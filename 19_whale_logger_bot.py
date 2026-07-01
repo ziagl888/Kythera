@@ -1,15 +1,17 @@
 import asyncio
-import websockets
 import json
-import time
-import os
 import logging
-from datetime import datetime, timezone, timedelta
+import os
+import socket
+import time
+from datetime import datetime, timedelta, timezone
+
+import websockets
+
+from core import config as _kcfg  # channel ids
 
 # DB Connection importieren (für Telegram)
-from core.database import get_db_connection
 from core.market_utils import load_coins, send_telegram
-from core import config as _kcfg  # channel ids
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - WHALE_LOGGER - %(message)s')
@@ -28,10 +30,26 @@ TELEGRAM_CHANNEL_ID = _kcfg.CH_MARKET_DATA
 UPDATE_INTERVAL_SEC = 1800  # 30 Minuten
 
 TOP20_WHALE_COINS = [
-    "BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT",
-    "TRXUSDT", "DOGEUSDT", "ADAUSDT", "BCHUSDT", "HYPEUSDT",
-    "LINKUSDT", "ZECUSDT", "XLMUSDT", "LTCUSDT", "HBARUSDT",
-    "AVAXUSDT", "SUIUSDT", "UNIUSDT", "TONUSDT", "DOTUSDT"
+    "BTCUSDT",
+    "ETHUSDT",
+    "XRPUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "TRXUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "BCHUSDT",
+    "HYPEUSDT",
+    "LINKUSDT",
+    "ZECUSDT",
+    "XLMUSDT",
+    "LTCUSDT",
+    "HBARUSDT",
+    "AVAXUSDT",
+    "SUIUSDT",
+    "UNIUSDT",
+    "TONUSDT",
+    "DOTUSDT",
 ]
 
 # Globaler Arbeitsspeicher
@@ -57,14 +75,17 @@ def format_usd(val):
 
 # 📡 TELEGRAM HELPER
 
+
 def get_stats(trades, start_ts, end_ts, symbols=None, exclude=None):
     """Counts trades and volume for a specific time window and coin set."""
     l_c, l_v, s_c, s_v = 0, 0.0, 0, 0.0
     for t in trades:
         if start_ts <= t['ts'] < end_ts:
             sym = t['sym']
-            if symbols and sym not in symbols: continue
-            if exclude and sym in exclude: continue
+            if symbols and sym not in symbols:
+                continue
+            if exclude and sym in exclude:
+                continue
 
             if t['dir'] == 'LONG':
                 l_c += 1
@@ -77,7 +98,8 @@ def get_stats(trades, start_ts, end_ts, symbols=None, exclude=None):
 
 def get_ratio(long_vol, short_vol):
     """Calculates the L/S ratio."""
-    if short_vol == 0: return "∞" if long_vol > 0 else "0.0"
+    if short_vol == 0:
+        return "∞" if long_vol > 0 else "0.0"
     return f"{long_vol / short_vol:.2f}"
 
 
@@ -143,7 +165,8 @@ async def evaluate_whales_loop():
             altcoin_vols = {}
             for t in last_1h_trades:
                 sym = t['sym']
-                if sym in ["BTCUSDT", "ETHUSDT"]: continue
+                if sym in ["BTCUSDT", "ETHUSDT"]:
+                    continue
 
                 if sym not in altcoin_vols:
                     altcoin_vols[sym] = {'l_c': 0, 'l_v': 0.0, 's_c': 0, 's_v': 0.0}
@@ -171,10 +194,12 @@ async def evaluate_whales_loop():
                     dev_block += f"{sym:<10} {data['s_c']:>2}x {format_usd(data['s_v']):>8}\n"
 
             # 3. Top 5 Einzel-Trades (Die wahren Wale)
-            long_trades = sorted([t for t in last_1h_trades if t['dir'] == 'LONG'], key=lambda x: x['usd'],
-                                 reverse=True)[:5]
-            short_trades = sorted([t for t in last_1h_trades if t['dir'] == 'SHORT'], key=lambda x: x['usd'],
-                                  reverse=True)[:5]
+            long_trades = sorted(
+                [t for t in last_1h_trades if t['dir'] == 'LONG'], key=lambda x: x['usd'], reverse=True
+            )[:5]
+            short_trades = sorted(
+                [t for t in last_1h_trades if t['dir'] == 'SHORT'], key=lambda x: x['usd'], reverse=True
+            )[:5]
 
             trade_block = "<b>Top 5 Whale Trades Long (1h):</b>\n"
             for t in long_trades:
@@ -210,6 +235,7 @@ async def evaluate_whales_loop():
 
 # ⚙️ DATENSAMMLER CORE SYSTEM
 
+
 def load_existing_whales():
     global WHALE_TRADES
     WHALE_TRADES = []
@@ -222,7 +248,7 @@ def load_existing_whales():
 
         if os.path.exists(filepath):
             try:
-                with open(filepath, "r", encoding="utf-8") as f:
+                with open(filepath, encoding="utf-8") as f:
                     WHALE_TRADES.extend(json.load(f))
             except Exception as e:
                 logger.error(f"Error loading von {filepath}: {e}")
@@ -268,6 +294,36 @@ async def save_whales_loop():
             logger.error(f"Fehler im Speicher-Loop: {e}")
 
 
+def _apply_keepalive(ws) -> None:
+    """Applies TCP keepalive to an already-connected WebSocket.
+
+    Called AFTER websockets.connect() succeeds. Gets the underlying socket
+    from the transport and sets SO_KEEPALIVE + platform-specific intervals.
+    This avoids the Windows WinError 10057 that occurs when passing an
+    unconnected socket to websockets.connect(sock=...).
+
+    Prevents NAT/firewall idle-timeout disconnects (~300-360s) by sending
+    TCP-level ACK probes every 60s.
+    """
+    import sys
+
+    try:
+        sock = ws.transport.get_extra_info("socket")
+        if sock is None:
+            return
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if sys.platform == "win32":
+            # SIO_KEEPALIVE_VALS: (onoff, keepalivetime_ms, keepaliveinterval_ms)
+            # First probe after 60s idle, then every 10s
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60_000, 10_000))
+        else:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
+    except (AttributeError, OSError):
+        pass  # Non-fatal — connection still works without keepalive
+
+
 async def whale_ws_listener():
     global WHALE_TRADES
     coins = load_coins()
@@ -282,11 +338,13 @@ async def whale_ws_listener():
     _whale_backoff = 5.0
     while True:
         try:
-            async with websockets.connect(url, ping_interval=None, ping_timeout=None, open_timeout=30, max_size=2**22) as ws:
+            async with websockets.connect(
+                url, ping_interval=None, ping_timeout=None, open_timeout=30, max_size=2**22
+            ) as ws:
                 _apply_keepalive(ws)
                 logger.info(f"🟢 Whale WS connected ({len(streams)} aggTrade streams, URL-encoded)")
 
-                logger.info(f"📡 Whale-Radar lauscht auf Trades > ${MIN_USD_VALUE/1000:.0f}k...")
+                logger.info(f"📡 Whale-Radar lauscht auf Trades > ${MIN_USD_VALUE / 1000:.0f}k...")
 
                 # Unsolicited pong every 120s — keepalive safety net
                 async def _whale_pong_task():
@@ -299,39 +357,42 @@ async def whale_ws_listener():
 
                 pong_task = asyncio.create_task(_whale_pong_task())
                 try:
-                  while True:
-                    try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=45)
-                    except asyncio.TimeoutError:
-                        # No data for 45s — send pong as keepalive (not ping)
+                    while True:
                         try:
-                            await ws.pong()
+                            msg = await asyncio.wait_for(ws.recv(), timeout=45)
+                        except asyncio.TimeoutError:
+                            # No data for 45s — send pong as keepalive (not ping)
+                            try:
+                                await ws.pong()
+                            except Exception:
+                                break
+                            continue
+
+                        try:
+                            payload = json.loads(msg)
                         except Exception:
-                            break
-                        continue
+                            continue
 
-                    try:
-                        payload = json.loads(msg)
-                    except Exception:
-                        continue
+                        if "data" not in payload:
+                            continue
+                        data = payload["data"]
+                        if data.get("e") != "aggTrade":
+                            continue
 
-                    if "data" not in payload: continue
-                    data = payload["data"]
-                    if data.get("e") != "aggTrade": continue
+                        qty, price = float(data["q"]), float(data["p"])
+                        notional = qty * price
+                        if notional < MIN_USD_VALUE:
+                            continue
 
-                    qty, price = float(data["q"]), float(data["p"])
-                    notional = qty * price
-                    if notional < MIN_USD_VALUE: continue
-
-                    direction = "SHORT" if data["m"] else "LONG"
-                    trade_record = {
-                        "ts": data["T"] / 1000.0,
-                        "sym": data["s"],
-                        "dir": direction,
-                        "usd": round(notional, 2),
-                        "prc": price
-                    }
-                    WHALE_TRADES.append(trade_record)
+                        direction = "SHORT" if data["m"] else "LONG"
+                        trade_record = {
+                            "ts": data["T"] / 1000.0,
+                            "sym": data["s"],
+                            "dir": direction,
+                            "usd": round(notional, 2),
+                            "prc": price,
+                        }
+                        WHALE_TRADES.append(trade_record)
 
                 finally:
                     pong_task.cancel()
@@ -370,4 +431,3 @@ if __name__ == "__main__":
         trades_copy = list(WHALE_TRADES)
         sync_group_and_save(trades_copy)
         logger.info("✅ Daten erfolgreich gerettet. Shutdown stopped.")
-
