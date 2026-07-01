@@ -230,6 +230,9 @@ chart_buffer_snapshot.json.tmp
 command_logs.json
 directory_info.txt
 
+# watchdog process-control markers (park/unpark/restart intent from the dashboard)
+control/
+
 # logs & generated output
 *.log
 logs/

@@ -1,9 +1,12 @@
 import datetime
 import logging
 import os
+import signal
 import subprocess
 import sys
 import time
+
+from core.process_control import consume_restart, is_parked
 
 logging.basicConfig(
     level=logging.INFO,
@@ -178,11 +181,54 @@ def kill_process(name: str) -> None:
     logger.info(f"✅ {name} stopped successfully.")
 
 
+# ── Graceful Shutdown ────────────────────────────────────────────────────────
+
+
+def shutdown_all() -> None:
+    """Terminate every supervised bot and the dashboard. Idempotent."""
+    for name in list(running_processes.keys()):
+        kill_process(name)
+    stop_dashboard()
+
+
+_shutting_down = False
+
+
+def _handle_shutdown_signal(signum, frame) -> None:
+    """SIGTERM/SIGINT/SIGBREAK → graceful teardown of the whole fleet.
+
+    Previously the watchdog only cleaned up on Ctrl+C (KeyboardInterrupt); a
+    service stop / taskkill (SIGTERM) orphaned every child process.
+    """
+    global _shutting_down
+    if _shutting_down:
+        return
+    _shutting_down = True
+    logger.info(f"🛑 Signal {signum} empfangen — fahre alle Systeme herunter...")
+    shutdown_all()
+    logger.info("🏁 System fully offline.")
+    sys.exit(0)
+
+
+def _install_signal_handlers() -> None:
+    # SIGBREAK is Windows-only (Ctrl+Break); SIGTERM covers Linux/service stop.
+    for sig_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_shutdown_signal)
+        except (ValueError, OSError):
+            # Not in the main thread — non-fatal, KeyboardInterrupt still works.
+            pass
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
     logger.info("🛡️ System Watchdog started.")
+    _install_signal_handlers()
 
     # Dashboard zuerst starten — ist sofort erreichbar während die Bots hochfahren.
     start_dashboard()
@@ -195,6 +241,10 @@ def main() -> None:
         wait = delay - last_start
         if wait > 0:
             time.sleep(wait)
+        if is_parked(p_info["script"]):
+            logger.info(f"⏸️  {p_info['name']} ist geparkt — Start übersprungen.")
+            last_start = delay
+            continue
         start_process(p_info)
         last_start = delay
 
@@ -211,6 +261,27 @@ def main() -> None:
             # Bot-Crash-Check
             for p_info in PROCESSES_TO_RUN:
                 name = p_info["name"]
+                script = p_info["script"]
+
+                # Parking: a dashboard-initiated stop that must STAY stopped.
+                # The watchdog is the single actuator — it stops the bot here and
+                # does NOT revive it, fixing the old "stop gets undone in 10s" bug.
+                if is_parked(script):
+                    if name in running_processes:
+                        if running_processes[name]["process"].poll() is None:
+                            logger.info(f"⏸️  {name} ist geparkt — stoppe.")
+                            kill_process(name)
+                        else:
+                            del running_processes[name]
+                    continue
+
+                # One-shot restart requested from the dashboard.
+                if consume_restart(script):
+                    logger.info(f"♻️ {name} — Restart über Dashboard angefordert.")
+                    if name in running_processes and running_processes[name]["process"].poll() is None:
+                        kill_process(name)
+                    start_process(p_info)
+                    continue
 
                 if name not in running_processes:
                     logger.error(f"🚨 Prozess {name} fehlt! Starting neu...")
@@ -243,10 +314,9 @@ def main() -> None:
             time.sleep(10)
 
     except KeyboardInterrupt:
+        # Fallback if signal handlers could not be installed (e.g. non-main thread).
         logger.info("🛑 Watchdog stopped (Strg+C). Shutting down all systems...")
-        for name in list(running_processes.keys()):
-            kill_process(name)
-        stop_dashboard()
+        shutdown_all()
         logger.info("🏁 System fully offline.")
 
 

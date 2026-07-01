@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import queue as queue_module
-import subprocess
 import sys
 import threading
 import time
@@ -19,6 +18,8 @@ from typing import Iterator
 
 import psutil
 from flask import Flask, Response, jsonify, request, stream_with_context
+
+from core.process_control import is_parked, park, request_restart, unpark
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -62,12 +63,6 @@ PROCESSES = [
 
 # script → process info lookup
 SCRIPT_MAP = {p["script"]: p for p in PROCESSES}
-
-# ── Process State ───────────────────────────────────────────────────────────
-
-# pid → {name, script, started_at, restart_count}
-_managed: dict[int, dict] = {}
-_managed_lock = threading.Lock()
 
 # SSE event queue for live push to browser
 _sse_queue: deque[str] = deque(maxlen=200)
@@ -142,6 +137,7 @@ def _get_process_status(p_def: dict) -> dict:
         "script": script,
         "group": p_def.get("group", "other"),
         "running": False,
+        "parked": is_parked(script),
         "pid": None,
         "cpu": 0.0,
         "mem_mb": 0.0,
@@ -186,67 +182,47 @@ def get_system_stats() -> dict:
 # ── Process Control ─────────────────────────────────────────────────────────
 
 
+# Process control is INTENT-only. main_watchdog.py is the single actuator of
+# process lifecycle; the dashboard records intent (park/unpark/restart) here and
+# the watchdog acts on it within its next monitor cycle (<=10s). This is what
+# fixes the old bug where a dashboard "stop" was revived by the watchdog in 10s.
+
+
 def start_process(script: str) -> dict:
-    pid = _find_pid_for_script(script)
-    if pid:
-        return {"ok": False, "msg": f"Already running (PID {pid})"}
-    path = BASE_DIR / script
-    if not path.exists():
+    if not (BASE_DIR / script).exists():
         return {"ok": False, "msg": f"Script not found: {script}"}
-    proc = subprocess.Popen(
-        [sys.executable, str(path)],
-        cwd=str(BASE_DIR),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    _push_event("process_change", {"script": script, "action": "started", "pid": proc.pid})
-    return {"ok": True, "pid": proc.pid, "msg": f"Started (PID {proc.pid})"}
+    unpark(script)
+    _push_event("process_change", {"script": script, "action": "unparked"})
+    return {"ok": True, "msg": "Start angefordert — Watchdog startet den Bot (<=10s)."}
 
 
 def stop_process(script: str) -> dict:
-    pid = _find_pid_for_script(script)
-    if not pid:
-        return {"ok": False, "msg": "Not running"}
-    try:
-        proc = psutil.Process(pid)
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except psutil.TimeoutExpired:
-            proc.kill()
-        _push_event("process_change", {"script": script, "action": "stopped", "pid": pid})
-        return {"ok": True, "msg": f"Stopped (was PID {pid})"}
-    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-        return {"ok": False, "msg": str(e)}
+    park(script)
+    _push_event("process_change", {"script": script, "action": "parked"})
+    return {"ok": True, "msg": "Stop angefordert — Watchdog parkt den Bot (<=10s)."}
 
 
 def restart_process(script: str) -> dict:
-    stop_result = stop_process(script)
-    time.sleep(0.5)
-    start_result = start_process(script)
-    return {"ok": start_result["ok"], "msg": f"Stop: {stop_result['msg']} | Start: {start_result['msg']}"}
+    unpark(script)
+    request_restart(script)
+    _push_event("process_change", {"script": script, "action": "restart_requested"})
+    return {"ok": True, "msg": "Restart angefordert — Watchdog recycelt den Bot (<=10s)."}
 
 
 def restart_all() -> dict:
-    results = {}
-    for p in PROCESSES:
-        results[p["script"]] = restart_process(p["script"])
+    results = {p["script"]: restart_process(p["script"]) for p in PROCESSES}
     _push_event("system", {"action": "restart_all"})
     return results
 
 
 def stop_all() -> dict:
-    results = {}
-    for p in PROCESSES:
-        results[p["script"]] = stop_process(p["script"])
+    results = {p["script"]: stop_process(p["script"]) for p in PROCESSES}
     _push_event("system", {"action": "stop_all"})
     return results
 
 
 def start_all() -> dict:
-    results = {}
-    for p in PROCESSES:
-        results[p["script"]] = start_process(p["script"])
+    results = {p["script"]: start_process(p["script"]) for p in PROCESSES}
     _push_event("system", {"action": "start_all"})
     return results
 
