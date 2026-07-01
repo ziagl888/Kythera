@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
 import pandas as pd
@@ -153,6 +154,9 @@ def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, 
     except Exception as e:
         logger.error(f"Error for Chart-Generierung für {symbol}: {e}")
         return None
+    finally:
+        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        plt.close('all')
 
 
 def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=None):

@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone
 
 import joblib
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
 import pandas as pd
@@ -509,6 +510,9 @@ def generate_smc_chart(df, symbol, tf, strategy_name, direction, entry, p1, p2, 
     except Exception as e:
         logger.error(f"SMC Chart Error for {symbol}: {e}", exc_info=True)
         return None
+    finally:
+        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        plt.close('all')
 
 
 def main():

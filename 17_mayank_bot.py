@@ -7,6 +7,7 @@ import logging
 import os
 import time
 
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 import yfinance as yf
@@ -204,6 +205,9 @@ def generate_setup_chart(df, symbol, tf, fvg, supports, resistances, direction):
     except Exception as e:
         logger.error(f"Chart Error for {symbol}: {e}")
         return None
+    finally:
+        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        plt.close('all')
 
 
 def analyze_strategy():

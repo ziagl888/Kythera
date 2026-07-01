@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
 import pandas as pd
@@ -177,6 +178,9 @@ def generate_qm_chart(df, symbol, pattern_type, p1, p2, p3, p4, qm_level):
     except Exception as e:
         logger.error(f"Chart Error for {symbol}: {e}", exc_info=True)
         return None
+    finally:
+        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        plt.close('all')
 
 
 # 🕵️ PATTERN SCANNER

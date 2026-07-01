@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone
 
 import joblib
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
 import pandas as pd
@@ -348,6 +349,9 @@ def generate_qm_chart(df, symbol, direction, p1, p2, p3, p4, qm_level):
     except Exception as e:
         logger.error(f"QM Chart Error for {symbol}: {e}", exc_info=True)
         return None
+    finally:
+        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        plt.close('all')
 
 
 def send_cornix_signal(conn, df, symbol, tf, direction, entry, sl, tp, confidence, p1, p2, p3, p4):

@@ -5,12 +5,12 @@ warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 import matplotlib
 
 matplotlib.use('Agg')
-
 import datetime
 import logging
 import os
 import time
 
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 import yfinance as yf
@@ -253,6 +253,9 @@ def generate_smc_chart(df, symbol, tf, setup_type, level_data, is_bullish, suppo
     except Exception as e:
         logger.error(f"Chart Error: {e}")
         return None
+    finally:
+        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        plt.close('all')
 
 
 # 🚀 CORE ENGINE
