@@ -1,7 +1,7 @@
-import json
-import os
 import datetime
+import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,7 @@ LOG_FILE = "command_logs.json"
 
 def load_config():
     try:
-        with open(CONFIG_FILE, "r") as f:
+        with open(CONFIG_FILE) as f:
             return json.load(f)
     except Exception as e:
         logger.error(f"Error loading der config: {e}")
@@ -47,15 +47,17 @@ def log_command_atomic(username, command, full_text):
     try:
         logs = []
         if os.path.exists(LOG_FILE):
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
+            with open(LOG_FILE, encoding="utf-8") as f:
                 logs = json.load(f)
 
-        logs.append({
-            "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "user": username,
-            "command": command,
-            "full_text": full_text
-        })
+        logs.append(
+            {
+                "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "user": username,
+                "command": command,
+                "full_text": full_text,
+            }
+        )
 
         # Atomic write via .tmp
         tmp_file = LOG_FILE + ".tmp"

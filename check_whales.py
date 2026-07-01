@@ -1,6 +1,6 @@
-import os
 import glob
 import json
+import os
 from collections import Counter
 
 # Directory containing the files
@@ -28,7 +28,7 @@ def check_latest_whale_data():
 
     # 4. Datei laden und auswerten
     try:
-        with open(latest_file, "r", encoding="utf-8") as f:
+        with open(latest_file, encoding="utf-8") as f:
             trades = json.load(f)
 
         if not trades:

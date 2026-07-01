@@ -11,18 +11,16 @@ Läuft alle 5 Minuten und:
 
 Watchdog: start_delay=160
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
-import sys
 from datetime import datetime, timedelta, timezone
 
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.regime_logic import (
-    REGIME_DEBOUNCE_COUNT,
     apply_debounce,
     classify_regime,
     compute_features,
@@ -31,8 +29,8 @@ from core.regime_logic import (
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-CHECK_INTERVAL_SECONDS = 300          # alle 5 Minuten
-TREND_RETURN_THRESHOLD_4H_PCT = 1.5   # Referenz für Status-Posts
+CHECK_INTERVAL_SECONDS = 300  # alle 5 Minuten
+TREND_RETURN_THRESHOLD_4H_PCT = 1.5  # Referenz für Status-Posts
 VOLA_HIGH_PERCENTILE = 75
 VOLA_LOW_PERCENTILE = 40
 ALT_CONTEXT_THRESHOLD_PCT = 1.5
@@ -46,6 +44,7 @@ logger = setup_logging("REGIME_DETECTOR")
 # ─────────────────────────────────────────────────────────────────────────────
 # SCHEMA
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def ensure_regime_schema(conn) -> None:
     """
@@ -209,6 +208,7 @@ def ensure_regime_schema(conn) -> None:
 # REGIME HISTORY INSERT
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def insert_regime_history(conn, result: dict, features: dict) -> None:
     """Inserts one row into regime_history for the current check."""
     ts_now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -239,8 +239,7 @@ def insert_regime_history(conn, result: dict, features: dict) -> None:
                 result["confidence"],
                 result["confidence_btc"],
                 result["confidence_alt"],
-                json.dumps({k: v for k, v in features.items()
-                            if isinstance(v, (int, float, type(None)))}),
+                json.dumps({k: v for k, v in features.items() if isinstance(v, (int, float, type(None)))}),
             ),
         )
     conn.commit()
@@ -249,6 +248,7 @@ def insert_regime_history(conn, result: dict, features: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # REGIME-CHANGE HANDLER
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def handle_regime_change(
     conn,
@@ -298,7 +298,7 @@ def handle_regime_change(
     msg = (
         f"🔄 REGIME CHANGE\n\n"
         f"{chr(10).join(change_parts)}\n"
-        f"Confidence: BTC {conf_btc*100:.0f}% | Alt {conf_alt*100:.0f}%\n"
+        f"Confidence: BTC {conf_btc * 100:.0f}% | Alt {conf_alt * 100:.0f}%\n"
         f"\nBTC: ${btc_price:,.0f} ({btc_ret_4h:+.2f}% in 4h)"
         f"{btcdom_line}\n"
         f"\n<i>Close commands will follow via trading channel if needed.</i>"
@@ -314,6 +314,7 @@ def handle_regime_change(
 # STÜNDLICHER STATUS-POST
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def post_hourly_status() -> None:
     """Posts an hourly regime status to REGIME_STATUS_CHANNEL_ID."""
     from core.config import REGIME_STATUS_CHANNEL_ID
@@ -326,8 +327,7 @@ async def post_hourly_status() -> None:
         # Aktuelles Regime
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT regime, alt_context, since, alt_context_since, confidence "
-                "FROM regime_current WHERE id = 1"
+                "SELECT regime, alt_context, since, alt_context_since, confidence FROM regime_current WHERE id = 1"
             )
             row = cur.fetchone()
 
@@ -361,10 +361,7 @@ async def post_hourly_status() -> None:
             dist_rows = cur.fetchall()
 
         total_checks = sum(r[1] for r in dist_rows) or 1
-        dist_lines = "\n".join(
-            f"  {r[0]:<12} {r[1]/total_checks*100:.0f}%"
-            for r in dist_rows
-        )
+        dist_lines = "\n".join(f"  {r[0]:<12} {r[1] / total_checks * 100:.0f}%" for r in dist_rows)
 
         # Aktuelle BTC-Features
         features = compute_features(conn)
@@ -377,18 +374,12 @@ async def post_hourly_status() -> None:
                 f"1h {features['btc_return_1h']:+.2f}% | "
                 f"4h {features['btc_return_4h']:+.2f}%"
             )
-            atr_line = (
-                f"  1h {features['btc_atr_1h_pct']:.2f}% | "
-                f"4h {features['btc_atr_4h_pct']:.2f}%"
-            )
+            atr_line = f"  1h {features['btc_atr_1h_pct']:.2f}% | 4h {features['btc_atr_4h_pct']:.2f}%"
             if features.get("btcdom_value") is not None:
                 # BTCDOM ist Punkt-Index (Base 1000), kein Prozentsatz.
                 sign = "+" if (features.get("btcdom_return_24h") or 0) >= 0 else ""
                 ret24h = features.get("btcdom_return_24h", 0.0) or 0.0
-                btcdom_line = (
-                    f"  {features['btcdom_value']:.1f} | "
-                    f"24h {sign}{ret24h:.2f}%"
-                )
+                btcdom_line = f"  {features['btcdom_value']:.1f} | 24h {sign}{ret24h:.2f}%"
 
         # Offene Orchestrator-Trades
         with conn.cursor() as cur:
@@ -399,9 +390,7 @@ async def post_hourly_status() -> None:
             open_trades = cur.fetchall()
 
         open_count = len(open_trades)
-        open_lines = "\n".join(
-            f"  {t[0]} {t[1]} ({t[2]})" for t in open_trades[:8]
-        )
+        open_lines = "\n".join(f"  {t[0]} {t[1]} ({t[2]})" for t in open_trades[:8])
         if open_count > 8:
             open_lines += f"\n  ... and {open_count - 8} more"
 
@@ -430,7 +419,7 @@ async def post_hourly_status() -> None:
         ts_str = now_utc.strftime("%Y-%m-%d %H:%M")
         msg = (
             f"🌡️ REGIME STATUS — {ts_str} UTC\n\n"
-            f"BTC Regime: <b>{cur_regime}</b> (conf {(conf or 0)*100:.0f}%)\n"
+            f"BTC Regime: <b>{cur_regime}</b> (conf {(conf or 0) * 100:.0f}%)\n"
             f"Since: {_since_str(since)}\n"
             f"Alt Context: <b>{cur_alt}</b>\n"
             f"Alt since: {_since_str(alt_since)}\n\n"
@@ -457,6 +446,7 @@ async def post_hourly_status() -> None:
 # HAUPT-LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def regime_check_loop() -> None:
     """
     Runs every 5 minutes. Computes features, classifies, writes history,
@@ -472,9 +462,7 @@ async def regime_check_loop() -> None:
             logger.warning("Incomplete data — Regime-Check skipped")
             return
 
-        result = classify_regime(
-            features, features["vola_p75"], features["vola_p40"]
-        )
+        result = classify_regime(features, features["vola_p75"], features["vola_p40"])
         logger.info(
             f"Regime-Check: BTC={result['regime']} (conf={result['confidence_btc']:.2f}) "
             f"Alt={result['alt_context']} (conf={result['confidence_alt']:.2f})"
@@ -521,9 +509,7 @@ async def schedule_regime_checks() -> None:
     while True:
         now = datetime.now(timezone.utc)
         minutes_to_next = 5 - (now.minute % 5)
-        next_run = (now + timedelta(minutes=minutes_to_next)).replace(
-            second=0, microsecond=0
-        )
+        next_run = (now + timedelta(minutes=minutes_to_next)).replace(second=0, microsecond=0)
         sleep_sec = (next_run - now).total_seconds()
         await asyncio.sleep(max(sleep_sec, 1))
         await regime_check_loop()
@@ -534,9 +520,7 @@ async def schedule_hourly_status() -> None:
     """Posts status at XX:00:50 every hour."""
     while True:
         now = datetime.now(timezone.utc)
-        next_run = (now + timedelta(hours=1)).replace(
-            minute=0, second=50, microsecond=0
-        )
+        next_run = (now + timedelta(hours=1)).replace(minute=0, second=50, microsecond=0)
         sleep_sec = (next_run - now).total_seconds()
         await asyncio.sleep(max(sleep_sec, 1))
         await post_hourly_status()

@@ -1,6 +1,7 @@
+import os
+
 import joblib
 import xgboost as xgb
-import os
 
 
 def update_model(filename):
@@ -71,7 +72,3 @@ if __name__ == "__main__":
     update_model("threshold_72h_pump_final.pkl")
     update_model("threshold_168h_dump_final.pkl")
     update_model("threshold_168h_pump_final.pkl")
-
-
-
-

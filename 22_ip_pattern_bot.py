@@ -2,19 +2,20 @@ import warnings
 
 warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
-import time
 import json
-import os
 import logging
+import os
+import time
 from datetime import datetime, timezone
-import pandas as pd
-import numpy as np
-import scipy.signal
-import mplfinance as mpf
 
+import mplfinance as mpf
+import numpy as np
+import pandas as pd
+import scipy.signal
+
+from core import config as _kcfg  # channel ids
 from core.database import get_db_connection
 from core.market_utils import load_coins
-from core import config as _kcfg  # channel ids
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - INST_PATTERN_BOT - %(message)s')
@@ -46,7 +47,7 @@ def load_alerted_qms():
         logger.info("📂 No alerted_qms.json found → starting fresh.")
         return
     try:
-        with open(ALERTED_QMS_FILE, "r", encoding="utf-8") as f:
+        with open(ALERTED_QMS_FILE, encoding="utf-8") as f:
             data = json.load(f)
         ALERTED_QMS = set(data)
         logger.info(f"✅ {len(ALERTED_QMS)} known pattern IDs loaded.")
@@ -70,11 +71,14 @@ def save_alerted_qms():
 
 # 📡 DATEN & HILFSFUNKTIONEN
 
+
 def send_telegram_alert(conn, message, image_path):
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                        (INSTITUTIONAL_CHANNEL_ID, message, image_path))
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                (INSTITUTIONAL_CHANNEL_ID, message, image_path),
+            )
         conn.commit()
     except Exception as e:
         logger.error(f"Error sending in die Outbox: {e}")
@@ -143,7 +147,7 @@ def generate_qm_chart(df, symbol, pattern_type, p1, p2, p3, p4, qm_level):
             (get_dt(p1[0]), float(p1[2])),
             (get_dt(p2[0]), float(p2[2])),
             (get_dt(p3[0]), float(p3[2])),
-            (get_dt(p4[0]), float(p4[2]))
+            (get_dt(p4[0]), float(p4[2])),
         ]
 
         # 5. Styling and colours
@@ -164,7 +168,7 @@ def generate_qm_chart(df, symbol, pattern_type, p1, p2, p3, p4, qm_level):
             figsize=(12, 7),
             tight_layout=True,
             savefig=abs_filename,
-            returnfig=False
+            returnfig=False,
         )
 
         logger.info(f"Chart erfolgreich generiert: {abs_filename}")
@@ -173,6 +177,7 @@ def generate_qm_chart(df, symbol, pattern_type, p1, p2, p3, p4, qm_level):
     except Exception as e:
         logger.error(f"Chart Error for {symbol}: {e}", exc_info=True)
         return None
+
 
 # 🕵️ PATTERN SCANNER
 def scan_institutional_patterns():
@@ -185,15 +190,18 @@ def scan_institutional_patterns():
         for symbol in coins:
             df = pd.read_sql_query(
                 f'SELECT open_time, open, high, low, close FROM "{symbol}_{TIMEFRAME}" ORDER BY open_time DESC LIMIT {LOOKBACK_CANDLES}',
-                conn)
+                conn,
+            )
 
-            if len(df) < 100: continue
+            if len(df) < 100:
+                continue
 
             # Umdrehen (älteste zuerst)
             df = df.iloc[::-1].reset_index(drop=True)
             pivots = get_alternating_pivots(df, window=5)
 
-            if len(pivots) < 4: continue
+            if len(pivots) < 4:
+                continue
 
             current_price = df['close'].iloc[-1]
 

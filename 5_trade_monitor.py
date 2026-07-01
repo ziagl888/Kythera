@@ -1,9 +1,11 @@
-import time
-import logging
 import datetime
-import pytz
-from core.database import get_db_connection
+import logging
+import time
 import warnings
+
+import pytz
+
+from core.database import get_db_connection
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
@@ -18,8 +20,8 @@ def create_closed_trades_table(conn):
             CREATE TABLE IF NOT EXISTS closed_trades_master (
                 id SERIAL PRIMARY KEY,
                 strategy TEXT, time TIMESTAMP WITHOUT TIME ZONE, coin TEXT,
-                direction TEXT, lev TEXT, entry REAL, target1 REAL, target2 REAL, 
-                target3 REAL, target4 REAL, sl REAL, close_price REAL, 
+                direction TEXT, lev TEXT, entry REAL, target1 REAL, target2 REAL,
+                target3 REAL, target4 REAL, sl REAL, close_price REAL,
                 posted TIMESTAMP WITHOUT TIME ZONE, status TEXT
             )
         """)
@@ -35,34 +37,52 @@ def close_trade(conn, trade, close_price, end_status):
     # Jetzt konsequent UTC.
     now = datetime.datetime.now(datetime.timezone.utc)
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO closed_trades_master (
                 strategy, time, coin, direction, lev, entry, target1, target2, target3, target4, sl, close_price, posted, status
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (trade['strategy'], trade['time'], trade['coin'], trade['direction'], trade['lev'],
-              trade['entry'], trade['target1'], trade['target2'], trade['target3'], trade['target4'],
-              trade['sl'], close_price, now, end_status))
+        """,
+            (
+                trade['strategy'],
+                trade['time'],
+                trade['coin'],
+                trade['direction'],
+                trade['lev'],
+                trade['entry'],
+                trade['target1'],
+                trade['target2'],
+                trade['target3'],
+                trade['target4'],
+                trade['sl'],
+                close_price,
+                now,
+                end_status,
+            ),
+        )
 
         cur.execute("DELETE FROM active_trades_master WHERE id = %s", (trade['id'],))
     conn.commit()
 
     # Nur noch lokales Logging für dich, kein Telegram-Spam für Cornix!
     pct_change = ((close_price - trade['entry']) / trade['entry']) * 100
-    if trade['direction'] == 'SHORT': pct_change = -pct_change
+    if trade['direction'] == 'SHORT':
+        pct_change = -pct_change
     logger.info(
-        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} CLOSED ({end_status}) zu {close_price}. PnL: {pct_change:.2f}%")
+        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} CLOSED ({end_status}) zu {close_price}. PnL: {pct_change:.2f}%"
+    )
 
 
 def update_trade_level(conn, trade, new_level, new_sl):
     """Aktualisiert das Target-Level in der DB (STUMM)."""
     with conn.cursor() as cur:
-        cur.execute("UPDATE active_trades_master SET status = %s, sl = %s WHERE id = %s",
-                    (str(new_level), new_sl, trade['id']))
+        cur.execute(
+            "UPDATE active_trades_master SET status = %s, sl = %s WHERE id = %s", (str(new_level), new_sl, trade['id'])
+        )
     conn.commit()
     logger.info(
-        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} TARGET {new_level} HIT. SL intern auf {new_sl:.8f} gezogen.")
-
-
+        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} TARGET {new_level} HIT. SL intern auf {new_sl:.8f} gezogen."
+    )
 
 
 # HAUPT-MONITOR-SCHLEIFE (LOKALER DB-MODUS)
@@ -107,7 +127,7 @@ def monitor_loop():
             with c.cursor() as cur:
                 cur.execute("SELECT * FROM active_trades_master")
                 columns = [desc[0] for desc in cur.description]
-                active_trades = [dict(zip(columns, row)) for row in cur.fetchall()]
+                active_trades = [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
 
             if not active_trades:
                 continue
@@ -133,8 +153,7 @@ def monitor_loop():
                 for coin in active_coins:
                     try:
                         cur.execute(
-                            f'SELECT open_time, high, low, close FROM "{coin}_5m" '
-                            f'ORDER BY open_time DESC LIMIT 1'
+                            f'SELECT open_time, high, low, close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1'
                         )
                         row = cur.fetchone()
                         if row:
@@ -144,10 +163,7 @@ def monitor_loop():
                             age_sec = (now_utc - open_time).total_seconds()
                             if age_sec > stale_cutoff_seconds:
                                 stale_coins.add(coin)
-                                logger.debug(
-                                    f"⏸ {coin}: 5m-Candle {age_sec:.0f}s alt — "
-                                    f"skippe Trade-Checks"
-                                )
+                                logger.debug(f"⏸ {coin}: 5m-Candle {age_sec:.0f}s alt — skippe Trade-Checks")
                                 continue
                             live_prices[coin] = {
                                 'high': float(row[1]),
@@ -178,7 +194,6 @@ def monitor_loop():
                     continue
 
                 candle = live_prices[coin]
-                price = candle['close']  # Close für Logging / Close-Price beim Schließen
                 dir_long = trade['direction'] == 'LONG'
 
                 # Status kann 'WORKING' oder '1'/'2'/'3' sein. Defensiv parsen,
@@ -191,8 +206,7 @@ def monitor_loop():
                         current_level = int(status_str)
                     except (ValueError, TypeError):
                         logger.warning(
-                            f"Unerwarteter Status '{status_str}' für Trade {trade.get('id')} ({coin}). "
-                            f"Skipping."
+                            f"Unerwarteter Status '{status_str}' für Trade {trade.get('id')} ({coin}). Skipping."
                         )
                         continue
                 targets = [trade['target1'], trade['target2'], trade['target3'], trade['target4']]
@@ -215,7 +229,8 @@ def monitor_loop():
                 # SHORT TP getriggert wenn low unter Target
                 if current_level < 4:
                     next_target = targets[current_level]
-                    if next_target == 0: continue
+                    if next_target == 0:
+                        continue
 
                     if dir_long:
                         target_hit = candle['high'] >= next_target

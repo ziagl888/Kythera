@@ -2,15 +2,15 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import time
 import json
 import logging
-import pandas as pd
+
+import joblib
 import numpy as np
+import pandas as pd
 import scipy.signal
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
-import joblib
 
 from core.database import get_db_connection
 
@@ -29,10 +29,17 @@ LEVERAGE = 20
 TAKER_FEE = 0.0004
 
 PRICE_BASED_INDICATORS = [
-    'ema_9', 'ema_21', 'ema_50', 'ema_200',
-    'kama_21', 'wma_21',
-    'donchian_upper_20', 'donchian_lower_20', 'donchian_mid_20',
-    'boll_upper_20', 'boll_lower_20'
+    'ema_9',
+    'ema_21',
+    'ema_50',
+    'ema_200',
+    'kama_21',
+    'wma_21',
+    'donchian_upper_20',
+    'donchian_lower_20',
+    'donchian_mid_20',
+    'boll_upper_20',
+    'boll_lower_20',
 ]
 ABSOLUTE_INDICATORS = ['rsi_14', 'tsi_25_13_13', 'macd_dif_normal_12_26_9', 'macd_dea_normal_12_26_9']
 
@@ -42,11 +49,14 @@ ABSOLUTE_INDICATORS = ['rsi_14', 'tsi_25_13_13', 'macd_dif_normal_12_26_9', 'mac
 # ==========================================
 def load_coins():
     try:
-        with open(COINS_FILE, 'r') as f:
+        with open(COINS_FILE) as f:
             data = json.load(f)
-            return [c.upper() for c in (data.get('coins', data) if isinstance(data, dict) else data) if
-                    c.upper().endswith("USDT")]
-    except:
+            return [
+                c.upper()
+                for c in (data.get('coins', data) if isinstance(data, dict) else data)
+                if c.upper().endswith("USDT")
+            ]
+    except Exception:
         return []
 
 
@@ -67,7 +77,8 @@ def fetch_merged_data(symbol, tf):
         df = pd.read_sql_query(query, conn)
         conn.close()
 
-        if df.empty or len(df) < 500: return pd.DataFrame()
+        if df.empty or len(df) < 500:
+            return pd.DataFrame()
         df.ffill(inplace=True)
         df.bfill(inplace=True)
 
@@ -93,7 +104,7 @@ def simulate_and_extract_features(df, symbol):
         close_prev = closes[idx]
         features = {
             'dir_num': 1 if direction == 'LONG' else 0,
-            'atr_14_pct': (df['atr_14'].iloc[idx] / close_prev) * 100
+            'atr_14_pct': (df['atr_14'].iloc[idx] / close_prev) * 100,
         }
         for ind in ABSOLUTE_INDICATORS:
             features[ind] = df[ind].iloc[idx]
@@ -109,14 +120,16 @@ def simulate_and_extract_features(df, symbol):
     # --- 1a. THREE-DRIVE DIVERGENCE (BEARISH / SHORT) ---
     for i in range(2, len(peak_idx)):
         p1, p2, p3 = peak_idx[i - 2], peak_idx[i - 1], peak_idx[i]
-        if p3 - p1 > 100: continue
+        if p3 - p1 > 100:
+            continue
 
         if highs[p1] < highs[p2] < highs[p3]:
             if rsis[p1] > rsis[p2] > rsis[p3]:
                 entry = closes[p3]
                 sl = highs[p3] * 1.005
                 dist = sl - entry
-                if dist <= 0: continue
+                if dist <= 0:
+                    continue
                 tp = entry - (dist * RR_RATIO)
 
                 outcome = 0
@@ -138,14 +151,16 @@ def simulate_and_extract_features(df, symbol):
     # --- 1b. THREE-DRIVE DIVERGENCE (BULLISH / LONG) --- NEU!
     for i in range(2, len(trough_idx)):
         p1, p2, p3 = trough_idx[i - 2], trough_idx[i - 1], trough_idx[i]
-        if p3 - p1 > 100: continue
+        if p3 - p1 > 100:
+            continue
 
         if lows[p1] > lows[p2] > lows[p3]:
             if rsis[p1] < rsis[p2] < rsis[p3]:
                 entry = closes[p3]
                 sl = lows[p3] * 0.995
                 dist = entry - sl
-                if dist <= 0: continue
+                if dist <= 0:
+                    continue
                 tp = entry + (dist * RR_RATIO)
 
                 outcome = 0
@@ -248,8 +263,13 @@ def train_model(trades_df, pattern_name, tf):
     test_trades = trades_df.loc[X_test.index].copy()
 
     model = xgb.XGBClassifier(
-        n_estimators=300, max_depth=5, learning_rate=0.03,
-        subsample=0.8, colsample_bytree=0.8, random_state=42, eval_metric='logloss'
+        n_estimators=300,
+        max_depth=5,
+        learning_rate=0.03,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        eval_metric='logloss',
     )
     model.fit(X_train, y_train)
 
@@ -264,7 +284,8 @@ def train_model(trades_df, pattern_name, tf):
     thresholds = np.arange(0.30, 0.85, 0.05)
     for thresh in thresholds:
         taken = test_trades[test_trades['prob'] >= thresh]
-        if len(taken) == 0: continue
+        if len(taken) == 0:
+            continue
 
         wins = len(taken[taken['outcome'] == 1])
         losses = len(taken[taken['outcome'] == 0])
@@ -275,7 +296,8 @@ def train_model(trades_df, pattern_name, tf):
         pnl = net_r * (TRADE_MARGIN * 0.1)  # Annahme: 1R = 10% Margin-Verlust
 
         print(
-            f"Thresh: {thresh:.2f} | Trades: {len(taken):<4} | Win Rate: {win_rate:>5.1f}% | Net R: {net_r:+.1f} | PnL: ${pnl:+,.0f}")
+            f"Thresh: {thresh:.2f} | Trades: {len(taken):<4} | Win Rate: {win_rate:>5.1f}% | Net R: {net_r:+.1f} | PnL: ${pnl:+,.0f}"
+        )
 
         if pnl > best_pnl:
             best_pnl = pnl
@@ -283,7 +305,8 @@ def train_model(trades_df, pattern_name, tf):
             best_stats = {'trades': len(taken), 'wr': win_rate, 'pnl': pnl, 'net_r': net_r}
 
     print(
-        f"🎯 OPTIMAL: {best_thresh:.2f} -> {best_stats.get('net_r', 0)} R (Win Rate: {best_stats.get('wr', 0):.1f}%)\n")
+        f"🎯 OPTIMAL: {best_thresh:.2f} -> {best_stats.get('net_r', 0)} R (Win Rate: {best_stats.get('wr', 0):.1f}%)\n"
+    )
 
     # Modell speichern
     prefix = "bb" if "Breaker" in pattern_name else "td"
@@ -294,16 +317,19 @@ def train_model(trades_df, pattern_name, tf):
 
 def main():
     coins = load_coins()
-    if not coins: return
+    if not coins:
+        return
 
     for tf in TIMEFRAMES:
         all_bb = []
         all_td = []
 
         for idx, coin in enumerate(coins, 1):
-            if idx % 50 == 0: logger.info(f"[{tf}] Loading Features: {idx}/{len(coins)}")
+            if idx % 50 == 0:
+                logger.info(f"[{tf}] Loading Features: {idx}/{len(coins)}")
             df = fetch_merged_data(coin, tf)
-            if df.empty: continue
+            if df.empty:
+                continue
 
             bb, td = simulate_and_extract_features(df, coin)
             all_bb.extend(bb)

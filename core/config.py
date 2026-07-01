@@ -3,6 +3,7 @@
 # All secrets are read from the .env file (python-dotenv) or environment variables.
 
 import os
+
 from dotenv import load_dotenv
 
 # Load .env file (if present). In production, variables can also be set via
@@ -15,8 +16,7 @@ def _required(name: str) -> str:
     val = os.getenv(name)
     if not val:
         raise RuntimeError(
-            f"Environment variable '{name}' is missing. "
-            f"Please set it in .env or the environment (see .env.example)."
+            f"Environment variable '{name}' is missing. Please set it in .env or the environment (see .env.example)."
         )
     return val
 
@@ -42,10 +42,12 @@ BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
 # --- TELEGRAM CONFIGURATION ---
 TELEGRAM_BOT_TOKEN = _required("TELEGRAM_BOT_TOKEN")
 
+
 # --- CHANNEL IDS (env-driven, D-... never hardcode private channel IDs) ---
 def _ch(name: str) -> int:
     """Read a Telegram channel id from the environment (0 = unset/disabled)."""
     return int(os.getenv(name, "0"))
+
 
 CH_FAST_IN_OUT = _ch("CH_FAST_IN_OUT")
 CH_5_PERCENT = _ch("CH_5_PERCENT")
@@ -94,13 +96,44 @@ TELEGRAM_CHANNELS = {
 # --- SPECIAL COIN LISTS ---
 # The Main Channel Bot only runs on these coins
 MAIN_CHANNEL_COINS = [
-    "BTCUSDT", "ETHUSDT", "XRPUSDT", "LINKUSDT", "ADAUSDT", "BNBUSDT",
-    "DOGEUSDT", "AVAXUSDT", "AAVEUSDT", "HBARUSDT", "BTCDOMUSDT", "ENSUSDT",
-    "GRTUSDT", "INJUSDT", "FETUSDT", "ETHBTC", "SUIUSDT", "PENDLEUSDT",
-    "SEIUSDT", "ONDOUSDT", "TONUSDT", "ETHFIUSDT", "ENAUSDT", "TAOUSDT",
-    "RENDERUSDT", "BRETTUSDT", "EIGENUSDT", "IPUSDT", "HYPEUSDT", "LTCUSDT",
-    "BCHUSDT", "APTUSDT", "CRVUSDT", "SOLUSDT", "UNIUSDT", "NEARUSDT",
-    "JUPUSDT", "BERAUSDT",
+    "BTCUSDT",
+    "ETHUSDT",
+    "XRPUSDT",
+    "LINKUSDT",
+    "ADAUSDT",
+    "BNBUSDT",
+    "DOGEUSDT",
+    "AVAXUSDT",
+    "AAVEUSDT",
+    "HBARUSDT",
+    "BTCDOMUSDT",
+    "ENSUSDT",
+    "GRTUSDT",
+    "INJUSDT",
+    "FETUSDT",
+    "ETHBTC",
+    "SUIUSDT",
+    "PENDLEUSDT",
+    "SEIUSDT",
+    "ONDOUSDT",
+    "TONUSDT",
+    "ETHFIUSDT",
+    "ENAUSDT",
+    "TAOUSDT",
+    "RENDERUSDT",
+    "BRETTUSDT",
+    "EIGENUSDT",
+    "IPUSDT",
+    "HYPEUSDT",
+    "LTCUSDT",
+    "BCHUSDT",
+    "APTUSDT",
+    "CRVUSDT",
+    "SOLUSDT",
+    "UNIUSDT",
+    "NEARUSDT",
+    "JUPUSDT",
+    "BERAUSDT",
 ]
 
 

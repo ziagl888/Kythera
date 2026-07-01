@@ -1,20 +1,21 @@
 import warnings
+
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-import time
 import datetime
 import json
 import logging
+import time
+
 import pandas as pd
 import requests
+
+from core.config import MAIN_CHANNEL_COINS, TELEGRAM_CHANNELS
 from core.database import get_db_connection
-from core.config import TELEGRAM_CHANNELS, MAIN_CHANNEL_COINS
-
-
+from strategies.strat_5_percent import analyze_coin as analyze_5_pct
 
 # --- IMPORT ALL STRATEGIES ---
 from strategies.strat_fast_in_out import analyze_coin as analyze_fast
-from strategies.strat_5_percent import analyze_coin as analyze_5_pct
 from strategies.strat_main_channel import analyze_coin as analyze_main
 from strategies.strat_support_resistance import analyze_coin as analyze_sr
 from strategies.strat_volume_indicator import analyze_coin as analyze_vol
@@ -40,9 +41,7 @@ def get_live_price(symbol, conn=None):
         # Fallback: neuester 5m-Close aus DB
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    f'SELECT close FROM "{symbol}_5m" ORDER BY open_time DESC LIMIT 1'
-                )
+                cur.execute(f'SELECT close FROM "{symbol}_5m" ORDER BY open_time DESC LIMIT 1')
                 row = cur.fetchone()
                 if row:
                     return float(row[0])
@@ -57,33 +56,52 @@ def write_to_active_trades(conn, signal):
         cur.execute("""
             CREATE TABLE IF NOT EXISTS active_trades_master (
                 id SERIAL PRIMARY KEY, strategy TEXT, time TIMESTAMP WITHOUT TIME ZONE,
-                coin TEXT, direction TEXT, lev TEXT, target1 REAL, target2 REAL, 
+                coin TEXT, direction TEXT, lev TEXT, target1 REAL, target2 REAL,
                 target3 REAL, target4 REAL, sl REAL, entry REAL, posted TIMESTAMP WITHOUT TIME ZONE, status TEXT
             )
         """)
         t2, t3, t4 = signal.get('target2', 0), signal.get('target3', 0), signal.get('target4', 0)
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO active_trades_master (
                 strategy, time, coin, direction, lev, target1, target2, target3, target4, sl, entry, posted, status
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'WORKING')
-        """, (signal['strategy'], now, signal['coin'], signal['direction'], signal['lev'],
-              signal['target1'], t2, t3, t4, signal['sl'], signal['entry'], now))
+        """,
+            (
+                signal['strategy'],
+                now,
+                signal['coin'],
+                signal['direction'],
+                signal['lev'],
+                signal['target1'],
+                t2,
+                t3,
+                t4,
+                signal['sl'],
+                signal['entry'],
+                now,
+            ),
+        )
     conn.commit()
 
 
 def write_to_telegram_outbox(conn, signal):
     msg = f"📈 Signal for {signal['coin']} 📈\n\n🚨 Direction: {signal['direction']}\n🚨 Leverage: {signal['lev']}\n🚨 Margin: Cross\n🏦 CMP Entry: $ {signal['entry']:.8f}\n"
     msg += f"💰 TP1: $ {signal['target1']:.8f}\n"
-    if 'target2' in signal and signal['target2'] > 0: msg += f"💰 TP2: $ {signal['target2']:.8f}\n"
-    if 'target3' in signal and signal['target3'] > 0: msg += f"💰 TP3: $ {signal['target3']:.8f}\n"
-    if 'target4' in signal and signal['target4'] > 0: msg += f"💰 TP4: $ {signal['target4']:.8f}\n"
+    if 'target2' in signal and signal['target2'] > 0:
+        msg += f"💰 TP2: $ {signal['target2']:.8f}\n"
+    if 'target3' in signal and signal['target3'] > 0:
+        msg += f"💰 TP3: $ {signal['target3']:.8f}\n"
+    if 'target4' in signal and signal['target4'] > 0:
+        msg += f"💰 TP4: $ {signal['target4']:.8f}\n"
     msg += f"\n💸 Stop Loss: $ {signal['sl']:.8f}\n\n🧠 {signal['strategy']} Strategy - V3"
 
     target_channel = TELEGRAM_CHANNELS.get(signal['strategy'])
 
     with conn.cursor() as cur:
         cur.execute(
-            "CREATE TABLE IF NOT EXISTS telegram_outbox (id SERIAL PRIMARY KEY, channel_id BIGINT, message TEXT, sent BOOLEAN DEFAULT FALSE)")
+            "CREATE TABLE IF NOT EXISTS telegram_outbox (id SERIAL PRIMARY KEY, channel_id BIGINT, message TEXT, sent BOOLEAN DEFAULT FALSE)"
+        )
         cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, msg))
     conn.commit()
 
@@ -101,9 +119,12 @@ def write_signal_atomic(conn, signal):
 
     msg = f"📈 Signal for {signal['coin']} 📈\n\n🚨 Direction: {signal['direction']}\n🚨 Leverage: {signal['lev']}\n🚨 Margin: Cross\n🏦 CMP Entry: $ {signal['entry']:.8f}\n"
     msg += f"💰 TP1: $ {signal['target1']:.8f}\n"
-    if t2 > 0: msg += f"💰 TP2: $ {t2:.8f}\n"
-    if t3 > 0: msg += f"💰 TP3: $ {t3:.8f}\n"
-    if t4 > 0: msg += f"💰 TP4: $ {t4:.8f}\n"
+    if t2 > 0:
+        msg += f"💰 TP2: $ {t2:.8f}\n"
+    if t3 > 0:
+        msg += f"💰 TP3: $ {t3:.8f}\n"
+    if t4 > 0:
+        msg += f"💰 TP4: $ {t4:.8f}\n"
     msg += f"\n💸 Stop Loss: $ {signal['sl']:.8f}\n\n🧠 {signal['strategy']} Strategy - V3"
     target_channel = TELEGRAM_CHANNELS.get(signal['strategy'])
 
@@ -117,19 +138,34 @@ def write_signal_atomic(conn, signal):
                 )
             """)
             cur.execute(
-                "CREATE TABLE IF NOT EXISTS telegram_outbox (id SERIAL PRIMARY KEY, channel_id BIGINT, message TEXT, sent BOOLEAN DEFAULT FALSE)")
+                "CREATE TABLE IF NOT EXISTS telegram_outbox (id SERIAL PRIMARY KEY, channel_id BIGINT, message TEXT, sent BOOLEAN DEFAULT FALSE)"
+            )
 
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO active_trades_master (
                     strategy, time, coin, direction, lev, target1, target2, target3, target4, sl, entry, posted, status
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'WORKING')
-            """, (signal['strategy'], now, signal['coin'], signal['direction'], signal['lev'],
-                  signal['target1'], t2, t3, t4, signal['sl'], signal['entry'], now))
+            """,
+                (
+                    signal['strategy'],
+                    now,
+                    signal['coin'],
+                    signal['direction'],
+                    signal['lev'],
+                    signal['target1'],
+                    t2,
+                    t3,
+                    t4,
+                    signal['sl'],
+                    signal['entry'],
+                    now,
+                ),
+            )
 
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                        (target_channel, msg))
+            cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, msg))
         conn.commit()
-    except Exception as e:
+    except Exception:
         conn.rollback()
         raise
 
@@ -137,11 +173,12 @@ def write_signal_atomic(conn, signal):
 def run_detectors_for_timeframe(timeframe):
     # --- NEU: DIESER BLOCK MUSS GENAU HIER REIN! ---
     import warnings
+
     warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
     conn = get_db_connection()
     try:
-        with open('coins.json', 'r') as f:
+        with open('coins.json') as f:
             all_symbols = json.load(f)
 
         logger.info(f"🔍 Starting strategy scans for timeframe: {timeframe}...")
@@ -150,37 +187,45 @@ def run_detectors_for_timeframe(timeframe):
             try:
                 # Wir laden für alle 480 Kerzen (wegen S/R und Main Channel)
                 df = pd.read_sql_query(
-                    f'SELECT * FROM "{symbol}_{timeframe}_indicators" ORDER BY open_time DESC LIMIT 480', conn)
+                    f'SELECT * FROM "{symbol}_{timeframe}_indicators" ORDER BY open_time DESC LIMIT 480', conn
+                )
                 df_indexed = df.set_index('open_time')  # Vorbereiten für die komplexen Bots
             except Exception:
                 continue
 
-            if df.empty: continue
+            if df.empty:
+                continue
 
             live_price = get_live_price(symbol, conn)
-            if not live_price: continue
+            if not live_price:
+                continue
 
             signals = []
 
             # --- 30m STRATEGIEN ---
             if timeframe == '30m':
                 s1 = analyze_fast(conn, symbol, df, live_price)
-                if s1: signals.append(s1)
+                if s1:
+                    signals.append(s1)
 
                 s2 = analyze_vol(conn, symbol, df_indexed, live_price)
-                if s2: signals.append(s2)
+                if s2:
+                    signals.append(s2)
 
             # --- 1h STRATEGIEN ---
             elif timeframe == '1h':
                 s3 = analyze_5_pct(conn, symbol, df, live_price)
-                if s3: signals.append(s3)
+                if s3:
+                    signals.append(s3)
 
                 s4 = analyze_sr(conn, symbol, df_indexed, live_price)
-                if s4: signals.append(s4)
+                if s4:
+                    signals.append(s4)
 
                 if symbol in MAIN_CHANNEL_COINS:
                     s5 = analyze_main(conn, symbol, df_indexed, live_price)
-                    if s5: signals.append(s5)
+                    if s5:
+                        signals.append(s5)
 
             for signal in signals:
                 logger.info(f"🚀 SIGNAL FOUND: [{signal['strategy']}] {signal['coin']} {signal['direction']}!")
@@ -197,7 +242,7 @@ def main():
 
     while True:
         try:
-            with open(STATE_FILE, 'r') as f:
+            with open(STATE_FILE) as f:
                 state = json.load(f)
 
             for tf in ['30m', '1h']:

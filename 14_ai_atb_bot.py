@@ -6,28 +6,28 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 import matplotlib
 
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import matplotlib.ticker as mticker
-
-import time
 import datetime
-import logging
-import joblib
-import pandas as pd
-import pandas_ta as ta
-import numpy as np
-import scipy.signal
-import scipy.stats as stats
 import json
+import logging
 import os
+import time
 import uuid
 
-from core.database import get_db_connection
-from core.charting import generate_minichart_image
-from core.market_utils import get_max_leverage, check_cooldown, update_cooldown
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+import joblib
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
+import pandas as pd
+import pandas_ta as ta
+import scipy.signal
+import scipy.stats as stats
+
 from core import config as _kcfg  # channel ids
+from core.charting import generate_minichart_image
+from core.database import get_db_connection
+from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATB_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def load_trendline_state():
         logger.info("📂 No trendline_state.json found → starting fresh.")
         return
     try:
-        with open(TRENDLINE_STATE_FILE, "r", encoding="utf-8") as f:
+        with open(TRENDLINE_STATE_FILE, encoding="utf-8") as f:
             data = json.load(f)
         # last_alert wieder in datetime umwandeln
         TRENDLINE_STATE = {}
@@ -95,6 +95,7 @@ def save_trendline_state():
     except Exception as e:
         logger.error(f"Error saving von {TRENDLINE_STATE_FILE}: {e}")
 
+
 CHART_DIR = "generated_charts"
 os.makedirs(CHART_DIR, exist_ok=True)
 
@@ -110,7 +111,7 @@ def load_models_and_coins():
         logger.error(f"❌ Error loading der ATB1 Modelle: {e}")
 
     try:
-        with open('coins.json', 'r') as f:
+        with open('coins.json') as f:
             data = json.load(f)
             return data.get('coins', data) if isinstance(data, dict) else data
     except Exception:
@@ -119,21 +120,24 @@ def load_models_and_coins():
 
 # 🧠 BERECHNUNGS-LOGIKEN (NEU: Index-Basiert!)
 def detect_trend(df):
-    if len(df) < 50: return 'UNDECIDED', None
+    if len(df) < 50:
+        return 'UNDECIDED', None
 
     highs, lows = df['high'].values, df['low'].values
     high_pivots = scipy.signal.find_peaks(highs, distance=8)[0]
     low_pivots = scipy.signal.find_peaks(-lows, distance=8)[0]
 
     def calc_line(pivots, is_high):
-        if len(pivots) < 2: return None, None
+        if len(pivots) < 2:
+            return None, None
 
         # 💥 DER FIX: Wir nutzen den einfachen Kerzen-Index statt riesiger Timestamps!
         x = pivots
         y = highs[pivots] if is_high else lows[pivots]
 
         slope, intercept, r_value, _, _ = stats.linregress(x, y)
-        if abs(r_value) < TREND_MIN_R_VALUE: return None, None
+        if abs(r_value) < TREND_MIN_R_VALUE:
+            return None, None
         return float(slope), float(intercept)
 
     down_slope, down_intercept = calc_line(high_pivots, True)
@@ -157,7 +161,8 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
     model_to_use = MODELS['LONG'] if is_long else MODELS['SHORT']
     current_ml_threshold = TL_THRESH_LONG if is_long else TL_THRESH_SHORT
 
-    if model_to_use is None: return 0.0, current_ml_threshold
+    if model_to_use is None:
+        return 0.0, current_ml_threshold
 
     try:
         df = df_raw.copy()
@@ -165,7 +170,8 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         df.dropna(subset=['open', 'high', 'low', 'close', 'volume'], inplace=True)
-        if df.empty: return 0.0, current_ml_threshold
+        if df.empty:
+            return 0.0, current_ml_threshold
 
         df['vol_avg_20'] = df['volume'].rolling(window=20).mean()
         df['rsi'] = ta.rsi(df['close'], length=14)
@@ -216,7 +222,8 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
         df['ATR_PCT'] = df['ATR'] / df['close']
 
         df.dropna(inplace=True)
-        if df.empty: return 0.0, current_ml_threshold
+        if df.empty:
+            return 0.0, current_ml_threshold
 
         row = df.iloc[-1]
         vol_ratio = (row['volume'] / row['vol_avg_20']) if row['vol_avg_20'] > 0 else 0
@@ -225,17 +232,25 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
         hour_of_day = pd.to_datetime(row['open_time']).hour
 
         features_dict = {
-            'vol_ratio': [vol_ratio], 'rsi': [row['rsi']], 'atr_pct': [row['ATR_PCT']],
-            'dist_ema200': [dist_ema200], 'slope_trend': [slope_pct_per_day], 'hour_of_day': [hour_of_day],
-            'dist_close_ema9_pct': [row['dist_close_ema9_pct']], 'dist_ema9_ema21_pct': [row['dist_ema9_ema21_pct']],
-            'dist_close_kama9_pct': [row['dist_close_kama9_pct']], 'MACD_Line': [row['MACD_Line']],
-            'MACD_Signal': [row['MACD_Signal']], 'TSI_Line': [row['TSI_Line']], 'TSI_Signal': [row['TSI_Signal']],
+            'vol_ratio': [vol_ratio],
+            'rsi': [row['rsi']],
+            'atr_pct': [row['ATR_PCT']],
+            'dist_ema200': [dist_ema200],
+            'slope_trend': [slope_pct_per_day],
+            'hour_of_day': [hour_of_day],
+            'dist_close_ema9_pct': [row['dist_close_ema9_pct']],
+            'dist_ema9_ema21_pct': [row['dist_ema9_ema21_pct']],
+            'dist_close_kama9_pct': [row['dist_close_kama9_pct']],
+            'MACD_Line': [row['MACD_Line']],
+            'MACD_Signal': [row['MACD_Signal']],
+            'TSI_Line': [row['TSI_Line']],
+            'TSI_Signal': [row['TSI_Signal']],
             'dist_close_bb_lower_pct': [row['dist_close_bb_lower_pct']],
             'dist_close_bb_upper_pct': [row['dist_close_bb_upper_pct']],
             'bb_position_relative': [row['bb_position_relative']],
             'dist_close_dc_lower_pct': [row['dist_close_dc_lower_pct']],
             'dist_close_dc_upper_pct': [row['dist_close_dc_upper_pct']],
-            'dc_position_relative': [row['dc_position_relative']]
+            'dc_position_relative': [row['dc_position_relative']],
         }
         # FIX: Zusätzlicher Schutz gegen NaN/Inf in den Features.
         # Hinweis: Die Indikatoren werden hier live via pandas_ta neu berechnet,
@@ -257,16 +272,23 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
 def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
     try:
         df_7d = pd.read_sql_query(
-            f'SELECT * FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'8 days\' ORDER BY open_time ASC', conn,
-            parse_dates=['open_time'])
+            f'SELECT * FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'8 days\' ORDER BY open_time ASC',
+            conn,
+            parse_dates=['open_time'],
+        )
         df_ind = pd.read_sql_query(
             f'SELECT * FROM "{symbol}_1h_indicators" WHERE open_time >= NOW() - INTERVAL \'8 days\' ORDER BY open_time ASC',
-            conn, parse_dates=['open_time'])
+            conn,
+            parse_dates=['open_time'],
+        )
         df_90d = pd.read_sql_query(
-            f'SELECT * FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\' ORDER BY open_time ASC', conn,
-            parse_dates=['open_time'])
+            f'SELECT * FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\' ORDER BY open_time ASC',
+            conn,
+            parse_dates=['open_time'],
+        )
 
-        if df_7d.empty or df_ind.empty: return None
+        if df_7d.empty or df_ind.empty:
+            return None
 
         df_7d.columns = [c.upper() for c in df_7d.columns]
         df_ind.columns = [c.upper() for c in df_ind.columns]
@@ -281,9 +303,8 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
         df_plot = df_plot.ffill().bfill()
 
         for c in ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']:
-            if c in df_plot.columns: df_plot[c] = pd.to_numeric(df_plot[c], errors='coerce')
-
-        live_price = float(df_plot['CLOSE'].iloc[-1])
+            if c in df_plot.columns:
+                df_plot[c] = pd.to_numeric(df_plot[c], errors='coerce')
 
         bg = '#1e1e1e'
         fg = 'white'
@@ -292,24 +313,24 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
         ax1 = fig.add_subplot(gs[0, 0])
         ax1.set_facecolor(bg)
 
-        #x_vals = np.arange(len(df_plot))
-        #o, c, h, l = df_plot['OPEN'].values, df_plot['CLOSE'].values, df_plot['HIGH'].values, df_plot['LOW'].values
-        #up, down = c >= o, ~up
-        #col_up, col_down = '#44ff44', '#ff4444'
+        # x_vals = np.arange(len(df_plot))
+        # o, c, h, l = df_plot['OPEN'].values, df_plot['CLOSE'].values, df_plot['HIGH'].values, df_plot['LOW'].values
+        # up, down = c >= o, ~up
+        # col_up, col_down = '#44ff44', '#ff4444'
 
         x_vals = np.arange(len(df_plot))
         o = df_plot['OPEN'].values
         c = df_plot['CLOSE'].values
         h = df_plot['HIGH'].values
-        l = df_plot['LOW'].values
+        low = df_plot['LOW'].values
         up = c >= o
         down = c < o
         col_up = '#44ff44'
         col_down = '#ff4444'
 
-        ax1.vlines(x_vals[up], l[up], h[up], color=col_up, linewidth=1.2, zorder=3)
-        ax1.vlines(x_vals[down], l[down], h[down], color=col_down, linewidth=1.2, zorder=3)
-        body_h = np.maximum(np.abs(c - o), (h.max() - l.min()) * 0.002)
+        ax1.vlines(x_vals[up], low[up], h[up], color=col_up, linewidth=1.2, zorder=3)
+        ax1.vlines(x_vals[down], low[down], h[down], color=col_down, linewidth=1.2, zorder=3)
+        body_h = np.maximum(np.abs(c - o), (h.max() - low.min()) * 0.002)
         body_b = np.minimum(o, c)
         ax1.bar(x_vals[up], body_h[up], bottom=body_b[up], width=0.6, color=col_up, linewidth=0, zorder=4)
         ax1.bar(x_vals[down], body_h[down], bottom=body_b[down], width=0.6, color=col_down, linewidth=0, zorder=4)
@@ -318,26 +339,28 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
             ax1.plot(x_vals, df_plot['DONCHIAN_UPPER_20'], color='#00ffff', linewidth=1.5, label='Don Upper 20')
             ax1.plot(x_vals, df_plot['DONCHIAN_MID_20'], color='#00ffff', linewidth=1.0, alpha=0.8, label='Don Mid 20')
             ax1.plot(x_vals, df_plot['DONCHIAN_LOWER_20'], color='#00ffff', linewidth=1.5, label='Don Lower 20')
-            ax1.fill_between(x_vals, df_plot['DONCHIAN_LOWER_20'], df_plot['DONCHIAN_UPPER_20'], color='#00ffff',
-                             alpha=0.06)
+            ax1.fill_between(
+                x_vals, df_plot['DONCHIAN_LOWER_20'], df_plot['DONCHIAN_UPPER_20'], color='#00ffff', alpha=0.06
+            )
 
-        if 'EMA_9' in df_plot.columns: ax1.plot(x_vals, df_plot['EMA_9'], color='yellow', linewidth=1.1, label='EMA9')
-        if 'EMA_21' in df_plot.columns: ax1.plot(x_vals, df_plot['EMA_21'], color='#32CD32', linewidth=1.1,
-                                                 label='EMA21')
-        if 'WMA_55' in df_plot.columns: ax1.plot(x_vals, df_plot['WMA_55'], color='#FFB300', linewidth=1.1,
-                                                 label='WMA55')
-        if 'EMA_200' in df_plot.columns: ax1.plot(x_vals, df_plot['EMA_200'], color='#E53935', linewidth=1.1,
-                                                  label='EMA200')
-        if 'KAMA_9' in df_plot.columns: ax1.plot(x_vals, df_plot['KAMA_9'], color='#9C27B0', linewidth=1.1,
-                                                 label='KAMA9')
+        if 'EMA_9' in df_plot.columns:
+            ax1.plot(x_vals, df_plot['EMA_9'], color='yellow', linewidth=1.1, label='EMA9')
+        if 'EMA_21' in df_plot.columns:
+            ax1.plot(x_vals, df_plot['EMA_21'], color='#32CD32', linewidth=1.1, label='EMA21')
+        if 'WMA_55' in df_plot.columns:
+            ax1.plot(x_vals, df_plot['WMA_55'], color='#FFB300', linewidth=1.1, label='WMA55')
+        if 'EMA_200' in df_plot.columns:
+            ax1.plot(x_vals, df_plot['EMA_200'], color='#E53935', linewidth=1.1, label='EMA200')
+        if 'KAMA_9' in df_plot.columns:
+            ax1.plot(x_vals, df_plot['KAMA_9'], color='#9C27B0', linewidth=1.1, label='KAMA9')
 
         ax1.set_title(f"{symbol} Trendline Break", color=fg, fontsize=19, pad=25, weight='bold')
         ax1.legend(facecolor=bg, labelcolor=fg, fontsize=12, loc='upper left')
         ax1.grid(True, alpha=0.25, color=fg, linewidth=0.5)
         ax1.tick_params(colors=fg, labelsize=11)
 
-        margin = (h.max() - l.min()) * 0.05
-        ax1.set_ylim(l.min() - margin, h.max() + margin)
+        margin = (h.max() - low.min()) * 0.05
+        ax1.set_ylim(low.min() - margin, h.max() + margin)
 
         ax_vol = ax1.twinx()
         vol_max = df_plot['VOLUME'].max()
@@ -345,8 +368,16 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
         vol_colors = np.where(up, col_up, col_down)
         display_volume = df_plot['VOLUME'].copy()
         display_volume[display_volume < vol_min_display] = vol_min_display
-        ax_vol.bar(x_vals, display_volume, width=0.6, color=vol_colors, alpha=0.5, edgecolor='#ffffff44',
-                   linewidth=0.25, align='center')
+        ax_vol.bar(
+            x_vals,
+            display_volume,
+            width=0.6,
+            color=vol_colors,
+            alpha=0.5,
+            edgecolor='#ffffff44',
+            linewidth=0.25,
+            align='center',
+        )
         ax_vol.set_ylim(0, vol_max * 2.5)
         ax_vol.yaxis.set_label_position("right")
         ax_vol.yaxis.tick_right()
@@ -362,7 +393,7 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
 
         ax_vbp = fig.add_subplot(gs[0, 1])
         ax_vbp.set_facecolor('#1e1e1e')
-        price_bins = np.linspace(l.min(), h.max(), 40)
+        price_bins = np.linspace(low.min(), h.max(), 40)
         vol_by_price = np.zeros(len(price_bins) - 1)
         for _, row in df_7d.iterrows():
             idx = np.searchsorted(price_bins, [row['LOW'], row['HIGH']])
@@ -370,9 +401,14 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
             if idx[0] == idx[1]:
                 vol_by_price[idx[0]] += row['VOLUME']
             else:
-                vol_by_price[idx[0]:idx[1]] += row['VOLUME'] / (idx[1] - idx[0])
-        ax_vbp.barh((price_bins[:-1] + price_bins[1:]) / 2, vol_by_price, height=(price_bins[1] - price_bins[0]) * 0.8,
-                    color='#ff69b4', alpha=0.6)
+                vol_by_price[idx[0] : idx[1]] += row['VOLUME'] / (idx[1] - idx[0])
+        ax_vbp.barh(
+            (price_bins[:-1] + price_bins[1:]) / 2,
+            vol_by_price,
+            height=(price_bins[1] - price_bins[0]) * 0.8,
+            color='#ff69b4',
+            alpha=0.6,
+        )
         ax_vbp.set_ylim(ax1.get_ylim())
         ax_vbp.invert_xaxis()
         ax_vbp.tick_params(colors='white')
@@ -392,18 +428,20 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
 
             t_map = {t: i for i, t in enumerate(df_plot['OPEN_TIME'])}
             px, py = [], []
-            for t, p in zip(pivot_times, pivot_prices):
+            for t, p in zip(pivot_times, pivot_prices, strict=False):
                 if t in t_map:
                     px.append(t_map[t])
                     py.append(p)
             color_pivot = '#ff4444' if trend_direction == 'DOWN' else '#44ff44'
-            if px: ax1.scatter(px, py, color=color_pivot, s=180, zorder=6, edgecolors='white', linewidth=3.0,
-                               marker='o')
+            if px:
+                ax1.scatter(px, py, color=color_pivot, s=180, zorder=6, edgecolors='white', linewidth=3.0, marker='o')
 
         ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
         ax2.set_facecolor(bg)
-        if 'RSI_9' in df_plot.columns: ax2.plot(x_vals, df_plot['RSI_9'], color='yellow', linewidth=1.1)
-        if 'RSI_14' in df_plot.columns: ax2.plot(x_vals, df_plot['RSI_14'], color='orange', linewidth=1.1)
+        if 'RSI_9' in df_plot.columns:
+            ax2.plot(x_vals, df_plot['RSI_9'], color='yellow', linewidth=1.1)
+        if 'RSI_14' in df_plot.columns:
+            ax2.plot(x_vals, df_plot['RSI_14'], color='orange', linewidth=1.1)
         ax2.axhline(75, color='red', linestyle='--', alpha=0.8)
         ax2.axhline(25, color='green', linestyle='--', alpha=0.8)
         ax2.set_ylim(0, 100)
@@ -412,10 +450,10 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
 
         ax3 = fig.add_subplot(gs[2, 0], sharex=ax1)
         ax3.set_facecolor(bg)
-        if 'TSI_FAST_12_7_7' in df_plot.columns: ax3.plot(x_vals, df_plot['TSI_FAST_12_7_7'], color='#00ff00',
-                                                          linewidth=1.8)
-        if 'TSI_FAST_12_7_7_SIGNAL' in df_plot.columns: ax3.plot(x_vals, df_plot['TSI_FAST_12_7_7_SIGNAL'], color='red',
-                                                                 linewidth=1.4)
+        if 'TSI_FAST_12_7_7' in df_plot.columns:
+            ax3.plot(x_vals, df_plot['TSI_FAST_12_7_7'], color='#00ff00', linewidth=1.8)
+        if 'TSI_FAST_12_7_7_SIGNAL' in df_plot.columns:
+            ax3.plot(x_vals, df_plot['TSI_FAST_12_7_7_SIGNAL'], color='red', linewidth=1.4)
         ax3.axhline(0, color=fg, linestyle='-', alpha=0.3)
         ax3.set_ylim(-100, 100)
         ax3.set_ylabel('TSI', color=fg)
@@ -423,7 +461,8 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
 
         def format_date(x, pos=None):
             idx = int(x + 0.5)
-            if 0 <= idx < len(df_plot): return df_plot['OPEN_TIME'].iloc[idx].strftime('%d.%m %H:%M')
+            if 0 <= idx < len(df_plot):
+                return df_plot['OPEN_TIME'].iloc[idx].strftime('%d.%m %H:%M')
             return ''
 
         ax1.xaxis.set_major_formatter(mticker.FuncFormatter(format_date))
@@ -431,7 +470,8 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
 
         for ax in [ax1, ax2, ax3, ax_vol]:
             ax.tick_params(colors=fg, labelsize=10)
-            for label in ax.get_xticklabels() + ax.get_yticklabels(): label.set_color(fg)
+            for label in ax.get_xticklabels() + ax.get_yticklabels():
+                label.set_color(fg)
 
         filename = f"{CHART_DIR}/ATB1_BIG_{symbol}_{uuid.uuid4().hex[:8]}.png"
         fig.savefig(filename, format='png', dpi=150, facecolor=bg, bbox_inches='tight', pad_inches=0.4)
@@ -474,6 +514,7 @@ def save_minichart_to_disk(symbol: str) -> str:
         logger.error(f"❌ Fehler beim Abrufen des Minicharts für {symbol}: {e}")
         return None
 
+
 def send_signal(conn, symbol, direction, prob, close_price, event_name, trend_direction, pic_path):
     # FIX: check_cooldown returned True wenn Cooldown AKTIV ist → skip.
     if check_cooldown(conn, MODEL_ID, symbol, direction, 4):
@@ -496,32 +537,52 @@ def send_signal(conn, symbol, direction, prob, close_price, event_name, trend_di
 
     lev = get_max_leverage(symbol, 20)
 
-    lines = [f"📈 Signal for {symbol} 📈", f"🚨 Direction: {direction}", f"🚨 Leverage: {lev}", f"🚨 Margin: Cross",
-             f"🏦 CMP Entry: $ {entry1:.5f}", f"🏦 Entry 2: $ {entry2:.5f}"]
-    for i, t in enumerate(targets[:3], 1): lines.append(f"💰 TP{i}: $ {t:.5f}")
+    lines = [
+        f"📈 Signal for {symbol} 📈",
+        f"🚨 Direction: {direction}",
+        f"🚨 Leverage: {lev}",
+        "🚨 Margin: Cross",
+        f"🏦 CMP Entry: $ {entry1:.5f}",
+        f"🏦 Entry 2: $ {entry2:.5f}",
+    ]
+    for i, t in enumerate(targets[:3], 1):
+        lines.append(f"💰 TP{i}: $ {t:.5f}")
     lines += [f"💸 Stop Loss: $ {sl:.5f}", f"🧠 Trade idea generated by AI module {MODEL_ID}"]
     cornix_msg = "\n".join(lines)
 
-    color = "#00ff88" if direction == "LONG" else "#ff4466"
     emoji = "🚀 AI ATB1 TRENDLINE LONG" if direction == "LONG" else "💥 AI ATB1 TRENDLINE SHORT"
 
     html_caption = f"""<pre><b>{emoji}</b>\n<b>{symbol}</b>\n<b>→ Direction: {direction}</b>\n<b>→ Event: {event_name}</b>\n<b>→ 90d Trend: {trend_direction}</b>\n<b>→ ML Confidence: <b>{prob:.1%}</b></b>\n<b>→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC | Modul: {MODEL_ID}</b></pre>"""
 
-    #chart_path = save_minichart_to_disk(symbol)
+    # chart_path = save_minichart_to_disk(symbol)
 
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                    (TARGET_CHANNEL_ID, cornix_msg))
+        cur.execute(
+            "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (TARGET_CHANNEL_ID, cornix_msg)
+        )
         if pic_path:
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                        (TARGET_CHANNEL_ID, html_caption, pic_path))
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                (TARGET_CHANNEL_ID, html_caption, pic_path),
+            )
         else:
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                        (TARGET_CHANNEL_ID, html_caption))
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (TARGET_CHANNEL_ID, html_caption)
+            )
         cur.execute(
             """INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (symbol, float(entry1), MODEL_ID, direction, float(prob), float(entry1), float(entry2), float(sl),
-             json.dumps(targets)))
+            (
+                symbol,
+                float(entry1),
+                MODEL_ID,
+                direction,
+                float(prob),
+                float(entry1),
+                float(entry2),
+                float(sl),
+                json.dumps(targets),
+            ),
+        )
     conn.commit()
     logger.info(f"✅ {MODEL_ID} Trade Signal für {symbol} in Outbox gelegt!")
     update_cooldown(conn, MODEL_ID, symbol, direction)
@@ -537,11 +598,14 @@ def run_trendline_detector():
     distance_logs = []
 
     for symbol in coins:
-        if 'USDT_' in symbol: continue
+        if 'USDT_' in symbol:
+            continue
         stats_dict["total"] += 1
 
-        state = TRENDLINE_STATE.get(symbol, {"last_alert": datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc),
-                                             "prev_relation": "unknown"})
+        state = TRENDLINE_STATE.get(
+            symbol,
+            {"last_alert": datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc), "prev_relation": "unknown"},
+        )
         if (now - state["last_alert"]).total_seconds() < 3600:
             continue
 
@@ -597,8 +661,9 @@ def run_trendline_detector():
             # Erlaubt dem Bot wieder am Fließband zu triggern, wenn Coins ins Radar kommen
             if prev_relation in ["below", "near", "unknown"] and current_relation == "above" and distance > tolerance:
                 event = "TRENDLINE BREAK UP"
-            elif prev_relation in ["above", "near",
-                                   "unknown"] and current_relation == "below" and distance < -tolerance:
+            elif (
+                prev_relation in ["above", "near", "unknown"] and current_relation == "below" and distance < -tolerance
+            ):
                 event = "TRENDLINE BREAK DOWN"
             elif prev_relation in ["above", "unknown"] and current_relation == "near":
                 if min(df_recent['low'].iloc[-3:]) >= trend_value_last - tolerance and last_close > prev_close:
@@ -615,30 +680,47 @@ def run_trendline_detector():
                 try:
                     with conn.cursor() as cur:
                         cur.execute(
-                            """CREATE TABLE IF NOT EXISTS trendmeet_rawdata (id SERIAL PRIMARY KEY, detection_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, coin TEXT, event_type TEXT, trend_direction TEXT, close_price NUMERIC, trend_value NUMERIC, rel_distance_pct NUMERIC, abs_distance NUMERIC)""")
+                            """CREATE TABLE IF NOT EXISTS trendmeet_rawdata (id SERIAL PRIMARY KEY, detection_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, coin TEXT, event_type TEXT, trend_direction TEXT, close_price NUMERIC, trend_value NUMERIC, rel_distance_pct NUMERIC, abs_distance NUMERIC)"""
+                        )
                         cur.execute(
                             """INSERT INTO trendmeet_rawdata (coin, event_type, trend_direction, close_price, trend_value, rel_distance_pct, abs_distance) VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                            (symbol, event, trend_direction, float(last_close), float(trend_value_last),
-                             float(rel_distance) * 100, float(distance)))
+                            (
+                                symbol,
+                                event,
+                                trend_direction,
+                                float(last_close),
+                                float(trend_value_last),
+                                float(rel_distance) * 100,
+                                float(distance),
+                            ),
+                        )
 
                         if ml_prob >= 0.25:
                             direction = "LONG" if "UP" in event else "SHORT"
                             cur.execute(
-                                """CREATE TABLE IF NOT EXISTS ML_TREND_TRADES (id SERIAL PRIMARY KEY, symbol TEXT, direction TEXT, ml_probability NUMERIC, close_price NUMERIC, event_type TEXT, trend_direction TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)""")
+                                """CREATE TABLE IF NOT EXISTS ML_TREND_TRADES (id SERIAL PRIMARY KEY, symbol TEXT, direction TEXT, ml_probability NUMERIC, close_price NUMERIC, event_type TEXT, trend_direction TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)"""
+                            )
                             cur.execute(
                                 """INSERT INTO ML_TREND_TRADES (symbol, direction, ml_probability, close_price, event_type, trend_direction) VALUES (%s, %s, %s, %s, %s, %s)""",
-                                (symbol, direction, float(ml_prob), float(last_close), f"{event} (ML: {ml_prob:.0%})",
-                                 trend_direction))
+                                (
+                                    symbol,
+                                    direction,
+                                    float(ml_prob),
+                                    float(last_close),
+                                    f"{event} (ML: {ml_prob:.0%})",
+                                    trend_direction,
+                                ),
+                            )
 
                             cur.execute(
                                 """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, False)""",
-                                ("ATB1", now, symbol, direction, float(last_close), float(ml_prob)))
+                                ("ATB1", now, symbol, direction, float(last_close), float(ml_prob)),
+                            )
                     conn.commit()
                 except Exception as e:
                     logger.error(f"DB Error bei Trendline: {e}")
                     conn.rollback()
 
-                color = "#00ff00" if "UP" in event else "#ff0066"
                 emoji = "🚀" if "UP" in event else "💥"
                 trade_status = "(Trade Triggered ✅)" if ml_prob >= threshold else "(No Trade ❌)"
 
@@ -654,10 +736,13 @@ def run_trendline_detector():
                         if info_chart_path:
                             cur.execute(
                                 "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                                (TRENDBREAKER_CHANNEL_ID, info_html, info_chart_path))
+                                (TRENDBREAKER_CHANNEL_ID, info_html, info_chart_path),
+                            )
                         else:
-                            cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                        (TRENDBREAKER_CHANNEL_ID, info_html))
+                            cur.execute(
+                                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
+                                (TRENDBREAKER_CHANNEL_ID, info_html),
+                            )
                     conn.commit()
                 except Exception as e:
                     logger.error(f"Error sending in Trendbreaker Channel: {e}")
@@ -666,7 +751,7 @@ def run_trendline_detector():
                 if ml_prob >= threshold:
                     direction = "LONG" if "UP" in event else "SHORT"
                     logger.info(f"🔥 ATB1 TRADE EXECUTE: {symbol} {direction}")
-                    send_signal(conn, symbol, direction, ml_prob, last_close, event, trend_direction,info_chart_path)
+                    send_signal(conn, symbol, direction, ml_prob, last_close, event, trend_direction, info_chart_path)
 
                 state["last_alert"] = now
 
@@ -685,11 +770,13 @@ def run_trendline_detector():
     distance_logs.sort(key=lambda x: x[1])
     top_3 = ", ".join([f"{s} ({d:.1f}%)" for s, d in distance_logs[:5]])
 
-    logger.info(f"🏁 ATB1 Trendline Scan stopped. "
-                f"Geprüft: {stats_dict['total']} | "
-                f"Kein klarer Trend (R<{TREND_MIN_R_VALUE}): {stats_dict['no_trend']} | "
-                f"Zu weit von Trendline entfernt (>{MAX_DISTANCE_PCT * 100}%): {stats_dict['too_far']} | "
-                f"Breakouts gefunden: {stats_dict['events']}")
+    logger.info(
+        f"🏁 ATB1 Trendline Scan stopped. "
+        f"Geprüft: {stats_dict['total']} | "
+        f"Kein klarer Trend (R<{TREND_MIN_R_VALUE}): {stats_dict['no_trend']} | "
+        f"Zu weit von Trendline entfernt (>{MAX_DISTANCE_PCT * 100}%): {stats_dict['too_far']} | "
+        f"Breakouts gefunden: {stats_dict['events']}"
+    )
     logger.info(f"🔍 Top 5 nächste Coins zur Trendlinie aktuell: {top_3}")
 
 

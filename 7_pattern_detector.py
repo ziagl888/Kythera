@@ -2,22 +2,22 @@ import warnings
 
 warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
-import pandas as pd
-import numpy as np
-import logging
-import time
-
-from datetime import datetime, timedelta, timezone
-from scipy import stats
-import mplfinance as mpf
-import os
 import json
+import logging
+import os
+import time
+from datetime import datetime, timezone
 
-from core.database import get_db_connection
-from core.config import TELEGRAM_CHANNELS
-from core.market_utils import check_cooldown, update_cooldown, get_max_leverage
-from core.trade_utils import calculate_smart_targets
+import mplfinance as mpf
+import numpy as np
+import pandas as pd
+from scipy import stats
+
 from core import config as _kcfg  # channel ids
+from core.config import TELEGRAM_CHANNELS
+from core.database import get_db_connection
+from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PATTERN_DET - %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,11 +35,10 @@ ACTIVE_PATTERNS_FILE = "active_patterns.json"
 
 def get_coins():
     try:
-        with open('coins.json', 'r') as f:
+        with open('coins.json') as f:
             return json.load(f)
     except Exception:
         return []
-
 
 
 def send_to_outbox(conn, message, image_path=None):
@@ -49,8 +48,10 @@ def send_to_outbox(conn, message, image_path=None):
         return
 
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                    (target_channel, message, image_path))
+        cur.execute(
+            "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+            (target_channel, message, image_path),
+        )
     conn.commit()
 
 
@@ -62,7 +63,7 @@ def load_active_patterns():
         return
 
     try:
-        with open(ACTIVE_PATTERNS_FILE, 'r') as f:
+        with open(ACTIVE_PATTERNS_FILE) as f:
             data = json.load(f)
 
         ACTIVE_PATTERNS = {}
@@ -110,7 +111,7 @@ def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, 
         PADDING_CANDLES = 12
 
         start_plot = max(0, current_idx - MAX_CANDLES)
-        plot_df = df.iloc[start_plot: current_idx + 1].copy()
+        plot_df = df.iloc[start_plot : current_idx + 1].copy()
         plot_df['open_time'] = pd.to_datetime(plot_df['open_time']).dt.tz_localize(None)
         plot_df.set_index('open_time', inplace=True)
 
@@ -126,23 +127,27 @@ def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, 
 
         mc = mpf.make_marketcolors(up='#00ff88', down='#ff4466', edge='inherit', wick='inherit')
         s = mpf.make_mpf_style(
-            marketcolors=mc,
-            base_mpf_style='nightclouds',
-            gridaxis='horizontal',
-            rc={'grid.alpha': 0.15}
+            marketcolors=mc, base_mpf_style='nightclouds', gridaxis='horizontal', rc={'grid.alpha': 0.15}
         )
 
         apds = [
             mpf.make_addplot(y_highs, color='#00ffff', width=1.5, linestyle='-'),
-            mpf.make_addplot(y_lows, color='#ffd700', width=1.5, linestyle='-')
+            mpf.make_addplot(y_lows, color='#ffd700', width=1.5, linestyle='-'),
         ]
 
         filename = f"{CHART_DIR}/{symbol}_{tf}_{pattern_name.replace(' ', '_')}_{int(time.time())}.png"
 
         mpf.plot(
-            plot_df, type='candle', style=s, volume=True, addplot=apds,
+            plot_df,
+            type='candle',
+            style=s,
+            volume=True,
+            addplot=apds,
             title=f"\n{pattern_name}: {symbol.replace('USDT', '')} ({tf}) | Last 7 Days",
-            figsize=(12, 8), tight_layout=True, savefig=filename, returnfig=False
+            figsize=(12, 8),
+            tight_layout=True,
+            savefig=filename,
+            returnfig=False,
         )
         return filename
     except Exception as e:
@@ -150,13 +155,16 @@ def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, 
         return None
 
 
-
 def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=None):
     # Cooldown time per module (Pattern-Breakouts haben längere Gültigkeit als
     # schnelle Intraday-signals). Module-Tags: BR1H, BR2H, BR4H, BR1D, ABR1, RUB1.
     cd_hours_map = {
-        'BR1H': 6, 'BR2H': 12, 'BR4H': 24, 'BR1D': 72,
-        'ABR1': 6, 'RUB1': 4,
+        'BR1H': 6,
+        'BR2H': 12,
+        'BR4H': 24,
+        'BR1D': 72,
+        'ABR1': 6,
+        'RUB1': 4,
     }
     cd_hours = cd_hours_map.get(module, 6)
 
@@ -178,16 +186,13 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
         f"📈 Signal for {symbol} 📈",
         f"🚨 Direction: {direction}",
         f"🚨 Leverage: {lev}",
-        f"🚨 Margin: Cross",
+        "🚨 Margin: Cross",
         f"🏦 CMP Entry: $ {entry1:.8f}",
         f"🏦 Entry 2: $ {entry2:.8f}",
     ]
     for i, target in enumerate(targets, 1):
         lines.append(f"💰 TP{i}: $ {target:.8f}")
-    lines += [
-        f"💸 Stop Loss: $ {sl:.8f}",
-        f"🧠 Trade idea generated by AI module {module} V3"
-    ]
+    lines += [f"💸 Stop Loss: $ {sl:.8f}", f"🧠 Trade idea generated by AI module {module} V3"]
     cornix_msg = "\n".join(lines)
 
     # Dynamische Channel-Auswahl
@@ -204,21 +209,35 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
     html_caption = f"<b>🚀 AI {module} {direction} SIGNAL</b>\n<b>{symbol.replace('USDT', '')}</b>\n→ Direction: {direction}\n→ Confidence: <b>Retest done</b>\n\n<pre>{cornix_msg}</pre>"
 
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                    (target_channel, cornix_msg))
+        cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, cornix_msg))
         if chart_path:
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                        (target_channel, html_caption, chart_path))
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                (target_channel, html_caption, chart_path),
+            )
         else:
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                        (target_channel, html_caption))
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, html_caption)
+            )
 
         # DB für den Monitor
-        cur.execute("""
+        cur.execute(
+            """
                 INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (symbol, float(entry1), module, direction, 1.0, float(entry1), float(entry2), float(sl),
-                  json.dumps(targets)))
+            """,
+            (
+                symbol,
+                float(entry1),
+                module,
+                direction,
+                1.0,
+                float(entry1),
+                float(entry2),
+                float(sl),
+                json.dumps(targets),
+            ),
+        )
 
     conn.commit()
     update_cooldown(conn, module, symbol, direction)
@@ -231,15 +250,20 @@ def analyze_patterns(current_hour):
         coins = get_coins()
         for symbol in coins:
             for tf in PATTERN_TIMEFRAMES:
-                if tf == '2h' and current_hour % 2 != 0: continue
-                if tf == '4h' and current_hour % 4 != 0: continue
-                if tf == '1d' and current_hour != 0: continue
+                if tf == '2h' and current_hour % 2 != 0:
+                    continue
+                if tf == '4h' and current_hour % 4 != 0:
+                    continue
+                if tf == '1d' and current_hour != 0:
+                    continue
 
                 try:
                     df = pd.read_sql_query(
                         f'SELECT open_time, open, high, low, close, volume FROM "{symbol}_{tf}" ORDER BY open_time DESC LIMIT 168',
-                        conn)
-                    if len(df) < 50: continue
+                        conn,
+                    )
+                    if len(df) < 50:
+                        continue
                     df = df.iloc[::-1].reset_index(drop=True)
 
                     # 1. Pivots finden
@@ -288,7 +312,8 @@ def analyze_patterns(current_hour):
                             low_prev = slope_l * prev_idx + intercept_l
 
                             pivot_time_str = pd.to_datetime(df['open_time'].iloc[recent_highs.index[-1]]).strftime(
-                                '%Y%m%d%H%M')
+                                '%Y%m%d%H%M'
+                            )
                             pattern_id = f"{symbol}_{tf}_{pattern_name}_{pivot_time_str}"
 
                             line_highs_dict = {'m': slope_h, 'b': intercept_h}
@@ -308,10 +333,18 @@ def analyze_patterns(current_hour):
                                         "direction": breakout_dir,
                                         "break_time": df['open_time'].iloc[current_idx],
                                         "break_idx": current_idx,
-                                        "retest_occurred": False
+                                        "retest_occurred": False,
                                     }
-                                    chart_path = generate_pattern_chart(df, symbol, tf, pattern_name, line_highs_dict,
-                                                                        line_lows_dict, start_plot_idx, current_idx)
+                                    chart_path = generate_pattern_chart(
+                                        df,
+                                        symbol,
+                                        tf,
+                                        pattern_name,
+                                        line_highs_dict,
+                                        line_lows_dict,
+                                        start_plot_idx,
+                                        current_idx,
+                                    )
                                     msg = f"<b>📐 PATTERN BREAKOUT</b>\n<b>{symbol.replace('USDT', '')} | {tf} Chart</b>\n→ Pattern: {pattern_name}\n→ Action: {breakout_dir}\n→ Breakout Price: <code>${c_close:,.4f}</code>\n<i>Waiting for retest...</i>"
                                     send_to_outbox(conn, msg, chart_path)
                                     logger.info(f"🚀 {breakout_dir} für {symbol} ({pattern_name}) erkannt!")
@@ -335,21 +368,30 @@ def analyze_patterns(current_hour):
                                 retest_key = f"{pattern_id}_retest"
 
                                 # 1. Fakeout
-                                if (is_bullish and c_close < line * (1 - fail_tol)) or \
-                                        (not is_bullish and c_close > line * (1 + fail_tol)):
+                                if (is_bullish and c_close < line * (1 - fail_tol)) or (
+                                    not is_bullish and c_close > line * (1 + fail_tol)
+                                ):
                                     if retest_key not in ALERTED_RETESTS:
                                         ALERTED_RETESTS.add(retest_key)
-                                        chart_path = generate_pattern_chart(df, symbol, tf, pattern_name,
-                                                                            line_highs_dict, line_lows_dict,
-                                                                            start_plot_idx, current_idx)
+                                        chart_path = generate_pattern_chart(
+                                            df,
+                                            symbol,
+                                            tf,
+                                            pattern_name,
+                                            line_highs_dict,
+                                            line_lows_dict,
+                                            start_plot_idx,
+                                            current_idx,
+                                        )
                                         msg = f"<b>❌ FAKEOUT RETEST</b>\n<b>{symbol.replace('USDT', '')} | {tf}</b>\n→ Pattern: {pattern_name}\n→ Deep break back into pattern!"
                                         send_to_outbox(conn, msg, chart_path)
                                     del ACTIVE_PATTERNS[pattern_id]
                                     continue
 
                                 # 2. Retest-Touch + Successful?
-                                touched = (is_bullish and c_low <= line * (1 + touch_tol)) or \
-                                          (not is_bullish and c_high >= line * (1 - touch_tol))
+                                touched = (is_bullish and c_low <= line * (1 + touch_tol)) or (
+                                    not is_bullish and c_high >= line * (1 - touch_tol)
+                                )
                                 closed_correct = (is_bullish and c_close > line) or (not is_bullish and c_close < line)
 
                                 if touched and closed_correct:
@@ -359,12 +401,21 @@ def analyze_patterns(current_hour):
                                         tracked["retest_idx"] = current_idx
                                         ALERTED_RETESTS.add(retest_key)
 
-                                        chart_path = generate_pattern_chart(df, symbol, tf, pattern_name,
-                                                                            line_highs_dict, line_lows_dict,
-                                                                            start_plot_idx, current_idx)
+                                        chart_path = generate_pattern_chart(
+                                            df,
+                                            symbol,
+                                            tf,
+                                            pattern_name,
+                                            line_highs_dict,
+                                            line_lows_dict,
+                                            start_plot_idx,
+                                            current_idx,
+                                        )
                                         msg = f"<b>🔄 RETEST DETECTED 📍</b>\n<b>{symbol.replace('USDT', '')} | {tf}</b>\n→ Pattern: {pattern_name}\n→ Retest bei <code>${tracked['retest_price']:.4f}</code>\n<i>Waiting for strong confirmation...</i>"
                                         send_to_outbox(conn, msg, chart_path)
-                                        logger.info(f"🔄 Retest DETECTED {symbol} {tf} @ ${tracked['retest_price']:.4f}")
+                                        logger.info(
+                                            f"🔄 Retest DETECTED {symbol} {tf} @ ${tracked['retest_price']:.4f}"
+                                        )
 
                                     # Strong confirmation?
                                     body_pct = abs(c_close - c_open) / c_open
@@ -372,9 +423,16 @@ def analyze_patterns(current_hour):
                                     strong_bear = c_close < c_open and body_pct >= min_body_pct
 
                                     if (is_bullish and strong_bull) or (not is_bullish and strong_bear):
-                                        chart_path = generate_pattern_chart(df, symbol, tf, pattern_name,
-                                                                            line_highs_dict, line_lows_dict,
-                                                                            start_plot_idx, current_idx)
+                                        chart_path = generate_pattern_chart(
+                                            df,
+                                            symbol,
+                                            tf,
+                                            pattern_name,
+                                            line_highs_dict,
+                                            line_lows_dict,
+                                            start_plot_idx,
+                                            current_idx,
+                                        )
                                         direction = "LONG" if is_bullish else "SHORT"
                                         module_name = f"BR{tf.upper()}"
                                         process_ai_trade(conn, symbol, direction, module_name, c_close, chart_path)

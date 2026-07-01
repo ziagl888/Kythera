@@ -2,12 +2,13 @@
 core/market_utils.py
 Shared trading utilities used across bots and strategies.
 """
+
 from __future__ import annotations
 
-import json
-import os
-import logging
 import datetime
+import json
+import logging
+import os
 from typing import TypedDict
 
 import numpy as np
@@ -16,6 +17,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # ── Shared type definitions ────────────────────────────────────────────────
+
 
 class SignalDict(TypedDict):
     strategy: str
@@ -227,9 +229,7 @@ def find_support_resistance_zones(
                 continue
 
             # 1. Passt der Preis zu einer existierenden Zone? → Counter erhöhen
-            matched = next(
-                (z for z in zones if abs(z - price) <= match_tolerance), None
-            )
+            matched = next((z for z in zones if abs(z - price) <= match_tolerance), None)
             if matched is not None:
                 zones[matched] += 1
                 continue
@@ -251,6 +251,7 @@ def find_support_resistance_zones(
 def send_telegram(message: str, channel_id: int) -> None:
     """Queues a Telegram message into the outbox table for the bot to dispatch."""
     from core.database import get_db_connection
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -260,14 +261,13 @@ def send_telegram(message: str, channel_id: int) -> None:
         conn.commit()
 
 
-def calculate_pivots(
-    df: pd.DataFrame, window: int = 5
-) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+def calculate_pivots(df: pd.DataFrame, window: int = 5) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
     """
     Finds swing lows (support pivots) and swing highs (resistance pivots).
     Returns (troughs, peaks) as lists of (bar_index, price).
     """
     import scipy.signal
+
     highs = df["high"].values
     lows = df["low"].values
     peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=window)[0]

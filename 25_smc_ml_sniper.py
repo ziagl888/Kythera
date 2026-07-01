@@ -2,29 +2,31 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import time
 import json
-import os
 import logging
-import pandas as pd
-import numpy as np
-import scipy.signal
+import os
+import time
+from datetime import datetime, timezone
+
 import joblib
 import mplfinance as mpf
-from datetime import datetime, timezone, timedelta
+import numpy as np
+import pandas as pd
+import scipy.signal
+
+from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
+from core.market_utils import check_cooldown, get_max_leverage, load_coins, update_cooldown
 from core.trade_utils import calculate_smart_targets
-from core.market_utils import check_cooldown, update_cooldown, get_max_leverage, load_coins
-from core import config as _kcfg  # channel ids
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - SMC_SNIPER - %(message)s')
 logger = logging.getLogger(__name__)
 SMC_CHANNELS = {
     'bb': _kcfg.CH_SNIPER_BB,  # 👈 Channel-ID für Breaker Block
-    'td': _kcfg.CH_SNIPER_TD  # 👈 Channel-ID für Three-Drive (Bitte anpassen!)
+    'td': _kcfg.CH_SNIPER_TD,  # 👈 Channel-ID für Three-Drive (Bitte anpassen!)
 }
 
 COINS_FILE = "coins.json"
@@ -37,14 +39,21 @@ PIVOT_WINDOW = 10
 # 💥 Die optimalen Thresholds aus deinem Training (RR = 1:2)
 THRESHOLDS = {
     'bb': 0.40,  # Breaker Block
-    'td': 0.30  # Three-Drive
+    'td': 0.30,  # Three-Drive
 }
 
 PRICE_BASED_INDICATORS = [
-    'ema_9', 'ema_21', 'ema_50', 'ema_200',
-    'kama_21', 'wma_21',
-    'donchian_upper_20', 'donchian_lower_20', 'donchian_mid_20',
-    'boll_upper_20', 'boll_lower_20'
+    'ema_9',
+    'ema_21',
+    'ema_50',
+    'ema_200',
+    'kama_21',
+    'wma_21',
+    'donchian_upper_20',
+    'donchian_lower_20',
+    'donchian_mid_20',
+    'boll_upper_20',
+    'boll_lower_20',
 ]
 ABSOLUTE_INDICATORS = ['rsi_14', 'tsi_25_13_13', 'macd_dif_normal_12_26_9', 'macd_dea_normal_12_26_9']
 
@@ -62,8 +71,6 @@ for tf in TIMEFRAMES:
             exit(1)
 
 
-
-
 def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_price, features_dict, p1, p2, p3=None):
     module_tag = f"{strategy_code.upper()}_{tf.upper()}"
     model_data = MODELS[strategy_code][tf]
@@ -71,16 +78,21 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
 
     # 1. Cooldown / Active Trade Check
     with conn.cursor() as cur:
-        cur.execute("""
-            SELECT 1 FROM ai_signals 
+        cur.execute(
+            """
+            SELECT 1 FROM ai_signals
             WHERE symbol = %s AND direction = %s AND model = %s
-        """, (symbol, direction, module_tag))
-        if cur.fetchone(): return
+        """,
+            (symbol, direction, module_tag),
+        )
+        if cur.fetchone():
+            return
 
     # 2. ML Vorhersage
     ml_input = pd.DataFrame([features_dict])
     for col in model_data['features']:
-        if col not in ml_input.columns: ml_input[col] = 0
+        if col not in ml_input.columns:
+            ml_input[col] = 0
     ml_input = ml_input[model_data['features']]
 
     prob = model_data['model'].predict_proba(ml_input)[0][1]
@@ -91,30 +103,48 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
     if prob >= 0.25:
         is_posted = bool(prob >= min_thresh)
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 1 FROM ml_predictions_master 
+            cur.execute(
+                """
+                SELECT 1 FROM ml_predictions_master
                 WHERE coin = %s AND direction = %s AND model_name = %s AND time > NOW() - INTERVAL '4 hours'
-            """, (symbol, direction, module_tag))
+            """,
+                (symbol, direction, module_tag),
+            )
             if not cur.fetchone():
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
                     VALUES (0, %s, %s, %s, %s, %s, %s, %s)
-                """, (module_tag, now, symbol, direction, float(current_price), float(prob), is_posted))
+                """,
+                    (module_tag, now, symbol, direction, float(current_price), float(prob), is_posted),
+                )
 
     # 4. ECHTER TRADE AUSFÜHREN
     if prob >= min_thresh:
         # check_cooldown returned True wenn Cooldown NOCH AKTIV ist → dann skippen.
         cd_hours = 4 if tf == '1h' else 12
-        if check_cooldown(conn, module_tag, symbol, direction, cd_hours): return
+        if check_cooldown(conn, module_tag, symbol, direction, cd_hours):
+            return
 
         # Nutze die neuen dynamischen Targets & Stop Loss Logik
         setup = calculate_smart_targets(conn, symbol, direction, current_price)
 
         logger.info(f"🟢 TRADE PASSED! {symbol} ({module_tag}) wird getradet (Conf: {confidence:.1f}%)")
         send_cornix_signal(
-            conn, df, symbol, tf, strategy_code, direction,
-            setup['entry1'], setup['entry2'], setup['sl'], setup['targets'],
-            confidence, p1, p2, p3
+            conn,
+            df,
+            symbol,
+            tf,
+            strategy_code,
+            direction,
+            setup['entry1'],
+            setup['entry2'],
+            setup['sl'],
+            setup['targets'],
+            confidence,
+            p1,
+            p2,
+            p3,
         )
         update_cooldown(conn, module_tag, symbol, direction)
 
@@ -140,14 +170,16 @@ def scan_market():
                     ORDER BY t1.open_time DESC LIMIT 150
                 """
                 df = pd.read_sql_query(query, conn)
-                if len(df) < 100: continue
+                if len(df) < 100:
+                    continue
 
                 df = df.iloc[::-1].reset_index(drop=True)
                 df.ffill(inplace=True)
                 df.bfill(inplace=True)
 
                 for c in df.columns:
-                    if c not in ['open_time', 'trend_direction']: df[c] = df[c].astype(float)
+                    if c not in ['open_time', 'trend_direction']:
+                        df[c] = df[c].astype(float)
 
                 highs, lows, closes = df['high'].values, df['low'].values, df['close'].values
                 rsis = df['rsi_14'].values
@@ -156,7 +188,8 @@ def scan_market():
                 peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=PIVOT_WINDOW)[0]
                 trough_idx = scipy.signal.argrelextrema(lows, np.less, order=PIVOT_WINDOW)[0]
 
-                if len(peak_idx) < 3 or len(trough_idx) < 3: continue
+                if len(peak_idx) < 3 or len(trough_idx) < 3:
+                    continue
 
                 # 1. THREE-DRIVE DIVERGENCE (TD)
                 # FIX: Vorher keine zeitliche Begrenzung → peak_idx[-3] konnte 300
@@ -171,8 +204,19 @@ def scan_market():
                     if (p3 - p1) <= MAX_TD_SPAN and highs[p1] < highs[p2] < highs[p3]:
                         if rsis[p1] > rsis[p2] > rsis[p3]:
                             feats = extract_ml_features(df, p3, 'SHORT')
-                            evaluate_and_trade(conn, df, symbol, tf, 'td', 'SHORT', current_price, feats,
-                                               (p1, 1, highs[p1]), (p2, 1, highs[p2]), (p3, 1, highs[p3]))
+                            evaluate_and_trade(
+                                conn,
+                                df,
+                                symbol,
+                                tf,
+                                'td',
+                                'SHORT',
+                                current_price,
+                                feats,
+                                (p1, 1, highs[p1]),
+                                (p2, 1, highs[p2]),
+                                (p3, 1, highs[p3]),
+                            )
 
                 # 1b. Bullish Drive (Long) - NEU!
                 p_trough3 = trough_idx[-1]
@@ -181,8 +225,19 @@ def scan_market():
                     if (p3 - p1) <= MAX_TD_SPAN and lows[p1] > lows[p2] > lows[p3]:
                         if rsis[p1] < rsis[p2] < rsis[p3]:
                             feats = extract_ml_features(df, p3, 'LONG')
-                            evaluate_and_trade(conn, df, symbol, tf, 'td', 'LONG', current_price, feats,
-                                               (p1, -1, lows[p1]), (p2, -1, lows[p2]), (p3, -1, lows[p3]))
+                            evaluate_and_trade(
+                                conn,
+                                df,
+                                symbol,
+                                tf,
+                                'td',
+                                'LONG',
+                                current_price,
+                                feats,
+                                (p1, -1, lows[p1]),
+                                (p2, -1, lows[p2]),
+                                (p3, -1, lows[p3]),
+                            )
 
                 # 2. BREAKER BLOCK (BB)
                 # FIX: Der alte Check feuerte sobald `current_price ~= pivot_res`,
@@ -203,12 +258,22 @@ def scan_market():
                     if breakout_idx != -1 and (len(df) - 1 - breakout_idx) <= MAX_BB_AGE:
                         # Nach dem Breakout muss der Preis mindestens einmal oberhalb
                         # des Levels gelaufen sein — sonst war es kein echter Break
-                        peak_after_breakout = max(highs[breakout_idx:len(df) - 1])
+                        peak_after_breakout = max(highs[breakout_idx : len(df) - 1])
                         if peak_after_breakout > pivot_res * 1.003:  # min 0.3% drüber
                             feats = extract_ml_features(df, len(df) - 2, 'LONG')
-                            evaluate_and_trade(conn, df, symbol, tf, 'bb', 'LONG', current_price, feats,
-                                               (p_res, 1, pivot_res), (breakout_idx, 1, highs[breakout_idx]),
-                                               (len(df) - 1, 1, current_price))
+                            evaluate_and_trade(
+                                conn,
+                                df,
+                                symbol,
+                                tf,
+                                'bb',
+                                'LONG',
+                                current_price,
+                                feats,
+                                (p_res, 1, pivot_res),
+                                (breakout_idx, 1, highs[breakout_idx]),
+                                (len(df) - 1, 1, current_price),
+                            )
 
                 p_sup = trough_idx[-2]
                 pivot_sup = lows[p_sup]
@@ -220,12 +285,22 @@ def scan_market():
                             break
                     # Breakdown muss frisch sein UND tief genug gegangen sein
                     if breakdown_idx != -1 and (len(df) - 1 - breakdown_idx) <= MAX_BB_AGE:
-                        trough_after_breakdown = min(lows[breakdown_idx:len(df) - 1])
+                        trough_after_breakdown = min(lows[breakdown_idx : len(df) - 1])
                         if trough_after_breakdown < pivot_sup * 0.997:  # min 0.3% drunter
                             feats = extract_ml_features(df, len(df) - 2, 'SHORT')
-                            evaluate_and_trade(conn, df, symbol, tf, 'bb', 'SHORT', current_price, feats,
-                                               (p_sup, -1, pivot_sup), (breakdown_idx, -1, lows[breakdown_idx]),
-                                               (len(df) - 1, -1, current_price))
+                            evaluate_and_trade(
+                                conn,
+                                df,
+                                symbol,
+                                tf,
+                                'bb',
+                                'SHORT',
+                                current_price,
+                                feats,
+                                (p_sup, -1, pivot_sup),
+                                (breakdown_idx, -1, lows[breakdown_idx]),
+                                (len(df) - 1, -1, current_price),
+                            )
 
             except Exception as e:
                 logger.debug(f"Error for {symbol} ({tf}): {e}")
@@ -235,10 +310,7 @@ def scan_market():
 
 def extract_ml_features(df, idx, direction):
     close_prev = df['close'].iloc[idx]
-    features = {
-        'dir_num': 1 if direction == 'LONG' else 0,
-        'atr_14_pct': (df['atr_14'].iloc[idx] / close_prev) * 100
-    }
+    features = {'dir_num': 1 if direction == 'LONG' else 0, 'atr_14_pct': (df['atr_14'].iloc[idx] / close_prev) * 100}
     for ind in ABSOLUTE_INDICATORS:
         features[ind] = df[ind].iloc[idx]
     for ind in PRICE_BASED_INDICATORS:
@@ -251,8 +323,9 @@ def extract_ml_features(df, idx, direction):
     return features
 
 
-def send_cornix_signal(conn, df, symbol, tf, strategy_code, direction, entry1, entry2, sl, targets, confidence, p1, p2,
-                       p3=None):
+def send_cornix_signal(
+    conn, df, symbol, tf, strategy_code, direction, entry1, entry2, sl, targets, confidence, p1, p2, p3=None
+):
     lev = get_max_leverage(symbol, 20)
     module_tag = f"{strategy_code.upper()}_{tf.upper()}"
     strategy_name = "Breaker Block" if strategy_code == 'bb' else "Three-Drive"
@@ -274,7 +347,6 @@ def send_cornix_signal(conn, df, symbol, tf, strategy_code, direction, entry1, e
     cornix_msg += f"\n💸 Stop Loss: $ {sl:.6f}\n🧠 AI Confidence: {confidence:.1f}% ({module_tag} Filter)"
 
     # --- HTML CAPTION ---
-    is_long = direction == "LONG"
     avg_entry = (entry1 + entry2) / 2
     risk_pct = abs((sl - avg_entry) / avg_entry)
     reward_pct = abs((targets[0] - avg_entry) / avg_entry) if targets else 0.01
@@ -296,7 +368,9 @@ def send_cornix_signal(conn, df, symbol, tf, strategy_code, direction, entry1, e
     for i, t in enumerate(targets[:5], 1):
         pct = abs((t - entry1) / entry1 * 100) * int(lev.replace('x', ''))
         color = "#00ff88" if i <= 2 else "#88ff88"
-        html_caption += f"<b style=\"color:{color};\">   T{i}:</b> <b>${t:,.8f}</b> → <b style=\"color:lime;\">+{pct:.1f}%</b>\n"
+        html_caption += (
+            f"<b style=\"color:{color};\">   T{i}:</b> <b>${t:,.8f}</b> → <b style=\"color:lime;\">+{pct:.1f}%</b>\n"
+        )
 
     sl_loss = risk_pct * 100 * int(lev.replace('x', ''))
     html_caption += f"""<b>└─ Stop Loss:</b> <b>${sl:,.8f}</b> → <b>-{sl_loss:.1f}%</b>
@@ -309,18 +383,33 @@ def send_cornix_signal(conn, df, symbol, tf, strategy_code, direction, entry1, e
 
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                        (target_channel, cornix_msg))
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, cornix_msg)
+            )
 
             if chart_path:
-                cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                            (target_channel, html_caption, chart_path))
+                cur.execute(
+                    "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                    (target_channel, html_caption, chart_path),
+                )
 
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (symbol, float(entry1), module_tag, direction, float(confidence / 100), float(entry1), float(entry2),
-                  float(sl), json.dumps(targets)))
+            """,
+                (
+                    symbol,
+                    float(entry1),
+                    module_tag,
+                    direction,
+                    float(confidence / 100),
+                    float(entry1),
+                    float(entry2),
+                    float(sl),
+                    json.dumps(targets),
+                ),
+            )
 
     except Exception as e:
         logger.error(f"Telegram/DB Error: {e}")
@@ -370,11 +459,7 @@ def generate_smc_chart(df, symbol, tf, strategy_name, direction, entry, p1, p2, 
 
         if strategy_name == "Three-Drive":
             # Zick-Zack der 3 Pivots + RSI-Subplot
-            alines.append([
-                (get_dt(p1[0]), float(p1[2])),
-                (get_dt(p2[0]), float(p2[2])),
-                (get_dt(p3[0]), float(p3[2]))
-            ])
+            alines.append([(get_dt(p1[0]), float(p1[2])), (get_dt(p2[0]), float(p2[2])), (get_dt(p3[0]), float(p3[2]))])
             apds.append(mpf.make_addplot(plot_df['rsi_14'], panel=2, color='cyan', ylabel='RSI (14)'))
             panel_ratios = (4, 1, 1.5)
 
@@ -395,14 +480,18 @@ def generate_smc_chart(df, symbol, tf, strategy_name, direction, entry, p1, p2, 
 
             apds.append(mpf.make_addplot(marker_array, type='scatter', markersize=200, marker='*', color='yellow'))
 
-        abs_filename = os.path.abspath(
-            f"{CHART_DIR}/{symbol}_{strategy_name.replace(' ', '_')}_{int(time.time())}.png"
-        )
+        abs_filename = os.path.abspath(f"{CHART_DIR}/{symbol}_{strategy_name.replace(' ', '_')}_{int(time.time())}.png")
 
         kwargs = dict(
-            type='candle', style=s, title=f"\n{symbol} | {strategy_name} ({tf})",
-            figsize=(12, 8), tight_layout=True, savefig=abs_filename, returnfig=False,
-            volume=True, panel_ratios=panel_ratios
+            type='candle',
+            style=s,
+            title=f"\n{symbol} | {strategy_name} ({tf})",
+            figsize=(12, 8),
+            tight_layout=True,
+            savefig=abs_filename,
+            returnfig=False,
+            volume=True,
+            panel_ratios=panel_ratios,
         )
 
         if apds:

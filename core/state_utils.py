@@ -14,9 +14,10 @@ Jetzt zentral:
   - atomic_read_json: mit Default-Fallback bei Korruption
   - Alles mit einheitlichem Logging
 """
+
 import json
-import os
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -75,15 +76,13 @@ def atomic_read_json(filepath: str, default: Any = None) -> Any:
         return default
 
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             content = f.read().strip()
         if not content:
             return default
         return json.loads(content)
     except json.JSONDecodeError as e:
-        logger.error(
-            f"Corrupt state file {filepath}: {e} — backed up as .corrupt, using default"
-        )
+        logger.error(f"Corrupt state file {filepath}: {e} — backed up as .corrupt, using default")
         # Backup the corrupt file and return default
         try:
             os.replace(filepath, filepath + ".corrupt")

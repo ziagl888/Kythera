@@ -1,21 +1,22 @@
 import warnings
+
 warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
-import time
 import datetime
-import logging
-import joblib
-import pandas as pd
-import numpy as np
-import scipy.signal
 import json
+import logging
 import os
+import time
 
-from core.database import get_db_connection
-from core.charting import generate_minichart_image
-from core.market_utils import get_max_leverage, check_cooldown, update_cooldown
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+import joblib
+import numpy as np
+import pandas as pd
+
 from core import config as _kcfg  # channel ids
+from core.charting import generate_minichart_image
+from core.database import get_db_connection
+from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_RUB_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -54,7 +55,6 @@ def load_models():
         logger.error(f"❌ Error loading der Rubberband Modelle: {e}")
 
 
-
 # --- HAUPT CHECKER FUNKTION ---
 def check_rubberband_conditions():
     if not MODEL_LONG or not MODEL_SHORT:
@@ -63,7 +63,7 @@ def check_rubberband_conditions():
 
     conn = get_db_connection()
     try:
-        with open('coins.json', 'r') as f:
+        with open('coins.json') as f:
             coins = json.load(f)
     except Exception as e:
         logger.error(f"Could not load coins.json: {e}")
@@ -88,7 +88,7 @@ def check_rubberband_conditions():
 
             # 2. Letzte Indikatoren holen
             query_ind = f"""
-                SELECT 
+                SELECT
                     rsi_14, tsi_fast_12_7_7, tsi_fast_12_7_7_signal,
                     macd_dif_normal_12_26_9, macd_dea_normal_12_26_9,
                     atr_14, ema_200, donchian_lower_20, donchian_upper_20
@@ -100,15 +100,17 @@ def check_rubberband_conditions():
                 # 1. Trend Daten
                 cur.execute(query_90d)
                 rows_90d = cur.fetchall()
-                if len(rows_90d) < 50: continue
+                if len(rows_90d) < 50:
+                    continue
                 df_90d = pd.DataFrame(rows_90d, columns=['open_time', 'close'])
 
                 # 2. Indikator Daten
                 cur.execute(query_ind)
                 row_ind = cur.fetchone()
-                if not row_ind: continue
+                if not row_ind:
+                    continue
                 columns_ind = [desc[0] for desc in cur.description]
-                ind = dict(zip(columns_ind, row_ind))
+                ind = dict(zip(columns_ind, row_ind, strict=False))
 
             # --- TRENDBERECHNUNG ---
             # Timestamp-Array für lineare Regression
@@ -129,7 +131,7 @@ def check_rubberband_conditions():
             slope_pct_per_day = (slope * 86400) / curr_close if curr_close != 0 else 0
 
             # --- INDIKATOREN AUSLESEN ---
-            def get_f(key, default=0.0):
+            def get_f(key, default=0.0, ind=ind):
                 val = ind.get(key)
                 # FIX: Vorher wurde nur auf `None` geprüft. pandas/postgres können aber
                 # NaN/Inf liefern (insbesondere bei frischen Coins mit wenig Historie).
@@ -173,19 +175,23 @@ def check_rubberband_conditions():
                 continue
 
             # --- ML FEATURES BERECHNEN ---
-            features = pd.DataFrame([{
-                'dist_to_trend': dist_to_trend_pct,
-                'rsi': rsi,
-                'atr_pct': atr_pct,
-                'dist_ema200': dist_ema200,
-                'slope_trend': slope_pct_per_day,
-                'MACD_Line': macd_line,
-                'MACD_Signal': macd_signal,
-                'TSI_Line': tsi_line,
-                'TSI_Signal': tsi_signal
-            }])
+            features = pd.DataFrame(
+                [
+                    {
+                        'dist_to_trend': dist_to_trend_pct,
+                        'rsi': rsi,
+                        'atr_pct': atr_pct,
+                        'dist_ema200': dist_ema200,
+                        'slope_trend': slope_pct_per_day,
+                        'MACD_Line': macd_line,
+                        'MACD_Signal': macd_signal,
+                        'TSI_Line': tsi_line,
+                        'TSI_Signal': tsi_signal,
+                    }
+                ]
+            )
 
-            is_long = (event_type == "REVERSION_UP")
+            is_long = event_type == "REVERSION_UP"
             model = MODEL_LONG if is_long else MODEL_SHORT
             threshold = REVERSION_THRESH_LONG if is_long else REVERSION_THRESH_SHORT
 
@@ -214,10 +220,13 @@ def check_rubberband_conditions():
             if prob < threshold:
                 # Ablegen in Master Tabelle (als abgelehnter Trade)
                 with conn.cursor() as cur:
-                    cur.execute("""
+                    cur.execute(
+                        """
                         INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
                         VALUES (0, %s, %s, %s, %s, %s, %s, False)
-                    """, (module_tag, now, symbol, direction, float(curr_close), float(prob)))
+                    """,
+                        (module_tag, now, symbol, direction, float(curr_close), float(prob)),
+                    )
                 conn.commit()
                 continue
 
@@ -229,12 +238,18 @@ def check_rubberband_conditions():
             supps, resis = get_hvn_and_sr_levels(conn, symbol, curr_close)
 
             if is_long:
-                sl = max([x for x in supps if x < entry2 * 0.99]) if any(
-                    x < entry2 * 0.99 for x in supps) else entry2 * 0.975
+                sl = (
+                    max([x for x in supps if x < entry2 * 0.99])
+                    if any(x < entry2 * 0.99 for x in supps)
+                    else entry2 * 0.975
+                )
                 t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
             else:
-                sl = min([x for x in resis if x > entry2 * 1.01]) if any(
-                    x > entry2 * 1.01 for x in resis) else entry2 * 1.025
+                sl = (
+                    min([x for x in resis if x > entry2 * 1.01])
+                    if any(x > entry2 * 1.01 for x in resis)
+                    else entry2 * 1.025
+                )
                 t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
             # FIX: Vorher `while len(targets) < 20: append last*1.02` → extrapolierte
@@ -246,14 +261,20 @@ def check_rubberband_conditions():
             lev = get_max_leverage(symbol, 20)
 
             # Cornix Text
-            lines = [f"📈 Signal for {symbol} 📈", f"🚨 Direction: {direction}", f"🚨 Leverage: {lev}", f"🚨 Margin: Cross",
-                     f"🏦 CMP Entry: $ {entry1:.8f}", f"🏦 Entry 2: $ {entry2:.8f}"]
-            for i, t in enumerate(targets[:3], 1): lines.append(f"💰 TP{i}: $ {t:.8f}")
+            lines = [
+                f"📈 Signal for {symbol} 📈",
+                f"🚨 Direction: {direction}",
+                f"🚨 Leverage: {lev}",
+                "🚨 Margin: Cross",
+                f"🏦 CMP Entry: $ {entry1:.8f}",
+                f"🏦 Entry 2: $ {entry2:.8f}",
+            ]
+            for i, t in enumerate(targets[:3], 1):
+                lines.append(f"💰 TP{i}: $ {t:.8f}")
             lines += [f"💸 Stop Loss: $ {sl:.8f}", f"🧠 Trade idea generated by AI module {module_tag}"]
             cornix_msg = "\n".join(lines)
 
             # HTML für Chart
-            border_color = "#00ff00" if is_long else "#ff0066"
             emoji = "🚀 RUBBERBAND MEAN REVERSION LONG" if is_long else "💥 RUBBERBAND MEAN REVERSION SHORT"
             dist_str = f"{dist_to_trend_pct * 100:+.2f}%"
 
@@ -262,37 +283,57 @@ def check_rubberband_conditions():
             chart_buf = generate_minichart_image(symbol, minutes=240)
             with conn.cursor() as cur:
                 # Cornix Channel (Hier nutzt er den speziellen Rubberband Channel!)
-                cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                            (RUBBERBAND_CHANNEL_ID, cornix_msg))
+                cur.execute(
+                    "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
+                    (RUBBERBAND_CHANNEL_ID, cornix_msg),
+                )
                 # Chart Channel
                 if chart_buf:
-                    cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                                (RUBBERBAND_CHANNEL_ID, html_caption, chart_buf))
+                    cur.execute(
+                        "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                        (RUBBERBAND_CHANNEL_ID, html_caption, chart_buf),
+                    )
                 else:
-                    cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                (RUBBERBAND_CHANNEL_ID, html_caption))
+                    cur.execute(
+                        "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
+                        (RUBBERBAND_CHANNEL_ID, html_caption),
+                    )
 
                 # AI Signal Monitor
 
-                cur.execute("""
+                cur.execute(
+                    """
                                 INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets)
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
-                            (symbol, float(entry1), module_tag, direction, float(prob), float(entry1), float(entry2), float(sl),
-                             json.dumps(targets)))
+                    (
+                        symbol,
+                        float(entry1),
+                        module_tag,
+                        direction,
+                        float(prob),
+                        float(entry1),
+                        float(entry2),
+                        float(sl),
+                        json.dumps(targets),
+                    ),
+                )
                 # Master Log
                 cur.execute(
                     """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, True)""",
-                    (module_tag, now, symbol, direction, float(curr_close), float(prob)))
+                    (module_tag, now, symbol, direction, float(curr_close), float(prob)),
+                )
 
             conn.commit()
             update_cooldown(conn, module_tag, symbol, direction)
 
         except Exception as e:
             logger.error(f"Error for {symbol} in RUB1: {e}")
-            if conn: conn.rollback()
+            if conn:
+                conn.rollback()
 
-    if conn: conn.close()
+    if conn:
+        conn.close()
     logger.info("🏁 RUB1 Model Check stopped.")
 
 

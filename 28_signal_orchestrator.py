@@ -12,21 +12,20 @@ Läuft alle 500ms und:
 
 Watchdog: start_delay=175
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import NamedTuple
 
+from core import config as _kcfg  # channel ids
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, send_telegram, update_cooldown
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
-from core import config as _kcfg  # channel ids
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -45,12 +44,12 @@ FALLBACK_MIN_WR = 50.0
 
 # Outcome-Klassifikation im Lifecycle-Sync: siehe Erläuterung in
 # 27_bot_regime_analyzer.py — gleiche Logik damit Win/Loss-Bestimmung konsistent ist.
-OUTCOME_MIN_PNL_PCT = 0.1       # |pnl| <= 0.1% → neutral
+OUTCOME_MIN_PNL_PCT = 0.1  # |pnl| <= 0.1% → neutral
 OUTCOME_MAX_ABS_PNL_PCT = 100.0  # |pnl| > 100% → neutral (Daten-Bug)
 
 BOT_IDENTIFICATION_PATTERNS = [
-    r"\b(MIS1-\d+[Hh]_(?:pump|dump))\b",   # MIS1-8h_pump, most specific first
-    r"\b(MIS1-\d+[Hh])\b",                  # MIS1-8H, MIS1-24H
+    r"\b(MIS1-\d+[Hh]_(?:pump|dump))\b",  # MIS1-8h_pump, most specific first
+    r"\b(MIS1-\d+[Hh])\b",  # MIS1-8H, MIS1-24H
     r"\b(MIS1|ATS1|RUB1|ATB1|AIM1|ABR1|EPD1|SRA1)\b",
     # Quasimodo (24_quasimodo_bot.py): f"QM_{tf.upper()}" → QM_1H, QM_4H
     # SMC-ML-Sniper (25_smc_ml_sniper.py): f"{BB|TD}_{tf.upper()}" → BB_1H, BB_4H, TD_1H, TD_4H
@@ -83,6 +82,7 @@ _last_lifecycle_sync: float = 0.0
 # ─────────────────────────────────────────────────────────────────────────────
 # PARSING
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def parse_cornix_signal(msg: str) -> dict | None:
     """
@@ -152,6 +152,7 @@ def identify_bot(msg: str, channel_id: int | None) -> str | None:
 # DETEKTOR-ZUVERLÄSSIGKEIT
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def is_regime_detector_reliable(conn) -> tuple[bool, str]:
     """
     Returns (True, 'reliable') if the regime detector is trustworthy,
@@ -215,9 +216,7 @@ def is_whitelisted_fallback(conn, bot_name: str, direction: str) -> tuple[bool, 
     return (False, "fallback_wr_below_50")
 
 
-def get_whitelist_decision(
-    conn, bot_name: str, direction: str
-) -> tuple[bool, str]:
+def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, str]:
     """
     Main whitelist entry point. Chooses between:
       - Normal 4D-lookup (reliable detector)
@@ -252,10 +251,7 @@ def get_whitelist_decision(
         return (bool(wl_row[0]), wl_row[1] or "unknown")
 
     # Fallback path
-    logger.info(
-        f"⚠️ Regime detector unreliable ({status}) — "
-        f"Overall fallback for {bot_name} {direction}"
-    )
+    logger.info(f"⚠️ Regime detector unreliable ({status}) — Overall fallback for {bot_name} {direction}")
     whitelisted, fallback_reason = is_whitelisted_fallback(conn, bot_name, direction)
     return (whitelisted, f"{status}:{fallback_reason}")
 
@@ -271,6 +267,7 @@ def get_current_regime_full(conn) -> tuple[str, str] | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # OPPOSITE-DIRECTION CHECK
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
     """True if an open orchestrator trade exists for this coin in opposite direction."""
@@ -299,10 +296,10 @@ def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
 # nutzt get_hvn_and_sr_levels() + ensure_min_tp_distance() aus core/trade_utils.
 # Siehe auch 14_ai_atb_bot.py, 13_ai_rub_bot.py — alle nutzen dasselbe Muster.
 
-ROM1_DESIRED_LEVERAGE = 20              # Gleicher Standard wie die AI-Bots
-ROM1_ENTRY2_OFFSET_PCT = 0.05           # 2. Entry 5% entfernt (AI-Bot-Standard)
-ROM1_SL_FALLBACK_OFFSET_PCT = 0.025     # Fallback-SL wenn keine echte Zone verfügbar
-ROM1_TP_MIN_DISTANCE_PCT = 0.05         # Mindestabstand letztes TP zum Entry
+ROM1_DESIRED_LEVERAGE = 20  # Gleicher Standard wie die AI-Bots
+ROM1_ENTRY2_OFFSET_PCT = 0.05  # 2. Entry 5% entfernt (AI-Bot-Standard)
+ROM1_SL_FALLBACK_OFFSET_PCT = 0.025  # Fallback-SL wenn keine echte Zone verfügbar
+ROM1_TP_MIN_DISTANCE_PCT = 0.05  # Mindestabstand letztes TP zum Entry
 
 
 def _get_latest_price(conn, coin: str) -> float | None:
@@ -312,9 +309,7 @@ def _get_latest_price(conn, coin: str) -> float | None:
     """
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1'
-            )
+            cur.execute(f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1')
             row = cur.fetchone()
         if row is None or row[0] is None:
             return None
@@ -343,7 +338,7 @@ def compute_rom1_trade_params(conn, coin: str, direction: str) -> dict | None:
         logger.warning(f"ROM1: Kein Preis für {coin}, skipping Trade-Berechnung")
         return None
 
-    is_long = (direction == "LONG")
+    is_long = direction == "LONG"
     entry1 = current_price
 
     if is_long:
@@ -371,9 +366,7 @@ def compute_rom1_trade_params(conn, coin: str, direction: str) -> dict | None:
         )
 
     # Bis zu 20 Targets (wie die AI-Bots), gecappt durch ensure_min_tp_distance
-    targets = ensure_min_tp_distance(
-        t_cands[:20], entry1, is_long, min_pct=ROM1_TP_MIN_DISTANCE_PCT
-    )
+    targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=ROM1_TP_MIN_DISTANCE_PCT)
 
     if not targets:
         logger.warning(f"ROM1: Keine validen Targets für {coin} {direction}")
@@ -411,7 +404,7 @@ def build_rom1_cornix_message(
         f"📈 Signal for {coin} 📈",
         f"🚨 Direction: {direction}",
         f"🚨 Leverage: {params['leverage']}",
-        f"🚨 Margin: Cross",
+        "🚨 Margin: Cross",
         f"🏦 CMP Entry: $ {params['entry1']:.8f}",
         f"🏦 Entry 2: $ {params['entry2']:.8f}",
     ]
@@ -420,7 +413,7 @@ def build_rom1_cornix_message(
     for i, t in enumerate(params["targets"][:3], start=1):
         lines.append(f"💰 TP{i}: $ {t:.8f}")
     lines.append(f"💸 Stop Loss: $ {params['sl']:.8f}")
-    lines.append(f"🧠 Trade idea generated by AI module ROM1 V1")
+    lines.append("🧠 Trade idea generated by AI module ROM1 V1")
     if trigger_bot:
         # Trigger-Info als eigene Zeile — bleibt für Leser sichtbar und
         # wird auch in orchestrator_open_trades unter bot_name saved.
@@ -431,6 +424,7 @@ def build_rom1_cornix_message(
 # ─────────────────────────────────────────────────────────────────────────────
 # ROM1-TRACKING
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def insert_rom1_signal(conn, coin: str, direction: str, params: dict) -> None:
     """Inserts a ROM1 entry into ai_signals for lifecycle tracking.
@@ -480,8 +474,7 @@ def insert_orchestrator_open_trade(
                  original_outbox_id, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'OPEN')
             """,
-            (coin, direction, bot_name, entry, now_utc,
-             regime, alt_context, outbox_id),
+            (coin, direction, bot_name, entry, now_utc, regime, alt_context, outbox_id),
         )
     conn.commit()
 
@@ -515,6 +508,7 @@ def log_suppressed(
 # SIGNAL-GATING
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def signal_gating_pass(conn) -> None:
     """
     Scans telegram_outbox for new bot signals and forwards whitelisted ones
@@ -547,7 +541,7 @@ async def signal_gating_pass(conn) -> None:
         return
 
     last_id = _last_seen_outbox_id
-    for (outbox_id, channel_id, message) in rows:
+    for outbox_id, channel_id, message in rows:
         last_id = max(last_id, outbox_id)
 
         # ── Parse signal ──────────────────────────────────────────────────────
@@ -561,37 +555,25 @@ async def signal_gating_pass(conn) -> None:
         # ── Identify bot ──────────────────────────────────────────────────────
         bot_name = identify_bot(message, channel_id)
         if bot_name is None:
-            logger.warning(
-                f"Bot nicht identifizierbar für Outbox #{outbox_id}: {message[:80]!r}"
-            )
+            logger.warning(f"Bot nicht identifizierbar für Outbox #{outbox_id}: {message[:80]!r}")
             log_suppressed(conn, None, coin, direction, "bot_unidentified", outbox_id)
             continue
 
         # ── Whitelist check ───────────────────────────────────────────────────
         whitelisted, wl_reason = get_whitelist_decision(conn, bot_name, direction)
         if not whitelisted:
-            logger.info(
-                f"⛔ Signal filtered: {bot_name} {coin} {direction} "
-                f"(reason: {wl_reason})"
-            )
-            log_suppressed(
-                conn, bot_name, coin, direction, f"bot_not_whitelisted:{wl_reason}", outbox_id
-            )
+            logger.info(f"⛔ Signal filtered: {bot_name} {coin} {direction} (reason: {wl_reason})")
+            log_suppressed(conn, bot_name, coin, direction, f"bot_not_whitelisted:{wl_reason}", outbox_id)
             continue
 
         # ── Cooldown check ────────────────────────────────────────────────────
-        if check_cooldown(conn, ORCHESTRATOR_MODULE_NAME, coin, direction,
-                          ORCHESTRATOR_COOLDOWN_HOURS):
-            log_suppressed(
-                conn, bot_name, coin, direction, "orchestrator_cooldown", outbox_id
-            )
+        if check_cooldown(conn, ORCHESTRATOR_MODULE_NAME, coin, direction, ORCHESTRATOR_COOLDOWN_HOURS):
+            log_suppressed(conn, bot_name, coin, direction, "orchestrator_cooldown", outbox_id)
             continue
 
         # ── Cross-direction check ─────────────────────────────────────────────
         if is_opposite_direction_open(conn, coin, direction):
-            log_suppressed(
-                conn, bot_name, coin, direction, "opposite_direction_open", outbox_id
-            )
+            log_suppressed(conn, bot_name, coin, direction, "opposite_direction_open", outbox_id)
             continue
 
         # ── ALL CHECKS PASSED → ROM1 BERECHNET EIGENEN TRADE ────────────────
@@ -602,9 +584,7 @@ async def signal_gating_pass(conn) -> None:
         rom1_params = compute_rom1_trade_params(conn, coin, direction)
         if rom1_params is None:
             # Preis not available oder S/R-Lookup fehlgeschlagen → nicht posten
-            log_suppressed(
-                conn, bot_name, coin, direction, "rom1_params_unavailable", outbox_id
-            )
+            log_suppressed(conn, bot_name, coin, direction, "rom1_params_unavailable", outbox_id)
             continue
 
         state = get_current_regime_full(conn)
@@ -614,9 +594,7 @@ async def signal_gating_pass(conn) -> None:
         # ROM1 baut seine eigene Cornix-Message aus den berechneten Params.
         # trigger_bot zeigt im Signal-Text welcher Original-Bot den Trade
         # ausgelöst hat — Info bleibt für Leser und Downstream-Analytics erhalten.
-        rom1_message = build_rom1_cornix_message(
-            coin, direction, rom1_params, trigger_bot=bot_name
-        )
+        rom1_message = build_rom1_cornix_message(coin, direction, rom1_params, trigger_bot=bot_name)
 
         # Post ins Trading-Channel
         send_telegram(rom1_message, REGIME_TRADING_CHANNEL_ID)
@@ -627,8 +605,14 @@ async def signal_gating_pass(conn) -> None:
         # Orchestrator open trade — nutzt jetzt auch den ROM1-Entry, nicht mehr den
         # originalen Entry aus dem parsed Signal
         insert_orchestrator_open_trade(
-            conn, coin, direction, bot_name,
-            rom1_params["entry1"], outbox_id, cur_regime, cur_alt,
+            conn,
+            coin,
+            direction,
+            bot_name,
+            rom1_params["entry1"],
+            outbox_id,
+            cur_regime,
+            cur_alt,
         )
 
         # Update cooldown
@@ -647,9 +631,8 @@ async def signal_gating_pass(conn) -> None:
 # LIFECYCLE SYNC
 # ─────────────────────────────────────────────────────────────────────────────
 
-def mark_orchestrator_trade_closed(
-    conn, trade_id: int, status: str, reason: str
-) -> None:
+
+def mark_orchestrator_trade_closed(conn, trade_id: int, status: str, reason: str) -> None:
     """Updates an orchestrator_open_trades row to closed."""
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     with conn.cursor() as cur:
@@ -674,10 +657,7 @@ def _get_last_close_price(conn, coin: str, fallback: float | None = None) -> flo
         with conn.cursor() as cur:
             cur.execute("SAVEPOINT sp_get_close")
             try:
-                cur.execute(
-                    f'SELECT close FROM "{coin}_5m" '
-                    f'ORDER BY open_time DESC LIMIT 1'
-                )
+                cur.execute(f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1')
                 row = cur.fetchone()
                 cur.execute("RELEASE SAVEPOINT sp_get_close")
                 if row and row[0] is not None:
@@ -737,9 +717,7 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
 
     for row in ai_rows:
         tid, symbol, model, trade_dir, entry1, price, targets_hit, open_time = row
-        entry = float(entry1) if entry1 is not None else (
-            float(price) if price is not None else 0.0
-        )
+        entry = float(entry1) if entry1 is not None else (float(price) if price is not None else 0.0)
         close_price = _get_last_close_price(conn, coin, fallback=entry)
         if close_price is None:
             close_price = entry  # letzter Fallback
@@ -754,8 +732,14 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        symbol, model, trade_dir, entry, close_price,
-                        int(targets_hit or 0), open_time, now,
+                        symbol,
+                        model,
+                        trade_dir,
+                        entry,
+                        close_price,
+                        int(targets_hit or 0),
+                        open_time,
+                        now,
                         "CLOSED_REGIME_CHANGE",
                     ),
                 )
@@ -763,10 +747,7 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
             conn.commit()
             result["ai_closed"] += 1
         except Exception as e:
-            logger.warning(
-                f"Regime-Close: AI-Trade {tid} ({symbol} {model}) "
-                f"konnte nicht geschlossen werden: {e}"
-            )
+            logger.warning(f"Regime-Close: AI-Trade {tid} ({symbol} {model}) konnte nicht geschlossen werden: {e}")
             conn.rollback()
 
     # ── Klassische Trades (active_trades_master) ───────────────────────────
@@ -782,11 +763,9 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
                 (coin, direction),
             )
             classic_cols = [d[0] for d in cur.description]
-            classic_rows = [dict(zip(classic_cols, r)) for r in cur.fetchall()]
+            classic_rows = [dict(zip(classic_cols, r, strict=False)) for r in cur.fetchall()]
     except Exception as e:
-        logger.warning(
-            f"Regime-Close: active_trades_master-Query fehlgeschlagen ({coin}): {e}"
-        )
+        logger.warning(f"Regime-Close: active_trades_master-Query fehlgeschlagen ({coin}): {e}")
         conn.rollback()
         classic_rows = []
 
@@ -807,11 +786,20 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        trade['strategy'], trade['time'], trade['coin'],
-                        trade['direction'], trade['lev'], entry,
-                        trade['target1'], trade['target2'],
-                        trade['target3'], trade['target4'], trade['sl'],
-                        close_price, now, "CLOSED_REGIME_CHANGE",
+                        trade['strategy'],
+                        trade['time'],
+                        trade['coin'],
+                        trade['direction'],
+                        trade['lev'],
+                        entry,
+                        trade['target1'],
+                        trade['target2'],
+                        trade['target3'],
+                        trade['target4'],
+                        trade['sl'],
+                        close_price,
+                        now,
+                        "CLOSED_REGIME_CHANGE",
                     ),
                 )
                 cur.execute(
@@ -822,17 +810,16 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
             result["classic_closed"] += 1
         except Exception as e:
             logger.warning(
-                f"Regime-Close: Classic-Trade {trade['id']} "
-                f"({trade['coin']}) konnte nicht geschlossen werden: {e}"
+                f"Regime-Close: Classic-Trade {trade['id']} ({trade['coin']}) konnte nicht geschlossen werden: {e}"
             )
             conn.rollback()
 
     return result
 
 
-def _classify_outcome_by_pnl(direction: str, entry: float | None,
-                              close_price: float | None,
-                              close_reason: str | None) -> str:
+def _classify_outcome_by_pnl(
+    direction: str, entry: float | None, close_price: float | None, close_reason: str | None
+) -> str:
     """Klassifiziert einen geschlossenen Trade anhand des realen PnL.
 
     Spiegelt die Logik aus 27_bot_regime_analyzer.py wider — gleiche
@@ -848,8 +835,7 @@ def _classify_outcome_by_pnl(direction: str, entry: float | None,
     reason = (close_reason or "").upper()
     # Neutral-Marker: extern verursachte Closes die nicht vom Bot-Signal kommen
     # → nicht in Win/Loss-Statistik zählen
-    if ("DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason
-            or "REGIME_CHANGE" in reason):
+    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason or "REGIME_CHANGE" in reason:
         return "CLOSED_NEUTRAL"
     if entry is None or close_price is None:
         return "CLOSED_NEUTRAL"
@@ -890,9 +876,10 @@ async def sync_closed_trades(conn) -> None:
         )
         open_trades = cur.fetchall()
 
-    for (trade_id, coin, direction, bot_name, opened_at) in open_trades:
-        opened_at_naive = opened_at if not (hasattr(opened_at, "tzinfo") and opened_at.tzinfo) \
-            else opened_at.replace(tzinfo=None)
+    for trade_id, coin, direction, _bot_name, opened_at in open_trades:
+        opened_at_naive = (
+            opened_at if not (hasattr(opened_at, "tzinfo") and opened_at.tzinfo) else opened_at.replace(tzinfo=None)
+        )
         window_start = opened_at_naive - timedelta(seconds=60)
         window_end = opened_at_naive + timedelta(hours=720)  # 30 days max
 
@@ -913,9 +900,7 @@ async def sync_closed_trades(conn) -> None:
         if row:
             entry, close_price, _status = row
             # Klassische Trades haben keinen close_reason — nur PnL zählt.
-            new_status = _classify_outcome_by_pnl(
-                direction, entry, close_price, close_reason=None
-            )
+            new_status = _classify_outcome_by_pnl(direction, entry, close_price, close_reason=None)
             mark_orchestrator_trade_closed(conn, trade_id, new_status, "lifecycle_sync")
             continue
 
@@ -936,15 +921,14 @@ async def sync_closed_trades(conn) -> None:
 
         if row:
             entry, close_price, close_reason = row
-            new_status = _classify_outcome_by_pnl(
-                direction, entry, close_price, close_reason
-            )
+            new_status = _classify_outcome_by_pnl(direction, entry, close_price, close_reason)
             mark_orchestrator_trade_closed(conn, trade_id, new_status, "lifecycle_sync")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REGIME-CHANGE → CLOSE-COMMANDS
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 async def check_regime_change_and_close(conn) -> None:
     """
@@ -992,16 +976,13 @@ async def check_regime_change_and_close(conn) -> None:
 
     # Load all open trades
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, coin, direction, bot_name "
-            "FROM orchestrator_open_trades WHERE status = 'OPEN'"
-        )
+        cur.execute("SELECT id, coin, direction, bot_name FROM orchestrator_open_trades WHERE status = 'OPEN'")
         open_trades = cur.fetchall()
 
     closes = []
     keeps = []
 
-    for (trade_id, coin, direction, bot_name) in open_trades:
+    for trade_id, coin, direction, bot_name in open_trades:
         whitelisted, reason = get_whitelist_decision(conn, bot_name, direction)
         if not whitelisted:
             closes.append((trade_id, coin, direction, bot_name, reason))
@@ -1011,13 +992,15 @@ async def check_regime_change_and_close(conn) -> None:
     # Post Close-Commands to trading channel and move trades to closed tables
     total_ai = 0
     total_classic = 0
-    for (trade_id, coin, direction, bot_name, reason) in closes:
+    for trade_id, coin, direction, bot_name, reason in closes:
         close_cmd = f"Close {coin}"
         send_telegram(close_cmd, REGIME_TRADING_CHANNEL_ID)
 
         # Mark orchestrator_open_trades row as closed
         mark_orchestrator_trade_closed(
-            conn, trade_id, "CLOSED_REGIME_CHANGE",
+            conn,
+            trade_id,
+            "CLOSED_REGIME_CHANGE",
             f"REGIME_CHANGE:{reason}",
         )
 
@@ -1042,17 +1025,9 @@ async def check_regime_change_and_close(conn) -> None:
 
     # Summary to status channel
     change_line = "\n".join(changes)
-    close_lines = "\n".join(
-        f"  {c[1]} {c[2]} ({c[3]}) — closed 🛑" for c in closes
-    )
-    keep_lines = "\n".join(
-        f"  {k[0]} {k[1]} ({k[2]}) — kept open (whitelisted)" for k in keeps
-    )
-    summary = (
-        f"🔄 REGIME CHANGE & AUTO-CLOSE\n\n"
-        f"{change_line}\n\n"
-        f"Open trades before change: {len(open_trades)}\n"
-    )
+    close_lines = "\n".join(f"  {c[1]} {c[2]} ({c[3]}) — closed 🛑" for c in closes)
+    keep_lines = "\n".join(f"  {k[0]} {k[1]} ({k[2]}) — kept open (whitelisted)" for k in keeps)
+    summary = f"🔄 REGIME CHANGE & AUTO-CLOSE\n\n{change_line}\n\nOpen trades before change: {len(open_trades)}\n"
     if closes:
         summary += close_lines + "\n"
     if keeps:
@@ -1073,6 +1048,7 @@ async def check_regime_change_and_close(conn) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # HAUPT-LOOP
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def should_run_lifecycle_sync() -> bool:
     global _last_lifecycle_sync

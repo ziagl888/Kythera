@@ -1,18 +1,19 @@
+import json
+import logging
 import os
 import socket
-import json
 import threading
-import logging
-import pandas as pd
-import numpy as np
 
 # ⚠️  MUSS vor jedem anderen matplotlib-Import stehen — verhindert
 #     "cannot connect to display"-Abstürze auf headless Servern.
 import matplotlib
+import numpy as np
+import pandas as pd
+
 matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
-from matplotlib.dates import MinuteLocator, DateFormatter
+from matplotlib.dates import DateFormatter, MinuteLocator
 from matplotlib.patches import Rectangle
 
 logger = logging.getLogger(__name__)
@@ -28,12 +29,12 @@ logger = logging.getLogger(__name__)
 # der genannten Fonts nicht installiert sind.
 try:
     plt.rcParams['font.sans-serif'] = [
-        'DejaVu Sans',              # Default, für Latin
-        'Microsoft YaHei',          # Win10/11 default CJK
-        'SimHei',                   # Windows CJK fallback
-        'Noto Sans CJK SC',         # Linux CJK
-        'Arial Unicode MS',         # macOS CJK
-        'sans-serif'                # ultimate fallback
+        'DejaVu Sans',  # Default, für Latin
+        'Microsoft YaHei',  # Win10/11 default CJK
+        'SimHei',  # Windows CJK fallback
+        'Noto Sans CJK SC',  # Linux CJK
+        'Arial Unicode MS',  # macOS CJK
+        'sans-serif',  # ultimate fallback
     ]
     # axes.unicode_minus=False vermeidet zusätzliche Font-Warnings beim
     # Minus-Zeichen (Unicode U+2212 vs ASCII '-')
@@ -58,6 +59,7 @@ CHART_SERVICE_HOST = os.getenv("CHART_SERVICE_HOST", "127.0.0.1")
 CHART_SERVICE_PORT = int(os.getenv("CHART_SERVICE_PORT", "5555"))
 _SERVICE_TIMEOUT = 3.0  # Sekunden
 
+
 def _fetch_1m_from_service(symbol: str, minutes: int = 240) -> pd.DataFrame:
     """Holt 1min-Kerzen vom lokalen chart_data_service via TCP.
 
@@ -68,9 +70,7 @@ def _fetch_1m_from_service(symbol: str, minutes: int = 240) -> pd.DataFrame:
     request = json.dumps({"cmd": "get", "symbol": symbol, "minutes": minutes}) + "\n"
 
     try:
-        with socket.create_connection(
-            (CHART_SERVICE_HOST, CHART_SERVICE_PORT), timeout=_SERVICE_TIMEOUT
-        ) as sock:
+        with socket.create_connection((CHART_SERVICE_HOST, CHART_SERVICE_PORT), timeout=_SERVICE_TIMEOUT) as sock:
             sock.sendall(request.encode("utf-8"))
             # Antwort lesen bis Newline
             buf = b""
@@ -85,7 +85,7 @@ def _fetch_1m_from_service(symbol: str, minutes: int = 240) -> pd.DataFrame:
         line = buf.split(b"\n", 1)[0].decode("utf-8")
         response = json.loads(line)
 
-    except (socket.timeout, ConnectionRefusedError, OSError) as e:
+    except (TimeoutError, ConnectionRefusedError, OSError) as e:
         logger.warning(f"Chart-Service nicht erreichbar für {symbol}: {e}")
         return pd.DataFrame()
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -149,9 +149,7 @@ def _fetch_5m_from_db(symbol: str, minutes: int = 240) -> pd.DataFrame:
             return pd.DataFrame()
 
         df['open_time'] = pd.to_datetime(df['open_time'], utc=True)
-        df[['open', 'high', 'low', 'close', 'volume']] = df[
-            ['open', 'high', 'low', 'close', 'volume']
-        ].astype(float)
+        df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
         df = df.sort_values('open_time').set_index('open_time')
         return df
 
@@ -173,9 +171,9 @@ def fetch_1m_data_binance(symbol: str, minutes: int = 240) -> pd.DataFrame:
     return _fetch_1m_from_service(symbol, minutes)
 
 
-
-def generate_minichart_image(symbol: str, minutes: int = 240, spike_time=None,
-                              spike_start=None, spike_end=None) -> str | None:
+def generate_minichart_image(
+    symbol: str, minutes: int = 240, spike_time=None, spike_start=None, spike_end=None
+) -> str | None:
     """Erzeugt ein Mini-Chart-Bild für das gegebene Symbol.
 
     Args:
@@ -194,8 +192,7 @@ def generate_minichart_image(symbol: str, minutes: int = 240, spike_time=None,
         return _generate_chart_locked(symbol, minutes, spike_time, spike_start, spike_end)
 
 
-def _generate_chart_locked(symbol: str, minutes: int, spike_time=None,
-                           spike_start=None, spike_end=None) -> str | None:
+def _generate_chart_locked(symbol: str, minutes: int, spike_time=None, spike_start=None, spike_end=None) -> str | None:
     """Interne Implementierung — nur innerhalb von _CHART_LOCK aufrufen."""
     fig = None
     try:
@@ -228,16 +225,14 @@ def _generate_chart_locked(symbol: str, minutes: int, spike_time=None,
             vol_max_scale = volume.max() or 1
 
         vol_colors = [
-            '#00ff88' if i == 0 or price.iloc[i] >= price.iloc[i - 1] else '#ff3040'
-            for i in range(len(price))
+            '#00ff88' if i == 0 or price.iloc[i] >= price.iloc[i - 1] else '#ff3040' for i in range(len(price))
         ]
         time_diffs = df.index.to_series().diff().dt.total_seconds().median()
         if pd.isna(time_diffs) or time_diffs == 0:
             time_diffs = 60
         width_days = (time_diffs / 86400) * 0.9
 
-        ax_vol.bar(price.index, volume, color=vol_colors, width=width_days,
-                   alpha=0.5, align='center', zorder=1)
+        ax_vol.bar(price.index, volume, color=vol_colors, width=width_days, alpha=0.5, align='center', zorder=1)
         ax_vol.set_ylim(0, vol_max_scale * 4.0)
         ax_vol.axis('off')
 
@@ -246,53 +241,53 @@ def _generate_chart_locked(symbol: str, minutes: int, spike_time=None,
         # Breite: 5 Minuten = 5/1440 Tage, 85% davon für leichten Abstand zwischen Kerzen.
         if not df_5m.empty and len(df_5m) >= 2:
             # Nur Kerzen im Zeitbereich des 1min-Charts anzeigen
-            df_5m = df_5m[
-                (df_5m.index >= df.index[0]) & (df_5m.index <= df.index[-1])
-            ]
+            df_5m = df_5m[(df_5m.index >= df.index[0]) & (df_5m.index <= df.index[-1])]
 
             if len(df_5m) >= 1:
-                candle_width_days = (5 * 60 / 86400) * 0.85  # 5min × 85%
-
                 for ts, row in df_5m.iterrows():
-                    o, h, l, c = row['open'], row['high'], row['low'], row['close']
+                    o, h, low, c = row['open'], row['high'], row['low'], row['close']
                     candle_is_up = c >= o
                     body_color = '#00ff88' if candle_is_up else '#ff3040'
                     body_alpha = 0.55
                     wick_alpha = 0.70
 
                     # Docht (High-Low) als dünne Linie
-                    ax_price.plot(
-                        [ts, ts], [l, h],
-                        color=body_color, linewidth=1.0, alpha=wick_alpha, zorder=2.3
-                    )
+                    ax_price.plot([ts, ts], [low, h], color=body_color, linewidth=1.0, alpha=wick_alpha, zorder=2.3)
 
                     # Körper als Rectangle
                     body_low = min(o, c)
                     body_height = abs(c - o)
                     # Minimalhöhe damit doji-Kerzen sichtbar sind
-                    if body_height < (h - l) * 0.02 and (h - l) > 0:
-                        body_height = (h - l) * 0.02
+                    if body_height < (h - low) * 0.02 and (h - low) > 0:
+                        body_height = (h - low) * 0.02
                     rect = Rectangle(
                         (ts - pd.Timedelta(seconds=150 * 0.85), body_low),  # x-offset, y
-                        pd.Timedelta(seconds=300 * 0.85), body_height,       # width, height
-                        facecolor=body_color, edgecolor=body_color,
-                        alpha=body_alpha, zorder=2.4, linewidth=0.7
+                        pd.Timedelta(seconds=300 * 0.85),
+                        body_height,  # width, height
+                        facecolor=body_color,
+                        edgecolor=body_color,
+                        alpha=body_alpha,
+                        zorder=2.4,
+                        linewidth=0.7,
                     )
                     ax_price.add_patch(rect)
 
         # === PREIS-LINIE (1min, Hauptfokus) ===
         fill_color = "#00ff88" if is_up else "#ff3040"
-        ax_price.fill_between(price.index, price, price.min(),
-                              color=fill_color, alpha=0.12, zorder=2)
+        ax_price.fill_between(price.index, price, price.min(), color=fill_color, alpha=0.12, zorder=2)
         ax_price.plot(price.index, price, color="#00ffff", linewidth=2.0, zorder=3)
-        ax_price.axhline(price.iloc[-1], color="white", linewidth=1,
-                         linestyle="--", alpha=0.5, zorder=3.5)
+        ax_price.axhline(price.iloc[-1], color="white", linewidth=1, linestyle="--", alpha=0.5, zorder=3.5)
         ax_price.text(
-            0.05, price.iloc[-1], f"{price.iloc[-1]:,.4f}",
+            0.05,
+            price.iloc[-1],
+            f"{price.iloc[-1]:,.4f}",
             transform=ax_price.get_yaxis_transform(),
-            color="white", fontsize=10, fontweight='bold', va='center',
+            color="white",
+            fontsize=10,
+            fontweight='bold',
+            va='center',
             bbox=dict(facecolor='#1e1e1e', edgecolor='none', pad=5),
-            zorder=4
+            zorder=4,
         )
 
         # === SPIKE-MARKER (DEAKTIVIERT) ===
@@ -316,11 +311,17 @@ def _generate_chart_locked(symbol: str, minutes: int, spike_time=None,
         centers = (bins[:-1] + bins[1:]) / 2
         bar_height = (bins[1] - bins[0]) * 0.88
 
-        ax_vbp.barh(centers, hist, height=bar_height, color='#ff69b4',
-                    alpha=0.75, edgecolor='#ff1493', linewidth=0.6)
+        ax_vbp.barh(centers, hist, height=bar_height, color='#ff69b4', alpha=0.75, edgecolor='#ff1493', linewidth=0.6)
         max_idx = np.argmax(hist)
-        ax_vbp.barh(centers[max_idx], hist[max_idx], height=(bins[1] - bins[0]),
-                    color='#00ffff', alpha=0.9, edgecolor='#ff1493', linewidth=0.6)
+        ax_vbp.barh(
+            centers[max_idx],
+            hist[max_idx],
+            height=(bins[1] - bins[0]),
+            color='#00ffff',
+            alpha=0.9,
+            edgecolor='#ff1493',
+            linewidth=0.6,
+        )
 
         ax_vbp.set_ylim(ax_price.get_ylim())
         ax_vbp.invert_xaxis()
@@ -333,7 +334,11 @@ def _generate_chart_locked(symbol: str, minutes: int, spike_time=None,
         title_time = f"{actual_minutes}min" if actual_minutes > 0 else f"{minutes}min"
         ax_price.set_title(
             f"{coin_str} • {title_time} • ${price.iloc[-1]:,.8f}",
-            color="white", fontsize=20, fontweight='bold', loc='center', pad=10
+            color="white",
+            fontsize=20,
+            fontweight='bold',
+            loc='center',
+            pad=10,
         )
         ax_price.grid(True, color='#333333', alpha=0.3, linestyle='--')
         ax_price.set_facecolor("#0d0d0d")
@@ -355,10 +360,10 @@ def _generate_chart_locked(symbol: str, minutes: int, spike_time=None,
         # zeigt dann auf denselben Pfad, aber der Telegram-Bot löscht die Datei after
         # dem ersten Versand → FileNotFoundError beim zweiten ("Bild not found").
         import time as _t
+
         os.makedirs("charts", exist_ok=True)
         chart_path = f"charts/{symbol}_{int(_t.time() * 1000)}_ai_chart.png"
-        plt.savefig(chart_path, format='png', dpi=150,
-                    facecolor="#0d0d0d", bbox_inches='tight')
+        plt.savefig(chart_path, format='png', dpi=150, facecolor="#0d0d0d", bbox_inches='tight')
         return chart_path
 
     except Exception as e:

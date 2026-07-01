@@ -17,8 +17,8 @@ Upsert auch gleich normalisierte Namen verwenden.
 WICHTIG: Die Normalisierung ist idempotent — pretty_name(pretty_name(x))
 == pretty_name(x). Ein bereits normalisierter Name bleibt unverändert.
 """
-import re as _re
 
+import re as _re
 
 # Display aliases for classic bots — spaces removed for
 # better readability in tables
@@ -30,9 +30,7 @@ _CLASSIC_ALIASES = {
 }
 
 # Pre-compiled regex for MIS1 consolidation
-_MIS1_PATTERN = _re.compile(
-    r'^(MIS1-\d+)[hH](?:_(?:pump|dump|PUMP|DUMP))?$'
-)
+_MIS1_PATTERN = _re.compile(r'^(MIS1-\d+)[hH](?:_(?:pump|dump|PUMP|DUMP))?$')
 
 
 def pretty_name(s: str) -> str:
@@ -63,7 +61,7 @@ def pretty_name(s: str) -> str:
 
     # 1. Typo-Fix MSI1 → MIS1
     if s.startswith("MSI1-"):
-        s = "MIS1-" + s[len("MSI1-"):]
+        s = "MIS1-" + s[len("MSI1-") :]
     elif s == "MSI1":
         s = "MIS1"
 

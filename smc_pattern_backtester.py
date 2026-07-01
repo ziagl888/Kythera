@@ -2,12 +2,12 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import time
-import pandas as pd
-import numpy as np
-import scipy.signal
-import logging
 import json
+import logging
+
+import numpy as np
+import pandas as pd
+import scipy.signal
 
 from core.database import get_db_connection
 
@@ -22,11 +22,14 @@ FEE_RATE = 0.0008  # 0.04% Maker + 0.04% Taker (inkl. Slippage) pro Trade
 
 def get_coins():
     try:
-        with open('coins.json', 'r') as f:
+        with open('coins.json') as f:
             data = json.load(f)
-            return [c.upper() for c in (data.get('coins', data) if isinstance(data, dict) else data) if
-                    c.upper().endswith("USDT")]
-    except:
+            return [
+                c.upper()
+                for c in (data.get('coins', data) if isinstance(data, dict) else data)
+                if c.upper().endswith("USDT")
+            ]
+    except Exception:
         return []
 
 
@@ -53,7 +56,8 @@ def run_backtest():
                     ORDER BY t1.open_time ASC
                 """
                 df = pd.read_sql_query(query, conn)
-                if len(df) < 500: continue
+                if len(df) < 500:
+                    continue
 
                 df.ffill(inplace=True)
                 for c in ['open', 'high', 'low', 'close', 'rsi_14']:
@@ -79,7 +83,8 @@ def run_backtest():
                             entry = closes[i]
                             sl = highs[i] * 1.002
                             dist = sl - entry
-                            if dist <= 0: continue
+                            if dist <= 0:
+                                continue
                             tp = entry - (dist * RR_RATIO)
 
                             for j in range(i + 1, len(df)):
@@ -98,7 +103,8 @@ def run_backtest():
                             entry = closes[i]
                             sl = lows[i] * 0.998
                             dist = entry - sl
-                            if dist <= 0: continue
+                            if dist <= 0:
+                                continue
                             tp = entry + (dist * RR_RATIO)
 
                             for j in range(i + 1, len(df)):
@@ -110,8 +116,15 @@ def run_backtest():
                                     break
                             break
 
-                results.append({'Pattern': '1. Liquidity Sweep', 'TF': tf, 'Symbol': symbol, 'Wins': sweep_wins,
-                                'Losses': sweep_losses})
+                results.append(
+                    {
+                        'Pattern': '1. Liquidity Sweep',
+                        'TF': tf,
+                        'Symbol': symbol,
+                        'Wins': sweep_wins,
+                        'Losses': sweep_losses,
+                    }
+                )
 
                 # =======================================================
                 # STRATEGIE 2: THREE-DRIVE DIVERGENCE
@@ -121,14 +134,16 @@ def run_backtest():
 
                 for i in range(2, len(peak_idx)):
                     p1, p2, p3 = peak_idx[i - 2], peak_idx[i - 1], peak_idx[i]
-                    if p3 - p1 > 100: continue
+                    if p3 - p1 > 100:
+                        continue
 
                     if highs[p1] < highs[p2] < highs[p3]:
                         if rsis[p1] > rsis[p2] > rsis[p3]:
                             entry = closes[p3]
                             sl = highs[p3] * 1.005
                             dist = sl - entry
-                            if dist <= 0: continue
+                            if dist <= 0:
+                                continue
                             tp = entry - (dist * RR_RATIO)
 
                             for j in range(p3 + 1, len(df)):
@@ -140,7 +155,8 @@ def run_backtest():
                                     break
 
                 results.append(
-                    {'Pattern': '2. Three-Drive Div', 'TF': tf, 'Symbol': symbol, 'Wins': td_wins, 'Losses': td_losses})
+                    {'Pattern': '2. Three-Drive Div', 'TF': tf, 'Symbol': symbol, 'Wins': td_wins, 'Losses': td_losses}
+                )
 
                 # =======================================================
                 # STRATEGIE 3: BREAKER BLOCK (Support/Resistance Flip)
@@ -205,9 +221,10 @@ def run_backtest():
                                 break
 
                 results.append(
-                    {'Pattern': '3. Breaker Block', 'TF': tf, 'Symbol': symbol, 'Wins': bb_wins, 'Losses': bb_losses})
+                    {'Pattern': '3. Breaker Block', 'TF': tf, 'Symbol': symbol, 'Wins': bb_wins, 'Losses': bb_losses}
+                )
 
-            except Exception as e:
+            except Exception:
                 pass
 
     conn.close()

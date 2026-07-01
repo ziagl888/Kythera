@@ -1,15 +1,16 @@
 import asyncio
-import aiohttp
 import json
-import time
-import os
 import logging
-from datetime import datetime, timezone, timedelta
+import os
+import time
+from datetime import datetime, timedelta, timezone
+
+import aiohttp
+
+from core import config as _kcfg  # channel ids
 
 # DB Connection importieren (für den Telegram Versand)
-from core.database import get_db_connection
 from core.market_utils import load_coins, send_telegram
-from core import config as _kcfg  # channel ids
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - FUNDING_LOGGER - %(message)s')
@@ -32,10 +33,26 @@ LAST_TOP20_ALERT = 0
 TOP20_COOLDOWN = 900  # 15 Minuten in Sekunden
 
 TOP20_FUNDING_COINS = [
-    "BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT",
-    "TRXUSDT", "DOGEUSDT", "ADAUSDT", "BCHUSDT", "HYPEUSDT",
-    "LINKUSDT", "ZECUSDT", "XLMUSDT", "LTCUSDT", "HBARUSDT",
-    "AVAXUSDT", "SUIUSDT", "UNIUSDT", "TONUSDT", "DOTUSDT"
+    "BTCUSDT",
+    "ETHUSDT",
+    "XRPUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "TRXUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "BCHUSDT",
+    "HYPEUSDT",
+    "LINKUSDT",
+    "ZECUSDT",
+    "XLMUSDT",
+    "LTCUSDT",
+    "HBARUSDT",
+    "AVAXUSDT",
+    "SUIUSDT",
+    "UNIUSDT",
+    "TONUSDT",
+    "DOTUSDT",
 ]
 
 # Globaler Arbeitsspeicher
@@ -63,6 +80,7 @@ def get_historical_rate(symbol, target_ts, tolerance=900):
     O(log n) via bisect statt O(n) Linear-Scan.
     """
     import bisect
+
     series = FUNDING_BY_SYMBOL.get(symbol)
     if not series:
         return None
@@ -82,6 +100,7 @@ def get_historical_rate(symbol, target_ts, tolerance=900):
 
 
 # 📡 TELEGRAM HELPER
+
 
 def calc_diff_bps(current, historical):
     """Differenz zweier Funding-Rates in Basispunkten (1 bps = 0.0001 = 0.01%).
@@ -114,7 +133,8 @@ def check_top20_positive_pct(current_rates_dict):
             if current_rates_dict[coin] > 0:
                 pos_count += 1
 
-    if total == 0: return None
+    if total == 0:
+        return None
     return (pos_count / total) * 100
 
 
@@ -150,7 +170,6 @@ async def evaluate_funding_sentiment(api_data, now_ts):
                 break
 
         if triggered:
-            emoji = "🟢" if direction == "POSITIVE" else "🔴"
             alert_msg = f"""<pre>
 🚨 <b>FUNDING EXTREME ALERT</b> 🚨
 <b>{pct_value:.0f}%</b> of TOP20 Coins are <b>{direction}</b>!
@@ -188,7 +207,8 @@ async def funding_overview_loop():
             try:
                 # 2. Exakt jetzt frische Daten für die Übersicht holen
                 async with session.get("https://fapi.binance.com/fapi/v1/premiumIndex", timeout=15) as resp:
-                    if resp.status != 200: continue
+                    if resp.status != 200:
+                        continue
                     api_data = await resp.json()
 
                 now_ts = time.time()
@@ -232,8 +252,9 @@ async def funding_overview_loop():
                 top20_pos_1h_str = f"{top20_pos_1h:.1f}%" if top20_pos_1h is not None else "N/A"
 
                 # C) Top 5 Positiv & Negativ
-                valid_rates = {k: v for k, v in current_rates.items() if
-                               get_historical_rate(k, now_ts - 300) is not None or v != 0}
+                valid_rates = {
+                    k: v for k, v in current_rates.items() if get_historical_rate(k, now_ts - 300) is not None or v != 0
+                }
                 sorted_rates = sorted(valid_rates.items(), key=lambda x: x[1])
 
                 top3_neg = sorted_rates[:5]
@@ -267,6 +288,7 @@ async def funding_overview_loop():
 
 # ⚙️ CORE SYSTEM
 
+
 def load_existing_funding_data():
     global FUNDING_HISTORY
     FUNDING_HISTORY = []
@@ -279,7 +301,7 @@ def load_existing_funding_data():
 
         if os.path.exists(filepath):
             try:
-                with open(filepath, "r", encoding="utf-8") as f:
+                with open(filepath, encoding="utf-8") as f:
                     day_data = json.load(f)
                     FUNDING_HISTORY.extend(day_data)
             except Exception as e:
@@ -350,11 +372,7 @@ async def funding_monitor_loop():
                     symbol = item["symbol"]
                     if symbol in valid_coins:
                         rate = float(item["lastFundingRate"])
-                        record = {
-                            "ts": now_ts,
-                            "sym": symbol,
-                            "rate": rate
-                        }
+                        record = {"ts": now_ts, "sym": symbol, "rate": rate}
                         FUNDING_HISTORY.append(record)
                         saved_count += 1
 
@@ -377,7 +395,6 @@ async def funding_monitor_loop():
                 logger.error(f"Fehler im Funding-Monitor: {e}", exc_info=True)
 
             await asyncio.sleep(SAVE_INTERVAL_SEC)
-
 
 
 async def main():

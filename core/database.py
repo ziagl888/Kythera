@@ -4,16 +4,16 @@ from __future__ import annotations
 import logging
 import threading
 import warnings
+from contextlib import contextmanager
+from typing import Iterator
 
 import psycopg2
 import psycopg2.extensions
 from psycopg2 import pool as pg_pool
-from contextlib import contextmanager
-from typing import Iterator
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-from core.config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
+from core.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +30,7 @@ def _get_pool() -> pg_pool.ThreadedConnectionPool:
     with _POOL_LOCK:
         if _POOL is not None and not _POOL.closed:
             return _POOL
-        logger.info(
-            f"Creating DB connection pool "
-            f"(min={_POOL_MIN}, max={_POOL_MAX}) → {DB_HOST}:{DB_PORT}/{DB_NAME}"
-        )
+        logger.info(f"Creating DB connection pool (min={_POOL_MIN}, max={_POOL_MAX}) → {DB_HOST}:{DB_PORT}/{DB_NAME}")
         _POOL = pg_pool.ThreadedConnectionPool(
             minconn=_POOL_MIN,
             maxconn=_POOL_MAX,
@@ -88,7 +85,7 @@ class PooledConnection:
         conn = object.__getattribute__(self, '_conn')
         try:
             if not conn.closed:
-                conn.rollback()          # clean up any open transaction
+                conn.rollback()  # clean up any open transaction
             _get_pool().putconn(conn)
         except Exception as e:
             logger.warning(f"Error returning connection to pool: {e}")

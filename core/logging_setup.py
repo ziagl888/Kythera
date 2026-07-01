@@ -48,6 +48,7 @@ def setup_logging(
 
     # --- Rotating file handler (10 MB, 3 backups) ---
     from logging.handlers import RotatingFileHandler
+
     fh = RotatingFileHandler(
         filename=f"{log_dir}/{name}.log",
         maxBytes=10 * 1024 * 1024,

@@ -1,23 +1,22 @@
 import warnings
+
 warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
-import time
 import datetime
-import logging
-import joblib
 import json
+import logging
 import os
+import time
 
-import pandas as pd
+import joblib
 import numpy as np
-import scipy.signal
+import pandas as pd
 
-from core.database import get_db_connection
-from core.charting import generate_minichart_image
-from core.market_utils import get_max_leverage, check_cooldown, update_cooldown
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 from core import config as _kcfg  # channel ids
-
+from core.charting import generate_minichart_image
+from core.database import get_db_connection
+from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATS_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -28,17 +27,29 @@ AI_CHANNEL_ID = _kcfg.CH_ATS
 # --- LOAD ML MODELS ---
 TSI_MODEL_LONG_PATH = "model_tsi_long_robust.pkl"
 TSI_MODEL_SHORT_PATH = "model_tsi_short_robust.pkl"
-TSI_THRESH_LONG = 0.65 #0.8
-TSI_THRESH_SHORT = 0.65 #0.8
+TSI_THRESH_LONG = 0.65  # 0.8
+TSI_THRESH_SHORT = 0.65  # 0.8
 
 TSI_FEATURES = [
-    "rsi_14", "rsi_6", "macd_hist", "atr_pct",
-    "vol_ratio", "bb_width", "bb_pos",
-    "dist_ema200", "dist_ema9_21",
-    "rsi_ratio", "slope_norm",
-    "dist_supp", "dist_res",
-    "dist_kama9", "dist_kama21", "dist_kama55", "dist_kama9_21",
-    "dist_donch_up", "dist_donch_low",
+    "rsi_14",
+    "rsi_6",
+    "macd_hist",
+    "atr_pct",
+    "vol_ratio",
+    "bb_width",
+    "bb_pos",
+    "dist_ema200",
+    "dist_ema9_21",
+    "rsi_ratio",
+    "slope_norm",
+    "dist_supp",
+    "dist_res",
+    "dist_kama9",
+    "dist_kama21",
+    "dist_kama55",
+    "dist_kama9_21",
+    "dist_donch_up",
+    "dist_donch_low",
     "macd_cross_bearish",
     "ema9_21_cross_bearish",
     "kama9_21_cross_bearish",
@@ -48,7 +59,7 @@ TSI_FEATURES = [
     "close_to_vwap_pct",
     "obv_val",
     "volume_spike",
-    "volume_trend_up"
+    "volume_trend_up",
 ]
 
 MODEL_LONG = None
@@ -75,8 +86,6 @@ def load_models():
         logger.error(f"❌ Error loading der TSI Modelle: {e}")
 
 
-
-
 # --- HAUPT CHECKER FUNKTION ---
 def check_tsi_crossovers():
     if not MODEL_LONG or not MODEL_SHORT:
@@ -85,7 +94,7 @@ def check_tsi_crossovers():
 
     conn = get_db_connection()
     try:
-        with open('coins.json', 'r') as f:
+        with open('coins.json') as f:
             coins = json.load(f)
     except Exception as e:
         logger.error(f"Could not load coins.json: {e}")
@@ -102,7 +111,7 @@ def check_tsi_crossovers():
             # Jetzt laden wir 500 Kerzen UND normalisieren OBV auf `obv - obv.iloc[0]`,
             # sodass der absolute Wert unabhängig vom Datenfenster-Start ist.
             query = f"""
-                SELECT 
+                SELECT
                     p.open_time, p.high, p.low, p.close, p.volume,
                     i.rsi_14, i.rsi_6, i.tsi_fast_12_7_7, i.tsi_fast_12_7_7_signal,
                     i.ema_9, i.ema_21, i.ema_50, i.ema_200,
@@ -118,7 +127,8 @@ def check_tsi_crossovers():
             with conn.cursor() as cur:
                 cur.execute(query)
                 rows = cur.fetchall()
-                if len(rows) < 50: continue
+                if len(rows) < 50:
+                    continue
                 columns = [desc[0] for desc in cur.description]
                 df = pd.DataFrame(rows, columns=columns)
 
@@ -163,7 +173,8 @@ def check_tsi_crossovers():
             current_price = float(row['close'])
 
             vol_sma20 = df['volume'].rolling(20).mean().iloc[current_idx]
-            if vol_sma20 == 0: vol_sma20 = 1.0
+            if vol_sma20 == 0:
+                vol_sma20 = 1.0
 
             features = {
                 "rsi_14": row['rsi_14'],
@@ -171,12 +182,12 @@ def check_tsi_crossovers():
                 "macd_hist": row['macd_dif_normal_12_26_9'] - row['macd_dea_normal_12_26_9'],
                 "atr_pct": (row['atr_14'] / row['close']) * 100 if row['close'] else 0,
                 "vol_ratio": row['volume'] / vol_sma20,
-                "bb_width": (row['boll_upper_20'] - row['boll_lower_20']) / row['boll_lower_20'] if row[
-                    'boll_lower_20'] else 0,
-                "bb_pos": (row['close'] - row['boll_lower_20']) / (row['boll_upper_20'] - row['boll_lower_20']) if (row[
-                                                                                                                        'boll_upper_20'] -
-                                                                                                                    row[
-                                                                                                                        'boll_lower_20']) != 0 else 0,
+                "bb_width": (row['boll_upper_20'] - row['boll_lower_20']) / row['boll_lower_20']
+                if row['boll_lower_20']
+                else 0,
+                "bb_pos": (row['close'] - row['boll_lower_20']) / (row['boll_upper_20'] - row['boll_lower_20'])
+                if (row['boll_upper_20'] - row['boll_lower_20']) != 0
+                else 0,
                 "dist_ema200": (row['close'] / row['ema_200']) - 1 if row['ema_200'] else 0,
                 "dist_ema9_21": (row['ema_9'] / row['ema_21']) - 1 if row['ema_21'] else 0,
                 "dist_kama9": (row['close'] / row['kama_9']) - 1 if row['kama_9'] else 0,
@@ -190,19 +201,22 @@ def check_tsi_crossovers():
                 "dist_supp": (row['close'] - row['support_price']) / row['close'] if row['close'] else 0,
                 "dist_res": (row['resistance_price'] - row['close']) / row['close'] if row['close'] else 0,
                 "macd_cross_bearish": int(
-                    row_prev['macd_dif_normal_12_26_9'] >= row_prev['macd_dea_normal_12_26_9'] and row[
-                        'macd_dif_normal_12_26_9'] < row['macd_dea_normal_12_26_9']),
+                    row_prev['macd_dif_normal_12_26_9'] >= row_prev['macd_dea_normal_12_26_9']
+                    and row['macd_dif_normal_12_26_9'] < row['macd_dea_normal_12_26_9']
+                ),
                 "ema9_21_cross_bearish": int(row_prev['ema_9'] >= row_prev['ema_21'] and row['ema_9'] < row['ema_21']),
                 "kama9_21_cross_bearish": int(
-                    row_prev['kama_9'] >= row_prev['kama_21'] and row['kama_9'] < row['kama_21']),
+                    row_prev['kama_9'] >= row_prev['kama_21'] and row['kama_9'] < row['kama_21']
+                ),
                 "bollinger_lower_break": int(row['close'] < row['boll_lower_20']),
                 "close_below_ema50": int(row['close'] < row['ema_50']),
-                "obv_ratio": row['obv'] / df['obv'].rolling(20).mean().iloc[current_idx] if
-                df['obv'].rolling(20).mean().iloc[current_idx] != 0 else 0,
+                "obv_ratio": row['obv'] / df['obv'].rolling(20).mean().iloc[current_idx]
+                if df['obv'].rolling(20).mean().iloc[current_idx] != 0
+                else 0,
                 "close_to_vwap_pct": (row['close'] / row['vwap_20']) - 1 if row['vwap_20'] else 0,
                 "obv_val": row['obv'],
                 "volume_spike": int(row['volume'] > vol_sma20 * 2),
-                "volume_trend_up": int(df['volume'].rolling(5).mean().iloc[current_idx] > vol_sma20)
+                "volume_trend_up": int(df['volume'].rolling(5).mean().iloc[current_idx] > vol_sma20),
             }
 
             # Prediction DataFrame erstellen (Spaltenreihenfolge erzwingen)
@@ -224,10 +238,13 @@ def check_tsi_crossovers():
 
             elif 0.25 <= prob_profit < threshold:
                 with conn.cursor() as cur:
-                    cur.execute("""
+                    cur.execute(
+                        """
                         INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
                         VALUES (0, %s, %s, %s, %s, %s, %s, False)
-                    """, (module_tag, now, symbol, direction, float(current_price), prob_profit))
+                    """,
+                        (module_tag, now, symbol, direction, float(current_price), prob_profit),
+                    )
                 conn.commit()
 
             elif prob_profit >= threshold:
@@ -240,18 +257,24 @@ def check_tsi_crossovers():
 
                 logger.info(f"🔥 TRADE EXECUTE: {symbol} {direction} (ML {prob_profit:.1%})")
 
-                is_long = (direction == "LONG")
+                is_long = direction == "LONG"
                 entry1 = current_price
                 entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
                 supps, resis = get_hvn_and_sr_levels(conn, symbol, current_price)
 
                 if is_long:
-                    sl = max([x for x in supps if x < entry2 * 0.99]) if any(
-                        x < entry2 * 0.99 for x in supps) else entry2 * 0.975
+                    sl = (
+                        max([x for x in supps if x < entry2 * 0.99])
+                        if any(x < entry2 * 0.99 for x in supps)
+                        else entry2 * 0.975
+                    )
                     t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
                 else:
-                    sl = min([x for x in resis if x > entry2 * 1.01]) if any(
-                        x > entry2 * 1.01 for x in resis) else entry2 * 1.025
+                    sl = (
+                        min([x for x in resis if x > entry2 * 1.01])
+                        if any(x > entry2 * 1.01 for x in resis)
+                        else entry2 * 1.025
+                    )
                     t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
                 # FIX: echte Zonen + ggf. 5%-Target wenn letzte Zone zu nah
@@ -259,14 +282,20 @@ def check_tsi_crossovers():
 
                 lev = get_max_leverage(symbol, 20)
                 # Cornix Text
-                lines = [f"📈 Signal for {symbol} 📈", f"🚨 Direction: {direction}", f"🚨 Leverage: {lev}", f"🚨 Margin: Cross",
-                         f"🏦 CMP Entry: $ {entry1:.8f}", f"🏦 Entry 2: $ {entry2:.8f}"]
-                for i, t in enumerate(targets[:3], 1): lines.append(f"💰 TP{i}: $ {t:.8f}")
+                lines = [
+                    f"📈 Signal for {symbol} 📈",
+                    f"🚨 Direction: {direction}",
+                    f"🚨 Leverage: {lev}",
+                    "🚨 Margin: Cross",
+                    f"🏦 CMP Entry: $ {entry1:.8f}",
+                    f"🏦 Entry 2: $ {entry2:.8f}",
+                ]
+                for i, t in enumerate(targets[:3], 1):
+                    lines.append(f"💰 TP{i}: $ {t:.8f}")
                 lines += [f"💸 Stop Loss: $ {sl:.8f}", f"🧠 Trade idea generated by AI module {module_tag} V3"]
                 cornix_msg = "\n".join(lines)
 
                 # HTML für Chart
-                border_color = "#00ff00" if is_long else "#ff0066"
                 emoji = "🚀 TSI-SNIPER LONG" if is_long else "💥 TSI-SNIPER SHORT"
                 vol_trend_str = "JA" if features['volume_trend_up'] else "NEIN"
 
@@ -275,27 +304,45 @@ def check_tsi_crossovers():
                 chart_buf = generate_minichart_image(symbol, minutes=240)
                 with conn.cursor() as cur:
                     # Cornix Channel
-                    cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                (AI_CHANNEL_ID, cornix_msg))
+                    cur.execute(
+                        "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (AI_CHANNEL_ID, cornix_msg)
+                    )
                     # Chart Channel
                     if chart_buf:
-                        cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                                    (AI_CHANNEL_ID, html_caption, chart_buf))
+                        cur.execute(
+                            "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                            (AI_CHANNEL_ID, html_caption, chart_buf),
+                        )
                     else:
-                        cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                    (AI_CHANNEL_ID, html_caption))
+                        cur.execute(
+                            "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
+                            (AI_CHANNEL_ID, html_caption),
+                        )
 
                     # AI Signal Monitor
 
-                    cur.execute("""
+                    cur.execute(
+                        """
                                     INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets)
                                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                """, (symbol, entry1, module_tag, direction, float(prob_profit), float(entry1), float(entry2),
-                                      float(sl), json.dumps(targets)))
+                                """,
+                        (
+                            symbol,
+                            entry1,
+                            module_tag,
+                            direction,
+                            float(prob_profit),
+                            float(entry1),
+                            float(entry2),
+                            float(sl),
+                            json.dumps(targets),
+                        ),
+                    )
                     # Master Log
                     cur.execute(
                         """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, True)""",
-                        (module_tag, now, symbol, direction, float(current_price), float(prob_profit)))
+                        (module_tag, now, symbol, direction, float(current_price), float(prob_profit)),
+                    )
 
                 conn.commit()
                 # Cooldown setzen, damit gleicher Coin/Direction nicht sofort wieder feuert
@@ -303,9 +350,11 @@ def check_tsi_crossovers():
 
         except Exception as e:
             logger.error(f"Error for {symbol} in ATS1: {e}")
-            if conn: conn.rollback()
+            if conn:
+                conn.rollback()
 
-    if conn: conn.close()
+    if conn:
+        conn.close()
     logger.info("🏁 ATS1 Model Check stopped.")
 
 

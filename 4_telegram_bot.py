@@ -6,22 +6,22 @@ import time
 import warnings
 
 from telegram import Bot
-from telegram.error import TelegramError, RetryAfter
+from telegram.error import RetryAfter, TelegramError
 
 # Suppress Pandas warning (in case it appears here)
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- UNSERE SAUBEREN IMPORTS ---
-from core.database import get_db_connection
 from core.config import TELEGRAM_BOT_TOKEN
+from core.database import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - TELEGRAM_BOT - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- KONSTANTEN ---
-MAX_ATTEMPTS = 3           # After 3 failed attempts a message is marked as "failed"
-FETCH_BATCH_SIZE = 50      # Max Messages pro DB-Roundtrip
-IDLE_SLEEP_SEC = 5         # Loop-Delay wenn Outbox leer
+MAX_ATTEMPTS = 3  # After 3 failed attempts a message is marked as "failed"
+FETCH_BATCH_SIZE = 50  # Max Messages pro DB-Roundtrip
+IDLE_SLEEP_SEC = 5  # Loop-Delay wenn Outbox leer
 
 # Rate limiting (replaces old fixed ANTI_SPAM_SLEEP_SEC=1):
 #
@@ -33,7 +33,7 @@ IDLE_SLEEP_SEC = 5         # Loop-Delay wenn Outbox leer
 # intelligent message selection: instead of strict FIFO, pick the next sendable
 # message from the batch. This way a channel backlog does not stall
 # other channels.
-GLOBAL_MIN_INTERVAL_MS = 50         # ~20 sends/s globally (Telegram allows 30/s)
+GLOBAL_MIN_INTERVAL_MS = 50  # ~20 sends/s globally (Telegram allows 30/s)
 PER_CHANNEL_MIN_INTERVAL_MS = 3100  # ~19/min per channel (Telegram allows 20/min)
 
 
@@ -213,7 +213,7 @@ async def process_outbox():
                         sendable_idx = None
                         earliest_unblock_ms = None
 
-                        for idx, (msg_id, channel_id, text, image_path) in enumerate(unsent_messages):
+                        for idx, (_msg_id, channel_id, _text, _image_path) in enumerate(unsent_messages):
                             last_ch = last_send_per_channel.get(channel_id, 0.0)
                             ch_ready_at = last_ch + PER_CHANNEL_MIN_INTERVAL_MS
                             global_ready_at = last_global_send_ms + GLOBAL_MIN_INTERVAL_MS
@@ -250,13 +250,9 @@ async def process_outbox():
                                     logger.info(f"🖼️ Bild-Nachricht {msg_id} an Kanal {channel_id} gesendet.")
                                 except FileNotFoundError:
                                     logger.warning(f"⚠️ Bild not found: {image_path}. Sending nur Text.")
-                                    await bot.send_message(
-                                        chat_id=channel_id, text=text, parse_mode="HTML"
-                                    )
+                                    await bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
                             else:
-                                await bot.send_message(
-                                    chat_id=channel_id, text=text, parse_mode="HTML"
-                                )
+                                await bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
                                 logger.info(f"✅ Text-Nachricht {msg_id} an Kanal {channel_id} gesendet.")
 
                             # Erfolg: Timestamps updaten
@@ -299,8 +295,7 @@ async def process_outbox():
                             if "Chat not found" in error_msg or "chat not found" in error_msg:
                                 logger.error(f"❌ Chat {channel_id} not found. Msg {msg_id} → failed.")
                                 cur.execute(
-                                    "UPDATE telegram_outbox SET failed = TRUE, last_error = %s "
-                                    "WHERE id = %s",
+                                    "UPDATE telegram_outbox SET failed = TRUE, last_error = %s WHERE id = %s",
                                     (error_msg[:1000], msg_id),
                                 )
                                 try_delete_chart(image_path)
@@ -327,7 +322,6 @@ async def process_outbox():
                                 logger.error(f"❌ Msg {msg_id} final failed (unerwartet): {error_msg}")
                             else:
                                 logger.warning(f"⚠️ Msg {msg_id} Fehler, Retry: {error_msg}")
-
 
         except Exception as e:
             logger.error(f"⚠️ Loop-Error: {e}")

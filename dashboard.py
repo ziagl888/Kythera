@@ -7,13 +7,11 @@ Opens on http://localhost:5000
 from __future__ import annotations
 
 import json
-import os
-import signal
+import queue as queue_module
 import subprocess
 import sys
-import time
 import threading
-import queue as queue_module
+import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,36 +23,41 @@ from flask import Flask, Response, jsonify, request, stream_with_context
 # ── Config ─────────────────────────────────────────────────────────────────
 
 BASE_DIR = Path(__file__).parent
-LOG_DIR  = BASE_DIR / "logs"
-PORT     = 5000
+LOG_DIR = BASE_DIR / "logs"
+PORT = 5000
 
 # Process definitions — mirrors main_watchdog.py
 PROCESSES = [
-    {"name": "Data Ingestion",    "script": "1_data_ingestion.py",        "group": "core",     "restart_interval": None},
-    {"name": "Chart Data Service","script": "chart_data_service.py",      "group": "core",     "restart_interval": None},
-    {"name": "Indicator Engine",  "script": "2_indicator_engine.py",      "group": "core",     "restart_interval": 21600},
-    {"name": "Detectors",         "script": "3_detectors.py",             "group": "core",     "restart_interval": 21600},
-    {"name": "Telegram Bot",      "script": "4_telegram_bot.py",          "group": "core",     "restart_interval": None},
-    {"name": "Trade Monitor",     "script": "5_trade_monitor.py",         "group": "core",     "restart_interval": None},
-    {"name": "Housekeeping",      "script": "6_housekeeping.py",          "group": "core",     "restart_interval": None},
-    {"name": "Pattern detector",  "script": "7_pattern_detector.py",      "group": "strategy", "restart_interval": None},
-    {"name": "AI Trade Monitor",  "script": "8_ai_trade_monitor.py",      "group": "strategy", "restart_interval": None},
-    {"name": "AI SR Bot",         "script": "9_ai_sr_bot.py",             "group": "strategy", "restart_interval": None},
-    {"name": "Pump Dump Detector","script": "10_pump_dump_detector.py",   "group": "strategy", "restart_interval": None},
-    {"name": "AI MIS1 Detector",  "script": "11_ai_mis_bot.py",           "group": "ai",       "restart_interval": None},
-    {"name": "AI ATS1 Detector",  "script": "12_ai_ats_bot.py",           "group": "ai",       "restart_interval": None},
-    {"name": "AI RUB1 Detector",  "script": "13_ai_rub_bot.py",           "group": "ai",       "restart_interval": None},
-    {"name": "AI ATB1 Detector",  "script": "14_ai_atb_bot.py",           "group": "ai",       "restart_interval": None},
-    {"name": "AI AIM1 Detector",  "script": "15_ai_master_bot.py",        "group": "ai",       "restart_interval": None},
-    {"name": "SMC FOREX Detector","script": "16_smc_forex_metals_bot.py", "group": "strategy", "restart_interval": None},
-    {"name": "Mayank Bot",        "script": "17_mayank_bot.py",           "group": "strategy", "restart_interval": None},
-    {"name": "AI ABR1 Detector",  "script": "18_ai_abr1_bot.py",         "group": "ai",       "restart_interval": None},
-    {"name": "Whale logger Bot",  "script": "19_whale_logger_bot.py",     "group": "logger",   "restart_interval": None},
-    {"name": "Funding logger Bot","script": "20_funding_logger_bot.py",   "group": "logger",   "restart_interval": None},
-    {"name": "BTC SMC Bot",       "script": "21_btc_smc_strategy.py",     "group": "strategy", "restart_interval": None},
-    {"name": "Market Tracker",    "script": "23_market_tracker.py",       "group": "logger",   "restart_interval": None},
-    {"name": "Quasimodo Bot",     "script": "24_quasimodo_bot.py",        "group": "strategy", "restart_interval": None},
-    {"name": "TD & BB Bot",       "script": "25_smc_ml_sniper.py",        "group": "ai",       "restart_interval": None},
+    {"name": "Data Ingestion", "script": "1_data_ingestion.py", "group": "core", "restart_interval": None},
+    {"name": "Chart Data Service", "script": "chart_data_service.py", "group": "core", "restart_interval": None},
+    {"name": "Indicator Engine", "script": "2_indicator_engine.py", "group": "core", "restart_interval": 21600},
+    {"name": "Detectors", "script": "3_detectors.py", "group": "core", "restart_interval": 21600},
+    {"name": "Telegram Bot", "script": "4_telegram_bot.py", "group": "core", "restart_interval": None},
+    {"name": "Trade Monitor", "script": "5_trade_monitor.py", "group": "core", "restart_interval": None},
+    {"name": "Housekeeping", "script": "6_housekeeping.py", "group": "core", "restart_interval": None},
+    {"name": "Pattern detector", "script": "7_pattern_detector.py", "group": "strategy", "restart_interval": None},
+    {"name": "AI Trade Monitor", "script": "8_ai_trade_monitor.py", "group": "strategy", "restart_interval": None},
+    {"name": "AI SR Bot", "script": "9_ai_sr_bot.py", "group": "strategy", "restart_interval": None},
+    {"name": "Pump Dump Detector", "script": "10_pump_dump_detector.py", "group": "strategy", "restart_interval": None},
+    {"name": "AI MIS1 Detector", "script": "11_ai_mis_bot.py", "group": "ai", "restart_interval": None},
+    {"name": "AI ATS1 Detector", "script": "12_ai_ats_bot.py", "group": "ai", "restart_interval": None},
+    {"name": "AI RUB1 Detector", "script": "13_ai_rub_bot.py", "group": "ai", "restart_interval": None},
+    {"name": "AI ATB1 Detector", "script": "14_ai_atb_bot.py", "group": "ai", "restart_interval": None},
+    {"name": "AI AIM1 Detector", "script": "15_ai_master_bot.py", "group": "ai", "restart_interval": None},
+    {
+        "name": "SMC FOREX Detector",
+        "script": "16_smc_forex_metals_bot.py",
+        "group": "strategy",
+        "restart_interval": None,
+    },
+    {"name": "Mayank Bot", "script": "17_mayank_bot.py", "group": "strategy", "restart_interval": None},
+    {"name": "AI ABR1 Detector", "script": "18_ai_abr1_bot.py", "group": "ai", "restart_interval": None},
+    {"name": "Whale logger Bot", "script": "19_whale_logger_bot.py", "group": "logger", "restart_interval": None},
+    {"name": "Funding logger Bot", "script": "20_funding_logger_bot.py", "group": "logger", "restart_interval": None},
+    {"name": "BTC SMC Bot", "script": "21_btc_smc_strategy.py", "group": "strategy", "restart_interval": None},
+    {"name": "Market Tracker", "script": "23_market_tracker.py", "group": "logger", "restart_interval": None},
+    {"name": "Quasimodo Bot", "script": "24_quasimodo_bot.py", "group": "strategy", "restart_interval": None},
+    {"name": "TD & BB Bot", "script": "25_smc_ml_sniper.py", "group": "ai", "restart_interval": None},
 ]
 
 # script → process info lookup
@@ -86,6 +89,7 @@ def _push_event(event_type: str, data: dict) -> None:
 
 # ── Process Discovery ───────────────────────────────────────────────────────
 
+
 def _script_to_log(script: str) -> Path:
     """Derive log file path from script name, using core/logging_setup convention."""
     name_map = {p["script"]: p["name"] for p in PROCESSES}
@@ -93,7 +97,7 @@ def _script_to_log(script: str) -> Path:
     # logging_setup writes to logs/<name>.log
     candidates = [
         LOG_DIR / f"{name}.log",
-        BASE_DIR / f"{script.replace('.py','')}.log",
+        BASE_DIR / f"{script.replace('.py', '')}.log",
         BASE_DIR / "watchdog.log",
     ]
     for c in candidates:
@@ -149,10 +153,10 @@ def _get_process_status(p_def: dict) -> dict:
         try:
             proc = psutil.Process(pid)
             with proc.oneshot():
-                status["running"]  = proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
-                status["pid"]      = pid
-                status["cpu"]      = round(proc.cpu_percent(interval=0.1), 1)
-                status["mem_mb"]   = round(proc.memory_info().rss / 1024 / 1024, 1)
+                status["running"] = proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+                status["pid"] = pid
+                status["cpu"] = round(proc.cpu_percent(interval=0.1), 1)
+                status["mem_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
                 status["uptime_s"] = int(time.time() - proc.create_time())
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
@@ -181,6 +185,7 @@ def get_system_stats() -> dict:
 
 # ── Process Control ─────────────────────────────────────────────────────────
 
+
 def start_process(script: str) -> dict:
     pid = _find_pid_for_script(script)
     if pid:
@@ -194,7 +199,6 @@ def start_process(script: str) -> dict:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    p_def = SCRIPT_MAP.get(script, {})
     _push_event("process_change", {"script": script, "action": "started", "pid": proc.pid})
     return {"ok": True, "pid": proc.pid, "msg": f"Started (PID {proc.pid})"}
 
@@ -249,12 +253,13 @@ def start_all() -> dict:
 
 # ── Log Streaming ───────────────────────────────────────────────────────────
 
+
 def tail_log(log_path: Path, lines: int = 200) -> list[str]:
     """Return the last N lines from a log file."""
     if not log_path.exists():
         return [f"[Log file not found: {log_path}]"]
     try:
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
             return f.readlines()[-lines:]
     except Exception as e:
         return [f"[Error reading log: {e}]"]
@@ -265,7 +270,7 @@ def stream_log(log_path: Path) -> Iterator[str]:
     if not log_path.exists():
         yield f"data: [Waiting for {log_path.name}...]\n\n"
 
-    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+    with open(log_path, encoding="utf-8", errors="replace") as f:
         f.seek(0, 2)  # seek to end
         while True:
             line = f.readline()
@@ -276,6 +281,7 @@ def stream_log(log_path: Path) -> Iterator[str]:
 
 
 # ── Background stats poller ─────────────────────────────────────────────────
+
 
 def _stats_poller() -> None:
     """Push system stats every 5s to all SSE clients."""
@@ -376,8 +382,7 @@ def api_events():
         recent = list(_sse_queue)[-10:]
 
     def generate():
-        for ev in recent:
-            yield ev
+        yield from recent
         try:
             while True:
                 try:

@@ -2,17 +2,17 @@ import warnings
 
 warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
-import time
 import datetime
 import logging
+import time
+
 import pandas as pd
-import numpy as np
-import scipy.signal
+
+from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
 from core.market_utils import calculate_pivots, get_max_leverage
-from core import config as _kcfg  # channel ids
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - BTC_SNIPER - %(message)s')
 logger = logging.getLogger(__name__)
@@ -29,8 +29,8 @@ EMA_PERIOD = 21
 # Damit bleibt die Strategie bei ruhigem Market eng (hohe R:R), passt sich aber
 # bei Volatilität automatisch an (z.B. after CPI-Releases, Halving-Events).
 SL_ATR_MULT = 1.0
-SL_PCT_FLOOR = 0.004   # 0.4% — minimaler SL (historisch optimiertes Floor)
-SL_PCT_CAP = 0.012     # 1.2% — Cap verhindert zu weite SLs in High-Vola-Phasen
+SL_PCT_FLOOR = 0.004  # 0.4% — minimaler SL (historisch optimiertes Floor)
+SL_PCT_CAP = 0.012  # 1.2% — Cap verhindert zu weite SLs in High-Vola-Phasen
 
 DESIRED_LEVERAGE = 100  # wird gegen max_leverage.json gecapped
 
@@ -44,11 +44,14 @@ def calculate_atr(df, period=14):
     high = df['high']
     low = df['low']
     close = df['close']
-    tr = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low - close.shift()).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            high - low,
+            (high - close.shift()).abs(),
+            (low - close.shift()).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
     return tr.rolling(period).mean()
 
 
@@ -100,7 +103,9 @@ def fetch_db_data():
         conn = get_db_connection()
         # FIX: Vorher ASC → lud Daten von 2020. Jetzt DESC LIMIT 500 +
         # Reverse, damit wir die NEUESTEN 500 Kerzen chronologisch sortiert bekommen.
-        query = f'SELECT open_time, open, high, low, close FROM "{SYMBOL}_{TIMEFRAME}" ORDER BY open_time DESC LIMIT 500'
+        query = (
+            f'SELECT open_time, open, high, low, close FROM "{SYMBOL}_{TIMEFRAME}" ORDER BY open_time DESC LIMIT 500'
+        )
         df = pd.read_sql_query(query, conn)
         conn.close()
 
@@ -110,7 +115,8 @@ def fetch_db_data():
         # Chronologisch sortieren (älteste zuerst), damit alle Indizes und Pivots passen
         df = df.iloc[::-1].reset_index(drop=True)
 
-        for c in ['open', 'high', 'low', 'close']: df[c] = df[c].astype(float)
+        for c in ['open', 'high', 'low', 'close']:
+            df[c] = df[c].astype(float)
 
         # Die laufende/aktuelle Kerze ignorieren, wir handeln nur harte Closes!
         if not df.empty:
@@ -124,10 +130,13 @@ def fetch_db_data():
 
 # 🧠 SMC MATHEMATIK
 
+
 def is_touching_pivot(price, pivots, max_idx, threshold=0.001):
     for p_idx, p_val in reversed(pivots):
-        if p_idx > max_idx - 5: continue
-        if p_idx < max_idx - MAX_PIVOT_AGE: break
+        if p_idx > max_idx - 5:
+            continue
+        if p_idx < max_idx - MAX_PIVOT_AGE:
+            break
         if abs(price - p_val) / p_val <= threshold:
             return True
     return False
@@ -171,7 +180,6 @@ def analyze_market():
 
                 # Wurde es am Pivot started?
                 if is_touching_pivot(candle_1_low, supports, i - 2):
-
                     # Wurde es VOR der aktuellen Kerze schon geschlossen?
                     was_closed_before = any(lows[j] <= gap_bottom for j in range(i + 1, curr_idx))
 
@@ -179,8 +187,11 @@ def analyze_market():
                         # Hat die AKTUELLE Kerze das FVG genau jetzt fully closed?
                         if curr_low <= gap_bottom:
                             # SETUP GEFUNDEN! Targets suchen...
-                            valid_res = [val for p_idx, val in resistances if
-                                         curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val > curr_price]
+                            valid_res = [
+                                val
+                                for p_idx, val in resistances
+                                if curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val > curr_price
+                            ]
 
                             if valid_res:
                                 target = min(valid_res)
@@ -192,7 +203,9 @@ def analyze_market():
 
                                 if risk > 0 and rr >= MIN_RR_RATIO:
                                     lev = get_max_leverage(SYMBOL, DESIRED_LEVERAGE)
-                                    logger.info(f"🎯 BINGO LONG! FVG fully closed bei {gap_bottom:.2f} | SL-Pct {sl_pct*100:.2f}%")
+                                    logger.info(
+                                        f"🎯 BINGO LONG! FVG fully closed bei {gap_bottom:.2f} | SL-Pct {sl_pct * 100:.2f}%"
+                                    )
                                     send_cornix_signal("LONG", curr_price, sl, target, rr, lev)
                                     return  # Verhindert, dass wir mehrere Setups im selben Durchlauf posten
 
@@ -206,7 +219,6 @@ def analyze_market():
 
                 # Wurde es am Pivot started?
                 if is_touching_pivot(candle_1_high, resistances, i - 2):
-
                     # Wurde es VOR der aktuellen Kerze schon geschlossen?
                     was_closed_before = any(highs[j] >= gap_top for j in range(i + 1, curr_idx))
 
@@ -214,8 +226,11 @@ def analyze_market():
                         # Hat die AKTUELLE Kerze das FVG genau jetzt fully closed?
                         if curr_high >= gap_top:
                             # SETUP GEFUNDEN! Targets suchen...
-                            valid_sup = [val for p_idx, val in supports if
-                                         curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val < curr_price]
+                            valid_sup = [
+                                val
+                                for p_idx, val in supports
+                                if curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val < curr_price
+                            ]
 
                             if valid_sup:
                                 target = max(valid_sup)
@@ -227,7 +242,9 @@ def analyze_market():
 
                                 if risk > 0 and rr >= MIN_RR_RATIO:
                                     lev = get_max_leverage(SYMBOL, DESIRED_LEVERAGE)
-                                    logger.info(f"🎯 BINGO SHORT! FVG fully closed bei {gap_top:.2f} | SL-Pct {sl_pct*100:.2f}%")
+                                    logger.info(
+                                        f"🎯 BINGO SHORT! FVG fully closed bei {gap_top:.2f} | SL-Pct {sl_pct * 100:.2f}%"
+                                    )
                                     send_cornix_signal("SHORT", curr_price, sl, target, rr, lev)
                                     return
 
@@ -235,7 +252,9 @@ def analyze_market():
 # ⏰ HAUPTSCHLEIFE
 def main():
     logger.info("=== 🎯 BTC SNIPER BOT (CORNIX EDITION) GESTARTET ===")
-    logger.info(f"Parameter: EMA {EMA_PERIOD} | SL dynamisch (ATR×{SL_ATR_MULT}, {SL_PCT_FLOOR*100:.1f}%–{SL_PCT_CAP*100:.1f}%) | Min R:R {MIN_RR_RATIO}")
+    logger.info(
+        f"Parameter: EMA {EMA_PERIOD} | SL dynamisch (ATR×{SL_ATR_MULT}, {SL_PCT_FLOOR * 100:.1f}%–{SL_PCT_CAP * 100:.1f}%) | Min R:R {MIN_RR_RATIO}"
+    )
 
     while True:
         try:

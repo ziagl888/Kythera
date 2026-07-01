@@ -3,20 +3,21 @@ import warnings
 warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 
-import time
 import datetime
-import logging
-import pandas as pd
-import numpy as np
-import scipy.signal
 import json
+import logging
+import time
+
+import numpy as np
+import pandas as pd
+import scipy.signal
 import xgboost as xgb
 
-from core.database import get_db_connection
-from core.charting import generate_minichart_image
-from core.market_utils import get_max_leverage, check_cooldown, update_cooldown
-from core.trade_utils import calculate_smart_targets
 from core import config as _kcfg  # channel ids
+from core.charting import generate_minichart_image
+from core.database import get_db_connection
+from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - ABR1_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -52,11 +53,24 @@ LEVEL_TOLERANCE_PCT = 0.005
 LIVE_DATA_HISTORY_HOURS = 240
 
 FEATURE_COLUMNS = [
-    'dist_close_ema9_pct', 'dist_ema9_ema21_pct', 'dist_close_kama9_pct', 'rsi14',
-    'rsi_below_30', 'rsi_above_70', 'tsi', 'tsi_signal', 'tsi_above_0', 'tsi_below_0',
-    'dist_close_boll_upper_pct', 'dist_close_boll_mid_pct', 'dist_close_boll_lower_pct',
-    'dist_close_donchian_upper_pct', 'dist_close_donchian_mid_pct', 'dist_close_donchian_lower_pct',
-    'retest_volume', 'retest_volume_ratio_avg'
+    'dist_close_ema9_pct',
+    'dist_ema9_ema21_pct',
+    'dist_close_kama9_pct',
+    'rsi14',
+    'rsi_below_30',
+    'rsi_above_70',
+    'tsi',
+    'tsi_signal',
+    'tsi_above_0',
+    'tsi_below_0',
+    'dist_close_boll_upper_pct',
+    'dist_close_boll_mid_pct',
+    'dist_close_boll_lower_pct',
+    'dist_close_donchian_upper_pct',
+    'dist_close_donchian_mid_pct',
+    'dist_close_donchian_lower_pct',
+    'retest_volume',
+    'retest_volume_ratio_avg',
 ]
 
 # Modelle global
@@ -75,7 +89,7 @@ def load_models_and_coins():
         exit(1)
 
     try:
-        with open(SG_COINS_FILE, 'r') as f:
+        with open(SG_COINS_FILE) as f:
             data = json.load(f)
             return data.get('coins', data) if isinstance(data, dict) else data
     except Exception:
@@ -83,10 +97,8 @@ def load_models_and_coins():
         return []
 
 
-
 def calculate_technical_indicators(df):
     """Berechnet alle Features für das Modell via pandas_ta"""
-    import pandas_ta as ta  # Import hier, damit es nicht crasht, wenn es oben fehlt
 
     # Sicherstellen, dass alles numerisch ist
     for col in ['open', 'high', 'low', 'close', 'volume']:
@@ -101,21 +113,40 @@ def calculate_technical_indicators(df):
     df.ta.donchian(length=20, append=True)
 
     expected_pta_cols = {
-        'EMA_9': np.nan, 'EMA_21': np.nan, 'KAMA_9': np.nan,
-        'RSI_14': np.nan, 'TSI_12_7': np.nan, 'TSIs_12_7_7': np.nan,
-        'BBL_20_2': np.nan, 'BBM_20_2': np.nan, 'BBU_20_2': np.nan,
-        'DCL_20': np.nan, 'DCM_20': np.nan, 'DCU_20': np.nan
+        'EMA_9': np.nan,
+        'EMA_21': np.nan,
+        'KAMA_9': np.nan,
+        'RSI_14': np.nan,
+        'TSI_12_7': np.nan,
+        'TSIs_12_7_7': np.nan,
+        'BBL_20_2': np.nan,
+        'BBM_20_2': np.nan,
+        'BBU_20_2': np.nan,
+        'DCL_20': np.nan,
+        'DCM_20': np.nan,
+        'DCU_20': np.nan,
     }
     for col, default_val in expected_pta_cols.items():
         if col not in df.columns:
             df[col] = default_val
 
-    df.rename(columns={
-        'EMA_9': 'ema9', 'EMA_21': 'ema21', 'KAMA_9': 'kama9',
-        'RSI_14': 'rsi14', 'TSI_12_7': 'tsi', 'TSIs_12_7_7': 'tsi_signal',
-        'BBL_20_2': 'boll_lower_20', 'BBM_20_2': 'boll_mid_20', 'BBU_20_2': 'boll_upper_20',
-        'DCL_20': 'donchian_lower_20', 'DCM_20': 'donchian_mid_20', 'DCU_20': 'donchian_upper_20'
-    }, inplace=True)
+    df.rename(
+        columns={
+            'EMA_9': 'ema9',
+            'EMA_21': 'ema21',
+            'KAMA_9': 'kama9',
+            'RSI_14': 'rsi14',
+            'TSI_12_7': 'tsi',
+            'TSIs_12_7_7': 'tsi_signal',
+            'BBL_20_2': 'boll_lower_20',
+            'BBM_20_2': 'boll_mid_20',
+            'BBU_20_2': 'boll_upper_20',
+            'DCL_20': 'donchian_lower_20',
+            'DCM_20': 'donchian_mid_20',
+            'DCU_20': 'donchian_upper_20',
+        },
+        inplace=True,
+    )
 
     df['dist_close_ema9_pct'] = ((df['close'] - df['ema9']) / df['ema9'] * 100).fillna(0)
     df['dist_ema9_ema21_pct'] = ((df['ema9'] - df['ema21']) / df['ema21'] * 100).fillna(0)
@@ -128,10 +159,12 @@ def calculate_technical_indicators(df):
     df['dist_close_boll_mid_pct'] = ((df['close'] - df['boll_mid_20']) / df['boll_mid_20'] * 100).fillna(0)
     df['dist_close_boll_lower_pct'] = ((df['close'] - df['boll_lower_20']) / df['boll_lower_20'] * 100).fillna(0)
     df['dist_close_donchian_upper_pct'] = (
-                (df['close'] - df['donchian_upper_20']) / df['donchian_upper_20'] * 100).fillna(0)
+        (df['close'] - df['donchian_upper_20']) / df['donchian_upper_20'] * 100
+    ).fillna(0)
     df['dist_close_donchian_mid_pct'] = ((df['close'] - df['donchian_mid_20']) / df['donchian_mid_20'] * 100).fillna(0)
     df['dist_close_donchian_lower_pct'] = (
-                (df['close'] - df['donchian_lower_20']) / df['donchian_lower_20'] * 100).fillna(0)
+        (df['close'] - df['donchian_lower_20']) / df['donchian_lower_20'] * 100
+    ).fillna(0)
     df['volume_avg_30'] = df['volume'].rolling(window=30, min_periods=1).mean()
     df['retest_volume_ratio_avg'] = (df['volume'] / df['volume_avg_30']).fillna(1)
     df['retest_volume'] = df['volume']
@@ -153,13 +186,25 @@ def find_pivot_levels(df):
     for idx in high_extrema_indices:
         original_idx = idx - PIVOT_WINDOW
         if 0 <= original_idx < len(df):
-            levels.append({'price': df.iloc[original_idx]['high'], 'type': 'resistance', 'index': original_idx,
-                           'time': df.iloc[original_idx]['open_time']})
+            levels.append(
+                {
+                    'price': df.iloc[original_idx]['high'],
+                    'type': 'resistance',
+                    'index': original_idx,
+                    'time': df.iloc[original_idx]['open_time'],
+                }
+            )
     for idx in low_extrema_indices:
         original_idx = idx - PIVOT_WINDOW
         if 0 <= original_idx < len(df):
-            levels.append({'price': df.iloc[original_idx]['low'], 'type': 'support', 'index': original_idx,
-                           'time': df.iloc[original_idx]['open_time']})
+            levels.append(
+                {
+                    'price': df.iloc[original_idx]['low'],
+                    'type': 'support',
+                    'index': original_idx,
+                    'time': df.iloc[original_idx]['open_time'],
+                }
+            )
     return levels
 
 
@@ -178,13 +223,19 @@ def send_signal(conn, symbol, direction, prob, close_price):
 
     lev = get_max_leverage(symbol, 20)
 
-    lines = [f"📈 Signal for {symbol} 📈", f"🚨 Direction: {direction}", f"🚨 Leverage: {lev}", f"🚨 Margin: Cross",
-             f"🏦 CMP Entry: $ {entry1:.5f}", f"🏦 Entry 2: $ {entry2:.5f}"]
-    for i, t in enumerate(targets[:3], 1): lines.append(f"💰 TP{i}: $ {t:.5f}")
+    lines = [
+        f"📈 Signal for {symbol} 📈",
+        f"🚨 Direction: {direction}",
+        f"🚨 Leverage: {lev}",
+        "🚨 Margin: Cross",
+        f"🏦 CMP Entry: $ {entry1:.5f}",
+        f"🏦 Entry 2: $ {entry2:.5f}",
+    ]
+    for i, t in enumerate(targets[:3], 1):
+        lines.append(f"💰 TP{i}: $ {t:.5f}")
     lines += [f"💸 Stop Loss: $ {sl:.5f}", f"🧠 Trade idea generated by AI module {MODEL_ID}"]
     cornix_msg = "\n".join(lines)
 
-    color = "#00ff88" if direction == "LONG" else "#ff4466"
     emoji = "🚀 AI ABR1 LONG SIGNAL" if direction == "LONG" else "💥 AI ABR1 SHORT SIGNAL"
 
     html = f"""<pre><b>{emoji}</b>\n<b>{symbol}</b>\n<b>→ Direction: {direction}</b>\n<b>→ ML Confidence: <b>{prob:.1%}</b></b>\n<b>→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC | Modul: {MODEL_ID}</b>\n<b>→ Source: AI Break & Retest Model</b>\n\n{cornix_msg}</pre>"""
@@ -193,18 +244,31 @@ def send_signal(conn, symbol, direction, prob, close_price):
 
     with conn.cursor() as cur:
         # Cornix Channel (Hier nutzt er den speziellen Rubberband Channel!)
-        cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                    (TARGET_CHANNEL_ID, cornix_msg))
+        cur.execute(
+            "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (TARGET_CHANNEL_ID, cornix_msg)
+        )
         if chart_buf:
-            cur.execute("INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                        (TARGET_CHANNEL_ID, html, chart_buf))
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                (TARGET_CHANNEL_ID, html, chart_buf),
+            )
         else:
             cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (TARGET_CHANNEL_ID, html))
 
         cur.execute(
             """INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (symbol, float(entry1), MODEL_ID, direction, float(prob), float(entry1), float(entry2), float(sl),
-             json.dumps(targets)))
+            (
+                symbol,
+                float(entry1),
+                MODEL_ID,
+                direction,
+                float(prob),
+                float(entry1),
+                float(entry2),
+                float(sl),
+                json.dumps(targets),
+            ),
+        )
     conn.commit()
     update_cooldown(conn, MODEL_ID, symbol, direction)
     logger.info(f"✅ {MODEL_ID} Signal für {symbol} in Outbox gelegt!")
@@ -228,7 +292,8 @@ def process_abr_logic(conn, symbol):
 
         df_indicators = calculate_technical_indicators(df.copy())
         levels = find_pivot_levels(df_indicators)
-        if not levels: return
+        if not levels:
+            return
 
         potential_retest_candle_indices = range(len(df_indicators) - 1, max(0, len(df_indicators) - 1 - 3), -1)
 
@@ -240,16 +305,18 @@ def process_abr_logic(conn, symbol):
             # `df = df[df['open_time'] < current_hour_utc]` weggeschnitten.
 
             for level in levels:
-                if level['index'] >= retest_idx: continue
+                if level['index'] >= retest_idx:
+                    continue
 
                 lvl_price = level['price']
                 upper_bound = lvl_price * (1 + LEVEL_TOLERANCE_PCT)
                 lower_bound = lvl_price * (1 - LEVEL_TOLERANCE_PCT)
 
-                is_retest_long = (retest_candle['low'] <= upper_bound and retest_candle['low'] >= lower_bound)
-                is_retest_short = (retest_candle['high'] >= lower_bound and retest_candle['high'] <= upper_bound)
+                is_retest_long = retest_candle['low'] <= upper_bound and retest_candle['low'] >= lower_bound
+                is_retest_short = retest_candle['high'] >= lower_bound and retest_candle['high'] <= upper_bound
 
-                if not (is_retest_long or is_retest_short): continue
+                if not (is_retest_long or is_retest_short):
+                    continue
 
                 break_found = False
                 direction = None
@@ -259,17 +326,24 @@ def process_abr_logic(conn, symbol):
                 for break_idx in range(search_start_idx, search_end_idx, -1):
                     b_candle = df_indicators.iloc[break_idx]
                     prev_b_candle = df_indicators.iloc[break_idx - 1] if break_idx > 0 else None
-                    if prev_b_candle is None: continue
+                    if prev_b_candle is None:
+                        continue
 
-                    if level['type'] == 'resistance' and prev_b_candle['close'] < lvl_price and b_candle[
-                        'close'] > lvl_price:
-                        break_found = True;
-                        direction = 'LONG';
+                    if (
+                        level['type'] == 'resistance'
+                        and prev_b_candle['close'] < lvl_price
+                        and b_candle['close'] > lvl_price
+                    ):
+                        break_found = True
+                        direction = 'LONG'
                         break
-                    elif level['type'] == 'support' and prev_b_candle['close'] > lvl_price and b_candle[
-                        'close'] < lvl_price:
-                        break_found = True;
-                        direction = 'SHORT';
+                    elif (
+                        level['type'] == 'support'
+                        and prev_b_candle['close'] > lvl_price
+                        and b_candle['close'] < lvl_price
+                    ):
+                        break_found = True
+                        direction = 'SHORT'
                         break
 
                 if break_found and direction:
@@ -289,7 +363,8 @@ def process_abr_logic(conn, symbol):
 
                     if prediction_proba >= 0.50:  # Grundbedingung aus deinem alten Script
                         logger.info(
-                            f"ABR1 Break&Retest erkannt bei {symbol} | Dir: {direction} | Prob: {prediction_proba:.2f}")
+                            f"ABR1 Break&Retest erkannt bei {symbol} | Dir: {direction} | Prob: {prediction_proba:.2f}"
+                        )
                         if prediction_proba >= current_threshold:
                             send_signal(conn, symbol, direction, prediction_proba, retest_candle['close'])
 

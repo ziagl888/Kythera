@@ -21,10 +21,11 @@ Output:
 
 Alle Zahlen in MB/GB (pg_size_pretty-Format), keine Raw-Bytes.
 """
+
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 # sys.path für Import von core.database erweitern
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +41,7 @@ except ImportError:
 # ────────────────────────────────────────────────────────────────────────────
 # PRINTING HELPERS
 # ────────────────────────────────────────────────────────────────────────────
+
 
 def section(title: str) -> None:
     print()
@@ -57,26 +59,25 @@ def print_kv(key: str, value, width: int = 38) -> None:
     print(f"  {key:<{width}} {value}")
 
 
-def print_table(rows: list[tuple], headers: list[str],
-                widths: list[int] | None = None) -> None:
+def print_table(rows: list[tuple], headers: list[str], widths: list[int] | None = None) -> None:
     """Simple table printer with aligned columns."""
     if not rows:
         print("  (keine Daten)")
         return
     if widths is None:
-        widths = [max(len(str(h)), *(len(str(r[i])) for r in rows)) + 2
-                  for i, h in enumerate(headers)]
-    header_line = "  " + "".join(f"{h:<{w}}" for h, w in zip(headers, widths))
+        widths = [max(len(str(h)), *(len(str(r[i])) for r in rows)) + 2 for i, h in enumerate(headers)]
+    header_line = "  " + "".join(f"{h:<{w}}" for h, w in zip(headers, widths, strict=False))
     print(header_line)
     print("  " + "─" * (sum(widths)))
     for r in rows:
-        row_line = "  " + "".join(f"{str(v):<{w}}" for v, w in zip(r, widths))
+        row_line = "  " + "".join(f"{str(v):<{w}}" for v, w in zip(r, widths, strict=False))
         print(row_line)
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # QUERIES
 # ────────────────────────────────────────────────────────────────────────────
+
 
 def analyze_overall(cur) -> None:
     section("1. GESAMT-STATISTIK")
@@ -329,11 +330,7 @@ def analyze_autovacuum(cur) -> None:
     else:
         headers = ["Tabelle", "Dead%", "Dead", "Live", "Last Autovac"]
         widths = [40, 8, 12, 12, 25]
-        display = [
-            (r[0][:38], f"{r[5]}%", f"{r[3]:,}", f"{r[4]:,}",
-             str(r[2])[:19] if r[2] else "NIE")
-            for r in rows
-        ]
+        display = [(r[0][:38], f"{r[5]}%", f"{r[3]:,}", f"{r[4]:,}", str(r[2])[:19] if r[2] else "NIE") for r in rows]
         print_table(display, headers, widths)
 
     # Tabellen die nie analysiert wurden
@@ -445,18 +442,18 @@ def analyze_consolidation_potential(cur) -> None:
 
     subsection("Aktuell vs. nach Konsolidierung")
     print_kv("OHLCV-Tabellen aktuell:", f"{n_ohlcv:,}")
-    print_kv("OHLCV-Tabellen nach Konsolidierung:",
-             f"{len(ohlcv_tfs)} (eine pro Timeframe)")
-    print_kv(" → Reduktion:",
-             f"{n_ohlcv - len(ohlcv_tfs):,} Tabellen weniger"
-             f" ({100*(n_ohlcv - len(ohlcv_tfs))/max(n_ohlcv,1):.1f}%)")
+    print_kv("OHLCV-Tabellen nach Konsolidierung:", f"{len(ohlcv_tfs)} (eine pro Timeframe)")
+    print_kv(
+        " → Reduktion:",
+        f"{n_ohlcv - len(ohlcv_tfs):,} Tabellen weniger ({100 * (n_ohlcv - len(ohlcv_tfs)) / max(n_ohlcv, 1):.1f}%)",
+    )
     print()
     print_kv("Indikator-Tabellen aktuell:", f"{n_ind:,}")
-    print_kv("Indikator-Tabellen nach Konsolidierung:",
-             f"{len(ind_tfs)} (eine pro Timeframe)")
-    print_kv(" → Reduktion:",
-             f"{n_ind - len(ind_tfs):,} Tabellen weniger"
-             f" ({100*(n_ind - len(ind_tfs))/max(n_ind,1):.1f}%)")
+    print_kv("Indikator-Tabellen nach Konsolidierung:", f"{len(ind_tfs)} (eine pro Timeframe)")
+    print_kv(
+        " → Reduktion:",
+        f"{n_ind - len(ind_tfs):,} Tabellen weniger ({100 * (n_ind - len(ind_tfs)) / max(n_ind, 1):.1f}%)",
+    )
 
     total_old = n_ohlcv + n_ind
     total_new = len(ohlcv_tfs) + len(ind_tfs)
@@ -464,18 +461,17 @@ def analyze_consolidation_potential(cur) -> None:
     print()
     print_kv("Tabellenanzahl gesamt aktuell:", f"{total_old:,}")
     print_kv("Tabellenanzahl gesamt nach Fix:", f"{total_new}")
-    print_kv(" → Reduktion:",
-             f"{total_old - total_new:,} Tabellen weniger"
-             f" ({100*(total_old - total_new)/max(total_old,1):.1f}%)")
+    print_kv(
+        " → Reduktion:",
+        f"{total_old - total_new:,} Tabellen weniger ({100 * (total_old - total_new) / max(total_old, 1):.1f}%)",
+    )
 
     subsection("Storage-Schätzung mit TimescaleDB-Compression")
     combined = size_ohlcv + size_ind
     print_kv("Aktuelles OHLCV + Indicator Storage:", _bytes_to_pretty(combined))
     print_kv("Nach Konsolidierung (unkomprimiert):", _bytes_to_pretty(combined))
-    print_kv(" → TimescaleDB 90% Compression (typisch):",
-             _bytes_to_pretty(int(combined * 0.10)))
-    print_kv(" → TimescaleDB 75% Compression (konservativ):",
-             _bytes_to_pretty(int(combined * 0.25)))
+    print_kv(" → TimescaleDB 90% Compression (typisch):", _bytes_to_pretty(int(combined * 0.10)))
+    print_kv(" → TimescaleDB 75% Compression (konservativ):", _bytes_to_pretty(int(combined * 0.25)))
     print()
     print("  OHLCV-Daten komprimieren typischerweise sehr gut (90%+) weil")
     print("  open/high/low/close/volume sequenzielle, korrelierte Werte sind.")
@@ -486,6 +482,7 @@ def analyze_consolidation_potential(cur) -> None:
 # ────────────────────────────────────────────────────────────────────────────
 # UTILS
 # ────────────────────────────────────────────────────────────────────────────
+
 
 def _bytes_to_pretty(n: int) -> str:
     """Formatiert Bytes als MB/GB/TB-String."""
@@ -501,6 +498,7 @@ def _bytes_to_pretty(n: int) -> str:
 # ────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ────────────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     print("╔" + "═" * 78 + "╗")

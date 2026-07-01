@@ -44,17 +44,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
+import socket
 import sys
 import time
 from collections import deque
-from datetime import datetime, timezone
-from pathlib import Path
 
 # Dependencies
-import aiohttp
-import socket
 import websockets
 
 # Eigene Config (für Coin-Liste)
@@ -74,8 +70,8 @@ SNAPSHOT_INTERVAL_SEC = 60  # alle 60s Snapshot
 
 BUFFER_SIZE = 300  # 300 × 1min = 5h Historie pro Coin
 STREAMS_PER_WS = 600  # Binance Futures limit: 1024 streams per connection
-                          # (300 is the connect-attempt limit per 5 min per IP — different thing).
-                          # 600 fits all ~537 USDT coins comfortably in a single connection.
+# (300 is the connect-attempt limit per 5 min per IP — different thing).
+# 600 fits all ~537 USDT coins comfortably in a single connection.
 BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams="
 
 # ─── In-Memory-Buffer ────────────────────────────────────────────────────────
@@ -86,10 +82,11 @@ _START_TIME = time.time()
 
 # ─── Coin-Liste laden ────────────────────────────────────────────────────────
 
+
 def load_coins() -> list[str]:
     """Reads coins.json and returns a list of symbols (lowercase for WS)."""
     try:
-        with open(COINS_FILE, "r", encoding="utf-8") as f:
+        with open(COINS_FILE, encoding="utf-8") as f:
             data = json.load(f)
         coins = data.get("coins", data) if isinstance(data, dict) else data
         # Nur USDT-Paare, lowercase für Binance-WS
@@ -98,7 +95,9 @@ def load_coins() -> list[str]:
         logger.error(f"Could not load coins.json: {e}")
         return []
 
+
 # ─── Snapshot-Persistenz ─────────────────────────────────────────────────────
+
 
 async def save_snapshot() -> None:
     """Serialisiert alle Buffers als JSON auf Disk.
@@ -119,6 +118,7 @@ async def save_snapshot() -> None:
     except Exception as e:
         logger.error(f"Snapshot save failed: {e}")
 
+
 def load_snapshot() -> None:
     """Lädt den letzten Snapshot in die Buffers. Robust gegen fehlende/kaputte Files."""
     if not os.path.exists(SNAPSHOT_FILE):
@@ -126,7 +126,7 @@ def load_snapshot() -> None:
         return
 
     try:
-        with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+        with open(SNAPSHOT_FILE, encoding="utf-8") as f:
             snapshot = json.load(f)
     except Exception as e:
         logger.warning(f"Snapshot load failed ({e}), starting mit leeren Buffers.")
@@ -147,9 +147,8 @@ def load_snapshot() -> None:
 
     logger.info(f"Snapshot geladen: {loaded} Symbole mit Historie wiederhergestellt.")
 
+
 # ─── WebSocket-Worker ────────────────────────────────────────────────────────
-
-
 
 
 def _apply_keepalive(ws) -> None:
@@ -164,6 +163,7 @@ def _apply_keepalive(ws) -> None:
     TCP-level ACK probes every 60s.
     """
     import sys
+
     try:
         sock = ws.transport.get_extra_info("socket")
         if sock is None:
@@ -179,6 +179,7 @@ def _apply_keepalive(ws) -> None:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
     except (AttributeError, OSError):
         pass  # Non-fatal — connection still works without keepalive
+
 
 async def ws_worker(worker_id: int, symbols: list[str]) -> None:
     """Ein WebSocket-Worker hört auf bis zu STREAMS_PER_WS Streams.
@@ -253,12 +254,12 @@ async def _process_ws_message(raw_msg: str) -> None:
 
     try:
         candle = [
-            int(k["t"]),          # open_time (ms)
-            float(k["o"]),        # open
-            float(k["h"]),        # high
-            float(k["l"]),        # low
-            float(k["c"]),        # close
-            float(k["v"]),        # volume
+            int(k["t"]),  # open_time (ms)
+            float(k["o"]),  # open
+            float(k["h"]),  # high
+            float(k["l"]),  # low
+            float(k["c"]),  # close
+            float(k["v"]),  # volume
         ]
     except (KeyError, ValueError, TypeError):
         return
@@ -275,7 +276,9 @@ async def _process_ws_message(raw_msg: str) -> None:
 
         buf.append(candle)
 
+
 # ─── TCP-Server ──────────────────────────────────────────────────────────────
+
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     """Handler pro TCP-Client-Verbindung. Liest eine Zeile Request, antwortet, schließt."""
@@ -336,7 +339,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         except Exception:
             pass
 
+
 # ─── Orchestrierung ──────────────────────────────────────────────────────────
+
 
 async def snapshot_loop() -> None:
     """Schreibt alle SNAPSHOT_INTERVAL_SEC den aktuellen Buffer-Stand after Disk."""
@@ -362,7 +367,7 @@ async def main() -> None:
     # 3. WebSocket-Worker starten (chunked)
     ws_tasks = []
     for i in range(0, len(coins), STREAMS_PER_WS):
-        chunk = coins[i:i + STREAMS_PER_WS]
+        chunk = coins[i : i + STREAMS_PER_WS]
         worker_id = i // STREAMS_PER_WS + 1
         ws_tasks.append(asyncio.create_task(ws_worker(worker_id, chunk)))
         if i > 0:
@@ -370,9 +375,7 @@ async def main() -> None:
     logger.info(f"📡 {len(ws_tasks)} WebSocket-Worker started.")
 
     # 4. TCP-Server starten
-    server = await asyncio.start_server(
-        handle_client, CHART_SERVICE_HOST, CHART_SERVICE_PORT
-    )
+    server = await asyncio.start_server(handle_client, CHART_SERVICE_HOST, CHART_SERVICE_PORT)
     addr = server.sockets[0].getsockname()
     logger.info(f"🔌 TCP-Server hört auf {addr[0]}:{addr[1]}")
 

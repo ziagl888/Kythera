@@ -11,6 +11,7 @@ Implements the two-axis classification:
 Python files with numeric prefixes (26_...) cannot be imported directly.
 This module is the importable entry point.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,17 +23,18 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ──────────────────────────────────────────────────────────────
-TREND_RETURN_THRESHOLD_4H_PCT = 1.5       # > ±1.5% in 4h = Trend-Indikation
-CHOP_RETURN_THRESHOLD_4H_PCT = 0.5        # < ±0.5% in 4h = Chop-Indikation
-VOLA_HIGH_PERCENTILE = 75                 # ATR über P75 der letzten 30d = HIGH_VOLA
-VOLA_LOW_PERCENTILE = 40                  # ATR unter P40 = niedrige Vola
+TREND_RETURN_THRESHOLD_4H_PCT = 1.5  # > ±1.5% in 4h = Trend-Indikation
+CHOP_RETURN_THRESHOLD_4H_PCT = 0.5  # < ±0.5% in 4h = Chop-Indikation
+VOLA_HIGH_PERCENTILE = 75  # ATR über P75 der letzten 30d = HIGH_VOLA
+VOLA_LOW_PERCENTILE = 40  # ATR unter P40 = niedrige Vola
 VOLA_LOOKBACK_DAYS = 30
-ALT_CONTEXT_THRESHOLD_PCT = 1.5           # |BTCDOM 24h| > 1.5% → ALT_STRONG/ALT_WEAK
-REGIME_DEBOUNCE_COUNT = 2                 # 2 Checks = 10 Minuten Bestätigung
-MIN_DATA_POINTS_15M = 480                 # 480 × 15min = 5 Tage minimum
+ALT_CONTEXT_THRESHOLD_PCT = 1.5  # |BTCDOM 24h| > 1.5% → ALT_STRONG/ALT_WEAK
+REGIME_DEBOUNCE_COUNT = 2  # 2 Checks = 10 Minuten Bestätigung
+MIN_DATA_POINTS_15M = 480  # 480 × 15min = 5 Tage minimum
 
 
 # ── Feature computation ────────────────────────────────────────────────────────
+
 
 def compute_features(conn, as_of: datetime | None = None) -> dict | None:
     """
@@ -76,9 +78,7 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
         return None
 
     if len(df_btc) < MIN_DATA_POINTS_15M:
-        logger.warning(
-            f"Insufficient BTC data: {len(df_btc)} < {MIN_DATA_POINTS_15M} Kerzen"
-        )
+        logger.warning(f"Insufficient BTC data: {len(df_btc)} < {MIN_DATA_POINTS_15M} Kerzen")
         return None
 
     df_btc = df_btc.set_index("open_time")
@@ -93,11 +93,14 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
 
     # ATR as % of close (True Range)
     prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
 
     # ATR_1h (EMA over 4 bars), ATR_4h (EMA over 16 bars)
     atr_1h = tr.ewm(span=4, adjust=False).mean()
@@ -128,13 +131,10 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
         if len(df_dom) >= 96:  # 96 × 15min = 24h minimum
             dom_close = df_dom["close"]
             btcdom_value = float(dom_close.iloc[-1])
-            btcdom_return_24h = float(
-                (dom_close.iloc[-1] - dom_close.iloc[-96]) / dom_close.iloc[-96] * 100
-            )
+            btcdom_return_24h = float((dom_close.iloc[-1] - dom_close.iloc[-96]) / dom_close.iloc[-96] * 100)
         else:
             logger.warning(
-                f"BTCDOMUSDT_15m only has {len(df_dom)} candles — "
-                f"Alt-Context using safe default ALT_NEUTRAL"
+                f"BTCDOMUSDT_15m only has {len(df_dom)} candles — Alt-Context using safe default ALT_NEUTRAL"
             )
     except Exception as e:
         logger.warning(f"BTCDOMUSDT_15m not available: {e} — Alt-Context: ALT_NEUTRAL")
@@ -154,9 +154,8 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
 
 # ── BTC-Regime-Classifier ─────────────────────────────────────────────────────
 
-def classify_btc_regime(
-    features: dict, vola_p75: float, vola_p40: float
-) -> tuple[str, float]:
+
+def classify_btc_regime(features: dict, vola_p75: float, vola_p40: float) -> tuple[str, float]:
     """
     Classifies the BTC regime from pure BTC features + vola percentiles.
 
@@ -198,6 +197,7 @@ def classify_btc_regime(
 
 # ── Alt-Context-Classifier ────────────────────────────────────────────────────
 
+
 def classify_alt_context(features: dict) -> tuple[str, float]:
     """
     Classifies the alt-context from BTCDOM movement (24h change).
@@ -231,9 +231,8 @@ def classify_alt_context(features: dict) -> tuple[str, float]:
 
 # ── Combined Classifier ───────────────────────────────────────────────────────
 
-def classify_regime(
-    features: dict, vola_p75: float, vola_p40: float
-) -> dict:
+
+def classify_regime(features: dict, vola_p75: float, vola_p40: float) -> dict:
     """
     Main entry point: classifies both axes and returns combined result.
 
@@ -259,6 +258,7 @@ def classify_regime(
 
 
 # ── Debounce ──────────────────────────────────────────────────────────────────
+
 
 def apply_debounce(
     conn,
@@ -304,14 +304,19 @@ def apply_debounce(
                      pending_alt_context, pending_alt_count)
                 VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, NULL, 0, NULL, 0)
                 """,
-                (raw_regime, raw_alt_context, raw_ts_naive, raw_ts_naive,
-                 raw_confidence, raw_regime, raw_alt_context, raw_ts_naive),
+                (
+                    raw_regime,
+                    raw_alt_context,
+                    raw_ts_naive,
+                    raw_ts_naive,
+                    raw_confidence,
+                    raw_regime,
+                    raw_alt_context,
+                    raw_ts_naive,
+                ),
             )
         conn.commit()
-        logger.info(
-            f"🆕 Regime initialised: {raw_regime} / {raw_alt_context} "
-            f"(conf {raw_confidence:.2f})"
-        )
+        logger.info(f"🆕 Regime initialised: {raw_regime} / {raw_alt_context} (conf {raw_confidence:.2f})")
         return {
             "effective_regime": raw_regime,
             "effective_alt_context": raw_alt_context,
@@ -319,9 +324,7 @@ def apply_debounce(
             "alt_context_changed": False,
         }
 
-    (cur_regime, cur_alt, cur_since, cur_alt_since,
-     pend_regime, pend_count,
-     pend_alt, pend_alt_count) = row
+    (cur_regime, cur_alt, cur_since, cur_alt_since, pend_regime, pend_count, pend_alt, pend_alt_count) = row
 
     btc_changed = False
     alt_changed = False
@@ -344,10 +347,7 @@ def apply_debounce(
             # Second consecutive check with same new value → confirm change
             new_pend_count = pend_count + 1
             if new_pend_count >= REGIME_DEBOUNCE_COUNT:
-                logger.info(
-                    f"🔄 BTC-Regime confirmed: {cur_regime} → {raw_regime} "
-                    f"(after {new_pend_count} checks)"
-                )
+                logger.info(f"🔄 BTC-Regime confirmed: {cur_regime} → {raw_regime} (after {new_pend_count} checks)")
                 new_regime = raw_regime
                 new_since = raw_ts_naive
                 new_pend_regime = None
@@ -367,8 +367,7 @@ def apply_debounce(
             new_pend_alt_count = pend_alt_count + 1
             if new_pend_alt_count >= REGIME_DEBOUNCE_COUNT:
                 logger.info(
-                    f"🔄 Alt-Context confirmed: {cur_alt} → {raw_alt_context} "
-                    f"(after {new_pend_alt_count} checks)"
+                    f"🔄 Alt-Context confirmed: {cur_alt} → {raw_alt_context} (after {new_pend_alt_count} checks)"
                 )
                 new_alt = raw_alt_context
                 new_alt_since = raw_ts_naive
@@ -399,12 +398,18 @@ def apply_debounce(
             WHERE id = 1
             """,
             (
-                new_regime, new_alt,
-                new_since, new_alt_since,
+                new_regime,
+                new_alt,
+                new_since,
+                new_alt_since,
                 raw_confidence,
-                raw_regime, raw_alt_context, raw_ts_naive,
-                new_pend_regime, new_pend_count,
-                new_pend_alt, new_pend_alt_count,
+                raw_regime,
+                raw_alt_context,
+                raw_ts_naive,
+                new_pend_regime,
+                new_pend_count,
+                new_pend_alt,
+                new_pend_alt_count,
             ),
         )
     conn.commit()

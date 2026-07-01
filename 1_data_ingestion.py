@@ -1,27 +1,24 @@
-import requests
-import time
-import pandas as pd
-import json
+import asyncio
 import datetime
-import psycopg2
-from psycopg2 import extras
-import pytz
+import json
 import logging
 import random
-import asyncio
 import socket
-import websockets
-from concurrent.futures import ThreadPoolExecutor
-from core.database import get_db_connection
+import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
+
+import pytz
+import requests
+import websockets
+from psycopg2 import extras
+
+from core.database import get_db_connection
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
-from core.config import (
-    DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT,
-    BASE_URL, TIMEFRAMES, NUM_WORKERS
-)
+from core.config import BASE_URL, NUM_WORKERS, TIMEFRAMES
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - INGESTION - %(message)s')
 logger = logging.getLogger(__name__)
@@ -41,7 +38,8 @@ def update_trading_pairs(filename='coins.json'):
         data = response.json()
 
         trading_pairs = [
-            symbol['symbol'] for symbol in data['symbols']
+            symbol['symbol']
+            for symbol in data['symbols']
             if symbol['status'] == 'TRADING' and not symbol['symbol'].endswith('USDC')
         ]
 
@@ -52,13 +50,14 @@ def update_trading_pairs(filename='coins.json'):
     except Exception as e:
         logger.error(f"Error during coin update: {e}")
         try:
-            with open(filename, 'r') as f:
+            with open(filename) as f:
                 return json.load(f)
         except Exception:
             return ["BTCUSDT", "ETHUSDT"]
 
 
 # PHASE 1: DER TURBO-GREPPER (REST API Catch-Up)
+
 
 def create_table_if_needed(conn, symbol, timeframe):
     tablename = f'"{symbol}_{timeframe}"'
@@ -82,7 +81,8 @@ def get_latest_open_time(conn, symbol, timeframe):
     try:
         with conn.cursor() as cursor:
             cursor.execute("SELECT to_regclass(%s)", (tablename,))
-            if cursor.fetchone()[0] is None: return None
+            if cursor.fetchone()[0] is None:
+                return None
             cursor.execute(f'SELECT MAX(open_time) FROM {tablename}')
             res = cursor.fetchone()
             return res[0].astimezone(pytz.utc) if res and res[0] else None
@@ -103,14 +103,17 @@ def fetch_ohlcv_batch(session, symbol, interval, start_ts, end_ts):
                 wait = int(resp.headers.get("Retry-After", 10)) + 2
                 time.sleep(wait)
                 continue
-            if resp.status_code != 200: break
+            if resp.status_code != 200:
+                break
 
             data = resp.json()
-            if not data: break
+            if not data:
+                break
             all_data.extend(data)
 
             curr = data[-1][6] + 1
-            if curr >= end_ts: break
+            if curr >= end_ts:
+                break
             time.sleep(0.1)  # Reduziert für mehr Speed, Limit bei Binance Futures ist recht hoch
         except Exception:
             time.sleep(5)
@@ -118,7 +121,8 @@ def fetch_ohlcv_batch(session, symbol, interval, start_ts, end_ts):
 
 
 def insert_fast(conn, data, symbol, timeframe):
-    if not data: return 0
+    if not data:
+        return 0
     tablename = f'"{symbol}_{timeframe}"'
     tuples = []
     for row in data:
@@ -127,7 +131,7 @@ def insert_fast(conn, data, symbol, timeframe):
 
     sql = f"""
         INSERT INTO {tablename} (symbol, open_time, open, high, low, close, volume)
-        VALUES %s ON CONFLICT (symbol, open_time) DO UPDATE 
+        VALUES %s ON CONFLICT (symbol, open_time) DO UPDATE
         SET open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close, volume=EXCLUDED.volume
     """
     try:
@@ -165,15 +169,19 @@ def process_coin(symbol, resume_points):
 
             start_ts = int(start_dt.timestamp() * 1000)
 
-            if start_ts >= end_ts: continue
+            if start_ts >= end_ts:
+                continue
             raw = fetch_ohlcv_batch(session, symbol, tf, start_ts, end_ts)
-            if raw: insert_fast(conn, raw, symbol, tf)
+            if raw:
+                insert_fast(conn, raw, symbol, tf)
 
     except Exception as e:
         logger.error(f"Fehler {symbol}: {e}")
     finally:
-        if 'conn' in locals() and conn: conn.close()
-        if 'session' in locals(): session.close()
+        if 'conn' in locals() and conn:
+            conn.close()
+        if 'session' in locals():
+            session.close()
 
 
 def create_db_snapshot(symbols):
@@ -260,8 +268,8 @@ def _flush_to_db(buffer_copy):
                 sql = f"""
                     INSERT INTO {table_name} (symbol, open_time, open, high, low, close, volume)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (symbol, open_time) DO UPDATE 
-                    SET open = EXCLUDED.open, high = EXCLUDED.high, 
+                    ON CONFLICT (symbol, open_time) DO UPDATE
+                    SET open = EXCLUDED.open, high = EXCLUDED.high,
                         low = EXCLUDED.low, close = EXCLUDED.close, volume = EXCLUDED.volume
                 """
                 # SAVEPOINT: Jede Zeile läuft in einer Sub-Transaktion.
@@ -284,8 +292,7 @@ def _flush_to_db(buffer_copy):
 
             conn.commit()
             if failed_tables:
-                logger.info(f"Flush: {success}/{count} erfolgreich, "
-                            f"{len(failed_tables)} Tabellen mit Fehlern skipped.")
+                logger.info(f"Flush: {success}/{count} erfolgreich, {len(failed_tables)} Tabellen mit Fehlern skipped.")
     except Exception as e:
         conn.rollback()
         logger.error(f"Flush Error (gesamt): {e}")
@@ -346,14 +353,11 @@ WS_UNSOLICITED_PONG_SEC = 120.0
 
 # Ping-Config (an Binance-Futures-Spezifikation angepasst)
 WS_PING_INTERVAL_SEC = None  # Disable library pings — Binance sends its own ping every
-                             # 180s and the websockets library auto-responds with pong.
-                             # Running our own ping_interval=180 causes a collision:
-                             # both sides send pings simultaneously → library times out
-                             # waiting for its pong → false disconnect after ~206s.
-WS_PING_TIMEOUT_SEC = None   # Not needed when ping_interval=None
-
-
-
+# 180s and the websockets library auto-responds with pong.
+# Running our own ping_interval=180 causes a collision:
+# both sides send pings simultaneously → library times out
+# waiting for its pong → false disconnect after ~206s.
+WS_PING_TIMEOUT_SEC = None  # Not needed when ping_interval=None
 
 
 def _apply_keepalive(ws) -> None:
@@ -368,6 +372,7 @@ def _apply_keepalive(ws) -> None:
     TCP-level ACK probes every 60s.
     """
     import sys
+
     try:
         sock = ws.transport.get_extra_info("socket")
         if sock is None:
@@ -383,6 +388,7 @@ def _apply_keepalive(ws) -> None:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
     except (AttributeError, OSError):
         pass  # Non-fatal — connection still works without keepalive
+
 
 async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float = 0.0):
     """Ein einzelner WebSocket-Worker mit robustem Reconnect und Watchdog.
@@ -420,10 +426,7 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
             ) as ws:
                 _apply_keepalive(ws)
                 connected_at = datetime.datetime.now(pytz.UTC)
-                logger.info(
-                    f"🟢 WS-Worker {worker_id} connected "
-                    f"({len(streams)} streams, URL-encoded)"
-                )
+                logger.info(f"🟢 WS-Worker {worker_id} connected ({len(streams)} streams, URL-encoded)")
 
                 # No SUBSCRIBE needed — streams are in the URL.
                 # Reset backoff on successful connect.
@@ -447,54 +450,56 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
                 last_msg_ts = datetime.datetime.now(pytz.UTC)
 
                 try:
-                  while True:
-                    try:
-                        # Timeout hier damit wir den Watchdog checken können
-                        msg = await asyncio.wait_for(
-                            ws.recv(),
-                            timeout=WS_MESSAGE_WATCHDOG_SEC,
-                        )
-                    except asyncio.TimeoutError:
-                        # Keine Message innerhalb Watchdog-Fenster
-                        silence_sec = (datetime.datetime.now(pytz.UTC) - last_msg_ts).total_seconds()
-                        logger.warning(
-                            f"⏰ WS-Worker {worker_id}: {silence_sec:.0f}s keine Messages, "
-                            f"erzwinge Reconnect"
-                        )
-                        break
-
-                    last_msg_ts = datetime.datetime.now(pytz.UTC)
-
-                    try:
-                        payload = json.loads(msg)
-                    except json.JSONDecodeError:
-                        continue
-
-                    # SUBSCRIBE-Response durchgehen lassen
-                    if 'result' in payload:
-                        if payload.get('result') is not None:
-                            # Nicht-Null Result → Fehler (Binance antwortet mit null bei Erfolg)
-                            logger.warning(
-                                f"WS-Worker {worker_id}: Subscribe-Error: {payload}"
+                    while True:
+                        try:
+                            # Timeout hier damit wir den Watchdog checken können
+                            msg = await asyncio.wait_for(
+                                ws.recv(),
+                                timeout=WS_MESSAGE_WATCHDOG_SEC,
                             )
-                        continue
+                        except asyncio.TimeoutError:
+                            # Keine Message innerhalb Watchdog-Fenster
+                            silence_sec = (datetime.datetime.now(pytz.UTC) - last_msg_ts).total_seconds()
+                            logger.warning(
+                                f"⏰ WS-Worker {worker_id}: {silence_sec:.0f}s keine Messages, erzwinge Reconnect"
+                            )
+                            break
 
-                    # Fehler-Response
-                    if 'error' in payload:
-                        logger.warning(f"WS-Worker {worker_id}: Error-Response: {payload}")
-                        continue
+                        last_msg_ts = datetime.datetime.now(pytz.UTC)
 
-                    # Daten-Message
-                    if 'data' in payload and 'k' in payload['data']:
-                        k = payload['data']['k']
-                        sym = k['s']
-                        tf = k['i']
-                        open_time = datetime.datetime.fromtimestamp(k['t'] / 1000, pytz.UTC)
+                        try:
+                            payload = json.loads(msg)
+                        except json.JSONDecodeError:
+                            continue
 
-                        WS_KLINE_BUFFER[(sym, tf)] = (
-                            sym, open_time, float(k['o']), float(k['h']),
-                            float(k['l']), float(k['c']), float(k['v'])
-                        )
+                        # SUBSCRIBE-Response durchgehen lassen
+                        if 'result' in payload:
+                            if payload.get('result') is not None:
+                                # Nicht-Null Result → Fehler (Binance antwortet mit null bei Erfolg)
+                                logger.warning(f"WS-Worker {worker_id}: Subscribe-Error: {payload}")
+                            continue
+
+                        # Fehler-Response
+                        if 'error' in payload:
+                            logger.warning(f"WS-Worker {worker_id}: Error-Response: {payload}")
+                            continue
+
+                        # Daten-Message
+                        if 'data' in payload and 'k' in payload['data']:
+                            k = payload['data']['k']
+                            sym = k['s']
+                            tf = k['i']
+                            open_time = datetime.datetime.fromtimestamp(k['t'] / 1000, pytz.UTC)
+
+                            WS_KLINE_BUFFER[(sym, tf)] = (
+                                sym,
+                                open_time,
+                                float(k['o']),
+                                float(k['h']),
+                                float(k['l']),
+                                float(k['c']),
+                                float(k['v']),
+                            )
 
                 finally:
                     pong_task.cancel()
@@ -543,14 +548,13 @@ async def start_websocket_fleet(symbols):
             all_streams.append(f"{sym.lower()}@kline_{tf}")
 
     stream_chunks = [
-        all_streams[i:i + WS_STREAMS_PER_WORKER]
-        for i in range(0, len(all_streams), WS_STREAMS_PER_WORKER)
+        all_streams[i : i + WS_STREAMS_PER_WORKER] for i in range(0, len(all_streams), WS_STREAMS_PER_WORKER)
     ]
 
     n_workers = len(stream_chunks)
     logger.info(
         f"🚀 Starting {n_workers} WS-Worker für {len(all_streams)} Streams "
-        f"(~{len(all_streams) // max(n_workers,1)} Streams/Worker, "
+        f"(~{len(all_streams) // max(n_workers, 1)} Streams/Worker, "
         f"Stagger {WS_STARTUP_STAGGER_SEC}s zwischen Starts)"
     )
 

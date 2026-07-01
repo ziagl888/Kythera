@@ -1,15 +1,16 @@
 import warnings
+
 warnings.filterwarnings("ignore")
 
-import time
-import json
-import os
-import sys
 import io
-import pandas as pd
-import numpy as np
-import scipy.signal
+import json
 import logging
+import sys
+import time
+
+import numpy as np
+import pandas as pd
+import scipy.signal
 
 # Zwingt die Windows-Konsole, UTF-8 (Emojis) zu akzeptieren
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -41,7 +42,7 @@ ORDER_EXPIRY = 100
 # ==========================================
 def load_coins():
     try:
-        with open(COINS_FILE, 'r') as f:
+        with open(COINS_FILE) as f:
             data = json.load(f)
             coin_list = data.get('coins', data) if isinstance(data, dict) else data
             return [c.upper() for c in coin_list if c.upper().endswith("USDT")]
@@ -57,7 +58,8 @@ def fetch_db_data(symbol, tf):
         df = pd.read_sql_query(query, conn)
         conn.close()
 
-        for c in ['open', 'high', 'low', 'close']: df[c] = df[c].astype(float)
+        for c in ['open', 'high', 'low', 'close']:
+            df[c] = df[c].astype(float)
         df.dropna(inplace=True)
         return df.reset_index(drop=True)
     except Exception:
@@ -139,13 +141,16 @@ def run_simulation(df, symbol, tf):
                 else:
                     losses += 1
 
-                if capital > max_capital: max_capital = capital
+                if capital > max_capital:
+                    max_capital = capital
                 drawdown = (max_capital - capital) / max_capital * 100
-                if drawdown > max_drawdown: max_drawdown = drawdown
+                if drawdown > max_drawdown:
+                    max_drawdown = drawdown
 
                 trades_to_remove.append(trade)
 
-        for t in trades_to_remove: active_trades.remove(t)
+        for t in trades_to_remove:
+            active_trades.remove(t)
 
         # B) PENDING ORDERS PRÜFEN
         orders_to_remove = []
@@ -179,7 +184,8 @@ def run_simulation(df, symbol, tf):
                 active_trades.append({'direction': dir, 'entry': entry, 'sl': sl, 'tp': tp})
                 orders_to_remove.append(order)
 
-        for o in orders_to_remove: pending_orders.remove(o)
+        for o in orders_to_remove:
+            pending_orders.remove(o)
 
         # C) NEUE PIVOTS BESTÄTIGEN
         while raw_pivot_pointer < len(raw_pivots):
@@ -213,7 +219,8 @@ def run_simulation(df, symbol, tf):
                         tp = LL
                         if curr_price < entry:
                             pending_orders.append(
-                                {'direction': 'SHORT', 'entry': entry, 'sl': sl, 'tp': tp, 'created_at': curr_idx})
+                                {'direction': 'SHORT', 'entry': entry, 'sl': sl, 'tp': tp, 'created_at': curr_idx}
+                            )
 
                 elif p1[1] == -1 and p2[1] == 1 and p3[1] == -1 and p4[1] == 1:
                     L, H, LL, HH = p1[2], p2[2], p3[2], p4[2]
@@ -224,7 +231,8 @@ def run_simulation(df, symbol, tf):
                         tp = HH
                         if curr_price > entry:
                             pending_orders.append(
-                                {'direction': 'LONG', 'entry': entry, 'sl': sl, 'tp': tp, 'created_at': curr_idx})
+                                {'direction': 'LONG', 'entry': entry, 'sl': sl, 'tp': tp, 'created_at': curr_idx}
+                            )
 
     total_trades = wins + losses
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
@@ -236,7 +244,7 @@ def run_simulation(df, symbol, tf):
         'trades': total_trades,
         'win_rate': win_rate,
         'pnl': net_pnl,
-        'max_dd': max_drawdown
+        'max_dd': max_drawdown,
     }
 
 

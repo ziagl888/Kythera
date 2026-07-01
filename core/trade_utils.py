@@ -1,7 +1,8 @@
-import pandas as pd
-import numpy as np
-import scipy.signal
 import logging
+
+import numpy as np
+import pandas as pd
+import scipy.signal
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ def get_atr(df, period=14):
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     true_range = np.max(ranges, axis=1)
     return true_range.rolling(window=period).mean().iloc[-1]
+
 
 def calculate_smart_targets(conn, symbol, direction, live_price):
     """
@@ -228,7 +230,7 @@ def calculate_smart_targets(conn, symbol, direction, live_price):
             "entry1": float(entry1),
             "entry2": float(entry2),
             "sl": float(sl),
-            "targets": [float(t) for t in final_targets]
+            "targets": [float(t) for t in final_targets],
         }
 
     except Exception as e:
@@ -239,8 +241,9 @@ def calculate_smart_targets(conn, symbol, direction, live_price):
             "entry1": e1,
             "entry2": e1 * 0.96 if is_long else e1 * 1.04,
             "sl": e1 * 0.92 if is_long else e1 * 1.08,
-            "targets": [e1 * 1.05] if is_long else [e1 * 0.95]
+            "targets": [e1 * 1.05] if is_long else [e1 * 0.95],
         }
+
 
 def get_hvn_and_sr_levels(conn, symbol, live_price):
     """Fetches historical data and calculates levels for targets/SL.
@@ -258,7 +261,8 @@ def get_hvn_and_sr_levels(conn, symbol, live_price):
     """
     try:
         df = pd.read_sql_query(
-            f'SELECT high, low, close FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\'', conn)
+            f'SELECT high, low, close FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\'', conn
+        )
     except Exception:
         return [], []
 

@@ -1,18 +1,19 @@
-import time
 import datetime
-import logging
-import json
-import requests
-import warnings
-import os
-import hmac
 import hashlib
+import hmac
+import json
+import logging
+import os
+import time
+import warnings
+
+import requests
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
-from core.database import get_db_connection
 from core.config import BINANCE_API_KEY, BINANCE_SECRET
+from core.database import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - HOUSEKEEPING - %(message)s')
 logger = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ def cleanup_delisted_trades():
 
     # 1. Aktive Coin-Liste laden
     try:
-        with open('coins.json', 'r') as f:
+        with open('coins.json') as f:
             active_coins = set(json.load(f))
     except Exception as e:
         logger.error(f"Could not load coins.json: {e} — Delisted-Cleanup skipped")
@@ -122,14 +123,12 @@ def cleanup_delisted_trades():
                 "FROM active_trades_master"
             )
             columns = [desc[0] for desc in cur.description]
-            classic_rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+            classic_rows = [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
 
         classic_delisted = [t for t in classic_rows if t['coin'] not in active_coins]
 
         if classic_delisted:
-            logger.info(
-                f"  Klassische Trades: {len(classic_delisted)} auf delisted Coins gefunden"
-            )
+            logger.info(f"  Klassische Trades: {len(classic_delisted)} auf delisted Coins gefunden")
             for trade in classic_delisted:
                 coin = trade['coin']
                 entry = float(trade['entry']) if trade['entry'] else 0.0
@@ -148,10 +147,17 @@ def cleanup_delisted_trades():
                             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
-                                trade['strategy'], trade['time'], coin,
-                                trade['direction'], trade['lev'], entry,
-                                trade['target1'], trade['target2'],
-                                trade['target3'], trade['target4'], trade['sl'],
+                                trade['strategy'],
+                                trade['time'],
+                                coin,
+                                trade['direction'],
+                                trade['lev'],
+                                entry,
+                                trade['target1'],
+                                trade['target2'],
+                                trade['target3'],
+                                trade['target4'],
+                                trade['sl'],
                                 close_price,
                                 datetime.datetime.now(datetime.timezone.utc),
                                 "DELISTED",
@@ -165,30 +171,26 @@ def cleanup_delisted_trades():
                     closed_classic += 1
                 except Exception as e:
                     logger.warning(
-                        f"  ⚠ Klassischer Trade {trade['id']} ({coin}) "
-                        f"konnte nicht delisted-closed werden: {e}"
+                        f"  ⚠ Klassischer Trade {trade['id']} ({coin}) konnte nicht delisted-closed werden: {e}"
                     )
                     conn.rollback()
 
         # ── AI-Trades (ai_signals) ──
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, symbol, model, direction, entry1, price, "
-                "current_target_hit, open_time FROM ai_signals"
+                "SELECT id, symbol, model, direction, entry1, price, current_target_hit, open_time FROM ai_signals"
             )
             columns = [desc[0] for desc in cur.description]
-            ai_rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+            ai_rows = [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
 
         ai_delisted = [t for t in ai_rows if t['symbol'] not in active_coins]
 
         if ai_delisted:
-            logger.info(
-                f"  AI-Trades: {len(ai_delisted)} auf delisted Coins gefunden"
-            )
+            logger.info(f"  AI-Trades: {len(ai_delisted)} auf delisted Coins gefunden")
             for trade in ai_delisted:
                 coin = trade['symbol']
-                entry = float(trade['entry1']) if trade['entry1'] else (
-                    float(trade['price']) if trade['price'] else 0.0
+                entry = (
+                    float(trade['entry1']) if trade['entry1'] else (float(trade['price']) if trade['price'] else 0.0)
                 )
                 close_price = _fetch_last_close_or_entry(conn, coin, entry)
                 targets_hit = int(trade['current_target_hit'] or 0)
@@ -202,8 +204,12 @@ def cleanup_delisted_trades():
                             ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
                             """,
                             (
-                                coin, trade['model'], trade['direction'],
-                                entry, close_price, targets_hit,
+                                coin,
+                                trade['model'],
+                                trade['direction'],
+                                entry,
+                                close_price,
+                                targets_hit,
                                 trade['open_time'],
                                 "DELISTED / CLEANUP",
                             ),
@@ -215,19 +221,13 @@ def cleanup_delisted_trades():
                     conn.commit()
                     closed_ai += 1
                 except Exception as e:
-                    logger.warning(
-                        f"  ⚠ AI-Trade {trade['id']} ({coin}) "
-                        f"konnte nicht delisted-closed werden: {e}"
-                    )
+                    logger.warning(f"  ⚠ AI-Trade {trade['id']} ({coin}) konnte nicht delisted-closed werden: {e}")
                     conn.rollback()
 
         if closed_classic == 0 and closed_ai == 0:
             logger.info("  ✅ Keine delisted Trades gefunden.")
         else:
-            logger.info(
-                f"  ✅ Delisted-Cleanup: {closed_classic} klassische + "
-                f"{closed_ai} AI-Trades geschlossen."
-            )
+            logger.info(f"  ✅ Delisted-Cleanup: {closed_classic} klassische + {closed_ai} AI-Trades geschlossen.")
 
     except Exception as e:
         logger.error(f"❌ Fehler beim Delisted-Cleanup: {e}", exc_info=True)
@@ -255,9 +255,7 @@ def _fetch_last_close_or_entry(conn, coin: str, entry: float) -> float:
             # SAVEPOINT verhindert dass ein Lese-Error den Cleanup-Commit kippt
             cur.execute("SAVEPOINT sp_fetch_price")
             try:
-                cur.execute(
-                    f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1'
-                )
+                cur.execute(f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1')
                 row = cur.fetchone()
                 cur.execute("RELEASE SAVEPOINT sp_fetch_price")
                 if row and row[0]:
@@ -284,11 +282,7 @@ def update_max_leverage_json():
         timestamp = int(time.time() * 1000)
         query_string = f"timestamp={timestamp}&recvWindow=5000"
 
-        signature = hmac.new(
-            BINANCE_SECRET.encode('utf-8'),
-            query_string.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
+        signature = hmac.new(BINANCE_SECRET.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
 
         full_url = f"{url}?{query_string}&signature={signature}"
         headers = {'X-MBX-APIKEY': BINANCE_API_KEY}
@@ -339,8 +333,7 @@ def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT DISTINCT image_path FROM telegram_outbox "
-                    "WHERE sent = FALSE AND image_path IS NOT NULL"
+                    "SELECT DISTINCT image_path FROM telegram_outbox WHERE sent = FALSE AND image_path IS NOT NULL"
                 )
                 referenced = {row[0] for row in cur.fetchall() if row[0]}
         finally:
@@ -370,7 +363,8 @@ def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
             logging.info(
                 f"🧹 HOUSEKEEPING: {deleted_count} alte Charts gelöscht, "
                 f"{skipped_referenced} skipped (noch in Outbox referenziert) "
-                f"in '{folder_path}' (älter als {max_age_hours}h).")
+                f"in '{folder_path}' (älter als {max_age_hours}h)."
+            )
     except Exception as e:
         logging.error(f"🔥 Fehler beim Löschen der Charts in '{folder_path}': {e}")
 
@@ -396,10 +390,13 @@ def cleanup_telegram_outbox(max_age_days=7):
             has_created_at = cur.fetchone() is not None
 
             if has_created_at:
-                cur.execute("""
+                cur.execute(
+                    """
                     DELETE FROM telegram_outbox
                     WHERE sent = TRUE AND created_at < NOW() - INTERVAL %s
-                """, (f'{max_age_days} days',))
+                """,
+                    (f'{max_age_days} days',),
+                )
             else:
                 # Fallback: Lösche gesendete entries mit IDs kleiner als die
                 # aktuell kleinste ID minus einen Puffer (d.h. die ältesten).
@@ -431,7 +428,7 @@ def clean_old_database_entries():
         '30m': '1 year',
         '1h': '1 year',
         '2h': '1 year',
-        '4h': '1 year'
+        '4h': '1 year',
     }
 
     conn = get_db_connection()
@@ -528,9 +525,14 @@ def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms
 def _timeframe_to_seconds(tf: str) -> int:
     """'5m' → 300, '1h' → 3600, '1d' → 86400, '1w' → 604800"""
     mapping = {
-        "5m": 300, "15m": 900, "30m": 1800,
-        "1h": 3600, "2h": 7200, "4h": 14400,
-        "1d": 86400, "1w": 604800,
+        "5m": 300,
+        "15m": 900,
+        "30m": 1800,
+        "1h": 3600,
+        "2h": 7200,
+        "4h": 14400,
+        "1d": 86400,
+        "1w": 604800,
     }
     return mapping.get(tf, 0)
 
@@ -555,7 +557,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
     start_time = time.time()
 
     try:
-        with open("coins.json", "r", encoding="utf-8") as f:
+        with open("coins.json", encoding="utf-8") as f:
             data = json.load(f)
         coins = data.get("coins", data) if isinstance(data, dict) else data
         coins = [c.upper() for c in coins if c.upper().endswith("USDT")]
@@ -585,14 +587,11 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                     ind_table = f'"{symbol}_{tf}_indicators"'
 
                     # 1) Existierende Kerzen im Scan-Fenster lesen
-                    scan_start_dt = datetime.datetime.fromtimestamp(
-                        scan_start_ms / 1000, tz=datetime.timezone.utc
-                    )
+                    scan_start_dt = datetime.datetime.fromtimestamp(scan_start_ms / 1000, tz=datetime.timezone.utc)
                     with conn.cursor() as cur:
                         try:
                             cur.execute(
-                                f"SELECT open_time FROM {ohlcv_table} "
-                                "WHERE open_time >= %s ORDER BY open_time ASC",
+                                f"SELECT open_time FROM {ohlcv_table} WHERE open_time >= %s ORDER BY open_time ASC",
                                 (scan_start_dt,),
                             )
                             rows = cur.fetchall()
@@ -632,9 +631,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                     for gap_start_ms, gap_end_ms in gap_ranges:
                         # Binance endTime ist inklusive — wir addieren expected_delta damit
                         # die letzte Kerze sicher mit drin ist
-                        klines = _fetch_klines_from_binance(
-                            symbol, tf, gap_start_ms, gap_end_ms + expected_delta_ms
-                        )
+                        klines = _fetch_klines_from_binance(symbol, tf, gap_start_ms, gap_end_ms + expected_delta_ms)
                         if not klines:
                             continue
 
@@ -646,12 +643,13 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                                     # Nur Kerzen im eigentlichen Gap-Range einfügen — falls Binance mehr liefert
                                     if ot_ms < gap_start_ms or ot_ms > gap_end_ms + expected_delta_ms:
                                         continue
-                                    ot = datetime.datetime.fromtimestamp(
-                                        ot_ms / 1000, tz=datetime.timezone.utc
-                                    )
+                                    ot = datetime.datetime.fromtimestamp(ot_ms / 1000, tz=datetime.timezone.utc)
                                     o_val, h_val, l_val, c_val, v_val = (
-                                        float(k[1]), float(k[2]), float(k[3]),
-                                        float(k[4]), float(k[5]),
+                                        float(k[1]),
+                                        float(k[2]),
+                                        float(k[3]),
+                                        float(k[4]),
+                                        float(k[5]),
                                     )
                                     cur.execute(
                                         f"INSERT INTO {ohlcv_table} "
@@ -671,9 +669,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                         continue
 
                     # 5) Indikator-Invalidierung: alle Rows ab first_gap löschen
-                    first_gap_dt = datetime.datetime.fromtimestamp(
-                        first_gap_ms / 1000, tz=datetime.timezone.utc
-                    )
+                    first_gap_dt = datetime.datetime.fromtimestamp(first_gap_ms / 1000, tz=datetime.timezone.utc)
                     rows_invalidated = 0
                     try:
                         with conn.cursor() as cur:

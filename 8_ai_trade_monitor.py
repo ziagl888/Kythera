@@ -1,12 +1,13 @@
-import time
 import datetime
-import logging
 import json
+import logging
+import time
+import warnings
+
 import pytz
 
 # --- IMPORT CONFIGURATION FROM CORE ---
 from core.database import get_db_connection
-import warnings
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
@@ -49,7 +50,7 @@ def main():
             with conn.cursor() as cur:
                 # Loading ALLE aktiven AI-Trades
                 cur.execute("""
-                    SELECT id, symbol, model, direction, entry1, price, sl, targets, current_target_hit, open_time 
+                    SELECT id, symbol, model, direction, entry1, price, sl, targets, current_target_hit, open_time
                     FROM ai_signals
                 """)
                 active_trades = cur.fetchall()
@@ -82,8 +83,7 @@ def main():
                 for coin in active_coins:
                     try:
                         cur.execute(
-                            f'SELECT open_time, high, low, close FROM "{coin}_5m" '
-                            f'ORDER BY open_time DESC LIMIT 1'
+                            f'SELECT open_time, high, low, close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1'
                         )
                         row = cur.fetchone()
                         if row:
@@ -128,7 +128,18 @@ def main():
 
             with conn.cursor() as cur:
                 for trade in active_trades:
-                    trade_id, symbol, model, direction, entry1, db_price, current_sl, targets_data, targets_hit, open_time = trade
+                    (
+                        trade_id,
+                        symbol,
+                        model,
+                        direction,
+                        entry1,
+                        db_price,
+                        current_sl,
+                        targets_data,
+                        targets_hit,
+                        open_time,
+                    ) = trade
 
                     candle = live_prices.get(symbol)
                     if not candle:
@@ -222,28 +233,47 @@ def main():
 
                     # C) DATENBANK UPDATES AUSFÜHREN
                     if is_closed:
-                        pnl = (close_price - entry) / entry * 100 if direction == "LONG" else (
-                                entry - close_price) / entry * 100
+                        pnl = (
+                            (close_price - entry) / entry * 100
+                            if direction == "LONG"
+                            else (entry - close_price) / entry * 100
+                        )
                         logger.info(
-                            f"🔒 AI Trade {symbol} ({model}) geschlossen! Grund: {close_reason} | PnL: {pnl:.2f}%")
+                            f"🔒 AI Trade {symbol} ({model}) geschlossen! Grund: {close_reason} | PnL: {pnl:.2f}%"
+                        )
 
-                        cur.execute("""
+                        cur.execute(
+                            """
                             INSERT INTO closed_ai_signals (symbol, model, direction, entry, close_price, targets_hit, open_time, close_time, status)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
-                        """, (symbol, model, direction, float(entry), float(close_price), int(new_targets_hit), open_time,
-                              close_reason))
+                        """,
+                            (
+                                symbol,
+                                model,
+                                direction,
+                                float(entry),
+                                float(close_price),
+                                int(new_targets_hit),
+                                open_time,
+                                close_reason,
+                            ),
+                        )
 
                         cur.execute("DELETE FROM ai_signals WHERE id = %s", (trade_id,))
                         db_was_changed = True
 
                     elif targets_data is not None and new_targets_hit > (targets_hit or 0):
                         logger.info(
-                            f"🎯 AI Trade {symbol} ({model}) hat Target {new_targets_hit} erreicht! SL auf {new_sl:.6f} gezogen.")
-                        cur.execute("""
-                            UPDATE ai_signals 
-                            SET current_target_hit = %s, sl = %s 
+                            f"🎯 AI Trade {symbol} ({model}) hat Target {new_targets_hit} erreicht! SL auf {new_sl:.6f} gezogen."
+                        )
+                        cur.execute(
+                            """
+                            UPDATE ai_signals
+                            SET current_target_hit = %s, sl = %s
                             WHERE id = %s
-                        """, (new_targets_hit, new_sl, trade_id))
+                        """,
+                            (new_targets_hit, new_sl, trade_id),
+                        )
                         db_was_changed = True
 
                     # === NEU: BATCH COMMIT AUSFÜHREN ===
@@ -252,7 +282,8 @@ def main():
                         if updates_pending >= BATCH_SIZE:
                             conn.commit()
                             logger.info(
-                                f"💾 Batch Commit: {BATCH_SIZE} Trades in der Datenbank gespeichert (Speicher geleert).")
+                                f"💾 Batch Commit: {BATCH_SIZE} Trades in der Datenbank gespeichert (Speicher geleert)."
+                            )
                             updates_pending = 0
 
             # Finaler Commit für den Rest der Trades (die z.B. nur 12 waren, also den 50er Threshold nicht erreicht haben)

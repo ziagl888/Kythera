@@ -12,10 +12,10 @@ Aufruf mit --initial-run für vollständigen Einmal-Durchlauf.
 
 Watchdog: start_delay=167
 """
+
 from __future__ import annotations
 
 import asyncio
-import logging
 import statistics
 import sys
 import warnings
@@ -30,13 +30,12 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-import numpy as np
 import pandas as pd
 from psycopg2 import extras as pg_extras
 
+from core.bot_naming import pretty_name
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
-from core.bot_naming import pretty_name
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -66,7 +65,7 @@ ANALYSIS_WINDOWS: list[int] = [7, 30, 90]
 #      Close-Preise) und verzerren avg_loss/avg_win massiv.
 #
 # Die Logik ist PnL-basiert statt targets_hit-basiert:
-OUTCOME_MIN_PNL_PCT: float = 0.1      # |pnl| <= 0.1% → neutral (Housekeeping)
+OUTCOME_MIN_PNL_PCT: float = 0.1  # |pnl| <= 0.1% → neutral (Housekeeping)
 OUTCOME_MAX_ABS_PNL_PCT: float = 100.0  # |pnl| > 100% → neutral (Daten-Bug)
 
 BTC_REGIMES = ["TREND_UP", "TREND_DOWN", "CHOP", "HIGH_VOLA", "TRANSITION"]
@@ -75,7 +74,7 @@ DIRECTIONS = ["LONG", "SHORT"]
 
 # Counter-trend Richtungen per BTC-Regime
 COUNTER_TREND_DIRECTIONS: dict[str, str] = {
-    "TREND_UP":   "SHORT",
+    "TREND_UP": "SHORT",
     "TREND_DOWN": "LONG",
 }
 
@@ -88,6 +87,7 @@ logger = setup_logging("BOT_REGIME_ANALYZER")
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def is_counter_trend(regime: str, direction: str) -> bool:
     """True if the direction is the 'hard' counter-trend direction for this BTC regime."""
@@ -122,6 +122,7 @@ def _compute_stats(pnl_pcts: list[float], is_wins: list[int]) -> dict:
 # TRADE-DATEN LADEN
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _classify_outcome(close_reason: str, pnl_pct: float) -> str:
     """Klassifiziert einen einzelnen Trade.
 
@@ -135,8 +136,7 @@ def _classify_outcome(close_reason: str, pnl_pct: float) -> str:
     # Housekeeping-Closes: weder Win noch Loss (extern verursacht,
     # nicht vom Bot-Signal). Umfasst Delisting, Orphan-Cleanup und
     # Regime-Wechsel-Forced-Closes.
-    if ("DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason
-            or "REGIME_CHANGE" in reason):
+    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason or "REGIME_CHANGE" in reason:
         return "neutral"
     if pnl_pct is None or (isinstance(pnl_pct, float) and pd.isna(pnl_pct)):
         return "neutral"
@@ -295,9 +295,19 @@ def load_trades_with_regime(conn, window_days: int) -> pd.DataFrame:
     frames = [f for f in [df_classic, df_ai] if not f.empty]
     if not frames:
         return pd.DataFrame(
-            columns=["bot_name", "direction", "entry", "close_price",
-                     "is_win", "pnl_pct", "regime", "alt_context",
-                     "opened_at", "close_reason", "outcome"]
+            columns=[
+                "bot_name",
+                "direction",
+                "entry",
+                "close_price",
+                "is_win",
+                "pnl_pct",
+                "regime",
+                "alt_context",
+                "opened_at",
+                "close_reason",
+                "outcome",
+            ]
         )
 
     df = pd.concat(frames, ignore_index=True)
@@ -323,6 +333,7 @@ def load_trades_with_regime(conn, window_days: int) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 # PERFORMANCE BERECHNEN & UPSERTEN
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> int:
     """
@@ -355,18 +366,24 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
                 df_dir["is_win"].tolist(),
             )
             if overall_stats:
-                rows.append((
-                    bot, "ALL", "ALL", direction, window_days,
-                    overall_stats["n_trades"],
-                    overall_stats["win_rate"],
-                    overall_stats["avg_pnl_pct"],
-                    overall_stats["median_pnl_pct"],
-                    overall_stats["pnl_stddev"],
-                    overall_stats["sharpe_like"],
-                    overall_stats["worst_trade_pct"],
-                    overall_stats["best_trade_pct"],
-                    now_utc,
-                ))
+                rows.append(
+                    (
+                        bot,
+                        "ALL",
+                        "ALL",
+                        direction,
+                        window_days,
+                        overall_stats["n_trades"],
+                        overall_stats["win_rate"],
+                        overall_stats["avg_pnl_pct"],
+                        overall_stats["median_pnl_pct"],
+                        overall_stats["pnl_stddev"],
+                        overall_stats["sharpe_like"],
+                        overall_stats["worst_trade_pct"],
+                        overall_stats["best_trade_pct"],
+                        now_utc,
+                    )
+                )
 
             # Per BTC-Regime, aggregated over alt_context (regime × ALL)
             for regime in BTC_REGIMES:
@@ -376,14 +393,24 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
                     df_reg["is_win"].tolist(),
                 )
                 if stats:
-                    rows.append((
-                        bot, regime, "ALL", direction, window_days,
-                        stats["n_trades"], stats["win_rate"],
-                        stats["avg_pnl_pct"], stats["median_pnl_pct"],
-                        stats["pnl_stddev"], stats["sharpe_like"],
-                        stats["worst_trade_pct"], stats["best_trade_pct"],
-                        now_utc,
-                    ))
+                    rows.append(
+                        (
+                            bot,
+                            regime,
+                            "ALL",
+                            direction,
+                            window_days,
+                            stats["n_trades"],
+                            stats["win_rate"],
+                            stats["avg_pnl_pct"],
+                            stats["median_pnl_pct"],
+                            stats["pnl_stddev"],
+                            stats["sharpe_like"],
+                            stats["worst_trade_pct"],
+                            stats["best_trade_pct"],
+                            now_utc,
+                        )
+                    )
 
                 # 4D: regime × alt_context
                 for alt in ALT_CONTEXTS:
@@ -393,14 +420,24 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
                         df_cell["is_win"].tolist(),
                     )
                     if stats_4d:
-                        rows.append((
-                            bot, regime, alt, direction, window_days,
-                            stats_4d["n_trades"], stats_4d["win_rate"],
-                            stats_4d["avg_pnl_pct"], stats_4d["median_pnl_pct"],
-                            stats_4d["pnl_stddev"], stats_4d["sharpe_like"],
-                            stats_4d["worst_trade_pct"], stats_4d["best_trade_pct"],
-                            now_utc,
-                        ))
+                        rows.append(
+                            (
+                                bot,
+                                regime,
+                                alt,
+                                direction,
+                                window_days,
+                                stats_4d["n_trades"],
+                                stats_4d["win_rate"],
+                                stats_4d["avg_pnl_pct"],
+                                stats_4d["median_pnl_pct"],
+                                stats_4d["pnl_stddev"],
+                                stats_4d["sharpe_like"],
+                                stats_4d["worst_trade_pct"],
+                                stats_4d["best_trade_pct"],
+                                now_utc,
+                            )
+                        )
 
             # Per alt_context, aggregated over regimes (ALL × alt_context)
             for alt in ALT_CONTEXTS:
@@ -410,14 +447,24 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
                     df_alt["is_win"].tolist(),
                 )
                 if stats:
-                    rows.append((
-                        bot, "ALL", alt, direction, window_days,
-                        stats["n_trades"], stats["win_rate"],
-                        stats["avg_pnl_pct"], stats["median_pnl_pct"],
-                        stats["pnl_stddev"], stats["sharpe_like"],
-                        stats["worst_trade_pct"], stats["best_trade_pct"],
-                        now_utc,
-                    ))
+                    rows.append(
+                        (
+                            bot,
+                            "ALL",
+                            alt,
+                            direction,
+                            window_days,
+                            stats["n_trades"],
+                            stats["win_rate"],
+                            stats["avg_pnl_pct"],
+                            stats["median_pnl_pct"],
+                            stats["pnl_stddev"],
+                            stats["sharpe_like"],
+                            stats["worst_trade_pct"],
+                            stats["best_trade_pct"],
+                            now_utc,
+                        )
+                    )
 
         # BOTH direction aggregate
         df_both = df_bot
@@ -430,14 +477,24 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
                     df_cell["is_win"].tolist(),
                 )
                 if stats:
-                    rows.append((
-                        bot, regime, alt, "BOTH", window_days,
-                        stats["n_trades"], stats["win_rate"],
-                        stats["avg_pnl_pct"], stats["median_pnl_pct"],
-                        stats["pnl_stddev"], stats["sharpe_like"],
-                        stats["worst_trade_pct"], stats["best_trade_pct"],
-                        now_utc,
-                    ))
+                    rows.append(
+                        (
+                            bot,
+                            regime,
+                            alt,
+                            "BOTH",
+                            window_days,
+                            stats["n_trades"],
+                            stats["win_rate"],
+                            stats["avg_pnl_pct"],
+                            stats["median_pnl_pct"],
+                            stats["pnl_stddev"],
+                            stats["sharpe_like"],
+                            stats["worst_trade_pct"],
+                            stats["best_trade_pct"],
+                            now_utc,
+                        )
+                    )
 
     if not rows:
         return 0
@@ -473,6 +530,7 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
 # ─────────────────────────────────────────────────────────────────────────────
 # WHITELIST BERECHNEN
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def compute_whitelist(conn) -> int:
     """
@@ -536,8 +594,7 @@ def compute_whitelist(conn) -> int:
 
                     elif is_counter_trend(regime, direction):
                         # Strict rule for counter-trend
-                        if (wr_bot >= COUNTER_TREND_MIN_WR_PCT and
-                                wr_bot >= wr_overall + COUNTER_TREND_MIN_ADVANTAGE_PP):
+                        if wr_bot >= COUNTER_TREND_MIN_WR_PCT and wr_bot >= wr_overall + COUNTER_TREND_MIN_ADVANTAGE_PP:
                             whitelisted = True
                             reason = "counter_trend_specialist"
                         else:
@@ -553,10 +610,17 @@ def compute_whitelist(conn) -> int:
                             whitelisted = False
                             reason = "wr_below_overall"
 
-                    whitelist_rows.append((
-                        bot, regime, alt, direction,
-                        whitelisted, reason, now_utc,
-                    ))
+                    whitelist_rows.append(
+                        (
+                            bot,
+                            regime,
+                            alt,
+                            direction,
+                            whitelisted,
+                            reason,
+                            now_utc,
+                        )
+                    )
 
     with conn.cursor() as cur:
         pg_extras.execute_values(
@@ -582,6 +646,7 @@ def compute_whitelist(conn) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # TÄGLICHER CROSS-TABLE-POST
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 async def post_daily_cross_table() -> None:
     """
@@ -643,7 +708,7 @@ async def post_daily_cross_table() -> None:
             f"📊 BOT × ALT-CONTEXT PERFORMANCE — {cur_regime} (30d)\n\n"
             f"Bot          LONG                          SHORT\n"
             f"             ALT_W    ALT_N    ALT_S       ALT_W    ALT_N    ALT_S\n"
-            f"{'─'*67}"
+            f"{'─' * 67}"
         )
 
         lines = [header]
@@ -654,9 +719,7 @@ async def post_daily_cross_table() -> None:
             sl = _cell(bot, "ALT_WEAK", "SHORT")
             sn = _cell(bot, "ALT_NEUTRAL", "SHORT")
             ss = _cell(bot, "ALT_STRONG", "SHORT")
-            lines.append(
-                f"{bot:<12} {ll}    {ln}    {ls}       {sl}    {sn}    {ss}"
-            )
+            lines.append(f"{bot:<12} {ll}    {ln}    {ls}       {sl}    {sn}    {ss}")
 
         lines.append(
             f"\nAktuelles Regime: {cur_regime}  |  Aktueller Alt-Context: {cur_alt}\n"
@@ -680,6 +743,7 @@ async def post_daily_cross_table() -> None:
 # ANALYSE JOB
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def cleanup_stale_performance_rows(conn) -> int:
     """Löscht bot_regime_performance-Rows mit nicht-normalisierten Bot-Namen.
 
@@ -699,9 +763,7 @@ def cleanup_stale_performance_rows(conn) -> int:
     """
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT DISTINCT bot_name FROM bot_regime_performance"
-            )
+            cur.execute("SELECT DISTINCT bot_name FROM bot_regime_performance")
             bot_names = [r[0] for r in cur.fetchall()]
     except Exception as e:
         logger.warning(f"Cleanup-Scan fehlgeschlagen: {e}")
@@ -745,14 +807,9 @@ async def run_analysis() -> None:
             df = load_trades_with_regime(conn, window)
             n = compute_and_upsert_performance(conn, df, window)
             total_rows += n
-            logger.info(
-                f"Window {window}d: {len(df)} Trades → {n} performance rows upserted"
-            )
+            logger.info(f"Window {window}d: {len(df)} Trades → {n} performance rows upserted")
         wl_count = compute_whitelist(conn)
-        logger.info(
-            f"✅ Analyse completed: {total_rows} Performance-Rows, "
-            f"{wl_count} Whitelist-entries"
-        )
+        logger.info(f"✅ Analyse completed: {total_rows} Performance-Rows, {wl_count} Whitelist-entries")
     except Exception as e:
         logger.error(f"Analyse-Error: {e}", exc_info=True)
     finally:
@@ -763,6 +820,7 @@ async def run_analysis() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # SCHEDULER
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 async def schedule_hourly_analysis() -> None:
     """Runs analysis at XX:05:00 every hour."""

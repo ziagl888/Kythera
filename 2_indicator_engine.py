@@ -1,26 +1,24 @@
 import warnings
+
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-import pandas as pd
-import json
 import datetime
-import numpy as np
-from psycopg2 import extras
+import json
 import logging
-import time
-from concurrent.futures import ProcessPoolExecutor
-from scipy import stats
-import scipy.signal
 import os
 import sys
+import time
+from concurrent.futures import ProcessPoolExecutor
+
+import numpy as np
+import pandas as pd
+import scipy.signal
+from psycopg2 import extras
+from scipy import stats
 
 from core.config import INDICATOR_TIMEFRAMES, NUM_WORKERS
 from core.database import get_db_connection
 from core.market_utils import load_coins
-
-
-
-
 
 STATE_FILE = 'indicator_state.json'
 
@@ -28,31 +26,34 @@ STATE_FILE = 'indicator_state.json'
 COINS_FILE = 'coins.json'
 INDICATOR_SUFFIX = '_indicators'
 
-import sys
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - INDICATOR_ENGINE - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('indicator_calculation.log', encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.FileHandler('indicator_calculation.log', encoding='utf-8'), logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
 
 # HILFSFUNKTIONEN
 def get_timeframe_delta(timeframe):
-    if timeframe == '1h': return pd.Timedelta(hours=1)
-    if timeframe == '15m': return pd.Timedelta(minutes=15)
-    if timeframe == '5m': return pd.Timedelta(minutes=5)
-    if timeframe == '30m': return pd.Timedelta(minutes=30)
-    if timeframe == '2h': return pd.Timedelta(hours=2)
-    if timeframe == '4h': return pd.Timedelta(hours=4)
-    if timeframe == '1d': return pd.Timedelta(days=1)
-    if timeframe == '1w': return pd.Timedelta(weeks=1)
+    if timeframe == '1h':
+        return pd.Timedelta(hours=1)
+    if timeframe == '15m':
+        return pd.Timedelta(minutes=15)
+    if timeframe == '5m':
+        return pd.Timedelta(minutes=5)
+    if timeframe == '30m':
+        return pd.Timedelta(minutes=30)
+    if timeframe == '2h':
+        return pd.Timedelta(hours=2)
+    if timeframe == '4h':
+        return pd.Timedelta(hours=4)
+    if timeframe == '1d':
+        return pd.Timedelta(days=1)
+    if timeframe == '1w':
+        return pd.Timedelta(weeks=1)
     return pd.Timedelta(hours=1)
-
 
 
 def table_exists(conn, table_name):
@@ -69,29 +70,86 @@ def table_exists(conn, table_name):
 
 def get_indicator_definitions():
     definitions = {
-        "RSI_6": "REAL", "RSI_9": "REAL", "RSI_12": "REAL", "RSI_14": "REAL", "RSI_24": "REAL",
-        "EMA_7": "REAL", "EMA_9": "REAL", "EMA_12": "REAL", "EMA_21": "REAL", "EMA_26": "REAL",
-        "EMA_34": "REAL", "EMA_50": "REAL", "EMA_55": "REAL", "EMA_89": "REAL", "EMA_99": "REAL", "EMA_200": "REAL",
-        "MA_7": "REAL", "MA_10": "REAL", "MA_20": "REAL", "MA_25": "REAL", "MA_50": "REAL",
-        "MA_99": "REAL", "MA_100": "REAL", "MA_200": "REAL",
-        "WMA_7": "REAL", "WMA_9": "REAL", "WMA_12": "REAL", "WMA_21": "REAL", "WMA_26": "REAL",
-        "WMA_34": "REAL", "WMA_50": "REAL", "WMA_55": "REAL", "WMA_89": "REAL", "WMA_99": "REAL", "WMA_200": "REAL",
-        "SMMA_10": "REAL", "SMMA_20": "REAL", "SMMA_25": "REAL", "SMMA_50": "REAL", "SMMA_99": "REAL",
-        "SMMA_100": "REAL", "SMMA_200": "REAL",
-        "KAMA_7": "REAL", "KAMA_9": "REAL", "KAMA_12": "REAL", "KAMA_21": "REAL", "KAMA_26": "REAL",
-        "KAMA_34": "REAL", "KAMA_50": "REAL", "KAMA_55": "REAL", "KAMA_89": "REAL", "KAMA_99": "REAL",
-        "ATR_9": "REAL", "ATR_14": "REAL", "ATR_21": "REAL",
-        "TSI_25_13_13": "REAL", "TSI_25_13_13_SIGNAL": "REAL",
-        "TSI_FAST_12_7_7": "REAL", "TSI_FAST_12_7_7_SIGNAL": "REAL",
-        "HVN_1": "REAL", "HVN_2": "REAL", "HVN_3": "REAL", "POC": "REAL",
-        "MACD_DIF_FAST_9_21_9": "REAL", "MACD_DEA_FAST_9_21_9": "REAL",
-        "MACD_DIF_NORMAL_12_26_9": "REAL", "MACD_DEA_NORMAL_12_26_9": "REAL",
-        "BOLL_UPPER_20": "REAL", "BOLL_MID_20": "REAL", "BOLL_LOWER_20": "REAL",
-        "TRENDLINE_SLOPE": "REAL", "TRENDLINE_INTERCEPT": "REAL",
-        "CHANNEL_UPPER_PRICE": "REAL", "CHANNEL_LOWER_PRICE": "REAL",
-        "TRENDLINE_PRICE": "REAL", "MID_LINE": "REAL", "R_SQUARED": "REAL",
+        "RSI_6": "REAL",
+        "RSI_9": "REAL",
+        "RSI_12": "REAL",
+        "RSI_14": "REAL",
+        "RSI_24": "REAL",
+        "EMA_7": "REAL",
+        "EMA_9": "REAL",
+        "EMA_12": "REAL",
+        "EMA_21": "REAL",
+        "EMA_26": "REAL",
+        "EMA_34": "REAL",
+        "EMA_50": "REAL",
+        "EMA_55": "REAL",
+        "EMA_89": "REAL",
+        "EMA_99": "REAL",
+        "EMA_200": "REAL",
+        "MA_7": "REAL",
+        "MA_10": "REAL",
+        "MA_20": "REAL",
+        "MA_25": "REAL",
+        "MA_50": "REAL",
+        "MA_99": "REAL",
+        "MA_100": "REAL",
+        "MA_200": "REAL",
+        "WMA_7": "REAL",
+        "WMA_9": "REAL",
+        "WMA_12": "REAL",
+        "WMA_21": "REAL",
+        "WMA_26": "REAL",
+        "WMA_34": "REAL",
+        "WMA_50": "REAL",
+        "WMA_55": "REAL",
+        "WMA_89": "REAL",
+        "WMA_99": "REAL",
+        "WMA_200": "REAL",
+        "SMMA_10": "REAL",
+        "SMMA_20": "REAL",
+        "SMMA_25": "REAL",
+        "SMMA_50": "REAL",
+        "SMMA_99": "REAL",
+        "SMMA_100": "REAL",
+        "SMMA_200": "REAL",
+        "KAMA_7": "REAL",
+        "KAMA_9": "REAL",
+        "KAMA_12": "REAL",
+        "KAMA_21": "REAL",
+        "KAMA_26": "REAL",
+        "KAMA_34": "REAL",
+        "KAMA_50": "REAL",
+        "KAMA_55": "REAL",
+        "KAMA_89": "REAL",
+        "KAMA_99": "REAL",
+        "ATR_9": "REAL",
+        "ATR_14": "REAL",
+        "ATR_21": "REAL",
+        "TSI_25_13_13": "REAL",
+        "TSI_25_13_13_SIGNAL": "REAL",
+        "TSI_FAST_12_7_7": "REAL",
+        "TSI_FAST_12_7_7_SIGNAL": "REAL",
+        "HVN_1": "REAL",
+        "HVN_2": "REAL",
+        "HVN_3": "REAL",
+        "POC": "REAL",
+        "MACD_DIF_FAST_9_21_9": "REAL",
+        "MACD_DEA_FAST_9_21_9": "REAL",
+        "MACD_DIF_NORMAL_12_26_9": "REAL",
+        "MACD_DEA_NORMAL_12_26_9": "REAL",
+        "BOLL_UPPER_20": "REAL",
+        "BOLL_MID_20": "REAL",
+        "BOLL_LOWER_20": "REAL",
+        "TRENDLINE_SLOPE": "REAL",
+        "TRENDLINE_INTERCEPT": "REAL",
+        "CHANNEL_UPPER_PRICE": "REAL",
+        "CHANNEL_LOWER_PRICE": "REAL",
+        "TRENDLINE_PRICE": "REAL",
+        "MID_LINE": "REAL",
+        "R_SQUARED": "REAL",
         "TREND_DIRECTION": "TEXT",
-        "SUPPORT_PRICE": "REAL", "RESISTANCE_PRICE": "REAL"
+        "SUPPORT_PRICE": "REAL",
+        "RESISTANCE_PRICE": "REAL",
     }
     for w in [4, 10, 12, 15, 20]:
         definitions[f"DONCHIAN_UPPER_{w}"] = "REAL"
@@ -129,15 +187,12 @@ def update_timeframe_state(timeframe, status):
     """Writes the current status to a JSON file so other scripts can read it."""
     try:
         if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, 'r') as f:
+            with open(STATE_FILE) as f:
                 state = json.load(f)
         else:
             state = {}
 
-        state[timeframe] = {
-            'status': status,
-            'timestamp': datetime.datetime.now().isoformat()
-        }
+        state[timeframe] = {'status': status, 'timestamp': datetime.datetime.now().isoformat()}
 
         # FIX (#45): Atomares Write via Temp + os.replace. Vorher wurde direkt
         # in die Zieldatei geschrieben — bei gleichzeitigem Read aus dem
@@ -152,6 +207,7 @@ def update_timeframe_state(timeframe, status):
         os.replace(tmp, STATE_FILE)
     except Exception as e:
         logger.error(f"Error in status update for {timeframe}: {e}")
+
 
 # MATHEMATIK & INDIKATOREN
 def calculate_trendline_and_channel_robust_optimized(df):
@@ -203,8 +259,8 @@ def calculate_trendline_and_channel_robust_optimized(df):
         "CHANNEL_UPPER_PRICE": pd.Series(upper_channel, index=df.index),
         "CHANNEL_LOWER_PRICE": pd.Series(lower_channel, index=df.index),
         "MID_LINE": pd.Series(trendline_values, index=df.index),
-        "R_SQUARED": pd.Series(r_value ** 2, index=df.index),
-        "TREND_DIRECTION": pd.Series(direction, index=df.index)
+        "R_SQUARED": pd.Series(r_value**2, index=df.index),
+        "TREND_DIRECTION": pd.Series(direction, index=df.index),
     }
 
 
@@ -223,7 +279,8 @@ def get_hvn_poc_for_dataset(df, timeframe):
             p = (bin_edges[idx] + bin_edges[idx + 1]) / 2
             if abs(p - poc_price) > (poc_price * 0.005):
                 hvn_prices.append(p)
-        while len(hvn_prices) < 3: hvn_prices.append(0)
+        while len(hvn_prices) < 3:
+            hvn_prices.append(0)
         return {"POC": poc_price, "HVN_1": hvn_prices[0], "HVN_2": hvn_prices[1], "HVN_3": hvn_prices[2]}
     except Exception:
         return {"POC": 0, "HVN_1": 0, "HVN_2": 0, "HVN_3": 0}
@@ -307,7 +364,7 @@ def calculate_kama(series, period=10, fast=2, slow=30):
 
     for i in range(period, len(closes)):
         change = abs(closes[i] - closes[i - period])
-        volatility = np.sum(np.abs(np.diff(closes[i - period:i + 1])))
+        volatility = np.sum(np.abs(np.diff(closes[i - period : i + 1])))
         er = change / volatility if volatility != 0 else 0
         sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
         kama[i] = kama[i - 1] + sc * (closes[i] - kama[i - 1])
@@ -321,13 +378,18 @@ def calculate_indicators_optimized(df, timeframe):
     low = df['low']
     results = {}
 
-    for p in [6, 9, 12, 14, 24]: results[f'RSI_{p}'] = calculate_rsi(close, p)
-    for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]: results[f'EMA_{p}'] = close.ewm(span=p,
-                                                                                          adjust=False).mean().fillna(0)
-    for p in [7, 10, 20, 25, 50, 99, 100, 200]: results[f'MA_{p}'] = close.rolling(window=p).mean().fillna(0)
-    for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]: results[f'WMA_{p}'] = calculate_wma(close, period=p)
-    for p in [10, 20, 25, 50, 99, 100, 200]: results[f'SMMA_{p}'] = calculate_smma(close, period=p)
-    for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99]: results[f'KAMA_{p}'] = calculate_kama(close, period=p)
+    for p in [6, 9, 12, 14, 24]:
+        results[f'RSI_{p}'] = calculate_rsi(close, p)
+    for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]:
+        results[f'EMA_{p}'] = close.ewm(span=p, adjust=False).mean().fillna(0)
+    for p in [7, 10, 20, 25, 50, 99, 100, 200]:
+        results[f'MA_{p}'] = close.rolling(window=p).mean().fillna(0)
+    for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]:
+        results[f'WMA_{p}'] = calculate_wma(close, period=p)
+    for p in [10, 20, 25, 50, 99, 100, 200]:
+        results[f'SMMA_{p}'] = calculate_smma(close, period=p)
+    for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99]:
+        results[f'KAMA_{p}'] = calculate_kama(close, period=p)
 
     mid = close.rolling(20).mean()
     std = close.rolling(20).std()
@@ -354,7 +416,8 @@ def calculate_indicators_optimized(df, timeframe):
     tr2 = (high - close.shift()).abs()
     tr3 = (low - close.shift()).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    for p in [9, 14, 21]: results[f'ATR_{p}'] = tr.ewm(alpha=1 / p, adjust=False).mean().fillna(0)
+    for p in [9, 14, 21]:
+        results[f'ATR_{p}'] = tr.ewm(alpha=1 / p, adjust=False).mean().fillna(0)
 
     def calc_tsi(r, s):
         diff = close.diff()
@@ -373,7 +436,8 @@ def calculate_indicators_optimized(df, timeframe):
     results.update(trend_data)
 
     hvn_data = get_hvn_poc_for_dataset(df, timeframe)
-    for k, v in hvn_data.items(): results[k] = v
+    for k, v in hvn_data.items():
+        results[k] = v
 
     try:
         sup, res = find_support_resistance(df)
@@ -413,7 +477,8 @@ def write_indicators_to_db_optimized(conn, df, symbol, timeframe, definitions):
     table_name = f'"{symbol}_{timeframe}{INDICATOR_SUFFIX}"'
     valid_cols = ['symbol', 'open_time', 'close'] + list(definitions.keys())
     for col in valid_cols:
-        if col not in df.columns: df[col] = 0
+        if col not in df.columns:
+            df[col] = 0
 
     df_to_write = df[valid_cols].copy()
     data_values = [tuple(x) for x in df_to_write.to_numpy()]
@@ -438,6 +503,7 @@ def process_coin_task(args):
 
     # --- NEU: DIESER BLOCK MUSS GENAU HIER REIN! ---
     import warnings
+
     warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
     symbol, timeframe = args
@@ -463,7 +529,6 @@ def process_coin_task(args):
         with conn.cursor() as cur:
             cur.execute(f"SELECT MAX(open_time) FROM {ind_table}")
             last_ind_time = cur.fetchone()[0]
-
 
         if last_ind_time is None:
             start_fetch_time = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)

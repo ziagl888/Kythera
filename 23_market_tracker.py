@@ -4,17 +4,18 @@ warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 
 import asyncio
-import time
 import json
 import logging
-import pandas as pd
 from datetime import datetime, timedelta, timezone
+
+import pandas as pd
+
+from core import config as _kcfg  # channel ids
+from core.bot_naming import pretty_name
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
 from core.market_utils import send_telegram
-from core.bot_naming import pretty_name
-from core import config as _kcfg  # channel ids
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - MARKET_TRACKER - %(message)s')
@@ -29,27 +30,33 @@ COINS_FILE = 'coins.json'
 
 # 📡 DATABASE & HELPERS
 
+
 def load_all_altcoins():
     try:
-        with open(COINS_FILE, 'r') as f:
+        with open(COINS_FILE) as f:
             data = json.load(f)
             coin_list = data.get('coins', data) if isinstance(data, dict) else data
-            return [c.upper() for c in coin_list if
-                    c.upper().endswith("USDT") and c.upper() not in EXCLUDED_COINS_FOR_TOTAL]
+            return [
+                c.upper() for c in coin_list if c.upper().endswith("USDT") and c.upper() not in EXCLUDED_COINS_FOR_TOTAL
+            ]
     except Exception as e:
         logger.error(f"Error loading von {COINS_FILE}: {e}")
         return []
 
 
 def format_money(val):
-    if val >= 1e9: return f"${val / 1e9:.2f}B"
-    if val >= 1e6: return f"${val / 1e6:.2f}M"
-    if val >= 1e3: return f"${val / 1e3:.0f}K"
+    if val >= 1e9:
+        return f"${val / 1e9:.2f}B"
+    if val >= 1e6:
+        return f"${val / 1e6:.2f}M"
+    if val >= 1e3:
+        return f"${val / 1e3:.0f}K"
     return f"${val:,.0f}"
 
 
 def get_color(val, reverse=False):
-    if reverse: return "lime" if val < 0 else "red"
+    if reverse:
+        return "lime" if val < 0 else "red"
     return "lime" if val >= 0 else "red"
 
 
@@ -84,7 +91,7 @@ async def get_volume_data(symbols, hours_ago):
                             sell_totals += float(row[2])
                     except Exception:
                         conn.rollback()
-    except Exception as e:
+    except Exception:
         pass
     return usd_totals, buy_totals, sell_totals
 
@@ -101,7 +108,8 @@ async def get_price_change(symbols, hours_ago):
                     try:
                         cur.execute(
                             f'SELECT close FROM "{sym}_30m" WHERE open_time >= %s ORDER BY open_time ASC LIMIT 1',
-                            (start,))
+                            (start,),
+                        )
                         r_old = cur.fetchone()
                         cur.execute(f'SELECT close FROM "{sym}_30m" ORDER BY open_time DESC LIMIT 1')
                         r_new = cur.fetchone()
@@ -110,13 +118,13 @@ async def get_price_change(symbols, hours_ago):
                             valid_coins += 1
                     except Exception:
                         conn.rollback()
-    except Exception as e:
+    except Exception:
         pass
     return (total_change / valid_coins) if valid_coins > 0 else 0.0
 
 
 async def generate_main_report(target_name):
-    is_total = (target_name == "TOTAL ALT MARKET")
+    is_total = target_name == "TOTAL ALT MARKET"
     symbols = load_all_altcoins() if is_total else [target_name]
 
     ch_1h = await get_price_change(symbols, 1)
@@ -130,14 +138,17 @@ async def generate_main_report(target_name):
     for name, h in periods.items():
         u, b, s = await get_volume_data(symbols, h)
         v_data[name] = {'usd': u, 'diff': b - s}
-        if name == '30d': usd_30d = u
+        if name == '30d':
+            usd_30d = u
 
     avg_daily = usd_30d / 30 if usd_30d > 0 else 1
     for name, data in v_data.items():
         exp = avg_daily * (periods[name] / 24)
         data['pct'] = ((data['usd'] / exp) - 1) * 100 if exp > 0 else 0
 
-    f_p = lambda x: f"{x:+.2f}%"
+    def f_p(x):
+        return f"{x:+.2f}%"
+
     emoji = "💎" if target_name == "BTCUSDT" else "💠" if target_name == "ETHUSDT" else "🔥"
 
     html = f"""<pre>
@@ -187,9 +198,11 @@ async def job_gainers_losers():
                         # Holt die gesamten letzten 24h für den Coin in einem Rutsch
                         cur.execute(
                             f'SELECT open_time, close FROM "{sym}_30m" WHERE open_time >= %s ORDER BY open_time ASC',
-                            (t24,))
+                            (t24,),
+                        )
                         rows = cur.fetchall()
-                        if not rows: continue
+                        if not rows:
+                            continue
                         df = pd.DataFrame(rows, columns=['ot', 'c'])
 
                         curr_p = df['c'].iloc[-1]
@@ -208,20 +221,19 @@ async def job_gainers_losers():
                         stats.append({'sym': sym.replace("USDT", ""), '1h': c1, '4h': c4, '24h': c24})
                     except Exception:
                         conn.rollback()
-    except Exception as e:
+    except Exception:
         pass
 
-    if not stats: return
+    if not stats:
+        return
 
     def build_list(tf, is_gain):
         s = sorted(stats, key=lambda x: x[tf], reverse=is_gain)[:10]
         lines = []
         for i, c in enumerate(s, 1):
             val = c[tf]
-            col = "lime" if val >= 0 else "red"
             sign = "+" if val > 0 else ""
-            lines.append(
-                f"<b>{i:02d}</b> <b>{c['sym']:<9}</b> <b>{sign}{val:.2f}%</b>")
+            lines.append(f"<b>{i:02d}</b> <b>{c['sym']:<9}</b> <b>{sign}{val:.2f}%</b>")
         return "\n".join(lines)
 
     # GAINERS MSG
@@ -273,37 +285,42 @@ async def job_volume_spikes():
                     try:
                         cur.execute(
                             f'SELECT SUM(volume), (SELECT close FROM "{sym}_30m" ORDER BY open_time DESC LIMIT 1) FROM "{sym}_30m" WHERE open_time >= %s',
-                            (t4,))
+                            (t4,),
+                        )
                         r = cur.fetchone()
-                        if not r or not r[0]: continue
+                        if not r or not r[0]:
+                            continue
 
                         usd_4h = float(r[0]) * float(r[1])
-                        if usd_4h < 250000: continue  # Mindestens 250k Volumen
+                        if usd_4h < 250000:
+                            continue  # Mindestens 250k Volumen
 
-                        cur.execute(f'SELECT SUM(volume) FROM "{sym}_30m" WHERE open_time >= %s AND open_time < %s',
-                                    (t7, t4))
+                        cur.execute(
+                            f'SELECT SUM(volume) FROM "{sym}_30m" WHERE open_time >= %s AND open_time < %s', (t7, t4)
+                        )
                         r7 = cur.fetchone()
-                        if not r7 or not r7[0]: continue
+                        if not r7 or not r7[0]:
+                            continue
 
                         avg_4h_vol_over_7d = float(r7[0]) / 42.0  # 7 Tage = 42x 4h-Perioden
-                        if avg_4h_vol_over_7d <= 0: continue
+                        if avg_4h_vol_over_7d <= 0:
+                            continue
 
                         ratio = float(r[0]) / avg_4h_vol_over_7d
                         if ratio >= 2.5:  # Zeigt alles ab 2.5x
                             spikes.append({'sym': sym.replace("USDT", ""), 'rat': ratio, 'usd': usd_4h})
                     except Exception:
                         conn.rollback()
-    except Exception as e:
+    except Exception:
         pass
 
-    if not spikes: return
+    if not spikes:
+        return
     spikes = sorted(spikes, key=lambda x: x['rat'], reverse=True)[:10]
 
     lines = []
     for i, s in enumerate(spikes, 1):
-        col = "#ff00ff" if s['rat'] >= 8 else "#ff4466" if s['rat'] >= 5 else "lime"
-        lines.append(
-            f"<b>{i:02d}</b> <b>{s['sym']:<8}</b> <b>{s['rat']:>5.1f}x</b> {format_money(s['usd']):>7}")
+        lines.append(f"<b>{i:02d}</b> <b>{s['sym']:<8}</b> <b>{s['rat']:>5.1f}x</b> {format_money(s['usd']):>7}")
 
     msg = f"""<pre>
 🌊 <b>TOP 10 VOLUME SPIKES</b> 🌊
@@ -331,31 +348,32 @@ async def job_volatile_coins():
                     try:
                         cur.execute(
                             f'SELECT MAX(high), MIN(low), (SELECT close FROM "{sym}_30m" ORDER BY open_time DESC LIMIT 1) FROM "{sym}_30m" WHERE open_time >= %s',
-                            (t4,))
+                            (t4,),
+                        )
                         r = cur.fetchone()
-                        if not r or not r[0] or not r[1]: continue
+                        if not r or not r[0] or not r[1]:
+                            continue
 
-                        h, l, c = float(r[0]), float(r[1]), float(r[2])
-                        if l <= 0: continue
+                        h, low, c = float(r[0]), float(r[1]), float(r[2])
+                        if low <= 0:
+                            continue
 
-                        range_pct = ((h - l) / l) * 100
+                        range_pct = ((h - low) / low) * 100
                         if range_pct >= 5.0:  # Zeigt alles über 5% Range
-                            volatile.append({'sym': sym.replace("USDT", ""), 'r': range_pct, 'h': h, 'l': l, 'c': c})
+                            volatile.append({'sym': sym.replace("USDT", ""), 'r': range_pct, 'h': h, 'l': low, 'c': c})
                     except Exception:
                         conn.rollback()
-    except Exception as e:
+    except Exception:
         pass
 
-    if not volatile: return
+    if not volatile:
+        return
     volatile = sorted(volatile, key=lambda x: x['r'], reverse=True)[:15]
 
     lines = []
     for i, v in enumerate(volatile, 1):
-        col = "#ff00ff" if v['r'] >= 15 else "lime"
         trend = "UP" if v['c'] > v['l'] * 1.02 else "DOWN"
-        t_col = "lime" if trend == "UP" else "red"
-        lines.append(
-            f"<b>{i:02d}</b> <b>{v['sym']:<8}</b> <b>{v['r']:>5.1f}%</b> <b>{trend}</b>")
+        lines.append(f"<b>{i:02d}</b> <b>{v['sym']:<8}</b> <b>{v['r']:>5.1f}%</b> <b>{trend}</b>")
 
     msg = f"""<pre>
 ⚡ <b>TOP 15 VOLATILE COINS</b> ⚡
@@ -381,16 +399,18 @@ async def job_signal_summary():
         query_act_trades = "SELECT strategy, direction, time as created_at FROM active_trades_master WHERE time >= %s"
         df_act_trades = pd.read_sql_query(query_act_trades, conn, params=(t24,))
 
-        query_act_ai = "SELECT model_name as strategy, direction, time as created_at FROM ml_predictions_master WHERE time >= %s"
+        query_act_ai = (
+            "SELECT model_name as strategy, direction, time as created_at FROM ml_predictions_master WHERE time >= %s"
+        )
         df_act_ai = pd.read_sql_query(query_act_ai, conn, params=(t24,))
 
-        # 2. GESCHLOSSENE TRADES HOLEN 
+        # 2. GESCHLOSSENE TRADES HOLEN
         # Wir fragen alles ab, was entweder in den letzten 24h geschlossen ODER eröffnet wurde
         # Queries erweitert um entry/close_price für PnL-basierte is_win-Klassifikation
         query_cls_trades = """
             SELECT strategy, direction, entry, close_price,
-                   time as created_at, posted as closed_at, status 
-            FROM closed_trades_master 
+                   time as created_at, posted as closed_at, status
+            FROM closed_trades_master
             WHERE posted >= %s OR time >= %s
         """
         df_cls_trades = pd.read_sql_query(query_cls_trades, conn, params=(t24, t24))
@@ -399,7 +419,7 @@ async def job_signal_summary():
             SELECT model as strategy, direction, entry, close_price,
                    open_time as created_at, close_time as closed_at, targets_hit,
                    status as close_reason
-            FROM closed_ai_signals 
+            FROM closed_ai_signals
             WHERE close_time >= %s OR open_time >= %s
         """
         df_cls_ai = pd.read_sql_query(query_cls_ai, conn, params=(t24, t24))
@@ -445,9 +465,7 @@ async def job_signal_summary():
         else:
             reason_upper = pd.Series([''] * len(df), index=df.index)
 
-        is_housekeeping = reason_upper.str.contains(
-            'DELISTED|CLEANUP|ORPHAN|REGIME_CHANGE', regex=True, na=False
-        )
+        is_housekeeping = reason_upper.str.contains('DELISTED|CLEANUP|ORPHAN|REGIME_CHANGE', regex=True, na=False)
 
         # PnL-basierte Klassifikation (mit Fallback)
         pnl_num = pd.to_numeric(df['pnl_pct'], errors='coerce')
@@ -478,7 +496,7 @@ async def job_signal_summary():
         is_win = is_win | (no_pnl & fallback_win)
 
         df['is_win'] = is_win
-        df['is_decisive'] = (is_win_by_pnl | is_loss_by_pnl | (no_pnl & ~is_housekeeping))
+        df['is_decisive'] = is_win_by_pnl | is_loss_by_pnl | (no_pnl & ~is_housekeeping)
 
     if not df_cls_trades.empty:
         _compute_outcome_flags(df_cls_trades, has_close_reason=False)
@@ -516,31 +534,42 @@ async def job_signal_summary():
         if s in ["SUPPORT RESISTANCE", "ABR1", "RUB1", "SRA1"]:
             return "LEVEL"
         # PATTERN = SMC-Patterns, Chart-Patterns, Trendline
-        if s in ["AIM1", "ATB1"] or s.startswith("BR") or s.startswith("TD") \
-                or s.startswith("BB") or s.startswith("QM") or s.startswith("SMC"):
+        if (
+            s in ["AIM1", "ATB1"]
+            or s.startswith("BR")
+            or s.startswith("TD")
+            or s.startswith("BB")
+            or s.startswith("QM")
+            or s.startswith("SMC")
+        ):
             return "PATTERN"
         return "OTHER"
 
-    if not df_all_created.empty: df_all_created['category'] = df_all_created['strategy'].apply(get_category)
-    if not df_all_closed.empty: df_all_closed['category'] = df_all_closed['strategy'].apply(get_category)
+    if not df_all_created.empty:
+        df_all_created['category'] = df_all_created['strategy'].apply(get_category)
+    if not df_all_closed.empty:
+        df_all_closed['category'] = df_all_closed['strategy'].apply(get_category)
 
     # --- STATISTIKEN BERECHNEN ---
     def calc_stats(cat_name):
-        cat_created = df_all_created[
-            df_all_created['category'] == cat_name] if not df_all_created.empty else pd.DataFrame()
+        cat_created = (
+            df_all_created[df_all_created['category'] == cat_name] if not df_all_created.empty else pd.DataFrame()
+        )
         cat_closed = df_all_closed[df_all_closed['category'] == cat_name] if not df_all_closed.empty else pd.DataFrame()
 
         def get_o_stats(hours):
-            if cat_created.empty: return 0, 0, "0.0"
+            if cat_created.empty:
+                return 0, 0, "0.0"
             t_limit = now - timedelta(hours=hours)
             sub = cat_created[cat_created['created_at'] >= t_limit]
-            l = len(sub[sub['direction'] == 'LONG'])
+            n_long = len(sub[sub['direction'] == 'LONG'])
             s = len(sub[sub['direction'] == 'SHORT'])
-            ratio = "∞" if s == 0 and l > 0 else "0.0" if s == 0 else f"{l / s:.1f}"
-            return l, s, ratio
+            ratio = "∞" if s == 0 and n_long > 0 else "0.0" if s == 0 else f"{n_long / s:.1f}"
+            return n_long, s, ratio
 
         def get_c_stats(hours):
-            if cat_closed.empty: return "0.0", "0.0"
+            if cat_closed.empty:
+                return "0.0", "0.0"
             t_limit = now - timedelta(hours=hours)
             sub = cat_closed[cat_closed['closed_at'] >= t_limit]
 
@@ -553,8 +582,8 @@ async def job_signal_summary():
             l_dec = l_sub[l_sub['is_decisive']] if 'is_decisive' in l_sub.columns else l_sub
             s_dec = s_sub[s_sub['is_decisive']] if 'is_decisive' in s_sub.columns else s_sub
 
-            l_win = (len(l_dec[l_dec['is_win'] == True]) / len(l_dec) * 100) if len(l_dec) > 0 else 0.0
-            s_win = (len(s_dec[s_dec['is_win'] == True]) / len(s_dec) * 100) if len(s_dec) > 0 else 0.0
+            l_win = (len(l_dec[l_dec['is_win']]) / len(l_dec) * 100) if len(l_dec) > 0 else 0.0
+            s_win = (len(s_dec[s_dec['is_win']]) / len(s_dec) * 100) if len(s_dec) > 0 else 0.0
             return f"{l_win:.1f}", f"{s_win:.1f}"
 
         o1_l, o1_s, o1_r = get_o_stats(1)
@@ -677,10 +706,7 @@ def _get_regime_fit_label(conn, bot_name: str) -> str:
         else:
             label = "NEUTRAL"
 
-        return (
-            f"{cur_regime} {wr_regime:.0f}% (n={n_regime}), "
-            f"Overall {wr_overall:.0f}% → {label}"
-        )
+        return f"{cur_regime} {wr_regime:.0f}% (n={n_regime}), Overall {wr_overall:.0f}% → {label}"
 
     except Exception:
         return "---"
@@ -823,29 +849,43 @@ async def job_per_bot_performance() -> None:
 
     # Geschlossene klassische Trades
     if not df_cls_closed.empty:
-        df_cls_closed['status_num'] = pd.to_numeric(
-            df_cls_closed['status'], errors='coerce'
-        ).fillna(0).astype(int)
+        df_cls_closed['status_num'] = pd.to_numeric(df_cls_closed['status'], errors='coerce').fillna(0).astype(int)
         # NEU: close_reason-Spalte gibt es für klassische Trades nicht — leer setzen
         df_cls_closed['close_reason'] = ''
         df_cls_closed['is_closed'] = True
-        df_cls_closed = df_cls_closed[[
-            'strategy', 'direction', 'entry', 'close_price',
-            'created_at', 'closed_at', 'is_closed', 'status_num', 'close_reason'
-        ]]
+        df_cls_closed = df_cls_closed[
+            [
+                'strategy',
+                'direction',
+                'entry',
+                'close_price',
+                'created_at',
+                'closed_at',
+                'is_closed',
+                'status_num',
+                'close_reason',
+            ]
+        ]
 
     # Geschlossene AI-Trades
     if not df_ai_closed.empty:
-        df_ai_closed['status_num'] = pd.to_numeric(
-            df_ai_closed['targets_hit'], errors='coerce'
-        ).fillna(0).astype(int)
+        df_ai_closed['status_num'] = pd.to_numeric(df_ai_closed['targets_hit'], errors='coerce').fillna(0).astype(int)
         # close_reason wurde in der Query geladen, ggf. NaN → ''
         df_ai_closed['close_reason'] = df_ai_closed['close_reason'].fillna('').astype(str)
         df_ai_closed['is_closed'] = True
-        df_ai_closed = df_ai_closed[[
-            'strategy', 'direction', 'entry', 'close_price',
-            'created_at', 'closed_at', 'is_closed', 'status_num', 'close_reason'
-        ]]
+        df_ai_closed = df_ai_closed[
+            [
+                'strategy',
+                'direction',
+                'entry',
+                'close_price',
+                'created_at',
+                'closed_at',
+                'is_closed',
+                'status_num',
+                'close_reason',
+            ]
+        ]
 
     # Offene Trades — haben kein close, keinen status
     for df_open in (df_cls_open, df_ai_open):
@@ -904,8 +944,7 @@ async def job_per_bot_performance() -> None:
             return ''
         reason = (row['close_reason'] or '').upper()
         # Housekeeping-Closes: weder Win noch Loss (extern verursacht)
-        if ('DELISTED' in reason or 'CLEANUP' in reason or 'ORPHAN' in reason
-                or 'REGIME_CHANGE' in reason):
+        if 'DELISTED' in reason or 'CLEANUP' in reason or 'ORPHAN' in reason or 'REGIME_CHANGE' in reason:
             return 'neutral'
         pnl = row['pnl_pct']
         if pd.isna(pnl):
@@ -946,10 +985,10 @@ async def job_per_bot_performance() -> None:
     #   zur Eröffnung ab. Ein 168h-MIS1-Signal das heute schließt wurde vor
     #   einer Woche eröffnet — das sollte nicht die "1h"-Spalte beeinflussen.
     WINDOWS = [
-        ("1h",  timedelta(hours=1)),
-        ("4h",  timedelta(hours=4)),
+        ("1h", timedelta(hours=1)),
+        ("4h", timedelta(hours=4)),
         ("24h", timedelta(hours=24)),
-        ("7d",  timedelta(days=7)),
+        ("7d", timedelta(days=7)),
         ("All", None),
     ]
     MIN_TRADES = 3
@@ -1095,8 +1134,10 @@ async def job_per_bot_performance() -> None:
             'tp3_plus': n_tp3_plus,
             'tp4': n_tp4,
             'sl': n_sl,
-            'long_n': l_n, 'long_wins': l_wins,
-            'short_n': s_n, 'short_wins': s_wins,
+            'long_n': l_n,
+            'long_wins': l_wins,
+            'short_n': s_n,
+            'short_wins': s_wins,
         }
 
         # Kelly basiert auf ALLEN geschlossenen Trades dieser Strategy
@@ -1131,9 +1172,7 @@ async def job_per_bot_performance() -> None:
     #     4h: 12 opened → 8 closed, 4 still open
     #       TP1+:7 TP2+:5 TP3+:2 TP4:0 | SL:1
     #       LONG: 6/7 win | SHORT: 1/1 win
-    header = (
-        "Bot          │ 1h    │ 4h   │ 24h  │ 7d   │ All"
-    )
+    header = "Bot          │ 1h    │ 4h   │ 24h  │ 7d   │ All"
     separator = "─" * len(header)
 
     lines = [header, separator]
@@ -1167,15 +1206,11 @@ async def job_per_bot_performance() -> None:
         if d.get('opened', 0) > 0:
             if d['closed'] > 0:
                 # Voller Detail-Block mit TP-Staffelung + Direction-Split
-                detail1 = (
-                    f"  4h: {d['opened']} opened → "
-                    f"{d['closed']} closed, {d['open']} still open"
-                )
+                detail1 = f"  4h: {d['opened']} opened → {d['closed']} closed, {d['open']} still open"
                 lines.append(detail1)
 
                 detail2 = (
-                    f"    TP1+:{d['tp1_plus']} TP2+:{d['tp2_plus']} "
-                    f"TP3+:{d['tp3_plus']} TP4:{d['tp4']} | SL:{d['sl']}"
+                    f"    TP1+:{d['tp1_plus']} TP2+:{d['tp2_plus']} TP3+:{d['tp3_plus']} TP4:{d['tp4']} | SL:{d['sl']}"
                 )
                 lines.append(detail2)
 
@@ -1192,9 +1227,7 @@ async def job_per_bot_performance() -> None:
             else:
                 # Nur Aktivität ohne Close → Kompakt-Variante (1 Zeile + Leerzeile)
                 # Vermeidet den leeren Detail-Block, Layout bleibt ruhig.
-                lines.append(
-                    f"  4h: {d['opened']} opened, {d['open']} still open"
-                )
+                lines.append(f"  4h: {d['opened']} opened, {d['open']} still open")
                 lines.append("")
 
     if len(lines) <= 2:
@@ -1269,8 +1302,6 @@ async def job_per_bot_performance() -> None:
         except Exception:
             pass
 
-    kelly_block = "\n".join(kelly_lines).rstrip()
-
     # --- Zusammenbau: ALLES in EINEN <pre>-Block, ohne style-Attribute ---
     # WICHTIG — Telegram-HTML-Regeln (Bot API Dokumentation):
     #   - Erlaubte Tags: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="...">,
@@ -1285,7 +1316,6 @@ async def job_per_bot_performance() -> None:
     # Messages mit vielen verschachtelten Tags triggert das trotzdem Parser-
     # Probleme. Wir bleiben hier auf der sicheren Seite: minimales API-konformes
     # HTML, KEINE style-Attribute.
-    table_body = "\n".join(lines)
 
     # --- Telegram-Message-Splitting ---
     # Bei vielen Strategien übersteigen die Posts das 4096-Zeichen-Limit.
@@ -1388,16 +1418,8 @@ async def job_per_bot_performance() -> None:
     table_separator = lines[1] if len(lines) > 1 else ""
     table_column_hdr = f"{table_header_line}\n{table_separator}\n"
 
-    table_header_first = (
-        '<pre>'
-        '📊 <b>PER-BOT PERFORMANCE</b> 📊\n\n'
-        + table_column_hdr
-    )
-    table_header_continued = (
-        '<pre>'
-        '📊 <b>PER-BOT PERFORMANCE</b> (continued) 📊\n\n'
-        + table_column_hdr
-    )
+    table_header_first = '<pre>📊 <b>PER-BOT PERFORMANCE</b> 📊\n\n' + table_column_hdr
+    table_header_continued = '<pre>📊 <b>PER-BOT PERFORMANCE</b> (continued) 📊\n\n' + table_column_hdr
     table_footer = (
         '\n\n<b>Legend:</b>\n'
         '  ↑ 1h WR ≥10pp above All | ↓ 1h WR ≥10pp below All\n'
@@ -1420,9 +1442,7 @@ async def job_per_bot_performance() -> None:
 
     # ── Kelly-Block splitten ─────────────────────────────────────────────
     kelly_header_first = (
-        '<pre>'
-        '💰 <b>HALF-KELLY POSITION SIZING</b> 💰\n'
-        '<i>20x Cross Leverage, Half-Kelly based on all-time data</i>\n\n'
+        '<pre>💰 <b>HALF-KELLY POSITION SIZING</b> 💰\n<i>20x Cross Leverage, Half-Kelly based on all-time data</i>\n\n'
     )
     kelly_header_continued = (
         '<pre>'
@@ -1457,11 +1477,9 @@ async def job_per_bot_performance() -> None:
         await asyncio.sleep(1)
 
     logger.info(
-        f"✅ Per-Bot Performance-Post gesendet "
-        f"({len(sorted_strategies)} Strategien, {len(df_all)} Trades total)."
+        f"✅ Per-Bot Performance-Post gesendet ({len(sorted_strategies)} Strategien, {len(df_all)} Trades total)."
     )
     await asyncio.sleep(1)
-
 
 
 # ⏰ SCHEDULER ENGINE
@@ -1503,23 +1521,18 @@ async def main():
     tasks = [
         # 1. Main Vol Report: Volle Stunde + 15 Sek [XX:00:15]
         asyncio.create_task(schedule_job([0], 15, job_main_reports, "Main_Volume_Report")),
-
         # 2. Gainers & Losers: Volle Stunde + 1 Min (60 Sek) [XX:01:00]
         asyncio.create_task(schedule_job([1], 0, job_gainers_losers, "Gainers_Losers")),
-
         # 3. Volume Spikes: Volle Stunde + 15 Sek UND Halbe Stunde + 15 Sek [XX:00:15 & XX:30:15]
         asyncio.create_task(schedule_job([0, 30], 30, job_volume_spikes, "Volume_Spikes")),
-
         # 4. Volatile Coins: Volle Stunde + 25 Sek UND Halbe Stunde + 25 Sek [XX:00:25 & XX:30:25]
         asyncio.create_task(schedule_job([0, 30], 45, job_volatile_coins, "Volatile_Coins")),
-
         # 5. NEU: Signal Summary: Volle Stunde + 1 Sek [XX:00:01]
         asyncio.create_task(schedule_job([0], 1, job_signal_summary, "Signal_Summary")),
-
         # 6. Per-Bot Performance-Detail: Volle Stunde + 30 Sek [XX:00:30]
         # Läuft 30s after der Signal-Summary damit der Telegram-Worker nicht
         # zwei große Posts im gleichen Takt in denselben Channel drückt.
-        asyncio.create_task(schedule_job([0], 30, job_per_bot_performance, "Per_Bot_Performance"))
+        asyncio.create_task(schedule_job([0], 30, job_per_bot_performance, "Per_Bot_Performance")),
     ]
 
     await asyncio.gather(*tasks)

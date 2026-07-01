@@ -1,6 +1,6 @@
-import os
 import glob
 import json
+import os
 from datetime import datetime
 
 DATA_DIR = "funding_data"
@@ -20,7 +20,7 @@ def check_latest_funding_data():
     print(f"Reading Daten aus: {latest_file}...\n")
 
     try:
-        with open(latest_file, "r", encoding="utf-8") as f:
+        with open(latest_file, encoding="utf-8") as f:
             data = json.load(f)
 
         if not data:
@@ -28,7 +28,7 @@ def check_latest_funding_data():
             return
 
         print("=" * 40)
-        print(f"💰 FUNDING RATES STATISTIK")
+        print("💰 FUNDING RATES STATISTIK")
         print(f"Records in file: {len(data)}")
 
         # Zeige die 5 aktuellsten entries als Beispiel

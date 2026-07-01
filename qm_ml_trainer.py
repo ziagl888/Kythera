@@ -2,15 +2,15 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import time
 import json
 import logging
-import pandas as pd
+
+import joblib
 import numpy as np
+import pandas as pd
 import scipy.signal
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
-import joblib
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
@@ -34,16 +34,20 @@ PIVOT_WINDOW = 5
 ORDER_EXPIRY = 50
 
 PRICE_BASED_INDICATORS = [
-    'ema_9', 'ema_21', 'ema_50', 'ema_200',
-    'kama_21', 'wma_21',
-    'donchian_upper_20', 'donchian_lower_20', 'donchian_mid_20',
-    'boll_upper_20', 'boll_lower_20'
+    'ema_9',
+    'ema_21',
+    'ema_50',
+    'ema_200',
+    'kama_21',
+    'wma_21',
+    'donchian_upper_20',
+    'donchian_lower_20',
+    'donchian_mid_20',
+    'boll_upper_20',
+    'boll_lower_20',
 ]
 
-ABSOLUTE_INDICATORS = [
-    'rsi_14', 'tsi_25_13_13',
-    'macd_dif_normal_12_26_9', 'macd_dea_normal_12_26_9'
-]
+ABSOLUTE_INDICATORS = ['rsi_14', 'tsi_25_13_13', 'macd_dif_normal_12_26_9', 'macd_dea_normal_12_26_9']
 
 
 # ==========================================
@@ -51,7 +55,7 @@ ABSOLUTE_INDICATORS = [
 # ==========================================
 def load_coins():
     try:
-        with open(COINS_FILE, 'r') as f:
+        with open(COINS_FILE) as f:
             data = json.load(f)
             coin_list = data.get('coins', data) if isinstance(data, dict) else data
             return [c.upper() for c in coin_list if c.upper().endswith("USDT")]
@@ -77,7 +81,8 @@ def fetch_merged_data(symbol, tf):
         df = pd.read_sql_query(query, conn)
         conn.close()
 
-        if df.empty: return pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
         df.ffill(inplace=True)
         df.bfill(inplace=True)
 
@@ -140,7 +145,7 @@ def simulate_qm_trades(df, symbol):
                     'tp': order['tp'],
                     'outcome': None,
                     'atr_14_pct': (df['atr_14'].iloc[feature_idx] / close_prev) * 100,
-                    'trend_direction': str(df['trend_direction'].iloc[feature_idx])
+                    'trend_direction': str(df['trend_direction'].iloc[feature_idx]),
                 }
 
                 for ind in ABSOLUTE_INDICATORS:
@@ -159,7 +164,8 @@ def simulate_qm_trades(df, symbol):
                 completed_trades.append(o)
 
         for t in completed_trades:
-            if t['trade_data']['outcome'] is not None: continue
+            if t['trade_data']['outcome'] is not None:
+                continue
             d, sl, tp = t['trade_data']['direction'], t['trade_data']['sl'], t['trade_data']['tp']
             if d == "LONG":
                 if c_low <= sl:
@@ -198,14 +204,16 @@ def simulate_qm_trades(df, symbol):
                         processed_qm_ids.add(qm_id)
                         if c_price < H:
                             pending_orders.append(
-                                {'direction': 'SHORT', 'entry': H, 'sl': HH * 1.003, 'tp': LL, 'created_at': curr_idx})
+                                {'direction': 'SHORT', 'entry': H, 'sl': HH * 1.003, 'tp': LL, 'created_at': curr_idx}
+                            )
                 elif p1[1] == -1 and p2[1] == 1 and p3[1] == -1 and p4[1] == 1:
                     L, H, LL, HH = p1[2], p2[2], p3[2], p4[2]
                     if LL < L and HH > H:
                         processed_qm_ids.add(qm_id)
                         if c_price > L:
                             pending_orders.append(
-                                {'direction': 'LONG', 'entry': L, 'sl': LL * 0.997, 'tp': HH, 'created_at': curr_idx})
+                                {'direction': 'LONG', 'entry': L, 'sl': LL * 0.997, 'tp': HH, 'created_at': curr_idx}
+                            )
 
     return [t['trade_data'] for t in completed_trades if t['trade_data']['outcome'] is not None]
 
@@ -240,8 +248,9 @@ def train_and_optimize(trades_df, tf):
     else:
         trend_cols = []
 
-    feature_cols = ABSOLUTE_INDICATORS + ['atr_14_pct'] + [f"{ind}_dist_pct" for ind in
-                                                           PRICE_BASED_INDICATORS] + trend_cols
+    feature_cols = (
+        ABSOLUTE_INDICATORS + ['atr_14_pct'] + [f"{ind}_dist_pct" for ind in PRICE_BASED_INDICATORS] + trend_cols
+    )
 
     trades_df['dir_num'] = (trades_df['direction'] == 'LONG').astype(int)
     feature_cols.append('dir_num')
@@ -259,18 +268,19 @@ def train_and_optimize(trades_df, tf):
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=42,
-        eval_metric='logloss'
+        eval_metric='logloss',
     )
 
     model.fit(X_train, y_train)
 
     importances = model.feature_importances_
-    feat_imp = pd.DataFrame({'Feature': feature_cols, 'Importance': importances}).sort_values(by='Importance',
-                                                                                              ascending=False)
+    feat_imp = pd.DataFrame({'Feature': feature_cols, 'Importance': importances}).sort_values(
+        by='Importance', ascending=False
+    )
     print("\n" + "=" * 60)
     print(f"🏆 TOP INDIKATOREN FÜR QUASIMODO-ERFOLG ({tf} Chart)")
     print("=" * 60)
-    for idx, row in feat_imp.head(10).iterrows():
+    for _idx, row in feat_imp.head(10).iterrows():
         print(f"🔹 {row['Feature']:<30}: {row['Importance']:.2%}")
 
     print("\n" + "=" * 60)
@@ -287,14 +297,16 @@ def train_and_optimize(trades_df, tf):
     thresholds = np.arange(0.30, 0.85, 0.05)
     for thresh in thresholds:
         taken_trades = test_trades[test_trades['prob'] >= thresh]
-        if len(taken_trades) == 0: continue
+        if len(taken_trades) == 0:
+            continue
 
         wins = len(taken_trades[taken_trades['outcome'] == 1])
         win_rate = (wins / len(taken_trades)) * 100
         pnl = sum(calculate_pnl(row, row['outcome'] == 1) for _, row in taken_trades.iterrows())
 
         print(
-            f"Threshold >= {thresh:.2f} | Trades: {len(taken_trades):<5} | Win Rate: {win_rate:>5.1f}% | PnL: ${pnl:+,.2f}")
+            f"Threshold >= {thresh:.2f} | Trades: {len(taken_trades):<5} | Win Rate: {win_rate:>5.1f}% | PnL: ${pnl:+,.2f}"
+        )
 
         if pnl > best_pnl:
             best_pnl = pnl
@@ -326,10 +338,12 @@ def main():
         all_trades = []
 
         for idx, coin in enumerate(coins, 1):
-            if idx % 50 == 0: logger.info(f"[{tf}] Processing Coin {idx}/{len(coins)}: {coin}...")
+            if idx % 50 == 0:
+                logger.info(f"[{tf}] Processing Coin {idx}/{len(coins)}: {coin}...")
 
             df = fetch_merged_data(coin, tf)
-            if len(df) < 200: continue
+            if len(df) < 200:
+                continue
 
             trades = simulate_qm_trades(df, coin)
             all_trades.extend(trades)

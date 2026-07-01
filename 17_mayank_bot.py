@@ -2,20 +2,18 @@ import warnings
 
 warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
-import time
 import datetime
 import logging
-import pandas as pd
-import numpy as np
-import scipy.signal
-import yfinance as yf
-import mplfinance as mpf
 import os
+import time
 
-from core.market_utils import calculate_pivots, check_cooldown, update_cooldown
+import mplfinance as mpf
+import pandas as pd
+import yfinance as yf
 
-from core.database import get_db_connection
 from core import config as _kcfg  # channel ids
+from core.database import get_db_connection
+from core.market_utils import calculate_pivots, check_cooldown, update_cooldown
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - TRADFI_SMC_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -23,15 +21,15 @@ logger = logging.getLogger(__name__)
 # --- CONFIGURATION ---
 SMC_CHANNEL_ID = _kcfg.CH_MAYANK  # Dein gewünschter Channel
 TIMEFRAMES = ['1h', '4h']
-#ASSETS = {
+# ASSETS = {
 #    'XAUUSD=X': 'GOLD',
 #    'USDJPY=X': 'USDJPY'
-#}
+# }
 ASSETS = {
-    'GC=F': 'GOLD',      # Comex Gold Futures (Genauester Chart für Gold bei YFinance)
-    'SI=F': 'SILVER',    # Comex Silver Futures (falls du Silber auch willst)
-    'JPY=X': 'USDJPY',   # USD/JPY
-    'EURUSD=X': 'EURUSD' # EUR/USD (falls du den auch scannen willst)
+    'GC=F': 'GOLD',  # Comex Gold Futures (Genauester Chart für Gold bei YFinance)
+    'SI=F': 'SILVER',  # Comex Silver Futures (falls du Silber auch willst)
+    'JPY=X': 'USDJPY',  # USD/JPY
+    'EURUSD=X': 'EURUSD',  # EUR/USD (falls du den auch scannen willst)
 }
 CHART_DIR = "generated_charts"
 os.makedirs(CHART_DIR, exist_ok=True)
@@ -52,20 +50,30 @@ def fetch_yfinance_data(ticker, tf):
             resample_tf = '4h'
 
         df = yf.download(ticker, interval=yf_interval, period=period, progress=False)
-        if df.empty: return df
+        if df.empty:
+            return df
 
         # YFinance MultiIndex Header Fix
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
         if resample_tf:
-            df = df.resample(resample_tf).agg({
-                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
-            }).dropna()
+            df = (
+                df.resample(resample_tf)
+                .agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
+                .dropna()
+            )
 
         df = df.reset_index()
-        col_map = {'Datetime': 'open_time', 'Date': 'open_time', 'Open': 'open', 'High': 'high', 'Low': 'low',
-                   'Close': 'close', 'Volume': 'volume'}
+        col_map = {
+            'Datetime': 'open_time',
+            'Date': 'open_time',
+            'Open': 'open',
+            'High': 'high',
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume',
+        }
         df.rename(columns=col_map, inplace=True)
 
         if df['open_time'].dt.tz is not None:
@@ -190,7 +198,7 @@ def generate_setup_chart(df, symbol, tf, fvg, supports, resistances, direction):
             figsize=(14, 8),
             tight_layout=True,
             savefig=filename,
-            returnfig=False
+            returnfig=False,
         )
         return filename
     except Exception as e:
@@ -205,7 +213,8 @@ def analyze_strategy():
         for tf in TIMEFRAMES:
             try:
                 df = fetch_yfinance_data(ticker, tf)
-                if df.empty or len(df) < 50: continue
+                if df.empty or len(df) < 50:
+                    continue
 
                 supports, resistances = calculate_pivots(df, window=5)
 
@@ -227,7 +236,6 @@ def analyze_strategy():
                         # BEDINGUNG 1: Hat Kerze i-2 (oder i-1) einen Support-Pivot berührt?
                         candle_1_low = df['low'].iloc[i - 2]
                         if is_touching_pivot(candle_1_low, supports, i - 2, threshold=0.001):
-
                             # BEDINGUNG 2: Wurde das FVG bis jetzt noch NICHT "fully closed"?
                             # Fully closed heißt, der Preis ist auf gap_bottom oder tiefer gefallen
                             was_closed_before = False
@@ -245,22 +253,28 @@ def analyze_strategy():
                                     module_tag = f"MAYANK_{symbol_name}_{tf.upper()}"
                                     with get_db_connection() as _cd_conn:
                                         if check_cooldown(_cd_conn, module_tag, symbol_name, "LONG", 12):
-                                            logger.info(
-                                                f"⏳ Cooldown active für {symbol_name} ({tf}) LONG. Skip.")
+                                            logger.info(f"⏳ Cooldown active für {symbol_name} ({tf}) LONG. Skip.")
                                             break
 
                                     logger.info(
-                                        f"🚀 BINGO LONG! {symbol_name} ({tf}) hat das FVG bei {gap_bottom:.3f} fully closed!")
+                                        f"🚀 BINGO LONG! {symbol_name} ({tf}) hat das FVG bei {gap_bottom:.3f} fully closed!"
+                                    )
 
                                     # Targets berechnen (nächste Resistance Pivots after oben)
                                     targets = sorted([val for idx, val in resistances if val > curr_price])[:8]
-                                    if not targets: targets = [curr_price * 1.01,
-                                                               curr_price * 1.02]  # Fallback für TradFi
+                                    if not targets:
+                                        targets = [curr_price * 1.01, curr_price * 1.02]  # Fallback für TradFi
 
                                     sl = curr_low * 0.998  # Knapp unter das letzte Tief
-                                    chart_path = generate_setup_chart(df, symbol_name, tf,
-                                                                      {'top': gap_top, 'bottom': gap_bottom,
-                                                                       'index': i}, supports, resistances, "LONG")
+                                    chart_path = generate_setup_chart(
+                                        df,
+                                        symbol_name,
+                                        tf,
+                                        {'top': gap_top, 'bottom': gap_bottom, 'index': i},
+                                        supports,
+                                        resistances,
+                                        "LONG",
+                                    )
 
                                     msg = f"""<pre><b>🎯 SMC PIVOT RETEST</b>\n<b>{symbol_name} | {tf} Chart</b>\n<b>→ Action: <b>LONG</b></b>\n<b>→ Entry: {curr_price:.4f}</b>\n<b>→ FVG Fully Closed: {gap_bottom:.4f}</b>\n<b>→ Stop Loss: {sl:.4f}</b>\n<b>→ Targets:</b> {', '.join([f'{t:.3f}' for t in targets[:3]])}</pre>"""
 
@@ -270,11 +284,13 @@ def analyze_strategy():
                                             if chart_path:
                                                 cur.execute(
                                                     "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                                                    (SMC_CHANNEL_ID, msg, chart_path))
+                                                    (SMC_CHANNEL_ID, msg, chart_path),
+                                                )
                                             else:
                                                 cur.execute(
                                                     "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                                    (SMC_CHANNEL_ID, msg))
+                                                    (SMC_CHANNEL_ID, msg),
+                                                )
                                         conn.commit()
                                         # Cooldown setzen NACH erfolgreichem Send
                                         update_cooldown(conn, module_tag, symbol_name, "LONG")
@@ -290,7 +306,6 @@ def analyze_strategy():
                         # BEDINGUNG 1: Hat Kerze i-2 einen Resistance-Pivot berührt?
                         candle_1_high = df['high'].iloc[i - 2]
                         if is_touching_pivot(candle_1_high, resistances, i - 2, threshold=0.001):
-
                             # BEDINGUNG 2: Wurde das FVG bis jetzt noch NICHT "fully closed"? (Preis stieg auf gap_top)
                             was_closed_before = False
                             for j in range(i + 1, curr_idx):
@@ -305,22 +320,30 @@ def analyze_strategy():
                                     module_tag = f"MAYANK_{symbol_name}_{tf.upper()}"
                                     with get_db_connection() as _cd_conn:
                                         if check_cooldown(_cd_conn, module_tag, symbol_name, "SHORT", 12):
-                                            logger.info(
-                                                f"⏳ Cooldown active für {symbol_name} ({tf}) SHORT. Skip.")
+                                            logger.info(f"⏳ Cooldown active für {symbol_name} ({tf}) SHORT. Skip.")
                                             break
 
                                     logger.info(
-                                        f"💥 BINGO SHORT! {symbol_name} ({tf}) hat das FVG bei {gap_top:.3f} fully closed!")
+                                        f"💥 BINGO SHORT! {symbol_name} ({tf}) hat das FVG bei {gap_top:.3f} fully closed!"
+                                    )
 
                                     # Targets (nächste Support Pivots after unten)
                                     targets = sorted([val for idx, val in supports if val < curr_price], reverse=True)[
-                                        :8]
-                                    if not targets: targets = [curr_price * 0.99, curr_price * 0.98]
+                                        :8
+                                    ]
+                                    if not targets:
+                                        targets = [curr_price * 0.99, curr_price * 0.98]
 
                                     sl = curr_high * 1.002
-                                    chart_path = generate_setup_chart(df, symbol_name, tf,
-                                                                      {'top': gap_top, 'bottom': gap_bottom,
-                                                                       'index': i}, supports, resistances, "SHORT")
+                                    chart_path = generate_setup_chart(
+                                        df,
+                                        symbol_name,
+                                        tf,
+                                        {'top': gap_top, 'bottom': gap_bottom, 'index': i},
+                                        supports,
+                                        resistances,
+                                        "SHORT",
+                                    )
 
                                     msg = f"""<pre><b>🎯 SMC PIVOT RETEST</b>\n<b>{symbol_name} | {tf} Chart</b>\n<b>→ Action: <b>SHORT</b></b>\n<b>→ Entry: {curr_price:.4f}</b>\n<b>→ FVG Fully Closed: {gap_top:.4f}</b>\n<b>→ Stop Loss: {sl:.4f}</b>\n<b>→ Targets:</b> {', '.join([f'{t:.3f}' for t in targets[:3]])}</pre>"""
 
@@ -329,11 +352,13 @@ def analyze_strategy():
                                             if chart_path:
                                                 cur.execute(
                                                     "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                                                    (SMC_CHANNEL_ID, msg, chart_path))
+                                                    (SMC_CHANNEL_ID, msg, chart_path),
+                                                )
                                             else:
                                                 cur.execute(
                                                     "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                                    (SMC_CHANNEL_ID, msg))
+                                                    (SMC_CHANNEL_ID, msg),
+                                                )
                                         conn.commit()
                                         # Cooldown setzen NACH erfolgreichem Send
                                         update_cooldown(conn, module_tag, symbol_name, "SHORT")
