@@ -1,0 +1,598 @@
+import requests
+import time
+import pandas as pd
+import json
+import datetime
+import psycopg2
+from psycopg2 import extras
+import pytz
+import logging
+import random
+import asyncio
+import socket
+import websockets
+from concurrent.futures import ThreadPoolExecutor
+from core.database import get_db_connection
+import warnings
+
+warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
+
+# --- IMPORT CONFIGURATION FROM CORE ---
+from core.config import (
+    DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT,
+    BASE_URL, TIMEFRAMES, NUM_WORKERS
+)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - INGESTION - %(message)s')
+logger = logging.getLogger(__name__)
+
+# --- GLOBAL RAM BUFFER FOR WEBSOCKETS ---
+WS_KLINE_BUFFER = {}
+
+
+# PHASE 0: UPDATE COIN LIST
+def update_trading_pairs(filename='coins.json'):
+    """Fetches the latest futures pairs from Binance."""
+    logger.info("Updating Coin-Liste...")
+    url = BASE_URL + '/fapi/v1/exchangeInfo'
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        trading_pairs = [
+            symbol['symbol'] for symbol in data['symbols']
+            if symbol['status'] == 'TRADING' and not symbol['symbol'].endswith('USDC')
+        ]
+
+        with open(filename, 'w') as f:
+            json.dump(trading_pairs, f, indent=2)
+        logger.info(f"✅ {len(trading_pairs)} pairs in '{filename}' saved.")
+        return trading_pairs
+    except Exception as e:
+        logger.error(f"Error during coin update: {e}")
+        try:
+            with open(filename, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return ["BTCUSDT", "ETHUSDT"]
+
+
+# PHASE 1: DER TURBO-GREPPER (REST API Catch-Up)
+
+def create_table_if_needed(conn, symbol, timeframe):
+    tablename = f'"{symbol}_{timeframe}"'
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {tablename} (
+                    symbol TEXT, open_time TIMESTAMP WITH TIME ZONE,
+                    open DOUBLE PRECISION, high DOUBLE PRECISION, low DOUBLE PRECISION,
+                    close DOUBLE PRECISION, volume DOUBLE PRECISION,
+                    PRIMARY KEY (symbol, open_time)
+                );
+            """)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+
+
+def get_latest_open_time(conn, symbol, timeframe):
+    tablename = f'"{symbol}_{timeframe}"'
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT to_regclass(%s)", (tablename,))
+            if cursor.fetchone()[0] is None: return None
+            cursor.execute(f'SELECT MAX(open_time) FROM {tablename}')
+            res = cursor.fetchone()
+            return res[0].astimezone(pytz.utc) if res and res[0] else None
+    except Exception:
+        conn.rollback()
+        return None
+
+
+def fetch_ohlcv_batch(session, symbol, interval, start_ts, end_ts):
+    url = BASE_URL + '/fapi/v1/klines'
+    all_data = []
+    curr = start_ts
+    while True:
+        params = {'symbol': symbol, 'interval': interval, 'startTime': curr, 'endTime': end_ts, 'limit': 1500}
+        try:
+            resp = session.get(url, params=params, timeout=10)
+            if resp.status_code in [429, 418]:
+                wait = int(resp.headers.get("Retry-After", 10)) + 2
+                time.sleep(wait)
+                continue
+            if resp.status_code != 200: break
+
+            data = resp.json()
+            if not data: break
+            all_data.extend(data)
+
+            curr = data[-1][6] + 1
+            if curr >= end_ts: break
+            time.sleep(0.1)  # Reduziert für mehr Speed, Limit bei Binance Futures ist recht hoch
+        except Exception:
+            time.sleep(5)
+    return all_data
+
+
+def insert_fast(conn, data, symbol, timeframe):
+    if not data: return 0
+    tablename = f'"{symbol}_{timeframe}"'
+    tuples = []
+    for row in data:
+        ts = datetime.datetime.fromtimestamp(row[0] / 1000, pytz.utc)
+        tuples.append((symbol, ts, float(row[1]), float(row[2]), float(row[3]), float(row[4]), float(row[5])))
+
+    sql = f"""
+        INSERT INTO {tablename} (symbol, open_time, open, high, low, close, volume)
+        VALUES %s ON CONFLICT (symbol, open_time) DO UPDATE 
+        SET open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close, volume=EXCLUDED.volume
+    """
+    try:
+        with conn.cursor() as cur:
+            extras.execute_values(cur, sql, tuples)
+        conn.commit()
+        return len(tuples)
+    except Exception:
+        conn.rollback()
+        return 0
+
+
+def process_coin(symbol, resume_points):
+    try:
+        time.sleep(random.uniform(0.1, 1.0))  # Leichter Jitter gegen Rate-Limits
+        conn = get_db_connection()
+        session = requests.Session()
+        session.headers.update({"User-Agent": "CryptoBot/2.0"})
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        seven_days_ago = now - datetime.timedelta(days=7)
+        end_ts = int(now.timestamp() * 1000)
+
+        for tf in TIMEFRAMES:
+            create_table_if_needed(conn, symbol, tf)
+
+            latest_db = resume_points.get(f"{symbol}_{tf}")
+
+            # LOGIK: Nimm das ältere Datum. Entweder den letzten DB Eintrag oder 7 Tage in der Vergangenheit.
+            if latest_db:
+                start_dt = min(latest_db, seven_days_ago)
+            else:
+                # Fallback, wenn die Tabelle komplett leer ist (z.B. neuer Coin)
+                start_dt = now - datetime.timedelta(days=730)
+
+            start_ts = int(start_dt.timestamp() * 1000)
+
+            if start_ts >= end_ts: continue
+            raw = fetch_ohlcv_batch(session, symbol, tf, start_ts, end_ts)
+            if raw: insert_fast(conn, raw, symbol, tf)
+
+    except Exception as e:
+        logger.error(f"Fehler {symbol}: {e}")
+    finally:
+        if 'conn' in locals() and conn: conn.close()
+        if 'session' in locals(): session.close()
+
+
+def create_db_snapshot(symbols):
+    """Scans the DB and records the exact state of all coins."""
+    resume_points = {}
+    conn = get_db_connection()
+    try:
+        for sym in symbols:
+            for tf in TIMEFRAMES:
+                latest = get_latest_open_time(conn, sym, tf)
+                if latest:
+                    resume_points[f"{sym}_{tf}"] = latest
+        return resume_points
+    finally:
+        conn.close()
+
+
+def run_catchup_job(symbols):
+    """Führt den synchronen REST-Catch-Up mit Snapshot aus."""
+    logger.info("📸 Erstelle Datenbank-Snapshot für REST Catch-Up...")
+    resume_points = create_db_snapshot(symbols)
+
+    logger.info(f"⏳ Starting REST Catch-Up (letzte 7 Tage/Gaps) für {len(symbols)} Coins...")
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as exe:
+        # Konvertierung zu list() erzwingt die Ausführung des iterators
+        list(exe.map(lambda sym: process_coin(sym, resume_points), symbols))
+    logger.info("✅ REST Catch-Up vollständig completed!")
+
+
+async def periodic_rest_catchup(symbols):
+    """Background loop: runs gap-check at startup then every 12h."""
+    loop = asyncio.get_running_loop()
+    while True:
+        # Den synchronen Catch-Up in einen Thread auslagern, um den Event-Loop (WebSockets) nicht zu blockieren
+        await loop.run_in_executor(None, run_catchup_job, symbols)
+
+        logger.info("💤 Catch-Up Job schläft für 12 Stunden...")
+        await asyncio.sleep(12 * 3600)  # 12 Stunden warten
+
+
+# PHASE 2 & 3: WEBSOCKET STREAMING & DB FLUSHER
+async def db_buffer_flusher():
+    """Schreibt den RAM-Buffer alle 3 Sekunden ressourcenschonend in die DB.
+
+    Wichtig: Atomic-Swap statt copy-then-clear, damit WS-Messages die zwischen
+    den beiden Operationen ankommen nicht verloren gehen.
+    """
+    global WS_KLINE_BUFFER
+    logger.info("💾 DB Buffer Flusher started (Intervall: 3s)")
+    while True:
+        await asyncio.sleep(3)
+        if not WS_KLINE_BUFFER:
+            continue
+
+        # Atomic swap: wir tauschen den Buffer in EINEM Statement aus.
+        # Der alte Inhalt geht in buffer_copy, neuer leerer Buffer ist sofort aktiv.
+        # Da Python asyncio single-threaded ist, kann zwischen den beiden Zuweisungen
+        # kein anderer Coroutine laufen (kein await dazwischen).
+        buffer_copy = WS_KLINE_BUFFER
+        WS_KLINE_BUFFER = {}
+
+        try:
+            await asyncio.to_thread(_flush_to_db, buffer_copy)
+        except Exception as e:
+            logger.error(f"Fehler beim DB Flush: {e}")
+
+
+def _flush_to_db(buffer_copy):
+    """Hilfsfunktion: Schreibt asynchronen Buffer via psycopg2 in DB (mit Chunking).
+
+    FIX: Vorher rollte ein Fehler in EINER Zeile (z.B. fehlende Tabelle für neuen
+    Coin) den kompletten Batch zurück — hunderte Kerzen verloren. Jetzt nutzen
+    wir SAVEPOINTs pro Row: eine einzelne fehlerhafte Row wird verworfen,
+    alle anderen committen sauber.
+    """
+    conn = get_db_connection()
+    failed_tables = set()
+    try:
+        with conn.cursor() as cur:
+            count = 0
+            success = 0
+            for (sym, tf), data in buffer_copy.items():
+                table_name = f'"{sym}_{tf}"'
+                sql = f"""
+                    INSERT INTO {table_name} (symbol, open_time, open, high, low, close, volume)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, open_time) DO UPDATE 
+                    SET open = EXCLUDED.open, high = EXCLUDED.high, 
+                        low = EXCLUDED.low, close = EXCLUDED.close, volume = EXCLUDED.volume
+                """
+                # SAVEPOINT: Jede Zeile läuft in einer Sub-Transaktion.
+                sp_name = f"sp_{count}"
+                try:
+                    cur.execute(f"SAVEPOINT {sp_name}")
+                    cur.execute(sql, data)
+                    cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                    success += 1
+                except Exception as row_err:
+                    cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                    # Nur einmal pro Tabelle loggen, nicht pro Zeile
+                    if (sym, tf) not in failed_tables:
+                        failed_tables.add((sym, tf))
+                        logger.warning(f"Insert-Fehler für {sym}_{tf}: {row_err}")
+                count += 1
+
+                if count % 100 == 0:
+                    conn.commit()
+
+            conn.commit()
+            if failed_tables:
+                logger.info(f"Flush: {success}/{count} erfolgreich, "
+                            f"{len(failed_tables)} Tabellen mit Fehlern skipped.")
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Flush Error (gesamt): {e}")
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WEBSOCKET-FLEET
+# ═══════════════════════════════════════════════════════════════════════════
+# Konfiguration mit Sicherheitsmarge zu Binance-Limits:
+#   - Max 1024 Streams pro Connection → wir nutzen 800 (Reserve)
+#   - Max 300 Connect-Attempts pro 5min pro IP → wir begrenzen uns hart auf 60
+#     per-Worker (mit Backoff), und der initiale Start staggert
+#   - Max 10 messages/s pro Connection → wir schicken max 1 SUBSCRIBE/s
+# Binance sends its own ping every 180s; the websockets library responds automatically.
+# We disable the library's own ping (ping_interval=None) to avoid the collision:
+# both sides pinging simultaneously → library waits for its pong → times out → disconnect.
+# Dead connections are detected by the message watchdog (WS_MESSAGE_WATCHDOG_SEC=120s).
+#
+# Watchdog: tracked letzte Message-Zeit pro Worker. Wenn > 120s nichts ankommt
+# trotz offener Connection, erzwingt Reconnect.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Streams per WS connection. Using URL-encoded combined stream format
+# (wss://fstream.binance.com/stream?streams=s1/s2/...) instead of SUBSCRIBE
+# messages — this uses the documented 1024-stream limit reliably.
+# SUBSCRIBE-based connections appear to be dropped by Binance at ~150-200s
+# when carrying 800+ streams, despite the documented 1024 limit.
+WS_STREAMS_PER_WORKER = 860
+
+# SUBSCRIBE-Chunk-Größe und Abstand. Binance erlaubt 10 msg/s pro Connection
+# (Futures); wir bleiben bei 1 msg/s = 10x Sicherheitsmarge, wichtig beim
+# gleichzeitigen Startup vieler Worker.
+WS_SUBSCRIBE_CHUNK_SIZE = 200
+WS_SUBSCRIBE_DELAY_SEC = 1.0
+
+# Staggered Startup: beim ersten Start Worker versetzt anlegen um die
+# 300-connects-pro-5min-Regel nicht zu verletzen.
+# 10s stagger over 6 workers = 60s spread → workers never hit the Binance
+# 180s ping cycle at the same time → no simultaneous reconnect storm.
+WS_STARTUP_STAGGER_SEC = 10.0
+
+# Reconnect-Backoff: start bei 5s, verdoppelt sich, gedeckelt bei 300s.
+# Jitter ±20% verhindert dass alle Worker gleichzeitig reconnecten.
+WS_RECONNECT_MIN_SEC = 5.0
+WS_RECONNECT_MAX_SEC = 300.0
+
+# Wenn länger als so viele Sekunden keine Message reinkommt → Connection
+# für tot halten und reconnecten (Binance-Streams ticken praktisch ständig,
+# besonders die 5m-Streams).
+WS_MESSAGE_WATCHDOG_SEC = 120.0
+
+# Unsolicited pong interval: send a pong frame every 120s as a keepalive safety net.
+# Spec allows this (>15min is the documented minimum — 2min is more conservative).
+# Guards against event-loop hiccups that might delay the auto-pong response.
+WS_UNSOLICITED_PONG_SEC = 120.0
+
+# Ping-Config (an Binance-Futures-Spezifikation angepasst)
+WS_PING_INTERVAL_SEC = None  # Disable library pings — Binance sends its own ping every
+                             # 180s and the websockets library auto-responds with pong.
+                             # Running our own ping_interval=180 causes a collision:
+                             # both sides send pings simultaneously → library times out
+                             # waiting for its pong → false disconnect after ~206s.
+WS_PING_TIMEOUT_SEC = None   # Not needed when ping_interval=None
+
+
+
+
+
+def _apply_keepalive(ws) -> None:
+    """Applies TCP keepalive to an already-connected WebSocket.
+
+    Called AFTER websockets.connect() succeeds. Gets the underlying socket
+    from the transport and sets SO_KEEPALIVE + platform-specific intervals.
+    This avoids the Windows WinError 10057 that occurs when passing an
+    unconnected socket to websockets.connect(sock=...).
+
+    Prevents NAT/firewall idle-timeout disconnects (~300-360s) by sending
+    TCP-level ACK probes every 60s.
+    """
+    import sys
+    try:
+        sock = ws.transport.get_extra_info("socket")
+        if sock is None:
+            return
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if sys.platform == "win32":
+            # SIO_KEEPALIVE_VALS: (onoff, keepalivetime_ms, keepaliveinterval_ms)
+            # First probe after 60s idle, then every 10s
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60_000, 10_000))
+        else:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
+    except (AttributeError, OSError):
+        pass  # Non-fatal — connection still works without keepalive
+
+async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float = 0.0):
+    """Ein einzelner WebSocket-Worker mit robustem Reconnect und Watchdog.
+
+    Verbesserungen ggü. der alten Version:
+      - Staggered Startup: initialer Delay verhindert 16 Connects auf einmal
+      - Exponential Backoff mit Jitter bei Disconnects
+      - Message-Watchdog: erzwingt Reconnect wenn zu lange no data kommen
+      - Eindeutige SUBSCRIBE-IDs (worker_id * 1000 + chunk_idx)
+      - Subscribe-Response-Check (mit Timeout)
+      - ping_interval/timeout an Binance-Spezifikation angepasst
+      - Langsamere Subscribes (1s statt 0.5s) um msg/s-Limit einzuhalten
+    """
+    if startup_delay > 0:
+        logger.info(f"⏳ WS-Worker {worker_id} wartet {startup_delay:.0f}s für staggered start...")
+        await asyncio.sleep(startup_delay)
+
+    # URL-encoded combined stream — all streams in the query string.
+    # This uses the documented 1024-stream limit and avoids SUBSCRIBE messages.
+    url = "wss://fstream.binance.com/stream?streams=" + "/".join(streams)
+
+    backoff = WS_RECONNECT_MIN_SEC
+    consecutive_failures = 0
+
+    while True:
+        connected_at = None
+        try:
+            async with websockets.connect(
+                url,
+                ping_interval=WS_PING_INTERVAL_SEC,
+                ping_timeout=WS_PING_TIMEOUT_SEC,
+                open_timeout=30,
+                close_timeout=10,
+                max_size=2**22,
+            ) as ws:
+                _apply_keepalive(ws)
+                connected_at = datetime.datetime.now(pytz.UTC)
+                logger.info(
+                    f"🟢 WS-Worker {worker_id} connected "
+                    f"({len(streams)} streams, URL-encoded)"
+                )
+
+                # No SUBSCRIBE needed — streams are in the URL.
+                # Reset backoff on successful connect.
+                consecutive_failures = 0
+                backoff = WS_RECONNECT_MIN_SEC
+
+                # --- PONG TASK: unsolicited pong every 120s ---
+                # Spec allows this as keepalive. Guards against event-loop
+                # hiccups that could delay the library's auto-pong response.
+                async def _pong_task():
+                    while True:
+                        await asyncio.sleep(WS_UNSOLICITED_PONG_SEC)
+                        try:
+                            await ws.pong()
+                        except Exception:
+                            break  # WS closed — let outer loop handle reconnect
+
+                pong_task = asyncio.create_task(_pong_task())
+
+                # --- MAIN LOOP mit Message-Watchdog ---
+                last_msg_ts = datetime.datetime.now(pytz.UTC)
+
+                try:
+                  while True:
+                    try:
+                        # Timeout hier damit wir den Watchdog checken können
+                        msg = await asyncio.wait_for(
+                            ws.recv(),
+                            timeout=WS_MESSAGE_WATCHDOG_SEC,
+                        )
+                    except asyncio.TimeoutError:
+                        # Keine Message innerhalb Watchdog-Fenster
+                        silence_sec = (datetime.datetime.now(pytz.UTC) - last_msg_ts).total_seconds()
+                        logger.warning(
+                            f"⏰ WS-Worker {worker_id}: {silence_sec:.0f}s keine Messages, "
+                            f"erzwinge Reconnect"
+                        )
+                        break
+
+                    last_msg_ts = datetime.datetime.now(pytz.UTC)
+
+                    try:
+                        payload = json.loads(msg)
+                    except json.JSONDecodeError:
+                        continue
+
+                    # SUBSCRIBE-Response durchgehen lassen
+                    if 'result' in payload:
+                        if payload.get('result') is not None:
+                            # Nicht-Null Result → Fehler (Binance antwortet mit null bei Erfolg)
+                            logger.warning(
+                                f"WS-Worker {worker_id}: Subscribe-Error: {payload}"
+                            )
+                        continue
+
+                    # Fehler-Response
+                    if 'error' in payload:
+                        logger.warning(f"WS-Worker {worker_id}: Error-Response: {payload}")
+                        continue
+
+                    # Daten-Message
+                    if 'data' in payload and 'k' in payload['data']:
+                        k = payload['data']['k']
+                        sym = k['s']
+                        tf = k['i']
+                        open_time = datetime.datetime.fromtimestamp(k['t'] / 1000, pytz.UTC)
+
+                        WS_KLINE_BUFFER[(sym, tf)] = (
+                            sym, open_time, float(k['o']), float(k['h']),
+                            float(k['l']), float(k['c']), float(k['v'])
+                        )
+
+                finally:
+                    pong_task.cancel()
+                    try:
+                        await pong_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+        except asyncio.CancelledError:
+            logger.info(f"🛑 WS-Worker {worker_id} stopped (cancelled).")
+            raise
+        except Exception as e:
+            consecutive_failures += 1
+            uptime_str = ""
+            if connected_at is not None:
+                uptime_sec = (datetime.datetime.now(pytz.UTC) - connected_at).total_seconds()
+                uptime_str = f" (war {uptime_sec:.0f}s verbunden)"
+
+            # Exponential Backoff mit Jitter
+            jitter = random.uniform(0.8, 1.2)
+            wait_sec = min(backoff * jitter, WS_RECONNECT_MAX_SEC)
+
+            # Add worker_id spread so workers don't all reconnect simultaneously
+            spread_sec = (worker_id - 1) * 2.0
+            total_wait = wait_sec + spread_sec
+            logger.warning(
+                f"🔴 WS-Worker {worker_id} getrennt{uptime_str}: {type(e).__name__}: {e}. "
+                f"Reconnect in {total_wait:.1f}s (Versuch #{consecutive_failures}, spread +{spread_sec:.0f}s)"
+            )
+            await asyncio.sleep(total_wait)
+            # Backoff verdoppeln bis zum Cap
+            backoff = min(backoff * 2.0, WS_RECONNECT_MAX_SEC)
+
+
+async def start_websocket_fleet(symbols):
+    """Teilt die Streams auf WS-Connections auf mit staggered Startup.
+
+    Auslegungsprinzipien:
+      - Wenige, volle Connections besser als viele halbvolle (Binance-Overhead)
+      - Startup-Stagger verhindert Rate-Limit beim initialen Connect
+      - Bei Reconnect-Storm greift zusätzlich der Exponential Backoff
+    """
+    all_streams = []
+    for sym in symbols:
+        for tf in TIMEFRAMES:
+            all_streams.append(f"{sym.lower()}@kline_{tf}")
+
+    stream_chunks = [
+        all_streams[i:i + WS_STREAMS_PER_WORKER]
+        for i in range(0, len(all_streams), WS_STREAMS_PER_WORKER)
+    ]
+
+    n_workers = len(stream_chunks)
+    logger.info(
+        f"🚀 Starting {n_workers} WS-Worker für {len(all_streams)} Streams "
+        f"(~{len(all_streams) // max(n_workers,1)} Streams/Worker, "
+        f"Stagger {WS_STARTUP_STAGGER_SEC}s zwischen Starts)"
+    )
+
+    # Warnung wenn wir zu viele Connects in 5 Minuten haben könnten.
+    # Binance erlaubt 300 Connect-Attempts pro 5min pro IP.
+    expected_connects_per_5min = n_workers  # initial, ohne Reconnects
+    if expected_connects_per_5min > 60:
+        logger.warning(
+            f"⚠️  {n_workers} Worker + Reconnects könnten das Binance-Limit "
+            f"(300 Connects pro 5min) sprengen. Erwäge mehr Streams pro Worker."
+        )
+
+    tasks = [db_buffer_flusher()]
+    for i, chunk in enumerate(stream_chunks):
+        startup_delay = i * WS_STARTUP_STAGGER_SEC
+        tasks.append(binance_ws_worker(i + 1, chunk, startup_delay=startup_delay))
+
+    await asyncio.gather(*tasks)
+
+
+# HAUPT-EINSTIEGSPUNKT
+async def main_async():
+    logger.info("=== DATA INGESTION SYSTEM START ===")
+
+    # 1. Aktuelle Liste holen (Synchron)
+    symbols = update_trading_pairs()
+
+    # 2. Den Background-Task für den 7-Tage-Check (läuft direkt 1x an und dann alle 12h)
+    catchup_task = asyncio.create_task(periodic_rest_catchup(symbols))
+
+    # 3. WebSockets sofort starten
+    ws_task = asyncio.create_task(start_websocket_fleet(symbols))
+
+    await asyncio.gather(catchup_task, ws_task)
+
+
+def main():
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        logger.info("🛑 Data Ingestion stopped (Strg+C).")
+
+
+if __name__ == "__main__":
+    main()

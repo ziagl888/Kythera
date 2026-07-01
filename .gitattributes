@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.pkl binary
+*.joblib binary
+*.mp4 binary
+*.json -text

@@ -1,0 +1,81 @@
+name: Syntax Check
+
+# Läuft bei jedem Push und jedem Pull Request.
+# Fängt die häufigsten "Bot startet nicht"-Probleme ab BEVOR sie deployed werden.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: AST Parse — alle Python-Dateien müssen syntaktisch valide sein
+        run: |
+          failed=0
+          while IFS= read -r -d '' file; do
+            if ! python -c "import ast, sys; ast.parse(open('$file').read())" 2>/dev/null; then
+              echo "::error file=$file::Syntax error in $file"
+              python -c "import ast; ast.parse(open('$file').read())" || true
+              failed=1
+            fi
+          done < <(find . -name "*.py" -not -path "./venv/*" -not -path "./.venv/*" -print0)
+          if [ $failed -eq 1 ]; then
+            exit 1
+          fi
+          echo "✅ Alle Python-Dateien parsen sauber."
+
+      - name: Import-Smoke-Test — core-Module
+        # Diese Module werden von fast allen Bots importiert. Wenn eines davon
+        # einen ImportError hat, sterben alle Bots beim Start.
+        run: |
+          pip install --quiet psycopg2-binary pandas numpy scipy joblib xgboost pytz
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          # Smoke: Können wir die core-Module importieren?
+          # (Einige Module brauchen Environment-Variablen zur Laufzeit,
+          # das testen wir hier NICHT — nur die reine Import-Syntax.)
+          modules_to_test = [
+              'core.market_utils',
+              'core.trade_utils',
+              'core.state_utils',
+          ]
+          failed = []
+          for m in modules_to_test:
+              try:
+                  __import__(m)
+                  print(f'✅ {m}')
+              except ImportError as e:
+                  print(f'❌ {m}: {e}')
+                  failed.append(m)
+              except Exception as e:
+                  # Andere Fehler (z.B. fehlende Config) sind ok — nur ImportErrors fangen
+                  print(f'⚠️  {m}: {type(e).__name__}: {e} (non-import error, ignoriert)')
+          if failed:
+              sys.exit(1)
+          "
+
+      - name: Check — keine verbotenen Secret-Strings
+        # Einfache Heuristik: keine echten API-Keys im Code
+        run: |
+          if grep -rE "BINANCE_API_KEY *= *['\"][A-Za-z0-9]{30,}" --include="*.py" . ; then
+            echo "::error::Möglicher hardcodierter Binance API Key gefunden!"
+            exit 1
+          fi
+          if grep -rE "TELEGRAM_BOT_TOKEN *= *['\"][0-9]{9,}:[A-Za-z0-9_-]{30,}" --include="*.py" . ; then
+            echo "::error::Möglicher hardcodierter Telegram Bot Token gefunden!"
+            exit 1
+          fi
+          echo "✅ Keine hardcodierten Secrets gefunden."

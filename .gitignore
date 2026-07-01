@@ -216,3 +216,33 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Kythera runtime data / state (regenerated at runtime, never commit) ---
+1minute.json
+1minute.json.tmp
+pump_dump_state.json
+active_patterns.json
+alerted_qms.json
+trendline_state.json
+indicator_state.json
+chart_buffer_snapshot.json
+chart_buffer_snapshot.json.tmp
+command_logs.json
+directory_info.txt
+
+# logs & generated output
+*.log
+logs/
+charts/
+generated_charts/
+institutional_charts/
+whale_data/
+funding_data/
+
+# local envs
+.env
+.env.*
+!.env.example
+
+# local bot config (real channel ids) — use bot_config.example.json as template
+bot_config.json

@@ -1,0 +1,26 @@
+# Kythera gitleaks config — extends the default rule set with project-specific
+# patterns for the leaks we actually hit.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "telegram-channel-id"
+description = "Hardcoded private Telegram channel id (route through core.config / env instead)"
+regex = '''-100\d{10}'''
+tags = ["telegram", "pii", "kythera"]
+
+[[rules]]
+id = "telegram-bot-token"
+description = "Telegram bot token"
+regex = '''[0-9]{8,10}:[A-Za-z0-9_-]{30,}'''
+tags = ["telegram", "secret"]
+
+[allowlist]
+description = "Placeholders and env templates are allowed"
+paths = [
+    '''\.env\.example$''',
+    '''\.gitleaks\.toml$''',
+]
+regexes = [
+    '''-100XXXXXXXXXX''',
+]

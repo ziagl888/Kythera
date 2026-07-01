@@ -1,0 +1,28 @@
+# --- Core & Database ---
+requests
+pandas
+numpy
+psycopg2-binary
+websockets
+websocket-client
+pytz
+python-dateutil
+aiohttp
+python-dotenv
+
+# --- Math & Indicators (Ebene 2) ---
+scikit-learn
+scipy
+xgboost
+yfinance
+pandas_ta
+joblib
+
+# --- Charting & Telegram (Ebene 3 & 4) ---
+mplfinance
+matplotlib
+python-telegram-bot
+
+# --- Dashboard (Flask Web-UI + Prozess-Monitoring) ---
+flask
+psutil

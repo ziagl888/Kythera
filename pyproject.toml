@@ -1,0 +1,30 @@
+[project]
+name = "kythera"
+version = "0.1.0"
+description = "Kythera — a multi-bot crypto trading & market-intelligence system"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# Legacy analysis/backtest/patch scripts are not held to the same bar yet.
+extend-exclude = [".venv", "backtest", "reports", "tools", "handlers", "strategies"]
+
+[tool.ruff.lint]
+# Start deliberately lean so pre-commit is adoptable on a large legacy tree.
+# F  = pyflakes (undefined names / unused imports — would have caught the
+#      missing `_kcfg` import), E4/E7/E9 = import/statement/syntax errors,
+# I  = import sorting, B = bugbear, UP = pyupgrade.
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
+ignore = [
+    "E501",  # line length is the formatter's job; legacy lines are long
+    "B008",  # function calls in argument defaults (common in this codebase)
+    "UP035", # deprecated typing imports — defer, not worth the churn yet
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Numbered entrypoint bots keep module-level config constants after imports.
+"*.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "preserve"
