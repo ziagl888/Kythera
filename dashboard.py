@@ -524,6 +524,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
   .proc-dot.up   { background: var(--green); box-shadow: 0 0 5px var(--green); }
   .proc-dot.down { background: var(--red); }
+  .proc-dot.parked { background: var(--yellow); }
   .proc-name { flex: 1; font-size: 13px; line-height: 1.3; }
   .proc-pid  { font-family: var(--mono); font-size: 10px; color: var(--muted); }
 
@@ -577,6 +578,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
   .card-status.up   { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
   .card-status.down { background: var(--red); }
+  .card-status.parked { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
   .card-name { font-size: 13px; font-weight: 600; flex: 1; }
   .card-script { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 1px; }
   .card-metrics {
@@ -589,6 +591,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .metric-value { font-family: var(--mono); font-size: 14px; font-weight: 600; }
   .metric-value.up   { color: var(--green); }
   .metric-value.down { color: var(--red); }
+  .metric-value.parked { color: var(--yellow); }
   .card-actions { display: flex; gap: 6px; }
   .group-badge {
     font-size: 10px;
@@ -881,7 +884,7 @@ function renderSidebar() {
   el.innerHTML = allStatuses.map(p => `
     <div class="proc-row ${selectedScript === p.script ? 'active' : ''}"
          onclick="selectProcess('${p.script}')">
-      <div class="proc-dot ${p.running ? 'up' : 'down'}"></div>
+      <div class="proc-dot ${p.running ? 'up' : (p.parked ? 'parked' : 'down')}"></div>
       <div>
         <div class="proc-name">${p.name}</div>
       </div>
@@ -905,12 +908,14 @@ function renderCards() {
 
   document.getElementById('cardsGrid').innerHTML = procs.map(p => {
     const up = p.running;
+    const state = up ? 'up' : (p.parked ? 'parked' : 'down');
+    const stateLabel = up ? 'Running' : (p.parked ? 'Parked' : 'Stopped');
     const uptime = up ? fmtUptime(p.uptime_s) : '—';
     return `
     <div class="card ${selectedScript === p.script ? 'selected' : ''}"
          style="${selectedScript === p.script ? 'border-color:var(--blue)' : ''}">
       <div class="card-head">
-        <div class="card-status ${up ? 'up' : 'down'}"></div>
+        <div class="card-status ${state}"></div>
         <div>
           <div class="card-name">${p.name}</div>
           <div class="card-script">${p.script}</div>
@@ -920,7 +925,7 @@ function renderCards() {
       <div class="card-metrics">
         <div class="metric">
           <span class="metric-label">Status</span>
-          <span class="metric-value ${up ? 'up' : 'down'}">${up ? 'Running' : 'Stopped'}</span>
+          <span class="metric-value ${state}">${stateLabel}</span>
         </div>
         ${up ? `
         <div class="metric">
@@ -1031,12 +1036,12 @@ function renderSystem(sys, procs) {
   const summary = document.getElementById('processSummary');
   summary.innerHTML = procs.map(p => `
     <div class="summary-row">
-      <div class="proc-dot ${p.running ? 'up' : 'down'}" style="flex-shrink:0"></div>
+      <div class="proc-dot ${p.running ? 'up' : (p.parked ? 'parked' : 'down')}" style="flex-shrink:0"></div>
       <div style="flex:1">${p.name}</div>
       <div style="font-family:var(--mono);color:var(--muted);font-size:11px;width:60px">${p.pid ? '#' + p.pid : '—'}</div>
       <div style="font-family:var(--mono);font-size:11px;width:60px">${p.running ? p.cpu + '%' : ''}</div>
       <div style="font-family:var(--mono);font-size:11px;width:70px">${p.running ? p.mem_mb + 'MB' : ''}</div>
-      <div style="font-family:var(--mono);color:var(--muted);font-size:11px;width:80px">${p.running ? fmtUptime(p.uptime_s) : 'stopped'}</div>
+      <div style="font-family:var(--mono);color:var(--muted);font-size:11px;width:80px">${p.running ? fmtUptime(p.uptime_s) : (p.parked ? 'parked' : 'stopped')}</div>
     </div>
   `).join('');
 }
