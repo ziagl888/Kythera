@@ -1,0 +1,3 @@
+# Immutable golden indicator snapshots (*.npz) + manifest.json land here.
+# Frozen via `guard.py refresh`; never edited by hand. Refresh only with a
+# justified commit message (KYTHERA_GOLDEN_REFRESH=1).

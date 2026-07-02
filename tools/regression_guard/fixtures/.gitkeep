@@ -1,0 +1,2 @@
+# Frozen OHLCV fixtures (*.npz) land here — the immutable INPUT to the guard.
+# Populated once via `guard.py extract` against the live DB, then committed.

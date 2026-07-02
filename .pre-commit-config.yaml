@@ -30,3 +30,17 @@ repos:
     rev: v8.21.3
     hooks:
       - id: gitleaks
+
+  # Indicator regression guard (Phase 1, T-2026-CU-9050-009). Recomputes the
+  # ~108 indicators from frozen OHLCV fixtures and compares to an immutable
+  # golden snapshot — blocks any commit that drifts the live signal path.
+  # Passes as a no-op until the golden snapshot is frozen (see tools/
+  # regression_guard/README.md). Runs on every commit, no operator habit needed.
+  - repo: local
+    hooks:
+      - id: kythera-indicator-regression-guard
+        name: Kythera indicator regression guard
+        entry: python tools/regression_guard/guard.py verify
+        language: system
+        pass_filenames: false
+        always_run: true

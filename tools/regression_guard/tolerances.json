@@ -1,0 +1,8 @@
+{
+  "_note": "Per-feature tolerance bands for the indicator regression guard. The compute path (calculate_indicators_optimized) contains no RNG and is deterministic given its input, so the default band is intentionally tight. The band is a safety net against BLAS float-reduction-order jitter, which the guard's BLAS thread pin (OMP/OPENBLAS/MKL_NUM_THREADS=1) already suppresses. Widen a specific column ONLY if a real machine demonstrates jitter for it, and record why. Columns not listed use 'default'. Set a column to the string 'exact' to force bit-for-bit; non-numeric columns (e.g. TREND_DIRECTION) are always exact regardless.",
+  "default": {
+    "rtol": 0.0,
+    "atol": 1e-09
+  },
+  "columns": {}
+}
