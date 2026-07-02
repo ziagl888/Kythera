@@ -38,14 +38,19 @@ SG_COINS_FILE = 'coins.json'
 # prüfen, ob die Semantik bei der Modell-Version stimmt.
 THRESHOLDS = {'LONG': 0.60, 'SHORT': 0.80}
 
-# FIX: SUCCESS_CLASS_IDX wird in predict_proba[0, SUCCESS_CLASS_IDX] verwendet.
-# Standard-Konvention bei XGBoost Binary-Classifier:
-#   label=0 = Failure, label=1 = Success → SUCCESS_CLASS_IDX=1
-# Diese Codebase nutzt jedoch SUCCESS_CLASS_IDX=0 aus historischen Gründen
-# (alte Modelle hatten invertiertes Label). BITTE VERIFIZIEREN gegen das
-# Training-Notebook: wenn dort `y=1` für gewinnende Trades steht, MUSS hier
-# SUCCESS_CLASS_IDX=1 stehen — sonst wird die Probability für FAILURE als
-# Success-Score interpretiert und alle Thresholds wirken invers.
+# SUCCESS_CLASS_IDX wählt in predict_proba[0, SUCCESS_CLASS_IDX] die Spalte der
+# "Erfolgs"-Klasse. Das bt2-Modell ist KEIN Binär-Classifier, sondern 3-klassig
+# (multi:softprob). Verifiziert gegen den Trainingscode (BT2-ML-Trainer.py /
+# BT2-ML-Final_Saver.py, 2025-12): der Datagrepper vergibt die String-Labels
+#   continuation_success (price_change > +5%) = Trade geht auf  → WIN
+#   failed_breakout      (price_change < -3%) = Trade scheitert → LOSS
+#   neutral              (dazwischen)                           → seitwärts
+# und der Trainer kodiert sie per sklearn LabelEncoder ALPHABETISCH:
+#   continuation_success = 0, failed_breakout = 1, neutral = 2
+# (success_idx = class_mapping['continuation_success'] = 0, für LONG- UND
+# SHORT-Modell identisch trainiert).
+# → SUCCESS_CLASS_IDX = 0 ist KORREKT. NICHT auf 1 setzen — 1 ist die
+#   LOSS-Klasse (failed_breakout).
 SUCCESS_CLASS_IDX = 0
 PIVOT_WINDOW = 10
 RETEST_BACKWARD_LOOKUP_CANDLES = 24
