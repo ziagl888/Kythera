@@ -1,0 +1,229 @@
+{
+  "engine_file": "2_indicator_engine.py",
+  "engine_sha256": "4f9c66c5f9a044baf7bf5f5c7b0b16c1aa3616675b35e55572e76d251a3c9e8c",
+  "fixtures": {
+    "BTCUSDT__1d.npz": {
+      "rows": 600,
+      "sha256": "1c437c4bc33788368717ceb3f588ff38326b4a26bbbfd99e7a1e108818eedd05"
+    },
+    "BTCUSDT__1h.npz": {
+      "rows": 600,
+      "sha256": "5fa09c4694087017cfa48bc26cff357b6248bfba85a81207978166f833f8fb83"
+    },
+    "BTCUSDT__1w.npz": {
+      "rows": 123,
+      "sha256": "72bc5fd03990caf9b569f1be361cdaa6a6b618e829daa9d614b1d6fc5f699760"
+    },
+    "BTCUSDT__2h.npz": {
+      "rows": 600,
+      "sha256": "a1bc4f72929691d092965448675f07584e6d35d1fed39e08df9ae0de7bdf80fa"
+    },
+    "BTCUSDT__30m.npz": {
+      "rows": 600,
+      "sha256": "6c356277694922be4f9ec29b0170ada9c7f86963c02d6ccaefb993efc35c0ae9"
+    },
+    "BTCUSDT__4h.npz": {
+      "rows": 600,
+      "sha256": "c0464a56740cbf146cff9923f8ae0d9e19ad384b0b504300b0ebaf3b50373336"
+    },
+    "DOGEUSDT__1d.npz": {
+      "rows": 600,
+      "sha256": "32ee37356b6a7321da957ccd17e2ededbafa7aef766693358f07c32b95062b6b"
+    },
+    "DOGEUSDT__1h.npz": {
+      "rows": 600,
+      "sha256": "7e76f97691924c2c9eeefc7691928e64ce5f123acc06a7417c6401fb25fe3f90"
+    },
+    "DOGEUSDT__1w.npz": {
+      "rows": 123,
+      "sha256": "8d869fbd8b54a46de089de361bb3c3dd942e7415670c6ecbdc6a17a4af93444a"
+    },
+    "DOGEUSDT__2h.npz": {
+      "rows": 600,
+      "sha256": "2f6c36fd48a995f667c1f1671e6a3394373b0d60e433cd871979433bba729dd1"
+    },
+    "DOGEUSDT__30m.npz": {
+      "rows": 600,
+      "sha256": "3c885a92ea7aa5e341603130a58dd4ee956bf799c47800fea2bbac2e18bf2863"
+    },
+    "DOGEUSDT__4h.npz": {
+      "rows": 600,
+      "sha256": "b91d118c164ca49e466e1645355e3c1561c5a9b08a2b6e20ef0d1700ed65d39c"
+    },
+    "ETHUSDT__1d.npz": {
+      "rows": 600,
+      "sha256": "60973018ff064503bf3a5ebf87fd33919d497fc1623b4d0e139c35e28e9a486e"
+    },
+    "ETHUSDT__1h.npz": {
+      "rows": 600,
+      "sha256": "1bf7c60f8363b9c3ae5613e0e0d26370ac9ec3244c9223f35b91337b93112807"
+    },
+    "ETHUSDT__1w.npz": {
+      "rows": 123,
+      "sha256": "83563dd45d6c509dc86ac41bb3ccb474b9640d2f74ee992f7b47342311aff6af"
+    },
+    "ETHUSDT__2h.npz": {
+      "rows": 600,
+      "sha256": "6b175849c4718d68dc2de912f27d45b3af9ead9c30cd3d832dacf392596166f7"
+    },
+    "ETHUSDT__30m.npz": {
+      "rows": 600,
+      "sha256": "5cd4c28f3225943acc50bee3d5c174518d7bc8dbe0d5c91e36063c27eae1c546"
+    },
+    "ETHUSDT__4h.npz": {
+      "rows": 600,
+      "sha256": "a424541bad34900b97e0d15493e13353cae0d4e68b0391bad2b8cbdd9752b777"
+    },
+    "SOLUSDT__1d.npz": {
+      "rows": 600,
+      "sha256": "638ceb1f3a9558967c3b2286233632ff6fce03bdfc1efbbf4cda6a0ada09e6d4"
+    },
+    "SOLUSDT__1h.npz": {
+      "rows": 600,
+      "sha256": "1b3173087b6b126ab9f208a214738f50d41a6af719d9f82e7d034354a6c48e75"
+    },
+    "SOLUSDT__1w.npz": {
+      "rows": 123,
+      "sha256": "365b29a65234a5c687e946905ecc3bf8bca882e42bf716ab3634d9f994e7402c"
+    },
+    "SOLUSDT__2h.npz": {
+      "rows": 600,
+      "sha256": "4602022ab62b82db3dda5665f1b9af2a923a53b739e685826fb3bd7c946cbfb0"
+    },
+    "SOLUSDT__30m.npz": {
+      "rows": 600,
+      "sha256": "31279b3c1652e62361bf0b7156ad94156ec29df291122bb3601e58a3bb429dfe"
+    },
+    "SOLUSDT__4h.npz": {
+      "rows": 600,
+      "sha256": "03babfb71525c3fa237538e632e47a89dfb8e50f910ad651c38775ce0c2d3448"
+    }
+  },
+  "generated_at": "2026-07-03T11:11:36.471957+00:00",
+  "git_commit": "da83a0e4c97dd96347e1dd03eb4631b03ae39597",
+  "golden": {
+    "BTCUSDT__1d.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "049d52a08da00c5da5ca504174acb70a5e805e30cf7ca9d1f4e9d22f57d66c39"
+    },
+    "BTCUSDT__1h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "8f708e1fbbbee8e2ee125593f903ba90a759d0d37d5e58752b225ba54bdd2ece"
+    },
+    "BTCUSDT__1w.npz": {
+      "cols": 111,
+      "rows": 123,
+      "sha256": "9207e91f316378337afd48b616ae73ec0a4873f3d9544def5d51cee8606754f5"
+    },
+    "BTCUSDT__2h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "80332e2f3bdd2fd5381b19787c066feecc55efc3cf4c9ae37cf47e170be534c3"
+    },
+    "BTCUSDT__30m.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "9374ad2a568a3ee4a60dde6f98ed315e18ad5a3b4ed2378d67ea19ffa27f68ea"
+    },
+    "BTCUSDT__4h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "2217f5ac36982e1320897b5fc71e28209741674ccf7976a82ef636b2b46b40f9"
+    },
+    "DOGEUSDT__1d.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "76478382bf0bf228b830cf03328561486ecf4d962b2927ca1c00db9810b5207a"
+    },
+    "DOGEUSDT__1h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "221b89c9b4531312a462b887ddbaca32551b43a7f764d7fc9b96eb72cad94109"
+    },
+    "DOGEUSDT__1w.npz": {
+      "cols": 111,
+      "rows": 123,
+      "sha256": "b66c9bb9f8073c346d36721749cca328f20cd148c82a17390b9cf79a6c0249ca"
+    },
+    "DOGEUSDT__2h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "06db5c00109a23a86c395bb3a0a494e79b3a8caa221a5e0c66f03871da5acb15"
+    },
+    "DOGEUSDT__30m.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "23ea294d7b835d9783c568e73366133276fd488ffff20642d5ab732baeaa3a7d"
+    },
+    "DOGEUSDT__4h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "2fe1e884e292303309803d751bab23f1680ded03f036896e1d1340f3984fa025"
+    },
+    "ETHUSDT__1d.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "6bff0a39c284fabd667793ed0238fe174fb69840ba7b29effd67feff558f9f6c"
+    },
+    "ETHUSDT__1h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "a9f6dbf064865bdef3451bbcd8136fd456ebe98fa0649e3315cfee8878a6cb63"
+    },
+    "ETHUSDT__1w.npz": {
+      "cols": 111,
+      "rows": 123,
+      "sha256": "eaba64ee210a0824a6188c40ec1c49cfb25a8e0ff7c76c7b68376cc8a78f1353"
+    },
+    "ETHUSDT__2h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "3466957852722673dc670f0c67ebf1d82b1549e40c96229dab72e6ca83b1e241"
+    },
+    "ETHUSDT__30m.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "bf9ebcf1b892bb8356015ceb926d9a40ce3c57f25cb93f1bfa75aa35a56e010d"
+    },
+    "ETHUSDT__4h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "4bf794eb1b1bc74f7d0f87f989168c370a3465d2a852e9a3c79bef9daa273ac9"
+    },
+    "SOLUSDT__1d.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "66238903a276562162740fb90e625c2f804e9a791725207a823236c696d07793"
+    },
+    "SOLUSDT__1h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "32056831f57fa80741d6c5c430e0b5db3b1721732a0b014d22f2c60bf7487c47"
+    },
+    "SOLUSDT__1w.npz": {
+      "cols": 111,
+      "rows": 123,
+      "sha256": "8cfdf8ef47fe57de177cb7913adccca38da0a235c362c2dde364dba345fe29cb"
+    },
+    "SOLUSDT__2h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "99a498bc160a367122998798ba62abdc377d65057f871c350286ed9e9ed31d4f"
+    },
+    "SOLUSDT__30m.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "1565d6a5408cfaed806e06632cb9f484edd5933e0c661a53b6a168d528b9fb0a"
+    },
+    "SOLUSDT__4h.npz": {
+      "cols": 111,
+      "rows": 600,
+      "sha256": "6b4cc7a2f018dedadac3ea2aafda51dc8d4fd96565932e2ac8f0cb0febebd36a"
+    }
+  },
+  "note": "Golden snapshot of calculate_indicators_optimized over the frozen OHLCV fixtures. Refresh only with a justified commit message.",
+  "schema_version": 1,
+  "tolerances_sha256": "caefe7cb1466e65d8451fc6a3270bbea467796aae4d70431e434d688da1ea60e"
+}
