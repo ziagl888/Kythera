@@ -252,3 +252,6 @@ bot_config.json
 
 # private, never-pushed working area (planning docs, handoffs, refactor briefs)
 .local/
+
+# Claude Code local environment
+.claude/
