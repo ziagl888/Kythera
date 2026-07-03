@@ -1,0 +1,40 @@
+{
+  "type": "LONG",
+  "timestamp": "20251230_220114",
+  "params": {
+    "n_estimators": 300,
+    "learning_rate": 0.1,
+    "max_depth": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "gamma": 0
+  },
+  "cv_score": 0.1336021375611189,
+  "application_threshold": 0.79,
+  "class_mapping": {
+    "continuation_success": 0,
+    "failed_breakout": 1,
+    "neutral": 2
+  },
+  "success_class_index": 0,
+  "feature_columns": [
+    "dist_close_ema9_pct",
+    "dist_ema9_ema21_pct",
+    "dist_close_kama9_pct",
+    "rsi14",
+    "rsi_below_30",
+    "rsi_above_70",
+    "tsi",
+    "tsi_signal",
+    "tsi_above_0",
+    "tsi_below_0",
+    "dist_close_boll_upper_pct",
+    "dist_close_boll_mid_pct",
+    "dist_close_boll_lower_pct",
+    "dist_close_donchian_upper_pct",
+    "dist_close_donchian_mid_pct",
+    "dist_close_donchian_lower_pct",
+    "retest_volume",
+    "retest_volume_ratio_avg"
+  ]
+}
