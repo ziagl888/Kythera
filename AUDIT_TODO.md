@@ -10,6 +10,8 @@
 
 **Step 6 (2026-07-03): Strategie-/Modell-Konzeptbewertung** — alle 26 Strategien/Modelle konzeptionell bewertet (Edge-Hypothese, Trainingsvalidität, Live-Evidenz aus Report 14) mit Note A–F, Gesamtranking und Portfolio-Empfehlungen: `audit_reports/16_strategy_concept_evaluation.md`. Kurzfassung: Top-Kandidaten MIS1-72H, TD, SRA1, Support Resistance (je B−); verlässlich schädlich AIM1, UFI1, Fast In And Out, QM_4H (je F); Meta-Ebene C+ (ROM1-Mehrwert real, aber die 4D-Regime-Hypothese ist ungetestet — TRANSITION-Restklasse deaktiviert das Gate 44,5% der Zeit); kein Modell hat aktuell belegbaren ML-Skill — die Gewinne stammen aus S/R-Trade-Konstruktion + Regel-Gates + Marktregime.
 
+**Step 7 (2026-07-03): Monitor-Replay & Lücken-Check** — `audit_reports/17_monitor_replay_and_gaps.md`. Kurzfassung: Monitor-Scoring stimmt nur zu **63,4%** mit einem First-Touch-Replay der 5m-Kerzen überein (17,8% verpasste TP1, 18,8% TP1 trotz SL-zuerst; Volume Indicator/5 Percent nur 44/45% — P2.7/P1.2 quantifiziert) → Monitor-Rewrite vor Modell-Neutraining. Außerdem: 800 Outbox-Messages still verworfen (alle Timed out, 212 im FIFO-Channel), ticker_10s leer, ai_signals löscht Targets beim Close (AI-Flotte rückwirkend nicht auditierbar), 5m-Daten lückenlos.
+
 **Step 6 (2026-07-03): Regime-Orchestrator-Gesamtanalyse** — `audit_reports/16_regime_orchestrator_analysis.md`. Kurzfassung: ROM1 liefert +8pp WR-Mehrwert, aber die Whitelist ist zu 89% Default-Open (747× insufficient_data), die 4D-Matrix hat median 7 Trades/Zelle, der Detector hat in 5,5 Monaten nie ein TREND-Regime gehalten (7 Episoden, alle <1h) und flappt in 52% der Episoden; Auto-Close kappt 49% der Trades im Gewinn (median 0%). Vorschläge in 4 Stufen inkl. Suppressed-Counterfactual-Scorer und Empirical-Bayes-Shrinkage statt 4D-Whitelist.
 
 **Step 5 (2026-07-03): Strategie-Vorschlagsliste** — datengetriebene Konzepte für neue Long/Short-Strategien und Modelle in `audit_reports/15_strategy_proposals.md` (S1-S13 + Hypothesen-Tests: Konfluenz-2 = +2pp WR aber 4+ Modelle = Kontra-Signal; Regime-Richtungs-Matrix CHOP→nur SHORT; AIM1-Fade +9,5%/Trade auf Papier, nur Shadow; FIFO-Problem ist Selektion, nicht Tails).
@@ -62,7 +64,7 @@
 
 ### Telegram / Monitore
 - [ ] **P1.1 Keine Staleness-TTL auf der Outbox.** `4_telegram_bot.py:183-194`: nach Downtime werden stundenalte Signale zu längst vergangenen Preisen rausgeblasen. **Fix:** `AND created_at > NOW()-INTERVAL '15 min'` für Signal-Channels, ältere `failed='expired'`. `[DB]`
-- [ ] **P1.2 Trailing-SL in `5_trade_monitor.py:246-247` zieht nie nach** — für Level 2/3 wird der **alte** SL (`trade['sl']`) statt `targets[new_level-2]` übergeben (8_ai macht es richtig). Alle Multi-Target-PnL/Winrates systematisch falsch. `[DB]` (CRITICAL falls irgendetwas `active_trades_master.sl` an Cornix postet)
+- [ ] **P1.2 ✔quantifiziert(Step7: Replay — 18,8% der Trades bekamen TP1 trotz SL-zuerst) Trailing-SL in `5_trade_monitor.py:246-247` zieht nie nach** — für Level 2/3 wird der **alte** SL (`trade['sl']`) statt `targets[new_level-2]` übergeben (8_ai macht es richtig). Alle Multi-Target-PnL/Winrates systematisch falsch. `[DB]` (CRITICAL falls irgendetwas `active_trades_master.sl` an Cornix postet)
 - [ ] **P1.3 Per-Channel-FIFO bricht bei transientem Sendefehler** (`4_telegram_bot.py:305-324`) → SL-Update kann vor seinem Entry-Signal ankommen. **Fix:** fehlgeschlagenen Channel für den Rest des Batches blocken.
 - [ ] **P1.4 `:.6f`-Preisformatierung zerstört Sub-0.001-Coins** (`handlers/open_handler.py:104-110`) → gerundete/kollabierende TPs, Cornix rejected. **Fix:** signifikante Stellen / tickSize. `[DB]`
 - [ ] **P1.5 ✘(Step2: Spalte ist INTEGER) `8_ai_trade_monitor.py:265` — `int > str` TypeError wenn `current_target_hit` TEXT ist** → ganze Monitor-Iteration stirbt → SL-Hits aller AI-Trades unerkannt. **Fix:** `old_targets_hit = int(targets_hit or 0)` mit try/except. `[DB]`
@@ -133,11 +135,11 @@
 - [ ] **P2.6 `5_trade_monitor.posted`: tz-aware UTC in `TIMESTAMP WITHOUT TIME ZONE`** (`5:22-25,59`) → Fix wirkungslos falls Session-TZ ≠ UTC. `[DB]`
 
 ### Monitore / Datenintegrität
-- [ ] **P2.7 Monitore inspizieren nur die neueste 5m-Kerze** (`5:152-176`, `8:82-110`, `ORDER BY open_time DESC LIMIT 1`) → SL/TP-Hits während Downtime permanent verpasst. **Fix:** `last_checked_open_time`, vorwärts scannen. `[DB]`
+- [ ] **P2.7 ✔quantifiziert(Step7: 17,8% verpasste TP1; Gesamt-Übereinstimmung Monitor↔Replay nur 63,4%) Monitore inspizieren nur die neueste 5m-Kerze** (`5:152-176`, `8:82-110`, `ORDER BY open_time DESC LIMIT 1`) → SL/TP-Hits während Downtime permanent verpasst. **Fix:** `last_checked_open_time`, vorwärts scannen. `[DB]`
 - [ ] **P2.8 Unguarded Close-Race** (`5:31-65`, `8:245-276`) → Doppel-Rows in Closed-Tabellen, Lost Updates. **Fix:** `DELETE ... RETURNING` first, Insert nur bei Treffer. `[DB]`
 - [ ] **P2.9 SHORT-Trade mit `sl=0` sofort "ausgestoppt" bei Preis 0 (+100% PnL)** (`5:216-225`). **Fix:** Guard `sl>0`. `[DB]`
 - [ ] **P2.10 Kein `FOR UPDATE SKIP LOCKED`/Singleton auf der Outbox** (`4:183-194`) → zwei Consumer würden alles doppelt senden.
-- [ ] **P2.11 Permanent-failing Messages nach 3 Versuchen still verworfen, kein Alert** (`4:22,124-144`) → verlorenes Cornix-Signal unsichtbar. **Fix:** Retry ohne parse_mode, Operator-Alert. `[DB]`
+- [ ] **P2.11 ✔quantifiziert(Step7: 800 verworfene Messages, alle 'Timed out', 212 im FIFO-Trading-Channel) Permanent-failing Messages nach 3 Versuchen still verworfen, kein Alert** (`4:22,124-144`) → verlorenes Cornix-Signal unsichtbar. **Fix:** Retry ohne parse_mode, Operator-Alert. `[DB]`
 
 ### Indikator-Engine / Ingestion / Housekeeping
 - [ ] **P2.12 ✔(Step2: gespeichert==ewm(span), Δ zu Wilder ø4,8 Punkte) RSI ist kein Wilder-RSI** (`2_indicator_engine.py:336-337`, `ewm(span)` statt `alpha=1/period`) → RSI_14 ≈ Wilder-7-8; Schwellen 70/30 feuern zu oft (ATR im selben File korrekt). **Fix:** bewusste Migration. `[DB]`
