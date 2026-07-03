@@ -13,7 +13,7 @@
 | `master_trade_model_xgboost_combined_signals.pkl` | 15 AIM1 | `x10-mlzeitfolge-v2.py` (`master_task.py` = nur Loader-Prototyp) | ✔ geklärt |
 | `trade_success_xgb_LONG/SHORT_v2.json` | 9 SRA1 | `X9-SR-ANALYZER-Schritt1.py` (v1) + `core/update_model.py` (Konvertierung) | ✔ **bewiesen: v2 = reine Formatkonvertierung von v1** (Booster-Vergleich: alle 100 Bäume bit-identisch, 38 Features, LONG+SHORT) |
 | `pump_dump_model.pkl` | 10 EPD1 | `zzz.py` (`train_pump_dump_model`, ~Z.7054-7242) | ~ Trainer existiert, ist aber **auskommentiert** (Z.7033/7040) — Artefakt aus unbekanntem Lauf |
-| `pump_model_{8,24,72,168}h_{pump,dump}_final.pkl` + `threshold_*` | 11 MIS1 | **KEIN Trainer auf der Maschine** (Maschine komplett durchsucht) | ✘ **einzige Familie ohne jede Provenienz** |
+| `pump_model_{8,24,72,168}h_{pump,dump}_final.pkl` + `threshold_*` | 11 MIS1 | `X5-analyze_indicators_v8.py` (**nachträglich gefunden**, s. Addendum) | ✔ geklärt — f-String-Dateiname täuschte alle Literal-Suchen |
 
 ## Gesamtverdikte
 
@@ -117,3 +117,33 @@
 - Startup-Assertion in jedem Bot: kein Feature konstant, keine per reindex verworfenen Nicht-Null-Spalten.
 
 **Reihenfolge-Empfehlung:** MIS1 (keine Provenienz + Ticker-Leakage) und AIM1 (aktiv schädlich) zuerst, dann ABR1 (pta-Fix ist Voraussetzung), dann ATB1/RUB1 (Event-/Feature-Parität), dann ATS1 (OBV-Fix), EPD1 (Gate-Fix reicht ggf. vorerst), SRA1 zuletzt (funktional am gesündesten).
+
+---
+
+## Addendum (2026-07-03, später): MIS1-Trainer GEFUNDEN — `X5-analyze_indicators_v8.py`
+
+Nachscan von `D:\_BACKUP` + gesamtem User-Profil auf Anfrage: Der Trainer lag die ganze Zeit in `_X`,
+speichert aber mit f-String (`f"pump_model_{name}_final.pkl"`, Z.254-255) — alle Literal-Greps liefen ins Leere.
+**Verifikation:** Hyperparameter exakt identisch mit der pkl-Introspektion (1000/4/0.02/spw1.5/gamma2/lambda10),
+Feature-Bau erzeugt exakt die 67 Features **inklusive der F1-Unfall-Features**: die `line_cols`-Schleife (Z.69)
+läuft nach dem Anlegen von `boll_*_dist_atr`/`ema_200_dist_atr`/`ema_9_cross_above_21` und produziert deren
+`_dist_pct`-Versionen — der Ticker-Leakage-Befund ist damit an der Quelle bestätigt.
+
+**Jetzt bekannte Label-Definitionen:** Close-to-Close-Return über den Horizont, Schwellen ±5%/8h, ±10%/24h,
+±15%/72h, ±25%/168h (Z.153-161). Kein Pfad/SL — reine Zukunftsrendite (X-R1 gilt auch hier).
+
+**Trainer-Defekte (Kurz-Audit):**
+- **P0:** `StratifiedKFold(shuffle=True)` (Z.194) über stündliche Samples mit 8-168h **überlappenden**
+  Label-Fenstern → Zwillings-Leakage; die berichteten Precision-Werte sind stark inflationiert.
+- **P1:** Threshold = beste Precision **über die 5 Folds gemaxt** (Z.240-243) → Maximum-Statistik;
+  zusätzlich Recall-Floor nur 3%.
+- **P1:** Final-Modell wird auf ALLEN Daten gefittet (Z.252), der Threshold stammt aber aus den
+  Shuffle-Folds → Operating-Point passt nicht zum deployten Modell.
+- **P2:** keine Kalibrierung (scale_pos_weight=1.5), `fillna(0)`-Kaskade, Training inkl. Forming-Candle-Rows,
+  400-Tage-Fenster mit heutiger coins.json (Survivorship).
+
+**Konsequenz:** MIS1 ist reproduzierbar (Retraining-Grundlage vorhanden — in `legacy_trainers/` gesichert),
+und die Verdikte bleiben: Die starke Live-Performance von MIS1-72H entsteht TROTZ dieser Methodik
+(vermutlich weil die Momentum-/Vol-Features auf langen Horizonten echte Signale tragen), nicht wegen ihr.
+Neutraining nach dem Gerüst oben (zeitlicher Split, Pfad-Label via First-Touch-Simulator, line_cols-Fix,
+Kalibrierung) bleibt Priorität #1 der Modell-Sanierung.

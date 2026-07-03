@@ -27,6 +27,14 @@ syntaktisch valide, aber ohne gesetzte Env-Vars nicht lauffähig — gewollt.
 | `x10-mlzeitfolge-v2.py` | `master_trade_model_xgboost_combined_signals.pkl` | 15 AIM1 |
 | `x10-mlzeitfolge.py`, `master_task.py` | Vorgänger / Loader-Prototyp | — |
 | `zzz.py` (v1-Monolith; Trainer: `train_pump_dump_model`, ~Z.7050-7240) | `pump_dump_model.pkl` | 10 EPD1 |
+| **`X5-analyze_indicators_v8.py`** (ältere Generationen: `X5-*.py`) | `pump_model_{8,24,72,168}h_{pump,dump}_final.pkl` + `threshold_*_final.pkl` | **11 MIS1** |
 
-**Ohne Trainer bleibt:** die MIS1-Familie (`pump_model_*_final.pkl` + `threshold_*`) — auf keiner
-Maschine auffindbar (Step 3). Einzige Modellfamilie ohne Provenienz.
+**MIS1-Provenienz nachträglich GEFUNDEN** (Nachscan der Backups/Platte auf User-Anfrage):
+Der Trainer speichert mit f-String-Dateinamen (`f"pump_model_{name}_final.pkl"`), weshalb alle
+Literal-Suchen ihn verfehlten. Verifikation: Hyperparameter (n_estimators=1000, max_depth=4,
+lr=0.02, scale_pos_weight=1.5, gamma=2.0, reg_lambda=10) und Feature-Bau (inkl. der pathologischen
+`*_dist_atr_dist_pct`-Unfall-Features) decken sich exakt mit der pkl-Introspektion aus Report 13.
+Label-Definitionen: Close-to-Close-Return ≥ ±5%/8h, ±10%/24h, ±15%/72h, ±25%/168h.
+Trainer-Defekte (Addendum in Report 13): StratifiedKFold **mit shuffle** über massiv überlappende
+Horizont-Fenster (Leakage), Threshold = beste Precision über die Folds (Selektions-Bias),
+Final-Fit auf ALLEN Daten, keine Kalibrierung.
