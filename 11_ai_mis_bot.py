@@ -238,8 +238,13 @@ def check_mis_models():
             df = df.iloc[::-1].reset_index(drop=True)
 
             df_features = add_advanced_features(df)
-            df_current = df_features.iloc[-1:]
-            current_price = float(df_current['close'].iloc[0])
+            # FIX P1.17: Modell-Features aus der letzten GESCHLOSSENEN Kerze (iloc[-2]),
+            # nicht aus der laufenden (iloc[-1]). Die offene Kerze liefert stale/verzerrte
+            # Volume-/Indikator-Partials → strukturell verzerrte Features auf jeder
+            # Prediction. Vorbild: 12_ai_ats_bot.py nutzt current_idx=-2.
+            # Der Entry-Preis bleibt bewusst live (aktueller Kurs aus iloc[-1]).
+            df_current = df_features.iloc[-2:-1]
+            current_price = float(df_features['close'].iloc[-1])
 
             # feature_cols wird einmalig vor der Schleife aus model_sample gezogen
 
