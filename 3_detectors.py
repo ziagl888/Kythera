@@ -15,7 +15,6 @@ from core.database import get_db_connection
 from strategies.strat_5_percent import analyze_coin as analyze_5_pct
 
 # --- IMPORT ALL STRATEGIES ---
-from strategies.strat_fast_in_out import analyze_coin as analyze_fast
 from strategies.strat_main_channel import analyze_coin as analyze_main
 from strategies.strat_support_resistance import analyze_coin as analyze_sr
 from strategies.strat_volume_indicator import analyze_coin as analyze_vol
@@ -202,39 +201,52 @@ def run_detectors_for_timeframe(timeframe):
 
             signals = []
 
-            # --- 30m STRATEGIEN ---
-            if timeframe == '30m':
-                # PARKED (Audit Report 14/16): Fast In And Out ist mit Σ −25.843
-                # Preis-% netto (111k Trades) der größte Verlustbringer der Flotte —
-                # keine Edge-Hypothese, Tail-Verluste fressen die TP1-Scalps.
-                # Reaktivierung nur nach komplettem Redesign (Note F).
-                # s1 = analyze_fast(conn, symbol, df, live_price)
-                # if s1:
-                #     signals.append(s1)
+            # P1.15: Per-Coin-Isolation. Vorher konnte ein einziger schlechter
+            # Coin (kaputte Indikator-Row, unerwarteter dtype) eine Strategie
+            # crashen → Exception lief bis main() durch (dort nur FileNotFoundError
+            # gefangen) → ganzer Detector-Prozess tot, halbe Coin-Liste ungescannt.
+            # Jetzt: rollback + ERROR-Log (Coin, Timeframe, Strategie via exc_info)
+            # und weiter mit dem nächsten Coin.
+            try:
+                # --- 30m STRATEGIEN ---
+                if timeframe == '30m':
+                    # PARKED (Audit Report 14/16): Fast In And Out ist mit Σ −25.843
+                    # Preis-% netto (111k Trades) der größte Verlustbringer der Flotte —
+                    # keine Edge-Hypothese, Tail-Verluste fressen die TP1-Scalps.
+                    # Reaktivierung nur nach komplettem Redesign (Note F).
+                    # s1 = analyze_fast(conn, symbol, df, live_price)
+                    # if s1:
+                    #     signals.append(s1)
 
-                s2 = analyze_vol(conn, symbol, df_indexed, live_price)
-                if s2:
-                    signals.append(s2)
+                    s2 = analyze_vol(conn, symbol, df_indexed, live_price)
+                    if s2:
+                        signals.append(s2)
 
-            # --- 1h STRATEGIEN ---
-            elif timeframe == '1h':
-                s3 = analyze_5_pct(conn, symbol, df, live_price)
-                if s3:
-                    signals.append(s3)
+                # --- 1h STRATEGIEN ---
+                elif timeframe == '1h':
+                    s3 = analyze_5_pct(conn, symbol, df, live_price)
+                    if s3:
+                        signals.append(s3)
 
-                s4 = analyze_sr(conn, symbol, df_indexed, live_price)
-                if s4:
-                    signals.append(s4)
+                    s4 = analyze_sr(conn, symbol, df_indexed, live_price)
+                    if s4:
+                        signals.append(s4)
 
-                if symbol in MAIN_CHANNEL_COINS:
-                    s5 = analyze_main(conn, symbol, df_indexed, live_price)
-                    if s5:
-                        signals.append(s5)
+                    if symbol in MAIN_CHANNEL_COINS:
+                        s5 = analyze_main(conn, symbol, df_indexed, live_price)
+                        if s5:
+                            signals.append(s5)
 
-            for signal in signals:
-                logger.info(f"🚀 SIGNAL FOUND: [{signal['strategy']}] {signal['coin']} {signal['direction']}!")
-                # FIX: Atomarer Write statt zwei separate Commits (siehe write_signal_atomic)
-                write_signal_atomic(conn, signal)
+                for signal in signals:
+                    logger.info(f"🚀 SIGNAL FOUND: [{signal['strategy']}] {signal['coin']} {signal['direction']}!")
+                    # FIX: Atomarer Write statt zwei separate Commits (siehe write_signal_atomic)
+                    write_signal_atomic(conn, signal)
+            except Exception as e:
+                # P1.15: aborted Txn säubern, damit der nächste Coin nicht mit einer
+                # vergifteten Transaktion weiterläuft; exc_info zeigt die Strategie.
+                conn.rollback()
+                logger.error(f"❌ Coin {symbol} ({timeframe}) Strategie-Scan fehlgeschlagen: {e}", exc_info=True)
+                continue
 
     finally:
         conn.close()
@@ -259,6 +271,12 @@ def main():
                         logger.info(f"🏁 Scans für {tf} stopped.")
         except FileNotFoundError:
             pass
+        except Exception as e:
+            # P1.15: breiter Fang statt Prozess-Tod. Was auch immer im Scan-Pass
+            # durchschlägt (DB-Reconnect, State-Datei korrupt), wird geloggt und
+            # nach Backoff neu versucht — der Watchdog muss den Detector nicht neu starten.
+            logger.error(f"❌ Detector-Loop-Fehler, Backoff 30s: {e}", exc_info=True)
+            time.sleep(30)
 
         # Polling-Intervall: 30s. Die Indicator-Engine schreibt Updates nur zu Candle-Close-Zeiten
         # (alle 30/60 Min), aber wir wollen signals nicht bis zu 10 Min after dem Close verzögern.
