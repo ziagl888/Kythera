@@ -557,15 +557,6 @@ def process_coin_logics(conn, symbol):
     volat = np.std(rec_prices) / np.mean(rec_prices) if np.mean(rec_prices) > 0 else 0
     change_5min = (current_price / float(data[-30]["p"]) - 1) * 100 if len(data) >= 30 else 0
 
-    inds = get_indicators_at_time(conn, symbol) or {}
-    rsi = float(inds.get('rsi_14', 50))
-    tsi = float(inds.get('tsi_fast_12_7_7', 0))
-    macd = float(inds.get('macd_dif_normal_12_26_9', 0))
-    ema9 = float(inds.get('ema_9', current_price))
-    ema21 = float(inds.get('ema_21', current_price))
-    e9_dist = (current_price - ema9) / ema9 * 100 if ema9 > 0 else 0
-    e21_dist = (current_price - ema21) / ema21 * 100 if ema21 > 0 else 0
-
     # Event in DB speichern — aber NUR wenn es die Housekeeping-Retention
     # ueberleben wuerde (Schwellen zentral in core/config.py, dieselben Werte
     # nutzt der Retention-DELETE in 6_housekeeping.py). Vorher wurde JEDER
@@ -597,6 +588,20 @@ def process_coin_logics(conn, symbol):
     model = load_pump_model()
     if model is None:
         return
+
+    # Indikator-Fetch NACH Cooldown-/vol_ratio-/Model-Gate (T-2026-CU-9050-014):
+    # die Werte fliessen ausschliesslich in features_array unten. Vorher lief
+    # die Query auf JEDEM 10s-Tick pro Symbol (~108 Queries/s gegen die
+    # *_indicators-Tabellen), obwohl >99% der Ticks an den Gates daruber
+    # early-returnen. Der pump_dump_events-Insert nutzt keine Indikatoren.
+    inds = get_indicators_at_time(conn, symbol) or {}
+    rsi = float(inds.get('rsi_14', 50))
+    tsi = float(inds.get('tsi_fast_12_7_7', 0))
+    macd = float(inds.get('macd_dif_normal_12_26_9', 0))
+    ema9 = float(inds.get('ema_9', current_price))
+    ema21 = float(inds.get('ema_21', current_price))
+    e9_dist = (current_price - ema9) / ema9 * 100 if ema9 > 0 else 0
+    e21_dist = (current_price - ema21) / ema21 * 100 if ema21 > 0 else 0
 
     # --- ML CHECK (Schnelles 10-Feature Modell) ---
     features_array = np.array(
