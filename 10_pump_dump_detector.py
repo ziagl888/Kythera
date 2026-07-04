@@ -566,16 +566,22 @@ def process_coin_logics(conn, symbol):
     e9_dist = (current_price - ema9) / ema9 * 100 if ema9 > 0 else 0
     e21_dist = (current_price - ema21) / ema21 * 100 if ema21 > 0 else 0
 
-    # Event in DB speichern (wird vom Housekeeping später gereinigt)
-    with conn.cursor() as cur:
-        cur.execute(
-            """CREATE TABLE IF NOT EXISTS pump_dump_events (symbol VARCHAR(20), spike_time TIMESTAMP, volume_ratio REAL, price_change_60s REAL, buy_pressure REAL, volatility REAL, rsi_14 REAL, tsi REAL, macd_dif REAL, ema9_distance_pct REAL, ema21_distance_pct REAL)"""
-        )
-        cur.execute(
-            "INSERT INTO pump_dump_events (symbol, spike_time, volume_ratio, price_change_60s, buy_pressure, volatility) VALUES (%s, %s, %s, %s, %s, %s)",
-            (symbol, now, float(vol_ratio), float(p_chg_60s), float(buy_pres), float(volat)),
-        )
-        conn.commit()
+    # Event in DB speichern — aber NUR wenn es die Housekeeping-Retention
+    # (6_housekeeping.py: DELETE WHERE volume_ratio < 3.0 OR |price_change_60s| < 1.5)
+    # ueberleben wuerde. Vorher wurde JEDER 10s-Tick pro Symbol geschrieben
+    # (~4,6M Rows/Tag, groesste Tabelle der DB) und spaeter zu >99% wieder
+    # geloescht — reine WAL-/Vacuum-Churn (P1.40). Steady-State-Trainingsdaten
+    # unveraendert: der Trainer sampelt nur vol_ratio >= 5, und Rows unterhalb
+    # des Gates haette das Housekeeping ohnehin vor dem naechsten Trainingslauf
+    # geloescht (lediglich das transiente Fenster bis dahin entfaellt).
+    # CREATE TABLE laeuft seit P1.40 einmalig in main(), nicht mehr pro Tick.
+    if vol_ratio >= 3.0 and abs(p_chg_60s) >= 1.5:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO pump_dump_events (symbol, spike_time, volume_ratio, price_change_60s, buy_pressure, volatility) VALUES (%s, %s, %s, %s, %s, %s)",
+                (symbol, now, float(vol_ratio), float(p_chg_60s), float(buy_pres), float(volat)),
+            )
+            conn.commit()
 
     if (now - pd_state["last_alert_time"]).total_seconds() < 900:
         return
@@ -752,6 +758,13 @@ def main():
 
     # 💥 DER FIX: Autocommit aktivieren, damit ein kleiner Fehler nicht den ganzen Bot lahmlegt!
     conn.autocommit = True
+
+    # P1.40: Tabelle EINMAL beim Start anlegen statt pro Symbol pro 10s-Tick
+    # (vorher ~108 CREATE-IF-NOT-EXISTS-Statements/Sekunde gegen den Katalog).
+    with conn.cursor() as cur:
+        cur.execute(
+            """CREATE TABLE IF NOT EXISTS pump_dump_events (symbol VARCHAR(20), spike_time TIMESTAMP, volume_ratio REAL, price_change_60s REAL, buy_pressure REAL, volatility REAL, rsi_14 REAL, tsi REAL, macd_dif REAL, ema9_distance_pct REAL, ema21_distance_pct REAL)"""
+        )
 
     # 1. State und Cache laden (Keine Kaltstart-Blindheit mehr!)
     load_state_from_disk()

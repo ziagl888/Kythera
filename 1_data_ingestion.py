@@ -129,10 +129,15 @@ def insert_fast(conn, data, symbol, timeframe):
         ts = datetime.datetime.fromtimestamp(row[0] / 1000, pytz.utc)
         tuples.append((symbol, ts, float(row[1]), float(row[2]), float(row[3]), float(row[4]), float(row[5])))
 
+    # D3 (Audit Report 18 A1): das WHERE macht den Upsert zum No-op, wenn sich
+    # nichts geaendert hat — sonst schreibt jeder identische Re-Upsert eine neue
+    # Row-Version ins WAL (~2,8 Mio sinnlose Updates/Tag allein auf 5m).
     sql = f"""
-        INSERT INTO {tablename} (symbol, open_time, open, high, low, close, volume)
+        INSERT INTO {tablename} AS t (symbol, open_time, open, high, low, close, volume)
         VALUES %s ON CONFLICT (symbol, open_time) DO UPDATE
         SET open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close, volume=EXCLUDED.volume
+        WHERE (t.open, t.high, t.low, t.close, t.volume)
+              IS DISTINCT FROM (EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.close, EXCLUDED.volume)
     """
     try:
         with conn.cursor() as cur:
@@ -265,12 +270,16 @@ def _flush_to_db(buffer_copy):
             success = 0
             for (sym, tf), data in buffer_copy.items():
                 table_name = f'"{sym}_{tf}"'
+                # D3: WHERE-Klausel wie in insert_fast — unveraenderte Kerzen
+                # erzeugen keine neue Row-Version (WAL-Write-Amplification).
                 sql = f"""
-                    INSERT INTO {table_name} (symbol, open_time, open, high, low, close, volume)
+                    INSERT INTO {table_name} AS t (symbol, open_time, open, high, low, close, volume)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (symbol, open_time) DO UPDATE
                     SET open = EXCLUDED.open, high = EXCLUDED.high,
                         low = EXCLUDED.low, close = EXCLUDED.close, volume = EXCLUDED.volume
+                    WHERE (t.open, t.high, t.low, t.close, t.volume)
+                          IS DISTINCT FROM (EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.close, EXCLUDED.volume)
                 """
                 # SAVEPOINT: Jede Zeile läuft in einer Sub-Transaktion.
                 sp_name = f"sp_{count}"

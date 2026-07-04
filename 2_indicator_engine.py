@@ -13,6 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
 import scipy.signal
+from numpy.lib.stride_tricks import sliding_window_view
 from psycopg2 import extras
 from scipy import stats
 
@@ -320,9 +321,20 @@ def calc_fibonacci_levels_dynamic(df, timeframe='1h'):
 
 
 def calculate_wma(series, period):
+    """Vektorisierte WMA (P2.19): sliding_window_view + ein BLAS-matvec statt
+    rolling.apply mit Python-Lambda pro Fenster (~10x schneller).
+
+    Guard-verifiziert: max. Abweichung zur alten rolling.apply-Variante ueber
+    alle Golden-Fixtures 5,8e-11 — weit innerhalb des Toleranzbands (atol 1e-9).
+    """
     weights = np.arange(1, period + 1)
     sum_weights = weights.sum()
-    return series.rolling(window=period).apply(lambda x: np.dot(x, weights) / sum_weights, raw=True).fillna(0)
+    values = series.to_numpy(dtype=np.float64)
+    out = np.full(len(values), np.nan)
+    if len(values) >= period:
+        windows = sliding_window_view(values, period)
+        out[period - 1 :] = windows.dot(weights) / sum_weights
+    return pd.Series(out, index=series.index).fillna(0)
 
 
 def calculate_smma(series, period):
@@ -362,12 +374,23 @@ def calculate_kama(series, period=10, fast=2, slow=30):
     fast_sc = 2 / (fast + 1)
     slow_sc = 2 / (slow + 1)
 
-    for i in range(period, len(closes)):
-        change = abs(closes[i] - closes[i - period])
-        volatility = np.sum(np.abs(np.diff(closes[i - period : i + 1])))
-        er = change / volatility if volatility != 0 else 0
-        sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
-        kama[i] = kama[i - 1] + sc * (closes[i] - kama[i - 1])
+    # P2.19: change/volatility/er/sc vektorisiert statt np.diff+np.sum pro Bar
+    # (vorher O(n*period), ~20x langsamer). Nur die inhaerent sequenzielle
+    # KAMA-Rekursion bleibt als billige O(n)-Schleife. sliding_window_view
+    # + sum(axis=1) nutzt dieselbe pairwise-Summation wie np.sum ueber den
+    # Slice — Guard-verifiziert bit-identisch zur alten Schleife.
+    closes = np.asarray(closes, dtype=float)
+    abs_diff = np.abs(np.diff(closes))
+    change = np.abs(closes[period:] - closes[:-period])
+    volatility = sliding_window_view(abs_diff, period).sum(axis=1)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        er = np.where(volatility != 0, change / volatility, 0.0)
+    sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
+
+    prev = kama[period - 1]
+    for j in range(len(sc)):
+        prev = prev + sc[j] * (closes[period + j] - prev)
+        kama[period + j] = prev
     return pd.Series(kama, index=series.index)
 
 
@@ -598,22 +621,34 @@ def main():
 
             # --- WICHTIG: Wir verarbeiten die Timeframes jetzt aftereinander! ---
             # So springt '30m' auf 'updated', sobald es fertig ist, und Skript 3 kann schon starten.
-            for current_tf in INDICATOR_TIMEFRAMES:
-                logger.info(f"⚙️ Starting Berechnungen für Timeframe: {current_tf}...")
-                update_timeframe_state(current_tf, 'working')
+            # P2.19: EIN ProcessPool fuer den ganzen Zyklus statt Spawn/Teardown
+            # pro Timeframe (Windows-Prozess-Start ist teuer: 6 TFs x NUM_WORKERS
+            # Prozesse mit vollem numpy/pandas/scipy-Import). Die TF-Reihenfolge
+            # und die 'updated'-Freigabe pro TF bleiben unveraendert, weil
+            # exe.map pro Timeframe weiterhin blockierend abgearbeitet wird.
+            with ProcessPoolExecutor(max_workers=NUM_WORKERS) as exe:
+                for current_tf in INDICATOR_TIMEFRAMES:
+                    logger.info(f"⚙️ Starting Berechnungen für Timeframe: {current_tf}...")
+                    update_timeframe_state(current_tf, 'working')
 
-                # Wir bauen die Tasks NUR für den aktuellen Timeframe
-                tasks = [(s, current_tf) for s in symbols]
-
-                with ProcessPoolExecutor(max_workers=NUM_WORKERS) as exe:
+                    # Wir bauen die Tasks NUR für den aktuellen Timeframe
+                    tasks = [(s, current_tf) for s in symbols]
                     list(exe.map(process_coin_task, tasks))
 
-                # Timeframe ist fertig -> Gib ihn für Ebene 3 (Detectors) frei!
-                update_timeframe_state(current_tf, 'updated')
-                logger.info(f"✅ Timeframe {current_tf} erfolgreich completed und freigegeben!")
+                    # Timeframe ist fertig -> Gib ihn für Ebene 3 (Detectors) frei!
+                    update_timeframe_state(current_tf, 'updated')
+                    logger.info(f"✅ Timeframe {current_tf} erfolgreich completed und freigegeben!")
 
             duration = time.time() - start_time
             logger.info(f"🏁 Kompletter Indikator-Zyklus completed in {duration:.1f} Sekunden!")
+            # P2.19: Der Trigger feuert alle 30 min — laeuft ein Zyklus laenger,
+            # wird der naechste Trigger stillschweigend uebersprungen. Ab 25 min
+            # laut warnen, damit das VOR dem ersten Skip sichtbar wird.
+            if duration > 25 * 60:
+                logger.warning(
+                    f"⚠️ Indikator-Zyklus brauchte {duration / 60:.1f} min — "
+                    f"naehert sich dem 30-min-Budget, naechster Trigger wuerde uebersprungen!"
+                )
 
             # Schlafe für 65 seconds. Dadurch stellen wir sicher, dass wir in Minute '3'
             # oder '18' aufwachen und den Trigger nicht doppelt auslösen!
