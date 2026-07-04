@@ -30,6 +30,10 @@ logger = setup_logging("DATA_INGESTION")
 # --- GLOBAL RAM BUFFER FOR WEBSOCKETS ---
 WS_KLINE_BUFFER = {}
 
+# Zeitstempel der letzten echten WS-Daten-Message (über alle Worker).
+# Steuert den REST-Freshness-Fallback: liefert der WS, schläft der Fallback.
+WS_LAST_DATA_TS = 0.0
+
 
 # PHASE 0: UPDATE COIN LIST
 def update_trading_pairs(filename='coins.json'):
@@ -264,6 +268,68 @@ def run_catchup_job(symbols):
 # fließen lassen, BEVOR der Catch-up CPU zieht. Live-Daten sind sofort da,
 # die Historie kommt 2 min später — statt umgekehrt.
 CATCHUP_WARMUP_SEC = 120
+
+# ── REST-FRESHNESS-FALLBACK (WS-Ausfall-Brücke) ──────────────────────────────
+# Binance kann diese IP auf WS-Datenebene drosseln (erlebt am 04.07.: Handshake
+# ok, aber 0 Messages, auch auf Einzelstreams — REST läuft dabei normal weiter).
+# Damit die Fleet dann nicht auf stundenaltem Stand handelt, hält diese Schleife
+# die heißen TFs per REST frisch (limit=2 → Weight 1 pro Request; 657 Coins ×
+# 3 TFs bei ~3 req/s ≈ 180 Weight/min von 2400 erlaubten — ungefährlich).
+# Sie ist STROMLOS, solange der WS liefert (WS_LAST_DATA_TS < 3 min alt).
+FRESHNESS_HOT_TFS = ['5m', '30m', '1h']
+FRESHNESS_WS_HEALTHY_SEC = 180   # WS-Daten jünger als das → Fallback schläft
+FRESHNESS_REQ_SPACING_SEC = 0.3  # ~3 req/s
+FRESHNESS_IDLE_SLEEP_SEC = 60
+
+
+def run_freshness_job(symbols):
+    """Ein Durchlauf: jüngste 2 Kerzen der heißen TFs für alle Coins per REST."""
+    conn = get_db_connection()
+    session = requests.Session()
+    session.headers.update({"User-Agent": "CryptoBot/2.0"})
+    updated = 0
+    try:
+        for sym in symbols:
+            # Abbrechen, sobald der WS wieder liefert — kein Doppel-Aufwand.
+            if time.time() - WS_LAST_DATA_TS < FRESHNESS_WS_HEALTHY_SEC:
+                logger.info("🔌 Freshness-Fallback: WS liefert wieder — Durchlauf abgebrochen.")
+                return updated
+            for tf in FRESHNESS_HOT_TFS:
+                try:
+                    resp = session.get(
+                        BASE_URL + '/fapi/v1/klines',
+                        params={'symbol': sym, 'interval': tf, 'limit': 2},
+                        timeout=10,
+                    )
+                    if resp.status_code in (429, 418):
+                        wait = int(resp.headers.get("Retry-After", 30)) + 2
+                        logger.warning(f"Freshness-Fallback: Rate-Limit ({resp.status_code}), warte {wait}s")
+                        time.sleep(wait)
+                        continue
+                    if resp.status_code == 200:
+                        updated += insert_fast(conn, resp.json(), sym, tf)
+                except Exception:
+                    pass
+                time.sleep(FRESHNESS_REQ_SPACING_SEC)
+        return updated
+    finally:
+        conn.close()
+        session.close()
+
+
+async def freshness_fallback_loop(symbols):
+    """Hintergrund-Brücke: hält die heißen TFs frisch, wenn (und nur wenn) der WS tot ist."""
+    loop = asyncio.get_running_loop()
+    await asyncio.sleep(CATCHUP_WARMUP_SEC + 60)  # WS + erster Catch-up zuerst
+    logger.info("🩹 Freshness-Fallback bereit (aktiviert sich nur bei totem WS).")
+    while True:
+        if time.time() - WS_LAST_DATA_TS < FRESHNESS_WS_HEALTHY_SEC:
+            await asyncio.sleep(FRESHNESS_IDLE_SLEEP_SEC)
+            continue
+        logger.warning("🩹 WS liefert keine Daten — REST-Freshness-Durchlauf startet (heiße TFs).")
+        updated = await loop.run_in_executor(None, run_freshness_job, symbols)
+        logger.info(f"🩹 Freshness-Durchlauf fertig: {updated} Kerzen-Upserts.")
+        await asyncio.sleep(FRESHNESS_IDLE_SLEEP_SEC)
 
 
 async def periodic_rest_catchup(symbols):
@@ -567,6 +633,8 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
                                 got_data = True
                                 consecutive_failures = 0
                                 backoff = WS_RECONNECT_MIN_SEC
+                            global WS_LAST_DATA_TS
+                            WS_LAST_DATA_TS = time.time()
                             k = payload['data']['k']
                             sym = k['s']
                             tf = k['i']
@@ -700,7 +768,10 @@ async def main_async():
     # 3. WebSockets sofort starten
     ws_task = asyncio.create_task(start_websocket_fleet(symbols))
 
-    await asyncio.gather(catchup_task, ws_task)
+    # 4. REST-Freshness-Brücke (aktiv nur bei totem WS — z.B. IP-Drossel)
+    freshness_task = asyncio.create_task(freshness_fallback_loop(symbols))
+
+    await asyncio.gather(catchup_task, ws_task, freshness_task)
 
 
 def main():
