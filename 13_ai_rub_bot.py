@@ -217,7 +217,9 @@ def check_rubberband_conditions():
             logger.info(f"RUB1 Trigger: {symbol} {direction} | ML-Conf: {prob:.1%} (Thresh: {threshold:.2f})")
 
             # --- SHADOW MODE LOGGING ---
-            if prob < threshold:
+            # Direction-Gate (Audit Report 14 D.5): RUB1 LONG 48,7% WR vs SHORT 63,9% —
+            # die LONG-Seite ist Messer-Fangen und geht nur noch in den Shadow-Log.
+            if prob < threshold or is_long:
                 # Ablegen in Master Tabelle (als abgelehnter Trade)
                 with conn.cursor() as cur:
                     cur.execute(

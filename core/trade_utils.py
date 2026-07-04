@@ -45,6 +45,26 @@ def get_atr(df, period=14):
     return true_range.rolling(window=period).mean().iloc[-1]
 
 
+def cap_leverage_to_sl(desired_lev, entry, sl, safety=0.5):
+    """R4 (Audit): Hebel so cappen, dass die Liquidation nie vor dem SL liegt.
+
+    Isolierte Liquidation liegt grob bei 1/lev Preisdistanz; mit lev <= safety/sl_dist
+    liegt sie bei mindestens (1/safety)-facher SL-Distanz (safety=0.5 → Faktor 2).
+    Beispiele der Bug-Klasse: 100x mit 1,2%-SL (P0.5) → Cap 41x;
+    20x mit 34%-SL (P0.6) → Cap 1x.
+    """
+    try:
+        desired_lev = int(desired_lev)
+        if not entry or not sl or entry <= 0:
+            return max(1, desired_lev)
+        sl_dist = abs(float(entry) - float(sl)) / float(entry)
+        if sl_dist <= 0:
+            return max(1, desired_lev)
+        return max(1, min(desired_lev, int(safety / sl_dist)))
+    except (TypeError, ValueError):
+        return max(1, int(desired_lev) if desired_lev else 1)
+
+
 def calculate_smart_targets(conn, symbol, direction, live_price):
     """
     Kombiniert den riesigen Pool an echten Leveln mit intelligentem Clustering,

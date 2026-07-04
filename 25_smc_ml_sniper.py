@@ -249,7 +249,9 @@ def scan_market():
                 MAX_BB_AGE = 20  # Breakout darf max 20 Kerzen alt sein
                 p_res = peak_idx[-2]
                 pivot_res = highs[p_res]
-                if current_price >= pivot_res * 0.995 and current_price <= pivot_res * 1.005:
+                # PARKED BB_1H (Audit Report 14/16): netto −1.089 bei 55,7% WR —
+                # die 1h-Edge überlebt Fees+Rauschen nicht; BB_4H (+565) läuft weiter.
+                if tf != '1h' and current_price >= pivot_res * 0.995 and current_price <= pivot_res * 1.005:
                     breakout_idx = -1
                     for i in range(p_res + 1, len(df) - 1):
                         if closes[i] > pivot_res:

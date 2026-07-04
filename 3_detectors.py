@@ -204,9 +204,13 @@ def run_detectors_for_timeframe(timeframe):
 
             # --- 30m STRATEGIEN ---
             if timeframe == '30m':
-                s1 = analyze_fast(conn, symbol, df, live_price)
-                if s1:
-                    signals.append(s1)
+                # PARKED (Audit Report 14/16): Fast In And Out ist mit Σ −25.843
+                # Preis-% netto (111k Trades) der größte Verlustbringer der Flotte —
+                # keine Edge-Hypothese, Tail-Verluste fressen die TP1-Scalps.
+                # Reaktivierung nur nach komplettem Redesign (Note F).
+                # s1 = analyze_fast(conn, symbol, df, live_price)
+                # if s1:
+                #     signals.append(s1)
 
                 s2 = analyze_vol(conn, symbol, df_indexed, live_price)
                 if s2:

@@ -27,8 +27,12 @@ AI_CHANNEL_ID = _kcfg.CH_ATS
 # --- LOAD ML MODELS ---
 TSI_MODEL_LONG_PATH = "model_tsi_long_robust.pkl"
 TSI_MODEL_SHORT_PATH = "model_tsi_short_robust.pkl"
-TSI_THRESH_LONG = 0.65  # 0.8
-TSI_THRESH_SHORT = 0.65  # 0.8
+# Operating-Band (Audit Report 13/16): Die Confidence-Kalibrierung ist durch den
+# OBV-Train/Serve-Skew INVERTIERT — Bucket 0.6-0.7 hat live 71% WR, 0.8-0.9 nur 57%.
+# Deshalb: Posten nur im empirisch besten Band [0.60, 0.80); >=0.80 geht in Shadow.
+TSI_THRESH_LONG = 0.60
+TSI_THRESH_SHORT = 0.60
+TSI_PROB_CAP = 0.80
 
 TSI_FEATURES = [
     "rsi_14",
@@ -236,7 +240,7 @@ def check_tsi_crossovers():
             if prob_profit < 0.25:
                 continue
 
-            elif 0.25 <= prob_profit < threshold:
+            elif 0.25 <= prob_profit < threshold or prob_profit >= TSI_PROB_CAP:
                 with conn.cursor() as cur:
                     cur.execute(
                         """

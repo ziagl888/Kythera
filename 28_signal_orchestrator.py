@@ -365,6 +365,15 @@ def compute_rom1_trade_params(conn, coin: str, direction: str) -> dict | None:
             reverse=True,
         )
 
+    # FIX P2.27 (Audit, Step 2 belegt: SL-Distanz p90=17,9%, max 65%): Die nächste
+    # S/R-Zone kann beliebig weit weg liegen — bei 20x jenseits der Liquidation.
+    # Gleicher 15%-Cap wie calculate_smart_targets.
+    ROM1_MAX_SL_DIST_PCT = 0.15
+    if is_long:
+        sl = max(sl, entry2 * (1 - ROM1_MAX_SL_DIST_PCT))
+    else:
+        sl = min(sl, entry2 * (1 + ROM1_MAX_SL_DIST_PCT))
+
     # Bis zu 20 Targets (wie die AI-Bots), gecappt durch ensure_min_tp_distance
     targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=ROM1_TP_MIN_DISTANCE_PCT)
 

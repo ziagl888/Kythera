@@ -439,6 +439,12 @@ def analyze_patterns(current_hour):
                                         )
                                         direction = "LONG" if is_bullish else "SHORT"
                                         module_name = f"BR{tf.upper()}"
+                                        # Direction-Gate (Audit Report 14 D.5): BR1H SHORT
+                                        # 49,5% WR vs LONG 65,5% — SHORT-Seite deaktiviert.
+                                        if module_name == 'BR1H' and direction == 'SHORT':
+                                            logger.info(f"⛔ BR1H SHORT-Gate: {symbol} unterdrückt (Report 14 D.5)")
+                                            del ACTIVE_PATTERNS[pattern_id]
+                                            continue
                                         process_ai_trade(conn, symbol, direction, module_name, c_close, chart_path)
                                         logger.info(f"✅ SUCCESSFUL RETEST + TRADE ausgelöst {symbol} {tf}")
                                         del ACTIVE_PATTERNS[pattern_id]

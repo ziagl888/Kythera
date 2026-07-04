@@ -580,6 +580,12 @@ def process_coin_logics(conn, symbol):
     if (now - pd_state["last_alert_time"]).total_seconds() < 900:
         return
 
+    # FIX (Audit Report 13, EPD1-P0): Der Trainer sampelt ausschließlich Events mit
+    # volume_ratio >= 5 — ohne dieses Gate wird das Modell auf jedem 10s-Tick
+    # out-of-distribution befragt (Kalibrierung corr≈0). Gate spiegelt das Training.
+    if vol_ratio < 5.0:
+        return
+
     # Modell holen (nur das 10-Feature Modell!)
     model = load_pump_model()
     if model is None:
@@ -635,6 +641,22 @@ def process_coin_logics(conn, symbol):
         conn.commit()
 
     elif best_prob >= 0.60:
+        # Direction-Gate (Audit Report 14 D.5): EPD1 LONG 50,2% WR vs SHORT 76,5% —
+        # LONG-Seite nur noch Shadow-Logging, gehandelt wird nur SHORT (Pump-Fade).
+        if best_direction == "LONG":
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
+                    VALUES (0, %s, %s, %s, %s, %s, %s, False)
+                """,
+                    (module_tag, now, symbol, best_direction, float(current_price), float(best_prob)),
+                )
+            conn.commit()
+            # Cooldown auch für den Shadow-Pfad setzen, sonst loggt jeder 10s-Tick erneut.
+            pd_state["last_alert_time"] = now
+            return
+
         # 🔥 BINGO! Trade ausführen
         emoji = "🚀 EARLY PUMP DETECTION" if best_direction == "LONG" else "💥 EARLY DUMP ALERT"
 

@@ -46,7 +46,7 @@
 - [ ] **P0.4 ✔(Step2, präzisiert: Raw-Namen-Rows seit 19.04. eingefroren → MIS+Channel-Bots gaten auf 2,5 Monate alten Stats) Whitelist-Gate läuft ins Leere (Bot-Name-Mismatch).** `28_signal_orchestrator.py:134-148,240-251,556` vs `27_bot_regime_analyzer.py:322`: Analyzer schreibt `pretty_name()`-normalisierte Keys (`MIS1-8h`, `FastInOut`), Orchestrator fragt mit **rohen** Namen (`MIS1-8H`, `Fast In And Out`) → case-sensitiver Lookup findet nie etwas → `(True, "no_whitelist_entry")` → **Signal immer durchgereicht**; Fallback + Regime-Auto-Close ebenso inert. Betrifft die ganze MIS-Familie + alle Channel-Fallback-Bots. **Fix:** `bot_name = pretty_name(bot_name)` direkt nach `identify_bot()` (und beim Insert in `orchestrator_open_trades`); Default-Open-Rate alarmieren. `[DB]`
 
 ### Leverage jenseits der Liquidation
-- [ ] **P0.5 `21_btc_smc_strategy.py:31-35,199,238` — 100x Leverage mit 0.4–1.2% SL.** Isoliert liquidiert bei ~-0.9% *vor* dem SL; jeder Stop = -100% Margin. **Fix:** siehe R4, oder `DESIRED_LEVERAGE ≤ 25`.
+- [x] **P0.5 ✅(2026-07-04 umgesetzt: DESIRED_LEVERAGE=25 + `cap_leverage_to_sl()` aus R4 an beiden Signal-Sites) `21_btc_smc_strategy.py` — 100x Leverage mit 0.4–1.2% SL.** Isoliert liquidiert bei ~-0.9% *vor* dem SL; jeder Stop = -100% Margin.
 - [ ] **P0.6 `29_ufi1_bot.py:194,244` — 20x mit ~34% SL** (`sl=swing_high*1.03`, Entry ~0.77·sh). Isoliert liquidiert bei ~+5%; die Backtest-"+0.83R" überleben 20x nicht. **Fix:** Leverage aus SL-Distanz (~1-2x) oder UFI1-Cap ≤3x.
 
 ### Kaputte Trades / stiller Datenverlust
@@ -161,7 +161,7 @@
 - [ ] **P2.24 Regime-Wechsel während Orchestrator-Downtime nie nachgeholt** (`28:76-77,949-952`, In-Memory-State). **Fix:** beim Start alle OPEN-Trades gegen aktuelle Whitelist prüfen. `[DB]`
 - [ ] **P2.25 ✔✔(Step2: Raw-Namen-Rows computed_at=19.04. — genau die, die der Orchestrator liest) Stale `bot_regime_whitelist`-Rows nie bereinigt** (`27:747-793` nur Perf-Tabelle) → Orchestrator gated (via P0.4-Rohnamen) auf monatealten Einträgen. **Fix:** Cleanup ausdehnen + `computed_at`-Staleness-Gate. `[DB]`
 - [ ] **P2.26 Kein Same-Direction-Open-Check** (`28:272-284`) → nach 4h-Cooldown stapelt ROM1 Positionen auf denselben Coin. `[DB]`
-- [ ] **P2.27 ✔(Step2: p90=17,9%, max 65%; 20/133 >15%) ROM1-SL ohne Distanz-Cap** (`28:355-366`) → nächste S/R-Zone 30-50% weg, bei 20x jenseits Liquidation — R4. `[DB]`
+- [x] **P2.27 ✔(Step2: p90=17,9%, max 65%; 20/133 >15%) ✅(2026-07-04 umgesetzt: 15%-SL-Distanz-Cap im ROM1-Pfad) ROM1-SL ohne Distanz-Cap** (`28:355-366`) → nächste S/R-Zone 30-50% weg, bei 20x jenseits Liquidation — R4.
 - [ ] **P2.28 60s-Detection-Fenster + `start_delay=175`** (`28:35`) → jeder Restart wirft ≥3 min Signalstrom kommentarlos weg. **Fix:** Fenster 5-10 min + `stale_signal`-Log. `[DB]`
 
 ### Weitere AI/SMC/Classic (Auswahl)

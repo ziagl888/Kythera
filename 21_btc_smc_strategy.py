@@ -13,6 +13,7 @@ from core import config as _kcfg  # channel ids
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
 from core.market_utils import calculate_pivots, get_max_leverage
+from core.trade_utils import cap_leverage_to_sl
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - BTC_SNIPER - %(message)s')
 logger = logging.getLogger(__name__)
@@ -32,7 +33,9 @@ SL_ATR_MULT = 1.0
 SL_PCT_FLOOR = 0.004  # 0.4% — minimaler SL (historisch optimiertes Floor)
 SL_PCT_CAP = 0.012  # 1.2% — Cap verhindert zu weite SLs in High-Vola-Phasen
 
-DESIRED_LEVERAGE = 100  # wird gegen max_leverage.json gecapped
+# FIX P0.5 (Audit): 100x mit 0,4-1,2%-SL liquidierte bei ~-0,9% VOR dem SL —
+# jeder Stop war -100% Margin. Jetzt 25x + zusätzlich cap_leverage_to_sl (R4).
+DESIRED_LEVERAGE = 25  # wird gegen max_leverage.json gecapped
 
 MIN_RR_RATIO = 1.25  # Minimum Risk-Reward
 MAX_PIVOT_AGE = 120  # Keine Asbach-Uralt-Ziele
@@ -202,7 +205,7 @@ def analyze_market():
                                 rr = reward / risk
 
                                 if risk > 0 and rr >= MIN_RR_RATIO:
-                                    lev = get_max_leverage(SYMBOL, DESIRED_LEVERAGE)
+                                    lev = cap_leverage_to_sl(get_max_leverage(SYMBOL, DESIRED_LEVERAGE), curr_price, sl)
                                     logger.info(
                                         f"🎯 BINGO LONG! FVG fully closed bei {gap_bottom:.2f} | SL-Pct {sl_pct * 100:.2f}%"
                                     )
@@ -241,7 +244,7 @@ def analyze_market():
                                 rr = reward / risk
 
                                 if risk > 0 and rr >= MIN_RR_RATIO:
-                                    lev = get_max_leverage(SYMBOL, DESIRED_LEVERAGE)
+                                    lev = cap_leverage_to_sl(get_max_leverage(SYMBOL, DESIRED_LEVERAGE), curr_price, sl)
                                     logger.info(
                                         f"🎯 BINGO SHORT! FVG fully closed bei {gap_top:.2f} | SL-Pct {sl_pct * 100:.2f}%"
                                     )

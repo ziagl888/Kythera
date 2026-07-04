@@ -31,8 +31,10 @@ COINS_FILE = "coins.json"
 CHART_DIR = "generated_charts"
 os.makedirs(CHART_DIR, exist_ok=True)
 
-TIMEFRAMES = ['1h', '4h']
-MODEL_PATHS = {'1h': "qm_xgboost_model_1h.pkl", '4h': "qm_xgboost_model_4h.pkl"}
+# PARKED 4h (Audit Report 14/16): QM_4H ist netto negativ (−277, 54,9% WR)
+# und steht auf der Stopp-Liste; QM_1H läuft weiter (Redesign-Kandidat).
+TIMEFRAMES = ['1h']
+MODEL_PATHS = {'1h': "qm_xgboost_model_1h.pkl"}
 
 MIN_CONFIDENCE = 0.65  # FIX: Vorher 0.40 → viel zu niedrig, schlechter Erwartungswert.
 ZONE_TOLERANCE = 0.005  # FIX: Vorher 0.01 (1%) → zu weit. 0.5% ist sauberer Retest-Bereich.
