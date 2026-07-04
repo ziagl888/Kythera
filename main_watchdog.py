@@ -111,12 +111,23 @@ def _acquire_single_instance_lock() -> None:
         logger.warning(f"⚠️  Single-Instance-Mutex nicht setzbar ({e}) — Start ohne Mutex-Guard.")
         return
 
-    if last_error == _ERROR_ALREADY_EXISTS:
+    # Review-Härtung P0.2: CreateMutexW==NULL mit ERROR_ACCESS_DENIED (5) ist der
+    # kanonische Fall "Mutex existiert, gehört aber einem anderen User/Elevation-
+    # Level" (z.B. Task-Scheduler vs. interaktive Session) — auch das ist eine
+    # laufende zweite Instanz.
+    _ERROR_ACCESS_DENIED = 5
+    if last_error == _ERROR_ALREADY_EXISTS or (not _instance_mutex and last_error == _ERROR_ACCESS_DENIED):
         logger.error(
-            "🚨 Ein zweiter Watchdog läuft bereits (Mutex 'Global\\KytheraWatchdog' existiert) — "
-            "Abbruch, um doppelte Fleet/doppelte Cornix-Signale zu verhindern (P0.2)."
+            "🚨 Ein zweiter Watchdog läuft bereits (Mutex 'Global\\KytheraWatchdog' existiert, "
+            f"GetLastError={last_error}) — Abbruch, um doppelte Fleet/doppelte Cornix-Signale "
+            "zu verhindern (P0.2)."
         )
         sys.exit(1)
+    if not _instance_mutex:
+        # NULL-Handle aus anderem Grund: kein Beweis für eine zweite Instanz, aber
+        # auch kein Lock — weiterlaufen und warnen; Orphan-Detection bleibt die
+        # zweite Verteidigungslinie.
+        logger.warning(f"⚠️  CreateMutexW lieferte NULL (GetLastError={last_error}) — Start ohne Mutex-Guard.")
 
 
 def _terminate_orphan_fleet() -> None:
