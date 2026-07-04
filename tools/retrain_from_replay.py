@@ -262,6 +262,12 @@ def top_importance(model, feature_cols, k=8):
 
 
 def main():
+    # cp1252-Konsole: Emojis in Ausgaben dürfen den Lauf nicht abbrechen.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1"])
     ap.add_argument("--tf", default="4h", choices=["1h", "4h"])
