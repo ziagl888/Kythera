@@ -6,7 +6,7 @@ import time
 import warnings
 
 from telegram import Bot
-from telegram.error import RetryAfter, TelegramError, TimedOut
+from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
 
 # Suppress Pandas warning (in case it appears here)
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
@@ -511,6 +511,26 @@ async def process_outbox():
                             last_global_send_ms = now_after
                             logger.warning(
                                 f"⚠️ Msg {msg_id} an Kanal {channel_id} TimedOut — Outcome unbekannt, "
+                                f"Row bleibt 'sending' (P0.1)."
+                            )
+
+                        except NetworkError as e:
+                            # Review-Härtung P0.1(d): auch Nicht-TimedOut-Transportfehler
+                            # (httpx ReadError/RemoteProtocolError = Connection-Reset NACH
+                            # möglichem Request-Empfang bei Telegram) sind ein UNBEKANNTES
+                            # Outcome — gleiche Behandlung wie TimedOut: Row bleibt
+                            # 'sending', recover_stale_sending() entscheidet.
+                            cur.execute(
+                                "UPDATE telegram_outbox SET attempts = attempts + 1, last_error = %s WHERE id = %s",
+                                (f"NetworkError (unknown outcome): {e}"[:1000], msg_id),
+                            )
+                            conn.commit()
+                            failed_channels.add(channel_id)  # P1.3: FIFO schützen
+                            now_after = time.time() * 1000
+                            last_send_per_channel[channel_id] = now_after
+                            last_global_send_ms = now_after
+                            logger.warning(
+                                f"⚠️ Msg {msg_id} an Kanal {channel_id} NetworkError — Outcome unbekannt, "
                                 f"Row bleibt 'sending' (P0.1)."
                             )
 
