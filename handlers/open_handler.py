@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 import requests
 
 from core.database import get_db_connection
-from core.trade_utils import calculate_smart_targets
+from core.trade_utils import calculate_smart_targets, format_price
 from core.bot_utils import get_target_channel
 
 logger = logging.getLogger(__name__)
@@ -101,13 +101,14 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
     cornix_msg += f"🚨 Direction: {direction}\n"
     cornix_msg += f"🚨 Leverage: {lev}x\n"
     cornix_msg += f"🚨 Margin: Cross\n"
-    cornix_msg += f"🏦 CMP Entry: $ {entry1:.6f}\n"
-    cornix_msg += f"🏦 Entry 2: $ {entry2:.6f}\n"
+    # P1.4: signifikante Stellen statt :.6f, sonst kollabieren Sub-0.001-TPs
+    cornix_msg += f"🏦 CMP Entry: $ {format_price(entry1)}\n"
+    cornix_msg += f"🏦 Entry 2: $ {format_price(entry2)}\n"
 
     for i, t in enumerate(targets[:10], 1):
-        cornix_msg += f"💰 TP{i}: $ {t:.6f}\n"
+        cornix_msg += f"💰 TP{i}: $ {format_price(t)}\n"
 
-    cornix_msg += f"💸 Stop Loss: $ {sl:.6f}\n"
+    cornix_msg += f"💸 Stop Loss: $ {format_price(sl)}\n"
     cornix_msg += f"🧠 Triggered manually by @{username}"
 
     # --- SENDEN (OHNE parse_mode='HTML') ---
