@@ -420,10 +420,12 @@ def process_master_trades():
             join_time = signal['join_time']
 
             if coin not in cached_ohlcv_indicators:
-                sql_ind = (
-                    f"SELECT * FROM \"{coin}_1h_indicators\" WHERE open_time <= %s ORDER BY open_time DESC LIMIT 1"
-                )
-                sql_ohlcv = f"SELECT close FROM \"{coin}_1h\" WHERE open_time <= %s ORDER BY open_time DESC LIMIT 1"
+                # FIX (P1.21): `<` statt `<=`. join_time ist die auf die Stunde abgerundete
+                # Signalzeit; mit `<=` fiel die Kerze mit open_time == join_time ein, die zum
+                # Signalzeitpunkt noch offen (forming) war → Indikator/Close aus der laufenden
+                # Stunde. Mit `<` zieht ausschliesslich die letzte GESCHLOSSENE Stundenkerze.
+                sql_ind = f"SELECT * FROM \"{coin}_1h_indicators\" WHERE open_time < %s ORDER BY open_time DESC LIMIT 1"
+                sql_ohlcv = f"SELECT close FROM \"{coin}_1h\" WHERE open_time < %s ORDER BY open_time DESC LIMIT 1"
                 try:
                     ind_df = df_from_query(conn, sql_ind, (join_time,))
                     ohlcv_df = df_from_query(conn, sql_ohlcv, (join_time,))
