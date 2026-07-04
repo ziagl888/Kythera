@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import socket
 import time
 from datetime import datetime, timedelta, timezone
@@ -324,29 +325,52 @@ def _apply_keepalive(ws) -> None:
         pass  # Non-fatal — connection still works without keepalive
 
 
-async def whale_ws_listener():
-    global WHALE_TRADES
-    coins = load_coins()
-    if not coins:
-        logger.error("Keine Coins gefunden. Beende Listener.")
-        return
+# ── P1.42: WS-Sharding-Konfiguration ─────────────────────────────────────
+# Binance-Futures (fapi) liefert Combined-Streams mit vielen Streams pro
+# Connection nur bis ~200 zuverlässig — mit allen 538 aggTrade-Streams auf
+# EINER Connection kamen nur 49/529 Symbole an bzw. die Connection wurde
+# komplett abgelehnt (Logger schrieb seit 18.04. gar keine Files mehr).
+# Fix: Streams in Chunks à ≤180 auf mehrere Connections sharden
+# (538 Symbole → 3 Connections), Muster übernommen aus 1_data_ingestion.py
+# (WEBSOCKET-FLEET: Chunking, staggered Startup, Backoff mit Jitter,
+# ein asyncio-Task pro Connection).
+WHALE_STREAMS_PER_CONN = 180
+WHALE_WS_STAGGER_SEC = 3.0  # Versatz zwischen den Connection-Starts
+WHALE_RECONNECT_MIN_SEC = 5.0
+WHALE_RECONNECT_MAX_SEC = 300.0
 
-    streams = [f"{c.lower()}@aggTrade" for c in coins]
+
+async def whale_ws_worker(worker_id: int, streams: list, startup_delay: float = 0.0):
+    """Eine WS-Connection für einen Stream-Shard mit eigener Reconnect-Schleife (P1.42).
+
+    Pong-Keepalive und 45s-Watchdog laufen pro Connection — jeder Shard
+    überwacht und reconnected sich selbst, unabhängig von den anderen.
+    """
+    global WHALE_TRADES
+
+    if startup_delay > 0:
+        # Staggered Start: Connects zeitlich spreizen (Binance-Connect-Limit
+        # + kein gemeinsamer 180s-Ping-Zyklus aller Shards)
+        logger.info(f"⏳ Whale WS {worker_id} wartet {startup_delay:.0f}s für staggered start...")
+        await asyncio.sleep(startup_delay)
+
     # URL-encoded combined stream — avoids SUBSCRIBE which Binance drops at ~150s with many streams
     url = "wss://fstream.binance.com/stream?streams=" + "/".join(streams)
 
-    _whale_backoff = 5.0
+    _whale_backoff = WHALE_RECONNECT_MIN_SEC
     while True:
         try:
             async with websockets.connect(
                 url, ping_interval=None, ping_timeout=None, open_timeout=30, max_size=2**22
             ) as ws:
                 _apply_keepalive(ws)
-                logger.info(f"🟢 Whale WS connected ({len(streams)} aggTrade streams, URL-encoded)")
+                logger.info(f"🟢 Whale WS {worker_id} connected ({len(streams)} aggTrade streams, URL-encoded)")
 
-                logger.info(f"📡 Whale-Radar lauscht auf Trades > ${MIN_USD_VALUE / 1000:.0f}k...")
+                # Backoff nach erfolgreichem Connect zurücksetzen (Audit 09-W2:
+                # vorher resettete er nie → dauerhaft gecappte 300s-Reconnect-Waits)
+                _whale_backoff = WHALE_RECONNECT_MIN_SEC
 
-                # Unsolicited pong every 120s — keepalive safety net
+                # Unsolicited pong every 120s — keepalive safety net (per Connection)
                 async def _whale_pong_task():
                     while True:
                         await asyncio.sleep(120)
@@ -402,11 +426,43 @@ async def whale_ws_listener():
                         pass
 
         except Exception as e:
-            logger.warning(f"🔴 WebSocket disconnected ({e}). Reconnecting in {_whale_backoff:.0f}s...")
-            await asyncio.sleep(_whale_backoff)
-            _whale_backoff = min(_whale_backoff * 2.0, 300.0)
+            # Jitter + Worker-Spread, damit die Shards nicht synchron reconnecten
+            # (Muster aus 1_data_ingestion.py binance_ws_worker)
+            jitter = random.uniform(0.8, 1.2)
+            spread_sec = (worker_id - 1) * 2.0
+            wait_sec = min(_whale_backoff * jitter, WHALE_RECONNECT_MAX_SEC) + spread_sec
+            logger.warning(f"🔴 Whale WS {worker_id} disconnected ({e}). Reconnecting in {wait_sec:.0f}s...")
+            await asyncio.sleep(wait_sec)
+            _whale_backoff = min(_whale_backoff * 2.0, WHALE_RECONNECT_MAX_SEC)
             continue
-        _whale_backoff = 5.0  # reset backoff on clean exit of inner loop
+        _whale_backoff = WHALE_RECONNECT_MIN_SEC  # reset backoff on clean exit of inner loop
+
+
+async def whale_ws_listener():
+    """Startet die Whale-WS-Fleet: Streams in Shards à ≤180 auf mehrere Connections (P1.42)."""
+    coins = load_coins()
+    if not coins:
+        logger.error("Keine Coins gefunden. Beende Listener.")
+        return
+
+    streams = [f"{c.lower()}@aggTrade" for c in coins]
+
+    # P1.42: in Chunks à ≤ WHALE_STREAMS_PER_CONN sharden (538 Symbole → 3 Connections)
+    stream_chunks = [streams[i : i + WHALE_STREAMS_PER_CONN] for i in range(0, len(streams), WHALE_STREAMS_PER_CONN)]
+
+    logger.info(
+        f"🚀 Whale-WS-Fleet: {len(stream_chunks)} Connections für {len(streams)} Streams "
+        f"(≤{WHALE_STREAMS_PER_CONN}/Conn, Stagger {WHALE_WS_STAGGER_SEC:.0f}s)"
+    )
+    logger.info(f"📡 Whale-Radar lauscht auf Trades > ${MIN_USD_VALUE / 1000:.0f}k...")
+
+    # Ein Task pro Connection, gestaffelter Start
+    await asyncio.gather(
+        *(
+            whale_ws_worker(i + 1, chunk, startup_delay=i * WHALE_WS_STAGGER_SEC)
+            for i, chunk in enumerate(stream_chunks)
+        )
+    )
 
 
 async def main():
