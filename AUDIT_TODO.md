@@ -207,6 +207,13 @@
 
 ---
 
+## Z — Zukunft / Roadmap (nicht audit-getrieben)
+
+- [ ] **Z1 — Überarbeitung der Weboberfläche (Dashboard-Rewrite).** `dashboard.py` grundlegend modernisieren statt nur patchen. Dabei die offenen Audit-Punkte gleich miterledigen: Auth (P0.8), Prozesslisten-Drift → `core/fleet.py` als Single Source (R2/P1.38), CSRF, Log-Streaming, `/api/status`-Performance. Scope klären: Framework (Flask behalten vs FastAPI+HTMX/React), Echtzeit-Updates (SSE/WebSocket statt 6s-Polling), Mobile-Tauglichkeit.
+- [ ] **Z2 — Bereitstellung über Cloudflare Tunnel.** Unter Windows möglich: `cloudflared` gibt es als Windows-Binary und läuft als Windows-Service (`cloudflared service install`). Outbound-only-Verbindung → kein Port-Forwarding, Port 5000 kann komplett auf `127.0.0.1` gebunden bleiben (erledigt P0.8-Exposure nebenbei). Zugriffsschutz via Cloudflare Access (Zero-Trust-Login vor dem Dashboard, kostenloser Plan reicht für 1 User). Voraussetzung: eigene Domain in Cloudflare. Reihenfolge: Z2 kann VOR Z1 live gehen — Tunnel + Access schützen auch das alte Dashboard sofort.
+
+---
+
 ## Step 2 — Live-DB-Validierungskatalog (VPS + DB-Zugriff)
 
 Diese Queries bestätigen/messen die `[DB]`-Punkte und ziehen die **Strategie-Ergebnisse** in den Kontext, um jede Strategie gegen Herz und Nieren zu prüfen.
