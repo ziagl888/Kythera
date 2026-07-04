@@ -13,6 +13,7 @@ import requests
 from core.config import MAIN_CHANNEL_COINS, TELEGRAM_CHANNELS
 from core.database import get_db_connection
 from strategies.strat_5_percent import analyze_coin as analyze_5_pct
+from strategies.strat_fast_in_out import analyze_coin as analyze_fast
 
 # --- IMPORT ALL STRATEGIES ---
 from strategies.strat_main_channel import analyze_coin as analyze_main
@@ -210,13 +211,12 @@ def run_detectors_for_timeframe(timeframe):
             try:
                 # --- 30m STRATEGIEN ---
                 if timeframe == '30m':
-                    # PARKED (Audit Report 14/16): Fast In And Out ist mit Σ −25.843
-                    # Preis-% netto (111k Trades) der größte Verlustbringer der Flotte —
-                    # keine Edge-Hypothese, Tail-Verluste fressen die TP1-Scalps.
-                    # Reaktivierung nur nach komplettem Redesign (Note F).
-                    # s1 = analyze_fast(conn, symbol, df, live_price)
-                    # if s1:
-                    #     signals.append(s1)
+                    # Fast In And Out auf expliziten Operator-Wunsch (04.07.) wieder
+                    # aktiv — Audit Report 14/16 (Σ −25.843, Note F) bleibt als
+                    # Kontext dokumentiert; Exit-/Tail-Redesign empfohlen.
+                    s1 = analyze_fast(conn, symbol, df, live_price)
+                    if s1:
+                        signals.append(s1)
 
                     s2 = analyze_vol(conn, symbol, df_indexed, live_price)
                     if s2:
