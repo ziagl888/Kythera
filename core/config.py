@@ -34,6 +34,14 @@ TIMEFRAMES = ["5m", "15m", "30m", "1h", "2h", "4h", "1d", "1w"]
 INDICATOR_TIMEFRAMES = ["30m", "1h", "2h", "4h", "1d", "1w"]
 NUM_WORKERS = 3
 
+# --- PUMP/DUMP EVENT RETENTION (P1.40) ---
+# Single source for two coupled thresholds: the detector's insert gate
+# (10_pump_dump_detector.py) and the housekeeping retention DELETE
+# (6_housekeeping.py) must use the same values, otherwise the gate silently
+# drifts from what the DB keeps.
+PUMP_EVENT_MIN_VOL_RATIO = 3.0
+PUMP_EVENT_MIN_ABS_PCHG_60S = 1.5
+
 # Optional — only needed by 6_housekeeping.py (leverage update).
 # Falls not set, überspringt Housekeeping den Leverage-Refresh.
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")

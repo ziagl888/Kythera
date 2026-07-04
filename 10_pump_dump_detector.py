@@ -567,15 +567,16 @@ def process_coin_logics(conn, symbol):
     e21_dist = (current_price - ema21) / ema21 * 100 if ema21 > 0 else 0
 
     # Event in DB speichern — aber NUR wenn es die Housekeeping-Retention
-    # (6_housekeeping.py: DELETE WHERE volume_ratio < 3.0 OR |price_change_60s| < 1.5)
-    # ueberleben wuerde. Vorher wurde JEDER 10s-Tick pro Symbol geschrieben
-    # (~4,6M Rows/Tag, groesste Tabelle der DB) und spaeter zu >99% wieder
-    # geloescht — reine WAL-/Vacuum-Churn (P1.40). Steady-State-Trainingsdaten
-    # unveraendert: der Trainer sampelt nur vol_ratio >= 5, und Rows unterhalb
-    # des Gates haette das Housekeeping ohnehin vor dem naechsten Trainingslauf
-    # geloescht (lediglich das transiente Fenster bis dahin entfaellt).
+    # ueberleben wuerde (Schwellen zentral in core/config.py, dieselben Werte
+    # nutzt der Retention-DELETE in 6_housekeeping.py). Vorher wurde JEDER
+    # 10s-Tick pro Symbol geschrieben (~4,6M Rows/Tag, groesste Tabelle der DB)
+    # und spaeter zu >99% wieder geloescht — reine WAL-/Vacuum-Churn (P1.40).
+    # Steady-State-Trainingsdaten unveraendert: der Trainer sampelt nur
+    # vol_ratio >= 5, und Rows unterhalb des Gates haette das Housekeeping
+    # ohnehin vor dem naechsten Trainingslauf geloescht (lediglich das
+    # transiente Fenster bis dahin entfaellt).
     # CREATE TABLE laeuft seit P1.40 einmalig in main(), nicht mehr pro Tick.
-    if vol_ratio >= 3.0 and abs(p_chg_60s) >= 1.5:
+    if vol_ratio >= _kcfg.PUMP_EVENT_MIN_VOL_RATIO and abs(p_chg_60s) >= _kcfg.PUMP_EVENT_MIN_ABS_PCHG_60S:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO pump_dump_events (symbol, spike_time, volume_ratio, price_change_60s, buy_pressure, volatility) VALUES (%s, %s, %s, %s, %s, %s)",

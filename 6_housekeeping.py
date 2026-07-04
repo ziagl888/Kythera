@@ -12,7 +12,7 @@ import requests
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
-from core.config import BINANCE_API_KEY, BINANCE_SECRET
+from core.config import BINANCE_API_KEY, BINANCE_SECRET, PUMP_EVENT_MIN_ABS_PCHG_60S, PUMP_EVENT_MIN_VOL_RATIO
 from core.database import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - HOUSEKEEPING - %(message)s')
@@ -474,10 +474,12 @@ def clean_old_database_entries():
             # 3. Schwache Pump/Dump Events löschen (EINMAL after der Tabellen-Schleife,
             #    nicht bei jeder Tabelle. Vorher lief das ~12.600× durch falsche Einrückung).
             try:
-                cur.execute("""
-                    DELETE FROM pump_dump_events
-                    WHERE volume_ratio < 3.0 OR ABS(price_change_60s) < 1.5;
-                """)
+                # Schwellen zentral in core/config.py — dasselbe Paar gated den
+                # Insert im Detector (10_pump_dump_detector.py, P1.40).
+                cur.execute(
+                    "DELETE FROM pump_dump_events WHERE volume_ratio < %s OR ABS(price_change_60s) < %s;",
+                    (PUMP_EVENT_MIN_VOL_RATIO, PUMP_EVENT_MIN_ABS_PCHG_60S),
+                )
                 deleted_events = cur.rowcount
                 if deleted_events > 0:
                     logger.info(f"🧹 HOUSEKEEPING: {deleted_events} schwache Pump/Dump Events gelöscht.")
