@@ -33,7 +33,11 @@ from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn
 # ─────────────────────────────────────────────────────────────────────────────
 LOOP_INTERVAL_MS = 500
 AUTO_CLOSE_ON_REGIME_CHANGE = True
-NEW_SIGNAL_DETECTION_WINDOW_SEC = 60
+# FIX P2.28: 60s → 300s. Neuheit garantiert der id-Cursor (inkl. MAX(id)-Init
+# beim Start) — das Fenster ist nur noch die Staleness-Grenze. Bei 60s fielen
+# Signale schon raus, wenn ein einzelner Gating-Pass (S/R-Berechnung über
+# mehrere Rows) länger als eine Minute hing.
+NEW_SIGNAL_DETECTION_WINDOW_SEC = 300
 ORCHESTRATOR_MODULE_NAME = "ROM1"
 # Footer-Marker der eigenen ROM1-Messages — Single Source für den Message-
 # Builder UND die Self-Echo-Barriere, damit die beiden nie auseinanderdriften.
@@ -285,6 +289,30 @@ def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
             LIMIT 1
             """,
             (coin, opposite),
+        )
+        return cur.fetchone() is not None
+
+
+def is_same_direction_open(conn, coin: str, direction: str) -> bool:
+    """FIX P2.26: True wenn bereits ein OPEN ROM1-Trade auf coin+direction läuft.
+
+    Ohne diesen Check stapelte ROM1 nach Ablauf des 4h-Cooldowns weitere
+    Positionen auf denselben Coin in dieselbe Richtung (Doppel-Exposure).
+
+    Age-Bound 72h: eine im Lifecycle hängen gebliebene OPEN-Row (Crash
+    zwischen Commit und Monitor-Pickup, manuell gelöschte ai_signals-Row)
+    würde den Coin sonst FÜR IMMER aus dem ROM1-Trading nehmen — nur mit
+    Suppression-Logs, ohne Alarm. Nach 72h gilt die Row als Leiche.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM orchestrator_open_trades
+            WHERE coin = %s AND direction = %s AND status = 'OPEN'
+              AND opened_at > NOW() - INTERVAL '72 hours'
+            LIMIT 1
+            """,
+            (coin, direction),
         )
         return cur.fetchone() is not None
 
@@ -545,8 +573,8 @@ async def signal_gating_pass(conn) -> None:
     from core.config import REGIME_TRADING_CHANNEL_ID
 
     # Cursor beim Prozessstart auf MAX(id) setzen — ohne das würde nach einem
-    # Restart (Cursor = 0) das ganze 60s-Fenster erneut durchlaufen und bereits
-    # gegatete Rows bekämen Duplikat-Einträge in orchestrator_suppressed_signals
+    # Restart (Cursor = 0) das ganze Detection-Fenster erneut durchlaufen und
+    # bereits gegatete Rows bekämen Duplikat-Einträge in orchestrator_suppressed_signals
     # (verzerrt die Suppression-Statistik). Signale aus der Downtime sind damit
     # bewusst übersprungen — wie vorher auch (sent=TRUE-Filter bzw. P2.28).
     if not _outbox_cursor_initialized:
@@ -649,6 +677,11 @@ def _gate_and_forward_row(
     # ── Cross-direction check ─────────────────────────────────────────────
     if is_opposite_direction_open(conn, coin, direction):
         log_suppressed(conn, bot_name, coin, direction, "opposite_direction_open", outbox_id)
+        return
+
+    # ── Same-direction check (FIX P2.26) ──────────────────────────────────
+    if is_same_direction_open(conn, coin, direction):
+        log_suppressed(conn, bot_name, coin, direction, "same_direction_open", outbox_id)
         return
 
     # ── ALL CHECKS PASSED → ROM1 BERECHNET EIGENEN TRADE ────────────────
