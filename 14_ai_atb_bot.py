@@ -165,7 +165,12 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
         return 0.0, current_ml_threshold
 
     try:
-        df = df_raw.copy()
+        # FIX (P1.22): Die letzte Kerze in df_90d ist die noch offene Forming-Candle
+        # (~3 min alt). Ihr Volumen ist erst ~1/20 des Kerzen-Endwerts → vol_ratio
+        # landete bei ~1/20 der Trainingsskala (Modell trainiert auf geschlossenen
+        # Kerzen). Features daher auf der letzten GESCHLOSSENEN Kerze berechnen;
+        # der Live-Entry-Preis kommt separat via current_close_price rein.
+        df = df_raw.iloc[:-1].copy()
         df.columns = df.columns.str.lower()
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -760,6 +765,15 @@ def run_trendline_detector():
 
         except Exception as e:
             logger.error(f"Error for {symbol} in ATB1 Detector: {e}", exc_info=True)
+            # FIX (P1.23): Transaktion nach einem per-Coin-Fehler zurückrollen —
+            # sonst bleibt die (nicht-autocommit) Connection im "aborted"-Zustand
+            # und vergiftet den Rest des 538-Coin-Scans ("current transaction is
+            # aborted"). rollback() selbst absichern, damit eine tote Connection
+            # nicht den ganzen Scan crasht.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
     conn.close()
 
