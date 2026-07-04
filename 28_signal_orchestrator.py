@@ -671,14 +671,14 @@ def _gate_and_forward_row(
     # ausgelöst hat — Info bleibt für Leser und Downstream-Analytics erhalten.
     rom1_message = build_rom1_cornix_message(coin, direction, rom1_params, trigger_bot=bot_name)
 
-    # FIX P0.3/P1.7: Cooldown zuerst (eigener Commit — crasht es danach, ist
-    # der Trade für 4h unterdrückt statt doppelt gepostet: die sichere
-    # Richtung). Danach Tracking (ai_signals + orchestrator_open_trades) und
-    # der Outbox-Post in EINER Transaktion auf derselben Connection — damit
-    # gibt es weder "Cornix-Trade ohne Tracking" (alter Zustand, Send zuerst)
-    # noch "Phantom-Tracking ohne Post" (Monitor würde einen nie eröffneten
-    # Trade managen und die Whitelist-Statistik verzerren).
-    update_cooldown(conn, ORCHESTRATOR_MODULE_NAME, coin, direction)
+    # FIX P0.3/P1.7: Cooldown, Tracking (ai_signals + orchestrator_open_trades)
+    # und der Outbox-Post in EINER Transaktion auf derselben Connection, mit
+    # dem Outbox-Insert als letztem Write — damit gibt es weder "Cornix-Trade
+    # ohne Tracking" (alter Zustand, Send zuerst) noch "Phantom-Tracking/
+    # Cooldown ohne Post". Ein Doppel-Post bei Rollback droht nicht: der
+    # Cursor advanced pro Row im finally (signal_gating_pass) und wird beim
+    # Prozess-Restart auf MAX(id) initialisiert.
+    update_cooldown(conn, ORCHESTRATOR_MODULE_NAME, coin, direction, commit=False)
 
     # ROM1-Tracking in ai_signals (wird vom 8_ai_trade_monitor aufgegriffen)
     insert_rom1_signal(conn, coin, direction, rom1_params, commit=False)
@@ -757,12 +757,20 @@ def _get_last_close_price(conn, coin: str, fallback: float | None = None) -> flo
 
 
 def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dict:
-    """Schließt alle offenen Trades für coin+direction wegen Regime-Wechsel.
+    """Schließt die offenen ROM1-Trades für coin+direction wegen Regime-Wechsel.
 
-    Findet offene entries in ai_signals und active_trades_master für das
-    angegebene coin+direction und verschiebt sie in die closed_*-Tabellen
-    mit status-Marker "CLOSED_REGIME_CHANGE". Wird vom Regime-Wechsel-
+    Findet offene ROM1-entries in ai_signals für das angegebene
+    coin+direction und verschiebt sie in closed_ai_signals mit
+    status-Marker "CLOSED_REGIME_CHANGE". Wird vom Regime-Wechsel-
     Handler aufgerufen afterdem der Close-Command an Cornix gegangen ist.
+
+    FIX P1.9: Vorher wurden ALLE offenen Trades aller Bots auf coin+direction
+    geschlossen (kein model-/strategy-Filter) — fremde Verluste wurden als
+    neutral zensiert und die Whitelist-Winrates nach oben gebiast. Der
+    Close-Command geht nur an den ROM1-Trading-Channel, also dürfen auch nur
+    die orchestrator-eigenen Rows (model='ROM1') geschlossen werden. Der
+    active_trades_master-Block ist raus — ROM1 schreibt nie dorthin, dort
+    konnten nur Fremd-Trades getroffen werden.
 
     Warum nicht erst den Monitor warten lassen?
     - Cornix schließt die Binance-Position JETZT
@@ -783,8 +791,8 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
     now = datetime.now(timezone.utc)
 
     # ── AI-Trades (ai_signals) ─────────────────────────────────────────────
-    # Alle offenen AI-Trades auf diesem Coin+Direction finden — auch die
-    # ROM1-Kopie des Orchestrators selbst.
+    # FIX P1.9: nur die ROM1-Kopie des Orchestrators selbst — fremde
+    # AI-Trades bleiben offen und werden von ihren eigenen Monitoren bewertet.
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -792,7 +800,7 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
                 SELECT id, symbol, model, direction, entry1, price,
                        current_target_hit, open_time
                 FROM ai_signals
-                WHERE symbol = %s AND direction = %s
+                WHERE symbol = %s AND direction = %s AND model = 'ROM1'
                 """,
                 (coin, direction),
             )
@@ -837,70 +845,8 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
             logger.warning(f"Regime-Close: AI-Trade {tid} ({symbol} {model}) konnte nicht geschlossen werden: {e}")
             conn.rollback()
 
-    # ── Klassische Trades (active_trades_master) ───────────────────────────
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, strategy, time, coin, direction, lev, entry,
-                       target1, target2, target3, target4, sl
-                FROM active_trades_master
-                WHERE coin = %s AND direction = %s
-                """,
-                (coin, direction),
-            )
-            classic_cols = [d[0] for d in cur.description]
-            classic_rows = [dict(zip(classic_cols, r, strict=False)) for r in cur.fetchall()]
-    except Exception as e:
-        logger.warning(f"Regime-Close: active_trades_master-Query fehlgeschlagen ({coin}): {e}")
-        conn.rollback()
-        classic_rows = []
-
-    for trade in classic_rows:
-        entry = float(trade['entry']) if trade['entry'] else 0.0
-        close_price = _get_last_close_price(conn, coin, fallback=entry)
-        if close_price is None:
-            close_price = entry
-
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO closed_trades_master (
-                        strategy, time, coin, direction, lev, entry,
-                        target1, target2, target3, target4, sl,
-                        close_price, posted, status
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        trade['strategy'],
-                        trade['time'],
-                        trade['coin'],
-                        trade['direction'],
-                        trade['lev'],
-                        entry,
-                        trade['target1'],
-                        trade['target2'],
-                        trade['target3'],
-                        trade['target4'],
-                        trade['sl'],
-                        close_price,
-                        now,
-                        "CLOSED_REGIME_CHANGE",
-                    ),
-                )
-                cur.execute(
-                    "DELETE FROM active_trades_master WHERE id = %s",
-                    (trade['id'],),
-                )
-            conn.commit()
-            result["classic_closed"] += 1
-        except Exception as e:
-            logger.warning(
-                f"Regime-Close: Classic-Trade {trade['id']} ({trade['coin']}) konnte nicht geschlossen werden: {e}"
-            )
-            conn.rollback()
-
+    # FIX P1.9: kein active_trades_master-Close mehr — 'classic_closed' bleibt
+    # für die Caller-Summary im Result, ist aber immer 0.
     return result
 
 
@@ -944,7 +890,8 @@ def _classify_outcome_by_pnl(
 
 async def sync_closed_trades(conn) -> None:
     """
-    Checks if any open orchestrator trades have been closed in the master tables.
+    Checks if any open orchestrator trades have been closed in closed_ai_signals
+    (model='ROM1' — die eigene Tracking-Kopie, siehe FIX P1.8 unten).
     Updates orchestrator_open_trades accordingly.
     Runs every LIFECYCLE_SYNC_INTERVAL_SEC seconds.
 
@@ -967,42 +914,29 @@ async def sync_closed_trades(conn) -> None:
         opened_at_naive = (
             opened_at if not (hasattr(opened_at, "tzinfo") and opened_at.tzinfo) else opened_at.replace(tzinfo=None)
         )
+        # FIX P1.8: Vorher matchte der Sync per Zufall fremde Trades — kein
+        # model-Filter, kein ORDER BY, 720h-Fenster (Report 18 K1: Outcome
+        # nichtdeterministisch, Opposite-Schutz fiel vorzeitig weg). Jetzt:
+        # nur model='ROM1', open_time als Zeitanker ±60s gegen opened_at
+        # (Tracking + ai_signals entstehen in derselben Transaktion), bei
+        # mehreren Kandidaten gewinnt die kleinste Zeitdifferenz. Der
+        # closed_trades_master-Check ist raus — ROM1 schreibt nie nach
+        # active_trades_master, dort konnte nur ein Fremd-Trade matchen.
         window_start = opened_at_naive - timedelta(seconds=60)
-        window_end = opened_at_naive + timedelta(hours=720)  # 30 days max
+        window_end = opened_at_naive + timedelta(seconds=60)
 
-        # Check closed_trades_master
-        # status ist ein String "0"..."4" (0=SL, 1..4=TP-Level)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT entry, close_price, status FROM closed_trades_master
-                WHERE coin = %s AND direction = %s
-                  AND time >= %s AND time <= %s
-                LIMIT 1
-                """,
-                (coin, direction, window_start, window_end),
-            )
-            row = cur.fetchone()
-
-        if row:
-            entry, close_price, _status = row
-            # Klassische Trades haben keinen close_reason — nur PnL zählt.
-            new_status = _classify_outcome_by_pnl(direction, entry, close_price, close_reason=None)
-            mark_orchestrator_trade_closed(conn, trade_id, new_status, "lifecycle_sync")
-            continue
-
-        # Check closed_ai_signals
         # `status` in closed_ai_signals enthält tatsächlich den close_reason
         # (z.B. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP").
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT entry, close_price, status FROM closed_ai_signals
-                WHERE symbol = %s AND direction = %s
+                WHERE symbol = %s AND direction = %s AND model = 'ROM1'
                   AND open_time >= %s AND open_time <= %s
+                ORDER BY ABS(EXTRACT(EPOCH FROM (open_time - %s)))
                 LIMIT 1
                 """,
-                (coin, direction, window_start, window_end),
+                (coin, direction, window_start, window_end, opened_at_naive),
             )
             row = cur.fetchone()
 
@@ -1091,14 +1025,13 @@ async def check_regime_change_and_close(conn) -> None:
             f"REGIME_CHANGE:{reason}",
         )
 
-        # Fix: Verschiebe auch die Original-Trades aus ai_signals /
-        # active_trades_master in ihre closed_*-Tabellen, damit sie nicht
-        # als "still open" in den Market-Tracker-Reports erscheinen bis
-        # der Monitor irgendwann ihren eigenen SL/TP trifft (kann Tage
-        # dauern). Der Marker "CLOSED_REGIME_CHANGE" wird downstream als
-        # neutraler Close klassifiziert (nicht Win/nicht Loss) — der Trade
-        # wurde aus externen Gründen geschlossen, nicht weil das Bot-Signal
-        # falsch war.
+        # Verschiebe die ROM1-Tracking-Kopie aus ai_signals nach
+        # closed_ai_signals, damit sie nicht als "still open" in den
+        # Market-Tracker-Reports erscheint bis der Monitor irgendwann
+        # ihren eigenen SL/TP trifft (kann Tage dauern). Der Marker
+        # "CLOSED_REGIME_CHANGE" wird downstream als neutraler Close
+        # klassifiziert (nicht Win/nicht Loss). FIX P1.9: fremde Trades
+        # (andere Modelle, active_trades_master) bleiben unangetastet.
         close_stats = force_close_trades_for_regime_change(conn, coin, direction)
         total_ai += close_stats["ai_closed"]
         total_classic += close_stats["classic_closed"]
