@@ -53,6 +53,8 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
                 targets = sorted([zone[0] for zone in resistance_zones], key=lambda x: abs(x - entry))[:4]
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
+                # FIX P0.7: 0 Zonen → t1==0 erzeugte LONG-TPs unter dem Entry
+                if t1 == 0: return None
                 if t2 == 0: x=(t1-entry)/4; t4=t1; t1=entry+x; t2=entry+(2*x); t3=entry+(3*x)
                 elif t3 == 0: x=(t1-entry)/2; t4=t2; t2=t1; t1=entry+x; y=(t4-t2)/2; t3=t2+y
                 sl = float(entry * 0.975)
@@ -65,6 +67,8 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
                 targets = sorted([zone[0] for zone in support_zones], key=lambda x: abs(x - entry))[:4]
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
+                # FIX P0.7: 0 Zonen → t1==0 erzeugte SHORT-TPs bei -25/-50/-75%
+                if t1 == 0: return None
                 if t2 == 0: x=(entry-t1)/4; t4=t1; t1=entry-x; t2=entry-(2*x); t3=entry-(3*x)
                 elif t3 == 0: x=(entry-t1)/2; t4=t2; t2=t1; t1=entry-x; y=(t2-t4)/2; t3=t2-y
                 sl = float(entry * 1.025)

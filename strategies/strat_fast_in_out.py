@@ -71,7 +71,11 @@ def evaluate_conditions(data, direction):
             # wo LONG-Setups laufen. Korrekt: nur im "schwach/bearish"-RSI-Bereich.
             if not (last_row['rsi_9'] <= 45): return False
             if not (last_row['ema_9'] < last_row['ema_21']): return False
-            if not (last_row['close'] > last_row['support_price'] * 0.95): return False
+            # FIX P1.14: Headroom-Guard war vorzeichenverdreht — `close >
+            # support*0.95` ist quasi immer wahr (No-op). Gemeint ist: SHORT
+            # nur wenn noch ≥5% Luft bis zum Support (Spiegel des LONG-Checks
+            # `close < resistance*0.95`).
+            if not (last_row['close'] > last_row['support_price'] * 1.05): return False
             return True
 
     except Exception as e:

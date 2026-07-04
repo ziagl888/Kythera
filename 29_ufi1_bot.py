@@ -34,6 +34,7 @@ from core import config as _kcfg  # channel ids
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, load_coins, update_cooldown
+from core.trade_utils import cap_leverage_to_sl
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -241,7 +242,10 @@ def post_signal(conn, symbol: str, setup: dict, live_price: float) -> None:
     entry = live_price  # live price as entry (current market)
     sl = setup["sl_price"]
     tp1 = setup["tp1_price"]
-    lev = get_max_leverage(symbol, 20)
+    # FIX P0.6 (R4): 20x mit ~34% SL-Distanz (sl = swing_high*1.03, Entry tief
+    # im Retracement) liquidiert isoliert bei ~+5% — lange vor dem SL. Hebel
+    # wird deshalb gegen die SL-Distanz gecappt (ergibt hier typisch 1-2x).
+    lev = cap_leverage_to_sl(get_max_leverage(symbol, 20), entry, sl)
 
     # Cornix plain-text (sent by 4_telegram_bot.py)
     cornix_lines = [

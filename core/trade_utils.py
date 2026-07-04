@@ -48,21 +48,30 @@ def get_atr(df, period=14):
 def cap_leverage_to_sl(desired_lev, entry, sl, safety=0.5):
     """R4 (Audit): Hebel so cappen, dass die Liquidation nie vor dem SL liegt.
 
+    Akzeptiert int ODER den "20x"-String aus get_max_leverage() und gibt das
+    Ergebnis im Eingabeformat zurück (String rein → "12x" raus), damit
+    Call-Sites den Wert unverändert in die Cornix-Message formatieren.
+    (Vorher warf int("20x") einen ValueError — auch im except-Handler —
+    und riss die Signal-Pfade von 21/28/29 komplett ab.)
+
     Isolierte Liquidation liegt grob bei 1/lev Preisdistanz; mit lev <= safety/sl_dist
     liegt sie bei mindestens (1/safety)-facher SL-Distanz (safety=0.5 → Faktor 2).
     Beispiele der Bug-Klasse: 100x mit 1,2%-SL (P0.5) → Cap 41x;
     20x mit 34%-SL (P0.6) → Cap 1x.
     """
+    as_string = isinstance(desired_lev, str)
     try:
-        desired_lev = int(desired_lev)
-        if not entry or not sl or entry <= 0:
-            return max(1, desired_lev)
-        sl_dist = abs(float(entry) - float(sl)) / float(entry)
-        if sl_dist <= 0:
-            return max(1, desired_lev)
-        return max(1, min(desired_lev, int(safety / sl_dist)))
+        lev = max(1, int(str(desired_lev).strip().lower().rstrip("x")))
     except (TypeError, ValueError):
-        return max(1, int(desired_lev) if desired_lev else 1)
+        lev = 1
+    try:
+        if entry and sl and float(entry) > 0:
+            sl_dist = abs(float(entry) - float(sl)) / float(entry)
+            if sl_dist > 0:
+                lev = max(1, min(lev, int(safety / sl_dist)))
+    except (TypeError, ValueError):
+        pass
+    return f"{lev}x" if as_string else lev
 
 
 def calculate_smart_targets(conn, symbol, direction, live_price):
@@ -280,8 +289,12 @@ def get_hvn_and_sr_levels(conn, symbol, live_price):
     Returns (supports, resistances): zwei sortierte Listen von Preis-Leveln.
     """
     try:
+        # FIX P2.29: ORDER BY — ohne Sortierung liefert Postgres die Rows in
+        # beliebiger Reihenfolge und argrelextrema findet Phantom-Extrema,
+        # die als SL/TP-Preise in SRA1/ATS1/RUB1 landen.
         df = pd.read_sql_query(
-            f'SELECT high, low, close FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\'', conn
+            f'SELECT high, low, close FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\' ORDER BY open_time ASC',
+            conn,
         )
     except Exception:
         return [], []

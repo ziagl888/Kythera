@@ -213,10 +213,15 @@ def monitor_loop():
 
                 # SL CHECK — Wick-aware: LONG stopped out wenn low unter SL,
                 # SHORT stopped out wenn high über SL
-                if dir_long:
-                    sl_hit = candle['low'] <= trade['sl']
+                # FIX P2.9: sl>0-Guard — ein SHORT mit sl=0 (kaputter Writer)
+                # wäre sonst sofort "ausgestoppt" bei Preis 0 → +100% Fake-PnL.
+                sl_price = float(trade['sl'] or 0)
+                if sl_price <= 0:
+                    sl_hit = False
+                elif dir_long:
+                    sl_hit = candle['low'] <= sl_price
                 else:
-                    sl_hit = candle['high'] >= trade['sl']
+                    sl_hit = candle['high'] >= sl_price
 
                 if sl_hit:
                     end_status = "0" if current_level == 0 else f"{current_level}"
@@ -230,6 +235,18 @@ def monitor_loop():
                 if current_level < 4:
                     next_target = targets[current_level]
                     if next_target == 0:
+                        # Korrupter Trade ohne SL UND ohne weiteres Target hätte
+                        # keinerlei Close-Pfad mehr (der sl>0-Guard oben hat den
+                        # alten Sofort-Fake-Stop entfernt) → neutral am Entry
+                        # schließen statt Zombie in active_trades_master.
+                        # entry>0-Guard: close_trade rechnet PnL = Δ/entry — bei
+                        # entry 0/None würde das die ganze Monitor-Iteration killen.
+                        entry_price = float(trade['entry'] or 0)
+                        if sl_price <= 0 and entry_price > 0:
+                            logger.warning(
+                                f"Korrupter Trade {trade.get('id')} ({coin}): sl<=0 und kein Target — neutral geschlossen."
+                            )
+                            close_trade(c, trade, entry_price, "0" if current_level == 0 else f"{current_level}")
                         continue
 
                     if dir_long:
@@ -244,7 +261,12 @@ def monitor_loop():
                             if trade['target2'] == 0:
                                 close_trade(c, trade, float(next_target), "1")
                         elif new_level < 4 and targets[new_level] != 0:
-                            update_trade_level(c, trade, new_level, trade['sl'])
+                            # FIX P1.2: Trailing-SL = zuletzt erreichtes Target
+                            # (targets[new_level-2]). Vorher wurde der ALTE SL
+                            # (trade['sl']) übergeben → der SL zog nie nach und
+                            # alle Multi-Target-PnL/Winrates waren systematisch
+                            # falsch. 8_ai_trade_monitor macht es bereits so.
+                            update_trade_level(c, trade, new_level, targets[new_level - 2])
                         else:
                             close_trade(c, trade, float(next_target), "4")
 

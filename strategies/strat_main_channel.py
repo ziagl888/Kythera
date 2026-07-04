@@ -71,6 +71,12 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
 
+                # FIX P0.7: 0 gefundene Zonen → t1==0 lief ungeguarded in die
+                # Interpolation und erzeugte LONG-TPs UNTER dem Entry (TP1 =
+                # 0.75·Entry). Ohne echte Zonen gibt es kein valides Signal.
+                if t1 == 0:
+                    return None
+
                 # Ziel-Interpolation (Aus deinem Script 1)
                 if t2 == 0:
                     x = (t1 - entry) / 4;
@@ -115,6 +121,11 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
                 targets = sorted([zone[0] for zone in support_zones], key=lambda x: abs(x - entry))[:4]
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
+
+                # FIX P0.7: siehe LONG-Pfad — ohne Zonen kein Signal (SHORT-
+                # Interpolation hätte TPs bei -25/-50/-75% erzeugt).
+                if t1 == 0:
+                    return None
 
                 # Ziel-Interpolation (Aus deinem Script 1)
                 if t2 == 0:

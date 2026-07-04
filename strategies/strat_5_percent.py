@@ -8,8 +8,12 @@ warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 logger = logging.getLogger(__name__)
 
+# FIX P2.43: ema_200/wma_21/wma_26 ergänzt — die Conditions unten nutzen sie,
+# aber der Spalten-Check deckte sie nicht ab → fehlten sie im df, flog ein
+# KeyError, der still als "kein Signal" verschluckt wurde.
 REQUIRED_COLUMNS = ['rsi_9', 'rsi_14', 'tsi_fast_12_7_7', 'tsi_fast_12_7_7_signal', 'ema_9', 'ema_12', 'ema_21',
-                    'ema_26', 'ema_55', 'ema_89', 'wma_9', 'wma_12', 'close', 'kama_9', 'kama_12', 'kama_21',
+                    'ema_26', 'ema_55', 'ema_89', 'ema_200', 'wma_9', 'wma_12', 'wma_21', 'wma_26', 'close',
+                    'kama_9', 'kama_12', 'kama_21',
                     'macd_dif_fast_9_21_9', 'macd_dea_fast_9_21_9', 'donchian_mid_4', 'boll_mid_20', 'atr_14',
                     'support_price', 'resistance_price']
 
@@ -83,7 +87,9 @@ def evaluate_conditions(data, direction):
             if not (last_row['close'] < last_row['ema_200']): return False
             if not (last_row['wma_9'] < last_row['ema_21']): return False
             if not (last_row['wma_12'] < last_row['ema_26']): return False
-            if not (last_row['ema_12'] < last_row['ema_55']): return False
+            # FIX P2.43: war `ema_12 < ema_55` — Typo, der LONG-Spiegel (Z. 56)
+            # prüft `ema_21 > ema_55`.
+            if not (last_row['ema_21'] < last_row['ema_55']): return False
             if not (last_row['ema_21'] < last_row['ema_89']): return False
             if not (last_row['ema_21'] < last_row['ema_200']): return False
             if not (last_row['ema_9'] < last_row['wma_21']): return False
@@ -94,7 +100,10 @@ def evaluate_conditions(data, direction):
             if not (last_row['macd_dif_fast_9_21_9'] < last_row['macd_dea_fast_9_21_9']): return False
             if not (last_row['close'] < last_row['donchian_mid_4']): return False
             if not (last_row['close'] < last_row['boll_mid_20']): return False
-            if not (last_row['close'] > last_row['support_price'] * 0.95): return False
+            # FIX P1.14: Headroom-Guard war vorzeichenverdreht — `close >
+            # support*0.95` ist quasi immer wahr (No-op). SHORT nur wenn noch
+            # ≥5% Luft bis zum Support (Spiegel des LONG-Checks Z. 67).
+            if not (last_row['close'] > last_row['support_price'] * 1.05): return False
             if not (last_row['close'] <= last_row['resistance_price'] * 0.999): return False
             return True
 

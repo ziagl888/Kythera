@@ -29,8 +29,11 @@ _CLASSIC_ALIASES = {
     "5 Percent": "5Percent",
 }
 
-# Pre-compiled regex for MIS1 consolidation
-_MIS1_PATTERN = _re.compile(r'^(MIS1-\d+)[hH](?:_(?:pump|dump|PUMP|DUMP))?$')
+# Pre-compiled regex for MIS1 consolidation.
+# Vollständig case-insensitive: der Orchestrator matcht Bot-Namen mit
+# re.IGNORECASE aus Message-Text ("MIS1-8H_Pump" ist möglich) — jede
+# Case-Variante muss auf denselben Whitelist-Key normalisieren.
+_MIS1_PATTERN = _re.compile(r'^(MIS1-\d+)h(?:_(?:pump|dump))?$', _re.IGNORECASE)
 
 
 def pretty_name(s: str) -> str:
@@ -65,10 +68,11 @@ def pretty_name(s: str) -> str:
     elif s == "MSI1":
         s = "MIS1"
 
-    # 2+3. MIS1-<N>H + Pump/Dump konsolidieren
+    # 2+3. MIS1-<N>H + Pump/Dump konsolidieren (case-insensitive; group(1)
+    # trägt die Original-Casing des Inputs, daher upper() für den Kanon)
     m = _MIS1_PATTERN.match(s)
     if m:
-        s = m.group(1) + "h"
+        s = m.group(1).upper() + "h"
 
     # 4. Klassische Aliase
     return _CLASSIC_ALIASES.get(s, s)

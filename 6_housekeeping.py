@@ -636,9 +636,21 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                             continue
 
                         # 4) INSERT ... ON CONFLICT DO NOTHING pro Kerze
+                        # FIX P0.9: Der PK der Candle-Tabellen ist (symbol, open_time)
+                        # — der alte INSERT ließ `symbol` weg und nutzte
+                        # ON CONFLICT (open_time) (kein passender Unique-Index)
+                        # → JEDER Insert warf, das except verschluckte es still,
+                        # und der nächtliche Gap-Filler war ein No-op.
+                        # Savepoint pro Row, damit ein Einzel-Fehler nicht die
+                        # Transaktion für den Rest des Batches abortet.
                         with conn.cursor() as cur:
                             for k in klines:
                                 try:
+                                    # SAVEPOINT als ERSTE Anweisung im try — stünde er
+                                    # nach dem Parsing, würde ein Parse-Fehler in Row N
+                                    # auf den Savepoint VOR Row N-1s Insert zurückrollen
+                                    # und deren Kerze still wieder löschen.
+                                    cur.execute("SAVEPOINT gap_fill_row")
                                     ot_ms = int(k[0])
                                     # Nur Kerzen im eigentlichen Gap-Range einfügen — falls Binance mehr liefert
                                     if ot_ms < gap_start_ms or ot_ms > gap_end_ms + expected_delta_ms:
@@ -653,14 +665,19 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                                     )
                                     cur.execute(
                                         f"INSERT INTO {ohlcv_table} "
-                                        "(open_time, open, high, low, close, volume) "
-                                        "VALUES (%s, %s, %s, %s, %s, %s) "
-                                        "ON CONFLICT (open_time) DO NOTHING",
-                                        (ot, o_val, h_val, l_val, c_val, v_val),
+                                        "(symbol, open_time, open, high, low, close, volume) "
+                                        "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                                        "ON CONFLICT (symbol, open_time) DO NOTHING",
+                                        (symbol, ot, o_val, h_val, l_val, c_val, v_val),
                                     )
                                     candles_inserted_for_cointf += cur.rowcount
-                                except Exception:
-                                    # Einzel-Row-Fehler ignorieren, nächste Kerze
+                                except Exception as row_err:
+                                    # FIX P0.9: Fehler loggen statt still verschlucken
+                                    logger.warning(f"Gap-Filler: Insert-Fehler {symbol} {tf} @ {k[0]}: {row_err}")
+                                    try:
+                                        cur.execute("ROLLBACK TO SAVEPOINT gap_fill_row")
+                                    except Exception:
+                                        break  # Transaktion nicht mehr nutzbar — Batch abbrechen
                                     continue
                         conn.commit()
 
