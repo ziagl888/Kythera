@@ -28,6 +28,11 @@ os.makedirs(CHART_DIR, exist_ok=True)
 # 🛠️ CONFIGURATION
 SMC_TIMEFRAMES = ['15m', '30m', '1h', '2h', '4h', '1d', '1w']
 
+# P1.27: Cooldown muss mindestens eine Kerzendauer betragen — sonst refired
+# dieselbe 1d/1w-Kerze innerhalb ihrer eigenen Laufzeit mehrfach (12h-Default
+# deckt nur 15m..4h ab). 1d → 24h, 1w → 7d.
+COOLDOWN_HOURS = {'1d': 24, '1w': 168}
+
 MARKETS = {
     "METALS": {
         "channel_id": _kcfg.CH_SMC_METALS,
@@ -128,9 +133,9 @@ def fetch_yfinance_data(ticker, tf):
         for c in ['open', 'high', 'low', 'close']:
             df[c] = df[c].astype(float)
 
-        # 💥 FIX 1: Wir schneiden NICHT mehr rigoros die letzte Kerze ab!
-        # Bei YFinance ist die letzte Zeile fast immer die aktuelle (bereits geschlossene) Kerze.
         # Drop only NaN (invalid) values that arise on weekends.
+        # P1.27: Die forming (letzte) Kerze wird NICHT mehr hier behalten — sie
+        # wird zentral in run_smc_analysis für beide Datenquellen abgeschnitten.
         df.dropna(subset=['close'], inplace=True)
         df = df.reset_index(drop=True)
 
@@ -323,8 +328,15 @@ def run_smc_analysis():
             for tf in SMC_TIMEFRAMES:
                 try:
                     df = fetch_db_data(conn, symbol, tf) if source == "database" else fetch_yfinance_data(symbol, tf)
+                    # P1.27: letzte (noch offene) Kerze für BEIDE Datenquellen droppen —
+                    # sonst hält eine forming 1d/1w-Kerze die Signal-Bedingung tagelang
+                    # und refired über den Cooldown die ganze Woche.
+                    df = df.iloc[:-1].reset_index(drop=True)
                     if df.empty or len(df) < 50:
                         continue
+
+                    # P1.27: TF-abhängiger Cooldown (≥ eine Kerzendauer).
+                    cd_hours = COOLDOWN_HOURS.get(tf, 12)
 
                     curr_idx = len(df) - 1
                     curr_candle = df.iloc[curr_idx]
@@ -345,7 +357,7 @@ def run_smc_analysis():
                             # Cooldown-Key ohne TF → gleicher Coin/Direction kann
                             # nicht gleichzeitig auf 1h und 4h feuern.
                             cd_key = "SMC_BOS"
-                            if not check_cooldown(conn, cd_key, display_name, 'LONG', 12):
+                            if not check_cooldown(conn, cd_key, display_name, 'LONG', cd_hours):
                                 logger.info(f"🏛️ BULLISH SHIFT: {display_name} ({tf}) breaks {last_res_val:.4f}")
                                 tgts = sorted([v for i, v in resistances if v > price])[:5] or [
                                     price * 1.01,
@@ -380,7 +392,7 @@ def run_smc_analysis():
                         # BEARISH SHIFT
                         elif price < last_sup_val and df['open'].iloc[curr_idx] >= last_sup_val:
                             cd_key = "SMC_BOS"
-                            if not check_cooldown(conn, cd_key, display_name, 'SHORT', 12):
+                            if not check_cooldown(conn, cd_key, display_name, 'SHORT', cd_hours):
                                 logger.info(f"🏛️ BEARISH SHIFT: {display_name} ({tf}) breaks {last_sup_val:.4f}")
                                 tgts = sorted([v for i, v in supports if v < price], reverse=True)[:5] or [
                                     price * 0.99,
@@ -417,7 +429,7 @@ def run_smc_analysis():
                     for fvg in bull_fvgs[-2:]:
                         if curr_candle['low'] <= fvg['top'] and price > (fvg['bottom'] * 0.999):
                             cd_key = "SMC_FVG"
-                            if not check_cooldown(conn, cd_key, display_name, 'LONG', 12):
+                            if not check_cooldown(conn, cd_key, display_name, 'LONG', cd_hours):
                                 tgts = sorted([v for i, v in resistances if v > price])[:5] or [
                                     price * 1.01,
                                     price * 1.02,
@@ -445,7 +457,7 @@ def run_smc_analysis():
                     for fvg in bear_fvgs[-2:]:
                         if curr_candle['high'] >= fvg['bottom'] and price < (fvg['top'] * 1.001):
                             cd_key = "SMC_FVG"
-                            if not check_cooldown(conn, cd_key, display_name, 'SHORT', 12):
+                            if not check_cooldown(conn, cd_key, display_name, 'SHORT', cd_hours):
                                 tgts = sorted([v for i, v in supports if v < price], reverse=True)[:5] or [
                                     price * 0.99,
                                     price * 0.98,
