@@ -85,7 +85,7 @@
 
 ### Klassische Strategien
 - [x] **P1.14 ✅(2026-07-04 umgesetzt: `support*1.05` in beiden Strats) SHORT-"Headroom"-Check ist ein vorzeichenverdrehter No-op** (`strat_fast_in_out.py:74`, `strat_5_percent.py:97`): `close > support*0.95` ist quasi immer wahr → SHORT hat keinen Headroom-Guard. **Fix:** `close > support*1.05`. `[DB]`
-- [ ] **P1.15 Ein schlechter Coin killt den ganzen Detector-Prozess** (`3_detectors.py:186-233`, Strategie-Calls unprotected, `main()` fängt nur `FileNotFoundError`) → halbe Coin-Liste ungescannt bis coins.json gefixt. **Fix:** per-Coin try/except + rollback, breites except mit Backoff in main().
+- [x] **P1.15 ✅(2026-07-04 umgesetzt: per-Coin try/except um Strategie-Calls+Write mit conn.rollback()+ERROR-Log (Coin/TF, Strategie via exc_info) → continue; main() breites except Exception mit ERROR-Log + 30s-Backoff statt Prozess-Tod) Ein schlechter Coin killt den ganzen Detector-Prozess** (`3_detectors.py:186-233`, Strategie-Calls unprotected, `main()` fängt nur `FileNotFoundError`) → halbe Coin-Liste ungescannt bis coins.json gefixt. **Fix:** per-Coin try/except + rollback, breites except mit Backoff in main().
 - [ ] **P1.16 Volume Indicator hat keinen Cooldown** (`strat_volume_indicator.py:68-100`) → bis zu 5 Tage alter Spike refeuert alle 30 min (Serien-Reentry). **Fix:** `check_cooldown/update_cooldown` (12-24h) oder Dedupe auf Spike-Timestamp. `[DB]`
 
 ### AI-Bots (Look-ahead / Skew / Robustheit)
