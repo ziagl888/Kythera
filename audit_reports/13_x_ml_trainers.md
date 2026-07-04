@@ -147,3 +147,35 @@ und die Verdikte bleiben: Die starke Live-Performance von MIS1-72H entsteht TROT
 (vermutlich weil die Momentum-/Vol-Features auf langen Horizonten echte Signale tragen), nicht wegen ihr.
 Neutraining nach dem Gerüst oben (zeitlicher Split, Pfad-Label via First-Touch-Simulator, line_cols-Fix,
 Kalibrierung) bleibt Priorität #1 der Modell-Sanierung.
+
+---
+
+## Addendum 2 (2026-07-04): In-Repo-Modelle QM/TD/BB per Artefakt-Introspektion verifiziert — Provenienz-Restliste
+
+Die Provenienz-Tabelle oben deckte nur die `Documents\_X`-Familien ab. Die **In-Repo-Modelle** (Trainer `qm_ml_trainer.py`/`smc_ml_trainer.py` im Repo selbst) wurden jetzt per Pickle-Introspektion (Fleet-Python, xgboost 3.1.2) nachgeprüft:
+
+| Artefakt | Befund | Provenienz |
+|---|---|---|
+| `qm_xgboost_model_1h/4h.pkl` | dict {model, features, optimal_threshold}; **20 Features exakt = qm_ml_trainer-Schema** (rsi_14, tsi_25_13_13, macd_*_normal_12_26_9, *_dist_pct, trend-Dummies, dir_num); gespeichert mit xgb 3.1.2 (= installierte Version, kein Versions-Skew) | ✔ geklärt |
+| `td_xgboost_model_1h/4h.pkl` · `bb_xgboost_model_1h/4h.pkl` | identisches Schema (20 Features, smc_ml_trainer-Reihenfolge), xgb 3.1.2 | ✔ geklärt |
+| `qm_xgboost_model_v2.pkl` | **Orphan** — kein Bot lädt es (`24:35` lädt nur `_1h/_4h`); stored threshold 0.1 | aufräumen/archivieren |
+| `pump_dump_model.pkl` (EPD1) | nackter XGBClassifier, 10 Features ohne Namen, keine Metadata — **Provenienz aber via Backups auf D:\ geschlossen (s.u.)** | ✔ geklärt (Addendum 3) |
+
+**Threshold-Drift (neu, konkret):** Die pkls speichern `optimal_threshold`, die Bots weichen ab: QM-Bot hardcodet **0.65** vs. gespeichert **0.30** (laut FIX-Kommentar `24:37` bewusst, aber undokumentiert gegenüber dem Artefakt); Sniper BB hardcodet **0.40** vs. gespeichert **0.35** (`25:42`); TD 0.30 = 0.30 ✔. Empfehlung: Thresholds aus dem pkl laden und Abweichungen als expliziten Override mit Begründung führen.
+
+**Verbleibende Provenienz-Restliste (vollständig):**
+1. **Metadata-Lücke systemisch:** Kein einziges Artefakt (auch die geklärten) trägt meta.json/Trainingsdatum/Datenfenster/Git-Hash — Provenienz ist überall nur *rekonstruiert*, nicht *deklariert*. Fix = X-R5/P3.4: `{model, features, thresholds, xgb_version, trained_at, data_window, trainer_git_hash}` als Pflichtformat beim nächsten Retrain.
+2. **Bekannte Rest-Punkte aus der Haupttabelle:** ABR1 deployed den 31.12.-Lauf statt des besseren `BT2-ML-Final_Saver`-Laufs vom 30.12. (bewusst?); ATS1-Short auf `_1h_X`-Tabellen trainiert (Datenquelle unvalidiert); SRA1-Label-Semantik (`SL1/SL2/SL3/4`) weiterhin unbelegt.
+
+---
+
+## Addendum 3 (2026-07-04): EPD1-Provenienz via D:\-Backups GESCHLOSSEN
+
+Rekonstruktion über die Backup-Serie `D:\_BACKUP\` (Zips 2025-11-07 … 2026-04-01) + `Documents\_X\zzz-sicherung.py`:
+
+1. **Trainingszeitpunkt bewiesen:** `pump_dump_model.pkl` trägt in **allen** Backups ab 2026-03-06 denselben Zeitstempel **2026-01-22 22:22** und ist **md5-identisch** zum deployten Repo-Artefakt (`6c09741a…`) — das Live-Modell ist der Lauf vom 22.01.2026, seitdem unverändert.
+2. **Trainer-Lineage bewiesen:** `zzz.py` vom 12.12.2025 (Backup) enthält **noch kein** Pump-Dump-Training; `Documents\_X\zzz-sicherung.py` vom **22.12.2025** enthält `train_pump_dump_model()` mit **aktiven** Aufrufen (Z. 4785/4792) und `joblib.dump("pump_dump_model.pkl")` (Z. 5218); in `zzz.py` vom 26.02.2026 (heutiger Stand) sind die Aufrufe auskommentiert. Timeline: Feature eingebaut ~22.12.2025 → lief bis mind. 22.01.2026 → vor dem 26.02.2026 deaktiviert.
+3. **Funktionsidentität bewiesen:** Diff der Trainingsfunktion (zzz-sicherung 5037-5218 vs. zzz.py 7054-7242) = **8 Zeilen, alle am Funktionsende** (Logging/except/finally) — der auskommentierte Code in der heutigen zzz.py IST der Code, der das deployte Modell gebaut hat.
+4. **Report-13-Kernbefund in der gelaufenen Version bestätigt:** Das Trainings-Sampling-Gate `if volume_ratio < 5.0: continue` (zzz-sicherung Z. 50) und die 10-Feature-Liste (beginnend `volume_ratio, price_change_60s, buy_pressure, volatility, …`, Z. 104-116/172) stehen exakt so in der Version, die am 22.01. lief — der Covariate-Shift (live wird jeder 10s-Tick ohne Gate gescored) ist damit endgültig belegt, ebenso der Random-Split (`train_test_split(random_state=42, stratify=y)`, Z. 125).
+
+**Konsequenz:** Alle 9 Modell-Familien haben jetzt geklärte Provenienz. Für EPD1 heißt das konkret: Das Modell ist 5,5 Monate stale (trainiert 22.01. auf Daten davor), das tägliche Retraining wurde bewusst abgeschaltet (Log meldet weiterhin Erfolg — P1 bleibt), und der Gate-Fix (`vol_ratio ≥ 5` vor `predict`, Report 16 Empfehlung) hat nun eine bewiesene Code-Grundlage.
