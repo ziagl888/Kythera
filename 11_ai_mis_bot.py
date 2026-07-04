@@ -121,7 +121,9 @@ def load_pump_models():
 def pct_distance(price_series: pd.Series, indicator_series: pd.Series) -> pd.Series:
     denominator = indicator_series.replace(0, np.nan)
     result = (price_series - indicator_series) / denominator * 100
-    return result.fillna(0)
+    # FIX P2.34: inf zuerst zu NaN — fillna(0) fängt inf nicht, und inf im
+    # Feature-Vektor macht die XGB-Prediction unbrauchbar.
+    return result.replace([np.inf, -np.inf], np.nan).fillna(0)
 
 
 def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -179,21 +181,28 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     for col in line_cols:
         df[f'{col}_dist_pct'] = pct_distance(price, df[col])
 
-    return df.fillna(0)
+    # FIX P2.34: Zero-Volume-Divisionen (vol_ratio etc.) erzeugen inf —
+    # fillna(0) allein lässt die durch und vergiftet die Prediction.
+    return df.replace([np.inf, -np.inf], np.nan).fillna(0)
 
 
 # 🛡️ COOLDOWN CHECK
 
 
 def check_mis_models():
+    # FIX P2.32: kein autocommit mehr — Outbox-Post, ai_signals-Insert und
+    # master-Log gehören pro Signal in EINE Transaktion (Commit übernimmt
+    # update_cooldown bzw. der explizite Commit im Shadow-Pfad). Vorher
+    # konnte ein Crash mittendrin einen gePOSTeten Trade ohne Tracking
+    # hinterlassen.
     conn = get_db_connection()
-    conn.autocommit = True
 
     try:
         with open('coins.json') as f:
             coins = json.load(f)
     except Exception as e:
         logger.error(f"Could not load coins.json: {e}")
+        conn.close()  # Pool-Slot freigeben (Review Batch 4)
         return
 
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -205,9 +214,11 @@ def check_mis_models():
     model_sample = next((cfg["model"] for cfg in PUMP_MODELS.values() if cfg["loaded"]), None)
     if not model_sample:
         logger.error("No MIS1 model loaded. Scan aborted.")
+        conn.close()  # Pool-Slot freigeben (Review Batch 4)
         return
     feature_cols = model_sample.feature_names_in_
 
+    conn_dead = False
     for symbol in coins:
         try:
             query = f"""
@@ -272,7 +283,11 @@ def check_mis_models():
             if not candidates:
                 continue
 
-            candidates.sort(reverse=True, key=lambda x: x[0])
+            # FIX P2.33: nach Abstand zur MODELL-EIGENEN Schwelle ranken, nicht
+            # nach roher Probability — die 8 Modelle sind unterschiedlich
+            # kalibriert, ein 0.55er unter-Schwelle-Kandidat verdrängte sonst
+            # ein 0.52er über-Schwelle-Signal.
+            candidates.sort(reverse=True, key=lambda x: x[0] - x[3])
             best_prob, best_horizon, best_direction, best_threshold = candidates[0]
             module_tag = f"MIS1-{best_horizon}"
 
@@ -313,6 +328,7 @@ def check_mis_models():
                         """,
                             (module_tag, now, symbol, best_direction, float(current_price), float(best_prob)),
                         )
+                conn.commit()  # P2.32: Shadow-Insert explizit committen (autocommit ist aus)
             elif best_prob >= best_threshold:
                 # 💥 Hard Cooldown Check (8h, 24h, 72h, 168h Sperre je after Modell)
                 # check_cooldown returned True wenn Cooldown NOCH AKTIV ist → dann skippen.
@@ -429,11 +445,30 @@ def check_mis_models():
                         (module_tag, now, symbol, best_direction, float(current_price), float(best_prob)),
                     )
 
-                # Cooldown setzen damit der gleiche Coin/Direction nicht sofort wieder feuert
+                # Cooldown setzen damit der gleiche Coin/Direction nicht sofort wieder feuert.
+                # P2.32: update_cooldown committed (default commit=True) und schließt damit
+                # die EINE Transaktion aus Outbox-Posts + ai_signals + master-Log atomar ab.
                 update_cooldown(conn, module_tag, symbol, best_direction)
 
         except Exception as e:
             logger.error(f"Error for {symbol} in MIS1: {e}")
+        finally:
+            # P2.32 + Review Batch 4: Transaktion pro Coin IMMER schließen.
+            # (a) Eine aborted Transaktion würde sonst alle folgenden Coins
+            #     vergiften ("current transaction is aborted", vgl. P1.23).
+            # (b) Eine offene Read-Transaktion über den ganzen 538-Coin-Scan
+            #     friert NOW() (= transaction_timestamp) auf den Scan-Start ein
+            #     → telegram_outbox.created_at rückdatiert (Orchestrator-
+            #     Staleness-Filter verwirft die Signale still) und Cooldowns
+            #     werden um die Scan-Dauer verkürzt.
+            # Nach einem Commit-Pfad ist der rollback ein No-op.
+            try:
+                conn.rollback()
+            except Exception:
+                logger.error("MIS1: rollback fehlgeschlagen (tote Connection) — Scan-Abbruch.")
+                conn_dead = True
+        if conn_dead:
+            break
 
     if conn:
         conn.close()

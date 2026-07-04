@@ -133,6 +133,9 @@ def create_feature_row(direction, indicators):
     )
 
     atr = indicators.get('atr_14', np.nan)
+    # FIX P1.20: ATR-Features IMMER emittieren — fehlt ATR, hatte der
+    # Feature-Vektor 35 statt 38 Spalten, predict_proba warf und die ganze
+    # Scan-Iteration brach ab. XGBoost kann mit NaN nativ umgehen.
     if pd.notna(atr) and atr > 0:
         features.update(
             {
@@ -141,6 +144,8 @@ def create_feature_row(direction, indicators):
                 'boll_width_atr': ((indicators.get('boll_upper_20', 0) - indicators.get('boll_lower_20', 0)) / atr),
             }
         )
+    else:
+        features.update({'support_atr': np.nan, 'resist_atr': np.nan, 'boll_width_atr': np.nan})
 
     features['is_long'] = 1.0 if direction.upper() == 'LONG' else 0.0
     return features
@@ -151,17 +156,20 @@ def create_feature_row(direction, indicators):
 # POSTING LOGIK
 
 
-def process_ai_trade(conn, symbol, direction, module, live_price, confidence, chart_path=None):
-    """Calculates trade details, writes to outbox and monitor."""
+def process_ai_trade(conn, symbol, direction, module, live_price, confidence, chart_path=None) -> bool:
+    """Calculates trade details, writes to outbox and monitor.
+
+    Returns True wenn der Trade wirklich gepostet wurde, False wenn der
+    interne Cooldown den Post unterdrückt hat (P2.30: der Caller schrieb
+    vorher posted=True in ml_predictions_master, obwohl nie gepostet wurde).
+    """
     target_channel = _kcfg.CH_AI_SR  # Dein Ziel-Kanal
 
     # FIX: Vorher eigener Cooldown-Check mit `pd.Timestamp.utcnow().tz_localize(None)`
     # → crashes in newer pandas versions (utcnow is tz-aware there) and mixes
     # tz-aware/tz-naive Vergleiche. Jetzt: saubere Version aus market_utils.
-    # Additionally: cooldown is now set AFTER successful send, not
-    # already at check → if send crashes, no dead cooldown entry.
     if check_cooldown(conn, module, symbol, direction, 4):
-        return
+        return False
 
     # 2. Level & Targets
     is_long = direction == "LONG"
@@ -223,10 +231,15 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
                 json.dumps(targets),
             ),
         )
+    # FIX (Review Batch 4): Cooldown in DERSELBEN Transaktion wie Outbox +
+    # ai_signals setzen. Vorher lief update_cooldown NACH conn.commit() —
+    # warf der Cooldown-Upsert (z.B. lock_timeout), blieb der Post committed,
+    # aber ohne Cooldown und ohne master-Log → der nächste Scan-Pass hat
+    # denselben Trade erneut gepostet (Doppel-Exposure bei Cornix).
+    update_cooldown(conn, module, symbol, direction, commit=False)
     conn.commit()
-    # FIX: Cooldown erst after erfolgreichem Send setzen (siehe Kommentar oben).
-    update_cooldown(conn, module, symbol, direction)
     logger.info(f"🚀 {module} Trade für {symbol} erfolgreich abgefeuert!")
+    return True
 
 
 # MAIN LOOP
@@ -252,57 +265,86 @@ def main():
                 for trade in fresh_trades:
                     t_id, t_time, coin, direction, entry = trade
 
-                    # 2. Duplikatprüfung in Master-Log
-                    cur.execute(
-                        "SELECT 1 FROM ml_predictions_master WHERE trade_id = %s AND model_name = %s",
-                        (t_id, module_name),
-                    )
-                    if cur.fetchone():
-                        continue
-
-                    # 3. Indikatoren & Features
-                    inds = get_indicators_at_time(conn, coin, t_time)
-                    if not inds:
-                        continue
-
-                    features = create_feature_row(direction, inds)
-                    if not features:
-                        continue
-
-                    # 4. XGBoost Vorhersage
-                    X = pd.DataFrame([features])
-                    model = MODEL_LONG if direction == 'LONG' else MODEL_SHORT
-                    conf = float(model.predict_proba(X)[0, 1])
-
-                    # 5. Klassifizierung & Schatten-Log
-                    posted = False
-                    if conf >= 0.65:
-                        logger.info(f"🎯 Treffer! {coin} {direction} hat {conf:.1%} Confidence.")
-                        chart_p = generate_minichart_image(coin, minutes=240)
-                        process_ai_trade(conn, coin, direction, module_name, entry, conf, chart_p)
-                        posted = True
-
-                    # Alles >= 0.35 in die Master-History loggen
-                    if conf >= 0.35:
+                    # FIX P1.20: per-Trade-Isolation. Vorher riss EIN kaputter
+                    # Trade (z.B. predict-Fehler) die ganze Iteration ab und der
+                    # Pass-Rollback verwarf auch die Shadow-Inserts aller schon
+                    # verarbeiteten Trades. Jetzt: commit pro Trade, rollback
+                    # betrifft nur den einen.
+                    try:
+                        # 2. Duplikatprüfung in Master-Log
                         cur.execute(
-                            """
-                            INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                            (t_id, module_name, t_time, coin, direction, entry, conf, posted),
+                            "SELECT 1 FROM ml_predictions_master WHERE trade_id = %s AND model_name = %s",
+                            (t_id, module_name),
                         )
-                    else:
-                        # Unter 0.45 nur als "erledigt" markieren (minimales Log)
-                        cur.execute(
-                            "INSERT INTO ml_predictions_master (trade_id, model_name, coin, confidence, posted) VALUES (%s, %s, %s, %s, False)",
-                            (t_id, module_name, coin, conf),
-                        )
+                        if cur.fetchone():
+                            continue
+
+                        # 3. Indikatoren & Features
+                        inds = get_indicators_at_time(conn, coin, t_time)
+                        if not inds:
+                            continue
+
+                        features = create_feature_row(direction, inds)
+                        if not features:
+                            continue
+
+                        # 4. XGBoost Vorhersage
+                        X = pd.DataFrame([features])
+                        model = MODEL_LONG if direction == 'LONG' else MODEL_SHORT
+                        conf = float(model.predict_proba(X)[0, 1])
+
+                        # 5. Klassifizierung & Schatten-Log
+                        posted = False
+                        if conf >= 0.65:
+                            # FIX (Review Batch 4): NaN-ATR-Vektoren nicht live posten.
+                            # P1.20 lässt fehlende ATR-Features als NaN durch, damit der
+                            # Scan nicht mehr crasht — aber das Modell hat im Training nie
+                            # NaN in diesen Spalten gesehen, die Confidence darauf ist
+                            # unkalibriert. Solche Rows nur shadow-loggen, kein Cornix-Post.
+                            if pd.isna(features.get('support_atr', np.nan)):
+                                logger.info(f"⚠️ {coin} {direction} conf {conf:.1%} — ATR fehlt, nur Shadow-Log.")
+                            else:
+                                logger.info(f"🎯 Treffer! {coin} {direction} hat {conf:.1%} Confidence.")
+                                chart_p = generate_minichart_image(coin, minutes=240)
+                                # FIX P2.30: posted aus dem Rückgabewert — False wenn der
+                                # interne 4h-Cooldown den Post unterdrückt hat.
+                                posted = process_ai_trade(conn, coin, direction, module_name, entry, conf, chart_p)
+
+                        # Alles >= 0.35 in die Master-History loggen
+                        if conf >= 0.35:
+                            cur.execute(
+                                """
+                                INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                                (t_id, module_name, t_time, coin, direction, entry, conf, posted),
+                            )
+                        else:
+                            # Unter 0.45 nur als "erledigt" markieren (minimales Log)
+                            cur.execute(
+                                "INSERT INTO ml_predictions_master (trade_id, model_name, coin, confidence, posted) VALUES (%s, %s, %s, %s, False)",
+                                (t_id, module_name, coin, conf),
+                            )
+                        conn.commit()
+                    except Exception as trade_err:
+                        logger.error(f"SRA1: Fehler bei Trade {t_id} ({coin} {direction}): {trade_err}")
+                        # Rollback guarded — auf einer toten Connection (DB-Restart)
+                        # wirft rollback() selbst und würde sonst bis aus main()
+                        # durchschlagen und den Prozess killen.
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            logger.error("SRA1: rollback fehlgeschlagen — Pass-Abbruch, Connection wird erneuert.")
+                            break
 
             conn.commit()
         except Exception as e:
             logger.error(f"Fehler im Loop: {e}")
             if conn:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass  # tote Connection — close() im finally gibt den Slot frei
         finally:
             if conn:
                 conn.close()
