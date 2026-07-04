@@ -1,3 +1,5 @@
+import atexit
+import ctypes
 import datetime
 import logging
 import os
@@ -5,6 +7,8 @@ import signal
 import subprocess
 import sys
 import time
+
+import psutil
 
 from core.health_monitor import run_health_checks
 from core.process_control import consume_restart, is_parked
@@ -69,6 +73,112 @@ PROCESSES_TO_RUN = [
 
 running_processes: dict = {}
 _dashboard_proc: subprocess.Popen | None = None
+
+# Basenames aller Fleet-Skripte (Bots + Dashboard) — für die Orphan-Detection
+# (P0.2): ein von uns gespawnter python-Prozess trägt eines dieser Skripte in
+# seiner Cmdline. Läuft so ein Prozess ohne uns als Parent, ist er verwaist.
+FLEET_SCRIPTS: frozenset = frozenset([os.path.basename(p["script"]) for p in PROCESSES_TO_RUN] + [DASHBOARD_SCRIPT])
+
+# Named Mutex Handle (Windows) — muss über die gesamte Prozess-Lebensdauer
+# referenziert bleiben, sonst gibt der GC das Handle frei und die zweite
+# Instanz käme durch. P0.2.
+_instance_mutex = None
+
+# Windows GetLastError-Code für "Mutex existiert bereits" → zweite Fleet-Instanz.
+_ERROR_ALREADY_EXISTS = 183
+
+
+# ── Single-Instance-Guard (P0.2) ─────────────────────────────────────────────
+
+
+def _acquire_single_instance_lock() -> None:
+    """Verhindert eine zweite Watchdog-Instanz (P0.2 — geld-kritisch).
+
+    Ein zweiter Watchdog spawnt eine zweite komplette Fleet → jedes Cornix-Signal
+    doppelt. Windows Named Mutex (Global\\-Namespace, session-übergreifend): existiert
+    er schon, läuft bereits ein Watchdog → hart abbrechen. Nur ctypes/kernel32,
+    kein pywin32.
+    """
+    global _instance_mutex
+    if os.name != "nt":
+        # Non-Windows (Tests/Dev): Mutex-Guard nicht verfügbar — Orphan-Detection
+        # bleibt die zweite Verteidigungslinie.
+        return
+    try:
+        _instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\KytheraWatchdog")
+        last_error = ctypes.windll.kernel32.GetLastError()
+    except Exception as e:  # noqa: BLE001 — Guard darf den Start nie mit einem Traceback killen.
+        logger.warning(f"⚠️  Single-Instance-Mutex nicht setzbar ({e}) — Start ohne Mutex-Guard.")
+        return
+
+    # Review-Härtung P0.2: CreateMutexW==NULL mit ERROR_ACCESS_DENIED (5) ist der
+    # kanonische Fall "Mutex existiert, gehört aber einem anderen User/Elevation-
+    # Level" (z.B. Task-Scheduler vs. interaktive Session) — auch das ist eine
+    # laufende zweite Instanz.
+    _ERROR_ACCESS_DENIED = 5
+    if last_error == _ERROR_ALREADY_EXISTS or (not _instance_mutex and last_error == _ERROR_ACCESS_DENIED):
+        logger.error(
+            "🚨 Ein zweiter Watchdog läuft bereits (Mutex 'Global\\KytheraWatchdog' existiert, "
+            f"GetLastError={last_error}) — Abbruch, um doppelte Fleet/doppelte Cornix-Signale "
+            "zu verhindern (P0.2)."
+        )
+        sys.exit(1)
+    if not _instance_mutex:
+        # NULL-Handle aus anderem Grund: kein Beweis für eine zweite Instanz, aber
+        # auch kein Lock — weiterlaufen und warnen; Orphan-Detection bleibt die
+        # zweite Verteidigungslinie.
+        logger.warning(f"⚠️  CreateMutexW lieferte NULL (GetLastError={last_error}) — Start ohne Mutex-Guard.")
+
+
+def _terminate_orphan_fleet() -> None:
+    """Killt verwaiste Fleet-Prozesse eines abgestürzten Vor-Watchdogs (P0.2).
+
+    Ein hartes ``taskkill /F`` auf den alten Watchdog läuft nicht durch dessen
+    SIGTERM-Handler → die Kinder überleben verwaist weiter und produzieren
+    weiter Signale. Beim Start suchen wir daher python-Prozesse, deren Cmdline
+    ein Fleet-Skript enthält und die NICHT unsere eigenen Kinder sind, und
+    beenden sie (5s Grace, dann kill).
+    """
+    self_pid = os.getpid()
+    try:
+        own_children = {c.pid for c in psutil.Process(self_pid).children(recursive=True)}
+    except psutil.Error:
+        own_children = set()
+
+    orphans = []
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            if proc.pid == self_pid or proc.pid in own_children:
+                continue
+            name = (proc.info.get("name") or "").lower()
+            if "python" not in name:
+                continue
+            cmdline = proc.info.get("cmdline") or []
+            if any(os.path.basename(tok) in FLEET_SCRIPTS for tok in cmdline):
+                orphans.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    if not orphans:
+        return
+
+    logger.warning(
+        f"🧟 {len(orphans)} verwaiste Fleet-Prozesse gefunden (PIDs: "
+        f"{[p.pid for p in orphans]}) — beende sie vor dem Start (P0.2)."
+    )
+    for proc in orphans:
+        try:
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    _gone, alive = psutil.wait_procs(orphans, timeout=5)
+    for proc in alive:
+        try:
+            logger.warning(f"⚠️  Orphan PID {proc.pid} reagiert nicht — force kill.")
+            proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
@@ -186,9 +296,18 @@ def kill_process(name: str) -> None:
 
 
 def shutdown_all() -> None:
-    """Terminate every supervised bot and the dashboard. Idempotent."""
+    """Terminate every supervised bot and the dashboard. Idempotent.
+
+    P0.2-Härtung: pro Kind gekapselt — schlägt das Beenden eines Prozesses fehl,
+    darf das die Terminierung der restlichen Kinder nicht abbrechen (sonst
+    überleben verwaiste Prozesse den Watchdog-Tod).
+    """
     for name in list(running_processes.keys()):
-        kill_process(name)
+        try:
+            kill_process(name)
+        except Exception:  # noqa: BLE001 — Teardown muss alle Kinder erreichen.
+            logger.exception(f"⚠️  Fehler beim Beenden von {name} — fahre mit den übrigen fort.")
+            running_processes.pop(name, None)
     stop_dashboard()
 
 
@@ -229,7 +348,16 @@ def _install_signal_handlers() -> None:
 
 def main() -> None:
     logger.info("🛡️ System Watchdog started.")
+
+    # P0.2: Zweite Watchdog-Instanz hart verhindern (Mutex), dann verwaiste Kinder
+    # eines abgestürzten Vor-Watchdogs aufräumen — beides VOR dem Spawn der Fleet.
+    _acquire_single_instance_lock()
+    _terminate_orphan_fleet()
+
     _install_signal_handlers()
+    # Letzte Verteidigungslinie: bei jedem Exit-Pfad (auch unerwartet) die Kinder
+    # terminieren, bevor der Watchdog stirbt (P0.2). shutdown_all ist idempotent.
+    atexit.register(shutdown_all)
 
     # Dashboard zuerst starten — ist sofort erreichbar während die Bots hochfahren.
     start_dashboard()
