@@ -120,8 +120,12 @@ def check_cooldown(conn, module: str, coin: str, direction: str, cd_hours: float
     return last > cutoff
 
 
-def update_cooldown(conn, module: str, coin: str, direction: str) -> None:
-    """Upserts the cooldown timestamp for this module/coin/direction."""
+def update_cooldown(conn, module: str, coin: str, direction: str, commit: bool = True) -> None:
+    """Upserts the cooldown timestamp for this module/coin/direction.
+
+    commit=False lässt den Upsert in der offenen Transaktion des Callers
+    (P1.7: der Orchestrator committed Cooldown + Tracking + Outbox atomar).
+    """
     with conn.cursor() as cursor:
         cursor.execute(
             """
@@ -132,7 +136,8 @@ def update_cooldown(conn, module: str, coin: str, direction: str) -> None:
             """,
             (module, coin, direction),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def calculate_obv(
