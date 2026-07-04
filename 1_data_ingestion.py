@@ -21,8 +21,11 @@ warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 # --- IMPORT CONFIGURATION FROM CORE ---
 from core.config import BASE_URL, NUM_WORKERS, TIMEFRAMES
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - INGESTION - %(message)s')
-logger = logging.getLogger(__name__)
+# File-Logging (logs/DATA_INGESTION.log) statt nur unsichtbarer Konsole —
+# ohne das waren WS-Disconnects und Flush-Fehler im Betrieb nicht diagnostizierbar.
+from core.logging_setup import setup_logging
+
+logger = setup_logging("DATA_INGESTION")
 
 # --- GLOBAL RAM BUFFER FOR WEBSOCKETS ---
 WS_KLINE_BUFFER = {}
@@ -381,7 +384,13 @@ def _flush_to_db(buffer_copy):
 # messages — this uses the documented 1024-stream limit reliably.
 # SUBSCRIBE-based connections appear to be dropped by Binance at ~150-200s
 # when carrying 800+ streams, despite the documented 1024 limit.
-WS_STREAMS_PER_WORKER = 860
+#
+# FIX HTTP 414 (URI Too Long): 860 Streams ergaben ~19-KB-URLs — je nach
+# Symbollängen im Chunk lehnte Binance den Handshake mit 414 ab; der betroffene
+# Worker (12% aller Streams) kam NIE online und retried endlos. 400 Streams
+# ≈ 9-KB-URL liegen sicher unter dem Limit; ~14 Worker bleiben weit unter der
+# 300-Connects/5min-Grenze.
+WS_STREAMS_PER_WORKER = 400
 
 # SUBSCRIBE-Chunk-Größe und Abstand. Binance erlaubt 10 msg/s pro Connection
 # (Futures); wir bleiben bei 1 msg/s = 10x Sicherheitsmarge, wichtig beim
