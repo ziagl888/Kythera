@@ -95,10 +95,16 @@ def set_low_priority() -> None:
         pass
     try:
         import ctypes
+        from ctypes import wintypes
 
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        ctypes.windll.kernel32.SetPriorityClass(handle, 0x4000)
-        print("Prozess-Priorität: BELOW_NORMAL (ctypes)")
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # Ohne explizite argtypes schlägt SetPriorityClass auf 64-bit still fehl
+        # (HANDLE wird als c_int übergeben) — deshalb hier sauber deklariert.
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k32.SetPriorityClass.restype = wintypes.BOOL
+        ok = k32.SetPriorityClass(k32.GetCurrentProcess(), 0x4000)
+        print("Prozess-Priorität: BELOW_NORMAL" if ok else "WARNUNG: SetPriorityClass fehlgeschlagen")
     except Exception:
         print("WARNUNG: Priorität konnte nicht gesenkt werden")
 
@@ -647,6 +653,14 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="nur die ersten N Coins")
     ap.add_argument("--out", default=DEFAULT_OUT_DIR)
     args = ap.parse_args()
+
+    # cp1252-Konsole: Emojis/Sonderzeichen in Fehlermeldungen dürfen den Lauf
+    # nicht per UnicodeEncodeError abbrechen.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
     set_low_priority()
     check_cpu_headroom()

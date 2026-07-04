@@ -10,6 +10,9 @@ import time
 
 import numpy as np
 import pandas as pd
+import pandas_ta  # noqa: F401 — registriert den df.ta-Accessor (Regression aus 052ba4c:
+# der Ruff-Cleanup entfernte den funktionslokalen Import aus b6735d9 als "unused",
+# wodurch calculate_technical_indicators auf JEDEM Coin mit AttributeError starb)
 import scipy.signal
 import xgboost as xgb
 
