@@ -109,10 +109,22 @@ def scan_market():
                 highs, lows, closes = df['high'].values, df['low'].values, df['close'].values
                 current_price = closes[-1]
 
-                peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=PIVOT_WINDOW)[0]
-                trough_idx = scipy.signal.argrelextrema(lows, np.less, order=PIVOT_WINDOW)[0]
+                # P1.24: Pivot-Suche nur auf abgeschlossenen Kerzen — die letzte Zeile
+                # ist die laufende (forming) Kerze; sonst repaintet der Pivot und der
+                # Bot weicht von der Trainer-Geometrie ab.
+                c_highs, c_lows = highs[:-1], lows[:-1]
 
-                raw_pivots = [(i, 1, highs[i]) for i in peak_idx] + [(i, -1, lows[i]) for i in trough_idx]
+                peak_idx = scipy.signal.argrelextrema(c_highs, np.greater, order=PIVOT_WINDOW)[0]
+                trough_idx = scipy.signal.argrelextrema(c_lows, np.less, order=PIVOT_WINDOW)[0]
+
+                # P1.24: Kanten-Pivots verwerfen — argrelextrema (mode='clip') lässt am
+                # rechten Rand unbestätigte Pivots durch; ein Pivot braucht PIVOT_WINDOW
+                # nachfolgende Kerzen zur Bestätigung.
+                max_confirmed_idx = len(c_highs) - 1 - PIVOT_WINDOW
+                peak_idx = peak_idx[peak_idx <= max_confirmed_idx]
+                trough_idx = trough_idx[trough_idx <= max_confirmed_idx]
+
+                raw_pivots = [(i, 1, c_highs[i]) for i in peak_idx] + [(i, -1, c_lows[i]) for i in trough_idx]
                 raw_pivots.sort(key=lambda x: x[0])
 
                 alt_pivots = []
