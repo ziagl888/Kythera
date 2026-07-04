@@ -1,10 +1,38 @@
 import logging
+import math
 
 import numpy as np
 import pandas as pd
 import scipy.signal
 
 logger = logging.getLogger(__name__)
+
+
+def format_price(p) -> str:
+    """P1.4: Preis mit signifikanten Stellen formatieren (statt festem :.6f).
+
+    Warum: `:.6f` rundet Sub-0.001-Coins (z.B. 1000SATS, PEPE) auf identische
+    Werte → alle TPs kollabieren auf denselben String → Cornix rejected das Signal.
+    Regel: >=1 → 4 Nachkommastellen; >=0.001 → 6; darunter dynamisch ~6
+    signifikante Stellen (führende Nullen bleiben erhalten, keine
+    wissenschaftliche Notation, damit Cornix den Wert parsen kann).
+    """
+    try:
+        v = float(p)
+    except (TypeError, ValueError):
+        return str(p)
+
+    a = abs(v)
+    if a == 0:
+        return "0.00"
+    if a >= 1:
+        decimals = 4
+    elif a >= 0.001:
+        decimals = 6
+    else:
+        # ~6 signifikante Stellen: führende Nullen nach dem Komma mitzählen
+        decimals = 5 - math.floor(math.log10(a))
+    return f"{v:.{decimals}f}"
 
 
 def ensure_min_tp_distance(targets: list, entry: float, is_long: bool, min_pct: float = 0.05) -> list:
