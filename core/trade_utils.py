@@ -22,6 +22,12 @@ def format_price(p) -> str:
     except (TypeError, ValueError):
         return str(p)
 
+    # Review-Härtung P1.4: NaN/Inf passieren den float()-Cast, würden aber unten
+    # in math.log10 bzw. im f-Format crashen — defensiv als String zurückgeben
+    # statt den Message-Builder zu killen.
+    if not math.isfinite(v):
+        return str(p)
+
     a = abs(v)
     if a == 0:
         return "0.00"
