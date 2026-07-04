@@ -79,20 +79,28 @@ def check_rubberband_conditions():
                 continue
 
             # 1. 90 Tage Daten für die Trendberechnung holen
+            # P1.19: Forming-Candle ausschließen (open_time < date_trunc('hour', NOW())),
+            # sonst rechnet die Regression mit der offenen Kerze aus ~2 min Daten.
             query_90d = f"""
                 SELECT open_time, close
                 FROM "{symbol}_1h"
                 WHERE open_time >= NOW() - INTERVAL '95 days'
+                  AND open_time < date_trunc('hour', NOW())
                 ORDER BY open_time ASC
             """
 
             # 2. Letzte Indikatoren holen
+            # P1.19: closed-candle-Filter — LIMIT 1 lieferte sonst die offene Kerze
+            # (Partial-Indikatoren). close mitziehen, damit curr_close aus DERSELBEN
+            # geschlossenen Kerze stammt wie die Indikatoren (nicht aus dem 90d-Array).
             query_ind = f"""
                 SELECT
+                    close,
                     rsi_14, tsi_fast_12_7_7, tsi_fast_12_7_7_signal,
                     macd_dif_normal_12_26_9, macd_dea_normal_12_26_9,
                     atr_14, ema_200, donchian_lower_20, donchian_upper_20
                 FROM "{symbol}_1h_indicators"
+                WHERE open_time < date_trunc('hour', NOW())
                 ORDER BY open_time DESC LIMIT 1
             """
 
@@ -123,7 +131,16 @@ def check_rubberband_conditions():
             slope, intercept = np.linalg.lstsq(A, close_values, rcond=None)[0]
 
             curr_ts = ts_values[-1]
-            curr_close = close_values[-1]
+            # P1.19: curr_close aus der geschlossenen Indikator-Kerze (ind['close']),
+            # nicht aus dem 90d-Preis-Array — so mischen dist_to_trend + alle ML-Features
+            # nicht mehr Live-Preis mit Partial-Indikatoren. Fallback auf die (nun
+            # ebenfalls geschlossene) letzte 90d-Kerze, falls close NaN/fehlt.
+            try:
+                curr_close = float(ind['close'])
+                if not np.isfinite(curr_close):
+                    curr_close = float(close_values[-1])
+            except (TypeError, ValueError, KeyError):
+                curr_close = float(close_values[-1])
             trend_val_curr = slope * curr_ts + intercept
 
             # Wie weit sind wir prozentual vom Trend entfernt?
