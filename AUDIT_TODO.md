@@ -118,7 +118,7 @@
 
 ### Market-Intelligence
 - [ ] **P1.39 Pump/Dump-Timestamp-Fix unvollständig** (`10_pump_dump_detector.py:522-529,552-558`): Volume-Explosion + ML-Features noch index-basiert → nach Restart falsche "VOLUME EXPLOSION"-Alerts + schiefe ML-Features. **Fix:** über `_find_bucket_before/range` routen.
-- [ ] **P1.40 `pump_dump_events`: unconditional CREATE+INSERT pro Symbol pro 10s-Tick** (`10:569-578`) → ~108 stmt/s, ~4.6M Rows/Tag (rsi/tsi-Spalten nie befüllt). **Fix:** CREATE einmalig, Insert samplen/batchen. `[DB]`
+- [x] **P1.40 ✅(2026-07-04 umgesetzt: CREATE einmalig in main(), Insert gated auf Retention-Komplement vol_ratio>=3.0 AND |Δp60s|>=1.5; Schwellen zentral in core/config.py) `pump_dump_events`: unconditional CREATE+INSERT pro Symbol pro 10s-Tick** (`10:569-578`) → ~108 stmt/s, ~4.6M Rows/Tag (rsi/tsi-Spalten nie befüllt). **Fix:** CREATE einmalig, Insert samplen/batchen. `[DB]`
 - [ ] **P1.41 Shadow-Inserts in `ml_predictions_master` ohne Cooldown** (`10:625-635`) → bis 8640 Rows/Tag/Symbol, vom Market-Tracker als "opened signal" gezählt. **Fix:** per-Symbol Shadow-Cooldown; Consumer filtern `posted=TRUE`. `[DB]`
 - [ ] **P1.42 ✔✔(Step2: 49/529 Symbole; Logger schreibt seit 18.04. gar keine Files mehr) Whale-Logger: 538 aggTrade-Streams auf einer Futures-WS-Connection** (`19:334-336`, fapi-Cap ~200/Conn) → ~340 Symbole still nicht geliefert. **Fix:** in 3 Connections sharden. `[DB]` (Whale-Files vs coins.json)
 - [ ] **P1.43 Market-Tracker: Pool-Leak bei Query-Fehler + fehlender rollback** (`23:395-429,749-831`) → 1 Leak/Stunde → nach ~8h alle Tracker-Jobs tot bis Restart. **Fix:** `try/finally close`, `rollback` vor Fallback. `[DB]`
@@ -151,7 +151,7 @@
 - [ ] **P2.16 Zwei Prozesse schreiben `coins.json` mit verschiedenen Filtern, non-atomar** (`1:31-56` inkl. Quarterlies vs `6:24-47` PERPETUAL). **Fix:** ein Writer via Core, tmp+os.replace. `[DB]`
 - [ ] **P2.17 Delisted-Cleanup schließt Trades auf jedem Symbol nicht in coins.json** (`6:128,186`) inkl. Metals/Forex/ETHBTC → nächtliche Falsch-Closes. **Fix:** auf Binance-Perp-Shape beschränken. `[DB]`
 - [ ] **P2.18 Housekeeping-REST ohne 429/418-Handling** (`6:508-522`) → nach dem Gap-Filler-Fix Burst → 418-IP-Ban trifft auch Trading-Endpoints. **Fix:** Retry-After/Backoff spiegeln.
-- [ ] **P2.19 Indikator-Zyklus riskiert das 30-min-Budget** (`2:585-626`, WMA via Python-Lambda-`apply`, KAMA Python-Loop, ProcessPool je TF neu) → Überlauf skippt still den nächsten Trigger. **Fix:** WMA vektorisieren (`np.convolve`/`sliding_window_view`), ein Executor/Zyklus, WARN bei >25min. `[DB]`
+- [x] **P2.19 ✅(2026-07-04 umgesetzt: WMA via sliding_window_view ~10x, KAMA er/sc vektorisiert ~20x, ein Executor/Zyklus, WARN >25min; Regression-Guard 24/24 grün, KAMA bit-identisch) Indikator-Zyklus riskiert das 30-min-Budget** (`2:585-626`, WMA via Python-Lambda-`apply`, KAMA Python-Loop, ProcessPool je TF neu) → Überlauf skippt still den nächsten Trigger. **Fix:** WMA vektorisieren (`np.convolve`/`sliding_window_view`), ein Executor/Zyklus, WARN bei >25min. `[DB]`
 - [ ] **P2.20 chart_data_service: kein Message-Watchdog + Gap-Handling** (`chart_data_service.py:184-232`); 12MB-JSON-Snapshot synchron auf dem Event-Loop alle 60s (`102-119`). **Fix:** `asyncio.wait_for(recv,120)`, `to_thread` für dump, Intervall 300s.
 
 ### Orchestrator/Regime (Rest)
