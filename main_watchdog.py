@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 
+from core.health_monitor import run_health_checks
 from core.process_control import consume_restart, is_parked
 
 logging.basicConfig(
@@ -251,9 +252,18 @@ def main() -> None:
     total_delay = sorted_procs[-1].get("start_delay", 0) if sorted_procs else 0
     logger.info(f"🟢 Alle Systeme started (gestaffelt über {total_delay}s). Starting monitoring...")
 
+    last_health_check = 0.0
+
     try:
         while True:
             current_time = time.time()
+
+            # Health-Monitoring (1x/min): Daten-Staleness (P2.47, mit Auto-Restart
+            # der Ingestion), CPU-Dauerlast (WS-Disconnect-Ursache), Outbox-Failures
+            # (P2.11). Alerts via TELEGRAM_ALERT_CHAT_ID + watchdog.log.
+            if current_time - last_health_check >= 60:
+                last_health_check = current_time
+                run_health_checks()
 
             # Dashboard-Crash-Check
             check_dashboard()
