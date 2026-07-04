@@ -6,12 +6,13 @@ import random
 import socket
 import time
 import warnings
-from concurrent.futures import ThreadPoolExecutor
 
 import pytz
 import requests
 import websockets
 from psycopg2 import extras
+
+from concurrent.futures import ProcessPoolExecutor  # Catch-up in eigenen Prozessen (GIL-Fix)
 
 from core.database import get_db_connection
 
@@ -157,7 +158,6 @@ def process_coin(symbol, resume_points):
         session.headers.update({"User-Agent": "CryptoBot/2.0"})
 
         now = datetime.datetime.now(datetime.timezone.utc)
-        seven_days_ago = now - datetime.timedelta(days=7)
         end_ts = int(now.timestamp() * 1000)
 
         for tf in TIMEFRAMES:
@@ -165,9 +165,14 @@ def process_coin(symbol, resume_points):
 
             latest_db = resume_points.get(f"{symbol}_{tf}")
 
-            # LOGIK: Nimm das ältere Datum. Entweder den letzten DB Eintrag oder 7 Tage in der Vergangenheit.
+            # Gap-aware Catch-up (Audit 02/P1.11-Folgefix): Vorher wurde IMMER
+            # min(latest_db, now-7d) genommen → 7-Tage-Vollrewrite für ~5.500
+            # Kombos bei JEDEM Start (~20+ min Vollast, GIL-Starvation der WS-Loop).
+            # Der 7d-Rewrite war nur die Krücke für den Boundary-Overwrite-Bug
+            # (Buffer-Key ohne open_time) — der ist jetzt gefixt. 24h-Overlap
+            # bleibt als Sicherheitsnetz (deckt WS-Lücken + Partial-Kerzen ab).
             if latest_db:
-                start_dt = min(latest_db, seven_days_ago)
+                start_dt = latest_db - datetime.timedelta(hours=24)
             else:
                 # Fallback, wenn die Tabelle komplett leer ist (z.B. neuer Coin)
                 start_dt = now - datetime.timedelta(days=730)
@@ -205,22 +210,51 @@ def create_db_snapshot(symbols):
 
 
 def run_catchup_job(symbols):
-    """Führt den synchronen REST-Catch-Up mit Snapshot aus."""
+    """Führt den REST-Catch-Up mit Snapshot aus — in EIGENEN PROZESSEN.
+
+    GIL-Fix (Ursache der zyklischen WS-Disconnects): Vorher lief der Catch-up
+    im ThreadPool DESSELBEN Prozesses wie die WS-Event-Loop. Die JSON-/Insert-
+    Threads kämpften minutenlang mit der Event-Loop um den GIL → der WS-Consumer
+    kam nicht hinterher → TCP-Backpressure → Binance trennt Slow-Consumer →
+    DATA_STALE-Zyklus. ProcessPool isoliert die CPU-Arbeit komplett vom GIL
+    der Event-Loop; jeder Child hat seinen eigenen DB-Pool.
+    """
     logger.info("📸 Erstelle Datenbank-Snapshot für REST Catch-Up...")
     resume_points = create_db_snapshot(symbols)
 
-    logger.info(f"⏳ Starting REST Catch-Up (letzte 7 Tage/Gaps) für {len(symbols)} Coins...")
-    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as exe:
-        # Konvertierung zu list() erzwingt die Ausführung des iterators
-        list(exe.map(lambda sym: process_coin(sym, resume_points), symbols))
+    logger.info(f"⏳ Starting REST Catch-Up (gap-aware, 24h-Overlap) für {len(symbols)} Coins...")
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as exe:
+        # Pro Symbol nur dessen eigene Resume-Points übergeben (klein & picklebar).
+        futures = {
+            exe.submit(
+                process_coin,
+                sym,
+                {f"{sym}_{tf}": resume_points[f"{sym}_{tf}"] for tf in TIMEFRAMES if f"{sym}_{tf}" in resume_points},
+            ): sym
+            for sym in symbols
+        }
+        for fut, sym in futures.items():
+            try:
+                fut.result()
+            except Exception as e:
+                logger.error(f"Catch-up-Fehler {sym}: {e}")
     logger.info("✅ REST Catch-Up vollständig completed!")
 
 
+# Warm-up: Die WS-Fleet zuerst verbinden lassen (Stagger ~70s) und Live-Kerzen
+# fließen lassen, BEVOR der Catch-up CPU zieht. Live-Daten sind sofort da,
+# die Historie kommt 2 min später — statt umgekehrt.
+CATCHUP_WARMUP_SEC = 120
+
+
 async def periodic_rest_catchup(symbols):
-    """Background loop: runs gap-check at startup then every 12h."""
+    """Background loop: erster Lauf nach Warm-up, danach alle 12h."""
     loop = asyncio.get_running_loop()
+    logger.info(f"⏳ Catch-up wartet {CATCHUP_WARMUP_SEC}s (WS-Fleet zuerst verbinden lassen)...")
+    await asyncio.sleep(CATCHUP_WARMUP_SEC)
     while True:
-        # Den synchronen Catch-Up in einen Thread auslagern, um den Event-Loop (WebSockets) nicht zu blockieren
+        # In Thread auslagern (blockiert die Loop nicht); die CPU-Arbeit selbst
+        # passiert in den Child-Prozessen des ProcessPools.
         await loop.run_in_executor(None, run_catchup_job, symbols)
 
         logger.info("💤 Catch-Up Job schläft für 12 Stunden...")
@@ -268,7 +302,7 @@ def _flush_to_db(buffer_copy):
         with conn.cursor() as cur:
             count = 0
             success = 0
-            for (sym, tf), data in buffer_copy.items():
+            for (sym, tf, _open_time), data in buffer_copy.items():
                 table_name = f'"{sym}_{tf}"'
                 # D3: WHERE-Klausel wie in insert_fast — unveraenderte Kerzen
                 # erzeugen keine neue Row-Version (WAL-Write-Amplification).
@@ -500,7 +534,11 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
                             tf = k['i']
                             open_time = datetime.datetime.fromtimestamp(k['t'] / 1000, pytz.UTC)
 
-                            WS_KLINE_BUFFER[(sym, tf)] = (
+                            # P1.11: Key inkl. open_time — vorher überschrieb die erste
+                            # Message der NEUEN Kerze das finale Update der alten Kerze
+                            # im Buffer (an jeder Kerzengrenze), die gespeicherte
+                            # "Closed"-Kerze blieb bis zum REST-Catch-up leicht falsch.
+                            WS_KLINE_BUFFER[(sym, tf, open_time)] = (
                                 sym,
                                 open_time,
                                 float(k['o']),
