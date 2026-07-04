@@ -652,6 +652,8 @@ def main() -> None:
     ap.add_argument("--coins", default=None, help="Kommagetrennte Liste; Default: coins.json")
     ap.add_argument("--limit", type=int, default=None, help="nur die ersten N Coins")
     ap.add_argument("--out", default=DEFAULT_OUT_DIR)
+    ap.add_argument("--resume", action="store_true",
+                    help="an bestehendes JSONL anhängen und bereits enthaltene Coins überspringen")
     args = ap.parse_args()
 
     # cp1252-Konsole: Emojis/Sonderzeichen in Fehlermeldungen dürfen den Lauf
@@ -676,37 +678,79 @@ def main() -> None:
     ufi1_mod = import_bot_module("29_ufi1_bot.py", "ufi1_bot") if args.strategy == "ufi1" else None
     abr1_mod = import_bot_module("18_ai_abr1_bot.py", "abr1_bot") if args.strategy == "abr1" else None
 
-    conn = get_db_connection()
-    try:
-        conn.set_session(readonly=True)
-    except Exception:
-        pass
-
     all_trades: list[dict] = []
+    done_symbols: set[str] = set()
+    if args.resume and os.path.exists(out_path):
+        with open(out_path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    tr = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # abgeschnittene letzte Zeile eines abgebrochenen Laufs
+                all_trades.append(tr)
+                done_symbols.add(tr["symbol"])
+        # Der zuletzt geschriebene Coin könnte unvollständig sein → neu rechnen.
+        if all_trades:
+            last_sym = all_trades[-1]["symbol"]
+            all_trades = [t for t in all_trades if t["symbol"] != last_sym]
+            done_symbols.discard(last_sym)
+        print(f"Resume: {len(done_symbols)} Coins / {len(all_trades)} Trades übernommen")
+
+    def fresh_conn():
+        c = get_db_connection()
+        try:
+            c.set_session(readonly=True)
+        except Exception:
+            pass
+        return c
+
+    conn = fresh_conn()
     t0 = time.time()
     try:
+        # Auch bei Resume konsolidiert neu schreiben (übernommene Trades zuerst).
         with open(out_path, "w", encoding="utf-8") as fh:
+            for tr in all_trades:
+                fh.write(json.dumps(tr, default=str) + "\n")
             for i, symbol in enumerate(coins, 1):
-                try:
-                    if args.strategy == "ufi1":
-                        trades = run_ufi1(conn, symbol, args.days, ufi1_mod)
-                    elif args.strategy in ("td", "bb"):
-                        trades = run_td_bb(conn, symbol, args.tf, args.days, args.strategy)
-                    else:
-                        trades = run_abr1(conn, symbol, args.days, abr1_mod)
-                except Exception as e:
-                    print(f"  !! {symbol}: {e}")
+                if symbol in done_symbols:
+                    continue
+                trades = None
+                for attempt in (1, 2):
                     try:
-                        conn.rollback()
-                    except Exception:
-                        pass
+                        if args.strategy == "ufi1":
+                            trades = run_ufi1(conn, symbol, args.days, ufi1_mod)
+                        elif args.strategy in ("td", "bb"):
+                            trades = run_td_bb(conn, symbol, args.tf, args.days, args.strategy)
+                        else:
+                            trades = run_abr1(conn, symbol, args.days, abr1_mod)
+                        break
+                    except Exception as e:
+                        print(f"  !! {symbol} (Versuch {attempt}): {e}")
+                        # Tote Connection (z.B. DB-Neustart/Idle-Kill nach Stunden)
+                        # nicht den ganzen Lauf reißen lassen — reconnecten.
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                            try:
+                                conn = fresh_conn()
+                                print(f"  ↻ DB-Reconnect vor erneutem Versuch von {symbol}")
+                            except Exception as e2:
+                                print(f"  ↻ Reconnect fehlgeschlagen: {e2}")
+                                time.sleep(30)
+                                conn = fresh_conn()
+                if trades is None:
                     continue
                 for tr in trades:
                     fh.write(json.dumps(tr, default=str) + "\n")
+                fh.flush()
                 all_trades.extend(trades)
                 if i % 25 == 0 or i == len(coins):
                     el = time.time() - t0
-                    print(f"[{i}/{len(coins)}] {symbol}: total {len(all_trades)} Trades ({el:.0f}s)")
+                    print(f"[{i}/{len(coins)}] {symbol}: total {len(all_trades)} Trades ({el:.0f}s)", flush=True)
     finally:
         conn.close()
 
