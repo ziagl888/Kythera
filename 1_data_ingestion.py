@@ -209,6 +209,22 @@ def create_db_snapshot(symbols):
         conn.close()
 
 
+def _catchup_child_low_priority():
+    """Initializer für Catch-up-Child-Prozesse: BELOW_NORMAL-Priorität.
+
+    Zweiter Teil des WS-Stabilitäts-Fixes: Auch mit ProcessPool starvten die
+    Catch-up-Kinder bei 100% Gesamt-CPU (10 Kerne: Catch-up + Engine-Zyklus +
+    25 Bots) die WS-Event-Loop auf OS-Scheduler-Ebene. BELOW_NORMAL heißt:
+    Catch-up nutzt nur CPU, die sonst niemand will — der WS-Prozess gewinnt.
+    """
+    try:
+        import psutil
+
+        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+    except Exception:
+        pass
+
+
 def run_catchup_job(symbols):
     """Führt den REST-Catch-Up mit Snapshot aus — in EIGENEN PROZESSEN.
 
@@ -223,7 +239,7 @@ def run_catchup_job(symbols):
     resume_points = create_db_snapshot(symbols)
 
     logger.info(f"⏳ Starting REST Catch-Up (gap-aware, 24h-Overlap) für {len(symbols)} Coins...")
-    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as exe:
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS, initializer=_catchup_child_low_priority) as exe:
         # Pro Symbol nur dessen eigene Resume-Points übergeben (klein & picklebar).
         futures = {
             exe.submit(
@@ -379,10 +395,14 @@ WS_SUBSCRIBE_DELAY_SEC = 1.0
 # 180s ping cycle at the same time → no simultaneous reconnect storm.
 WS_STARTUP_STAGGER_SEC = 10.0
 
-# Reconnect-Backoff: start bei 5s, verdoppelt sich, gedeckelt bei 300s.
+# Reconnect-Backoff: start bei 5s, verdoppelt sich, gedeckelt bei 90s.
 # Jitter ±20% verhindert dass alle Worker gleichzeitig reconnecten.
+# Cap von 300s auf 90s gesenkt: Nach einer CPU-Saturationsphase (Catch-up +
+# Engine-Zyklus) sollen die Worker schnell wieder da sein, nicht bis zu 5 min
+# im Backoff sitzen — genau das riss vorher die Kerzen-Frische über das
+# 12-min-DATA_STALE-Limit.
 WS_RECONNECT_MIN_SEC = 5.0
-WS_RECONNECT_MAX_SEC = 300.0
+WS_RECONNECT_MAX_SEC = 90.0
 
 # Wenn länger als so viele Sekunden keine Message reinkommt → Connection
 # für tot halten und reconnecten (Binance-Streams ticken praktisch ständig,
@@ -625,6 +645,18 @@ async def start_websocket_fleet(symbols):
 # HAUPT-EINSTIEGSPUNKT
 async def main_async():
     logger.info("=== DATA INGESTION SYSTEM START ===")
+
+    # WS-Stabilität: Die Ingestion ist der Daten-Herzschlag der ganzen Fleet —
+    # ihre Event-Loop darf in CPU-Saturationsphasen (Engine-Zyklus, Bots) nicht
+    # vom Scheduler verhungern. ABOVE_NORMAL (nicht HIGH: das würde dem OS
+    # selbst Ressourcen streitig machen).
+    try:
+        import psutil
+
+        psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+        logger.info("⚡ Prozess-Priorität auf ABOVE_NORMAL gesetzt (WS-Loop-Schutz).")
+    except Exception as e:
+        logger.warning(f"Priorität konnte nicht gesetzt werden: {e}")
 
     # 1. Aktuelle Liste holen (Synchron)
     symbols = update_trading_pairs()
