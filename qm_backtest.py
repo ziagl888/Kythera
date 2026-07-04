@@ -165,20 +165,35 @@ def run_simulation(df, symbol, tf):
             tp = order['tp']
 
             triggered = False
-            invalidated = False
+            stopped_on_fill = False
 
+            # FIX (P1.30): SL-Durchstich ist KEINE Invalidierung — der SL liegt
+            # jenseits des Entrys, dieselbe Kerze hat also zwingend auch den Entry
+            # berührt. Konservativ als fill-then-stop werten (sofortiger Verlust)
+            # statt den garantierten Verlierer aus der Statistik zu löschen.
             if dir == "LONG":
                 if curr_low <= sl:
-                    invalidated = True
+                    triggered, stopped_on_fill = True, True
                 elif curr_low <= entry:
                     triggered = True
             elif dir == "SHORT":
                 if curr_high >= sl:
-                    invalidated = True
+                    triggered, stopped_on_fill = True, True
                 elif curr_high >= entry:
                     triggered = True
 
-            if invalidated:
+            if triggered and stopped_on_fill:
+                nominal_size = TRADE_MARGIN * LEVERAGE
+                qty = nominal_size / entry
+                raw_pnl = (sl - entry) * qty if dir == "LONG" else (entry - sl) * qty
+                net_pnl = raw_pnl - nominal_size * TAKER_FEE * 2
+                capital += net_pnl
+                losses += 1
+                if capital > max_capital:
+                    max_capital = capital
+                drawdown = (max_capital - capital) / max_capital * 100
+                if drawdown > max_drawdown:
+                    max_drawdown = drawdown
                 orders_to_remove.append(order)
             elif triggered:
                 active_trades.append({'direction': dir, 'entry': entry, 'sl': sl, 'tp': tp})

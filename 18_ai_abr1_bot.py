@@ -78,6 +78,49 @@ FEATURE_COLUMNS = [
     'retest_volume_ratio_avg',
 ]
 
+# Binär-Flags dürfen über ein einzelnes Coin-Fenster legitim konstant sein
+# (z.B. RSI nie unter 30) — der Startup-Selbsttest prüft sie deshalb nicht hart.
+BINARY_FLAG_FEATURES = {'rsi_below_30', 'rsi_above_70', 'tsi_above_0', 'tsi_below_0'}
+
+# FIX (P0.12): pandas_ta benennt seine Spalten versions-/parameterabhängig
+# (KAMA_9_2_30 statt KAMA_9, TSI_7_12_7 statt TSI_12_7, BBL_20_2.0_2.0 statt
+# BBL_20_2, DCL_20_20 statt DCL_20). Das alte Exakt-Matching fand 11 der 18
+# Feature-Quellspalten nie → NaN → fillna(0) → das Modell lief real nur auf
+# 7 Features (Split-Count-Beweis im Audit). Prefix-Matching wie in
+# 14_ai_atb_bot.py:197-211. 'TSIs_' muss vor 'TSI_' stehen.
+PTA_PREFIX_TO_CANONICAL = [
+    ('EMA_9', 'ema9'),
+    ('EMA_21', 'ema21'),
+    ('KAMA_9', 'kama9'),
+    ('RSI_14', 'rsi14'),
+    ('TSIs_', 'tsi_signal'),
+    ('TSI_', 'tsi'),
+    ('BBL_', 'boll_lower_20'),
+    ('BBM_', 'boll_mid_20'),
+    ('BBU_', 'boll_upper_20'),
+    ('DCL_', 'donchian_lower_20'),
+    ('DCM_', 'donchian_mid_20'),
+    ('DCU_', 'donchian_upper_20'),
+]
+
+
+def resolve_pta_columns(df):
+    """Mappt pandas_ta-Ausgabespalten per Prefix auf die kanonischen Namen.
+
+    Wirft ValueError, wenn eine Quellspalte fehlt — kein stilles fillna(0) mehr.
+    """
+    rename_map = {}
+    missing = []
+    for prefix, canonical in PTA_PREFIX_TO_CANONICAL:
+        col = next((c for c in df.columns if c.startswith(prefix)), None)
+        if col is None:
+            missing.append(f"{prefix}* → {canonical}")
+        else:
+            rename_map[col] = canonical
+    if missing:
+        raise ValueError(f"pandas_ta-Spalten nicht gefunden: {missing}")
+    return df.rename(columns=rename_map)
+
 # Modelle global
 MODELS = {'LONG': None, 'SHORT': None}
 
@@ -117,41 +160,10 @@ def calculate_technical_indicators(df):
     df.ta.bbands(length=20, append=True)
     df.ta.donchian(length=20, append=True)
 
-    expected_pta_cols = {
-        'EMA_9': np.nan,
-        'EMA_21': np.nan,
-        'KAMA_9': np.nan,
-        'RSI_14': np.nan,
-        'TSI_12_7': np.nan,
-        'TSIs_12_7_7': np.nan,
-        'BBL_20_2': np.nan,
-        'BBM_20_2': np.nan,
-        'BBU_20_2': np.nan,
-        'DCL_20': np.nan,
-        'DCM_20': np.nan,
-        'DCU_20': np.nan,
-    }
-    for col, default_val in expected_pta_cols.items():
-        if col not in df.columns:
-            df[col] = default_val
-
-    df.rename(
-        columns={
-            'EMA_9': 'ema9',
-            'EMA_21': 'ema21',
-            'KAMA_9': 'kama9',
-            'RSI_14': 'rsi14',
-            'TSI_12_7': 'tsi',
-            'TSIs_12_7_7': 'tsi_signal',
-            'BBL_20_2': 'boll_lower_20',
-            'BBM_20_2': 'boll_mid_20',
-            'BBU_20_2': 'boll_upper_20',
-            'DCL_20': 'donchian_lower_20',
-            'DCM_20': 'donchian_mid_20',
-            'DCU_20': 'donchian_upper_20',
-        },
-        inplace=True,
-    )
+    # FIX (P0.12): Prefix-Matching statt Exakt-Namen + hartes ValueError bei
+    # fehlender Quellspalte (vorher: NaN-Spalte anlegen → fillna(0) → Feature
+    # still konstant 0).
+    df = resolve_pta_columns(df)
 
     df['dist_close_ema9_pct'] = ((df['close'] - df['ema9']) / df['ema9'] * 100).fillna(0)
     df['dist_ema9_ema21_pct'] = ((df['ema9'] - df['ema21']) / df['ema21'] * 100).fillna(0)
@@ -175,6 +187,55 @@ def calculate_technical_indicators(df):
     df['retest_volume'] = df['volume']
 
     return df.fillna(0)
+
+
+def startup_feature_selfcheck(coins):
+    """FIX (P0.12): Startup-Assertion "kein Feature konstant".
+
+    Berechnet die Feature-Pipeline auf echten Daten einiger Coins und bricht hart
+    ab, wenn ein kontinuierliches Feature konstant ist oder Spalten fehlen — genau
+    der Fehlermodus, der das Modell monatelang unbemerkt auf 7/18 Features fahren
+    ließ. Binär-Flags werden nur gewarnt (legitim konstant über kurze Fenster).
+    """
+    conn = get_db_connection()
+    try:
+        frames = []
+        for symbol in coins[:10]:
+            try:
+                df = pd.read_sql(
+                    f"""
+                    SELECT open_time, open, high, low, close, volume
+                    FROM "{symbol}_1h"
+                    WHERE open_time >= NOW() - INTERVAL '{LIVE_DATA_HISTORY_HOURS} hours'
+                    ORDER BY open_time ASC;
+                    """,
+                    conn,
+                )
+            except Exception as e:
+                logger.warning(f"Selbsttest: {symbol} nicht ladbar ({e}), nächster Coin.")
+                continue
+            if len(df) < 60:
+                continue
+            frames.append(calculate_technical_indicators(df.copy())[FEATURE_COLUMNS])
+            if len(frames) >= 3:
+                break
+
+        if not frames:
+            logger.critical("❌ Feature-Selbsttest: keine verwertbaren Daten gefunden — Abbruch.")
+            exit(1)
+
+        sample = pd.concat(frames, ignore_index=True)
+        continuous = [c for c in FEATURE_COLUMNS if c not in BINARY_FLAG_FEATURES]
+        constant = [c for c in continuous if sample[c].nunique(dropna=False) <= 1]
+        if constant:
+            logger.critical(f"❌ Feature-Selbsttest fehlgeschlagen — konstante Features: {constant}. Abbruch.")
+            exit(1)
+        constant_flags = [c for c in BINARY_FLAG_FEATURES if sample[c].nunique(dropna=False) <= 1]
+        if constant_flags:
+            logger.warning(f"Selbsttest: Binär-Flags konstant über die Stichprobe (kann legitim sein): {constant_flags}")
+        logger.info(f"✅ Feature-Selbsttest bestanden ({len(sample)} Zeilen, {len(frames)} Coins, 18/18 Features variabel).")
+    finally:
+        conn.close()
 
 
 def find_pivot_levels(df):
@@ -380,6 +441,7 @@ def process_abr_logic(conn, symbol):
 def main():
     logger.info("=== AI BREAK & RETEST BOT (ABR1) GESTARTET ===")
     coins = load_models_and_coins()
+    startup_feature_selfcheck(coins)
 
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)

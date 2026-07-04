@@ -5,12 +5,13 @@ warnings.filterwarnings("ignore")
 import json
 import logging
 
+import os
+
 import joblib
 import numpy as np
 import pandas as pd
 import scipy.signal
 import xgboost as xgb
-from sklearn.model_selection import train_test_split
 
 from core.database import get_db_connection
 
@@ -27,6 +28,19 @@ RR_RATIO = 2.0
 TRADE_MARGIN = 1000.0
 LEVERAGE = 20
 TAKER_FEE = 0.0004
+
+# Neue Artefakte gehen ausschließlich nach staging_models — NIE in-place über
+# ein Produktions-pkl (P1.35-Regel). Rollout entscheidet der Operator.
+STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
+
+# FIX (P1.31): unter dieser Coin-Abdeckung wird hart abgebrochen statt still
+# auf einem trunkierten Universum zu trainieren.
+MIN_COIN_COVERAGE = 0.80
+
+# FIX (P1.29): Purge-Gap zwischen den chronologischen Slices. TD-Muster spannen
+# bis zu 100 Bars, BB-Setups bis zu 100 (60 Breakout + 40 Retest) — Labels, die
+# über das Slice-Ende hinauslaufen, dürfen nicht in den nächsten Slice leaken.
+PURGE_GAP_BARS = 100
 
 PRICE_BASED_INDICATORS = [
     'ema_9',
@@ -61,6 +75,10 @@ def load_coins():
 
 
 def fetch_merged_data(symbol, tf):
+    # FIX (P1.31): Connection via try/finally schließen (vorher leakte jeder
+    # Query-Fehler eine Pool-Connection) und Skips sichtbar loggen statt still
+    # ein leeres DataFrame zurückzugeben.
+    conn = None
     try:
         conn = get_db_connection()
         fields = ["t1.open_time", "t1.open", "t1.high", "t1.low", "t1.close"]
@@ -75,7 +93,6 @@ def fetch_merged_data(symbol, tf):
             ORDER BY t1.open_time ASC
         """
         df = pd.read_sql_query(query, conn)
-        conn.close()
 
         if df.empty or len(df) < 500:
             return pd.DataFrame()
@@ -86,8 +103,12 @@ def fetch_merged_data(symbol, tf):
             if c not in ['open_time', 'trend_direction']:
                 df[c] = df[c].astype(float)
         return df.reset_index(drop=True)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[{tf}] {symbol} übersprungen: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
 
 
 def simulate_and_extract_features(df, symbol):
@@ -146,6 +167,7 @@ def simulate_and_extract_features(df, symbol):
                 feats['entry'] = entry
                 feats['sl'] = sl
                 feats['tp'] = tp
+                feats['entry_time'] = df['open_time'].iloc[p3]  # P1.29: für den chronologischen Split
                 td_trades.append(feats)
 
     # --- 1b. THREE-DRIVE DIVERGENCE (BULLISH / LONG) --- NEU!
@@ -177,6 +199,7 @@ def simulate_and_extract_features(df, symbol):
                 feats['entry'] = entry
                 feats['sl'] = sl
                 feats['tp'] = tp
+                feats['entry_time'] = df['open_time'].iloc[p3]  # P1.29: für den chronologischen Split
                 td_trades.append(feats)
 
     # --- 2. BREAKER BLOCK ---
@@ -208,6 +231,7 @@ def simulate_and_extract_features(df, symbol):
                     feats['entry'] = entry
                     feats['sl'] = sl
                     feats['tp'] = tp
+                    feats['entry_time'] = df['open_time'].iloc[j]  # P1.29: Retest-Kerze = Entry-Zeit
                     bb_trades.append(feats)
                     break
 
@@ -239,6 +263,7 @@ def simulate_and_extract_features(df, symbol):
                     feats['entry'] = entry
                     feats['sl'] = sl
                     feats['tp'] = tp
+                    feats['entry_time'] = df['open_time'].iloc[j]  # P1.29: Retest-Kerze = Entry-Zeit
                     bb_trades.append(feats)
                     break
 
@@ -248,6 +273,41 @@ def simulate_and_extract_features(df, symbol):
 # ==========================================
 # 🧠 ML TRAINING & EVALUATION
 # ==========================================
+def chronological_three_way_split(trades_df, tf):
+    """FIX (P1.29): chronologischer Train/Val/Test-Split (70/15/15) mit Purge-Gap.
+
+    Vorher: random train_test_split über zeitlich überlappende Quasi-Duplikate
+    (Kontamination) + Threshold-Wahl auf dem Test-Set (Maximum-Statistik).
+    """
+    tf_hours = {'1h': 1, '4h': 4}.get(tf, 1)
+    gap = pd.Timedelta(hours=PURGE_GAP_BARS * tf_hours)
+
+    df = trades_df.copy()
+    df['entry_time'] = pd.to_datetime(df['entry_time'], utc=True)
+    df = df.sort_values('entry_time').reset_index(drop=True)
+
+    t_train_end = df['entry_time'].quantile(0.70)
+    t_val_end = df['entry_time'].quantile(0.85)
+
+    train = df[df['entry_time'] <= t_train_end]
+    val = df[(df['entry_time'] > t_train_end + gap) & (df['entry_time'] <= t_val_end)]
+    test = df[df['entry_time'] > t_val_end + gap]
+    return train, val, test
+
+
+def _threshold_scan(trades, thresh):
+    taken = trades[trades['prob'] >= thresh]
+    if len(taken) == 0:
+        return None
+    wins = len(taken[taken['outcome'] == 1])
+    losses = len(taken[taken['outcome'] == 0])
+    win_rate = (wins / len(taken)) * 100
+    # PnL = (Wins * 2R) - (Losses * 1R)
+    net_r = (wins * 2.0) - losses
+    pnl = net_r * (TRADE_MARGIN * 0.1)  # Annahme: 1R = 10% Margin-Verlust
+    return {'trades': len(taken), 'wr': win_rate, 'pnl': pnl, 'net_r': net_r}
+
+
 def train_model(trades_df, pattern_name, tf):
     if trades_df.empty or len(trades_df) < 50:
         logger.warning(f"Insufficient data für {pattern_name} auf {tf}.")
@@ -255,12 +315,19 @@ def train_model(trades_df, pattern_name, tf):
 
     logger.info(f"🚀 Starting ML Training für {pattern_name} ({tf}) mit {len(trades_df)} Trades...")
 
-    feature_cols = [c for c in trades_df.columns if c not in ['outcome', 'entry', 'sl', 'tp']]
-    X = trades_df[feature_cols].fillna(0)
-    y = trades_df['outcome'].astype(int)
+    feature_cols = [c for c in trades_df.columns if c not in ['outcome', 'entry', 'sl', 'tp', 'entry_time']]
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    test_trades = trades_df.loc[X_test.index].copy()
+    train_trades, val_trades, test_trades = chronological_three_way_split(trades_df, tf)
+    logger.info(
+        f"[{tf}] {pattern_name}: chronologischer Split train={len(train_trades)} "
+        f"val={len(val_trades)} test={len(test_trades)} (Purge-Gap {PURGE_GAP_BARS} Bars)"
+    )
+    if len(train_trades) < 100 or len(val_trades) < 30 or len(test_trades) < 30:
+        logger.error(f"[{tf}] {pattern_name}: zu wenig Trades für einen validen 3-Wege-Split — Abbruch.")
+        return
+
+    X_train = train_trades[feature_cols].fillna(0)
+    y_train = train_trades['outcome'].astype(int)
 
     model = xgb.XGBClassifier(
         n_estimators=300,
@@ -273,45 +340,59 @@ def train_model(trades_df, pattern_name, tf):
     )
     model.fit(X_train, y_train)
 
-    probs = model.predict_proba(X_test)[:, 1]
-    test_trades['prob'] = probs
+    # FIX (P1.29): Threshold auf dem VALIDATION-Slice wählen; Test bleibt unberührt.
+    val_trades = val_trades.copy()
+    val_trades['prob'] = model.predict_proba(val_trades[feature_cols].fillna(0))[:, 1]
 
     best_pnl = -float('inf')
     best_thresh = 0.0
-    best_stats = {}
 
-    print(f"\n--- 💰 THRESHOLD OPTIMIERUNG: {pattern_name} ({tf}) ---")
+    print(f"\n--- 💰 THRESHOLD OPTIMIERUNG (Validation): {pattern_name} ({tf}) ---")
     thresholds = np.arange(0.30, 0.85, 0.05)
     for thresh in thresholds:
-        taken = test_trades[test_trades['prob'] >= thresh]
-        if len(taken) == 0:
+        stats = _threshold_scan(val_trades, thresh)
+        if stats is None:
             continue
-
-        wins = len(taken[taken['outcome'] == 1])
-        losses = len(taken[taken['outcome'] == 0])
-        win_rate = (wins / len(taken)) * 100
-
-        # PnL = (Wins * 2R) - (Losses * 1R)
-        net_r = (wins * 2.0) - losses
-        pnl = net_r * (TRADE_MARGIN * 0.1)  # Annahme: 1R = 10% Margin-Verlust
-
         print(
-            f"Thresh: {thresh:.2f} | Trades: {len(taken):<4} | Win Rate: {win_rate:>5.1f}% | Net R: {net_r:+.1f} | PnL: ${pnl:+,.0f}"
+            f"Thresh: {thresh:.2f} | Trades: {stats['trades']:<4} | Win Rate: {stats['wr']:>5.1f}% "
+            f"| Net R: {stats['net_r']:+.1f} | PnL: ${stats['pnl']:+,.0f}"
         )
-
-        if pnl > best_pnl:
-            best_pnl = pnl
+        if stats['pnl'] > best_pnl:
+            best_pnl = stats['pnl']
             best_thresh = thresh
-            best_stats = {'trades': len(taken), 'wr': win_rate, 'pnl': pnl, 'net_r': net_r}
+
+    # Ehrliche Out-of-Sample-Zahl: fixer Threshold aus Validation, angewandt auf Test.
+    test_trades = test_trades.copy()
+    test_trades['prob'] = model.predict_proba(test_trades[feature_cols].fillna(0))[:, 1]
+    test_stats = _threshold_scan(test_trades, best_thresh) or {'trades': 0, 'wr': 0.0, 'pnl': 0.0, 'net_r': 0.0}
 
     print(
-        f"🎯 OPTIMAL: {best_thresh:.2f} -> {best_stats.get('net_r', 0)} R (Win Rate: {best_stats.get('wr', 0):.1f}%)\n"
+        f"🎯 OPTIMAL: {best_thresh:.2f} (Validation) | TEST: {test_stats['trades']} Trades, "
+        f"{test_stats['wr']:.1f}% WR, {test_stats['net_r']:+.1f} R\n"
     )
 
-    # Modell speichern
+    # Modell speichern — nur nach STAGING_DIR, nie in-place über Produktions-pkls.
     prefix = "bb" if "Breaker" in pattern_name else "td"
-    save_path = f"{prefix}_xgboost_model_{tf}.pkl"
-    joblib.dump({'model': model, 'features': feature_cols, 'optimal_threshold': best_thresh}, save_path)
+    os.makedirs(STAGING_DIR, exist_ok=True)
+    save_path = os.path.join(STAGING_DIR, f"{prefix}_xgboost_model_{tf}.pkl")
+    joblib.dump(
+        {
+            'model': model,
+            'features': feature_cols,
+            'optimal_threshold': best_thresh,
+            'meta': {
+                'trainer': 'smc_ml_trainer.py',
+                'xgboost_version': xgb.__version__,
+                'split': 'chronological 70/15/15 + purge gap (P1.29)',
+                'threshold_selected_on': 'validation',
+                'test_stats': test_stats,
+                'n_train': int(len(train_trades)),
+                'n_val': int(len(val_trades)),
+                'n_test': int(len(test_trades)),
+            },
+        },
+        save_path,
+    )
     logger.info(f"💾 Saved: {save_path}")
 
 
@@ -323,17 +404,34 @@ def main():
     for tf in TIMEFRAMES:
         all_bb = []
         all_td = []
+        coins_with_data = 0
+        skipped = []
 
         for idx, coin in enumerate(coins, 1):
             if idx % 50 == 0:
                 logger.info(f"[{tf}] Loading Features: {idx}/{len(coins)}")
             df = fetch_merged_data(coin, tf)
             if df.empty:
+                skipped.append(coin)
                 continue
 
+            coins_with_data += 1
             bb, td = simulate_and_extract_features(df, coin)
             all_bb.extend(bb)
             all_td.extend(td)
+
+        # FIX (P1.31): harter Abbruch statt still auf 0-8 Coins trainieren.
+        coverage = coins_with_data / len(coins) if coins else 0.0
+        if skipped:
+            logger.warning(
+                f"[{tf}] {len(skipped)} Coins ohne (ausreichende) Daten: "
+                f"{skipped[:20]}{'...' if len(skipped) > 20 else ''}"
+            )
+        if coverage < MIN_COIN_COVERAGE:
+            raise SystemExit(
+                f"[{tf}] ABBRUCH: nur {coins_with_data}/{len(coins)} Coins ({coverage:.0%}) lieferten Daten "
+                f"(Minimum {MIN_COIN_COVERAGE:.0%})."
+            )
 
         train_model(pd.DataFrame(all_bb), "Breaker Block", tf)
         train_model(pd.DataFrame(all_td), "Three-Drive", tf)

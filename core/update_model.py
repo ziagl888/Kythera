@@ -32,7 +32,17 @@ def update_model(filename):
 
         # 2. Das Modell im neuen, nativen XGBoost-Format speichern
         # The native format (.json or .ubm) is more version-independent
-        new_filename = filename.replace(".model", "_v2.json")
+        # FIX (P1.35): replace(".model", ...) war ein No-op für *_model.pkl/.joblib —
+        # save_model() überschrieb dann das Original-Artefakt in-place. Jetzt splitext
+        # + harter Refuse, falls Ziel == Quelle oder das Ziel bereits existiert.
+        root, ext = os.path.splitext(filename)
+        new_filename = f"{root}_v2.json"
+        if os.path.abspath(new_filename) == os.path.abspath(filename):
+            print(f"🛑 Refusing to overwrite source artifact in-place: {filename}")
+            return None
+        if os.path.exists(new_filename):
+            print(f"🛑 Refusing to overwrite existing artifact: {new_filename}")
+            return None
         model.save_model(new_filename)
 
         # 3. Testweise wieder laden, um Erfolg zu prüfen
