@@ -385,12 +385,15 @@ def _flush_to_db(buffer_copy):
 # SUBSCRIBE-based connections appear to be dropped by Binance at ~150-200s
 # when carrying 800+ streams, despite the documented 1024 limit.
 #
-# FIX HTTP 414 (URI Too Long): 860 Streams ergaben ~19-KB-URLs — je nach
-# Symbollängen im Chunk lehnte Binance den Handshake mit 414 ab; der betroffene
-# Worker (12% aller Streams) kam NIE online und retried endlos. 400 Streams
-# ≈ 9-KB-URL liegen sicher unter dem Limit; ~14 Worker bleiben weit unter der
-# 300-Connects/5min-Grenze.
-WS_STREAMS_PER_WORKER = 400
+# FIX HTTP 414 (URI Too Long): 860 Streams ergaben ~19-KB-URLs → Binance
+# lehnte manche Handshakes mit 414 ab.
+# FIX SILENT-CAP (der eigentliche Killer): Binance USDⓈ-M-Futures liefert
+# pro Connection nur ~200 Streams — bei mehr wird der Handshake AKZEPTIERT,
+# aber es kommen NIE Messages (kein Fehler!). Mit 400 Streams liefen alle
+# 14 Worker in den 120s-Message-Watchdog und reconnecteten endlos stumm.
+# Identisches Verhalten hatte das Audit beim Whale-Logger dokumentiert
+# (P1.42: "fapi-Cap ~200/Conn"). 180 = Sicherheitsmarge unter dem Cap.
+WS_STREAMS_PER_WORKER = 180
 
 # SUBSCRIBE-Chunk-Größe und Abstand. Binance erlaubt 10 msg/s pro Connection
 # (Futures); wir bleiben bei 1 msg/s = 10x Sicherheitsmarge, wichtig beim
@@ -400,9 +403,9 @@ WS_SUBSCRIBE_DELAY_SEC = 1.0
 
 # Staggered Startup: beim ersten Start Worker versetzt anlegen um die
 # 300-connects-pro-5min-Regel nicht zu verletzen.
-# 10s stagger over 6 workers = 60s spread → workers never hit the Binance
-# 180s ping cycle at the same time → no simultaneous reconnect storm.
-WS_STARTUP_STAGGER_SEC = 10.0
+# Bei ~30 Workern (180 Streams/Conn): 5s Stagger = 150s Startspread —
+# alle Worker binnen 2,5 min oben, 30 Connects/5min << Limit 300.
+WS_STARTUP_STAGGER_SEC = 5.0
 
 # Reconnect-Backoff: start bei 5s, verdoppelt sich, gedeckelt bei 90s.
 # Jitter ±20% verhindert dass alle Worker gleichzeitig reconnecten.
