@@ -108,20 +108,29 @@ def cap_leverage_to_sl(desired_lev, entry, sl, safety=0.5):
     return f"{lev}x" if as_string else lev
 
 
-def calculate_smart_targets(conn, symbol, direction, live_price):
+def calculate_smart_targets(conn, symbol, direction, live_price, df=None):
     """
     Kombiniert den riesigen Pool an echten Leveln mit intelligentem Clustering,
     ATR-based minimum distance and hard SAFETY-CAPS against out-of-bounds values.
+
+    `df` (optional): fertiges, chronologisch aufsteigendes 1h-Fenster mit
+    open/high/low/close/volume. Wird es übergeben, findet KEIN DB-Zugriff statt —
+    so spielt der Walk-Forward-Simulator (tools/walkforward_sim.py, P0.10) exakt
+    dieselbe Level-/SL-/Target-Logik auf historischen Fenstern ab wie die
+    Live-Bots (eine Quelle statt Copy-Paste-Skew). Auch der Fehler-Fallback am
+    Ende ist bewusst identisch — der Simulator soll das Live-Verhalten messen.
     """
     try:
-        # Loading 1000 hours for proper swing-highs
-        query = f'SELECT open, high, low, close, volume FROM "{symbol}_1h" ORDER BY open_time DESC LIMIT 1000'
-        df = pd.read_sql_query(query, conn)
+        if df is None:
+            # Loading 1000 hours for proper swing-highs
+            query = f'SELECT open, high, low, close, volume FROM "{symbol}_1h" ORDER BY open_time DESC LIMIT 1000'
+            df = pd.read_sql_query(query, conn)
+            df = df.iloc[::-1]
 
         if len(df) < 100:
             raise ValueError("Insufficient data")
 
-        df = df.iloc[::-1].reset_index(drop=True)
+        df = df.reset_index(drop=True)
         live_price = float(live_price)
         is_long = direction.upper() == "LONG"
 
