@@ -1,4 +1,4 @@
-from core.market_utils import get_max_leverage, is_trade_already_active
+from core.market_utils import check_cooldown, get_max_leverage, is_trade_already_active, update_cooldown
 # strategies/strat_volume_indicator.py
 import logging
 import pandas as pd
@@ -85,17 +85,28 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     lev = get_max_leverage(symbol, 20)
     margin = 'Cross'
 
+    # FIX P1.16: Ohne Cooldown refeuerte ein bis zu 5 Tage alter Volume-Spike
+    # alle 30 min dasselbe Signal (Serien-Reentry). Jetzt 12h-Sperre pro
+    # (Coin, Direction) über das zentrale trade_cooldowns-System.
+    module_tag = 'Volume Indicator'
+    cd_hours = 12
+
     if volume_spike == 1:  # LONG
         if is_trade_already_active(conn, symbol, 'LONG', 'Volume Indicator'): return None
+        # check_cooldown returned True wenn die Sperre NOCH aktiv ist → skip.
+        if check_cooldown(conn, module_tag, symbol, 'LONG', cd_hours): return None
         sl = float(entry * 0.95)
         t1, t2, t3, t4 = float(entry * 1.025), float(entry * 1.050), float(entry * 1.075), float(entry * 1.10)
+        update_cooldown(conn, module_tag, symbol, 'LONG')
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "LONG", "margin": margin, "entry": entry, "lev": lev,
                 "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
 
     elif volume_spike == -1:  # SHORT
         if is_trade_already_active(conn, symbol, 'SHORT', 'Volume Indicator'): return None
+        if check_cooldown(conn, module_tag, symbol, 'SHORT', cd_hours): return None
         sl = float(entry * 1.05)
         t1, t2, t3, t4 = float(entry * 0.975), float(entry * 0.95), float(entry * 0.925), float(entry * 0.9)
+        update_cooldown(conn, module_tag, symbol, 'SHORT')
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "SHORT", "margin": margin, "entry": entry, "lev": lev,
                 "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
 
