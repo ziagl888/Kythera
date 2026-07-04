@@ -407,14 +407,15 @@ WS_SUBSCRIBE_DELAY_SEC = 1.0
 # alle Worker binnen 2,5 min oben, 30 Connects/5min << Limit 300.
 WS_STARTUP_STAGGER_SEC = 5.0
 
-# Reconnect-Backoff: start bei 5s, verdoppelt sich, gedeckelt bei 90s.
+# Reconnect-Backoff: start bei 5s, verdoppelt sich, gedeckelt bei 900s.
 # Jitter ±20% verhindert dass alle Worker gleichzeitig reconnecten.
-# Cap von 300s auf 90s gesenkt: Nach einer CPU-Saturationsphase (Catch-up +
-# Engine-Zyklus) sollen die Worker schnell wieder da sein, nicht bis zu 5 min
-# im Backoff sitzen — genau das riss vorher die Kerzen-Frische über das
-# 12-min-DATA_STALE-Limit.
+# WICHTIG (Anti-Ban): Der Backoff wird erst nach der ERSTEN DATEN-Message
+# zurückgesetzt, nicht beim Connect — Binance kann Verbindungen annehmen und
+# stumm lassen (IP-Drossel nach Connect-Churn). Mit Reset-on-Connect
+# reconnecteten 30 stumme Worker im 120s-Takt (~900 Connects/h) und
+# erneuerten die Drossel endlos selbst.
 WS_RECONNECT_MIN_SEC = 5.0
-WS_RECONNECT_MAX_SEC = 90.0
+WS_RECONNECT_MAX_SEC = 900.0
 
 # Wenn länger als so viele Sekunden keine Message reinkommt → Connection
 # für tot halten und reconnecten (Binance-Streams ticken praktisch ständig,
@@ -504,9 +505,10 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
                 logger.info(f"🟢 WS-Worker {worker_id} connected ({len(streams)} streams, URL-encoded)")
 
                 # No SUBSCRIBE needed — streams are in the URL.
-                # Reset backoff on successful connect.
-                consecutive_failures = 0
-                backoff = WS_RECONNECT_MIN_SEC
+                # Backoff wird NICHT hier zurückgesetzt, sondern erst bei der
+                # ersten echten Daten-Message (stumme Verbindungen zählen als
+                # Fehlversuch weiter — Anti-Ban, siehe WS_RECONNECT_MAX_SEC).
+                got_data = False
 
                 # --- PONG TASK: unsolicited pong every 120s ---
                 # Spec allows this as keepalive. Guards against event-loop
@@ -561,6 +563,10 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
 
                         # Daten-Message
                         if 'data' in payload and 'k' in payload['data']:
+                            if not got_data:
+                                got_data = True
+                                consecutive_failures = 0
+                                backoff = WS_RECONNECT_MIN_SEC
                             k = payload['data']['k']
                             sym = k['s']
                             tf = k['i']
@@ -586,6 +592,21 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
                         await pong_task
                     except (asyncio.CancelledError, Exception):
                         pass
+
+            # Watchdog-Break-Pfad (Verbindung war offen, aber stumm): Vorher
+            # reconnectete das SOFORT ohne Backoff → 30 stumme Worker = 120s-
+            # Reconnect-Hammer, der eine IP-Drossel endlos erneuert. Jetzt:
+            # stumme Verbindung = Fehlversuch mit exponentiellem Backoff.
+            if not got_data:
+                consecutive_failures += 1
+                jitter = random.uniform(0.8, 1.2)
+                wait_sec = min(backoff * jitter, WS_RECONNECT_MAX_SEC)
+                logger.warning(
+                    f"🔇 WS-Worker {worker_id}: Verbindung blieb stumm — Backoff {wait_sec:.0f}s "
+                    f"(Versuch #{consecutive_failures})"
+                )
+                await asyncio.sleep(wait_sec)
+                backoff = min(backoff * 2.0, WS_RECONNECT_MAX_SEC)
 
         except asyncio.CancelledError:
             logger.info(f"🛑 WS-Worker {worker_id} stopped (cancelled).")

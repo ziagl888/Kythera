@@ -34,7 +34,11 @@ CPU_ALERT_PCT = 90               # Durchschnitt ueber 5 Minuten
 OUTBOX_FAIL_LIMIT = 20           # failed-Rows in 15 min
 OUTBOX_PENDING_AGE_S = 10 * 60   # aeltestes ungesendetes Signal
 ALERT_COOLDOWN_S = 30 * 60
-INGESTION_RESTART_COOLDOWN_S = 30 * 60
+# Auto-Restart bewusst selten: Jeder Ingestion-Restart erzeugt ~30 WS-Connects.
+# Bei einer Binance-IP-Drossel (Connect-Churn-Strafe) hält ein 30-min-Restart-
+# Takt die Strafe selbst am Leben — 2h lassen sie abklingen; die Ingestion
+# heilt stumme Verbindungen inzwischen selbst per Backoff (1_data_ingestion).
+INGESTION_RESTART_COOLDOWN_S = 120 * 60
 
 _cpu_samples: deque = deque(maxlen=5)
 _last_alert: dict = {}
