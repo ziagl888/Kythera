@@ -289,12 +289,16 @@ def run_freshness_job(symbols):
     session.headers.update({"User-Agent": "CryptoBot/2.0"})
     updated = 0
     try:
-        for sym in symbols:
-            # Abbrechen, sobald der WS wieder liefert — kein Doppel-Aufwand.
-            if time.time() - WS_LAST_DATA_TS < FRESHNESS_WS_HEALTHY_SEC:
-                logger.info("🔌 Freshness-Fallback: WS liefert wieder — Durchlauf abgebrochen.")
-                return updated
-            for tf in FRESHNESS_HOT_TFS:
+        # TF-priorisiert statt symbolweise: erst ALLE Coins 5m (~3,5 min Zyklus),
+        # dann 30m, dann 1h. So bleibt der zeitkritischste TF für jedes Symbol
+        # unter dem 12-min-DATA_STALE-Limit, statt dass Z-Coins alle TFs eines
+        # ~20-min-Zyklus hinterherhängen.
+        for tf in FRESHNESS_HOT_TFS:
+            for sym in symbols:
+                # Abbrechen, sobald der WS wieder liefert — kein Doppel-Aufwand.
+                if time.time() - WS_LAST_DATA_TS < FRESHNESS_WS_HEALTHY_SEC:
+                    logger.info("🔌 Freshness-Fallback: WS liefert wieder — Durchlauf abgebrochen.")
+                    return updated
                 try:
                     resp = session.get(
                         BASE_URL + '/fapi/v1/klines',
