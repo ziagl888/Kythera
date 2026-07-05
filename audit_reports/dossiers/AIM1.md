@@ -2,6 +2,8 @@
 
 > Stacking-Meta-Modell über alle Bot-Signale (Marktkontext × Schwarm × Quell-Identität). **Note F (Report 16).** Kernverdikt: **aktiv schädlich, verlässlich invertiert** — conf>0,9 → 9,3% WR, Σ −3.399 netto; größter AI-Verlustbringer. **Sofort pausieren** (Report 13/14/16 einstimmig).
 
+> **ABSCHLUSS 2026-07-05:** Operator-Entscheidung — AIM1 wird ad acta gelegt (kein Retrain). Nachfolger **AIM2** nach `docs/AIM2_DESIGN.md` (S7-Bauplan, Batch-E-Gerüst); Slot 15, Channel und Posting-Flow bleiben, `ai_signals.model='AIM2'` für saubere Attribution. Dieses Dossier ist damit historisch.
+
 ## 1. Steckbrief
 
 | Feld | Inhalt |
