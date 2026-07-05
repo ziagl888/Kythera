@@ -6,8 +6,10 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 import datetime
 import json
 import logging
+import os
 import time
 
+import joblib
 import numpy as np
 import pandas as pd
 import pandas_ta  # noqa: F401 — registriert den df.ta-Accessor (Regression aus 052ba4c:
@@ -124,16 +126,65 @@ def resolve_pta_columns(df):
         raise ValueError(f"pandas_ta-Spalten nicht gefunden: {missing}")
     return df.rename(columns=rename_map)
 
-# Modelle global
+# Modelle global — je Richtung ein Vertrag: {model, features, threshold,
+# success_idx, calibrator}. Der Vertrag kommt aus der meta.json des Artefakts
+# (Fix R13-ABR1-5: nichts mehr hardcoden, was das Training festlegt).
 MODELS = {'LONG': None, 'SHORT': None}
+
+
+def _load_model_contract(direction, model_file):
+    """Lädt Modell + Vertrag. Neue Artefakte (tools/retrain_from_replay.py)
+    bringen eine *_meta.json mit model_type='binary...', features, threshold —
+    success ist dort predict_proba[:, 1]. Ohne meta.json: Legacy-3-Klassen-
+    Modell (multi:softprob, success = Klasse 0, Thresholds aus THRESHOLDS)."""
+    model = xgb.XGBClassifier()
+    model.load_model(model_file)
+
+    meta_path = model_file.replace('.json', '_meta.json')
+    calib_path = model_file.replace('.json', '_calib.pkl')
+    calibrator = None
+    if os.path.exists(calib_path):
+        calibrator = joblib.load(calib_path)
+
+    if os.path.exists(meta_path):
+        with open(meta_path, encoding='utf-8') as f:
+            meta = json.load(f)
+        if not str(meta.get('model_type', '')).startswith('binary'):
+            raise ValueError(f"{meta_path}: unerwarteter model_type {meta.get('model_type')!r}")
+        features = meta.get('features')
+        if not features:
+            raise ValueError(f"{meta_path}: Feature-Liste fehlt — Artefakt mit aktuellem Trainer neu erzeugen")
+        contract = {
+            'model': model,
+            'features': list(features),
+            'threshold': float(meta['optimal_threshold']),
+            'success_idx': 1,
+            'calibrator': calibrator,
+        }
+        logger.info(
+            f"✅ {direction}: Binär-Modell ({meta_path}), {len(features)} Features, "
+            f"Threshold {contract['threshold']:.2f}, Kalibrator: {'ja' if calibrator else 'nein'}"
+        )
+        return contract
+
+    logger.warning(
+        f"⚠️ {direction}: keine {meta_path} gefunden — Legacy-3-Klassen-Vertrag "
+        f"(success_idx={SUCCESS_CLASS_IDX}, Threshold {THRESHOLDS[direction]:.2f}). "
+        f"Das Legacy-Modell ist laut Audit/Retrain (Report 19) als Gate praktisch blind."
+    )
+    return {
+        'model': model,
+        'features': list(FEATURE_COLUMNS),
+        'threshold': float(THRESHOLDS[direction]),
+        'success_idx': SUCCESS_CLASS_IDX,
+        'calibrator': calibrator,
+    }
 
 
 def load_models_and_coins():
     try:
-        MODELS['LONG'] = xgb.XGBClassifier()
-        MODELS['LONG'].load_model(SG_LONG_MODEL_FILE)
-        MODELS['SHORT'] = xgb.XGBClassifier()
-        MODELS['SHORT'].load_model(SG_SHORT_MODEL_FILE)
+        MODELS['LONG'] = _load_model_contract('LONG', SG_LONG_MODEL_FILE)
+        MODELS['SHORT'] = _load_model_contract('SHORT', SG_SHORT_MODEL_FILE)
         logger.info("✅ ML Modelle loaded successfully.")
     except Exception as e:
         logger.critical(f"❌ ERROR: Could not load ML models: {e}")
@@ -242,39 +293,157 @@ def startup_feature_selfcheck(coins):
 
 
 def find_pivot_levels(df):
+    """FIX (R07-ABR1-b, Detektor-Rework 2026-07): nur BESTÄTIGTE Pivots.
+
+    Das alte 'edge'-Padding + greater_equal erklärte die letzten PIVOT_WINDOW
+    Kerzen zu unbestätigten Pivots, die mit der nächsten Kerze wieder
+    verschwinden konnten (Repainting) — solche Levels kamen im Training
+    (BT2-Datagrepper, ohne Padding) nie vor. Jetzt: ein Pivot braucht
+    PIVOT_WINDOW Kerzen auf BEIDEN Seiten; der Rand wird hart ausgeschlossen
+    (argrelextrema clippt am Rand sonst gegen sich selbst).
+    """
     if len(df) < PIVOT_WINDOW * 2 + 1:
         return []
 
-    padded_high = np.pad(df['high'].values, (PIVOT_WINDOW, PIVOT_WINDOW), 'edge')
-    padded_low = np.pad(df['low'].values, (PIVOT_WINDOW, PIVOT_WINDOW), 'edge')
+    high_extrema_indices = scipy.signal.argrelextrema(df['high'].values, np.greater_equal, order=PIVOT_WINDOW)[0]
+    low_extrema_indices = scipy.signal.argrelextrema(df['low'].values, np.less_equal, order=PIVOT_WINDOW)[0]
 
-    high_extrema_indices = scipy.signal.argrelextrema(padded_high, np.greater_equal, order=PIVOT_WINDOW)[0]
-    low_extrema_indices = scipy.signal.argrelextrema(padded_low, np.less_equal, order=PIVOT_WINDOW)[0]
+    first_confirmed = PIVOT_WINDOW
+    last_confirmed = len(df) - 1 - PIVOT_WINDOW
 
     levels = []
-    for idx in high_extrema_indices:
-        original_idx = idx - PIVOT_WINDOW
-        if 0 <= original_idx < len(df):
-            levels.append(
-                {
-                    'price': df.iloc[original_idx]['high'],
-                    'type': 'resistance',
-                    'index': original_idx,
-                    'time': df.iloc[original_idx]['open_time'],
-                }
-            )
-    for idx in low_extrema_indices:
-        original_idx = idx - PIVOT_WINDOW
-        if 0 <= original_idx < len(df):
-            levels.append(
-                {
-                    'price': df.iloc[original_idx]['low'],
-                    'type': 'support',
-                    'index': original_idx,
-                    'time': df.iloc[original_idx]['open_time'],
-                }
-            )
+    for idx, price_col, lvl_type in (
+        (high_extrema_indices, 'high', 'resistance'),
+        (low_extrema_indices, 'low', 'support'),
+    ):
+        for original_idx in idx:
+            if first_confirmed <= original_idx <= last_confirmed:
+                levels.append(
+                    {
+                        'price': df.iloc[original_idx][price_col],
+                        'type': lvl_type,
+                        'index': int(original_idx),
+                        'time': df.iloc[original_idx]['open_time'],
+                    }
+                )
     return levels
+
+
+# Setup-Geometrie-Features (Detektor-Rework 2026-07): die 18 FEATURE_COLUMNS
+# sind generische Indikator-Abstände der Retest-Kerze — das Break&Retest-Setup
+# selbst (Level-Distanz, Break-Stärke, Alter) war für das Modell unsichtbar.
+# Diese Features werden von find_break_retest_setups() geliefert und gehen in
+# die NEUEN Binär-Modelle ein (Feature-Liste kommt aus deren meta.json).
+GEOMETRY_FEATURES = [
+    'setup_dist_close_level_pct',
+    'setup_break_strength_pct',
+    'setup_candles_since_break',
+    'setup_level_age_candles',
+    'setup_retest_wick_pct',
+]
+
+
+def find_break_retest_setups(df, retest_idx, levels):
+    """Gemeinsame Break&Retest-Erkennung für Bot UND Walk-Forward-Simulator
+    (tools/walkforward_sim.py importiert diese Funktion — eine Quelle, kein Skew).
+
+    Prüft, ob die Kerze bei retest_idx der ERSTE Retest eines frischen,
+    gültigen Level-Breaks ist. Behebt drei Fehler der alten Inline-Logik:
+
+    1. RICHTUNGS-KOPPLUNG: Vorher war der Retest ein reines Touch-Gate
+       (is_retest_long OR is_retest_short), die Richtung kam allein aus dem
+       Break — ein High-Touch von UNTEN an einen aufwärts gebrochenen
+       Widerstand (= gescheiterter Ausbruch, im Training die LOSS-Klasse)
+       wurde als LONG signalisiert. Jetzt: LONG verlangt Low-Touch von oben
+       UND Close über dem Level; SHORT spiegelbildlich (Trainer-Semantik,
+       BT2-Datagrepper Z. 215/272).
+    2. HOLD-CHECK: Alle Closes zwischen Break und Retest müssen auf der
+       Break-Seite des Levels bleiben — ein zwischenzeitlich gescheiterter
+       Ausbruch invalidiert das Setup.
+    3. ERST-TOUCH: Der Trainer labelt nur den ersten Retest nach dem Break;
+       eine frühere Band-Berührung zwischen Break und Retest invalidiert.
+
+    Zusätzlich Trainer-Semantik für das Level-Alter: der Break muss NACH der
+    vollständigen Pivot-Bestätigung liegen (break_idx > level_index + PIVOT_WINDOW).
+
+    Rückgabe: Liste von Setups (max. 1 je Richtung; bei mehreren Kandidaten
+    gewinnt der frischeste Break) inkl. GEOMETRY_FEATURES fürs Modell.
+    """
+    retest = df.iloc[retest_idx]
+    setups = {}
+
+    for level in levels:
+        lvl_price = level['price']
+        upper_bound = lvl_price * (1 + LEVEL_TOLERANCE_PCT)
+        lower_bound = lvl_price * (1 - LEVEL_TOLERANCE_PCT)
+
+        if level['type'] == 'resistance':
+            direction = 'LONG'
+            # Retest von OBEN: Low tastet das Band an, Close hält über dem Level.
+            if not (lower_bound <= retest['low'] <= upper_bound and retest['close'] > lvl_price):
+                continue
+        else:
+            direction = 'SHORT'
+            # Retest von UNTEN: High tastet das Band an, Close hält unter dem Level.
+            if not (lower_bound <= retest['high'] <= upper_bound and retest['close'] < lvl_price):
+                continue
+
+        # Break-Suche rückwärts; Level muss vor dem Break bestätigt sein.
+        search_end_idx = max(level['index'] + PIVOT_WINDOW, retest_idx - RETEST_BACKWARD_LOOKUP_CANDLES)
+        break_idx = None
+        for j in range(retest_idx - 1, search_end_idx, -1):
+            if j <= 0:
+                break
+            c_close = df.iloc[j]['close']
+            prev_close = df.iloc[j - 1]['close']
+            if direction == 'LONG':
+                if prev_close < lvl_price < c_close:
+                    break_idx = j
+                    break
+                if c_close <= lvl_price:
+                    break  # Close unter dem Level nach dem Break → Ausbruch gescheitert
+                if df.iloc[j]['low'] <= upper_bound:
+                    break  # frühere Band-Berührung → Retest wäre nicht der erste
+            else:
+                if prev_close > lvl_price > c_close:
+                    break_idx = j
+                    break
+                if c_close >= lvl_price:
+                    break
+                if df.iloc[j]['high'] >= lower_bound:
+                    break
+        if break_idx is None:
+            continue
+
+        candles_since_break = retest_idx - break_idx
+        break_close = df.iloc[break_idx]['close']
+        if direction == 'LONG':
+            dist_close_level = (retest['close'] - lvl_price) / lvl_price * 100
+            break_strength = (break_close - lvl_price) / lvl_price * 100
+            retest_wick = (retest['close'] - retest['low']) / retest['close'] * 100
+        else:
+            dist_close_level = (lvl_price - retest['close']) / lvl_price * 100
+            break_strength = (lvl_price - break_close) / lvl_price * 100
+            retest_wick = (retest['high'] - retest['close']) / retest['close'] * 100
+
+        setup = {
+            'direction': direction,
+            'level_price': float(lvl_price),
+            'level_type': level['type'],
+            'break_idx': int(break_idx),
+            'features': {
+                'setup_dist_close_level_pct': float(dist_close_level),
+                'setup_break_strength_pct': float(break_strength),
+                'setup_candles_since_break': float(candles_since_break),
+                'setup_level_age_candles': float(retest_idx - level['index']),
+                'setup_retest_wick_pct': float(retest_wick),
+            },
+        }
+        best = setups.get(direction)
+        if best is None or candles_since_break < best['features']['setup_candles_since_break']:
+            setups[direction] = setup
+
+    return list(setups.values())
 
 
 def send_signal(conn, symbol, direction, prob, close_price):
@@ -364,78 +533,48 @@ def process_abr_logic(conn, symbol):
         if not levels:
             return
 
-        potential_retest_candle_indices = range(len(df_indicators) - 1, max(0, len(df_indicators) - 1 - 3), -1)
+        # FIX (R07-ABR1-a, Detektor-Rework 2026-07): NUR die jüngste
+        # geschlossene Kerze ist Retest-Kandidat. Der Bot läuft stündlich —
+        # jede Kerze wird genau einmal geprüft; das alte 3-Kerzen-Fenster
+        # produzierte bis zu 3h stale Entries und Doppel-Bewertungen.
+        # (Die laufende Kerze wurde oben via open_time < current_hour_utc
+        # weggeschnitten — 1h-Kerzen haben immer minute=0.)
+        retest_idx = len(df_indicators) - 1
+        retest_candle = df_indicators.iloc[retest_idx]
 
-        for retest_idx in potential_retest_candle_indices:
-            retest_candle = df_indicators.iloc[retest_idx]
-            # FIX: Der frühere Filter `retest_candle['open_time'].minute != 0`
-            # war wirkungslos — 1h-Kerzen haben IMMER minute=0. Die aktuelle
-            # (laufende) Kerze wurde bereits oben via
-            # `df = df[df['open_time'] < current_hour_utc]` weggeschnitten.
+        for setup in find_break_retest_setups(df_indicators, retest_idx, levels):
+            direction = setup['direction']
+            contract = MODELS[direction]
 
-            for level in levels:
-                if level['index'] >= retest_idx:
-                    continue
+            # Feature-Vertrag des Artefakts strikt bedienen: Indikator-Features
+            # der Retest-Kerze + Setup-Geometrie. Fehlende Features sind ein
+            # harter Fehler — KEIN stilles fillna(0) über fehlende Spalten
+            # (X-R5-Muster, hat den 11-Features-Bug 3 Stufen lang versteckt).
+            feature_row = {**retest_candle[FEATURE_COLUMNS].to_dict(), **setup['features']}
+            missing = [c for c in contract['features'] if c not in feature_row]
+            if missing:
+                raise ValueError(f"Feature-Vertrag verletzt — fehlend: {missing}")
+            X_event = pd.DataFrame([{c: feature_row[c] for c in contract['features']}], dtype=float)
 
-                lvl_price = level['price']
-                upper_bound = lvl_price * (1 + LEVEL_TOLERANCE_PCT)
-                lower_bound = lvl_price * (1 - LEVEL_TOLERANCE_PCT)
+            # Defensive Absicherung gegen NaN/Inf in berechneten WERTEN
+            # (z.B. Indikator-Warmup bei frischen Coins): NaN/Inf → 0 (neutral).
+            X_event = X_event.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-                is_retest_long = retest_candle['low'] <= upper_bound and retest_candle['low'] >= lower_bound
-                is_retest_short = retest_candle['high'] >= lower_bound and retest_candle['high'] <= upper_bound
+            prediction_proba = float(contract['model'].predict_proba(X_event)[0, contract['success_idx']])
 
-                if not (is_retest_long or is_retest_short):
-                    continue
+            # Kalibrierte Confidence nur für die Anzeige — das Gate läuft auf
+            # der Roh-Probability, auf der auch der Threshold gewählt wurde.
+            display_proba = prediction_proba
+            if contract['calibrator'] is not None:
+                display_proba = float(contract['calibrator'].predict([prediction_proba])[0])
 
-                break_found = False
-                direction = None
-                search_start_idx = retest_idx - 1
-                search_end_idx = max(level['index'], retest_idx - RETEST_BACKWARD_LOOKUP_CANDLES)
-
-                for break_idx in range(search_start_idx, search_end_idx, -1):
-                    b_candle = df_indicators.iloc[break_idx]
-                    prev_b_candle = df_indicators.iloc[break_idx - 1] if break_idx > 0 else None
-                    if prev_b_candle is None:
-                        continue
-
-                    if (
-                        level['type'] == 'resistance'
-                        and prev_b_candle['close'] < lvl_price
-                        and b_candle['close'] > lvl_price
-                    ):
-                        break_found = True
-                        direction = 'LONG'
-                        break
-                    elif (
-                        level['type'] == 'support'
-                        and prev_b_candle['close'] > lvl_price
-                        and b_candle['close'] < lvl_price
-                    ):
-                        break_found = True
-                        direction = 'SHORT'
-                        break
-
-                if break_found and direction:
-                    current_model = MODELS[direction]
-                    current_threshold = THRESHOLDS[direction]
-
-                    X_event_features = retest_candle[FEATURE_COLUMNS].values
-                    X_event = pd.DataFrame([X_event_features], columns=FEATURE_COLUMNS, dtype=float)
-
-                    # FIX: Defensive Absicherung gegen NaN/Inf in den Features.
-                    # Vorher konnte ein einziges NaN (z.B. bei frischen Coins mit
-                    # Indikator-Warmup-Phase) die ML-Prediction crashen oder
-                    # Garbage-Werte liefern. Jetzt: NaN/Inf → 0 (neutral).
-                    X_event = X_event.replace([np.inf, -np.inf], np.nan).fillna(0)
-
-                    prediction_proba = float(current_model.predict_proba(X_event)[0, SUCCESS_CLASS_IDX])
-
-                    if prediction_proba >= 0.50:  # Grundbedingung aus deinem alten Script
-                        logger.info(
-                            f"ABR1 Break&Retest erkannt bei {symbol} | Dir: {direction} | Prob: {prediction_proba:.2f}"
-                        )
-                        if prediction_proba >= current_threshold:
-                            send_signal(conn, symbol, direction, prediction_proba, retest_candle['close'])
+            logger.info(
+                f"ABR1 Break&Retest erkannt bei {symbol} | Dir: {direction} | "
+                f"Level: {setup['level_price']:.6f} | Prob: {prediction_proba:.2f} "
+                f"(Gate {contract['threshold']:.2f})"
+            )
+            if prediction_proba >= contract['threshold']:
+                send_signal(conn, symbol, direction, display_proba, retest_candle['close'])
 
     except Exception as e:
         logger.error(f"Error for {symbol}: {e}")

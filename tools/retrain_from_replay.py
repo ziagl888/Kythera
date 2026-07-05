@@ -7,7 +7,7 @@ die Nachfolger-Modelle:
 
   td / bb   — binäres XGB wie smc_ml_trainer (20 Features), ein Modell je TF
   abr1      — binäres XGB je Richtung (18 Features wie 18_ai_abr1_bot)
-  mis1      — 4 binäre XGB ({72,168}h × {pump,dump}) auf den 63 bereinigten
+  mis1      — 8 binäre XGB ({8,24,72,168}h × {pump,dump}) auf den 63 bereinigten
               Features aus core.mis_features (Leakage-Fix, Report 13); Label =
               TP1-vor-SL INNERHALB des Horizonts (horizontgekappter Replay)
 
@@ -44,6 +44,8 @@ sys.path.insert(0, REPO_ROOT)
 from core.mis_features import FEATURE_COLS as MIS1_FEATURES  # noqa: E402
 from core.mis_features import assert_features_alive  # noqa: E402
 
+MIS1_HORIZONS = (8, 24, 72, 168)  # muss zu tools/walkforward_sim.MIS1_HORIZONS passen
+
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
 LIVE_DIR = r"C:\Users\Michael\PycharmProjects\crypto_trading_bot_v2"
@@ -58,13 +60,24 @@ SNIPER_FEATURES = [
     "trend_UP", "trend_DOWN", "trend_SIDEWAYS",
 ]
 
-ABR1_FEATURES = [
+# Feature-Vertrag des ALTEN 3-Klassen-Produktionsmodells (nur noch für den
+# Alt-vs-Neu-Kalibrierungsvergleich — das alte Modell kennt exakt diese 18).
+ABR1_FEATURES_LEGACY = [
     "dist_close_ema9_pct", "dist_ema9_ema21_pct", "dist_close_kama9_pct",
     "rsi14", "rsi_below_30", "rsi_above_70",
     "tsi", "tsi_signal", "tsi_above_0", "tsi_below_0",
     "dist_close_boll_upper_pct", "dist_close_boll_mid_pct", "dist_close_boll_lower_pct",
     "dist_close_donchian_upper_pct", "dist_close_donchian_mid_pct", "dist_close_donchian_lower_pct",
     "retest_volume", "retest_volume_ratio_avg",
+]
+
+# Neuer Vertrag: 18 Indikator-Features + Setup-Geometrie aus dem Detektor-
+# Rework (find_break_retest_setups in 18_ai_abr1_bot — der Simulator schreibt
+# sie ins Replay-Feature-Dict). Vorher war das Break&Retest-Setup selbst für
+# das Modell unsichtbar.
+ABR1_FEATURES = ABR1_FEATURES_LEGACY + [
+    "setup_dist_close_level_pct", "setup_break_strength_pct",
+    "setup_candles_since_break", "setup_level_age_candles", "setup_retest_wick_pct",
 ]
 
 
@@ -181,7 +194,7 @@ def old_model_calibration(strategy, tf, df, direction=None, horizon=None):
         else:  # abr1: natives 3-Klassen-JSON, success = Klasse 0
             model = xgb.XGBClassifier()
             model.load_model(os.path.join(LIVE_DIR, f"bt2_model_{direction}.json"))
-            X = df.reindex(columns=ABR1_FEATURES, fill_value=0).fillna(0)
+            X = df.reindex(columns=ABR1_FEATURES_LEGACY, fill_value=0).fillna(0)
             probs = model.predict_proba(X)[:, 0]
         return probs, bucket_calibration(np.asarray(probs), df["outcome"].values.astype(float),
                                          df["net_pnl_pct"].values.astype(float))
@@ -247,7 +260,9 @@ def run_abr1(replay_path: str) -> dict:
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(train, val, test, ABR1_FEATURES)
         _, calib_old = old_model_calibration("abr1", None, test, direction=direction)
 
-        # natives XGB-JSON wie das Produktions-Format + meta-Sidecar
+        # natives XGB-JSON wie das Produktions-Format + meta-Sidecar.
+        # "features" gehört IN die meta (Artefakt-Governance, Report 13) — der
+        # Bot lädt den Vertrag von dort statt ihn zu hardcoden (R13-ABR1-5).
         os.makedirs(STAGING_DIR, exist_ok=True)
         out_json = os.path.join(STAGING_DIR, f"bt2_model_{direction}.json")
         model.save_model(out_json)
@@ -257,6 +272,7 @@ def run_abr1(replay_path: str) -> dict:
             "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
             "model_type": "binary (1=TP1-first-touch) — ANDERS als das alte 3-Klassen-Modell!",
             "success_proba": "predict_proba[:, 1]",
+            "features": ABR1_FEATURES,
             "optimal_threshold": thresh, "split": "chronological 70/15/15 + purge gap",
             "xgboost_version": xgb.__version__,
             "n_train": len(train), "n_val": len(val), "n_test": len(test),
@@ -264,6 +280,10 @@ def run_abr1(replay_path: str) -> dict:
         }
         with open(out_json.replace(".json", "_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2)
+        # Isotonic-Kalibrator persistieren (war vorher NUR bei td/bb im pkl —
+        # für abr1 ging er verloren). Der Bot nutzt ihn für die angezeigte
+        # Confidence; das Gate läuft weiter auf der Roh-Probability.
+        joblib.dump(iso, out_json.replace(".json", "_calib.pkl"))
         print(f"  💾 {out_json}")
         results[direction] = {"n_events": len(d), "base_rate": round(d["outcome"].mean() * 100, 1),
                               "threshold": thresh, "val_stats": val_stats, "test_stats": test_stats,
@@ -286,7 +306,7 @@ def load_mis1_replay(path: str) -> pd.DataFrame:
                 "symbol": t["symbol"], "direction": t["direction"],
                 "signal_time": pd.Timestamp(t["signal_time"]),
             })
-            for h in (72, 168):
+            for h in MIS1_HORIZONS:
                 row[f"outcome_{h}h"] = t.get(f"outcome_{h}h")
                 row[f"net_pnl_{h}h"] = t.get(f"net_pnl_{h}h")
             rows.append(row)
@@ -308,7 +328,7 @@ def run_mis1(replay_path: str, stride_hours: int = 24) -> dict:
     assert_features_alive(df_all, context=" (mis1-Retrain)")
 
     results: dict = {"strategy": "mis1"}
-    for horizon in (72, 168):
+    for horizon in MIS1_HORIZONS:
         for direction in ("LONG", "SHORT"):
             key = f"{horizon}h_{'pump' if direction == 'LONG' else 'dump'}"
             d = df_all[(df_all["direction"] == direction) & df_all[f"outcome_{horizon}h"].notna()].copy()

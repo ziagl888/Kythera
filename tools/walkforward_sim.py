@@ -547,16 +547,18 @@ def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
     """Walk-forward der ABR1-Erkennung: pro geschlossener 1h-Kerze prüft der
-    Replay genau diese Kerze als Retest-Kandidat (der Bot prüft stündlich die
-    letzten 3 — bar-für-bar deckt dieselben Kandidaten ohne Dreifachzählung).
+    Replay genau diese Kerze als Retest-Kandidat (== Bot-Verhalten seit dem
+    Detektor-Rework 2026-07).
+
+    Die Erkennung kommt komplett aus dem Bot-Modul (find_break_retest_setups:
+    Richtungs-Kopplung des Retests, Hold-Check, Erst-Touch, bestätigte Pivots)
+    — eine Quelle, kein Skew. Die Setup-Geometrie-Features des Detektors
+    landen mit im Feature-Dict des Replay-Events.
 
     Indikatoren werden EINMAL über die Gesamtserie via Bot-Feature-Builder
     berechnet (== Trainer-Verhalten; minimale Abweichung zum 240h-Fenster des
     Bots bei rekursiven Indikatoren, dokumentiert im Report).
     """
-    PIVOT_WINDOW = abr1_mod.PIVOT_WINDOW
-    LOOKBACK = abr1_mod.RETEST_BACKWARD_LOOKUP_CANDLES
-    TOL = abr1_mod.LEVEL_TOLERANCE_PCT
     HIST = abr1_mod.LIVE_DATA_HISTORY_HOURS  # 240
 
     df = load_ohlcv(conn, symbol, "1h", days + 15)
@@ -577,7 +579,6 @@ def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
     for t in range(HIST, len(df)):
         ts_decision = pd.Timestamp(t1h[t]) + pd.Timedelta(hours=1)
         lo_b = t - HIST + 1
-        win_h, win_l = H[lo_b: t + 1], L[lo_b: t + 1]
         win_df = df.iloc[lo_b: t + 1].reset_index(drop=True)
 
         levels = abr1_mod.find_pivot_levels(win_df)
@@ -585,32 +586,8 @@ def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
             continue
 
         retest_idx = len(win_df) - 1  # genau die frisch geschlossene Kerze
-        retest_high, retest_low = win_h[-1], win_l[-1]
-
-        for level in levels:
-            if level["index"] >= retest_idx:
-                continue
-            lvl = level["price"]
-            ub, lb = lvl * (1 + TOL), lvl * (1 - TOL)
-            is_retest_long = lb <= retest_low <= ub
-            is_retest_short = lb <= retest_high <= ub
-            if not (is_retest_long or is_retest_short):
-                continue
-
-            direction = None
-            search_end = max(level["index"], retest_idx - LOOKBACK)
-            for b in range(retest_idx - 1, search_end, -1):
-                if b <= 0:
-                    continue
-                if level["type"] == "resistance" and win_df["close"].iloc[b - 1] < lvl < win_df["close"].iloc[b]:
-                    direction = "LONG"
-                    break
-                if level["type"] == "support" and win_df["close"].iloc[b - 1] > lvl > win_df["close"].iloc[b]:
-                    direction = "SHORT"
-                    break
-            if direction is None:
-                continue
-
+        for bnr_setup in abr1_mod.find_break_retest_setups(win_df, retest_idx, levels):
+            direction = bnr_setup["direction"]
             if direction in cooldown and ts_decision < cooldown[direction]:
                 continue
             entry = float(C[t])
@@ -623,14 +600,14 @@ def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
                 setup["entry1"], setup["sl"], setup["targets"], PUBLISHED_TARGETS["abr1"],
             )
             feats = {k: float(df_ind[k].iloc[t]) for k in feature_cols}
+            feats.update({k: float(v) for k, v in bnr_setup["features"].items()})
             trades.append({
                 "strategy": "abr1", "tf": "1h", "symbol": symbol, "direction": direction,
                 "signal_time": str(ts_decision), "entry": setup["entry1"], "entry2": setup["entry2"],
                 "sl": setup["sl"], "targets": setup["targets"][:PUBLISHED_TARGETS["abr1"]],
-                "level_price": float(lvl), "features": feats, **result,
+                "level_price": float(bnr_setup["level_price"]), "features": feats, **result,
             })
             cooldown[direction] = ts_decision + pd.Timedelta(hours=4)
-            break  # wie live: ein Signal pro Scan/Richtung, dann Cooldown
 
     return trades
 
@@ -638,7 +615,7 @@ def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 # ADAPTER 5: MIS1 (dichte Stichprobe je geschlossener 1h-Kerze — Retrain-Labels)
 # ─────────────────────────────────────────────────────────────────────────────
-MIS1_HORIZONS = (72, 168)  # Report 16: Fokus 72H; 168H nur mit Drift-Monitoring
+MIS1_HORIZONS = (8, 24, 72, 168)  # alle Live-Horizonte des Bots; 2026-07-05 um 8/24 erweitert (vorher Report-16-Fokus 72/168)
 MIS1_WARMUP = 30  # volume_sma20 (20) + Deltas; DB-Indikatoren kommen fertig aus dem Join
 
 
@@ -677,7 +654,7 @@ def run_mis1(conn, symbol: str, days: int, stride: int) -> list[dict]:
 
     Je Sample und Richtung: Geometrie = calculate_smart_targets auf dem
     1000-Kerzen-Fenster BIS zur Entscheidungskerze (exakt die Live-Funktion),
-    Exits horizontgekappt (72h/168h) in EINEM Lauf — Label = TP1-vor-SL
+    Exits horizontgekappt (8h/24h/72h/168h) in EINEM Lauf — Label = TP1-vor-SL
     INNERHALB des Horizonts; Timeout mit vollem Datenfenster ist eine 0,
     Datenende vor Horizontende bleibt None (wird beim Training verworfen).
 
