@@ -43,7 +43,7 @@ PROCESSES_TO_RUN = [
     {"name": "AI ATS1 Detector", "script": "12_ai_ats_bot.py", "restart_interval": None, "start_delay": 55},
     {"name": "AI RUB1 Detector", "script": "13_ai_rub_bot.py", "restart_interval": None, "start_delay": 63},
     {"name": "AI ATB1 Detector", "script": "14_ai_atb_bot.py", "restart_interval": None, "start_delay": 71},
-    {"name": "AI AIM1 Detector", "script": "15_ai_master_bot.py", "restart_interval": None, "start_delay": 79},
+    {"name": "AI AIM2 Detector", "script": "15_ai_master_bot.py", "restart_interval": None, "start_delay": 79},
     {"name": "SMC FOREX Detector", "script": "16_smc_forex_metals_bot.py", "restart_interval": None, "start_delay": 87},
     {"name": "Mayank Bot", "script": "17_mayank_bot.py", "restart_interval": None, "start_delay": 95},
     {"name": "AI ABR1 Detector", "script": "18_ai_abr1_bot.py", "restart_interval": None, "start_delay": 103},
