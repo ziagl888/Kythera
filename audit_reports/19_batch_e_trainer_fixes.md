@@ -91,7 +91,19 @@ Kandidatenwahl nach Report 16 + E2: **TD_1H/4H** (beste Kalibrierung, netto posi
 
 Methodik je Modell (`tools/retrain_from_replay.py`): Label = First-Touch-TP1-vor-SL der **geposteten** smart-targets-Geometrie (Fees inkl.); chronologischer 70/15/15-Split mit Purge-Gap; Threshold per **realem Replay-PnL** auf Validation; Isotonic-Kalibrierung (als Zusatz-Key im Artefakt); Kalibrierungs-Report alt vs. neu auf identischen Test-Events.
 
-<!-- RETRAIN_RESULTS -->
+### Ergebnisse (Details + Kalibrierungstabellen: `staging_models\REPORT.md` und `retrain_*_stats.json`)
+
+| Modell | Replay-Events | Neues Modell (Out-of-Time-Test) | Alt-Modell auf denselben Events | Deploy-Empfehlung |
+|---|---|---|---|---|
+| **TD_4H** | 1.245 / 540d | 63,5% WR @0,50 bei 63,3% Basisrate; Kalibrierung 0,4→0,8 monoton | 0,8+-Bucket = Basisniveau (62,5%, n=56) | ✔ vertretbar, Erwartung klein; Datenlage strukturell dünn |
+| **TD_1H** | 3.916 / 540d | **anti-kalibriert** (0,0–0,3→75%, 0,7–0,8→44,8%); Val-PnL überall negativ | genauso flach (0,8+: 52,1%, n=169) | ✘ NICHT deployen; TD_1H parken oder ohne Confidence |
+| **BB_4H** | 13.334 / 540d | +5pp WR über Basisrate @0,60, monoton 0,3→0,7 — aber Test-PnL −90% kum. | Probs kollabieren <0,5, kein Ranking | (✔) als Filter, Ertragserwartung neutral |
+| **ABR1 LONG** | 77.398 / 365d (100 Coins) | Test-WR = Basisrate, 0,8+ anti-kalibriert (35,8%) | 99,5% der Probs <0,3 → Gate live blind | ✘ LONG-Gate zu |
+| **ABR1 SHORT** | 91.627 / 365d (100 Coins) | 0,5→0,8 monoton (+2–4pp), Operating Point besser 0,60–0,70 statt Val-0,75 | dito blind | (✔) mit Bot-Umbau auf Binär-Vertrag |
+
+**Gesamtfazit:** Kein Retrain liefert robusten Out-of-Time-Ertrag — WR-Rankings übersetzen sich nicht zuverlässig in PnL. Bestätigt Report 16: Der Ertrag kommt aus Trade-Konstruktion + Regime, nicht aus ML-Skill. Nächste echte Hebel: Exit-Geometrie und MIS1-Neutraining nach diesem Gerüst.
+
+**Betriebsnotizen aus den Läufen:** (a) Beide Langläufe starben nach Stunden binnen 3 Minuten an einer extern gekillten DB-Connection (P1.33-Klasse live beobachtet) → Simulator hat jetzt Reconnect-Retry + `--resume`. (b) `coins.json` wechselte zwischen den Läufen von 648 auf 530 Einträge — **P2.16 live bestätigt** (zwei Writer mit verschiedenen Filtern). (c) ABR1-Detektor ohne ML-Gate emittiert ~1.700 Events/Coin/Jahr — Full-Universe-Replay wäre ~900k Events; auf die 100 liquidesten Coins gekappt (dokumentierter Bias).
 
 ---
 
