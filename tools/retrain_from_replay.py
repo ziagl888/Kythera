@@ -7,6 +7,9 @@ die Nachfolger-Modelle:
 
   td / bb   — binäres XGB wie smc_ml_trainer (20 Features), ein Modell je TF
   abr1      — binäres XGB je Richtung (18 Features wie 18_ai_abr1_bot)
+  mis1      — 4 binäre XGB ({72,168}h × {pump,dump}) auf den 63 bereinigten
+              Features aus core.mis_features (Leakage-Fix, Report 13); Label =
+              TP1-vor-SL INNERHALB des Horizonts (horizontgekappter Replay)
 
 Methodik (Report-13-Gerüst):
   * chronologischer 70/15/15-Split mit Purge-Gap (P1.29)
@@ -37,6 +40,9 @@ from sklearn.isotonic import IsotonicRegression
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
+
+from core.mis_features import FEATURE_COLS as MIS1_FEATURES  # noqa: E402
+from core.mis_features import assert_features_alive  # noqa: E402
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
@@ -153,10 +159,21 @@ def train_binary(train, val, test, feature_cols, hyper=None):
     return model, iso, thresh, val_stats, test_stats, calib_new
 
 
-def old_model_calibration(strategy, tf, df, direction=None):
+def old_model_calibration(strategy, tf, df, direction=None, horizon=None):
     """Kalibrierung des PRODUKTIONS-Modells auf denselben Replay-Events."""
     try:
-        if strategy in ("td", "bb"):
+        if strategy == "mis1":
+            # Legacy-67-Feature-pkl (inkl. der Unfall-Features — die stehen im
+            # Replay als legacy_features-Spalten bereit, s. core.mis_features).
+            key = f"{horizon}h_{'pump' if direction == 'LONG' else 'dump'}"
+            path = os.path.join(LIVE_DIR, f"pump_model_{key}_final.pkl")
+            if not os.path.exists(path):
+                path = os.path.join(REPO_ROOT, f"pump_model_{key}_final.pkl")
+            model = joblib.load(path)
+            feats = list(model.feature_names_in_)
+            X = df.reindex(columns=feats, fill_value=0).fillna(0)
+            probs = model.predict_proba(X)[:, 1]
+        elif strategy in ("td", "bb"):
             data = joblib.load(os.path.join(LIVE_DIR, f"{strategy}_xgboost_model_{tf}.pkl"))
             model, feats = data["model"], data["features"]
             X = df.reindex(columns=feats, fill_value=0).fillna(0)
@@ -255,6 +272,88 @@ def run_abr1(replay_path: str) -> dict:
     return {"strategy": "abr1", **results}
 
 
+def load_mis1_replay(path: str) -> pd.DataFrame:
+    """MIS1-JSONL: Features + legacy_features flach, beide Horizont-Labels.
+    Zeilen ohne Label für einen Horizont (Datenende) werden erst je Horizont
+    verworfen — deshalb hier KEIN globaler outcome_tp1-Filter."""
+    rows = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            t = json.loads(line)
+            row = dict(t.pop("features", {}))
+            row.update(t.pop("legacy_features", {}))
+            row.update({
+                "symbol": t["symbol"], "direction": t["direction"],
+                "signal_time": pd.Timestamp(t["signal_time"]),
+            })
+            for h in (72, 168):
+                row[f"outcome_{h}h"] = t.get(f"outcome_{h}h")
+                row[f"net_pnl_{h}h"] = t.get(f"net_pnl_{h}h")
+            rows.append(row)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["signal_time"] = pd.to_datetime(df["signal_time"], utc=True).dt.tz_localize(None)
+        df = df.sort_values("signal_time").reset_index(drop=True)
+    return df
+
+
+def run_mis1(replay_path: str, stride_hours: int = 24) -> dict:
+    df_all = load_mis1_replay(replay_path)
+    if df_all.empty or len(df_all) < 2000:
+        raise SystemExit(f"Zu wenig Replay-Samples ({len(df_all)}) in {replay_path}")
+    print(f"mis1: {len(df_all)} Samples, {df_all['symbol'].nunique()} Coins, "
+          f"{df_all['signal_time'].min()} → {df_all['signal_time'].max()}")
+
+    # P0.12-Assertion auf dem Trainingsmaterial: kein kontinuierliches Feature konstant.
+    assert_features_alive(df_all, context=" (mis1-Retrain)")
+
+    results: dict = {"strategy": "mis1"}
+    for horizon in (72, 168):
+        for direction in ("LONG", "SHORT"):
+            key = f"{horizon}h_{'pump' if direction == 'LONG' else 'dump'}"
+            d = df_all[(df_all["direction"] == direction) & df_all[f"outcome_{horizon}h"].notna()].copy()
+            d["outcome"] = d[f"outcome_{horizon}h"].astype(int)
+            d["net_pnl_pct"] = d[f"net_pnl_{horizon}h"].astype(float)
+            d = d.reset_index(drop=True)
+            if len(d) < 2000:
+                print(f"mis1 {key}: nur {len(d)} Events — übersprungen")
+                continue
+
+            # Purge-Gap = Horizont + Stride: kein Label-Fenster aus dem Train-
+            # Slice ragt in Val/Test hinein (Zwillings-Leakage, 13-Addendum-P0).
+            train, val, test = chrono_split(d, horizon + stride_hours)
+            print(f"mis1 {key}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
+                  f"Basisrate TP1@{horizon}h {d['outcome'].mean()*100:.1f}%")
+
+            model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
+                train, val, test, MIS1_FEATURES)
+            _, calib_old = old_model_calibration("mis1", None, test,
+                                                 direction=direction, horizon=horizon)
+
+            meta = {
+                "trainer": "tools/retrain_from_replay.py", "strategy": "mis1",
+                "horizon_hours": horizon, "direction": direction,
+                "label_source": os.path.basename(replay_path),
+                "label": f"first-touch TP1-vor-SL der geposteten smart-targets-Geometrie "
+                         f"INNERHALB {horizon}h, Fees inkl. (Timeout=0)",
+                "features": "core.mis_features.FEATURE_COLS (63, skalenfrei — Leakage-Fix Report 13)",
+                "split": f"chronological 70/15/15 + purge gap {horizon + stride_hours}h",
+                "threshold_selected_on": "validation (realer Replay-PnL)",
+                "xgboost_version": xgb.__version__,
+                "n_train": len(train), "n_val": len(val), "n_test": len(test),
+                "val_stats": val_stats, "test_stats": test_stats,
+            }
+            save_artifact(os.path.join(STAGING_DIR, f"mis1_model_{key}.pkl"),
+                          model, MIS1_FEATURES, thresh, iso, meta)
+            with open(os.path.join(STAGING_DIR, f"mis1_model_{key}_meta.json"), "w", encoding="utf-8") as fh:
+                json.dump(meta, fh, indent=2, default=str)
+            results[key] = {"n_events": len(d), "base_rate": round(d["outcome"].mean() * 100, 1),
+                            "threshold": thresh, "val_stats": val_stats, "test_stats": test_stats,
+                            "calibration_new_test": calib_new, "calibration_old_same_events": calib_old,
+                            "feature_importance_top": top_importance(model, MIS1_FEATURES)}
+    return results
+
+
 def top_importance(model, feature_cols, k=8):
     imp = model.feature_importances_
     order = np.argsort(imp)[::-1][:k]
@@ -269,20 +368,25 @@ def main():
     except Exception:
         pass
     ap = argparse.ArgumentParser()
-    ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1"])
+    ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1", "mis1"])
     ap.add_argument("--tf", default="4h", choices=["1h", "4h"])
     ap.add_argument("--replay", default=None)
     ap.add_argument("--days", type=int, default=540)
+    ap.add_argument("--stride", type=int, default=24,
+                    help="mis1: Sampling-Stride des Replays (geht in den Purge-Gap ein)")
     args = ap.parse_args()
 
     if args.replay is None:
         tag = f"{args.strategy}_{args.tf}" if args.strategy in ("td", "bb") else args.strategy
-        days = args.days if args.strategy in ("td", "bb") else 365
+        days = args.days if args.strategy in ("td", "bb", "mis1") else 365
         args.replay = os.path.join(REPLAY_DIR, f"{tag}_replay_{days}d.jsonl")
 
     if args.strategy in ("td", "bb"):
         result = run_td_bb(args.strategy, args.tf, args.replay)
         name = f"{args.strategy}_{args.tf}"
+    elif args.strategy == "mis1":
+        result = run_mis1(args.replay, stride_hours=args.stride)
+        name = "mis1"
     else:
         result = run_abr1(args.replay)
         name = "abr1"

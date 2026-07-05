@@ -29,6 +29,9 @@ Strategien
   td     — Three-Drive-Erkennung aus 25_smc_ml_sniper.scan_market (1h+4h)
   bb     — Breaker-Block-Erkennung aus 25_smc_ml_sniper.scan_market (1h+4h)
   abr1   — Break&Retest-Erkennung aus 18_ai_abr1_bot (1h)
+  mis1   — dichte Stichprobe je geschlossener 1h-Kerze (kein Detektor-Gate),
+           Features aus core.mis_features (geteilter Builder, Leakage-Fix),
+           Labels horizontgekappt 72h/168h — Retrain-Priorität #1 (Report 16)
 
 Betriebsregeln (Live-VPS!)
 --------------------------
@@ -64,7 +67,19 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 from core.database import get_db_connection  # noqa: E402
-from core.trade_utils import calculate_smart_targets  # noqa: E402
+from core.mis_features import (  # noqa: E402
+    FEATURE_COLS as MIS1_FEATURE_COLS,
+)
+from core.mis_features import (
+    LEGACY_ONLY_COLS as MIS1_LEGACY_COLS,
+)
+from core.mis_features import (
+    MIS_SQL_INDICATOR_SELECT,
+)
+from core.mis_features import (
+    add_advanced_features as mis1_add_features,
+)
+from core.trade_utils import calculate_smart_targets, compute_smart_target_levels  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────────────
 # KONFIGURATION
@@ -77,7 +92,7 @@ MAX_CPU_AT_START = 90.0  # health_monitor CPU_SATURATED nicht triggern
 
 # Wie viele TPs der jeweilige Bot tatsächlich publiziert (Cornix-Message) —
 # bestimmt die Positions-Fraktionierung im Ladder-Exit.
-PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3}
+PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5}
 
 
 def set_low_priority() -> None:
@@ -621,6 +636,124 @@ def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ADAPTER 5: MIS1 (dichte Stichprobe je geschlossener 1h-Kerze — Retrain-Labels)
+# ─────────────────────────────────────────────────────────────────────────────
+MIS1_HORIZONS = (72, 168)  # Report 16: Fokus 72H; 168H nur mit Drift-Monitoring
+MIS1_WARMUP = 30  # volume_sma20 (20) + Deltas; DB-Indikatoren kommen fertig aus dem Join
+
+
+def load_mis1_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
+    """1h-Kerzen + Indikator-Join mit der geteilten Spaltenliste aus
+    core.mis_features. NUR geschlossene Kerzen (R1-Disziplin) — die laufende
+    Stunde fliegt am date_trunc-Filter raus."""
+    try:
+        df = pd.read_sql_query(
+            f"""SELECT h.open_time, h.open, h.high, h.low, h.close, h.volume,
+                {MIS_SQL_INDICATOR_SELECT}
+                FROM "{symbol}_1h" h
+                LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time
+                WHERE h.open_time >= NOW() - INTERVAL '{int(days)} days'
+                  AND h.open_time < date_trunc('hour', NOW())
+                ORDER BY h.open_time ASC""",
+            conn,
+        )
+    except Exception:
+        conn.rollback()
+        return None
+    if df.empty:
+        return None
+    df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
+    for c in df.columns:
+        if c != "open_time":
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.dropna(subset=["high", "low", "close"]).reset_index(drop=True)
+
+
+def run_mis1(conn, symbol: str, days: int, stride: int) -> list[dict]:
+    """MIS1 ist NICHT detektor-gated — live scored der Bot jeden Coin jede Stunde.
+    Der Replay sampelt deshalb dicht: jede `stride`-te geschlossene Kerze, mit
+    deterministischem per-Coin-Offset (crc32), damit nicht alle Coins zur selben
+    Marktstunde gesampelt werden (querschnittliche Zwillings-Korrelation).
+
+    Je Sample und Richtung: Geometrie = calculate_smart_targets auf dem
+    1000-Kerzen-Fenster BIS zur Entscheidungskerze (exakt die Live-Funktion),
+    Exits horizontgekappt (72h/168h) in EINEM Lauf — Label = TP1-vor-SL
+    INNERHALB des Horizonts; Timeout mit vollem Datenfenster ist eine 0,
+    Datenende vor Horizontende bleibt None (wird beim Training verworfen).
+
+    Bewusste Näherung: Entry = Close der frisch geschlossenen Kerze (der Bot
+    nutzt den Live-Preis ~11 Minuten nach Stundenschluss).
+    Kein Cooldown im Replay — Dedup übernimmt der Stride; die Live-Cooldowns
+    drosseln nur das POSTING, nicht das Scoring."""
+    import zlib
+
+    df = load_mis1_frame(conn, symbol, days)
+    if df is None or len(df) < 250:
+        return []
+
+    feats_df = mis1_add_features(df, include_legacy=True)
+
+    t1h = df["open_time"].values
+    h1h, l1h, c1h = df["high"].values, df["low"].values, df["close"].values
+    n = len(df)
+    offset = zlib.crc32(symbol.encode()) % max(stride, 1)
+
+    trades: list[dict] = []
+    for t in range(MIS1_WARMUP + offset, n - 1, max(stride, 1)):
+        ts_decision = pd.Timestamp(t1h[t]) + pd.Timedelta(hours=1)
+        current_price = float(c1h[t])
+        if current_price <= 0:
+            continue
+        win1h = df.iloc[max(0, t + 1 - 1000): t + 1][["open", "high", "low", "close", "volume"]]
+        if len(win1h) < 100:
+            continue
+
+        features = {k: round(float(feats_df[k].iloc[t]), 6) for k in MIS1_FEATURE_COLS}
+        legacy = {k: round(float(feats_df[k].iloc[t]), 6) for k in MIS1_LEGACY_COLS}
+
+        # Level-Pool ist richtungsunabhängig → einmal rechnen, beide Richtungen
+        # (bit-identisch zum Doppel-Call, Paritätstest 2026-07-05).
+        try:
+            pool = compute_smart_target_levels(win1h, current_price)
+        except Exception:
+            pool = None  # calculate_smart_targets läuft dann in den Live-Fallback
+
+        for direction in ("LONG", "SHORT"):
+            setup = calculate_smart_targets(None, symbol, direction, current_price, df=win1h, levels=pool)
+            start = t + 1
+            rec = {
+                "strategy": "mis1", "tf": "1h", "symbol": symbol, "direction": direction,
+                "signal_time": str(ts_decision), "entry": setup["entry1"], "entry2": setup["entry2"],
+                "sl": setup["sl"], "targets": setup["targets"][:PUBLISHED_TARGETS["mis1"]],
+                "features": features, "legacy_features": legacy,
+            }
+            for hours in MIS1_HORIZONS:
+                end = start + hours
+                full_window = end <= n
+                r = simulate_exit(
+                    t1h[:end], h1h[:end], l1h[:end], c1h[:end], start, direction,
+                    setup["entry1"], setup["sl"], setup["targets"], PUBLISHED_TARGETS["mis1"],
+                )
+                out = r["outcome_tp1"]
+                if out is None:
+                    # weder TP1 noch SL berührt: mit vollem Horizontfenster eine
+                    # ehrliche 0, bei Datenende vor Horizontende kein Label.
+                    out = 0 if full_window else None
+                rec[f"outcome_{hours}h"] = out
+                rec[f"net_pnl_{hours}h"] = r["net_pnl_pct"]
+                rec[f"exit_reason_{hours}h"] = r["exit_reason"]
+                rec[f"r_multiple_{hours}h"] = r["r_multiple"]
+            # Kompatibilität mit summarize()/load_replay(): Langhorizont als Hauptlabel
+            rec["outcome_tp1"] = rec[f"outcome_{MIS1_HORIZONS[-1]}h"]
+            rec["net_pnl_pct"] = rec[f"net_pnl_{MIS1_HORIZONS[-1]}h"]
+            rec["r_multiple"] = rec[f"r_multiple_{MIS1_HORIZONS[-1]}h"]
+            rec["risk_pct"] = r["risk_pct"]
+            trades.append(rec)
+
+    return trades
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DRIVER
 # ─────────────────────────────────────────────────────────────────────────────
 def summarize(trades: list[dict], label: str) -> dict:
@@ -646,9 +779,11 @@ def summarize(trades: list[dict], label: str) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Walk-Forward-Simulator (P0.10/P0.11)")
-    ap.add_argument("--strategy", required=True, choices=["ufi1", "td", "bb", "abr1"])
+    ap.add_argument("--strategy", required=True, choices=["ufi1", "td", "bb", "abr1", "mis1"])
     ap.add_argument("--tf", default="1h", choices=["1h", "4h"], help="nur für td/bb")
     ap.add_argument("--days", type=int, default=365)
+    ap.add_argument("--stride", type=int, default=24,
+                    help="mis1: jede N-te geschlossene Kerze sampeln (per-Coin-Offset dedupliziert Marktstunden)")
     ap.add_argument("--coins", default=None, help="Kommagetrennte Liste; Default: coins.json")
     ap.add_argument("--limit", type=int, default=None, help="nur die ersten N Coins")
     ap.add_argument("--out", default=DEFAULT_OUT_DIR)
@@ -721,6 +856,8 @@ def main() -> None:
                             trades = run_ufi1(conn, symbol, args.days, ufi1_mod)
                         elif args.strategy in ("td", "bb"):
                             trades = run_td_bb(conn, symbol, args.tf, args.days, args.strategy)
+                        elif args.strategy == "mis1":
+                            trades = run_mis1(conn, symbol, args.days, args.stride)
                         else:
                             trades = run_abr1(conn, symbol, args.days, abr1_mod)
                         break

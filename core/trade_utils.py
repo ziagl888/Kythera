@@ -70,13 +70,24 @@ def ensure_min_tp_distance(targets: list, entry: float, is_long: bool, min_pct: 
 
 
 def get_atr(df, period=14):
-    """Calculates the Average True Range (ATR) for dynamic SL/entry distances."""
-    high_low = df['high'] - df['low']
-    high_close = np.abs(df['high'] - df['close'].shift())
-    low_close = np.abs(df['low'] - df['close'].shift())
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = np.max(ranges, axis=1)
-    return true_range.rolling(window=period).mean().iloc[-1]
+    """Calculates the Average True Range (ATR) for dynamic SL/entry distances.
+
+    PERF (MIS1-Retrain 2026-07): numpy statt pd.concat+rolling — der Walk-
+    Forward-Simulator ruft das hunderttausendfach. Semantik unverändert:
+    die alte np.max(DataFrame, axis=1) lief mit skipna → in der ersten Zeile
+    (prev_close=NaN) zählte nur high-low; fmax repliziert genau das. Ergebnis
+    ist NaN, solange weniger als `period` Kerzen vorliegen (wie rolling.mean).
+    """
+    h = df['high'].to_numpy(dtype=float)
+    l = df['low'].to_numpy(dtype=float)  # noqa: E741
+    c = df['close'].to_numpy(dtype=float)
+    if len(h) < period:
+        return np.nan
+    prev_c = np.empty_like(c)
+    prev_c[0] = np.nan
+    prev_c[1:] = c[:-1]
+    tr = np.fmax(h - l, np.fmax(np.abs(h - prev_c), np.abs(l - prev_c)))
+    return float(np.mean(tr[-period:]))
 
 
 def cap_leverage_to_sl(desired_lev, entry, sl, safety=0.5):
@@ -108,7 +119,169 @@ def cap_leverage_to_sl(desired_lev, entry, sl, safety=0.5):
     return f"{lev}x" if as_string else lev
 
 
-def calculate_smart_targets(conn, symbol, direction, live_price, df=None):
+def _cut_label_edges(bin_edges) -> np.ndarray:
+    """Bit-identische Reproduktion der pandas-Label-Rundung aus
+    pandas.core.reshape.tile._format_labels (precision = _infer_precision(3,…),
+    dann _round_frac je Kante) — vektorisiert, weil der Walk-Forward-Simulator
+    das hunderttausendfach ruft. Formel je Wert x!=0: bei |x|<1 wird auf
+    (precision − floor(log10(|frac|)) − 1) Dezimalen gerundet, sonst auf
+    `precision`; precision ist das kleinste p ∈ [3,20), bei dem alle gerundeten
+    Kanten eindeutig bleiben (Fallback p=3 wie pandas)."""
+    x = np.asarray(bin_edges, dtype=float)
+
+    def round_frac_vec(v: np.ndarray, precision: int) -> np.ndarray:
+        out = v.copy()
+        m = np.isfinite(v) & (v != 0)
+        vm = v[m]
+        frac, whole = np.modf(vm)
+        digits = np.full(vm.shape, precision, dtype=np.int64)
+        wz = whole == 0  # (frac==0 UND whole==0 hieße v==0 — oben ausgefiltert)
+        digits[wz] = precision - np.floor(np.log10(np.abs(frac[wz]))).astype(np.int64) - 1
+        r = np.empty_like(vm)
+        for d in np.unique(digits):
+            sel = digits == d
+            r[sel] = np.around(vm[sel], int(d))
+        out[m] = r
+        return out
+
+    for precision in range(3, 20):
+        rounded = round_frac_vec(x, precision)
+        if np.unique(rounded).size == x.size:
+            return rounded
+    return round_frac_vec(x, 3)
+
+
+def compute_smart_target_levels(df, live_price) -> dict:
+    """Richtungsunabhängiger Teil von calculate_smart_targets: ATR + der
+    geclusterte Level-Pool (S/R, Fibs, HVNs, FVGs).
+
+    Ausgelagert (MIS1-Retrain 2026-07), damit der Walk-Forward-Simulator den
+    Pool je Zeitpunkt EINMAL rechnet und für LONG und SHORT wiederverwendet —
+    live rechnen die Bots ihn wie bisher implizit pro Call. Wirft bei <100
+    Kerzen; das Exception-Handling (Live-Fallback) liegt beim Caller
+    calculate_smart_targets, exakt wie vorher."""
+    if len(df) < 100:
+        raise ValueError("Insufficient data")
+
+    df = df.reset_index(drop=True)
+    live_price = float(live_price)
+
+    atr = get_atr(df, 14)
+    if pd.isna(atr) or atr == 0:
+        atr = live_price * 0.02
+
+    # 💥 SAFETY CAP 1: ATR limit
+    # Prevents a flash crash from ruining the ATR. Max ATR = 4% of live price.
+    atr = min(atr, live_price * 0.04)
+
+    highs, lows = df['high'].values, df['low'].values
+
+    # 🟢 1. SUPPORT & RESISTANCE
+    max_idx = scipy.signal.argrelextrema(highs, np.greater, order=20)[0]
+    min_idx = scipy.signal.argrelextrema(lows, np.less, order=20)[0]
+    resistances = [highs[i] for i in max_idx]
+    supports = [lows[i] for i in min_idx]
+
+    # 🟢 2. FIBONACCI
+    swing_high = np.max(highs[-300:])
+    swing_low = np.min(lows[-300:])
+    fib_range = swing_high - swing_low
+
+    fibs = []
+    if fib_range > 0:
+        for x in [0.236, 0.382, 0.5, 0.618, 0.786]:
+            fibs.append(swing_high - fib_range * x)
+        for x in [1.272, 1.618, 2.0, 2.618]:
+            fibs.append(swing_low + fib_range * x)
+        for x in [1.272, 1.618, 2.0, 2.618]:
+            fibs.append(swing_high - fib_range * (x - 1))
+
+    # 🟢 3. HIGH VOLUME NODES & FVGs
+    # PERF (MIS1-Retrain 2026-07): pd.cut(labels=False)+bincount statt
+    # Interval-Labels+groupby — die Label-Formatierung dominierte die
+    # Laufzeit der ganzen Funktion. Die Mids werden aus den GERUNDETEN
+    # Kanten gebildet (exakt die pandas-Label-Rundung via _round_frac/
+    # _infer_precision) — bit-identisch zum alten interval.mid; bei
+    # pandas-Interna-Änderungen fällt es auf die ungerundeten Kanten
+    # zurück (Abweichung ~Anzeige-Präzision, unter dem 0,5%-Cluster-Raster).
+    hvns = []
+    try:
+        bin_ids, bin_edges = pd.cut(df['close'], bins=60, labels=False, retbins=True)
+        edges = _cut_label_edges(bin_edges)
+        ids = bin_ids.to_numpy(dtype=np.int64)
+        vols = np.bincount(ids, weights=df['volume'].to_numpy(dtype=float), minlength=60)
+        occupied = np.bincount(ids, minlength=60) > 0  # wie groupby(observed=True)
+        # nlargest-Semantik: absteigend nach Volumen, Ties in Bin-Reihenfolge
+        top = sorted(np.flatnonzero(occupied).tolist(), key=lambda b: (-vols[b], b))[:6]
+        for b in top:
+            hvns.append((edges[b] + edges[b + 1]) / 2.0)
+    except Exception:
+        pass
+
+    # 🟢 4. FAIR VALUE GAPS (FVG)
+    # A FVG is a 3-candle formation where the middle candle (i-1)
+    # creates a gap between candle i-2 and candle i:
+    #   Bullish FVG: high[i-2] < low[i]  AND middle candle is bullish (close > open)
+    #   Bearish FVG: low[i-2] > high[i]  AND middle candle is bearish (close < open)
+    #
+    # The gap boundary used as level is the one that normally acts
+    # as support/resistance at retest (not the gap midpoint — that price
+    # does not exist on the chart as a real level).
+    # Additionally: mitigation check — FVGs that have already been traded through
+    # are no longer active levels.
+    # PERF (MIS1-Retrain 2026-07): Erkennung + Mitigation vektorisiert.
+    # Der alte O(n²)-Mitigation-Scan (für jede FVG alle Folgekerzen) ist
+    # semantisch exakt "suffix-min(lows) <= gap_bottom" bzw.
+    # "suffix-max(highs) >= gap_top" — hier als accumulate in O(n).
+    # Bull/Bear schließen sich pro Kerze konstruktiv aus (low<=high),
+    # das elif der alten Schleife ist damit abgedeckt.
+    fvgs = []
+    opens = df['open'].values
+    highs_arr = df['high'].values
+    lows_arr = df['low'].values
+    closes_arr = df['close'].values
+    n = len(df)
+    if n >= 3:
+        suffix_min_low = np.minimum.accumulate(lows_arr[::-1])[::-1]
+        suffix_max_high = np.maximum.accumulate(highs_arr[::-1])[::-1]
+        idx = np.arange(2, n)
+        mid_bull = closes_arr[idx - 1] > opens[idx - 1]
+        mid_bear = closes_arr[idx - 1] < opens[idx - 1]
+
+        bull = (highs_arr[idx - 2] < lows_arr[idx]) & mid_bull
+        bear = (lows_arr[idx - 2] > highs_arr[idx]) & mid_bear
+
+        # Mitigation ab Kerze i+1; die letzte Kerze (i == n-1) hat keinen
+        # Folgescan → nie mitigiert (wie die alte leere range).
+        for i in idx[bull]:
+            gap_bottom = float(highs_arr[i - 2])
+            if i + 1 >= n or suffix_min_low[i + 1] > gap_bottom:
+                fvgs.append(gap_bottom)
+        for i in idx[bear]:
+            gap_top = float(lows_arr[i - 2])
+            if i + 1 >= n or suffix_max_high[i + 1] < gap_top:
+                fvgs.append(gap_top)
+
+    # 🔄 CLUSTERING
+    all_levels = supports + resistances + fibs + hvns + fvgs
+    all_levels = [float(lvl) for lvl in all_levels if lvl > 0]
+    all_levels.sort()
+
+    clustered_levels = []
+    if all_levels:
+        current_cluster = [all_levels[0]]
+        for lvl in all_levels[1:]:
+            if (lvl - current_cluster[-1]) / current_cluster[-1] < 0.005:
+                current_cluster.append(lvl)
+            else:
+                clustered_levels.append(sum(current_cluster) / len(current_cluster))
+                current_cluster = [lvl]
+        clustered_levels.append(sum(current_cluster) / len(current_cluster))
+
+    return {"atr": atr, "clustered_levels": clustered_levels}
+
+
+def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels=None):
     """
     Kombiniert den riesigen Pool an echten Leveln mit intelligentem Clustering,
     ATR-based minimum distance and hard SAFETY-CAPS against out-of-bounds values.
@@ -119,119 +292,24 @@ def calculate_smart_targets(conn, symbol, direction, live_price, df=None):
     dieselbe Level-/SL-/Target-Logik auf historischen Fenstern ab wie die
     Live-Bots (eine Quelle statt Copy-Paste-Skew). Auch der Fehler-Fallback am
     Ende ist bewusst identisch — der Simulator soll das Live-Verhalten messen.
+
+    `levels` (optional): vorberechneter Pool aus compute_smart_target_levels —
+    der Simulator übergibt ihn, um LONG und SHORT desselben Zeitpunkts nicht
+    doppelt zu rechnen. Live-Caller lassen ihn weg (Verhalten unverändert).
     """
     try:
-        if df is None:
-            # Loading 1000 hours for proper swing-highs
-            query = f'SELECT open, high, low, close, volume FROM "{symbol}_1h" ORDER BY open_time DESC LIMIT 1000'
-            df = pd.read_sql_query(query, conn)
-            df = df.iloc[::-1]
+        if levels is None:
+            if df is None:
+                # Loading 1000 hours for proper swing-highs
+                query = f'SELECT open, high, low, close, volume FROM "{symbol}_1h" ORDER BY open_time DESC LIMIT 1000'
+                df = pd.read_sql_query(query, conn)
+                df = df.iloc[::-1]
+            levels = compute_smart_target_levels(df, live_price)
 
-        if len(df) < 100:
-            raise ValueError("Insufficient data")
-
-        df = df.reset_index(drop=True)
+        atr = levels["atr"]
+        clustered_levels = levels["clustered_levels"]
         live_price = float(live_price)
         is_long = direction.upper() == "LONG"
-
-        atr = get_atr(df, 14)
-        if pd.isna(atr) or atr == 0:
-            atr = live_price * 0.02
-
-        # 💥 SAFETY CAP 1: ATR limit
-        # Prevents a flash crash from ruining the ATR. Max ATR = 4% of live price.
-        atr = min(atr, live_price * 0.04)
-
-        highs, lows = df['high'].values, df['low'].values
-
-        # 🟢 1. SUPPORT & RESISTANCE
-        max_idx = scipy.signal.argrelextrema(highs, np.greater, order=20)[0]
-        min_idx = scipy.signal.argrelextrema(lows, np.less, order=20)[0]
-        resistances = [highs[i] for i in max_idx]
-        supports = [lows[i] for i in min_idx]
-
-        # 🟢 2. FIBONACCI
-        swing_high = np.max(highs[-300:])
-        swing_low = np.min(lows[-300:])
-        fib_range = swing_high - swing_low
-
-        fibs = []
-        if fib_range > 0:
-            for x in [0.236, 0.382, 0.5, 0.618, 0.786]:
-                fibs.append(swing_high - fib_range * x)
-            for x in [1.272, 1.618, 2.0, 2.618]:
-                fibs.append(swing_low + fib_range * x)
-            for x in [1.272, 1.618, 2.0, 2.618]:
-                fibs.append(swing_high - fib_range * (x - 1))
-
-        # 🟢 3. HIGH VOLUME NODES & FVGs
-        hvns = []
-        try:
-            df['price_bins'] = pd.cut(df['close'], bins=60)
-            vol_profile = df.groupby('price_bins', observed=True)['volume'].sum()
-            top_bins = vol_profile.nlargest(6)
-            for interval in top_bins.index:
-                hvns.append(interval.mid)
-        except Exception:
-            pass
-
-        # 🟢 4. FAIR VALUE GAPS (FVG)
-        # A FVG is a 3-candle formation where the middle candle (i-1)
-        # creates a gap between candle i-2 and candle i:
-        #   Bullish FVG: high[i-2] < low[i]  AND middle candle is bullish (close > open)
-        #   Bearish FVG: low[i-2] > high[i]  AND middle candle is bearish (close < open)
-        #
-        # The gap boundary used as level is the one that normally acts
-        # as support/resistance at retest (not the gap midpoint — that price
-        # does not exist on the chart as a real level).
-        # Additionally: mitigation check — FVGs that have already been traded through
-        # are no longer active levels.
-        fvgs = []
-        opens = df['open'].values
-        highs_arr = df['high'].values
-        lows_arr = df['low'].values
-        closes_arr = df['close'].values
-        n = len(df)
-        for i in range(2, n):
-            mid_close = closes_arr[i - 1]
-            mid_open = opens[i - 1]
-            # Bullish FVG
-            if highs_arr[i - 2] < lows_arr[i] and mid_close > mid_open:
-                gap_bottom = float(highs_arr[i - 2])
-                # Mitigation: was the gap-bottom undercut by a later candle?
-                mitigated = False
-                for j in range(i + 1, n):
-                    if lows_arr[j] <= gap_bottom:
-                        mitigated = True
-                        break
-                if not mitigated:
-                    fvgs.append(gap_bottom)
-            # Bearish FVG
-            elif lows_arr[i - 2] > highs_arr[i] and mid_close < mid_open:
-                gap_top = float(lows_arr[i - 2])
-                mitigated = False
-                for j in range(i + 1, n):
-                    if highs_arr[j] >= gap_top:
-                        mitigated = True
-                        break
-                if not mitigated:
-                    fvgs.append(gap_top)
-
-        # 🔄 CLUSTERING
-        all_levels = supports + resistances + fibs + hvns + fvgs
-        all_levels = [float(lvl) for lvl in all_levels if lvl > 0]
-        all_levels.sort()
-
-        clustered_levels = []
-        if all_levels:
-            current_cluster = [all_levels[0]]
-            for lvl in all_levels[1:]:
-                if (lvl - current_cluster[-1]) / current_cluster[-1] < 0.005:
-                    current_cluster.append(lvl)
-                else:
-                    clustered_levels.append(sum(current_cluster) / len(current_cluster))
-                    current_cluster = [lvl]
-            clustered_levels.append(sum(current_cluster) / len(current_cluster))
 
         # 🎯 ENTRY, SL & TARGET DISTRIBUTION
         entry1 = live_price
