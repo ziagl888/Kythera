@@ -293,7 +293,7 @@ def load_candles(conn, symbol: str, since: str) -> pd.DataFrame | None:
 
 
 def process_symbol(conn, symbol: str, events: pd.DataFrame, swarm_idx, r_ts, r_rows,
-                   trail_idx, out_fh, stats: dict) -> None:
+                   trail_idx, out_fh, stats: dict, skip_entry_hour: bool = False) -> None:
     df = load_candles(conn, symbol, SINCE_DEFAULT)
     if df is None or len(df) < MIN_WINDOW:
         stats["no_candles"] += len(events)
@@ -320,6 +320,9 @@ def process_symbol(conn, symbol: str, events: pd.DataFrame, swarm_idx, r_ts, r_r
             stats["stale_join"] += 1
             continue
 
+        # Konservativ-Modus: Signalstunden-Kerze überspringen — ihr High/Low
+        # enthält bis zu 1h Preisbewegung VOR dem Signal (Label-Lookahead-Probe).
+        start_off = 2 if skip_entry_hour else 1
         cache_key = (idx, ev.direction)
         if cache_key not in label_cache:
             entry_close = float(closes[idx])
@@ -334,10 +337,10 @@ def process_symbol(conn, symbol: str, events: pd.DataFrame, swarm_idx, r_ts, r_r
                     targets = [float(t) for t in setup["targets"][:N_PUBLISHED]]
                     if not targets or sl <= 0 or entry1 <= 0:
                         raise ValueError("degenerate geometry")
-                    end = min(idx + 1 + HORIZON_CANDLES, len(times))
+                    end = min(idx + start_off + HORIZON_CANDLES, len(times))
                     res = simulate_exit(
                         times[:end], highs[:end], lows[:end], closes[:end],
-                        start_idx=idx + 1, direction=ev.direction, entry=entry1, sl=sl,
+                        start_idx=idx + start_off, direction=ev.direction, entry=entry1, sl=sl,
                         targets=targets, n_published=len(targets),
                     )
                     market_row = {c: ind_arrays[c][idx] for c in IND_COLS}
@@ -397,6 +400,8 @@ def main() -> None:
     ap.add_argument("--since", default=SINCE_DEFAULT)
     ap.add_argument("--out", default=os.path.join(REPLAY_DIR, "aim2_events.jsonl"))
     ap.add_argument("--limit-symbols", type=int, default=0)
+    ap.add_argument("--skip-entry-hour", action="store_true",
+                    help="Konservative Labels: Signalstunden-Kerze nicht replayen (Lookahead-Probe)")
     args = ap.parse_args()
 
     set_low_priority()
@@ -427,7 +432,8 @@ def main() -> None:
     with open(args.out, "w", encoding="utf-8") as fh:
         for i, sym in enumerate(symbols, 1):
             sym_events = train_ev[train_ev["symbol"] == sym]
-            process_symbol(conn, sym, sym_events, swarm_idx, r_ts, r_rows, trail_idx, fh, stats)
+            process_symbol(conn, sym, sym_events, swarm_idx, r_ts, r_rows, trail_idx, fh, stats,
+                           skip_entry_hour=args.skip_entry_hour)
             if i % 25 == 0 or i == len(symbols):
                 closed = stats["written"] - stats["open_end"]
                 wr = stats["wins"] / closed * 100 if closed else 0.0
