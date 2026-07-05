@@ -554,7 +554,11 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
 
     # URL-encoded combined stream — all streams in the query string.
     # This uses the documented 1024-stream limit and avoids SUBSCRIBE messages.
-    url = "wss://fstream.binance.com/stream?streams=" + "/".join(streams)
+    # WICHTIG (Root-Cause der "stummen" Verbindungen, gefunden 05.07.2026):
+    # Binance hat die Legacy-URLs /ws und /stream zum 23.04.2026 abgeschaltet —
+    # ungeroutete Verbindungen handshaken weiter erfolgreich, pushen aber KEINE
+    # /market-Streams (kline/aggTrade/markPrice) mehr. Neue geroutete URL:
+    url = "wss://fstream.binance.com/market/stream?streams=" + "/".join(streams)
 
     backoff = WS_RECONNECT_MIN_SEC
     consecutive_failures = 0

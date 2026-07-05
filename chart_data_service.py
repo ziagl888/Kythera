@@ -72,7 +72,8 @@ BUFFER_SIZE = 300  # 300 × 1min = 5h Historie pro Coin
 STREAMS_PER_WS = 600  # Binance Futures limit: 1024 streams per connection
 # (300 is the connect-attempt limit per 5 min per IP — different thing).
 # 600 fits all ~537 USDT coins comfortably in a single connection.
-BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams="
+# Binance-Migration 23.04.2026: kline = /market-Stream, geroutete URL Pflicht.
+BINANCE_WS_URL = "wss://fstream.binance.com/market/stream?streams="
 
 # ─── In-Memory-Buffer ────────────────────────────────────────────────────────
 # Struktur: { "BTCUSDT": deque([[open_time_ms, open, high, low, close, volume], ...]) }

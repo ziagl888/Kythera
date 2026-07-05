@@ -355,7 +355,9 @@ async def whale_ws_worker(worker_id: int, streams: list, startup_delay: float = 
         await asyncio.sleep(startup_delay)
 
     # URL-encoded combined stream — avoids SUBSCRIBE which Binance drops at ~150s with many streams
-    url = "wss://fstream.binance.com/stream?streams=" + "/".join(streams)
+    # Binance-Migration 23.04.2026: aggTrade ist ein /market-Stream — die alte
+    # ungeroutete URL pushte seitdem nichts mehr (deshalb war der Logger "tot").
+    url = "wss://fstream.binance.com/market/stream?streams=" + "/".join(streams)
 
     _whale_backoff = WHALE_RECONNECT_MIN_SEC
     while True:
