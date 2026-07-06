@@ -26,12 +26,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-from tools.research_dataset_common import (
+# REPO_ROOT MUSS vor dem ersten tools-/core-Import auf sys.path liegen
+# (Henne-Ei; Spec-Review-Fix 2026-07-06, Muster tools/aim2_build_dataset.py).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tools.research_dataset_common import (  # noqa: E402
     MIN_WINDOW,
     REPLAY_DIR,
     WINDOW_CANDLES,

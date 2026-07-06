@@ -266,7 +266,7 @@ def process_signal(conn, sig: dict) -> None:
         if prob >= ARTIFACT["threshold"] and not LIVE_POSTING:
             logger.info(f"👻 SHADOW-Post {symbol} {direction} (p={prob:.2f}) — Live-Posting deaktiviert.")
         # dedup_hours=0: JEDER FIFO-Kandidat wird geloggt (A/B-Vollständigkeit) —
-        # Dedupe übernimmt die id-Watermark des Pollings.
+        # Dedupe übernimmt das Seen-Set des Zeitfenster-Pollings.
         log_prediction(conn, ARTIFACT["tag"], symbol, direction, entry, conf, posted=False, dedup_hours=0)
     conn.commit()
 

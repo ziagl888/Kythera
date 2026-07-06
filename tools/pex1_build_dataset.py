@@ -24,12 +24,18 @@ import argparse
 import datetime as dt
 import json
 import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-from tools.research_dataset_common import (
+# REPO_ROOT MUSS vor dem ersten tools-/core-Import auf sys.path liegen —
+# der Insert in research_dataset_common käme sonst nie zur Ausführung
+# (Henne-Ei; Spec-Review-Fix 2026-07-06, Muster tools/aim2_build_dataset.py).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tools.research_dataset_common import (  # noqa: E402
     LOCAL_TZ,
     MIN_WINDOW,
     REPLAY_DIR,

@@ -54,6 +54,12 @@ Kandidat kommt live per REST (`/fapi/v1/fundingRate`) — der Bot hängt damit
 NICHT am Backfill-Zustand der `funding_rates`-Tabelle. **Bekannter Rest-Skew:**
 live wird die *laufende* Rate bewertet, im Training die *gesettelte* (gleiche
 Quelle, ein Settlement Versatz). Cooldown 24h je Coin/Richtung.
+**Bewusste Abweichung von der S8-Exit-Idee:** Report 15 skizziert „Halten bis
+Funding-Normalisierung oder Time-Stop" — implementiert ist die
+Flotten-Standard-Geometrie (Smart-Target-TP/SL, Trainings-Horizont 7 Tage),
+weil First-Touch-Simulator und AI-Trade-Monitor genau diese Geometrie labeln
+bzw. tracken; ein Funding-Normalisierungs-Exit bräuchte einen eigenen
+Monitor-Pfad. V2-Kandidat, falls die Shadow-Zahlen die Idee tragen.
 
 ### TRM1 — Transition-Resolution (S10)
 Läuft nur, wenn das DEBOUNCED Regime (`regime_current`) TRANSITION ist.
@@ -133,6 +139,15 @@ Idle-Modus und die Idee wird mit Befund geparkt.
   Monate wäre über die DST-Grenze 1h falsch gewesen).
 - TRM1-`minutes_in_transition` ist live die debounced Episodendauer, im
   Training die Roh-Episodendauer — akzeptierte Näherung, im Doc vermerkt.
+- TRM1 nutzt von den „confidence-Verläufen" (S10) nur die aktuellen
+  `confidence_btc/alt`-Werte; Fenster-Verläufe existieren für Returns/ATR/
+  Regime-Fraktionen. Confidence-Deltas sind ein V2-Feature-Kandidat.
+- FIF1 lässt zwei S11-genannte Feature-Familien bewusst weg: den
+  Modell-übergreifenden Konfluenz-Zähler (E3 — bräuchte den vollen
+  Multi-Quellen-Event-Strom im Live-Pfad; implementiert sind FIFO-interne
+  Burst-Zähler) und die Coin-Liquiditätsklasse (kein sauberer Live-Proxy
+  ohne neue Datenpflege; `vol_ratio_sma20` deckt einen Teil ab). Beides
+  V2-Kandidaten nach der ersten Shadow-Auswertung.
 - TRM1 postet nie gegen eine offene Gegenposition (kein Self-Hedge auf
   BTCUSDT) — kippt die Prognose, wird nur Shadow geloggt.
 - Betriebsnotiz: +4 Prozesse ≈ +8 dauerhafte PG-Connections
