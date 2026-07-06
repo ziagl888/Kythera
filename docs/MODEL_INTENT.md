@@ -428,6 +428,17 @@ auf Rauschen mehr). Eigener Task.
 SL-Distanzen werden gedeckelt (15 %-Cap aus dem Audit-Batch verifizieren/schärfen).
 Eigener Task.
 
+**Offener Punkt (Michi, 2026-07-07 → Task T-2026-CU-9050-020):**
+**HMM-Regime-Studie** — Markov-Switching-Modell (3–4 Gauß-Zustände auf
+BTC-4h-Features inkl. Funding) als Regime-Schicht, im direkten A/B-Vergleich
+mit `26_regime_detector` (§22) und dem ROM1-Gating. Motivation: der gemeinsame
+Fehlermodus ALLER Report-21-Fehlschläge war Regime-Nichtstationarität; ein
+HMM-Posterior mit Zustandspersistenz ist die prinzipielle Version dessen, was
+die Heuristik versucht. Prüfkriterium: hängt die Monats-Performance von
+ABR-LONG/RUB out-of-sample an den Zuständen — und schlägt der Posterior die
+bestehende Klassifikation als Gate-Feature? Kontext-Schicht, kein
+Alpha-Generator; Details im Task.
+
 ## 25. Intelligence-Layer (Whale/Funding) ✅ Aufwertung beauftragt (2026-07-06)
 
 **Entschieden (Michi):** Whale-Flows + Funding-Extremes werden **als Features in
