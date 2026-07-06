@@ -71,6 +71,10 @@ Grouped by role. Names match the process names in `main_watchdog.py`.
 | `25_smc_ml_sniper.py` | TD & BB Bot | SMC ML sniper (trend-detection + break-and-retest) |
 | `29_ufi1_bot.py` | UFI1 Fib Bot | Fibonacci-inversion SHORT (1D) — **parked** (audit) |
 | `22_ip_pattern_bot.py` | IP Pattern Bot | Inverse-pattern bot — **disabled** in the watchdog |
+| `30_ai_pex1_bot.py` | AI PEX1 Detector | Pump-exhaustion SHORT (Report 15 S6) — posts to `CH_NEW_IDEAS` |
+| `31_ai_fmr1_bot.py` | AI FMR1 Detector | Funding-extreme mean-reversion (Report 15 S8) — `CH_NEW_IDEAS` |
+| `32_ai_trm1_bot.py` | AI TRM1 Detector | Transition-resolution BTC trades (Report 15 S10) — `CH_NEW_IDEAS` |
+| `33_ai_fif1_bot.py` | AI FIF1 Detector | ML filter over the Fast-In-Out signal stream (Report 15 S11) — `CH_NEW_IDEAS` |
 
 ### Market intelligence
 | Script | Process | Role |
@@ -101,6 +105,9 @@ core/                 Shared infrastructure (imported by every bot)
   process_control.py    Park/restart markers (control/parked, control/restart)
   aim2_features.py      AIM2 feature builder — shared by trainer AND serving
   mis_features.py       MIS1 feature builder (leakage-free, shared)
+  research_features.py  Feature builders for bots 30-33 (PEX1/FMR1/TRM1/FIF1, shared)
+  model_artifacts.py    Uniform artifact loader for the research bots
+  signal_post.py        Shared outbox + ai_signals posting for the research bots
   trade_utils.py        Smart-target/SL math, leverage caps
   charting.py           mplfinance chart rendering
   market_utils.py       Coin lists, cooldowns, Telegram send helpers

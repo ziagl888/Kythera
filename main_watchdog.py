@@ -69,6 +69,11 @@ PROCESSES_TO_RUN = [
         "start_delay": 175,
     },
     {"name": "UFI1 Fib Bot", "script": "29_ufi1_bot.py", "restart_interval": None, "start_delay": 183},
+    # ── Research-Bots (Report 15: S6/S8/S10/S11 — Channel CH_NEW_IDEAS) ──────
+    {"name": "AI PEX1 Detector", "script": "30_ai_pex1_bot.py", "restart_interval": None, "start_delay": 191},
+    {"name": "AI FMR1 Detector", "script": "31_ai_fmr1_bot.py", "restart_interval": None, "start_delay": 199},
+    {"name": "AI TRM1 Detector", "script": "32_ai_trm1_bot.py", "restart_interval": None, "start_delay": 207},
+    {"name": "AI FIF1 Detector", "script": "33_ai_fif1_bot.py", "restart_interval": None, "start_delay": 215},
 ]
 
 running_processes: dict = {}
