@@ -218,6 +218,12 @@ regimeabhängig (Alt-Pump-Phasen; Juli negativ → Drift-Watch Pflicht).
 - [x] Falsches Erfolgs-Logging des auskommentierten Daily-Retrains entfernen.
 - [x] **Retrain eingeplant** (Label = gepostete Geometrie, nur vol_ratio≥5-Events,
       Drift-Monitoring wegen Regimeabhängigkeit).
+- [ ] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
+      `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2) —
+      bei ABR trennt fund_24h Richtungserfolg sauber (LONG-Gate >+3 bps,
+      SHORT-Veto >+1,5 bps, kreuzvalidiert auf 33,5k Events); für ein
+      Momentum-MITFAHR-Modell plausibel richtungsentscheidend. Historie liegt
+      voll in `funding_rates` (430d × 530 Coins).
 
 ---
 
@@ -238,6 +244,11 @@ Random-Split-Memorization). Live-Gewinn stammt aus Vorfilter + S/R-Targets + SHO
 - [x] **LONG-Gate WIEDER ÖFFNEN** (Operator-Entscheid, revidiert den Audit-Batch:
       Idee ist symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML).
       → Code-Änderung + Bot-Neustart nötig.
+- [ ] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
+      `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2).
+      Für Mean-Reversion besonders interessant: extremes Funding = überfüllte
+      Seite → Snap-Back-Kandidat vs. weiterlaufendes Messer. Historie voll in
+      `funding_rates`.
 
 ---
 
