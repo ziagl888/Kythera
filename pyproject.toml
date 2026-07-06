@@ -8,7 +8,7 @@ requires-python = ">=3.10"
 line-length = 120
 target-version = "py310"
 # Legacy analysis/backtest/patch scripts are not held to the same bar yet.
-extend-exclude = [".venv", "backtest", "reports", "tools", "handlers", "strategies"]
+extend-exclude = [".venv", "backtest", "reports", "tools", "handlers", "strategies", "legacy_trainers"]
 
 [tool.ruff.lint]
 # Start deliberately lean so pre-commit is adoptable on a large legacy tree.
