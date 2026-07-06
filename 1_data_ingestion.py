@@ -45,10 +45,19 @@ def update_trading_pairs(filename='coins.json'):
         response.raise_for_status()
         data = response.json()
 
+        # Gleicher Filter wie 6_housekeeping.update_coins_json — beide schreiben
+        # coins.json und dürfen sich nicht widersprechen. Der alte Lose-Filter
+        # (nur status=TRADING) ließ Binance-Neuprodukte durch: Quote-Assets
+        # "U"/"USD1" (→ Symbol "ETHU"), Cross-Pairs (ETHBTC), Quartals-Futures
+        # (_260925) und TRADIFI_PERPETUAL (Aktien/Metalle) — die Flotte ist nur
+        # auf USDT-Krypto-Perpetuals validiert (Vorfall 2026-07-06: ABR2-Signale
+        # auf ETHU/COSTUSDT/XAUUSDT).
         trading_pairs = [
             symbol['symbol']
             for symbol in data['symbols']
-            if symbol['status'] == 'TRADING' and not symbol['symbol'].endswith('USDC')
+            if symbol['quoteAsset'] == 'USDT'
+            and symbol['status'] == 'TRADING'
+            and symbol['contractType'] == 'PERPETUAL'
         ]
 
         with open(filename, 'w') as f:
