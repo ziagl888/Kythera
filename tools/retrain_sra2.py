@@ -1,0 +1,305 @@
+"""
+tools/retrain_sra2.py — SRA2: Retrain des S/R-Meta-Filters (Task #1, 2026-07-06).
+
+Basis: legacy_trainers/X9-SR-ANALYZER-Schritt1.py (bewiesener SRA1-Trainer,
+Meta-Labeling über closed_trades3, getrennte LONG/SHORT-Modelle, chronologischer
+Split). Vier Verbesserungen per Operator-Beschluss (docs/MODEL_INTENT.md §5):
+
+  1. PREIS-ROHSPALTEN RAUS (Skalen-Leakage): die 15 absoluten Preis-Level +
+     atr_14/macd in Preisskala fliegen; erhalten bleiben die skalenfreien
+     Pendants (pct_*, *_atr) plus neue skalenfreie Ersatzspalten
+     (macd_dif_pct, macd_dea_pct, atr_pct).
+  2. LOOK-AHEAD-FIX (Audit 13-P2b): Indikator-Join nur auf die letzte
+     GESCHLOSSENE 1h-Kerze (open_time <= signal_time - 1h) — der alte Join
+     traf die forming candle (bis +1h Zukunft).
+  3. NaN LIVE-KONSISTENT: kein globales fillna(median) mehr (Train/Live-
+     Lücke) — XGBoost verarbeitet NaN nativ, exakt wie der Bot (P1.20).
+  4. Isotonic-Kalibrierung auf Validation + Threshold via pick_threshold_safe
+     (Ø-PnL/Trade, Mindest-n) statt implizitem 0,65-Hardcode.
+
+Label (Operator bestätigt 2026-07-06 + Code-Beweis 13-updatesupportresistance):
+  status in ('SL1','SL2','SL3','4') = WIN (SL nach TP1/2/3 = Trailing-Gewinn),
+  'SL0' = LOSS. PnL-Approximation für die Threshold-Ökonomie: 25 %-Tranchen je
+  erreichtem Target, Rest zum Trailing-SL-Level (SL1→Entry, SL2→T1, SL3→T2).
+
+Artefakte NUR nach staging (P1.35): sra2_model_{LONG,SHORT}.json (natives
+XGBoost-JSON wie der Bot es lädt) + _meta.json (Vertrag: features, threshold,
+model_id='SRA2') + _calib.pkl. Deploy entscheidet Michi.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+import joblib
+import numpy as np
+import pandas as pd
+import xgboost as xgb
+from sklearn.isotonic import IsotonicRegression
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
+
+from core.database import get_db_connection  # noqa: E402
+from tools.retrain_from_replay import STAGING_DIR, pick_threshold_safe  # noqa: E402
+
+# Skalenfreier SRA2-Feature-Vertrag (22 statt 38; kein is_long — Modelle sind
+# je Richtung getrennt, die Spalte war konstant).
+SRA2_FEATURES = [
+    "rsi_9", "rsi_14", "rsi_24",
+    "tsi_fast_12_7_7", "tsi_fast_12_7_7_signal",
+    "macd_dif_pct", "macd_dea_pct", "atr_pct",
+    "r_squared", "trend_direction_num",
+    "pct_ema9", "pct_ema21", "pct_wma9", "pct_kama9",
+    "pct_support", "pct_resist", "pct_boll_mid",
+    "ema9_ema21_pct", "kama9_kama21_pct",
+    "support_atr", "resist_atr", "boll_width_atr",
+]
+
+TREND_MAP = {"UP": 1, "DOWN": -1, "FLAT": 0, "SIDEWAYS": 0}
+
+INDICATOR_COLS = (
+    "open_time, close, rsi_9, rsi_14, rsi_24, macd_dif_fast_9_21_9, "
+    "macd_dea_fast_9_21_9, tsi_fast_12_7_7, tsi_fast_12_7_7_signal, atr_14, "
+    "r_squared, boll_upper_20, boll_mid_20, boll_lower_20, donchian_upper_20, "
+    "donchian_lower_20, donchian_mid_20, support_price, resistance_price, "
+    "ema_9, ema_21, wma_9, wma_21, kama_9, kama_21, trend_direction"
+)
+
+
+def _pct(a, b):
+    try:
+        a, b = float(a), float(b)
+        if b == 0 or pd.isna(a) or pd.isna(b):
+            return np.nan
+        return (a - b) / b * 100.0
+    except (TypeError, ValueError):
+        return np.nan
+
+
+def build_features(ind: dict) -> dict:
+    """Skalenfreie SRA2-Features aus einer 1h-Indikator-Zeile. NaN bleibt NaN
+    (XGBoost-nativ, live-konsistent — Verbesserung 3)."""
+    close = ind.get("close")
+    atr = ind.get("atr_14")
+    f = {
+        "rsi_9": ind.get("rsi_9"), "rsi_14": ind.get("rsi_14"), "rsi_24": ind.get("rsi_24"),
+        "tsi_fast_12_7_7": ind.get("tsi_fast_12_7_7"),
+        "tsi_fast_12_7_7_signal": ind.get("tsi_fast_12_7_7_signal"),
+        "macd_dif_pct": _pct(ind.get("macd_dif_fast_9_21_9", 0) + (close or 0), close) if close else np.nan,
+        "macd_dea_pct": _pct(ind.get("macd_dea_fast_9_21_9", 0) + (close or 0), close) if close else np.nan,
+        "atr_pct": _pct((atr or 0) + (close or 0), close) if close and atr is not None else np.nan,
+        "r_squared": ind.get("r_squared"),
+        "trend_direction_num": TREND_MAP.get(str(ind.get("trend_direction", "")).upper(), 0),
+        "pct_ema9": _pct(close, ind.get("ema_9")),
+        "pct_ema21": _pct(close, ind.get("ema_21")),
+        "pct_wma9": _pct(close, ind.get("wma_9")),
+        "pct_kama9": _pct(close, ind.get("kama_9")),
+        "pct_support": _pct(close, ind.get("support_price")),
+        "pct_resist": _pct(close, ind.get("resistance_price")),
+        "pct_boll_mid": _pct(close, ind.get("boll_mid_20")),
+        "ema9_ema21_pct": _pct(ind.get("ema_9"), ind.get("ema_21")),
+        "kama9_kama21_pct": _pct(ind.get("kama_9"), ind.get("kama_21")),
+    }
+    # ATR-normalisierte Distanzen (wie Bot P1.20: fehlt ATR → NaN, kein 0-Fake)
+    try:
+        atr_f = float(atr) if atr is not None else np.nan
+        close_f = float(close) if close is not None else np.nan
+        if pd.notna(atr_f) and atr_f > 0 and pd.notna(close_f):
+            sup, res = ind.get("support_price"), ind.get("resistance_price")
+            bu, bl = ind.get("boll_upper_20"), ind.get("boll_lower_20")
+            f["support_atr"] = (close_f - float(sup)) / atr_f if sup is not None else np.nan
+            f["resist_atr"] = (float(res) - close_f) / atr_f if res is not None else np.nan
+            f["boll_width_atr"] = (float(bu) - float(bl)) / atr_f if bu is not None and bl is not None else np.nan
+        else:
+            f["support_atr"] = f["resist_atr"] = f["boll_width_atr"] = np.nan
+    except (TypeError, ValueError):
+        f["support_atr"] = f["resist_atr"] = f["boll_width_atr"] = np.nan
+    return f
+
+
+def approx_pnl_pct(row) -> float:
+    """PnL-Approximation je Status für die Threshold-Ökonomie: 25 %-Tranchen je
+    erreichtem Target, Rest zum Trailing-SL (SL1→Entry, SL2→T1, SL3→T2),
+    SL0 = voller SL, '4' = volle Ladder. Fees 0,10 % RT."""
+    try:
+        entry = float(row["entry"])
+        if entry <= 0:
+            return 0.0
+        is_long = str(row["direction"]).upper() == "LONG"
+        sign = 1.0 if is_long else -1.0
+        tgts = [row.get(f"target{i}") for i in range(1, 5)]
+        tgts = [float(t) if t is not None else None for t in tgts]
+        sl = float(row["sl"]) if row.get("sl") is not None else None
+
+        def leg(price):
+            return sign * (float(price) - entry) / entry * 100.0
+
+        status = str(row["status"]).strip()
+        if status == "4":
+            legs = [leg(t) for t in tgts if t is not None]
+        elif status in ("SL1", "SL2", "SL3"):
+            n_hit = int(status[2])
+            legs = [leg(tgts[i]) for i in range(n_hit) if tgts[i] is not None]
+            trail_exit = entry if n_hit == 1 else tgts[n_hit - 2]
+            legs += [leg(trail_exit)] * (4 - n_hit) if trail_exit is not None else []
+        else:  # SL0 / unbekannt = voller Verlust zum SL
+            legs = [leg(sl)] * 4 if sl is not None else [-5.0] * 4
+        return float(np.mean(legs)) - 0.10 if legs else 0.0
+    except (TypeError, ValueError, KeyError):
+        return 0.0
+
+
+def load_dataset(conn) -> pd.DataFrame:
+    trades = pd.read_sql_query(
+        """SELECT lfd, time, coin, direction, entry, sl,
+                  target1, target2, target3, target4, status
+           FROM closed_trades3 ORDER BY time ASC""",
+        conn,
+    )
+    trades["coin"] = trades["coin"].str.replace("USDC", "USDT", regex=False)
+    print(f"closed_trades3: {len(trades)} Trades, {trades['coin'].nunique()} Coins")
+
+    rows = []
+    cur = conn.cursor()
+    ind_cache: dict[str, pd.DataFrame | None] = {}
+    for _, tr in trades.iterrows():
+        coin = tr["coin"]
+        if coin not in ind_cache:
+            try:
+                ind_cache[coin] = pd.read_sql_query(
+                    f'SELECT {INDICATOR_COLS} FROM "{coin}_1h_indicators" ORDER BY open_time ASC',
+                    conn,
+                )
+            except Exception:
+                conn.rollback()
+                ind_cache[coin] = None
+        dfi = ind_cache[coin]
+        if dfi is None or dfi.empty:
+            continue
+        # LOOK-AHEAD-FIX (Verbesserung 2): letzte GESCHLOSSENE 1h-Kerze —
+        # open_time + 1h <= Signalzeit.
+        t_sig = pd.Timestamp(tr["time"])
+        ot = pd.to_datetime(dfi["open_time"])
+        if ot.dt.tz is not None and t_sig.tzinfo is None:
+            t_sig = t_sig.tz_localize(ot.dt.tz)
+        elif ot.dt.tz is None and t_sig.tzinfo is not None:
+            t_sig = t_sig.tz_localize(None)
+        mask = ot <= (t_sig - pd.Timedelta(hours=1))
+        if not mask.any():
+            continue
+        ind = dfi[mask].iloc[-1].to_dict()
+
+        f = build_features(ind)
+        f["signal_time"] = t_sig
+        f["direction"] = str(tr["direction"]).upper()
+        f["outcome"] = 1 if str(tr["status"]).strip() in ("SL1", "SL2", "SL3", "4") else 0
+        f["net_pnl_pct"] = approx_pnl_pct(tr)
+        rows.append(f)
+    cur.close()
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["signal_time"] = pd.to_datetime(df["signal_time"], utc=True).dt.tz_localize(None)
+        df = df.sort_values("signal_time").reset_index(drop=True)
+    return df
+
+
+def chrono_split_gap(df: pd.DataFrame, gap_days: float = 7.0):
+    t_train = df["signal_time"].quantile(0.70)
+    t_val = df["signal_time"].quantile(0.85)
+    gap = pd.Timedelta(days=gap_days)
+    return (
+        df[df["signal_time"] <= t_train],
+        df[(df["signal_time"] > t_train + gap) & (df["signal_time"] <= t_val)],
+        df[df["signal_time"] > t_val + gap],
+    )
+
+
+def main() -> None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+    conn = get_db_connection()
+    df = load_dataset(conn)
+    conn.close()
+    if df.empty or len(df) < 300:
+        raise SystemExit(f"Zu wenig Events ({len(df)}) — Abbruch (Guard wie Schritt1)")
+    print(f"Dataset: {len(df)} Events, {df['signal_time'].min()} → {df['signal_time'].max()}")
+
+    results: dict = {"strategy": "sra2", "features": SRA2_FEATURES}
+    for direction in ("LONG", "SHORT"):
+        d = df[df["direction"] == direction].reset_index(drop=True)
+        if len(d) < 300:
+            print(f"SRA2 {direction}: nur {len(d)} Events — übersprungen")
+            continue
+        train, val, test = chrono_split_gap(d)
+        base = d["outcome"].mean() * 100
+        print(f"SRA2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
+              f"Basisrate WIN {base:.1f}%")
+
+        # Hyperparameter wie der bewiesene Schritt1-Trainer
+        model = xgb.XGBClassifier(
+            objective="binary:logistic", eval_metric="auc", n_estimators=400,
+            max_depth=4, learning_rate=0.025, subsample=0.82,
+            colsample_bytree=0.75, reg_lambda=1.3, reg_alpha=0.1,
+            tree_method="hist", random_state=42, early_stopping_rounds=50,
+        )
+        model.fit(train[SRA2_FEATURES], train["outcome"].astype(int),
+                  eval_set=[(val[SRA2_FEATURES], val["outcome"].astype(int))], verbose=False)
+
+        p_val = model.predict_proba(val[SRA2_FEATURES])[:, 1]
+        p_test = model.predict_proba(test[SRA2_FEATURES])[:, 1]
+
+        iso = IsotonicRegression(out_of_bounds="clip")
+        iso.fit(p_val, val["outcome"].astype(int))
+
+        thresh, val_stats = pick_threshold_safe(val.reset_index(drop=True), p_val, min_n=100)
+        m = p_test >= thresh if thresh is not None else np.zeros(len(p_test), dtype=bool)
+        test_stats = {
+            "n_taken": int(m.sum()),
+            "wr": round(float(test.loc[m, "outcome"].mean()) * 100, 1) if m.sum() else None,
+            "avg_net_pnl_pct": round(float(test.loc[m, "net_pnl_pct"].mean()), 3) if m.sum() else None,
+            "sum_net_pnl_pct": round(float(test.loc[m, "net_pnl_pct"].sum()), 1) if m.sum() else None,
+            "base_rate_test": round(float(test["outcome"].mean()) * 100, 1),
+            "n_test_total": int(len(test)),
+        }
+        print(f"  Threshold {thresh} | TEST: {json.dumps(test_stats)}")
+
+        meta = {
+            "trainer": "tools/retrain_sra2.py", "strategy": "sra2",
+            "model_id": "SRA2", "direction": direction,
+            "model_type": "binary (1 = TP1 erreicht: status SL1/SL2/SL3/4)",
+            "success_proba": "predict_proba[:, 1]",
+            "features": SRA2_FEATURES,
+            "optimal_threshold": thresh,
+            "label_source": "closed_trades3 (Meta-Labeling; Semantik Operator+Code-verifiziert 2026-07-06)",
+            "changes_vs_sra1": "Preis-Rohspalten raus (22 skalenfreie Features), "
+                               "Look-ahead-Fix (nur geschlossene 1h-Kerze), NaN nativ "
+                               "statt Median-Imputation, Isotonic + pick_threshold_safe",
+            "split": "chronological 70/15/15 + 7d purge gap",
+            "xgboost_version": xgb.__version__,
+            "n_train": len(train), "n_val": len(val), "n_test": len(test),
+            "val_stats": val_stats, "test_stats": test_stats,
+        }
+        out = os.path.join(STAGING_DIR, f"sra2_model_{direction}.json")
+        model.save_model(out)  # natives XGBoost-JSON — Format wie der Bot es lädt
+        joblib.dump(iso, os.path.join(STAGING_DIR, f"sra2_model_{direction}_calib.pkl"))
+        with open(os.path.join(STAGING_DIR, f"sra2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        print(f"  💾 {out}")
+        results[direction] = {"n_events": len(d), "base_rate": round(base, 1),
+                              "threshold": thresh, "val_stats": val_stats, "test_stats": test_stats}
+
+    with open(os.path.join(STAGING_DIR, "retrain_sra2_stats.json"), "w", encoding="utf-8") as fh:
+        json.dump(results, fh, indent=2, default=str)
+    print(f"\nStats: {os.path.join(STAGING_DIR, 'retrain_sra2_stats.json')}")
+
+
+if __name__ == "__main__":
+    main()
