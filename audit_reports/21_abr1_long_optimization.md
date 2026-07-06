@@ -119,3 +119,39 @@ Nächster (letzter) Kandidat gem. §3: neue Informationsquellen. Funding-Rate-
 Historie wird backfillt (`tools/backfill_funding_rates.py`, Tabelle
 `funding_rates`) — Funding ist im Gegensatz zu Whale-Daten (WS erst seit
 04.07. wieder live) vollständig historisch verfügbar.
+
+---
+
+## Addendum 2 (2026-07-06 spätabends): Feature-Recheck — Mechanik + Funding
+
+Operator-Hypothese: „wir schauen nicht auf die richtigen Indikatoren." Getestet
+wurden 16 **Setup-Mechanik-Features** (Break-Volumen/-Body/-Close-Position,
+Pullback-Volumen, Level-Touches, Coin-Trend 7d/30d, Abstand 30d-Hoch/-Tief,
+SMA50d/20d, relative Stärke vs. BTC, ATR) und 6 **Funding-Features**
+(letzte Rate, 24h/72h-Mittel, 7d-Summe, 90d-Perzentil, Trend).
+
+**Mechanik-Features:** Univariat erstmals positive Zellen — `level_touches` Q4
+(+0,10 %, 61 % WR), `dist_lo_30d` Q1 (+0,49 %, 65 %: frühe Reversal-Breaks nahe
+dem 30d-Tief), `atr14_rel` Q1 (+0,24 %, 64 %). Bemerkenswert: **Break-Volumen —
+das Lehrbuch-Kriterium — ist komplett flach.** Regel-Kombinationen (Schwellen
+nur aus Train) erreichen im Train +0,5…+0,76 %/Trade, sind aber im Test-Fenster
+(Mai–Jul 26) ALLE negativ → regimeabhängig, nicht deploybar.
+
+**Funding:** 75 % aller Werte kleben am Binance-Default (+1,0 bps). Signal
+steckt strikt darüber (Longs zahlen echte Prämie = zahlungsbereite
+Perp-Nachfrage hinter dem Break):
+
+| fund_24h-Regel | n/Jahr (100 Coins) | gesamt | Train | Test (Mai–Jul) |
+|---|---|---|---|---|
+| ≥ +1,0 bps (Default) | 6.954 | −0,58 % | −0,67 % | −1,29 % |
+| > +1,5 bps | 311 | +1,32 % / 74 % | +1,66 % | −1,02 % (n=49) |
+| **> +3,0 bps** | 119 | **+1,12 % / 74 %** | +1,44 % | **+0,69 % / 88 % (n=17)** |
+
+`fund_24h > +3 bps` ist die **einzige Regel der gesamten Studienreihe, die den
+Out-of-Sample-Test übersteht** — bei ehrlich dünner Testbasis (n=17).
+
+**Operator-Entscheid:** Live-Experiment statt weiterer Validierung. LONG öffnet
+nur noch über das Funding-Gate (`FUNDING_GATE_LONG_BPS = 3.0`, Mittel der
+letzten 3 Sätze via REST, fail-closed, 30-min-Cache), Tag ABR2, Funding-Wert in
+der Info-Nachricht. Erwartung ~1–2 Signale/Tag auf 530 Coins. Review nach 4–6
+Wochen bzw. ≥30 getrackten Trades.

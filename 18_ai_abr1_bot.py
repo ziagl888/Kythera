@@ -12,6 +12,7 @@ import time
 import joblib
 import numpy as np
 import pandas as pd
+import requests
 import pandas_ta  # noqa: F401 — registriert den df.ta-Accessor (Regression aus 052ba4c:
 # der Ruff-Cleanup entfernte den funktionslokalen Import aus b6735d9 als "unused",
 # wodurch calculate_technical_indicators auf JEDEM Coin mit AttributeError starb)
@@ -61,6 +62,40 @@ PIVOT_WINDOW = 10
 RETEST_BACKWARD_LOOKUP_CANDLES = 24
 LEVEL_TOLERANCE_PCT = 0.005
 LIVE_DATA_HISTORY_HOURS = 240
+
+# ── LONG-Funding-Gate (Experiment, Operator-Freigabe 2026-07-06 abends) ──────
+# Report 21 Addendum 2: Die einzige Regel, die den Out-of-Sample-Test überlebt —
+# LONG nur, wenn das Mittel der letzten 3 Funding-Sätze STRIKT über dem
+# Binance-Default (+1,0 bps/8h) liegt: fund_24h > +3 bps → +1,12%/Trade, 74% WR
+# (n=119/Jahr auf 100 Coins; Test-Fenster +0,69%, n=17 — dünn, daher Experiment
+# mit eigenem Tracking-Tag und Review nach 4–6 Wochen). Fail-CLOSED: ohne
+# Funding-Daten bleibt LONG zu.
+FUNDING_GATE_LONG_BPS = 3.0
+FUNDING_GATE_TAG = 'ABR2'  # Generation-2-Tag; direction-Spalte trennt die Seiten
+_funding_cache: dict = {}  # symbol -> (monotonic_ts, mean_bps | None)
+
+
+def get_funding_24h_bps(symbol):
+    """Mittel der letzten 3 abgerechneten Funding-Sätze in bps (30-min-Cache).
+    None bei API-Fehler — der Aufrufer behandelt das als 'Gate zu'."""
+    now = time.monotonic()
+    hit = _funding_cache.get(symbol)
+    if hit is not None and now - hit[0] < 1800:
+        return hit[1]
+    mean_bps = None
+    try:
+        r = requests.get(
+            "https://fapi.binance.com/fapi/v1/fundingRate",
+            params={"symbol": symbol, "limit": 3}, timeout=10,
+        )
+        r.raise_for_status()
+        rates = [float(x["fundingRate"]) for x in r.json()]
+        if rates:
+            mean_bps = sum(rates) / len(rates) * 1e4
+    except Exception as e:
+        logger.warning(f"⚠️ Funding-Check {symbol} fehlgeschlagen (Gate bleibt zu): {e}")
+    _funding_cache[symbol] = (now, mean_bps)
+    return mean_bps
 
 FEATURE_COLUMNS = [
     'dist_close_ema9_pct',
@@ -450,7 +485,7 @@ def find_break_retest_setups(df, retest_idx, levels):
     return list(setups.values())
 
 
-def send_signal(conn, symbol, direction, prob, close_price):
+def send_signal(conn, symbol, direction, prob, close_price, model_tag_override=None, funding_bps=None):
     # Cooldown: 4h pro Coin/Direction. check_cooldown gibt True zurück wenn aktiv (blockiert).
     if check_cooldown(conn, MODEL_ID, symbol, direction, 4):
         logger.info(f"⏳ Cooldown active für {symbol} ({direction}).")
@@ -469,6 +504,8 @@ def send_signal(conn, symbol, direction, prob, close_price):
     # unter neuem Tag (ABR2, ...), damit Alt/Neu in Trackern getrennt messbar
     # sind. Das Tag kommt aus dem Artefakt-Vertrag; Legacy-Modelle bleiben ABR1.
     model_tag = MODELS[direction].get('model_id', MODEL_ID) if MODELS.get(direction) else MODEL_ID
+    if model_tag_override:
+        model_tag = model_tag_override  # z. B. Funding-Gate-LONG postet als Generation 2
 
     lines = [
         f"📈 Signal for {symbol} 📈",
@@ -488,7 +525,10 @@ def send_signal(conn, symbol, direction, prob, close_price):
     # FIX Doppel-Post (Operator-Meldung 2026-07-06): Die Info-Nachricht darf den
     # Cornix-Block NICHT nochmal enthalten — Cornix parste beide Nachrichten als
     # eigenständige Signale (doppelte Position).
-    html = f"""<pre><b>{emoji}</b>\n<b>{symbol}</b>\n<b>→ Direction: {direction}</b>\n<b>→ ML Confidence: <b>{prob:.1%}</b></b>\n<b>→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC | Modul: {model_tag}</b>\n<b>→ Source: AI Break & Retest Model</b></pre>"""
+    # Funding-Zeile NUR in der Info-Nachricht (die Cornix-Nachricht bleibt die
+    # einzige parsebare — Doppel-Post-Regel 2026-07-06 unangetastet).
+    funding_line = f"\n<b>→ Funding-Gate: {funding_bps:+.2f} bps/8h (24h-Mittel)</b>" if funding_bps is not None else ""
+    html = f"""<pre><b>{emoji}</b>\n<b>{symbol}</b>\n<b>→ Direction: {direction}</b>\n<b>→ ML Confidence: <b>{prob:.1%}</b></b>{funding_line}\n<b>→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC | Modul: {model_tag}</b>\n<b>→ Source: AI Break & Retest Model</b></pre>"""
 
     chart_buf = generate_minichart_image(symbol, minutes=240)
 
@@ -585,13 +625,22 @@ def process_abr_logic(conn, symbol):
                 f"Level: {setup['level_price']:.6f} | Prob: {prediction_proba:.2f} "
                 f"(Gate {contract['threshold']:.2f})"
             )
-            # Operator-Entscheid REVIDIERT 2026-07-06 abends: der LONG-Immer-
-            # Bypass ist zurückgenommen (~60 Signale in 3h auf 657 Coins;
-            # Report 21: Setup ungefiltert −0,59%/Trade, Break-even-WR ~63%).
-            # LONG läuft wieder über den Legacy-Blocker-Vertrag (Gate 0,60,
-            # lässt praktisch nichts durch), bis ein Modell mit echtem
-            # Selektionswert existiert.
-            if prediction_proba >= contract['threshold']:
+            # Gates je Richtung (Stand 2026-07-06 abends):
+            #   SHORT — Binär-Modell-Gate auf Roh-Probability (v2-Vertrag).
+            #   LONG  — Funding-Gate-EXPERIMENT (Report 21 Addendum 2): das
+            #           ML-Gate ist für LONG nachweislich blind, aber
+            #           fund_24h > +3 bps überlebt als einzige Regel den
+            #           Out-of-Sample-Test. Der Legacy-Modell-Vertrag dient nur
+            #           noch der Confidence-Anzeige; fail-closed ohne Funding.
+            if direction == 'LONG':
+                fund_bps = get_funding_24h_bps(symbol)
+                if fund_bps is not None and fund_bps > FUNDING_GATE_LONG_BPS:
+                    logger.info(f"🟢 LONG-Funding-Gate offen für {symbol}: {fund_bps:+.2f} bps")
+                    send_signal(conn, symbol, direction, display_proba, retest_candle['close'],
+                                model_tag_override=FUNDING_GATE_TAG, funding_bps=fund_bps)
+                elif fund_bps is not None:
+                    logger.info(f"⛔ LONG-Funding-Gate zu für {symbol}: {fund_bps:+.2f} bps (Limit {FUNDING_GATE_LONG_BPS:+.1f})")
+            elif prediction_proba >= contract['threshold']:
                 send_signal(conn, symbol, direction, display_proba, retest_candle['close'])
 
     except Exception as e:

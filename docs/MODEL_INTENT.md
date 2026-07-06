@@ -95,6 +95,15 @@ intent-konform.
       kein getesteter Hebel dreht LONG positiv. LONG läuft wieder über den
       Legacy-Blocker (3-Klassen-Modell ohne meta.json, Gate 0,60 ≈ zu).
       Reaktivierung nur mit neuen Datenquellen oder Regimewechsel (Report 21 §3).
+- [x] **LONG-Funding-Gate-EXPERIMENT (Michi, 2026-07-06 spätabends):** Nach dem
+      Feature-Recheck auf Operator-Hypothese („falsche Indikatoren") wurden 16
+      Setup-Mechanik-Features + 6 Funding-Features getestet (Report 21
+      Addendum 2). Einziger Out-of-Sample-Überlebender: **fund_24h > +3 bps**
+      (Longs zahlen Prämie über Binance-Default) → +1,12 %/Trade, 74 % WR
+      (n=119/Jahr auf 100 Coins; Test +0,69 %, n=17 — dünn). LONG öffnet jetzt
+      NUR über dieses Gate (live REST, fail-closed, 30-min-Cache), postet als
+      ABR2 mit Funding-Wert in der Info-Nachricht. Erwartung ~1–2 Signale/Tag.
+      **Review nach 4–6 Wochen** (≥30 Trades): Cornix-Tracking entscheidet.
 - [ ] Batch-E-Threshold (SHORT 0,75 aus dünner Validation) nach Abschluss der
       laufenden Sim mit `pick_threshold_safe` neu bestimmen.
 
