@@ -41,10 +41,17 @@ from sklearn.isotonic import IsotonicRegression
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+from core.funding_features import FUNDING_FEATURES  # noqa: E402
 from core.mis_features import FEATURE_COLS as MIS1_FEATURES  # noqa: E402
 from core.mis_features import assert_features_alive  # noqa: E402
+from core.rub_features import RUB_FEATURES  # noqa: E402
 
 MIS1_HORIZONS = (8, 24, 72, 168)  # muss zu tools/walkforward_sim.MIS1_HORIZONS passen
+
+# RUB2-Vertrag (MODEL_INTENT §8): die 9 geteilten Bot-Features (core/rub_features,
+# MACD fix auf normal_12_26_9 = Live-Parität, Semantikbruch behoben) + die 6
+# Funding-Features (core/funding_features) aus dem Replay-Adapter.
+RUB2_FEATURES = list(RUB_FEATURES) + list(FUNDING_FEATURES)
 
 # Operator-Konzept (2026-07-06): Move-Label = "±X% Bewegung INNERHALB des
 # Horizonts" (Close-Basis), Schwelle wächst mit dem Horizont. Quelle:
@@ -464,6 +471,60 @@ def run_mis1(replay_path: str, stride_hours: int = 24,
     return results
 
 
+def run_rub(replay_path: str) -> dict:
+    """RUB2-Retrain (Task #2): Binärmodell je Richtung auf den Replay-Events des
+    geteilten Vorfilters (core/rub_features), Label = First-Touch der eigenen
+    HVN/S-R-Geometrie inkl. SL-Pfad (behebt das Max-Favorable-Label des alten
+    BT3-Trainers), chronologischer Split (behebt die Episoden-Memorization des
+    Random-Splits), Threshold via pick_threshold_safe."""
+    df = load_replay(replay_path)
+    if df.empty or len(df) < 600:
+        raise SystemExit(f"Zu wenig Replay-Events ({len(df)}) in {replay_path}")
+    print(f"rub: {len(df)} Events, {df['symbol'].nunique()} Coins, "
+          f"{df['signal_time'].min()} → {df['signal_time'].max()}")
+
+    results: dict = {"strategy": "rub2", "features": RUB2_FEATURES}
+    for direction in ("LONG", "SHORT"):
+        d = df[df["direction"] == direction].reset_index(drop=True)
+        if len(d) < 300:
+            print(f"rub2 {direction}: nur {len(d)} Events — übersprungen")
+            continue
+        # Purge-Gap 7 Tage: Reversion-Trades können lange laufen, und die
+        # Extrem-Episoden clustern — großzügig gegen Zwillings-Leakage.
+        train, val, test = chrono_split(d, gap_hours=7 * 24)
+        print(f"rub2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
+              f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%")
+
+        model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
+            train, val, test, RUB2_FEATURES, picker=pick_threshold_safe)
+
+        meta = {
+            "trainer": "tools/retrain_from_replay.py", "strategy": "rub2",
+            "model_id": "RUB2", "direction": direction,
+            "model_type": "binary (1=TP1-first-touch)", "success_proba": "predict_proba[:, 1]",
+            "features": RUB2_FEATURES,
+            "optimal_threshold": thresh,
+            "label_source": os.path.basename(replay_path),
+            "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-13-Parität), Fees inkl.",
+            "changes_vs_rub1": "MACD auf normal_12_26_9 fixiert (Live-Parität), Label mit "
+                               "SL-Pfad statt Max-Favorable-72h, chronologischer Split mit "
+                               "7d-Purge statt Random-Split, +6 Funding-Features",
+            "split": "chronological 70/15/15 + 7d purge gap",
+            "xgboost_version": xgb.__version__,
+            "n_train": len(train), "n_val": len(val), "n_test": len(test),
+            "val_stats": val_stats, "test_stats": test_stats,
+        }
+        save_artifact(os.path.join(STAGING_DIR, f"rub2_model_{direction}.pkl"),
+                      model, RUB2_FEATURES, thresh, iso, meta)
+        with open(os.path.join(STAGING_DIR, f"rub2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        results[direction] = {"n_events": len(d), "base_rate": round(d["outcome"].mean() * 100, 1),
+                              "threshold": thresh, "val_stats": val_stats, "test_stats": test_stats,
+                              "calibration_new_test": calib_new,
+                              "feature_importance_top": top_importance(model, RUB2_FEATURES)}
+    return results
+
+
 def top_importance(model, feature_cols, k=8):
     imp = model.feature_importances_
     order = np.argsort(imp)[::-1][:k]
@@ -478,7 +539,7 @@ def main():
     except Exception:
         pass
     ap = argparse.ArgumentParser()
-    ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1", "mis1"])
+    ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1", "mis1", "rub"])
     ap.add_argument("--tf", default="4h", choices=["1h", "4h"])
     ap.add_argument("--replay", default=None)
     ap.add_argument("--days", type=int, default=540)
@@ -499,6 +560,15 @@ def main():
         tag = f"{args.strategy}_{args.tf}" if args.strategy in ("td", "bb") else args.strategy
         days = args.days if args.strategy in ("td", "bb", "mis1") else 365
         args.replay = os.path.join(REPLAY_DIR, f"{tag}_replay_{days}d.jsonl")
+
+    if args.strategy == "rub":
+        result = run_rub(args.replay)
+        name = "rub2"
+        out = os.path.join(STAGING_DIR, f"retrain_{name}_stats.json")
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(result, fh, indent=2, default=str)
+        print(f"\nStats: {out}")
+        return
 
     if args.strategy in ("td", "bb"):
         result = run_td_bb(args.strategy, args.tf, args.replay)
