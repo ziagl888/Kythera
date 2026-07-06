@@ -74,10 +74,13 @@ intent-konform.
 **Entschieden (Michi, 2026-07-06):**
 - [x] Intent-Satz bestätigt; Label bleibt Trade-Geometrie (TP1-vor-SL) — für einen
       Detektor-Filter die richtige Frage.
-- [x] **LONG-Seite bleibt IMMER offen** (Operator-Entscheid, bewusst gegen die
-      Audit-Empfehlung): Setup + S/R-Targets rechtfertigen den Trade auch ohne
-      ML-Selektionsnachweis. Das ML-Gate darf LONG nicht schließen; falls das
-      LONG-Modell wertlos bleibt, wird es nur informativ (Confidence-Anzeige).
+- [x] ~~**LONG-Seite bleibt IMMER offen**~~ **REVIDIERT am Abend des 2026-07-06
+      (Michi):** Der LONG-Immer-Bypass produzierte ~60 Signale in 3h über das
+      657-Coin-Universum; Report 21 (Exit-Resim + ML-Selektion + BTC-Regime auf
+      27,7k Events) zeigt: Setup ungefiltert −0,59 %/Trade, Break-even-WR ~63 %,
+      kein getesteter Hebel dreht LONG positiv. LONG läuft wieder über den
+      Legacy-Blocker (3-Klassen-Modell ohne meta.json, Gate 0,60 ≈ zu).
+      Reaktivierung nur mit neuen Datenquellen oder Regimewechsel (Report 21 §3).
 - [ ] Batch-E-Threshold (SHORT 0,75 aus dünner Validation) nach Abschluss der
       laufenden Sim mit `pick_threshold_safe` neu bestimmen.
 

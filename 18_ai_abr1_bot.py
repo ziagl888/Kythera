@@ -585,12 +585,13 @@ def process_abr_logic(conn, symbol):
                 f"Level: {setup['level_price']:.6f} | Prob: {prediction_proba:.2f} "
                 f"(Gate {contract['threshold']:.2f})"
             )
-            # Operator-Entscheid 2026-07-06 (docs/MODEL_INTENT.md §2): Die
-            # LONG-Seite postet IMMER — Setup + S/R-Targets rechtfertigen den
-            # Trade; das LONG-Modell hat auch auf sauberen Detektor-Events
-            # keinen Selektionswert (Retrain 06.07.), Confidence ist informativ.
-            gate_passed = prediction_proba >= contract['threshold'] or direction == 'LONG'
-            if gate_passed:
+            # Operator-Entscheid REVIDIERT 2026-07-06 abends: der LONG-Immer-
+            # Bypass ist zurückgenommen (~60 Signale in 3h auf 657 Coins;
+            # Report 21: Setup ungefiltert −0,59%/Trade, Break-even-WR ~63%).
+            # LONG läuft wieder über den Legacy-Blocker-Vertrag (Gate 0,60,
+            # lässt praktisch nichts durch), bis ein Modell mit echtem
+            # Selektionswert existiert.
+            if prediction_proba >= contract['threshold']:
                 send_signal(conn, symbol, direction, display_proba, retest_candle['close'])
 
     except Exception as e:
