@@ -27,9 +27,15 @@ def main():
                 ALTER TABLE closed_ai_signals
                 ADD COLUMN IF NOT EXISTS close_time TIMESTAMPTZ DEFAULT NOW()
             """)
+            # Limit-Entry-Support (MIS2-SHORT, 2026-07-06): entry_filled=FALSE
+            # heißt "Limit-Order noch nicht gefüllt" — kein Scoring vor dem Fill;
+            # expiry_hours = Horizont für Verfall (Entry nie erreicht) und
+            # Timeout-Exit (gehört zur studien-validierten Bracket-Geometrie).
+            cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS entry_filled BOOLEAN DEFAULT TRUE")
+            cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS expiry_hours INTEGER")
         conn.commit()
     except Exception as e:
-        logger.warning(f"Could not migrate close_time column: {e}")
+        logger.warning(f"Could not migrate schema columns: {e}")
         conn.rollback()
 
     # FIX P2.7: In-Memory-Wasserzeichen pro Trade-ID (erste Stufe, kein DB-Schema-Change:
@@ -58,7 +64,8 @@ def main():
             with conn.cursor() as cur:
                 # Loading ALLE aktiven AI-Trades
                 cur.execute("""
-                    SELECT id, symbol, model, direction, entry1, price, sl, targets, current_target_hit, open_time
+                    SELECT id, symbol, model, direction, entry1, price, sl, targets, current_target_hit, open_time,
+                           entry_filled, expiry_hours
                     FROM ai_signals
                 """)
                 active_trades = cur.fetchall()
@@ -180,6 +187,8 @@ def main():
                         targets_data,
                         targets_hit,
                         open_time,
+                        entry_filled,
+                        expiry_hours,
                     ) = trade
 
                     candles_all = coin_candles.get(symbol)
@@ -215,6 +224,14 @@ def main():
                     if targets_data is not None:
                         targets = json.loads(targets_data) if isinstance(targets_data, str) else targets_data
 
+                    # Limit-Entry-Status (MIS2-SHORT: Entry = Limit-Sell +5 % über
+                    # Signalkurs — Scoring erst NACH dem Fill, sonst Phantom-Trades).
+                    filled = True if entry_filled is None else bool(entry_filled)
+                    expiry = int(expiry_hours) if expiry_hours is not None else None
+                    ot_aware = open_time
+                    if ot_aware is not None and ot_aware.tzinfo is None:
+                        ot_aware = ot_aware.replace(tzinfo=pytz.UTC)
+
                     for candle in trade_candles:
                         last_checked[trade_id] = candle['open_time']
 
@@ -230,8 +247,45 @@ def main():
                         new_sl = sl_state
                         new_targets_hit = hit_state
                         db_was_changed = False  # Hilfsvariable für den Batch-Counter
+                        tp_allowed = True
 
-                        if targets is None:
+                        # Horizont-Alter dieser Kerze relativ zum Signal
+                        c_ot = candle['open_time']
+                        if c_ot.tzinfo is None:
+                            c_ot = c_ot.replace(tzinfo=pytz.UTC)
+                        past_expiry = (
+                            expiry is not None and ot_aware is not None
+                            and (c_ot - ot_aware) >= datetime.timedelta(hours=expiry)
+                        )
+
+                        if not filled:
+                            if past_expiry:
+                                # Entry innerhalb des Horizonts nie erreicht → Verfall,
+                                # PnL 0 (war nie im Markt). Consumers filtern den Status.
+                                is_closed = True
+                                close_reason = "ENTRY_NOT_FILLED"
+                                close_price = entry
+                            elif (direction == "SHORT" and candle_high >= entry) or (
+                                direction == "LONG" and candle_low <= entry
+                            ):
+                                filled = True
+                                tp_allowed = False  # Fill-Kerze: konservativ nur SL (wie Studie)
+                                cur.execute(
+                                    "UPDATE ai_signals SET entry_filled = TRUE WHERE id = %s", (trade_id,)
+                                )
+                                db_was_changed = True
+                                logger.info(f"📥 {symbol} ({model}): Limit-Entry {entry} gefüllt.")
+                            else:
+                                continue  # vor dem Fill kein SL/TP-Scoring
+
+                        if is_closed:
+                            pass  # ENTRY_NOT_FILLED → direkt zum Close-Block C)
+                        elif past_expiry:
+                            # Studien-Geometrie: hartes Timeout am Horizontende → Exit zum Close
+                            is_closed = True
+                            close_reason = "HORIZON_TIMEOUT"
+                            close_price = current_price
+                        elif targets is None:
                             # LEGACY: einfache %-Schwellen gegen Close (keine Level-Info vorhanden)
                             if direction == "LONG":
                                 pnl_pct = (current_price - entry) / entry * 100
@@ -253,7 +307,7 @@ def main():
                                     is_closed = True
                                     close_reason = f"SL Hit (SL: {sl_state})"
                                     close_price = float(sl_state)
-                                else:
+                                elif tp_allowed:
                                     # TPs: LONG TP getriggert wenn high über Target
                                     for i in range(new_targets_hit, len(targets)):
                                         if candle_high >= float(targets[i]):
@@ -275,7 +329,7 @@ def main():
                                     is_closed = True
                                     close_reason = f"SL Hit (SL: {sl_state})"
                                     close_price = float(sl_state)
-                                else:
+                                elif tp_allowed:
                                     # TPs: SHORT TP getriggert wenn low unter Target
                                     for i in range(new_targets_hit, len(targets)):
                                         if candle_low <= float(targets[i]):

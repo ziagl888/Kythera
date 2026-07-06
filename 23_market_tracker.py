@@ -420,7 +420,8 @@ async def job_signal_summary():
                    open_time as created_at, close_time as closed_at, targets_hit,
                    status as close_reason
             FROM closed_ai_signals
-            WHERE close_time >= %s OR open_time >= %s
+            WHERE (close_time >= %s OR open_time >= %s)
+              AND status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
         """
         df_cls_ai = pd.read_sql_query(query_cls_ai, conn, params=(t24, t24))
 
@@ -767,6 +768,7 @@ async def job_per_bot_performance() -> None:
                    status as close_reason
             FROM closed_ai_signals
             WHERE entry IS NOT NULL AND close_price IS NOT NULL
+              AND status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
             """,
             conn,
         )

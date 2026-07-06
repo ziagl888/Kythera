@@ -402,10 +402,13 @@ def check_mis_models():
                             (target_channel, html_caption),
                         )
 
+                    # SHORT = Limit-Entry (+5 % über Markt): entry_filled=FALSE
+                    # bis der Monitor den Fill sieht; expiry_hours = Horizont
+                    # (Verfall + Timeout-Exit — Teil der validierten Geometrie).
                     cur.execute(
                         """
-                        INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets, entry_filled, expiry_hours)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                         (
                             symbol,
@@ -417,6 +420,8 @@ def check_mis_models():
                             float(entry2),
                             float(sl),
                             json.dumps(targets),
+                            is_long,  # LONG = CMP-Entry (sofort gefüllt), SHORT = Limit
+                            None if is_long else int(best_horizon.replace("H", "")),
                         ),
                     )
 
