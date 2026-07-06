@@ -180,13 +180,17 @@ def load_dataset(conn) -> pd.DataFrame:
         if dfi is None or dfi.empty:
             continue
         # LOOK-AHEAD-FIX (Verbesserung 2): letzte GESCHLOSSENE 1h-Kerze —
-        # open_time + 1h <= Signalzeit.
+        # open_time + 1h <= Signalzeit. TZ-Vertrag (AIM2-Vermessung 2026-07-05):
+        # closed_trades3-Writer stempeln PG-LOKALZEIT (Europe/Bucharest) —
+        # naive Zeiten deshalb dort lokalisieren, dann UTC; Kerzen sind UTC.
         t_sig = pd.Timestamp(tr["time"])
-        ot = pd.to_datetime(dfi["open_time"])
-        if ot.dt.tz is not None and t_sig.tzinfo is None:
-            t_sig = t_sig.tz_localize(ot.dt.tz)
-        elif ot.dt.tz is None and t_sig.tzinfo is not None:
-            t_sig = t_sig.tz_localize(None)
+        if t_sig.tzinfo is None:
+            # DST-Kanten deterministisch auflösen (ambiguous: Herbst-Doppelstunde
+            # → DST-Variante; nonexistent: Frühjahrs-Lücke → vorwärts schieben).
+            # Fehler von ±1h an 2 Stunden/Jahr ist fürs Training immateriell.
+            t_sig = t_sig.tz_localize("Europe/Bucharest", ambiguous=True, nonexistent="shift_forward")
+        t_sig = t_sig.tz_convert("UTC")
+        ot = pd.to_datetime(dfi["open_time"], utc=True)
         mask = ot <= (t_sig - pd.Timedelta(hours=1))
         if not mask.any():
             continue
@@ -204,6 +208,7 @@ def load_dataset(conn) -> pd.DataFrame:
     if not df.empty:
         df["signal_time"] = pd.to_datetime(df["signal_time"], utc=True).dt.tz_localize(None)
         df = df.sort_values("signal_time").reset_index(drop=True)
+        # Zeiten sind ab hier naive UTC — konsistent für Split-Quantile.
     return df
 
 

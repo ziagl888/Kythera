@@ -175,9 +175,22 @@ erzeugt die Kandidaten, das ML sagt nur „diesen nehmen / diesen nicht"
 - [x] **Label-Semantik GEKLÄRT:** SL1/SL2/SL3 = SL nach TP1/TP2/TP3 getroffen =
       Trailing-Gewinn-Exits → Label `WIN` ist KORREKT. Die offene Audit-Frage
       (Report 13/16) ist damit vom Operator beantwortet; kein Label-Blocker mehr.
-- [x] **Retrain eingeplant** (Warteschlange nach den MIS1-Move-Retrains):
-      Preisspalten-Features raus, Kalibrierung dazu, gleiches Gerüst.
-      ATR-Crash-Fix (35/38-Spalten-Loop) sofort davor, geht ohne Retrain.
+- [x] ATR-Crash: war bereits gefixt (P1.20). Label-Semantik zusätzlich per
+      Code-Beweis bestätigt (13-updatesupportresistance zählt erreichte Targets).
+
+**SRA2-Retrain durchgeführt 2026-07-06 nachts — Ergebnis: NICHT deploybar.**
+`tools/retrain_sra2.py` (22 skalenfreie Features, Look-ahead-Fix inkl.
+TZ-Korrektur Europe/Bucharest→UTC, NaN nativ, Isotonic + Safe-Threshold;
+7.967 Events):
+- LONG: Test 448 Trades @0,64 → WR 42,0 % (Basis 38,5 %, nur +3,5 pp Uplift),
+  Ø **−1,61 %/Trade** — Val-Test-Bruch; Testfenster (Jan–Feb 26) war Bärenphase.
+- SHORT: Safe-Picker verweigert ehrlich (kein Operating Point mit positivem
+  Ø-PnL bei n≥100).
+- **Root-Blocker entdeckt:** Label-Quelle `closed_trades3` ist TOT seit
+  23.02.2026 (Writer 13-updatesupportresistance in _X läuft nicht mehr) —
+  Trainingsdaten enden vor 4,5 Monaten, S/R-Outcomes seither ungetrackt.
+  → Task #5: Label-Pipeline wiederbeleben (bevorzugt Replay-Labels statt
+  fragiler Tracker), DANN SRA2 wiederholen. **SRA1 bleibt unverändert live.**
 
 ---
 
