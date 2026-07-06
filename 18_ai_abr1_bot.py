@@ -71,6 +71,12 @@ LIVE_DATA_HISTORY_HOURS = 240
 # mit eigenem Tracking-Tag und Review nach 4–6 Wochen). Fail-CLOSED: ohne
 # Funding-Daten bleibt LONG zu.
 FUNDING_GATE_LONG_BPS = 3.0
+# SHORT-Spiegelbefund (gleiche Studie, 33,5k SHORT-Events): fund_24h > +1,5 bps
+# ist für SHORTs in Train UND Test konsistent giftig (−1,2%/Trade) — exakt die
+# Zone, in der das LONG-Gate öffnet. Deshalb VETO auf dem Modell-Gate. Anders
+# als das LONG-Gate fail-OPEN: ohne Funding-Daten gilt das validierte
+# Modell-Signal (das Veto ist Sicherheitsnetz, nicht Primär-Gate).
+FUNDING_VETO_SHORT_BPS = 1.5
 FUNDING_GATE_TAG = 'ABR2'  # Generation-2-Tag; direction-Spalte trennt die Seiten
 _funding_cache: dict = {}  # symbol -> (monotonic_ts, mean_bps | None)
 
@@ -641,7 +647,18 @@ def process_abr_logic(conn, symbol):
                 elif fund_bps is not None:
                     logger.info(f"⛔ LONG-Funding-Gate zu für {symbol}: {fund_bps:+.2f} bps (Limit {FUNDING_GATE_LONG_BPS:+.1f})")
             elif prediction_proba >= contract['threshold']:
-                send_signal(conn, symbol, direction, display_proba, retest_candle['close'])
+                # SHORT-Funding-Veto (2026-07-06, Report 21 Addendum 2 Spiegel-
+                # test): bei fund_24h > +1,5 bps ist die Zone konsistent
+                # verlustig — Veto trotz Modell-Gate. Fail-open (s. Konstante).
+                fund_bps = get_funding_24h_bps(symbol)
+                if fund_bps is not None and fund_bps > FUNDING_VETO_SHORT_BPS:
+                    logger.info(
+                        f"⛔ SHORT-Funding-Veto für {symbol}: {fund_bps:+.2f} bps "
+                        f"(> {FUNDING_VETO_SHORT_BPS:+.1f}, Modell-Prob {prediction_proba:.2f})"
+                    )
+                else:
+                    send_signal(conn, symbol, direction, display_proba, retest_candle['close'],
+                                funding_bps=fund_bps)
 
     except Exception as e:
         logger.error(f"Error for {symbol}: {e}")

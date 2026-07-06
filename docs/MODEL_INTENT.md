@@ -104,6 +104,13 @@ intent-konform.
       NUR über dieses Gate (live REST, fail-closed, 30-min-Cache), postet als
       ABR2 mit Funding-Wert in der Info-Nachricht. Erwartung ~1–2 Signale/Tag.
       **Review nach 4–6 Wochen** (≥30 Trades): Cornix-Tracking entscheidet.
+- [x] **SHORT-Funding-Veto (Michi, 2026-07-06):** Spiegeltest auf 33,5k
+      SHORT-Events — `fund_24h > +1,5 bps` ist für SHORTs in Train UND Test
+      konsistent verlustig (−1,2 %/Trade; exakt die Zone, in der das LONG-Gate
+      öffnet → unabhängige Kreuzvalidierung des Funding-Signals). SHORTs
+      brauchen jetzt Modell-Gate ≥0,75 UND fund_24h ≤ +1,5 bps; fail-open
+      (Veto ist Sicherheitsnetz, nicht Primär-Gate). Review zusammen mit dem
+      LONG-Experiment.
 - [ ] Batch-E-Threshold (SHORT 0,75 aus dünner Validation) nach Abschluss der
       laufenden Sim mit `pick_threshold_safe` neu bestimmen.
 

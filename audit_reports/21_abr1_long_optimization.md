@@ -155,3 +155,12 @@ nur noch über das Funding-Gate (`FUNDING_GATE_LONG_BPS = 3.0`, Mittel der
 letzten 3 Sätze via REST, fail-closed, 30-min-Cache), Tag ABR2, Funding-Wert in
 der Info-Nachricht. Erwartung ~1–2 Signale/Tag auf 530 Coins. Review nach 4–6
 Wochen bzw. ≥30 getrackten Trades.
+
+**Spiegeltest SHORT (33,5k Events):** dieselbe Funding-Zone ist für SHORTs
+konsistent giftig — `fund_24h > +1,5 bps` → −1,21 %/Trade (Train −1,13, Test
+−1,00; > +3 bps: −1,21/−1,11/−1,72). Das kreuzvalidiert das LONG-Gate mit
+unabhängigen Daten. Die symmetrische Seite (fund_24h < −3 bps → +0,56 %) ist
+real, aber schwächer als das bestehende Modell-Gate (+1,5 %/Trade) — kein
+Ersatz, keine Änderung. **Umgesetzt als SHORT-Funding-Veto**
+(`FUNDING_VETO_SHORT_BPS = 1.5`, fail-open): SHORT braucht Modell-Gate UND
+fund_24h ≤ +1,5 bps.
