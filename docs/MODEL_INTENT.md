@@ -237,6 +237,14 @@ regimeabhängig (Alt-Pump-Phasen; Juli negativ → Drift-Watch Pflicht).
       SHORT-Veto >+1,5 bps, kreuzvalidiert auf 33,5k Events); für ein
       Momentum-MITFAHR-Modell plausibel richtungsentscheidend. Historie liegt
       voll in `funding_rates` (430d × 530 Coins).
+- [x] **Replay-Adapter GEBAUT (2026-07-06 nachts):** `tools/epd2_build_dataset.py`
+      — EPD ist 10s-Tick-basiert, bar-für-bar nicht nachspielbar; die
+      Detektor-Logs (`pump_dump_events`) SIND die Events. Spiegelt Bot-10-
+      Semantik: Alert-Gate vol_ratio≥5 beidseitig, Richtung = mitfahren,
+      900s-Dedup, Post-Spike-Entry, **HVN/SR-Geometrie as-of**
+      (`get_hvn_and_sr_levels(df=…)` + `hvn_sr_trade_geometry`), Label via
+      `simulate_exit` (Skip-Entry-Hour, 7d-Horizont), 10 Live-Features
+      (sample_fill=1.0 als dokumentierte Näherung) + 6 Funding-Features.
 
 ---
 
@@ -254,6 +262,13 @@ Random-Split-Memorization). Live-Gewinn stammt aus Vorfilter + S/R-Targets + SHO
 - [x] Retrain-Label: **Geometrie mit SL-Pfad** (First-Touch TP1-vor-SL — der
       Drawdown-Pfad steckt via SL-Touch automatisch drin). Gleiche Infrastruktur;
       braucht einen RUB1-Adapter im Walkforward (Vorfilter-Events nachspielen).
+- [x] **Adapter GEBAUT (2026-07-06 nachts):** `walkforward_sim.py --strategy rub`
+      — Vorfilter/Regression/9-Feature-Vertrag nach `core/rub_features.py`
+      gehoben (EINE Quelle, Bot 13 refaktoriert und nutzt sie live; X-R1).
+      Replay je geschlossener 1h-Kerze: 95d-Regression as-of, 4h-Cooldown je
+      Richtung wie live, Geometrie = `get_hvn_and_sr_levels(df=…)` +
+      `hvn_sr_trade_geometry` + `ensure_min_tp_distance`, Label via
+      `simulate_exit`; Feature-Dict enthält zusätzlich die 6 Funding-Features.
 - [x] **LONG-Gate WIEDER ÖFFNEN** (Operator-Entscheid, revidiert den Audit-Batch:
       Idee ist symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML).
       → Code-Änderung + Bot-Neustart nötig.

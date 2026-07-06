@@ -79,7 +79,15 @@ from core.mis_features import (
 from core.mis_features import (
     add_advanced_features as mis1_add_features,
 )
-from core.trade_utils import calculate_smart_targets, compute_smart_target_levels  # noqa: E402
+from core.funding_features import funding_features_asof, load_funding  # noqa: E402
+from core.rub_features import build_rub_features, rub_event_type, rub_trend  # noqa: E402
+from core.trade_utils import (  # noqa: E402
+    calculate_smart_targets,
+    compute_smart_target_levels,
+    ensure_min_tp_distance,
+    get_hvn_and_sr_levels,
+    hvn_sr_trade_geometry,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # KONFIGURATION
@@ -92,7 +100,7 @@ MAX_CPU_AT_START = 90.0  # health_monitor CPU_SATURATED nicht triggern
 
 # Wie viele TPs der jeweilige Bot tatsächlich publiziert (Cornix-Message) —
 # bestimmt die Positions-Fraktionierung im Ladder-Exit.
-PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5}
+PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5, "rub": 3}
 
 
 def set_low_priority() -> None:
@@ -731,6 +739,145 @@ def run_mis1(conn, symbol: str, days: int, stride: int) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ADAPTER 6: RUB (Rubberband Mean Reversion — Vorfilter-Events nachspielen)
+# ─────────────────────────────────────────────────────────────────────────────
+RUB_REG_WINDOW_H = 95 * 24   # Regressions-/Level-Fenster wie im Bot (95d-Query)
+RUB_MIN_REG_ROWS = 50        # Bot: len(rows_90d) < 50 → skip
+RUB_COOLDOWN_H = 4           # Live-Cooldown je Coin/Richtung (Bot 13)
+
+RUB_SQL_INDICATORS = (
+    "i.rsi_14, i.tsi_fast_12_7_7, i.tsi_fast_12_7_7_signal, "
+    "i.macd_dif_normal_12_26_9, i.macd_dea_normal_12_26_9, "
+    "i.atr_14, i.ema_200, i.donchian_lower_20, i.donchian_upper_20"
+)
+
+
+def load_rub_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
+    """1h-Kerzen + exakt die Indikatoren, die Bot 13 abfragt (as-of pro Kerze).
+    NUR geschlossene Kerzen (R1-Disziplin)."""
+    try:
+        df = pd.read_sql_query(
+            f"""SELECT h.open_time, h.open, h.high, h.low, h.close, h.volume,
+                {RUB_SQL_INDICATORS}
+                FROM "{symbol}_1h" h
+                LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time
+                WHERE h.open_time >= NOW() - INTERVAL '{int(days) + 100} days'
+                  AND h.open_time < date_trunc('hour', NOW())
+                ORDER BY h.open_time ASC""",
+            conn,
+        )
+    except Exception:
+        conn.rollback()
+        return None
+    if df.empty:
+        return None
+    df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
+    for c in df.columns:
+        if c != "open_time":
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.dropna(subset=["high", "low", "close"]).reset_index(drop=True)
+
+
+def _rub_val(arr, i, default):
+    """NaN/Inf → default (Spiegel von get_f im Bot)."""
+    v = arr[i]
+    try:
+        fv = float(v)
+        return fv if np.isfinite(fv) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def run_rub1(conn, symbol: str, days: int) -> list[dict]:
+    """Walk-forward des RUB-Vorfilters: je geschlossener 1h-Kerze wird die
+    Rubberband-Bedingung geprüft (== stündlicher Live-Scan von Bot 13).
+
+    EINE Quelle mit dem Bot (core/rub_features: Regression, Vorfilter,
+    9-Feature-Vertrag) + Live-Geometrie as-of (get_hvn_and_sr_levels(df=...) +
+    hvn_sr_trade_geometry + ensure_min_tp_distance). 4h-Cooldown je Richtung
+    wie live. Zusätzlich die 6 Funding-Features (core/funding_features) im
+    Feature-Dict — für den RUB2-Retrain (MODEL_INTENT §8).
+
+    Bewusste Näherung: Entry = Close der frisch geschlossenen Kerze (der Bot
+    nutzt den Preis kurz nach Stundenschluss)."""
+    df = load_rub_frame(conn, symbol, days)
+    if df is None or len(df) < RUB_MIN_REG_ROWS + 2:
+        return []
+
+    fund_by_sym = load_funding(conn, [symbol])
+
+    t1h = df["open_time"].values
+    h1h, l1h, c1h = df["high"].values, df["low"].values, df["close"].values
+    ts_sec = df["open_time"].astype("int64").to_numpy() / 1e9
+    n = len(df)
+
+    # Replay-Fenster: die Warmup-Historie (Regressions-Lookback) liegt VOR dem
+    # angeforderten Zeitraum, Events entstehen nur in den letzten `days` Tagen.
+    start_t = max(RUB_MIN_REG_ROWS, n - days * 24)
+
+    # t1h stammt aus .values → naive UTC-datetime64; Cooldown-Marker ebenfalls naiv.
+    cooldown = {"LONG": pd.Timestamp.min, "SHORT": pd.Timestamp.min}
+    trades: list[dict] = []
+    for t in range(start_t, n - 1):
+        curr_close = float(c1h[t])
+        if not np.isfinite(curr_close) or curr_close <= 0:
+            continue
+
+        lo = max(0, t + 1 - RUB_REG_WINDOW_H)
+        if t + 1 - lo < RUB_MIN_REG_ROWS:
+            continue
+
+        rsi = _rub_val(df["rsi_14"].values, t, 50.0)
+        tsi_line = _rub_val(df["tsi_fast_12_7_7"].values, t, 0.0)
+        dc_lower = _rub_val(df["donchian_lower_20"].values, t, curr_close)
+        dc_upper = _rub_val(df["donchian_upper_20"].values, t, curr_close)
+
+        # Regression erst NACH einem billigen Vor-Vorfilter? Nein — dist_to_trend
+        # steckt in der Bedingung selbst; die Closed-Form-Regression ist billig.
+        dist_pct, slope_day = rub_trend(ts_sec[lo: t + 1], c1h[lo: t + 1], curr_close)
+        event_type = rub_event_type(dist_pct, rsi, tsi_line, curr_close, dc_lower, dc_upper)
+        if not event_type:
+            continue
+
+        direction = "LONG" if event_type == "REVERSION_UP" else "SHORT"
+        ts_decision = pd.Timestamp(t1h[t]) + pd.Timedelta(hours=1)
+        if ts_decision < cooldown[direction]:
+            continue
+        cooldown[direction] = ts_decision + pd.Timedelta(hours=RUB_COOLDOWN_H)
+
+        features = build_rub_features(
+            dist_pct, slope_day, curr_close, rsi, tsi_line,
+            _rub_val(df["tsi_fast_12_7_7_signal"].values, t, 0.0),
+            _rub_val(df["macd_dif_normal_12_26_9"].values, t, 0.0),
+            _rub_val(df["macd_dea_normal_12_26_9"].values, t, 0.0),
+            _rub_val(df["atr_14"].values, t, 0.0),
+            _rub_val(df["ema_200"].values, t, curr_close),
+        )
+        features.update(funding_features_asof(fund_by_sym, symbol, ts_decision))
+
+        is_long = direction == "LONG"
+        win95 = df.iloc[lo: t + 1][["high", "low", "close"]]
+        supps, resis = get_hvn_and_sr_levels(None, symbol, curr_close, df=win95)
+        entry1 = curr_close
+        entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
+        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        if not targets or sl <= 0:
+            continue
+
+        res = simulate_exit(t1h, h1h, l1h, c1h, t + 1, direction,
+                            entry1, sl, targets, PUBLISHED_TARGETS["rub"])
+        trades.append({
+            "strategy": "rub", "tf": "1h", "symbol": symbol, "direction": direction,
+            "signal_time": str(ts_decision), "entry": entry1, "entry2": entry2,
+            "sl": sl, "targets": targets[:PUBLISHED_TARGETS["rub"]],
+            "dist_to_trend_pct": round(dist_pct, 6),
+            "features": features, **res,
+        })
+
+    return trades
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DRIVER
 # ─────────────────────────────────────────────────────────────────────────────
 def summarize(trades: list[dict], label: str) -> dict:
@@ -756,7 +903,7 @@ def summarize(trades: list[dict], label: str) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Walk-Forward-Simulator (P0.10/P0.11)")
-    ap.add_argument("--strategy", required=True, choices=["ufi1", "td", "bb", "abr1", "mis1"])
+    ap.add_argument("--strategy", required=True, choices=["ufi1", "td", "bb", "abr1", "mis1", "rub"])
     ap.add_argument("--tf", default="1h", choices=["1h", "4h"], help="nur für td/bb")
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--stride", type=int, default=24,
@@ -835,6 +982,8 @@ def main() -> None:
                             trades = run_td_bb(conn, symbol, args.tf, args.days, args.strategy)
                         elif args.strategy == "mis1":
                             trades = run_mis1(conn, symbol, args.days, args.stride)
+                        elif args.strategy == "rub":
+                            trades = run_rub1(conn, symbol, args.days)
                         else:
                             trades = run_abr1(conn, symbol, args.days, abr1_mod)
                         break

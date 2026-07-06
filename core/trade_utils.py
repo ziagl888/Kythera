@@ -395,7 +395,7 @@ def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels
         }
 
 
-def get_hvn_and_sr_levels(conn, symbol, live_price):
+def get_hvn_and_sr_levels(conn, symbol, live_price, df=None):
     """Fetches historical data and calculates levels for targets/SL.
 
     FIX (#52): Diese Funktion war 5× identisch kopiert in:
@@ -406,19 +406,26 @@ def get_hvn_and_sr_levels(conn, symbol, live_price):
       - 14_ai_atb_bot.py
     Jetzt zentral hier. Kein Kopie mehr pflegen, kein Drift zwischen den Bots.
 
+    `df` (optional): fertiges, chronologisch aufsteigendes 1h-Fenster mit
+    high/low/close (idealerweise ~95 Tage). Wird es übergeben, findet KEIN
+    DB-Zugriff statt — gleiches As-of-Muster wie `calculate_smart_targets`
+    (P0.10): die Walkforward-Adapter (RUB2/EPD2) spielen so exakt dieselbe
+    Level-Logik auf historischen Fenstern ab wie die Live-Bots.
+
     Nutzt scipy.signal.argrelextrema auf 95 Tagen 1h-Kerzen + Fibonacci-Levels.
     Returns (supports, resistances): zwei sortierte Listen von Preis-Leveln.
     """
-    try:
-        # FIX P2.29: ORDER BY — ohne Sortierung liefert Postgres die Rows in
-        # beliebiger Reihenfolge und argrelextrema findet Phantom-Extrema,
-        # die als SL/TP-Preise in SRA1/ATS1/RUB1 landen.
-        df = pd.read_sql_query(
-            f'SELECT high, low, close FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\' ORDER BY open_time ASC',
-            conn,
-        )
-    except Exception:
-        return [], []
+    if df is None:
+        try:
+            # FIX P2.29: ORDER BY — ohne Sortierung liefert Postgres die Rows in
+            # beliebiger Reihenfolge und argrelextrema findet Phantom-Extrema,
+            # die als SL/TP-Preise in SRA1/ATS1/RUB1 landen.
+            df = pd.read_sql_query(
+                f'SELECT high, low, close FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\' ORDER BY open_time ASC',
+                conn,
+            )
+        except Exception:
+            return [], []
 
     if df.empty or len(df) < 50:
         return [], []
@@ -435,3 +442,30 @@ def get_hvn_and_sr_levels(conn, symbol, live_price):
     fib_ext = [swing_low + fib_range * x for x in [1.272, 1.618, 2.0, 2.618]]
 
     return supports + fib_ret, resistances + fib_ext
+
+
+def hvn_sr_trade_geometry(entry1, is_long, supps, resis):
+    """Entry2/SL/Target-Kandidaten aus HVN/SR-Leveln — die Geometrie, die
+    Bot 10 (EPD) und Bot 13 (RUB) inline identisch berechnen (dortige Kopien
+    bleiben vorerst; diese Funktion ist die referenzierte EINE Quelle für die
+    Walkforward-Adapter, damit Replay-Geometrie == Live-Geometrie).
+
+    Returns (entry2, sl, target_candidates) — Targets danach durch
+    ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05) ziehen.
+    """
+    entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
+    if is_long:
+        sl = (
+            max([x for x in supps if x < entry2 * 0.99])
+            if any(x < entry2 * 0.99 for x in supps)
+            else entry2 * 0.975
+        )
+        t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
+    else:
+        sl = (
+            min([x for x in resis if x > entry2 * 1.01])
+            if any(x > entry2 * 1.01 for x in resis)
+            else entry2 * 1.025
+        )
+        t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
+    return entry2, sl, t_cands

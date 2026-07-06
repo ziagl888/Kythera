@@ -16,6 +16,7 @@ from core import config as _kcfg  # channel ids
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.rub_features import build_rub_features, rub_event_type, rub_trend
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_RUB_BOT - %(message)s')
@@ -121,16 +122,13 @@ def check_rubberband_conditions():
                 ind = dict(zip(columns_ind, row_ind, strict=False))
 
             # --- TRENDBERECHNUNG ---
-            # Timestamp-Array für lineare Regression
+            # Regression + Vorfilter + Feature-Bau leben seit dem RUB2-Adapter
+            # (2026-07-06) in core/rub_features — EINE Quelle für Bot UND
+            # Walkforward-Replay (X-R1-Regel), wie find_break_retest_setups bei ABR.
             df_90d['ts'] = pd.to_datetime(df_90d['open_time'], utc=True).apply(lambda x: x.timestamp())
             ts_values = df_90d['ts'].values
             close_values = df_90d['close'].values.astype(float)
 
-            # Lineare Regression (Numpy Least Squares)
-            A = np.vstack([ts_values, np.ones(len(ts_values))]).T
-            slope, intercept = np.linalg.lstsq(A, close_values, rcond=None)[0]
-
-            curr_ts = ts_values[-1]
             # P1.19: curr_close aus der geschlossenen Indikator-Kerze (ind['close']),
             # nicht aus dem 90d-Preis-Array — so mischen dist_to_trend + alle ML-Features
             # nicht mehr Live-Preis mit Partial-Indikatoren. Fallback auf die (nun
@@ -141,11 +139,8 @@ def check_rubberband_conditions():
                     curr_close = float(close_values[-1])
             except (TypeError, ValueError, KeyError):
                 curr_close = float(close_values[-1])
-            trend_val_curr = slope * curr_ts + intercept
 
-            # Wie weit sind wir prozentual vom Trend entfernt?
-            dist_to_trend_pct = (curr_close - trend_val_curr) / trend_val_curr if trend_val_curr != 0 else 0
-            slope_pct_per_day = (slope * 86400) / curr_close if curr_close != 0 else 0
+            dist_to_trend_pct, slope_pct_per_day = rub_trend(ts_values, close_values, curr_close)
 
             # --- INDIKATOREN AUSLESEN ---
             def get_f(key, default=0.0, ind=ind):
@@ -174,39 +169,17 @@ def check_rubberband_conditions():
             dc_lower = get_f('donchian_lower_20', curr_close)
             dc_upper = get_f('donchian_upper_20', curr_close)
 
-            atr_pct = (atr_14 / curr_close) if curr_close > 0 else 0
-            dist_ema200 = (curr_close - ema_200) / ema_200 if ema_200 > 0 else 0
-
-            # --- VORFILTERUNG (RUBBERBAND BEDINGUNGEN) ---
-            event_type = None
-
-            # Bedingung LONG: Preis extrem weit UNTER dem Trend (-8%), RSI Oversold, TSI tief, am Donchian Boden
-            if dist_to_trend_pct <= -0.08 and rsi < 30 and tsi_line < -15 and curr_close <= dc_lower * 1.01:
-                event_type = "REVERSION_UP"
-
-            # Bedingung SHORT: Preis extrem weit ÜBER dem Trend (+8%), RSI Overbought, TSI hoch, am Donchian Dach
-            elif dist_to_trend_pct >= 0.08 and rsi > 70 and tsi_line > 15 and curr_close >= dc_upper * 0.99:
-                event_type = "REVERSION_DOWN"
-
+            # --- VORFILTERUNG (RUBBERBAND BEDINGUNGEN) — geteilte Quelle ---
+            event_type = rub_event_type(dist_to_trend_pct, rsi, tsi_line, curr_close, dc_lower, dc_upper)
             if not event_type:
                 continue
 
-            # --- ML FEATURES BERECHNEN ---
-            features = pd.DataFrame(
-                [
-                    {
-                        'dist_to_trend': dist_to_trend_pct,
-                        'rsi': rsi,
-                        'atr_pct': atr_pct,
-                        'dist_ema200': dist_ema200,
-                        'slope_trend': slope_pct_per_day,
-                        'MACD_Line': macd_line,
-                        'MACD_Signal': macd_signal,
-                        'TSI_Line': tsi_line,
-                        'TSI_Signal': tsi_signal,
-                    }
-                ]
-            )
+            # --- ML FEATURES BERECHNEN — geteilte Quelle ---
+            features = pd.DataFrame([
+                build_rub_features(dist_to_trend_pct, slope_pct_per_day, curr_close,
+                                   rsi, tsi_line, tsi_signal, macd_line, macd_signal,
+                                   atr_14, ema_200)
+            ])
 
             is_long = event_type == "REVERSION_UP"
             model = MODEL_LONG if is_long else MODEL_SHORT

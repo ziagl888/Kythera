@@ -63,8 +63,14 @@ def detect_offset_h(conn) -> int:
     row = df_query(conn, "SELECT MAX(spike_time) AS m FROM pump_dump_events")["m"].iloc[0]
     if pd.isna(row):
         return 0
+    row_ts = pd.Timestamp(row)
+    if row_ts.tzinfo is not None:
+        # timestamptz-Spalte (Ist-Zustand seit Vermessung 2026-07-06): PG liefert
+        # aware UTC — keine Offset-Heuristik nötig, Konvertierung übernimmt
+        # spike_time_to_utc über den tz-aware-Zweig.
+        return 0
     now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
-    return int(np.clip(round((pd.Timestamp(row) - now).total_seconds() / 3600.0), -12, 12))
+    return int(np.clip(round((row_ts - now).total_seconds() / 3600.0), -12, 12))
 
 
 def spike_time_to_utc(series: pd.Series, offset_h: int) -> pd.Series:
@@ -74,6 +80,9 @@ def spike_time_to_utc(series: pd.Series, offset_h: int) -> pd.Series:
     → DST-aware konvertieren; 0 ⇒ bereits UTC; alles andere: konstanter Shift
     mit Warnung (unbekannte Domäne)."""
     s = pd.to_datetime(series, errors="coerce")
+    if getattr(s.dt, "tz", None) is not None:
+        # timestamptz: bereits UTC-aware → naive UTC (aim2-Konvention).
+        return s.dt.tz_convert("UTC").dt.tz_localize(None)
     if offset_h == 0:
         return s
     if offset_h in (2, 3):

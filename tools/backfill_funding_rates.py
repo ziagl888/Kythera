@@ -94,7 +94,20 @@ def main():
                 cur.execute("SELECT EXTRACT(EPOCH FROM MAX(funding_time)) * 1000 "
                             "FROM funding_rates WHERE symbol = %s", (symbol,))
                 row = cur.fetchone()
-            start_ms = int(row[0]) + 1 if row and row[0] else default_start
+            if row and row[0]:
+                # Head-Check (Fix 2026-07-06): Resume nur ab MAX ist blind für
+                # fehlende ÄLTERE Historie (z.B. wenn ein früherer Lauf mit
+                # kleinerem --days lief — so geschehen bei BTC/ETH/BCH nach dem
+                # 30d-Smoke-Test). Fehlt der Kopf, ab default_start neu laden —
+                # ON CONFLICT dedupliziert den Überlapp.
+                with conn.cursor() as cur:
+                    cur.execute("SELECT EXTRACT(EPOCH FROM MIN(funding_time)) * 1000 "
+                                "FROM funding_rates WHERE symbol = %s", (symbol,))
+                    min_row = cur.fetchone()
+                head_missing = min_row and min_row[0] and int(min_row[0]) > default_start + 2 * 86400 * 1000
+                start_ms = default_start if head_missing else int(row[0]) + 1
+            else:
+                start_ms = default_start
 
             rows = fetch(symbol, start_ms, now_ms)
             if rows:
