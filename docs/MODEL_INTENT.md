@@ -314,17 +314,33 @@ liegt die Liquidation (~+5 %) VOR dem SL (25–40 %) — 72 % der historischen T
 wären liquidiert worden. Positionsgröße klein zu halten ist Operator-Sache
 (Cornix-Konfiguration). Kein Retrain; Entparken + Neustart als Action-Item.
 
-## 11. ATB1 — Trendlinien-Break/Bounce 🔨 NEUAUFBAU eingeplant (2026-07-06)
+## 11. ATB1 → ATB2 — Konvergenz-Kanal-Breakout 🔨 NEUAUFBAU, Design verschmolzen (2026-07-07)
 
-**Soll (von Michi definiert, 2026-07-06):** „Die" Trendlinie = **Linie durch
-bestätigte Swing-Pivots mit ≥3 Berührungen** (1h/4h, objektiv reproduzierbar —
-analog find_pivot_levels). Events: Break und Bounce dieser Linien, ML scored.
+**Soll (Michi 2026-07-06, erweitert 2026-07-07):** „Die" Trendlinie = **Linie durch
+bestätigte Swing-Pivots mit ≥3 Berührungen** (1h/4h, objektiv reproduzierbar).
+Per Operator-Entscheid 2026-07-07 verschmolzen mit der Event-Definition aus dem
+TradingView-Script „Breakout Pattern Setup [WillyAlgoTrader]" (Open Source):
+**konvergierende Kanäle** (Wedge/Triangle/Pennant) statt Einzellinien —
+Boundary-Fit an bestätigte Pivots, Validierung über Konvergenz (≥2 % Verengung),
+Kanalbreite 0,5–120× ATR, Touch-Toleranz 0,15× ATR und **Volume-Contraction im
+Kanal** (In-Channel-Volumen < 85 % des Vorlaufs — bei uns bisher ungetestet).
+Event: Ausbruch mit bestätigtem Kerzenschluss.
 
-**Plan Neuaufbau (eigener Task, nach der aktuellen Retrain-Queue):** Detektor auf
-die Pivot-Definition bauen (Event-Typ als Feature!), Walkforward-Adapter, Labels =
-gepostete Geometrie via Replay, dann Retrain nach Standard-Gerüst. Der alte Trainer
-(Close-Regressionsgeraden) wird verworfen. Bot bleibt geparkt bis der Neuaufbau
-validiert ist.
+**Bewusste Abweichungen vom Script:** Min-Touches 3 statt 2 (Operator-Intent);
+der 5-Faktor-Score (Penetrationstiefe/ATR, Body-Ratio, Body-Commitment,
+Volumen-Spike, RSI-Momentum) wird NICHT als handgewichteter Score übernommen,
+sondern als **5 Setup-Features fürs XGB-Gate** (analog ABR-Geometrie-Features);
+Targets = Measured-Move (⅓/⅔/volle Kanalbreite) als Kandidat GEGEN unsere
+Smart-Targets im Replay-Vergleich; Break-even-Trailing des Scripts ist verdächtig
+(QM-Lektion: gibt Gewinne zurück) → Exit-Varianten simulieren statt glauben.
+
+**Plan (Task #7, nach der aktuellen Retrain-Queue):** Kanal-Detektor bauen
+(kein Repaint: nur bestätigte Pivots, Closed-Candle-Break), Walkforward-Adapter,
+Labels = First-Touch mit Fees via simulate_exit, Geometrie-Vergleich
+Measured-Move vs. Smart-Targets, Retrain nach Standard-Gerüst (Safe-Threshold,
+model_id=ATB2). Der alte Trainer (Close-Regressionsgeraden) ist verworfen;
+Bot bleibt geparkt, bis ATB2 out-of-time validiert ist. Kein Backtest-Vertrauen
+in das Script selbst — dessen „Winrate" ist TP1-Touch (Report-16-Falle).
 
 ---
 
