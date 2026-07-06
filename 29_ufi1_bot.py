@@ -273,8 +273,9 @@ def post_signal(conn, symbol: str, setup: dict, live_price: float) -> None:
         f"→ Entry fib: 0.382 retracement (${fib_entry:.8f})\n"
         f"→ Confirmation: candle closes below Fib level\n"
         f"→ TP1: ${tp1:.8f} (swing low)\n"
-        f"→ SL: ${sl:.8f} (above swing high)\n\n"
-        f"{cornix_msg}</pre>"
+        # FIX Doppel-Post (2026-07-06, Flotten-Sweep): kein eingebetteter
+        # Cornix-Block — Cornix parste sonst beide Nachrichten als Signale.
+        f"→ SL: ${sl:.8f} (above swing high)</pre>"
     )
 
     with conn.cursor() as cur:

@@ -635,7 +635,10 @@ def process_coin_logics(conn, symbol):
         return
 
     # === LOGIK ANWENDEN ===
-    module_tag = "EPD1"
+    # EPD2 (Operator 2026-07-06): Richtungs-Gate entfernt — beide Seiten handeln
+    # wieder (Intent: Momentum-Mitfahren in beide Richtungen); geänderte
+    # Generation postet unter neuem Tag (Versionierungs-Regel).
+    module_tag = "EPD2"
 
     if best_prob < 0.25:
         pass  # Schrott ignorieren
@@ -653,21 +656,8 @@ def process_coin_logics(conn, symbol):
         conn.commit()
 
     elif best_prob >= 0.60:
-        # Direction-Gate (Audit Report 14 D.5): EPD1 LONG 50,2% WR vs SHORT 76,5% —
-        # LONG-Seite nur noch Shadow-Logging, gehandelt wird nur SHORT (Pump-Fade).
-        if best_direction == "LONG":
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
-                    VALUES (0, %s, %s, %s, %s, %s, %s, False)
-                """,
-                    (module_tag, now, symbol, best_direction, float(current_price), float(best_prob)),
-                )
-            conn.commit()
-            # Cooldown auch für den Shadow-Pfad setzen, sonst loggt jeder 10s-Tick erneut.
-            pd_state["last_alert_time"] = now
-            return
+        # Direction-Gate ENTFERNT (Operator 2026-07-06): beide Richtungen handeln
+        # wieder (Audit-Batch hatte LONG nach Report 14 D.5 in den Shadow gelegt).
 
         # 🔥 BINGO! Trade ausführen
         emoji = "🚀 EARLY PUMP DETECTION" if best_direction == "LONG" else "💥 EARLY DUMP ALERT"

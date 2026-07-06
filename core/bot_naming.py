@@ -29,11 +29,12 @@ _CLASSIC_ALIASES = {
     "5 Percent": "5Percent",
 }
 
-# Pre-compiled regex for MIS1 consolidation.
-# Vollständig case-insensitive: der Orchestrator matcht Bot-Namen mit
-# re.IGNORECASE aus Message-Text ("MIS1-8H_Pump" ist möglich) — jede
+# Pre-compiled regex for MIS consolidation — generationsübergreifend (MIS1,
+# MIS2, ... — Versionierungs-Regel Operator 2026-07-06: Retrains posten unter
+# neuem Tag). Vollständig case-insensitive: der Orchestrator matcht Bot-Namen
+# mit re.IGNORECASE aus Message-Text ("MIS1-8H_Pump" ist möglich) — jede
 # Case-Variante muss auf denselben Whitelist-Key normalisieren.
-_MIS1_PATTERN = _re.compile(r'^(MIS1-\d+)h(?:_(?:pump|dump))?$', _re.IGNORECASE)
+_MIS1_PATTERN = _re.compile(r'^(MIS\d+-\d+)h(?:_(?:pump|dump))?$', _re.IGNORECASE)
 
 
 def pretty_name(s: str) -> str:
@@ -51,6 +52,7 @@ def pretty_name(s: str) -> str:
         pretty_name("Fast In And Out")       == "FastInOut"
         pretty_name("MIS1-8H")               == "MIS1-8h"
         pretty_name("MIS1-168H_pump")        == "MIS1-168h"
+        pretty_name("MIS2-72H")              == "MIS2-72h"   # neue Generation
         pretty_name("MSI1-24h")              == "MIS1-24h"
         pretty_name("ATS1")                  == "ATS1"          # unchanged
         pretty_name("ATS1_Robust")           == "ATS1_Robust"   # unchanged

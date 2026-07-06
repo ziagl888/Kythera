@@ -37,29 +37,31 @@ MIS_CHANNELS = {
 }
 
 # --- LOAD ML MODELS ---
-# Neues Artefakt-Format (Retrain 2026-07, tools/retrain_from_replay.py):
-#   mis1_model_{horizon}.pkl = dict(model, features, optimal_threshold,
-#   calibrator_isotonic, meta) — Threshold/Features kommen aus dem Artefakt
-#   selbst, nichts kann mehr auseinanderdriften. Fallback: Legacy-Paar
-#   pump_model_*_final.pkl + threshold_*_final.pkl (67-Feature-Modelle).
+# MIS2 (Operator-Entscheide 2026-07-06, docs/MODEL_INTENT.md §1):
+#   * Move-Label-Modelle (±5%/8h, ±10%/24h, ±15%/72h, ±25%/168h) ersetzen die
+#     alten MIS1-Modelle KOMPLETT — MIS1 ist abgeschaltet, kein Legacy-Fallback.
+#   * NUR die Pump-Seite ist deploybar (alle 4 Horizonte mit Out-of-Time-Ertrag);
+#     die Dump-Seite erkennt Dumps zwar gut, verdient aber mit der Short-Geometrie
+#     nichts — sie wird separat überarbeitet (eigener Task).
+#   * Basis-Mix nach Testlage: Close-Labels für 8h/24h/168h, Wick für 72h.
+#   Artefakt = dict(model, features, optimal_threshold, calibrator_isotonic, meta)
+#   aus tools/retrain_from_replay.py --label-mode move.
+MODEL_GENERATION = "MIS2"
 PUMP_MODELS = {
     key: {
-        "artifact_path": f"mis1_model_{key}.pkl",
-        "model_path": f"pump_model_{key}_final.pkl",
-        "threshold_path": f"threshold_{key}_final.pkl",
+        "artifact_path": f"mis2_model_{key}.pkl",
         "model": None,
         "threshold": 0.5,
         "features": None,
         "calibrator": None,
         "loaded": False,
     }
-    for key in ("8h_pump", "8h_dump", "24h_pump", "24h_dump",
-                "72h_pump", "72h_dump", "168h_pump", "168h_dump")
+    for key in ("8h_pump", "24h_pump", "72h_pump", "168h_pump")
 }
 
 
 def load_pump_models():
-    """Lädt alle verfügbaren MIS1-Modelle (neues Dict-Artefakt vor Legacy-Paar)."""
+    """Lädt die MIS2-Move-Artefakte (kein Legacy-Fallback — MIS1 ist aus)."""
     loaded_count = 0
     for key, cfg in PUMP_MODELS.items():
         try:
@@ -71,27 +73,17 @@ def load_pump_models():
                 cfg["calibrator"] = art.get("calibrator_isotonic")
                 cfg["loaded"] = True
                 loaded_count += 1
-            elif os.path.exists(cfg["model_path"]):
-                cfg["model"] = joblib.load(cfg["model_path"])
-                if os.path.exists(cfg["threshold_path"]):
-                    cfg["threshold"] = float(joblib.load(cfg["threshold_path"]))
-                else:
-                    cfg["threshold"] = 0.60
-                cfg["features"] = list(getattr(cfg["model"], "feature_names_in_", []))
-                cfg["loaded"] = True
-                loaded_count += 1
             else:
-                logger.warning(f"Modell fehlt: {cfg['artifact_path']} / {cfg['model_path']}")
+                logger.warning(f"Modell fehlt: {cfg['artifact_path']}")
         except Exception as e:
             logger.error(f"Error loading von {key}: {e}")
 
-    logger.info(f"✅ {loaded_count}/8 Multi-Horizon Modelle (MIS1) loaded successfully.")
+    logger.info(f"✅ {loaded_count}/{len(PUMP_MODELS)} Multi-Horizon Modelle ({MODEL_GENERATION}) loaded successfully.")
 
     # FIX: Thresholds explizit loggen, damit Drift zwischen Modell-File und
-    # Threshold-File sofort auffällt (Thresholds sind separate pkl-Files und
-    # können leicht "vergessen werden" mit zu updaten beim Re-Training).
+    # Threshold-File sofort auffällt.
     thresh_summary = ", ".join(f"{h}={cfg['threshold']:.2f}" for h, cfg in PUMP_MODELS.items() if cfg["loaded"])
-    logger.info(f"MIS1 Thresholds: {thresh_summary}")
+    logger.info(f"{MODEL_GENERATION} Thresholds: {thresh_summary}")
 
 
 def startup_feature_selfcheck():
@@ -253,7 +245,7 @@ def check_mis_models():
             # ein 0.52er über-Schwelle-Signal.
             candidates.sort(reverse=True, key=lambda x: x[0] - x[3])
             best_prob, best_horizon, best_direction, best_threshold, best_conf = candidates[0]
-            module_tag = f"MIS1-{best_horizon}"
+            module_tag = f"{MODEL_GENERATION}-{best_horizon}"  # z. B. MIS2-72H (Versionierungs-Regel)
 
             # 1. Aktiver Trade Check — prüft ob ein nicht-geschlossener Trade für
             #    genau dieses Modul/Coin/Richtung läuft. Der Cooldown-Check weiter
@@ -356,10 +348,9 @@ def check_mis_models():
                     html_caption += f"<b style=\"color:{t_col};\">   T{i}:</b> <b>${t:,.8f}</b> → <b style=\"color:lime;\">+{pct:.1f}%</b>\n"
 
                 sl_loss = risk_pct * 100 * int(lev.replace('x', ''))
-                html_caption += f"""<b>└─ Stop Loss:</b> <b>${sl:,.8f}</b> → <b>-{sl_loss:.1f}%</b>
-
-<b>--- CORNIX FORMAT ---</b>
-{cornix_msg}</pre>"""
+                # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne
+                # eingebetteten Cornix-Block — Cornix parste beide Nachrichten.
+                html_caption += f"""<b>└─ Stop Loss:</b> <b>${sl:,.8f}</b> → <b>-{sl_loss:.1f}%</b></pre>"""
 
                 # Target Channel Routing
                 target_channel = MIS_CHANNELS.get(best_horizon, _kcfg.CH_MIS_8H)  # Fallback

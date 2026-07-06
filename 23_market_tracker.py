@@ -524,24 +524,20 @@ async def job_signal_summary():
         Jetzt saubere Zuordnung after Signal-Typ.
         """
         s = str(strategy).upper()
+        # Versionierungs-Regel (Operator 2026-07-06): Retrain-Generationen posten
+        # unter neuem Tag (MIS2, ABR2, ATS2, ...) — deshalb Präfix-Matching statt
+        # Exakt-Listen, damit neue Generationen automatisch kategorisiert werden.
         # INDICATOR = klassische Oszillator-/Crossover-basierte signals
-        if s in ["5 PERCENT", "FAST IN AND OUT", "ATS1"] or s.startswith("MIS"):
+        if s in ["5 PERCENT", "FAST IN AND OUT"] or s.startswith(("MIS", "ATS")):
             return "INDICATOR"
         # VOLUME = rein volumen-basierte signals
-        if s in ["VOLUME INDICATOR", "EPD1"]:
+        if s == "VOLUME INDICATOR" or s.startswith("EPD"):
             return "VOLUME"
         # LEVEL = Support/Resistance & Reversion an Zonen
-        if s in ["SUPPORT RESISTANCE", "ABR1", "RUB1", "SRA1"]:
+        if s == "SUPPORT RESISTANCE" or s.startswith(("ABR", "RUB", "SRA")):
             return "LEVEL"
         # PATTERN = SMC-Patterns, Chart-Patterns, Trendline
-        if (
-            s in ["AIM1", "ATB1"]
-            or s.startswith("BR")
-            or s.startswith("TD")
-            or s.startswith("BB")
-            or s.startswith("QM")
-            or s.startswith("SMC")
-        ):
+        if s.startswith(("AIM", "ATB", "BR", "TD", "BB", "QM", "SMC")):
             return "PATTERN"
         return "OTHER"
 

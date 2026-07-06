@@ -303,7 +303,9 @@ def check_tsi_crossovers():
                 emoji = "🚀 TSI-SNIPER LONG" if is_long else "💥 TSI-SNIPER SHORT"
                 vol_trend_str = "JA" if features['volume_trend_up'] else "NEIN"
 
-                html_caption = f"""<pre><b>{emoji}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ Direction: {direction}</b>\n<b>→ Confidence: <b>{prob_profit:.1%}</b> (Thresh {threshold})</b>\n<b>→ Price: {current_price:.4f}</b>\n<b>→ Vol Trend Up: {vol_trend_str} | Spike: {features['volume_spike']}</b>\n<b>→ Time: {now.strftime('%H:%M')} UTC | Modul: ATS1 V3</b>\n\n{cornix_msg}</pre>"""
+                # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne
+                # eingebetteten Cornix-Block — Cornix parste beide Nachrichten.
+                html_caption = f"""<pre><b>{emoji}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ Direction: {direction}</b>\n<b>→ Confidence: <b>{prob_profit:.1%}</b> (Thresh {threshold})</b>\n<b>→ Price: {current_price:.4f}</b>\n<b>→ Vol Trend Up: {vol_trend_str} | Spike: {features['volume_spike']}</b>\n<b>→ Time: {now.strftime('%H:%M')} UTC | Modul: ATS1 V3</b></pre>"""
 
                 chart_buf = generate_minichart_image(symbol, minutes=240)
                 with conn.cursor() as cur:

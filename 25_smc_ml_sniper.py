@@ -59,22 +59,38 @@ PRICE_BASED_INDICATORS = [
 ABSOLUTE_INDICATORS = ['rsi_14', 'tsi_25_13_13', 'macd_dif_normal_12_26_9', 'macd_dea_normal_12_26_9']
 
 # 🧠 LOAD MODELS
+# Vertrag (Report 13 Addendum 2 + Versionierungs-Regel 2026-07-06): neue
+# Artefakte aus tools/retrain_from_replay.py tragen optimal_threshold,
+# calibrator_isotonic und meta.model_id (z. B. 'TD2_4H') im pkl-Dict —
+# Threshold aus dem Artefakt schlägt den Hardcode, das model_id-Tag trennt
+# Alt/Neu in den Trackern. Alt-Artefakte ohne diese Keys laufen unverändert.
 MODELS = {'bb': {}, 'td': {}}
 for tf in TIMEFRAMES:
     for strategy in ['bb', 'td']:
         path = f"{strategy}_xgboost_model_{tf}.pkl"
         try:
             data = joblib.load(path)
-            MODELS[strategy][tf] = {'model': data['model'], 'features': data['features']}
-            logger.info(f"✅ ML-Modell ({strategy.upper()} | {tf}) geladen.")
+            MODELS[strategy][tf] = {
+                'model': data['model'],
+                'features': data['features'],
+                'threshold': float(data['optimal_threshold']) if data.get('optimal_threshold') is not None else THRESHOLDS[strategy],
+                'calibrator': data.get('calibrator_isotonic'),
+                'model_id': (data.get('meta') or {}).get('model_id'),
+            }
+            logger.info(
+                f"✅ ML-Modell ({strategy.upper()} | {tf}) geladen — Threshold "
+                f"{MODELS[strategy][tf]['threshold']:.2f}"
+                f"{' (Artefakt)' if data.get('optimal_threshold') is not None else ' (Hardcode)'}, "
+                f"Tag {MODELS[strategy][tf]['model_id'] or f'{strategy.upper()}_{tf.upper()}'}"
+            )
         except Exception as e:
             logger.critical(f"❌ Could not load model ({path}): {e}")
             exit(1)
 
 
 def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_price, features_dict, p1, p2, p3=None):
-    module_tag = f"{strategy_code.upper()}_{tf.upper()}"
     model_data = MODELS[strategy_code][tf]
+    module_tag = model_data.get('model_id') or f"{strategy_code.upper()}_{tf.upper()}"
     now = datetime.now(timezone.utc)
 
     # 1. Cooldown / Active Trade Check
@@ -98,7 +114,7 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
 
     prob = model_data['model'].predict_proba(ml_input)[0][1]
     confidence = prob * 100
-    min_thresh = THRESHOLDS[strategy_code]
+    min_thresh = model_data['threshold']  # aus dem Artefakt (Fallback: Hardcode, s. Loader)
 
     # 3. Shadow Log
     if prob >= 0.25:
@@ -280,7 +296,10 @@ def scan_market():
 
                 p_sup = trough_idx[-2]
                 pivot_sup = lows[p_sup]
-                if current_price <= pivot_sup * 1.005 and current_price >= pivot_sup * 0.995:
+                # FIX Parking-Lücke (Report-19-Nebenfund, Operator-Go 2026-07-06):
+                # Das BB_1H-Parking saß nur im LONG-Zweig — SHORT feuerte weiter.
+                # Jetzt beide Seiten geparkt, bis die BB_1H-Überarbeitung steht.
+                if tf != '1h' and current_price <= pivot_sup * 1.005 and current_price >= pivot_sup * 0.995:
                     breakdown_idx = -1
                     for i in range(p_sup + 1, len(df) - 1):
                         if closes[i] < pivot_sup:
@@ -376,11 +395,9 @@ def send_cornix_signal(
         )
 
     sl_loss = risk_pct * 100 * int(lev.replace('x', ''))
-    html_caption += f"""<b>└─ Stop Loss:</b> <b>${sl:,.8f}</b> → <b>-{sl_loss:.1f}%</b>
-
-<b>--- CORNIX FORMAT ---</b>
-{cornix_msg}
-</pre>"""
+    # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne eingebetteten
+    # Cornix-Block — Cornix parste beide Nachrichten als Signale.
+    html_caption += f"""<b>└─ Stop Loss:</b> <b>${sl:,.8f}</b> → <b>-{sl_loss:.1f}%</b></pre>"""
 
     chart_path = generate_smc_chart(df, symbol, tf, strategy_name, direction, entry1, p1, p2, p3)
 

@@ -216,7 +216,10 @@ def check_rubberband_conditions():
                 continue
 
             direction = "LONG" if is_long else "SHORT"
-            module_tag = "RUB1"
+            # RUB2 (Operator 2026-07-06): LONG-Gate wieder offen (Intent: Idee ist
+            # symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML) —
+            # geänderte Generation postet unter neuem Tag (Versionierungs-Regel).
+            module_tag = "RUB2"
 
             # FIX: Cooldown-Check VOR der teuren ML-Prediction.
             # Vorher lief predict_proba auch dann, wenn der Coin noch im Cooldown war
@@ -234,9 +237,9 @@ def check_rubberband_conditions():
             logger.info(f"RUB1 Trigger: {symbol} {direction} | ML-Conf: {prob:.1%} (Thresh: {threshold:.2f})")
 
             # --- SHADOW MODE LOGGING ---
-            # Direction-Gate (Audit Report 14 D.5): RUB1 LONG 48,7% WR vs SHORT 63,9% —
-            # die LONG-Seite ist Messer-Fangen und geht nur noch in den Shadow-Log.
-            if prob < threshold or is_long:
+            # Direction-Gate ENTFERNT (Operator 2026-07-06): LONG handelt wieder
+            # (Audit-Batch hatte LONG nach Report 14 D.5 in den Shadow gelegt).
+            if prob < threshold:
                 # Ablegen in Master Tabelle (als abgelehnter Trade)
                 with conn.cursor() as cur:
                     cur.execute(
@@ -297,7 +300,9 @@ def check_rubberband_conditions():
             emoji = "🚀 RUBBERBAND MEAN REVERSION LONG" if is_long else "💥 RUBBERBAND MEAN REVERSION SHORT"
             dist_str = f"{dist_to_trend_pct * 100:+.2f}%"
 
-            html_caption = f"""<pre><b>{emoji}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ Direction: {direction}</b>\n<b>→ Confidence: <b>{prob:.1%}</b> (Thresh {threshold})</b>\n<b>→ Price: {curr_close:.4f}</b>\n<b>→ Trend Distance: <b>{dist_str}</b></b>\n<b>→ Time: {now.strftime('%H:%M')} UTC | Modul: {module_tag}</b>\n\n{cornix_msg}</pre>"""
+            # FIX Doppel-Post (2026-07-06, gleiche Fehlerklasse wie Bot 18/7):
+            # Chart-Caption ohne eingebetteten Cornix-Block.
+            html_caption = f"""<pre><b>{emoji}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ Direction: {direction}</b>\n<b>→ Confidence: <b>{prob:.1%}</b> (Thresh {threshold})</b>\n<b>→ Price: {curr_close:.4f}</b>\n<b>→ Trend Distance: <b>{dist_str}</b></b>\n<b>→ Time: {now.strftime('%H:%M')} UTC | Modul: {module_tag}</b></pre>"""
 
             chart_buf = generate_minichart_image(symbol, minutes=240)
             with conn.cursor() as cur:

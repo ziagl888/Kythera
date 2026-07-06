@@ -390,7 +390,9 @@ def send_cornix_signal(conn, df, symbol, tf, direction, entry, sl, tp, confidenc
 
     chart_path = generate_qm_chart(df, symbol, direction, p1, p2, p3, p4, entry)
 
-    html_caption = f"<b>🚀 AI {module_tag} SNIPER SIGNAL</b>\n<b>{symbol.replace('USDT', '')}</b>\n→ Pattern: {direction} Quasimodo\n→ Win Probability: <b>{confidence:.1f}%</b>\n\n<pre>{cornix_msg}</pre>"
+    # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne eingebetteten
+    # Cornix-Block — Cornix parste sonst beide Nachrichten als Signale.
+    html_caption = f"<b>🚀 AI {module_tag} SNIPER SIGNAL</b>\n<b>{symbol.replace('USDT', '')}</b>\n→ Pattern: {direction} Quasimodo\n→ Win Probability: <b>{confidence:.1f}%</b>"
 
     try:
         with conn.cursor() as cur:

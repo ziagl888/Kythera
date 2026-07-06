@@ -46,6 +46,11 @@ from core.mis_features import assert_features_alive  # noqa: E402
 
 MIS1_HORIZONS = (8, 24, 72, 168)  # muss zu tools/walkforward_sim.MIS1_HORIZONS passen
 
+# Operator-Konzept (2026-07-06): Move-Label = "±X% Bewegung INNERHALB des
+# Horizonts" (Close-Basis), Schwelle wächst mit dem Horizont. Quelle:
+# tools/mis1_move_labels.py über den Preisreihen der Replay-Samples.
+MOVE_THRESH_PCT = {8: 5.0, 24: 10.0, 72: 15.0, 168: 25.0}
+
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
 LIVE_DIR = r"C:\Users\Michael\PycharmProjects\crypto_trading_bot_v2"
@@ -144,7 +149,38 @@ def pick_threshold(val_df: pd.DataFrame, probs: np.ndarray) -> tuple[float, dict
     return best_thresh, best
 
 
-def train_binary(train, val, test, feature_cols, hyper=None):
+def pick_threshold_safe(val_df: pd.DataFrame, probs: np.ndarray, min_n: int = 200):
+    """Operator-Kriterium (2026-07-06): möglichst wenige, dafür sichere Trades.
+
+    Statt Summen-PnL (belohnt Volumen → degeneriert in bullischen Val-Slices
+    zum Take-almost-all) wird der Ø-Netto-PnL PRO Trade maximiert. Kandidaten
+    sind Prob-Quantile (funktioniert bei jeder Basisrate), Mindest-Stichprobe
+    min_n auf Validation, bei Gleichstand gewinnt der höhere Threshold.
+    Liefert threshold=None, wenn kein Kandidat min_n erreicht ODER der beste
+    Ø-PnL <= 0 ist — das Modell gilt dann als NICHT deploybar."""
+    quantiles = (0.50, 0.70, 0.80, 0.85, 0.90, 0.925, 0.95, 0.97, 0.98, 0.99)
+    cands = sorted({round(float(np.quantile(probs, q)), 4) for q in quantiles})
+    curve, best = [], None
+    for thresh in cands:
+        m = probs >= thresh
+        n = int(m.sum())
+        if n < min_n:
+            continue
+        point = {
+            "threshold": thresh, "n": n,
+            "avg_net_pnl_pct": round(float(val_df.loc[m, "net_pnl_pct"].mean()), 3),
+            "sum_net_pnl_pct": round(float(val_df.loc[m, "net_pnl_pct"].sum()), 2),
+            "wr": round(float(val_df.loc[m, "outcome"].mean()) * 100, 1),
+        }
+        curve.append(point)
+        if best is None or point["avg_net_pnl_pct"] >= best["avg_net_pnl_pct"]:
+            best = point
+    if best is None or best["avg_net_pnl_pct"] <= 0:
+        return None, {"deployable": False, "best": best, "curve": curve}
+    return best["threshold"], {"deployable": True, **best, "curve": curve}
+
+
+def train_binary(train, val, test, feature_cols, hyper=None, picker=pick_threshold):
     hyper = hyper or dict(n_estimators=300, max_depth=5, learning_rate=0.03,
                           subsample=0.8, colsample_bytree=0.8, random_state=42,
                           eval_metric="logloss")
@@ -157,9 +193,9 @@ def train_binary(train, val, test, feature_cols, hyper=None):
     iso = IsotonicRegression(out_of_bounds="clip")
     iso.fit(p_val, val["outcome"].astype(int))
 
-    thresh, val_stats = pick_threshold(val, p_val)
+    thresh, val_stats = picker(val, p_val)
 
-    m = p_test >= thresh
+    m = p_test >= thresh if thresh is not None else np.zeros(len(p_test), dtype=bool)
     test_stats = {
         "n_taken": int(m.sum()),
         "wr": round(float(test.loc[m, "outcome"].mean()) * 100, 1) if m.sum() else None,
@@ -228,6 +264,9 @@ def run_td_bb(strategy: str, tf: str, replay_path: str) -> dict:
 
     meta = {
         "trainer": "tools/retrain_from_replay.py", "strategy": strategy, "tf": tf,
+        # Versionierungs-Regel (Operator 2026-07-06): Retrain-Generation postet
+        # unter neuem Modell-Tag, damit Alt/Neu in den Trackern getrennt sind.
+        "model_id": f"{strategy.upper()}2_{tf.upper()}",
         "label_source": os.path.basename(replay_path),
         "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
         "split": "chronological 70/15/15 + purge gap", "threshold_selected_on": "validation",
@@ -268,6 +307,7 @@ def run_abr1(replay_path: str) -> dict:
         model.save_model(out_json)
         meta = {
             "trainer": "tools/retrain_from_replay.py", "strategy": "abr1", "direction": direction,
+            "model_id": "ABR2",  # Versionierungs-Regel Operator 2026-07-06
             "label_source": os.path.basename(replay_path),
             "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
             "model_type": "binary (1=TP1-first-touch) — ANDERS als das alte 3-Klassen-Modell!",
@@ -317,12 +357,33 @@ def load_mis1_replay(path: str) -> pd.DataFrame:
     return df
 
 
-def run_mis1(replay_path: str, stride_hours: int = 24) -> dict:
+def load_mis1_move_labels(path: str) -> pd.DataFrame:
+    """JSONL aus tools/mis1_move_labels.py: kontinuierliche Move-Extreme je
+    (symbol, signal_time) — Label-Schwellen werden hier im Trainer angelegt."""
+    rows = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            rows.append(json.loads(line))
+    df = pd.DataFrame(rows)
+    df["signal_time"] = pd.to_datetime(df["signal_time"], utc=True).dt.tz_localize(None)
+    return df
+
+
+def run_mis1(replay_path: str, stride_hours: int = 24,
+             label_mode: str = "geometry", move_path: str | None = None,
+             move_basis: str = "close") -> dict:
     df_all = load_mis1_replay(replay_path)
     if df_all.empty or len(df_all) < 2000:
         raise SystemExit(f"Zu wenig Replay-Samples ({len(df_all)}) in {replay_path}")
     print(f"mis1: {len(df_all)} Samples, {df_all['symbol'].nunique()} Coins, "
           f"{df_all['signal_time'].min()} → {df_all['signal_time'].max()}")
+
+    if label_mode == "move":
+        move_path = move_path or os.path.join(os.path.dirname(replay_path), "mis1_move_labels.jsonl")
+        mv = load_mis1_move_labels(move_path)
+        df_all = df_all.merge(mv, on=["symbol", "signal_time"], how="left")
+        n_matched = df_all[f"full_{MIS1_HORIZONS[0]}h"].notna().sum()
+        print(f"mis1 move-labels: {len(mv)} Punkte geladen, {n_matched}/{len(df_all)} Samples gematcht")
 
     # P0.12-Assertion auf dem Trainingsmaterial: kein kontinuierliches Feature konstant.
     assert_features_alive(df_all, context=" (mis1-Retrain)")
@@ -331,9 +392,26 @@ def run_mis1(replay_path: str, stride_hours: int = 24) -> dict:
     for horizon in MIS1_HORIZONS:
         for direction in ("LONG", "SHORT"):
             key = f"{horizon}h_{'pump' if direction == 'LONG' else 'dump'}"
-            d = df_all[(df_all["direction"] == direction) & df_all[f"outcome_{horizon}h"].notna()].copy()
-            d["outcome"] = d[f"outcome_{horizon}h"].astype(int)
-            d["net_pnl_pct"] = d[f"net_pnl_{horizon}h"].astype(float)
+            if label_mode == "move":
+                thr_move = MOVE_THRESH_PCT[horizon]
+                col = (f"runup_{move_basis}_pct_{horizon}h" if direction == "LONG"
+                       else f"drawdown_{move_basis}_pct_{horizon}h")
+                sub = df_all[df_all["direction"] == direction].copy()
+                ext = pd.to_numeric(sub[col], errors="coerce")
+                hit = (ext >= thr_move) if direction == "LONG" else (ext <= -thr_move)
+                full = sub[f"full_{horizon}h"].fillna(False).astype(bool)
+                # Ein Treffer zählt immer; eine 0 nur bei vollem Horizontfenster
+                # (Datenende vor Horizontende ist kein verlässliches "kein Move").
+                sub["outcome"] = np.where(hit, 1.0, np.where(full, 0.0, np.nan))
+                sub.loc[ext.isna(), "outcome"] = np.nan
+                d = sub[sub["outcome"].notna()].copy()
+                d["outcome"] = d["outcome"].astype(int)
+            else:
+                d = df_all[(df_all["direction"] == direction) & df_all[f"outcome_{horizon}h"].notna()].copy()
+                d["outcome"] = d[f"outcome_{horizon}h"].astype(int)
+            # Ökonomische Bewertung bleibt in beiden Modi die gepostete
+            # Trade-Geometrie (das verdient/verliert ein Follower real).
+            d["net_pnl_pct"] = pd.to_numeric(d[f"net_pnl_{horizon}h"], errors="coerce").fillna(0.0)
             d = d.reset_index(drop=True)
             if len(d) < 2000:
                 print(f"mis1 {key}: nur {len(d)} Events — übersprungen")
@@ -346,26 +424,38 @@ def run_mis1(replay_path: str, stride_hours: int = 24) -> dict:
                   f"Basisrate TP1@{horizon}h {d['outcome'].mean()*100:.1f}%")
 
             model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
-                train, val, test, MIS1_FEATURES)
+                train, val, test, MIS1_FEATURES, picker=pick_threshold_safe)
             _, calib_old = old_model_calibration("mis1", None, test,
                                                  direction=direction, horizon=horizon)
 
+            if label_mode == "move":
+                label_txt = (f"{move_basis.capitalize()}-Move {'+' if direction == 'LONG' else '-'}"
+                             f"{MOVE_THRESH_PCT[horizon]}% INNERHALB {horizon}h "
+                             f"(Operator-Konzept; Quelle tools/mis1_move_labels.py)")
+            else:
+                label_txt = (f"first-touch TP1-vor-SL der geposteten smart-targets-Geometrie "
+                             f"INNERHALB {horizon}h, Fees inkl. (Timeout=0)")
+            if label_mode == "move":
+                prefix = "mis1_move_model" if move_basis == "close" else "mis1_move_wick_model"
+            else:
+                prefix = "mis1_model"
             meta = {
                 "trainer": "tools/retrain_from_replay.py", "strategy": "mis1",
+                "model_id": "MIS2",  # Bot hängt den Horizont an: MIS2-8H etc.
+                "label_mode": label_mode,
                 "horizon_hours": horizon, "direction": direction,
                 "label_source": os.path.basename(replay_path),
-                "label": f"first-touch TP1-vor-SL der geposteten smart-targets-Geometrie "
-                         f"INNERHALB {horizon}h, Fees inkl. (Timeout=0)",
+                "label": label_txt,
                 "features": "core.mis_features.FEATURE_COLS (63, skalenfrei — Leakage-Fix Report 13)",
                 "split": f"chronological 70/15/15 + purge gap {horizon + stride_hours}h",
-                "threshold_selected_on": "validation (realer Replay-PnL)",
+                "threshold_selected_on": "validation (Ø-Netto-PnL/Trade, min_n=200 — pick_threshold_safe)",
                 "xgboost_version": xgb.__version__,
                 "n_train": len(train), "n_val": len(val), "n_test": len(test),
                 "val_stats": val_stats, "test_stats": test_stats,
             }
-            save_artifact(os.path.join(STAGING_DIR, f"mis1_model_{key}.pkl"),
+            save_artifact(os.path.join(STAGING_DIR, f"{prefix}_{key}.pkl"),
                           model, MIS1_FEATURES, thresh, iso, meta)
-            with open(os.path.join(STAGING_DIR, f"mis1_model_{key}_meta.json"), "w", encoding="utf-8") as fh:
+            with open(os.path.join(STAGING_DIR, f"{prefix}_{key}_meta.json"), "w", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=2, default=str)
             results[key] = {"n_events": len(d), "base_rate": round(d["outcome"].mean() * 100, 1),
                             "threshold": thresh, "val_stats": val_stats, "test_stats": test_stats,
@@ -394,6 +484,15 @@ def main():
     ap.add_argument("--days", type=int, default=540)
     ap.add_argument("--stride", type=int, default=24,
                     help="mis1: Sampling-Stride des Replays (geht in den Purge-Gap ein)")
+    ap.add_argument("--label-mode", default="geometry", choices=["geometry", "move"],
+                    help="mis1: geometry = TP1-vor-SL der Smart-Targets; "
+                         "move = ±X%%-Bewegung innerhalb des Horizonts (Operator-Konzept)")
+    ap.add_argument("--move-labels", default=None,
+                    help="mis1 move: JSONL aus tools/mis1_move_labels.py "
+                         "(Default: mis1_move_labels.jsonl neben dem Replay)")
+    ap.add_argument("--move-basis", default="close", choices=["close", "wick"],
+                    help="mis1 move: Schlusskurs- oder Docht-Extreme als Label-Basis "
+                         "(Operator 2026-07-06: beide Varianten trainieren und vergleichen)")
     args = ap.parse_args()
 
     if args.replay is None:
@@ -405,8 +504,13 @@ def main():
         result = run_td_bb(args.strategy, args.tf, args.replay)
         name = f"{args.strategy}_{args.tf}"
     elif args.strategy == "mis1":
-        result = run_mis1(args.replay, stride_hours=args.stride)
-        name = "mis1"
+        result = run_mis1(args.replay, stride_hours=args.stride,
+                          label_mode=args.label_mode, move_path=args.move_labels,
+                          move_basis=args.move_basis)
+        if args.label_mode == "move":
+            name = "mis1_move" if args.move_basis == "close" else "mis1_move_wick"
+        else:
+            name = "mis1"
     else:
         result = run_abr1(args.replay)
         name = "abr1"

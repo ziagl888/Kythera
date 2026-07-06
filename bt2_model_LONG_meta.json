@@ -1,0 +1,52 @@
+{
+  "trainer": "tools/retrain_from_replay.py",
+  "strategy": "abr1",
+  "direction": "LONG",
+  "label_source": "abr1_replay_365d.jsonl",
+  "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
+  "model_type": "binary (1=TP1-first-touch) \u2014 ANDERS als das alte 3-Klassen-Modell!",
+  "success_proba": "predict_proba[:, 1]",
+  "features": [
+    "dist_close_ema9_pct",
+    "dist_ema9_ema21_pct",
+    "dist_close_kama9_pct",
+    "rsi14",
+    "rsi_below_30",
+    "rsi_above_70",
+    "tsi",
+    "tsi_signal",
+    "tsi_above_0",
+    "tsi_below_0",
+    "dist_close_boll_upper_pct",
+    "dist_close_boll_mid_pct",
+    "dist_close_boll_lower_pct",
+    "dist_close_donchian_upper_pct",
+    "dist_close_donchian_mid_pct",
+    "dist_close_donchian_lower_pct",
+    "retest_volume",
+    "retest_volume_ratio_avg",
+    "setup_dist_close_level_pct",
+    "setup_break_strength_pct",
+    "setup_candles_since_break",
+    "setup_level_age_candles",
+    "setup_retest_wick_pct"
+  ],
+  "optimal_threshold": 0.3,
+  "split": "chronological 70/15/15 + purge gap",
+  "xgboost_version": "3.2.0",
+  "n_train": 19275,
+  "n_val": 3769,
+  "n_test": 3693,
+  "val_stats": {
+    "n": 3763,
+    "sum_net_pnl_pct": 4249.29,
+    "wr": 70.2
+  },
+  "test_stats": {
+    "n_taken": 3680,
+    "wr": 51.8,
+    "sum_net_pnl_pct": -3086.98,
+    "base_rate_test": 51.9,
+    "n_test_total": 3693
+  }
+}

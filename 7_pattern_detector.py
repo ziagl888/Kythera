@@ -164,11 +164,14 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
     # schnelle Intraday-signals). Module-Tags: BR1H, BR2H, BR4H, BR1D, ABR1, RUB1.
     cd_hours_map = {
         'BR1H': 6,
+        'BR1Hv2': 6,  # Versionierungs-Regel 2026-07-06: Gate-Revert, neue Generation
         'BR2H': 12,
         'BR4H': 24,
         'BR1D': 72,
         'ABR1': 6,
+        'ABR2': 6,  # Versionierungs-Regel 2026-07-06: neue Generation, gleicher Cooldown
         'RUB1': 4,
+        'RUB2': 4,
     }
     cd_hours = cd_hours_map.get(module, 6)
 
@@ -202,15 +205,18 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
     # Dynamische Channel-Auswahl
     if module.startswith('BR'):
         target_channel = _kcfg.CH_PATTERN_BR
-    elif module == 'ABR1':
+    elif module.startswith('ABR'):
         target_channel = _kcfg.CH_ABR1
-    elif module == 'RUB1':
+    elif module.startswith('RUB'):
         target_channel = _kcfg.CH_DISABLED
     else:
         target_channel = _kcfg.CH_PUMP_AI
 
     # Telegram Outbox
-    html_caption = f"<b>🚀 AI {module} {direction} SIGNAL</b>\n<b>{symbol.replace('USDT', '')}</b>\n→ Direction: {direction}\n→ Confidence: <b>Retest done</b>\n\n<pre>{cornix_msg}</pre>"
+    # FIX Doppel-Post (Operator-Meldung 2026-07-06, gleiche Fehlerklasse wie
+    # 18_ai_abr1_bot): Chart-Caption ohne eingebetteten Cornix-Block — Cornix
+    # parste sonst BEIDE Nachrichten als eigenständige Signale.
+    html_caption = f"<b>🚀 AI {module} {direction} SIGNAL</b>\n<b>{symbol.replace('USDT', '')}</b>\n→ Direction: {direction}\n→ Confidence: <b>Retest done</b>"
 
     with conn.cursor() as cur:
         cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, cornix_msg))
@@ -439,12 +445,12 @@ def analyze_patterns(current_hour):
                                         )
                                         direction = "LONG" if is_bullish else "SHORT"
                                         module_name = f"BR{tf.upper()}"
-                                        # Direction-Gate (Audit Report 14 D.5): BR1H SHORT
-                                        # 49,5% WR vs LONG 65,5% — SHORT-Seite deaktiviert.
-                                        if module_name == 'BR1H' and direction == 'SHORT':
-                                            logger.info(f"⛔ BR1H SHORT-Gate: {symbol} unterdrückt (Report 14 D.5)")
-                                            del ACTIVE_PATTERNS[pattern_id]
-                                            continue
+                                        # Direction-Gate ENTFERNT (Operator 2026-07-06): beide
+                                        # Richtungen laufen wieder; BR1H postet als BR1Hv2
+                                        # (Versionierungs-Regel), bis das geplante ML-Gate über
+                                        # den BR-Signalen steht.
+                                        if module_name == 'BR1H':
+                                            module_name = 'BR1Hv2'
                                         process_ai_trade(conn, symbol, direction, module_name, c_close, chart_path)
                                         logger.info(f"✅ SUCCESSFUL RETEST + TRADE ausgelöst {symbol} {tf}")
                                         del ACTIVE_PATTERNS[pattern_id]
