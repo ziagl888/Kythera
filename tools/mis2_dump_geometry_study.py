@@ -54,28 +54,61 @@ from tools.retrain_from_replay import (  # noqa: E402
 from tools.walkforward_sim import set_low_priority  # noqa: E402
 
 FEE_RT_PCT = 0.10  # 0,05 % je Seite
-SL_GRID = (2.0, 3.0, 5.0, 8.0)
+# V2 (Operator-Feedback 2026-07-06 abends): SL-Raster horizontabhängig — bei
+# −15 %/−25 %-Zielen war 8 % max. unangemessen eng ("mehr Abstand beim SL").
+SL_GRID_BY_HORIZON = {
+    8: (3.0, 5.0, 8.0, 12.0),
+    24: (5.0, 8.0, 12.0, 16.0),
+    72: (5.0, 8.0, 12.0, 20.0),
+    168: (8.0, 12.0, 16.0, 20.0),
+}
 TP_FRACTIONS = (0.5, 2.0 / 3.0, 1.0)
+# V2: Entry-Varianten — die funktionierenden Shorts der Flotte (EPD1/RUB1/SR)
+# verkaufen an Struktur bzw. in die Gegenbewegung; stumpfer Close-Entry war
+# die Schwäche des V1-Grids. 0.0 = Market am Signal-Close; sonst Limit-Sell
+# X % ÜBER dem Signal-Close (füllt nur, wenn der Bounce kommt).
+ENTRY_BOUNCE_PCT = (0.0, 2.5, 5.0)
 OPERATING_QUANTILE = 0.98  # Top-2 % der Val-Probabilities als Gate
 
 
 def simulate_short_bracket(candles: pd.DataFrame, t: int, horizon: int,
-                           entry: float, tp_pct: float, sl_pct: float):
-    """Wick-aware First-Touch für einen SHORT-Bracket auf Kerzen t+1..t+horizon.
-    SL-first bei Ambiguität (TP und SL in derselben Kerze). Timeout → Close-Exit.
-    Rückgabe: (outcome, net_pnl_pct) — outcome 1=TP, 0=SL, 2=Timeout, None=Datenende."""
-    tp_price = entry * (1 - tp_pct / 100.0)
-    sl_price = entry * (1 + sl_pct / 100.0)
+                           signal_close: float, tp_pct: float, sl_pct: float,
+                           bounce_pct: float = 0.0):
+    """Wick-aware First-Touch für einen SHORT auf Kerzen t+1..t+horizon.
+
+    bounce_pct > 0: Limit-Sell bei signal_close*(1+bounce) — Entry erst, wenn
+    eine Kerze das Level per High erreicht (konservativ: Fill zum Limit).
+    TP liegt IMMER relativ zum Signal-Close (die Move-Prognose zählt ab dem
+    Signalzeitpunkt), SL relativ zum tatsächlichen Entry.
+    SL-first bei Ambiguität. Timeout → Close-Exit. Rückgabe:
+    (outcome, net_pnl_pct) — 1=TP, 0=SL, 2=Timeout, 3=nie gefüllt, None=Datenende."""
     n = len(candles)
     end = t + horizon
     highs, lows, closes = candles["high"].values, candles["low"].values, candles["close"].values
-    for i in range(t + 1, min(end, n - 1) + 1):
-        hit_sl = highs[i] >= sl_price
-        hit_tp = lows[i] <= tp_price
-        if hit_sl:  # SL-first (konservativ, wie simulate_exit)
+    tp_price = signal_close * (1 - tp_pct / 100.0)
+
+    if bounce_pct <= 0:
+        entry, entry_i = signal_close, t
+    else:
+        limit_price = signal_close * (1 + bounce_pct / 100.0)
+        entry, entry_i = None, None
+        for i in range(t + 1, min(end, n - 1) + 1):
+            if highs[i] >= limit_price:
+                entry, entry_i = limit_price, i
+                break
+        if entry is None:
+            return (3, None) if end <= n - 1 else (None, None)
+
+    sl_price = entry * (1 + sl_pct / 100.0)
+    # Fill-Kerze selbst: SL-Check ab Fill (konservativ — High könnte nach dem
+    # Fill weiterlaufen), TP-Check erst ab der Folgekerze.
+    if entry_i > t and highs[entry_i] >= sl_price:
+        return 0, -sl_pct - FEE_RT_PCT
+    for i in range(entry_i + 1, min(end, n - 1) + 1):
+        if highs[i] >= sl_price:  # SL-first bei Ambiguität
             return 0, -sl_pct - FEE_RT_PCT
-        if hit_tp:
-            return 1, tp_pct - FEE_RT_PCT
+        if lows[i] <= tp_price:
+            return 1, (entry - tp_price) / entry * 100.0 - FEE_RT_PCT
     if end <= n - 1:
         return 2, (entry - closes[end]) / entry * 100.0 - FEE_RT_PCT
     return None, None
@@ -158,8 +191,10 @@ def main() -> None:
             if er_col in sel.columns:
                 rec["exit_reasons"] = sel[er_col].fillna("none").value_counts().to_dict()
 
-            # 2) Geometrie-Grid auf 1h-Kerzen
-            grids = {(tp_f, sl): [] for tp_f in TP_FRACTIONS for sl in SL_GRID}
+            # 2) Geometrie-Grid auf 1h-Kerzen (V2: SL je Horizont + Entry-Bounces)
+            sl_grid = SL_GRID_BY_HORIZON[horizon]
+            grids = {(tp_f, sl, b): [] for tp_f in TP_FRACTIONS for sl in sl_grid
+                     for b in ENTRY_BOUNCE_PCT}
             for _, row in sel.iterrows():
                 sym = row["symbol"]
                 if sym not in price_cache:
@@ -179,18 +214,22 @@ def main() -> None:
                 entry = float(dfp["close"].iloc[t])
                 if entry <= 0:
                     continue
-                for (tp_f, sl), acc in grids.items():
-                    out, pnl = simulate_short_bracket(dfp, t, horizon, entry, thr_move * tp_f, sl)
+                for (tp_f, sl, b), acc in grids.items():
+                    out, pnl = simulate_short_bracket(dfp, t, horizon, entry,
+                                                      thr_move * tp_f, sl, bounce_pct=b)
                     if out is not None:
                         acc.append((out, pnl))
 
-            for (tp_f, sl), acc in grids.items():
-                if not acc:
+            for (tp_f, sl, b), acc in grids.items():
+                filled = [a for a in acc if a[0] != 3]
+                if not filled:
                     continue
-                outs = np.array([a[0] for a in acc], dtype=float)
-                pnls = np.array([a[1] for a in acc], dtype=float)
-                rec["variants"][f"tp{thr_move * tp_f:.1f}_sl{sl:.0f}"] = {
-                    "n": int(len(acc)),
+                outs = np.array([a[0] for a in filled], dtype=float)
+                pnls = np.array([a[1] for a in filled], dtype=float)
+                rec["variants"][f"tp{thr_move * tp_f:.1f}_sl{sl:.0f}_e{b:.1f}"] = {
+                    "n_signals": int(len(acc)),
+                    "n_filled": int(len(filled)),
+                    "fill_rate": round(float(len(filled) / len(acc)) * 100, 1),
                     "tp_rate": round(float((outs == 1).mean()) * 100, 1),
                     "sl_rate": round(float((outs == 0).mean()) * 100, 1),
                     "timeout_rate": round(float((outs == 2).mean()) * 100, 1),

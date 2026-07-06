@@ -56,7 +56,27 @@ PUMP_MODELS = {
         "calibrator": None,
         "loaded": False,
     }
-    for key in ("8h_pump", "24h_pump", "72h_pump", "168h_pump")
+    for key in ("8h_pump", "24h_pump", "72h_pump", "168h_pump",
+                "8h_dump", "24h_dump", "72h_dump", "168h_dump")
+}
+
+# MIS2-SHORT-Regeln je Horizont (Operator-Entscheide 2026-07-06 abends +
+# Geometrie-Studie V2, staging_models/mis2_dump_geometry_study_v2.json):
+#   * Entry = LIMIT-Sell "bounce_pct" ÜBER dem Signalkurs — in den Aufwärts-
+#     Zuck hinein verkaufen (der riss vorher die Stops; Fill-Quote 78-88 %).
+#   * TP rechnet ab SIGNALKURS (die Move-Prognose zählt ab Signalzeitpunkt),
+#     SL ab Entry. Ein einzelnes TP — exakt die simulierte Geometrie.
+#   * Hebel: hartes 20x-Posting per Operator-Entscheid (Cross-Margin, kleine
+#     Positionen auf großes Depot) — bewusst KEIN cap_leverage_to_sl, obwohl
+#     SL 12-16 % über der Isolated-Liquidationsdistanz liegt.
+#   * 8H ist laut Studie negativ (−0,24 %/Trade) — Operator will den
+#     Live-Beweis ("evtl stimmen die modelle nicht 100%"), dokumentiert in
+#     docs/MODEL_INTENT.md §1.
+DUMP_RULES = {
+    "8H": {"bounce_pct": 5.0, "tp_pct": 5.0, "sl_pct": 5.0},     # Studie: −0,24 %/Trade
+    "24H": {"bounce_pct": 5.0, "tp_pct": 10.0, "sl_pct": 16.0},  # Studie: +0,49 %/Trade
+    "72H": {"bounce_pct": 5.0, "tp_pct": 15.0, "sl_pct": 12.0},  # Studie: +0,72 %/Trade
+    "168H": {"bounce_pct": 5.0, "tp_pct": 16.7, "sl_pct": 12.0}, # Studie: +0,27 %/Trade
 }
 
 
@@ -292,17 +312,25 @@ def check_mis_models():
                 if check_cooldown(conn, module_tag, symbol, best_direction, cd_hours):
                     continue
 
-                logger.info(f"🚀 MIS1 Trade gefunden: {symbol} {best_direction} | {module_tag} (raw {best_prob:.3f} / kalibriert {best_conf:.1%})")
-
-                # 💥 SMARTE TARGETS (Die neue Core Funktion!)
-                trade_setup = calculate_smart_targets(conn, symbol, best_direction, current_price)
-
-                entry1 = trade_setup['entry1']
-                entry2 = trade_setup['entry2']
-                sl = trade_setup['sl']
-                targets = trade_setup['targets']
+                logger.info(f"🚀 {MODEL_GENERATION} Trade gefunden: {symbol} {best_direction} | {module_tag} (raw {best_prob:.3f} / kalibriert {best_conf:.1%})")
 
                 is_long = best_direction == "LONG"
+                if is_long:
+                    # 💥 SMARTE TARGETS (Pump-Seite: wie gehabt)
+                    trade_setup = calculate_smart_targets(conn, symbol, best_direction, current_price)
+                    entry1 = trade_setup['entry1']
+                    entry2 = trade_setup['entry2']
+                    sl = trade_setup['sl']
+                    targets = trade_setup['targets']
+                else:
+                    # Dump-Seite: studien-validierte Bracket-Geometrie je Horizont
+                    # (s. DUMP_RULES oben) statt Smart-Targets — die verloren
+                    # nachweislich (Studie V1: −0,3 bis −0,8 %/Trade).
+                    rules = DUMP_RULES[best_horizon]
+                    entry1 = current_price * (1 + rules["bounce_pct"] / 100.0)  # Limit-Sell in den Bounce
+                    entry2 = entry1  # Einzel-Entry — exakt die simulierte Geometrie
+                    sl = entry1 * (1 + rules["sl_pct"] / 100.0)
+                    targets = [current_price * (1 - rules["tp_pct"] / 100.0)]  # TP ab Signalkurs
                 lev = get_max_leverage(symbol, 20)
                 emoji = "🚀 PUMP SIGNAL (MIS)" if is_long else "💥 DUMP SIGNAL (MIS)"
                 strength = "STRONG" if best_prob >= best_threshold + 0.1 else "MODERATE"

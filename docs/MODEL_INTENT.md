@@ -48,11 +48,25 @@ Trades entstehen (max. PnL bei min. Risiko).
 - [x] **MIS2 deployed 2026-07-06**: nur Pump-Seite (LONG), Basis-Mix Close für
       8h/24h/168h + Wick für 72h, Tags `MIS2-<H>H`, gleiche Horizont-Channels.
       Bot 11 ohne Legacy-Fallback (MIS1-Modelle laden nicht mehr).
-- [ ] **Dump-Seite neu überarbeiten** (Operator 2026-07-06, eigener Task,
-      zeitnah): Die Move-Modelle ERKENNEN Dumps gut (64–73 % Trefferquote bei
-      ~10 % Basisrate), aber die Short-Smart-Targets-Geometrie verdient daran
-      nichts → Kandidaten: eigene Short-Geometrie, reiner Warn-Kanal, oder
-      Exit-Redesign. Bis dahin postet MIS2 keine SHORTs.
+- [x] **Dump-Seite überarbeitet und LIVE (2026-07-06 abends):** Geometrie-Studie
+      in zwei Runden (`tools/mis2_dump_geometry_study.py`, Ergebnisse V1/V2 in
+      `staging_models/mis2_dump_geometry_study*.json`):
+      V1 (Market-Entry, SL ≤8 %) — alles negativ, Diagnose: selektierte Coins
+      zucken vor dem Dump nach oben und reißen die Stops. V2 auf Operator-Input
+      („mehr SL-Abstand") + Struktur-Analogie zu EPD1/RUB1: **Limit-Entry 5 %
+      über Signalkurs (in den Bounce verkaufen) + horizontabhängige weite SLs**
+      dreht 24h/72h/168h ins Plus.
+      **Deployte Regeln (alle: Entry Limit +5 %, Close-Basis-Modelle,
+      Operating Point Top-2 %-Val-Quantil):**
+      8H TP−5/SL5 (Studie −0,24 %/Trade — Operator will Live-Beweis, Einwand
+      dokumentiert) · 24H TP−10/SL16 (+0,49) · 72H TP−15/SL12 (+0,72) ·
+      168H TP−16,7/SL12 (+0,27).
+      **Operator-Entscheide:** 20x wird gepostet (Cross, kleine Positionen auf
+      großes Depot — bewusst KEIN cap_leverage_to_sl trotz SL > Isolated-
+      Liq-Distanz); alle 4 Horizonte als Trades (kein Warn-Kanal).
+      **Bekannte Folgearbeit:** Der Trade-Monitor kennt keine Limit-Entries —
+      MIS2-SHORT-Scoring muss „Entry nie gefüllt" (Preis erreicht +5 % nicht,
+      12–22 % der Signale) erkennen, sonst werden Phantom-Trades gescored.
 
 ---
 
