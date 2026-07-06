@@ -95,6 +95,22 @@ intent-konform.
       kein getesteter Hebel dreht LONG positiv. LONG läuft wieder über den
       Legacy-Blocker (3-Klassen-Modell ohne meta.json, Gate 0,60 ≈ zu).
       Reaktivierung nur mit neuen Datenquellen oder Regimewechsel (Report 21 §3).
+- [x] **LONG-Funding-Gate-EXPERIMENT (Michi, 2026-07-06 spätabends):** Nach dem
+      Feature-Recheck auf Operator-Hypothese („falsche Indikatoren") wurden 16
+      Setup-Mechanik-Features + 6 Funding-Features getestet (Report 21
+      Addendum 2). Einziger Out-of-Sample-Überlebender: **fund_24h > +3 bps**
+      (Longs zahlen Prämie über Binance-Default) → +1,12 %/Trade, 74 % WR
+      (n=119/Jahr auf 100 Coins; Test +0,69 %, n=17 — dünn). LONG öffnet jetzt
+      NUR über dieses Gate (live REST, fail-closed, 30-min-Cache), postet als
+      ABR2 mit Funding-Wert in der Info-Nachricht. Erwartung ~1–2 Signale/Tag.
+      **Review nach 4–6 Wochen** (≥30 Trades): Cornix-Tracking entscheidet.
+- [x] **SHORT-Funding-Veto (Michi, 2026-07-06):** Spiegeltest auf 33,5k
+      SHORT-Events — `fund_24h > +1,5 bps` ist für SHORTs in Train UND Test
+      konsistent verlustig (−1,2 %/Trade; exakt die Zone, in der das LONG-Gate
+      öffnet → unabhängige Kreuzvalidierung des Funding-Signals). SHORTs
+      brauchen jetzt Modell-Gate ≥0,75 UND fund_24h ≤ +1,5 bps; fail-open
+      (Veto ist Sicherheitsnetz, nicht Primär-Gate). Review zusammen mit dem
+      LONG-Experiment.
 - [ ] Batch-E-Threshold (SHORT 0,75 aus dünner Validation) nach Abschluss der
       laufenden Sim mit `pick_threshold_safe` neu bestimmen.
 
@@ -202,6 +218,12 @@ regimeabhängig (Alt-Pump-Phasen; Juli negativ → Drift-Watch Pflicht).
 - [x] Falsches Erfolgs-Logging des auskommentierten Daily-Retrains entfernen.
 - [x] **Retrain eingeplant** (Label = gepostete Geometrie, nur vol_ratio≥5-Events,
       Drift-Monitoring wegen Regimeabhängigkeit).
+- [ ] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
+      `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2) —
+      bei ABR trennt fund_24h Richtungserfolg sauber (LONG-Gate >+3 bps,
+      SHORT-Veto >+1,5 bps, kreuzvalidiert auf 33,5k Events); für ein
+      Momentum-MITFAHR-Modell plausibel richtungsentscheidend. Historie liegt
+      voll in `funding_rates` (430d × 530 Coins).
 
 ---
 
@@ -222,6 +244,11 @@ Random-Split-Memorization). Live-Gewinn stammt aus Vorfilter + S/R-Targets + SHO
 - [x] **LONG-Gate WIEDER ÖFFNEN** (Operator-Entscheid, revidiert den Audit-Batch:
       Idee ist symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML).
       → Code-Änderung + Bot-Neustart nötig.
+- [ ] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
+      `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2).
+      Für Mean-Reversion besonders interessant: extremes Funding = überfüllte
+      Seite → Snap-Back-Kandidat vs. weiterlaufendes Messer. Historie voll in
+      `funding_rates`.
 
 ---
 
