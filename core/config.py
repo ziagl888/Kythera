@@ -90,6 +90,10 @@ CH_PATTERN_BR = _ch("CH_PATTERN_BR")
 CH_AI_SR = _ch("CH_AI_SR")
 CH_PAPER = _ch("CH_PAPER")
 CH_DISABLED = _ch("CH_DISABLED")
+# Gemeinsamer Channel der Research-Bots 30-33 (PEX1/FMR1/TRM1/FIF1 — Report 15
+# S6/S8/S10/S11). Ein Channel für alle vier: die neuen Ideen werden als Kohorte
+# beobachtet, Attribution läuft über den Modell-Tag in ai_signals.
+CH_NEW_IDEAS = _ch("CH_NEW_IDEAS")
 
 
 TELEGRAM_CHANNELS = {
