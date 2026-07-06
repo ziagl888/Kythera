@@ -50,13 +50,15 @@ from core.research_features import (  # noqa: E402
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
-PURGE_DAYS = 7
 
+# purge_days >= Replay-Horizont des jeweiligen Builders, sonst überlappen die
+# PnL-Fenster der Threshold-Wahl über die Split-Grenze (Review-Fix 2026-07-06):
+# pex1/fmr1/fif1 simulieren 7 Tage, trm1 (BTC-Smart-Targets) 14 Tage.
 STRATEGIES = {
-    "pex1": {"model_id": "PEX1", "features": PEX1_FEATURES, "kind": "binary"},
-    "fmr1": {"model_id": "FMR1", "features": FMR1_FEATURES, "kind": "binary"},
-    "trm1": {"model_id": "TRM1", "features": TRM1_FEATURES, "kind": "multiclass"},
-    "fif1": {"model_id": "FIF1", "features": FIF1_FEATURES, "kind": "binary"},
+    "pex1": {"model_id": "PEX1", "features": PEX1_FEATURES, "kind": "binary", "purge_days": 7},
+    "fmr1": {"model_id": "FMR1", "features": FMR1_FEATURES, "kind": "binary", "purge_days": 7},
+    "trm1": {"model_id": "TRM1", "features": TRM1_FEATURES, "kind": "multiclass", "purge_days": 14},
+    "fif1": {"model_id": "FIF1", "features": FIF1_FEATURES, "kind": "binary", "purge_days": 7},
 }
 
 
@@ -81,11 +83,11 @@ def load_events(path: str, feature_cols: list[str]) -> tuple[pd.DataFrame, pd.Da
     return meta, X
 
 
-def chrono_split(meta: pd.DataFrame):
+def chrono_split(meta: pd.DataFrame, purge_days: int):
     ts = meta["ts"]
     t1 = ts.quantile(0.70)
     t2 = ts.quantile(0.85)
-    purge = pd.Timedelta(days=PURGE_DAYS)
+    purge = pd.Timedelta(days=purge_days)
     train = (ts <= t1 - purge).to_numpy()
     val = ((ts > t1) & (ts <= t2 - purge)).to_numpy()
     test = (ts > t2).to_numpy()
@@ -128,9 +130,9 @@ def train_binary(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
     log(f"Gelabelt: {len(meta)} | WR (gewichtet): {np.average(y, weights=w):.3f} "
         f"| ø Replay-PnL: {np.average(pnl, weights=w):+.3f}%")
 
-    tr, va, te, t1, t2 = chrono_split(meta)
+    tr, va, te, t1, t2 = chrono_split(meta, cfg["purge_days"])
     log(f"Split: train={tr.sum()} | val={va.sum()} | test={te.sum()} "
-        f"(t1={t1.date()}, t2={t2.date()}, purge={PURGE_DAYS}d)")
+        f"(t1={t1.date()}, t2={t2.date()}, purge={cfg['purge_days']}d)")
     if min(tr.sum(), va.sum(), te.sum()) < args.min_val_trades:
         raise SystemExit("Zu wenig Events für einen belastbaren Split — Abbruch.")
 
@@ -183,16 +185,22 @@ def train_binary(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
 def train_trm1(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
     """TRM1: 3-Klassen-Modell; Gate = max(P(up), P(down)); der Threshold wird
     über den Replay-PnL des BTC-Trades in der prognostizierten Richtung gewählt."""
+    # Events mit offenem Replay (win_* = None → Mark-to-Market-PnL) fliegen
+    # komplett raus — konsistent mit dem label-Filter der binären Pfade
+    # (Review-Fix 2026-07-06; vorher verrauschten offene Trades die
+    # Threshold-Wahl).
+    closed = (meta["win_long"].notna() & meta["win_short"].notna()).to_numpy()
+    meta, X = meta[closed].reset_index(drop=True), X[closed].reset_index(drop=True)
     y = meta["label_class"].astype(int).to_numpy()
     pnl_long = pd.to_numeric(meta["pnl_long"], errors="coerce").fillna(0.0).to_numpy()
     pnl_short = pd.to_numeric(meta["pnl_short"], errors="coerce").fillna(0.0).to_numpy()
     w = pd.to_numeric(meta["weight"], errors="coerce").fillna(1.0).to_numpy()
-    log(f"Events: {len(meta)} | Klassen: other={int((y == 0).sum())} "
+    log(f"Events (Replay geschlossen): {len(meta)} | Klassen: other={int((y == 0).sum())} "
         f"up={int((y == TRM1_CLASS_UP).sum())} down={int((y == TRM1_CLASS_DOWN).sum())}")
 
-    tr, va, te, t1, t2 = chrono_split(meta)
+    tr, va, te, t1, t2 = chrono_split(meta, cfg["purge_days"])
     log(f"Split: train={tr.sum()} | val={va.sum()} | test={te.sum()} "
-        f"(t1={t1.date()}, t2={t2.date()}, purge={PURGE_DAYS}d)")
+        f"(t1={t1.date()}, t2={t2.date()}, purge={cfg['purge_days']}d)")
     if min(tr.sum(), va.sum(), te.sum()) < args.min_val_trades:
         raise SystemExit("Zu wenig Events für einen belastbaren Split — Abbruch.")
 
@@ -285,7 +293,7 @@ def main() -> None:
             "kind": cfg["kind"],
             "trained_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "events_file": events_path,
-            "purge_days": PURGE_DAYS,
+            "purge_days": cfg["purge_days"],
             **result["meta_extra"],
         },
     }

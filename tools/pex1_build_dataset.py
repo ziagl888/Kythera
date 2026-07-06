@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from tools.research_dataset_common import (
+    LOCAL_TZ,
     MIN_WINDOW,
     REPLAY_DIR,
     WINDOW_CANDLES,
@@ -60,6 +61,23 @@ def detect_offset_h(conn) -> int:
     return int(np.clip(round((pd.Timestamp(row) - now).total_seconds() / 3600.0), -12, 12))
 
 
+def spike_time_to_utc(series: pd.Series, offset_h: int) -> pd.Series:
+    """spike_time → naive UTC. Ein konstanter Offset über Monate wäre DST-blind
+    (Review-Fix 2026-07-06: Pre-DST-Events würden 1h verschoben → Kerze VOR dem
+    Event im Label). Offset 2/3h ⇒ Domäne ist die PG-Lokalzeit Europe/Bucharest
+    → DST-aware konvertieren; 0 ⇒ bereits UTC; alles andere: konstanter Shift
+    mit Warnung (unbekannte Domäne)."""
+    s = pd.to_datetime(series, errors="coerce")
+    if offset_h == 0:
+        return s
+    if offset_h in (2, 3):
+        s = s.dt.tz_localize(LOCAL_TZ, nonexistent="shift_forward", ambiguous="NaT")
+        return s.dt.tz_convert("UTC").dt.tz_localize(None)
+    log(f"WARNUNG: spike_time-Offset {offset_h:+d}h passt zu keiner bekannten TZ-Domäne — "
+        f"konstanter Shift (DST-blind).")
+    return s - pd.Timedelta(hours=offset_h)
+
+
 def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
     ev = df_query(
         conn,
@@ -67,14 +85,17 @@ def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
         SELECT symbol, spike_time, volume_ratio, price_change_60s, buy_pressure, volatility
         FROM pump_dump_events
         WHERE volume_ratio >= %s AND price_change_60s >= %s
-          AND spike_time > %s::timestamp + %s::interval
+          AND spike_time > %s::timestamp
         ORDER BY spike_time ASC
         """,
-        (PEX1_MIN_VOL_RATIO, PEX1_MIN_PUMP_PCHG_60S, since, f"{offset_h} hours"),
+        # Grober SQL-Vorfilter mit 1 Tag Marge; exakter Since-Cut nach der
+        # TZ-Konvertierung in pandas.
+        (PEX1_MIN_VOL_RATIO, PEX1_MIN_PUMP_PCHG_60S, since),
     )
-    ev["ts"] = pd.to_datetime(ev["spike_time"]) - pd.Timedelta(hours=offset_h)
+    ev["ts"] = spike_time_to_utc(ev["spike_time"], offset_h)
     ev["symbol"] = ev["symbol"].astype(str).str.upper()
     ev = ev[ev["symbol"].str.endswith("USDT")].dropna(subset=["ts"])
+    ev = ev[ev["ts"] >= pd.Timestamp(since)]
 
     # Dedup: je Symbol 4h-Mindestabstand (erster Spike gewinnt — wie der Cooldown live).
     keep, last_ts = [], {}
@@ -130,19 +151,29 @@ def main() -> None:
                 if join_is_stale(times, idx, row.ts):
                     stats["stale_join"] += 1
                     continue
-                entry_close = float(closes[idx])
+                # Entry = Spike-Preis-Schätzung, NICHT der Pre-Pump-Close
+                # (Review-Fix HIGH 2026-07-06): Bot 30 steigt live POST-Pump ein
+                # (live_price nach dem Spike). Der Pre-Pump-Close als Entry hätte
+                # pump-korreliert deflationierte Labels erzeugt (der Pump selbst
+                # riss den simulierten SL). Schätzer: letzter Close × (1 + 60s-Move).
+                entry_est = float(closes[idx]) * (1.0 + float(row.price_change_60s) / 100.0)
                 try:
                     win = df.iloc[max(0, idx - WINDOW_CANDLES + 1): idx + 1]
-                    setup = calculate_smart_targets(None, sym, "SHORT", entry_close, df=win)
+                    setup = calculate_smart_targets(None, sym, "SHORT", entry_est, df=win)
                     entry1 = float(setup["entry1"])
                     sl = float(setup["sl"])
                     targets = [float(t) for t in setup["targets"][:N_PUBLISHED]]
                     if not targets or sl <= 0 or entry1 <= 0:
                         raise ValueError("degenerate geometry")
-                    end = min(idx + 1 + HORIZON_CANDLES, len(times))
+                    # Replay ab idx+2: die Event-Kerze (idx+1) enthält den
+                    # Pump-Run-up VOR unserem Entry — wick-aware First-Touch
+                    # würde ihn fälschlich als SL-Riss zählen. Konservativ
+                    # (schnelle TP-Treffer derselben Stunde entfallen ebenfalls);
+                    # aim2-Präzedenz: --skip-entry-hour.
+                    end = min(idx + 2 + HORIZON_CANDLES, len(times))
                     res = simulate_exit(
                         times[:end], highs[:end], lows[:end], closes[:end],
-                        start_idx=idx + 1, direction="SHORT", entry=entry1, sl=sl,
+                        start_idx=idx + 2, direction="SHORT", entry=entry1, sl=sl,
                         targets=targets, n_published=len(targets),
                     )
                     event = {

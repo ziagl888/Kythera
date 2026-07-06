@@ -50,7 +50,7 @@ MODEL_ID = "FIF1"
 ARTIFACT_PATH = "fif1_model.pkl"
 TARGET_CHANNEL_ID = _kcfg.CH_NEW_IDEAS
 LIVE_POSTING = os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"
-SHADOW_FLOOR = 0.0  # JEDER Kandidat wird geloggt — volle A/B-Basis
+SIGNAL_MAX_AGE_MIN = 10  # Signale älter als das nie verarbeiten (Idle-Catch-up-Guard)
 SOURCE_STRATEGY = "Fast In And Out"
 ARTIFACT_RETRY_S = 1800
 
@@ -157,16 +157,41 @@ def startup_feature_selfcheck() -> None:
         conn.close()
 
 
-def fetch_new_signals(conn, last_id: int) -> list[dict]:
+def signal_key(sig: dict) -> tuple:
+    """Tabellen-agnostischer Dedupe-Key: ein Signal wandert vom Monitor binnen
+    Sekunden von active_ nach closed_trades_master (mit NEUER Serial-id) — die
+    id taugt deshalb nicht als Union-Watermark."""
+    return (
+        str(sig["coin"]).upper(),
+        str(sig["direction"]).upper(),
+        str(sig["time"]),
+        float(sig["entry"] or 0),
+    )
+
+
+def fetch_recent_signals(conn) -> list[dict]:
+    """FIFO-Signale der letzten SIGNAL_MAX_AGE_MIN Minuten aus BEIDEN
+    Master-Tabellen (Review-Fixes 2026-07-06):
+      * UNION mit closed: Fast-Resolver (SL/TP < 60s nach Insert) verschwinden
+        sonst vor dem nächsten Poll aus active — genau die Verlierer, die der
+        Filter lernen soll, würden live systematisch fehlen.
+      * Zeitfenster statt id-Watermark: nach Idle-/Ausfall-Phasen wird kein
+        Backlog tage-alter Signale mit verfallener Original-Geometrie gepostet
+        (Analogon zum 30-min-Guard in Bot 30). Zeitvergleich DB-seitig — die
+        time-Spalten tragen PG-Lokalzeit, NOW() castet in dieselbe Domäne."""
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT id, coin, direction, entry, target1, sl
+            f"""
+            SELECT id, time, coin, direction, entry, target1, sl
             FROM active_trades_master
-            WHERE strategy = %s AND id > %s
-            ORDER BY id ASC
+            WHERE strategy = %(s)s AND time > NOW() - INTERVAL '{SIGNAL_MAX_AGE_MIN} minutes'
+            UNION ALL
+            SELECT id, time, coin, direction, entry, target1, sl
+            FROM closed_trades_master
+            WHERE strategy = %(s)s AND time > NOW() - INTERVAL '{SIGNAL_MAX_AGE_MIN} minutes'
+            ORDER BY time ASC
             """,
-            (SOURCE_STRATEGY, last_id),
+            {"s": SOURCE_STRATEGY},
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
@@ -258,14 +283,23 @@ def main() -> None:
 
     conn = get_db_connection()
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM active_trades_master WHERE strategy = %s",
-            (SOURCE_STRATEGY,),
-        )
-        last_id = int(cur.fetchone()[0])
+        # Das Zeitfenster-Polling scannt beide Master-Tabellen jede Minute —
+        # ohne (strategy, time)-Index wären das Seq-Scans über die größte
+        # Trade-Tabelle der Fleet (closed: 111k+ FIFO-Zeilen). Gleicher Index
+        # trägt auch fifo_burst_counts.
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_atm_strategy_time ON active_trades_master (strategy, time)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ctm_strategy_time ON closed_trades_master (strategy, time)")
+    conn.commit()
+    # Signale, die VOR dem Bot-Start liegen, nicht nachträglich verarbeiten:
+    # aktuelles Fenster als gesehen markieren (verhindert auch Doppel-Posts
+    # nach einem schnellen Bot-Restart innerhalb des Fensters).
+    seen: dict[tuple, datetime.datetime] = {}
+    now0 = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    for sig in fetch_recent_signals(conn):
+        seen[signal_key(sig)] = now0
     conn.rollback()
     conn.close()
-    logger.info(f"Start-Watermark: active_trades_master.id > {last_id}")
+    logger.info(f"Start: {len(seen)} Signale im Fenster als gesehen markiert.")
 
     while True:
         ensure_artifact()
@@ -275,10 +309,14 @@ def main() -> None:
 
         conn = get_db_connection()
         try:
-            signals = fetch_new_signals(conn, last_id)
+            signals = fetch_recent_signals(conn)
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             conn_dead = False
             for sig in signals:
-                last_id = max(last_id, int(sig["id"]))
+                key = signal_key(sig)
+                if key in seen:
+                    continue
+                seen[key] = now  # process-once, auch bei Fehler kein Retry-Loop
                 try:
                     process_signal(conn, sig)
                 except Exception as e:
@@ -291,6 +329,9 @@ def main() -> None:
                         conn_dead = True
                 if conn_dead:
                     break
+            # Seen-Set beschneiden (Fenster + Marge — bleibt konstant klein)
+            cutoff = now - datetime.timedelta(minutes=SIGNAL_MAX_AGE_MIN * 3)
+            seen = {k: v for k, v in seen.items() if v >= cutoff}
         except Exception as e:
             logger.error(f"FIF1-Poll-Fehler: {e}")
         finally:

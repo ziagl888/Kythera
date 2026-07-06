@@ -37,9 +37,15 @@ dem Val-Operating-Point), kalibrierte Confidence nur für Anzeige, Cooldowns via
 Konsumiert die Events des `10_pump_dump_detector` (nur Pumps: `price_change_60s
 ≥ +1,5`), Gate `volume_ratio ≥ 5` exakt wie im Training (Report 13 EPD1-P0:
 sonst out-of-distribution). Events älter als 30 min werden verworfen (Catch-up
-nach Downtime darf keine verfallenen Exhaustion-Thesen posten). Geometrie:
-`calculate_smart_targets` SHORT — identisch zur Label-Geometrie. Cooldown 4h je
-Coin, im Training als Event-Dedup gespiegelt.
+nach Downtime darf keine verfallenen Exhaustion-Thesen posten); die
+Feature-Kerze wird relativ zur EVENT-Zeit gewählt (floor-1 wie im Training).
+Geometrie: `calculate_smart_targets` SHORT. **Label-Geometrie (Review-Fix
+2026-07-06):** Trainings-Entry ist die Spike-Preis-Schätzung
+`close[idx] × (1 + 60s-Move)` — nicht der Pre-Pump-Close (der hätte
+pump-korreliert deflationierte Labels erzeugt); das Replay startet konservativ
+NACH der Event-Kerze (deren High enthält den Run-up vor dem Entry). Cooldown
+4h je Coin auf JEDEM gescorten Event — exakter Spiegel des
+Trainings-Dedups.
 
 ### FMR1 — Funding-Extreme Mean-Reversion (S8)
 Cross-Section über ALLE Coins aus einem `premiumIndex`-Request; Kandidaten sind
@@ -59,11 +65,16 @@ live gated das debounced Regime. Cooldown 12h je Richtung.
 
 ### FIF1 — FIFO-Filter (S11)
 Standalone-A/B: Der Live-FIFO-Pfad (`3_detectors.py`) bleibt unangetastet.
-FIF1 pollt neue `Fast In And Out`-Zeilen (id-Watermark, beim Start = MAX(id)),
-scored jede mit dem Meta-Klassifier und postet die Gate-Passer unter Tag FIF1 —
-mit der ORIGINAL-Geometrie (Entry/TP1/SL unverändert), damit die Selektion der
-einzige Unterschied ist. JEDER Kandidat landet in `ml_predictions_master`
-(posted true/false) — das ist die A/B-Auswertungsbasis.
+FIF1 pollt `Fast In And Out`-Zeilen der letzten 10 Minuten aus BEIDEN
+Master-Tabellen (Review-Fixes 2026-07-06: die closed-UNION fängt
+Fast-Resolver, die der Monitor binnen 60s aus active löscht; das Zeitfenster
+verhindert, dass nach Idle-/Ausfall-Phasen ein Backlog tage-alter Signale mit
+verfallener Geometrie gepostet wird). Dedupe über einen Content-Key
+(Coin/Richtung/Zeit/Entry); benötigte `(strategy, time)`-Indizes legt der Bot
+beim Start an. Gate-Passer posten unter Tag FIF1 mit der ORIGINAL-Geometrie
+(Entry/TP1/SL unverändert), damit die Selektion der einzige Unterschied ist.
+JEDER Kandidat landet in `ml_predictions_master` (posted true/false) — das ist
+die A/B-Auswertungsbasis.
 
 ## Step 2 — Training auf dem VPS
 
@@ -116,7 +127,14 @@ Idle-Modus und die Idee wird mit Befund geparkt.
 - PEX1 nutzt die 4 Event-Messwerte + 1h-Kontext; Microstructure-Features aus
   einem 10s-Ticker (Report 15) existieren als Live-Tabelle nicht — bewusst
   verschoben, bis eine 10s-Persistenz existiert.
-- `pump_dump_events.spike_time` trägt keine TZ-Garantie — Bot und Builder
-  messen den Offset gegen die Wanduhr (±12h-Clip) statt zu raten.
+- `pump_dump_events.spike_time` trägt keine TZ-Garantie — der Bot misst den
+  Offset gegen die Wanduhr (±12h-Clip); der Builder konvertiert bei Offset
+  2/3h DST-aware über Europe/Bucharest (Review-Fix: ein konstanter Offset über
+  Monate wäre über die DST-Grenze 1h falsch gewesen).
 - TRM1-`minutes_in_transition` ist live die debounced Episodendauer, im
   Training die Roh-Episodendauer — akzeptierte Näherung, im Doc vermerkt.
+- TRM1 postet nie gegen eine offene Gegenposition (kein Self-Hedge auf
+  BTCUSDT) — kippt die Prognose, wird nur Shadow geloggt.
+- Betriebsnotiz: +4 Prozesse ≈ +8 dauerhafte PG-Connections
+  (KYTHERA_DB_POOL_MIN=2 je Prozess) — beim Rollout gegen `max_connections`
+  prüfen (P1.34).

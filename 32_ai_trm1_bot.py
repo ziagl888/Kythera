@@ -97,8 +97,13 @@ def fetch_regime_window(conn, limit: int = TRM1_WINDOW_CHECKS) -> list[dict]:
     return rows[::-1]
 
 
-def startup_feature_selfcheck() -> None:
-    """P0.12-Muster: Features über echte regime_history-Fenster rechnen."""
+def startup_feature_selfcheck() -> bool:
+    """P0.12-Muster: Features über echte regime_history-Fenster rechnen.
+
+    Rückgabe False bei (noch) zu wenig regime_history — der Aufrufer wartet
+    dann statt zu crashen (frisches Setup füllt sich alle 5 min selbst; ein
+    exit(1) würde einen ~2h-Watchdog-Restart-Loop erzeugen, Review-Fix
+    2026-07-06). Kaputte Features bleiben ein harter Abbruch."""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
@@ -112,8 +117,8 @@ def startup_feature_selfcheck() -> None:
             cols = [d[0] for d in cur.description]
             hist = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()][::-1]
         if len(hist) < TRM1_WINDOW_CHECKS + 10:
-            logger.critical("❌ Selbsttest: zu wenig regime_history-Zeilen — läuft 26_regime_detector?")
-            exit(1)
+            logger.warning("Selbsttest: zu wenig regime_history-Zeilen — läuft 26_regime_detector? Warte.")
+            return False
         rows = []
         for end in range(TRM1_WINDOW_CHECKS, len(hist), 5):
             window = hist[end - TRM1_WINDOW_CHECKS : end]
@@ -134,6 +139,7 @@ def startup_feature_selfcheck() -> None:
             context=" (TRM1-Startup)",
         )
         logger.info(f"✅ Feature-Selbsttest bestanden ({len(rows)} Fenster).")
+        return True
     except ValueError as e:
         logger.critical(f"❌ {e}")
         exit(1)
@@ -185,8 +191,15 @@ def run_check() -> None:
             return
         if has_open_ai_signal(conn, TRADE_SYMBOL, direction, ARTIFACT["tag"]):
             return
+        # Kein Self-Hedge (Review-Fix 2026-07-06): kippt die Prognose im
+        # 5-min-Takt, während der Gegen-Trade noch offen ist, würde TRM1 sonst
+        # gleichzeitige Gegenpositionen auf BTCUSDT posten — dann nur Shadow.
+        opposite = "SHORT" if direction == "LONG" else "LONG"
+        allow_post = not has_open_ai_signal(conn, TRADE_SYMBOL, opposite, ARTIFACT["tag"])
+        if not allow_post and prob >= ARTIFACT["threshold"]:
+            logger.info(f"⛔ Gegenposition ({opposite}) offen — {direction}-Signal nur als Shadow.")
 
-        if prob >= ARTIFACT["threshold"] and LIVE_POSTING:
+        if prob >= ARTIFACT["threshold"] and LIVE_POSTING and allow_post:
             setup = calculate_smart_targets(conn, TRADE_SYMBOL, direction, live_price)
             post_ai_signal(
                 conn,
@@ -208,7 +221,7 @@ def run_check() -> None:
             log_prediction(conn, ARTIFACT["tag"], TRADE_SYMBOL, direction, live_price, conf, posted=True)
             update_cooldown(conn, MODEL_ID, TRADE_SYMBOL, direction)  # committet atomar
         else:
-            if prob >= ARTIFACT["threshold"]:
+            if prob >= ARTIFACT["threshold"] and not LIVE_POSTING:
                 logger.info(f"👻 SHADOW-Post {direction} (p={prob:.2f}) — Live-Posting deaktiviert.")
             log_prediction(conn, ARTIFACT["tag"], TRADE_SYMBOL, direction, live_price, conf, posted=False)
             conn.commit()
@@ -242,7 +255,8 @@ def main() -> None:
     conn.commit()
     conn.close()
 
-    startup_feature_selfcheck()
+    while not startup_feature_selfcheck():
+        time.sleep(600)  # regime_history füllt sich alle 5 min von selbst
 
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)

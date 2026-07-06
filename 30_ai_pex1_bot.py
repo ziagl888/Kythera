@@ -165,7 +165,10 @@ def process_event(conn, event: dict, offset_h: int) -> None:
     if has_open_ai_signal(conn, symbol, direction, ARTIFACT["tag"]):
         return
 
-    res = fetch_context_frame(conn, symbol)
+    # Feature-Kerze relativ zur EVENT-Zeit (floor-1 wie im Training) — ein über
+    # eine Stundengrenze verarbeitetes Event sähe sonst eine spätere Kerze, bei
+    # PEX1 wäre das die Pump-Kerze selbst (Review-Fix 2026-07-06).
+    res = fetch_context_frame(conn, symbol, as_of=spike_utc)
     if res is None:
         return
     df, idx = res
@@ -178,8 +181,6 @@ def process_event(conn, event: dict, offset_h: int) -> None:
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     prob = float(ARTIFACT["model"].predict_proba(X)[0, 1])
-    if prob < SHADOW_FLOOR:
-        return
     conf = calibrated_confidence(ARTIFACT, prob)
     live_price = float(df["close"].iloc[-1])
 
@@ -207,13 +208,15 @@ def process_event(conn, event: dict, offset_h: int) -> None:
             ],
         )
         log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=True)
-        # schließt die Transaktion (Outbox + ai_signals + master-Log) atomar ab
-        update_cooldown(conn, MODEL_ID, symbol, direction)
     else:
         if prob >= ARTIFACT["threshold"]:
             logger.info(f"👻 SHADOW-Post {symbol} (p={prob:.2f}) — Live-Posting deaktiviert.")
-        log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=False)
-        conn.commit()
+        if prob >= SHADOW_FLOOR:
+            log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=False)
+    # Cooldown auf JEDEM gescorten Event — Spiegel des unbedingten 4h-Dedups im
+    # Training; nur so sieht das Modell live dieselbe Event-Verteilung
+    # (Review-Fix 2026-07-06). update_cooldown committet die Transaktion atomar.
+    update_cooldown(conn, MODEL_ID, symbol, direction)
 
 
 def main() -> None:
@@ -233,6 +236,10 @@ def main() -> None:
                 PRIMARY KEY (module, coin, direction)
             );
         """)
+        # Poll-Pfad läuft jede Minute auf spike_time — ohne Index wäre das ein
+        # Seq-Scan pro Zyklus (Tabelle bleibt dank P1.40-Retention klein, aber
+        # der Index macht den Watermark-Scan konstant billig).
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pde_spike_time ON pump_dump_events (spike_time)")
         cur.execute("SELECT MAX(spike_time) FROM pump_dump_events")
         row = cur.fetchone()
     conn.commit()

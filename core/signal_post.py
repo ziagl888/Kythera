@@ -61,8 +61,12 @@ def post_ai_signal(
         f"🚨 Leverage: {lev}",
         "🚨 Margin: Cross",
         f"🏦 CMP Entry: $ {format_price(entry1)}",
-        f"🏦 Entry 2: $ {format_price(entry2)}",
     ]
+    # Einzel-Entry-Signale (FIF1: Original-FIFO-Geometrie) posten wie das
+    # Quell-Format nur EINE Entry-Zeile — Cornix' Verhalten bei zwei
+    # identischen Preis-Strings ist nicht verifiziert (vgl. format_price-Fix).
+    if format_price(entry2) != format_price(entry1):
+        lines.append(f"🏦 Entry 2: $ {format_price(entry2)}")
     for i, t in enumerate(targets[:n_show], 1):
         lines.append(f"💰 TP{i}: $ {format_price(t)}")
     lines += [

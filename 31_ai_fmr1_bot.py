@@ -126,8 +126,10 @@ def startup_feature_selfcheck() -> None:
     coin_set = load_coin_set()
     cs = fetch_cross_section(coin_set)
     if cs is None:
-        logger.critical("❌ Selbsttest: Funding-Cross-Section nicht abrufbar — Abbruch.")
-        exit(1)
+        # KEIN exit(1): ein transienter Binance-/Netz-Ausfall beim Boot würde
+        # sonst einen Watchdog-Restart-Loop erzeugen (Review-Fix 2026-07-06).
+        # Der Scan skippt bei fetch_cross_section()==None ohnehin sauber.
+        logger.warning("Selbsttest: Funding-Cross-Section nicht abrufbar — Scan skippt, bis Binance antwortet.")
 
     conn = get_db_connection()
     try:
@@ -162,9 +164,8 @@ def startup_feature_selfcheck() -> None:
             },
             context=" (FMR1-Startup)",
         )
-        logger.info(
-            f"✅ Feature-Selbsttest bestanden ({len(rows)} Zeilen, {used} Coins, {len(cs)} Coins in der Cross-Section)."
-        )
+        cs_note = f"{len(cs)} Coins in der Cross-Section" if cs is not None else "Cross-Section ausstehend"
+        logger.info(f"✅ Feature-Selbsttest bestanden ({len(rows)} Zeilen, {used} Coins, {cs_note}).")
     except ValueError as e:
         logger.critical(f"❌ {e}")
         exit(1)
@@ -198,8 +199,6 @@ def process_candidate(conn, symbol: str, direction: str, rate: float, pctl: floa
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     prob = float(ARTIFACT["model"].predict_proba(X)[0, 1])
-    if prob < SHADOW_FLOOR:
-        return
     conf = calibrated_confidence(ARTIFACT, prob)
     live_price = float(df["close"].iloc[-1])
 
@@ -225,12 +224,14 @@ def process_candidate(conn, symbol: str, direction: str, rate: float, pctl: floa
             extra_info_lines=[f"Funding: {rate * 1e4:+.1f} bps, Perzentil {pctl:.0%}"],
         )
         log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=True)
-        update_cooldown(conn, MODEL_ID, symbol, direction)  # committet atomar
     else:
         if prob >= ARTIFACT["threshold"]:
             logger.info(f"👻 SHADOW-Post {symbol} {direction} (p={prob:.2f}) — Live-Posting deaktiviert.")
-        log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=False)
-        conn.commit()
+        if prob >= SHADOW_FLOOR:
+            log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=False)
+    # Cooldown auf JEDEM gescorten Kandidaten — Spiegel des unbedingten
+    # 24h-Dedups im Training (Review-Fix 2026-07-06); committet atomar.
+    update_cooldown(conn, MODEL_ID, symbol, direction)
 
 
 def run_scan() -> None:

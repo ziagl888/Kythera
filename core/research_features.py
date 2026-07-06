@@ -63,12 +63,18 @@ def candle_context_features(df: pd.DataFrame, idx: int) -> dict:
     vol = float(df["volume"].iloc[idx])
     vol_sma20 = float(df["volume"].iloc[idx - 19 : idx + 1].mean())
 
-    atr = float(pd.to_numeric(df["atr_14"].iloc[idx], errors="coerce") or 0.0)
-    rsi = float(pd.to_numeric(df["rsi_14"].iloc[idx], errors="coerce") or 50.0)
-    ema21 = float(pd.to_numeric(df["ema_21"].iloc[idx], errors="coerce") or 0.0)
-    ema200 = float(pd.to_numeric(df["ema_200"].iloc[idx], errors="coerce") or 0.0)
-    b_up = float(pd.to_numeric(df["boll_upper_20"].iloc[idx], errors="coerce") or 0.0)
-    b_lo = float(pd.to_numeric(df["boll_lower_20"].iloc[idx], errors="coerce") or 0.0)
+    def num(col: str, default: float) -> float:
+        # NaN ist truthy — `to_numeric(...) or default` würde den Default nie
+        # treffen und legitime 0.0-Werte überschreiben (Review-Fix 2026-07-06).
+        v = pd.to_numeric(df[col].iloc[idx], errors="coerce")
+        return default if pd.isna(v) else float(v)
+
+    atr = num("atr_14", 0.0)
+    rsi = num("rsi_14", 50.0)
+    ema21 = num("ema_21", 0.0)
+    ema200 = num("ema_200", 0.0)
+    b_up = num("boll_upper_20", 0.0)
+    b_lo = num("boll_lower_20", 0.0)
 
     feats = {
         "ret_1h_pct": ret_pct(1),
@@ -281,11 +287,25 @@ def build_fif1_row(
 
 
 # ── Gemeinsamer Kontext-Frame-Fetch (Bots 30/31/33) ──────────────────────────
-def fetch_context_frame(conn, symbol: str, lookback: int = 60, now_utc=None):
+# Spiegel des Trainings-Gates MAX_JOIN_STALENESS_H (tools/research_dataset_common):
+# eine Feature-Kerze, die älter als 3h relativ zum Entscheidungszeitpunkt ist,
+# hätte das Training verworfen — live darf sie kein Signal speisen (Review-Fix
+# 2026-07-06: vorher fehlte der Guard, Ingestion-Lag → Signale auf Stunden-alten
+# Preisen).
+CONTEXT_MAX_STALENESS_H = 3
+
+
+def fetch_context_frame(conn, symbol: str, lookback: int = 60, as_of=None):
     """Letzte 1h-Kerzen + Kontext-Indikatoren (CONTEXT_SQL_SELECT-Join).
 
-    Rückgabe ``(df ASC, idx der letzten GESCHLOSSENEN Kerze)`` oder None bei
-    zu wenig Daten — Features nie von der laufenden Kerze (R1-Vertrag).
+    ``as_of``: Entscheidungszeitpunkt (naive UTC oder aware; Default = jetzt).
+    Die Feature-Kerze ist die letzte GESCHLOSSENE Kerze VOR der as_of-Stunde —
+    exakt der floor-1-Join der Dataset-Builder (Training-Serving-Parität, R1).
+    Event-Bots (PEX1) übergeben die Event-Zeit, damit ein über eine
+    Stundengrenze verarbeitetes Event dieselbe Kerze sieht wie im Training.
+
+    Rückgabe ``(df ASC, idx der Feature-Kerze)`` oder None bei zu wenig Daten
+    oder wenn die Feature-Kerze staler als CONTEXT_MAX_STALENESS_H ist.
     """
     import datetime as _dt
 
@@ -307,14 +327,20 @@ def fetch_context_frame(conn, symbol: str, lookback: int = 60, now_utc=None):
     for c in df.columns:
         if c != "open_time":
             df[c] = pd.to_numeric(df[c], errors="coerce")
-    if now_utc is None:
-        now_utc = _dt.datetime.now(_dt.timezone.utc)
-    cur_hour = now_utc.replace(minute=0, second=0, microsecond=0, tzinfo=None)
-    idx = len(df) - 1
-    if df["open_time"].iloc[idx] >= cur_hour:
-        idx -= 1  # laufende Kerze überspringen
+
+    if as_of is None:
+        as_of = _dt.datetime.now(_dt.timezone.utc)
+    as_of = pd.Timestamp(as_of)
+    if as_of.tzinfo is not None:
+        as_of = as_of.tz_convert("UTC").tz_localize(None)
+    cur_hour = as_of.floor("h")
+
+    times = df["open_time"]
+    idx = int(times.searchsorted(cur_hour, side="left")) - 1  # letzte Kerze VOR der as_of-Stunde
     if idx < CONTEXT_MIN_CANDLES - 1:
         return None
+    if (cur_hour - times.iloc[idx]) > pd.Timedelta(hours=CONTEXT_MAX_STALENESS_H):
+        return None  # stale Join — Training hätte das Event verworfen
     return df, idx
 
 
