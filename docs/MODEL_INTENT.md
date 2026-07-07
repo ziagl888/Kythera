@@ -246,6 +246,29 @@ regimeabhängig (Alt-Pump-Phasen; Juli negativ → Drift-Watch Pflicht).
       `simulate_exit` (Skip-Entry-Hour, 7d-Horizont), 10 Live-Features
       (sample_fill=1.0 als dokumentierte Näherung) + 6 Funding-Features.
 
+**EPD2-Retrain durchgeführt 2026-07-07 — BEIDE Richtungen NICHT deploybar.**
+Datensatz nach DST-Fix: 85.031 Events / 639 Symbole (2026-02-25→07-07,
+mehr Historie gibt es nicht — Log-Beginn), gelabelt 78.351;
+`retrain_from_replay.py --strategy epd` (16 Features = 10 Live + 6 Funding,
+Chrono-Split, 7d-Purge, Safe-Threshold):
+- LONG (45.760 Events, Basis 52,2 %): Safe-Picker verweigert; bester
+  Val-Punkt −0,97 %/Trade. Test-Kalibrierung monoton in der WR
+  (43,9→69 %), aber **jedes Bucket im Ø-PnL negativ** — das Modell rankt
+  TP1-Wahrscheinlichkeit, die gepostete Geometrie hat trotzdem negatives EV.
+- SHORT (32.591 Events, Basis 60,0 %): Val formal deploybar @0,674
+  (+0,09 %/Trade, hauchdünn), aber **Val-Test-Bruch**: Test 1.204 Trades,
+  WR 68,2 % == Basisrate (null Selektion), −0,90 %/Trade.
+- **Monats-Split: kein einziger positiver Monat in KEINER Richtung**
+  (LONG Ø −0,05…−3,66; SHORT Ø −0,00…−3,93). Anders als bei RUB-LONG
+  (§8) ist hier im verfügbaren Fenster auch kein Bull-Regime-Rettungsanker
+  sichtbar — wobei die 4,5 Monate keine starke Alt-Pump-Phase enthalten
+  (EPD1s profitable Phasen lagen laut Step-4-Vermessung davor).
+- Konsequenz: kein Deploy; Ist-Zustand (Bot 10 mit Alt-Modell, beide
+  Richtungen offen per Operator-Entscheid) läuft weiter, Drift-Watch
+  bleibt Pflicht. Artefakte liegen in staging (`epd2_model_{LONG,SHORT}.pkl`),
+  Stats `retrain_epd2_stats.json`. Wiedervorlage: Retrain erneut, sobald
+  eine echte Alt-Pump-Phase in den Logs ist (Regime-Fenster-These §8).
+
 ---
 
 ## 8. RUB1 — Rubberband Mean Reversion ✅ (Intent bestätigt 2026-07-06)
