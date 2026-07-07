@@ -44,7 +44,7 @@ PROCESSES: list[dict[str, Any]] = [
     {"name": "AI ATS1 Detector", "script": "12_ai_ats_bot.py", "group": "ai", "restart_interval": None},
     {"name": "AI RUB1 Detector", "script": "13_ai_rub_bot.py", "group": "ai", "restart_interval": None},
     {"name": "AI ATB1 Detector", "script": "14_ai_atb_bot.py", "group": "ai", "restart_interval": None},
-    {"name": "AI AIM1 Detector", "script": "15_ai_master_bot.py", "group": "ai", "restart_interval": None},
+    {"name": "AI AIM2 Detector", "script": "15_ai_master_bot.py", "group": "ai", "restart_interval": None},
     {
         "name": "SMC FOREX Detector",
         "script": "16_smc_forex_metals_bot.py",
