@@ -53,8 +53,16 @@ TELEGRAM_BOT_TOKEN = _required("TELEGRAM_BOT_TOKEN")
 
 # --- CHANNEL IDS (env-driven, D-... never hardcode private channel IDs) ---
 def _ch(name: str) -> int:
-    """Read a Telegram channel id from the environment (0 = unset/disabled)."""
-    return int(os.getenv(name, "0"))
+    """Read a Telegram channel id from the environment (0 = unset/disabled).
+
+    Empty/whitespace value counts as unset — a templated `.env` line like
+    `CH_MAIN=` must not crash every bot at import via `int("")` (Review PR #10;
+    audit_reports/01_core_infra.md LOW).
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return 0
+    return int(raw)
 
 
 CH_FAST_IN_OUT = _ch("CH_FAST_IN_OUT")

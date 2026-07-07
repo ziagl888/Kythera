@@ -1,3 +1,68 @@
+## [2026-07-07 abends] PR #10 — Review-Fixes zu den PR-#9-Findings (Korrektheit)
+
+### Fixed
+- `core/model_artifacts.py` — **`maybe_reload` verwirft ein geladenes Artefakt
+  bei einem fehlgeschlagenen Reload nicht mehr.** Bisher ersetzte das tägliche
+  Reload das In-Memory-Modell unbedingt durch das Ergebnis von `load_artifact`;
+  ein transienter Fehler (File-Lock während Operator-Copy, AV-Scan, halb
+  geschriebener Deploy) schaltete damit eine live Seite bis zum nächsten
+  24h-Fenster stumm (RUB2-SHORT: `if not RUB2_SHORT["loaded"]: continue`, kein
+  Legacy-Fallback). Neu: schlägt der Reload fehl UND existiert die Datei noch,
+  bleibt das geladene Artefakt aktiv (`loaded_at` wird trotzdem vorgerückt →
+  kein Retry pro Tick). Nur wenn die Datei WEG ist (Operator-Undeploy), wird
+  der Nicht-geladen-Zustand übernommen. Verhaltens-Test inline verifiziert.
+- `10_pump_dump_detector.py` — **`ticker_10s`-Timestamp auf die 10s-Marke
+  gefloort.** Der neue `UNIQUE(symbol, ts)`-Index konnte die motivierende
+  Doppel-Writer-Klasse (Detector-Doppelstart) gar nicht verhindern, weil jeder
+  Prozess einen rohen `datetime.now(utc)` je Tick stempelte → zwei Instanzen
+  erzeugten `ts`-Werte mit µs-Jitter, `ON CONFLICT DO NOTHING` griff nie. Jetzt
+  identischer, gerasterter `ts` je 10s-Fenster → Dedup wirkt.
+- `core/ticker_10s.py` — **Einmal-Migration (Dedup-DELETE + `CREATE UNIQUE
+  INDEX`) committet sofort in eigener Transaktion**, vor den idempotenten
+  Compression-/Retention-Policy-Statements. Sonst hätte ein späterer
+  Policy-Fehler per Rollback Dedup + Index mit weggeworfen, und der teure
+  Full-Table-DELETE liefe bei JEDEM Start erneut — nach `COMPRESS_AFTER` gegen
+  komprimierte Chunks, wo DELETE/`CREATE UNIQUE INDEX` eingeschränkt sind.
+- `tools/retrain_from_replay.py` — **`load_replay` scheitert bei `null`-Features
+  oder `null`-`net_pnl_pct` laut statt still auf 0.0/`{}` zu defaulten.** Solche
+  Zeilen sind Replay-Writer-Bugs; als 0.0-PnL-Zeilen verwässerten sie die
+  Validation-Ökonomie, auf der `pick_threshold_safe` den LIVE-Gate-Threshold
+  wählt (deploybar aussehendes Artefakt auf korrupter Ökonomie).
+- `13_ai_rub_bot.py` — **`RUB2_SHORT`-Init auf die volle `load_artifact`-
+  Contract-Form** (statt Teil-Dict ohne `threshold`/`features`/`loaded_at`):
+  entschärft KeyError-Fallen vor `load_models()` und erzwingt via `loaded_at=0.0`
+  den ersten Reload-Load.
+- `core/config.py` — **`_ch` behandelt leeren/whitespace-Wert als ungesetzt**
+  (→ 0) statt an `int("")` zu crashen. Eine getemplatete `.env`-Zeile wie
+  `CH_MAIN=` hätte sonst jeden Bot beim Import gerissen
+  (audit_reports/01_core_infra.md LOW).
+
+### Verifiziert
+- ruff (CI-Set) clean, mypy 65 Dateien clean, Regression-Guard `verify` OK,
+  Standalone-Suite 149 passed (die 3 roten Tests — `test_bot_naming`,
+  `test_bot_regime_analyzer`, `test_signal_orchestrator::…rom1…` — sind
+  vorbestehend auf `main`, keine PR-#10-Regression).
+
+### Offene Follow-ups (dokumentiert, nicht merge-blockierend)
+- **`backtest/backfill_regime_history.py`** ruft `classify_regime` weiter ohne
+  `prev_regime` → Enter-only-Semantik ≠ Live-Detector (Hysterese). Bei einem
+  Re-Run mischt `regime_history` zwei Klassifikator-Semantiken. Fix: rollierendes
+  `prev_regime` durch die Schleife fädeln wie im Detector.
+- **`tools/regime_rules_study.py`** modelliert im vektorisierten `classify()` die
+  deployte Hysterese nicht → künftige Grid-Runs bewerten eine No-Hysterese-
+  Variante.
+- **Bots 25/18** (`25_smc_ml_sniper.py`, `18_ai_abr1_bot.py`) laden Artefakte
+  weiter von Hand ohne Feature-Contract-Check/Reload; Bot 25 `exit(1)` statt
+  Idle bei fehlendem Artefakt. Kandidat für `core/model_artifacts.load_artifact`.
+- **RUB2-Feature-Contract** wird in Bot 13 (`RUB_FEATURES + FUNDING_FEATURES`)
+  und Trainer (`RUB2_FEATURES`) getrennt komponiert — eine geteilte Konstante in
+  `core` (wie `PEX1_FEATURES` in `core/research_features.py`) wäre die eine
+  Quelle (Regel 7). Divergenz scheitert aktuell laut über `load_artifact`, nicht
+  still, daher Follow-up.
+- **`13_ai_rub_bot.py` `since=now-95d`** dupliziert das `rates[-270:]`-Fenster von
+  `funding_features_asof` als Magic-Konstante (deckt es aktuell ab; koppeln über
+  eine geteilte Konstante).
+
 ## [2026-07-07 mittags] Detector-Rework §22 LIVE — Mid-Vola-Trend-Regel mit Hysterese
 
 ### Changed

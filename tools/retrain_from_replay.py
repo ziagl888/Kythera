@@ -147,7 +147,19 @@ def load_replay(path: str, ts_key: str = "signal_time", label_key: str = "outcom
             t = json.loads(line)
             if t.get(label_key) is None:
                 continue  # bei Datenende noch offene Trades: kein Label
-            row = dict(t.pop("features", None) or {})
+            feats = t.pop("features", None)
+            pnl = t.get("net_pnl_pct")
+            if feats is None or pnl is None:
+                # LAUT scheitern statt still mit 0 trainieren (Review PR #10):
+                # null-Features/null-PnL sind Writer-Bugs — als 0.0-Zeilen würden
+                # sie die Validation-Ökonomie verwässern, auf der
+                # pick_threshold_safe den LIVE-Gate-Threshold wählt.
+                missing = "features" if feats is None else "net_pnl_pct"
+                raise ValueError(
+                    f"Replay-Zeile ohne {missing} in {path} "
+                    f"({t.get('symbol')}, {t.get(ts_key)}) — Replay-Writer prüfen."
+                )
+            row = dict(feats)
             row.update(
                 {
                     "symbol": t["symbol"],
@@ -156,7 +168,7 @@ def load_replay(path: str, ts_key: str = "signal_time", label_key: str = "outcom
                     # die ganze Spalte einmal (statt pd.Timestamp je Zeile doppelt).
                     "signal_time": t[ts_key],
                     "outcome": int(t[label_key]),
-                    "net_pnl_pct": float(t.get("net_pnl_pct") or 0.0),
+                    "net_pnl_pct": float(pnl),
                     "r_multiple": t.get("r_multiple"),
                 }
             )

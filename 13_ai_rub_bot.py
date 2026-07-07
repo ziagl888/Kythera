@@ -43,7 +43,20 @@ RUB2_EXPECTED_FEATURES = RUB_FEATURES + FUNDING_FEATURES
 REVERSION_THRESH_LONG = 0.75
 
 MODEL_LONG = None
-RUB2_SHORT: dict = {"loaded": False, "path": RUB2_SHORT_ARTIFACT_PATH, "tag": "RUB2"}
+# Volle load_artifact-Contract-Form (KEIN Teil-Dict): loaded_at=0.0 erzwingt den
+# ersten maybe_reload-Load, und threshold/features/model existieren als Keys, damit
+# kein Zugriffspfad vor load_models() auf einem halben Contract in KeyError läuft.
+RUB2_SHORT: dict = {
+    "loaded": False,
+    "model": None,
+    "features": None,
+    "threshold": 1.0,
+    "calibrator": None,
+    "tag": "RUB2",
+    "meta": {},
+    "loaded_at": 0.0,
+    "path": RUB2_SHORT_ARTIFACT_PATH,
+}
 
 
 def load_models():

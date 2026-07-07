@@ -77,6 +77,12 @@ def _ensure_schema_inner(conn) -> None:
             )
             cur.execute(f"DROP INDEX IF EXISTS ix_{TABLE}_symbol_ts")
             cur.execute(f"CREATE UNIQUE INDEX uq_{TABLE}_symbol_ts ON {TABLE} (symbol, ts)")
+            # Migration sofort committen (eigene Transaktion): schlüge ein
+            # späteres Policy-Statement fehl, würfe der Rollback sonst Dedup +
+            # Index mit weg und der Full-Table-DELETE liefe bei JEDEM Start
+            # erneut — nach COMPRESS_AFTER dann gegen komprimierte Chunks,
+            # wo DELETE/CREATE UNIQUE INDEX eingeschränkt sind.
+            conn.commit()
         cur.execute(
             f"""ALTER TABLE {TABLE} SET (
                     timescaledb.compress,
