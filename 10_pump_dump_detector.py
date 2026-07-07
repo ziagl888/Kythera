@@ -876,6 +876,15 @@ def main():
 
             except Exception as e:
                 logger.error(f"HF Loop Error: {e}")
+                # Review-Fix (PR #9): ohne Rollback bleibt die Connection nach
+                # einem DB-Fehler in InFailedSqlTransaction und JEDER folgende
+                # Insert (pump_dump_events, Outbox, ticker_10s) schlägt fehl —
+                # der Loop liefe weiter, wäre aber funktional tot. Muster wie
+                # send_outbox.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 time.sleep(5)
 
     except KeyboardInterrupt:

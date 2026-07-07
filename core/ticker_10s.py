@@ -32,6 +32,20 @@ def ensure_schema(conn) -> None:
     Einmal beim Prozess-Start aufrufen (nicht pro Tick). Erwartet die
     timescaledb-Extension in der DB (auf dem Live-VPS installiert, 2.26).
     """
+    try:
+        _ensure_schema_inner(conn)
+    except Exception:
+        # Halb ausgeführte DDL nie auf der geteilten Connection liegen lassen —
+        # der Caller läuft nach einem Schema-Fehler bewusst ohne Persistenz
+        # weiter und braucht dafür eine saubere Transaktion.
+        try:
+            conn.rollback()
+        except Exception:
+            logger.exception("Rollback nach fehlgeschlagenem ticker_10s-Schema-Setup fehlgeschlagen")
+        raise
+
+
+def _ensure_schema_inner(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(
             f"""CREATE TABLE IF NOT EXISTS {TABLE} (
@@ -78,11 +92,22 @@ def insert_ticks(conn, rows: list[tuple]) -> None:
     """
     if not rows:
         return
-    with conn.cursor() as cur:
-        execute_values(
-            cur,
-            f"INSERT INTO {TABLE} (ts, symbol, price, vol_10s, vol_valid) VALUES %s",
-            rows,
-            page_size=200,
-        )
-    conn.commit()
+    try:
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                f"INSERT INTO {TABLE} (ts, symbol, price, vol_10s, vol_valid) VALUES %s",
+                rows,
+                page_size=200,
+            )
+        conn.commit()
+    except Exception:
+        # Rollback gehört zum Commit-Besitz: ohne ihn bleibt die geteilte
+        # Connection in InFailedSqlTransaction und ALLE folgenden Detector-
+        # Inserts (pump_dump_events, Outbox) schlagen fehl — genau das
+        # "toter Detector"-Szenario, das der Caller-Contract ausschließt.
+        try:
+            conn.rollback()
+        except Exception:
+            logger.exception("Rollback nach fehlgeschlagenem ticker_10s-Insert fehlgeschlagen")
+        raise

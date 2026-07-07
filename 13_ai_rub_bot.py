@@ -85,7 +85,11 @@ def load_models():
 
 # --- HAUPT CHECKER FUNKTION ---
 def check_rubberband_conditions():
-    if not MODEL_LONG or not (RUB2_SHORT or MODEL_SHORT):
+    # Review-Fix (PR #9): kein UND-Guard mehr — ein fehlendes LONG-Legacy-Modell
+    # darf den deployten RUB2-SHORT-Pfad nicht mit abschalten (und umgekehrt).
+    # Die Richtungs-Guards im Loop (MODEL_LONG is None / MODEL_SHORT is None)
+    # überspringen die jeweils nicht ladbare Seite einzeln.
+    if not (MODEL_LONG or RUB2_SHORT or MODEL_SHORT):
         logger.error("Modelle not loaded. Skipping Scan.")
         return
 
