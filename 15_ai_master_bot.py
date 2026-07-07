@@ -23,6 +23,7 @@ import logging
 import os
 import time
 import warnings
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import joblib
@@ -56,23 +57,31 @@ AI_CHANNEL_ID = _kcfg.CH_MASTER
 MODEL_PATH = "master_meta_model_aim2.pkl"
 MODEL_NAME = "AIM2"
 LIVE_POSTING = os.getenv("AIM2_LIVE_POSTING", "0") == "1"  # Default: Shadow-only
-SHADOW_FLOOR = 0.25            # darunter nicht mal Shadow loggen
-MODEL_RELOAD_S = 24 * 3600     # R07-AIM1-b: Modell täglich neu laden
-CANDIDATE_WINDOW_MIN = 30      # P2.35-Fix: Catch-up-fähiges Fenster, Dedup via processed-Tabelle
+SHADOW_FLOOR = 0.25  # darunter nicht mal Shadow loggen
+MODEL_RELOAD_S = 24 * 3600  # R07-AIM1-b: Modell täglich neu laden
+CANDIDATE_WINDOW_MIN = 30  # P2.35-Fix: Catch-up-fähiges Fenster, Dedup via processed-Tabelle
 MAX_JOIN_STALENESS_H = 3
-PARITY_MIN_NONZERO = 0.40      # OOD-Wache (P0.13): zu viele Null-Features → nicht handeln
+PARITY_MIN_NONZERO = 0.40  # OOD-Wache (P0.13): zu viele Null-Features → nicht handeln
 LOCAL_TZ = ZoneInfo("Europe/Bucharest")
 
 IND_COLS = MARKET_PRICE_COLS + MARKET_ABS_COLS + ATR_COLS + ["trend_direction"]
 
-ARTIFACT = {"model": None, "features": [], "threshold": 0.80, "calibrator": None,
-            "vocab": set(), "loaded_at": 0.0}
+ARTIFACT: dict[str, Any] = {
+    "model": None,
+    "features": [],
+    "threshold": 0.80,
+    "calibrator": None,
+    "vocab": set(),
+    "loaded_at": 0.0,
+}
 
 
 def load_model() -> None:
     if not os.path.exists(MODEL_PATH):
-        logger.warning(f"⚠️ AIM2-Artefakt '{MODEL_PATH}' nicht gefunden — Bot wartet "
-                       f"(Deploy aus staging_models ist eine Operator-Entscheidung).")
+        logger.warning(
+            f"⚠️ AIM2-Artefakt '{MODEL_PATH}' nicht gefunden — Bot wartet "
+            f"(Deploy aus staging_models ist eine Operator-Entscheidung)."
+        )
         ARTIFACT["model"] = None
         return
     try:
@@ -83,9 +92,11 @@ def load_model() -> None:
         ARTIFACT["calibrator"] = saved.get("calibrator")
         ARTIFACT["vocab"] = set(saved.get("vocab_sources", []))
         ARTIFACT["loaded_at"] = time.time()
-        logger.info(f"✅ AIM2-Artefakt geladen: {len(ARTIFACT['features'])} Features, "
-                    f"Threshold {ARTIFACT['threshold']}, Vokabular {len(ARTIFACT['vocab'])} Quellen, "
-                    f"Posting={'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}")
+        logger.info(
+            f"✅ AIM2-Artefakt geladen: {len(ARTIFACT['features'])} Features, "
+            f"Threshold {ARTIFACT['threshold']}, Vokabular {len(ARTIFACT['vocab'])} Quellen, "
+            f"Posting={'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}"
+        )
     except Exception as e:
         logger.error(f"❌ Fehler beim Laden des AIM2-Artefakts: {e}")
         ARTIFACT["model"] = None
@@ -141,16 +152,17 @@ def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
     if not conv.empty:
         conv["source_type"] = "conv"
 
-    stream = pd.concat([d for d in (ai, conv) if not d.empty], ignore_index=True) \
-        if (not ai.empty or not conv.empty) else pd.DataFrame()
+    stream = (
+        pd.concat([d for d in (ai, conv) if not d.empty], ignore_index=True)
+        if (not ai.empty or not conv.empty)
+        else pd.DataFrame()
+    )
     if stream.empty:
         return stream
 
     stream["ts"] = to_utc_naive(stream["time"])
     stream = stream.dropna(subset=["ts", "coin", "direction"])
-    stream["symbol"] = (
-        stream["coin"].astype(str).str.upper().str.replace(r"_\d+[mhdwM]$", "", regex=True)
-    )
+    stream["symbol"] = stream["coin"].astype(str).str.upper().str.replace(r"_\d+[mhdwM]$", "", regex=True)
     stream = stream[stream["symbol"].str.endswith("USDT")]
     stream["direction"] = stream["direction"].astype(str).str.upper()
     stream = stream[stream["direction"].isin(["LONG", "SHORT"])]
@@ -160,12 +172,17 @@ def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
 
 
 def swarm_stats(stream: pd.DataFrame, symbol: str, ts, direction: str) -> dict:
-    out = {"total_5d": 0, "long_5d": 0, "short_5d": 0, "latest_age_h": 120.0,
-           "confl_same_dir_4h": 0, "distinct_src_same_dir_4h": 0}
+    out = {
+        "total_5d": 0,
+        "long_5d": 0,
+        "short_5d": 0,
+        "latest_age_h": 120.0,
+        "confl_same_dir_4h": 0,
+        "distinct_src_same_dir_4h": 0,
+    }
     if stream.empty:
         return out
-    g = stream[(stream["symbol"] == symbol) & (stream["ts"] < ts)
-               & (stream["ts"] >= ts - pd.Timedelta(days=5))]
+    g = stream[(stream["symbol"] == symbol) & (stream["ts"] < ts) & (stream["ts"] >= ts - pd.Timedelta(days=5))]
     if g.empty:
         return out
     out["total_5d"] = len(g)
@@ -194,8 +211,7 @@ def load_trail_map(conn) -> dict:
     )
     if df.empty:
         return {}
-    return {r["model"]: (float(r["wins"]) / float(r["n"]) if r["n"] else 0.5, int(r["n"]))
-            for _, r in df.iterrows()}
+    return {r["model"]: (float(r["wins"]) / float(r["n"]) if r["n"] else 0.5, int(r["n"])) for _, r in df.iterrows()}
 
 
 def load_market_row(conn, symbol: str, ts) -> tuple[dict, float] | None:
@@ -260,8 +276,7 @@ def process_master_trades():
             logger.info("ℹ️ Keine Signale im 5-Tage-Fenster.")
             return
 
-        candidates = stream[stream["ts"] > now_utc_naive
-                            - pd.Timedelta(minutes=CANDIDATE_WINDOW_MIN)]
+        candidates = stream[stream["ts"] > now_utc_naive - pd.Timedelta(minutes=CANDIDATE_WINDOW_MIN)]
         if candidates.empty:
             logger.info("ℹ️ Keine neuen Signale im Kandidaten-Fenster.")
             return
@@ -272,14 +287,17 @@ def process_master_trades():
             ((current_time - datetime.timedelta(days=5)),),
         )
         processed = (
-            set(zip(processed_df["signal_type"], processed_df["signal_id"]))
-            if not processed_df.empty else set()
+            set(zip(processed_df["signal_type"], processed_df["signal_id"], strict=True))
+            if not processed_df.empty
+            else set()
         )
         type_key = {"ai": "ai_signal", "conv": "conv_signal"}
-        candidates = candidates[[
-            (type_key[st], sid) not in processed
-            for st, sid in zip(candidates["source_type"], candidates["id"])
-        ]]
+        candidates = candidates[
+            [
+                (type_key[st], sid) not in processed
+                for st, sid in zip(candidates["source_type"], candidates["id"], strict=True)
+            ]
+        ]
         if candidates.empty:
             logger.info("ℹ️ Alle Kandidaten bereits verarbeitet.")
             return
@@ -314,27 +332,44 @@ def process_master_trades():
             drift = max(-50.0, min(50.0, drift))
 
             feats = build_feature_row(
-                market_row, close_price, regime_row, regime_age,
+                market_row,
+                close_price,
+                regime_row,
+                regime_age,
                 swarm_stats(stream, coin, ts, direction),
-                {"name": signal.source, "type": signal.source_type, "conf": conf,
-                 "trail_wr_30d": wr, "trail_n_30d": n,
-                 "entry_drift_pct": drift, "direction": direction},
+                {
+                    "name": signal.source,
+                    "type": signal.source_type,
+                    "conf": conf,
+                    "trail_wr_30d": wr,
+                    "trail_n_30d": n,
+                    "entry_drift_pct": drift,
+                    "direction": direction,
+                },
             )
 
             if ARTIFACT["vocab"] and str(signal.source) not in ARTIFACT["vocab"]:
                 vocab_misses += 1  # P0.13-Wache: neue Quelle, die das Modell nie sah
 
-            X = (pd.DataFrame([feats]).reindex(columns=ARTIFACT["features"], fill_value=0.0)
-                 .apply(pd.to_numeric, errors="coerce").fillna(0.0).astype("float32"))
+            X = (
+                pd.DataFrame([feats])
+                .reindex(columns=ARTIFACT["features"], fill_value=0.0)
+                .apply(pd.to_numeric, errors="coerce")
+                .fillna(0.0)
+                .astype("float32")
+            )
             raw = float(ARTIFACT["model"].predict_proba(X)[0][1])
-            prob = (float(ARTIFACT["calibrator"].predict(np.array([raw]))[0])
-                    if ARTIFACT["calibrator"] is not None else raw)
+            prob = (
+                float(ARTIFACT["calibrator"].predict(np.array([raw]))[0]) if ARTIFACT["calibrator"] is not None else raw
+            )
 
             parity = parity_nonzero_share(X.iloc[0].tolist(), ARTIFACT["features"])
             trusted = parity >= PARITY_MIN_NONZERO
             if not trusted:
-                logger.warning(f"⚠️ Parity-Guard {coin}/{signal.source}: nur {parity:.0%} "
-                               f"Nicht-Null-Features → OOD-Verdacht, kein Posting.")
+                logger.warning(
+                    f"⚠️ Parity-Guard {coin}/{signal.source}: nur {parity:.0%} "
+                    f"Nicht-Null-Features → OOD-Verdacht, kein Posting."
+                )
 
             processed_inserts.append((type_key[signal.source_type], int(signal.id), prob))
 
@@ -343,11 +378,12 @@ def process_master_trades():
 
             wants_post = prob >= ARTIFACT["threshold"] and trusted
             if not (wants_post and LIVE_POSTING):
-                shadow_inserts.append((MODEL_NAME, current_time, coin, direction,
-                                       close_price, prob, False))
+                shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, False))
                 if wants_post:
-                    logger.info(f"👻 SHADOW-Post {coin} {direction} (p={prob:.2f}, "
-                                f"Quelle {signal.source}) — Live-Posting deaktiviert.")
+                    logger.info(
+                        f"👻 SHADOW-Post {coin} {direction} (p={prob:.2f}, "
+                        f"Quelle {signal.source}) — Live-Posting deaktiviert."
+                    )
                 continue
 
             # --- LIVE-POSTING (nur mit AIM2_LIVE_POSTING=1 nach der Shadow-Phase) ---
@@ -358,8 +394,7 @@ def process_master_trades():
                 )
                 if cur.fetchone():
                     logger.info(f"⏳ Skip {coin} {direction}: aktiver {MODEL_NAME}-Trade läuft.")
-                    shadow_inserts.append((MODEL_NAME, current_time, coin, direction,
-                                           close_price, prob, False))
+                    shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, False))
                     continue
 
             trade_setup = calculate_smart_targets(conn, coin, direction, close_price)
@@ -377,8 +412,7 @@ def process_master_trades():
             ]
             for i, t in enumerate(targets[:3], 1):
                 lines.append(f"💰 TP{i}: $ {t:.8f}")
-            lines += [f"💸 Stop Loss: $ {sl:.8f}",
-                      "🧠 Trade idea verified by Master AI module (AIM2) V1"]
+            lines += [f"💸 Stop Loss: $ {sl:.8f}", "🧠 Trade idea verified by Master AI module (AIM2) V1"]
             cornix_msg = "\n".join(lines)
 
             html_caption = (
@@ -393,32 +427,45 @@ def process_master_trades():
             chart_buf = generate_minichart_image(coin, minutes=240)
 
             with conn.cursor() as cur:
-                cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                            (AI_CHANNEL_ID, cornix_msg))
+                cur.execute(
+                    "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (AI_CHANNEL_ID, cornix_msg)
+                )
                 if chart_buf:
                     cur.execute(
                         "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                        (AI_CHANNEL_ID, html_caption, chart_buf))
+                        (AI_CHANNEL_ID, html_caption, chart_buf),
+                    )
                 else:
-                    cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                (AI_CHANNEL_ID, html_caption))
+                    cur.execute(
+                        "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
+                        (AI_CHANNEL_ID, html_caption),
+                    )
                 cur.execute(
                     """
                     INSERT INTO ai_signals (symbol, price, model, direction, confidence,
                                             entry1, entry2, sl, targets)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (coin, entry1, MODEL_NAME, direction, float(prob), float(entry1),
-                     float(entry2), float(sl), json.dumps(targets)),
+                    (
+                        coin,
+                        entry1,
+                        MODEL_NAME,
+                        direction,
+                        float(prob),
+                        float(entry1),
+                        float(entry2),
+                        float(sl),
+                        json.dumps(targets),
+                    ),
                 )
-            shadow_inserts.append((MODEL_NAME, current_time, coin, direction,
-                                   close_price, prob, True))
-            logger.info(f"✅ AIM2 MASTER ALERT {coin} {direction} (p={prob:.1%}, "
-                        f"Quelle {signal.source})")
+            shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, True))
+            logger.info(f"✅ AIM2 MASTER ALERT {coin} {direction} (p={prob:.1%}, Quelle {signal.source})")
 
         if vocab_misses:
-            logger.warning(f"⚠️ {vocab_misses} Kandidaten von Quellen ausserhalb des "
-                           f"Trainings-Vokabulars — bei Häufung: Retrain (P0.13-Wache).")
+            logger.warning(
+                f"⚠️ {vocab_misses} Kandidaten von Quellen ausserhalb des "
+                f"Trainings-Vokabulars — bei Häufung: Retrain (P0.13-Wache)."
+            )
 
         with conn.cursor() as cur:
             if processed_inserts:
@@ -453,8 +500,7 @@ def process_master_trades():
 
 
 def main():
-    logger.info(f"=== 🧠 AI MASTER BOT (AIM2) GESTARTET — "
-                f"{'LIVE-POSTING' if LIVE_POSTING else 'SHADOW-ONLY'} ===")
+    logger.info(f"=== 🧠 AI MASTER BOT (AIM2) GESTARTET — {'LIVE-POSTING' if LIVE_POSTING else 'SHADOW-ONLY'} ===")
 
     conn = get_db_connection()
     with conn.cursor() as cur:

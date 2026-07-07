@@ -202,9 +202,18 @@ def check_rubberband_conditions():
                 continue
 
             # --- ML FEATURES BERECHNEN — geteilte Quelle ---
-            base_features = build_rub_features(dist_to_trend_pct, slope_pct_per_day, curr_close,
-                                               rsi, tsi_line, tsi_signal, macd_line, macd_signal,
-                                               atr_14, ema_200)
+            base_features = build_rub_features(
+                dist_to_trend_pct,
+                slope_pct_per_day,
+                curr_close,
+                rsi,
+                tsi_line,
+                tsi_signal,
+                macd_line,
+                macd_signal,
+                atr_14,
+                ema_200,
+            )
 
             is_long = event_type == "REVERSION_UP"
             direction = "LONG" if is_long else "SHORT"

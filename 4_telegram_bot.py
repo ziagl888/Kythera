@@ -234,7 +234,7 @@ def try_delete_chart(image_path: str) -> None:
         logger.debug(f"Konnte Chart {image_path} nicht löschen: {e}")
 
 
-def try_delete_chart_if_unreferenced(cur, image_path: str, current_msg_id: int) -> None:
+def try_delete_chart_if_unreferenced(cur, image_path: str | None, current_msg_id: int) -> None:
     """FIX (#68/#87): Chart nur löschen wenn KEIN weiterer ungesendeter Outbox-Eintrag
     denselben Pfad referenziert.
 

@@ -56,8 +56,7 @@ PUMP_MODELS = {
         "calibrator": None,
         "loaded": False,
     }
-    for key in ("8h_pump", "24h_pump", "72h_pump", "168h_pump",
-                "8h_dump", "24h_dump", "72h_dump", "168h_dump")
+    for key in ("8h_pump", "24h_pump", "72h_pump", "168h_pump", "8h_dump", "24h_dump", "72h_dump", "168h_dump")
 }
 
 # MIS2-SHORT-Regeln je Horizont (Operator-Entscheide 2026-07-06 abends +
@@ -73,10 +72,10 @@ PUMP_MODELS = {
 #     Live-Beweis ("evtl stimmen die modelle nicht 100%"), dokumentiert in
 #     docs/MODEL_INTENT.md §1.
 DUMP_RULES = {
-    "8H": {"bounce_pct": 5.0, "tp_pct": 5.0, "sl_pct": 5.0},     # Studie: −0,24 %/Trade
+    "8H": {"bounce_pct": 5.0, "tp_pct": 5.0, "sl_pct": 5.0},  # Studie: −0,24 %/Trade
     "24H": {"bounce_pct": 5.0, "tp_pct": 10.0, "sl_pct": 16.0},  # Studie: +0,49 %/Trade
     "72H": {"bounce_pct": 5.0, "tp_pct": 15.0, "sl_pct": 12.0},  # Studie: +0,72 %/Trade
-    "168H": {"bounce_pct": 5.0, "tp_pct": 16.7, "sl_pct": 12.0}, # Studie: +0,27 %/Trade
+    "168H": {"bounce_pct": 5.0, "tp_pct": 16.7, "sl_pct": 12.0},  # Studie: +0,27 %/Trade
 }
 
 
@@ -140,7 +139,9 @@ def startup_feature_selfcheck():
             exit(1)
         constant_flags = [c for c in BINARY_FLAG_FEATURES if sample[c].nunique(dropna=False) <= 1]
         if constant_flags:
-            logger.warning(f"Selbsttest: Binär-Flags konstant über die Stichprobe (kann legitim sein): {constant_flags}")
+            logger.warning(
+                f"Selbsttest: Binär-Flags konstant über die Stichprobe (kann legitim sein): {constant_flags}"
+            )
 
         for key, cfg in PUMP_MODELS.items():
             if not cfg["loaded"]:
@@ -157,7 +158,9 @@ def startup_feature_selfcheck():
             logger.critical("❌ Kein kompatibles MIS1-Modell übrig — Abbruch.")
             exit(1)
         n_ok = sum(1 for cfg in PUMP_MODELS.values() if cfg["loaded"])
-        logger.info(f"✅ Feature-Selbsttest bestanden ({len(sample)} Zeilen, {len(frames)} Coins, {n_ok} Modelle kompatibel).")
+        logger.info(
+            f"✅ Feature-Selbsttest bestanden ({len(sample)} Zeilen, {len(frames)} Coins, {n_ok} Modelle kompatibel)."
+        )
     finally:
         conn.close()
 
@@ -312,7 +315,9 @@ def check_mis_models():
                 if check_cooldown(conn, module_tag, symbol, best_direction, cd_hours):
                     continue
 
-                logger.info(f"🚀 {MODEL_GENERATION} Trade gefunden: {symbol} {best_direction} | {module_tag} (raw {best_prob:.3f} / kalibriert {best_conf:.1%})")
+                logger.info(
+                    f"🚀 {MODEL_GENERATION} Trade gefunden: {symbol} {best_direction} | {module_tag} (raw {best_prob:.3f} / kalibriert {best_conf:.1%})"
+                )
 
                 is_long = best_direction == "LONG"
                 if is_long:

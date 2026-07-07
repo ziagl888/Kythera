@@ -455,17 +455,9 @@ def hvn_sr_trade_geometry(entry1, is_long, supps, resis):
     """
     entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
     if is_long:
-        sl = (
-            max([x for x in supps if x < entry2 * 0.99])
-            if any(x < entry2 * 0.99 for x in supps)
-            else entry2 * 0.975
-        )
+        sl = max([x for x in supps if x < entry2 * 0.99]) if any(x < entry2 * 0.99 for x in supps) else entry2 * 0.975
         t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
     else:
-        sl = (
-            min([x for x in resis if x > entry2 * 1.01])
-            if any(x > entry2 * 1.01 for x in resis)
-            else entry2 * 1.025
-        )
+        sl = min([x for x in resis if x > entry2 * 1.01]) if any(x > entry2 * 1.01 for x in resis) else entry2 * 1.025
         t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
     return entry2, sl, t_cands

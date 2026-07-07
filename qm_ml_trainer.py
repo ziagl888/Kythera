@@ -4,7 +4,6 @@ warnings.filterwarnings("ignore")
 
 import json
 import logging
-
 import os
 
 import joblib
@@ -447,7 +446,9 @@ def main():
         # FIX (P1.31): harter Abbruch statt still auf 0-8 Coins trainieren.
         coverage = coins_with_data / len(coins) if coins else 0.0
         if skipped:
-            logger.warning(f"[{tf}] {len(skipped)} Coins ohne (ausreichende) Daten: {skipped[:20]}{'...' if len(skipped) > 20 else ''}")
+            logger.warning(
+                f"[{tf}] {len(skipped)} Coins ohne (ausreichende) Daten: {skipped[:20]}{'...' if len(skipped) > 20 else ''}"
+            )
         if coverage < MIN_COIN_COVERAGE:
             raise SystemExit(
                 f"[{tf}] ABBRUCH: nur {coins_with_data}/{len(coins)} Coins ({coverage:.0%}) lieferten Daten "

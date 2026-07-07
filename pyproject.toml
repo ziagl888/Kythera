@@ -8,7 +8,13 @@ requires-python = ">=3.10"
 line-length = 120
 target-version = "py310"
 # Legacy analysis/backtest/patch scripts are not held to the same bar yet.
-extend-exclude = [".venv", "backtest", "reports", "tools", "handlers", "strategies", "legacy_trainers"]
+# trainers_x = standalone ML-datagrepper/trainer scripts (same class as
+# legacy_trainers; also carry a pandas_ta side-effect import ruff would wrongly
+# strip). 99_smc_paper_bot.py = experimental paper bot, not in the live fleet.
+extend-exclude = [
+    ".venv", "backtest", "reports", "tools", "handlers", "strategies",
+    "legacy_trainers", "trainers_x", "99_smc_paper_bot.py",
+]
 
 [tool.ruff.lint]
 # Start deliberately lean so pre-commit is adoptable on a large legacy tree.
@@ -28,3 +34,29 @@ ignore = [
 
 [tool.ruff.format]
 quote-style = "preserve"
+
+[tool.mypy]
+python_version = "3.10"
+# Die Fleet läuft auf einem Windows-VPS — mypy prüft die real laufenden
+# win32-Zweige (sys.platform-Guards) statt sie als unerreichbar zu überspringen.
+# Hält zugleich CI (Linux-Runner) und die Windows-Dev-Maschine deckungsgleich.
+platform = "win32"
+# Deliberately non-strict: this is a legacy-grown, pandas/numpy-heavy bot fleet,
+# not a from-scratch typed module. We do NOT check untyped function bodies —
+# the gate catches real type mismatches (arg-type, return-value, union-attr,
+# assignment) on the annotated surface, not "add annotations everywhere".
+ignore_missing_imports = true      # xgboost, pandas_ta, mplfinance, telegram, … ship no stubs
+warn_redundant_casts = true
+warn_unused_ignores = true
+# var-annotated = "annotate this empty module-level container" (WHALE_TRADES=[],
+# WS_KLINE_BUFFER={}, …). Not a bug, just an inference hint; in a non-strict
+# legacy fleet we check type CONSISTENCY, not annotation completeness. Off.
+disable_error_code = ["var-annotated"]
+# Same non-live/legacy set ruff skips, plus the two standalone analysis scripts.
+exclude = '(?x)(^(backtest|reports|tools|handlers|strategies|legacy_trainers|trainers_x)/ |^99_smc_paper_bot\.py$ |^(fib_backtest|db_schema_analysis)\.py$ )'
+
+# Pandas Series/DataFrame indexing (`df["col"]`) trips mypy's [index]/[union-attr]
+# without adding signal — pandas' own py.typed stubs are incomplete here. Scoped
+# OFF only where it is pure noise; the real bugs live in other error codes.
+# (Applied per-file via `# type: ignore[index]` where residual, not globally, so
+#  a genuine index bug elsewhere still surfaces.)

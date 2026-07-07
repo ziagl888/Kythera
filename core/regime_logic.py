@@ -40,9 +40,9 @@ MIN_DATA_POINTS_15M = 480  # 480 × 15min = 5 Tage minimum
 # vom absoluten Vola-Niveau. Studie: RUB-LONG in TREND_UP +1,42 %/Trade
 # (n=1.077) vs. −0,31 % gesamt.
 MID_TREND_ATR_ENTER = 1.5  # Einstieg: |ret_4h| ≥ 1,5 × ATR_4h%
-MID_TREND_ATR_EXIT = 1.0   # Hysterese: bestehender TREND hält bis |ret_4h| < 1,0 × ATR
-TREND_DEBOUNCE_COUNT = 3   # TREND braucht 3 Checks (15 min) statt 2 — Flap-Dämpfung
-                           # (Studie: 34 % der TREND-Episoden <1h ohne Zusatzdämpfung)
+MID_TREND_ATR_EXIT = 1.0  # Hysterese: bestehender TREND hält bis |ret_4h| < 1,0 × ATR
+TREND_DEBOUNCE_COUNT = 3  # TREND braucht 3 Checks (15 min) statt 2 — Flap-Dämpfung
+# (Studie: 34 % der TREND-Episoden <1h ohne Zusatzdämpfung)
 
 
 # ── Feature computation ────────────────────────────────────────────────────────

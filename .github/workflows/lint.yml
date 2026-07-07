@@ -1,0 +1,35 @@
+name: Lint
+
+# Läuft bei jedem Push und jedem PR gegen main. Erzwingt ruff (Lint + Format)
+# server-seitig — dieselbe Config wie der lokale pre-commit-Hook
+# (.pre-commit-config.yaml), damit CI und lokal nie auseinanderlaufen.
+# ruff ist auf die pre-commit-Version 0.15.17 gepinnt (Drift-Schutz: eine
+# neuere ruff könnte neue Regeln aktivieren und einen grünen Tree rot färben).
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff (gepinnt auf pre-commit-Version)
+        run: pip install --quiet ruff==0.15.17
+
+      - name: ruff check
+        # Config + excludes kommen aus pyproject.toml [tool.ruff].
+        run: ruff check --output-format=github .
+
+      - name: ruff format --check
+        run: ruff format --check .

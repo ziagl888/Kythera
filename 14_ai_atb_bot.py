@@ -501,8 +501,8 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
 # aus core.market_utils ersetzt (beide haben identische Semantik).
 
 
-def save_minichart_to_disk(symbol: str) -> str:
-    """Holt den fertigen Minichart-Pfad aus der Core-Engine."""
+def save_minichart_to_disk(symbol: str) -> str | None:
+    """Holt den fertigen Minichart-Pfad aus der Core-Engine (None bei Fehler/fehlend)."""
     try:
         # Die Core-Funktion generiert den Chart, speichert ihn in 'charts/'
         # und gibt uns den direkten Dateipfad als String zurück.

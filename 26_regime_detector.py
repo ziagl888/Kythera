@@ -469,9 +469,7 @@ async def regime_check_loop() -> None:
             row = cur.fetchone()
         prev_regime = row[0] if row else None
 
-        result = classify_regime(
-            features, features["vola_p75"], features["vola_p40"], prev_regime=prev_regime
-        )
+        result = classify_regime(features, features["vola_p75"], features["vola_p40"], prev_regime=prev_regime)
         logger.info(
             f"Regime-Check: BTC={result['regime']} (conf={result['confidence_btc']:.2f}) "
             f"Alt={result['alt_context']} (conf={result['confidence_alt']:.2f})"
