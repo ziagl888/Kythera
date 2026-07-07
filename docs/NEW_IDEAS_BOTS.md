@@ -156,7 +156,9 @@ Idle-Modus und die Idee wird mit Befund geparkt.
 
 - PEX1 nutzt die 4 Event-Messwerte + 1h-Kontext; Microstructure-Features aus
   einem 10s-Ticker (Report 15) existieren als Live-Tabelle nicht — bewusst
-  verschoben, bis eine 10s-Persistenz existiert.
+  verschoben, bis eine 10s-Persistenz existiert. **→ erledigt 2026-07-07:**
+  Hypertable `ticker_10s` (siehe „V2-Pfade" unten), Daten akkumulieren ab dem
+  nächsten Detector-Restart.
 - `pump_dump_events.spike_time` trägt keine TZ-Garantie — der Bot misst den
   Offset gegen die Wanduhr (±12h-Clip); der Builder konvertiert bei Offset
   2/3h DST-aware über Europe/Bucharest (Review-Fix: ein konstanter Offset über
@@ -177,3 +179,68 @@ Idle-Modus und die Idee wird mit Befund geparkt.
 - Betriebsnotiz: +4 Prozesse ≈ +8 dauerhafte PG-Connections
   (KYTHERA_DB_POOL_MIN=2 je Prozess) — beim Rollout gegen `max_connections`
   prüfen (P1.34).
+
+## V2-Pfade nach dem negativen Erstbefund (Operator-Richtung 2026-07-07)
+
+Diagnose-Konsens: PEX1 scheitert an fehlender Information (best_iteration=2 —
+in den 1h-Features ist nichts zu lernen), FMR1 an der Label-Geometrie (die
+S8-These „halten bis Funding-Normalisierung" wurde mit First-Touch-TP/SL
+gelabelt). Mehr Standard-Indikatoren würden bei beiden nichts ändern.
+
+### PEX2 — 10s-Microstructure-Persistenz (GEBAUT 2026-07-07)
+
+Hypertable **`ticker_10s`** (TimescaleDB 2.26, `core/ticker_10s.py`):
+`(ts TIMESTAMPTZ, symbol, price, vol_10s, vol_valid)` — Schreiber ist der
+`10_pump_dump_detector` (er baut die 10s-Buckets ohnehin in-memory aus dem
+`/ticker/24hr`-Poll; neu ist EIN batched Insert pro Tick über alle Coins).
+
+- Budget: ~108 Coins × 8.640 Ticks/Tag ≈ 0,9M Rows/Tag (~45 MB roh); Chunks
+  1 Tag, Compression nach 3 Tagen (segmentby=symbol), Retention 365 Tage —
+  alles native Timescale-Jobs, Housekeeping bleibt außen vor. Kein
+  P1.40-Rückfall: 1 Insert/10s statt 108 Einzel-Inserts.
+- Kill-Switch: `KYTHERA_TICKER_10S_PERSIST=0` (Default an).
+- TZ-Vertrag: `ts` ist TIMESTAMPTZ (UTC-aware) — bewusste Abweichung von den
+  naiven Legacy-Spalten, DST-Fehlerklasse (f95f092) ausgeschlossen.
+- **Aktivierung:** Detector-/Fleet-Restart nötig (läuft live vom Repo).
+- **PEX2-Feature-Kandidaten** (wenn genug Events mit 10s-Kontext existieren,
+  realistisch nach ~2–3 Monaten): Volumen-Abklingrate nach dem Spike,
+  Buy-Pressure-Fade (Event vs. +1/+3/+5 min), Time-to-Peak, Retrace-Anteil
+  seit Spike-Hoch — d.h. Scoring bewusst auf Event+X min verschieben, damit
+  das Abklingen beobachtbar ist.
+- Backfill-Option geprüft und verworfen: historische 10s-Buckets aus
+  `data.binance.vision`-aggTrades wären rekonstruierbar, aber die Deltas aus
+  `/ticker/24hr` (rollierendes Fenster!) sind NICHT dieselbe Messgröße —
+  Training auf aggTrades + Live auf Ticker-Deltas wäre genau der
+  Bot≠Builder-Skew, den die X-R1-Regel verbietet. Also: Daten ehrlich
+  akkumulieren.
+
+### FMR2 — eigener Exit-Pfad (Design, noch nicht gebaut)
+
+Kern: Die S8-These sauber testen heißt, Exit = Funding-Normalisierung ODER
+Time-Stop — im Label UND live. Mechanik-Vorbild ist ROM1
+(`28_signal_orchestrator.py`): `Close <SYMBOL>`-Command via
+`send_telegram(...)` → `telegram_outbox` (Cornix schließt), eigene Rows per
+`DELETE FROM ai_signals … RETURNING` + Insert in `closed_ai_signals`
+(`status='CLOSED_FUNDING_NORMALIZED'`), Filter strikt auf den eigenen
+Modell-Tag. `8_ai_trade_monitor` hat KEINEN Custom-Exit-Hook — der Bot muss
+den Close-Zeitpunkt selbst besitzen (stündlicher Scan reicht, Settlements
+kommen alle 8h); das RETURNING-Guard entschärft das Race mit dem Monitor
+(SL/Timeout trackt der weiterhin).
+
+**Reihenfolge (bewusst offline-first, kein Bot-Umbau vor Beweis):**
+1. Exit-Predicate + Konstanten nach `core/research_features.py` (eine Quelle
+   für Builder UND Bot, X-R1). Vorschlag: SHORT-Exit sobald
+   `funding_cs_pctl < 0.80` ODER `funding_z_30d < 1.0`; LONG symmetrisch
+   (`> 0.20` / `> −1.0`); Time-Stop 9 Settlements (3 Tage); harter SL bleibt.
+2. `fmr1_build_dataset` V2: Label = PnL am Normalisierungs-/Timeout-Exit
+   (Exit-Preis der Settlement-Kerze), NICHT First-Touch-TP/SL.
+3. Retrain (Queue-Slot, Ein-Job-Regel). Nur bei Val+Test positiv weiter —
+   sonst ist die S8-These ehrlich falsifiziert und wird geparkt.
+4. Erst dann Bot-Exit-Loop + Deploy unter neuem Tag **FMR2**
+   (Versionierungs-Regel: geänderte Generation = neuer Tag).
+
+**⚠ Offener Operator-Entscheid — Channel-Kollision:** Cornix' `Close <SYMBOL>`
+schließt ALLE Trades des Symbols im Channel, und `CH_NEW_IDEAS` teilen sich
+vier Bots — ein FMR2-Close würde offene PEX1/FIF1/TRM1-Trades desselben Coins
+mitschließen. Empfehlung: eigener Channel für FMR2, sobald Schritt 3 grün ist
+(Alternative: Kollisions-Check auf offene fremde `ai_signals` vor dem Close).

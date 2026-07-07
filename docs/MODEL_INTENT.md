@@ -488,11 +488,34 @@ Audit-Einwand Liquidation ~−0,9 % vor jedem SL wurde vorgetragen und überstim
 **Entschieden (Michi):** Läuft **unverändert weiter** (Audit-Abschaltempfehlung
 überstimmt). Kein Tracking, kein Repaint-Fix beauftragt.
 
-## 22. Regime-Detection ✅ Fix beauftragt (2026-07-06)
+## 22. Regime-Detection ✅ UMGESETZT + LIVE (2026-07-07)
 
 **Entschieden (Michi):** **TRANSITION-Restklasse aufspalten** — Mid-Vola-Band
 (P40–P75) bekommt eine eigene Trend-Regel, damit TREND_UP/DOWN überhaupt vorkommen
-und das 4D-Gating nicht die halbe Zeit deaktiviert ist. Eigener Task.
+und das 4D-Gating nicht die halbe Zeit deaktiviert ist.
+
+**Umsetzung (2026-07-07, Operator-Pick nach `tools/regime_rules_study.py`):**
+Vol-skalierte Mid-Band-Regel **V2 K=1,5 mit Hysterese** in
+`core/regime_logic.py`: |ret_4h| ≥ 1,5×ATR_4h% → TREND_UP/DOWN; bestehender
+TREND hält bis |ret_4h| < 1,0×ATR (Hysterese via `prev_regime` =
+effektives Regime aus `regime_current`); TREND-Ziele brauchen 3 statt 2
+Debounce-Checks. Low-Vola-/HIGH_VOLA-/CHOP-Regeln unverändert.
+- Studie (430d, 7 Varianten): Ist-Regel produzierte 3 TREND_UP-Episoden in
+  430 Tagen (100 % <1h) — strukturell tot, weil ATR<P40 und |ret|>1,5 %
+  einander fast ausschließen.
+- Validierung mit finaler Regel (stateful, echte classify-Funktion):
+  TREND_UP 9,6 % / TREND_DOWN 9,8 % der Zeit (je ~415 Ep, med 1,5h,
+  Flaps 21–25 %), TRANSITION 41 %→20,8 %. **RUB-LONG in TREND_UP
+  +1,65 %/Trade (n=1.378), 9/13 Monate positiv** — negativ nur in den
+  tiefen Bear-Monaten Okt/Nov 25 + Jan 26 (Bull-Flackern im Bär = Falle)
+  → bestätigt die Regime-Gate-These aus §8, ist aber kein Bear-Immunschutz.
+- Deploy-Sicherheit: fehlende Whitelist-Zellen der neuen TREND-Zustände
+  defaulten auf open (`no_whitelist_entry`) — kein Mass-Auto-Close-Risiko;
+  die Zellen sammeln ab jetzt Daten. Tests: backtest/test_regime_detector.py
+  (27, inkl. 7 neue für Mid-Band/Hysterese/Debounce-3).
+- **Follow-up:** §23-Umbau (Shrinkage statt Default-Open) gehört zeitnah
+  dahinter; RUB-LONG-Regime-Gate in Bot 13 erst nach Whitelist-Datenlage
+  oder als expliziter TREND_UP-Schalter (Operator-Entscheid).
 
 ## 23. Bot-Regime-Analyzer / Whitelist ✅ Umbau beauftragt (2026-07-06)
 

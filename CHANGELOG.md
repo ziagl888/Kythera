@@ -1,3 +1,26 @@
+## [2026-07-07 mittags] Detector-Rework §22 LIVE — Mid-Vola-Trend-Regel mit Hysterese
+
+### Changed
+- `core/regime_logic.py` — **Mid-Band-Trend-Regel V2 K=1,5 + Hysterese**
+  (Operator-Pick aus `tools/regime_rules_study.py`, 7 Varianten über 430d):
+  Im Band P40..P75 gilt |ret_4h| ≥ 1,5×ATR_4h% → TREND_UP/DOWN; bestehender
+  TREND hält bis |ret_4h| < 1,0×ATR (`prev_regime`-Param, gefüttert aus
+  `regime_current`); TREND-Ziele brauchen 3 statt 2 Debounce-Checks.
+  Alt: TREND war strukturell tot (3 Episoden in 430d, alle <1h, weil
+  ATR<P40 ∧ |ret|>1,5 % sich fast ausschließen); TRANSITION war 41 %
+  Restklasse. Neu (validiert, stateful mit echter classify-Funktion):
+  TREND_UP/DOWN je ~10 % der Zeit (med 1,5h, Flaps 21–25 %), TRANSITION
+  20,8 %. Ökonomie-Check: RUB-LONG in TREND_UP +1,65 %/Trade (n=1.378),
+  9/13 Monate positiv (negativ nur Okt/Nov 25 + Jan 26 — tiefe Bear-Monate).
+- `26_regime_detector.py` — liest das effektive Regime vor der
+  Klassifikation und reicht es als `prev_regime` durch (Hysterese).
+- Tests: `backtest/test_regime_detector.py` +7 (Mid-Band, Hysterese
+  beide Richtungen, HIGH_VOLA-Vorrang, TREND-Debounce-3) — 27 passed.
+- Deploy-Sicherheit geprüft: fehlende Whitelist-Zellen der neuen
+  TREND-Zustände defaulten auf open (kein Mass-Auto-Close); Zellen sammeln
+  ab jetzt Evidenz. Follow-up: §23-Analyzer-Umbau (Shrinkage statt
+  Default-Open), danach ggf. explizites TREND_UP-Gate für RUB-LONG (§8).
+
 ## [2026-07-07 mittags] New-Ideas-Kohorte trainiert — FIF1 deployed, Detector-Studie gestartet
 
 ### Added
