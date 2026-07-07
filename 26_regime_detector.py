@@ -24,6 +24,8 @@ from core.regime_logic import (
     apply_debounce,
     classify_regime,
     compute_features,
+    hysteresis_prev_regime,
+    read_regime_state,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -462,12 +464,11 @@ async def regime_check_loop() -> None:
             logger.warning("Incomplete data — Regime-Check skipped")
             return
 
-        # Aktuelles effektives Regime für die Mid-Band-Hysterese (§22):
-        # ein bestehender TREND hält, bis |ret_4h| unter die Exit-Schwelle fällt.
-        with conn.cursor() as cur:
-            cur.execute("SELECT regime FROM regime_current WHERE id = 1")
-            row = cur.fetchone()
-        prev_regime = row[0] if row else None
+        # Regime-State EINMAL je Check lesen: liefert die Hysterese-Referenz
+        # (§22 — bestehender ODER pendender TREND hält bis unter die
+        # Exit-Schwelle) und wird unten an apply_debounce durchgereicht.
+        state_row = read_regime_state(conn)
+        prev_regime = hysteresis_prev_regime(state_row)
 
         result = classify_regime(features, features["vola_p75"], features["vola_p40"], prev_regime=prev_regime)
         logger.info(
@@ -483,6 +484,7 @@ async def regime_check_loop() -> None:
             raw_alt_context=result["alt_context"],
             raw_confidence=result["confidence"],
             raw_ts=datetime.now(timezone.utc),
+            state_row=state_row,
         )
 
         if debounced["btc_regime_changed"] or debounced["alt_context_changed"]:

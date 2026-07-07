@@ -60,7 +60,12 @@ def _ensure_schema_inner(conn) -> None:
             f"SELECT create_hypertable(%s, 'ts', chunk_time_interval => INTERVAL '{CHUNK_INTERVAL}', if_not_exists => TRUE)",
             (TABLE,),
         )
-        cur.execute(f"CREATE INDEX IF NOT EXISTS ix_{TABLE}_symbol_ts ON {TABLE} (symbol, ts DESC)")
+        # UNIQUE statt plain Index: ein zweiter Writer (Doppelstart des
+        # Detectors) darf keine stillen Duplikat-Rows erzeugen — bekannte
+        # Fehlerklasse (closed_ai_signals-Dups, coins.json-Doppel-Writer).
+        # Der Insert läuft mit ON CONFLICT DO NOTHING gegen diesen Index.
+        cur.execute(f"DROP INDEX IF EXISTS ix_{TABLE}_symbol_ts")
+        cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{TABLE}_symbol_ts ON {TABLE} (symbol, ts)")
         cur.execute(
             f"""ALTER TABLE {TABLE} SET (
                     timescaledb.compress,
@@ -96,7 +101,8 @@ def insert_ticks(conn, rows: list[tuple]) -> None:
         with conn.cursor() as cur:
             execute_values(
                 cur,
-                f"INSERT INTO {TABLE} (ts, symbol, price, vol_10s, vol_valid) VALUES %s",
+                f"INSERT INTO {TABLE} (ts, symbol, price, vol_10s, vol_valid) VALUES %s "
+                f"ON CONFLICT (symbol, ts) DO NOTHING",
                 rows,
                 page_size=200,
             )

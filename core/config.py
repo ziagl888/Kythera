@@ -95,14 +95,29 @@ CH_DISABLED = _ch("CH_DISABLED")
 # beobachtet, Attribution läuft über den Modell-Tag in ai_signals.
 CH_NEW_IDEAS = _ch("CH_NEW_IDEAS")
 
+
 # Per-Bot-Override (Operator 2026-07-07): ungesetzt → Fallback auf den
 # Kohorten-Channel. Damit kann ein einzelner Bot (z.B. FMR2 mit eigenem
 # Close-Pfad — Cornix' "Close <SYMBOL>" trifft ALLE Trades des Symbols im
 # Channel) per .env auf einen eigenen Channel wandern, ohne Code-Deploy.
-CH_PEX1 = _ch("CH_PEX1") or CH_NEW_IDEAS
-CH_FMR1 = _ch("CH_FMR1") or CH_NEW_IDEAS
-CH_TRM1 = _ch("CH_TRM1") or CH_NEW_IDEAS
-CH_FIF1 = _ch("CH_FIF1") or CH_NEW_IDEAS
+def _ch_override(name: str, fallback: int) -> int:
+    """Wie _ch(), aber mit Fallback NUR bei ungesetzter/leerer Variable.
+
+    Ein explizites `CH_X=0` muss 0 bleiben (die Bots erzwingen bei
+    TARGET_CHANNEL_ID == 0 Shadow-only) — `_ch(name) or fallback` würde die
+    repo-weite 0=disabled-Semantik schlucken und den Bot still auf den
+    Live-Kohorten-Channel zurückfallen lassen.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return fallback
+    return int(raw)
+
+
+CH_PEX1 = _ch_override("CH_PEX1", CH_NEW_IDEAS)
+CH_FMR1 = _ch_override("CH_FMR1", CH_NEW_IDEAS)
+CH_TRM1 = _ch_override("CH_TRM1", CH_NEW_IDEAS)
+CH_FIF1 = _ch_override("CH_FIF1", CH_NEW_IDEAS)
 
 
 TELEGRAM_CHANNELS = {
