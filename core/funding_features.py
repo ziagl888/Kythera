@@ -39,14 +39,21 @@ FUNDING_FEATURES = [
 MIN_HISTORY = 21
 
 
-def load_funding(conn, symbols: list[str]) -> dict[str, pd.DataFrame]:
-    """Lädt die Funding-Historie je Symbol aus ``funding_rates`` (aufsteigend)."""
-    fr = pd.read_sql_query(
-        "SELECT symbol, funding_time, funding_rate FROM funding_rates "
-        "WHERE symbol = ANY(%(syms)s) ORDER BY symbol, funding_time",
-        conn,
-        params={"syms": list(symbols)},
-    )
+def load_funding(conn, symbols: list[str], since=None) -> dict[str, pd.DataFrame]:
+    """Lädt die Funding-Historie je Symbol aus ``funding_rates`` (aufsteigend).
+
+    since: optionale Untergrenze (tz-aware). Live-Bots begrenzen damit den
+    Load — funding_features_asof nutzt maximal die letzten 270 Sätze (~90d),
+    die volle Historie je Trigger zu ziehen ist verschenkte DB-Arbeit.
+    Trainer/Replays lassen since weg (as-of über den gesamten Zeitraum).
+    """
+    query = "SELECT symbol, funding_time, funding_rate FROM funding_rates WHERE symbol = ANY(%(syms)s)"
+    params: dict = {"syms": list(symbols)}
+    if since is not None:
+        query += " AND funding_time >= %(since)s"
+        params["since"] = since
+    query += " ORDER BY symbol, funding_time"
+    fr = pd.read_sql_query(query, conn, params=params)
     fr["funding_time"] = pd.to_datetime(fr["funding_time"], utc=True)
     return {s: g.reset_index(drop=True) for s, g in fr.groupby("symbol")}
 

@@ -60,7 +60,29 @@ def _ensure_schema_inner(conn) -> None:
             f"SELECT create_hypertable(%s, 'ts', chunk_time_interval => INTERVAL '{CHUNK_INTERVAL}', if_not_exists => TRUE)",
             (TABLE,),
         )
-        cur.execute(f"CREATE INDEX IF NOT EXISTS ix_{TABLE}_symbol_ts ON {TABLE} (symbol, ts DESC)")
+        # UNIQUE statt plain Index: ein zweiter Writer (Doppelstart des
+        # Detectors) darf keine stillen Duplikat-Rows erzeugen — bekannte
+        # Fehlerklasse (closed_ai_signals-Dups, coins.json-Doppel-Writer).
+        # Der Insert läuft mit ON CONFLICT DO NOTHING gegen diesen Index.
+        cur.execute("SELECT 1 FROM pg_indexes WHERE indexname = %s", (f"uq_{TABLE}_symbol_ts",))
+        if cur.fetchone() is None:
+            # Einmalige Migration mit Dedup-Vorlauf: existieren beim ersten
+            # Start des neuen Codes bereits Duplikate (genau die Doppel-
+            # Writer-Klasse, gegen die der Index schützt), würde CREATE
+            # UNIQUE INDEX sonst auf JEDEM Start fehlschlagen und die
+            # Persistenz bliebe dauerhaft aus. Gleiche ts ⇒ gleicher Chunk,
+            # der ctid-Vergleich ist dort eindeutig.
+            cur.execute(
+                f"DELETE FROM {TABLE} a USING {TABLE} b WHERE a.symbol = b.symbol AND a.ts = b.ts AND a.ctid > b.ctid"
+            )
+            cur.execute(f"DROP INDEX IF EXISTS ix_{TABLE}_symbol_ts")
+            cur.execute(f"CREATE UNIQUE INDEX uq_{TABLE}_symbol_ts ON {TABLE} (symbol, ts)")
+            # Migration sofort committen (eigene Transaktion): schlüge ein
+            # späteres Policy-Statement fehl, würfe der Rollback sonst Dedup +
+            # Index mit weg und der Full-Table-DELETE liefe bei JEDEM Start
+            # erneut — nach COMPRESS_AFTER dann gegen komprimierte Chunks,
+            # wo DELETE/CREATE UNIQUE INDEX eingeschränkt sind.
+            conn.commit()
         cur.execute(
             f"""ALTER TABLE {TABLE} SET (
                     timescaledb.compress,
@@ -96,7 +118,8 @@ def insert_ticks(conn, rows: list[tuple]) -> None:
         with conn.cursor() as cur:
             execute_values(
                 cur,
-                f"INSERT INTO {TABLE} (ts, symbol, price, vol_10s, vol_valid) VALUES %s",
+                f"INSERT INTO {TABLE} (ts, symbol, price, vol_10s, vol_valid) VALUES %s "
+                f"ON CONFLICT (symbol, ts) DO NOTHING",
                 rows,
                 page_size=200,
             )

@@ -815,7 +815,13 @@ def main():
                     continue
                 raw_data = res.json()
 
-                tick_dt = datetime.datetime.now(datetime.timezone.utc)
+                # Auf die 10s-Marke gefloort: nur so erzeugt ein zweiter Writer
+                # (Doppelstart) IDENTISCHE (symbol, ts)-Keys und ON CONFLICT
+                # DO NOTHING gegen uq_ticker_10s_symbol_ts dedupliziert wirklich —
+                # rohe now()-Stempel kollidieren wegen µs-Jitter nie. Preis ist
+                # dann "Sample kurz nach der Marke", akzeptiert bei 10s-Raster.
+                _tick_epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+                tick_dt = datetime.datetime.fromtimestamp(_tick_epoch - _tick_epoch % 10, tz=datetime.timezone.utc)
                 ts_str = tick_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 tick_rows = []  # (ts, symbol, price, vol_10s, vol_valid) für ticker_10s
 

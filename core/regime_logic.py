@@ -186,9 +186,11 @@ def classify_btc_regime(
       6. Fallback               → TRANSITION (unklare Richtung)
 
     Args:
-        prev_regime: aktuelles EFFEKTIVES Regime (regime_current) für die
-                     Hysterese der Mid-Band-Regel; None ⇒ nur Enter-Schwelle
-                     (Kaltstart/Backfill).
+        prev_regime: Regime-Referenz für die Mid-Band-Hysterese — effektives
+                     Regime ODER pendender TREND (hysteresis_prev_regime aus
+                     dem regime_current-State, damit die Hold-Schwelle schon
+                     während der Debounce-Bestätigung gilt); None ⇒ nur
+                     Enter-Schwelle (Kaltstart/Backfill).
 
     Returns (regime_name, confidence 0.0-1.0).
     """
@@ -304,6 +306,53 @@ def classify_regime(
 
 # ── Debounce ──────────────────────────────────────────────────────────────────
 
+#: Spaltenreihenfolge von read_regime_state — apply_debounce entpackt dagegen.
+_STATE_COLUMNS = (
+    "regime, alt_context, since, alt_context_since, "
+    "pending_regime, pending_count, pending_alt_context, pending_alt_count"
+)
+
+#: Sentinel: state_row nicht übergeben → apply_debounce liest selbst.
+_STATE_UNREAD = object()
+
+
+def read_regime_state(conn) -> tuple | None:
+    """Liest die regime_current-Zeile EINMAL je Check (None = Kaltstart).
+
+    Caller reichen die Zeile an hysteresis_prev_regime UND apply_debounce
+    weiter — eine Quelle je Zyklus statt zwei getrennter Reads derselben Row.
+    """
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_STATE_COLUMNS} FROM regime_current WHERE id = 1")
+        return cur.fetchone()
+
+
+def hysteresis_prev_regime(state_row: tuple | None) -> str | None:
+    """prev_regime für die §22-Mid-Band-Hysterese aus dem Debounce-State.
+
+    Die Hold-Schwelle muss auch während der PENDING-Phase gelten: TREND-Entry
+    braucht TREND_DEBOUNCE_COUNT konsekutive Raw-Checks, und solange das
+    effektive Regime noch nicht TREND ist, würde ein einzelner Dip unter die
+    Enter-Schwelle den Zähler resetten — TREND bestätigt bei Oszillation um
+    die Schwelle dann NIE (Review-Finding PR #9). Darum zählt ein pendender
+    TREND wie ein bestehender: Enter einmal bei 1,5×ATR, danach reicht die
+    Hold-Schwelle (1,0×ATR) für die Bestätigungs-Checks — das entspricht der
+    §22-Studien-Semantik (Enter-einmal, dann halten).
+
+    Vorrang: das EFFEKTIVE TREND-Regime schlägt einen pendenden TREND —
+    sonst würde ein einzelner Gegen-Spike (Raw-TREND_DOWN pendend während
+    effektiv TREND_UP) dem LIVE-Trend die Hold-Schwelle entziehen und ihn
+    über die TRANSITION-Bestätigung dauerhaft kippen (Verifier PR #10).
+    """
+    if state_row is None:
+        return None
+    regime, pending = state_row[0], state_row[4]
+    if regime is not None and str(regime).startswith("TREND"):
+        return str(regime)
+    if pending is not None and str(pending).startswith("TREND"):
+        return str(pending)
+    return regime
+
 
 def apply_debounce(
     conn,
@@ -311,6 +360,7 @@ def apply_debounce(
     raw_alt_context: str,
     raw_confidence: float,
     raw_ts: datetime,
+    state_row=_STATE_UNREAD,
 ) -> dict:
     """
     Reads regime_current, compares with raw values, manages debounce state
@@ -329,13 +379,7 @@ def apply_debounce(
     """
     raw_ts_naive = raw_ts.replace(tzinfo=None) if raw_ts.tzinfo else raw_ts
 
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT regime, alt_context, since, alt_context_since, "
-            "pending_regime, pending_count, pending_alt_context, pending_alt_count "
-            "FROM regime_current WHERE id = 1"
-        )
-        row = cur.fetchone()
+    row = read_regime_state(conn) if state_row is _STATE_UNREAD else state_row
 
     # ── Cold start: initialize regime_current ────────────────────────────────
     if row is None:

@@ -27,12 +27,12 @@ Vergleich; Absolutwerte sind Näherung.
 
 Read-only; Ergebnis-JSON nach staging_models.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import sys
-import time
 
 import numpy as np
 import pandas as pd
@@ -46,18 +46,17 @@ from core.regime_logic import (  # noqa: E402
     VOLA_LOOKBACK_DAYS,
 )
 
-STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
-REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
+from tools.research_dataset_common import (  # noqa: E402
+    REPLAY_DIR,
+    STAGING_DIR,
+    log,
+)
 
 DAYS = 430
-DEBOUNCE_BARS = 2          # ≈ 2 Checks à 5 min live
-BARS_PER_DAY = 96          # 15m
+DEBOUNCE_BARS = 2  # ≈ 2 Checks à 5 min live
+BARS_PER_DAY = 96  # 15m
 FIX_GRID = (1.5, 2.0, 2.5)
 ATR_GRID = (0.75, 1.0, 1.5)
-
-
-def log(msg: str) -> None:
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 def load_btc(conn) -> pd.DataFrame:
@@ -80,11 +79,17 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
     atr_4h = tr.ewm(span=16, adjust=False).mean()
 
-    out = pd.DataFrame({
-        "ts": df["open_time"],
-        "ret_4h": close.pct_change(16) * 100,
-        "atr_4h_pct": atr_4h / close * 100,
-    })
+    out = pd.DataFrame(
+        {
+            # Zustand auf den BAR-CLOSE stempeln (open_time + 15m): ret_4h/ATR
+            # dieser Zeile sind erst mit dem Close bekannt — mit open_time hätte
+            # der as-of-Merge in economics() bis zu 15 min Lookahead und die
+            # Regime-Ökonomie wäre optimistisch verzerrt (Review PR #9).
+            "ts": df["open_time"] + pd.Timedelta(minutes=15),
+            "ret_4h": close.pct_change(16) * 100,
+            "atr_4h_pct": atr_4h / close * 100,
+        }
+    )
     win = VOLA_LOOKBACK_DAYS * BARS_PER_DAY
     vola = out["atr_4h_pct"]
     out["p75"] = vola.rolling(win, min_periods=win // 2).quantile(0.75)
@@ -104,8 +109,7 @@ def classify(feat: pd.DataFrame, variant: str, param: float | None) -> np.ndarra
     regime[high_vola] = "HIGH_VOLA"
     regime[low_vola & (ret > TREND_RETURN_THRESHOLD_4H_PCT)] = "TREND_UP"
     regime[low_vola & (ret < -TREND_RETURN_THRESHOLD_4H_PCT)] = "TREND_DOWN"
-    regime[low_vola & (np.abs(ret) < CHOP_RETURN_THRESHOLD_4H_PCT)
-           & (np.abs(ret) <= TREND_RETURN_THRESHOLD_4H_PCT)] = "CHOP"
+    regime[low_vola & (np.abs(ret) < CHOP_RETURN_THRESHOLD_4H_PCT)] = "CHOP"
 
     if variant == "V1_fix":
         regime[mid & (ret >= param)] = "TREND_UP"
@@ -180,9 +184,10 @@ def economics(eff: np.ndarray, ts: pd.Series, events: pd.DataFrame) -> dict:
     state = pd.DataFrame({"ts": ts.values, "regime": eff})
     merged = pd.merge_asof(events, state, on="ts", direction="backward")
     g = merged.groupby("regime")["pnl"].agg(["size", "mean", "median"])
-    return {reg: {"n": int(r["size"]), "avg_pnl": round(float(r["mean"]), 2),
-                  "med_pnl": round(float(r["median"]), 2)}
-            for reg, r in g.iterrows()}
+    return {
+        reg: {"n": int(r["size"]), "avg_pnl": round(float(r["mean"]), 2), "med_pnl": round(float(r["median"]), 2)}
+        for reg, r in g.iterrows()
+    }
 
 
 def main() -> None:
@@ -202,8 +207,10 @@ def main() -> None:
 
     rub = load_replay_events(os.path.join(REPLAY_DIR, "rub_replay_365d.jsonl"), "LONG")
     abr = load_replay_events(os.path.join(REPLAY_DIR, "detector_fix", "abr1_replay_365d.jsonl"), "LONG")
-    log(f"Ökonomie-Overlay: RUB-LONG={0 if rub is None else len(rub)} Events, "
-        f"ABR1-LONG={0 if abr is None else len(abr)} Events")
+    log(
+        f"Ökonomie-Overlay: RUB-LONG={0 if rub is None else len(rub)} Events, "
+        f"ABR1-LONG={0 if abr is None else len(abr)} Events"
+    )
 
     variants: list[tuple[str, str, float | None]] = [("V0_ist", "V0", None)]
     variants += [(f"V1_fix_{x}", "V1_fix", x) for x in FIX_GRID]
@@ -221,9 +228,11 @@ def main() -> None:
         results[name] = res
 
         s = res["structure"]
-        log(f"{name}: TREND_UP {s['TREND_UP']['share_pct']}% ({s['TREND_UP']['episodes']} Ep, "
+        log(
+            f"{name}: TREND_UP {s['TREND_UP']['share_pct']}% ({s['TREND_UP']['episodes']} Ep, "
             f"med {s['TREND_UP']['median_h']}h) | TREND_DOWN {s['TREND_DOWN']['share_pct']}% "
-            f"({s['TREND_DOWN']['episodes']} Ep) | TRANSITION {s['TRANSITION']['share_pct']}%")
+            f"({s['TREND_DOWN']['episodes']} Ep) | TRANSITION {s['TRANSITION']['share_pct']}%"
+        )
         if rub is not None and "TREND_UP" in res.get("rub_long_by_regime", {}):
             r = res["rub_long_by_regime"]["TREND_UP"]
             log(f"   RUB-LONG in TREND_UP: n={r['n']}, Ø {r['avg_pnl']:+.2f}%/Trade")
