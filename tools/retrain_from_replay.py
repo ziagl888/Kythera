@@ -53,6 +53,13 @@ MIS1_HORIZONS = (8, 24, 72, 168)  # muss zu tools/walkforward_sim.MIS1_HORIZONS 
 # Funding-Features (core/funding_features) aus dem Replay-Adapter.
 RUB2_FEATURES = list(RUB_FEATURES) + list(FUNDING_FEATURES)
 
+# EPD2 (MODEL_INTENT §7): die 10 Live-Features von Bot 10 (Schlüsselnamen wie
+# im Builder tools/epd2_build_dataset.py geschrieben) + die 6 Funding-Features.
+EPD2_FEATURES = [
+    "vol_ratio", "p_chg_60s", "buy_pres", "volat", "sample_fill",
+    "rsi", "tsi", "macd", "e9_dist", "e21_dist",
+] + list(FUNDING_FEATURES)
+
 # Operator-Konzept (2026-07-06): Move-Label = "±X% Bewegung INNERHALB des
 # Horizonts" (Close-Basis), Schwelle wächst mit dem Horizont. Quelle:
 # tools/mis1_move_labels.py über den Preisreihen der Replay-Samples.
@@ -525,6 +532,80 @@ def run_rub(replay_path: str) -> dict:
     return results
 
 
+def run_epd(events_path: str) -> dict:
+    """EPD2-Retrain (MODEL_INTENT §7): Binärmodell je Richtung auf den
+    Detektor-Events aus tools/epd2_build_dataset.py (nur vol_ratio≥5 wie live,
+    Label = First-Touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie via
+    simulate_exit, 7d-Horizont; offene Trades ungelabelt). Der Builder
+    schreibt ts/label/features statt signal_time/outcome_tp1 → eigener Loader."""
+    rows = []
+    with open(events_path, encoding="utf-8") as fh:
+        for line in fh:
+            t = json.loads(line)
+            if t.get("label") is None:
+                continue  # open_at_end: Report-13-Regel, nicht labeln
+            row = dict(t.get("features") or {})
+            row.update({
+                "symbol": t["symbol"], "direction": t["direction"],
+                "signal_time": pd.Timestamp(t["ts"]),
+                "outcome": int(t["label"]),
+                "net_pnl_pct": float(t.get("net_pnl_pct") or 0.0),
+            })
+            rows.append(row)
+    df = pd.DataFrame(rows)
+    if df.empty or len(df) < 600:
+        raise SystemExit(f"Zu wenig gelabelte EPD2-Events ({len(df)}) in {events_path}")
+    df["signal_time"] = pd.to_datetime(df["signal_time"], utc=True).dt.tz_localize(None)
+    df = df.sort_values("signal_time").reset_index(drop=True)
+    print(f"epd: {len(df)} Events, {df['symbol'].nunique()} Coins, "
+          f"{df['signal_time'].min()} → {df['signal_time'].max()}")
+
+    results: dict = {"strategy": "epd2", "features": EPD2_FEATURES}
+    for direction in ("LONG", "SHORT"):
+        d = df[df["direction"] == direction].reset_index(drop=True)
+        if len(d) < 300:
+            print(f"epd2 {direction}: nur {len(d)} Events — übersprungen")
+            continue
+        # Purge-Gap 7 Tage = Label-Horizont des Builders (HORIZON_CANDLES).
+        train, val, test = chrono_split(d, gap_hours=7 * 24)
+        print(f"epd2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
+              f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%")
+        if min(len(train), len(val), len(test)) < 50:
+            # Zeitraum zu kurz für den Purge-Gap (z. B. abgeschnittener Builder-
+            # Lauf): iso.fit/Picker würden auf leeren Slices crashen.
+            print(f"epd2 {direction}: degenerierter Split — übersprungen")
+            continue
+
+        model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
+            train, val, test, EPD2_FEATURES, picker=pick_threshold_safe)
+
+        meta = {
+            "trainer": "tools/retrain_from_replay.py", "strategy": "epd2",
+            "model_id": "EPD2", "direction": direction,
+            "model_type": "binary (1=TP1-first-touch)", "success_proba": "predict_proba[:, 1]",
+            "features": EPD2_FEATURES,
+            "optimal_threshold": thresh,
+            "label_source": os.path.basename(events_path),
+            "label": "first-touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie (simulate_exit, 7d), Fees inkl.",
+            "changes_vs_epd1": "nur vol_ratio>=5-Events (Training==Serving statt OOD), Label = "
+                               "gepostete Geometrie statt Fix-Bracket, chronologischer Split mit "
+                               "7d-Purge statt Random-Split, +6 Funding-Features (Operator 2026-07-06)",
+            "split": "chronological 70/15/15 + 7d purge gap",
+            "xgboost_version": xgb.__version__,
+            "n_train": len(train), "n_val": len(val), "n_test": len(test),
+            "val_stats": val_stats, "test_stats": test_stats,
+        }
+        save_artifact(os.path.join(STAGING_DIR, f"epd2_model_{direction}.pkl"),
+                      model, EPD2_FEATURES, thresh, iso, meta)
+        with open(os.path.join(STAGING_DIR, f"epd2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        results[direction] = {"n_events": len(d), "base_rate": round(d["outcome"].mean() * 100, 1),
+                              "threshold": thresh, "val_stats": val_stats, "test_stats": test_stats,
+                              "calibration_new_test": calib_new,
+                              "feature_importance_top": top_importance(model, EPD2_FEATURES)}
+    return results
+
+
 def top_importance(model, feature_cols, k=8):
     imp = model.feature_importances_
     order = np.argsort(imp)[::-1][:k]
@@ -539,7 +620,7 @@ def main():
     except Exception:
         pass
     ap = argparse.ArgumentParser()
-    ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1", "mis1", "rub"])
+    ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1", "mis1", "rub", "epd"])
     ap.add_argument("--tf", default="4h", choices=["1h", "4h"])
     ap.add_argument("--replay", default=None)
     ap.add_argument("--days", type=int, default=540)
@@ -557,13 +638,17 @@ def main():
     args = ap.parse_args()
 
     if args.replay is None:
-        tag = f"{args.strategy}_{args.tf}" if args.strategy in ("td", "bb") else args.strategy
-        days = args.days if args.strategy in ("td", "bb", "mis1") else 365
-        args.replay = os.path.join(REPLAY_DIR, f"{tag}_replay_{days}d.jsonl")
+        if args.strategy == "epd":
+            # EPD2 nutzt die Detektor-Events des Builders, kein Kerzen-Replay.
+            args.replay = os.path.join(REPLAY_DIR, "epd2_events.jsonl")
+        else:
+            tag = f"{args.strategy}_{args.tf}" if args.strategy in ("td", "bb") else args.strategy
+            days = args.days if args.strategy in ("td", "bb", "mis1") else 365
+            args.replay = os.path.join(REPLAY_DIR, f"{tag}_replay_{days}d.jsonl")
 
-    if args.strategy == "rub":
-        result = run_rub(args.replay)
-        name = "rub2"
+    if args.strategy in ("rub", "epd"):
+        result = run_rub(args.replay) if args.strategy == "rub" else run_epd(args.replay)
+        name = "rub2" if args.strategy == "rub" else "epd2"
         out = os.path.join(STAGING_DIR, f"retrain_{name}_stats.json")
         with open(out, "w", encoding="utf-8") as fh:
             json.dump(result, fh, indent=2, default=str)
