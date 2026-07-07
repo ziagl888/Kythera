@@ -462,7 +462,14 @@ async def regime_check_loop() -> None:
             logger.warning("Incomplete data — Regime-Check skipped")
             return
 
-        result = classify_regime(features, features["vola_p75"], features["vola_p40"])
+        # Aktuelles effektives Regime für die Mid-Band-Hysterese (§22):
+        # ein bestehender TREND hält, bis |ret_4h| unter die Exit-Schwelle fällt.
+        with conn.cursor() as cur:
+            cur.execute("SELECT regime FROM regime_current WHERE id = 1")
+            row = cur.fetchone()
+        prev_regime = row[0] if row else None
+
+        result = classify_regime(features, features["vola_p75"], features["vola_p40"], prev_regime=prev_regime)
         logger.info(
             f"Regime-Check: BTC={result['regime']} (conf={result['confidence_btc']:.2f}) "
             f"Alt={result['alt_context']} (conf={result['confidence_alt']:.2f})"

@@ -53,10 +53,59 @@ def test_classify_btc_chop():
 
 
 def test_classify_btc_transition_mid_zone():
-    # Mid-vola, moderate return (not clearly trend or chop)
+    # Mid-vola, moderate return: |ret|=1.0 < 1.5×ATR(1.2)=1.8 → TRANSITION
     features = {"btc_return_4h": 1.0, "btc_atr_4h_pct": 1.2}
     regime, conf = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8)
     assert regime == "TRANSITION"
+
+
+# ── Mid-Vola-Trend-Regel (§22, 2026-07-07) ───────────────────────────────────
+
+def test_classify_btc_mid_band_trend_up_on_vol_scaled_return():
+    # Mid-Band: |ret|=2.0 ≥ 1.5×ATR(1.2)=1.8 → TREND_UP
+    features = {"btc_return_4h": 2.0, "btc_atr_4h_pct": 1.2}
+    regime, conf = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8)
+    assert regime == "TREND_UP"
+    assert conf > 0.5
+
+
+def test_classify_btc_mid_band_trend_down_on_vol_scaled_return():
+    features = {"btc_return_4h": -2.0, "btc_atr_4h_pct": 1.2}
+    regime, conf = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8)
+    assert regime == "TREND_DOWN"
+
+
+def test_classify_btc_mid_band_hysteresis_holds_existing_trend():
+    # ret=1.3 liegt unter Enter (1.8) aber über Exit (1.2) → hält NUR mit prev.
+    features = {"btc_return_4h": 1.3, "btc_atr_4h_pct": 1.2}
+    regime_without, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8)
+    regime_with, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8,
+                                         prev_regime="TREND_UP")
+    assert regime_without == "TRANSITION"
+    assert regime_with == "TREND_UP"
+
+
+def test_classify_btc_mid_band_hysteresis_exits_below_exit_threshold():
+    # ret=1.0 < Exit (1.0×ATR=1.2) → TREND_UP fällt trotz prev.
+    features = {"btc_return_4h": 1.0, "btc_atr_4h_pct": 1.2}
+    regime, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8,
+                                    prev_regime="TREND_UP")
+    assert regime == "TRANSITION"
+
+
+def test_classify_btc_mid_band_hysteresis_direction_specific():
+    # prev=TREND_DOWN hält keinen positiven ret im Halte-Band.
+    features = {"btc_return_4h": 1.3, "btc_atr_4h_pct": 1.2}
+    regime, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8,
+                                    prev_regime="TREND_DOWN")
+    assert regime == "TRANSITION"
+
+
+def test_classify_btc_high_vola_still_overrides_mid_band_trend():
+    # ATR über P75 → HIGH_VOLA, auch wenn ret die Trend-Schwelle schlägt.
+    features = {"btc_return_4h": 5.0, "btc_atr_4h_pct": 2.5}
+    regime, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8)
+    assert regime == "HIGH_VOLA"
 
 
 def test_classify_btc_insufficient_data_returns_transition():
@@ -218,6 +267,28 @@ def test_debounce_both_axes_change_simultaneously():
                             datetime.now(timezone.utc))
     assert result["btc_regime_changed"] is True
     assert result["alt_context_changed"] is True
+
+
+def test_debounce_trend_needs_three_checks():
+    """TREND-Ziele brauchen 3 Checks (§22-Flap-Dämpfung), andere weiterhin 2."""
+    # pend_count=1 → dieser Check wäre der zweite: für TREND noch KEIN Wechsel …
+    row = ("TRANSITION", "ALT_NEUTRAL",
+           datetime(2026, 1, 1), datetime(2026, 1, 1),
+           "TREND_UP", 1, None, 0)
+    conn, _ = _make_mock_conn(row)
+    result = apply_debounce(conn, "TREND_UP", "ALT_NEUTRAL", 0.8,
+                            datetime.now(timezone.utc))
+    assert result["btc_regime_changed"] is False
+
+    # … erst der dritte Check (pend_count=2) bestätigt.
+    row3 = ("TRANSITION", "ALT_NEUTRAL",
+            datetime(2026, 1, 1), datetime(2026, 1, 1),
+            "TREND_UP", 2, None, 0)
+    conn3, _ = _make_mock_conn(row3)
+    result3 = apply_debounce(conn3, "TREND_UP", "ALT_NEUTRAL", 0.8,
+                             datetime.now(timezone.utc))
+    assert result3["btc_regime_changed"] is True
+    assert result3["effective_regime"] == "TREND_UP"
 
 
 def test_debounce_reset_on_raw_flicker():

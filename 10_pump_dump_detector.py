@@ -14,6 +14,7 @@ import numpy as np
 import requests
 
 from core import config as _kcfg  # channel ids
+from core import ticker_10s
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
@@ -23,6 +24,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR
 logger = logging.getLogger(__name__)
 
 # --- CONFIG & CHANNELS ---
+# 10s-Persistenz für Microstructure-Features (PEX1 V2): Kill-Switch per Env,
+# damit Ops den Schreiber ohne Code-Deploy stilllegen kann (Muster P1.34).
+TICKER_10S_PERSIST = os.getenv("KYTHERA_TICKER_10S_PERSIST", "1") == "1"
+
 MARKET_CHANNEL_ID = _kcfg.CH_PUMP_MARKET
 AI_CHANNEL_ID = _kcfg.CH_PUMP_AI
 MAIN_CHANNEL_ID = _kcfg.CH_PUMP_MAIN
@@ -762,6 +767,17 @@ def main():
             """CREATE TABLE IF NOT EXISTS pump_dump_events (symbol VARCHAR(20), spike_time TIMESTAMP, volume_ratio REAL, price_change_60s REAL, buy_pressure REAL, volatility REAL, rsi_14 REAL, tsi REAL, macd_dif REAL, ema9_distance_pct REAL, ema21_distance_pct REAL)"""
         )
 
+    # 10s-Ticker-Persistenz (Hypertable) — Schema einmalig beim Start sicherstellen.
+    # Schlägt das fehl (z.B. Extension fehlt), läuft der Detector OHNE Persistenz
+    # weiter — die Pump-Detection ist der Primärjob, nicht das Daten-Sammeln.
+    ticker_10s_ok = False
+    if TICKER_10S_PERSIST:
+        try:
+            ticker_10s.ensure_schema(conn)
+            ticker_10s_ok = True
+        except Exception as e:
+            logger.error(f"❌ ticker_10s-Schema nicht verfügbar — Persistenz deaktiviert: {e}")
+
     # 1. State und Cache laden (Keine Kaltstart-Blindheit mehr!)
     load_state_from_disk()
 
@@ -799,7 +815,9 @@ def main():
                     continue
                 raw_data = res.json()
 
-                ts_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                tick_dt = datetime.datetime.now(datetime.timezone.utc)
+                ts_str = tick_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                tick_rows = []  # (ts, symbol, price, vol_10s, vol_valid) für ticker_10s
 
                 for item in raw_data:
                     symbol = item["symbol"]
@@ -833,6 +851,10 @@ def main():
                             v10s_valid = True
 
                     entry = {"t": ts_str, "p": price, "v10s": v10s, "v10s_valid": v10s_valid, "cum_vol": cum_vol}
+                    if ticker_10s_ok:
+                        # Auch v10s_valid=False persistieren (Rollover-Marker) —
+                        # der Builder filtert selbst, genau wie process_coin_logics.
+                        tick_rows.append((tick_dt, symbol, price, v10s, v10s_valid))
 
                     if symbol not in ONE_MINUTE_DATA:
                         ONE_MINUTE_DATA[symbol] = deque(maxlen=1440)
@@ -844,8 +866,25 @@ def main():
                     ONE_MINUTE_DATA[symbol].append(entry)
                     process_coin_logics(conn, symbol)
 
+                # EIN batched Insert pro Tick (alle Coins) — nie den Loop stoppen,
+                # ein verlorener Tick ist akzeptabel, ein toter Detector nicht.
+                if tick_rows:
+                    try:
+                        ticker_10s.insert_ticks(conn, tick_rows)
+                    except Exception as e:
+                        logger.error(f"ticker_10s-Insert fehlgeschlagen (Tick verworfen): {e}")
+
             except Exception as e:
                 logger.error(f"HF Loop Error: {e}")
+                # Review-Fix (PR #9): ohne Rollback bleibt die Connection nach
+                # einem DB-Fehler in InFailedSqlTransaction und JEDER folgende
+                # Insert (pump_dump_events, Outbox, ticker_10s) schlägt fehl —
+                # der Loop liefe weiter, wäre aber funktional tot. Muster wie
+                # send_outbox.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 time.sleep(5)
 
     except KeyboardInterrupt:

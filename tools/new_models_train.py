@@ -79,7 +79,10 @@ def load_events(path: str, feature_cols: list[str]) -> tuple[pd.DataFrame, pd.Da
     if missing:
         raise SystemExit(f"Events tragen nicht alle Vertrags-Features — fehlend: {missing}")
     X = X[feature_cols].astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    meta["ts"] = pd.to_datetime(meta["ts"])
+    # ISO8601 statt Format-Inferenz: die Builder schreiben gemischte Präzision
+    # (FMR1-Settlements sekundengenau ohne .%f, Spike-Events mit Mikrosekunden) —
+    # pandas rät sonst das Format der ersten Zeile und wirft auf der zweiten.
+    meta["ts"] = pd.to_datetime(meta["ts"], format="ISO8601")
     return meta, X
 
 
