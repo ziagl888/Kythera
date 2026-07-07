@@ -254,7 +254,8 @@ def main():
                         if c_ot.tzinfo is None:
                             c_ot = c_ot.replace(tzinfo=pytz.UTC)
                         past_expiry = (
-                            expiry is not None and ot_aware is not None
+                            expiry is not None
+                            and ot_aware is not None
                             and (c_ot - ot_aware) >= datetime.timedelta(hours=expiry)
                         )
 
@@ -270,9 +271,7 @@ def main():
                             ):
                                 filled = True
                                 tp_allowed = False  # Fill-Kerze: konservativ nur SL (wie Studie)
-                                cur.execute(
-                                    "UPDATE ai_signals SET entry_filled = TRUE WHERE id = %s", (trade_id,)
-                                )
+                                cur.execute("UPDATE ai_signals SET entry_filled = TRUE WHERE id = %s", (trade_id,))
                                 db_was_changed = True
                                 logger.info(f"📥 {symbol} ({model}): Limit-Entry {entry} gefüllt.")
                             else:

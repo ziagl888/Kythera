@@ -12,8 +12,9 @@ import time
 import joblib
 import numpy as np
 import pandas as pd
-import requests
 import pandas_ta  # noqa: F401 — registriert den df.ta-Accessor (Regression aus 052ba4c:
+import requests
+
 # der Ruff-Cleanup entfernte den funktionslokalen Import aus b6735d9 als "unused",
 # wodurch calculate_technical_indicators auf JEDEM Coin mit AttributeError starb)
 import scipy.signal
@@ -92,7 +93,8 @@ def get_funding_24h_bps(symbol):
     try:
         r = requests.get(
             "https://fapi.binance.com/fapi/v1/fundingRate",
-            params={"symbol": symbol, "limit": 3}, timeout=10,
+            params={"symbol": symbol, "limit": 3},
+            timeout=10,
         )
         r.raise_for_status()
         rates = [float(x["fundingRate"]) for x in r.json()]
@@ -102,6 +104,7 @@ def get_funding_24h_bps(symbol):
         logger.warning(f"⚠️ Funding-Check {symbol} fehlgeschlagen (Gate bleibt zu): {e}")
     _funding_cache[symbol] = (now, mean_bps)
     return mean_bps
+
 
 FEATURE_COLUMNS = [
     'dist_close_ema9_pct',
@@ -166,6 +169,7 @@ def resolve_pta_columns(df):
     if missing:
         raise ValueError(f"pandas_ta-Spalten nicht gefunden: {missing}")
     return df.rename(columns=rename_map)
+
 
 # Modelle global — je Richtung ein Vertrag: {model, features, threshold,
 # success_idx, calibrator}. Der Vertrag kommt aus der meta.json des Artefakts
@@ -331,8 +335,12 @@ def startup_feature_selfcheck(coins):
             exit(1)
         constant_flags = [c for c in BINARY_FLAG_FEATURES if sample[c].nunique(dropna=False) <= 1]
         if constant_flags:
-            logger.warning(f"Selbsttest: Binär-Flags konstant über die Stichprobe (kann legitim sein): {constant_flags}")
-        logger.info(f"✅ Feature-Selbsttest bestanden ({len(sample)} Zeilen, {len(frames)} Coins, 18/18 Features variabel).")
+            logger.warning(
+                f"Selbsttest: Binär-Flags konstant über die Stichprobe (kann legitim sein): {constant_flags}"
+            )
+        logger.info(
+            f"✅ Feature-Selbsttest bestanden ({len(sample)} Zeilen, {len(frames)} Coins, 18/18 Features variabel)."
+        )
     finally:
         conn.close()
 
@@ -642,10 +650,19 @@ def process_abr_logic(conn, symbol):
                 fund_bps = get_funding_24h_bps(symbol)
                 if fund_bps is not None and fund_bps > FUNDING_GATE_LONG_BPS:
                     logger.info(f"🟢 LONG-Funding-Gate offen für {symbol}: {fund_bps:+.2f} bps")
-                    send_signal(conn, symbol, direction, display_proba, retest_candle['close'],
-                                model_tag_override=FUNDING_GATE_TAG, funding_bps=fund_bps)
+                    send_signal(
+                        conn,
+                        symbol,
+                        direction,
+                        display_proba,
+                        retest_candle['close'],
+                        model_tag_override=FUNDING_GATE_TAG,
+                        funding_bps=fund_bps,
+                    )
                 elif fund_bps is not None:
-                    logger.info(f"⛔ LONG-Funding-Gate zu für {symbol}: {fund_bps:+.2f} bps (Limit {FUNDING_GATE_LONG_BPS:+.1f})")
+                    logger.info(
+                        f"⛔ LONG-Funding-Gate zu für {symbol}: {fund_bps:+.2f} bps (Limit {FUNDING_GATE_LONG_BPS:+.1f})"
+                    )
             elif prediction_proba >= contract['threshold']:
                 # SHORT-Funding-Veto (2026-07-06, Report 21 Addendum 2 Spiegel-
                 # test): bei fund_24h > +1,5 bps ist die Zone konsistent
@@ -657,8 +674,7 @@ def process_abr_logic(conn, symbol):
                         f"(> {FUNDING_VETO_SHORT_BPS:+.1f}, Modell-Prob {prediction_proba:.2f})"
                     )
                 else:
-                    send_signal(conn, symbol, direction, display_proba, retest_candle['close'],
-                                funding_bps=fund_bps)
+                    send_signal(conn, symbol, direction, display_proba, retest_candle['close'], funding_bps=fund_bps)
 
     except Exception as e:
         logger.error(f"Error for {symbol}: {e}")

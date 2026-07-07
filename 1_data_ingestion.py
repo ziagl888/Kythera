@@ -1,18 +1,16 @@
 import asyncio
 import datetime
 import json
-import logging
 import random
 import socket
 import time
 import warnings
+from concurrent.futures import ProcessPoolExecutor  # Catch-up in eigenen Prozessen (GIL-Fix)
 
 import pytz
 import requests
 import websockets
 from psycopg2 import extras
-
-from concurrent.futures import ProcessPoolExecutor  # Catch-up in eigenen Prozessen (GIL-Fix)
 
 from core.database import get_db_connection
 
@@ -286,7 +284,7 @@ CATCHUP_WARMUP_SEC = 120
 # 3 TFs bei ~3 req/s ≈ 180 Weight/min von 2400 erlaubten — ungefährlich).
 # Sie ist STROMLOS, solange der WS liefert (WS_LAST_DATA_TS < 3 min alt).
 FRESHNESS_HOT_TFS = ['5m', '30m', '1h']
-FRESHNESS_WS_HEALTHY_SEC = 180   # WS-Daten jünger als das → Fallback schläft
+FRESHNESS_WS_HEALTHY_SEC = 180  # WS-Daten jünger als das → Fallback schläft
 FRESHNESS_REQ_SPACING_SEC = 0.3  # ~3 req/s
 FRESHNESS_IDLE_SLEEP_SEC = 60
 

@@ -47,9 +47,7 @@ RSI_COLS = ["rsi_6", "rsi_9", "rsi_12", "rsi_14", "rsi_24"]
 
 # Eingabespalten, die der Builder zwingend braucht (nach dem SQL-Aliasing
 # tsi_fast_12_7_7→tsi_fast, macd_*_normal_12_26_9→macd_dif/macd_dea).
-REQUIRED_INPUT_COLS = (
-    ["close", "volume"] + RSI_COLS + RAW_LINE_COLS + ["tsi_fast", "macd_dif", "macd_dea", "atr_14"]
-)
+REQUIRED_INPUT_COLS = ["close", "volume"] + RSI_COLS + RAW_LINE_COLS + ["tsi_fast", "macd_dif", "macd_dea", "atr_14"]
 
 # Gemeinsame SELECT-Liste für Bot und Simulator (h = Kerzen-Tabelle, i = Indikator-Join).
 MIS_SQL_INDICATOR_SELECT = """
@@ -66,30 +64,40 @@ MIS_SQL_INDICATOR_SELECT = """
 """
 
 # ── Feature-Katalog (explizit, geordnet — Artefakt-meta speichert ihn mit) ───
-DELTA_FEATURES = (
-    [f"{c}_delta_1" for c in RSI_COLS]
-    + ["tsi_fast_delta_1", "macd_dif_pct_delta_1", "macd_hist_pct_delta_1"]
-)
+DELTA_FEATURES = [f"{c}_delta_1" for c in RSI_COLS] + [
+    "tsi_fast_delta_1",
+    "macd_dif_pct_delta_1",
+    "macd_hist_pct_delta_1",
+]
 
 BINARY_FLAG_FEATURES = [
-    "above_ema_200", "rsi_14_above_50", "rsi_14_cross_above_30", "ema_9_cross_above_21",
+    "above_ema_200",
+    "rsi_14_above_50",
+    "rsi_14_cross_above_30",
+    "ema_9_cross_above_21",
 ]
 
 FEATURE_COLS = (
-    [f"{c}_dist_pct" for c in RAW_LINE_COLS]          # 38 — % Abstand Preis↔Linie
-    + DELTA_FEATURES                                   # 8
-    + ["volume_ratio_prev", "volume_ratio_sma20"]      # 2
-    + RSI_COLS + ["tsi_fast", "macd_hist_pct"]         # 7
-    + BINARY_FLAG_FEATURES                             # 4
+    [f"{c}_dist_pct" for c in RAW_LINE_COLS]  # 38 — % Abstand Preis↔Linie
+    + DELTA_FEATURES  # 8
+    + ["volume_ratio_prev", "volume_ratio_sma20"]  # 2
+    + RSI_COLS
+    + ["tsi_fast", "macd_hist_pct"]  # 7
+    + BINARY_FLAG_FEATURES  # 4
     + ["boll_upper_dist_atr", "boll_lower_dist_atr", "ema_200_dist_atr", "atr_14_pct"]  # 4
 )  # = 63, alle skalenfrei
 
 # Die 8 Legacy-Spalten, die NUR für Vergleiche mit den alten 67-Feature-pkls
 # gebraucht werden (4 Unfall-Features + 4 unnormalisierte Vorgänger).
 LEGACY_ONLY_COLS = [
-    "boll_upper_dist_atr_dist_pct", "boll_lower_dist_atr_dist_pct",
-    "ema_200_dist_atr_dist_pct", "ema_9_cross_above_21_dist_pct",
-    "macd_dif_delta_1", "macd_hist", "macd_hist_delta_1", "atr_14",
+    "boll_upper_dist_atr_dist_pct",
+    "boll_lower_dist_atr_dist_pct",
+    "ema_200_dist_atr_dist_pct",
+    "ema_9_cross_above_21_dist_pct",
+    "macd_dif_delta_1",
+    "macd_hist",
+    "macd_hist_delta_1",
+    "atr_14",
 ]
 
 
@@ -142,9 +150,9 @@ def add_advanced_features(df: pd.DataFrame, include_legacy: bool = False) -> pd.
     df["above_ema_200"] = (close > df["ema_200"]).astype(int)
     df["rsi_14_above_50"] = (df["rsi_14"] > 50).astype(int)
     df["rsi_14_cross_above_30"] = ((df["rsi_14"].shift(1) < 30) & (df["rsi_14"] >= 30)).astype(int)
-    df["ema_9_cross_above_21"] = (
-        (df["ema_9"].shift(1) < df["ema_21"].shift(1)) & (df["ema_9"] > df["ema_21"])
-    ).astype(int)
+    df["ema_9_cross_above_21"] = ((df["ema_9"].shift(1) < df["ema_21"].shift(1)) & (df["ema_9"] > df["ema_21"])).astype(
+        int
+    )
 
     # ATR-normalisierte Abstände + skalenfreie ATR
     eps = 1e-8
@@ -177,10 +185,7 @@ def add_advanced_features_multi(df: pd.DataFrame, include_legacy: bool = False) 
     damit Deltas/Crosses/Rolling nie über Symbolgrenzen rechnen."""
     if "symbol" not in df.columns:
         raise ValueError("add_advanced_features_multi erwartet eine 'symbol'-Spalte")
-    parts = [
-        add_advanced_features(g, include_legacy=include_legacy)
-        for _, g in df.groupby("symbol", sort=False)
-    ]
+    parts = [add_advanced_features(g, include_legacy=include_legacy) for _, g in df.groupby("symbol", sort=False)]
     return pd.concat(parts, ignore_index=True)
 
 

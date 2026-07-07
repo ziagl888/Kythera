@@ -7,22 +7,30 @@ Herkunft: inline-Logik aus 13_ai_rub_bot.check_rubberband_conditions
 (2026-07-06, MODEL_INTENT §8) hierher gehoben. Der Bot ruft dieselben
 Funktionen wie der Replay.
 """
+
 from __future__ import annotations
 
 import numpy as np
 
 #: Feature-Vertrag des RUB-ML (Spaltennamen wie vom Alt-Trainer erwartet).
 RUB_FEATURES = [
-    'dist_to_trend', 'rsi', 'atr_pct', 'dist_ema200', 'slope_trend',
-    'MACD_Line', 'MACD_Signal', 'TSI_Line', 'TSI_Signal',
+    'dist_to_trend',
+    'rsi',
+    'atr_pct',
+    'dist_ema200',
+    'slope_trend',
+    'MACD_Line',
+    'MACD_Signal',
+    'TSI_Line',
+    'TSI_Signal',
 ]
 
 #: Vorfilter-Schwellen (Rubberband-Bedingungen, Bot 13).
-DIST_TREND_MIN = 0.08     # ±8 % von der 90d-Regression
+DIST_TREND_MIN = 0.08  # ±8 % von der 90d-Regression
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 TSI_EXTREME = 15
-DC_TOUCH_TOL = 0.01       # close <= dc_lower*1.01 bzw. >= dc_upper*0.99
+DC_TOUCH_TOL = 0.01  # close <= dc_lower*1.01 bzw. >= dc_upper*0.99
 
 
 def rub_trend(ts_seconds: np.ndarray, closes: np.ndarray, curr_close: float):
@@ -41,18 +49,26 @@ def rub_trend(ts_seconds: np.ndarray, closes: np.ndarray, curr_close: float):
 
 def rub_event_type(dist_to_trend_pct, rsi, tsi_line, curr_close, dc_lower, dc_upper):
     """Rubberband-Vorfilter. Returns 'REVERSION_UP' | 'REVERSION_DOWN' | None."""
-    if (dist_to_trend_pct <= -DIST_TREND_MIN and rsi < RSI_OVERSOLD
-            and tsi_line < -TSI_EXTREME and curr_close <= dc_lower * (1 + DC_TOUCH_TOL)):
+    if (
+        dist_to_trend_pct <= -DIST_TREND_MIN
+        and rsi < RSI_OVERSOLD
+        and tsi_line < -TSI_EXTREME
+        and curr_close <= dc_lower * (1 + DC_TOUCH_TOL)
+    ):
         return "REVERSION_UP"
-    if (dist_to_trend_pct >= DIST_TREND_MIN and rsi > RSI_OVERBOUGHT
-            and tsi_line > TSI_EXTREME and curr_close >= dc_upper * (1 - DC_TOUCH_TOL)):
+    if (
+        dist_to_trend_pct >= DIST_TREND_MIN
+        and rsi > RSI_OVERBOUGHT
+        and tsi_line > TSI_EXTREME
+        and curr_close >= dc_upper * (1 - DC_TOUCH_TOL)
+    ):
         return "REVERSION_DOWN"
     return None
 
 
-def build_rub_features(dist_to_trend_pct, slope_pct_per_day, curr_close,
-                       rsi, tsi_line, tsi_signal, macd_line, macd_signal,
-                       atr_14, ema_200) -> dict:
+def build_rub_features(
+    dist_to_trend_pct, slope_pct_per_day, curr_close, rsi, tsi_line, tsi_signal, macd_line, macd_signal, atr_14, ema_200
+) -> dict:
     """Der 9-Feature-Vertrag (RUB_FEATURES) als dict."""
     atr_pct = (atr_14 / curr_close) if curr_close > 0 else 0.0
     dist_ema200 = (curr_close - ema_200) / ema_200 if ema_200 > 0 else 0.0
