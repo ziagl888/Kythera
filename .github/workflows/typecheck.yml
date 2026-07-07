@@ -1,0 +1,36 @@
+name: Typecheck
+
+# mypy über den Live-Code (Root-Bots + core/), Config aus pyproject.toml
+# [tool.mypy] (non-strict, ignore_missing_imports, platform=win32, excludes wie
+# ruff). Prüft die real laufenden Windows-Zweige und fängt Typ-Mismatches
+# (arg-type, return-value, union-attr) auf der annotierten Oberfläche.
+# mypy gepinnt = Drift-Schutz; typisierte Deps (pandas/numpy/scipy/xgboost)
+# installiert wie im Syntax-Check, damit CI == Dev-Maschine.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install mypy (gepinnt) + typisierte Deps
+        run: pip install --quiet "mypy==2.1.0" psycopg2-binary pandas numpy scipy joblib xgboost pytz
+
+      - name: mypy
+        # Numeric-prefixed Bot-Dateien sind keine importierbaren Modulnamen →
+        # explizite Datei-Liste (Root-.py + core/), die excludeten Dateien raus.
+        run: |
+          FILES=$(ls *.py | grep -vE '^(99_smc_paper_bot|fib_backtest|db_schema_analysis)\.py$'; ls core/*.py)
+          mypy $FILES
