@@ -1,3 +1,24 @@
+## [2026-07-07 mittags] New-Ideas-Kohorte trainiert — FIF1 deployed, Detector-Studie gestartet
+
+### Added
+- **Alle 4 New-Ideas-Datasets gebaut + trainiert** (Ergebnistabelle in
+  `docs/NEW_IDEAS_BOTS.md`): PEX1 ohne Selektionswert (AUC~0,55,
+  Threshold degeneriert), FMR1 ohne Fundament (Val-AUC 0,498 = Zufall),
+  TRM1 upstream blockiert (Klassen 0/5/1589 — Detector hält TREND nie,
+  Step-6-Befund; Wiedervorlage nach Detector-Rework), **FIF1 einziger
+  Kandidat** (Val-OP +0,044 %/Trade dünn; Test-Gate −0,08→+0,331 %/Trade,
+  WR 75,3 %, n=893/18.011).
+- **FIF1 DEPLOYED** (Operator 2026-07-07): `fif1_model.pkl` (thr 0,67) im
+  Repo-Root, Bot 33 recycelt — postet LIVE in CH_NEW_IDEAS
+  (`NEW_IDEAS_LIVE_POSTING=1`, AIM2-Validierungsmuster). Review 4–6 Wochen.
+- `tools/regime_rules_study.py` — **Detector-Rework Schritt 1 (MODEL_INTENT
+  §22)**: Regelvarianten-Replay über die volle BTC-15m-Historie. Ist-Regel
+  V0 vs. Mid-Band-Trend-Regel mit fixem Threshold (V1, Grid 1,5/2,0/2,5 %)
+  vs. vol-skaliert |ret_4h| ≥ K×ATR (V2, Grid 0,75/1,0/1,5); Bewertung
+  über Episoden-Statistik (kommt TREND vor? flappt es?) UND Ökonomie-Overlay
+  (Ø-PnL der RUB-LONG/ABR1-LONG-Replay-Events je Regime-Zustand — der
+  Regime-Gate-Use-Case aus §8). Debounce-Näherung 2 Bars; read-only.
+
 ## [2026-07-07] RUB2-SHORT deployed — Bot 13 auf Artefakt-Contract
 
 ### Added

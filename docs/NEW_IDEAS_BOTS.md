@@ -31,6 +31,30 @@ Startup-Feature-Selbsttest (P0.12), Gate auf roher Probability (Threshold aus
 dem Val-Operating-Point), kalibrierte Confidence nur für Anzeige, Cooldowns via
 `trade_cooldowns`, Tracking durch `8_ai_trade_monitor`.
 
+## Trainings-Ergebnisse (2026-07-07, alle staging — kein Deploy ohne Operator)
+
+Alle vier Datensätze gebaut (nach DST-Fix f95f092) und trainiert
+(`tools/new_models_train.py`, Chrono-Split + Purge, Gate auf roher Prob):
+
+| Modell | Events | AUC val/test | Val-OP | Test-Gate-Uplift | Verdict |
+|---|---|---|---|---|---|
+| PEX1 | 28.855 (26.271 gelabelt) | 0,545 / 0,565 | thr 0,65 degeneriert (99 % Pass) | −0,560 → −0,555 %/Trade (nichts) | ❌ kein Selektionswert; best_iteration=2 |
+| FMR1 | 11.503 (10.481) | **0,498** / 0,544 | −2,24 %/Trade (n=65) | −1,05 → −0,06 %/Trade (n=144) | ❌ Val = Zufall, OP negativ — kein Fundament |
+| TRM1 | 1.594 (Klassen 0/5/1.589!) | — nicht trainiert — | — | — | ⛔ upstream blockiert: Detector hält TREND nie (Step-6-Befund) → Klassen existieren nicht. Wiedervorlage nach Detector-Rework/TRANSITION-Split |
+| FIF1 | 120.102 (120.072) | 0,533 / 0,561 | **+0,044 %/Trade** (thr 0,67, n=541) | **−0,082 → +0,331 %/Trade, WR 75,3 %, n=893/18.011 (5 % Pass)** | ⚠ einziger Kandidat: Val UND Test positiv, aber Val-Edge hauchdünn |
+| (EPD2) | 78.351 | siehe MODEL_INTENT §7 | Safe-Picker verweigert / Val-Test-Bruch | LONG alle Buckets negativ; SHORT Test-WR == Basisrate | ❌ beide Richtungen |
+
+Einordnung: konsistent mit der Batch-E-Kernthese — Event-Ranking-Gates liefern
+fast nie robuste Out-of-Time-Expectancy. FIF1 ist die Ausnahme mit dünnem, aber
+in Val und Test gleichgerichtetem Signal (vergleichbar MIS1-8h_pump).
+
+**FIF1 DEPLOYED (Operator-Entscheid 2026-07-07 ~11:49):** `fif1_model.pkl`
+(thr 0,67, 21 Features) ins Repo-Root kopiert, Bot 33 per Restart-Marker
+recycelt, Artefakt-Load verifiziert. Läuft mit `NEW_IDEAS_LIVE_POSTING=1`
+LIVE (kein Shadow — Operator-Muster wie AIM2: Cornix-Tracking der geposteten
+Signale ist die Validierung). Review nach 4–6 Wochen gegen `ai_signals`.
+PEX1/FMR1/TRM1: kein Deploy, Bots 30–32 bleiben idle.
+
 ## Design-Notizen je Bot
 
 ### PEX1 — Pump-Exhaustion-Short (S6)
