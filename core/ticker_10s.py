@@ -64,8 +64,19 @@ def _ensure_schema_inner(conn) -> None:
         # Detectors) darf keine stillen Duplikat-Rows erzeugen — bekannte
         # Fehlerklasse (closed_ai_signals-Dups, coins.json-Doppel-Writer).
         # Der Insert läuft mit ON CONFLICT DO NOTHING gegen diesen Index.
-        cur.execute(f"DROP INDEX IF EXISTS ix_{TABLE}_symbol_ts")
-        cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{TABLE}_symbol_ts ON {TABLE} (symbol, ts)")
+        cur.execute("SELECT 1 FROM pg_indexes WHERE indexname = %s", (f"uq_{TABLE}_symbol_ts",))
+        if cur.fetchone() is None:
+            # Einmalige Migration mit Dedup-Vorlauf: existieren beim ersten
+            # Start des neuen Codes bereits Duplikate (genau die Doppel-
+            # Writer-Klasse, gegen die der Index schützt), würde CREATE
+            # UNIQUE INDEX sonst auf JEDEM Start fehlschlagen und die
+            # Persistenz bliebe dauerhaft aus. Gleiche ts ⇒ gleicher Chunk,
+            # der ctid-Vergleich ist dort eindeutig.
+            cur.execute(
+                f"DELETE FROM {TABLE} a USING {TABLE} b WHERE a.symbol = b.symbol AND a.ts = b.ts AND a.ctid > b.ctid"
+            )
+            cur.execute(f"DROP INDEX IF EXISTS ix_{TABLE}_symbol_ts")
+            cur.execute(f"CREATE UNIQUE INDEX uq_{TABLE}_symbol_ts ON {TABLE} (symbol, ts)")
         cur.execute(
             f"""ALTER TABLE {TABLE} SET (
                     timescaledb.compress,

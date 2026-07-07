@@ -125,6 +125,14 @@ def test_hysteresis_prev_regime_pending_trend_counts_like_existing():
     assert hysteresis_prev_regime(row) == "TREND_UP"
 
 
+def test_hysteresis_prev_regime_effective_trend_beats_pending_trend():
+    # Verifier PR #10: ein einzelner Gegen-Spike (pendend TREND_DOWN) darf dem
+    # LIVE TREND_UP nicht die Hold-Schwelle entziehen — sonst kippt der aktive
+    # Trend über die TRANSITION-Bestätigung, obwohl ret im Halte-Band bleibt.
+    row = _state_row("TREND_UP", pending_regime="TREND_DOWN")
+    assert hysteresis_prev_regime(row) == "TREND_UP"
+
+
 def test_hysteresis_prev_regime_pending_non_trend_ignored():
     row = _state_row("TREND_UP", pending_regime="CHOP")
     assert hysteresis_prev_regime(row) == "TREND_UP"

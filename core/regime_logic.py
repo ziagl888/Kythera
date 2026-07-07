@@ -338,10 +338,17 @@ def hysteresis_prev_regime(state_row: tuple | None) -> str | None:
     TREND wie ein bestehender: Enter einmal bei 1,5×ATR, danach reicht die
     Hold-Schwelle (1,0×ATR) für die Bestätigungs-Checks — das entspricht der
     §22-Studien-Semantik (Enter-einmal, dann halten).
+
+    Vorrang: das EFFEKTIVE TREND-Regime schlägt einen pendenden TREND —
+    sonst würde ein einzelner Gegen-Spike (Raw-TREND_DOWN pendend während
+    effektiv TREND_UP) dem LIVE-Trend die Hold-Schwelle entziehen und ihn
+    über die TRANSITION-Bestätigung dauerhaft kippen (Verifier PR #10).
     """
     if state_row is None:
         return None
     regime, pending = state_row[0], state_row[4]
+    if regime is not None and str(regime).startswith("TREND"):
+        return str(regime)
     if pending is not None and str(pending).startswith("TREND"):
         return str(pending)
     return regime
