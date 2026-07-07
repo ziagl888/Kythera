@@ -37,6 +37,10 @@ quote-style = "preserve"
 
 [tool.mypy]
 python_version = "3.10"
+# Die Fleet läuft auf einem Windows-VPS — mypy prüft die real laufenden
+# win32-Zweige (sys.platform-Guards) statt sie als unerreichbar zu überspringen.
+# Hält zugleich CI (Linux-Runner) und die Windows-Dev-Maschine deckungsgleich.
+platform = "win32"
 # Deliberately non-strict: this is a legacy-grown, pandas/numpy-heavy bot fleet,
 # not a from-scratch typed module. We do NOT check untyped function bodies —
 # the gate catches real type mismatches (arg-type, return-value, union-attr,
