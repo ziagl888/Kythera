@@ -14,7 +14,7 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 import psutil
 from flask import Flask, Response, jsonify, request, stream_with_context
@@ -28,7 +28,7 @@ LOG_DIR = BASE_DIR / "logs"
 PORT = 5000
 
 # Process definitions — mirrors main_watchdog.py
-PROCESSES = [
+PROCESSES: list[dict[str, Any]] = [
     {"name": "Data Ingestion", "script": "1_data_ingestion.py", "group": "core", "restart_interval": None},
     {"name": "Chart Data Service", "script": "chart_data_service.py", "group": "core", "restart_interval": None},
     {"name": "Indicator Engine", "script": "2_indicator_engine.py", "group": "core", "restart_interval": 21600},
@@ -1133,8 +1133,8 @@ if __name__ == "__main__":
     # Unicode characters like 🟢 or 📁 crash there with UnicodeEncodeError.
     # sys.stdout/stderr auf UTF-8 umstellen bevor wir irgendwas printen.
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[union-attr]  # guarded by except below
+        sys.stderr.reconfigure(encoding='utf-8')  # type: ignore[union-attr]
     except (AttributeError, Exception):
         # Python <3.7 or non-standard stdout — fallback: replace emojis
         pass

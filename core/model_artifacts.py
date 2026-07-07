@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from typing import Any
 
 import joblib
 
@@ -32,7 +33,7 @@ def load_artifact(path: str, expected_features: list[str], default_tag: str) -> 
     aktuelle Builder nicht liefert, wird es NICHT geladen (P0.12 — kein
     stilles fillna(0) über fehlende Spalten).
     """
-    out = {
+    out: dict[str, Any] = {
         "loaded": False,
         "model": None,
         "features": None,

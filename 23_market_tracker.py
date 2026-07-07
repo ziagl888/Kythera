@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pandas as pd
 
@@ -1050,7 +1051,7 @@ async def job_per_bot_performance() -> None:
         # ─── Stats pro Zeitfenster ───
         # Neue Semantik: Filter auf created_at (Eröffnungszeit).
         # WR nur aus geschlossenen Trades innerhalb des Fensters.
-        stats = {'total': len(sub_full)}
+        stats: dict[str, Any] = {'total': len(sub_full)}
 
         for win_name, delta in WINDOWS:
             if delta is None:

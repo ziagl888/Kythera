@@ -23,6 +23,7 @@ import logging
 import os
 import time
 import warnings
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import joblib
@@ -65,7 +66,14 @@ LOCAL_TZ = ZoneInfo("Europe/Bucharest")
 
 IND_COLS = MARKET_PRICE_COLS + MARKET_ABS_COLS + ATR_COLS + ["trend_direction"]
 
-ARTIFACT = {"model": None, "features": [], "threshold": 0.80, "calibrator": None, "vocab": set(), "loaded_at": 0.0}
+ARTIFACT: dict[str, Any] = {
+    "model": None,
+    "features": [],
+    "threshold": 0.80,
+    "calibrator": None,
+    "vocab": set(),
+    "loaded_at": 0.0,
+}
 
 
 def load_model() -> None:

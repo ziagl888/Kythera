@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Any
 
 import psutil
 
@@ -27,7 +28,7 @@ DASHBOARD_PORT = 5000
 # 'restart_interval': Sekunden bis zum geplanten RAM-Recycling-Restart (None = nie).
 # 'start_delay':      seconds to wait before first start, staggered so that
 #                     not all 538 coins × 24 bots hammer the DB simultaneously.
-PROCESSES_TO_RUN = [
+PROCESSES_TO_RUN: list[dict[str, Any]] = [
     {"name": "Data Ingestion", "script": "1_data_ingestion.py", "restart_interval": None, "start_delay": 0},
     {"name": "Chart Data Service", "script": "chart_data_service.py", "restart_interval": None, "start_delay": 3},
     {"name": "Indicator Engine", "script": "2_indicator_engine.py", "restart_interval": 21600, "start_delay": 5},

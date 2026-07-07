@@ -34,3 +34,25 @@ ignore = [
 
 [tool.ruff.format]
 quote-style = "preserve"
+
+[tool.mypy]
+python_version = "3.10"
+# Deliberately non-strict: this is a legacy-grown, pandas/numpy-heavy bot fleet,
+# not a from-scratch typed module. We do NOT check untyped function bodies —
+# the gate catches real type mismatches (arg-type, return-value, union-attr,
+# assignment) on the annotated surface, not "add annotations everywhere".
+ignore_missing_imports = true      # xgboost, pandas_ta, mplfinance, telegram, … ship no stubs
+warn_redundant_casts = true
+warn_unused_ignores = true
+# var-annotated = "annotate this empty module-level container" (WHALE_TRADES=[],
+# WS_KLINE_BUFFER={}, …). Not a bug, just an inference hint; in a non-strict
+# legacy fleet we check type CONSISTENCY, not annotation completeness. Off.
+disable_error_code = ["var-annotated"]
+# Same non-live/legacy set ruff skips, plus the two standalone analysis scripts.
+exclude = '(?x)(^(backtest|reports|tools|handlers|strategies|legacy_trainers|trainers_x)/ |^99_smc_paper_bot\.py$ |^(fib_backtest|db_schema_analysis)\.py$ )'
+
+# Pandas Series/DataFrame indexing (`df["col"]`) trips mypy's [index]/[union-attr]
+# without adding signal — pandas' own py.typed stubs are incomplete here. Scoped
+# OFF only where it is pure noise; the real bugs live in other error codes.
+# (Applied per-file via `# type: ignore[index]` where residual, not globally, so
+#  a genuine index bug elsewhere still surfaces.)
