@@ -145,6 +145,10 @@ Idle-Modus und die Idee wird mit Befund geparkt.
 ## VPS-Setup-Checkliste
 
 1. `.env` ergänzen: `CH_NEW_IDEAS=<Channel-ID>` und `NEW_IDEAS_LIVE_POSTING=1`.
+   Optional je Bot: `CH_PEX1` / `CH_FMR1` / `CH_TRM1` / `CH_FIF1` überschreiben
+   den Kohorten-Channel einzeln (ungesetzt → Fallback `CH_NEW_IDEAS`; Operator
+   2026-07-07: Start gemeinsam im Test-Channel, eigener Channel erst, wenn ein
+   Bot sich bewährt — Umzug ist dann ein reiner .env-Eintrag + Restart).
 2. Cornix auf den neuen Channel lauschen lassen (falls die Signale ausgeführt
    werden sollen — sonst bleibt es ein Beobachtungs-Channel).
 3. Fleet-Restart oder `touch control/restart/main_watchdog.py`-Äquivalent —
@@ -239,8 +243,10 @@ kommen alle 8h); das RETURNING-Guard entschärft das Race mit dem Monitor
 4. Erst dann Bot-Exit-Loop + Deploy unter neuem Tag **FMR2**
    (Versionierungs-Regel: geänderte Generation = neuer Tag).
 
-**⚠ Offener Operator-Entscheid — Channel-Kollision:** Cornix' `Close <SYMBOL>`
-schließt ALLE Trades des Symbols im Channel, und `CH_NEW_IDEAS` teilen sich
-vier Bots — ein FMR2-Close würde offene PEX1/FIF1/TRM1-Trades desselben Coins
-mitschließen. Empfehlung: eigener Channel für FMR2, sobald Schritt 3 grün ist
-(Alternative: Kollisions-Check auf offene fremde `ai_signals` vor dem Close).
+**Channel-Kollision — entschieden (Operator 2026-07-07):** Cornix' `Close
+<SYMBOL>` schließt ALLE Trades des Symbols im Channel. Da `CH_NEW_IDEAS` ein
+Test-Channel ist, ist die Kollision anfangs akzeptiert. Vorsorglich hat jeder
+Bot jetzt einen eigenen `.env`-Override (`CH_PEX1/CH_FMR1/CH_TRM1/CH_FIF1`,
+Fallback `CH_NEW_IDEAS`, `core/config.py`) — spätestens wenn FMR2 mit
+Close-Pfad live geht, bekommt er per `CH_FMR1` einen eigenen Channel; das ist
+dann nur ein .env-Eintrag + Restart, kein Code-Deploy.
