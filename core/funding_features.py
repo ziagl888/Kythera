@@ -20,18 +20,19 @@ Validierte Schwellen (ABR-Familie, Stand 2026-07-06):
 Referenz: Binance-Default-Funding = +1,0 bps/8h — dort kleben ~75 % der Werte,
 das Signal steckt STRIKT darüber/darunter.
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
 FUNDING_FEATURES = [
-    "fund_last",      # letzter abgerechneter Satz (bps)
-    "fund_24h",       # Mittel letzte 3 Sätze (bps) — Gate-/Veto-Größe
-    "fund_72h",       # Mittel letzte 9 Sätze (bps)
-    "fund_7d_cum",    # Summe letzte 21 Sätze (bps)
+    "fund_last",  # letzter abgerechneter Satz (bps)
+    "fund_24h",  # Mittel letzte 3 Sätze (bps) — Gate-/Veto-Größe
+    "fund_72h",  # Mittel letzte 9 Sätze (bps)
+    "fund_7d_cum",  # Summe letzte 21 Sätze (bps)
     "fund_pctl_90d",  # Perzentil des letzten Satzes vs. eigene 90d-Historie
-    "fund_trend",     # fund_24h − fund_72h (bps)
+    "fund_trend",  # fund_24h − fund_72h (bps)
 ]
 
 #: Mindestanzahl historischer Sätze, bevor Features berechnet werden (7 Tage).
@@ -43,7 +44,8 @@ def load_funding(conn, symbols: list[str]) -> dict[str, pd.DataFrame]:
     fr = pd.read_sql_query(
         "SELECT symbol, funding_time, funding_rate FROM funding_rates "
         "WHERE symbol = ANY(%(syms)s) ORDER BY symbol, funding_time",
-        conn, params={"syms": list(symbols)},
+        conn,
+        params={"syms": list(symbols)},
     )
     fr["funding_time"] = pd.to_datetime(fr["funding_time"], utc=True)
     return {s: g.reset_index(drop=True) for s, g in fr.groupby("symbol")}

@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
 
-STALE_LIMIT_S = 12 * 60          # BTCUSDT_5m aelter als 12 min = Datenfluss tot
-CPU_ALERT_PCT = 90               # Durchschnitt ueber 5 Minuten
-OUTBOX_FAIL_LIMIT = 20           # failed-Rows in 15 min
-OUTBOX_PENDING_AGE_S = 10 * 60   # aeltestes ungesendetes Signal
+STALE_LIMIT_S = 12 * 60  # BTCUSDT_5m aelter als 12 min = Datenfluss tot
+CPU_ALERT_PCT = 90  # Durchschnitt ueber 5 Minuten
+OUTBOX_FAIL_LIMIT = 20  # failed-Rows in 15 min
+OUTBOX_PENDING_AGE_S = 10 * 60  # aeltestes ungesendetes Signal
 ALERT_COOLDOWN_S = 30 * 60
 # Auto-Restart bewusst selten: Jeder Ingestion-Restart erzeugt ~30 WS-Connects.
 # Bei einer Binance-IP-Drossel (Connect-Churn-Strafe) hält ein 30-min-Restart-

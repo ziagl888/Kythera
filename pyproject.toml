@@ -8,7 +8,13 @@ requires-python = ">=3.10"
 line-length = 120
 target-version = "py310"
 # Legacy analysis/backtest/patch scripts are not held to the same bar yet.
-extend-exclude = [".venv", "backtest", "reports", "tools", "handlers", "strategies", "legacy_trainers"]
+# trainers_x = standalone ML-datagrepper/trainer scripts (same class as
+# legacy_trainers; also carry a pandas_ta side-effect import ruff would wrongly
+# strip). 99_smc_paper_bot.py = experimental paper bot, not in the live fleet.
+extend-exclude = [
+    ".venv", "backtest", "reports", "tools", "handlers", "strategies",
+    "legacy_trainers", "trainers_x", "99_smc_paper_bot.py",
+]
 
 [tool.ruff.lint]
 # Start deliberately lean so pre-commit is adoptable on a large legacy tree.

@@ -73,7 +73,9 @@ for tf in TIMEFRAMES:
             MODELS[strategy][tf] = {
                 'model': data['model'],
                 'features': data['features'],
-                'threshold': float(data['optimal_threshold']) if data.get('optimal_threshold') is not None else THRESHOLDS[strategy],
+                'threshold': float(data['optimal_threshold'])
+                if data.get('optimal_threshold') is not None
+                else THRESHOLDS[strategy],
                 'calibrator': data.get('calibrator_isotonic'),
                 'model_id': (data.get('meta') or {}).get('model_id'),
             }

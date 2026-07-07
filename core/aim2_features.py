@@ -25,19 +25,32 @@ import math
 
 # Preis-basierte Indikatoren → Distanz zum Close in % (skalenfrei)
 MARKET_PRICE_COLS = [
-    "ema_9", "ema_21", "ema_50", "ema_200",
-    "kama_21", "wma_21",
-    "boll_upper_20", "boll_mid_20", "boll_lower_20",
-    "donchian_upper_20", "donchian_lower_20", "donchian_mid_20",
-    "support_price", "resistance_price", "trendline_price",
+    "ema_9",
+    "ema_21",
+    "ema_50",
+    "ema_200",
+    "kama_21",
+    "wma_21",
+    "boll_upper_20",
+    "boll_mid_20",
+    "boll_lower_20",
+    "donchian_upper_20",
+    "donchian_lower_20",
+    "donchian_mid_20",
+    "support_price",
+    "resistance_price",
+    "trendline_price",
 ]
 
 # Bereits skalenfreie Indikatoren → unverändert
 MARKET_ABS_COLS = [
-    "rsi_6", "rsi_14",
+    "rsi_6",
+    "rsi_14",
     "tsi_25_13_13",
-    "macd_dif_normal_12_26_9", "macd_dea_normal_12_26_9",
-    "trendline_slope", "r_squared",
+    "macd_dif_normal_12_26_9",
+    "macd_dea_normal_12_26_9",
+    "trendline_slope",
+    "r_squared",
 ]
 
 ATR_COLS = ["atr_14", "atr_21"]  # → % vom Close
@@ -100,9 +113,7 @@ def build_feature_row(
     # --- Markt (floor-1-Kerze) ---
     for col in MARKET_PRICE_COLS:
         val = _f(market_row.get(col), default=float("nan"))
-        row[f"{col}_dist_pct"] = (
-            (val - close_safe) / close_safe * 100.0 if math.isfinite(val) and val > 0 else 0.0
-        )
+        row[f"{col}_dist_pct"] = (val - close_safe) / close_safe * 100.0 if math.isfinite(val) and val > 0 else 0.0
     for col in MARKET_ABS_COLS:
         row[col] = _f(market_row.get(col))
     for col in ATR_COLS:
