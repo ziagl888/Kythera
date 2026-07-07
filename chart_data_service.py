@@ -49,6 +49,7 @@ import socket
 import sys
 import time
 from collections import deque
+from typing import Any
 
 # Dependencies
 import websockets
@@ -233,7 +234,7 @@ async def ws_worker(worker_id: int, symbols: list[str]) -> None:
         backoff = min(backoff * 2.0, 300.0)  # exponential backoff, cap 300s
 
 
-async def _process_ws_message(raw_msg: str) -> None:
+async def _process_ws_message(raw_msg: str | bytes) -> None:
     """Verarbeitet eine einzelne WebSocket-Nachricht."""
     try:
         msg = json.loads(raw_msg)
@@ -292,7 +293,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         try:
             req = json.loads(line.decode("utf-8").strip())
         except json.JSONDecodeError as e:
-            response = {"error": f"invalid json: {e}"}
+            response: dict[str, Any] = {"error": f"invalid json: {e}"}
             writer.write((json.dumps(response) + "\n").encode("utf-8"))
             await writer.drain()
             return

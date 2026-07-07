@@ -226,7 +226,7 @@ def build_trm1_row(window_rows: list[dict], minutes_in_transition: float) -> dic
     def f(row: dict, key: str) -> float:
         v = row.get(key)
         try:
-            v = float(v)
+            v = float(v)  # type: ignore[arg-type]  # None/non-numerisch → TypeError/ValueError unten gefangen
         except (TypeError, ValueError):
             return 0.0
         return v if np.isfinite(v) else 0.0
