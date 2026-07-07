@@ -15,6 +15,7 @@ import pandas as pd
 from core import config as _kcfg  # channel ids
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
+from core.funding_features import funding_features_asof, load_funding
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.rub_features import build_rub_features, rub_event_type, rub_trend
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
@@ -29,16 +30,24 @@ RUBBERBAND_CHANNEL_ID = _kcfg.CH_RUBBERBAND
 # --- LOAD ML MODELS ---
 MODEL_LONG_PATH = 'long_reversion_model.joblib'
 MODEL_SHORT_PATH = 'short_reversion_model.joblib'
+# RUB2-SHORT (Deploy 2026-07-07, MODEL_INTENT §8): Artefakt aus
+# tools/retrain_from_replay.py --strategy rub — Contract wie Bot 25
+# (model/features/optimal_threshold/calibrator_isotonic/meta). 15 Features
+# (9 rub + 6 Funding). Threshold gilt auf der ROHEN predict_proba (so hat
+# ihn pick_threshold_safe gewählt). Fehlt das Artefakt, fällt SHORT auf das
+# Legacy-Modell zurück.
+RUB2_SHORT_ARTIFACT_PATH = 'rub2_model_SHORT.pkl'
 REVERSION_THRESH_LONG = 0.75
 REVERSION_THRESH_SHORT = 0.85
 
 MODEL_LONG = None
 MODEL_SHORT = None
+RUB2_SHORT = None
 
 
 def load_models():
     """Loads the Mean Reversion models."""
-    global MODEL_LONG, MODEL_SHORT
+    global MODEL_LONG, MODEL_SHORT, RUB2_SHORT
     try:
         if os.path.exists(MODEL_LONG_PATH):
             MODEL_LONG = joblib.load(MODEL_LONG_PATH)
@@ -55,10 +64,28 @@ def load_models():
     except Exception as e:
         logger.error(f"❌ Error loading der Rubberband Modelle: {e}")
 
+    try:
+        if os.path.exists(RUB2_SHORT_ARTIFACT_PATH):
+            data = joblib.load(RUB2_SHORT_ARTIFACT_PATH)
+            RUB2_SHORT = {
+                'model': data['model'],
+                'features': list(data['features']),
+                'threshold': float(data['optimal_threshold']),
+                'model_id': data.get('meta', {}).get('model_id', 'RUB2'),
+            }
+            logger.info(
+                f"✅ RUB2-SHORT-Artefakt geladen (thr {RUB2_SHORT['threshold']:.3f}, "
+                f"{len(RUB2_SHORT['features'])} Features)."
+            )
+        else:
+            logger.warning(f"Artefakt fehlt: {RUB2_SHORT_ARTIFACT_PATH} — SHORT nutzt Legacy-Modell.")
+    except Exception as e:
+        logger.error(f"❌ RUB2-SHORT-Artefakt nicht ladbar: {e} — SHORT nutzt Legacy-Modell.")
+
 
 # --- HAUPT CHECKER FUNKTION ---
 def check_rubberband_conditions():
-    if not MODEL_LONG or not MODEL_SHORT:
+    if not MODEL_LONG or not (RUB2_SHORT or MODEL_SHORT):
         logger.error("Modelle not loaded. Skipping Scan.")
         return
 
@@ -175,19 +202,11 @@ def check_rubberband_conditions():
                 continue
 
             # --- ML FEATURES BERECHNEN — geteilte Quelle ---
-            features = pd.DataFrame([
-                build_rub_features(dist_to_trend_pct, slope_pct_per_day, curr_close,
-                                   rsi, tsi_line, tsi_signal, macd_line, macd_signal,
-                                   atr_14, ema_200)
-            ])
+            base_features = build_rub_features(dist_to_trend_pct, slope_pct_per_day, curr_close,
+                                               rsi, tsi_line, tsi_signal, macd_line, macd_signal,
+                                               atr_14, ema_200)
 
             is_long = event_type == "REVERSION_UP"
-            model = MODEL_LONG if is_long else MODEL_SHORT
-            threshold = REVERSION_THRESH_LONG if is_long else REVERSION_THRESH_SHORT
-
-            if model is None:
-                continue
-
             direction = "LONG" if is_long else "SHORT"
             # RUB2 (Operator 2026-07-06): LONG-Gate wieder offen (Intent: Idee ist
             # symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML) —
@@ -205,7 +224,31 @@ def check_rubberband_conditions():
                 continue
 
             # Prediction (teuer, erst after Cooldown-Check)
-            prob = model.predict_proba(features)[0, 1]
+            if is_long:
+                if MODEL_LONG is None:
+                    continue
+                threshold = REVERSION_THRESH_LONG
+                prob = MODEL_LONG.predict_proba(pd.DataFrame([base_features]))[0, 1]
+            elif RUB2_SHORT is not None:
+                # RUB2-SHORT: Funding-Features as-of aus funding_rates — exakt
+                # dieselbe Quelle/Funktion wie der Replay (walkforward_sim
+                # --strategy rub). Fehlende Funding-Historie ⇒ Spalten fehlen ⇒
+                # unten 0 wie fillna(0) im Trainer (Serving-Parität, kein Skip).
+                # Lazy je Event (Vorfilter feuert selten — kein Voll-Load je Scan).
+                threshold = RUB2_SHORT['threshold']
+                fund_by_sym = load_funding(conn, [symbol])
+                base_features.update(funding_features_asof(fund_by_sym, symbol, now))
+                ml_input = pd.DataFrame([base_features])
+                for col in RUB2_SHORT['features']:
+                    if col not in ml_input.columns:
+                        ml_input[col] = 0
+                ml_input = ml_input[RUB2_SHORT['features']].fillna(0)
+                prob = RUB2_SHORT['model'].predict_proba(ml_input)[0, 1]
+            else:
+                if MODEL_SHORT is None:
+                    continue
+                threshold = REVERSION_THRESH_SHORT
+                prob = MODEL_SHORT.predict_proba(pd.DataFrame([base_features]))[0, 1]
 
             logger.info(f"RUB1 Trigger: {symbol} {direction} | ML-Conf: {prob:.1%} (Thresh: {threshold:.2f})")
 

@@ -272,11 +272,51 @@ Random-Split-Memorization). Live-Gewinn stammt aus Vorfilter + S/R-Targets + SHO
 - [x] **LONG-Gate WIEDER ÖFFNEN** (Operator-Entscheid, revidiert den Audit-Batch:
       Idee ist symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML).
       → Code-Änderung + Bot-Neustart nötig.
-- [ ] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
+- [x] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
       `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2).
       Für Mean-Reversion besonders interessant: extremes Funding = überfüllte
       Seite → Snap-Back-Kandidat vs. weiterlaufendes Messer. Historie voll in
-      `funding_rates`.
+      `funding_rates`. → Umgesetzt: 15-Feature-Vertrag (9 rub + 6 funding).
+
+**RUB2-Retrain durchgeführt 2026-07-07 vormittags — LONG NICHT deploybar,
+SHORT deploybar @0,829.** Replay `rub_replay_365d.jsonl` (365d, 530 Coins,
+97.641 Events; Lauf war durch den VPS-Ausfall 04:42 unterbrochen und wurde
+per `--resume` ab Coin 433 fertiggerechnet), Trainer
+`retrain_from_replay.py --strategy rub --days 365` (Chrono-Split + Purge,
+Isotonic, Safe-Threshold):
+- LONG (52.081 Events, Basis TP1 60,6 %): Val-Kurve auf ALLEN Thresholds
+  negativ (Ø −0,9…−1,2 %/Trade), Safe-Picker verweigert (threshold null,
+  Test 0 Trades). Damit ist die Operator-Hypothese „LONG-Schwäche =
+  Artefakt des kaputten ML" durch den sauberen Retrain NICHT bestätigt —
+  auch das saubere Modell findet keinen profitablen LONG-Operating-Point.
+  Kalibrierung invertiert im PnL: niedrige Prob-Buckets tragen die besten
+  Ø-PnLs (Tail-Snapbacks), d. h. TP1-Wahrscheinlichkeit ≠ Erwartungswert.
+- SHORT (45.560 Events, Basis TP1 73,9 %): thr 0,829, Val +0,25 %/Trade
+  (WR 81,5 %), Test 680/4.725 Trades, WR 81,9 % vs. Basis 79,1 %,
+  Summe +432 %P (**+0,64 %/Trade netto**) — konsistent mit dem bekannten
+  SHORT-Tail-Befund. Top-Features: slope_trend, dist_to_trend, dist_ema200;
+  fund_7d_cum/fund_72h auf Platz 5/6 (Funding trägt real bei).
+- Artefakte: `staging_models/rub2_model_{LONG,SHORT}.pkl` + Stats
+  `retrain_rub2_stats.json`.
+
+**Deploy (Operator-Entscheid 2026-07-07): SHORT LIVE in Bot 13.**
+`rub2_model_SHORT.pkl` ins Repo-Root kopiert (P1.35); Bot 13 lädt den
+Artefakt-Contract (Bot-25-Muster), baut die 6 Funding-Features as-of aus
+`funding_rates` (lazy je Event; fehlende Historie ⇒ 0 = `fillna(0)`-Parität)
+und gatet auf roher predict_proba @0,829. Fallback Legacy @0,85, falls das
+Artefakt fehlt. Freshness-Infra: Scheduled Task „Kythera Funding Backfill"
+(stündlich; Tabelle hatte keinen Live-Writer). LONG läuft unverändert auf
+dem Legacy-Modell @0,75 (Operator: Gate bleibt offen).
+
+**Regime-Befund zur LONG-Seite (Monats-Split des Replays, 2026-07-07):**
+Operator-These „LONG greift im Bull-Market" wird von den Daten gestützt —
+ungefilterte LONG-Events: Aug 25 +3,9 %/Trade (n=4.321), Sep 25 +2,4 %,
+Apr 26 +3,0 %, aber Okt 25 −3,6 %, Nov 25 −4,8 %, Jan 26 −3,4 %. Die
+Schwankung ist ein Regime-Effekt, kein Ranking-Problem des Modells
+(das Event-Ranking bleibt auch im Retrain wertlos). Konsequenz: LONG
+braucht ein **Regime-Gate** (Bull-Phasen-Schalter) statt eines
+Event-Gates — Kandidat für die HMM-Regime-Studie T-2026-CU-9050-020
+bzw. Whitelist/ROM1-Integration.
 
 ---
 

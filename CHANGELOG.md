@@ -1,3 +1,50 @@
+## [2026-07-07] RUB2-SHORT deployed — Bot 13 auf Artefakt-Contract
+
+### Added
+- `13_ai_rub_bot.py` — **SHORT läuft auf dem RUB2-Artefakt** (`rub2_model_SHORT.pkl`,
+  expliziter Copy aus staging_models, P1.35): Contract wie Bot 25
+  (model/features/optimal_threshold aus dem pkl-Dict), 15-Feature-Vertrag
+  (9 rub + 6 Funding as-of aus `funding_rates` via `core/funding_features`,
+  lazy je Event), fehlende Funding-Historie ⇒ 0 wie `fillna(0)` im Trainer
+  (Serving-Parität), Threshold 0,829 auf roher predict_proba (Safe-Picker-
+  Semantik). Fallback auf Legacy-Modell @0,85, falls Artefakt fehlt.
+  LONG unverändert Legacy @0,75 (RUB2-LONG nicht deploybar — Val-Kurve
+  durchweg negativ; Details MODEL_INTENT §8).
+- Scheduled Task **„Kythera Funding Backfill"** (stündlich, :35, als User) →
+  `Documents\kythera_funding_backfill.bat` ruft `tools/backfill_funding_rates.py`
+  inkrementell — hält `funding_rates` frisch fürs RUB2-Serving (Tabelle hatte
+  keinen Live-Writer; Stand vor dem Fix: 18 h alt).
+- Scheduled Task **„Kythera Fleet Autostart"** (ONSTART +2 min, SYSTEM) →
+  `Documents\start_kythera_fleet.bat` — Konsequenz aus dem VPS-Ausfall
+  2026-07-07 (~04:42–08:18, provider-seitig): nichts startete die Fleet neu.
+
+### Fixed
+- `tools/pex1_build_dataset.py` `spike_time_to_utc` — **DST-Mixed-Offset-Bug**
+  (traf PEX1- UND EPD2-Builder): `pd.to_datetime(errors="coerce")` ohne
+  `utc=True` fixiert bei timestamptz-Serien den Offset der ersten Zeile;
+  alle Zeilen mit anderem Offset (nach dem EET→EEST-Wechsel 2026-03-29)
+  wurden zu NaT koerziert und vom `dropna` verworfen — der erste EPD2-Lauf
+  verlor so ALLE Events nach dem 29.03. (38.974 statt erwartet ~3× so viele;
+  Zeitraum 32 statt 132 Tage). Awareness wird jetzt am Rohwert geprüft und
+  aware Serien mit `utc=True` geparst. Dataset neu gebaut.
+- `tools/retrain_from_replay.py` `run_epd` — Guard gegen degenerierte
+  Chrono-Splits (leerer Val-Slice ⇒ `iso.fit`-Crash beim abgeschnittenen
+  ersten Datensatz); außerdem `--strategy epd` NEU: EPD2-Trainer
+  (16-Feature-Vertrag = 10 Bot-10-Live-Features + 6 Funding, eigener Loader
+  fürs Builder-Schema ts/label/features, 7d-Purge, Safe-Threshold,
+  Artefakte `staging_models/epd2_model_{LONG,SHORT}.pkl`).
+
+### Kontext (Retrain-Ergebnisse, 2026-07-07 vormittags)
+- RUB-Replay 365d/530 Coins fertig (Resume nach VPS-Ausfall ab Coin 433);
+  `retrain_from_replay.py --strategy rub --days 365`: **SHORT deploybar**
+  @0,829 (Test 680/4.725, WR 81,9 % vs. Basis 79,1 %, +0,64 %/Trade netto),
+  **LONG nicht deploybar** (alle Val-Thresholds −0,9…−1,2 %/Trade).
+  Monats-Split des Replays stützt die Operator-These Regime-Abhängigkeit:
+  LONG ungefiltert in Alt-Bull-Monaten deutlich positiv (Aug/Sep 25:
+  +3,9/+2,4 %/Trade; Apr 26: +3,0), in Bear-Monaten desaströs (Okt/Nov 25:
+  −3,6/−4,8; Jan 26: −3,4) → LONG braucht ein REGIME-Gate, kein
+  Event-Ranking-Gate (verknüpft mit T-2026-CU-9050-020 HMM-Studie).
+
 ## [2026-07-06 nachts] Replay-Adapter für RUB2- und EPD2-Retrain
 
 ### Added
