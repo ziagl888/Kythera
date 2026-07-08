@@ -24,6 +24,8 @@ from core.regime_logic import (
     apply_debounce,
     classify_regime,
     compute_features,
+    hysteresis_prev_regime,
+    read_regime_state,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -462,7 +464,13 @@ async def regime_check_loop() -> None:
             logger.warning("Incomplete data — Regime-Check skipped")
             return
 
-        result = classify_regime(features, features["vola_p75"], features["vola_p40"])
+        # Regime-State EINMAL je Check lesen: liefert die Hysterese-Referenz
+        # (§22 — bestehender ODER pendender TREND hält bis unter die
+        # Exit-Schwelle) und wird unten an apply_debounce durchgereicht.
+        state_row = read_regime_state(conn)
+        prev_regime = hysteresis_prev_regime(state_row)
+
+        result = classify_regime(features, features["vola_p75"], features["vola_p40"], prev_regime=prev_regime)
         logger.info(
             f"Regime-Check: BTC={result['regime']} (conf={result['confidence_btc']:.2f}) "
             f"Alt={result['alt_context']} (conf={result['confidence_alt']:.2f})"
@@ -476,6 +484,7 @@ async def regime_check_loop() -> None:
             raw_alt_context=result["alt_context"],
             raw_confidence=result["confidence"],
             raw_ts=datetime.now(timezone.utc),
+            state_row=state_row,
         )
 
         if debounced["btc_regime_changed"] or debounced["alt_context_changed"]:

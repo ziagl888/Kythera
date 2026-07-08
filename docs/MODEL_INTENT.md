@@ -246,6 +246,29 @@ regimeabhängig (Alt-Pump-Phasen; Juli negativ → Drift-Watch Pflicht).
       `simulate_exit` (Skip-Entry-Hour, 7d-Horizont), 10 Live-Features
       (sample_fill=1.0 als dokumentierte Näherung) + 6 Funding-Features.
 
+**EPD2-Retrain durchgeführt 2026-07-07 — BEIDE Richtungen NICHT deploybar.**
+Datensatz nach DST-Fix: 85.031 Events / 639 Symbole (2026-02-25→07-07,
+mehr Historie gibt es nicht — Log-Beginn), gelabelt 78.351;
+`retrain_from_replay.py --strategy epd` (16 Features = 10 Live + 6 Funding,
+Chrono-Split, 7d-Purge, Safe-Threshold):
+- LONG (45.760 Events, Basis 52,2 %): Safe-Picker verweigert; bester
+  Val-Punkt −0,97 %/Trade. Test-Kalibrierung monoton in der WR
+  (43,9→69 %), aber **jedes Bucket im Ø-PnL negativ** — das Modell rankt
+  TP1-Wahrscheinlichkeit, die gepostete Geometrie hat trotzdem negatives EV.
+- SHORT (32.591 Events, Basis 60,0 %): Val formal deploybar @0,674
+  (+0,09 %/Trade, hauchdünn), aber **Val-Test-Bruch**: Test 1.204 Trades,
+  WR 68,2 % == Basisrate (null Selektion), −0,90 %/Trade.
+- **Monats-Split: kein einziger positiver Monat in KEINER Richtung**
+  (LONG Ø −0,05…−3,66; SHORT Ø −0,00…−3,93). Anders als bei RUB-LONG
+  (§8) ist hier im verfügbaren Fenster auch kein Bull-Regime-Rettungsanker
+  sichtbar — wobei die 4,5 Monate keine starke Alt-Pump-Phase enthalten
+  (EPD1s profitable Phasen lagen laut Step-4-Vermessung davor).
+- Konsequenz: kein Deploy; Ist-Zustand (Bot 10 mit Alt-Modell, beide
+  Richtungen offen per Operator-Entscheid) läuft weiter, Drift-Watch
+  bleibt Pflicht. Artefakte liegen in staging (`epd2_model_{LONG,SHORT}.pkl`),
+  Stats `retrain_epd2_stats.json`. Wiedervorlage: Retrain erneut, sobald
+  eine echte Alt-Pump-Phase in den Logs ist (Regime-Fenster-These §8).
+
 ---
 
 ## 8. RUB1 — Rubberband Mean Reversion ✅ (Intent bestätigt 2026-07-06)
@@ -272,11 +295,51 @@ Random-Split-Memorization). Live-Gewinn stammt aus Vorfilter + S/R-Targets + SHO
 - [x] **LONG-Gate WIEDER ÖFFNEN** (Operator-Entscheid, revidiert den Audit-Batch:
       Idee ist symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML).
       → Code-Änderung + Bot-Neustart nötig.
-- [ ] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
+- [x] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
       `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2).
       Für Mean-Reversion besonders interessant: extremes Funding = überfüllte
       Seite → Snap-Back-Kandidat vs. weiterlaufendes Messer. Historie voll in
-      `funding_rates`.
+      `funding_rates`. → Umgesetzt: 15-Feature-Vertrag (9 rub + 6 funding).
+
+**RUB2-Retrain durchgeführt 2026-07-07 vormittags — LONG NICHT deploybar,
+SHORT deploybar @0,829.** Replay `rub_replay_365d.jsonl` (365d, 530 Coins,
+97.641 Events; Lauf war durch den VPS-Ausfall 04:42 unterbrochen und wurde
+per `--resume` ab Coin 433 fertiggerechnet), Trainer
+`retrain_from_replay.py --strategy rub --days 365` (Chrono-Split + Purge,
+Isotonic, Safe-Threshold):
+- LONG (52.081 Events, Basis TP1 60,6 %): Val-Kurve auf ALLEN Thresholds
+  negativ (Ø −0,9…−1,2 %/Trade), Safe-Picker verweigert (threshold null,
+  Test 0 Trades). Damit ist die Operator-Hypothese „LONG-Schwäche =
+  Artefakt des kaputten ML" durch den sauberen Retrain NICHT bestätigt —
+  auch das saubere Modell findet keinen profitablen LONG-Operating-Point.
+  Kalibrierung invertiert im PnL: niedrige Prob-Buckets tragen die besten
+  Ø-PnLs (Tail-Snapbacks), d. h. TP1-Wahrscheinlichkeit ≠ Erwartungswert.
+- SHORT (45.560 Events, Basis TP1 73,9 %): thr 0,829, Val +0,25 %/Trade
+  (WR 81,5 %), Test 680/4.725 Trades, WR 81,9 % vs. Basis 79,1 %,
+  Summe +432 %P (**+0,64 %/Trade netto**) — konsistent mit dem bekannten
+  SHORT-Tail-Befund. Top-Features: slope_trend, dist_to_trend, dist_ema200;
+  fund_7d_cum/fund_72h auf Platz 5/6 (Funding trägt real bei).
+- Artefakte: `staging_models/rub2_model_{LONG,SHORT}.pkl` + Stats
+  `retrain_rub2_stats.json`.
+
+**Deploy (Operator-Entscheid 2026-07-07): SHORT LIVE in Bot 13.**
+`rub2_model_SHORT.pkl` ins Repo-Root kopiert (P1.35); Bot 13 lädt den
+Artefakt-Contract (Bot-25-Muster), baut die 6 Funding-Features as-of aus
+`funding_rates` (lazy je Event; fehlende Historie ⇒ 0 = `fillna(0)`-Parität)
+und gatet auf roher predict_proba @0,829. Fallback Legacy @0,85, falls das
+Artefakt fehlt. Freshness-Infra: Scheduled Task „Kythera Funding Backfill"
+(stündlich; Tabelle hatte keinen Live-Writer). LONG läuft unverändert auf
+dem Legacy-Modell @0,75 (Operator: Gate bleibt offen).
+
+**Regime-Befund zur LONG-Seite (Monats-Split des Replays, 2026-07-07):**
+Operator-These „LONG greift im Bull-Market" wird von den Daten gestützt —
+ungefilterte LONG-Events: Aug 25 +3,9 %/Trade (n=4.321), Sep 25 +2,4 %,
+Apr 26 +3,0 %, aber Okt 25 −3,6 %, Nov 25 −4,8 %, Jan 26 −3,4 %. Die
+Schwankung ist ein Regime-Effekt, kein Ranking-Problem des Modells
+(das Event-Ranking bleibt auch im Retrain wertlos). Konsequenz: LONG
+braucht ein **Regime-Gate** (Bull-Phasen-Schalter) statt eines
+Event-Gates — Kandidat für die HMM-Regime-Studie T-2026-CU-9050-020
+bzw. Whitelist/ROM1-Integration.
 
 ---
 
@@ -425,11 +488,34 @@ Audit-Einwand Liquidation ~−0,9 % vor jedem SL wurde vorgetragen und überstim
 **Entschieden (Michi):** Läuft **unverändert weiter** (Audit-Abschaltempfehlung
 überstimmt). Kein Tracking, kein Repaint-Fix beauftragt.
 
-## 22. Regime-Detection ✅ Fix beauftragt (2026-07-06)
+## 22. Regime-Detection ✅ UMGESETZT + LIVE (2026-07-07)
 
 **Entschieden (Michi):** **TRANSITION-Restklasse aufspalten** — Mid-Vola-Band
 (P40–P75) bekommt eine eigene Trend-Regel, damit TREND_UP/DOWN überhaupt vorkommen
-und das 4D-Gating nicht die halbe Zeit deaktiviert ist. Eigener Task.
+und das 4D-Gating nicht die halbe Zeit deaktiviert ist.
+
+**Umsetzung (2026-07-07, Operator-Pick nach `tools/regime_rules_study.py`):**
+Vol-skalierte Mid-Band-Regel **V2 K=1,5 mit Hysterese** in
+`core/regime_logic.py`: |ret_4h| ≥ 1,5×ATR_4h% → TREND_UP/DOWN; bestehender
+TREND hält bis |ret_4h| < 1,0×ATR (Hysterese via `prev_regime` =
+effektives Regime aus `regime_current`); TREND-Ziele brauchen 3 statt 2
+Debounce-Checks. Low-Vola-/HIGH_VOLA-/CHOP-Regeln unverändert.
+- Studie (430d, 7 Varianten): Ist-Regel produzierte 3 TREND_UP-Episoden in
+  430 Tagen (100 % <1h) — strukturell tot, weil ATR<P40 und |ret|>1,5 %
+  einander fast ausschließen.
+- Validierung mit finaler Regel (stateful, echte classify-Funktion):
+  TREND_UP 9,6 % / TREND_DOWN 9,8 % der Zeit (je ~415 Ep, med 1,5h,
+  Flaps 21–25 %), TRANSITION 41 %→20,8 %. **RUB-LONG in TREND_UP
+  +1,65 %/Trade (n=1.378), 9/13 Monate positiv** — negativ nur in den
+  tiefen Bear-Monaten Okt/Nov 25 + Jan 26 (Bull-Flackern im Bär = Falle)
+  → bestätigt die Regime-Gate-These aus §8, ist aber kein Bear-Immunschutz.
+- Deploy-Sicherheit: fehlende Whitelist-Zellen der neuen TREND-Zustände
+  defaulten auf open (`no_whitelist_entry`) — kein Mass-Auto-Close-Risiko;
+  die Zellen sammeln ab jetzt Daten. Tests: backtest/test_regime_detector.py
+  (27, inkl. 7 neue für Mid-Band/Hysterese/Debounce-3).
+- **Follow-up:** §23-Umbau (Shrinkage statt Default-Open) gehört zeitnah
+  dahinter; RUB-LONG-Regime-Gate in Bot 13 erst nach Whitelist-Datenlage
+  oder als expliziter TREND_UP-Schalter (Operator-Entscheid).
 
 ## 23. Bot-Regime-Analyzer / Whitelist ✅ Umbau beauftragt (2026-07-06)
 

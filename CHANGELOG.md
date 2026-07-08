@@ -1,3 +1,159 @@
+## [2026-07-07 abends] PR #10 — Review-Fixes zu den PR-#9-Findings (Korrektheit)
+
+### Fixed
+- `core/model_artifacts.py` — **`maybe_reload` verwirft ein geladenes Artefakt
+  bei einem fehlgeschlagenen Reload nicht mehr.** Bisher ersetzte das tägliche
+  Reload das In-Memory-Modell unbedingt durch das Ergebnis von `load_artifact`;
+  ein transienter Fehler (File-Lock während Operator-Copy, AV-Scan, halb
+  geschriebener Deploy) schaltete damit eine live Seite bis zum nächsten
+  24h-Fenster stumm (RUB2-SHORT: `if not RUB2_SHORT["loaded"]: continue`, kein
+  Legacy-Fallback). Neu: schlägt der Reload fehl UND existiert die Datei noch,
+  bleibt das geladene Artefakt aktiv (`loaded_at` wird trotzdem vorgerückt →
+  kein Retry pro Tick). Nur wenn die Datei WEG ist (Operator-Undeploy), wird
+  der Nicht-geladen-Zustand übernommen. Verhaltens-Test inline verifiziert.
+- `10_pump_dump_detector.py` — **`ticker_10s`-Timestamp auf die 10s-Marke
+  gefloort.** Der neue `UNIQUE(symbol, ts)`-Index konnte die motivierende
+  Doppel-Writer-Klasse (Detector-Doppelstart) gar nicht verhindern, weil jeder
+  Prozess einen rohen `datetime.now(utc)` je Tick stempelte → zwei Instanzen
+  erzeugten `ts`-Werte mit µs-Jitter, `ON CONFLICT DO NOTHING` griff nie. Jetzt
+  identischer, gerasterter `ts` je 10s-Fenster → Dedup wirkt.
+- `core/ticker_10s.py` — **Einmal-Migration (Dedup-DELETE + `CREATE UNIQUE
+  INDEX`) committet sofort in eigener Transaktion**, vor den idempotenten
+  Compression-/Retention-Policy-Statements. Sonst hätte ein späterer
+  Policy-Fehler per Rollback Dedup + Index mit weggeworfen, und der teure
+  Full-Table-DELETE liefe bei JEDEM Start erneut — nach `COMPRESS_AFTER` gegen
+  komprimierte Chunks, wo DELETE/`CREATE UNIQUE INDEX` eingeschränkt sind.
+- `tools/retrain_from_replay.py` — **`load_replay` scheitert bei `null`-Features
+  oder `null`-`net_pnl_pct` laut statt still auf 0.0/`{}` zu defaulten.** Solche
+  Zeilen sind Replay-Writer-Bugs; als 0.0-PnL-Zeilen verwässerten sie die
+  Validation-Ökonomie, auf der `pick_threshold_safe` den LIVE-Gate-Threshold
+  wählt (deploybar aussehendes Artefakt auf korrupter Ökonomie).
+- `13_ai_rub_bot.py` — **`RUB2_SHORT`-Init auf die volle `load_artifact`-
+  Contract-Form** (statt Teil-Dict ohne `threshold`/`features`/`loaded_at`):
+  entschärft KeyError-Fallen vor `load_models()` und erzwingt via `loaded_at=0.0`
+  den ersten Reload-Load.
+- `core/config.py` — **`_ch` behandelt leeren/whitespace-Wert als ungesetzt**
+  (→ 0) statt an `int("")` zu crashen. Eine getemplatete `.env`-Zeile wie
+  `CH_MAIN=` hätte sonst jeden Bot beim Import gerissen
+  (audit_reports/01_core_infra.md LOW).
+
+### Verifiziert
+- ruff (CI-Set) clean, mypy 65 Dateien clean, Regression-Guard `verify` OK,
+  Standalone-Suite 149 passed (die 3 roten Tests — `test_bot_naming`,
+  `test_bot_regime_analyzer`, `test_signal_orchestrator::…rom1…` — sind
+  vorbestehend auf `main`, keine PR-#10-Regression).
+
+### Offene Follow-ups (dokumentiert, nicht merge-blockierend)
+- **`backtest/backfill_regime_history.py`** ruft `classify_regime` weiter ohne
+  `prev_regime` → Enter-only-Semantik ≠ Live-Detector (Hysterese). Bei einem
+  Re-Run mischt `regime_history` zwei Klassifikator-Semantiken. Fix: rollierendes
+  `prev_regime` durch die Schleife fädeln wie im Detector.
+- **`tools/regime_rules_study.py`** modelliert im vektorisierten `classify()` die
+  deployte Hysterese nicht → künftige Grid-Runs bewerten eine No-Hysterese-
+  Variante.
+- **Bots 25/18** (`25_smc_ml_sniper.py`, `18_ai_abr1_bot.py`) laden Artefakte
+  weiter von Hand ohne Feature-Contract-Check/Reload; Bot 25 `exit(1)` statt
+  Idle bei fehlendem Artefakt. Kandidat für `core/model_artifacts.load_artifact`.
+- **RUB2-Feature-Contract** wird in Bot 13 (`RUB_FEATURES + FUNDING_FEATURES`)
+  und Trainer (`RUB2_FEATURES`) getrennt komponiert — eine geteilte Konstante in
+  `core` (wie `PEX1_FEATURES` in `core/research_features.py`) wäre die eine
+  Quelle (Regel 7). Divergenz scheitert aktuell laut über `load_artifact`, nicht
+  still, daher Follow-up.
+- **`13_ai_rub_bot.py` `since=now-95d`** dupliziert das `rates[-270:]`-Fenster von
+  `funding_features_asof` als Magic-Konstante (deckt es aktuell ab; koppeln über
+  eine geteilte Konstante).
+
+## [2026-07-07 mittags] Detector-Rework §22 LIVE — Mid-Vola-Trend-Regel mit Hysterese
+
+### Changed
+- `core/regime_logic.py` — **Mid-Band-Trend-Regel V2 K=1,5 + Hysterese**
+  (Operator-Pick aus `tools/regime_rules_study.py`, 7 Varianten über 430d):
+  Im Band P40..P75 gilt |ret_4h| ≥ 1,5×ATR_4h% → TREND_UP/DOWN; bestehender
+  TREND hält bis |ret_4h| < 1,0×ATR (`prev_regime`-Param, gefüttert aus
+  `regime_current`); TREND-Ziele brauchen 3 statt 2 Debounce-Checks.
+  Alt: TREND war strukturell tot (3 Episoden in 430d, alle <1h, weil
+  ATR<P40 ∧ |ret|>1,5 % sich fast ausschließen); TRANSITION war 41 %
+  Restklasse. Neu (validiert, stateful mit echter classify-Funktion):
+  TREND_UP/DOWN je ~10 % der Zeit (med 1,5h, Flaps 21–25 %), TRANSITION
+  20,8 %. Ökonomie-Check: RUB-LONG in TREND_UP +1,65 %/Trade (n=1.378),
+  9/13 Monate positiv (negativ nur Okt/Nov 25 + Jan 26 — tiefe Bear-Monate).
+- `26_regime_detector.py` — liest das effektive Regime vor der
+  Klassifikation und reicht es als `prev_regime` durch (Hysterese).
+- Tests: `backtest/test_regime_detector.py` +7 (Mid-Band, Hysterese
+  beide Richtungen, HIGH_VOLA-Vorrang, TREND-Debounce-3) — 27 passed.
+- Deploy-Sicherheit geprüft: fehlende Whitelist-Zellen der neuen
+  TREND-Zustände defaulten auf open (kein Mass-Auto-Close); Zellen sammeln
+  ab jetzt Evidenz. Follow-up: §23-Analyzer-Umbau (Shrinkage statt
+  Default-Open), danach ggf. explizites TREND_UP-Gate für RUB-LONG (§8).
+
+## [2026-07-07 mittags] New-Ideas-Kohorte trainiert — FIF1 deployed, Detector-Studie gestartet
+
+### Added
+- **Alle 4 New-Ideas-Datasets gebaut + trainiert** (Ergebnistabelle in
+  `docs/NEW_IDEAS_BOTS.md`): PEX1 ohne Selektionswert (AUC~0,55,
+  Threshold degeneriert), FMR1 ohne Fundament (Val-AUC 0,498 = Zufall),
+  TRM1 upstream blockiert (Klassen 0/5/1589 — Detector hält TREND nie,
+  Step-6-Befund; Wiedervorlage nach Detector-Rework), **FIF1 einziger
+  Kandidat** (Val-OP +0,044 %/Trade dünn; Test-Gate −0,08→+0,331 %/Trade,
+  WR 75,3 %, n=893/18.011).
+- **FIF1 DEPLOYED** (Operator 2026-07-07): `fif1_model.pkl` (thr 0,67) im
+  Repo-Root, Bot 33 recycelt — postet LIVE in CH_NEW_IDEAS
+  (`NEW_IDEAS_LIVE_POSTING=1`, AIM2-Validierungsmuster). Review 4–6 Wochen.
+- `tools/regime_rules_study.py` — **Detector-Rework Schritt 1 (MODEL_INTENT
+  §22)**: Regelvarianten-Replay über die volle BTC-15m-Historie. Ist-Regel
+  V0 vs. Mid-Band-Trend-Regel mit fixem Threshold (V1, Grid 1,5/2,0/2,5 %)
+  vs. vol-skaliert |ret_4h| ≥ K×ATR (V2, Grid 0,75/1,0/1,5); Bewertung
+  über Episoden-Statistik (kommt TREND vor? flappt es?) UND Ökonomie-Overlay
+  (Ø-PnL der RUB-LONG/ABR1-LONG-Replay-Events je Regime-Zustand — der
+  Regime-Gate-Use-Case aus §8). Debounce-Näherung 2 Bars; read-only.
+
+## [2026-07-07] RUB2-SHORT deployed — Bot 13 auf Artefakt-Contract
+
+### Added
+- `13_ai_rub_bot.py` — **SHORT läuft auf dem RUB2-Artefakt** (`rub2_model_SHORT.pkl`,
+  expliziter Copy aus staging_models, P1.35): Contract wie Bot 25
+  (model/features/optimal_threshold aus dem pkl-Dict), 15-Feature-Vertrag
+  (9 rub + 6 Funding as-of aus `funding_rates` via `core/funding_features`,
+  lazy je Event), fehlende Funding-Historie ⇒ 0 wie `fillna(0)` im Trainer
+  (Serving-Parität), Threshold 0,829 auf roher predict_proba (Safe-Picker-
+  Semantik). Fallback auf Legacy-Modell @0,85, falls Artefakt fehlt.
+  LONG unverändert Legacy @0,75 (RUB2-LONG nicht deploybar — Val-Kurve
+  durchweg negativ; Details MODEL_INTENT §8).
+- Scheduled Task **„Kythera Funding Backfill"** (stündlich, :35, als User) →
+  `Documents\kythera_funding_backfill.bat` ruft `tools/backfill_funding_rates.py`
+  inkrementell — hält `funding_rates` frisch fürs RUB2-Serving (Tabelle hatte
+  keinen Live-Writer; Stand vor dem Fix: 18 h alt).
+- Scheduled Task **„Kythera Fleet Autostart"** (ONSTART +2 min, SYSTEM) →
+  `Documents\start_kythera_fleet.bat` — Konsequenz aus dem VPS-Ausfall
+  2026-07-07 (~04:42–08:18, provider-seitig): nichts startete die Fleet neu.
+
+### Fixed
+- `tools/pex1_build_dataset.py` `spike_time_to_utc` — **DST-Mixed-Offset-Bug**
+  (traf PEX1- UND EPD2-Builder): `pd.to_datetime(errors="coerce")` ohne
+  `utc=True` fixiert bei timestamptz-Serien den Offset der ersten Zeile;
+  alle Zeilen mit anderem Offset (nach dem EET→EEST-Wechsel 2026-03-29)
+  wurden zu NaT koerziert und vom `dropna` verworfen — der erste EPD2-Lauf
+  verlor so ALLE Events nach dem 29.03. (38.974 statt erwartet ~3× so viele;
+  Zeitraum 32 statt 132 Tage). Awareness wird jetzt am Rohwert geprüft und
+  aware Serien mit `utc=True` geparst. Dataset neu gebaut.
+- `tools/retrain_from_replay.py` `run_epd` — Guard gegen degenerierte
+  Chrono-Splits (leerer Val-Slice ⇒ `iso.fit`-Crash beim abgeschnittenen
+  ersten Datensatz); außerdem `--strategy epd` NEU: EPD2-Trainer
+  (16-Feature-Vertrag = 10 Bot-10-Live-Features + 6 Funding, eigener Loader
+  fürs Builder-Schema ts/label/features, 7d-Purge, Safe-Threshold,
+  Artefakte `staging_models/epd2_model_{LONG,SHORT}.pkl`).
+
+### Kontext (Retrain-Ergebnisse, 2026-07-07 vormittags)
+- RUB-Replay 365d/530 Coins fertig (Resume nach VPS-Ausfall ab Coin 433);
+  `retrain_from_replay.py --strategy rub --days 365`: **SHORT deploybar**
+  @0,829 (Test 680/4.725, WR 81,9 % vs. Basis 79,1 %, +0,64 %/Trade netto),
+  **LONG nicht deploybar** (alle Val-Thresholds −0,9…−1,2 %/Trade).
+  Monats-Split des Replays stützt die Operator-These Regime-Abhängigkeit:
+  LONG ungefiltert in Alt-Bull-Monaten deutlich positiv (Aug/Sep 25:
+  +3,9/+2,4 %/Trade; Apr 26: +3,0), in Bear-Monaten desaströs (Okt/Nov 25:
+  −3,6/−4,8; Jan 26: −3,4) → LONG braucht ein REGIME-Gate, kein
+  Event-Ranking-Gate (verknüpft mit T-2026-CU-9050-020 HMM-Studie).
+
 ## [2026-07-06 nachts] Replay-Adapter für RUB2- und EPD2-Retrain
 
 ### Added

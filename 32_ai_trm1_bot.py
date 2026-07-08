@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_ID = "TRM1"
 ARTIFACT_PATH = "trm1_model.pkl"
-TARGET_CHANNEL_ID = _kcfg.CH_NEW_IDEAS
+TARGET_CHANNEL_ID = _kcfg.CH_TRM1  # per-Bot-Override, Fallback CH_NEW_IDEAS
 LIVE_POSTING = os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"
 SHADOW_FLOOR = 0.25
 TRADE_SYMBOL = "BTCUSDT"
@@ -239,7 +239,7 @@ def main() -> None:
     global LIVE_POSTING
     logger.info("=== 🧭 AI TRM1 BOT (Transition-Resolution, S10) GESTARTET ===")
     if TARGET_CHANNEL_ID == 0:
-        logger.warning("CH_NEW_IDEAS nicht gesetzt — erzwinge Shadow-only-Modus.")
+        logger.warning("Weder CH_TRM1 noch CH_NEW_IDEAS gesetzt — erzwinge Shadow-only-Modus.")
         LIVE_POSTING = False
     logger.info(f"Posting: {'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}")
 

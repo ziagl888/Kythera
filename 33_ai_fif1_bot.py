@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_ID = "FIF1"
 ARTIFACT_PATH = "fif1_model.pkl"
-TARGET_CHANNEL_ID = _kcfg.CH_NEW_IDEAS
+TARGET_CHANNEL_ID = _kcfg.CH_FIF1  # per-Bot-Override, Fallback CH_NEW_IDEAS
 LIVE_POSTING = os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"
 SIGNAL_MAX_AGE_MIN = 10  # Signale älter als das nie verarbeiten (Idle-Catch-up-Guard)
 SOURCE_STRATEGY = "Fast In And Out"
@@ -275,7 +275,7 @@ def main() -> None:
     global LIVE_POSTING
     logger.info("=== 🎛️ AI FIF1 BOT (FIFO-Filter, S11) GESTARTET ===")
     if TARGET_CHANNEL_ID == 0:
-        logger.warning("CH_NEW_IDEAS nicht gesetzt — erzwinge Shadow-only-Modus.")
+        logger.warning("Weder CH_FIF1 noch CH_NEW_IDEAS gesetzt — erzwinge Shadow-only-Modus.")
         LIVE_POSTING = False
     logger.info(f"Posting: {'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}")
 

@@ -79,10 +79,17 @@ def spike_time_to_utc(series: pd.Series, offset_h: int) -> pd.Series:
     Event im Label). Offset 2/3h ⇒ Domäne ist die PG-Lokalzeit Europe/Bucharest
     → DST-aware konvertieren; 0 ⇒ bereits UTC; alles andere: konstanter Shift
     mit Warnung (unbekannte Domäne)."""
+    # Awareness am ROHWERT prüfen, nicht an der geparsten Spalte: timestamptz
+    # über eine DST-Grenze (z. B. 2026-03-29 EET→EEST) liefert GEMISCHTE
+    # Offsets (+02/+03). pd.to_datetime ohne utc=True fixiert dann den Offset
+    # der ersten Zeile und koerziert alle abweichenden Zeilen zu NaT — der
+    # EPD2-Lauf 2026-07-07 verlor so ALLE Events nach dem DST-Wechsel.
+    sample = next((v for v in series if v is not None and not pd.isna(v)), None)
+    if sample is not None and getattr(sample, "tzinfo", None) is not None:
+        # timestamptz: aware → utc=True verkraftet gemischte Offsets → naive UTC.
+        s = pd.to_datetime(series, errors="coerce", utc=True)
+        return s.dt.tz_localize(None)
     s = pd.to_datetime(series, errors="coerce")
-    if getattr(s.dt, "tz", None) is not None:
-        # timestamptz: bereits UTC-aware → naive UTC (aim2-Konvention).
-        return s.dt.tz_convert("UTC").dt.tz_localize(None)
     if offset_h == 0:
         return s
     if offset_h in (2, 3):

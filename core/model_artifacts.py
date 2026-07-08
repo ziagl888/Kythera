@@ -73,10 +73,26 @@ def load_artifact(path: str, expected_features: list[str], default_tag: str) -> 
 
 
 def maybe_reload(artifact: dict, expected_features: list[str]) -> dict:
-    """Tägliches Reload (nimmt still neue Deploys auf, R07-AIM1-b-Muster)."""
+    """Tägliches Reload (nimmt still neue Deploys auf, R07-AIM1-b-Muster).
+
+    Ein fehlgeschlagener Reload darf ein GELADENES Artefakt nicht verwerfen
+    (Review PR #10): ein transienter Fehler (File-Lock während Operator-Copy,
+    AV-Scan, halb geschriebener Deploy) würde sonst eine live Seite bis zum
+    nächsten 24h-Fenster stumm schalten. Nur wenn die Datei WEG ist
+    (Operator-Undeploy), wird der Nicht-geladen-Zustand übernommen.
+    """
     if time.time() - artifact.get("loaded_at", 0) < RELOAD_SECONDS:
         return artifact
-    return load_artifact(artifact["path"], expected_features, artifact["tag"])
+    fresh = load_artifact(artifact["path"], expected_features, artifact["tag"])
+    if fresh["loaded"] or not artifact.get("loaded"):
+        return fresh
+    if not os.path.exists(artifact["path"]):
+        return fresh
+    logger.warning(
+        f"⚠️ Reload von {artifact['path']} fehlgeschlagen — behalte das geladene "
+        f"Artefakt {artifact['tag']} (nächster Versuch in {RELOAD_SECONDS // 3600}h)."
+    )
+    return {**artifact, "loaded_at": fresh["loaded_at"]}
 
 
 def calibrated_confidence(artifact: dict, raw_prob: float) -> float:
