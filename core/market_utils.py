@@ -95,12 +95,32 @@ def is_trade_already_active(conn, coin: str, direction: str, strategy: str) -> b
         return cursor.fetchone()[0]
 
 
+# Hard limit of the LIVE trade_cooldowns.module column: character varying(10).
+# The in-repo bootstrap DDLs say VARCHAR(50)/TEXT, but the live table predates
+# them and CREATE TABLE IF NOT EXISTS never widens columns (DDL drift, see
+# AUDIT_TODO P2.2). A longer tag makes update_cooldown throw
+# StringDataRightTruncation — which silenced the Volume Indicator for five
+# days (T-2026-CU-9050-024). Guarded here so the contract fails loudly and
+# identically in every environment, not just on the live VPS.
+COOLDOWN_MODULE_MAX_LEN = 10
+
+
+def _check_module_tag(module: str) -> None:
+    if len(module) > COOLDOWN_MODULE_MAX_LEN:
+        raise ValueError(
+            f"cooldown module tag '{module}' is {len(module)} chars — live "
+            f"trade_cooldowns.module is varchar({COOLDOWN_MODULE_MAX_LEN}), "
+            "shorten the tag (see T-2026-CU-9050-024)"
+        )
+
+
 def check_cooldown(conn, module: str, coin: str, direction: str, cd_hours: float) -> bool:
     """Returns True if the cooldown period has not yet elapsed (trade blocked).
 
     Nutzt timezone-aware UTC. Falls die DB einen naiven Timestamp zurückgibt,
     it is interpreted as UTC (stored that way historically).
     """
+    _check_module_tag(module)
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     cutoff = now_utc - datetime.timedelta(hours=cd_hours)
     with conn.cursor() as cursor:
@@ -126,6 +146,7 @@ def update_cooldown(conn, module: str, coin: str, direction: str, commit: bool =
     commit=False lässt den Upsert in der offenen Transaktion des Callers
     (P1.7: der Orchestrator committed Cooldown + Tracking + Outbox atomar).
     """
+    _check_module_tag(module)
     with conn.cursor() as cursor:
         cursor.execute(
             """

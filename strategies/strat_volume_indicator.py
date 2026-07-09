@@ -105,7 +105,12 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
         if check_cooldown(conn, module_tag, symbol, 'LONG', cd_hours): return None
         sl = float(entry * 0.95)
         t1, t2, t3, t4 = float(entry * 1.025), float(entry * 1.050), float(entry * 1.075), float(entry * 1.10)
-        update_cooldown(conn, module_tag, symbol, 'LONG')
+        # commit=False: the cooldown row joins the caller's transaction and is
+        # committed atomically with the signal by write_signal_atomic
+        # (3_detectors). A self-commit here would persist the 12h block even
+        # when the signal write fails afterwards — coin silenced without a
+        # posted signal (CLAUDE.md rule 8: the caller commits).
+        update_cooldown(conn, module_tag, symbol, 'LONG', commit=False)
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "LONG", "margin": margin, "entry": entry, "lev": lev,
                 "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
 
@@ -114,7 +119,8 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
         if check_cooldown(conn, module_tag, symbol, 'SHORT', cd_hours): return None
         sl = float(entry * 1.05)
         t1, t2, t3, t4 = float(entry * 0.975), float(entry * 0.95), float(entry * 0.925), float(entry * 0.9)
-        update_cooldown(conn, module_tag, symbol, 'SHORT')
+        # commit=False — see LONG branch above.
+        update_cooldown(conn, module_tag, symbol, 'SHORT', commit=False)
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "SHORT", "margin": margin, "entry": entry, "lev": lev,
                 "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
 
