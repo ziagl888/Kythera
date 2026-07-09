@@ -28,6 +28,27 @@ TELEGRAM_CHANNEL_ID = _kcfg.CH_MARKET_DATA
 EXCLUDED_COINS_FOR_TOTAL = ['BTCUSDT', 'XAUUSDT', 'XAGUSDT', 'PAXGUSDT', 'BTCDOMUSDT']
 COINS_FILE = 'coins.json'
 
+# ── Dedup fragments for the closed-trade tables (report-14 unique-index key) ──
+# Single source for all four hourly queries — key and survivor order must stay
+# in sync between job_signal_summary and job_per_bot_performance
+# (T-2026-CU-9050-025). closed_ai_signals has no unique index and carries
+# ~357k migration / LEGACY re-close rows (re-closes of the SAME trade with a
+# different close_time/close_price); closed_trades_master ~11k (all verified
+# identical-entry re-closes, no laddered trades). Survivor per group = the
+# EARLIEST close (the original outcome; re-close artifacts came later); the
+# remaining columns only break ties between rows with identical close times.
+# Direction is uppercased inside the key — historical rows are not uniformly
+# uppercase and all downstream comparisons are exact 'LONG'/'SHORT'.
+#
+# NOTE: open_time/time come from now() column defaults, and Postgres freezes
+# now() per transaction — two same-key signals written in one commit would
+# merge here (and would equally violate the planned report-14 unique index).
+# No current writer does that (per-coin/direction cooldowns + dedupe).
+AI_DEDUP_KEY = "symbol, model, upper(btrim(direction)), open_time"
+AI_DEDUP_ORDER = f"{AI_DEDUP_KEY}, close_time ASC NULLS LAST, targets_hit DESC NULLS LAST, status ASC NULLS LAST"
+CLS_DEDUP_KEY = "coin, strategy, upper(btrim(direction)), time"
+CLS_DEDUP_ORDER = f"{CLS_DEDUP_KEY}, posted ASC NULLS LAST, status DESC NULLS LAST"
+
 
 # 📡 DATABASE & HELPERS
 
@@ -408,40 +429,41 @@ async def job_signal_summary():
         # 2. GESCHLOSSENE TRADES HOLEN
         # Wir fragen alles ab, was entweder in den letzten 24h geschlossen ODER eröffnet wurde
         # Queries erweitert um entry/close_price für PnL-basierte is_win-Klassifikation
-        # Dedupe on (instrument, strategy, direction, open_time) in SQL — the
-        # unique-index key report 14 calls for. The previous key additionally
-        # included entry/close_price/close_time and did NOT collapse the ~357k
-        # migration / LEGACY re-close rows (T-2026-CU-9050-025): a re-close
-        # writes the SAME trade again with a different close_time/close_price.
-        # Live measurement 2026-07-09: 439k raw AI rows, 360k under the old
-        # key, 81.8k real trades under this key; outside Feb/Mar 2026 the key
-        # is unique in practice (raw == distinct every month). Survivor = the
-        # EARLIEST close (the original outcome; the re-close artifact came
-        # later), then highest targets_hit (sidesteps the LEGACY
-        # targets_hit=0 writer bug). Direction is uppercased inside the key
-        # and select list — historical rows are not uniformly uppercase and
-        # every comparison below is an exact 'LONG'/'SHORT' match.
-        query_cls_trades = """
-            SELECT DISTINCT ON (coin, strategy, upper(btrim(direction)), time)
-                   strategy, upper(btrim(direction)) as direction, entry, close_price,
-                   time as created_at, posted as closed_at, status
-            FROM closed_trades_master
-            WHERE posted >= %s OR time >= %s
-            ORDER BY coin, strategy, upper(btrim(direction)), time,
-                     posted ASC NULLS LAST, status DESC NULLS LAST
+        # Dedupe on the report-14 key (see AI_DEDUP_KEY/CLS_DEDUP_KEY at module
+        # top). Structure: dedup runs over the FULL table first, filters come
+        # OUTSIDE — so the survivor pick (earliest close = original outcome)
+        # is independent of the 24h window and the price-validity filter. A
+        # window-first query would let a future re-close event resurface
+        # months-old trades as freshly closed (only the artifact falls inside
+        # the window). entry/close_price > 0 matches job_per_bot_performance —
+        # v1-era rows carry close_price=0 and would otherwise score SHORTs as
+        # +100% wins. Live-verified 2026-07-09: with current data, filter
+        # placement does not change a single surviving row.
+        query_cls_trades = f"""
+            SELECT * FROM (
+                SELECT DISTINCT ON ({CLS_DEDUP_KEY})
+                       strategy, upper(btrim(direction)) as direction, entry, close_price,
+                       time as created_at, posted as closed_at, status
+                FROM closed_trades_master
+                ORDER BY {CLS_DEDUP_ORDER}
+            ) d
+            WHERE (d.closed_at >= %s OR d.created_at >= %s)
+              AND d.entry > 0 AND d.close_price > 0
         """
         df_cls_trades = pd.read_sql_query(query_cls_trades, conn, params=(t24, t24))
 
-        query_cls_ai = """
-            SELECT DISTINCT ON (symbol, model, upper(btrim(direction)), open_time)
-                   model as strategy, upper(btrim(direction)) as direction, entry, close_price,
-                   open_time as created_at, close_time as closed_at, targets_hit,
-                   status as close_reason
-            FROM closed_ai_signals
-            WHERE (close_time >= %s OR open_time >= %s)
-              AND status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
-            ORDER BY symbol, model, upper(btrim(direction)), open_time,
-                     close_time ASC NULLS LAST, targets_hit DESC NULLS LAST, status ASC NULLS LAST
+        query_cls_ai = f"""
+            SELECT * FROM (
+                SELECT DISTINCT ON ({AI_DEDUP_KEY})
+                       model as strategy, upper(btrim(direction)) as direction, entry, close_price,
+                       open_time as created_at, close_time as closed_at, targets_hit,
+                       status as close_reason
+                FROM closed_ai_signals
+                WHERE status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
+                ORDER BY {AI_DEDUP_ORDER}
+            ) d
+            WHERE (d.closed_at >= %s OR d.created_at >= %s)
+              AND d.entry > 0 AND d.close_price > 0
         """
         df_cls_ai = pd.read_sql_query(query_cls_ai, conn, params=(t24, t24))
 
@@ -786,34 +808,27 @@ async def job_per_bot_performance() -> None:
 
         # Klassische Trades: time=created, posted=closed, status=0..4 (string)
         #
-        # Both closed queries dedupe on (instrument, strategy, direction,
-        # open_time) — the unique-index key report 14 calls for
-        # (T-2026-CU-9050-025). The previous key additionally included
-        # entry/close_price/close_time and did NOT collapse the ~357k
-        # migration / LEGACY re-close rows: a re-close writes the SAME trade
-        # again with a different close_time/close_price. Live measurement
-        # 2026-07-09: 439k raw AI rows → 81.8k real trades under this key;
-        # outside Feb/Mar 2026 the key is unique in practice (raw == distinct
-        # every month). Survivor = the EARLIEST close (the original outcome;
-        # the re-close artifact came later), then highest targets_hit
-        # (sidesteps the LEGACY targets_hit=0 writer bug). DISTINCT ON
-        # collapses everything server-side instead of shipping the noise to
-        # pandas every hour. Direction is uppercased inside the key and the
-        # select list — historical rows are not uniformly uppercase and
-        # pnl_pct/direction splits compare exact 'LONG'/'SHORT'.
+        # Both closed queries dedupe on the report-14 key (AI_DEDUP_KEY /
+        # CLS_DEDUP_KEY at module top, rationale there). Live measurement
+        # 2026-07-09: 439k raw AI rows → 81.8k real trades under this key
+        # (old #13 key left 360k); outside Feb/Mar 2026 the key is unique in
+        # practice (raw == distinct every month). Same structure as the
+        # summary queries: dedup over the full table FIRST, validity filter
+        # outside — the survivor pick must not depend on the filter.
         #
         # entry > 0 AND close_price > 0: v1-era rows (pre-2026-03) carry
         # close_price=0 — the pnl formula would score such a SHORT as a +100%
         # win (a LONG as a -100% loss), both inside the 100% outlier bound.
         df_cls_closed = pd.read_sql_query(
-            """
-            SELECT DISTINCT ON (coin, strategy, upper(btrim(direction)), time)
-                   strategy, upper(btrim(direction)) as direction, entry, close_price,
-                   time as created_at, posted as closed_at, status
-            FROM closed_trades_master
-            WHERE entry > 0 AND close_price > 0
-            ORDER BY coin, strategy, upper(btrim(direction)), time,
-                     posted ASC NULLS LAST, status DESC NULLS LAST
+            f"""
+            SELECT * FROM (
+                SELECT DISTINCT ON ({CLS_DEDUP_KEY})
+                       strategy, upper(btrim(direction)) as direction, entry, close_price,
+                       time as created_at, posted as closed_at, status
+                FROM closed_trades_master
+                ORDER BY {CLS_DEDUP_ORDER}
+            ) d
+            WHERE d.entry > 0 AND d.close_price > 0
             """,
             conn,
         )
@@ -821,16 +836,17 @@ async def job_per_bot_performance() -> None:
         # AI-signals: open_time=created, close_time=closed, targets_hit=0..19 (int)
         # close_reason wird aus der status-Spalte geladen (vom 8_ai_trade_monitor gesetzt)
         df_ai_closed = pd.read_sql_query(
-            """
-            SELECT DISTINCT ON (symbol, model, upper(btrim(direction)), open_time)
-                   model as strategy, upper(btrim(direction)) as direction, entry, close_price,
-                   open_time as created_at, close_time as closed_at, targets_hit,
-                   status as close_reason
-            FROM closed_ai_signals
-            WHERE entry > 0 AND close_price > 0
-              AND status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
-            ORDER BY symbol, model, upper(btrim(direction)), open_time,
-                     close_time ASC NULLS LAST, targets_hit DESC NULLS LAST, status ASC NULLS LAST
+            f"""
+            SELECT * FROM (
+                SELECT DISTINCT ON ({AI_DEDUP_KEY})
+                       model as strategy, upper(btrim(direction)) as direction, entry, close_price,
+                       open_time as created_at, close_time as closed_at, targets_hit,
+                       status as close_reason
+                FROM closed_ai_signals
+                WHERE status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
+                ORDER BY {AI_DEDUP_ORDER}
+            ) d
+            WHERE d.entry > 0 AND d.close_price > 0
             """,
             conn,
         )

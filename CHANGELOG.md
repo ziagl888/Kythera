@@ -15,7 +15,17 @@
   Normalbetrieb eindeutig, raw == distinct in jedem Monat). Survivor je
   Gruppe: frühester Close (das Original-Outcome; das Re-Close-Artefakt kam
   später), dann höchste targets_hit. Beide Jobs, beide Tabellen (Classic:
-  ~11k Duplikate nach demselben Schlüssel).
+  ~11k Duplikate nach demselben Schlüssel — alle mit identischen Entries
+  verifiziert, keine legitimen Ladder-Trades betroffen).
+- `23_market_tracker.py` — **Einheitliche Query-Struktur nach Review**: Dedup
+  läuft in allen vier Queries ZUERST über die volle Tabelle, Fenster- und
+  Preis-Validitäts-Filter (`entry/close_price > 0`, jetzt auch im
+  Summary-Job) liegen außen. Damit hängt die Survivor-Wahl nicht vom Filter
+  ab, und ein künftiges Re-Close-Event kann keine Monate alten Trades als
+  „frisch geschlossen" ins 24h-Fenster spülen. Schlüssel/Sortierung leben in
+  Modul-Konstanten (`AI_DEDUP_KEY` etc.) statt in vier Kopien. Live
+  verifiziert: identische Ergebnismenge (81.837 Gruppen) bei beiden
+  Strukturen mit aktuellem Datenbestand.
 
 ### Bewusst NICHT geändert
 - `tools/track_shadow_model.py` behält seinen engeren Natural-Key — er wird
