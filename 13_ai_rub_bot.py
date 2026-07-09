@@ -45,6 +45,10 @@ REVERSION_THRESH_LONG = 0.75
 # ohne Artefakt-Meta und postet per Operator-Entscheid (2026-07-06) unter RUB2.
 # Die SHORT-Seite zieht ihren Tag dagegen aus RUB2_SHORT["tag"] (= meta.model_id).
 RUB_LONG_TAG = "RUB2"
+# Gleicher Wert, ANDERE Bedeutung: das Tag, unter dem dieser Bot vor
+# T-2026-CU-9050-030 BEIDE Richtungen postete. Nur für den transitionalen
+# Cooldown-Dedup — siehe check_rubberband_conditions.
+RUB_LEGACY_TAG = "RUB2"
 
 MODEL_LONG = None
 # Volle load_artifact-Contract-Form (KEIN Teil-Dict): loaded_at=0.0 erzwingt den
@@ -237,7 +241,15 @@ def check_rubberband_conditions():
             # Der Shadow-Log unterhalb bleibt erhalten — er dokumentiert alle
             # potenziellen Trades, auch die abgelehnten. Beim Skip durch Cooldown
             # loggen wir weiterhin fürs Monitoring.
-            if check_cooldown(conn, module_tag, symbol, direction, 4):
+            # Transitionaler Dedup (T-2026-CU-9050-030): der Cooldown ist RUBs EINZIGE
+            # Re-Fire-Sperre — anders als MIS/QM prüft dieser Bot ai_signals nicht auf
+            # einen offenen Trade. Der Cooldown-Key ist der Tag, und der wechselt beim
+            # RUB3-Rollout auf der SHORT-Seite. Eine frische RUB2-Cooldown-Row würde ein
+            # RUB3-Signal auf demselben Coin dann nicht mehr sperren. Also zusätzlich
+            # gegen den Alt-Tag prüfen; solange die Tags gleich sind (heute), fällt der
+            # zweite Query weg.
+            cooldown_tags = [module_tag] if module_tag == RUB_LEGACY_TAG else [module_tag, RUB_LEGACY_TAG]
+            if any(check_cooldown(conn, t, symbol, direction, 4) for t in cooldown_tags):
                 logger.debug(f"RUB1 Prediction für {symbol} {direction} im Cooldown — skip.")
                 continue
 
