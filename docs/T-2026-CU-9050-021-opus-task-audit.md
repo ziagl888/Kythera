@@ -43,7 +43,10 @@ Fünf widersprüchliche Checkboxen am Code verifiziert statt geflippt. Ergebnis:
 - ~~P1.11 WS-Buffer-Key~~ — **war bereits gefixt**, Key ist `(sym, tf, open_time)` (`1_data_ingestion.py:662`). Aus A2 gestrichen.
 **Done:** je Item Fix + betroffener `backtest/`-Test bzw. nachvollziehbarer Beweis im PR + Checkbox. **Achtung:** alles Geld-Pfad-nah — Qualitätsbar §5 "Code-Fix" voll anwenden.
 
-### A2b · P1.45 Artefakt-`model_id` in den Post-Pfaden verdrahten (BUILD, ~2-3h) — **vor jedem Retrain-Rollout**
+### ✅ A2b · P1.45 Artefakt-`model_id` in den Post-Pfaden verdrahten (BUILD, ~2-3h) — **erledigt 2026-07-09, T-2026-CU-9050-030 / PR #20**
+**Erledigt:** MIS zieht die Generation je Horizont aus `meta.model_id`, RUB richtungsabhängig (SHORT aus der Meta, LONG behält die benannte Konstante `RUB_LONG_TAG`), QM präventiv inkl. `module_tag` als Pflicht-Keyword in `send_cornix_signal`. Drei Guard-Tests. Keine Live-Semantik-Änderung — die Tags bleiben heute MIS2-\*, RUB2, QM_1H. **B7 und C2 sind damit entblockt** (der EPD2/SRA2-Nebenbefund bleibt offen, siehe unten).
+
+
 `11_ai_mis`, `13_ai_rub` und `24_quasimodo` werfen die verfügbare `model_id` weg und posten unter einer Quellcode-Konstante (Details im Ledger, P1.45). Heute stimmt der Tag zufällig; beim nächsten Retrain (MIS3/RUB3/QM2) verschmelzen die Generationen still in Per-Bot-WR und Orchestrator-Gating — dieselbe Klasse, die PR #16 im Sniper gefixt hat. Muster: `18_ai_abr1_bot.py:520`. RUB richtungsabhängig fixen (LONG reused `"RUB2"` bewusst für ein Legacy-Modell). Je ein Guard-Test analog `backtest/test_sniper_tag.py`. **Blockiert B7 und C2.**
 
 ### A3 · P2-Robustheits-Cluster Ingestion/Housekeeping (BUILD, ~4h)
@@ -82,7 +85,7 @@ Der Guard **ist armed**: 24 Goldens + 24 Fixtures + `manifest.json` sind seit Co
 **Vorentscheid:** exakt dem Muster der gelieferten Adapter folgen: Detection-Logik in geteilten `core/*`-Builder heben, `tools/walkforward_sim.py --strategy <s>`, Retrain via `retrain_from_replay.py`, Artefakt nach `staging_models/` mit neuem Model-Tag. **Rollout jedes Kandidaten = C-Gate (Michi).**
 **Korrektur 2026-07-09 (T-028): MIS1 gehört nicht mehr in diese Liste.** Adapter und Retrain-Code sind gebaut — `walkforward_sim.py` unterstützt `ufi1, td, bb, abr1, mis1, rub` (`:906`), `retrain_from_replay.py` zusätzlich `epd` (`:771`), geteilte Builder `core/{mis,rub,funding}_features.py` existieren. Bei MIS1 steht nur noch die **Ausführung** aus (400d-Replay auf dem VPS → MIS2-Familie trainieren → Kalibrierungs-Report), nicht der Code.
 **Ohne jeden Adapter (Grep: 0 Treffer in `walkforward_sim.py`):** QM, ATS1, ATB1, SRA1. Reihenfolge nach Live-Relevanz: MIS1-Ausführung + QM zuerst, ATB1 zuletzt (geparkt).
-**Vorbedingung: A2b (P1.45).** MIS und QM sind genau die Bots, die ihre Artefakt-`model_id` verwerfen — ein MIS3/QM2-Rollout vor dem Fix postet die neue Generation still unter dem alten Tag. Ausserdem: `retrain_from_replay.py:723` (EPD2) und `retrain_sra2.py:281` (SRA2) schreiben dict-Artefakte **mit** `model_id`, während die Live-Bots `10_pump_dump_detector` und `9_ai_sr_bot` rohe Modelle laden und keine Meta lesen — beim Verdrahten muss der Tag aus der `model_id` kommen.
+**Vorbedingung: A2b (P1.45) — ✅ erfüllt seit 2026-07-09 (T-2026-CU-9050-030).** MIS und QM lesen ihre Artefakt-`model_id` jetzt; ein MIS3/QM2-Rollout postet unter dem neuen Tag. **Offen bleibt** der EPD2/SRA2-Teil: `retrain_from_replay.py:723` (EPD2) und `retrain_sra2.py:281` (SRA2) schreiben dict-Artefakte **mit** `model_id`, während die Live-Bots `10_pump_dump_detector` und `9_ai_sr_bot` rohe Modelle laden und keine Meta lesen — beim Verdrahten muss der Tag aus der `model_id` kommen.
 
 ## Tier C — Michi-gated (Opus bereitet Briefing/Zahlen vor, ersetzt das Verdict nicht)
 
@@ -102,9 +105,9 @@ Erst nach Z2 (B4). Tech-Entscheidung (Flask vs FastAPI+HTMX/React, SSE/WS, Mobil
 ~~A1~~ erledigt. ~~B5~~ war bereits scharf. Von hier:
 
 1. **A2** (Monitor/Tracker-Korrektheit — direkte Verbesserung der Gating-Datenbasis; Restmenge ist verifiziert, fünf Items)
-2. **A2b** (P1.45 `model_id`-Verdrahtung — klein, aber **blockiert jeden Retrain-Rollout**; sinnvoll direkt nach oder parallel zu A2, da datei-disjunkt)
+2. ~~**A2b** (P1.45 `model_id`-Verdrahtung)~~ — ✅ erledigt 2026-07-09 (T-2026-CU-9050-030)
 3. **B1** (R3 zentrale UTC-Policy — räumt das grösste offene Cluster strukturell)
 4. **B6** sobald Michi die VPS-Session freigibt (Blocker für A4-Replay und B7)
 5. **A3/B2/B3** nach Kapazität. Lückenfüller: **P2.51** (Guard-Disarm-Härtung, ~15 min BUILD), **P1.26** (SMC-FVG-Dead-Code, Einzeiler + Test).
 
-C1/C3 nur als Vorbereitung, nie eigenmächtig. Kein Retrain-Rollout vor A2b.
+C1/C3 nur als Vorbereitung, nie eigenmächtig. A2b ist seit 2026-07-09 erledigt — die Rollout-Sperre für MIS3/RUB3/QM2 ist damit aufgehoben; EPD2/SRA2 brauchen die `model_id`-Verdrahtung noch (P1.45-Nebenbefund).
