@@ -28,8 +28,7 @@ def test_loader_prefers_artifact_model_id():
         "the loader no longer reads the artifact meta — a QM2 artifact would post as QM_1H"
     )
     assert re.search(r"'tag':\s*model_id or f\"QM_\{tf\.upper\(\)\}\"", SRC), (
-        "the loader no longer falls back to the derived tag when model_id is absent "
-        "(today's qm_ml_trainer writes none)"
+        "the loader no longer falls back to the derived tag when model_id is absent (today's qm_ml_trainer writes none)"
     )
 
 
@@ -67,8 +66,22 @@ def test_trade_call_passes_module_tag():
     )
 
 
+def test_active_check_covers_the_legacy_tag():
+    """The tag is also the dedup key. When QM2 rolls out the tag flips, so an open QM_1H
+    position would stop blocking a re-fire on the same symbol/direction and the bot would
+    open a SECOND live position next to it. The active-trade check must cover the tag the
+    pre-fix code would have posted (sniper precedent, T-2026-CU-9050-026). With no QM2
+    artifact deployed both tags are identical and the IN is a no-op."""
+    assert "model IN (%s, %s)" in SRC, "active-trade check no longer covers the legacy tag"
+    assert re.search(r"legacy_tag\s*=\s*f\"QM_\{tf\.upper\(\)\}\"", SRC), "legacy_tag must be the pre-fix derived tag"
+    assert re.search(r"\(symbol,\s*direction,\s*module_tag,\s*legacy_tag\)", SRC), (
+        "the active-trade query no longer binds both tags"
+    )
+
+
 if __name__ == "__main__":
     test_loader_prefers_artifact_model_id()
+    test_active_check_covers_the_legacy_tag()
     test_scan_uses_the_artifact_tag()
     test_send_requires_module_tag()
     test_send_does_not_recompute_the_tag()

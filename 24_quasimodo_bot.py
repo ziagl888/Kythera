@@ -91,6 +91,13 @@ def scan_market():
 
     for tf in TIMEFRAMES:
         module_tag = ML_MODELS[tf]['tag']  # Artefakt-Tag, nicht aus tf abgeleitet
+        # Transitionaler Dedup (T-2026-CU-9050-030): der Active-Trade-Check läuft über
+        # den Tag, und der wechselt beim QM2-Rollout (QM_1H → QM2_1H). Ohne den Alt-Tag
+        # blockte eine offene QM_1H-Position denselben Coin/Direction nicht mehr — der
+        # QM2-Lauf öffnete eine ZWEITE Live-Position daneben. legacy_tag ist exakt das
+        # Tag, das dieser Bot vor dem Fix gepostet hätte; solange kein QM2-Artefakt
+        # deployt ist, sind beide identisch und das IN ist ein No-op.
+        legacy_tag = f"QM_{tf.upper()}"
         logger.info(f"🔍 Starting QM-Scan für Timeframe: {tf}")
 
         current_model = ML_MODELS[tf]['model']
@@ -174,9 +181,9 @@ def scan_market():
                         cur.execute(
                             """
                             SELECT 1 FROM ai_signals
-                            WHERE symbol = %s AND direction = %s AND model = %s
+                            WHERE symbol = %s AND direction = %s AND model IN (%s, %s)
                         """,
-                            (symbol, direction, module_tag),
+                            (symbol, direction, module_tag, legacy_tag),
                         )
                         trade_exists = cur.fetchone()
 
