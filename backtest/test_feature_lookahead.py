@@ -170,6 +170,10 @@ def test_mis_multi_lookahead():
         g_base = base[base["symbol"] == sym].reset_index(drop=True)
         g_pois = poisoned[poisoned["symbol"] == sym].reset_index(drop=True)
         assert_rows_invariant(g_base, g_pois, FEATURE_COLS, perturb_from, f"MIS-multi({sym})")
+        # Canary wie in test_mis_lookahead: die vergiftete Region MUSS divergieren.
+        a = g_base.loc[perturb_from:, FEATURE_COLS].to_numpy(dtype=np.float64)
+        b = g_pois.loc[perturb_from:, FEATURE_COLS].to_numpy(dtype=np.float64)
+        assert not np.allclose(a, b, equal_nan=True), f"Perturbation erreicht den Multi-Builder nicht ({sym})"
     print(f"OK  MIS add_advanced_features_multi: Zeilen < {perturb_from} je Symbol invariant")
 
 
