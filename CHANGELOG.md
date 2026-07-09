@@ -1,3 +1,37 @@
+## [2026-07-09] SMC-16 FVG-Entry war unerreichbar (T-2026-CU-9050-033, P1.26)
+
+`find_unmitigated_fvgs` in `16_smc_forex_metals_bot.py` scannte auf Mitigation
+über `range(fvg['index'] + 1, len(df))` — **inklusive** der aktuellen Kerze
+(`curr_idx = len(df) - 1`) — und verwarf ein BULLISH-FVG, sobald `low <= top`
+war. Genau dieses Prädikat prüft der Entry-Trigger anschliessend auf derselben
+Kerze (`16:436`, symmetrisch BEARISH über `high >= bottom` in `16:464`). Jedes
+FVG, das den Entry ausgelöst hätte, war damit per Konstruktion schon aus
+`bull_fvgs`/`bear_fvgs` gefallen: der FVG-Entry konnte in beiden Richtungen nie
+feuern. Der Beweis steht rein am Code — der FVG-Pfad schreibt als Cooldown-Key
+ausschliesslich das literale `"SMC_FVG"` (`16:437,465`, die einzigen beiden
+Writer dieses Keys), und dafür existieren 0 Live-Rows (die 83 gefundenen
+`SMC_1H_FVG`/`SMC_4H_FVG`-Rows stammen aus einer älteren, TF-präfigierenden
+Codeversion — die Falle, an der die frühere Widerlegung dieses Findings
+scheiterte).
+
+Der Scan endet jetzt vor der aktuellen Kerze (`range(fvg['index'] + 1, curr_idx)`).
+Die aktuelle Kerze ist der Entry-Auslöser, nicht der Mitigator.
+
+### Live-Semantik
+Die einzige Verhaltensänderung: FVG-Entries werden möglich. Kerzen **vor** der
+aktuellen mitigieren unverändert, die FVG-Erkennung selbst ist unberührt, und
+die beiden Trigger-Bedingungen (`price > bottom * 0.999` bzw.
+`price < top * 1.001`), Cooldown, Cornix-Message und Chart bleiben wie sie
+waren. Der BOS/CHoCH-Pfad ist nicht betroffen.
+
+### Verifikation
+Neuer Guard-Test `backtest/test_smc_fvg_dead_code.py` (11 Fälle): Tap auf der
+aktuellen Kerze überlebt den Scan (beide Richtungen), Tap auf einer früheren
+Kerze mitigiert weiterhin, Entry-Trigger als Ganzes erreichbar, plus ein
+Divergenz-Kanarienvogel, der den alten `range()` nachbaut und beweist, dass er
+genau die triggernden FVGs tötet — ein Revert des Fixes lässt den Test rot
+werden.
+
 ## [2026-07-09] Market-Tracker gibt Pool-Connections auf dem Fehlerpfad zurück (T-2026-CU-9050-029, P1.43, PR #18)
 
 `23_market_tracker.py` holte die Connection an zwei Stellen bare und rief

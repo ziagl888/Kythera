@@ -159,9 +159,15 @@ def find_unmitigated_fvgs(df, direction="BULLISH"):
                 fvgs.append({'top': df['low'].iloc[i - 2], 'bottom': df['high'].iloc[i], 'index': i})
 
     unmitigated = []
+    curr_idx = len(df) - 1
     for fvg in fvgs:
         is_mitigated = False
-        for j in range(fvg['index'] + 1, len(df)):  # 💥 FIX: Bis zum tatsächlichen Ende iterieren!
+        # P1.26: The mitigation scan must stop BEFORE the current candle. The FVG
+        # entry trigger in run_smc_analysis re-evaluates the very same predicate
+        # (low <= top / high >= bottom) on df.iloc[curr_idx]. Including curr_idx
+        # here removed exactly those FVGs that would fire, so the entry could
+        # never trigger (dead code). Older candles still mitigate as before.
+        for j in range(fvg['index'] + 1, curr_idx):
             if direction == "BULLISH" and df['low'].iloc[j] <= fvg['top']:
                 is_mitigated = True
                 break
