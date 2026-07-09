@@ -1,6 +1,6 @@
 # OPUS-HANDOFF — Operating Manual Kythera
 
-**Stand:** 2026-07-07 (letzter Fable-5-Tag) · **Task:** T-2026-CU-9050-021 · **Schwester-Handoffs:** T-2026-CU-9000-296 (claude_skills), T-2026-CU-9000-297 (knowledge_scraper)
+**Stand:** 2026-07-09 (Ledger-Verifikation T-2026-CU-9050-028) · **Basis:** 2026-07-07, T-2026-CU-9050-021 (letzter Fable-5-Tag) · **Schwester-Handoffs:** T-2026-CU-9000-296 (claude_skills), T-2026-CU-9000-297 (knowledge_scraper)
 
 Ab 2026-07-08 übernimmt Opus die Task-Abarbeitung in diesem Repo. Dieses Dokument ist das Operating Manual: Arbeitszyklus, System-Synthese, kuratierte Fallen, Qualitätsbar, Eskalationsregeln. Es ergänzt `CLAUDE.md` (harte Regeln, auto-geladen) und `docs/T-2026-CU-9050-021-opus-task-audit.md` (geranktes Backlog). **Am Session-Start lesen, vor dem ersten Edit.**
 
@@ -12,7 +12,8 @@ Kythera ist Michis produktiver Crypto-Trading-Bot (~29 Bots, ~530 Coins, Binance
 
 ## §2 Kanonischer Arbeitszyklus
 
-1. **Task wählen** — Backlog-Reihenfolge aus dem Task-Audit-Doc; pro Task zuerst `read_doc` des KB-Task-Docs (die Briefs hier sind Interpretation vom 2026-07-07, die KB kann weitergedreht sein).
+0. **`git fetch origin` + Stand prüfen** — vor jeder Priorisierung, vor dem ersten Edit (Falle 15).
+1. **Task wählen** — Backlog-Reihenfolge aus dem Task-Audit-Doc; pro Task zuerst `read_doc` des KB-Task-Docs (die Briefs dort sind eine Interpretation vom Stand-Datum, die KB kann weitergedreht sein).
 2. **KB-Task starten** (`/task-start T-2026-CU-9050-NNN`), Worktree, Branch `feat/<t-id>`.
 3. **Vor Lösungsideen: Problem in 4 Fragen zerlegen** (Skill `z-fable-judgment`): Outcome / Population / Messung / Stop-Kriterium. Wenn eine nicht beantwortbar ist → Rückfrage, nicht Annahme.
 4. **KB-first:** `search_kb` nach Präzedenzfall (Decisions, 9050-Tasks, Audit-Reports). Fast alles hier hat einen dokumentierten Vorentscheid.
@@ -30,7 +31,7 @@ Kythera ist Michis produktiver Crypto-Trading-Bot (~29 Bots, ~530 Coins, Binance
 - **Regime-Schicht:** Bots 26 (Detector, 5 BTC-Klassen × 3 Alt-Kontexte) / 27 (per-Bot-Performance → Whitelist) / 28 (Gating). Doku: `docs/REGIME_ORCHESTRATOR.md` (live, aber Spec-Drift P1.10 beachten).
 - **ML-Programm:** Seit dem Audit gilt: **Labels nur aus Walk-Forward-Replay der echten Order-Geometrie** (`tools/walkforward_sim.py`, first-touch TP1-vs-SL, Fees) — nie Close-basierte Proxys. Retrain-Pipeline: `tools/retrain_from_replay.py`, AIM2: `tools/aim2_build_dataset.py` + `aim2_train.py`. Modell-Intents: `docs/MODEL_INTENT.md`. AIM2-Design: `docs/AIM2_DESIGN.md` (Bot 15, shadow-first via `AIM2_LIVE_POSTING`). Research-Bots 30–33 (PEX1/FMR1/TRM1/FIF1): `docs/NEW_IDEAS_BOTS.md`, gated via `NEW_IDEAS_LIVE_POSTING`, ohne Artefakt laufen sie im Idle-Mode.
 - **Geparkt per Audit-Entscheid:** `14_ai_atb_bot.py`, `29_ufi1_bot.py`. **AIM1 ist tot** (invertierte Kalibration, P0.13 — Entscheid: KEIN Retrain, bleibt aus; AIM2 ist der Ersatz).
-- **Staged-C-Refactor** (T-2026-CU-9050-007, Premortem in `.local/refactor/` — gitignored): Strangler-Fig innerhalb Kytheras, TimescaleDB-Fundament neben dem Bestand, Strategien einzeln hinter Paritäts-Gates. Phase 0 done, Phase 1 (Regression-Guard) gebaut aber **nicht scharf** (T-2026-CU-9050-010). Der alte v4-Repo ist tot — nicht wiederbeleben. Leitsatz aus dem Premortem: **"Green means like-v2, never correct."**
+- **Staged-C-Refactor** (T-2026-CU-9050-007, Premortem in `.local/refactor/` — gitignored): Strangler-Fig innerhalb Kytheras, TimescaleDB-Fundament neben dem Bestand, Strategien einzeln hinter Paritäts-Gates. Phase 0 done, Phase 1 (Regression-Guard) gebaut **und scharf** — 24 Goldens + 24 Fixtures + Manifest sind seit `4765e25` git-tracked, `guard.py verify` läuft als pre-commit-Hook (Korrektur 2026-07-09: dieser Absatz und das Task-Audit sagten fälschlich „nicht scharf"; offen ist nur die Disarm-Härtung P2.51). Der alte v4-Repo ist tot — nicht wiederbeleben. Leitsatz aus dem Premortem: **"Green means like-v2, never correct."**
 
 ## §4 Die kuratierten Fallen (was schwächere Modelle hier falsch machen)
 
@@ -46,8 +47,10 @@ Kythera ist Michis produktiver Crypto-Trading-Bot (~29 Bots, ~530 Coins, Binance
 10. **Windows-Realität.** Live-VPS ist Windows: `platform=win32` (mypy), win32-Prozess-Prioritäten, SIGBREAK, PG-Datadir `C:\PGDATA`, Backups `D:\_BACKUP\db`, PowerShell 5.1 (keine `&&`-Chains). `terminate()` ist ein Hard-Kill (P2.48).
 11. **CI-Lücke.** CI = ruff/format + mypy + AST/Import-Smoke + Secret-Regex. Kein pytest, kein Guard, keine Backtests. Verhaltens-Verifikation ist Bringschuld der Session (§7).
 12. **Ruff/mypy-Excludes.** `backtest/`, `tools/`, `strategies/`, `handlers/`, `trainers_x/`, `legacy_trainers/` sind excluded — dort ist der Lint-Bar bewusst niedriger. Nicht "aufräumen" als Selbstzweck (Boy-Scout nur mit Touch-Kontext).
-13. **AUDIT_TODO-Checkbox ≠ Wahrheit.** Einzelne Items sind per Annotation widerlegt/erledigt, aber die Checkbox steht noch offen (P1.5, P1.18, P1.26, P2.2, P2.50). Erst Annotation lesen, dann handeln.
+13. **AUDIT_TODO-Annotation ≠ Wahrheit.** Bis 2026-07-09 stand hier „erst Annotation lesen, dann handeln". Das reicht nicht: bei der Verifikation (T-028) stellte sich **eine der Annotationen selbst als falsch heraus** — P1.26 war als widerlegt markiert, ist aber ein realer Dead-Code-Bug; der „Beweis" waren Cooldown-Rows einer älteren Codeversion, deren Key der aktuelle Code gar nicht mehr schreibt. Regel also: **erst Annotation lesen, dann am Code nachprüfen, dann handeln.** Ein Live-Zähl-Beweis („N Rows, also feuert der Pfad") ist nur gültig, wenn der aktuelle Code diesen Key auch tatsächlich schreibt.
 14. **MIS2-SHORT Limit-Entries** werden vom Trade-Monitor noch falsch gescored (unfilled +5%-Entries dürfen nicht zählen) — bekannter Follow-up, nicht als neuen Bug melden.
+15. **Der Checkout kann hinter `origin` liegen.** Mehrere Sessions arbeiten parallel am selben Repo; am 2026-07-09 war der Build-Checkout 8 Commits zurück. Wer aus einem stale Checkout priorisiert, sieht die Fixes nicht, die schon liegen, und arbeitet sie erneut ab. **Vor jeder Priorisierung `git fetch origin` + Stand prüfen** — vor dem ersten Edit, nicht danach.
+16. **Modell-Tag kommt aus dem Artefakt, nie aus einer Konstante.** Harte Regel 6 wird nicht dadurch erfüllt, dass die Quellcode-Konstante zufällig zur aktuellen Generation passt. Drei Bots (`11_ai_mis`, `13_ai_rub`, `24_quasimodo`) werfen die geladene `meta.model_id` weg (P1.45) — beim nächsten Retrain verschmelzen die Generationen still in der Per-Bot-Statistik, auf der das Orchestrator-Gating entscheidet. Korrektmuster: `18_ai_abr1_bot.py:520`. **Vor jedem Retrain-Rollout prüfen, ob der Post-Pfad die `model_id` wirklich liest.**
 
 ## §5 Qualitätsbar pro Deliverable
 
