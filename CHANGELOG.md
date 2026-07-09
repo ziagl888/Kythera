@@ -1,4 +1,4 @@
-## [2026-07-09] "Opened"-Zählung entdoppelt, EPD2-Shadow-Inserts gedrosselt (T-2026-CU-9050-029, P1.44 + P1.41, PR #19)
+## [2026-07-09] "Opened"-Zählung entdoppelt, EPD2-Shadow-Inserts gedrosselt (T-2026-CU-9050-029, P1.44 + P1.41, PR #23)
 
 Zwei Hälften desselben Defekts: der Schreiber produzierte Shadow-Zeilen ohne
 Drossel, der Leser zählte sie — und zählte gepostete AI-Signale obendrein
