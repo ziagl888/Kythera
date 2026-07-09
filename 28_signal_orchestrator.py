@@ -56,13 +56,20 @@ OUTCOME_MIN_PNL_PCT = 0.1  # |pnl| <= 0.1% → neutral
 OUTCOME_MAX_ABS_PNL_PCT = 100.0  # |pnl| > 100% → neutral (Daten-Bug)
 
 BOT_IDENTIFICATION_PATTERNS = [
-    r"\b(MIS1-\d+[Hh]_(?:pump|dump))\b",  # MIS1-8h_pump, most specific first
-    r"\b(MIS1-\d+[Hh])\b",  # MIS1-8H, MIS1-24H
-    r"\b(MIS1|ATS1|RUB1|ATB1|AIM1|ABR1|EPD1|SRA1)\b",
+    # Versionierungs-Regel (Operator 2026-07-06): Retrain-Generationen posten
+    # unter neuem Tag (MIS2, RUB2, BB2_4H, ...) — deshalb generationsoffene
+    # Patterns (\d+ statt literal 1), analog get_category im Market-Tracker.
+    # Ein Tag, das hier nicht matcht, wird als bot_unidentified HART
+    # unterdrückt (T-2026-CU-9050-026: BB2_4H wäre nie beim Whitelist-Check
+    # angekommen; gleiche Wurzel wie das offene RUB2-Attributions-Finding
+    # aus PR #9).
+    r"\b(MIS\d+-\d+[Hh]_(?:pump|dump))\b",  # MIS1-8h_pump, most specific first
+    r"\b(MIS\d+-\d+[Hh])\b",  # MIS1-8H, MIS2-72H
+    r"\b((?:MIS|ATS|RUB|ATB|AIM|ABR|EPD|SRA)\d+)\b",  # RUB2, ABR2, ...
     # Quasimodo (24_quasimodo_bot.py): f"QM_{tf.upper()}" → QM_1H, QM_4H
-    # SMC-ML-Sniper (25_smc_ml_sniper.py): f"{BB|TD}_{tf.upper()}" → BB_1H, BB_4H, TD_1H, TD_4H
+    # SMC-ML-Sniper (25_smc_ml_sniper.py): Artefakt-model_id → BB_1H, BB2_4H, TD2_4H
     # Pattern Detector (7_pattern_detector.py): f"BR{tf.upper()}" → BR1H, BR2H, BR4H, BR1D
-    r"\b(QM_\d+[HhDd]|BB_\d+[HhDd]|TD_\d+[HhDd]|BR\d+[HhDd])\b",
+    r"\b(QM\d*_\d+[HhDd]|BB\d*_\d+[HhDd]|TD\d*_\d+[HhDd]|BR\d+[HhDd])\b",
     # Legacy-Fallback (alte QM/BB/TD Varianten, falls historische Outbox-entries
     # noch existieren) — die aktuellen Bots nutzen diese Tags nicht mehr.
     r"\b(QM_BULL|QM_BEAR|BB_BULL|BB_BEAR|TD_LONG|TD_SHORT)\b",

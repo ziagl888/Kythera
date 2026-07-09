@@ -1,3 +1,46 @@
+## [2026-07-09] PR #16 — SMC-Sniper: Retrain-Trades posteten unter dem Alt-Tag (T-2026-CU-9050-026)
+
+Auslöser: Operator-Eindruck „der SMC postet keine Trades mehr". Befund: er
+tradet — aber unsichtbar.
+
+### Fixed
+- `25_smc_ml_sniper.py` — **`send_cornix_signal` reicht jetzt die
+  Artefakt-`model_id` durch statt den Tag als `{strategy}_{tf}` neu zu
+  berechnen.** `evaluate_and_trade` nutzte korrekt `BB2_4H`/`TD2_4H`
+  (Cooldowns, ml_predictions), aber der Signal-/Trade-Write lief unter
+  `BB_4H`/`TD_4H` — die Retrain-Generation war in ai_signals und allen
+  Downstream-Stats (Per-Bot-Post, A–Z-Post, Regime-Analyzer) mit der
+  Alt-Generation verschmolzen (Regel-6-Verstoß). Evidenz: 97 der 115
+  offenen `BB_4H`-Rows tragen Confidence ≥ 0.63 (= BB2-Threshold), 88
+  Closes seit dem BB2-Deploy 06.07. Operator-Entscheid: fixen, KEINE
+  Umschreibung der falsch getaggten Altrows (wäre Live-Write).
+  Guard-Test: `backtest/test_sniper_tag.py`.
+- `28_signal_orchestrator.py` — **`BOT_IDENTIFICATION_PATTERNS`
+  generationsoffen gemacht** (Review-Fund, hätte den Tag-Fix sabotiert):
+  die Patterns matchten nur `BB_`/`TD_` und die Literal-Liste nur
+  `RUB1/ABR1/...` — ein `BB2_4H`-Signal wäre als `bot_unidentified` HART
+  unterdrückt worden, statt (wie beabsichtigt) default-open durch die
+  Whitelist zu laufen. Jetzt `BB\d*_`, `TD\d*_`, `QM\d*_` und
+  `(MIS|ATS|RUB|ATB|AIM|ABR|EPD|SRA)\d+` — das schließt zugleich das
+  offene RUB2-Attributions-Finding aus PR #9 (RUB2 postet seit 07.07.
+  live und hing am `🧠 …Strategy`-Footer-Fallback). Erst mit diesem Fix
+  gilt: neuer Tag startet in der Regime-Whitelist ohne Historie
+  (default-open) — bewusst akzeptiert.
+- `25_smc_ml_sniper.py` — **Übergangs-Dedup**: der Active-Trade-Check
+  prüft `model IN (neuer Tag, Alt-Tag)` — die ~115 offenen, falsch
+  getaggten Rows blocken weiterhin Re-Fires auf demselben Coin/Direction
+  (sonst zweite Live-Position neben der alten). `module_tag` ist jetzt
+  Pflicht-Keyword-Parameter (vergessener Tag → lauter TypeError statt
+  stillem Alt-Tag). Orchestrator-Tests um Generation-Tags erweitert.
+
+### Nebenbefunde (kein Codeänderungsbedarf)
+- `16_smc_forex_metals_bot.py` (SMC_15M/30M/4H im A–Z-Post) ist by design
+  info-only — der Code in diesem Repo hatte nie einen ai_signals-Pfad; die
+  Feb-Trades stammen von einem Legacy-Script. Wenn der Bot wieder getrackte
+  Trades liefern soll, ist das ein eigener Task (Operator-Entscheid).
+- Mayank postet Info-Signale ohne Position-Tracking (Refire-Bug bereits in
+  PR #14 gefixt).
+
 ## [2026-07-09] PR #15 — Market-Tracker Dedup-Key v2: Report-14-Schlüssel, All-Time/Kelly jetzt wirklich sauber (T-2026-CU-9050-025)
 
 ### Fixed

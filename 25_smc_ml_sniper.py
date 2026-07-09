@@ -107,13 +107,20 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
     now = datetime.now(timezone.utc)
 
     # 1. Cooldown / Active Trade Check
+    # Transitional (T-2026-CU-9050-026): also check the static legacy tag —
+    # ~115 open rows written before the tag fix still carry BB_4H/TD_4H, and
+    # the operator declined rewriting them. Without the IN, a re-fire on the
+    # same symbol/direction would open a SECOND live position next to the
+    # mistagged one. Also preserves the pre-fix blocking against pattern-
+    # detector rows that share the static tag.
+    legacy_tag = f"{strategy_code.upper()}_{tf.upper()}"
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT 1 FROM ai_signals
-            WHERE symbol = %s AND direction = %s AND model = %s
+            WHERE symbol = %s AND direction = %s AND model IN (%s, %s)
         """,
-            (symbol, direction, module_tag),
+            (symbol, direction, module_tag, legacy_tag),
         )
         if cur.fetchone():
             return
@@ -160,6 +167,10 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
         setup = calculate_smart_targets(conn, symbol, direction, current_price)
 
         logger.info(f"🟢 TRADE PASSED! {symbol} ({module_tag}) wird getradet (Conf: {confidence:.1f}%)")
+        # module_tag durchreichen — send_cornix_signal darf den Tag NICHT neu
+        # aus strategy_code/tf ableiten, sonst posten Retrain-Generationen
+        # (BB2_4H/TD2_4H aus der Artefakt-model_id) unter dem Alt-Tag
+        # (Regel 6, T-2026-CU-9050-026).
         send_cornix_signal(
             conn,
             df,
@@ -175,6 +186,7 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
             p1,
             p2,
             p3,
+            module_tag=module_tag,
         )
         update_cooldown(conn, module_tag, symbol, direction)
 
@@ -359,10 +371,31 @@ def extract_ml_features(df, idx, direction):
 
 
 def send_cornix_signal(
-    conn, df, symbol, tf, strategy_code, direction, entry1, entry2, sl, targets, confidence, p1, p2, p3=None
+    conn,
+    df,
+    symbol,
+    tf,
+    strategy_code,
+    direction,
+    entry1,
+    entry2,
+    sl,
+    targets,
+    confidence,
+    p1,
+    p2,
+    p3=None,
+    *,
+    module_tag,
 ):
     lev = get_max_leverage(symbol, 20)
-    module_tag = f"{strategy_code.upper()}_{tf.upper()}"
+    # FIX T-2026-CU-9050-026: the tag comes from the caller (artifact model_id,
+    # e.g. BB2_4H) — recomputing f"{strategy_code}_{tf}" here wrote every
+    # retrain-generation trade under the OLD tag (BB_4H/TD_4H), merging it
+    # with the previous generation in ai_signals and every downstream stat
+    # (rule 6: new generations post under a new tag). Deliberately a REQUIRED
+    # keyword arg: a future call site that forgets it should fail loudly
+    # instead of silently reintroducing the old-tag bug.
     strategy_name = "Breaker Block" if strategy_code == 'bb' else "Three-Drive"
 
     # 💥 NEU: Bestimme den richtigen Channel für dieses Pattern
