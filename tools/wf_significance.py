@@ -11,11 +11,18 @@
 #   1. RANDOM-CONTROL (Sign-Flip-Permutation, der Kern): Unter H0 "die Richtungs-
 #      wahl hat keinen Edge" ist jeder Trade austauschbar mit seinem Gegen-Trade
 #      auf derselben Geometrie. Der Gegen-Trade zahlt dieselben Fees:
-#      flip(net) = -(net + fee_rt) - fee_rt = -net - 2*fee_rt (Näherung: Ladder-
-#      Teil-Fills gebühren-gemittelt). n Iterationen zufälliger Flip-Masken
-#      liefern die Null-Verteilung des Mittelwerts -> p-Wert + Delta gegen die
-#      Kontrolle. Das ist bewusst KEIN Test gegen 0: die Kontrolle trägt den
-#      Fee-Drag, den ein richtungsloser Zufalls-Trader real hätte.
+#      flip(net) = -(net + fee_rt) - fee_rt = -net - 2*fee_rt. Die Fee-Summe
+#      ist wegen der Linearität der leg_pnl-Summation exakt der Round-Trip;
+#      die eigentliche Näherung ist die Symmetrieannahme gross' = -gross — ein
+#      real reversierter Trade wäre bei SL-/TP-gekappten Ladder-Profilen
+#      früher gestoppt worden. BIAS-RICHTUNG (Review PR #20): die Kontrolle
+#      ist dadurch bei Trend-Following-artigen R:R-Profilen zu negativ ->
+#      p-Werte eher zu KLEIN, knappe Signifikanz nicht überinterpretieren.
+#      Fairere Kontrolle (simulate_exit-Re-Run mit gespiegelter Richtung) =
+#      eigener Task. n Iterationen zufälliger Flip-Masken liefern die
+#      Null-Verteilung des Mittelwerts -> p-Wert + Delta gegen die Kontrolle.
+#      Das ist bewusst KEIN Test gegen 0: die Kontrolle trägt den Fee-Drag,
+#      den ein richtungsloser Zufalls-Trader real hätte.
 #   2. PERMUTATIONSTEST (Trade-Reihenfolge) für MaxDD: Sharpe ist bei per-Trade-
 #      %-PnL unter Reihenfolge-Permutation INVARIANT (komponierte Equity:
 #      eq_k/eq_{k-1}-1 = pnl_k) — der vt-Permutationstest auf Sharpe wäre hier
@@ -98,10 +105,14 @@ def sign_flip_control(pnls: np.ndarray, fee_rt_pct: float, n: int, seed: int) ->
 def order_permutation_test(pnls: np.ndarray, n: int, seed: int) -> dict:
     """Permutationstest der Trade-Reihenfolge -> p-Wert für den Max-Drawdown.
 
-    H0: der beobachtete MaxDD ist nicht milder als der einer zufälligen
-    Reihenfolge derselben Trades. p = Anteil Permutationen mit MaxDD <= observed
-    (beide negativ; "<=" = tiefer/schlechter). Kleines p => der beobachtete Pfad
-    ist untypisch GUTARTIG (Clusterung der Verluste ist nicht zufällig mild).
+    p = Anteil Permutationen mit MaxDD <= observed (beide negativ; "<=" =
+    tiefer/schlechter). KLEINES p => kaum eine zufällige Reihenfolge ist so
+    schlimm wie die beobachtete — die Verluste clustern untypisch MALIGNE in
+    der echten Chronologie (Regime-Abhängigkeit prüfen). p nahe 1 => fast jede
+    Reihenfolge wäre gleich schlimm oder schlimmer — der beobachtete Pfad war
+    untypisch gnädig, das reale DD-Risiko über simulated_max_dd_median_pct
+    budgetieren statt über den beobachteten Wert. (Richtung im Review PR #20
+    korrigiert — vorher stand sie invertiert hier.)
     """
     rng = np.random.default_rng(seed)
     observed = max_drawdown_pct(pnls)

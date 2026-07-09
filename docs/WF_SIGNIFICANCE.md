@@ -45,9 +45,17 @@ Tests (`backtest/test_wf_significance.py`).
 
 - `random_control.p_value < 0.05` UND `sharpe_per_trade_ci[0] > 0`: Edge ist
   von Zufall unterscheidbar — Kandidat für die nächste Batch-E-Stufe.
-- `p_value` klein, aber `p_value_dd_worse` ebenfalls klein: Edge da, aber der
-  beobachtete Pfad war untypisch gnädig — DD-Erwartung aus der
-  Permutations-Verteilung (`simulated_max_dd_median_pct`) budgetieren.
+- `p_value_dd_worse` **klein**: kaum eine zufällige Reihenfolge derselben
+  Trades wäre so schlimm — die Verluste clustern untypisch maligne in der
+  echten Chronologie (Tail-Risk-/Regime-Signal, genau der Fall, den der Test
+  fangen soll). `p_value_dd_worse` **nahe 1**: der beobachtete Pfad war
+  untypisch gnädig — das DD-Budget aus `simulated_max_dd_median_pct` nehmen,
+  nicht aus dem beobachteten MaxDD.
 - **Grenzen:** testet EINEN Kandidaten. Wer viele Varianten screent, braucht
   zusätzlich FDR/Deflated-Sharpe (bewusst Non-Scope, eigener Task). Kein
-  Ersatz für Purge/Embargo im Simulator selbst.
+  Ersatz für Purge/Embargo im Simulator selbst. Und: die Sign-Flip-Kontrolle
+  nimmt `gross' = -gross` an — ein real reversierter Trade wäre bei
+  SL-/TP-gekappten Ladder-Profilen früher gestoppt worden. Die Kontrolle ist
+  dadurch bei Trend-Following-artigen R:R-Profilen zu negativ, **p-Werte eher
+  zu klein**: knappe Signifikanz nicht überlesen als Beweis. Fairere Kontrolle
+  (simulate_exit-Re-Run mit gespiegelter Richtung) = eigener Task.
