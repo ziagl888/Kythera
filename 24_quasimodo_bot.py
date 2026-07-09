@@ -60,8 +60,24 @@ ML_MODELS = {}
 for tf, path in MODEL_PATHS.items():
     try:
         ml_data = joblib.load(path)
-        ML_MODELS[tf] = {'model': ml_data['model'], 'features': ml_data['features']}
-        logger.info(f"✅ ML-Modell für {tf} loaded successfully. Features: {len(ml_data['features'])}")
+        # Posting-Tag aus der Artefakt-Meta, sonst abgeleitet (T-2026-CU-9050-030).
+        # Heute schreibt qm_ml_trainer.py keine model_id — der abgeleitete QM_1H ist
+        # also der Ist-Zustand. Präventiv: sobald ein QM2-Retrain der etablierten
+        # Konvention f"{strategy.upper()}2_{tf.upper()}" folgt (retrain_from_replay.py),
+        # postet der Bot als QM2_1H statt still unter dem Alt-Tag mit der QM1-Statistik
+        # zu verschmelzen, auf der das Orchestrator-Gating entscheidet (Regel 6).
+        # Der Orchestrator erkennt QM2_1H bereits (QM\d*_ in BOT_IDENTIFICATION_PATTERNS).
+        meta = ml_data.get('meta') or {}
+        model_id = str(meta.get('model_id') or ml_data.get('model_id') or "").strip()
+        ML_MODELS[tf] = {
+            'model': ml_data['model'],
+            'features': ml_data['features'],
+            'tag': model_id or f"QM_{tf.upper()}",
+        }
+        logger.info(
+            f"✅ ML-Modell für {tf} loaded successfully. Features: {len(ml_data['features'])}, "
+            f"Tag: {ML_MODELS[tf]['tag']}{'' if model_id else ' (abgeleitet — Artefakt ohne model_id)'}"
+        )
     except Exception as e:
         logger.critical(f"❌ Could not load model for {tf} nicht laden ({path}): {e}")
         exit(1)
@@ -74,7 +90,7 @@ def scan_market():
     now = datetime.now(timezone.utc)
 
     for tf in TIMEFRAMES:
-        module_tag = f"QM_{tf.upper()}"
+        module_tag = ML_MODELS[tf]['tag']  # Artefakt-Tag, nicht aus tf abgeleitet
         logger.info(f"🔍 Starting QM-Scan für Timeframe: {tf}")
 
         current_model = ML_MODELS[tf]['model']
@@ -273,7 +289,6 @@ def scan_market():
                                 conn,
                                 df,
                                 symbol,
-                                tf,
                                 direction,
                                 current_price,
                                 sl_level,
@@ -283,6 +298,7 @@ def scan_market():
                                 p2,
                                 p3,
                                 p4,
+                                module_tag=module_tag,
                             )
                             update_cooldown(conn, module_tag, symbol, direction)
                         else:
@@ -368,9 +384,14 @@ def generate_qm_chart(df, symbol, direction, p1, p2, p3, p4, qm_level):
         plt.close('all')
 
 
-def send_cornix_signal(conn, df, symbol, tf, direction, entry, sl, tp, confidence, p1, p2, p3, p4):
+def send_cornix_signal(conn, df, symbol, direction, entry, sl, tp, confidence, p1, p2, p3, p4, *, module_tag):
     lev = get_max_leverage(symbol, 20)
-    module_tag = f"QM_{tf.upper()}"
+    # FIX T-2026-CU-9050-030: das Tag kommt vom Caller (Artefakt-model_id) — es hier
+    # wieder als f"QM_{tf}" abzuleiten, würde jeden Trade einer neuen Generation
+    # unter dem Alt-Tag schreiben und ihn in ai_signals mit der Vorgänger-Generation
+    # verschmelzen (Regel 6). Bewusst PFLICHT-Keyword: eine künftige Aufrufstelle, die
+    # ihn vergisst, scheitert laut mit TypeError, statt still den Alt-Tag zu nehmen —
+    # dasselbe Muster wie 25_smc_ml_sniper.py (T-2026-CU-9050-026).
 
     target_dist = tp - entry
     tp1 = entry + (target_dist * 0.5)
