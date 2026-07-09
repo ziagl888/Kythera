@@ -1,3 +1,56 @@
+## [2026-07-09] PR #13 — Market-Tracker: Per-Bot-WR-Korrektheit + kompakter A–Z-Model-Post (T-2026-CU-9050-023)
+
+Auslöser: Operator-Frage, ob die Erfolgsraten je Bot im Sentiment-Tracker-Kanal
+stimmen. Antwort: die Klassifikations-Logik (PnL-basiert, Neutrale raus) war
+sauber, aber drei Datenprobleme verzerrten die Zahlen.
+
+### Fixed
+- `23_market_tracker.py` — **Dedupe auf dem natürlichen Schlüssel, serverseitig
+  via `SELECT DISTINCT ON` in beiden Jobs** (`job_signal_summary` +
+  `job_per_bot_performance`). `closed_ai_signals` hat keinen Unique-Index und
+  trägt ~357k Duplikat-Rows aus Migration/LEGACY-Re-Close (Report 14) — n,
+  All-Time-WR und Kelly waren inflationiert, und die Duplikate wurden bisher
+  stündlich komplett zur Client-Seite transferiert. Der `ORDER BY`-Tiebreaker
+  (`targets_hit DESC`/`status DESC`) macht die überlebende Row deterministisch
+  (Duplikate unterscheiden sich genau in status/targets_hit). Gleicher
+  Schlüssel wie `tools/track_shadow_model.py`.
+- `23_market_tracker.py` — **`close_price=0`-Rows (v1-Ära, pre-2026-03) fliegen
+  aus der WR.** Die PnL-Formel wertete solche SHORTs als +100%-Win und LONGs
+  als −100%-Loss — beides innerhalb der 100%-Outlier-Grenze, floss also ein.
+  Per-Bot-Job: SQL-Filter `entry > 0 AND close_price > 0`. Summary-Job: Rows
+  mit vorhandenem, aber unbrauchbarem Preis sind jetzt NEUTRAL statt in den
+  status/targets-Fallback zu laufen (der hätte den bekannten LEGACY-
+  `targets_hit=0`-Writer-Bug wiederbelebt, den der PnL-Pfad umgehen soll).
+- `23_market_tracker.py` — **Direction-Case normalisiert** (`upper(btrim(...))`
+  im Dedup-Schlüssel und in der Select-Liste; pandas-Normalisierung als
+  Belt-and-Braces für die Open-Frames). Historische lowercase-`short`-Rows
+  bekamen bisher das LONG-Vorzeichen im PnL und fielen aus den
+  LONG/SHORT-Splits.
+
+### Added
+- `23_market_tracker.py` — **Neuer Kompakt-Post „MODELS A–Z"** im
+  Sentiment-Tracker-Kanal: eine Zeile pro Modell (24h/7d/All-WR, ø-PnL,
+  entschiedenes n), alphanumerisch sortiert — Modell-Generationen (ABR1/ABR2,
+  RUB1/RUB2, MIS1/MIS2, …) stehen direkt untereinander. Gesendet zwischen
+  Haupttabelle und Kelly-Block; Chunking über das bestehende `_build_chunks`
+  (neuer `separator`-Parameter statt Copy-Paste-Helper).
+
+### Verifiziert
+- ruff + `ruff format --check` + mypy grün (CI 6/6).
+- Offline-Smoke-Runs beider Jobs mit gemockter DB: Natural-Key-Dedupe
+  (Duplikate mit abweichendem status kollabieren), lowercase-Direction
+  korrekt gescored, `DELISTED`-only-Bot zeigt n=0, LEGACY-`close=0`-Row
+  neutral statt Loss, A–Z-Sortierung + Sende-Reihenfolge Tabelle→Kompakt→Kelly.
+- DB-gebundene Nachkontrolle (Plausibilisierung gegen
+  `tools/track_shadow_model.py`) gehört in eine VPS-Session nach Deploy.
+
+### Bewusst NICHT geändert
+- Kein Unique-Index/Purge auf `closed_ai_signals` — DB-Migration an
+  Live-Tabellen ist Operator-Entscheid (Report 14 Empfehlung #1,
+  T-2026-CU-9050-018).
+- P1.44 (Opened-Counts doppeln AI-Trades + zählen Shadow-Predictions) bleibt
+  offen — separates Finding, nicht Teil dieses Fixes.
+
 ## [2026-07-07 abends] PR #10 — Review-Fixes zu den PR-#9-Findings (Korrektheit)
 
 ### Fixed
