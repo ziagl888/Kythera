@@ -1393,7 +1393,7 @@ async def job_per_bot_performance() -> None:
 
             kelly_lines.append("")  # Leerzeile als Abtrennung zwischen Bots
     finally:
-        # Regime-Connection sauber schließen afterdem alle Bots durch sind
+        # Regime-Connection sauber schließen, nachdem alle Bots durch sind
         if _regime_conn is not None:
             try:
                 _regime_conn.close()
