@@ -29,6 +29,12 @@
 #       - research.funding_stats             (Settlement-Liste bis "jetzt")
 #       - aim2.build_feature_row             (row-scoped, kein Zeit-Input;
 #                                             der floor-1-Join ist Caller-Pflicht)
+#   * Bewusst NICHT einzeln getestet (keine Look-ahead-Fläche): pct_distance
+#     (elementweises Mapping ohne Fenster/Shift, transitiv via
+#     add_advanced_features mitgetestet), assert_features_alive (beide Module,
+#     Invarianten-Assertion statt Feature-Berechnung), parity_nonzero_share
+#     (Diagnose auf fertigem Vektor), load_funding (reiner DB-Loader; das
+#     as-of-Gate liegt in funding_features_asof und ist oben abgedeckt).
 #   * fetch_context_frame (R1-Kern, DB-frei via Stub-Cursor): eine Forming
 #     Candle der aktuellen Stunde in der DB (is_closed ist NICHT durchgesetzt,
 #     OPUS-HANDOFF Falle 1) darf weder die gewählte Feature-Kerze noch deren
