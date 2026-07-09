@@ -73,10 +73,20 @@ CLS_DEDUP_ORDER = f"{CLS_DEDUP_KEY}, posted ASC NULLS LAST, status DESC NULLS LA
 # recovers created_at and is intentionally fuzzy (coin/model/direction within
 # 30 days) — a still-open signal whose prediction row was deduped away lands on
 # a slightly older sibling row, and one with no row at all falls back to NOW().
-# The still-open set is small, so the blast radius is a handful of rows near the
-# window edge. The alternative (ml_predictions_master as the opens source) is
-# worse: log_prediction dedupes 4h per module/coin/direction, so it is a
-# DEDUPED log, not a faithful one, and would undercount legitimate re-posts.
+# The alternative (ml_predictions_master as the opens source) is worse:
+# log_prediction dedupes 4h per module/coin/direction, so it is a DEDUPED log,
+# not a faithful one, and would undercount legitimate re-posts.
+#
+# `m.posted = TRUE` keeps a shadow row from supplying the open timestamp. Two
+# groups therefore always take the NOW() fallback, and their still-open rows read
+# as perpetually fresh in the Opened buckets. Display only — Kelly and WR consume
+# closed_ai_signals.open_time, never this JOIN:
+#   - bots that never write to ml_predictions_master at all (7, 18, 29, ROM1);
+#     unchanged, they always fell back.
+#   - ATB1 (14_ai_atb_bot.py:720), which writes posted=False even on its LIVE
+#     branch — before the filter it accidentally matched its own shadow row.
+#     ATB1 is parked, so this is bounded to legacy open rows. Root cause tracked
+#     as P1.46; it must be fixed there, not by weakening this filter.
 OPEN_AI_SIGNALS_QUERY = """
     SELECT a.model as strategy, a.direction, a.entry1 as entry,
            COALESCE(m.time, NOW() AT TIME ZONE 'UTC') as created_at
