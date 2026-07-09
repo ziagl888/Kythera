@@ -13,9 +13,25 @@ tradet — aber unsichtbar.
   Alt-Generation verschmolzen (Regel-6-Verstoß). Evidenz: 97 der 115
   offenen `BB_4H`-Rows tragen Confidence ≥ 0.63 (= BB2-Threshold), 88
   Closes seit dem BB2-Deploy 06.07. Operator-Entscheid: fixen, KEINE
-  Umschreibung der falsch getaggten Altrows (wäre Live-Write). Neuer Tag
-  startet in der Regime-Whitelist ohne Historie (default-open) — bewusst
-  akzeptiert. Guard-Test: `backtest/test_sniper_tag.py`.
+  Umschreibung der falsch getaggten Altrows (wäre Live-Write).
+  Guard-Test: `backtest/test_sniper_tag.py`.
+- `28_signal_orchestrator.py` — **`BOT_IDENTIFICATION_PATTERNS`
+  generationsoffen gemacht** (Review-Fund, hätte den Tag-Fix sabotiert):
+  die Patterns matchten nur `BB_`/`TD_` und die Literal-Liste nur
+  `RUB1/ABR1/...` — ein `BB2_4H`-Signal wäre als `bot_unidentified` HART
+  unterdrückt worden, statt (wie beabsichtigt) default-open durch die
+  Whitelist zu laufen. Jetzt `BB\d*_`, `TD\d*_`, `QM\d*_` und
+  `(MIS|ATS|RUB|ATB|AIM|ABR|EPD|SRA)\d+` — das schließt zugleich das
+  offene RUB2-Attributions-Finding aus PR #9 (RUB2 postet seit 07.07.
+  live und hing am `🧠 …Strategy`-Footer-Fallback). Erst mit diesem Fix
+  gilt: neuer Tag startet in der Regime-Whitelist ohne Historie
+  (default-open) — bewusst akzeptiert.
+- `25_smc_ml_sniper.py` — **Übergangs-Dedup**: der Active-Trade-Check
+  prüft `model IN (neuer Tag, Alt-Tag)` — die ~115 offenen, falsch
+  getaggten Rows blocken weiterhin Re-Fires auf demselben Coin/Direction
+  (sonst zweite Live-Position neben der alten). `module_tag` ist jetzt
+  Pflicht-Keyword-Parameter (vergessener Tag → lauter TypeError statt
+  stillem Alt-Tag). Orchestrator-Tests um Generation-Tags erweitert.
 
 ### Nebenbefunde (kein Codeänderungsbedarf)
 - `16_smc_forex_metals_bot.py` (SMC_15M/30M/4H im A–Z-Post) ist by design

@@ -17,21 +17,24 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = (ROOT / "25_smc_ml_sniper.py").read_text(encoding="utf-8")
 
 
-def test_send_cornix_signal_accepts_module_tag():
+def test_send_cornix_signal_requires_module_tag():
     sig = re.search(r"def send_cornix_signal\((.*?)\):", SRC, re.DOTALL)
     assert sig, "send_cornix_signal not found"
-    assert "module_tag" in sig.group(1), "send_cornix_signal lost its module_tag parameter"
+    params = sig.group(1)
+    assert "module_tag" in params, "send_cornix_signal lost its module_tag parameter"
+    assert not re.search(r"module_tag\s*=", params), (
+        "module_tag must be a REQUIRED parameter — a default reintroduces the silent old-tag bug"
+    )
 
 
-def test_recompute_only_as_fallback():
-    body_match = re.search(r"def send_cornix_signal\(.*?\n(.*?)\ndef ", SRC, re.DOTALL)
+def test_no_tag_recompute_in_send():
+    body_match = re.search(r"def send_cornix_signal\(.*?\):\n(.*?)\ndef ", SRC, re.DOTALL)
     assert body_match, "send_cornix_signal body not found"
     body = body_match.group(1)
-    # The static tag may only be derived when no tag was passed in.
-    for m in re.finditer(r"^(\s*)module_tag\s*=\s*f\"\{strategy_code", body, re.MULTILINE):
-        indent = len(m.group(1))
-        assert indent > 4, "send_cornix_signal recomputes module_tag unconditionally again"
-    assert "if not module_tag" in body, "fallback guard for missing module_tag is gone"
+    assert not re.search(r"module_tag\s*=\s*f[\"']\{strategy_code", body), (
+        "send_cornix_signal derives the tag from strategy_code/tf again — "
+        "retrain generations would post under the old tag"
+    )
 
 
 def test_trade_call_passes_module_tag():
@@ -42,8 +45,20 @@ def test_trade_call_passes_module_tag():
     )
 
 
+def test_active_check_covers_legacy_tag():
+    """Transitional dedup: open positions written under the pre-fix static tag
+    (BB_4H/TD_4H) must still block a re-fire under the new tag — otherwise the
+    same symbol/direction opens a second live position."""
+    body_match = re.search(r"def evaluate_and_trade\(.*?\):\n(.*?)\ndef ", SRC, re.DOTALL)
+    assert body_match, "evaluate_and_trade body not found"
+    body = body_match.group(1)
+    assert "model IN (%s, %s)" in body, "active-trade check no longer covers the legacy tag"
+    assert "legacy_tag" in body, "legacy_tag derivation missing in evaluate_and_trade"
+
+
 if __name__ == "__main__":
-    test_send_cornix_signal_accepts_module_tag()
-    test_recompute_only_as_fallback()
+    test_send_cornix_signal_requires_module_tag()
+    test_no_tag_recompute_in_send()
     test_trade_call_passes_module_tag()
+    test_active_check_covers_legacy_tag()
     print("OK — sniper model-tag contract holds")

@@ -162,6 +162,25 @@ def test_identify_bot_smc_ml_sniper_footer():
     ) == "TD_4H"
 
 
+def test_identify_bot_retrain_generation_tags():
+    """Versionierungs-Regel: Retrain-Generationen posten unter neuem Tag
+    (BB2_4H, TD2_4H, RUB2, MIS2-72H, ...) und MÜSSEN identifizierbar sein —
+    sonst hart unterdrückt als bot_unidentified (T-2026-CU-9050-026;
+    RUB2-Attributions-Finding aus PR #9)."""
+    assert orch.identify_bot(
+        "🧠 AI Confidence: 67.3% (BB2_4H Filter)", None
+    ) == "BB2_4H"
+    assert orch.identify_bot(
+        "🧠 AI Confidence: 71.0% (TD2_4H Filter)", None
+    ) == "TD2_4H"
+    assert orch.identify_bot("RUB2 breakout signal", None) == "RUB2"
+    assert orch.identify_bot("ABR2 retest signal", None) == "ABR2"
+    assert orch.identify_bot("MIS2-72H analysis", None) == "MIS2-72H"
+    assert orch.identify_bot("MIS2-8h_pump detected", None) == "MIS2-8h_pump"
+    # Alt-Generation bleibt unverändert erkannt
+    assert orch.identify_bot("RUB1 legacy signal", None) == "RUB1"
+
+
 def test_identify_bot_pattern_detector_footer():
     """Pattern Detector (7_pattern_detector.py): BR1H, BR2H, BR4H, BR1D."""
     assert orch.identify_bot(
