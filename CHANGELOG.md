@@ -1,3 +1,29 @@
+## [2026-07-09] PR #15 — Market-Tracker Dedup-Key v2: Report-14-Schlüssel, All-Time/Kelly jetzt wirklich sauber (T-2026-CU-9050-025)
+
+### Fixed
+- `23_market_tracker.py` — **Dedup-Schlüssel von (…, entry, close_price,
+  open_time, close_time) auf `(symbol/coin, strategy, direction, open_time)`
+  umgestellt** — der Unique-Index-Schlüssel, den Report 14 empfiehlt.
+  Live-Messung nach dem PR-#13-Deploy: 439.325 rohe AI-Rows → der alte
+  Schlüssel kollabierte nur auf 360.682, der Report-14-Schlüssel zeigt
+  **81.842 echte Trades**. Grund: die ~357k Migrations-/LEGACY-Duplikate
+  (Feb 2026: 372.794 → 15.339) sind Re-Closes DESSELBEN Trades mit anderem
+  close_time/close_price — der alte Schlüssel sah sie als verschiedene
+  Trades. All-Time-WR und Kelly waren damit weiterhin verzerrt; die kurzen
+  Fenster (1h–7d) und der Regime-Analyzer (30d) waren sauber (0 Duplikate in
+  den letzten 30 Tagen; außerhalb Feb/März 2026 ist der Schlüssel im
+  Normalbetrieb eindeutig, raw == distinct in jedem Monat). Survivor je
+  Gruppe: frühester Close (das Original-Outcome; das Re-Close-Artefakt kam
+  später), dann höchste targets_hit. Beide Jobs, beide Tabellen (Classic:
+  ~11k Duplikate nach demselben Schlüssel).
+
+### Bewusst NICHT geändert
+- `tools/track_shadow_model.py` behält seinen engeren Natural-Key — er wird
+  auf frische Tags (EPD2 etc.) angewandt, wo keine Migrations-Duplikate
+  existieren; funktional identisch.
+- Der Unique-Index selbst + Purge der Duplikat-Rows bleibt DB-Migration →
+  Operator-Entscheid (Report 14 Empfehlung #1).
+
 ## [2026-07-09] PR #14 — Cooldown-Tags sprengen varchar(10): Volume Indicator signal-tot, Mayank-Refire (T-2026-CU-9050-024)
 
 `trade_cooldowns.module` ist auf der Live-DB `character varying(10)` (per
