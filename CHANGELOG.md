@@ -23,8 +23,8 @@ veralteter Grundlage.
   längst `(sym, tf, open_time)`, `1_data_ingestion.py:662` — war fälschlich als
   A2-Item gelistet), **P1.18** (Feature-Selektion ist namensbasiert,
   `11_ai_mis_bot.py:245`; der Fix greift erst beim nächsten Bot-Restart),
-  **P2.50** (Guard ist armed, 25 Goldens seit `4765e25`, `verify` als
-  pre-commit-Hook).
+  **P2.50** (Guard ist armed, 24 Goldens + 24 Fixtures seit `4765e25`, `verify`
+  als pre-commit-Hook).
 - **P2.2 bleibt offen:** die TZ-Dimension ist aufgelöst, die Spaltenbreite
   nicht. Ursprung der Drift gefunden — `legacy_trainers/zzz.py:13443` deklariert
   `module VARCHAR(10)`, und `CREATE TABLE IF NOT EXISTS` verbreitert nie. Der
