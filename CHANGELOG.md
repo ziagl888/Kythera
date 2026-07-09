@@ -1,3 +1,28 @@
+## [2026-07-09] Signifikanz-Layer über den Walk-Forward-Replay-Output (T-2026-CU-9050-027 D3)
+
+Ein Replay-Summary sagt „+38 R über 365d" — `tools/wf_significance.py` beantwortet
+neu die Folgefrage, ob dieser Edge von Rauschen unterscheidbar ist, bevor ein
+Kandidat Richtung Live-Gate diskutiert wird. Rein additiv über dem Trade-JSONL
+von `tools/walkforward_sim.py`; Muster aus HKUDS/Vibe-Trading (MIT,
+`validation.py` + `bench_runner_strict.py`), adaptiert statt kopiert:
+
+- **Random-Control (Sign-Flip):** Null-Verteilung aus Richtungs-Flips DERSELBEN
+  Trades inkl. Fee-Drag (`flip(net) = -net - 2*fee_rt`) → p-Wert + Delta gegen
+  den richtungslosen Zufalls-Trader, bewusst kein Test gegen 0.
+- **Reihenfolge-Permutation für den MaxDD** (Verlust-Clusterung zufallstypisch?).
+  Der vt-Permutationstest auf Sharpe wurde bewusst NICHT übernommen — bei
+  per-Trade-%-PnL ist Sharpe reihenfolge-invariant, der Test wäre degeneriert.
+- **Bootstrap-CIs** für per-Trade-Sharpe (bewusst nicht annualisiert), avg_r,
+  TP1-WR.
+
+Deterministisch (Seed 42). Verifikation DB-frei: `backtest/test_wf_significance.py`
+(6/6, u.a. Edge-vs-Rauschen-Diskriminierung, Fee-Drag in der Null, CLI-
+Determinismus). Doku: `docs/WF_SIGNIFICANCE.md`. Offen (VPS-Session): Lauf über
+einen echten Batch-E-Replay-Output — Artefakte liegen nur auf dem VPS.
+Multiple-Testing (FDR/Deflated Sharpe) bleibt bewusst Non-Scope (eigener Task).
+
+---
+
 ## [2026-07-09] Look-ahead-Perturbationstest über die geteilten Feature-Builder (T-2026-CU-9050-027 D1, PR #19)
 
 Die harten Regeln 5 (nur geschlossene Kerzen) und 7 (geteilte Feature-Builder,
