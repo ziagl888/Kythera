@@ -1,3 +1,35 @@
+## [2026-07-09] Look-ahead-Perturbationstest über die geteilten Feature-Builder (T-2026-CU-9050-027 D1, PR #19)
+
+Die harten Regeln 5 (nur geschlossene Kerzen) und 7 (geteilte Feature-Builder,
+Trainer == Serving == Replay) waren bisher nur durch Konvention und ~69
+DO-NOT-/forming-/lookahead-Kommentare abgesichert. Neu: `backtest/
+test_feature_lookahead.py` (standalone, DB-frei) macht sie mechanisch prüfbar —
+Muster geerntet aus HKUDS/Vibe-Trading (MIT), `tests/factors/test_lookahead.py`.
+
+- **Frame-/as-of-Builder** (`mis.add_advanced_features[_multi]`, research
+  candle-context + PEX1/FMR1/FIF1-Rows, `funding_features_asof`): alle
+  Input-Spalten ab der Perturbations-Zeile mit NaN/1e10 vergiften — die Zeilen
+  davor müssen bit-nah (1e-9) invariant bleiben. Canary-Assertions belegen,
+  dass die Vergiftung den Builder wirklich erreicht; ein Boundary-Test belegt,
+  dass ein Funding-Settlement exakt AT ts strikt draußen bleibt.
+- **Window-/row-scoped Builder** (`rub_trend`/`build_rub_features`,
+  `build_trm1_row`, `funding_stats`, `regime_features`, `aim2.build_feature_row`):
+  per Signatur ohne Zukunfts-Achse (Caller schneidet) — geprüft werden
+  Determinismus, Input-Nicht-Mutation und die internen Fenstergrenzen (TRM1-12er,
+  Funding-90er).
+- **`fetch_context_frame`** (R1-Kern, DB-frei via Stub-Cursor): eine Forming
+  Candle der aktuellen Stunde in der Tabelle ändert weder die gewählte
+  Feature-Kerze (floor-1-Join) noch deren Features; der Staleness-Guard (>3h)
+  liefert None.
+
+**Ergebnis: kein Future-Leak gefunden** — gültiges No-op-Done. Detektionskraft
+separat falsifiziert (künstliche `shift(-1)`-/`iloc[idx+1]`-Leaks sowie zwei
+Mutation-Injektionen in echte Builder werden gefangen). Bekannter kosmetischer
+Drive-by: `core/funding_features.py:70` wirft eine tz-UserWarning (Semantik
+korrekt, UTC vs UTC) — nicht gefixt, geteilter Builder (Regel 7).
+
+---
+
 ## [2026-07-09] Market-Tracker gibt Pool-Connections auf dem Fehlerpfad zurück (T-2026-CU-9050-029, P1.43, PR #18)
 
 `23_market_tracker.py` holte die Connection an zwei Stellen bare und rief
