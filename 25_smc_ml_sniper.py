@@ -160,6 +160,10 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
         setup = calculate_smart_targets(conn, symbol, direction, current_price)
 
         logger.info(f"🟢 TRADE PASSED! {symbol} ({module_tag}) wird getradet (Conf: {confidence:.1f}%)")
+        # module_tag durchreichen — send_cornix_signal darf den Tag NICHT neu
+        # aus strategy_code/tf ableiten, sonst posten Retrain-Generationen
+        # (BB2_4H/TD2_4H aus der Artefakt-model_id) unter dem Alt-Tag
+        # (Regel 6, T-2026-CU-9050-026).
         send_cornix_signal(
             conn,
             df,
@@ -175,6 +179,7 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
             p1,
             p2,
             p3,
+            module_tag=module_tag,
         )
         update_cooldown(conn, module_tag, symbol, direction)
 
@@ -359,10 +364,31 @@ def extract_ml_features(df, idx, direction):
 
 
 def send_cornix_signal(
-    conn, df, symbol, tf, strategy_code, direction, entry1, entry2, sl, targets, confidence, p1, p2, p3=None
+    conn,
+    df,
+    symbol,
+    tf,
+    strategy_code,
+    direction,
+    entry1,
+    entry2,
+    sl,
+    targets,
+    confidence,
+    p1,
+    p2,
+    p3=None,
+    module_tag=None,
 ):
     lev = get_max_leverage(symbol, 20)
-    module_tag = f"{strategy_code.upper()}_{tf.upper()}"
+    # FIX T-2026-CU-9050-026: the tag comes from the caller (artifact model_id,
+    # e.g. BB2_4H) — recomputing f"{strategy_code}_{tf}" here wrote every
+    # retrain-generation trade under the OLD tag (BB_4H/TD_4H), merging it
+    # with the previous generation in ai_signals and every downstream stat
+    # (rule 6: new generations post under a new tag). Fallback only for
+    # safety if a caller omits the tag.
+    if not module_tag:
+        module_tag = f"{strategy_code.upper()}_{tf.upper()}"
     strategy_name = "Breaker Block" if strategy_code == 'bb' else "Three-Drive"
 
     # 💥 NEU: Bestimme den richtigen Channel für dieses Pattern
