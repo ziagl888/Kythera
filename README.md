@@ -35,6 +35,8 @@ Binance (WS /market + REST)
 
 **Only the Signal Orchestrator's trading channel is wired to Cornix** — the individual bot channels are informational, so trades fire exactly once.
 
+> For the deeper view — the database-as-message-bus design, the full signal lifecycle, the `core/` shared-layer contracts, and the known structural debt — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 > **Binance WebSocket note.** Binance decommissioned the legacy futures WS endpoints (`/stream`, `/ws`) on **2026-04-23**; kline/aggTrade/markPrice streams now live under `wss://fstream.binance.com/market/…`. All WS consumers in this repo use the new URL. Ingestion additionally runs a REST **freshness fallback** that bridges candle gaps whenever the WS goes silent, and caps each connection at 180 streams (HTTP-414 / silent-cap limits).
 
 ## The fleet
@@ -202,6 +204,18 @@ pre-commit run --all-files  # run against the whole tree
 - **CI:** GitHub Actions (`.github/workflows/syntax-check.yml`) byte-compiles the tree on every push.
 
 Keep secrets in `.env`, keep PRs small and cohesive, and let the hooks run.
+
+## Documentation
+
+| Document | What it is |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the system fits together: message-bus design, signal lifecycle, `core/` contracts, structural debt |
+| [`docs/OPUS-HANDOFF.md`](docs/OPUS-HANDOFF.md) | Working manual for contributors: work cycle, curated traps, quality bar, escalation rules |
+| [`AUDIT_TODO.md`](AUDIT_TODO.md) | Living findings ledger (R / P0–P3 / Z) from the 2026 audit |
+| [`docs/AIM2_DESIGN.md`](docs/AIM2_DESIGN.md) · [`docs/REGIME_ORCHESTRATOR.md`](docs/REGIME_ORCHESTRATOR.md) · [`docs/TIMESCALE_R1_MIGRATION.md`](docs/TIMESCALE_R1_MIGRATION.md) | Design docs: AIM2 meta-gate, regime orchestration, the (designed, not-yet-applied) TimescaleDB/R1 migration |
+| [`docs/MODEL_INTENT.md`](docs/MODEL_INTENT.md) · [`docs/NEW_IDEAS_BOTS.md`](docs/NEW_IDEAS_BOTS.md) | Per-model intent; the 30–33 research bots |
+| [`SETUP_ANLEITUNG.md`](SETUP_ANLEITUNG.md) | Detailed step-by-step setup (German) |
+| `audit_reports/` | The full 2026 audit: 20 reports + per-model dossiers |
 
 ## License
 
