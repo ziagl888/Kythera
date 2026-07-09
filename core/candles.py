@@ -172,19 +172,25 @@ def _grace_seconds() -> float:
     return float(os.getenv("KYTHERA_CANDLES_CLOSE_GRACE_SEC", "0"))
 
 
-def period_start(tf: str, now: datetime) -> datetime:
+def period_start(tf: str, now: datetime, grace_seconds: float | None = None) -> datetime:
     """Open time of the period that is CURRENTLY forming at `now` (UTC).
 
     Every candle with `open_time < period_start(tf, now)` is closed. Pure Python
     mirror of `_period_start_sql` — used by tools/candles_parity.py and by the
     unit tests, so the SQL and the Python answer can be compared directly.
+
+    `grace_seconds=None` reads KYTHERA_CANDLES_CLOSE_GRACE_SEC, exactly as the
+    SQL does. Pass 0.0 explicitly for the un-graced boundary; the two answers
+    differ once the operator sets a grace, and a "mirror" that quietly ignored
+    it would be a mirror of the wrong statement.
     """
     validate_timeframe(tf)
     if now.tzinfo is None:
         raise ValueError("period_start() requires a timezone-aware datetime")
+    grace = _grace_seconds() if grace_seconds is None else grace_seconds
     step = TF_SECONDS[tf]
     off = _TF_EPOCH_OFFSET.get(tf, 0)
-    epoch = now.astimezone(timezone.utc).timestamp()
+    epoch = now.astimezone(timezone.utc).timestamp() - grace
     floored = ((epoch - off) // step) * step + off
     return datetime.fromtimestamp(floored, tz=timezone.utc)
 
@@ -328,6 +334,8 @@ def read_candles_with_indicators(
     tf: str,
     *,
     limit: int | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     include_forming: bool = False,
     candle_columns: Sequence[str] | None = CANDLE_COLUMNS,
     indicator_columns: Sequence[str] | None = None,
@@ -337,6 +345,10 @@ def read_candles_with_indicators(
     This is the dominant AI-bot read pattern (bots 11, 12, 15, 24, 25 and
     core/research_features). It stays one SQL statement so the migration does
     not turn one query into two round-trips per coin.
+
+    `end` is what an as-of read needs: 15_ai_master_bot reads the newest joined
+    row strictly before a floored timestamp, and every replay/backfill path
+    reads a historical window. Without it those call sites could not migrate.
 
     Duplicate column names (`symbol`, `close`, `open_time` exist on both sides)
     are resolved in favour of the candle table; the indicator side is projected
@@ -360,7 +372,14 @@ def read_candles_with_indicators(
         ctab=_ident(ctab),
         itab=_ident(itab),
     )
-    inner += sql.SQL(" WHERE true") + _forming_filter(tf, include_forming, alias="h")
+    inner += sql.SQL(" WHERE true")
+    if start is not None:
+        inner += sql.SQL(" AND h.open_time >= %s")
+        params.append(start)
+    if end is not None:
+        inner += sql.SQL(" AND h.open_time <= %s")
+        params.append(end)
+    inner += _forming_filter(tf, include_forming, alias="h")
     inner += sql.SQL(" ORDER BY h.open_time DESC")
     if limit is not None:
         inner += sql.SQL(" LIMIT %s")
@@ -413,7 +432,11 @@ def indicator_column_names(conn: Any, symbol: str, tf: str) -> list[str]:
     """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position",
+            # Schema-qualified: an identically named table in another schema on
+            # the search_path would contribute phantom columns to the JOIN.
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = %s "
+            "ORDER BY ordinal_position",
             (indicators_table(symbol, tf),),
         )
         return [r[0] for r in cur.fetchall()]

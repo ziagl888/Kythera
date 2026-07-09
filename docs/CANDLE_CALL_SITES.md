@@ -13,7 +13,7 @@ Arbeitsgrundlage für **Phase 0/1** der R1-+-TimescaleDB-Migration: die neue Zug
 ```python
 read_candles(conn, symbol, tf, *, limit, start, end, include_forming=False, columns=CANDLE_COLUMNS)
 read_indicators(conn, symbol, tf, *, limit, start, end, include_forming=False, columns=None)
-read_candles_with_indicators(conn, symbol, tf, *, limit, include_forming=False, ...)   # LEFT JOIN
+read_candles_with_indicators(conn, symbol, tf, *, limit, start, end, include_forming=False, ...)   # LEFT JOIN
 latest_open_time(conn, symbol, tf, *, include_forming=True)
 upsert_candles(conn, symbol, tf, rows, *, closed)          # Caller committet
 upsert_indicators(conn, df, symbol, tf)                     # Caller committet

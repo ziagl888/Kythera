@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -57,6 +58,20 @@ def test_period_start_is_timezone_independent():
     utc_now = _utc(2026, 7, 9, 14, 37)
     tokyo = utc_now.astimezone(timezone(timedelta(hours=9)))
     assert c.period_start("1h", tokyo) == c.period_start("1h", utc_now)
+
+
+def test_period_start_honours_the_grace_period():
+    """The Python mirror must apply the same grace the SQL applies."""
+    just_past_the_hour = _utc(2026, 7, 9, 14, 0, 1)
+    assert c.period_start("1h", just_past_the_hour) == _utc(2026, 7, 9, 14)
+    os.environ["KYTHERA_CANDLES_CLOSE_GRACE_SEC"] = "5"
+    try:
+        # With 5 s of grace the 14:00 candle is not yet considered forming-safe,
+        # so the cutoff falls back into the 13:00 period.
+        assert c.period_start("1h", just_past_the_hour) == _utc(2026, 7, 9, 13)
+        assert c.period_start("1h", just_past_the_hour, grace_seconds=0.0) == _utc(2026, 7, 9, 14)
+    finally:
+        os.environ.pop("KYTHERA_CANDLES_CLOSE_GRACE_SEC", None)
 
 
 def test_period_start_rejects_naive_datetime():
@@ -119,6 +134,14 @@ def test_whitelist_is_enforced_when_installed():
     assert c.validate_symbol("ETHUSDT") == "ETHUSDT"
 
 
+def test_joined_read_accepts_an_as_of_bound():
+    """15_ai_master reads the newest joined row before a floored ts — `end=` must exist."""
+    import inspect
+
+    sig = inspect.signature(c.read_candles_with_indicators)
+    assert {"start", "end", "limit", "include_forming"} <= set(sig.parameters)
+
+
 def test_projection_must_carry_open_time():
     with pytest.raises(ValueError, match="open_time"):
         c.read_candles(None, "BTCUSDT", "1h", columns=["close"])
@@ -157,8 +180,10 @@ def test_reads_reject_bad_symbol_without_a_connection():
 
 
 def test_upsert_candles_rejects_non_bool_closed():
+    """`closed` comes from the Binance kline flag; a truthy int must not slip through."""
+    truthy_not_bool: Any = 1
     with pytest.raises(TypeError):
-        c.upsert_candles(None, "BTCUSDT", "1h", [("BTCUSDT", _utc(2026, 7, 9), 1, 1, 1, 1, 1)], closed=1)
+        c.upsert_candles(None, "BTCUSDT", "1h", [("BTCUSDT", _utc(2026, 7, 9), 1, 1, 1, 1, 1)], closed=truthy_not_bool)
 
 
 def test_upsert_candles_on_empty_rows_is_a_noop():
