@@ -1,3 +1,42 @@
+## [2026-07-09] Market-Tracker gibt Pool-Connections auf dem Fehlerpfad zurück (T-2026-CU-9050-029, P1.43, PR #18)
+
+`23_market_tracker.py` holte die Connection an zwei Stellen bare und rief
+`conn.close()` als **letzte Anweisung im try-Body** — bei einer werfenden Query
+sprang der Ablauf direkt ins `except: log; return`, das `close()` lief nie, der
+Pool-Slot war weg. Der Pool deckelt bei 8 Connections pro Prozess, also ziehen
+~8 DB-Schluckauf den Tracker dauerhaft trocken: der Prozess bleibt unterm
+Watchdog „healthy" und postet still nichts mehr. Die Ursache ist die
+Acquire/Release-Form, nicht die Queries.
+
+Beide Stellen nutzen jetzt `with get_db_connection() as conn:` — die Form, die
+die fünf übrigen `job_*`-Funktionen derselben Datei schon hatten.
+
+### Auf derselben Bruchlinie mitgefixt
+- **Der `ai_signals`-Fallback lief in der abgebrochenen Transaktion.** Postgres
+  bricht bei einer fehlgeschlagenen Anweisung die ganze Transaktion ab; der
+  Fallback wäre mit `InFailedSqlTransaction` gestorben — er ist also nie
+  zurückgefallen. `rollback()` davor ergänzt.
+- **`_get_regime_fit_label` vergiftete die geteilte Connection.** Die Funktion
+  schluckt ihre Exception und liefert `---`, aber der Caller teilt EINE
+  Connection über ~25 Bots. Ohne `rollback` blieb die Transaktion abgebrochen,
+  der erste fehlgeschlagene Lookup degradierte die Regime-Fit-Spalte **aller
+  folgenden** Bots auf `---`.
+- **Die Kelly/Regime-Fit-Schleife** indexiert in das Kelly-Dict; ein `KeyError`
+  übersprang `_regime_conn.close()`. Jetzt `try/finally`.
+
+### Live-Semantik
+Auf dem Erfolgspfad ändert sich nichts: die Connection wird am identischen Punkt
+freigegeben (nach dem letzten Read, vor der pandas-Verarbeitung), mit demselben
+`rollback()` + `putconn()`. Alle Deltas liegen auf Pfaden, die vorher einen
+Pool-Slot verloren oder an `InFailedSqlTransaction` starben. Wirkt beim nächsten
+regulären Restart, kein Deploy.
+
+Verifikation: `backtest/test_market_tracker_conn.py` (neu, standalone, DB-frei,
+7/7) — die 4 Bug-Tests fallen nachweislich auf dem Pre-Fix-Stand, die 3
+Kontroll-Tests laufen auf beiden Ständen grün.
+
+---
+
 ## [2026-07-09] Ledger wahr gemacht — Steuerungs-Dokumente gegen den Code verifiziert (T-2026-CU-9050-028)
 
 Kein Code-Fix. Die beiden Steuerungs-Dokumente (`docs/OPUS-HANDOFF.md`,

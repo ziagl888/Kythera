@@ -415,59 +415,60 @@ async def job_signal_summary():
     t24 = now - timedelta(hours=24)
 
     try:
-        conn = get_db_connection()
+        # `with` (not a bare close() at the end of the try): PooledConnection
+        # returns the connection to the pool on __exit__, so a raising query no
+        # longer burns a pool slot. Pool max is 8 per process — a leak per failed
+        # run silently starves the tracker after a handful of DB hiccups.
+        with get_db_connection() as conn:
+            # 1. OFFENE TRADES HOLEN (Hier gibt es naturgemäß nur den Eröffnungszeitpunkt)
+            query_act_trades = (
+                "SELECT strategy, direction, time as created_at FROM active_trades_master WHERE time >= %s"
+            )
+            df_act_trades = pd.read_sql_query(query_act_trades, conn, params=(t24,))
 
-        # 1. OFFENE TRADES HOLEN (Hier gibt es naturgemäß nur den Eröffnungszeitpunkt)
-        query_act_trades = "SELECT strategy, direction, time as created_at FROM active_trades_master WHERE time >= %s"
-        df_act_trades = pd.read_sql_query(query_act_trades, conn, params=(t24,))
+            query_act_ai = "SELECT model_name as strategy, direction, time as created_at FROM ml_predictions_master WHERE time >= %s"
+            df_act_ai = pd.read_sql_query(query_act_ai, conn, params=(t24,))
 
-        query_act_ai = (
-            "SELECT model_name as strategy, direction, time as created_at FROM ml_predictions_master WHERE time >= %s"
-        )
-        df_act_ai = pd.read_sql_query(query_act_ai, conn, params=(t24,))
+            # 2. GESCHLOSSENE TRADES HOLEN
+            # Wir fragen alles ab, was entweder in den letzten 24h geschlossen ODER eröffnet wurde
+            # Queries erweitert um entry/close_price für PnL-basierte is_win-Klassifikation
+            # Dedupe on the report-14 key (see AI_DEDUP_KEY/CLS_DEDUP_KEY at module
+            # top). Structure: dedup runs over the FULL table first, filters come
+            # OUTSIDE — so the survivor pick (earliest close = original outcome)
+            # is independent of the 24h window and the price-validity filter. A
+            # window-first query would let a future re-close event resurface
+            # months-old trades as freshly closed (only the artifact falls inside
+            # the window). entry/close_price > 0 matches job_per_bot_performance —
+            # v1-era rows carry close_price=0 and would otherwise score SHORTs as
+            # +100% wins. Live-verified 2026-07-09: with current data, filter
+            # placement does not change a single surviving row.
+            query_cls_trades = f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON ({CLS_DEDUP_KEY})
+                           strategy, upper(btrim(direction)) as direction, entry, close_price,
+                           time as created_at, posted as closed_at, status
+                    FROM closed_trades_master
+                    ORDER BY {CLS_DEDUP_ORDER}
+                ) d
+                WHERE (d.closed_at >= %s OR d.created_at >= %s)
+                  AND d.entry > 0 AND d.close_price > 0
+            """
+            df_cls_trades = pd.read_sql_query(query_cls_trades, conn, params=(t24, t24))
 
-        # 2. GESCHLOSSENE TRADES HOLEN
-        # Wir fragen alles ab, was entweder in den letzten 24h geschlossen ODER eröffnet wurde
-        # Queries erweitert um entry/close_price für PnL-basierte is_win-Klassifikation
-        # Dedupe on the report-14 key (see AI_DEDUP_KEY/CLS_DEDUP_KEY at module
-        # top). Structure: dedup runs over the FULL table first, filters come
-        # OUTSIDE — so the survivor pick (earliest close = original outcome)
-        # is independent of the 24h window and the price-validity filter. A
-        # window-first query would let a future re-close event resurface
-        # months-old trades as freshly closed (only the artifact falls inside
-        # the window). entry/close_price > 0 matches job_per_bot_performance —
-        # v1-era rows carry close_price=0 and would otherwise score SHORTs as
-        # +100% wins. Live-verified 2026-07-09: with current data, filter
-        # placement does not change a single surviving row.
-        query_cls_trades = f"""
-            SELECT * FROM (
-                SELECT DISTINCT ON ({CLS_DEDUP_KEY})
-                       strategy, upper(btrim(direction)) as direction, entry, close_price,
-                       time as created_at, posted as closed_at, status
-                FROM closed_trades_master
-                ORDER BY {CLS_DEDUP_ORDER}
-            ) d
-            WHERE (d.closed_at >= %s OR d.created_at >= %s)
-              AND d.entry > 0 AND d.close_price > 0
-        """
-        df_cls_trades = pd.read_sql_query(query_cls_trades, conn, params=(t24, t24))
-
-        query_cls_ai = f"""
-            SELECT * FROM (
-                SELECT DISTINCT ON ({AI_DEDUP_KEY})
-                       model as strategy, upper(btrim(direction)) as direction, entry, close_price,
-                       open_time as created_at, close_time as closed_at, targets_hit,
-                       status as close_reason
-                FROM closed_ai_signals
-                WHERE status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
-                ORDER BY {AI_DEDUP_ORDER}
-            ) d
-            WHERE (d.closed_at >= %s OR d.created_at >= %s)
-              AND d.entry > 0 AND d.close_price > 0
-        """
-        df_cls_ai = pd.read_sql_query(query_cls_ai, conn, params=(t24, t24))
-
-        conn.close()
+            query_cls_ai = f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON ({AI_DEDUP_KEY})
+                           model as strategy, upper(btrim(direction)) as direction, entry, close_price,
+                           open_time as created_at, close_time as closed_at, targets_hit,
+                           status as close_reason
+                    FROM closed_ai_signals
+                    WHERE status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
+                    ORDER BY {AI_DEDUP_ORDER}
+                ) d
+                WHERE (d.closed_at >= %s OR d.created_at >= %s)
+                  AND d.entry > 0 AND d.close_price > 0
+            """
+            df_cls_ai = pd.read_sql_query(query_cls_ai, conn, params=(t24, t24))
     except Exception as e:
         logger.error(f"Error loading der Signal-Daten: {e}")
         return
@@ -764,6 +765,14 @@ def _get_regime_fit_label(conn, bot_name: str) -> str:
         return f"{cur_regime} {wr_regime:.0f}% (n={n_regime}), Overall {wr_overall:.0f}% → {label}"
 
     except Exception:
+        # The caller reuses ONE connection for all bots. A failed statement
+        # leaves the transaction aborted, so without this rollback every
+        # subsequent bot's lookup dies with InFailedSqlTransaction and the
+        # whole column degrades to '---' after the first hiccup.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return "---"
 
 
@@ -802,106 +811,110 @@ async def job_per_bot_performance() -> None:
     now = datetime.now(timezone.utc)
 
     try:
-        conn = get_db_connection()
+        # `with`: see job_signal_summary — the connection must go back to the
+        # pool even when one of the five queries below raises.
+        with get_db_connection() as conn:
+            # ═══ GESCHLOSSENE TRADES ═══
 
-        # ═══ GESCHLOSSENE TRADES ═══
-
-        # Klassische Trades: time=created, posted=closed, status=0..4 (string)
-        #
-        # Both closed queries dedupe on the report-14 key (AI_DEDUP_KEY /
-        # CLS_DEDUP_KEY at module top, rationale there). Live measurement
-        # 2026-07-09: 439k raw AI rows → 81.8k real trades under this key
-        # (old #13 key left 360k); outside Feb/Mar 2026 the key is unique in
-        # practice (raw == distinct every month). Same structure as the
-        # summary queries: dedup over the full table FIRST, validity filter
-        # outside — the survivor pick must not depend on the filter.
-        #
-        # entry > 0 AND close_price > 0: v1-era rows (pre-2026-03) carry
-        # close_price=0 — the pnl formula would score such a SHORT as a +100%
-        # win (a LONG as a -100% loss), both inside the 100% outlier bound.
-        df_cls_closed = pd.read_sql_query(
-            f"""
-            SELECT * FROM (
-                SELECT DISTINCT ON ({CLS_DEDUP_KEY})
-                       strategy, upper(btrim(direction)) as direction, entry, close_price,
-                       time as created_at, posted as closed_at, status
-                FROM closed_trades_master
-                ORDER BY {CLS_DEDUP_ORDER}
-            ) d
-            WHERE d.entry > 0 AND d.close_price > 0
-            """,
-            conn,
-        )
-
-        # AI-signals: open_time=created, close_time=closed, targets_hit=0..19 (int)
-        # close_reason wird aus der status-Spalte geladen (vom 8_ai_trade_monitor gesetzt)
-        df_ai_closed = pd.read_sql_query(
-            f"""
-            SELECT * FROM (
-                SELECT DISTINCT ON ({AI_DEDUP_KEY})
-                       model as strategy, upper(btrim(direction)) as direction, entry, close_price,
-                       open_time as created_at, close_time as closed_at, targets_hit,
-                       status as close_reason
-                FROM closed_ai_signals
-                WHERE status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
-                ORDER BY {AI_DEDUP_ORDER}
-            ) d
-            WHERE d.entry > 0 AND d.close_price > 0
-            """,
-            conn,
-        )
-
-        # ═══ OFFENE TRADES ═══
-
-        # active_trades_master: time=created; keine close_price/status
-        df_cls_open = pd.read_sql_query(
-            """
-            SELECT strategy, direction, entry, time as created_at
-            FROM active_trades_master
-            WHERE entry IS NOT NULL
-            """,
-            conn,
-        )
-
-        # ai_signals: hat keine Spalte für Eröffnungszeit, aber ml_predictions_master
-        # hat sie (time=created). Wir könnten joinen, aber der einfachere Weg:
-        # ai_signals.id SERIAL ist zeitlich aufsteigend und wir nehmen als
-        # Proxy NOW() - bei Fehler kein Problem, nur Detail-Zeile etwas ungenau.
-        # Deshalb: JOIN mit ml_predictions_master auf trade_id für created_at.
-        # Falls das nicht geht, fallback: keine Zeit, keine Einbeziehung ins
-        # Zeit-Fenster.
-        try:
-            df_ai_open = pd.read_sql_query(
-                """
-                SELECT a.model as strategy, a.direction, a.entry1 as entry,
-                       COALESCE(m.time, NOW() AT TIME ZONE 'UTC') as created_at
-                FROM ai_signals a
-                LEFT JOIN ml_predictions_master m
-                  ON m.coin = a.symbol AND m.model_name = a.model
-                 AND m.direction = a.direction
-                 AND m.time >= NOW() AT TIME ZONE 'UTC' - INTERVAL '30 days'
-                WHERE a.entry1 IS NOT NULL
+            # Klassische Trades: time=created, posted=closed, status=0..4 (string)
+            #
+            # Both closed queries dedupe on the report-14 key (AI_DEDUP_KEY /
+            # CLS_DEDUP_KEY at module top, rationale there). Live measurement
+            # 2026-07-09: 439k raw AI rows → 81.8k real trades under this key
+            # (old #13 key left 360k); outside Feb/Mar 2026 the key is unique in
+            # practice (raw == distinct every month). Same structure as the
+            # summary queries: dedup over the full table FIRST, validity filter
+            # outside — the survivor pick must not depend on the filter.
+            #
+            # entry > 0 AND close_price > 0: v1-era rows (pre-2026-03) carry
+            # close_price=0 — the pnl formula would score such a SHORT as a +100%
+            # win (a LONG as a -100% loss), both inside the 100% outlier bound.
+            df_cls_closed = pd.read_sql_query(
+                f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON ({CLS_DEDUP_KEY})
+                           strategy, upper(btrim(direction)) as direction, entry, close_price,
+                           time as created_at, posted as closed_at, status
+                    FROM closed_trades_master
+                    ORDER BY {CLS_DEDUP_ORDER}
+                ) d
+                WHERE d.entry > 0 AND d.close_price > 0
                 """,
                 conn,
             )
-            # Bei Duplikaten durch JOIN: den neuesten ml-Eintrag nehmen
-            if not df_ai_open.empty and 'created_at' in df_ai_open.columns:
-                df_ai_open = df_ai_open.sort_values('created_at').drop_duplicates(
-                    subset=['strategy', 'direction', 'entry'], keep='last'
+
+            # AI-signals: open_time=created, close_time=closed, targets_hit=0..19 (int)
+            # close_reason wird aus der status-Spalte geladen (vom 8_ai_trade_monitor gesetzt)
+            df_ai_closed = pd.read_sql_query(
+                f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON ({AI_DEDUP_KEY})
+                           model as strategy, upper(btrim(direction)) as direction, entry, close_price,
+                           open_time as created_at, close_time as closed_at, targets_hit,
+                           status as close_reason
+                    FROM closed_ai_signals
+                    WHERE status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
+                    ORDER BY {AI_DEDUP_ORDER}
+                ) d
+                WHERE d.entry > 0 AND d.close_price > 0
+                """,
+                conn,
+            )
+
+            # ═══ OFFENE TRADES ═══
+
+            # active_trades_master: time=created; keine close_price/status
+            df_cls_open = pd.read_sql_query(
+                """
+                SELECT strategy, direction, entry, time as created_at
+                FROM active_trades_master
+                WHERE entry IS NOT NULL
+                """,
+                conn,
+            )
+
+            # ai_signals: hat keine Spalte für Eröffnungszeit, aber ml_predictions_master
+            # hat sie (time=created). Wir könnten joinen, aber der einfachere Weg:
+            # ai_signals.id SERIAL ist zeitlich aufsteigend und wir nehmen als
+            # Proxy NOW() - bei Fehler kein Problem, nur Detail-Zeile etwas ungenau.
+            # Deshalb: JOIN mit ml_predictions_master auf trade_id für created_at.
+            # Falls das nicht geht, fallback: keine Zeit, keine Einbeziehung ins
+            # Zeit-Fenster.
+            try:
+                df_ai_open = pd.read_sql_query(
+                    """
+                    SELECT a.model as strategy, a.direction, a.entry1 as entry,
+                           COALESCE(m.time, NOW() AT TIME ZONE 'UTC') as created_at
+                    FROM ai_signals a
+                    LEFT JOIN ml_predictions_master m
+                      ON m.coin = a.symbol AND m.model_name = a.model
+                     AND m.direction = a.direction
+                     AND m.time >= NOW() AT TIME ZONE 'UTC' - INTERVAL '30 days'
+                    WHERE a.entry1 IS NOT NULL
+                    """,
+                    conn,
                 )
-        except Exception as e:
-            logger.debug(f"ai_signals JOIN fehlgeschlagen: {e} — nutze Fallback")
-            df_ai_open = pd.read_sql_query(
-                """
-                SELECT model as strategy, direction, entry1 as entry,
-                       NOW() AT TIME ZONE 'UTC' as created_at
-                FROM ai_signals
-                WHERE entry1 IS NOT NULL
-                """,
-                conn,
-            )
-
-        conn.close()
+                # Bei Duplikaten durch JOIN: den neuesten ml-Eintrag nehmen
+                if not df_ai_open.empty and 'created_at' in df_ai_open.columns:
+                    df_ai_open = df_ai_open.sort_values('created_at').drop_duplicates(
+                        subset=['strategy', 'direction', 'entry'], keep='last'
+                    )
+            except Exception as e:
+                logger.debug(f"ai_signals JOIN fehlgeschlagen: {e} — nutze Fallback")
+                # Postgres aborts the whole transaction on a failed statement;
+                # without this rollback the fallback query dies with
+                # InFailedSqlTransaction and takes the entire post down — i.e.
+                # the fallback never actually fell back.
+                conn.rollback()
+                df_ai_open = pd.read_sql_query(
+                    """
+                    SELECT model as strategy, direction, entry1 as entry,
+                           NOW() AT TIME ZONE 'UTC' as created_at
+                    FROM ai_signals
+                    WHERE entry1 IS NOT NULL
+                    """,
+                    conn,
+                )
     except Exception as e:
         logger.error(f"Error loading der Per-Bot Performance-Daten: {e}", exc_info=True)
         return
@@ -1344,45 +1357,48 @@ async def job_per_bot_performance() -> None:
     except Exception:
         _regime_conn = None  # Graceful: alle Regime-Fits zeigen dann "---"
 
-    for strategy, stats in sorted_strategies:
-        k = stats.get('kelly', {})
-        status = k.get('status')
+    # try/finally: the loop below indexes into the kelly dict; anything raising
+    # in there used to skip the close() and leak the pool slot.
+    try:
+        for strategy, stats in sorted_strategies:
+            k = stats.get('kelly', {})
+            status = k.get('status')
 
-        kelly_lines.append(f"<b>{strategy}</b>")
+            kelly_lines.append(f"<b>{strategy}</b>")
 
-        if status == 'insufficient_data':
-            kelly_lines.append("  --- insufficient data (need ≥10 wins & losses)")
-        elif status == 'neg_edge':
-            kelly_lines.append("  ⛔ NEGATIVE EDGE — do not trade")
-        elif status == 'ok':
-            hk = k['half_kelly_pct']
-            ms = k['margin_safe_pct']
-            mp = k['margin_pure_pct']
-            kelly_lines.append(f"  Half-Kelly:   {hk:>5.1f}% of account")
-            kelly_lines.append(f"  Safe Margin:  {ms:>5.2f}%  (Half-Kelly / Lev)")
-            kelly_lines.append(f"  Pure Margin:  {mp:>5.1f}%  (Half-Kelly / (avg_loss × Lev))")
-        else:
-            kelly_lines.append("  ---")
+            if status == 'insufficient_data':
+                kelly_lines.append("  --- insufficient data (need ≥10 wins & losses)")
+            elif status == 'neg_edge':
+                kelly_lines.append("  ⛔ NEGATIVE EDGE — do not trade")
+            elif status == 'ok':
+                hk = k['half_kelly_pct']
+                ms = k['margin_safe_pct']
+                mp = k['margin_pure_pct']
+                kelly_lines.append(f"  Half-Kelly:   {hk:>5.1f}% of account")
+                kelly_lines.append(f"  Safe Margin:  {ms:>5.2f}%  (Half-Kelly / Lev)")
+                kelly_lines.append(f"  Pure Margin:  {mp:>5.1f}%  (Half-Kelly / (avg_loss × Lev))")
+            else:
+                kelly_lines.append("  ---")
 
-        # Regime Fit — Graceful Degradation: zeigt '---' wenn Orchestrator
-        # nicht deployt oder Connection tot ist.
+            # Regime Fit — Graceful Degradation: zeigt '---' wenn Orchestrator
+            # nicht deployt oder Connection tot ist.
+            if _regime_conn is not None:
+                try:
+                    fit_label = _get_regime_fit_label(_regime_conn, strategy)
+                except Exception:
+                    fit_label = "---"
+                kelly_lines.append(f"  Regime Fit:   {fit_label}")
+            else:
+                kelly_lines.append("  Regime Fit:   ---")
+
+            kelly_lines.append("")  # Leerzeile als Abtrennung zwischen Bots
+    finally:
+        # Regime-Connection sauber schließen, nachdem alle Bots durch sind
         if _regime_conn is not None:
             try:
-                fit_label = _get_regime_fit_label(_regime_conn, strategy)
+                _regime_conn.close()
             except Exception:
-                fit_label = "---"
-            kelly_lines.append(f"  Regime Fit:   {fit_label}")
-        else:
-            kelly_lines.append("  Regime Fit:   ---")
-
-        kelly_lines.append("")  # Leerzeile als Abtrennung zwischen Bots
-
-    # Regime-Connection sauber schließen afterdem alle Bots durch sind
-    if _regime_conn is not None:
-        try:
-            _regime_conn.close()
-        except Exception:
-            pass
+                pass
 
     # --- Zusammenbau: ALLES in EINEN <pre>-Block, ohne style-Attribute ---
     # WICHTIG — Telegram-HTML-Regeln (Bot API Dokumentation):
