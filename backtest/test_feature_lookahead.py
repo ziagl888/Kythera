@@ -52,6 +52,7 @@ from core.mis_features import (  # noqa: E402
     RAW_LINE_COLS,
     REQUIRED_INPUT_COLS,
     add_advanced_features,
+    add_advanced_features_multi,
 )
 
 # ── Konstanten ────────────────────────────────────────────────────────────────
@@ -151,6 +152,25 @@ def test_mis_lookahead():
         b = poisoned.loc[perturb_from:, FEATURE_COLS].to_numpy(dtype=np.float64)
         assert not np.allclose(a, b, equal_nan=True), "Perturbation erreicht den Builder nicht — Test ohne Kraft"
     print(f"OK  MIS add_advanced_features: Zeilen < {perturb_from} invariant unter Zukunfts-Vergiftung (beide Modi)")
+
+
+def test_mis_multi_lookahead():
+    """add_advanced_features_multi (Trainer-Pfad für Multi-Coin-Frames): dieselbe
+    Invarianz je Symbol — Vergiftung der Zukunft beider Symbole darf die Zeilen
+    davor nicht ändern (die Symbolgrenzen-Parität deckt test_mis_features.py)."""
+    perturb_from = PROBE_T + 10
+    a = make_mis_df(seed=21).assign(symbol="AAAUSDT")
+    b = make_mis_df(seed=22).assign(symbol="BBBUSDT")
+    a_p = poison_future(a, REQUIRED_INPUT_COLS, perturb_from)
+    b_p = poison_future(b, REQUIRED_INPUT_COLS, perturb_from)
+
+    base = add_advanced_features_multi(pd.concat([a, b], ignore_index=True))
+    poisoned = add_advanced_features_multi(pd.concat([a_p, b_p], ignore_index=True))
+    for sym in ("AAAUSDT", "BBBUSDT"):
+        g_base = base[base["symbol"] == sym].reset_index(drop=True)
+        g_pois = poisoned[poisoned["symbol"] == sym].reset_index(drop=True)
+        assert_rows_invariant(g_base, g_pois, FEATURE_COLS, perturb_from, f"MIS-multi({sym})")
+    print(f"OK  MIS add_advanced_features_multi: Zeilen < {perturb_from} je Symbol invariant")
 
 
 # ── Research: df+idx-Builder ──────────────────────────────────────────────────
@@ -280,6 +300,42 @@ def test_trm1_window_contract():
     print("OK  build_trm1_row: deterministisch, Zeilen außerhalb des 12er-Fensters fließen nicht ein")
 
 
+def test_funding_stats_window_contract():
+    """funding_stats: Settlement-Liste endet per Kontrakt am 'jetzt' (window-scoped,
+    Caller schneidet). Intern nutzt sie maximal die letzten FMR1_HISTORY_SETTLEMENTS
+    Sätze — ältere Elemente dürfen das Ergebnis nicht beeinflussen."""
+    rng = np.random.default_rng(23)
+    rates = list(rng.normal(1e-4, 5e-5, 150))
+    base = research_features.funding_stats(rates)
+    assert base == research_features.funding_stats(list(rates)), "funding_stats nicht deterministisch"
+
+    n_hist = research_features.FMR1_HISTORY_SETTLEMENTS
+    older_poisoned = [PERTURB_VALUE] * (len(rates) - n_hist) + rates[-n_hist:]
+    got = research_features.funding_stats(older_poisoned)
+    assert_dicts_equal(base, got, "funding_stats(older-than-window)")
+    print(f"OK  funding_stats: deterministisch, Sätze außerhalb der letzten {n_hist} fließen nicht ein")
+
+
+def test_regime_features_row_scoped():
+    """regime_features ist row-scoped (eine regime_history-Zeile + Alter rein,
+    One-Hot-Dict raus) — keine Zeit-Achse; prüfbar: Determinismus + Nicht-Mutation."""
+    row = {"regime": "TREND_UP", "confidence": 0.8}
+    before = dict(row)
+    a = research_features.regime_features(row, 15.0)
+    b = research_features.regime_features(row, 15.0)
+    assert a == b and row == before, "regime_features nicht deterministisch oder mutiert Input"
+    assert a["regime_is_TREND_UP"] == 1.0 and a["regime_conf"] == 0.8
+    print("OK  regime_features: deterministisch, row-scoped, Input unmutiert")
+
+
+def test_rub_event_type_pure():
+    """rub_event_type ist eine pure Skalar-Funktion (Vorfilter) — Determinismus."""
+    args = (-0.10, 25.0, -20.0, 95.0, 96.0, 110.0)
+    assert rub_features.rub_event_type(*args) == rub_features.rub_event_type(*args) == "REVERSION_UP"
+    assert rub_features.rub_event_type(0.0, 50.0, 0.0, 100.0, 96.0, 110.0) is None
+    print("OK  rub_event_type: pure, deterministisch")
+
+
 def test_aim2_row_scoped():
     """aim2.build_feature_row ist row-scoped: eine Event-Zeile rein, ein
     Feature-Dict raus — kein Zeit-Series-Input, also keine Perturbations-Achse.
@@ -401,12 +457,16 @@ if __name__ == "__main__":
     except Exception:
         pass
     test_mis_lookahead()
+    test_mis_multi_lookahead()
     test_candle_context_lookahead()
     test_event_row_builders_lookahead()
     test_funding_asof_lookahead()
     test_funding_asof_boundary_strict()
     test_rub_window_scoped()
     test_trm1_window_contract()
+    test_funding_stats_window_contract()
+    test_regime_features_row_scoped()
+    test_rub_event_type_pure()
     test_aim2_row_scoped()
     test_fetch_context_frame_ignores_forming_candle()
     test_fetch_context_frame_staleness_guard()
