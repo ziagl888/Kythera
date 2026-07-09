@@ -303,13 +303,22 @@ def check_mis_models():
             # 1. Aktiver Trade Check — prüft ob ein nicht-geschlossener Trade für
             #    genau dieses Modul/Coin/Richtung läuft. Der Cooldown-Check weiter
             #    unten verhindert zusätzlich zu schnelle Folgesignale im Horizon-Fenster.
+            #
+            #    Der Check läuft über den Tag — und der Tag wechselt beim Retrain-Rollout
+            #    (MIS2-72H → MIS3-72H). Ohne den Alt-Tag im IN würde eine offene
+            #    MIS2-Position denselben Coin/Direction nicht mehr blocken und der
+            #    MIS3-Lauf öffnete eine ZWEITE Live-Position daneben. legacy_tag ist
+            #    exakt das Tag, das dieser Bot vor T-2026-CU-9050-030 gepostet hätte;
+            #    solange Konstante und Artefakt-Generation übereinstimmen, ist das IN
+            #    ein No-op. Muster: 25_smc_ml_sniper.py (T-2026-CU-9050-026).
+            legacy_tag = f"{MODEL_GENERATION}-{best_horizon}"
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT 1 FROM ai_signals
-                    WHERE symbol = %s AND direction = %s AND model = %s
+                    WHERE symbol = %s AND direction = %s AND model IN (%s, %s)
                 """,
-                    (symbol, best_direction, module_tag),
+                    (symbol, best_direction, module_tag, legacy_tag),
                 )
                 trade_exists = cur.fetchone()
 

@@ -52,8 +52,7 @@ def test_tag_is_built_from_artifact_generation():
         "module_tag is not built from the winning artifact's generation"
     )
     assert not re.search(r"module_tag\s*=\s*f\"\{MODEL_GENERATION\}", SRC), (
-        "module_tag is derived from the MODEL_GENERATION constant again — "
-        "a MIS3 retrain would post under the MIS2 tag"
+        "module_tag is derived from the MODEL_GENERATION constant again — a MIS3 retrain would post under the MIS2 tag"
     )
 
 
@@ -68,9 +67,25 @@ def test_generation_travels_with_the_candidate():
     )
 
 
+def test_active_check_covers_the_legacy_tag():
+    """The tag is also the dedup key. When MIS3 rolls out the tag flips, so an open
+    MIS2-72H position would stop blocking a re-fire on the same symbol/direction and
+    the bot would open a SECOND live position next to it. The active-trade check must
+    therefore cover the tag the pre-fix code would have posted (sniper precedent,
+    T-2026-CU-9050-026). While constant and artifact generation agree, the IN is a no-op."""
+    body = re.search(r"def check_mis_models\(.*?\):\n(.*?)\ndef ", SRC, re.DOTALL)
+    assert body, "check_mis_models body not found"
+    body = body.group(1)
+    assert "model IN (%s, %s)" in body, "active-trade check no longer covers the legacy tag"
+    assert re.search(r"legacy_tag\s*=\s*f\"\{MODEL_GENERATION\}-\{best_horizon\}\"", body), (
+        "legacy_tag must be the pre-fix tag (MODEL_GENERATION constant + horizon)"
+    )
+
+
 if __name__ == "__main__":
     test_loader_reads_model_id_from_meta()
     test_missing_model_id_fails_loudly()
     test_tag_is_built_from_artifact_generation()
     test_generation_travels_with_the_candidate()
+    test_active_check_covers_the_legacy_tag()
     print("OK — MIS model-tag contract holds")
