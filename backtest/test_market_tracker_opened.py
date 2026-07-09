@@ -180,9 +180,9 @@ def test_shadow_predictions_are_not_counted_as_opened(summary):
 def test_opens_are_read_from_ai_signals(summary):
     _, queries = summary
     assert any("FROM ai_signals" in q for q in queries), "ai_signals was never queried for opens"
-    # The fake read_sql raises on a bare ml_predictions_master read, so reaching
-    # here already proves it is not an opens source. The JOIN is the only place
-    # it may appear, and only to recover created_at.
+    # The prediction log may only ever be touched by the created_at JOIN. A bare
+    # `FROM ml_predictions_master` read means it is being used as an opens source
+    # again — that is the pre-fix shape, and the fake feeds it 3 rows to prove it.
     ml_reads = [q for q in queries if "ml_predictions_master" in q]
     for q in ml_reads:
         assert "LEFT JOIN ml_predictions_master" in q, f"non-JOIN read of the prediction log: {q}"
