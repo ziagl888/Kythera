@@ -88,7 +88,15 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     # FIX P1.16: Ohne Cooldown refeuerte ein bis zu 5 Tage alter Volume-Spike
     # alle 30 min dasselbe Signal (Serien-Reentry). Jetzt 12h-Sperre pro
     # (Coin, Direction) über das zentrale trade_cooldowns-System.
-    module_tag = 'Volume Indicator'
+    #
+    # FIX T-2026-CU-9050-024: trade_cooldowns.module is varchar(10) — the
+    # original tag 'Volume Indicator' (16 chars) made every update_cooldown
+    # throw StringDataRightTruncation BEFORE the signal dict was returned,
+    # silencing this bot entirely from 2026-07-04 to 2026-07-09. The tag must
+    # stay <= 10 chars ('VolIndic' matches the core/bot_naming display alias).
+    # No cooldown-row migration needed: no write with the long tag ever
+    # succeeded.
+    module_tag = 'VolIndic'
     cd_hours = 12
 
     if volume_spike == 1:  # LONG

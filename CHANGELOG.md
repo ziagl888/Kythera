@@ -1,3 +1,20 @@
+## [2026-07-09] PR #14 — Volume Indicator seit 04.07. signal-tot: Cooldown-Tag sprengte varchar(10) (T-2026-CU-9050-024)
+
+### Fixed
+- `strategies/strat_volume_indicator.py` — **`module_tag` von `'Volume
+  Indicator'` (16 Zeichen) auf `'VolIndic'` (8) gekürzt.**
+  `trade_cooldowns.module` ist `varchar(10)`; der P1.16-Fix (2026-07-04) warf
+  deshalb bei JEDEM Signal-Versuch `StringDataRightTruncation` — und zwar vor
+  dem `return` des Signal-Dicts. Folge: der Volume Indicator hat vom 04.07.
+  bis 09.07. **null Signale gepostet** (die P1.15-Per-Coin-Isolation fing die
+  Exception mit Rollback, daher kein Kaskadenschaden, aber Dauer-Log-Spam im
+  Watchdog-Log; `check_cooldown` fand nie eine Row → jeder 30m-Zyklus crashte
+  erneut). Entdeckt beim PR-#13-Deploy im Watchdog-Log. Operator-Entscheid:
+  fixen, Bot postet wieder. Keine Cooldown-Row-Migration nötig — kein Write
+  mit dem langen Tag ist je durchgekommen. `'VolIndic'` entspricht dem
+  Display-Alias aus `core/bot_naming.py`. AUDIT_TODO P1.16 um
+  Regression-Annotation ergänzt.
+
 ## [2026-07-09] PR #13 — Market-Tracker: Per-Bot-WR-Korrektheit + kompakter A–Z-Model-Post (T-2026-CU-9050-023)
 
 Auslöser: Operator-Frage, ob die Erfolgsraten je Bot im Sentiment-Tracker-Kanal
