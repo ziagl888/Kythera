@@ -26,8 +26,10 @@ veralteter Grundlage.
   **P2.50** (Guard ist armed, 24 Goldens + 24 Fixtures seit `4765e25`, `verify`
   als pre-commit-Hook).
 - **P2.2 bleibt offen:** die TZ-Dimension ist aufgelöst, die Spaltenbreite
-  nicht. Ursprung der Drift gefunden — `legacy_trainers/zzz.py:13443` deklariert
-  `module VARCHAR(10)`, und `CREATE TABLE IF NOT EXISTS` verbreitert nie. Der
+  nicht. `CREATE TABLE IF NOT EXISTS` verbreitert nie, die Drift zementiert
+  sich. Als Herkunfts-**Indiz** (nicht als Beweis) notiert: die einzige Stelle
+  im Repo mit `module VARCHAR(10)` ist ein auskommentierter Legacy-DDL-Block in
+  `legacy_trainers/zzz.py:13443`; die ausführende DDL liegt nicht im Repo. Der
   saubere Fix ist ein Live-`ALTER` (Operator-Entscheid).
 
 ### Fehlerklassen-Sweep aus PR #14 und #16 (der eigentliche Wert)
