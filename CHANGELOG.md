@@ -1,3 +1,83 @@
+## [2026-07-09] Ledger wahr gemacht — Steuerungs-Dokumente gegen den Code verifiziert (T-2026-CU-9050-028)
+
+Kein Code-Fix. Die beiden Steuerungs-Dokumente (`docs/OPUS-HANDOFF.md`,
+`docs/T-2026-CU-9050-021-opus-task-audit.md`) trugen Stand 07-07 und kannten
+die Arbeit von 07-08/07-09 nicht — wer sie als Backlog las, priorisierte auf
+veralteter Grundlage.
+
+### Verifiziert statt geflippt
+- **P1.26 bleibt offen — die Annotation war falsch.** Sie markierte das Finding
+  als widerlegt („83 SMC_*_FVG-Cooldown-Rows, Pfad feuert"). Am Code: der
+  Mitigation-Scan in `16_smc_forex_metals_bot.py:164` läuft
+  `range(fvg['index']+1, len(df))`, also **inklusive** `curr_idx = len(df)-1`,
+  und markiert BULLISH als mitigiert bei `low[j] <= fvg['top']`. Der Trigger
+  (`:430`) prüft dasselbe Prädikat auf derselben Kerze. Ein FVG, das den Entry
+  auslösen würde, ist damit per Konstruktion schon aus `bull_fvgs` entfernt →
+  **der FVG-Entry kann nie feuern.** Auflösung des Beweis-Widerspruchs: der
+  aktuelle Code schreibt repo-weit nur den literalen Key `"SMC_FVG"`
+  (`:431,459`); die 83 gefundenen Rows heissen `SMC_1H_FVG` etc. und stammen
+  aus einer älteren, TF-präfigierenden Version. Der Dead-Code-Beweis steht rein
+  am Code und braucht die DB nicht.
+- Geflippt nach Nachprüfung: **P1.5** (Spalte ist INTEGER, zusätzlich
+  Defensiv-Cast in `8_ai_trade_monitor.py:216-219`), **P1.11** (Buffer-Key ist
+  längst `(sym, tf, open_time)`, `1_data_ingestion.py:662` — war fälschlich als
+  A2-Item gelistet), **P1.18** (Feature-Selektion ist namensbasiert,
+  `11_ai_mis_bot.py:245`; der Fix greift erst beim nächsten Bot-Restart),
+  **P2.50** (Guard ist armed, 25 Goldens seit `4765e25`, `verify` als
+  pre-commit-Hook).
+- **P2.2 bleibt offen:** die TZ-Dimension ist aufgelöst, die Spaltenbreite
+  nicht. Ursprung der Drift gefunden — `legacy_trainers/zzz.py:13443` deklariert
+  `module VARCHAR(10)`, und `CREATE TABLE IF NOT EXISTS` verbreitert nie. Der
+  saubere Fix ist ein Live-`ALTER` (Operator-Entscheid).
+
+### Fehlerklassen-Sweep aus PR #14 und #16 (der eigentliche Wert)
+- *Stiller Signal-Tod durch Spalten-Overflow:* **keine zweite aktive Instanz.**
+  Alle 18 `trade_cooldowns.module`-Writer bis zum Tag-Wert aufgelöst; längster
+  Tag 9 Zeichen (`MAYANK_4H`, `MIS2-168H`), alle distinkt, keine
+  Trunkierungs-Kollision. Restrisiko als **P3.13** notiert (Tag-Längentest deckt
+  nur Mayank ab; der `COOLDOWN_MODULE_MAX_LEN`-Guard raist `ValueError` und
+  würde von denselben breiten `except`-Blöcken geschluckt — die tragende
+  Absicherung ist der DB-freie Static-Test).
+- *Post-Pfad ignoriert Artefakt-`model_id`:* **keine zweite aktiv falsch
+  feuernde Instanz, aber drei latente** → neues Finding **P1.45**.
+  `11_ai_mis_bot.py` (Konstante `MODEL_GENERATION="MIS2"`, dazu hartkodierte
+  `mis2_*.pkl`-Dateinamen), `13_ai_rub_bot.py` (`load_artifact` berechnet den
+  Tag korrekt, der Bot verwirft ihn) und `24_quasimodo_bot.py` (struktureller
+  Zwilling des Snipers: abgeleitetes `f"QM_{tf}"` kann ein QM2 nie treffen — und
+  der Orchestrator ist seit `ff8e01e` bereits QM2-fähig). Heute stimmen die Tags
+  zufällig; **beim nächsten Retrain-Rollout verschmelzen die Generationen still**
+  in der Per-Bot-Statistik, auf der das Orchestrator-Gating entscheidet.
+  → blockiert MIS3/RUB3/QM2, als **A2b** vor B7/C2 eingeplant.
+
+### Changed
+- `AUDIT_TODO.md` — fünf Checkboxen korrigiert, A2-Items mit Code-Belegen vom
+  07-09 annotiert, neue Findings **P1.45**, **P2.51**, **P3.13**.
+- `docs/T-2026-CU-9050-021-opus-task-audit.md` — Stand 07-09; Tasks 022–026 +
+  PR #12 nachgetragen; **A1 erledigt**; **A2 auf die verifizierte Restmenge
+  eingekürzt** (fünf statt sechs Items — die PRs #13/#15 haben keines davon
+  miterledigt, ihre Dedup wirkt nur auf die geschlossenen Tabellen); **A2b** neu;
+  **B5 gestrichen** (Guard war längst scharf); **B7 um MIS1 gekürzt** (Adapter
+  `run_mis1` existiert, nur die Ausführung steht aus).
+- `docs/OPUS-HANDOFF.md` — Stand 07-09; Zyklus-Schritt 0 (`git fetch` vor
+  Priorisierung); Falle 13 verschärft (Annotationen selbst können falsch sein —
+  am Code nachprüfen); neue Fallen 15 (stale Checkout) und 16 (Modell-Tag kommt
+  aus dem Artefakt, nie aus einer Konstante); Guard-Status korrigiert.
+
+### Nebenbefund
+- **P2.51** (neu): `tools/regression_guard/guard.py:132-137` — `mode_verify` gibt
+  bei fehlenden Goldens „NOT ARMED … Pass" und Exit 0 zurück, ohne zu prüfen, ob
+  `manifest.json` existiert. Wer `golden/` löscht oder beim Merge verliert,
+  disarmt den Guard unbemerkt; der pre-commit-Hook bleibt grün. Der umgekehrte
+  Fall (Goldens ohne Fixtures) ist korrekt mit Exit 1 behandelt.
+
+### KB
+- `T-2026-CU-9050-016` (Batch E) von `open` auf `done` korrigiert: alle im Task
+  benannten Kriterien (P0.10–P0.13, P1.29–P1.31, P1.35) sind geliefert und mit
+  Report-19-Zahlen belegt. QM/ATS1/ATB1/SRA1 waren nie Done-Kriterien dieses
+  Tasks, sondern der als B7 kartierte VPS-Folge-Scope.
+
+---
+
 ## [2026-07-09] PR #16 — SMC-Sniper: Retrain-Trades posteten unter dem Alt-Tag (T-2026-CU-9050-026)
 
 Auslöser: Operator-Eindruck „der SMC postet keine Trades mehr". Befund: er
