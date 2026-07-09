@@ -12,6 +12,7 @@ import requests
 
 from core.config import MAIN_CHANNEL_COINS, TELEGRAM_CHANNELS
 from core.database import get_db_connection
+from core.market_utils import update_cooldown
 from strategies.strat_5_percent import analyze_coin as analyze_5_pct
 from strategies.strat_fast_in_out import analyze_coin as analyze_fast
 
@@ -164,6 +165,17 @@ def write_signal_atomic(conn, signal):
             )
 
             cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, msg))
+
+        # T-2026-CU-9050-024: a strategy can request its cooldown row via
+        # signal['cooldown_module'] — written HERE so it commits atomically
+        # with active_trades + outbox for exactly this signal. A strategy-side
+        # upsert was either committed prematurely (cooldown persisted although
+        # the signal write failed) or, with commit=False, leaked into an
+        # EARLIER signal's commit in the same per-coin cycle.
+        cooldown_module = signal.get('cooldown_module')
+        if cooldown_module:
+            update_cooldown(conn, cooldown_module, signal['coin'], signal['direction'], commit=False)
+
         conn.commit()
     except Exception:
         conn.rollback()

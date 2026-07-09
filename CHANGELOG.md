@@ -18,12 +18,16 @@ Live-Tabelle ist älter, `CREATE TABLE IF NOT EXISTS` verbreitert nie
   crashte erneut). Entdeckt beim PR-#13-Deploy im Watchdog-Log.
   Operator-Entscheid: fixen, Bot postet wieder. Keine Row-Migration nötig —
   kein Write mit dem langen Tag ist je durchgekommen.
-- `strategies/strat_volume_indicator.py` — **`update_cooldown` jetzt mit
-  `commit=False`**: der Cooldown landet in der Caller-Transaktion und wird
-  von `write_signal_atomic` atomar MIT dem Signal committet (Regel 8:
-  Transaktionen committet der Caller). Vorher hätte ein Fehlschlag des
-  Signal-Writes eine bereits committete 12h-Sperre hinterlassen — Coin stumm
-  ohne gepostetes Signal.
+- `strategies/strat_volume_indicator.py` + `3_detectors.py` — **Cooldown
+  wandert in `write_signal_atomic`**: die Strategie schreibt nicht mehr
+  selbst, sondern requested den Cooldown via `signal['cooldown_module']`;
+  der Detector schreibt ihn in DERSELBEN Transaktion wie
+  active_trades_master + Outbox (Regel 8: Transaktionen committet der
+  Caller). Ein Self-Commit in der Strategie hätte die 12h-Sperre auch bei
+  fehlgeschlagenem Signal-Write persistiert; ein `commit=False` in der
+  Strategie war ebenfalls nicht atomar (Review-Fund Runde 2: der Commit
+  eines FRÜHEREN Signals im selben Per-Coin-Zyklus — z.B. Fast In And Out —
+  hätte den pending Cooldown mitgenommen).
 - `17_mayank_bot.py` — **gleiche Bug-Klasse, schlimmere Wirkung:**
   `module_tag = f"MAYANK_{symbol}_{tf}"` (≥14 Zeichen) warf NACH dem
   Outbox-Insert → Cooldown nie persistiert → **dasselbe FVG-Setup wurde jede
@@ -36,9 +40,15 @@ Live-Tabelle ist älter, `CREATE TABLE IF NOT EXISTS` verbreitert nie
   `check_cooldown`/`update_cooldown`: überlange Tags werfen jetzt in JEDER
   Umgebung sofort einen sprechenden `ValueError` (Dev/Staging-DBs aus den
   Repo-DDLs hätten den Live-Fehler nie reproduziert, CI wäre grün geblieben).
+- `25_smc_ml_sniper.py` — **Load-Fallback für Artefakt-`model_id` > 10
+  Zeichen**: ein überlanger Tag aus der pkl-Meta würde den neuen Guard bei
+  JEDER Evaluation werfen (per-Symbol-except schluckt still → Bot postet
+  nichts). Jetzt: lauter `logger.error` + Fallback auf den statischen
+  `{strategy}_{tf}`-Tag. Aktuelle Artefakte (BB2/TD2) passen.
 - `backtest/test_cooldown_tags.py` — DB-freier Standalone-Test: Guard wirft,
-  VolIndic-/Mayank-Tags passen, fleet-weiter Scan auf überlange
-  Literal-Tags in `check_cooldown`/`update_cooldown`-Aufrufen.
+  VolIndic-/Mayank-Tags passen, VolIndic-Cooldown läuft atomar über
+  `write_signal_atomic` (kein Strategy-Self-Write), fleet-weiter Scan auf
+  überlange Literal-Tags (Root + strategies/ + core/).
 
 ### Nachlauf
 - AUDIT_TODO: P1.16 um Regression-Annotation ergänzt (inkl. FIO-Kollateral),

@@ -69,12 +69,27 @@ def test_mayank_tags_fit():
             )
 
 
+def test_vol_indicator_cooldown_is_atomic_via_detector():
+    """The Volume Indicator must NOT write its own cooldown — it requests it
+    via signal['cooldown_module'] and 3_detectors.write_signal_atomic writes
+    it in the same transaction as the signal (T-2026-CU-9050-024 round 2:
+    a strategy-side upsert leaked into an earlier signal's commit)."""
+    strat_src = (ROOT / "strategies" / "strat_volume_indicator.py").read_text(encoding="utf-8")
+    assert "update_cooldown(" not in strat_src, "vol strategy writes its own cooldown again"
+    assert '"cooldown_module": module_tag' in strat_src, "cooldown_module request missing from signal dict"
+
+    det_src = (ROOT / "3_detectors.py").read_text(encoding="utf-8")
+    assert "cooldown_module" in det_src, "write_signal_atomic does not honor cooldown_module"
+    assert "commit=False" in det_src, "cooldown in write_signal_atomic must join the signal transaction"
+
+
 def test_static_tag_literals_fleetwide():
     """Every string literal passed directly as the module arg to
     check_cooldown/update_cooldown anywhere in the repo root + strategies/
     must fit the live column."""
     offenders = []
-    for py in list(ROOT.glob("*.py")) + list((ROOT / "strategies").glob("*.py")):
+    scan_dirs = [ROOT, ROOT / "strategies", ROOT / "core"]
+    for py in [p for d in scan_dirs for p in d.glob("*.py")]:
         src = py.read_text(encoding="utf-8", errors="replace")
         for m in re.finditer(r"(?:check|update)_cooldown\(\s*[^,]+,\s*['\"]([^'\"]+)['\"]", src):
             tag = m.group(1)
@@ -87,5 +102,6 @@ if __name__ == "__main__":
     test_guard_rejects_long_tags()
     test_volume_indicator_tag_fits()
     test_mayank_tags_fit()
+    test_vol_indicator_cooldown_is_atomic_via_detector()
     test_static_tag_literals_fleetwide()
     print("OK — all cooldown-tag invariants hold")

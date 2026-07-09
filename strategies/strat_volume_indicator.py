@@ -1,4 +1,4 @@
-from core.market_utils import check_cooldown, get_max_leverage, is_trade_already_active, update_cooldown
+from core.market_utils import check_cooldown, get_max_leverage, is_trade_already_active
 # strategies/strat_volume_indicator.py
 import logging
 import pandas as pd
@@ -105,23 +105,24 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
         if check_cooldown(conn, module_tag, symbol, 'LONG', cd_hours): return None
         sl = float(entry * 0.95)
         t1, t2, t3, t4 = float(entry * 1.025), float(entry * 1.050), float(entry * 1.075), float(entry * 1.10)
-        # commit=False: the cooldown row joins the caller's transaction and is
-        # committed atomically with the signal by write_signal_atomic
-        # (3_detectors). A self-commit here would persist the 12h block even
-        # when the signal write fails afterwards — coin silenced without a
-        # posted signal (CLAUDE.md rule 8: the caller commits).
-        update_cooldown(conn, module_tag, symbol, 'LONG', commit=False)
+        # No update_cooldown here: the cooldown is requested via
+        # 'cooldown_module' and written by write_signal_atomic (3_detectors)
+        # in the SAME transaction as active_trades + outbox. Writing it here —
+        # even with commit=False — was not atomic: another strategy's signal
+        # on the same coin/cycle commits first and would persist the pending
+        # cooldown although THIS signal was never written.
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "LONG", "margin": margin, "entry": entry, "lev": lev,
-                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
+                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl,
+                "cooldown_module": module_tag}
 
     elif volume_spike == -1:  # SHORT
         if is_trade_already_active(conn, symbol, 'SHORT', 'Volume Indicator'): return None
         if check_cooldown(conn, module_tag, symbol, 'SHORT', cd_hours): return None
         sl = float(entry * 1.05)
         t1, t2, t3, t4 = float(entry * 0.975), float(entry * 0.95), float(entry * 0.925), float(entry * 0.9)
-        # commit=False — see LONG branch above.
-        update_cooldown(conn, module_tag, symbol, 'SHORT', commit=False)
+        # Cooldown via 'cooldown_module' — see LONG branch above.
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "SHORT", "margin": margin, "entry": entry, "lev": lev,
-                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
+                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl,
+                "cooldown_module": module_tag}
 
     return None

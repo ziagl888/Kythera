@@ -19,7 +19,7 @@ from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
-from core.market_utils import check_cooldown, get_max_leverage, load_coins, update_cooldown
+from core.market_utils import COOLDOWN_MODULE_MAX_LEN, check_cooldown, get_max_leverage, load_coins, update_cooldown
 from core.trade_utils import calculate_smart_targets
 
 # 🛠️ CONFIGURATION
@@ -93,6 +93,17 @@ for tf in TIMEFRAMES:
 def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_price, features_dict, p1, p2, p3=None):
     model_data = MODELS[strategy_code][tf]
     module_tag = model_data.get('model_id') or f"{strategy_code.upper()}_{tf.upper()}"
+    # T-2026-CU-9050-024: an artifact-provided model_id must fit the live
+    # trade_cooldowns.module varchar(10) — an oversized tag would make the
+    # check_cooldown length guard raise on EVERY evaluation and the
+    # per-symbol except would silently zero this bot's output. Fall back to
+    # the static tag, loudly.
+    if len(module_tag) > COOLDOWN_MODULE_MAX_LEN:
+        logger.error(
+            f"model_id '{module_tag}' exceeds the cooldown tag limit "
+            f"({COOLDOWN_MODULE_MAX_LEN}) — falling back to static tag"
+        )
+        module_tag = f"{strategy_code.upper()}_{tf.upper()}"
     now = datetime.now(timezone.utc)
 
     # 1. Cooldown / Active Trade Check
