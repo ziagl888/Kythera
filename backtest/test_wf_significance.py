@@ -62,8 +62,10 @@ def test_random_control_carries_fee_drag():
     pnls = rng.normal(0.0, 2.0, 400)
     rc = sign_flip_control(pnls, fee_rt_pct=0.1, n=1000, seed=42)
     assert rc["control_mean_pnl_pct"] < 0.0, rc
-    # Erwartung analytisch: E[control] = (observed + flip)/2 = -fee_rt = -0.1
-    assert abs(rc["control_mean_pnl_pct"] - (float(pnls.mean()) - 0.1) / 1.0) < 0.2
+    # Erwartung analytisch: E[control] = 0.5*pnl + 0.5*(-pnl - 2*fee_rt) = -fee_rt,
+    # KONSTANT und unabhängig vom beobachteten Mittel (Review-Fix PR #20: vorher
+    # wurde gegen mean-fee_rt verglichen — die falsche Invariante).
+    assert abs(rc["control_mean_pnl_pct"] - (-0.1)) < 0.05, rc
     print("OK  Random-Control: Fee-Drag in der Null-Verteilung enthalten")
 
 
