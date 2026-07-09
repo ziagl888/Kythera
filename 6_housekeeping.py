@@ -509,6 +509,11 @@ _GAP_FILL_MIN_INTERVAL_S = 0.25  # ~4 req/s → weit unter dem Weight-Limit
 _GAP_FILL_MAX_RETRIES = 5
 _GAP_FILL_RETRY_DEADLINE_S = 120.0
 _gap_fill_ban_until = 0.0  # monotonic-Zeitpunkt, bis zu dem die 418-Ban-Pause gilt
+# Zählt 418er über den GANZEN Lauf (Review PR #21): Binance eskaliert
+# Repeat-Offender-Bans — ein flaches 120s-Fenster würde den Ban bei fehlendem
+# Retry-After-Header alle ~2 min re-triggern statt exponentiell zurückzuweichen.
+# Reset erst bei einem erfolgreichen Call.
+_gap_fill_consecutive_bans = 0
 
 
 def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms: int) -> list | None:
@@ -523,7 +528,7 @@ def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms
     → prozessweites Ban-Fenster (>=120s), alle weiteren Calls liefern bis zum
     Ablauf sofort None — der nächste nächtliche Lauf holt die Gaps nach.
     """
-    global _gap_fill_ban_until
+    global _gap_fill_ban_until, _gap_fill_consecutive_bans
     if time.monotonic() < _gap_fill_ban_until:
         return None  # 418-Ban-Fenster aktiv — nicht weiter hämmern
 
@@ -537,14 +542,21 @@ def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms
     }
     budget = RetryBudget(max_attempts=_GAP_FILL_MAX_RETRIES, deadline_s=_GAP_FILL_RETRY_DEADLINE_S)
     consecutive_fail = 0
+    # Anders als in fetch_ohlcv_batch zählt hier JEDER Versuch (inkl. dem
+    # ersten) gegen das Budget — es gibt keine Erfolgs-Pagination in diesem
+    # Ein-Range-Call (Review PR #21, RetryBudget kennt beide Muster).
     while budget.attempt():
         _GAP_FILL_THROTTLE.wait("binance-fapi", _GAP_FILL_MIN_INTERVAL_S)
         try:
             resp = requests.get(url, params=params, timeout=15)
             if resp.status_code == 418:
-                wait = backoff_seconds(418, 1, resp.headers.get("Retry-After"))
+                _gap_fill_consecutive_bans += 1
+                wait = backoff_seconds(418, _gap_fill_consecutive_bans, resp.headers.get("Retry-After"))
                 _gap_fill_ban_until = time.monotonic() + wait
-                logger.warning(f"Gap-Fill {symbol} {interval}: 418 (IP-Ban-Signal) — Gap-Filler pausiert {wait:.0f}s")
+                logger.warning(
+                    f"Gap-Fill {symbol} {interval}: 418 (IP-Ban-Signal Nr. {_gap_fill_consecutive_bans}) "
+                    f"— Gap-Filler pausiert {wait:.0f}s"
+                )
                 return None
             if resp.status_code == 429:
                 consecutive_fail += 1
@@ -553,6 +565,7 @@ def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
+            _gap_fill_consecutive_bans = 0  # erfolgreicher Call beendet die Ban-Eskalation
             return resp.json()
         except requests.exceptions.RequestException as e:
             consecutive_fail += 1

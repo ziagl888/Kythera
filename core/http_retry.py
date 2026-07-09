@@ -34,8 +34,14 @@ JITTER_MAX_S = 0.5
 class RetryBudget:
     """Zählt Versuche + Wanduhr-Deadline für EINE logische REST-Operation.
 
-    ``attempt()`` vor jedem (Wieder-)Versuch aufrufen; False = Budget erschöpft,
-    aufhören und mit dem weiterarbeiten, was da ist.
+    ``attempt()`` liefert False = Budget erschöpft, aufhören und mit dem
+    weiterarbeiten, was da ist. Der CALLER entscheidet, was ein "Versuch" ist —
+    beide Muster sind gewollt (nicht "angleichen"):
+      (a) nur FEHL-Versuche zählen (1_data_ingestion.fetch_ohlcv_batch:
+          Erfolgs-Seiten paginieren frei, sonst würde das Budget lange,
+          fehlerfreie Backfills kappen);
+      (b) jeder Versuch zählt inkl. dem ersten (6_housekeeping-Gap-Filler:
+          ``while budget.attempt():`` — ein Ein-Range-Call ohne Pagination).
     """
 
     def __init__(
