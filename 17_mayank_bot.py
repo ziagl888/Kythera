@@ -254,7 +254,15 @@ def analyze_strategy():
                                     # FIX: Cooldown-Check vor dem Senden, sonst feuert
                                     # der Bot stündlich das gleiche Signal, solange das
                                     # FVG-Kriterium erfüllt ist.
-                                    module_tag = f"MAYANK_{symbol_name}_{tf.upper()}"
+                                    #
+                                    # FIX T-2026-CU-9050-024: no symbol in the tag —
+                                    # trade_cooldowns.module is varchar(10) on the live DB
+                                    # and the old f"MAYANK_{symbol}_{tf}" (>=14 chars) made
+                                    # every update_cooldown throw AFTER the outbox insert:
+                                    # cooldown never persisted, the same FVG re-posted
+                                    # every scan. The symbol already lives in the `coin`
+                                    # key column, so (module, coin, direction) stays unique.
+                                    module_tag = f"MAYANK_{tf.upper()}"
                                     with get_db_connection() as _cd_conn:
                                         if check_cooldown(_cd_conn, module_tag, symbol_name, "LONG", 12):
                                             logger.info(f"⏳ Cooldown active für {symbol_name} ({tf}) LONG. Skip.")
@@ -321,7 +329,10 @@ def analyze_strategy():
                                 # BEDINGUNG 3: Hat die JETZIGE Kerze das FVG fully closed?
                                 if curr_high >= gap_top:
                                     # FIX: Cooldown-Check vor dem Senden (siehe LONG oben).
-                                    module_tag = f"MAYANK_{symbol_name}_{tf.upper()}"
+                                    # FIX T-2026-CU-9050-024: no symbol in the tag
+                                    # (varchar(10)); symbol lives in the coin key column —
+                                    # see the LONG branch.
+                                    module_tag = f"MAYANK_{tf.upper()}"
                                     with get_db_connection() as _cd_conn:
                                         if check_cooldown(_cd_conn, module_tag, symbol_name, "SHORT", 12):
                                             logger.info(f"⏳ Cooldown active für {symbol_name} ({tf}) SHORT. Skip.")

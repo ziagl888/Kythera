@@ -1,4 +1,4 @@
-from core.market_utils import check_cooldown, get_max_leverage, is_trade_already_active, update_cooldown
+from core.market_utils import check_cooldown, get_max_leverage, is_trade_already_active
 # strategies/strat_volume_indicator.py
 import logging
 import pandas as pd
@@ -88,7 +88,15 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     # FIX P1.16: Ohne Cooldown refeuerte ein bis zu 5 Tage alter Volume-Spike
     # alle 30 min dasselbe Signal (Serien-Reentry). Jetzt 12h-Sperre pro
     # (Coin, Direction) über das zentrale trade_cooldowns-System.
-    module_tag = 'Volume Indicator'
+    #
+    # FIX T-2026-CU-9050-024: trade_cooldowns.module is varchar(10) — the
+    # original tag 'Volume Indicator' (16 chars) made every update_cooldown
+    # throw StringDataRightTruncation BEFORE the signal dict was returned,
+    # silencing this bot entirely from 2026-07-04 to 2026-07-09. The tag must
+    # stay <= 10 chars ('VolIndic' matches the core/bot_naming display alias).
+    # No cooldown-row migration needed: no write with the long tag ever
+    # succeeded.
+    module_tag = 'VolIndic'
     cd_hours = 12
 
     if volume_spike == 1:  # LONG
@@ -97,17 +105,24 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
         if check_cooldown(conn, module_tag, symbol, 'LONG', cd_hours): return None
         sl = float(entry * 0.95)
         t1, t2, t3, t4 = float(entry * 1.025), float(entry * 1.050), float(entry * 1.075), float(entry * 1.10)
-        update_cooldown(conn, module_tag, symbol, 'LONG')
+        # No update_cooldown here: the cooldown is requested via
+        # 'cooldown_module' and written by write_signal_atomic (3_detectors)
+        # in the SAME transaction as active_trades + outbox. Writing it here —
+        # even with commit=False — was not atomic: another strategy's signal
+        # on the same coin/cycle commits first and would persist the pending
+        # cooldown although THIS signal was never written.
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "LONG", "margin": margin, "entry": entry, "lev": lev,
-                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
+                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl,
+                "cooldown_module": module_tag}
 
     elif volume_spike == -1:  # SHORT
         if is_trade_already_active(conn, symbol, 'SHORT', 'Volume Indicator'): return None
         if check_cooldown(conn, module_tag, symbol, 'SHORT', cd_hours): return None
         sl = float(entry * 1.05)
         t1, t2, t3, t4 = float(entry * 0.975), float(entry * 0.95), float(entry * 0.925), float(entry * 0.9)
-        update_cooldown(conn, module_tag, symbol, 'SHORT')
+        # Cooldown via 'cooldown_module' — see LONG branch above.
         return {"strategy": "Volume Indicator", "coin": symbol, "direction": "SHORT", "margin": margin, "entry": entry, "lev": lev,
-                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
+                "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl,
+                "cooldown_module": module_tag}
 
     return None

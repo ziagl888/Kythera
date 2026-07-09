@@ -1,3 +1,61 @@
+## [2026-07-09] PR #14 — Cooldown-Tags sprengen varchar(10): Volume Indicator signal-tot, Mayank-Refire (T-2026-CU-9050-024)
+
+`trade_cooldowns.module` ist auf der Live-DB `character varying(10)` (per
+`information_schema` verifiziert). Die Repo-DDLs sagen VARCHAR(50)/TEXT — die
+Live-Tabelle ist älter, `CREATE TABLE IF NOT EXISTS` verbreitert nie
+(DDL-Drift, P2.2 erweitert). Zwei Writer nutzten längere Tags:
+
+### Fixed
+- `strategies/strat_volume_indicator.py` — **`module_tag` von `'Volume
+  Indicator'` (16 Zeichen) auf `'VolIndic'` (8) gekürzt.** Der P1.16-Fix
+  (2026-07-04) warf deshalb bei JEDEM Signal-Versuch
+  `StringDataRightTruncation` — vor dem `return` des Signal-Dicts. Folge: der
+  Volume Indicator hat vom 04.07. bis 09.07. **null Signale gepostet**, und
+  weil `analyze_fast` im selben Per-Coin-try läuft und `write_signal_atomic`
+  erst danach kommt, ging in Zyklen mit gleichzeitigem
+  Fast-In-And-Out-Signal **auch dieses Signal verloren** (Kollateralschaden
+  der P1.15-Isolation; `check_cooldown` fand nie eine Row → jeder 30m-Zyklus
+  crashte erneut). Entdeckt beim PR-#13-Deploy im Watchdog-Log.
+  Operator-Entscheid: fixen, Bot postet wieder. Keine Row-Migration nötig —
+  kein Write mit dem langen Tag ist je durchgekommen.
+- `strategies/strat_volume_indicator.py` + `3_detectors.py` — **Cooldown
+  wandert in `write_signal_atomic`**: die Strategie schreibt nicht mehr
+  selbst, sondern requested den Cooldown via `signal['cooldown_module']`;
+  der Detector schreibt ihn in DERSELBEN Transaktion wie
+  active_trades_master + Outbox (Regel 8: Transaktionen committet der
+  Caller). Ein Self-Commit in der Strategie hätte die 12h-Sperre auch bei
+  fehlgeschlagenem Signal-Write persistiert; ein `commit=False` in der
+  Strategie war ebenfalls nicht atomar (Review-Fund Runde 2: der Commit
+  eines FRÜHEREN Signals im selben Per-Coin-Zyklus — z.B. Fast In And Out —
+  hätte den pending Cooldown mitgenommen).
+- `17_mayank_bot.py` — **gleiche Bug-Klasse, schlimmere Wirkung:**
+  `module_tag = f"MAYANK_{symbol}_{tf}"` (≥14 Zeichen) warf NACH dem
+  Outbox-Insert → Cooldown nie persistiert → **dasselbe FVG-Setup wurde jede
+  Scan-Runde erneut gepostet**, solange das Setup bestand. Neuer Tag
+  `f"MAYANK_{tf}"` (≤10); das Symbol steckt ohnehin in der `coin`-Key-Spalte,
+  die (module, coin, direction)-Eindeutigkeit bleibt identisch.
+
+### Added
+- `core/market_utils.py` — **Längen-Guard `COOLDOWN_MODULE_MAX_LEN = 10`** in
+  `check_cooldown`/`update_cooldown`: überlange Tags werfen jetzt in JEDER
+  Umgebung sofort einen sprechenden `ValueError` (Dev/Staging-DBs aus den
+  Repo-DDLs hätten den Live-Fehler nie reproduziert, CI wäre grün geblieben).
+- `25_smc_ml_sniper.py` — **Load-Fallback für Artefakt-`model_id` > 10
+  Zeichen**: ein überlanger Tag aus der pkl-Meta würde den neuen Guard bei
+  JEDER Evaluation werfen (per-Symbol-except schluckt still → Bot postet
+  nichts). Jetzt: lauter `logger.error` + Fallback auf den statischen
+  `{strategy}_{tf}`-Tag. Aktuelle Artefakte (BB2/TD2) passen.
+- `backtest/test_cooldown_tags.py` — DB-freier Standalone-Test: Guard wirft,
+  VolIndic-/Mayank-Tags passen, VolIndic-Cooldown läuft atomar über
+  `write_signal_atomic` (kein Strategy-Self-Write), fleet-weiter Scan auf
+  überlange Literal-Tags (Root + strategies/ + core/).
+
+### Nachlauf
+- AUDIT_TODO: P1.16 um Regression-Annotation ergänzt (inkl. FIO-Kollateral),
+  P2.2 um die Breiten-Drift-Dimension erweitert. Empfehlung an Operator:
+  `ALTER TABLE trade_cooldowns ALTER COLUMN module TYPE VARCHAR(50)` bei
+  nächster Gelegenheit (Live-Schema-Änderung → Eskalation, T-2026-CU-9050-018).
+
 ## [2026-07-09] PR #13 — Market-Tracker: Per-Bot-WR-Korrektheit + kompakter A–Z-Model-Post (T-2026-CU-9050-023)
 
 Auslöser: Operator-Frage, ob die Erfolgsraten je Bot im Sentiment-Tracker-Kanal
