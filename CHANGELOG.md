@@ -34,11 +34,34 @@ der Performance der alten entschieden (Verstoss gegen Versionierungs-Regel 6).
   `TypeError`, statt still den Alt-Tag zu schreiben. Der Orchestrator erkennt
   `QM2_1H` seit `ff8e01e` bereits.
 
+### Fixed — transitionaler Dedup (Review-Fund, hätte den Tag-Fix zur Geldfalle gemacht)
+Der Posting-Tag **ist zugleich der Dedupe-Key**. Beim Generationswechsel kippt er —
+und damit hätte eine noch offene Position der Alt-Generation denselben
+Coin/Direction nicht mehr geblockt: der neue Lauf hätte eine **zweite Live-Position**
+daneben eröffnet. Exakt die Falle, die PR #16 beim Sniper mit
+`model IN (neuer Tag, Alt-Tag)` entschärft hat. Pro Bot an der Stelle geschlossen,
+die dort tatsächlich sperrt:
+
+- `11_ai_mis_bot.py` / `24_quasimodo_bot.py` — Active-Trade-Check auf
+  `model IN (%s, %s)` erweitert.
+- `13_ai_rub_bot.py` — RUB hat **keinen** Active-Trade-Check gegen `ai_signals`; sein
+  4h-Cooldown ist die einzige Re-Fire-Sperre. Der prüft jetzt zusätzlich gegen
+  `RUB_LEGACY_TAG`. (Die fehlende Open-Position-Prüfung ist ein Alt-Zustand, nicht
+  Teil dieses Tasks.)
+
+`legacy_tag` ist jeweils **genau das Tag, das der Bot vor diesem Fix gepostet hätte** —
+keine Operator-Konstante, kein toter Code. Solange Quellcode-Konstante und
+Artefakt-Generation übereinstimmen, sind beide Tags identisch und die Klausel ist ein
+No-op.
+
 Guard-Tests (statisch, DB-frei — ein Runtime-Guard würde von den fleet-weiten
 breiten `except`-Blöcken geschluckt, Lektion aus T-2026-CU-9050-024):
 `backtest/test_mis_tag.py`, `backtest/test_rub_tag.py`,
-`backtest/test_quasimodo_tag.py`. **Keine Live-Semantik-Änderung** — die drei Tags
-lauten mit den deployten Artefakten unverändert `MIS2-<Horizont>`, `RUB2`, `QM_1H`.
+`backtest/test_quasimodo_tag.py`. Alle drei sind mutations-geprüft: das Zurückdrehen
+je einer Fix-Zeile lässt den zugehörigen Test rot werden. **Keine
+Live-Semantik-Änderung** — die drei Tags lauten mit den deployten Artefakten
+unverändert `MIS2-<Horizont>`, `RUB2`, `QM_1H`, und die Dedup-Klauseln sind bei
+identischen Tags wirkungsgleich zum Vorzustand.
 
 ### Offen (bewusst nicht in diesem PR)
 - `retrain_from_replay.py:723` (EPD2) und `retrain_sra2.py:281` (SRA2) schreiben
