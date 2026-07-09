@@ -1,3 +1,37 @@
+## [2026-07-09] HTTP-Härtung der Binance-REST-Pfade (T-2026-CU-9050-027 D2, P2.14 + P2.18)
+
+Neues `core/http_retry.py` (reine Politik ohne I/O, injizierbare Uhr/Sleep →
+DB-/netzfrei testbar): `RetryBudget` (max_attempts UND Wanduhr-Deadline),
+`backoff_seconds` (429 mit Retry-After-Respekt, 418 nie unter 120s und
+exponentiell — ein Retry-After-Header darf die Ban-Wartezeit nur erhöhen),
+`MinIntervalThrottle` (Mindestabstand + Jitter je Host-Bucket). Muster nach
+HKUDS/Vibe-Trading `loaders/_http.py`/`retry_with_budget` (MIT), kein Drop-in.
+
+- **P2.14 (`1_data_ingestion.fetch_ohlcv_batch`):** die `while True`-Schleife
+  konnte bei einem stuck Symbol ewig loopen und hämmerte bei 418 mit
+  Retry-After+2s in den Ban. Jetzt: gebudgeteter Retry (8 Versuche/300s je
+  Symbol×TF-Batch, nur FEHL-Versuche zählen — Erfolgs-Seiten paginieren frei),
+  418-Backoff ≥120s exponentiell. Bei erschöpftem Budget werden die bereits
+  geholten Teildaten verwendet; der nächste 12h-Lauf setzt am MAX(open_time)
+  wieder auf.
+- **P2.18 (`6_housekeeping._fetch_klines_from_binance`):** der Gap-Filler hatte
+  gar kein 429/418-Handling (`raise_for_status` → None) und konnte im Burst
+  über ~9k Tabellen einen 418-IP-Ban ziehen, der auch die Trading-Endpoints
+  trifft. Jetzt: 429 → Retry-After-bewusster gebudgeteter Backoff; 418 →
+  prozessweites Ban-Fenster (alle weiteren Gap-Fill-Calls liefern bis zum
+  Ablauf sofort None statt weiterzuhämmern; der nächste nächtliche Lauf holt
+  die Gaps nach); Throttle 0,25s/Request gegen den Burst.
+
+Live-Semantik: Erfolgs-Pfade unverändert (gleiche URLs, gleiche Parse-Wege);
+alle Deltas liegen auf Fehler-Pfaden, die vorher endlos retryten oder bannten.
+Wirkt beim nächsten regulären Restart, kein Deploy. Verifikation:
+`backtest/test_http_retry.py` (7/7, standalone), ruff+mypy grün auf allen drei
+Dateien. Der Freshness-Fallback (`run_freshness_job`) behält sein eigenes,
+schon gedeckeltes Rate-Limit-Handling — bewusst nicht angefasst (limit=2-Calls,
+Weight ungefährlich).
+
+---
+
 ## [2026-07-09] Market-Tracker gibt Pool-Connections auf dem Fehlerpfad zurück (T-2026-CU-9050-029, P1.43, PR #18)
 
 `23_market_tracker.py` holte die Connection an zwei Stellen bare und rief
