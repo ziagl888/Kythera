@@ -408,21 +408,37 @@ async def job_signal_summary():
         # 2. GESCHLOSSENE TRADES HOLEN
         # Wir fragen alles ab, was entweder in den letzten 24h geschlossen ODER eröffnet wurde
         # Queries erweitert um entry/close_price für PnL-basierte is_win-Klassifikation
+        # Dedupe on the natural key in SQL (report 14: closed_ai_signals has no
+        # unique index and carries ~357k duplicate rows from the v2 migration /
+        # LEGACY re-close event). Duplicates differ exactly in status /
+        # targets_hit, so those columns stay OUT of the key — same key as
+        # tools/track_shadow_model.py — and a deterministic ORDER BY tiebreaker
+        # picks the survivor (highest target info first, which sidesteps the
+        # LEGACY targets_hit=0 writer bug). Direction is uppercased inside the
+        # key and the select list: historical rows are not uniformly uppercase
+        # (the shadow tracker uses ILIKE for the same reason) and every
+        # comparison below is an exact 'LONG'/'SHORT' match.
         query_cls_trades = """
-            SELECT strategy, direction, entry, close_price,
+            SELECT DISTINCT ON (coin, strategy, upper(btrim(direction)), entry, close_price, time, posted)
+                   strategy, upper(btrim(direction)) as direction, entry, close_price,
                    time as created_at, posted as closed_at, status
             FROM closed_trades_master
             WHERE posted >= %s OR time >= %s
+            ORDER BY coin, strategy, upper(btrim(direction)), entry, close_price, time, posted,
+                     status DESC NULLS LAST
         """
         df_cls_trades = pd.read_sql_query(query_cls_trades, conn, params=(t24, t24))
 
         query_cls_ai = """
-            SELECT model as strategy, direction, entry, close_price,
+            SELECT DISTINCT ON (symbol, model, upper(btrim(direction)), entry, close_price, open_time, close_time)
+                   model as strategy, upper(btrim(direction)) as direction, entry, close_price,
                    open_time as created_at, close_time as closed_at, targets_hit,
                    status as close_reason
             FROM closed_ai_signals
             WHERE (close_time >= %s OR open_time >= %s)
               AND status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
+            ORDER BY symbol, model, upper(btrim(direction)), entry, close_price, open_time, close_time,
+                     targets_hit DESC NULLS LAST, status ASC NULLS LAST
         """
         df_cls_ai = pd.read_sql_query(query_cls_ai, conn, params=(t24, t24))
 
@@ -430,6 +446,12 @@ async def job_signal_summary():
     except Exception as e:
         logger.error(f"Error loading der Signal-Daten: {e}")
         return
+
+    # Belt-and-braces for the frames whose direction is not normalised in SQL
+    # (active_trades_master / ml_predictions_master).
+    for df in [df_act_trades, df_act_ai]:
+        if not df.empty and 'direction' in df.columns:
+            df['direction'] = df['direction'].astype(str).str.strip().str.upper()
 
     # --- DATEN AUFBEREITEN & GEWINNE ERMITTELN ---
 
@@ -452,7 +474,15 @@ async def job_signal_summary():
         if 'entry' in df.columns and 'close_price' in df.columns:
             entry = pd.to_numeric(df['entry'], errors='coerce')
             close = pd.to_numeric(df['close_price'], errors='coerce')
-            valid = entry.notna() & close.notna() & (entry > 0)
+            priced = entry.notna() & close.notna()
+            # close > 0 in addition to entry > 0: v1-era rows (pre-2026-03)
+            # carry close_price=0 — without the guard a SHORT there scores as
+            # a +100% win (a LONG as a -100% loss). Rows whose price is
+            # present but unusable are NEUTRAL, not fallback material: the
+            # status/targets fallback would resurrect exactly the writer bugs
+            # the PnL-based path was built to bypass.
+            valid = priced & (entry > 0) & (close > 0)
+            bad_price = priced & ~valid
             pct = (close - entry) / entry * 100
             is_short = df['direction'] == 'SHORT'
             pnl_pct = pct.where(~is_short, -pct)
@@ -460,6 +490,7 @@ async def job_signal_summary():
             df['pnl_pct'] = pnl_pct
         else:
             df['pnl_pct'] = pd.NA
+            bad_price = pd.Series(False, index=df.index)
 
         # close_reason-Spalte (leer falls not loaded)
         if has_close_reason and 'close_reason' in df.columns:
@@ -492,9 +523,10 @@ async def job_signal_summary():
         else:
             fallback_win = pd.Series([False] * len(df), index=df.index)
 
-        # Kombiniere: PnL wenn vorhanden, sonst Fallback (außer housekeeping)
+        # Kombiniere: PnL wenn vorhanden, sonst Fallback (außer housekeeping
+        # und bad_price — letztere sind neutral, siehe oben)
         is_win = is_win_by_pnl.copy()
-        no_pnl = ~has_pnl & ~is_housekeeping
+        no_pnl = ~has_pnl & ~is_housekeeping & ~bad_price
         is_win = is_win | (no_pnl & fallback_win)
 
         df['is_win'] = is_win
@@ -750,12 +782,32 @@ async def job_per_bot_performance() -> None:
         # ═══ GESCHLOSSENE TRADES ═══
 
         # Klassische Trades: time=created, posted=closed, status=0..4 (string)
+        #
+        # Both closed queries dedupe on the natural key in SQL: closed_ai_signals
+        # has no unique index and carries ~357k duplicate rows from the v2
+        # migration / LEGACY re-close event (report 14) — without the dedupe,
+        # n, all-time WR and Kelly are inflated. Duplicates differ exactly in
+        # status/targets_hit, so those columns stay OUT of the key (same key as
+        # tools/track_shadow_model.py) and the ORDER BY tiebreaker makes the
+        # surviving row deterministic (highest target info first, sidestepping
+        # the LEGACY targets_hit=0 writer bug). DISTINCT ON also collapses the
+        # duplicates server-side instead of shipping them to pandas every hour.
+        # Direction is uppercased inside the key and select list — historical
+        # rows are not uniformly uppercase (shadow tracker uses ILIKE for the
+        # same reason) and pnl_pct/direction splits compare exact 'LONG'/'SHORT'.
+        #
+        # entry > 0 AND close_price > 0: v1-era rows (pre-2026-03) carry
+        # close_price=0 — the pnl formula would score such a SHORT as a +100%
+        # win (a LONG as a -100% loss), both inside the 100% outlier bound.
         df_cls_closed = pd.read_sql_query(
             """
-            SELECT strategy, direction, entry, close_price,
+            SELECT DISTINCT ON (coin, strategy, upper(btrim(direction)), entry, close_price, time, posted)
+                   strategy, upper(btrim(direction)) as direction, entry, close_price,
                    time as created_at, posted as closed_at, status
             FROM closed_trades_master
-            WHERE entry IS NOT NULL AND close_price IS NOT NULL
+            WHERE entry > 0 AND close_price > 0
+            ORDER BY coin, strategy, upper(btrim(direction)), entry, close_price, time, posted,
+                     status DESC NULLS LAST
             """,
             conn,
         )
@@ -764,12 +816,15 @@ async def job_per_bot_performance() -> None:
         # close_reason wird aus der status-Spalte geladen (vom 8_ai_trade_monitor gesetzt)
         df_ai_closed = pd.read_sql_query(
             """
-            SELECT model as strategy, direction, entry, close_price,
+            SELECT DISTINCT ON (symbol, model, upper(btrim(direction)), entry, close_price, open_time, close_time)
+                   model as strategy, upper(btrim(direction)) as direction, entry, close_price,
                    open_time as created_at, close_time as closed_at, targets_hit,
                    status as close_reason
             FROM closed_ai_signals
-            WHERE entry IS NOT NULL AND close_price IS NOT NULL
+            WHERE entry > 0 AND close_price > 0
               AND status IS DISTINCT FROM 'ENTRY_NOT_FILLED'
+            ORDER BY symbol, model, upper(btrim(direction)), entry, close_price, open_time, close_time,
+                     targets_hit DESC NULLS LAST, status ASC NULLS LAST
             """,
             conn,
         )
@@ -917,6 +972,12 @@ async def job_per_bot_performance() -> None:
     df_all['close_price'] = pd.to_numeric(df_all['close_price'], errors='coerce')
     df_all = df_all.dropna(subset=['entry'])
     df_all = df_all[df_all['entry'] > 0]
+
+    # Belt-and-braces direction normalisation: the closed queries already
+    # uppercase in SQL, but the open-trade frames (active_trades_master /
+    # ai_signals) do not. A lowercase 'short' would otherwise get the LONG
+    # sign in pnl_pct and drop out of the direction splits.
+    df_all['direction'] = df_all['direction'].astype(str).str.strip().str.upper()
 
     # PnL nur für geschlossene Trades berechnen
     pct = (df_all['close_price'] - df_all['entry']) / df_all['entry'] * 100
@@ -1375,12 +1436,15 @@ async def job_per_bot_performance() -> None:
         header_first: str,
         header_continued: str,
         footer: str,
+        separator: str = "\n\n",
     ) -> list[str]:
         """Packt Bot-Blöcke in mehrere Chunks unter dem 4096-Zeichen-Limit.
 
         - header_first: Header für den allerersten Chunk (volle Überschrift)
         - header_continued: Header für Folge-Chunks ("continued" Markierung)
         - footer: Footer für jeden Chunk (Legende etc.)
+        - separator: Trenner zwischen Blöcken ("\\n\\n" für Bot-Blöcke mit
+          Leerzeile, "\\n" für einzeilige Tabellen-Rows)
         """
         if not blocks:
             return []
@@ -1392,13 +1456,13 @@ async def job_per_bot_performance() -> None:
         current_body = []
         current_size = len(current_hdr) + len(footer)
 
-        separator_size = 2  # "\n\n" zwischen Bot-Blöcken
+        separator_size = len(separator)
 
         for block in blocks:
             needed = len(block) + (separator_size if current_body else 0)
             if current_size + needed > TELEGRAM_TEXT_LIMIT - SAFETY_BUFFER and current_body:
                 # Chunk abschließen
-                chunks.append(current_hdr + "\n\n".join(current_body) + footer)
+                chunks.append(current_hdr + separator.join(current_body) + footer)
                 # Neuer Chunk mit "continued" Header
                 current_hdr = header_continued
                 current_body = [block]
@@ -1408,7 +1472,7 @@ async def job_per_bot_performance() -> None:
                 current_size += needed
 
         if current_body:
-            chunks.append(current_hdr + "\n\n".join(current_body) + footer)
+            chunks.append(current_hdr + separator.join(current_body) + footer)
 
         return chunks
 
@@ -1466,10 +1530,47 @@ async def job_per_bot_performance() -> None:
     if not kelly_chunks:
         kelly_chunks = [kelly_header_first + kelly_footer]
 
-    # --- Senden: erst Tabellen-Chunks, dann Kelly-Chunks ---
-    # Kurzer Delay zwischen Messages damit Telegram die Reihenfolge behält.
+    # ── Compact post: one line per model, alphanumerically sorted ────────
+    # Complements the main table (sorted by trade count) with an A–Z view:
+    # model generations (ABR1/ABR2, RUB1/RUB2, ...) sit directly under each
+    # other and compare at a glance. Deliberately only 24h/7d/All + avg PnL
+    # + n — no detail block, no Kelly.
+    compact_rows = []
+    for strategy, stats in sorted(rows_per_strategy.items(), key=lambda kv: kv[0].casefold()):
+        avg_pnl = stats.get('avg_pnl_all')
+        pnl_cell = f"{avg_pnl:+.2f}%" if avg_pnl is not None else "---"
+        compact_rows.append(
+            f"{strategy:<12} │ {stats['24h'][0]:>4} │ {stats['7d'][0]:>4} │ {stats['All'][0]:>4} │ "
+            f"{pnl_cell} n={stats['n_decisive_total']}"
+        )
+
+    compact_col_hdr = "Bot          │ 24h  │ 7d   │ All  │ avgPnL n"
+    compact_table_hdr = f"{compact_col_hdr}\n{'─' * len(compact_col_hdr)}\n"
+    compact_header_first = '<pre>🔡 <b>MODELS A–Z</b> (compact)\n\n' + compact_table_hdr
+    compact_header_continued = '<pre>🔡 <b>MODELS A–Z</b> (continued)\n\n' + compact_table_hdr
+    compact_footer = (
+        '\n\n<b>Legend:</b>\n'
+        '  WR from decisive closes (window = open time)\n'
+        '  --- = fewer than 3 decisive trades\n'
+        '  avgPnL / n = all-time, neutrals excluded'
+        '</pre>'
+    )
+
+    compact_chunks = _build_chunks(
+        compact_rows,
+        compact_header_first,
+        compact_header_continued,
+        compact_footer,
+        separator="\n",
+    )
+
+    # --- Send: table chunks, then compact A-Z post, then Kelly chunks ---
+    # Short delay between messages so Telegram keeps the ordering.
     for tchunk in table_chunks:
         send_telegram(tchunk, TELEGRAM_CHANNEL_ID)
+        await asyncio.sleep(1)
+    for cchunk in compact_chunks:
+        send_telegram(cchunk, TELEGRAM_CHANNEL_ID)
         await asyncio.sleep(1)
     for kchunk in kelly_chunks:
         send_telegram(kchunk, TELEGRAM_CHANNEL_ID)
