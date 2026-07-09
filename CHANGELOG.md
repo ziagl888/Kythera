@@ -1,3 +1,41 @@
+## [2026-07-09] Kerzen-API `core/candles.py` + Call-Site-Inventar + Paritäts-Tool (T-2026-CU-9050-034, C1-Vorbereitung)
+
+Vorbereitung der R1-/TimescaleDB-Migration (`docs/TIMESCALE_R1_MIGRATION.md`,
+T-2026-CU-9050-018). **Reine Neuanlage — kein bestehender Call-Site wurde
+umverdrahtet, kein Dual-Write, kein Backfill, kein Cutover, keine
+Schema-Änderung.** Die Fleet läuft unverändert.
+
+Neu:
+
+- **`core/candles.py`** — die zentrale Zugriffs-API über die per-Coin-Tabellen,
+  durch die in Phase 1 alle Kerzen-/Indikator-Zugriffe laufen sollen. Vier
+  Verträge: Reads liefern **immer ASC** (heute mischen sich ASC- und
+  DESC-Frames, `iloc[-1]` bedeutet je nach Datei etwas anderes);
+  `include_forming=False` ist Default und schaltet R1 bot-für-bot scharf;
+  Writes **committen nicht** (Caller-Commit-Kontrakt wie `core/signal_post.py`);
+  Symbol/Timeframe werden validiert und über `psycopg2.sql.Identifier` gequotet
+  (P3.3, optionale `coins.json`-Whitelist).
+- **`docs/CANDLE_CALL_SITES.md`** — Inventar jeder Stelle im Repo, die eine
+  Kerzen- oder Indikator-Tabelle anfasst, mit heutigem Forming-Candle-Verhalten,
+  R1-Blast-Radius, vorgeschlagener Umverdrahtungs-Reihenfolge und den offenen
+  Operator-Fragen.
+- **`tools/candles_parity.py`** — Paritäts-Vergleich alt vs. Hypertable
+  (Row-Count, `max(open_time)`, OHLCV-Checksumme) als Gate für Migrationsphase
+  3. Der Vergleichskern ist DB-frei und per `--self-check` auf der
+  Build-Maschine lauffähig; echte Läufe brauchen den VPS.
+- **`backtest/test_candles.py`** — 29 DB-freie Tests.
+
+Der `is_closed`-Vertrag des Ziel-Schemas existiert in den Alt-Tabellen nicht.
+Phase A leitet ihn aus der Uhr ab (`open_time < period_start(tf, now())`),
+DB-seitig gerechnet, per Epoch-Arithmetik statt `date_trunc()` — letzteres hängt
+an der Session-Zeitzone und hätte je nach Bot-Prozess anders geschnitten (R3).
+Für `1w` ist der Cutoff auf Montag verankert; Epoch 0 ist ein Donnerstag,
+Binance-Wochenkerzen öffnen Montag 00:00 UTC.
+
+Offen (Operator, siehe `docs/CANDLE_CALL_SITES.md` §5): Retention, `REAL` →
+`double precision` (P3.12), 1d/1w-Streaming, Close-Grace-Period. **R1 senkt die
+Signal-Raten — das ist der Zweck. Schwellen erst nach dem Retrain neu tunen.**
+
 ## [2026-07-09] Market-Tracker gibt Pool-Connections auf dem Fehlerpfad zurück (T-2026-CU-9050-029, P1.43, PR #18)
 
 `23_market_tracker.py` holte die Connection an zwei Stellen bare und rief
