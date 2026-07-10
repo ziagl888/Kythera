@@ -1,3 +1,60 @@
+## [2026-07-10] SMC-Sniper: Pivots nicht mehr auf der laufenden Kerze (T-2026-CU-9050-036, P1.46)
+
+`25_smc_ml_sniper.py` liest 150 Kerzen `DESC`, dreht auf ASC — und liess
+`scipy.signal.argrelextrema` bisher über den **vollen** Frame laufen. Die
+letzte Zeile ist die forming Kerze. Ihr High/Low bewegt sich, also repaintete
+der Pivot-Satz **innerhalb** der laufenden Kerze: die drei Drives eines
+Three-Drive und das Level eines Breaker-Blocks verschoben sich, nachdem das
+Signal bereits gepostet war. Die Schwesterbots droppen die forming Kerze seit
+Juli (`24:115` aus P1.24, `16:334` aus P1.27, `21:126`); 25 war die einzige
+Lücke — und der einzige der vier, der im Geld-Pfad live postet (harte Regel 5).
+
+Fix: `c_highs, c_lows = highs[:-1], lows[:-1]` vor den beiden
+`argrelextrema`-Aufrufen, Muster wie `24_quasimodo_bot.py:115`. Die
+Pivot-Indizes bleiben zu den Vollarrays aligned (`highs[p1]`, `rsis[p1]`
+funktionieren unverändert), und alle `len(df)-1`/`len(df)-2`-Offsets — die
+BB-Feature-Zeile, das Breakout-Fenster, die Freshness-Gates — bleiben
+unberührt. Ein `df.iloc[:-1]` auf den Frame hätte genau diese Offsets um eine
+Kerze verschoben; das ist bewusst nicht passiert und per Test festgenagelt.
+
+`current_price = closes[-1]` bleibt **live**: es ist der CMP, an dem der Entry
+gesetzt wird, plus der Auslöser für die BB-Level-Nähe — kein analytischer
+Input. Der R1-Endzustand (`include_forming=False` auch für die Preis-Seite)
+hängt an den Operator-Fragen 4/6 aus `docs/CANDLE_CALL_SITES.md` und an
+Migrations-Block 4.
+
+Signal-Raten-Delta, DB-frei über die Regression-Guard-Fixtures replayt
+(4 Coins × 1h/4h, 3.608 Scan-Punkte, jeweils 150-Kerzen-Fenster mit der letzten
+Zeile als forming Kerze; gezählt wird der Geometrie-Trigger vor ML-Gate und
+Cooldown):
+
+| Pattern | vorher | nachher | beide | nur vorher | nur nachher |
+|---|---|---|---|---|---|
+| BB LONG | 58 | 57 | 50 | 8 | 7 |
+| BB SHORT | 65 | 61 | 56 | 9 | 5 |
+| TD LONG | 11 | 10 | 10 | 1 | 0 |
+| TD SHORT | 20 | 19 | 17 | 3 | 2 |
+| **Summe** | **154** | **147** | **133** | **21** | **14** |
+
+Also **−4,5 %** Trigger-Rate; 21 Trigger fallen weg, 14 kommen hinzu (der
+verschobene Pivot-Satz ändert `peak_idx[-2]` und damit das BB-Level). Der
+Replay misst exakt das Code-Delta (Zeile drin vs. draussen); der echte
+Live-Repaint ist grösser, weil dort die forming Kerze nur teilweise gefüllt
+ist. R1 senkt die Signal-Raten — das ist der Zweck; Schwellen erst nach dem
+Retrain neu tunen.
+
+Bewusst **nicht** mitgefixt: `argrelextrema(mode='clip')` lässt am rechten Rand
+weiter unbestätigte Pivots durch (der `max_confirmed_idx`-Filter aus P1.24).
+Bei 25 ist das kein Drop-in — das TD-Frische-Gate
+(`len(df) - p3 <= PIVOT_WINDOW + 2`) sucht genau diese Kanten-Pivots. Ein Filter
+dort wäre eine Strategie-Änderung, kein Bugfix, und gehört in einen eigenen
+Task.
+
+Verifikation: `backtest/test_sniper_forming.py` (neu, 4/4, DB-frei — inkl. eines
+numerischen Tests, der den Repaint-Mechanismus selbst reproduziert),
+`backtest/test_sniper_tag.py` (4/4), `guard.py smoke` grün, ruff + mypy grün.
+Wirkt beim nächsten regulären Restart, kein Deploy.
+
 ## [2026-07-09] Kerzen-API `core/candles.py` + Call-Site-Inventar + Paritäts-Tool (T-2026-CU-9050-034, C1-Vorbereitung)
 
 Vorbereitung der R1-/TimescaleDB-Migration (`docs/TIMESCALE_R1_MIGRATION.md`,
