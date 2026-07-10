@@ -94,9 +94,8 @@ Pfad tot.
 (2) Zwei neue Befunde derselben Klasse wie P1.48: weder EPD noch SRA hat einen
 Active-Trade-Check gegen `ai_signals`; EPDs einzige Re-Fire-Sperre ist ein
 In-Memory-900s-Timer, der einen Prozess-Neustart nicht überlebt.
-(3) Ledger-Defekt: `P1.46` ist doppelt vergeben (ATB1 aus T-029 und Sniper aus
-T-036) — der RUB-Eintrag wurde auf `P1.48` umnummeriert, die ältere Kollision
-steht offen.
+(Der `P1.46`-Nummernkonflikt dreier Sessions war beim Merge auf `main` bereits
+durch PR #36 aufgelöst — Sniper behält P1.46, ATB1 wurde P1.47, RUB P1.48.)
 
 ## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)
 
