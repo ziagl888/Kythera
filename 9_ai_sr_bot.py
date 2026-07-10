@@ -9,7 +9,6 @@ import time
 
 import numpy as np
 import pandas as pd
-import xgboost as xgb
 
 from core import config as _kcfg  # channel ids
 from core.charting import generate_minichart_image
@@ -17,35 +16,77 @@ from core.charting import generate_minichart_image
 # --- CORE IMPORTE ---
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.model_artifacts import load_artifact_json, maybe_reload
+from core.sra_features import SRA2_FEATURES, build_sra2_features
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 # Logging Setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_SR_BOT - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- LOAD MODELS ---
-# try:
-#    MODEL_LONG = joblib.load("trade_success_xgb_LONG_v1.model")
-#    MODEL_SHORT = joblib.load("trade_success_xgb_SHORT_v1.model")
-#    logger.info("✅ XGBoost Modelle (SRA1) loaded successfully!")
-# except Exception as e:
-#    logger.error(f"❌ Error loading der Modelle: {e}")
-#    exit(1)
+# --- MODELL-ARTEFAKTE (natives XGB-JSON + optionale Meta-/Calib-Sidecars) ---
+#
+# Die Dateinamen sind generationsfreie SLOTS — der Operator kopiert das
+# promotete Artefakt hierher. Die Generation steht ausschliesslich in der
+# Sidecar-Meta (`*_meta.json` → model_id), nie im Dateinamen und nie in einer
+# Quellcode-Konstante (harte Regel 6, T-2026-CU-9050-042). Ein SRA3-Retrain
+# postet damit als SRA3, statt still mit SRA2 in derselben Per-Bot-Statistik zu
+# verschmelzen, auf der das Orchestrator-Gating entscheidet.
+SRA_ARTIFACT_PATHS = {
+    'LONG': "trade_success_xgb_LONG_v2.json",
+    'SHORT': "trade_success_xgb_SHORT_v2.json",
+}
+# Der Tag, unter dem dieser Bot vor T-2026-CU-9050-042 BEIDE Richtungen postete.
+# Zwei Rollen: default_tag fürs heutige Legacy-Artefakt (keine Meta ⇒ kein
+# model_id) UND transitionaler Dedupe-Key — siehe check_cooldown/Duplikatprüfung.
+SRA_LEGACY_TAG = 'SRA1'
+# Posting-Schwelle des Legacy-Modells. Ein Artefakt mit Meta bringt seine eigene
+# mit (optimal_threshold aus dem Validation-Slice) und überschreibt sie.
+SRA_LEGACY_THRESHOLD = 0.65
+# Shadow-Log-Untergrenze: alles darüber landet in ml_predictions_master.
+SRA_SHADOW_THRESHOLD = 0.35
 
-# --- MODELLE LADEN (AKTUALISIERT FÜR NATIVES JSON FORMAT) ---
-try:
-    # Wir erstellen leere Container und laden das Modell hinein
-    MODEL_LONG = xgb.XGBClassifier()
-    MODEL_LONG.load_model("trade_success_xgb_LONG_v2.json")
+MODELS: dict[str, dict] = {}
 
-    MODEL_SHORT = xgb.XGBClassifier()
-    MODEL_SHORT.load_model("trade_success_xgb_SHORT_v2.json")
 
-    logger.info("✅ XGBoost models (SRA1) loaded in native JSON format!")
-except Exception as e:
-    logger.error(f"❌ Error loading der neuen Modelle: {e}")
-    # Fallback auf alte Methode, falls Dateien noch nicht da sind
-    exit(1)
+def sra_expected_features() -> list[str]:
+    """Die Feature-Namen, die dieser Bot bauen KANN — Legacy-Vektor ∪ SRA2-Vertrag.
+
+    Der harte Feature-Vertrag (P0.12): verlangt ein Artefakt eine Spalte, die
+    hier fehlt, wird es nicht geladen und der Bot idlet — nie fillna(0), denn
+    das Modell hätte diese Spalte im Training nie als 0 gesehen. Die Liste wird
+    aus den Buildern ABGELEITET, nicht danebengeschrieben (zwei Listen driften).
+    """
+    dummy: dict = dict.fromkeys(SRA_INDICATOR_COLS, 1.0)
+    dummy['trend_direction'] = 'UP'
+    legacy = create_feature_row('LONG', dummy) or {}
+    return list(dict.fromkeys([*legacy.keys(), *SRA2_FEATURES]))
+
+
+def build_serving_row(direction, indicators) -> dict | None:
+    """Der Feature-Frame für ein Artefakt MIT Meta.
+
+    Achtung, geteilte Spaltennamen mit UNTERSCHIEDLICHER Semantik: der alte
+    Bot-Vektor rechnet ``pct_*`` gegen den Close, der SRA2-Builder gegen den
+    Referenzwert (ema9, wma9, …). Der SRA2-Builder gewinnt deshalb bewusst
+    (rechts im Merge) — er definiert die Semantik, auf der das Artefakt
+    trainiert wurde. Der Legacy-Pfad unten fasst diesen Frame nie an.
+    """
+    legacy = create_feature_row(direction, indicators)
+    if not legacy:
+        return None
+    return {**legacy, **build_sra2_features(indicators)}
+
+
+def load_models() -> None:
+    """Lädt beide Richtungs-Artefakte. Fehlt eines, idlet NUR diese Richtung
+    (Falle 3: ein Bot ohne Artefakt startet und tut nichts, statt in den
+    Watchdog-Restart-Loop zu laufen — vorher war das ein `exit(1)`)."""
+    expected = sra_expected_features()
+    for direction, path in SRA_ARTIFACT_PATHS.items():
+        MODELS[direction] = load_artifact_json(path, expected, SRA_LEGACY_TAG, SRA_LEGACY_THRESHOLD)
+    if not any(a['loaded'] for a in MODELS.values()):
+        logger.error("❌ Kein SRA-Artefakt ladbar — Bot läuft im Idle-Modus bis zum Deploy.")
 
 
 # FEATURE & INDIKATOR HELFER
@@ -74,6 +115,37 @@ def get_indicators_at_time(conn, coin, timestamp):
         return None
 
 
+# Roh-Indikatorspalten, die create_feature_row 1:1 übernimmt. Modul-Konstante,
+# damit sra_expected_features() den Feature-Vertrag AUS dem Builder ableiten kann
+# statt ihn danebenzuschreiben (zwei Listen driften auseinander).
+SRA_INDICATOR_COLS = [
+    'rsi_9',
+    'rsi_14',
+    'rsi_24',
+    'macd_dif_fast_9_21_9',
+    'macd_dea_fast_9_21_9',
+    'tsi_fast_12_7_7',
+    'tsi_fast_12_7_7_signal',
+    'atr_14',
+    'r_squared',
+    'boll_upper_20',
+    'boll_mid_20',
+    'boll_lower_20',
+    'donchian_upper_20',
+    'donchian_lower_20',
+    'donchian_mid_20',
+    'support_price',
+    'resistance_price',
+    'ema_9',
+    'ema_21',
+    'wma_9',
+    'wma_21',
+    'kama_9',
+    'kama_21',
+    'close',
+]
+
+
 def create_feature_row(direction, indicators):
     """Erstellt das Feature-Dict für XGBoost basierend auf deiner Modell-Logik."""
     close = indicators.get('close', np.nan)
@@ -81,32 +153,7 @@ def create_feature_row(direction, indicators):
         return None
 
     features = {}
-    base_cols = [
-        'rsi_9',
-        'rsi_14',
-        'rsi_24',
-        'macd_dif_fast_9_21_9',
-        'macd_dea_fast_9_21_9',
-        'tsi_fast_12_7_7',
-        'tsi_fast_12_7_7_signal',
-        'atr_14',
-        'r_squared',
-        'boll_upper_20',
-        'boll_mid_20',
-        'boll_lower_20',
-        'donchian_upper_20',
-        'donchian_lower_20',
-        'donchian_mid_20',
-        'support_price',
-        'resistance_price',
-        'ema_9',
-        'ema_21',
-        'wma_9',
-        'wma_21',
-        'kama_9',
-        'kama_21',
-        'close',
-    ]
+    base_cols = SRA_INDICATOR_COLS
 
     for col in base_cols:
         val = indicators.get(col)
@@ -168,7 +215,15 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
     # FIX: Vorher eigener Cooldown-Check mit `pd.Timestamp.utcnow().tz_localize(None)`
     # → crashes in newer pandas versions (utcnow is tz-aware there) and mixes
     # tz-aware/tz-naive Vergleiche. Jetzt: saubere Version aus market_utils.
-    if check_cooldown(conn, module, symbol, direction, 4):
+    #
+    # Transitionaler Dedup (T-2026-CU-9050-042): der Cooldown-Key IST der Tag, und
+    # der Tag wechselt beim Retrain-Rollout (SRA1 → SRA2). Eine frische
+    # SRA1-Cooldown-Row würde ein SRA2-Signal auf demselben Coin dann nicht mehr
+    # sperren, und Cornix öffnete eine zweite Live-Position neben der ersten.
+    # Also zusätzlich gegen den Alt-Tag prüfen; solange die Tags gleich sind
+    # (heute, Legacy-Artefakt ohne Meta), fällt der zweite Query weg.
+    cooldown_tags = [module] if module == SRA_LEGACY_TAG else [module, SRA_LEGACY_TAG]
+    if any(check_cooldown(conn, t, symbol, direction, 4) for t in cooldown_tags):
         return False
 
     # 2. Level & Targets
@@ -248,10 +303,16 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
 
 
 def main():
-    logger.info("=== 🧠 ML SR BOT (SRA1) AKTIVIERT ===")
-    module_name = 'SRA1'
+    logger.info("=== 🧠 ML SR BOT AKTIVIERT ===")
+    load_models()
 
     while True:
+        # Tägliches Reload nimmt einen Artefakt-Deploy ohne Restart auf; ein
+        # fehlgeschlagener Reload verwirft ein geladenes Artefakt nicht.
+        expected = sra_expected_features()
+        for direction in SRA_ARTIFACT_PATHS:
+            MODELS[direction] = maybe_reload(MODELS[direction], expected)
+
         conn = get_db_connection()
         try:
             with conn.cursor() as cur:
@@ -273,10 +334,24 @@ def main():
                     # verarbeiteten Trades. Jetzt: commit pro Trade, rollback
                     # betrifft nur den einen.
                     try:
+                        artifact = MODELS.get(direction)
+                        if not artifact or not artifact['loaded']:
+                            continue  # Idle-Modus dieser Richtung (Falle 3)
+                        # Der Posting-Tag kommt aus der Artefakt-Meta (load_artifact_json
+                        # setzt tag = meta.model_id); ohne Meta bleibt es der benannte
+                        # Legacy-Tag. Er trägt ai_signals.model, ml_predictions_master
+                        # .model_name und den Cooldown-Key — alle drei müssen dieselbe
+                        # Generation nennen, sonst mischt die Per-Bot-Statistik zwei
+                        # Modelle (Regel 6).
+                        module_name = artifact['tag']
+
                         # 2. Duplikatprüfung in Master-Log
+                        #    Transitional: auch gegen den Alt-Tag prüfen. Ohne ihn hielte
+                        #    ein SRA2-Rollout jeden bereits verarbeiteten Trade für neu und
+                        #    postete ihn ein zweites Mal.
                         cur.execute(
-                            "SELECT 1 FROM ml_predictions_master WHERE trade_id = %s AND model_name = %s",
-                            (t_id, module_name),
+                            "SELECT 1 FROM ml_predictions_master WHERE trade_id = %s AND model_name IN (%s, %s)",
+                            (t_id, module_name, SRA_LEGACY_TAG),
                         )
                         if cur.fetchone():
                             continue
@@ -291,13 +366,25 @@ def main():
                             continue
 
                         # 4. XGBoost Vorhersage
-                        X = pd.DataFrame([features])
-                        model = MODEL_LONG if direction == 'LONG' else MODEL_SHORT
-                        conf = float(model.predict_proba(X)[0, 1])
+                        #    Artefakt MIT Meta: Frame aus dem geteilten SRA2-Builder,
+                        #    ausgerichtet auf den Vertrag — Auswahl UND Reihenfolge. Keine
+                        #    fillna über Spalten: load_artifact_json hat die Namen hart
+                        #    validiert (P0.12); fehlende WERTE bleiben NaN, das kennt das
+                        #    Modell aus dem Training.
+                        #    Artefakt OHNE Meta: der Legacy-Vektor, unverändert — er ist
+                        #    der Vertrag des heute deployten SRA1-Modells.
+                        if artifact['features']:
+                            serving = build_serving_row(direction, inds)
+                            if not serving:
+                                continue
+                            X = pd.DataFrame([serving])[artifact['features']]
+                        else:
+                            X = pd.DataFrame([features])
+                        conf = float(artifact['model'].predict_proba(X)[0, 1])
 
                         # 5. Klassifizierung & Schatten-Log
                         posted = False
-                        if conf >= 0.65:
+                        if conf >= artifact['threshold']:
                             # FIX (Review Batch 4): NaN-ATR-Vektoren nicht live posten.
                             # P1.20 lässt fehlende ATR-Features als NaN durch, damit der
                             # Scan nicht mehr crasht — aber das Modell hat im Training nie
@@ -312,8 +399,8 @@ def main():
                                 # interne 4h-Cooldown den Post unterdrückt hat.
                                 posted = process_ai_trade(conn, coin, direction, module_name, entry, conf, chart_p)
 
-                        # Alles >= 0.35 in die Master-History loggen
-                        if conf >= 0.35:
+                        # Alles >= SRA_SHADOW_THRESHOLD in die Master-History loggen
+                        if conf >= SRA_SHADOW_THRESHOLD:
                             cur.execute(
                                 """
                                 INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
@@ -322,7 +409,7 @@ def main():
                                 (t_id, module_name, t_time, coin, direction, entry, conf, posted),
                             )
                         else:
-                            # Unter 0.45 nur als "erledigt" markieren (minimales Log)
+                            # Darunter nur als "erledigt" markieren (minimales Log)
                             cur.execute(
                                 "INSERT INTO ml_predictions_master (trade_id, model_name, coin, confidence, posted) VALUES (%s, %s, %s, %s, False)",
                                 (t_id, module_name, coin, conf),

@@ -43,23 +43,13 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 from core.database import get_db_connection  # noqa: E402
+from core.sra_features import SRA2_FEATURES, build_sra2_features  # noqa: E402
 from tools.retrain_from_replay import STAGING_DIR, pick_threshold_safe  # noqa: E402
 
-# Skalenfreier SRA2-Feature-Vertrag (22 statt 38; kein is_long — Modelle sind
-# je Richtung getrennt, die Spalte war konstant).
-SRA2_FEATURES = [
-    "rsi_9", "rsi_14", "rsi_24",
-    "tsi_fast_12_7_7", "tsi_fast_12_7_7_signal",
-    "macd_dif_pct", "macd_dea_pct", "atr_pct",
-    "r_squared", "trend_direction_num",
-    "pct_ema9", "pct_ema21", "pct_wma9", "pct_kama9",
-    "pct_support", "pct_resist", "pct_boll_mid",
-    "ema9_ema21_pct", "kama9_kama21_pct",
-    "support_atr", "resist_atr", "boll_width_atr",
-]
+# Feature-Vertrag + Builder leben in core/sra_features.py — EIN Builder fuer
+# Trainer und Serving (X-R1). 9_ai_sr_bot importiert denselben Modul.
 
-TREND_MAP = {"UP": 1, "DOWN": -1, "FLAT": 0, "SIDEWAYS": 0}
-
+# Roh-Indikatorspalten, die build_sra2_features als Eingabe braucht (SQL-Projektion).
 INDICATOR_COLS = (
     "open_time, close, rsi_9, rsi_14, rsi_24, macd_dif_fast_9_21_9, "
     "macd_dea_fast_9_21_9, tsi_fast_12_7_7, tsi_fast_12_7_7_signal, atr_14, "
@@ -67,57 +57,6 @@ INDICATOR_COLS = (
     "donchian_lower_20, donchian_mid_20, support_price, resistance_price, "
     "ema_9, ema_21, wma_9, wma_21, kama_9, kama_21, trend_direction"
 )
-
-
-def _pct(a, b):
-    try:
-        a, b = float(a), float(b)
-        if b == 0 or pd.isna(a) or pd.isna(b):
-            return np.nan
-        return (a - b) / b * 100.0
-    except (TypeError, ValueError):
-        return np.nan
-
-
-def build_features(ind: dict) -> dict:
-    """Skalenfreie SRA2-Features aus einer 1h-Indikator-Zeile. NaN bleibt NaN
-    (XGBoost-nativ, live-konsistent — Verbesserung 3)."""
-    close = ind.get("close")
-    atr = ind.get("atr_14")
-    f = {
-        "rsi_9": ind.get("rsi_9"), "rsi_14": ind.get("rsi_14"), "rsi_24": ind.get("rsi_24"),
-        "tsi_fast_12_7_7": ind.get("tsi_fast_12_7_7"),
-        "tsi_fast_12_7_7_signal": ind.get("tsi_fast_12_7_7_signal"),
-        "macd_dif_pct": _pct(ind.get("macd_dif_fast_9_21_9", 0) + (close or 0), close) if close else np.nan,
-        "macd_dea_pct": _pct(ind.get("macd_dea_fast_9_21_9", 0) + (close or 0), close) if close else np.nan,
-        "atr_pct": _pct((atr or 0) + (close or 0), close) if close and atr is not None else np.nan,
-        "r_squared": ind.get("r_squared"),
-        "trend_direction_num": TREND_MAP.get(str(ind.get("trend_direction", "")).upper(), 0),
-        "pct_ema9": _pct(close, ind.get("ema_9")),
-        "pct_ema21": _pct(close, ind.get("ema_21")),
-        "pct_wma9": _pct(close, ind.get("wma_9")),
-        "pct_kama9": _pct(close, ind.get("kama_9")),
-        "pct_support": _pct(close, ind.get("support_price")),
-        "pct_resist": _pct(close, ind.get("resistance_price")),
-        "pct_boll_mid": _pct(close, ind.get("boll_mid_20")),
-        "ema9_ema21_pct": _pct(ind.get("ema_9"), ind.get("ema_21")),
-        "kama9_kama21_pct": _pct(ind.get("kama_9"), ind.get("kama_21")),
-    }
-    # ATR-normalisierte Distanzen (wie Bot P1.20: fehlt ATR → NaN, kein 0-Fake)
-    try:
-        atr_f = float(atr) if atr is not None else np.nan
-        close_f = float(close) if close is not None else np.nan
-        if pd.notna(atr_f) and atr_f > 0 and pd.notna(close_f):
-            sup, res = ind.get("support_price"), ind.get("resistance_price")
-            bu, bl = ind.get("boll_upper_20"), ind.get("boll_lower_20")
-            f["support_atr"] = (close_f - float(sup)) / atr_f if sup is not None else np.nan
-            f["resist_atr"] = (float(res) - close_f) / atr_f if res is not None else np.nan
-            f["boll_width_atr"] = (float(bu) - float(bl)) / atr_f if bu is not None and bl is not None else np.nan
-        else:
-            f["support_atr"] = f["resist_atr"] = f["boll_width_atr"] = np.nan
-    except (TypeError, ValueError):
-        f["support_atr"] = f["resist_atr"] = f["boll_width_atr"] = np.nan
-    return f
 
 
 def approx_pnl_pct(row) -> float:
@@ -196,7 +135,7 @@ def load_dataset(conn) -> pd.DataFrame:
             continue
         ind = dfi[mask].iloc[-1].to_dict()
 
-        f = build_features(ind)
+        f = build_sra2_features(ind)
         f["signal_time"] = t_sig
         f["direction"] = str(tr["direction"]).upper()
         f["outcome"] = 1 if str(tr["status"]).strip() in ("SL1", "SL2", "SL3", "4") else 0
