@@ -61,6 +61,12 @@ def parse_definitions(text: str) -> list[tuple[int, int, int]]:
     return out
 
 
+def _id_sort_key(finding_id: str) -> tuple[int, int]:
+    """"P1.9" -> (1, 9). Lexical sort would put P1.10 before P1.9."""
+    sev, num = finding_id.lstrip("P").split(".")
+    return int(sev), int(num)
+
+
 def find_duplicates(defs: list[tuple[int, int, int]]) -> dict[str, list[int]]:
     """Map "P1.46" -> [line, line, ...] for every id defined more than once."""
     seen: dict[str, list[int]] = collections.defaultdict(list)
@@ -102,7 +108,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 0
 
     print(f"[finding-ids] FEHLER — {len(dupes)} doppelt vergebene Finding-ID(s):", file=sys.stderr)
-    for fid, lines in sorted(dupes.items()):
+    # numerisch sortieren, nicht lexikalisch — sonst steht P1.10 vor P1.9
+    for fid, lines in sorted(dupes.items(), key=lambda kv: _id_sort_key(kv[0])):
         where = ", ".join(f"Zeile {n}" for n in lines)
         print(f"  {fid}: {where}", file=sys.stderr)
     print(

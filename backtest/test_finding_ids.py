@@ -84,6 +84,13 @@ def test_next_free_is_max_plus_one_per_severity():
     path.unlink()
 
 
+def test_duplicate_report_sorts_numerically():
+    """P1.9 before P1.10 — lexical sort would invert them and make a long dup list
+    hard to read."""
+    ids = ["P1.10", "P1.9", "P0.2", "P2.1"]
+    assert sorted(ids, key=finding_ids._id_sort_key) == ["P0.2", "P1.9", "P1.10", "P2.1"]
+
+
 def test_missing_ledger_fails_open():
     """The check runs as a pre-commit hook on every commit. A checkout without the
     ledger must not block the commit — only a real, determinable duplicate blocks."""
@@ -107,6 +114,7 @@ if __name__ == "__main__":
     test_prose_reference_is_not_a_definition()
     test_number_prefix_is_not_confused()
     test_next_free_is_max_plus_one_per_severity()
+    test_duplicate_report_sorts_numerically()
     test_missing_ledger_fails_open()
     test_real_ledger_is_clean()
     print("OK - finding-id guard holds")
