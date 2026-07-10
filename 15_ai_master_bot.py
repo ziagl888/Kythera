@@ -44,9 +44,13 @@ from core.aim2_features import (
     build_feature_row,
     parity_nonzero_share,
 )
+from core.aim2_topn import MODEL_TAG as TOPN_TAG
+from core.aim2_topn import TopNCandidate, select_topn
+from core.aim2_topn import load_config as load_topn_config
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
+from core.signal_post import has_open_ai_signal, post_ai_signal
 from core.time import utc_now_naive
 from core.trade_utils import calculate_smart_targets
 
@@ -55,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 AI_CHANNEL_ID = _kcfg.CH_MASTER
+TOPN_CHANNEL_ID = _kcfg.CH_AIM2_TOPN  # eigener Kanal; 0 = ungesetzt → Shadow-only
 MODEL_PATH = "master_meta_model_aim2.pkl"
 MODEL_NAME = "AIM2"
 LIVE_POSTING = os.getenv("AIM2_LIVE_POSTING", "0") == "1"  # Default: Shadow-only
@@ -122,7 +127,12 @@ def df_from_query(conn, query, params=None):
 
 def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
     """Posted-AI- + Conv-Signale (Schwarm-Basis UND Kandidaten-Obermenge).
-    Identische Definition wie im Trainer: posted=true, ohne AIM1/AIM2."""
+    Identische Definition wie im Trainer: posted=true, ohne AIM1/AIM2.
+
+    Der AIM2-TOPN-Tag wird ebenfalls ausgeschlossen: die Top-N-Zeilen sind
+    Meta-Gate-Ausgaben derselben Pipeline, kein Basissignal — sie als Kandidat
+    oder in den Schwarm zurückzulassen wäre dieselbe F6-Selbst-Feedback-Schleife
+    wie bei AIM1/AIM2 (T-2026-CU-9050-051)."""
     since_local = (
         pd.Timestamp(since_utc_naive).tz_localize("UTC").tz_convert(LOCAL_TZ).tz_localize(None)
     ).to_pydatetime()
@@ -132,9 +142,9 @@ def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
         """
         SELECT id, model_name AS source, time, coin, direction, entry, confidence
         FROM ml_predictions_master
-        WHERE posted = true AND model_name NOT IN ('AIM1', 'AIM2') AND time > %s
+        WHERE posted = true AND model_name NOT IN ('AIM1', 'AIM2', %s) AND time > %s
         """,
-        (since_local,),
+        (TOPN_TAG, since_local),
     )
     if not ai.empty:
         ai["source_type"] = "ai"
@@ -261,6 +271,26 @@ def load_latest_regime(conn) -> tuple[dict | None, float]:
     return row, age_min
 
 
+def count_topn_posts_24h(conn, now_utc_naive) -> int:
+    """Rolling-24h-Zähler der AIM2-TOPN-Zeilen in ml_predictions_master.
+
+    Zählt Shadow UND Live (jede Selektion schreibt eine Zeile), damit die
+    harte Tages-Kappe im Shadow exakt so greift wie live — der Shadow ist so
+    eine getreue Vorschau. `time` ist PG-Lokalzeit (Bucharest); der Cutoff wird
+    identisch zu load_signal_stream nach lokal konvertiert (R3-Vertrag)."""
+    since_local = (
+        pd.Timestamp(now_utc_naive - pd.Timedelta(hours=24)).tz_localize("UTC").tz_convert(LOCAL_TZ).tz_localize(None)
+    ).to_pydatetime()
+    df = df_from_query(
+        conn,
+        "SELECT count(*) AS n FROM ml_predictions_master WHERE model_name = %s AND time > %s",
+        (TOPN_TAG, since_local),
+    )
+    if df.empty:
+        return 0
+    return int(df.iloc[0]["n"])
+
+
 def process_master_trades():
     if ARTIFACT["model"] is None:
         logger.warning("AIM2 skipped: Artefakt nicht geladen.")
@@ -310,6 +340,14 @@ def process_master_trades():
 
         processed_inserts, shadow_inserts = [], []
         vocab_misses = 0
+
+        # AIM2-TOPN (T-2026-CU-9050-051): eigener High-Conviction-Kanal hinter
+        # default-off-Gate. Wir sammeln die starken, vertrauenswürdigen
+        # Kandidaten dieses Zyklus und selektieren NACH der Schleife die Top-N
+        # unter der rollierenden 24h-Kappe. topn_min: nie unter dem Basis-Gate.
+        topn_cfg = load_topn_config()
+        topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"])
+        topn_pool: list[TopNCandidate] = []
 
         for signal in candidates.itertuples():
             coin, ts, direction = signal.symbol, signal.ts, signal.direction
@@ -373,6 +411,18 @@ def process_master_trades():
                 )
 
             processed_inserts.append((type_key[signal.source_type], int(signal.id), prob))
+
+            if topn_cfg.enabled and trusted and prob >= topn_min:
+                topn_pool.append(
+                    TopNCandidate(
+                        coin=coin,
+                        direction=direction,
+                        prob=prob,
+                        trusted=trusted,
+                        source=str(signal.source),
+                        close_price=close_price,
+                    )
+                )
 
             if prob < SHADOW_FLOOR:
                 continue
@@ -468,6 +518,53 @@ def process_master_trades():
                 f"Trainings-Vokabulars — bei Häufung: Retrain (P0.13-Wache)."
             )
 
+        # --- AIM2-TOPN: Top-N des Tages unter rollierender 24h-Kappe ---
+        if topn_cfg.enabled and topn_pool:
+            posts_24h = count_topn_posts_24h(conn, now_utc_naive)
+            selected = select_topn(topn_pool, topn_cfg.n, topn_min, posts_24h)
+            topn_live = topn_cfg.live and TOPN_CHANNEL_ID != 0
+            if topn_cfg.live and TOPN_CHANNEL_ID == 0:
+                logger.warning("AIM2-TOPN: Live-Gate an, aber CH_AIM2_TOPN ungesetzt → Shadow-only.")
+            for cand in selected:
+                # Läuft für Coin/Richtung bereits ein TOPN-Trade: Slot als Shadow
+                # verbuchen (Kappe bleibt ehrlich), aber nicht doppelt posten.
+                if topn_live and has_open_ai_signal(conn, cand.coin, cand.direction, TOPN_TAG):
+                    shadow_inserts.append(
+                        (TOPN_TAG, current_time, cand.coin, cand.direction, cand.close_price, cand.prob, False)
+                    )
+                    logger.info(f"⏳ AIM2-TOPN Skip {cand.coin} {cand.direction}: aktiver Trade läuft.")
+                    continue
+                if topn_live:
+                    setup = calculate_smart_targets(conn, cand.coin, cand.direction, cand.close_price)
+                    post_ai_signal(
+                        conn,
+                        TOPN_CHANNEL_ID,
+                        TOPN_TAG,
+                        cand.coin,
+                        cand.direction,
+                        cand.prob,
+                        setup["entry1"],
+                        setup["entry2"],
+                        setup["sl"],
+                        setup["targets"],
+                        source_desc=f"AIM2 Top-{topn_cfg.n} des Tages · Quelle {cand.source}",
+                        extra_info_lines=[f"Master-Confidence (kalibriert): {cand.prob:.1%}"],
+                    )
+                    shadow_inserts.append(
+                        (TOPN_TAG, current_time, cand.coin, cand.direction, cand.close_price, cand.prob, True)
+                    )
+                    logger.info(
+                        f"💎 AIM2-TOPN LIVE {cand.coin} {cand.direction} (p={cand.prob:.1%}, Quelle {cand.source})"
+                    )
+                else:
+                    shadow_inserts.append(
+                        (TOPN_TAG, current_time, cand.coin, cand.direction, cand.close_price, cand.prob, False)
+                    )
+                    logger.info(
+                        f"👻 AIM2-TOPN SHADOW {cand.coin} {cand.direction} "
+                        f"(p={cand.prob:.1%}, Quelle {cand.source}) — Live-Posting deaktiviert."
+                    )
+
         with conn.cursor() as cur:
             if processed_inserts:
                 cur.executemany(
@@ -502,6 +599,12 @@ def process_master_trades():
 
 def main():
     logger.info(f"=== 🧠 AI MASTER BOT (AIM2) GESTARTET — {'LIVE-POSTING' if LIVE_POSTING else 'SHADOW-ONLY'} ===")
+    _topn = load_topn_config()
+    if _topn.enabled:
+        _topn_mode = "LIVE" if (_topn.live and TOPN_CHANNEL_ID != 0) else "SHADOW-ONLY"
+        logger.info(f"    AIM2-TOPN aktiv — N={_topn.n}, min_prob={_topn.min_prob:.2f}, Posting={_topn_mode}")
+    else:
+        logger.info("    AIM2-TOPN deaktiviert (AIM2_TOPN_ENABLED≠1) — Basis-AIM2 unverändert.")
 
     conn = get_db_connection()
     with conn.cursor() as cur:

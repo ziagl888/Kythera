@@ -1,3 +1,45 @@
+## [2026-07-10] AIM2-TOPN: "Top 1-3 des Tages" als High-Conviction-Kanal, default-off (T-2026-CU-9050-051)
+
+Aus T-2026-CU-9050-031, Weg 2: der strukturelle Pfad zu „täglich 1-3 Trades, sehr
+hohe Winrate". AIM2 rankt bereits die ganze Fleet und postet alles über seinem
+~34 %-Pass-Threshold (≈110/Tag). AIM2-TOPN ist der **zweite, selektive Konsument
+derselben Scores**: statt „alles über der Linie" höchstens **N (1-3) der stärksten
+Kandidaten des Tages** in einen **eigenen Kanal/Tag** (`AIM2-TOPN`, Regel 6),
+getrennt vom Basis-AIM2-Posting.
+
+### Added
+- `core/aim2_topn.py` — reine, DB-freie Selektionslogik (`select_topn`,
+  `load_config`) plus der Routing-Tag `AIM2-TOPN` (≤ 10 Zeichen, passt in den
+  Cooldown-Module-Key). „Top-N des Tages" ist erst ex-post bekannt, daher
+  approximiert über eine hohe **Mindest-Probability** (nie unter dem
+  Basis-Gate-Threshold) plus eine **harte rollierende 24h-Kappe** N. Rollierend
+  statt Kalendertag — kein Mitternachts-Burst (23:50 + 00:10 = 2·N in 20 min).
+- `tools/aim2_topn_calibrate.py` — **read-only** Schwellen-Kalibrierung aus
+  `master_ai_processed_signals.ml_confidence`: welcher `min_prob` liefert
+  historisch ~1-3/Tag. Schreibt nichts, schaltet nichts scharf (nur VPS, DB nötig).
+- `backtest/test_aim2_topn.py` (DB-frei, standalone): Kappe, min-prob-Floor,
+  Parity/trusted-Filter, (Coin,Richtung)-Dedupe, deterministischer Tie-Break,
+  Config-Defaults/Clamping und die statische Verdrahtungs-Prüfung (Gate default-off,
+  TOPN-Tag aus dem Stream ausgeschlossen, kein Flip der Money-Gates).
+- `CH_AIM2_TOPN` in `core/config.py` (plain `_ch`, 0 = ungesetzt ⇒ Shadow-only,
+  **kein** Fallback auf den AIM2-Kanal).
+
+### Changed
+- `15_ai_master_bot.py`: sammelt je Zyklus die starken, vertrauenswürdigen
+  Kandidaten, selektiert nach der Schleife die Top-N unter der 24h-Kappe und
+  postet über den auditierten `core.signal_post.post_ai_signal` (genau EINE
+  Cornix-Message, Regel 4). Der `AIM2-TOPN`-Tag ist aus AIM2s eigenem
+  Kandidaten-/Schwarm-Stream ausgeschlossen (F6-Selbst-Feedback).
+
+### Gates (alle default-off — Scharf-Schalten ist Michis Entscheidung)
+- `AIM2_TOPN_ENABLED=0` (Master-Schalter; aus ⇒ **null** Verhaltensänderung an
+  Basis-AIM2 — statisch abgetestet), `AIM2_TOPN_LIVE_POSTING=0` (shadow-first),
+  `AIM2_TOPN_N=1`, `AIM2_TOPN_MIN_PROB=0.95`. `AIM2_LIVE_POSTING` und
+  `NEW_IDEAS_LIVE_POSTING` bleiben unangetastet.
+
+Design: `docs/MODEL_INTENT.md` §9a. Verifiziert: `backtest/test_aim2_topn.py`
+(17 grün), `guard.py verify` (24 Fixtures), ruff+mypy lokal grün.
+
 ## [2026-07-10] Der Gate-Wert wird messbar: ROM1-Counterfactual-Scorer für unterdrückte Signale (T-2026-CU-9050-047)
 
 Bis jetzt war der Nutzen des Orchestrator-Gates schlicht **unbekannt**. Das 4D-Gate
