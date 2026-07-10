@@ -38,22 +38,39 @@ Trade wird. Die Reihenfolge lässt sich nicht umdrehen. Was geht, ist die
 Wiederholung: `core/funding_features.funding_features_cached` cacht je Symbol mit
 einem **Stunden-Key**.
 
-Und das ist exakt, keine Näherung — die zweite Korrektur an T-042, wo stand, ein
-Cache breche die Trainer-Parität. `funding_features_asof` hängt vom Zeitstempel
-**ausschliesslich** über den `searchsorted`-Schnitt ab (wie viele Abrechnungen davor
-liegen), Binance rechnet auf **vollen Stunden** ab, und alle Aggregate sind Suffixe
-(`rates[-3:]`, `rates[-270:]`) — die wandernde `since`-Untergrenze geht nicht ein.
-Innerhalb einer angebrochenen Stunde kann sich der Wert also gar nicht ändern. Was
-die Parität bräche, wäre ein **naiver Zeit-TTL**: der kann eine Abrechnungsgrenze
-überspannen. Ein Eintrag aus den ersten 120 Sekunden einer Stunde wird verworfen,
-weil die `hh:00`-Zeile mit ein paar Sekunden Verzug in `funding_rates` landet.
+Der Schlüssel kommt dabei aus den **Daten**, nicht aus der Wanduhr — und das ist
+der Punkt, an dem der erste Entwurf dieses Fixes falsch war. Er cachte je
+angebrochener Stunde, in der Annahme, Binance rechne auf vollen Stunden ab. Ein
+adversarialer Review hat das mit zwei ausgeführten Gegenbeispielen widerlegt:
+`tools/backfill_funding_rates.py` schreibt `funding_time` millisekunden-genau,
+nichts erzwingt das Stunden-Raster (eine Abrechnung um 12:30 blieb bis 13:00
+unsichtbar); und der 120s-Ingestion-Guard war eine Wette auf eine SLA — eine Zeile,
+die nach 150s landete, wurde für den Rest der Stunde ignoriert.
+
+Jetzt gilt ein Eintrag bis zu der Abrechnung, die das Ergebnis als Nächstes ändern
+kann: der nächste `funding_time`, der schon in der Historie steht (gleich auf welcher
+Minute er sitzt), oder — hinter der letzten Zeile — die letzte Abrechnung plus das
+aus den jüngsten Abständen geschätzte Intervall (8h/4h/1h je Paar). Ist die fällige
+Zeile noch nicht ingested, ist der Eintrag bereits abgelaufen und es wird bei jedem
+Aufruf neu geladen, bis sie erscheint; ihr `funding_time` schiebt die Grenze dann
+weiter. Der Cache **korrigiert sich selbst**, statt auf einen Zeitplan zu wetten.
+
+Damit steht die Wertneutralität wieder auf der Invariante statt auf einer Annahme:
+`funding_features_asof` hängt vom Zeitstempel **ausschliesslich** über den
+`searchsorted`-Schnitt ab, und alle Aggregate sind Suffixe (`rates[-3:]`,
+`rates[-270:]`) — die wandernde `since`-Untergrenze geht nicht ein. Was die Parität
+bräche, wäre ein **naiver Zeit-TTL**: der kann eine Abrechnungsgrenze überspannen.
+Der T-042-Eintrag unten warnte genau davor und schloss daraus fälschlich, ein Cache
+sei überhaupt kein Drop-in.
 
 Verifikation DB-frei: `backtest/test_funding_cache.py` nagelt zuerst die Invariante
-selbst fest (as-of konstant innerhalb der Stunde, und beweglich über die
-Abrechnung — beides oberhalb von `MIN_HISTORY`, sonst verglichen die Tests zwei
-leere Dicts), dann das Cache-Verhalten. Erweitert: `test_epd_tag.py` (15),
-`test_sra_tag.py` (13). Mutations-geprüft, u.a. Zeit-TTL statt Stunden-Key,
-Tages- statt Stunden-Key, fehlender Lag-Guard, Legacy-Tag aus dem Bind.
+selbst fest (as-of konstant zwischen zwei Abrechnungen, und beweglich über eine —
+beides oberhalb von `MIN_HISTORY`, sonst verglichen die Tests zwei leere Dicts),
+dann beide widerlegten Gegenbeispiele, dann das Cache-Verhalten. Erweitert:
+`test_epd_tag.py` (15), `test_sra_tag.py` (13). Mutations-geprüft — der Stunden-Key
+und eine aus der letzten Zeile statt aus dem nächsten Satz abgeleitete Grenze fallen
+beide durch. Letztere war ein echter Bug im ersten Anlauf dieses Fixes, den der neue
+Test gefangen hat.
 
 **Live-Semantik ändert sich bewusst** an genau einer Stelle je Bot: ein Signal auf
 einem Coin, auf dem bereits ein Trade derselben Richtung offen ist, fällt weg. Erste
