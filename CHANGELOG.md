@@ -1,3 +1,102 @@
+## [2026-07-10] EPD und SRA laden ihr Artefakt über den geteilten Contract (T-2026-CU-9050-042)
+
+Letzte zwei Instanzen der P1.45-Fehlerklasse: ein Post-Pfad schreibt einen
+hartkodierten Modell-Tag, statt die `model_id` aus der Artefakt-Meta zu lesen
+(harte Regel 6). Anders als bei MIS/RUB/QM war der Tag hier aber nur das
+Symptom — darunter lag ein **Format-Bruch zwischen Retrain-Ausgabe und
+Live-Ladepfad**, und der musste zuerst weg.
+
+**Befund-Korrektur zur Task-Doc (Falle 13):** `retrain_sra2.py` emittiert *kein*
+dict-Artefakt, sondern natives XGB-JSON + `_meta.json`/`_calib.pkl` — dasselbe
+Format wie ABR2. Der Format-Mismatch bestand allein bei EPD; SRA fehlte nur der
+Meta-Read. Am Code verifiziert, nicht aus der Annotation übernommen.
+
+Drei Schritte, ein Bot pro Commit:
+
+- **`core/model_artifacts.py`** bekommt `load_artifact_json()`. Der
+  XGB-JSON-Sidecar-Loader steckte bis jetzt eingebacken in
+  `18_ai_abr1_bot._load_model_contract`; jetzt liefert er denselben
+  Contract-Dict wie `load_artifact()` (dict-pkl). Ohne `_meta.json` gilt der
+  benannte Legacy-Vertrag (Tag + Threshold aus Konstanten, `features=None`),
+  mit Meta kommen Tag, Threshold und Feature-Vertrag aus dem Artefakt. Ein
+  nicht-binärer `model_type` im binären Slot wird abgelehnt, statt still die
+  falsche `predict_proba`-Spalte zu lesen. `maybe_reload` dispatcht jetzt über
+  die Datei-Endung — über den pkl-Loader geroutet hätte ein JSON-Artefakt nie
+  neu gelesen und nach einem Deploy still die alte Generation weitergeliefert.
+
+- **SRA** (`9_ai_sr_bot.py`): lud seine `.json`-Modelle roh in einen
+  `xgb.XGBClassifier` und postete beide Richtungen unter der Konstanten `SRA1`.
+  Der Tag kommt jetzt aus der Meta, der Threshold ebenso. Zusätzlich ein
+  **Serving-Paritäts-Bruch**, der einen SRA2-Rollout verdorben hätte: Bot und
+  Trainer benutzten dieselben Spaltennamen mit **verschiedenen Formeln** —
+  `pct_ema9` war im Bot `(close-ema9)/close`, im Trainer `(close-ema9)/ema9` —
+  und `macd_dif_pct`/`macd_dea_pct`/`atr_pct` baute der Bot gar nicht. Der
+  Builder liegt jetzt einmal in `core/sra_features.py`, importiert von Bot und
+  Trainer (X-R1-Regel). Der Legacy-Vektor bleibt unangetastet daneben — er ist
+  der Vertrag des heute deployten Modells. Ein fehlendes Artefakt idlet die
+  Richtung, statt `exit(1)` in den Watchdog-Restart-Loop zu laufen (Falle 3).
+
+- **EPD** (`10_pump_dump_detector.py`): live läuft ein **rohes 3-Klassen**-Modell
+  mit positionalem 10-Feature-Array (Erfolg = Klasse 2/0, Threshold hart 0.60).
+  Das EPD2-Artefakt ist dagegen **binär je Richtung**, mit 16 benannten Features
+  inkl. der 6 Funding-Spalten und Threshold/`model_id` in der Meta. Beide Pfade
+  koexistieren jetzt: ohne Artefakt läuft der Legacy-Zweig bit-identisch weiter,
+  mit Artefakt gewinnt es und bringt Tag + Threshold mit. Die Funding-Features
+  werden **as-of dem Event** gezogen (`funding_features_asof`, wie
+  `tools/epd2_build_dataset.py:231`), je Trigger hinter dem
+  `vol_ratio>=5`-Vorfilter. Fehlende Funding-**Historie** wird zu 0 wie
+  `fillna(0)` im Trainer (Serving-Parität); ein fehlender Feature-**Name**
+  verweigert dagegen weiterhin das Artefakt und idlet den Bot (P0.12).
+
+**Bekanntes Performance-Risiko (dokumentiert, nicht optimiert — greift erst mit
+deploytem EPD2-Artefakt):** der Funding-Load ist ein DB-Roundtrip pro
+qualifizierendem 10s-Tick, nicht pro Signal. Der Vorfilter `vol_ratio>=5` hält an,
+solange das Volumen-Event läuft, und der Shadow-Zweig setzt den 900s-Timer
+bewusst nicht zurück (P1.41) — ein Coin im Shadow-Band zieht die Query also auf
+jedem Tick, marktweit parallel über alle betroffenen Coins. Ein TTL-Cache wäre
+hier **kein** trivialer Fix: er verschöbe den As-of-Zeitpunkt der Funding-Features
+und bräche genau die Trainer-Parität, die dieser Commit herstellt. Vor dem
+EPD2-Rollout zu klären (Messung, dann ggf. Load hinter ein Zeit-Gate ziehen, das
+den As-of-Zeitpunkt nicht verändert).
+
+**Transitionaler Dedup**, je Bot dort, wo er wirklich sperrt: der Post-Tag ist
+zugleich der Dedupe-Key, und beim Generationswechsel kippt er. SRA prüft die
+Master-Log-Duplikatprüfung (sonst hielte ein SRA2-Rollout jeden bereits
+verarbeiteten Trade für neu und postete ihn erneut) und den Cooldown gegen den
+Alt-Tag. EPDs einziger tag-gekoppelter Lock ist die Shadow-Log-Dedupe; dafür
+nimmt `core/signal_post.log_prediction` ein optionales `legacy_tag` entgegen —
+geschrieben wird immer unter dem aktuellen Tag. Alle anderen Aufrufer sind
+unberührt (Default `None`).
+
+**Live-Semantik unverändert.** Kein Artefakt ist deployt, also läuft beides auf
+dem Legacy-Vertrag: gleiche Tags, gleiche Thresholds, gleiche Feature-Vektoren,
+gleiche Dedupe-Queries (die transitionalen Binds kollabieren bei identischen
+Tags). Verifikation DB-frei: `backtest/test_model_artifacts.py` (10),
+`test_sra_tag.py` (11), `test_epd_tag.py` (12) — Loader- und Dedupe-Verhalten
+echt ausgeführt (Fake-Cursor), der Rest statische Netze; alle mutations-geprüft.
+Kein Rollout, kein Artefakt angefasst, keine DB-Änderung.
+
+**Streukreis der `core/`-Änderungen** (geteilter Code, deshalb explizit): (1)
+`log_prediction` ist additiv — `legacy_tag` hat den Default `None` und lässt die
+alte Einzeltag-Query byte-identisch, die Bots 30–33 sind unberührt. (2)
+`maybe_reload` reicht beim täglichen Reload jetzt `default_tag` statt des
+**aktuell geladenen** Tags als Fallback weiter. Für `13_ai_rub_bot.RUB2_SHORT`
+(hand-gebautes Contract-Dict ohne `default_tag`) fällt `.get()` exakt auf
+`artifact["tag"]` zurück — genau der Ausdruck, den der alte `maybe_reload`
+benutzte, also bit-identisch. Für die Bots 30–33 (Contract via `load_artifact`)
+greift der Unterschied nur, wenn ein Artefakt beim Reload **keine** `model_id` in
+der Meta trägt; dann erbte der Reload bisher den Tag der Generation, die er
+gerade ersetzt. Das ist der eigentliche Bugfix an dieser Stelle, kein
+Kollateralschaden — im Normalbetrieb (Trainer schreibt `model_id` immer) ist der
+Pfad tot.
+
+**Offen für Michi:** (1) EPD2/SRA2-Rollout ist jetzt entblockt — Operator-Entscheid.
+(2) Zwei neue Befunde derselben Klasse wie P1.48: weder EPD noch SRA hat einen
+Active-Trade-Check gegen `ai_signals`; EPDs einzige Re-Fire-Sperre ist ein
+In-Memory-900s-Timer, der einen Prozess-Neustart nicht überlebt.
+(Der `P1.46`-Nummernkonflikt dreier Sessions war beim Merge auf `main` bereits
+durch PR #36 aufgelöst — Sniper behält P1.46, ATB1 wurde P1.47, RUB P1.48.)
+
 ## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)
 
 Nebenfund aus der Blast-Radius-Analyse zu T-2026-CU-9050-037. `load_joined` rief
