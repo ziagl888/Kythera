@@ -1,3 +1,42 @@
+## [2026-07-10] Indikator-Engine erfindet keine Warm-up-Werte mehr — NaN fließt wie bei KAMA (T-2026-CU-9050-054)
+
+P1.13, am Code verifiziert (Falle 13): `2_indicator_engine.py` füllte die
+Warm-up-Fenster der Rolling-Indikatoren mit `.fillna(0)` bzw. `.fillna(50)` —
+`wma_*` (`calculate_wma`), `rsi_*` (`calculate_rsi`), `boll_*_20` und
+`donchian_*`. Für einen jungen Coin liest `extract_ml_features` in
+`24_quasimodo_bot.py`/`25_smc_ml_sniper.py` daraus
+`donchian_upper_20_dist_pct = (0-close)/close*100 = -100.0`: fünf der elf
+Preis-Features sind in den ersten ~20 Bars hart auf −100 gepinnt und kodieren
+„junger Coin" statt eines Abstandsmaßes. Symmetrisch in Bot und Replay (kein
+Train/Serve-Skew), aber beidseitig Müll.
+
+**Fix:** die undefinierten Warm-up-Zeilen fließen jetzt als NaN — genau wie
+`calculate_kama` es seit jeher tut. Alle betroffenen Spalten sind `REAL` (wie
+`kama_*`), der NaN-Write-Pfad ist damit in Produktion bereits bewiesen. Auf der
+Leseseite ändert sich nichts erzwungen: die Bots imputieren die Kopfzeilen
+weiter über ihr bestehendes `ffill().bfill()` (aus `-100` wird so ein sinnvoller
+Abstand zum ersten echten Wert), der Replay verwirft sie seit
+T-2026-CU-9050-045 per `dropna()`. Der Blast-Radius wurde über alle
+`_indicators`-Consumer geprüft: jeder ML-Feature-Pfad imputiert (`fillna(0)`,
+`ffill/bfill` oder `isfinite`-Guard); die einzigen Roh-Consumer (Strategie-Bots
+`strat_*`) lesen die neuesten 480 Kerzen (Warm-up ist rein historisch) und ihre
+AND-verketteten NaN-Vergleiche blocken strikt mehr, erzeugen also nie ein
+Signal. `ma_*` blieb bewusst unangetastet (kein aktiver Consumer, kein
+Distanz-Feature) — außerhalb der verifizierten Fläche.
+
+Regression-Guard: der Golden wurde bewusst refreshed
+(`KYTHERA_GOLDEN_REFRESH=1`). Die 816 Breaches sind ausschließlich die
+Warm-up-Kopfzeilen der vier Familien (golden `0`/`50` → fresh `NaN`), keine
+andere Spalte driftet — die Diff im `golden/` belegt genau das.
+
+**Noch offen (Operator/Michi, C-Gate, NICHT Teil dieses PRs):** Der Fix ist ein
+DB-Writer-Change und wird erst durch einen Recompute der Indikator-Tabellen live
+wirksam (heute schreibt die Engine Warm-up-Kopfzeilen nur beim Erstlauf eines
+Neu-Listings). Danach gehört ein TD2/BB2/QM2-Retrain auf die verschobene
+Feature-Verteilung, und **erst beim Artefakt-Rollout** darf das `bfill` in
+`24_quasimodo_bot.py:126`/`25_smc_ml_sniper.py:220` entfernt werden — nie
+isoliert.
+
 ## [2026-07-10] Finding-IDs im Ledger: Duplikat-Guard als pre-commit-Hook (T-2026-CU-9050-059)
 
 Am 09./10.07. trugen drei frisch angelegte Findings gleichzeitig die ID **P1.46**.
