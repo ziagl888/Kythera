@@ -28,6 +28,63 @@ Kein Live-Signal-Pfad berührt, keine DB-Änderung.
 Labels trainiert wurden — und ob deshalb Staging-Retrains neu zu bewerten sind.
 Diese Session hat nichts trainiert und nichts ausgerollt (C-Gate).
 
+## [2026-07-09] Signifikanz-Layer über den Walk-Forward-Replay-Output (T-2026-CU-9050-027 D3)
+
+Ein Replay-Summary sagt „+38 R über 365d" — `tools/wf_significance.py` beantwortet
+neu die Folgefrage, ob dieser Edge von Rauschen unterscheidbar ist, bevor ein
+Kandidat Richtung Live-Gate diskutiert wird. Rein additiv über dem Trade-JSONL
+von `tools/walkforward_sim.py`; Muster aus HKUDS/Vibe-Trading (MIT,
+`validation.py` + `bench_runner_strict.py`), adaptiert statt kopiert:
+
+- **Random-Control (Sign-Flip):** Null-Verteilung aus Richtungs-Flips DERSELBEN
+  Trades inkl. Fee-Drag (`flip(net) = -net - 2*fee_rt`) → p-Wert + Delta gegen
+  den richtungslosen Zufalls-Trader, bewusst kein Test gegen 0.
+- **Reihenfolge-Permutation für den MaxDD** (Verlust-Clusterung zufallstypisch?).
+  Der vt-Permutationstest auf Sharpe wurde bewusst NICHT übernommen — bei
+  per-Trade-%-PnL ist Sharpe reihenfolge-invariant, der Test wäre degeneriert.
+- **Bootstrap-CIs** für per-Trade-Sharpe (bewusst nicht annualisiert), avg_r,
+  TP1-WR.
+
+Deterministisch (Seed 42). Verifikation DB-frei: `backtest/test_wf_significance.py`
+(6/6, u.a. Edge-vs-Rauschen-Diskriminierung, Fee-Drag in der Null, CLI-
+Determinismus). Doku: `docs/WF_SIGNIFICANCE.md`. Offen (VPS-Session): Lauf über
+einen echten Batch-E-Replay-Output — Artefakte liegen nur auf dem VPS.
+Multiple-Testing (FDR/Deflated Sharpe) bleibt bewusst Non-Scope (eigener Task).
+
+---
+
+## [2026-07-09] Look-ahead-Perturbationstest über die geteilten Feature-Builder (T-2026-CU-9050-027 D1, PR #19)
+
+Die harten Regeln 5 (nur geschlossene Kerzen) und 7 (geteilte Feature-Builder,
+Trainer == Serving == Replay) waren bisher nur durch Konvention und ~69
+DO-NOT-/forming-/lookahead-Kommentare abgesichert. Neu: `backtest/
+test_feature_lookahead.py` (standalone, DB-frei) macht sie mechanisch prüfbar —
+Muster geerntet aus HKUDS/Vibe-Trading (MIT), `tests/factors/test_lookahead.py`.
+
+- **Frame-/as-of-Builder** (`mis.add_advanced_features[_multi]`, research
+  candle-context + PEX1/FMR1/FIF1-Rows, `funding_features_asof`): alle
+  Input-Spalten ab der Perturbations-Zeile mit NaN/1e10 vergiften — die Zeilen
+  davor müssen bit-nah (1e-9) invariant bleiben. Canary-Assertions belegen,
+  dass die Vergiftung den Builder wirklich erreicht; ein Boundary-Test belegt,
+  dass ein Funding-Settlement exakt AT ts strikt draußen bleibt.
+- **Window-/row-scoped Builder** (`rub_trend`/`build_rub_features`,
+  `build_trm1_row`, `funding_stats`, `regime_features`, `aim2.build_feature_row`):
+  per Signatur ohne Zukunfts-Achse (Caller schneidet) — geprüft werden
+  Determinismus, Input-Nicht-Mutation und die internen Fenstergrenzen (TRM1-12er,
+  Funding-90er).
+- **`fetch_context_frame`** (R1-Kern, DB-frei via Stub-Cursor): eine Forming
+  Candle der aktuellen Stunde in der Tabelle ändert weder die gewählte
+  Feature-Kerze (floor-1-Join) noch deren Features; der Staleness-Guard (>3h)
+  liefert None.
+
+**Ergebnis: kein Future-Leak gefunden** — gültiges No-op-Done. Detektionskraft
+separat falsifiziert (künstliche `shift(-1)`-/`iloc[idx+1]`-Leaks sowie zwei
+Mutation-Injektionen in echte Builder werden gefangen). Bekannter kosmetischer
+Drive-by: `core/funding_features.py:70` wirft eine tz-UserWarning (Semantik
+korrekt, UTC vs UTC) — nicht gefixt, geteilter Builder (Regel 7).
+
+---
+
 ## [2026-07-09] Zentrale UTC-Policy gelegt: `core/time.py` + ruff DTZ (T-2026-CU-9050-032, R3)
 
 Kythera hat keine Zeitquelle, sondern zwanzig. Writer schreiben teils naive
@@ -77,6 +134,8 @@ gegen den AIM2 gebaut wurde (P0.13).
 Der Flip gehört deshalb in ein eigenes Fenster, zusammen mit dem P2.3-Writer-Fix,
 den sechs Kompensationen und der Operator-Entscheidung Backfill-vs-Cutover für
 die Historie. `docs/UTC_POLICY.md` §4–§6 ist der Handoff dafür.
+
+---
 
 ## [2026-07-09] SMC-16 FVG-Entry war unerreichbar (T-2026-CU-9050-033, P1.26)
 
