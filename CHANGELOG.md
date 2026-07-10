@@ -1,3 +1,33 @@
+## [2026-07-10] Look-ahead im Walk-Forward-Simulator geschlossen (T-2026-CU-9050-037)
+
+`tools/walkforward_sim.py` ist seit P0.10 die **einzige Label-Quelle des gesamten
+Retrain-Programms**. Seine beiden Haupt-Loader `load_ohlcv` (`:174`) und
+`load_joined` (`:204`) lasen bis `NOW()` ohne obere Grenze — die laufende Kerze
+kam als geschlossene im Replay an. Jedes daraus trainierte Modell hat auf einer
+Kerze gelernt, die es zur Entscheidungszeit noch nicht kannte (harte Regel 5).
+Die Schwester-Loader `load_mis1_frame` (`:635`) und `load_rub_frame` (`:759`)
+derselben Datei schnitten schon immer korrekt ab.
+
+Fix:
+
+- Beide Loader gehen jetzt über **`core.candles`** (`read_candles` /
+  `read_candles_with_indicators`, `include_forming=False`) statt über rohe
+  f-String-SQL. Damit greift der TF-generische Epoch-Cutoff der Kerzen-API.
+  Bewusst **nicht** das `date_trunc('hour', NOW())` der Nachbarn kopiert: die
+  Loader lesen auch `1d` und `4h`, dort hätte ein Stunden-Trunc die laufende
+  Kerze stehen lassen. Nebeneffekt: ASC-Kontrakt und Identifier-Hygiene (P3.3).
+- `backtest/test_feature_lookahead.py` bekommt zwei DB-freie Tests, die für alle
+  benutzten Timeframes (1h/4h/1d) prüfen, dass die forming Kerze nicht im
+  Replay-Frame landet. Mutations-geprüft: mit `include_forming=True` fallen sie.
+
+Erster Schritt von Block 1 der Umverdrahtungs-Reihenfolge in
+`docs/CANDLE_CALL_SITES.md` §4 (Offline-Tooling zuerst, `walkforward_sim` voran).
+Kein Live-Signal-Pfad berührt, keine DB-Änderung.
+
+**Offen für Michi:** ob bereits ausgerollte Modelle auf den alten, vergifteten
+Labels trainiert wurden — und ob deshalb Staging-Retrains neu zu bewerten sind.
+Diese Session hat nichts trainiert und nichts ausgerollt (C-Gate).
+
 ## [2026-07-09] Signifikanz-Layer über den Walk-Forward-Replay-Output (T-2026-CU-9050-027 D3)
 
 Ein Replay-Summary sagt „+38 R über 365d" — `tools/wf_significance.py` beantwortet
