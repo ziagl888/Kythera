@@ -235,19 +235,43 @@ def check_rubberband_conditions():
             #           damit als RUB3, statt still mit RUB2 zu verschmelzen (Regel 6).
             module_tag = RUB_LONG_TAG if is_long else RUB2_SHORT["tag"]
 
-            # FIX: Cooldown-Check VOR der teuren ML-Prediction.
+            # 1. Aktiver Trade Check (T-2026-CU-9050-043) — prüft, ob für genau dieses
+            #    Modul/Coin/Richtung bereits ein nicht-geschlossener Trade läuft.
+            #    Der Cooldown darunter ist eine FREQUENZ-Sperre (4h), kein Positions-
+            #    Guard: ein RUB-Trade läuft bei Mean-Reversion regelmäßig länger als
+            #    sein Cooldown, und ohne diesen Check öffnete das Folgesignal eine
+            #    ZWEITE Live-Position neben der ersten. Muster: 11_ai_mis_bot.py.
+            #
+            #    Der Check läuft über den Tag, und der Tag wechselt beim Retrain-
+            #    Rollout der SHORT-Seite (RUB2 → RUB3). Ohne den Alt-Tag im IN würde
+            #    eine offene RUB2-Position denselben Coin/Direction nicht mehr blocken.
+            #    Solange die Tags übereinstimmen (heute), ist das IN ein No-op.
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1 FROM ai_signals
+                    WHERE symbol = %s AND direction = %s AND model IN (%s, %s)
+                """,
+                    (symbol, direction, module_tag, RUB_LEGACY_TAG),
+                )
+                trade_exists = cur.fetchone()
+
+            if trade_exists:
+                continue  # Trade läuft live im AI Monitor
+
+            # 2. FIX: Cooldown-Check VOR der teuren ML-Prediction.
             # Vorher lief predict_proba auch dann, wenn der Coin noch im Cooldown war
             # (bei 500 Coins × mehreren Event-Typen = viel verschwendete CPU).
             # Der Shadow-Log unterhalb bleibt erhalten — er dokumentiert alle
             # potenziellen Trades, auch die abgelehnten. Beim Skip durch Cooldown
             # loggen wir weiterhin fürs Monitoring.
-            # Transitionaler Dedup (T-2026-CU-9050-030): der Cooldown ist RUBs EINZIGE
-            # Re-Fire-Sperre — anders als MIS/QM prüft dieser Bot ai_signals nicht auf
-            # einen offenen Trade. Der Cooldown-Key ist der Tag, und der wechselt beim
-            # RUB3-Rollout auf der SHORT-Seite. Eine frische RUB2-Cooldown-Row würde ein
-            # RUB3-Signal auf demselben Coin dann nicht mehr sperren. Also zusätzlich
-            # gegen den Alt-Tag prüfen; solange die Tags gleich sind (heute), fällt der
-            # zweite Query weg.
+            # Transitionaler Dedup (T-2026-CU-9050-030): der Cooldown-Key ist der Tag,
+            # und der wechselt beim RUB3-Rollout auf der SHORT-Seite. Eine frische
+            # RUB2-Cooldown-Row würde ein RUB3-Signal auf demselben Coin dann nicht mehr
+            # sperren. Also zusätzlich gegen den Alt-Tag prüfen; solange die Tags gleich
+            # sind (heute), fällt der zweite Query weg. Dieselbe Transitional-Logik trägt
+            # der Active-Trade-Check oben — beide Sperren müssen den Generationswechsel
+            # überstehen, sonst reißt der Schutz an der jeweils anderen Stelle auf.
             cooldown_tags = [module_tag] if module_tag == RUB_LEGACY_TAG else [module_tag, RUB_LEGACY_TAG]
             if any(check_cooldown(conn, t, symbol, direction, 4) for t in cooldown_tags):
                 logger.debug(f"RUB1 Prediction für {symbol} {direction} im Cooldown — skip.")

@@ -1,3 +1,46 @@
+## [2026-07-10] RUB bekommt den Active-Trade-Check seiner Geschwister (T-2026-CU-9050-043)
+
+`13_ai_rub_bot.py` war der einzige AI-Bot ohne Positions-Guard: seine einzige
+Re-Fire-Sperre war der 4h-Cooldown (`:252`), und die ganze Datei berührte
+`ai_signals` nur schreibend (INSERT `:376`). Ein Cooldown begrenzt die Signal-
+**Frequenz**, nicht die Zahl gleichzeitig offener Positionen. Ein Mean-Reversion-
+Trade überlebt seine vier Stunden regelmässig — danach durfte derselbe Coin in
+derselben Richtung erneut feuern, und Cornix öffnete eine **zweite volle Position
+mit eigenem SL** neben der ersten. MIS (`:318`), QM und der Sniper (`:116`) haben
+den Guard seit jeher; RUB fehlte er ohne dokumentierten Grund. Das ist auch der
+Grund, warum der transitionale Dedup aus T-2026-CU-9050-030 bei RUB in den
+Cooldown ausweichen musste — es gab schlicht keinen Check, in den er gehört hätte.
+
+Operator-Entscheid vorab (Michi, 2026-07-10): kein beabsichtigtes Averaging-Down,
+sondern ein Bug.
+
+Fix:
+
+- Vor der (teuren) ML-Prediction prüft der Bot jetzt
+  `SELECT 1 FROM ai_signals WHERE symbol/direction/model IN (%s, %s)` und
+  überspringt das Signal bei einem Treffer — Muster `11_ai_mis_bot.py`.
+- Gebunden wird derselbe **richtungsabhängige** Tag, den auch der Post-Pfad
+  schreibt (LONG `RUB_LONG_TAG`, SHORT `RUB2_SHORT["tag"]` aus der Artefakt-Meta),
+  plus `RUB_LEGACY_TAG` als transitionaler Dedup: der Tag ist zugleich der
+  Dedupe-Key, und beim RUB3-Rollout kippt er. Ohne den Alt-Tag im `IN` würde eine
+  offene RUB2-Position ein RUB3-Signal auf demselben Coin nicht mehr blocken —
+  exakt die zweite Live-Position, die dieser Guard verhindert. Solange die Tags
+  übereinstimmen (heute), ist das `IN` ein No-op.
+- Der Cooldown bleibt **unverändert** als Frequenz-Sperre daneben stehen (wie bei
+  MIS laufen beide parallel). Sein jetzt falscher Kommentar („prüft ai_signals
+  nicht") ist mitgezogen.
+- `backtest/test_rub_tag.py`: zwei neue DB-freie Tests (Guard vorhanden + Skip;
+  Bindung an `module_tag` **und** `RUB_LEGACY_TAG`). Mutations-geprüft — Legacy-Tag
+  aus dem Bind entfernt bzw. Check ganz entfernt ⇒ beide rot.
+
+**Live-Semantik ändert sich hier bewusst**, anders als bei T-030: Signale auf einem
+Coin, auf dem bereits ein RUB-Trade derselben Richtung offen ist, fallen weg. Die
+erste Position, jedes Signal auf freiem Coin und die Gegenrichtung bleiben
+unberührt; der Cooldown-Pfad ist bit-identisch. Keine DB-Änderung, kein Rollout.
+
+**Offen für eine VPS-Session:** die Rückwärts-Messung, wie oft
+`(symbol, direction, model='RUB2')` real mehrfach gleichzeitig offen war
+(`ai_signals` / `closed_ai_signals`, read-only). Nicht blockierend für den Fix.
 ## [2026-07-10] Doppeltes `db_schema_analysis.py` bereinigt (T-2026-CU-9050-039, P3.1)
 
 `tools/db_schema_analysis.py` gelöscht. Die Root-Kopie ist kanonisch und bleibt
