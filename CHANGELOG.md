@@ -1,3 +1,25 @@
+## [2026-07-10] Doppeltes `db_schema_analysis.py` bereinigt (T-2026-CU-9050-039, P3.1)
+
+`tools/db_schema_analysis.py` gelöscht. Die Root-Kopie ist kanonisch und bleibt
+unverändert; die Fleet ist nicht betroffen (das Skript ist ein read-only
+DBA-Werkzeug über den PostgreSQL-System-Katalog, kein Bot-Pfad).
+
+Die Ausgangs-Annahme, beide Dateien seien **byte-identisch**
+(`docs/CANDLE_CALL_SITES.md` §2), war **falsch** und ist dort jetzt korrigiert:
+
+- Die Root-Kopie trägt den ruff-Cleanup aus `052ba4c` (Import-Sortierung,
+  `zip(..., strict=False)`, Formatierung); die `tools/`-Kopie stammt unverändert
+  aus dem Initial-Import `b6735d9`.
+- Die `tools/`-Kopie war zudem **nicht lauffähig**: ihr
+  `sys.path.insert(0, dirname(__file__))` zeigte auf `tools/`, wo kein `core/`
+  liegt — `from core.database import …` scheiterte immer, sie brach mit
+  „core.database nicht gefunden" ab. `audit_reports/10_dashboard_tools.md:47`
+  und `AUDIT_TODO.md` P3.1 hatten das bereits richtig beschrieben.
+
+Kein Eingriff an `pyproject.toml` oder `.github/workflows/typecheck.yml` nötig:
+beide Exclude-Einträge nennen die Root-Datei, die bleibt (`tools/` ist ohnehin
+pauschal excluded).
+
 ## [2026-07-10] Watchdog-Backoff blockiert die Fleet-Aufsicht nicht mehr (T-2026-CU-9050-029, P1.37)
 
 `time.sleep(delay)` stand im Pro-Prozess-Rumpf der Monitor-Schleife. Bis zu

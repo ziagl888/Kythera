@@ -163,7 +163,9 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 | **DDL** | `1:83`, `2:173,180`, `6:61` | Bewusst außerhalb der API. Entfällt in Phase C |
 | **Gemischter Ingestion-Batch** | `1_data_ingestion:177` | `closed=` ist ein Bool pro Call; der REST-Catch-up mischt geschlossene Historie mit einer forming Endzeile → **zwei** Upsert-Calls. Kein fehlendes Feature, eine Verdrahtungs-Frage |
 
-**Zwei Aufräum-Funde außerhalb des Auftrags** (nicht stillschweigend weggelassen): `db_schema_analysis.py` und `tools/db_schema_analysis.py` sind **byte-identische Duplikate**; `legacy_trainers/` (23 Dateien) ist toter Code mit eigenen Roh-Tabellen-Reads und einem eigenen `get_live_price`. Beides ist löschbar, beides ist für die Migration nicht nötig.
+**Zwei Aufräum-Funde außerhalb des Auftrags** (nicht stillschweigend weggelassen): `db_schema_analysis.py` existierte doppelt (Repo-Root + `tools/`); `legacy_trainers/` (23 Dateien) ist toter Code mit eigenen Roh-Tabellen-Reads und einem eigenen `get_live_price`. Beides ist löschbar, beides ist für die Migration nicht nötig.
+
+> **Korrektur 2026-07-10 (T-2026-CU-9050-039).** Die hier ursprünglich behauptete **Byte-Identität der beiden `db_schema_analysis.py` war falsch.** Die Root-Kopie wurde in `052ba4c` (ruff cleanup) modernisiert, die `tools/`-Kopie stammt unverändert aus dem Initial-Import; zudem zeigte deren `sys.path.insert(0, dirname(__file__))` auf `tools/`, wo kein `core/` liegt — sie konnte `core.database` nie importieren. `audit_reports/10_dashboard_tools.md:47` und `AUDIT_TODO.md` P3.1 hatten das bereits korrekt vermerkt. Die stale `tools/`-Kopie ist gelöscht, die Root-Kopie ist kanonisch (die Exclude-Einträge in `pyproject.toml` und `.github/workflows/typecheck.yml` zeigen ohnehin auf sie).
 
 ---
 
@@ -218,7 +220,7 @@ Diese Fragen blockieren den Start von Phase 1. Keine davon ist in diesem Task en
 5. **`11_ai_mis` / `12_ai_ats`:** beide brauchen die forming Kerze als Live-Preis und die vorletzte als Feature-Zeile. Bleiben sie auf `include_forming=True` mit expliziter Trennung (mein Vorschlag), oder sollen sie zwei Calls machen (`read_candles(include_forming=False)` für Features + `latest_price()` für den Preis)? Zweiteres ist sauberer, kostet aber eine zweite Query pro Coin und Zyklus.
 6. **Signal-Raten.** R1 **senkt** sie — das ist der Zweck. Klassik-Strategien feuern seltener, MIS/RUB/ATB-Feature-Verteilungen verschieben sich. **Schwellen erst nach dem Retrain neu tunen** (Report 16), nicht während der Umverdrahtung.
 7. **Owner + Branch-Modell.** T-018 §4 verlangt „Migration als EIN Branch mit klarem Owner". Bei parallelen Sessions am selben Repo ist das eine Vorbedingung, keine Empfehlung.
-8. **Aufräum-Freigabe** (Nebenfunde): `tools/db_schema_analysis.py` als Duplikat löschen? `legacy_trainers/` löschen?
+8. **Aufräum-Freigabe** (Nebenfunde): ~~`tools/db_schema_analysis.py` als Duplikat löschen?~~ — **entschieden und erledigt** (T-2026-CU-9050-039, 2026-07-10: gelöscht, Root ist kanonisch). Offen bleibt: `legacy_trainers/` löschen?
 
 ---
 
