@@ -35,6 +35,11 @@
 #     Invarianten-Assertion statt Feature-Berechnung), parity_nonzero_share
 #     (Diagnose auf fertigem Vektor), load_funding (reiner DB-Loader; das
 #     as-of-Gate liegt in funding_features_asof und ist oben abgedeckt).
+#   * walkforward_sim.load_ohlcv / load_joined (R1-Kern, DB-frei via Fake-Reader):
+#     die beiden Loader speisen die Labels JEDES Retrains (P0.10). Sie müssen
+#     core.candles mit include_forming=False aufrufen; die laufende Kerze darf
+#     nicht im Replay-Frame landen. Der Fake-Reader bildet den Cutoff pandas-
+#     seitig nach — die echte SQL braucht libpq zum Rendern (test_candles.py).
 #   * fetch_context_frame (R1-Kern, DB-frei via Stub-Cursor): eine Forming
 #     Candle der aktuellen Stunde in der DB (is_closed ist NICHT durchgesetzt,
 #     OPUS-HANDOFF Falle 1) darf weder die gewählte Feature-Kerze noch deren
@@ -460,6 +465,98 @@ def test_fetch_context_frame_staleness_guard():
     print("OK  fetch_context_frame: Staleness-Guard (>3h) liefert None")
 
 
+# ── walkforward_sim: Loader-Kontrakt (die einzige Label-Quelle des Retrains) ──
+def _import_walkforward_sim():
+    """`tools/walkforward_sim.py` ist DB-frei importierbar, sobald die zwei
+    Pflicht-Secrets aus core.config gesetzt sind — die Verbindung baut erst
+    main() auf. Die Loader lassen sich damit ohne DB gegen ihren Kontrakt testen."""
+    os.environ.setdefault("DB_PASSWORD", "test")
+    os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
+    import tools.walkforward_sim as wfs
+
+    return wfs
+
+
+def _closed_plus_forming(tf: str, cols: list[str], n: int = 40) -> pd.DataFrame:
+    """Frame aus n geschlossenen Kerzen PLUS der aktuell laufenden (open_time ==
+    period_start), so wie die per-Coin-Tabelle sie heute wirklich enthält."""
+    from core import candles
+
+    forming_open = candles.period_start(tf, dt.datetime.now(dt.timezone.utc))
+    step = candles.timeframe_delta(tf)
+    times = [forming_open - i * step for i in range(n, -1, -1)]
+    df = pd.DataFrame({"open_time": times})
+    for c in cols:
+        if c != "open_time":
+            df[c] = 1.0 if c != "trend_direction" else "UP"
+    return df
+
+
+def _fake_reader(frame: pd.DataFrame, calls: list[dict]):
+    """Ersetzt core.candles.read_candles* durch eine pandas-seitige Nachbildung
+    des `include_forming`-Cutoffs (die echte SQL braucht libpq zum Rendern —
+    siehe backtest/test_candles.py). Prüft damit BEIDES: dass der Loader den
+    Kontrakt richtig aufruft und dass die laufende Kerze wirklich rausfällt."""
+    from core import candles
+
+    def _read(conn, symbol, tf, **kw):
+        calls.append({"symbol": symbol, "tf": tf, **kw})
+        df = frame
+        if not kw.get("include_forming", False):
+            cutoff = candles.period_start(tf, dt.datetime.now(dt.timezone.utc))
+            df = df[df["open_time"] < cutoff]
+        return df.reset_index(drop=True)
+
+    return _read
+
+
+def test_walkforward_loaders_drop_the_forming_candle():
+    """`load_ohlcv` / `load_joined` speisen die Labels JEDES Retrains (P0.10).
+    Die laufende Kerze darf dort nie als geschlossen ankommen — sonst trägt
+    jedes daraus trainierte Modell einen Look-ahead."""
+    wfs = _import_walkforward_sim()
+    original = wfs.read_candles
+    try:
+        for tf in ("1h", "4h", "1d"):
+            frame = _closed_plus_forming(tf, list(wfs.OHLCV_COLUMNS))
+            forming_open = pd.Timestamp(frame["open_time"].iloc[-1])
+            calls: list[dict] = []
+            wfs.read_candles = _fake_reader(frame, calls)
+            got = wfs.load_ohlcv(object(), "TESTUSDT", tf, days=30)
+
+            assert calls and calls[0]["include_forming"] is False, f"load_ohlcv({tf}) liest die forming Kerze"
+            assert got is not None and len(got) == len(frame) - 1
+            assert (got["open_time"] < forming_open).all(), (
+                f"load_ohlcv({tf}): forming Kerze im Replay-Frame — Look-ahead in der Label-Quelle"
+            )
+    finally:
+        wfs.read_candles = original
+    print("OK  load_ohlcv: forming Kerze fällt für 1h/4h/1d raus (include_forming=False)")
+
+
+def test_walkforward_joined_loader_drops_the_forming_candle():
+    """Gleiche Invariante für den Sniper-Join (td/bb-Adapter, 1h + 4h)."""
+    wfs = _import_walkforward_sim()
+    original = wfs.read_candles_with_indicators
+    try:
+        for tf in ("1h", "4h"):
+            frame = _closed_plus_forming(tf, list(wfs.OHLCV_COLUMNS) + wfs.SNIPER_JOIN_INDICATORS)
+            forming_open = pd.Timestamp(frame["open_time"].iloc[-1])
+            calls: list[dict] = []
+            wfs.read_candles_with_indicators = _fake_reader(frame, calls)
+            got = wfs.load_joined(object(), "TESTUSDT", tf, days=30)
+
+            assert calls and calls[0]["include_forming"] is False, f"load_joined({tf}) liest die forming Kerze"
+            assert calls[0]["indicator_columns"] == wfs.SNIPER_JOIN_INDICATORS
+            assert got is not None and len(got) == len(frame) - 1
+            assert (got["open_time"] < forming_open).all(), (
+                f"load_joined({tf}): forming Kerze im Replay-Frame — Look-ahead in der Label-Quelle"
+            )
+    finally:
+        wfs.read_candles_with_indicators = original
+    print("OK  load_joined: forming Kerze fällt für 1h/4h raus (include_forming=False)")
+
+
 if __name__ == "__main__":
     # cp1252-Konsole (Windows): Sonderzeichen nicht crashen lassen
     try:
@@ -480,4 +577,6 @@ if __name__ == "__main__":
     test_aim2_row_scoped()
     test_fetch_context_frame_ignores_forming_candle()
     test_fetch_context_frame_staleness_guard()
+    test_walkforward_loaders_drop_the_forming_candle()
+    test_walkforward_joined_loader_drops_the_forming_candle()
     print("\nAlle Look-ahead-Perturbationstests bestanden — kein Future-Leak in den geteilten Feature-Buildern.")

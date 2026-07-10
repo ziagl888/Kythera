@@ -52,7 +52,12 @@ def get_live_price(symbol, conn=None):
 
 
 def write_to_active_trades(conn, signal):
-    now = datetime.datetime.now()
+    # P2.3 (offen): naive Server-Lokalzeit in `active_trades_master.time/posted`.
+    # Der Fix auf `utc_now_naive()` gehört UNTRENNBAR zum Pool-Flip auf
+    # `timezone=UTC` — allein gezogen kippt er `33_ai_fif1_bot` von korrekt auf
+    # Drift, und die Trainer in tools/ rechnen historisch mit Lokalzeit (siehe
+    # docs/UTC_POLICY.md §5). Kommt mit dem R3-Restart-Fenster.
+    now = datetime.datetime.now()  # noqa: DTZ005
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS active_trades_master (
@@ -115,7 +120,7 @@ def write_signal_atomic(conn, signal):
     in active_trades_master ist er drin, aber in der Outbox nicht → niemand weiß
     dass er existiert, aber der Trade-Monitor verfolgt ihn trotzdem.
     """
-    now = datetime.datetime.now()
+    now = datetime.datetime.now()  # noqa: DTZ005 — P2.3, siehe write_to_active_trades
     t2, t3, t4 = signal.get('target2', 0), signal.get('target3', 0), signal.get('target4', 0)
 
     msg = f"📈 Signal for {signal['coin']} 📈\n\n🚨 Direction: {signal['direction']}\n🚨 Leverage: {signal['lev']}\n🚨 Margin: Cross\n🏦 CMP Entry: $ {signal['entry']:.8f}\n"

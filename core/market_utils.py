@@ -14,6 +14,8 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
+from core.time import to_utc, utc_now
+
 logger = logging.getLogger(__name__)
 
 # ── Shared type definitions ────────────────────────────────────────────────
@@ -121,8 +123,7 @@ def check_cooldown(conn, module: str, coin: str, direction: str, cd_hours: float
     it is interpreted as UTC (stored that way historically).
     """
     _check_module_tag(module)
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    cutoff = now_utc - datetime.timedelta(hours=cd_hours)
+    cutoff = utc_now() - datetime.timedelta(hours=cd_hours)
     with conn.cursor() as cursor:
         cursor.execute(
             """
@@ -134,10 +135,9 @@ def check_cooldown(conn, module: str, coin: str, direction: str, cd_hours: float
         row = cursor.fetchone()
     if row is None:
         return False
-    last = row[0]
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=datetime.timezone.utc)
-    return last > cutoff
+    # `trade_cooldowns.last_posted_at` existiert live als timestamptz und in den
+    # Bootstrap-DDLs als naive Spalte (DDL-Drift P2.2) — to_utc normalisiert beide.
+    return to_utc(row[0]) > cutoff
 
 
 def update_cooldown(conn, module: str, coin: str, direction: str, commit: bool = True) -> None:
