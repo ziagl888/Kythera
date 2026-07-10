@@ -1,3 +1,28 @@
+## [2026-07-10] `legacy_trainers/` ist keine Wegwerf-Ware — Operator-Frage §5.8 geschlossen (Doku)
+
+`docs/CANDLE_CALL_SITES.md` führte `legacy_trainers/` an drei Stellen als „toter
+Code" und „löschbar". Beides ist irreführend und stand im selben Absatz wie der
+bereits korrigierte `db_schema_analysis.py`-Fehlbefund (T-2026-CU-9050-039).
+
+Richtig ist: kein laufender Prozess importiert die Skripte, und sie sind bewusst
+nicht lauffähig (Credentials durch `os.getenv(...)`-Platzhalter ersetzt). Genau
+das ist ihr Zweck. Sie sind die **einzige Reproduktionsgrundlage der acht live
+geladenen Modell-Artefakte** — `legacy_trainers/README.md` ordnet jeden Trainer
+seinem Artefakt und Bot zu (MIS1→11, ABR1→18, ATS1→12, RUB1→13, SRA1→9,
+AIM1→15, EPD1→10, ATB1→14), und der Ordner entstand in `7b5ec89` ausdrücklich
+als „frozen provenance". Ihre konservierten Defekte (Label-Geometrie,
+Split-Leakage, In-Sample-Thresholds, Feature-Skews) erklären das Verhalten der
+Live-Modelle und sind die Referenz, gegen die das Retrain-Programm misst.
+
+Für die Migration sind sie irrelevant — sie werden **nicht umverdrahtet**, und
+nach Phase C laufen sie ohnehin nie wieder. Das ist ein Argument gegen
+Umverdrahten, keines fürs Löschen; der alte Text vermischte beides.
+
+**Entscheid: `legacy_trainers/` bleibt.** Operator-Frage §5.8 ist damit in beiden
+Teilen beantwortet und blockiert Phase 1 nicht mehr. Ein `NICHT LÖSCHEN`-Hinweis
+steht jetzt auch oben in `legacy_trainers/README.md`, wo ein Folge-Agent zuerst
+hinschaut. Kein Code berührt.
+
 ## [2026-07-10] Vier rote Tests auf main repariert (T-2026-CU-9050-038)
 
 CI gated nur ruff/format, mypy, Syntax/Imports und Secret-Regex — pytest läuft
