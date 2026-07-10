@@ -18,6 +18,7 @@ from core import ticker_10s
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
+from core.signal_post import log_prediction
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR - %(message)s')
@@ -41,6 +42,23 @@ ROUND_LEVEL_CONFIG = {
     "XRPUSDT": {"step": 0.1, "decimals": 3},
     "BTCDOMUSDT": {"step": 100, "decimals": 0},
 }
+
+# P1.39: Fenster-Randschutz für die zeit-basierten Lookups.
+#
+# Die Bucket-Stempel liegen exakt auf dem 10s-Raster (`_tick_epoch % 10`). Wird
+# ein Fenster gegen den Anker `bucket_anchor` (= Stempel des jüngsten Buckets)
+# gemessen, fällt jeder Zielzeitpunkt exakt auf einen Rasterpunkt — der Guard
+# absorbiert dann nur noch Float-/Parse-Rauschen an der Grenze.
+#
+# 5s ist kleiner als der halbe Bucket-Abstand (10s), der Guard kann also nie
+# einen zusätzlichen Bucket hereinlassen. Genau dafür ist er klein gewählt.
+#
+# WICHTIG: der Guard ersetzt NICHT den Anker. Gegen die Wanduhr `now` gemessen
+# wandert der Zielzeitpunkt um den Phasenversatz [0,10) zwischen Rasterpunkt und
+# Aufrufzeit, und das Fenster kippte zwischen 6 und 7 Buckets — ein Modell-
+# Feature, das springt, ohne dass sich der Markt bewegt hat. Deshalb ankern alle
+# Feature-Lookups auf `bucket_anchor`, nicht auf `now`.
+WINDOW_EDGE_GUARD = 5
 
 # --- ML MODEL FOR 10 SECONDS ---
 ML_MODEL_PATH = "pump_dump_model.pkl"
@@ -337,6 +355,16 @@ def process_coin_logics(conn, symbol):
     if len(data) < 36:
         return  # Brauchen etwas Historie
 
+    # Invarianten dieser Funktion (P1.39 — bitte vor jeder "Vereinfachung" lesen):
+    #   1. Fenster werden über ZEITSTEMPEL ausgewählt, nie über Listen-Indizes.
+    #      `data` kann Lücken haben, und `volumes_10s`-artige gefilterte Listen
+    #      haben Positionen, die keinem Zeitpunkt entsprechen.
+    #   2. Jeder `_find_bucket_*`-Aufruf ankert auf `bucket_anchor`, nie auf `now`.
+    #      Sonst wandert das Fenster mit dem Aufrufzeitpunkt (siehe unten).
+    #   3. `now` bleibt Wanduhr — Staleness-Check, die beiden Alert-Cooldowns und
+    #      `pump_dump_events.spike_time` MÜSSEN daran hängen bleiben.
+    #   4. Fehlt ein Bucket, wird der Tick übersprungen. Es wird KEIN Ersatzwert
+    #      (0, letzter Preis, …) als Modell-Feature erfunden.
     now = datetime.datetime.now(datetime.timezone.utc)
     current_price = float(data[-1]["p"])
     current_vol = float(data[-1]["v10s"])
@@ -350,6 +378,20 @@ def process_coin_logics(conn, symbol):
     latest_ts = _parse_bucket_ts(data[-1])
     if latest_ts is None:
         return
+
+    # P1.39: ALLE Bucket-Lookups ankern auf dem jüngsten Bucket-Zeitstempel,
+    # nicht auf der Wanduhr. Die Bucket-Stempel sind auf das 10s-Raster gefloort
+    # (`_tick_epoch - _tick_epoch % 10`), `now` ist der Aufrufzeitpunkt irgendwo
+    # innerhalb des Rasters — und der Detector iteriert ~530 Coins nach einem
+    # REST-Roundtrip, der Versatz wandert also auch noch über den Batch.
+    # Gegen `now` gemessen läge die 60s-Grenze mal vor, mal hinter dem Bucket von
+    # vor 60s: das Fenster kippte je nach Aufrufzeitpunkt zwischen 6 und 7
+    # Buckets, und ein Modell-Feature sprang, ohne dass sich der Markt bewegte.
+    # Gegen `latest_ts` liegt jeder Zielzeitpunkt exakt auf einem Rasterpunkt.
+    # `now` bleibt für alles Wanduhr-Artige zuständig (Staleness, Alert-Gates,
+    # spike_time).
+    bucket_anchor = latest_ts
+
     latest_age_sec = (now - latest_ts).total_seconds()
     if latest_age_sec > 60:
         # Daten-Gap zu groß — nicht aussagekräftig für Pump-Detection.
@@ -360,9 +402,10 @@ def process_coin_logics(conn, symbol):
     # Wenn die aktuelle Volume-Messung durch einen 24h-Rollover ungültig ist,
     # skippingn wir Volume-basierte Checks komplett (Price-Check läuft weiter).
     current_vol_valid = bool(data[-1].get("v10s_valid", True))
-    prices = [float(e["p"]) for e in data]
-    # Nur gültige Volume-Deltas für Baseline und Analyse verwenden.
-    volumes_10s = [float(e["v10s"]) for e in data if e.get("v10s_valid", True)]
+    # P1.39: die flachen `prices`/`volumes_10s`-Listen sind weg. Jeder Konsument
+    # holt sein Fenster jetzt über _find_bucket_before/_find_bucket_range aus
+    # `data` und filtert `v10s_valid` selbst — Positionen in einer gefilterten
+    # Liste sagen nichts über die Zeit aus.
 
     # -- Initialize States --
     if symbol not in PRICE_VOLUME_ALERT_STATE:
@@ -405,7 +448,7 @@ def process_coin_logics(conn, symbol):
             seconds_back = lookback * 10
 
             # Bucket vor genau `seconds_back` Sekunden suchen (mit 20s Toleranz)
-            past_entry = _find_bucket_before(data, now, seconds_back, tolerance=20)
+            past_entry = _find_bucket_before(data, bucket_anchor, seconds_back, tolerance=20)
             if past_entry is None:
                 # Kein Bucket im gewünschten Zeitfenster — entweder zu wenig
                 # Historie oder Daten-Lücke. Diesen Lookback skippingn.
@@ -425,7 +468,7 @@ def process_coin_logics(conn, symbol):
                 # Zeit-basiert: Bucket von vor 600s (= 10min) suchen
                 dead_cat = False
                 chg_10m = None
-                bucket_10m_ago = _find_bucket_before(data, now, 600, tolerance=30)
+                bucket_10m_ago = _find_bucket_before(data, bucket_anchor, 600, tolerance=30)
                 if bucket_10m_ago is not None:
                     price_10m = float(bucket_10m_ago.get("p", 0))
                     if price_10m > 0:
@@ -443,7 +486,7 @@ def process_coin_logics(conn, symbol):
                 # Bei DUMP: Start = highest, End = current_low.
                 # WICHTIG: auch hier zeit-basiert statt data[-lookback:], sonst
                 # wird after Restart wieder der alte Bug produziert.
-                spike_window = _find_bucket_range(data, now, seconds_back, tolerance=20)
+                spike_window = _find_bucket_range(data, bucket_anchor, seconds_back, tolerance=20)
                 if not spike_window:
                     # Kein brauchbares Fenster — Alert skippen
                     continue
@@ -524,43 +567,101 @@ def process_coin_logics(conn, symbol):
                 break
 
         # 2. Volume Explosion
-        if not alerted and len(volumes_10s) >= 360:
-            rec_vols, rec_prices = volumes_10s[-18:], prices[-18:]
-            p_chg_3m = (current_price / rec_prices[0] - 1) * 100 if rec_prices[0] > 0 else 0
+        #
+        # P1.39: zeit-basiert statt index-basiert. Die alte Form hatte zwei
+        # Fehler: (a) `volumes_10s` ist auf `v10s_valid` GEFILTERT, `prices`
+        # nicht — `volumes_10s[-18:]` und `prices[-18:]` zeigten also auf
+        # unterschiedliche Zeitpunkte, sobald ein einziger Bucket ungültig war;
+        # (b) bei WS-Lücken sind 18 Buckets nicht 3 Minuten und 360 nicht eine
+        # Stunde. Beides schob das Fenster still, ohne dass irgendwas auffiel.
+        if not alerted:
+            rec_buckets = _find_bucket_range(data, bucket_anchor, 180, tolerance=WINDOW_EDGE_GUARD)
+            hour_vols = [
+                float(e["v10s"])
+                for e in _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
+                if e.get("v10s_valid", True)
+            ]
+            rec_vols = [float(e["v10s"]) for e in rec_buckets if e.get("v10s_valid", True)]
+            bucket_3m = _find_bucket_before(data, bucket_anchor, 180, tolerance=WINDOW_EDGE_GUARD)
 
-            if abs(p_chg_3m) >= 2.0:
-                avg_hr_vol = sum(volumes_10s[-360:]) / 360
-                if avg_hr_vol > 0:
-                    vol_factor = sum(rec_vols) / (avg_hr_vol * 18)
-                    if vol_factor >= 12.0:
-                        pres = "BUY PRESSURE" if p_chg_3m >= 2.0 else "SELL PRESSURE"
-                        html = f"""<pre><b>📈 VOLUME EXPLOSION</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ <b>{vol_factor:.1f}× in last 3min ({pres} {p_chg_3m:+.2f}%)</b></b>\n<b>→ Price: <code>${current_price:,.8f}</code></b></pre>"""
-                        send_outbox(conn, MARKET_CHANNEL_ID, html, generate_minichart_image(symbol, minutes=240))
-                        alerted = True
+            # Gate wie vorher: eine volle Stunde gültiger Buckets als Baseline.
+            if bucket_3m is not None and rec_vols and len(hour_vols) >= 360:
+                price_3m = float(bucket_3m["p"])
+                p_chg_3m = (current_price / price_3m - 1) * 100 if price_3m > 0 else 0
+
+                if abs(p_chg_3m) >= 2.0:
+                    avg_hr_vol = sum(hour_vols) / len(hour_vols)
+                    if avg_hr_vol > 0:
+                        # Mittelwert statt sum/18: bei Lücken hat rec_vols
+                        # weniger Buckets, und /18 hätte den Faktor gedrückt.
+                        vol_factor = (sum(rec_vols) / len(rec_vols)) / avg_hr_vol
+                        if vol_factor >= 12.0:
+                            pres = "BUY PRESSURE" if p_chg_3m >= 2.0 else "SELL PRESSURE"
+                            html = f"""<pre><b>📈 VOLUME EXPLOSION</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ <b>{vol_factor:.1f}× in last 3min ({pres} {p_chg_3m:+.2f}%)</b></b>\n<b>→ Price: <code>${current_price:,.8f}</code></b></pre>"""
+                            send_outbox(conn, MARKET_CHANNEL_ID, html, generate_minichart_image(symbol, minutes=240))
+                            alerted = True
 
         if alerted:
             pv_state["last_alert_time"] = now + datetime.timedelta(seconds=(900 - 300) if use_ext_cooldown else 0)
 
     # B) ML PUMP/DUMP DETECTOR (AI Channel) - FAST 10 FEAT MODEL
+    #
+    # P1.39: die vier Modell-Features unten wurden index-basiert gerechnet
+    # (`prices[-7:]` als "60s", der volume_samples-Deque als "1h"). Bei einer
+    # WS-Lücke bedeutete "-7" nicht 60 Sekunden — das Modell bekam ein still
+    # gedehntes Fenster. Jetzt alles über _find_bucket_before/_find_bucket_range.
+    #
+    # ACHTUNG (OPUS-HANDOFF §4 Falle 2): vol_ratio/p_chg_60s/buy_pres/volat sind
+    # Modell-Inputs UND werden so in pump_dump_events geloggt, woraus
+    # tools/epd2_build_dataset.py trainiert. Diese Änderung verschiebt die
+    # Serving-Verteilung gegen das aktuell deployte EPD2-Artefakt, bis ein
+    # Retrain auf den neuen Definitionen ausgerollt ist (Operator-Entscheid
+    # 2026-07-09, Folge-Task). Gaps waren vorher selten, aber genau in den
+    # Spike-Momenten (WS-Last) am wahrscheinlichsten — der alte Wert war dort
+    # falsch, nicht bloss anders.
     if len(pd_state["volume_samples"]) < 60:
         return
 
-    if len(pd_state["volume_samples"]) == 360:
-        pd_state["avg_volume"] = sum(pd_state["volume_samples"]) / 360
-    elif pd_state["avg_volume"] == 0:
-        pd_state["avg_volume"] = sum(pd_state["volume_samples"]) / len(pd_state["volume_samples"])
-
-    if pd_state["avg_volume"] <= 0:
+    # Baseline zeit-basiert: alle gültigen Buckets der letzten Stunde. Der Deque
+    # zählt Ticks, nicht Sekunden — nach einer Lücke spannte er über mehr als
+    # eine Stunde. Er bleibt nur noch Warmup-Gate und Vollständigkeits-Feature.
+    # tolerance=WINDOW_EDGE_GUARD statt der Default-20s (siehe Konstante).
+    hour_vols = [
+        float(e["v10s"])
+        for e in _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
+        if e.get("v10s_valid", True)
+    ]
+    if not hour_vols:
+        return
+    avg_volume = sum(hour_vols) / len(hour_vols)
+    pd_state["avg_volume"] = avg_volume
+    if avg_volume <= 0:
         return
 
-    vol_ratio = current_vol / pd_state["avg_volume"]
-    rec_prices = prices[-7:]
-    p_chg_60s = (rec_prices[-1] / rec_prices[0] - 1) * 100 if len(rec_prices) >= 7 else 0
-    buy_pres = sum(1 for j in range(1, len(rec_prices)) if rec_prices[j] > rec_prices[j - 1]) / max(
-        1, len(rec_prices) - 1
-    )
+    # 60s-Fenster über Zeitstempel. Fehlt der Bucket von vor 60s, ist p_chg_60s
+    # nicht bestimmbar — Tick überspringen statt eine 0 ins Modell zu schreiben
+    # (eine erfundene 0 ist ein Feature-Wert, kein "unbekannt").
+    bucket_60s = _find_bucket_before(data, bucket_anchor, 60, tolerance=WINDOW_EDGE_GUARD)
+    # Bei lückenlosen Ticks sind das exakt die 7 Buckets, die das alte
+    # prices[-7:] getroffen hat.
+    window_60s = _find_bucket_range(data, bucket_anchor, 60, tolerance=WINDOW_EDGE_GUARD)
+    rec_prices = [float(e["p"]) for e in window_60s]
+    if bucket_60s is None or len(rec_prices) < 2:
+        return
+
+    price_60s = float(bucket_60s["p"])
+    if price_60s <= 0:
+        return
+
+    vol_ratio = current_vol / avg_volume
+    p_chg_60s = (current_price / price_60s - 1) * 100
+    buy_pres = sum(1 for j in range(1, len(rec_prices)) if rec_prices[j] > rec_prices[j - 1]) / (len(rec_prices) - 1)
     volat = np.std(rec_prices) / np.mean(rec_prices) if np.mean(rec_prices) > 0 else 0
-    change_5min = (current_price / float(data[-30]["p"]) - 1) * 100 if len(data) >= 30 else 0
+
+    # Nur Anzeige (Alert-Caption), kein Modell-Feature — fehlender Bucket ist
+    # hier folgenlos.
+    bucket_5m = _find_bucket_before(data, bucket_anchor, 300, tolerance=30)
+    change_5min = (current_price / float(bucket_5m["p"]) - 1) * 100 if bucket_5m and float(bucket_5m["p"]) > 0 else 0
 
     # Event in DB speichern — aber NUR wenn es die Housekeeping-Retention
     # ueberleben wuerde (Schwellen zentral in core/config.py, dieselben Werte
@@ -649,15 +750,25 @@ def process_coin_logics(conn, symbol):
         pass  # Schrott ignorieren
 
     elif 0.25 <= best_prob < 0.60:
-        # Shadow Mode: Ablegen in Master Tabelle
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
-                VALUES (0, %s, %s, %s, %s, %s, %s, False)
-            """,
-                (module_tag, now, symbol, best_direction, float(current_price), float(best_prob)),
-            )
+        # Shadow Mode: Ablegen in Master Tabelle.
+        #
+        # P1.41: das 900s-Gate oben (`last_alert_time`) bremst diesen Zweig NICHT
+        # — zurückgesetzt wird der Timer nur im Live-Trade-Zweig unten. Ein Coin,
+        # der dauerhaft im Shadow-Band (0.25..0.60) predictet, feuerte damit auf
+        # JEDEM qualifizierenden 10s-Tick einen INSERT (bis 8640 Rows/Tag/Symbol).
+        # Den Timer hier mitzusetzen wäre falsch: das würde auch echte Live-Signale
+        # desselben Coins 900s lang unterdrücken. Stattdessen dedupt log_prediction
+        # die Shadow-Zeilen selbst (4h je Modul/Coin/Richtung) — derselbe Pfad, den
+        # die Bots 30-33 nutzen. Commit bleibt beim Caller (harte Regel 8).
+        log_prediction(
+            conn,
+            module_tag,
+            symbol,
+            best_direction,
+            float(current_price),
+            float(best_prob),
+            posted=False,
+        )
         conn.commit()
 
     elif best_prob >= 0.60:

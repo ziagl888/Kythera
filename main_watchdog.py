@@ -262,6 +262,14 @@ def start_process(process_info: dict) -> None:
 # DB hammering on config/import errors.
 _crash_history: dict = {}  # name -> list of crash timestamps
 
+# P1.37: earliest wall-clock time a crashed process may be restarted.
+# The backoff used to be a time.sleep() inside the per-process loop, which froze
+# the ENTIRE monitor — for up to 900s no other bot was supervised, no park marker
+# was honoured, no dashboard restart was consumed, no health check ran. The delay
+# is now a per-process deadline: the loop keeps turning and simply skips this one
+# process until its deadline passes.
+_restart_not_before: dict[str, float] = {}  # name -> epoch seconds
+
 
 def _compute_restart_delay(name: str) -> float:
     """Returns backoff delay based on crash frequency in the last hour."""
@@ -281,6 +289,92 @@ def _compute_restart_delay(name: str) -> float:
             f"⚠️  {name} has crashed {crashes_last_hour}times in the last hour! Waiting {delay}s before next restart."
         )
     return delay
+
+
+def supervise_process(p_info: dict, current_time: float) -> None:
+    """One supervision pass over a single bot. Never blocks.
+
+    Extracted from main()'s monitor loop (P1.37) so the crash-backoff deadline
+    is testable without driving the whole watchdog. Order of the branches is
+    load-bearing:
+
+      1. parked  — the operator's stop wins over everything, including a
+         pending crash backoff.
+      2. dashboard restart — an explicit operator action overrides the backoff.
+      3. backoff deadline — skip this bot, but keep the loop turning for all
+         the others.
+      4. missing / crashed / scheduled restart.
+    """
+    name = p_info["name"]
+    script = p_info["script"]
+
+    # Parking: a dashboard-initiated stop that must STAY stopped.
+    # The watchdog is the single actuator — it stops the bot here and
+    # does NOT revive it, fixing the old "stop gets undone in 10s" bug.
+    if is_parked(script):
+        # P1.37: a park during the backoff window must win. The old code slept
+        # through the parking and then started the bot anyway; now the deadline
+        # is dropped and the bot stays down.
+        _restart_not_before.pop(name, None)
+        if name in running_processes:
+            if running_processes[name]["process"].poll() is None:
+                logger.info(f"⏸️  {name} ist geparkt — stoppe.")
+                kill_process(name)
+            else:
+                del running_processes[name]
+        return
+
+    # One-shot restart requested from the dashboard. An explicit operator
+    # action overrides the crash backoff (P1.37).
+    if consume_restart(script):
+        logger.info(f"♻️ {name} — Restart über Dashboard angefordert.")
+        _restart_not_before.pop(name, None)
+        if name in running_processes and running_processes[name]["process"].poll() is None:
+            kill_process(name)
+        start_process(p_info)
+        return
+
+    # P1.37: crash backoff as a deadline, not a sleep.
+    not_before = _restart_not_before.get(name)
+    if not_before is not None:
+        if current_time < not_before:
+            return
+        _restart_not_before.pop(name, None)
+        logger.info(f"⏱️  {name} — Backoff abgelaufen, starte neu.")
+
+    if name not in running_processes:
+        logger.error(f"🚨 Prozess {name} fehlt! Starting neu...")
+        start_process(p_info)
+        return
+
+    tracker = running_processes[name]
+    p = tracker["process"]
+
+    return_code = p.poll()
+    if return_code is not None:
+        logger.error(f"💥 CRASH: {name} (Code: {return_code}). Emergency restart!")
+        del running_processes[name]
+        # FIX: Backoff vor Restart, um to limit crash loops.
+        # P1.37: kein time.sleep() — das fror die gesamte Schleife ein (bis 900s
+        # keine anderen Restarts, keine Park-Marker, kein Dashboard, keine
+        # Health-Checks). Deadline setzen und weiterlaufen; der Restart passiert
+        # in dem Zyklus, in dem die Deadline abgelaufen ist — und erst nachdem
+        # der Park-Check oben erneut gelaufen ist.
+        delay = _compute_restart_delay(name)
+        if delay > 0:
+            _restart_not_before[name] = current_time + delay
+            logger.info(f"⏳ Waiting {delay}s vor Restart von {name} (crash protection)...")
+            return
+        start_process(p_info)
+        return
+
+    restart_interval = p_info.get("restart_interval")
+    if restart_interval:
+        uptime = current_time - tracker["start_time"]
+        if uptime >= restart_interval:
+            logger.info(f"♻️ Geplanter Restart: {name} (Uptime: {uptime / 3600:.1f}h)")
+            kill_process(name)
+            start_process(p_info)
 
 
 def kill_process(name: str) -> None:
@@ -404,56 +498,7 @@ def main() -> None:
 
             # Bot-Crash-Check
             for p_info in PROCESSES_TO_RUN:
-                name = p_info["name"]
-                script = p_info["script"]
-
-                # Parking: a dashboard-initiated stop that must STAY stopped.
-                # The watchdog is the single actuator — it stops the bot here and
-                # does NOT revive it, fixing the old "stop gets undone in 10s" bug.
-                if is_parked(script):
-                    if name in running_processes:
-                        if running_processes[name]["process"].poll() is None:
-                            logger.info(f"⏸️  {name} ist geparkt — stoppe.")
-                            kill_process(name)
-                        else:
-                            del running_processes[name]
-                    continue
-
-                # One-shot restart requested from the dashboard.
-                if consume_restart(script):
-                    logger.info(f"♻️ {name} — Restart über Dashboard angefordert.")
-                    if name in running_processes and running_processes[name]["process"].poll() is None:
-                        kill_process(name)
-                    start_process(p_info)
-                    continue
-
-                if name not in running_processes:
-                    logger.error(f"🚨 Prozess {name} fehlt! Starting neu...")
-                    start_process(p_info)
-                    continue
-
-                tracker = running_processes[name]
-                p = tracker["process"]
-
-                return_code = p.poll()
-                if return_code is not None:
-                    logger.error(f"💥 CRASH: {name} (Code: {return_code}). Emergency restart!")
-                    del running_processes[name]
-                    # FIX: Backoff vor Restart, um to limit crash loops.
-                    delay = _compute_restart_delay(name)
-                    if delay > 0:
-                        logger.info(f"⏳ Waiting {delay}s vor Restart von {name} (crash protection)...")
-                        time.sleep(delay)
-                    start_process(p_info)
-                    continue
-
-                restart_interval = p_info.get("restart_interval")
-                if restart_interval:
-                    uptime = current_time - tracker["start_time"]
-                    if uptime >= restart_interval:
-                        logger.info(f"♻️ Geplanter Restart: {name} (Uptime: {uptime / 3600:.1f}h)")
-                        kill_process(name)
-                        start_process(p_info)
+                supervise_process(p_info, current_time)
 
             time.sleep(10)
 
