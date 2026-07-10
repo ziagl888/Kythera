@@ -11,13 +11,16 @@ from collections import deque
 
 import joblib
 import numpy as np
+import pandas as pd
 import requests
 
 from core import config as _kcfg  # channel ids
 from core import ticker_10s
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
+from core.funding_features import FUNDING_FEATURES, funding_features_asof, load_funding
 from core.market_utils import get_max_leverage
+from core.model_artifacts import load_artifact, maybe_reload
 from core.signal_post import log_prediction
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
@@ -61,10 +64,59 @@ ROUND_LEVEL_CONFIG = {
 WINDOW_EDGE_GUARD = 5
 
 # --- ML MODEL FOR 10 SECONDS ---
+#
+# ZWEI Generationen, zwei Formate (T-2026-CU-9050-042):
+#
+#   LEGACY (heute live) — pump_dump_model.pkl ist ein ROHES 3-Klassen-Modell.
+#       Erfolg = Klasse 2 (Pump) bzw. Klasse 0 (Dump), Features als POSITIONALES
+#       Array, kein Meta, kein Threshold. Es postet unter der Konstanten EPD2.
+#
+#   EPD2-RETRAIN — epd2_model_{LONG,SHORT}.pkl sind dict-Artefakte
+#       (tools/retrain_from_replay.py --strategy epd): je Richtung ein BINÄRES
+#       Modell (Erfolg = predict_proba[:, 1]), Features NACH NAMEN inkl. der
+#       6 Funding-Spalten, Threshold und model_id in der Meta.
+#
+# Liegen die Artefakte, gewinnen sie; der Tag kommt dann aus meta.model_id
+# (harte Regel 6) statt aus EPD_LEGACY_TAG. Ohne Artefakte läuft der Legacy-Pfad
+# unverändert weiter — diese Session ändert die Live-Semantik nicht.
 ML_MODEL_PATH = "pump_dump_model.pkl"
+EPD2_ARTIFACT_PATHS = {"LONG": "epd2_model_LONG.pkl", "SHORT": "epd2_model_SHORT.pkl"}
+
+# Tag, unter dem der Bot vor dem Retrain-Rollout postet — default_tag für ein
+# Artefakt ohne model_id UND transitionaler Dedup-Key (siehe log_prediction).
+EPD_LEGACY_TAG = "EPD2"
+# Posting-Schwelle des Legacy-Modells. Ein EPD2-Artefakt bringt seine eigene mit.
+EPD_LEGACY_THRESHOLD = 0.60
+# Untergrenze des Shadow-Bands (darunter: Schrott, gar kein Log).
+EPD_SHADOW_THRESHOLD = 0.25
+
+# Die 10 Basis-Features in der Reihenfolge, in der das LEGACY-Modell sie als
+# positionales Array erwartet. Reihenfolge ist hier Vertrag — nicht sortieren.
+EPD_BASE_FEATURES = [
+    "vol_ratio",
+    "p_chg_60s",
+    "buy_pres",
+    "volat",
+    "sample_fill",
+    "rsi",
+    "tsi",
+    "macd",
+    "e9_dist",
+    "e21_dist",
+]
+# Was der Serving-Builder liefern KANN (P0.12-Vertrag): Basis + Funding.
+EPD_EXPECTED_FEATURES = EPD_BASE_FEATURES + list(FUNDING_FEATURES)
 
 _ml_model = None
 _ml_model_time = None
+_epd2: dict[str, dict] = {}
+
+
+def load_epd2_artifacts():
+    """Lädt die Retrain-Artefakte (dict-Format) — leer, solange keine deployt sind."""
+    for direction, path in EPD2_ARTIFACT_PATHS.items():
+        _epd2[direction] = load_artifact(path, EPD_EXPECTED_FEATURES, EPD_LEGACY_TAG)
+    return {d: a for d, a in _epd2.items() if a["loaded"]}
 
 
 def load_pump_model():
@@ -690,10 +742,15 @@ def process_coin_logics(conn, symbol):
     if vol_ratio < 5.0:
         return
 
-    # Modell holen (nur das 10-Feature Modell!)
-    model = load_pump_model()
-    if model is None:
-        return
+    # Modell holen: EPD2-Artefakte wenn deployt, sonst das Legacy-Modell.
+    # maybe_reload läuft auch über NICHT geladene Contracts — so nimmt der Bot
+    # einen späteren Artefakt-Deploy im 24h-Fenster auf, ohne Restart.
+    for _d in list(_epd2):
+        _epd2[_d] = maybe_reload(_epd2[_d], EPD_EXPECTED_FEATURES)
+    epd2 = {d: a for d, a in _epd2.items() if a["loaded"]}
+    model = None if epd2 else load_pump_model()
+    if model is None and not epd2:
+        return  # Idle-Modus (Falle 3)
 
     # Indikator-Fetch NACH Cooldown-/vol_ratio-/Model-Gate (T-2026-CU-9050-014):
     # die Werte fliessen ausschliesslich in features_array unten. Vorher lief
@@ -709,47 +766,75 @@ def process_coin_logics(conn, symbol):
     e9_dist = (current_price - ema9) / ema9 * 100 if ema9 > 0 else 0
     e21_dist = (current_price - ema21) / ema21 * 100 if ema21 > 0 else 0
 
-    # --- ML CHECK (Schnelles 10-Feature Modell) ---
-    features_array = np.array(
-        [
-            [
-                vol_ratio,
-                p_chg_60s,
-                buy_pres,
-                volat,
-                len(pd_state["volume_samples"]) / 360.0,
-                rsi,
-                tsi,
-                macd,
-                e9_dist,
-                e21_dist,
-            ]
-        ]
-    )
+    # --- ML CHECK ---
+    base_features = {
+        "vol_ratio": vol_ratio,
+        "p_chg_60s": p_chg_60s,
+        "buy_pres": buy_pres,
+        "volat": volat,
+        "sample_fill": len(pd_state["volume_samples"]) / 360.0,
+        "rsi": rsi,
+        "tsi": tsi,
+        "macd": macd,
+        "e9_dist": e9_dist,
+        "e21_dist": e21_dist,
+    }
 
     try:
-        prob = model.predict_proba(features_array)[0]
-        classes = list(model.classes_)
+        if epd2:
+            # EPD2: je Richtung ein binäres Modell. Funding-Features as-of JETZT —
+            # der Dataset-Builder (tools/epd2_build_dataset.py:231) nimmt sie as-of
+            # dem Event-Zeitstempel, und das Event ist genau dieser Tick.
+            # since-Schranke wie bei RUB (as-of nutzt max. die letzten 270 Sätze).
+            #
+            # PERFORMANCE-RISIKO (bekannt, vor dem EPD2-Rollout zu klären): das ist
+            # ein DB-Roundtrip pro qualifizierendem TICK, nicht pro Signal. Der
+            # vol_ratio>=5-Vorfilter hält an, solange das Volumen-Event läuft, und
+            # der Shadow-Zweig setzt den 900s-Timer bewusst nicht zurück (P1.41).
+            # Ein TTL-Cache ist KEIN Drop-in: er verschöbe den As-of-Zeitpunkt und
+            # bräche die Trainer-Parität, die dieser Pfad gerade herstellt.
+            fund_by_sym = load_funding(conn, [symbol], since=now - datetime.timedelta(days=95))
+            feats = {**base_features, **funding_features_asof(fund_by_sym, symbol, now)}
+            candidates = []
+            for direction, art in epd2.items():
+                # Fehlende Funding-HISTORIE ⇒ Spalten fehlen ⇒ hier 0, wie fillna(0)
+                # im Trainer (train_binary). Das ist Serving-Parität, kein P0.12-Bruch:
+                # load_artifact hat die Feature-NAMEN hart validiert.
+                ml_input = pd.DataFrame([feats]).reindex(columns=art["features"]).fillna(0)
+                candidates.append((float(art["model"].predict_proba(ml_input)[0, 1]), direction, art))
+            best_prob, best_direction, best_art = max(candidates, key=lambda c: c[0])
+            module_tag = best_art["tag"]
+            post_threshold = float(best_art["threshold"])
+        else:
+            # LEGACY: EIN 3-Klassen-Modell, positionales Feature-Array.
+            features_array = np.array([[base_features[c] for c in EPD_BASE_FEATURES]])
+            prob = model.predict_proba(features_array)[0]
+            classes = list(model.classes_)
 
-        prob_dump = prob[classes.index(0)] if 0 in classes else 0
-        prob_pump = prob[classes.index(2)] if 2 in classes else 0
+            prob_dump = prob[classes.index(0)] if 0 in classes else 0
+            prob_pump = prob[classes.index(2)] if 2 in classes else 0
 
-        best_prob = max(prob_pump, prob_dump)
-        best_direction = "LONG" if prob_pump >= prob_dump else "SHORT"
+            best_prob = max(prob_pump, prob_dump)
+            best_direction = "LONG" if prob_pump >= prob_dump else "SHORT"
+            module_tag = EPD_LEGACY_TAG
+            post_threshold = EPD_LEGACY_THRESHOLD
     except Exception as e:
         logger.error(f"Prediction Fehler in HF Loop: {e}")
         return
 
     # === LOGIK ANWENDEN ===
     # EPD2 (Operator 2026-07-06): Richtungs-Gate entfernt — beide Seiten handeln
-    # wieder (Intent: Momentum-Mitfahren in beide Richtungen); geänderte
-    # Generation postet unter neuem Tag (Versionierungs-Regel).
-    module_tag = "EPD2"
+    # wieder (Intent: Momentum-Mitfahren in beide Richtungen).
+    #
+    # module_tag und post_threshold kommen aus dem Prediction-Block oben: bei
+    # deploytem Artefakt aus dessen Meta (model_id / optimal_threshold), sonst aus
+    # den Legacy-Konstanten. Nie eine Konstante über einem geladenen Artefakt —
+    # sonst verschmilzt ein EPD3-Retrain still mit der EPD2-Statistik (Regel 6).
 
-    if best_prob < 0.25:
+    if best_prob < EPD_SHADOW_THRESHOLD:
         pass  # Schrott ignorieren
 
-    elif 0.25 <= best_prob < 0.60:
+    elif EPD_SHADOW_THRESHOLD <= best_prob < post_threshold:
         # Shadow Mode: Ablegen in Master Tabelle.
         #
         # P1.41: das 900s-Gate oben (`last_alert_time`) bremst diesen Zweig NICHT
@@ -768,10 +853,14 @@ def process_coin_logics(conn, symbol):
             float(current_price),
             float(best_prob),
             posted=False,
+            # Der Dedup-Key ist der Tag. Beim EPD3-Rollout kippt er, und die neue
+            # Generation begänne ihr 4h-Fenster bei null → doppelte Shadow-Zeilen
+            # für denselben Coin. Gleicher Tag (heute) ⇒ No-op.
+            legacy_tag=EPD_LEGACY_TAG,
         )
         conn.commit()
 
-    elif best_prob >= 0.60:
+    elif best_prob >= post_threshold:
         # Direction-Gate ENTFERNT (Operator 2026-07-06): beide Richtungen handeln
         # wieder (Audit-Batch hatte LONG nach Report 14 D.5 in den Shadow gelegt).
 
@@ -864,6 +953,15 @@ def process_coin_logics(conn, symbol):
 # MAIN LOOP
 def main():
     logger.info("=== 🏎️ 10-SEC HIGH FREQUENCY DETECTOR GESTARTET ===")
+
+    # Retrain-Artefakte einmal beim Start prüfen. Keine da → Legacy-Pfad
+    # (der heutige Zustand); die Artefakte gewinnen, sobald sie deployt sind.
+    loaded = load_epd2_artifacts()
+    logger.info(
+        f"EPD-Artefakte: {sorted(loaded)} geladen"
+        if loaded
+        else f"Keine EPD2-Artefakte — Legacy-Modell '{ML_MODEL_PATH}' unter Tag {EPD_LEGACY_TAG}."
+    )
 
     session = requests.Session()
     conn = get_db_connection()
