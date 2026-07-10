@@ -27,6 +27,7 @@ from core.bot_naming import pretty_name
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, send_telegram, update_cooldown
+from core.time import LEGACY_WRITER_TZ, utc_now_naive
 from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn_and_sr_levels
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,7 +49,46 @@ FALLBACK_MAX_DISTINCT_REGIMES_2H = 3
 FALLBACK_UNSTABLE_LOOKBACK_HOURS = 2
 REFERENCE_WINDOW_DAYS = 30
 MIN_TRADES_FOR_DECISION = 30
+# Max age of a bot_regime_whitelist cell before the 4D lookup is distrusted
+# (P0.4/P2.25): 27_bot_regime_analyzer recomputes the whitelist daily, so a
+# cell older than two analyzer cycles means the analyzer is dead or writes a
+# key the orchestrator never reads. Gating on such a cell decides today's
+# money on stats frozen months ago — fall back to the overall window instead.
+WHITELIST_MAX_AGE_HOURS = 48
 LIFECYCLE_SYNC_INTERVAL_SEC = 30
+# Half-width of the row anchor used by the lifecycle sync, the corpse reaper's
+# twin check and its anti-censor guard. ONE constant on purpose: if the match
+# loop and the reaper ever disagree on the window, the reaper can censor an
+# outcome the match loop would still have classified.
+LIFECYCLE_SYNC_WINDOW_SEC = 60
+# Historical session TZ under which the pre-T-052 DB default stamped
+# ai_signals.open_time (canonical constant lives in core/time.py: pinned, NOT
+# current_setting('TimeZone') — a future R3 session-TZ flip must not un-shield
+# live legacy positions; AT TIME ZONE handles their DST per-timestamp). Only
+# used for the legacy second window; new rows carry naive UTC and match the
+# first window. Collision-free because the 4h per-coin+direction cooldown makes
+# two same-direction trades 3h±window apart impossible (pinned by a test).
+LEGACY_SESSION_TZ = LEGACY_WRITER_TZ
+
+
+def _anchor_window_predicate(col: str, anchor: str) -> str:
+    """SQL predicate: `col` lies within ±LIFECYCLE_SYNC_WINDOW_SEC of `anchor`,
+    either directly (naive-UTC rows) or after converting a legacy
+    session-local timestamp to UTC.
+
+    ONE builder for the match loop, the reaper's twin check and its
+    anti-censor guard — the three must never disagree on the window shape, or
+    the reaper censors outcomes the match loop would still classify (the
+    round-3 asymmetry class). Interpolations are compile-time constants only.
+    """
+    w = f"INTERVAL '{LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
+    return (
+        f"({col} BETWEEN {anchor} - {w} AND {anchor} + {w} "
+        f"OR ({col} AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC') "
+        f"BETWEEN {anchor} - {w} AND {anchor} + {w})"
+    )
+
+
 FALLBACK_MIN_WR = 50.0
 
 # Outcome-Klassifikation im Lifecycle-Sync: siehe Erläuterung in
@@ -249,8 +289,12 @@ def is_whitelisted_fallback(conn, bot_name: str, direction: str) -> tuple[bool, 
 def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, str]:
     """
     Main whitelist entry point. Chooses between:
-      - Normal 4D-lookup (reliable detector)
-      - Overall-fallback (unreliable detector)
+      - Normal 4D-lookup (reliable detector, fresh cell)
+      - Overall-fallback (unreliable detector, or 4D cell older than
+        WHITELIST_MAX_AGE_HOURS — P0.4/P2.25 staleness gate)
+
+    computed_at is naive UTC (27_bot_regime_analyzer writes utc_now naive),
+    so it compares directly against utc_now_naive().
     """
     reliable, status = is_regime_detector_reliable(conn)
 
@@ -267,7 +311,7 @@ def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, s
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT whitelisted, reason FROM bot_regime_whitelist
+                SELECT whitelisted, reason, computed_at FROM bot_regime_whitelist
                 WHERE bot_name = %s AND regime = %s
                   AND alt_context = %s AND direction = %s
                 """,
@@ -277,6 +321,19 @@ def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, s
 
         if wl_row is None:
             return (True, "no_whitelist_entry")
+
+        computed_at = wl_row[2]
+        stale = computed_at is None or (utc_now_naive() - computed_at) > timedelta(hours=WHITELIST_MAX_AGE_HOURS)
+        if stale:
+            age_str = (
+                "unknown" if computed_at is None else f"{(utc_now_naive() - computed_at).total_seconds() / 3600:.0f}h"
+            )
+            logger.warning(
+                f"⚠️ Stale whitelist cell ({regime}/{alt_context}, age {age_str}) — "
+                f"Overall fallback for {bot_name} {direction}"
+            )
+            whitelisted, fallback_reason = is_whitelisted_fallback(conn, bot_name, direction)
+            return (whitelisted, f"whitelist_stale:{fallback_reason}")
 
         return (bool(wl_row[0]), wl_row[1] or "unknown")
 
@@ -300,7 +357,16 @@ def get_current_regime_full(conn) -> tuple[str, str] | None:
 
 
 def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
-    """True if an open orchestrator trade exists for this coin in opposite direction."""
+    """True if an open orchestrator trade exists for this coin in opposite direction.
+
+    Deliberately NO age bound here (T-2026-CU-9050-052): a genuinely live ROM1
+    position can stay open well past 72h (expiry_hours is never set for ROM1),
+    and dropping the block by age would let ROM1 post the opposite direction
+    against a live position (flip/double exposure — the exact P1.8 risk).
+    Corpse rows that would otherwise block forever are closed by the corpse
+    reaper in sync_closed_trades instead: a row is only OPEN while its
+    ai_signals twin still exists or until the reaper transitions it.
+    """
     opposite = "SHORT" if new_direction == "LONG" else "LONG"
     with conn.cursor() as cur:
         cur.execute(
@@ -320,17 +386,18 @@ def is_same_direction_open(conn, coin: str, direction: str) -> bool:
     Ohne diesen Check stapelte ROM1 nach Ablauf des 4h-Cooldowns weitere
     Positionen auf denselben Coin in dieselbe Richtung (Doppel-Exposure).
 
-    Age-Bound 72h: eine im Lifecycle hängen gebliebene OPEN-Row (Crash
-    zwischen Commit und Monitor-Pickup, manuell gelöschte ai_signals-Row)
-    würde den Coin sonst FÜR IMMER aus dem ROM1-Trading nehmen — nur mit
-    Suppression-Logs, ohne Alarm. Nach 72h gilt die Row als Leiche.
+    The former 72h age bound is gone (T-2026-CU-9050-052): it was meant to
+    decay corpse rows, but it also un-blocked genuinely live positions older
+    than 72h and re-enabled the stacking this check exists to prevent. Corpse
+    decay is now the corpse reaper's job (sync_closed_trades): an OPEN row
+    whose ai_signals twin is gone is transitioned out after 72h, so it can
+    never block this coin+direction forever.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT 1 FROM orchestrator_open_trades
             WHERE coin = %s AND direction = %s AND status = 'OPEN'
-              AND opened_at > NOW() - INTERVAL '72 hours'
             LIMIT 1
             """,
             (coin, direction),
@@ -500,14 +567,22 @@ def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bo
 
     commit=False lässt den Insert in der offenen Transaktion des Callers —
     signal_gating_pass committed Tracking + Outbox-Post atomar zusammen.
+
+    P1.8 follow-up (T-2026-CU-9050-052): open_time is set explicitly as naive
+    UTC. The DB default now() stamps session-local time (Europe/Bucharest)
+    into the naive timestamp column — a constant +3h offset against the
+    naive-UTC opened_at of the orchestrator_open_trades twin row, so the
+    ±60s window in sync_closed_trades could never match (sync silently dead
+    since 2026-07-04; evidence: T-2026-CU-9050-044). Monitor 8 already treats
+    open_time as UTC (ot_aware) — for ROM1 rows that assumption now holds.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO ai_signals
                 (symbol, price, model, direction, confidence,
-                 entry1, entry2, sl, targets)
-            VALUES (%s, %s, 'ROM1', %s, 1.0, %s, %s, %s, %s)
+                 entry1, entry2, sl, targets, open_time)
+            VALUES (%s, %s, 'ROM1', %s, 1.0, %s, %s, %s, %s, %s)
             """,
             (
                 coin,
@@ -517,6 +592,7 @@ def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bo
                 params["entry2"],
                 params["sl"],
                 json.dumps(params["targets"]),
+                utc_now_naive(),
             ),
         )
     if commit:
@@ -532,11 +608,18 @@ def insert_orchestrator_open_trade(
     outbox_id: int | None,
     regime: str | None,
     alt_context: str | None,
+    wl_reason: str | None = None,
     commit: bool = True,
 ) -> None:
     """Records a forwarded trade in orchestrator_open_trades.
 
     commit=False: siehe insert_rom1_signal — atomarer Forward-Commit im Caller.
+
+    wl_reason (B8) persists WHICH gate path let the signal through — a real 4D
+    cell, `no_whitelist_entry`, or one of the fallback paths. Without it the
+    forwarded side of the gate is unauditable (suppressed_signals only records
+    the blocked side); 26_regime_detector.post_hourly_status reads it for the
+    default-open rate.
     """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     with conn.cursor() as cur:
@@ -545,10 +628,10 @@ def insert_orchestrator_open_trade(
             INSERT INTO orchestrator_open_trades
                 (coin, direction, bot_name, entry_price, opened_at,
                  regime_at_open, alt_context_at_open,
-                 original_outbox_id, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'OPEN')
+                 original_outbox_id, wl_reason, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'OPEN')
             """,
-            (coin, direction, bot_name, entry, now_utc, regime, alt_context, outbox_id),
+            (coin, direction, bot_name, entry, now_utc, regime, alt_context, outbox_id, wl_reason),
         )
     if commit:
         conn.commit()
@@ -748,6 +831,7 @@ def _gate_and_forward_row(
         outbox_id,
         cur_regime,
         cur_alt,
+        wl_reason=wl_reason,
         commit=False,
     )
 
@@ -954,6 +1038,12 @@ async def sync_closed_trades(conn) -> None:
     schreibt targets_hit=0 etc.). DELISTED/CLEANUP-Trades bekommen den Status
     CLOSED_NEUTRAL — die Orchestrator-Performance wird dadurch nicht verzerrt.
     """
+    # Reaper FIRST: corpse decay must not depend on the health of the per-row
+    # match loop below (a poison row there would silently disable decay while
+    # the unbounded direction blocks stay active). Safe to run first: the
+    # reaper skips anything the match loop could still classify.
+    await reap_corpse_trades(conn)
+
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -976,21 +1066,31 @@ async def sync_closed_trades(conn) -> None:
         # mehreren Kandidaten gewinnt die kleinste Zeitdifferenz. Der
         # closed_trades_master-Check ist raus — ROM1 schreibt nie nach
         # active_trades_master, dort konnte nur ein Fremd-Trade matchen.
-        window_start = opened_at_naive - timedelta(seconds=60)
-        window_end = opened_at_naive + timedelta(seconds=60)
-
+        #
+        # T-2026-CU-9050-052: second window through LEGACY_SESSION_TZ — rows
+        # written before this fix carry session-local open_time (+3h), and
+        # their closes (copied verbatim by the monitor) would otherwise never
+        # match; a legacy-era trade that closes AFTER deploy would lose its
+        # real WIN/LOSS to the corpse reaper. Safe against cross-matching a
+        # different trade: the 4h per-coin+direction cooldown means no two
+        # same-direction trades can sit 3h±window apart.
         # `status` in closed_ai_signals enthält tatsächlich den close_reason
         # (z.B. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP").
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT entry, close_price, status FROM closed_ai_signals
                 WHERE symbol = %s AND direction = %s AND model = 'ROM1'
-                  AND open_time >= %s AND open_time <= %s
-                ORDER BY ABS(EXTRACT(EPOCH FROM (open_time - %s)))
+                  AND {_anchor_window_predicate("open_time", "%s::timestamp")}
+                ORDER BY LEAST(
+                    ABS(EXTRACT(EPOCH FROM (open_time - %s))),
+                    ABS(EXTRACT(EPOCH FROM (
+                        (open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC') - %s
+                    )))
+                )
                 LIMIT 1
                 """,
-                (coin, direction, window_start, window_end, opened_at_naive),
+                (coin, direction) + (opened_at_naive,) * 6,
             )
             row = cur.fetchone()
 
@@ -998,6 +1098,69 @@ async def sync_closed_trades(conn) -> None:
             entry, close_price, close_reason = row
             new_status = _classify_outcome_by_pnl(direction, entry, close_price, close_reason)
             mark_orchestrator_trade_closed(conn, trade_id, new_status, "lifecycle_sync")
+
+
+async def reap_corpse_trades(conn) -> None:
+    """Closes OPEN tracking rows whose ai_signals twin is gone (corpse reaper).
+
+    T-2026-CU-9050-052: a live ROM1 trade always has its ai_signals twin (both
+    rows are written in the same transaction; the monitor deletes the twin on
+    close). An OPEN row WITHOUT a twin is a trade that closed but was never
+    synced — either a legacy corpse from the dead-sync era (open_time stamped
+    +3h by the session-TZ DB default, the ±60s sync window can never match:
+    395 rows as of 2026-07-10) or a pathological case (manually deleted
+    ai_signals row). Left OPEN, such rows block the direction checks forever,
+    feed spurious Close commands into every regime-change pass, and get
+    re-scanned by the sync loop on every pass.
+
+    Guards, in order:
+    - 72h minimum age: never touches fresh rows.
+    - Twin check is ROW-anchored (±window around opened_at, both rows are
+      written in one transaction), NOT just coin+direction — a live trade's
+      twin must not shield a corpse that shares coin+direction (stacking era),
+      because that corpse would keep feeding Close commands that flatten the
+      LIVE position on the next regime flip. Legacy twins sit at
+      LEGACY_SESSION_TZ local time, hence the second window.
+    - Never censors a classifiable outcome: if a closed_ai_signals row exists
+      in either sync window (same two windows as the match loop — asymmetry
+      here would censor legacy-era closes), the regular match loop will
+      classify the real WIN/LOSS — the reaper skips (closes the
+      monitor-commit race for >72h trades; the monitor deletes the twin and
+      writes the close atomically).
+
+    Reaped rows get CLOSED_NEUTRAL (no PnL/WR distortion, same convention as
+    DELISTED/CLEANUP) and closed_at = reap time — NOT the real close time,
+    which is unknowable for corpses. Duration stats must exclude
+    close_reason='corpse_reaper'. No Telegram post — bookkeeping, not a trade
+    action. A twin that is stuck (monitor cannot process the coin) keeps its
+    row OPEN by design — protection over availability; the decay path for
+    that case is housekeeping's DELISTED cleanup deleting the twin.
+    """
+    now_naive = utc_now_naive()
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE orchestrator_open_trades o
+            SET status = 'CLOSED_NEUTRAL', closed_at = %s, close_reason = 'corpse_reaper'
+            WHERE o.status = 'OPEN'
+              AND o.opened_at < %s
+              AND NOT EXISTS (
+                  SELECT 1 FROM ai_signals a
+                  WHERE a.model = 'ROM1' AND a.symbol = o.coin AND a.direction = o.direction
+                    AND {_anchor_window_predicate("a.open_time", "o.opened_at")}
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM closed_ai_signals c
+                  WHERE c.model = 'ROM1' AND c.symbol = o.coin AND c.direction = o.direction
+                    AND {_anchor_window_predicate("c.open_time", "o.opened_at")}
+              )
+            """,
+            (now_naive, now_naive - timedelta(hours=72)),
+        )
+        reaped = cur.rowcount
+    conn.commit()
+    if reaped:
+        logger.info(f"🧹 Corpse-Reaper: {reaped} verwaiste OPEN-Rows ohne ai_signals-Twin neutral geschlossen.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1133,17 +1296,47 @@ def should_run_lifecycle_sync() -> bool:
     return False
 
 
+async def _run_stage(conn, stage_name: str, coro) -> bool:
+    """Runs one main-loop stage; an exception is logged and the connection is
+    rolled back so the NEXT stage does not inherit an aborted transaction.
+    Returns False on failure so the caller can keep money-path couplings.
+
+    T-2026-CU-9050-052: the stages were one try block before — a persistent
+    poison row in the regime check or the gating pass would then silently
+    starve the lifecycle sync (and with it the corpse reaper, the only decay
+    path for stuck OPEN rows) forever.
+    """
+    try:
+        await coro
+        return True
+    except Exception as e:
+        logger.error(f"Orchestrator-Loop-Error [{stage_name}]: {e}", exc_info=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
 async def main_loop() -> None:
     logger.info("=== 🎯 SIGNAL ORCHESTRATOR STARTED ===")
     while True:
         conn = None
         try:
             conn = get_db_connection()
-            await check_regime_change_and_close(conn)
-            await signal_gating_pass(conn)
+            regime_ok = await _run_stage(conn, "regime_change", check_regime_change_and_close(conn))
+            if regime_ok:
+                await _run_stage(conn, "gating", signal_gating_pass(conn))
+            else:
+                # Fail-closed on the money path: while regime-flip auto-closes
+                # are broken, do NOT open new exposure via the gating pass.
+                # Only the lifecycle sync below stays independent.
+                logger.warning("Gating-Pass übersprungen: Regime-Stage fehlgeschlagen (fail-closed).")
             if should_run_lifecycle_sync():
-                await sync_closed_trades(conn)
+                await _run_stage(conn, "lifecycle_sync", sync_closed_trades(conn))
         except Exception as e:
+            # Backstop: nothing here may ever kill the process (no gating, no
+            # auto-closes, no reaping on the live fleet).
             logger.error(f"Orchestrator-Loop-Error: {e}", exc_info=True)
         finally:
             if conn:

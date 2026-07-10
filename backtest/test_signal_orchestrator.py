@@ -7,6 +7,9 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import asyncio
+import datetime
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -514,6 +517,70 @@ def test_fallback_uses_overall_performance_wr_threshold():
     assert orch.FALLBACK_MIN_WR == 50.0
 
 
+# ── Whitelist staleness gate (P0.4/P2.25) ─────────────────────────────────────
+
+def _mock_conn_for_whitelist(cell_age_hours, whitelisted=False, fallback_wr=58.0):
+    """Stable regime + one 4D cell of the given age + an overall fallback row."""
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    computed_at = None if cell_age_hours is None else now - datetime.timedelta(hours=cell_age_hours)
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    conn.cursor = MagicMock(return_value=cur)
+    cur.fetchone = MagicMock(side_effect=[
+        ("TREND_UP",),                              # is_regime_detector_reliable
+        (1,),                                       # distinct regimes 2h
+        ("TREND_UP", "ALT_NEUTRAL"),                # regime_current
+        (whitelisted, "wr_above_threshold", computed_at),  # 4D cell
+        (100, fallback_wr),                         # is_whitelisted_fallback
+    ])
+    return conn
+
+
+def test_fresh_whitelist_cell_decides():
+    """A cell younger than WHITELIST_MAX_AGE_HOURS is honoured as-is."""
+    conn = _mock_conn_for_whitelist(cell_age_hours=1, whitelisted=False)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is False
+    assert reason == "wr_above_threshold"
+
+
+def test_stale_whitelist_cell_falls_back_to_overall():
+    """A cell older than 48h is distrusted — the overall fallback decides."""
+    conn = _mock_conn_for_whitelist(cell_age_hours=49, whitelisted=False, fallback_wr=58.0)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is True  # fallback WR 58% > 50%
+    assert reason == "whitelist_stale:fallback_wr_above_50"
+
+
+def test_null_computed_at_treated_as_stale():
+    conn = _mock_conn_for_whitelist(cell_age_hours=None, whitelisted=True, fallback_wr=42.0)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is False  # fallback WR 42% < 50%
+    assert reason == "whitelist_stale:fallback_wr_below_50"
+
+
+# ── B8: wl_reason persisted on the forwarded side ─────────────────────────────
+
+def test_insert_orchestrator_open_trade_persists_wl_reason():
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    conn.cursor = MagicMock(return_value=cur)
+
+    orch.insert_orchestrator_open_trade(
+        conn, "BTCUSDT", "LONG", "MIS1-8h", 50000.0, 7,
+        "TREND_UP", "ALT_NEUTRAL", wl_reason="no_whitelist_entry", commit=False,
+    )
+
+    sql, params = cur.execute.call_args[0]
+    assert "wl_reason" in sql
+    assert params[-1] == "no_whitelist_entry"
+    conn.commit.assert_not_called()
+
+
 # ── Cooldown ──────────────────────────────────────────────────────────────────
 
 def test_cooldown_module_name_is_rom1():
@@ -542,6 +609,166 @@ def test_cross_direction_allowed_after_trade_close():
     cur.fetchone = MagicMock(return_value=None)  # No trade found
     conn.cursor = MagicMock(return_value=cur)
     assert orch.is_opposite_direction_open(conn, "BTCUSDT", "SHORT") is False
+
+
+def _mock_conn(executed=None, rowcount=0, fetchall=None):
+    """Shared mock conn/cursor scaffold. Optionally records every
+    (sql, params) pair into `executed`."""
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    cur.fetchone = MagicMock(return_value=None)
+    cur.fetchall = MagicMock(return_value=fetchall if fetchall is not None else [])
+    cur.rowcount = rowcount
+    if executed is not None:
+        cur.execute = MagicMock(side_effect=lambda sql, params=None: executed.append((sql, params)))
+    conn.cursor = MagicMock(return_value=cur)
+    return conn, cur
+
+
+def _captured_query(fn, *args):
+    """Run fn against a mock conn and return the (sql, params) it executed."""
+    conn, cur = _mock_conn()
+    fn(conn, *args)
+    sql, params = cur.execute.call_args[0]
+    return sql, params
+
+
+def test_opposite_direction_check_has_no_age_bound():
+    """T-2026-CU-9050-052: the opposite-direction block must hold as long as
+    the row is OPEN — a live ROM1 position can legitimately outlast any time
+    cutoff (expiry_hours is never set), and an age bound would re-enable the
+    flip/double-exposure P1.8 exists to prevent. Corpse decay is the reaper's
+    job, not this check's."""
+    sql, params = _captured_query(orch.is_opposite_direction_open, "BTCUSDT", "SHORT")
+    assert "INTERVAL" not in sql
+    assert "status = 'OPEN'" in sql
+    assert params == ("BTCUSDT", "LONG")  # opposite of the new direction
+
+
+def test_same_direction_check_has_no_age_bound():
+    """The P2.26 anti-stacking twin must also block for the whole lifetime of
+    an OPEN row (its former 72h bound un-blocked live positions)."""
+    sql, params = _captured_query(orch.is_same_direction_open, "BTCUSDT", "LONG")
+    assert "INTERVAL" not in sql
+    assert "status = 'OPEN'" in sql
+    assert params == ("BTCUSDT", "LONG")
+
+
+def test_insert_rom1_signal_sets_open_time_naive_utc():
+    """P1.8 follow-up (T-2026-CU-9050-052): the ai_signals INSERT must set
+    open_time explicitly as naive UTC. Relying on the DB default stamps
+    session-local time (+3h) and the ±60s lifecycle-sync window never
+    matches the naive-UTC opened_at of the twin tracking row."""
+    params_dict = {"entry1": 100.0, "entry2": 95.0, "sl": 90.0, "targets": [105.0, 110.0]}
+    sql, params = _captured_query(orch.insert_rom1_signal, "BTCUSDT", "LONG", params_dict, False)
+
+    assert "open_time" in sql
+    open_time = params[-1]
+    assert isinstance(open_time, datetime.datetime)
+    assert open_time.tzinfo is None  # naive — the column is TIMESTAMP WITHOUT TIME ZONE
+    utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    assert abs((utc_now - open_time).total_seconds()) < 5  # UTC wall clock, not local (+3h)
+
+
+def test_sync_closed_trades_runs_corpse_reaper_first():
+    """T-2026-CU-9050-052: every sync pass must reap OPEN rows whose ai_signals
+    twin is gone (trade closed but never synced — e.g. the 395 dead-sync-era
+    corpses whose +3h open_time can never match). The reaper runs BEFORE the
+    per-row match loop so corpse decay survives a poison row there, and it
+    must never post to telegram_outbox."""
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, rowcount=3)
+
+    asyncio.run(orch.sync_closed_trades(conn))
+
+    assert executed, "sync pass executed no SQL"
+    first_sql, params = executed[0]
+    # Reaper-first: the UPDATE is the very first statement of the pass.
+    assert "UPDATE orchestrator_open_trades" in first_sql
+    assert "CLOSED_NEUTRAL" in first_sql
+    assert "corpse_reaper" in first_sql
+    assert not any("telegram_outbox" in s for s, _ in executed)  # bookkeeping only
+
+    closed_at, cutoff = params
+    assert closed_at.tzinfo is None and cutoff.tzinfo is None  # naive UTC columns
+    assert abs(((closed_at - cutoff) - datetime.timedelta(hours=72)).total_seconds()) < 5
+    utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    assert abs((utc_now - closed_at).total_seconds()) < 5  # UTC wall clock, not local (+3h)
+
+
+def test_corpse_reaper_is_row_anchored_and_never_censors_syncable_closes():
+    """The reaper's twin check must be anchored to the row's own opened_at
+    (±window, same-transaction inserts) — a live trade's twin on the same
+    coin+direction must not shield a stacking-era corpse, which would keep
+    feeding spurious Close commands that flatten the live position. Legacy
+    twins sit at LEGACY_SESSION_TZ local time (second window, hard-coded so a
+    future session-TZ change cannot un-shield live legacy positions). And it
+    must skip rows whose close is already recorded in closed_ai_signals — in
+    EITHER window, or legacy-era closes would be censored: those get their
+    REAL outcome from the match loop, never a corpse_reaper censor."""
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, rowcount=0)
+
+    asyncio.run(orch.reap_corpse_trades(conn))
+
+    (sql, _params), = executed
+    window = f"INTERVAL '{orch.LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
+    assert "NOT EXISTS" in sql
+    assert "FROM ai_signals" in sql
+    assert f"a.open_time BETWEEN o.opened_at - {window}" in sql  # row anchor, not coin-scoped
+    assert "current_setting" not in sql  # pinned zone, not the mutable session GUC
+    assert "FROM closed_ai_signals" in sql  # anti-censor guard: syncable close → skip
+    # Legacy window in BOTH subqueries (twin check AND anti-censor guard).
+    assert sql.count(f"AT TIME ZONE '{orch.LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC'") == 2
+
+
+def test_sync_match_loop_covers_legacy_window():
+    """The match loop must search closed_ai_signals in the same two windows as
+    the reaper (raw naive-UTC anchor + LEGACY_SESSION_TZ conversion) — without
+    the second window, a legacy-era trade closing after deploy loses its real
+    WIN/LOSS to the reaper."""
+    opened_at = datetime.datetime(2026, 7, 8, 12, 0, 0)
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, fetchall=[(1, "BTCUSDT", "LONG", "SomeBot", opened_at)])
+
+    asyncio.run(orch.sync_closed_trades(conn))
+
+    selects = [(sql, p) for sql, p in executed if "SELECT entry, close_price, status" in sql]
+    assert len(selects) == 1
+    sql, params = selects[0]
+    assert f"AT TIME ZONE '{orch.LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC'" in sql
+    assert "LEAST(" in sql  # closest-match ranking across both windows
+    assert params[0] == "BTCUSDT" and params[1] == "LONG"
+
+
+def test_run_stage_isolates_failures_and_reports_status():
+    """_run_stage must swallow a stage exception (rollback so the next stage
+    does not inherit an aborted transaction) and report failure via its return
+    value — main_loop uses that to keep gating fail-closed behind the
+    regime-close stage while the lifecycle sync stays independent."""
+    conn = MagicMock()
+
+    async def boom():
+        raise RuntimeError("poison row")
+
+    assert asyncio.run(orch._run_stage(conn, "stage", boom())) is False
+    conn.rollback.assert_called_once()
+
+    async def fine():
+        return None
+
+    assert asyncio.run(orch._run_stage(conn, "stage", fine())) is True
+
+
+def test_legacy_window_cannot_cross_match_thanks_to_cooldown():
+    """The LEGACY_SESSION_TZ second window is only collision-free because two
+    same-coin+direction ROM1 trades can never sit ~3h apart: the per-coin+
+    direction cooldown must stay above the max legacy offset (+3h EEST) plus
+    the anchor window on both sides. If this assert fires, the cooldown was
+    lowered and the legacy windows in sync/reaper must be revisited."""
+    assert orch.ORCHESTRATOR_COOLDOWN_HOURS * 3600 > 3 * 3600 + 2 * orch.LIFECYCLE_SYNC_WINDOW_SEC
 
 
 # ── ROM1 Tracking ─────────────────────────────────────────────────────────────

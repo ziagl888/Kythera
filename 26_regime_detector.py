@@ -36,6 +36,12 @@ TREND_RETURN_THRESHOLD_4H_PCT = 1.5  # Referenz für Status-Posts
 VOLA_HIGH_PERCENTILE = 75
 VOLA_LOW_PERCENTILE = 40
 ALT_CONTEXT_THRESHOLD_PCT = 1.5
+# Share of forwarded ROM1 trades that bypassed a real 4D whitelist cell
+# (default-open or fallback) above which the hourly status flags the gate.
+# P0.4 ran undetected for months precisely because a silently-open gate looks
+# exactly like a permissive one from the outside.
+GATE_DEFAULT_OPEN_ALARM_PCT = 20.0
+GATE_STATS_LOOKBACK_HOURS = 24
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING
@@ -163,10 +169,18 @@ def ensure_regime_schema(conn) -> None:
                 regime_at_open TEXT,
                 alt_context_at_open TEXT,
                 original_outbox_id BIGINT,
+                wl_reason TEXT,
                 status TEXT DEFAULT 'OPEN',
                 closed_at TIMESTAMP WITHOUT TIME ZONE,
                 close_reason TEXT
             )
+        """)
+        # B8: additive for DBs created before the column existed. Rows written
+        # by the pre-B8 orchestrator keep wl_reason NULL — the gate-quality
+        # stats below count them separately instead of guessing a path.
+        cur.execute("""
+            ALTER TABLE orchestrator_open_trades
+            ADD COLUMN IF NOT EXISTS wl_reason TEXT
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_oot_status
@@ -418,6 +432,40 @@ async def post_hourly_status() -> None:
         if not wl_rows:
             wl_lines = "\n  (whitelist not yet computed)"
 
+        # Gate-Qualität: wieviele Forwards der letzten 24h liefen über eine
+        # echte 4D-Zelle, wieviele über default-open bzw. Fallback (B8).
+        # wl_reason-Format: '4D-Grund' | 'no_whitelist_entry' |
+        # '<status>:<fallback_reason>' (Fallback- und Staleness-Pfad).
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE wl_reason = 'no_whitelist_entry'),
+                    COUNT(*) FILTER (WHERE POSITION(':' IN wl_reason) > 0),
+                    COUNT(*) FILTER (WHERE wl_reason IS NOT NULL),
+                    COUNT(*) FILTER (WHERE wl_reason IS NULL)
+                FROM orchestrator_open_trades
+                WHERE opened_at >= (NOW() AT TIME ZONE 'UTC')
+                      - INTERVAL '%s hours'
+                """,
+                (GATE_STATS_LOOKBACK_HOURS,),
+            )
+            n_default_open, n_fallback, n_known, n_unknown = cur.fetchone()
+
+        if n_known:
+            pct_default_open = n_default_open / n_known * 100
+            pct_fallback = n_fallback / n_known * 100
+            pct_4d = 100 - pct_default_open - pct_fallback
+            bypass_flag = "⚠️ " if pct_default_open + pct_fallback >= GATE_DEFAULT_OPEN_ALARM_PCT else ""
+            gate_lines = (
+                f"  {bypass_flag}default-open {pct_default_open:.0f}% | "
+                f"fallback {pct_fallback:.0f}% | 4D {pct_4d:.0f}% ({n_known} forwards)"
+            )
+            if n_unknown:
+                gate_lines += f"\n  ({n_unknown} pre-B8 forwards without reason)"
+        else:
+            gate_lines = f"  no forwards in {GATE_STATS_LOOKBACK_HOURS}h"
+
         ts_str = now_utc.strftime("%Y-%m-%d %H:%M")
         msg = (
             f"🌡️ REGIME STATUS — {ts_str} UTC\n\n"
@@ -430,6 +478,7 @@ async def post_hourly_status() -> None:
             f"BTCDOM:\n{btcdom_line}\n\n"
             f"Last 24h regime distribution:\n{dist_lines}\n\n"
             f"Whitelist ({cur_regime} × {cur_alt}):{wl_lines}\n\n"
+            f"Gate path (last {GATE_STATS_LOOKBACK_HOURS}h):\n{gate_lines}\n\n"
             f"Open trades in trading channel: {open_count}\n"
             f"{open_lines}"
         )
