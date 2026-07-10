@@ -29,6 +29,8 @@
 #       - research.funding_stats             (Settlement-Liste bis "jetzt")
 #       - aim2.build_feature_row             (row-scoped, kein Zeit-Input;
 #                                             der floor-1-Join ist Caller-Pflicht)
+#       - sra.build_sra2_features            (row-scoped, eine Indikator-Zeile rein;
+#                                             der floor-1-Join ist Caller-Pflicht)
 #   * Bewusst NICHT einzeln getestet (keine Look-ahead-Fläche): pct_distance
 #     (elementweises Mapping ohne Fenster/Shift, transitiv via
 #     add_advanced_features mitgetestet), assert_features_alive (beide Module,
@@ -56,7 +58,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import aim2_features, funding_features, research_features, rub_features  # noqa: E402
+from core import aim2_features, funding_features, research_features, rub_features, sra_features  # noqa: E402
 from core.mis_features import (  # noqa: E402
     FEATURE_COLS,
     LEGACY_ONLY_COLS,
@@ -375,6 +377,35 @@ def test_aim2_row_scoped():
     print("OK  aim2.build_feature_row: deterministisch, row-scoped, Inputs unmutiert")
 
 
+def test_sra2_row_scoped():
+    """sra.build_sra2_features ist row-scoped: eine 1h-Indikator-Zeile rein, ein
+    Feature-Dict raus — kein Zeit-Series-Input, also keine Perturbations-Achse.
+    Der floor-1-Join (letzte GESCHLOSSENE Kerze) ist Caller-Pflicht (9_ai_sr_bot /
+    tools/retrain_sra2.py); hier prüfbar: Determinismus, keine Mutation der
+    Input-Zeile und der Key-Vertrag gegen SRA2_FEATURES (die Bot==Trainer-Parität
+    aus T-2026-CU-9050-042 haftet an genau diesem Schlüssel-Set)."""
+    ind = {
+        "close": 101.0, "atr_14": 1.5,
+        "rsi_9": 55.0, "rsi_14": 52.0, "rsi_24": 48.0,
+        "tsi_fast_12_7_7": 0.3, "tsi_fast_12_7_7_signal": 0.2,
+        "macd_dif_fast_9_21_9": 0.4, "macd_dea_fast_9_21_9": 0.35,
+        "r_squared": 0.7, "trend_direction": "UP",
+        "ema_9": 100.5, "ema_21": 99.8, "wma_9": 100.2, "kama_9": 100.1, "kama_21": 99.5,
+        "support_price": 97.0, "resistance_price": 105.0, "boll_mid_20": 100.0,
+        "boll_upper_20": 103.0, "boll_lower_20": 97.5,
+    }
+    ind_before = dict(ind)
+
+    a = sra_features.build_sra2_features(ind)
+    b = sra_features.build_sra2_features(ind)
+    assert a == b, "build_sra2_features nicht deterministisch"
+    assert ind == ind_before, "build_sra2_features mutiert die Input-Zeile"
+    assert set(a) == set(sra_features.SRA2_FEATURES), (
+        f"build_sra2_features bricht den SRA2-Key-Vertrag ({set(a) ^ set(sra_features.SRA2_FEATURES)})"
+    )
+    print("OK  sra.build_sra2_features: deterministisch, row-scoped, Input unmutiert, Key-Vertrag")
+
+
 # ── fetch_context_frame: R1 / Forming-Candle via Stub-Cursor ─────────────────
 class _StubCursor:
     def __init__(self, rows, cols):
@@ -610,6 +641,7 @@ if __name__ == "__main__":
     test_regime_features_row_scoped()
     test_rub_event_type_pure()
     test_aim2_row_scoped()
+    test_sra2_row_scoped()
     test_fetch_context_frame_ignores_forming_candle()
     test_fetch_context_frame_staleness_guard()
     test_walkforward_loaders_drop_the_forming_candle()
