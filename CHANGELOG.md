@@ -20,6 +20,425 @@ Kein Eingriff an `pyproject.toml` oder `.github/workflows/typecheck.yml` nötig:
 beide Exclude-Einträge nennen die Root-Datei, die bleibt (`tools/` ist ohnehin
 pauschal excluded).
 
+## [2026-07-10] SMC-Sniper: Pivots nicht mehr auf der laufenden Kerze (T-2026-CU-9050-036, P1.46)
+
+`25_smc_ml_sniper.py` liest 150 Kerzen `DESC`, dreht auf ASC — und liess
+`scipy.signal.argrelextrema` bisher über den **vollen** Frame laufen. Die
+letzte Zeile ist die forming Kerze. Ihr High/Low bewegt sich, also repaintete
+der Pivot-Satz **innerhalb** der laufenden Kerze: die drei Drives eines
+Three-Drive und das Level eines Breaker-Blocks verschoben sich, nachdem das
+Signal bereits gepostet war. Die Schwesterbots droppen die forming Kerze seit
+Juli (`24:138` aus P1.24, `16:334` aus P1.27, `21:126`); 25 war die einzige
+Lücke — und der einzige der vier, der im Geld-Pfad live postet (harte Regel 5).
+
+Fix: `c_highs, c_lows = highs[:-1], lows[:-1]` vor den beiden
+`argrelextrema`-Aufrufen, Muster wie `24_quasimodo_bot.py:138`. Die
+Pivot-Indizes bleiben zu den Vollarrays aligned (`highs[p1]`, `rsis[p1]`
+funktionieren unverändert), und alle `len(df)-1`/`len(df)-2`-Offsets — die
+BB-Feature-Zeile, das Breakout-Fenster, die Freshness-Gates — bleiben
+unberührt. Ein `df.iloc[:-1]` auf den Frame hätte genau diese Offsets um eine
+Kerze verschoben; das ist bewusst nicht passiert und per Test festgenagelt.
+
+`current_price = closes[-1]` bleibt **live**: es ist der CMP, an dem der Entry
+gesetzt wird, plus der Auslöser für die BB-Level-Nähe — kein analytischer
+Input. Der R1-Endzustand (`include_forming=False` auch für die Preis-Seite)
+hängt an den Operator-Fragen 4/6 aus `docs/CANDLE_CALL_SITES.md` und an
+Migrations-Block 4.
+
+Signal-Raten-Delta, DB-frei über die Regression-Guard-Fixtures replayt
+(4 Coins × 1h/4h, 3.608 Scan-Punkte, jeweils 150-Kerzen-Fenster mit der letzten
+Zeile als forming Kerze; gezählt wird der Geometrie-Trigger vor ML-Gate und
+Cooldown). Reproduzierbar über `python tools/sniper_forming_delta.py`:
+
+| Pattern | vorher | nachher | beide | nur vorher | nur nachher |
+|---|---|---|---|---|---|
+| BB LONG | 58 | 57 | 50 | 8 | 7 |
+| BB SHORT | 65 | 61 | 56 | 9 | 5 |
+| TD LONG | 11 | 10 | 10 | 1 | 0 |
+| TD SHORT | 20 | 19 | 17 | 3 | 2 |
+| **Summe** | **154** | **147** | **133** | **21** | **14** |
+
+Also **−4,5 %** Trigger-Rate; 21 Trigger fallen weg, 14 kommen hinzu (der
+verschobene Pivot-Satz ändert `peak_idx[-2]` und damit das BB-Level). Der
+Replay misst exakt das Code-Delta (Zeile drin vs. draussen); der echte
+Live-Repaint ist grösser, weil dort die forming Kerze nur teilweise gefüllt
+ist. R1 senkt die Signal-Raten — das ist der Zweck; Schwellen erst nach dem
+Retrain neu tunen.
+
+Bewusst **nicht** mitgefixt: `argrelextrema(mode='clip')` lässt am rechten Rand
+weiter unbestätigte Pivots durch (der `max_confirmed_idx`-Filter aus P1.24).
+Bei 25 ist das kein Drop-in — das TD-Frische-Gate
+(`len(df) - p3 <= PIVOT_WINDOW + 2`) sucht genau diese Kanten-Pivots. Ein Filter
+dort wäre eine Strategie-Änderung, kein Bugfix, und gehört in einen eigenen
+Task.
+
+Verifikation: `backtest/test_sniper_forming.py` (neu, 4/4, DB-frei — inkl. eines
+numerischen Tests, der den Repaint-Mechanismus selbst reproduziert),
+`backtest/test_sniper_tag.py` (4/4), `guard.py smoke` grün, ruff + mypy grün.
+Wirkt beim nächsten regulären Restart, kein Deploy.
+
+## [2026-07-10] Pump/Dump-Fenster zeit-basiert statt index-basiert (T-2026-CU-9050-029, P1.39)
+
+Der Detector schnitt seine Fenster über Listen-Indizes: `prices[-7:]` hiess nur
+dann „die letzten 60 Sekunden", wenn jeder 10s-Bucket ankam. Bei einer
+WS-Lücke — am wahrscheinlichsten genau im Spike, wenn der Socket am meisten zu
+tun hat — spannte „-7" über Minuten, und das Modell bewertete ein still
+gedehntes Fenster.
+
+Dazu ein zweiter, unabhängiger Fehler: `volumes_10s` war auf `v10s_valid`
+**gefiltert**, `prices` nicht. `volumes_10s[-18:]` und `prices[-18:]` zeigten
+also auf unterschiedliche Zeitpunkte, sobald ein einziger Bucket ungültig war.
+
+Beide Abschnitte (Volume-Explosion-Alert und ML-Feature-Pfad) routen jetzt über
+`_find_bucket_before` / `_find_bucket_range`, die nach Zeitstempel auswählen —
+dieselben Helfer, die der Preis-Spike-Pfad längst nutzt. Die flachen
+`prices`/`volumes_10s`-Listen sind ersatzlos entfallen: dass beide nach dem
+Umbau unbenutzt waren, ist der Beleg, dass keine Index-Rechnung übrig blieb.
+
+Fehlt der Bucket von vor 60s, wird der Tick **übersprungen**, statt eine
+erfundene `0` als Feature ins Modell zu schreiben — eine 0 ist ein Messwert,
+kein „unbekannt".
+
+### Anker statt Wanduhr
+Alle Bucket-Lookups messen gegen `bucket_anchor` (den Stempel des jüngsten
+Buckets), nicht gegen `now`. Die Stempel sind aufs 10s-Raster gefloort, `now`
+ist der Aufrufzeitpunkt — und der Detector iteriert ~530 Coins nach einem
+REST-Roundtrip, der Versatz wandert also auch über den Batch. Gegen `now`
+gemessen schrumpfte das 60s-Fenster ab einem Versatz von 5s still auf 6, dann
+5 Buckets: `buy_pres`/`volat` beschrieben ~50 Sekunden, während `p_chg_60s`
+weiter echte 60 Sekunden maß. Drei Features, die dieselbe Spanne beschreiben
+sollen, taten es nicht. Gegen den Anker liegt jeder Zielzeitpunkt exakt auf
+einem Rasterpunkt, und `WINDOW_EDGE_GUARD = 5` absorbiert nur noch
+Parse-Rauschen. Gefunden im `z-code-reviewer`-Pass, nicht durch die erste
+Test-Runde — die synthetisierte Buckets mit Versatz 0.
+
+Mit umgestellt wurden auch die drei vorbestehenden Lookups des
+Preis-Spike-Pfads: zwei Zeitbasen für Geschwister-Lookups derselben Funktion
+wären schlimmer als eine falsche. Bewusst **nicht** umgestellt, weil echte
+Wanduhr-Semantik: Staleness-Check, die beiden Alert-Cooldowns und
+`pump_dump_events.spike_time`.
+
+### Messung
+Im Gap-Szenario des Tests meldete die alte Index-Rechnung `p_chg_60s = +100.0`
+— sie griff über ein 10-Minuten-Loch auf einen Bucket mit halbem Preis. Die
+zeit-basierte Variante meldet die wahren `0.0`. Genau solche Werte landeten
+bisher auch in `pump_dump_events`.
+
+### ⚠ Retrain-Kopplung
+`vol_ratio`, `p_chg_60s`, `buy_pres` und `volat` sind Modell-Inputs **und**
+werden so nach `pump_dump_events` geloggt, woraus `tools/epd2_build_dataset.py`
+trainiert. Das deployte EPD2-Artefakt wurde auf der alten Definition gefittet;
+bis zum Retrain-Rollout läuft Serving gegen eine leicht verschobene Verteilung.
+Bei lückenlosen Ticks sind alt und neu identisch (Kontroll-Tests belegen das),
+die Drift betrifft ausschliesslich Gap-Ticks — dort war der alte Wert aber
+falsch, nicht bloss anders. Operator-Entscheid Michi 2026-07-09; Folge-Task
+**T-2026-CU-9050-035** (EPD2-Retrain auf den neuen Feature-Definitionen).
+
+Verifikation: `backtest/test_pump_dump_time_windows.py` (neu, standalone,
+DB-frei, 6/6). Vier Tests fallen auf dem Pre-Fix-Stand; die zwei übrigen laufen
+auf beiden Ständen grün und belegen damit, dass der lückenlose Pfad unverändert
+ist. Wirkt beim nächsten regulären Restart, kein Deploy.
+
+---
+
+## [2026-07-09] "Opened"-Zählung entdoppelt, EPD2-Shadow-Inserts gedrosselt (T-2026-CU-9050-029, P1.44 + P1.41, PR #23)
+
+Zwei Hälften desselben Defekts: der Schreiber produzierte Shadow-Zeilen ohne
+Drossel, der Leser zählte sie — und zählte gepostete AI-Signale obendrein
+doppelt. Die per-Bot-Statistik ist die Entscheidungsgrundlage des
+Orchestrator-Gatings, also ist eine aufgeblähte „Opened"-Zahl ein
+Geld-Pfad-Defekt.
+
+### P1.44 — Leser: Opens kommen aus `ai_signals`, nicht aus dem Prediction-Log
+`ml_predictions_master` ist ein append-only Log — nirgends im Repo wird daraus
+gelöscht. `closed_ai_signals` hält dieselben Signale nach dem Schliessen, und
+beide Frames landeten in `df_all_created`. Jedes AI-Signal, das im Fenster
+öffnete **und** schloss, zählte damit zweimal. Zusätzlich trug der Log
+Shadow-Zeilen (`posted=False`), die nie gehandelt wurden.
+
+Die klassische Seite hatte das Problem nie: die Monitore DELETEn beim Schliessen
+aus `active_trades_master` bzw. `ai_signals` und INSERTen in die
+`closed_*`-Tabelle — aktiv ∪ geschlossen ist also disjunkt. Die AI-Seite
+spiegelt das jetzt: `ai_signals` ∪ `closed_ai_signals`. Beide Posts teilen sich
+einen `_load_open_ai_signals()`-Helper; die Drift zwischen Summary- und
+Per-Bot-Post war die eigentliche Ursache.
+
+**Verworfene Alternative** (Operator-Entscheid): `ml_predictions_master WHERE
+posted=TRUE` als Quelle. Der Log ist **dedupliziert** (4h je Modul/Coin/
+Richtung), nicht vollständig — ein legitimer Re-Post in dem Fenster hätte keine
+Zeile, die Opens würden **unter**zählen.
+
+### P1.41 — Schreiber: EPD2-Shadow-Inserts laufen über `log_prediction()`
+Der Shadow-Zweig (`0.25 ≤ p < 0.60`) INSERTete auf jedem qualifizierenden
+10s-Tick. Das 900s-Gate darüber bremst ihn nicht: `last_alert_time` wird nur im
+Live-Trade-Zweig zurückgesetzt. Ein Coin, der dauerhaft im Shadow-Band
+predictet, drosselte sich daher nie (bis 8640 Rows/Tag/Symbol). Statt eines
+neuen Cooldowns nutzt der Zweig jetzt `core.signal_post.log_prediction()`, das
+bereits 4h je Modul/Coin/Richtung dedupt — derselbe Pfad wie bei den Bots 30-33.
+Der Timer wird hier **bewusst nicht** gesetzt: er gated auch echte Signale, ein
+Reset würde Live-EPD2-Trades desselben Coins 900s unterdrücken.
+
+### Live-Semantik
+Beabsichtigt geändert: bei 1 offenen + 1 geschlossenen AI-Signal im Fenster
+meldet „Opened" jetzt **2 statt 3**, und eine Shadow-Prediction taucht gar nicht
+mehr als eröffnetes Signal auf. Closed-Counts, Win-Rate und Kelly-Mathematik
+bleiben unberührt — `df_all_closed` zieht weiterhin ausschliesslich aus den
+`closed_*`-Tabellen. Wirkt beim nächsten regulären Restart, kein Deploy.
+
+Bekannt, hier nicht gefixt: `log_prediction` dedupt gegen `NOW()` (PG-Lokalzeit)
+auf UTC-Rows. Das verschiebt das effektive Fenster, drosselt aber. Gehört ins
+R3/TZ-Cluster (P2.1–P2.6) und darf dort nicht per Punkt-Fix angefasst werden.
+
+Verifikation: `backtest/test_market_tracker_opened.py` (neu, 7/7) und
+`backtest/test_shadow_prediction_cooldown.py` (neu, 4/4), beide standalone und
+DB-frei. Der Kern-Test fällt auf dem Pre-Fix-Stand mit 3L statt 2L — er misst
+den Doppelzähler, statt an einer Exception zu sterben.
+## [2026-07-10] Look-ahead im Walk-Forward-Simulator geschlossen (T-2026-CU-9050-037)
+
+`tools/walkforward_sim.py` ist seit P0.10 die **einzige Label-Quelle des gesamten
+Retrain-Programms**. Seine beiden Haupt-Loader `load_ohlcv` (`:174`) und
+`load_joined` (`:204`) lasen bis `NOW()` ohne obere Grenze — die laufende Kerze
+kam als geschlossene im Replay an. Jedes daraus trainierte Modell hat auf einer
+Kerze gelernt, die es zur Entscheidungszeit noch nicht kannte (harte Regel 5).
+Die Schwester-Loader `load_mis1_frame` (`:635`) und `load_rub_frame` (`:759`)
+derselben Datei schnitten schon immer korrekt ab.
+
+Fix:
+
+- Beide Loader gehen jetzt über **`core.candles`** (`read_candles` /
+  `read_candles_with_indicators`, `include_forming=False`) statt über rohe
+  f-String-SQL. Damit greift der TF-generische Epoch-Cutoff der Kerzen-API.
+  Bewusst **nicht** das `date_trunc('hour', NOW())` der Nachbarn kopiert: die
+  Loader lesen auch `1d` und `4h`, dort hätte ein Stunden-Trunc die laufende
+  Kerze stehen lassen. Nebeneffekt: ASC-Kontrakt und Identifier-Hygiene (P3.3).
+- `backtest/test_feature_lookahead.py` bekommt zwei DB-freie Tests, die für alle
+  benutzten Timeframes (1h/4h/1d) prüfen, dass die forming Kerze nicht im
+  Replay-Frame landet. Mutations-geprüft: mit `include_forming=True` fallen sie.
+
+Erster Schritt von Block 1 der Umverdrahtungs-Reihenfolge in
+`docs/CANDLE_CALL_SITES.md` §4 (Offline-Tooling zuerst, `walkforward_sim` voran).
+Kein Live-Signal-Pfad berührt, keine DB-Änderung.
+
+**Offen für Michi:** ob bereits ausgerollte Modelle auf den alten, vergifteten
+Labels trainiert wurden — und ob deshalb Staging-Retrains neu zu bewerten sind.
+Diese Session hat nichts trainiert und nichts ausgerollt (C-Gate).
+
+## [2026-07-09] Signifikanz-Layer über den Walk-Forward-Replay-Output (T-2026-CU-9050-027 D3)
+
+Ein Replay-Summary sagt „+38 R über 365d" — `tools/wf_significance.py` beantwortet
+neu die Folgefrage, ob dieser Edge von Rauschen unterscheidbar ist, bevor ein
+Kandidat Richtung Live-Gate diskutiert wird. Rein additiv über dem Trade-JSONL
+von `tools/walkforward_sim.py`; Muster aus HKUDS/Vibe-Trading (MIT,
+`validation.py` + `bench_runner_strict.py`), adaptiert statt kopiert:
+
+- **Random-Control (Sign-Flip):** Null-Verteilung aus Richtungs-Flips DERSELBEN
+  Trades inkl. Fee-Drag (`flip(net) = -net - 2*fee_rt`) → p-Wert + Delta gegen
+  den richtungslosen Zufalls-Trader, bewusst kein Test gegen 0.
+- **Reihenfolge-Permutation für den MaxDD** (Verlust-Clusterung zufallstypisch?).
+  Der vt-Permutationstest auf Sharpe wurde bewusst NICHT übernommen — bei
+  per-Trade-%-PnL ist Sharpe reihenfolge-invariant, der Test wäre degeneriert.
+- **Bootstrap-CIs** für per-Trade-Sharpe (bewusst nicht annualisiert), avg_r,
+  TP1-WR.
+
+Deterministisch (Seed 42). Verifikation DB-frei: `backtest/test_wf_significance.py`
+(6/6, u.a. Edge-vs-Rauschen-Diskriminierung, Fee-Drag in der Null, CLI-
+Determinismus). Doku: `docs/WF_SIGNIFICANCE.md`. Offen (VPS-Session): Lauf über
+einen echten Batch-E-Replay-Output — Artefakte liegen nur auf dem VPS.
+Multiple-Testing (FDR/Deflated Sharpe) bleibt bewusst Non-Scope (eigener Task).
+
+---
+
+## [2026-07-09] Look-ahead-Perturbationstest über die geteilten Feature-Builder (T-2026-CU-9050-027 D1, PR #19)
+
+Die harten Regeln 5 (nur geschlossene Kerzen) und 7 (geteilte Feature-Builder,
+Trainer == Serving == Replay) waren bisher nur durch Konvention und ~69
+DO-NOT-/forming-/lookahead-Kommentare abgesichert. Neu: `backtest/
+test_feature_lookahead.py` (standalone, DB-frei) macht sie mechanisch prüfbar —
+Muster geerntet aus HKUDS/Vibe-Trading (MIT), `tests/factors/test_lookahead.py`.
+
+- **Frame-/as-of-Builder** (`mis.add_advanced_features[_multi]`, research
+  candle-context + PEX1/FMR1/FIF1-Rows, `funding_features_asof`): alle
+  Input-Spalten ab der Perturbations-Zeile mit NaN/1e10 vergiften — die Zeilen
+  davor müssen bit-nah (1e-9) invariant bleiben. Canary-Assertions belegen,
+  dass die Vergiftung den Builder wirklich erreicht; ein Boundary-Test belegt,
+  dass ein Funding-Settlement exakt AT ts strikt draußen bleibt.
+- **Window-/row-scoped Builder** (`rub_trend`/`build_rub_features`,
+  `build_trm1_row`, `funding_stats`, `regime_features`, `aim2.build_feature_row`):
+  per Signatur ohne Zukunfts-Achse (Caller schneidet) — geprüft werden
+  Determinismus, Input-Nicht-Mutation und die internen Fenstergrenzen (TRM1-12er,
+  Funding-90er).
+- **`fetch_context_frame`** (R1-Kern, DB-frei via Stub-Cursor): eine Forming
+  Candle der aktuellen Stunde in der Tabelle ändert weder die gewählte
+  Feature-Kerze (floor-1-Join) noch deren Features; der Staleness-Guard (>3h)
+  liefert None.
+
+**Ergebnis: kein Future-Leak gefunden** — gültiges No-op-Done. Detektionskraft
+separat falsifiziert (künstliche `shift(-1)`-/`iloc[idx+1]`-Leaks sowie zwei
+Mutation-Injektionen in echte Builder werden gefangen). Bekannter kosmetischer
+Drive-by: `core/funding_features.py:70` wirft eine tz-UserWarning (Semantik
+korrekt, UTC vs UTC) — nicht gefixt, geteilter Builder (Regel 7).
+
+---
+
+## [2026-07-09] Zentrale UTC-Policy gelegt: `core/time.py` + ruff DTZ (T-2026-CU-9050-032, R3)
+
+Kythera hat keine Zeitquelle, sondern zwanzig. Writer schreiben teils naive
+Serverlokalzeit, teils aware UTC, teils Postgres' `NOW()`; Reader interpretieren
+dieselben Spalten als UTC. Der VPS läuft auf `Europe/Bucharest`, also läuft das
+um +2/+3h auseinander — in Cooldowns, Trade-Fenstern und Burst-Zählern, also im
+Geld-Pfad. Die Einzel-Fixes des Audits haben das Cluster nie geschlossen, weil
+jeder von ihnen eine neue Domäne erfand.
+
+Dieser Eintrag legt die Policy, **ohne Live-Semantik zu ändern**:
+
+- **`core/time.py`** — `utc_now()` (aware), `utc_now_naive()` für die legacy
+  `TIMESTAMP WITHOUT TIME ZONE`-Spalten, `to_utc()`, `as_naive_utc()`,
+  `from_unix_ts()`. Ab jetzt die einzige sanktionierte Zeitquelle.
+- **ruff-Regelgruppe `DTZ`** (`pyproject.toml`). Ein neues `datetime.now()` ohne
+  `tz` fällt im CI durch, statt still eine weitere Domäne aufzumachen. Die zwei
+  bewusst naiven Bestandsdateien (`3_detectors`, `30_ai_pex1_bot`) tragen ein
+  `# noqa: DTZ…` mit Begründung — sichtbare Rest-Schuld statt stiller Ausnahme.
+- **`docs/UTC_POLICY.md`** — Spalten-Inventar, der Bestand an Drift-Kompensationen,
+  die Reihenfolge des Rests, und `docs/migrations/2026-07-r3-timestamptz.sql` als
+  vorbereitete, **nicht ausgeführte** DDL.
+
+Angepasst auf die neue Zeitquelle: `15_ai_master_bot` (deprecated `utcnow()` →
+`utc_now_naive()`, identisch) und `core/market_utils.check_cooldown`
+(handgeschriebener Normalisierer → `to_utc()`, identisch). Zwei Stellen ändern
+eine sichtbare, aber folgenlose Ausgabe: `2_indicator_engine` schreibt den
+State-Token und die Scheduler-Log-Zeile jetzt in UTC — der Token ist für
+`3_detectors` ein opaker String-Vergleich, und der Minuten-Trigger ist gegenüber
+einer Vollstunden-Offset-TZ invariant; `check_funding` rendert seine UTC-Epoche
+nicht mehr als Lokalzeit.
+
+`backtest/test_time.py` pinnt die Semantik der neuen Zeitquelle DB-frei, inklusive
+eines Laufs unter gesetztem `TZ=Europe/Bucharest` — genau die Fehlerklasse
+„läuft lokal, driftet auf dem VPS".
+
+### Warum der Pool-Flip NICHT drin ist
+Ursprünglich sollte `-c timezone=UTC` im Connection-Pool mit. Die Session-TZ
+entscheidet, wie Postgres zwischen `timestamptz` und den naiven Spalten castet —
+der Flip repariert also P2.5 und P2.6, **kippt aber sechs Stellen, die die Drift
+heute bereits korrekt herausrechnen**: `15_ai_master_bot.to_utc_naive()` und die
+fünf Dataset-Builder in `tools/` (`research_dataset_common`, `aim2_build_dataset`,
+`fif1_build_dataset`, `pex1_build_dataset`, `retrain_sra2`). Die Trainer lesen
+Historie; nach dem Flip trägt jede naive Spalte beide Domänen, und weder „immer
+kompensieren" noch „nie kompensieren" ist richtig. Das ist der Train/Serve-Skew,
+gegen den AIM2 gebaut wurde (P0.13).
+
+Der Flip gehört deshalb in ein eigenes Fenster, zusammen mit dem P2.3-Writer-Fix,
+den sechs Kompensationen und der Operator-Entscheidung Backfill-vs-Cutover für
+die Historie. `docs/UTC_POLICY.md` §4–§6 ist der Handoff dafür.
+
+---
+
+## [2026-07-09] SMC-16 FVG-Entry war unerreichbar (T-2026-CU-9050-033, P1.26)
+
+`find_unmitigated_fvgs` in `16_smc_forex_metals_bot.py` scannte auf Mitigation
+über `range(fvg['index'] + 1, len(df))` — **inklusive** der aktuellen Kerze
+(`curr_idx = len(df) - 1`) — und verwarf ein BULLISH-FVG, sobald `low <= top`
+war. Genau dieses Prädikat prüft der Entry-Trigger anschliessend auf derselben
+Kerze (`16:436`, symmetrisch BEARISH über `high >= bottom` in `16:464`). Jedes
+FVG, das den Entry ausgelöst hätte, war damit per Konstruktion schon aus
+`bull_fvgs`/`bear_fvgs` gefallen: der FVG-Entry konnte in beiden Richtungen nie
+feuern. Der Beweis steht rein am Code — der FVG-Pfad schreibt als Cooldown-Key
+ausschliesslich das literale `"SMC_FVG"` (`16:437,465`, die einzigen beiden
+Writer dieses Keys), und dafür existieren 0 Live-Rows (die 83 gefundenen
+`SMC_1H_FVG`/`SMC_4H_FVG`-Rows stammen aus einer älteren, TF-präfigierenden
+Codeversion — die Falle, an der die frühere Widerlegung dieses Findings
+scheiterte).
+
+Der Scan endet jetzt vor der aktuellen Kerze (`range(fvg['index'] + 1, curr_idx)`).
+Die aktuelle Kerze ist der Entry-Auslöser, nicht der Mitigator.
+
+### Live-Semantik
+Die einzige Verhaltensänderung: FVG-Entries werden möglich. Kerzen **vor** der
+aktuellen mitigieren unverändert, die FVG-Erkennung selbst ist unberührt, und
+die beiden Trigger-Bedingungen (`price > bottom * 0.999` bzw.
+`price < top * 1.001`), Cooldown, Cornix-Message und Chart bleiben wie sie
+waren. Der BOS/CHoCH-Pfad ist nicht betroffen.
+
+### Verifikation
+Neuer Guard-Test `backtest/test_smc_fvg_dead_code.py` (11 Fälle): Tap auf der
+aktuellen Kerze überlebt den Scan (beide Richtungen), Tap auf einer früheren
+Kerze mitigiert weiterhin, Entry-Trigger als Ganzes erreichbar, plus ein
+Divergenz-Kanarienvogel, der den alten `range()` nachbaut und beweist, dass er
+genau die triggernden FVGs tötet — ein Revert des Fixes lässt den Test rot
+werden.
+
+## [2026-07-09] MIS/RUB/QM posten unter der Artefakt-`model_id` statt unter einer Quellcode-Konstante (T-2026-CU-9050-030, P1.45, PR #24)
+
+Nachbrenner zum Sniper-Fix aus PR #16: derselbe Fehlerklasse-Sweep fand drei
+weitere Post-Pfade, die ihr Artefakt laden, die `meta.model_id` aber wegwerfen und
+unter einer Konstante posten. **Heute stimmt der Tag jeweils zufällig** — es war
+also kein Betriebs-Bug, sondern eine scharfe Mine unter dem nächsten
+Retrain-Rollout: MIS3/RUB3/QM2 wären still unter dem Alt-Tag gelandet, hätten sich
+in `ai_signals` und in der Per-Bot-Win-Rate mit der Vorgänger-Generation vermischt,
+und das Orchestrator-Gating hätte über die Whitelist der neuen Generation anhand
+der Performance der alten entschieden (Verstoss gegen Versionierungs-Regel 6).
+
+### Fixed
+- `11_ai_mis_bot.py` — **jedes der acht Horizont-Artefakte trägt jetzt seine eigene
+  Generation aus `meta.model_id`**; den Posting-Tag baut der Gewinner-Kandidat
+  (`f"{best_generation}-{best_horizon}"`). Ein Teil-Rollout (72H schon MIS3, Rest
+  MIS2) taggt damit jedes Signal mit der Generation des Modells, das gefeuert hat,
+  und wird beim Laden als gemischte Generation geloggt. Die Dateinamen
+  `mis2_model_*.pkl` bleiben bewusst **generationsfreie Slot-Namen**
+  (Operator-Entscheid 2026-07-09) — genau deshalb ist `meta.model_id` der einzige
+  Generationsmarker. Fehlt sie, greift `MODEL_GENERATION` als Fallback, aber mit
+  `logger.error` statt still.
+- `13_ai_rub_bot.py` — **Tag ist jetzt richtungsabhängig**: SHORT nimmt
+  `RUB2_SHORT["tag"]` (= `meta.model_id`, von `load_artifact` schon immer korrekt
+  berechnet und bis dato weggeworfen), LONG behält die benannte Konstante
+  `RUB_LONG_TAG`. LONG fährt das Legacy-Modell `long_reversion_model.joblib` ohne
+  jede Meta und postet per Operator-Entscheid (2026-07-06) unter `RUB2` — den
+  SHORT-Artefakt-Tag dorthin zu verdrahten, hätte ein Signal mit der Generation
+  eines Modells etikettiert, das nie gelaufen ist.
+- `24_quasimodo_bot.py` — **präventiv, bevor QM2 existiert**: der Loader bevorzugt
+  `meta.model_id` (heute schreibt `qm_ml_trainer.py` keine → abgeleiteter Tag
+  `QM_1H`, so geloggt), und `send_cornix_signal` leitet den Tag nicht mehr ein
+  zweites Mal aus `tf` ab, sondern bekommt `module_tag` als **Pflicht-Keyword** —
+  das Sniper-Muster: eine Aufrufstelle, die ihn vergisst, scheitert laut mit
+  `TypeError`, statt still den Alt-Tag zu schreiben. Der Orchestrator erkennt
+  `QM2_1H` seit `ff8e01e` bereits.
+
+### Fixed — transitionaler Dedup (Review-Fund, hätte den Tag-Fix zur Geldfalle gemacht)
+Der Posting-Tag **ist zugleich der Dedupe-Key**. Beim Generationswechsel kippt er —
+und damit hätte eine noch offene Position der Alt-Generation denselben
+Coin/Direction nicht mehr geblockt: der neue Lauf hätte eine **zweite Live-Position**
+daneben eröffnet. Exakt die Falle, die PR #16 beim Sniper mit
+`model IN (neuer Tag, Alt-Tag)` entschärft hat. Pro Bot an der Stelle geschlossen,
+die dort tatsächlich sperrt:
+
+- `11_ai_mis_bot.py` / `24_quasimodo_bot.py` — Active-Trade-Check auf
+  `model IN (%s, %s)` erweitert.
+- `13_ai_rub_bot.py` — RUB hat **keinen** Active-Trade-Check gegen `ai_signals`; sein
+  4h-Cooldown ist die einzige Re-Fire-Sperre. Der prüft jetzt zusätzlich gegen
+  `RUB_LEGACY_TAG`. (Die fehlende Open-Position-Prüfung ist ein Alt-Zustand, nicht
+  Teil dieses Tasks.)
+
+`legacy_tag` ist jeweils **genau das Tag, das der Bot vor diesem Fix gepostet hätte** —
+keine Operator-Konstante, kein toter Code. Solange Quellcode-Konstante und
+Artefakt-Generation übereinstimmen, sind beide Tags identisch und die Klausel ist ein
+No-op.
+
+Guard-Tests (statisch, DB-frei — ein Runtime-Guard würde von den fleet-weiten
+breiten `except`-Blöcken geschluckt, Lektion aus T-2026-CU-9050-024):
+`backtest/test_mis_tag.py`, `backtest/test_rub_tag.py`,
+`backtest/test_quasimodo_tag.py`. Alle drei sind mutations-geprüft: das Zurückdrehen
+je einer Fix-Zeile lässt den zugehörigen Test rot werden. **Keine
+Live-Semantik-Änderung** — die drei Tags lauten mit den deployten Artefakten
+unverändert `MIS2-<Horizont>`, `RUB2`, `QM_1H`, und die Dedup-Klauseln sind bei
+identischen Tags wirkungsgleich zum Vorzustand.
+
+### Offen (bewusst nicht in diesem PR)
+- `retrain_from_replay.py:723` (EPD2) und `retrain_sra2.py:281` (SRA2) schreiben
+  dict-Artefakte **mit** `model_id`, während die Live-Bots `10_pump_dump_detector`
+  und `9_ai_sr_bot` **rohe** Modelle laden und keine Meta lesen — das
+  Retrain-Ausgabeformat divergiert vom Live-Ladeformat. Beim Verdrahten von
+  EPD2/SRA2 muss der Tag aus der neuen `model_id` kommen, sonst entstehen Instanz 4
+  und 5 derselben Fehlerklasse. Bleibt als P1.45-Nebenbefund im Ledger.
+
 ## [2026-07-09] Kerzen-API `core/candles.py` + Call-Site-Inventar + Paritäts-Tool (T-2026-CU-9050-034, C1-Vorbereitung)
 
 Vorbereitung der R1-/TimescaleDB-Migration (`docs/TIMESCALE_R1_MIGRATION.md`,
@@ -57,6 +476,7 @@ Binance-Wochenkerzen öffnen Montag 00:00 UTC.
 Offen (Operator, siehe `docs/CANDLE_CALL_SITES.md` §5): Retention, `REAL` →
 `double precision` (P3.12), 1d/1w-Streaming, Close-Grace-Period. **R1 senkt die
 Signal-Raten — das ist der Zweck. Schwellen erst nach dem Retrain neu tunen.**
+
 ## [2026-07-09] HTTP-Härtung der Binance-REST-Pfade (T-2026-CU-9050-027 D2, P2.14 + P2.18)
 
 Neues `core/http_retry.py` (reine Politik ohne I/O, injizierbare Uhr/Sleep →

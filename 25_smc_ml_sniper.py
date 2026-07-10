@@ -227,8 +227,19 @@ def scan_market():
                 rsis = df['rsi_14'].values
                 current_price = closes[-1]
 
-                peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=PIVOT_WINDOW)[0]
-                trough_idx = scipy.signal.argrelextrema(lows, np.less, order=PIVOT_WINDOW)[0]
+                # T-2026-CU-9050-036 (R1, hard rule 5): the last row is the forming
+                # candle — its high/low still move, so a pivot built on it repaints
+                # and the posted geometry (drives, breaker level) changes after the
+                # signal went out. Build the pivots on closed candles only, same
+                # guard as 24_quasimodo_bot.py:138. Indices stay aligned with the
+                # full arrays, so highs[p]/lows[p]/rsis[p] keep working. The live
+                # price stays live: current_price is the CMP the entry is placed at,
+                # not an analytical input (it feeds the BB level-proximity trigger
+                # and calculate_smart_targets).
+                c_highs, c_lows = highs[:-1], lows[:-1]
+
+                peak_idx = scipy.signal.argrelextrema(c_highs, np.greater, order=PIVOT_WINDOW)[0]
+                trough_idx = scipy.signal.argrelextrema(c_lows, np.less, order=PIVOT_WINDOW)[0]
 
                 if len(peak_idx) < 3 or len(trough_idx) < 3:
                     continue

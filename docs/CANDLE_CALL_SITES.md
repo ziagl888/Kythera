@@ -103,7 +103,7 @@ Legende **Forming heute**: `offen` = die neueste Zeile kann die laufende Kerze s
 | `21_btc_smc_strategy.py:110` | BTC-SMC | read-candles | var | DESC LIMIT 500 → ASC | **gedroppt** (`:126`) | F — `:126` entfernen |
 | `22_ip_pattern_bot.py:196` | IP-Pattern | read-candles | var | DESC LIMIT n → ASC | offen: `current_price=iloc[-1]` (`:210`) | F |
 | `24_quasimodo_bot.py:90` | Quasimodo | read-joined | var | DESC LIMIT 100 → ASC | Pivots gedroppt (`:115`), Preis `closes[-1]` offen | F — `:115` entfernen |
-| `25_smc_ml_sniper.py:208` | Sniper | read-joined | var | DESC LIMIT 150 → ASC | **kein Drop.** `argrelextrema` + `current_price` auf der forming Kerze | F — **stiller Repaint, höchstes Risiko** |
+| `25_smc_ml_sniper.py:208` | Sniper | read-joined | var | DESC LIMIT 150 → ASC | Pivots **gedroppt** (`:239`, T-2026-CU-9050-036), Preis `closes[-1]` offen | F — `:239` entfernen |
 | `29_ufi1_bot.py:72` | UFI1 (geparkt) | read-candles | 1d | ASC | offen | F |
 | `7_pattern_detector.py:272` | Pattern | read-candles | 1h–1d | DESC LIMIT 168 → ASC | **gedroppt**: `iloc[:-4]` (`:282`), `len(df)-2` (`:310`) | F + Offset-Rework |
 | `17_mayank_bot.py` | Mayank | **keine DB-Kerzen** (yfinance) | – | – | – | — |
@@ -132,7 +132,7 @@ Legende **Forming heute**: `offen` = die neueste Zeile kann die laufende Kerze s
 
 | Stelle | Art | TF | Forming heute | Ziel |
 |---|---|---|---|---|
-| `tools/walkforward_sim.py:174,204` | read-candles / read-joined | 1d/1h/4h | **offen — forming als geschlossen behandelt = echter Look-ahead im Walk-Forward** | F (hoher Wert) |
+| `tools/walkforward_sim.py:174,204` | read-candles / read-joined | 1d/1h/4h | **umverdrahtet** (T-2026-CU-9050-037): beide Loader gehen über `core.candles` mit `include_forming=False` | ✅ F |
 | `tools/walkforward_sim.py:635,759` | read-joined (MIS1/RUB) | 1h | gedroppt (`date_trunc`) | F |
 | `tools/aim2_build_dataset.py:275` · `epd2_build_dataset.py:113` · `research_dataset_common.py:74` | read-joined | 1h | Event-Floor `searchsorted-1` | F (geringes Delta) |
 | `tools/retrain_sra2.py:172` | read-indicators | 1h | Python-Floor-Maske | F |
@@ -173,11 +173,11 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 
 **Echte Verhaltensänderung, und genau dafür ist die Migration da:**
 
-- **`25_smc_ml_sniper:208`** — kein Drop, `argrelextrema`-Pivots *und* `current_price` auf der forming Kerze. **Stiller Repaint, höchstes Einzelrisiko.**
+- ~~**`25_smc_ml_sniper:208`** — kein Drop, `argrelextrema`-Pivots *und* `current_price` auf der forming Kerze. **Stiller Repaint, höchstes Einzelrisiko.**~~ **Pivot-Seite erledigt** (2026-07-10, T-2026-CU-9050-036, P1.46): `argrelextrema` läuft auf `highs[:-1]/lows[:-1]`, der intra-candle Repaint ist weg. `current_price = closes[-1]` bleibt bewusst live (CMP-Entry + BB-Level-Nähe) — die Preis-Seite kippt erst mit Block 4, nach Operator-Frage 4/6.
 - **`2_indicator_engine:574`** — Indikatoren werden fleet-weit über der forming Kerze berechnet. Bricht heute harte Regel 5.
 - **`core/trade_utils:304,423`** — höchster Fan-in: die forming Kerze speist den Level-Pool (Swing/HVN/FVG/S-R/Fib) *aller* Bots.
 - **`core/regime_logic:81,136`** — die forming 15m-Kerze steuert die Regime-Klassifikation und damit das Orchestrator-Gating.
-- **`tools/walkforward_sim:174,204`** — forming als geschlossen behandelt: **Look-ahead im Walk-Forward-Simulator**, also in genau dem Werkzeug, das die Labels des Retrain-Programms erzeugt.
+- ~~**`tools/walkforward_sim:174,204`** — forming als geschlossen behandelt: **Look-ahead im Walk-Forward-Simulator**, also in genau dem Werkzeug, das die Labels des Retrain-Programms erzeugt.~~ **Gefixt 2026-07-10 (T-2026-CU-9050-037)** als erster Schritt von Block 1: beide Loader lesen über `core.candles` (`include_forming=False`), Invariante mechanisch geprüft in `backtest/test_feature_lookahead.py`. Offen bleibt die Frage an den Operator, ob bereits ausgerollte Modelle auf den alten Labels trainiert wurden.
 - `22_ip_pattern:196`, `29_ufi1:72`, `14_ai_atb:618`, `23_market_tracker` (%-Change, Volatilität, Volumen-/Range-Aggregate), `core/charting:138` (kosmetisch), `regime_rules_study:63` und `step2_part2:25` (mild).
 
 **Index-gekoppelt — Flip nur zusammen mit Offset-Rework**, sonst wird eine *geschlossene* Kerze zu viel gedroppt: `7_pattern_detector` (`iloc[:-4]`, `len(df)-2`), `11_ai_mis` (`iloc[-2:-1]` / `iloc[-1]`), `12_ai_ats` (`-2`/`-3`), `24_quasimodo` (`[:-1]` + `closes[-1]`), `16_smc_forex_metals` (`:334`), `21_btc_smc` (`:126`), `18_ai_abr1` (`:595`).
@@ -201,7 +201,7 @@ Sechs Blöcke, jeder ein eigener Commit, Regression-Guard davor und danach. Blö
 | 1 | Offline-Tooling | Trainer, Backtests, `*_build_dataset`, `walkforward_sim`, `retrain_sra2`, `rgcore`, Audit-Replays, `core/charting` | Kein Live-Signal-Pfad, sofort rückrollbar. Fördert die fehlenden API-Formen (Aggregate, `first=True`) früh zutage. `walkforward_sim` zuerst — dort sitzt der Look-ahead, der das Retrain-Programm verunreinigt | nein |
 | 2 | Strategien + `3_detectors` + geteilte Helfer | `strat_*`, `3_detectors`, `core/trade_utils`, `core/market_utils` | Die Strategien sind schon zeitstempel-gebunden (kleines Delta); die Helfer entblocken die AI-Bots | nein |
 | 3 | **Monitore + Orchestrator explizit auf `True`** | `5`, `8`, `28`, `3.get_live_price`, `29:96`, `6:259`, `core/health_monitor` | **Vor** dem ersten `False` im Geld-Pfad: das `True` sichtbar und reviewbar machen. Ein Monitor, der still auf geschlossene Kerzen kippt, scored SL/TP bis zu 5 Minuten zu spät | nein |
-| 4 | AI-Bots, **ein Bot pro Commit** | `9,10,13,14,15,18,22,24,25,29` (F) und `11,12` (T + Index-Rework) | R1 wird hier wirksam. Signal-Raten im 24-h-Vergleich dokumentieren. `25` zuerst — dort ist der Repaint | nein |
+| 4 | AI-Bots, **ein Bot pro Commit** | `9,10,13,14,15,18,22,24,25,29` (F) und `11,12` (T + Index-Rework) | R1 wird hier wirksam. Signal-Raten im 24-h-Vergleich dokumentieren. Der Pivot-Repaint in `25` ist vorgezogen erledigt (T-2026-CU-9050-036); offen bleibt dort nur die Preis-Seite | nein |
 | 5 | Geteilte Feature-Builder **plus Trainer/Replay im selben Commit** | `core/research_features`, `core/regime_logic` + zugehörige Trainer | Harte Regel 7: Trainer == Serving == Replay. Getrennt umstellen = stille Feature-Drift in Live-Modellen | nein |
 | 6 | `2_indicator_engine` (Reads + Writes), `1_data_ingestion`, `6_housekeeping` | Engine-Read `:574`, Upserts, Gap-Filler, DELETE/DDL-Gaps | Höchste R1-Wirkung (Indikatoren über forming Kerze) und die Caller-Commit-Umstellung. Ab hier trägt das Datenmodell das echte `is_closed` | **ja — VPS, C-Gate** |
 
