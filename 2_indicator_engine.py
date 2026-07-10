@@ -20,6 +20,7 @@ from scipy import stats
 from core.config import INDICATOR_TIMEFRAMES, NUM_WORKERS
 from core.database import get_db_connection
 from core.market_utils import load_coins
+from core.time import utc_now
 
 STATE_FILE = 'indicator_state.json'
 
@@ -193,7 +194,11 @@ def update_timeframe_state(timeframe, status):
         else:
             state = {}
 
-        state[timeframe] = {'status': status, 'timestamp': datetime.datetime.now().isoformat()}
+        # Der Timestamp ist für 3_detectors nur ein Change-Token (String-Vergleich),
+        # trägt jetzt aber UTC statt Serverlokalzeit. Nebeneffekt: im DST-Rücksprung
+        # kam dieselbe Lokalzeit-Stunde zweimal vor, das Token war dort nicht
+        # eindeutig — in UTC gibt es diese Ambiguität nicht.
+        state[timeframe] = {'status': status, 'timestamp': utc_now().isoformat()}
 
         # FIX (#45): Atomares Write via Temp + os.replace. Vorher wurde direkt
         # in die Zieldatei geschrieben — bei gleichzeitigem Read aus dem
@@ -606,7 +611,10 @@ def main():
         update_timeframe_state(tf, 'waiting_for_trigger')
 
     while True:
-        now = datetime.datetime.now()
+        # Der Trigger hängt nur an der Minute (Kerzenschluss ist UTC-aligned),
+        # die ist gegenüber einer Vollstunden-Offset-TZ invariant. UTC macht
+        # zusätzlich die Log-Zeile deckungsgleich mit den DB-Timestamps.
+        now = utc_now()
 
         # Prüfen, ob wir in einer der magischen Minuten sind
         if now.minute in target_minutes:

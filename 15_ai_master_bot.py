@@ -47,6 +47,7 @@ from core.aim2_features import (
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
+from core.time import utc_now_naive
 from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_MASTER_BOT - %(message)s')
@@ -255,7 +256,7 @@ def load_latest_regime(conn) -> tuple[dict | None, float]:
     if df.empty:
         return None, 360.0
     row = df.iloc[0].to_dict()
-    now_utc = datetime.datetime.utcnow()
+    now_utc = utc_now_naive()  # regime_history.ts ist naiv-UTC; utcnow() ist deprecated
     age_min = max(0.0, (now_utc - pd.Timestamp(row["ts"]).to_pydatetime()).total_seconds() / 60.0)
     return row, age_min
 
