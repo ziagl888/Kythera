@@ -356,7 +356,29 @@ def main():
                         if cur.fetchone():
                             continue
 
-                        # 3. Indikatoren & Features
+                        # 3. Aktiver Trade Check (T-2026-CU-9050-055) — prüft, ob für
+                        #    genau dieses Modul/Coin/Richtung bereits ein nicht-
+                        #    geschlossener Trade läuft. Der 4h-Cooldown im Post-Pfad ist
+                        #    eine FREQUENZ-Sperre, kein Positions-Guard: ein SRA-Trade
+                        #    läuft regelmässig länger, und ohne diesen Check öffnete das
+                        #    Folgesignal eine ZWEITE Live-Position neben der ersten
+                        #    (dieselbe Lektion wie RUB, T-2026-CU-9050-043).
+                        #    Muster: 11_ai_mis_bot.py:318. Die Duplikatprüfung darüber
+                        #    schützt nur gegen denselben trade_id, nicht gegen einen
+                        #    NEUEN Setup-Trade auf einem Coin, der schon offen ist.
+                        #
+                        #    Der Tag ist zugleich der Dedupe-Key und kippt beim
+                        #    SRA2-Rollout; ohne den Alt-Tag im IN blockte eine offene
+                        #    SRA1-Position das SRA2-Signal nicht mehr. Gleiche Tags
+                        #    (heute) ⇒ No-op.
+                        cur.execute(
+                            "SELECT 1 FROM ai_signals WHERE symbol = %s AND direction = %s AND model IN (%s, %s)",
+                            (coin, direction, module_name, SRA_LEGACY_TAG),
+                        )
+                        if cur.fetchone():
+                            continue  # Trade läuft live im AI Monitor
+
+                        # 4. Indikatoren & Features
                         inds = get_indicators_at_time(conn, coin, t_time)
                         if not inds:
                             continue
@@ -365,7 +387,7 @@ def main():
                         if not features:
                             continue
 
-                        # 4. XGBoost Vorhersage
+                        # 5. XGBoost Vorhersage
                         #    Artefakt MIT Meta: Frame aus dem geteilten SRA2-Builder,
                         #    ausgerichtet auf den Vertrag — Auswahl UND Reihenfolge. Keine
                         #    fillna über Spalten: load_artifact_json hat die Namen hart
@@ -382,7 +404,7 @@ def main():
                             X = pd.DataFrame([features])
                         conf = float(artifact['model'].predict_proba(X)[0, 1])
 
-                        # 5. Klassifizierung & Schatten-Log
+                        # 6. Klassifizierung & Schatten-Log
                         posted = False
                         if conf >= artifact['threshold']:
                             # FIX (Review Batch 4): NaN-ATR-Vektoren nicht live posten.
