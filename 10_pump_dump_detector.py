@@ -785,8 +785,14 @@ def process_coin_logics(conn, symbol):
             # EPD2: je Richtung ein binäres Modell. Funding-Features as-of JETZT —
             # der Dataset-Builder (tools/epd2_build_dataset.py:231) nimmt sie as-of
             # dem Event-Zeitstempel, und das Event ist genau dieser Tick.
-            # Lazy je Event: der vol_ratio>=5-Vorfilter feuert selten, ein Voll-Load
-            # je 10s-Tick wäre verschenkte DB-Arbeit. since-Schranke wie bei RUB.
+            # since-Schranke wie bei RUB (as-of nutzt max. die letzten 270 Sätze).
+            #
+            # PERFORMANCE-RISIKO (bekannt, vor dem EPD2-Rollout zu klären): das ist
+            # ein DB-Roundtrip pro qualifizierendem TICK, nicht pro Signal. Der
+            # vol_ratio>=5-Vorfilter hält an, solange das Volumen-Event läuft, und
+            # der Shadow-Zweig setzt den 900s-Timer bewusst nicht zurück (P1.41).
+            # Ein TTL-Cache ist KEIN Drop-in: er verschöbe den As-of-Zeitpunkt und
+            # bräche die Trainer-Parität, die dieser Pfad gerade herstellt.
             fund_by_sym = load_funding(conn, [symbol], since=now - datetime.timedelta(days=95))
             feats = {**base_features, **funding_features_asof(fund_by_sym, symbol, now)}
             candidates = []

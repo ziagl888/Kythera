@@ -43,10 +43,21 @@ Drei Schritte, ein Bot pro Commit:
   koexistieren jetzt: ohne Artefakt läuft der Legacy-Zweig bit-identisch weiter,
   mit Artefakt gewinnt es und bringt Tag + Threshold mit. Die Funding-Features
   werden **as-of dem Event** gezogen (`funding_features_asof`, wie
-  `tools/epd2_build_dataset.py:231`), lazy je Trigger hinter dem
+  `tools/epd2_build_dataset.py:231`), je Trigger hinter dem
   `vol_ratio>=5`-Vorfilter. Fehlende Funding-**Historie** wird zu 0 wie
   `fillna(0)` im Trainer (Serving-Parität); ein fehlender Feature-**Name**
   verweigert dagegen weiterhin das Artefakt und idlet den Bot (P0.12).
+
+**Bekanntes Performance-Risiko (dokumentiert, nicht optimiert — greift erst mit
+deploytem EPD2-Artefakt):** der Funding-Load ist ein DB-Roundtrip pro
+qualifizierendem 10s-Tick, nicht pro Signal. Der Vorfilter `vol_ratio>=5` hält an,
+solange das Volumen-Event läuft, und der Shadow-Zweig setzt den 900s-Timer
+bewusst nicht zurück (P1.41) — ein Coin im Shadow-Band zieht die Query also auf
+jedem Tick, marktweit parallel über alle betroffenen Coins. Ein TTL-Cache wäre
+hier **kein** trivialer Fix: er verschöbe den As-of-Zeitpunkt der Funding-Features
+und bräche genau die Trainer-Parität, die dieser Commit herstellt. Vor dem
+EPD2-Rollout zu klären (Messung, dann ggf. Load hinter ein Zeit-Gate ziehen, das
+den As-of-Zeitpunkt nicht verändert).
 
 **Transitionaler Dedup**, je Bot dort, wo er wirklich sperrt: der Post-Tag ist
 zugleich der Dedupe-Key, und beim Generationswechsel kippt er. SRA prüft die
