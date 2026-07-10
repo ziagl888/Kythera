@@ -1,3 +1,34 @@
+## [2026-07-10] Spike: Replication-Scoring (polybot) auf Hyperliquid-Public-Fills evaluiert (T-2026-CU-9050-058)
+
+Machbarkeits-Eval, ob polybots „Replication Scoring"-Konzept
+([ent0n29/polybot](https://github.com/ent0n29/polybot), MIT, Java) für Kythera auf
+**Hyperliquid-Public-Fills** reproduzierbar ist. Lead aus dem Repo-Audit 2026-07-10
+(KB `mcp-41a50fe33552`). **Kein Fleet-Code angefasst** — reiner Research-Spike.
+
+Ergebnis (Verdict in `docs/HYPERLIQUID_REPLICATION_EVAL.md`): **technisch machbar
+und billig, strategisch optional und an die offene Hyperliquid-Venue-Entscheidung
+gebunden.** Datenzugang, Signatur-Extraktion und Score wurden **live verifiziert**
+(2026-07-10), die zitierten Zahlen sind echte PoC-Ausgabe, keine Schätzung.
+
+### Added
+- `tools/research/hl_replication_poc.py` — standalone, DB-frei, stdlib-only, kein
+  `core`-Import, schreibt nichts. Beweist die drei tragenden Behauptungen: (1)
+  jede Trader-Fill-Historie ist per Adresse public+keyless abrufbar (Leaderboard =
+  40.376-Adressen-Universum), (2) polybots vier Verteilungs-Features portieren 1:1
+  auf Perp-Fills (coin/dir/maker-taker/size — das Perp-Schema ist **reicher** als
+  polybots Polymarket-Quelle), (3) polybots exakte Formel (mean L1 über Marginals
+  → 0–100) läuft unverändert. Ergänzt eine **Self-Consistency**-Messung (zeitliche
+  Replizierbarkeit eines *einzelnen* Traders), die der rohe polybot-Score auslässt.
+- `docs/HYPERLIQUID_REPLICATION_EVAL.md` — die volle Eval: Datenzugang + Limits
+  (2000 Fills/Call, 10k-History-Ceiling/Adresse), Signatur-Mapping,
+  Score-Kritik (Similarity ≠ Reproduzierbarkeit; Marginals ignorieren
+  Sequenz/Joint), Fit mit Kytheras vorhandenem Replay/Regime/Feature-Builder-Stack,
+  und das Sekundärziel ClickHouse-Ingestion → **Reject, Timescale-Hypertable
+  reicht** für append-only Low-Volume-Fills.
+
+Verifiziert: PoC live gegen `api.hyperliquid.xyz/info` + Leaderboard-Blob (HTTP 200,
+2000 Fills/Adresse, Score-Ausgabe plausibel), ruff check + format lokal grün.
+
 ## [2026-07-10] AIM2-TOPN: "Top 1-3 des Tages" als High-Conviction-Kanal, default-off (T-2026-CU-9050-051)
 
 Aus T-2026-CU-9050-031, Weg 2: der strukturelle Pfad zu „täglich 1-3 Trades, sehr
