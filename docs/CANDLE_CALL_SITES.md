@@ -1,6 +1,6 @@
 # Kerzen-Zugriffe: API-Vertrag, Call-Site-Inventar, Migrations-Reihenfolge
 
-**Stand:** 2026-07-09 (Commit 485a78e) · **Task:** T-2026-CU-9050-034 (C1-Vorbereitung) · **Übergeordnet:** T-2026-CU-9050-018, `docs/TIMESCALE_R1_MIGRATION.md`
+**Stand:** 2026-07-09 (Commit 1b140a5) · **Task:** T-2026-CU-9050-034 (C1-Vorbereitung) · **Übergeordnet:** T-2026-CU-9050-018, `docs/TIMESCALE_R1_MIGRATION.md`
 
 Arbeitsgrundlage für **Phase 0/1** der R1-+-TimescaleDB-Migration: die neue Zugriffs-API `core/candles.py`, das vollständige Inventar der Stellen, die heute per-Coin-Kerzen- oder Indikator-Tabellen anfassen, der R1-Blast-Radius und die Umverdrahtungs-Reihenfolge.
 
@@ -58,21 +58,21 @@ Legende **Forming heute**: `offen` = die neueste Zeile kann die laufende Kerze s
 
 | Stelle | Funktion | Art | TF | Ordering | Forming heute | Ziel | Commit heute |
 |---|---|---|---|---|---|---|---|
-| `1_data_ingestion.py:81` | `create_table_if_needed` | DDL | arg | – | – | bleibt inline | ja |
-| `1_data_ingestion.py:98,101` | `get_latest_open_time` | `to_regclass` + `MAX(open_time)` | arg | Aggregat | sieht forming | `latest_open_time(include_forming=True)` | – |
-| `1_data_ingestion.py:151` | `insert_fast` (REST-Catch-up) | write-candles, `execute_values`, `IS DISTINCT FROM` | arg | – | schreibt Historie + ggf. forming Endzeile | `upsert_candles(closed=…)`, **zwei Calls** (Historie/forming) | **ja** |
-| `1_data_ingestion.py:406` | `_flush_to_db` (WS-Flush) | write-candles, **SAVEPOINT pro Zeile** | Buffer | – | schreibt live forming | `upsert_candles(closed=k['x'])` | ja |
+| `1_data_ingestion.py:83` | `create_table_if_needed` | DDL | arg | – | – | bleibt inline | ja |
+| `1_data_ingestion.py:99,102` | `get_latest_open_time` | `to_regclass` + `MAX(open_time)` | arg | Aggregat | sieht forming | `latest_open_time(include_forming=True)` | – |
+| `1_data_ingestion.py:177` | `insert_fast` (REST-Catch-up) | write-candles, `execute_values`, `IS DISTINCT FROM` | arg | – | schreibt Historie + ggf. forming Endzeile | `upsert_candles(closed=…)`, **zwei Calls** (Historie/forming) | **ja** |
+| `1_data_ingestion.py:437` | `_flush_to_db` (WS-Flush) | write-candles, **SAVEPOINT pro Zeile** | Buffer | – | schreibt live forming | `upsert_candles(closed=k['x'])` | ja |
 | `2_indicator_engine.py:173,180` | `create_indicator_table` | DDL + Index | arg | – | – | bleibt inline | ja |
 | `2_indicator_engine.py:553` | `process_coin_task` | `MAX(open_time)` **auf Indikator-Tabelle** | arg | Aggregat | – | **API-Gap** | – |
 | `2_indicator_engine.py:574` | `process_coin_task` | read-candles `SELECT *` | arg | ASC, kein LIMIT | **offen — Indikatoren werden über der forming Kerze gerechnet** (bricht harte Regel 5) | **F** | – |
 | `2_indicator_engine.py:513` | `write_indicators_to_db_optimized` | write-indicators | arg | – | schreibt Indikator-Zeile der forming Kerze | `upsert_indicators()` | **ja** |
-| `6_housekeeping.py:59` | Bootstrap | DDL | 8 TF | – | – | bleibt inline | ja |
-| `6_housekeeping.py:258` | `_fetch_last_close_or_entry` | read-candles | 5m | DESC LIMIT 1 | gewollt | **T** | – |
-| `6_housekeeping.py:438` | Delisted-Scan | `information_schema` | – | – | – | **API-Gap** | – |
-| `6_housekeeping.py:460` | Retention | **DELETE** | 5m–4h | – | – | **API-Gap** | ja |
-| `6_housekeeping.py:596` | Gap-Scan | read-candles (`open_time`) | var | ASC | offen | F | – |
-| `6_housekeeping.py:669` | Gap-Filler | write-candles, `ON CONFLICT DO NOTHING` | var | – | nur geschlossene Lücken | `upsert_candles(closed=True)` | ja |
-| `6_housekeeping.py:696` | Indikator-Invalidierung | **DELETE** | var | – | – | **API-Gap** | ja |
+| `6_housekeeping.py:61` | Bootstrap | DDL | 8 TF | – | – | bleibt inline | ja |
+| `6_housekeeping.py:259` | `_fetch_last_close_or_entry` | read-candles | 5m | DESC LIMIT 1 | gewollt | **T** | – |
+| `6_housekeeping.py:440` | Delisted-Scan | `information_schema` | – | – | – | **API-Gap** | – |
+| `6_housekeeping.py:461` | Retention | **DELETE** | 5m–4h | – | – | **API-Gap** | ja |
+| `6_housekeeping.py:647` | Gap-Scan | read-candles (`open_time`) | var | ASC | offen | F | – |
+| `6_housekeeping.py:720` | Gap-Filler | write-candles, `ON CONFLICT DO NOTHING` | var | – | nur geschlossene Lücken | `upsert_candles(closed=True)` | ja |
+| `6_housekeeping.py:747` | Indikator-Invalidierung | **DELETE** | var | – | – | **API-Gap** | ja |
 
 ### Block B — Monitore, Orchestrator, Preis-Fallbacks (`include_forming=True`)
 
@@ -157,11 +157,11 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 |---|---|---|
 | **Aggregat-SQL** (`SUM`/`MAX`/`MIN`/`CASE` + korrelierter Subselect, `count(DISTINCT)`, `generate_series`-Gap-Census) | `23_market_tracker:100,309,321,372`; `step2_analysis:148,190`; `step2_part2:17,73`; `step7_monitor_replay:92` | Market-Tracker ist live-hot → `window_volume()`/`window_range()` ergänzen **oder** in pandas umschreiben (30m × 7d ≈ 336 Zeilen/Coin). Audit-Tools bleiben roh. |
 | **Ältester Satz im Fenster** (`ORDER BY ASC LIMIT 1`) | `23_market_tracker:132` | Die API liefert immer die *neuesten* N → `read_candles(..., first=True)` nötig |
-| **`DELETE` nach Alter / ab `open_time`** | `6_housekeeping:460,696` | `delete_candles_before()` / `delete_indicators_from()` |
+| **`DELETE` nach Alter / ab `open_time`** | `6_housekeeping:461,747` | `delete_candles_before()` / `delete_indicators_from()` |
 | **`MAX(open_time)` auf der Indikator-Tabelle** | `2_indicator_engine:553` | `latest_open_time(..., kind='indicators')` |
-| **Tabellen-Enumeration** | `6_housekeeping:438`; 3 Audit-Tools; `fib_backtest:87` | `list_coin_tables(conn, tf=None)`; `fib_backtest` braucht zusätzlich Case-Auflösung |
-| **DDL** | `1:81`, `2:173,180`, `6:59` | Bewusst außerhalb der API. Entfällt in Phase C |
-| **Gemischter Ingestion-Batch** | `1_data_ingestion:151` | `closed=` ist ein Bool pro Call; der REST-Catch-up mischt geschlossene Historie mit einer forming Endzeile → **zwei** Upsert-Calls. Kein fehlendes Feature, eine Verdrahtungs-Frage |
+| **Tabellen-Enumeration** | `6_housekeeping:440`; 3 Audit-Tools; `fib_backtest:87` | `list_coin_tables(conn, tf=None)`; `fib_backtest` braucht zusätzlich Case-Auflösung |
+| **DDL** | `1:83`, `2:173,180`, `6:61` | Bewusst außerhalb der API. Entfällt in Phase C |
+| **Gemischter Ingestion-Batch** | `1_data_ingestion:177` | `closed=` ist ein Bool pro Call; der REST-Catch-up mischt geschlossene Historie mit einer forming Endzeile → **zwei** Upsert-Calls. Kein fehlendes Feature, eine Verdrahtungs-Frage |
 
 **Zwei Aufräum-Funde außerhalb des Auftrags** (nicht stillschweigend weggelassen): `db_schema_analysis.py` und `tools/db_schema_analysis.py` sind **byte-identische Duplikate**; `legacy_trainers/` (23 Dateien) ist toter Code mit eigenen Roh-Tabellen-Reads und einem eigenen `get_live_price`. Beides ist löschbar, beides ist für die Migration nicht nötig.
 
@@ -182,7 +182,7 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 
 Bei 11 und 12 ist die forming Kerze **Teil des Vertrags** (Feature-Zeile = vorletzte, Live-Preis = letzte). Sie bleiben auf `include_forming=True` und bekommen die Trennung sauber, statt sie über negative Indizes zu erraten.
 
-**Muss `include_forming=True` bleiben** — hier würde `False` Geld kosten oder die Fleet neu starten: Monitore `5`/`8`, Orchestrator `28`, `get_live_price` in `3`/`29`, `6_housekeeping:258`, **`core/health_monitor:70`** (sonst false-positive `DATA_STALE`), `tools/audit/live_parity:81` (Parität zur Live-Serving-Semantik).
+**Muss `include_forming=True` bleiben** — hier würde `False` Geld kosten oder die Fleet neu starten: Monitore `5`/`8`, Orchestrator `28`, `get_live_price` in `3`/`29`, `6_housekeeping:259`, **`core/health_monitor:70`** (sonst false-positive `DATA_STALE`), `tools/audit/live_parity:81` (Parität zur Live-Serving-Semantik).
 
 **Schon forming-sicher, kein Delta:** `9_ai_sr`, `10_pump_dump`, `13_ai_rub` (P1.19), `15_ai_master`, alle drei `strategies/*`, `core/market_utils`, `core/research_features`, `walkforward_sim:635,759`, `mis1_move_labels`, `retrain_sra2`, die `step2`-Aggregate.
 
@@ -198,7 +198,7 @@ Sechs Blöcke, jeder ein eigener Commit, Regression-Guard davor und danach. Blö
 |---|---|---|---|---|
 | 1 | Offline-Tooling | Trainer, Backtests, `*_build_dataset`, `walkforward_sim`, `retrain_sra2`, `rgcore`, Audit-Replays, `core/charting` | Kein Live-Signal-Pfad, sofort rückrollbar. Fördert die fehlenden API-Formen (Aggregate, `first=True`) früh zutage. `walkforward_sim` zuerst — dort sitzt der Look-ahead, der das Retrain-Programm verunreinigt | nein |
 | 2 | Strategien + `3_detectors` + geteilte Helfer | `strat_*`, `3_detectors`, `core/trade_utils`, `core/market_utils` | Die Strategien sind schon zeitstempel-gebunden (kleines Delta); die Helfer entblocken die AI-Bots | nein |
-| 3 | **Monitore + Orchestrator explizit auf `True`** | `5`, `8`, `28`, `3.get_live_price`, `29:96`, `6:258`, `core/health_monitor` | **Vor** dem ersten `False` im Geld-Pfad: das `True` sichtbar und reviewbar machen. Ein Monitor, der still auf geschlossene Kerzen kippt, scored SL/TP bis zu 5 Minuten zu spät | nein |
+| 3 | **Monitore + Orchestrator explizit auf `True`** | `5`, `8`, `28`, `3.get_live_price`, `29:96`, `6:259`, `core/health_monitor` | **Vor** dem ersten `False` im Geld-Pfad: das `True` sichtbar und reviewbar machen. Ein Monitor, der still auf geschlossene Kerzen kippt, scored SL/TP bis zu 5 Minuten zu spät | nein |
 | 4 | AI-Bots, **ein Bot pro Commit** | `9,10,13,14,15,18,22,24,25,29` (F) und `11,12` (T + Index-Rework) | R1 wird hier wirksam. Signal-Raten im 24-h-Vergleich dokumentieren. `25` zuerst — dort ist der Repaint | nein |
 | 5 | Geteilte Feature-Builder **plus Trainer/Replay im selben Commit** | `core/research_features`, `core/regime_logic` + zugehörige Trainer | Harte Regel 7: Trainer == Serving == Replay. Getrennt umstellen = stille Feature-Drift in Live-Modellen | nein |
 | 6 | `2_indicator_engine` (Reads + Writes), `1_data_ingestion`, `6_housekeeping` | Engine-Read `:574`, Upserts, Gap-Filler, DELETE/DDL-Gaps | Höchste R1-Wirkung (Indikatoren über forming Kerze) und die Caller-Commit-Umstellung. Ab hier trägt das Datenmodell das echte `is_closed` | **ja — VPS, C-Gate** |
