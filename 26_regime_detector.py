@@ -154,8 +154,24 @@ def ensure_regime_schema(conn) -> None:
                 whitelisted BOOLEAN NOT NULL,
                 reason TEXT,
                 computed_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                whitelisted_v2 BOOLEAN,
+                reason_v2 TEXT,
                 PRIMARY KEY (bot_name, regime, alt_context, direction)
             )
+        """)
+        # T-2026-CU-9050-048: shadow columns for the v2 whitelist (net-expectancy
+        # lower bound + hierarchical Empirical-Bayes shrinkage). 27_bot_regime_
+        # analyzer writes them ALONGSIDE the v1 decision; the live gate
+        # (28_signal_orchestrator.get_whitelist_decision) keeps reading the v1
+        # `whitelisted` column. Additive for DBs created before v2 — pre-v2 rows
+        # keep whitelisted_v2 NULL until the next analyzer cycle recomputes them.
+        cur.execute("""
+            ALTER TABLE bot_regime_whitelist
+            ADD COLUMN IF NOT EXISTS whitelisted_v2 BOOLEAN
+        """)
+        cur.execute("""
+            ALTER TABLE bot_regime_whitelist
+            ADD COLUMN IF NOT EXISTS reason_v2 TEXT
         """)
 
         cur.execute("""

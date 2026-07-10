@@ -32,6 +32,102 @@ pinnt, dass die Grenze `threshold` ist und nicht das 0.25-Shadow-Gate, und
 für psycopg2. ruff + format + mypy grün.
 
 ---
+## [2026-07-10] Merge-Train-Onboarding: Kythera-PRs merged jetzt der Daemon, nicht die Session (T-2026-CU-9050-063)
+
+Kythera fährt ab jetzt auf dem merge-train (`services/merge_train/` in
+knowledge_base_internal, Hetzner): nach bestandenen Kern-Reviews stempelt die
+Session `cu/reviews`, setzt das Label `merge-train` und schließt — der Daemon
+merged seriell und rebased jeden PR höchstens einmal. Grund: am 2026-07-10
+liefen zeitweise 6+ parallele Sessions gegen main; jede CHANGELOG-Top-Insertion
+kollidierte mit jeder, und wer selbst mergte, zahlte pro PR 1–2 manuelle
+Konflikt-Runden (O(n²)-Rebase-Kaskade — genau der Fall, für den der Train
+gebaut wurde). Operativ aktiviert: Labels `merge-train`/`merge-train:failed`
+im Repo, `MERGE_TRAIN_REPOS` auf Hetzner um `Kythera` erweitert, Service
+neu gestartet. Kein Deploy-Hook (Build-Repo, post-merge läuft nichts).
+Doku: `docs/OPUS-HANDOFF.md` §2 Schritt 7 (inkl. Bounce-/Re-Queue-Regeln) und
+`CLAUDE.md` Workflow. Dieser PR ist selbst der erste Zug — sein Merge durch den
+Daemon ist die End-to-End-Verifikation inkl. Daemon-PAT-Zugriff aufs Repo.
+## [2026-07-10] AIM2-Trainer: Meta-Gate-Tags aus load_events ausgeschlossen — F6-Symmetrie zum Serving (T-2026-CU-9050-065)
+
+Folge aus T-2026-CU-9050-051. Die Serving-Seite (`15_ai_master_bot.load_signal_stream`)
+schließt AIM1/AIM2/AIM2-TOPN aus dem Kandidaten-/Schwarm-Stream aus (F6-Selbst-Feedback),
+der Trainer `tools/aim2_build_dataset.py` filterte aber nur `model_name <> 'AIM1'`. Ein
+künftiger AIM2-Retrain hätte damit die eigenen Meta-Gate-Ausgaben (AIM2 postet seit 06.07.,
+AIM2-TOPN sobald live) als Trainings-Events gelabelt — dieselbe Leckage, die serving-seitig
+längst gefixt ist, und ein Bruch der AIM2_DESIGN-§3-Invariante „identische Definition wie im
+Trainer".
+
+### Changed
+- `tools/aim2_build_dataset.py`: `load_events` zieht jetzt `model_name NOT IN ('AIM1', 'AIM2', %s)`
+  mit dem Tag aus `core.aim2_topn.MODEL_TAG` — Symmetrie zum Serving hergestellt, Tag
+  single-sourced (kein zweites Literal).
+
+### Added
+- `backtest/test_aim2_event_source_symmetry.py` (DB-frei, standalone): pinnt statisch, dass
+  Trainer und Serving denselben Meta-Gate-Ausschluss tragen und keiner mehr den alten
+  `<> 'AIM1'`-Filter benutzt.
+
+Kein Live-Eingriff, kein Retrain-Rollout — reine Definitionskorrektur für den nächsten
+Trainings-Lauf. Verifiziert: neuer Test grün, `guard.py verify` (24 Fixtures), ruff+mypy grün.
+
+## [2026-07-10] Spike: Replication-Scoring (polybot) auf Hyperliquid-Public-Fills evaluiert (T-2026-CU-9050-058)
+
+Machbarkeits-Eval, ob polybots „Replication Scoring"-Konzept
+([ent0n29/polybot](https://github.com/ent0n29/polybot), MIT, Java) für Kythera auf
+**Hyperliquid-Public-Fills** reproduzierbar ist. Lead aus dem Repo-Audit 2026-07-10
+(KB `mcp-41a50fe33552`). **Kein Fleet-Code angefasst** — reiner Research-Spike.
+
+Ergebnis (Verdict in `docs/HYPERLIQUID_REPLICATION_EVAL.md`): **technisch machbar
+und billig, strategisch optional und an die offene Hyperliquid-Venue-Entscheidung
+gebunden.** Datenzugang, Signatur-Extraktion und Score wurden **live verifiziert**
+(2026-07-10), die zitierten Zahlen sind echte PoC-Ausgabe, keine Schätzung.
+
+### Added
+- `tools/research/hl_replication_poc.py` — standalone, DB-frei, stdlib-only, kein
+  `core`-Import, schreibt nichts. Beweist die drei tragenden Behauptungen: (1)
+  jede Trader-Fill-Historie ist per Adresse public+keyless abrufbar (Leaderboard =
+  40.376-Adressen-Universum), (2) polybots vier Verteilungs-Features portieren 1:1
+  auf Perp-Fills (coin/dir/maker-taker/size — das Perp-Schema ist **reicher** als
+  polybots Polymarket-Quelle), (3) polybots exakte Formel (mean L1 über Marginals
+  → 0–100) läuft unverändert. Ergänzt eine **Self-Consistency**-Messung (zeitliche
+  Replizierbarkeit eines *einzelnen* Traders), die der rohe polybot-Score auslässt.
+- `docs/HYPERLIQUID_REPLICATION_EVAL.md` — die volle Eval: Datenzugang + Limits
+  (2000 Fills/Call, 10k-History-Ceiling/Adresse), Signatur-Mapping,
+  Score-Kritik (Similarity ≠ Reproduzierbarkeit; Marginals ignorieren
+  Sequenz/Joint), Fit mit Kytheras vorhandenem Replay/Regime/Feature-Builder-Stack,
+  und das Sekundärziel ClickHouse-Ingestion → **Reject, Timescale-Hypertable
+  reicht** für append-only Low-Volume-Fills.
+
+Verifiziert: PoC live gegen `api.hyperliquid.xyz/info` + Leaderboard-Blob (HTTP 200,
+2000 Fills/Adresse, Score-Ausgabe plausibel), ruff check + format lokal grün.
+
+## [2026-07-10] Fractional-Kelly-Sizing-Spec aus CloddsBot destilliert (T-2026-CU-9050-057)
+
+Aus dem Repo-Audit 2026-07-10 (`alsk1992/CloddsBot`, MIT) die `kelly.ts`-Parametrik als
+Position-Sizing-Spec für Kythera destilliert: `docs/KELLY_SIZING_SPEC.md`. Reine Design-Doku,
+**kein Live-Code**.
+
+### Der rahmende Befund
+Kythera sized heute **keine** Notional-Größe — das macht Cornix. Kythera stellt nur Leverage
+(`get_max_leverage` + `cap_leverage_to_sl`), Trade-Geometrie und das Orchestrator-Gating. Ein
+1:1-Port von `kelly.ts` (`positionSize = bankroll × kelly`) hätte in Kythera keinen Hebel, an
+dem er zieht. Verwertbar ist deshalb nicht die Größen-Zahl, sondern die **Adjustment-Kaskade**
+(Drawdown, Win/Loss-Streaks, Vola-Scaling, Kategorie-Performance, Sample-Size, Quarter-Kelly).
+
+### Was der Spec zeigt
+Das State-Substrat für die Statistik-Adjustments (Win-Rate, Vola/Sharpe, „Kategorie" =
+Bot×Regime×Direction) existiert bereits in `bot_regime_performance` (`27_bot_regime_analyzer`,
+Fenster 7/30/90d) — datenseitig fast geschenkt. Was fehlt: Bankroll/Peak/Drawdown und Streaks
+(kein Kapital-Modell in Kythera). Drei Andock-Optionen dokumentiert (A: Leverage-Skalierung,
+B: Orchestrator-Gating/Size-as-Inclusion, C: Cornix per-Signal-Risk — ungeprüft), plus die
+Perp-Anpassung `b = R = TP-Dist/SL-Dist` statt binärem `odds=1`.
+
+### Empfehlung
+Kein Notional-Sizer bauen. Erst ein Batch-E-Studien-Task (Vorlage T-2026-CU-9050-020): Kelly-
+Fraktion aus `bot_regime_performance` als Post-hoc-Gewichtung auf die Walk-Forward-Replay-PnL
+legen und den Effekt messen — **bevor** eine Zeile Live-Sizing-Code entsteht. Bei positivem
+Beweis Option B (default-off Gate). Offene Operator-Fragen (Cornix-Money-Management, ob Kythera
+je eigenes Notional-Sizing bekommt) an Michi eskaliert.
 
 ## [2026-07-10] AIM2-TOPN: "Top 1-3 des Tages" als High-Conviction-Kanal, default-off (T-2026-CU-9050-051)
 
@@ -74,6 +170,59 @@ getrennt vom Basis-AIM2-Posting.
 
 Design: `docs/MODEL_INTENT.md` §9a. Verifiziert: `backtest/test_aim2_topn.py`
 (17 grün), `guard.py verify` (24 Fixtures), ruff+mypy lokal grün.
+
+## [2026-07-10] ROM1-Whitelist v2 als Shadow-Spalte: Netto-Expectancy statt WR + hierarchisches Shrinkage + B9-Zensur-Korrektur (T-2026-CU-9050-048)
+
+Der Gate-Umbau aus Report 16 (Empfehlungen 6+7), gebaut **ausschließlich als
+Shadow-Spalte**. Der Live-Gate bleibt unverändert auf v1 — scharf schalten ist
+Michis Entscheidung nach dem Counterfactual-Vergleich (T-2026-CU-9050-047), nicht
+Teil dieses Tasks.
+
+### Warum
+Die 4D-Whitelist hat zwei strukturelle Fehler (Report 16): **B1** — 89 % der
+frischen Zellen sind `insufficient_data` und werden default-open durchgewunken
+(n < 30 entscheidet nicht, sondern winkt durch); **B2** — Median 7 Trades/Zelle,
+der WR-Punktschätzer ist zu verrauscht, und ein 55 %-WR-Bot mit winzigen Wins +
+großen Losses ist netto ein Verlierer, den der reine WR-Gate durchlässt.
+
+### Was v2 anders macht (Shadow)
+`compute_whitelist` (27_bot_regime_analyzer) schreibt neben der v1-Entscheidung
+eine zweite: `whitelisted_v2` = die **untere Konfidenzgrenze der Netto-Expectancy
+(avg_pnl_pct) über dem Break-even**, geschätzt mit Empirical-Bayes-Shrinkage über
+die Hierarchie Bot×Regime×Alt → Bot×Regime → Bot×ALL. Eine sparse Zelle leiht
+Stärke vom übergeordneten Mittel (Gewicht n/(n+k)), eine Zelle ganz ohne Evidenz
+bleibt am neutralen Prior und wird **nicht** whitelisted — das killt die
+default-open-Krücke (B1). Die nötigen Spalten (`avg_pnl_pct`, `pnl_stddev`) lagen
+längst in `bot_regime_performance` und wurden bisher ignoriert. Alle Knöpfe
+(Break-even-Floor, Prior-Stärke k, z-Multiplikator) sind benannte Konstanten mit
+konservativen Startwerten — sie werden vor jedem Flip auf der VPS-DB kalibriert,
+nicht hier festgezurrt. Die neuen Spalten sind additiv (`ALTER … IF NOT EXISTS`),
+das Live-Gate (`get_whitelist_decision`) liest weiter `whitelisted`.
+
+### B9-Zensur-Korrektur
+`CLOSED_REGIME_CHANGE`-Trades zählen jetzt mit ihrem **realen PnL zum
+Close-Zeitpunkt** als Win/Loss statt pauschal neutral — der Auto-Close ist der
+Exit des Trades, kein externes Housekeeping. Vorher zensierte das genau die per
+Regime-Wechsel realisierten Verluste und biaste die gemessene ROM1-WR nach oben
+(Report 16 B9). Angewandt konsistent an allen vier Klassifikations-Stellen
+(`27_bot_regime_analyzer._classify_outcome`, `28_signal_orchestrator._classify_outcome_by_pnl`,
+`23_market_tracker` beide Klassifikatoren), damit Report-WR und Whitelist-WR nicht
+divergieren. `DELISTED/CLEANUP/ORPHAN` bleiben neutral; near-0 %-Regime-Closes
+fängt weiter der Micro-PnL-Filter. In der Praxis trägt nur `model='ROM1'` diesen
+Marker (P1.9), die Korrektur berührt also keine Fremd-Bot-Statistik und **nicht**
+den Live-Gate (der auf die Trigger-Bots gatet, nie auf ROM1). **Michi-Hinweis:**
+die auf VPS-Reports/Market-Tracker angezeigte ROM1-WR sinkt dadurch sichtbar —
+das ist Messkorrektur, kein Regressionsverlust.
+
+### Disziplin
+Kein Gate-Flip, kein Scharf-Schalten, kein Live-Eingriff. B1/B2 bleiben live in
+Kraft (v1), bis Michi nach dem Counterfactual-Vergleich flippt. Verifikation:
+`backtest/test_bot_regime_analyzer.py` (neue Tests der Shrinkage-Mathe: Formel-Pin
+gegen die Konstanten, Monotonie in n und Streuung, Prior-Fallback-Hierarchie,
+B1-No-Default-Open, Expectancy-Block trotz WR; plus B9-Klassifikation) und
+`test_signal_orchestrator.py` grün (46 + 75 Tests), ruff/format/mypy sauber,
+Regression-Guard `verify` unverändert (24 Fixtures, kein Indikator-Pfad berührt).
+Der scharfe v1↔v2-Vergleich braucht eine VPS-DB-Session.
 
 ## [2026-07-10] Der Gate-Wert wird messbar: ROM1-Counterfactual-Scorer für unterdrückte Signale (T-2026-CU-9050-047)
 

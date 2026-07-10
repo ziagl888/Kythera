@@ -53,6 +53,7 @@ from core.aim2_features import (  # noqa: E402
     TRAIL_WINDOW_DAYS,
     build_feature_row,
 )
+from core.aim2_topn import MODEL_TAG as TOPN_TAG  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.trade_utils import calculate_smart_targets  # noqa: E402
 from tools.walkforward_sim import simulate_exit  # noqa: E402  (nur Import — Datei gehört dem ABR1-Rework)
@@ -120,14 +121,20 @@ def keep_sampled(strategy: str, event_id) -> bool:
 # 1) EVENTS
 # ─────────────────────────────────────────────────────────────────────────────
 def load_events(conn, since: str) -> pd.DataFrame:
+    # Meta-Gate-Ausgaben sind kein Basissignal: AIM1 (tot), AIM2 (postet seit
+    # 06.07.) und AIM2-TOPN (T-2026-CU-9050-051) fallen raus, sonst würde ein
+    # AIM2-Retrain die eigenen Gate-Entscheidungen als Trainings-Events labeln
+    # (F6-Selbst-Feedback). Identisch zur Serving-Definition in
+    # 15_ai_master_bot.load_signal_stream — die AIM2_DESIGN.md-§3-Invariante
+    # „identische Definition wie im Trainer" (T-2026-CU-9050-065).
     ai = df_query(
         conn,
         """
         SELECT id, model_name AS source, time, coin, direction, entry, confidence
         FROM ml_predictions_master
-        WHERE posted = true AND model_name <> 'AIM1' AND time > %s
+        WHERE posted = true AND model_name NOT IN ('AIM1', 'AIM2', %s) AND time > %s
         """,
-        (since,),
+        (TOPN_TAG, since),
     )
     ai["source_type"] = "ai"
 
