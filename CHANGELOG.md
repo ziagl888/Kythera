@@ -55,6 +55,58 @@ korrekt, UTC vs UTC) — nicht gefixt, geteilter Builder (Regel 7).
 
 ---
 
+## [2026-07-09] Zentrale UTC-Policy gelegt: `core/time.py` + ruff DTZ (T-2026-CU-9050-032, R3)
+
+Kythera hat keine Zeitquelle, sondern zwanzig. Writer schreiben teils naive
+Serverlokalzeit, teils aware UTC, teils Postgres' `NOW()`; Reader interpretieren
+dieselben Spalten als UTC. Der VPS läuft auf `Europe/Bucharest`, also läuft das
+um +2/+3h auseinander — in Cooldowns, Trade-Fenstern und Burst-Zählern, also im
+Geld-Pfad. Die Einzel-Fixes des Audits haben das Cluster nie geschlossen, weil
+jeder von ihnen eine neue Domäne erfand.
+
+Dieser Eintrag legt die Policy, **ohne Live-Semantik zu ändern**:
+
+- **`core/time.py`** — `utc_now()` (aware), `utc_now_naive()` für die legacy
+  `TIMESTAMP WITHOUT TIME ZONE`-Spalten, `to_utc()`, `as_naive_utc()`,
+  `from_unix_ts()`. Ab jetzt die einzige sanktionierte Zeitquelle.
+- **ruff-Regelgruppe `DTZ`** (`pyproject.toml`). Ein neues `datetime.now()` ohne
+  `tz` fällt im CI durch, statt still eine weitere Domäne aufzumachen. Die zwei
+  bewusst naiven Bestandsdateien (`3_detectors`, `30_ai_pex1_bot`) tragen ein
+  `# noqa: DTZ…` mit Begründung — sichtbare Rest-Schuld statt stiller Ausnahme.
+- **`docs/UTC_POLICY.md`** — Spalten-Inventar, der Bestand an Drift-Kompensationen,
+  die Reihenfolge des Rests, und `docs/migrations/2026-07-r3-timestamptz.sql` als
+  vorbereitete, **nicht ausgeführte** DDL.
+
+Angepasst auf die neue Zeitquelle: `15_ai_master_bot` (deprecated `utcnow()` →
+`utc_now_naive()`, identisch) und `core/market_utils.check_cooldown`
+(handgeschriebener Normalisierer → `to_utc()`, identisch). Zwei Stellen ändern
+eine sichtbare, aber folgenlose Ausgabe: `2_indicator_engine` schreibt den
+State-Token und die Scheduler-Log-Zeile jetzt in UTC — der Token ist für
+`3_detectors` ein opaker String-Vergleich, und der Minuten-Trigger ist gegenüber
+einer Vollstunden-Offset-TZ invariant; `check_funding` rendert seine UTC-Epoche
+nicht mehr als Lokalzeit.
+
+`backtest/test_time.py` pinnt die Semantik der neuen Zeitquelle DB-frei, inklusive
+eines Laufs unter gesetztem `TZ=Europe/Bucharest` — genau die Fehlerklasse
+„läuft lokal, driftet auf dem VPS".
+
+### Warum der Pool-Flip NICHT drin ist
+Ursprünglich sollte `-c timezone=UTC` im Connection-Pool mit. Die Session-TZ
+entscheidet, wie Postgres zwischen `timestamptz` und den naiven Spalten castet —
+der Flip repariert also P2.5 und P2.6, **kippt aber sechs Stellen, die die Drift
+heute bereits korrekt herausrechnen**: `15_ai_master_bot.to_utc_naive()` und die
+fünf Dataset-Builder in `tools/` (`research_dataset_common`, `aim2_build_dataset`,
+`fif1_build_dataset`, `pex1_build_dataset`, `retrain_sra2`). Die Trainer lesen
+Historie; nach dem Flip trägt jede naive Spalte beide Domänen, und weder „immer
+kompensieren" noch „nie kompensieren" ist richtig. Das ist der Train/Serve-Skew,
+gegen den AIM2 gebaut wurde (P0.13).
+
+Der Flip gehört deshalb in ein eigenes Fenster, zusammen mit dem P2.3-Writer-Fix,
+den sechs Kompensationen und der Operator-Entscheidung Backfill-vs-Cutover für
+die Historie. `docs/UTC_POLICY.md` §4–§6 ist der Handoff dafür.
+
+---
+
 ## [2026-07-09] SMC-16 FVG-Entry war unerreichbar (T-2026-CU-9050-033, P1.26)
 
 `find_unmitigated_fvgs` in `16_smc_forex_metals_bot.py` scannte auf Mitigation
@@ -161,6 +213,7 @@ identischen Tags wirkungsgleich zum Vorzustand.
   Retrain-Ausgabeformat divergiert vom Live-Ladeformat. Beim Verdrahten von
   EPD2/SRA2 muss der Tag aus der neuen `model_id` kommen, sonst entstehen Instanz 4
   und 5 derselben Fehlerklasse. Bleibt als P1.45-Nebenbefund im Ledger.
+
 ## [2026-07-09] Kerzen-API `core/candles.py` + Call-Site-Inventar + Paritäts-Tool (T-2026-CU-9050-034, C1-Vorbereitung)
 
 Vorbereitung der R1-/TimescaleDB-Migration (`docs/TIMESCALE_R1_MIGRATION.md`,
@@ -198,6 +251,7 @@ Binance-Wochenkerzen öffnen Montag 00:00 UTC.
 Offen (Operator, siehe `docs/CANDLE_CALL_SITES.md` §5): Retention, `REAL` →
 `double precision` (P3.12), 1d/1w-Streaming, Close-Grace-Period. **R1 senkt die
 Signal-Raten — das ist der Zweck. Schwellen erst nach dem Retrain neu tunen.**
+
 ## [2026-07-09] HTTP-Härtung der Binance-REST-Pfade (T-2026-CU-9050-027 D2, P2.14 + P2.18)
 
 Neues `core/http_retry.py` (reine Politik ohne I/O, injizierbare Uhr/Sleep →

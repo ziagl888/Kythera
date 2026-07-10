@@ -1,7 +1,8 @@
 import glob
 import json
 import os
-from datetime import datetime
+
+from core.time import from_unix_ts
 
 DATA_DIR = "funding_data"
 
@@ -34,7 +35,9 @@ def check_latest_funding_data():
         # Zeige die 5 aktuellsten entries als Beispiel
         print("\nLetzte 5 erfasste Raten:")
         for d in data[-5:]:
-            time_str = datetime.fromtimestamp(d['ts']).strftime('%H:%M:%S')
+            # `ts` ist eine UTC-Epoche (20_funding_logger_bot) — vorher als
+            # Serverlokalzeit gerendert, jetzt als UTC wie überall sonst.
+            time_str = from_unix_ts(d['ts']).strftime('%H:%M:%S')
             print(f"[{time_str}] {d['sym']:<12} : {d['rate'] * 100:+.4f}%")
 
         print("=" * 40)
