@@ -48,8 +48,9 @@ Source-Build schlägt fehl). Der harte Collect-Fehler ist durch einen benannten
 `pytest.importorskip` ersetzt — reines Umgebungsproblem, kein Code-Fehler.
 
 ### Verifikation
-`python -m pytest backtest -q` → 271 passed, 1 skipped; zusätzlich läuft jede
-Datei der Suite einzeln grün (die Import-Reihenfolgen-Kopplung ist weg).
+`python -m pytest backtest -q` → volle Suite grün, genau ein Skip (der benannte
+pandas_ta-`importorskip`); zusätzlich läuft jede Datei der Suite einzeln grün
+(die Import-Reihenfolgen-Kopplung ist weg).
 ruff, `ruff format --check` und mypy sauber.
 `python tools/regression_guard/guard.py smoke` OK — der Guard wurde nicht
 refreshed. Der neue Guard-Test gegen `_build_channel_fallback` ist per Mutation
