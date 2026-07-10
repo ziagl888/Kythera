@@ -13,6 +13,7 @@ import websockets
 from psycopg2 import extras
 
 from core.database import get_db_connection
+from core.http_retry import RetryBudget, backoff_seconds
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
@@ -110,17 +111,35 @@ def fetch_ohlcv_batch(session, symbol, interval, start_ts, end_ts):
     url = BASE_URL + '/fapi/v1/klines'
     all_data = []
     curr = start_ts
+    # P2.14: gebudgeteter Retry statt while-True — ein stuck Symbol darf den
+    # 12h-Catch-up nicht mehr blockieren; nur FEHL-Versuche zählen gegen das
+    # Budget, Erfolgs-Seiten paginieren frei weiter. 418 = Binance-IP-Ban-
+    # Eskalation: nie unter 120s, exponentiell (weiter hämmern verlängert den
+    # Ban). Bei erschöpftem Budget werden die bereits geholten Teildaten
+    # verwendet — der nächste 12h-Lauf setzt am MAX(open_time) wieder auf.
+    budget = RetryBudget(max_attempts=CATCHUP_MAX_RETRIES, deadline_s=CATCHUP_RETRY_DEADLINE_S)
+    consecutive_fail = 0
     while True:
         params = {'symbol': symbol, 'interval': interval, 'startTime': curr, 'endTime': end_ts, 'limit': 1500}
         try:
             resp = session.get(url, params=params, timeout=10)
             if resp.status_code in [429, 418]:
-                wait = int(resp.headers.get("Retry-After", 10)) + 2
+                if not budget.attempt():
+                    logger.warning(
+                        f"Catch-up {symbol} {interval}: Retry-Budget erschöpft "
+                        f"({budget.exhausted_reason()}) — {len(all_data)} Kerzen Teildaten werden verwendet."
+                    )
+                    break
+                consecutive_fail += 1
+                wait = backoff_seconds(resp.status_code, consecutive_fail, resp.headers.get("Retry-After"))
+                if resp.status_code == 418:
+                    logger.warning(f"Catch-up {symbol} {interval}: 418 (IP-Ban-Signal) — Backoff {wait:.0f}s")
                 time.sleep(wait)
                 continue
             if resp.status_code != 200:
                 break
 
+            consecutive_fail = 0
             data = resp.json()
             if not data:
                 break
@@ -131,7 +150,14 @@ def fetch_ohlcv_batch(session, symbol, interval, start_ts, end_ts):
                 break
             time.sleep(0.1)  # Reduziert für mehr Speed, Limit bei Binance Futures ist recht hoch
         except Exception:
-            time.sleep(5)
+            if not budget.attempt():
+                logger.warning(
+                    f"Catch-up {symbol} {interval}: Retry-Budget erschöpft "
+                    f"({budget.exhausted_reason()}) — {len(all_data)} Kerzen Teildaten werden verwendet."
+                )
+                break
+            consecutive_fail += 1
+            time.sleep(backoff_seconds(None, consecutive_fail))
     return all_data
 
 
@@ -275,6 +301,11 @@ def run_catchup_job(symbols):
 # fließen lassen, BEVOR der Catch-up CPU zieht. Live-Daten sind sofort da,
 # die Historie kommt 2 min später — statt umgekehrt.
 CATCHUP_WARMUP_SEC = 120
+
+# P2.14: Retry-Budget je Symbol×TF-Batch im 12h-Catch-up. Nur Fehlversuche
+# (429/418/Netzfehler) zählen; Erfolgs-Seiten paginieren unbegrenzt weiter.
+CATCHUP_MAX_RETRIES = 8
+CATCHUP_RETRY_DEADLINE_S = 300.0
 
 # ── REST-FRESHNESS-FALLBACK (WS-Ausfall-Brücke) ──────────────────────────────
 # Binance kann diese IP auf WS-Datenebene drosseln (erlebt am 04.07.: Handshake

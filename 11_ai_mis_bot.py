@@ -46,14 +46,20 @@ MIS_CHANNELS = {
 #   * Basis-Mix nach Testlage: Close-Labels für 8h/24h/168h, Wick für 72h.
 #   Artefakt = dict(model, features, optimal_threshold, calibrator_isotonic, meta)
 #   aus tools/retrain_from_replay.py --label-mode move.
+# MODEL_GENERATION ist NUR noch der laute Fallback-Tag, falls ein Artefakt keine
+# meta.model_id trägt — der Posting-Tag kommt aus dem Artefakt (Versionierungs-
+# Regel, T-2026-CU-9050-030). Die Dateinamen sind bewusst generationsfreie SLOTS
+# (Operator-Entscheid 2026-07-09): ein MIS3-Rollout überschreibt mis2_model_*.pkl,
+# und der Bot postet allein anhand der neuen meta.model_id als MIS3-72H.
 MODEL_GENERATION = "MIS2"
 PUMP_MODELS = {
     key: {
-        "artifact_path": f"mis2_model_{key}.pkl",
+        "artifact_path": f"mis2_model_{key}.pkl",  # Slot-Name, KEINE Generations-Angabe
         "model": None,
         "threshold": 0.5,
         "features": None,
         "calibrator": None,
+        "generation": MODEL_GENERATION,
         "loaded": False,
     }
     for key in ("8h_pump", "24h_pump", "72h_pump", "168h_pump", "8h_dump", "24h_dump", "72h_dump", "168h_dump")
@@ -90,6 +96,20 @@ def load_pump_models():
                 cfg["threshold"] = float(art["optimal_threshold"])
                 cfg["features"] = list(art["features"])
                 cfg["calibrator"] = art.get("calibrator_isotonic")
+                # Posting-Tag aus der Artefakt-Meta (Versionierungs-Regel): ein
+                # MIS3-Retrain im selben Slot muss als MIS3-* posten, sonst
+                # verschmilzt seine Per-Bot-Statistik mit MIS2 und das
+                # Orchestrator-Gating entscheidet über die neue Generation
+                # anhand der Performance der alten (T-2026-CU-9050-030).
+                model_id = str((art.get("meta") or {}).get("model_id") or "").strip()
+                if model_id:
+                    cfg["generation"] = model_id
+                else:
+                    logger.error(
+                        f"⚠️ {cfg['artifact_path']}: meta.model_id fehlt — poste unter Fallback-Tag "
+                        f"{MODEL_GENERATION}. Ein Retrain-Artefakt OHNE model_id taggt seine Trades falsch."
+                    )
+                    cfg["generation"] = MODEL_GENERATION
                 cfg["loaded"] = True
                 loaded_count += 1
             else:
@@ -97,12 +117,19 @@ def load_pump_models():
         except Exception as e:
             logger.error(f"Error loading von {key}: {e}")
 
-    logger.info(f"✅ {loaded_count}/{len(PUMP_MODELS)} Multi-Horizon Modelle ({MODEL_GENERATION}) loaded successfully.")
+    generations = sorted({cfg["generation"] for cfg in PUMP_MODELS.values() if cfg["loaded"]})
+    logger.info(
+        f"✅ {loaded_count}/{len(PUMP_MODELS)} Multi-Horizon Modelle ({'/'.join(generations)}) loaded successfully."
+    )
+    if len(generations) > 1:
+        # Gemischter Rollout (z. B. 72H schon MIS3, Rest noch MIS2). Kein Fehler —
+        # jedes Signal postet unter der Generation SEINES Modells —, aber sichtbar machen.
+        logger.warning(f"Gemischte Modell-Generationen geladen: {generations}")
 
     # FIX: Thresholds explizit loggen, damit Drift zwischen Modell-File und
     # Threshold-File sofort auffällt.
     thresh_summary = ", ".join(f"{h}={cfg['threshold']:.2f}" for h, cfg in PUMP_MODELS.items() if cfg["loaded"])
-    logger.info(f"{MODEL_GENERATION} Thresholds: {thresh_summary}")
+    logger.info(f"{'/'.join(generations) or MODEL_GENERATION} Thresholds: {thresh_summary}")
 
 
 def startup_feature_selfcheck():
@@ -255,7 +282,7 @@ def check_mis_models():
                             conf = float(np.clip(cfg["calibrator"].predict([prob])[0], 0.0, 1.0))
                         else:
                             conf = prob
-                        candidates.append((prob, clean_horizon, direction, cfg["threshold"], conf))
+                        candidates.append((prob, clean_horizon, direction, cfg["threshold"], conf, cfg["generation"]))
                 except Exception as e:
                     logger.error(f"{symbol} {horizon}: predict fehlgeschlagen: {e}")
 
@@ -267,19 +294,31 @@ def check_mis_models():
             # kalibriert, ein 0.55er unter-Schwelle-Kandidat verdrängte sonst
             # ein 0.52er über-Schwelle-Signal.
             candidates.sort(reverse=True, key=lambda x: x[0] - x[3])
-            best_prob, best_horizon, best_direction, best_threshold, best_conf = candidates[0]
-            module_tag = f"{MODEL_GENERATION}-{best_horizon}"  # z. B. MIS2-72H (Versionierungs-Regel)
+            best_prob, best_horizon, best_direction, best_threshold, best_conf, best_generation = candidates[0]
+            # Generation kommt aus der Artefakt-Meta des GEWINNER-Modells, nie aus
+            # einer Quellcode-Konstante (T-2026-CU-9050-030): mis2_model_*.pkl ist ein
+            # Slot-Name, nur meta.model_id kennt die Generation. z. B. MIS2-72H → MIS3-72H.
+            module_tag = f"{best_generation}-{best_horizon}"
 
             # 1. Aktiver Trade Check — prüft ob ein nicht-geschlossener Trade für
             #    genau dieses Modul/Coin/Richtung läuft. Der Cooldown-Check weiter
             #    unten verhindert zusätzlich zu schnelle Folgesignale im Horizon-Fenster.
+            #
+            #    Der Check läuft über den Tag — und der Tag wechselt beim Retrain-Rollout
+            #    (MIS2-72H → MIS3-72H). Ohne den Alt-Tag im IN würde eine offene
+            #    MIS2-Position denselben Coin/Direction nicht mehr blocken und der
+            #    MIS3-Lauf öffnete eine ZWEITE Live-Position daneben. legacy_tag ist
+            #    exakt das Tag, das dieser Bot vor T-2026-CU-9050-030 gepostet hätte;
+            #    solange Konstante und Artefakt-Generation übereinstimmen, ist das IN
+            #    ein No-op. Muster: 25_smc_ml_sniper.py (T-2026-CU-9050-026).
+            legacy_tag = f"{MODEL_GENERATION}-{best_horizon}"
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT 1 FROM ai_signals
-                    WHERE symbol = %s AND direction = %s AND model = %s
+                    WHERE symbol = %s AND direction = %s AND model IN (%s, %s)
                 """,
-                    (symbol, best_direction, module_tag),
+                    (symbol, best_direction, module_tag, legacy_tag),
                 )
                 trade_exists = cur.fetchone()
 
@@ -316,7 +355,7 @@ def check_mis_models():
                     continue
 
                 logger.info(
-                    f"🚀 {MODEL_GENERATION} Trade gefunden: {symbol} {best_direction} | {module_tag} (raw {best_prob:.3f} / kalibriert {best_conf:.1%})"
+                    f"🚀 {best_generation} Trade gefunden: {symbol} {best_direction} | {module_tag} (raw {best_prob:.3f} / kalibriert {best_conf:.1%})"
                 )
 
                 is_long = best_direction == "LONG"
