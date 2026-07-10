@@ -1,3 +1,38 @@
+## [2026-07-10] ROM1: Regime-Auto-Close differenziert — Gewinner trailen statt blind closen (T-2026-CU-9050-049, B6)
+
+Bei einem Regime-Wechsel schloss der Orchestrator (`28_signal_orchestrator.py`)
+jeden nicht-whitelisteten offenen Trade per Market-`Close` — laut Report 16 (B6)
+wurden dabei ~49 % der Trades **im Gewinn** gekappt (median PnL 0 %, Churn +
+Fees + zensierte Statistik).
+
+Neu, hinter dem Default-OFF-Gate `TRAIL_WINNERS_ON_REGIME_CHANGE`
+(env `KYTHERA_REGIME_TRAIL_WINNERS=1`): ein Trade **im Gewinn** wird nicht mehr
+geschlossen, sondern sein Stop-Loss via Cornix-**SL-Update-Message**
+(`SL <SYMBOL> <preis>`, symbol-adressiert wie `Close`) auf **Break-even** bzw.
+das **letzte erreichte TP-Level** gezogen; der Trade läuft weiter. Verlierer
+werden weiter market-geschlossen.
+
+A/B messbar über die neue Spalte `orchestrator_open_trades.regime_close_action`
+(`REGIME_CHANGE_CLOSED` vs `REGIME_CHANGE_TRAILED`, plus `regime_action_at`).
+Der TRAILED-Tag überlebt den späteren finalen Close (Lifecycle-Sync lässt ihn
+unangetastet), so bleibt die Kohorte für den 4–6-Wochen-Live-Vergleich über den
+Tracker-Pfad identifizierbar (Auswertungs-Query dokumentiert in
+`docs/REGIME_ORCHESTRATOR.md`).
+
+Sicherheit: die SL-Update-Message ist eine einzeilige Kommando-Semantik und
+**nie** ein zweites Cornix-parsebares Signal (harte Regel 4, unit-getestet gegen
+`parse_cornix_signal`). Da `Close <coin>` symbol-weit wirkt, wird ein Coin mit
+getrailtem Gewinner im selben Pass **nicht** zusätzlich market-geschlossen.
+
+Kein Deploy, kein Scharfschalten: das Gate ist Default-OFF, die additive
+`ensure_schema`-Spalte (B8-Präzedenz) greift erst beim nächsten VPS-Restart —
+das Aktivieren des Experiments ist eine Operator-Entscheidung (OPUS-HANDOFF §6).
+
+Verifikation: `backtest/test_signal_orchestrator.py` (11 neue Tests, 86/86),
+`test_regime_detector.py` + `test_bot_regime_analyzer.py` (79/79),
+`regression_guard verify` OK (24/24), ruff/format/mypy grün. Wirkungsnachweis
+live (VPS).
+
 ## [2026-07-10] ATB1: posted-Flag spiegelt den Live-Trade, nicht hart False (T-2026-CU-9050-062, P1.47)
 
 `14_ai_atb_bot.py` loggte jede Prediction ab `ml_prob >= 0.25` nach
