@@ -27,7 +27,13 @@ Ein Teil der Live-Tabellen ist `TIMESTAMP WITHOUT TIME ZONE`. Postgres castet zw
 
 **Der Offset ist +2/+3 h.** Die VPS-TZ ist `Europe/Bucharest` (EET/EEST), vermessen am 2026-07-05 (`tools/research_dataset_common.py:34`). Die AUDIT_TODO-Einträge P2.1–P2.6 sprechen von „CEST" und „1–2 h" — das ist die Grössenordnung, nicht die Zahl.
 
-Konsequenz: die naiven Spalten tragen heute **Lokalzeit**, und ein Teil des Bestands kompensiert das bereits explizit (§5). Ein isolierter Fix macht diese Kompensationen falsch. Genau daran sind die Einzel-Fixes des Audits gescheitert.
+**Nicht jede naive Spalte trägt Lokalzeit.** Der Domänen-Unterschied hängt am Writer, nicht am Spaltentyp:
+
+- Ein **naiver** Python-Parameter geht ungecastet durch — `26_regime_detector.py:216` schreibt `datetime.now(timezone.utc).replace(tzinfo=None)`, also naiv-**UTC**. Der ganze `regime_*`-Cluster ist heute schon korrekt und braucht **keine** Kompensation. Der Flip fasst ihn nicht an.
+- Ein **aware** Parameter oder `NOW()` wird beim Schreiben in eine naive Spalte mit der Session-TZ gecastet und landet damit als **Lokalzeit** (`5_trade_monitor.posted`, `ml_predictions_master.time`, `pump_dump_events.spike_time`).
+- `3_detectors.py` schreibt naive **Lokalzeit** direkt (P2.3).
+
+Genau die zweite und dritte Gruppe kompensiert der Bestand bereits explizit (§5). Ein isolierter Fix macht diese Kompensationen falsch. Daran sind die Einzel-Fixes des Audits gescheitert.
 
 ## 3. Spalten-Inventar
 
@@ -66,7 +72,9 @@ Restart-Effekt: Zeilen von vor dem Restart tragen Lokalzeit und werden ab dann a
 
 ## 5. Die Kompensationen — der eigentliche Grund für den Zuschnitt
 
-Sechs Stellen rechnen die Drift bereits explizit heraus. Sie sind heute **korrekt** und werden durch den Flip **falsch**:
+Sechs Stellen rechnen die Drift bereits explizit heraus. Sie sind heute **korrekt** und werden durch die Umstellung **falsch**.
+
+Präzise: die Pool-Option **allein** fasst sie nicht an — sie vergleichen naive Parameter gegen naive Spalten, und das ist session-unabhängig. Falsch werden sie in dem Moment, in dem die **Writer** UTC schreiben (P2.3 und der aware-Cast unter UTC-Session). Da Flip und Writer-Fix zwingend zusammen landen (§4.2), ist das dieselbe Umstellung.
 
 | Stelle | Was sie tut |
 |---|---|

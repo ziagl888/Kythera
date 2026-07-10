@@ -26,11 +26,19 @@ ALTER TABLE closed_trades_master
     ALTER COLUMN "time" TYPE timestamptz USING "time" AT TIME ZONE 'UTC',
     ALTER COLUMN posted TYPE timestamptz USING posted AT TIME ZONE 'UTC';
 
--- trade_cooldowns.last_posted_at ist live bereits timestamptz (P2.2); der
--- ALTER ist ein No-op-Sicherungsnetz für Umgebungen, die aus der naiven
--- Bootstrap-DDL von 26_regime_detector.py entstanden sind.
-ALTER TABLE trade_cooldowns
-    ALTER COLUMN last_posted_at TYPE timestamptz USING last_posted_at AT TIME ZONE 'UTC';
+-- trade_cooldowns.last_posted_at steht hier BEWUSST NICHT drin.
+--
+-- Live ist die Spalte bereits timestamptz (P2.2). Ein `ALTER … TYPE timestamptz
+-- USING last_posted_at AT TIME ZONE 'UTC'` wäre darauf KEIN No-op: auf einer
+-- timestamptz-Spalte liefert `AT TIME ZONE 'UTC'` einen naiven Wert, den der
+-- TYPE-Cast mit der Session-TZ zurückwandelt. Nur unter einer UTC-Session ist
+-- das die Identität — unter jeder anderen verschiebt es eine Live-Geldspalte
+-- still um den Offset. Jeder andere ALTER hier ist session-unabhängig.
+--
+-- Umgebungen, die aus der naiven Bootstrap-DDL von 26_regime_detector.py
+-- entstanden sind, brauchen den ALTER trotzdem. Vorher den Ist-Typ prüfen:
+--   SELECT data_type FROM information_schema.columns
+--    WHERE table_name = 'trade_cooldowns' AND column_name = 'last_posted_at';
 
 ALTER TABLE regime_history
     ALTER COLUMN ts TYPE timestamptz USING ts AT TIME ZONE 'UTC';

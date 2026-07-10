@@ -14,8 +14,8 @@ Dieser Eintrag legt die Policy, **ohne Live-Semantik zu ändern**:
   `from_unix_ts()`. Ab jetzt die einzige sanktionierte Zeitquelle.
 - **ruff-Regelgruppe `DTZ`** (`pyproject.toml`). Ein neues `datetime.now()` ohne
   `tz` fällt im CI durch, statt still eine weitere Domäne aufzumachen. Die zwei
-  bewusst naiven Bestandsstellen tragen ein `# noqa: DTZ…` mit Begründung —
-  sichtbare Rest-Schuld statt stiller Ausnahme.
+  bewusst naiven Bestandsdateien (`3_detectors`, `30_ai_pex1_bot`) tragen ein
+  `# noqa: DTZ…` mit Begründung — sichtbare Rest-Schuld statt stiller Ausnahme.
 - **`docs/UTC_POLICY.md`** — Spalten-Inventar, der Bestand an Drift-Kompensationen,
   die Reihenfolge des Rests, und `docs/migrations/2026-07-r3-timestamptz.sql` als
   vorbereitete, **nicht ausgeführte** DDL.

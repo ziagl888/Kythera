@@ -195,8 +195,9 @@ def update_timeframe_state(timeframe, status):
             state = {}
 
         # Der Timestamp ist für 3_detectors nur ein Change-Token (String-Vergleich),
-        # trägt jetzt aber UTC statt Serverlokalzeit — im DST-Rücksprung ist eine
-        # Lokalzeit-Stunde doppelt und das Token damit nicht mehr eindeutig.
+        # trägt jetzt aber UTC statt Serverlokalzeit. Nebeneffekt: im DST-Rücksprung
+        # kam dieselbe Lokalzeit-Stunde zweimal vor, das Token war dort nicht
+        # eindeutig — in UTC gibt es diese Ambiguität nicht.
         state[timeframe] = {'status': status, 'timestamp': utc_now().isoformat()}
 
         # FIX (#45): Atomares Write via Temp + os.replace. Vorher wurde direkt
