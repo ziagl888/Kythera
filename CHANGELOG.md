@@ -29,6 +29,34 @@ gebunden.** Datenzugang, Signatur-Extraktion und Score wurden **live verifiziert
 Verifiziert: PoC live gegen `api.hyperliquid.xyz/info` + Leaderboard-Blob (HTTP 200,
 2000 Fills/Adresse, Score-Ausgabe plausibel), ruff check + format lokal grün.
 
+## [2026-07-10] Fractional-Kelly-Sizing-Spec aus CloddsBot destilliert (T-2026-CU-9050-057)
+
+Aus dem Repo-Audit 2026-07-10 (`alsk1992/CloddsBot`, MIT) die `kelly.ts`-Parametrik als
+Position-Sizing-Spec für Kythera destilliert: `docs/KELLY_SIZING_SPEC.md`. Reine Design-Doku,
+**kein Live-Code**.
+
+### Der rahmende Befund
+Kythera sized heute **keine** Notional-Größe — das macht Cornix. Kythera stellt nur Leverage
+(`get_max_leverage` + `cap_leverage_to_sl`), Trade-Geometrie und das Orchestrator-Gating. Ein
+1:1-Port von `kelly.ts` (`positionSize = bankroll × kelly`) hätte in Kythera keinen Hebel, an
+dem er zieht. Verwertbar ist deshalb nicht die Größen-Zahl, sondern die **Adjustment-Kaskade**
+(Drawdown, Win/Loss-Streaks, Vola-Scaling, Kategorie-Performance, Sample-Size, Quarter-Kelly).
+
+### Was der Spec zeigt
+Das State-Substrat für die Statistik-Adjustments (Win-Rate, Vola/Sharpe, „Kategorie" =
+Bot×Regime×Direction) existiert bereits in `bot_regime_performance` (`27_bot_regime_analyzer`,
+Fenster 7/30/90d) — datenseitig fast geschenkt. Was fehlt: Bankroll/Peak/Drawdown und Streaks
+(kein Kapital-Modell in Kythera). Drei Andock-Optionen dokumentiert (A: Leverage-Skalierung,
+B: Orchestrator-Gating/Size-as-Inclusion, C: Cornix per-Signal-Risk — ungeprüft), plus die
+Perp-Anpassung `b = R = TP-Dist/SL-Dist` statt binärem `odds=1`.
+
+### Empfehlung
+Kein Notional-Sizer bauen. Erst ein Batch-E-Studien-Task (Vorlage T-2026-CU-9050-020): Kelly-
+Fraktion aus `bot_regime_performance` als Post-hoc-Gewichtung auf die Walk-Forward-Replay-PnL
+legen und den Effekt messen — **bevor** eine Zeile Live-Sizing-Code entsteht. Bei positivem
+Beweis Option B (default-off Gate). Offene Operator-Fragen (Cornix-Money-Management, ob Kythera
+je eigenes Notional-Sizing bekommt) an Michi eskaliert.
+
 ## [2026-07-10] AIM2-TOPN: "Top 1-3 des Tages" als High-Conviction-Kanal, default-off (T-2026-CU-9050-051)
 
 Aus T-2026-CU-9050-031, Weg 2: der strukturelle Pfad zu „täglich 1-3 Trades, sehr
@@ -70,6 +98,7 @@ getrennt vom Basis-AIM2-Posting.
 
 Design: `docs/MODEL_INTENT.md` §9a. Verifiziert: `backtest/test_aim2_topn.py`
 (17 grün), `guard.py verify` (24 Fixtures), ruff+mypy lokal grün.
+
 ## [2026-07-10] ROM1-Whitelist v2 als Shadow-Spalte: Netto-Expectancy statt WR + hierarchisches Shrinkage + B9-Zensur-Korrektur (T-2026-CU-9050-048)
 
 Der Gate-Umbau aus Report 16 (Empfehlungen 6+7), gebaut **ausschließlich als
