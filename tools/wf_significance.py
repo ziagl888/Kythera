@@ -136,7 +136,7 @@ def order_permutation_test(pnls: np.ndarray, n: int, seed: int) -> dict:
     schlimm wie die beobachtete — die Verluste clustern untypisch MALIGNE in
     der echten Chronologie (Regime-Abhängigkeit prüfen). p nahe 1 => fast jede
     Reihenfolge wäre gleich schlimm oder schlimmer — der beobachtete Pfad war
-    untypisch gnädig, das reale DD-Risiko über simulated_max_dd_median_pct
+    untypisch gnädig, das reale DD-Risiko über simulated_max_dd_median_pp
     budgetieren statt über den beobachteten Wert. (Richtung im Review PR #20
     korrigiert — vorher stand sie invertiert hier.)
     """
@@ -147,9 +147,9 @@ def order_permutation_test(pnls: np.ndarray, n: int, seed: int) -> dict:
         sim[k] = max_drawdown_pct(rng.permutation(pnls))
     worse_or_equal = int((sim <= observed).sum())
     return {
-        "observed_max_dd_pct": round(observed, 4),
-        "simulated_max_dd_median_pct": round(float(np.median(sim)), 4),
-        "simulated_max_dd_p5_pct": round(float(np.percentile(sim, 5)), 4),
+        "observed_max_dd_pp": round(observed, 4),
+        "simulated_max_dd_median_pp": round(float(np.median(sim)), 4),
+        "simulated_max_dd_p5_pp": round(float(np.percentile(sim, 5)), 4),
         "p_value_dd_worse": round((worse_or_equal + 1) / (n + 1), 4),
         "n_permutations": n,
     }
@@ -256,8 +256,8 @@ def render_report(results: dict) -> str:
             f"p={rc['p_value']}"
         )
         lines.append(
-            f"  MaxDD-Pfad (abs, %-Pkt): beobachtet {op['observed_max_dd_pct']:.2f} vs "
-            f"Permutations-Median {op['simulated_max_dd_median_pct']:.2f}, "
+            f"  MaxDD-Pfad (abs, %-Pkt): beobachtet {op['observed_max_dd_pp']:.2f} vs "
+            f"Permutations-Median {op['simulated_max_dd_median_pp']:.2f}, "
             f"p(schlechter)={op['p_value_dd_worse']}"
         )
         sh = bs["sharpe_per_trade_ci"]
@@ -313,6 +313,10 @@ def main() -> None:
         "n_iterations": args.n,
         "seed": args.seed,
         "fee_roundtrip_pct": fee_rt,
+        # Einheit explizit im Report: der MaxDD ist absolut in %-Punkten (Suffix
+        # _pp), nicht peak-normiert. Alte Reports tragen _pct und sind NICHT
+        # vergleichbar (T-2026-CU-9050-053).
+        "max_dd_unit": "percentage_points",
         "note": "Einzel-Kandidaten-Test; Multi-Kandidaten-Screening braucht zusätzlich FDR (Non-Scope D3).",
     }
     out_path = args.out or (os.path.splitext(args.replay_jsonl)[0] + "_significance.json")

@@ -55,7 +55,7 @@ Tests (`backtest/test_wf_significance.py`).
   untypisch **maligne** — kaum eine Zufallsreihenfolge ist so schlecht; die
   Regime-Abhängigkeit prüfen und das DD-Risiko am beobachteten Wert messen.
   **Nahe 1** = fast jede Reihenfolge wäre gleich schlimm oder schlimmer, der
-  Pfad war untypisch gnädig → das DD-Budget aus `simulated_max_dd_median_pct`
+  Pfad war untypisch gnädig → das DD-Budget aus `simulated_max_dd_median_pp`
   nehmen. Der Wert ist eine **Pfad-Clusterungs-Statistik in %-Punkten**, kein
   echter Portfolio-Drawdown (gleichzeitige Signale bleiben sequenziell
   verkettet — Grenze, siehe „Befund" unten). Bis zum Fix war diese Regel auf
@@ -147,7 +147,7 @@ mit dem gefixten Tool reproduziert):
 | ufi1/SHORT | 0,035 | 0,005 (beob. −1.436,72 vs Median −278,19) |
 
 Für rub/LONG hätte die alte Lese-Regel das DD-Budget aus
-`simulated_max_dd_median_pct` genommen, obwohl der beobachtete Pfad schlechter
+`simulated_max_dd_median_pp` genommen, obwohl der beobachtete Pfad schlechter
 war als 199 von 200 Zufallsreihenfolgen — jetzt zeigt der Test das korrekt an.
 
 **Keine Deploy-Aussage der obigen Batch-E-Tabelle ändert sich.** Sie steht auf
