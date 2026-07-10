@@ -227,7 +227,7 @@ Der Offset ist **+2/+3h** (VPS-TZ `Europe/Bucharest`, vermessen 2026-07-05), nic
 
 ## P3 — Niedrig / Kosmetik / Aufräumen (gesammelt)
 
-- [ ] **P3.1 Duplikate/Dead-Code:** `tools/db_schema_analysis.py` (stale, kann nicht mal laufen) löschen (Root ist kanonisch); `load_coins` ×6 mit Semantik-Drift auf Core ziehen; `3_detectors.py:53-106` tote Signal-Writer entfernen; `_apply_keepalive` ×2, TIMEFRAMES-Redeklaration in Housekeeping.
+- [ ] **P3.1 Duplikate/Dead-Code:** ~~`tools/db_schema_analysis.py` (stale, kann nicht mal laufen) löschen (Root ist kanonisch)~~ ✅ 2026-07-10 (T-2026-CU-9050-039: gelöscht; die Behauptung „byte-identisch" aus `docs/CANDLE_CALL_SITES.md` war falsch — Root trägt den ruff-Cleanup aus `052ba4c`, die `tools/`-Kopie konnte `core.database` wegen ihres `sys.path.insert` nie importieren); `load_coins` ×6 mit Semantik-Drift auf Core ziehen; `3_detectors.py:53-106` tote Signal-Writer entfernen; `_apply_keepalive` ×2, TIMEFRAMES-Redeklaration in Housekeeping.
 - [ ] **P3.2 Unrotierte Logs:** `2_indicator_engine.py` (`indicator_calculation.log`), `main_watchdog.py` (`watchdog.log`), `dashboard.log`-Pipe → `setup_logging()` bzw. Truncate im Housekeeping.
 - [ ] **P3.3 SQL-Identifier-Hygiene:** ~40 f-String-Tabellennamen aus coins.json — eine zentrale `re.fullmatch(r'[A-Z0-9]+', symbol)`-Validierung in `load_coins` schließt alle. (Kein aktiver Injection-Pfad, aber Second-Order-Risiko in `28:312` aus geparstem Message-Text.)
 - [ ] **P3.4 requirements.txt vollständig ungepinnt** → `pip freeze` als `requirements.lock.txt`, mindestens Major-Pins (pandas/PTB/xgboost). Modell-pkls: `xgb.__version__` im Artefakt + Load-Assert.
