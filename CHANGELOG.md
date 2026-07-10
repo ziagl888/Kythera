@@ -27,6 +27,35 @@ definiert (`- [ ] **P1.45 …`). Genau das prüft ein eigener Test ab.
 Der Bestand bleibt unverändert (125 Findings, keine Duplikate; nächste freie IDs:
 P1.49, P2.52). Kein Renumbering.
 
+## [2026-07-10] Signifikanz-Layer über die echten Batch-E-Replays: Layer bestätigt, MaxDD-Statistik widerlegt (T-2026-CU-9050-040)
+
+Der VPS-Rest aus T-2026-CU-9050-027 D3: `tools/wf_significance.py` lief read-only
+über `mis1_replay_400d`, `rub_replay_365d`, `abr1_replay_365d` und
+`ufi1_replay_365d` (`--group-by strategy+direction`, n=1000, Seed 42), Ergebnisse
+in `docs/WF_SIGNIFICANCE.md`.
+
+**Der Layer verhält sich wie spezifiziert.** Das Kontroll-Mittel trifft in allen
+sieben Gruppen den Round-Trip-Fee-Drag (−0,0961 … −0,1006 gegen erwartete −0,10),
+und die trade-gewichteten Aggregate reproduzieren die `*_summary.json` des
+Simulators exakt (WR, avg_r, avg_pnl). Der Lauf ist deterministisch.
+
+Inhaltlich messen die Replays den **rohen Detektor**, nicht das deployte Modell:
+abr1/SHORT hat einen Roh-Edge und abr1/LONG ist signifikant schlechter als ein
+richtungsloser Zufalls-Trader (deckt sich mit dem Live-Bild), während rub in
+beiden Richtungen roh negativ ist, obwohl RUB2-SHORT live läuft — dort trägt die
+Modell-Selektion den Edge. mis1/SHORT ist trotz p = 0,001 ein Null-Edge
+(CI-Untergrenze 0,0006).
+
+**Widerlegt:** die Lese-Regel zu `p_value_dd_worse`. `max_drawdown_pct` normiert
+auf den laufenden Peak, aber die additive Equity dieser fleet-weiten Replays
+verkettet 8,8–20,2 gleichzeitige Signale pro Zeitstempel als sequenzielle
+Einzelwetten und fällt tief unter null (rub/LONG: 72 % des Pfades negativ). Der
+Quotient misst dann die zufällige Peak-Höhe statt der Verlust-Clusterung: mit
+absolutem DD in %-Punkten kippt rub/LONG von p = 1,000 („untypisch gnädiger
+Pfad") auf p = 0,005 (schlechter als 199 von 200 Zufallsreihenfolgen) — die
+bisherige Regel hätte das DD-Budget genau falsch herum gesetzt. Statistik 2 ist
+in der Doku auf „nicht operativ lesen" gestellt; Fix ist T-2026-CU-9050-053.
+Statistik 1 und 3 sind reihenfolge-invariant und unberührt.
 ## [2026-07-10] EPD und SRA laden ihr Artefakt über den geteilten Contract (T-2026-CU-9050-042)
 
 Letzte zwei Instanzen der P1.45-Fehlerklasse: ein Post-Pfad schreibt einen
