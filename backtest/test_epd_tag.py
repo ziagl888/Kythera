@@ -22,7 +22,10 @@ What this guard protects:
     builder, and a missing funding HISTORY yields 0 exactly as the trainer's
     fillna(0) — while a missing feature NAME still refuses the artifact (P0.12);
   * the shadow-log dedupe probes the legacy tag too, because the tag is the
-    dedupe key and it flips on the generation switch.
+    dedupe key and it flips on the generation switch;
+  * an active-trade check against ai_signals stops a second live position on a coin
+    whose trade outlived the in-memory 900s timer (T-2026-CU-9050-055), and the
+    funding load goes through the value-neutral per-hour cache.
 
 Run: python backtest/test_epd_tag.py
 """
@@ -109,14 +112,48 @@ def test_epd2_uses_binary_success_probability():
     )
 
 
-def test_funding_features_are_served_asof_the_event():
-    """tools/epd2_build_dataset.py takes funding as-of the event timestamp; the
-    live event IS this tick, so serving must use `now`, not a candle boundary."""
-    assert re.search(r"load_funding\(conn,\s*\[symbol\],\s*since=now\s*-\s*datetime\.timedelta\(days=95\)\)", SRC), (
-        "the funding history load lost its since-bound or its symbol scope"
+def test_funding_features_are_served_asof_the_event_through_the_cache():
+    """tools/epd2_build_dataset.py takes funding as-of the event timestamp; the live
+    event IS this tick, so serving must use `now`, not a candle boundary.
+
+    The funding features are model INPUT, so the load cannot move behind the trade
+    decision — what the per-hour cache removes is the repetition (T-2026-CU-9050-055).
+    Its values are identical; see backtest/test_funding_cache.py."""
+    assert re.search(r"funding_features_cached\(conn,\s*symbol,\s*now\)", SRC), (
+        "funding is no longer served as-of the event through the per-hour cache"
     )
-    assert re.search(r"funding_features_asof\(fund_by_sym,\s*symbol,\s*now\)", SRC), (
-        "funding features are no longer taken as-of the event timestamp — training/serving parity breaks"
+    assert not re.search(r"\bload_funding\(", SRC), (
+        "a raw load_funding call is back in the 10s loop — the cache was bypassed"
+    )
+
+
+def test_active_trade_check_blocks_a_second_position():
+    """T-2026-CU-9050-055: the 900s re-fire timer is a FREQUENCY guard and lives only
+    in memory. An EPD trade routinely outlives it, so without a check against the open
+    trades in ai_signals the next signal opens a SECOND live position on the same coin.
+    Same shape as 11_ai_mis_bot.py:318 and 13_ai_rub_bot.py."""
+    assert re.search(
+        r"SELECT 1 FROM ai_signals\s*\n\s*WHERE symbol = %s AND direction = %s AND model IN \(%s, %s\)", SRC
+    ), "the active-trade check against ai_signals is gone — a trade outliving the 900s timer could re-fire"
+    assert re.search(r"if cur\.fetchone\(\):\s*\n\s*return", SRC), (
+        "the active-trade check no longer skips the signal when an open trade exists"
+    )
+
+
+def test_active_trade_check_uses_the_posting_tag_and_the_legacy_tag():
+    """The check keys on the tag, so it must bind the tag the post path writes plus the
+    pre-fix tag. On an EPD3 rollout an open EPD2 position would otherwise stop blocking,
+    reopening exactly the hole the guard closes."""
+    assert re.search(r"\(symbol,\s*best_direction,\s*module_tag,\s*EPD_LEGACY_TAG\)", SRC), (
+        "the active-trade check no longer binds (module_tag, EPD_LEGACY_TAG)"
+    )
+
+
+def test_active_trade_check_runs_before_the_shadow_log():
+    """Like MIS/RUB the guard suppresses the shadow row too — the open trade is what
+    matters, not the log line. Below the branching it would post first."""
+    assert SRC.index("SELECT 1 FROM ai_signals") < SRC.index("if best_prob < EPD_SHADOW_THRESHOLD"), (
+        "the active-trade check moved below the shadow/post branching"
     )
 
 
