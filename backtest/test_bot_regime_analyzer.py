@@ -416,3 +416,147 @@ def test_epd1_realistic_distribution():
     assert 65500 < len(filtered) < 65800
     wr = filtered["is_win"].sum() / len(filtered) * 100
     assert 57.0 < wr < 58.5, f"WR außerhalb erwartetem Bereich: {wr:.2f}%"
+
+
+# ── B9-Zensur-Korrektur (T-2026-CU-9050-048) ──────────────────────────────────
+# REGIME_CHANGE-Closes zählen mit realem PnL als Win/Loss statt pauschal neutral.
+# DELISTED/CLEANUP/ORPHAN bleiben neutral; near-0%-Closes fängt der Micro-Filter.
+
+def test_b9_classify_outcome_regime_change_counts_win():
+    """CLOSED_REGIME_CHANGE mit signifikantem +PnL ist jetzt ein Win."""
+    mod = _load_analyzer_module()
+    assert mod._classify_outcome("CLOSED_REGIME_CHANGE", 4.2) == "win"
+    assert mod._classify_outcome("REGIME_CHANGE:not_whitelisted", 2.5) == "win"
+
+
+def test_b9_classify_outcome_regime_change_counts_loss():
+    """Der zuvor zensierte Fall: ein realisierter Regime-Wechsel-Verlust
+    ist jetzt ein Loss (das war die WR-Verzerrung aus Report 16 B9)."""
+    mod = _load_analyzer_module()
+    assert mod._classify_outcome("CLOSED_REGIME_CHANGE", -3.7) == "loss"
+
+
+def test_b9_classify_outcome_regime_change_micro_still_neutral():
+    """Ein Regime-Close nahe Break-even bleibt neutral (Micro-PnL-Filter)."""
+    mod = _load_analyzer_module()
+    assert mod._classify_outcome("CLOSED_REGIME_CHANGE", 0.05) == "neutral"
+
+
+def test_b9_delisted_and_cleanup_still_neutral():
+    """B9 berührt NUR REGIME_CHANGE — echte Housekeeping-Closes bleiben neutral."""
+    mod = _load_analyzer_module()
+    assert mod._classify_outcome("DELISTED / CLEANUP", -12.0) == "neutral"
+    assert mod._classify_outcome("MANUAL CLEANUP", +6.0) == "neutral"
+    assert mod._classify_outcome("ORPHAN CLOSE", -4.0) == "neutral"
+
+
+# ── v2 Whitelist: Netto-Expectancy-Untergrenze + EB-Shrinkage ─────────────────
+# _v2_expectancy_lower_bound / _v2_whitelist_decision sind pure/DB-frei.
+
+def test_v2_lower_bound_matches_eb_formula():
+    """Pin die Shrinkage-Formel gegen die Modul-Konstanten (bleibt gültig,
+    wenn die Konstanten später kalibriert werden)."""
+    mod = _load_analyzer_module()
+    import math
+    cell = {"n": 100, "avg_pnl": 1.0, "std": 2.0}
+    est, lb, n_eff, src = mod._v2_expectancy_lower_bound(cell, None, None)
+    k = mod.V2_SHRINKAGE_PSEUDO_COUNT
+    z = mod.V2_LOWER_BOUND_Z
+    w = 100.0 / (100.0 + k)
+    exp_est = w * 1.0 + (1.0 - w) * mod.V2_PRIOR_MEAN_PNL_PCT
+    exp_neff = 100.0 + k
+    exp_se = 2.0 / math.sqrt(exp_neff)
+    assert est == pytest.approx(exp_est)
+    assert lb == pytest.approx(exp_est - z * exp_se)
+    assert n_eff == pytest.approx(exp_neff)
+    assert src == "cell"
+
+
+def test_v2_no_data_anywhere_is_not_whitelisted():
+    """B1-Fix: eine Zelle ganz ohne Evidenz wird NICHT default-open
+    durchgewunken (v1 tat genau das über `insufficient_data`)."""
+    mod = _load_analyzer_module()
+    whitelisted, reason = mod._v2_whitelist_decision(None, None, None)
+    assert whitelisted is False
+    assert "src=prior" in reason
+
+
+def test_v2_strong_positive_cell_is_whitelisted():
+    """Viele Trades, klar positive Expectancy, niedrige Streuung → Untergrenze
+    über Break-even → whitelisted."""
+    mod = _load_analyzer_module()
+    cell = {"n": 200, "avg_pnl": 1.5, "std": 2.0}
+    whitelisted, reason = mod._v2_whitelist_decision(cell, None, None)
+    assert whitelisted is True
+    assert "v2_pass" in reason
+
+
+def test_v2_negative_expectancy_blocked_despite_data():
+    """Der Kern des Umbaus: eine Zelle mit negativer Netto-Expectancy wird
+    geblockt — egal wie die WR aussieht (v1 hätte sie evtl. durchgelassen)."""
+    mod = _load_analyzer_module()
+    cell = {"n": 200, "avg_pnl": -0.4, "std": 2.0}
+    whitelisted, _ = mod._v2_whitelist_decision(cell, None, None)
+    assert whitelisted is False
+
+
+def test_v2_sparse_cell_inherits_strong_parent():
+    """Eine leere 4D-Zelle leiht Stärke vom robusten Bot×ALL-Level: die
+    Schätzung wird Richtung Eltern-Mittel gezogen, prior_source=bot_all."""
+    mod = _load_analyzer_module()
+    parent_overall = {"n": 500, "avg_pnl": 0.8, "std": 1.5}
+    est, lb, n_eff, src = mod._v2_expectancy_lower_bound(None, None, parent_overall)
+    assert src == "bot_all"
+    assert 0.0 < est < 0.8           # zwischen Prior (0) und Eltern-Mittel
+    whitelisted, _ = mod._v2_whitelist_decision(None, None, parent_overall)
+    assert whitelisted is True
+
+
+def test_v2_smaller_n_gives_lower_bound():
+    """Gleiches Mittel + gleiche Streuung, weniger Trades → engere Evidenz,
+    tiefere Untergrenze (Shrinkage + breiteres Intervall)."""
+    mod = _load_analyzer_module()
+    big = mod._v2_expectancy_lower_bound({"n": 200, "avg_pnl": 1.0, "std": 2.0}, None, None)
+    small = mod._v2_expectancy_lower_bound({"n": 10, "avg_pnl": 1.0, "std": 2.0}, None, None)
+    assert small[1] < big[1]  # lb
+
+
+def test_v2_higher_variance_gives_lower_bound():
+    """Gleiches Mittel + gleiches n, höhere Streuung → tiefere Untergrenze."""
+    mod = _load_analyzer_module()
+    calm = mod._v2_expectancy_lower_bound({"n": 100, "avg_pnl": 1.0, "std": 1.0}, None, None)
+    wild = mod._v2_expectancy_lower_bound({"n": 100, "avg_pnl": 1.0, "std": 6.0}, None, None)
+    assert wild[1] < calm[1]  # lb
+
+
+def test_v2_finest_populated_level_dominates_source():
+    """Der prior_source verfolgt das feinste Level mit Daten."""
+    mod = _load_analyzer_module()
+    cell = {"n": 60, "avg_pnl": 1.2, "std": 2.0}
+    pr = {"n": 120, "avg_pnl": 0.9, "std": 2.0}
+    po = {"n": 400, "avg_pnl": 0.5, "std": 2.0}
+    _, _, _, src = mod._v2_expectancy_lower_bound(cell, pr, po)
+    assert src == "cell"
+    # Ohne Zell-Daten fällt die Quelle auf Bot×Regime zurück
+    _, _, _, src2 = mod._v2_expectancy_lower_bound(None, pr, po)
+    assert src2 == "bot_regime"
+
+
+def test_v2_reason_string_is_parseable():
+    """reason_v2 trägt lb/est/src/neff für den Counterfactual-Vergleich."""
+    mod = _load_analyzer_module()
+    _, reason = mod._v2_whitelist_decision({"n": 100, "avg_pnl": 1.0, "std": 2.0}, None, None)
+    for token in ("v2_", "lb=", "est=", "src=", "neff="):
+        assert token in reason
+
+
+def test_v2_shrinkage_pulls_extreme_small_cell_toward_parent():
+    """Eine kleine Zelle mit extremem Mittel wird zum Eltern-Mittel geschrumpft
+    (statt dem Rauschen zu vertrauen)."""
+    mod = _load_analyzer_module()
+    parent_overall = {"n": 500, "avg_pnl": 0.5, "std": 2.0}
+    est, _, _, _ = mod._v2_expectancy_lower_bound(
+        {"n": 4, "avg_pnl": 9.0, "std": 2.0}, None, parent_overall
+    )
+    # 4 Trades ziehen die 9%-Spitze kaum durch — est bleibt nahe am Eltern-Mittel
+    assert est < 2.0

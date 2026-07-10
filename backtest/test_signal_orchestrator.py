@@ -276,20 +276,32 @@ def test_identify_bot_legacy_qm_bull_still_works():
 
 # ── Regime-Change Outcome Classification ─────────────────────────────────────
 
-def test_classify_outcome_regime_change_is_neutral():
-    """REGIME_CHANGE-Close wird als CLOSED_NEUTRAL klassifiziert —
-    weder Win noch Loss, weil der Close extern ausgelöst wurde."""
-    # LONG +5% PnL aber als REGIME_CHANGE geschlossen → NEUTRAL (nicht WIN)
+def test_classify_outcome_regime_change_counts_real_pnl():
+    """B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE-Closes zählen
+    mit ihrem realen PnL als Win/Loss statt pauschal neutral — ein Auto-Close
+    ist der Exit des Trades, kein externes Housekeeping. Vorher zensierte das
+    genau die per Regime-Wechsel realisierten Verluste (Report 16 B9)."""
+    # LONG +5% PnL, als REGIME_CHANGE geschlossen → echter WIN (vorher NEUTRAL)
     result = orch._classify_outcome_by_pnl(
         "LONG", entry=100.0, close_price=105.0,
         close_reason="REGIME_CHANGE:not_whitelisted"
     )
-    assert result == "CLOSED_NEUTRAL"
+    assert result == "CLOSED_TP"
 
-    # Auch bei Loss → NEUTRAL
+    # Realisierter Verlust darf nicht mehr zensiert werden → echter LOSS
     result = orch._classify_outcome_by_pnl(
         "LONG", entry=100.0, close_price=95.0,
         close_reason="REGIME_CHANGE:btc_trend_down"
+    )
+    assert result == "CLOSED_SL"
+
+
+def test_classify_outcome_regime_change_micro_pnl_still_neutral():
+    """B9: ein Regime-Close nahe Break-even (|pnl| <= Micro-Filter) bleibt
+    neutral — nur signifikanter realisierter PnL wird zu Win/Loss."""
+    result = orch._classify_outcome_by_pnl(
+        "LONG", entry=100.0, close_price=100.05,  # +0.05% < OUTCOME_MIN_PNL_PCT
+        close_reason="REGIME_CHANGE:chop"
     )
     assert result == "CLOSED_NEUTRAL"
 

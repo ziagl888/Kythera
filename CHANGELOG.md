@@ -39,6 +39,58 @@ getrennt vom Basis-AIM2-Posting.
 
 Design: `docs/MODEL_INTENT.md` §9a. Verifiziert: `backtest/test_aim2_topn.py`
 (17 grün), `guard.py verify` (24 Fixtures), ruff+mypy lokal grün.
+## [2026-07-10] ROM1-Whitelist v2 als Shadow-Spalte: Netto-Expectancy statt WR + hierarchisches Shrinkage + B9-Zensur-Korrektur (T-2026-CU-9050-048)
+
+Der Gate-Umbau aus Report 16 (Empfehlungen 6+7), gebaut **ausschließlich als
+Shadow-Spalte**. Der Live-Gate bleibt unverändert auf v1 — scharf schalten ist
+Michis Entscheidung nach dem Counterfactual-Vergleich (T-2026-CU-9050-047), nicht
+Teil dieses Tasks.
+
+### Warum
+Die 4D-Whitelist hat zwei strukturelle Fehler (Report 16): **B1** — 89 % der
+frischen Zellen sind `insufficient_data` und werden default-open durchgewunken
+(n < 30 entscheidet nicht, sondern winkt durch); **B2** — Median 7 Trades/Zelle,
+der WR-Punktschätzer ist zu verrauscht, und ein 55 %-WR-Bot mit winzigen Wins +
+großen Losses ist netto ein Verlierer, den der reine WR-Gate durchlässt.
+
+### Was v2 anders macht (Shadow)
+`compute_whitelist` (27_bot_regime_analyzer) schreibt neben der v1-Entscheidung
+eine zweite: `whitelisted_v2` = die **untere Konfidenzgrenze der Netto-Expectancy
+(avg_pnl_pct) über dem Break-even**, geschätzt mit Empirical-Bayes-Shrinkage über
+die Hierarchie Bot×Regime×Alt → Bot×Regime → Bot×ALL. Eine sparse Zelle leiht
+Stärke vom übergeordneten Mittel (Gewicht n/(n+k)), eine Zelle ganz ohne Evidenz
+bleibt am neutralen Prior und wird **nicht** whitelisted — das killt die
+default-open-Krücke (B1). Die nötigen Spalten (`avg_pnl_pct`, `pnl_stddev`) lagen
+längst in `bot_regime_performance` und wurden bisher ignoriert. Alle Knöpfe
+(Break-even-Floor, Prior-Stärke k, z-Multiplikator) sind benannte Konstanten mit
+konservativen Startwerten — sie werden vor jedem Flip auf der VPS-DB kalibriert,
+nicht hier festgezurrt. Die neuen Spalten sind additiv (`ALTER … IF NOT EXISTS`),
+das Live-Gate (`get_whitelist_decision`) liest weiter `whitelisted`.
+
+### B9-Zensur-Korrektur
+`CLOSED_REGIME_CHANGE`-Trades zählen jetzt mit ihrem **realen PnL zum
+Close-Zeitpunkt** als Win/Loss statt pauschal neutral — der Auto-Close ist der
+Exit des Trades, kein externes Housekeeping. Vorher zensierte das genau die per
+Regime-Wechsel realisierten Verluste und biaste die gemessene ROM1-WR nach oben
+(Report 16 B9). Angewandt konsistent an allen vier Klassifikations-Stellen
+(`27_bot_regime_analyzer._classify_outcome`, `28_signal_orchestrator._classify_outcome_by_pnl`,
+`23_market_tracker` beide Klassifikatoren), damit Report-WR und Whitelist-WR nicht
+divergieren. `DELISTED/CLEANUP/ORPHAN` bleiben neutral; near-0 %-Regime-Closes
+fängt weiter der Micro-PnL-Filter. In der Praxis trägt nur `model='ROM1'` diesen
+Marker (P1.9), die Korrektur berührt also keine Fremd-Bot-Statistik und **nicht**
+den Live-Gate (der auf die Trigger-Bots gatet, nie auf ROM1). **Michi-Hinweis:**
+die auf VPS-Reports/Market-Tracker angezeigte ROM1-WR sinkt dadurch sichtbar —
+das ist Messkorrektur, kein Regressionsverlust.
+
+### Disziplin
+Kein Gate-Flip, kein Scharf-Schalten, kein Live-Eingriff. B1/B2 bleiben live in
+Kraft (v1), bis Michi nach dem Counterfactual-Vergleich flippt. Verifikation:
+`backtest/test_bot_regime_analyzer.py` (neue Tests der Shrinkage-Mathe: Formel-Pin
+gegen die Konstanten, Monotonie in n und Streuung, Prior-Fallback-Hierarchie,
+B1-No-Default-Open, Expectancy-Block trotz WR; plus B9-Klassifikation) und
+`test_signal_orchestrator.py` grün (46 + 75 Tests), ruff/format/mypy sauber,
+Regression-Guard `verify` unverändert (24 Fixtures, kein Indikator-Pfad berührt).
+Der scharfe v1↔v2-Vergleich braucht eine VPS-DB-Session.
 
 ## [2026-07-10] Der Gate-Wert wird messbar: ROM1-Counterfactual-Scorer für unterdrückte Signale (T-2026-CU-9050-047)
 

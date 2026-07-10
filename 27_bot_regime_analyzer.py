@@ -5,7 +5,11 @@ Bot-Regime-Analyzer — Phase 2 des Regime-Orchestrators.
 Läuft stündlich zu XX:05:00 und:
   1. Berechnet für jeden Bot × Regime × Alt-Context × Direction die historische Performance
   2. Schreibt Ergebnisse in bot_regime_performance (UPSERT)
-  3. Berechnet bot_regime_whitelist (zweistufige Logik)
+  3. Berechnet bot_regime_whitelist:
+       v1 (LIVE) — zweistufige WR-Logik, autoritativ für den Gate
+       v2 (SHADOW, T-2026-CU-9050-048) — Netto-Expectancy-Untergrenze mit
+          hierarchischem EB-Shrinkage in den Spalten whitelisted_v2/reason_v2;
+          NICHT vom Live-Gate gelesen (Flip ist Michis Entscheidung)
   4. Postet täglich um 07:00 UTC ein Cross-Table-Post
 
 Aufruf mit --initial-run für vollständigen Einmal-Durchlauf.
@@ -16,6 +20,7 @@ Watchdog: start_delay=167
 from __future__ import annotations
 
 import asyncio
+import math
 import statistics
 import sys
 import warnings
@@ -45,6 +50,52 @@ COUNTER_TREND_MIN_ADVANTAGE_PP: float = 10.0
 MIN_TRADES_FOR_DECISION: int = 30
 REFERENCE_WINDOW_DAYS: int = 30
 ANALYSIS_WINDOWS: list[int] = [7, 30, 90]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHITELIST v2 — Netto-Expectancy-Gate mit hierarchischem Shrinkage
+# (T-2026-CU-9050-048, Report 16 Empfehlungen 6+7)
+# ─────────────────────────────────────────────────────────────────────────────
+# Der v1-Gate (wr_bot >= wr_overall) hat zwei strukturelle Fehler (Report 16):
+#   B1 — 89% der frischen Zellen sind `insufficient_data` → default-open
+#        (n < MIN_TRADES_FOR_DECISION winkt durch statt zu entscheiden).
+#   B2 — Median 7 Trades/Zelle: der WR-Punktschätzer ist zu verrauscht, um eine
+#        4D-Selektion zu tragen; ein 55%-WR-Bot mit winzigen Wins + großen
+#        Losses ist netto ein Verlierer, den der WR-Gate durchlässt.
+#
+# v2 ersetzt den WR-Punktschätzer durch die UNTERE Konfidenzgrenze der
+# Netto-Expectancy (avg_pnl_pct), geschätzt mit Empirical-Bayes-Shrinkage über
+# die Hierarchie Bot×Regime×Alt → Bot×Regime → Bot×ALL. Die Zelle wird nur
+# whitelisted, wenn diese konservative Untergrenze über dem Break-even liegt —
+# es gibt keine `insufficient_data`-Krücke mehr, jede Zelle liefert eine
+# benutzbare, nach unten gezogene Schätzung (kein default-open).
+#
+# WICHTIG: v2 ist eine SHADOW-Spalte (whitelisted_v2). Der Live-Gate liest
+# weiter v1. Scharf-Schalten ist ausschließlich Michis Entscheidung nach dem
+# Counterfactual-Vergleich (T-2026-CU-9050-047). Die Konstanten unten sind
+# bewusst konservative Startwerte — sie werden vor jedem Flip auf der VPS-DB
+# kalibriert, nicht hier festgezurrt.
+#
+# Break-even in avg_pnl_pct-Einheiten: avg_pnl_pct ist der rohe (ungehebelte)
+# Preis-Move in %, NICHT fee-adjusted. Round-trip-Taker-Fees auf dem Notional
+# liegen grob bei einem Zehntelprozent; wir verlangen die Untergrenze > diesem
+# Floor statt nur > 0. Deckt sich zufällig mit OUTCOME_MIN_PNL_PCT (Neutral-Band).
+V2_BREAK_EVEN_PNL_PCT: float = 0.1
+# Prior-Stärke der Shrinkage in Pseudo-Beobachtungen (EB: τ² = σ²/k). Eine Zelle
+# mit n echten Trades trägt Gewicht n/(n+k) gegenüber dem übergeordneten Mittel;
+# die Posterior-Varianz ist σ²/(n+k). Größer = mehr Vertrauen in den Prior
+# (Eltern-Level), kleiner = die Zelle setzt sich schneller durch.
+V2_SHRINKAGE_PSEUDO_COUNT: float = 25.0
+# z-Multiplikator der einseitigen Untergrenze (~95% ≈ 1.64). Höher = strenger.
+V2_LOWER_BOUND_Z: float = 1.64
+# Neutraler Prior-Mittelwert, gegen den das gröbste Level geschrumpft wird. 0.0
+# = "über eine Zelle ohne Evidenz nehmen wir Break-even an" — eine Zelle ganz
+# ohne Daten bleibt bei 0, die Untergrenze wird negativ, sie wird NICHT
+# whitelisted (das ist der B1-Fix: kein default-open).
+V2_PRIOR_MEAN_PNL_PCT: float = 0.0
+# Fallback-Streuung, wenn auf keinem Level eine belastbare Stddev (n>=2) liegt.
+# Nur relevant für Zellen fast ohne Daten — die scheitern über die weite
+# Untergrenze ohnehin; der Wert verhindert nur Division-durch-0.
+V2_DEFAULT_PNL_STDDEV: float = 5.0
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TRADE-OUTCOME-KLASSIFIKATION
@@ -134,9 +185,18 @@ def _classify_outcome(close_reason: str, pnl_pct: float) -> str:
     """
     reason = (close_reason or "").upper()
     # Housekeeping-Closes: weder Win noch Loss (extern verursacht,
-    # nicht vom Bot-Signal). Umfasst Delisting, Orphan-Cleanup und
-    # Regime-Wechsel-Forced-Closes.
-    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason or "REGIME_CHANGE" in reason:
+    # nicht vom Bot-Signal). Umfasst Delisting und Orphan-Cleanup.
+    #
+    # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE ist NICHT mehr
+    # dabei. Ein Regime-Wechsel-Forced-Close hat einen realen PnL zum
+    # Close-Zeitpunkt — den als "neutral" zu verwerfen zensiert genau die
+    # Verluste, die der Orchestrator selbst durch Auto-Close realisiert, und
+    # biast die gemessene ROM1-WR nach oben (Report 16, B9). Solche Closes
+    # laufen jetzt durch die normale PnL-Klassifikation; near-0%-Closes bleiben
+    # über den Micro-PnL-Filter (OUTCOME_MIN_PNL_PCT) trotzdem neutral. In der
+    # Praxis trägt nur model='ROM1' diesen Marker (P1.9), die Korrektur berührt
+    # also keine Fremd-Bot-Statistik.
+    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason:
         return "neutral"
     if pnl_pct is None or (isinstance(pnl_pct, float) and pd.isna(pnl_pct)):
         return "neutral"
@@ -532,24 +592,118 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _v2_expectancy_lower_bound(
+    cell: dict | None,
+    parent_regime: dict | None,
+    parent_overall: dict | None,
+) -> tuple[float, float, float, str]:
+    """Hierarchical Empirical-Bayes lower bound of a cell's net expectancy.
+
+    Each level dict (or None if that level has no performance row) carries::
+
+        {"n": int, "avg_pnl": float | None, "std": float | None}
+
+    with avg_pnl = avg_pnl_pct and std = pnl_stddev from bot_regime_performance.
+    The three levels form the hierarchy (finest first, as the caller passes them):
+
+      cell           = Bot × Regime × Alt × Direction  — the 4D cell we decide
+      parent_regime  = Bot × Regime × ALL × Direction  — pooled over alt_context
+      parent_overall = Bot × ALL    × ALL × Direction  — the bot's overall dir
+
+    Shrinkage (sequential EB, coarse→fine): start at V2_PRIOR_MEAN_PNL_PCT and,
+    for each level that has data, blend the running estimate toward that level's
+    mean with weight n / (n + k). The finest well-populated level dominates; a
+    sparse 4D cell inherits the coarser (Bot×Regime, then Bot×ALL) estimate; a
+    cell with no data at ANY level stays at the neutral prior (→ lb < break-even
+    → not whitelisted). This is the B1 fix: no `insufficient_data` default-open.
+
+    Lower bound (EB posterior): se = std_used / sqrt(n_cell + k),
+    lb = est − z·se. n_cell is the 4D cell's OWN n (0 if absent) — the prior
+    contributes k pseudo-observations of certainty, so a sparse cell keeps a
+    wide interval even when a strong parent lifts `est`, and must earn its own
+    evidence (or lean on a robustly-positive parent) to clear break-even.
+    std_used is the finest level with a usable spread (n≥2), else the coarser
+    fallback, else V2_DEFAULT_PNL_STDDEV.
+
+    Returns (shrunk_mean, lower_bound, n_eff, prior_source). Pure/DB-free.
+    """
+    # Coarse → fine so the finest populated level wins the sequential blend.
+    ordered = [
+        ("bot_all", parent_overall),
+        ("bot_regime", parent_regime),
+        ("cell", cell),
+    ]
+
+    est = V2_PRIOR_MEAN_PNL_PCT
+    prior_source = "prior"
+    for name, lvl in ordered:
+        if lvl and lvl.get("n") and lvl["n"] > 0 and lvl.get("avg_pnl") is not None:
+            n = float(lvl["n"])
+            w = n / (n + V2_SHRINKAGE_PSEUDO_COUNT)
+            est = w * float(lvl["avg_pnl"]) + (1.0 - w) * est
+            prior_source = name
+
+    # Streuung: feinstes Level mit belastbarer Stddev (fine → coarse).
+    std_used: float | None = None
+    for _name, lvl in reversed(ordered):
+        if lvl and lvl.get("n") and lvl["n"] >= 2 and lvl.get("std") is not None:
+            s = float(lvl["std"])
+            if math.isfinite(s) and s > 0:
+                std_used = s
+                break
+    if std_used is None:
+        std_used = V2_DEFAULT_PNL_STDDEV
+
+    n_cell = float(cell["n"]) if (cell and cell.get("n")) else 0.0
+    n_eff = n_cell + V2_SHRINKAGE_PSEUDO_COUNT
+    se = std_used / math.sqrt(n_eff)
+    lb = est - V2_LOWER_BOUND_Z * se
+    return est, lb, n_eff, prior_source
+
+
+def _v2_whitelist_decision(
+    cell: dict | None,
+    parent_regime: dict | None,
+    parent_overall: dict | None,
+) -> tuple[bool, str]:
+    """Shadow v2 gate decision for one 4D cell (see _v2_expectancy_lower_bound).
+
+    whitelisted_v2 = (lower bound of net expectancy > break-even). The reason
+    string carries the numbers so the counterfactual comparison
+    (tools/rom1_counterfactual.py) can bucket by gate path and audit the flip.
+    """
+    est, lb, n_eff, src = _v2_expectancy_lower_bound(cell, parent_regime, parent_overall)
+    whitelisted = lb > V2_BREAK_EVEN_PNL_PCT
+    verdict = "pass" if whitelisted else "block"
+    reason = f"v2_{verdict}:lb={lb:.3f}:est={est:.3f}:src={src}:neff={n_eff:.0f}"
+    return whitelisted, reason
+
+
 def compute_whitelist(conn) -> int:
     """
     Computes bot_regime_whitelist from bot_regime_performance.
-    Uses 2-stage logic:
+
+    v1 (LIVE gate, unchanged) — 2-stage logic:
       Stage 1: Counter-trend direction? → strict rule (≥60% AND ≥overall+10pp)
       Stage 2: Standard direction?      → wr ≥ overall suffices
       n < MIN_TRADES_FOR_DECISION        → whitelisted (insufficient data)
+
+    v2 (SHADOW column whitelisted_v2, T-2026-CU-9050-048) — net-expectancy
+    lower bound with hierarchical EB shrinkage (_v2_whitelist_decision). Written
+    alongside v1; NOT read by the live gate. The flip to v2 is Michi's call
+    after the counterfactual comparison (T-2026-CU-9050-047) — never here.
 
     Returns number of whitelist rows written.
     """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    # Load all relevant performance data
+    # Load all relevant performance data. avg_pnl_pct + pnl_stddev feed the v2
+    # shadow gate (net-expectancy shrinkage); v1 only needs n + win_rate.
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT bot_name, regime, alt_context, direction,
-                   n_trades, win_rate
+                   n_trades, win_rate, avg_pnl_pct, pnl_stddev
             FROM bot_regime_performance
             WHERE window_days = %s
             """,
@@ -565,7 +719,12 @@ def compute_whitelist(conn) -> int:
     perf: dict[tuple, dict] = {}
     for row in perf_rows:
         key = (row[0], row[1], row[2], row[3])
-        perf[key] = {"n": row[4], "wr": row[5] or 0.0}
+        perf[key] = {
+            "n": row[4],
+            "wr": row[5] or 0.0,
+            "avg_pnl": row[6],
+            "std": row[7],
+        }
 
     # Collect all bots
     all_bots = {r[0] for r in perf_rows}
@@ -587,6 +746,17 @@ def compute_whitelist(conn) -> int:
                     overall = perf.get(overall_key, {})
                     wr_overall = overall.get("wr", 0.0)
 
+                    # ── v2 SHADOW decision (T-2026-CU-9050-048) ──────────────
+                    # Net-expectancy lower bound with hierarchical EB shrinkage
+                    # Bot×Regime×Alt → Bot×Regime → Bot×ALL. Written to the
+                    # shadow columns only; the live gate stays on v1 below.
+                    whitelisted_v2, reason_v2 = _v2_whitelist_decision(
+                        perf.get(cell_key),
+                        perf.get((bot, regime, "ALL", direction)),
+                        perf.get(overall_key),
+                    )
+
+                    # ── v1 LIVE decision (unchanged, authoritative) ──────────
                     # Decision logic
                     if n < MIN_TRADES_FOR_DECISION:
                         whitelisted = True
@@ -619,6 +789,8 @@ def compute_whitelist(conn) -> int:
                             whitelisted,
                             reason,
                             now_utc,
+                            whitelisted_v2,
+                            reason_v2,
                         )
                     )
 
@@ -628,13 +800,16 @@ def compute_whitelist(conn) -> int:
             """
             INSERT INTO bot_regime_whitelist
                 (bot_name, regime, alt_context, direction,
-                 whitelisted, reason, computed_at)
+                 whitelisted, reason, computed_at,
+                 whitelisted_v2, reason_v2)
             VALUES %s
             ON CONFLICT (bot_name, regime, alt_context, direction)
             DO UPDATE SET
                 whitelisted = EXCLUDED.whitelisted,
                 reason = EXCLUDED.reason,
-                computed_at = EXCLUDED.computed_at
+                computed_at = EXCLUDED.computed_at,
+                whitelisted_v2 = EXCLUDED.whitelisted_v2,
+                reason_v2 = EXCLUDED.reason_v2
             """,
             whitelist_rows,
         )
