@@ -1,3 +1,31 @@
+## [2026-07-10] ATB1: posted-Flag spiegelt den Live-Trade, nicht hart False (T-2026-CU-9050-062, P1.47)
+
+`14_ai_atb_bot.py` loggte jede Prediction ab `ml_prob >= 0.25` nach
+`ml_predictions_master`, hart mit `posted=False` — auch die, die tatsächlich
+gehandelt wurden (`ml_prob >= threshold`). Der Live-Trade selbst (`send_signal`)
+schreibt nur nach `ai_signals`, es gab also nie eine `posted=True`-Zeile.
+
+Folge seit P1.44: der `created_at`-JOIN des Market-Trackers (`m.posted = TRUE`)
+matchte keine einzige ATB1-Zeile, offene ATB1-Positionen fielen dauerhaft auf
+`NOW()` zurück und wirkten in den Opened-Buckets ewig frisch. Anders als
+ATS1/RUB1/MIS1/SRA1, die auf ihrem Live-Zweig `posted=True` schreiben.
+
+Der Flag kommt jetzt aus `_atb1_posted_flag(ml_prob, threshold)` — `True` genau
+dann, wenn die Prediction den Trade auslöst. Als reine Funktion extrahiert, weil
+`run_trendline_detector` als Ganzes nicht treibbar ist; so ist die Grenze
+(`threshold`, **nicht** das 0.25-Shadow-Gate) testbar und gegen ein späteres
+„Vereinfachen" gesichert.
+
+Wirkung nur Anzeige — Kelly/WR ziehen `created_at` aus
+`closed_ai_signals.open_time`, nicht aus dem JOIN. Kein Deploy; ATB1 ist
+geparkt, der Fix greift beim nächsten Restart. Vor dem Entparken von Bot 14 war
+das die offene Auflage.
+
+Verifikation: `backtest/test_atb1_posted_flag.py` (neu, standalone, DB-frei,
+5/5) — alle fünf fallen auf dem Pre-Fix-Stand. ruff + format + mypy grün.
+
+---
+
 ## [2026-07-10] AIM2-TOPN: "Top 1-3 des Tages" als High-Conviction-Kanal, default-off (T-2026-CU-9050-051)
 
 Aus T-2026-CU-9050-031, Weg 2: der strukturelle Pfad zu „täglich 1-3 Trades, sehr

@@ -156,6 +156,20 @@ def find_pivots(df, distance=8):
     return high_peaks, low_peaks
 
 
+def _atb1_posted_flag(ml_prob: float, threshold: float) -> bool:
+    """Ob eine ATB1-Prediction als GEHANDELT (posted=True) ins ml_predictions_master
+    geht. Genau dann, wenn sie den Live-Trade auslöst — dasselbe Prädikat wie
+    send_signal weiter unten (`ml_prob >= threshold`).
+
+    P1.47: der Shadow-Insert lief für alles ab 0.25, hart mit posted=False —
+    auch für tatsächlich gehandelte Trades. Der created_at-JOIN des
+    Market-Trackers (m.posted = TRUE, P1.44) matcht darum keine ATB1-Zeile, und
+    offene ATB1-Positionen wirken in den Opened-Buckets ewig frisch. Die Grenze
+    ist threshold, NICHT das 0.25-Shadow-Gate: nur ab threshold wird gehandelt.
+    """
+    return bool(ml_prob >= threshold)
+
+
 def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
     is_long = "UP" in event_type_str
     model_to_use = MODELS['LONG'] if is_long else MODELS['SHORT']
@@ -717,9 +731,23 @@ def run_trendline_detector():
                                 ),
                             )
 
+                            # P1.47: posted spiegelt, ob diese Prediction TATSÄCHLICH
+                            # gehandelt wird (siehe _atb1_posted_flag). Vorher stand
+                            # hier hart False, auch für ausgeführte Trades — dadurch
+                            # matchte der created_at-JOIN im Market-Tracker
+                            # (m.posted = TRUE, P1.44) keine einzige ATB1-Zeile, und
+                            # offene ATB1-Positionen fielen dauerhaft auf NOW() zurück.
                             cur.execute(
-                                """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, False)""",
-                                ("ATB1", now, symbol, direction, float(last_close), float(ml_prob)),
+                                """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, %s)""",
+                                (
+                                    "ATB1",
+                                    now,
+                                    symbol,
+                                    direction,
+                                    float(last_close),
+                                    float(ml_prob),
+                                    _atb1_posted_flag(ml_prob, threshold),
+                                ),
                             )
                     conn.commit()
                 except Exception as e:
