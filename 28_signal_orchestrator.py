@@ -27,6 +27,7 @@ from core.bot_naming import pretty_name
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, send_telegram, update_cooldown
+from core.time import utc_now_naive
 from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn_and_sr_levels
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -300,13 +301,24 @@ def get_current_regime_full(conn) -> tuple[str, str] | None:
 
 
 def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
-    """True if an open orchestrator trade exists for this coin in opposite direction."""
+    """True if an open orchestrator trade exists for this coin in opposite direction.
+
+    Age-Bound 72h (FIX P1.8-Folge, T-2026-CU-9050-052): ohne Bound blockte eine
+    im Lifecycle hängen gebliebene OPEN-Row die Gegenrichtung FÜR IMMER — beim
+    toten Sync (04.–10.07.) waren das 166 Suppressions auf 79 Coins. Nach 72h
+    gilt die Row als Leiche (gleiche Begründung wie is_same_direction_open).
+
+    `opened_at` ist naiv-UTC (insert_orchestrator_open_trade), NOW() liefert
+    aber Session-TZ (Europe/Bucharest) — daher NOW() AT TIME ZONE 'UTC', sonst
+    wäre der Bound effektiv 69h.
+    """
     opposite = "SHORT" if new_direction == "LONG" else "LONG"
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT 1 FROM orchestrator_open_trades
             WHERE coin = %s AND direction = %s AND status = 'OPEN'
+              AND opened_at > (NOW() AT TIME ZONE 'UTC') - INTERVAL '72 hours'
             LIMIT 1
             """,
             (coin, opposite),
@@ -324,13 +336,16 @@ def is_same_direction_open(conn, coin: str, direction: str) -> bool:
     zwischen Commit und Monitor-Pickup, manuell gelöschte ai_signals-Row)
     würde den Coin sonst FÜR IMMER aus dem ROM1-Trading nehmen — nur mit
     Suppression-Logs, ohne Alarm. Nach 72h gilt die Row als Leiche.
+
+    NOW() AT TIME ZONE 'UTC' statt NOW() (T-2026-CU-9050-052): opened_at ist
+    naiv-UTC, NOW() liefert Session-TZ (+3h) — der Bound war effektiv 69h.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT 1 FROM orchestrator_open_trades
             WHERE coin = %s AND direction = %s AND status = 'OPEN'
-              AND opened_at > NOW() - INTERVAL '72 hours'
+              AND opened_at > (NOW() AT TIME ZONE 'UTC') - INTERVAL '72 hours'
             LIMIT 1
             """,
             (coin, direction),
@@ -500,14 +515,22 @@ def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bo
 
     commit=False lässt den Insert in der offenen Transaktion des Callers —
     signal_gating_pass committed Tracking + Outbox-Post atomar zusammen.
+
+    FIX P1.8-Folge (T-2026-CU-9050-052): open_time wird explizit naiv-UTC
+    gesetzt. Der DB-Default now() stempelt Session-TZ (Europe/Bucharest) in
+    die naive timestamp-Spalte → konstant +3h gegen das naiv-UTC opened_at
+    der orchestrator_open_trades-Zwillings-Row, und das ±60s-Fenster in
+    sync_closed_trades konnte nie matchen (Sync still tot seit 04.07.,
+    Beweis: T-2026-CU-9050-044). Monitor 8 behandelt open_time ohnehin als
+    UTC (ot_aware) — für ROM1-Rows stimmt diese Annahme jetzt.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO ai_signals
                 (symbol, price, model, direction, confidence,
-                 entry1, entry2, sl, targets)
-            VALUES (%s, %s, 'ROM1', %s, 1.0, %s, %s, %s, %s)
+                 entry1, entry2, sl, targets, open_time)
+            VALUES (%s, %s, 'ROM1', %s, 1.0, %s, %s, %s, %s, %s)
             """,
             (
                 coin,
@@ -517,6 +540,7 @@ def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bo
                 params["entry2"],
                 params["sl"],
                 json.dumps(params["targets"]),
+                utc_now_naive(),
             ),
         )
     if commit:

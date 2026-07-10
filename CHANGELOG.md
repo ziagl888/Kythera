@@ -1,3 +1,35 @@
+## [2026-07-10] P1.8-Folgefix: ROM1-Lifecycle-Sync war seit 04.07. still tot — open_time jetzt explizit naiv-UTC + 72h-Age-Bound auf den Opposite-Block (T-2026-CU-9050-052)
+
+Die VPS-Verify-Session T-2026-CU-9050-044 hat den P0-Verdacht aus dem
+ROM1-Deep-Review bestätigt: der P1.8-Fix vom 04.07. (±60s-Match gegen
+`ai_signals.open_time`) hat den Sync nicht repariert, sondern still getötet.
+`insert_rom1_signal` setzte `open_time` nicht — der DB-Default `now()` stempelt
+bei Session-TZ Europe/Bucharest Lokalzeit in die naive timestamp-Spalte,
+konstant +10.799 s (+3 h) gegen das naiv-UTC `opened_at` der Tracking-Row. Das
+±60s-Fenster konnte nie matchen: letzter `lifecycle_sync`-Close exakt am
+Deploy-Zeitpunkt 04.07. 11:10, danach 395 akkumulierte OPEN-Rows (208 älter
+72 h) und `opposite_direction_open`-Suppressions von 4/Tag auf 165/Tag (166
+Suppressions auf 79 Coins nachweislich durch Leichen-Rows).
+
+Fix in `28_signal_orchestrator.py`: (1) `open_time` wird explizit als
+naiv-UTC gesetzt (`core.time.utc_now_naive`, gleiche Quelle-Semantik wie das
+`opened_at` der Zwillings-Row; Monitor 8 behandelt `open_time` ohnehin als
+UTC). (2) `is_opposite_direction_open` bekommt den 72h-Age-Bound, den
+`is_same_direction_open` (P2.26) schon hatte — eine Leichen-Row nimmt die
+Gegenrichtung nicht mehr für immer aus dem Trading. Beide Bounds rechnen mit
+`NOW() AT TIME ZONE 'UTC'` statt `NOW()`: `opened_at` ist naiv-UTC, das nackte
+`NOW()` lieferte Session-Lokalzeit und machte aus 72 h effektiv 69 h.
+
+Die 395 Alt-Leichen matchen auch nach dem Fix nie (ihre
+closed_ai_signals-Kopien tragen +3 h) — sie laufen über den Age-Bound aus dem
+Opposite-Block aus; ob sie zusätzlich bereinigt werden, ist Operator-Entscheid
+(kein DB-Write aus der Verify-Session). Verifikation nach Deploy: der
+OPEN-älter-72h-Count muss fallen und `lifecycle_sync`-Closes müssen wieder
+>0/Tag auftauchen. Drei neue Tests pinnen INSERT-Spalte + naiv-UTC-Wert und
+den UTC-korrekten Age-Bound in beiden Richtungs-Checks
+(`backtest/test_signal_orchestrator.py`, 63 passed; Suiten
+test_regime_detector/test_bot_regime_analyzer: 65 passed).
+
 ## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)
 
 Nebenfund aus der Blast-Radius-Analyse zu T-2026-CU-9050-037. `load_joined` rief
