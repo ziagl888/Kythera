@@ -12,23 +12,31 @@ Deploy-Zeitpunkt 04.07. 11:10, danach 395 akkumulierte OPEN-Rows (208 älter
 Suppressions auf 79 Coins nachweislich durch Leichen-Rows).
 
 Fix in `28_signal_orchestrator.py`: (1) `open_time` wird explizit als
-naiv-UTC gesetzt (`core.time.utc_now_naive`, gleiche Quelle-Semantik wie das
+naiv-UTC gesetzt (`core.time.utc_now_naive`, gleiche Quell-Semantik wie das
 `opened_at` der Zwillings-Row; Monitor 8 behandelt `open_time` ohnehin als
-UTC). (2) `is_opposite_direction_open` bekommt den 72h-Age-Bound, den
-`is_same_direction_open` (P2.26) schon hatte — eine Leichen-Row nimmt die
-Gegenrichtung nicht mehr für immer aus dem Trading. Beide Bounds rechnen mit
-`NOW() AT TIME ZONE 'UTC'` statt `NOW()`: `opened_at` ist naiv-UTC, das nackte
-`NOW()` lieferte Session-Lokalzeit und machte aus 72 h effektiv 69 h.
+UTC). (2) Neuer **Corpse-Reaper** im Lifecycle-Sync: eine OPEN-Row, deren
+`ai_signals`-Zwilling nicht mehr existiert (Trade wurde geschlossen, aber nie
+gesynct — genau die Leichen-Klasse), wird nach 72 h Mindestalter auf
+`CLOSED_NEUTRAL` / `close_reason='corpse_reaper'` gestellt. Reine Buchhaltung,
+kein Telegram-Post. Damit verschwinden die Leichen wirklich aus dem
+OPEN-Bestand — sie blocken die Richtungs-Checks nicht mehr, füttern den
+Regime-Change-Auto-Close nicht mehr mit Spurious-`Close`-Kommandos und werden
+nicht mehr in jedem Sync-Pass erneut gescannt. (3) Die Richtungs-Checks
+bleiben bewusst OHNE Zeitschranke: ein Age-Bound (auch der bestehende 72h-Bound
+aus P2.26 in `is_same_direction_open`, hier entfernt) hebt den Schutz auch für
+ECHTE >72h-Positionen auf — ROM1 setzt kein `expiry_hours`, eine legitime
+Position kann beliebig lange offen sein, und ohne Block würde die Gegenrichtung
+die Live-Position flippen (Review-Finding aus PR #40). Liveness-Kriterium ist
+jetzt der Zwilling, nicht die Uhr.
 
-Die 395 Alt-Leichen matchen auch nach dem Fix nie (ihre
-closed_ai_signals-Kopien tragen +3 h) — sie laufen über den Age-Bound aus dem
-Opposite-Block aus; ob sie zusätzlich bereinigt werden, ist Operator-Entscheid
-(kein DB-Write aus der Verify-Session). Verifikation nach Deploy: der
-OPEN-älter-72h-Count muss fallen und `lifecycle_sync`-Closes müssen wieder
->0/Tag auftauchen. Drei neue Tests pinnen INSERT-Spalte + naiv-UTC-Wert und
-den UTC-korrekten Age-Bound in beiden Richtungs-Checks
-(`backtest/test_signal_orchestrator.py`, 63 passed; Suiten
-test_regime_detector/test_bot_regime_analyzer: 65 passed).
+Verifikation nach Deploy: `lifecycle_sync`-Closes tauchen wieder auf
+(>0/Tag), der OPEN-älter-72h-Bestand (208 Rows Stand 10.07., wachsend Richtung
+395) wird vom Reaper im ersten Sync-Pass abgeräumt und bleibt danach ~0, und
+es gibt KEINEN `Close`-Kommando-Burst beim nächsten Regime-Flip. Fünf neue
+Tests pinnen INSERT-Spalte + naiv-UTC-Wert, die bound-freien Richtungs-Checks
+und den twin-scoped Reaper (CLOSED_NEUTRAL, NOT-EXISTS, 72h-Mindestalter, kein
+Outbox-Write) — `backtest/test_signal_orchestrator.py`; Suiten
+test_regime_detector/test_bot_regime_analyzer unverändert grün.
 
 ## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)
 

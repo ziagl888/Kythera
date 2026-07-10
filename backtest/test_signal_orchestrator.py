@@ -7,6 +7,9 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import asyncio
+import datetime
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -557,21 +560,24 @@ def _captured_query(fn, *args):
     return sql, params
 
 
-def test_opposite_direction_check_has_utc_age_bound():
-    """P1.8 follow-up (T-2026-CU-9050-052): a corpse OPEN row must stop
-    blocking the opposite direction after 72h. opened_at is naive UTC while
-    NOW() returns session-local time, so the bound must convert NOW() to UTC."""
+def test_opposite_direction_check_has_no_age_bound():
+    """T-2026-CU-9050-052: the opposite-direction block must hold as long as
+    the row is OPEN — a live ROM1 position can legitimately outlast any time
+    cutoff (expiry_hours is never set), and an age bound would re-enable the
+    flip/double-exposure P1.8 exists to prevent. Corpse decay is the reaper's
+    job, not this check's."""
     sql, params = _captured_query(orch.is_opposite_direction_open, "BTCUSDT", "SHORT")
-    assert "72 hours" in sql
-    assert "AT TIME ZONE 'UTC'" in sql
+    assert "INTERVAL" not in sql
+    assert "status = 'OPEN'" in sql
     assert params == ("BTCUSDT", "LONG")  # opposite of the new direction
 
 
-def test_same_direction_check_has_utc_age_bound():
-    """The P2.26 twin must use the identical UTC-corrected 72h bound."""
+def test_same_direction_check_has_no_age_bound():
+    """The P2.26 anti-stacking twin must also block for the whole lifetime of
+    an OPEN row (its former 72h bound un-blocked live positions)."""
     sql, params = _captured_query(orch.is_same_direction_open, "BTCUSDT", "LONG")
-    assert "72 hours" in sql
-    assert "AT TIME ZONE 'UTC'" in sql
+    assert "INTERVAL" not in sql
+    assert "status = 'OPEN'" in sql
     assert params == ("BTCUSDT", "LONG")
 
 
@@ -580,24 +586,49 @@ def test_insert_rom1_signal_sets_open_time_naive_utc():
     open_time explicitly as naive UTC. Relying on the DB default stamps
     session-local time (+3h) and the ±60s lifecycle-sync window never
     matches the naive-UTC opened_at of the twin tracking row."""
-    import datetime as _dt
+    params_dict = {"entry1": 100.0, "entry2": 95.0, "sl": 90.0, "targets": [105.0, 110.0]}
+    sql, params = _captured_query(orch.insert_rom1_signal, "BTCUSDT", "LONG", params_dict, False)
 
+    assert "open_time" in sql
+    open_time = params[-1]
+    assert isinstance(open_time, datetime.datetime)
+    assert open_time.tzinfo is None  # naive — the column is TIMESTAMP WITHOUT TIME ZONE
+    utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    assert abs((utc_now - open_time).total_seconds()) < 5  # UTC wall clock, not local (+3h)
+
+
+def test_sync_closed_trades_runs_twin_scoped_corpse_reaper():
+    """T-2026-CU-9050-052: every sync pass must reap OPEN rows whose ai_signals
+    twin is gone (trade closed but never synced — e.g. the 395 dead-sync-era
+    corpses whose +3h open_time can never match). The reaper is pure
+    bookkeeping: CLOSED_NEUTRAL, twin-scoped via NOT EXISTS, 72h minimum age,
+    and it must never post to telegram_outbox."""
+    executed = []
     conn = MagicMock()
     cur = MagicMock()
     cur.__enter__ = MagicMock(return_value=cur)
     cur.__exit__ = MagicMock(return_value=False)
+    cur.fetchall = MagicMock(return_value=[])  # no OPEN rows in the match loop
+    cur.rowcount = 3
+    cur.execute = MagicMock(side_effect=lambda sql, params=None: executed.append((sql, params)))
     conn.cursor = MagicMock(return_value=cur)
-    params_dict = {"entry1": 100.0, "entry2": 95.0, "sl": 90.0, "targets": [105.0, 110.0]}
 
-    orch.insert_rom1_signal(conn, "BTCUSDT", "LONG", params_dict, commit=False)
+    asyncio.run(orch.sync_closed_trades(conn))
 
-    sql, params = cur.execute.call_args[0]
-    assert "open_time" in sql
-    open_time = params[-1]
-    assert isinstance(open_time, _dt.datetime)
-    assert open_time.tzinfo is None  # naive — the column is TIMESTAMP WITHOUT TIME ZONE
-    utc_now = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
-    assert abs((utc_now - open_time).total_seconds()) < 5  # UTC wall clock, not local (+3h)
+    updates = [(sql, params) for sql, params in executed if "UPDATE orchestrator_open_trades" in sql]
+    assert len(updates) == 1
+    sql, params = updates[0]
+    assert "CLOSED_NEUTRAL" in sql
+    assert "corpse_reaper" in sql
+    assert "NOT EXISTS" in sql
+    assert "model = 'ROM1'" in sql
+    assert not any("telegram_outbox" in s for s, _ in executed)  # bookkeeping only
+
+    closed_at, cutoff = params
+    assert closed_at.tzinfo is None and cutoff.tzinfo is None  # naive UTC columns
+    assert abs(((closed_at - cutoff) - datetime.timedelta(hours=72)).total_seconds()) < 5
+    utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    assert abs((utc_now - closed_at).total_seconds()) < 5  # UTC wall clock, not local (+3h)
 
 
 # ── ROM1 Tracking ─────────────────────────────────────────────────────────────

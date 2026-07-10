@@ -303,14 +303,13 @@ def get_current_regime_full(conn) -> tuple[str, str] | None:
 def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
     """True if an open orchestrator trade exists for this coin in opposite direction.
 
-    Age-Bound 72h (FIX P1.8-Folge, T-2026-CU-9050-052): ohne Bound blockte eine
-    im Lifecycle hängen gebliebene OPEN-Row die Gegenrichtung FÜR IMMER — beim
-    toten Sync (04.–10.07.) waren das 166 Suppressions auf 79 Coins. Nach 72h
-    gilt die Row als Leiche (gleiche Begründung wie is_same_direction_open).
-
-    `opened_at` ist naiv-UTC (insert_orchestrator_open_trade), NOW() liefert
-    aber Session-TZ (Europe/Bucharest) — daher NOW() AT TIME ZONE 'UTC', sonst
-    wäre der Bound effektiv 69h.
+    Deliberately NO age bound here (T-2026-CU-9050-052): a genuinely live ROM1
+    position can stay open well past 72h (expiry_hours is never set for ROM1),
+    and dropping the block by age would let ROM1 post the opposite direction
+    against a live position (flip/double exposure — the exact P1.8 risk).
+    Corpse rows that would otherwise block forever are closed by the corpse
+    reaper in sync_closed_trades instead: a row is only OPEN while its
+    ai_signals twin still exists or until the reaper transitions it.
     """
     opposite = "SHORT" if new_direction == "LONG" else "LONG"
     with conn.cursor() as cur:
@@ -318,7 +317,6 @@ def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
             """
             SELECT 1 FROM orchestrator_open_trades
             WHERE coin = %s AND direction = %s AND status = 'OPEN'
-              AND opened_at > (NOW() AT TIME ZONE 'UTC') - INTERVAL '72 hours'
             LIMIT 1
             """,
             (coin, opposite),
@@ -332,20 +330,18 @@ def is_same_direction_open(conn, coin: str, direction: str) -> bool:
     Ohne diesen Check stapelte ROM1 nach Ablauf des 4h-Cooldowns weitere
     Positionen auf denselben Coin in dieselbe Richtung (Doppel-Exposure).
 
-    Age-Bound 72h: eine im Lifecycle hängen gebliebene OPEN-Row (Crash
-    zwischen Commit und Monitor-Pickup, manuell gelöschte ai_signals-Row)
-    würde den Coin sonst FÜR IMMER aus dem ROM1-Trading nehmen — nur mit
-    Suppression-Logs, ohne Alarm. Nach 72h gilt die Row als Leiche.
-
-    NOW() AT TIME ZONE 'UTC' statt NOW() (T-2026-CU-9050-052): opened_at ist
-    naiv-UTC, NOW() liefert Session-TZ (+3h) — der Bound war effektiv 69h.
+    The former 72h age bound is gone (T-2026-CU-9050-052): it was meant to
+    decay corpse rows, but it also un-blocked genuinely live positions older
+    than 72h and re-enabled the stacking this check exists to prevent. Corpse
+    decay is now the corpse reaper's job (sync_closed_trades): an OPEN row
+    whose ai_signals twin is gone is transitioned out after 72h, so it can
+    never block this coin+direction forever.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT 1 FROM orchestrator_open_trades
             WHERE coin = %s AND direction = %s AND status = 'OPEN'
-              AND opened_at > (NOW() AT TIME ZONE 'UTC') - INTERVAL '72 hours'
             LIMIT 1
             """,
             (coin, direction),
@@ -516,13 +512,13 @@ def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bo
     commit=False lässt den Insert in der offenen Transaktion des Callers —
     signal_gating_pass committed Tracking + Outbox-Post atomar zusammen.
 
-    FIX P1.8-Folge (T-2026-CU-9050-052): open_time wird explizit naiv-UTC
-    gesetzt. Der DB-Default now() stempelt Session-TZ (Europe/Bucharest) in
-    die naive timestamp-Spalte → konstant +3h gegen das naiv-UTC opened_at
-    der orchestrator_open_trades-Zwillings-Row, und das ±60s-Fenster in
-    sync_closed_trades konnte nie matchen (Sync still tot seit 04.07.,
-    Beweis: T-2026-CU-9050-044). Monitor 8 behandelt open_time ohnehin als
-    UTC (ot_aware) — für ROM1-Rows stimmt diese Annahme jetzt.
+    P1.8 follow-up (T-2026-CU-9050-052): open_time is set explicitly as naive
+    UTC. The DB default now() stamps session-local time (Europe/Bucharest)
+    into the naive timestamp column — a constant +3h offset against the
+    naive-UTC opened_at of the orchestrator_open_trades twin row, so the
+    ±60s window in sync_closed_trades could never match (sync silently dead
+    since 2026-07-04; evidence: T-2026-CU-9050-044). Monitor 8 already treats
+    open_time as UTC (ot_aware) — for ROM1 rows that assumption now holds.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -1022,6 +1018,48 @@ async def sync_closed_trades(conn) -> None:
             entry, close_price, close_reason = row
             new_status = _classify_outcome_by_pnl(direction, entry, close_price, close_reason)
             mark_orchestrator_trade_closed(conn, trade_id, new_status, "lifecycle_sync")
+
+    await reap_corpse_trades(conn)
+
+
+async def reap_corpse_trades(conn) -> None:
+    """Closes OPEN tracking rows whose ai_signals twin is gone (corpse reaper).
+
+    T-2026-CU-9050-052: a live ROM1 trade always has its ai_signals twin (both
+    rows are written in the same transaction; the monitor deletes the twin on
+    close). An OPEN row WITHOUT a twin is therefore a trade that closed but was
+    never synced — either a legacy corpse from the dead-sync era (open_time was
+    stamped +3h by the DB default, the ±60s window can never match: 395 rows as
+    of 2026-07-10) or a pathological case (crash between commit and monitor
+    pickup, manually deleted ai_signals row). Left OPEN, such rows block the
+    direction checks forever, feed spurious Close commands into every
+    regime-change pass, and get re-scanned by the sync loop on every pass.
+
+    Transition them to CLOSED_NEUTRAL (no PnL distortion, same convention as
+    DELISTED/CLEANUP). No Telegram post — this is bookkeeping, not a trade
+    action. The 72h minimum age keeps the reaper strictly behind the regular
+    sync path, which matches real closes within one 30s pass; it must never
+    race a matchable close out of its real outcome.
+    """
+    now_naive = utc_now_naive()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE orchestrator_open_trades o
+            SET status = 'CLOSED_NEUTRAL', closed_at = %s, close_reason = 'corpse_reaper'
+            WHERE o.status = 'OPEN'
+              AND o.opened_at < %s
+              AND NOT EXISTS (
+                  SELECT 1 FROM ai_signals a
+                  WHERE a.model = 'ROM1' AND a.symbol = o.coin AND a.direction = o.direction
+              )
+            """,
+            (now_naive, now_naive - timedelta(hours=72)),
+        )
+        reaped = cur.rowcount
+    conn.commit()
+    if reaped:
+        logger.info(f"🧹 Corpse-Reaper: {reaped} verwaiste OPEN-Rows ohne ai_signals-Twin neutral geschlossen.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
