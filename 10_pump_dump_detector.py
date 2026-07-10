@@ -692,7 +692,9 @@ def process_coin_logics(conn, symbol):
                         vol_factor = (sum(rec_vols) / len(rec_vols)) / avg_hr_vol
                         if vol_factor >= 12.0:
                             pres = "BUY PRESSURE" if p_chg_3m >= 2.0 else "SELL PRESSURE"
-                            html = f"""<pre><b>📈 VOLUME EXPLOSION</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ <b>{vol_factor:.1f}× in last 3min ({pres} {p_chg_3m:+.2f}%)</b></b>\n<b>→ Price: <code>${current_price:,.8f}</code></b></pre>"""
+                            # `%/3m` not `%`: p_chg_3m is a normalised rate, not the
+                            # raw move over a window that may have been 4 minutes.
+                            html = f"""<pre><b>📈 VOLUME EXPLOSION</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ <b>{vol_factor:.1f}× in last 3min ({pres} {p_chg_3m:+.2f}%/3m)</b></b>\n<b>→ Price: <code>${current_price:,.8f}</code></b></pre>"""
                             send_outbox(conn, MARKET_CHANNEL_ID, html, generate_minichart_image(symbol, minutes=240))
                             alerted = True
 
@@ -721,12 +723,17 @@ def process_coin_logics(conn, symbol):
     # zählt Ticks, nicht Sekunden — nach einer Lücke spannte er über mehr als
     # eine Stunde. Er bleibt nur noch Warmup-Gate und Vollständigkeits-Feature.
     # tolerance=WINDOW_EDGE_GUARD statt der Default-20s (siehe Konstante).
-    hour_vols = [
-        float(e["v10s"])
-        for e in _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
-        if e.get("v10s_valid", True)
-    ]
-    if not hour_vols:
+    hour_buckets = _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
+    hour_vols = [float(e["v10s"]) for e in hour_buckets if e.get("v10s_valid", True)]
+    # Same warmup floor as the Volume-Explosion path (T-2026-CU-9050-035). `not
+    # hour_vols` alone let a single surviving bucket become the entire baseline
+    # after a gap, and `vol_ratio = current_vol / avg_volume` is both a model
+    # input AND the pump_dump_events insert gate below — a one-sample denominator
+    # writes garbage events and scores the model out of distribution.
+    if (
+        len(hour_vols) < HOUR_WINDOW_MIN_SAMPLES
+        or _window_coverage_sec(hour_buckets, bucket_anchor) < HOUR_WINDOW_MIN_COVERAGE_SEC
+    ):
         return
     avg_volume = sum(hour_vols) / len(hour_vols)
     pd_state["avg_volume"] = avg_volume
@@ -756,6 +763,12 @@ def process_coin_logics(conn, symbol):
     # `window_sec`, not a nominal 60. Three features that claim to describe one
     # window must actually share it; the P1.39 review found the opposite and that
     # is the bug class this whole task descends from.
+    #
+    # Note they are deliberately NOT rate-normalised: a fraction of up-moves and a
+    # coefficient of variation are not per-second quantities. Their distribution
+    # therefore depends on the cadence (a 45s window holds fewer diffs than a
+    # 150s one). EPD3 is fitted on exactly this definition, so the dependency is
+    # in-sample rather than a train/serve skew.
     window_60s = _find_bucket_range(data, bucket_anchor, int(window_sec), tolerance=WINDOW_EDGE_GUARD)
     rec_prices = [float(e["p"]) for e in window_60s]
     if len(rec_prices) < 2:

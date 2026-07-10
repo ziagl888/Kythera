@@ -363,6 +363,24 @@ def test_window_coverage_is_a_span_not_a_count():
     assert det._window_coverage_sec([], now) == 0.0
 
 
+def test_ml_baseline_refuses_a_one_sample_hour(run_tick):
+    """A single surviving bucket must not become the volume baseline.
+
+    `vol_ratio = current_vol / avg_volume` is a model input AND the
+    pump_dump_events insert gate. Post-gap, `if not hour_vols` alone let one
+    bucket define avg_volume, inflating vol_ratio without bound.
+    """
+    now = datetime.datetime.now(UTC)
+    # Enough warmup ticks, but the hour window holds only a couple of buckets:
+    # ancient history (>1h old) plus a short fresh tail.
+    ancient = [_bucket(now - datetime.timedelta(seconds=7200 + 10 * i), 100.0, 1.0) for i in range(400, 0, -1)]
+    tail = [_bucket(now - datetime.timedelta(seconds=60 - 10 * i), 100.0, 1.0) for i in range(6)]
+    buckets = ancient + tail
+    buckets[-1] = _bucket(now, 110.0, 500.0)
+
+    assert run_tick(buckets).features == [], "scored against a one-sample hourly baseline"
+
+
 def test_volume_explosion_fires_at_a_realistic_cadence(monkeypatch):
     """The >= 360-bucket baseline gate made this alert unreachable in production.
 
