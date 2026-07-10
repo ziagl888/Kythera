@@ -1,3 +1,60 @@
+## [2026-07-10] Vier rote Tests auf main repariert (T-2026-CU-9050-038)
+
+CI gated nur ruff/format, mypy, Syntax/Imports und Secret-Regex — pytest läuft
+nirgends. Vier Tests der `backtest`-Suite waren deshalb unbemerkt rot, teils
+seit dem Initial-Import. Bei T-2026-CU-9050-034 fielen sie beim Lauf der vollen
+Suite auf. Jeder wurde am Code diagnostiziert, keiner stillschweigend geskippt
+oder gelöscht.
+
+- **`test_bot_naming::test_similar_but_not_matching`** — der Test hielt am
+  MIS1-only-Vertrag fest, während `core/bot_naming.py` in `99e9de3` bewusst auf
+  `MIS\d+` generalisiert wurde (harte Regel 6: Retrains posten unter neuem Tag).
+  Der Docstring der Funktion dokumentiert `pretty_name("MIS2-72H") == "MIS2-72h"`
+  bereits. Der Test wurde nachgezogen; die eigentliche Invariante (Generationen
+  vermischen sich nicht) ist als eigener Test erhalten.
+- **`test_bot_regime_analyzer::test_regime_lookup_for_trade`** — tot geboren: er
+  importierte ein nie existierendes Modul `src_27` und rechnete seine Assertions
+  inline nach, ohne den Produktionscode je aufzurufen. Ersetzt durch echte Tests
+  gegen `27_bot_regime_analyzer._compute_stats` (Aggregat, leere Eingabe,
+  Sharpe-Guard bei n=1).
+- **`test_signal_orchestrator::test_identify_bot_channel_fallback`** — testete
+  die Umgebung statt den Code. `core.config._ch()` liefert `0` für unbelegte
+  Channels; auf der Build-Maschine (leerer `.env`-Stub) kollabierten damit alle
+  fünf Keys von `CHANNEL_TO_BOT_FALLBACK` auf `0`, und der letzte Eintrag gewann.
+- **`test_signal_orchestrator::test_compute_rom1_trade_params_long`** — der
+  R4-Audit-Fix zog `cap_leverage_to_sl()` in den ROM1-Pfad, der Test mockte aber
+  nur `get_max_leverage`. `params["leverage"]` war deshalb ein `MagicMock` aus
+  dem gemockten `core.trade_utils`. Der Test setzt jetzt die echte Funktion ein
+  und prüft den tatsächlichen Cap (`"6x"`: 8 % SL-Distanz deckeln die
+  gewünschten 20x).
+
+### Live-Semantik
+Eine Produktions-Änderung: `CHANNEL_TO_BOT_FALLBACK` wird über
+`_build_channel_fallback()` gebaut und lässt den `0`-Sentinel unbelegter
+Channels fallen. Auf dem VPS sind alle fünf `CH_*` echte, distinkte Telegram-IDs
+— die Map ist dort unverändert. Der Filter greift nur im degenerierten Fall:
+statt dass ein deaktivierter Bot auf einen **fremden** Bot-Namen auflöst, liefert
+`identify_bot` jetzt `None`. Da `identify_bot` ausschliesslich mit echten
+Channel-IDs gerufen wird (`28:659`), ändert sich das Live-Verhalten nicht.
+
+### Nebenbefunde (mitgefixt)
+`test_signal_orchestrator.py` und `test_bot_regime_analyzer.py` liessen sich nur
+sammeln, wenn zufällig eine alphabetisch frühere Testdatei `DB_PASSWORD` bzw.
+`TELEGRAM_BOT_TOKEN` gesetzt hatte; beide seeden ihre Dummies jetzt selbst.
+`test_abr1_detection.py` brach beim Collect ab: `pandas_ta` steht in
+`requirements.txt:18` und ist auf dem VPS installiert, auf dieser Python-3.14-
+Build-Maschine aber nicht installierbar (zieht `numba`, kein cp314-Wheel,
+Source-Build schlägt fehl). Der harte Collect-Fehler ist durch einen benannten
+`pytest.importorskip` ersetzt — reines Umgebungsproblem, kein Code-Fehler.
+
+### Verifikation
+`python -m pytest backtest -q` → volle Suite grün, genau ein Skip (der benannte
+pandas_ta-`importorskip`); zusätzlich läuft jede Datei der Suite einzeln grün
+(die Import-Reihenfolgen-Kopplung ist weg).
+ruff, `ruff format --check` und mypy sauber.
+`python tools/regression_guard/guard.py smoke` OK — der Guard wurde nicht
+refreshed. Der neue Guard-Test gegen `_build_channel_fallback` ist per Mutation
+geprüft: entfernt man den `if cid`-Filter, wird er rot.
 ## [2026-07-10] RUB bekommt den Active-Trade-Check seiner Geschwister (T-2026-CU-9050-043)
 
 `13_ai_rub_bot.py` war der einzige AI-Bot ohne Positions-Guard: seine einzige
