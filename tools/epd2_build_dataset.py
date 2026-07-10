@@ -11,7 +11,15 @@ Spiegel der BOT-10-Semantik statt Bot 30):
      |price_change_60s| >= PUMP_EVENT_MIN_ABS_PCHG_60S — BEIDE Richtungen.
   2. Richtung = MITFAHREN (Intent §7): Pump (+60s-Move) → LONG, Dump → SHORT.
   3. TZ-Fix + Dedup 900 s je Symbol (Live-Alert-Throttle von Bot 10).
-  4. Entry = Post-Spike-Schätzer close×(1+move) (Review-Fix aus pex1).
+  4. Entry = echter Preis zum `spike_time` aus ``ticker_10s`` (T-2026-CU-9050-035).
+     Früher war das der Schätzer ``close×(1+p_chg_60s/100)``. Der ist seit der
+     Normalisierung von ``p_chg_60s`` auf eine Rate pro 60 s FALSCH: die Spalte
+     trägt nicht mehr den realisierten Move, und ohne die Fensterlänge lässt er
+     sich aus dem Event-Log nicht rekonstruieren (harte Regel 7, Trainer ==
+     Serving). ``ticker_10s`` hält den tatsächlich gehandelten Preis in 10s-
+     Auflösung und schlägt jeden Schätzer — gemessen finden 7053 von 7055 Events
+     der letzten drei Tage einen Tick innerhalb von 60 s, über alle 404
+     Event-Symbole.
   5. Geometrie = BOT-10-Geometrie as-of: get_hvn_and_sr_levels(df=95d-Fenster)
      + hvn_sr_trade_geometry + ensure_min_tp_distance (NICHT smart_targets —
      Bot 10 postet HVN/SR-Geometrie).
@@ -60,6 +68,7 @@ SINCE_DEFAULT = "2026-02-25"      # Beginn belastbarer pump_dump_events-Historie
 ALERT_MIN_VOL_RATIO = 5.0         # Alert-Gate von Bot 10 (Training == Serving)
 HORIZON_CANDLES = 7 * 24
 DEDUP_SECONDS = 900               # Live-Alert-Throttle je Symbol (Bot 10)
+TICKER_MAX_LAG_SEC = 60           # max. Abstand Event ↔ ticker_10s-Tick für den Entry
 N_PUBLISHED = 3
 LEVEL_WINDOW_H = 95 * 24          # HVN/SR-Fenster wie get_hvn_and_sr_levels live
 
@@ -107,6 +116,62 @@ def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
     return ev[pd.Series(keep, index=ev.index)].reset_index(drop=True)
 
 
+def ticker_history_start(conn) -> pd.Timestamp | None:
+    """Ältester `ticker_10s`-Tick als naive UTC, oder None bei leerer Tabelle."""
+    row = df_query(conn, "SELECT MIN(ts) AS m FROM ticker_10s")["m"].iloc[0]
+    if pd.isna(row):
+        return None
+    return pd.Timestamp(row).tz_convert("UTC").tz_localize(None)
+
+
+def load_ticker_prices(conn, symbol: str, since: str) -> tuple[np.ndarray, np.ndarray]:
+    """10s-Ticks eines Symbols als (Zeiten, Preise), chronologisch.
+
+    `ticker_10s.ts` ist per TZ-Vertrag UTC-aware (core/ticker_10s.py) — anders als
+    die naiven Legacy-Spalten. Hier auf naive UTC gebracht, damit der Vergleich
+    mit `spike_time_to_utc(...)` auf derselben Basis läuft.
+    """
+    try:
+        df = df_query(
+            conn,
+            "SELECT ts, price FROM ticker_10s WHERE symbol = %s AND ts >= %s::timestamptz ORDER BY ts ASC",
+            (symbol, since),
+        )
+    except Exception:
+        conn.rollback()
+        return np.empty(0, dtype="datetime64[ns]"), np.empty(0, dtype=np.float64)
+    if df.empty:
+        return np.empty(0, dtype="datetime64[ns]"), np.empty(0, dtype=np.float64)
+    ts = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None).values.astype("datetime64[ns]")
+    return ts, df["price"].to_numpy(dtype=np.float64)
+
+
+def entry_from_ticker(
+    ts_arr: np.ndarray, px_arr: np.ndarray, event_ts: pd.Timestamp, max_lag: int = TICKER_MAX_LAG_SEC
+) -> float | None:
+    """Tatsächlich gehandelter Preis zum Event-Zeitpunkt, oder None.
+
+    `spike_time` ist die Wanduhr des Detectors NACH dem 60s-Move, der Tick an
+    dieser Stelle ist also bereits der Post-Spike-Preis — genau das, was der alte
+    Schätzer approximieren wollte. Kein Fallback auf den Schätzer: ohne Tick ist
+    der Entry unbekannt, und eine geratene Entry-Geometrie erzeugt ein falsches
+    Label, kein fehlendes.
+    """
+    if ts_arr.size == 0:
+        return None
+    target = np.datetime64(pd.Timestamp(event_ts).to_datetime64())
+    i = int(np.searchsorted(ts_arr, target))
+    best_lag, best_px = None, None
+    for j in (i - 1, i):
+        if 0 <= j < ts_arr.size:
+            lag = abs((ts_arr[j] - target) / np.timedelta64(1, "s"))
+            if lag <= max_lag and (best_lag is None or lag < best_lag):
+                best_lag, best_px = lag, float(px_arr[j])
+    if best_px is None or best_px <= 0:
+        return None
+    return best_px
+
+
 def load_candles_epd(conn, symbol: str, since: str) -> pd.DataFrame | None:
     """1h-Kerzen + EPD-Indikatorspalten, Lookback 100d (95d-Level-Fenster)."""
     try:
@@ -146,6 +211,11 @@ def main() -> None:
     ap.add_argument("--since", default=SINCE_DEFAULT)
     ap.add_argument("--out", default=os.path.join(REPLAY_DIR, "epd2_events.jsonl"))
     ap.add_argument("--limit-symbols", type=int, default=0)
+    ap.add_argument(
+        "--allow-pre-ticker",
+        action="store_true",
+        help="Events vor dem ersten ticker_10s-Tick zulassen (sie verlieren ihren Entry).",
+    )
     args = ap.parse_args()
 
     set_low_priority()
@@ -155,6 +225,22 @@ def main() -> None:
     conn = get_db_connection()
     offset_h = detect_offset_h(conn)
     log(f"spike_time-Offset: {offset_h:+d}h gegen UTC")
+
+    # Der Entry kommt aus ticker_10s (Schritt 4 im Modul-Docstring). Reicht `since`
+    # vor den ersten Tick, würde jedes Event davor still an `no_ticker` verloren
+    # gehen — das sieht im Log wie ein kleiner Filter aus und ist in Wahrheit ein
+    # halber Datensatz. Lieber laut abbrechen als leise schrumpfen.
+    tick_start = ticker_history_start(conn)
+    if tick_start is None:
+        log("FEHLER: ticker_10s ist leer — ohne Ticks kein Entry. Abbruch.")
+        sys.exit(2)
+    if pd.Timestamp(args.since) < tick_start and not args.allow_pre_ticker:
+        log(f"FEHLER: --since {args.since} liegt vor dem ersten ticker_10s-Tick "
+            f"({tick_start:%Y-%m-%d %H:%M} UTC). Events davor bekommen keinen Entry.")
+        log("       Setze --since auf den Post-Restart-Schnitt (empfohlen), oder "
+            "--allow-pre-ticker, wenn der Verlust bewusst ist.")
+        sys.exit(2)
+
     ev = load_events(conn, args.since, offset_h)
     n_long = int((ev["price_change_60s"] > 0).sum())
     log(f"Events nach Gates + Dedup: {len(ev)} ({n_long} Pump/LONG, "
@@ -165,7 +251,7 @@ def main() -> None:
         symbols = symbols[: args.limit_symbols]
 
     stats = {k: 0 for k in ("written", "wins", "open_end", "no_candles", "no_window",
-                            "stale_join", "geometry_fail")}
+                            "stale_join", "geometry_fail", "no_ticker")}
     with open(args.out, "w", encoding="utf-8") as fh:
         for i, sym in enumerate(symbols, 1):
             df = load_candles_epd(conn, sym, args.since)
@@ -174,6 +260,7 @@ def main() -> None:
                 stats["no_candles"] += len(sym_ev)
                 continue
             fund_by_sym = load_funding(conn, [sym])
+            tick_ts, tick_px = load_ticker_prices(conn, sym, args.since)
             times = df["open_time"].values.astype("datetime64[ns]")
             highs = df["high"].to_numpy(dtype=np.float64)
             lows = df["low"].to_numpy(dtype=np.float64)
@@ -190,9 +277,14 @@ def main() -> None:
                 p_chg = float(row.price_change_60s)
                 direction = "LONG" if p_chg > 0 else "SHORT"
                 is_long = direction == "LONG"
-                # Entry = Post-Spike-Schätzer (Review-Fix aus pex1): Bot 10
-                # steigt live NACH dem 60s-Move ein.
-                entry1 = float(closes[idx]) * (1.0 + p_chg / 100.0)
+                # Entry = echter Post-Spike-Preis aus ticker_10s. `p_chg_60s` ist
+                # seit T-035 eine Rate pro 60 s, kein realisierter Move — als
+                # Aufschlag auf `close` wäre er schlicht falsch. Das Vorzeichen
+                # (Richtung) bleibt von der Normalisierung unberührt.
+                entry1 = entry_from_ticker(tick_ts, tick_px, row.ts)
+                if entry1 is None:
+                    stats["no_ticker"] += 1
+                    continue
                 try:
                     win = df.iloc[max(0, idx + 1 - LEVEL_WINDOW_H): idx + 1][["high", "low", "close"]]
                     supps, resis = get_hvn_and_sr_levels(None, sym, entry1, df=win)
