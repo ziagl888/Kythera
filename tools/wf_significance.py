@@ -28,6 +28,11 @@
 #      eq_k/eq_{k-1}-1 = pnl_k) — der vt-Permutationstest auf Sharpe wäre hier
 #      degeneriert und wird bewusst NICHT übernommen. Pfadabhängig und ehrlich
 #      testbar ist der Max-Drawdown der Equity-Kurve in Signalzeit-Reihenfolge.
+#      Der DD wird ABSOLUT in %-Punkten unter dem Peak gemessen, nicht auf die
+#      Peak-Höhe normiert — sonst konfundiert die zufällige Peak-Höhe der
+#      fleet-weiten Multi-Coin-Replays den Test (T-2026-CU-9050-053, Details in
+#      max_drawdown_pct). Es ist eine Pfad-Clusterungs-Statistik, kein echter
+#      Portfolio-Drawdown (Overlap bleibt sequenziell verkettet).
 #   3. BOOTSTRAP-CI (Resampling mit Zurücklegen) für per-Trade-Sharpe, avg_r und
 #      Win-Rate. Per-Trade-Sharpe = mean/std der Trade-PnLs, bewusst NICHT
 #      annualisiert (Trades sind nicht zeit-regulär; eine sqrt(252)-Skalierung
@@ -61,15 +66,36 @@ DEFAULT_FEE_PER_SIDE_PCT = 0.05  # Taker je Seite in % (FEE_PER_SIDE walkforward
 
 # ── Kern-Statistiken ──────────────────────────────────────────────────────────
 def max_drawdown_pct(pnls: np.ndarray) -> float:
-    """Max-Drawdown (in %, negativ) der additiven Equity-Kurve aus %-PnLs.
+    """Max-Drawdown in %-PUNKTEN unter dem laufenden Peak der additiven Equity.
 
-    Additiv (Summe der %-PnLs, Basis 100) wie summarize()'s sum_net_pnl_pct —
-    konsistent mit dem Replay-Reporting, Reihenfolge-abhängig (das ist der Punkt).
+    ABSOLUT (``equity - peak``), NICHT auf die Peak-Höhe normiert. Die additive
+    Equity (Σ %-PnL) ist reihenfolge-abhängig (das ist der Punkt) und konsistent
+    mit summarize()'s sum_net_pnl_pct.
+
+    Warum absolut statt (equity-peak)/peak (T-2026-CU-9050-053): auf den
+    fleet-weiten Multi-Coin-Replays verkettet der Pfad 8–20 gleichzeitige
+    Signale pro Zeitstempel als sequenzielle Einzelwetten, die Equity fällt
+    dadurch tief unter null. Der Quotient hätte am Ende primär die ZUFÄLLIGE
+    Peak-Höhe gemessen (mis1/SHORT + abr1/SHORT Peak bei Trade 0 ≈ 95, rub/LONG
+    bei 2.477) — der Permutationstest war so konfundiert und stellte p_dd_worse
+    verkehrt herum (rub/LONG „gnädig" 1,000 statt „maligne" 0,005). Der absolute
+    DD ist frei von diesem Peak-Artefakt; die +100-Basis kürzt sich in
+    (equity - peak) heraus und entfällt. Nebeneffekt: die alte Division brauchte
+    einen ``np.where(peak > 0, peak, 1.0)``-Guard, der bei Peak ≤ 0 still Einheit
+    UND Skalierung wechselte — dieser Fall existiert hier gar nicht mehr.
+
+    GRENZE: gleichzeitige Signale bleiben sequenziell verkettet. Die Zahl ist
+    eine Pfad-Clusterungs-Statistik in %-Punkten, KEIN echter Portfolio-Drawdown
+    (dafür bräuchte es einen overlap-respektierenden Equity-Pfad mit
+    Kapitalallokation — bewusst nicht in diesem additiven Layer). Für den
+    Permutationstest (gleiche Malignität über alle Reihenfolgen?) ist das die
+    ehrliche Größe, weil beobachteter und permutierter Pfad exakt gleich gemessen
+    werden.
     """
-    equity = 100.0 + np.cumsum(pnls)
+    equity = np.cumsum(pnls)
     peak = np.maximum.accumulate(equity)
-    dd = (equity - peak) / np.where(peak > 0, peak, 1.0)
-    return float(dd.min() * 100.0)
+    dd = equity - peak  # <= 0, in Prozentpunkten
+    return float(dd.min())
 
 
 def per_trade_sharpe(pnls: np.ndarray) -> float:
@@ -230,8 +256,9 @@ def render_report(results: dict) -> str:
             f"p={rc['p_value']}"
         )
         lines.append(
-            f"  MaxDD-Pfad: beobachtet {op['observed_max_dd_pct']:.2f}% vs Permutations-Median "
-            f"{op['simulated_max_dd_median_pct']:.2f}%, p(schlechter)={op['p_value_dd_worse']}"
+            f"  MaxDD-Pfad (abs, %-Pkt): beobachtet {op['observed_max_dd_pct']:.2f} vs "
+            f"Permutations-Median {op['simulated_max_dd_median_pct']:.2f}, "
+            f"p(schlechter)={op['p_value_dd_worse']}"
         )
         sh = bs["sharpe_per_trade_ci"]
         lines.append(
