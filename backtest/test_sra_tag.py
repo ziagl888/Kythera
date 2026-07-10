@@ -91,6 +91,31 @@ def test_master_log_dedupe_covers_the_legacy_tag():
     )
 
 
+def test_active_trade_check_blocks_a_second_position():
+    """T-2026-CU-9050-055: the 4h cooldown is a FREQUENCY guard, not a position guard,
+    and the trade_id duplicate check only stops the SAME setup being scored twice — not
+    a NEW setup on a coin that already carries an open trade. Without the ai_signals
+    probe the second setup opens a second live position (the RUB lesson, T-043)."""
+    assert re.search(r"SELECT 1 FROM ai_signals WHERE symbol = %s AND direction = %s AND model IN \(%s, %s\)", SRC), (
+        "the active-trade check against ai_signals is gone"
+    )
+    assert re.search(r"\(coin,\s*direction,\s*module_name,\s*SRA_LEGACY_TAG\)", SRC), (
+        "the active-trade check no longer binds (module_name, SRA_LEGACY_TAG) — it lost the posting or the legacy tag"
+    )
+
+
+def test_active_trade_check_runs_before_the_expensive_prediction():
+    """SRA knows the direction up front (it comes from active_trades_master), so the
+    guard belongs before the indicator fetch and predict_proba.
+
+    Anchored on the actual call, not on the string `predict_proba` — that also appears
+    in the P1.20 comment far above and would make the ordering assertion vacuous."""
+    check = SRC.index("SELECT 1 FROM ai_signals")
+    inds = SRC.index("inds = get_indicators_at_time")
+    predict = SRC.index("artifact['model'].predict_proba")
+    assert check < inds < predict, "the active-trade check moved below the indicator fetch / prediction"
+
+
 def test_cooldown_covers_the_legacy_tag():
     """Same story on the cooldown: a fresh SRA1 row must keep blocking an SRA2
     signal on the same coin, or Cornix opens a second live position."""
