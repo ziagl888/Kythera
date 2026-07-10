@@ -1,0 +1,242 @@
+# backtest/test_pump_dump_time_windows.py
+"""
+Unit tests for the time-based feature windows of the pump/dump detector (P1.39).
+
+The detector used to slice its windows by list index: `prices[-7:]` meant "the
+last 60 seconds" only if every 10s bucket arrived. On a WebSocket gap — most
+likely exactly during a spike, when the socket is busiest — "-7" silently
+spanned minutes, and the model was asked to score a stretched window.
+
+Worse, `volumes_10s` was FILTERED on v10s_valid while `prices` was not, so
+`volumes_10s[-18:]` and `prices[-18:]` referred to different instants as soon as
+a single bucket was invalid.
+
+Everything now routes through _find_bucket_before / _find_bucket_range, which
+select by timestamp. These tests pin the gap behaviour, which is the only place
+the old and new code disagree.
+
+Run with: pytest backtest/test_pump_dump_time_windows.py -v
+"""
+
+from __future__ import annotations
+
+import datetime
+import importlib.util
+import os
+import sys
+import unittest.mock as mock
+from collections import deque
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+os.environ.setdefault("DB_PASSWORD", "test")
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
+
+import pytest
+
+from core.signal_post import log_prediction  # noqa: F401  (import order: see sibling test)
+
+UTC = datetime.timezone.utc
+
+
+def _load_detector():
+    spec = importlib.util.spec_from_file_location(
+        "pump_dump_detector",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "10_pump_dump_detector.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(
+        "sys.modules",
+        {
+            "core.database": mock.MagicMock(),
+            "core.charting": mock.MagicMock(),
+            "core.market_utils": mock.MagicMock(),
+            "core.trade_utils": mock.MagicMock(),
+            "core.ticker_10s": mock.MagicMock(),
+        },
+    ):
+        spec.loader.exec_module(mod)
+    return mod
+
+
+det = _load_detector()
+
+SYMBOL = "TESTUSDT"
+
+# Feature order in 10_pump_dump_detector.process_coin_logics
+F_VOL_RATIO, F_P_CHG_60S, F_BUY_PRES, F_VOLAT = 0, 1, 2, 3
+
+
+class _Recorder:
+    """Captures the feature vector, then lands in the shadow band."""
+
+    classes_ = [0, 1, 2]
+
+    def __init__(self) -> None:
+        self.features: list[list[float]] = []
+
+    def predict_proba(self, x):
+        self.features.append(list(x[0]))
+        return [[0.10, 0.50, 0.40]]
+
+
+class FakeConn:
+    def cursor(self, *a, **kw):
+        return mock.MagicMock(__enter__=lambda s: s, __exit__=lambda *a: False)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def _bucket(ts: datetime.datetime, price: float, vol: float, valid: bool = True) -> dict:
+    return {"t": ts.isoformat(), "p": str(price), "v10s": str(vol), "v10s_valid": valid}
+
+
+@pytest.fixture
+def run_tick(monkeypatch):
+    """Drive process_coin_logics over a supplied bucket list; return the model."""
+
+    def _run(buckets: list[dict], sample_vol: float = 1.0) -> _Recorder:
+        """`sample_vol` seeds the legacy volume_samples deque. Post-fix the
+        baseline is derived from `buckets`, so poisoning the deque is how a test
+        proves the deque is no longer the source."""
+        model = _Recorder()
+        monkeypatch.setitem(det.ONE_MINUTE_DATA, SYMBOL, deque(buckets))
+        monkeypatch.setitem(
+            det.PUMP_DUMP_STATE,
+            SYMBOL,
+            {
+                "avg_volume": 0.0,
+                "volume_samples": deque([sample_vol] * 359, maxlen=360),
+                "last_alert_time": datetime.datetime(1970, 1, 1, tzinfo=UTC),
+            },
+        )
+        monkeypatch.setitem(
+            det.PRICE_VOLUME_ALERT_STATE,
+            SYMBOL,
+            {"last_alert_time": datetime.datetime.now(UTC)},  # suppress section A alerts
+        )
+        monkeypatch.setattr(det, "load_pump_model", lambda: model)
+        monkeypatch.setattr(det, "get_indicators_at_time", lambda *a, **kw: {})
+        monkeypatch.setattr(det, "send_outbox", lambda *a, **kw: None)
+        monkeypatch.setattr(det, "check_round_levels", lambda *a, **kw: None)
+        monkeypatch.setattr(det, "log_prediction", lambda *a, **kw: None)
+        det.process_coin_logics(FakeConn(), SYMBOL)
+        return model
+
+    return _run
+
+
+def _dense(now: datetime.datetime, n: int = 400, vol: float = 1.0) -> list[dict]:
+    """n buckets, exactly 10s apart, flat price 100, ending at `now`."""
+    return [_bucket(now - datetime.timedelta(seconds=10 * (n - 1 - i)), 100.0, vol) for i in range(n)]
+
+
+# ── The 60s window is measured in seconds, not in list positions ──────────────
+
+
+def test_p_chg_60s_is_measured_against_the_bucket_60s_ago(run_tick):
+    now = datetime.datetime.now(UTC)
+    buckets = _dense(now)
+    buckets[-1] = _bucket(now, 110.0, 50.0)  # spike on the newest bucket
+
+    model = run_tick(buckets)
+
+    assert model.features, "model was never scored"
+    # bucket 60s ago is priced 100 -> +10%
+    assert model.features[0][F_P_CHG_60S] == pytest.approx(10.0)
+
+
+def test_tick_is_skipped_when_the_60s_bucket_is_missing(run_tick):
+    """A WS gap must not be scored with a fabricated 0 for p_chg_60s."""
+    now = datetime.datetime.now(UTC)
+    # An hour of history, then a 5-minute hole, then one fresh bucket.
+    old = [_bucket(now - datetime.timedelta(seconds=300 + 10 * i), 100.0, 1.0) for i in range(360, 0, -1)]
+    buckets = old + [_bucket(now, 110.0, 50.0)]
+
+    model = run_tick(buckets)
+
+    assert model.features == [], "model was scored across a 5-minute gap"
+
+
+def test_old_index_math_would_have_used_a_stale_price(run_tick):
+    """Regression witness: with a gap, prices[-7:] reaches across it.
+
+    The fresh tail holds only 6 buckets, so the old `prices[-7:]` pulled in one
+    bucket from before a 10-minute hole, priced 50 — and reported +100% in the
+    "last 60 seconds". The time-based lookup finds the real 60s-ago bucket
+    inside the tail (priced 100) and reports 0%.
+
+    Verified: this test fails on the pre-fix file with p_chg_60s == 100.0.
+    """
+    now = datetime.datetime.now(UTC)
+    stale = [_bucket(now - datetime.timedelta(seconds=600 + 10 * i), 50.0, 1.0) for i in range(360, 0, -1)]
+    tail = [_bucket(now - datetime.timedelta(seconds=10 * (6 - i)), 100.0, 1.0) for i in range(6)]
+    buckets = stale + tail
+    buckets[-1] = _bucket(now, 100.0, 50.0)
+
+    model = run_tick(buckets)
+    # The 60s-ago bucket sits inside the dense tail (priced 100) -> 0% change,
+    # NOT the +100% the stale 50.0 rows would have produced.
+    assert model.features, "model was never scored"
+    assert model.features[0][F_P_CHG_60S] == pytest.approx(0.0)
+
+
+# ── The hourly volume baseline ignores invalid buckets ───────────────────────
+
+
+def test_volume_baseline_skips_invalid_buckets(run_tick):
+    now = datetime.datetime.now(UTC)
+    buckets = _dense(now)
+    # Poison every other bucket with a huge but INVALID volume.
+    for i in range(0, len(buckets) - 1, 2):
+        ts = datetime.datetime.fromisoformat(buckets[i]["t"])
+        buckets[i] = _bucket(ts, 100.0, 1000.0, valid=False)
+    buckets[-1] = _bucket(now, 110.0, 50.0)
+
+    # Poison the legacy deque too: pre-fix it WAS the baseline, so a passing
+    # assertion here would prove nothing about where the baseline comes from.
+    model = run_tick(buckets, sample_vol=1000.0)
+
+    assert model.features, "model was never scored"
+    # Valid buckets carry volume 1.0 (plus the 50.0 spike), so the baseline sits
+    # near 1.3 and vol_ratio lands in the tens. Had the invalid 1000.0 rows
+    # leaked into the baseline it would be ~500, dragging vol_ratio below 1 —
+    # under the bot's own vol_ratio >= 5 gate, i.e. the model would never run.
+    assert model.features[0][F_VOL_RATIO] > 10.0
+
+
+def test_volume_baseline_is_an_hour_of_wallclock_not_360_ticks(run_tick):
+    """Buckets older than an hour must not enter the baseline."""
+    now = datetime.datetime.now(UTC)
+    # 360 recent buckets (1h) at volume 1.0, plus ancient buckets at 1000.0.
+    recent = [_bucket(now - datetime.timedelta(seconds=10 * (359 - i)), 100.0, 1.0) for i in range(360)]
+    ancient = [_bucket(now - datetime.timedelta(seconds=7200 + 10 * i), 100.0, 1000.0) for i in range(100, 0, -1)]
+    buckets = ancient + recent
+    buckets[-1] = _bucket(now, 110.0, 50.0)
+
+    model = run_tick(buckets, sample_vol=1000.0)
+
+    assert model.features, "model was never scored"
+    # Only the last hour of buckets counts (volume 1.0). The ancient 1000.0
+    # buckets and the poisoned deque must both stay out of the baseline.
+    assert model.features[0][F_VOL_RATIO] == pytest.approx(50.0, rel=0.15)
+
+
+# ── buy_pressure / volatility come from the same 60s window ──────────────────
+
+
+def test_buy_pressure_and_volatility_use_the_60s_window(run_tick):
+    now = datetime.datetime.now(UTC)
+    buckets = _dense(now)
+    buckets[-1] = _bucket(now, 110.0, 50.0)
+
+    model = run_tick(buckets)
+    feats = model.features[0]
+
+    # 60s window = 7 buckets: six at 100, one at 110 -> exactly one up-move.
+    assert feats[F_BUY_PRES] == pytest.approx(1 / 6)
+    assert feats[F_VOLAT] > 0.0
