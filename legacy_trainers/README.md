@@ -6,6 +6,13 @@ Code** — die dort dokumentierten Defekte (Label-Geometrie, Split-Leakage, In-S
 Feature-Skews) sind ABSICHTLICH unverändert konserviert. Neutrainings folgen dem Gerüst aus
 Report 13/15, nicht diesen Skripten.
 
+> **NICHT LÖSCHEN.** Dass kein Prozess diese Dateien importiert und sie ohne Env-Vars nicht laufen,
+> macht sie nicht zu totem Code — es ist ihr Zweck. Sie sind die einzige Reproduktionsgrundlage der
+> acht Artefakte in der Tabelle unten. `docs/CANDLE_CALL_SITES.md` hat sie einmal als „toter Code,
+> löschbar" geführt; das ist dort seit 2026-07-10 korrigiert (Operator-Entscheid, Frage §5.8).
+> Sie werden auch bei der TimescaleDB-Migration **nicht umverdrahtet** — nach Phase C laufen sie
+> ohnehin nie wieder, und genau das ist in Ordnung.
+
 **Sanitisierung:** Alle Credentials (DB-Passwort, Telegram-Token, Binance-API-Key/Secret,
 Channel-IDs) wurden durch `os.getenv(...)`-Reads bzw. Platzhalter ersetzt. Die Skripte sind
 syntaktisch valide, aber ohne gesetzte Env-Vars nicht lauffähig — gewollt.

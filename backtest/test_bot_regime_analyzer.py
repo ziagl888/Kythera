@@ -7,6 +7,13 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# _load_analyzer_module() execs 27_bot_regime_analyzer.py, which imports core.config —
+# that raises when its _required() vars are unset. The build machine ships an empty
+# .env stub, so seed dummies here instead of relying on another test file having
+# seeded them earlier during collection.
+os.environ.setdefault("DB_PASSWORD", "unit-test")
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "unit-test")
+
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock
@@ -20,27 +27,38 @@ def _perf_row(n, wr):
 
 # ── Stats computation ─────────────────────────────────────────────────────────
 
-def test_regime_lookup_for_trade():
-    """Trade gets annotated with the regime nearest in time."""
-    # This is tested indirectly via the SQL subquery — tested via integration
-    # Here we test the _compute_stats function directly
-    from src_27 import _compute_stats  # noqa: Would import from 27_bot_regime_analyzer
-    # We test via direct import path
-    import importlib.util, sys
-    spec = importlib.util.spec_from_file_location(
-        "bot_regime_analyzer",
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                     "27_bot_regime_analyzer.py")
-    )
-    mod = importlib.util.load_from_spec = None  # skip actual import in unit test
-    # Just verify the logic inline
-    pnl = [1.0, 2.0, -1.0, 3.0]
-    wins = [1, 1, 0, 1]
-    import statistics
-    wr = sum(wins) / len(wins) * 100
-    avg = statistics.mean(pnl)
-    assert wr == 75.0
-    assert avg == pytest.approx(1.25)
+def test_compute_stats_from_pnl_and_wins():
+    """_compute_stats aggregiert PnL-Liste + Win-Flags zur Performance-Zeile.
+
+    Ersetzt den früheren `test_regime_lookup_for_trade`: der importierte ein
+    nie existierendes Modul `src_27` und rechnete seine Assertions inline nach,
+    ohne den Produktionscode je aufzurufen.
+    """
+    mod = _load_analyzer_module()
+    stats = mod._compute_stats([1.0, 2.0, -1.0, 3.0], [1, 1, 0, 1])
+
+    assert stats["n_trades"] == 4
+    assert stats["win_rate"] == 75.0
+    assert stats["avg_pnl_pct"] == pytest.approx(1.25)
+    assert stats["median_pnl_pct"] == pytest.approx(1.5)
+    assert stats["worst_trade_pct"] == -1.0
+    assert stats["best_trade_pct"] == 3.0
+    assert stats["sharpe_like"] == pytest.approx(stats["avg_pnl_pct"] / stats["pnl_stddev"])
+
+
+def test_compute_stats_empty_input():
+    """Leere Eingabe → leeres Dict (kein statistics.StatisticsError)."""
+    mod = _load_analyzer_module()
+    assert mod._compute_stats([], []) == {}
+
+
+def test_compute_stats_single_trade_has_no_sharpe():
+    """n=1: stdev ist 0 → sharpe_like bleibt None statt ZeroDivisionError."""
+    mod = _load_analyzer_module()
+    stats = mod._compute_stats([2.0], [1])
+    assert stats["n_trades"] == 1
+    assert stats["pnl_stddev"] == 0.0
+    assert stats["sharpe_like"] is None
 
 
 def test_aggregation_correctness():

@@ -49,7 +49,7 @@ Schwäche gegenüber dem echten Flag: eine Kerze, deren Periode gerade abgelaufe
 
 ## 2. Call-Site-Inventar
 
-**≈108 verifizierte Call-Sites in 50 Live-Dateien** (`legacy_trainers/`: 23 Dateien, toter Code, eine Aggregat-Zeile — wird nicht umverdrahtet, sondern beim Cleanup mit den Tabellen entsorgt).
+**≈108 verifizierte Call-Sites in 50 Live-Dateien** (`legacy_trainers/`: 23 Dateien mit Roh-Tabellen-Reads, eine Aggregat-Zeile — **wird nicht umverdrahtet**, weil kein Prozess sie ausführt; die Skripte sind eingefrorene Provenienz, siehe §2-Nebenfunde. Wenn die per-Coin-Tabellen in Phase C wegfallen, laufen sie ohnehin nie wieder — das ist kein Grund, sie zu löschen).
 
 Legende **Forming heute**: `offen` = die neueste Zeile kann die laufende Kerze sein und wird verwendet · `gedroppt` = die Datei entfernt sie selbst · `gebunden` = die Query ist auf einen geschlossenen Zeitstempel begrenzt · `gewollt` = die forming Candle ist der Zweck.
 **Ziel**: `F` = `include_forming=False` · `T` = `include_forming=True`.
@@ -163,7 +163,13 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 | **DDL** | `1:83`, `2:173,180`, `6:61` | Bewusst außerhalb der API. Entfällt in Phase C |
 | **Gemischter Ingestion-Batch** | `1_data_ingestion:177` | `closed=` ist ein Bool pro Call; der REST-Catch-up mischt geschlossene Historie mit einer forming Endzeile → **zwei** Upsert-Calls. Kein fehlendes Feature, eine Verdrahtungs-Frage |
 
-**Zwei Aufräum-Funde außerhalb des Auftrags** (nicht stillschweigend weggelassen): `db_schema_analysis.py` und `tools/db_schema_analysis.py` sind **byte-identische Duplikate**; `legacy_trainers/` (23 Dateien) ist toter Code mit eigenen Roh-Tabellen-Reads und einem eigenen `get_live_price`. Beides ist löschbar, beides ist für die Migration nicht nötig.
+**Zwei Aufräum-Funde außerhalb des Auftrags** (nicht stillschweigend weggelassen): `db_schema_analysis.py` existierte doppelt (Repo-Root + `tools/`); `legacy_trainers/` (23 Dateien) trägt eigene Roh-Tabellen-Reads und einen eigenen `get_live_price`. Für die Migration ist beides nicht nötig.
+
+> **Korrektur 2026-07-10 (T-2026-CU-9050-039).** Der Absatz darüber stand ursprünglich so da: *„`db_schema_analysis.py` und `tools/db_schema_analysis.py` sind **byte-identische Duplikate**; `legacy_trainers/` (23 Dateien) ist **toter Code** […]. **Beides ist löschbar.**"* Beide Aussagen halten der Prüfung am Code nicht stand.
+>
+> **`db_schema_analysis.py` war nicht byte-identisch.** Die Root-Kopie wurde in `052ba4c` (ruff cleanup) modernisiert, die `tools/`-Kopie stammt unverändert aus dem Initial-Import; zudem zeigte deren `sys.path.insert(0, dirname(__file__))` auf `tools/`, wo kein `core/` liegt — sie konnte `core.database` nie importieren. `audit_reports/10_dashboard_tools.md:47` und `AUDIT_TODO.md` P3.1 hatten das bereits korrekt vermerkt. Die stale `tools/`-Kopie ist gelöscht, die Root-Kopie ist kanonisch (die Exclude-Einträge in `pyproject.toml` und `.github/workflows/typecheck.yml` zeigen ohnehin auf sie).
+>
+> **`legacy_trainers/` ist nicht „toter Code" im Sinne von löschbar.** Kein laufender Prozess importiert die Skripte, und sie sind bewusst nicht lauffähig (Credentials durch `os.getenv(...)`-Platzhalter ersetzt) — aber sie sind die **einzige Reproduktionsgrundlage der acht live geladenen Modell-Artefakte**. `legacy_trainers/README.md` ordnet jeden Trainer seinem Artefakt und Bot zu (MIS1→11, ABR1→18, ATS1→12, RUB1→13, SRA1→9, AIM1→15, EPD1→10, ATB1→14); der Ordner entstand genau dafür (`7b5ec89 feat: preserve the _X ML trainers as frozen provenance`). Ihre dokumentierten Defekte (Label-Geometrie, Split-Leakage, In-Sample-Thresholds, Feature-Skews) sind absichtlich konserviert — sie erklären das Verhalten der Live-Modelle und sind die Referenz, gegen die das Retrain-Programm seine Deltas misst. **Bleibt. Siehe Operator-Frage §5.8.**
 
 ---
 
@@ -218,7 +224,7 @@ Diese Fragen blockieren den Start von Phase 1. Keine davon ist in diesem Task en
 5. **`11_ai_mis` / `12_ai_ats`:** beide brauchen die forming Kerze als Live-Preis und die vorletzte als Feature-Zeile. Bleiben sie auf `include_forming=True` mit expliziter Trennung (mein Vorschlag), oder sollen sie zwei Calls machen (`read_candles(include_forming=False)` für Features + `latest_price()` für den Preis)? Zweiteres ist sauberer, kostet aber eine zweite Query pro Coin und Zyklus.
 6. **Signal-Raten.** R1 **senkt** sie — das ist der Zweck. Klassik-Strategien feuern seltener, MIS/RUB/ATB-Feature-Verteilungen verschieben sich. **Schwellen erst nach dem Retrain neu tunen** (Report 16), nicht während der Umverdrahtung.
 7. **Owner + Branch-Modell.** T-018 §4 verlangt „Migration als EIN Branch mit klarem Owner". Bei parallelen Sessions am selben Repo ist das eine Vorbedingung, keine Empfehlung.
-8. **Aufräum-Freigabe** (Nebenfunde): `tools/db_schema_analysis.py` als Duplikat löschen? `legacy_trainers/` löschen?
+8. ~~**Aufräum-Freigabe** (Nebenfunde): `tools/db_schema_analysis.py` als Duplikat löschen? `legacy_trainers/` löschen?~~ — **beide entschieden, 2026-07-10 (T-2026-CU-9050-039).** `tools/db_schema_analysis.py` ist **gelöscht** (stale, nie lauffähig; Root ist kanonisch). `legacy_trainers/` **bleibt** — es ist eingefrorene Provenienz der acht live geladenen Artefakte, kein toter Code. Löschen würde die Reproduktionsgrundlage von MIS1/ABR1/ATS1/RUB1/SRA1/AIM1/EPD1/ATB1 vernichten, um Dateien zu entfernen, die niemand ausführt und die aus ruff/mypy ausgeschlossen sind (`docs/OPUS-HANDOFF.md` §4.12: Excludes nicht als Selbstzweck aufräumen). Diese Frage blockiert Phase 1 damit nicht mehr.
 
 ---
 

@@ -1,3 +1,150 @@
+## [2026-07-10] `legacy_trainers/` ist keine Wegwerf-Ware — Operator-Frage §5.8 geschlossen (Doku)
+
+`docs/CANDLE_CALL_SITES.md` führte `legacy_trainers/` an drei Stellen als „toter
+Code" und „löschbar". Beides ist irreführend und stand im selben Absatz wie der
+bereits korrigierte `db_schema_analysis.py`-Fehlbefund (T-2026-CU-9050-039).
+
+Richtig ist: kein laufender Prozess importiert die Skripte, und sie sind bewusst
+nicht lauffähig (Credentials durch `os.getenv(...)`-Platzhalter ersetzt). Genau
+das ist ihr Zweck. Sie sind die **einzige Reproduktionsgrundlage der acht live
+geladenen Modell-Artefakte** — `legacy_trainers/README.md` ordnet jeden Trainer
+seinem Artefakt und Bot zu (MIS1→11, ABR1→18, ATS1→12, RUB1→13, SRA1→9,
+AIM1→15, EPD1→10, ATB1→14), und der Ordner entstand in `7b5ec89` ausdrücklich
+als „frozen provenance". Ihre konservierten Defekte (Label-Geometrie,
+Split-Leakage, In-Sample-Thresholds, Feature-Skews) erklären das Verhalten der
+Live-Modelle und sind die Referenz, gegen die das Retrain-Programm misst.
+
+Für die Migration sind sie irrelevant — sie werden **nicht umverdrahtet**, und
+nach Phase C laufen sie ohnehin nie wieder. Das ist ein Argument gegen
+Umverdrahten, keines fürs Löschen; der alte Text vermischte beides.
+
+**Entscheid: `legacy_trainers/` bleibt.** Operator-Frage §5.8 ist damit in beiden
+Teilen beantwortet und blockiert Phase 1 nicht mehr. Ein `NICHT LÖSCHEN`-Hinweis
+steht jetzt auch oben in `legacy_trainers/README.md`, wo ein Folge-Agent zuerst
+hinschaut. Kein Code berührt.
+
+## [2026-07-10] Vier rote Tests auf main repariert (T-2026-CU-9050-038)
+
+CI gated nur ruff/format, mypy, Syntax/Imports und Secret-Regex — pytest läuft
+nirgends. Vier Tests der `backtest`-Suite waren deshalb unbemerkt rot, teils
+seit dem Initial-Import. Bei T-2026-CU-9050-034 fielen sie beim Lauf der vollen
+Suite auf. Jeder wurde am Code diagnostiziert, keiner stillschweigend geskippt
+oder gelöscht.
+
+- **`test_bot_naming::test_similar_but_not_matching`** — der Test hielt am
+  MIS1-only-Vertrag fest, während `core/bot_naming.py` in `99e9de3` bewusst auf
+  `MIS\d+` generalisiert wurde (harte Regel 6: Retrains posten unter neuem Tag).
+  Der Docstring der Funktion dokumentiert `pretty_name("MIS2-72H") == "MIS2-72h"`
+  bereits. Der Test wurde nachgezogen; die eigentliche Invariante (Generationen
+  vermischen sich nicht) ist als eigener Test erhalten.
+- **`test_bot_regime_analyzer::test_regime_lookup_for_trade`** — tot geboren: er
+  importierte ein nie existierendes Modul `src_27` und rechnete seine Assertions
+  inline nach, ohne den Produktionscode je aufzurufen. Ersetzt durch echte Tests
+  gegen `27_bot_regime_analyzer._compute_stats` (Aggregat, leere Eingabe,
+  Sharpe-Guard bei n=1).
+- **`test_signal_orchestrator::test_identify_bot_channel_fallback`** — testete
+  die Umgebung statt den Code. `core.config._ch()` liefert `0` für unbelegte
+  Channels; auf der Build-Maschine (leerer `.env`-Stub) kollabierten damit alle
+  fünf Keys von `CHANNEL_TO_BOT_FALLBACK` auf `0`, und der letzte Eintrag gewann.
+- **`test_signal_orchestrator::test_compute_rom1_trade_params_long`** — der
+  R4-Audit-Fix zog `cap_leverage_to_sl()` in den ROM1-Pfad, der Test mockte aber
+  nur `get_max_leverage`. `params["leverage"]` war deshalb ein `MagicMock` aus
+  dem gemockten `core.trade_utils`. Der Test setzt jetzt die echte Funktion ein
+  und prüft den tatsächlichen Cap (`"6x"`: 8 % SL-Distanz deckeln die
+  gewünschten 20x).
+
+### Live-Semantik
+Eine Produktions-Änderung: `CHANNEL_TO_BOT_FALLBACK` wird über
+`_build_channel_fallback()` gebaut und lässt den `0`-Sentinel unbelegter
+Channels fallen. Auf dem VPS sind alle fünf `CH_*` echte, distinkte Telegram-IDs
+— die Map ist dort unverändert. Der Filter greift nur im degenerierten Fall:
+statt dass ein deaktivierter Bot auf einen **fremden** Bot-Namen auflöst, liefert
+`identify_bot` jetzt `None`. Da `identify_bot` ausschliesslich mit echten
+Channel-IDs gerufen wird (`28:659`), ändert sich das Live-Verhalten nicht.
+
+### Nebenbefunde (mitgefixt)
+`test_signal_orchestrator.py` und `test_bot_regime_analyzer.py` liessen sich nur
+sammeln, wenn zufällig eine alphabetisch frühere Testdatei `DB_PASSWORD` bzw.
+`TELEGRAM_BOT_TOKEN` gesetzt hatte; beide seeden ihre Dummies jetzt selbst.
+`test_abr1_detection.py` brach beim Collect ab: `pandas_ta` steht in
+`requirements.txt:18` und ist auf dem VPS installiert, auf dieser Python-3.14-
+Build-Maschine aber nicht installierbar (zieht `numba`, kein cp314-Wheel,
+Source-Build schlägt fehl). Der harte Collect-Fehler ist durch einen benannten
+`pytest.importorskip` ersetzt — reines Umgebungsproblem, kein Code-Fehler.
+
+### Verifikation
+`python -m pytest backtest -q` → volle Suite grün, genau ein Skip (der benannte
+pandas_ta-`importorskip`); zusätzlich läuft jede Datei der Suite einzeln grün
+(die Import-Reihenfolgen-Kopplung ist weg).
+ruff, `ruff format --check` und mypy sauber.
+`python tools/regression_guard/guard.py smoke` OK — der Guard wurde nicht
+refreshed. Der neue Guard-Test gegen `_build_channel_fallback` ist per Mutation
+geprüft: entfernt man den `if cid`-Filter, wird er rot.
+## [2026-07-10] RUB bekommt den Active-Trade-Check seiner Geschwister (T-2026-CU-9050-043)
+
+`13_ai_rub_bot.py` war der einzige AI-Bot ohne Positions-Guard: seine einzige
+Re-Fire-Sperre war der 4h-Cooldown (`:252`), und die ganze Datei berührte
+`ai_signals` nur schreibend (INSERT `:376`). Ein Cooldown begrenzt die Signal-
+**Frequenz**, nicht die Zahl gleichzeitig offener Positionen. Ein Mean-Reversion-
+Trade überlebt seine vier Stunden regelmässig — danach durfte derselbe Coin in
+derselben Richtung erneut feuern, und Cornix öffnete eine **zweite volle Position
+mit eigenem SL** neben der ersten. MIS (`:318`), QM und der Sniper (`:116`) haben
+den Guard seit jeher; RUB fehlte er ohne dokumentierten Grund. Das ist auch der
+Grund, warum der transitionale Dedup aus T-2026-CU-9050-030 bei RUB in den
+Cooldown ausweichen musste — es gab schlicht keinen Check, in den er gehört hätte.
+
+Operator-Entscheid vorab (Michi, 2026-07-10): kein beabsichtigtes Averaging-Down,
+sondern ein Bug.
+
+Fix:
+
+- Vor der (teuren) ML-Prediction prüft der Bot jetzt
+  `SELECT 1 FROM ai_signals WHERE symbol/direction/model IN (%s, %s)` und
+  überspringt das Signal bei einem Treffer — Muster `11_ai_mis_bot.py`.
+- Gebunden wird derselbe **richtungsabhängige** Tag, den auch der Post-Pfad
+  schreibt (LONG `RUB_LONG_TAG`, SHORT `RUB2_SHORT["tag"]` aus der Artefakt-Meta),
+  plus `RUB_LEGACY_TAG` als transitionaler Dedup: der Tag ist zugleich der
+  Dedupe-Key, und beim RUB3-Rollout kippt er. Ohne den Alt-Tag im `IN` würde eine
+  offene RUB2-Position ein RUB3-Signal auf demselben Coin nicht mehr blocken —
+  exakt die zweite Live-Position, die dieser Guard verhindert. Solange die Tags
+  übereinstimmen (heute), ist das `IN` ein No-op.
+- Der Cooldown bleibt **unverändert** als Frequenz-Sperre daneben stehen (wie bei
+  MIS laufen beide parallel). Sein jetzt falscher Kommentar („prüft ai_signals
+  nicht") ist mitgezogen.
+- `backtest/test_rub_tag.py`: zwei neue DB-freie Tests (Guard vorhanden + Skip;
+  Bindung an `module_tag` **und** `RUB_LEGACY_TAG`). Mutations-geprüft — Legacy-Tag
+  aus dem Bind entfernt bzw. Check ganz entfernt ⇒ beide rot.
+
+**Live-Semantik ändert sich hier bewusst**, anders als bei T-030: Signale auf einem
+Coin, auf dem bereits ein RUB-Trade derselben Richtung offen ist, fallen weg. Die
+erste Position, jedes Signal auf freiem Coin und die Gegenrichtung bleiben
+unberührt; der Cooldown-Pfad ist bit-identisch. Keine DB-Änderung, kein Rollout.
+
+**Offen für eine VPS-Session:** die Rückwärts-Messung, wie oft
+`(symbol, direction, model='RUB2')` real mehrfach gleichzeitig offen war
+(`ai_signals` / `closed_ai_signals`, read-only). Nicht blockierend für den Fix.
+## [2026-07-10] Doppeltes `db_schema_analysis.py` bereinigt (T-2026-CU-9050-039, P3.1)
+
+`tools/db_schema_analysis.py` gelöscht. Die Root-Kopie ist kanonisch und bleibt
+unverändert; die Fleet ist nicht betroffen (das Skript ist ein read-only
+DBA-Werkzeug über den PostgreSQL-System-Katalog, kein Bot-Pfad).
+
+Die Ausgangs-Annahme, beide Dateien seien **byte-identisch**
+(`docs/CANDLE_CALL_SITES.md` §2), war **falsch** und ist dort jetzt korrigiert:
+
+- Die Root-Kopie trägt den ruff-Cleanup aus `052ba4c` (Import-Sortierung,
+  `zip(..., strict=False)`, Formatierung); die `tools/`-Kopie stammt unverändert
+  aus dem Initial-Import `b6735d9`.
+- Die `tools/`-Kopie war zudem **nicht lauffähig**: ihr
+  `sys.path.insert(0, dirname(__file__))` zeigte auf `tools/`, wo kein `core/`
+  liegt — `from core.database import …` scheiterte immer, sie brach mit
+  „core.database nicht gefunden" ab. `audit_reports/10_dashboard_tools.md:47`
+  und `AUDIT_TODO.md` P3.1 hatten das bereits richtig beschrieben.
+
+Kein Eingriff an `pyproject.toml` oder `.github/workflows/typecheck.yml` nötig:
+beide Exclude-Einträge nennen die Root-Datei, die bleibt (`tools/` ist ohnehin
+pauschal excluded).
+
 ## [2026-07-10] Watchdog-Backoff blockiert die Fleet-Aufsicht nicht mehr (T-2026-CU-9050-029, P1.37)
 
 `time.sleep(delay)` stand im Pro-Prozess-Rumpf der Monitor-Schleife. Bis zu
