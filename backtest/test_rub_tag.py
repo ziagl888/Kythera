@@ -1,4 +1,4 @@
-"""Standalone (DB-free) guard for the RUB model-tag contract.
+"""Standalone (DB-free) guard for the RUB model-tag and re-fire contract.
 
 Background (T-2026-CU-9050-030, finding P1.45): load_artifact already computed the
 correct tag from the SHORT artifact's meta.model_id, but the bot dropped it and
@@ -51,9 +51,37 @@ def test_short_tag_comes_from_the_artifact():
     )
 
 
+def test_active_trade_check_blocks_a_second_position():
+    """T-2026-CU-9050-043: the cooldown is a FREQUENCY guard (4h), not a position guard.
+    A mean-reversion trade routinely outlives its cooldown, so without a check against the
+    open trades in ai_signals the next signal opens a SECOND live position on the same
+    coin. The bot must probe ai_signals by symbol/direction/model and skip on a hit —
+    same shape as 11_ai_mis_bot.py and 25_smc_ml_sniper.py."""
+    assert re.search(
+        r"SELECT 1 FROM ai_signals\s*\n\s*WHERE symbol = %s AND direction = %s AND model IN \(%s, %s\)", SRC
+    ), (
+        "the active-trade check against ai_signals is gone — a trade outliving its 4h "
+        "cooldown would let the same coin/direction fire a second live position"
+    )
+    assert re.search(r"if trade_exists:\s*\n\s*continue", SRC), (
+        "the active-trade check no longer skips the signal when an open trade exists"
+    )
+
+
+def test_active_trade_check_uses_the_posting_tag_and_the_legacy_tag():
+    """The check keys on the tag, so it must bind the SAME direction-dependent tag the
+    post path writes (module_tag) plus the pre-fix tag. On a RUB3 rollout an open RUB2
+    position would otherwise stop blocking, and the guard would reopen exactly the hole
+    it was built to close."""
+    assert re.search(r"\(symbol,\s*direction,\s*module_tag,\s*RUB_LEGACY_TAG\)", SRC), (
+        "the active-trade check no longer binds (module_tag, RUB_LEGACY_TAG) — either it "
+        "stopped tracking the posting tag or it lost the transitional legacy tag"
+    )
+
+
 def test_cooldown_covers_the_legacy_tag():
-    """RUB has NO active-trade check against ai_signals — the cooldown is its only
-    re-fire guard, and its key is the tag. When RUB3 rolls out the SHORT tag flips, so a
+    """The cooldown stays alongside the active-trade check as the frequency guard (as in
+    MIS: both run). Its key is the tag too. When RUB3 rolls out the SHORT tag flips, so a
     fresh RUB2 cooldown row would stop blocking a RUB3 signal on the same coin. The
     cooldown therefore also probes the pre-fix tag; while the tags agree the second query
     is skipped."""
@@ -69,7 +97,9 @@ def test_cooldown_covers_the_legacy_tag():
 
 if __name__ == "__main__":
     test_tag_is_direction_dependent()
+    test_active_trade_check_blocks_a_second_position()
+    test_active_trade_check_uses_the_posting_tag_and_the_legacy_tag()
     test_cooldown_covers_the_legacy_tag()
     test_long_tag_is_a_named_constant()
     test_short_tag_comes_from_the_artifact()
-    print("OK — RUB model-tag contract holds")
+    print("OK — RUB model-tag + re-fire contract holds")
