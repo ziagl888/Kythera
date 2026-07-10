@@ -1,3 +1,65 @@
+## [2026-07-10] EPD und SRA bekommen den Active-Trade-Check; EPDs Funding-Load wird gecacht (T-2026-CU-9050-055)
+
+Zwei Folgebefunde aus T-2026-CU-9050-042, auf Operator-Auftrag (Michi, 2026-07-10).
+Damit ist die Fehlerklasse aus P1.48 fleet-weit geschlossen: **alle** postenden
+AI-Bots prüfen jetzt vor dem Signal, ob auf dem Coin schon ein Trade offen ist.
+
+**Der Positions-Guard.** Weder `10_pump_dump_detector` (EPD) noch `9_ai_sr_bot`
+(SRA) berührte `ai_signals` lesend. Was sie hatten, waren Frequenz-Sperren:
+
+- EPD: `pd_state["last_alert_time"]`, 900 Sekunden — und ein **In-Memory**-Timer.
+  Ein EPD-Trade überlebt eine Viertelstunde regelmässig; danach durfte derselbe
+  Coin erneut feuern, und Cornix öffnete eine **zweite volle Position** daneben.
+- SRA: der 4h-Cooldown plus die `trade_id`-Duplikatprüfung. Letztere schützt nur
+  gegen dasselbe Setup — nicht gegen ein **neues** S/R-Setup auf einem Coin, auf
+  dem bereits ein SRA-Trade läuft.
+
+Beide bekommen jetzt `SELECT 1 FROM ai_signals WHERE symbol/direction/model IN
+(tag, legacy_tag)` und überspringen das Signal bei einem Treffer. Bei **EPD** läuft
+der Check *nach* der Prediction — die Richtung entsteht erst im `argmax` — aber
+*vor* der Shadow/Post-Verzweigung, also unterdrückt er wie bei MIS/RUB auch die
+Shadow-Zeile. Operator-Entscheid: `symbol+direction` wie bei den Geschwistern, kein
+richtungsagnostischer Key, damit ein Reversal auf demselben Coin erlaubt bleibt.
+Bei **SRA** steht die Richtung schon aus `active_trades_master` fest, der Check
+sitzt deshalb vor Indikator-Fetch und `predict_proba` und spart auch Arbeit. Der
+Legacy-Tag reist in beiden Binds mit (transitionaler Dedup über den EPD3-/
+SRA2-Generationswechsel); Cooldown und 900s-Timer bleiben unangetastet daneben.
+
+**Der Funding-Load — und eine Korrektur an der eigenen Notiz von T-042.** Dort stand,
+der Load feuere „pro qualifizierendem Tick, weil der `vol_ratio>=5`-Vorfilter
+anhält". Das war ungenau: der 900s-Timer sperrt sehr wohl **vor** der ML-Strecke.
+Der Wiederholungsfall ist ein anderer — der Timer wird **nur im Live-Trade-Zweig
+gesetzt**, ein Coin im Shadow-Band (0.25..threshold) passiert das Gate also auf
+jedem 10s-Tick und zog die Query jedes Mal.
+
+„Funding nur bei Trades laden" ist **nicht baubar**: die 6 Funding-Spalten sind
+Modell-**Input**, sie erzeugen die `prob`, die überhaupt erst entscheidet, ob es ein
+Trade wird. Die Reihenfolge lässt sich nicht umdrehen. Was geht, ist die
+Wiederholung: `core/funding_features.funding_features_cached` cacht je Symbol mit
+einem **Stunden-Key**.
+
+Und das ist exakt, keine Näherung — die zweite Korrektur an T-042, wo stand, ein
+Cache breche die Trainer-Parität. `funding_features_asof` hängt vom Zeitstempel
+**ausschliesslich** über den `searchsorted`-Schnitt ab (wie viele Abrechnungen davor
+liegen), Binance rechnet auf **vollen Stunden** ab, und alle Aggregate sind Suffixe
+(`rates[-3:]`, `rates[-270:]`) — die wandernde `since`-Untergrenze geht nicht ein.
+Innerhalb einer angebrochenen Stunde kann sich der Wert also gar nicht ändern. Was
+die Parität bräche, wäre ein **naiver Zeit-TTL**: der kann eine Abrechnungsgrenze
+überspannen. Ein Eintrag aus den ersten 120 Sekunden einer Stunde wird verworfen,
+weil die `hh:00`-Zeile mit ein paar Sekunden Verzug in `funding_rates` landet.
+
+Verifikation DB-frei: `backtest/test_funding_cache.py` nagelt zuerst die Invariante
+selbst fest (as-of konstant innerhalb der Stunde, und beweglich über die
+Abrechnung — beides oberhalb von `MIN_HISTORY`, sonst verglichen die Tests zwei
+leere Dicts), dann das Cache-Verhalten. Erweitert: `test_epd_tag.py` (15),
+`test_sra_tag.py` (13). Mutations-geprüft, u.a. Zeit-TTL statt Stunden-Key,
+Tages- statt Stunden-Key, fehlender Lag-Guard, Legacy-Tag aus dem Bind.
+
+**Live-Semantik ändert sich bewusst** an genau einer Stelle je Bot: ein Signal auf
+einem Coin, auf dem bereits ein Trade derselben Richtung offen ist, fällt weg. Erste
+Position, freier Coin, Gegenrichtung und der berechnete Funding-Wert bleiben
+unverändert. Kein Rollout, kein Artefakt angefasst, keine DB-Änderung.
+
 ## [2026-07-10] EPD und SRA laden ihr Artefakt über den geteilten Contract (T-2026-CU-9050-042)
 
 Letzte zwei Instanzen der P1.45-Fehlerklasse: ein Post-Pfad schreibt einen
