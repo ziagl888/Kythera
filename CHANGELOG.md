@@ -1,3 +1,75 @@
+## [2026-07-09] MIS/RUB/QM posten unter der Artefakt-`model_id` statt unter einer Quellcode-Konstante (T-2026-CU-9050-030, P1.45, PR #24)
+
+Nachbrenner zum Sniper-Fix aus PR #16: derselbe Fehlerklasse-Sweep fand drei
+weitere Post-Pfade, die ihr Artefakt laden, die `meta.model_id` aber wegwerfen und
+unter einer Konstante posten. **Heute stimmt der Tag jeweils zufällig** — es war
+also kein Betriebs-Bug, sondern eine scharfe Mine unter dem nächsten
+Retrain-Rollout: MIS3/RUB3/QM2 wären still unter dem Alt-Tag gelandet, hätten sich
+in `ai_signals` und in der Per-Bot-Win-Rate mit der Vorgänger-Generation vermischt,
+und das Orchestrator-Gating hätte über die Whitelist der neuen Generation anhand
+der Performance der alten entschieden (Verstoss gegen Versionierungs-Regel 6).
+
+### Fixed
+- `11_ai_mis_bot.py` — **jedes der acht Horizont-Artefakte trägt jetzt seine eigene
+  Generation aus `meta.model_id`**; den Posting-Tag baut der Gewinner-Kandidat
+  (`f"{best_generation}-{best_horizon}"`). Ein Teil-Rollout (72H schon MIS3, Rest
+  MIS2) taggt damit jedes Signal mit der Generation des Modells, das gefeuert hat,
+  und wird beim Laden als gemischte Generation geloggt. Die Dateinamen
+  `mis2_model_*.pkl` bleiben bewusst **generationsfreie Slot-Namen**
+  (Operator-Entscheid 2026-07-09) — genau deshalb ist `meta.model_id` der einzige
+  Generationsmarker. Fehlt sie, greift `MODEL_GENERATION` als Fallback, aber mit
+  `logger.error` statt still.
+- `13_ai_rub_bot.py` — **Tag ist jetzt richtungsabhängig**: SHORT nimmt
+  `RUB2_SHORT["tag"]` (= `meta.model_id`, von `load_artifact` schon immer korrekt
+  berechnet und bis dato weggeworfen), LONG behält die benannte Konstante
+  `RUB_LONG_TAG`. LONG fährt das Legacy-Modell `long_reversion_model.joblib` ohne
+  jede Meta und postet per Operator-Entscheid (2026-07-06) unter `RUB2` — den
+  SHORT-Artefakt-Tag dorthin zu verdrahten, hätte ein Signal mit der Generation
+  eines Modells etikettiert, das nie gelaufen ist.
+- `24_quasimodo_bot.py` — **präventiv, bevor QM2 existiert**: der Loader bevorzugt
+  `meta.model_id` (heute schreibt `qm_ml_trainer.py` keine → abgeleiteter Tag
+  `QM_1H`, so geloggt), und `send_cornix_signal` leitet den Tag nicht mehr ein
+  zweites Mal aus `tf` ab, sondern bekommt `module_tag` als **Pflicht-Keyword** —
+  das Sniper-Muster: eine Aufrufstelle, die ihn vergisst, scheitert laut mit
+  `TypeError`, statt still den Alt-Tag zu schreiben. Der Orchestrator erkennt
+  `QM2_1H` seit `ff8e01e` bereits.
+
+### Fixed — transitionaler Dedup (Review-Fund, hätte den Tag-Fix zur Geldfalle gemacht)
+Der Posting-Tag **ist zugleich der Dedupe-Key**. Beim Generationswechsel kippt er —
+und damit hätte eine noch offene Position der Alt-Generation denselben
+Coin/Direction nicht mehr geblockt: der neue Lauf hätte eine **zweite Live-Position**
+daneben eröffnet. Exakt die Falle, die PR #16 beim Sniper mit
+`model IN (neuer Tag, Alt-Tag)` entschärft hat. Pro Bot an der Stelle geschlossen,
+die dort tatsächlich sperrt:
+
+- `11_ai_mis_bot.py` / `24_quasimodo_bot.py` — Active-Trade-Check auf
+  `model IN (%s, %s)` erweitert.
+- `13_ai_rub_bot.py` — RUB hat **keinen** Active-Trade-Check gegen `ai_signals`; sein
+  4h-Cooldown ist die einzige Re-Fire-Sperre. Der prüft jetzt zusätzlich gegen
+  `RUB_LEGACY_TAG`. (Die fehlende Open-Position-Prüfung ist ein Alt-Zustand, nicht
+  Teil dieses Tasks.)
+
+`legacy_tag` ist jeweils **genau das Tag, das der Bot vor diesem Fix gepostet hätte** —
+keine Operator-Konstante, kein toter Code. Solange Quellcode-Konstante und
+Artefakt-Generation übereinstimmen, sind beide Tags identisch und die Klausel ist ein
+No-op.
+
+Guard-Tests (statisch, DB-frei — ein Runtime-Guard würde von den fleet-weiten
+breiten `except`-Blöcken geschluckt, Lektion aus T-2026-CU-9050-024):
+`backtest/test_mis_tag.py`, `backtest/test_rub_tag.py`,
+`backtest/test_quasimodo_tag.py`. Alle drei sind mutations-geprüft: das Zurückdrehen
+je einer Fix-Zeile lässt den zugehörigen Test rot werden. **Keine
+Live-Semantik-Änderung** — die drei Tags lauten mit den deployten Artefakten
+unverändert `MIS2-<Horizont>`, `RUB2`, `QM_1H`, und die Dedup-Klauseln sind bei
+identischen Tags wirkungsgleich zum Vorzustand.
+
+### Offen (bewusst nicht in diesem PR)
+- `retrain_from_replay.py:723` (EPD2) und `retrain_sra2.py:281` (SRA2) schreiben
+  dict-Artefakte **mit** `model_id`, während die Live-Bots `10_pump_dump_detector`
+  und `9_ai_sr_bot` **rohe** Modelle laden und keine Meta lesen — das
+  Retrain-Ausgabeformat divergiert vom Live-Ladeformat. Beim Verdrahten von
+  EPD2/SRA2 muss der Tag aus der neuen `model_id` kommen, sonst entstehen Instanz 4
+  und 5 derselben Fehlerklasse. Bleibt als P1.45-Nebenbefund im Ledger.
 ## [2026-07-09] Kerzen-API `core/candles.py` + Call-Site-Inventar + Paritäts-Tool (T-2026-CU-9050-034, C1-Vorbereitung)
 
 Vorbereitung der R1-/TimescaleDB-Migration (`docs/TIMESCALE_R1_MIGRATION.md`,
