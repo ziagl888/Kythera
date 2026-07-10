@@ -102,6 +102,12 @@ CH_DISABLED = _ch("CH_DISABLED")
 # S6/S8/S10/S11). Ein Channel für alle vier: die neuen Ideen werden als Kohorte
 # beobachtet, Attribution läuft über den Modell-Tag in ai_signals.
 CH_NEW_IDEAS = _ch("CH_NEW_IDEAS")
+# AIM2-TOPN high-conviction channel (T-2026-CU-9050-051): the "Top 1-3 des
+# Tages" stream is deliberately SEPARATE from the base AIM2 channel (CH_MASTER)
+# so it can be traded on its own risk profile. Plain _ch (0 = unset): an unset
+# channel forces shadow-only in 15_ai_master_bot.py — never silently falls back
+# onto the base AIM2 channel.
+CH_AIM2_TOPN = _ch("CH_AIM2_TOPN")
 
 
 # Per-Bot-Override (Operator 2026-07-07): ungesetzt → Fallback auf den

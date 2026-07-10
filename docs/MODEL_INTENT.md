@@ -363,6 +363,45 @@ Quellsignale; Label = First-Touch der rekonstruierten Geometrie; läuft shadow-o
       jetzt (Flag war bereits aktiv, das Traden des Channels konfiguriert Michi
       in Cornix). Drift-/Kalibrierungs-Monitoring läuft trotzdem weiter.
 
+### 9a. AIM2-TOPN — "Top 1-3 des Tages" als High-Conviction-Kanal 🔨 (T-2026-CU-9050-051, default-off)
+
+**Soll (aus T-2026-CU-9050-031, Weg 2):** der strukturelle Weg zu „täglich 1-3
+Trades, sehr hohe Winrate". AIM2 rankt bereits die ganze Fleet (OOT-Gate-Uplift
+−0,69 → +1,92 %/Trade @34 % Pass). Statt „alles über der Linie" (≈110/Tag)
+selektiert AIM2-TOPN **höchstens N (1-3) der stärksten Kandidaten des Tages** und
+routet sie in einen **eigenen Kanal/Tag** (`AIM2-TOPN`, Regel 6) — per Konstruktion
+wenige, hoch-selektierte Trades, getrennt vom Basis-AIM2-Posting.
+
+**Mechanik (Bot 15 → `core/aim2_topn.py`, geteilte reine Logik):**
+- „Top-N des Tages" ist erst ex-post bekannt → approximiert über eine hohe
+  **Mindest-Probability** (`AIM2_TOPN_MIN_PROB`, Default 0,95, nie unter dem
+  Basis-Gate-Threshold) plus eine **harte rollierende 24h-Kappe** N
+  (`AIM2_TOPN_N`, Default 1). Rollierend statt Kalendertag — kein
+  Mitternachts-Burst (23:50 + 00:10 = 2·N in 20 min).
+- Selektion je Zyklus: nur `trusted` (Parity-Guard bestanden) & `prob ≥ min_prob`,
+  Dedupe je (Coin, Richtung, stärkste), deterministischer Tie-Break
+  (prob desc, coin, direction), Kappe = `N − posts_last_24h`.
+- 24h-Zähler aus `ml_predictions_master` (Shadow **und** Live), damit die Kappe
+  im Shadow exakt wie live greift → getreue Vorschau.
+- Posting über den auditierten `core.signal_post.post_ai_signal` (genau EINE
+  Cornix-Message, Regel 4). Der TOPN-Tag ist aus AIM2s eigenem Kandidaten-/
+  Schwarm-Stream ausgeschlossen (F6-Selbst-Feedback).
+
+**Gates (alle default-off, Flip = Michis Entscheid):**
+- `AIM2_TOPN_ENABLED=0` (Master-Schalter; aus ⇒ **null** Verhaltensänderung an
+  Basis-AIM2).
+- `AIM2_TOPN_LIVE_POSTING=0` (shadow-first, analog `AIM2_LIVE_POSTING`).
+- `CH_AIM2_TOPN` ungesetzt ⇒ erzwingt Shadow-only (kein Fallback auf den
+  AIM2-Kanal).
+
+**Offen / Bestätigung einholen:**
+- [ ] **Schwellen-Kalibrierung** aus der VPS-DB via `tools/aim2_topn_calibrate.py`
+      (read-only): welcher `min_prob` liefert historisch ~1-3/Tag? Bis dahin
+      läuft der konservative Default 0,95.
+- [ ] **Scharf-Schalten** (`AIM2_TOPN_ENABLED=1`, dann `AIM2_TOPN_LIVE_POSTING=1`
+      + `CH_AIM2_TOPN` setzen + Cornix-Konfiguration des Kanals) — ausschliesslich
+      Michis Entscheidung nach einer Shadow-Auswertung.
+
 ---
 
 ## 10. UFI1 — Dead-Cat-Bounce-Short ⚠ REAKTIVIERT auf Operator-Entscheid (2026-07-06)
