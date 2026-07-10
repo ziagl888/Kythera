@@ -20,6 +20,46 @@ Kein Eingriff an `pyproject.toml` oder `.github/workflows/typecheck.yml` nötig:
 beide Exclude-Einträge nennen die Root-Datei, die bleibt (`tools/` ist ohnehin
 pauschal excluded).
 
+## [2026-07-10] Watchdog-Backoff blockiert die Fleet-Aufsicht nicht mehr (T-2026-CU-9050-029, P1.37)
+
+`time.sleep(delay)` stand im Pro-Prozess-Rumpf der Monitor-Schleife. Bis zu
+900 Sekunden lang fror das den **gesamten** Watchdog ein: kein anderer Bot wurde
+beaufsichtigt, kein Park-Marker beachtet, kein Dashboard-Restart konsumiert,
+kein Health-Check gefahren. Der Watchdog ist der einzige Aktor der Flotte — ein
+einzelner crash-loopender Bot nahm damit die Aufsicht über alle ~29 anderen mit.
+
+Zweiter Fehler auf denselben Zeilen: nach dem Sleep lief `start_process`
+bedingungslos. Wer den Bot während der 900s parkte, sah zu, wie der Watchdog ihn
+trotzdem wiederbelebte.
+
+Der Delay ist jetzt eine **Pro-Prozess-Deadline** (`_restart_not_before`). Die
+Schleife dreht weiter und überspringt nur den betroffenen Bot. Die Reihenfolge
+der Zweige ist tragend und an der Funktion dokumentiert: Park schlägt alles
+(und verwirft eine anstehende Deadline), ein Dashboard-Restart schlägt den
+Backoff, dann erst greift die Deadline. Weil der Park-Check dadurch in jedem
+10s-Zyklus erneut läuft, hält ein Park während des Backoff-Fensters den Bot
+unten — der zweite Fehler fällt durch dieselbe Umstrukturierung.
+
+Die Backoff-Kurve selbst ist unverändert (0/15/60/300/900s nach Crashes der
+letzten Stunde) und per Test festgenagelt.
+
+**Refactor mit Touch-Kontext:** der Pro-Prozess-Rumpf liegt jetzt in
+`supervise_process(p_info, current_time)`. Jedes `continue` wurde zu `return` —
+für einen Schleifenrumpf äquivalent. Ohne diese Extraktion ist die Deadline
+nicht testbar, ohne `main()` samt Lock, Orphan-Kill und gestaffeltem Fleet-Start
+zu fahren.
+
+**Beweislage, ehrlich:** `backtest/test_watchdog_backoff.py` (neu, standalone,
+DB-frei, 6/6) sind Regressions-Guards auf dem neuen Verhalten, **keine** Zeugen
+des alten Bugs — auf dem Pre-Fix-Stand erroren sie, weil `supervise_process`
+noch nicht existierte. Der alte Fehler ist am Pre-Fix-Code direkt ablesbar
+(`main_watchdog.py:443-447`). Damit er nicht zurückkommt, patcht die Fixture
+`time.sleep` mit einem Mock, der wirft: jeder künftige blockierende Wait im
+Supervision-Pfad macht die Suite rot.
+
+Wirkt beim nächsten regulären Watchdog-Restart, kein Deploy.
+
+---
 ## [2026-07-10] SMC-Sniper: Pivots nicht mehr auf der laufenden Kerze (T-2026-CU-9050-036, P1.46)
 
 `25_smc_ml_sniper.py` liest 150 Kerzen `DESC`, dreht auf ASC — und liess
