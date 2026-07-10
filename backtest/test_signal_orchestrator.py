@@ -150,11 +150,35 @@ def test_identify_bot_channel_fallback():
         assert orch.identify_bot("random message", -1099) is None
 
 
-def test_channel_fallback_map_excludes_unset_channels():
-    """_ch() liefert 0 für unbelegte Channels — 0 darf kein Map-Key sein,
-    sonst gewinnt beim Kollaps aller unbelegten Channels der letzte Eintrag."""
-    assert 0 not in orch.CHANNEL_TO_BOT_FALLBACK
-    assert all(cid != 0 for cid in orch.CHANNEL_TO_BOT_FALLBACK)
+def test_build_channel_fallback_drops_unset_channels():
+    """_ch() liefert 0 für unbelegte Channels. Ohne Filter kollabieren alle
+    unbelegten Channels auf den Key 0 und der letzte Eintrag gewinnt still —
+    ein Lookup für einen deaktivierten Bot löste dann auf einen fremden Bot auf.
+
+    Direkt gegen _build_channel_fallback getestet: ein Assert auf das
+    modul-globale Dict wäre auf der Build-Maschine tautologisch (leerer
+    .env-Stub → alle CH_* sind 0 → Map ist leer).
+    """
+    result = orch._build_channel_fallback(
+        (
+            (-1001, "Fast In And Out"),
+            (0, "5 Percent"),            # unbelegt → fliegt raus
+            (0, "Volume Indicator"),     # zweiter unbelegter → kein Kollaps-Gewinner
+            (-1005, "Pattern Detector"),
+        )
+    )
+
+    assert result == {-1001: "Fast In And Out", -1005: "Pattern Detector"}
+    assert 0 not in result
+    # Kein unbelegter Bot überlebt als Kollaps-Gewinner
+    assert "5 Percent" not in result.values()
+    assert "Volume Indicator" not in result.values()
+
+
+def test_identify_bot_unset_channel_resolves_to_none():
+    """Ein deaktivierter Bot (channel_id 0) darf keinen fremden Namen liefern."""
+    with mock.patch.object(orch, "CHANNEL_TO_BOT_FALLBACK", {-1005: "Pattern Detector"}):
+        assert orch.identify_bot("random message", 0) is None
 
 
 def test_identify_bot_unknown_returns_none():

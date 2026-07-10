@@ -19,6 +19,7 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
 from core import config as _kcfg  # channel ids
@@ -76,20 +77,26 @@ BOT_IDENTIFICATION_PATTERNS = [
     r"🧠\s*([A-Za-z0-9 ]+?)\s+Strategy",
 ]
 
-# core.config._ch() returns 0 for an unset channel id. Without the filter every
-# unset channel collapses onto the key 0 and the last entry silently wins, so a
-# lookup for a disabled bot would resolve to an unrelated bot name.
-CHANNEL_TO_BOT_FALLBACK: dict[int, str] = {
-    cid: name
-    for cid, name in (
+
+def _build_channel_fallback(pairs: Iterable[tuple[int, str]]) -> dict[int, str]:
+    """Maps channel id → bot name, dropping unset channels.
+
+    core.config._ch() returns 0 for an unset channel id. Without the filter every
+    unset channel collapses onto the key 0 and the last entry silently wins, so a
+    lookup for a disabled bot would resolve to an unrelated bot name.
+    """
+    return {cid: name for cid, name in pairs if cid}
+
+
+CHANNEL_TO_BOT_FALLBACK: dict[int, str] = _build_channel_fallback(
+    (
         (_kcfg.CH_FAST_IN_OUT, "Fast In And Out"),
         (_kcfg.CH_5_PERCENT, "5 Percent"),
         (_kcfg.CH_SUPPORT_RESISTANCE, "Support Resistance"),
         (_kcfg.CH_VOLUME_INDICATOR, "Volume Indicator"),
         (_kcfg.CH_PATTERN_DETECTOR, "Pattern Detector"),
     )
-    if cid
-}
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 logger = setup_logging("SIGNAL_ORCHESTRATOR")
