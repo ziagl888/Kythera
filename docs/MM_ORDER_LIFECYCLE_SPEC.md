@@ -422,4 +422,3 @@ to quote real size.
   rule, shared feature builders, escalation), [`OPUS-HANDOFF.md`](OPUS-HANDOFF.md) §6
   (money-path escalation).
 - **Task:** T-2026-CU-9050-056 (KB project 9050).
-```
