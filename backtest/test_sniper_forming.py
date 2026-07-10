@@ -67,11 +67,24 @@ def test_forming_candle_repaints_the_raw_pivot_set():
     assert closed_sets.pop(), "fixture degenerated to an empty pivot set — it would pass vacuously"
 
 
-def test_pivot_indices_stay_aligned_with_the_full_arrays():
-    """`highs[p]` / `rsis[p]` are still read off the FULL arrays after the fix.
-    Front-anchored slicing keeps those indices valid — assert it, because an
-    `iloc[:-1]` on the frame instead would silently shift every offset."""
+def test_slice_is_front_anchored_so_pivot_indices_address_the_full_arrays():
+    """`highs[p]` / `rsis[p]` are read off the FULL arrays while `p` comes from the
+    shortened one. Only a FRONT-anchored slice keeps that sound: `highs[:-1]` does,
+    `highs[1:]` would silently read the wrong candle."""
+    rng = np.random.default_rng(20500036)
+    highs = rng.normal(size=300).cumsum() + 100.0
+    pivots = scipy.signal.argrelextrema(highs[:-1], np.greater, order=PIVOT_WINDOW)[0]
+    assert len(pivots) >= 3, "fixture produced too few pivots to be meaningful"
+    # The back-anchored variant that must never be used: same length, same call,
+    # but every pivot index would then name a candle one step to the left.
+    assert all(highs[p] != highs[1:][p] for p in pivots), (
+        "fixture degenerated — a back-anchored slice must misread every pivot here"
+    )
+
     body = _scan_body()
+    assert not re.search(r"argrelextrema\(\s*\w*highs\[1:\]", body), (
+        "a back-anchored slice would make highs[p]/rsis[p] read the wrong candle"
+    )
     for expr in ("highs[p1]", "lows[p1]", "rsis[p1]"):
         assert expr in body, f"{expr} vanished — check that pivot indices still address the full arrays"
     assert not re.search(r"df\s*=\s*df\.iloc\[:-1\]", body), (
