@@ -37,7 +37,7 @@ bis zum Retrain-Rollout läuft Serving gegen eine leicht verschobene Verteilung.
 Bei lückenlosen Ticks sind alt und neu identisch (Kontroll-Tests belegen das),
 die Drift betrifft ausschliesslich Gap-Ticks — dort war der alte Wert aber
 falsch, nicht bloss anders. Operator-Entscheid Michi 2026-07-09; Folge-Task
-**T-2026-CU-9050-030** (EPD2-Retrain auf den neuen Feature-Definitionen).
+**T-2026-CU-9050-035** (EPD2-Retrain auf den neuen Feature-Definitionen).
 
 Verifikation: `backtest/test_pump_dump_time_windows.py` (neu, standalone,
 DB-frei, 6/6). Vier Tests fallen auf dem Pre-Fix-Stand; die zwei übrigen laufen
