@@ -602,7 +602,11 @@ async def job_signal_summary():
         else:
             reason_upper = pd.Series([''] * len(df), index=df.index)
 
-        is_housekeeping = reason_upper.str.contains('DELISTED|CLEANUP|ORPHAN|REGIME_CHANGE', regex=True, na=False)
+        # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE raus — ein
+        # Auto-Close realisiert einen echten PnL und zählt als Win/Loss (nur
+        # near-0%-Closes bleiben über den Micro-PnL-Filter neutral). Ohne das
+        # divergierte die Report-WR von der (jetzt korrigierten) Whitelist-WR.
+        is_housekeeping = reason_upper.str.contains('DELISTED|CLEANUP|ORPHAN', regex=True, na=False)
 
         # PnL-basierte Klassifikation (mit Fallback)
         pnl_num = pd.to_numeric(df['pnl_pct'], errors='coerce')
@@ -1085,8 +1089,10 @@ async def job_per_bot_performance() -> None:
         if not row['is_closed']:
             return ''
         reason = (row['close_reason'] or '').upper()
-        # Housekeeping-Closes: weder Win noch Loss (extern verursacht)
-        if 'DELISTED' in reason or 'CLEANUP' in reason or 'ORPHAN' in reason or 'REGIME_CHANGE' in reason:
+        # Housekeeping-Closes: weder Win noch Loss (extern verursacht).
+        # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE zählt jetzt
+        # mit realem PnL als Win/Loss (near-0% fängt der Micro-PnL-Filter).
+        if 'DELISTED' in reason or 'CLEANUP' in reason or 'ORPHAN' in reason:
             return 'neutral'
         pnl = row['pnl_pct']
         if pd.isna(pnl):

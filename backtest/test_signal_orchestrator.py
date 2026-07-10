@@ -7,6 +7,9 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import asyncio
+import datetime
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -273,20 +276,32 @@ def test_identify_bot_legacy_qm_bull_still_works():
 
 # ── Regime-Change Outcome Classification ─────────────────────────────────────
 
-def test_classify_outcome_regime_change_is_neutral():
-    """REGIME_CHANGE-Close wird als CLOSED_NEUTRAL klassifiziert —
-    weder Win noch Loss, weil der Close extern ausgelöst wurde."""
-    # LONG +5% PnL aber als REGIME_CHANGE geschlossen → NEUTRAL (nicht WIN)
+def test_classify_outcome_regime_change_counts_real_pnl():
+    """B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE-Closes zählen
+    mit ihrem realen PnL als Win/Loss statt pauschal neutral — ein Auto-Close
+    ist der Exit des Trades, kein externes Housekeeping. Vorher zensierte das
+    genau die per Regime-Wechsel realisierten Verluste (Report 16 B9)."""
+    # LONG +5% PnL, als REGIME_CHANGE geschlossen → echter WIN (vorher NEUTRAL)
     result = orch._classify_outcome_by_pnl(
         "LONG", entry=100.0, close_price=105.0,
         close_reason="REGIME_CHANGE:not_whitelisted"
     )
-    assert result == "CLOSED_NEUTRAL"
+    assert result == "CLOSED_TP"
 
-    # Auch bei Loss → NEUTRAL
+    # Realisierter Verlust darf nicht mehr zensiert werden → echter LOSS
     result = orch._classify_outcome_by_pnl(
         "LONG", entry=100.0, close_price=95.0,
         close_reason="REGIME_CHANGE:btc_trend_down"
+    )
+    assert result == "CLOSED_SL"
+
+
+def test_classify_outcome_regime_change_micro_pnl_still_neutral():
+    """B9: ein Regime-Close nahe Break-even (|pnl| <= Micro-Filter) bleibt
+    neutral — nur signifikanter realisierter PnL wird zu Win/Loss."""
+    result = orch._classify_outcome_by_pnl(
+        "LONG", entry=100.0, close_price=100.05,  # +0.05% < OUTCOME_MIN_PNL_PCT
+        close_reason="REGIME_CHANGE:chop"
     )
     assert result == "CLOSED_NEUTRAL"
 
@@ -514,6 +529,70 @@ def test_fallback_uses_overall_performance_wr_threshold():
     assert orch.FALLBACK_MIN_WR == 50.0
 
 
+# ── Whitelist staleness gate (P0.4/P2.25) ─────────────────────────────────────
+
+def _mock_conn_for_whitelist(cell_age_hours, whitelisted=False, fallback_wr=58.0):
+    """Stable regime + one 4D cell of the given age + an overall fallback row."""
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    computed_at = None if cell_age_hours is None else now - datetime.timedelta(hours=cell_age_hours)
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    conn.cursor = MagicMock(return_value=cur)
+    cur.fetchone = MagicMock(side_effect=[
+        ("TREND_UP",),                              # is_regime_detector_reliable
+        (1,),                                       # distinct regimes 2h
+        ("TREND_UP", "ALT_NEUTRAL"),                # regime_current
+        (whitelisted, "wr_above_threshold", computed_at),  # 4D cell
+        (100, fallback_wr),                         # is_whitelisted_fallback
+    ])
+    return conn
+
+
+def test_fresh_whitelist_cell_decides():
+    """A cell younger than WHITELIST_MAX_AGE_HOURS is honoured as-is."""
+    conn = _mock_conn_for_whitelist(cell_age_hours=1, whitelisted=False)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is False
+    assert reason == "wr_above_threshold"
+
+
+def test_stale_whitelist_cell_falls_back_to_overall():
+    """A cell older than 48h is distrusted — the overall fallback decides."""
+    conn = _mock_conn_for_whitelist(cell_age_hours=49, whitelisted=False, fallback_wr=58.0)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is True  # fallback WR 58% > 50%
+    assert reason == "whitelist_stale:fallback_wr_above_50"
+
+
+def test_null_computed_at_treated_as_stale():
+    conn = _mock_conn_for_whitelist(cell_age_hours=None, whitelisted=True, fallback_wr=42.0)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is False  # fallback WR 42% < 50%
+    assert reason == "whitelist_stale:fallback_wr_below_50"
+
+
+# ── B8: wl_reason persisted on the forwarded side ─────────────────────────────
+
+def test_insert_orchestrator_open_trade_persists_wl_reason():
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    conn.cursor = MagicMock(return_value=cur)
+
+    orch.insert_orchestrator_open_trade(
+        conn, "BTCUSDT", "LONG", "MIS1-8h", 50000.0, 7,
+        "TREND_UP", "ALT_NEUTRAL", wl_reason="no_whitelist_entry", commit=False,
+    )
+
+    sql, params = cur.execute.call_args[0]
+    assert "wl_reason" in sql
+    assert params[-1] == "no_whitelist_entry"
+    conn.commit.assert_not_called()
+
+
 # ── Cooldown ──────────────────────────────────────────────────────────────────
 
 def test_cooldown_module_name_is_rom1():
@@ -542,6 +621,166 @@ def test_cross_direction_allowed_after_trade_close():
     cur.fetchone = MagicMock(return_value=None)  # No trade found
     conn.cursor = MagicMock(return_value=cur)
     assert orch.is_opposite_direction_open(conn, "BTCUSDT", "SHORT") is False
+
+
+def _mock_conn(executed=None, rowcount=0, fetchall=None):
+    """Shared mock conn/cursor scaffold. Optionally records every
+    (sql, params) pair into `executed`."""
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    cur.fetchone = MagicMock(return_value=None)
+    cur.fetchall = MagicMock(return_value=fetchall if fetchall is not None else [])
+    cur.rowcount = rowcount
+    if executed is not None:
+        cur.execute = MagicMock(side_effect=lambda sql, params=None: executed.append((sql, params)))
+    conn.cursor = MagicMock(return_value=cur)
+    return conn, cur
+
+
+def _captured_query(fn, *args):
+    """Run fn against a mock conn and return the (sql, params) it executed."""
+    conn, cur = _mock_conn()
+    fn(conn, *args)
+    sql, params = cur.execute.call_args[0]
+    return sql, params
+
+
+def test_opposite_direction_check_has_no_age_bound():
+    """T-2026-CU-9050-052: the opposite-direction block must hold as long as
+    the row is OPEN — a live ROM1 position can legitimately outlast any time
+    cutoff (expiry_hours is never set), and an age bound would re-enable the
+    flip/double-exposure P1.8 exists to prevent. Corpse decay is the reaper's
+    job, not this check's."""
+    sql, params = _captured_query(orch.is_opposite_direction_open, "BTCUSDT", "SHORT")
+    assert "INTERVAL" not in sql
+    assert "status = 'OPEN'" in sql
+    assert params == ("BTCUSDT", "LONG")  # opposite of the new direction
+
+
+def test_same_direction_check_has_no_age_bound():
+    """The P2.26 anti-stacking twin must also block for the whole lifetime of
+    an OPEN row (its former 72h bound un-blocked live positions)."""
+    sql, params = _captured_query(orch.is_same_direction_open, "BTCUSDT", "LONG")
+    assert "INTERVAL" not in sql
+    assert "status = 'OPEN'" in sql
+    assert params == ("BTCUSDT", "LONG")
+
+
+def test_insert_rom1_signal_sets_open_time_naive_utc():
+    """P1.8 follow-up (T-2026-CU-9050-052): the ai_signals INSERT must set
+    open_time explicitly as naive UTC. Relying on the DB default stamps
+    session-local time (+3h) and the ±60s lifecycle-sync window never
+    matches the naive-UTC opened_at of the twin tracking row."""
+    params_dict = {"entry1": 100.0, "entry2": 95.0, "sl": 90.0, "targets": [105.0, 110.0]}
+    sql, params = _captured_query(orch.insert_rom1_signal, "BTCUSDT", "LONG", params_dict, False)
+
+    assert "open_time" in sql
+    open_time = params[-1]
+    assert isinstance(open_time, datetime.datetime)
+    assert open_time.tzinfo is None  # naive — the column is TIMESTAMP WITHOUT TIME ZONE
+    utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    assert abs((utc_now - open_time).total_seconds()) < 5  # UTC wall clock, not local (+3h)
+
+
+def test_sync_closed_trades_runs_corpse_reaper_first():
+    """T-2026-CU-9050-052: every sync pass must reap OPEN rows whose ai_signals
+    twin is gone (trade closed but never synced — e.g. the 395 dead-sync-era
+    corpses whose +3h open_time can never match). The reaper runs BEFORE the
+    per-row match loop so corpse decay survives a poison row there, and it
+    must never post to telegram_outbox."""
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, rowcount=3)
+
+    asyncio.run(orch.sync_closed_trades(conn))
+
+    assert executed, "sync pass executed no SQL"
+    first_sql, params = executed[0]
+    # Reaper-first: the UPDATE is the very first statement of the pass.
+    assert "UPDATE orchestrator_open_trades" in first_sql
+    assert "CLOSED_NEUTRAL" in first_sql
+    assert "corpse_reaper" in first_sql
+    assert not any("telegram_outbox" in s for s, _ in executed)  # bookkeeping only
+
+    closed_at, cutoff = params
+    assert closed_at.tzinfo is None and cutoff.tzinfo is None  # naive UTC columns
+    assert abs(((closed_at - cutoff) - datetime.timedelta(hours=72)).total_seconds()) < 5
+    utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    assert abs((utc_now - closed_at).total_seconds()) < 5  # UTC wall clock, not local (+3h)
+
+
+def test_corpse_reaper_is_row_anchored_and_never_censors_syncable_closes():
+    """The reaper's twin check must be anchored to the row's own opened_at
+    (±window, same-transaction inserts) — a live trade's twin on the same
+    coin+direction must not shield a stacking-era corpse, which would keep
+    feeding spurious Close commands that flatten the live position. Legacy
+    twins sit at LEGACY_SESSION_TZ local time (second window, hard-coded so a
+    future session-TZ change cannot un-shield live legacy positions). And it
+    must skip rows whose close is already recorded in closed_ai_signals — in
+    EITHER window, or legacy-era closes would be censored: those get their
+    REAL outcome from the match loop, never a corpse_reaper censor."""
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, rowcount=0)
+
+    asyncio.run(orch.reap_corpse_trades(conn))
+
+    (sql, _params), = executed
+    window = f"INTERVAL '{orch.LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
+    assert "NOT EXISTS" in sql
+    assert "FROM ai_signals" in sql
+    assert f"a.open_time BETWEEN o.opened_at - {window}" in sql  # row anchor, not coin-scoped
+    assert "current_setting" not in sql  # pinned zone, not the mutable session GUC
+    assert "FROM closed_ai_signals" in sql  # anti-censor guard: syncable close → skip
+    # Legacy window in BOTH subqueries (twin check AND anti-censor guard).
+    assert sql.count(f"AT TIME ZONE '{orch.LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC'") == 2
+
+
+def test_sync_match_loop_covers_legacy_window():
+    """The match loop must search closed_ai_signals in the same two windows as
+    the reaper (raw naive-UTC anchor + LEGACY_SESSION_TZ conversion) — without
+    the second window, a legacy-era trade closing after deploy loses its real
+    WIN/LOSS to the reaper."""
+    opened_at = datetime.datetime(2026, 7, 8, 12, 0, 0)
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, fetchall=[(1, "BTCUSDT", "LONG", "SomeBot", opened_at)])
+
+    asyncio.run(orch.sync_closed_trades(conn))
+
+    selects = [(sql, p) for sql, p in executed if "SELECT entry, close_price, status" in sql]
+    assert len(selects) == 1
+    sql, params = selects[0]
+    assert f"AT TIME ZONE '{orch.LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC'" in sql
+    assert "LEAST(" in sql  # closest-match ranking across both windows
+    assert params[0] == "BTCUSDT" and params[1] == "LONG"
+
+
+def test_run_stage_isolates_failures_and_reports_status():
+    """_run_stage must swallow a stage exception (rollback so the next stage
+    does not inherit an aborted transaction) and report failure via its return
+    value — main_loop uses that to keep gating fail-closed behind the
+    regime-close stage while the lifecycle sync stays independent."""
+    conn = MagicMock()
+
+    async def boom():
+        raise RuntimeError("poison row")
+
+    assert asyncio.run(orch._run_stage(conn, "stage", boom())) is False
+    conn.rollback.assert_called_once()
+
+    async def fine():
+        return None
+
+    assert asyncio.run(orch._run_stage(conn, "stage", fine())) is True
+
+
+def test_legacy_window_cannot_cross_match_thanks_to_cooldown():
+    """The LEGACY_SESSION_TZ second window is only collision-free because two
+    same-coin+direction ROM1 trades can never sit ~3h apart: the per-coin+
+    direction cooldown must stay above the max legacy offset (+3h EEST) plus
+    the anchor window on both sides. If this assert fires, the cooldown was
+    lowered and the legacy windows in sync/reaper must be revisited."""
+    assert orch.ORCHESTRATOR_COOLDOWN_HOURS * 3600 > 3 * 3600 + 2 * orch.LIFECYCLE_SYNC_WINDOW_SEC
 
 
 # ── ROM1 Tracking ─────────────────────────────────────────────────────────────
@@ -737,6 +976,46 @@ def test_compute_rom1_trade_params_returns_none_when_no_targets():
     assert params is None
 
 
+def test_compute_rom1_trade_params_asof_price_bypasses_db():
+    """As-of-Pfad (T-2026-CU-9050-047): price=/df= übergeben → KEIN
+    _get_latest_price-DB-Zugriff, price ersetzt den CMP, df geht an den
+    Level-Lookup durch. Muster wie get_hvn_and_sr_levels(df=...)."""
+    fake_df = object()  # nur Durchreichung prüfen — der Level-Lookup ist gemockt
+    with mock.patch.object(orch, "_get_latest_price") as m_price, \
+         mock.patch.object(orch, "get_hvn_and_sr_levels",
+                           return_value=([92.0], [105.0, 110.0])) as m_sr, \
+         mock.patch.object(orch, "ensure_min_tp_distance",
+                           side_effect=lambda t, e, l, min_pct: list(t)), \
+         mock.patch.object(orch, "cap_leverage_to_sl", _real_cap_leverage_to_sl), \
+         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+        params = orch.compute_rom1_trade_params(None, "BTCUSDT", "LONG", price=100.0, df=fake_df)
+
+    m_price.assert_not_called()                       # kein DB-Preis-Read
+    m_sr.assert_called_once()
+    assert m_sr.call_args.kwargs.get("df") is fake_df  # As-of-Fenster durchgereicht
+    assert params is not None
+    assert params["entry1"] == 100.0
+    assert params["entry2"] == 95.0
+    assert params["sl"] == 92.0
+
+
+def test_compute_rom1_trade_params_asof_matches_live_path():
+    """Bit-Parität: derselbe Preis über den Live-Pfad (_get_latest_price) und
+    über den As-of-Pfad (price=) muss identische Geometrie liefern — das ist die
+    X-R1-Garantie, auf der der Counterfactual-Scorer steht."""
+    with mock.patch.multiple(
+        orch,
+        get_hvn_and_sr_levels=mock.MagicMock(return_value=([95.0, 90.0, 85.0], [108.0, 112.0])),
+        ensure_min_tp_distance=mock.MagicMock(side_effect=lambda t, e, l, min_pct: list(t)),
+        cap_leverage_to_sl=_real_cap_leverage_to_sl,
+        get_max_leverage=mock.MagicMock(return_value="20x"),
+    ):
+        with mock.patch.object(orch, "_get_latest_price", return_value=100.0):
+            live = orch.compute_rom1_trade_params(mock.MagicMock(), "BTCUSDT", "SHORT")
+        asof = orch.compute_rom1_trade_params(None, "BTCUSDT", "SHORT", price=100.0, df=None)
+    assert live == asof
+
+
 def test_build_rom1_cornix_message_format():
     """Das ausgegebene Message-Format muss Cornix-parsebar sein und wieder
     von parse_cornix_signal() erkannt werden."""
@@ -862,3 +1141,71 @@ def test_rom1_params_used_not_original_signal():
     # targets als JSON
     import json as _json
     assert _json.loads(values[6]) == [105.0, 110.0, 120.0]
+
+
+# ── T-2026-CU-9050-049: differentiated regime auto-close ───────────────────────
+
+def test_sl_update_message_format():
+    """SL-update is symbol-addressed (like Close), 8-decimal price."""
+    assert orch.build_rom1_sl_update_message("BTCUSDT", 63120.5) == "SL BTCUSDT 63120.50000000"
+
+
+def test_sl_update_message_not_parseable_as_signal():
+    """HARD RULE 4: the SL-update must NEVER parse as a new Cornix signal —
+    otherwise it would open a second position with real money."""
+    msg = orch.build_rom1_sl_update_message("BTCUSDT", 63120.5)
+    assert orch.parse_cornix_signal(msg) is None
+    # And a real signal still parses (guards against a broken parser masking it).
+    assert orch.parse_cornix_signal(LONG_SIGNAL) is not None
+
+
+def test_trailed_sl_long_winner_breakeven_when_no_tp():
+    """LONG in profit, no TP hit → trail SL to break-even (entry)."""
+    assert orch._compute_trailed_sl("LONG", 100.0, 103.0, 0, []) == 100.0
+
+
+def test_trailed_sl_long_winner_last_tp_when_hit():
+    """LONG with 2 TPs hit → trail SL to the 2nd (last reached) TP level."""
+    sl = orch._compute_trailed_sl("LONG", 100.0, 112.0, 2, [105.0, 110.0, 120.0])
+    assert sl == 110.0
+
+
+def test_trailed_sl_short_winner_last_tp_when_hit():
+    """SHORT mirror: price below entry, 1 TP hit → SL to the 1st TP (above price)."""
+    sl = orch._compute_trailed_sl("SHORT", 100.0, 88.0, 1, [95.0, 90.0, 80.0])
+    assert sl == 95.0
+
+
+def test_trailed_sl_falls_back_to_breakeven_when_tp_retraced():
+    """LONG hit TP2 (110) but price retraced to 106 — TP2 is now ABOVE price and
+    would instantly stop the trade out. Must fall back to break-even (entry)."""
+    sl = orch._compute_trailed_sl("LONG", 100.0, 106.0, 2, [105.0, 110.0, 120.0])
+    assert sl == 100.0
+
+
+def test_trailed_sl_loser_returns_none():
+    """LONG below entry → not a winner → None (caller closes it)."""
+    assert orch._compute_trailed_sl("LONG", 100.0, 97.0, 0, []) is None
+    assert orch._compute_trailed_sl("SHORT", 100.0, 103.0, 0, []) is None
+
+
+def test_trailed_sl_flat_below_fee_floor_returns_none():
+    """Profit under the fee floor is not worth protecting → None."""
+    # +0.05% < TRAIL_MIN_PROFIT_PCT (0.1%)
+    assert orch._compute_trailed_sl("LONG", 100.0, 100.05, 0, []) is None
+
+
+def test_trailed_sl_invalid_inputs_return_none():
+    assert orch._compute_trailed_sl("LONG", 0.0, 100.0, 0, []) is None
+    assert orch._compute_trailed_sl("LONG", 100.0, 0.0, 0, []) is None
+    assert orch._compute_trailed_sl("LONG", -1.0, 100.0, 0, []) is None
+
+
+def test_trailed_sl_min_profit_matches_fee_floor():
+    """The winner floor mirrors the round-trip fee / neutral-PnL floor."""
+    assert orch.TRAIL_MIN_PROFIT_PCT == orch.OUTCOME_MIN_PNL_PCT
+
+
+def test_trail_gate_default_off():
+    """Unproven money-path behavior ships default-off (Kythera doctrine)."""
+    assert orch.TRAIL_WINNERS_ON_REGIME_CHANGE is False

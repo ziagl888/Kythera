@@ -161,7 +161,7 @@ def test_shadow_branch_calls_log_prediction_not_a_raw_insert(detector, monkeypat
     monkeypatch.setattr(
         det,
         "log_prediction",
-        lambda conn, tag, sym, direction, entry, conf, posted: calls.append({"tag": tag, "sym": sym, "posted": posted}),
+        lambda conn, tag, sym, direction, entry, conf, posted, **kw: calls.append({"tag": tag, "sym": sym, "posted": posted}),
     )
     conn = FakeConn()
 

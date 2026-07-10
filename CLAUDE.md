@@ -18,7 +18,7 @@ Multi-Bot Crypto-Trading-System (Binance Futures) auf einem Windows-VPS. **Hier 
 
 ## Workflow
 
-- Pro Task: KB-Task (Projekt 9050) + Worktree + Branch `feat/<t-id>`, PR auf `main` (ziagl888-Repo → autonomer Merge-Pfad nach bestandenen Kern-Reviews: z-code-reviewer + z-spec-compliance-review).
+- Pro Task: KB-Task (Projekt 9050) + Worktree + Branch `feat/<t-id>`, PR auf `main` (ziagl888-Repo → autonomer Merge-Pfad nach bestandenen Kern-Reviews: z-code-reviewer + z-spec-compliance-review). **Merge-Default: merge-train** — nach PASS `cu/reviews` stempeln + Label `merge-train`, der Hetzner-Daemon merged seriell; kein eigenes `gh pr merge` (Details: OPUS-HANDOFF §2 Schritt 7).
 - Commits/PRs/Code-Kommentare in Englisch, Author Michael Ziegler.
 - CI gated nur ruff/format, mypy, Syntax/Imports, Secret-Regex — **grünes CI ≠ korrekt.** Verhalten verifizieren über `backtest/test_*.py` (standalone, DB-frei) und `python tools/regression_guard/guard.py verify|smoke`.
 - Nach jedem Merge: `CHANGELOG.md`-Eintrag (Deutsch, wie bestehende), betroffene `AUDIT_TODO.md`-Checkboxen pflegen, KB-Task-Status aktualisieren.

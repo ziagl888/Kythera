@@ -19,8 +19,12 @@ localhost:5432 hardcoded) und öffnen die Connection **readonly**. Interpreter: 
 | `inspect_models.py` | 3 | MIS1-pkl-Introspektion (Features, Klassen, Thresholds) → Report 13 |
 | `live_parity.py` | 3 | MIS1 End-to-End-Parity-Test Bot-Feature-Bau ↔ Modelle (liest DB) |
 | `tree_splits.py` | 3 | Split-Count-/Schwellen-Analyse der MIS1-Booster (Ticker-Leakage-Beweis) |
+| `finding_ids.py` | — | Ledger-Werkzeug, **DB-frei**: `check` (Duplikat-Guard, läuft als pre-commit-Hook) und `next --severity P1` (nächste freie Finding-ID) |
 
 Hinweise:
+- `finding_ids.py` ist kein Analyse-Skript der Audit-Steps, sondern das Werkzeug für `AUDIT_TODO.md` selbst.
+  Vor dem Anlegen eines neuen Findings: `python tools/audit/finding_ids.py next --severity P1`.
+  Nur die Checkbox-Zeile (`- [ ] **P1.45 …`) definiert ein Finding — Prosa-Referenzen zählen nicht.
 - Die Zahlen in den Reports sind Snapshots vom 2026-07-03; erneutes Ausführen liefert aktuelle Werte.
 - `step7_monitor_replay.py` funktioniert nur für Zeiträume, in denen 5m-Kerzen vorliegen (~30 Tage Retention).
 - `step4b_results.py` ist die Referenz für Performance-Zahlen (dedupliziert); `step4_results.py` nur historisch.

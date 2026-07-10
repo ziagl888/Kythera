@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from collections.abc import Iterable
@@ -27,6 +28,7 @@ from core.bot_naming import pretty_name
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, send_telegram, update_cooldown
+from core.time import LEGACY_WRITER_TZ, utc_now_naive
 from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn_and_sr_levels
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,6 +36,20 @@ from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn
 # ─────────────────────────────────────────────────────────────────────────────
 LOOP_INTERVAL_MS = 500
 AUTO_CLOSE_ON_REGIME_CHANGE = True
+# T-2026-CU-9050-049: winner-differentiated regime auto-close (A/B). Default OFF.
+# When True, an open trade that is IN PROFIT at a regime change is NOT market-
+# closed — its stop-loss is trailed (break-even, or the last reached TP level)
+# via a Cornix SL-update command and the trade keeps running; losers are still
+# closed. This changes live money-path behavior and starts an A/B experiment
+# (orchestrator_open_trades.regime_close_action REGIME_CHANGE_CLOSED vs
+# REGIME_CHANGE_TRAILED). Flipping it True is an operator decision
+# (OPUS-HANDOFF §6; Kythera doctrine "Default-off für Unbewiesenes").
+TRAIL_WINNERS_ON_REGIME_CHANGE = os.getenv("KYTHERA_REGIME_TRAIL_WINNERS", "0") == "1"
+# Minimum profit (direction-aware price move %) for a trade to count as a
+# "winner" worth protecting rather than closing. Mirrors the round-trip taker
+# fee floor (OUTCOME_MIN_PNL_PCT / 27_bot_regime_analyzer.V2_BREAK_EVEN_PNL_PCT):
+# below it a break-even SL would not lock a real non-loss, so we close instead.
+TRAIL_MIN_PROFIT_PCT = 0.1
 # FIX P2.28: 60s → 300s. Neuheit garantiert der id-Cursor (inkl. MAX(id)-Init
 # beim Start) — das Fenster ist nur noch die Staleness-Grenze. Bei 60s fielen
 # Signale schon raus, wenn ein einzelner Gating-Pass (S/R-Berechnung über
@@ -48,7 +64,46 @@ FALLBACK_MAX_DISTINCT_REGIMES_2H = 3
 FALLBACK_UNSTABLE_LOOKBACK_HOURS = 2
 REFERENCE_WINDOW_DAYS = 30
 MIN_TRADES_FOR_DECISION = 30
+# Max age of a bot_regime_whitelist cell before the 4D lookup is distrusted
+# (P0.4/P2.25): 27_bot_regime_analyzer recomputes the whitelist daily, so a
+# cell older than two analyzer cycles means the analyzer is dead or writes a
+# key the orchestrator never reads. Gating on such a cell decides today's
+# money on stats frozen months ago — fall back to the overall window instead.
+WHITELIST_MAX_AGE_HOURS = 48
 LIFECYCLE_SYNC_INTERVAL_SEC = 30
+# Half-width of the row anchor used by the lifecycle sync, the corpse reaper's
+# twin check and its anti-censor guard. ONE constant on purpose: if the match
+# loop and the reaper ever disagree on the window, the reaper can censor an
+# outcome the match loop would still have classified.
+LIFECYCLE_SYNC_WINDOW_SEC = 60
+# Historical session TZ under which the pre-T-052 DB default stamped
+# ai_signals.open_time (canonical constant lives in core/time.py: pinned, NOT
+# current_setting('TimeZone') — a future R3 session-TZ flip must not un-shield
+# live legacy positions; AT TIME ZONE handles their DST per-timestamp). Only
+# used for the legacy second window; new rows carry naive UTC and match the
+# first window. Collision-free because the 4h per-coin+direction cooldown makes
+# two same-direction trades 3h±window apart impossible (pinned by a test).
+LEGACY_SESSION_TZ = LEGACY_WRITER_TZ
+
+
+def _anchor_window_predicate(col: str, anchor: str) -> str:
+    """SQL predicate: `col` lies within ±LIFECYCLE_SYNC_WINDOW_SEC of `anchor`,
+    either directly (naive-UTC rows) or after converting a legacy
+    session-local timestamp to UTC.
+
+    ONE builder for the match loop, the reaper's twin check and its
+    anti-censor guard — the three must never disagree on the window shape, or
+    the reaper censors outcomes the match loop would still classify (the
+    round-3 asymmetry class). Interpolations are compile-time constants only.
+    """
+    w = f"INTERVAL '{LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
+    return (
+        f"({col} BETWEEN {anchor} - {w} AND {anchor} + {w} "
+        f"OR ({col} AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC') "
+        f"BETWEEN {anchor} - {w} AND {anchor} + {w})"
+    )
+
+
 FALLBACK_MIN_WR = 50.0
 
 # Outcome-Klassifikation im Lifecycle-Sync: siehe Erläuterung in
@@ -249,8 +304,12 @@ def is_whitelisted_fallback(conn, bot_name: str, direction: str) -> tuple[bool, 
 def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, str]:
     """
     Main whitelist entry point. Chooses between:
-      - Normal 4D-lookup (reliable detector)
-      - Overall-fallback (unreliable detector)
+      - Normal 4D-lookup (reliable detector, fresh cell)
+      - Overall-fallback (unreliable detector, or 4D cell older than
+        WHITELIST_MAX_AGE_HOURS — P0.4/P2.25 staleness gate)
+
+    computed_at is naive UTC (27_bot_regime_analyzer writes utc_now naive),
+    so it compares directly against utc_now_naive().
     """
     reliable, status = is_regime_detector_reliable(conn)
 
@@ -267,7 +326,7 @@ def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, s
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT whitelisted, reason FROM bot_regime_whitelist
+                SELECT whitelisted, reason, computed_at FROM bot_regime_whitelist
                 WHERE bot_name = %s AND regime = %s
                   AND alt_context = %s AND direction = %s
                 """,
@@ -277,6 +336,19 @@ def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, s
 
         if wl_row is None:
             return (True, "no_whitelist_entry")
+
+        computed_at = wl_row[2]
+        stale = computed_at is None or (utc_now_naive() - computed_at) > timedelta(hours=WHITELIST_MAX_AGE_HOURS)
+        if stale:
+            age_str = (
+                "unknown" if computed_at is None else f"{(utc_now_naive() - computed_at).total_seconds() / 3600:.0f}h"
+            )
+            logger.warning(
+                f"⚠️ Stale whitelist cell ({regime}/{alt_context}, age {age_str}) — "
+                f"Overall fallback for {bot_name} {direction}"
+            )
+            whitelisted, fallback_reason = is_whitelisted_fallback(conn, bot_name, direction)
+            return (whitelisted, f"whitelist_stale:{fallback_reason}")
 
         return (bool(wl_row[0]), wl_row[1] or "unknown")
 
@@ -300,7 +372,16 @@ def get_current_regime_full(conn) -> tuple[str, str] | None:
 
 
 def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
-    """True if an open orchestrator trade exists for this coin in opposite direction."""
+    """True if an open orchestrator trade exists for this coin in opposite direction.
+
+    Deliberately NO age bound here (T-2026-CU-9050-052): a genuinely live ROM1
+    position can stay open well past 72h (expiry_hours is never set for ROM1),
+    and dropping the block by age would let ROM1 post the opposite direction
+    against a live position (flip/double exposure — the exact P1.8 risk).
+    Corpse rows that would otherwise block forever are closed by the corpse
+    reaper in sync_closed_trades instead: a row is only OPEN while its
+    ai_signals twin still exists or until the reaper transitions it.
+    """
     opposite = "SHORT" if new_direction == "LONG" else "LONG"
     with conn.cursor() as cur:
         cur.execute(
@@ -320,17 +401,18 @@ def is_same_direction_open(conn, coin: str, direction: str) -> bool:
     Ohne diesen Check stapelte ROM1 nach Ablauf des 4h-Cooldowns weitere
     Positionen auf denselben Coin in dieselbe Richtung (Doppel-Exposure).
 
-    Age-Bound 72h: eine im Lifecycle hängen gebliebene OPEN-Row (Crash
-    zwischen Commit und Monitor-Pickup, manuell gelöschte ai_signals-Row)
-    würde den Coin sonst FÜR IMMER aus dem ROM1-Trading nehmen — nur mit
-    Suppression-Logs, ohne Alarm. Nach 72h gilt die Row als Leiche.
+    The former 72h age bound is gone (T-2026-CU-9050-052): it was meant to
+    decay corpse rows, but it also un-blocked genuinely live positions older
+    than 72h and re-enabled the stacking this check exists to prevent. Corpse
+    decay is now the corpse reaper's job (sync_closed_trades): an OPEN row
+    whose ai_signals twin is gone is transitioned out after 72h, so it can
+    never block this coin+direction forever.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT 1 FROM orchestrator_open_trades
             WHERE coin = %s AND direction = %s AND status = 'OPEN'
-              AND opened_at > NOW() - INTERVAL '72 hours'
             LIMIT 1
             """,
             (coin, direction),
@@ -354,6 +436,7 @@ ROM1_DESIRED_LEVERAGE = 20  # Gleicher Standard wie die AI-Bots
 ROM1_ENTRY2_OFFSET_PCT = 0.05  # 2. Entry 5% entfernt (AI-Bot-Standard)
 ROM1_SL_FALLBACK_OFFSET_PCT = 0.025  # Fallback-SL wenn keine echte Zone verfügbar
 ROM1_TP_MIN_DISTANCE_PCT = 0.05  # Mindestabstand letztes TP zum Entry
+ROM1_PUBLISHED_TARGETS = 3  # build_rom1_cornix_message postet TP1..TP3 (Cornix-Standard)
 
 
 def _get_latest_price(conn, coin: str) -> float | None:
@@ -373,7 +456,7 @@ def _get_latest_price(conn, coin: str) -> float | None:
         return None
 
 
-def compute_rom1_trade_params(conn, coin: str, direction: str) -> dict | None:
+def compute_rom1_trade_params(conn, coin: str, direction: str, price=None, df=None) -> dict | None:
     """Berechnet Entry/SL/Targets für einen ROM1-Trade — unabhängig vom
     ursprünglichen Bot-Signal.
 
@@ -383,17 +466,25 @@ def compute_rom1_trade_params(conn, coin: str, direction: str) -> dict | None:
       - SL = nächstliegende S/R-Zone außerhalb Entry2, sonst Entry2 × (1 ∓ 2.5%)
       - Targets = echte S/R-Zonen jenseits Entry1, gecappt durch ensure_min_tp_distance
 
+    `price`/`df` (optional, beide zusammen): As-of-Muster wie
+    `get_hvn_and_sr_levels(df=...)` und `calculate_smart_targets(df=...)` (P0.10).
+    Werden sie übergeben, findet KEIN DB-Zugriff statt: `price` ersetzt den
+    Live-CMP, `df` ist das chronologisch aufsteigende 1h-Fenster (~95 Tage,
+    high/low/close) BIS zur Entscheidungskerze. Der ROM1-Counterfactual-Scorer
+    (tools/rom1_counterfactual.py) spielt so exakt diese Geometrie auf
+    historischen Fenstern ab — eine Quelle, kein Copy-Paste-Skew (X-R1).
+
     Returns None falls Preis not available ist oder Zonen-Lookup versagt.
     Sonst dict mit:
       entry1, entry2, sl, targets (list), leverage (str, z.B. "20x")
     """
-    current_price = _get_latest_price(conn, coin)
+    current_price = price if price is not None else _get_latest_price(conn, coin)
     if current_price is None or current_price <= 0:
         logger.warning(f"ROM1: Kein Preis für {coin}, skipping Trade-Berechnung")
         return None
 
     is_long = direction == "LONG"
-    entry1 = current_price
+    entry1 = float(current_price)
 
     if is_long:
         entry2 = entry1 * (1 - ROM1_ENTRY2_OFFSET_PCT)
@@ -401,7 +492,7 @@ def compute_rom1_trade_params(conn, coin: str, direction: str) -> dict | None:
         entry2 = entry1 * (1 + ROM1_ENTRY2_OFFSET_PCT)
 
     try:
-        supps, resis = get_hvn_and_sr_levels(conn, coin, current_price)
+        supps, resis = get_hvn_and_sr_levels(conn, coin, current_price, df=df)
     except Exception as e:
         logger.warning(f"ROM1: S/R-Lookup für {coin} fehlgeschlagen: {e}")
         return None
@@ -476,7 +567,7 @@ def build_rom1_cornix_message(
     ]
     # Cornix nimmt nur die ersten 3 TPs wahr (Standard) — wir posten auch nur 3.
     # Die restlichen Targets (bis zu 20) stehen in ai_signals für den Monitor.
-    for i, t in enumerate(params["targets"][:3], start=1):
+    for i, t in enumerate(params["targets"][:ROM1_PUBLISHED_TARGETS], start=1):
         lines.append(f"💰 TP{i}: $ {t:.8f}")
     lines.append(f"💸 Stop Loss: $ {params['sl']:.8f}")
     lines.append(f"🧠 Trade idea generated by {ROM1_SIGNATURE} V1")
@@ -500,14 +591,22 @@ def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bo
 
     commit=False lässt den Insert in der offenen Transaktion des Callers —
     signal_gating_pass committed Tracking + Outbox-Post atomar zusammen.
+
+    P1.8 follow-up (T-2026-CU-9050-052): open_time is set explicitly as naive
+    UTC. The DB default now() stamps session-local time (Europe/Bucharest)
+    into the naive timestamp column — a constant +3h offset against the
+    naive-UTC opened_at of the orchestrator_open_trades twin row, so the
+    ±60s window in sync_closed_trades could never match (sync silently dead
+    since 2026-07-04; evidence: T-2026-CU-9050-044). Monitor 8 already treats
+    open_time as UTC (ot_aware) — for ROM1 rows that assumption now holds.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO ai_signals
                 (symbol, price, model, direction, confidence,
-                 entry1, entry2, sl, targets)
-            VALUES (%s, %s, 'ROM1', %s, 1.0, %s, %s, %s, %s)
+                 entry1, entry2, sl, targets, open_time)
+            VALUES (%s, %s, 'ROM1', %s, 1.0, %s, %s, %s, %s, %s)
             """,
             (
                 coin,
@@ -517,6 +616,7 @@ def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bo
                 params["entry2"],
                 params["sl"],
                 json.dumps(params["targets"]),
+                utc_now_naive(),
             ),
         )
     if commit:
@@ -532,11 +632,18 @@ def insert_orchestrator_open_trade(
     outbox_id: int | None,
     regime: str | None,
     alt_context: str | None,
+    wl_reason: str | None = None,
     commit: bool = True,
 ) -> None:
     """Records a forwarded trade in orchestrator_open_trades.
 
     commit=False: siehe insert_rom1_signal — atomarer Forward-Commit im Caller.
+
+    wl_reason (B8) persists WHICH gate path let the signal through — a real 4D
+    cell, `no_whitelist_entry`, or one of the fallback paths. Without it the
+    forwarded side of the gate is unauditable (suppressed_signals only records
+    the blocked side); 26_regime_detector.post_hourly_status reads it for the
+    default-open rate.
     """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     with conn.cursor() as cur:
@@ -545,10 +652,10 @@ def insert_orchestrator_open_trade(
             INSERT INTO orchestrator_open_trades
                 (coin, direction, bot_name, entry_price, opened_at,
                  regime_at_open, alt_context_at_open,
-                 original_outbox_id, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'OPEN')
+                 original_outbox_id, wl_reason, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'OPEN')
             """,
-            (coin, direction, bot_name, entry, now_utc, regime, alt_context, outbox_id),
+            (coin, direction, bot_name, entry, now_utc, regime, alt_context, outbox_id, wl_reason),
         )
     if commit:
         conn.commit()
@@ -748,6 +855,7 @@ def _gate_and_forward_row(
         outbox_id,
         cur_regime,
         cur_alt,
+        wl_reason=wl_reason,
         commit=False,
     )
 
@@ -773,19 +881,170 @@ def _gate_and_forward_row(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def mark_orchestrator_trade_closed(conn, trade_id: int, status: str, reason: str) -> None:
-    """Updates an orchestrator_open_trades row to closed."""
+def mark_orchestrator_trade_closed(
+    conn,
+    trade_id: int,
+    status: str,
+    reason: str,
+    regime_close_action: str | None = None,
+) -> None:
+    """Updates an orchestrator_open_trades row to closed.
+
+    regime_close_action (T-2026-CU-9050-049): optional A/B arm tag written
+    atomically with the close ('REGIME_CHANGE_CLOSED' for a regime-change
+    market-close). When None the column is left untouched — so the lifecycle-
+    sync's final close of a previously-TRAILED trade does NOT overwrite its
+    'REGIME_CHANGE_TRAILED' tag (the cohort marker must survive to the real exit).
+    """
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    with conn.cursor() as cur:
+        if regime_close_action is not None:
+            cur.execute(
+                """
+                UPDATE orchestrator_open_trades
+                SET status = %s, closed_at = %s, close_reason = %s,
+                    regime_close_action = %s, regime_action_at = %s
+                WHERE id = %s
+                """,
+                (status, now_utc, reason, regime_close_action, now_utc, trade_id),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE orchestrator_open_trades
+                SET status = %s, closed_at = %s, close_reason = %s
+                WHERE id = %s
+                """,
+                (status, now_utc, reason, trade_id),
+            )
+    conn.commit()
+
+
+def mark_orchestrator_trade_trailed(conn, trade_id: int, new_sl: float) -> None:
+    """Tags an OPEN orchestrator trade as trailed at a regime change (A/B arm).
+
+    T-2026-CU-9050-049. Keeps status='OPEN' — the trade keeps running with its
+    moved SL and closes later via the monitor/lifecycle-sync with its real PnL.
+    regime_close_action='REGIME_CHANGE_TRAILED' survives that final close
+    (mark_orchestrator_trade_closed leaves it untouched), so the TRAILED cohort
+    stays identifiable for the 4-6 week live comparison. It also excludes the
+    trade from future regime-close passes (the candidate query filters
+    regime_close_action IS NULL) so we never re-trail or spam SL-update messages.
+    """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE orchestrator_open_trades
-            SET status = %s, closed_at = %s, close_reason = %s
+            SET regime_close_action = 'REGIME_CHANGE_TRAILED', regime_action_at = %s
             WHERE id = %s
             """,
-            (status, now_utc, reason, trade_id),
+            (now_utc, trade_id),
         )
     conn.commit()
+
+
+def build_rom1_sl_update_message(coin: str, new_sl: float) -> str:
+    """Builds the Cornix SL-update command for an open ROM1 position.
+
+    T-2026-CU-9050-049. Cornix here is configured for symbol-addressed channel
+    commands — the same family as the existing `Close <SYMBOL>` command (see
+    core.config:115). Like Close, this moves the stop for ALL open trades of the
+    symbol in the trading channel.
+
+    HARD RULE 4 (no double-parse): this MUST NOT be parseable as a new Cornix
+    signal. parse_cornix_signal requires the "Signal for …/Direction/Entry"
+    block, which this single-line command never carries — test_signal_orchestrator
+    asserts parse_cornix_signal() returns None for this message.
+
+    The exact keyword is operator-owned (Michi, T-2026-CU-9050-049: symbol-
+    addressed, like Close). Kept as a single builder so the wire format has one
+    place to change if the Cornix config is retuned.
+    """
+    return f"SL {coin} {new_sl:.8f}"
+
+
+def _get_rom1_trade_levels(conn, coin: str, direction: str) -> tuple[int, list[float]]:
+    """Best-effort (targets_hit, targets) for the open ROM1 twin of coin+direction.
+
+    Returns (0, []) on any miss — the caller then trails to break-even, which is
+    always safe for a winner. Matches the same coin+direction+model='ROM1' as
+    force_close_trades_for_regime_change; on multiple opens the most recent wins.
+    Wrapped in a SAVEPOINT so a bad row can't poison the caller's transaction.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT sp_rom1_levels")
+            try:
+                cur.execute(
+                    """
+                    SELECT current_target_hit, targets
+                    FROM ai_signals
+                    WHERE symbol = %s AND direction = %s AND model = 'ROM1'
+                    ORDER BY open_time DESC
+                    LIMIT 1
+                    """,
+                    (coin, direction),
+                )
+                row = cur.fetchone()
+                cur.execute("RELEASE SAVEPOINT sp_rom1_levels")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_rom1_levels")
+                return (0, [])
+    except Exception:
+        return (0, [])
+    if not row:
+        return (0, [])
+    targets_hit, targets_raw = row
+    tlist: list[float] = []
+    if targets_raw:
+        try:
+            parsed = targets_raw if isinstance(targets_raw, list) else json.loads(targets_raw)
+            tlist = [float(t) for t in parsed]
+        except (ValueError, TypeError):
+            tlist = []
+    return (int(targets_hit or 0), tlist)
+
+
+def _compute_trailed_sl(
+    direction: str,
+    entry: float,
+    current_price: float,
+    targets_hit: int,
+    targets: list[float] | None,
+) -> float | None:
+    """SL level to trail a winning trade to, or None if it is not a protectable
+    winner (→ caller closes it instead).
+
+    T-2026-CU-9050-049. Winner = current price beyond entry in the trade
+    direction by more than TRAIL_MIN_PROFIT_PCT. The trailed SL is the last
+    REACHED TP level when at least one TP was hit, else break-even (entry). A TP
+    level is only used when it still sits on the protective side of the current
+    price (below for LONG, above for SHORT); if price has retraced through it we
+    fall back to break-even, which for a winner is always on the safe side. So
+    the returned SL can never instantly stop the trade out. Returns None on
+    invalid entry/price or when the trade is not in meaningful profit.
+    """
+    is_long = direction == "LONG"
+    if entry <= 0 or current_price <= 0:
+        return None
+    raw = (current_price - entry) / entry * 100.0
+    pnl = raw if is_long else -raw
+    if pnl <= TRAIL_MIN_PROFIT_PCT:
+        return None  # not a winner → close
+    level = entry  # break-even default (always protective for a winner)
+    if targets_hit and targets:
+        idx = min(int(targets_hit), len(targets)) - 1
+        if 0 <= idx < len(targets):
+            tp = float(targets[idx])
+            if (is_long and tp < current_price) or (not is_long and tp > current_price):
+                level = tp
+    # Final guard: SL must sit strictly on the protective side of current price.
+    if is_long and level >= current_price:
+        return None
+    if not is_long and level <= current_price:
+        return None
+    return level
 
 
 def _get_last_close_price(conn, coin: str, fallback: float | None = None) -> float | None:
@@ -833,10 +1092,13 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
     - In der Zwischenzeit würde der Trade als "still open" in der
       Statistik erscheinen und die WR verzerren
 
-    Classification: Der "CLOSED_REGIME_CHANGE"-Marker wird von Market-
-    Tracker, Analyzer und Orchestrator-Outcome-Classifier als NEUTRAL
-    behandelt (nicht als Win/Loss) — der Trade wurde aus externen
-    Gründen geschlossen, nicht wegen des Bot-Signals.
+    Classification (B9-Zensur-Korrektur, T-2026-CU-9050-048): Der
+    "CLOSED_REGIME_CHANGE"-Marker wird von Market-Tracker, Analyzer und
+    Orchestrator-Outcome-Classifier mit seinem REALEN PnL zum Close-Zeitpunkt
+    als Win/Loss gewertet (vorher pauschal NEUTRAL — das zensierte genau die
+    per Auto-Close realisierten Verluste und biaste die ROM1-WR nach oben,
+    Report 16 B9). Der Auto-Close ist der Exit des Trades, nicht ein externes
+    Housekeeping-Event.
 
     Returns:
         dict mit 'ai_closed' und 'classic_closed' (Anzahl der geschlossenen)
@@ -921,8 +1183,13 @@ def _classify_outcome_by_pnl(
     """
     reason = (close_reason or "").upper()
     # Neutral-Marker: extern verursachte Closes die nicht vom Bot-Signal kommen
-    # → nicht in Win/Loss-Statistik zählen
-    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason or "REGIME_CHANGE" in reason:
+    # → nicht in Win/Loss-Statistik zählen.
+    #
+    # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE ist NICHT mehr
+    # neutral — ein Auto-Close bei Regime-Wechsel realisiert einen echten PnL,
+    # der als Win/Loss zählen muss (near-0%-Closes fängt der Micro-PnL-Filter
+    # weiter neutral ab). Spiegelt _classify_outcome in 27_bot_regime_analyzer.
+    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason:
         return "CLOSED_NEUTRAL"
     if entry is None or close_price is None:
         return "CLOSED_NEUTRAL"
@@ -954,6 +1221,12 @@ async def sync_closed_trades(conn) -> None:
     schreibt targets_hit=0 etc.). DELISTED/CLEANUP-Trades bekommen den Status
     CLOSED_NEUTRAL — die Orchestrator-Performance wird dadurch nicht verzerrt.
     """
+    # Reaper FIRST: corpse decay must not depend on the health of the per-row
+    # match loop below (a poison row there would silently disable decay while
+    # the unbounded direction blocks stay active). Safe to run first: the
+    # reaper skips anything the match loop could still classify.
+    await reap_corpse_trades(conn)
+
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -976,21 +1249,31 @@ async def sync_closed_trades(conn) -> None:
         # mehreren Kandidaten gewinnt die kleinste Zeitdifferenz. Der
         # closed_trades_master-Check ist raus — ROM1 schreibt nie nach
         # active_trades_master, dort konnte nur ein Fremd-Trade matchen.
-        window_start = opened_at_naive - timedelta(seconds=60)
-        window_end = opened_at_naive + timedelta(seconds=60)
-
+        #
+        # T-2026-CU-9050-052: second window through LEGACY_SESSION_TZ — rows
+        # written before this fix carry session-local open_time (+3h), and
+        # their closes (copied verbatim by the monitor) would otherwise never
+        # match; a legacy-era trade that closes AFTER deploy would lose its
+        # real WIN/LOSS to the corpse reaper. Safe against cross-matching a
+        # different trade: the 4h per-coin+direction cooldown means no two
+        # same-direction trades can sit 3h±window apart.
         # `status` in closed_ai_signals enthält tatsächlich den close_reason
         # (z.B. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP").
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT entry, close_price, status FROM closed_ai_signals
                 WHERE symbol = %s AND direction = %s AND model = 'ROM1'
-                  AND open_time >= %s AND open_time <= %s
-                ORDER BY ABS(EXTRACT(EPOCH FROM (open_time - %s)))
+                  AND {_anchor_window_predicate("open_time", "%s::timestamp")}
+                ORDER BY LEAST(
+                    ABS(EXTRACT(EPOCH FROM (open_time - %s))),
+                    ABS(EXTRACT(EPOCH FROM (
+                        (open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC') - %s
+                    )))
+                )
                 LIMIT 1
                 """,
-                (coin, direction, window_start, window_end, opened_at_naive),
+                (coin, direction) + (opened_at_naive,) * 6,
             )
             row = cur.fetchone()
 
@@ -998,6 +1281,69 @@ async def sync_closed_trades(conn) -> None:
             entry, close_price, close_reason = row
             new_status = _classify_outcome_by_pnl(direction, entry, close_price, close_reason)
             mark_orchestrator_trade_closed(conn, trade_id, new_status, "lifecycle_sync")
+
+
+async def reap_corpse_trades(conn) -> None:
+    """Closes OPEN tracking rows whose ai_signals twin is gone (corpse reaper).
+
+    T-2026-CU-9050-052: a live ROM1 trade always has its ai_signals twin (both
+    rows are written in the same transaction; the monitor deletes the twin on
+    close). An OPEN row WITHOUT a twin is a trade that closed but was never
+    synced — either a legacy corpse from the dead-sync era (open_time stamped
+    +3h by the session-TZ DB default, the ±60s sync window can never match:
+    395 rows as of 2026-07-10) or a pathological case (manually deleted
+    ai_signals row). Left OPEN, such rows block the direction checks forever,
+    feed spurious Close commands into every regime-change pass, and get
+    re-scanned by the sync loop on every pass.
+
+    Guards, in order:
+    - 72h minimum age: never touches fresh rows.
+    - Twin check is ROW-anchored (±window around opened_at, both rows are
+      written in one transaction), NOT just coin+direction — a live trade's
+      twin must not shield a corpse that shares coin+direction (stacking era),
+      because that corpse would keep feeding Close commands that flatten the
+      LIVE position on the next regime flip. Legacy twins sit at
+      LEGACY_SESSION_TZ local time, hence the second window.
+    - Never censors a classifiable outcome: if a closed_ai_signals row exists
+      in either sync window (same two windows as the match loop — asymmetry
+      here would censor legacy-era closes), the regular match loop will
+      classify the real WIN/LOSS — the reaper skips (closes the
+      monitor-commit race for >72h trades; the monitor deletes the twin and
+      writes the close atomically).
+
+    Reaped rows get CLOSED_NEUTRAL (no PnL/WR distortion, same convention as
+    DELISTED/CLEANUP) and closed_at = reap time — NOT the real close time,
+    which is unknowable for corpses. Duration stats must exclude
+    close_reason='corpse_reaper'. No Telegram post — bookkeeping, not a trade
+    action. A twin that is stuck (monitor cannot process the coin) keeps its
+    row OPEN by design — protection over availability; the decay path for
+    that case is housekeeping's DELISTED cleanup deleting the twin.
+    """
+    now_naive = utc_now_naive()
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE orchestrator_open_trades o
+            SET status = 'CLOSED_NEUTRAL', closed_at = %s, close_reason = 'corpse_reaper'
+            WHERE o.status = 'OPEN'
+              AND o.opened_at < %s
+              AND NOT EXISTS (
+                  SELECT 1 FROM ai_signals a
+                  WHERE a.model = 'ROM1' AND a.symbol = o.coin AND a.direction = o.direction
+                    AND {_anchor_window_predicate("a.open_time", "o.opened_at")}
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM closed_ai_signals c
+                  WHERE c.model = 'ROM1' AND c.symbol = o.coin AND c.direction = o.direction
+                    AND {_anchor_window_predicate("c.open_time", "o.opened_at")}
+              )
+            """,
+            (now_naive, now_naive - timedelta(hours=72)),
+        )
+        reaped = cur.rowcount
+    conn.commit()
+    if reaped:
+        logger.info(f"🧹 Corpse-Reaper: {reaped} verwaiste OPEN-Rows ohne ai_signals-Twin neutral geschlossen.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1049,46 +1395,94 @@ async def check_regime_change_and_close(conn) -> None:
 
     from core.config import REGIME_STATUS_CHANNEL_ID, REGIME_TRADING_CHANNEL_ID
 
-    # Load all open trades
+    # Load all open trades that have not already been actioned by a prior
+    # regime pass. T-2026-CU-9050-049: a TRAILED winner stays status='OPEN' but
+    # carries regime_close_action — excluding it here prevents re-trailing / a
+    # second SL-update on every subsequent regime change. (Closed rows are
+    # already excluded by status <> 'OPEN'.)
     with conn.cursor() as cur:
-        cur.execute("SELECT id, coin, direction, bot_name FROM orchestrator_open_trades WHERE status = 'OPEN'")
+        cur.execute(
+            "SELECT id, coin, direction, bot_name, entry_price "
+            "FROM orchestrator_open_trades "
+            "WHERE status = 'OPEN' AND regime_close_action IS NULL"
+        )
         open_trades = cur.fetchall()
 
+    # Each candidate carries trail_sl: a float SL level → trail the winner, or
+    # None → close the loser. trail_sl stays None entirely while the gate is off.
     closes = []
     keeps = []
 
-    for trade_id, coin, direction, bot_name in open_trades:
+    for trade_id, coin, direction, bot_name, entry_price in open_trades:
         whitelisted, reason = get_whitelist_decision(conn, bot_name, direction)
-        if not whitelisted:
-            closes.append((trade_id, coin, direction, bot_name, reason))
-        else:
+        if whitelisted:
             keeps.append((coin, direction, bot_name))
+            continue
+        trail_sl = None
+        if TRAIL_WINNERS_ON_REGIME_CHANGE:
+            entry = float(entry_price) if entry_price is not None else 0.0
+            current_price = _get_last_close_price(conn, coin, fallback=entry) or entry
+            targets_hit, targets = _get_rom1_trade_levels(conn, coin, direction)
+            trail_sl = _compute_trailed_sl(direction, entry, current_price, targets_hit, targets)
+        closes.append((trade_id, coin, direction, bot_name, reason, trail_sl))
 
-    # Post Close-Commands to trading channel and move trades to closed tables
+    # Pass 1: trail winners (SL-update, keep running). Done FIRST so Pass 2 can
+    # avoid flattening a just-trailed winner with the symbol-wide `Close <coin>`.
+    trailed_coins: set[str] = set()
+    n_trailed = 0
+    for trade_id, coin, direction, bot_name, reason, trail_sl in closes:
+        if trail_sl is None:
+            continue
+        # SL-update, NOT a second Cornix signal (hard rule 4). Symbol-addressed
+        # like Close (core.config:115) — one command per winning coin.
+        send_telegram(build_rom1_sl_update_message(coin, trail_sl), REGIME_TRADING_CHANNEL_ID)
+        mark_orchestrator_trade_trailed(conn, trade_id, trail_sl)
+        trailed_coins.add(coin)
+        n_trailed += 1
+        logger.info(
+            f"🎯 Regime-Change TRAIL: {coin} {direction} SL→{trail_sl:.8f} "
+            f"(bot={bot_name}, reason={reason}) — trade kept open (A/B: TRAILED)"
+        )
+
+    # Pass 2: close losers. Post Close-Commands and move trades to closed tables.
     total_ai = 0
     total_classic = 0
-    for trade_id, coin, direction, bot_name, reason in closes:
-        close_cmd = f"Close {coin}"
-        send_telegram(close_cmd, REGIME_TRADING_CHANNEL_ID)
+    n_closed = 0
+    for trade_id, coin, direction, bot_name, reason, trail_sl in closes:
+        if trail_sl is not None:
+            continue
+        if coin in trailed_coins:
+            # Cornix `Close <coin>` is symbol-wide (core.config:115) and would
+            # flatten the trailed winner on the same symbol. Skip and leave this
+            # row OPEN for the next regime pass to re-judge once the winner exits.
+            logger.warning(
+                f"Regime-Close: defer Close {coin} {direction} — same symbol has a "
+                f"trailed winner this pass; symbol-wide Close would flatten it."
+            )
+            continue
+        send_telegram(f"Close {coin}", REGIME_TRADING_CHANNEL_ID)
 
-        # Mark orchestrator_open_trades row as closed
+        # Mark orchestrator_open_trades row as closed (A/B arm: CLOSED).
         mark_orchestrator_trade_closed(
             conn,
             trade_id,
             "CLOSED_REGIME_CHANGE",
             f"REGIME_CHANGE:{reason}",
+            regime_close_action="REGIME_CHANGE_CLOSED",
         )
 
         # Verschiebe die ROM1-Tracking-Kopie aus ai_signals nach
         # closed_ai_signals, damit sie nicht als "still open" in den
         # Market-Tracker-Reports erscheint bis der Monitor irgendwann
         # ihren eigenen SL/TP trifft (kann Tage dauern). Der Marker
-        # "CLOSED_REGIME_CHANGE" wird downstream als neutraler Close
-        # klassifiziert (nicht Win/nicht Loss). FIX P1.9: fremde Trades
-        # (andere Modelle, active_trades_master) bleiben unangetastet.
+        # "CLOSED_REGIME_CHANGE" wird downstream mit seinem realen PnL als
+        # Win/Loss klassifiziert (B9-Zensur-Korrektur, T-2026-CU-9050-048).
+        # FIX P1.9: fremde Trades (andere Modelle, active_trades_master)
+        # bleiben unangetastet.
         close_stats = force_close_trades_for_regime_change(conn, coin, direction)
         total_ai += close_stats["ai_closed"]
         total_classic += close_stats["classic_closed"]
+        n_closed += 1
 
         logger.info(
             f"🛑 Close command posted: {coin} {direction} "
@@ -1099,14 +1493,16 @@ async def check_regime_change_and_close(conn) -> None:
 
     # Summary to status channel
     change_line = "\n".join(changes)
-    close_lines = "\n".join(f"  {c[1]} {c[2]} ({c[3]}) — closed 🛑" for c in closes)
+    close_lines = "\n".join(
+        f"  {c[1]} {c[2]} ({c[3]}) — {'trailed 🎯' if c[5] is not None else 'closed 🛑'}" for c in closes
+    )
     keep_lines = "\n".join(f"  {k[0]} {k[1]} ({k[2]}) — kept open (whitelisted)" for k in keeps)
     summary = f"🔄 REGIME CHANGE & AUTO-CLOSE\n\n{change_line}\n\nOpen trades before change: {len(open_trades)}\n"
     if closes:
         summary += close_lines + "\n"
     if keeps:
         summary += keep_lines + "\n"
-    summary += f"\n{len(closes)} close command(s) posted to trading channel."
+    summary += f"\n{n_closed} close + {n_trailed} trail command(s) posted to trading channel."
     if total_ai or total_classic:
         summary += (
             f"\n{total_ai} AI + {total_classic} classic trade(s) moved to "
@@ -1133,17 +1529,47 @@ def should_run_lifecycle_sync() -> bool:
     return False
 
 
+async def _run_stage(conn, stage_name: str, coro) -> bool:
+    """Runs one main-loop stage; an exception is logged and the connection is
+    rolled back so the NEXT stage does not inherit an aborted transaction.
+    Returns False on failure so the caller can keep money-path couplings.
+
+    T-2026-CU-9050-052: the stages were one try block before — a persistent
+    poison row in the regime check or the gating pass would then silently
+    starve the lifecycle sync (and with it the corpse reaper, the only decay
+    path for stuck OPEN rows) forever.
+    """
+    try:
+        await coro
+        return True
+    except Exception as e:
+        logger.error(f"Orchestrator-Loop-Error [{stage_name}]: {e}", exc_info=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
 async def main_loop() -> None:
     logger.info("=== 🎯 SIGNAL ORCHESTRATOR STARTED ===")
     while True:
         conn = None
         try:
             conn = get_db_connection()
-            await check_regime_change_and_close(conn)
-            await signal_gating_pass(conn)
+            regime_ok = await _run_stage(conn, "regime_change", check_regime_change_and_close(conn))
+            if regime_ok:
+                await _run_stage(conn, "gating", signal_gating_pass(conn))
+            else:
+                # Fail-closed on the money path: while regime-flip auto-closes
+                # are broken, do NOT open new exposure via the gating pass.
+                # Only the lifecycle sync below stays independent.
+                logger.warning("Gating-Pass übersprungen: Regime-Stage fehlgeschlagen (fail-closed).")
             if should_run_lifecycle_sync():
-                await sync_closed_trades(conn)
+                await _run_stage(conn, "lifecycle_sync", sync_closed_trades(conn))
         except Exception as e:
+            # Backstop: nothing here may ever kill the process (no gating, no
+            # auto-closes, no reaping on the live fleet).
             logger.error(f"Orchestrator-Loop-Error: {e}", exc_info=True)
         finally:
             if conn:

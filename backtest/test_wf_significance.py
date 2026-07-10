@@ -90,7 +90,37 @@ def test_max_drawdown_shape():
     assert max_drawdown_pct(np.array([1.0, 1.0, 1.0])) == 0.0
     dd = max_drawdown_pct(np.array([10.0, -5.0, -5.0, 8.0]))
     assert dd < 0.0
-    print("OK  MaxDD: 0 ohne Drawdown, negativ mit")
+    # Absolut in %-Punkten unter dem Peak: cumsum [10,5,0,8], Peak 10, tiefster
+    # Punkt 0 -> -10 %-Punkte. Pinnt die Einheit (nicht mehr peak-normiert).
+    assert dd == -10.0, dd
+    print("OK  MaxDD: 0 ohne Drawdown, -10 %-Punkte mit")
+
+
+def test_max_drawdown_peak_height_invariance():
+    """Pin gegen die Peak-Normierung (T-2026-CU-9050-053). Zwei Pfade mit
+    IDENTISCHEM absolutem Drawdown (ein 50-%-Punkte-Absturz), aber
+    unterschiedlicher Peak-Höhe, müssen denselben MaxDD liefern. Die alte
+    Formel (equity-peak)/peak teilte durch die zufällige Peak-Höhe und gab
+    -25 % (Peak-Equity 200) vs -45,45 % (Peak-Equity 110) — genau der
+    Konfundierungs-Effekt, der auf den Multi-Coin-Replays p_dd_worse verkehrt
+    herum stellte. Mutations-Check: mit der alten Formel FÄLLT dieser Test."""
+    high_peak = max_drawdown_pct(np.array([100.0, -50.0]))  # alt: Peak-Equity 200
+    low_peak = max_drawdown_pct(np.array([10.0, -50.0]))    # alt: Peak-Equity 110
+    assert high_peak == low_peak, (high_peak, low_peak)
+    assert high_peak == -50.0, high_peak
+    print("OK  MaxDD: peak-höhen-invariant (absolute %-Punkte, nicht normiert)")
+
+
+def test_max_drawdown_survives_nonpositive_peak():
+    """Nebenbefund (b): fällt die additive Equity nie über die alte 100er-Basis,
+    war der Peak der alten Formel <= 0 und der Guard np.where(peak>0, peak, 1.0)
+    wechselte still auf %-Punkte UND behielt die *100-Skalierung — aus einem
+    -40-%-Punkte-DD wurde -4000. Der absolute DD gibt hier sauber -40, ohne
+    Sonderfall. Mutations-Check: die alte Formel liefert -4000 und FÄLLT."""
+    # cumsum [-150,-120,-160] -> (alt) 100+cumsum = [-50,-20,-60], Peak <= 0 überall
+    dd = max_drawdown_pct(np.array([-150.0, 30.0, -40.0]))
+    assert dd == -40.0, dd
+    print("OK  MaxDD: nicht-positiver Peak sauber in %-Punkten, kein Einheiten-/Skalen-Sprung")
 
 
 def test_skip_paths():
@@ -140,6 +170,8 @@ if __name__ == "__main__":
     test_random_control_carries_fee_drag()
     test_order_permutation_dd()
     test_max_drawdown_shape()
+    test_max_drawdown_peak_height_invariance()
+    test_max_drawdown_survives_nonpositive_peak()
     test_skip_paths()
     test_cli_end_to_end_deterministic()
     print("\nAlle wf_significance-Tests bestanden.")

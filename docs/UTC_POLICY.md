@@ -52,7 +52,7 @@ Zielzustand ist überall `timestamptz`.
 | `orchestrator_suppressed_signals` | `ts` | naiv | `26_regime_detector.py` |
 | `pump_dump_events` | `spike_time` | naiv | `10_pump_dump_detector.py` |
 | `ml_predictions_master` | `time` | naiv, **keine Repo-DDL** | — (Lücke, R2/B3) |
-| `ai_signals` | `time` | **Typ repo-seitig nicht belegbar** — gegen `information_schema` verifizieren | — (Lücke, R2/B3) |
+| `ai_signals` | `open_time` | **gemischte Domäne** — live verifiziert 2026-07-10 (T-044): Spalte ist `timestamp without time zone DEFAULT now()`, d. h. alle Writer, die `open_time` dem Default überlassen, stempeln Session-lokal (Bucharest). Ausnahme seit T-052: ROM1-Rows (`28_signal_orchestrator.insert_rom1_signal`) schreiben explizit naiv-UTC, damit der Lifecycle-Sync gegen das naiv-UTC `opened_at` matchen kann. Vereinheitlichung = R3-Flip (§4) | `28` (UTC), alle anderen AI-Bots (Default = lokal) |
 | `closed_ai_signals` | `close_time` | bereits `timestamptz` | `8_ai_trade_monitor.py:27` |
 | `{sym}_{tf}`, `ticker_10s`, `ml_predictions_master.processed_at` | `open_time`, `ts`, `processed_at` | bereits `timestamptz` | — |
 
