@@ -188,7 +188,9 @@ def ensure_regime_schema(conn) -> None:
                 wl_reason TEXT,
                 status TEXT DEFAULT 'OPEN',
                 closed_at TIMESTAMP WITHOUT TIME ZONE,
-                close_reason TEXT
+                close_reason TEXT,
+                regime_close_action TEXT,
+                regime_action_at TIMESTAMP WITHOUT TIME ZONE
             )
         """)
         # B8: additive for DBs created before the column existed. Rows written
@@ -197,6 +199,20 @@ def ensure_regime_schema(conn) -> None:
         cur.execute("""
             ALTER TABLE orchestrator_open_trades
             ADD COLUMN IF NOT EXISTS wl_reason TEXT
+        """)
+        # T-2026-CU-9050-049: differentiated regime auto-close A/B.
+        # regime_close_action tags which arm a trade took at a regime change —
+        # 'REGIME_CHANGE_CLOSED' (market-closed loser) vs 'REGIME_CHANGE_TRAILED'
+        # (winner whose SL was trailed and kept running). It survives the trade's
+        # eventual final close, so the TRAILED cohort stays identifiable for the
+        # 4-6 week live comparison; regime_action_at is when that action fired.
+        cur.execute("""
+            ALTER TABLE orchestrator_open_trades
+            ADD COLUMN IF NOT EXISTS regime_close_action TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE orchestrator_open_trades
+            ADD COLUMN IF NOT EXISTS regime_action_at TIMESTAMP WITHOUT TIME ZONE
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_oot_status

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from collections.abc import Iterable
@@ -35,6 +36,20 @@ from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn
 # ─────────────────────────────────────────────────────────────────────────────
 LOOP_INTERVAL_MS = 500
 AUTO_CLOSE_ON_REGIME_CHANGE = True
+# T-2026-CU-9050-049: winner-differentiated regime auto-close (A/B). Default OFF.
+# When True, an open trade that is IN PROFIT at a regime change is NOT market-
+# closed — its stop-loss is trailed (break-even, or the last reached TP level)
+# via a Cornix SL-update command and the trade keeps running; losers are still
+# closed. This changes live money-path behavior and starts an A/B experiment
+# (orchestrator_open_trades.regime_close_action REGIME_CHANGE_CLOSED vs
+# REGIME_CHANGE_TRAILED). Flipping it True is an operator decision
+# (OPUS-HANDOFF §6; Kythera doctrine "Default-off für Unbewiesenes").
+TRAIL_WINNERS_ON_REGIME_CHANGE = os.getenv("KYTHERA_REGIME_TRAIL_WINNERS", "0") == "1"
+# Minimum profit (direction-aware price move %) for a trade to count as a
+# "winner" worth protecting rather than closing. Mirrors the round-trip taker
+# fee floor (OUTCOME_MIN_PNL_PCT / 27_bot_regime_analyzer.V2_BREAK_EVEN_PNL_PCT):
+# below it a break-even SL would not lock a real non-loss, so we close instead.
+TRAIL_MIN_PROFIT_PCT = 0.1
 # FIX P2.28: 60s → 300s. Neuheit garantiert der id-Cursor (inkl. MAX(id)-Init
 # beim Start) — das Fenster ist nur noch die Staleness-Grenze. Bei 60s fielen
 # Signale schon raus, wenn ein einzelner Gating-Pass (S/R-Berechnung über
@@ -866,19 +881,170 @@ def _gate_and_forward_row(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def mark_orchestrator_trade_closed(conn, trade_id: int, status: str, reason: str) -> None:
-    """Updates an orchestrator_open_trades row to closed."""
+def mark_orchestrator_trade_closed(
+    conn,
+    trade_id: int,
+    status: str,
+    reason: str,
+    regime_close_action: str | None = None,
+) -> None:
+    """Updates an orchestrator_open_trades row to closed.
+
+    regime_close_action (T-2026-CU-9050-049): optional A/B arm tag written
+    atomically with the close ('REGIME_CHANGE_CLOSED' for a regime-change
+    market-close). When None the column is left untouched — so the lifecycle-
+    sync's final close of a previously-TRAILED trade does NOT overwrite its
+    'REGIME_CHANGE_TRAILED' tag (the cohort marker must survive to the real exit).
+    """
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    with conn.cursor() as cur:
+        if regime_close_action is not None:
+            cur.execute(
+                """
+                UPDATE orchestrator_open_trades
+                SET status = %s, closed_at = %s, close_reason = %s,
+                    regime_close_action = %s, regime_action_at = %s
+                WHERE id = %s
+                """,
+                (status, now_utc, reason, regime_close_action, now_utc, trade_id),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE orchestrator_open_trades
+                SET status = %s, closed_at = %s, close_reason = %s
+                WHERE id = %s
+                """,
+                (status, now_utc, reason, trade_id),
+            )
+    conn.commit()
+
+
+def mark_orchestrator_trade_trailed(conn, trade_id: int, new_sl: float) -> None:
+    """Tags an OPEN orchestrator trade as trailed at a regime change (A/B arm).
+
+    T-2026-CU-9050-049. Keeps status='OPEN' — the trade keeps running with its
+    moved SL and closes later via the monitor/lifecycle-sync with its real PnL.
+    regime_close_action='REGIME_CHANGE_TRAILED' survives that final close
+    (mark_orchestrator_trade_closed leaves it untouched), so the TRAILED cohort
+    stays identifiable for the 4-6 week live comparison. It also excludes the
+    trade from future regime-close passes (the candidate query filters
+    regime_close_action IS NULL) so we never re-trail or spam SL-update messages.
+    """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE orchestrator_open_trades
-            SET status = %s, closed_at = %s, close_reason = %s
+            SET regime_close_action = 'REGIME_CHANGE_TRAILED', regime_action_at = %s
             WHERE id = %s
             """,
-            (status, now_utc, reason, trade_id),
+            (now_utc, trade_id),
         )
     conn.commit()
+
+
+def build_rom1_sl_update_message(coin: str, new_sl: float) -> str:
+    """Builds the Cornix SL-update command for an open ROM1 position.
+
+    T-2026-CU-9050-049. Cornix here is configured for symbol-addressed channel
+    commands — the same family as the existing `Close <SYMBOL>` command (see
+    core.config:115). Like Close, this moves the stop for ALL open trades of the
+    symbol in the trading channel.
+
+    HARD RULE 4 (no double-parse): this MUST NOT be parseable as a new Cornix
+    signal. parse_cornix_signal requires the "Signal for …/Direction/Entry"
+    block, which this single-line command never carries — test_signal_orchestrator
+    asserts parse_cornix_signal() returns None for this message.
+
+    The exact keyword is operator-owned (Michi, T-2026-CU-9050-049: symbol-
+    addressed, like Close). Kept as a single builder so the wire format has one
+    place to change if the Cornix config is retuned.
+    """
+    return f"SL {coin} {new_sl:.8f}"
+
+
+def _get_rom1_trade_levels(conn, coin: str, direction: str) -> tuple[int, list[float]]:
+    """Best-effort (targets_hit, targets) for the open ROM1 twin of coin+direction.
+
+    Returns (0, []) on any miss — the caller then trails to break-even, which is
+    always safe for a winner. Matches the same coin+direction+model='ROM1' as
+    force_close_trades_for_regime_change; on multiple opens the most recent wins.
+    Wrapped in a SAVEPOINT so a bad row can't poison the caller's transaction.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT sp_rom1_levels")
+            try:
+                cur.execute(
+                    """
+                    SELECT current_target_hit, targets
+                    FROM ai_signals
+                    WHERE symbol = %s AND direction = %s AND model = 'ROM1'
+                    ORDER BY open_time DESC
+                    LIMIT 1
+                    """,
+                    (coin, direction),
+                )
+                row = cur.fetchone()
+                cur.execute("RELEASE SAVEPOINT sp_rom1_levels")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_rom1_levels")
+                return (0, [])
+    except Exception:
+        return (0, [])
+    if not row:
+        return (0, [])
+    targets_hit, targets_raw = row
+    tlist: list[float] = []
+    if targets_raw:
+        try:
+            parsed = targets_raw if isinstance(targets_raw, list) else json.loads(targets_raw)
+            tlist = [float(t) for t in parsed]
+        except (ValueError, TypeError):
+            tlist = []
+    return (int(targets_hit or 0), tlist)
+
+
+def _compute_trailed_sl(
+    direction: str,
+    entry: float,
+    current_price: float,
+    targets_hit: int,
+    targets: list[float] | None,
+) -> float | None:
+    """SL level to trail a winning trade to, or None if it is not a protectable
+    winner (→ caller closes it instead).
+
+    T-2026-CU-9050-049. Winner = current price beyond entry in the trade
+    direction by more than TRAIL_MIN_PROFIT_PCT. The trailed SL is the last
+    REACHED TP level when at least one TP was hit, else break-even (entry). A TP
+    level is only used when it still sits on the protective side of the current
+    price (below for LONG, above for SHORT); if price has retraced through it we
+    fall back to break-even, which for a winner is always on the safe side. So
+    the returned SL can never instantly stop the trade out. Returns None on
+    invalid entry/price or when the trade is not in meaningful profit.
+    """
+    is_long = direction == "LONG"
+    if entry <= 0 or current_price <= 0:
+        return None
+    raw = (current_price - entry) / entry * 100.0
+    pnl = raw if is_long else -raw
+    if pnl <= TRAIL_MIN_PROFIT_PCT:
+        return None  # not a winner → close
+    level = entry  # break-even default (always protective for a winner)
+    if targets_hit and targets:
+        idx = min(int(targets_hit), len(targets)) - 1
+        if 0 <= idx < len(targets):
+            tp = float(targets[idx])
+            if (is_long and tp < current_price) or (not is_long and tp > current_price):
+                level = tp
+    # Final guard: SL must sit strictly on the protective side of current price.
+    if is_long and level >= current_price:
+        return None
+    if not is_long and level <= current_price:
+        return None
+    return level
 
 
 def _get_last_close_price(conn, coin: str, fallback: float | None = None) -> float | None:
@@ -1229,34 +1395,80 @@ async def check_regime_change_and_close(conn) -> None:
 
     from core.config import REGIME_STATUS_CHANNEL_ID, REGIME_TRADING_CHANNEL_ID
 
-    # Load all open trades
+    # Load all open trades that have not already been actioned by a prior
+    # regime pass. T-2026-CU-9050-049: a TRAILED winner stays status='OPEN' but
+    # carries regime_close_action — excluding it here prevents re-trailing / a
+    # second SL-update on every subsequent regime change. (Closed rows are
+    # already excluded by status <> 'OPEN'.)
     with conn.cursor() as cur:
-        cur.execute("SELECT id, coin, direction, bot_name FROM orchestrator_open_trades WHERE status = 'OPEN'")
+        cur.execute(
+            "SELECT id, coin, direction, bot_name, entry_price "
+            "FROM orchestrator_open_trades "
+            "WHERE status = 'OPEN' AND regime_close_action IS NULL"
+        )
         open_trades = cur.fetchall()
 
+    # Each candidate carries trail_sl: a float SL level → trail the winner, or
+    # None → close the loser. trail_sl stays None entirely while the gate is off.
     closes = []
     keeps = []
 
-    for trade_id, coin, direction, bot_name in open_trades:
+    for trade_id, coin, direction, bot_name, entry_price in open_trades:
         whitelisted, reason = get_whitelist_decision(conn, bot_name, direction)
-        if not whitelisted:
-            closes.append((trade_id, coin, direction, bot_name, reason))
-        else:
+        if whitelisted:
             keeps.append((coin, direction, bot_name))
+            continue
+        trail_sl = None
+        if TRAIL_WINNERS_ON_REGIME_CHANGE:
+            entry = float(entry_price) if entry_price is not None else 0.0
+            current_price = _get_last_close_price(conn, coin, fallback=entry) or entry
+            targets_hit, targets = _get_rom1_trade_levels(conn, coin, direction)
+            trail_sl = _compute_trailed_sl(direction, entry, current_price, targets_hit, targets)
+        closes.append((trade_id, coin, direction, bot_name, reason, trail_sl))
 
-    # Post Close-Commands to trading channel and move trades to closed tables
+    # Pass 1: trail winners (SL-update, keep running). Done FIRST so Pass 2 can
+    # avoid flattening a just-trailed winner with the symbol-wide `Close <coin>`.
+    trailed_coins: set[str] = set()
+    n_trailed = 0
+    for trade_id, coin, direction, bot_name, reason, trail_sl in closes:
+        if trail_sl is None:
+            continue
+        # SL-update, NOT a second Cornix signal (hard rule 4). Symbol-addressed
+        # like Close (core.config:115) — one command per winning coin.
+        send_telegram(build_rom1_sl_update_message(coin, trail_sl), REGIME_TRADING_CHANNEL_ID)
+        mark_orchestrator_trade_trailed(conn, trade_id, trail_sl)
+        trailed_coins.add(coin)
+        n_trailed += 1
+        logger.info(
+            f"🎯 Regime-Change TRAIL: {coin} {direction} SL→{trail_sl:.8f} "
+            f"(bot={bot_name}, reason={reason}) — trade kept open (A/B: TRAILED)"
+        )
+
+    # Pass 2: close losers. Post Close-Commands and move trades to closed tables.
     total_ai = 0
     total_classic = 0
-    for trade_id, coin, direction, bot_name, reason in closes:
-        close_cmd = f"Close {coin}"
-        send_telegram(close_cmd, REGIME_TRADING_CHANNEL_ID)
+    n_closed = 0
+    for trade_id, coin, direction, bot_name, reason, trail_sl in closes:
+        if trail_sl is not None:
+            continue
+        if coin in trailed_coins:
+            # Cornix `Close <coin>` is symbol-wide (core.config:115) and would
+            # flatten the trailed winner on the same symbol. Skip and leave this
+            # row OPEN for the next regime pass to re-judge once the winner exits.
+            logger.warning(
+                f"Regime-Close: defer Close {coin} {direction} — same symbol has a "
+                f"trailed winner this pass; symbol-wide Close would flatten it."
+            )
+            continue
+        send_telegram(f"Close {coin}", REGIME_TRADING_CHANNEL_ID)
 
-        # Mark orchestrator_open_trades row as closed
+        # Mark orchestrator_open_trades row as closed (A/B arm: CLOSED).
         mark_orchestrator_trade_closed(
             conn,
             trade_id,
             "CLOSED_REGIME_CHANGE",
             f"REGIME_CHANGE:{reason}",
+            regime_close_action="REGIME_CHANGE_CLOSED",
         )
 
         # Verschiebe die ROM1-Tracking-Kopie aus ai_signals nach
@@ -1270,6 +1482,7 @@ async def check_regime_change_and_close(conn) -> None:
         close_stats = force_close_trades_for_regime_change(conn, coin, direction)
         total_ai += close_stats["ai_closed"]
         total_classic += close_stats["classic_closed"]
+        n_closed += 1
 
         logger.info(
             f"🛑 Close command posted: {coin} {direction} "
@@ -1280,14 +1493,16 @@ async def check_regime_change_and_close(conn) -> None:
 
     # Summary to status channel
     change_line = "\n".join(changes)
-    close_lines = "\n".join(f"  {c[1]} {c[2]} ({c[3]}) — closed 🛑" for c in closes)
+    close_lines = "\n".join(
+        f"  {c[1]} {c[2]} ({c[3]}) — {'trailed 🎯' if c[5] is not None else 'closed 🛑'}" for c in closes
+    )
     keep_lines = "\n".join(f"  {k[0]} {k[1]} ({k[2]}) — kept open (whitelisted)" for k in keeps)
     summary = f"🔄 REGIME CHANGE & AUTO-CLOSE\n\n{change_line}\n\nOpen trades before change: {len(open_trades)}\n"
     if closes:
         summary += close_lines + "\n"
     if keeps:
         summary += keep_lines + "\n"
-    summary += f"\n{len(closes)} close command(s) posted to trading channel."
+    summary += f"\n{n_closed} close + {n_trailed} trail command(s) posted to trading channel."
     if total_ai or total_classic:
         summary += (
             f"\n{total_ai} AI + {total_classic} classic trade(s) moved to "

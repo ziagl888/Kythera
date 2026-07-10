@@ -242,3 +242,21 @@ AUTO_CLOSE_ON_REGIME_CHANGE = False
 ```
 
 Nach Neustart des Prozesses: Regime-Wechsel werden noch erkannt und geloggt, aber keine Close-Commands gepostet.
+
+### Differenzierter Auto-Close: Gewinner trailen statt closen (A/B, T-2026-CU-9050-049)
+
+Der blinde Auto-Close kappte ~49 % der Regime-Closes im Gewinn (Report aus T-2026-CU-9050-031). Optional lässt sich der Close differenzieren: ein Trade **im Gewinn** bei Regime-Wechsel wird **nicht** market-geschlossen, sondern sein Stop-Loss wird via Cornix-**SL-Update-Message** (`SL <SYMBOL> <preis>`, symbol-adressiert wie `Close`) auf **Break-even** bzw. das **letzte erreichte TP-Level** gezogen — der Trade läuft weiter. Verlierer werden weiter geschlossen.
+
+```python
+# In 28_signal_orchestrator.py bzw. per .env (Operator-Entscheid):
+TRAIL_WINNERS_ON_REGIME_CHANGE  # env KYTHERA_REGIME_TRAIL_WINNERS=1, Default 0 (OFF)
+```
+
+**Default OFF** — das ändert Live-Money-Verhalten und startet ein A/B-Experiment; Scharfschalten ist eine Operator-Entscheidung (OPUS-HANDOFF §6). Die SL-Update-Message ist **keine** zweite Cornix-parsebare Signal-Message (harte Regel 4).
+
+**A/B-Auswertung** über `orchestrator_open_trades.regime_close_action`:
+
+- `REGIME_CHANGE_CLOSED` — Verlierer sofort geschlossen; Outcome = realer PnL zum Close-Zeitpunkt (Row landet in `closed_ai_signals` mit `status='CLOSED_REGIME_CHANGE'`).
+- `REGIME_CHANGE_TRAILED` — Gewinner getrailt, läuft weiter; das echte Outcome kommt später aus dem Monitor/Lifecycle-Sync (`closed_ai_signals.status` = `CLOSED_TP`/`CLOSED_SL`). Der Tag überlebt den finalen Close, `regime_action_at` hält den Zeitpunkt.
+
+Vergleich der beiden Kohorten (Netto-PnL/WR über 4–6 Wochen) via Join `orchestrator_open_trades` → `closed_ai_signals` (coin+direction+`open_time`≈`opened_at`, wie `sync_closed_trades`).

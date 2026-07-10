@@ -1141,3 +1141,71 @@ def test_rom1_params_used_not_original_signal():
     # targets als JSON
     import json as _json
     assert _json.loads(values[6]) == [105.0, 110.0, 120.0]
+
+
+# ── T-2026-CU-9050-049: differentiated regime auto-close ───────────────────────
+
+def test_sl_update_message_format():
+    """SL-update is symbol-addressed (like Close), 8-decimal price."""
+    assert orch.build_rom1_sl_update_message("BTCUSDT", 63120.5) == "SL BTCUSDT 63120.50000000"
+
+
+def test_sl_update_message_not_parseable_as_signal():
+    """HARD RULE 4: the SL-update must NEVER parse as a new Cornix signal —
+    otherwise it would open a second position with real money."""
+    msg = orch.build_rom1_sl_update_message("BTCUSDT", 63120.5)
+    assert orch.parse_cornix_signal(msg) is None
+    # And a real signal still parses (guards against a broken parser masking it).
+    assert orch.parse_cornix_signal(LONG_SIGNAL) is not None
+
+
+def test_trailed_sl_long_winner_breakeven_when_no_tp():
+    """LONG in profit, no TP hit → trail SL to break-even (entry)."""
+    assert orch._compute_trailed_sl("LONG", 100.0, 103.0, 0, []) == 100.0
+
+
+def test_trailed_sl_long_winner_last_tp_when_hit():
+    """LONG with 2 TPs hit → trail SL to the 2nd (last reached) TP level."""
+    sl = orch._compute_trailed_sl("LONG", 100.0, 112.0, 2, [105.0, 110.0, 120.0])
+    assert sl == 110.0
+
+
+def test_trailed_sl_short_winner_last_tp_when_hit():
+    """SHORT mirror: price below entry, 1 TP hit → SL to the 1st TP (above price)."""
+    sl = orch._compute_trailed_sl("SHORT", 100.0, 88.0, 1, [95.0, 90.0, 80.0])
+    assert sl == 95.0
+
+
+def test_trailed_sl_falls_back_to_breakeven_when_tp_retraced():
+    """LONG hit TP2 (110) but price retraced to 106 — TP2 is now ABOVE price and
+    would instantly stop the trade out. Must fall back to break-even (entry)."""
+    sl = orch._compute_trailed_sl("LONG", 100.0, 106.0, 2, [105.0, 110.0, 120.0])
+    assert sl == 100.0
+
+
+def test_trailed_sl_loser_returns_none():
+    """LONG below entry → not a winner → None (caller closes it)."""
+    assert orch._compute_trailed_sl("LONG", 100.0, 97.0, 0, []) is None
+    assert orch._compute_trailed_sl("SHORT", 100.0, 103.0, 0, []) is None
+
+
+def test_trailed_sl_flat_below_fee_floor_returns_none():
+    """Profit under the fee floor is not worth protecting → None."""
+    # +0.05% < TRAIL_MIN_PROFIT_PCT (0.1%)
+    assert orch._compute_trailed_sl("LONG", 100.0, 100.05, 0, []) is None
+
+
+def test_trailed_sl_invalid_inputs_return_none():
+    assert orch._compute_trailed_sl("LONG", 0.0, 100.0, 0, []) is None
+    assert orch._compute_trailed_sl("LONG", 100.0, 0.0, 0, []) is None
+    assert orch._compute_trailed_sl("LONG", -1.0, 100.0, 0, []) is None
+
+
+def test_trailed_sl_min_profit_matches_fee_floor():
+    """The winner floor mirrors the round-trip fee / neutral-PnL floor."""
+    assert orch.TRAIL_MIN_PROFIT_PCT == orch.OUTCOME_MIN_PNL_PCT
+
+
+def test_trail_gate_default_off():
+    """Unproven money-path behavior ships default-off (Kythera doctrine)."""
+    assert orch.TRAIL_WINNERS_ON_REGIME_CHANGE is False
