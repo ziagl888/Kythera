@@ -55,6 +55,70 @@ numerischen Tests, der den Repaint-Mechanismus selbst reproduziert),
 `backtest/test_sniper_tag.py` (4/4), `guard.py smoke` grün, ruff + mypy grün.
 Wirkt beim nächsten regulären Restart, kein Deploy.
 
+## [2026-07-10] Pump/Dump-Fenster zeit-basiert statt index-basiert (T-2026-CU-9050-029, P1.39)
+
+Der Detector schnitt seine Fenster über Listen-Indizes: `prices[-7:]` hiess nur
+dann „die letzten 60 Sekunden", wenn jeder 10s-Bucket ankam. Bei einer
+WS-Lücke — am wahrscheinlichsten genau im Spike, wenn der Socket am meisten zu
+tun hat — spannte „-7" über Minuten, und das Modell bewertete ein still
+gedehntes Fenster.
+
+Dazu ein zweiter, unabhängiger Fehler: `volumes_10s` war auf `v10s_valid`
+**gefiltert**, `prices` nicht. `volumes_10s[-18:]` und `prices[-18:]` zeigten
+also auf unterschiedliche Zeitpunkte, sobald ein einziger Bucket ungültig war.
+
+Beide Abschnitte (Volume-Explosion-Alert und ML-Feature-Pfad) routen jetzt über
+`_find_bucket_before` / `_find_bucket_range`, die nach Zeitstempel auswählen —
+dieselben Helfer, die der Preis-Spike-Pfad längst nutzt. Die flachen
+`prices`/`volumes_10s`-Listen sind ersatzlos entfallen: dass beide nach dem
+Umbau unbenutzt waren, ist der Beleg, dass keine Index-Rechnung übrig blieb.
+
+Fehlt der Bucket von vor 60s, wird der Tick **übersprungen**, statt eine
+erfundene `0` als Feature ins Modell zu schreiben — eine 0 ist ein Messwert,
+kein „unbekannt".
+
+### Anker statt Wanduhr
+Alle Bucket-Lookups messen gegen `bucket_anchor` (den Stempel des jüngsten
+Buckets), nicht gegen `now`. Die Stempel sind aufs 10s-Raster gefloort, `now`
+ist der Aufrufzeitpunkt — und der Detector iteriert ~530 Coins nach einem
+REST-Roundtrip, der Versatz wandert also auch über den Batch. Gegen `now`
+gemessen schrumpfte das 60s-Fenster ab einem Versatz von 5s still auf 6, dann
+5 Buckets: `buy_pres`/`volat` beschrieben ~50 Sekunden, während `p_chg_60s`
+weiter echte 60 Sekunden maß. Drei Features, die dieselbe Spanne beschreiben
+sollen, taten es nicht. Gegen den Anker liegt jeder Zielzeitpunkt exakt auf
+einem Rasterpunkt, und `WINDOW_EDGE_GUARD = 5` absorbiert nur noch
+Parse-Rauschen. Gefunden im `z-code-reviewer`-Pass, nicht durch die erste
+Test-Runde — die synthetisierte Buckets mit Versatz 0.
+
+Mit umgestellt wurden auch die drei vorbestehenden Lookups des
+Preis-Spike-Pfads: zwei Zeitbasen für Geschwister-Lookups derselben Funktion
+wären schlimmer als eine falsche. Bewusst **nicht** umgestellt, weil echte
+Wanduhr-Semantik: Staleness-Check, die beiden Alert-Cooldowns und
+`pump_dump_events.spike_time`.
+
+### Messung
+Im Gap-Szenario des Tests meldete die alte Index-Rechnung `p_chg_60s = +100.0`
+— sie griff über ein 10-Minuten-Loch auf einen Bucket mit halbem Preis. Die
+zeit-basierte Variante meldet die wahren `0.0`. Genau solche Werte landeten
+bisher auch in `pump_dump_events`.
+
+### ⚠ Retrain-Kopplung
+`vol_ratio`, `p_chg_60s`, `buy_pres` und `volat` sind Modell-Inputs **und**
+werden so nach `pump_dump_events` geloggt, woraus `tools/epd2_build_dataset.py`
+trainiert. Das deployte EPD2-Artefakt wurde auf der alten Definition gefittet;
+bis zum Retrain-Rollout läuft Serving gegen eine leicht verschobene Verteilung.
+Bei lückenlosen Ticks sind alt und neu identisch (Kontroll-Tests belegen das),
+die Drift betrifft ausschliesslich Gap-Ticks — dort war der alte Wert aber
+falsch, nicht bloss anders. Operator-Entscheid Michi 2026-07-09; Folge-Task
+**T-2026-CU-9050-035** (EPD2-Retrain auf den neuen Feature-Definitionen).
+
+Verifikation: `backtest/test_pump_dump_time_windows.py` (neu, standalone,
+DB-frei, 6/6). Vier Tests fallen auf dem Pre-Fix-Stand; die zwei übrigen laufen
+auf beiden Ständen grün und belegen damit, dass der lückenlose Pfad unverändert
+ist. Wirkt beim nächsten regulären Restart, kein Deploy.
+
+---
+
 ## [2026-07-09] "Opened"-Zählung entdoppelt, EPD2-Shadow-Inserts gedrosselt (T-2026-CU-9050-029, P1.44 + P1.41, PR #23)
 
 Zwei Hälften desselben Defekts: der Schreiber produzierte Shadow-Zeilen ohne
