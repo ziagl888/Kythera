@@ -104,12 +104,36 @@ nach `ffill()` zusätzlich `bfill()`. Das `ffill` schließt Innen-Lücken aus de
 Vergangenheit und ist harmlos; das `bfill` füllte die verbleibenden **Kopfzeilen
 aus der Zukunft**.
 
-Diese Kopfzeilen sind keine Theorie: die Warmup-Spalten der DB-Indikatoren sind am
-Anfang jeder Coin-Historie NULL (`ema_200` braucht 200 Bars, die Donchian-Kanäle 20),
-während `run_td_bb` bereits ab `t = WINDOW-1 = 149` Events emittiert. Anders als der
-forming-Kerzen-Befund aus T-037 — der sich selbst quarantänisiert, weil seine Records
-kein Label bekommen und `load_replay` sie verwirft — landete dieser Leak in
-**gelabelten** Trainingszeilen der td/bb-Replays (Modelle TD2/BB2, Bot 25).
+> **Korrektur 2026-07-10 (nach Code-Prüfung von `2_indicator_engine.py:335-448`):** die
+> ursprüngliche Fassung dieses Eintrags begründete den Fix mit „die Warmup-Spalten sind
+> NULL (`ema_200` braucht 200 Bars, die Donchian-Kanäle 20)". **Das ist falsch.** Die
+> Engine liefert diese Spalten gefüllt: `ema_*`, `macd_*`, `atr_14`, `tsi_*` sind
+> `ewm(adjust=False)` und ab Zeile 0 definiert; `wma_21`, `donchian_*_20`, `boll_*_20`
+> tragen `.fillna(0)`, `rsi_14` trägt `.fillna(50)`. Der Fix bleibt richtig, seine
+> Mechanik ist aber eine andere — unten korrigiert. Die Fehlerklasse ist Falle 13 aus
+> `docs/OPUS-HANDOFF.md`, eine Ebene tiefer: der Loader wurde am Code geprüft, der
+> Datenproduzent dahinter nicht.
+
+Genau **eine** der fünfzehn Spalten, die `load_joined` liest, ist in der DB wirklich
+leer: **`kama_21`**. `calculate_kama` (`2_indicator_engine.py:344-350`) füllt bewusst
+nicht — die Zeilen 0–19 sind NaN, Zeile 20 trägt den SMA-Bootstrap. `bfill` hatte damit
+genau ein Ziel: es schrieb diesen Bootstrap-Wert rückwärts in die 20 Zeilen davor, also
+Zukunft in die Vergangenheit. `run_td_bb` beginnt zwar erst bei `t = WINDOW-1 = 149`,
+die Feature-Kerze ist aber der **Pivot-Index** (`lo_b + p3`), und der reicht bei kleinem
+`t` bis Zeile 0 herunter. Anders als der forming-Kerzen-Befund aus T-037 — der sich
+selbst quarantänisiert, weil seine Records kein Label bekommen und `load_replay` sie
+verwirft — landete dieser Leak damit in **gelabelten** Trainingszeilen der td/bb-Replays
+(Modelle TD2/BB2, Bot 25). Betroffen sind Coins, deren Listing in das Replay-Fenster
+fällt; für ältere Coins enthält der Frame kein NaN und `bfill` war ein No-op.
+
+**Der größere Nachbar-Befund, den dieser Fix NICHT behebt:** die `.fillna(0)`-Spalten
+sind kein NaN und überleben das `dropna()`. Für eine junge Coin steht in den ersten ~20
+Bars `donchian_upper_20 = 0.0`, und `extract_ml_features` macht daraus
+`donchian_upper_20_dist_pct = -100.0`. Fünf der elf Preis-Features sind dort hart
+gepinnt. Das ist **P1.13** im `AUDIT_TODO.md` („`fillna(0)` auf Warm-up-Fenstern schreibt
+erfundene Indikatorwerte", Fix: NaN fließen lassen wie KAMA es tut) und gehört vor den
+nächsten TD2/BB2/QM2-Retrain, weil es die Feature-Verteilung von Bot **und** Replay
+gleichermaßen verschiebt.
 
 Fix: `to_numeric` vor `ffill` gezogen, `bfill` ersatzlos entfernt, die verbleibenden
 NaN-Kopfzeilen werden verworfen. Ein Event ohne echte Indikatoren ist kein
@@ -117,11 +141,19 @@ Trainingsdatum. `backtest/test_feature_lookahead.py` pinnt das mechanisch
 (mutations-geprüft: mit `bfill` fällt der Test).
 
 **Nicht angefasst, bewusst:** `25_smc_ml_sniper.py:220` und `24_quasimodo_bot.py:126`
-tragen dieselbe Zeile. Sie fenstern aber `DESC LIMIT 150` **ab jetzt** — dort füllt
-`bfill` aus Zeilen, die der Bot ohnehin schon gesehen hat, also kein Look-ahead
-relativ zur Entscheidungszeit. Der Rest-Fall (frisch gelisteter Coin, dessen
-150er-Fenster ganz in der Warmup-Zone liegt) ist ein Geld-Pfad-Befund und gehört
-als eigene Entscheidung an Michi, nicht in diesen Commit.
+tragen dieselbe Zeile. Sie fenstern aber `DESC LIMIT 150` bzw. `100` **ab jetzt** — dort
+füllt `bfill` aus Zeilen, die der Bot ohnehin schon gesehen hat, also kein Look-ahead
+relativ zur Entscheidungszeit, sondern eine stille Imputation des Feature-Vektors. Und
+sie feuert nur, wenn die ersten 20 Kerzen der Coin-Historie im Fenster liegen, der Coin
+also ≤ ~170 Kerzen hat (`1h`: 4–7 Tage alt; `4h`: 17–28 Tage) — für die große Mehrheit
+der Coins ist `bfill` dort ein No-op.
+
+Wichtiger als die Zeile selbst ist ihre **Kopplung an den Retrain**: seit diesem Commit
+verwirft der Replay die 20 Kopfzeilen, der Live-Bot imputiert sie weiter. Das nächste
+aus dem Replay trainierte TD2/BB2/QM2 hat sie nie gesehen. Die Bots dürfen deshalb
+**nicht isoliert** angeglichen werden, sondern nur **gemeinsam mit dem Artefakt-Rollout**
+— sonst entsteht genau der Train/Serve-Skew, gegen den T-037/T-045 antreten. Geld-Pfad,
+Operator-Entscheidung (`docs/OPUS-HANDOFF.md` §6).
 
 ## [2026-07-10] `legacy_trainers/` ist keine Wegwerf-Ware — Operator-Frage §5.8 geschlossen (Doku)
 
