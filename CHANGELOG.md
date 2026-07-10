@@ -26,6 +26,36 @@ definiert (`- [ ] **P1.45 …`). Genau das prüft ein eigener Test ab.
 
 Der Bestand bleibt unverändert (125 Findings, keine Duplikate; nächste freie IDs:
 P1.49, P2.52). Kein Renumbering.
+## [2026-07-10] wf_significance MaxDD entkonfundiert: absoluter Drawdown in %-Punkten statt Peak-Normierung (T-2026-CU-9050-053)
+
+Fix zum Befund aus T-2026-CU-9050-040. `tools/wf_significance.py:max_drawdown_pct`
+normierte den Drawdown auf den laufenden Peak (`(equity − peak) / peak`). Auf den
+fleet-weiten Multi-Coin-Replays trägt die additive Equity das nicht: 8,8–20,2
+gleichzeitige Signale pro Zeitstempel werden als sequenzielle Einzelwetten
+verkettet, die Equity fällt tief unter null, und der Quotient misst am Ende die
+zufällige Peak-Höhe statt der Verlust-Clusterung.
+
+Fix: der DD wird jetzt **absolut in %-Punkten** unter dem Peak gerechnet
+(`equity − peak`, ohne Normierung; die +100-Basis kürzt sich heraus). Beobachteter
+und permutierter Pfad werden damit exakt gleich gemessen. Der Nebenbefund
+(`np.where(peak > 0, peak, 1.0)` wechselte bei Peak ≤ 0 still Einheit und
+×100-Skalierung) löst sich by construction — ohne Division gibt es keinen Guard
+mehr. Gewählte Option: absoluter DD statt eines overlap-respektierenden
+Equity-Pfads; letzterer bräuchte Kapitalallokations-Annahmen, die das Replay-JSONL
+nicht trägt (Grenze in `docs/WF_SIGNIFICANCE.md` benannt: Pfad-Clusterungs-Statistik,
+kein echter Portfolio-Drawdown).
+
+Verifiziert am echten Artefakt (200 Permutationen, Seed 42): rub/LONG kippt von
+p = 1,000 („untypisch gnädig") auf 0,005 (beob. −55.208 vs Median −17.182),
+ufi1/SHORT von 0,035 auf 0,005. `backtest/test_wf_significance.py` pinnt die
+Peak-Höhen-Invarianz und den Nicht-positiv-Peak-Fall mechanisch (mutations-geprüft:
+beide fallen gegen die alte Formel — −25 % vs −45,45 % bzw. −4000). Die Lese-Hilfe
+in `docs/WF_SIGNIFICANCE.md` ist wieder scharf gestellt.
+
+**Keine Deploy-Aussage der Batch-E-Tabelle ändert sich.** Sie steht auf Statistik 1
+(Random-Control) und 3 (Bootstrap-CI), beide reihenfolge-invariant und vom DD-Fix
+unberührt; die DD-Statistik war ohnehin als „nicht operativ lesen" markiert und ging
+in keinen Deploy-Call ein.
 ## [2026-07-10] P1.8-Folgefix: ROM1-Lifecycle-Sync war seit 04.07. still tot — open_time jetzt explizit naiv-UTC + twin-basierter Corpse-Reaper statt Age-Bounds (T-2026-CU-9050-052)
 
 Die VPS-Verify-Session T-2026-CU-9050-044 hat den P0-Verdacht aus dem
