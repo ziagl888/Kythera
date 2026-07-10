@@ -1,3 +1,55 @@
+## [2026-07-09] "Opened"-Zählung entdoppelt, EPD2-Shadow-Inserts gedrosselt (T-2026-CU-9050-029, P1.44 + P1.41, PR #23)
+
+Zwei Hälften desselben Defekts: der Schreiber produzierte Shadow-Zeilen ohne
+Drossel, der Leser zählte sie — und zählte gepostete AI-Signale obendrein
+doppelt. Die per-Bot-Statistik ist die Entscheidungsgrundlage des
+Orchestrator-Gatings, also ist eine aufgeblähte „Opened"-Zahl ein
+Geld-Pfad-Defekt.
+
+### P1.44 — Leser: Opens kommen aus `ai_signals`, nicht aus dem Prediction-Log
+`ml_predictions_master` ist ein append-only Log — nirgends im Repo wird daraus
+gelöscht. `closed_ai_signals` hält dieselben Signale nach dem Schliessen, und
+beide Frames landeten in `df_all_created`. Jedes AI-Signal, das im Fenster
+öffnete **und** schloss, zählte damit zweimal. Zusätzlich trug der Log
+Shadow-Zeilen (`posted=False`), die nie gehandelt wurden.
+
+Die klassische Seite hatte das Problem nie: die Monitore DELETEn beim Schliessen
+aus `active_trades_master` bzw. `ai_signals` und INSERTen in die
+`closed_*`-Tabelle — aktiv ∪ geschlossen ist also disjunkt. Die AI-Seite
+spiegelt das jetzt: `ai_signals` ∪ `closed_ai_signals`. Beide Posts teilen sich
+einen `_load_open_ai_signals()`-Helper; die Drift zwischen Summary- und
+Per-Bot-Post war die eigentliche Ursache.
+
+**Verworfene Alternative** (Operator-Entscheid): `ml_predictions_master WHERE
+posted=TRUE` als Quelle. Der Log ist **dedupliziert** (4h je Modul/Coin/
+Richtung), nicht vollständig — ein legitimer Re-Post in dem Fenster hätte keine
+Zeile, die Opens würden **unter**zählen.
+
+### P1.41 — Schreiber: EPD2-Shadow-Inserts laufen über `log_prediction()`
+Der Shadow-Zweig (`0.25 ≤ p < 0.60`) INSERTete auf jedem qualifizierenden
+10s-Tick. Das 900s-Gate darüber bremst ihn nicht: `last_alert_time` wird nur im
+Live-Trade-Zweig zurückgesetzt. Ein Coin, der dauerhaft im Shadow-Band
+predictet, drosselte sich daher nie (bis 8640 Rows/Tag/Symbol). Statt eines
+neuen Cooldowns nutzt der Zweig jetzt `core.signal_post.log_prediction()`, das
+bereits 4h je Modul/Coin/Richtung dedupt — derselbe Pfad wie bei den Bots 30-33.
+Der Timer wird hier **bewusst nicht** gesetzt: er gated auch echte Signale, ein
+Reset würde Live-EPD2-Trades desselben Coins 900s unterdrücken.
+
+### Live-Semantik
+Beabsichtigt geändert: bei 1 offenen + 1 geschlossenen AI-Signal im Fenster
+meldet „Opened" jetzt **2 statt 3**, und eine Shadow-Prediction taucht gar nicht
+mehr als eröffnetes Signal auf. Closed-Counts, Win-Rate und Kelly-Mathematik
+bleiben unberührt — `df_all_closed` zieht weiterhin ausschliesslich aus den
+`closed_*`-Tabellen. Wirkt beim nächsten regulären Restart, kein Deploy.
+
+Bekannt, hier nicht gefixt: `log_prediction` dedupt gegen `NOW()` (PG-Lokalzeit)
+auf UTC-Rows. Das verschiebt das effektive Fenster, drosselt aber. Gehört ins
+R3/TZ-Cluster (P2.1–P2.6) und darf dort nicht per Punkt-Fix angefasst werden.
+
+Verifikation: `backtest/test_market_tracker_opened.py` (neu, 7/7) und
+`backtest/test_shadow_prediction_cooldown.py` (neu, 4/4), beide standalone und
+DB-frei. Der Kern-Test fällt auf dem Pre-Fix-Stand mit 3L statt 2L — er misst
+den Doppelzähler, statt an einer Exception zu sterben.
 ## [2026-07-10] Look-ahead im Walk-Forward-Simulator geschlossen (T-2026-CU-9050-037)
 
 `tools/walkforward_sim.py` ist seit P0.10 die **einzige Label-Quelle des gesamten
