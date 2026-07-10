@@ -18,7 +18,7 @@ from core import config as _kcfg  # channel ids
 from core import ticker_10s
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
-from core.funding_features import FUNDING_FEATURES, funding_features_asof, load_funding
+from core.funding_features import FUNDING_FEATURES, funding_features_cached
 from core.market_utils import get_max_leverage
 from core.model_artifacts import load_artifact, maybe_reload
 from core.signal_post import log_prediction
@@ -785,16 +785,12 @@ def process_coin_logics(conn, symbol):
             # EPD2: je Richtung ein binäres Modell. Funding-Features as-of JETZT —
             # der Dataset-Builder (tools/epd2_build_dataset.py:231) nimmt sie as-of
             # dem Event-Zeitstempel, und das Event ist genau dieser Tick.
-            # since-Schranke wie bei RUB (as-of nutzt max. die letzten 270 Sätze).
             #
-            # PERFORMANCE-RISIKO (bekannt, vor dem EPD2-Rollout zu klären): das ist
-            # ein DB-Roundtrip pro qualifizierendem TICK, nicht pro Signal. Der
-            # vol_ratio>=5-Vorfilter hält an, solange das Volumen-Event läuft, und
-            # der Shadow-Zweig setzt den 900s-Timer bewusst nicht zurück (P1.41).
-            # Ein TTL-Cache ist KEIN Drop-in: er verschöbe den As-of-Zeitpunkt und
-            # bräche die Trainer-Parität, die dieser Pfad gerade herstellt.
-            fund_by_sym = load_funding(conn, [symbol], since=now - datetime.timedelta(days=95))
-            feats = {**base_features, **funding_features_asof(fund_by_sym, symbol, now)}
+            # Der Load ist gecacht (funding_features_cached): der 900s-Timer sperrt
+            # zwar vor dieser Strecke, wird aber nur im Live-Trade-Zweig gesetzt —
+            # ein Coin, der dauerhaft im Shadow-Band predictet, zöge die Query sonst
+            # auf JEDEM 10s-Tick. Der Stunden-Key macht das Caching wertneutral.
+            feats = {**base_features, **funding_features_cached(conn, symbol, now)}
             candidates = []
             for direction, art in epd2.items():
                 # Fehlende Funding-HISTORIE ⇒ Spalten fehlen ⇒ hier 0, wie fillna(0)
@@ -821,6 +817,31 @@ def process_coin_logics(conn, symbol):
     except Exception as e:
         logger.error(f"Prediction Fehler in HF Loop: {e}")
         return
+
+    # Aktiver Trade Check (T-2026-CU-9050-055) — prüft, ob für genau dieses
+    # Modul/Coin/Richtung bereits ein nicht-geschlossener Trade läuft.
+    # Der 900s-Timer oben ist eine FREQUENZ-Sperre und lebt nur im Speicher; ein
+    # EPD-Trade läuft regelmässig länger, und ohne diesen Check öffnete das
+    # Folgesignal eine ZWEITE Live-Position neben der ersten. Muster:
+    # 11_ai_mis_bot.py:318. Der Check läuft NACH der Prediction, weil die
+    # Richtung erst aus dem argmax feststeht (Operator-Entscheid 2026-07-10:
+    # symbol+direction wie bei den Geschwistern, kein richtungsagnostischer Key).
+    # Er sperrt bewusst auch den Shadow-Log — wie bei MIS/RUB ist der Trade das,
+    # was zählt, nicht die Zeile.
+    #
+    # Der Tag ist zugleich der Dedupe-Key und kippt beim EPD3-Rollout; ohne den
+    # Alt-Tag im IN blockte eine offene EPD2-Position das EPD3-Signal nicht mehr.
+    # Solange die Tags übereinstimmen (heute), ist das IN ein No-op.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM ai_signals
+            WHERE symbol = %s AND direction = %s AND model IN (%s, %s)
+        """,
+            (symbol, best_direction, module_tag, EPD_LEGACY_TAG),
+        )
+        if cur.fetchone():
+            return  # Trade läuft live im AI Monitor
 
     # === LOGIK ANWENDEN ===
     # EPD2 (Operator 2026-07-06): Richtungs-Gate entfernt — beide Seiten handeln

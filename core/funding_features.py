@@ -23,6 +23,8 @@ das Signal steckt STRIKT darüber/darunter.
 
 from __future__ import annotations
 
+import datetime
+
 import numpy as np
 import pandas as pd
 
@@ -81,3 +83,50 @@ def funding_features_asof(by_sym: dict[str, pd.DataFrame], symbol: str, ts_utc) 
         "fund_pctl_90d": float((hist90 <= last).mean() * 100),
         "fund_trend": float(m3 - m9),
     }
+
+
+# --- Per-Stunde-Cache für Hochfrequenz-Aufrufer (T-2026-CU-9050-055) ---
+#
+# ``funding_features_asof`` hängt vom Zeitstempel AUSSCHLIESSLICH über den
+# searchsorted-Schnitt ab — also über die Zahl der Sätze mit funding_time < ts.
+# Binance rechnet Funding auf VOLLEN Stunden ab (8h-Raster, einzelne Paare
+# 4h/1h). Innerhalb einer angebrochenen Stunde kommt kein Satz dazu, der Schnitt
+# bleibt gleich, und alle Aggregate sind Suffixe (rates[-3:], rates[-270:], …) —
+# sie hängen nicht an der ``since``-Untergrenze des Loads. Ein Cache mit dem
+# Stunden-Key liefert deshalb BIT-IDENTISCHE Werte; er ist keine Näherung.
+#
+# Ein naiver Zeit-TTL wäre eine: der verschöbe den As-of-Zeitpunkt quer über eine
+# Abrechnungsgrenze und bräche die Trainer-Parität (Train == Serve == Replay).
+#
+# Ausnahme Ingestion-Lag: die Zeile für hh:00 landet erst Sekunden später in
+# ``funding_rates``. Ein Cache-Eintrag, der in den ersten ``CACHE_MIN_AGE_S``
+# einer Stunde gebaut wurde, kann sie verpasst haben und wird verworfen.
+CACHE_MIN_AGE_S = 120
+CACHE_SINCE_DAYS = 95  # as-of nutzt max. die letzten 270 Sätze
+
+#: symbol → (Stunden-Key, Bauzeitpunkt, Features)
+_CACHE: dict[str, tuple[datetime.datetime, datetime.datetime, dict]] = {}
+
+
+def clear_funding_cache() -> None:
+    """Nur für Tests / Prozess-Reset."""
+    _CACHE.clear()
+
+
+def funding_features_cached(conn, symbol: str, ts_utc: datetime.datetime, loader=load_funding) -> dict:
+    """Wie ``funding_features_asof``, aber höchstens ein DB-Roundtrip je Symbol
+    und Stunde. Die Werte sind identisch zum ungecachten Aufruf (siehe oben).
+
+    ``loader`` ist injizierbar, damit der Cache DB-frei testbar bleibt.
+    """
+    hour = ts_utc.replace(minute=0, second=0, microsecond=0)
+    hit = _CACHE.get(symbol)
+    if hit is not None:
+        cached_hour, built_at, feats = hit
+        if cached_hour == hour and (built_at - hour).total_seconds() >= CACHE_MIN_AGE_S:
+            return feats
+
+    by_sym = loader(conn, [symbol], since=ts_utc - datetime.timedelta(days=CACHE_SINCE_DAYS))
+    feats = funding_features_asof(by_sym, symbol, ts_utc)
+    _CACHE[symbol] = (hour, ts_utc, feats)
+    return feats
