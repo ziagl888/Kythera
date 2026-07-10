@@ -143,7 +143,11 @@ def next_feature_change(g: pd.DataFrame, ts_utc) -> pd.Timestamp | None:
 
     Verkürzt ein Coin seine Kadenz (Binance 8h → 4h/1h) oder verzerrt eine
     Ingestion-Lücke die jüngsten Abstände, überschätzt ein Median das nächste
-    Intervall um Stunden. Das Minimum kann das nicht.
+    Intervall um Stunden. Das Minimum kann die BEOBACHTETEN Abstände nicht
+    überschätzen — den allerersten Satz einer plötzlich kürzeren Kadenz kann
+    keine Historien-Schätzung vorhersehen (ein Onset-Overshoot bleibt), aber ab
+    dem zweiten kurzen Satz zieht das Minimum nach, ein Median-Fenster hinge noch
+    stundenlang am alten Wert.
 
     ``None`` bei zu kurzer Historie — ohne zwei Sätze ist kein Intervall bestimmbar,
     dann wird nicht gecacht.
@@ -176,7 +180,12 @@ def funding_features_cached(conn, symbol: str, ts_utc: datetime.datetime, loader
 
     g = by_sym.get(symbol)
     valid_until = next_feature_change(g, ts_utc) if g is not None else None
-    if valid_until is not None and pd.Timestamp(ts_utc) <= valid_until:
+    # Ein LEERES Ergebnis (Historie < MIN_HISTORY) NICHT cachen: der nächste Satz,
+    # der den Coin über die Schwelle hebt, kann früher fallen als das geschätzte
+    # Intervall, und bis dahin würde `{}` ausgeliefert — genau dann, wenn der Coin
+    # handelbar wird. Wie beim Late-Row-Fall: lieber jeden Tick neu laden, bis echte
+    # Features da sind.
+    if feats and valid_until is not None and pd.Timestamp(ts_utc) <= valid_until:
         _CACHE[symbol] = (valid_until, feats)
     else:
         # Historie zu kurz (kein Intervall bestimmbar) ODER die Abrechnung ist

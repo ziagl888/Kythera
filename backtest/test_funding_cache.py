@@ -41,6 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.funding_features import (  # noqa: E402
+    FUNDING_FEATURES,
     clear_funding_cache,
     funding_features_asof,
     funding_features_cached,
@@ -255,6 +256,58 @@ def test_a_late_landing_row_is_not_frozen_for_a_whole_period():
     assert fresh == funding_features_asof(loader.by_sym, SYMBOL, DUE + datetime.timedelta(minutes=10))
     _cached(DUE + datetime.timedelta(minutes=20), loader)
     assert loader.calls == 4, "the cache stopped working once the late row had landed"
+
+
+def test_an_empty_result_below_min_history_is_not_cached():
+    """funding_features_asof returns {} below MIN_HISTORY. Caching that would serve
+    empty funding features until the estimated interval elapses — right when the coin
+    crosses the threshold and becomes tradeable. The row that lifts it over can land
+    sooner than the estimate, so the empty result must never be cached."""
+    clear_funding_cache()
+    below = [T0 + datetime.timedelta(hours=8 * i) for i in range(20)]  # < MIN_HISTORY (21)
+    loader = _CountingLoader(_frame(times=below))
+    last = below[-1]
+
+    assert funding_features_asof(loader.by_sym, SYMBOL, last + datetime.timedelta(minutes=1)) == {}
+    _cached(last + datetime.timedelta(minutes=1), loader)  # darf NICHT cachen
+
+    # Der 21. Satz landet nach 1h (früher als das 8h-Intervall). Query bei last+2h.
+    loader.by_sym = _frame(times=[*below, last + datetime.timedelta(hours=1)])
+    ts = last + datetime.timedelta(hours=2)
+    served = _cached(ts, loader)
+    assert served == funding_features_asof(loader.by_sym, SYMBOL, ts), (
+        "an empty pre-threshold result was cached and hid the real funding features"
+    )
+    assert served, "the coin is over MIN_HISTORY now — features must be non-empty"
+
+
+def test_cached_values_equal_the_asof_values_field_by_field():
+    """The load-bearing invariant of this whole module is Train == Serve (rule 7): the
+    served funding numbers must be the ones the trainer/replay compute. Pin the actual
+    VALUES, not just the load count — otherwise a regression in a feature definition
+    (e.g. the fund_24h window) rides through green."""
+    clear_funding_cache()
+    loader = _CountingLoader(_frame())
+    ts = LAST + datetime.timedelta(minutes=1)
+    served = _cached(ts, loader)
+    truth = funding_features_asof(loader.by_sym, SYMBOL, ts)
+    assert set(served) == set(FUNDING_FEATURES), f"served keys drifted from the contract: {set(served)}"
+    for k in FUNDING_FEATURES:
+        assert served[k] == truth[k], f"{k}: cache {served[k]} != as-of {truth[k]}"
+
+    # Hand-gerechnete Erwartungswerte, damit auch die FEATURE-DEFINITION selbst gepinnt
+    # ist — served==truth allein fängt eine Fenster-Regression nicht, weil beide Seiten
+    # dieselbe (kaputte) Definition benutzten. Fixture: 40 Sätze, bps = 1.0..4.9 (+0.1/Satz).
+    expected = {
+        "fund_last": 4.9,  # rates[-1]
+        "fund_24h": 4.8,  # mean(4.7, 4.8, 4.9) — das 3-Satz-Fenster
+        "fund_72h": 4.5,  # mean(4.1 … 4.9) — 9 Sätze
+        "fund_7d_cum": 81.9,  # sum(2.9 … 4.9) — 21 Sätze
+        "fund_pctl_90d": 100.0,  # 4.9 ist das Maximum
+        "fund_trend": 0.3,  # fund_24h − fund_72h
+    }
+    for k, want in expected.items():
+        assert abs(served[k] - want) < 1e-6, f"{k}: {served[k]} != expected {want} — feature definition changed"
 
 
 def test_cache_is_per_symbol():
