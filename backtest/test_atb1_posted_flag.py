@@ -22,6 +22,8 @@ import os
 import sys
 import unittest.mock as mock
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # core.config fails hard on missing secrets; the build machine ships an empty .env.
@@ -88,6 +90,11 @@ def test_boundary_is_not_the_025_shadow_gate():
 
 
 def test_returns_plain_bool_not_numpy():
-    # psycopg2 wants a real bool for the posted column, not numpy.bool_
-    out = atb1._atb1_posted_flag(0.80, 0.70)
+    # psycopg2 wants a real bool for the posted column, not numpy.bool_.
+    # ml_prob comes from model.predict_proba, i.e. numpy.float64 in production —
+    # numpy.float64 >= float yields numpy.bool_, so the helper's bool() wrapper
+    # is load-bearing. Feed a numpy input so this test actually pins that: with a
+    # plain float literal, `>=` already returns a Python bool and the assertion
+    # would pass even if the wrapper were deleted.
+    out = atb1._atb1_posted_flag(np.float64(0.80), 0.70)
     assert type(out) is bool

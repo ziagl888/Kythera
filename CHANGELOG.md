@@ -22,7 +22,14 @@ geparkt, der Fix greift beim nächsten Restart. Vor dem Entparken von Bot 14 war
 das die offene Auflage.
 
 Verifikation: `backtest/test_atb1_posted_flag.py` (neu, standalone, DB-frei,
-5/5) — alle fünf fallen auf dem Pre-Fix-Stand. ruff + format + mypy grün.
+5/5). Ehrlich zur Beweiskraft: die fünf Tests prüfen den neuen Helper, auf dem
+Pre-Fix-Stand fehlt er, also erroren sie (`AttributeError`) statt den Insert-Bug
+verhaltensmässig zu messen — der Insert-Aufruf selbst ist nur indirekt gedeckt
+(`run_trendline_detector` ist als Ganzes nicht treibbar). Ihr Wert ist der
+Forward-Guard auf die Helper-Grenze: `test_boundary_is_not_the_025_shadow_gate`
+pinnt, dass die Grenze `threshold` ist und nicht das 0.25-Shadow-Gate, und
+`test_returns_plain_bool_not_numpy` (numpy-Input) sichert den `bool()`-Wrapper
+für psycopg2. ruff + format + mypy grün.
 
 ---
 
