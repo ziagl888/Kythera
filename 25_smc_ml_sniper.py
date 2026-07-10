@@ -231,7 +231,7 @@ def scan_market():
                 # candle — its high/low still move, so a pivot built on it repaints
                 # and the posted geometry (drives, breaker level) changes after the
                 # signal went out. Build the pivots on closed candles only, same
-                # guard as 24_quasimodo_bot.py:115. Indices stay aligned with the
+                # guard as 24_quasimodo_bot.py:138. Indices stay aligned with the
                 # full arrays, so highs[p]/lows[p]/rsis[p] keep working. The live
                 # price stays live: current_price is the CMP the entry is placed at,
                 # not an analytical input (it feeds the BB level-proximity trigger

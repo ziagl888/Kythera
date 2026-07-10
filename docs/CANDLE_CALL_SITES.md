@@ -132,7 +132,7 @@ Legende **Forming heute**: `offen` = die neueste Zeile kann die laufende Kerze s
 
 | Stelle | Art | TF | Forming heute | Ziel |
 |---|---|---|---|---|
-| `tools/walkforward_sim.py:174,204` | read-candles / read-joined | 1d/1h/4h | **offen — forming als geschlossen behandelt = echter Look-ahead im Walk-Forward** | F (hoher Wert) |
+| `tools/walkforward_sim.py:174,204` | read-candles / read-joined | 1d/1h/4h | **umverdrahtet** (T-2026-CU-9050-037): beide Loader gehen über `core.candles` mit `include_forming=False` | ✅ F |
 | `tools/walkforward_sim.py:635,759` | read-joined (MIS1/RUB) | 1h | gedroppt (`date_trunc`) | F |
 | `tools/aim2_build_dataset.py:275` · `epd2_build_dataset.py:113` · `research_dataset_common.py:74` | read-joined | 1h | Event-Floor `searchsorted-1` | F (geringes Delta) |
 | `tools/retrain_sra2.py:172` | read-indicators | 1h | Python-Floor-Maske | F |
@@ -175,7 +175,7 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 - **`2_indicator_engine:574`** — Indikatoren werden fleet-weit über der forming Kerze berechnet. Bricht heute harte Regel 5.
 - **`core/trade_utils:304,423`** — höchster Fan-in: die forming Kerze speist den Level-Pool (Swing/HVN/FVG/S-R/Fib) *aller* Bots.
 - **`core/regime_logic:81,136`** — die forming 15m-Kerze steuert die Regime-Klassifikation und damit das Orchestrator-Gating.
-- **`tools/walkforward_sim:174,204`** — forming als geschlossen behandelt: **Look-ahead im Walk-Forward-Simulator**, also in genau dem Werkzeug, das die Labels des Retrain-Programms erzeugt.
+- ~~**`tools/walkforward_sim:174,204`** — forming als geschlossen behandelt: **Look-ahead im Walk-Forward-Simulator**, also in genau dem Werkzeug, das die Labels des Retrain-Programms erzeugt.~~ **Gefixt 2026-07-10 (T-2026-CU-9050-037)** als erster Schritt von Block 1: beide Loader lesen über `core.candles` (`include_forming=False`), Invariante mechanisch geprüft in `backtest/test_feature_lookahead.py`. Offen bleibt die Frage an den Operator, ob bereits ausgerollte Modelle auf den alten Labels trainiert wurden.
 - `22_ip_pattern:196`, `29_ufi1:72`, `14_ai_atb:618`, `23_market_tracker` (%-Change, Volatilität, Volumen-/Range-Aggregate), `core/charting:138` (kosmetisch), `regime_rules_study:63` und `step2_part2:25` (mild).
 
 **Index-gekoppelt — Flip nur zusammen mit Offset-Rework**, sonst wird eine *geschlossene* Kerze zu viel gedroppt: `7_pattern_detector` (`iloc[:-4]`, `len(df)-2`), `11_ai_mis` (`iloc[-2:-1]` / `iloc[-1]`), `12_ai_ats` (`-2`/`-3`), `24_quasimodo` (`[:-1]` + `closes[-1]`), `16_smc_forex_metals` (`:334`), `21_btc_smc` (`:126`), `18_ai_abr1` (`:595`).

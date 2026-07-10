@@ -50,6 +50,80 @@ CLS_DEDUP_KEY = "coin, strategy, upper(btrim(direction)), time"
 CLS_DEDUP_ORDER = f"{CLS_DEDUP_KEY}, posted ASC NULLS LAST, status DESC NULLS LAST"
 
 
+# ── Open AI signals ──────────────────────────────────────────────────────────
+# P1.44: the OPEN side of the AI signals must come from `ai_signals`, never from
+# `ml_predictions_master`. Two reasons, both of which silently inflated the
+# "Opened" counts:
+#
+#   1. ml_predictions_master is an append-only prediction log — nothing ever
+#      DELETEs from it. closed_ai_signals holds the same signals after they
+#      close. Counting both meant every AI signal that opened AND closed inside
+#      the window was counted TWICE as "opened".
+#   2. It also carries shadow rows (posted=False, e.g. EPD2's 0.25..0.60 band,
+#      see P1.41) that were never traded. Those are not opened signals.
+#
+# ai_signals and closed_ai_signals are per-signal and disjoint — the monitors
+# DELETE from ai_signals on close (8_ai_trade_monitor.py:360) and INSERT into
+# closed_ai_signals. That mirrors the classic path exactly
+# (active_trades_master / closed_trades_master), and it is the shape
+# job_per_bot_performance already used. Both posts now share this one query so
+# they cannot drift apart.
+#
+# ai_signals has no open-time column; ml_predictions_master does. The LEFT JOIN
+# recovers created_at and is intentionally fuzzy (coin/model/direction within
+# 30 days) — a still-open signal whose prediction row was deduped away lands on
+# a slightly older sibling row, and one with no row at all falls back to NOW().
+# The alternative (ml_predictions_master as the opens source) is worse:
+# log_prediction dedupes 4h per module/coin/direction, so it is a DEDUPED log,
+# not a faithful one, and would undercount legitimate re-posts.
+#
+# `m.posted = TRUE` keeps a shadow row from supplying the open timestamp. Two
+# groups therefore always take the NOW() fallback, and their still-open rows read
+# as perpetually fresh in the Opened buckets. Display only — Kelly and WR consume
+# closed_ai_signals.open_time, never this JOIN:
+#   - bots that never write to ml_predictions_master at all (7, 18, 29, ROM1);
+#     unchanged, they always fell back.
+#   - ATB1 (14_ai_atb_bot.py:720), which writes posted=False even on its LIVE
+#     branch — before the filter it accidentally matched its own shadow row.
+#     ATB1 is parked, so this is bounded to legacy open rows. Root cause tracked
+#     as P1.46; it must be fixed there, not by weakening this filter.
+OPEN_AI_SIGNALS_QUERY = """
+    SELECT a.model as strategy, a.direction, a.entry1 as entry,
+           COALESCE(m.time, NOW() AT TIME ZONE 'UTC') as created_at
+    FROM ai_signals a
+    LEFT JOIN ml_predictions_master m
+      ON m.coin = a.symbol AND m.model_name = a.model
+     AND m.direction = a.direction
+     AND m.posted = TRUE
+     AND m.time >= NOW() AT TIME ZONE 'UTC' - INTERVAL '30 days'
+    WHERE a.entry1 IS NOT NULL
+"""
+
+OPEN_AI_SIGNALS_FALLBACK_QUERY = """
+    SELECT model as strategy, direction, entry1 as entry,
+           NOW() AT TIME ZONE 'UTC' as created_at
+    FROM ai_signals
+    WHERE entry1 IS NOT NULL
+"""
+
+
+def _load_open_ai_signals(conn) -> pd.DataFrame:
+    """Open AI signals with a best-effort created_at. Never raises on the JOIN."""
+    try:
+        df = pd.read_sql_query(OPEN_AI_SIGNALS_QUERY, conn)
+        # Der JOIN kann pro Signal mehrere ml-Zeilen treffen — neueste gewinnt.
+        if not df.empty and 'created_at' in df.columns:
+            df = df.sort_values('created_at').drop_duplicates(subset=['strategy', 'direction', 'entry'], keep='last')
+        return df
+    except Exception as e:
+        logger.debug(f"ai_signals JOIN fehlgeschlagen: {e} — nutze Fallback")
+        # Postgres aborts the whole transaction on a failed statement; without
+        # this rollback the fallback dies with InFailedSqlTransaction — i.e. the
+        # fallback never actually fell back.
+        conn.rollback()
+        return pd.read_sql_query(OPEN_AI_SIGNALS_FALLBACK_QUERY, conn)
+
+
 # 📡 DATABASE & HELPERS
 
 
@@ -426,8 +500,12 @@ async def job_signal_summary():
             )
             df_act_trades = pd.read_sql_query(query_act_trades, conn, params=(t24,))
 
-            query_act_ai = "SELECT model_name as strategy, direction, time as created_at FROM ml_predictions_master WHERE time >= %s"
-            df_act_ai = pd.read_sql_query(query_act_ai, conn, params=(t24,))
+            # P1.44: open AI signals come from ai_signals, NOT from
+            # ml_predictions_master (append-only + shadow rows → double-counted
+            # and inflated "Opened"). See OPEN_AI_SIGNALS_QUERY at module top.
+            # No 24h filter needed: ai_signals only ever holds the still-open
+            # set, and get_o_stats windows on created_at client-side anyway.
+            df_act_ai = _load_open_ai_signals(conn)
 
             # 2. GESCHLOSSENE TRADES HOLEN
             # Wir fragen alles ab, was entweder in den letzten 24h geschlossen ODER eröffnet wurde
@@ -571,6 +649,11 @@ async def job_signal_summary():
     for df in [df_cls_trades, df_cls_ai]:
         if not df.empty and 'closed_at' in df.columns:
             df['closed_at'] = pd.to_datetime(df['closed_at'], utc=True)
+    # Opens = still-open ∪ closed, per Signal-Typ. Beide Paare sind disjunkt,
+    # weil die Monitore beim Schliessen aus active_trades_master bzw. ai_signals
+    # DELETEn und in die closed_*-Tabelle INSERTen. Vor P1.44 stand hier auf der
+    # AI-Seite ml_predictions_master (append-only) statt ai_signals — jedes
+    # AI-Signal, das im Fenster öffnete UND schloss, zählte doppelt.
     df_all_created = pd.concat([df_act_trades, df_act_ai, df_cls_trades, df_cls_ai], ignore_index=True)
     df_all_closed = pd.concat([df_cls_trades, df_cls_ai], ignore_index=True)
 
@@ -873,48 +956,12 @@ async def job_per_bot_performance() -> None:
                 conn,
             )
 
-            # ai_signals: hat keine Spalte für Eröffnungszeit, aber ml_predictions_master
-            # hat sie (time=created). Wir könnten joinen, aber der einfachere Weg:
-            # ai_signals.id SERIAL ist zeitlich aufsteigend und wir nehmen als
-            # Proxy NOW() - bei Fehler kein Problem, nur Detail-Zeile etwas ungenau.
-            # Deshalb: JOIN mit ml_predictions_master auf trade_id für created_at.
-            # Falls das nicht geht, fallback: keine Zeit, keine Einbeziehung ins
-            # Zeit-Fenster.
-            try:
-                df_ai_open = pd.read_sql_query(
-                    """
-                    SELECT a.model as strategy, a.direction, a.entry1 as entry,
-                           COALESCE(m.time, NOW() AT TIME ZONE 'UTC') as created_at
-                    FROM ai_signals a
-                    LEFT JOIN ml_predictions_master m
-                      ON m.coin = a.symbol AND m.model_name = a.model
-                     AND m.direction = a.direction
-                     AND m.time >= NOW() AT TIME ZONE 'UTC' - INTERVAL '30 days'
-                    WHERE a.entry1 IS NOT NULL
-                    """,
-                    conn,
-                )
-                # Bei Duplikaten durch JOIN: den neuesten ml-Eintrag nehmen
-                if not df_ai_open.empty and 'created_at' in df_ai_open.columns:
-                    df_ai_open = df_ai_open.sort_values('created_at').drop_duplicates(
-                        subset=['strategy', 'direction', 'entry'], keep='last'
-                    )
-            except Exception as e:
-                logger.debug(f"ai_signals JOIN fehlgeschlagen: {e} — nutze Fallback")
-                # Postgres aborts the whole transaction on a failed statement;
-                # without this rollback the fallback query dies with
-                # InFailedSqlTransaction and takes the entire post down — i.e.
-                # the fallback never actually fell back.
-                conn.rollback()
-                df_ai_open = pd.read_sql_query(
-                    """
-                    SELECT model as strategy, direction, entry1 as entry,
-                           NOW() AT TIME ZONE 'UTC' as created_at
-                    FROM ai_signals
-                    WHERE entry1 IS NOT NULL
-                    """,
-                    conn,
-                )
+            # ai_signals hat keine Spalte für die Eröffnungszeit —
+            # _load_open_ai_signals holt sie per JOIN aus ml_predictions_master
+            # (Rationale + Fallback: OPEN_AI_SIGNALS_QUERY am Modul-Kopf).
+            # Geteilt mit job_signal_summary, damit die beiden Posts nicht
+            # auseinanderdriften (P1.44).
+            df_ai_open = _load_open_ai_signals(conn)
     except Exception as e:
         logger.error(f"Error loading der Per-Bot Performance-Daten: {e}", exc_info=True)
         return

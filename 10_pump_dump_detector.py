@@ -18,6 +18,7 @@ from core import ticker_10s
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
+from core.signal_post import log_prediction
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR - %(message)s')
@@ -649,15 +650,25 @@ def process_coin_logics(conn, symbol):
         pass  # Schrott ignorieren
 
     elif 0.25 <= best_prob < 0.60:
-        # Shadow Mode: Ablegen in Master Tabelle
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
-                VALUES (0, %s, %s, %s, %s, %s, %s, False)
-            """,
-                (module_tag, now, symbol, best_direction, float(current_price), float(best_prob)),
-            )
+        # Shadow Mode: Ablegen in Master Tabelle.
+        #
+        # P1.41: das 900s-Gate oben (`last_alert_time`) bremst diesen Zweig NICHT
+        # — zurückgesetzt wird der Timer nur im Live-Trade-Zweig unten. Ein Coin,
+        # der dauerhaft im Shadow-Band (0.25..0.60) predictet, feuerte damit auf
+        # JEDEM qualifizierenden 10s-Tick einen INSERT (bis 8640 Rows/Tag/Symbol).
+        # Den Timer hier mitzusetzen wäre falsch: das würde auch echte Live-Signale
+        # desselben Coins 900s lang unterdrücken. Stattdessen dedupt log_prediction
+        # die Shadow-Zeilen selbst (4h je Modul/Coin/Richtung) — derselbe Pfad, den
+        # die Bots 30-33 nutzen. Commit bleibt beim Caller (harte Regel 8).
+        log_prediction(
+            conn,
+            module_tag,
+            symbol,
+            best_direction,
+            float(current_price),
+            float(best_prob),
+            posted=False,
+        )
         conn.commit()
 
     elif best_prob >= 0.60:
