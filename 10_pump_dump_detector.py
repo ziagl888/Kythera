@@ -60,6 +60,38 @@ ROUND_LEVEL_CONFIG = {
 # Feature-Lookups auf `bucket_anchor`, nicht auf `now`.
 WINDOW_EDGE_GUARD = 5
 
+# T-2026-CU-9050-035: the 5s guard above is only valid where the 10s grid is
+# actually dense. Measured on 421_350 real anchors from a live 1minute.json
+# snapshot (2026-07-10, 6h window): the bucket spacing is bimodal — median 10s,
+# but p90 = 70s, and only 62.7% of gaps are <= 15s. The detector polls ~530
+# symbols per REST round-trip, so under load it simply does not produce a bucket
+# every 10s.
+#
+# Consequence for `p_chg_60s`: demanding a bucket at exactly anchor-60s +/- 5s
+# resolved for 61.3% of anchors — the other 38.7% returned early and were never
+# scored. Widening the tolerance instead (e.g. 20s) would reintroduce the very
+# mislabelling P1.39 removed: a bucket 80s old is not a 60s reference.
+#
+# Fix: pick the bucket whose age is CLOSEST to 60s inside [45s, 150s] and
+# normalise the observed price change to a per-60s rate. The feature keeps its
+# meaning at any cadence. Same measurement: 97.7% of anchors resolve, the chosen
+# dt has median 60s (p90 80s), and the resulting scale factor 60/dt has median
+# 1.00 (p10 0.75) — on a dense grid this is a no-op by construction.
+P_CHG_WINDOW_TARGET_SEC = 60
+P_CHG_WINDOW_MIN_SEC = 45
+P_CHG_WINDOW_MAX_SEC = 150
+
+# Baseline warmup for the volume paths. Pre-P1.39 this was `len(volumes_10s) >=
+# 360`, where `volumes_10s` spanned the ENTIRE 1440-entry deque (~4h) — a warmup
+# check that is always true once the bot is running. P1.39 kept the literal 360
+# but moved it onto a list that now only spans the last 3600s, silently turning a
+# warmup gate into a "one bucket per 10s for a full hour" density requirement.
+# Real density is ~193 buckets/hour, so the gate passed for 0 of 421_350 anchors:
+# the Volume-Explosion alert would never fire again. Gate on the window actually
+# COVERING an hour plus a sample floor instead of on a bucket count.
+HOUR_WINDOW_MIN_COVERAGE_SEC = 3000
+HOUR_WINDOW_MIN_SAMPLES = 30
+
 # --- ML MODEL FOR 10 SECONDS ---
 ML_MODEL_PATH = "pump_dump_model.pkl"
 
@@ -326,6 +358,60 @@ def _find_bucket_before(data: list, now: datetime.datetime, seconds_ago: int, to
     return None
 
 
+def _find_bucket_nearest(
+    data: list,
+    anchor: datetime.datetime,
+    seconds_ago: int,
+    min_age: int,
+    max_age: int,
+) -> tuple[dict, float] | None:
+    """Bucket whose age is closest to `seconds_ago`, restricted to [min_age, max_age].
+
+    Returns ``(entry, age_seconds)`` or ``None`` when the buffer holds no bucket
+    in the admissible age band. `age_seconds` is the TRUE elapsed time between
+    that bucket and `anchor` — callers normalise their rate with it instead of
+    pretending the bucket sits exactly `seconds_ago` in the past.
+
+    Why not `_find_bucket_before` with a wide tolerance: that one returns the
+    NEWEST bucket inside the band and discards how old it really is. At a 70s
+    cadence it hands back an 80s-old bucket and the caller labels the result
+    "60s". Here the age travels with the bucket, so the caller can be honest.
+
+    The band, not a symmetric tolerance, is what bounds the noise: a reference
+    only 20s old would get its move scaled by 3x. `min_age` keeps the scale
+    factor sane, `max_age` keeps the window recognisably short-term.
+    """
+    if not data:
+        return None
+
+    best: tuple[dict, float] | None = None
+    for entry in reversed(data):
+        entry_ts = _parse_bucket_ts(entry)
+        if entry_ts is None:
+            continue
+        age = (anchor - entry_ts).total_seconds()
+        if age > max_age:
+            break  # chronological: everything further back is older still
+        if age < min_age:
+            continue
+        if best is None or abs(age - seconds_ago) < abs(best[1] - seconds_ago):
+            best = (entry, age)
+    return best
+
+
+def _window_coverage_sec(buckets: list, anchor: datetime.datetime) -> float:
+    """How far back the oldest bucket of `buckets` actually reaches from `anchor`.
+
+    A bucket COUNT says nothing about the span it covers once the cadence varies;
+    this is the honest warmup signal for "do we have an hour of baseline yet".
+    """
+    for entry in buckets:  # chronological, oldest first
+        entry_ts = _parse_bucket_ts(entry)
+        if entry_ts is not None:
+            return (anchor - entry_ts).total_seconds()
+    return 0.0
+
+
 def _find_bucket_range(data: list, now: datetime.datetime, seconds_ago: int, tolerance: int = 20) -> list:
     """Gibt alle Buckets zurück die im Zeitraum [now - seconds_ago, now] liegen.
 
@@ -576,18 +662,27 @@ def process_coin_logics(conn, symbol):
         # Stunde. Beides schob das Fenster still, ohne dass irgendwas auffiel.
         if not alerted:
             rec_buckets = _find_bucket_range(data, bucket_anchor, 180, tolerance=WINDOW_EDGE_GUARD)
-            hour_vols = [
-                float(e["v10s"])
-                for e in _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
-                if e.get("v10s_valid", True)
-            ]
+            hour_buckets = _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
+            hour_vols = [float(e["v10s"]) for e in hour_buckets if e.get("v10s_valid", True)]
             rec_vols = [float(e["v10s"]) for e in rec_buckets if e.get("v10s_valid", True)]
-            bucket_3m = _find_bucket_before(data, bucket_anchor, 180, tolerance=WINDOW_EDGE_GUARD)
+            # Same band logic as the ML path below: a 3m reference that really is
+            # ~3m old, carrying its true age, instead of demanding a grid point
+            # that a 70s cadence never produces (T-2026-CU-9050-035).
+            ref_3m = _find_bucket_nearest(data, bucket_anchor, 180, 150, 300)
 
-            # Gate wie vorher: eine volle Stunde gültiger Buckets als Baseline.
-            if bucket_3m is not None and rec_vols and len(hour_vols) >= 360:
+            # Warmup gate: the hour window must COVER an hour and carry enough
+            # samples — not contain 360 buckets, which no real cadence does.
+            hour_covered = _window_coverage_sec(hour_buckets, bucket_anchor)
+            if (
+                ref_3m is not None
+                and rec_vols
+                and len(hour_vols) >= HOUR_WINDOW_MIN_SAMPLES
+                and hour_covered >= HOUR_WINDOW_MIN_COVERAGE_SEC
+            ):
+                bucket_3m, window_3m_sec = ref_3m
                 price_3m = float(bucket_3m["p"])
-                p_chg_3m = (current_price / price_3m - 1) * 100 if price_3m > 0 else 0
+                # Normalised to a per-180s rate, same reasoning as p_chg_60s.
+                p_chg_3m = (current_price / price_3m - 1) * 100 * (180.0 / window_3m_sec) if price_3m > 0 else 0
 
                 if abs(p_chg_3m) >= 2.0:
                     avg_hr_vol = sum(hour_vols) / len(hour_vols)
@@ -638,23 +733,40 @@ def process_coin_logics(conn, symbol):
     if avg_volume <= 0:
         return
 
-    # 60s-Fenster über Zeitstempel. Fehlt der Bucket von vor 60s, ist p_chg_60s
-    # nicht bestimmbar — Tick überspringen statt eine 0 ins Modell zu schreiben
-    # (eine erfundene 0 ist ein Feature-Wert, kein "unbekannt").
-    bucket_60s = _find_bucket_before(data, bucket_anchor, 60, tolerance=WINDOW_EDGE_GUARD)
-    # Bei lückenlosen Ticks sind das exakt die 7 Buckets, die das alte
-    # prices[-7:] getroffen hat.
-    window_60s = _find_bucket_range(data, bucket_anchor, 60, tolerance=WINDOW_EDGE_GUARD)
-    rec_prices = [float(e["p"]) for e in window_60s]
-    if bucket_60s is None or len(rec_prices) < 2:
+    # 60s reference bucket, chosen by closest true age inside the admissible band
+    # (T-2026-CU-9050-035). Still time-based, still anchored on `bucket_anchor`,
+    # and still refusing to invent a value: if the buffer holds nothing between
+    # 45s and 150s back, the tick is skipped exactly as before.
+    ref = _find_bucket_nearest(
+        data,
+        bucket_anchor,
+        P_CHG_WINDOW_TARGET_SEC,
+        P_CHG_WINDOW_MIN_SEC,
+        P_CHG_WINDOW_MAX_SEC,
+    )
+    if ref is None:
         return
+    bucket_60s, window_sec = ref
 
     price_60s = float(bucket_60s["p"])
     if price_60s <= 0:
         return
 
+    # buy_pres and volat describe the SAME span p_chg_60s is measured over —
+    # `window_sec`, not a nominal 60. Three features that claim to describe one
+    # window must actually share it; the P1.39 review found the opposite and that
+    # is the bug class this whole task descends from.
+    window_60s = _find_bucket_range(data, bucket_anchor, int(window_sec), tolerance=WINDOW_EDGE_GUARD)
+    rec_prices = [float(e["p"]) for e in window_60s]
+    if len(rec_prices) < 2:
+        return
+
     vol_ratio = current_vol / avg_volume
-    p_chg_60s = (current_price / price_60s - 1) * 100
+    # Normalise the observed move to a per-60s rate. On a dense grid window_sec
+    # is 60 and this is the identity; on a stretched one it reports the rate the
+    # window actually implies instead of silently over-reporting the move.
+    p_chg_raw = (current_price / price_60s - 1) * 100
+    p_chg_60s = p_chg_raw * (P_CHG_WINDOW_TARGET_SEC / window_sec)
     buy_pres = sum(1 for j in range(1, len(rec_prices)) if rec_prices[j] > rec_prices[j - 1]) / (len(rec_prices) - 1)
     volat = np.std(rec_prices) / np.mean(rec_prices) if np.mean(rec_prices) > 0 else 0
 

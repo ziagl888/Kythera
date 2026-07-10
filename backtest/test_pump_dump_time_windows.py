@@ -282,3 +282,127 @@ def test_60s_window_is_stable_across_the_tick_phase_offset(run_tick, offset):
     # 7 buckets in the 60s window -> 6 diffs -> exactly one up-move.
     assert feats[F_BUY_PRES] == pytest.approx(1 / 6), f"window size flipped at offset {offset}s"
     assert feats[F_P_CHG_60S] == pytest.approx(10.0), f"p_chg_60s drifted at offset {offset}s"
+
+
+# ── T-2026-CU-9050-035: the 10s grid is a fiction under load ─────────────────
+#
+# Measured on 421_350 real anchors from a live 1minute.json snapshot: median
+# bucket spacing is 10s but p90 is 70s. Demanding a bucket at exactly anchor-60s
+# +/- 5s therefore dropped 38.7% of all ticks unscored, and the hour baseline
+# (>= 360 buckets) passed for literally 0 anchors, killing Volume-Explosion.
+
+
+def _sparse(now: datetime.datetime, step: int, n: int, vol: float = 1.0, price: float = 100.0) -> list[dict]:
+    """n buckets `step` seconds apart, ending exactly at `now`."""
+    return [_bucket(now - datetime.timedelta(seconds=step * (n - 1 - i)), price, vol) for i in range(n)]
+
+
+def test_find_bucket_nearest_returns_the_closest_age_not_the_newest():
+    now = datetime.datetime.now(UTC)
+    # Ages 40s (too new), 55s, 80s. Closest to 60 inside [45,150] is 55.
+    data = [
+        _bucket(now - datetime.timedelta(seconds=80), 1.0, 1.0),
+        _bucket(now - datetime.timedelta(seconds=55), 2.0, 1.0),
+        _bucket(now - datetime.timedelta(seconds=40), 3.0, 1.0),
+        _bucket(now, 4.0, 1.0),
+    ]
+    entry, age = det._find_bucket_nearest(data, now, 60, 45, 150)
+    assert float(entry["p"]) == 2.0
+    assert age == pytest.approx(55.0)
+
+
+def test_find_bucket_nearest_rejects_ages_outside_the_band():
+    now = datetime.datetime.now(UTC)
+    only_too_new = [_bucket(now - datetime.timedelta(seconds=20), 1.0, 1.0), _bucket(now, 2.0, 1.0)]
+    only_too_old = [_bucket(now - datetime.timedelta(seconds=400), 1.0, 1.0), _bucket(now, 2.0, 1.0)]
+    assert det._find_bucket_nearest(only_too_new, now, 60, 45, 150) is None
+    assert det._find_bucket_nearest(only_too_old, now, 60, 45, 150) is None
+
+
+def test_p_chg_60s_is_normalised_to_a_per_60s_rate(run_tick):
+    """A 70s cadence must yield a rate, not a skipped tick and not an inflated move.
+
+    Pre-fix this tick returned early (no bucket at 60s +/- 5s) and was never
+    scored. Reference bucket is 70s old and 9.0% below spot, so the honest
+    per-60s rate is 9.0 * 60/70 = 7.714%, not 9.0%.
+    """
+    now = datetime.datetime.now(UTC)
+    buckets = _sparse(now, step=70, n=60)
+    buckets[-1] = _bucket(now, 109.0, 50.0)
+
+    model = run_tick(buckets)
+
+    assert model.features, "70s cadence must still be scored"
+    assert model.features[0][F_P_CHG_60S] == pytest.approx(9.0 * 60 / 70, rel=1e-6)
+
+
+def test_normalisation_is_identity_on_a_dense_grid(run_tick):
+    """The scale factor must not perturb the 10s path — 60/60 == 1."""
+    now = datetime.datetime.now(UTC)
+    buckets = _dense(now)
+    buckets[-1] = _bucket(now, 110.0, 50.0)
+
+    model = run_tick(buckets)
+    assert model.features[0][F_P_CHG_60S] == pytest.approx(10.0)
+
+
+def test_tick_is_still_skipped_when_the_band_holds_nothing(run_tick):
+    """Refusing to invent a value survives the change: a 5m hole stays unscored."""
+    now = datetime.datetime.now(UTC)
+    old = [_bucket(now - datetime.timedelta(seconds=300 + 10 * i), 100.0, 1.0) for i in range(360, 0, -1)]
+    buckets = old + [_bucket(now, 110.0, 50.0)]
+
+    assert run_tick(buckets).features == [], "scored across a 5-minute gap"
+
+
+def test_window_coverage_is_a_span_not_a_count():
+    now = datetime.datetime.now(UTC)
+    sparse_hour = _sparse(now, step=70, n=52)  # 52 buckets, ~3570s of span
+    assert len(sparse_hour) < 360
+    assert det._window_coverage_sec(sparse_hour, now) == pytest.approx(3570.0)
+    assert det._window_coverage_sec([], now) == 0.0
+
+
+def test_volume_explosion_fires_at_a_realistic_cadence(monkeypatch):
+    """The >= 360-bucket baseline gate made this alert unreachable in production.
+
+    Pre-fix: len(hour_vols) == 52 < 360 -> the branch was dead for every symbol.
+    Post-fix the hour window is judged by the span it covers (~3570s) and a
+    sample floor, so a genuine 13x volume explosion alerts again.
+    """
+    now = datetime.datetime.now(UTC)
+    buckets = _sparse(now, step=70, n=52)  # ~1h of history at the real cadence
+    # +2.5% over the last ~3m: enough for the volume-explosion price condition,
+    # below every threshold of the price-move alert above it.
+    buckets[-1] = _bucket(now, 102.5, 60.0)
+    for k in (2, 3):  # the other two buckets inside the 180s window
+        ts = _parse(buckets[-k]["t"])
+        buckets[-k] = _bucket(ts, 100.0, 60.0)
+
+    sent: list[str] = []
+    monkeypatch.setitem(det.ONE_MINUTE_DATA, SYMBOL, deque(buckets))
+    monkeypatch.setitem(
+        det.PUMP_DUMP_STATE,
+        SYMBOL,
+        {
+            "avg_volume": 0.0,
+            "volume_samples": deque([1.0] * 359, maxlen=360),
+            "last_alert_time": datetime.datetime(1970, 1, 1, tzinfo=UTC),
+        },
+    )
+    # Let section A run: no price alert will trigger, but the volume branch will.
+    monkeypatch.setitem(
+        det.PRICE_VOLUME_ALERT_STATE,
+        SYMBOL,
+        {"last_alert_time": datetime.datetime(1970, 1, 1, tzinfo=UTC)},
+    )
+    monkeypatch.setattr(det, "load_pump_model", lambda: None)  # stop before the ML path
+    monkeypatch.setattr(det, "get_indicators_at_time", lambda *a, **kw: {})
+    monkeypatch.setattr(det, "check_round_levels", lambda *a, **kw: None)
+    monkeypatch.setattr(det, "log_prediction", lambda *a, **kw: None)
+    monkeypatch.setattr(det, "generate_minichart_image", lambda *a, **kw: None)
+    monkeypatch.setattr(det, "send_outbox", lambda conn, chan, html, chart=None: sent.append(html))
+
+    det.process_coin_logics(FakeConn(), SYMBOL)
+
+    assert any("VOLUME EXPLOSION" in h for h in sent), f"volume explosion never fired at a 70s cadence; sent={sent}"
