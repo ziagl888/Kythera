@@ -30,7 +30,15 @@ import datetime
 
 UTC = datetime.timezone.utc
 
-__all__ = ["UTC", "as_naive_utc", "from_unix_ts", "to_utc", "utc_now", "utc_now_naive"]
+# The session TZ under which Postgres' DB defaults (now()) and naive-local
+# writers historically stamped the legacy TIMESTAMP columns. Pinned as a
+# constant on purpose: rows written before a column's writer went UTC keep
+# this wall clock forever, regardless of any later session/server TZ change
+# (R3 flip). Readers that must interpret such legacy rows convert with
+# ``AT TIME ZONE`` against THIS zone, never current_setting('TimeZone').
+LEGACY_WRITER_TZ = "Europe/Bucharest"
+
+__all__ = ["LEGACY_WRITER_TZ", "UTC", "as_naive_utc", "from_unix_ts", "to_utc", "utc_now", "utc_now_naive"]
 
 
 def utc_now() -> datetime.datetime:
