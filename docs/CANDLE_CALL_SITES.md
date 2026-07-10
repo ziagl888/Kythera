@@ -103,7 +103,7 @@ Legende **Forming heute**: `offen` = die neueste Zeile kann die laufende Kerze s
 | `21_btc_smc_strategy.py:110` | BTC-SMC | read-candles | var | DESC LIMIT 500 → ASC | **gedroppt** (`:126`) | F — `:126` entfernen |
 | `22_ip_pattern_bot.py:196` | IP-Pattern | read-candles | var | DESC LIMIT n → ASC | offen: `current_price=iloc[-1]` (`:210`) | F |
 | `24_quasimodo_bot.py:90` | Quasimodo | read-joined | var | DESC LIMIT 100 → ASC | Pivots gedroppt (`:115`), Preis `closes[-1]` offen | F — `:115` entfernen |
-| `25_smc_ml_sniper.py:208` | Sniper | read-joined | var | DESC LIMIT 150 → ASC | **kein Drop.** `argrelextrema` + `current_price` auf der forming Kerze | F — **stiller Repaint, höchstes Risiko** |
+| `25_smc_ml_sniper.py:208` | Sniper | read-joined | var | DESC LIMIT 150 → ASC | Pivots **gedroppt** (`:239`, T-2026-CU-9050-036), Preis `closes[-1]` offen | F — `:239` entfernen |
 | `29_ufi1_bot.py:72` | UFI1 (geparkt) | read-candles | 1d | ASC | offen | F |
 | `7_pattern_detector.py:272` | Pattern | read-candles | 1h–1d | DESC LIMIT 168 → ASC | **gedroppt**: `iloc[:-4]` (`:282`), `len(df)-2` (`:310`) | F + Offset-Rework |
 | `17_mayank_bot.py` | Mayank | **keine DB-Kerzen** (yfinance) | – | – | – | — |
@@ -163,7 +163,9 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 | **DDL** | `1:83`, `2:173,180`, `6:61` | Bewusst außerhalb der API. Entfällt in Phase C |
 | **Gemischter Ingestion-Batch** | `1_data_ingestion:177` | `closed=` ist ein Bool pro Call; der REST-Catch-up mischt geschlossene Historie mit einer forming Endzeile → **zwei** Upsert-Calls. Kein fehlendes Feature, eine Verdrahtungs-Frage |
 
-**Zwei Aufräum-Funde außerhalb des Auftrags** (nicht stillschweigend weggelassen): `db_schema_analysis.py` und `tools/db_schema_analysis.py` sind **byte-identische Duplikate**; `legacy_trainers/` (23 Dateien) ist toter Code mit eigenen Roh-Tabellen-Reads und einem eigenen `get_live_price`. Beides ist löschbar, beides ist für die Migration nicht nötig.
+**Zwei Aufräum-Funde außerhalb des Auftrags** (nicht stillschweigend weggelassen): `db_schema_analysis.py` existierte doppelt (Repo-Root + `tools/`); `legacy_trainers/` (23 Dateien) ist toter Code mit eigenen Roh-Tabellen-Reads und einem eigenen `get_live_price`. Beides ist löschbar, beides ist für die Migration nicht nötig.
+
+> **Korrektur 2026-07-10 (T-2026-CU-9050-039).** Die hier ursprünglich behauptete **Byte-Identität der beiden `db_schema_analysis.py` war falsch.** Die Root-Kopie wurde in `052ba4c` (ruff cleanup) modernisiert, die `tools/`-Kopie stammt unverändert aus dem Initial-Import; zudem zeigte deren `sys.path.insert(0, dirname(__file__))` auf `tools/`, wo kein `core/` liegt — sie konnte `core.database` nie importieren. `audit_reports/10_dashboard_tools.md:47` und `AUDIT_TODO.md` P3.1 hatten das bereits korrekt vermerkt. Die stale `tools/`-Kopie ist gelöscht, die Root-Kopie ist kanonisch (die Exclude-Einträge in `pyproject.toml` und `.github/workflows/typecheck.yml` zeigen ohnehin auf sie).
 
 ---
 
@@ -171,7 +173,7 @@ Die Skizze aus T-018 §2 hatte fünf Funktionen; die gebaute API schließt deren
 
 **Echte Verhaltensänderung, und genau dafür ist die Migration da:**
 
-- **`25_smc_ml_sniper:208`** — kein Drop, `argrelextrema`-Pivots *und* `current_price` auf der forming Kerze. **Stiller Repaint, höchstes Einzelrisiko.**
+- ~~**`25_smc_ml_sniper:208`** — kein Drop, `argrelextrema`-Pivots *und* `current_price` auf der forming Kerze. **Stiller Repaint, höchstes Einzelrisiko.**~~ **Pivot-Seite erledigt** (2026-07-10, T-2026-CU-9050-036, P1.46): `argrelextrema` läuft auf `highs[:-1]/lows[:-1]`, der intra-candle Repaint ist weg. `current_price = closes[-1]` bleibt bewusst live (CMP-Entry + BB-Level-Nähe) — die Preis-Seite kippt erst mit Block 4, nach Operator-Frage 4/6.
 - **`2_indicator_engine:574`** — Indikatoren werden fleet-weit über der forming Kerze berechnet. Bricht heute harte Regel 5.
 - **`core/trade_utils:304,423`** — höchster Fan-in: die forming Kerze speist den Level-Pool (Swing/HVN/FVG/S-R/Fib) *aller* Bots.
 - **`core/regime_logic:81,136`** — die forming 15m-Kerze steuert die Regime-Klassifikation und damit das Orchestrator-Gating.
@@ -199,7 +201,7 @@ Sechs Blöcke, jeder ein eigener Commit, Regression-Guard davor und danach. Blö
 | 1 | Offline-Tooling | Trainer, Backtests, `*_build_dataset`, `walkforward_sim`, `retrain_sra2`, `rgcore`, Audit-Replays, `core/charting` | Kein Live-Signal-Pfad, sofort rückrollbar. Fördert die fehlenden API-Formen (Aggregate, `first=True`) früh zutage. `walkforward_sim` zuerst — dort sitzt der Look-ahead, der das Retrain-Programm verunreinigt | nein |
 | 2 | Strategien + `3_detectors` + geteilte Helfer | `strat_*`, `3_detectors`, `core/trade_utils`, `core/market_utils` | Die Strategien sind schon zeitstempel-gebunden (kleines Delta); die Helfer entblocken die AI-Bots | nein |
 | 3 | **Monitore + Orchestrator explizit auf `True`** | `5`, `8`, `28`, `3.get_live_price`, `29:96`, `6:259`, `core/health_monitor` | **Vor** dem ersten `False` im Geld-Pfad: das `True` sichtbar und reviewbar machen. Ein Monitor, der still auf geschlossene Kerzen kippt, scored SL/TP bis zu 5 Minuten zu spät | nein |
-| 4 | AI-Bots, **ein Bot pro Commit** | `9,10,13,14,15,18,22,24,25,29` (F) und `11,12` (T + Index-Rework) | R1 wird hier wirksam. Signal-Raten im 24-h-Vergleich dokumentieren. `25` zuerst — dort ist der Repaint | nein |
+| 4 | AI-Bots, **ein Bot pro Commit** | `9,10,13,14,15,18,22,24,25,29` (F) und `11,12` (T + Index-Rework) | R1 wird hier wirksam. Signal-Raten im 24-h-Vergleich dokumentieren. Der Pivot-Repaint in `25` ist vorgezogen erledigt (T-2026-CU-9050-036); offen bleibt dort nur die Preis-Seite | nein |
 | 5 | Geteilte Feature-Builder **plus Trainer/Replay im selben Commit** | `core/research_features`, `core/regime_logic` + zugehörige Trainer | Harte Regel 7: Trainer == Serving == Replay. Getrennt umstellen = stille Feature-Drift in Live-Modellen | nein |
 | 6 | `2_indicator_engine` (Reads + Writes), `1_data_ingestion`, `6_housekeeping` | Engine-Read `:574`, Upserts, Gap-Filler, DELETE/DDL-Gaps | Höchste R1-Wirkung (Indikatoren über forming Kerze) und die Caller-Commit-Umstellung. Ab hier trägt das Datenmodell das echte `is_closed` | **ja — VPS, C-Gate** |
 
@@ -218,7 +220,7 @@ Diese Fragen blockieren den Start von Phase 1. Keine davon ist in diesem Task en
 5. **`11_ai_mis` / `12_ai_ats`:** beide brauchen die forming Kerze als Live-Preis und die vorletzte als Feature-Zeile. Bleiben sie auf `include_forming=True` mit expliziter Trennung (mein Vorschlag), oder sollen sie zwei Calls machen (`read_candles(include_forming=False)` für Features + `latest_price()` für den Preis)? Zweiteres ist sauberer, kostet aber eine zweite Query pro Coin und Zyklus.
 6. **Signal-Raten.** R1 **senkt** sie — das ist der Zweck. Klassik-Strategien feuern seltener, MIS/RUB/ATB-Feature-Verteilungen verschieben sich. **Schwellen erst nach dem Retrain neu tunen** (Report 16), nicht während der Umverdrahtung.
 7. **Owner + Branch-Modell.** T-018 §4 verlangt „Migration als EIN Branch mit klarem Owner". Bei parallelen Sessions am selben Repo ist das eine Vorbedingung, keine Empfehlung.
-8. **Aufräum-Freigabe** (Nebenfunde): `tools/db_schema_analysis.py` als Duplikat löschen? `legacy_trainers/` löschen?
+8. **Aufräum-Freigabe** (Nebenfunde): ~~`tools/db_schema_analysis.py` als Duplikat löschen?~~ — **entschieden und erledigt** (T-2026-CU-9050-039, 2026-07-10: gelöscht, Root ist kanonisch). Offen bleibt: `legacy_trainers/` löschen?
 
 ---
 

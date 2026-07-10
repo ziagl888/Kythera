@@ -54,6 +54,232 @@ ruff, `ruff format --check` und mypy sauber.
 `python tools/regression_guard/guard.py smoke` OK — der Guard wurde nicht
 refreshed. Der neue Guard-Test gegen `_build_channel_fallback` ist per Mutation
 geprüft: entfernt man den `if cid`-Filter, wird er rot.
+## [2026-07-10] RUB bekommt den Active-Trade-Check seiner Geschwister (T-2026-CU-9050-043)
+
+`13_ai_rub_bot.py` war der einzige AI-Bot ohne Positions-Guard: seine einzige
+Re-Fire-Sperre war der 4h-Cooldown (`:252`), und die ganze Datei berührte
+`ai_signals` nur schreibend (INSERT `:376`). Ein Cooldown begrenzt die Signal-
+**Frequenz**, nicht die Zahl gleichzeitig offener Positionen. Ein Mean-Reversion-
+Trade überlebt seine vier Stunden regelmässig — danach durfte derselbe Coin in
+derselben Richtung erneut feuern, und Cornix öffnete eine **zweite volle Position
+mit eigenem SL** neben der ersten. MIS (`:318`), QM und der Sniper (`:116`) haben
+den Guard seit jeher; RUB fehlte er ohne dokumentierten Grund. Das ist auch der
+Grund, warum der transitionale Dedup aus T-2026-CU-9050-030 bei RUB in den
+Cooldown ausweichen musste — es gab schlicht keinen Check, in den er gehört hätte.
+
+Operator-Entscheid vorab (Michi, 2026-07-10): kein beabsichtigtes Averaging-Down,
+sondern ein Bug.
+
+Fix:
+
+- Vor der (teuren) ML-Prediction prüft der Bot jetzt
+  `SELECT 1 FROM ai_signals WHERE symbol/direction/model IN (%s, %s)` und
+  überspringt das Signal bei einem Treffer — Muster `11_ai_mis_bot.py`.
+- Gebunden wird derselbe **richtungsabhängige** Tag, den auch der Post-Pfad
+  schreibt (LONG `RUB_LONG_TAG`, SHORT `RUB2_SHORT["tag"]` aus der Artefakt-Meta),
+  plus `RUB_LEGACY_TAG` als transitionaler Dedup: der Tag ist zugleich der
+  Dedupe-Key, und beim RUB3-Rollout kippt er. Ohne den Alt-Tag im `IN` würde eine
+  offene RUB2-Position ein RUB3-Signal auf demselben Coin nicht mehr blocken —
+  exakt die zweite Live-Position, die dieser Guard verhindert. Solange die Tags
+  übereinstimmen (heute), ist das `IN` ein No-op.
+- Der Cooldown bleibt **unverändert** als Frequenz-Sperre daneben stehen (wie bei
+  MIS laufen beide parallel). Sein jetzt falscher Kommentar („prüft ai_signals
+  nicht") ist mitgezogen.
+- `backtest/test_rub_tag.py`: zwei neue DB-freie Tests (Guard vorhanden + Skip;
+  Bindung an `module_tag` **und** `RUB_LEGACY_TAG`). Mutations-geprüft — Legacy-Tag
+  aus dem Bind entfernt bzw. Check ganz entfernt ⇒ beide rot.
+
+**Live-Semantik ändert sich hier bewusst**, anders als bei T-030: Signale auf einem
+Coin, auf dem bereits ein RUB-Trade derselben Richtung offen ist, fallen weg. Die
+erste Position, jedes Signal auf freiem Coin und die Gegenrichtung bleiben
+unberührt; der Cooldown-Pfad ist bit-identisch. Keine DB-Änderung, kein Rollout.
+
+**Offen für eine VPS-Session:** die Rückwärts-Messung, wie oft
+`(symbol, direction, model='RUB2')` real mehrfach gleichzeitig offen war
+(`ai_signals` / `closed_ai_signals`, read-only). Nicht blockierend für den Fix.
+## [2026-07-10] Doppeltes `db_schema_analysis.py` bereinigt (T-2026-CU-9050-039, P3.1)
+
+`tools/db_schema_analysis.py` gelöscht. Die Root-Kopie ist kanonisch und bleibt
+unverändert; die Fleet ist nicht betroffen (das Skript ist ein read-only
+DBA-Werkzeug über den PostgreSQL-System-Katalog, kein Bot-Pfad).
+
+Die Ausgangs-Annahme, beide Dateien seien **byte-identisch**
+(`docs/CANDLE_CALL_SITES.md` §2), war **falsch** und ist dort jetzt korrigiert:
+
+- Die Root-Kopie trägt den ruff-Cleanup aus `052ba4c` (Import-Sortierung,
+  `zip(..., strict=False)`, Formatierung); die `tools/`-Kopie stammt unverändert
+  aus dem Initial-Import `b6735d9`.
+- Die `tools/`-Kopie war zudem **nicht lauffähig**: ihr
+  `sys.path.insert(0, dirname(__file__))` zeigte auf `tools/`, wo kein `core/`
+  liegt — `from core.database import …` scheiterte immer, sie brach mit
+  „core.database nicht gefunden" ab. `audit_reports/10_dashboard_tools.md:47`
+  und `AUDIT_TODO.md` P3.1 hatten das bereits richtig beschrieben.
+
+Kein Eingriff an `pyproject.toml` oder `.github/workflows/typecheck.yml` nötig:
+beide Exclude-Einträge nennen die Root-Datei, die bleibt (`tools/` ist ohnehin
+pauschal excluded).
+
+## [2026-07-10] Watchdog-Backoff blockiert die Fleet-Aufsicht nicht mehr (T-2026-CU-9050-029, P1.37)
+
+`time.sleep(delay)` stand im Pro-Prozess-Rumpf der Monitor-Schleife. Bis zu
+900 Sekunden lang fror das den **gesamten** Watchdog ein: kein anderer Bot wurde
+beaufsichtigt, kein Park-Marker beachtet, kein Dashboard-Restart konsumiert,
+kein Health-Check gefahren. Der Watchdog ist der einzige Aktor der Flotte — ein
+einzelner crash-loopender Bot nahm damit die Aufsicht über alle ~29 anderen mit.
+
+Zweiter Fehler auf denselben Zeilen: nach dem Sleep lief `start_process`
+bedingungslos. Wer den Bot während der 900s parkte, sah zu, wie der Watchdog ihn
+trotzdem wiederbelebte.
+
+Der Delay ist jetzt eine **Pro-Prozess-Deadline** (`_restart_not_before`). Die
+Schleife dreht weiter und überspringt nur den betroffenen Bot. Die Reihenfolge
+der Zweige ist tragend und an der Funktion dokumentiert: Park schlägt alles
+(und verwirft eine anstehende Deadline), ein Dashboard-Restart schlägt den
+Backoff, dann erst greift die Deadline. Weil der Park-Check dadurch in jedem
+10s-Zyklus erneut läuft, hält ein Park während des Backoff-Fensters den Bot
+unten — der zweite Fehler fällt durch dieselbe Umstrukturierung.
+
+Die Backoff-Kurve selbst ist unverändert (0/15/60/300/900s nach Crashes der
+letzten Stunde) und per Test festgenagelt.
+
+**Refactor mit Touch-Kontext:** der Pro-Prozess-Rumpf liegt jetzt in
+`supervise_process(p_info, current_time)`. Jedes `continue` wurde zu `return` —
+für einen Schleifenrumpf äquivalent. Ohne diese Extraktion ist die Deadline
+nicht testbar, ohne `main()` samt Lock, Orphan-Kill und gestaffeltem Fleet-Start
+zu fahren.
+
+**Beweislage, ehrlich:** `backtest/test_watchdog_backoff.py` (neu, standalone,
+DB-frei, 6/6) sind Regressions-Guards auf dem neuen Verhalten, **keine** Zeugen
+des alten Bugs — auf dem Pre-Fix-Stand erroren sie, weil `supervise_process`
+noch nicht existierte. Der alte Fehler ist am Pre-Fix-Code direkt ablesbar
+(`main_watchdog.py:443-447`). Damit er nicht zurückkommt, patcht die Fixture
+`time.sleep` mit einem Mock, der wirft: jeder künftige blockierende Wait im
+Supervision-Pfad macht die Suite rot.
+
+Wirkt beim nächsten regulären Watchdog-Restart, kein Deploy.
+
+---
+## [2026-07-10] SMC-Sniper: Pivots nicht mehr auf der laufenden Kerze (T-2026-CU-9050-036, P1.46)
+
+`25_smc_ml_sniper.py` liest 150 Kerzen `DESC`, dreht auf ASC — und liess
+`scipy.signal.argrelextrema` bisher über den **vollen** Frame laufen. Die
+letzte Zeile ist die forming Kerze. Ihr High/Low bewegt sich, also repaintete
+der Pivot-Satz **innerhalb** der laufenden Kerze: die drei Drives eines
+Three-Drive und das Level eines Breaker-Blocks verschoben sich, nachdem das
+Signal bereits gepostet war. Die Schwesterbots droppen die forming Kerze seit
+Juli (`24:138` aus P1.24, `16:334` aus P1.27, `21:126`); 25 war die einzige
+Lücke — und der einzige der vier, der im Geld-Pfad live postet (harte Regel 5).
+
+Fix: `c_highs, c_lows = highs[:-1], lows[:-1]` vor den beiden
+`argrelextrema`-Aufrufen, Muster wie `24_quasimodo_bot.py:138`. Die
+Pivot-Indizes bleiben zu den Vollarrays aligned (`highs[p1]`, `rsis[p1]`
+funktionieren unverändert), und alle `len(df)-1`/`len(df)-2`-Offsets — die
+BB-Feature-Zeile, das Breakout-Fenster, die Freshness-Gates — bleiben
+unberührt. Ein `df.iloc[:-1]` auf den Frame hätte genau diese Offsets um eine
+Kerze verschoben; das ist bewusst nicht passiert und per Test festgenagelt.
+
+`current_price = closes[-1]` bleibt **live**: es ist der CMP, an dem der Entry
+gesetzt wird, plus der Auslöser für die BB-Level-Nähe — kein analytischer
+Input. Der R1-Endzustand (`include_forming=False` auch für die Preis-Seite)
+hängt an den Operator-Fragen 4/6 aus `docs/CANDLE_CALL_SITES.md` und an
+Migrations-Block 4.
+
+Signal-Raten-Delta, DB-frei über die Regression-Guard-Fixtures replayt
+(4 Coins × 1h/4h, 3.608 Scan-Punkte, jeweils 150-Kerzen-Fenster mit der letzten
+Zeile als forming Kerze; gezählt wird der Geometrie-Trigger vor ML-Gate und
+Cooldown). Reproduzierbar über `python tools/sniper_forming_delta.py`:
+
+| Pattern | vorher | nachher | beide | nur vorher | nur nachher |
+|---|---|---|---|---|---|
+| BB LONG | 58 | 57 | 50 | 8 | 7 |
+| BB SHORT | 65 | 61 | 56 | 9 | 5 |
+| TD LONG | 11 | 10 | 10 | 1 | 0 |
+| TD SHORT | 20 | 19 | 17 | 3 | 2 |
+| **Summe** | **154** | **147** | **133** | **21** | **14** |
+
+Also **−4,5 %** Trigger-Rate; 21 Trigger fallen weg, 14 kommen hinzu (der
+verschobene Pivot-Satz ändert `peak_idx[-2]` und damit das BB-Level). Der
+Replay misst exakt das Code-Delta (Zeile drin vs. draussen); der echte
+Live-Repaint ist grösser, weil dort die forming Kerze nur teilweise gefüllt
+ist. R1 senkt die Signal-Raten — das ist der Zweck; Schwellen erst nach dem
+Retrain neu tunen.
+
+Bewusst **nicht** mitgefixt: `argrelextrema(mode='clip')` lässt am rechten Rand
+weiter unbestätigte Pivots durch (der `max_confirmed_idx`-Filter aus P1.24).
+Bei 25 ist das kein Drop-in — das TD-Frische-Gate
+(`len(df) - p3 <= PIVOT_WINDOW + 2`) sucht genau diese Kanten-Pivots. Ein Filter
+dort wäre eine Strategie-Änderung, kein Bugfix, und gehört in einen eigenen
+Task.
+
+Verifikation: `backtest/test_sniper_forming.py` (neu, 4/4, DB-frei — inkl. eines
+numerischen Tests, der den Repaint-Mechanismus selbst reproduziert),
+`backtest/test_sniper_tag.py` (4/4), `guard.py smoke` grün, ruff + mypy grün.
+Wirkt beim nächsten regulären Restart, kein Deploy.
+
+## [2026-07-10] Pump/Dump-Fenster zeit-basiert statt index-basiert (T-2026-CU-9050-029, P1.39)
+
+Der Detector schnitt seine Fenster über Listen-Indizes: `prices[-7:]` hiess nur
+dann „die letzten 60 Sekunden", wenn jeder 10s-Bucket ankam. Bei einer
+WS-Lücke — am wahrscheinlichsten genau im Spike, wenn der Socket am meisten zu
+tun hat — spannte „-7" über Minuten, und das Modell bewertete ein still
+gedehntes Fenster.
+
+Dazu ein zweiter, unabhängiger Fehler: `volumes_10s` war auf `v10s_valid`
+**gefiltert**, `prices` nicht. `volumes_10s[-18:]` und `prices[-18:]` zeigten
+also auf unterschiedliche Zeitpunkte, sobald ein einziger Bucket ungültig war.
+
+Beide Abschnitte (Volume-Explosion-Alert und ML-Feature-Pfad) routen jetzt über
+`_find_bucket_before` / `_find_bucket_range`, die nach Zeitstempel auswählen —
+dieselben Helfer, die der Preis-Spike-Pfad längst nutzt. Die flachen
+`prices`/`volumes_10s`-Listen sind ersatzlos entfallen: dass beide nach dem
+Umbau unbenutzt waren, ist der Beleg, dass keine Index-Rechnung übrig blieb.
+
+Fehlt der Bucket von vor 60s, wird der Tick **übersprungen**, statt eine
+erfundene `0` als Feature ins Modell zu schreiben — eine 0 ist ein Messwert,
+kein „unbekannt".
+
+### Anker statt Wanduhr
+Alle Bucket-Lookups messen gegen `bucket_anchor` (den Stempel des jüngsten
+Buckets), nicht gegen `now`. Die Stempel sind aufs 10s-Raster gefloort, `now`
+ist der Aufrufzeitpunkt — und der Detector iteriert ~530 Coins nach einem
+REST-Roundtrip, der Versatz wandert also auch über den Batch. Gegen `now`
+gemessen schrumpfte das 60s-Fenster ab einem Versatz von 5s still auf 6, dann
+5 Buckets: `buy_pres`/`volat` beschrieben ~50 Sekunden, während `p_chg_60s`
+weiter echte 60 Sekunden maß. Drei Features, die dieselbe Spanne beschreiben
+sollen, taten es nicht. Gegen den Anker liegt jeder Zielzeitpunkt exakt auf
+einem Rasterpunkt, und `WINDOW_EDGE_GUARD = 5` absorbiert nur noch
+Parse-Rauschen. Gefunden im `z-code-reviewer`-Pass, nicht durch die erste
+Test-Runde — die synthetisierte Buckets mit Versatz 0.
+
+Mit umgestellt wurden auch die drei vorbestehenden Lookups des
+Preis-Spike-Pfads: zwei Zeitbasen für Geschwister-Lookups derselben Funktion
+wären schlimmer als eine falsche. Bewusst **nicht** umgestellt, weil echte
+Wanduhr-Semantik: Staleness-Check, die beiden Alert-Cooldowns und
+`pump_dump_events.spike_time`.
+
+### Messung
+Im Gap-Szenario des Tests meldete die alte Index-Rechnung `p_chg_60s = +100.0`
+— sie griff über ein 10-Minuten-Loch auf einen Bucket mit halbem Preis. Die
+zeit-basierte Variante meldet die wahren `0.0`. Genau solche Werte landeten
+bisher auch in `pump_dump_events`.
+
+### ⚠ Retrain-Kopplung
+`vol_ratio`, `p_chg_60s`, `buy_pres` und `volat` sind Modell-Inputs **und**
+werden so nach `pump_dump_events` geloggt, woraus `tools/epd2_build_dataset.py`
+trainiert. Das deployte EPD2-Artefakt wurde auf der alten Definition gefittet;
+bis zum Retrain-Rollout läuft Serving gegen eine leicht verschobene Verteilung.
+Bei lückenlosen Ticks sind alt und neu identisch (Kontroll-Tests belegen das),
+die Drift betrifft ausschliesslich Gap-Ticks — dort war der alte Wert aber
+falsch, nicht bloss anders. Operator-Entscheid Michi 2026-07-09; Folge-Task
+**T-2026-CU-9050-035** (EPD2-Retrain auf den neuen Feature-Definitionen).
+
+Verifikation: `backtest/test_pump_dump_time_windows.py` (neu, standalone,
+DB-frei, 6/6). Vier Tests fallen auf dem Pre-Fix-Stand; die zwei übrigen laufen
+auf beiden Ständen grün und belegen damit, dass der lückenlose Pfad unverändert
+ist. Wirkt beim nächsten regulären Restart, kein Deploy.
+
+---
+
 ## [2026-07-09] "Opened"-Zählung entdoppelt, EPD2-Shadow-Inserts gedrosselt (T-2026-CU-9050-029, P1.44 + P1.41, PR #23)
 
 Zwei Hälften desselben Defekts: der Schreiber produzierte Shadow-Zeilen ohne
