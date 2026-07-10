@@ -44,3 +44,15 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # Finding-ID guard (T-2026-CU-9050-059). Parallel sessions each read the
+      # ledger, took what looked like the next free number and wrote it back —
+      # three findings ended up as P1.46 (renumbered by hand in PR #36). This
+      # catches the collision at commit time instead of in review. Fails open on
+      # a missing AUDIT_TODO.md.
+      - id: kythera-finding-id-guard
+        name: Kythera AUDIT_TODO finding-id guard
+        entry: python tools/audit/finding_ids.py check
+        language: system
+        pass_filenames: false
+        always_run: true
