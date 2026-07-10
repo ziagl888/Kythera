@@ -85,27 +85,37 @@ def funding_features_asof(by_sym: dict[str, pd.DataFrame], symbol: str, ts_utc) 
     }
 
 
-# --- Per-Stunde-Cache für Hochfrequenz-Aufrufer (T-2026-CU-9050-055) ---
+# --- Abrechnungs-gebundener Cache für Hochfrequenz-Aufrufer (T-2026-CU-9050-055) ---
 #
 # ``funding_features_asof`` hängt vom Zeitstempel AUSSCHLIESSLICH über den
-# searchsorted-Schnitt ab — also über die Zahl der Sätze mit funding_time < ts.
-# Binance rechnet Funding auf VOLLEN Stunden ab (8h-Raster, einzelne Paare
-# 4h/1h). Innerhalb einer angebrochenen Stunde kommt kein Satz dazu, der Schnitt
-# bleibt gleich, und alle Aggregate sind Suffixe (rates[-3:], rates[-270:], …) —
-# sie hängen nicht an der ``since``-Untergrenze des Loads. Ein Cache mit dem
-# Stunden-Key liefert deshalb BIT-IDENTISCHE Werte; er ist keine Näherung.
+# searchsorted-Schnitt ab — über die Zahl der Sätze mit funding_time < ts. Solange
+# keine neue Abrechnung dazukommt, ist das Ergebnis konstant: der Schnitt bleibt
+# gleich, und alle Aggregate sind Suffixe (rates[-3:], rates[-270:], …), hängen
+# also nicht an der wandernden ``since``-Untergrenze des Loads.
 #
-# Ein naiver Zeit-TTL wäre eine: der verschöbe den As-of-Zeitpunkt quer über eine
-# Abrechnungsgrenze und bräche die Trainer-Parität (Train == Serve == Replay).
+# Der Cache-Schlüssel kommt deshalb aus den DATEN, nicht aus der Wanduhr: ein
+# Eintrag gilt bis zu der Abrechnung, die das Ergebnis als Nächstes verändern kann
+# (siehe ``next_feature_change``). Zwei Fehlerklassen, die ein uhr-gebundener Key
+# (z.B. "eine Stunde") hätte, entfallen damit:
 #
-# Ausnahme Ingestion-Lag: die Zeile für hh:00 landet erst Sekunden später in
-# ``funding_rates``. Ein Cache-Eintrag, der in den ersten ``CACHE_MIN_AGE_S``
-# einer Stunde gebaut wurde, kann sie verpasst haben und wird verworfen.
-CACHE_MIN_AGE_S = 120
+#   * Abrechnungen, die nicht auf einer vollen Stunde liegen. Nichts erzwingt
+#     das — ``tools/backfill_funding_rates.py`` schreibt ``funding_time`` mit
+#     voller Millisekunden-Auflösung. Ein Satz um 12:30 wäre unter einem
+#     Stunden-Key bis 13:00 unsichtbar geblieben.
+#   * Ingestion-Verzug. Ist die fällige Zeile noch nicht da, ist der Eintrag
+#     bereits abgelaufen: es wird neu geladen, bis sie erscheint — dann schiebt
+#     der frische ``funding_time`` die Grenze weiter. Der Cache korrigiert sich
+#     selbst, statt auf eine Ingestion-SLA zu wetten.
+#
+# Ein naiver Zeit-TTL leistet beides nicht: er kann eine Abrechnungsgrenze
+# überspannen und dem Modell veraltetes Funding servieren — Bruch der
+# Trainer-Parität (Train == Serve == Replay).
 CACHE_SINCE_DAYS = 95  # as-of nutzt max. die letzten 270 Sätze
+#: Wie viele der jüngsten Abstände das Intervall schätzen (Median, robust gegen Lücken).
+CACHE_INTERVAL_SAMPLES = 8
 
-#: symbol → (Stunden-Key, Bauzeitpunkt, Features)
-_CACHE: dict[str, tuple[datetime.datetime, datetime.datetime, dict]] = {}
+#: symbol → (gültig_bis = nächste fällige Abrechnung, Features)
+_CACHE: dict[str, tuple[pd.Timestamp, dict]] = {}
 
 
 def clear_funding_cache() -> None:
@@ -113,20 +123,54 @@ def clear_funding_cache() -> None:
     _CACHE.clear()
 
 
+def next_feature_change(g: pd.DataFrame, ts_utc) -> pd.Timestamp | None:
+    """Bis wann das As-of-Ergebnis für ``ts_utc`` unverändert bleibt.
+
+    ``funding_features_asof`` schneidet mit ``searchsorted(..., 'left')``: es gehen
+    die Sätze mit ``funding_time < ts`` ein. Das Ergebnis kippt also erst, wenn ts
+    den NÄCHSTEN Satz überschreitet. Der steht entweder schon in den Daten (dann
+    ist er die Grenze — auch wenn er auf keiner vollen Stunde liegt), oder er ist
+    noch nicht abgerechnet: dann schätzen wir ihn als letzter Satz + Intervall.
+
+    ``None`` bei zu kurzer Historie — ohne zwei Sätze ist kein Intervall bestimmbar,
+    dann wird nicht gecacht.
+    """
+    ft = g["funding_time"]
+    if len(ft) < 2:
+        return None
+    i = int(ft.searchsorted(pd.Timestamp(ts_utc), side="left"))
+    if i < len(ft):
+        return ft.iloc[i]
+    step = ft.diff().dropna().iloc[-CACHE_INTERVAL_SAMPLES:].median()
+    if pd.isna(step) or step <= pd.Timedelta(0):
+        return None
+    return ft.iloc[-1] + step
+
+
 def funding_features_cached(conn, symbol: str, ts_utc: datetime.datetime, loader=load_funding) -> dict:
-    """Wie ``funding_features_asof``, aber höchstens ein DB-Roundtrip je Symbol
-    und Stunde. Die Werte sind identisch zum ungecachten Aufruf (siehe oben).
+    """Wie ``funding_features_asof``, aber ohne den DB-Roundtrip zu wiederholen,
+    solange keine neue Abrechnung das Ergebnis verändern kann. Die Werte sind
+    identisch zum ungecachten Aufruf (Begründung oben).
 
     ``loader`` ist injizierbar, damit der Cache DB-frei testbar bleibt.
     """
-    hour = ts_utc.replace(minute=0, second=0, microsecond=0)
     hit = _CACHE.get(symbol)
-    if hit is not None:
-        cached_hour, built_at, feats = hit
-        if cached_hour == hour and (built_at - hour).total_seconds() >= CACHE_MIN_AGE_S:
-            return feats
+    if hit is not None and pd.Timestamp(ts_utc) <= hit[0]:
+        return hit[1]
 
     by_sym = loader(conn, [symbol], since=ts_utc - datetime.timedelta(days=CACHE_SINCE_DAYS))
     feats = funding_features_asof(by_sym, symbol, ts_utc)
-    _CACHE[symbol] = (hour, ts_utc, feats)
+
+    g = by_sym.get(symbol)
+    valid_until = next_feature_change(g, ts_utc) if g is not None else None
+    if valid_until is not None and pd.Timestamp(ts_utc) <= valid_until:
+        _CACHE[symbol] = (valid_until, feats)
+    else:
+        # Historie zu kurz (kein Intervall bestimmbar) ODER die Abrechnung ist
+        # überfällig, weil die Zeile noch nicht ingested ist. Im zweiten Fall wäre
+        # der Eintrag ohnehin sofort abgelaufen — die Uhr läuft vorwärts, ein
+        # abgelaufener Eintrag wird nie ausgeliefert. Das `pop` ist also Hygiene
+        # (und ein Netz gegen einen NTP-Rückschritt), nicht die tragende Sperre.
+        # Die tragende Sperre ist der `<=`-Vergleich oben.
+        _CACHE.pop(symbol, None)
     return feats
