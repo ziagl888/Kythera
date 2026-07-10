@@ -86,7 +86,7 @@ CLS_DEDUP_ORDER = f"{CLS_DEDUP_KEY}, posted ASC NULLS LAST, status DESC NULLS LA
 #   - ATB1 (14_ai_atb_bot.py:720), which writes posted=False even on its LIVE
 #     branch — before the filter it accidentally matched its own shadow row.
 #     ATB1 is parked, so this is bounded to legacy open rows. Root cause tracked
-#     as P1.46; it must be fixed there, not by weakening this filter.
+#     as P1.47; it must be fixed there, not by weakening this filter.
 OPEN_AI_SIGNALS_QUERY = """
     SELECT a.model as strategy, a.direction, a.entry1 as entry,
            COALESCE(m.time, NOW() AT TIME ZONE 'UTC') as created_at
