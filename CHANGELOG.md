@@ -27,6 +27,104 @@ Pfad") auf p = 0,005 (schlechter als 199 von 200 Zufallsreihenfolgen) — die
 bisherige Regel hätte das DD-Budget genau falsch herum gesetzt. Statistik 2 ist
 in der Doku auf „nicht operativ lesen" gestellt; Fix ist T-2026-CU-9050-053.
 Statistik 1 und 3 sind reihenfolge-invariant und unberührt.
+## [2026-07-10] EPD und SRA laden ihr Artefakt über den geteilten Contract (T-2026-CU-9050-042)
+
+Letzte zwei Instanzen der P1.45-Fehlerklasse: ein Post-Pfad schreibt einen
+hartkodierten Modell-Tag, statt die `model_id` aus der Artefakt-Meta zu lesen
+(harte Regel 6). Anders als bei MIS/RUB/QM war der Tag hier aber nur das
+Symptom — darunter lag ein **Format-Bruch zwischen Retrain-Ausgabe und
+Live-Ladepfad**, und der musste zuerst weg.
+
+**Befund-Korrektur zur Task-Doc (Falle 13):** `retrain_sra2.py` emittiert *kein*
+dict-Artefakt, sondern natives XGB-JSON + `_meta.json`/`_calib.pkl` — dasselbe
+Format wie ABR2. Der Format-Mismatch bestand allein bei EPD; SRA fehlte nur der
+Meta-Read. Am Code verifiziert, nicht aus der Annotation übernommen.
+
+Drei Schritte, ein Bot pro Commit:
+
+- **`core/model_artifacts.py`** bekommt `load_artifact_json()`. Der
+  XGB-JSON-Sidecar-Loader steckte bis jetzt eingebacken in
+  `18_ai_abr1_bot._load_model_contract`; jetzt liefert er denselben
+  Contract-Dict wie `load_artifact()` (dict-pkl). Ohne `_meta.json` gilt der
+  benannte Legacy-Vertrag (Tag + Threshold aus Konstanten, `features=None`),
+  mit Meta kommen Tag, Threshold und Feature-Vertrag aus dem Artefakt. Ein
+  nicht-binärer `model_type` im binären Slot wird abgelehnt, statt still die
+  falsche `predict_proba`-Spalte zu lesen. `maybe_reload` dispatcht jetzt über
+  die Datei-Endung — über den pkl-Loader geroutet hätte ein JSON-Artefakt nie
+  neu gelesen und nach einem Deploy still die alte Generation weitergeliefert.
+
+- **SRA** (`9_ai_sr_bot.py`): lud seine `.json`-Modelle roh in einen
+  `xgb.XGBClassifier` und postete beide Richtungen unter der Konstanten `SRA1`.
+  Der Tag kommt jetzt aus der Meta, der Threshold ebenso. Zusätzlich ein
+  **Serving-Paritäts-Bruch**, der einen SRA2-Rollout verdorben hätte: Bot und
+  Trainer benutzten dieselben Spaltennamen mit **verschiedenen Formeln** —
+  `pct_ema9` war im Bot `(close-ema9)/close`, im Trainer `(close-ema9)/ema9` —
+  und `macd_dif_pct`/`macd_dea_pct`/`atr_pct` baute der Bot gar nicht. Der
+  Builder liegt jetzt einmal in `core/sra_features.py`, importiert von Bot und
+  Trainer (X-R1-Regel). Der Legacy-Vektor bleibt unangetastet daneben — er ist
+  der Vertrag des heute deployten Modells. Ein fehlendes Artefakt idlet die
+  Richtung, statt `exit(1)` in den Watchdog-Restart-Loop zu laufen (Falle 3).
+
+- **EPD** (`10_pump_dump_detector.py`): live läuft ein **rohes 3-Klassen**-Modell
+  mit positionalem 10-Feature-Array (Erfolg = Klasse 2/0, Threshold hart 0.60).
+  Das EPD2-Artefakt ist dagegen **binär je Richtung**, mit 16 benannten Features
+  inkl. der 6 Funding-Spalten und Threshold/`model_id` in der Meta. Beide Pfade
+  koexistieren jetzt: ohne Artefakt läuft der Legacy-Zweig bit-identisch weiter,
+  mit Artefakt gewinnt es und bringt Tag + Threshold mit. Die Funding-Features
+  werden **as-of dem Event** gezogen (`funding_features_asof`, wie
+  `tools/epd2_build_dataset.py:231`), je Trigger hinter dem
+  `vol_ratio>=5`-Vorfilter. Fehlende Funding-**Historie** wird zu 0 wie
+  `fillna(0)` im Trainer (Serving-Parität); ein fehlender Feature-**Name**
+  verweigert dagegen weiterhin das Artefakt und idlet den Bot (P0.12).
+
+**Bekanntes Performance-Risiko (dokumentiert, nicht optimiert — greift erst mit
+deploytem EPD2-Artefakt):** der Funding-Load ist ein DB-Roundtrip pro
+qualifizierendem 10s-Tick, nicht pro Signal. Der Vorfilter `vol_ratio>=5` hält an,
+solange das Volumen-Event läuft, und der Shadow-Zweig setzt den 900s-Timer
+bewusst nicht zurück (P1.41) — ein Coin im Shadow-Band zieht die Query also auf
+jedem Tick, marktweit parallel über alle betroffenen Coins. Ein TTL-Cache wäre
+hier **kein** trivialer Fix: er verschöbe den As-of-Zeitpunkt der Funding-Features
+und bräche genau die Trainer-Parität, die dieser Commit herstellt. Vor dem
+EPD2-Rollout zu klären (Messung, dann ggf. Load hinter ein Zeit-Gate ziehen, das
+den As-of-Zeitpunkt nicht verändert).
+
+**Transitionaler Dedup**, je Bot dort, wo er wirklich sperrt: der Post-Tag ist
+zugleich der Dedupe-Key, und beim Generationswechsel kippt er. SRA prüft die
+Master-Log-Duplikatprüfung (sonst hielte ein SRA2-Rollout jeden bereits
+verarbeiteten Trade für neu und postete ihn erneut) und den Cooldown gegen den
+Alt-Tag. EPDs einziger tag-gekoppelter Lock ist die Shadow-Log-Dedupe; dafür
+nimmt `core/signal_post.log_prediction` ein optionales `legacy_tag` entgegen —
+geschrieben wird immer unter dem aktuellen Tag. Alle anderen Aufrufer sind
+unberührt (Default `None`).
+
+**Live-Semantik unverändert.** Kein Artefakt ist deployt, also läuft beides auf
+dem Legacy-Vertrag: gleiche Tags, gleiche Thresholds, gleiche Feature-Vektoren,
+gleiche Dedupe-Queries (die transitionalen Binds kollabieren bei identischen
+Tags). Verifikation DB-frei: `backtest/test_model_artifacts.py` (10),
+`test_sra_tag.py` (11), `test_epd_tag.py` (12) — Loader- und Dedupe-Verhalten
+echt ausgeführt (Fake-Cursor), der Rest statische Netze; alle mutations-geprüft.
+Kein Rollout, kein Artefakt angefasst, keine DB-Änderung.
+
+**Streukreis der `core/`-Änderungen** (geteilter Code, deshalb explizit): (1)
+`log_prediction` ist additiv — `legacy_tag` hat den Default `None` und lässt die
+alte Einzeltag-Query byte-identisch, die Bots 30–33 sind unberührt. (2)
+`maybe_reload` reicht beim täglichen Reload jetzt `default_tag` statt des
+**aktuell geladenen** Tags als Fallback weiter. Für `13_ai_rub_bot.RUB2_SHORT`
+(hand-gebautes Contract-Dict ohne `default_tag`) fällt `.get()` exakt auf
+`artifact["tag"]` zurück — genau der Ausdruck, den der alte `maybe_reload`
+benutzte, also bit-identisch. Für die Bots 30–33 (Contract via `load_artifact`)
+greift der Unterschied nur, wenn ein Artefakt beim Reload **keine** `model_id` in
+der Meta trägt; dann erbte der Reload bisher den Tag der Generation, die er
+gerade ersetzt. Das ist der eigentliche Bugfix an dieser Stelle, kein
+Kollateralschaden — im Normalbetrieb (Trainer schreibt `model_id` immer) ist der
+Pfad tot.
+
+**Offen für Michi:** (1) EPD2/SRA2-Rollout ist jetzt entblockt — Operator-Entscheid.
+(2) Zwei neue Befunde derselben Klasse wie P1.48: weder EPD noch SRA hat einen
+Active-Trade-Check gegen `ai_signals`; EPDs einzige Re-Fire-Sperre ist ein
+In-Memory-900s-Timer, der einen Prozess-Neustart nicht überlebt.
+(Der `P1.46`-Nummernkonflikt dreier Sessions war beim Merge auf `main` bereits
+durch PR #36 aufgelöst — Sniper behält P1.46, ATB1 wurde P1.47, RUB P1.48.)
 
 ## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)
 
@@ -35,12 +133,36 @@ nach `ffill()` zusätzlich `bfill()`. Das `ffill` schließt Innen-Lücken aus de
 Vergangenheit und ist harmlos; das `bfill` füllte die verbleibenden **Kopfzeilen
 aus der Zukunft**.
 
-Diese Kopfzeilen sind keine Theorie: die Warmup-Spalten der DB-Indikatoren sind am
-Anfang jeder Coin-Historie NULL (`ema_200` braucht 200 Bars, die Donchian-Kanäle 20),
-während `run_td_bb` bereits ab `t = WINDOW-1 = 149` Events emittiert. Anders als der
-forming-Kerzen-Befund aus T-037 — der sich selbst quarantänisiert, weil seine Records
-kein Label bekommen und `load_replay` sie verwirft — landete dieser Leak in
-**gelabelten** Trainingszeilen der td/bb-Replays (Modelle TD2/BB2, Bot 25).
+> **Korrektur 2026-07-10 (nach Code-Prüfung von `2_indicator_engine.py:335-448`):** die
+> ursprüngliche Fassung dieses Eintrags begründete den Fix mit „die Warmup-Spalten sind
+> NULL (`ema_200` braucht 200 Bars, die Donchian-Kanäle 20)". **Das ist falsch.** Die
+> Engine liefert diese Spalten gefüllt: `ema_*`, `macd_*`, `atr_14`, `tsi_*` sind
+> `ewm(adjust=False)` und ab Zeile 0 definiert; `wma_21`, `donchian_*_20`, `boll_*_20`
+> tragen `.fillna(0)`, `rsi_14` trägt `.fillna(50)`. Der Fix bleibt richtig, seine
+> Mechanik ist aber eine andere — unten korrigiert. Die Fehlerklasse ist Falle 13 aus
+> `docs/OPUS-HANDOFF.md`, eine Ebene tiefer: der Loader wurde am Code geprüft, der
+> Datenproduzent dahinter nicht.
+
+Genau **eine** der fünfzehn Spalten, die `load_joined` liest, ist in der DB wirklich
+leer: **`kama_21`**. `calculate_kama` (`2_indicator_engine.py:344-350`) füllt bewusst
+nicht — die Zeilen 0–19 sind NaN, Zeile 20 trägt den SMA-Bootstrap. `bfill` hatte damit
+genau ein Ziel: es schrieb diesen Bootstrap-Wert rückwärts in die 20 Zeilen davor, also
+Zukunft in die Vergangenheit. `run_td_bb` beginnt zwar erst bei `t = WINDOW-1 = 149`,
+die Feature-Kerze ist aber der **Pivot-Index** (`lo_b + p3`), und der reicht bei kleinem
+`t` bis Zeile 0 herunter. Anders als der forming-Kerzen-Befund aus T-037 — der sich
+selbst quarantänisiert, weil seine Records kein Label bekommen und `load_replay` sie
+verwirft — landete dieser Leak damit in **gelabelten** Trainingszeilen der td/bb-Replays
+(Modelle TD2/BB2, Bot 25). Betroffen sind Coins, deren Listing in das Replay-Fenster
+fällt; für ältere Coins enthält der Frame kein NaN und `bfill` war ein No-op.
+
+**Der größere Nachbar-Befund, den dieser Fix NICHT behebt:** die `.fillna(0)`-Spalten
+sind kein NaN und überleben das `dropna()`. Für eine junge Coin steht in den ersten ~20
+Bars `donchian_upper_20 = 0.0`, und `extract_ml_features` macht daraus
+`donchian_upper_20_dist_pct = -100.0`. Fünf der elf Preis-Features sind dort hart
+gepinnt. Das ist **P1.13** im `AUDIT_TODO.md` („`fillna(0)` auf Warm-up-Fenstern schreibt
+erfundene Indikatorwerte", Fix: NaN fließen lassen wie KAMA es tut) und gehört vor den
+nächsten TD2/BB2/QM2-Retrain, weil es die Feature-Verteilung von Bot **und** Replay
+gleichermaßen verschiebt.
 
 Fix: `to_numeric` vor `ffill` gezogen, `bfill` ersatzlos entfernt, die verbleibenden
 NaN-Kopfzeilen werden verworfen. Ein Event ohne echte Indikatoren ist kein
@@ -48,11 +170,19 @@ Trainingsdatum. `backtest/test_feature_lookahead.py` pinnt das mechanisch
 (mutations-geprüft: mit `bfill` fällt der Test).
 
 **Nicht angefasst, bewusst:** `25_smc_ml_sniper.py:220` und `24_quasimodo_bot.py:126`
-tragen dieselbe Zeile. Sie fenstern aber `DESC LIMIT 150` **ab jetzt** — dort füllt
-`bfill` aus Zeilen, die der Bot ohnehin schon gesehen hat, also kein Look-ahead
-relativ zur Entscheidungszeit. Der Rest-Fall (frisch gelisteter Coin, dessen
-150er-Fenster ganz in der Warmup-Zone liegt) ist ein Geld-Pfad-Befund und gehört
-als eigene Entscheidung an Michi, nicht in diesen Commit.
+tragen dieselbe Zeile. Sie fenstern aber `DESC LIMIT 150` bzw. `100` **ab jetzt** — dort
+füllt `bfill` aus Zeilen, die der Bot ohnehin schon gesehen hat, also kein Look-ahead
+relativ zur Entscheidungszeit, sondern eine stille Imputation des Feature-Vektors. Und
+sie feuert nur, wenn die ersten 20 Kerzen der Coin-Historie im Fenster liegen, der Coin
+also ≤ ~170 Kerzen hat (`1h`: 4–7 Tage alt; `4h`: 17–28 Tage) — für die große Mehrheit
+der Coins ist `bfill` dort ein No-op.
+
+Wichtiger als die Zeile selbst ist ihre **Kopplung an den Retrain**: seit diesem Commit
+verwirft der Replay die 20 Kopfzeilen, der Live-Bot imputiert sie weiter. Das nächste
+aus dem Replay trainierte TD2/BB2/QM2 hat sie nie gesehen. Die Bots dürfen deshalb
+**nicht isoliert** angeglichen werden, sondern nur **gemeinsam mit dem Artefakt-Rollout**
+— sonst entsteht genau der Train/Serve-Skew, gegen den T-037/T-045 antreten. Geld-Pfad,
+Operator-Entscheidung (`docs/OPUS-HANDOFF.md` §6).
 
 ## [2026-07-10] `legacy_trainers/` ist keine Wegwerf-Ware — Operator-Frage §5.8 geschlossen (Doku)
 

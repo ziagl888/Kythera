@@ -133,18 +133,36 @@ def log_prediction(
     confidence: float,
     posted: bool,
     dedup_hours: int = 4,
+    legacy_tag: str | None = None,
 ) -> None:
     """ml_predictions_master-Eintrag (Shadow-Logging, Report 15 — Grundlage der
     4–8-Wochen-Shadow-Auswertung). Dedup wie 11_ai_mis_bot: dieselbe
-    Modul/Coin/Richtung-Kombi höchstens einmal je ``dedup_hours``. Ohne Commit."""
+    Modul/Coin/Richtung-Kombi höchstens einmal je ``dedup_hours``. Ohne Commit.
+
+    ``legacy_tag`` (T-2026-CU-9050-042): der Dedup-Key IST der Modell-Tag, und der
+    kippt beim Retrain-Rollout. Ohne den Alt-Tag im Fenster begänne die neue
+    Generation ihre Dedup-Historie bei null und schriebe die Shadow-Zeilen
+    desselben Coins doppelt. Gleicher oder fehlender Alt-Tag ⇒ No-op, der zweite
+    Bind fällt weg. GESCHRIEBEN wird immer unter ``model_tag`` — die laufende
+    Generation, nie der Alt-Tag.
+    """
     now = datetime.datetime.now(datetime.timezone.utc)
+    window = f"{int(dedup_hours)} hours"
     with conn.cursor() as cur:
-        cur.execute(
-            """SELECT 1 FROM ml_predictions_master
-               WHERE coin = %s AND direction = %s AND model_name = %s
-                 AND time > NOW() - %s::interval""",
-            (symbol, direction, model_tag, f"{int(dedup_hours)} hours"),
-        )
+        if legacy_tag and legacy_tag != model_tag:
+            cur.execute(
+                """SELECT 1 FROM ml_predictions_master
+                   WHERE coin = %s AND direction = %s AND model_name IN (%s, %s)
+                     AND time > NOW() - %s::interval""",
+                (symbol, direction, model_tag, legacy_tag, window),
+            )
+        else:
+            cur.execute(
+                """SELECT 1 FROM ml_predictions_master
+                   WHERE coin = %s AND direction = %s AND model_name = %s
+                     AND time > NOW() - %s::interval""",
+                (symbol, direction, model_tag, window),
+            )
         if cur.fetchone():
             return
         cur.execute(
