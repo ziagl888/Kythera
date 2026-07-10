@@ -71,7 +71,8 @@ def test_random_control_carries_fee_drag():
 
 def test_order_permutation_dd():
     """Verlust-Clusterung am Stück → beobachteter MaxDD ist untypisch schlecht
-    (p nahe 1 in unserer one-sided Definition 'Anteil Permutationen schlechter')."""
+    → KLEINES p (Definition: Anteil Permutationen, die gleich schlecht oder
+    schlechter sind — kaum eine ist es). Interleaved → größeres p."""
     wins = [1.0] * 100
     losses = [-1.0] * 60
     clustered = np.array(losses + wins)  # alle Verluste zuerst → tiefer DD
