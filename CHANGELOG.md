@@ -1,4 +1,4 @@
-## [2026-07-10] P1.8-Folgefix: ROM1-Lifecycle-Sync war seit 04.07. still tot — open_time jetzt explizit naiv-UTC + 72h-Age-Bound auf den Opposite-Block (T-2026-CU-9050-052)
+## [2026-07-10] P1.8-Folgefix: ROM1-Lifecycle-Sync war seit 04.07. still tot — open_time jetzt explizit naiv-UTC + twin-basierter Corpse-Reaper statt Age-Bounds (T-2026-CU-9050-052)
 
 Die VPS-Verify-Session T-2026-CU-9050-044 hat den P0-Verdacht aus dem
 ROM1-Deep-Review bestätigt: der P1.8-Fix vom 04.07. (±60s-Match gegen
@@ -14,28 +14,43 @@ Suppressions auf 79 Coins nachweislich durch Leichen-Rows).
 Fix in `28_signal_orchestrator.py`: (1) `open_time` wird explizit als
 naiv-UTC gesetzt (`core.time.utc_now_naive`, gleiche Quell-Semantik wie das
 `opened_at` der Zwillings-Row; Monitor 8 behandelt `open_time` ohnehin als
-UTC). (2) Neuer **Corpse-Reaper** im Lifecycle-Sync: eine OPEN-Row, deren
-`ai_signals`-Zwilling nicht mehr existiert (Trade wurde geschlossen, aber nie
-gesynct — genau die Leichen-Klasse), wird nach 72 h Mindestalter auf
-`CLOSED_NEUTRAL` / `close_reason='corpse_reaper'` gestellt. Reine Buchhaltung,
-kein Telegram-Post. Damit verschwinden die Leichen wirklich aus dem
-OPEN-Bestand — sie blocken die Richtungs-Checks nicht mehr, füttern den
-Regime-Change-Auto-Close nicht mehr mit Spurious-`Close`-Kommandos und werden
-nicht mehr in jedem Sync-Pass erneut gescannt. (3) Die Richtungs-Checks
+UTC). Damit ist `ai_signals.open_time` eine gemischte Domäne (ROM1=UTC, Rest=
+Session-lokal via Default) — dokumentiert in `docs/UTC_POLICY.md` §3, die
+Vereinheitlichung bleibt der R3-Flip. (2) Neuer **Corpse-Reaper** am ANFANG
+jedes Lifecycle-Sync-Passes (Decay hängt damit nicht an der Gesundheit des
+Match-Loops): eine OPEN-Row, deren `ai_signals`-Zwilling nicht mehr existiert
+(Trade wurde geschlossen, aber nie gesynct — genau die Leichen-Klasse), wird
+nach 72 h Mindestalter auf `CLOSED_NEUTRAL` / `close_reason='corpse_reaper'`
+gestellt. Der Twin-Check ist **row-anchored** (±60 s um `opened_at`, beide
+Rows entstehen in einer Transaktion; Legacy-Zwillinge über ein zweites
+Fenster in Session-TZ) — ein Live-Trade auf demselben coin+direction schirmt
+eine Stacking-Ära-Leiche also NICHT ab. Zusätzliche Anti-Zensur-Klausel:
+existiert bereits eine syncbare `closed_ai_signals`-Row (±60 s), überspringt
+der Reaper — das echte WIN/LOSS-Outcome klassifiziert der Match-Loop, nie der
+Reaper (schließt das Monitor-Commit-Race für >72h-Trades). `closed_at` der
+gereapten Rows ist die Reap-Zeit, nicht die echte Close-Zeit —
+Duration-Auswertungen müssen `close_reason='corpse_reaper'` ausschließen.
+Reine Buchhaltung, kein Telegram-Post. Damit verschwinden die Leichen wirklich
+aus dem OPEN-Bestand — sie blocken die Richtungs-Checks nicht mehr, füttern
+den Regime-Change-Auto-Close nicht mehr mit Spurious-`Close`-Kommandos und
+werden nicht mehr in jedem Sync-Pass erneut gescannt. (3) Die Richtungs-Checks
 bleiben bewusst OHNE Zeitschranke: ein Age-Bound (auch der bestehende 72h-Bound
 aus P2.26 in `is_same_direction_open`, hier entfernt) hebt den Schutz auch für
 ECHTE >72h-Positionen auf — ROM1 setzt kein `expiry_hours`, eine legitime
 Position kann beliebig lange offen sein, und ohne Block würde die Gegenrichtung
 die Live-Position flippen (Review-Finding aus PR #40). Liveness-Kriterium ist
-jetzt der Zwilling, nicht die Uhr.
+jetzt der Zwilling, nicht die Uhr. Bewusster Tradeoff: ein STUCK-Zwilling
+(Monitor kann den Coin nicht scoren) blockt weiter — Schutz vor Verfügbarkeit;
+der Decay-Pfad dafür ist der DELISTED-Cleanup des Housekeepings.
 
 Verifikation nach Deploy: `lifecycle_sync`-Closes tauchen wieder auf
 (>0/Tag), der OPEN-älter-72h-Bestand (208 Rows Stand 10.07., wachsend Richtung
 395) wird vom Reaper im ersten Sync-Pass abgeräumt und bleibt danach ~0, und
-es gibt KEINEN `Close`-Kommando-Burst beim nächsten Regime-Flip. Fünf neue
+es gibt KEINEN `Close`-Kommando-Burst beim nächsten Regime-Flip. Sechs neue
 Tests pinnen INSERT-Spalte + naiv-UTC-Wert, die bound-freien Richtungs-Checks
-und den twin-scoped Reaper (CLOSED_NEUTRAL, NOT-EXISTS, 72h-Mindestalter, kein
-Outbox-Write) — `backtest/test_signal_orchestrator.py`; Suiten
+und den Reaper-Contract (Reaper-first, row-anchored Twin-Fenster inkl.
+Session-TZ-Legacy-Fenster, Anti-Zensur-Klausel, kein Outbox-Write) —
+`backtest/test_signal_orchestrator.py`; Suiten
 test_regime_detector/test_bot_regime_analyzer unverändert grün.
 
 ## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)

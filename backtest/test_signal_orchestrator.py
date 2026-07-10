@@ -547,14 +547,25 @@ def test_cross_direction_allowed_after_trade_close():
     assert orch.is_opposite_direction_open(conn, "BTCUSDT", "SHORT") is False
 
 
-def _captured_query(fn, *args):
-    """Run fn against a mock conn and return the (sql, params) it executed."""
+def _mock_conn(executed=None, rowcount=0):
+    """Shared mock conn/cursor scaffold. Optionally records every
+    (sql, params) pair into `executed`."""
     conn = MagicMock()
     cur = MagicMock()
     cur.__enter__ = MagicMock(return_value=cur)
     cur.__exit__ = MagicMock(return_value=False)
     cur.fetchone = MagicMock(return_value=None)
+    cur.fetchall = MagicMock(return_value=[])
+    cur.rowcount = rowcount
+    if executed is not None:
+        cur.execute = MagicMock(side_effect=lambda sql, params=None: executed.append((sql, params)))
     conn.cursor = MagicMock(return_value=cur)
+    return conn, cur
+
+
+def _captured_query(fn, *args):
+    """Run fn against a mock conn and return the (sql, params) it executed."""
+    conn, cur = _mock_conn()
     fn(conn, *args)
     sql, params = cur.execute.call_args[0]
     return sql, params
@@ -597,31 +608,23 @@ def test_insert_rom1_signal_sets_open_time_naive_utc():
     assert abs((utc_now - open_time).total_seconds()) < 5  # UTC wall clock, not local (+3h)
 
 
-def test_sync_closed_trades_runs_twin_scoped_corpse_reaper():
+def test_sync_closed_trades_runs_corpse_reaper_first():
     """T-2026-CU-9050-052: every sync pass must reap OPEN rows whose ai_signals
     twin is gone (trade closed but never synced — e.g. the 395 dead-sync-era
-    corpses whose +3h open_time can never match). The reaper is pure
-    bookkeeping: CLOSED_NEUTRAL, twin-scoped via NOT EXISTS, 72h minimum age,
-    and it must never post to telegram_outbox."""
+    corpses whose +3h open_time can never match). The reaper runs BEFORE the
+    per-row match loop so corpse decay survives a poison row there, and it
+    must never post to telegram_outbox."""
     executed = []
-    conn = MagicMock()
-    cur = MagicMock()
-    cur.__enter__ = MagicMock(return_value=cur)
-    cur.__exit__ = MagicMock(return_value=False)
-    cur.fetchall = MagicMock(return_value=[])  # no OPEN rows in the match loop
-    cur.rowcount = 3
-    cur.execute = MagicMock(side_effect=lambda sql, params=None: executed.append((sql, params)))
-    conn.cursor = MagicMock(return_value=cur)
+    conn, _cur = _mock_conn(executed=executed, rowcount=3)
 
     asyncio.run(orch.sync_closed_trades(conn))
 
-    updates = [(sql, params) for sql, params in executed if "UPDATE orchestrator_open_trades" in sql]
-    assert len(updates) == 1
-    sql, params = updates[0]
-    assert "CLOSED_NEUTRAL" in sql
-    assert "corpse_reaper" in sql
-    assert "NOT EXISTS" in sql
-    assert "model = 'ROM1'" in sql
+    assert executed, "sync pass executed no SQL"
+    first_sql, params = executed[0]
+    # Reaper-first: the UPDATE is the very first statement of the pass.
+    assert "UPDATE orchestrator_open_trades" in first_sql
+    assert "CLOSED_NEUTRAL" in first_sql
+    assert "corpse_reaper" in first_sql
     assert not any("telegram_outbox" in s for s, _ in executed)  # bookkeeping only
 
     closed_at, cutoff = params
@@ -629,6 +632,28 @@ def test_sync_closed_trades_runs_twin_scoped_corpse_reaper():
     assert abs(((closed_at - cutoff) - datetime.timedelta(hours=72)).total_seconds()) < 5
     utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     assert abs((utc_now - closed_at).total_seconds()) < 5  # UTC wall clock, not local (+3h)
+
+
+def test_corpse_reaper_is_row_anchored_and_never_censors_syncable_closes():
+    """The reaper's twin check must be anchored to the row's own opened_at
+    (±60s, same-transaction inserts) — a live trade's twin on the same
+    coin+direction must not shield a stacking-era corpse, which would keep
+    feeding spurious Close commands that flatten the live position. Legacy
+    twins sit at session-local time (second window via current_setting).
+    And it must skip rows whose close is already recorded in
+    closed_ai_signals: those get their REAL outcome from the match loop,
+    never a corpse_reaper censor."""
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, rowcount=0)
+
+    asyncio.run(orch.reap_corpse_trades(conn))
+
+    (sql, _params), = executed
+    assert "NOT EXISTS" in sql
+    assert "FROM ai_signals" in sql
+    assert "a.open_time BETWEEN o.opened_at - INTERVAL '60 seconds'" in sql  # row anchor, not coin-scoped
+    assert "current_setting('TimeZone')" in sql  # legacy session-local twin window
+    assert "FROM closed_ai_signals" in sql  # anti-censor guard: syncable close → skip
 
 
 # ── ROM1 Tracking ─────────────────────────────────────────────────────────────

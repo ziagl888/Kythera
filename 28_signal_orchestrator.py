@@ -974,6 +974,12 @@ async def sync_closed_trades(conn) -> None:
     schreibt targets_hit=0 etc.). DELISTED/CLEANUP-Trades bekommen den Status
     CLOSED_NEUTRAL — die Orchestrator-Performance wird dadurch nicht verzerrt.
     """
+    # Reaper FIRST: corpse decay must not depend on the health of the per-row
+    # match loop below (a poison row there would silently disable decay while
+    # the unbounded direction blocks stay active). Safe to run first: the
+    # reaper skips anything the match loop could still classify.
+    await reap_corpse_trades(conn)
+
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -1019,27 +1025,40 @@ async def sync_closed_trades(conn) -> None:
             new_status = _classify_outcome_by_pnl(direction, entry, close_price, close_reason)
             mark_orchestrator_trade_closed(conn, trade_id, new_status, "lifecycle_sync")
 
-    await reap_corpse_trades(conn)
-
 
 async def reap_corpse_trades(conn) -> None:
     """Closes OPEN tracking rows whose ai_signals twin is gone (corpse reaper).
 
     T-2026-CU-9050-052: a live ROM1 trade always has its ai_signals twin (both
     rows are written in the same transaction; the monitor deletes the twin on
-    close). An OPEN row WITHOUT a twin is therefore a trade that closed but was
-    never synced — either a legacy corpse from the dead-sync era (open_time was
-    stamped +3h by the DB default, the ±60s window can never match: 395 rows as
-    of 2026-07-10) or a pathological case (crash between commit and monitor
-    pickup, manually deleted ai_signals row). Left OPEN, such rows block the
-    direction checks forever, feed spurious Close commands into every
-    regime-change pass, and get re-scanned by the sync loop on every pass.
+    close). An OPEN row WITHOUT a twin is a trade that closed but was never
+    synced — either a legacy corpse from the dead-sync era (open_time stamped
+    +3h by the session-TZ DB default, the ±60s sync window can never match:
+    395 rows as of 2026-07-10) or a pathological case (manually deleted
+    ai_signals row). Left OPEN, such rows block the direction checks forever,
+    feed spurious Close commands into every regime-change pass, and get
+    re-scanned by the sync loop on every pass.
 
-    Transition them to CLOSED_NEUTRAL (no PnL distortion, same convention as
-    DELISTED/CLEANUP). No Telegram post — this is bookkeeping, not a trade
-    action. The 72h minimum age keeps the reaper strictly behind the regular
-    sync path, which matches real closes within one 30s pass; it must never
-    race a matchable close out of its real outcome.
+    Guards, in order:
+    - 72h minimum age: never touches fresh rows.
+    - Twin check is ROW-anchored (±60s around opened_at, both rows are written
+      in one transaction), NOT just coin+direction — a live trade's twin must
+      not shield a corpse that shares coin+direction (stacking era), because
+      that corpse would keep feeding Close commands that flatten the LIVE
+      position on the next regime flip. Legacy twins sit at session-local
+      time, hence the second window via current_setting('TimeZone').
+    - Never censors a classifiable outcome: if a closed_ai_signals row exists
+      in the sync window, the regular match loop will classify the real
+      WIN/LOSS — the reaper skips (closes the monitor-commit race for >72h
+      trades; the monitor deletes the twin and writes the close atomically).
+
+    Reaped rows get CLOSED_NEUTRAL (no PnL/WR distortion, same convention as
+    DELISTED/CLEANUP) and closed_at = reap time — NOT the real close time,
+    which is unknowable for corpses. Duration stats must exclude
+    close_reason='corpse_reaper'. No Telegram post — bookkeeping, not a trade
+    action. A twin that is stuck (monitor cannot process the coin) keeps its
+    row OPEN by design — protection over availability; the decay path for
+    that case is housekeeping's DELISTED cleanup deleting the twin.
     """
     now_naive = utc_now_naive()
     with conn.cursor() as cur:
@@ -1052,6 +1071,19 @@ async def reap_corpse_trades(conn) -> None:
               AND NOT EXISTS (
                   SELECT 1 FROM ai_signals a
                   WHERE a.model = 'ROM1' AND a.symbol = o.coin AND a.direction = o.direction
+                    AND (
+                        a.open_time BETWEEN o.opened_at - INTERVAL '60 seconds'
+                                        AND o.opened_at + INTERVAL '60 seconds'
+                        OR (a.open_time AT TIME ZONE current_setting('TimeZone') AT TIME ZONE 'UTC')
+                                    BETWEEN o.opened_at - INTERVAL '60 seconds'
+                                        AND o.opened_at + INTERVAL '60 seconds'
+                    )
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM closed_ai_signals c
+                  WHERE c.model = 'ROM1' AND c.symbol = o.coin AND c.direction = o.direction
+                    AND c.open_time BETWEEN o.opened_at - INTERVAL '60 seconds'
+                                        AND o.opened_at + INTERVAL '60 seconds'
               )
             """,
             (now_naive, now_naive - timedelta(hours=72)),
