@@ -1,3 +1,87 @@
+## [2026-07-10] P1.8-Folgefix: ROM1-Lifecycle-Sync war seit 04.07. still tot — open_time jetzt explizit naiv-UTC + twin-basierter Corpse-Reaper statt Age-Bounds (T-2026-CU-9050-052)
+
+Die VPS-Verify-Session T-2026-CU-9050-044 hat den P0-Verdacht aus dem
+ROM1-Deep-Review bestätigt: der P1.8-Fix vom 04.07. (±60s-Match gegen
+`ai_signals.open_time`) hat den Sync nicht repariert, sondern still getötet.
+`insert_rom1_signal` setzte `open_time` nicht — der DB-Default `now()` stempelt
+bei Session-TZ Europe/Bucharest Lokalzeit in die naive timestamp-Spalte,
+konstant +10.799 s (+3 h) gegen das naiv-UTC `opened_at` der Tracking-Row. Das
+±60s-Fenster konnte nie matchen: letzter `lifecycle_sync`-Close exakt am
+Deploy-Zeitpunkt 04.07. 11:10, danach 395 akkumulierte OPEN-Rows (208 älter
+72 h) und `opposite_direction_open`-Suppressions von 4/Tag auf 165/Tag (166
+Suppressions auf 79 Coins nachweislich durch Leichen-Rows).
+
+Fix in `28_signal_orchestrator.py`: (1) `open_time` wird explizit als
+naiv-UTC gesetzt (`core.time.utc_now_naive`, gleiche Quell-Semantik wie das
+`opened_at` der Zwillings-Row; Monitor 8 behandelt `open_time` ohnehin als
+UTC). Damit ist `ai_signals.open_time` eine gemischte Domäne (ROM1=UTC, Rest=
+Session-lokal via Default) — dokumentiert in `docs/UTC_POLICY.md` §3, die
+Vereinheitlichung bleibt der R3-Flip. (2) Neuer **Corpse-Reaper** am ANFANG
+jedes Lifecycle-Sync-Passes (Decay hängt damit nicht an der Gesundheit des
+Match-Loops): eine OPEN-Row, deren `ai_signals`-Zwilling nicht mehr existiert
+(Trade wurde geschlossen, aber nie gesynct — genau die Leichen-Klasse), wird
+nach 72 h Mindestalter auf `CLOSED_NEUTRAL` / `close_reason='corpse_reaper'`
+gestellt. Der Twin-Check ist **row-anchored** (±60 s um `opened_at`, beide
+Rows entstehen in einer Transaktion) — ein Live-Trade auf demselben
+coin+direction schirmt eine Stacking-Ära-Leiche also NICHT ab. Für die
+Legacy-Population (open_time in Session-Lokalzeit gestempelt) gibt es ein
+zweites Fenster über die **hart kodierte historische Writer-TZ**
+`Europe/Bucharest` (bewusst nicht `current_setting('TimeZone')`: ein
+künftiger R3-Flip der Session-TZ darf live Legacy-Positionen nicht
+entschirmen; DST behandelt `AT TIME ZONE` pro Timestamp). Dieses
+Legacy-Fenster gilt **symmetrisch** auch im Sync-Match-Loop und in der
+Anti-Zensur-Klausel des Reapers — sonst würde ein Legacy-Trade, der NACH dem
+Deploy schließt, sein echtes WIN/LOSS an den Reaper verlieren; so recovered
+der Match-Loop stattdessen auch die echten Outcomes der Alt-Leichen.
+Kollisionsfrei ist das Fenster, weil der 4h-Cooldown pro coin+direction zwei
+gleichgerichtete Trades im Abstand von ~3 h strukturell ausschließt (per Test
+gepinnt, inkl. Fenster-Konstante `LIFECYCLE_SYNC_WINDOW_SEC` für alle
+Anker-Fenster). Anti-Zensur-Klausel: existiert bereits eine syncbare
+`closed_ai_signals`-Row (in einem der beiden Fenster), überspringt der
+Reaper — das echte WIN/LOSS-Outcome klassifiziert der Match-Loop, nie der
+Reaper (schließt das Monitor-Commit-Race für >72h-Trades). `closed_at` der
+gereapten Rows ist die Reap-Zeit, nicht die echte Close-Zeit —
+Duration-Auswertungen müssen `close_reason='corpse_reaper'` ausschließen.
+Der Main-Loop isoliert die drei Stages jetzt einzeln (try/except + Rollback
+pro Stage): eine Poison-Row im Regime-Check oder Gating kann den
+Lifecycle-Sync (und damit den einzigen Decay-Pfad) nicht mehr dauerhaft
+aushungern. Der Geld-Pfad bleibt dabei fail-closed: schlägt die Regime-Stage
+fehl, wird der Gating-Pass übersprungen (kein neues Exposure, solange die
+Auto-Closes gestört sind), und ein äußeres Catch-all hält den Prozess am
+Leben. Das Zwei-Fenster-Prädikat baut EIN Helper
+(`_anchor_window_predicate`) für alle drei SQL-Stellen; die historische
+Writer-TZ liegt kanonisch in `core/time.py` (`LEGACY_WRITER_TZ`). Empirisch
+gegen die Live-DB entlastet (read-only): 0 von 409 OPEN-Rows haben mehr als
+einen Close-Kandidaten über beide Fenster (kein Cross-Match im Bestand), und
+der komplette First-Pass über 440k `closed_ai_signals`-Rows dauert 1,8 s
+(4,4 ms/Row) — keine Loop-Blockade.
+Reine Buchhaltung, kein Telegram-Post. Damit verschwinden die Leichen wirklich
+aus dem OPEN-Bestand — sie blocken die Richtungs-Checks nicht mehr, füttern
+den Regime-Change-Auto-Close nicht mehr mit Spurious-`Close`-Kommandos und
+werden nicht mehr in jedem Sync-Pass erneut gescannt. (3) Die Richtungs-Checks
+bleiben bewusst OHNE Zeitschranke: ein Age-Bound (auch der bestehende 72h-Bound
+aus P2.26 in `is_same_direction_open`, hier entfernt) hebt den Schutz auch für
+ECHTE >72h-Positionen auf — ROM1 setzt kein `expiry_hours`, eine legitime
+Position kann beliebig lange offen sein, und ohne Block würde die Gegenrichtung
+die Live-Position flippen (Review-Finding aus PR #40). Liveness-Kriterium ist
+jetzt der Zwilling, nicht die Uhr. Bewusster Tradeoff: ein STUCK-Zwilling
+(Monitor kann den Coin nicht scoren) blockt weiter — Schutz vor Verfügbarkeit;
+der Decay-Pfad dafür ist der DELISTED-Cleanup des Housekeepings.
+
+Verifikation nach Deploy: `lifecycle_sync`-Closes tauchen wieder auf
+(>0/Tag), der OPEN-älter-72h-Bestand (208 Rows Stand 10.07., wachsend Richtung
+395) wird im ersten Sync-Pass abgebaut — Alt-Leichen mit vorhandener Close-Row
+bekommen ihr ECHTES Outcome über den Match-Loop (`lifecycle_sync`), nur
+matchlose Reste gehen als `corpse_reaper` neutral raus — und danach bleibt der
+Bestand ~0; KEIN `Close`-Kommando-Burst beim nächsten Regime-Flip. Sieben neue
+Tests pinnen INSERT-Spalte + naiv-UTC-Wert, die bound-freien Richtungs-Checks,
+den Reaper-Contract (Reaper-first, row-anchored Twin-Fenster, hart kodierte
+Legacy-TZ in beiden Subqueries, Anti-Zensur-Klausel, kein Outbox-Write), das
+Legacy-Fenster im Match-Loop und die Cooldown-Invariante, die das
+Legacy-Fenster kollisionsfrei macht — `backtest/test_signal_orchestrator.py`;
+Suiten test_regime_detector/test_bot_regime_analyzer unverändert grün.
+
+
 ## [2026-07-10] Signifikanz-Layer über die echten Batch-E-Replays: Layer bestätigt, MaxDD-Statistik widerlegt (T-2026-CU-9050-040)
 
 Der VPS-Rest aus T-2026-CU-9050-027 D3: `tools/wf_significance.py` lief read-only
