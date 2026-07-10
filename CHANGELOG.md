@@ -1,3 +1,37 @@
+## [2026-07-10] ATB1: posted-Flag spiegelt den Live-Trade, nicht hart False (T-2026-CU-9050-062, P1.47)
+
+`14_ai_atb_bot.py` loggte jede Prediction ab `ml_prob >= 0.25` nach
+`ml_predictions_master`, hart mit `posted=False` — auch die, die tatsächlich
+gehandelt wurden (`ml_prob >= threshold`). Der Live-Trade selbst (`send_signal`)
+schreibt nur nach `ai_signals`, es gab also nie eine `posted=True`-Zeile.
+
+Folge seit P1.44: der `created_at`-JOIN des Market-Trackers (`m.posted = TRUE`)
+matchte keine einzige ATB1-Zeile, offene ATB1-Positionen fielen dauerhaft auf
+`NOW()` zurück und wirkten in den Opened-Buckets ewig frisch. Anders als
+ATS1/RUB1/MIS1/SRA1, die auf ihrem Live-Zweig `posted=True` schreiben.
+
+Der Flag kommt jetzt aus `_atb1_posted_flag(ml_prob, threshold)` — `True` genau
+dann, wenn die Prediction den Trade auslöst. Als reine Funktion extrahiert, weil
+`run_trendline_detector` als Ganzes nicht treibbar ist; so ist die Grenze
+(`threshold`, **nicht** das 0.25-Shadow-Gate) testbar und gegen ein späteres
+„Vereinfachen" gesichert.
+
+Wirkung nur Anzeige — Kelly/WR ziehen `created_at` aus
+`closed_ai_signals.open_time`, nicht aus dem JOIN. Kein Deploy; ATB1 ist
+geparkt, der Fix greift beim nächsten Restart. Vor dem Entparken von Bot 14 war
+das die offene Auflage.
+
+Verifikation: `backtest/test_atb1_posted_flag.py` (neu, standalone, DB-frei,
+5/5). Ehrlich zur Beweiskraft: die fünf Tests prüfen den neuen Helper, auf dem
+Pre-Fix-Stand fehlt er, also erroren sie (`AttributeError`) statt den Insert-Bug
+verhaltensmässig zu messen — der Insert-Aufruf selbst ist nur indirekt gedeckt
+(`run_trendline_detector` ist als Ganzes nicht treibbar). Ihr Wert ist der
+Forward-Guard auf die Helper-Grenze: `test_boundary_is_not_the_025_shadow_gate`
+pinnt, dass die Grenze `threshold` ist und nicht das 0.25-Shadow-Gate, und
+`test_returns_plain_bool_not_numpy` (numpy-Input) sichert den `bool()`-Wrapper
+für psycopg2. ruff + format + mypy grün.
+
+---
 ## [2026-07-10] Merge-Train-Onboarding: Kythera-PRs merged jetzt der Daemon, nicht die Session (T-2026-CU-9050-063)
 
 Kythera fährt ab jetzt auf dem merge-train (`services/merge_train/` in
