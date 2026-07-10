@@ -1,3 +1,47 @@
+## [2026-07-10] Der Gate-Wert wird messbar: ROM1-Counterfactual-Scorer für unterdrückte Signale (T-2026-CU-9050-047)
+
+Bis jetzt war der Nutzen des Orchestrator-Gates schlicht **unbekannt**. Das 4D-Gate
+ist zu 89 % default-open, und die +8pp ROM1-Win-Rate sind durch drei gleichgerichtete
+Biases verzerrt — es gab keine Zahl dafür, was eine Unterdrückung erspart oder
+gekostet hat. Dieser Task liefert das Messwerkzeug (Report 16, §8).
+
+### Was der Scorer tut
+`tools/rom1_counterfactual.py` rechnet für jede Row in `orchestrator_suppressed_signals`
+das hypothetische Outcome nach: Welche ROM1-Geometrie hätte der Orchestrator zum
+Signal-Zeitpunkt gepostet, und wie wäre dieser Trade im First-Touch-Replay
+(`tools.walkforward_sim.simulate_exit`) ausgegangen — wick-aware, SL-first,
+Monitor-Trailing, Fees. Aggregiert pro Suppression-Reason
+(`bot_not_whitelisted:wr_below_overall`, `orchestrator_cooldown`, …): Win-Rate,
+Netto-PnL, R. **Positiver Netto-PnL auf der suppressed-Seite = das Gate hat Geld
+liegen gelassen.**
+
+### Beide Seiten desselben Gates
+`--side forwarded` scored die durchgelassene Seite aus `orchestrator_open_trades`,
+gebucketed nach `wl_reason` (die B8-Spalte aus T-2026-CU-9050-046) — also pro
+Gate-PFAD: echte 4D-Zelle vs. `no_whitelist_entry` (default-open) vs. Fallback.
+`--side both` stellt beide Seiten bei gleichem Horizont nebeneinander. Erst dieser
+Vergleich beantwortet, ob der Gate-Pfad Gewinner von Verlierern trennt oder der
++8pp-WR ein Artefakt der default-open-Rate ist. Die `dedupe`-Reasons
+(same/opposite_direction_open, cooldown) sind als eigene `bucket_class` getrennt —
+sie messen Positions-Hygiene, nicht das 4D-Urteil, und wären sonst irreführend.
+
+### Disziplin
+Reine Mess-/Scorer-Schicht: kein Gate-Flip, kein Scharf-Schalten, read-only
+DB-Session, SELECT-only, committet nie. R1-sauber — die Entscheidungskerze ist die
+letzte zum Signal-Zeitpunkt geschlossene, der Exit-Scan beginnt auf der Kerze danach
+(`as_of_index`). Die Geometrie kommt aus **einer** Quelle: `compute_rom1_trade_params`
+bekam optionale As-of-Parameter `price=`/`df=` (dasselbe P0.10-Muster wie
+`get_hvn_and_sr_levels(df=)`), sodass der Replay exakt die Live-Geometrie postet —
+kein Copy-Paste-Skew (X-R1). Der eigentliche Lauf braucht eine VPS-Session
+(Preisdaten/DB); geliefert ist das Tooling plus DB-freie Tests.
+
+Verifikation: `backtest/test_rom1_counterfactual.py` (19 Tests, standalone/DB-frei)
+deckt As-of-Indexierung/kein Look-ahead, Horizont-Kappung, Skip-Accounting und
+Aggregation ab; `test_signal_orchestrator.py` bekam den As-of-Pfad plus einen
+Live-vs-As-of-Paritätstest. `guard.py verify` grün.
+
+---
+
 ## [2026-07-10] Das 10s-Raster ist unter Last eine Fiktion: Pump/Dump-Fenster normalisiert, totes Volume-Gate repariert (T-2026-CU-9050-035)
 
 Der EPD2-Retrain, für den dieser Task angelegt wurde, ist **nicht** passiert — die
