@@ -20,8 +20,15 @@ extend-exclude = [
 # Start deliberately lean so pre-commit is adoptable on a large legacy tree.
 # F  = pyflakes (undefined names / unused imports — would have caught the
 #      missing `_kcfg` import), E4/E7/E9 = import/statement/syntax errors,
-# I  = import sorting, B = bugbear, UP = pyupgrade.
-select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
+# I  = import sorting, B = bugbear, UP = pyupgrade,
+# DTZ = flake8-datetimez — the enforcement half of the R3 UTC policy
+#      (T-2026-CU-9050-032). Bans naive `datetime.now()`/`utcnow()`/
+#      `fromtimestamp(ts)`; `core/time.py` is the sanctioned way in.
+#      Two holes it cannot close, both tracked in docs/UTC_POLICY.md §8:
+#      the excluded trees above (P2.1 lives in `strategies/`), and the
+#      SQL-side drift, where `NOW()` is compared against a naive column and
+#      no Python datetime appears at all (P2.4, P2.21).
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "DTZ"]
 ignore = [
     "E501",  # line length is the formatter's job; legacy lines are long
     "B008",  # function calls in argument defaults (common in this codebase)

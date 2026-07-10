@@ -41,6 +41,14 @@ MODEL_LONG_PATH = 'long_reversion_model.joblib'
 RUB2_SHORT_ARTIFACT_PATH = 'rub2_model_SHORT.pkl'
 RUB2_EXPECTED_FEATURES = RUB_FEATURES + FUNDING_FEATURES
 REVERSION_THRESH_LONG = 0.75
+# Posting-Tag der LONG-Seite. Konstante mit Absicht: LONG fährt das Legacy-Modell
+# ohne Artefakt-Meta und postet per Operator-Entscheid (2026-07-06) unter RUB2.
+# Die SHORT-Seite zieht ihren Tag dagegen aus RUB2_SHORT["tag"] (= meta.model_id).
+RUB_LONG_TAG = "RUB2"
+# Gleicher Wert, ANDERE Bedeutung: das Tag, unter dem dieser Bot vor
+# T-2026-CU-9050-030 BEIDE Richtungen postete. Nur für den transitionalen
+# Cooldown-Dedup — siehe check_rubberband_conditions.
+RUB_LEGACY_TAG = "RUB2"
 
 MODEL_LONG = None
 # Volle load_artifact-Contract-Form (KEIN Teil-Dict): loaded_at=0.0 erzwingt den
@@ -213,10 +221,19 @@ def check_rubberband_conditions():
 
             is_long = event_type == "REVERSION_UP"
             direction = "LONG" if is_long else "SHORT"
-            # RUB2 (Operator 2026-07-06): LONG-Gate wieder offen (Intent: Idee ist
-            # symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML) —
-            # geänderte Generation postet unter neuem Tag (Versionierungs-Regel).
-            module_tag = "RUB2"
+            # Der Posting-Tag ist RICHTUNGSABHÄNGIG (T-2026-CU-9050-030):
+            #   LONG  — fährt das Legacy-Modell long_reversion_model.joblib, das gar
+            #           kein Artefakt-Meta hat. Es postet per Operator-Entscheid
+            #           (2026-07-06) trotzdem unter RUB2: das LONG-Gate wurde mit der
+            #           RUB2-Generation wieder geöffnet (Intent: Idee ist symmetrisch,
+            #           LONG-Schwäche womöglich Artefakt des kaputten ML), und der neue
+            #           Tag trennt die wieder-offene Seite von der RUB1-Historie.
+            #           Bewusst eine Konstante — RUB2_SHORT["tag"] hier zu ziehen wäre
+            #           schlicht falsch, es ist nicht das Modell, das gefeuert hat.
+            #   SHORT — zieht den Tag aus der Artefakt-Meta (load_artifact setzt
+            #           tag = meta.model_id). Ein RUB3-Retrain im selben Slot postet
+            #           damit als RUB3, statt still mit RUB2 zu verschmelzen (Regel 6).
+            module_tag = RUB_LONG_TAG if is_long else RUB2_SHORT["tag"]
 
             # FIX: Cooldown-Check VOR der teuren ML-Prediction.
             # Vorher lief predict_proba auch dann, wenn der Coin noch im Cooldown war
@@ -224,7 +241,15 @@ def check_rubberband_conditions():
             # Der Shadow-Log unterhalb bleibt erhalten — er dokumentiert alle
             # potenziellen Trades, auch die abgelehnten. Beim Skip durch Cooldown
             # loggen wir weiterhin fürs Monitoring.
-            if check_cooldown(conn, module_tag, symbol, direction, 4):
+            # Transitionaler Dedup (T-2026-CU-9050-030): der Cooldown ist RUBs EINZIGE
+            # Re-Fire-Sperre — anders als MIS/QM prüft dieser Bot ai_signals nicht auf
+            # einen offenen Trade. Der Cooldown-Key ist der Tag, und der wechselt beim
+            # RUB3-Rollout auf der SHORT-Seite. Eine frische RUB2-Cooldown-Row würde ein
+            # RUB3-Signal auf demselben Coin dann nicht mehr sperren. Also zusätzlich
+            # gegen den Alt-Tag prüfen; solange die Tags gleich sind (heute), fällt der
+            # zweite Query weg.
+            cooldown_tags = [module_tag] if module_tag == RUB_LEGACY_TAG else [module_tag, RUB_LEGACY_TAG]
+            if any(check_cooldown(conn, t, symbol, direction, 4) for t in cooldown_tags):
                 logger.debug(f"RUB1 Prediction für {symbol} {direction} im Cooldown — skip.")
                 continue
 

@@ -57,7 +57,7 @@ import json
 import os
 import sys
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -66,6 +66,7 @@ import scipy.signal
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+from core.candles import read_candles, read_candles_with_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.mis_features import (  # noqa: E402
     FEATURE_COLS as MIS1_FEATURE_COLS,
@@ -81,6 +82,7 @@ from core.mis_features import (
 )
 from core.funding_features import funding_features_asof, load_funding  # noqa: E402
 from core.rub_features import build_rub_features, rub_event_type, rub_trend  # noqa: E402
+from core.time import utc_now  # noqa: E402
 from core.trade_utils import (  # noqa: E402
     calculate_smart_targets,
     compute_smart_target_levels,
@@ -169,12 +171,27 @@ def load_coins() -> list[str]:
     return [c.upper() for c in coins if c.upper().endswith("USDT")]
 
 
+OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
+
+
+def _window_start(days: int) -> datetime:
+    """Untere Fenstergrenze. Aware UTC über core.time (R3-Policy) — der obere
+    Schnitt an der forming Kerze rechnet DB-seitig in core.candles."""
+    return utc_now() - timedelta(days=int(days))
+
+
 def load_ohlcv(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:
+    """OHLCV window, ASC, GESCHLOSSENE Kerzen (R1-Disziplin).
+
+    Über core.candles statt roher f-String-SQL: der Cutoff dort ist Epoch-
+    Arithmetik auf der DB-Uhr und damit für JEDEN Timeframe richtig. Die
+    Nachbar-Loader schneiden mit `date_trunc('hour', NOW())` — für die 1d- und
+    4h-Reads dieses Simulators wäre das zu grob und ließe die laufende Kerze
+    stehen. Look-ahead hier vergiftet die Labels des gesamten Retrain-Programms.
+    """
     try:
-        df = pd.read_sql_query(
-            f'SELECT open_time, open, high, low, close, volume FROM "{symbol}_{tf}" '
-            f"WHERE open_time >= NOW() - INTERVAL '{int(days)} days' ORDER BY open_time ASC",
-            conn,
+        df = read_candles(
+            conn, symbol, tf, start=_window_start(days), include_forming=False, columns=OHLCV_COLUMNS
         )
     except Exception:
         conn.rollback()
@@ -193,19 +210,21 @@ SNIPER_PRICE_INDICATORS = [
     "boll_upper_20", "boll_lower_20",
 ]
 SNIPER_ABS_INDICATORS = ["rsi_14", "tsi_25_13_13", "macd_dif_normal_12_26_9", "macd_dea_normal_12_26_9"]
+SNIPER_JOIN_INDICATORS = SNIPER_PRICE_INDICATORS + SNIPER_ABS_INDICATORS + ["atr_14", "trend_direction"]
 
 
 def load_joined(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:
-    """OHLCV + Indikator-Join, wie ihn 25_smc_ml_sniper live liest."""
-    fields = ["t1.open_time", "t1.open", "t1.high", "t1.low", "t1.close", "t1.volume"]
-    for ind in SNIPER_PRICE_INDICATORS + SNIPER_ABS_INDICATORS + ["atr_14", "trend_direction"]:
-        fields.append(f"t2.{ind}")
+    """OHLCV + Indikator-Join, wie ihn 25_smc_ml_sniper live liest — aber nur
+    GESCHLOSSENE Kerzen. Live repaintet Bot 25 auf der forming Kerze (Report
+    CANDLE_CALL_SITES §3); der Replay darf das nicht nachbauen, sonst lernt das
+    Modell auf Kerzen, die es zur Entscheidungszeit nie gesehen hat."""
     try:
-        df = pd.read_sql_query(
-            f'SELECT {", ".join(fields)} FROM "{symbol}_{tf}" t1 '
-            f'LEFT JOIN "{symbol}_{tf}_indicators" t2 ON t1.open_time = t2.open_time '
-            f"WHERE t1.open_time >= NOW() - INTERVAL '{int(days)} days' ORDER BY t1.open_time ASC",
-            conn,
+        df = read_candles_with_indicators(
+            conn, symbol, tf,
+            start=_window_start(days),
+            include_forming=False,
+            candle_columns=OHLCV_COLUMNS,
+            indicator_columns=SNIPER_JOIN_INDICATORS,
         )
     except Exception:
         conn.rollback()
