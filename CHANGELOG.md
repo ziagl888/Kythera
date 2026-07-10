@@ -13,6 +13,29 @@ neu gestartet. Kein Deploy-Hook (Build-Repo, post-merge läuft nichts).
 Doku: `docs/OPUS-HANDOFF.md` §2 Schritt 7 (inkl. Bounce-/Re-Queue-Regeln) und
 `CLAUDE.md` Workflow. Dieser PR ist selbst der erste Zug — sein Merge durch den
 Daemon ist die End-to-End-Verifikation inkl. Daemon-PAT-Zugriff aufs Repo.
+## [2026-07-10] AIM2-Trainer: Meta-Gate-Tags aus load_events ausgeschlossen — F6-Symmetrie zum Serving (T-2026-CU-9050-065)
+
+Folge aus T-2026-CU-9050-051. Die Serving-Seite (`15_ai_master_bot.load_signal_stream`)
+schließt AIM1/AIM2/AIM2-TOPN aus dem Kandidaten-/Schwarm-Stream aus (F6-Selbst-Feedback),
+der Trainer `tools/aim2_build_dataset.py` filterte aber nur `model_name <> 'AIM1'`. Ein
+künftiger AIM2-Retrain hätte damit die eigenen Meta-Gate-Ausgaben (AIM2 postet seit 06.07.,
+AIM2-TOPN sobald live) als Trainings-Events gelabelt — dieselbe Leckage, die serving-seitig
+längst gefixt ist, und ein Bruch der AIM2_DESIGN-§3-Invariante „identische Definition wie im
+Trainer".
+
+### Changed
+- `tools/aim2_build_dataset.py`: `load_events` zieht jetzt `model_name NOT IN ('AIM1', 'AIM2', %s)`
+  mit dem Tag aus `core.aim2_topn.MODEL_TAG` — Symmetrie zum Serving hergestellt, Tag
+  single-sourced (kein zweites Literal).
+
+### Added
+- `backtest/test_aim2_event_source_symmetry.py` (DB-frei, standalone): pinnt statisch, dass
+  Trainer und Serving denselben Meta-Gate-Ausschluss tragen und keiner mehr den alten
+  `<> 'AIM1'`-Filter benutzt.
+
+Kein Live-Eingriff, kein Retrain-Rollout — reine Definitionskorrektur für den nächsten
+Trainings-Lauf. Verifiziert: neuer Test grün, `guard.py verify` (24 Fixtures), ruff+mypy grün.
+
 ## [2026-07-10] Spike: Replication-Scoring (polybot) auf Hyperliquid-Public-Fills evaluiert (T-2026-CU-9050-058)
 
 Machbarkeits-Eval, ob polybots „Replication Scoring"-Konzept
