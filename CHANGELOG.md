@@ -20,10 +20,18 @@ Dieser Eintrag legt die Policy, **ohne Live-Semantik zu ändern**:
   die Reihenfolge des Rests, und `docs/migrations/2026-07-r3-timestamptz.sql` als
   vorbereitete, **nicht ausgeführte** DDL.
 
-Angepasst auf die neue Zeitquelle, jeweils verhaltensgleich: `15_ai_master_bot`
-(deprecated `utcnow()`), `2_indicator_engine` (State-Token und Scheduler-Uhr),
-`core/market_utils.check_cooldown` (handgeschriebener Normalisierer → `to_utc()`),
-`check_funding` (rendert eine UTC-Epoche nicht mehr als Lokalzeit).
+Angepasst auf die neue Zeitquelle: `15_ai_master_bot` (deprecated `utcnow()` →
+`utc_now_naive()`, identisch) und `core/market_utils.check_cooldown`
+(handgeschriebener Normalisierer → `to_utc()`, identisch). Zwei Stellen ändern
+eine sichtbare, aber folgenlose Ausgabe: `2_indicator_engine` schreibt den
+State-Token und die Scheduler-Log-Zeile jetzt in UTC — der Token ist für
+`3_detectors` ein opaker String-Vergleich, und der Minuten-Trigger ist gegenüber
+einer Vollstunden-Offset-TZ invariant; `check_funding` rendert seine UTC-Epoche
+nicht mehr als Lokalzeit.
+
+`backtest/test_time.py` pinnt die Semantik der neuen Zeitquelle DB-frei, inklusive
+eines Laufs unter gesetztem `TZ=Europe/Bucharest` — genau die Fehlerklasse
+„läuft lokal, driftet auf dem VPS".
 
 ### Warum der Pool-Flip NICHT drin ist
 Ursprünglich sollte `-c timezone=UTC` im Connection-Pool mit. Die Session-TZ

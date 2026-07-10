@@ -57,7 +57,7 @@ Zielzustand ist überall `timestamptz`.
 1. `core/database.py` — `options="-c lock_timeout=30000 -c timezone=UTC"`.
 2. `3_detectors.py` — beide `datetime.now()` auf `utc_now_naive()` (P2.3). **Pflicht**: ohne diesen Fix kippt der Flip `33_ai_fif1_bot.fifo_burst_counts` von korrekt auf Drift, während er `5_trade_monitor` (P2.6) und `core/market_utils.update_cooldown` (P2.5) repariert.
 3. Die Kompensationen aus §5 entfernen.
-4. Die Docstrings mitziehen, die heute „PG-Lokalzeit" behaupten: `15_ai_master_bot.py:12,107`, `33_ai_fif1_bot.py:183`, `tools/*`.
+4. Die Docstrings mitziehen, die heute „PG-Lokalzeit" behaupten: Modul-Docstring und `to_utc_naive()` in `15_ai_master_bot.py`, `fetch_recent_signals()` und `fifo_burst_counts()` in `33_ai_fif1_bot.py`, sowie die Header in `tools/*`.
 5. Entscheiden, was mit der **Historie** passiert (§6).
 
 Restart-Effekt: Zeilen von vor dem Restart tragen Lokalzeit und werden ab dann als UTC gelesen — sie erscheinen +2/+3 h in der Zukunft. Betroffen sind die kurzen Fenster (60 min Trade-Monitor, 1 h / 24 h FIF1-Burst-Dichte, 5 Tage AIM2-Signal-Stream); der Effekt läuft mit dem längsten Fenster aus.
@@ -70,12 +70,12 @@ Sechs Stellen rechnen die Drift bereits explizit heraus. Sie sind heute **korrek
 
 | Stelle | Was sie tut |
 |---|---|
-| `15_ai_master_bot.py:106` (`to_utc_naive`) + `:126` (`since_local`) | AIM2-Signal-Stream: `ml_predictions_master.time` und `*_trades_master.time` von Bukarest nach UTC |
-| `tools/research_dataset_common.py:34,63` | `LOCAL_TZ`-Konstante + `to_utc_naive` für alle Research-Datasets |
-| `tools/aim2_build_dataset.py:96` | AIM2-Trainings-Datensatz |
-| `tools/fif1_build_dataset.py` | FIF1-Trainings-Datensatz |
-| `tools/pex1_build_dataset.py:79,96` | PEX1-Trainings-Datensatz |
-| `tools/retrain_sra2.py:184` | SRA2-Retrain |
+| `15_ai_master_bot.to_utc_naive()` + `load_signal_stream.since_local` | AIM2-Signal-Stream: `ml_predictions_master.time` und `*_trades_master.time` von Bukarest nach UTC |
+| `tools/research_dataset_common.py` — `LOCAL_TZ` + `to_utc_naive()` | die geteilte Basis aller Research-Datasets |
+| `tools/aim2_build_dataset.to_utc_naive()` | AIM2-Trainings-Datensatz |
+| `tools/fif1_build_dataset.py` (importiert `to_utc_naive`) | FIF1-Trainings-Datensatz |
+| `tools/pex1_build_dataset.py` (importiert `LOCAL_TZ`) | PEX1-Trainings-Datensatz |
+| `tools/retrain_sra2.py` (lokalisiert `closed_trades3`-Zeiten) | SRA2-Retrain |
 
 Die Trainer sind der harte Teil: sie lesen **Historie**. Nach dem Flip enthält jede naive Spalte beide Domänen — Lokalzeit vor dem Restart, UTC danach. Weder „immer kompensieren" noch „nie kompensieren" ist dann richtig. Ein Trainer, der das ignoriert, produziert Train/Serve-Skew — genau den Fehlermodus, gegen den AIM2 gebaut wurde (P0.13).
 

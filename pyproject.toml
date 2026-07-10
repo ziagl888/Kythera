@@ -23,9 +23,11 @@ extend-exclude = [
 # I  = import sorting, B = bugbear, UP = pyupgrade,
 # DTZ = flake8-datetimez — the enforcement half of the R3 UTC policy
 #      (T-2026-CU-9050-032). Bans naive `datetime.now()`/`utcnow()`/
-#      `fromtimestamp(ts)`; `core/time.py` is the sanctioned way in. The
-#      excluded trees above are NOT covered — the mechanical pull-through of
-#      the remaining TZ findings (AUDIT_TODO P2.1/P2.4/P2.21) is a follow-up.
+#      `fromtimestamp(ts)`; `core/time.py` is the sanctioned way in.
+#      Two holes it cannot close, both tracked in docs/UTC_POLICY.md §8:
+#      the excluded trees above (P2.1 lives in `strategies/`), and the
+#      SQL-side drift, where `NOW()` is compared against a naive column and
+#      no Python datetime appears at all (P2.4, P2.21).
 select = ["E4", "E7", "E9", "F", "I", "B", "UP", "DTZ"]
 ignore = [
     "E501",  # line length is the formatter's job; legacy lines are long
