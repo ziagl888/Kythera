@@ -26,7 +26,7 @@ Migrations-Block 4.
 Signal-Raten-Delta, DB-frei über die Regression-Guard-Fixtures replayt
 (4 Coins × 1h/4h, 3.608 Scan-Punkte, jeweils 150-Kerzen-Fenster mit der letzten
 Zeile als forming Kerze; gezählt wird der Geometrie-Trigger vor ML-Gate und
-Cooldown):
+Cooldown). Reproduzierbar über `python tools/sniper_forming_delta.py`:
 
 | Pattern | vorher | nachher | beide | nur vorher | nur nachher |
 |---|---|---|---|---|---|
