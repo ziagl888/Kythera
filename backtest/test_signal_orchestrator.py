@@ -964,6 +964,46 @@ def test_compute_rom1_trade_params_returns_none_when_no_targets():
     assert params is None
 
 
+def test_compute_rom1_trade_params_asof_price_bypasses_db():
+    """As-of-Pfad (T-2026-CU-9050-047): price=/df= übergeben → KEIN
+    _get_latest_price-DB-Zugriff, price ersetzt den CMP, df geht an den
+    Level-Lookup durch. Muster wie get_hvn_and_sr_levels(df=...)."""
+    fake_df = object()  # nur Durchreichung prüfen — der Level-Lookup ist gemockt
+    with mock.patch.object(orch, "_get_latest_price") as m_price, \
+         mock.patch.object(orch, "get_hvn_and_sr_levels",
+                           return_value=([92.0], [105.0, 110.0])) as m_sr, \
+         mock.patch.object(orch, "ensure_min_tp_distance",
+                           side_effect=lambda t, e, l, min_pct: list(t)), \
+         mock.patch.object(orch, "cap_leverage_to_sl", _real_cap_leverage_to_sl), \
+         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+        params = orch.compute_rom1_trade_params(None, "BTCUSDT", "LONG", price=100.0, df=fake_df)
+
+    m_price.assert_not_called()                       # kein DB-Preis-Read
+    m_sr.assert_called_once()
+    assert m_sr.call_args.kwargs.get("df") is fake_df  # As-of-Fenster durchgereicht
+    assert params is not None
+    assert params["entry1"] == 100.0
+    assert params["entry2"] == 95.0
+    assert params["sl"] == 92.0
+
+
+def test_compute_rom1_trade_params_asof_matches_live_path():
+    """Bit-Parität: derselbe Preis über den Live-Pfad (_get_latest_price) und
+    über den As-of-Pfad (price=) muss identische Geometrie liefern — das ist die
+    X-R1-Garantie, auf der der Counterfactual-Scorer steht."""
+    with mock.patch.multiple(
+        orch,
+        get_hvn_and_sr_levels=mock.MagicMock(return_value=([95.0, 90.0, 85.0], [108.0, 112.0])),
+        ensure_min_tp_distance=mock.MagicMock(side_effect=lambda t, e, l, min_pct: list(t)),
+        cap_leverage_to_sl=_real_cap_leverage_to_sl,
+        get_max_leverage=mock.MagicMock(return_value="20x"),
+    ):
+        with mock.patch.object(orch, "_get_latest_price", return_value=100.0):
+            live = orch.compute_rom1_trade_params(mock.MagicMock(), "BTCUSDT", "SHORT")
+        asof = orch.compute_rom1_trade_params(None, "BTCUSDT", "SHORT", price=100.0, df=None)
+    assert live == asof
+
+
 def test_build_rom1_cornix_message_format():
     """Das ausgegebene Message-Format muss Cornix-parsebar sein und wieder
     von parse_cornix_signal() erkannt werden."""
