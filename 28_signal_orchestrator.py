@@ -926,10 +926,13 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
     - In der Zwischenzeit würde der Trade als "still open" in der
       Statistik erscheinen und die WR verzerren
 
-    Classification: Der "CLOSED_REGIME_CHANGE"-Marker wird von Market-
-    Tracker, Analyzer und Orchestrator-Outcome-Classifier als NEUTRAL
-    behandelt (nicht als Win/Loss) — der Trade wurde aus externen
-    Gründen geschlossen, nicht wegen des Bot-Signals.
+    Classification (B9-Zensur-Korrektur, T-2026-CU-9050-048): Der
+    "CLOSED_REGIME_CHANGE"-Marker wird von Market-Tracker, Analyzer und
+    Orchestrator-Outcome-Classifier mit seinem REALEN PnL zum Close-Zeitpunkt
+    als Win/Loss gewertet (vorher pauschal NEUTRAL — das zensierte genau die
+    per Auto-Close realisierten Verluste und biaste die ROM1-WR nach oben,
+    Report 16 B9). Der Auto-Close ist der Exit des Trades, nicht ein externes
+    Housekeeping-Event.
 
     Returns:
         dict mit 'ai_closed' und 'classic_closed' (Anzahl der geschlossenen)
@@ -1014,8 +1017,13 @@ def _classify_outcome_by_pnl(
     """
     reason = (close_reason or "").upper()
     # Neutral-Marker: extern verursachte Closes die nicht vom Bot-Signal kommen
-    # → nicht in Win/Loss-Statistik zählen
-    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason or "REGIME_CHANGE" in reason:
+    # → nicht in Win/Loss-Statistik zählen.
+    #
+    # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE ist NICHT mehr
+    # neutral — ein Auto-Close bei Regime-Wechsel realisiert einen echten PnL,
+    # der als Win/Loss zählen muss (near-0%-Closes fängt der Micro-PnL-Filter
+    # weiter neutral ab). Spiegelt _classify_outcome in 27_bot_regime_analyzer.
+    if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason:
         return "CLOSED_NEUTRAL"
     if entry is None or close_price is None:
         return "CLOSED_NEUTRAL"
@@ -1255,9 +1263,10 @@ async def check_regime_change_and_close(conn) -> None:
         # closed_ai_signals, damit sie nicht als "still open" in den
         # Market-Tracker-Reports erscheint bis der Monitor irgendwann
         # ihren eigenen SL/TP trifft (kann Tage dauern). Der Marker
-        # "CLOSED_REGIME_CHANGE" wird downstream als neutraler Close
-        # klassifiziert (nicht Win/nicht Loss). FIX P1.9: fremde Trades
-        # (andere Modelle, active_trades_master) bleiben unangetastet.
+        # "CLOSED_REGIME_CHANGE" wird downstream mit seinem realen PnL als
+        # Win/Loss klassifiziert (B9-Zensur-Korrektur, T-2026-CU-9050-048).
+        # FIX P1.9: fremde Trades (andere Modelle, active_trades_master)
+        # bleiben unangetastet.
         close_stats = force_close_trades_for_regime_change(conn, coin, direction)
         total_ai += close_stats["ai_closed"]
         total_classic += close_stats["classic_closed"]
