@@ -121,6 +121,75 @@ def test_next_feature_change_infers_the_interval_from_history():
     assert next_feature_change(_frame(times=[T0])[SYMBOL], T0) is None, "a single row cannot yield an interval"
 
 
+def test_interval_estimate_never_overshoots_a_shortening_cadence():
+    """The estimate must be CONSERVATIVE. Overestimating parks the cache across a real
+    settlement and serves a stale value (parity break); underestimating only costs an
+    extra load. A coin switching 8h→1h — or a gap skewing the recent diffs — is exactly
+    where a median overshoots by hours. The minimum cannot.
+
+    The rasters are deliberately non-uniform: with a uniform one, minimum, median and
+    last-diff all coincide and the assertion would be vacuous."""
+    # (a) Kadenz kippt 8h → 1h: ein Median der letzten Abstaende saehe +8h.
+    times = [T0 + datetime.timedelta(hours=8 * i) for i in range(N)]
+    times += [times[-1] + datetime.timedelta(hours=i) for i in (1, 2)]
+    last = times[-1]
+    due = next_feature_change(_frame(times=times)[SYMBOL], last + datetime.timedelta(minutes=1))
+    assert due == pd.Timestamp(last + datetime.timedelta(hours=1)), (
+        f"estimate {due} overshoots the true 1h cadence — a median of the last diffs would say +8h"
+    )
+
+    # (b) Der LETZTE Abstand ist eine Ingestion-Luecke (16h). Wer nur den letzten Diff
+    #     nimmt, ueberschaetzt genauso wie der Median — das Minimum nicht.
+    gapped = [*times, last + datetime.timedelta(hours=16)]
+    gap_last = gapped[-1]
+    due = next_feature_change(_frame(times=gapped)[SYMBOL], gap_last + datetime.timedelta(minutes=1))
+    assert due == pd.Timestamp(gap_last + datetime.timedelta(hours=1)), (
+        f"estimate {due} inherited the 16h gap as the interval — the last diff is not a safe estimator"
+    )
+
+
+def test_a_shortening_cadence_never_serves_a_stale_value():
+    """The behavioural half of the test above, straight from the adversarial finding."""
+    clear_funding_cache()
+    times = [T0 + datetime.timedelta(hours=8 * i) for i in range(N)]
+    times += [times[-1] + datetime.timedelta(hours=i) for i in (1, 2)]
+    loader = _CountingLoader(_frame(times=times))
+    last = times[-1]
+
+    _cached(last + datetime.timedelta(minutes=1), loader)  # gecacht bis last+1h
+
+    # Die nächste (1h-)Abrechnung landet. Der Cache MUSS sie sehen.
+    loader.by_sym = _frame(times=[*times, last + datetime.timedelta(hours=1)])
+    ts = last + datetime.timedelta(hours=1, minutes=5)
+    served = _cached(ts, loader)
+    assert served == funding_features_asof(loader.by_sym, SYMBOL, ts), (
+        "the cache sat across a real settlement and served a stale value"
+    )
+
+
+def test_the_boundary_matches_the_asof_cut_at_an_exact_settlement_timestamp():
+    """Both sides must cut with searchsorted 'left'. With 'right', a query landing
+    exactly on a funding_time would reuse an entry whose value changes a nanosecond
+    later."""
+    by_sym = _frame()
+    g = by_sym[SYMBOL]
+    exact = LAST  # ts liegt exakt auf einer Abrechnung
+    assert next_feature_change(g, exact) == pd.Timestamp(exact), (
+        "the boundary must be the settlement itself when ts sits exactly on it"
+    )
+    # No-lookahead: der Satz AUF ts geht nicht ein (funding_time < ts, strikt).
+    assert funding_features_asof(by_sym, SYMBOL, exact) == funding_features_asof(
+        by_sym, SYMBOL, exact - datetime.timedelta(seconds=1)
+    ), "a settlement exactly at ts leaked into the features — that is lookahead"
+
+    clear_funding_cache()
+    loader = _CountingLoader(by_sym)
+    assert _cached(exact, loader) == funding_features_asof(by_sym, SYMBOL, exact)
+    after = _cached(exact + datetime.timedelta(seconds=1), loader)
+    assert after == funding_features_asof(by_sym, SYMBOL, exact + datetime.timedelta(seconds=1))
+    assert loader.calls == 2, "the entry cached exactly on a settlement was reused one second later"
+
+
 # ------------------------------------------------------------------- cache behaviour
 
 

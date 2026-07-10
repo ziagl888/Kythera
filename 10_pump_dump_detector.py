@@ -789,7 +789,9 @@ def process_coin_logics(conn, symbol):
             # Der Load ist gecacht (funding_features_cached): der 900s-Timer sperrt
             # zwar vor dieser Strecke, wird aber nur im Live-Trade-Zweig gesetzt —
             # ein Coin, der dauerhaft im Shadow-Band predictet, zöge die Query sonst
-            # auf JEDEM 10s-Tick. Der Stunden-Key macht das Caching wertneutral.
+            # auf JEDEM 10s-Tick. Der Cache-Schluessel kommt aus den Daten (bis zur
+            # naechsten Abrechnung, die das Ergebnis aendern kann) und ist deshalb
+            # wertneutral — siehe core/funding_features.next_feature_change.
             feats = {**base_features, **funding_features_cached(conn, symbol, now)}
             candidates = []
             for direction, art in epd2.items():

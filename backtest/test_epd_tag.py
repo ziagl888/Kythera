@@ -25,7 +25,7 @@ What this guard protects:
     dedupe key and it flips on the generation switch;
   * an active-trade check against ai_signals stops a second live position on a coin
     whose trade outlived the in-memory 900s timer (T-2026-CU-9050-055), and the
-    funding load goes through the value-neutral per-hour cache.
+    funding load goes through the value-neutral settlement-bound cache.
 
 Run: python backtest/test_epd_tag.py
 """
@@ -117,10 +117,10 @@ def test_funding_features_are_served_asof_the_event_through_the_cache():
     event IS this tick, so serving must use `now`, not a candle boundary.
 
     The funding features are model INPUT, so the load cannot move behind the trade
-    decision — what the per-hour cache removes is the repetition (T-2026-CU-9050-055).
+    decision — what the settlement-bound cache removes is the repetition (T-2026-CU-9050-055).
     Its values are identical; see backtest/test_funding_cache.py."""
     assert re.search(r"funding_features_cached\(conn,\s*symbol,\s*now\)", SRC), (
-        "funding is no longer served as-of the event through the per-hour cache"
+        "funding is no longer served as-of the event through the settlement-bound cache"
     )
     assert not re.search(r"\bload_funding\(", SRC), (
         "a raw load_funding call is back in the 10s loop — the cache was bypassed"

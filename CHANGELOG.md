@@ -35,8 +35,8 @@ jedem 10s-Tick und zog die Query jedes Mal.
 „Funding nur bei Trades laden" ist **nicht baubar**: die 6 Funding-Spalten sind
 Modell-**Input**, sie erzeugen die `prob`, die überhaupt erst entscheidet, ob es ein
 Trade wird. Die Reihenfolge lässt sich nicht umdrehen. Was geht, ist die
-Wiederholung: `core/funding_features.funding_features_cached` cacht je Symbol mit
-einem **Stunden-Key**.
+Wiederholung: `core/funding_features.funding_features_cached` cacht je Symbol bis zur
+nächsten Abrechnung, die das Ergebnis überhaupt verändern kann.
 
 Der Schlüssel kommt dabei aus den **Daten**, nicht aus der Wanduhr — und das ist
 der Punkt, an dem der erste Entwurf dieses Fixes falsch war. Er cachte je
@@ -55,6 +55,14 @@ Zeile noch nicht ingested, ist der Eintrag bereits abgelaufen und es wird bei je
 Aufruf neu geladen, bis sie erscheint; ihr `funding_time` schiebt die Grenze dann
 weiter. Der Cache **korrigiert sich selbst**, statt auf einen Zeitplan zu wetten.
 
+Die Intervall-Schätzung nimmt das **Minimum** der jüngsten Abstände, nicht den Median
+— ein zweiter Fund des Re-Reviews. Die Fehlerrichtungen sind nicht gleich teuer: zu
+kurz geschätzt kostet einen zusätzlichen DB-Roundtrip, zu lang geschätzt lässt den
+Cache über einer echten Abrechnung sitzen und einen stale Wert ausliefern. Verkürzt
+ein Coin seine Kadenz (8h → 1h) oder verzerrt eine Ingestion-Lücke die Abstände,
+überschätzt ein Median (oder der letzte Abstand) um Stunden; das Minimum kann das
+strukturell nicht.
+
 Damit steht die Wertneutralität wieder auf der Invariante statt auf einer Annahme:
 `funding_features_asof` hängt vom Zeitstempel **ausschliesslich** über den
 `searchsorted`-Schnitt ab, und alle Aggregate sind Suffixe (`rates[-3:]`,
@@ -67,10 +75,11 @@ Verifikation DB-frei: `backtest/test_funding_cache.py` nagelt zuerst die Invaria
 selbst fest (as-of konstant zwischen zwei Abrechnungen, und beweglich über eine —
 beides oberhalb von `MIN_HISTORY`, sonst verglichen die Tests zwei leere Dicts),
 dann beide widerlegten Gegenbeispiele, dann das Cache-Verhalten. Erweitert:
-`test_epd_tag.py` (15), `test_sra_tag.py` (13). Mutations-geprüft — der Stunden-Key
-und eine aus der letzten Zeile statt aus dem nächsten Satz abgeleitete Grenze fallen
-beide durch. Letztere war ein echter Bug im ersten Anlauf dieses Fixes, den der neue
-Test gefangen hat.
+`test_epd_tag.py` (15), `test_sra_tag.py` (13). Mutations-geprüft: der uhr-gebundene
+Stunden-Key, eine aus der letzten Zeile statt aus dem nächsten Satz abgeleitete Grenze,
+ein Median- oder Letzter-Abstand-Schätzer und ein `searchsorted`-Schnitt auf `right`
+(Lookahead bei exakter Zeitstempel-Gleichheit) fallen alle durch. Die zweite und die
+dritte Mutation waren echte Bugs in den ersten beiden Anläufen dieses Fixes.
 
 **Live-Semantik ändert sich bewusst** an genau einer Stelle je Bot: ein Signal auf
 einem Coin, auf dem bereits ein Trade derselben Richtung offen ist, fällt weg. Erste

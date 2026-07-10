@@ -111,7 +111,7 @@ def funding_features_asof(by_sym: dict[str, pd.DataFrame], symbol: str, ts_utc) 
 # überspannen und dem Modell veraltetes Funding servieren — Bruch der
 # Trainer-Parität (Train == Serve == Replay).
 CACHE_SINCE_DAYS = 95  # as-of nutzt max. die letzten 270 Sätze
-#: Wie viele der jüngsten Abstände das Intervall schätzen (Median, robust gegen Lücken).
+#: Wie viele der jüngsten Abstände in die Intervall-Schätzung eingehen.
 CACHE_INTERVAL_SAMPLES = 8
 
 #: symbol → (gültig_bis = nächste fällige Abrechnung, Features)
@@ -130,7 +130,20 @@ def next_feature_change(g: pd.DataFrame, ts_utc) -> pd.Timestamp | None:
     die Sätze mit ``funding_time < ts`` ein. Das Ergebnis kippt also erst, wenn ts
     den NÄCHSTEN Satz überschreitet. Der steht entweder schon in den Daten (dann
     ist er die Grenze — auch wenn er auf keiner vollen Stunde liegt), oder er ist
-    noch nicht abgerechnet: dann schätzen wir ihn als letzter Satz + Intervall.
+    noch nicht abgerechnet: dann wird er aus der Historie geschätzt.
+
+    Die Schätzung nimmt bewusst das **Minimum** der jüngsten Abstände, nicht den
+    Median. Die beiden Fehlerrichtungen sind nämlich nicht gleich teuer:
+
+      * Zu KURZ geschätzt → der Eintrag läuft zu früh ab, ein zusätzlicher
+        DB-Roundtrip. Kostet Zeit, nie Korrektheit.
+      * Zu LANG geschätzt → der Cache sitzt über einer echten Abrechnung und
+        liefert einen stale Wert. Genau der Paritäts-Bruch, den dieser Cache
+        verhindern soll.
+
+    Verkürzt ein Coin seine Kadenz (Binance 8h → 4h/1h) oder verzerrt eine
+    Ingestion-Lücke die jüngsten Abstände, überschätzt ein Median das nächste
+    Intervall um Stunden. Das Minimum kann das nicht.
 
     ``None`` bei zu kurzer Historie — ohne zwei Sätze ist kein Intervall bestimmbar,
     dann wird nicht gecacht.
@@ -141,7 +154,7 @@ def next_feature_change(g: pd.DataFrame, ts_utc) -> pd.Timestamp | None:
     i = int(ft.searchsorted(pd.Timestamp(ts_utc), side="left"))
     if i < len(ft):
         return ft.iloc[i]
-    step = ft.diff().dropna().iloc[-CACHE_INTERVAL_SAMPLES:].median()
+    step = ft.diff().dropna().iloc[-CACHE_INTERVAL_SAMPLES:].min()
     if pd.isna(step) or step <= pd.Timedelta(0):
         return None
     return ft.iloc[-1] + step
