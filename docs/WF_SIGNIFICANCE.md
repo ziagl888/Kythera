@@ -36,7 +36,12 @@ Tests (`backtest/test_wf_significance.py`).
    (`p_value_dd_worse` = Anteil Permutationen mit tieferem DD). Der
    vt-Permutationstest auf Sharpe wurde bewusst NICHT übernommen: bei
    per-Trade-%-PnL ist Sharpe unter Reihenfolge-Permutation invariant — der
-   Test wäre degeneriert.
+   Test wäre degeneriert. Der DD wird **absolut in %-Punkten** unter dem Peak
+   gemessen (`equity − peak`), nicht auf die Peak-Höhe normiert — sonst
+   konfundiert die zufällige Peak-Höhe der fleet-weiten Multi-Coin-Replays den
+   Test (T-2026-CU-9050-053, siehe „Befund" unten). Es ist eine
+   Pfad-Clusterungs-Statistik, kein echter Portfolio-Drawdown (gleichzeitige
+   Signale bleiben sequenziell verkettet).
 3. **Bootstrap-CIs** (Resampling mit Zurücklegen) für per-Trade-Sharpe
    (bewusst nicht annualisiert — Trades sind nicht zeit-regulär), `avg_r` und
    TP1-Win-Rate, je mit `prob_positive`.
@@ -45,11 +50,16 @@ Tests (`backtest/test_wf_significance.py`).
 
 - `random_control.p_value < 0.05` UND `sharpe_per_trade_ci[0] > 0`: Edge ist
   von Zufall unterscheidbar — Kandidat für die nächste Batch-E-Stufe.
-- `p_value_dd_worse`: **derzeit nicht operativ lesen.** Die ursprüngliche
-  Lese-Regel (klein = maligne Verlust-Clusterung, nahe 1 = untypisch gnädiger
-  Pfad) ist auf den fleet-weiten Batch-E-Replays widerlegt — siehe „Befund:
-  Statistik 2 ist auf Multi-Coin-Replays konfundiert". Statistik 1 und 3 sind
-  reihenfolge-invariant und davon unberührt.
+- `p_value_dd_worse` (absoluter DD in %-Punkten, seit T-2026-CU-9050-053):
+  **klein** (≲ 0,05) = die Verluste clustern in der echten Chronologie
+  untypisch **maligne** — kaum eine Zufallsreihenfolge ist so schlecht; die
+  Regime-Abhängigkeit prüfen und das DD-Risiko am beobachteten Wert messen.
+  **Nahe 1** = fast jede Reihenfolge wäre gleich schlimm oder schlimmer, der
+  Pfad war untypisch gnädig → das DD-Budget aus `simulated_max_dd_median_pct`
+  nehmen. Der Wert ist eine **Pfad-Clusterungs-Statistik in %-Punkten**, kein
+  echter Portfolio-Drawdown (gleichzeitige Signale bleiben sequenziell
+  verkettet — Grenze, siehe „Befund" unten). Bis zum Fix war diese Regel auf
+  den Multi-Coin-Replays durch die Peak-Normierung genau verkehrt herum.
 - **Grenzen:** testet EINEN Kandidaten. Wer viele Varianten screent, braucht
   zusätzlich FDR/Deflated-Sharpe (bewusst Non-Scope, eigener Task). Kein
   Ersatz für Purge/Embargo im Simulator selbst. Und: die Sign-Flip-Kontrolle
@@ -102,36 +112,47 @@ Argument in beide Richtungen:
   SHORT-only und einem Zeitfenster. Kein Anlass, den Park-Entscheid
   anzufassen.
 
-## Befund: Statistik 2 ist auf Multi-Coin-Replays konfundiert
+## Befund (behoben, T-2026-CU-9050-053): Peak-Normierung konfundierte Statistik 2
 
-`max_drawdown_pct` normiert den Drawdown auf den laufenden Peak. Auf diesen
-Replays trägt die additive Equity (`100 + Σ %-PnL`) das nicht: pro Zeitstempel
-liegen 8,8 (rub) bis 20,2 (mis1) gleichzeitige Signale über 530–648 Coins an,
-die der Pfad als sequenzielle Einzelwetten verkettet. Die Equity fällt dadurch
-tief unter null (rub/LONG: 72 % des Pfades negativ, Tief −35.072) und der
-Quotient `(equity − peak) / peak` misst am Ende vor allem, **wie hoch der Peak
-zufällig stand**: mis1/SHORT und abr1/SHORT haben ihren Peak bei Trade 0
-(≈ 95), rub/LONG bei 2.477 — daher dort ein optisch mildes −421 % gegen einen
-Permutations-Median von −7.203 %.
+**Diagnose (Stand des Erst-Laufs).** `max_drawdown_pct` normierte den Drawdown
+auf den laufenden Peak (`(equity − peak) / peak`). Auf diesen Replays trägt die
+additive Equity (`100 + Σ %-PnL`) das nicht: pro Zeitstempel liegen 8,8 (rub)
+bis 20,2 (mis1) gleichzeitige Signale über 530–648 Coins an, die der Pfad als
+sequenzielle Einzelwetten verkettet. Die Equity fällt dadurch tief unter null
+(rub/LONG: 72 % des Pfades negativ, Tief −35.072) und der Quotient misst am Ende
+vor allem, **wie hoch der Peak zufällig stand**: mis1/SHORT und abr1/SHORT haben
+ihren Peak bei Trade 0 (≈ 95), rub/LONG bei 2.477 — daher dort ein optisch
+mildes −421 % gegen einen Permutations-Median von −7.203 %. Nebenbefund: der
+Guard `np.where(peak > 0, peak, 1.0)` wechselte bei Peak ≤ 0 stillschweigend
+Einheit UND Skalierung (relativ → %-Punkte × 100).
 
-Gegenprobe (200 Permutationen, Seed 42, absoluter DD in %-Punkten unter dem
-Peak statt Normierung) — die operative Aussage kippt:
+**Fix.** `max_drawdown_pct` rechnet den DD jetzt **absolut in %-Punkten** unter
+dem Peak (`equity − peak`, ohne Normierung; die +100-Basis kürzt sich heraus).
+Beobachteter und permutierter Pfad werden damit exakt gleich gemessen, frei vom
+Peak-Höhen-Artefakt; der Guard entfällt ersatzlos, weil keine Division mehr
+stattfindet. Damit ist `p_value_dd_worse` wieder operativ lesbar (Lese-Hilfe
+oben). Gewählte Option: absoluter DD statt eines overlap-respektierenden
+Equity-Pfads — letzterer bräuchte Kapitalallokations-/Sizing-Annahmen, die das
+Replay-JSONL nicht trägt, und würde von der `sum_net_pnl_pct`-Reporting-Konvention
+abweichen. **Grenze:** die Zahl bleibt eine Pfad-Clusterungs-Statistik, kein
+echter Portfolio-Drawdown (Overlap sequenziell verkettet).
 
-| Kandidat | p_dd_worse relativ (Tool) | p_dd_worse absolut |
+Die operative Aussage kippt (200 Permutationen, Seed 42, `--fee-per-side 0,05`;
+mit dem gefixten Tool reproduziert):
+
+| Kandidat | p_dd_worse vor Fix (relativ) | p_dd_worse nach Fix (absolut, Tool) |
 |---|---|---|
-| rub/LONG | 1,000 („untypisch gnädig") | 0,005 (maligne Clusterung) |
+| rub/LONG | 1,000 („untypisch gnädig") | 0,005 (maligne Clusterung; beob. −55.208 vs Median −17.182) |
 | abr1/SHORT | 0,005 | 0,005 |
-| ufi1/SHORT | 0,035 | 0,005 |
+| ufi1/SHORT | 0,035 | 0,005 (beob. −1.436,72 vs Median −278,19) |
 
-Für rub/LONG hätte die bisherige Lese-Regel das DD-Budget aus
+Für rub/LONG hätte die alte Lese-Regel das DD-Budget aus
 `simulated_max_dd_median_pct` genommen, obwohl der beobachtete Pfad schlechter
-war als 199 von 200 Zufallsreihenfolgen. `observed_max_dd_pct`,
-`simulated_max_dd_*` und `p_value_dd_worse` sind auf fleet-weiten Replays
-daher nicht als Drawdown-Aussage verwendbar. Nebenbefund: der Guard
-`np.where(peak > 0, peak, 1.0)` wechselt bei Peak ≤ 0 stillschweigend die
-Einheit (relativ → %-Punkte), statt den Fall zu markieren.
+war als 199 von 200 Zufallsreihenfolgen — jetzt zeigt der Test das korrekt an.
 
-Fix (absoluter DD und/oder ein Equity-Pfad, der Overlap respektiert) ist
-T-2026-CU-9050-053, nicht Teil dieses Laufs. Statistik 1 (Random-Control) und 3
-(Bootstrap-CIs) sind reihenfolge-invariant und von alldem unberührt — die
-Tabelle oben bleibt gültig.
+**Keine Deploy-Aussage der obigen Batch-E-Tabelle ändert sich.** Sie steht auf
+Statistik 1 (Random-Control `p`) und 3 (Sharpe-CI), beide reihenfolge-invariant
+und vom DD-Fix unberührt; die Werte oben wurden mit dem gefixten Tool identisch
+reproduziert (rub/LONG mean −0,3246, `p`=1,000, Sharpe negativ). Die
+Drawdown-Statistik war ohnehin als „nicht operativ lesen" markiert und ging in
+keinen Deploy-Call ein — sie ist jetzt nur wieder benutzbar.
