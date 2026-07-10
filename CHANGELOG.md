@@ -1,3 +1,78 @@
+## [2026-07-10] Das 10s-Raster ist unter Last eine Fiktion: Pump/Dump-Fenster normalisiert, totes Volume-Gate repariert (T-2026-CU-9050-035)
+
+Der EPD2-Retrain, für den dieser Task angelegt wurde, ist **nicht** passiert — die
+Datenlage-Prüfung (Schritt 1) hat ihn blockiert und dabei zwei latente
+Regressionen aus P1.39 freigelegt.
+
+### Warum kein Retrain
+`pump_dump_events` enthält **null** Rows der neuen Feature-Definition. P1.39 ist
+zwar gemergt, aber Bot 10 lief zum Messzeitpunkt ununterbrochen seit dem
+Fleet-Start am 08.07. und hielt den alten Modulcode. Der Log-Banner
+„ML-Modell geladen" sieht nach Startup aus, ist aber ein *stündlicher*
+Cache-Reload (`load_pump_model()`, TTL 3600s): seine Kadenz driftet über 24h
+monoton von 13:41 auf 13:44, ohne den Reset, den ein Prozess-Neustart erzwingen
+würde. Der im Task empfohlene Zeitschnitt liefert also einen leeren Datensatz.
+Der Retrain wartet auf einen Bot-10-Restart (Operator-Entscheidung).
+
+### Messung
+Gegen 421 350 echte Anker aus dem Live-`1minute.json` (6h-Fenster): die
+Bucket-Kadenz ist **bimodal** — Median 10s, aber p90 = 70s, und nur 62,7 % der
+Abstände liegen unter 15s. Der Detector pollt ~530 Symbole pro REST-Roundtrip;
+unter Last entsteht schlicht kein Bucket pro 10 Sekunden.
+
+Daraus folgten zwei Defekte, die erst beim nächsten Restart scharf geworden wären:
+
+- **`p_chg_60s` verlor 38,7 % aller Ticks.** `WINDOW_EDGE_GUARD = 5` verlangt
+  einen Bucket bei exakt `anchor-60s ± 5s`; das löste nur für 61,3 % der Anker
+  auf, der Rest kehrte ungescored zurück.
+- **Der Volume-Explosion-Alert war tot.** Die Konstante `360` wanderte aus
+  `len(volumes_10s) >= 360` — einem Warmup-Check über den *ganzen* 1440er-Deque,
+  praktisch immer wahr — nach `len(hour_vols) >= 360`, wo dieselbe Zahl eine
+  Dichte von einem Bucket pro 10s über eine volle Stunde fordert. Reale Dichte:
+  ~193/h. Das Gate hielt für **0 von 421 350** Ankern.
+
+### Fix
+`_find_bucket_nearest` wählt den Bucket mit der zum Ziel nächsten **echten**
+Distanz innerhalb eines Altersbandes und gibt diese Distanz mit zurück. `p_chg_60s`
+und `p_chg_3m` normalisieren die beobachtete Bewegung auf eine Rate pro 60s bzw.
+180s; `buy_pres` und `volat` teilen sich dieselbe tatsächliche Spanne. Auf dichtem
+Raster ist das die Identität (Skalierung 60/dt: Median 1,00, p10 0,75), unter Last
+meldet es die Rate, die das Fenster wirklich hergibt. Coverage `p_chg_60s`:
+61,3 % → **97,7 %**. Der Stunden-Warmup gated jetzt auf die überdeckte Zeitspanne
+plus Sample-Floor statt auf eine Bucket-Anzahl.
+
+Bewusst **nicht** auf `tolerance=20` gewechselt: einen 80s alten Bucket als „60s"
+zu verrechnen wäre die abgeschwächte Wiederkehr genau des Fehlers, den P1.39
+beseitigt hat.
+
+### Retrain-Kopplung
+Die vier Modell-Inputs verschieben sich damit erneut — bewusst, und vor dem
+Restart, damit EPD3 direkt auf der endgültigen Definition gefittet wird statt
+zweimal. Voraussetzung für einen sauberen Rollout bleibt T-2026-CU-9050-030
+(P1.45): `module_tag` ist Quellcode-Konstante, der Detector liest keine
+Artefakt-Meta — ein EPD3-Artefakt postete sonst still unter dem Alt-Tag.
+
+### Entry-Schätzer nachgezogen
+`p_chg_60s` ist damit eine Rate und **kein** realisierter Move mehr. Der Builder
+las die Spalte aber als Move (`entry1 = close × (1 + p_chg/100)`) — und weil die
+Fensterlänge nirgends persistiert wird, ist der rohe Move aus dem Event-Log nicht
+rekonstruierbar (harte Regel 7). Der Entry kommt jetzt aus `ticker_10s`, dem
+tatsächlich gehandelten Preis: über die letzten drei Tage finden 7053 von 7055
+gegateten Events einen Tick innerhalb 60 s, über alle 404 Event-Symbole. Fehlt der
+Tick, fällt die Zeile raus (`no_ticker`) statt geschätzt zu werden — ein
+unbekannter Entry muss ein fehlendes Label werden, kein falsches. Ein `--since`
+vor dem ersten Tick bricht laut ab, statt den Datensatz still zu halbieren.
+
+Verifikation: `backtest/test_pump_dump_time_windows.py` (18 Tests) +
+`backtest/test_epd2_entry_from_ticker.py` (5 Tests), standalone und DB-frei.
+Sechs fallen auf dem jeweiligen Pre-Fix-Stand, darunter die drei
+Verhaltenszeugen (70s-Kadenz wird gar nicht gescored; Volume-Explosion feuert
+nie; Ein-Sample-Baseline wird gescored). Die übrigen laufen auf beiden Ständen
+grün und belegen, dass der dichte Pfad unverändert bleibt. `backtest/` gesamt
+316 grün, Regression-Guard `verify` + `smoke` grün. Wirkt beim nächsten
+regulären Restart, kein Deploy.
+
+---
 ## [2026-07-10] Orchestrator-Gate: Staleness-Gate auf der 4D-Zelle, `wl_reason` auf dem Forward, Doku-Korrektur (T-2026-CU-9050-046)
 
 Drei Befunde aus dem ROM1-Deep-Review, alle am selben blinden Fleck: **die
