@@ -117,6 +117,38 @@ grün und belegen, dass der dichte Pfad unverändert bleibt. `backtest/` gesamt
 regulären Restart, kein Deploy.
 
 ---
+
+## [2026-07-10] Konzept-Spec: MM-Order-Lifecycle-Patterns für die offene Hyperliquid-Venue-Entscheidung (T-2026-CU-9050-056)
+
+Reine Doku-/Konzept-Arbeit, kein Code am Fleet. Aus dem Repo-Audit vom 2026-07-10
+(KB `mcp-41a50fe33552`) war `lihanyu81/polymarket_lp_tool` als sauberste
+MM-Order-Lifecycle-Architektur markiert. Da das Repo **keine LICENSE** trägt
+(all-rights-reserved), ist das Ergebnis ein **Pattern-Harvest in eigenen Worten** —
+kein Code kopiert, portiert oder vendored; falls je gebaut wird, dann clean-room aus
+dieser Spec.
+
+### Added
+- **`docs/MM_ORDER_LIFECYCLE_SPEC.md`** — destilliert 14 benannte, übertragbare
+  Patterns (Reconciliation-statt-State-Machine, Cumulative-Watermark-Fill-Detection,
+  Per-Side-Quote-Diff, Cancel-then-Repost vs. Modify, WS-User/Market-Trennung,
+  Priority-Cascade, Reprice-Speed-Limits, Tick-Regime, Midpoint-Filter, Fill-Risk,
+  Structural-Deleverage, Vol-Gate, Hysterese-Monitor). Jedes Pattern ist von der
+  Polymarket-CLOB-Annahme auf ein **Hyperliquid-Perp-Orderbuch** gemappt
+  (Mapping-Tabelle, §7), inkl. der drei zu strippenden Prediction-Market-Annahmen
+  ((0,1)-Preisdomäne, Reward-Band, Binary-Condition-Pairing) und der sechs Lücken, die
+  die Quelle **nicht** abdeckt und die selbst zu designen sind (kontinuierlicher
+  Inventory-Skew, Funding-Awareness, Mark/Oracle/Last, Event-Risk-Gate, Latency-Budget,
+  Maker-Economics). Abschluss: Empfehlung „feasible, aber nur grünes Licht für einen
+  Shadow/Paper-Prototyp" plus fünf offene Fragen für die Venue-Entscheidung.
+- **Doku-Map-Zeile** in `docs/ARCHITECTURE.md` §12 (Verweis auf die neue Spec,
+  als pre-decision markiert).
+
+**Kein Live-Bezug:** die Spec baut nichts, flippt kein Gate, berührt keinen Bot. Ein
+etwaiger MM-Prototyp läuft laut Spec zuerst shadow/paper und ist — wie jeder Geld-Pfad
+— eine Operator-Entscheidung (`OPUS-HANDOFF.md` §6).
+
+---
+
 ## [2026-07-10] Orchestrator-Gate: Staleness-Gate auf der 4D-Zelle, `wl_reason` auf dem Forward, Doku-Korrektur (T-2026-CU-9050-046)
 
 Drei Befunde aus dem ROM1-Deep-Review, alle am selben blinden Fleck: **die

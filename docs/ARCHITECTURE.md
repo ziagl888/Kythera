@@ -350,5 +350,6 @@ All secrets and routing live in `.env` (git-ignored) and are read through `core/
 | [`docs/TIMESCALE_R1_MIGRATION.md`](TIMESCALE_R1_MIGRATION.md) | Designed R1 + hypertable migration (not yet applied) |
 | [`docs/MODEL_INTENT.md`](MODEL_INTENT.md) | Per-model intent and semantics |
 | [`docs/NEW_IDEAS_BOTS.md`](NEW_IDEAS_BOTS.md) | The 30-33 research bots (PEX1/FMR1/TRM1/FIF1) |
+| [`docs/MM_ORDER_LIFECYCLE_SPEC.md`](MM_ORDER_LIFECYCLE_SPEC.md) | Concept spec: MM order-lifecycle patterns for the open Hyperliquid-venue decision (pre-decision) |
 | [`SETUP_ANLEITUNG.md`](../SETUP_ANLEITUNG.md) | Detailed step-by-step setup (German) |
 | `audit_reports/` | The full 2026 audit: 20 reports + per-model dossiers |
