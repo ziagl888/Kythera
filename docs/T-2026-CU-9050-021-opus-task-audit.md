@@ -43,11 +43,10 @@ Fünf widersprüchliche Checkboxen am Code verifiziert statt geflippt. Ergebnis:
 - ~~P1.11 WS-Buffer-Key~~ — **war bereits gefixt**, Key ist `(sym, tf, open_time)` (`1_data_ingestion.py:662`). Aus A2 gestrichen.
 **Done:** je Item Fix + betroffener `backtest/`-Test bzw. nachvollziehbarer Beweis im PR + Checkbox. **Achtung:** alles Geld-Pfad-nah — Qualitätsbar §5 "Code-Fix" voll anwenden.
 
-### ✅ A2b · P1.45 Artefakt-`model_id` in den Post-Pfaden verdrahten (BUILD, ~2-3h) — **erledigt 2026-07-09, T-2026-CU-9050-030 / PR #20**
-**Erledigt:** MIS zieht die Generation je Horizont aus `meta.model_id`, RUB richtungsabhängig (SHORT aus der Meta, LONG behält die benannte Konstante `RUB_LONG_TAG`), QM präventiv inkl. `module_tag` als Pflicht-Keyword in `send_cornix_signal`. Drei Guard-Tests. Keine Live-Semantik-Änderung — die Tags bleiben heute MIS2-\*, RUB2, QM_1H. **B7 und C2 sind damit entblockt** (der EPD2/SRA2-Nebenbefund bleibt offen, siehe unten).
+### ✅ A2b · P1.45 Artefakt-`model_id` in den Post-Pfaden verdrahten (BUILD, ~2-3h) — **erledigt 2026-07-09, T-2026-CU-9050-030 / PR #24**
+**War:** `11_ai_mis`, `13_ai_rub` und `24_quasimodo` warfen die verfügbare `model_id` weg und posteten unter einer Quellcode-Konstante (Details im Ledger, P1.45) — dieselbe Klasse, die PR #16 im Sniper gefixt hat.
 
-
-`11_ai_mis`, `13_ai_rub` und `24_quasimodo` werfen die verfügbare `model_id` weg und posten unter einer Quellcode-Konstante (Details im Ledger, P1.45). Heute stimmt der Tag zufällig; beim nächsten Retrain (MIS3/RUB3/QM2) verschmelzen die Generationen still in Per-Bot-WR und Orchestrator-Gating — dieselbe Klasse, die PR #16 im Sniper gefixt hat. Muster: `18_ai_abr1_bot.py:520`. RUB richtungsabhängig fixen (LONG reused `"RUB2"` bewusst für ein Legacy-Modell). Je ein Guard-Test analog `backtest/test_sniper_tag.py`. **Blockiert B7 und C2.**
+**Erledigt:** MIS zieht die Generation je Horizont aus `meta.model_id`, RUB richtungsabhängig (SHORT aus der Meta, LONG behält die benannte Konstante `RUB_LONG_TAG` für sein Legacy-Modell), QM präventiv inkl. `module_tag` als Pflicht-Keyword in `send_cornix_signal`. Dazu der transitionale Dedup, weil der Tag zugleich der Dedupe-Key ist (MIS/QM: `model IN (neu, legacy)`; RUB hat keinen Active-Trade-Check → Cooldown gegen beide Tags). Drei mutations-geprüfte Guard-Tests. Keine Live-Semantik-Änderung — die Tags bleiben heute MIS2-\*, RUB2, QM_1H. **B7 und C2 sind damit entblockt** (der EPD2/SRA2-Nebenbefund bleibt offen, siehe unten).
 
 ### A3 · P2-Robustheits-Cluster Ingestion/Housekeeping (BUILD, ~4h)
 P2.14 (Retry-Bound + 418-Backoff), P2.16 (coins.json ein Writer, atomar — Filter-Parität ist seit dem ETHU-Vorfall heikel), P2.17 (Delisted-Cleanup nur Binance-Perp-Shape), P2.18 (Housekeeping-REST 429/418-Handling), P2.36/P2.37 (ATB1 unknown-state + Exception-Handling — Bot ist geparkt, Fix ist risikofrei), P2.49 (atomic_write_json Windows-Fix: unique tmp + retry).

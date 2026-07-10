@@ -1,4 +1,4 @@
-## [2026-07-09] MIS/RUB/QM posten unter der Artefakt-`model_id` statt unter einer Quellcode-Konstante (T-2026-CU-9050-030, P1.45, PR #20)
+## [2026-07-09] MIS/RUB/QM posten unter der Artefakt-`model_id` statt unter einer Quellcode-Konstante (T-2026-CU-9050-030, P1.45, PR #24)
 
 Nachbrenner zum Sniper-Fix aus PR #16: derselbe Fehlerklasse-Sweep fand drei
 weitere Post-Pfade, die ihr Artefakt laden, die `meta.model_id` aber wegwerfen und
@@ -70,6 +70,76 @@ identischen Tags wirkungsgleich zum Vorzustand.
   Retrain-Ausgabeformat divergiert vom Live-Ladeformat. Beim Verdrahten von
   EPD2/SRA2 muss der Tag aus der neuen `model_id` kommen, sonst entstehen Instanz 4
   und 5 derselben Fehlerklasse. Bleibt als P1.45-Nebenbefund im Ledger.
+## [2026-07-09] Kerzen-API `core/candles.py` + Call-Site-Inventar + Paritäts-Tool (T-2026-CU-9050-034, C1-Vorbereitung)
+
+Vorbereitung der R1-/TimescaleDB-Migration (`docs/TIMESCALE_R1_MIGRATION.md`,
+T-2026-CU-9050-018). **Reine Neuanlage — kein bestehender Call-Site wurde
+umverdrahtet, kein Dual-Write, kein Backfill, kein Cutover, keine
+Schema-Änderung.** Die Fleet läuft unverändert.
+
+Neu:
+
+- **`core/candles.py`** — die zentrale Zugriffs-API über die per-Coin-Tabellen,
+  durch die in Phase 1 alle Kerzen-/Indikator-Zugriffe laufen sollen. Vier
+  Verträge: Reads liefern **immer ASC** (heute mischen sich ASC- und
+  DESC-Frames, `iloc[-1]` bedeutet je nach Datei etwas anderes);
+  `include_forming=False` ist Default und schaltet R1 bot-für-bot scharf;
+  Writes **committen nicht** (Caller-Commit-Kontrakt wie `core/signal_post.py`);
+  Symbol/Timeframe werden validiert und über `psycopg2.sql.Identifier` gequotet
+  (P3.3, optionale `coins.json`-Whitelist).
+- **`docs/CANDLE_CALL_SITES.md`** — Inventar jeder Stelle im Repo, die eine
+  Kerzen- oder Indikator-Tabelle anfasst, mit heutigem Forming-Candle-Verhalten,
+  R1-Blast-Radius, vorgeschlagener Umverdrahtungs-Reihenfolge und den offenen
+  Operator-Fragen.
+- **`tools/candles_parity.py`** — Paritäts-Vergleich alt vs. Hypertable
+  (Row-Count, `max(open_time)`, OHLCV-Checksumme) als Gate für Migrationsphase
+  3. Der Vergleichskern ist DB-frei und per `--self-check` auf der
+  Build-Maschine lauffähig; echte Läufe brauchen den VPS.
+- **`backtest/test_candles.py`** — 29 DB-freie Tests.
+
+Der `is_closed`-Vertrag des Ziel-Schemas existiert in den Alt-Tabellen nicht.
+Phase A leitet ihn aus der Uhr ab (`open_time < period_start(tf, now())`),
+DB-seitig gerechnet, per Epoch-Arithmetik statt `date_trunc()` — letzteres hängt
+an der Session-Zeitzone und hätte je nach Bot-Prozess anders geschnitten (R3).
+Für `1w` ist der Cutoff auf Montag verankert; Epoch 0 ist ein Donnerstag,
+Binance-Wochenkerzen öffnen Montag 00:00 UTC.
+
+Offen (Operator, siehe `docs/CANDLE_CALL_SITES.md` §5): Retention, `REAL` →
+`double precision` (P3.12), 1d/1w-Streaming, Close-Grace-Period. **R1 senkt die
+Signal-Raten — das ist der Zweck. Schwellen erst nach dem Retrain neu tunen.**
+## [2026-07-09] HTTP-Härtung der Binance-REST-Pfade (T-2026-CU-9050-027 D2, P2.14 + P2.18)
+
+Neues `core/http_retry.py` (reine Politik ohne I/O, injizierbare Uhr/Sleep →
+DB-/netzfrei testbar): `RetryBudget` (max_attempts UND Wanduhr-Deadline),
+`backoff_seconds` (429 mit Retry-After-Respekt, 418 nie unter 120s und
+exponentiell — ein Retry-After-Header darf die Ban-Wartezeit nur erhöhen),
+`MinIntervalThrottle` (Mindestabstand + Jitter je Host-Bucket). Muster nach
+HKUDS/Vibe-Trading `loaders/_http.py`/`retry_with_budget` (MIT), kein Drop-in.
+
+- **P2.14 (`1_data_ingestion.fetch_ohlcv_batch`):** die `while True`-Schleife
+  konnte bei einem stuck Symbol ewig loopen und hämmerte bei 418 mit
+  Retry-After+2s in den Ban. Jetzt: gebudgeteter Retry (8 Versuche/300s je
+  Symbol×TF-Batch, nur FEHL-Versuche zählen — Erfolgs-Seiten paginieren frei),
+  418-Backoff ≥120s exponentiell. Bei erschöpftem Budget werden die bereits
+  geholten Teildaten verwendet; der nächste 12h-Lauf setzt am MAX(open_time)
+  wieder auf.
+- **P2.18 (`6_housekeeping._fetch_klines_from_binance`):** der Gap-Filler hatte
+  gar kein 429/418-Handling (`raise_for_status` → None) und konnte im Burst
+  über ~9k Tabellen einen 418-IP-Ban ziehen, der auch die Trading-Endpoints
+  trifft. Jetzt: 429 → Retry-After-bewusster gebudgeteter Backoff; 418 →
+  prozessweites Ban-Fenster (alle weiteren Gap-Fill-Calls liefern bis zum
+  Ablauf sofort None statt weiterzuhämmern; der nächste nächtliche Lauf holt
+  die Gaps nach); Throttle 0,25s/Request gegen den Burst.
+
+Live-Semantik: Erfolgs-Pfade unverändert (gleiche URLs, gleiche Parse-Wege);
+alle Deltas liegen auf Fehler-Pfaden, die vorher endlos retryten oder bannten.
+Wirkt beim nächsten regulären Restart, kein Deploy. Verifikation:
+`backtest/test_http_retry.py` (7/7, standalone), ruff+mypy grün auf allen drei
+Dateien. Der Freshness-Fallback (`run_freshness_job`) behält sein eigenes,
+schon gedeckeltes Rate-Limit-Handling — bewusst nicht angefasst (limit=2-Calls,
+Weight ungefährlich).
+
+---
 
 ## [2026-07-09] Market-Tracker gibt Pool-Connections auf dem Fehlerpfad zurück (T-2026-CU-9050-029, P1.43, PR #18)
 
