@@ -45,7 +45,16 @@ Duration-Auswertungen müssen `close_reason='corpse_reaper'` ausschließen.
 Der Main-Loop isoliert die drei Stages jetzt einzeln (try/except + Rollback
 pro Stage): eine Poison-Row im Regime-Check oder Gating kann den
 Lifecycle-Sync (und damit den einzigen Decay-Pfad) nicht mehr dauerhaft
-aushungern.
+aushungern. Der Geld-Pfad bleibt dabei fail-closed: schlägt die Regime-Stage
+fehl, wird der Gating-Pass übersprungen (kein neues Exposure, solange die
+Auto-Closes gestört sind), und ein äußeres Catch-all hält den Prozess am
+Leben. Das Zwei-Fenster-Prädikat baut EIN Helper
+(`_anchor_window_predicate`) für alle drei SQL-Stellen; die historische
+Writer-TZ liegt kanonisch in `core/time.py` (`LEGACY_WRITER_TZ`). Empirisch
+gegen die Live-DB entlastet (read-only): 0 von 409 OPEN-Rows haben mehr als
+einen Close-Kandidaten über beide Fenster (kein Cross-Match im Bestand), und
+der komplette First-Pass über 440k `closed_ai_signals`-Rows dauert 1,8 s
+(4,4 ms/Row) — keine Loop-Blockade.
 Reine Buchhaltung, kein Telegram-Post. Damit verschwinden die Leichen wirklich
 aus dem OPEN-Bestand — sie blocken die Richtungs-Checks nicht mehr, füttern
 den Regime-Change-Auto-Close nicht mehr mit Spurious-`Close`-Kommandos und

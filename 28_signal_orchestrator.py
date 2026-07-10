@@ -27,7 +27,7 @@ from core.bot_naming import pretty_name
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, send_telegram, update_cooldown
-from core.time import utc_now_naive
+from core.time import LEGACY_WRITER_TZ, utc_now_naive
 from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn_and_sr_levels
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -56,14 +56,33 @@ LIFECYCLE_SYNC_INTERVAL_SEC = 30
 # outcome the match loop would still have classified.
 LIFECYCLE_SYNC_WINDOW_SEC = 60
 # Historical session TZ under which the pre-T-052 DB default stamped
-# ai_signals.open_time. Deliberately hard-coded, NOT current_setting('TimeZone'):
-# the legacy rows were written under this zone regardless of any future session
-# or server TZ change (R3 UTC flip), and AT TIME ZONE handles their DST
-# per-timestamp. Only used for the legacy second window; new rows carry naive
-# UTC and match the first window. Collision-free because the 4h per-coin+
-# direction cooldown makes two same-direction trades 3h±window apart impossible
-# (pinned by a test).
-LEGACY_SESSION_TZ = "Europe/Bucharest"
+# ai_signals.open_time (canonical constant lives in core/time.py: pinned, NOT
+# current_setting('TimeZone') — a future R3 session-TZ flip must not un-shield
+# live legacy positions; AT TIME ZONE handles their DST per-timestamp). Only
+# used for the legacy second window; new rows carry naive UTC and match the
+# first window. Collision-free because the 4h per-coin+direction cooldown makes
+# two same-direction trades 3h±window apart impossible (pinned by a test).
+LEGACY_SESSION_TZ = LEGACY_WRITER_TZ
+
+
+def _anchor_window_predicate(col: str, anchor: str) -> str:
+    """SQL predicate: `col` lies within ±LIFECYCLE_SYNC_WINDOW_SEC of `anchor`,
+    either directly (naive-UTC rows) or after converting a legacy
+    session-local timestamp to UTC.
+
+    ONE builder for the match loop, the reaper's twin check and its
+    anti-censor guard — the three must never disagree on the window shape, or
+    the reaper censors outcomes the match loop would still classify (the
+    round-3 asymmetry class). Interpolations are compile-time constants only.
+    """
+    w = f"INTERVAL '{LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
+    return (
+        f"({col} BETWEEN {anchor} - {w} AND {anchor} + {w} "
+        f"OR ({col} AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC') "
+        f"BETWEEN {anchor} - {w} AND {anchor} + {w})"
+    )
+
+
 FALLBACK_MIN_WR = 50.0
 
 # Outcome-Klassifikation im Lifecycle-Sync: siehe Erläuterung in
@@ -1024,9 +1043,6 @@ async def sync_closed_trades(conn) -> None:
         # real WIN/LOSS to the corpse reaper. Safe against cross-matching a
         # different trade: the 4h per-coin+direction cooldown means no two
         # same-direction trades can sit 3h±window apart.
-        window_start = opened_at_naive - timedelta(seconds=LIFECYCLE_SYNC_WINDOW_SEC)
-        window_end = opened_at_naive + timedelta(seconds=LIFECYCLE_SYNC_WINDOW_SEC)
-
         # `status` in closed_ai_signals enthält tatsächlich den close_reason
         # (z.B. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP").
         with conn.cursor() as cur:
@@ -1034,9 +1050,7 @@ async def sync_closed_trades(conn) -> None:
                 f"""
                 SELECT entry, close_price, status FROM closed_ai_signals
                 WHERE symbol = %s AND direction = %s AND model = 'ROM1'
-                  AND (open_time BETWEEN %s AND %s
-                       OR (open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC')
-                           BETWEEN %s AND %s)
+                  AND {_anchor_window_predicate("open_time", "%s::timestamp")}
                 ORDER BY LEAST(
                     ABS(EXTRACT(EPOCH FROM (open_time - %s))),
                     ABS(EXTRACT(EPOCH FROM (
@@ -1045,7 +1059,7 @@ async def sync_closed_trades(conn) -> None:
                 )
                 LIMIT 1
                 """,
-                (coin, direction, window_start, window_end, window_start, window_end, opened_at_naive, opened_at_naive),
+                (coin, direction) + (opened_at_naive,) * 6,
             )
             row = cur.fetchone()
 
@@ -1092,7 +1106,6 @@ async def reap_corpse_trades(conn) -> None:
     that case is housekeeping's DELISTED cleanup deleting the twin.
     """
     now_naive = utc_now_naive()
-    window = f"INTERVAL '{LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -1103,24 +1116,12 @@ async def reap_corpse_trades(conn) -> None:
               AND NOT EXISTS (
                   SELECT 1 FROM ai_signals a
                   WHERE a.model = 'ROM1' AND a.symbol = o.coin AND a.direction = o.direction
-                    AND (
-                        a.open_time BETWEEN o.opened_at - {window}
-                                        AND o.opened_at + {window}
-                        OR (a.open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC')
-                                    BETWEEN o.opened_at - {window}
-                                        AND o.opened_at + {window}
-                    )
+                    AND {_anchor_window_predicate("a.open_time", "o.opened_at")}
               )
               AND NOT EXISTS (
                   SELECT 1 FROM closed_ai_signals c
                   WHERE c.model = 'ROM1' AND c.symbol = o.coin AND c.direction = o.direction
-                    AND (
-                        c.open_time BETWEEN o.opened_at - {window}
-                                        AND o.opened_at + {window}
-                        OR (c.open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC')
-                                    BETWEEN o.opened_at - {window}
-                                        AND o.opened_at + {window}
-                    )
+                    AND {_anchor_window_predicate("c.open_time", "o.opened_at")}
               )
             """,
             (now_naive, now_naive - timedelta(hours=72)),
@@ -1264,9 +1265,10 @@ def should_run_lifecycle_sync() -> bool:
     return False
 
 
-async def _run_stage(conn, stage_name: str, coro) -> None:
+async def _run_stage(conn, stage_name: str, coro) -> bool:
     """Runs one main-loop stage; an exception is logged and the connection is
     rolled back so the NEXT stage does not inherit an aborted transaction.
+    Returns False on failure so the caller can keep money-path couplings.
 
     T-2026-CU-9050-052: the stages were one try block before — a persistent
     poison row in the regime check or the gating pass would then silently
@@ -1275,12 +1277,14 @@ async def _run_stage(conn, stage_name: str, coro) -> None:
     """
     try:
         await coro
+        return True
     except Exception as e:
         logger.error(f"Orchestrator-Loop-Error [{stage_name}]: {e}", exc_info=True)
         try:
             conn.rollback()
         except Exception:
             pass
+        return False
 
 
 async def main_loop() -> None:
@@ -1289,15 +1293,22 @@ async def main_loop() -> None:
         conn = None
         try:
             conn = get_db_connection()
-        except Exception as e:
-            logger.error(f"Orchestrator-Loop-Error [connect]: {e}", exc_info=True)
-        if conn:
-            try:
-                await _run_stage(conn, "regime_change", check_regime_change_and_close(conn))
+            regime_ok = await _run_stage(conn, "regime_change", check_regime_change_and_close(conn))
+            if regime_ok:
                 await _run_stage(conn, "gating", signal_gating_pass(conn))
-                if should_run_lifecycle_sync():
-                    await _run_stage(conn, "lifecycle_sync", sync_closed_trades(conn))
-            finally:
+            else:
+                # Fail-closed on the money path: while regime-flip auto-closes
+                # are broken, do NOT open new exposure via the gating pass.
+                # Only the lifecycle sync below stays independent.
+                logger.warning("Gating-Pass übersprungen: Regime-Stage fehlgeschlagen (fail-closed).")
+            if should_run_lifecycle_sync():
+                await _run_stage(conn, "lifecycle_sync", sync_closed_trades(conn))
+        except Exception as e:
+            # Backstop: nothing here may ever kill the process (no gating, no
+            # auto-closes, no reaping on the live fleet).
+            logger.error(f"Orchestrator-Loop-Error: {e}", exc_info=True)
+        finally:
+            if conn:
                 conn.close()
         await asyncio.sleep(LOOP_INTERVAL_MS / 1000.0)
 

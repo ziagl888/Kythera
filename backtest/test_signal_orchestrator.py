@@ -679,6 +679,25 @@ def test_sync_match_loop_covers_legacy_window():
     assert params[0] == "BTCUSDT" and params[1] == "LONG"
 
 
+def test_run_stage_isolates_failures_and_reports_status():
+    """_run_stage must swallow a stage exception (rollback so the next stage
+    does not inherit an aborted transaction) and report failure via its return
+    value — main_loop uses that to keep gating fail-closed behind the
+    regime-close stage while the lifecycle sync stays independent."""
+    conn = MagicMock()
+
+    async def boom():
+        raise RuntimeError("poison row")
+
+    assert asyncio.run(orch._run_stage(conn, "stage", boom())) is False
+    conn.rollback.assert_called_once()
+
+    async def fine():
+        return None
+
+    assert asyncio.run(orch._run_stage(conn, "stage", fine())) is True
+
+
 def test_legacy_window_cannot_cross_match_thanks_to_cooldown():
     """The LEGACY_SESSION_TZ second window is only collision-free because two
     same-coin+direction ROM1 trades can never sit ~3h apart: the per-coin+
