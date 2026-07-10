@@ -517,6 +517,70 @@ def test_fallback_uses_overall_performance_wr_threshold():
     assert orch.FALLBACK_MIN_WR == 50.0
 
 
+# ── Whitelist staleness gate (P0.4/P2.25) ─────────────────────────────────────
+
+def _mock_conn_for_whitelist(cell_age_hours, whitelisted=False, fallback_wr=58.0):
+    """Stable regime + one 4D cell of the given age + an overall fallback row."""
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    computed_at = None if cell_age_hours is None else now - datetime.timedelta(hours=cell_age_hours)
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    conn.cursor = MagicMock(return_value=cur)
+    cur.fetchone = MagicMock(side_effect=[
+        ("TREND_UP",),                              # is_regime_detector_reliable
+        (1,),                                       # distinct regimes 2h
+        ("TREND_UP", "ALT_NEUTRAL"),                # regime_current
+        (whitelisted, "wr_above_threshold", computed_at),  # 4D cell
+        (100, fallback_wr),                         # is_whitelisted_fallback
+    ])
+    return conn
+
+
+def test_fresh_whitelist_cell_decides():
+    """A cell younger than WHITELIST_MAX_AGE_HOURS is honoured as-is."""
+    conn = _mock_conn_for_whitelist(cell_age_hours=1, whitelisted=False)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is False
+    assert reason == "wr_above_threshold"
+
+
+def test_stale_whitelist_cell_falls_back_to_overall():
+    """A cell older than 48h is distrusted — the overall fallback decides."""
+    conn = _mock_conn_for_whitelist(cell_age_hours=49, whitelisted=False, fallback_wr=58.0)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is True  # fallback WR 58% > 50%
+    assert reason == "whitelist_stale:fallback_wr_above_50"
+
+
+def test_null_computed_at_treated_as_stale():
+    conn = _mock_conn_for_whitelist(cell_age_hours=None, whitelisted=True, fallback_wr=42.0)
+    whitelisted, reason = orch.get_whitelist_decision(conn, "MIS1-8h", "LONG")
+    assert whitelisted is False  # fallback WR 42% < 50%
+    assert reason == "whitelist_stale:fallback_wr_below_50"
+
+
+# ── B8: wl_reason persisted on the forwarded side ─────────────────────────────
+
+def test_insert_orchestrator_open_trade_persists_wl_reason():
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    conn.cursor = MagicMock(return_value=cur)
+
+    orch.insert_orchestrator_open_trade(
+        conn, "BTCUSDT", "LONG", "MIS1-8h", 50000.0, 7,
+        "TREND_UP", "ALT_NEUTRAL", wl_reason="no_whitelist_entry", commit=False,
+    )
+
+    sql, params = cur.execute.call_args[0]
+    assert "wl_reason" in sql
+    assert params[-1] == "no_whitelist_entry"
+    conn.commit.assert_not_called()
+
+
 # ── Cooldown ──────────────────────────────────────────────────────────────────
 
 def test_cooldown_module_name_is_rom1():

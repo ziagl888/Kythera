@@ -1,3 +1,54 @@
+## [2026-07-10] Orchestrator-Gate: Staleness-Gate auf der 4D-Zelle, `wl_reason` auf dem Forward, Doku-Korrektur (T-2026-CU-9050-046)
+
+Drei Befunde aus dem ROM1-Deep-Review, alle am selben blinden Fleck: **die
+durchgelassene Seite des Gates war unbeobachtbar.** `orchestrator_suppressed_signals`
+protokolliert nur, was geblockt wurde. Warum ein Signal *durchging* — echte 4D-Zelle,
+`no_whitelist_entry` oder Fallback — stand nirgends. Genau deshalb konnte P0.4
+(Bot-Namen-Mismatch, jedes Signal lief als `no_whitelist_entry` durch) monatelang
+laufen, ohne aufzufallen: ein still offenes Gate sieht von außen aus wie ein
+großzügiges.
+
+### Added
+- **`wl_reason`-Spalte an `orchestrator_open_trades`** (B8). `ensure_regime_schema`
+  legt sie für neue DBs an und zieht sie für bestehende per
+  `ALTER TABLE … ADD COLUMN IF NOT EXISTS` nach; `insert_orchestrator_open_trade`
+  schreibt die Entscheidung, die `get_whitelist_decision` tatsächlich getroffen hat.
+  Rows aus der Zeit davor bleiben `NULL` und werden in der Statistik separat
+  gezählt, statt einen Pfad zu raten.
+- **Gate-Pfad-Zeile im stündlichen Regime-Status** (P0.4-Rest). Über die letzten 24h:
+  Anteil default-open / Fallback / echte 4D-Entscheidung. Ab 20 % Bypass-Anteil
+  (default-open + Fallback zusammen) trägt die Zeile ein `⚠️`.
+- Vier Tests in `backtest/test_signal_orchestrator.py` (frische Zelle entscheidet,
+  stale Zelle fällt zurück, `computed_at IS NULL` gilt als stale, `wl_reason` landet
+  im INSERT).
+
+### Changed
+- **`get_whitelist_decision` misstraut alten Zellen** (P0.4-Rest/P2.25): eine
+  `bot_regime_whitelist`-Zelle älter als 48h (`WHITELIST_MAX_AGE_HOURS`, zwei
+  Analyzer-Zyklen) entscheidet nicht mehr — stattdessen greift der Overall-Fallback,
+  Reason `whitelist_stale:<fallback_reason>`. Ein fehlendes `computed_at` zählt als
+  stale. **Semantik-Änderung auf dem Geld-Pfad:** die Live-Zellen sind laut Audit auf
+  `computed_at=19.04.` eingefroren, der Fallback lässt bei <30 Trades durch — heute
+  blockierte Bot/Richtungs-Paare können also aufgehen. Das ist der Zweck des Fixes,
+  aber eine volumen-erhöhende Änderung. `force_close_trades_for_regime_change` nutzt
+  dieselbe Funktion und schließt Trades folglich ebenfalls nach Fallback-Logik.
+- **`docs/REGIME_ORCHESTRATOR.md`** (P1.10): die Doku behauptete, das System „tradet
+  nicht selbst" und sei ein reiner Signal-Router. Das war seit der ROM1-Geometrie
+  falsch — ein durchgelassenes Bot-Signal ist nur der Trigger, `compute_rom1_trade_params`
+  verwirft Entry/SL/Targets des Originals. Die Konsequenz (Gating-Statistik ≠
+  Ausführungs-Statistik) steht jetzt dort.
+
+**Deploy-Reihenfolge:** Bot 26 vor Bot 28 neu starten — 26 legt die Spalte in
+`ensure_regime_schema` an, 28 schreibt sie. Beim regulären Fleet-Start ist das
+gedeckt (`start_delay` 160 vs. 175). Startet nur 28 gegen eine DB ohne die Spalte,
+schlägt der INSERT fehl und die Transaktion rollt zurück: ein verlorenes Signal,
+kein Cornix-Post ohne Tracking.
+
+Nicht Teil dieses PRs: das P1.8-Hardening (explizites `open_time`) kam bereits mit
+T-2026-CU-9050-052. Der dort ebenfalls diskutierte 72h-Age-Bound auf
+`is_opposite_direction_open` wurde **bewusst verworfen** — er hätte eine echte, über
+72h offene ROM1-Position freigegeben und die Gegenrichtung dagegen posten lassen.
+Tote OPEN-Rows räumt der Corpse-Reaper in `sync_closed_trades` ab.
 ## [2026-07-10] Indikator-Engine erfindet keine Warm-up-Werte mehr — NaN fließt wie bei KAMA (T-2026-CU-9050-054)
 
 P1.13, am Code verifiziert (Falle 13): `2_indicator_engine.py` füllte die

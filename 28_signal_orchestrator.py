@@ -49,6 +49,12 @@ FALLBACK_MAX_DISTINCT_REGIMES_2H = 3
 FALLBACK_UNSTABLE_LOOKBACK_HOURS = 2
 REFERENCE_WINDOW_DAYS = 30
 MIN_TRADES_FOR_DECISION = 30
+# Max age of a bot_regime_whitelist cell before the 4D lookup is distrusted
+# (P0.4/P2.25): 27_bot_regime_analyzer recomputes the whitelist daily, so a
+# cell older than two analyzer cycles means the analyzer is dead or writes a
+# key the orchestrator never reads. Gating on such a cell decides today's
+# money on stats frozen months ago — fall back to the overall window instead.
+WHITELIST_MAX_AGE_HOURS = 48
 LIFECYCLE_SYNC_INTERVAL_SEC = 30
 # Half-width of the row anchor used by the lifecycle sync, the corpse reaper's
 # twin check and its anti-censor guard. ONE constant on purpose: if the match
@@ -283,8 +289,12 @@ def is_whitelisted_fallback(conn, bot_name: str, direction: str) -> tuple[bool, 
 def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, str]:
     """
     Main whitelist entry point. Chooses between:
-      - Normal 4D-lookup (reliable detector)
-      - Overall-fallback (unreliable detector)
+      - Normal 4D-lookup (reliable detector, fresh cell)
+      - Overall-fallback (unreliable detector, or 4D cell older than
+        WHITELIST_MAX_AGE_HOURS — P0.4/P2.25 staleness gate)
+
+    computed_at is naive UTC (27_bot_regime_analyzer writes utc_now naive),
+    so it compares directly against utc_now_naive().
     """
     reliable, status = is_regime_detector_reliable(conn)
 
@@ -301,7 +311,7 @@ def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, s
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT whitelisted, reason FROM bot_regime_whitelist
+                SELECT whitelisted, reason, computed_at FROM bot_regime_whitelist
                 WHERE bot_name = %s AND regime = %s
                   AND alt_context = %s AND direction = %s
                 """,
@@ -311,6 +321,19 @@ def get_whitelist_decision(conn, bot_name: str, direction: str) -> tuple[bool, s
 
         if wl_row is None:
             return (True, "no_whitelist_entry")
+
+        computed_at = wl_row[2]
+        stale = computed_at is None or (utc_now_naive() - computed_at) > timedelta(hours=WHITELIST_MAX_AGE_HOURS)
+        if stale:
+            age_str = (
+                "unknown" if computed_at is None else f"{(utc_now_naive() - computed_at).total_seconds() / 3600:.0f}h"
+            )
+            logger.warning(
+                f"⚠️ Stale whitelist cell ({regime}/{alt_context}, age {age_str}) — "
+                f"Overall fallback for {bot_name} {direction}"
+            )
+            whitelisted, fallback_reason = is_whitelisted_fallback(conn, bot_name, direction)
+            return (whitelisted, f"whitelist_stale:{fallback_reason}")
 
         return (bool(wl_row[0]), wl_row[1] or "unknown")
 
@@ -585,11 +608,18 @@ def insert_orchestrator_open_trade(
     outbox_id: int | None,
     regime: str | None,
     alt_context: str | None,
+    wl_reason: str | None = None,
     commit: bool = True,
 ) -> None:
     """Records a forwarded trade in orchestrator_open_trades.
 
     commit=False: siehe insert_rom1_signal — atomarer Forward-Commit im Caller.
+
+    wl_reason (B8) persists WHICH gate path let the signal through — a real 4D
+    cell, `no_whitelist_entry`, or one of the fallback paths. Without it the
+    forwarded side of the gate is unauditable (suppressed_signals only records
+    the blocked side); 26_regime_detector.post_hourly_status reads it for the
+    default-open rate.
     """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     with conn.cursor() as cur:
@@ -598,10 +628,10 @@ def insert_orchestrator_open_trade(
             INSERT INTO orchestrator_open_trades
                 (coin, direction, bot_name, entry_price, opened_at,
                  regime_at_open, alt_context_at_open,
-                 original_outbox_id, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'OPEN')
+                 original_outbox_id, wl_reason, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'OPEN')
             """,
-            (coin, direction, bot_name, entry, now_utc, regime, alt_context, outbox_id),
+            (coin, direction, bot_name, entry, now_utc, regime, alt_context, outbox_id, wl_reason),
         )
     if commit:
         conn.commit()
@@ -801,6 +831,7 @@ def _gate_and_forward_row(
         outbox_id,
         cur_regime,
         cur_alt,
+        wl_reason=wl_reason,
         commit=False,
     )
 

@@ -12,10 +12,12 @@ Der Regime-Orchestrator ist ein Metasystem das über den bestehenden 25 Trading-
 
 1. **Erkennt das Markt-Regime** alle 5 Minuten zweidimensional
 2. **Filtert Bot-Signale** nach historischer Regime-Performance
-3. **Leitet passende Signale** in einen dedizierten Cornix-Channel weiter
+3. **Postet einen eigenen Trade** (Modul `ROM1`) in einen dedizierten Cornix-Channel, sobald ein Signal das Gate passiert
 4. **Schließt automatisch Trades** bei Regime-Wechseln
 
-Das System tradet **nicht selbst**. Es ist ein reiner Filter und Signal-Router.
+Das System **tradet selbst** — es ist kein reiner Signal-Router. Ein durchgelassenes Bot-Signal ist nur der *Trigger*: `compute_rom1_trade_params()` (`28_signal_orchestrator.py`) verwirft Entry/SL/Targets des Original-Signals und berechnet aus aktuellem Preis und echten S/R-Zonen eine **eigene ROM1-Geometrie**, die als eigene Cornix-Message gepostet und als `model='ROM1'` in `ai_signals` getrackt wird.
+
+**Konsequenz (P1.10):** Gating-Statistik ≠ Ausführungs-Statistik. Die Whitelist entscheidet auf Basis der Performance des *Trigger-Bots*, gehandelt wird aber ROM1-Geometrie. Ein Bot kann in seinem Regime profitabel sein und der daraus abgeleitete ROM1-Trade trotzdem verlieren (und umgekehrt) — beim Lesen der Regime-Performance-Tabellen mitdenken.
 
 ### Warum zweidimensional?
 
