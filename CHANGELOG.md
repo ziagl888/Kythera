@@ -86,6 +86,13 @@ einem Coin, auf dem bereits ein Trade derselben Richtung offen ist, fällt weg. 
 Position, freier Coin, Gegenrichtung und der berechnete Funding-Wert bleiben
 unverändert. Kein Rollout, kein Artefakt angefasst, keine DB-Änderung.
 
+**Nebenbei (Boy-Scout, vorbestehend seit T-042):** `CACHE_SINCE_DAYS` von 95 auf 110
+angehoben. Der Funding-Load fensterte auf 95 Tage, das 270-Sätze-Fenster von
+`fund_pctl_90d` braucht bei 8h-Kadenz aber exakt 90 — nur 5 Tage Puffer. Ein Coin mit
+>5d kumulierter Funding-Lücke bekam live <270 Samples und wich in diesem einen
+Feature minimal vom Trainer ab (volle Historie). 110d gibt 20 Tage Lücken-Puffer.
+Berührt die Cache-Werteidentität nicht (Cache und `asof` sehen denselben Frame).
+
 ## [2026-07-10] EPD und SRA laden ihr Artefakt über den geteilten Contract (T-2026-CU-9050-042)
 
 Letzte zwei Instanzen der P1.45-Fehlerklasse: ein Post-Pfad schreibt einen

@@ -110,7 +110,12 @@ def funding_features_asof(by_sym: dict[str, pd.DataFrame], symbol: str, ts_utc) 
 # Ein naiver Zeit-TTL leistet beides nicht: er kann eine Abrechnungsgrenze
 # überspannen und dem Modell veraltetes Funding servieren — Bruch der
 # Trainer-Parität (Train == Serve == Replay).
-CACHE_SINCE_DAYS = 95  # as-of nutzt max. die letzten 270 Sätze
+# as-of nutzt max. die letzten 270 Sätze (rates[-270:] für fund_pctl_90d). Bei
+# 8h-Kadenz sind das exakt 90 Tage — 95d gäben nur 5 Tage Puffer, ein Coin mit
+# >5d kumulierter Funding-Lücke in seinen letzten 270 Sätzen bekäme live weniger
+# als 270 Samples und wiche in fund_pctl_90d minimal vom Trainer ab (der über die
+# volle Historie rechnet). 110d gibt 20 Tage Lücken-Puffer über das 90d-Minimum.
+CACHE_SINCE_DAYS = 110
 #: Wie viele der jüngsten Abstände in die Intervall-Schätzung eingehen.
 CACHE_INTERVAL_SAMPLES = 8
 
