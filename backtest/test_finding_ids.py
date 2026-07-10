@@ -99,6 +99,41 @@ def test_missing_ledger_fails_open():
     assert finding_ids.main(["--ledger", str(missing), "check"]) == 0
 
 
+def test_undecodable_ledger_fails_open():
+    """UnicodeDecodeError is a ValueError, not an OSError. Uncaught, it would crash the
+    pre-commit hook and block EVERY commit — the opposite of failing open."""
+    fh = tempfile.NamedTemporaryFile("wb", suffix=".md", delete=False)
+    fh.write(b"- [ ] **P1.46 kaputt\xff\xfe** x\n")  # invalid utf-8
+    fh.close()
+    path = pathlib.Path(fh.name)
+    assert finding_ids._read_ledger(path) is None
+    assert finding_ids.main(["--ledger", str(path), "check"]) == 0
+    path.unlink()
+
+
+def test_format_drift_is_loud_not_silent():
+    """If the ledger's markdown changes so DEFINITION_RE matches nothing, the guard must
+    fail loudly. Otherwise it reports "0 findings, no duplicates" forever and waves every
+    future collision through — the P2.51 silent-disarm class."""
+    # Ids present, but written as `* [ ]` instead of `- [ ]` -> zero definitions parsed.
+    drifted = _tmp_ledger("* [ ] **P1.46 Neues Format** x\n* [ ] **P1.46 Nochmal** y\n")
+    text = drifted.read_text(encoding="utf-8")
+    defs = finding_ids.parse_definitions(text)
+    assert defs == [], "Vorbedingung: das gedriftete Format darf nicht mehr matchen"
+    assert finding_ids.detect_format_drift(text, defs) is True
+    assert finding_ids.main(["--ledger", str(drifted), "check"]) == 1, (
+        "blinder Guard muss Exit 1 liefern, nicht still gruen sein"
+    )
+    drifted.unlink()
+
+    # A ledger with no findings at all is NOT drift — it is just empty.
+    empty = _tmp_ledger("# AUDIT_TODO\n\nNoch keine Findings.\n")
+    text = empty.read_text(encoding="utf-8")
+    assert finding_ids.detect_format_drift(text, finding_ids.parse_definitions(text)) is False
+    assert finding_ids.main(["--ledger", str(empty), "check"]) == 0
+    empty.unlink()
+
+
 def test_real_ledger_is_clean():
     """The committed ledger must pass — it was renumbered in PR #36."""
     assert LEDGER.exists(), "AUDIT_TODO.md fehlt"
@@ -116,5 +151,7 @@ if __name__ == "__main__":
     test_next_free_is_max_plus_one_per_severity()
     test_duplicate_report_sorts_numerically()
     test_missing_ledger_fails_open()
+    test_undecodable_ledger_fails_open()
+    test_format_drift_is_loud_not_silent()
     test_real_ledger_is_clean()
     print("OK - finding-id guard holds")

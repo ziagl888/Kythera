@@ -49,6 +49,9 @@ DEFINITION_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+\*\*P(\d+)\.(\d+)(?!\d)")
 
 DEFAULT_LEDGER = pathlib.Path(__file__).resolve().parents[2] / "AUDIT_TODO.md"
 SEVERITY_RE = re.compile(r"^P(\d+)$")
+# Any finding id anywhere in the text — definition OR prose reference. Used only
+# to detect that the definition regex has gone blind (see _detect_format_drift).
+ANY_ID_RE = re.compile(r"\bP\d+\.\d+\b")
 
 
 def parse_definitions(text: str) -> list[tuple[int, int, int]]:
@@ -88,11 +91,27 @@ def _read_ledger(path: pathlib.Path) -> str | None:
     checkout without AUDIT_TODO.md (or a worktree mid-rebase) must not block the
     commit. Only a real, determinable duplicate blocks — same philosophy as the
     other Cu gates.
+
+    UnicodeDecodeError is caught alongside OSError on purpose: it is a ValueError,
+    not an OSError, so an uncaught one would crash the hook and block every commit —
+    the exact opposite of failing open.
     """
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
+
+
+def detect_format_drift(text: str, defs: list[tuple[int, int, int]]) -> bool:
+    """True when the ledger mentions finding ids but we parsed zero definitions.
+
+    Without this, a change to the ledger's markdown (say `* [ ]` instead of `- [ ]`)
+    makes DEFINITION_RE match nothing, and `check` cheerfully reports "0 findings, no
+    duplicates" forever — a guard that disarms itself in silence. Same failure class
+    as P2.51 (the regression guard going quiet when its goldens vanish). An empty or
+    id-less file is NOT drift; it is simply a ledger without findings.
+    """
+    return not defs and bool(ANY_ID_RE.search(text))
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -102,6 +121,18 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 0
 
     defs = parse_definitions(text)
+
+    if detect_format_drift(text, defs):
+        print(
+            f"[finding-ids] FEHLER — {args.ledger} nennt Finding-IDs, aber KEINE einzige "
+            "Definitionszeile wurde erkannt.\n"
+            "  Das Ledger-Format hat sich geaendert und der Guard ist blind — er wuerde\n"
+            "  ab jetzt jede Kollision durchwinken. DEFINITION_RE in tools/audit/finding_ids.py\n"
+            "  ans neue Format anpassen (erwartet: `- [ ] **P1.45 …`).",
+            file=sys.stderr,
+        )
+        return 1
+
     dupes = find_duplicates(defs)
     if not dupes:
         print(f"[finding-ids] OK — {len(defs)} Findings, keine doppelte ID.")
