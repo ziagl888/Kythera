@@ -1,3 +1,19 @@
+## [2026-07-10] Merge-Train-Onboarding: Kythera-PRs merged jetzt der Daemon, nicht die Session (T-2026-CU-9050-063)
+
+Kythera fährt ab jetzt auf dem merge-train (`services/merge_train/` in
+knowledge_base_internal, Hetzner): nach bestandenen Kern-Reviews stempelt die
+Session `cu/reviews`, setzt das Label `merge-train` und schließt — der Daemon
+merged seriell und rebased jeden PR höchstens einmal. Grund: am 2026-07-10
+liefen zeitweise 6+ parallele Sessions gegen main; jede CHANGELOG-Top-Insertion
+kollidierte mit jeder, und wer selbst mergte, zahlte pro PR 1–2 manuelle
+Konflikt-Runden (O(n²)-Rebase-Kaskade — genau der Fall, für den der Train
+gebaut wurde). Operativ aktiviert: Labels `merge-train`/`merge-train:failed`
+im Repo, `MERGE_TRAIN_REPOS` auf Hetzner um `Kythera` erweitert, Service
+neu gestartet. Kein Deploy-Hook (Build-Repo, post-merge läuft nichts).
+Doku: `docs/OPUS-HANDOFF.md` §2 Schritt 7 (inkl. Bounce-/Re-Queue-Regeln) und
+`CLAUDE.md` Workflow. Dieser PR ist selbst der erste Zug — sein Merge durch den
+Daemon ist die End-to-End-Verifikation inkl. Daemon-PAT-Zugriff aufs Repo.
+
 ## [2026-07-10] AIM2-TOPN: "Top 1-3 des Tages" als High-Conviction-Kanal, default-off (T-2026-CU-9050-051)
 
 Aus T-2026-CU-9050-031, Weg 2: der strukturelle Pfad zu „täglich 1-3 Trades, sehr
