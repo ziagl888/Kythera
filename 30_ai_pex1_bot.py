@@ -244,7 +244,10 @@ def main() -> None:
         row = cur.fetchone()
     conn.commit()
     # Nur Events NACH dem Start verarbeiten (kein Replay alter Pumps beim Boot).
-    watermark = row[0] if row and row[0] else datetime.datetime(2000, 1, 1)
+    # Bewusst naiv (R3, DTZ001 unterdrückt): der Sentinel wird gegen `pump_dump_events.spike_time`
+    # gehalten — eine naive Spalte. Ein aware Wert würde den Vergleich sprengen; die
+    # Spalte selbst trägt UTC (siehe docs/UTC_POLICY.md, Migrationsliste).
+    watermark = row[0] if row and row[0] else datetime.datetime(2000, 1, 1)  # noqa: DTZ001
     conn.close()
 
     startup_feature_selfcheck()

@@ -1,3 +1,45 @@
+## [2026-07-09] Zentrale UTC-Policy gelegt: `core/time.py` + ruff DTZ (T-2026-CU-9050-032, R3)
+
+Kythera hat keine Zeitquelle, sondern zwanzig. Writer schreiben teils naive
+Serverlokalzeit, teils aware UTC, teils Postgres' `NOW()`; Reader interpretieren
+dieselben Spalten als UTC. Der VPS läuft auf `Europe/Bucharest`, also läuft das
+um +2/+3h auseinander — in Cooldowns, Trade-Fenstern und Burst-Zählern, also im
+Geld-Pfad. Die Einzel-Fixes des Audits haben das Cluster nie geschlossen, weil
+jeder von ihnen eine neue Domäne erfand.
+
+Dieser Eintrag legt die Policy, **ohne Live-Semantik zu ändern**:
+
+- **`core/time.py`** — `utc_now()` (aware), `utc_now_naive()` für die legacy
+  `TIMESTAMP WITHOUT TIME ZONE`-Spalten, `to_utc()`, `as_naive_utc()`,
+  `from_unix_ts()`. Ab jetzt die einzige sanktionierte Zeitquelle.
+- **ruff-Regelgruppe `DTZ`** (`pyproject.toml`). Ein neues `datetime.now()` ohne
+  `tz` fällt im CI durch, statt still eine weitere Domäne aufzumachen. Die zwei
+  bewusst naiven Bestandsstellen tragen ein `# noqa: DTZ…` mit Begründung —
+  sichtbare Rest-Schuld statt stiller Ausnahme.
+- **`docs/UTC_POLICY.md`** — Spalten-Inventar, der Bestand an Drift-Kompensationen,
+  die Reihenfolge des Rests, und `docs/migrations/2026-07-r3-timestamptz.sql` als
+  vorbereitete, **nicht ausgeführte** DDL.
+
+Angepasst auf die neue Zeitquelle, jeweils verhaltensgleich: `15_ai_master_bot`
+(deprecated `utcnow()`), `2_indicator_engine` (State-Token und Scheduler-Uhr),
+`core/market_utils.check_cooldown` (handgeschriebener Normalisierer → `to_utc()`),
+`check_funding` (rendert eine UTC-Epoche nicht mehr als Lokalzeit).
+
+### Warum der Pool-Flip NICHT drin ist
+Ursprünglich sollte `-c timezone=UTC` im Connection-Pool mit. Die Session-TZ
+entscheidet, wie Postgres zwischen `timestamptz` und den naiven Spalten castet —
+der Flip repariert also P2.5 und P2.6, **kippt aber sechs Stellen, die die Drift
+heute bereits korrekt herausrechnen**: `15_ai_master_bot.to_utc_naive()` und die
+fünf Dataset-Builder in `tools/` (`research_dataset_common`, `aim2_build_dataset`,
+`fif1_build_dataset`, `pex1_build_dataset`, `retrain_sra2`). Die Trainer lesen
+Historie; nach dem Flip trägt jede naive Spalte beide Domänen, und weder „immer
+kompensieren" noch „nie kompensieren" ist richtig. Das ist der Train/Serve-Skew,
+gegen den AIM2 gebaut wurde (P0.13).
+
+Der Flip gehört deshalb in ein eigenes Fenster, zusammen mit dem P2.3-Writer-Fix,
+den sechs Kompensationen und der Operator-Entscheidung Backfill-vs-Cutover für
+die Historie. `docs/UTC_POLICY.md` §4–§6 ist der Handoff dafür.
+
 ## [2026-07-09] HTTP-Härtung der Binance-REST-Pfade (T-2026-CU-9050-027 D2, P2.14 + P2.18)
 
 Neues `core/http_retry.py` (reine Politik ohne I/O, injizierbare Uhr/Sleep →
