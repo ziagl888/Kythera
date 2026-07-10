@@ -115,14 +115,27 @@ def test_whitespace_stripped():
     assert pretty_name("  MIS1-8H  ") == "MIS1-8h"
 
 
+def test_generation_preserved_across_normalisation():
+    """Die Case-Konsolidierung normalisiert generationsübergreifend, ohne
+    Generationen zu vermischen (harte Regel 6: Retrains posten unter neuem Tag).
+
+    Der Horizon-Suffix wird auch bei MIS2 auf lowercase gezogen, aber MIS2
+    bleibt MIS2 — nur der historische Typo MSI1 wird auf MIS1 gemappt.
+    """
+    assert pretty_name("MIS2-8H") == "MIS2-8h"
+    assert pretty_name("MIS2-8H_pump") == "MIS2-8h"
+    # Generationen bleiben getrennt
+    assert pretty_name("MIS2-8H") != pretty_name("MIS1-8H")
+
+
 def test_similar_but_not_matching():
     """Names resembling but not matching the pattern remain unchanged."""
-    # z.B. MIS2 (hypothetisch) soll nicht zu MIS1 werden
-    assert pretty_name("MIS2-8H") == "MIS2-8H"
     # MIS1 ohne Horizon bleibt
     assert pretty_name("MIS1") == "MIS1"
     # MIS1 mit komischen Suffix matcht nicht den Pattern
     assert pretty_name("MIS1-xyz") == "MIS1-xyz"
+    # Ziffernloses Präfix matcht das MIS\d+-Pattern nicht
+    assert pretty_name("MIS-8H") == "MIS-8H"
 
 
 # ── Regression ────────────────────────────────────────────────────────────────

@@ -12,7 +12,16 @@ from unittest.mock import MagicMock, patch
 
 # Import under a stable alias to avoid 28_... prefix issues
 import importlib.util, unittest.mock as mock
-from core import config as _kcfg  # channel ids
+
+# core.config raises at import when its _required() vars are unset. The build
+# machine ships an empty .env stub, so seed dummies before importing — otherwise
+# this module only collects when an alphabetically earlier test file happens to
+# seed them first.
+os.environ.setdefault("DB_PASSWORD", "unit-test")
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "unit-test")
+
+from core import config as _kcfg  # noqa: E402 — must follow the env seed above
+from core.trade_utils import cap_leverage_to_sl as _real_cap_leverage_to_sl  # noqa: E402
 
 def _load_orchestrator():
     spec = importlib.util.spec_from_file_location(
@@ -129,8 +138,23 @@ def test_identify_bot_strategy_footer():
 
 
 def test_identify_bot_channel_fallback():
-    result = orch.identify_bot("random message", _kcfg.CH_FAST_IN_OUT)
-    assert result == "Fast In And Out"
+    """Unbekannter Text → Bot-Name kommt aus der Channel-ID.
+
+    Der Map wird synthetisch gesetzt: die echten CH_*-Werte kommen aus der
+    Umgebung und sind auf der Build-Maschine (leerer .env-Stub) alle 0.
+    """
+    fake_map = {-1001: "Fast In And Out", -1002: "Pattern Detector"}
+    with mock.patch.object(orch, "CHANNEL_TO_BOT_FALLBACK", fake_map):
+        assert orch.identify_bot("random message", -1001) == "Fast In And Out"
+        assert orch.identify_bot("random message", -1002) == "Pattern Detector"
+        assert orch.identify_bot("random message", -1099) is None
+
+
+def test_channel_fallback_map_excludes_unset_channels():
+    """_ch() liefert 0 für unbelegte Channels — 0 darf kein Map-Key sein,
+    sonst gewinnt beim Kollaps aller unbelegten Channels der letzte Eintrag."""
+    assert 0 not in orch.CHANNEL_TO_BOT_FALLBACK
+    assert all(cid != 0 for cid in orch.CHANNEL_TO_BOT_FALLBACK)
 
 
 def test_identify_bot_unknown_returns_none():
@@ -605,15 +629,18 @@ def test_rom1_constants_match_ai_bots():
 
 def test_compute_rom1_trade_params_long():
     """LONG-Trade: Entry1 = aktueller Preis, Entry2 = 5% darunter,
-    SL aus Supports, Targets aus Resistances."""
+    SL aus Supports, Targets aus Resistances, Hebel gegen die SL-Distanz gecappt."""
     mock_conn = mock.MagicMock()
     # Mock _get_latest_price; ensure_min_tp_distance passthrough (Identity) damit
-    # die Targets-Liste durchgereicht wird.
+    # die Targets-Liste durchgereicht wird. cap_leverage_to_sl kommt aus dem beim
+    # Laden gemockten core.trade_utils — hier die echte Funktion einsetzen, sonst
+    # prüft die leverage-Assertion nur ein MagicMock.
     with mock.patch.object(orch, "_get_latest_price", return_value=100.0), \
          mock.patch.object(orch, "get_hvn_and_sr_levels",
                            return_value=([92.0, 88.0], [105.0, 110.0, 120.0])), \
          mock.patch.object(orch, "ensure_min_tp_distance",
                            side_effect=lambda t, e, l, min_pct: list(t)), \
+         mock.patch.object(orch, "cap_leverage_to_sl", _real_cap_leverage_to_sl), \
          mock.patch.object(orch, "get_max_leverage", return_value="20x"):
         params = orch.compute_rom1_trade_params(mock_conn, "BTCUSDT", "LONG")
 
@@ -624,7 +651,8 @@ def test_compute_rom1_trade_params_long():
     assert params["sl"] == 92.0
     # Targets: alle Resistances > 101 sortiert
     assert params["targets"] == [105.0, 110.0, 120.0]
-    assert params["leverage"] == "20x"
+    # R4: SL-Distanz gegen Entry1 = 8% → Cap int(0.5/0.08) = 6, unter den 20x Wunsch
+    assert params["leverage"] == "6x"
 
 
 def test_compute_rom1_trade_params_short():

@@ -25,6 +25,13 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+# 18_ai_abr1_bot importiert pandas_ta auf Modulebene (registriert den df.ta-Accessor).
+# pandas_ta steht in requirements.txt und ist auf dem VPS installiert; auf einer
+# Python-3.14-Build-Maschine ist es nicht installierbar (zieht numba, kein Wheel für
+# 3.14, Source-Build schlägt fehl). Ohne diesen Guard bricht die ganze Datei beim
+# Collect ab statt einen benannten Skip zu melden.
+pytest.importorskip("pandas_ta", reason="pandas_ta not installed (numba has no cp314 wheel)")
+
 
 def _import_abr1():
     path = os.path.join(REPO_ROOT, "18_ai_abr1_bot.py")

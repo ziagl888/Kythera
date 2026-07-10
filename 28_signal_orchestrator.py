@@ -76,12 +76,19 @@ BOT_IDENTIFICATION_PATTERNS = [
     r"🧠\s*([A-Za-z0-9 ]+?)\s+Strategy",
 ]
 
+# core.config._ch() returns 0 for an unset channel id. Without the filter every
+# unset channel collapses onto the key 0 and the last entry silently wins, so a
+# lookup for a disabled bot would resolve to an unrelated bot name.
 CHANNEL_TO_BOT_FALLBACK: dict[int, str] = {
-    _kcfg.CH_FAST_IN_OUT: "Fast In And Out",
-    _kcfg.CH_5_PERCENT: "5 Percent",
-    _kcfg.CH_SUPPORT_RESISTANCE: "Support Resistance",
-    _kcfg.CH_VOLUME_INDICATOR: "Volume Indicator",
-    _kcfg.CH_PATTERN_DETECTOR: "Pattern Detector",
+    cid: name
+    for cid, name in (
+        (_kcfg.CH_FAST_IN_OUT, "Fast In And Out"),
+        (_kcfg.CH_5_PERCENT, "5 Percent"),
+        (_kcfg.CH_SUPPORT_RESISTANCE, "Support Resistance"),
+        (_kcfg.CH_VOLUME_INDICATOR, "Volume Indicator"),
+        (_kcfg.CH_PATTERN_DETECTOR, "Pattern Detector"),
+    )
+    if cid
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
