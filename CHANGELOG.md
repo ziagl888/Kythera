@@ -71,10 +71,24 @@ unberührt (Default `None`).
 **Live-Semantik unverändert.** Kein Artefakt ist deployt, also läuft beides auf
 dem Legacy-Vertrag: gleiche Tags, gleiche Thresholds, gleiche Feature-Vektoren,
 gleiche Dedupe-Queries (die transitionalen Binds kollabieren bei identischen
-Tags). Verifikation DB-frei: `backtest/test_model_artifacts.py` (9),
-`test_sra_tag.py` (12), `test_epd_tag.py` (11) — Loader- und Dedupe-Verhalten
+Tags). Verifikation DB-frei: `backtest/test_model_artifacts.py` (10),
+`test_sra_tag.py` (11), `test_epd_tag.py` (12) — Loader- und Dedupe-Verhalten
 echt ausgeführt (Fake-Cursor), der Rest statische Netze; alle mutations-geprüft.
 Kein Rollout, kein Artefakt angefasst, keine DB-Änderung.
+
+**Streukreis der `core/`-Änderungen** (geteilter Code, deshalb explizit): (1)
+`log_prediction` ist additiv — `legacy_tag` hat den Default `None` und lässt die
+alte Einzeltag-Query byte-identisch, die Bots 30–33 sind unberührt. (2)
+`maybe_reload` reicht beim täglichen Reload jetzt `default_tag` statt des
+**aktuell geladenen** Tags als Fallback weiter. Für `13_ai_rub_bot.RUB2_SHORT`
+(hand-gebautes Contract-Dict ohne `default_tag`) fällt `.get()` exakt auf
+`artifact["tag"]` zurück — genau der Ausdruck, den der alte `maybe_reload`
+benutzte, also bit-identisch. Für die Bots 30–33 (Contract via `load_artifact`)
+greift der Unterschied nur, wenn ein Artefakt beim Reload **keine** `model_id` in
+der Meta trägt; dann erbte der Reload bisher den Tag der Generation, die er
+gerade ersetzt. Das ist der eigentliche Bugfix an dieser Stelle, kein
+Kollateralschaden — im Normalbetrieb (Trainer schreibt `model_id` immer) ist der
+Pfad tot.
 
 **Offen für Michi:** (1) EPD2/SRA2-Rollout ist jetzt entblockt — Operator-Entscheid.
 (2) Zwei neue Befunde derselben Klasse wie P1.48: weder EPD noch SRA hat einen

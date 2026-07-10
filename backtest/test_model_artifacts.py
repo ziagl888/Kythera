@@ -163,6 +163,22 @@ def test_reload_of_a_json_artifact_uses_the_json_loader():
     assert fresh["tag"] == "SRA3", f"reload did not re-read the json artifact — still serving {fresh['tag']}"
 
 
+def test_reload_of_a_hand_built_contract_without_default_tag_keeps_the_old_behaviour():
+    """13_ai_rub_bot builds RUB2_SHORT by hand and has no `default_tag` key. The old
+    maybe_reload passed `artifact["tag"]` as the fallback; the .get() must land on
+    exactly that, or an untouched live bot changes behaviour on its daily reload."""
+    with tempfile.TemporaryDirectory() as d:
+        p = str(Path(d) / "rub2_model_SHORT.pkl")
+        joblib.dump(
+            {"model": _fit(), "features": FEATURES, "optimal_threshold": 0.5, "meta": {}},  # keine model_id
+            p,
+        )
+        hand_built = {"loaded": False, "model": None, "features": None, "threshold": 1.0, "tag": "RUB2", "path": p}
+        fresh = maybe_reload(hand_built, BUILDER_CAN_PRODUCE)  # loaded_at fehlt → .get(...,0) → Reload
+    assert fresh["loaded"], "the hand-built contract must still reload"
+    assert fresh["tag"] == "RUB2", f"fallback tag drifted for a contract without default_tag: {fresh['tag']}"
+
+
 def test_reload_keeps_a_loaded_artifact_when_the_file_turns_unreadable():
     with tempfile.TemporaryDirectory() as d:
         p = _write_json_artifact(Path(d), meta=_binary_meta(model_id="SRA2"))

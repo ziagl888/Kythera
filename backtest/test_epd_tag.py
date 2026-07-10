@@ -123,9 +123,9 @@ def test_funding_features_are_served_asof_the_event():
 def test_missing_funding_history_is_zeroed_like_the_trainer():
     """Trainer parity: train_binary fits on feature_cols.fillna(0). A missing
     funding HISTORY is a missing value (→ 0), not a missing contract column."""
-    assert re.search(
-        r"pd\.DataFrame\(\[feats\]\)\.reindex\(columns=art\[[\"']features[\"']\]\)\.fillna\(0\)", SRC
-    ), "the EPD2 serving frame no longer mirrors the trainer's fillna(0) over missing funding values"
+    assert re.search(r"pd\.DataFrame\(\[feats\]\)\.reindex\(columns=art\[[\"']features[\"']\]\)\.fillna\(0\)", SRC), (
+        "the EPD2 serving frame no longer mirrors the trainer's fillna(0) over missing funding values"
+    )
 
 
 # --------------------------------------------------- transitional dedup (behaviour)
