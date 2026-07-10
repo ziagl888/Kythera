@@ -37,6 +37,34 @@ Feature-Verteilung, und **erst beim Artefakt-Rollout** darf das `bfill` in
 `24_quasimodo_bot.py:126`/`25_smc_ml_sniper.py:220` entfernt werden — nie
 isoliert.
 
+## [2026-07-10] Finding-IDs im Ledger: Duplikat-Guard als pre-commit-Hook (T-2026-CU-9050-059)
+
+Am 09./10.07. trugen drei frisch angelegte Findings gleichzeitig die ID **P1.46**.
+Mehrere Sessions arbeiteten parallel am `AUDIT_TODO.md`, jede las das Ledger, nahm
+die scheinbar nächste freie Nummer und schrieb sie zurück — eine klassische
+Read-Modify-Write-Race ohne Allokator. PR #34/#36 haben von Hand auf P1.47/P1.48
+umnummeriert; die Ursache blieb.
+
+### Added
+- `tools/audit/finding_ids.py` mit zwei Subcommands. **`check`** meldet doppelt
+  vergebene IDs und liefert Exit 1 — das ist das Netz. **`next --severity P1`**
+  druckt deterministisch die nächste freie Nummer (max+1 je Severity) — das ist
+  die Bequemlichkeit. Wie das KB-`next_id()` ist `next` eine Momentaufnahme und
+  **keine Reservierung**: zwei gleichzeitige Aufrufe bekommen dieselbe Nummer.
+  Was die Kollision von `main` fernhält, ist `check`.
+- **pre-commit-Hook `kythera-finding-id-guard`** (neben dem Regression-Guard) —
+  die Kollision fällt beim Commit auf, nicht erst im Review. Fehlt
+  `AUDIT_TODO.md`, läuft der Hook fail-open durch, statt den Commit zu blocken.
+- `backtest/test_finding_ids.py` (DB-frei, standalone).
+
+Die tragende Unterscheidung ist **Definition vs. Referenz**: Findings werden quer
+durch das Ledger in Prosa zitiert („orthogonal zu P1.44"), ein naives `grep` auf
+`P\d+\.\d+` meldet darum Dutzende Falsch-Duplikate und der Guard wäre binnen eines
+Tages abgeschaltet. Ein Finding ist **ausschließlich** auf seiner Checkbox-Zeile
+definiert (`- [ ] **P1.45 …`). Genau das prüft ein eigener Test ab.
+
+Der Bestand bleibt unverändert (125 Findings, keine Duplikate; nächste freie IDs:
+P1.49, P2.52). Kein Renumbering.
 ## [2026-07-10] wf_significance MaxDD entkonfundiert: absoluter Drawdown in %-Punkten statt Peak-Normierung (T-2026-CU-9050-053)
 
 Fix zum Befund aus T-2026-CU-9050-040. `tools/wf_significance.py:max_drawdown_pct`
