@@ -232,11 +232,19 @@ def load_joined(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:
     if df.empty:
         return None
     df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
-    df.ffill(inplace=True)
-    df.bfill(inplace=True)
     for c in df.columns:
         if c not in ("open_time", "trend_direction"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
+    # ffill schließt Innen-Lücken aus der VERGANGENHEIT. Ein bfill danach (wie in
+    # 25_smc_ml_sniper:220) würde die verbleibenden Kopfzeilen aus der ZUKUNFT
+    # füllen: die Warmup-Spalten (ema_200 braucht 200 Bars) sind am Anfang der
+    # Coin-Historie NULL, und run_td_bb emittiert schon ab t=WINDOW-1=149. Der
+    # Replay verwirft diese Zeilen stattdessen — ein Event ohne echte Indikatoren
+    # ist kein Trainingsdatum (T-2026-CU-9050-045).
+    df.ffill(inplace=True)
+    df = df.dropna()
+    if df.empty:
+        return None
     return df.reset_index(drop=True)
 
 

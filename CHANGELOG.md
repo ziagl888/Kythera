@@ -1,3 +1,29 @@
+## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)
+
+Nebenfund aus der Blast-Radius-Analyse zu T-2026-CU-9050-037. `load_joined` rief
+nach `ffill()` zusätzlich `bfill()`. Das `ffill` schließt Innen-Lücken aus der
+Vergangenheit und ist harmlos; das `bfill` füllte die verbleibenden **Kopfzeilen
+aus der Zukunft**.
+
+Diese Kopfzeilen sind keine Theorie: die Warmup-Spalten der DB-Indikatoren sind am
+Anfang jeder Coin-Historie NULL (`ema_200` braucht 200 Bars, die Donchian-Kanäle 20),
+während `run_td_bb` bereits ab `t = WINDOW-1 = 149` Events emittiert. Anders als der
+forming-Kerzen-Befund aus T-037 — der sich selbst quarantänisiert, weil seine Records
+kein Label bekommen und `load_replay` sie verwirft — landete dieser Leak in
+**gelabelten** Trainingszeilen der td/bb-Replays (Modelle TD2/BB2, Bot 25).
+
+Fix: `to_numeric` vor `ffill` gezogen, `bfill` ersatzlos entfernt, die verbleibenden
+NaN-Kopfzeilen werden verworfen. Ein Event ohne echte Indikatoren ist kein
+Trainingsdatum. `backtest/test_feature_lookahead.py` pinnt das mechanisch
+(mutations-geprüft: mit `bfill` fällt der Test).
+
+**Nicht angefasst, bewusst:** `25_smc_ml_sniper.py:220` und `24_quasimodo_bot.py:126`
+tragen dieselbe Zeile. Sie fenstern aber `DESC LIMIT 150` **ab jetzt** — dort füllt
+`bfill` aus Zeilen, die der Bot ohnehin schon gesehen hat, also kein Look-ahead
+relativ zur Entscheidungszeit. Der Rest-Fall (frisch gelisteter Coin, dessen
+150er-Fenster ganz in der Warmup-Zone liegt) ist ein Geld-Pfad-Befund und gehört
+als eigene Entscheidung an Michi, nicht in diesen Commit.
+
 ## [2026-07-10] `legacy_trainers/` ist keine Wegwerf-Ware — Operator-Frage §5.8 geschlossen (Doku)
 
 `docs/CANDLE_CALL_SITES.md` führte `legacy_trainers/` an drei Stellen als „toter

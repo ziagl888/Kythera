@@ -557,6 +557,41 @@ def test_walkforward_joined_loader_drops_the_forming_candle():
     print("OK  load_joined: forming Kerze fällt für 1h/4h raus (include_forming=False)")
 
 
+WARMUP_ROWS = 12  # so viele Kopfzeilen haben noch keinen ema_200 (Warmup der DB-Indikatoren)
+
+
+def test_walkforward_joined_loader_never_backfills_warmup_indicators():
+    """Zweiter Look-ahead derselben Funktion (T-2026-CU-9050-045): `ffill` schließt
+    Innen-Lücken aus der Vergangenheit, ein `bfill` danach würde die Warmup-Kopfzeilen
+    aus der ZUKUNFT füllen. `ema_200` ist am Anfang jeder Coin-Historie NULL, und
+    `run_td_bb` emittiert schon ab `t=149` — der Leak landet also, anders als die
+    forming Kerze, in GELABELTEN Trainingszeilen. Erwartung: Kopfzeilen verworfen,
+    nie mit einem späteren Wert gefüllt."""
+    wfs = _import_walkforward_sim()
+    original = wfs.read_candles_with_indicators
+    try:
+        frame = _closed_plus_forming("1h", list(wfs.OHLCV_COLUMNS) + wfs.SNIPER_JOIN_INDICATORS)
+        # ema_200 fehlt im Warmup; die erste echte Zeile trägt einen unverwechselbaren Wert.
+        frame.loc[: WARMUP_ROWS - 1, "ema_200"] = np.nan
+        frame.loc[WARMUP_ROWS:, "ema_200"] = 4711.0
+        first_real_open = pd.Timestamp(frame["open_time"].iloc[WARMUP_ROWS])
+
+        wfs.read_candles_with_indicators = _fake_reader(frame, [])
+        got = wfs.load_joined(object(), "TESTUSDT", "1h", days=30)
+
+        assert got is not None and not got["ema_200"].isna().any()
+        assert (got["open_time"] >= first_real_open).all(), (
+            "load_joined: Warmup-Kopfzeile überlebt — ihr ema_200 kann nur aus der Zukunft stammen"
+        )
+        # closed = len(frame)-1 (forming), davon fallen die WARMUP_ROWS Kopfzeilen weg.
+        assert len(got) == len(frame) - 1 - WARMUP_ROWS, (
+            f"erwartet {len(frame) - 1 - WARMUP_ROWS} Zeilen, bekommen {len(got)} — bfill füllt noch"
+        )
+    finally:
+        wfs.read_candles_with_indicators = original
+    print(f"OK  load_joined: {WARMUP_ROWS} Warmup-Kopfzeilen verworfen statt aus der Zukunft gefüllt")
+
+
 if __name__ == "__main__":
     # cp1252-Konsole (Windows): Sonderzeichen nicht crashen lassen
     try:
@@ -579,4 +614,5 @@ if __name__ == "__main__":
     test_fetch_context_frame_staleness_guard()
     test_walkforward_loaders_drop_the_forming_candle()
     test_walkforward_joined_loader_drops_the_forming_candle()
+    test_walkforward_joined_loader_never_backfills_warmup_indicators()
     print("\nAlle Look-ahead-Perturbationstests bestanden — kein Future-Leak in den geteilten Feature-Buildern.")
