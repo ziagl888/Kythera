@@ -57,7 +57,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -82,6 +82,7 @@ from core.mis_features import (
 )
 from core.funding_features import funding_features_asof, load_funding  # noqa: E402
 from core.rub_features import build_rub_features, rub_event_type, rub_trend  # noqa: E402
+from core.time import utc_now  # noqa: E402
 from core.trade_utils import (  # noqa: E402
     calculate_smart_targets,
     compute_smart_target_levels,
@@ -174,7 +175,9 @@ OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
 
 
 def _window_start(days: int) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=int(days))
+    """Untere Fenstergrenze. Aware UTC über core.time (R3-Policy) — der obere
+    Schnitt an der forming Kerze rechnet DB-seitig in core.candles."""
+    return utc_now() - timedelta(days=int(days))
 
 
 def load_ohlcv(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:

@@ -28,6 +28,163 @@ Kein Live-Signal-Pfad berührt, keine DB-Änderung.
 Labels trainiert wurden — und ob deshalb Staging-Retrains neu zu bewerten sind.
 Diese Session hat nichts trainiert und nichts ausgerollt (C-Gate).
 
+## [2026-07-09] Zentrale UTC-Policy gelegt: `core/time.py` + ruff DTZ (T-2026-CU-9050-032, R3)
+
+Kythera hat keine Zeitquelle, sondern zwanzig. Writer schreiben teils naive
+Serverlokalzeit, teils aware UTC, teils Postgres' `NOW()`; Reader interpretieren
+dieselben Spalten als UTC. Der VPS läuft auf `Europe/Bucharest`, also läuft das
+um +2/+3h auseinander — in Cooldowns, Trade-Fenstern und Burst-Zählern, also im
+Geld-Pfad. Die Einzel-Fixes des Audits haben das Cluster nie geschlossen, weil
+jeder von ihnen eine neue Domäne erfand.
+
+Dieser Eintrag legt die Policy, **ohne Live-Semantik zu ändern**:
+
+- **`core/time.py`** — `utc_now()` (aware), `utc_now_naive()` für die legacy
+  `TIMESTAMP WITHOUT TIME ZONE`-Spalten, `to_utc()`, `as_naive_utc()`,
+  `from_unix_ts()`. Ab jetzt die einzige sanktionierte Zeitquelle.
+- **ruff-Regelgruppe `DTZ`** (`pyproject.toml`). Ein neues `datetime.now()` ohne
+  `tz` fällt im CI durch, statt still eine weitere Domäne aufzumachen. Die zwei
+  bewusst naiven Bestandsdateien (`3_detectors`, `30_ai_pex1_bot`) tragen ein
+  `# noqa: DTZ…` mit Begründung — sichtbare Rest-Schuld statt stiller Ausnahme.
+- **`docs/UTC_POLICY.md`** — Spalten-Inventar, der Bestand an Drift-Kompensationen,
+  die Reihenfolge des Rests, und `docs/migrations/2026-07-r3-timestamptz.sql` als
+  vorbereitete, **nicht ausgeführte** DDL.
+
+Angepasst auf die neue Zeitquelle: `15_ai_master_bot` (deprecated `utcnow()` →
+`utc_now_naive()`, identisch) und `core/market_utils.check_cooldown`
+(handgeschriebener Normalisierer → `to_utc()`, identisch). Zwei Stellen ändern
+eine sichtbare, aber folgenlose Ausgabe: `2_indicator_engine` schreibt den
+State-Token und die Scheduler-Log-Zeile jetzt in UTC — der Token ist für
+`3_detectors` ein opaker String-Vergleich, und der Minuten-Trigger ist gegenüber
+einer Vollstunden-Offset-TZ invariant; `check_funding` rendert seine UTC-Epoche
+nicht mehr als Lokalzeit.
+
+`backtest/test_time.py` pinnt die Semantik der neuen Zeitquelle DB-frei, inklusive
+eines Laufs unter gesetztem `TZ=Europe/Bucharest` — genau die Fehlerklasse
+„läuft lokal, driftet auf dem VPS".
+
+### Warum der Pool-Flip NICHT drin ist
+Ursprünglich sollte `-c timezone=UTC` im Connection-Pool mit. Die Session-TZ
+entscheidet, wie Postgres zwischen `timestamptz` und den naiven Spalten castet —
+der Flip repariert also P2.5 und P2.6, **kippt aber sechs Stellen, die die Drift
+heute bereits korrekt herausrechnen**: `15_ai_master_bot.to_utc_naive()` und die
+fünf Dataset-Builder in `tools/` (`research_dataset_common`, `aim2_build_dataset`,
+`fif1_build_dataset`, `pex1_build_dataset`, `retrain_sra2`). Die Trainer lesen
+Historie; nach dem Flip trägt jede naive Spalte beide Domänen, und weder „immer
+kompensieren" noch „nie kompensieren" ist richtig. Das ist der Train/Serve-Skew,
+gegen den AIM2 gebaut wurde (P0.13).
+
+Der Flip gehört deshalb in ein eigenes Fenster, zusammen mit dem P2.3-Writer-Fix,
+den sechs Kompensationen und der Operator-Entscheidung Backfill-vs-Cutover für
+die Historie. `docs/UTC_POLICY.md` §4–§6 ist der Handoff dafür.
+
+## [2026-07-09] SMC-16 FVG-Entry war unerreichbar (T-2026-CU-9050-033, P1.26)
+
+`find_unmitigated_fvgs` in `16_smc_forex_metals_bot.py` scannte auf Mitigation
+über `range(fvg['index'] + 1, len(df))` — **inklusive** der aktuellen Kerze
+(`curr_idx = len(df) - 1`) — und verwarf ein BULLISH-FVG, sobald `low <= top`
+war. Genau dieses Prädikat prüft der Entry-Trigger anschliessend auf derselben
+Kerze (`16:436`, symmetrisch BEARISH über `high >= bottom` in `16:464`). Jedes
+FVG, das den Entry ausgelöst hätte, war damit per Konstruktion schon aus
+`bull_fvgs`/`bear_fvgs` gefallen: der FVG-Entry konnte in beiden Richtungen nie
+feuern. Der Beweis steht rein am Code — der FVG-Pfad schreibt als Cooldown-Key
+ausschliesslich das literale `"SMC_FVG"` (`16:437,465`, die einzigen beiden
+Writer dieses Keys), und dafür existieren 0 Live-Rows (die 83 gefundenen
+`SMC_1H_FVG`/`SMC_4H_FVG`-Rows stammen aus einer älteren, TF-präfigierenden
+Codeversion — die Falle, an der die frühere Widerlegung dieses Findings
+scheiterte).
+
+Der Scan endet jetzt vor der aktuellen Kerze (`range(fvg['index'] + 1, curr_idx)`).
+Die aktuelle Kerze ist der Entry-Auslöser, nicht der Mitigator.
+
+### Live-Semantik
+Die einzige Verhaltensänderung: FVG-Entries werden möglich. Kerzen **vor** der
+aktuellen mitigieren unverändert, die FVG-Erkennung selbst ist unberührt, und
+die beiden Trigger-Bedingungen (`price > bottom * 0.999` bzw.
+`price < top * 1.001`), Cooldown, Cornix-Message und Chart bleiben wie sie
+waren. Der BOS/CHoCH-Pfad ist nicht betroffen.
+
+### Verifikation
+Neuer Guard-Test `backtest/test_smc_fvg_dead_code.py` (11 Fälle): Tap auf der
+aktuellen Kerze überlebt den Scan (beide Richtungen), Tap auf einer früheren
+Kerze mitigiert weiterhin, Entry-Trigger als Ganzes erreichbar, plus ein
+Divergenz-Kanarienvogel, der den alten `range()` nachbaut und beweist, dass er
+genau die triggernden FVGs tötet — ein Revert des Fixes lässt den Test rot
+werden.
+
+## [2026-07-09] MIS/RUB/QM posten unter der Artefakt-`model_id` statt unter einer Quellcode-Konstante (T-2026-CU-9050-030, P1.45, PR #24)
+
+Nachbrenner zum Sniper-Fix aus PR #16: derselbe Fehlerklasse-Sweep fand drei
+weitere Post-Pfade, die ihr Artefakt laden, die `meta.model_id` aber wegwerfen und
+unter einer Konstante posten. **Heute stimmt der Tag jeweils zufällig** — es war
+also kein Betriebs-Bug, sondern eine scharfe Mine unter dem nächsten
+Retrain-Rollout: MIS3/RUB3/QM2 wären still unter dem Alt-Tag gelandet, hätten sich
+in `ai_signals` und in der Per-Bot-Win-Rate mit der Vorgänger-Generation vermischt,
+und das Orchestrator-Gating hätte über die Whitelist der neuen Generation anhand
+der Performance der alten entschieden (Verstoss gegen Versionierungs-Regel 6).
+
+### Fixed
+- `11_ai_mis_bot.py` — **jedes der acht Horizont-Artefakte trägt jetzt seine eigene
+  Generation aus `meta.model_id`**; den Posting-Tag baut der Gewinner-Kandidat
+  (`f"{best_generation}-{best_horizon}"`). Ein Teil-Rollout (72H schon MIS3, Rest
+  MIS2) taggt damit jedes Signal mit der Generation des Modells, das gefeuert hat,
+  und wird beim Laden als gemischte Generation geloggt. Die Dateinamen
+  `mis2_model_*.pkl` bleiben bewusst **generationsfreie Slot-Namen**
+  (Operator-Entscheid 2026-07-09) — genau deshalb ist `meta.model_id` der einzige
+  Generationsmarker. Fehlt sie, greift `MODEL_GENERATION` als Fallback, aber mit
+  `logger.error` statt still.
+- `13_ai_rub_bot.py` — **Tag ist jetzt richtungsabhängig**: SHORT nimmt
+  `RUB2_SHORT["tag"]` (= `meta.model_id`, von `load_artifact` schon immer korrekt
+  berechnet und bis dato weggeworfen), LONG behält die benannte Konstante
+  `RUB_LONG_TAG`. LONG fährt das Legacy-Modell `long_reversion_model.joblib` ohne
+  jede Meta und postet per Operator-Entscheid (2026-07-06) unter `RUB2` — den
+  SHORT-Artefakt-Tag dorthin zu verdrahten, hätte ein Signal mit der Generation
+  eines Modells etikettiert, das nie gelaufen ist.
+- `24_quasimodo_bot.py` — **präventiv, bevor QM2 existiert**: der Loader bevorzugt
+  `meta.model_id` (heute schreibt `qm_ml_trainer.py` keine → abgeleiteter Tag
+  `QM_1H`, so geloggt), und `send_cornix_signal` leitet den Tag nicht mehr ein
+  zweites Mal aus `tf` ab, sondern bekommt `module_tag` als **Pflicht-Keyword** —
+  das Sniper-Muster: eine Aufrufstelle, die ihn vergisst, scheitert laut mit
+  `TypeError`, statt still den Alt-Tag zu schreiben. Der Orchestrator erkennt
+  `QM2_1H` seit `ff8e01e` bereits.
+
+### Fixed — transitionaler Dedup (Review-Fund, hätte den Tag-Fix zur Geldfalle gemacht)
+Der Posting-Tag **ist zugleich der Dedupe-Key**. Beim Generationswechsel kippt er —
+und damit hätte eine noch offene Position der Alt-Generation denselben
+Coin/Direction nicht mehr geblockt: der neue Lauf hätte eine **zweite Live-Position**
+daneben eröffnet. Exakt die Falle, die PR #16 beim Sniper mit
+`model IN (neuer Tag, Alt-Tag)` entschärft hat. Pro Bot an der Stelle geschlossen,
+die dort tatsächlich sperrt:
+
+- `11_ai_mis_bot.py` / `24_quasimodo_bot.py` — Active-Trade-Check auf
+  `model IN (%s, %s)` erweitert.
+- `13_ai_rub_bot.py` — RUB hat **keinen** Active-Trade-Check gegen `ai_signals`; sein
+  4h-Cooldown ist die einzige Re-Fire-Sperre. Der prüft jetzt zusätzlich gegen
+  `RUB_LEGACY_TAG`. (Die fehlende Open-Position-Prüfung ist ein Alt-Zustand, nicht
+  Teil dieses Tasks.)
+
+`legacy_tag` ist jeweils **genau das Tag, das der Bot vor diesem Fix gepostet hätte** —
+keine Operator-Konstante, kein toter Code. Solange Quellcode-Konstante und
+Artefakt-Generation übereinstimmen, sind beide Tags identisch und die Klausel ist ein
+No-op.
+
+Guard-Tests (statisch, DB-frei — ein Runtime-Guard würde von den fleet-weiten
+breiten `except`-Blöcken geschluckt, Lektion aus T-2026-CU-9050-024):
+`backtest/test_mis_tag.py`, `backtest/test_rub_tag.py`,
+`backtest/test_quasimodo_tag.py`. Alle drei sind mutations-geprüft: das Zurückdrehen
+je einer Fix-Zeile lässt den zugehörigen Test rot werden. **Keine
+Live-Semantik-Änderung** — die drei Tags lauten mit den deployten Artefakten
+unverändert `MIS2-<Horizont>`, `RUB2`, `QM_1H`, und die Dedup-Klauseln sind bei
+identischen Tags wirkungsgleich zum Vorzustand.
+
+### Offen (bewusst nicht in diesem PR)
+- `retrain_from_replay.py:723` (EPD2) und `retrain_sra2.py:281` (SRA2) schreiben
+  dict-Artefakte **mit** `model_id`, während die Live-Bots `10_pump_dump_detector`
+  und `9_ai_sr_bot` **rohe** Modelle laden und keine Meta lesen — das
+  Retrain-Ausgabeformat divergiert vom Live-Ladeformat. Beim Verdrahten von
+  EPD2/SRA2 muss der Tag aus der neuen `model_id` kommen, sonst entstehen Instanz 4
+  und 5 derselben Fehlerklasse. Bleibt als P1.45-Nebenbefund im Ledger.
+
 ## [2026-07-09] Kerzen-API `core/candles.py` + Call-Site-Inventar + Paritäts-Tool (T-2026-CU-9050-034, C1-Vorbereitung)
 
 Vorbereitung der R1-/TimescaleDB-Migration (`docs/TIMESCALE_R1_MIGRATION.md`,
@@ -65,6 +222,7 @@ Binance-Wochenkerzen öffnen Montag 00:00 UTC.
 Offen (Operator, siehe `docs/CANDLE_CALL_SITES.md` §5): Retention, `REAL` →
 `double precision` (P3.12), 1d/1w-Streaming, Close-Grace-Period. **R1 senkt die
 Signal-Raten — das ist der Zweck. Schwellen erst nach dem Retrain neu tunen.**
+
 ## [2026-07-09] HTTP-Härtung der Binance-REST-Pfade (T-2026-CU-9050-027 D2, P2.14 + P2.18)
 
 Neues `core/http_retry.py` (reine Politik ohne I/O, injizierbare Uhr/Sleep →
