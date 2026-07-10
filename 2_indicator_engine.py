@@ -339,7 +339,12 @@ def calculate_wma(series, period):
     if len(values) >= period:
         windows = sliding_window_view(values, period)
         out[period - 1 :] = windows.dot(weights) / sum_weights
-    return pd.Series(out, index=series.index).fillna(0)
+    # T-2026-CU-9050-054 (P1.13): the first `period-1` bars are undefined — let the
+    # NaN flow (like calculate_kama) instead of fabricating 0. A fabricated 0 made
+    # extract_ml_features in 24_quasimodo_bot/25_smc_ml_sniper read
+    # wma_21_dist_pct = (0-close)/close*100 = -100.0 on young coins, encoding
+    # "new listing" instead of a distance. NaN is imputed by the bots' bfill.
+    return pd.Series(out, index=series.index)
 
 
 def calculate_smma(series, period):
@@ -353,11 +358,15 @@ def calculate_rsi(series, period=14):
     roll_up = up.ewm(span=period, adjust=False).mean()
     roll_down = down.ewm(span=period, adjust=False).mean()
     rs = roll_up / roll_down
-    # FIX: Vorher `100 - (100 / (1 + rs)).fillna(0)` → fillna(0) nur auf das
-    # INNERE Ergebnis angewandt. Bei NaN-rs wurde daraus `100 - 0 = 100` →
-    # RSI zeigte fälschlich 100 (max overbought) an Stellen ohne Daten,
-    # was false SHORTs triggerte. Jetzt die GESAMTE Formel mit fillna(50) (neutral).
-    return (100.0 - (100.0 / (1.0 + rs))).fillna(50)
+    # History: an earlier bug applied `.fillna(0)` to the INNER term only, so a
+    # NaN rs became `100 - 0 = 100` → RSI falsely read 100 (max overbought) where
+    # there was no data and triggered false SHORTs. That was replaced by a full
+    # `.fillna(50)` (neutral). T-2026-CU-9050-054 (P1.13) removes the fabrication
+    # entirely: a fabricated 50 is still an invented value on the warmup rows of a
+    # young coin. Let the NaN flow (like calculate_kama); the bots' bfill imputes
+    # it, the replay drops the head rows. Note the divide already yields NaN (not
+    # 100) for the 0/0 warmup case, so the old false-100 bug does not return.
+    return 100.0 - (100.0 / (1.0 + rs))
 
 
 def calculate_kama(series, period=10, fast=2, slow=30):
@@ -419,16 +428,21 @@ def calculate_indicators_optimized(df, timeframe):
     for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99]:
         results[f'KAMA_{p}'] = calculate_kama(close, period=p)
 
+    # T-2026-CU-9050-054 (P1.13): the rolling(20)/rolling(w) warmup rows are
+    # undefined — let the NaN flow (like calculate_kama) instead of fabricating 0.
+    # A fabricated 0 pinned boll_*/donchian_*_dist_pct to -100.0 for young coins in
+    # extract_ml_features (24_quasimodo_bot/25_smc_ml_sniper). NaN is imputed by the
+    # bots' bfill; the replay drops the head rows.
     mid = close.rolling(20).mean()
     std = close.rolling(20).std()
-    results['BOLL_MID_20'] = mid.fillna(0)
-    results['BOLL_UPPER_20'] = (mid + 2 * std).fillna(0)
-    results['BOLL_LOWER_20'] = (mid - 2 * std).fillna(0)
+    results['BOLL_MID_20'] = mid
+    results['BOLL_UPPER_20'] = mid + 2 * std
+    results['BOLL_LOWER_20'] = mid - 2 * std
 
     for w in [4, 10, 12, 15, 20]:
-        results[f'DONCHIAN_UPPER_{w}'] = high.rolling(w).max().fillna(0)
-        results[f'DONCHIAN_LOWER_{w}'] = low.rolling(w).min().fillna(0)
-        results[f'DONCHIAN_MID_{w}'] = ((results[f'DONCHIAN_UPPER_{w}'] + results[f'DONCHIAN_LOWER_{w}']) / 2).fillna(0)
+        results[f'DONCHIAN_UPPER_{w}'] = high.rolling(w).max()
+        results[f'DONCHIAN_LOWER_{w}'] = low.rolling(w).min()
+        results[f'DONCHIAN_MID_{w}'] = (results[f'DONCHIAN_UPPER_{w}'] + results[f'DONCHIAN_LOWER_{w}']) / 2
 
     def calc_macd(fast, slow, sig):
         f_ema = close.ewm(span=fast, adjust=False).mean()
