@@ -50,6 +50,20 @@ FALLBACK_UNSTABLE_LOOKBACK_HOURS = 2
 REFERENCE_WINDOW_DAYS = 30
 MIN_TRADES_FOR_DECISION = 30
 LIFECYCLE_SYNC_INTERVAL_SEC = 30
+# Half-width of the row anchor used by the lifecycle sync, the corpse reaper's
+# twin check and its anti-censor guard. ONE constant on purpose: if the match
+# loop and the reaper ever disagree on the window, the reaper can censor an
+# outcome the match loop would still have classified.
+LIFECYCLE_SYNC_WINDOW_SEC = 60
+# Historical session TZ under which the pre-T-052 DB default stamped
+# ai_signals.open_time. Deliberately hard-coded, NOT current_setting('TimeZone'):
+# the legacy rows were written under this zone regardless of any future session
+# or server TZ change (R3 UTC flip), and AT TIME ZONE handles their DST
+# per-timestamp. Only used for the legacy second window; new rows carry naive
+# UTC and match the first window. Collision-free because the 4h per-coin+
+# direction cooldown makes two same-direction trades 3h±window apart impossible
+# (pinned by a test).
+LEGACY_SESSION_TZ = "Europe/Bucharest"
 FALLBACK_MIN_WR = 50.0
 
 # Outcome-Klassifikation im Lifecycle-Sync: siehe Erläuterung in
@@ -1002,21 +1016,36 @@ async def sync_closed_trades(conn) -> None:
         # mehreren Kandidaten gewinnt die kleinste Zeitdifferenz. Der
         # closed_trades_master-Check ist raus — ROM1 schreibt nie nach
         # active_trades_master, dort konnte nur ein Fremd-Trade matchen.
-        window_start = opened_at_naive - timedelta(seconds=60)
-        window_end = opened_at_naive + timedelta(seconds=60)
+        #
+        # T-2026-CU-9050-052: second window through LEGACY_SESSION_TZ — rows
+        # written before this fix carry session-local open_time (+3h), and
+        # their closes (copied verbatim by the monitor) would otherwise never
+        # match; a legacy-era trade that closes AFTER deploy would lose its
+        # real WIN/LOSS to the corpse reaper. Safe against cross-matching a
+        # different trade: the 4h per-coin+direction cooldown means no two
+        # same-direction trades can sit 3h±window apart.
+        window_start = opened_at_naive - timedelta(seconds=LIFECYCLE_SYNC_WINDOW_SEC)
+        window_end = opened_at_naive + timedelta(seconds=LIFECYCLE_SYNC_WINDOW_SEC)
 
         # `status` in closed_ai_signals enthält tatsächlich den close_reason
         # (z.B. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP").
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT entry, close_price, status FROM closed_ai_signals
                 WHERE symbol = %s AND direction = %s AND model = 'ROM1'
-                  AND open_time >= %s AND open_time <= %s
-                ORDER BY ABS(EXTRACT(EPOCH FROM (open_time - %s)))
+                  AND (open_time BETWEEN %s AND %s
+                       OR (open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC')
+                           BETWEEN %s AND %s)
+                ORDER BY LEAST(
+                    ABS(EXTRACT(EPOCH FROM (open_time - %s))),
+                    ABS(EXTRACT(EPOCH FROM (
+                        (open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC') - %s
+                    )))
+                )
                 LIMIT 1
                 """,
-                (coin, direction, window_start, window_end, opened_at_naive),
+                (coin, direction, window_start, window_end, window_start, window_end, opened_at_naive, opened_at_naive),
             )
             row = cur.fetchone()
 
@@ -1041,16 +1070,18 @@ async def reap_corpse_trades(conn) -> None:
 
     Guards, in order:
     - 72h minimum age: never touches fresh rows.
-    - Twin check is ROW-anchored (±60s around opened_at, both rows are written
-      in one transaction), NOT just coin+direction — a live trade's twin must
-      not shield a corpse that shares coin+direction (stacking era), because
-      that corpse would keep feeding Close commands that flatten the LIVE
-      position on the next regime flip. Legacy twins sit at session-local
-      time, hence the second window via current_setting('TimeZone').
+    - Twin check is ROW-anchored (±window around opened_at, both rows are
+      written in one transaction), NOT just coin+direction — a live trade's
+      twin must not shield a corpse that shares coin+direction (stacking era),
+      because that corpse would keep feeding Close commands that flatten the
+      LIVE position on the next regime flip. Legacy twins sit at
+      LEGACY_SESSION_TZ local time, hence the second window.
     - Never censors a classifiable outcome: if a closed_ai_signals row exists
-      in the sync window, the regular match loop will classify the real
-      WIN/LOSS — the reaper skips (closes the monitor-commit race for >72h
-      trades; the monitor deletes the twin and writes the close atomically).
+      in either sync window (same two windows as the match loop — asymmetry
+      here would censor legacy-era closes), the regular match loop will
+      classify the real WIN/LOSS — the reaper skips (closes the
+      monitor-commit race for >72h trades; the monitor deletes the twin and
+      writes the close atomically).
 
     Reaped rows get CLOSED_NEUTRAL (no PnL/WR distortion, same convention as
     DELISTED/CLEANUP) and closed_at = reap time — NOT the real close time,
@@ -1061,9 +1092,10 @@ async def reap_corpse_trades(conn) -> None:
     that case is housekeeping's DELISTED cleanup deleting the twin.
     """
     now_naive = utc_now_naive()
+    window = f"INTERVAL '{LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             UPDATE orchestrator_open_trades o
             SET status = 'CLOSED_NEUTRAL', closed_at = %s, close_reason = 'corpse_reaper'
             WHERE o.status = 'OPEN'
@@ -1072,18 +1104,23 @@ async def reap_corpse_trades(conn) -> None:
                   SELECT 1 FROM ai_signals a
                   WHERE a.model = 'ROM1' AND a.symbol = o.coin AND a.direction = o.direction
                     AND (
-                        a.open_time BETWEEN o.opened_at - INTERVAL '60 seconds'
-                                        AND o.opened_at + INTERVAL '60 seconds'
-                        OR (a.open_time AT TIME ZONE current_setting('TimeZone') AT TIME ZONE 'UTC')
-                                    BETWEEN o.opened_at - INTERVAL '60 seconds'
-                                        AND o.opened_at + INTERVAL '60 seconds'
+                        a.open_time BETWEEN o.opened_at - {window}
+                                        AND o.opened_at + {window}
+                        OR (a.open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC')
+                                    BETWEEN o.opened_at - {window}
+                                        AND o.opened_at + {window}
                     )
               )
               AND NOT EXISTS (
                   SELECT 1 FROM closed_ai_signals c
                   WHERE c.model = 'ROM1' AND c.symbol = o.coin AND c.direction = o.direction
-                    AND c.open_time BETWEEN o.opened_at - INTERVAL '60 seconds'
-                                        AND o.opened_at + INTERVAL '60 seconds'
+                    AND (
+                        c.open_time BETWEEN o.opened_at - {window}
+                                        AND o.opened_at + {window}
+                        OR (c.open_time AT TIME ZONE '{LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC')
+                                    BETWEEN o.opened_at - {window}
+                                        AND o.opened_at + {window}
+                    )
               )
             """,
             (now_naive, now_naive - timedelta(hours=72)),
@@ -1227,20 +1264,40 @@ def should_run_lifecycle_sync() -> bool:
     return False
 
 
+async def _run_stage(conn, stage_name: str, coro) -> None:
+    """Runs one main-loop stage; an exception is logged and the connection is
+    rolled back so the NEXT stage does not inherit an aborted transaction.
+
+    T-2026-CU-9050-052: the stages were one try block before — a persistent
+    poison row in the regime check or the gating pass would then silently
+    starve the lifecycle sync (and with it the corpse reaper, the only decay
+    path for stuck OPEN rows) forever.
+    """
+    try:
+        await coro
+    except Exception as e:
+        logger.error(f"Orchestrator-Loop-Error [{stage_name}]: {e}", exc_info=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 async def main_loop() -> None:
     logger.info("=== 🎯 SIGNAL ORCHESTRATOR STARTED ===")
     while True:
         conn = None
         try:
             conn = get_db_connection()
-            await check_regime_change_and_close(conn)
-            await signal_gating_pass(conn)
-            if should_run_lifecycle_sync():
-                await sync_closed_trades(conn)
         except Exception as e:
-            logger.error(f"Orchestrator-Loop-Error: {e}", exc_info=True)
-        finally:
-            if conn:
+            logger.error(f"Orchestrator-Loop-Error [connect]: {e}", exc_info=True)
+        if conn:
+            try:
+                await _run_stage(conn, "regime_change", check_regime_change_and_close(conn))
+                await _run_stage(conn, "gating", signal_gating_pass(conn))
+                if should_run_lifecycle_sync():
+                    await _run_stage(conn, "lifecycle_sync", sync_closed_trades(conn))
+            finally:
                 conn.close()
         await asyncio.sleep(LOOP_INTERVAL_MS / 1000.0)
 

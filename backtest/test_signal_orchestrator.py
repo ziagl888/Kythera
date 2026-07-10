@@ -547,7 +547,7 @@ def test_cross_direction_allowed_after_trade_close():
     assert orch.is_opposite_direction_open(conn, "BTCUSDT", "SHORT") is False
 
 
-def _mock_conn(executed=None, rowcount=0):
+def _mock_conn(executed=None, rowcount=0, fetchall=None):
     """Shared mock conn/cursor scaffold. Optionally records every
     (sql, params) pair into `executed`."""
     conn = MagicMock()
@@ -555,7 +555,7 @@ def _mock_conn(executed=None, rowcount=0):
     cur.__enter__ = MagicMock(return_value=cur)
     cur.__exit__ = MagicMock(return_value=False)
     cur.fetchone = MagicMock(return_value=None)
-    cur.fetchall = MagicMock(return_value=[])
+    cur.fetchall = MagicMock(return_value=fetchall if fetchall is not None else [])
     cur.rowcount = rowcount
     if executed is not None:
         cur.execute = MagicMock(side_effect=lambda sql, params=None: executed.append((sql, params)))
@@ -636,24 +636,56 @@ def test_sync_closed_trades_runs_corpse_reaper_first():
 
 def test_corpse_reaper_is_row_anchored_and_never_censors_syncable_closes():
     """The reaper's twin check must be anchored to the row's own opened_at
-    (±60s, same-transaction inserts) — a live trade's twin on the same
+    (±window, same-transaction inserts) — a live trade's twin on the same
     coin+direction must not shield a stacking-era corpse, which would keep
     feeding spurious Close commands that flatten the live position. Legacy
-    twins sit at session-local time (second window via current_setting).
-    And it must skip rows whose close is already recorded in
-    closed_ai_signals: those get their REAL outcome from the match loop,
-    never a corpse_reaper censor."""
+    twins sit at LEGACY_SESSION_TZ local time (second window, hard-coded so a
+    future session-TZ change cannot un-shield live legacy positions). And it
+    must skip rows whose close is already recorded in closed_ai_signals — in
+    EITHER window, or legacy-era closes would be censored: those get their
+    REAL outcome from the match loop, never a corpse_reaper censor."""
     executed = []
     conn, _cur = _mock_conn(executed=executed, rowcount=0)
 
     asyncio.run(orch.reap_corpse_trades(conn))
 
     (sql, _params), = executed
+    window = f"INTERVAL '{orch.LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
     assert "NOT EXISTS" in sql
     assert "FROM ai_signals" in sql
-    assert "a.open_time BETWEEN o.opened_at - INTERVAL '60 seconds'" in sql  # row anchor, not coin-scoped
-    assert "current_setting('TimeZone')" in sql  # legacy session-local twin window
+    assert f"a.open_time BETWEEN o.opened_at - {window}" in sql  # row anchor, not coin-scoped
+    assert "current_setting" not in sql  # pinned zone, not the mutable session GUC
     assert "FROM closed_ai_signals" in sql  # anti-censor guard: syncable close → skip
+    # Legacy window in BOTH subqueries (twin check AND anti-censor guard).
+    assert sql.count(f"AT TIME ZONE '{orch.LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC'") == 2
+
+
+def test_sync_match_loop_covers_legacy_window():
+    """The match loop must search closed_ai_signals in the same two windows as
+    the reaper (raw naive-UTC anchor + LEGACY_SESSION_TZ conversion) — without
+    the second window, a legacy-era trade closing after deploy loses its real
+    WIN/LOSS to the reaper."""
+    opened_at = datetime.datetime(2026, 7, 8, 12, 0, 0)
+    executed = []
+    conn, _cur = _mock_conn(executed=executed, fetchall=[(1, "BTCUSDT", "LONG", "SomeBot", opened_at)])
+
+    asyncio.run(orch.sync_closed_trades(conn))
+
+    selects = [(sql, p) for sql, p in executed if "SELECT entry, close_price, status" in sql]
+    assert len(selects) == 1
+    sql, params = selects[0]
+    assert f"AT TIME ZONE '{orch.LEGACY_SESSION_TZ}' AT TIME ZONE 'UTC'" in sql
+    assert "LEAST(" in sql  # closest-match ranking across both windows
+    assert params[0] == "BTCUSDT" and params[1] == "LONG"
+
+
+def test_legacy_window_cannot_cross_match_thanks_to_cooldown():
+    """The LEGACY_SESSION_TZ second window is only collision-free because two
+    same-coin+direction ROM1 trades can never sit ~3h apart: the per-coin+
+    direction cooldown must stay above the max legacy offset (+3h EEST) plus
+    the anchor window on both sides. If this assert fires, the cooldown was
+    lowered and the legacy windows in sync/reaper must be revisited."""
+    assert orch.ORCHESTRATOR_COOLDOWN_HOURS * 3600 > 3 * 3600 + 2 * orch.LIFECYCLE_SYNC_WINDOW_SEC
 
 
 # ── ROM1 Tracking ─────────────────────────────────────────────────────────────

@@ -22,14 +22,30 @@ Match-Loops): eine OPEN-Row, deren `ai_signals`-Zwilling nicht mehr existiert
 (Trade wurde geschlossen, aber nie gesynct — genau die Leichen-Klasse), wird
 nach 72 h Mindestalter auf `CLOSED_NEUTRAL` / `close_reason='corpse_reaper'`
 gestellt. Der Twin-Check ist **row-anchored** (±60 s um `opened_at`, beide
-Rows entstehen in einer Transaktion; Legacy-Zwillinge über ein zweites
-Fenster in Session-TZ) — ein Live-Trade auf demselben coin+direction schirmt
-eine Stacking-Ära-Leiche also NICHT ab. Zusätzliche Anti-Zensur-Klausel:
-existiert bereits eine syncbare `closed_ai_signals`-Row (±60 s), überspringt
-der Reaper — das echte WIN/LOSS-Outcome klassifiziert der Match-Loop, nie der
+Rows entstehen in einer Transaktion) — ein Live-Trade auf demselben
+coin+direction schirmt eine Stacking-Ära-Leiche also NICHT ab. Für die
+Legacy-Population (open_time in Session-Lokalzeit gestempelt) gibt es ein
+zweites Fenster über die **hart kodierte historische Writer-TZ**
+`Europe/Bucharest` (bewusst nicht `current_setting('TimeZone')`: ein
+künftiger R3-Flip der Session-TZ darf live Legacy-Positionen nicht
+entschirmen; DST behandelt `AT TIME ZONE` pro Timestamp). Dieses
+Legacy-Fenster gilt **symmetrisch** auch im Sync-Match-Loop und in der
+Anti-Zensur-Klausel des Reapers — sonst würde ein Legacy-Trade, der NACH dem
+Deploy schließt, sein echtes WIN/LOSS an den Reaper verlieren; so recovered
+der Match-Loop stattdessen auch die echten Outcomes der Alt-Leichen.
+Kollisionsfrei ist das Fenster, weil der 4h-Cooldown pro coin+direction zwei
+gleichgerichtete Trades im Abstand von ~3 h strukturell ausschließt (per Test
+gepinnt, inkl. Fenster-Konstante `LIFECYCLE_SYNC_WINDOW_SEC` für alle
+Anker-Fenster). Anti-Zensur-Klausel: existiert bereits eine syncbare
+`closed_ai_signals`-Row (in einem der beiden Fenster), überspringt der
+Reaper — das echte WIN/LOSS-Outcome klassifiziert der Match-Loop, nie der
 Reaper (schließt das Monitor-Commit-Race für >72h-Trades). `closed_at` der
 gereapten Rows ist die Reap-Zeit, nicht die echte Close-Zeit —
 Duration-Auswertungen müssen `close_reason='corpse_reaper'` ausschließen.
+Der Main-Loop isoliert die drei Stages jetzt einzeln (try/except + Rollback
+pro Stage): eine Poison-Row im Regime-Check oder Gating kann den
+Lifecycle-Sync (und damit den einzigen Decay-Pfad) nicht mehr dauerhaft
+aushungern.
 Reine Buchhaltung, kein Telegram-Post. Damit verschwinden die Leichen wirklich
 aus dem OPEN-Bestand — sie blocken die Richtungs-Checks nicht mehr, füttern
 den Regime-Change-Auto-Close nicht mehr mit Spurious-`Close`-Kommandos und
@@ -45,13 +61,16 @@ der Decay-Pfad dafür ist der DELISTED-Cleanup des Housekeepings.
 
 Verifikation nach Deploy: `lifecycle_sync`-Closes tauchen wieder auf
 (>0/Tag), der OPEN-älter-72h-Bestand (208 Rows Stand 10.07., wachsend Richtung
-395) wird vom Reaper im ersten Sync-Pass abgeräumt und bleibt danach ~0, und
-es gibt KEINEN `Close`-Kommando-Burst beim nächsten Regime-Flip. Sechs neue
-Tests pinnen INSERT-Spalte + naiv-UTC-Wert, die bound-freien Richtungs-Checks
-und den Reaper-Contract (Reaper-first, row-anchored Twin-Fenster inkl.
-Session-TZ-Legacy-Fenster, Anti-Zensur-Klausel, kein Outbox-Write) —
-`backtest/test_signal_orchestrator.py`; Suiten
-test_regime_detector/test_bot_regime_analyzer unverändert grün.
+395) wird im ersten Sync-Pass abgebaut — Alt-Leichen mit vorhandener Close-Row
+bekommen ihr ECHTES Outcome über den Match-Loop (`lifecycle_sync`), nur
+matchlose Reste gehen als `corpse_reaper` neutral raus — und danach bleibt der
+Bestand ~0; KEIN `Close`-Kommando-Burst beim nächsten Regime-Flip. Sieben neue
+Tests pinnen INSERT-Spalte + naiv-UTC-Wert, die bound-freien Richtungs-Checks,
+den Reaper-Contract (Reaper-first, row-anchored Twin-Fenster, hart kodierte
+Legacy-TZ in beiden Subqueries, Anti-Zensur-Klausel, kein Outbox-Write), das
+Legacy-Fenster im Match-Loop und die Cooldown-Invariante, die das
+Legacy-Fenster kollisionsfrei macht — `backtest/test_signal_orchestrator.py`;
+Suiten test_regime_detector/test_bot_regime_analyzer unverändert grün.
 
 ## [2026-07-10] Zweiter Look-ahead in `walkforward_sim.load_joined`: `bfill()` entfernt (T-2026-CU-9050-045)
 
