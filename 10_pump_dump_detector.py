@@ -43,13 +43,21 @@ ROUND_LEVEL_CONFIG = {
     "BTCDOMUSDT": {"step": 100, "decimals": 0},
 }
 
-# P1.39: Fenster-Randschutz für die zeit-basierten Lookups. `now` liegt immer
-# Sub-Sekunden nach dem Zeitstempel des jüngsten Buckets, und die Ticker-Buckets
-# sitzen nicht auf exakten 10s-Rastern. Ohne Guard fällt der Bucket, der genau
-# auf der Fenstergrenze liegt, mal rein und mal raus — ein Modell-Feature, das
-# zwischen zwei Ticks um 1/7 springt, ohne dass sich der Markt bewegt hat.
-# 5s < halber Bucket-Abstand (10s), der Guard kann also nie einen zusätzlichen
-# Bucket hereinlassen.
+# P1.39: Fenster-Randschutz für die zeit-basierten Lookups.
+#
+# Die Bucket-Stempel liegen exakt auf dem 10s-Raster (`_tick_epoch % 10`). Wird
+# ein Fenster gegen den Anker `bucket_anchor` (= Stempel des jüngsten Buckets)
+# gemessen, fällt jeder Zielzeitpunkt exakt auf einen Rasterpunkt — der Guard
+# absorbiert dann nur noch Float-/Parse-Rauschen an der Grenze.
+#
+# 5s ist kleiner als der halbe Bucket-Abstand (10s), der Guard kann also nie
+# einen zusätzlichen Bucket hereinlassen. Genau dafür ist er klein gewählt.
+#
+# WICHTIG: der Guard ersetzt NICHT den Anker. Gegen die Wanduhr `now` gemessen
+# wandert der Zielzeitpunkt um den Phasenversatz [0,10) zwischen Rasterpunkt und
+# Aufrufzeit, und das Fenster kippte zwischen 6 und 7 Buckets — ein Modell-
+# Feature, das springt, ohne dass sich der Markt bewegt hat. Deshalb ankern alle
+# Feature-Lookups auf `bucket_anchor`, nicht auf `now`.
 WINDOW_EDGE_GUARD = 5
 
 # --- ML MODEL FOR 10 SECONDS ---
@@ -347,6 +355,16 @@ def process_coin_logics(conn, symbol):
     if len(data) < 36:
         return  # Brauchen etwas Historie
 
+    # Invarianten dieser Funktion (P1.39 — bitte vor jeder "Vereinfachung" lesen):
+    #   1. Fenster werden über ZEITSTEMPEL ausgewählt, nie über Listen-Indizes.
+    #      `data` kann Lücken haben, und `volumes_10s`-artige gefilterte Listen
+    #      haben Positionen, die keinem Zeitpunkt entsprechen.
+    #   2. Jeder `_find_bucket_*`-Aufruf ankert auf `bucket_anchor`, nie auf `now`.
+    #      Sonst wandert das Fenster mit dem Aufrufzeitpunkt (siehe unten).
+    #   3. `now` bleibt Wanduhr — Staleness-Check, die beiden Alert-Cooldowns und
+    #      `pump_dump_events.spike_time` MÜSSEN daran hängen bleiben.
+    #   4. Fehlt ein Bucket, wird der Tick übersprungen. Es wird KEIN Ersatzwert
+    #      (0, letzter Preis, …) als Modell-Feature erfunden.
     now = datetime.datetime.now(datetime.timezone.utc)
     current_price = float(data[-1]["p"])
     current_vol = float(data[-1]["v10s"])
@@ -360,6 +378,20 @@ def process_coin_logics(conn, symbol):
     latest_ts = _parse_bucket_ts(data[-1])
     if latest_ts is None:
         return
+
+    # P1.39: ALLE Bucket-Lookups ankern auf dem jüngsten Bucket-Zeitstempel,
+    # nicht auf der Wanduhr. Die Bucket-Stempel sind auf das 10s-Raster gefloort
+    # (`_tick_epoch - _tick_epoch % 10`), `now` ist der Aufrufzeitpunkt irgendwo
+    # innerhalb des Rasters — und der Detector iteriert ~530 Coins nach einem
+    # REST-Roundtrip, der Versatz wandert also auch noch über den Batch.
+    # Gegen `now` gemessen läge die 60s-Grenze mal vor, mal hinter dem Bucket von
+    # vor 60s: das Fenster kippte je nach Aufrufzeitpunkt zwischen 6 und 7
+    # Buckets, und ein Modell-Feature sprang, ohne dass sich der Markt bewegte.
+    # Gegen `latest_ts` liegt jeder Zielzeitpunkt exakt auf einem Rasterpunkt.
+    # `now` bleibt für alles Wanduhr-Artige zuständig (Staleness, Alert-Gates,
+    # spike_time).
+    bucket_anchor = latest_ts
+
     latest_age_sec = (now - latest_ts).total_seconds()
     if latest_age_sec > 60:
         # Daten-Gap zu groß — nicht aussagekräftig für Pump-Detection.
@@ -416,7 +448,7 @@ def process_coin_logics(conn, symbol):
             seconds_back = lookback * 10
 
             # Bucket vor genau `seconds_back` Sekunden suchen (mit 20s Toleranz)
-            past_entry = _find_bucket_before(data, now, seconds_back, tolerance=20)
+            past_entry = _find_bucket_before(data, bucket_anchor, seconds_back, tolerance=20)
             if past_entry is None:
                 # Kein Bucket im gewünschten Zeitfenster — entweder zu wenig
                 # Historie oder Daten-Lücke. Diesen Lookback skippingn.
@@ -436,7 +468,7 @@ def process_coin_logics(conn, symbol):
                 # Zeit-basiert: Bucket von vor 600s (= 10min) suchen
                 dead_cat = False
                 chg_10m = None
-                bucket_10m_ago = _find_bucket_before(data, now, 600, tolerance=30)
+                bucket_10m_ago = _find_bucket_before(data, bucket_anchor, 600, tolerance=30)
                 if bucket_10m_ago is not None:
                     price_10m = float(bucket_10m_ago.get("p", 0))
                     if price_10m > 0:
@@ -454,7 +486,7 @@ def process_coin_logics(conn, symbol):
                 # Bei DUMP: Start = highest, End = current_low.
                 # WICHTIG: auch hier zeit-basiert statt data[-lookback:], sonst
                 # wird after Restart wieder der alte Bug produziert.
-                spike_window = _find_bucket_range(data, now, seconds_back, tolerance=20)
+                spike_window = _find_bucket_range(data, bucket_anchor, seconds_back, tolerance=20)
                 if not spike_window:
                     # Kein brauchbares Fenster — Alert skippen
                     continue
@@ -543,10 +575,14 @@ def process_coin_logics(conn, symbol):
         # (b) bei WS-Lücken sind 18 Buckets nicht 3 Minuten und 360 nicht eine
         # Stunde. Beides schob das Fenster still, ohne dass irgendwas auffiel.
         if not alerted:
-            rec_buckets = _find_bucket_range(data, now, 180)
-            hour_vols = [float(e["v10s"]) for e in _find_bucket_range(data, now, 3600) if e.get("v10s_valid", True)]
+            rec_buckets = _find_bucket_range(data, bucket_anchor, 180, tolerance=WINDOW_EDGE_GUARD)
+            hour_vols = [
+                float(e["v10s"])
+                for e in _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
+                if e.get("v10s_valid", True)
+            ]
             rec_vols = [float(e["v10s"]) for e in rec_buckets if e.get("v10s_valid", True)]
-            bucket_3m = _find_bucket_before(data, now, 180)
+            bucket_3m = _find_bucket_before(data, bucket_anchor, 180, tolerance=WINDOW_EDGE_GUARD)
 
             # Gate wie vorher: eine volle Stunde gültiger Buckets als Baseline.
             if bucket_3m is not None and rec_vols and len(hour_vols) >= 360:
@@ -592,7 +628,7 @@ def process_coin_logics(conn, symbol):
     # tolerance=WINDOW_EDGE_GUARD statt der Default-20s (siehe Konstante).
     hour_vols = [
         float(e["v10s"])
-        for e in _find_bucket_range(data, now, 3600, tolerance=WINDOW_EDGE_GUARD)
+        for e in _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
         if e.get("v10s_valid", True)
     ]
     if not hour_vols:
@@ -605,10 +641,10 @@ def process_coin_logics(conn, symbol):
     # 60s-Fenster über Zeitstempel. Fehlt der Bucket von vor 60s, ist p_chg_60s
     # nicht bestimmbar — Tick überspringen statt eine 0 ins Modell zu schreiben
     # (eine erfundene 0 ist ein Feature-Wert, kein "unbekannt").
-    bucket_60s = _find_bucket_before(data, now, 60)
+    bucket_60s = _find_bucket_before(data, bucket_anchor, 60, tolerance=WINDOW_EDGE_GUARD)
     # Bei lückenlosen Ticks sind das exakt die 7 Buckets, die das alte
     # prices[-7:] getroffen hat.
-    window_60s = _find_bucket_range(data, now, 60, tolerance=WINDOW_EDGE_GUARD)
+    window_60s = _find_bucket_range(data, bucket_anchor, 60, tolerance=WINDOW_EDGE_GUARD)
     rec_prices = [float(e["p"]) for e in window_60s]
     if bucket_60s is None or len(rec_prices) < 2:
         return
@@ -624,7 +660,7 @@ def process_coin_logics(conn, symbol):
 
     # Nur Anzeige (Alert-Caption), kein Modell-Feature — fehlender Bucket ist
     # hier folgenlos.
-    bucket_5m = _find_bucket_before(data, now, 300, tolerance=30)
+    bucket_5m = _find_bucket_before(data, bucket_anchor, 300, tolerance=30)
     change_5min = (current_price / float(bucket_5m["p"]) - 1) * 100 if bucket_5m and float(bucket_5m["p"]) > 0 else 0
 
     # Event in DB speichern — aber NUR wenn es die Housekeeping-Retention

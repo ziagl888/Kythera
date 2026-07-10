@@ -18,10 +18,26 @@ Umbau unbenutzt waren, ist der Beleg, dass keine Index-Rechnung übrig blieb.
 
 Fehlt der Bucket von vor 60s, wird der Tick **übersprungen**, statt eine
 erfundene `0` als Feature ins Modell zu schreiben — eine 0 ist ein Messwert,
-kein „unbekannt". Neu: `WINDOW_EDGE_GUARD = 5` (kleiner als der halbe
-Bucket-Abstand) fängt die Sub-Sekunden-Drift an der Fenstergrenze ab; ohne den
-Guard springt ein Modell-Feature zwischen zwei Ticks um 1/7, ohne dass sich der
-Markt bewegt hat.
+kein „unbekannt".
+
+### Anker statt Wanduhr
+Alle Bucket-Lookups messen gegen `bucket_anchor` (den Stempel des jüngsten
+Buckets), nicht gegen `now`. Die Stempel sind aufs 10s-Raster gefloort, `now`
+ist der Aufrufzeitpunkt — und der Detector iteriert ~530 Coins nach einem
+REST-Roundtrip, der Versatz wandert also auch über den Batch. Gegen `now`
+gemessen schrumpfte das 60s-Fenster ab einem Versatz von 5s still auf 6, dann
+5 Buckets: `buy_pres`/`volat` beschrieben ~50 Sekunden, während `p_chg_60s`
+weiter echte 60 Sekunden maß. Drei Features, die dieselbe Spanne beschreiben
+sollen, taten es nicht. Gegen den Anker liegt jeder Zielzeitpunkt exakt auf
+einem Rasterpunkt, und `WINDOW_EDGE_GUARD = 5` absorbiert nur noch
+Parse-Rauschen. Gefunden im `z-code-reviewer`-Pass, nicht durch die erste
+Test-Runde — die synthetisierte Buckets mit Versatz 0.
+
+Mit umgestellt wurden auch die drei vorbestehenden Lookups des
+Preis-Spike-Pfads: zwei Zeitbasen für Geschwister-Lookups derselben Funktion
+wären schlimmer als eine falsche. Bewusst **nicht** umgestellt, weil echte
+Wanduhr-Semantik: Staleness-Check, die beiden Alert-Cooldowns und
+`pump_dump_events.spike_time`.
 
 ### Messung
 Im Gap-Szenario des Tests meldete die alte Index-Rechnung `p_chg_60s = +100.0`

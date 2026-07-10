@@ -91,6 +91,10 @@ class FakeConn:
         pass
 
 
+def _parse(ts_str: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+
+
 def _bucket(ts: datetime.datetime, price: float, vol: float, valid: bool = True) -> dict:
     return {"t": ts.isoformat(), "p": str(price), "v10s": str(vol), "v10s_valid": valid}
 
@@ -99,7 +103,7 @@ def _bucket(ts: datetime.datetime, price: float, vol: float, valid: bool = True)
 def run_tick(monkeypatch):
     """Drive process_coin_logics over a supplied bucket list; return the model."""
 
-    def _run(buckets: list[dict], sample_vol: float = 1.0) -> _Recorder:
+    def _run(buckets: list[dict], sample_vol: float = 1.0, now_offset: float = 0.0) -> _Recorder:
         """`sample_vol` seeds the legacy volume_samples deque. Post-fix the
         baseline is derived from `buckets`, so poisoning the deque is how a test
         proves the deque is no longer the source."""
@@ -124,6 +128,13 @@ def run_tick(monkeypatch):
         monkeypatch.setattr(det, "send_outbox", lambda *a, **kw: None)
         monkeypatch.setattr(det, "check_round_levels", lambda *a, **kw: None)
         monkeypatch.setattr(det, "log_prediction", lambda *a, **kw: None)
+        if now_offset:
+            # Freeze wall-clock `now` at `now_offset` seconds past the newest
+            # bucket's grid position — the real phase offset (see below).
+            frozen = _parse(buckets[-1]["t"]) + datetime.timedelta(seconds=now_offset)
+            fake_dt = mock.MagicMock(wraps=datetime.datetime)
+            fake_dt.now = lambda tz=None: frozen
+            monkeypatch.setattr(det.datetime, "datetime", fake_dt)
         det.process_coin_logics(FakeConn(), SYMBOL)
         return model
 
@@ -240,3 +251,34 @@ def test_buy_pressure_and_volatility_use_the_60s_window(run_tick):
     # 60s window = 7 buckets: six at 100, one at 110 -> exactly one up-move.
     assert feats[F_BUY_PRES] == pytest.approx(1 / 6)
     assert feats[F_VOLAT] > 0.0
+
+
+# ── The window is anchored on the bucket grid, not on the wall clock ─────────
+
+
+@pytest.mark.parametrize("offset", [0.0, 3.0, 6.0, 9.5])
+def test_60s_window_is_stable_across_the_tick_phase_offset(run_tick, offset):
+    """Bucket stamps are floored to the 10s grid (`_tick_epoch % 10`), but
+    process_coin_logics runs at an arbitrary point inside that grid — and it
+    iterates ~530 coins after a REST round-trip, so the offset drifts across the
+    batch too.
+
+    Anchored on wall-clock `now` with tolerance=5, the 60s-ago bucket fell
+    outside the cutoff whenever the offset exceeded 5s: the window flipped
+    between 6 and 7 buckets and buy_pres jumped between 1/5 and 1/6 while the
+    market stood still. Anchored on the newest bucket's stamp, every target
+    lands exactly on a grid point.
+    """
+    now = datetime.datetime.now(UTC)
+    # Put the newest bucket on a clean grid point.
+    grid = now.replace(microsecond=0) - datetime.timedelta(seconds=now.second % 10)
+    buckets = [_bucket(grid - datetime.timedelta(seconds=10 * (399 - i)), 100.0, 1.0) for i in range(400)]
+    buckets[-1] = _bucket(grid, 110.0, 50.0)
+
+    model = run_tick(buckets, now_offset=offset)
+
+    assert model.features, f"model was never scored at offset {offset}s"
+    feats = model.features[0]
+    # 7 buckets in the 60s window -> 6 diffs -> exactly one up-move.
+    assert feats[F_BUY_PRES] == pytest.approx(1 / 6), f"window size flipped at offset {offset}s"
+    assert feats[F_P_CHG_60S] == pytest.approx(10.0), f"p_chg_60s drifted at offset {offset}s"
