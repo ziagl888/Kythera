@@ -1393,6 +1393,36 @@ async def check_regime_change_and_close(conn) -> None:
     if not AUTO_CLOSE_ON_REGIME_CHANGE:
         return
 
+    _close_non_whitelisted_open_trades(
+        conn,
+        changes=changes,
+        title="🔄 REGIME CHANGE & AUTO-CLOSE",
+        count_label="Open trades before change",
+    )
+
+
+def _close_non_whitelisted_open_trades(
+    conn,
+    changes: list[str],
+    title: str,
+    count_label: str,
+    always_announce: bool = True,
+) -> None:
+    """Re-judges every OPEN orchestrator trade against the CURRENT 4D whitelist
+    and posts Close (loser) / SL-trail (winner, A/B gate) commands for the ones
+    the current regime no longer whitelists, then posts a summary.
+
+    Shared by two triggers:
+      - check_regime_change_and_close: an OBSERVED in-memory regime flip.
+      - run_startup_reconciliation (P2.24): a flip that happened while the
+        orchestrator was DOWN is never observed as a flip, so we reconcile
+        against the current whitelist at startup instead of a remembered regime.
+
+    Money-path safety: only ROM1's own tracked rows live in
+    orchestrator_open_trades, and the DB-side force-close is model='ROM1'
+    filtered (P1.9) — foreign bots' trades are never touched. No new close
+    mechanism: reuses the existing Close-command + mark/force-close path.
+    """
     from core.config import REGIME_STATUS_CHANNEL_ID, REGIME_TRADING_CHANNEL_ID
 
     # Load all open trades that have not already been actioned by a prior
@@ -1491,13 +1521,20 @@ async def check_regime_change_and_close(conn) -> None:
             f"{close_stats['classic_closed']} classic force-closed"
         )
 
-    # Summary to status channel
+    # Summary to status channel. always_announce=True (regime-change caller)
+    # always posts — an observed flip is worth reporting even if every trade was
+    # kept. The startup caller passes False: it stays silent unless it actually
+    # closed or trailed something, so a routine watchdog restart with N healthy
+    # open trades does not spam the status channel on every boot.
+    if not (always_announce or n_closed or n_trailed):
+        return
+
     change_line = "\n".join(changes)
     close_lines = "\n".join(
         f"  {c[1]} {c[2]} ({c[3]}) — {'trailed 🎯' if c[5] is not None else 'closed 🛑'}" for c in closes
     )
     keep_lines = "\n".join(f"  {k[0]} {k[1]} ({k[2]}) — kept open (whitelisted)" for k in keeps)
-    summary = f"🔄 REGIME CHANGE & AUTO-CLOSE\n\n{change_line}\n\nOpen trades before change: {len(open_trades)}\n"
+    summary = f"{title}\n\n{change_line}\n\n{count_label}: {len(open_trades)}\n"
     if closes:
         summary += close_lines + "\n"
     if keeps:
@@ -1513,6 +1550,44 @@ async def check_regime_change_and_close(conn) -> None:
         send_telegram(summary, REGIME_STATUS_CHANNEL_ID)
     except Exception as e:
         logger.error(f"Error sending des Regime-Change-Summary: {e}")
+
+
+async def run_startup_reconciliation(conn) -> None:
+    """P2.24: one-shot startup catch-up for regime changes missed during downtime.
+
+    check_regime_change_and_close only acts on an OBSERVED in-memory regime flip
+    (regime_current now differs from the value remembered at the last poll). On a
+    fresh start that baseline (_last_known_regime) is empty, so the first poll
+    only SEEDS it and returns — a regime flip that happened while the orchestrator
+    was down is therefore never acted on, and every open trade keeps running under
+    a regime that may no longer whitelist it (the P2.24 gap: In-Memory-State,
+    "Regime-Wechsel während Orchestrator-Downtime nie nachgeholt").
+
+    This reconciles every OPEN trade against the CURRENT whitelist at startup — no
+    remembered regime needed — and seeds the in-memory baseline so the periodic
+    check starts clean (and does not re-fire on the current state). It reuses the
+    same ROM1-only close/trail path as the regime-change handler, so no new close
+    mechanism and no foreign-bot trades touched (P1.9).
+    """
+    global _last_known_regime, _last_known_alt_context
+
+    # Seed the in-memory baseline from the current regime so the first periodic
+    # check_regime_change_and_close does not treat the boot state as a change.
+    state = get_current_regime_full(conn)
+    if state is not None:
+        _last_known_regime, _last_known_alt_context = state
+
+    if not AUTO_CLOSE_ON_REGIME_CHANGE:
+        return
+
+    logger.info("🚀 Startup reconciliation: prüfe offene ROM1-Trades gegen die aktuelle Whitelist (P2.24).")
+    _close_non_whitelisted_open_trades(
+        conn,
+        changes=["Startup reconciliation — offene Trades gegen aktuelle Whitelist geprüft (P2.24)"],
+        title="🚀 ORCHESTRATOR STARTUP — WHITELIST RECONCILIATION",
+        count_label="Open trades at startup",
+        always_announce=False,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1553,6 +1628,27 @@ async def _run_stage(conn, stage_name: str, coro) -> bool:
 
 async def main_loop() -> None:
     logger.info("=== 🎯 SIGNAL ORCHESTRATOR STARTED ===")
+
+    # P2.24: reconcile open trades against the current whitelist ONCE at startup,
+    # before the periodic loop begins. This closes the downtime gap that the
+    # in-memory regime tracker cannot see (see run_startup_reconciliation). Runs
+    # on its own short-lived connection and is fully fail-safe: a failure here
+    # must never prevent the orchestrator from starting its normal loop.
+    startup_conn = None
+    try:
+        startup_conn = get_db_connection()
+        await run_startup_reconciliation(startup_conn)
+    except Exception as e:
+        logger.error(f"Orchestrator startup reconciliation failed: {e}", exc_info=True)
+        if startup_conn is not None:
+            try:
+                startup_conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if startup_conn is not None:
+            startup_conn.close()
+
     while True:
         conn = None
         try:

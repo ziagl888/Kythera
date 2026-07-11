@@ -51,6 +51,19 @@ MIN_TRADES_FOR_DECISION: int = 30
 REFERENCE_WINDOW_DAYS: int = 30
 ANALYSIS_WINDOWS: list[int] = [7, 30, 90]
 
+# P2.25 (write-side): retention for bot_regime_whitelist rows the analyzer no
+# longer refreshes. compute_whitelist() only UPSERTs rows for bots that appear
+# in the current analysis window (all_bots); a bot that stops trading, or a
+# pre-naming-fix raw-name key, leaves its row frozen forever. The orchestrator's
+# read side already distrusts any cell older than 48h (28:WHITELIST_MAX_AGE_HOURS
+# → overall fallback), so a row untouched for 14 DAYS is provably non-authoritative
+# there. 14d is deliberately conservative: comfortably above the analyzer's daily
+# cadence (a few missed runs never purge an otherwise-active bot — and if it is
+# active, compute_whitelist re-creates the row with a fresh computed_at in the
+# same pass) and far above the 48h read gate. Raw-name keys are purged directly
+# regardless of age (same criterion as cleanup_stale_performance_rows).
+WHITELIST_RETENTION_DAYS: int = 14
+
 # ─────────────────────────────────────────────────────────────────────────────
 # WHITELIST v2 — Netto-Expectancy-Gate mit hierarchischem Shrinkage
 # (T-2026-CU-9050-048, Report 16 Empfehlungen 6+7)
@@ -968,6 +981,78 @@ def cleanup_stale_performance_rows(conn) -> int:
         return 0
 
 
+def build_whitelist_cleanup_query(now_utc: datetime, retention_days: int) -> tuple[str, tuple]:
+    """Builds the DELETE for stale bot_regime_whitelist rows (P2.25 write-side).
+
+    Two disjoint DELETE criteria, OR-combined:
+      (A) raw-name keys — `pretty_name(bot_name) <> bot_name`. These are the
+          pre-naming-fix rows (frozen since 2026-04-19) that the P0.4 root cause
+          was about: the analyzer now writes pretty_name()-normalized keys and
+          the orchestrator reads them, so a raw-name row is provably orphaned —
+          never re-UPSERTed, never read. Same criterion as
+          cleanup_stale_performance_rows, applied age-independently.
+      (B) age — `computed_at < now - retention_days`. A normalized-key row the
+          analyzer stopped refreshing (a bot that left the analysis window). The
+          orchestrator's 48h read gate already treats it as stale → overall
+          fallback, so purging it after 14d changes no live decision; if the bot
+          trades again, compute_whitelist re-creates the row.
+
+    Returned as (sql, params) so a DB-free test can assert the exact predicate
+    shape without a live connection. The pretty_name normalization is done in
+    Python (build the raw-name list from a DISTINCT scan) — Postgres has no
+    pretty_name(); the caller passes the resolved list.
+    """
+    cutoff = now_utc - timedelta(days=retention_days)
+    sql = "DELETE FROM bot_regime_whitelist WHERE bot_name = ANY(%s)    OR computed_at < %s"
+    return sql, (cutoff,)
+
+
+def cleanup_stale_whitelist_rows(conn) -> int:
+    """Löscht stale bot_regime_whitelist-Rows (P2.25, Schreibseite).
+
+    compute_whitelist() UPSERTet nur Rows für Bots im aktuellen Analysefenster
+    (all_bots) — Rows von Bots, die nicht mehr handeln, sowie die alten
+    Rohnamen-Keys (eingefroren seit 19.04.) bleiben für immer liegen. Der
+    Orchestrator liest sie via 48h-Staleness-Gate zwar nicht mehr autoritativ
+    (T-046), aber die Rows selbst wurden bisher nie abgeräumt.
+
+    Kriterien siehe build_whitelist_cleanup_query: (A) Rohnamen-Keys
+    (pretty_name-Mismatch, altersunabhängig) ODER (B) computed_at älter als
+    WHITELIST_RETENTION_DAYS. Konservativ: der Read-Gate hat alles >48h ohnehin
+    schon entwertet, aktive Bots werden im selben Lauf neu geschrieben.
+
+    Returns: Anzahl der gelöschten Rows.
+    """
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT bot_name FROM bot_regime_whitelist")
+            bot_names = [r[0] for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"Whitelist-Cleanup-Scan fehlgeschlagen: {e}")
+        return 0
+
+    raw_name_keys = [b for b in bot_names if pretty_name(b) != b]
+
+    sql, params = build_whitelist_cleanup_query(now_utc, WHITELIST_RETENTION_DAYS)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (raw_name_keys,) + params)
+            deleted = cur.rowcount
+        conn.commit()
+        if deleted:
+            logger.info(
+                f"🧹 Cleanup stale bot_regime_whitelist: {deleted} Rows entfernt "
+                f"(Rohnamen-Keys: {len(raw_name_keys)}, z.B. {raw_name_keys[:3]}; "
+                f"+ Rows älter als {WHITELIST_RETENTION_DAYS}d)"
+            )
+        return deleted
+    except Exception as e:
+        logger.warning(f"Whitelist-Cleanup-Delete fehlgeschlagen: {e}")
+        conn.rollback()
+        return 0
+
+
 async def run_analysis() -> None:
     """Main analysis job: loads trades, computes performance, updates whitelist."""
     conn = None
@@ -976,6 +1061,11 @@ async def run_analysis() -> None:
         # One-time Cleanup: entfernt stale rows mit nicht-normalisierten
         # Bot-Namen. Nach erstem Lauf idempotent (tut nichts mehr).
         cleanup_stale_performance_rows(conn)
+        # P2.25 (Schreibseite): dieselbe stale-Row-Klasse in der Whitelist-
+        # Tabelle abräumen (Rohnamen-Keys + Rows älter als Retention), die der
+        # Orchestrator liest. Vor compute_whitelist(), das aktive Bots direkt
+        # danach wieder frisch schreibt.
+        cleanup_stale_whitelist_rows(conn)
 
         total_rows = 0
         for window in ANALYSIS_WINDOWS:

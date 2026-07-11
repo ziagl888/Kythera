@@ -1,3 +1,44 @@
+## [2026-07-11] Orchestrator: Startup-Whitelist-Reconciliation (P2.24) + Whitelist-Cleanup-Schreibseite (P2.25) (T-2026-CU-9050-082)
+
+Zwei Regime-Gating-Findings geschlossen, beide über die In-Memory- bzw.
+Schreib-Seite eines seit T-046 nur halb entschärften Problems.
+
+**P2.24 — Regime-Wechsel während Orchestrator-Downtime nie nachgeholt.**
+`check_regime_change_and_close` feuert nur auf einem BEOBACHTETEN In-Memory-Flip
+(aktuelles `regime_current` ≠ dem beim letzten Poll gemerkten `_last_known_regime`).
+Beim Prozessstart ist diese Baseline leer, der erste Poll seedet sie also nur und
+kehrt zurück — ein Regime-Wechsel, der WÄHREND der Downtime passiert ist, wird nie
+nachgeholt, und jeder offene Trade läuft unter einem Regime weiter, das ihn evtl.
+nicht mehr whitelistet. Fix: `run_startup_reconciliation` läuft einmalig vor der
+Main-Loop und prüft alle OPEN-Trades in `orchestrator_open_trades` gegen die
+AKTUELLE Whitelist — kein erinnertes Regime nötig. Der Close-/Trail-Body ist in
+`_close_non_whitelisted_open_trades` extrahiert und mit dem Regime-Change-Handler
+geteilt: nur ROM1-eigene Trades (die Tabelle enthält per Konstruktion nur ROM1,
+der DB-seitige Force-Close ist `model='ROM1'`-gefiltert, P1.9), bestehender
+Close-Pfad, kein neuer Mechanismus. Startup seedet zusätzlich die Baseline, damit
+der erste periodische Check nicht auf dem Boot-Zustand feuert, und postet nur dann
+eine Status-Meldung, wenn er wirklich etwas geschlossen/getrailt hat — kein
+Status-Channel-Spam bei jedem Watchdog-Restart. Fail-safe: eigene Kurz-Connection,
+ein Fehler hier blockt den Loop-Start nie.
+
+**P2.25 (Schreibseite) — Stale `bot_regime_whitelist`-Rows nie bereinigt.** Die
+Lese-Seite ist seit T-046 entschärft (Zellen >48h → Overall-Fallback). Offen war die
+Schreib-Seite: `cleanup_stale_performance_rows` räumte nur die Perf-Tabelle, die
+Rohnamen-Rows in `bot_regime_whitelist` (eingefroren seit 19.04., genau die, die der
+Orchestrator las) blieben liegen. Neue `cleanup_stale_whitelist_rows` läuft in
+`run_analysis` direkt daneben, vor `compute_whitelist`. Zwei disjunkte, ODER-verknüpfte
+DELETE-Kriterien (`build_whitelist_cleanup_query`): (A) Rohnamen-Keys
+`pretty_name(bot_name) <> bot_name` — provably orphaned, altersunabhängig gelöscht wie
+in der Perf-Tabelle; (B) `computed_at` älter als `WHITELIST_RETENTION_DAYS` (14d) —
+normalisierte Rows retirierter Bots. 14d bewusst konservativ: der Read-Gate (48h) hat
+alles Ältere ohnehin entwertet, aktive Bots werden im selben Lauf neu geschrieben.
+Scan-/Delete-Fehler werden geschluckt (0 zurück, kein Commit) — der stündliche Lauf
+crasht nie an der Bereinigung.
+
+Verifikation DB-frei: `backtest/test_orchestrator_startup_check.py` (6) +
+`backtest/test_whitelist_cleanup.py` (6), plus die bestehenden Orchestrator-/
+Analyzer-Suiten grün (144 gesamt). ruff/format/mypy lokal grün. Live-Verifikation
+(Restart-Nachlauf; Step-2-Query 9) bleibt VPS-Session-Follow-up.
 ## [2026-07-11] 23_market_tracker.py — Telegram-Chunker splittet Über-Blöcke, Full-History-Load + async-Jobs als Risiko dokumentiert (P2.41, T-2026-CU-9050-081)
 
 Rest-Aufräumung von P2.41 am Market-Tracker, vier Teilbefunde vom 07-03-Ledger am
