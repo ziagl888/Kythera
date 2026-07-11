@@ -12,7 +12,7 @@ from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
-from core.market_utils import calculate_pivots, get_max_leverage
+from core.market_utils import calculate_pivots, check_cooldown, get_max_leverage, update_cooldown
 from core.trade_utils import cap_leverage_to_sl
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - BTC_SNIPER - %(message)s')
@@ -40,6 +40,15 @@ DESIRED_LEVERAGE = 25  # wird gegen max_leverage.json gecapped
 MIN_RR_RATIO = 1.25  # Minimum Risk-Reward
 MAX_PIVOT_AGE = 120  # Keine Asbach-Uralt-Ziele
 MAX_FVG_AGE = 48  # FVG muss innerhalb von 2 Tagen gefüllt werden
+
+# Cooldown/Dedupe (P2.46): ohne diese Sperre feuert der Bot bei Gap-Filler-Lag
+# dasselbe Setup eine 1h-Kerze später erneut. 12h ist der Fleet-Default für
+# sub-daily Timeframes (P1.27-Muster, vgl. 16_smc_forex_metals COOLDOWN_HOURS.get(tf, 12))
+# und liegt über der Kerzendauer (1h), damit das 1h-versetzte Doppelsignal sicher
+# geblockt ist. Der Tag trägt kein Symbol — das liegt in der coin-Key-Spalte;
+# "BTCSMC_1H" (9 Zeichen) passt in trade_cooldowns.module varchar(10) (T-024-Falle).
+COOLDOWN_TAG = "BTCSMC_1H"
+COOLDOWN_HOURS = 12
 
 
 def calculate_atr(df, period=14):
@@ -73,7 +82,14 @@ def calculate_dynamic_sl_pct(df, curr_close):
 
 # 📡 CORNIX SIGNAL GENERATOR
 def send_cornix_signal(direction, entry, sl, tp, rr, lev):
-    """Generiert ein sauberes Text-Signal, das Cornix zu 100% versteht."""
+    """Generiert ein sauberes Text-Signal, das Cornix zu 100% versteht.
+
+    Returns True, wenn das Signal gepostet wurde, False, wenn der Cooldown es
+    unterdrückt (P2.46) oder ein DB-Fehler auftrat. Der Cooldown-Upsert teilt sich
+    die Transaktion des Outbox-Inserts (commit=False + ein einziges conn.commit),
+    damit Signal und Dedupe-Marker atomar persistiert werden — ein Teil-Commit
+    würde dasselbe Setup im nächsten Scan erneut posten lassen.
+    """
 
     emoji = "🟢" if direction == "LONG" else "🔴"
 
@@ -91,13 +107,23 @@ Stop-Loss: {sl:.2f}
 
     try:
         with get_db_connection() as conn:
+            # P2.46: bei Gap-Filler-Lag re-triggert dasselbe FVG-Setup den Bot eine
+            # Kerze später. check_cooldown gibt True zurück, solange die Sperre aktiv
+            # ist → dann nicht erneut posten.
+            if check_cooldown(conn, COOLDOWN_TAG, SYMBOL, direction, COOLDOWN_HOURS):
+                logger.info(f"⏳ Cooldown active für {SYMBOL} {direction}. Skip.")
+                return False
             with conn.cursor() as cur:
                 # Wir schicken es als reinen Text in die Outbox, HTML formatiert
                 cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (CHANNEL_ID, msg))
+            # Cooldown im selben Commit wie der Outbox-Insert setzen (Caller-Commit-Kontrakt).
+            update_cooldown(conn, COOLDOWN_TAG, SYMBOL, direction, commit=False)
             conn.commit()
         logger.info(f"Cornix signal sent! {direction} @ {entry:.2f} (R:R {rr:.2f}, Lev {lev})")
+        return True
     except Exception as e:
         logger.error(f"Error sending des Signals: {e}")
+        return False
 
 
 # 📊 DATA FETCHING (LOKALE DATENBANK)
@@ -206,10 +232,10 @@ def analyze_market():
 
                                 if risk > 0 and rr >= MIN_RR_RATIO:
                                     lev = cap_leverage_to_sl(get_max_leverage(SYMBOL, DESIRED_LEVERAGE), curr_price, sl)
-                                    logger.info(
-                                        f"🎯 BINGO LONG! FVG fully closed bei {gap_bottom:.2f} | SL-Pct {sl_pct * 100:.2f}%"
-                                    )
-                                    send_cornix_signal("LONG", curr_price, sl, target, rr, lev)
+                                    if send_cornix_signal("LONG", curr_price, sl, target, rr, lev):
+                                        logger.info(
+                                            f"🎯 BINGO LONG! FVG fully closed bei {gap_bottom:.2f} | SL-Pct {sl_pct * 100:.2f}%"
+                                        )
                                     return  # Verhindert, dass wir mehrere Setups im selben Durchlauf posten
 
     # 🔴 2. SHORT SETUPS PRÜFEN
@@ -245,10 +271,10 @@ def analyze_market():
 
                                 if risk > 0 and rr >= MIN_RR_RATIO:
                                     lev = cap_leverage_to_sl(get_max_leverage(SYMBOL, DESIRED_LEVERAGE), curr_price, sl)
-                                    logger.info(
-                                        f"🎯 BINGO SHORT! FVG fully closed bei {gap_top:.2f} | SL-Pct {sl_pct * 100:.2f}%"
-                                    )
-                                    send_cornix_signal("SHORT", curr_price, sl, target, rr, lev)
+                                    if send_cornix_signal("SHORT", curr_price, sl, target, rr, lev):
+                                        logger.info(
+                                            f"🎯 BINGO SHORT! FVG fully closed bei {gap_top:.2f} | SL-Pct {sl_pct * 100:.2f}%"
+                                        )
                                     return
 
 
