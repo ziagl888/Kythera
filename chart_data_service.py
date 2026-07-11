@@ -45,7 +45,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import socket
 import sys
 import time
 from collections import deque
@@ -57,6 +56,8 @@ import websockets
 # Eigene Config (für Coin-Liste)
 # Wichtig: Der Service läuft im Projekt-Root, also sollten alle Imports funktionieren
 from core.logging_setup import setup_logging
+from core.market_utils import load_coins as _core_load_coins
+from core.ws_utils import apply_keepalive as _apply_keepalive
 
 logger = setup_logging("CHART_SERVICE")
 
@@ -124,16 +125,13 @@ def compute_new_symbols(current: set[str], tracked: set[str]) -> list[str]:
 
 
 def load_coins() -> list[str]:
-    """Reads coins.json and returns a list of symbols (lowercase for WS)."""
-    try:
-        with open(COINS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        coins = data.get("coins", data) if isinstance(data, dict) else data
-        # Nur USDT-Paare, lowercase für Binance-WS
-        return sorted({c.upper() for c in coins if c.upper().endswith("USDT")})
-    except Exception as e:
-        logger.error(f"Could not load coins.json: {e}")
-        return []
+    """Reads coins.json and returns the sorted, de-duplicated USDT symbols (upper-case).
+
+    Delegates to core.market_utils.load_coins (P3.1 consolidation) for the
+    read/dict-unwrap/USDT-filter/symbol-validation; the sort+dedup on top is
+    this service's own contract.
+    """
+    return sorted(set(_core_load_coins(COINS_FILE, usdt_only=True, uppercase=True)))
 
 
 # ─── Snapshot-Persistenz ─────────────────────────────────────────────────────
@@ -201,36 +199,6 @@ def load_snapshot() -> None:
 
 
 # ─── WebSocket-Worker ────────────────────────────────────────────────────────
-
-
-def _apply_keepalive(ws) -> None:
-    """Applies TCP keepalive to an already-connected WebSocket.
-
-    Called AFTER websockets.connect() succeeds. Gets the underlying socket
-    from the transport and sets SO_KEEPALIVE + platform-specific intervals.
-    This avoids the Windows WinError 10057 that occurs when passing an
-    unconnected socket to websockets.connect(sock=...).
-
-    Prevents NAT/firewall idle-timeout disconnects (~300-360s) by sending
-    TCP-level ACK probes every 60s.
-    """
-    import sys
-
-    try:
-        sock = ws.transport.get_extra_info("socket")
-        if sock is None:
-            return
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        if sys.platform == "win32":
-            # SIO_KEEPALIVE_VALS: (onoff, keepalivetime_ms, keepaliveinterval_ms)
-            # First probe after 60s idle, then every 10s
-            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60_000, 10_000))
-        else:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
-    except (AttributeError, OSError):
-        pass  # Non-fatal — connection still works without keepalive
 
 
 async def ws_worker(worker_id: int, symbols: list[str]) -> None:

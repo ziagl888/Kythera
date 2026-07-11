@@ -688,7 +688,7 @@ def main():
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
 
-        # Läuft immer um Minute 10, wie von dir im alten JobQueue geplant
+        # P3.10: comment corrected to match code — fires at minute 2 (not 10).
         if now.minute == 2:
             logger.info("Starting ABR1 Scan...")
             conn = get_db_connection()

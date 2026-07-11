@@ -68,6 +68,7 @@ sys.path.insert(0, REPO_ROOT)
 
 from core.candles import read_candles, read_candles_with_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
+from core.market_utils import load_coins as _core_load_coins  # noqa: E402
 from core.mis_features import (  # noqa: E402
     FEATURE_COLS as MIS1_FEATURE_COLS,
 )
@@ -165,10 +166,8 @@ def import_bot_module(filename: str, module_name: str):
 # DATEN (read-only)
 # ─────────────────────────────────────────────────────────────────────────────
 def load_coins() -> list[str]:
-    with open(os.path.join(REPO_ROOT, "coins.json")) as f:
-        data = json.load(f)
-    coins = data.get("coins", data) if isinstance(data, dict) else data
-    return [c.upper() for c in coins if c.upper().endswith("USDT")]
+    # P3.1: read/dict-unwrap/USDT-filter/symbol-validation via the canon.
+    return _core_load_coins(os.path.join(REPO_ROOT, "coins.json"), usdt_only=True, uppercase=True)
 
 
 OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")

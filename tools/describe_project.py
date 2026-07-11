@@ -1,7 +1,24 @@
+"""Dev utility: dumps the directory tree + full source of every .py/.xml/.css/.scss
+file under a selected directory into ``directory_info.txt``.
+
+⚠ INFO-LEAK (P3.5, T-2026-CU-9050-096): the output file contains the COMPLETE
+source of the codebase. Run it only on a local machine and never commit or share
+``directory_info.txt`` — for Kythera it would expose the full trading logic, and
+any secret hardcoded in a .py file (there should be none — secrets live in the
+gitignored ``.env``/``.local/`` — but this tool would surface a regression). The
+ignore set below skips ``.git``/``.local``/``.venv`` so those never land in the
+dump; it still does not sanitise file *contents*.
+"""
+
 import os
 import subprocess
 import tkinter as tk
 from tkinter import filedialog
+
+# Directories never traversed — VCS internals, the gitignored secret store,
+# virtualenvs and caches. Kept defensive because the tool dumps full source.
+IGNORE_DIRS = {'.venv', '.git', '.local', '__pycache__', 'node_modules'}
+
 
 def main():
     # Hide the root window
@@ -14,19 +31,21 @@ def main():
         print("No directory selected. Exiting.")
         return
 
+    print(
+        "⚠ This writes the FULL source of the selected tree into "
+        "directory_info.txt — do not share or commit that file."
+    )
+
     # Create output file in the selected directory
     output_file = os.path.join(selected_dir, "directory_info.txt")
-
-    # Directories to be completely ignored
-    IGNORE_DIRS = {'.venv'}
 
     with open(output_file, 'w', encoding='utf-8') as f:
         # Step 1: Execute tree command and write to file
         f.write("Directory Tree:\n")
         try:
-            # -I ignores .venv (also works without -a)
+            # -I ignores the secret/vcs/cache dirs (also works without -a)
             tree_output = subprocess.run(
-                ['tree', '-I', '.venv', selected_dir],
+                ['tree', '-I', '|'.join(IGNORE_DIRS), selected_dir],
                 capture_output=True,
                 text=True,
                 encoding='utf-8'

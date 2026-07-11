@@ -1,3 +1,4 @@
+import asyncio
 import re
 import logging
 from pathlib import Path
@@ -74,7 +75,9 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception:
         pass
 
-    live_price = get_live_price(symbol)
+    # P3.5: get_live_price does a blocking requests.get — run it off the event
+    # loop so a slow Binance response doesn't freeze every other bot handler.
+    live_price = await asyncio.to_thread(get_live_price, symbol)
     if not live_price:
         await msg.reply_text(f"❌ Could not fetch live price for {symbol}.")
         return
@@ -93,7 +96,9 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
     targets = setup['targets']
 
     user = update.effective_user
-    username = user.username if user else (user.full_name if user else "Trader")
+    # P3.5: a user without an @username would render "@None" in the attribution
+    # line — fall back to full_name, then to "Trader".
+    username = (user.username or user.full_name) if user else "Trader"
     is_long = direction == "LONG"
 
     # 💥 CORNIX RAW TEXT (Purer Plain Text)

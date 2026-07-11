@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import random
-import socket
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -13,6 +12,8 @@ from core import config as _kcfg  # channel ids
 
 # DB Connection importieren (für Telegram)
 from core.market_utils import load_coins, send_telegram
+from core.trade_utils import format_price
+from core.ws_utils import apply_keepalive as _apply_keepalive
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - WHALE_LOGGER - %(message)s')
@@ -205,12 +206,14 @@ async def evaluate_whales_loop():
             trade_block = "<b>Top 5 Whale Trades Long (1h):</b>\n"
             for t in long_trades:
                 dt_str = datetime.fromtimestamp(t['ts'], tz=timezone.utc).strftime('%H:%M')
-                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {t['prc']:.2f} ({dt_str})\n"
+                # P3.5: significant-digit price so sub-cent coins don't all show "$0.00".
+                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {format_price(t['prc'])} ({dt_str})\n"
 
             trade_block += "\n<b>Top 5 Whale Trades Short (1h):</b>\n"
             for t in short_trades:
                 dt_str = datetime.fromtimestamp(t['ts'], tz=timezone.utc).strftime('%H:%M')
-                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {t['prc']:.2f} ({dt_str})\n"
+                # P3.5: significant-digit price so sub-cent coins don't all show "$0.00".
+                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {format_price(t['prc'])} ({dt_str})\n"
 
             # 4. Zusammenbauen der fertigen Nachricht
             msg = f"""<pre>
@@ -293,36 +296,6 @@ async def save_whales_loop():
             logger.debug(f"💾 Historie gesichert. Im RAM: {len(WHALE_TRADES)}")
         except Exception as e:
             logger.error(f"Fehler im Speicher-Loop: {e}")
-
-
-def _apply_keepalive(ws) -> None:
-    """Applies TCP keepalive to an already-connected WebSocket.
-
-    Called AFTER websockets.connect() succeeds. Gets the underlying socket
-    from the transport and sets SO_KEEPALIVE + platform-specific intervals.
-    This avoids the Windows WinError 10057 that occurs when passing an
-    unconnected socket to websockets.connect(sock=...).
-
-    Prevents NAT/firewall idle-timeout disconnects (~300-360s) by sending
-    TCP-level ACK probes every 60s.
-    """
-    import sys
-
-    try:
-        sock = ws.transport.get_extra_info("socket")
-        if sock is None:
-            return
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        if sys.platform == "win32":
-            # SIO_KEEPALIVE_VALS: (onoff, keepalivetime_ms, keepaliveinterval_ms)
-            # First probe after 60s idle, then every 10s
-            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60_000, 10_000))
-        else:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
-    except (AttributeError, OSError):
-        pass  # Non-fatal — connection still works without keepalive
 
 
 # ── P1.42: WS-Sharding-Konfiguration ─────────────────────────────────────

@@ -7,6 +7,9 @@ import logging
 import os
 import time
 
+import matplotlib
+
+matplotlib.use('Agg')  # P3.8: headless VPS has no display — set before pyplot import
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd

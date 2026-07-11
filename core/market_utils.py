@@ -9,6 +9,7 @@ import datetime
 import json
 import logging
 import os
+import re
 from typing import TypedDict
 
 import numpy as np
@@ -72,14 +73,57 @@ def get_max_leverage(symbol: str, desired_leverage: int = 20) -> str:
     return f"{min(desired_leverage, max_lev)}x"
 
 
-def load_coins(path: str = "coins.json") -> list[str]:
-    """Loads the coin list from coins.json."""
+# A coin symbol is the atom of the ~40 f-string table names ``f"{sym}_{tf}"``
+# scattered across the fleet (there is no single ``candles`` table). coins.json
+# is written only by the two quoteAsset=USDT+PERPETUAL filters
+# (1_data_ingestion + 6_housekeeping), so every real entry already matches this
+# pattern — the validation is a no-op on live data and exists purely to close
+# the one second-order identifier surface (AUDIT_TODO P3.3): a symbol that ever
+# reached a table name unchecked. Enforced centrally here so all six former
+# copies of load_coins inherit it.
+_SYMBOL_RE = re.compile(r"[A-Z0-9]+")
+
+
+def load_coins(path: str = "coins.json", *, usdt_only: bool = False, uppercase: bool = False) -> list[str]:
+    """Loads and symbol-validates the coin list from coins.json.
+
+    Central identifier hygiene (P3.3): each symbol must match ``[A-Z0-9]+``
+    (after optional upper-casing). Non-conforming entries are dropped with an
+    ERROR log line — never silently kept, never ``fillna``-substituted. On the
+    live coins.json (uppercase USDT perpetuals) nothing is dropped, so callers
+    on the data path (1_data_ingestion, T-092) see an identical list.
+
+    Args:
+        path: coins.json location.
+        usdt_only: keep only ``*USDT`` symbols — the offline backtest/trainer
+            callers that historically filtered locally.
+        uppercase: upper-case each symbol before validating/returning — matches
+            the ``c.upper()`` those callers applied. Off by default so the data
+            path keeps the verbatim json contract.
+
+    Returns the surviving symbols in file order (empty list on read/parse error,
+    preserving the all-or-nothing contract 1_data_ingestion relies on).
+    """
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception as e:
         logger.error(f"Failed to load coins from {path}: {e}")
         return []
+
+    raw = data.get("coins", data) if isinstance(data, dict) else data
+    out: list[str] = []
+    for entry in raw:
+        sym = str(entry)
+        if uppercase:
+            sym = sym.upper()
+        if not _SYMBOL_RE.fullmatch(sym):
+            logger.error(f"load_coins: dropping non-conforming symbol {entry!r} from {path}")
+            continue
+        if usdt_only and not sym.endswith("USDT"):
+            continue
+        out.append(sym)
+    return out
 
 
 def is_trade_already_active(conn, coin: str, direction: str, strategy: str) -> bool:

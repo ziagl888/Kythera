@@ -13,14 +13,19 @@ warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
 from core.coins import looks_like_usdt_perp, refresh_coins_json
-from core.config import BASE_URL, BINANCE_API_KEY, BINANCE_SECRET, PUMP_EVENT_MIN_ABS_PCHG_60S, PUMP_EVENT_MIN_VOL_RATIO
+from core.config import (
+    BASE_URL,
+    BINANCE_API_KEY,
+    BINANCE_SECRET,
+    PUMP_EVENT_MIN_ABS_PCHG_60S,
+    PUMP_EVENT_MIN_VOL_RATIO,
+    TIMEFRAMES,
+)
 from core.database import get_db_connection
 from core.http_retry import MinIntervalThrottle, RetryBudget, backoff_seconds
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - HOUSEKEEPING - %(message)s')
 logger = logging.getLogger(__name__)
-
-TIMEFRAMES = ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
 
 
 def update_coins_json():
@@ -374,6 +379,30 @@ def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
             )
     except Exception as e:
         logging.error(f"🔥 Fehler beim Löschen der Charts in '{folder_path}': {e}")
+
+
+def truncate_oversized_logs(log_paths=("logs/dashboard.log",), max_bytes=20 * 1024 * 1024):
+    """Caps append-only raw-pipe logs that no logging handler rotates (P3.2).
+
+    logs/dashboard.log is the dashboard subprocess' stdout/stderr pipe
+    (main_watchdog opens it in append mode), so it grows unbounded — unlike the
+    watchdog/indicator logs, which now use RotatingFileHandler. When a file
+    exceeds max_bytes we keep only its last half and drop the rest. Best-effort:
+    the dashboard keeps its append handle open, so any I/O error is swallowed.
+    """
+    keep = max_bytes // 2
+    for path in log_paths:
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) <= max_bytes:
+                continue
+            with open(path, "rb") as f:
+                f.seek(-keep, os.SEEK_END)
+                tail = f.read()
+            with open(path, "wb") as f:
+                f.write(tail)
+            logger.info(f"🧹 HOUSEKEEPING: log '{path}' auf die letzten {keep // (1024 * 1024)} MB gekürzt.")
+        except Exception as e:
+            logger.warning(f"Konnte Log '{path}' nicht kürzen: {e}")
 
 
 def cleanup_telegram_outbox(max_age_days=7):
@@ -833,12 +862,18 @@ def main():
             clean_old_database_entries()
 
             # 5. Die alten Bilder löschen
-            cleanup_generated_charts("generated_charts")
-            cleanup_generated_charts("charts")
+            cleanup_generated_charts("generated_charts")  # 7_pattern_detector
+            cleanup_generated_charts("charts")  # core/charting.py
+            # P3.11: 22_ip_pattern_bot writes here and nothing was cleaning it →
+            # unbounded growth. Same outbox-referenced guard as the others.
+            cleanup_generated_charts("institutional_charts")
 
             # 6. FIX: Alte (gesendete) Outbox-entries löschen — sonst läuft die
             # Tabelle unbegrenzt voll.
             cleanup_telegram_outbox(max_age_days=7)
+
+            # 6b. P3.2: den unrotierten dashboard.log-Pipe kappen.
+            truncate_oversized_logs()
 
             # 7. Nightly Gap-Filler: scannt die letzten 24h aller Coin×TF-Tabellen
             # auf fehlende Kerzen, füllt sie via Binance REST, und invalidiert

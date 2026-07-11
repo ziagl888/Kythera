@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
+from logging.handlers import RotatingFileHandler
 
 import numpy as np
 import pandas as pd
@@ -33,7 +34,12 @@ INDICATOR_SUFFIX = '_indicators'
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - INDICATOR_ENGINE - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler('indicator_calculation.log', encoding='utf-8'), logging.StreamHandler(sys.stdout)],
+    # P3.2: RotatingFileHandler (same path, so the watchdog hang-check and the
+    # dashboard log viewer keep finding it) instead of an unbounded FileHandler.
+    handlers=[
+        RotatingFileHandler('indicator_calculation.log', maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
 logger = logging.getLogger(__name__)
 

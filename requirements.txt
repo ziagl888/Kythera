@@ -1,6 +1,13 @@
+# Pinning policy (P3.4, T-2026-CU-9050-096): the three libraries whose major
+# versions carry breaking API/model-format changes get a major pin so an
+# accidental `pip install -U` cannot silently bump the fleet across a major
+# boundary (pandas 3 copy-on-write, PTB async API, xgboost model format). These
+# are the current-state versions — NOT an upgrade. The full transitive lock
+# lives in requirements.lock.txt.
+
 # --- Core & Database ---
 requests
-pandas
+pandas>=3.0,<4.0
 numpy
 psycopg2-binary
 websockets
@@ -13,7 +20,7 @@ python-dotenv
 # --- Math & Indicators (Ebene 2) ---
 scikit-learn
 scipy
-xgboost
+xgboost>=3.0,<4.0
 yfinance
 pandas_ta
 joblib
@@ -21,7 +28,7 @@ joblib
 # --- Charting & Telegram (Ebene 3 & 4) ---
 mplfinance
 matplotlib
-python-telegram-bot
+python-telegram-bot>=22,<23
 
 # --- Dashboard (Flask Web-UI + Prozess-Monitoring) ---
 flask

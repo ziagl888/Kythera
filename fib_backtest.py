@@ -24,7 +24,6 @@ Aufruf:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import warnings
 from collections import Counter
@@ -37,8 +36,16 @@ import pandas as pd
 import psycopg2
 from dotenv import load_dotenv
 
+from core.market_utils import load_coins as _core_load_coins
+
 warnings.filterwarnings("ignore")
 load_dotenv()
+
+# Known backtest limitations (P3.6): outcomes are gross — no trading fees are
+# applied — and there is no capital/concurrency model (each setup is scored
+# independently). load_coins() reads today's coins.json over a ~1y window, so
+# delisted losers are missing (survivorship bias). Numbers are directional, not
+# a live expectancy.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # KONFIGURATION
@@ -71,14 +78,10 @@ def get_conn():
 
 
 def load_coins() -> list[str]:
-    try:
-        with open(COINS_FILE) as f:
-            data = json.load(f)
-        coins = data if isinstance(data, list) else data.get("coins", [])
-        return [c.upper() for c in coins if c.upper().endswith("USDT")]
-    except Exception as e:
-        print(f"  ⚠ coins.json: {e}")
-        return ["BTCUSDT", "ETHUSDT"]
+    # Delegates to core.market_utils.load_coins (P3.1). The ["BTCUSDT","ETHUSDT"]
+    # fallback is kept for the unreadable/empty-coins.json case so this offline
+    # backtest never runs on an empty universe.
+    return _core_load_coins(COINS_FILE, usdt_only=True, uppercase=True) or ["BTCUSDT", "ETHUSDT"]
 
 
 def load_ohlcv(conn, symbol: str, since: datetime) -> pd.DataFrame | None:

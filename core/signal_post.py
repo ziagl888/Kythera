@@ -168,6 +168,12 @@ def log_prediction(
             )
         if cur.fetchone():
             return
+        # P3.10 (dead column, documented): trade_id is a hardcoded 0 here and in
+        # every other ml_predictions_master writer (11/12/13/14/15/24/25 +
+        # 10_pump_dump) — it is never back-filled by any UPDATE, so it carries no
+        # information on this shared path. The ONE writer that stores a real
+        # trade_id is 9_ai_sr_bot (binds the setup-trade id). Do not read this
+        # column as a trade key for anything except 9_ai_sr rows.
         cur.execute(
             """INSERT INTO ml_predictions_master
                (trade_id, model_name, time, coin, direction, entry, confidence, posted)

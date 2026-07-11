@@ -2,7 +2,6 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import json
 import logging
 import os
 
@@ -14,6 +13,7 @@ import xgboost as xgb
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
+from core.market_utils import load_coins as _core_load_coins
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - QM_ML_TRAINER - %(message)s')
 logger = logging.getLogger(__name__)
@@ -62,14 +62,8 @@ ABSOLUTE_INDICATORS = ['rsi_14', 'tsi_25_13_13', 'macd_dif_normal_12_26_9', 'mac
 # 📊 1. DATA FETCHING & TRADE SIMULATION
 # ==========================================
 def load_coins():
-    try:
-        with open(COINS_FILE) as f:
-            data = json.load(f)
-            coin_list = data.get('coins', data) if isinstance(data, dict) else data
-            return [c.upper() for c in coin_list if c.upper().endswith("USDT")]
-    except Exception as e:
-        logger.error(f"Error loading von coins.json: {e}")
-        return []
+    # P3.1: read/dict-unwrap/USDT-filter/symbol-validation via the canon.
+    return _core_load_coins(COINS_FILE, usdt_only=True, uppercase=True)
 
 
 def fetch_merged_data(symbol, tf):
@@ -95,6 +89,9 @@ def fetch_merged_data(symbol, tf):
         if df.empty:
             return pd.DataFrame()
         df.ffill(inplace=True)
+        # P3.6 (known limitation): bfill fills leading NaNs with the FIRST future
+        # value — a backward look-ahead. Harmless only where it touches the warmup
+        # head before any label window; documented, not changed (no logic edit).
         df.bfill(inplace=True)
 
         for c in df.columns:
