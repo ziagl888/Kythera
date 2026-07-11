@@ -61,11 +61,11 @@ for tf, path in MODEL_PATHS.items():
     try:
         ml_data = joblib.load(path)
         # Posting-Tag aus der Artefakt-Meta, sonst abgeleitet (T-2026-CU-9050-030).
-        # Heute schreibt qm_ml_trainer.py keine model_id — der abgeleitete QM_1H ist
-        # also der Ist-Zustand. Präventiv: sobald ein QM2-Retrain der etablierten
-        # Konvention f"{strategy.upper()}2_{tf.upper()}" folgt (retrain_from_replay.py),
-        # postet der Bot als QM2_1H statt still unter dem Alt-Tag mit der QM1-Statistik
-        # zu verschmelzen, auf der das Orchestrator-Gating entscheidet (Regel 6).
+        # Seit T-2026-CU-9050-061 schreibt qm_ml_trainer.py die model_id
+        # f"QM2_{tf.upper()}" in die Meta — ein QM2-Retrain postet damit als QM2_1H
+        # statt still unter dem Alt-Tag QM_1H mit der QM1-Statistik zu verschmelzen,
+        # auf der das Orchestrator-Gating entscheidet (Regel 6). Der abgeleitete
+        # QM_1H bleibt der Fallback für Alt-Artefakte ohne model_id.
         # Der Orchestrator erkennt QM2_1H bereits (QM\d*_ in BOT_IDENTIFICATION_PATTERNS).
         meta = ml_data.get('meta') or {}
         model_id = str(meta.get('model_id') or ml_data.get('model_id') or "").strip()

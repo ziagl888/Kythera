@@ -404,6 +404,12 @@ def train_and_optimize(trades_df, tf):
         'optimal_threshold': best_thresh,
         'meta': {
             'trainer': 'qm_ml_trainer.py',
+            # T-2026-CU-9050-061: emit model_id so a QM retrain posts under a NEW
+            # tag (hard rule 6). Bot 24 reads meta['model_id'] and otherwise
+            # derives the legacy QM_1H, silently merging the new model into the
+            # QM1 per-bot stats the orchestrator gates on. Convention matches
+            # retrain_from_replay: f"{STRATEGY}2_{TF}" -> QM2_1H.
+            'model_id': f'QM2_{tf.upper()}',
             'xgboost_version': xgb.__version__,
             'split': 'chronological 70/15/15 + purge gap (P1.29)',
             'threshold_selected_on': 'validation',
