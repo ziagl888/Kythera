@@ -248,7 +248,9 @@ def scan_market():
                         # T-2026-CU-9050-060 (F4): impute non-finite values (inf/NaN → 0)
                         # like every core/*_features.py builder — and like this bot's own
                         # trainer, which fits and scores on .fillna(0) frames
-                        # (qm_ml_trainer.py:321/353/378): exact train/serve parity. The
+                        # (qm_ml_trainer.py:321/353/378): exact NaN parity (inf→0 is
+                        # deliberately stricter — bare fillna(0) leaves inf, which is
+                        # unreachable here by construction). The
                         # XGB model would NOT crash on NaN — it routes NaN down untrained
                         # default branches, a silent skew. Reachable: ffill().bfill()
                         # above leaves NaN in all-NaN columns, which arise not only from

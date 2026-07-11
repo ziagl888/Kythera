@@ -49,8 +49,8 @@ def test_epd_legacy_path_imputes_per_trainer_null_contract():
 
 
 def test_epd2_branch_keeps_its_own_zero_contract():
-    """The EPD2 branch's fillna(0) mirrors train_binary — the legacy rsi->50
-    contract must NOT leak into it."""
+    """The EPD2 branch's fillna(0) mirrors train_binary. (Presence pin only —
+    an upstream mutation of the feats dict would not be caught here.)"""
     assert re.search(r"reindex\(columns=art\[\"features\"\]\)\.fillna\(0\)", EPD_SRC), (
         "the EPD2 branch lost its trainer-parity fillna(0)"
     )

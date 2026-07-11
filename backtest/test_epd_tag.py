@@ -85,8 +85,7 @@ def test_legacy_positional_feature_order_is_preserved():
         "the legacy feature array is no longer built from EPD_BASE_FEATURES in contract order"
     )
     assert re.search(r"for c, v in base_features\.items\(\)", SRC), (
-        "the imputed dict no longer derives from base_features — the positional "
-        "columns would come from somewhere else"
+        "the imputed dict no longer derives from base_features — wrong column source"
     )
     order = re.search(r"^EPD_BASE_FEATURES = \[(.*?)\]", SRC, re.S | re.M).group(1)
     names = re.findall(r"[\"'](\w+)[\"']", order)

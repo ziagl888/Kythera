@@ -381,7 +381,9 @@ def extract_ml_features(df, idx, direction):
     # T-2026-CU-9050-060 (F4): impute non-finite values (inf/NaN → 0) like every
     # core/*_features.py builder — and like this bot's own trainer, which fits
     # and scores on .fillna(0) frames (smc_ml_trainer.py:328/344/365): exact
-    # train/serve parity. The XGB model would NOT crash on NaN — it routes NaN
+    # NaN parity (inf→0 is deliberately stricter — bare fillna(0) leaves inf,
+    # which is unreachable here by construction). The XGB model would NOT
+    # crash on NaN — it routes NaN
     # down untrained default branches, a silent skew. Reachable: ffill().bfill()
     # upstream leaves NaN in all-NaN columns, which arise not only from frozen
     # windows (those yield 0 pivots, the scan bails earlier) but also when the
