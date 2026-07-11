@@ -1,4 +1,24 @@
-## [2026-07-11] MAX1 Shadow-Deploy: Artefakt promoted, Gate 0,85/Kappe 3 (Operator-Entscheid: max. Trefferquote) (T-2026-CU-9050-070/-072)
+## [2026-07-11] QM2-Retrain-Vorbereitung: qm_ml_trainer.py schreibt jetzt model_id (T-2026-CU-9050-061, Schritt 2)
+
+Vorbereitung für den QM2-Retrain nach dem P1.13-Recompute (Schritt 1 dieses Tasks
+ist live: 3,07M Warmup-Kopfzeilen genullt). Der Task nennt `retrain_from_replay.py`
+für TD2/BB2/QM2 — aber weder das noch `walkforward_sim.py` kennt `qm`. Quasimodo
+(Bot 24) hat einen eigenen Trainer, `qm_ml_trainer.py`, der die (jetzt recomputeten)
+`_indicators`-Tabellen liest, eine eigene Walk-Forward-Trade-Sim für Labels nutzt,
+`fillna(0)` fährt (Parität mit der Bot-Serving-Imputation seit PR #62) und bereits
+nach `staging_models/` schreibt. Operator-Entscheid (Michi 2026-07-11): QM2 über
+diesen bestehenden Trainer statt einer `retrain_from_replay`-Erweiterung.
+
+Einzige Lücke war Regel 6: `qm_ml_trainer.py` schrieb **keine** `model_id`, sodass
+ein QM2-Retrain still als abgeleitetes `QM_1H` gepostet und mit der QM1-Statistik
+verschmolzen wäre, auf der das Orchestrator-Gating entscheidet. Fix: der Trainer
+schreibt jetzt `meta['model_id'] = f"QM2_{tf.upper()}"` (Konvention wie
+`retrain_from_replay`: `QM2_1H`). Bot 24 liest das Feld bereits (T-030) und leitet
+nur bei Alt-Artefakten ohne `model_id` auf `QM_1H` zurück; sein Kommentar ist auf
+den neuen Ist-Zustand aktualisiert. Kein Verhaltensänderung an bestehenden
+Artefakten — nur neue QM-Retrains tragen den Tag.
+
+
 
 Operator-Freigabe Michi 2026-07-11: MAX1 (Bot 34) geht in den Shadow-Betrieb. Das auf dem
 VPS erzeugte Artefakt `max1_model_SHORT.pkl` (+ `_meta.json`) ist aus `staging_models/` in
