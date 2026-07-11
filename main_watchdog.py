@@ -264,6 +264,103 @@ def start_process(process_info: dict) -> None:
 # DB hammering on config/import errors.
 _crash_history: dict = {}  # name -> list of crash timestamps
 
+# ── Hang-/Heartbeat-Detection (P2.47) ────────────────────────────────────────
+# The watchdog only ever checked process EXISTENCE (poll()). A bot that hangs —
+# alive but wedged on a dead socket / deadlock, producing nothing — stayed
+# "green" while the fleet traded on stale data (Step-2-proven: ingestion 6h dead
+# at a green watchdog). Data-staleness itself is already covered DB-side by
+# core.health_monitor (candle age → auto-restart of ingestion). This adds the
+# GENERIC signal: a supervised process whose log file has not advanced for
+# HANG_LIMIT_S is wedged.
+#
+# Safe by construction (money path):
+#   - The heartbeat is the process's OWN open log file, resolved mapping-free
+#     from its open handles (no fragile script→logname table). A process with no
+#     observable log file is EXEMPT — it can never be false-restarted.
+#   - Auto-restart is DEFAULT-OFF: by default a hang only WARNs (operator
+#     decides). Opt in per deployment via KYTHERA_WATCHDOG_HANG_AUTORESTART=1;
+#     the restart then rides the SAME crash backoff, so a re-hanging bot backs
+#     off instead of looping.
+#   - A freshly (re)started bot gets a full HANG_LIMIT_S grace window before it
+#     can be flagged.
+# HANG_LIMIT_S <= 0 disables the check entirely.
+HANG_LIMIT_S = int(os.getenv("KYTHERA_WATCHDOG_HANG_LIMIT_S", str(20 * 60)))
+HANG_AUTORESTART = os.getenv("KYTHERA_WATCHDOG_HANG_AUTORESTART", "0") == "1"
+_HANG_ALERT_COOLDOWN_S = 30 * 60
+_hang_alerted: dict[str, float] = {}  # name -> epoch of last hang warning
+
+
+def _resolve_heartbeat_log(pid: int) -> str | None:
+    """Best-effort: the process's own open ``.log`` file, mapping-free.
+
+    Prefers a file under ``logs/`` (core.logging_setup convention) over a
+    root-level ``*.log`` (a few bots use a plain FileHandler). Returns None when
+    nothing usable is open — that process is then exempt from hang-detection, so
+    a bot that only logs to stdout is never mistaken for wedged.
+    """
+    try:
+        open_files = psutil.Process(pid).open_files()
+    except Exception:  # noqa: BLE001 — a heartbeat probe must never crash the watchdog.
+        return None
+    logs: list[str] = [f.path for f in open_files if f.path.lower().endswith(".log")]
+    if not logs:
+        return None
+    logs.sort(key=lambda p: (os.sep + "logs" + os.sep) not in p.lower())
+    return logs[0]
+
+
+def check_heartbeat(p_info: dict, current_time: float) -> None:
+    """One heartbeat pass over a single bot. Never blocks, never raises.
+
+    Extracted so the hang deadline is testable without driving the whole
+    watchdog (mirrors supervise_process).
+    """
+    if HANG_LIMIT_S <= 0:
+        return
+    name = p_info["name"]
+    tracker = running_processes.get(name)
+    if tracker is None:
+        return  # missing / crashed → supervise_process owns that path.
+    if tracker["process"].poll() is not None:
+        return  # exited — a crash, not a hang.
+    # Grace: give a freshly (re)started bot a full window to produce output.
+    if current_time - tracker["start_time"] < HANG_LIMIT_S:
+        return
+    # Resolve + cache the heartbeat log once per process lifetime (open_files is
+    # relatively expensive on Windows — never call it on the hot path).
+    if "heartbeat_log" not in tracker:
+        tracker["heartbeat_log"] = _resolve_heartbeat_log(tracker["process"].pid)
+    log_path = tracker["heartbeat_log"]
+    if not log_path:
+        return  # no observable log → exempt.
+    try:
+        age = current_time - os.path.getmtime(log_path)
+    except OSError:
+        return
+    if age < HANG_LIMIT_S:
+        return
+
+    if current_time - _hang_alerted.get(name, 0.0) >= _HANG_ALERT_COOLDOWN_S:
+        _hang_alerted[name] = current_time
+        logger.error(
+            f"🫀 {name} lebt, aber {os.path.basename(log_path)} ist {age / 60:.0f} min still "
+            f"(Limit {HANG_LIMIT_S // 60} min) — Prozess vermutlich wedged."
+        )
+
+    if not HANG_AUTORESTART:
+        return  # WARNING-only default — operator decides on the money path.
+
+    logger.warning(f"♻️ {name} — Hang-Restart (Auto, KYTHERA_WATCHDOG_HANG_AUTORESTART=1).")
+    _hang_alerted.pop(name, None)
+    kill_process(name)
+    # Ride the existing crash backoff so a bot that keeps re-hanging backs off.
+    delay = _compute_restart_delay(name)
+    if delay > 0:
+        _restart_not_before[name] = current_time + delay
+    else:
+        start_process(p_info)
+
+
 # P1.37: earliest wall-clock time a crashed process may be restarted.
 # The backoff used to be a time.sleep() inside the per-process loop, which froze
 # the ENTIRE monitor — for up to 900s no other bot was supervised, no park marker
@@ -498,9 +595,11 @@ def main() -> None:
             # Dashboard-Crash-Check
             check_dashboard()
 
-            # Bot-Crash-Check
+            # Bot-Crash-Check (Prozess-Existenz) + Hang-Check (P2.47:
+            # lebt-aber-wedged via Log-Heartbeat).
             for p_info in PROCESSES_TO_RUN:
                 supervise_process(p_info, current_time)
+                check_heartbeat(p_info, current_time)
 
             time.sleep(10)
 

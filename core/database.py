@@ -30,6 +30,49 @@ _POOL_LOCK = threading.Lock()
 _POOL_MIN = int(os.getenv("KYTHERA_DB_POOL_MIN", "2"))
 _POOL_MAX = int(os.getenv("KYTHERA_DB_POOL_MAX", "8"))
 
+# FIX P2.47: a bot blocked forever on a dead DB socket or a runaway query used to
+# stay "green" for the watchdog (process alive, producing nothing → the fleet
+# handled stale data). Two conservative, server-/socket-side guards on every
+# pooled connection, all env-overridable so a long trainer/housekeeping query can
+# opt out PER PROCESS (set the env before the process imports this module):
+#   - statement_timeout caps any single query server-side. 0 = disabled (the
+#     escape hatch for legitimately long-running trainer/housekeeping queries).
+#   - lock_timeout (pre-existing) caps how long a query waits for a lock.
+#   - TCP keepalives make a silently-dropped VPS↔Postgres socket fail fast
+#     instead of hanging the caller forever on a half-open connection.
+# NOTE: no timezone change here — the TZ line (R3/UTC_POLICY.md) is deliberately
+# out of scope for this fix.
+_DEFAULT_LOCK_TIMEOUT_MS = 30000
+_DEFAULT_STATEMENT_TIMEOUT_MS = 30000
+_DEFAULT_KEEPALIVES_IDLE_S = 30
+_DEFAULT_KEEPALIVES_INTERVAL_S = 10
+_DEFAULT_KEEPALIVES_COUNT = 3
+
+
+def _connect_options() -> str:
+    """Builds the libpq ``options`` string (server-side per-session GUCs).
+
+    Read at pool-creation time (not import) so a per-process env override takes
+    effect and the value stays testable.
+    """
+    lock_ms = int(os.getenv("KYTHERA_DB_LOCK_TIMEOUT_MS", str(_DEFAULT_LOCK_TIMEOUT_MS)))
+    parts = [f"-c lock_timeout={lock_ms}"]
+    stmt_ms = int(os.getenv("KYTHERA_DB_STATEMENT_TIMEOUT_MS", str(_DEFAULT_STATEMENT_TIMEOUT_MS)))
+    if stmt_ms > 0:  # 0 disables the cap — long trainer/housekeeping queries.
+        parts.append(f"-c statement_timeout={stmt_ms}")
+    return " ".join(parts)
+
+
+def _keepalive_kwargs() -> dict[str, int]:
+    """libpq TCP-keepalive connect params — detect a dead server socket."""
+    return {
+        "keepalives": 1,
+        "keepalives_idle": int(os.getenv("KYTHERA_DB_KEEPALIVES_IDLE_S", str(_DEFAULT_KEEPALIVES_IDLE_S))),
+        "keepalives_interval": int(os.getenv("KYTHERA_DB_KEEPALIVES_INTERVAL_S", str(_DEFAULT_KEEPALIVES_INTERVAL_S))),
+        "keepalives_count": int(os.getenv("KYTHERA_DB_KEEPALIVES_COUNT", str(_DEFAULT_KEEPALIVES_COUNT))),
+    }
+
+
 # Liveness-Probe-Cache (P1.33): id(conn) → monotonic-Zeitpunkt der letzten
 # erfolgreichen SELECT-1-Probe. Innerhalb der TTL wird beim Checkout nicht
 # erneut geprobt (Hot-Loop-Schonung, siehe get_db_connection-Docstring).
@@ -44,7 +87,11 @@ def _get_pool() -> pg_pool.ThreadedConnectionPool:
     with _POOL_LOCK:
         if _POOL is not None and not _POOL.closed:
             return _POOL
-        logger.info(f"Creating DB connection pool (min={_POOL_MIN}, max={_POOL_MAX}) → {DB_HOST}:{DB_PORT}/{DB_NAME}")
+        options = _connect_options()
+        logger.info(
+            f"Creating DB connection pool (min={_POOL_MIN}, max={_POOL_MAX}, options='{options}') "
+            f"→ {DB_HOST}:{DB_PORT}/{DB_NAME}"
+        )
         _POOL = pg_pool.ThreadedConnectionPool(
             minconn=_POOL_MIN,
             maxconn=_POOL_MAX,
@@ -53,7 +100,8 @@ def _get_pool() -> pg_pool.ThreadedConnectionPool:
             password=DB_PASSWORD,
             host=DB_HOST,
             port=DB_PORT,
-            options="-c lock_timeout=30000",
+            options=options,
+            **_keepalive_kwargs(),
         )
     return _POOL
 

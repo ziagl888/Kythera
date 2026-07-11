@@ -1,3 +1,38 @@
+## [2026-07-11] Watchdog-Hang-Detection + statement_timeout/keepalives im DB-Pool (T-2026-CU-9050-077, P2.47)
+
+Step-2-Befund: die Data-Ingestion war 6h tot bei grünem Watchdog — die Fleet handelte
+auf Stale-Daten. Ursache doppelt: (1) der Watchdog prüft nur Prozess-EXISTENZ, ein
+lebender-aber-wedged Bot bleibt "grün"; (2) der DB-Pool hatte keinen statement_timeout
+und keine TCP-keepalives, ein auf einem toten Socket hängender Bot blockiert ewig ohne
+zu sterben.
+
+`core/database.py`: jede gepoolte Connection bekommt jetzt `statement_timeout` (default
+30s, kappt Runaway-Queries server-seitig) und libpq-TCP-keepalives (idle 30s / intervall
+10s / count 3 — ein still gedroppter VPS↔Postgres-Socket schlägt schnell fehl statt zu
+hängen). Alle Werte sind benannte Konstanten und env-overridable; `statement_timeout`
+lässt sich per Prozess über `KYTHERA_DB_STATEMENT_TIMEOUT_MS=0` deaktivieren — der
+Escape-Hatch für lange Trainer-/Housekeeping-Queries. Das pre-existierende `lock_timeout`
+bleibt. **Kein** Timezone-Flip (R3/UTC_POLICY.md bewusst ausgeklammert).
+
+`main_watchdog.py`: neuer generischer Heartbeat (`check_heartbeat`). Ein lebender Prozess,
+dessen eigenes Log-File `HANG_LIMIT_S` (default 20 min) nicht mehr advanced, gilt als
+wedged → WARNING. Das Log wird **mapping-frei** aus den offenen File-Handles des Prozesses
+aufgelöst (einmal pro Prozess-Leben gecached, kein fragiler script→logname-Table); ein
+Bot ohne beobachtbares Log ist EXEMPT und kann nie fälschlich neu gestartet werden. Ein
+frisch (neu)gestarteter Bot hat ein volles Grace-Fenster. Auto-Restart ist **default-OFF**
+(Geld-Pfad — per default nur WARNING, Operator entscheidet); Opt-in via
+`KYTHERA_WATCHDOG_HANG_AUTORESTART=1`, der Restart reitet dann auf dem bestehenden
+Crash-Backoff (P1.37, kein `time.sleep` im Supervision-Pfad). Die Daten-Staleness selbst
+deckt weiterhin `core/health_monitor` DB-seitig ab (Kerzen-Alter → Auto-Restart der
+Ingestion); dieser Patch ergänzt das um das generische Prozess-Signal. DB-freie Tests:
+`backtest/test_db_pool_options.py`, `backtest/test_watchdog_hang.py`.
+
+Offen (bewusst nicht in diesem Patch, siehe PR): eine flächendeckende Per-Bot-Heartbeat-
+Abdeckung setzt voraus, dass jeder Bot zuverlässig pro Zyklus loggt — heterogen im
+Bestand (nur ein Teil nutzt `core.logging_setup`, einige loggen nur nach stdout). Der
+Heartbeat greift heute nur für Bots mit beobachtbarem Log; die Ausweitung ist ein
+Folge-Thema statt improvisiertem Scope-Wachstum.
+
 ## [2026-07-11] Regression-Guard-Disarm gehärtet (P2.51) + Cooldown-Tag-Test um die MIS-Horizonte erweitert (P3.13) (T-2026-CU-9050-076)
 
 Zwei kleine Härtungen aus dem Ledger, beide DB-frei, kein Live-Eingriff.
@@ -115,7 +150,6 @@ entfernen, nie isoliert. Achtung nach dem Recompute: das Serving imputiert die
 Warm-up-Zeilen (bfill) und füttert sie, der Trainer verwirft sie per `dropna`
 (`tools/walkforward_sim.py:245`) — die Aussage „kein Train/Serve-Skew" aus dem
 PR-#43-Text gilt nur für den Pre-Recompute-Zustand.
-
 ## [2026-07-11] tools/restart_fleet.ps1 — UAC-freier Fleet-Restart-Zyklus über den Task "Kythera Watchdog" (T-2026-CU-9050-074)
 
 Lehre aus dem 00:32-Mass-Crash (Konsole des manuell gestarteten Watchdogs geschlossen,
