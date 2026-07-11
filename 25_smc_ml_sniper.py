@@ -300,6 +300,33 @@ def scan_market():
                 peak_idx = scipy.signal.argrelextrema(c_highs, np.greater, order=PIVOT_WINDOW)[0]
                 trough_idx = scipy.signal.argrelextrema(c_lows, np.less, order=PIVOT_WINDOW)[0]
 
+                # T-2026-CU-9050-093 (P1.46-rest, operator-approved STRATEGY
+                # change): drop unconfirmed right-edge pivots. argrelextrema runs
+                # with the default mode='clip', so a pivot inside the last
+                # PIVOT_WINDOW closed candles is flagged against clipped
+                # (boundary-repeated) right neighbours — it has fewer than
+                # PIVOT_WINDOW real candles confirming it and can still repaint
+                # once the next candles close (a later candle exceeds the level →
+                # the point was never a pivot, the posted Three-Drive / breaker
+                # geometry shifts after the signal is out). 24_quasimodo_bot.py
+                # drops the whole last-PIVOT_WINDOW band (max_confirmed_idx); here
+                # that is NOT a drop-in, because the TD freshness gate below
+                # (len(df) - p3 <= PIVOT_WINDOW + 2) deliberately hunts exactly
+                # these fresh edge pivots — a full drop would silence Three-Drive.
+                # Compromise (option B of the task): require >= PIVOT_WINDOW//2
+                # confirming closed candles to the right of each pivot. That
+                # halves the residual repaint window (a kept pivot can still move
+                # over at most PIVOT_WINDOW//2 candles instead of PIVOT_WINDOW)
+                # while leaving TD a fresh-reversal entry. One shared filter feeds
+                # both consumers (TD gate + find_breaker_setup) so the edge policy
+                # is consistent. last_closed = len(df) - 2: the forming candle is
+                # already out (c_highs = highs[:-1]), so the newest closed index
+                # is len(df) - 2, and pivot indices address the full arrays.
+                PIVOT_CONFIRM = PIVOT_WINDOW // 2
+                last_closed = len(df) - 2
+                peak_idx = peak_idx[peak_idx <= last_closed - PIVOT_CONFIRM]
+                trough_idx = trough_idx[trough_idx <= last_closed - PIVOT_CONFIRM]
+
                 if len(peak_idx) < 3 or len(trough_idx) < 3:
                     continue
 
@@ -310,6 +337,10 @@ def scan_market():
                 MAX_TD_SPAN = 50  # Drive 1 bis Drive 3 max 50 Kerzen
 
                 # 1a. Bearish Drive (Short)
+                # peak_idx[-1] is now the newest *confirmed* pivot (edge filter
+                # above). The gate is the freshness upper bound; the lower bound
+                # (>= PIVOT_WINDOW//2 confirmed) is the filter, so p3 lands in a
+                # PIVOT_WINDOW//2 .. PIVOT_WINDOW confirming-candle band.
                 p_peak3 = peak_idx[-1]
                 if len(df) - p_peak3 <= PIVOT_WINDOW + 2:
                     p1, p2, p3 = peak_idx[-3], peak_idx[-2], peak_idx[-1]

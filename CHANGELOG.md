@@ -1,3 +1,47 @@
+## [2026-07-11] SMC-Sniper: unbestätigte Kanten-Pivots verworfen — bewusste Strategie-Änderung (P1.46-Rest, T-2026-CU-9050-093)
+
+`25_smc_ml_sniper.py` findet Swing-Pivots via `scipy.signal.argrelextrema` mit dem
+Default `mode='clip'`. Am rechten Rand vergleicht `clip` einen Kandidaten gegen den
+wiederholten Randwert statt gegen echte Nachbarn — ein Pivot in den letzten
+`PIVOT_WINDOW` (10) geschlossenen Kerzen wird also mit **weniger** als 10 echten
+rechten Nachbarn akzeptiert. Ein solcher Kanten-Pivot ist unbestätigt: schließt die
+nächste Kerze über sein Level, war der Punkt nie ein Pivot — der publizierte
+Three-Drive bzw. das Breaker-Block-Level (und damit die daraus berechneten SL/TP)
+repainten, **nachdem** das Signal (Geld-Pfad, Bot 25 postet live) draußen war. P1.46
+hat die *forming*-Kerze gedroppt; dieser Rest-Repaint am rechten Rand blieb bewusst
+offen, weil das TD-Frische-Gate (`len(df) - p3 <= PIVOT_WINDOW + 2`) genau diese
+frischen Kanten-Pivots sucht — der volle Bot-24-Filter wäre kein Drop-in gewesen.
+
+Dies ist eine **Operator-freigegebene Strategie-Änderung** (Michi, 2026-07-11), kein
+Bugfix. Umgesetzt ist **Option B**: ein gemeinsamer Kanten-Filter direkt nach
+`argrelextrema` verwirft Pivots mit weniger als `PIVOT_WINDOW//2 = 5` bestätigenden
+geschlossenen Kerzen rechts (`peak_idx[peak_idx <= last_closed - PIVOT_WINDOW//2]`,
+analog `trough_idx`; `last_closed = len(df) - 2`, da die forming-Kerze schon draußen
+ist). **Ein** Filter speist beide Konsumenten (TD-Gate + `find_breaker_setup`), die
+Kanten-Politik ist damit konsistent. Der volle Filter (Option A, `PIVOT_WINDOW`
+Bestätigung wie Bot 24) wurde verworfen — er hätte das TD-Frische-Gate leergeräumt.
+
+Signal-Raten-Delta, DB-frei über die Regression-Guard-Fixtures gemessen
+(`tools/sniper_edge_pivot_delta.py`, aktuelle Geometrie inkl. T-089-`find_breaker_setup`,
+4 Coins × 1h/4h, 3.608 Scan-Punkte): **Breaker-Block unverändert (0,0 %)** — ein
+Breaker verlangt Breakout + Follow-through *nach* dem Pivot und ist damit strukturell
+längst bestätigt; der gesamte Effekt liegt in **Three-Drive** (−40 % LONG / −47 %
+SHORT). **Gesamt −5,9 %** (221 → 208 Geometrie-Trigger, rein subtraktiv — kein neuer
+Trigger). Option A hätte TD um ~90 % gekappt (Gesamt −11,8 %) und den Detektor faktisch
+stillgelegt. Das Rest-Repaint-Fenster ist damit **halbiert** (≤ 5 statt ≤ 10 Kerzen),
+bewusst nicht auf null: TD braucht die frische Reversal-Entry.
+
+Retrain-Kopplung: die deployten Artefakte TD2/BB2 sind auf der **alten** Pivot-Politik
+gefittet. Bis zum Retrain-Rollout (Operator-Entscheid) sieht das Serving eine leicht
+verschobene TD-Pattern-Verteilung; BB ist unberührt (0 % Delta). Ein Retrain sollte auf
+der neuen Politik neu labeln.
+
+Verifikation DB-frei: `backtest/test_sniper_edge_pivots.py` (neu, 7/7 — Kanten-Pivot-
+Repaint-Mechanik, Filter-Schwelle exakt bei `PIVOT_WINDOW//2`, Reihenfolge vor dem
+Pivot-Count-Gate, Guards für P1.46-forming-Drop und T-089-`find_breaker_setup`).
+`test_sniper_forming`/`test_sniper_retest_level`/`test_sniper_tag` unverändert grün
+(kombiniert 24/24). ruff + format + mypy grün.
+
 ## [2026-07-11] Monitore tracken exakt die publizierten Targets (P2.31, T-2026-CU-9050-083)
 
 Die AI-Signal-Bots 9/12/13 (SRA1/ATS1/RUB1) publizieren im Cornix-Block TP1-3, Bot 11
