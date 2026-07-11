@@ -441,7 +441,14 @@ def scan_market():
                         )
 
             except Exception as e:
-                logger.debug(f"Error for {symbol} ({tf}): {e}")
+                # P3.7: was logger.debug → invisible. Match bot 29: surface the
+                # coin-level failure and roll the connection back so a poisoned
+                # transaction does not abort every following coin's query.
+                logger.error(f"Error for {symbol} ({tf}): {e}", exc_info=True)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
     conn.close()
 
