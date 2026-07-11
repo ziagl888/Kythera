@@ -1,3 +1,51 @@
+## [2026-07-11] AIM2-Serving: Kandidaten-Fenster 60 min + tabellen-agnostischer conv-Dedup-Key (P2.35, T-2026-CU-9050-090)
+
+Drei Audit-Findings aus Welle 5 am AIM2-Master-Gate (`15_ai_master_bot.py`).
+**Kontext:** AIM1 bleibt per P0.13 AUS (kein Retrain); der Code läuft als AIM2-Träger
+(shadow-first hinter `AIM2_LIVE_POSTING`, `docs/AIM2_DESIGN.md`). Die Fixes gelten dem
+AIM2-Pfad. Die Ledger-Zeilennummern von P2.35 (Stand 07-03) stammen aus dem alten
+AIM1-Code — gegen den aktuellen AIM2-Neubau neu verortet.
+
+**(a) Kandidaten-Fenster 30 → 60 min.** Der AIM2-Neubau hatte das ursprüngliche
+5-min-Fenster bereits auf 30 min gezogen und eine persistente Dedup-Tabelle
+(`master_ai_processed_signals`) eingeführt. Rest-Delta laut Brief: 60 min. Das Fenster
+begrenzt nur die Staleness (wie alt ein Signal noch gehandelt werden darf); Doppel-
+Processing nach Downtime verhindert die Dedup-Tabelle, nicht die Fensterbreite — die
+Verbreiterung ist damit gefahrlos.
+
+**(b) Kontext-/Schwarm-Selbstzählung — bereits korrekt, kein Change.** Der Verdacht
+„Kontext-Aggregate zählen den Kandidaten selbst mit" trifft auf AIM2 nicht mehr zu:
+`swarm_stats` (Serving) filtert strikt `ts < Kandidaten-ts`, und `load_signal_stream`
+schließt AIM1/AIM2/AIM2-TOPN aus dem Stream aus. Der Trainer (`aim2_build_dataset.py`)
+tut mit `searchsorted(side="left")` + identischem Modell-Ausschluss exakt dasselbe.
+**Beide Seiten sind identisch → keine Änderung, und ausdrücklich KEINE Retrain-Kopplung**
+(Regel 7 nicht berührt: es ändert sich kein Modell-Input-Feature). Ein DB-freier Test
+pinnt die Invariante jetzt mechanisch.
+
+**(c) conv-Dedup-Key ist jetzt tabellen-agnostisch (Root-Cause statt Symptom).** Der
+Dedup-Key war `(signal_type, id)` mit `signal_type="conv_signal"` für active- UND
+closed_trades_master. Beide Tabellen haben aber **eigene SERIAL-Sequenzen**, und ein
+conv-Signal wandert binnen Sekunden von active nach closed — mit **neuer id** bei
+unveränderter Open-`time` (`5_trade_monitor.close_trade` kopiert die Identitätsfelder
+1:1). Der per-Tabelle `id` taugt deshalb nicht als Dedup-Schlüssel (dieselbe Diagnose,
+die `33_ai_fif1_bot.signal_key` schon dokumentiert). Zwei Fehlerklassen: (1) die
+closed-Form (neue id, `time` noch im 60-min-Fenster) wird als frischer Kandidat
+re-gescored → **Doppel-Post** — für schnelle Strategien wie „Fast In And Out" der
+Regelfall; (2) unbeteiligte active/closed-Rows mit zufällig gleicher id verdrängen sich
+gegenseitig aus dem processed-Set → stiller Verlust eines legitimen Signals (die im
+Ledger genannte Kollision). Der Brief-Vorschlag „distinkte signal_types" (active vs.
+closed trennen) fixt nur (2), nicht (1). Fix daher über einen migrations-stabilen
+Identitäts-Key: `conv_signal_identity(source, symbol, direction, time, entry)` → BIGINT-
+sicherer md5-Hash; ai behält die stabile `ml_predictions_master.id`. Schema der
+Dedup-Tabelle unverändert (TEXT/BIGINT bleiben) → keine Live-Migration; alte
+`conv_signal`-Rows im processed-Set werden nach Deploy einmalig ignoriert (bounded,
+shadow-only).
+
+Wirksam bei Live-Gate-Flip; heute shadow-only. DB-freie Tests:
+`backtest/test_aim_context_features.py` (conv-Identität über active→closed stabil,
+id-Kollision aufgelöst, ai-Namespace getrennt, Schwarm-Selbstausschluss, Fenster ≥60).
+Verifikation: volle `backtest/`-Suite grün (611), ruff/format/mypy clean.
+
 ## [2026-07-11] 21_btc_smc Cooldown/Dedupe + 20_funding_bot Extreme-Schwelle 75→95/85 (T-2026-CU-9050-088)
 
 Zwei unabhängige Audit-Findings aus Welle 5.
