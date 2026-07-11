@@ -1,3 +1,34 @@
+## [2026-07-11] Monitore tracken exakt die publizierten Targets (P2.31, T-2026-CU-9050-083)
+
+Die AI-Signal-Bots 9/12/13 (SRA1/ATS1/RUB1) publizieren im Cornix-Block TP1-3, Bot 11
+(MIS1) TP1-5 — der Subscriber sieht also 3 bzw. 5 Targets. Gespeichert wurde in
+`ai_signals.targets` aber die **volle** berechnete Zonen-Liste (bis zu 20 aus
+`ensure_min_tp_distance(t_cands[:20], …)`). Der AI-Trade-Monitor (`8_ai_trade_monitor.py`)
+scored `range(new_targets_hit, len(targets))` über genau das, was gespeichert ist, und
+meldet `ALL TARGETS HIT` bei `len(targets)` — er hat kein eigenes Target-Limit. Folge:
+er wertete bis zu 10-20 Phantom-TPs, die nie publiziert wurden. Die Win-Definition und
+die Trailing-SL-Semantik (SL zieht auf `targets[new_targets_hit-2]`) liefen auf Zielen
+außerhalb des Signals — die Live-Statistik entsprach nicht der Cornix-Realität.
+
+Fix: an der `ai_signals`-Insert-Stelle jedes Bots wird die Target-Liste auf die
+publizierte Anzahl gekappt (`json.dumps(targets[:n_show])`). `n_show` (3 bzw. 5) ist
+jetzt eine benannte lokale Größe direkt an der Target-Berechnung und speist **sowohl**
+den Cornix-Loop als auch den Insert — eine einzige Quelle, damit Tracking == Publikation
+nicht wieder auseinanderdriftet. Der Cornix-Block selbst ändert sich **nicht** (Regel 4):
+der Loop nutzt vorher `targets[:3]`/`[:5]`, jetzt `targets[:n_show]` mit identischem Wert,
+der publizierte Message-String ist byte-identisch. Es geht ausschließlich um die
+Tracking-Zeile. Der Monitor bleibt unberührt — das Kappen an der Quelle ist der korrekte
+Hebel, weil `n_show` beim publizierenden Code lebt und der Monitor die publizierte Anzahl
+gar nicht kennt. In-Path mitgezogen: `core/signal_post.post_ai_signal` (Research-Bots
+30-33) hatte dasselbe Muster (Cornix `targets[:n_show]`, Insert volle Liste) auf denselben
+`ai_signals`→Monitor-8-Pfad — ebenfalls auf `targets[:n_show]` gekappt.
+
+Bestandsdaten in der DB bleiben unangetastet (Historien-Korrektur wäre ein VPS-Job).
+DB-freier Guard `backtest/test_published_targets.py`: behavioral gegen den echten
+Insert-Pfad von `post_ai_signal` (stored == publizierte Cornix-Targets == n_show) plus
+strukturelle Guards für die vier Bots und den Monitor-Scoring-Loop; fällt auf dem
+Pre-Fix-Stand (stored 8, published 3).
+
 ## [2026-07-11] AIM2-Serving: Kandidaten-Fenster 60 min + tabellen-agnostischer conv-Dedup-Key (P2.35, T-2026-CU-9050-090)
 
 Drei Audit-Findings aus Welle 5 am AIM2-Master-Gate (`15_ai_master_bot.py`).

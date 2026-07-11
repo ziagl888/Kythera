@@ -385,6 +385,12 @@ def check_mis_models():
                 reward_pct = abs((targets[0] - avg_entry) / avg_entry) if targets else 0.01
                 rrr = reward_pct / risk_pct if risk_pct > 0 else 0.01
 
+                # P2.31: publish AND track exactly the same targets. The Cornix block
+                # shows the first n_show TPs; the AI monitor (8_ai_trade_monitor) scores
+                # whatever is stored in ai_signals.targets. Storing the full target list
+                # made the monitor score phantom TPs the subscriber never saw.
+                n_show = 5
+
                 # Cornix Text
                 cornix_msg = f"""📈 Signal for {symbol} 📈
 🚨 Direction: {best_direction}
@@ -393,7 +399,7 @@ def check_mis_models():
 🏦 CMP Entry: $ {entry1:.8f}
 🏦 Entry 2: $ {entry2:.8f}"""
 
-                for i, t in enumerate(targets[:5], 1):
+                for i, t in enumerate(targets[:n_show], 1):
                     cornix_msg += f"\n💰 TP{i}: $ {t:.8f}"
 
                 cornix_msg += (
@@ -414,7 +420,7 @@ def check_mis_models():
 
 <b>├─ Take Profits:</b>
 """
-                for i, t in enumerate(targets[:5], 1):
+                for i, t in enumerate(targets[:n_show], 1):
                     pct = abs((t - entry1) / entry1 * 100) * int(lev.replace('x', ''))
                     t_col = "#00ff88" if i <= 2 else "#88ff88"
                     html_caption += f"<b style=\"color:{t_col};\">   T{i}:</b> <b>${t:,.8f}</b> → <b style=\"color:lime;\">+{pct:.1f}%</b>\n"
@@ -463,7 +469,7 @@ def check_mis_models():
                             float(entry1),
                             float(entry2),
                             float(sl),
-                            json.dumps(targets),
+                            json.dumps(targets[:n_show]),
                             is_long,  # LONG = CMP-Entry (sofort gefüllt), SHORT = Limit
                             None if is_long else int(best_horizon.replace("H", "")),
                         ),

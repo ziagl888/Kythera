@@ -118,7 +118,10 @@ def post_ai_signal(
                 float(entry1),
                 float(entry2),
                 float(sl),
-                json.dumps([float(t) for t in targets]),
+                # P2.31: track exactly the published targets. The Cornix block above
+                # shows targets[:n_show]; the AI monitor scores whatever is stored in
+                # ai_signals.targets — storing the full list scored phantom TPs.
+                json.dumps([float(t) for t in targets[:n_show]]),
             ),
         )
     logger.info(f"✅ {model_tag} Signal für {symbol} {direction} in Outbox gelegt.")
