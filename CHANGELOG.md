@@ -1,4 +1,4 @@
-## [2026-07-11] Post-Merge-Review zu P1.13: RSI-Flat-Fall dokumentiert, EPD-Legacy-Guard, isfinite-Angleich in Bot 24/25 (T-2026-CU-9050-060)
+## [2026-07-11] Post-Merge-Review zu P1.13: RSI-Flat-Fall dokumentiert, NaN-Paritäts-Imputation im EPD-Legacy-Pfad und in Bot 24/25 (T-2026-CU-9050-060)
 
 Drei unabhängige Reviewer-Läufe über den gemergten Stand von PR #43
 (T-2026-CU-9050-054) — Verdict einstimmig APPROVED, der Fix selbst ist korrekt
