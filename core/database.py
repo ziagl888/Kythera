@@ -42,8 +42,18 @@ _POOL_MAX = int(os.getenv("KYTHERA_DB_POOL_MAX", "8"))
 #     instead of hanging the caller forever on a half-open connection.
 # NOTE: no timezone change here — the TZ line (R3/UTC_POLICY.md) is deliberately
 # out of scope for this fix.
+#
+# statement_timeout default = 300s (not 30s): this DB has closed_trades_master /
+# closed_ai_signals without usable indexes (full-table scans), an hourly
+# market-tracker that loads full history, and housekeeping that iterates ~9.7k
+# tables (audit_reports/18_db_architecture_performance.md). Legitimate queries
+# >30s are therefore likely; a 30s cap would surface QueryCanceled inside the
+# broad excepts of many bots → silent degradation, the exact failure class this
+# audit fights. 300s still kills real runaways/hangs while sparing hourly
+# analytics. Tightening to 30s is an OPERATOR decision to make only AFTER the Z0
+# query-runtime measurement on the VPS confirms nothing legitimate runs that long.
 _DEFAULT_LOCK_TIMEOUT_MS = 30000
-_DEFAULT_STATEMENT_TIMEOUT_MS = 30000
+_DEFAULT_STATEMENT_TIMEOUT_MS = 300000
 _DEFAULT_KEEPALIVES_IDLE_S = 30
 _DEFAULT_KEEPALIVES_INTERVAL_S = 10
 _DEFAULT_KEEPALIVES_COUNT = 3

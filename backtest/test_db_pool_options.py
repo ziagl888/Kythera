@@ -17,7 +17,6 @@ Run with: pytest backtest/test_db_pool_options.py -v
 
 from __future__ import annotations
 
-import importlib
 import os
 import sys
 import unittest.mock as mock
@@ -66,7 +65,7 @@ def _create_pool_capture(monkeypatch):
 def test_defaults_carry_statement_and_lock_timeout(monkeypatch):
     kwargs = _create_pool_capture(monkeypatch)
     assert "-c lock_timeout=30000" in kwargs["options"]
-    assert "-c statement_timeout=30000" in kwargs["options"]
+    assert "-c statement_timeout=300000" in kwargs["options"]
 
 
 def test_defaults_enable_tcp_keepalives(monkeypatch):

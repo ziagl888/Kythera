@@ -7,12 +7,20 @@ und keine TCP-keepalives, ein auf einem toten Socket hängender Bot blockiert ew
 zu sterben.
 
 `core/database.py`: jede gepoolte Connection bekommt jetzt `statement_timeout` (default
-30s, kappt Runaway-Queries server-seitig) und libpq-TCP-keepalives (idle 30s / intervall
-10s / count 3 — ein still gedroppter VPS↔Postgres-Socket schlägt schnell fehl statt zu
-hängen). Alle Werte sind benannte Konstanten und env-overridable; `statement_timeout`
-lässt sich per Prozess über `KYTHERA_DB_STATEMENT_TIMEOUT_MS=0` deaktivieren — der
-Escape-Hatch für lange Trainer-/Housekeeping-Queries. Das pre-existierende `lock_timeout`
-bleibt. **Kein** Timezone-Flip (R3/UTC_POLICY.md bewusst ausgeklammert).
+300s, kappt Runaway-Queries/Hänger server-seitig) und libpq-TCP-keepalives (idle 30s /
+intervall 10s / count 3 — ein still gedroppter VPS↔Postgres-Socket schlägt schnell fehl
+statt zu hängen). Der Default ist bewusst **300s, nicht 30s**: diese DB hat
+`closed_trades_master`/`closed_ai_signals` ohne nutzbare Indexe (Full-Table-Scans), einen
+stündlichen Market-Tracker der Full-History lädt und Housekeeping über ~9.7k Tabellen
+(audit_reports/18). Legitime Queries >30s sind damit wahrscheinlich; ein 30s-Cap würde
+`QueryCanceled` in den breiten excepts vieler Bots auslösen → stille Degradation, genau die
+Fehlerklasse die dieses Audit bekämpft. 300s killt echte Runaways/Hänger und verschont die
+stündlichen Analytics. Eine **Verschärfung auf 30s** ist ein Operator-Entscheid — erst
+**nach** der Z0-Query-Laufzeit-Messung auf dem VPS. Alle Werte sind benannte Konstanten und
+env-overridable; `statement_timeout` lässt sich per Prozess über
+`KYTHERA_DB_STATEMENT_TIMEOUT_MS=0` deaktivieren — der Escape-Hatch für lange
+Trainer-/Housekeeping-Queries. Das pre-existierende `lock_timeout` bleibt. **Kein**
+Timezone-Flip (R3/UTC_POLICY.md bewusst ausgeklammert).
 
 `main_watchdog.py`: neuer generischer Heartbeat (`check_heartbeat`). Ein lebender Prozess,
 dessen eigenes Log-File `HANG_LIMIT_S` (default 20 min) nicht mehr advanced, gilt als
