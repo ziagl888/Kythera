@@ -1,3 +1,23 @@
+## [2026-07-12] R2(b): docs/schema.sql — kanonische DDL-Referenz aus der Live-DB (T-2026-CU-9050-098)
+
+Schließt den Schema-Teil von Root-Cause R2 (der Fleet-Teil (a) kam mit
+`core/fleet.py`, T-091). `docs/schema.sql` ist ein kuratierter
+`pg_dump 17.6 --schema-only --no-owner --no-privileges` der Live-DB `cryptodata`
+vom 2026-07-12: alle 44 Applikations-Tabellen — darunter erstmals die bislang
+komplett DDL-losen `ai_signals` (13 Writer) und `ml_predictions_master`
+(9 Writer) — plus `BTCUSDT_1h`/`BTCUSDT_1h_indicators` als repräsentative
+Vorlage der Per-Coin-Familie. Die 9.789 generierten Tabellen (per-Coin,
+Quarterly-Futures, yfinance-Forex `=X`, `_GOLD`-Metalle sowie die
+CJK-benannten Junk-Symbol-Tabellen aus der P2.16-Doppel-Writer-Leak-Klasse,
+deren Löschung ein D5-Operator-Gate bleibt) sind als Namensfamilien im
+Datei-Header dokumentiert statt einzeln gedumpt. Die Datei ist bewusst
+**Referenz, keine Migration**: ausführende DDL bleiben die
+`CREATE TABLE IF NOT EXISTS`-Sites in den Bots, jeder Live-`ALTER` bleibt
+Operator-Entscheid (§6). `\restrict`-Token des Dumps entfernt, damit eine
+Regeneration sauber difft; das Regenerations-Kommando steht im Header.
+Read-only-Job aus der VPS-Orchestrierung T-2026-CU-9050-097 (Job 9), lief
+parallel zum P1.13-Dry-Run.
+
 ## [2026-07-11] P3-Hygiene-Batch — load_coins-Konsolidierung, Symbol-Validierung, Log-Rotation, Pins, Spec-Drift-Doku (T-2026-CU-9050-096)
 
 Reiner Aufräum-Batch aus der AUDIT_TODO-P3-Sektion (P3.1–P3.8, P3.10, P3.11), je
