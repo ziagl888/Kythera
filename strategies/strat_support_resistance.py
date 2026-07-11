@@ -11,10 +11,20 @@ logger = logging.getLogger(__name__)
 
 def analyze_coin(conn, symbol, df_indicators, live_price):
     if len(df_indicators) < 50: return None
-    current_row, previous_row = df_indicators.iloc[0], df_indicators.iloc[1]
+    current_row = df_indicators.iloc[0]
 
-    support_price_prev = float(previous_row['support_price']) if pd.notna(previous_row['support_price']) else 0
-    resistance_price_prev = float(previous_row['resistance_price']) if pd.notna(previous_row['resistance_price']) else 0
+    # T-2026-CU-9050-084 (P1.12): support_price/resistance_price are window-global
+    # and are now written only to the newest CLOSED bar (NaN on the forming bar and
+    # every older bar). Read the level from the newest bar that still carries it
+    # (first non-null in this DESC frame) instead of the fixed iloc[1]. With the
+    # forming bar present — the normal case — that IS iloc[1] (the newest closed
+    # bar), so the level is unchanged; if the forming bar is missing it stays on the
+    # newest closed bar instead of silently reading a NULLed row.
+    sr_idx = df_indicators['support_price'].first_valid_index()
+    sr_row = df_indicators.loc[sr_idx] if sr_idx is not None else None
+
+    support_price_prev = float(sr_row['support_price']) if sr_row is not None and pd.notna(sr_row['support_price']) else 0
+    resistance_price_prev = float(sr_row['resistance_price']) if sr_row is not None and pd.notna(sr_row['resistance_price']) else 0
     close_price_current = current_row['close']
     support_price_hit = resistance_price_hit = 0
 
