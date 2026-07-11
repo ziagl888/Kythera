@@ -35,6 +35,68 @@ ASSETS = {
 CHART_DIR = "generated_charts"
 os.makedirs(CHART_DIR, exist_ok=True)
 
+# P2.45(a): Kerzendauer je TF fürs Weekend-/Stale-Candle-Gate. Mayank handelt
+# ausschliesslich Forex/Metals (yfinance), die am Wochenende stillstehen — die
+# letzte geschlossene Kerze friert ein und hält die FVG-Bedingung, während der
+# 12h-Cooldown darunter abläuft → Refire auf abgestandener Kerze. Bewusst als
+# lokale Kopie zu 16_smc_forex_metals_bot gehalten (beide Bots sind eigenständige
+# Skripte und duplizieren bereits fetch/chart-Logik); ein Signal darf nur bei
+# frischen Daten feuern (siehe is_stale_candle).
+CANDLE_DURATION = {
+    '1h': datetime.timedelta(hours=1),
+    '4h': datetime.timedelta(hours=4),
+}
+
+# P2.45(c): Minimal-Sanity für SL-Distanz und Risk-Reward. Mayank postet
+# SL = letztes-Tief*0.998 und TP = nächster Pivot (Fallback ±1/2%), ohne Prüfung,
+# ob der Stop nah genug am Entry liegt (Liquidations-Risiko unter Leverage) oder
+# ob der nächste Take-Profit das Risiko überhaupt schlägt. Zwei konservative
+# Gates im Geist des 15%-SL-Distanz-Caps von calculate_smart_targets (P2.27).
+MAX_SL_DIST = 0.15  # 15% — gleicher Cap wie der ROM1-Pfad (P2.27)
+MIN_RR = 0.5  # nächster TP muss >= halbes Risiko als Reward bieten (Sanity-Floor)
+
+
+def is_stale_candle(candle_open_time, tf, now=None):
+    """P2.45(a): True, wenn die letzte geschlossene Kerze abgestanden ist —
+    seit ihrem Close mindestens zwei volle Kerzendauern vergangen sind, ohne
+    dass eine neue entstand (Wochenende / stehender yfinance-Feed). Zwei-Kerzen-
+    Toleranz gegen einzelnen Live-Lag; ein Wochenende überschreitet sie bei
+    1h/4h um ein Vielfaches."""
+    dur = CANDLE_DURATION.get(tf)
+    if dur is None:
+        return False
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    ts = pd.Timestamp(candle_open_time)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize('UTC')
+    else:
+        ts = ts.tz_convert('UTC')
+    close_time = ts.to_pydatetime() + dur
+    return (now - close_time) >= 2 * dur
+
+
+def passes_sl_rr_guard(entry, sl, tp1, direction):
+    """P2.45(c): True, wenn SL-Distanz und Risk-Reward plausibel sind. Der Stop
+    muss auf der richtigen Seite und näher als MAX_SL_DIST am Entry liegen, der
+    nächste Take-Profit muss auf der richtigen Seite und mindestens MIN_RR mal
+    das Risiko wert sein. Fängt degenerierte Geometrien (SL ≫ TP, TP ≈ Entry,
+    verkehrter Stop) ab, ohne normale Pivot-Ladders zu beschneiden."""
+    entry = float(entry)
+    sl = float(sl)
+    tp1 = float(tp1)
+    if entry <= 0:
+        return False
+    risk = (entry - sl) if direction == "LONG" else (sl - entry)
+    reward = (tp1 - entry) if direction == "LONG" else (entry - tp1)
+    if risk <= 0 or reward <= 0:
+        return False
+    if (risk / entry) > MAX_SL_DIST:
+        return False
+    if (reward / risk) < MIN_RR:
+        return False
+    return True
+
 
 # 📊 DATA FETCHING (YFinance)
 def fetch_yfinance_data(ticker, tf):
@@ -229,6 +291,11 @@ def analyze_strategy():
                 curr_high = curr_candle['high']
                 curr_price = curr_candle['close']
 
+                # P2.45(a): kein Re-Signal auf einer eingefrorenen Wochenend-Kerze
+                # — sonst refired der 12h-Cooldown dieselbe Kerze über das WE.
+                if is_stale_candle(curr_candle['open_time'], tf):
+                    continue
+
                 # 🟢 LONG SETUP PRÜFEN
                 # Searching after bullischen FVGs in der Vergangenheit
                 for i in range(2, curr_idx):
@@ -278,6 +345,18 @@ def analyze_strategy():
                                         targets = [curr_price * 1.01, curr_price * 1.02]  # Fallback für TradFi
 
                                     sl = curr_low * 0.998  # Knapp unter das letzte Tief
+
+                                    # P2.45(c): SL/RR-Sanity. SL und TP1 sind für
+                                    # jedes FVG dieses Scans identisch (aus curr_low
+                                    # bzw. curr_price/resistances) → ein Fail blockt
+                                    # den ganzen Scan, daher break.
+                                    if not passes_sl_rr_guard(curr_price, sl, targets[0], "LONG"):
+                                        logger.info(
+                                            f"🚫 SL/RR-Guard verwirft {symbol_name} ({tf}) LONG "
+                                            f"(entry {curr_price:.4f}, sl {sl:.4f}, tp1 {targets[0]:.4f})"
+                                        )
+                                        break
+
                                     chart_path = generate_setup_chart(
                                         df,
                                         symbol_name,
@@ -350,6 +429,15 @@ def analyze_strategy():
                                         targets = [curr_price * 0.99, curr_price * 0.98]
 
                                     sl = curr_high * 1.002
+
+                                    # P2.45(c): SL/RR-Sanity (siehe LONG-Zweig).
+                                    if not passes_sl_rr_guard(curr_price, sl, targets[0], "SHORT"):
+                                        logger.info(
+                                            f"🚫 SL/RR-Guard verwirft {symbol_name} ({tf}) SHORT "
+                                            f"(entry {curr_price:.4f}, sl {sl:.4f}, tp1 {targets[0]:.4f})"
+                                        )
+                                        break
+
                                     chart_path = generate_setup_chart(
                                         df,
                                         symbol_name,

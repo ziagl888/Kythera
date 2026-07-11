@@ -32,6 +32,52 @@ frei→genau ein Outbox-Insert + atomarer Cooldown-Upsert, DB-Fehler→Non-Post)
 `backtest/test_funding_threshold.py` (95/85-Grenzfälle inkl. „75 feuert nicht mehr"),
 Tag-Länge statisch gepinnt in `backtest/test_cooldown_tags.py`.
 
+## [2026-07-11] SMC/Mayank/Sniper — Weekend-Refire, FVG-Age, SL/RR (P2.45) + Break-and-Retest-Level (P2.39) (T-2026-CU-9050-089)
+
+Vier Signal-Qualitäts-Fixes an den drei SMC-Bots (16/17/25) aus der Welle-5-Dispatch
+(T-2026-CU-9050-075). Alle vier lassen ausschliesslich Signale WEGFALLEN bzw. korrigieren,
+WELCHES Level gescort wird — keine neue Position, kein neuer Post-Pfad.
+
+**P2.45(a) — Weekend-/Stale-Candle-Gate (16 + 17).** Forex/Metals stehen am Wochenende
+still: die letzte geschlossene yfinance-Kerze friert ein und erfüllt die Struktur-/FVG-
+Bedingung tagelang weiter, während der 12h-Cooldown darunter abläuft → der Bot refeuerte
+dieselbe eingefrorene Kerze bei jedem Cooldown-Ablauf. Neu: reiner Helper
+`is_stale_candle(open_time, tf, now)` — ein Signal darf nur feuern, wenn seit dem Close der
+letzten Kerze weniger als **zwei Kerzendauern** vergangen sind. Die Zwei-Kerzen-Toleranz
+verzeiht einen einzelnen yfinance-Live-Lag; ein Wochenende überschreitet sie bei intraday-TFs
+um ein Vielfaches. Gate als `continue` in `run_smc_analysis`/`analyze_strategy`. **Der
+24/7-Krypto-Pfad (METALS: BTC/ETH/…) ist nie stale → dort ändert sich nichts.** Bewusst
+konservativ offen gelassen: ein 1d/1w-Signal kann über ein WE noch einmal refeuern, bevor die
+2-Dauern-Schwelle greift — die dominante Regression war der intraday-12h-Refire.
+
+**P2.45(b) — FVG-Age-Limit (16).** `find_unmitigated_fvgs` bekam `max_age=FVG_MAX_AGE` (50 Bars):
+ein nie mitigiertes FVG blieb sonst über die gesamte 300-Kerzen-Historie triggerbar. Konservativ
+(1h ≈ 2d, 4h ≈ 8d, 1d = 50d); ältere Gaps gelten als abgestanden.
+
+**P2.45(c) — SL/RR-Sanity (17).** Mayank postete SL = letztes-Tief*0.998 und TP = nächster Pivot
+ohne jede Prüfung, ob der Stop unter Leverage überlebt oder ob der nächste TP das Risiko schlägt.
+Neu: reiner Helper `passes_sl_rr_guard(entry, sl, tp1, direction)` vor dem Send in beiden Zweigen —
+verwirft Stops weiter als 15% vom Entry (Liquidations-Risiko, gleicher Cap wie der ROM1-Pfad P2.27)
+und Setups, deren nächster TP nicht mindestens 0.5× das Risiko als Reward bietet (Sanity-Floor, keine
+normale Pivot-Ladder beschnitten). SL/TP sind pro Scan FVG-unabhängig (aus `curr_low`/`curr_price`),
+ein Fail blockt daher den Scan (`break`).
+
+**P2.39 — Break-and-Retest wählt das falsche Level (25).** Der Breaker-Block scorte blind
+`peak_idx[-2]`/`trough_idx[-2]`; gehörte der frische Retest zu einem anderen Swing (dem neuesten
+oder einem älteren), prüfte der Bot ein Level, an dem der Preis gar nicht war — und verpasste das
+echte Setup. Neu: reiner Helper `find_breaker_setup(...)` läuft die Pivots von neu nach alt und nimmt
+den ersten, dessen Level (a) im Retest-Band (±0.5%) um den aktuellen Preis liegt, (b) durch einen
+Close innerhalb der letzten `MAX_BB_AGE`=20 geschlossenen Kerzen gebrochen wurde und (c) danach ≥0.3%
+Follow-through lief. Frische-, Follow-through- und Band-Schwellen sind identisch zum Alt-Code — nur die
+Level-**Auswahl** ändert sich. Feature-Timing bewusst am Retest-Bar (`len(df)-2`) belassen und
+dokumentiert (Pattern-Anker des BB-Modells); ein Wechsel wäre Strategie-Redesign und gehört nicht hierher.
+
+Die bestehenden SMC-Fixes bleiben unangetastet und grün: P1.26/P1.27 (16, FVG-Dead-Code-Range +
+forming-Drop + TF-Cooldown) und P1.46 (25, forming-Pivots) — `test_smc_fvg_dead_code.py`,
+`test_sniper_forming.py`, `test_sniper_tag.py` alle weiter grün. DB-frei getestet:
+`backtest/test_smc_weekend_refire.py` (14/14) + `backtest/test_sniper_retest_level.py` (9/9), je mit
+Divergenz-Kanarie gegen die Pre-Fix-Logik. Volle backtest-Suite: 612 passed.
+
 ## [2026-07-11] 14_ai_atb_bot.py — ATB1 unknown-State observe-only + Main-Loop-Härtung (T-2026-CU-9050-086)
 
 Zwei Robustheits-Fixes am geparkten Bot 14 (ATB1). Wirken erst beim Entparken —

@@ -36,6 +36,7 @@ os.makedirs(CHART_DIR, exist_ok=True)
 
 TIMEFRAMES = ['1h', '4h']
 PIVOT_WINDOW = 10
+MAX_BB_AGE = 20  # P2.39: Breakout/Breakdown darf max 20 geschlossene Kerzen alt sein
 
 # 💥 Die optimalen Thresholds aus deinem Training (RR = 1:2)
 THRESHOLDS = {
@@ -191,6 +192,64 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
         update_cooldown(conn, module_tag, symbol, direction)
 
 
+def find_breaker_setup(
+    pivot_indices,
+    level_arr,
+    extreme_arr,
+    closes,
+    n_closed,
+    current_price,
+    direction,
+    max_age=MAX_BB_AGE,
+    band=0.005,
+    break_margin=0.003,
+):
+    """P2.39: wählt das Breaker-Level, das der Preis JETZT tatsächlich retestet,
+    statt blind peak_idx[-2]/trough_idx[-2]. Der alte Code prüfte immer den
+    zweitletzten Pivot; gehörte der frische Retest zu einem anderen Swing (dem
+    neuesten oder einem älteren), wurde das falsche Level gescored.
+
+    Läuft die Pivots von neu nach alt und nimmt den ersten, dessen Level
+      (a) im Retest-Band (±`band`) um den aktuellen Preis liegt,
+      (b) durch einen Close innerhalb der letzten `max_age` geschlossenen Kerzen
+          gebrochen wurde und
+      (c) danach mit `break_margin` Follow-through über/unter das Level lief.
+    Gibt (pivot_idx, breakout_idx) zurück oder None. Alte Pivots scheiden von
+    selbst aus: ihr erster Breakout liegt ausserhalb des max_age-Fensters.
+
+    `current_price` bleibt der Live-CMP (kein analytischer Input, R1/P1.46);
+    `n_closed = len(df) - 1` schliesst die forming-Kerze aus Breakout-Suche und
+    Follow-through aus, identisch zur alten Range `range(p+1, len(df)-1)`.
+    """
+    is_long = direction == 'LONG'
+    for p in reversed([int(x) for x in pivot_indices]):
+        level = float(level_arr[p])
+        if level <= 0:
+            continue
+        # (a) Preis retestet genau dieses Level gerade
+        if not (level * (1 - band) <= current_price <= level * (1 + band)):
+            continue
+        # (b) frischer Breakout/Breakdown nach dem Pivot
+        breakout_idx = -1
+        for i in range(p + 1, n_closed):
+            if (closes[i] > level) if is_long else (closes[i] < level):
+                breakout_idx = i
+                break
+        if breakout_idx == -1 or (n_closed - 1 - breakout_idx) > max_age:
+            continue
+        # (c) Follow-through nach dem Break (min. break_margin über/unter Level)
+        window = extreme_arr[breakout_idx:n_closed]
+        if len(window) == 0:
+            continue
+        if is_long:
+            if window.max() > level * (1 + break_margin):
+                return p, breakout_idx
+        else:
+            if window.min() < level * (1 - break_margin):
+                return p, breakout_idx
+    return None
+
+
 def scan_market():
     coins = load_coins()
     conn = get_db_connection()
@@ -292,73 +351,63 @@ def scan_market():
                                 (p3, -1, lows[p3]),
                             )
 
-                # 2. BREAKER BLOCK (BB)
-                # FIX: Der alte Check feuerte sobald `current_price ~= pivot_res`,
-                # selbst wenn der Breakout 100 Kerzen zurücklag. Jetzt:
-                #   - Breakout muss innerhalb der letzten 20 Kerzen stattgefunden haben
-                #   - Preis muss von oben (über pivot_res) zurück zum Level kommen
-                #   - Zwischendurch darf der Preis das Level nicht massiv verletzt haben
-                MAX_BB_AGE = 20  # Breakout darf max 20 Kerzen alt sein
-                p_res = peak_idx[-2]
-                pivot_res = highs[p_res]
+                # 2. BREAKER BLOCK (BB) — Break-and-Retest.
+                # P2.39: das Retest-Level wird jetzt danach gewählt, WELCHES Level
+                # der Preis gerade retestet (find_breaker_setup), statt blind
+                # peak_idx[-2]/trough_idx[-2]. Der alte Check feuerte zudem, sobald
+                # `current_price ~= pivot_res`, egal wie alt der Breakout war;
+                # Retest-Band (±0.5%), Breakout-Frische (≤20 Kerzen) und der 0.3%-
+                # Follow-through stecken jetzt im Helper.
+                #
+                # Feature-Timing bewusst am Retest-Bar (letzte geschlossene Kerze,
+                # len(df)-2): der Breakout liegt früher (breakout_idx), die ML-
+                # Features beschreiben den Entscheidungsmoment des Retests — der
+                # Pattern-Anker des BB-Modells (TD ankert analog auf p3). Ein
+                # Wechsel des Anker-Bars wäre Strategie-Redesign, nicht dieser Fix.
+                n_closed = len(df) - 1
+
                 # PARKED BB_1H (Audit Report 14/16): netto −1.089 bei 55,7% WR —
                 # die 1h-Edge überlebt Fees+Rauschen nicht; BB_4H (+565) läuft weiter.
-                if tf != '1h' and current_price >= pivot_res * 0.995 and current_price <= pivot_res * 1.005:
-                    breakout_idx = -1
-                    for i in range(p_res + 1, len(df) - 1):
-                        if closes[i] > pivot_res:
-                            breakout_idx = i
-                            break
-                    # Breakout muss existieren UND frisch sein
-                    if breakout_idx != -1 and (len(df) - 1 - breakout_idx) <= MAX_BB_AGE:
-                        # Nach dem Breakout muss der Preis mindestens einmal oberhalb
-                        # des Levels gelaufen sein — sonst war es kein echter Break
-                        peak_after_breakout = max(highs[breakout_idx : len(df) - 1])
-                        if peak_after_breakout > pivot_res * 1.003:  # min 0.3% drüber
-                            feats = extract_ml_features(df, len(df) - 2, 'LONG')
-                            evaluate_and_trade(
-                                conn,
-                                df,
-                                symbol,
-                                tf,
-                                'bb',
-                                'LONG',
-                                current_price,
-                                feats,
-                                (p_res, 1, pivot_res),
-                                (breakout_idx, 1, highs[breakout_idx]),
-                                (len(df) - 1, 1, current_price),
-                            )
+                # Parking-Lücke (Report-19-Nebenfund, Operator-Go 2026-07-06): gilt
+                # für BEIDE Seiten, bis die BB_1H-Überarbeitung steht.
+                if tf != '1h':
+                    bb_long = find_breaker_setup(peak_idx, highs, highs, closes, n_closed, current_price, 'LONG')
+                    if bb_long is not None:
+                        p_res, breakout_idx = bb_long
+                        pivot_res = highs[p_res]
+                        feats = extract_ml_features(df, len(df) - 2, 'LONG')
+                        evaluate_and_trade(
+                            conn,
+                            df,
+                            symbol,
+                            tf,
+                            'bb',
+                            'LONG',
+                            current_price,
+                            feats,
+                            (p_res, 1, pivot_res),
+                            (breakout_idx, 1, highs[breakout_idx]),
+                            (len(df) - 1, 1, current_price),
+                        )
 
-                p_sup = trough_idx[-2]
-                pivot_sup = lows[p_sup]
-                # FIX Parking-Lücke (Report-19-Nebenfund, Operator-Go 2026-07-06):
-                # Das BB_1H-Parking saß nur im LONG-Zweig — SHORT feuerte weiter.
-                # Jetzt beide Seiten geparkt, bis die BB_1H-Überarbeitung steht.
-                if tf != '1h' and current_price <= pivot_sup * 1.005 and current_price >= pivot_sup * 0.995:
-                    breakdown_idx = -1
-                    for i in range(p_sup + 1, len(df) - 1):
-                        if closes[i] < pivot_sup:
-                            breakdown_idx = i
-                            break
-                    # Breakdown muss frisch sein UND tief genug gegangen sein
-                    if breakdown_idx != -1 and (len(df) - 1 - breakdown_idx) <= MAX_BB_AGE:
-                        trough_after_breakdown = min(lows[breakdown_idx : len(df) - 1])
-                        if trough_after_breakdown < pivot_sup * 0.997:  # min 0.3% drunter
-                            feats = extract_ml_features(df, len(df) - 2, 'SHORT')
-                            evaluate_and_trade(
-                                conn,
-                                df,
-                                symbol,
-                                tf,
-                                'bb',
-                                'SHORT',
-                                current_price,
-                                feats,
-                                (p_sup, -1, pivot_sup),
-                                (breakdown_idx, -1, lows[breakdown_idx]),
-                                (len(df) - 1, -1, current_price),
-                            )
+                    bb_short = find_breaker_setup(trough_idx, lows, lows, closes, n_closed, current_price, 'SHORT')
+                    if bb_short is not None:
+                        p_sup, breakdown_idx = bb_short
+                        pivot_sup = lows[p_sup]
+                        feats = extract_ml_features(df, len(df) - 2, 'SHORT')
+                        evaluate_and_trade(
+                            conn,
+                            df,
+                            symbol,
+                            tf,
+                            'bb',
+                            'SHORT',
+                            current_price,
+                            feats,
+                            (p_sup, -1, pivot_sup),
+                            (breakdown_idx, -1, lows[breakdown_idx]),
+                            (len(df) - 1, -1, current_price),
+                        )
 
             except Exception as e:
                 logger.debug(f"Error for {symbol} ({tf}): {e}")
