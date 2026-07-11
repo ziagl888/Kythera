@@ -18,6 +18,7 @@ Posting-Flow, aber Modell + Feature-Aufbau sind neu:
 """
 
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -65,7 +66,7 @@ MODEL_NAME = "AIM2"
 LIVE_POSTING = os.getenv("AIM2_LIVE_POSTING", "0") == "1"  # Default: Shadow-only
 SHADOW_FLOOR = 0.25  # darunter nicht mal Shadow loggen
 MODEL_RELOAD_S = 24 * 3600  # R07-AIM1-b: Modell täglich neu laden
-CANDIDATE_WINDOW_MIN = 30  # P2.35-Fix: Catch-up-fähiges Fenster, Dedup via processed-Tabelle
+CANDIDATE_WINDOW_MIN = 60  # P2.35: Catch-up nach Downtime; Doppel-Processing hält dedup_key ab
 MAX_JOIN_STALENESS_H = 3
 PARITY_MIN_NONZERO = 0.40  # OOD-Wache (P0.13): zu viele Null-Features → nicht handeln
 LOCAL_TZ = ZoneInfo("Europe/Bucharest")
@@ -123,6 +124,46 @@ def df_from_query(conn, query, params=None):
             return pd.DataFrame()
         columns = [desc[0] for desc in cur.description]
         return pd.DataFrame(rows, columns=columns)
+
+
+_CONV_ID_MOD = (1 << 63) - 1  # BIGINT-sicherer (signed 64-bit) Namensraum für den conv-Hash
+
+
+def conv_signal_identity(source, symbol, direction, ts, entry) -> int:
+    """Stabile, tabellen-agnostische Identität eines conv-Signals als BIGINT.
+
+    Ein conv-Signal wandert binnen Sekunden von active_ nach
+    closed_trades_master — mit NEUER Serial-id, aber unveränderter Identität
+    (5_trade_monitor.close_trade kopiert time/coin/direction/entry/strategy 1:1;
+    closed_trades_master.id ist eine eigene SEQUENCE). Der per-Tabelle `id`
+    taugt deshalb NICHT als Dedup-Schlüssel — dieselbe Diagnose wie
+    33_ai_fif1_bot.signal_key. Bei id-basierten Keys entstünden zwei Fehler:
+      * die closed-Form (neue id, gleiche Open-`time` → noch im Kandidaten-
+        Fenster) würde als frischer Kandidat re-gescored → Doppel-Post, und
+      * unbeteiligte active/closed-Rows mit zufällig gleicher id verdrängen sich
+        gegenseitig aus dem processed-Set (die P2.35-Kollision).
+    Dedup daher über die migrations-stabilen Felder statt über die id."""
+    raw = "|".join(
+        (
+            str(source),
+            str(symbol).upper(),
+            str(direction).upper(),
+            pd.Timestamp(ts).isoformat(),
+            format(float(entry) if pd.notna(entry) else 0.0, ".10g"),
+        )
+    )
+    return int(hashlib.md5(raw.encode()).hexdigest(), 16) % _CONV_ID_MOD
+
+
+def dedup_key(source_type, sid, source, symbol, direction, ts, entry) -> tuple[str, int]:
+    """(signal_type, signal_id) für master_ai_processed_signals.
+
+    ai: ml_predictions_master.id ist stabil (posted-Rows migrieren nie) → direkte
+    id. conv: tabellen-agnostischer Identitäts-Hash (siehe conv_signal_identity),
+    weil die per-Tabelle Serial-id über die active→closed-Migration nicht hält."""
+    if source_type == "ai":
+        return ("ai_signal", int(sid))
+    return ("conv", conv_signal_identity(source, symbol, direction, ts, entry))
 
 
 def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
@@ -318,17 +359,29 @@ def process_master_trades():
             ((current_time - datetime.timedelta(days=5)),),
         )
         processed = (
-            set(zip(processed_df["signal_type"], processed_df["signal_id"], strict=True))
+            {(str(t), int(i)) for t, i in zip(processed_df["signal_type"], processed_df["signal_id"], strict=True)}
             if not processed_df.empty
             else set()
         )
-        type_key = {"ai": "ai_signal", "conv": "conv_signal"}
-        candidates = candidates[
-            [
-                (type_key[st], sid) not in processed
-                for st, sid in zip(candidates["source_type"], candidates["id"], strict=True)
+        # Tabellen-agnostischer Dedup-Key: conv-id ist über die active→closed-
+        # Migration nicht stabil (dedup_key). Key einmal je Kandidat berechnen,
+        # als Spalte mitführen und beim processed-Insert wiederverwenden.
+        candidates = candidates.assign(
+            dkey=[
+                dedup_key(st, sid, src, sym, dr, ts, en)
+                for st, sid, src, sym, dr, ts, en in zip(
+                    candidates["source_type"],
+                    candidates["id"],
+                    candidates["source"],
+                    candidates["symbol"],
+                    candidates["direction"],
+                    candidates["ts"],
+                    candidates["entry"],
+                    strict=True,
+                )
             ]
-        ]
+        )
+        candidates = candidates[[k not in processed for k in candidates["dkey"]]]
         if candidates.empty:
             logger.info("ℹ️ Alle Kandidaten bereits verarbeitet.")
             return
@@ -410,7 +463,7 @@ def process_master_trades():
                     f"Nicht-Null-Features → OOD-Verdacht, kein Posting."
                 )
 
-            processed_inserts.append((type_key[signal.source_type], int(signal.id), prob))
+            processed_inserts.append((*signal.dkey, prob))
 
             if topn_cfg.enabled and trusted and prob >= topn_min:
                 topn_pool.append(
