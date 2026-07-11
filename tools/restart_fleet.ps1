@@ -158,6 +158,13 @@ if ($task.State -eq 'Running') {
         $bots = Get-FleetBotProcesses
         Write-Log ("  waiting for stop - task={0}, bots={1}" -f $task.State, $bots.Count)
     } while (((Get-Date) -lt $deadline) -and (($task.State -eq 'Running') -or ($bots.Count -gt 0)))
+    if ($task.State -eq 'Running') {
+        # Without this guard the script would fall through to Start-ScheduledTask
+        # (a no-op on a running task), find the never-stopped dashboard on port
+        # 5000, and report a restart that never happened.
+        Write-Log ("Task still Running after {0}s - the stop did not take effect. Aborting; nothing was restarted." -f $StopTimeoutSec) 'ERROR'
+        exit 3
+    }
     if ($bots.Count -gt 0) {
         Write-Log ("{0} bot process(es) survived the tree-stop as orphans - OK: the next watchdog start reaps them (_terminate_orphan_fleet, P0.2)." -f $bots.Count) 'WARN'
     } else {
