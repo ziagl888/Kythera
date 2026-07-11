@@ -32,7 +32,8 @@
 
 .NOTES
     Exit codes (load-bearing for the operator):
-      0 - restart complete and verified (task Running + dashboard up)
+      0 - restart complete and verified (task Running + dashboard up,
+          re-confirmed after 15s), or -DryRun preflight OK
       1 - aborted before any stop: preflight, pull failure, non-main checkout,
           stop-ACL failure, or a fleet running OUTSIDE the scheduled task -
           the fleet keeps running untouched
@@ -131,10 +132,16 @@ Write-Log ("Task '{0}': State={1}, User={2}, RunLevel={3}" -f $TaskName, $task.S
 $bots = Get-FleetBotProcesses
 Write-Log ("Fleet bot processes (python-with-python-parent): {0}" -f $bots.Count)
 
-$branch = [string](Invoke-Git @('rev-parse', '--abbrev-ref', 'HEAD'))
-Invoke-Git @('fetch', 'origin') | Out-Null
-$head = [string](Invoke-Git @('rev-parse', '--short', 'HEAD'))
-$behind = [int][string](Invoke-Git @('rev-list', '--count', 'HEAD..origin/main'))
+try {
+    $branch = [string](Invoke-Git @('rev-parse', '--abbrev-ref', 'HEAD'))
+    Invoke-Git @('fetch', 'origin') | Out-Null
+    $head = [string](Invoke-Git @('rev-parse', '--short', 'HEAD'))
+    $behind = [int][string](Invoke-Git @('rev-list', '--count', 'HEAD..origin/main'))
+} catch {
+    Write-Log ("Git preflight failed: {0}" -f $_.Exception.Message) 'ERROR'
+    Write-Log "Fleet untouched - nothing was stopped or started." 'ERROR'
+    exit 1
+}
 Write-Log ("Branch={0}, HEAD={1}, behind origin/main: {2} commit(s)" -f $branch, $head, $behind)
 if ($behind -gt 0) {
     Invoke-Git @('log', '--oneline', 'HEAD..origin/main') |
@@ -178,6 +185,7 @@ if ($SkipPull) {
 # trainer - they are reported, never killed.)
 $task = Get-WatchdogTask
 $preStopPids = @((Get-FleetBotProcesses) | ForEach-Object { [int64]$_.ProcessId })
+$stopVerified = $false
 
 if ($task.State -eq 'Running') {
     Write-Log ("Stopping task '{0}' ({1} fleet PIDs snapshotted)..." -f $TaskName, $preStopPids.Count)
@@ -188,13 +196,21 @@ if ($task.State -eq 'Running') {
         Write-Log "Likely the task-ACL gap (stop was never exercised before T-074). Needs a one-time elevated fix; the fleet keeps running." 'ERROR'
         exit 1
     }
-    $deadline = (Get-Date).AddSeconds($StopTimeoutSec)
-    do {
-        Start-Sleep -Seconds 5
-        $task = Get-WatchdogTask
-        $alive = Get-AlivePids -Pids $preStopPids
-        Write-Log ("  waiting for stop - task={0}, snapshot PIDs alive={1}" -f $task.State, $alive.Count)
-    } while (((Get-Date) -lt $deadline) -and (($task.State -eq 'Running') -or ($alive.Count -gt 0)))
+    # From here on the stop has been issued: any unexpected error must NOT
+    # surface as exit 1 ("fleet untouched") - it lands on exit 2 (unclear).
+    try {
+        $deadline = (Get-Date).AddSeconds($StopTimeoutSec)
+        do {
+            Start-Sleep -Seconds 5
+            $task = Get-WatchdogTask
+            $alive = Get-AlivePids -Pids $preStopPids
+            Write-Log ("  waiting for stop - task={0}, snapshot PIDs alive={1}" -f $task.State, $alive.Count)
+        } while (((Get-Date) -lt $deadline) -and (($task.State -eq 'Running') -or ($alive.Count -gt 0)))
+    } catch {
+        Write-Log ("Polling failed after the stop was issued: {0}" -f $_.Exception.Message) 'ERROR'
+        Write-Log "Fleet state UNCLEAR - check task state and processes manually, then start the task if needed." 'ERROR'
+        exit 2
+    }
     if ($task.State -eq 'Running') {
         # Without this guard the script would fall through to Start-ScheduledTask
         # (a no-op on a running task), find the never-stopped dashboard on port
@@ -208,19 +224,34 @@ if ($task.State -eq 'Running') {
     } else {
         Write-Log "All snapshotted fleet PIDs are gone - fleet stopped."
     }
+    $stopVerified = $true
 } elseif ($preStopPids.Count -gt 0) {
-    # The 00:32 pattern: a watchdog started OUTSIDE the task (manual console)
-    # holds the fleet. Starting the task now would spawn a second watchdog
-    # that instantly exits on the single-instance mutex - and the old
-    # dashboard on port 5000 would fake a successful "restart" on old code.
-    Write-Log ("Task is not running (State={0}) but {1} fleet process(es) are alive - the fleet runs OUTSIDE the scheduled task." -f $task.State, $preStopPids.Count) 'ERROR'
-    Write-Log "No UAC-free stop path exists for that watchdog. Stop it manually (its console / elevated), then re-run. Fleet untouched." 'ERROR'
+    # Either the 00:32 pattern - a watchdog started OUTSIDE the task holds the
+    # fleet (starting the task now would spawn a second watchdog that instantly
+    # exits on the single-instance mutex, and the old dashboard on port 5000
+    # would fake a successful "restart" on old code) - or a trainer's python
+    # workers. The fingerprint cannot tell them apart.
+    Write-Log ("Task is not running (State={0}) but {1} python parent/child pair(s) are alive (PIDs: {2})." -f $task.State, $preStopPids.Count, ($preStopPids -join ', ')) 'ERROR'
+    Write-Log "Either a watchdog running OUTSIDE the scheduled task (no UAC-free stop path exists for it) or a trainer's workers - identify the PIDs before stopping ANYTHING, then re-run. Fleet untouched." 'ERROR'
     exit 1
 } else {
     Write-Log ("Task not running (State={0}) and no fleet processes found - skipping stop, going straight to start." -f $task.State) 'WARN'
 }
 
 # --- Step 3: start the fleet and verify ----------------------------------------
+
+# Soundness check for the success criterion: if port 5000 is ALREADY bound
+# and this run did not just verify a stop, an unmanaged (orphan/manual)
+# dashboard holds it - it would fake the success gate below, and the mutex
+# would turn the task start into a no-op anyway. Refuse rather than guess.
+$portBusy = Test-NetConnection -ComputerName 'localhost' -Port $DashboardPort -InformationLevel Quiet -WarningAction SilentlyContinue
+if ($portBusy -and -not $stopVerified) {
+    Write-Log ("Port {0} is already in use, but no stop was verified in this run - an unmanaged dashboard holds it and would fake the success check. Aborting; nothing was started." -f $DashboardPort) 'ERROR'
+    exit 1
+}
+if ($portBusy) {
+    Write-Log ("Port {0} is still bound after the stop (orphan dashboard) - the watchdog start reaps it (dashboard.py is in FLEET_SCRIPTS); relying on the re-confirmation below." -f $DashboardPort) 'WARN'
+}
 
 Write-Log ("Starting task '{0}'..." -f $TaskName)
 try {
@@ -233,19 +264,37 @@ try {
     exit 4
 }
 
-$deadline = (Get-Date).AddSeconds($StartTimeoutSec)
-$verified = $false
-do {
-    Start-Sleep -Seconds 10
-    $task = Get-WatchdogTask
-    $bots = Get-FleetBotProcesses
-    $dashboardUp = Test-NetConnection -ComputerName 'localhost' -Port $DashboardPort -InformationLevel Quiet -WarningAction SilentlyContinue
-    # Port 5000 alone is not proof: an orphaned OLD dashboard can hold the
-    # port while the new watchdog import-crashed (task flips back to Ready).
-    # Success = task still Running AND the dashboard answers.
-    $verified = ($dashboardUp -and ($task.State -eq 'Running'))
-    Write-Log ("  waiting for start - task={0}, bots={1}, dashboard:{2}={3}" -f $task.State, $bots.Count, $DashboardPort, $dashboardUp)
-} while (((Get-Date) -lt $deadline) -and (-not $verified))
+try {
+    $deadline = (Get-Date).AddSeconds($StartTimeoutSec)
+    $verified = $false
+    do {
+        Start-Sleep -Seconds 10
+        $task = Get-WatchdogTask
+        $bots = Get-FleetBotProcesses
+        $dashboardUp = Test-NetConnection -ComputerName 'localhost' -Port $DashboardPort -InformationLevel Quiet -WarningAction SilentlyContinue
+        # Port 5000 alone is not proof: an orphaned OLD dashboard can hold the
+        # port while the new watchdog import-crashed (task flips back to Ready).
+        # Success = task still Running AND the dashboard answers.
+        $verified = ($dashboardUp -and ($task.State -eq 'Running'))
+        Write-Log ("  waiting for start - task={0}, bots={1}, dashboard:{2}={3}" -f $task.State, $bots.Count, $DashboardPort, $dashboardUp)
+    } while (((Get-Date) -lt $deadline) -and (-not $verified))
+
+    if ($verified) {
+        # Re-confirm: a watchdog that import-crashes AFTER the first positive
+        # poll (dotenv/PYTHONPATH, the known failure class) flips the task back
+        # to Ready within seconds - catch that before declaring success.
+        Start-Sleep -Seconds 15
+        $task = Get-WatchdogTask
+        if ($task.State -ne 'Running') {
+            Write-Log ("Re-confirmation FAILED - task fell back to {0} after the first positive poll (watchdog died right after start)." -f $task.State) 'ERROR'
+            $verified = $false
+        }
+    }
+} catch {
+    Write-Log ("Polling failed during start verification: {0}" -f $_.Exception.Message) 'ERROR'
+    Write-Log "Fleet state UNCLEAR - verify manually: task state, dashboard, watchdog.log." 'ERROR'
+    exit 2
+}
 
 if ($verified) {
     $leftover = Get-AlivePids -Pids $preStopPids
