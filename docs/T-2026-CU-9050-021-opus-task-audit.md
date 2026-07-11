@@ -56,10 +56,10 @@ Der Orchestrator T-075 hat die Tag-Wellen 1–6 als datei-disjunkte BUILD-Tasks 
 | T-089 | SMC/Mayank/Sniper: Weekend-/Stale-Candle-Gate, FVG-Age-Limit (50 Bars), SL/RR-Guard, Break-and-Retest wählt echtes Level | P2.45, P2.39 |
 | T-090 | AIM2 Kandidatenfenster 30→60 min + tabellen-agnostischer `conv_signal`-Identity-Dedup (shadow-only) | P2.35 |
 | T-091 | `core/fleet.py` = eine Prozess-Definition; Watchdog + Dashboard importieren sie (Bots 26–34 jetzt sichtbar) | R2(a), P1.38-tlw. |
+| T-092 | Datenpipeline-Robustheit: `find_contaminating_gap`-Continuity-Check, periodischer coins.json-Refresh ohne Restart, `_consume_with_watchdog` (`chart_data_service`) | P2.13, P2.15, P2.20 |
 | T-093 | Sniper-Kanten-Pivots — `argrelextrema`-Rest-Repaint am rechten Rand (Option B, ≥5 bestätigende geschlossene Bars) | P1.46-Rest |
 
-**Noch in Arbeit (Checkbox offen, nicht mit einbeziehen):**
-- **T-092** Datenpipeline-Robustheit (P2.13 Gap-Continuity, P2.15 Coin-Refresh, P2.20 `chart_data_service`-Watchdog) — `in_progress`, die drei Boxen bleiben `[ ]`. Der T-075-Dispatch listete diese Punkte, geschlossen sind sie **nicht** — im Ledger als offen geführt.
+**Noch offen / Sonderfälle:**
 - **T-078** (P1.12-Erstversuch) → **wontfix**, von T-084 (Variante B) abgelöst.
 - **Nur teilweise:** **R2** (R2(a) Prozessliste erledigt, R2(b) `schema.sql`/DDL braucht VPS/DB) und **P1.38** (Prozesslisten-Drift via `core/fleet.py` weg; CSRF-Origin-Check, Log-Streaming-Handle und die `/api/status`-psutil-Sweeps bleiben offen).
 - **Neue Bots/Prep (nicht Checkbox-schliessend):** MAX1 (`34_ai_max1_bot.py`, RUB2-SHORT-Klon, shadow-only, `MAX1_LIVE_POSTING`=AUS, T-067/070) und die QM2-Retrain-Vorbereitung (`qm_ml_trainer.py` schreibt jetzt `model_id`, T-061).
@@ -132,11 +132,10 @@ Erst nach Z2 (B4). Tech-Entscheidung (Flask vs FastAPI+HTMX/React, SSE/WS, Mobil
 
 ## Empfohlene Reihenfolge (aktualisiert 2026-07-11 nach der T-075-Welle)
 
-**Fast der gesamte BUILD-Backlog ist abgearbeitet.** Erledigt: ~~A1~~, ~~A2~~, ~~A2b~~ (inkl. EPD2/SRA2), ~~A3~~, ~~B5~~, der grösste Teil des P2-Robustheits-Clusters (P2.14–P2.51 bis auf die unten genannten) und ~~R2(a)~~. Was jetzt noch offen ist, zerfällt in drei Gruppen:
+**Fast der gesamte BUILD-Backlog ist abgearbeitet.** Erledigt: ~~A1~~, ~~A2~~, ~~A2b~~ (inkl. EPD2/SRA2), ~~A3~~, ~~B5~~, fast das gesamte P2-Robustheits-Cluster (P2.13–P2.51 bis auf den unten genannten Rest) und ~~R2(a)~~. Offen im P2-Bereich bleiben nur noch P2.12, der TZ-Block P2.1–P2.6/P2.21 (hinter R3) und P2.22/P2.23. Was insgesamt noch aussteht, zerfällt in drei Gruppen:
 
 **1. BUILD, ohne Michi ausführbar (Rest):**
-- **T-092-Abschluss** — Datenpipeline-Robustheit **P2.13** (Gap-Continuity-Check), **P2.15** (Coin-Refresh ohne Restart), **P2.20** (`chart_data_service`-Watchdog + async Snapshot). Task ist `in_progress`; hier ansetzen, sobald es frei ist.
-- **P2.12** (Wilder-RSI-Migration) — bewusste Migration mit Retrain-Kopplung, **erst nach T-092** anfassen (gemeinsame Indikator-Engine-Fläche).
+- **P2.12** (Wilder-RSI-Migration) — bewusste Migration mit Retrain-Kopplung; jetzt frei, seit T-092 die Datenpipeline-Fläche (P2.13/15/20) geräumt hat. Nächster Indikator-Engine-Punkt.
 - **B1 · R3 zentrale UTC-Policy** (`core/time.py` liegt, T-032) — der Pool-Flip auf `timezone=UTC` + der **TZ-Cluster P2.1–P2.6/P2.21** hängen daran; eigener Task mit Fleet-Restart-Fenster (Details `docs/UTC_POLICY.md`).
 - **B2 · R4-Rest** (`cap_leverage_to_sl()` auf die restlichen signal-emittierenden Bots), **R1** (Forming-Candle-Vertrag repo-weit — teils via C1-Call-Site-Inventar), **P2.22/P2.23** (Regime-Attribution/„Unreliable"-Heuristik), **P2.38** (ABR1 `SUCCESS_CLASS_IDX`), **P3.12** (`REAL`→`double`, DB-nah).
 - **A5 · P3-Batch** (P3.1-Rest, P3.2/P3.3/P3.5/P3.7/P3.8/P3.10/P3.11) — Lückenfüller, nicht in Geld-Pfad-PRs mischen.
