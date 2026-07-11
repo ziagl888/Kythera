@@ -53,6 +53,9 @@ TRENDLINE_STATE = {}
 # after jedem Restart war prev_relation="unknown" für ALLE Coins → der
 # Break-Check `prev in ["below","near","unknown"] and curr == "above"` feuerte
 # sofort für jeden Coin, der aktuell über seiner Trendlinie liegt (= massenhaft).
+# P2.36: Persistenz allein reicht nicht — die Datei kann fehlen/korrupt sein.
+# Der eigentliche Schutz ist der observe-only-Guard in classify_trendline_event
+# (unknown emittiert nichts, State wird nur neu aufgebaut).
 TRENDLINE_STATE_FILE = "trendline_state.json"
 
 
@@ -154,6 +157,49 @@ def find_pivots(df, distance=8):
     high_peaks, _ = scipy.signal.find_peaks(df['high'], distance=distance)
     low_peaks, _ = scipy.signal.find_peaks(-df['low'], distance=distance)
     return high_peaks, low_peaks
+
+
+def classify_trendline_event(
+    prev_relation,
+    current_relation,
+    distance,
+    tolerance,
+    recent_lows,
+    recent_highs,
+    trend_value_last,
+    last_close,
+    prev_close,
+):
+    """Classify the trendline event for one coin (BREAK/BOUNCE) or None.
+
+    P2.36 — unknown prev_relation = observe-only. After a state loss
+    (``trendline_state.json`` missing or corrupt) TRENDLINE_STATE resets to {},
+    so every coin falls back to prev_relation="unknown" (the ``.get`` default in
+    the scan loop). The old inline logic listed "unknown" in every break/bounce
+    condition, so on the first cycle after a state loss EVERY coin currently
+    above/below its trendline emitted a fresh BREAK event — a mass signal flood
+    with real money (the old inline comment admitted the bug outright). We now
+    emit no event while the prior relation is unknown; the caller still records
+    the observed relation, so genuine transitions fire from the next cycle on.
+
+    Pure function (no DB / no I/O) so the observe-only invariant is testable
+    standalone — see backtest/test_atb_unknown_state.py.
+    """
+    # Observe-only: rebuild the relation this cycle, emit nothing.
+    if prev_relation == "unknown":
+        return None
+
+    if prev_relation in ("below", "near") and current_relation == "above" and distance > tolerance:
+        return "TRENDLINE BREAK UP"
+    if prev_relation in ("above", "near") and current_relation == "below" and distance < -tolerance:
+        return "TRENDLINE BREAK DOWN"
+    if prev_relation == "above" and current_relation == "near":
+        if min(recent_lows) >= trend_value_last - tolerance and last_close > prev_close:
+            return "BOUNCE UP FROM TRENDLINE"
+    if prev_relation == "below" and current_relation == "near":
+        if max(recent_highs) <= trend_value_last + tolerance and last_close < prev_close:
+            return "BOUNCE DOWN FROM TRENDLINE"
+    return None
 
 
 def _atb1_posted_flag(ml_prob: float, threshold: float) -> bool:
@@ -616,198 +662,207 @@ def run_trendline_detector():
     stats_dict = {"total": 0, "no_data": 0, "no_trend": 0, "too_far": 0, "events": 0}
     distance_logs = []
 
-    for symbol in coins:
-        if 'USDT_' in symbol:
-            continue
-        stats_dict["total"] += 1
+    # P2.37: guard the whole scan with try/finally so the DB connection is always
+    # returned and the rebuilt trendline state is always persisted — even if the
+    # loop aborts mid-scan. A leaked conn exhausts the pool over restarts; a
+    # dropped state save would re-arm the observe-only rebuild (and its silence)
+    # on the next cycle. The per-coin except (P1.23) stays nested inside.
+    try:
+        for symbol in coins:
+            if 'USDT_' in symbol:
+                continue
+            stats_dict["total"] += 1
 
-        state = TRENDLINE_STATE.get(
-            symbol,
-            {"last_alert": datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc), "prev_relation": "unknown"},
-        )
-        if (now - state["last_alert"]).total_seconds() < 3600:
-            continue
-
-        try:
-            query = f"""SELECT open_time, open, high, low, close, volume FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL '95 days' ORDER BY open_time ASC"""
-            df_90d = pd.read_sql_query(query, conn, parse_dates=['open_time'])
-            if len(df_90d) < 50:
-                stats_dict["no_data"] += 1
+            state = TRENDLINE_STATE.get(
+                symbol,
+                {"last_alert": datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc), "prev_relation": "unknown"},
+            )
+            if (now - state["last_alert"]).total_seconds() < 3600:
                 continue
 
-            df_90d['open_time'] = pd.to_datetime(df_90d['open_time'], utc=True)
-            df_recent = df_90d.tail(4).copy()
-            if len(df_recent) < 3:
-                stats_dict["no_data"] += 1
-                continue
-
-            last_close = float(df_recent['close'].iloc[-1])
-            prev_close = float(df_recent['close'].iloc[-2])
-
-            trend_direction, trend_data = detect_trend(df_90d)
-            if not trend_data:
-                stats_dict["no_trend"] += 1
-                continue
-
-            slope, intercept = trend_data
-
-            # FIX: Wir berechnen die Linie nun über den Kerzen-Index!
-            last_idx = len(df_90d) - 1
-            trend_value_last = slope * last_idx + intercept
-
-            # FIX: Standard-Prozent-Rechnung (verhindert das -100% Problem!)
-            rel_distance = abs(last_close - trend_value_last) / last_close
-            distance_logs.append((symbol, rel_distance * 100))
-
-            if rel_distance > MAX_DISTANCE_PCT:
-                stats_dict["too_far"] += 1
-                continue
-
-            tolerance = last_close * 0.008
-            distance = last_close - trend_value_last
-
-            if abs(distance) <= tolerance:
-                current_relation = "near"
-            elif distance > 0:
-                current_relation = "above"
-            else:
-                current_relation = "below"
-
-            prev_relation = state["prev_relation"]
-            event = None
-
-            # HIER IST DER BUG AUS DEINEM ALTEN BOT WIEDER AKTIV!
-            # Erlaubt dem Bot wieder am Fließband zu triggern, wenn Coins ins Radar kommen
-            if prev_relation in ["below", "near", "unknown"] and current_relation == "above" and distance > tolerance:
-                event = "TRENDLINE BREAK UP"
-            elif (
-                prev_relation in ["above", "near", "unknown"] and current_relation == "below" and distance < -tolerance
-            ):
-                event = "TRENDLINE BREAK DOWN"
-            elif prev_relation in ["above", "unknown"] and current_relation == "near":
-                if min(df_recent['low'].iloc[-3:]) >= trend_value_last - tolerance and last_close > prev_close:
-                    event = "BOUNCE UP FROM TRENDLINE"
-            elif prev_relation in ["below", "unknown"] and current_relation == "near":
-                if max(df_recent['high'].iloc[-3:]) <= trend_value_last + tolerance and last_close < prev_close:
-                    event = "BOUNCE DOWN FROM TRENDLINE"
-
-            if event:
-                stats_dict["events"] += 1
-                ml_prob, threshold = get_ml_prediction(df_90d, event, slope, last_close)
-                logger.info(f"Signal: {symbol} {event} | ML Score: {ml_prob:.2f} (Thresh: {threshold:.2f})")
-
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """CREATE TABLE IF NOT EXISTS trendmeet_rawdata (id SERIAL PRIMARY KEY, detection_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, coin TEXT, event_type TEXT, trend_direction TEXT, close_price NUMERIC, trend_value NUMERIC, rel_distance_pct NUMERIC, abs_distance NUMERIC)"""
-                        )
-                        cur.execute(
-                            """INSERT INTO trendmeet_rawdata (coin, event_type, trend_direction, close_price, trend_value, rel_distance_pct, abs_distance) VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                            (
-                                symbol,
-                                event,
-                                trend_direction,
-                                float(last_close),
-                                float(trend_value_last),
-                                float(rel_distance) * 100,
-                                float(distance),
-                            ),
-                        )
-
-                        if ml_prob >= 0.25:
-                            direction = "LONG" if "UP" in event else "SHORT"
-                            cur.execute(
-                                """CREATE TABLE IF NOT EXISTS ML_TREND_TRADES (id SERIAL PRIMARY KEY, symbol TEXT, direction TEXT, ml_probability NUMERIC, close_price NUMERIC, event_type TEXT, trend_direction TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)"""
-                            )
-                            cur.execute(
-                                """INSERT INTO ML_TREND_TRADES (symbol, direction, ml_probability, close_price, event_type, trend_direction) VALUES (%s, %s, %s, %s, %s, %s)""",
-                                (
-                                    symbol,
-                                    direction,
-                                    float(ml_prob),
-                                    float(last_close),
-                                    f"{event} (ML: {ml_prob:.0%})",
-                                    trend_direction,
-                                ),
-                            )
-
-                            # P1.47: posted spiegelt, ob diese Prediction TATSÄCHLICH
-                            # gehandelt wird (siehe _atb1_posted_flag). Vorher stand
-                            # hier hart False, auch für ausgeführte Trades — dadurch
-                            # matchte der created_at-JOIN im Market-Tracker
-                            # (m.posted = TRUE, P1.44) keine einzige ATB1-Zeile, und
-                            # offene ATB1-Positionen fielen dauerhaft auf NOW() zurück.
-                            cur.execute(
-                                """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, %s)""",
-                                (
-                                    "ATB1",
-                                    now,
-                                    symbol,
-                                    direction,
-                                    float(last_close),
-                                    float(ml_prob),
-                                    _atb1_posted_flag(ml_prob, threshold),
-                                ),
-                            )
-                    conn.commit()
-                except Exception as e:
-                    logger.error(f"DB Error bei Trendline: {e}")
-                    conn.rollback()
-
-                emoji = "🚀" if "UP" in event else "💥"
-                trade_status = "(Trade Triggered ✅)" if ml_prob >= threshold else "(No Trade ❌)"
-
-                # Formatierte Prozentzahl für die Telegram Ausgabe
-                dist_str = (distance / trend_value_last) * 100
-
-                info_html = f"""<pre><b>{emoji} {event}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ 90d Trend: <b>{trend_direction}</b></b>\n<b>→ Close: <code>${last_close:,.8f}</code> | Trend: <code>${trend_value_last:,.8f}</code></b>\n<b>→ Distance: {dist_str:+.2f}%</b>\n<b>→ ML Confidence: {ml_prob:.1%} {trade_status}</b>\n<b>→ Time: {now.strftime('%H:%M')} UTC</b></pre>"""
-
-                info_chart_path = generate_megageil_chart(conn, symbol, trend_direction, slope, intercept)
-
-                try:
-                    with conn.cursor() as cur:
-                        if info_chart_path:
-                            cur.execute(
-                                "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                                (TRENDBREAKER_CHANNEL_ID, info_html, info_chart_path),
-                            )
-                        else:
-                            cur.execute(
-                                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-                                (TRENDBREAKER_CHANNEL_ID, info_html),
-                            )
-                    conn.commit()
-                except Exception as e:
-                    logger.error(f"Error sending in Trendbreaker Channel: {e}")
-                    conn.rollback()
-
-                if ml_prob >= threshold:
-                    direction = "LONG" if "UP" in event else "SHORT"
-                    logger.info(f"🔥 ATB1 TRADE EXECUTE: {symbol} {direction}")
-                    send_signal(conn, symbol, direction, ml_prob, last_close, event, trend_direction, info_chart_path)
-
-                state["last_alert"] = now
-
-            state["prev_relation"] = current_relation
-            TRENDLINE_STATE[symbol] = state
-
-        except Exception as e:
-            logger.error(f"Error for {symbol} in ATB1 Detector: {e}", exc_info=True)
-            # FIX (P1.23): Transaktion nach einem per-Coin-Fehler zurückrollen —
-            # sonst bleibt die (nicht-autocommit) Connection im "aborted"-Zustand
-            # und vergiftet den Rest des 538-Coin-Scans ("current transaction is
-            # aborted"). rollback() selbst absichern, damit eine tote Connection
-            # nicht den ganzen Scan crasht.
             try:
-                conn.rollback()
-            except Exception:
-                pass
+                query = f"""SELECT open_time, open, high, low, close, volume FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL '95 days' ORDER BY open_time ASC"""
+                df_90d = pd.read_sql_query(query, conn, parse_dates=['open_time'])
+                if len(df_90d) < 50:
+                    stats_dict["no_data"] += 1
+                    continue
 
-    conn.close()
+                df_90d['open_time'] = pd.to_datetime(df_90d['open_time'], utc=True)
+                df_recent = df_90d.tail(4).copy()
+                if len(df_recent) < 3:
+                    stats_dict["no_data"] += 1
+                    continue
 
-    # FIX: State after jedem Scan persistieren, damit der Bot bei Restart weiß,
-    # welche Coins schon über/unter ihrer Trendlinie waren (verhindert Massen-Alerts).
-    save_trendline_state()
+                last_close = float(df_recent['close'].iloc[-1])
+                prev_close = float(df_recent['close'].iloc[-2])
+
+                trend_direction, trend_data = detect_trend(df_90d)
+                if not trend_data:
+                    stats_dict["no_trend"] += 1
+                    continue
+
+                slope, intercept = trend_data
+
+                # FIX: Wir berechnen die Linie nun über den Kerzen-Index!
+                last_idx = len(df_90d) - 1
+                trend_value_last = slope * last_idx + intercept
+
+                # FIX: Standard-Prozent-Rechnung (verhindert das -100% Problem!)
+                rel_distance = abs(last_close - trend_value_last) / last_close
+                distance_logs.append((symbol, rel_distance * 100))
+
+                if rel_distance > MAX_DISTANCE_PCT:
+                    stats_dict["too_far"] += 1
+                    continue
+
+                tolerance = last_close * 0.008
+                distance = last_close - trend_value_last
+
+                if abs(distance) <= tolerance:
+                    current_relation = "near"
+                elif distance > 0:
+                    current_relation = "above"
+                else:
+                    current_relation = "below"
+
+                prev_relation = state["prev_relation"]
+
+                # P2.36: unknown prev_relation is observe-only (see
+                # classify_trendline_event) — the first cycle after a state loss
+                # only rebuilds the relation below, no longer floods break events.
+                event = classify_trendline_event(
+                    prev_relation,
+                    current_relation,
+                    distance,
+                    tolerance,
+                    df_recent['low'].iloc[-3:],
+                    df_recent['high'].iloc[-3:],
+                    trend_value_last,
+                    last_close,
+                    prev_close,
+                )
+
+                if event:
+                    stats_dict["events"] += 1
+                    ml_prob, threshold = get_ml_prediction(df_90d, event, slope, last_close)
+                    logger.info(f"Signal: {symbol} {event} | ML Score: {ml_prob:.2f} (Thresh: {threshold:.2f})")
+
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """CREATE TABLE IF NOT EXISTS trendmeet_rawdata (id SERIAL PRIMARY KEY, detection_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, coin TEXT, event_type TEXT, trend_direction TEXT, close_price NUMERIC, trend_value NUMERIC, rel_distance_pct NUMERIC, abs_distance NUMERIC)"""
+                            )
+                            cur.execute(
+                                """INSERT INTO trendmeet_rawdata (coin, event_type, trend_direction, close_price, trend_value, rel_distance_pct, abs_distance) VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                                (
+                                    symbol,
+                                    event,
+                                    trend_direction,
+                                    float(last_close),
+                                    float(trend_value_last),
+                                    float(rel_distance) * 100,
+                                    float(distance),
+                                ),
+                            )
+
+                            if ml_prob >= 0.25:
+                                direction = "LONG" if "UP" in event else "SHORT"
+                                cur.execute(
+                                    """CREATE TABLE IF NOT EXISTS ML_TREND_TRADES (id SERIAL PRIMARY KEY, symbol TEXT, direction TEXT, ml_probability NUMERIC, close_price NUMERIC, event_type TEXT, trend_direction TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)"""
+                                )
+                                cur.execute(
+                                    """INSERT INTO ML_TREND_TRADES (symbol, direction, ml_probability, close_price, event_type, trend_direction) VALUES (%s, %s, %s, %s, %s, %s)""",
+                                    (
+                                        symbol,
+                                        direction,
+                                        float(ml_prob),
+                                        float(last_close),
+                                        f"{event} (ML: {ml_prob:.0%})",
+                                        trend_direction,
+                                    ),
+                                )
+
+                                # P1.47: posted spiegelt, ob diese Prediction TATSÄCHLICH
+                                # gehandelt wird (siehe _atb1_posted_flag). Vorher stand
+                                # hier hart False, auch für ausgeführte Trades — dadurch
+                                # matchte der created_at-JOIN im Market-Tracker
+                                # (m.posted = TRUE, P1.44) keine einzige ATB1-Zeile, und
+                                # offene ATB1-Positionen fielen dauerhaft auf NOW() zurück.
+                                cur.execute(
+                                    """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, %s)""",
+                                    (
+                                        "ATB1",
+                                        now,
+                                        symbol,
+                                        direction,
+                                        float(last_close),
+                                        float(ml_prob),
+                                        _atb1_posted_flag(ml_prob, threshold),
+                                    ),
+                                )
+                        conn.commit()
+                    except Exception as e:
+                        logger.error(f"DB Error bei Trendline: {e}")
+                        conn.rollback()
+
+                    emoji = "🚀" if "UP" in event else "💥"
+                    trade_status = "(Trade Triggered ✅)" if ml_prob >= threshold else "(No Trade ❌)"
+
+                    # Formatierte Prozentzahl für die Telegram Ausgabe
+                    dist_str = (distance / trend_value_last) * 100
+
+                    info_html = f"""<pre><b>{emoji} {event}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ 90d Trend: <b>{trend_direction}</b></b>\n<b>→ Close: <code>${last_close:,.8f}</code> | Trend: <code>${trend_value_last:,.8f}</code></b>\n<b>→ Distance: {dist_str:+.2f}%</b>\n<b>→ ML Confidence: {ml_prob:.1%} {trade_status}</b>\n<b>→ Time: {now.strftime('%H:%M')} UTC</b></pre>"""
+
+                    info_chart_path = generate_megageil_chart(conn, symbol, trend_direction, slope, intercept)
+
+                    try:
+                        with conn.cursor() as cur:
+                            if info_chart_path:
+                                cur.execute(
+                                    "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
+                                    (TRENDBREAKER_CHANNEL_ID, info_html, info_chart_path),
+                                )
+                            else:
+                                cur.execute(
+                                    "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
+                                    (TRENDBREAKER_CHANNEL_ID, info_html),
+                                )
+                        conn.commit()
+                    except Exception as e:
+                        logger.error(f"Error sending in Trendbreaker Channel: {e}")
+                        conn.rollback()
+
+                    if ml_prob >= threshold:
+                        direction = "LONG" if "UP" in event else "SHORT"
+                        logger.info(f"🔥 ATB1 TRADE EXECUTE: {symbol} {direction}")
+                        send_signal(
+                            conn, symbol, direction, ml_prob, last_close, event, trend_direction, info_chart_path
+                        )
+
+                    state["last_alert"] = now
+
+                state["prev_relation"] = current_relation
+                TRENDLINE_STATE[symbol] = state
+
+            except Exception as e:
+                logger.error(f"Error for {symbol} in ATB1 Detector: {e}", exc_info=True)
+                # FIX (P1.23): Transaktion nach einem per-Coin-Fehler zurückrollen —
+                # sonst bleibt die (nicht-autocommit) Connection im "aborted"-Zustand
+                # und vergiftet den Rest des 538-Coin-Scans ("current transaction is
+                # aborted"). rollback() selbst absichern, damit eine tote Connection
+                # nicht den ganzen Scan crasht.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+    finally:
+        # P2.37: always return the connection + persist the rebuilt state, even on
+        # a mid-scan abort (see the guard note above). Mirrors 3_detectors' P1.15
+        # finally: conn.close().
+        conn.close()
+        # FIX: State after jedem Scan persistieren, damit der Bot bei Restart weiß,
+        # welche Coins schon über/unter ihrer Trendlinie waren (verhindert Massen-Alerts).
+        save_trendline_state()
 
     distance_logs.sort(key=lambda x: x[1])
     top_3 = ", ".join([f"{s} ({d:.1f}%)" for s, d in distance_logs[:5]])
@@ -839,6 +894,15 @@ def main():
         except KeyboardInterrupt:
             logger.info("ATB1 Bot manuell stopped (Strg+C).")
             break
+        except Exception as e:
+            # P2.37: broad catch instead of process death. Previously only
+            # KeyboardInterrupt was caught, so any scan exception (DB reconnect,
+            # corrupt state file, unexpected dtype) escaped the loop and killed
+            # the process, leaking the connection with it. Now: log + backoff and
+            # retry (pattern: 3_detectors.main(), P1.15). run_trendline_detector's
+            # own finally has already returned the connection.
+            logger.error(f"❌ ATB1 loop error, backoff 30s: {e}", exc_info=True)
+            time.sleep(30)
 
 
 if __name__ == "__main__":
