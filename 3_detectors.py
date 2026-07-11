@@ -27,6 +27,24 @@ logger = logging.getLogger(__name__)
 STATE_FILE = 'indicator_state.json'
 
 
+def get_live_prices_batch():
+    """P2.44: fetch ALL futures last-prices in ONE Binance call.
+
+    Replaces ~530 serial ``get_live_price`` klines calls per detector cycle (one
+    per coin) with a single ``/fapi/v1/ticker/price`` request (returns every
+    symbol). Returns ``{symbol: float(price)}``; on any failure it returns ``{}``
+    and the caller falls back to the per-symbol ``get_live_price`` (HTTP → DB),
+    so a batch outage degrades to the old behaviour rather than skipping coins.
+    """
+    try:
+        url = "https://fapi.binance.com/fapi/v1/ticker/price"
+        resp = requests.get(url, timeout=10).json()
+        return {row["symbol"]: float(row["price"]) for row in resp}
+    except Exception:
+        logger.warning("Batch ticker/price fetch failed; falling back to per-coin price lookups", exc_info=True)
+        return {}
+
+
 def get_live_price(symbol, conn=None):
     """Fetches the current live price from Binance.
     Bei Ausfall (Rate-Limit, Netzwerk-Error) Fallback auf den neuesten Close
@@ -200,6 +218,9 @@ def run_detectors_for_timeframe(timeframe):
 
         logger.info(f"🔍 Starting strategy scans for timeframe: {timeframe}...")
 
+        # P2.44: one batch price fetch per cycle instead of one HTTP call per coin.
+        price_map = get_live_prices_batch()
+
         for symbol in all_symbols:
             try:
                 # Wir laden für alle 480 Kerzen (wegen S/R und Main Channel)
@@ -213,7 +234,11 @@ def run_detectors_for_timeframe(timeframe):
             if df.empty:
                 continue
 
-            live_price = get_live_price(symbol, conn)
+            # Prefer the batched price; fall back to the per-symbol HTTP→DB path
+            # only for symbols missing from the batch (or if the batch failed).
+            live_price = price_map.get(symbol)
+            if not live_price:
+                live_price = get_live_price(symbol, conn)
             if not live_price:
                 continue
 
