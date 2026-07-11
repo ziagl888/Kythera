@@ -1,3 +1,77 @@
+## [2026-07-11] P3-Hygiene-Batch — load_coins-Konsolidierung, Symbol-Validierung, Log-Rotation, Pins, Spec-Drift-Doku (T-2026-CU-9050-096)
+
+Reiner Aufräum-Batch aus der AUDIT_TODO-P3-Sektion (P3.1–P3.8, P3.10, P3.11), je
+Punkt einzeln im PR. Kein Geld-Pfad-Verhalten geändert; wo ein Punkt Verhalten
+berührt, konservativ und einzeln ausgewiesen. Regression-Guard bleibt ohne
+Refresh grün, volle `backtest/`-Suite 691 grün.
+
+**P3.1/P3.3 — load_coins-Konsolidierung + zentrale Symbol-Validierung.** Die sechs
+mit Semantik-Drift kopierten `load_coins` (chart_data_service, fib_backtest,
+walkforward_sim, qm_backtest, smc_ml_trainer, qm_ml_trainer) laufen jetzt über
+`core.market_utils.load_coins` mit neuen `usdt_only`/`uppercase`-Flags, die ihr
+lokales Filtern reproduzieren. Der Kanon validiert zentral jedes Symbol gegen
+`[A-Z0-9]+` (drop+ERROR-Log, nie stiller Keep) — das schließt alle ~40 f-String-
+Tabellennamen an einer Stelle (P3.3). No-op auf der Live-coins.json (530 Upper-
+USDT-Perps), sodass `1_data_ingestion` (T-092) eine identische Liste sieht.
+Dazu: tote `write_to_active_trades`/`write_to_telegram_outbox` in `3_detectors`
+entfernt (grep-verifiziert callerlos, `write_signal_atomic` ist der Pfad), die
+drei byte-identischen `_apply_keepalive` nach `core/ws_utils` gezogen (lokaler
+`import sys` bleibt gegen mypy-`platform=win32`-Unreachable), TIMEFRAMES-
+Redeklaration in `6_housekeeping` → `core.config`. DB-freier Test
+`backtest/test_symbol_validation.py` (8 Fälle).
+
+**P3.2 — Log-Rotation.** `indicator_calculation.log` und `watchdog.log` von
+`FileHandler` auf `RotatingFileHandler` (10 MB × 3) am **gleichen** Pfad — bewusst
+nicht `setup_logging`, dessen `logs/<name>.log`-Umbenennung die Reader bricht
+(Watchdog-Hang-Check liest `indicator_calculation.log`; Dashboard + health_monitor
+lesen `watchdog.log`). Der append-only `logs/dashboard.log`-Pipe (kein Logging-
+Handler) wird via neuer `truncate_oversized_logs` im 03:00-Housekeeping über 20 MB
+auf die letzte Hälfte gekappt.
+
+**P3.4 — Dependency-Pins.** Major-Pins für pandas (`>=3.0,<4`), python-telegram-bot
+(`>=22,<23`), xgboost (`>=3.0,<4`) — Ist-Stand gepinnt, kein Upgrade. Neue
+`requirements.lock.txt` = Dependency-Closure von requirements.txt gegen den
+installierten Stand (52 Pakete), **nicht** `pip freeze` (Global-Env trägt ~230
+fremde Cu-Tooling-/editable-Installs). Header flaggt sie als unvollständig:
+yfinance + pandas_ta sind auf der DB-freien Build-Maschine (T-011) nicht
+installiert → der autoritative Voll-Lock gehört in eine VPS-Session.
+
+**P3.5 — Formatierung / Blocking-IO / Info-Leak.** whale_logger-Preisanzeige
+`:.2f` → `format_price` (Sub-Cent-Coins zeigten sonst „$0.00"; rein informativ,
+kein Cornix-Block). `open_handler`: das blockierende `get_live_price`
+(`requests.get`) wird aus dem async-Handler via `asyncio.to_thread` ausgelagert,
+plus `@None`-Attributions-Fix (Fallback auf full_name). `describe_project`:
+Full-Source-Dump-Info-Leak im Docstring + Runtime-Warnung dokumentiert,
+Ignore-Set auf `.git`/`.local`/`__pycache__`/`node_modules` erweitert.
+
+**P3.6 — Backtest-Limitationen dokumentiert (Doku-Teil).** „Known limitations"-
+Blöcke in smc_pattern_backtester (FEE_RATE deklariert aber nie referenziert +
+Survivorship + kein Kapital/Concurrency-Modell), fib_backtest, qm_backtest, plus
+bfill-Leak-Notiz am Call-Site der beiden ML-Trainer. Keine Logik-Änderung. Der
+`[DB]`-Teil (delisted-Tabellen noch da?) bleibt offen.
+
+**P3.7 — Coin-Level-Exceptions sichtbar gemacht.** Der Coin×TF-Loop in
+24_quasimodo + 25_smc_ml_sniper verschluckte Fehler auf `logger.debug`; auf das
+Bot-29-Muster angeglichen: `logger.error(..., exc_info=True)` + `conn.rollback()`,
+damit eine vergiftete Transaktion nicht jeden Folge-Coin abbricht.
+
+**P3.8 — matplotlib-Agg.** `matplotlib.use('Agg')` vor dem pyplot-Import in
+17/24/25 (crashten sonst headless auf dem VPS), je eine Zeile, Muster Bot 16.
+
+**P3.10 — Spec-Drift-Doku (erst gegen Code verifiziert).** Zwei Audit-Claims
+korrigiert: (a) `regime_current` wird beim ERSTEN Check/Cold-Start gesetzt, nicht
+nach dem zweiten; (b) die per-Zelle-↑/↓-Marker sind gar nicht implementiert
+(`_cell` gibt nur `{wr}%`, Legende verwaist); (c) die „Fallback-Rate im Status-
+Post" fehlt nicht, sie aggregiert nur alle Fallback-Gründe statt isoliert
+`regime_unstable`. Scheduler-Kommentare in 18_abr1/12_ats/13_rub nannten die
+falsche Trigger-Minute (10/8/12 vs Code 2/13/10) → Kommentare korrigiert, die
+`now.minute`-Guards (Geld-Pfad) unangetastet. `ml_predictions_master.trade_id` =
+hardcoded 0 überall außer 9_ai_sr_bot → an core/signal_post dokumentiert.
+
+**P3.11 — Chart-Verzeichnis-Growth.** Housekeeping räumte `generated_charts` und
+`charts`, aber nicht `institutional_charts` (22_ip_pattern_bot) → unbounded
+Growth. In den 03:00-Cleanup aufgenommen (gleiche Outbox-Referenz-Schutzlogik).
+
 ## [2026-07-11] Datenpipeline-Robustheit — Gap-Continuity-Check, Coin-Refresh ohne Restart, chart_data_service-Watchdog (T-2026-CU-9050-092)
 
 Drei Datenpipeline-Findings aus dem Audit-Ledger (P2.13, P2.15, P2.20), alle mit
