@@ -1,4 +1,4 @@
-﻿-- Kythera — canonical live-DB schema reference (R2(b), T-2026-CU-9050-098).
+-- Kythera — canonical live-DB schema reference (R2(b), T-2026-CU-9050-098).
 --
 -- Source: pg_dump 17.6 --schema-only --no-owner --no-privileges against the live
 -- database `cryptodata` on 2026-07-12. This file is a REFERENCE, not a migration:
