@@ -1,3 +1,41 @@
+## [2026-07-11] Regression-Guard-Disarm gehärtet (P2.51) + Cooldown-Tag-Test um die MIS-Horizonte erweitert (P3.13) (T-2026-CU-9050-076)
+
+Zwei kleine Härtungen aus dem Ledger, beide DB-frei, kein Live-Eingriff.
+
+**P2.51 — Guard disarmt nicht mehr still bei gelöschten Goldens.**
+`tools/regression_guard/guard.py::mode_verify` gab bei leerem `golden/` pauschal
+„NOT ARMED … Pass" + Exit 0 zurück — auch wenn die `manifest.json` noch dalag.
+Damit schaltete das Löschen der Goldens (oder ihr Verlust bei einem Merge) den
+Guard unbemerkt ab, während der pre-commit-Hook grün blieb. Fix: das Manifest ist
+der „war-einmal-scharf"-Marker (schreibt `refresh` neben die Goldens) — liegt es
+vor, aber es gibt keine Goldens, endet `verify` jetzt mit **Exit 1** statt Pass.
+Der genuin nie-scharfe Zustand (kein Manifest) bleibt der legitime
+Pre-Live-DB-Freeze-Pass, und der umgekehrte Fall (Goldens ohne Fixtures → Exit 1,
+`:139-140`) ist unangetastet.
+
+**P3.13 — MIS-Horizont-Tags im Cooldown-Längennetz.** Der MIS-Bot postet seinen
+Cooldown unter einem *abgeleiteten* Tag `f"{generation}-{horizon}"`
+(`11_ai_mis_bot.py:301`), kein String-Literal — der bestehende
+Literal-Sweep im Test sah ihn nie. `MIS2-168H` ist mit 10 Zeichen bündig an
+`varchar(10)` (Fehlerklasse aus T-2026-CU-9050-024). Der Test parst jetzt
+`MODEL_GENERATION` + die `MIS_CHANNELS`-Horizonte aus der Bot-Quelle und
+rekonstruiert den Tag, sodass eine neue Generation (`MIS10`) oder ein längerer
+Horizont die Assertion reißt — statt still im geschluckten `ValueError` des
+`COOLDOWN_MODULE_MAX_LEN`-Guards zu landen.
+
+### Fixed
+- `tools/regression_guard/guard.py`: Manifest-vorhanden-aber-Goldens-fehlen →
+  Exit 1 (P2.51).
+
+### Tests
+- `backtest/test_regression_guard_disarm.py` (neu, DB-frei): drei Fälle für die
+  Disarm-Semantik. Fall 1 (Manifest ohne Goldens → Exit 1) ist ein echter
+  Bug-Zeuge — gegen den Pre-Fix-Stand fällt er nachweislich mit
+  AssertionError „got 0"; Fall 2 (nie scharf → Pass) und Fall 3 (Goldens ohne
+  Fixtures → Exit 1) pinnen die Nachbar-Invarianten. Der armed-Compute-Pfad
+  bleibt von `guard.py smoke` abgedeckt.
+- `backtest/test_cooldown_tags.py`: `test_mis_horizon_tags_fit` ergänzt (P3.13).
+
 ## [2026-07-11] Post-Merge-Review zu P1.13: RSI-Flat-Fall dokumentiert, NaN-Paritäts-Imputation im EPD-Legacy-Pfad und in Bot 24/25 (T-2026-CU-9050-060)
 
 Drei unabhängige Reviewer-Läufe über den gemergten Stand von PR #43

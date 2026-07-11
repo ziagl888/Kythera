@@ -69,6 +69,32 @@ def test_mayank_tags_fit():
             )
 
 
+def test_mis_horizon_tags_fit():
+    """MIS posts cooldowns under a derived tag ``f"{generation}-{horizon}"``
+    (11_ai_mis_bot.py:301), NOT a string literal — so test_static_tag_literals
+    below never sees it. The fallback generation is MODEL_GENERATION and the
+    horizons are the MIS_CHANNELS routing keys; MIS2-168H is exactly 10 chars,
+    flush against varchar(10) (T-2026-CU-9050-024 error class; P3.13). Parse both
+    from source so a new horizon (e.g. 720H) or a longer generation tag trips the
+    boundary here instead of silently in a swallowed ValueError at runtime."""
+    src = (ROOT / "11_ai_mis_bot.py").read_text(encoding="utf-8")
+
+    gen_match = re.search(r"MODEL_GENERATION\s*=\s*['\"]([^'\"]+)['\"]", src)
+    assert gen_match, "MODEL_GENERATION not found in 11_ai_mis_bot.py"
+    generation = gen_match.group(1)
+
+    ch_match = re.search(r"MIS_CHANNELS\s*=\s*\{([^}]+)\}", src)
+    assert ch_match, "MIS_CHANNELS dict not found in 11_ai_mis_bot.py"
+    horizons = re.findall(r"['\"]([0-9]+H)['\"]\s*:", ch_match.group(1))
+    assert horizons, "no horizon keys parsed from MIS_CHANNELS"
+
+    for horizon in horizons:
+        tag = f"{generation}-{horizon}"  # mirrors module_tag at 11_ai_mis_bot.py:301
+        assert len(tag) <= COOLDOWN_MODULE_MAX_LEN, (
+            f"MIS tag '{tag}' exceeds varchar({COOLDOWN_MODULE_MAX_LEN})"
+        )
+
+
 def test_vol_indicator_cooldown_is_atomic_via_detector():
     """The Volume Indicator must NOT write its own cooldown — it requests it
     via signal['cooldown_module'] and 3_detectors.write_signal_atomic writes
@@ -102,6 +128,7 @@ if __name__ == "__main__":
     test_guard_rejects_long_tags()
     test_volume_indicator_tag_fits()
     test_mayank_tags_fit()
+    test_mis_horizon_tags_fit()
     test_vol_indicator_cooldown_is_atomic_via_detector()
     test_static_tag_literals_fleetwide()
     print("OK — all cooldown-tag invariants hold")
