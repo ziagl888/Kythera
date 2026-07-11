@@ -33,6 +33,27 @@ SMC_TIMEFRAMES = ['15m', '30m', '1h', '2h', '4h', '1d', '1w']
 # deckt nur 15m..4h ab). 1d → 24h, 1w → 7d.
 COOLDOWN_HOURS = {'1d': 24, '1w': 168}
 
+# P2.45(a): Kerzendauer je TF für das Weekend-/Stale-Candle-Gate. Forex/Metals
+# stehen am Wochenende still — die letzte geschlossene Kerze friert ein und
+# hält die Struktur-/FVG-Bedingung tagelang. Der Cooldown (12h intraday) läuft
+# darunter ab und der Bot refired dieselbe eingefrorene Kerze. Ein Signal darf
+# nur feuern, wenn frische Daten vorliegen (siehe is_stale_candle). Auf dem
+# 24/7-Krypto-Pfad (METALS: BTC/ETH/…) ist die Kerze immer frisch → kein Effekt.
+CANDLE_DURATION = {
+    '15m': datetime.timedelta(minutes=15),
+    '30m': datetime.timedelta(minutes=30),
+    '1h': datetime.timedelta(hours=1),
+    '2h': datetime.timedelta(hours=2),
+    '4h': datetime.timedelta(hours=4),
+    '1d': datetime.timedelta(days=1),
+    '1w': datetime.timedelta(weeks=1),
+}
+
+# P2.45(b): FVG-Age-Limit — ein nie mitigiertes FVG bleibt sonst über die
+# gesamte 300-Kerzen-Historie triggerbar. Konservativ auf die jüngsten 50 Bars
+# begrenzt (1h ≈ 2d, 4h ≈ 8d, 1d = 50d); ältere Gaps gelten als abgestanden.
+FVG_MAX_AGE = 50
+
 MARKETS = {
     "METALS": {
         "channel_id": _kcfg.CH_SMC_METALS,
@@ -148,9 +169,40 @@ def fetch_yfinance_data(ticker, tf):
 # 🧠 SMC MATHEMATIK
 
 
-def find_unmitigated_fvgs(df, direction="BULLISH"):
+def is_stale_candle(candle_open_time, tf, now=None):
+    """P2.45(a): True, wenn die letzte *geschlossene* Kerze abgestanden ist —
+    seit ihrem Close mindestens zwei volle Kerzendauern vergangen sind, ohne
+    dass eine neue Kerze entstand. Am Wochenende friert der Forex/Metals-Feed
+    ein, die Kerze erfüllt die Signal-Bedingung tagelang weiter und der Bot
+    würde bei jedem Cooldown-Ablauf refeuern. Frische Daten zu verlangen blockt
+    das, ohne den 24/7-Krypto-Pfad zu berühren (dort ist die Kerze stets aktuell).
+
+    Zwei-Kerzen-Toleranz (statt einer), damit ein einzelner yfinance-Lag im
+    Live-Markt kein Fehl-Blocken auslöst; ein Wochenende überschreitet sie bei
+    intraday-TFs um ein Vielfaches.
+    """
+    dur = CANDLE_DURATION.get(tf)
+    if dur is None:
+        return False
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    ts = pd.Timestamp(candle_open_time)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize('UTC')
+    else:
+        ts = ts.tz_convert('UTC')
+    close_time = ts.to_pydatetime() + dur
+    return (now - close_time) >= 2 * dur
+
+
+def find_unmitigated_fvgs(df, direction="BULLISH", max_age=FVG_MAX_AGE):
     fvgs = []
-    for i in range(2, len(df) - 1):
+    curr_idx = len(df) - 1
+    # P2.45(b): nur FVGs aus den jüngsten `max_age` Bars betrachten — ältere,
+    # nie mitigierte Gaps sonst ewig triggerbar. Untergrenze bleibt >= 2
+    # (die FVG-Definition braucht i-2).
+    start_i = max(2, curr_idx - max_age)
+    for i in range(start_i, len(df) - 1):
         if direction == "BULLISH":
             if df['high'].iloc[i - 2] < df['low'].iloc[i] and df['close'].iloc[i - 1] > df['open'].iloc[i - 1]:
                 fvgs.append({'top': df['low'].iloc[i], 'bottom': df['high'].iloc[i - 2], 'index': i})
@@ -159,7 +211,6 @@ def find_unmitigated_fvgs(df, direction="BULLISH"):
                 fvgs.append({'top': df['low'].iloc[i - 2], 'bottom': df['high'].iloc[i], 'index': i})
 
     unmitigated = []
-    curr_idx = len(df) - 1
     for fvg in fvgs:
         is_mitigated = False
         # P1.26: The mitigation scan must stop BEFORE the current candle. The FVG
@@ -347,6 +398,12 @@ def run_smc_analysis():
                     curr_idx = len(df) - 1
                     curr_candle = df.iloc[curr_idx]
                     price = float(curr_candle['close'])
+
+                    # P2.45(a): kein Re-Signal auf einer eingefrorenen Kerze
+                    # (Wochenende / stehender Feed) — verhindert den Refire über
+                    # den Cooldown-Ablauf. 24/7-Krypto ist nie stale.
+                    if is_stale_candle(curr_candle['open_time'], tf):
+                        continue
 
                     supports, resistances = calculate_pivots(df, window=5)
 
