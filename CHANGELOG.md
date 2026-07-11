@@ -14,6 +14,13 @@ sichtbaren Python-Parent-Fingerprint, Dashboard-Port 5000). Das Script killt sel
 KEINE Prozesse — Waisen, die den Tree-Stop überleben, reapt der nächste Watchdog-Start
 (`_terminate_orphan_fleet`, P0.2). `-DryRun` für den Preflight (verifiziert: Task
 sichtbar, 37 Bot-Prozesse erkannt, Exit 0), `-SkipPull` für Restart ohne Pull.
+Der 3-Voter-Review schloss drei False-Success-Pfade: (1) Stop-Verifikation über einen
+PID-Snapshot VOR dem Stop (der Parent-Fingerprint ist nach Watchdog-Tod strukturell
+blind für Waisen), (2) Erfolgskriterium = Task-State `Running` UND Dashboard-Port
+(ein verwaistes Alt-Dashboard auf 5000 täuscht sonst bei import-gecrashtem Watchdog
+Erfolg vor), (3) Fleet-außerhalb-des-Tasks (00:32-Muster: manuell gestarteter
+Watchdog) → Abbruch statt Mutex-No-op-Restart. Exit-Codes 0/1/2/3/4 dokumentiert
+(4 = Fleet gestoppt, Start fehlgeschlagen → Fleet DOWN, manueller Task-Start).
 Achtung: der Stop-Pfad (Task-ACL) ist bis zum ersten echten Lauf ungetestet — bei
 "Access denied" braucht die ACL einmalig einen elevated Fix. Fleet-Restart bleibt eine
 Operator-Entscheidung (OPUS-HANDOFF §6); das Script läuft nie automatisch.
