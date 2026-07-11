@@ -3,7 +3,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import io
-import json
 import logging
 import sys
 import time
@@ -17,6 +16,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
+from core.market_utils import load_coins as _core_load_coins
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -41,14 +41,8 @@ ORDER_EXPIRY = 100
 # 📊 DATA & HELPERS
 # ==========================================
 def load_coins():
-    try:
-        with open(COINS_FILE) as f:
-            data = json.load(f)
-            coin_list = data.get('coins', data) if isinstance(data, dict) else data
-            return [c.upper() for c in coin_list if c.upper().endswith("USDT")]
-    except Exception as e:
-        logger.error(f"Error loading von {COINS_FILE}: {e}")
-        return []
+    # P3.1: read/dict-unwrap/USDT-filter/symbol-validation via the canon.
+    return _core_load_coins(COINS_FILE, usdt_only=True, uppercase=True)
 
 
 def fetch_db_data(symbol, tf):

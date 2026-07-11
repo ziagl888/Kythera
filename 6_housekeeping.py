@@ -13,14 +13,19 @@ warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
 from core.coins import looks_like_usdt_perp, refresh_coins_json
-from core.config import BASE_URL, BINANCE_API_KEY, BINANCE_SECRET, PUMP_EVENT_MIN_ABS_PCHG_60S, PUMP_EVENT_MIN_VOL_RATIO
+from core.config import (
+    BASE_URL,
+    BINANCE_API_KEY,
+    BINANCE_SECRET,
+    PUMP_EVENT_MIN_ABS_PCHG_60S,
+    PUMP_EVENT_MIN_VOL_RATIO,
+    TIMEFRAMES,
+)
 from core.database import get_db_connection
 from core.http_retry import MinIntervalThrottle, RetryBudget, backoff_seconds
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - HOUSEKEEPING - %(message)s')
 logger = logging.getLogger(__name__)
-
-TIMEFRAMES = ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
 
 
 def update_coins_json():

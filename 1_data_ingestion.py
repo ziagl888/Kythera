@@ -2,7 +2,6 @@ import asyncio
 import datetime
 import json
 import random
-import socket
 import time
 import warnings
 from concurrent.futures import ProcessPoolExecutor  # Catch-up in eigenen Prozessen (GIL-Fix)
@@ -15,6 +14,7 @@ from psycopg2 import extras
 from core.database import get_db_connection
 from core.http_retry import RetryBudget, backoff_seconds
 from core.market_utils import load_coins  # reines coins.json-Re-Read (P2.15)
+from core.ws_utils import apply_keepalive as _apply_keepalive
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
@@ -617,36 +617,6 @@ def _new_symbol_stream_chunks(new_symbols: list) -> list:
     initiale Fleet (<= WS_STREAMS_PER_WORKER Streams/Connection)."""
     all_streams = [f"{sym.lower()}@kline_{tf}" for sym in new_symbols for tf in TIMEFRAMES]
     return [all_streams[i : i + WS_STREAMS_PER_WORKER] for i in range(0, len(all_streams), WS_STREAMS_PER_WORKER)]
-
-
-def _apply_keepalive(ws) -> None:
-    """Applies TCP keepalive to an already-connected WebSocket.
-
-    Called AFTER websockets.connect() succeeds. Gets the underlying socket
-    from the transport and sets SO_KEEPALIVE + platform-specific intervals.
-    This avoids the Windows WinError 10057 that occurs when passing an
-    unconnected socket to websockets.connect(sock=...).
-
-    Prevents NAT/firewall idle-timeout disconnects (~300-360s) by sending
-    TCP-level ACK probes every 60s.
-    """
-    import sys
-
-    try:
-        sock = ws.transport.get_extra_info("socket")
-        if sock is None:
-            return
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        if sys.platform == "win32":
-            # SIO_KEEPALIVE_VALS: (onoff, keepalivetime_ms, keepaliveinterval_ms)
-            # First probe after 60s idle, then every 10s
-            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60_000, 10_000))
-        else:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
-    except (AttributeError, OSError):
-        pass  # Non-fatal — connection still works without keepalive
 
 
 async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float = 0.0):

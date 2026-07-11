@@ -69,67 +69,6 @@ def get_live_price(symbol, conn=None):
         return None
 
 
-def write_to_active_trades(conn, signal):
-    # P2.3 (offen): naive Server-Lokalzeit in `active_trades_master.time/posted`.
-    # Der Fix auf `utc_now_naive()` gehört UNTRENNBAR zum Pool-Flip auf
-    # `timezone=UTC` — allein gezogen kippt er `33_ai_fif1_bot` von korrekt auf
-    # Drift, und die Trainer in tools/ rechnen historisch mit Lokalzeit (siehe
-    # docs/UTC_POLICY.md §5). Kommt mit dem R3-Restart-Fenster.
-    now = datetime.datetime.now()  # noqa: DTZ005
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS active_trades_master (
-                id SERIAL PRIMARY KEY, strategy TEXT, time TIMESTAMP WITHOUT TIME ZONE,
-                coin TEXT, direction TEXT, lev TEXT, target1 REAL, target2 REAL,
-                target3 REAL, target4 REAL, sl REAL, entry REAL, posted TIMESTAMP WITHOUT TIME ZONE, status TEXT
-            )
-        """)
-        t2, t3, t4 = signal.get('target2', 0), signal.get('target3', 0), signal.get('target4', 0)
-        cur.execute(
-            """
-            INSERT INTO active_trades_master (
-                strategy, time, coin, direction, lev, target1, target2, target3, target4, sl, entry, posted, status
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'WORKING')
-        """,
-            (
-                signal['strategy'],
-                now,
-                signal['coin'],
-                signal['direction'],
-                signal['lev'],
-                signal['target1'],
-                t2,
-                t3,
-                t4,
-                signal['sl'],
-                signal['entry'],
-                now,
-            ),
-        )
-    conn.commit()
-
-
-def write_to_telegram_outbox(conn, signal):
-    msg = f"📈 Signal for {signal['coin']} 📈\n\n🚨 Direction: {signal['direction']}\n🚨 Leverage: {signal['lev']}\n🚨 Margin: Cross\n🏦 CMP Entry: $ {signal['entry']:.8f}\n"
-    msg += f"💰 TP1: $ {signal['target1']:.8f}\n"
-    if 'target2' in signal and signal['target2'] > 0:
-        msg += f"💰 TP2: $ {signal['target2']:.8f}\n"
-    if 'target3' in signal and signal['target3'] > 0:
-        msg += f"💰 TP3: $ {signal['target3']:.8f}\n"
-    if 'target4' in signal and signal['target4'] > 0:
-        msg += f"💰 TP4: $ {signal['target4']:.8f}\n"
-    msg += f"\n💸 Stop Loss: $ {signal['sl']:.8f}\n\n🧠 {signal['strategy']} Strategy - V3"
-
-    target_channel = TELEGRAM_CHANNELS.get(signal['strategy'])
-
-    with conn.cursor() as cur:
-        cur.execute(
-            "CREATE TABLE IF NOT EXISTS telegram_outbox (id SERIAL PRIMARY KEY, channel_id BIGINT, message TEXT, sent BOOLEAN DEFAULT FALSE)"
-        )
-        cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, msg))
-    conn.commit()
-
-
 def write_signal_atomic(conn, signal):
     """FIX: Schreibt active_trades_master + telegram_outbox in EINER Transaktion.
 
@@ -138,7 +77,7 @@ def write_signal_atomic(conn, signal):
     in active_trades_master ist er drin, aber in der Outbox nicht → niemand weiß
     dass er existiert, aber der Trade-Monitor verfolgt ihn trotzdem.
     """
-    now = datetime.datetime.now()  # noqa: DTZ005 — P2.3, siehe write_to_active_trades
+    now = datetime.datetime.now()  # noqa: DTZ005 — P2.3: naive Server-Lokalzeit, Fix kommt mit dem R3-Pool-Flip (docs/UTC_POLICY.md §5)
     t2, t3, t4 = signal.get('target2', 0), signal.get('target3', 0), signal.get('target4', 0)
 
     msg = f"📈 Signal for {signal['coin']} 📈\n\n🚨 Direction: {signal['direction']}\n🚨 Leverage: {signal['lev']}\n🚨 Margin: Cross\n🏦 CMP Entry: $ {signal['entry']:.8f}\n"
