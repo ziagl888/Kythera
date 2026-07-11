@@ -14,10 +14,19 @@ from core.database import get_db_connection
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - BACKTESTER - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ── KNOWN BACKTEST LIMITATIONS (P3.6, T-2026-CU-9050-096) — read before trusting
+# any win-rate/PnL this script prints. Documented, deliberately NOT "fixed" here:
+#   1. Fees NOT applied. FEE_RATE below is declared but never referenced — every
+#      reported outcome is gross, so real WR/expectancy is lower.
+#   2. Survivorship bias. get_coins() reads today's coins.json but backtests 1-2
+#      years back; delisted symbols that would have lost are absent from the set.
+#   3. No capital / concurrency model. Trades are scored independently; there is
+#      no shared equity, no margin cap and no limit on simultaneous positions, so
+#      aggregate PnL overstates a real, capital-bounded run.
 TIMEFRAMES = ['1h', '4h']
 PIVOT_WINDOW = 10  # Größeres Window für echte Swing-Points
 RR_RATIO = 2.0  # Risk-Reward 1:2
-FEE_RATE = 0.0008  # 0.04% Maker + 0.04% Taker (inkl. Slippage) pro Trade
+FEE_RATE = 0.0008  # 0.04% Maker + 0.04% Taker (inkl. Slippage) — DECLARED BUT UNUSED, see limitation 1 above
 
 
 def get_coins():

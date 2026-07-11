@@ -21,6 +21,12 @@ from core.market_utils import load_coins as _core_load_coins
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
+# Known backtest limitations (P3.6): fees ARE applied (TAKER_FEE below) and a
+# single running equity is tracked, but there is no concurrency/margin cap —
+# every coin trades a full TRADE_MARGIN in parallel, so START_CAPITAL is not a
+# real constraint. load_coins() also reads today's coins.json over ~2y, so
+# delisted losers are absent (survivorship bias).
+
 # ==========================================
 # 🛠️ BACKTEST KONFIGURATION
 # ==========================================

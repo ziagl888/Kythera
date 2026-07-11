@@ -41,6 +41,12 @@ from core.market_utils import load_coins as _core_load_coins
 warnings.filterwarnings("ignore")
 load_dotenv()
 
+# Known backtest limitations (P3.6): outcomes are gross — no trading fees are
+# applied — and there is no capital/concurrency model (each setup is scored
+# independently). load_coins() reads today's coins.json over a ~1y window, so
+# delisted losers are missing (survivorship bias). Numbers are directional, not
+# a live expectancy.
+
 # ─────────────────────────────────────────────────────────────────────────────
 # KONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────

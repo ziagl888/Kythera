@@ -88,6 +88,9 @@ def fetch_merged_data(symbol, tf):
         if df.empty or len(df) < 500:
             return pd.DataFrame()
         df.ffill(inplace=True)
+        # P3.6 (known limitation): bfill fills leading NaNs with the FIRST future
+        # value — a backward look-ahead. Harmless only where it touches the warmup
+        # head before any label window; documented, not changed (no logic edit).
         df.bfill(inplace=True)
 
         for c in df.columns:
