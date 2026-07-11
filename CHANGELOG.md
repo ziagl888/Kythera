@@ -1,3 +1,30 @@
+## [2026-07-11] tools/restart_fleet.ps1 — UAC-freier Fleet-Restart-Zyklus über den Task "Kythera Watchdog" (T-2026-CU-9050-074)
+
+Lehre aus dem 00:32-Mass-Crash (Konsole des manuell gestarteten Watchdogs geschlossen,
+Watchdog tot, 15 verwaiste Bots, Dashboard down) und der anschließenden UAC-Odyssee:
+Recovery-Aktionen brauchten Elevation, aber UAC-Prompts erreichen Michis Desktop bei
+mehreren RDP-Sessions nicht zuverlässig. Seit T-068 existiert der Scheduled Task
+"Kythera Watchdog" (User Michael, Password-Logon, RunLevel Highest) — sein eigener
+User darf ihn OHNE Elevation starten und stoppen; der Task-Scheduler wendet das
+elevated Token an. Das neue Operator-Script fährt den kompletten Zyklus unelevated:
+`git pull --ff-only` ZUERST (schlägt er fehl, bleibt die Fleet unangetastet, inkl.
+Branch-Guard: gepullt wird nur auf `main`), dann `Stop-ScheduledTask`, dann
+`Start-ScheduledTask` mit Verifikation (Task-State, Bot-Zählung über den unelevated
+sichtbaren Python-Parent-Fingerprint, Dashboard-Port 5000). Das Script killt selbst
+KEINE Prozesse — Waisen, die den Tree-Stop überleben, reapt der nächste Watchdog-Start
+(`_terminate_orphan_fleet`, P0.2). `-DryRun` für den Preflight (verifiziert: Task
+sichtbar, 37 Bot-Prozesse erkannt, Exit 0), `-SkipPull` für Restart ohne Pull.
+Der 3-Voter-Review schloss drei False-Success-Pfade: (1) Stop-Verifikation über einen
+PID-Snapshot VOR dem Stop (der Parent-Fingerprint ist nach Watchdog-Tod strukturell
+blind für Waisen), (2) Erfolgskriterium = Task-State `Running` UND Dashboard-Port
+(ein verwaistes Alt-Dashboard auf 5000 täuscht sonst bei import-gecrashtem Watchdog
+Erfolg vor), (3) Fleet-außerhalb-des-Tasks (00:32-Muster: manuell gestarteter
+Watchdog) → Abbruch statt Mutex-No-op-Restart. Exit-Codes 0/1/2/3/4 dokumentiert
+(4 = Fleet gestoppt, Start fehlgeschlagen → Fleet DOWN, manueller Task-Start).
+Achtung: der Stop-Pfad (Task-ACL) ist bis zum ersten echten Lauf ungetestet — bei
+"Access denied" braucht die ACL einmalig einen elevated Fix. Fleet-Restart bleibt eine
+Operator-Entscheidung (OPUS-HANDOFF §6); das Script läuft nie automatisch.
+
 ## [2026-07-11] QM2-Retrain-Vorbereitung: qm_ml_trainer.py schreibt jetzt model_id (T-2026-CU-9050-061, Schritt 2)
 
 Vorbereitung für den QM2-Retrain nach dem P1.13-Recompute (Schritt 1 dieses Tasks
