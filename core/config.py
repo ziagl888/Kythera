@@ -133,6 +133,14 @@ CH_FMR1 = _ch_override("CH_FMR1", CH_NEW_IDEAS)
 CH_TRM1 = _ch_override("CH_TRM1", CH_NEW_IDEAS)
 CH_FIF1 = _ch_override("CH_FIF1", CH_NEW_IDEAS)
 
+# MAX1 high-conviction rubberband short (T-2026-CU-9050-067). Operator decision
+# 2026-07-11: this one posts into the MAIN channel — a deliberate departure from
+# the CH_NEW_IDEAS convention for new bots (OPUS-HANDOFF §5), because the whole
+# point is 1-3 high-conviction trades/day in the channel Michi actually trades.
+# The override exists so the stream can be re-routed without a code deploy; an
+# unset CH_MAIN (0) forces shadow-only in 34_ai_max1_bot.py.
+CH_MAX1 = _ch_override("CH_MAX1", CH_MAIN)
+
 
 TELEGRAM_CHANNELS = {
     "Fast In And Out": CH_FAST_IN_OUT,

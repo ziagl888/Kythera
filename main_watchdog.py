@@ -75,6 +75,8 @@ PROCESSES_TO_RUN: list[dict[str, Any]] = [
     {"name": "AI FMR1 Detector", "script": "31_ai_fmr1_bot.py", "restart_interval": None, "start_delay": 199},
     {"name": "AI TRM1 Detector", "script": "32_ai_trm1_bot.py", "restart_interval": None, "start_delay": 207},
     {"name": "AI FIF1 Detector", "script": "33_ai_fif1_bot.py", "restart_interval": None, "start_delay": 215},
+    # ── High-Conviction-Drossel über RUB2-SHORT (T-2026-CU-9050-067, Main-Channel) ──
+    {"name": "AI MAX1 Detector", "script": "34_ai_max1_bot.py", "restart_interval": None, "start_delay": 223},
 ]
 
 running_processes: dict = {}

@@ -77,6 +77,7 @@ Grouped by role. Names match the process names in `main_watchdog.py`.
 | `31_ai_fmr1_bot.py` | AI FMR1 Detector | Funding-extreme mean-reversion (Report 15 S8) — `CH_NEW_IDEAS` |
 | `32_ai_trm1_bot.py` | AI TRM1 Detector | Transition-resolution BTC trades (Report 15 S10) — `CH_NEW_IDEAS` |
 | `33_ai_fif1_bot.py` | AI FIF1 Detector | ML filter over the Fast-In-Out signal stream (Report 15 S11) — `CH_NEW_IDEAS` |
+| `34_ai_max1_bot.py` | AI MAX1 Detector | High-conviction throttle over the RUB2-SHORT model (1-3 trades/day) — `CH_MAIN`, gated by `MAX1_LIVE_POSTING` (default off) |
 
 ### Market intelligence
 | Script | Process | Role |
@@ -109,6 +110,7 @@ core/                 Shared infrastructure (imported by every bot)
   mis_features.py       MIS1 feature builder (leakage-free, shared)
   research_features.py  Feature builders for bots 30-33 (PEX1/FMR1/TRM1/FIF1, shared)
   model_artifacts.py    Uniform artifact loader for the research bots
+  max1_gate.py          MAX1 throttle: probability floor + rolling-24h cap (pure, DB-free)
   signal_post.py        Shared outbox + ai_signals posting for the research bots
   trade_utils.py        Smart-target/SL math, leverage caps
   charting.py           mplfinance chart rendering

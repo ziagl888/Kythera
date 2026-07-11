@@ -1,3 +1,42 @@
+## [2026-07-11] MAX1: eigenständiger High-Conviction-Klon von RUB2-SHORT für den Main-Channel (T-2026-CU-9050-067)
+
+RUB2-SHORT ist die stärkste Short-Kante der Fleet (live seit 06.07.: 24 Closes,
+79 % TP1-WR, +4,2 % Ø PnL — T-2026-CU-9050-044), feuert aber ~9×/Tag. Michis Ziel
+für den Main-Channel sind **1-3 Trades/Tag mit sehr hoher Trefferquote**. Statt
+RUB2 zu drosseln (T-2026-CU-9050-050 → **wontfix**: RUB2 bleibt unverändert in
+seinem Channel), läuft dasselbe Modell jetzt zusätzlich als eigener Bot
+**`34_ai_max1_bot.py`** mit selektivem Gate und eigenem Tag `MAX1`.
+
+Drossel in `core/max1_gate.py` (reine, DB-freie Selektion): hohe
+Mindest-Probability (`MAX1_MIN_PROB`, Default **0,93** — nie unter dem
+Artefakt-Threshold 0,829) als eigentlicher Selektor, plus eine **harte rollierende
+24h-Kappe** (`MAX1_MAX_PER_DAY`, Default **3**) als Backstop. Je Scan: Kandidaten
+sammeln, per Symbol deduplizieren, deterministisch ranken, auf die freien Slots
+schneiden. Der 24h-Zähler liest Shadow **und** Live aus `ml_predictions_master`,
+damit die Kappe im Shadow exakt wie live greift.
+
+Detection, Features (9 rub + 6 funding) und Trade-Geometrie kommen aus den
+**geteilten** Buildern (`core/rub_features.py`, `core/funding_features.py`,
+`hvn_sr_trade_geometry`) — importiert, nicht angefasst (X-R1). `13_ai_rub_bot.py`
+bleibt unverändert. Cooldown-/Dedupe-/Offene-Trade-Räume sind über den Tag getrennt:
+MAX1 und RUB2 blocken sich nicht gegenseitig, Doppel-Exposure auf demselben Coin ist
+die bewusste Konsequenz (dokumentiert in `docs/MODEL_INTENT.md` §8a).
+
+Artefakt: `tools/make_max1_artifact.py` erzeugt aus dem RUB2-SHORT-Modell eine
+Kopie mit `meta.model_id=MAX1` nach `staging_models/` (Modell, Feature-Vertrag,
+Kalibrator, Val-Operating-Point verbatim — nur die Identität wechselt, harte
+Regel 6). Der Posting-Tag kommt aus dieser Meta, nie aus einer Konstante (Falle 16).
+
+Nichts scharf geschaltet: `MAX1_LIVE_POSTING` ist **Default-OFF** (Shadow-only),
+ohne deploytes Artefakt läuft Bot 34 im Idle-Modus, und die Promotion aus
+`staging_models/` ist Michis Operator-Entscheid (OPUS-HANDOFF §6). Genau EINE
+Cornix-parsebare Message je Signal über `core.signal_post.post_ai_signal`
+(harte Regel 4). Watchdog-Registrierung: `start_delay=223`.
+
+Verifikation: `backtest/test_max1_gate.py` (21 neue Tests — Selektion/Kappe/
+Default-off-Gate/Tag-aus-Meta/Cornix-Einzelmessage/Cooldown-Trennung), volle
+Suite 458 grün, ruff/format/mypy grün, Artefakt lädt über `core/model_artifacts`
+(Tag MAX1, 15 Features, Threshold 0,829, Kalibrator ja).
 ## [2026-07-10] EPD und SRA bekommen den Active-Trade-Check; EPDs Funding-Load wird gecacht (T-2026-CU-9050-055)
 
 Zwei Folgebefunde aus T-2026-CU-9050-042, auf Operator-Auftrag (Michi, 2026-07-10).
