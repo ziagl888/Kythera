@@ -145,7 +145,7 @@ def check_tsi_crossovers():
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
             # 2. CROSSOVER PRÜFEN (Vorletzte Kerze vs Drittletzte Kerze)
-            # Da Bot 8 Min after Stunde läuft, ist Index -1 die offene Kerze.
+            # Da Bot 13 Min after Stunde läuft, ist Index -1 die offene Kerze.
             # Index -2 ist die completede. Index -3 ist die davor.
             current_idx = -2
             prev_idx = -3
@@ -378,13 +378,13 @@ def main():
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
 
-        # Der Bot soll exakt 8 Minuten after der vollen Stunde laufen
+        # P3.10: comments corrected to match code — fires at minute 13 (not 8).
         if now.minute == 13:
             check_tsi_crossovers()
-            # Schlafen, damit er nicht mehrfach in Minute 8 triggert
+            # Schlafen, damit er nicht mehrfach in Minute 13 triggert
             time.sleep(60)
         else:
-            # Checkt alle 10 Sekunden, ob Minute 8 erreicht ist
+            # Checkt alle 10 Sekunden, ob Minute 13 erreicht ist
             time.sleep(10)
 
 

@@ -445,13 +445,13 @@ def main():
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
 
-        # Der Bot soll exakt 12 Minuten after der vollen Stunde laufen
+        # P3.10: comments corrected to match code — fires at minute 10 (not 12).
         if now.minute == 10:
             check_rubberband_conditions()
-            # Schlafen, damit er nicht mehrfach in Minute 12 triggert
+            # Schlafen, damit er nicht mehrfach in Minute 10 triggert
             time.sleep(60)
         else:
-            # Checkt alle 10 Sekunden, ob Minute 12 erreicht ist
+            # Checkt alle 10 Sekunden, ob Minute 10 erreicht ist
             time.sleep(10)
 
 

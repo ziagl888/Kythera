@@ -127,6 +127,10 @@ Bot          LONG                          SHORT
 MIS1-8h      45%↓     62%      71%↑        42%      47%      38%↓
 ...
 ```
+> **Spec-Drift (P3.10):** die per-Zelle-`↑`/`↓`-Marker in diesem Beispiel sind
+> **nicht implementiert**. `_cell()` in `27_bot_regime_analyzer.py` gibt nur
+> `"{wr}%"` bzw. `"---"` aus; die `↑`/`↓`-Legende darunter im Status-Post ist
+> verwaist (dokumentiert am Legenden-Code). Zellen tragen also nie einen Pfeil.
 
 ### `28_signal_orchestrator.py`
 
@@ -162,7 +166,15 @@ MIS1-8h      45%↓     62%      71%↑        42%      47%      38%↓
 
 ### Wann ist ein Regime-Wechsel zu häufig?
 
-Wenn die Fallback-Rate im Status-Post dauerhaft über 30% steigt (`regime_unstable`), sind die ATR-Schwellwerte zu sensitiv. Optionen:
+Wenn die Fallback-Rate im Status-Post dauerhaft über 30% steigt, sind die ATR-Schwellwerte zu sensitiv. Optionen:
+
+> **Präzisierung (P3.10):** die `fallback %` im stündlichen Status-Post
+> (`26_regime_detector.py`) ist eine **Gate-Pfad-Aggregatzahl** über *alle*
+> Fallback-Gründe (`no_regime`, `regime_is_transition`, `regime_unstable`,
+> `whitelist_stale`) aus `orchestrator_open_trades.wl_reason` — **nicht** eine
+> isolierte `regime_unstable`-Rate und nicht aus `regime_history`/ATR gerechnet.
+> Ein hoher Wert kann also auch von TRANSITION/Whitelist-Staleness kommen; vor
+> dem ATR-Tuning die Fallback-Gründe einzeln prüfen.
 
 1. `VOLA_HIGH_PERCENTILE` erhöhen (e.g. 80 statt 75) → HIGH_VOLA seltener
 2. `REGIME_DEBOUNCE_COUNT` erhöhen (e.g. 3 statt 2) → 15 Min Bestätigung
@@ -195,7 +207,12 @@ Wenn ALT_STRONG/ALT_WEAK zu häufig ausgelöst wird:
 
 ### `regime_current` wird nicht initialisiert
 
-`regime_current` wird erst nach dem **zweiten** Check (DEBOUNCE_COUNT=2) gesetzt (10 Min). Das ist normal.
+Korrektur (P3.10, Spec-Drift gegen den Code): `regime_current` wird beim **ersten**
+erfolgreichen Check (Cold Start) sofort geschrieben — nicht erst nach dem zweiten.
+`DEBOUNCE_COUNT=2` verzögert nur nachfolgende Regime-**Wechsel**, nicht die
+Erst-Befüllung (`core/regime_logic.py`, Cold-Start-INSERT vor der Debounce-Logik).
+Bleibt die Zeile leer, hat der Detektor also noch keinen einzigen Check bestanden
+(fehlende Daten / Prozess läuft nicht), nicht „wartet auf Check 2".
 
 ### Keine Signale im Trading-Channel
 

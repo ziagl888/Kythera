@@ -909,6 +909,10 @@ async def post_daily_cross_table() -> None:
             ss = _cell(bot, "ALT_STRONG", "SHORT")
             lines.append(f"{bot:<12} {ll}    {ln}    {ls}       {sl}    {sn}    {ss}")
 
+        # P3.10 (spec-drift, documented not fixed): this ↑/↓ legend is ORPHANED —
+        # _cell() above only ever returns "{wr}%" or "---", it never appends an
+        # arrow, so no cross-table cell renders ↑/↓. Kept as-is (cosmetic); the
+        # marker feature was specced (REGIME_ORCHESTRATOR.md) but never built.
         lines.append(
             f"\nAktuelles Regime: {cur_regime}  |  Aktueller Alt-Context: {cur_alt}\n"
             f"↑ WR ≥ Overall+10pp → STARK\n"
