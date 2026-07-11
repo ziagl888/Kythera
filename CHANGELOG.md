@@ -158,6 +158,38 @@ entfernen, nie isoliert. Achtung nach dem Recompute: das Serving imputiert die
 Warm-up-Zeilen (bfill) und füttert sie, der Trainer verwirft sie per `dropna`
 (`tools/walkforward_sim.py:245`) — die Aussage „kein Train/Serve-Skew" aus dem
 PR-#43-Text gilt nur für den Pre-Recompute-Zustand.
+
+## [2026-07-11] core/coins.py — EIN atomarer coins.json-Writer (P2.16) + Binance-Perp-Shape-Guard für die Delisted-Cleanup (P2.17) (T-2026-CU-9050-079)
+
+**P2.16:** `coins.json` hatte zwei Schreiber — `1_data_ingestion.update_trading_pairs`
+(bei jedem Ingestion-Start) und `6_housekeeping.update_coins_json` (nächtlich 03:00 +
+beim Start) — jeder mit einer eigenen Kopie des Filters und einem non-atomaren
+`open('w')` + `json.dump`. Zwei handgepflegte Filter-Kopien driften (der ETHU-Vorfall
+2026-07-06), und der direkte Write lässt für die Dauer des Dumps eine leere/partielle
+`coins.json` sichtbar, die jeder Reader (Delisted-Cleanup, Gap-Filler, `load_coins`)
+mitten hineinlesen kann. Neu: `core/coins.py` ist der EINE Writer — eine Filter-Definition
+(`quoteAsset=USDT` + `status=TRADING` + `PERPETUAL`) und ein atomarer Write via
+tmp-File + `os.replace` (fsync, tmp im Zielverzeichnis → gleiches Dateisystem, auch auf
+Windows atomar). Beide Aufrufer rufen jetzt `refresh_coins_json`; ein Fetch-Fehler
+schreibt gar nichts (kein Truncate), die Ingestion fällt weiter auf die on-disk-Liste
+zurück. *Annotation-Korrektur (Falle 13):* die Filter-Divergenz „inkl. Quarterlies" war
+bereits nach dem ETHU-Vorfall geschlossen (beide schon `PERPETUAL`, CHANGELOG 2026-07-06) —
+offen waren nur die duplizierte Filter-Definition und der non-atomare Write.
+
+**P2.17:** Die Delisted-Cleanup schloss JEDEN offenen Trade, dessen Symbol nicht in
+`coins.json` steht — auch Nicht-Binance-Perp-Junk (Metals `XAUUSD`, Cross-Pair `ETHBTC`,
+Forex), der über den alten Lose-Filter oder ein momentanes coins.json-Wackeln
+hineingeraten war → nächtliche Falsch-Closes bei PnL 0. Neu: die Selektion (klassisch +
+AI) verlangt zusätzlich die Binance-USDT-Perp-Shape (`core.coins.looks_like_usdt_perp`,
+`<BASE>USDT` uppercase-alnum). Nur echt delistete USDT-Perpetuals werden noch geschlossen;
+`XAUUSD`/`ETHBTC` & Co. bleiben unangetastet. Der Single-Writer aus P2.16 entfernt zudem
+die vom Audit genannte „universe wobbles with dual coins.json writers"-Ursache.
+
+Kein Live-Eingriff (ENVIRONMENT: BUILD). DB-freie Tests: `backtest/test_coins_writer.py`
+(Filter-Parität, Atomarität, Fetch-Fehler lässt Datei unversehrt) +
+`backtest/test_delisted_cleanup.py` (Shape-Guard akzeptiert echte Perps, verwirft die
+benannten Falsch-Close-Symbole). ruff/format/mypy grün.
+
 ## [2026-07-11] tools/restart_fleet.ps1 — UAC-freier Fleet-Restart-Zyklus über den Task "Kythera Watchdog" (T-2026-CU-9050-074)
 
 Lehre aus dem 00:32-Mass-Crash (Konsole des manuell gestarteten Watchdogs geschlossen,
