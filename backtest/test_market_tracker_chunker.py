@@ -36,6 +36,16 @@ def _load_tracker():
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "23_market_tracker.py"),
     )
     mod = importlib.util.module_from_spec(spec)
+    # Pre-seed sys.modules with pandas (and, transitively, numpy) BEFORE the
+    # patch.dict below. patch.dict snapshots sys.modules on entry and restores
+    # it on exit, DELETING any key first imported inside the block. 23_market_tracker
+    # imports pandas during exec_module; without this pre-import that first import
+    # happens inside the patch and pandas/numpy get torn out of sys.modules on exit.
+    # numpy's C-extensions do not survive a fresh re-import in the same process, so
+    # every later-collected test that imports pandas (test_market_tracker_conn/opened)
+    # would die with ImportError in numpy._core. Importing here puts them in the
+    # snapshot, so they persist past the patch exit.
+    import pandas  # noqa: F401
     with mock.patch.dict(
         "sys.modules",
         {
