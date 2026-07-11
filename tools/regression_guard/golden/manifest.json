@@ -1,6 +1,6 @@
 {
   "engine_file": "2_indicator_engine.py",
-  "engine_sha256": "7e2363c00741ce39461e6d1f0493732e40ea6b6a3cda70f61d55a71ab5bfdc91",
+  "engine_sha256": "d8e965b4e533f61e13a217683b1def981ed4a303d785dce466ca006b8286fa78",
   "fixtures": {
     "BTCUSDT__1d.npz": {
       "rows": 600,
@@ -99,128 +99,128 @@
       "sha256": "03babfb71525c3fa237538e632e47a89dfb8e50f910ad651c38775ce0c2d3448"
     }
   },
-  "generated_at": "2026-07-11T18:41:28.684453+00:00",
-  "git_commit": "205f831f3b7d56a261a6a562cbd66bdda98af293",
+  "generated_at": "2026-07-11T20:25:47.225299+00:00",
+  "git_commit": "1072080dddcd0ce8d56d6655a5b2f8f886a4a52a",
   "golden": {
     "BTCUSDT__1d.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "7fef201204003fc3849983d921e9c54cf0149306ccf0c4b28f4d7a0eb0e8ff6b"
+      "sha256": "ede4af70d158f2370640e9940c174e003a98bf14796436158e515c7387d49f33"
     },
     "BTCUSDT__1h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "b90ce254ec558edf4d10d663030b1509c6512313b9e0de544f032543b78af5d8"
+      "sha256": "b67c22769415f420e41aeb6f5d822b7c1a3ac3c0bb7769516bec92892a260681"
     },
     "BTCUSDT__1w.npz": {
       "cols": 111,
       "rows": 123,
-      "sha256": "0819a50db172c596eb9d6ba4137db576fb2e66c9e10db0c31c2e5156560b3b11"
+      "sha256": "f663d056201f52ba0c78847cc44fc31e5d2d6e3efed77503bd62a0bee26f5d30"
     },
     "BTCUSDT__2h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "d000c47b23db390caf0fb2a6cb552d953d4c9ba7515a615cb3089c6ca6b7803b"
+      "sha256": "b18e58854cad46e65ad3cfd2bcde3729471a56249dac787222136bfbfbbb3e34"
     },
     "BTCUSDT__30m.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "257e0ee263ea80914670d2cc7dcdee3b8d0775263593c0f5b40926eb16efcc01"
+      "sha256": "339a000ae01fa546b332608e586bafc2e3bb744653aa239e1af375c2781214df"
     },
     "BTCUSDT__4h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "ddf3536394dbc8d60a450db46456ca209acbd90dcf8225371e81dadb83209cbe"
+      "sha256": "b1c77aeb4573ad8a4101faac79bdb625d8e5aec79860d6048fbff722dde892f9"
     },
     "DOGEUSDT__1d.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "f9410e19aa681e5f8e81d1002dd56274b3314495e86dbc4a3c3104f9d750e908"
+      "sha256": "e4f3b1622c59358184d2883089fc3e3242a13627097d3903567ae7ffec7f7db2"
     },
     "DOGEUSDT__1h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "e729872ee9379c382d2a8091ed7544d6aeacc9f8aded0b32ffbba507c4ec1388"
+      "sha256": "6c7e20ea106ecf57d377863500944281aabba99813f957a1ea8eaaa9667aaa23"
     },
     "DOGEUSDT__1w.npz": {
       "cols": 111,
       "rows": 123,
-      "sha256": "009f00fd1e85d5198f20e2cf9840275f56d84247bbfd88d62afdc67e96a51632"
+      "sha256": "00eb76bfedaf0b154cdbaabd7c7443f9cce11e3c3c7a3b067828ad5018bf1759"
     },
     "DOGEUSDT__2h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "7ff5b3e1e3e0a4c08aac9e203ed50fddd00552dea27b65cda3f9629456601873"
+      "sha256": "e40b9402c7438a6a25c6321ac553771b3e42c0f8d013b4dabeaa69d82d08679d"
     },
     "DOGEUSDT__30m.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "b2d7ef235dc4f3beb1d62d28c4315e109acb964a76f6a865877e5e214c884ff8"
+      "sha256": "a058665a61c0fadf14408e430058ef2272dbd075871a8273b0ab93d700fecff3"
     },
     "DOGEUSDT__4h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "25387211c83ed2a5ddaac6e9092ff667a5592f5f1c68d319d5dc3a4cf55b01c9"
+      "sha256": "3f31f1ed85388e4a11375efa685d89f867537022c50188dc5a8162e73e8b9748"
     },
     "ETHUSDT__1d.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "33e11ed49bc2f0d98ed9dea3b7f3620f5793158646cc864158b4121c1b7a2bae"
+      "sha256": "a59eaa0ac26c3fb983177ab0453fb3b68ad72cbe0c35e2cf931b56a6f5191991"
     },
     "ETHUSDT__1h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "a32e1aea5b896d146295699b7cb21e88799b59b7f56f058b5f6aad5c7703255e"
+      "sha256": "76ef09652d8d7cf8e473770c3290bc1043580af288a5e27b73f5653fb48ba11b"
     },
     "ETHUSDT__1w.npz": {
       "cols": 111,
       "rows": 123,
-      "sha256": "7431a779e1822ef257a6da034d5d3ca3b5facfb25b0ce260d2b2878349813b76"
+      "sha256": "39545ddcf99c74aeb091bba740624fca35876acc7e6da88e1a3f1dbf0ab25990"
     },
     "ETHUSDT__2h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "8da12a5422c30d1c71c913ff1751c11cce77646660d83237b0a5ce6b8e08a0a5"
+      "sha256": "6ef8693dad37b00a68a9fbe2b0114ec1834f5b7103aec988796beda5316c7bb3"
     },
     "ETHUSDT__30m.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "45ee73f42e2526124a918261e7e62373cfb64722771670b50b1fb12c11ddb86c"
+      "sha256": "f011a423067f9685a39ce4f33cbe426fab47696ac3687bdf80e919cac158d9e5"
     },
     "ETHUSDT__4h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "9f4c516b51a10e9961c1257f63c27aa39e1cc98185655fa3db39128d8975b4f6"
+      "sha256": "56846e0ba96341e7f0c4a15541d2896e21c8654d0945f8a60b8615e277a2c162"
     },
     "SOLUSDT__1d.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "fe9c8ffff68f02da5f14211dcbe2d16be9cdd619dbca2f18a5ec145fc298eba4"
+      "sha256": "49968801b5ab30699c134c3cc48a105746bf6fb4321d6f8fcd1255161e44fcc2"
     },
     "SOLUSDT__1h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "73b8985b778795f3f0a8533a25628d67e1706cea81aede0e4cff183d95aaff6c"
+      "sha256": "e0e4cf018e5c1842f7401370c79eb9cb56db25342f0c431234422c15ddc478c6"
     },
     "SOLUSDT__1w.npz": {
       "cols": 111,
       "rows": 123,
-      "sha256": "8e0c094bf9997eba82e7861d8169e01ad7dd7ab23c0c5cf8d66df6aca6a027fd"
+      "sha256": "a35ba51828146c716140eda652c498c199417dd1c0626b41cc8a3ac7ef1ed2cb"
     },
     "SOLUSDT__2h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "e708210592c954c3aa2db9971c6587272df6e23f0aa763243d3500a3a1ed678d"
+      "sha256": "b896e545cc66dc57ff01cd8805ead9be67ceda614c31468a8439a4fcfa98f4c7"
     },
     "SOLUSDT__30m.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "c62280f89128b5e2958ece6f9df21a5307bcb9b914427cfccec361a9383cf8c7"
+      "sha256": "e6ce1b24afdd580d0b806a4e7b0fe6d5779c8376c6270af92e1c1ff4ae5c80fe"
     },
     "SOLUSDT__4h.npz": {
       "cols": 111,
       "rows": 600,
-      "sha256": "6f8f377698b8c6fa6e400df98a63f4301d6a369a7287af1dbd4f0ede3ce1f5ba"
+      "sha256": "bca7cffdea612cd07cfd93e64e23fcb0ec07c50b8eaa7ce9eea96e1f09e41799"
     }
   },
   "note": "Golden snapshot of calculate_indicators_optimized over the frozen OHLCV fixtures. Refresh only with a justified commit message.",

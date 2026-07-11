@@ -403,8 +403,16 @@ def calculate_rsi(series, period=14):
     delta = series.diff()
     up = delta.clip(lower=0)
     down = -1 * delta.clip(upper=0)
-    roll_up = up.ewm(span=period, adjust=False).mean()
-    roll_down = down.ewm(span=period, adjust=False).mean()
+    # T-2026-CU-9050-095 (P2.12): true Wilder RSI. Wilder smooths the average
+    # gain/loss with alpha=1/period; the previous `ewm(span=period)` used
+    # alpha=2/(period+1), which for period=14 behaves like a Wilder-7.5 RSI
+    # (span=p ⇔ Wilder period (p+1)/2) — RSI_14 read ~4.8 points off Wilder on
+    # average, so the 70/30 (and rsi_9 55/75) bands fired too often. This is a
+    # deliberate, operator-approved migration; the DB history now carries two RSI
+    # domains until a VPS recompute (see AUDIT_TODO P2.12 / CHANGELOG). ATR in
+    # this file was already correct Wilder.
+    roll_up = up.ewm(alpha=1 / period, adjust=False).mean()
+    roll_down = down.ewm(alpha=1 / period, adjust=False).mean()
     rs = roll_up / roll_down
     # History: an earlier bug applied `.fillna(0)` to the INNER term only, so a
     # NaN rs became `100 - 0 = 100` → RSI falsely read 100 (max overbought) where
@@ -413,7 +421,10 @@ def calculate_rsi(series, period=14):
     # entirely: a fabricated 50 is still an invented value on the warmup rows of a
     # young coin. Let the NaN flow (like calculate_kama); the bots' bfill imputes
     # it, the replay drops the head rows. Note the divide already yields NaN (not
-    # 100) for the 0/0 warmup case, so the old false-100 bug does not return.
+    # 100) for the 0/0 warmup case, so the old false-100 bug does not return. The
+    # T-2026-CU-9050-095 Wilder switch (alpha vs span) changes only the smoothing
+    # coefficient, not the NaN handling: diff()'s leading NaN and the 0/0 cases
+    # below still yield NaN, never a fabricated value.
     #
     # T-2026-CU-9050-060 (F1): the NaN is NOT limited to the warmup head. On a
     # fully constant price window (every close identical: illiquid coin, flat

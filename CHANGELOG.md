@@ -707,6 +707,53 @@ Bekannte Risiken / Folge-Tasks (bewusst NICHT in diesem PR):
   den backfill'ten neuesten-geschlossenen Wert). **27_bot_regime_analyzer** liest keine der Spalten.
 - Bestandszeilen in der DB behalten den alten Broadcast-Wert; die Historien-Bereinigung ist ein
   separater VPS-Job (nicht hier).
+## [2026-07-11] 2_indicator_engine.py — calculate_rsi auf echten Wilder-RSI migriert (bewusste Migration, T-2026-CU-9050-095, P2.12)
+
+Operator-freigegebene bewusste Migration (Michi 2026-07-11). `calculate_rsi` glättete
+den Average-Gain/-Loss bisher mit `ewm(span=period)` — das ist α=2/(period+1), also
+für period=14 wie ein Wilder-7,5-RSI (span=p entspricht Wilder-Periode (p+1)/2). Das
+gespeicherte RSI_14 lief damit ~4,8 Punkte heißer als echtes Wilder (Step-2-Messung,
+P2.12), weshalb die 70/30-Bänder (und die rsi_9-55/75-Gates) zu oft feuerten. ATR und
+`calculate_smma` im selben File waren schon korrekt Wilder — RSI zieht jetzt nach:
+`ewm(alpha=1/period, adjust=False)`. Gegen eine unabhängige, hand-gerollte Wilder-RMA-
+Rekursion gepinnt (`backtest/test_wilder_rsi.py`, bit-genau ≤1e-9); die alte span-Formel
+fällt als Regression. Das NaN-Warmup-Verhalten (P1.13/T-054: erste Zeile fließt als NaN
+statt fabrizierter 50/100) und der Flat-Fall (konstanter Preis → 0/0 → NaN, T-060)
+bleiben erhalten — nur α ändert sich, nicht das NaN-Handling.
+
+**Regression-Guard-Golden bewusst refreshed (Regel 9):** exakt 120 `numeric_drift`-
+Breaches, ausschließlich RSI_6/9/12/14/24 über alle 24 Fixtures, null Nicht-RSI-Spalten —
+die Änderung ist voll gekapselt, keine Engine-Ausgabespalte leitet aus rsi ab. `guard.py
+verify` danach grün, `smoke` grün.
+
+**Signal-Raten-Delta** (`tools/wilder_rsi_signal_delta.py`, 24 Guard-Fixtures, 12.468
+geschlossene Bars, isoliert nur der RSI-Anteil der Gates): die 70/30-Extreme fallen am
+stärksten — RUB2 overbought (rsi_14>70) −4,84 pp (9,28→4,44 %, ~−52 % rel.), oversold
+(rsi_14<30) −5,61 pp (12,28→6,67 %, ~−46 %). Das ist genau das gemessene „70/30 feuern
+zu oft". Die SHORT-Gates sinken moderat (strat_5_percent −2,61 pp, fast_in_out −2,40 pp),
+die zentralen 55-75-LONG-Bänder bleiben ~flach (±0,7 pp). Das ist beabsichtigt — die
+Migration senkt die Signal-Raten; die 55/70/75-Schwellen werden hier NICHT nachgetunt
+(das folgt erst nach dem Retrain, P1.13-Doktrin).
+
+**Kopplung — nicht isoliert live wirksam (C-Gate, VPS, OPUS-HANDOFF §6):**
+- *Retrain:* `rsi_14` ist direkter Modell-Input von TD2/BB2/QM2 (`ABSOLUTE_INDICATORS`),
+  rsi_6/9/12/14/24 von MIS2, rsi_9/14/24 von SRA2, rsi_6/14 von AIM2, rsi_14 von den
+  Research-Bots; abgeleitete Features (mis `rsi_*_delta_1`, `rsi_14_above_50`,
+  `rsi_14_cross_above_30`, TD/BB Three-Drive-RSI-Pivot-Monotonie) verschieben sich mit.
+  Die deployten Artefakte sahen den alten span-RSI → Retrain auf der verschobenen
+  Verteilung vor Vertrauen.
+- *Mixed-History (wie R3-Pool-Flip):* ab Deploy trägt die DB-Historie zwei RSI-Domänen
+  (alt span pre-Deploy, Wilder post-Deploy); bis zu einem VPS-Recompute lesen Trainer
+  gemischte Werte. Wichtig: das T-061-Tool `recompute_indicators.py` nullt nur Warmup-
+  Heads und recomputet bewusst KEINE Werte (Full-Recompute ist nicht positions-stabil,
+  bis 48 % Mid-Band-Drift auf rsi_14 schon bei gleicher Formel). Ein Wilder-Recompute
+  der rsi_*-Spalten ist daher ein echter Full-Recompute — keine triviale T-061-
+  Erweiterung, sondern eine größere Operator-Entscheidung.
+
+Sequencing (P1.13-Doktrin, „nie isoliert"): (1) Code-Fix + Golden-Refresh [dieser PR],
+(2) VPS-Recompute rsi_* → eindomänig, (3) TD2/BB2/QM2 + MIS2/SRA2/AIM2/Research-Retrain,
+(4) erst danach die 55/70/75-Schwellen neu tunen. AUDIT_TODO P2.12 bleibt offen bis
+Recompute+Retrain.
 
 ## [2026-07-11] tools/restart_fleet.ps1 — UAC-freier Fleet-Restart-Zyklus über den Task "Kythera Watchdog" (T-2026-CU-9050-074)
 
