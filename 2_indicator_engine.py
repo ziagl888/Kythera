@@ -17,6 +17,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 from psycopg2 import extras
 from scipy import stats
 
+from core.candles import period_start
 from core.config import INDICATOR_TIMEFRAMES, NUM_WORKERS
 from core.database import get_db_connection
 from core.market_utils import load_coins
@@ -423,6 +424,93 @@ def calculate_kama(series, period=10, fast=2, slow=30):
     return pd.Series(kama, index=series.index)
 
 
+# T-2026-CU-9050-084 (P1.12, Option A/Variante B): "window-global" indicators are
+# computed ONCE over the whole calc window (a single trendline/channel linregress,
+# one HVN/POC histogram, one S/R pivot scan, one Fibonacci range) and were then
+# broadcast onto EVERY row of the frame. In the stored history that is look-ahead:
+# a bar from 5000 candles ago carried today's POC/support level (Step-2 evidence:
+# poc 149 distinct / support 236 distinct over 5000 old rows). We keep them ONLY on
+# the newest CLOSED bar (the as-of-now reference) and NULL them on the forming bar
+# and every older bar. Writing to the newest CLOSED bar — NOT the forming last row —
+# is the deliberate choice (operator-confirmed 2026-07-11): the serving readers all
+# read the newest closed candle, so they keep reading the identical value and harte
+# Regel 5 (forming candle) stays intact. Column-varying line values (trendline_price,
+# channel_*, mid_line) are window-global too — the whole line is refit each window —
+# so they are NULLed on non-reference bars as well.
+_WINDOW_GLOBAL_NUMERIC_COLS = (
+    "TRENDLINE_SLOPE",
+    "TRENDLINE_INTERCEPT",
+    "TRENDLINE_PRICE",
+    "CHANNEL_UPPER_PRICE",
+    "CHANNEL_LOWER_PRICE",
+    "MID_LINE",
+    "R_SQUARED",
+    "POC",
+    "HVN_1",
+    "HVN_2",
+    "HVN_3",
+    "SUPPORT_PRICE",
+    "RESISTANCE_PRICE",
+    "FIB_SUPPORT_0_236",
+    "FIB_SUPPORT_0_382",
+    "FIB_SUPPORT_0_5",
+    "FIB_SUPPORT_0_618",
+    "FIB_SUPPORT_0_786",
+    "FIB_RESISTANCE_0_236",
+    "FIB_RESISTANCE_0_382",
+    "FIB_RESISTANCE_0_5",
+    "FIB_RESISTANCE_0_618",
+    "FIB_RESISTANCE_0_786",
+    "FIB_EXTENSION_1_272",
+    "FIB_EXTENSION_1_618",
+    "FIB_EXTENSION_2_618",
+)
+# TEXT column handled separately: written as SQL NULL (None), not float NaN.
+_WINDOW_GLOBAL_TEXT_COLS = ("TREND_DIRECTION",)
+
+
+def _as_of_now_window_globals(indicators_df, timeframe):
+    """Keep window-global indicators only on the newest CLOSED bar; NULL the rest.
+
+    The reference bar is the newest bar whose ``open_time`` is strictly before the
+    currently-forming period (``core.candles.period_start``, the one canonical clock
+    cutoff, grace-aware). In production the last bar is the live forming candle, so
+    the reference is the second-to-last (newest closed) bar and the forming bar is
+    NULLed. For the historical regression-guard fixtures every bar lies far in the
+    past, so the reference is simply the last bar and the golden stays deterministic
+    regardless of when ``guard verify`` runs.
+
+    Numeric columns are set to NaN (the production-proven P1.13/T-054 NaN-write path;
+    the serving readers already treat NaN as "no value" via ``pd.notna``/bfill). The
+    TEXT column ``trend_direction`` is set to None so it lands as a real SQL NULL.
+    """
+    if indicators_df.empty:
+        return indicators_df
+
+    open_times = pd.to_datetime(indicators_df["open_time"], utc=True)
+    cutoff = period_start(timeframe, utc_now())
+    closed = open_times < cutoff
+    if closed.any():
+        ref_open_time = open_times[closed].max()
+        ref_mask = (open_times == ref_open_time).to_numpy()
+    else:
+        # No closed bar in the frame (e.g. a brand-new coin with only the forming
+        # bar): drop the window-global values entirely rather than leak a forming
+        # value into serving/training. The readers fall back to 0 / no-signal.
+        ref_mask = np.zeros(len(indicators_df), dtype=bool)
+
+    null_mask = ~ref_mask
+    for col in _WINDOW_GLOBAL_NUMERIC_COLS:
+        if col in indicators_df.columns:
+            indicators_df.loc[null_mask, col] = np.nan
+    for col in _WINDOW_GLOBAL_TEXT_COLS:
+        if col in indicators_df.columns:
+            # object dtype: None -> SQL NULL on write (not the string "nan").
+            indicators_df[col] = indicators_df[col].astype(object)
+            indicators_df.loc[null_mask, col] = None
+    return indicators_df
+
+
 def calculate_indicators_optimized(df, timeframe):
     df = df.sort_values('open_time')
     close = df['close']
@@ -527,6 +615,9 @@ def calculate_indicators_optimized(df, timeframe):
     indicators_df['open_time'] = df['open_time']
     indicators_df['close'] = df['close']
     indicators_df['symbol'] = df['symbol'].iloc[0] if not df.empty else ''
+    # T-2026-CU-9050-084 (P1.12): strip the broadcast window-global values off every
+    # bar except the newest closed one (as-of-now). See _as_of_now_window_globals.
+    indicators_df = _as_of_now_window_globals(indicators_df, timeframe)
     return indicators_df
 
 

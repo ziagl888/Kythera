@@ -412,6 +412,57 @@ Kein Live-Eingriff (ENVIRONMENT: BUILD). DB-freie Tests: `backtest/test_coins_wr
 `backtest/test_delisted_cleanup.py` (Shape-Guard akzeptiert echte Perps, verwirft die
 benannten Falsch-Close-Symbole). ruff/format/mypy grün.
 
+## [2026-07-11] P1.12: Fensterglobale Indikatoren nur noch auf die neueste GESCHLOSSENE Kerze (as-of-now) + 4 S/R-Reader konsistent (T-2026-CU-9050-084)
+
+Die fensterglobalen Indikatoren (ein Trendline/Channel-Fit, ein HVN/POC-Histogramm, ein
+S/R-Pivot-Scan, eine Fibonacci-Spanne) wurden bisher als Konstante bzw. rückprojizierte
+Linie auf JEDE Zeile des Rechenfensters gebroadcastet — Look-ahead in der gespeicherten
+Historie (Step-2-Beleg: 149 distinct POC / 236 distinct support über 5000 alte Rows; eine
+5000 Kerzen alte Zeile trug den heutigen Level). `2_indicator_engine.calculate_indicators_optimized`
+schreibt sie jetzt NUR noch auf die neueste GESCHLOSSENE Kerze (as-of-now-Referenzzeile) und
+NULLt sie auf der forming Kerze und allen älteren Zeilen (produktionsbewiesener NaN-Write-Pfad
+wie P1.13/T-054; `trend_direction` als echtes SQL-NULL). Betroffen sind 27 Spalten: der ganze
+Trend/Channel-Block, POC/HVN, SUPPORT/RESISTANCE_PRICE und alle FIB_*.
+
+Operator-Entscheid Michi 2026-07-11 — **Variante B** statt der wörtlichen Dispatch-Vorgabe
+"letzte Zeile": geschrieben wird auf die neueste GESCHLOSSENE Kerze, nicht auf die absolute
+letzte (forming) Zeile. Grund: die Verifikation zeigte, dass die neueste Indikator-Zeile die
+forming Kerze IST (die WS-Ingestion puffert jeden Kline-Tick ohne `k['x']`-Filter,
+`1_data_ingestion.py:693`) und alle Serving-Reader ohnehin die neueste GESCHLOSSENE Kerze lesen.
+Damit lesen sie den identischen Wert weiter, harte Regel 5 (Forming Candle) bleibt gewahrt —
+die Regel-5-vs-as-of-now-Kollision ist aufgelöst statt improvisiert.
+
+Reader-Inventar korrigiert: der Dispatch nannte 3 Reader, es sind fünf S/R-Konsumenten.
+`strat_support_resistance`/`strat_main_channel` (iloc[1]) und `strat_5_percent`/`strat_fast_in_out`
+(iloc[0] = forming!) lesen den Level jetzt robust aus der neuesten Nicht-NULL-Zeile
+(`first_valid_index`) statt aus einem festen Positionsindex — bei vorhandener forming Kerze exakt
+derselbe Wert, bei fehlender forming Kerze bleibt der Reader auf der geschlossenen Referenzzeile
+statt still eine genullte Zeile zu lesen. `12_ai_ats_bot` bleibt unverändert: es liest iloc[-2]
+(= neueste geschlossene = Referenz) und hat einen frame-weiten `fillna(0)`; unter Variante B
+keine Feature-Semantik-Änderung (die unter der Dispatch-Default-Variante A befürchtete
+ATS-Verschiebung entfällt).
+
+Verifiziert (DB-frei): `backtest/test_window_features.py` (Engine-Invariante für den forming- und
+den rein-historischen Fall, je Reader ein Guard, fällt auf dem Pre-Fix-Stand); Regression-Guard-
+Golden refresht (Regel 9, dokumentierter Grund) — die 648 Breaches sind exakt die 27
+fensterglobalen Spalten × 24 Fixtures auf den Nicht-Kopf-Zeilen, keine einzige per-Row-Spalte;
+Serving-Verifikation über die 4 realen 1h-Fixtures: Signal-Raten-Delta der Classic-Strats = 0
+(Level byte-gleich vor/nach), und ohne den Reader-Fix hätte 5-Percent auf SOL alle 993
+Sweep-Signale verloren.
+
+Bekannte Risiken / Folge-Tasks (bewusst NICHT in diesem PR):
+- **9_ai_sr_bot (+ `core/sra_features`)** liest die Indikatoren mit `open_time <= t_time` OHNE
+  Floor-Guard → kann die forming Kerze treffen und hält NaN (kein fillna). Unter Variante B werden
+  support/resistance/r_squared/trend_direction dort für forming-Reads NaN (XGB-nativ, vom Task als
+  bekanntes Risiko vorgesehen). Root-Cause ist der fehlende Floor-Guard (R1) — Folge-Task: auf die
+  neueste GESCHLOSSENE Kerze umstellen (wie `15_ai_master_bot`) + SRA-Retrain.
+- **15_ai_master_bot / `core/aim2_features`** liest strikt `open_time < floor(ts)` → neueste
+  geschlossene = Referenz → sicher, keine Änderung. **24_quasimodo / 25_smc_ml_sniper** lesen nur
+  `trend_direction` von einer geschlossenen Zeile mit ffill+bfill → robust (bot 25 TD-Pivot bekommt
+  den backfill'ten neuesten-geschlossenen Wert). **27_bot_regime_analyzer** liest keine der Spalten.
+- Bestandszeilen in der DB behalten den alten Broadcast-Wert; die Historien-Bereinigung ist ein
+  separater VPS-Job (nicht hier).
+
 ## [2026-07-11] tools/restart_fleet.ps1 — UAC-freier Fleet-Restart-Zyklus über den Task "Kythera Watchdog" (T-2026-CU-9050-074)
 
 Lehre aus dem 00:32-Mass-Crash (Konsole des manuell gestarteten Watchdogs geschlossen,

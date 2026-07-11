@@ -57,11 +57,20 @@ def evaluate_conditions(data, direction):
     # df_indicators kommt DESC sortiert aus dem Detector (iloc[0] = NEUESTE Kerze!)
     last_row = data.iloc[0]
 
+    # T-2026-CU-9050-084 (P1.12): support_price/resistance_price are window-global
+    # and are now written only to the newest CLOSED bar (NaN on the forming bar and
+    # every older bar). last_row is the forming bar — read the S/R level from the
+    # newest bar that still carries it (first non-null in this DESC frame) so the
+    # headroom guards keep working. Value is unchanged whenever the forming bar is
+    # present. The per-bar indicator checks below stay on last_row.
+    sr_idx = data['support_price'].first_valid_index()
+    sr_row = data.loc[sr_idx] if sr_idx is not None else last_row
+
     try:
         if direction == 'LONG':
             if not (55 <= last_row['rsi_9'] <= 75): return False
             if not (last_row['ema_9'] > last_row['ema_21']): return False
-            if not (last_row['close'] < last_row['resistance_price'] * 0.95): return False
+            if not (last_row['close'] < sr_row['resistance_price'] * 0.95): return False
             return True
 
         elif direction == 'SHORT':
@@ -75,7 +84,7 @@ def evaluate_conditions(data, direction):
             # support*0.95` ist quasi immer wahr (No-op). Gemeint ist: SHORT
             # nur wenn noch ≥5% Luft bis zum Support (Spiegel des LONG-Checks
             # `close < resistance*0.95`).
-            if not (last_row['close'] > last_row['support_price'] * 1.05): return False
+            if not (last_row['close'] > sr_row['support_price'] * 1.05): return False
             return True
 
     except Exception as e:
