@@ -25,6 +25,8 @@ import unittest.mock as mock
 
 import numpy as np
 import pandas as pd  # noqa: F401  (pre-seed before any sys.modules patch)
+import scipy.signal  # noqa: F401  (pre-seed C-ext before any sys.modules patch)
+import scipy.stats  # noqa: F401  (pre-seed C-ext before any sys.modules patch)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
