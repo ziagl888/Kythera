@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from logging.handlers import RotatingFileHandler
 from typing import Any
 
 import psutil
@@ -18,7 +19,12 @@ from core.process_control import consume_restart, is_parked
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - WATCHDOG - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler("watchdog.log", encoding='utf-8')],
+    # P3.2: RotatingFileHandler at the same path so the dashboard viewer
+    # (dashboard.py) and health_monitor keep reading watchdog.log.
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        RotatingFileHandler("watchdog.log", maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8'),
+    ],
 )
 logger = logging.getLogger(__name__)
 

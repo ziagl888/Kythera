@@ -381,6 +381,30 @@ def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
         logging.error(f"🔥 Fehler beim Löschen der Charts in '{folder_path}': {e}")
 
 
+def truncate_oversized_logs(log_paths=("logs/dashboard.log",), max_bytes=20 * 1024 * 1024):
+    """Caps append-only raw-pipe logs that no logging handler rotates (P3.2).
+
+    logs/dashboard.log is the dashboard subprocess' stdout/stderr pipe
+    (main_watchdog opens it in append mode), so it grows unbounded — unlike the
+    watchdog/indicator logs, which now use RotatingFileHandler. When a file
+    exceeds max_bytes we keep only its last half and drop the rest. Best-effort:
+    the dashboard keeps its append handle open, so any I/O error is swallowed.
+    """
+    keep = max_bytes // 2
+    for path in log_paths:
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) <= max_bytes:
+                continue
+            with open(path, "rb") as f:
+                f.seek(-keep, os.SEEK_END)
+                tail = f.read()
+            with open(path, "wb") as f:
+                f.write(tail)
+            logger.info(f"🧹 HOUSEKEEPING: log '{path}' auf die letzten {keep // (1024 * 1024)} MB gekürzt.")
+        except Exception as e:
+            logger.warning(f"Konnte Log '{path}' nicht kürzen: {e}")
+
+
 def cleanup_telegram_outbox(max_age_days=7):
     """FIX: Löscht alte, bereits gesendete telegram_outbox-entries.
 
@@ -844,6 +868,9 @@ def main():
             # 6. FIX: Alte (gesendete) Outbox-entries löschen — sonst läuft die
             # Tabelle unbegrenzt voll.
             cleanup_telegram_outbox(max_age_days=7)
+
+            # 6b. P3.2: den unrotierten dashboard.log-Pipe kappen.
+            truncate_oversized_logs()
 
             # 7. Nightly Gap-Filler: scannt die letzten 24h aller Coin×TF-Tabellen
             # auf fehlende Kerzen, füllt sie via Binance REST, und invalidiert
