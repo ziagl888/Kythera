@@ -1,3 +1,40 @@
+## [2026-07-11] Watchdog: Graceful Shutdown statt hartem terminate() (P2.48) + atomic_write_json Windows-Fix (P2.49) (T-2026-CU-9050-087)
+
+Zwei Prozess-/Persistenz-Findings aus der Welle-4-Dispatch (T-2026-CU-9050-075).
+
+**P2.48 — Harter terminate() orphant die ProcessPool-Worker.** `main_watchdog.kill_process`
+rief `p.terminate()` — auf Windows ein sofortiger `TerminateProcess` ohne Graceful Shutdown.
+Kritisch: die ProcessPool-Worker der Indicator-Engine (`2_indicator_engine.py`,
+`ProcessPoolExecutor`) überlebten den Parent-Kill als Waisen und rechneten weiter →
+Doppel-Compute-Fenster. Neu: jeder Bot (und das Dashboard) startet in EINER eigenen
+Prozessgruppe (`CREATE_NEW_PROCESS_GROUP`); der Stop schickt ein `CTRL_BREAK_EVENT` an die
+GANZE Gruppe — das erreicht den Bot UND seine Worker-Kinder, anders als `terminate()`, das
+nur den Bot selbst trifft. Danach wird `GRACEFUL_STOP_TIMEOUT_S` (Default 10s, env-overridable)
+gewartet, dann hart nachgetreten. Ist `CTRL_BREAK` nicht zustellbar (keine Konsole angehängt —
+Scheduled-Task-Start, oder Prozess schon weg), fällt der Pfad auf `terminate()` zurück und
+loggt es — nie schlechter als vorher. Die eigene Gruppe verhindert zugleich, dass ein
+Stop-Signal die Watchdog-Konsole mittrifft. P0.2 (Mutex + Orphan-Sweep) und der
+Scheduled-Task-Restart-Pfad (T-074, `restart_fleet.ps1` stoppt über `Stop-ScheduledTask` +
+Orphan-Reap beim nächsten Start) bleiben unangetastet — die Prozessgruppen-Isolation
+verbessert deren Teardown-Ordnung, regressiert sie nicht.
+
+**P2.49 — atomic_write_json verwarf Updates still auf Windows.** `core/state_utils.py`
+nutzte einen FESTEN `.tmp`-Namen (zwei parallele Writer auf denselben Pfad korrumpierten sich
+auf derselben Temp-Datei) und ließ `os.replace` unter dem breiten `except` scheitern, wenn ein
+Reader die Zieldatei offen hielt → das Update ging STILL verloren. Neu: unique Temp-Name via
+`tempfile.mkstemp` im Zielverzeichnis (gleiches Dateisystem → `os.replace` bleibt atomar,
+Muster `core/coins.py` #68) + kurzer Retry (5×50ms) auf `PermissionError`; bleibt es blockiert,
+wird es GELOGGT (kein stiller Verlust mehr) und die Temp-Datei aufgeräumt.
+
+DB-freie Tests: `backtest/test_atomic_write_json.py` (12: Roundtrip, unique-tmp, Retry-Pfad,
+Permanent-Failure-Logging, Cleanup), `backtest/test_watchdog_shutdown.py` (8: Prozessgruppen-Flag,
+CTRL_BREAK vs SIGTERM je Plattform, Hard-Kill-Eskalation, CTRL_BREAK-Fallback). Die Regressionsuiten
+`test_watchdog_backoff.py`/`test_watchdog_hang.py` (P1.37/P2.47) bleiben grün. **Beweislage ehrlich:**
+die tatsächliche Prozessgruppen-Signalzustellung und das ProcessPool-Worker-Teardown sind nur gegen
+eine echte Windows-Konsole beobachtbar — unit-testbar ist, dass das RICHTIGE Signal in der RICHTIGEN
+Reihenfolge abgesetzt wird; die Live-Verifikation (kein Waisen-Worker nach kill_process) ist ein
+VPS-Schritt.
+
 ## [2026-07-11] Detector-Zyklus: Batch-Ticker statt 538 Einzel-Calls + Volume-Indicator-Fixes (P2.44 + P2.42, T-2026-CU-9050-085)
 
 Zwei Findings aus dem Detector-Pfad, beide aus der Welle-4-Dispatch (T-2026-CU-9050-075).

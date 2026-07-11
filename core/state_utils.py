@@ -18,9 +18,26 @@ Jetzt zentral:
 import json
 import logging
 import os
+import tempfile
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Windows: os.replace scheitert mit PermissionError, wenn ein Reader die
+# Zieldatei genau im Replace-Moment offen hält. Ein kurzer Retry überbrückt
+# dieses schmale Fenster, statt das Update still zu verwerfen (P2.49).
+_REPLACE_RETRIES = 5
+_REPLACE_RETRY_SLEEP_S = 0.05
+
+
+def _cleanup_tmp(tmp: str) -> None:
+    """Entfernt eine liegengebliebene Temp-Datei, ohne selbst zu werfen."""
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    except OSError:
+        pass
 
 
 def atomic_write_json(filepath: str, data: Any, indent: int = 2) -> bool:
@@ -29,34 +46,64 @@ def atomic_write_json(filepath: str, data: Any, indent: int = 2) -> bool:
     Returns True bei Erfolg, False bei Fehler (mit Log-Entry).
     Ein konkurrenter Reader sieht IMMER entweder die alte oder die neue
     Version, niemals einen halb-geschriebenen Zwischenstand.
+
+    P2.49-Härtung:
+      - Unique Temp-Name via ``tempfile.mkstemp`` im ZIELVERZEICHNIS statt eines
+        festen ``.tmp``. Zwei parallele Writer auf denselben Pfad kollidierten
+        sonst auf derselben Temp-Datei und korrumpierten sich gegenseitig; das
+        gleiche Verzeichnis hält ``os.replace`` auf einem Dateisystem, sodass
+        die Atomicity-Garantie erhalten bleibt (Muster core/coins.py, #68).
+      - Kurzer Retry auf ``os.replace``, das auf Windows mit ``PermissionError``
+        scheitert, solange ein Reader die Zieldatei offen hält. Bleibt es nach
+        allen Versuchen blockiert, wird das GELOGGT (kein stiller Update-Verlust
+        mehr) und die Temp-Datei aufgeräumt.
     """
     if not filepath:
         logger.error("atomic_write_json: Leerer Pfad übergeben")
         return False
 
-    tmp = filepath + ".tmp"
+    # abspath() → dirname() ist immer nicht-leer, auch bei bloßem Dateinamen.
+    parent = os.path.dirname(os.path.abspath(filepath))
     try:
-        # Ensure the target directory exists
-        parent = os.path.dirname(os.path.abspath(filepath))
-        if parent and not os.path.exists(parent):
+        if not os.path.exists(parent):
             os.makedirs(parent, exist_ok=True)
+    except OSError as e:
+        logger.error(f"atomic_write_json: Zielverzeichnis für {filepath} nicht anlegbar: {e}")
+        return False
 
-        with open(tmp, "w", encoding="utf-8") as f:
+    basename = os.path.basename(filepath)
+    try:
+        fd, tmp = tempfile.mkstemp(dir=parent, prefix=f".{basename}.", suffix=".tmp")
+    except OSError as e:
+        logger.error(f"atomic_write_json: Temp-Datei für {filepath} nicht anlegbar: {e}")
+        return False
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
             f.flush()
             os.fsync(f.fileno())
 
-        # os.replace is atomic on POSIX and Windows
-        os.replace(tmp, filepath)
-        return True
+        # os.replace ist atomar auf POSIX und Windows. Auf Windows kann es aber
+        # mit PermissionError scheitern, solange ein Reader die Zieldatei offen
+        # hält → kurzer Retry statt stillem Update-Verlust.
+        last_err: OSError | None = None
+        for _ in range(_REPLACE_RETRIES):
+            try:
+                os.replace(tmp, filepath)
+                return True
+            except PermissionError as e:
+                last_err = e
+                time.sleep(_REPLACE_RETRY_SLEEP_S)
+        logger.error(
+            f"atomic_write_json: os.replace auf {filepath} nach {_REPLACE_RETRIES} Versuchen "
+            f"blockiert (Reader hält die Datei offen?): {last_err} — Update NICHT geschrieben."
+        )
+        _cleanup_tmp(tmp)
+        return False
     except Exception as e:
         logger.error(f"Error during atomic write von {filepath}: {e}")
-        # Temp-File aufräumen falls übrig
-        try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except Exception:
-            pass
+        _cleanup_tmp(tmp)
         return False
 
 
