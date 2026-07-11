@@ -12,6 +12,7 @@ from core import config as _kcfg  # channel ids
 
 # DB Connection importieren (für Telegram)
 from core.market_utils import load_coins, send_telegram
+from core.trade_utils import format_price
 from core.ws_utils import apply_keepalive as _apply_keepalive
 
 # 🛠️ CONFIGURATION
@@ -205,12 +206,14 @@ async def evaluate_whales_loop():
             trade_block = "<b>Top 5 Whale Trades Long (1h):</b>\n"
             for t in long_trades:
                 dt_str = datetime.fromtimestamp(t['ts'], tz=timezone.utc).strftime('%H:%M')
-                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {t['prc']:.2f} ({dt_str})\n"
+                # P3.5: significant-digit price so sub-cent coins don't all show "$0.00".
+                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {format_price(t['prc'])} ({dt_str})\n"
 
             trade_block += "\n<b>Top 5 Whale Trades Short (1h):</b>\n"
             for t in short_trades:
                 dt_str = datetime.fromtimestamp(t['ts'], tz=timezone.utc).strftime('%H:%M')
-                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {t['prc']:.2f} ({dt_str})\n"
+                # P3.5: significant-digit price so sub-cent coins don't all show "$0.00".
+                trade_block += f"{t['sym']:<9} {format_usd(t['usd']):>6} @ {format_price(t['prc'])} ({dt_str})\n"
 
             # 4. Zusammenbauen der fertigen Nachricht
             msg = f"""<pre>
