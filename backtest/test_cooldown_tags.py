@@ -95,6 +95,17 @@ def test_mis_horizon_tags_fit():
         )
 
 
+def test_btc_smc_tag_fits():
+    """21_btc_smc passes COOLDOWN_TAG as a variable (not an inline literal), so
+    the fleetwide literal scan below can't see it — pin it explicitly here."""
+    src = (ROOT / "21_btc_smc_strategy.py").read_text(encoding="utf-8")
+    m = re.search(r"COOLDOWN_TAG\s*=\s*['\"]([^'\"]+)['\"]", src)
+    assert m, "COOLDOWN_TAG literal not found in 21_btc_smc_strategy.py"
+    tag = m.group(1)
+    assert "{" not in tag, f"btc_smc tag must be a static literal, got '{tag}'"
+    assert len(tag) <= COOLDOWN_MODULE_MAX_LEN, f"tag '{tag}' exceeds varchar({COOLDOWN_MODULE_MAX_LEN})"
+
+
 def test_vol_indicator_cooldown_is_atomic_via_detector():
     """The Volume Indicator must NOT write its own cooldown — it requests it
     via signal['cooldown_module'] and 3_detectors.write_signal_atomic writes
@@ -129,6 +140,7 @@ if __name__ == "__main__":
     test_volume_indicator_tag_fits()
     test_mayank_tags_fit()
     test_mis_horizon_tags_fit()
+    test_btc_smc_tag_fits()
     test_vol_indicator_cooldown_is_atomic_via_detector()
     test_static_tag_literals_fleetwide()
     print("OK — all cooldown-tag invariants hold")

@@ -138,6 +138,29 @@ def check_top20_positive_pct(current_rates_dict):
     return (pos_count / total) * 100
 
 
+# P2.40: die 75%-Schwelle feuerte im Normalzustand — der Funding-Baseline ist
+# leicht positiv (~+0.01%), also sind routinemäßig ~75%+ der Top-20-Coins positiv.
+# Der 75er-Trigger meldete damit fast permanent "EXTREME". 95/85 behält den Alert
+# nur für echt einseitiges Funding (Operator-Entscheid Michi 2026-07-11).
+FUNDING_EXTREME_THRESHOLDS = [95, 85]
+
+
+def classify_funding_extreme(pos_pct):
+    """Klassifiziert das Top-20-Funding-Sentiment als (triggered, direction, pct_value).
+
+    pos_pct = Prozentsatz der Top-20-Coins mit positivem Funding (0..100).
+    Gibt (False, "", 0) zurück, wenn weder die positive noch die negative Seite
+    eine Extreme-Schwelle (FUNDING_EXTREME_THRESHOLDS) erreicht.
+    """
+    neg_pct = 100.0 - pos_pct
+    for threshold in FUNDING_EXTREME_THRESHOLDS:
+        if pos_pct >= threshold:
+            return True, "POSITIVE", pos_pct
+        if neg_pct >= threshold:
+            return True, "NEGATIVE", neg_pct
+    return False, "", 0
+
+
 # 🚨 SENTIMENT ENGINE (Nur Extreme Alerts)
 async def evaluate_funding_sentiment(api_data, now_ts):
     global LAST_TOP20_ALERT
@@ -155,19 +178,8 @@ async def evaluate_funding_sentiment(api_data, now_ts):
         # mit falschen Zahlen durchlaufen.
         if pos_pct is None:
             return
-        neg_pct = 100.0 - pos_pct
 
-        triggered = False
-        direction = ""
-        pct_value = 0
-
-        for threshold in [95, 85, 75]:
-            if pos_pct >= threshold:
-                triggered, direction, pct_value = True, "POSITIVE", pos_pct
-                break
-            elif neg_pct >= threshold:
-                triggered, direction, pct_value = True, "NEGATIVE", neg_pct
-                break
+        triggered, direction, pct_value = classify_funding_extreme(pos_pct)
 
         if triggered:
             alert_msg = f"""<pre>

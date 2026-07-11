@@ -1,3 +1,37 @@
+## [2026-07-11] 21_btc_smc Cooldown/Dedupe + 20_funding_bot Extreme-Schwelle 75→95/85 (T-2026-CU-9050-088)
+
+Zwei unabhängige Audit-Findings aus Welle 5.
+
+**P2.46 — `21_btc_smc_strategy.py` hatte keinen Cooldown/Dedupe.** Der Bot scannt
+stündlich und postet, sobald ein EMA21+FVG-Pivot-Retest-Setup „fully closed" ist.
+Ohne Sperre re-qualifiziert dasselbe Setup bei Gap-Filler-Lag im nächsten Scan —
+das identische Cornix-Signal ging ~1h versetzt ein zweites Mal raus (Doppelposition
+mit echtem Geld). Fix: jeder Post läuft jetzt durch das zentrale `trade_cooldowns`-
+System in `send_cornix_signal`. Der Cooldown-Check läuft vor dem Outbox-Insert; nach
+erfolgreichem Post wird der Cooldown im **selben Commit** wie der Insert gesetzt
+(`update_cooldown(..., commit=False)` + ein `conn.commit`), sodass Signal und
+Dedupe-Marker atomar persistieren — ein Teil-Commit hätte genau das Re-Posting
+ermöglicht, das der Fix verhindert (T-024-Lektion). Tag `BTCSMC_1H` (9 Zeichen, passt
+in `trade_cooldowns.module` varchar(10)); Cooldown 12h — Fleet-Default für sub-daily
+TFs (P1.27-Muster, vgl. Bot 16) und über der 1h-Kerzendauer, damit das 1h-versetzte
+Doppelsignal sicher geblockt ist. Die P0.5-Fixes (cap_leverage_to_sl) bleiben unberührt.
+
+**P2.40 — Funding-„Extreme"-Alert feuerte im Normalzustand.** `20_funding_logger_bot.py`
+postet einen TOP20-„FUNDING EXTREME ALERT", wenn ein Anteil der Top-20-Coins einseitig
+positiv/negativ funded. Die alte Untergrenze war 75 %. Der Funding-Baseline ist aber
+leicht positiv (~+0.01 %), also sind routinemäßig ~75 %+ der Top-20 positiv — der
+75er-Trigger meldete fast permanent „EXTREME". Operator-Entscheid (Michi 2026-07-11):
+Untergrenze auf 95/85. Die Schwellen-Logik ist in den reinen Helper
+`classify_funding_extreme(pos_pct)` extrahiert (testbar, Grenzfälle gepinnt).
+**Bewusste Signal-Raten-Änderung:** der Funding-Bot alertet ab jetzt seltener — nur
+noch bei echt einseitigem Funding (≥95/85 %), nicht mehr im leicht-positiven Alltag.
+Betrifft nur den Info-Kanal `CH_MARKET_DATA` (Sentiment-Post, kein Cornix-Trade).
+
+DB-freie Tests: `backtest/test_btc_smc_cooldown.py` (Cooldown-Wiring: aktiv→kein Post,
+frei→genau ein Outbox-Insert + atomarer Cooldown-Upsert, DB-Fehler→Non-Post),
+`backtest/test_funding_threshold.py` (95/85-Grenzfälle inkl. „75 feuert nicht mehr"),
+Tag-Länge statisch gepinnt in `backtest/test_cooldown_tags.py`.
+
 ## [2026-07-11] 14_ai_atb_bot.py — ATB1 unknown-State observe-only + Main-Loop-Härtung (T-2026-CU-9050-086)
 
 Zwei Robustheits-Fixes am geparkten Bot 14 (ATB1). Wirken erst beim Entparken —
