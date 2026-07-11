@@ -1,3 +1,31 @@
+## [2026-07-11] 14_ai_atb_bot.py — ATB1 unknown-State observe-only + Main-Loop-Härtung (T-2026-CU-9050-086)
+
+Zwei Robustheits-Fixes am geparkten Bot 14 (ATB1). Wirken erst beim Entparken —
+die Fixes sind risikofrei, mussten aber vor dem Entparken stehen (OPUS-HANDOFF §3).
+
+P2.36 (unknown-State = observe-only): Nach einem State-Loss (`trendline_state.json`
+fehlt oder ist korrupt) fällt TRENDLINE_STATE auf {} zurück, jeder Coin bekam
+`prev_relation="unknown"`. Der alte Inline-Break-Check listete "unknown" in jeder
+Bedingung — beim ersten Zyklus nach State-Loss feuerte damit JEDER Coin über/unter
+seiner Trendlinie ein frisches BREAK-Event (Massen-Event-Flood mit echtem Geld; der
+alte Kommentar gab den Bug offen zu). Die Event-Klassifikation ist jetzt in die reine
+`classify_trendline_event` extrahiert: `prev_relation=="unknown"` gibt `None` zurück.
+Der erste Zyklus baut nur die Relation neu auf und emittiert nichts; der Caller
+schreibt `prev_relation` unverändert weiter, echte Transitionen (below→above etc.)
+feuern ab dem Folgezyklus. Persistenz allein hätte nicht gereicht (Datei kann fehlen),
+der observe-only-Guard ist der eigentliche Schutz.
+
+P2.37 (Main-Loop-Exception-Handling + Conn-Hygiene): Der Scan in
+`run_trendline_detector` läuft jetzt in `try/finally` — `conn.close()` und
+`save_trendline_state()` laufen auch bei einem Mid-Scan-Abort (vorher: Connection-Leak
++ verworfener State). Der `main()`-Loop fing nur `KeyboardInterrupt`; jede Scan-Exception
+killte den Prozess. Jetzt breites `except Exception` mit ERROR-Log + 30s-Backoff statt
+Prozess-Tod (Muster: `3_detectors.main()`, P1.15). Der per-Coin-Rollback (P1.23) und die
+Forming-Candle-Slice (P1.22) bleiben unangetastet.
+
+DB-frei getestet in `backtest/test_atb_unknown_state.py` (observe-only-Invariante +
+differenzielle Assertion gegen die Pre-Fix-Flood-Logik; fällt auf dem Pre-Fix-Stand).
+
 ## [2026-07-11] Watchdog: Graceful Shutdown statt hartem terminate() (P2.48) + atomic_write_json Windows-Fix (P2.49) (T-2026-CU-9050-087)
 
 Zwei Prozess-/Persistenz-Findings aus der Welle-4-Dispatch (T-2026-CU-9050-075).
