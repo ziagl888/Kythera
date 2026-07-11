@@ -1,3 +1,47 @@
+## [2026-07-11] Datenpipeline-Robustheit — Gap-Continuity-Check, Coin-Refresh ohne Restart, chart_data_service-Watchdog (T-2026-CU-9050-092)
+
+Drei Datenpipeline-Findings aus dem Audit-Ledger (P2.13, P2.15, P2.20), alle mit
+DB-freien Tests in `backtest/` abgesichert; der Regression-Guard bleibt ohne
+Golden-Refresh grün (die Golden-Fixtures sind lückenfrei, der neue Gap-Check
+schlägt dort nie an — er lebt im DB-Worker, nicht in `calculate_indicators_optimized`).
+
+**P2.13 — Indikator-Engine rollte Fenster über Kerzen-Lücken.** `2_indicator_engine.py`
+lädt einen langen Lookback, um die rollenden Fenster aufzuwärmen, persistiert aber
+nur den jüngsten Tail. Fehlten Kerzen (WS-Ausfall, Ingestion-Hänger), rechnete ein
+„200-Perioden-MA" über die reale Zeit-Diskontinuität — Müll-Indikatoren genau auf
+Coins mit löchrigen Daten. `find_contaminating_gap` überspringt Symbol/TF diesen
+Zyklus (statt über das Loch zu rechnen) — aber **nur**, wenn die Lücke innerhalb
+`MAX_INDICATOR_LOOKBACK` (200) Bars vor einer zu schreibenden Zeile liegt. Eine
+alte, herausgerollte Lücke friert den Coin nicht ein (dessen `MAX(open_time)` würde
+sonst nie vorrücken). Der nächtliche Gap-Filler (`6_housekeeping`) füllt die Lücke,
+der nächste Zyklus rechnet lückenlos weiter — Self-Heal. Die Engine wurde in
+P1.12/T-084 (`_as_of_now_window_globals`) und P1.13/T-054 (NaN-Warmups) umgebaut;
+der Fix arbeitet gegen die aktuelle Struktur, nicht die alten Zeilennummern.
+
+**P2.15 — Coin-Liste beim Prozessstart eingefroren.** `1_data_ingestion.py` und
+`chart_data_service.py` fror die Coin-Liste beim Start ein — neu von Binance
+gelistete Coins bekamen bis zum nächsten Restart keine Daten. Beide lesen jetzt
+`coins.json` periodisch neu (das `6_housekeeping` täglich um 03:00 UTC aktualisiert
+— kein dritter Writer, respektiert P2.16) und ziehen neue Symbole **additiv** nach.
+`chart_data_service`: eigener WS-Worker pro Batch neuer Coins. `1_data_ingestion`
+(Vollversion, Operator-Entscheid Michi): Tabellen + einmaliger 730d-Catch-up +
+eigener WS-Worker, koordiniert über die drei nebenläufigen Loops (Catch-up,
+Freshness, WS-Fleet) via geteiltem `tracked`-Set, das die Loops pro Zyklus
+schnappschussen — neue Coins bekommen so auch die 12h-Catch-up- und
+Freshness-Abdeckung. Konservativ: entfernte Coins werden nie abgebaut (Stream-
+Teardown bleibt dem Restart), ein torn/leerer `coins.json`-Read ist ein No-op
+(nie ein Coin live aus der Ingestion fallen lassen).
+
+**P2.20 — chart_data_service ohne Message-Watchdog + synchroner 12MB-Snapshot.**
+`async for msg in ws` hatte kein Timeout — eine stumme Connection (Binance nimmt
+den Handshake an, sendet aber 0 Messages) hing den Worker ewig, ohne je zu
+reconnecten. `_consume_with_watchdog` holt jede Message mit
+`asyncio.wait_for(ws.recv(), 120)` und kehrt bei 120s Stille zurück → Reconnect.
+Der ~12MB-JSON-Snapshot + `os.replace` lief synchron auf dem Event-Loop und
+blockierte alle 60s die WS-Consumer; der Dump läuft jetzt in einem Thread
+(`asyncio.to_thread`), das Intervall wurde auf 300s geweitet (nur der konsistente
+Buffer-Snapshot wird kurz unter dem Lock kopiert).
+
 ## [2026-07-11] SMC-Sniper: unbestätigte Kanten-Pivots verworfen — bewusste Strategie-Änderung (P1.46-Rest, T-2026-CU-9050-093)
 
 `25_smc_ml_sniper.py` findet Swing-Pivots via `scipy.signal.argrelextrema` mit dem

@@ -67,7 +67,21 @@ CHART_SERVICE_HOST = os.getenv("CHART_SERVICE_HOST", "127.0.0.1")
 
 COINS_FILE = "coins.json"
 SNAPSHOT_FILE = "chart_buffer_snapshot.json"
-SNAPSHOT_INTERVAL_SEC = 60  # alle 60s Snapshot
+# P2.20: der ~12MB-Snapshot lief synchron auf dem Event-Loop; 60s war zu dicht.
+# Mit dem to_thread-Dump (siehe save_snapshot) und 300s-Intervall blockiert der
+# Snapshot die WS-Consumer nicht mehr — 5min Verlust-Fenster ist unkritisch, der
+# Buffer wird beim Start ohnehin nur als Warmstart-Historie genutzt.
+SNAPSHOT_INTERVAL_SEC = 300  # alle 5min Snapshot
+
+# P2.20: Message-Watchdog. Binance kann eine Connection annehmen und stumm lassen
+# (kein Fehler, nur 0 Messages). Ohne Timeout haengt `async for msg in ws` ewig,
+# ohne je zu reconnecten. >120s ohne Message trotz offener Connection = tot.
+CHART_WS_MESSAGE_WATCHDOG_SEC = 120
+
+# P2.15: coins.json wird zur Laufzeit von 6_housekeeping (taeglich 03:00 UTC)
+# aktualisiert. Ohne Re-Read bekaemen neu gelistete Coins bis zum Prozess-Restart
+# keine Chart-Daten. Alle 300s neu lesen und neue Symbole additiv nachziehen.
+COIN_REFRESH_INTERVAL_SEC = 300
 
 BUFFER_SIZE = 300  # 300 × 1min = 5h Historie pro Coin
 STREAMS_PER_WS = 600  # Binance Futures limit: 1024 streams per connection
@@ -81,6 +95,30 @@ BINANCE_WS_URL = "wss://fstream.binance.com/market/stream?streams="
 _BUFFERS: dict[str, deque] = {}
 _BUFFER_LOCK = asyncio.Lock()  # Schutz bei gleichzeitigem Read/Write
 _START_TIME = time.time()
+
+# P2.15: additiver Coin-Refresh. Symbole, die bereits einem WS-Worker zugeteilt
+# sind; laufende Worker-ID-Sequenz ueber initialen Fleet + Refresh-Worker hinweg.
+_TRACKED_SYMBOLS: set[str] = set()
+_ws_worker_counter = 0
+
+
+def _next_worker_id() -> int:
+    global _ws_worker_counter
+    _ws_worker_counter += 1
+    return _ws_worker_counter
+
+
+def compute_new_symbols(current: set[str], tracked: set[str]) -> list[str]:
+    """Neue, noch nicht getrackte Symbole (additiv, sortiert).
+
+    Konservativ: ein leeres ``current`` (torn/leerer coins.json-Read) ergibt keine
+    Aenderung — es werden nie Coins entfernt und nie auf einem kaputten Read
+    reagiert. load_coins() liefert bei kaputtem Read [] (all-or-nothing json.load).
+    """
+    if not current:
+        return []
+    return sorted(current - tracked)
+
 
 # ─── Coin-Liste laden ────────────────────────────────────────────────────────
 
@@ -106,10 +144,22 @@ async def save_snapshot() -> None:
 
     Nutzt atomic write (tmp + rename), damit ein halb-geschriebener Snapshot
     beim nächsten Start nicht zu einem kaputten Load führt.
+
+    P2.20: der ~12MB-JSON-Dump + os.replace liefen synchron auf dem Event-Loop und
+    blockierten alle 60s die WS-Consumer + den TCP-Server. Nur der konsistente
+    Buffer-Snapshot wird jetzt kurz unter dem Lock kopiert (schnell, flache
+    Referenz-Kopie); die Serialisierung + der Disk-Write laufen im Thread. Die
+    Candle-Listen werden nie in-place mutiert (nur appended), der Thread liest also
+    einen stabilen Snapshot, waehrend der Loop weiter Kerzen in die Deques schiebt.
     """
     async with _BUFFER_LOCK:
         snapshot = {sym: list(buf) for sym, buf in _BUFFERS.items() if len(buf) > 0}
 
+    await asyncio.to_thread(_write_snapshot_to_disk, snapshot)
+
+
+def _write_snapshot_to_disk(snapshot: dict[str, list]) -> None:
+    """Blocking JSON-Dump + atomic rename — laeuft im Thread, nie auf dem Event-Loop."""
     tmp = SNAPSHOT_FILE + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -212,11 +262,7 @@ async def ws_worker(worker_id: int, symbols: list[str]) -> None:
 
                 pong_task = asyncio.create_task(_chart_pong_task())
                 try:
-                    async for msg in ws:
-                        try:
-                            await _process_ws_message(msg)
-                        except Exception as e:
-                            logger.debug(f"WS-Worker {worker_id} message-error: {e}")
+                    await _consume_with_watchdog(ws, worker_id)
                 finally:
                     pong_task.cancel()
                     try:
@@ -232,6 +278,32 @@ async def ws_worker(worker_id: int, symbols: list[str]) -> None:
         spread = (worker_id - 1) * 2.0
         await asyncio.sleep(backoff + spread)
         backoff = min(backoff * 2.0, 300.0)  # exponential backoff, cap 300s
+
+
+async def _consume_with_watchdog(ws, worker_id: int) -> None:
+    """Liest Messages bis Timeout oder Close und kehrt dann zurueck (Caller reconnectet).
+
+    P2.20: statt ``async for msg in ws`` (blockiert ewig, wenn Binance die
+    Connection annimmt aber stumm laesst) wird jede Message mit
+    ``asyncio.wait_for(ws.recv(), CHART_WS_MESSAGE_WATCHDOG_SEC)`` geholt. Bleibt
+    laenger als das Watchdog-Fenster jede Message aus, gilt die Connection als tot
+    und die Funktion kehrt zurueck → der ws_worker verlaesst den ``async with`` und
+    reconnectet mit Backoff. Ein ConnectionClosed aus ``recv()`` propagiert wie
+    gehabt zum ws_worker-Handler.
+    """
+    last_msg = time.time()
+    while True:
+        try:
+            msg = await asyncio.wait_for(ws.recv(), timeout=CHART_WS_MESSAGE_WATCHDOG_SEC)
+        except asyncio.TimeoutError:
+            silence = time.time() - last_msg
+            logger.warning(f"⏰ WS-Worker {worker_id}: {silence:.0f}s keine Messages — erzwinge Reconnect.")
+            return
+        last_msg = time.time()
+        try:
+            await _process_ws_message(msg)
+        except Exception as e:
+            logger.debug(f"WS-Worker {worker_id} message-error: {e}")
 
 
 async def _process_ws_message(raw_msg: str | bytes) -> None:
@@ -355,6 +427,30 @@ async def snapshot_loop() -> None:
             logger.error(f"Snapshot-Loop-Error: {e}")
 
 
+async def coin_refresh_loop() -> None:
+    """P2.15: zieht neu in coins.json aufgetauchte Coins additiv nach (eigener WS-Worker).
+
+    Konservativ: nie Streams fuer entfernte Coins abbauen (das bleibt dem Restart)
+    — ein faelschlich (torn/leerer coins.json-Read) fehlender Coin darf nicht live
+    aus dem Chart-Buffer fallen. compute_new_symbols() haelt diese Invariante.
+    """
+    while True:
+        await asyncio.sleep(COIN_REFRESH_INTERVAL_SEC)
+        try:
+            new = compute_new_symbols(set(load_coins()), _TRACKED_SYMBOLS)
+            if not new:
+                continue
+            logger.info(f"🆕 {len(new)} neue Coins in coins.json — Chart-Streams werden nachgezogen.")
+            for i in range(0, len(new), STREAMS_PER_WS):
+                chunk = new[i : i + STREAMS_PER_WS]
+                wid = _next_worker_id()
+                asyncio.create_task(ws_worker(wid, chunk))
+                logger.info(f"🆕 Chart-WS-Worker {wid} fuer {len(chunk)} neue Coins gestartet.")
+            _TRACKED_SYMBOLS.update(new)
+        except Exception as e:
+            logger.error(f"Coin-Refresh-Fehler: {e}")
+
+
 async def main() -> None:
     # 1. Snapshot laden (wenn vorhanden)
     load_snapshot()
@@ -365,12 +461,13 @@ async def main() -> None:
         logger.error("Keine Coins geladen — Service kann nicht starten.")
         return
     logger.info(f"=== 📊 CHART DATA SERVICE START ({len(coins)} Coins) ===")
+    _TRACKED_SYMBOLS.update(coins)
 
     # 3. WebSocket-Worker starten (chunked)
     ws_tasks = []
     for i in range(0, len(coins), STREAMS_PER_WS):
         chunk = coins[i : i + STREAMS_PER_WS]
-        worker_id = i // STREAMS_PER_WS + 1
+        worker_id = _next_worker_id()
         ws_tasks.append(asyncio.create_task(ws_worker(worker_id, chunk)))
         if i > 0:
             await asyncio.sleep(3.0)  # stagger: avoid simultaneous connects
@@ -381,12 +478,13 @@ async def main() -> None:
     addr = server.sockets[0].getsockname()
     logger.info(f"🔌 TCP-Server hört auf {addr[0]}:{addr[1]}")
 
-    # 5. Snapshot-Loop
+    # 5. Snapshot-Loop + Coin-Refresh-Loop
     snapshot_task = asyncio.create_task(snapshot_loop())
+    refresh_task = asyncio.create_task(coin_refresh_loop())
 
     async with server:
         # Server läuft bis KeyboardInterrupt
-        await asyncio.gather(server.serve_forever(), *ws_tasks, snapshot_task)
+        await asyncio.gather(server.serve_forever(), *ws_tasks, snapshot_task, refresh_task)
 
 
 if __name__ == "__main__":

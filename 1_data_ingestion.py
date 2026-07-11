@@ -14,6 +14,7 @@ from psycopg2 import extras
 
 from core.database import get_db_connection
 from core.http_retry import RetryBudget, backoff_seconds
+from core.market_utils import load_coins  # reines coins.json-Re-Read (P2.15)
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
@@ -345,8 +346,12 @@ def run_freshness_job(symbols):
         session.close()
 
 
-async def freshness_fallback_loop(symbols):
-    """Hintergrund-Brücke: hält die heißen TFs frisch, wenn (und nur wenn) der WS tot ist."""
+async def freshness_fallback_loop(tracked):
+    """Hintergrund-Brücke: hält die heißen TFs frisch, wenn (und nur wenn) der WS tot ist.
+
+    ``tracked`` ist das geteilte Symbol-Set (vom Coin-Refresh mutiert); pro Durchlauf
+    geschnappschusst, damit neu nachgezogene Coins die Freshness-Abdeckung mitbekommen.
+    """
     loop = asyncio.get_running_loop()
     await asyncio.sleep(CATCHUP_WARMUP_SEC + 60)  # WS + erster Catch-up zuerst
     logger.info("🩹 Freshness-Fallback bereit (aktiviert sich nur bei totem WS).")
@@ -355,23 +360,68 @@ async def freshness_fallback_loop(symbols):
             await asyncio.sleep(FRESHNESS_IDLE_SLEEP_SEC)
             continue
         logger.warning("🩹 WS liefert keine Daten — REST-Freshness-Durchlauf startet (heiße TFs).")
-        updated = await loop.run_in_executor(None, run_freshness_job, symbols)
+        updated = await loop.run_in_executor(None, run_freshness_job, sorted(tracked))
         logger.info(f"🩹 Freshness-Durchlauf fertig: {updated} Kerzen-Upserts.")
         await asyncio.sleep(FRESHNESS_IDLE_SLEEP_SEC)
 
 
-async def periodic_rest_catchup(symbols):
-    """Background loop: erster Lauf nach Warm-up, danach alle 12h."""
+async def periodic_rest_catchup(tracked):
+    """Background loop: erster Lauf nach Warm-up, danach alle 12h.
+
+    ``tracked`` ist das geteilte Symbol-Set (vom Coin-Refresh mutiert); pro Zyklus
+    geschnappschusst, damit neu nachgezogene Coins die 12h-Abdeckung mitbekommen.
+    """
     loop = asyncio.get_running_loop()
     logger.info(f"⏳ Catch-up wartet {CATCHUP_WARMUP_SEC}s (WS-Fleet zuerst verbinden lassen)...")
     await asyncio.sleep(CATCHUP_WARMUP_SEC)
     while True:
         # In Thread auslagern (blockiert die Loop nicht); die CPU-Arbeit selbst
         # passiert in den Child-Prozessen des ProcessPools.
-        await loop.run_in_executor(None, run_catchup_job, symbols)
+        await loop.run_in_executor(None, run_catchup_job, sorted(tracked))
 
         logger.info("💤 Catch-Up Job schläft für 12 Stunden...")
         await asyncio.sleep(12 * 3600)  # 12 Stunden warten
+
+
+async def _spawn_ws_workers_for(new_symbols):
+    """Spawnt zusaetzliche WS-Worker fuer neue Symbole (additiv, Sharding + Stagger
+    wie im initialen Fleet). Die Worker schreiben in denselben WS_KLINE_BUFFER; der
+    globale db_buffer_flusher (im initialen Fleet gestartet) persistiert sie mit."""
+    for idx, chunk in enumerate(_new_symbol_stream_chunks(new_symbols)):
+        wid = _allocate_ws_worker_id()
+        startup_delay = idx * WS_STARTUP_STAGGER_SEC  # 300-Connects/5min-Limit schonen
+        asyncio.create_task(binance_ws_worker(wid, chunk, startup_delay=startup_delay))
+        logger.info(f"🆕 WS-Worker {wid}: {len(chunk)} neue Streams gestartet.")
+
+
+async def coin_refresh_loop(tracked):
+    """P2.15: zieht neu in coins.json aufgetauchte Coins ohne Prozess-Restart nach.
+
+    Pro neuem Symbol: Tabellen + einmaliger 730d-Catch-up (Child-Prozesse, GIL-frei)
+    und ein zusaetzlicher WS-Worker. ``tracked`` wird mit den Catch-up-/Freshness-Loops
+    geteilt (die es pro Zyklus schnappschussen), sodass neue Coins auch die 12h-Catch-up-
+    und Freshness-Abdeckung bekommen. Erst nach Catch-up + WS wird das Symbol als
+    bekannt markiert (sonst wuerde ein paralleler Loop es ohne Tabelle sehen)."""
+    loop = asyncio.get_running_loop()
+    await asyncio.sleep(CATCHUP_WARMUP_SEC + 60)  # WS-Fleet + erster Catch-up zuerst
+    logger.info("🆕 Coin-Refresh bereit (zieht neue Listings ohne Restart nach).")
+    while True:
+        await asyncio.sleep(COIN_REFRESH_INTERVAL_SEC)
+        try:
+            new_symbols = compute_new_symbols(set(load_coins()), tracked)
+            if not new_symbols:
+                continue
+            preview = ", ".join(new_symbols[:10]) + (" …" if len(new_symbols) > 10 else "")
+            logger.info(f"🆕 {len(new_symbols)} neue Coins in coins.json: {preview}")
+            # 1. Tabellen + einmaliger Catch-up (Child-Prozesse, blockiert die Loop nicht)
+            await loop.run_in_executor(None, run_catchup_job, new_symbols)
+            # 2. WS-Streams additiv nachziehen
+            await _spawn_ws_workers_for(new_symbols)
+            # 3. Erst jetzt als bekannt markieren (Catch-up + WS sind live)
+            tracked.update(new_symbols)
+            logger.info(f"✅ {len(new_symbols)} neue Coins live (Tabellen + Catch-up + WS).")
+        except Exception as e:
+            logger.error(f"Coin-Refresh-Fehler: {e}")
 
 
 # PHASE 2 & 3: WEBSOCKET STREAMING & DB FLUSHER
@@ -528,6 +578,45 @@ WS_PING_INTERVAL_SEC = None  # Disable library pings — Binance sends its own p
 # both sides send pings simultaneously → library times out
 # waiting for its pong → false disconnect after ~206s.
 WS_PING_TIMEOUT_SEC = None  # Not needed when ping_interval=None
+
+# P2.15: coins.json wird zur Laufzeit von 6_housekeeping (taeglich 03:00 UTC)
+# aktualisiert. Ohne Re-Read bekaemen neu gelistete Coins bis zum Prozess-Restart
+# keine Daten (kein WS-Stream, kein Catch-up). Der Refresh liest coins.json
+# periodisch neu und zieht neue Symbole ADDITIV nach: Tabellen + einmaliger
+# Catch-up + eigener WS-Worker. Konservativ — entfernte Coins werden NICHT
+# abgebaut (Stream-Teardown bleibt dem Restart), damit ein faelschlich (torn/leerer
+# coins.json-Read) fehlender Coin nicht live aus der Ingestion faellt.
+COIN_REFRESH_INTERVAL_SEC = 900
+
+# Fortlaufende WS-Worker-ID ueber initialen Fleet + Refresh-Worker hinweg, damit
+# nachgezogene Worker eindeutige IDs (Logs, Reconnect-Spread) bekommen.
+_next_ws_worker_id = 1
+
+
+def _allocate_ws_worker_id() -> int:
+    global _next_ws_worker_id
+    wid = _next_ws_worker_id
+    _next_ws_worker_id += 1
+    return wid
+
+
+def compute_new_symbols(current: set, tracked: set) -> list:
+    """Neue, noch nicht getrackte Symbole (additiv, sortiert).
+
+    Konservativ: ein leeres ``current`` (torn/leerer coins.json-Read) ergibt keine
+    Aenderung — nie Coins entfernen, nie auf einem kaputten Read reagieren.
+    load_coins() liefert bei kaputtem Read [] (all-or-nothing json.load).
+    """
+    if not current:
+        return []
+    return sorted(current - tracked)
+
+
+def _new_symbol_stream_chunks(new_symbols: list) -> list:
+    """Baut die kline-Stream-Namen fuer neue Symbole und shardet sie wie der
+    initiale Fleet (<= WS_STREAMS_PER_WORKER Streams/Connection)."""
+    all_streams = [f"{sym.lower()}@kline_{tf}" for sym in new_symbols for tf in TIMEFRAMES]
+    return [all_streams[i : i + WS_STREAMS_PER_WORKER] for i in range(0, len(all_streams), WS_STREAMS_PER_WORKER)]
 
 
 def _apply_keepalive(ws) -> None:
@@ -770,7 +859,7 @@ async def start_websocket_fleet(symbols):
     tasks = [db_buffer_flusher()]
     for i, chunk in enumerate(stream_chunks):
         startup_delay = i * WS_STARTUP_STAGGER_SEC
-        tasks.append(binance_ws_worker(i + 1, chunk, startup_delay=startup_delay))
+        tasks.append(binance_ws_worker(_allocate_ws_worker_id(), chunk, startup_delay=startup_delay))
 
     await asyncio.gather(*tasks)
 
@@ -793,17 +882,24 @@ async def main_async():
 
     # 1. Aktuelle Liste holen (Synchron)
     symbols = update_trading_pairs()
+    # Geteiltes Symbol-Set: der Coin-Refresh (P2.15) mutiert es, die Catch-up-/
+    # Freshness-Loops schnappschussen es pro Zyklus. Der initiale WS-Fleet bekommt
+    # den Start-Snapshot (seine Streams sind in die Connection-URLs gebacken).
+    tracked = set(symbols)
 
     # 2. Den Background-Task für den 7-Tage-Check (läuft direkt 1x an und dann alle 12h)
-    catchup_task = asyncio.create_task(periodic_rest_catchup(symbols))
+    catchup_task = asyncio.create_task(periodic_rest_catchup(tracked))
 
     # 3. WebSockets sofort starten
     ws_task = asyncio.create_task(start_websocket_fleet(symbols))
 
     # 4. REST-Freshness-Brücke (aktiv nur bei totem WS — z.B. IP-Drossel)
-    freshness_task = asyncio.create_task(freshness_fallback_loop(symbols))
+    freshness_task = asyncio.create_task(freshness_fallback_loop(tracked))
 
-    await asyncio.gather(catchup_task, ws_task, freshness_task)
+    # 5. Coin-Refresh: zieht neu gelistete Coins ohne Restart nach (P2.15)
+    refresh_task = asyncio.create_task(coin_refresh_loop(tracked))
+
+    await asyncio.gather(catchup_task, ws_task, freshness_task, refresh_task)
 
 
 def main():
