@@ -862,8 +862,11 @@ def main():
             clean_old_database_entries()
 
             # 5. Die alten Bilder löschen
-            cleanup_generated_charts("generated_charts")
-            cleanup_generated_charts("charts")
+            cleanup_generated_charts("generated_charts")  # 7_pattern_detector
+            cleanup_generated_charts("charts")  # core/charting.py
+            # P3.11: 22_ip_pattern_bot writes here and nothing was cleaning it →
+            # unbounded growth. Same outbox-referenced guard as the others.
+            cleanup_generated_charts("institutional_charts")
 
             # 6. FIX: Alte (gesendete) Outbox-entries löschen — sonst läuft die
             # Tabelle unbegrenzt voll.
