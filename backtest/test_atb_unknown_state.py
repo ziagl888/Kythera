@@ -37,6 +37,12 @@ def _load_atb1():
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "14_ai_atb_bot.py"),
     )
     mod = importlib.util.module_from_spec(spec)
+    # Pre-seed sys.modules with the real pandas BEFORE the patch.dict block. Without
+    # this, 14_ai_atb_bot's first pandas import happens INSIDE the patch context and
+    # patch.dict removes it again on __exit__, so any later-collected test module that
+    # imports pandas dies with "cannot load module more than once per process". Pattern
+    # from PR #69, commit 24fe759.
+    import pandas  # noqa: F401
     # 14_ai_atb_bot imports heavy plotting / DB deps at module load; stub them so
     # the pure helper can be imported standalone and DB-free.
     with mock.patch.dict(
