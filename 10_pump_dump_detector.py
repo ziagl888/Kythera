@@ -930,7 +930,20 @@ def process_coin_logics(conn, symbol):
             post_threshold = float(best_art["threshold"])
         else:
             # LEGACY: EIN 3-Klassen-Modell, positionales Feature-Array.
-            features_array = np.array([[base_features[c] for c in EPD_BASE_FEATURES]])
+            # T-2026-CU-9050-060 (F3): post-P1.13 a young coin's warmup rows read
+            # rsi_14 = NaN where the engine previously fabricated 50. The legacy
+            # pkl is an XGBClassifier, and XGBoost does NOT raise on NaN — it
+            # routes NaN down untrained default branches and scores an input the
+            # trainer never produced (verified against the production pickle).
+            # Impute per the legacy trainer's own NULL contract instead
+            # (legacy_trainers/zzz.py:7609-7617: rsi -> 50, everything else -> 0;
+            # the ema-dists collapse to 0 there via ema := price): train/serve
+            # parity, same principle as the EPD2 branch's fillna(0) — whose 0 is
+            # ITS trainer's contract (train_binary) and stays untouched above.
+            # Serving values are identical to what this model saw its whole
+            # pre-P1.13 life, so live semantics do not change.
+            imputed = {c: (v if np.isfinite(v) else (50.0 if c == "rsi" else 0.0)) for c, v in base_features.items()}
+            features_array = np.array([[imputed[c] for c in EPD_BASE_FEATURES]])
             prob = model.predict_proba(features_array)[0]
             classes = list(model.classes_)
 

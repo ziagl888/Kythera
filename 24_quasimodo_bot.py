@@ -245,6 +245,21 @@ def scan_market():
                         features['trend_DOWN'] = 1 if trend == 'DOWN' else 0
                         features['trend_SIDEWAYS'] = 1 if trend == 'SIDEWAYS' else 0
 
+                        # T-2026-CU-9050-060 (F4): impute non-finite values (inf/NaN → 0)
+                        # like every core/*_features.py builder — and like this bot's own
+                        # trainer, which fits and scores on .fillna(0) frames
+                        # (qm_ml_trainer.py:321/353/378): exact NaN parity (inf→0 is
+                        # deliberately stricter — bare fillna(0) leaves inf, which is
+                        # unreachable here by construction). The
+                        # XGB model would NOT crash on NaN — it routes NaN down untrained
+                        # default branches, a silent skew. Reachable: ffill().bfill()
+                        # above leaves NaN in all-NaN columns, which arise not only from
+                        # frozen windows (those yield 0 pivots, the scan bails earlier)
+                        # but also when the LEFT JOIN finds no indicator rows for the
+                        # whole window (engine outage/coverage gap) while price pivots
+                        # still exist.
+                        features = {k: (float(v) if np.isfinite(v) else 0.0) for k, v in features.items()}
+
                         ml_input = pd.DataFrame([features])
                         for col in expected_features:
                             if col not in ml_input.columns:
