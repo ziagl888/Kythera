@@ -19,6 +19,7 @@ from typing import Any, Iterator
 import psutil
 from flask import Flask, Response, jsonify, request, stream_with_context
 
+from core.fleet import FLEET
 from core.process_control import is_parked, park, request_restart, unpark
 
 # ── Config ─────────────────────────────────────────────────────────────────
@@ -27,39 +28,12 @@ BASE_DIR = Path(__file__).parent
 LOG_DIR = BASE_DIR / "logs"
 PORT = 5000
 
-# Process definitions — mirrors main_watchdog.py
-PROCESSES: list[dict[str, Any]] = [
-    {"name": "Data Ingestion", "script": "1_data_ingestion.py", "group": "core", "restart_interval": None},
-    {"name": "Chart Data Service", "script": "chart_data_service.py", "group": "core", "restart_interval": None},
-    {"name": "Indicator Engine", "script": "2_indicator_engine.py", "group": "core", "restart_interval": 21600},
-    {"name": "Detectors", "script": "3_detectors.py", "group": "core", "restart_interval": 21600},
-    {"name": "Telegram Bot", "script": "4_telegram_bot.py", "group": "core", "restart_interval": None},
-    {"name": "Trade Monitor", "script": "5_trade_monitor.py", "group": "core", "restart_interval": None},
-    {"name": "Housekeeping", "script": "6_housekeeping.py", "group": "core", "restart_interval": None},
-    {"name": "Pattern detector", "script": "7_pattern_detector.py", "group": "strategy", "restart_interval": None},
-    {"name": "AI Trade Monitor", "script": "8_ai_trade_monitor.py", "group": "strategy", "restart_interval": None},
-    {"name": "AI SR Bot", "script": "9_ai_sr_bot.py", "group": "strategy", "restart_interval": None},
-    {"name": "Pump Dump Detector", "script": "10_pump_dump_detector.py", "group": "strategy", "restart_interval": None},
-    {"name": "AI MIS1 Detector", "script": "11_ai_mis_bot.py", "group": "ai", "restart_interval": None},
-    {"name": "AI ATS1 Detector", "script": "12_ai_ats_bot.py", "group": "ai", "restart_interval": None},
-    {"name": "AI RUB1 Detector", "script": "13_ai_rub_bot.py", "group": "ai", "restart_interval": None},
-    {"name": "AI ATB1 Detector", "script": "14_ai_atb_bot.py", "group": "ai", "restart_interval": None},
-    {"name": "AI AIM2 Detector", "script": "15_ai_master_bot.py", "group": "ai", "restart_interval": None},
-    {
-        "name": "SMC FOREX Detector",
-        "script": "16_smc_forex_metals_bot.py",
-        "group": "strategy",
-        "restart_interval": None,
-    },
-    {"name": "Mayank Bot", "script": "17_mayank_bot.py", "group": "strategy", "restart_interval": None},
-    {"name": "AI ABR1 Detector", "script": "18_ai_abr1_bot.py", "group": "ai", "restart_interval": None},
-    {"name": "Whale logger Bot", "script": "19_whale_logger_bot.py", "group": "logger", "restart_interval": None},
-    {"name": "Funding logger Bot", "script": "20_funding_logger_bot.py", "group": "logger", "restart_interval": None},
-    {"name": "BTC SMC Bot", "script": "21_btc_smc_strategy.py", "group": "strategy", "restart_interval": None},
-    {"name": "Market Tracker", "script": "23_market_tracker.py", "group": "logger", "restart_interval": None},
-    {"name": "Quasimodo Bot", "script": "24_quasimodo_bot.py", "group": "strategy", "restart_interval": None},
-    {"name": "TD & BB Bot", "script": "25_smc_ml_sniper.py", "group": "ai", "restart_interval": None},
-]
+# Prozessliste — zentral in core/fleet.py definiert (Single Source, geteilt mit
+# main_watchdog.py; T-2026-CU-9050-091, R2(a)). Das Dashboard nutzt name/script/
+# group/restart_interval; das zusätzliche start_delay-Feld (nur für den Watchdog-
+# Start) ist hier ein No-op. Seit der Zentralisierung zeigt das Dashboard die
+# volle Fleet inkl. der zuvor fehlenden Bots 26–34.
+PROCESSES: list[dict[str, Any]] = FLEET
 
 # script → process info lookup
 SCRIPT_MAP = {p["script"]: p for p in PROCESSES}

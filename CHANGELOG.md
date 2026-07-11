@@ -72,6 +72,38 @@ DB-freier Guard `backtest/test_published_targets.py`: behavioral gegen den echte
 Insert-Pfad von `post_ai_signal` (stored == publizierte Cornix-Targets == n_show) plus
 strukturelle Guards für die vier Bots und den Monitor-Scoring-Loop; fällt auf dem
 Pre-Fix-Stand (stored 8, published 3).
+## [2026-07-11] Fleet-Prozessliste zentralisiert: `core/fleet.py` als Single Source (R2(a)/P1.38-Teilaspekt, T-2026-CU-9050-091)
+
+Die Prozessliste existierte doppelt und war gedriftet: `main_watchdog.py`
+(`PROCESSES_TO_RUN`, autoritativ, mit `start_delay`, volle Fleet) vs. `dashboard.py`
+(`PROCESSES`, mit `group`, aber **ohne** die Bots 26–34). Das Dashboard zeigte damit
+nur einen Teil der laufenden Fleet und musste bei jedem neuen Bot von Hand nachgezogen
+werden.
+
+**Fix:** neue `core/fleet.py` definiert die Fleet **einmal** (Name/Script/Group/
+`start_delay`/`restart_interval`); Watchdog und Dashboard importieren dieselbe Liste.
+Der Watchdog liest name/script/start_delay/restart_interval (ignoriert `group`), das
+Dashboard liest name/script/group/restart_interval (ignoriert `start_delay`) — das für
+den einen Konsumenten irrelevante Feld ist für den anderen ein No-op.
+
+**Keine Verhaltensänderung am Watchdog:** identische Prozesse, Start-Reihenfolge und
+Staffel-Delays wie zuvor inline (`backtest/test_fleet_definition.py` pinnt die
+autoritative Projektion Byte-für-Byte). Die Lifecycle-Mechanik — Single-Instance-Mutex/
+Orphan-Sweep/CTRL_BREAK (P0.2/P2.48) und Supervision/Backoff/Heartbeat (P1.37/P2.47) —
+ist **nicht** angefasst; zentralisiert wurde ausschließlich die LISTE.
+
+**Sichtbare Änderung nur im Dashboard:** es zeigt jetzt automatisch die volle Fleet
+inkl. der zuvor fehlenden Bots 26–34. Deren Anzeige-`group` wurde bewusst aus dem
+bestehenden Set (`core`/`ai`/`strategy`/`logger`) gewählt — die Regime-/Orchestrator-/
+UFI1-Bots 26–29 als `strategy`, die Research-/MAX1-Bots 30–34 als `ai` —, damit kein
+ungestyltes Badge und keine neue Filterkategorie im Dashboard entsteht. `22_ip_pattern_bot.py`
+bleibt (wie im Watchdog seit jeher auskommentiert) aus der Fleet ausgeschlossen.
+
+**Ledger:** R2(a) mit Teilhaken annotiert (R2(b), das `schema.sql`-Thema, bleibt offen —
+braucht VPS/DB); P1.38-Teilaspekt „Prozessliste driftet" abgehakt, die drei übrigen
+Dashboard-Fixes (CSRF, Log-Streaming-Handle, `/api/status`-psutil-Sweeps) bleiben offen.
+Ein Guard aus `backtest/test_max1_gate.py` wurde von `main_watchdog.py` auf `core/fleet.py`
+nachgezogen (die Registrierung wohnt jetzt dort).
 
 ## [2026-07-11] AIM2-Serving: Kandidaten-Fenster 60 min + tabellen-agnostischer conv-Dedup-Key (P2.35, T-2026-CU-9050-090)
 

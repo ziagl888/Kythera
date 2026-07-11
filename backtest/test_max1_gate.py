@@ -221,9 +221,11 @@ def test_artifact_path_is_not_promoted_into_the_live_root_by_code():
 
 
 def test_registered_in_watchdog():
-    wd = (ROOT / "main_watchdog.py").read_text(encoding="utf-8")
-    assert '"script": "34_ai_max1_bot.py"' in wd
-    assert '"start_delay": 223' in wd
+    # Die Fleet-Prozessliste ist seit T-2026-CU-9050-091 in core/fleet.py
+    # zentralisiert; der Watchdog konsumiert sie. Registrierung dort prüfen.
+    fleet = (ROOT / "core/fleet.py").read_text(encoding="utf-8")
+    assert '"script": "34_ai_max1_bot.py"' in fleet
+    assert '"start_delay": 223' in fleet
 
 
 if __name__ == "__main__":
