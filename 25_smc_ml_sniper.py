@@ -378,7 +378,13 @@ def extract_ml_features(df, idx, direction):
     features['trend_UP'] = 1 if trend == 'UP' else 0
     features['trend_DOWN'] = 1 if trend == 'DOWN' else 0
     features['trend_SIDEWAYS'] = 1 if trend == 'SIDEWAYS' else 0
-    return features
+    # T-2026-CU-9050-060 (F4): impute non-finite values like every
+    # core/*_features.py builder does (inf → 0, NaN → 0). Unreachable today —
+    # ffill().bfill() upstream only leaves NaN when a column is all-NaN, and an
+    # all-NaN rsi_14 implies a frozen window that yields 0 pivots — but this was
+    # the only ML feature path without the guard, and predict_proba raises on
+    # the first mid-series NaN.
+    return {k: (float(v) if np.isfinite(v) else 0.0) for k, v in features.items()}
 
 
 def send_cornix_signal(

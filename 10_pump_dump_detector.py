@@ -930,7 +930,17 @@ def process_coin_logics(conn, symbol):
             post_threshold = float(best_art["threshold"])
         else:
             # LEGACY: EIN 3-Klassen-Modell, positionales Feature-Array.
+            # T-2026-CU-9050-060 (F3): post-P1.13 a brand-new coin's warmup rows
+            # carry rsi_14 = NaN and sklearn raises on NaN input — previously only
+            # the broad except below caught that (safe suppression, but as ERROR
+            # noise). Skip explicitly instead. Deliberately NOT .fillna(0) like
+            # the EPD2 branch: that 0 mirrors a documented trainer contract
+            # (train_binary), the legacy pkl has none — and rsi=0 would read
+            # "extreme oversold", turning today's safe no-signal into a possible
+            # false-signal path. Live semantics unchanged: no signal, just quiet.
             features_array = np.array([[base_features[c] for c in EPD_BASE_FEATURES]])
+            if not np.isfinite(features_array).all():
+                return
             prob = model.predict_proba(features_array)[0]
             classes = list(model.classes_)
 

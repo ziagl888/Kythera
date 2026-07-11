@@ -245,6 +245,14 @@ def scan_market():
                         features['trend_DOWN'] = 1 if trend == 'DOWN' else 0
                         features['trend_SIDEWAYS'] = 1 if trend == 'SIDEWAYS' else 0
 
+                        # T-2026-CU-9050-060 (F4): impute non-finite values like every
+                        # core/*_features.py builder does (inf → 0, NaN → 0). Unreachable
+                        # today — ffill().bfill() above only leaves NaN when a column is
+                        # all-NaN, and an all-NaN rsi_14 implies a frozen window that
+                        # yields 0 pivots — but this was the only ML feature path without
+                        # the guard, and predict_proba raises on the first mid-series NaN.
+                        features = {k: (float(v) if np.isfinite(v) else 0.0) for k, v in features.items()}
+
                         ml_input = pd.DataFrame([features])
                         for col in expected_features:
                             if col not in ml_input.columns:

@@ -1,3 +1,62 @@
+## [2026-07-11] Post-Merge-Review zu P1.13: RSI-Flat-Fall dokumentiert, EPD-Legacy-Guard, isfinite-Angleich in Bot 24/25 (T-2026-CU-9050-060)
+
+Drei unabhängige Reviewer-Läufe über den gemergten Stand von PR #43
+(T-2026-CU-9050-054) — Verdict einstimmig APPROVED, der Fix selbst ist korrekt
+und symmetrisch, kein Rollback. Aber vier belegte Ungenauigkeiten, die dieser
+Eintrag korrigiert bzw. deren Fixes er dokumentiert.
+
+**F1 — RSI ist auch JENSEITS des Warm-ups dauerhaft NaN, wenn das Preisfenster
+vollständig konstant ist** (illiquider Coin, Neu-Listing-Vorlauf, Trading-Halt):
+`up = down = 0` auf jeder Zeile → `rs = 0/0 = NaN` → RSI auf jeder Zeile NaN,
+nicht nur im Kopf. Sobald EINE Preisbewegung existiert, hält `ewm(adjust=False)`
+`roll_down` für immer > 0 — der Zustand gilt also genau für voll-konstante
+Fenster. Entscheid (Review-Empfehlung): NaN bewusst belassen — „kein RSI
+definiert" ist ehrlich, eine 50 wäre wieder Fabrikation. Strukturell folgenlos:
+ein eingefrorenes Fenster erzeugt 0 Pivots (`argrelextrema` auf einer Konstanten
+ist leer), Bot 24 braucht ≥4 alternierende Pivots, Bot 25 ≥3 Peaks/Troughs —
+beide `continue`n vor dem ML-Pfad; die Roh-Consumer (`strat_*`) vergleichen
+NaN → False → kein Signal. Jetzt als Kommentar in `calculate_rsi` am Code.
+WMA/BOLL/DONCHIAN haben den Fall NICHT (`rolling().std()` einer Konstanten
+ist 0, nicht NaN) — dort ist NaN wirklich nur der Warm-up-Kopf.
+
+**F2/F5 — Umfangs-Korrektur zum PR-#43-Text:** „ausschließlich
+Warm-up-Kopfzeilen" war zweifach zu eng: (a) der F1-Fall liegt außerhalb des
+Warm-ups; (b) der tiefste Golden-Breach ist `wma_200` in Zeile 198 — ein
+199-Zeilen-Warm-up ist keine „Kopfzeile". Der Reviewer-Zählstand sind zudem
+**821** NaN-Breaches je Fixture, nicht 816 (Differenz: 5
+RSI-Zeile-0-Transitionen). Die Golden-Fixtures (BTC/ETH/SOL/DOGE, liquide)
+können den RSI-Flat-Fall strukturell nie auslösen — „Golden belegt den Umfang"
+gilt nur für den Warm-up-Teil, nicht für den illiquiden Teil der ~538er-Fleet.
+Betroffen sind ferner ALLE `rsi_*`- (6/9/12/14/24) und `wma_*`-Spalten, nicht
+nur `rsi_14`/`wma_21` wie im PR-Body (alle Consumer imputieren — unkritisch).
+
+### Fixed
+- `10_pump_dump_detector.py` (F3): der LEGACY-EPD-Pfad (greift nur ohne
+  deploytes EPD2-Artefakt — also heute) baute das positionale Feature-Array ohne
+  `fillna`. Bei `rsi_14 = NaN` (Neu-Listing, erste ~14 1h-Kerzen) warf sklearn
+  und der breite Exception-Handler unterdrückte das Signal — sicher, aber als
+  ERROR-Log-Rauschen. Jetzt expliziter `np.isfinite`-Skip. Bewusst NICHT
+  `.fillna(0)` wie im EPD2-Zweig: dessen 0 spiegelt den Trainer-Kontrakt
+  (`train_binary`); für das Legacy-pkl existiert kein solcher Kontrakt, und
+  `rsi=0` hieße „extrem oversold" — aus der heutigen sicheren Unterdrückung
+  würde ein möglicher Falsch-Signal-Pfad. Live-Semantik unverändert: kein
+  Signal, nur leiser.
+- `24_quasimodo_bot.py` / `25_smc_ml_sniper.py` (F4): der Feature-Bau vor
+  `predict_proba` bekommt dieselbe Non-Finite-Imputation (inf/NaN → 0) wie alle
+  `core/*_features.py`-Builder. Heute unerreichbar (das `bfill` oben lässt NaN
+  nur in All-NaN-Spalten übrig, und die implizieren 0 Pivots), aber es war der
+  einzige ML-Feature-Pfad ohne den Guard — eine latente Inkonsistenz, sobald
+  ein Preis-Indikator mid-series NaN würde.
+
+**Weiterhin offen (VPS bzw. C-Gate, unverändert aus T-054):** (1) die
+Populations-Zählung „wie viele Coins liegen unter ~170 Kerzen je TF" braucht
+eine VPS-Session — sie beziffert den Recompute-Effekt. (2) Recompute →
+TD2/BB2/QM2-Retrain → erst beim Artefakt-Rollout das `bfill` in Bot 24/25
+entfernen, nie isoliert. Achtung nach dem Recompute: das Serving imputiert die
+Warm-up-Zeilen (bfill) und füttert sie, der Trainer verwirft sie per `dropna`
+(`tools/walkforward_sim.py:245`) — die Aussage „kein Train/Serve-Skew" aus dem
+PR-#43-Text gilt nur für den Pre-Recompute-Zustand.
+
 ## [2026-07-10] EPD und SRA bekommen den Active-Trade-Check; EPDs Funding-Load wird gecacht (T-2026-CU-9050-055)
 
 Zwei Folgebefunde aus T-2026-CU-9050-042, auf Operator-Auftrag (Michi, 2026-07-10).
