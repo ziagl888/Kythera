@@ -341,6 +341,80 @@ braucht ein **Regime-Gate** (Bull-Phasen-Schalter) statt eines
 Event-Gates — Kandidat für die HMM-Regime-Studie T-2026-CU-9050-020
 bzw. Whitelist/ROM1-Integration.
 
+### 8a. MAX1 — High-Conviction-Drossel über RUB2-SHORT 🔨 (T-2026-CU-9050-067, default-off)
+
+**Soll (Operator-Entscheid Michi, 2026-07-11):** RUB2-SHORT ist die stärkste
+Short-Kante der Fleet (OOT +0,64 %/Trade netto; live seit 06.07.: 24 Closes,
+79 % TP1-WR, +4,2 % Ø — T-2026-CU-9050-044), feuert aber ~9×/Tag. Für den
+**Main-Channel** will Michi **1-3 Trades/Tag mit sehr hoher Trefferquote**.
+Nicht umgesetzt wird die Drossel *in* RUB2 (T-2026-CU-9050-050 → **wontfix**:
+RUB2 bleibt unverändert in seinem Channel). Stattdessen **MAX1**: ein eigener
+Bot, der dasselbe Modell fährt, aber nur die stärksten Kandidaten postet.
+
+**Mechanik (`34_ai_max1_bot.py` → `core/max1_gate.py`, reine Selektion):**
+- **Klon, kein Refactor:** Detection/Features/Funding-As-of kommen aus den
+  geteilten Buildern (`core/rub_features.py`, `core/funding_features.py` —
+  importiert, nicht angefasst, X-R1), die Geometrie aus dem geteilten
+  `hvn_sr_trade_geometry`. Damit gilt die gemessene RUB2-SHORT-Winrate für genau
+  die Trades, die MAX1 stellt. Bot 13 bleibt Byte-für-Byte, wie er ist.
+- **Zwei-teilige Drossel:** hohe **Mindest-Probability** (`MAX1_MIN_PROB`, Default
+  **0,93**, nie unter dem Artefakt-Threshold 0,829) als eigentlicher Selektor, plus
+  eine **harte rollierende 24h-Kappe** (`MAX1_MAX_PER_DAY`, Default **3**) als
+  Backstop. Rollierend statt Kalendertag — kein Mitternachts-Burst.
+- **Selektion je Scan:** alle Kandidaten über dem Gate sammeln, per Symbol
+  deduplizieren (stärkster gewinnt), deterministisch sortieren (prob desc, Symbol),
+  auf die freien Slots der 24h-Kappe schneiden.
+- **24h-Zähler aus `ml_predictions_master`** — Shadow **und** Live, damit die Kappe
+  im Shadow exakt wie live greift (getreue Vorschau). Vertrag des MAX1-Tags in
+  dieser Tabelle: **eine Zeile je Selektion, nie je abgelehntem Kandidaten** —
+  darunterliegende Predictions persistiert der RUB2-Scan bereits unter seinem Tag.
+- **Scan Minute 15** (RUB2: Minute 10) — dieselbe geschlossene 1h-Kerze, nur
+  entzerrt gegen den zweiten Voll-Scan auf der DB.
+- **Posting** über `core.signal_post.post_ai_signal` (genau EINE Cornix-Message,
+  Regel 4). Tag aus `meta.model_id` des Artefakts (Regel 6 / Falle 16).
+
+**Artefakt:** `staging_models/max1_model_SHORT.pkl` — Kopie des RUB2-SHORT-Modells
+mit `meta.model_id=MAX1`, erzeugt von `tools/make_max1_artifact.py` (Modell,
+Feature-Vertrag, Kalibrator, Val-Operating-Point verbatim; nur die Identität
+wechselt). **Auf dem VPS erzeugen** (die Library-Versionen des Quell-Artefakts
+leben dort), dann Promotion nach Repo-Root = Michis Entscheid. Ohne Artefakt läuft
+Bot 34 im Idle-Modus.
+
+**RUB2-Interaktion (by design):** Cooldown-, Dedupe- und Offene-Trade-Räume sind
+über den Tag getrennt (`MAX1` vs. `RUB2`) — die beiden Bots **blocken sich nicht
+gegenseitig**. Folge: **Doppel-Exposure auf demselben Coin ist möglich** (RUB2
+postet in seinen Channel, MAX1 zusätzlich in den Main-Channel; wenn Cornix beide
+Channels tradet, läuft die Position doppelt). Das ist die bewusste Konsequenz aus
+„RUB2 bleibt unverändert" — die Positionsgröße dieser Überlappung steuert Michi
+über die Cornix-Konfiguration der beiden Channels.
+
+**Gates (default-off, Flip = Michis Entscheid):**
+- `MAX1_LIVE_POSTING=0` (shadow-first; ohne Flip nur Shadow-Zeilen).
+- `CH_MAX1` ungesetzt ⇒ Fallback `CH_MAIN`; beide ungesetzt (0) ⇒ Shadow-only.
+
+**Zwei Lesehinweise für die Shadow-Zahlen** (sie sind die Datenbasis des
+Threshold-Entscheids — nicht überlesen):
+- Die persistierte `confidence` ist die **rohe** predict_proba — dieselbe Domäne wie
+  Gate, 044-Kurve und die RUB2-Zeilen. Der kalibrierte Wert steht nur in der
+  Info-Message.
+- Die **Shadow-Frequenz ist eine Obergrenze**: live schreibt ein Post eine
+  `ai_signals`-Zeile, die weitere Selektionen desselben Coins bis zum Close sperrt;
+  im Shadow existiert diese Zeile nicht, dort drosselt nur der 4h-Cooldown. Shadow
+  zeigt also eher etwas **mehr** Posts/Tag als live — nie weniger.
+- MAX1 scannt das **volle Coin-Universum** aus `coins.json`, nicht die kuratierte
+  `MAIN_CHANNEL_COINS`-Liste. Der Main-Channel sieht damit auch Alts, die er heute
+  nicht sieht. Eine Einschränkung wäre ein eigener Operator-Entscheid.
+
+**Offen / Bestätigung einholen:**
+- [ ] **Finale Zahlen** `MAX1_MIN_PROB` / `MAX1_MAX_PER_DAY`. Vorschlag aus der
+      044-Live-Kurve (SHORT, seit 06.07., n=24 Closes — indikativ, **kein**
+      Entscheid-Grade): 0,90 → 2,6 Posts/Tag · 0,91 → 1,8 · 0,93 → 1,3.
+      Default **0,93 + Kappe 3** = selektives Ende des Zielbands. Bei n=24 ist die
+      WR-Kurve nicht trennscharf; belastbarer wird sie über die Replay-Daten oder
+      1-2 Wochen Shadow.
+- [ ] **Scharf-Schalten** (`MAX1_LIVE_POSTING=1` + Cornix-Konfiguration des
+      Main-Channels) — nach Shadow-Auswertung, ausschliesslich Michis Entscheidung.
+
 ---
 
 ## 9. AIM1 → AIM2 — Meta-Gate über alle Signale ⚠ (Konzept bewusst geändert — Bestätigung einholen)
