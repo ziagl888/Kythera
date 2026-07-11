@@ -110,7 +110,20 @@ def refresh_coins_json(base_url: str, path: str = "coins.json", *, timeout: int 
     Returns the symbol list. Raises on fetch failure (nothing is written) —
     the atomic write only happens once a full, valid list is in hand, so a
     failed refresh never truncates the live ``coins.json``.
+
+    Also refuses to write an EMPTY universe. A 200-response with an empty or
+    missing ``symbols`` key (``filter_usdt_perpetuals`` returns ``[]``) is not
+    a real universe — writing it would leave ``coins.json`` empty and cascade:
+    ingestion brings the WS-fleet up with 0 coins (the on-disk fallback in
+    ``update_trading_pairs`` only triggers on Exception), and the nightly
+    ``cleanup_delisted_trades`` would force-close every open USDT-perp trade as
+    delisted (the P2.17 shape-guard does not protect against this — real perps
+    have the shape). Raising here means the on-disk fallback kicks in on the
+    ingestion side and housekeeping skips the refresh, exactly as on a fetch
+    failure.
     """
     symbols = fetch_usdt_perpetual_symbols(base_url, timeout=timeout)
+    if not symbols:
+        raise RuntimeError("empty universe — refusing to write coins.json")
     write_coins_json_atomic(symbols, path)
     return symbols

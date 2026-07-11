@@ -6,12 +6,14 @@ Deckt die drei Eigenschaften ab, die den Doppel-Writer-Bug schließen:
      die ETHU/ETHBTC/Quarterly-Junk-Symbole fallen raus.
   2. Atomarer Write (tmp + os.replace): ein Fehler mitten im Schreiben lässt
      die bestehende coins.json unversehrt und hinterlässt keine tmp-Reste.
-  3. refresh_coins_json schreibt NUR, wenn eine vollständige Liste vorliegt.
+  3. refresh_coins_json schreibt NUR, wenn eine vollständige, nicht-leere Liste
+     vorliegt — Fetch-Fehler UND leeres/fehlendes symbols-Feld verweigern den Write.
 
 DB-frei, netz-frei (fetch wird gemonkeypatcht).
 
 Run with: pytest backtest/test_coins_writer.py -v
 """
+
 from __future__ import annotations
 
 import json
@@ -116,3 +118,41 @@ def test_refresh_does_not_write_on_fetch_failure(tmp_path, monkeypatch):
     # coins.json bleibt auf dem alten Stand — kein Truncate bei Fetch-Fehler.
     with open(path) as f:
         assert json.load(f) == ["BTCUSDT"]
+
+
+def test_refresh_refuses_empty_universe(tmp_path, monkeypatch):
+    # Ein 200er-Response mit leerer symbols-Liste liefert [] — der Guard muss
+    # den Write verweigern, sonst leert er coins.json fleet-weit.
+    path = str(tmp_path / "coins.json")
+    coins.write_coins_json_atomic(["BTCUSDT"], path)  # bestehende, gute Datei
+    monkeypatch.setattr(coins, "fetch_usdt_perpetual_symbols", lambda base_url, timeout=10: [])
+
+    with pytest.raises(RuntimeError, match="empty universe"):
+        coins.refresh_coins_json("https://fapi.binance.com", path)
+
+    # Datei unversehrt, kein tmp-Rest → der Write lief nie.
+    with open(path) as f:
+        assert json.load(f) == ["BTCUSDT"]
+    leftovers = [n for n in os.listdir(tmp_path) if n.startswith(".coins.")]
+    assert leftovers == []
+
+
+def test_refresh_refuses_missing_symbols_field(tmp_path, monkeypatch):
+    # Fehlendes symbols-Feld: filter_usdt_perpetuals nutzt .get('symbols', [])
+    # → [] → derselbe Guard greift, coins.json bleibt unangetastet.
+    path = str(tmp_path / "coins.json")
+    coins.write_coins_json_atomic(["BTCUSDT"], path)  # bestehende, gute Datei
+
+    def _fetch_from_bodyless_response(base_url, timeout=10):
+        # Echter Pfad: exchangeInfo ohne symbols-Key → Filter liefert [].
+        return coins.filter_usdt_perpetuals({})
+
+    monkeypatch.setattr(coins, "fetch_usdt_perpetual_symbols", _fetch_from_bodyless_response)
+
+    with pytest.raises(RuntimeError, match="empty universe"):
+        coins.refresh_coins_json("https://fapi.binance.com", path)
+
+    with open(path) as f:
+        assert json.load(f) == ["BTCUSDT"]
+    leftovers = [n for n in os.listdir(tmp_path) if n.startswith(".coins.")]
+    assert leftovers == []

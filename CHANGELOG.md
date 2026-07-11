@@ -185,8 +185,22 @@ AI) verlangt zusätzlich die Binance-USDT-Perp-Shape (`core.coins.looks_like_usd
 `XAUUSD`/`ETHBTC` & Co. bleiben unangetastet. Der Single-Writer aus P2.16 entfernt zudem
 die vom Audit genannte „universe wobbles with dual coins.json writers"-Ursache.
 
+**Nachtrag (Orchestrator-Review T-075): Leeres-Universum-Guard.** Der neue zentrale
+Writer hatte — anders als der alte Housekeeping-Pfad (`if symbols:` vor dem Write) —
+keinen Schutz gegen eine leere Liste. Ein 200er-Response mit leerem oder fehlendem
+`symbols`-Key (`filter_usdt_perpetuals` nutzt `.get('symbols', [])`) liefert `[]` →
+`write_coins_json_atomic([])` würde `coins.json` sauber-atomar leeren. Folge: die
+Ingestion bringt die WS-Fleet mit 0 Coins hoch (der on-disk-Fallback greift NUR bei
+Exception), und die nächtliche `cleanup_delisted_trades` schlösse ALLE offenen
+USDT-Perp-Trades als delisted (der P2.17-Shape-Guard schützt nicht davor — echte Perps
+haben die Shape). Neu: `refresh_coins_json` verweigert den Write bei leerer Liste
+(`raise RuntimeError('empty universe — refusing to write coins.json')`) — damit greift
+in der Ingestion automatisch der on-disk-Fallback und Housekeeping überspringt den
+Refresh, genau wie bei einem Fetch-Fehler.
+
 Kein Live-Eingriff (ENVIRONMENT: BUILD). DB-freie Tests: `backtest/test_coins_writer.py`
-(Filter-Parität, Atomarität, Fetch-Fehler lässt Datei unversehrt) +
+(Filter-Parität, Atomarität, Fetch-Fehler lässt Datei unversehrt, leeres/fehlendes
+`symbols`-Feld → Write verweigert, Datei unverändert) +
 `backtest/test_delisted_cleanup.py` (Shape-Guard akzeptiert echte Perps, verwirft die
 benannten Falsch-Close-Symbole). ruff/format/mypy grün.
 
