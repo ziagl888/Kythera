@@ -863,6 +863,170 @@ def _get_regime_fit_label(conn, bot_name: str) -> str:
         return "---"
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# TELEGRAM MESSAGE CHUNKING (shared by the per-bot performance post)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Telegram rejects any message over 4096 chars, and send_telegram only queues
+# into telegram_outbox — the dispatcher (4_telegram_bot) drops an over-limit
+# message silently. The per-bot post is therefore split into several messages
+# on ENTRY boundaries so a bot/table entry is never torn across two messages.
+#
+# These were nested inside job_per_bot_performance; lifted to module scope so
+# the split logic is unit-testable without a DB (backtest/test_market_tracker_
+# chunker.py). They are pure — no closure over job-local state.
+
+TELEGRAM_TEXT_LIMIT = 4096
+SAFETY_BUFFER = 200  # headroom for HTML tags + unforeseen characters
+
+
+def _group_bot_entries(src_lines: list[str]) -> list[str]:
+    """Gruppiert Kelly-Zeilen zu Bot-Blöcken (getrennt durch Leerzeilen).
+
+    Ein Bot-Eintrag darf NIEMALS über Chunks gesplittet werden — sonst
+    endet der Post mit einem halben Eintrag.
+    """
+    blocks = []
+    current = []
+    for ln in src_lines:
+        if ln == "":
+            if current:
+                blocks.append("\n".join(current))
+                current = []
+        else:
+            current.append(ln)
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
+
+def _group_table_entries(src_lines: list[str]) -> list[str]:
+    """Gruppiert Tabellen-Zeilen zu Bot-Blöcken.
+
+    Die Tabelle ist ähnlich aufgebaut wie der Kelly-Block: jede
+    Bot-Zeile (plus optional 1-3 Detail-Zeilen) endet mit einer
+    Leerzeile. Die ersten beiden Zeilen (Header + Separator) müssen
+    in JEDEM Chunk dabei sein — Tabellen ohne Header wären unlesbar.
+    """
+    if len(src_lines) < 2:
+        return []
+    # Erste zwei Zeilen sind Header + Separator → separat halten,
+    # die packen wir in jedes Chunk-Header mit rein.
+    blocks = []
+    current = []
+    for ln in src_lines[2:]:
+        if ln == "":
+            if current:
+                blocks.append("\n".join(current))
+                current = []
+        else:
+            current.append(ln)
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
+
+def _hard_split_block(block: str, budget: int) -> list[str]:
+    """Last-resort split of a SINGLE oversized entry so no chunk exceeds the
+    Telegram limit.
+
+    Normal bot/table entries sit far under budget; _build_chunks only reaches
+    for this on a pathological entry (e.g. a corrupted strategy name or a bot
+    with an abnormal detail block). Without it, one over-budget block is emitted
+    as a single >4096-char chunk and Telegram drops the whole message silently.
+    Splits on line boundaries first, then on hard character boundaries for a
+    single over-long line — the post degrades into several messages instead of
+    vanishing. Every returned piece is guaranteed <= budget.
+    """
+    if budget <= 0 or len(block) <= budget:
+        return [block]
+    pieces: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in block.split("\n"):
+        if len(line) > budget:
+            # A single line longer than the budget — flush, then char-split it.
+            if current:
+                pieces.append("\n".join(current))
+                current = []
+                current_len = 0
+            for i in range(0, len(line), budget):
+                pieces.append(line[i : i + budget])
+            continue
+        add = len(line) + (1 if current else 0)  # +1 for the rejoining "\n"
+        if current and current_len + add > budget:
+            pieces.append("\n".join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += add
+    if current:
+        pieces.append("\n".join(current))
+    return pieces
+
+
+def _build_chunks(
+    blocks: list[str],
+    header_first: str,
+    header_continued: str,
+    footer: str,
+    separator: str = "\n\n",
+) -> list[str]:
+    """Packt Bot-Blöcke in mehrere Chunks unter dem 4096-Zeichen-Limit.
+
+    - header_first: Header für den allerersten Chunk (volle Überschrift)
+    - header_continued: Header für Folge-Chunks ("continued" Markierung)
+    - footer: Footer für jeden Chunk (Legende etc.)
+    - separator: Trenner zwischen Blöcken ("\\n\\n" für Bot-Blöcke mit
+      Leerzeile, "\\n" für einzeilige Tabellen-Rows)
+    """
+    if not blocks:
+        return []
+
+    # A single block that alone exceeds the per-chunk body budget would be
+    # emitted as one over-limit chunk and then silently dropped by Telegram
+    # (>4096 chars). Normal entries sit far under budget; this only trips on a
+    # pathological one. Split such a block on line/char boundaries FIRST so
+    # every emitted chunk stays legal. Budget uses the larger of the two headers
+    # so a split piece fits whether it lands in the first or a continued chunk.
+    body_budget = TELEGRAM_TEXT_LIMIT - SAFETY_BUFFER - max(len(header_first), len(header_continued)) - len(footer)
+    normalized: list[str] = []
+    for block in blocks:
+        if len(block) > body_budget:
+            normalized.extend(_hard_split_block(block, body_budget))
+        else:
+            normalized.append(block)
+    blocks = normalized
+
+    chunks = []
+    # Erster Chunk: header_first + blocks + footer
+    # Folge-Chunks: header_continued + blocks + footer
+    current_hdr = header_first
+    current_body = []
+    current_size = len(current_hdr) + len(footer)
+
+    separator_size = len(separator)
+
+    for block in blocks:
+        needed = len(block) + (separator_size if current_body else 0)
+        if current_size + needed > TELEGRAM_TEXT_LIMIT - SAFETY_BUFFER and current_body:
+            # Chunk abschließen
+            chunks.append(current_hdr + separator.join(current_body) + footer)
+            # Neuer Chunk mit "continued" Header
+            current_hdr = header_continued
+            current_body = [block]
+            current_size = len(current_hdr) + len(footer) + len(block)
+        else:
+            current_body.append(block)
+            current_size += needed
+
+    if current_body:
+        chunks.append(current_hdr + separator.join(current_body) + footer)
+
+    return chunks
+
+
 async def job_per_bot_performance() -> None:
     """Sendet eine detaillierte Performance-Tabelle pro einzelnem Bot/Strategy.
 
@@ -900,6 +1064,23 @@ async def job_per_bot_performance() -> None:
     try:
         # `with`: see job_signal_summary — the connection must go back to the
         # pool even when one of the five queries below raises.
+        #
+        # KNOWN RISK (P2.41, T-2026-CU-9050-081) — full-history load per hour.
+        # The two closed-table queries dedupe (DISTINCT ON) over the ENTIRE
+        # closed_trades_master / closed_ai_signals every hour (no time bound).
+        # This is INTENTIONAL and must not be "optimised" with a window filter:
+        #   1. The report carries an all-time column (stats['All']) plus all-time
+        #      avg-PnL and Kelly — those need the full history by definition.
+        #   2. The survivor pick (earliest close = original outcome) must run
+        #      over the full table; a window-first query lets a re-close artifact
+        #      resurface a months-old trade as freshly closed (same reason the
+        #      summary queries filter OUTSIDE the dedup).
+        # Measured cost 2026-07-09: ~439k raw AI rows collapse server-side to
+        # ~81.8k under the dedup key, so pandas receives the deduped set, not the
+        # raw table. Fine today; it grows with trade history. If it ever bites,
+        # the fix is a materialised all-time aggregate refreshed less often (a
+        # behaviour-changing redesign, an Operator decision), NOT a silent window
+        # here. Documented as a risk rather than optimised (Ledger-Geist).
         with get_db_connection() as conn:
             # ═══ GESCHLOSSENE TRADES ═══
 
@@ -1475,97 +1656,9 @@ async def job_per_bot_performance() -> None:
     # mit derselben Helper-Funktion in zuverlässige Chunks — auf
     # Zeilengrenzen, ohne Bot-entries oder Tabellen-Zeilen zu zerreißen.
 
-    TELEGRAM_TEXT_LIMIT = 4096
-    SAFETY_BUFFER = 200  # Puffer für HTML-Tags + unvorhergesehene Zeichen
-
-    def _group_bot_entries(src_lines: list[str]) -> list[str]:
-        """Gruppiert Kelly-Zeilen zu Bot-Blöcken (getrennt durch Leerzeilen).
-
-        Ein Bot-Eintrag darf NIEMALS über Chunks gesplittet werden — sonst
-        endet der Post mit einem halben Eintrag.
-        """
-        blocks = []
-        current = []
-        for ln in src_lines:
-            if ln == "":
-                if current:
-                    blocks.append("\n".join(current))
-                    current = []
-            else:
-                current.append(ln)
-        if current:
-            blocks.append("\n".join(current))
-        return blocks
-
-    def _group_table_entries(src_lines: list[str]) -> list[str]:
-        """Gruppiert Tabellen-Zeilen zu Bot-Blöcken.
-
-        Die Tabelle ist ähnlich aufgebaut wie der Kelly-Block: jede
-        Bot-Zeile (plus optional 1-3 Detail-Zeilen) endet mit einer
-        Leerzeile. Die ersten beiden Zeilen (Header + Separator) müssen
-        in JEDEM Chunk dabei sein — Tabellen ohne Header wären unlesbar.
-        """
-        if len(src_lines) < 2:
-            return []
-        # Erste zwei Zeilen sind Header + Separator → separat halten,
-        # die packen wir in jedes Chunk-Header mit rein.
-        blocks = []
-        current = []
-        for ln in src_lines[2:]:
-            if ln == "":
-                if current:
-                    blocks.append("\n".join(current))
-                    current = []
-            else:
-                current.append(ln)
-        if current:
-            blocks.append("\n".join(current))
-        return blocks
-
-    def _build_chunks(
-        blocks: list[str],
-        header_first: str,
-        header_continued: str,
-        footer: str,
-        separator: str = "\n\n",
-    ) -> list[str]:
-        """Packt Bot-Blöcke in mehrere Chunks unter dem 4096-Zeichen-Limit.
-
-        - header_first: Header für den allerersten Chunk (volle Überschrift)
-        - header_continued: Header für Folge-Chunks ("continued" Markierung)
-        - footer: Footer für jeden Chunk (Legende etc.)
-        - separator: Trenner zwischen Blöcken ("\\n\\n" für Bot-Blöcke mit
-          Leerzeile, "\\n" für einzeilige Tabellen-Rows)
-        """
-        if not blocks:
-            return []
-
-        chunks = []
-        # Erster Chunk: header_first + blocks + footer
-        # Folge-Chunks: header_continued + blocks + footer
-        current_hdr = header_first
-        current_body = []
-        current_size = len(current_hdr) + len(footer)
-
-        separator_size = len(separator)
-
-        for block in blocks:
-            needed = len(block) + (separator_size if current_body else 0)
-            if current_size + needed > TELEGRAM_TEXT_LIMIT - SAFETY_BUFFER and current_body:
-                # Chunk abschließen
-                chunks.append(current_hdr + separator.join(current_body) + footer)
-                # Neuer Chunk mit "continued" Header
-                current_hdr = header_continued
-                current_body = [block]
-                current_size = len(current_hdr) + len(footer) + len(block)
-            else:
-                current_body.append(block)
-                current_size += needed
-
-        if current_body:
-            chunks.append(current_hdr + separator.join(current_body) + footer)
-
-        return chunks
+    # Telegram-Chunking-Helper leben jetzt auf Modulebene (Über-Block-Split +
+    # DB-freie Tests, P2.41) — _group_table_entries / _group_bot_entries /
+    # _build_chunks.
 
     # ── Tabelle splitten ─────────────────────────────────────────────────
     table_header_line = lines[0] if len(lines) > 0 else ""
@@ -1674,6 +1767,21 @@ async def job_per_bot_performance() -> None:
 
 
 # ⏰ SCHEDULER ENGINE
+#
+# KNOWN RISK (P2.41, T-2026-CU-9050-081) — the jobs are `async def` but every
+# one does BLOCKING synchronous DB I/O (pd.read_sql_query / cur.execute). The
+# `async` is effectively cosmetic: on the single event loop a running job blocks
+# every other job's timer until it returns. This is tolerated by design, NOT a
+# concurrency bug, and is deliberately not "fixed" here:
+#   - The six jobs are staggered across distinct minute/second offsets (see
+#     main()), so in normal operation they do not overlap.
+#   - A true-async conversion (asyncio.to_thread around each query) would let
+#     jobs run concurrently and open several pooled connections at once — the
+#     pool max is 8 per process, so it would trade a benign scheduling delay for
+#     a real starvation risk. That is a rewrite, out of this task's scope.
+# The one real exposure: if a single job HANGS on a slow query it stalls the
+# others too. Mitigation already in place is the time-staggering; a hard
+# per-job timeout would be the minimal future hardening if it ever bites.
 async def schedule_job(minutes, second, job_func, name):
     """Führt einen Task exakt zu den definierten Minuten & Sekunden aus."""
     logger.info(f"Task '{name}' registriert für Min: {minutes}, Sek: {second}.")

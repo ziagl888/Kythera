@@ -1,3 +1,39 @@
+## [2026-07-11] 23_market_tracker.py — Telegram-Chunker splittet Über-Blöcke, Full-History-Load + async-Jobs als Risiko dokumentiert (P2.41, T-2026-CU-9050-081)
+
+Rest-Aufräumung von P2.41 am Market-Tracker, vier Teilbefunde vom 07-03-Ledger am
+aktuellen Code neu verortet und differenziert behandelt.
+
+Der echte Robustheits-Bug (d): der Message-Chunker `_build_chunks` konnte einen
+einzelnen Bot-/Tabellen-Block, der allein über dem Budget lag, als EINEN
+>4096-Zeichen-Chunk emittieren. `send_telegram` schreibt nur in `telegram_outbox`;
+der Dispatcher `4_telegram_bot` verwirft eine Über-Limit-Message still — der ganze
+Per-Bot-Post wäre unbemerkt verschwunden. Neuer `_hard_split_block`-Fallback splittet
+einen Über-Budget-Block zuerst auf Zeilen-, als letzte Instanz auf Zeichen-Grenzen; das
+Budget wird gegen den grösseren der beiden Header (Erst-/Folge-Chunk) gerechnet. Jeder
+emittierte Chunk ist jetzt garantiert ≤4096. Normale Einträge liegen weit unter dem
+Budget — der Fallback greift nur bei einem pathologischen Eintrag, aber dann geht der
+Post als mehrere Nachrichten raus statt zu verschwinden. Die drei Chunker-Helper wurden
+dafür von nested (in `job_per_bot_performance`) auf Modulebene gehoben, damit sie
+DB-frei testbar sind (rein, kein Closure-State).
+
+(c) Regime-Fit-Query ohne rollback: bereits durch P1.43/T-029 erledigt
+(`_get_regime_fit_label` rollt zurück, `_regime_conn` in try/finally) — am Code
+verifiziert, kein Rest offen (No-op).
+
+Bewusst NICHT geändert, als bekannte Risiken im Code dokumentiert (Ledger-Geist,
+Risiken früh dokumentieren statt blind optimieren): (a) der stündliche Full-History-Load
+der `closed_*`-Tabellen ist zwingend für die all-time-Spalte + den Survivor-Pick des
+DISTINCT-ON — ein Zeitfilter wäre eine Verhaltensänderung der Statistik (Operator-
+Entscheid). (b) die `async`-Jobs tun blockierendes sync-DB-I/O — kosmetisches `async`
+bei seriellem, zeit-gestaffeltem Scheduler; eine echte Async-Umstellung wäre ein Rewrite
+und tauschte eine harmlose Scheduling-Verzögerung gegen ein Pool-Starvation-Risiko
+(Pool-max 8/Prozess).
+
+Verifikation: `backtest/test_market_tracker_chunker.py` (neu, DB-frei, 13/13),
+`test_market_tracker_conn.py` unverändert 7/7 (Helper-Move ohne Verhaltensänderung),
+`test_market_tracker_opened.py` 7/7. ruff/format/mypy lokal grün. Wirkt beim nächsten
+regulären Restart, kein Deploy.
+
 ## [2026-07-11] Watchdog-Hang-Detection + statement_timeout/keepalives im DB-Pool (T-2026-CU-9050-077, P2.47)
 
 Step-2-Befund: die Data-Ingestion war 6h tot bei grünem Watchdog — die Fleet handelte
@@ -158,6 +194,7 @@ entfernen, nie isoliert. Achtung nach dem Recompute: das Serving imputiert die
 Warm-up-Zeilen (bfill) und füttert sie, der Trainer verwirft sie per `dropna`
 (`tools/walkforward_sim.py:245`) — die Aussage „kein Train/Serve-Skew" aus dem
 PR-#43-Text gilt nur für den Pre-Recompute-Zustand.
+
 
 ## [2026-07-11] core/coins.py — EIN atomarer coins.json-Writer (P2.16) + Binance-Perp-Shape-Guard für die Delisted-Cleanup (P2.17) (T-2026-CU-9050-079)
 
