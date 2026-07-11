@@ -378,12 +378,15 @@ def extract_ml_features(df, idx, direction):
     features['trend_UP'] = 1 if trend == 'UP' else 0
     features['trend_DOWN'] = 1 if trend == 'DOWN' else 0
     features['trend_SIDEWAYS'] = 1 if trend == 'SIDEWAYS' else 0
-    # T-2026-CU-9050-060 (F4): impute non-finite values like every
-    # core/*_features.py builder does (inf → 0, NaN → 0). Unreachable today —
-    # ffill().bfill() upstream only leaves NaN when a column is all-NaN, and an
-    # all-NaN rsi_14 implies a frozen window that yields 0 pivots — but this was
-    # the only ML feature path without the guard, and predict_proba raises on
-    # the first mid-series NaN.
+    # T-2026-CU-9050-060 (F4): impute non-finite values (inf/NaN → 0) like every
+    # core/*_features.py builder — and like this bot's own trainer, which fits
+    # and scores on .fillna(0) frames (smc_ml_trainer.py:328/344/365): exact
+    # train/serve parity. The XGB model would NOT crash on NaN — it routes NaN
+    # down untrained default branches, a silent skew. Reachable: ffill().bfill()
+    # upstream leaves NaN in all-NaN columns, which arise not only from frozen
+    # windows (those yield 0 pivots, the scan bails earlier) but also when the
+    # LEFT JOIN finds no indicator rows for the whole window (engine
+    # outage/coverage gap) while price pivots still exist.
     return {k: (float(v) if np.isfinite(v) else 0.0) for k, v in features.items()}
 
 

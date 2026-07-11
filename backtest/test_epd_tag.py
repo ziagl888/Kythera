@@ -77,9 +77,16 @@ def test_missing_model_idles_instead_of_crashing():
 def test_legacy_positional_feature_order_is_preserved():
     """The live 3-class model takes an unnamed array. Reordering EPD_BASE_FEATURES
     or building the array from a dict literal in another order silently feeds it
-    the wrong columns."""
-    assert re.search(r"np\.array\(\[\[base_features\[c\] for c in EPD_BASE_FEATURES\]\]\)", SRC), (
+    the wrong columns. Since T-2026-CU-9050-060 the array reads from the
+    NULL-contract-imputed view of base_features (rsi -> 50, rest -> 0 on
+    non-finite; see backtest/test_nan_feature_guards.py) — the order contract
+    is unchanged."""
+    assert re.search(r"np\.array\(\[\[imputed\[c\] for c in EPD_BASE_FEATURES\]\]\)", SRC), (
         "the legacy feature array is no longer built from EPD_BASE_FEATURES in contract order"
+    )
+    assert re.search(r"for c, v in base_features\.items\(\)", SRC), (
+        "the imputed dict no longer derives from base_features — the positional "
+        "columns would come from somewhere else"
     )
     order = re.search(r"^EPD_BASE_FEATURES = \[(.*?)\]", SRC, re.S | re.M).group(1)
     names = re.findall(r"[\"'](\w+)[\"']", order)

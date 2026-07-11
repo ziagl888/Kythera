@@ -8,9 +8,11 @@ Eintrag korrigiert bzw. deren Fixes er dokumentiert.
 **F1 — RSI ist auch JENSEITS des Warm-ups dauerhaft NaN, wenn das Preisfenster
 vollständig konstant ist** (illiquider Coin, Neu-Listing-Vorlauf, Trading-Halt):
 `up = down = 0` auf jeder Zeile → `rs = 0/0 = NaN` → RSI auf jeder Zeile NaN,
-nicht nur im Kopf. Sobald EINE Preisbewegung existiert, hält `ewm(adjust=False)`
-`roll_down` für immer > 0 — der Zustand gilt also genau für voll-konstante
-Fenster. Entscheid (Review-Empfehlung): NaN bewusst belassen — „kein RSI
+nicht nur im Kopf. Die erste Preisbewegung beendet den NaN-Zustand endgültig:
+`ewm(adjust=False)` hält danach `roll_up` (nach Up-Move) bzw. `roll_down` (nach
+Down-Move) für immer > 0 — eine reine Up-Serie liest dann RSI = 100, nicht NaN;
+der NaN-Zustand gilt also genau für voll-konstante Fenster. Entscheid
+(Review-Empfehlung): NaN bewusst belassen — „kein RSI
 definiert" ist ehrlich, eine 50 wäre wieder Fabrikation. Strukturell folgenlos:
 ein eingefrorenes Fenster erzeugt 0 Pivots (`argrelextrema` auf einer Konstanten
 ist leer), Bot 24 braucht ≥4 alternierende Pivots, Bot 25 ≥3 Peaks/Troughs —
@@ -32,21 +34,40 @@ nur `rsi_14`/`wma_21` wie im PR-Body (alle Consumer imputieren — unkritisch).
 
 ### Fixed
 - `10_pump_dump_detector.py` (F3): der LEGACY-EPD-Pfad (greift nur ohne
-  deploytes EPD2-Artefakt — also heute) baute das positionale Feature-Array ohne
-  `fillna`. Bei `rsi_14 = NaN` (Neu-Listing, erste ~14 1h-Kerzen) warf sklearn
-  und der breite Exception-Handler unterdrückte das Signal — sicher, aber als
-  ERROR-Log-Rauschen. Jetzt expliziter `np.isfinite`-Skip. Bewusst NICHT
-  `.fillna(0)` wie im EPD2-Zweig: dessen 0 spiegelt den Trainer-Kontrakt
-  (`train_binary`); für das Legacy-pkl existiert kein solcher Kontrakt, und
-  `rsi=0` hieße „extrem oversold" — aus der heutigen sicheren Unterdrückung
-  würde ein möglicher Falsch-Signal-Pfad. Live-Semantik unverändert: kein
-  Signal, nur leiser.
+  deploytes EPD2-Artefakt — also heute) baute das positionale Feature-Array
+  ohne jede NaN-Behandlung. **Die F3-Prämisse des Ursprungs-Reviews („sklearn
+  wirft bei NaN, der Exception-Handler unterdrückt sicher") ist dabei
+  falsifiziert worden** — am Produktions-pkl verifiziert: das Modell ist ein
+  `XGBClassifier`, XGBoost behandelt NaN nativ als Missing und liefert eine
+  Prediction über untrainierte Default-Branches. Ein NaN-`rsi_14`
+  (Neu-Listing-Warm-up post-P1.13) konnte also ein LIVE-Signal aus einem Input
+  erzeugen, den der Trainer nie produziert hat. Fix: Imputation nach dem
+  NULL-Kontrakt des Legacy-Trainers selbst (`legacy_trainers/zzz.py:7609-7617`:
+  rsi→50, alles andere→0; die ema-Dists kollabieren dort via ema:=Preis zu 0) —
+  Train/Serve-Parität nach demselben Prinzip wie das `fillna(0)` im EPD2-Zweig
+  (dessen eigener `train_binary`-Kontrakt unangetastet bleibt). Die
+  Serving-Werte sind identisch zu dem, was das Modell sein gesamtes
+  prä-P1.13-Leben gesehen hat — Neu-Listings werden weiter gescort, mit 50
+  statt NaN; kein Signal, das vorher unmöglich war, wird möglich. Bewusst NICHT
+  pauschal `fillna(0)`: rsi=0 hieße „extrem oversold" und wäre für dieses
+  Modell Out-of-Distribution.
 - `24_quasimodo_bot.py` / `25_smc_ml_sniper.py` (F4): der Feature-Bau vor
   `predict_proba` bekommt dieselbe Non-Finite-Imputation (inf/NaN → 0) wie alle
-  `core/*_features.py`-Builder. Heute unerreichbar (das `bfill` oben lässt NaN
-  nur in All-NaN-Spalten übrig, und die implizieren 0 Pivots), aber es war der
-  einzige ML-Feature-Pfad ohne den Guard — eine latente Inkonsistenz, sobald
-  ein Preis-Indikator mid-series NaN würde.
+  `core/*_features.py`-Builder — und wie die eigenen Trainer, die auf
+  `.fillna(0)`-Frames fitten UND scoren (`qm_ml_trainer.py:321/353/378`,
+  `smc_ml_trainer.py:328/344/365`): exakte Train/Serve-Parität. Auch hier wirft
+  XGB bei NaN nicht, sondern scored über untrainierte Default-Branches — ein
+  stiller Skew. Erreichbar ist der Pfad entgegen der ersten Annahme schon
+  heute: `ffill().bfill()` lässt NaN nur in All-NaN-Spalten übrig, und die
+  entstehen nicht nur bei eingefrorenen Fenstern (0 Pivots — die Bots bailen
+  vorher), sondern auch, wenn der LEFT JOIN für das gesamte
+  100/150-Kerzen-Fenster keine Indikator-Zeilen findet (Engine-Ausfall,
+  Coverage-Lücke) — Preis-Pivots existieren dann weiter. Auf dem
+  All-Finite-Pfad ist der Modell-Input unverändert.
+- Neuer Standalone-Test `backtest/test_nan_feature_guards.py` pinnt beide
+  Kontrakte (Legacy-NULL-Imputation rsi→50/Rest→0, 0-Imputation in Bot 24/25)
+  und die XGBoost-NaN-Prämisse gegen das Produktions-pkl (skippt ohne
+  Artefakt/xgboost).
 
 **Weiterhin offen (VPS bzw. C-Gate, unverändert aus T-054):** (1) die
 Populations-Zählung „wie viele Coins liegen unter ~170 Kerzen je TF" braucht

@@ -368,12 +368,14 @@ def calculate_rsi(series, period=14):
     # 100) for the 0/0 warmup case, so the old false-100 bug does not return.
     #
     # T-2026-CU-9050-060 (F1): the NaN is NOT limited to the warmup head. On a
-    # fully constant price window (every close identical: illiquid coin,
-    # new-listing run-up, trading halt) `up == down == 0` on every row, so
+    # fully constant price window (every close identical: illiquid coin, flat
+    # pre-listing stretch, trading halt) `up == down == 0` on every row, so
     # rs = 0/0 = NaN and RSI is NaN on EVERY row. Reachable in production and
     # kept deliberately — no RSI is defined for a flat series; a fabricated 50
-    # would be invention again. A single price move ends the state for good
-    # (ewm(adjust=False) keeps roll_down > 0 forever after). Consequence-free
+    # would be invention again. The first non-zero delta ends the NaN state for
+    # good: ewm(adjust=False) keeps roll_up (after an up-move) or roll_down
+    # (after a down-move) > 0 forever, so rs is finite or inf — an up-only
+    # series reads RSI = 100.0, not NaN. Consequence-free
     # for consumers: a frozen window yields 0 pivots, so bots 24/25 bail out
     # before their ML path (ffill().bfill() on an all-NaN column stays all-NaN),
     # and raw strat_* comparisons evaluate False on NaN (strictly conservative).
