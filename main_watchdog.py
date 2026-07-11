@@ -96,6 +96,26 @@ _instance_mutex = None
 _ERROR_ALREADY_EXISTS = 183
 
 
+# ── Graceful-Shutdown-Konfiguration (P2.48) ──────────────────────────────────
+# terminate() ist auf Windows ein harter TerminateProcess: der Bot bekommt keine
+# Chance aufzuräumen und — kritisch — die ProcessPool-Worker der Indicator-Engine
+# (2_indicator_engine.py, ProcessPoolExecutor) überleben den Parent-Kill als
+# Waisen und rechnen weiter → Doppel-Compute-Fenster. Wir starten jeden Bot daher
+# in EINER eigenen Prozessgruppe (CREATE_NEW_PROCESS_GROUP) und schicken beim Stop
+# ein CTRL_BREAK_EVENT an die GANZE Gruppe — das erreicht den Bot UND seine
+# Worker-Kinder, anders als terminate(), das nur den Bot selbst trifft. Ohne die
+# eigene Gruppe ginge das Console-Signal an die ganze Konsole inkl. Watchdog.
+_IS_WINDOWS = os.name == "nt"
+# CREATE_NEW_PROCESS_GROUP existiert nur auf Windows; 0 ist der neutrale
+# creationflags-Wert auf POSIX (der Parameter existiert dort, muss aber 0 sein).
+_CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+# CTRL_BREAK_EVENT existiert nur auf Windows.
+_CTRL_BREAK_EVENT = getattr(signal, "CTRL_BREAK_EVENT", None)
+# Sekunden, die ein Bot nach dem Graceful-Signal zum sauberen Beenden bekommt,
+# bevor hart nachgetreten wird.
+GRACEFUL_STOP_TIMEOUT_S = int(os.getenv("KYTHERA_GRACEFUL_STOP_S", "10"))
+
+
 # ── Single-Instance-Guard (P0.2) ─────────────────────────────────────────────
 
 
@@ -217,6 +237,7 @@ def start_dashboard() -> None:
         [sys.executable, script],
         stdout=dashboard_log,
         stderr=subprocess.STDOUT,  # stderr auch in gleiche Log-Datei
+        creationflags=_CREATE_NEW_PROCESS_GROUP,  # eigene Gruppe, konsistent zu den Bots (P2.48)
     )
     logger.info(
         f"🌐 Dashboard started (PID {_dashboard_proc.pid}) → http://localhost:{DASHBOARD_PORT} | Log: logs/dashboard.log"
@@ -251,7 +272,9 @@ def start_process(process_info: dict) -> None:
     name = process_info["name"]
     script_path = process_info["script"]
     logger.info(f"🚀 Starting Prozess: {name} ({script_path})")
-    p = subprocess.Popen([sys.executable, script_path])
+    # Eigene Prozessgruppe (P2.48): so erreicht das Stop-CTRL_BREAK den Bot samt
+    # seiner ProcessPool-Worker, ohne die Watchdog-Konsole mitzutreffen.
+    p = subprocess.Popen([sys.executable, script_path], creationflags=_CREATE_NEW_PROCESS_GROUP)
     running_processes[name] = {
         "process": p,
         "info": process_info,
@@ -476,17 +499,58 @@ def supervise_process(p_info: dict, current_time: float) -> None:
             start_process(p_info)
 
 
+def _request_graceful_stop(p: subprocess.Popen, name: str) -> bool:
+    """Bittet ``p`` — auf Windows dessen ganze Prozessgruppe inkl. der
+    ProcessPool-Worker — um ein geordnetes Herunterfahren (P2.48).
+
+    POSIX: ``terminate()`` = SIGTERM ist bereits das geordnete Stop-Signal.
+    Windows: ``CTRL_BREAK_EVENT`` an die Gruppe. Scheitert das — keine Konsole
+    angehängt (Scheduled-Task-Start), Prozess nicht in eigener Gruppe, oder
+    bereits beendet — fallen wir auf ``terminate()`` zurück; damit nie
+    schlechter als der bisherige harte Kill.
+
+    Returns True, wenn ein Graceful-Signal zugestellt wurde, sonst False.
+    """
+    if not _IS_WINDOWS:
+        p.terminate()  # SIGTERM — auf POSIX bereits graceful
+        return True
+    ctrl_break = _CTRL_BREAK_EVENT
+    if ctrl_break is None:
+        # Kann auf echtem Windows nicht auftreten (CTRL_BREAK_EVENT existiert dort
+        # immer); hält nur die Typen ehrlich und fällt sicher zurück.
+        p.terminate()
+        return False
+    try:
+        p.send_signal(ctrl_break)  # erreicht die ganze Prozessgruppe
+        return True
+    except (OSError, ValueError) as e:
+        logger.warning(f"⚠️ {name}: CTRL_BREAK nicht zustellbar ({e}) — harter terminate().")
+        try:
+            p.terminate()
+        except OSError:
+            pass
+        return False
+
+
 def kill_process(name: str) -> None:
     if name not in running_processes:
         return
     p = running_processes[name]["process"]
     logger.warning(f"🛑 Stopping process: {name}...")
-    p.terminate()
+    graceful = _request_graceful_stop(p, name)
     try:
-        p.wait(timeout=5)
+        p.wait(timeout=GRACEFUL_STOP_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        logger.error(f"⚠️ {name} not responding. Forcing kill!")
+        if _IS_WINDOWS:
+            sent = "CTRL_BREAK" if graceful else "terminate()"
+        else:
+            sent = "SIGTERM"
+        logger.error(f"⚠️ {name} reagiert {GRACEFUL_STOP_TIMEOUT_S}s nach {sent} nicht — harter Kill!")
         p.kill()
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.error(f"⚠️ {name} überlebt selbst den harten Kill — ProcessPool-Waisen möglich.")
     del running_processes[name]
     logger.info(f"✅ {name} stopped successfully.")
 
