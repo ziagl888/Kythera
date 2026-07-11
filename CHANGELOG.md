@@ -1,3 +1,34 @@
+## [2026-07-11] Detector-Zyklus: Batch-Ticker statt 538 Einzel-Calls + Volume-Indicator-Fixes (P2.44 + P2.42, T-2026-CU-9050-085)
+
+Zwei Findings aus dem Detector-Pfad, beide aus der Welle-4-Dispatch (T-2026-CU-9050-075).
+
+**P2.44 — HTTP-Last & Gate-Reihenfolge.** `3_detectors.py` machte pro Scan-Zyklus
+einen Binance-klines-Call je Coin (~530 serielle Requests). Neu: `get_live_prices_batch()`
+holt in EINEM `/fapi/v1/ticker/price`-Call alle Symbole; die Loop liest `price_map.get(symbol)`
+und fällt nur für fehlende Symbole (frisch delisted) oder bei Batch-Ausfall auf den alten
+per-Coin-HTTP→DB-Pfad zurück — kein Coin wird geskippt, ein Batch-Ausfall degradiert sauber
+aufs alte Verhalten. Zusätzlich in `strat_volume_indicator.analyze_coin`: der teure
+90d×30m-HVN-Read lief als ERSTES Gate für jeden Coin. Die vier Gates (Spike, Active-Trade,
+Cooldown, HVN) sind alle seiteneffektfreie, AND-verknüpfte Reads → auf billig-vor-teuer
+umsortiert, der HVN-Read läuft jetzt ZULETZT und nur, wenn ein Signal sonst emittierbar wäre.
+Die Signalmenge ist invariant gegen die Auswertungsreihenfolge. Der P1.16-Cooldown-Kontrakt
+(12h-Sperre, Tag `VolIndic`, Write via Detector mit `commit=False`) bleibt unangetastet —
+nur der read-only `check_cooldown` wurde vorgezogen.
+
+**P2.42 — Volume-Spike-Klassifikation & HVN-Gate.** Drei bewusst signaländernde Fixes
+(Ledger-Auftrag): (a) die Spike-Auswahl iteriert jetzt rückwärts — der JÜNGSTE Spike im
+5-Tage-Fenster entscheidet statt des ältesten (die alte Vorwärts-Schleife brach beim
+ersten/ältesten Spike ab); (b) ein Spike auf der ersten In-Period-Kerze (`i==0`) hat keinen
+In-Period-Vorgänger und wird jetzt verworfen statt still als Sell klassifiziert; (c) das
+HVN-Gate binnt Preise auf 0.1%-Level, bevor Volumen aggregiert wird — der alte
+`groupby('close')` auf rohen Float-Preisen akkumulierte auf fine-tick-Coins nie ein Level
+(jede Kerze ein eigener Preis) und feuerte dort faktisch nie. Die Klassifikations- und
+HVN-Logik wurde in die reinen Funktionen `_classify_latest_volume_spike` /
+`_is_near_high_volume_node` extrahiert (identisches Verhalten, DB-frei testbar).
+
+DB-freie Tests: `backtest/test_volume_indicator_spikes.py` (9, mit Pre-Fix-Referenz-Asserts),
+`backtest/test_detector_batch_ticker.py` (4). Die `[DB]`-markierte Live-Last-/Effekt-Messung
+(CPU-Grundlast, geänderte Signal-Rate) bleibt ein VPS-Schritt.
 ## [2026-07-11] Orchestrator: Startup-Whitelist-Reconciliation (P2.24) + Whitelist-Cleanup-Schreibseite (P2.25) (T-2026-CU-9050-082)
 
 Zwei Regime-Gating-Findings geschlossen, beide über die In-Memory- bzw.
