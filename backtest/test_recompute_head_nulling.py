@@ -17,14 +17,13 @@ import sys
 
 import numpy as np
 import pandas as pd
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("DB_PASSWORD", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
 
-from tools.recompute_indicators import TAIL_ROWS, head_null_plan  # noqa: E402
+from tools.recompute_indicators import TAIL_ROWS, head_null_plan, null_head_rows  # noqa: E402
 
 UTC = "UTC"
 COLS = ["WMA_7", "BOLL_UPPER_20"]
@@ -133,3 +132,36 @@ def test_already_null_head_is_not_recounted():
 def test_tail_rows_constant_matches_the_write_guard():
     """The tail guard the plan uses is the module's TAIL_ROWS, not a local literal."""
     assert TAIL_ROWS >= 1
+
+
+class _FakeCursor:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, sql, params):
+        self.calls.append((sql, params))
+
+
+def test_null_head_rows_writes_only_null_at_head_times():
+    """The execute UPDATE writes NULL, only at head_times, only for columns with heads."""
+    t = _times(4)
+    cols_plan = {
+        "WMA_7": {"head_times": [t[0], t[1]], "midband": 0, "midband_max": 0.0},
+        "RSI_14": {"head_times": [], "midband": 0, "midband_max": 0.0},  # no heads -> skipped
+    }
+    cur = _FakeCursor()
+    n = null_head_rows(cur, '"FOOUSDT_1h_indicators"', cols_plan)
+
+    assert n == 1, "only WMA_7 has head rows"
+    assert len(cur.calls) == 1
+    sql, params = cur.calls[0]
+    assert 'SET "wma_7" = NULL' in sql, "column lower-cased, set to NULL"
+    assert "= ANY(%s)" in sql, "parameterised time list, not string-interpolated"
+    assert params == ([t[0], t[1]],), "exactly the head times, nothing else"
+
+
+def test_null_head_rows_noop_when_no_heads():
+    cur = _FakeCursor()
+    n = null_head_rows(cur, '"X_1h_indicators"', {"WMA_7": {"head_times": []}})
+    assert n == 0
+    assert cur.calls == [], "no empty UPDATE issued"

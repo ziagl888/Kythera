@@ -163,12 +163,37 @@ def head_null_plan(db: pd.DataFrame, rc: pd.DataFrame, p113_cols: list[str]) -> 
     return out
 
 
+def null_head_rows(cur, ind_tbl: str, cols_plan: dict) -> int:
+    """Issue one UPDATE ... SET col=NULL per P1.13 column with head rows.
+
+    Extracted from main() so the SQL construction and the head_times handoff are
+    testable without a live DB. Returns the number of columns updated. Writes
+    ONLY NULL, ONLY at the given head times; a column with no head rows is
+    skipped (no empty UPDATE).
+    """
+    n = 0
+    for col, info in cols_plan.items():
+        if not info["head_times"]:
+            continue
+        cur.execute(
+            f'UPDATE {ind_tbl} SET "{col.lower()}" = NULL WHERE open_time = ANY(%s)',
+            (info["head_times"],),
+        )
+        n += 1
+    return n
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", default=True)
     mode.add_argument("--execute", action="store_true")
-    ap.add_argument("--sample", type=int, default=0, help="dry-run: recompute only N tables (spread across timeframes)")
+    ap.add_argument(
+        "--sample",
+        type=int,
+        default=0,
+        help="limit to N tables (spread across timeframes) — works in BOTH modes, e.g. a bounded --execute test",
+    )
     ap.add_argument("--timeframes", default="", help="comma list to restrict, e.g. 1h,4h")
     ap.add_argument("--state", default=os.path.join(_ROOT, "control", "recompute_progress.json"))
     args = ap.parse_args()
@@ -186,8 +211,10 @@ def main() -> None:
         keep = set(args.timeframes.split(","))
         tables = [t for t in tables if t[1] in keep]
 
-    if not execute and args.sample:
-        # spread the sample across timeframes AND coin ages for a fair estimate
+    if args.sample:
+        # Spread the sample across timeframes AND coin ages for a fair estimate.
+        # Works in BOTH modes: `--execute --sample N` is the bounded test run
+        # (write only N tables) before committing to the full ~4197.
         by_tf: dict[str, list] = {}
         for sym, tf in tables:
             by_tf.setdefault(tf, []).append((sym, tf))
@@ -238,15 +265,19 @@ def main() -> None:
 
         if execute:
             # NULL only the warmup head rows, per P1.13 column. Never a value.
-            with conn.cursor() as cur:
-                for col, info in plan["cols"].items():
-                    if not info["head_times"]:
-                        continue
-                    cur.execute(
-                        f'UPDATE {ind_tbl} SET "{col.lower()}" = NULL WHERE open_time = ANY(%s)',
-                        (info["head_times"],),
-                    )
-            conn.commit()
+            # Per-table try/except like the phases above: a single table's
+            # failure (lock timeout against bot 2, degenerate column) must roll
+            # back that table and skip on, not abort the whole run. Resume is
+            # idempotent, so a skipped table is retried next run.
+            try:
+                with conn.cursor() as cur:
+                    null_head_rows(cur, ind_tbl, plan["cols"])
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                print(f"  ! {sym}_{tf}: update failed, skipping: {e}")
+                timings.append(time.time() - ts)
+                continue
             written += 1
             done.add((sym, tf))
             if written % 50 == 0:
@@ -266,7 +297,8 @@ def main() -> None:
     else:
         n = max(1, len(timings))
         avg = sum(timings) / n
-        total_tables = len(list_indicator_tables(get_db_connection()))
+        # full population for the extrapolation — reuse the open conn, don't leak a new one
+        total_tables = len(tables) if not args.sample else len(list_indicator_tables(conn))
         print("\n=== DRY-RUN SUMMARY (head-nulling) ===")
         print(f"sampled tables        : {len(timings)}")
         print(f"HEAD cells to NULL    : {total_heads}  (recompute NaN & db finite, on {','.join(P113_PREFIXES)})")
