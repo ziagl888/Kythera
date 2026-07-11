@@ -130,6 +130,20 @@ def mode_verify(core) -> int:
     fixture_files = core.list_npz(FIXTURES_DIR)
 
     if not golden_files:
+        # A manifest.json is the "was armed once" marker: `refresh` writes it
+        # alongside the golden/*.npz. Manifest present but goldens gone means the
+        # snapshot was deleted or lost in a merge -> the guard is silently
+        # disarmed while the pre-commit hook stays green. Refuse to pass (P2.51).
+        # Only the genuinely never-armed state (no manifest) is a legitimate Pass
+        # -- that is the pre-live-DB-freeze condition the guard was designed for.
+        if os.path.exists(MANIFEST_PATH):
+            print(
+                "[guard] ERROR - manifest.json present but golden snapshot files are MISSING. "
+                "The guard was armed and its goldens are now gone (deleted or lost in a merge); "
+                "refusing to pass silently. Restore golden/ from git, or re-freeze deliberately:\n"
+                "          KYTHERA_GOLDEN_REFRESH=1 python tools/regression_guard/guard.py refresh"
+            )
+            return 1
         print(
             "[guard] NOT ARMED - no golden snapshot yet "
             "(run `extract` then `refresh` once the live DB is reachable). Pass."
