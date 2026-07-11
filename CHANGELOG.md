@@ -78,6 +78,152 @@ Warm-up-Zeilen (bfill) und füttert sie, der Trainer verwirft sie per `dropna`
 (`tools/walkforward_sim.py:245`) — die Aussage „kein Train/Serve-Skew" aus dem
 PR-#43-Text gilt nur für den Pre-Recompute-Zustand.
 
+## [2026-07-11] tools/restart_fleet.ps1 — UAC-freier Fleet-Restart-Zyklus über den Task "Kythera Watchdog" (T-2026-CU-9050-074)
+
+Lehre aus dem 00:32-Mass-Crash (Konsole des manuell gestarteten Watchdogs geschlossen,
+Watchdog tot, 15 verwaiste Bots, Dashboard down) und der anschließenden UAC-Odyssee:
+Recovery-Aktionen brauchten Elevation, aber UAC-Prompts erreichen Michis Desktop bei
+mehreren RDP-Sessions nicht zuverlässig. Seit T-068 existiert der Scheduled Task
+"Kythera Watchdog" (User Michael, Password-Logon, RunLevel Highest) — sein eigener
+User darf ihn OHNE Elevation starten und stoppen; der Task-Scheduler wendet das
+elevated Token an. Das neue Operator-Script fährt den kompletten Zyklus unelevated:
+`git pull --ff-only` ZUERST (schlägt er fehl, bleibt die Fleet unangetastet, inkl.
+Branch-Guard: gepullt wird nur auf `main`), dann `Stop-ScheduledTask`, dann
+`Start-ScheduledTask` mit Verifikation (Task-State, Bot-Zählung über den unelevated
+sichtbaren Python-Parent-Fingerprint, Dashboard-Port 5000). Das Script killt selbst
+KEINE Prozesse — Waisen, die den Tree-Stop überleben, reapt der nächste Watchdog-Start
+(`_terminate_orphan_fleet`, P0.2). `-DryRun` für den Preflight (verifiziert: Task
+sichtbar, 37 Bot-Prozesse erkannt, Exit 0), `-SkipPull` für Restart ohne Pull.
+Der 3-Voter-Review schloss drei False-Success-Pfade: (1) Stop-Verifikation über einen
+PID-Snapshot VOR dem Stop (der Parent-Fingerprint ist nach Watchdog-Tod strukturell
+blind für Waisen), (2) Erfolgskriterium = Task-State `Running` UND Dashboard-Port
+(ein verwaistes Alt-Dashboard auf 5000 täuscht sonst bei import-gecrashtem Watchdog
+Erfolg vor), (3) Fleet-außerhalb-des-Tasks (00:32-Muster: manuell gestarteter
+Watchdog) → Abbruch statt Mutex-No-op-Restart. Exit-Codes 0/1/2/3/4 dokumentiert
+(4 = Fleet gestoppt, Start fehlgeschlagen → Fleet DOWN, manueller Task-Start).
+Achtung: der Stop-Pfad (Task-ACL) ist bis zum ersten echten Lauf ungetestet — bei
+"Access denied" braucht die ACL einmalig einen elevated Fix. Fleet-Restart bleibt eine
+Operator-Entscheidung (OPUS-HANDOFF §6); das Script läuft nie automatisch.
+
+## [2026-07-11] QM2-Retrain-Vorbereitung: qm_ml_trainer.py schreibt jetzt model_id (T-2026-CU-9050-061, Schritt 2)
+
+Vorbereitung für den QM2-Retrain nach dem P1.13-Recompute (Schritt 1 dieses Tasks
+ist live: 3,07M Warmup-Kopfzeilen genullt). Der Task nennt `retrain_from_replay.py`
+für TD2/BB2/QM2 — aber weder das noch `walkforward_sim.py` kennt `qm`. Quasimodo
+(Bot 24) hat einen eigenen Trainer, `qm_ml_trainer.py`, der die (jetzt recomputeten)
+`_indicators`-Tabellen liest, eine eigene Walk-Forward-Trade-Sim für Labels nutzt,
+`fillna(0)` fährt (Parität mit der Bot-Serving-Imputation seit PR #62) und bereits
+nach `staging_models/` schreibt. Operator-Entscheid (Michi 2026-07-11): QM2 über
+diesen bestehenden Trainer statt einer `retrain_from_replay`-Erweiterung.
+
+Einzige Lücke war Regel 6: `qm_ml_trainer.py` schrieb **keine** `model_id`, sodass
+ein QM2-Retrain still als abgeleitetes `QM_1H` gepostet und mit der QM1-Statistik
+verschmolzen wäre, auf der das Orchestrator-Gating entscheidet. Fix: der Trainer
+schreibt jetzt `meta['model_id'] = f"QM2_{tf.upper()}"` (Konvention wie
+`retrain_from_replay`: `QM2_1H`). Bot 24 liest das Feld bereits (T-030) und leitet
+nur bei Alt-Artefakten ohne `model_id` auf `QM_1H` zurück; sein Kommentar ist auf
+den neuen Ist-Zustand aktualisiert. Kein Verhaltensänderung an bestehenden
+Artefakten — nur neue QM-Retrains tragen den Tag.
+
+
+
+Operator-Freigabe Michi 2026-07-11: MAX1 (Bot 34) geht in den Shadow-Betrieb. Das auf dem
+VPS erzeugte Artefakt `max1_model_SHORT.pkl` (+ `_meta.json`) ist aus `staging_models/` in
+den Repo-Root promoted und hier committet (Deploy-Konvention wie RUB2, 07c8874) — Byte-Kopie
+des RUB2-SHORT-Modells unter dem Tag MAX1, Load-Verify auf dem VPS mit sklearn 1.7.1:
+`True MAX1 0.829 15 True`. `MAX1_LIVE_POSTING` bleibt AUS (shadow-only, kein Cornix-Posting);
+Scharf-Schalten ist ein separater Operator-Schritt.
+
+### Gate-Zahlen für den Shadow-Start (Operator-Ziel: maximale Trefferquote)
+`.env` auf dem VPS: `MAX1_MIN_PROB=0.85`, `MAX1_MAX_PER_DAY=3` — bewusst NICHT der
+Default 0,93. Begründung (T-2026-CU-9050-070, KB `mcp-a65a1da76492`): die Live-Kurve
+(06.–11.07., 44 posted/28 closed) zeigt die höchste WR im Band 0,829–0,85 (81–82 %,
+n=21–28), während ≥0,88 die WR **fällt** (60–71 %) und nur der Ø-PnL steigt — hohe
+Thresholds kaufen Expectancy, nicht Trefferquote. Zudem clustern die ≥0,88-Kandidaten
+in Funding-Episoden (24h-Kappe liefert dann ~0,7/Tag statt 3). Alles n<30 — die
+Shadow-Phase misst genau die kappen-gebundene Selektions-WR; finale Zahlen danach.
+
+### Befund am Rande (eigener Folge-Task T-2026-CU-9050-071)
+Die Replay-Kurve (rub_replay_365d) ist für die Gate-Kalibrierung unbrauchbar: gematchte
+Signal-Paare Live↔Replay korrelieren −0,37, Replay-OOS erreicht in 59 Tagen nie prob ≥ 0,93.
+Feature-Skew Serving vs. Replay, Hauptverdacht Funding-Features.
+
+## [2026-07-11] P1.13-Recompute: ein voller Recompute ist NICHT positions-stabil — Werkzeug zur Kopfzeilen-Nullung (T-2026-CU-9050-061, Schritt 1)
+
+Erster Schritt des P1.13-Folge-Tasks: die Warmup-Kopfzeilen der Bestands-Coins auf
+den neuen NaN-Stand bringen (der Live-Fix aus T-054/PR #43 wirkt nur auf Neu-Listings).
+Dieser PR liefert das **Werkzeug** und den tragenden Analyse-Befund; der eigentliche
+Live-DB-Write ist ein separater, operator-gegateter Schritt (C-Gate, noch nicht ausgeführt).
+
+### Befund (gemessen, nicht behauptet)
+Der naheliegende Weg — jede `_indicators`-Tabelle neu rechnen und upserten — ist
+**nicht positions-stabil**. `2_indicator_engine` schreibt inkrementell (ein 1000-Kerzen-
+Fenster je Lauf, über Monate, teils von älteren Engine-Ständen), und die heutige Engine
+reproduziert die gespeicherten Mid-Band-Werte nicht. Gemessen an einer 30-Tabellen-
+Stichprobe: ein voller Recompute würde **~79.000 Mid-Band-Zellen** verändern (worst case
++707 % auf `rsi_14`), nicht nur die ~18.900 Warmup-Kopfzeilen. Ursache: fenster-globale
+Features (`TRENDLINE_*`, `HVN`, `POC`, `FIB_*`) sind Skalare übers ganze Fenster, lange
+ewm-Indikatoren (`EMA_200`, `SMMA_200`) konvergieren langsam vom Startpunkt. Ein voller
+Recompute hätte die Serving-Verteilung des gesamten Fleets verschoben und Training von
+Serving entkoppelt — das Gegenteil des Task-Ziels.
+
+### Lösung
+`tools/recompute_indicators.py` nullt **nur** die Warmup-Kopfzeilen der vier P1.13-Familien
+(`WMA_*`, `RSI_*`, `BOLL_*_20`, `DONCHIAN_*`): Die Engine bestimmt die Warmup-Grenze (die
+Zeilen, die sie jetzt als NaN liefert), aber geschrieben wird ausschließlich NULL an diese
+Positionen — nie ein neu gerechneter Mid-Band-Wert. Damit ist die Operation positions-stabil
+per Konstruktion (Mid-Band = unveränderte Serving-Werte). Der Retrain braucht genau das:
+die genullten Kopfzeilen fallen im Replay per `dropna()` (seit T-045) aus den Trainingsdaten.
+Läuft neben dem Live-Bot 2 (nullt nur historische Zeilen, die der inkrementelle Writer nie
+anfasst), niedrige Priorität, idempotent, resumable. `--dry-run` (default) schreibt nichts
+und belegt die Kopf/Mid-Band-Trennung; `--execute` ist operator-gegatet.
+
+Verifikation: `backtest/test_recompute_head_nulling.py` (5 Tests, standalone, DB-frei) pinnt
+die Grenze — Kopfzeilen werden genullt, Mid-Band-Abweichungen nur berichtet nie geschrieben,
+neueste Zeilen (bot-2-Race) ausgeschlossen. Dry-Run über 30 Tabellen bestätigt ~49 min bei
+3 Workern für den vollen Lauf. **Noch offen (separate Schritte):** der Live-Execute, der
+TD2/BB2/QM2-Retrain, und — erst beim Artefakt-Rollout — die `bfill`-Entfernung in
+`24_quasimodo_bot.py:126` / `25_smc_ml_sniper.py:220`.
+## [2026-07-11] MAX1: eigenständiger High-Conviction-Klon von RUB2-SHORT für den Main-Channel (T-2026-CU-9050-067)
+
+RUB2-SHORT ist die stärkste Short-Kante der Fleet (live seit 06.07.: 24 Closes,
+79 % TP1-WR, +4,2 % Ø PnL — T-2026-CU-9050-044), feuert aber ~9×/Tag. Michis Ziel
+für den Main-Channel sind **1-3 Trades/Tag mit sehr hoher Trefferquote**. Statt
+RUB2 zu drosseln (T-2026-CU-9050-050 → **wontfix**: RUB2 bleibt unverändert in
+seinem Channel), läuft dasselbe Modell jetzt zusätzlich als eigener Bot
+**`34_ai_max1_bot.py`** mit selektivem Gate und eigenem Tag `MAX1`.
+
+Drossel in `core/max1_gate.py` (reine, DB-freie Selektion): hohe
+Mindest-Probability (`MAX1_MIN_PROB`, Default **0,93** — nie unter dem
+Artefakt-Threshold 0,829) als eigentlicher Selektor, plus eine **harte rollierende
+24h-Kappe** (`MAX1_MAX_PER_DAY`, Default **3**) als Backstop. Je Scan: Kandidaten
+sammeln, per Symbol deduplizieren, deterministisch ranken, auf die freien Slots
+schneiden. Der 24h-Zähler liest Shadow **und** Live aus `ml_predictions_master`,
+damit die Kappe im Shadow exakt wie live greift.
+
+Detection, Features (9 rub + 6 funding) und Trade-Geometrie kommen aus den
+**geteilten** Buildern (`core/rub_features.py`, `core/funding_features.py`,
+`hvn_sr_trade_geometry`) — importiert, nicht angefasst (X-R1). `13_ai_rub_bot.py`
+bleibt unverändert. Cooldown-/Dedupe-/Offene-Trade-Räume sind über den Tag getrennt:
+MAX1 und RUB2 blocken sich nicht gegenseitig, Doppel-Exposure auf demselben Coin ist
+die bewusste Konsequenz (dokumentiert in `docs/MODEL_INTENT.md` §8a).
+
+Artefakt: `tools/make_max1_artifact.py` erzeugt aus dem RUB2-SHORT-Modell eine
+Kopie mit `meta.model_id=MAX1` nach `staging_models/` (Modell, Feature-Vertrag,
+Kalibrator, Val-Operating-Point verbatim — nur die Identität wechselt, harte
+Regel 6). Der Posting-Tag kommt aus dieser Meta, nie aus einer Konstante (Falle 16).
+
+Nichts scharf geschaltet: `MAX1_LIVE_POSTING` ist **Default-OFF** (Shadow-only),
+ohne deploytes Artefakt läuft Bot 34 im Idle-Modus, und die Promotion aus
+`staging_models/` ist Michis Operator-Entscheid (OPUS-HANDOFF §6). Genau EINE
+Cornix-parsebare Message je Signal über `core.signal_post.post_ai_signal`
+(harte Regel 4). Watchdog-Registrierung: `start_delay=223`.
+
+Verifikation: `backtest/test_max1_gate.py` (21 neue Tests — Selektion/Kappe/
+Default-off-Gate/Tag-aus-Meta/Cornix-Einzelmessage/Cooldown-Trennung), volle
+Suite 458 grün, ruff/format/mypy grün, Artefakt lädt über `core/model_artifacts`
+(Tag MAX1, 15 Features, Threshold 0,829, Kalibrator ja).
+
 ## [2026-07-10] EPD und SRA bekommen den Active-Trade-Check; EPDs Funding-Load wird gecacht (T-2026-CU-9050-055)
 
 Zwei Folgebefunde aus T-2026-CU-9050-042, auf Operator-Auftrag (Michi, 2026-07-10).
