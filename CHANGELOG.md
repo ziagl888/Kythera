@@ -1,3 +1,39 @@
+## [2026-07-11] P1.13-Recompute: ein voller Recompute ist NICHT positions-stabil — Werkzeug zur Kopfzeilen-Nullung (T-2026-CU-9050-061, Schritt 1)
+
+Erster Schritt des P1.13-Folge-Tasks: die Warmup-Kopfzeilen der Bestands-Coins auf
+den neuen NaN-Stand bringen (der Live-Fix aus T-054/PR #43 wirkt nur auf Neu-Listings).
+Dieser PR liefert das **Werkzeug** und den tragenden Analyse-Befund; der eigentliche
+Live-DB-Write ist ein separater, operator-gegateter Schritt (C-Gate, noch nicht ausgeführt).
+
+### Befund (gemessen, nicht behauptet)
+Der naheliegende Weg — jede `_indicators`-Tabelle neu rechnen und upserten — ist
+**nicht positions-stabil**. `2_indicator_engine` schreibt inkrementell (ein 1000-Kerzen-
+Fenster je Lauf, über Monate, teils von älteren Engine-Ständen), und die heutige Engine
+reproduziert die gespeicherten Mid-Band-Werte nicht. Gemessen an einer 30-Tabellen-
+Stichprobe: ein voller Recompute würde **~79.000 Mid-Band-Zellen** verändern (worst case
++707 % auf `rsi_14`), nicht nur die ~18.900 Warmup-Kopfzeilen. Ursache: fenster-globale
+Features (`TRENDLINE_*`, `HVN`, `POC`, `FIB_*`) sind Skalare übers ganze Fenster, lange
+ewm-Indikatoren (`EMA_200`, `SMMA_200`) konvergieren langsam vom Startpunkt. Ein voller
+Recompute hätte die Serving-Verteilung des gesamten Fleets verschoben und Training von
+Serving entkoppelt — das Gegenteil des Task-Ziels.
+
+### Lösung
+`tools/recompute_indicators.py` nullt **nur** die Warmup-Kopfzeilen der vier P1.13-Familien
+(`WMA_*`, `RSI_*`, `BOLL_*_20`, `DONCHIAN_*`): Die Engine bestimmt die Warmup-Grenze (die
+Zeilen, die sie jetzt als NaN liefert), aber geschrieben wird ausschließlich NULL an diese
+Positionen — nie ein neu gerechneter Mid-Band-Wert. Damit ist die Operation positions-stabil
+per Konstruktion (Mid-Band = unveränderte Serving-Werte). Der Retrain braucht genau das:
+die genullten Kopfzeilen fallen im Replay per `dropna()` (seit T-045) aus den Trainingsdaten.
+Läuft neben dem Live-Bot 2 (nullt nur historische Zeilen, die der inkrementelle Writer nie
+anfasst), niedrige Priorität, idempotent, resumable. `--dry-run` (default) schreibt nichts
+und belegt die Kopf/Mid-Band-Trennung; `--execute` ist operator-gegatet.
+
+Verifikation: `backtest/test_recompute_head_nulling.py` (5 Tests, standalone, DB-frei) pinnt
+die Grenze — Kopfzeilen werden genullt, Mid-Band-Abweichungen nur berichtet nie geschrieben,
+neueste Zeilen (bot-2-Race) ausgeschlossen. Dry-Run über 30 Tabellen bestätigt ~49 min bei
+3 Workern für den vollen Lauf. **Noch offen (separate Schritte):** der Live-Execute, der
+TD2/BB2/QM2-Retrain, und — erst beim Artefakt-Rollout — die `bfill`-Entfernung in
+`24_quasimodo_bot.py:126` / `25_smc_ml_sniper.py:220`.
 ## [2026-07-11] MAX1: eigenständiger High-Conviction-Klon von RUB2-SHORT für den Main-Channel (T-2026-CU-9050-067)
 
 RUB2-SHORT ist die stärkste Short-Kante der Fleet (live seit 06.07.: 24 Closes,
