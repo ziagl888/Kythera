@@ -59,6 +59,53 @@ def get_timeframe_delta(timeframe):
     return pd.Timedelta(hours=1)
 
 
+# P2.13: der laengste rollende Lookback (MA/EMA/WMA/SMMA_200). Eine Kerzen-Luecke
+# innerhalb dieser Bar-Distanz vor einer Zeile, die wir persistieren, laesst ein
+# rollendes Fenster ueber die Diskontinuitaet laufen — ein "200-Perioden-MA" wuerde
+# ueber das Loch gerechnet. Aeltere Luecken sind aus jedem persistierten Fenster
+# herausgerollt und harmlos.
+MAX_INDICATOR_LOOKBACK = 200
+
+# Ein Kerzen-Abstand groesser als dieses Vielfache des Timeframe-Deltas zaehlt als
+# fehlende Kerze. 1.5x faengt jede Ganz-Kerzen-Luecke (eine einzelne fehlende Kerze
+# verdoppelt den Abstand) und toleriert Sub-Kerzen-Timestamp-Jitter.
+GAP_TOLERANCE_FACTOR = 1.5
+
+
+def find_contaminating_gap(open_times, tf_delta, save_start_filter):
+    """P2.13: Findet die erste Kerzen-Luecke, die eine zu schreibende Indikator-Zeile
+    kontaminieren wuerde, oder None wenn der relevante Lookback lueckenlos ist.
+
+    Die Engine laedt bis zu ``lookback_candles`` Historie, um die rollenden Fenster
+    aufzuwaermen, persistiert aber nur Zeilen ab ``save_start_filter``. Eine Luecke
+    in der tiefen Warmup-Historie (aelter als MAX_INDICATOR_LOOKBACK Bars vor der
+    ersten persistierten Zeile) ist aus jedem geschriebenen Fenster herausgerollt und
+    harmlos; eine Luecke innerhalb dieses Fensters laesst einen rollenden Indikator
+    ueber das Loch laufen. Nur letztere wird gemeldet — damit eine alte, permanente
+    Historien-Luecke einen Coin nicht dauerhaft einfriert (dessen MAX(open_time)
+    wuerde sonst nie vorruecken, weil der Skip-Pfad das Schreiben verhindert).
+
+    Erwartet ``open_times`` aufsteigend sortiert (wie der ``ORDER BY open_time ASC``
+    des Loaders). Returns (prev_ts, next_ts) der ersten kontaminierenden Luecke,
+    sonst None.
+    """
+    ot = pd.to_datetime(pd.Series(open_times), utc=True).reset_index(drop=True)
+    if len(ot) < 2:
+        return None
+    save_mask = (ot >= save_start_filter).to_numpy()
+    if not save_mask.any():
+        return None  # nichts zu persistieren -> keine Kontamination moeglich
+    first_save_idx = int(save_mask.argmax())
+    check_start = max(0, first_save_idx - MAX_INDICATOR_LOOKBACK)
+    seg = ot.iloc[check_start:].reset_index(drop=True)
+    diffs = seg.diff()
+    breach = (diffs > tf_delta * GAP_TOLERANCE_FACTOR).to_numpy()
+    if not breach.any():
+        return None
+    j = int(breach.argmax())  # erster True-Index in seg (diff[0] ist NaT -> False)
+    return (seg.iloc[j - 1], seg.iloc[j])
+
+
 def table_exists(conn, table_name):
     try:
         with conn.cursor() as cursor:
@@ -705,6 +752,22 @@ def process_coin_task(args):
         df_raw['open_time'] = pd.to_datetime(df_raw['open_time'], utc=True)
         if 'symbol' not in df_raw.columns:
             df_raw['symbol'] = symbol
+
+        # P2.13: keine Indikatoren ueber Kerzen-Luecken rollen. Findet die Engine
+        # eine Luecke im Lookback, der eine zu schreibende Zeile speist, wird das
+        # Symbol/TF diesen Zyklus uebersprungen (statt ein rollendes Fenster ueber
+        # das Loch zu rechnen — ein "200-Perioden-MA" waere sonst ueber die
+        # Diskontinuitaet gerechnet und laege daneben). Der naechtliche Gap-Filler
+        # (6_housekeeping.fill_ohlcv_gaps_and_invalidate_indicators) fuellt die
+        # Luecke, der naechste Zyklus rechnet dann lueckenlos weiter.
+        gap = find_contaminating_gap(df_raw['open_time'], tf_delta, save_start_filter)
+        if gap is not None:
+            logger.warning(
+                f"⏭️ {symbol} ({timeframe}): Kerzen-Luecke {gap[0]} → {gap[1]} im "
+                f"Indikator-Lookback — uebersprungen (Backfill schliesst sie, dann "
+                f"rechnet der naechste Zyklus weiter)."
+            )
+            return
 
         df_ind = calculate_indicators_optimized(df_raw, timeframe)
         df_save = df_ind[df_ind['open_time'] >= save_start_filter]
