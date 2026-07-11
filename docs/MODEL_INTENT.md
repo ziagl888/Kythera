@@ -373,12 +373,14 @@ Bot, der dasselbe Modell fährt, aber nur die stärksten Kandidaten postet.
 - **Posting** über `core.signal_post.post_ai_signal` (genau EINE Cornix-Message,
   Regel 4). Tag aus `meta.model_id` des Artefakts (Regel 6 / Falle 16).
 
-**Artefakt:** `staging_models/max1_model_SHORT.pkl` — Kopie des RUB2-SHORT-Modells
+**Artefakt:** `max1_model_SHORT.pkl` (Repo-Root, **promoted 2026-07-11** per
+Operator-Entscheid Michi; auf dem VPS erzeugt mit sklearn 1.7.1, Load-Verify
+`True MAX1 0.829 15 True` — T-2026-CU-9050-070) — Kopie des RUB2-SHORT-Modells
 mit `meta.model_id=MAX1`, erzeugt von `tools/make_max1_artifact.py` (Modell,
 Feature-Vertrag, Kalibrator, Val-Operating-Point verbatim; nur die Identität
-wechselt). **Auf dem VPS erzeugen** (die Library-Versionen des Quell-Artefakts
-leben dort), dann Promotion nach Repo-Root = Michis Entscheid. Ohne Artefakt läuft
-Bot 34 im Idle-Modus.
+wechselt). Neuerzeugung nach jedem RUB2-SHORT-Retrain **auf dem VPS** (die
+Library-Versionen des Quell-Artefakts leben dort); die Promotion bleibt je
+Generation Michis Entscheid. Ohne Artefakt läuft Bot 34 im Idle-Modus.
 
 **RUB2-Interaktion (by design):** Cooldown-, Dedupe- und Offene-Trade-Räume sind
 über den Tag getrennt (`MAX1` vs. `RUB2`) — die beiden Bots **blocken sich nicht
@@ -406,12 +408,18 @@ Threshold-Entscheids — nicht überlesen):
   nicht sieht. Eine Einschränkung wäre ein eigener Operator-Entscheid.
 
 **Offen / Bestätigung einholen:**
-- [ ] **Finale Zahlen** `MAX1_MIN_PROB` / `MAX1_MAX_PER_DAY`. Vorschlag aus der
-      044-Live-Kurve (SHORT, seit 06.07., n=24 Closes — indikativ, **kein**
-      Entscheid-Grade): 0,90 → 2,6 Posts/Tag · 0,91 → 1,8 · 0,93 → 1,3.
-      Default **0,93 + Kappe 3** = selektives Ende des Zielbands. Bei n=24 ist die
-      WR-Kurve nicht trennscharf; belastbarer wird sie über die Replay-Daten oder
-      1-2 Wochen Shadow.
+- [x] **Shadow-Gate-Zahlen** (Operator-Entscheid Michi 2026-07-11, Ziel =
+      **maximale Trefferquote**, T-2026-CU-9050-070): `MAX1_MIN_PROB=0,85` +
+      `MAX1_MAX_PER_DAY=3` — bewusst NICHT der Default 0,93. Live-Kurve
+      (06.–11.07., 44 posted/28 closed): höchste WR im Band 0,829–0,85
+      (81–82 %, n=21–28); ab 0,88 **fällt** die WR (60–71 %) und nur der Ø-PnL
+      steigt. ≥0,88-Kandidaten clustern zudem in Funding-Episoden (24h-Kappe
+      liefert dann ~0,7/Tag). Achtung: die **Replay-Kurve ist für dieses Gate
+      unbrauchbar** — Live↔Replay-Prob-Korrelation −0,37 auf gematchten
+      Signalen, Feature-Skew-Verdacht Funding (T-2026-CU-9050-071). **Finale**
+      Zahlen nach 1–2 Wochen Shadow (dann misst `ml_predictions_master` die
+      kappen-gebundene Selektions-WR direkt); wenn die WR-Inversion hält, auch
+      Selektionsreihenfolge/Prob-Band statt Floor prüfen.
 - [ ] **Scharf-Schalten** (`MAX1_LIVE_POSTING=1` + Cornix-Konfiguration des
       Main-Channels) — nach Shadow-Auswertung, ausschliesslich Michis Entscheidung.
 

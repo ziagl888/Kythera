@@ -1,0 +1,97 @@
+{
+  "trainer": "tools/retrain_from_replay.py",
+  "strategy": "rub2",
+  "model_id": "MAX1",
+  "direction": "SHORT",
+  "model_type": "binary (1=TP1-first-touch)",
+  "success_proba": "predict_proba[:, 1]",
+  "features": [
+    "dist_to_trend",
+    "rsi",
+    "atr_pct",
+    "dist_ema200",
+    "slope_trend",
+    "MACD_Line",
+    "MACD_Signal",
+    "TSI_Line",
+    "TSI_Signal",
+    "fund_last",
+    "fund_24h",
+    "fund_72h",
+    "fund_7d_cum",
+    "fund_pctl_90d",
+    "fund_trend"
+  ],
+  "optimal_threshold": 0.829,
+  "label_source": "rub_replay_365d.jsonl",
+  "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-13-Parität), Fees inkl.",
+  "changes_vs_rub1": "MACD auf normal_12_26_9 fixiert (Live-Parität), Label mit SL-Pfad statt Max-Favorable-72h, chronologischer Split mit 7d-Purge statt Random-Split, +6 Funding-Features",
+  "split": "chronological 70/15/15 + 7d purge gap",
+  "xgboost_version": "3.1.2",
+  "n_train": 31894,
+  "n_val": 3775,
+  "n_test": 4725,
+  "val_stats": {
+    "deployable": true,
+    "threshold": 0.829,
+    "n": 758,
+    "avg_net_pnl_pct": 0.248,
+    "sum_net_pnl_pct": 188.02,
+    "wr": 81.5,
+    "curve": [
+      {
+        "threshold": 0.7934,
+        "n": 1886,
+        "avg_net_pnl_pct": 0.09,
+        "sum_net_pnl_pct": 170.17,
+        "wr": 81.2
+      },
+      {
+        "threshold": 0.8174,
+        "n": 1131,
+        "avg_net_pnl_pct": 0.232,
+        "sum_net_pnl_pct": 261.86,
+        "wr": 82.2
+      },
+      {
+        "threshold": 0.829,
+        "n": 758,
+        "avg_net_pnl_pct": 0.248,
+        "sum_net_pnl_pct": 188.02,
+        "wr": 81.5
+      },
+      {
+        "threshold": 0.8351,
+        "n": 567,
+        "avg_net_pnl_pct": 0.146,
+        "sum_net_pnl_pct": 83.06,
+        "wr": 81.1
+      },
+      {
+        "threshold": 0.8422,
+        "n": 379,
+        "avg_net_pnl_pct": 0.179,
+        "sum_net_pnl_pct": 67.94,
+        "wr": 81.5
+      },
+      {
+        "threshold": 0.8468,
+        "n": 285,
+        "avg_net_pnl_pct": 0.118,
+        "sum_net_pnl_pct": 33.55,
+        "wr": 81.1
+      }
+    ]
+  },
+  "test_stats": {
+    "n_taken": 680,
+    "wr": 81.9,
+    "sum_net_pnl_pct": 432.15,
+    "base_rate_test": 79.1,
+    "n_test_total": 4725
+  },
+  "derived_from": "RUB2",
+  "derived_from_file": "rub2_model_SHORT.pkl",
+  "derived_by": "tools/make_max1_artifact.py (T-2026-CU-9050-067)",
+  "note": "Byte-identical RUB2-SHORT model under the MAX1 tag. The 1-3/day throttle is bot config (MAX1_MIN_PROB / MAX1_MAX_PER_DAY), NOT the artifact threshold — optimal_threshold stays the val-picked 0.829 and remains the hard floor."
+}

@@ -1,3 +1,26 @@
+## [2026-07-11] MAX1 Shadow-Deploy: Artefakt promoted, Gate 0,85/Kappe 3 (Operator-Entscheid: max. Trefferquote) (T-2026-CU-9050-070/-072)
+
+Operator-Freigabe Michi 2026-07-11: MAX1 (Bot 34) geht in den Shadow-Betrieb. Das auf dem
+VPS erzeugte Artefakt `max1_model_SHORT.pkl` (+ `_meta.json`) ist aus `staging_models/` in
+den Repo-Root promoted und hier committet (Deploy-Konvention wie RUB2, 07c8874) — Byte-Kopie
+des RUB2-SHORT-Modells unter dem Tag MAX1, Load-Verify auf dem VPS mit sklearn 1.7.1:
+`True MAX1 0.829 15 True`. `MAX1_LIVE_POSTING` bleibt AUS (shadow-only, kein Cornix-Posting);
+Scharf-Schalten ist ein separater Operator-Schritt.
+
+### Gate-Zahlen für den Shadow-Start (Operator-Ziel: maximale Trefferquote)
+`.env` auf dem VPS: `MAX1_MIN_PROB=0.85`, `MAX1_MAX_PER_DAY=3` — bewusst NICHT der
+Default 0,93. Begründung (T-2026-CU-9050-070, KB `mcp-a65a1da76492`): die Live-Kurve
+(06.–11.07., 44 posted/28 closed) zeigt die höchste WR im Band 0,829–0,85 (81–82 %,
+n=21–28), während ≥0,88 die WR **fällt** (60–71 %) und nur der Ø-PnL steigt — hohe
+Thresholds kaufen Expectancy, nicht Trefferquote. Zudem clustern die ≥0,88-Kandidaten
+in Funding-Episoden (24h-Kappe liefert dann ~0,7/Tag statt 3). Alles n<30 — die
+Shadow-Phase misst genau die kappen-gebundene Selektions-WR; finale Zahlen danach.
+
+### Befund am Rande (eigener Folge-Task T-2026-CU-9050-071)
+Die Replay-Kurve (rub_replay_365d) ist für die Gate-Kalibrierung unbrauchbar: gematchte
+Signal-Paare Live↔Replay korrelieren −0,37, Replay-OOS erreicht in 59 Tagen nie prob ≥ 0,93.
+Feature-Skew Serving vs. Replay, Hauptverdacht Funding-Features.
+
 ## [2026-07-11] P1.13-Recompute: ein voller Recompute ist NICHT positions-stabil — Werkzeug zur Kopfzeilen-Nullung (T-2026-CU-9050-061, Schritt 1)
 
 Erster Schritt des P1.13-Folge-Tasks: die Warmup-Kopfzeilen der Bestands-Coins auf
