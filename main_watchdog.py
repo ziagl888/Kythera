@@ -11,6 +11,7 @@ from typing import Any
 
 import psutil
 
+from core.fleet import FLEET
 from core.health_monitor import run_health_checks
 from core.process_control import consume_restart, is_parked
 
@@ -25,59 +26,12 @@ logger = logging.getLogger(__name__)
 DASHBOARD_SCRIPT = "dashboard.py"
 DASHBOARD_PORT = 5000
 
-# 'restart_interval': Sekunden bis zum geplanten RAM-Recycling-Restart (None = nie).
-# 'start_delay':      seconds to wait before first start, staggered so that
-#                     not all 538 coins × 24 bots hammer the DB simultaneously.
-PROCESSES_TO_RUN: list[dict[str, Any]] = [
-    {"name": "Data Ingestion", "script": "1_data_ingestion.py", "restart_interval": None, "start_delay": 0},
-    {"name": "Chart Data Service", "script": "chart_data_service.py", "restart_interval": None, "start_delay": 3},
-    {"name": "Indicator Engine", "script": "2_indicator_engine.py", "restart_interval": 21600, "start_delay": 5},
-    {"name": "Detectors", "script": "3_detectors.py", "restart_interval": 21600, "start_delay": 5},
-    {"name": "Telegram Bot", "script": "4_telegram_bot.py", "restart_interval": None, "start_delay": 5},
-    {"name": "Trade Monitor", "script": "5_trade_monitor.py", "restart_interval": None, "start_delay": 5},
-    {"name": "Housekeeping", "script": "6_housekeeping.py", "restart_interval": None, "start_delay": 10},
-    {"name": "Pattern detector", "script": "7_pattern_detector.py", "restart_interval": None, "start_delay": 15},
-    {"name": "AI Trade Monitor", "script": "8_ai_trade_monitor.py", "restart_interval": None, "start_delay": 23},
-    {"name": "AI SR Bot", "script": "9_ai_sr_bot.py", "restart_interval": None, "start_delay": 31},
-    {"name": "Pump Dump Detector", "script": "10_pump_dump_detector.py", "restart_interval": None, "start_delay": 39},
-    {"name": "AI MIS1 Detector", "script": "11_ai_mis_bot.py", "restart_interval": None, "start_delay": 47},
-    {"name": "AI ATS1 Detector", "script": "12_ai_ats_bot.py", "restart_interval": None, "start_delay": 55},
-    {"name": "AI RUB1 Detector", "script": "13_ai_rub_bot.py", "restart_interval": None, "start_delay": 63},
-    {"name": "AI ATB1 Detector", "script": "14_ai_atb_bot.py", "restart_interval": None, "start_delay": 71},
-    {"name": "AI AIM2 Detector", "script": "15_ai_master_bot.py", "restart_interval": None, "start_delay": 79},
-    {"name": "SMC FOREX Detector", "script": "16_smc_forex_metals_bot.py", "restart_interval": None, "start_delay": 87},
-    {"name": "Mayank Bot", "script": "17_mayank_bot.py", "restart_interval": None, "start_delay": 95},
-    {"name": "AI ABR1 Detector", "script": "18_ai_abr1_bot.py", "restart_interval": None, "start_delay": 103},
-    {"name": "Whale logger Bot", "script": "19_whale_logger_bot.py", "restart_interval": None, "start_delay": 111},
-    {"name": "Funding logger Bot", "script": "20_funding_logger_bot.py", "restart_interval": None, "start_delay": 119},
-    {"name": "BTC SMC Bot", "script": "21_btc_smc_strategy.py", "restart_interval": None, "start_delay": 127},
-    # {"name": "IP Pattern Bot",  "script": "22_ip_pattern_bot.py",       "restart_interval": None,  "start_delay": 135},
-    {"name": "Market Tracker", "script": "23_market_tracker.py", "restart_interval": None, "start_delay": 135},
-    {"name": "Quasimodo Bot", "script": "24_quasimodo_bot.py", "restart_interval": None, "start_delay": 143},
-    {"name": "TD & BB Bot", "script": "25_smc_ml_sniper.py", "restart_interval": None, "start_delay": 151},
-    # ── Regime-Orchestrator (v5) ──────────────────────────────────────────────
-    {"name": "Regime Detector", "script": "26_regime_detector.py", "restart_interval": None, "start_delay": 160},
-    {
-        "name": "Bot Regime Analyzer",
-        "script": "27_bot_regime_analyzer.py",
-        "restart_interval": None,
-        "start_delay": 167,
-    },
-    {
-        "name": "Signal Orchestrator",
-        "script": "28_signal_orchestrator.py",
-        "restart_interval": None,
-        "start_delay": 175,
-    },
-    {"name": "UFI1 Fib Bot", "script": "29_ufi1_bot.py", "restart_interval": None, "start_delay": 183},
-    # ── Research-Bots (Report 15: S6/S8/S10/S11 — Channel CH_NEW_IDEAS) ──────
-    {"name": "AI PEX1 Detector", "script": "30_ai_pex1_bot.py", "restart_interval": None, "start_delay": 191},
-    {"name": "AI FMR1 Detector", "script": "31_ai_fmr1_bot.py", "restart_interval": None, "start_delay": 199},
-    {"name": "AI TRM1 Detector", "script": "32_ai_trm1_bot.py", "restart_interval": None, "start_delay": 207},
-    {"name": "AI FIF1 Detector", "script": "33_ai_fif1_bot.py", "restart_interval": None, "start_delay": 215},
-    # ── High-Conviction-Drossel über RUB2-SHORT (T-2026-CU-9050-067, Main-Channel) ──
-    {"name": "AI MAX1 Detector", "script": "34_ai_max1_bot.py", "restart_interval": None, "start_delay": 223},
-]
+# Die Fleet-Definition (Name/Script/Group/Delays) lebt zentral in core/fleet.py;
+# Watchdog UND Dashboard konsumieren dieselbe Liste (T-2026-CU-9050-091, R2(a)).
+# Der Watchdog nutzt name/script/start_delay/restart_interval — das zusätzliche
+# group-Feld (nur für die Dashboard-Anzeige) ist hier ein No-op. Reihenfolge und
+# Delays sind identisch zur früheren Inline-Liste; keine Verhaltensänderung.
+PROCESSES_TO_RUN: list[dict[str, Any]] = FLEET
 
 running_processes: dict = {}
 _dashboard_proc: subprocess.Popen | None = None
