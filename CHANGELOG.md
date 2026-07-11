@@ -34,6 +34,139 @@ neueste Zeilen (bot-2-Race) ausgeschlossen. Dry-Run über 30 Tabellen bestätigt
 3 Workern für den vollen Lauf. **Noch offen (separate Schritte):** der Live-Execute, der
 TD2/BB2/QM2-Retrain, und — erst beim Artefakt-Rollout — die `bfill`-Entfernung in
 `24_quasimodo_bot.py:126` / `25_smc_ml_sniper.py:220`.
+## [2026-07-11] MAX1: eigenständiger High-Conviction-Klon von RUB2-SHORT für den Main-Channel (T-2026-CU-9050-067)
+
+RUB2-SHORT ist die stärkste Short-Kante der Fleet (live seit 06.07.: 24 Closes,
+79 % TP1-WR, +4,2 % Ø PnL — T-2026-CU-9050-044), feuert aber ~9×/Tag. Michis Ziel
+für den Main-Channel sind **1-3 Trades/Tag mit sehr hoher Trefferquote**. Statt
+RUB2 zu drosseln (T-2026-CU-9050-050 → **wontfix**: RUB2 bleibt unverändert in
+seinem Channel), läuft dasselbe Modell jetzt zusätzlich als eigener Bot
+**`34_ai_max1_bot.py`** mit selektivem Gate und eigenem Tag `MAX1`.
+
+Drossel in `core/max1_gate.py` (reine, DB-freie Selektion): hohe
+Mindest-Probability (`MAX1_MIN_PROB`, Default **0,93** — nie unter dem
+Artefakt-Threshold 0,829) als eigentlicher Selektor, plus eine **harte rollierende
+24h-Kappe** (`MAX1_MAX_PER_DAY`, Default **3**) als Backstop. Je Scan: Kandidaten
+sammeln, per Symbol deduplizieren, deterministisch ranken, auf die freien Slots
+schneiden. Der 24h-Zähler liest Shadow **und** Live aus `ml_predictions_master`,
+damit die Kappe im Shadow exakt wie live greift.
+
+Detection, Features (9 rub + 6 funding) und Trade-Geometrie kommen aus den
+**geteilten** Buildern (`core/rub_features.py`, `core/funding_features.py`,
+`hvn_sr_trade_geometry`) — importiert, nicht angefasst (X-R1). `13_ai_rub_bot.py`
+bleibt unverändert. Cooldown-/Dedupe-/Offene-Trade-Räume sind über den Tag getrennt:
+MAX1 und RUB2 blocken sich nicht gegenseitig, Doppel-Exposure auf demselben Coin ist
+die bewusste Konsequenz (dokumentiert in `docs/MODEL_INTENT.md` §8a).
+
+Artefakt: `tools/make_max1_artifact.py` erzeugt aus dem RUB2-SHORT-Modell eine
+Kopie mit `meta.model_id=MAX1` nach `staging_models/` (Modell, Feature-Vertrag,
+Kalibrator, Val-Operating-Point verbatim — nur die Identität wechselt, harte
+Regel 6). Der Posting-Tag kommt aus dieser Meta, nie aus einer Konstante (Falle 16).
+
+Nichts scharf geschaltet: `MAX1_LIVE_POSTING` ist **Default-OFF** (Shadow-only),
+ohne deploytes Artefakt läuft Bot 34 im Idle-Modus, und die Promotion aus
+`staging_models/` ist Michis Operator-Entscheid (OPUS-HANDOFF §6). Genau EINE
+Cornix-parsebare Message je Signal über `core.signal_post.post_ai_signal`
+(harte Regel 4). Watchdog-Registrierung: `start_delay=223`.
+
+Verifikation: `backtest/test_max1_gate.py` (21 neue Tests — Selektion/Kappe/
+Default-off-Gate/Tag-aus-Meta/Cornix-Einzelmessage/Cooldown-Trennung), volle
+Suite 458 grün, ruff/format/mypy grün, Artefakt lädt über `core/model_artifacts`
+(Tag MAX1, 15 Features, Threshold 0,829, Kalibrator ja).
+## [2026-07-10] EPD und SRA bekommen den Active-Trade-Check; EPDs Funding-Load wird gecacht (T-2026-CU-9050-055)
+
+Zwei Folgebefunde aus T-2026-CU-9050-042, auf Operator-Auftrag (Michi, 2026-07-10).
+Damit ist die Fehlerklasse aus P1.48 fleet-weit geschlossen: **alle** postenden
+AI-Bots prüfen jetzt vor dem Signal, ob auf dem Coin schon ein Trade offen ist.
+
+**Der Positions-Guard.** Weder `10_pump_dump_detector` (EPD) noch `9_ai_sr_bot`
+(SRA) berührte `ai_signals` lesend. Was sie hatten, waren Frequenz-Sperren:
+
+- EPD: `pd_state["last_alert_time"]`, 900 Sekunden — und ein **In-Memory**-Timer.
+  Ein EPD-Trade überlebt eine Viertelstunde regelmässig; danach durfte derselbe
+  Coin erneut feuern, und Cornix öffnete eine **zweite volle Position** daneben.
+- SRA: der 4h-Cooldown plus die `trade_id`-Duplikatprüfung. Letztere schützt nur
+  gegen dasselbe Setup — nicht gegen ein **neues** S/R-Setup auf einem Coin, auf
+  dem bereits ein SRA-Trade läuft.
+
+Beide bekommen jetzt `SELECT 1 FROM ai_signals WHERE symbol/direction/model IN
+(tag, legacy_tag)` und überspringen das Signal bei einem Treffer. Bei **EPD** läuft
+der Check *nach* der Prediction — die Richtung entsteht erst im `argmax` — aber
+*vor* der Shadow/Post-Verzweigung, also unterdrückt er wie bei MIS/RUB auch die
+Shadow-Zeile. Operator-Entscheid: `symbol+direction` wie bei den Geschwistern, kein
+richtungsagnostischer Key, damit ein Reversal auf demselben Coin erlaubt bleibt.
+Bei **SRA** steht die Richtung schon aus `active_trades_master` fest, der Check
+sitzt deshalb vor Indikator-Fetch und `predict_proba` und spart auch Arbeit. Der
+Legacy-Tag reist in beiden Binds mit (transitionaler Dedup über den EPD3-/
+SRA2-Generationswechsel); Cooldown und 900s-Timer bleiben unangetastet daneben.
+
+**Der Funding-Load — und eine Korrektur an der eigenen Notiz von T-042.** Dort stand,
+der Load feuere „pro qualifizierendem Tick, weil der `vol_ratio>=5`-Vorfilter
+anhält". Das war ungenau: der 900s-Timer sperrt sehr wohl **vor** der ML-Strecke.
+Der Wiederholungsfall ist ein anderer — der Timer wird **nur im Live-Trade-Zweig
+gesetzt**, ein Coin im Shadow-Band (0.25..threshold) passiert das Gate also auf
+jedem 10s-Tick und zog die Query jedes Mal.
+
+„Funding nur bei Trades laden" ist **nicht baubar**: die 6 Funding-Spalten sind
+Modell-**Input**, sie erzeugen die `prob`, die überhaupt erst entscheidet, ob es ein
+Trade wird. Die Reihenfolge lässt sich nicht umdrehen. Was geht, ist die
+Wiederholung: `core/funding_features.funding_features_cached` cacht je Symbol bis zur
+nächsten Abrechnung, die das Ergebnis überhaupt verändern kann.
+
+Der Schlüssel kommt dabei aus den **Daten**, nicht aus der Wanduhr — und das ist
+der Punkt, an dem der erste Entwurf dieses Fixes falsch war. Er cachte je
+angebrochener Stunde, in der Annahme, Binance rechne auf vollen Stunden ab. Ein
+adversarialer Review hat das mit zwei ausgeführten Gegenbeispielen widerlegt:
+`tools/backfill_funding_rates.py` schreibt `funding_time` millisekunden-genau,
+nichts erzwingt das Stunden-Raster (eine Abrechnung um 12:30 blieb bis 13:00
+unsichtbar); und der 120s-Ingestion-Guard war eine Wette auf eine SLA — eine Zeile,
+die nach 150s landete, wurde für den Rest der Stunde ignoriert.
+
+Jetzt gilt ein Eintrag bis zu der Abrechnung, die das Ergebnis als Nächstes ändern
+kann: der nächste `funding_time`, der schon in der Historie steht (gleich auf welcher
+Minute er sitzt), oder — hinter der letzten Zeile — die letzte Abrechnung plus das
+aus den jüngsten Abständen geschätzte Intervall (8h/4h/1h je Paar). Ist die fällige
+Zeile noch nicht ingested, ist der Eintrag bereits abgelaufen und es wird bei jedem
+Aufruf neu geladen, bis sie erscheint; ihr `funding_time` schiebt die Grenze dann
+weiter. Der Cache **korrigiert sich selbst**, statt auf einen Zeitplan zu wetten.
+
+Die Intervall-Schätzung nimmt das **Minimum** der jüngsten Abstände, nicht den Median
+— ein zweiter Fund des Re-Reviews. Die Fehlerrichtungen sind nicht gleich teuer: zu
+kurz geschätzt kostet einen zusätzlichen DB-Roundtrip, zu lang geschätzt lässt den
+Cache über einer echten Abrechnung sitzen und einen stale Wert ausliefern. Verkürzt
+ein Coin seine Kadenz (8h → 1h) oder verzerrt eine Ingestion-Lücke die Abstände,
+überschätzt ein Median (oder der letzte Abstand) um Stunden; das Minimum kann das
+strukturell nicht.
+
+Damit steht die Wertneutralität wieder auf der Invariante statt auf einer Annahme:
+`funding_features_asof` hängt vom Zeitstempel **ausschliesslich** über den
+`searchsorted`-Schnitt ab, und alle Aggregate sind Suffixe (`rates[-3:]`,
+`rates[-270:]`) — die wandernde `since`-Untergrenze geht nicht ein. Was die Parität
+bräche, wäre ein **naiver Zeit-TTL**: der kann eine Abrechnungsgrenze überspannen.
+Der T-042-Eintrag unten warnte genau davor und schloss daraus fälschlich, ein Cache
+sei überhaupt kein Drop-in.
+
+Verifikation DB-frei: `backtest/test_funding_cache.py` nagelt zuerst die Invariante
+selbst fest (as-of konstant zwischen zwei Abrechnungen, und beweglich über eine —
+beides oberhalb von `MIN_HISTORY`, sonst verglichen die Tests zwei leere Dicts),
+dann beide widerlegten Gegenbeispiele, dann das Cache-Verhalten. Erweitert:
+`test_epd_tag.py` (15), `test_sra_tag.py` (13). Mutations-geprüft: der uhr-gebundene
+Stunden-Key, eine aus der letzten Zeile statt aus dem nächsten Satz abgeleitete Grenze,
+ein Median- oder Letzter-Abstand-Schätzer und ein `searchsorted`-Schnitt auf `right`
+(Lookahead bei exakter Zeitstempel-Gleichheit) fallen alle durch. Die zweite und die
+dritte Mutation waren echte Bugs in den ersten beiden Anläufen dieses Fixes.
+
+**Live-Semantik ändert sich bewusst** an genau einer Stelle je Bot: ein Signal auf
+einem Coin, auf dem bereits ein Trade derselben Richtung offen ist, fällt weg. Erste
+Position, freier Coin, Gegenrichtung und der berechnete Funding-Wert bleiben
+unverändert. Kein Rollout, kein Artefakt angefasst, keine DB-Änderung.
+
+**Nebenbei (Boy-Scout, vorbestehend seit T-042):** `CACHE_SINCE_DAYS` von 95 auf 110
+angehoben. Der Funding-Load fensterte auf 95 Tage, das 270-Sätze-Fenster von
+`fund_pctl_90d` braucht bei 8h-Kadenz aber exakt 90 — nur 5 Tage Puffer. Ein Coin mit
+>5d kumulierter Funding-Lücke bekam live <270 Samples und wich in diesem einen
+Feature minimal vom Trainer ab (volle Historie). 110d gibt 20 Tage Lücken-Puffer.
+Berührt die Cache-Werteidentität nicht (Cache und `asof` sehen denselben Frame).
 
 ## [2026-07-10] ROM1: Regime-Auto-Close differenziert — Gewinner trailen statt blind closen (T-2026-CU-9050-049, B6)
 
