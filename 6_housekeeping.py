@@ -12,7 +12,8 @@ import requests
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
-from core.config import BINANCE_API_KEY, BINANCE_SECRET, PUMP_EVENT_MIN_ABS_PCHG_60S, PUMP_EVENT_MIN_VOL_RATIO
+from core.coins import looks_like_usdt_perp, refresh_coins_json
+from core.config import BASE_URL, BINANCE_API_KEY, BINANCE_SECRET, PUMP_EVENT_MIN_ABS_PCHG_60S, PUMP_EVENT_MIN_VOL_RATIO
 from core.database import get_db_connection
 from core.http_retry import MinIntervalThrottle, RetryBudget, backoff_seconds
 
@@ -23,29 +24,25 @@ TIMEFRAMES = ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
 
 
 def update_coins_json():
-    """Fetches the latest active USDT perpetual futures from Binance and updates the file."""
+    """Fetches the latest active USDT perpetual futures from Binance and updates the file.
+
+    Filter + atomic write live in ``core.coins`` (the single coins.json writer,
+    P2.16) — shared with ``1_data_ingestion.update_trading_pairs`` so the two
+    can no longer drift apart. On a refresh failure the live coins.json is left
+    untouched (no truncation) and table creation is skipped for this run.
+    """
     logger.info("🔄 Updating coins.json von Binance...")
-    symbols = []
     try:
-        url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        for s in data['symbols']:
-            # We only want USDT pairs that are actively traded (PERPETUAL)
-            if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING' and s['contractType'] == 'PERPETUAL':
-                symbols.append(s['symbol'])
-
-        if symbols:
-            with open('coins.json', 'w') as f:
-                json.dump(symbols, f, indent=4)
-            logger.info(f"✅ coins.json updated successfully. {len(symbols)} active coins found.")
-        else:
-            logger.warning("⚠️ No USDT perpetual coins returned from Binance!")
-
+        symbols = refresh_coins_json(BASE_URL, 'coins.json')
     except Exception as e:
         logger.error(f"❌ Error updating coins.json: {e}")
+        return
+
+    if not symbols:
+        logger.warning("⚠️ No USDT perpetual coins returned from Binance!")
+        return
+
+    logger.info(f"✅ coins.json updated successfully. {len(symbols)} active coins found.")
 
     # Create tables for new coins immediately
     if symbols:
@@ -126,7 +123,15 @@ def cleanup_delisted_trades():
             columns = [desc[0] for desc in cur.description]
             classic_rows = [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
 
-        classic_delisted = [t for t in classic_rows if t['coin'] not in active_coins]
+        # P2.17: only force-close symbols that have the Binance USDT-perp shape.
+        # A symbol "not in coins.json" is NOT proof of a delisting — junk that
+        # leaked in (metals XAUUSD, cross pairs ETHBTC, forex) or a momentary
+        # coins.json wobble would otherwise get nightly false-closed at PnL 0.
+        # Restricting to the shape the fleet actually trades keeps the cleanup
+        # to genuinely-delisted USDT perpetuals.
+        classic_delisted = [
+            t for t in classic_rows if t['coin'] not in active_coins and looks_like_usdt_perp(t['coin'])
+        ]
 
         if classic_delisted:
             logger.info(f"  Klassische Trades: {len(classic_delisted)} auf delisted Coins gefunden")
@@ -184,7 +189,8 @@ def cleanup_delisted_trades():
             columns = [desc[0] for desc in cur.description]
             ai_rows = [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
 
-        ai_delisted = [t for t in ai_rows if t['symbol'] not in active_coins]
+        # P2.17: same Binance-perp-shape guard as the classic path above.
+        ai_delisted = [t for t in ai_rows if t['symbol'] not in active_coins and looks_like_usdt_perp(t['symbol'])]
 
         if ai_delisted:
             logger.info(f"  AI-Trades: {len(ai_delisted)} auf delisted Coins gefunden")
