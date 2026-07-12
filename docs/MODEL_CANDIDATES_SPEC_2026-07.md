@@ -391,9 +391,12 @@ Mid-Band-Regel V2 K=1,5 + Hysterese) treten TREND_UP/DOWN je ~10 % der Zeit
 auf. **Trigger-Bedingung:** `regime_history` zählen — ≥300 abgeschlossene
 TRANSITION→TREND-Übergänge je Zielklasse seit 2026-07-07 (realistisch einige
 Wochen). Dann: `tools/trm1_build_dataset.py` erneut (prüfen, ob der Builder
-die neuen Klassen sauber sieht), `new_models_train.py --strategy trm
---min-val-trades 20`, Tag **TRM2**. Stop-Kriterien wie gehabt
-(Deploy-Gate in NEW_IDEAS_BOTS.md).
+die neuen Klassen sauber sieht), `new_models_train.py --strategy trm1
+--min-val-trades 20`. **Tag-Bump nötig:** `model_id` ist in der
+`STRATEGIES`-Map von `tools/new_models_train.py` hart auf `TRM1` kodiert —
+für die neue Generation dort auf **TRM2** stellen (Versionierungs-Regel 6,
+MODEL_INTENT-Arbeitsregeln). Stop-Kriterien wie gehabt (Deploy-Gate in
+NEW_IDEAS_BOTS.md).
 
 ---
 
