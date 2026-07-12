@@ -323,6 +323,10 @@ TZ-Cluster P2.1–P2.6 lesen, Offsets DST-aware konvertieren (f95f092-Muster).
 (Scan-Minuten-Verschiebung o. Posting-Fenster) je Bot als Mini-Follow-ups.
 **Stop:** keine stabilen Buckets ⇒ dokumentieren, fertig.
 
+*(Nummerierungs-Hinweis: K14 ist bewusst nicht vergeben — der ursprüngliche
+K14-Platzhalter „Ichimoku-Regelfamilie" wurde verworfen, nachdem die
+Video-Auswertung keine Ichimoku-Regeln ergab; kein fehlender Abschnitt.)*
+
 ### K15 · SRX — Scratch-Reload-Exit-Studie auf ABR/BR-Events (Addendum 2026-07-12)
 
 **Typ:** Exit-Varianten-Replay auf existierenden Event-Populationen. **Aufwand:** ~1 Tag.
@@ -339,13 +343,17 @@ Exit-Mechanik ist neu.
 **Vorgehen:**
 1. `tools/scratch_exit_study.py` (neu): Event-Population aus den vorhandenen
    ABR-/BR-Replays wiederverwenden (ABR-Walkforward-Events aus Report 21 /
-   `walkforward_sim --strategy abr`-Outputs; kein neuer Detektor). Je Event
-   drei Exit-Varianten simulieren:
+   `walkforward_sim --strategy abr1`-Outputs — die Event-Records tragen
+   `level_price`, `entry`, `sl`, `targets`, `signal_time`; kein neuer
+   Detektor). Je Event drei Exit-Varianten simulieren:
    (a) Standard-Geometrie (Ist-Zustand, fixer SL, First-Touch) — Baseline;
-   (b) Scratch-Reload: Exit bei 4h-Kerzenschluss unter Entry-Level, Re-Entry
-   bei erneutem Cross + Retest (Retest = Folgekerze schließt nicht unter dem
-   Level), N ∈ {2, 4, 8} Zyklen, Fees je Zyklus nach Regel 10, Zeitfenster
-   je Event 14 Tage;
+   (b) Scratch-Reload: **Trigger-Feld = `level_price`** (das gebrochene
+   Level — das ist die „Linie" der Praktiker-Regel, nicht der Füllpreis
+   `entry`): LONG-Exit bei 4h-Kerzenschluss ZURÜCK UNTER `level_price`,
+   Re-Entry bei erneutem Cross + Retest desselben `level_price` (Retest =
+   Folgekerze schließt nicht unter dem Level); SHORT exakt gespiegelt
+   (Schluss ZURÜCK ÜBER `level_price`). N ∈ {2, 4, 8} Zyklen, Fees je
+   Zyklus nach Regel 10, Zeitfenster je Event 14 Tage;
    (c) wie (b), aber SL-Auslösung Close-basiert statt Touch-basiert —
    **eigene Grid-Zelle, getrennt ausweisen**, denn Close-basierte Stops
    unterschätzen bei Hebel das Liquidationsrisiko (Liquidation ist
@@ -470,10 +478,15 @@ gegen Live-Doku verifizieren, der Cap stand nur in Verifier-Evidenz).
 2. `core/hl_whales.py` + `36_hl_whale_collector.py` (Timescale-Konventionen
    wie K9): Tabelle `hl_whale_positions` (ts TIMESTAMPTZ, address, coin,
    szi, entry_px, leverage, liq_px, roe, position_value; PK (ts, address,
-   coin)) + `hl_whale_fills` (fill-level, aus userFills-Polling); Poll-Kadenz
-   60 s je Adresse (bleibt weit unter dem Rate-Budget), Kill-Switch
-   `KYTHERA_HL_PERSIST=0`; Registrierung `core/fleet.py`; Prozess-Start =
-   **Michi** (wie K9).
+   coin)) + `hl_whale_fills` (address, coin, side, px, sz, fill_time
+   TIMESTAMPTZ, tid BIGINT; **PK (address, tid)** — die Hyperliquid-Fill-ID
+   `tid` ist der Dedup-Schlüssel, weil gepollte `userFills`-Fenster
+   überlappen; Insert per ON CONFLICT DO NOTHING). Kuratierte Wallet-Liste
+   als repo-getrackte `hl_wallets.json` (analog `coins.json`: Adresse,
+   Label, Aufnahme-Datum, Kurations-Notiz — keine Secrets, Operator pflegt
+   per PR). Poll-Kadenz 60 s je Adresse (bleibt weit unter dem Rate-Budget),
+   Kill-Switch `KYTHERA_HL_PERSIST=0`; Registrierung `core/fleet.py`;
+   Prozess-Start = **Michi** (wie K9).
 3. **Bekannte Pitfalls (aus der Recherche, im Collector-Doc festhalten):**
    Agent-Wallets liefern leere States (Master-Adresse tracken); Sub-Accounts/
    Vaults sind von einer Adresse aus NICHT enumerierbar; entryPx ist
