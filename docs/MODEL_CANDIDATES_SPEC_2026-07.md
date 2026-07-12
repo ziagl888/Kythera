@@ -37,8 +37,9 @@ Ein-Job-Regel; versionierte Tags).
    TIMESTAMPTZ/UTC; beim Lesen von Legacy-Spalten das TZ-Cluster
    (AUDIT_TODO P2.1–P2.6) prüfen. `closed_ai_signals` enthält ~357k
    Duplikat-Zeilen — **vor jeder Auswertung deduplizieren** (per
-   Signal-Identität, z. B. (coin, model, entry_time, direction) — Vorgehen im
-   Skript dokumentieren).
+   Signal-Identität; Spaltennamen am Live-Schema verifizieren
+   (`docs/schema.sql`), z. B. (coin, model, open_time, direction) — Vorgehen
+   im Skript dokumentieren).
 7. **Artefakte nur nach `staging_models/`** mit `meta.model_id` = neuem Tag.
    Promotion in den Repo-Root, Gate-Flips, Bot-Entparken, Fleet-/Bot-Restarts,
    `.env`-Änderungen: **ausschließlich Michi** (OPUS-HANDOFF §6).
@@ -58,7 +59,7 @@ Ein-Job-Regel; versionierte Tags).
 | `{SYM}_{tf}`-Kandles | ~530 Coins × 5m/15m/30m/1h/2h/4h/1d/1w | Retention: **5m nur 1 Monat**, 15m–4h 1 Jahr (6_housekeeping) — Intraday-Studien auf **15m** aufsetzen |
 | `{SYM}_{tf}_indicators` | ~120 Indikatoren | RSI/EMA/MA/WMA/SMMA u. a. |
 | `funding_rates` | 430d × 530 Coins | stündlicher Backfill-Task; Builder `core/funding_features.py` (6 Features) existiert |
-| `pump_dump_events` | seit 2026-02-25 | Detector-Log (vol_ratio, price_change_60s) |
+| `pump_dump_events` | seit 2026-02-25 | Detector-Log (Spalten: `volume_ratio`, `price_change_60s`) |
 | `ticker_10s` | seit 2026-07-07 | Hypertable, ~108 Coins, 10s |
 | `whale_data/*.json` | seit 2026-07-05 | Top-20, Prints ≥ $25k, mit Taker-Richtung (`m`-Flag) |
 | `ai_signals` / `closed_ai_signals` | volle Fleet-Historie | Duplikat-Falle s. Regel 6 |
@@ -109,7 +110,8 @@ Overfitting-Verdacht durch monatliche Re-Optimierung).
 n ≥ 200 Test-Trades ⇒ Paper für unseren Stack falsifiziert, dokumentieren,
 parken. **Fallen:** Resample-TZ; Survivorship (Regel 9); NICHT dem
 Paper-Refitting nacheifern — genau das ist sein Overfitting-Vektor.
-**Wenn positiv:** eigener Folge-Task „Bot 35 TSM1" (Tag `TSM1`, 6h-Scan-Takt,
+**Wenn positiv:** eigener Folge-Task „Bot TSM1" (nächste freie Bot-Nummer —
+Nr. 35 ist für K9 reserviert; Tag `TSM1`, 6h-Scan-Takt,
 `core/model_artifacts.py`-Loader falls ML-Gate, sonst regelbasiert;
 Standard-Konventionen: EINE Cornix-Message, Cooldowns, Monitor-8-Tracking).
 
@@ -238,8 +240,8 @@ LONG" als Orchestrator-/Bot-Filter (Umsetzung = Gating-Change ⇒ Michi).
 **Hypothese:** Breadth-Größen über das 530er-Universum (Anteil Coins > EMA200/
 EMA50, Median-7d-Return, Advance/Decline, Return-Dispersion vs. BTC) schlagen
 bzw. ergänzen die BTC-only-Regime-Klassifikation — und liefern das fehlende
-**Regime-Gate für RUB-LONG** (MODEL_INTENT §8: TREND_UP +1,65 %/Trade,
-n=1.378, 9/13 Monate positiv). **Evidenz:** extern unbeforscht (Report §3
+**Regime-Gate für RUB-LONG** (MODEL_INTENT §22-Validierung: TREND_UP
++1,65 %/Trade, n=1.378, 9/13 Monate positiv; Gate-These in §8). **Evidenz:** extern unbeforscht (Report §3
 Frage 4); intern stark motiviert (§8/§22/§23, HMM-Task T-2026-CU-9050-020).
 
 **Vorgehen:**
@@ -409,7 +411,7 @@ NEW_IDEAS_BOTS.md).
 | Equity-Style 3–12-Monats-Momentum | flippt in Krypto ab ~1 Monat in Reversal | F4 |
 | BB/KC-Squeeze als eigenständiges Modell | Community-populär, Performance-Evidenz null; höchstens als billige Nebenzelle in K1s Grid | F11 |
 | TradingView-„Winrates" als Evidenz übernehmen | >95 % Repaint; nur Mechaniken als Hypothesen verwenden | F12, Report 16 |
-| PEX1-Rehabilitation auf 1h-Features / EPD2-Retrain ohne Alt-Pump-Fenster / RUB2-LONG als Event-Gate / SRA2 vor Label-Pipeline-Fix | intern bereits sauber falsifiziert — Recherche liefert KEINE neue Rehabilitierungs-Evidenz | MODEL_INTENT §7/§8, NEW_IDEAS_BOTS |
+| PEX1-Rehabilitation auf 1h-Features / EPD2-Retrain ohne Alt-Pump-Fenster / RUB2-LONG als Event-Gate / SRA2 vor Label-Pipeline-Fix | intern bereits sauber falsifiziert — Recherche liefert KEINE neue Rehabilitierungs-Evidenz | MODEL_INTENT §5/§7/§8, NEW_IDEAS_BOTS |
 
 ## Task-Zuschnitt (Vorschlag für die KB)
 

@@ -172,6 +172,11 @@ FMZQuant-TTM · crosstrade.io (Repaint) · techacademies-Medium ·
 awesome-pinescript (GitHub) · TrendSpider · TradingView „Liquidation Cascade
 Detector [QuantAlgo]".
 
+Hinweis: In §1 zusätzlich genannte Korroborations-Quellen (IRFA 2021/2024,
+Financial Innovation 2021, Traders Union, BeInCrypto) stammen aus den
+Verify-Läufen bzw. aus Zitaten INNERHALB der 19 gefetchten Quellen — sie
+zählen nicht zur Fetch-Liste.
+
 ## 5. Einordnung gegen den internen Bestand
 
 Deckungen: F2 validiert extern das ABR2-Funding-Gate/SHORT-Veto (Report 21
