@@ -27,7 +27,7 @@ Vier Verträge, alle tragend:
 1. **Reads liefern immer ASC** nach `open_time`. `iloc[-1]` ist überall die *neueste* Kerze. Heute mischen sich ASC- und DESC-Frames (14 Call-Sites lesen `DESC LIMIT n` und drehen anschließend selbst um) — genau die Falle 1 aus `docs/OPUS-HANDOFF.md`.
 2. **`include_forming=False` ist Default.** Preis-Checks (Monitore 5/8, `get_live_price`-Fallbacks, Orchestrator-Last-Close, Health-Monitor-Kanarie, Live-Parity-Replik) übergeben explizit `True`. Analytische Leser nicht — das ist R1.
 3. **Writes committen nicht.** Der Caller besitzt die Transaktion (harte Regel 8, wie `core/signal_post.py`). Wer `insert_fast()` / `write_indicators_to_db_optimized()` ersetzt, muss ein `conn.commit()` ergänzen — beide committen heute selbst.
-4. **Identifier-Hygiene (P3.3).** `symbol`/`tf` validiert (`^[A-Z0-9]{2,24}$`, TF-Whitelist), gequotet über `psycopg2.sql.Identifier`, optional harte `coins.json`-Whitelist. Die in P3.3 geforderte Validierung in `load_coins` bleibt separat offen.
+4. **Identifier-Hygiene (P3.3).** `symbol`/`tf` validiert (`^[A-Z0-9]{2,24}$`, TF-Whitelist), gequotet über `psycopg2.sql.Identifier`, optional harte `coins.json`-Whitelist. Die in P3.3 zusätzlich geforderte Validierung in `load_coins` ist inzwischen erledigt (T-2026-CU-9050-096, 2026-07-11: zentrale `re.fullmatch(r'[A-Z0-9]+')`-Prüfung in `core.market_utils.load_coins`, alle sechs Caller laufen darüber; Test `backtest/test_symbol_validation.py`).
 
 ### Der `is_closed`-Ersatz in Phase A
 
@@ -233,10 +233,10 @@ Diese Fragen blockieren den Start von Phase 1. Keine davon ist in diesem Task en
 | Artefakt | Verifikation | Status |
 |---|---|---|
 | `core/candles.py` | `ruff check` + `ruff format --check` + `mypy` (= CI) | grün |
-| `core/candles.py` | `backtest/test_candles.py` — 29 DB-freie Tests: Cutoff-Arithmetik (inkl. Montags-Anker und TZ-Unabhängigkeit), Identifier-Hygiene, TF-Sync gegen `core.config`, Argument-Validierung, Phase-4-Seam | grün |
+| `core/candles.py` | `backtest/test_candles.py` — 31 DB-freie Tests: Cutoff-Arithmetik (inkl. Montags-Anker und TZ-Unabhängigkeit), Identifier-Hygiene, TF-Sync gegen `core.config`, Argument-Validierung, Phase-4-Seam | grün |
 | `tools/candles_parity.py` | `python tools/candles_parity.py --self-check` (DB-frei); ohne Credentials sauberer Exit 2 | grün |
 | Regression-Guard | `python tools/regression_guard/guard.py smoke` | grün (unberührt) |
-| `tools/candles_parity.py` gegen beide Tabellen | DB nötig | **offen — VPS, ab Phase 2** |
-| Phase-0-Gate aus T-018: „API-Reads byte-gleich zu Direkt-SQL" | DB nötig | **offen — VPS** |
+| `tools/candles_parity.py` gegen beide Tabellen | DB nötig | **offen — VPS, ab Phase 2** (Hypertable existiert noch nicht) |
+| **Phase-0-Gate aus T-018: „API-Reads byte-gleich zu Direkt-SQL"** | `backtest/test_candles_db_parity.py` (T-2026-CU-9050-018): DB-freier Kanonisierungs-Kern (3 Tests, überall lauffähig) + 7 DB-Tests gegen die ALTEN per-Coin-Tabellen — `read_candles`/`read_indicators` byte-gleich zu Direkt-SQL, `limit` = neueste n + ASC, `include_forming=False` droppt exakt die forming Rows, JOIN-Read lässt die Candle-Seite unverändert, `latest_open_time` = `MAX(open_time)` | **grün — VPS-Lauf 2026-07-12** (DB `cryptodata`, BTCUSDT_1h) |
 
-Die Build-Maschine hat keine DB-Credentials; jede DB-gebundene Verifikation gehört in eine VPS-Session (T-2026-CU-9050-011).
+Die Build-Maschine hat keine DB-Credentials; jede DB-gebundene Verifikation gehört in eine VPS-Session (T-2026-CU-9050-011). `test_candles_db_parity.py` überspringt die DB-Tests dort sauber (`pytest.skip`) und lässt nur den Kanonisierungs-Kern laufen — der Phase-0-Gate-Lauf oben fand in einer dedizierten VPS-Owner-Session statt (T-2026-CU-9050-018, Read-only-SELECTs, keine Writes/DDL).

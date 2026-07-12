@@ -1,3 +1,34 @@
+## [2026-07-12] TimescaleDB-R1 Phase 0: Byte-Gleichheits-Gate für core/candles.py grün gegen die Live-DB (T-2026-CU-9050-018)
+
+Phase-0-Code-Teil der R1-+-TimescaleDB-Migration. Der Substanz-Teil lag bereits
+gemergt vor (`core/candles.py` + `tools/candles_parity.py` + Call-Site-Inventar aus
+T-034; die P3.3-Validierung in `load_coins` aus T-096) — offen war nur das eine
+in `docs/CANDLE_CALL_SITES.md` §6 als „offen — VPS" markierte Phase-0-Gate aus
+dem Design-Doc: **„API-Reads byte-gleich zu Direkt-SQL"**. Dieses Gate ist jetzt
+ausführbar und grün.
+
+Neu: `backtest/test_candles_db_parity.py`. Zwei Schichten nach dem Muster von
+`candles_parity.py`: (1) ein DB-freier Kanonisierungs-Kern (`canonical_cell`/
+`canonical_rows` — normalisiert die Repräsentations-Unterschiede zwischen
+pandas-DataFrame und rohen psycopg2-Tupeln: Timestamp↔datetime, NaN↔None,
+int↔float-Promotion, 12-signifikante-Stellen-Floor gegen REAL/double-Rauschen)
+mit eigenen Tests, die überall laufen und den Vergleicher selbst absichern, damit
+ein grüner DB-Lauf kein Falsch-Positiv eines kaputten Komparators sein kann;
+(2) 7 DB-Tests gegen die ALTEN per-Coin-Tabellen: `read_candles`/`read_indicators`
+byte-gleich zu handgeschriebenem Direkt-SQL, `limit` liefert die neuesten n in
+ASC, `include_forming=False` droppt exakt die forming Rows (R1-Kern), der JOIN-Read
+lässt die Candle-Seite unverändert, `latest_open_time` == `MAX(open_time)`. Ohne
+DB-Credentials überspringt der `conn`-Fixture die DB-Tests sauber (`pytest.skip`) —
+nie ein fabrizierter Pass.
+
+Gelaufen in einer dedizierten VPS-Owner-Session gegen `cryptodata` (BTCUSDT_1h,
+8.777 Rows): 10/10 grün, ausschließlich Read-only-SELECTs — **kein Write, keine
+DDL, kein Hypertable-Anlegen** (die TimescaleDB-Extension + Hypertable-DDL +
+Dual-Write/Backfill bleiben C-Gate bei Michi, nach der T-061-Rerun-Queue). Damit
+ist der Phase-0-Code-Teil abgeschlossen; die API-Signaturen (`read_candles`/
+`read_indicators` mit `include_forming`-Default `False`, `True` nur für Preis-Checks
+5/8) sind ab jetzt eingefroren — die parallele ATB2-Session (T-104) baut dagegen.
+
 ## [2026-07-12] Docs: Kandidaten-Addendum K13/K15 + K6-TOTAL3 aus Leaderboard-Recherche und Operator-Videos (T-2026-CU-9050-105)
 
 Zweite Research-Runde in die Handoff-Docs eingearbeitet (Operator-Freigabe
@@ -16,6 +47,7 @@ ingest-c1e5112dea7f), Reihenfolge/Task-Zuschnitt aktualisiert.
 `reports/model_ideas_research_2026-07.md`: §6-Addendum mit den
 Leaderboard-Befunden F14–F19 (inkl. widerlegtem 96,5 %-IRL-Claim und
 unverifiziertem Whale-Copy-Hype) und der Video-Auswertung. Reine Doku.
+
 ## [2026-07-12] K9/OIC: Open-Interest-Collector — Hypertable oi_5m + 35_oi_collector.py + 30d-Backfill-Tool (T-2026-CU-9050-103)
 
 Umsetzung des zeitkritischen Kandidaten K9 aus
