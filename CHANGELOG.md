@@ -29,6 +29,25 @@ ist der Phase-0-Code-Teil abgeschlossen; die API-Signaturen (`read_candles`/
 `read_indicators` mit `include_forming`-Default `False`, `True` nur für Preis-Checks
 5/8) sind ab jetzt eingefroren — die parallele ATB2-Session (T-104) baut dagegen.
 
+## [2026-07-12] Docs: Kandidaten-Addendum K13/K15 + K6-TOTAL3 aus Leaderboard-Recherche und Operator-Videos (T-2026-CU-9050-105)
+
+Zweite Research-Runde in die Handoff-Docs eingearbeitet (Operator-Freigabe
+Michi). `docs/MODEL_CANDIDATES_SPEC_2026-07.md`: neuer Kandidat **K13 HLW**
+(Hyperliquid-Whale-Position-Collector + Feature-/Lag-Studie — Hyperliquid ist
+laut verifizierter Recherche die einzige Venue mit dauerhaft öffentlicher
+Per-Adresse-Transparenz; Binance-Leaderboard nur Graumarkt-Scraper, Bybit ohne
+Lese-API; Skill-Persistenz akademisch belegt aber nie für Krypto repliziert →
+bewusst Collector+Studie statt Copy-Bot, Bot-Nr. 36 reserviert), neuer
+Kandidat **K15 SRX** (Scratch-Reload-Exit-Studie auf ABR/BR-Events: Exit bei
+Kerzenschluss unter Entry, Re-Entry bei Cross+Retest, max. N Zyklen vs. fixer
+SL; plus Touch- vs. Close-SL-Grid-Zelle — extrahiert aus Michis
+YouTube-Videos, KB ingest-9f6511a5f951), K6 um den **TOTAL3-Proxy** als
+Pflicht-Breadth-Feature ergänzt (Alt-Index ex BTC/ETH, KB
+ingest-c1e5112dea7f), Reihenfolge/Task-Zuschnitt aktualisiert.
+`reports/model_ideas_research_2026-07.md`: §6-Addendum mit den
+Leaderboard-Befunden F14–F19 (inkl. widerlegtem 96,5 %-IRL-Claim und
+unverifiziertem Whale-Copy-Hype) und der Video-Auswertung. Reine Doku.
+
 ## [2026-07-12] K9/OIC: Open-Interest-Collector — Hypertable oi_5m + 35_oi_collector.py + 30d-Backfill-Tool (T-2026-CU-9050-103)
 
 Umsetzung des zeitkritischen Kandidaten K9 aus
