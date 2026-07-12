@@ -24,7 +24,6 @@ os.environ.setdefault("DB_PASSWORD", "unit-test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "unit-test")
 
 from core import config as _kcfg  # noqa: E402 — must follow the env seed above
-from core.trade_utils import cap_leverage_to_sl as _real_cap_leverage_to_sl  # noqa: E402
 
 def _load_orchestrator():
     spec = importlib.util.spec_from_file_location(
@@ -892,21 +891,21 @@ def test_rom1_constants_match_ai_bots():
 
 def test_compute_rom1_trade_params_long():
     """LONG-Trade: Entry1 = aktueller Preis, Entry2 = 5% darunter,
-    SL aus Supports, Targets aus Resistances, Hebel gegen die SL-Distanz gecappt."""
+    SL aus Supports, Targets aus Resistances, Hebel = get_max_leverage."""
     mock_conn = mock.MagicMock()
     # Mock _get_latest_price; ensure_min_tp_distance passthrough (Identity) damit
-    # die Targets-Liste durchgereicht wird. cap_leverage_to_sl kommt aus dem beim
-    # Laden gemockten core.trade_utils — hier die echte Funktion einsetzen, sonst
-    # prüft die leverage-Assertion nur ein MagicMock.
+    # die Targets-Liste durchgereicht wird.
     with mock.patch.object(orch, "_get_latest_price", return_value=100.0), \
          mock.patch.object(orch, "get_hvn_and_sr_levels",
                            return_value=([92.0, 88.0], [105.0, 110.0, 120.0])), \
          mock.patch.object(orch, "ensure_min_tp_distance",
                            side_effect=lambda t, e, l, min_pct: list(t)), \
-         mock.patch.object(orch, "cap_leverage_to_sl", _real_cap_leverage_to_sl), \
-         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+         mock.patch.object(orch, "get_max_leverage", return_value="20x") as m_lev:
         params = orch.compute_rom1_trade_params(mock_conn, "BTCUSDT", "LONG")
 
+    # Der Mock ignoriert seine Args — ohne diesen Assert würde eine Regression
+    # der Call-Site (z.B. get_max_leverage(coin) ohne Desired-Arg) unbemerkt.
+    m_lev.assert_called_once_with("BTCUSDT", orch.ROM1_DESIRED_LEVERAGE)
     assert params is not None
     assert params["entry1"] == 100.0
     assert params["entry2"] == 95.0        # 5% unter Entry1
@@ -914,8 +913,10 @@ def test_compute_rom1_trade_params_long():
     assert params["sl"] == 92.0
     # Targets: alle Resistances > 101 sortiert
     assert params["targets"] == [105.0, 110.0, 120.0]
-    # R4: SL-Distanz gegen Entry1 = 8% → Cap int(0.5/0.08) = 6, unter den 20x Wunsch
-    assert params["leverage"] == "6x"
+    # Cross Margin (T-2026-CU-9050-101): kein SL-Distanz-Cap mehr — die 8%
+    # SL-Distanz drückte früher via cap_leverage_to_sl auf 6x. Es gilt nur
+    # noch der Per-Coin-Cap aus get_max_leverage (hier 20x gemockt).
+    assert params["leverage"] == "20x"
 
 
 def test_compute_rom1_trade_params_short():
@@ -986,7 +987,6 @@ def test_compute_rom1_trade_params_asof_price_bypasses_db():
                            return_value=([92.0], [105.0, 110.0])) as m_sr, \
          mock.patch.object(orch, "ensure_min_tp_distance",
                            side_effect=lambda t, e, l, min_pct: list(t)), \
-         mock.patch.object(orch, "cap_leverage_to_sl", _real_cap_leverage_to_sl), \
          mock.patch.object(orch, "get_max_leverage", return_value="20x"):
         params = orch.compute_rom1_trade_params(None, "BTCUSDT", "LONG", price=100.0, df=fake_df)
 
@@ -1007,7 +1007,6 @@ def test_compute_rom1_trade_params_asof_matches_live_path():
         orch,
         get_hvn_and_sr_levels=mock.MagicMock(return_value=([95.0, 90.0, 85.0], [108.0, 112.0])),
         ensure_min_tp_distance=mock.MagicMock(side_effect=lambda t, e, l, min_pct: list(t)),
-        cap_leverage_to_sl=_real_cap_leverage_to_sl,
         get_max_leverage=mock.MagicMock(return_value="20x"),
     ):
         with mock.patch.object(orch, "_get_latest_price", return_value=100.0):

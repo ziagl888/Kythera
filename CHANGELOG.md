@@ -1,3 +1,21 @@
+## [2026-07-12] ROM1: SL-basierter Leverage-Cap entfernt — Cross-Margin, fix 20x via get_max_leverage (T-2026-CU-9050-101)
+
+Operator-Entscheid Michi: Die ROM1-Trades laufen bei Binance in **Cross Margin**
+(die Cornix-Message postet seit jeher `Margin: Cross`), die Liquidation hängt
+also an der gesamten Wallet und nicht an der ~1/lev-Preisdistanz der
+Isolated-Rechnung. Der R4-Wrapper `cap_leverage_to_sl` in
+`compute_rom1_trade_params` (28_signal_orchestrator.py) drückte den Hebel bei
+weiten SLs deshalb unnötig (8%-SL → 6x statt 20x). Neu:
+`leverage = get_max_leverage(coin, ROM1_DESIRED_LEVERAGE)` — es gilt nur noch
+der Per-Coin-Binance-Cap aus `max_leverage.json` (Coins ohne 20x bekommen
+weiterhin automatisch ihren niedrigeren Cap). Gleiche Begründung wie der
+dokumentierte MIS2-Entscheid („Cross-Margin, kleine Positionen auf großes
+Depot — bewusst KEIN cap_leverage_to_sl"). Der 15%-SL-Distanz-Cap (P2.27)
+und die übrigen `cap_leverage_to_sl`-Sites (Bots 21/29, Isolated-Klasse
+P0.5/P0.6) bleiben unberührt; R4-Annotation im AUDIT_TODO entsprechend
+ergänzt. Tests in `backtest/test_signal_orchestrator.py` auf die neue
+Semantik umgestellt (LONG-Fall assertet jetzt 20x statt 6x-Cap).
+
 ## [2026-07-12] R2(b): docs/schema.sql — kanonische DDL-Referenz aus der Live-DB (T-2026-CU-9050-098)
 
 Schließt den Schema-Teil von Root-Cause R2 (der Fleet-Teil (a) kam mit
