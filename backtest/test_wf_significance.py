@@ -77,7 +77,7 @@ def test_order_permutation_dd():
     losses = [-1.0] * 60
     clustered = np.array(losses + wins)  # alle Verluste zuerst → tiefer DD
     res = order_permutation_test(clustered, n=500, seed=42)
-    assert res["observed_max_dd_pct"] <= res["simulated_max_dd_median_pct"], res
+    assert res["observed_max_dd_pp"] <= res["simulated_max_dd_median_pp"], res
     assert res["p_value_dd_worse"] < 0.2, res  # kaum eine Permutation ist schlechter
 
     interleaved = np.array([v for pair in zip(wins[:60], losses) for v in pair] + wins[60:])
