@@ -43,6 +43,7 @@ from typing import Any, Sequence
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
+from psycopg2 import sql
 
 from core import candles as c
 
@@ -50,11 +51,13 @@ from core import candles as c
 #
 # The API returns a pandas DataFrame; direct SQL returns raw psycopg2 tuples.
 # Both carry the SAME database values, but through different type paths: pandas
-# turns datetimes into Timestamps, promotes an int column to float once a NULL
-# appears, and represents SQL NULL as NaN rather than None. A raw `==` would
-# flag those representation differences as drift. Canonicalisation collapses
-# every value to a driver-independent string so the comparison sees the value,
-# not the container it arrived in.
+# turns datetimes into Timestamps and represents SQL NULL as NaN rather than
+# None, and float4/float8 can print with differing trailing digits. A raw `==`
+# would flag those representation differences as drift. Canonicalisation
+# collapses each value to a driver-independent string so the comparison sees the
+# value, not the container it arrived in. It deliberately keeps int and float
+# distinct (see the self-test) — it reconciles float-representation noise, not a
+# genuine int-vs-float type difference.
 
 _MISSING = "∅"  # ∅ — a single token for both None and NaN
 _FLOAT_FMT = "{:.12g}"  # matches tools/candles_parity.canonical_row (P3.12 noise floor)
@@ -119,7 +122,8 @@ def test_canonical_rows_is_order_sensitive():
 
 
 def test_frame_to_rows_selects_requested_columns_in_order():
-    pd = pytest.importorskip("pandas")
+    import pandas as pd  # a hard prerequisite anyway — core.candles imports it at module load
+
     df = pd.DataFrame({"open_time": [1, 2], "close": [10.0, 11.0], "junk": [0, 0]})
     assert frame_to_rows(df, ["open_time", "close"]) == [(1, 10.0), (2, 11.0)]
 
@@ -156,8 +160,6 @@ def _db_now(conn: Any) -> datetime:
 @pytest.fixture(scope="module")
 def probe(conn):
     """Pick a real (symbol, tf) whose candle table has enough closed rows."""
-    from psycopg2 import sql
-
     now = _db_now(conn)
     for symbol in _SYMBOL_CANDIDATES:
         for tf in _TF_CANDIDATES:
@@ -182,8 +184,6 @@ def _closed_window(conn: Any, tf: str, periods: int) -> tuple[datetime, datetime
 
 
 def _direct_candles(conn: Any, symbol: str, tf: str, start: datetime, end: datetime) -> list[tuple]:
-    from psycopg2 import sql
-
     table = c.candles_table(symbol, tf)
     query = sql.SQL(
         "SELECT symbol, open_time, open, high, low, close, volume FROM {tbl} "
@@ -219,8 +219,6 @@ def test_read_candles_limit_selects_the_newest_n(conn, probe):
     """`limit=n` must return the NEWEST n rows of the window, then ASC — not the oldest."""
     symbol, tf = probe
     start, end = _closed_window(conn, tf, 200)
-    from psycopg2 import sql
-
     table = c.candles_table(symbol, tf)
     inner = sql.SQL(
         "SELECT symbol, open_time, open, high, low, close, volume FROM {tbl} "
@@ -239,24 +237,42 @@ def test_read_candles_limit_selects_the_newest_n(conn, probe):
 
 
 def test_include_forming_false_drops_only_forming_rows(conn, probe):
-    """R1 contract: include_forming=False removes exactly the rows open_time >= cutoff."""
-    symbol, tf = probe
-    api_closed = c.read_candles(conn, symbol, tf, limit=5, include_forming=False)
-    api_all = c.read_candles(conn, symbol, tf, limit=6, include_forming=True)
+    """R1 contract: include_forming=False removes exactly the forming rows.
 
-    # Everything the closed read returned is genuinely closed at *any* instant of
-    # the test (cutoff sampled after the reads → strictly conservative).
-    cutoff = c.period_start(tf, _db_now(conn))
-    assert not api_closed.empty
-    assert all(ot < cutoff for ot in api_closed["open_time"])
+    Clock-safe by construction. Both reads cover the SAME window (same `start`,
+    no limit) so the only difference between them is the forming filter — no
+    newest-N artefact. `cutoff_before` is sampled BEFORE the reads and
+    `cutoff_after` AFTER; the API evaluates its own now() in between, so its
+    cutoff lies in [cutoff_before, cutoff_after]. Every assertion is phrased
+    against whichever bound makes it hold at any instant of that interval, so the
+    test never false-fails on a candle closing mid-run.
+    """
+    symbol, tf = probe
+    cutoff_before = c.period_start(tf, _db_now(conn))
+    start = cutoff_before - 10 * c.timeframe_delta(tf)
+    api_all = c.read_candles(conn, symbol, tf, start=start, include_forming=True)
+    api_closed = c.read_candles(conn, symbol, tf, start=start, include_forming=False)
+    cutoff_after = c.period_start(tf, _db_now(conn))
 
     closed_times = set(api_closed["open_time"])
     all_times = set(api_all["open_time"])
-    assert closed_times <= all_times  # no phantom rows introduced by the filter
-    # Any row the forming-inclusive read has that the closed read lacks must be
-    # a forming row (open_time >= cutoff). Nothing closed is silently dropped.
+    assert closed_times, "window held no closed candles — widen `start`"
+    assert closed_times <= all_times  # the filter never invents rows
+
+    # 1. Nothing the closed read returned is forming: it is < the API's cutoff,
+    #    which is at most cutoff_after.
+    assert all(ot < cutoff_after for ot in closed_times)
+    # 2. Nothing already closed before we started is dropped: any such row is
+    #    < cutoff_before ≤ the API's cutoff, so the filter must have kept it.
+    assert {ot for ot in all_times if ot < cutoff_before} <= closed_times
+    # 3. Every dropped row is a forming row (≥ cutoff_before).
     for ot in all_times - closed_times:
-        assert ot >= cutoff
+        assert ot >= cutoff_before
+    # 4. If a forming row physically exists right now, the filter actually drops
+    #    it (the test isn't vacuous when there is something to drop).
+    newest = c.latest_open_time(conn, symbol, tf, include_forming=True)
+    if newest is not None and newest >= cutoff_after:
+        assert newest not in closed_times
 
 
 def test_read_indicators_is_byte_equal_to_direct_sql(conn, probe):
@@ -269,8 +285,6 @@ def test_read_indicators_is_byte_equal_to_direct_sql(conn, probe):
     assert "open_time" in cols
 
     api = c.read_indicators(conn, symbol, tf, start=start, end=end, include_forming=True, columns=cols)
-    from psycopg2 import sql
-
     proj = sql.SQL(", ").join(sql.Identifier(col) for col in cols)
     query = sql.SQL("SELECT {proj} FROM {tbl} WHERE open_time >= %s AND open_time <= %s ORDER BY open_time ASC").format(
         proj=proj, tbl=sql.Identifier(table)
@@ -279,9 +293,10 @@ def test_read_indicators_is_byte_equal_to_direct_sql(conn, probe):
         cur.execute(query, (start, end))
         direct = cur.fetchall()
 
-    assert len(api) == len(direct)
-    if direct:
-        assert canonical_rows(frame_to_rows(api, cols)) == canonical_rows(direct)
+    # Non-empty, else the byte-equality below is a vacuous 0 == 0 pass. The candle
+    # probe guarantees ≥60 closed candles in this window; indicators track them.
+    assert len(api) == len(direct) > 0
+    assert canonical_rows(frame_to_rows(api, cols)) == canonical_rows(direct)
 
 
 def test_joined_read_preserves_the_candle_side(conn, probe):
@@ -308,8 +323,6 @@ def test_joined_read_preserves_the_candle_side(conn, probe):
 
 def test_latest_open_time_matches_max_open_time(conn, probe):
     symbol, tf = probe
-    from psycopg2 import sql
-
     table = c.candles_table(symbol, tf)
     with conn.cursor() as cur:
         cur.execute(sql.SQL("SELECT MAX(open_time) FROM {tbl}").format(tbl=sql.Identifier(table)))
