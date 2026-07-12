@@ -40,7 +40,7 @@ import requests
 
 from core import config as _kcfg  # noqa: F401 — lädt .env (DB-Zugang), Konvention der Fleet
 from core import oi_5m
-from core.database import get_db_connection
+from core.database import db_connection
 from core.http_retry import RetryBudget, backoff_seconds
 from core.logging_setup import setup_logging
 from core.market_utils import load_coins
@@ -132,12 +132,21 @@ def _run_sweep(session: requests.Session, conn) -> tuple[int, int]:
         logger.error("Keine Coins aus coins.json — Sweep übersprungen.")
         return 0, 0
     rows: list[tuple] = []
-    for symbol in coins:
-        rows.extend(_fetch_latest_point(session, symbol))
-        time.sleep(REQUEST_SPACING_S)
+    aborted: _SweepAborted | None = None
+    try:
+        for symbol in coins:
+            rows.extend(_fetch_latest_point(session, symbol))
+            time.sleep(REQUEST_SPACING_S)
+    except _SweepAborted as e:
+        # Bereits gefetchte Punkte VOR dem Ban-Backoff persistieren — der
+        # einzige Job dieses Prozesses ist lückenlose Historie; die Rows der
+        # restlichen Symbole sind ohnehin verloren, diese hier nicht.
+        aborted = e
     # EIN batched Insert pro Sweep (alle Coins) — nie den Loop stoppen, ein
     # verlorener Sweep ist akzeptabel, ein toter Collector nicht.
     oi_5m.insert_oi(conn, rows)
+    if aborted is not None:
+        raise aborted
     return len(rows), len(coins)
 
 
@@ -174,27 +183,26 @@ def main() -> None:
             time.sleep(SWEEP_INTERVAL_S)
             logger.info("Idle (KYTHERA_OI_PERSIST=0).")
 
-    conn = get_db_connection()
     schema_ok = False
     session = requests.Session()
 
     while True:
-        # Schema lazy + retry: schlägt das Setup fehl (DB bootet noch,
-        # Extension fehlt), beim nächsten Sweep erneut versuchen statt in die
-        # Watchdog-Crash-Backoff-Schleife zu exiten.
-        if not schema_ok:
-            try:
-                oi_5m.ensure_schema(conn)
-                schema_ok = True
-            except Exception as e:
-                logger.error(f"❌ oi_5m-Schema nicht verfügbar — nächster Versuch in {SWEEP_INTERVAL_S}s: {e}")
-                time.sleep(SWEEP_INTERVAL_S)
-                continue
-
         _sleep_until_next_sweep()
         try:
             t0 = time.monotonic()
-            n_rows, n_coins = _run_sweep(session, conn)
+            # Connection PRO SWEEP aus dem Pool ziehen statt einmal beim Start
+            # und für immer halten: der Checkout-Liveness-Check (P1.33) ersetzt
+            # nach einem DB-Restart tote Connections — eine gehaltene Connection
+            # bliebe dauerhaft kaputt und der Collector wäre "alive but dead"
+            # (loggt weiter, sammelt nie wieder — die P2.47-Fehlerklasse).
+            with db_connection() as conn:
+                # Schema lazy + retry: schlägt das Setup fehl (DB bootet noch,
+                # Extension fehlt), beim nächsten Sweep erneut versuchen statt
+                # in die Watchdog-Crash-Backoff-Schleife zu exiten.
+                if not schema_ok:
+                    oi_5m.ensure_schema(conn)
+                    schema_ok = True
+                n_rows, n_coins = _run_sweep(session, conn)
             logger.info(f"✅ Sweep: {n_rows}/{n_coins} OI-Punkte persistiert ({time.monotonic() - t0:.0f}s)")
         except _SweepAborted as e:
             logger.error(f"🚫 418 vom Binance-Endpoint — Sweep abgebrochen, {e.wait_s:.0f}s Backoff.")
