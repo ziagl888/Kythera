@@ -69,8 +69,16 @@ Ein-Job-Regel; versionierte Tags).
 
 **Empfohlene Reihenfolge** (Ein-Job-Regel; Begründung in den Specs):
 K9 (zeitkritisch, Implementierung ohne Sim-Job) → K3 + K8 (billigste Studien,
-reine DB-Analysen) → K1 → K2 → K5 → K4 (größter Bau) → K6 → K7 → K11;
-K10/K12 warten auf Datenreife.
+reine DB-Analysen) → K15 (Exit-Varianten-Studie auf vorhandenen Events) →
+K1 → K2 → K5 → K4 (größter Bau) → K6 → K7 → K11; K13 (Daten säen wie K9,
+ohne Sim-Job — parallel zur Studien-Queue baubar) · K10/K12 warten auf
+Datenreife.
+
+**Addendum 2026-07-12 (T-2026-CU-9050-105):** K13, K15 und die
+K6-TOTAL3-Ergänzung stammen aus der zweiten Research-Runde
+(Leaderboard-Recherche + zwei Operator-YouTube-Videos, Regel-Extrakte in KB
+`ingest-c1e5112dea7f` / `ingest-9f6511a5f951`); Befunde in
+`reports/model_ideas_research_2026-07.md` §6.
 
 ---
 
@@ -248,7 +256,13 @@ Frage 4); intern stark motiviert (§8/§22/§23, HMM-Task T-2026-CU-9050-020).
 1. `core/breadth_features.py` (neu, X-R1): as-of-Builder auf 1d/1h-Kandles +
    `_indicators` (EMA200 liegt vor). Effizienz: je Coin EINE Query, in-memory
    aggregieren — nicht 530 Tabellen je Zeitpunkt einzeln hämmern;
-   BELOW_NORMAL.
+   BELOW_NORMAL. **TOTAL3-Proxy als Pflicht-Feature (Addendum 2026-07-12):**
+   gleichgewichteter (und als Variante volumengewichteter) Preis-Index über
+   das eigene Universum OHNE BTC/ETH — Level, Abstand zur 90d-Regression,
+   Breakout-Flag. Praktiker-Gate „Alt-Trades nur bei TOTAL3 über Level"
+   (Quelle: KB `ingest-c1e5112dea7f`). Ehrlichkeits-Hinweis im Builder-Doc:
+   echte Marktkap-Gewichte haben wir nicht — der Preis-Index über ~530 Perps
+   ist ein Proxy und als solcher zu dokumentieren.
 2. `tools/breadth_study.py`: (a) Features vs. Forward-Returns der
    RUB-LONG-Events aus `rub_replay_365d.jsonl` (liegt vor — kein neuer
    Sim-Lauf nötig!); (b) Features vs. `regime_history`-Klassen
@@ -308,6 +322,47 @@ TZ-Cluster P2.1–P2.6 lesen, Offsets DST-aware konvertieren (f95f092-Muster).
 **Output:** Empfehlungs-Tabelle „Bot × Fenster meiden/bevorzugen" — Umsetzung
 (Scan-Minuten-Verschiebung o. Posting-Fenster) je Bot als Mini-Follow-ups.
 **Stop:** keine stabilen Buckets ⇒ dokumentieren, fertig.
+
+### K15 · SRX — Scratch-Reload-Exit-Studie auf ABR/BR-Events (Addendum 2026-07-12)
+
+**Typ:** Exit-Varianten-Replay auf existierenden Event-Populationen. **Aufwand:** ~1 Tag.
+**Hypothese:** Bei Break-&-Retest-Setups schlägt ein „Scratch-Reload"-Schema
+den fixen SL: Exit sofort, wenn eine Kerze ZURÜCK unter dem Entry-Level
+schließt (kleiner Scratch-Verlust + Fees), Re-Entry beim nächsten
+Cross+Retest desselben Levels, max. N Zyklen — statt einen vollen
+4–12 %-SL-Hit zu nehmen. Praktiker-Rechnung: 10 Scratch-Zyklen ≈ 1 % Fees
+vs. ein SL-Hit 4–12 %. **Evidenz:** Praktiker-Regel ohne Backtest (Quelle:
+KB `ingest-9f6511a5f951`, YouTube d5KlwDnJAAc) — reine
+Batch-E-Falsifikation; der Entry selbst ist unser ABR-Konzept, NUR die
+Exit-Mechanik ist neu.
+
+**Vorgehen:**
+1. `tools/scratch_exit_study.py` (neu): Event-Population aus den vorhandenen
+   ABR-/BR-Replays wiederverwenden (ABR-Walkforward-Events aus Report 21 /
+   `walkforward_sim --strategy abr`-Outputs; kein neuer Detektor). Je Event
+   drei Exit-Varianten simulieren:
+   (a) Standard-Geometrie (Ist-Zustand, fixer SL, First-Touch) — Baseline;
+   (b) Scratch-Reload: Exit bei 4h-Kerzenschluss unter Entry-Level, Re-Entry
+   bei erneutem Cross + Retest (Retest = Folgekerze schließt nicht unter dem
+   Level), N ∈ {2, 4, 8} Zyklen, Fees je Zyklus nach Regel 10, Zeitfenster
+   je Event 14 Tage;
+   (c) wie (b), aber SL-Auslösung Close-basiert statt Touch-basiert —
+   **eigene Grid-Zelle, getrennt ausweisen**, denn Close-basierte Stops
+   unterschätzen bei Hebel das Liquidationsrisiko (Liquidation ist
+   Touch-basiert; Cross-Margin mildert, eliminiert das nicht).
+2. Vergleichsmetriken je Variante: Ø-PnL netto, Verteilungs-Tails
+   (der Scratch-Ansatz tauscht seltene große Verluste gegen häufige kleine —
+   Median UND p5/p95 berichten), Zyklen-Statistik, Monats-Split.
+3. Report nach `staging_models/scratch_exit_study.json` + MD.
+
+**Stop-Kriterium:** Variante (b) schlägt (a) nicht konsistent in Val+Test
+(Chrono-Split der Events) ⇒ Praktiker-These falsifiziert, dokumentieren.
+**Cornix-Fit (nur bei positivem Befund relevant):** SL-auf-Entry kann Cornix
+nativ; der Scratch-Exit + Re-Entry braucht Bot-seitige Close-Commands +
+Re-Posting (ROM1-/FMR2-Mechanik) und ein Monitor-Konzept für Re-Entry-Trades
+— eigener Folge-Task, erst nach Replay-Beweis. **Falle:** Der Trade-Monitor
+kennt heute weder Scratch-Exits noch Re-Entries — die Studie ist bewusst
+offline; nichts davon in Bot 8 „nebenbei" einbauen.
 
 ---
 
@@ -384,6 +439,58 @@ Detector" — Performance-Claims ignorieren, F11/F12); intern: PEX1-Lektion.
 das Event — NICHT auf 1h-Kontext-Features ausweichen; wenn 15m zu grob wirkt,
 ist das Warten auf ticker_10s-Reife (PEX2-Pfad) die Antwort, nicht 1h.
 
+### K13 · HLW — Hyperliquid-Whale-Position-Collector + Studie (Addendum 2026-07-12)
+
+**Typ:** Collector (Daten säen) + spätere Studie. **Aufwand:** ~1–2 Tage Collector.
+**Hypothese (Studie, später):** (a) Aggregiertes Positioning kuratierter
+Hyperliquid-Top-Wallets prädiziert Forward-Returns auf unseren
+Binance-Perp-Coins (Feature für Regime/ROM-Gating); (b) naives Folgen einzelner
+Whale-Positionswechsel überlebt den Minuten-Lag unseres Stacks. **Evidenz**
+(Leaderboard-Deep-Research 2026-07-12, Report §6): Hyperliquid ist die EINZIGE
+Venue mit dauerhaft öffentlicher Per-Adresse-Transparenz; Skill-Persistenz im
+Top-Perzentil ist akademisch belegt (Barber/Odean, Taiwan — Mimicking war dort
+OOS-profitabel), aber NIE für Krypto-Perps repliziert; Style-Labels aus
+Aggregat-Stats sind instabil (36–40 % über 4 Wochen); die viralen
+Whale-Copy-Stories sind unverifiziert. Darum: Daten säen + bescheidene
+Feature-Fragen, KEIN Copy-Bot-Versprechen.
+
+**Datenzugang (verifiziert 2026-07-12, kann sich ändern):** Unauthentifizierte
+public `/info`-API: `clearinghouseState` (Positions-Snapshot je Adresse:
+entryPx=Durchschnitt, signierte Size, Leverage, liquidationPx, ROE,
+cumFunding; weight 2 ⇒ ~600 Polls/min/IP), `userFills`/`userFillsByTime`
+(Historie, 2.000/10.000-Item-Caps), `userFunding` +
+`userNonFundingLedgerUpdates` (500er-Pages, ms-Cursor); WebSocket `userFills`
+push (Cap ~10 unique User je IP auf User-Subscriptions — vor Architektur
+gegen Live-Doku verifizieren, der Cap stand nur in Verifier-Evidenz).
+
+**Vorgehen:**
+1. Wallet-Kuration (Operator-Input): 10–30 Adressen aus
+   Hyperdash/HypurrScan/CoinGlass-Leaderboards, Auswahlkriterien
+   dokumentieren (PnL-Historie, Account-Alter, kein Points-Farming-Verdacht).
+2. `core/hl_whales.py` + `36_hl_whale_collector.py` (Timescale-Konventionen
+   wie K9): Tabelle `hl_whale_positions` (ts TIMESTAMPTZ, address, coin,
+   szi, entry_px, leverage, liq_px, roe, position_value; PK (ts, address,
+   coin)) + `hl_whale_fills` (fill-level, aus userFills-Polling); Poll-Kadenz
+   60 s je Adresse (bleibt weit unter dem Rate-Budget), Kill-Switch
+   `KYTHERA_HL_PERSIST=0`; Registrierung `core/fleet.py`; Prozess-Start =
+   **Michi** (wie K9).
+3. **Bekannte Pitfalls (aus der Recherche, im Collector-Doc festhalten):**
+   Agent-Wallets liefern leere States (Master-Adresse tracken); Sub-Accounts/
+   Vaults sind von einer Adresse aus NICHT enumerierbar; entryPx ist
+   Durchschnitt ohne Entry-Timing (Timing kommt aus Fills, nicht Snapshots);
+   Adress-Churn (Whales wechseln Wallets) ⇒ Kurationsliste ist Pflege-Aufwand.
+4. **Studie (nach ~6–8 Wochen Historie, eigener Task):** (a) Aggregat-Features
+   (Netto-Long-Anteil, Positionsänderungs-Flow je Coin) vs. Forward-Returns
+   unserer Coins; (b) Lag-Kurve: PnL eines nachgebauten Positionswechsels bei
+   Entry +1/+5/+15/+60 min — beantwortet die Copy-Frage ehrlich.
+
+**Stop-Kriterium (Studie):** kein Aggregat-Feature mit stabilem
+Forward-Signal UND Lag-Kurve flach/negativ ⇒ Idee falsifiziert; der Collector
+wird dann bewusst abgeschaltet (Operator) statt Zombie-Daten zu sammeln.
+**Abgrenzung:** Binance-Leaderboard (Graumarkt-Scraper, kollabierend),
+Bybit/OKX/Bitget (keine Lese-API), BitMEX (anonymisiert) sind KEINE
+Grundlage — dokumentierte Anti-Pfade, nicht erneut evaluieren.
+
 ### K12 · TRM2 — Transition-Resolution-Wiedervorlage (entblockt)
 
 **Typ:** Wiedervorlage eines geparkten Kandidaten. **Aufwand:** ~0,5 Tage wenn reif.
@@ -416,8 +523,10 @@ NEW_IDEAS_BOTS.md).
 ## Task-Zuschnitt (Vorschlag für die KB)
 
 Je Kandidat EIN Task (Titel-Schema „K<N> <Tag>: <Kurzziel> (Studie|Bau)"),
-`touches` deklarieren, Reihenfolge aus §0. K4 (FMR2) und K9 (OIC) sind
-Implementierungs-Tasks mit Eskalationspunkten (Channel-.env, Fleet-Prozess);
-alle anderen starten als Studien-Tasks, deren Folge-Tasks erst nach positivem
-Befund geschnitten werden. Kein Kandidat deployt irgendetwas ohne Michis
-expliziten Entscheid.
+`touches` deklarieren, Reihenfolge aus §0. K4 (FMR2), K9 (OIC) und K13 (HLW)
+sind Implementierungs-Tasks mit Eskalationspunkten (Channel-.env,
+Fleet-Prozess, externe Venue-Abhängigkeit); alle anderen starten als
+Studien-Tasks, deren Folge-Tasks erst nach positivem Befund geschnitten
+werden. Kein Kandidat deployt irgendetwas ohne Michis expliziten Entscheid.
+Bot-Nummern-Vergabe: 35 = K9, 36 = K13 (reserviert per Addendum); weitere
+Bots nehmen die nächste freie Nummer.
