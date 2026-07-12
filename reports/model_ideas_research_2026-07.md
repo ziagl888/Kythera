@@ -188,3 +188,42 @@ Falsifiziertes wird durch die Recherche NICHT rehabilitiert: PEX1
 (1h-Features informationslos), EPD2 (kein Alt-Pump-Fenster), RUB2-LONG als
 Event-Gate (Regime-Problem), FMR1 (falsche Label-Geometrie — F3/FMR2 ist der
 korrekte Retest).
+
+## 6. Addendum 2026-07-12: Leaderboard-Recherche + Operator-Videos (T-2026-CU-9050-105)
+
+**Zweite Deep-Research-Runde** (Run `wf_907acab0-13f`, 103 Agents, gleiche
+Methodik) zur Operator-Frage „Top-Trader auf Hyperliquid/BitMEX & Co.
+analysieren und Strategien nachvollziehen":
+
+**F14 · Nur Hyperliquid ist dauerhaft öffentlich einsehbar** — *high*, 3-0:
+unauthentifizierte `/info`-API liefert je beliebiger Wallet-Adresse offene
+Positionen (entryPx, signierte Size, Leverage, Liq-Preis, ROE, cumFunding),
+Fills (WS push, sub-sekündlich), Funding-Zahlungen, Geldflüsse; ~600
+Positions-Polls/min/IP (weight 2 von 1200/min); Copy-Ökosystem existiert
+(Hyperdash, HypurrScan, CoinGlass, Open-Source-Bots). Caveats: Agent-Wallets
+leer, Sub-Accounts nicht enumerierbar, entryPx nur Durchschnitt, WS-Cap ~10
+User-Subscriptions/IP (nur Verifier-Evidenz — vor Architektur prüfen).
+**F15 · Binance-Leaderboard: nur kollabierende Graumarkt-Scraper** — *high*,
+3-0 (Endpoint seit ~Anfang 2024 auth-pflichtig, opt-in-only; RapidAPI-Vendor
+in Migration/EOL). **F16 · Bybit V5-Copy-API hat NULL Master-Lese-Endpoints**
+— *high*, 3-0; OKX/Bitget-Export und BitMEX-Nutzbarkeit: keine überlebenden
+Claims. **F17 · Skill-Persistenz existiert, aber nur im winzigen Top-Tail** —
+*high* (Barber/Lee/Liu/Odean, Taiwan): >80 % der Daytrader verlieren (2-1),
+<1 % sind prädizierbar netto-profitabel; Top-Partition blieb zu ~66 %
+profitabel und Mimicking wäre OOS profitabel gewesen (3-0) — NIE für
+Krypto-Perps repliziert. **F18 · Style-Reverse-Engineering ist fragil** —
+*high*: Labels aus Aggregat-Stats halten nur 36–40 % über 4 Wochen (CFTC);
+die 96,5 %-Identifikations-Genauigkeit der IRL-Studie wurde 0-3 WIDERLEGT;
+kein publiziertes Imitations-System mit belegter OOS-Profitabilität.
+**F19 · Copy-Trading erhöht kausal die Risikofreude der Follower** — *high*
+(Management Science 2020, Experiment). Whale-Copy-Hype (James Wynn etc.):
+keine verifizierte Evidenz. → Konsequenz: Kandidat **K13** (Collector +
+bescheidene Feature-/Lag-Studie) in der Spec, kein Copy-Bot.
+
+**Operator-Videos** (YouTube 5NR4urEIw9Q + d5KlwDnJAAc, Transkripte via
+yt-dlp Auto-Captions, Regel-Extrakte in KB `ingest-c1e5112dea7f` /
+`ingest-9f6511a5f951`): Die „most hated line" ist eine
+Cross-and-Retest-Entry-Annotation (= unser ABR-Konzept); neu und testbar sind
+das **Scratch-Reload-Exit-Schema** (→ Kandidat **K15**) und das
+**TOTAL3-Alt-Gate** (→ K6-Pflicht-Feature). Titel „Ichimoku" führt in die
+Irre — das Transkript enthält keine Ichimoku-Regeln.
