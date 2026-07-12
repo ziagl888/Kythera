@@ -24,6 +24,31 @@ Tests: `backtest/test_oi_5m.py` (DDL-/Insert-/Parsing-Contract, DB-frei) +
 Fleet-Anker in `test_fleet_definition.py` erweitert. **Operator-Gate offen:**
 Prozess-START auf dem VPS = Fleet-Eingriff (Watchdog liest FLEET beim Import
 → Watchdog-Restart nötig) und der einmalige Backfill-Lauf — beides Michi.
+## [2026-07-12] P2.12-Folge: --rsi-rewrite-Modus für recompute_indicators.py — RSI-Historie eindomänig Wilder (T-2026-CU-9050-099)
+
+Werkzeug für Schritt (2) der P2.12-Sequenz (der Wilder-Engine-Switch T-095 ist
+seit dem Fleet-Restart 2026-07-12 01:03 aktiv — die `rsi_*`-Historie ist seither
+ZWEIDOMÄNIG: alt=ewm(span), neu=Wilder). Der neue Modus schreibt die fünf
+`rsi_*`-Spalten über die gesamte Historie mit dem Wilder-Recompute neu — bewusst
+NICHT positions-stabil (Domänen-Migration, das Gegenteil des T-061-Trade-offs,
+im Docstring beider Modi gegenübergestellt). Sicherungen: `--dry-run` (Default,
+readonly-Session) misst Änderungszellen und Ø/Max-Delta; Tail-Guard gegen das
+Bot-2-Race; batched unnest-UPDATEs (parametrisiert, NaN→NULL); idempotent
+(Zellen ≤1e-3 RSI-Punkte Abstand werden übersprungen — der zweite Lauf ist ein
+No-op); eigenes Resume-State-File; und ein **Engine-Parity-Selbstcheck** mit
+Witness-Serie, der einen pre-T-095-Checkout hart abweist — die Historie kann
+nie versehentlich zurück auf span geschrieben werden.
+
+Read-only-Smoke gegen die Live-DB (`--sample 6`): 134.717 Zellen auf 5 Tabellen,
+Ø-Delta 5,43 RSI-Punkte (max 27,2) — konsistent mit der Step-2-Messung (ø4,8).
+Verifikation: `backtest/test_rsi_rewrite_plan.py` (9 Tests, DB-frei, inkl.
+Idempotenz-, Tail- und Parity-Grenze); die bestehenden Head-Nulling-Tests
+bleiben unberührt grün. **Der Execute war ein C-Gate** — Michi-Freigabe
+2026-07-12 ~05:00, ausgeführt am selben Tag: voller Dry-Run 88,4M Zellen
+(Ø-Delta 5,52 Punkte), Execute 88.426.142 Zellen über 3.831 Tabellen in 9,6h,
+0 Fehler, Idempotenz-Nachlauf 0 Zellen — die Historie ist seither eindomänig
+Wilder. Retrain-Kette danach erneut (der T-061-Retrain vom 2026-07-12 00:13
+lief noch auf der ewm-Historie), erst dann Promotion.
 
 ## [2026-07-12] Docs: Modellideen-Research-Report + Kandidaten-Specs als Opus-Handoff (T-2026-CU-9050-102)
 
