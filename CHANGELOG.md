@@ -1,3 +1,29 @@
+## [2026-07-12] K9/OIC: Open-Interest-Collector — Hypertable oi_5m + 35_oi_collector.py + 30d-Backfill-Tool (T-2026-CU-9050-103)
+
+Umsetzung des zeitkritischen Kandidaten K9 aus
+`docs/MODEL_CANDIDATES_SPEC_2026-07.md` (Binance-REST hält nur ~30d
+OI-Historie — jeder Tag ohne Collector ist unwiederbringlich verloren).
+Drei Bausteine: **(1)** `core/oi_5m.py` — Hypertable `oi_5m`
+(`ts TIMESTAMPTZ, symbol, open_interest, oi_value_usdt, PK (ts, symbol)`),
+Timescale-Jobs Chunks 1d / Compression nach 3d (segmentby=symbol) /
+Retention 730d, batched Insert mit `ON CONFLICT DO NOTHING`, geteilter
+Payload-Parser für beide Writer (ticker_10s-Blaupause). **(2)**
+`35_oi_collector.py` — eigener schlanker Prozess (getrennte Failure-Domain,
+BELOW_NORMAL): alle 5 min ein Sweep über coins.json via
+`/futures/data/openInterestHist` (period=5m, limit=1; liefert anders als
+`/fapi/v1/openInterest` auch die USDT-Bewertung und rastergestempelte
+Timestamps → echte Dedup-Keys), Requests über den Sweep verteilt
+(~530 req/5min gegen das 1000/5min-IP-Limit der /futures/data-Endpoints),
+429/418-Backoff via `core/http_retry`, Kill-Switch `KYTHERA_OI_PERSIST=0`
+(Default an, idlet supervised). Registriert in `core/fleet.py`
+(group=logger, start_delay=231; +2 PG-Idle-Connections, P1.34 beachten).
+**(3)** `tools/oi_backfill.py` — einmaliger paginierter ~30d-Initial-Backfill
+(rückwärts via endTime, selbstterminierend; idempotent gegen den laufenden
+Collector; Dry-Run-Smoke auf BTCUSDT: 8.639 Punkte ≈ exakt die 30d-Fenster).
+Tests: `backtest/test_oi_5m.py` (DDL-/Insert-/Parsing-Contract, DB-frei) +
+Fleet-Anker in `test_fleet_definition.py` erweitert. **Operator-Gate offen:**
+Prozess-START auf dem VPS = Fleet-Eingriff (Watchdog liest FLEET beim Import
+→ Watchdog-Restart nötig) und der einmalige Backfill-Lauf — beides Michi.
 ## [2026-07-12] P2.12-Folge: --rsi-rewrite-Modus für recompute_indicators.py — RSI-Historie eindomänig Wilder (T-2026-CU-9050-099)
 
 Werkzeug für Schritt (2) der P2.12-Sequenz (der Wilder-Engine-Switch T-095 ist
