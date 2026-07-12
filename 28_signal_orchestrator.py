@@ -511,8 +511,9 @@ def compute_rom1_trade_params(conn, coin: str, direction: str, price=None, df=No
         )
 
     # FIX P2.27 (Audit, Step 2 belegt: SL-Distanz p90=17,9%, max 65%): Die nächste
-    # S/R-Zone kann beliebig weit weg liegen — bei 20x jenseits der Liquidation.
-    # Gleicher 15%-Cap wie calculate_smart_targets.
+    # S/R-Zone kann beliebig weit weg liegen. Gleicher 15%-Cap wie
+    # calculate_smart_targets — als Risiko-Geometrie-Bound bewusst beibehalten,
+    # unabhängig vom Margin-Modus (Cross-Margin-Entscheid s.u.).
     ROM1_MAX_SL_DIST_PCT = 0.15
     if is_long:
         sl = max(sl, entry2 * (1 - ROM1_MAX_SL_DIST_PCT))

@@ -900,9 +900,12 @@ def test_compute_rom1_trade_params_long():
                            return_value=([92.0, 88.0], [105.0, 110.0, 120.0])), \
          mock.patch.object(orch, "ensure_min_tp_distance",
                            side_effect=lambda t, e, l, min_pct: list(t)), \
-         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+         mock.patch.object(orch, "get_max_leverage", return_value="20x") as m_lev:
         params = orch.compute_rom1_trade_params(mock_conn, "BTCUSDT", "LONG")
 
+    # Der Mock ignoriert seine Args — ohne diesen Assert würde eine Regression
+    # der Call-Site (z.B. get_max_leverage(coin) ohne Desired-Arg) unbemerkt.
+    m_lev.assert_called_once_with("BTCUSDT", orch.ROM1_DESIRED_LEVERAGE)
     assert params is not None
     assert params["entry1"] == 100.0
     assert params["entry2"] == 95.0        # 5% unter Entry1
