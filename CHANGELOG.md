@@ -1,3 +1,21 @@
+## [2026-07-12] Docs: Modellideen-Research-Report + Kandidaten-Specs als Opus-Handoff (T-2026-CU-9050-102)
+
+Zwei neue Dokumente aus dem Deep-Research-Lauf 2026-07-12 (101-Agent-Workflow,
+19 Quellen, 25 Claims adversarial verifiziert: 20 bestätigt / 5 widerlegt):
+`reports/model_ideas_research_2026-07.md` (zitierfähiger Befund-Report — BIS-
+Funding/Carry, Momentum→Reversal-Struktur, TSMOM-6h-Preprint, Post-Listing-
+Drift, invertierter MAX-Effekt, realized Moments, Settlement-Timing; inkl.
+Widerlegt-Liste und offener Fragen) und `docs/MODEL_CANDIDATES_SPEC_2026-07.md`
+(implementierungsreife Specs für 12 Kandidaten K1–K12 in 3 Tiers: TSM1,
+XSM1/XSR1, Funding-Risk-Layer, FMR2, LIS1, BRD, MOM/SKW1, SET, OI-Collector
+(zeitkritisch — REST hält nur 30d), WHI, WSH1, TRM2-Wiedervorlage; plus
+dokumentierte Anti-Kandidaten). Jede Spec trägt Hypothese, Datenlage,
+Schritt-Plan mit konkreten Tools/Konventionen (walkforward_sim, simulate_exit,
+pick_threshold_safe, X-R1-Builder, staging-only, Ein-Job-Regel),
+Stop-Kriterien nach Batch-E und Eskalationspunkte — geschrieben als Handoff,
+damit ein Folge-Agent die Coding-Tasks ohne Rückfragen schneiden kann.
+Reine Doku, kein Code-/Verhaltens-Change.
+
 ## [2026-07-12] ROM1: SL-basierter Leverage-Cap entfernt — Cross-Margin, fix 20x via get_max_leverage (T-2026-CU-9050-101)
 
 Operator-Entscheid Michi: Die ROM1-Trades laufen bei Binance in **Cross Margin**
