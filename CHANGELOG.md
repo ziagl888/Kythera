@@ -100,6 +100,35 @@ bleiben unberührt grün. **Der Execute war ein C-Gate** — Michi-Freigabe
 Wilder. Retrain-Kette danach erneut (der T-061-Retrain vom 2026-07-12 00:13
 lief noch auf der ewm-Historie), erst dann Promotion.
 
+## [2026-07-12] ATB2: Neuaufbau des Trendline-Bots als Converging-Channel-Pipeline (T-2026-CU-9050-104)
+
+Neuaufbau des toten ATB1 (Bot 14, geparkt, Audit-Note D, Σ −172 netto,
+Event-Mismatch) von null gemäß `docs/MODEL_INTENT.md` §11. ATB2 handelt nicht
+mehr Einzel-Trendlinien einer 90d-Close-Regressionsgerade, sondern
+**konvergierende Kanäle** (Wedge/Triangle/Pennant) aus bestätigten Swing-Pivots
+mit geschlossenem Ausbruch. Neu und DB-frei gebaut + getestet (kein Live-Eingriff,
+kein Artefakt im Live-Pfad — Bot bleibt geparkt bis zum validierten Verdikt):
+`core/atb2_features.py` (geteilte Detektions-/Feature-Quelle für Bot + Simulator
++ Trainer, X-R1-Regel: No-Repaint-Pivots, §11-Kanalkriterien, 5
+WillyAlgoTrader-Setup-Features + Kanalgeometrie als XGB-Features,
+Measured-Move-Targets, `assert_features_alive`, ATR/RSI/EMA deterministisch aus
+OHLCV statt pandas_ta-versionsabhängig), Walkforward-Adapter `run_atb2`
+(`--strategy atb2`, Label = First-Touch TP1-vor-SL der Measured-Move-Geometrie
+via `simulate_exit` inkl. Fees; Smart-Targets derselben Kerze als `smart_*`-
+Vergleich, §11) und Retrain-Runner `run_atb` (`--strategy atb2`, je Richtung,
+chronologischer 3-Wege-Split + 3d-Purge, Isotonic, Threshold via
+`pick_threshold_safe` auf Validation, Artefakt + `_meta.json` nach
+`staging_models/` mit `model_id=ATB2`). Behebt die X-R-Findings des toten
+BT1-Trainers: Event-Mismatch (X-R1), Label ohne SL-Pfad (X-R1/X-R5),
+Split-Leakage über überlappende Fenster (X-R3), Test-Set-Threshold (X-R2),
+Silent-Feature-Death (X-R6). Verifikation: `backtest/test_atb2_features.py`
+(9 DB-freie Tests, inkl. End-to-End-Adapter) + DB-freier Retrain-Smoke
+(600 Synthetik-Events → `model_id=ATB2`-Artefakte, Threshold korrekt None bei
+zu kleinem Val-Slice). Run-Book + Deploy-Verdikt-Kriterien: `docs/ATB2_REBUILD.md`.
+**Offen (Follow-up, gated):** Label/Train-Lauf auf dem VPS (hinter T-061-Queue,
+Sequential-Jobs); Bot-Serving-Rewire + P1.45-Tag-Fix + Entparken erst nach
+deploybarem out-of-time-Verdikt (C-Gate Michi).
+
 ## [2026-07-12] Docs: Modellideen-Research-Report + Kandidaten-Specs als Opus-Handoff (T-2026-CU-9050-102)
 
 Zwei neue Dokumente aus dem Deep-Research-Lauf 2026-07-12 (101-Agent-Workflow,

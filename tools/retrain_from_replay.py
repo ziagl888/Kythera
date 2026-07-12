@@ -45,6 +45,8 @@ from core.funding_features import FUNDING_FEATURES  # noqa: E402
 from core.mis_features import FEATURE_COLS as MIS1_FEATURES  # noqa: E402
 from core.mis_features import assert_features_alive  # noqa: E402
 from core.rub_features import RUB_FEATURES  # noqa: E402
+from core.atb2_features import ATB2_FEATURES  # noqa: E402
+from core.atb2_features import assert_features_alive as assert_atb2_alive  # noqa: E402
 
 MIS1_HORIZONS = (8, 24, 72, 168)  # muss zu tools/walkforward_sim.MIS1_HORIZONS passen
 
@@ -754,6 +756,88 @@ def run_epd(events_path: str) -> dict:
     return results
 
 
+def run_atb(replay_path: str) -> dict:
+    """ATB2-Retrain (MODEL_INTENT §11, Task-104): Binärmodell je Richtung auf den
+    Converging-Channel-Ausbruchs-Events des geteilten Detektors
+    (core/atb2_features). Label = First-Touch TP1-vor-SL der Measured-Move-
+    Geometrie inkl. SL-Pfad und Fees (behebt das +10%-Touch-OHNE-SL-Label des
+    toten BT1-Trainers, X-R1/X-R5), chronologischer 3-Wege-Split mit Embargo
+    (behebt die Zwillings-Leakage über 72h-überlappende Fenster, X-R3),
+    Threshold via pick_threshold_safe auf Validation (behebt den Test-Set-
+    Threshold, X-R2). Ersetzt ATB1 komplett — der alte Close-Regressions-
+    Detektor ist verworfen."""
+    df = load_replay(replay_path)
+    if df.empty or len(df) < 400:
+        raise SystemExit(f"Zu wenig ATB2-Replay-Events ({len(df)}) in {replay_path}")
+    print(
+        f"atb2: {len(df)} Events, {df['symbol'].nunique()} Coins, "
+        f"{df['signal_time'].min()} → {df['signal_time'].max()}"
+    )
+
+    results: dict = {"strategy": "atb2", "features": ATB2_FEATURES}
+    for direction in ("LONG", "SHORT"):
+        d = df[df["direction"] == direction].reset_index(drop=True)
+        if len(d) < 200:
+            print(f"atb2 {direction}: nur {len(d)} Events — übersprungen")
+            continue
+        # Silent-Feature-Death-Selbsttest auf dem Trainings-Replay (P0.12-Muster).
+        assert_atb2_alive(d, context=f" ({direction}-Replay)")
+        # Purge-Gap 3 Tage: Measured-Move-Trades können über mehrere Tage laufen;
+        # großzügiger Embargo gegen überlappende Episoden (X-R3-Fix).
+        train, val, test = chrono_split(d, gap_hours=3 * 24)
+        print(
+            f"atb2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
+            f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%"
+        )
+
+        model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
+            train, val, test, ATB2_FEATURES, picker=pick_threshold_safe
+        )
+
+        meta = {
+            "trainer": "tools/retrain_from_replay.py",
+            "strategy": "atb2",
+            "model_id": "ATB2",
+            "direction": direction,
+            "model_type": "binary (1=TP1-first-touch)",
+            "success_proba": "predict_proba[:, 1]",
+            "features": ATB2_FEATURES,
+            "optimal_threshold": thresh,
+            "label_source": os.path.basename(replay_path),
+            "label": "first-touch TP1-vor-SL der Measured-Move-Geometrie "
+            "(⅓/⅔/1× Kanalbreite), Fees inkl.",
+            "changes_vs_atb1": "Converging-Channel-Detektor (bestätigte Pivots, "
+            "geschlossener Ausbruch, §11) statt 90d-Close-Regressionsgerade; Label MIT "
+            "SL-Pfad statt +10%-Touch/72h; chronologischer Split mit 3d-Purge statt "
+            "Random-Split über überlappende Fenster; Threshold auf Validation statt "
+            "Test-Set; 5 WillyAlgoTrader-Setup-Features + Kanalgeometrie als XGB-Features",
+            "split": "chronological 70/15/15 + 3d purge gap",
+            "threshold_selected_on": "validation",
+            "xgboost_version": xgb.__version__,
+            "n_train": len(train),
+            "n_val": len(val),
+            "n_test": len(test),
+            "val_stats": val_stats,
+            "test_stats": test_stats,
+        }
+        save_artifact(
+            os.path.join(STAGING_DIR, f"atb2_model_{direction}.pkl"),
+            model, ATB2_FEATURES, thresh, iso, meta,
+        )
+        with open(os.path.join(STAGING_DIR, f"atb2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        results[direction] = {
+            "n_events": len(d),
+            "base_rate": round(d["outcome"].mean() * 100, 1),
+            "threshold": thresh,
+            "val_stats": val_stats,
+            "test_stats": test_stats,
+            "calibration_new_test": calib_new,
+            "feature_importance_top": top_importance(model, ATB2_FEATURES),
+        }
+    return results
+
+
 def top_importance(model, feature_cols, k=8):
     imp = model.feature_importances_
     order = np.argsort(imp)[::-1][:k]
@@ -768,7 +852,8 @@ def main():
     except Exception:
         pass
     ap = argparse.ArgumentParser()
-    ap.add_argument("--strategy", required=True, choices=["td", "bb", "abr1", "mis1", "rub", "epd"])
+    ap.add_argument("--strategy", required=True,
+                    choices=["td", "bb", "abr1", "mis1", "rub", "epd", "atb2"])
     ap.add_argument("--tf", default="4h", choices=["1h", "4h"])
     ap.add_argument("--replay", default=None)
     ap.add_argument("--days", type=int, default=540)
@@ -805,10 +890,14 @@ def main():
             days = args.days if args.strategy in ("td", "bb", "mis1") else 365
             args.replay = os.path.join(REPLAY_DIR, f"{tag}_replay_{days}d.jsonl")
 
-    if args.strategy in ("rub", "epd"):
+    if args.strategy in ("rub", "epd", "atb2"):
         # Ein Dispatch statt Zwillings-Ternaries — die nächste Event-Strategie
         # ergänzt genau einen Eintrag (Runner + Artefakt-Name zusammen).
-        runner, name = {"rub": (run_rub, "rub2"), "epd": (run_epd, "epd2")}[args.strategy]
+        runner, name = {
+            "rub": (run_rub, "rub2"),
+            "epd": (run_epd, "epd2"),
+            "atb2": (run_atb, "atb2"),
+        }[args.strategy]
         result = runner(args.replay)
         out = os.path.join(STAGING_DIR, f"retrain_{name}_stats.json")
         with open(out, "w", encoding="utf-8") as fh:
