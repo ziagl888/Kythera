@@ -285,4 +285,16 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 223,
         "restart_interval": None,
     },
+    # ── Open-Interest-Collector (K9/OIC, T-2026-CU-9050-103) ──────────────────
+    # Eigene Failure-Domain (kein Detector-Anbau); Hypertable oi_5m. PG-Budget:
+    # +2 Idle-Connections über den Standard-Pool (P1.34 — max_connections auf
+    # dem VPS gegenprüfen). Neuer Eintrag wird erst nach Watchdog-Restart
+    # supervised (FLEET wird beim Watchdog-Import gelesen) ⇒ Operator-Gate.
+    {
+        "name": "OI Collector",
+        "script": "35_oi_collector.py",
+        "group": "logger",
+        "start_delay": 231,
+        "restart_interval": None,
+    },
 ]

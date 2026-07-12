@@ -132,6 +132,9 @@ EXPECTED_WATCHDOG_VIEW = [
     ("AI TRM1 Detector", "32_ai_trm1_bot.py", 207, None),
     ("AI FIF1 Detector", "33_ai_fif1_bot.py", 215, None),
     ("AI MAX1 Detector", "34_ai_max1_bot.py", 223, None),
+    # T-2026-CU-9050-103 (K9/OIC): bewusste Fleet-Erweiterung — der Anker wächst
+    # mit, die Delays/Reihenfolge der Bestandseinträge bleiben unverändert.
+    ("OI Collector", "35_oi_collector.py", 231, None),
 ]
 
 # Vom Dashboard-CSS (.group-core/.group-ai/.group-strategy/.group-logger) und dem
