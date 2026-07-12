@@ -201,12 +201,14 @@ def test_assert_features_alive_raises_on_missing_and_constant():
     setup = atb.find_channel_breakout(df)
     assert setup is not None
     # Mehrere variierte Kanäle -> kontinuierliche Features variieren garantiert.
+    # n_pre=220 -> Break-Index > 200, damit EMA200 (SMA-seeded) real ist und
+    # dist_ema200 über die Fixtures variiert (sonst konstant-0 -> Assertion).
     rows = []
     for i, kw in enumerate([
-        dict(conv=0.05, span=80, in_vol=4000, break_gap=2.0, break_vol=8000),
-        dict(conv=0.06, span=100, in_vol=3500, break_gap=3.0, break_vol=9000),
-        dict(conv=0.045, span=70, in_vol=4500, break_gap=1.5, break_vol=7000, period=14),
-        dict(conv=0.055, span=90, in_vol=3000, break_gap=2.5, break_vol=8500),
+        dict(conv=0.05, span=80, in_vol=4000, break_gap=2.0, break_vol=8000, n_pre=220),
+        dict(conv=0.06, span=100, in_vol=3500, break_gap=3.0, break_vol=9000, n_pre=220),
+        dict(conv=0.045, span=70, in_vol=4500, break_gap=1.5, break_vol=7000, period=14, n_pre=220),
+        dict(conv=0.055, span=90, in_vol=3000, break_gap=2.5, break_vol=8500, n_pre=220),
     ]):
         d = atb.compute_indicators(make_converging_channel(break_dir="up", **kw))
         s = atb.find_channel_breakout(d)
@@ -238,7 +240,9 @@ def test_run_atb2_adapter_emits_record(monkeypatch):
     calculate_smart_targets werden gestubbt, simulate_exit läuft echt."""
     import tools.walkforward_sim as w
 
-    df = make_converging_channel(break_dir="up", n_pre=150, n_post=15)
+    # n_pre groß genug, dass run_atb2s Paritäts-Historie (MIN_HISTORY_CANDLES)
+    # überschritten ist und der Ausbruch tatsächlich evaluiert wird.
+    df = make_converging_channel(break_dir="up", n_pre=1450, n_post=15)
     monkeypatch.setattr(w, "load_ohlcv", lambda conn, sym, tf, days: df.copy())
     monkeypatch.setattr(
         w, "calculate_smart_targets",
@@ -256,6 +260,33 @@ def test_run_atb2_adapter_emits_record(monkeypatch):
     assert "outcome_tp1" in tr and "net_pnl_pct" in tr
     # §11-Vergleichsfelder:
     assert "smart_outcome_tp1" in tr and "smart_net_pnl_pct" in tr
+
+
+def test_zero_range_break_candle_no_crash():
+    """Flat-Candle (high==low, illiquide Stunde) als Ausbruchskerze darf keinen
+    0/0-ZeroDivisionError in build_atb2_features werfen."""
+    n = 60
+    px = np.linspace(100.0, 101.0, n)
+    df = pd.DataFrame({
+        "open_time": pd.date_range("2026-01-01", periods=n, freq="h"),
+        "open": px, "high": px + 0.2, "low": px - 0.2, "close": px,
+        "volume": np.full(n, 1000.0),
+    })
+    dfi = atb.compute_indicators(df)
+    # letzte Kerze flach und jenseits der Oberkante:
+    dfi.loc[dfi.index[-1], ["open", "high", "low", "close"]] = 105.0
+    channel = {
+        "up_slope": 0.0, "up_int": 101.0, "lo_slope": 0.0, "lo_int": 99.0,
+        "span_start": 0, "span_end": n - 2, "span": n - 2,
+        "width_start": 2.0, "width_end": 2.0, "convergence": 0.1,
+        "n_touch_upper": 3, "n_touch_lower": 3, "vol_contraction": 0.5,
+        "atr": 0.3, "channel_type": "pennant",
+    }
+    breakout = atb.detect_breakout(dfi, channel, n - 1)
+    assert breakout is not None and breakout["direction"] == "LONG"
+    feats = atb.build_atb2_features(dfi, channel, breakout, n - 1)  # darf nicht werfen
+    assert feats["body_commitment"] == 0.0
+    assert set(feats.keys()) == set(atb.ATB2_FEATURES)
 
 
 def test_indicators_deterministic_and_finite():

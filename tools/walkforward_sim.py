@@ -106,9 +106,10 @@ MAX_CPU_AT_START = 90.0  # health_monitor CPU_SATURATED nicht triggern
 # bestimmt die Positions-Fraktionierung im Ladder-Exit.
 PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5, "rub": 3, "atb2": 3}
 
-# ATB2 (§11): Kanal-Lookback (CHANNEL_MAX_SPAN) + Indikator-Warmup vor dem 1.
-# Event; Cooldown je Richtung wie die anderen Ausbruch-Bots.
-ATB2_WARMUP_DAYS = 12
+# ATB2 (§11): Warmup so groß, dass EMA200 vor dem 1. Event konvergiert
+# (MIN_HISTORY_CANDLES=1500 Kerzen ≈ 62,5 Tage → 65d Puffer); Cooldown je
+# Richtung wie die anderen Ausbruch-Bots.
+ATB2_WARMUP_DAYS = 65
 ATB2_COOLDOWN_H = 4
 
 
@@ -926,14 +927,14 @@ def run_atb2(conn, symbol: str, days: int) -> list[dict]:
     4h-Cooldown je Richtung; Entry = Close der frisch geschlossenen
     Ausbruchskerze."""
     df = load_ohlcv(conn, symbol, "1h", days + ATB2_WARMUP_DAYS)
-    min_rows = atb.CHANNEL_MAX_SPAN + atb.CONFIRM_BARS + atb.ATR_PERIOD + 2
-    if df is None or len(df) < min_rows:
+    # hist deckt Kanal-Lookback UND EMA200-Konvergenz (Paritäts-Kontrakt) ab.
+    hist = max(atb.CHANNEL_MAX_SPAN + atb.CONFIRM_BARS + atb.ATR_PERIOD, atb.MIN_HISTORY_CANDLES)
+    if df is None or len(df) < hist + 2:
         return []
     df_ind = atb.compute_indicators(df)
     t1h = df["open_time"].values
     H, L, C = df["high"].values, df["low"].values, df["close"].values
 
-    hist = atb.CHANNEL_MAX_SPAN + atb.CONFIRM_BARS + atb.ATR_PERIOD
     start_t = max(hist, len(df) - days * 24)
     cooldown = {"LONG": pd.Timestamp.min, "SHORT": pd.Timestamp.min}
     trades: list[dict] = []

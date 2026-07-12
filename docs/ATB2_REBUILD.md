@@ -84,6 +84,9 @@ Erst NACH einem deploybaren ATB2-Verdikt:
    Measured-Move-Geometrie posten; **P1.45**: Tag aus `contract["tag"]`
    (`meta.model_id`) statt hartem `MODEL_ID='ATB1'` (Muster: `18_ai_abr1_bot.py:520`).
    Ohne Artefakt läuft der Bot dann sauber im Idle-Mode.
+   **Paritäts-Kontrakt:** der Serving-Pfad MUSS je Coin ≥ `atb2_features.MIN_HISTORY_CANDLES`
+   (1500) geschlossene 1h-Kerzen vor der Entscheidungskerze laden, sonst driften
+   EMA200-abhängige Features (dist_ema200) gegenüber dem Replay (X-R1).
 2. **Entparken** (`control/parked/14_ai_atb_bot.py` entfernen) — Operator-Entscheid.
 
 Bis dahin bleibt ATB1 geparkt (kein Live-Effekt, kein Artefakt im Live-Pfad).

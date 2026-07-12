@@ -49,6 +49,14 @@ EMA_PERIOD = 200
 VOL_AVG_WINDOW = 20
 RSI_MOMENTUM_LOOKBACK = 3  # Kerzen für RSI-Delta
 
+# Train/Serve-Paritäts-Kontrakt (X-R1): EMA200 ist long-memory. Bot, Simulator
+# und Trainer müssen für denselben Zeitstempel VOR der Entscheidungskerze
+# mindestens so viele Kerzen geladen haben, dass der SMA-Seed ausgedämpft ist
+# ((199/201)^1300 ≈ 2·10⁻⁶) — sonst driften dist_ema200/atr_pct/rsi je nach
+# geladener Fensterlänge auseinander. Simulator setzt start_t entsprechend;
+# der Bot-Serving-Pfad MUSS ≥ diese Historie laden.
+MIN_HISTORY_CANDLES = 1500
+
 #: Der ATB2-Feature-Vertrag (Spaltennamen == meta.features des Artefakts).
 ATB2_FEATURES = [
     # --- 5 WillyAlgoTrader-Setup-Faktoren (als Features, nicht als Score) ---
@@ -131,14 +139,22 @@ def _wilder_rsi(close: np.ndarray, period: int) -> np.ndarray:
 
 
 def _ema(close: np.ndarray, period: int) -> np.ndarray:
-    """Exponential Moving Average (adjust=False, wie pandas ewm)."""
+    """Exponential Moving Average, **SMA-seeded** (wie ta-lib/pandas_ta).
+
+    Der erste Wert liegt bei Index ``period-1`` = SMA der ersten ``period``
+    Closes; davor NaN. Das entfernt die willkürliche ``close[0]``-Verankerung —
+    entscheidend für Train/Serve-Parität (X-R1): mit genügend Warmup
+    (`MIN_HISTORY_CANDLES`) konvergiert die Kurve, sodass Bot, Simulator und
+    Trainer für denselben Zeitstempel denselben EMA200 rechnen, egal wie lang
+    das jeweils geladene Fenster ist.
+    """
     n = len(close)
     ema = np.full(n, np.nan, dtype=float)
-    if n == 0:
+    if n < period:
         return ema
     alpha = 2.0 / (period + 1.0)
-    ema[0] = close[0]
-    for i in range(1, n):
+    ema[period - 1] = close[:period].mean()
+    for i in range(period, n):
         ema[i] = alpha * close[i] + (1.0 - alpha) * ema[i - 1]
     return ema
 
@@ -347,13 +363,19 @@ def build_atb2_features(df_ind: pd.DataFrame, channel: dict, breakout: dict, bre
     rsi_prev = rsi_arr[break_idx - RSI_MOMENTUM_LOOKBACK] if break_idx >= RSI_MOMENTUM_LOOKBACK else np.nan
     rsi_momentum = float(rsi_now - rsi_prev) if np.isfinite(rsi_now) and np.isfinite(rsi_prev) else 0.0
 
-    body_commitment = ((c - lo) / rng) if is_long else ((hi - c) / rng)
+    # rng>0-Guard VOR der Division — eine Flat-Candle (high==low, illiquide
+    # Stunde) darf keinen 0/0-ZeroDivisionError werfen (bricht sonst den
+    # Coin-Scan/Replay ab).
+    if rng > 0:
+        body_commitment = ((c - lo) / rng) if is_long else ((hi - c) / rng)
+    else:
+        body_commitment = 0.0
 
     ctype = channel["channel_type"]
     feats = {
         "pen_depth_atr": breakout["penetration"] / atr if atr > 0 else 0.0,
         "body_ratio": (abs(c - o) / rng) if rng > 0 else 0.0,
-        "body_commitment": float(body_commitment) if rng > 0 else 0.0,
+        "body_commitment": float(body_commitment),
         "vol_spike": float(vol_spike),
         "rsi_momentum": float(rsi_momentum),
         "chan_width_atr": channel["width_end"] / atr if atr > 0 else 0.0,
