@@ -29,7 +29,7 @@ from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, send_telegram, update_cooldown
 from core.time import LEGACY_WRITER_TZ, utc_now_naive
-from core.trade_utils import cap_leverage_to_sl, ensure_min_tp_distance, get_hvn_and_sr_levels
+from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -526,10 +526,12 @@ def compute_rom1_trade_params(conn, coin: str, direction: str, price=None, df=No
         logger.warning(f"ROM1: Keine validen Targets für {coin} {direction}")
         return None
 
-    # R4 (Audit): Hebel gegen die SL-Distanz cappen — Liquidation darf nie vor
-    # dem SL liegen. Konservativ gegen entry1 (CMP) gerechnet, dort ist die
-    # SL-Distanz am größten.
-    leverage = cap_leverage_to_sl(get_max_leverage(coin, ROM1_DESIRED_LEVERAGE), entry1, sl)
+    # ROM1 trades run in CROSS margin (see "Margin: Cross" in
+    # build_rom1_cornix_message): liquidation is wallet-level, not at ~1/lev
+    # price distance, so the isolated-margin R4 cap (cap_leverage_to_sl) does
+    # not apply here. Only the per-coin Binance cap from max_leverage.json
+    # limits the desired 20x (operator decision 2026-07-12).
+    leverage = get_max_leverage(coin, ROM1_DESIRED_LEVERAGE)
 
     return {
         "entry1": float(entry1),
