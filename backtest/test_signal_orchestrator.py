@@ -3,18 +3,27 @@
 Unit tests for Signal-Orchestrator (parsing, bot-ID, gating, cooldown, ROM1).
 Run with: pytest backtest/test_signal_orchestrator.py -v
 """
+
 from __future__ import annotations
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
 import datetime
 
-import pytest
-from unittest.mock import MagicMock, patch
-
 # Import under a stable alias to avoid 28_... prefix issues
-import importlib.util, unittest.mock as mock
+import importlib.util
+import unittest.mock as mock
+from unittest.mock import MagicMock
+
+# Load pandas (and transitively numpy) BEFORE _load_orchestrator(): its
+# mock.patch.dict("sys.modules") restore evicts entries first imported during
+# exec_module, and numpy's C core refuses a second per-process init (py3.14).
+import pandas as pd
+import pytest
 
 # core.config raises at import when its _required() vars are unset. The build
 # machine ships an empty .env stub, so seed dummies before importing — otherwise
@@ -25,25 +34,26 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "unit-test")
 
 from core import config as _kcfg  # noqa: E402 — must follow the env seed above
 
+
 def _load_orchestrator():
     spec = importlib.util.spec_from_file_location(
         "signal_orchestrator",
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                     "28_signal_orchestrator.py")
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "28_signal_orchestrator.py"),
     )
     mod = importlib.util.module_from_spec(spec)
-    with mock.patch.dict("sys.modules", {
-        "core.database": mock.MagicMock(),
-        "core.logging_setup": mock.MagicMock(
-            setup_logging=lambda x: __import__("logging").getLogger(x)
-        ),
-        "core.config": mock.MagicMock(
-            REGIME_TRADING_CHANNEL_ID=_kcfg.CH_REGIME_TRADING,
-            REGIME_STATUS_CHANNEL_ID=_kcfg.CH_MARKET_DATA,
-        ),
-        "core.market_utils": mock.MagicMock(),
-        "core.trade_utils": mock.MagicMock(),
-    }):
+    with mock.patch.dict(
+        "sys.modules",
+        {
+            "core.database": mock.MagicMock(),
+            "core.logging_setup": mock.MagicMock(setup_logging=lambda x: __import__("logging").getLogger(x)),
+            "core.config": mock.MagicMock(
+                REGIME_TRADING_CHANNEL_ID=_kcfg.CH_REGIME_TRADING,
+                REGIME_STATUS_CHANNEL_ID=_kcfg.CH_MARKET_DATA,
+            ),
+            "core.market_utils": mock.MagicMock(),
+            "core.trade_utils": mock.MagicMock(),
+        },
+    ):
         spec.loader.exec_module(mod)
     return mod
 
@@ -102,10 +112,7 @@ def test_parse_cornix_signal_short():
 
 
 def test_parse_cornix_signal_all_tps():
-    msg = LONG_SIGNAL.replace(
-        "💰 TP3: $ 66000.00000000",
-        "💰 TP3: $ 66000.00000000\n💰 TP4: $ 66500.00000000"
-    )
+    msg = LONG_SIGNAL.replace("💰 TP3: $ 66000.00000000", "💰 TP3: $ 66000.00000000\n💰 TP4: $ 66500.00000000")
     result = orch.parse_cornix_signal(msg)
     assert result is not None
     assert len(result["targets"]) == 4
@@ -113,8 +120,7 @@ def test_parse_cornix_signal_all_tps():
 
 def test_parse_cornix_signal_entry2_variant():
     msg = LONG_SIGNAL.replace(
-        "🏦 CMP Entry: $ 64321.50000000",
-        "🏦 CMP Entry: $ 64321.50000000\n🏦 Entry 2: $ 64000.00000000"
+        "🏦 CMP Entry: $ 64321.50000000", "🏦 CMP Entry: $ 64321.50000000\n🏦 Entry 2: $ 64000.00000000"
     )
     result = orch.parse_cornix_signal(msg)
     assert result is not None
@@ -128,6 +134,7 @@ def test_parse_non_cornix_returns_none():
 
 
 # ── Bot Identification ────────────────────────────────────────────────────────
+
 
 def test_identify_bot_ai_model_in_text():
     assert orch.identify_bot("AIM1 model signal", None) == "AIM1"
@@ -164,8 +171,8 @@ def test_build_channel_fallback_drops_unset_channels():
     result = orch._build_channel_fallback(
         (
             (-1001, "Fast In And Out"),
-            (0, "5 Percent"),            # unbelegt → fliegt raus
-            (0, "Volume Indicator"),     # zweiter unbelegter → kein Kollaps-Gewinner
+            (0, "5 Percent"),  # unbelegt → fliegt raus
+            (0, "Volume Indicator"),  # zweiter unbelegter → kein Kollaps-Gewinner
             (-1005, "Pattern Detector"),
         )
     )
@@ -198,18 +205,10 @@ def test_identify_bot_quasimodo_footer():
 
 def test_identify_bot_smc_ml_sniper_footer():
     """SMC-ML-Sniper (25_smc_ml_sniper.py): BB_ und TD_ Varianten."""
-    assert orch.identify_bot(
-        "🧠 AI Confidence: 67.3% (BB_1H Filter)", None
-    ) == "BB_1H"
-    assert orch.identify_bot(
-        "🧠 AI Confidence: 67.3% (BB_4H Filter)", None
-    ) == "BB_4H"
-    assert orch.identify_bot(
-        "🧠 AI Confidence: 67.3% (TD_1H Filter)", None
-    ) == "TD_1H"
-    assert orch.identify_bot(
-        "🧠 AI Confidence: 67.3% (TD_4H Filter)", None
-    ) == "TD_4H"
+    assert orch.identify_bot("🧠 AI Confidence: 67.3% (BB_1H Filter)", None) == "BB_1H"
+    assert orch.identify_bot("🧠 AI Confidence: 67.3% (BB_4H Filter)", None) == "BB_4H"
+    assert orch.identify_bot("🧠 AI Confidence: 67.3% (TD_1H Filter)", None) == "TD_1H"
+    assert orch.identify_bot("🧠 AI Confidence: 67.3% (TD_4H Filter)", None) == "TD_4H"
 
 
 def test_identify_bot_retrain_generation_tags():
@@ -217,12 +216,8 @@ def test_identify_bot_retrain_generation_tags():
     (BB2_4H, TD2_4H, RUB2, MIS2-72H, ...) und MÜSSEN identifizierbar sein —
     sonst hart unterdrückt als bot_unidentified (T-2026-CU-9050-026;
     RUB2-Attributions-Finding aus PR #9)."""
-    assert orch.identify_bot(
-        "🧠 AI Confidence: 67.3% (BB2_4H Filter)", None
-    ) == "BB2_4H"
-    assert orch.identify_bot(
-        "🧠 AI Confidence: 71.0% (TD2_4H Filter)", None
-    ) == "TD2_4H"
+    assert orch.identify_bot("🧠 AI Confidence: 67.3% (BB2_4H Filter)", None) == "BB2_4H"
+    assert orch.identify_bot("🧠 AI Confidence: 71.0% (TD2_4H Filter)", None) == "TD2_4H"
     assert orch.identify_bot("RUB2 breakout signal", None) == "RUB2"
     assert orch.identify_bot("ABR2 retest signal", None) == "ABR2"
     assert orch.identify_bot("MIS2-72H analysis", None) == "MIS2-72H"
@@ -233,18 +228,10 @@ def test_identify_bot_retrain_generation_tags():
 
 def test_identify_bot_pattern_detector_footer():
     """Pattern Detector (7_pattern_detector.py): BR1H, BR2H, BR4H, BR1D."""
-    assert orch.identify_bot(
-        "🧠 Trade idea generated by AI module BR1H V3", None
-    ) == "BR1H"
-    assert orch.identify_bot(
-        "🧠 Trade idea generated by AI module BR2H V3", None
-    ) == "BR2H"
-    assert orch.identify_bot(
-        "🧠 Trade idea generated by AI module BR4H V3", None
-    ) == "BR4H"
-    assert orch.identify_bot(
-        "🧠 Trade idea generated by AI module BR1D V3", None
-    ) == "BR1D"
+    assert orch.identify_bot("🧠 Trade idea generated by AI module BR1H V3", None) == "BR1H"
+    assert orch.identify_bot("🧠 Trade idea generated by AI module BR2H V3", None) == "BR2H"
+    assert orch.identify_bot("🧠 Trade idea generated by AI module BR4H V3", None) == "BR4H"
+    assert orch.identify_bot("🧠 Trade idea generated by AI module BR1D V3", None) == "BR1D"
 
 
 def test_identify_bot_maviausdt_regression():
@@ -275,6 +262,7 @@ def test_identify_bot_legacy_qm_bull_still_works():
 
 # ── Regime-Change Outcome Classification ─────────────────────────────────────
 
+
 def test_classify_outcome_regime_change_counts_real_pnl():
     """B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE-Closes zählen
     mit ihrem realen PnL als Win/Loss statt pauschal neutral — ein Auto-Close
@@ -282,15 +270,13 @@ def test_classify_outcome_regime_change_counts_real_pnl():
     genau die per Regime-Wechsel realisierten Verluste (Report 16 B9)."""
     # LONG +5% PnL, als REGIME_CHANGE geschlossen → echter WIN (vorher NEUTRAL)
     result = orch._classify_outcome_by_pnl(
-        "LONG", entry=100.0, close_price=105.0,
-        close_reason="REGIME_CHANGE:not_whitelisted"
+        "LONG", entry=100.0, close_price=105.0, close_reason="REGIME_CHANGE:not_whitelisted"
     )
     assert result == "CLOSED_TP"
 
     # Realisierter Verlust darf nicht mehr zensiert werden → echter LOSS
     result = orch._classify_outcome_by_pnl(
-        "LONG", entry=100.0, close_price=95.0,
-        close_reason="REGIME_CHANGE:btc_trend_down"
+        "LONG", entry=100.0, close_price=95.0, close_reason="REGIME_CHANGE:btc_trend_down"
     )
     assert result == "CLOSED_SL"
 
@@ -299,31 +285,28 @@ def test_classify_outcome_regime_change_micro_pnl_still_neutral():
     """B9: ein Regime-Close nahe Break-even (|pnl| <= Micro-Filter) bleibt
     neutral — nur signifikanter realisierter PnL wird zu Win/Loss."""
     result = orch._classify_outcome_by_pnl(
-        "LONG", entry=100.0, close_price=100.05,  # +0.05% < OUTCOME_MIN_PNL_PCT
-        close_reason="REGIME_CHANGE:chop"
+        "LONG",
+        entry=100.0,
+        close_price=100.05,  # +0.05% < OUTCOME_MIN_PNL_PCT
+        close_reason="REGIME_CHANGE:chop",
     )
     assert result == "CLOSED_NEUTRAL"
 
 
 def test_classify_outcome_normal_tp_still_win():
     """Normaler TP-Hit bleibt CLOSED_TP (kein Kollateralschaden durch Fix)."""
-    result = orch._classify_outcome_by_pnl(
-        "LONG", entry=100.0, close_price=103.0,
-        close_reason="ALL TARGETS HIT"
-    )
+    result = orch._classify_outcome_by_pnl("LONG", entry=100.0, close_price=103.0, close_reason="ALL TARGETS HIT")
     assert result == "CLOSED_TP"
 
 
 def test_classify_outcome_delisted_still_neutral():
     """Bestehende DELISTED/CLEANUP-Erkennung funktioniert noch."""
-    result = orch._classify_outcome_by_pnl(
-        "LONG", entry=100.0, close_price=100.0,
-        close_reason="DELISTED / CLEANUP"
-    )
+    result = orch._classify_outcome_by_pnl("LONG", entry=100.0, close_price=100.0, close_reason="DELISTED / CLEANUP")
     assert result == "CLOSED_NEUTRAL"
 
 
 # ── Regime-Change Force-Close ─────────────────────────────────────────────────
+
 
 def test_force_close_trades_for_regime_change_closes_ai_signals():
     """force_close_trades_for_regime_change verschiebt offene AI-Trades
@@ -344,17 +327,35 @@ def test_force_close_trades_for_regime_change_closes_ai_signals():
         elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
             # 1 offener AI-Trade auf BTCUSDT LONG (T-116: + targets, lev)
             mock_cursor._rows = [
-                (42, "BTCUSDT", "ATS1", "LONG", 50000.0, 50000.0, 0,
-                 __import__("datetime").datetime(2026, 4, 15),
-                 [51000.0, 52000.0], "20x"),
+                (
+                    42,
+                    "BTCUSDT",
+                    "ATS1",
+                    "LONG",
+                    50000.0,
+                    50000.0,
+                    0,
+                    __import__("datetime").datetime(2026, 4, 15),
+                    [51000.0, 52000.0],
+                    "20x",
+                ),
             ]
         elif "select id, strategy, time" in sql_lower:
             # keine classic trades
             mock_cursor._rows = []
             mock_cursor.description = [
-                ("id",), ("strategy",), ("time",), ("coin",), ("direction",),
-                ("lev",), ("entry",), ("target1",), ("target2",),
-                ("target3",), ("target4",), ("sl",),
+                ("id",),
+                ("strategy",),
+                ("time",),
+                ("coin",),
+                ("direction",),
+                ("lev",),
+                ("entry",),
+                ("target1",),
+                ("target2",),
+                ("target3",),
+                ("target4",),
+                ("sl",),
             ]
         elif "select close from" in sql_lower:
             # Letzter 5m-Close
@@ -379,13 +380,10 @@ def test_force_close_trades_for_regime_change_closes_ai_signals():
 
     # _get_last_close_price liest seit T-109 über core.candles.read_candles —
     # ohne Patch fällt der Mock-Pfad still auf entry zurück (pre-existing red).
-    import pandas as pd
 
     fake_df = pd.DataFrame({"open_time": [0], "close": [49500.0]})
     with mock.patch.object(orch, "read_candles", return_value=fake_df):
-        result = orch.force_close_trades_for_regime_change(
-            mock_conn, "BTCUSDT", "LONG"
-        )
+        result = orch.force_close_trades_for_regime_change(mock_conn, "BTCUSDT", "LONG")
 
     assert result["ai_closed"] == 1
     assert result["classic_closed"] == 0
@@ -398,8 +396,8 @@ def test_force_close_trades_for_regime_change_closes_ai_signals():
     assert params[0] == "BTCUSDT"
     assert params[1] == "ATS1"
     assert params[2] == "LONG"
-    assert params[3] == 50000.0       # entry
-    assert params[4] == 49500.0       # close_price = letzter 5m-Close
+    assert params[3] == 50000.0  # entry
+    assert params[4] == 49500.0  # close_price = letzter 5m-Close
     assert params[8] == "CLOSED_REGIME_CHANGE"
     # T-116: targets + lev werden für den Realized-PnL-Report durchgereicht
     assert params[9] == "[51000.0, 52000.0]"
@@ -425,16 +423,34 @@ def test_force_close_trades_for_regime_change_close_price_fallback_to_entry():
             ]
         elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
             mock_cursor._rows = [
-                (10, "FAKEUSDT", "EPD1", "SHORT", 5.0, None, 0,
-                 __import__("datetime").datetime(2026, 4, 13),
-                 None, None),
+                (
+                    10,
+                    "FAKEUSDT",
+                    "EPD1",
+                    "SHORT",
+                    5.0,
+                    None,
+                    0,
+                    __import__("datetime").datetime(2026, 4, 13),
+                    None,
+                    None,
+                ),
             ]
         elif "select id, strategy, time" in sql_lower:
             mock_cursor._rows = []
             mock_cursor.description = [
-                ("id",), ("strategy",), ("time",), ("coin",), ("direction",),
-                ("lev",), ("entry",), ("target1",), ("target2",),
-                ("target3",), ("target4",), ("sl",),
+                ("id",),
+                ("strategy",),
+                ("time",),
+                ("coin",),
+                ("direction",),
+                ("lev",),
+                ("entry",),
+                ("target1",),
+                ("target2",),
+                ("target3",),
+                ("target4",),
+                ("sl",),
             ]
         elif "select close from" in sql_lower:
             # KEIN 5m-Close verfügbar
@@ -451,9 +467,7 @@ def test_force_close_trades_for_regime_change_close_price_fallback_to_entry():
     mock_cursor.fetchall.side_effect = lambda: list(mock_cursor._rows)
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
-    result = orch.force_close_trades_for_regime_change(
-        mock_conn, "FAKEUSDT", "SHORT"
-    )
+    result = orch.force_close_trades_for_regime_change(mock_conn, "FAKEUSDT", "SHORT")
 
     assert result["ai_closed"] == 1
     assert len(inserts) == 1
@@ -478,9 +492,18 @@ def test_force_close_regime_change_legacy_insert_before_bot8_migration():
         elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
             selects.append(sql)
             mock_cursor._rows = [
-                (7, "BTCUSDT", "ROM1", "LONG", 100.0, 100.0, 1,
-                 __import__("datetime").datetime(2026, 7, 13),
-                 [105.0, 110.0], None),
+                (
+                    7,
+                    "BTCUSDT",
+                    "ROM1",
+                    "LONG",
+                    100.0,
+                    100.0,
+                    1,
+                    __import__("datetime").datetime(2026, 7, 13),
+                    [105.0, 110.0],
+                    None,
+                ),
             ]
         elif "select close from" in sql_lower:
             mock_cursor._rows = [(101.0,)]
@@ -523,9 +546,18 @@ def test_force_close_regime_change_lev_fallback_to_rom1_default():
             ]
         elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
             mock_cursor._rows = [
-                (8, "BTCUSDT", "ROM1", "SHORT", 100.0, 100.0, 0,
-                 __import__("datetime").datetime(2026, 7, 13),
-                 "[95.0, 90.0]", None),
+                (
+                    8,
+                    "BTCUSDT",
+                    "ROM1",
+                    "SHORT",
+                    100.0,
+                    100.0,
+                    0,
+                    __import__("datetime").datetime(2026, 7, 13),
+                    "[95.0, 90.0]",
+                    None,
+                ),
             ]
         elif "select close from" in sql_lower:
             mock_cursor._rows = [(99.0,)]
@@ -555,6 +587,7 @@ def test_force_close_regime_change_lev_fallback_to_rom1_default():
 
 # ── Signal Gating ─────────────────────────────────────────────────────────────
 
+
 def test_parse_non_signal_message_skipped():
     """Non-signal messages (no '📈 Signal for') should return None."""
     assert orch.parse_cornix_signal("Market update: BTC up 5%") is None
@@ -570,6 +603,7 @@ def test_gating_skips_market_tracker_posts():
 
 
 # ── Detector Reliability ──────────────────────────────────────────────────────
+
 
 def _mock_conn_with_regime(regime, distinct_count=1):
     conn = MagicMock()
@@ -644,6 +678,7 @@ def test_fallback_uses_overall_performance_wr_threshold():
 
 # ── Whitelist staleness gate (P0.4/P2.25) ─────────────────────────────────────
 
+
 def _mock_conn_for_whitelist(cell_age_hours, whitelisted=False, fallback_wr=58.0):
     """Stable regime + one 4D cell of the given age + an overall fallback row."""
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
@@ -653,13 +688,15 @@ def _mock_conn_for_whitelist(cell_age_hours, whitelisted=False, fallback_wr=58.0
     cur.__enter__ = MagicMock(return_value=cur)
     cur.__exit__ = MagicMock(return_value=False)
     conn.cursor = MagicMock(return_value=cur)
-    cur.fetchone = MagicMock(side_effect=[
-        ("TREND_UP",),                              # is_regime_detector_reliable
-        (1,),                                       # distinct regimes 2h
-        ("TREND_UP", "ALT_NEUTRAL"),                # regime_current
-        (whitelisted, "wr_above_threshold", computed_at),  # 4D cell
-        (100, fallback_wr),                         # is_whitelisted_fallback
-    ])
+    cur.fetchone = MagicMock(
+        side_effect=[
+            ("TREND_UP",),  # is_regime_detector_reliable
+            (1,),  # distinct regimes 2h
+            ("TREND_UP", "ALT_NEUTRAL"),  # regime_current
+            (whitelisted, "wr_above_threshold", computed_at),  # 4D cell
+            (100, fallback_wr),  # is_whitelisted_fallback
+        ]
+    )
     return conn
 
 
@@ -688,6 +725,7 @@ def test_null_computed_at_treated_as_stale():
 
 # ── B8: wl_reason persisted on the forwarded side ─────────────────────────────
 
+
 def test_insert_orchestrator_open_trade_persists_wl_reason():
     conn = MagicMock()
     cur = MagicMock()
@@ -696,8 +734,16 @@ def test_insert_orchestrator_open_trade_persists_wl_reason():
     conn.cursor = MagicMock(return_value=cur)
 
     orch.insert_orchestrator_open_trade(
-        conn, "BTCUSDT", "LONG", "MIS1-8h", 50000.0, 7,
-        "TREND_UP", "ALT_NEUTRAL", wl_reason="no_whitelist_entry", commit=False,
+        conn,
+        "BTCUSDT",
+        "LONG",
+        "MIS1-8h",
+        50000.0,
+        7,
+        "TREND_UP",
+        "ALT_NEUTRAL",
+        wl_reason="no_whitelist_entry",
+        commit=False,
     )
 
     sql, params = cur.execute.call_args[0]
@@ -707,6 +753,7 @@ def test_insert_orchestrator_open_trade_persists_wl_reason():
 
 
 # ── Cooldown ──────────────────────────────────────────────────────────────────
+
 
 def test_cooldown_module_name_is_rom1():
     assert orch.ORCHESTRATOR_MODULE_NAME == "ROM1"
@@ -838,7 +885,7 @@ def test_corpse_reaper_is_row_anchored_and_never_censors_syncable_closes():
 
     asyncio.run(orch.reap_corpse_trades(conn))
 
-    (sql, _params), = executed
+    ((sql, _params),) = executed
     window = f"INTERVAL '{orch.LIFECYCLE_SYNC_WINDOW_SEC} seconds'"
     assert "NOT EXISTS" in sql
     assert "FROM ai_signals" in sql
@@ -898,6 +945,7 @@ def test_legacy_window_cannot_cross_match_thanks_to_cooldown():
 
 # ── ROM1 Tracking ─────────────────────────────────────────────────────────────
 
+
 def test_rom1_signal_model_name():
     assert orch.ORCHESTRATOR_MODULE_NAME == "ROM1"
 
@@ -926,6 +974,7 @@ def test_loop_interval_is_500ms():
 # Stellen sicher dass der Lifecycle-Sync Win/Loss/Neutral korrekt aus dem
 # echten PnL ableitet statt aus dem fehlerhaften targets_hit/status-Feld.
 
+
 def test_classify_outcome_by_pnl_win():
     """Positive PnL → CLOSED_TP."""
     assert orch._classify_outcome_by_pnl("LONG", 100.0, 102.5, "TP hit") == "CLOSED_TP"
@@ -941,25 +990,19 @@ def test_classify_outcome_by_pnl_loss():
 def test_classify_outcome_by_pnl_legacy_target_hit_with_zero_targets():
     """Der Haupt-Bug: LEGACY TARGET HIT mit targets_hit=0. Vorher CLOSED_SL,
     jetzt korrekt CLOSED_TP weil PnL positiv ist."""
-    result = orch._classify_outcome_by_pnl(
-        "LONG", 100.0, 102.6, "LEGACY TARGET HIT (+2.5%)"
-    )
+    result = orch._classify_outcome_by_pnl("LONG", 100.0, 102.6, "LEGACY TARGET HIT (+2.5%)")
     assert result == "CLOSED_TP"
 
 
 def test_classify_outcome_by_pnl_delisted_is_neutral():
     """DELISTED / CLEANUP → CLOSED_NEUTRAL, nicht CLOSED_SL."""
-    result = orch._classify_outcome_by_pnl(
-        "LONG", 100.0, 80.0, "DELISTED / CLEANUP"
-    )
+    result = orch._classify_outcome_by_pnl("LONG", 100.0, 80.0, "DELISTED / CLEANUP")
     assert result == "CLOSED_NEUTRAL"
 
 
 def test_classify_outcome_by_pnl_outlier_is_neutral():
     """Ausreißer mit |pnl| > 100% → CLOSED_NEUTRAL."""
-    result = orch._classify_outcome_by_pnl(
-        "LONG", 100.0, 1234.0, "LEGACY TARGET HIT (+2.5%)"
-    )
+    result = orch._classify_outcome_by_pnl("LONG", 100.0, 1234.0, "LEGACY TARGET HIT (+2.5%)")
     assert result == "CLOSED_NEUTRAL"
 
 
@@ -996,6 +1039,7 @@ def test_classify_outcome_constants_match_analyzer():
 # Verifiziert dass ROM1 nicht mehr das originale Bot-Signal übernimmt,
 # sondern eigene Entry/SL/Targets via AI-Bot-Logik berechnet.
 
+
 def test_rom1_constants_match_ai_bots():
     """Leverage, Entry2-Offset etc. müssen mit den AI-Bots konsistent sein."""
     assert orch.ROM1_DESIRED_LEVERAGE == 20
@@ -1009,12 +1053,12 @@ def test_compute_rom1_trade_params_long():
     mock_conn = mock.MagicMock()
     # Mock _get_latest_price; ensure_min_tp_distance passthrough (Identity) damit
     # die Targets-Liste durchgereicht wird.
-    with mock.patch.object(orch, "_get_latest_price", return_value=100.0), \
-         mock.patch.object(orch, "get_hvn_and_sr_levels",
-                           return_value=([92.0, 88.0], [105.0, 110.0, 120.0])), \
-         mock.patch.object(orch, "ensure_min_tp_distance",
-                           side_effect=lambda t, e, l, min_pct: list(t)), \
-         mock.patch.object(orch, "get_max_leverage", return_value="20x") as m_lev:
+    with (
+        mock.patch.object(orch, "_get_latest_price", return_value=100.0),
+        mock.patch.object(orch, "get_hvn_and_sr_levels", return_value=([92.0, 88.0], [105.0, 110.0, 120.0])),
+        mock.patch.object(orch, "ensure_min_tp_distance", side_effect=lambda t, e, l, min_pct: list(t)),
+        mock.patch.object(orch, "get_max_leverage", return_value="20x") as m_lev,
+    ):
         params = orch.compute_rom1_trade_params(mock_conn, "BTCUSDT", "LONG")
 
     # Der Mock ignoriert seine Args — ohne diesen Assert würde eine Regression
@@ -1022,7 +1066,7 @@ def test_compute_rom1_trade_params_long():
     m_lev.assert_called_once_with("BTCUSDT", orch.ROM1_DESIRED_LEVERAGE)
     assert params is not None
     assert params["entry1"] == 100.0
-    assert params["entry2"] == 95.0        # 5% unter Entry1
+    assert params["entry2"] == 95.0  # 5% unter Entry1
     # SL: höchstes Support unter Entry2*0.99=94.05 → 92.0
     assert params["sl"] == 92.0
     # Targets: alle Resistances > 101 sortiert
@@ -1036,17 +1080,17 @@ def test_compute_rom1_trade_params_long():
 def test_compute_rom1_trade_params_short():
     """SHORT-Trade: Entry2 5% über Entry1, SL aus Resistances, Targets aus Supports."""
     mock_conn = mock.MagicMock()
-    with mock.patch.object(orch, "_get_latest_price", return_value=100.0), \
-         mock.patch.object(orch, "get_hvn_and_sr_levels",
-                           return_value=([95.0, 90.0, 85.0], [108.0, 112.0])), \
-         mock.patch.object(orch, "ensure_min_tp_distance",
-                           side_effect=lambda t, e, l, min_pct: list(t)), \
-         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+    with (
+        mock.patch.object(orch, "_get_latest_price", return_value=100.0),
+        mock.patch.object(orch, "get_hvn_and_sr_levels", return_value=([95.0, 90.0, 85.0], [108.0, 112.0])),
+        mock.patch.object(orch, "ensure_min_tp_distance", side_effect=lambda t, e, l, min_pct: list(t)),
+        mock.patch.object(orch, "get_max_leverage", return_value="20x"),
+    ):
         params = orch.compute_rom1_trade_params(mock_conn, "BTCUSDT", "SHORT")
 
     assert params is not None
     assert params["entry1"] == 100.0
-    assert params["entry2"] == 105.0       # 5% über Entry1
+    assert params["entry2"] == 105.0  # 5% über Entry1
     # SL: niedrigste Resistance über Entry2*1.01=106.05 → 108.0
     assert params["sl"] == 108.0
     # Targets: Supports unter Entry1*0.99=99, absteigend sortiert
@@ -1056,12 +1100,12 @@ def test_compute_rom1_trade_params_short():
 def test_compute_rom1_trade_params_sl_fallback_when_no_zones():
     """Wenn keine Zonen außerhalb Entry2, greift Fallback-SL."""
     mock_conn = mock.MagicMock()
-    with mock.patch.object(orch, "_get_latest_price", return_value=100.0), \
-         mock.patch.object(orch, "get_hvn_and_sr_levels",
-                           return_value=([], [105.0])), \
-         mock.patch.object(orch, "ensure_min_tp_distance",
-                           side_effect=lambda t, e, l, min_pct: list(t) or [e * 1.05]), \
-         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+    with (
+        mock.patch.object(orch, "_get_latest_price", return_value=100.0),
+        mock.patch.object(orch, "get_hvn_and_sr_levels", return_value=([], [105.0])),
+        mock.patch.object(orch, "ensure_min_tp_distance", side_effect=lambda t, e, l, min_pct: list(t) or [e * 1.05]),
+        mock.patch.object(orch, "get_max_leverage", return_value="20x"),
+    ):
         params = orch.compute_rom1_trade_params(mock_conn, "BTCUSDT", "LONG")
 
     assert params is not None
@@ -1082,11 +1126,12 @@ def test_compute_rom1_trade_params_returns_none_when_no_targets():
     ensure_min_tp_distance gibt aber mindestens 1 Fallback-TP zurück, daher
     testen wir den edge case dass ensure-Helper None/[] zurückgibt."""
     mock_conn = mock.MagicMock()
-    with mock.patch.object(orch, "_get_latest_price", return_value=100.0), \
-         mock.patch.object(orch, "get_hvn_and_sr_levels",
-                           return_value=([], [])), \
-         mock.patch.object(orch, "ensure_min_tp_distance", return_value=[]), \
-         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+    with (
+        mock.patch.object(orch, "_get_latest_price", return_value=100.0),
+        mock.patch.object(orch, "get_hvn_and_sr_levels", return_value=([], [])),
+        mock.patch.object(orch, "ensure_min_tp_distance", return_value=[]),
+        mock.patch.object(orch, "get_max_leverage", return_value="20x"),
+    ):
         params = orch.compute_rom1_trade_params(mock_conn, "BTCUSDT", "LONG")
     assert params is None
 
@@ -1096,15 +1141,15 @@ def test_compute_rom1_trade_params_asof_price_bypasses_db():
     _get_latest_price-DB-Zugriff, price ersetzt den CMP, df geht an den
     Level-Lookup durch. Muster wie get_hvn_and_sr_levels(df=...)."""
     fake_df = object()  # nur Durchreichung prüfen — der Level-Lookup ist gemockt
-    with mock.patch.object(orch, "_get_latest_price") as m_price, \
-         mock.patch.object(orch, "get_hvn_and_sr_levels",
-                           return_value=([92.0], [105.0, 110.0])) as m_sr, \
-         mock.patch.object(orch, "ensure_min_tp_distance",
-                           side_effect=lambda t, e, l, min_pct: list(t)), \
-         mock.patch.object(orch, "get_max_leverage", return_value="20x"):
+    with (
+        mock.patch.object(orch, "_get_latest_price") as m_price,
+        mock.patch.object(orch, "get_hvn_and_sr_levels", return_value=([92.0], [105.0, 110.0])) as m_sr,
+        mock.patch.object(orch, "ensure_min_tp_distance", side_effect=lambda t, e, l, min_pct: list(t)),
+        mock.patch.object(orch, "get_max_leverage", return_value="20x"),
+    ):
         params = orch.compute_rom1_trade_params(None, "BTCUSDT", "LONG", price=100.0, df=fake_df)
 
-    m_price.assert_not_called()                       # kein DB-Preis-Read
+    m_price.assert_not_called()  # kein DB-Preis-Read
     m_sr.assert_called_once()
     assert m_sr.call_args.kwargs.get("df") is fake_df  # As-of-Fenster durchgereicht
     assert params is not None
@@ -1190,9 +1235,7 @@ def test_build_rom1_cornix_message_with_trigger_bot():
         "targets": [105.0, 110.0, 120.0],
         "leverage": "20x",
     }
-    msg = orch.build_rom1_cornix_message(
-        "BTCUSDT", "LONG", params, trigger_bot="MIS1-8h"
-    )
+    msg = orch.build_rom1_cornix_message("BTCUSDT", "LONG", params, trigger_bot="MIS1-8h")
     # Trigger-Zeile muss im Output sein
     assert "📡 Triggered by: MIS1-8h" in msg
     # Kommt after dem Standard-Footer
@@ -1246,17 +1289,19 @@ def test_rom1_params_used_not_original_signal():
     values = call_args[0][1]
     # values: (symbol, price, direction, entry1, entry2, sl, targets_json)
     assert values[0] == "BTCUSDT"
-    assert values[1] == 100.0       # price = ROM1-entry1
+    assert values[1] == 100.0  # price = ROM1-entry1
     assert values[2] == "LONG"
-    assert values[3] == 100.0       # entry1 = ROM1-entry1
-    assert values[4] == 95.0        # entry2 = ROM1-entry2
-    assert values[5] == 92.0        # sl = ROM1-sl
+    assert values[3] == 100.0  # entry1 = ROM1-entry1
+    assert values[4] == 95.0  # entry2 = ROM1-entry2
+    assert values[5] == 92.0  # sl = ROM1-sl
     # targets als JSON
     import json as _json
+
     assert _json.loads(values[6]) == [105.0, 110.0, 120.0]
 
 
 # ── T-2026-CU-9050-049: differentiated regime auto-close ───────────────────────
+
 
 def test_sl_update_message_format():
     """SL-update is symbol-addressed (like Close), 8-decimal price."""
