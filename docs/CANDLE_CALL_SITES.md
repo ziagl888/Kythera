@@ -239,6 +239,8 @@ Block 2 (Strategien + `3_detectors` + geteilte Helfer) ist umverdrahtet. Sieben 
 
 Diese Fragen blockieren den Start von Phase 1. Keine davon ist in diesem Task entschieden worden.
 
+> **Update 2026-07-13 (D-2026-CLD-109):** Die C-Gate-Fragen sind entschieden (Michi) — **1. Retention: unbegrenzt** (nur Compression, keine Retention-Policy), **2. REAL → double precision: ja** (alle ~120 Spalten), **3. 1d/1w: nur REST, kein WS**. Plus: Retrain aller Bots der Reihe nach (Sequential-Jobs). Details in `docs/TIMESCALE_R1_MIGRATION.md` §5. **Offen bleiben die Block-4-Fragen 4 (Close-Grace-Period) und 5 (MIS/ATS-Forming)** — die gaten die AI-Bot-Umverdrahtung, nicht die C-Gate.
+
 1. **Retention** (T-018 §5.1): Historie unbegrenzt (komprimiert ~4–6 GB) oder Fenster? Empfehlung des Design-Docs: unbegrenzt.
 2. **`REAL` → `double precision`** für die ~120 Indikator-Spalten (P3.12)? Empfehlung: ja, im Zuge des Schema-Neubaus. Konsequenz hier: `tools/candles_parity.py` kanonisiert Floats auf 12 signifikante Stellen, damit der Typwechsel nicht jede Zeile als Drift meldet.
 3. **1d/1w weiter per WS** oder nur REST/Catch-up (spart ~1.300 Streams)? Empfehlung: nur REST für 1d/1w.

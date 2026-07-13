@@ -83,12 +83,16 @@ upsert_indicators(conn, df, symbol, tf)                         # Engine
 | Monitore brauchen die forming Candle (Preis-Checks) | Design-Fallstrick #1 | explizites `include_forming=True` NUR dort; Code-Review-Checkliste |
 | Zwei Sessions arbeiten parallel am Repo | real (heute mehrfach) | Migration als EIN Branch mit klarem Owner; Phase 1 in kleinen Commits pro Bot-Block |
 
-## 5. Offene Entscheidungen (Operator)
+## 5. Operator-Entscheidungen — ENTSCHIEDEN (Michi, 2026-07-13)
 
-1. **Retention:** Historie unbegrenzt behalten (komprimiert ~4–6 GB, unkritisch) oder z.B. 2 Jahre? → Empfehlung: unbegrenzt, Entscheidung verschiebbar.
-2. **REAL → double precision** für Indikator-Spalten (P3.12)? → Empfehlung: ja, im Zuge des Schema-Neubaus.
-3. **1d/1w weiter über WS streamen** oder nur REST (spart ~1.300 Streams gegen künftige IP-Drossel-Risiken)? → Empfehlung: nur REST/Catch-up für 1d/1w; WS für 5m–4h.
-4. **Startzeitpunkt:** frühestens nach 3–5 Tagen stabiler Fleet auf dem heutigen Stand (WS-Drossel abgeklungen, Batch 4 bewährt).
+Durabler Record: **D-2026-CLD-109** (KB). Diese vier gaten die C-Gate-Phasen 2–5.
+
+1. **Retention:** **UNBEGRENZT.** Keine `add_retention_policy` — nur die Compression-Policy. Komprimiert ist die Vollhistorie unkritisch (~4–6 GB).
+2. **REAL → double precision** (P3.12): **JA**, für ALLE ~120 Indikator-Spalten im Zuge des Schema-Neubaus. Sub-Cent-Coins verlieren unter `REAL` Präzision; Compression macht den Größenunterschied irrelevant.
+3. **1d/1w:** **NUR REST/Catch-up, kein WS mehr.** Spart ~1.300 Streams (IP-Drossel-Risiko). WS bleibt für 5m–4h. Der Umbau sitzt in `1_data_ingestion` (Block 6 / Phase 2).
+4. **Retrain:** **Alle möglichen Bots der Reihe nach rerunnen** (Sequential-Jobs-Regel, ein Job gleichzeitig). R1 (`include_forming=False`) verschiebt Feature-Verteilungen fleet-weit → jedes ML-Modell braucht Retrain auf R1-sauberen Walk-Forward-Labels; Artefakte nach `staging_models/`, Rollout je Bot Operator-Entscheidung. Prerequisit für indikator-abhängige Retrains: der historische Indikator-Recompute (T-061/P1.13) — der Backfill ist reiner Copy/Cast, kein Recompute, d.h. Alt-Indikatoren tragen den Forming-Kontaminationswert.
+
+> **Startzeitpunkt der C-Gate:** frühestens nach fertiger Reader-Umverdrahtung (Blocks 3–6) und nach der T-061-Rerun-Queue; jeder irreversible Schritt (Hypertable-DDL, Backfill, Read-Cutover, Table-Drop) bleibt eskalations-gegatet (Michi).
 
 ## 6. Verifikations-Werkzeuge
 
