@@ -21,7 +21,9 @@ import scipy.signal
 from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
+from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
+from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import check_cooldown, get_max_leverage, load_coins, update_cooldown
 
 # 🛠️ CONFIGURATION
@@ -92,6 +94,10 @@ def scan_market():
     conn.autocommit = True  # Verhindert Datenbank-Locks
     now = datetime.now(timezone.utc)
 
+    # R1: live price for the QM-proximity/entry gates — batch ticker (1 call/cycle),
+    # per-coin HTTP→DB fallback on miss (core.live_price).
+    price_map = get_live_prices_batch()
+
     for tf in TIMEFRAMES:
         module_tag = ML_MODELS[tf]['tag']  # Artefakt-Tag, nicht aus tf abgeleitet
         # Transitionaler Dedup (T-2026-CU-9050-030): der Active-Trade-Check läuft über
@@ -108,23 +114,24 @@ def scan_market():
 
         for symbol in coins:
             try:
-                # 💥 FIX: 't1.volume' im Select hinzugefügt, sonst crashed der Chart!
-                fields = ["t1.open_time", "t1.open", "t1.high", "t1.low", "t1.close", "t1.volume"]
-                for ind in PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']:
-                    fields.append(f"t2.{ind}")
-
-                query = f"""
-                    SELECT {', '.join(fields)}
-                    FROM "{symbol}_{tf}" t1
-                    LEFT JOIN "{symbol}_{tf}_indicators" t2 ON t1.open_time = t2.open_time
-                    ORDER BY t1.open_time DESC LIMIT 100
-                """
-
-                df = pd.read_sql_query(query, conn)
+                # R1: detect on CLOSED candles only. read_candles_with_indicators does
+                # the candle⋈indicator JOIN, returns ASC and drops the forming bar, so
+                # pivots no longer repaint and the manual DESC-reverse is gone.
+                # 't1.volume' is kept in candle_columns (needed by the chart); 'symbol'
+                # is EXCLUDED so the float-cast loop below stays valid.
+                indicator_cols = PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']
+                df = read_candles_with_indicators(
+                    conn,
+                    symbol,
+                    tf,
+                    limit=100,
+                    include_forming=False,
+                    candle_columns=("open_time", "open", "high", "low", "close", "volume"),
+                    indicator_columns=indicator_cols,
+                )
                 if len(df) < 50:
                     continue
 
-                df = df.iloc[::-1].reset_index(drop=True)
                 df.ffill(inplace=True)
                 df.bfill(inplace=True)
 
@@ -133,12 +140,16 @@ def scan_market():
                         df[c] = df[c].astype(float)
 
                 highs, lows, closes = df['high'].values, df['low'].values, df['close'].values
-                current_price = closes[-1]
+                # Detection is on closed candles; the QML-proximity/SL/zone gates and the
+                # entry need the LIVE price — batch ticker with per-coin HTTP→DB fallback.
+                current_price = price_map.get(symbol) or get_live_price(symbol, conn)
+                if not current_price:
+                    continue
+                current_price = float(current_price)
 
-                # P1.24: Pivot-Suche nur auf abgeschlossenen Kerzen — die letzte Zeile
-                # ist die laufende (forming) Kerze; sonst repaintet der Pivot und der
-                # Bot weicht von der Trainer-Geometrie ab.
-                c_highs, c_lows = highs[:-1], lows[:-1]
+                # P1.24 + R1: the frame already holds only CLOSED candles, so the pivot
+                # search runs on the full array — no forming-bar slice.
+                c_highs, c_lows = highs, lows
 
                 peak_idx = scipy.signal.argrelextrema(c_highs, np.greater, order=PIVOT_WINDOW)[0]
                 trough_idx = scipy.signal.argrelextrema(c_lows, np.less, order=PIVOT_WINDOW)[0]
@@ -209,7 +220,7 @@ def scan_market():
                     touched_recently = False
                     zone_upper = qm_level * (1 + ZONE_TOLERANCE)
                     zone_lower = qm_level * (1 - ZONE_TOLERANCE)
-                    for k in range(1, min(4, len(df))):  # letzte 3 geschlossene Kerzen
+                    for k in range(0, min(3, len(df))):  # R1: letzte 3 geschlossene Kerzen (forming weg → ab k=0)
                         c_high_k = highs[-1 - k]
                         c_low_k = lows[-1 - k]
                         if c_low_k <= zone_upper and c_high_k >= zone_lower:
@@ -229,7 +240,7 @@ def scan_market():
                         continue
 
                     if dist_to_qml <= ZONE_TOLERANCE * 2:  # echte Zone bleibt großzügiger
-                        feature_idx = len(df) - 2
+                        feature_idx = len(df) - 1  # R1: last row is now the last CLOSED candle (forming dropped)
                         close_prev = closes[feature_idx]
 
                         features = {
