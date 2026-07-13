@@ -738,8 +738,13 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                                     # und deren Kerze still wieder löschen.
                                     cur.execute("SAVEPOINT gap_fill_row")
                                     ot_ms = int(k[0])
-                                    # Nur Kerzen im eigentlichen Gap-Range einfügen — falls Binance mehr liefert
-                                    if ot_ms < gap_start_ms or ot_ms > gap_end_ms + expected_delta_ms:
+                                    # Nur die FEHLENDEN Kerzen [gap_start, gap_end] einfügen. Die
+                                    # rechte Grenze gap_end + expected_delta ist times[i] — die
+                                    # bereits existierende Kerze NACH der Lücke, die der Scan sah;
+                                    # sie per >= ausschließen. Sonst zählte sie (No-op-Upsert) als
+                                    # "gefüllt" und triggerte die Indikator-Invalidierung unten
+                                    # fälschlich auf unfüllbaren Lücken (Review T-2026-CU-9050-114).
+                                    if ot_ms < gap_start_ms or ot_ms >= gap_end_ms + expected_delta_ms:
                                         continue
                                     ot = datetime.datetime.fromtimestamp(ot_ms / 1000, tz=datetime.timezone.utc)
                                     row = (
@@ -751,13 +756,14 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                                         float(k[4]),
                                         float(k[5]),
                                     )
-                                    # Gap candles are historical → closed=True. upsert_candles
-                                    # replaces the old ON CONFLICT DO NOTHING with the shared
-                                    # DO UPDATE ... IS DISTINCT FROM: a boundary candle Binance
-                                    # re-sends is refreshed only if it actually changed (no WAL
-                                    # churn otherwise). Counts rows sent, not rowcount. It opens
-                                    # a second cursor inside the SAVEPOINT frame (same
-                                    # transaction) so a bad row is still isolated to its row.
+                                    # Gap candles are historical → closed=True. Only genuinely
+                                    # missing candles reach here (the pre-existing right boundary
+                                    # is filtered out above), so the return (rows sent) equals rows
+                                    # actually filled and the ==0 guard below stays meaningful.
+                                    # upsert_candles' DO UPDATE ... IS DISTINCT FROM replaces the
+                                    # old DO NOTHING (no WAL churn on no-ops) and opens a second
+                                    # cursor inside the SAVEPOINT frame (same transaction), so a bad
+                                    # row is isolated to its row.
                                     candles_inserted_for_cointf += upsert_candles(conn, symbol, tf, [row], closed=True)
                                 except Exception as row_err:
                                     # FIX P0.9: Fehler loggen statt still verschlucken
