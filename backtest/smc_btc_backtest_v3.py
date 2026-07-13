@@ -10,6 +10,7 @@ import scipy.signal
 import logging
 
 # --- Eigene DB Connection importieren ---
+from core.candles import read_candles
 from core.database import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -48,8 +49,10 @@ def fetch_db_data():
     logger.info(f"Loading historical {TIMEFRAME} Daten for {SYMBOL} from the database...")
     try:
         conn = get_db_connection()
-        query = f'SELECT open_time, open, high, low, close FROM "{SYMBOL}_{TIMEFRAME}" ORDER BY open_time ASC'
-        df = pd.read_sql_query(query, conn)
+        # Über core.candles: GESCHLOSSENE Kerzen, ASC (include_forming=False).
+        df = read_candles(
+            conn, SYMBOL, TIMEFRAME, include_forming=False, columns=('open_time', 'open', 'high', 'low', 'close')
+        )
         conn.close()
 
         for c in ['open', 'high', 'low', 'close']: df[c] = df[c].astype(float)
