@@ -127,6 +127,7 @@ def _fetch_5m_from_db(symbol: str, minutes: int = 240) -> pd.DataFrame:
 
     try:
         # Lazy import: verhindert zirkuläre Abhängigkeit beim Modul-Load
+        from core.candles import read_candles
         from core.database import get_db_connection
     except Exception as e:
         logger.debug(f"DB-Import für 5m-Layer fehlgeschlagen: {e}")
@@ -135,13 +136,16 @@ def _fetch_5m_from_db(symbol: str, minutes: int = 240) -> pd.DataFrame:
     try:
         conn = get_db_connection()
         try:
-            query = f'''
-                SELECT open_time, open, high, low, close, volume
-                FROM "{symbol}_5m"
-                ORDER BY open_time DESC
-                LIMIT %s
-            '''
-            df = pd.read_sql_query(query, conn, params=(n_candles,))
+            # Über core.candles: die neuesten n GESCHLOSSENEN 5m-Kerzen, ASC. Das
+            # Overlay ist kosmetisch — die forming Kerze gehört nicht hinein (R1).
+            df = read_candles(
+                conn,
+                symbol,
+                "5m",
+                limit=n_candles,
+                include_forming=False,
+                columns=("open_time", "open", "high", "low", "close", "volume"),
+            )
         finally:
             conn.close()
 

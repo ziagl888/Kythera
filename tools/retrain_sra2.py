@@ -42,6 +42,7 @@ from sklearn.isotonic import IsotonicRegression
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+from core.candles import read_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.sra_features import SRA2_FEATURES, build_sra2_features  # noqa: E402
 from tools.retrain_from_replay import STAGING_DIR, pick_threshold_safe  # noqa: E402
@@ -57,6 +58,9 @@ INDICATOR_COLS = (
     "donchian_lower_20, donchian_mid_20, support_price, resistance_price, "
     "ema_9, ema_21, wma_9, wma_21, kama_9, kama_21, trend_direction"
 )
+# Dieselben Spalten als Projektion für read_indicators (open_time zuerst — der
+# Read ordnet danach). Ein Ort für die Wahrheit, geparst aus INDICATOR_COLS.
+INDICATOR_COL_LIST = tuple(c.strip() for c in INDICATOR_COLS.split(","))
 
 
 def approx_pnl_pct(row) -> float:
@@ -108,9 +112,12 @@ def load_dataset(conn) -> pd.DataFrame:
         coin = tr["coin"]
         if coin not in ind_cache:
             try:
-                ind_cache[coin] = pd.read_sql_query(
-                    f'SELECT {INDICATOR_COLS} FROM "{coin}_1h_indicators" ORDER BY open_time ASC',
-                    conn,
+                # Über core.candles: GESCHLOSSENE 1h-Indikatorzeilen, ASC. Die
+                # Per-Signal-Maske unten (ot <= t_sig-1h) wählt ohnehin nur
+                # geschlossene Kerzen; include_forming=False hält die forming
+                # Zeile schon aus dem Cache (R1).
+                ind_cache[coin] = read_indicators(
+                    conn, coin, "1h", include_forming=False, columns=INDICATOR_COL_LIST
                 )
             except Exception:
                 conn.rollback()
