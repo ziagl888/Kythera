@@ -1,3 +1,38 @@
+## [2026-07-13] R1/TimescaleDB C-Gate Phase 0 — leere candles/indicators-Hypertables angelegt (T-2026-CU-9050-118)
+
+Erste **DB-Migrations-Phase** der R1+TimescaleDB-Umstellung (Umbrella T-2026-CU-9050-018, Entscheidungen
+**D-2026-CLD-109**): die zwei **leeren** Ziel-Hypertables anlegen. Reine Storage-Vorbereitung — `core.candles`
+liest weiter die ALTEN Per-Coin-Tabellen (`KYTHERA_CANDLES_SOURCE=legacy`), kein Bot wird angefasst, Rollback
+trivial (`DROP TABLE` — nichts liest die neuen Tabellen bis zum Phase-4-Cutover). Auf der Live-VPS ausgeführt,
+DDL-Schritt → Freigabe Michi vor Stempel + Ausführung.
+
+- **Neues Modul `core/candles_schema.py`** — idempotentes `ensure_hypertables(conn)` nach dem Muster von
+  `core/oi_5m.ensure_schema` (self-committing, Rollback-on-Failure). Runner `python -m core.candles_schema`
+  (Default = DB-freier Dry-Run-Print; `--execute` schaltet die Live-DDL scharf).
+- **`candles`** (9 Spalten, §1 des Migrations-Designs): `symbol, tf, open_time, open, high, low, close, volume,
+  is_closed`, PK `(symbol, tf, open_time)`. `tf` ist jetzt eine echte Spalte (war im Per-Coin-Tabellennamen
+  implizit), `is_closed` ist der R1-Vertrag (`DEFAULT false`).
+- **`indicators`** (113 Spalten): `symbol, tf, open_time, is_closed, close` + die **108** Indikator-Spalten aus
+  `2_indicator_engine.get_indicator_definitions()` — **zur Build-Zeit aus der EINEN kanonischen Quelle** abgeleitet
+  (importlib), damit die Hypertable nie von dem driftet, was Engine/Writer produzieren (Report #18).
+- **Entscheidungen (D-2026-CLD-109):** **REAL→double precision** für alle numerischen Indikator-Spalten
+  (verifiziert: 0 `float4` in `indicators`; `trend_direction` bleibt `text`), **Retention unbegrenzt** (keine
+  Policy). **Compression bewusst auf Phase 5 vertagt** (Operator-Entscheidung 2026-07-13) — Phase 0 legt nur
+  Tabellen + Hypertable + Index an. `create_hypertable(...,'open_time',chunk_time_interval=>'7 days')` in der
+  klassischen Form (wie `core/oi_5m` auf TS 2.26.3; äquivalent zum `by_range()` aus §1).
+- **Verifiziert live:** beide Hypertables vorhanden (1 Dim `open_time`, 7-Tage-Chunks), leer, keine
+  Compression-/Retention-Jobs, Spalten-Parität gegen Legacy `BTCUSDT_1h_indicators` (neu: exakt `{tf, is_closed}`,
+  keine Legacy-Spalte verloren). DB-freie Tests (`backtest/test_candles_schema.py`, 5×), Guard smoke+verify 24/24,
+  ruff/format/mypy clean. Beide Core-Reviews PASS (z-code-reviewer APPROVED, z-spec-compliance 9/9 ACs).
+- Phase-0-Gate `backtest/test_candles_db_parity.py` = **11/12**; der eine Fehlschlag
+  (`test_include_forming_false_drops_only_forming_rows`) ist eine **now-verankerte Freshness-Assertion**, die an der
+  laufenden Ingestion-Outage scheitert (Fenster `[now−10·Δ, now]` leer, da die Daten um 07:25 enden) — **keine
+  Phase-0-Regression** (Legacy-Reads, orthogonal zu den leeren Hypertables).
+
+**Offen (Michi-gegatet):** Retrain-Rollout (Part 2) + C-Gate Phasen 2–5 (Dual-Write inkl. 1d/1w-WS-Removal,
+Backfill, ≥5–7 Tage Parität, Read-Cutover, Cleanup/Drop der ~9,7k Alt-Tabellen). Die R1-AUDIT-Box schließt erst
+mit Phase 5.
+
 ## [2026-07-13] R1/TimescaleDB Block 6 Part 1 — DB-Writer auf core.candles + 4 API-Gaps (T-2026-CU-9050-114)
 
 Letzter Code-Block der R1+TimescaleDB-Migration (Umbrella T-2026-CU-9050-018): die Kerzen-/Indikator-**Writer**
