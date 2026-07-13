@@ -15,6 +15,7 @@ import pandas as pd
 from scipy import stats
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles
 from core.config import TELEGRAM_CHANNELS
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
@@ -268,13 +269,23 @@ def analyze_patterns(current_hour):
                     continue
 
                 try:
-                    df = pd.read_sql_query(
-                        f'SELECT open_time, open, high, low, close, volume FROM "{symbol}_{tf}" ORDER BY open_time DESC LIMIT 168',
+                    # R1: Erkennung auf GESCHLOSSENEN Kerzen (include_forming=False).
+                    # core.candles liefert ASC → die bisherige DESC-Umkehr entfällt.
+                    # Die Breakout-Kerze war schon iloc[-2] (geschlossen); ohne die
+                    # forming Kerze ist sie jetzt die letzte Zeile (current_idx unten
+                    # = len(df) - 1). `iloc[:-4]` bleibt: der Pivot-Confirm-Puffer
+                    # (rolling(9,center) braucht 4 Kerzen nach rechts) verliert nur den
+                    # bisherigen Forming-Repaint am Rand.
+                    df = read_candles(
                         conn,
+                        symbol,
+                        tf,
+                        limit=168,
+                        include_forming=False,
+                        columns=("open_time", "open", "high", "low", "close", "volume"),
                     )
                     if len(df) < 50:
                         continue
-                    df = df.iloc[::-1].reset_index(drop=True)
 
                     # 1. Pivots finden
                     df['Pivot_High'] = df['high'] == df['high'].rolling(window=9, center=True).max()
@@ -307,7 +318,9 @@ def analyze_patterns(current_hour):
                             pattern_name = "Descending Channel"
 
                         if pattern_name:
-                            current_idx = len(df) - 2
+                            # R1: forming Kerze ist nicht mehr im Frame → die jüngste
+                            # geschlossene (Breakout-Kerze) ist len(df) - 1 (vorher -2).
+                            current_idx = len(df) - 1
                             prev_idx = current_idx - 1
 
                             c_open = df['open'].iloc[current_idx]
