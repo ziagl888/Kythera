@@ -334,11 +334,19 @@ def test_force_close_trades_for_regime_change_closes_ai_signals():
 
     def execute_side_effect(sql, params=None):
         sql_lower = sql.strip().lower()
-        if "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
-            # 1 offener AI-Trade auf BTCUSDT LONG
+        if "information_schema.columns" in sql_lower:
+            # T-116: PnL-Spalten vorhanden (Bot-8-Migration gelaufen)
+            mock_cursor._rows = [
+                ("closed_ai_signals", "targets"),
+                ("closed_ai_signals", "lev"),
+                ("ai_signals", "lev"),
+            ]
+        elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
+            # 1 offener AI-Trade auf BTCUSDT LONG (T-116: + targets, lev)
             mock_cursor._rows = [
                 (42, "BTCUSDT", "ATS1", "LONG", 50000.0, 50000.0, 0,
-                 __import__("datetime").datetime(2026, 4, 15)),
+                 __import__("datetime").datetime(2026, 4, 15),
+                 [51000.0, 52000.0], "20x"),
             ]
         elif "select id, strategy, time" in sql_lower:
             # keine classic trades
@@ -369,9 +377,15 @@ def test_force_close_trades_for_regime_change_closes_ai_signals():
     mock_cursor.fetchall.side_effect = lambda: list(mock_cursor._rows)
     mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
-    result = orch.force_close_trades_for_regime_change(
-        mock_conn, "BTCUSDT", "LONG"
-    )
+    # _get_last_close_price liest seit T-109 über core.candles.read_candles —
+    # ohne Patch fällt der Mock-Pfad still auf entry zurück (pre-existing red).
+    import pandas as pd
+
+    fake_df = pd.DataFrame({"open_time": [0], "close": [49500.0]})
+    with mock.patch.object(orch, "read_candles", return_value=fake_df):
+        result = orch.force_close_trades_for_regime_change(
+            mock_conn, "BTCUSDT", "LONG"
+        )
 
     assert result["ai_closed"] == 1
     assert result["classic_closed"] == 0
@@ -379,7 +393,7 @@ def test_force_close_trades_for_regime_change_closes_ai_signals():
     ai_inserts = [p for kind, p in inserts if kind == "ai"]
     assert len(ai_inserts) == 1
     # params-Tuple: (symbol, model, direction, entry, close_price,
-    #                targets_hit, open_time, close_time, status)
+    #                targets_hit, open_time, close_time, status, targets, lev)
     params = ai_inserts[0]
     assert params[0] == "BTCUSDT"
     assert params[1] == "ATS1"
@@ -387,6 +401,9 @@ def test_force_close_trades_for_regime_change_closes_ai_signals():
     assert params[3] == 50000.0       # entry
     assert params[4] == 49500.0       # close_price = letzter 5m-Close
     assert params[8] == "CLOSED_REGIME_CHANGE"
+    # T-116: targets + lev werden für den Realized-PnL-Report durchgereicht
+    assert params[9] == "[51000.0, 52000.0]"
+    assert params[10] == "20x"
     # DELETE muss die ID 42 treffen
     ai_deletes = [p for kind, p in deletes if kind == "ai"]
     assert ai_deletes == [(42,)]
@@ -400,10 +417,17 @@ def test_force_close_trades_for_regime_change_close_price_fallback_to_entry():
 
     def execute_side_effect(sql, params=None):
         sql_lower = sql.strip().lower()
-        if "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
+        if "information_schema.columns" in sql_lower:
+            mock_cursor._rows = [
+                ("closed_ai_signals", "targets"),
+                ("closed_ai_signals", "lev"),
+                ("ai_signals", "lev"),
+            ]
+        elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
             mock_cursor._rows = [
                 (10, "FAKEUSDT", "EPD1", "SHORT", 5.0, None, 0,
-                 __import__("datetime").datetime(2026, 4, 13)),
+                 __import__("datetime").datetime(2026, 4, 13),
+                 None, None),
             ]
         elif "select id, strategy, time" in sql_lower:
             mock_cursor._rows = []
@@ -437,6 +461,96 @@ def test_force_close_trades_for_regime_change_close_price_fallback_to_entry():
     assert inserts[0][3] == 5.0  # entry
     assert inserts[0][4] == 5.0  # close_price = entry (Fallback)
     assert inserts[0][8] == "CLOSED_REGIME_CHANGE"
+
+
+def test_force_close_regime_change_legacy_insert_before_bot8_migration():
+    """T-116: Fehlen die targets/lev-Spalten noch (Bot-28-Restart vor der
+    Bot-8-Migration), muss der Close trotzdem durchgehen — im Legacy-Format
+    mit 9 Parametern. Der Close hat Vorrang vor der Report-Sichtbarkeit."""
+    mock_conn = MagicMock()
+    inserts = []
+    selects = []
+
+    def execute_side_effect(sql, params=None):
+        sql_lower = sql.strip().lower()
+        if "information_schema.columns" in sql_lower:
+            mock_cursor._rows = []  # Migration noch nicht gelaufen
+        elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
+            selects.append(sql)
+            mock_cursor._rows = [
+                (7, "BTCUSDT", "ROM1", "LONG", 100.0, 100.0, 1,
+                 __import__("datetime").datetime(2026, 7, 13),
+                 [105.0, 110.0], None),
+            ]
+        elif "select close from" in sql_lower:
+            mock_cursor._rows = [(101.0,)]
+        elif "insert into closed_ai_signals" in sql_lower:
+            inserts.append(params)
+        else:
+            pass
+
+    mock_cursor = MagicMock()
+    mock_cursor._rows = []
+    mock_cursor.execute.side_effect = execute_side_effect
+    mock_cursor.fetchone.side_effect = lambda: mock_cursor._rows[0] if mock_cursor._rows else None
+    mock_cursor.fetchall.side_effect = lambda: list(mock_cursor._rows)
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    result = orch.force_close_trades_for_regime_change(mock_conn, "BTCUSDT", "LONG")
+
+    assert result["ai_closed"] == 1
+    assert len(inserts) == 1
+    # Legacy-INSERT: 9 Parameter, kein targets/lev
+    assert len(inserts[0]) == 9
+    assert inserts[0][8] == "CLOSED_REGIME_CHANGE"
+    # Der SELECT darf die fehlende lev-Spalte nicht referenzieren
+    assert selects and "null as lev" in selects[0].lower()
+
+
+def test_force_close_regime_change_lev_fallback_to_rom1_default():
+    """T-116: Rows ohne First-Poll-Stempel (lev IS NULL, Übergangsfall)
+    bekommen den ROM1-Standard-Cap get_max_leverage(symbol, 20)."""
+    mock_conn = MagicMock()
+    inserts = []
+
+    def execute_side_effect(sql, params=None):
+        sql_lower = sql.strip().lower()
+        if "information_schema.columns" in sql_lower:
+            mock_cursor._rows = [
+                ("closed_ai_signals", "targets"),
+                ("closed_ai_signals", "lev"),
+                ("ai_signals", "lev"),
+            ]
+        elif "select id, symbol, model" in sql_lower and "from ai_signals" in sql_lower:
+            mock_cursor._rows = [
+                (8, "BTCUSDT", "ROM1", "SHORT", 100.0, 100.0, 0,
+                 __import__("datetime").datetime(2026, 7, 13),
+                 "[95.0, 90.0]", None),
+            ]
+        elif "select close from" in sql_lower:
+            mock_cursor._rows = [(99.0,)]
+        elif "insert into closed_ai_signals" in sql_lower:
+            inserts.append(params)
+        else:
+            pass
+
+    mock_cursor = MagicMock()
+    mock_cursor._rows = []
+    mock_cursor.execute.side_effect = execute_side_effect
+    mock_cursor.fetchone.side_effect = lambda: mock_cursor._rows[0] if mock_cursor._rows else None
+    mock_cursor.fetchall.side_effect = lambda: list(mock_cursor._rows)
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with mock.patch.object(orch, "get_max_leverage", return_value="20x") as glm:
+        result = orch.force_close_trades_for_regime_change(mock_conn, "BTCUSDT", "SHORT")
+
+    assert result["ai_closed"] == 1
+    assert len(inserts) == 1
+    # targets: JSON-String-Input wird normalisiert durchgereicht
+    assert inserts[0][9] == "[95.0, 90.0]"
+    # lev: NULL-Row → ROM1-Default-Cap
+    assert inserts[0][10] == "20x"
+    glm.assert_called_once_with("BTCUSDT", orch.ROM1_DESIRED_LEVERAGE)
 
 
 # ── Signal Gating ─────────────────────────────────────────────────────────────
