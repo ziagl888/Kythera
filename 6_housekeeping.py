@@ -12,6 +12,7 @@ import requests
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
+from core.candles import read_candles
 from core.coins import looks_like_usdt_perp, refresh_coins_json
 from core.config import (
     BASE_URL,
@@ -267,11 +268,14 @@ def _fetch_last_close_or_entry(conn, coin: str, entry: float) -> float:
             # SAVEPOINT verhindert dass ein Lese-Error den Cleanup-Commit kippt
             cur.execute("SAVEPOINT sp_fetch_price")
             try:
-                cur.execute(f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1')
-                row = cur.fetchone()
+                # core.candles: neuester 5m-Close, forming candle bewusst inkludiert
+                # (Preis-Read — contract 2: include_forming=True). read_candles öffnet
+                # einen eigenen Cursor auf derselben Connection; der SAVEPOINT schützt
+                # die Cleanup-Transaktion weiterhin bei fehlender Tabelle.
+                df = read_candles(conn, coin, "5m", limit=1, include_forming=True, columns=("open_time", "close"))
                 cur.execute("RELEASE SAVEPOINT sp_fetch_price")
-                if row and row[0]:
-                    return float(row[0])
+                if not df.empty and df["close"].iloc[-1]:
+                    return float(df["close"].iloc[-1])
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_fetch_price")
     except Exception:

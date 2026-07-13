@@ -18,10 +18,12 @@ import logging
 import os
 import time
 from collections import deque
+from datetime import datetime, timezone
 
 import psutil
 import requests
 
+from core.candles import latest_open_time
 from core.process_control import request_restart
 
 logger = logging.getLogger(__name__)
@@ -66,12 +68,16 @@ def _alert(key: str, msg: str) -> None:
 def _check_data_staleness(conn) -> None:
     """P2.47: Kerzen-Frische als Ingestion-/WS-Heartbeat, mit Auto-Heal."""
     global _last_ingestion_restart
-    with conn.cursor() as cur:
-        cur.execute('SELECT EXTRACT(EPOCH FROM (NOW() - max(open_time))) FROM "BTCUSDT_5m"')
-        row = cur.fetchone()
-    age = row[0] if row and row[0] is not None else None
-    if age is None:
+    # core.candles: neueste BTCUSDT_5m-open_time, forming candle bewusst inkludiert
+    # (ohne sie läse eine frische-aber-formende Kerze als stale und triggerte einen
+    # false-positive DATA_STALE-Restart — contract 2: include_forming=True). Das Alter
+    # wird in Python aus derselben Wall-Clock abgeleitet, die die DB nutzt (auf dem VPS
+    # co-lokiert); der Sub-Sekunden-Unterschied zum DB-seitigen NOW() ist gegen das
+    # Minuten-Limit STALE_LIMIT_S irrelevant.
+    latest = latest_open_time(conn, "BTCUSDT", "5m", include_forming=True)
+    if latest is None:
         return
+    age = (datetime.now(timezone.utc) - latest).total_seconds()
     if age > STALE_LIMIT_S:
         _alert(
             "DATA_STALE",
