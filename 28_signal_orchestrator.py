@@ -1116,12 +1116,43 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
     # ── AI-Trades (ai_signals) ─────────────────────────────────────────────
     # FIX P1.9: nur die ROM1-Kopie des Orchestrators selbst — fremde
     # AI-Trades bleiben offen und werden von ihren eigenen Monitoren bewertet.
+    #
+    # T-2026-CU-9050-116: targets + lev werden mitgeholt und beim Close nach
+    # closed_ai_signals durchgereicht — der Realized-PnL-Report (T-115) ist
+    # exact-only; ohne die beiden Spalten blieben ROM1-Regime-Auto-Closes
+    # dauerhaft unsichtbar (Operator: "rom trades sollten auch drinnen sein").
+    # Deterministische Spalten-Probe statt Exception-Fallback: die Spalten
+    # legt Bot 8 beim Boot an — ein Bot-28-Restart VOR der Bot-8-Migration
+    # darf den Regime-Close nicht lahmlegen, er läuft dann im Legacy-Format
+    # (Trade wird geschlossen, Row bleibt ohne targets/lev → Report-exclude).
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                SELECT table_name, column_name FROM information_schema.columns
+                WHERE (table_name = 'closed_ai_signals' AND column_name IN ('targets', 'lev'))
+                   OR (table_name = 'ai_signals' AND column_name = 'lev')
+                """
+            )
+            _have = {(r[0], r[1]) for r in cur.fetchall()}
+        have_pnl_cols = {
+            ("closed_ai_signals", "targets"),
+            ("closed_ai_signals", "lev"),
+            ("ai_signals", "lev"),
+        } <= _have
+    except Exception:
+        conn.rollback()
+        have_pnl_cols = False
+    if not have_pnl_cols:
+        logger.warning("Regime-Close: targets/lev-Spalten fehlen noch (Bot-8-Migration ausstehend) — Legacy-Close.")
+
+    lev_select = "lev" if have_pnl_cols else "NULL AS lev"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
                 SELECT id, symbol, model, direction, entry1, price,
-                       current_target_hit, open_time
+                       current_target_hit, open_time, targets, {lev_select}
                 FROM ai_signals
                 WHERE symbol = %s AND direction = %s AND model = 'ROM1'
                 """,
@@ -1134,33 +1165,72 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
         ai_rows = []
 
     for row in ai_rows:
-        tid, symbol, model, trade_dir, entry1, price, targets_hit, open_time = row
+        tid, symbol, model, trade_dir, entry1, price, targets_hit, open_time, targets_data, lev = row
         entry = float(entry1) if entry1 is not None else (float(price) if price is not None else 0.0)
         close_price = _get_last_close_price(conn, coin, fallback=entry)
         if close_price is None:
             close_price = entry  # letzter Fallback
 
+        # Publizierte Targets normalisieren (json-Spalte kommt als Liste oder
+        # String); korrupter Inhalt → NULL, der Report lässt die Row dann
+        # exact-only aus, der Close selbst geht durch (wie Bot 8).
+        try:
+            if isinstance(targets_data, str):
+                targets_data = json.loads(targets_data)
+            targets_json = json.dumps([float(t) for t in targets_data]) if targets_data else None
+        except (TypeError, ValueError):
+            targets_json = None
+        # lev: von Bot 8 beim First-Poll gestempelt (T-115). Fallback für
+        # Rows aus der Zeit vor dem Stempel: ROM1 postet immer den
+        # 20x-Standard-Cap (ROM1_DESIRED_LEVERAGE, Operator 2026-07-12).
+        lev_text = lev or get_max_leverage(symbol, ROM1_DESIRED_LEVERAGE)
+
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO closed_ai_signals (
-                        symbol, model, direction, entry, close_price,
-                        targets_hit, open_time, close_time, status
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        symbol,
-                        model,
-                        trade_dir,
-                        entry,
-                        close_price,
-                        int(targets_hit or 0),
-                        open_time,
-                        now,
-                        "CLOSED_REGIME_CHANGE",
-                    ),
-                )
+                if have_pnl_cols:
+                    cur.execute(
+                        """
+                        INSERT INTO closed_ai_signals (
+                            symbol, model, direction, entry, close_price,
+                            targets_hit, open_time, close_time, status, targets, lev
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            symbol,
+                            model,
+                            trade_dir,
+                            entry,
+                            close_price,
+                            int(targets_hit or 0),
+                            open_time,
+                            now,
+                            "CLOSED_REGIME_CHANGE",
+                            targets_json,
+                            lev_text,
+                        ),
+                    )
+                else:
+                    # Legacy-Format bis Bot 8 die Spalten angelegt hat — der
+                    # Close hat Vorrang vor der Report-Sichtbarkeit.
+                    cur.execute(
+                        """
+                        INSERT INTO closed_ai_signals (
+                            symbol, model, direction, entry, close_price,
+                            targets_hit, open_time, close_time, status
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            symbol,
+                            model,
+                            trade_dir,
+                            entry,
+                            close_price,
+                            int(targets_hit or 0),
+                            open_time,
+                            now,
+                            "CLOSED_REGIME_CHANGE",
+                        ),
+                    )
                 cur.execute("DELETE FROM ai_signals WHERE id = %s", (tid,))
             conn.commit()
             result["ai_closed"] += 1

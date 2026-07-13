@@ -1,3 +1,24 @@
+## [2026-07-13] ROM1-Regime-Auto-Closes in den Realized-PnL-Report: Bot-28-Close-Writer persistiert targets+lev (T-2026-CU-9050-116)
+
+Follow-up zu T-115 auf Operator-Anweisung ("rom trades sollten auch drinnen sein"): der **zweite**
+`closed_ai_signals`-Writer — der Regime-Auto-Close in `28_signal_orchestrator.py`
+(`force_close_trades_for_regime_change`, Status `CLOSED_REGIME_CHANGE`) — schrieb keine
+targets/lev; unter der exact-only-Regel des Realized-PnL-Reports blieben ROM1-Auto-Closes damit
+dauerhaft unsichtbar. Jetzt: SELECT der ROM1-Rows holt `targets` + `ai_signals.lev` (First-Poll-
+Stempel aus T-115) mit, der Close-INSERT reicht beide durch; lev-Fallback für ungestempelte
+Übergangs-Rows = `get_max_leverage(symbol, ROM1_DESIRED_LEVERAGE)` (ROM1 postet immer den
+20x-Standard-Cap). **Deploy-Ordering abgesichert:** deterministische `information_schema`-Probe —
+läuft Bot 28 vor der Bot-8-Migration, schließt er im Legacy-Format weiter (Close hat Vorrang vor
+Report-Sichtbarkeit), statt den Regime-Close lahmzulegen. Der Housekeeping-Writer
+(`6_housekeeping`, DELISTED) bleibt bewusst unangetastet — neutral, vom Report gefiltert.
+
+Verifikation (DB-frei): `backtest/test_signal_orchestrator.py` 88/88 — zwei bestehende
+Regime-Close-Tests auf den neuen Column-Contract erweitert (targets/lev-Passthrough), zwei neue
+Tests (Legacy-INSERT vor Bot-8-Migration; lev-Fallback auf ROM1-Default) + Fix eines vorbestehend
+roten Tests (seit T-109 liest `_get_last_close_price` über `core.candles.read_candles` — Mock
+gepatcht). ruff/mypy grün, Guard-Smoke OK. Deploy am selben Michi-Gate wie T-115 (zusätzlich
+Bot-28-Restart).
+
 ## [2026-07-13] R1/TimescaleDB C-Gate Phase 2 (Build) — Dual-Write + Backfill + 1d/1w-WS-Removal (T-2026-CU-9050-119)
 
 Zweite DB-Migrations-Phase der R1+TimescaleDB-Umstellung (Umbrella T-2026-CU-9050-018,
