@@ -13,12 +13,21 @@ import math
 import numpy as np
 import pandas as pd
 
+from core.candles import read_candles_with_indicators
+
 # ── Gemeinsamer Markt-Kontext (1h-Kerzen + Indikator-Join) ───────────────────
 # SELECT-Fragment für den Indikator-Join (h = Kerzen-Tabelle, i = Indikatoren).
 CONTEXT_SQL_SELECT = """
     i.rsi_14, i.ema_21, i.ema_200, i.atr_14,
     i.boll_upper_20, i.boll_lower_20
 """
+
+# Reine Indikator-Spaltennamen aus CONTEXT_SQL_SELECT (i.-Präfix + Whitespace
+# entfernt). EINE Quelle für den Live-Join (fetch_context_frame unten) UND den
+# Offline-Join (tools/research_dataset_common.load_candles_ctx importiert diese
+# Liste), damit die Frame-Spalten von Serving und Training/Replay byte-identisch
+# bleiben (harte Regel 7). read_candles_with_indicators erwartet die reinen Namen.
+CONTEXT_IND_COLS = [c.strip().split(".")[-1] for c in CONTEXT_SQL_SELECT.split(",") if c.strip()]
 
 CONTEXT_FEATURES = [
     "ret_1h_pct",
@@ -309,20 +318,22 @@ def fetch_context_frame(conn, symbol: str, lookback: int = 60, as_of=None):
     """
     import datetime as _dt
 
-    query = f"""
-        SELECT h.open_time, h.close, h.volume,
-               {CONTEXT_SQL_SELECT}
-        FROM "{symbol}_1h" h
-        LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time
-        ORDER BY h.open_time DESC LIMIT {int(lookback)}
-    """
-    with conn.cursor() as cur:
-        cur.execute(query)
-        rows = cur.fetchall()
-        if len(rows) < CONTEXT_MIN_CANDLES + 1:
-            return None
-        cols = [d[0] for d in cur.description]
-    df = pd.DataFrame(rows, columns=cols).iloc[::-1].reset_index(drop=True)
+    # R1 (harte Regel 7): identischer Read-Pfad wie der Offline-Join in
+    # tools/research_dataset_common.load_candles_ctx — core.candles liefert
+    # GESCHLOSSENE Kerzen (include_forming=False) bereits ASC sortiert. Die
+    # frühere DESC-SQL + .iloc[::-1]-Umkehr entfällt (INVERSE-Falle: bliebe die
+    # Umkehr, würde der Frame wieder DESC und searchsorted unten läge daneben).
+    df = read_candles_with_indicators(
+        conn,
+        symbol,
+        "1h",
+        limit=int(lookback),
+        include_forming=False,
+        candle_columns=("open_time", "close", "volume"),
+        indicator_columns=CONTEXT_IND_COLS,
+    )
+    if len(df) < CONTEXT_MIN_CANDLES + 1:
+        return None
     df["open_time"] = pd.to_datetime(df["open_time"], utc=True).dt.tz_localize(None)
     for c in df.columns:
         if c != "open_time":
