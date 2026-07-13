@@ -11,6 +11,7 @@ import scipy.signal
 import logging
 
 # --- Eigene DB Connection importieren ---
+from core.candles import read_candles
 from core.database import get_db_connection
 from core import config as _kcfg  # channel ids
 
@@ -73,8 +74,10 @@ def write_to_file(line):
 def fetch_db_data(symbol):
     try:
         conn = get_db_connection()
-        query = f'SELECT open_time, open, high, low, close FROM "{symbol}_{TIMEFRAME}" ORDER BY open_time ASC'
-        df = pd.read_sql_query(query, conn)
+        # Über core.candles: GESCHLOSSENE Kerzen, ASC (include_forming=False).
+        df = read_candles(
+            conn, symbol, TIMEFRAME, include_forming=False, columns=('open_time', 'open', 'high', 'low', 'close')
+        )
         conn.close()
 
         for c in ['open', 'high', 'low', 'close']: df[c] = df[c].astype(float)

@@ -39,12 +39,16 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import timedelta  # noqa: E402
+
+from core.candles import read_candles  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.regime_logic import (  # noqa: E402
     CHOP_RETURN_THRESHOLD_4H_PCT,
     TREND_RETURN_THRESHOLD_4H_PCT,
     VOLA_LOOKBACK_DAYS,
 )
+from core.time import utc_now  # noqa: E402
 
 from tools.research_dataset_common import (  # noqa: E402
     REPLAY_DIR,
@@ -60,11 +64,16 @@ ATR_GRID = (0.75, 1.0, 1.5)
 
 
 def load_btc(conn) -> pd.DataFrame:
-    df = pd.read_sql_query(
-        'SELECT open_time, high, low, close FROM "BTCUSDT_15m" '
-        "WHERE open_time >= NOW() AT TIME ZONE 'UTC' - INTERVAL '%s days' "
-        "ORDER BY open_time ASC" % (DAYS + VOLA_LOOKBACK_DAYS + 2),
+    # Über core.candles: GESCHLOSSENE 15m-Kerzen, ASC. Die Regime-Studie darf
+    # nicht auf der forming 15m-Kerze rechnen (dieselbe R1-Disziplin, die live
+    # core/regime_logic bekommt) — include_forming=False schneidet DB-seitig.
+    df = read_candles(
         conn,
+        "BTCUSDT",
+        "15m",
+        start=utc_now() - timedelta(days=DAYS + VOLA_LOOKBACK_DAYS + 2),
+        include_forming=False,
+        columns=("open_time", "high", "low", "close"),
     )
     # timestamptz über DST-Grenzen ⇒ gemischte Offsets ⇒ utc=True Pflicht
     # (gleiche Falle wie spike_time_to_utc, Fix f95f092); Events sind naive UTC.

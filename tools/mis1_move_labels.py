@@ -43,7 +43,11 @@ import pandas as pd
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+from datetime import timedelta  # noqa: E402
+
+from core.candles import read_candles  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
+from core.time import utc_now  # noqa: E402
 from tools.walkforward_sim import set_low_priority  # noqa: E402
 
 HORIZONS = (8, 24, 72, 168)
@@ -62,13 +66,16 @@ def collect_sample_times(replay_path: str) -> dict[str, list[str]]:
 
 def load_prices(conn, symbol: str, days: int) -> pd.DataFrame | None:
     try:
-        df = pd.read_sql_query(
-            f"""SELECT open_time, high, low, close
-                FROM "{symbol}_1h"
-                WHERE open_time >= NOW() - INTERVAL '{int(days)} days'
-                  AND open_time < date_trunc('hour', NOW())
-                ORDER BY open_time ASC""",
+        # Über core.candles: GESCHLOSSENE 1h-Kerzen, ASC. Der Cutoff dort ist
+        # Epoch-Arithmetik auf der DB-Uhr und ersetzt das frühere
+        # date_trunc('hour', NOW()) — TZ-unabhängig statt session-abhängig.
+        df = read_candles(
             conn,
+            symbol,
+            "1h",
+            start=utc_now() - timedelta(days=int(days)),
+            include_forming=False,
+            columns=("open_time", "high", "low", "close"),
         )
     except Exception:
         conn.rollback()

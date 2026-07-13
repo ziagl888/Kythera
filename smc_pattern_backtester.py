@@ -4,12 +4,15 @@ warnings.filterwarnings("ignore")
 
 import json
 import logging
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
 import scipy.signal
 
+from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
+from core.time import utc_now
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - BACKTESTER - %(message)s')
 logger = logging.getLogger(__name__)
@@ -56,15 +59,17 @@ def run_backtest():
                 logger.info(f"Processing Coin {idx}/{len(coins)}: {symbol} ({tf})")
 
             try:
-                # Hole Preis + RSI
-                query = f"""
-                    SELECT t1.open_time, t1.open, t1.high, t1.low, t1.close, t2.rsi_14
-                    FROM "{symbol}_{tf}" t1
-                    LEFT JOIN "{symbol}_{tf}_indicators" t2 ON t1.open_time = t2.open_time
-                    WHERE t1.open_time >= NOW() - INTERVAL '2 years'
-                    ORDER BY t1.open_time ASC
-                """
-                df = pd.read_sql_query(query, conn)
+                # Preis + RSI über core.candles: GESCHLOSSENE Kerzen, ASC
+                # (include_forming=False).
+                df = read_candles_with_indicators(
+                    conn,
+                    symbol,
+                    tf,
+                    start=utc_now() - timedelta(days=730),
+                    include_forming=False,
+                    candle_columns=('open_time', 'open', 'high', 'low', 'close'),
+                    indicator_columns=['rsi_14'],
+                )
                 if len(df) < 500:
                     continue
 

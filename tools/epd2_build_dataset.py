@@ -51,6 +51,7 @@ from tools.pex1_build_dataset import detect_offset_h, spike_time_to_utc  # noqa:
 from tools.research_dataset_common import (  # noqa: E402
     MIN_WINDOW,
     REPLAY_DIR,
+    candles_window_start,
     df_query,
     floor_idx,
     join_is_stale,
@@ -59,6 +60,7 @@ from tools.research_dataset_common import (  # noqa: E402
 )
 
 from core import config as _kcfg  # noqa: E402
+from core.candles import read_candles_with_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.funding_features import funding_features_asof, load_funding  # noqa: E402
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry  # noqa: E402
@@ -81,6 +83,8 @@ EPD_FEATURES = [
 EPD_SQL_INDICATORS = (
     "i.rsi_14, i.tsi_fast_12_7_7, i.macd_dif_normal_12_26_9, i.ema_9, i.ema_21"
 )
+# Reine Spaltennamen für read_candles_with_indicators (i.-Präfix entfernt).
+EPD_IND_COLS = [c.strip().split(".")[-1] for c in EPD_SQL_INDICATORS.split(",") if c.strip()]
 
 
 def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
@@ -173,17 +177,19 @@ def entry_from_ticker(
 
 
 def load_candles_epd(conn, symbol: str, since: str) -> pd.DataFrame | None:
-    """1h-Kerzen + EPD-Indikatorspalten, Lookback 100d (95d-Level-Fenster)."""
+    """1h-Kerzen + EPD-Indikatorspalten, Lookback 100d (95d-Level-Fenster).
+
+    Über core.candles: GESCHLOSSENE Kerzen (include_forming=False); der Caller
+    schneidet per floor_idx ohnehin auf die letzte geschlossene Kerze."""
     try:
-        df = df_query(
+        df = read_candles_with_indicators(
             conn,
-            f'SELECT h.open_time, h.open, h.high, h.low, h.close, h.volume, '
-            f"{EPD_SQL_INDICATORS} "
-            f'FROM "{symbol}_1h" h '
-            f'LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time '
-            f"WHERE h.open_time >= %s::timestamptz - INTERVAL '100 days' "
-            f"ORDER BY h.open_time ASC",
-            (since,),
+            symbol,
+            "1h",
+            start=candles_window_start(since, 100),
+            include_forming=False,
+            candle_columns=("open_time", "open", "high", "low", "close", "volume"),
+            indicator_columns=EPD_IND_COLS,
         )
     except Exception:
         conn.rollback()

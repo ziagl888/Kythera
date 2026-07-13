@@ -1,3 +1,38 @@
+## [2026-07-13] TimescaleDB-R1 Phase 1 Block 1: Offline-Tooling auf core.candles umverdrahtet (T-2026-CU-9050-107)
+
+Erster Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,
+Umbrella T-018). 12 Offline-Read-Sites lesen jetzt über `core.candles` statt roher
+f-String-SQL, alle mit `include_forming=False` — geschlossene Kerzen, ASC. Reiner
+read-only Code-Umbau ohne Live-Signal-Pfad; kein DB-Schema angefasst.
+
+Umverdrahtet: `core/charting.py` (kosmetischer 5m-Overlay), `tools/mis1_move_labels.py`
+(+ transitiv `mis2_dump_geometry_study`), `tools/regime_rules_study.py`,
+`tools/retrain_sra2.py`, `tools/research_dataset_common.py` (+ transitiv
+fif1/fmr1/pex1/trm1), `tools/aim2_build_dataset.py`, `tools/epd2_build_dataset.py`,
+`qm_ml_trainer.py`, `smc_ml_trainer.py`, `qm_backtest.py`, `smc_pattern_backtester.py`,
+`backtest/smc_btc_backtest{,_v2,_v3}.py`, `tools/regression_guard/rgcore.py`.
+
+R1 wird auch offline wirksam: die QM/SMC-Trainer und die Regime-Studie liefen
+vorher ohne oberen Zeit-Schnitt und rechneten/trainierten die forming Kerze mit —
+dieselbe Look-ahead-Klasse, die der Walk-Forward-Sim in T-037 verloren hat. Der
+neue Helfer `candles_window_start(since, lookback_days)` in `research_dataset_common`
+reproduziert das frühere `%s::timestamptz - INTERVAL 'N days'` TZ-treu in Python
+(eine Quelle für die Fenstergrenze; aim2/epd2 importieren ihn). Der Regression-Guard
+`extract` erfasst Fixtures ab jetzt forming-frei — nur der DB-Extract-Pfad,
+`verify`/`smoke` bleiben DB-frei und grün (kein Regel-9-Refresh).
+
+Bewusst nicht umverdrahtet (dokumentiert in `docs/CANDLE_CALL_SITES.md`):
+`fib_backtest.py` (pg_tables-Case-Variant-Probe kollidiert mit der Uppercase-API —
+eigener API-Gap), `tools/audit/step7_monitor_replay.py` (TZ-Forensik-Wegwerf-Skript,
+null Verhaltensnutzen bei Risiko für die Shift-Logik), `trainers_x/BT2-Datagrepper`
+(eingefrorene Provenienz, wie `legacy_trainers`).
+
+Verifiziert auf dem VPS gegen `cryptodata` (read-only SELECTs): alle Reader liefern
+ASC, die forming Kerze ist ausgeschlossen (`newest open_time < period_start`); Guard
+`smoke`+`verify` grün, ruff/format grün auf den nicht-exkludierten Dateien. Der
+Block ist reine Code-Umverdrahtung — die Signal-Raten-Neujustierung nach Retrain
+(Report 16) und das C-Gate (Hypertable/Backfill) bleiben spätere Blöcke.
+
 ## [2026-07-12] TimescaleDB-R1 Phase 0: Byte-Gleichheits-Gate für core/candles.py grün gegen die Live-DB (T-2026-CU-9050-018)
 
 Phase-0-Code-Teil der R1-+-TimescaleDB-Migration. Der Substanz-Teil lag bereits

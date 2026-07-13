@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore")
 
 import logging
 import os
+from datetime import timedelta
 
 import joblib
 import numpy as np
@@ -11,8 +12,10 @@ import pandas as pd
 import scipy.signal
 import xgboost as xgb
 
+from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
 from core.market_utils import load_coins as _core_load_coins
+from core.time import utc_now
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - SMC_ML_TRAINER - %(message)s')
 logger = logging.getLogger(__name__)
@@ -72,18 +75,20 @@ def fetch_merged_data(symbol, tf):
     conn = None
     try:
         conn = get_db_connection()
-        fields = ["t1.open_time", "t1.open", "t1.high", "t1.low", "t1.close"]
-        for ind in PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']:
-            fields.append(f"t2.{ind}")
-
-        query = f"""
-            SELECT {', '.join(fields)}
-            FROM "{symbol}_{tf}" t1
-            LEFT JOIN "{symbol}_{tf}_indicators" t2 ON t1.open_time = t2.open_time
-            WHERE t1.open_time >= NOW() - INTERVAL '2 years'
-            ORDER BY t1.open_time ASC
-        """
-        df = pd.read_sql_query(query, conn)
+        ind_cols = PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']
+        # Über core.candles: GESCHLOSSENE Kerzen + Indikator-Join, ASC
+        # (include_forming=False). Das 2-Jahres-Fenster hatte vorher keinen oberen
+        # Schnitt und trainierte die forming Kerze mit — dieselbe R1-Look-ahead-
+        # Klasse, die der Walk-Forward-Sim in T-037 verloren hat.
+        df = read_candles_with_indicators(
+            conn,
+            symbol,
+            tf,
+            start=utc_now() - timedelta(days=730),
+            include_forming=False,
+            candle_columns=('open_time', 'open', 'high', 'low', 'close'),
+            indicator_columns=ind_cols,
+        )
 
         if df.empty or len(df) < 500:
             return pd.DataFrame()

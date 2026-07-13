@@ -26,7 +26,12 @@ try:
 except Exception:
     pass
 
+from core.candles import read_candles_with_indicators  # noqa: E402
 from core.research_features import CONTEXT_SQL_SELECT  # noqa: E402
+
+# CONTEXT_SQL_SELECT ist ein "i.<col>, …"-SQL-Fragment; für read_candles_with_
+# indicators brauchen wir die reinen Spaltennamen (Präfix/Whitespace entfernt).
+CONTEXT_IND_COLS = [c.strip().split(".")[-1] for c in CONTEXT_SQL_SELECT.split(",") if c.strip()]
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
@@ -66,18 +71,38 @@ def to_utc_naive(series: pd.Series) -> pd.Series:
     return s.dt.tz_convert("UTC").dt.tz_localize(None)
 
 
+def candles_window_start(since: str, lookback_days: int):
+    """Untere Fenstergrenze als aware Datetime für core.candles.
+
+    Reproduziert das frühere ``%s::timestamptz - INTERVAL 'N days'`` der Builder-
+    SQL: ``since`` wurde DB-seitig in der Session-TZ (PG-Lokal == LOCAL_TZ) als
+    timestamptz interpretiert. Wir lokalisieren identisch und ziehen die Tage ab.
+    Das ist nur eine Warmup-Untergrenze weit vor den Events — DST-Granularität
+    (≤1h) ist immateriell, und die Bucharest-Lesart schneidet nie SPÄTER als die
+    alte SQL, verliert also keine Kerzen.
+    """
+    ts = pd.Timestamp(since)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize(LOCAL_TZ, nonexistent="shift_forward", ambiguous=True)
+    return (ts - pd.Timedelta(days=int(lookback_days))).to_pydatetime()
+
+
 def load_candles_ctx(conn, symbol: str, since: str, lookback_days: int = 30) -> pd.DataFrame | None:
-    """1h-Kerzen + Kontext-Indikatoren (CONTEXT_SQL_SELECT-Join), ASC, naive UTC."""
+    """1h-Kerzen + Kontext-Indikatoren (CONTEXT_SQL_SELECT-Join), ASC, naive UTC.
+
+    Über core.candles: GESCHLOSSENE Kerzen (include_forming=False). Die Caller
+    schneiden ohnehin per floor_idx auf die letzte geschlossene Kerze vor dem
+    Event — die forming Tail-Zeile hätten sie nie gewählt; der Wechsel ist
+    vertragskompatibel und entfernt einen latenten R1-Repaint (Report §3)."""
     try:
-        df = df_query(
+        df = read_candles_with_indicators(
             conn,
-            f'SELECT h.open_time, h.open, h.high, h.low, h.close, h.volume, '
-            f"{CONTEXT_SQL_SELECT} "
-            f'FROM "{symbol}_1h" h '
-            f'LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time '
-            f"WHERE h.open_time >= %s::timestamptz - INTERVAL '{int(lookback_days)} days' "
-            f"ORDER BY h.open_time ASC",
-            (since,),
+            symbol,
+            "1h",
+            start=candles_window_start(since, lookback_days),
+            include_forming=False,
+            candle_columns=("open_time", "open", "high", "low", "close", "volume"),
+            indicator_columns=CONTEXT_IND_COLS,
         )
     except Exception:
         conn.rollback()
