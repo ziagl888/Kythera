@@ -15,7 +15,9 @@ import pandas as pd
 import scipy.signal
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles
 from core.database import get_db_connection
+from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import load_coins
 
 # 🛠️ CONFIGURATION
@@ -190,24 +192,41 @@ def scan_institutional_patterns():
 
     logger.info(f"🔍 Scanne {len(coins)} Coins auf Institutional Patterns...")
 
+    # R1: live price for the QML-proximity gate — batch ticker (1 call/cycle),
+    # per-coin HTTP→DB fallback on miss (core.live_price).
+    price_map = get_live_prices_batch()
+
     try:
         for symbol in coins:
-            df = pd.read_sql_query(
-                f'SELECT open_time, open, high, low, close FROM "{symbol}_{TIMEFRAME}" ORDER BY open_time DESC LIMIT {LOOKBACK_CANDLES}',
+            # R1: detect on CLOSED candles only; core.candles returns ASC (no reverse)
+            # and drops the forming bar, so the pivots no longer repaint.
+            df = read_candles(
                 conn,
+                symbol,
+                TIMEFRAME,
+                limit=LOOKBACK_CANDLES,
+                include_forming=False,
+                columns=("open_time", "open", "high", "low", "close"),
             )
 
             if len(df) < 100:
                 continue
 
-            # Umdrehen (älteste zuerst)
-            df = df.iloc[::-1].reset_index(drop=True)
+            # core.candles yields raw NUMERIC (Decimal/object); cast to float for the
+            # scipy pivot search and the price math below.
+            for _c in ("open", "high", "low", "close"):
+                df[_c] = df[_c].astype(float)
+
             pivots = get_alternating_pivots(df, window=5)
 
             if len(pivots) < 4:
                 continue
 
-            current_price = df['close'].iloc[-1]
+            # Detection is done on closed candles; the QML-proximity gate below needs
+            # the live price, fetched AFTER structure resolved (no per-scan overhead).
+            current_price = price_map.get(symbol) or get_live_price(symbol, conn)
+            if not current_price:
+                continue
 
             # Wir analysieren immer Pakete von 4 aufeinanderfolgenden Pivots
             for i in range(len(pivots) - 3):
