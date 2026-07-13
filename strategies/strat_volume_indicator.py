@@ -1,7 +1,7 @@
+from core.candles import read_candles, timeframe_delta
 from core.market_utils import check_cooldown, get_max_leverage, is_trade_already_active
 # strategies/strat_volume_indicator.py
 import logging
-import pandas as pd
 import datetime
 import os
 import warnings
@@ -76,9 +76,15 @@ def _classify_latest_volume_spike(df_period, spike_threshold):
 def detect_high_volume_zone(conn, symbol, latest_close, latest_open_time, threshold_factor=3):
     try:
         start_time = latest_open_time - datetime.timedelta(days=90)
-        df_hist = pd.read_sql_query(
-            f'SELECT open_time, close, volume FROM "{symbol}_30m" WHERE open_time >= %s AND open_time < %s ORDER BY open_time ASC',
-            conn, params=(start_time, latest_open_time))
+        # R1 (T-2026-CU-9050-108): via core.candles, closed candles only. The old
+        # strict `open_time < latest_open_time` (exclude the current bar from its own
+        # 90d baseline) maps exactly onto the API's inclusive `end` by ending one 30m
+        # step earlier — open_times are period-aligned, so `<= latest-30m` == `< latest`.
+        df_hist = read_candles(
+            conn, symbol, "30m", start=start_time,
+            end=latest_open_time - timeframe_delta("30m"),
+            include_forming=False, columns=("open_time", "close", "volume"),
+        )
         if df_hist.empty: return False
         return _is_near_high_volume_node(df_hist, latest_close, threshold_factor)
     except Exception:
@@ -87,15 +93,22 @@ def detect_high_volume_zone(conn, symbol, latest_close, latest_open_time, thresh
 
 def detect_volume_spike_in_period(conn, symbol, open_time_1st_hit, open_time_hit):
     try:
-        df_period = pd.read_sql_query(
-            f'SELECT open_time, close, volume FROM "{symbol}_30m" WHERE open_time >= %s AND open_time <= %s ORDER BY open_time ASC',
-            conn, params=(open_time_1st_hit, open_time_hit))
+        # R1 (T-2026-CU-9050-108): via core.candles, closed candles only. Inclusive
+        # `<= open_time_hit` maps to `end=open_time_hit`; frame arrives ASC as before.
+        df_period = read_candles(
+            conn, symbol, "30m", start=open_time_1st_hit, end=open_time_hit,
+            include_forming=False, columns=("open_time", "close", "volume"),
+        )
         if df_period.empty: return 0
 
         hist_start = open_time_1st_hit - datetime.timedelta(days=10)
-        df_hist = pd.read_sql_query(
-            f'SELECT open_time, close, volume FROM "{symbol}_30m" WHERE open_time < %s AND open_time >= %s', conn,
-            params=(open_time_1st_hit, hist_start))
+        # The old strict `open_time < open_time_1st_hit` (baseline strictly before the
+        # window) maps exactly onto `end = open_time_1st_hit - 30m` (period-aligned).
+        df_hist = read_candles(
+            conn, symbol, "30m", start=hist_start,
+            end=open_time_1st_hit - timeframe_delta("30m"),
+            include_forming=False, columns=("open_time", "close", "volume"),
+        )
         if df_hist.empty: return 0
 
         volume_mean, volume_std = df_hist['volume'].mean(), df_hist['volume'].std()

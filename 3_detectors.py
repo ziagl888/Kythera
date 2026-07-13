@@ -7,9 +7,9 @@ import json
 import logging
 import time
 
-import pandas as pd
 import requests
 
+from core.candles import read_indicators
 from core.config import MAIN_CHANNEL_COINS, TELEGRAM_CHANNELS
 from core.database import get_db_connection
 from core.market_utils import update_cooldown
@@ -162,9 +162,17 @@ def run_detectors_for_timeframe(timeframe):
 
         for symbol in all_symbols:
             try:
-                # Wir laden für alle 480 Kerzen (wegen S/R und Main Channel)
-                df = pd.read_sql_query(
-                    f'SELECT * FROM "{symbol}_{timeframe}_indicators" ORDER BY open_time DESC LIMIT 480', conn
+                # Load the newest 480 CLOSED indicator rows (R1, T-2026-CU-9050-108):
+                # core.candles excludes the forming candle and returns ASC. All five
+                # classic strategies index this frame DESC (iloc[0] = newest bar), so
+                # it is flipped back to DESC to keep their contract byte-identical — the
+                # only behavioural change is that iloc[0] is now the newest CLOSED bar
+                # instead of the forming one. A raw ASC hand-off would silently make
+                # iloc[0] the OLDEST bar (docs/OPUS-HANDOFF.md Falle 1).
+                df = (
+                    read_indicators(conn, symbol, timeframe, limit=480, include_forming=False)
+                    .iloc[::-1]
+                    .reset_index(drop=True)
                 )
                 df_indexed = df.set_index('open_time')  # Vorbereiten für die komplexen Bots
             except Exception:

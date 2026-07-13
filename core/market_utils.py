@@ -15,6 +15,7 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
+from core.candles import read_candles
 from core.time import to_utc, utc_now
 
 logger = logging.getLogger(__name__)
@@ -228,14 +229,19 @@ def calculate_obv(
     # ±2σ bands and is much faster than the full history.
     baseline_start = open_time_start - pd.Timedelta(days=60)
 
-    df = pd.read_sql_query(
-        f'SELECT open_time, close, volume FROM "{symbol}_1h" '
-        f'WHERE open_time >= %s AND open_time <= %s '
-        f'ORDER BY open_time ASC',
+    # R1 (T-2026-CU-9050-108): via core.candles, closed candles only. Both bounds
+    # stay inclusive (>= start, <= end) and the frame arrives ASC, exactly as the old
+    # query; the forming filter is a no-op here because open_time_end is a closed bar
+    # (the caller passes a bar timestamp, and the detector frame now excludes forming).
+    df = read_candles(
         conn,
-        params=(baseline_start, open_time_end),
-        index_col="open_time",
-    )
+        symbol,
+        "1h",
+        start=baseline_start,
+        end=open_time_end,
+        include_forming=False,
+        columns=("open_time", "close", "volume"),
+    ).set_index("open_time")
     if df.empty or len(df) < 10:
         return 0
 

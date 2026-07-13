@@ -1,9 +1,13 @@
+import datetime
 import logging
 import math
 
 import numpy as np
 import pandas as pd
 import scipy.signal
+
+from core.candles import read_candles
+from core.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -300,10 +304,18 @@ def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels
     try:
         if levels is None:
             if df is None:
-                # Loading 1000 hours for proper swing-highs
-                query = f'SELECT open, high, low, close, volume FROM "{symbol}_1h" ORDER BY open_time DESC LIMIT 1000'
-                df = pd.read_sql_query(query, conn)
-                df = df.iloc[::-1]
+                # Loading 1000 hours for proper swing-highs. R1 (T-2026-CU-9050-108):
+                # read through core.candles with closed candles only — the forming 1h
+                # candle no longer feeds the Swing/HVN/FVG/S-R/Fib level pool. The API
+                # returns ASC already, so the old DESC-then-reverse drops out.
+                df = read_candles(
+                    conn,
+                    symbol,
+                    "1h",
+                    limit=1000,
+                    include_forming=False,
+                    columns=("open_time", "open", "high", "low", "close", "volume"),
+                )
             levels = compute_smart_target_levels(df, live_price)
 
         atr = levels["atr"]
@@ -417,12 +429,20 @@ def get_hvn_and_sr_levels(conn, symbol, live_price, df=None):
     """
     if df is None:
         try:
-            # FIX P2.29: ORDER BY — ohne Sortierung liefert Postgres die Rows in
-            # beliebiger Reihenfolge und argrelextrema findet Phantom-Extrema,
-            # die als SL/TP-Preise in SRA1/ATS1/RUB1 landen.
-            df = pd.read_sql_query(
-                f'SELECT high, low, close FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\' ORDER BY open_time ASC',
+            # FIX P2.29: the rows must be sorted (argrelextrema depends on row order,
+            # else phantom extrema leak into SRA1/ATS1/RUB1 SL/TP) — core.candles
+            # guarantees ASC. R1 (T-2026-CU-9050-108): closed candles only, so the
+            # forming 1h candle no longer feeds the 95d S/R + Fib pool. `start`
+            # reproduces the old `NOW() - INTERVAL '95 days'` as the instant 95 days
+            # ago (the ≤1h DST nuance is immaterial for this warm-up lower bound).
+            start = utc_now() - datetime.timedelta(days=95)
+            df = read_candles(
                 conn,
+                symbol,
+                "1h",
+                start=start,
+                include_forming=False,
+                columns=("open_time", "high", "low", "close"),
             )
         except Exception:
             return [], []

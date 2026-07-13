@@ -1,3 +1,4 @@
+from core.candles import read_candles
 from core.market_utils import calculate_obv, find_support_resistance_zones, get_max_leverage, is_trade_already_active
 # strategies/strat_main_channel.py
 import logging
@@ -57,14 +58,16 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     open_time_1st_hit = first_hit_row.name
     RSI_9_1ST_HIT, RSI_14_1ST_HIT = first_hit_row['rsi_9'], first_hit_row['rsi_14']
 
-    # We now need the raw OHLCV data for exact zones and OBV
-    df_ohlcv = pd.read_sql_query(f"""
-        SELECT open_time, open, high, low, close, volume FROM "{symbol}_1h"
-        WHERE open_time <= %s ORDER BY open_time DESC LIMIT 480
-    """, conn, params=(open_time_hit,))
+    # We now need the raw OHLCV data for exact zones and OBV.
+    # R1 (T-2026-CU-9050-108): via core.candles — newest 480 CLOSED 1h candles up to
+    # and including the hit bar (`end=`), returned ASC (no more sort_values). The hit
+    # bar is a closed bar now that the detector frame excludes the forming candle.
+    df_ohlcv = read_candles(
+        conn, symbol, "1h", limit=480, end=open_time_hit, include_forming=False,
+        columns=("open_time", "open", "high", "low", "close", "volume"),
+    )
 
     if len(df_ohlcv) < 200: return None
-    df_ohlcv = df_ohlcv.sort_values(by='open_time', ascending=True)
     support_zones, resistance_zones = find_support_resistance_zones(df_ohlcv)
 
     entry = live_price
