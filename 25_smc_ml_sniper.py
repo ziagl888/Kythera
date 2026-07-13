@@ -21,7 +21,9 @@ import scipy.signal
 from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
+from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
+from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import COOLDOWN_MODULE_MAX_LEN, check_cooldown, get_max_leverage, load_coins, update_cooldown
 from core.trade_utils import calculate_smart_targets
 
@@ -221,8 +223,10 @@ def find_breaker_setup(
     selbst aus: ihr erster Breakout liegt ausserhalb des max_age-Fensters.
 
     `current_price` bleibt der Live-CMP (kein analytischer Input, R1/P1.46);
-    `n_closed = len(df) - 1` schliesst die forming-Kerze aus Breakout-Suche und
-    Follow-through aus, identisch zur alten Range `range(p+1, len(df)-1)`.
+    `n_closed` ist die exklusive Obergrenze der Breakout-/Follow-through-Suche.
+    R1 Block 4: der Frame haelt jetzt nur geschlossene Kerzen (include_forming=
+    False), der Caller uebergibt `n_closed = len(df)`, also deckt `range(p+1,
+    n_closed)` alle geschlossenen Kerzen bis len(df)-1 ab.
     """
     is_long = direction == 'LONG'
     for p in reversed([int(x) for x in pivot_indices]):
@@ -258,26 +262,32 @@ def scan_market():
     conn = get_db_connection()
     conn.autocommit = True
 
+    # R1: live price for the BB level-proximity gate + entry/targets — batch ticker
+    # (1 call/cycle), per-coin HTTP→DB fallback on miss (core.live_price).
+    price_map = get_live_prices_batch()
+
     for tf in TIMEFRAMES:
         logger.info(f"🔍 Starting SMC-Scan (BB & TD) für Timeframe: {tf}")
 
         for symbol in coins:
             try:
-                fields = ["t1.open_time", "t1.open", "t1.high", "t1.low", "t1.close", "t1.volume"]
-                for ind in PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']:
-                    fields.append(f"t2.{ind}")
-
-                query = f"""
-                    SELECT {', '.join(fields)}
-                    FROM "{symbol}_{tf}" t1
-                    LEFT JOIN "{symbol}_{tf}_indicators" t2 ON t1.open_time = t2.open_time
-                    ORDER BY t1.open_time DESC LIMIT 150
-                """
-                df = pd.read_sql_query(query, conn)
+                # R1: detect on CLOSED candles only. read_candles_with_indicators does
+                # the candle⋈indicator JOIN, returns ASC and drops the forming bar, so
+                # pivots no longer repaint and the manual DESC-reverse is gone. 'symbol'
+                # is EXCLUDED from candle_columns so the float-cast loop stays valid.
+                indicator_cols = PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']
+                df = read_candles_with_indicators(
+                    conn,
+                    symbol,
+                    tf,
+                    limit=150,
+                    include_forming=False,
+                    candle_columns=("open_time", "open", "high", "low", "close", "volume"),
+                    indicator_columns=indicator_cols,
+                )
                 if len(df) < 100:
                     continue
 
-                df = df.iloc[::-1].reset_index(drop=True)
                 df.ffill(inplace=True)
                 df.bfill(inplace=True)
 
@@ -287,18 +297,19 @@ def scan_market():
 
                 highs, lows, closes = df['high'].values, df['low'].values, df['close'].values
                 rsis = df['rsi_14'].values
-                current_price = closes[-1]
+                # Detection is on closed candles; current_price is the LIVE CMP — it
+                # feeds the BB level-proximity trigger and calculate_smart_targets, not
+                # an analytical input. Batch ticker with per-coin HTTP→DB fallback.
+                current_price = price_map.get(symbol) or get_live_price(symbol, conn)
+                if not current_price:
+                    continue
+                current_price = float(current_price)
 
-                # T-2026-CU-9050-036 (R1, hard rule 5): the last row is the forming
-                # candle — its high/low still move, so a pivot built on it repaints
-                # and the posted geometry (drives, breaker level) changes after the
-                # signal went out. Build the pivots on closed candles only, same
-                # guard as 24_quasimodo_bot.py:138. Indices stay aligned with the
-                # full arrays, so highs[p]/lows[p]/rsis[p] keep working. The live
-                # price stays live: current_price is the CMP the entry is placed at,
-                # not an analytical input (it feeds the BB level-proximity trigger
-                # and calculate_smart_targets).
-                c_highs, c_lows = highs[:-1], lows[:-1]
+                # T-2026-CU-9050-036 (R1, hard rule 5) + R1 Block 4: the frame now holds
+                # only CLOSED candles (include_forming=False), so the pivot search runs on
+                # the full arrays — no forming-bar slice. Indices stay aligned with
+                # highs[p]/lows[p]/rsis[p].
+                c_highs, c_lows = highs, lows
 
                 peak_idx = scipy.signal.argrelextrema(c_highs, np.greater, order=PIVOT_WINDOW)[0]
                 trough_idx = scipy.signal.argrelextrema(c_lows, np.less, order=PIVOT_WINDOW)[0]
@@ -314,7 +325,7 @@ def scan_market():
                 # geometry shifts after the signal is out). 24_quasimodo_bot.py
                 # drops the whole last-PIVOT_WINDOW band (max_confirmed_idx); here
                 # that is NOT a drop-in, because the TD freshness gate below
-                # (len(df) - p3 <= PIVOT_WINDOW + 2) deliberately hunts exactly
+                # (len(df) - p3 <= PIVOT_WINDOW + 1) deliberately hunts exactly
                 # these fresh edge pivots — a full drop would silence Three-Drive.
                 # Compromise (option B of the task): require >= PIVOT_WINDOW//2
                 # confirming closed candles to the right of each pivot. That
@@ -322,11 +333,11 @@ def scan_market():
                 # over at most PIVOT_WINDOW//2 candles instead of PIVOT_WINDOW)
                 # while leaving TD a fresh-reversal entry. One shared filter feeds
                 # both consumers (TD gate + find_breaker_setup) so the edge policy
-                # is consistent. last_closed = len(df) - 2: the forming candle is
-                # already out (c_highs = highs[:-1]), so the newest closed index
-                # is len(df) - 2, and pivot indices address the full arrays.
+                # is consistent. R1 Block 4: the frame now holds only closed candles
+                # (include_forming=False), so the newest closed index is len(df) - 1,
+                # and pivot indices address the full arrays.
                 PIVOT_CONFIRM = PIVOT_WINDOW // 2
-                last_closed = len(df) - 2
+                last_closed = len(df) - 1
                 peak_idx = peak_idx[peak_idx <= last_closed - PIVOT_CONFIRM]
                 trough_idx = trough_idx[trough_idx <= last_closed - PIVOT_CONFIRM]
 
@@ -345,7 +356,7 @@ def scan_market():
                 # (>= PIVOT_WINDOW//2 confirmed) is the filter, so p3 lands in a
                 # PIVOT_WINDOW//2 .. PIVOT_WINDOW confirming-candle band.
                 p_peak3 = peak_idx[-1]
-                if len(df) - p_peak3 <= PIVOT_WINDOW + 2:
+                if len(df) - p_peak3 <= PIVOT_WINDOW + 1:
                     p1, p2, p3 = peak_idx[-3], peak_idx[-2], peak_idx[-1]
                     if (p3 - p1) <= MAX_TD_SPAN and highs[p1] < highs[p2] < highs[p3]:
                         if rsis[p1] > rsis[p2] > rsis[p3]:
@@ -366,7 +377,7 @@ def scan_market():
 
                 # 1b. Bullish Drive (Long) - NEU!
                 p_trough3 = trough_idx[-1]
-                if len(df) - p_trough3 <= PIVOT_WINDOW + 2:
+                if len(df) - p_trough3 <= PIVOT_WINDOW + 1:
                     p1, p2, p3 = trough_idx[-3], trough_idx[-2], trough_idx[-1]
                     if (p3 - p1) <= MAX_TD_SPAN and lows[p1] > lows[p2] > lows[p3]:
                         if rsis[p1] < rsis[p2] < rsis[p3]:
@@ -394,11 +405,13 @@ def scan_market():
                 # Follow-through stecken jetzt im Helper.
                 #
                 # Feature-Timing bewusst am Retest-Bar (letzte geschlossene Kerze,
-                # len(df)-2): der Breakout liegt früher (breakout_idx), die ML-
-                # Features beschreiben den Entscheidungsmoment des Retests — der
+                # R1 Block 4: jetzt len(df)-1): der Breakout liegt früher (breakout_idx),
+                # die ML-Features beschreiben den Entscheidungsmoment des Retests — der
                 # Pattern-Anker des BB-Modells (TD ankert analog auf p3). Ein
                 # Wechsel des Anker-Bars wäre Strategie-Redesign, nicht dieser Fix.
-                n_closed = len(df) - 1
+                # n_closed = len(df): the frame is now all-closed, so the breakout search
+                # and follow-through window include the last closed candle (len(df)-1).
+                n_closed = len(df)
 
                 # PARKED BB_1H (Audit Report 14/16): netto −1.089 bei 55,7% WR —
                 # die 1h-Edge überlebt Fees+Rauschen nicht; BB_4H (+565) läuft weiter.
@@ -409,7 +422,7 @@ def scan_market():
                     if bb_long is not None:
                         p_res, breakout_idx = bb_long
                         pivot_res = highs[p_res]
-                        feats = extract_ml_features(df, len(df) - 2, 'LONG')
+                        feats = extract_ml_features(df, len(df) - 1, 'LONG')
                         evaluate_and_trade(
                             conn,
                             df,
@@ -428,7 +441,7 @@ def scan_market():
                     if bb_short is not None:
                         p_sup, breakdown_idx = bb_short
                         pivot_sup = lows[p_sup]
-                        feats = extract_ml_features(df, len(df) - 2, 'SHORT')
+                        feats = extract_ml_features(df, len(df) - 1, 'SHORT')
                         evaluate_and_trade(
                             conn,
                             df,
