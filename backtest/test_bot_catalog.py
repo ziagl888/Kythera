@@ -37,6 +37,7 @@ from core.fleet import FLEET  # noqa: E402
         ("ATB2", "14_ai_atb_bot.py"),
         ("ATS1_Robust", "12_ai_ats_bot.py"),
         ("BB_4H", "25_smc_ml_sniper.py"),
+        ("BB2_1H", "25_smc_ml_sniper.py"),  # sniper retrain generation
         ("BR15M", "7_pattern_detector.py"),
         ("BR1Hv2", "7_pattern_detector.py"),
         ("EPD2", "10_pump_dump_detector.py"),
@@ -51,6 +52,7 @@ from core.fleet import FLEET  # noqa: E402
         ("RUB2", "13_ai_rub_bot.py"),
         ("SRA1", "9_ai_sr_bot.py"),
         ("TD_1H", "25_smc_ml_sniper.py"),
+        ("TD2_4H", "25_smc_ml_sniper.py"),  # sniper retrain generation
         ("TRM1", "32_ai_trm1_bot.py"),
         ("UFI1", "29_ufi1_bot.py"),
     ],

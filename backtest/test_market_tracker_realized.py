@@ -131,6 +131,53 @@ def test_empty_stats_give_no_blocks():
     assert mt._format_realized_pnl_blocks({}) == []
 
 
+# ── _is_neutral_close: housekeeping filter for BOTH sources ─────────────────
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["DELISTED", "DELISTED / CLEANUP", "delisted", "ORPHAN sweep", "Cleanup"],
+)
+def test_housekeeping_closes_are_neutral(reason):
+    # Review finding 2026-07-13: 6_housekeeping writes DELISTED markers into
+    # closed_trades_master.status too — the classic loop must filter them,
+    # or a delisting close scores as a full leveraged move.
+    assert mt._is_neutral_close(reason) is True
+
+
+@pytest.mark.parametrize("reason", ["0", "1", "4", "SL Hit (SL: 1.23)", "ALL TARGETS HIT", "", None])
+def test_regular_closes_are_not_neutral(reason):
+    assert mt._is_neutral_close(reason) is False
+
+
+# ── row parsing helpers (N-derivation from DB shapes) ───────────────────────
+
+
+def test_parse_targets_accepts_list_and_json_string():
+    assert mt._parse_targets([105.0, 110.0]) == [105.0, 110.0]
+    assert mt._parse_targets("[105.0, 110.0]") == [105.0, 110.0]
+
+
+@pytest.mark.parametrize("value", [None, "kaputt", "{}", 42, {"a": 1}])
+def test_parse_targets_rejects_non_lists(value):
+    assert mt._parse_targets(value) is None
+
+
+def test_classic_targets_derive_n_from_non_null_columns():
+    # 3_detectors writes 0 for absent targets; REAL NULLs arrive as NaN.
+    assert mt._classic_targets(105.0, 110.0, 0.0, 0.0) == [105.0, 110.0]
+    assert mt._classic_targets(105.0, None, float("nan"), -1.0) == [105.0]
+    assert mt._classic_targets(0.0, 0.0, 0.0, 0.0) == []
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [("0", 0), ("2", 2), ("4", 4), (3, 3), ("4.0", 4), (None, 0), ("DELISTED", 0)],
+)
+def test_parse_hits(status, expected):
+    assert mt._parse_hits(status) == expected
+
+
 # ── report constants sanity ──────────────────────────────────────────────────
 
 

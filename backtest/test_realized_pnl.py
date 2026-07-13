@@ -103,6 +103,13 @@ def test_sl_after_tp2_uses_target_prices_for_hit_parts():
     assert move == pytest.approx((5.0 + 10.0 + 5.0 + 5.0) / 4)
 
 
+def test_horizon_timeout_closes_rest_at_market():
+    # HORIZON_TIMEOUT (monitor closes at the candle close, k targets already
+    # hit): 25% at +5%, 75% at the market close of +2%.
+    move = weighted_move_pct("LONG", 100.0, 102.0, [105.0, 110.0, 115.0, 120.0], 1)
+    assert move == pytest.approx((5.0 + 3 * 2.0) / 4)
+
+
 def test_direction_is_normalised():
     assert weighted_move_pct(" long ", 100.0, 105.0, [105.0], 1) == pytest.approx(5.0)
     assert weighted_move_pct("Short", 100.0, 95.0, [90.0], 0) == pytest.approx(5.0)
@@ -129,6 +136,17 @@ def test_outlier_move_is_rejected():
     # |move| > MAX_ABS_MOVE_PCT pre-leverage = data bug → None, not a number.
     assert MAX_ABS_MOVE_PCT == pytest.approx(100.0)
     assert realized_pnl_pct("LONG", 1.0, 2.5, [3.0], 0, "20x") is None
+
+
+def test_outlier_close_leg_is_rejected_even_when_diluted_by_hit_targets():
+    # Review finding 2026-07-13: with k=3 of 4 targets hit, a data-bugged
+    # +150% close leg dilutes to (5+10+15+150)/4 ≈ 45% and would pass a gate
+    # on the weighted move only. The RAW close leg must be gated too.
+    targets = [105.0, 110.0, 115.0, 120.0]
+    assert weighted_move_pct("LONG", 100.0, 250.0, targets, 3) is None
+    assert realized_pnl_pct("LONG", 100.0, 250.0, targets, 3, "20x") is None
+    # ... while a legit close leg at the boundary still computes.
+    assert weighted_move_pct("LONG", 100.0, 200.0, targets, 3) is not None
 
 
 @pytest.mark.parametrize(

@@ -41,6 +41,11 @@ def parse_leverage(lev: object) -> float | None:
     return value if value > 0 else None
 
 
+def _signed_move_pct(sign: float, entry: float, price: float) -> float:
+    """Direction-korrigierter Preis-Move in % (LONG sign=+1, SHORT sign=-1)."""
+    return sign * (price - entry) / entry * 100.0
+
+
 def weighted_move_pct(
     direction: str,
     entry: float,
@@ -80,8 +85,15 @@ def weighted_move_pct(
         k = 0
     k = max(0, min(k, n))
 
-    hit_moves = sum(sign * (t - entry_f) / entry_f * 100.0 for t in target_prices[:k])
-    rest_move = (n - k) * sign * (close_f - entry_f) / entry_f * 100.0
+    # Outlier-Gate auf dem ROHEN Close-Leg, nicht erst auf dem gewichteten
+    # Ergebnis: bei k von N getroffenen Targets verdünnt die Staffelung ein
+    # Daten-Bug-Leg um den Faktor N/(N-k) — ein +150%-Leg passiert sonst als
+    # (5+10+15+150)/4 ≈ 45% den Gesamt-Filter (Review-Finding 2026-07-13).
+    if abs(_signed_move_pct(sign, entry_f, close_f)) > MAX_ABS_MOVE_PCT:
+        return None
+
+    hit_moves = sum(_signed_move_pct(sign, entry_f, t) for t in target_prices[:k])
+    rest_move = (n - k) * _signed_move_pct(sign, entry_f, close_f)
     return (hit_moves + rest_move) / n
 
 

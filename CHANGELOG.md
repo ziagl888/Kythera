@@ -30,12 +30,36 @@ Rest schließt zum Close-Preis (SL/Timeout); das Ganze × Hebel, Verlust-Clamp b
   Ausgeschlossen: `ENTRY_NOT_FILLED`, Housekeeping-Closes (DELISTED/CLEANUP/ORPHAN), geparkte Bots.
   Reine Info-Message, kein Cornix-Block (harte Regel 4).
 
-Verifikation (Build-Maschine, DB-frei): 81 neue Tests grün (`backtest/test_realized_pnl.py` 34,
-`test_bot_catalog.py` 38 inkl. Fleet-Konsistenz-Check, `test_market_tracker_realized.py` 9);
+**Review-Härtung (3× z-code-reviewer N-Vote, alle Findings verifiziert + gefixt):** (1) HIGH —
+klassische Housekeeping-Closes (`6_housekeeping` schreibt `DELISTED` auch in
+`closed_trades_master.status`) wären als voller gehebelter Move gezählt worden → gemeinsamer
+`_is_neutral_close`-Filter für BEIDE Quellen. (2) HIGH — `closed_trades_master.posted` landet
+per Session-TZ-Cast als **Lokalzeit** (UTC_POLICY §3, P2.6 offen), nicht als naive UTC → Classic-
+Uhr auf `LOCALTIMESTAMP` gedreht (sonst −3h-Fenster-Shift + stiller Drop frischer Closes);
+negative Ages werden jetzt gezählt + gewarnt statt still gedroppt. (3) Outlier-Gate zusätzlich
+auf dem ROHEN Close-Leg (Staffelung verdünnt ein Datenbug-Leg um N/(N−k)). (4) Migration-Pending-
+Erkennung via `information_schema`-Probe statt Exception-String-Match (der hätte jeden DB-Fehler
+als "Migration ausstehend" maskiert). (5) Bot 8 fail-fast, wenn targets/lev nach der Schema-
+Sicherung fehlen (statt 10s-Crash-Loop im Close-Pfad) + `json.dumps`-Guard. (6) Sniper-Präfixe
+`BB`/`TD` statt `BB_`/`TD_` (Retrain-Generation `TD2_4H` wäre unmapped gewesen).
+
+**Bewusste, dokumentierte Abweichung (Operator-Info):** die Spec wollte `ai_signals.lev` beim
+Signal-Post via `core/signal_post.py` persistieren — implementiert ist stattdessen ein Stempel
+beim **ersten Bot-8-Poll (~10s nach Post)** in die neue Spalte `ai_signals.lev` (UPDATE nur wenn
+NULL), beim Close mitkopiert. Erfüllt dieselbe Rationale (eine `max_leverage.json`-Änderung
+während der Trade-Laufzeit kann den historischen Wert nicht mehr verfälschen), ohne die ~14
+Signal-Emissions-Sites + deren Migrations-Ordering anzufassen; Rest-Skew nur noch Cache-
+Generationen-Differenz Poster↔Bot-8 im 10s-Fenster. UFI1 (SL-gecappter Hebel) bekommt bewusst
+NULL-lev und erscheint nie im Report; ROM1-Regime-Auto-Closes (Bot-28-Sync, derzeit tot)
+schreiben keine targets/lev und bleiben ausgeschlossen — Follow-up-Kandidaten.
+
+Verifikation (Build-Maschine, DB-frei): 111 neue Tests grün (`backtest/test_realized_pnl.py` 36,
+`test_bot_catalog.py` 40 inkl. Fleet-Konsistenz-Check, `test_market_tracker_realized.py` 35);
 bestehende Market-Tracker-Tests 27/27; ruff/format/mypy grün; Regression-Guard `smoke` OK.
 Volle Suite: 9 Failures identisch auf `main` vorbestehend (sniper_retest/window_features), keine
-Regression. **Deploy-Gate (Michi):** Bot-8- und Bot-23-Restart; die AI-Query degradiert bis zur
-Bot-8-Migration graceful (Warn-Log, Classic-Teil postet).
+Regression. **Reviews:** z-code-reviewer 3× unabhängig (Findings gefixt, s.o.) +
+z-spec-compliance 3× unabhängig. **Deploy-Gate (Michi):** Bot-8- und Bot-23-Restart; die AI-Query
+degradiert bis zur Bot-8-Migration graceful (Warn-Log, Classic-Teil postet).
 
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 5: geteilte Feature-Builder research_features + regime_logic auf geschlossene Kerzen (T-2026-CU-9050-112)
 

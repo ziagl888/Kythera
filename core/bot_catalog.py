@@ -27,7 +27,10 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     ("AIM", "15_ai_master_bot.py"),
     ("ATB", "14_ai_atb_bot.py"),
     ("ATS", "12_ai_ats_bot.py"),
-    ("BB_", "25_smc_ml_sniper.py"),
+    # Sniper tags rotate as BB_4H → BB2_4H on retrain (model_id from the
+    # artifact) — the prefix must survive that, hence "BB"/"TD" without the
+    # underscore. Disjoint from "BR" (bot 7) and "TRM" (bot 32).
+    ("BB", "25_smc_ml_sniper.py"),
     ("BR", "7_pattern_detector.py"),  # BR15M / BR1Hv2 / BR4H …
     ("EPD", "10_pump_dump_detector.py"),
     ("FIF", "33_ai_fif1_bot.py"),
@@ -37,10 +40,13 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     ("MSI", "11_ai_mis_bot.py"),  # historical typo family, see core/bot_naming
     ("PEX", "30_ai_pex1_bot.py"),
     ("QM", "24_quasimodo_bot.py"),
+    # ROM1 caveat: only bot-8-closed ROM1 rows carry targets/lev — regime
+    # auto-closes (28_signal_orchestrator sync path) insert without them and
+    # stay excluded from exact-only reports. Partial coverage by design.
     ("ROM", "28_signal_orchestrator.py"),
     ("RUB", "13_ai_rub_bot.py"),
     ("SRA", "9_ai_sr_bot.py"),
-    ("TD_", "25_smc_ml_sniper.py"),
+    ("TD", "25_smc_ml_sniper.py"),  # TD_4H and retrain generations (TD2_4H)
     ("TRM", "32_ai_trm1_bot.py"),
     ("UFI", "29_ufi1_bot.py"),
 )
