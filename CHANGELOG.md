@@ -1,3 +1,46 @@
+## [2026-07-13] TimescaleDB-R1 Phase 1 Block 2: Strategien + 3_detectors + geteilte Helfer auf core.candles (T-2026-CU-9050-108)
+
+Zweiter Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,
+Umbrella T-018). Sieben Read-Sites im **Live-Signal-Pfad** lesen jetzt über
+`core.candles` mit `include_forming=False` — geschlossene Kerzen, ASC. Reiner
+read-only Code-Umbau, kein DB-Schema angefasst. Anders als Block 1 (offline)
+ändert dieser Block echtes Live-Verhalten, deshalb **kein autonomer Merge** —
+Freigabe durch Michi vor dem Enqueue.
+
+Umverdrahtet: `core/trade_utils.calculate_smart_targets` + `get_hvn_and_sr_levels`
+(höchster Fan-in — die forming 1h-Kerze speiste bisher den Swing/HVN/FVG/S-R/Fib-
+Level-Pool **aller** AI-Bots), `core/market_utils.calculate_obv`,
+`strategies/strat_main_channel`, `strat_support_resistance`, `strat_volume_indicator`
+und `3_detectors.run_detectors_for_timeframe` (der Indikator-Frame der 5 Classic-Strats).
+
+Zwei scharfe Fallen behandelt: (1) **DESC→ASC-Ordering** (OPUS-HANDOFF Falle 1) —
+`3_detectors` reicht heute einen DESC-Frame an fünf Strategie-Konsumenten, die alle
+`iloc[0]`=neueste indexieren (`strat_main_channel/support_resistance/5_percent/
+fast_in_out` + Volume-Indikator). Der Detector-Read geht über die API (ASC + forming-
+frei) und wird per `.iloc[::-1]` in exakt den DESC-Frame zurückgedreht — **null
+Konsumenten-Reindex**, die einzige Verhaltensänderung ist `iloc[0]` = neueste
+GESCHLOSSENE statt forming Kerze. (2) **Strikte `<`-Grenzen** im Volume-Indikator
+bleiben byte-treu: `end = grenze − timeframe_delta("30m")` reproduziert `open_time <
+grenze` exakt (period-alignte open_times). `get_hvn_and_sr_levels` reproduziert
+`NOW() − INTERVAL '95 days'` als `utc_now() − 95d` (≤1h-DST-Nuance immateriell für die
+Warmup-Untergrenze).
+
+Verifiziert auf dem VPS gegen `cryptodata` (nur read-only SELECTs, 150 Coins):
+Mechanik 149/149 grün — Reads liefern ASC, forming ausgeschlossen (`newest open_time
+< period_start`), der Detector-Re-Flip liefert DESC mit `iloc[0]` = neueste
+geschlossene Kerze, und der geschlossene Frame ist byte-gleich zum Alt-Query.
+**Der Live-Signal-Raten-Vergleich ist auf diesem Snapshot nicht messbar**: die
+Fleet-Ingestion stand zum Prüfzeitpunkt ~2,4 h (neueste 1h-Kerze 04:00 UTC), es gibt
+also keine forming Kerze auszuschließen, und historische forming-Snapshots werden beim
+Close überschrieben. Tip-Kerzen-Sensitivität als Proxy (neueste geschlossene vs.
+zweitneueste): die restriktiven 5%/Fast-Gates flippen 0/298, die S/R-Hit-Vorbedingung
+25/149 (~17 %), die AI-Bot-Level-Pools verschieben sich bei 69–83 % der Coins
+(Ø ~4,6 % relativer Level-Shift). Der echte 24h-Live-A/B gehört in die Nachbeobachtung
+(Fleet up + Shadow) und die Schwellen-Neujustierung nach Retrain (Report 16) — nicht in
+diesen Block. Regression-Guard `smoke`+`verify` grün (24/24), ruff/format/mypy grün auf
+`core/` + `3_detectors.py` (`strategies/` ist ruff-exkludiert). C-Gate (Hypertable/
+Backfill) und die AI-Bot-Direktreader (Block 3/4) bleiben spätere Blöcke.
+
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 1: Offline-Tooling auf core.candles umverdrahtet (T-2026-CU-9050-107)
 
 Erster Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,
