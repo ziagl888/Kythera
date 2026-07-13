@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 from core import config as _kcfg  # channel ids
 from core.bot_naming import pretty_name
+from core.candles import read_candles
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, send_telegram, update_cooldown
@@ -445,12 +446,12 @@ def _get_latest_price(conn, coin: str) -> float | None:
     Gibt None zurück falls no data verfügbar sind (z.B. neu gelistetes Symbol).
     """
     try:
-        with conn.cursor() as cur:
-            cur.execute(f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1')
-            row = cur.fetchone()
-        if row is None or row[0] is None:
+        # core.candles: neuester 5m-Close, forming candle bewusst inkludiert
+        # (Live-Preis — contract 2: include_forming=True).
+        df = read_candles(conn, coin, "5m", limit=1, include_forming=True, columns=("open_time", "close"))
+        if df.empty or df["close"].iloc[-1] is None:
             return None
-        return float(row[0])
+        return float(df["close"].iloc[-1])
     except Exception as e:
         logger.warning(f"Konnte Preis für {coin} nicht laden: {e}")
         return None
@@ -1060,11 +1061,14 @@ def _get_last_close_price(conn, coin: str, fallback: float | None = None) -> flo
         with conn.cursor() as cur:
             cur.execute("SAVEPOINT sp_get_close")
             try:
-                cur.execute(f'SELECT close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1')
-                row = cur.fetchone()
+                # core.candles: neuester 5m-Close, forming candle bewusst inkludiert
+                # (Preis-Read — contract 2: include_forming=True). read_candles öffnet
+                # einen eigenen Cursor auf derselben Connection; der SAVEPOINT schützt
+                # die Transaktion weiterhin bei fehlender Tabelle.
+                df = read_candles(conn, coin, "5m", limit=1, include_forming=True, columns=("open_time", "close"))
                 cur.execute("RELEASE SAVEPOINT sp_get_close")
-                if row and row[0] is not None:
-                    return float(row[0])
+                if not df.empty and df["close"].iloc[-1] is not None:
+                    return float(df["close"].iloc[-1])
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_get_close")
     except Exception:

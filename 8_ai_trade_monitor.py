@@ -7,6 +7,7 @@ import warnings
 import pytz
 
 # --- IMPORT CONFIGURATION FROM CORE ---
+from core.candles import read_candles
 from core.database import get_db_connection
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
@@ -112,50 +113,58 @@ def main():
                     if prev is None or wm < prev:
                         coin_min_wm[t[1]] = wm
 
-            with conn.cursor() as cur:
-                for coin in active_coins:
-                    try:
-                        start_wm = coin_min_wm.get(coin)
-                        if start_wm is None:
-                            # Kein Trade dieses Coins hat ein Wasserzeichen (erster Lauf):
-                            # nur die neueste Kerze — kein Rückwirkend-Scoring.
-                            cur.execute(
-                                f'SELECT open_time, high, low, close FROM "{coin}_5m" ORDER BY open_time DESC LIMIT 1'
-                            )
-                            rows = cur.fetchall()
-                        else:
-                            cur.execute(
-                                f'SELECT open_time, high, low, close FROM "{coin}_5m" '
-                                f'WHERE open_time >= %s ORDER BY open_time ASC',
-                                (start_wm,),
-                            )
-                            rows = cur.fetchall()
-                        if not rows:
-                            continue
-                        newest_open = rows[-1][0]
-                        # Age berechnen (open_time ist TIMESTAMPTZ, now_utc ist auch TZ-aware)
-                        if newest_open.tzinfo is None:
-                            newest_open = newest_open.replace(tzinfo=pytz.UTC)
-                        age_sec = (now_utc - newest_open).total_seconds()
-                        if age_sec > stale_cutoff_seconds:
-                            stale_coins.add(coin)
-                            # Nur debug-log damit das Monitor-Log nicht explodiert
-                            logger.debug(
-                                f"⏸ {coin}: 5m-Candle {age_sec:.0f}s alt — skippe Trade-Checks (waiting for fresh data)"
-                            )
-                            continue
-                        coin_candles[coin] = [
-                            {
-                                'open_time': r[0],
-                                'high': float(r[1]),
-                                'low': float(r[2]),
-                                'close': float(r[3]),
-                            }
-                            for r in rows
-                        ]
-                    except Exception:
-                        conn.rollback()
-                        pass
+            # core.candles: 5m-Scoring-Kerzen, forming candle bewusst inkludiert
+            # (Monitore scoren SL/TP intra-candle — contract 2: include_forming=True).
+            # Erster Lauf ohne Wasserzeichen: nur die neueste Kerze. Sonst das ganze
+            # Fenster ab dem Wasserzeichen (start= ist `>=`-inklusiv).
+            for coin in active_coins:
+                try:
+                    start_wm = coin_min_wm.get(coin)
+                    if start_wm is None:
+                        df = read_candles(
+                            conn,
+                            coin,
+                            "5m",
+                            limit=1,
+                            include_forming=True,
+                            columns=("open_time", "high", "low", "close"),
+                        )
+                    else:
+                        df = read_candles(
+                            conn,
+                            coin,
+                            "5m",
+                            start=start_wm,
+                            include_forming=True,
+                            columns=("open_time", "high", "low", "close"),
+                        )
+                    rows = list(df.itertuples(index=False, name=None))
+                    if not rows:
+                        continue
+                    newest_open = rows[-1][0]
+                    # Age berechnen (open_time ist TIMESTAMPTZ, now_utc ist auch TZ-aware)
+                    if newest_open.tzinfo is None:
+                        newest_open = newest_open.replace(tzinfo=pytz.UTC)
+                    age_sec = (now_utc - newest_open).total_seconds()
+                    if age_sec > stale_cutoff_seconds:
+                        stale_coins.add(coin)
+                        # Nur debug-log damit das Monitor-Log nicht explodiert
+                        logger.debug(
+                            f"⏸ {coin}: 5m-Candle {age_sec:.0f}s alt — skippe Trade-Checks (waiting for fresh data)"
+                        )
+                        continue
+                    coin_candles[coin] = [
+                        {
+                            'open_time': r[0],
+                            'high': float(r[1]),
+                            'low': float(r[2]),
+                            'close': float(r[3]),
+                        }
+                        for r in rows
+                    ]
+                except Exception:
+                    conn.rollback()
+                    pass
 
             if not coin_candles:
                 continue

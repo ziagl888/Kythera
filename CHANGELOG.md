@@ -1,3 +1,41 @@
+## [2026-07-13] TimescaleDB-R1 Phase 1 Block 3: Monitore + Orchestrator + Preis-Fallbacks explizit auf core.candles (T-2026-CU-9050-109)
+
+Dritter Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,
+Umbrella T-018). Die sieben verbleibenden Preis-/Scoring-Reader im Geld-Pfad lesen
+jetzt über `core.candles` mit **explizitem `include_forming=True`** — der bewusste
+„das `True` sichtbar und reviewbar machen, BEVOR das erste `False` im Geld-Pfad
+landet"-Block. Reiner read-only Code-Umbau, kein DB-Schema angefasst.
+
+**Anders als Block 2 verhaltens-erhaltend:** `include_forming=True` = kein Forming-
+Filter, also sind die gelesenen Kerzen byte-gleich zu heute (neueste Zeile inkl.
+forming). Keine Signal-Raten-Änderung, keine Geld-Pfad-Semantik-Änderung. Trotzdem
+Geld-Pfad-Dateien → **kein autonomer Merge, Freigabe durch Michi vor dem Enqueue**
+(Block-2-Präzedenz).
+
+Umverdrahtet: `5_trade_monitor` + `8_ai_trade_monitor` (SL/TP-Scoring, 5m — erster
+Lauf neueste Kerze, sonst ab Wasserzeichen `>=`-inklusiv; die list-of-dicts-Struktur
+bleibt via `df.itertuples` unberührt, nur der Read geht über die API), `28_signal_
+orchestrator._get_latest_price` + `._get_last_close_price`, `3_detectors.get_live_
+price`-DB-Fallback, `29_ufi1_bot.get_live_price` (1h, geparkt), `6_housekeeping.
+_fetch_last_close_or_entry`, `core/health_monitor`-DATA_STALE-Kanarie (→ `latest_
+open_time(include_forming=True)`).
+
+Zwei Nuancen dokumentiert: (1) **Inventar-Drift korrigiert** — die Orchestrator-
+Sites lagen bei `:449`/`:1063`, nicht bei den im Inventar notierten `:352`/`:787`;
+`:1063` (`_get_last_close_price`) war gar nicht inventarisiert. (2) **health_monitor-
+Alter** wandert von DB-seitigem `NOW() − max(open_time)` auf Python `now() −
+latest_open_time`; beide teilen auf dem VPS dieselbe Wall-Clock, der Sub-Sekunden-
+Unterschied ist gegen das Minuten-Limit `STALE_LIMIT_S` irrelevant. Die SAVEPOINT-
+gekapselten Preis-Reads (28/6) behalten ihren SAVEPOINT — `read_candles` öffnet nur
+einen zweiten Cursor auf derselben Connection.
+
+Verifikation (Build-Maschine, DB-frei): `py_compile` + Import-Smoke aller 7 Dateien,
+`ruff check`/`ruff format --check`/`mypy` grün auf `core/` + Root-Bots, Regression-
+Guard `smoke` (6 Fixtures) + `verify` (24 Goldens) grün. Live-A/B ist per Konstruktion
+ein No-op (byte-gleiche Reads). `docs/CANDLE_CALL_SITES.md` §4 „Stand Block 3". Offen
+bleiben Block 4 (AI-Bot-Direktreader — das erste `False` im Geld-Pfad) und Block 6/
+C-Gate (DB-Writer `is_closed`).
+
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 2: Strategien + 3_detectors + geteilte Helfer auf core.candles (T-2026-CU-9050-108)
 
 Zweiter Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,
