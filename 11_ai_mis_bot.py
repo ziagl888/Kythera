@@ -13,12 +13,15 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles_with_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
+from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.mis_features import (
     BINARY_FLAG_FEATURES,
-    MIS_SQL_INDICATOR_SELECT,
+    RAW_LINE_COLS,
+    RSI_COLS,
     add_advanced_features,
     assert_features_alive,
 )
@@ -196,24 +199,43 @@ def startup_feature_selfcheck():
 
 
 def _fetch_mis_frame(conn, symbol):
-    """Letzte 100 1h-Kerzen + Indikator-Join — Spaltenliste kommt aus
-    core.mis_features (eine Quelle für Bot, Trainer und Simulator)."""
-    query = f"""
-        SELECT
-            h.open_time, h.close, h.volume,
-            {MIS_SQL_INDICATOR_SELECT}
-        FROM "{symbol}_1h" h
-        LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time
-        ORDER BY h.open_time DESC LIMIT 100
-    """
-    with conn.cursor() as cur:
-        cur.execute(query)
-        rows = cur.fetchall()
-        if len(rows) < 10:
-            return None
-        columns = [desc[0] for desc in cur.description]
-        df = pd.DataFrame(rows, columns=columns)
-    return df.iloc[::-1].reset_index(drop=True)
+    """Letzte 100 GESCHLOSSENE 1h-Kerzen + Indikator-Join — Spaltenkatalog kommt
+    aus core.mis_features (eine Quelle für Bot, Trainer und Simulator).
+
+    R1 (Block 4): liest geschlossene Kerzen via core.candles (ASC, forming bar
+    dropped — kein manuelles reverse mehr). Die API liefert die ROHEN
+    Indikatornamen; die drei MIS_SQL_INDICATOR_SELECT-Aliase (tsi_fast, macd_dif,
+    macd_dea) werden nach dem Read reproduziert, damit der Frame byte-gleich zur
+    geteilten SELECT-Liste (und damit zu tools/walkforward_sim.py) bleibt und
+    add_advanced_features seine REQUIRED_INPUT_COLS findet."""
+    indicator_cols = (
+        RSI_COLS
+        + RAW_LINE_COLS
+        + [
+            "tsi_fast_12_7_7",
+            "macd_dif_normal_12_26_9",
+            "macd_dea_normal_12_26_9",
+            "atr_14",
+        ]
+    )
+    df = read_candles_with_indicators(
+        conn,
+        symbol,
+        "1h",
+        limit=100,
+        include_forming=False,
+        candle_columns=("open_time", "close", "volume"),
+        indicator_columns=indicator_cols,
+    )
+    if len(df) < 10:
+        return None
+    return df.rename(
+        columns={
+            "tsi_fast_12_7_7": "tsi_fast",
+            "macd_dif_normal_12_26_9": "macd_dif",
+            "macd_dea_normal_12_26_9": "macd_dea",
+        }
+    )
 
 
 def check_mis_models():
@@ -243,6 +265,9 @@ def check_mis_models():
         conn.close()  # Pool-Slot freigeben (Review Batch 4)
         return
 
+    # R1: live entry price via batch ticker (1 call/cycle), per-coin HTTP→DB fallback.
+    price_map = get_live_prices_batch()
+
     conn_dead = False
     for symbol in coins:
         try:
@@ -251,13 +276,17 @@ def check_mis_models():
                 continue
 
             df_features = add_advanced_features(df)
-            # FIX P1.17: Modell-Features aus der letzten GESCHLOSSENEN Kerze (iloc[-2]),
-            # nicht aus der laufenden (iloc[-1]). Die offene Kerze liefert stale/verzerrte
-            # Volume-/Indikator-Partials → strukturell verzerrte Features auf jeder
-            # Prediction. Vorbild: 12_ai_ats_bot.py nutzt current_idx=-2.
-            # Der Entry-Preis bleibt bewusst live (aktueller Kurs aus iloc[-1]).
-            df_current = df_features.iloc[-2:-1]
-            current_price = float(df_features['close'].iloc[-1])
+            # FIX P1.17 + R1: model features from the last CLOSED candle. The frame now
+            # holds only closed candles (include_forming=False), so that is iloc[-1]
+            # (was iloc[-2] when the forming bar was still the last row) — the forming
+            # bar's stale/partial volume+indicator values are gone by construction.
+            # Kept as a 1-row DataFrame for sklearn name validation, not a Series.
+            # The entry price stays LIVE — batch ticker, not the candle close.
+            df_current = df_features.iloc[-1:]
+            live_price = price_map.get(symbol) or get_live_price(symbol, conn)
+            if not live_price:
+                continue
+            current_price = float(live_price)
 
             # Alle Modelle für diesen Coin testen — Feature-Auswahl je Modell
             # NAMENSBASIERT über das DataFrame (P1.18: `.values` hatte die

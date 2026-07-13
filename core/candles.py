@@ -24,9 +24,11 @@
 #    `iloc[0]` the oldest. No caller has to know how the SQL was ordered.
 # 2. `include_forming=False` is the default. Only price-shaped readers may pass
 #    True: monitors 5/8, get_live_price fallbacks, the orchestrator's last-close
-#    probe, the health-monitor staleness canary, and the two bots whose contract
-#    is "features from the second-to-last row, live price from the last"
-#    (11_ai_mis, 12_ai_ats). Analytical readers must not.
+#    probe (28), the 5m/1h last-price reads (6_housekeeping, 29_ufi1), and the
+#    health-monitor staleness canary. Analytical readers must not — the AI bots
+#    detect on closed candles and take the live entry price via get_live_price
+#    (or, for 12_ai_ats, the last closed close). 11_ai_mis and 12_ai_ats no
+#    longer read the forming candle themselves (R1 Block 4, T-2026-CU-9050-111).
 # 3. Writes DO NOT COMMIT. The caller owns the transaction (same contract as
 #    core/signal_post.py). Callers migrating away from insert_fast() /
 #    write_indicators_to_db_optimized() must add their own conn.commit().

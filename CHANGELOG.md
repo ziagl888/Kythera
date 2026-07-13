@@ -1,3 +1,38 @@
+## [2026-07-13] TimescaleDB-R1 Phase 1 Block 4 (Tranche 2 komplett): 22/24/25/11 + core/live_price.py auf geschlossene Kerzen (T-2026-CU-9050-111)
+
+Abschluss von Block 4 (R1 im Bot live; `docs/CANDLE_CALL_SITES.md` §4 „Stand Block 4 —
+Tranche 2 komplett"). Die vier restlichen AI-Bots lesen jetzt über `core.candles` mit
+`include_forming=False`; **Block 4 ist damit code-seitig komplett** (nur `14_ai_atb`
+bleibt ausgeschlossen → ATB2-Track T-106).
+
+- **Quellentscheid (Michi):** Die `get_live_price`-Helfer aus `3_detectors.py` (numerisch
+  benannt, nicht importierbar) sind 1:1 nach **`core/live_price.py`** gehoben; `3_detectors`
+  re-exportiert beide Namen (Batch-Ticker-Test zieht auf das echte `requests`-Modul um).
+  Befund: bei `22`/`24`/`25` speist `current_price` das **Erkennungs-Gate** (Level-Nähe/
+  Retest), nicht nur den Entry → Preis muss **während** des Scans bekannt sein. Daher
+  **Batch-Ticker vorab** (`get_live_prices_batch()` 1 Call/Zyklus, `price_map.get(sym) or
+  get_live_price(sym, conn)` je Coin) statt ~N HTTP-Calls. Der §5-Leitsatz „Preis erst nach
+  Erkennung" gilt damit nur eingeschränkt — 1 Batch-Call/Zyklus, kein Per-Coin-Overhead.
+- **`22_ip_pattern`** — `read_candles(include_forming=False, limit=300)`, DESC-Umkehr entfällt,
+  Pivots repaint-frei auf geschlossenem Frame. Expliziter Float-Cast auf OHLC (`core.candles`
+  liefert rohes NUMERIC/Decimal → sonst `Decimal − float`-Crash im QML-Gate).
+- **`24_quasimodo`** — `read_candles_with_indicators(include_forming=False)`, `[:-1]`-Drop
+  entfällt. Offset-Shift: `touched_recently k=1..3→0..2`, `feature_idx len−2→len−1` (dieselbe
+  geschlossene Kerze). `candle_columns` ohne `symbol`.
+- **`25_smc_ml_sniper`** (schwerster Rework) — alle end-relativen Offsets +1: `last_closed
+  len−2→len−1`, TD-Frische-Gates `PIVOT_WINDOW+2→+1`, `n_closed len−1→len` (Breakout/Follow-
+  through inkl. letzter geschlossener Kerze), BB-Anker `extract_ml_features len−2→len−1`.
+  Chart-Tupel bleiben `(len−1, …, current_price)`. TD-Pivot-Indizes (`p3`) unverändert.
+- **`11_ai_mis`** — `read_candles_with_indicators(include_forming=False)` in `_fetch_mis_frame`;
+  `df.rename` reproduziert die drei `MIS_SQL_INDICATOR_SELECT`-Aliase (Frame byte-gleich zu
+  `tools/walkforward_sim.py`), Konstante unangetastet. Feature-Zeile `iloc[-2:-1]→iloc[-1:]`.
+- **Contract 2 (`core/candles.py`)** nachgezogen: `11`/`12` sind keine Forming-Leser mehr.
+
+Verifikation (Build-Maschine, DB-frei, Fleet-Python 3.13.12): `py_compile` + `ruff check`/
+`ruff format --check` + `mypy` grün auf allen 5 Dateien; `test_detector_batch_ticker.py` 4/4;
+Regression-Guard `verify` 24/24 nach jedem Bot. **Live-Verhaltensänderung (22/24/25) → Michi-Go
+vor Enqueue; 24h-A/B Post-Merge-VPS; Schwellen erst nach Retrain (§5 q6).**
+
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 4 (Tranche 2, Teil): 12_ai_ats + 7_pattern_detector auf geschlossene Kerzen (T-2026-CU-9050-111)
 
 Fortsetzung von Block 4 (R1 im Bot live; `docs/CANDLE_CALL_SITES.md` §4). Die zwei

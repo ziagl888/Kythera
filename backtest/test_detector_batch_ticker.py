@@ -19,6 +19,8 @@ import os
 import sys
 import unittest.mock as mock
 
+import requests
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -29,8 +31,9 @@ def _load_detectors():
     )
     mod = importlib.util.module_from_spec(spec)
     # 3_detectors imports config/DB/strategy modules at load; stub them so the
-    # pure batch helper can be imported standalone. requests stays real so it
-    # can be patched per test.
+    # pure batch helper can be imported standalone. get_live_prices_batch now
+    # lives in core.live_price (re-exported here); the tests patch the shared
+    # ``requests`` module object directly, so it stays real and unstubbed.
     stubs = {
         "core.config": mock.MagicMock(MAIN_CHANNEL_COINS=set(), TELEGRAM_CHANNELS={}),
         "core.database": mock.MagicMock(),
@@ -55,7 +58,7 @@ def test_batch_maps_every_symbol_to_a_float_price():
         {"symbol": "ETHUSDT", "price": "3200.25"},
         {"symbol": "SOLUSDT", "price": "150.0"},
     ]
-    with mock.patch.object(DET.requests, "get") as g:
+    with mock.patch.object(requests, "get") as g:
         g.return_value.json.return_value = fake
         prices = DET.get_live_prices_batch()
     assert prices == {"BTCUSDT": 65000.5, "ETHUSDT": 3200.25, "SOLUSDT": 150.0}
@@ -66,14 +69,14 @@ def test_batch_maps_every_symbol_to_a_float_price():
 def test_batch_failure_returns_empty_dict():
     # A network/rate-limit error must not raise into the cycle — it degrades to
     # the per-coin fallback path.
-    with mock.patch.object(DET.requests, "get", side_effect=Exception("boom")):
+    with mock.patch.object(requests, "get", side_effect=Exception("boom")):
         assert DET.get_live_prices_batch() == {}
 
 
 def test_batch_malformed_payload_returns_empty_dict():
     # A row missing 'price'/'symbol' should not partially poison the map; the
     # whole fetch degrades to {} and the caller falls back per coin.
-    with mock.patch.object(DET.requests, "get") as g:
+    with mock.patch.object(requests, "get") as g:
         g.return_value.json.return_value = [{"symbol": "BTCUSDT"}]
         assert DET.get_live_prices_batch() == {}
 
