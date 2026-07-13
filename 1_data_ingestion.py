@@ -9,8 +9,8 @@ from concurrent.futures import ProcessPoolExecutor  # Catch-up in eigenen Prozes
 import pytz
 import requests
 import websockets
-from psycopg2 import extras
 
+from core.candles import latest_open_time, period_start, upsert_candles
 from core.database import get_db_connection
 from core.http_retry import RetryBudget, backoff_seconds
 from core.market_utils import load_coins  # reines coins.json-Re-Read (P2.15)
@@ -80,15 +80,12 @@ def create_table_if_needed(conn, symbol, timeframe):
 
 
 def get_latest_open_time(conn, symbol, timeframe):
-    tablename = f'"{symbol}_{timeframe}"'
+    # Resume/catch-up watermark: the newest row we wrote, forming or not
+    # (include_forming=True) — byte-equal to the old to_regclass + MAX(open_time).
+    # The API returns None for a missing table; the try/except preserves the
+    # original resume semantics (any error → None + rollback, never a crash).
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT to_regclass(%s)", (tablename,))
-            if cursor.fetchone()[0] is None:
-                return None
-            cursor.execute(f'SELECT MAX(open_time) FROM {tablename}')
-            res = cursor.fetchone()
-            return res[0].astimezone(pytz.utc) if res and res[0] else None
+        return latest_open_time(conn, symbol, timeframe, include_forming=True)
     except Exception:
         conn.rollback()
         return None
@@ -151,25 +148,26 @@ def fetch_ohlcv_batch(session, symbol, interval, start_ts, end_ts):
 def insert_fast(conn, data, symbol, timeframe):
     if not data:
         return 0
-    tablename = f'"{symbol}_{timeframe}"'
     tuples = []
     for row in data:
         ts = datetime.datetime.fromtimestamp(row[0] / 1000, pytz.utc)
         tuples.append((symbol, ts, float(row[1]), float(row[2]), float(row[3]), float(row[4]), float(row[5])))
 
-    # D3 (Audit Report 18 A1): das WHERE macht den Upsert zum No-op, wenn sich
-    # nichts geaendert hat — sonst schreibt jeder identische Re-Upsert eine neue
-    # Row-Version ins WAL (~2,8 Mio sinnlose Updates/Tag allein auf 5m).
-    sql = f"""
-        INSERT INTO {tablename} AS t (symbol, open_time, open, high, low, close, volume)
-        VALUES %s ON CONFLICT (symbol, open_time) DO UPDATE
-        SET open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close, volume=EXCLUDED.volume
-        WHERE (t.open, t.high, t.low, t.close, t.volume)
-              IS DISTINCT FROM (EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.close, EXCLUDED.volume)
-    """
+    # The REST catch-up returns closed history plus, as its last row, possibly the
+    # currently-forming candle. upsert_candles() takes one `closed` bool per call,
+    # so split on the clock: open_time < period_start(tf, now) is closed, the rest
+    # (at most the current period) is forming. This is where the real is_closed
+    # flag enters via REST. The IS DISTINCT FROM no-op guard (audit D3: no WAL
+    # churn on identical re-upserts) lives inside upsert_candles. Both calls share
+    # one transaction; this function is the caller and commits once (hard rule 8).
+    cutoff = period_start(timeframe, datetime.datetime.now(pytz.utc))
+    closed_rows = [t for t in tuples if t[1] < cutoff]
+    forming_rows = [t for t in tuples if t[1] >= cutoff]
     try:
-        with conn.cursor() as cur:
-            extras.execute_values(cur, sql, tuples)
+        if closed_rows:
+            upsert_candles(conn, symbol, timeframe, closed_rows, closed=True)
+        if forming_rows:
+            upsert_candles(conn, symbol, timeframe, forming_rows, closed=False)
         conn.commit()
         return len(tuples)
     except Exception:
@@ -465,24 +463,16 @@ def _flush_to_db(buffer_copy):
         with conn.cursor() as cur:
             count = 0
             success = 0
-            for (sym, tf, _open_time), data in buffer_copy.items():
-                table_name = f'"{sym}_{tf}"'
-                # D3: WHERE-Klausel wie in insert_fast — unveraenderte Kerzen
-                # erzeugen keine neue Row-Version (WAL-Write-Amplification).
-                sql = f"""
-                    INSERT INTO {table_name} AS t (symbol, open_time, open, high, low, close, volume)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (symbol, open_time) DO UPDATE
-                    SET open = EXCLUDED.open, high = EXCLUDED.high,
-                        low = EXCLUDED.low, close = EXCLUDED.close, volume = EXCLUDED.volume
-                    WHERE (t.open, t.high, t.low, t.close, t.volume)
-                          IS DISTINCT FROM (EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.close, EXCLUDED.volume)
-                """
-                # SAVEPOINT: Jede Zeile läuft in einer Sub-Transaktion.
+            # Buffer value = (row_tuple, closed_flag); upsert_candles carries the
+            # D3 IS DISTINCT FROM no-op guard and persists is_closed=closed. It
+            # opens a second cursor on this connection (same transaction as the
+            # SAVEPOINT — the established Block-3 pattern), so the per-row
+            # sub-transaction still isolates a single bad row from the batch.
+            for (sym, tf, _open_time), (row, closed) in buffer_copy.items():
                 sp_name = f"sp_{count}"
                 try:
                     cur.execute(f"SAVEPOINT {sp_name}")
-                    cur.execute(sql, data)
+                    upsert_candles(conn, sym, tf, [row], closed=closed)
                     cur.execute(f"RELEASE SAVEPOINT {sp_name}")
                     success += 1
                 except Exception as row_err:
@@ -735,14 +725,20 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
                             # Message der NEUEN Kerze das finale Update der alten Kerze
                             # im Buffer (an jeder Kerzengrenze), die gespeicherte
                             # "Closed"-Kerze blieb bis zum REST-Catch-up leicht falsch.
+                            # Value carries the real Binance closed flag k['x'] alongside
+                            # the row, so _flush_to_db can persist is_closed per candle
+                            # (this WS path is where the flag first enters the data model).
                             WS_KLINE_BUFFER[(sym, tf, open_time)] = (
-                                sym,
-                                open_time,
-                                float(k['o']),
-                                float(k['h']),
-                                float(k['l']),
-                                float(k['c']),
-                                float(k['v']),
+                                (
+                                    sym,
+                                    open_time,
+                                    float(k['o']),
+                                    float(k['h']),
+                                    float(k['l']),
+                                    float(k['c']),
+                                    float(k['v']),
+                                ),
+                                bool(k['x']),
                             )
 
                 finally:

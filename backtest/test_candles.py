@@ -197,6 +197,73 @@ def test_upsert_indicators_needs_key_columns():
         c.upsert_indicators(None, pd.DataFrame({"rsi": [1.0]}), "BTCUSDT", "1h")
 
 
+# ── Block-6 API-gap functions (T-2026-CU-9050-114) ────────────────────────────
+
+
+def test_table_for_kind_selects_the_right_table():
+    assert c._table_for_kind("BTCUSDT", "1h", "candles") == "BTCUSDT_1h"
+    assert c._table_for_kind("BTCUSDT", "1h", "indicators") == "BTCUSDT_1h_indicators"
+    with pytest.raises(ValueError):
+        c._table_for_kind("BTCUSDT", "1h", "junk")
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("BTCUSDT_1h", ("BTCUSDT", "1h", "candles")),
+        ("BTCUSDT_1h_indicators", ("BTCUSDT", "1h", "indicators")),
+        ("1000PEPEUSDT_5m", ("1000PEPEUSDT", "5m", "candles")),
+        ("BTCDOMUSDT_15m", ("BTCDOMUSDT", "15m", "candles")),
+        # non-candle tables never match the shape
+        ("active_trades_master", None),
+        ("telegram_outbox", None),
+        ("pump_dump_events", None),
+        ("regime_history", None),
+        ("oi_5m", None),  # lowercase symbol fails the regex
+        ("BTCUSDT_3m", None),  # 3m is not a known timeframe
+        ("_1h", None),  # empty symbol
+    ],
+)
+def test_parse_coin_table(name, expected):
+    assert c._parse_coin_table(name) == expected
+
+
+def test_latest_open_time_kind_is_validated_before_the_connection():
+    # bad symbol → ValueError before conn is touched, for both kinds
+    for kind in ("candles", "indicators"):
+        with pytest.raises(ValueError):
+            c.latest_open_time(None, "bad-symbol", "1h", kind=kind)
+    # unknown kind → ValueError, conn never touched
+    with pytest.raises(ValueError):
+        c.latest_open_time(None, "BTCUSDT", "1h", kind="junk")
+
+
+def test_delete_candles_before_validates_before_the_connection():
+    aware = _utc(2026, 1, 1)
+    # naive cutoff is rejected up front
+    with pytest.raises(ValueError, match="timezone-aware"):
+        c.delete_candles_before(None, "BTCUSDT", "1h", datetime(2026, 1, 1))
+    # bad symbol / bad kind never reach the (None) connection
+    with pytest.raises(ValueError):
+        c.delete_candles_before(None, "bad-symbol", "1h", aware)
+    with pytest.raises(ValueError):
+        c.delete_candles_before(None, "BTCUSDT", "1h", aware, kind="junk")
+
+
+def test_delete_indicators_from_validates_before_the_connection():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        c.delete_indicators_from(None, "BTCUSDT", "1h", datetime(2026, 1, 1))
+    with pytest.raises(ValueError):
+        c.delete_indicators_from(None, "bad-symbol", "1h", _utc(2026, 1, 1))
+
+
+def test_list_coin_tables_validates_before_the_connection():
+    with pytest.raises(ValueError):
+        c.list_coin_tables(None, "3m")  # unknown timeframe
+    with pytest.raises(ValueError):
+        c.list_coin_tables(None, kind="junk")
+
+
 # ── Backend switch (phase-4 seam) ─────────────────────────────────────────────
 
 
@@ -205,6 +272,13 @@ def test_hypertable_backend_is_not_silently_accepted():
     try:
         with pytest.raises(c.CandleSourceError):
             c.read_candles(None, "BTCUSDT", "1h")
+        # the new gap functions honour the same phase-4 seam
+        with pytest.raises(c.CandleSourceError):
+            c.list_coin_tables(None)
+        with pytest.raises(c.CandleSourceError):
+            c.delete_candles_before(None, "BTCUSDT", "1h", _utc(2026, 1, 1))
+        with pytest.raises(c.CandleSourceError):
+            c.delete_indicators_from(None, "BTCUSDT", "1h", _utc(2026, 1, 1))
     finally:
         os.environ.pop("KYTHERA_CANDLES_SOURCE", None)
 

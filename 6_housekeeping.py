@@ -12,7 +12,13 @@ import requests
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 # --- IMPORT CONFIGURATION FROM CORE ---
-from core.candles import read_candles
+from core.candles import (
+    delete_candles_before,
+    delete_indicators_from,
+    list_coin_tables,
+    read_candles,
+    upsert_candles,
+)
 from core.coins import looks_like_usdt_perp, refresh_coins_json
 from core.config import (
     BASE_URL,
@@ -473,60 +479,52 @@ def clean_old_database_entries():
 
     conn = get_db_connection()
     try:
+        # 1. Calendar-accurate cutoffs from the DB — matches the old
+        #    `NOW() - INTERVAL '<interval>'` exactly, sampled once up front so
+        #    every table is pruned against the same instant.
+        cutoffs = {}
         with conn.cursor() as cur:
-            # 1. Alle Tabellennamen aus der DB holen
-            cur.execute("""
-                SELECT table_name FROM information_schema.tables
-                WHERE table_schema = 'public'
-            """)
-            tables = [row[0] for row in cur.fetchall()]
+            for tf, interval in retention_policies.items():
+                cur.execute("SELECT now() - %s::interval", (interval,))
+                cutoffs[tf] = cur.fetchone()[0]
 
-            cleaned_count = 0
+        cleaned_count = 0
 
-            # 2. Durch alle Tabellen iterieren
-            for table in tables:
-                # Skipping unsere System-Tabellen (Trades, Telegram, etc.)
-                if "trades" in table or "telegram" in table:
-                    continue
-
-                # Prüfen, zu welchem Timeframe die Tabelle gehört
-                for tf, interval in retention_policies.items():
-                    # Sicherstellen, dass wir 5m nicht mit 15m verwechseln!
-                    # Wir prüfen, ob die Tabelle exakt auf "_5m" oder "_5m_indicators" endet.
-                    if table.endswith(f"_{tf}") or table.endswith(f"_{tf}_indicators"):
-                        try:
-                            # Wir löschen alles, was älter als das definierte Interval ist
-                            cur.execute(f"""
-                                DELETE FROM "{table}"
-                                WHERE open_time < NOW() - INTERVAL '{interval}';
-                            """)
-                            # WICHTIG: Commit after JEDER Tabelle, damit der RAM der DB nicht überläuft!
-                            conn.commit()
-                            cleaned_count += 1
-                        except Exception:
-                            # Falls eine Tabelle (aus welchem Grund auch immer) kein open_time hat
-                            conn.rollback()
-                            pass
-
-                        # Sobald wir den richtigen Timeframe gefunden und verarbeitet haben, abbrechen
-                        break
-
-            # 3. Schwache Pump/Dump Events löschen (EINMAL after der Tabellen-Schleife,
-            #    nicht bei jeder Tabelle. Vorher lief das ~12.600× durch falsche Einrückung).
+        # 2. list_coin_tables enumerates only real {sym}_{tf}[_indicators] tables —
+        #    system tables (trades, telegram, funding_rates, …) never match its
+        #    pattern, so the old substring blacklist is gone. A tf outside
+        #    retention_policies (1d/1w) has no cutoff → kept forever, as before.
+        for symbol, tf, kind in list_coin_tables(conn):
+            cutoff = cutoffs.get(tf)
+            if cutoff is None:
+                continue
             try:
-                # Schwellen zentral in core/config.py — dasselbe Paar gated den
-                # Insert im Detector (10_pump_dump_detector.py, P1.40).
+                # Deletes rows older than the cutoff from the candle OR indicator
+                # table (kind). Commit after each so the DB's RAM does not balloon.
+                delete_candles_before(conn, symbol, tf, cutoff, kind=kind)
+                conn.commit()
+                cleaned_count += 1
+            except Exception:
+                # A matched table without open_time shouldn't occur; stay safe.
+                conn.rollback()
+
+        # 3. Schwache Pump/Dump Events löschen (EINMAL after der Tabellen-Schleife,
+        #    nicht bei jeder Tabelle. Vorher lief das ~12.600× durch falsche Einrückung).
+        try:
+            # Schwellen zentral in core/config.py — dasselbe Paar gated den
+            # Insert im Detector (10_pump_dump_detector.py, P1.40).
+            with conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM pump_dump_events WHERE volume_ratio < %s OR ABS(price_change_60s) < %s;",
                     (PUMP_EVENT_MIN_VOL_RATIO, PUMP_EVENT_MIN_ABS_PCHG_60S),
                 )
                 deleted_events = cur.rowcount
-                if deleted_events > 0:
-                    logger.info(f"🧹 HOUSEKEEPING: {deleted_events} schwache Pump/Dump Events gelöscht.")
-                conn.commit()
-            except Exception as e:
-                logger.error(f"Fehler beim Löschen schwacher Pump/Dump Events: {e}")
-                conn.rollback()
+            if deleted_events > 0:
+                logger.info(f"🧹 HOUSEKEEPING: {deleted_events} schwache Pump/Dump Events gelöscht.")
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Fehler beim Löschen schwacher Pump/Dump Events: {e}")
+            conn.rollback()
 
         logger.info(f"✅ Datenbank erfolgreich bereinigt! {cleaned_count} Tabellen wurden geprüft und verkleinert.")
 
@@ -675,24 +673,20 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                     if tf_seconds == 0:
                         continue
 
-                    ohlcv_table = f'"{symbol}_{tf}"'
-                    ind_table = f'"{symbol}_{tf}_indicators"'
-
-                    # 1) Existierende Kerzen im Scan-Fenster lesen
+                    # 1) Existierende GESCHLOSSENE Kerzen im Scan-Fenster lesen.
+                    #    include_forming=False: die forming Kerze ist keine Lücke,
+                    #    also gehört sie nicht in die Gap-Diff.
                     scan_start_dt = datetime.datetime.fromtimestamp(scan_start_ms / 1000, tz=datetime.timezone.utc)
-                    with conn.cursor() as cur:
-                        try:
-                            cur.execute(
-                                f"SELECT open_time FROM {ohlcv_table} WHERE open_time >= %s ORDER BY open_time ASC",
-                                (scan_start_dt,),
-                            )
-                            rows = cur.fetchall()
-                        except Exception:
-                            # Tabelle existiert vermutlich noch nicht (neuer Coin) → skip
-                            conn.rollback()
-                            continue
+                    try:
+                        df_scan = read_candles(
+                            conn, symbol, tf, start=scan_start_dt, include_forming=False, columns=("open_time",)
+                        )
+                    except Exception:
+                        # Tabelle existiert vermutlich noch nicht (neuer Coin) → skip
+                        conn.rollback()
+                        continue
 
-                    if not rows or len(rows) < 2:
+                    if len(df_scan) < 2:
                         # Keine oder kaum Daten im Scan-Fenster — zu wenig zum Gaps-Detektieren
                         continue
 
@@ -701,7 +695,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                     expected_delta_ms = tf_seconds * 1000
                     tolerance_ms = int(expected_delta_ms * 1.5)
 
-                    times_ms = [int(r[0].timestamp() * 1000) for r in rows]
+                    times_ms = [int(ts.timestamp() * 1000) for ts in df_scan["open_time"]]
                     gap_ranges = []  # Liste von (missing_start_ms, missing_end_ms)
 
                     for i in range(1, len(times_ms)):
@@ -727,12 +721,12 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                         if not klines:
                             continue
 
-                        # 4) INSERT ... ON CONFLICT DO NOTHING pro Kerze
-                        # FIX P0.9: Der PK der Candle-Tabellen ist (symbol, open_time)
-                        # — der alte INSERT ließ `symbol` weg und nutzte
-                        # ON CONFLICT (open_time) (kein passender Unique-Index)
-                        # → JEDER Insert warf, das except verschluckte es still,
-                        # und der nächtliche Gap-Filler war ein No-op.
+                        # 4) upsert_candles pro Kerze (closed=True) — der Upsert
+                        # keyt auf (symbol, open_time). FIX P0.9 (historisch): der
+                        # alte INSERT ließ `symbol` weg und nutzte ON CONFLICT
+                        # (open_time) ohne passenden Unique-Index → JEDER Insert
+                        # warf, das except verschluckte es still, und der Gap-Filler
+                        # war ein No-op. Der zentrale Upsert hat den PK korrekt.
                         # Savepoint pro Row, damit ein Einzel-Fehler nicht die
                         # Transaktion für den Rest des Batches abortet.
                         with conn.cursor() as cur:
@@ -744,25 +738,33 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                                     # und deren Kerze still wieder löschen.
                                     cur.execute("SAVEPOINT gap_fill_row")
                                     ot_ms = int(k[0])
-                                    # Nur Kerzen im eigentlichen Gap-Range einfügen — falls Binance mehr liefert
-                                    if ot_ms < gap_start_ms or ot_ms > gap_end_ms + expected_delta_ms:
+                                    # Nur die FEHLENDEN Kerzen [gap_start, gap_end] einfügen. Die
+                                    # rechte Grenze gap_end + expected_delta ist times[i] — die
+                                    # bereits existierende Kerze NACH der Lücke, die der Scan sah;
+                                    # sie per >= ausschließen. Sonst zählte sie (No-op-Upsert) als
+                                    # "gefüllt" und triggerte die Indikator-Invalidierung unten
+                                    # fälschlich auf unfüllbaren Lücken (Review T-2026-CU-9050-114).
+                                    if ot_ms < gap_start_ms or ot_ms >= gap_end_ms + expected_delta_ms:
                                         continue
                                     ot = datetime.datetime.fromtimestamp(ot_ms / 1000, tz=datetime.timezone.utc)
-                                    o_val, h_val, l_val, c_val, v_val = (
+                                    row = (
+                                        symbol,
+                                        ot,
                                         float(k[1]),
                                         float(k[2]),
                                         float(k[3]),
                                         float(k[4]),
                                         float(k[5]),
                                     )
-                                    cur.execute(
-                                        f"INSERT INTO {ohlcv_table} "
-                                        "(symbol, open_time, open, high, low, close, volume) "
-                                        "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                                        "ON CONFLICT (symbol, open_time) DO NOTHING",
-                                        (symbol, ot, o_val, h_val, l_val, c_val, v_val),
-                                    )
-                                    candles_inserted_for_cointf += cur.rowcount
+                                    # Gap candles are historical → closed=True. Only genuinely
+                                    # missing candles reach here (the pre-existing right boundary
+                                    # is filtered out above), so the return (rows sent) equals rows
+                                    # actually filled and the ==0 guard below stays meaningful.
+                                    # upsert_candles' DO UPDATE ... IS DISTINCT FROM replaces the
+                                    # old DO NOTHING (no WAL churn on no-ops) and opens a second
+                                    # cursor inside the SAVEPOINT frame (same transaction), so a bad
+                                    # row is isolated to its row.
+                                    candles_inserted_for_cointf += upsert_candles(conn, symbol, tf, [row], closed=True)
                                 except Exception as row_err:
                                     # FIX P0.9: Fehler loggen statt still verschlucken
                                     logger.warning(f"Gap-Filler: Insert-Fehler {symbol} {tf} @ {k[0]}: {row_err}")
@@ -781,12 +783,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                     first_gap_dt = datetime.datetime.fromtimestamp(first_gap_ms / 1000, tz=datetime.timezone.utc)
                     rows_invalidated = 0
                     try:
-                        with conn.cursor() as cur:
-                            cur.execute(
-                                f"DELETE FROM {ind_table} WHERE open_time >= %s",
-                                (first_gap_dt,),
-                            )
-                            rows_invalidated = cur.rowcount
+                        rows_invalidated = delete_indicators_from(conn, symbol, tf, first_gap_dt)
                         conn.commit()
                     except Exception:
                         # Indicator-Tabelle existiert evtl. nicht — harmlos, Engine baut sie neu

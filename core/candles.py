@@ -146,6 +146,38 @@ def indicators_table(symbol: str, tf: str) -> str:
     return f"{candles_table(symbol, tf)}{INDICATOR_SUFFIX}"
 
 
+def _table_for_kind(symbol: str, tf: str, kind: str) -> str:
+    """Candle or indicator table name for `kind` in {'candles', 'indicators'}."""
+    if kind == "candles":
+        return candles_table(symbol, tf)
+    if kind == "indicators":
+        return indicators_table(symbol, tf)
+    raise ValueError(f"kind must be 'candles' or 'indicators', got {kind!r}")
+
+
+def _parse_coin_table(name: str) -> tuple[str, str, str] | None:
+    """Parse a raw table name into (symbol, tf, kind), or None if it is not a
+    per-coin candle/indicator table.
+
+    'BTCUSDT_1h'            → ('BTCUSDT', '1h', 'candles')
+    'BTCUSDT_1h_indicators' → ('BTCUSDT', '1h', 'indicators')
+    'active_trades_master'  → None (tf part is not a known timeframe)
+    'oi_5m'                 → None (symbol part fails the uppercase regex)
+    """
+    kind = "candles"
+    stem = name
+    if stem.endswith(INDICATOR_SUFFIX):
+        kind = "indicators"
+        stem = stem[: -len(INDICATOR_SUFFIX)]
+    idx = stem.rfind("_")
+    if idx <= 0:
+        return None
+    sym, tf = stem[:idx], stem[idx + 1 :]
+    if tf not in TF_SECONDS or not _SYMBOL_RE.match(sym):
+        return None
+    return (sym, tf, kind)
+
+
 def _ident(table: str) -> sql.Identifier:
     return sql.Identifier(table)
 
@@ -390,15 +422,22 @@ def read_candles_with_indicators(
     return _fetch_df(conn, query, params)
 
 
-def latest_open_time(conn: Any, symbol: str, tf: str, *, include_forming: bool = True) -> datetime | None:
+def latest_open_time(
+    conn: Any, symbol: str, tf: str, *, include_forming: bool = True, kind: str = "candles"
+) -> datetime | None:
     """MAX(open_time) of the candle table, or None if the table does not exist.
 
     Default `include_forming=True` keeps the ingestion catch-up/resume semantics
     of 1_data_ingestion.get_latest_open_time() byte-equal: it resumes from the
     newest row it wrote, forming or not.
+
+    `kind='indicators'` reads the indicator table instead — the resume watermark
+    2_indicator_engine.process_coin_task needs (its old `SELECT MAX(open_time)
+    FROM {sym}_{tf}_indicators`). Same forming semantics; the indicator table
+    only ever holds rows the engine wrote, so include_forming=True is a plain MAX.
     """
     _assert_legacy_backend()
-    table = candles_table(symbol, tf)
+    table = _table_for_kind(symbol, tf, kind)
     if not table_exists(conn, table):
         return None
     query = sql.SQL("SELECT MAX(open_time) FROM {tbl} WHERE true").format(tbl=_ident(table))
@@ -442,6 +481,45 @@ def indicator_column_names(conn: Any, symbol: str, tf: str) -> list[str]:
             (indicators_table(symbol, tf),),
         )
         return [r[0] for r in cur.fetchall()]
+
+
+def list_coin_tables(conn: Any, tf: str | None = None, *, kind: str | None = None) -> list[tuple[str, str, str]]:
+    """Enumerate the per-coin candle/indicator tables in the current schema.
+
+    Returns (symbol, tf, kind) tuples — kind in {'candles', 'indicators'} — for
+    every base table whose name parses as '{SYMBOL}_{tf}' or
+    '{SYMBOL}_{tf}_indicators' with a regex-valid symbol and a known timeframe.
+    Non-candle tables (active_trades_master, telegram_outbox, funding_rates,
+    oi_5m, regime_history, …) never match the pattern, so no substring blacklist
+    is needed — the shape is the filter.
+
+    Read-only. Replaces the raw `information_schema.tables` scans (6_housekeeping
+    retention/delisted-scan; the audit tools stay raw for now). `tf` restricts to
+    one timeframe, `kind` to 'candles' or 'indicators'. In phase C the per-coin
+    tables are gone and this returns an empty list.
+    """
+    _assert_legacy_backend()
+    if tf is not None:
+        validate_timeframe(tf)
+    if kind is not None and kind not in ("candles", "indicators"):
+        raise ValueError(f"kind must be 'candles', 'indicators' or None, got {kind!r}")
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+        )
+        names = [r[0] for r in cur.fetchall()]
+    out: list[tuple[str, str, str]] = []
+    for name in names:
+        parsed = _parse_coin_table(name)
+        if parsed is None:
+            continue
+        if tf is not None and parsed[1] != tf:
+            continue
+        if kind is not None and parsed[2] != kind:
+            continue
+        out.append(parsed)
+    return out
 
 
 # ── Writes (caller commits — contract 3) ──────────────────────────────────────
@@ -534,6 +612,49 @@ def _valid_col(col: str) -> str:
     if not _COLUMN_RE.match(col):
         raise ValueError(f"invalid column identifier: {col!r}")
     return col
+
+
+def delete_candles_before(conn: Any, symbol: str, tf: str, cutoff: datetime, *, kind: str = "candles") -> int:
+    """DELETE rows older than `cutoff` (open_time < cutoff), returning the count.
+
+    Serves 6_housekeeping.clean_old_database_entries (retention): it prunes the
+    per-coin candle table — or, with kind='indicators', the indicator table — of
+    everything older than the timeframe's retention window. The boundary is
+    exclusive (`<`), matching the previous `WHERE open_time < NOW() - INTERVAL`.
+    The caller computes `cutoff` (so the calendar-interval arithmetic stays in
+    the DB) and passes a timezone-aware datetime.
+
+    Does NOT commit (contract 3).
+    """
+    _assert_legacy_backend()
+    if cutoff.tzinfo is None:
+        raise ValueError("delete_candles_before() requires a timezone-aware cutoff")
+    table = _table_for_kind(symbol, tf, kind)
+    query = sql.SQL("DELETE FROM {tbl} WHERE open_time < %s").format(tbl=_ident(table))
+    with conn.cursor() as cur:
+        cur.execute(query, (cutoff,))
+        return cur.rowcount
+
+
+def delete_indicators_from(conn: Any, symbol: str, tf: str, start: datetime) -> int:
+    """DELETE indicator rows at or after `start` (open_time >= start), returning the count.
+
+    Serves 6_housekeeping.fill_ohlcv_gaps_and_invalidate_indicators: once a gap
+    is back-filled, every indicator row from the first gap onward is invalidated
+    so the engine recomputes it with a clean warmup. The boundary is inclusive
+    (`>=`), matching the previous `DELETE ... WHERE open_time >= %s`. This is the
+    opposite direction to delete_candles_before — deliberately a separate name.
+
+    Does NOT commit (contract 3).
+    """
+    _assert_legacy_backend()
+    if start.tzinfo is None:
+        raise ValueError("delete_indicators_from() requires a timezone-aware start")
+    table = indicators_table(symbol, tf)
+    query = sql.SQL("DELETE FROM {tbl} WHERE open_time >= %s").format(tbl=_ident(table))
+    with conn.cursor() as cur:
+        cur.execute(query, (start,))
+        return cur.rowcount
 
 
 # ── Helpers used by the migration tooling ─────────────────────────────────────
