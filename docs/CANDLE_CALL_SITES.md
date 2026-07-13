@@ -211,6 +211,17 @@ Sechs Blöcke, jeder ein eigener Commit, Regression-Guard davor und danach. Blö
 
 Danach erst die Phasen 2–5 aus `docs/TIMESCALE_R1_MIGRATION.md` (Dual-Write, Backfill, Paritäts-Beobachtung, Read-Cutover, Cleanup).
 
+### Stand Block 1 — erledigt (T-2026-CU-9050-107, 2026-07-13)
+
+Block 1 (Offline-Tooling) ist umverdrahtet. 12 Read-Sites gehen jetzt über `core.candles` mit `include_forming=False`; gegen die Live-VPS-DB read-only verifiziert (ASC-Frames, forming Kerze ausgeschlossen: `newest open_time < period_start`), Regression-Guard `smoke`+`verify` grün, ruff/format grün auf den nicht-exkludierten Root-Dateien.
+
+- **Umverdrahtet:** `core/charting.py`, `tools/mis1_move_labels.py` (+ transitiv `mis2_dump_geometry_study`), `tools/regime_rules_study.py`, `tools/retrain_sra2.py`, `tools/research_dataset_common.py` (+ transitiv fif1/fmr1/pex1/trm1), `tools/aim2_build_dataset.py`, `tools/epd2_build_dataset.py`, `qm_ml_trainer.py`, `smc_ml_trainer.py`, `qm_backtest.py`, `smc_pattern_backtester.py`, `backtest/smc_btc_backtest{,_v2,_v3}.py`, `tools/regression_guard/rgcore.py`. `tools/walkforward_sim.py` war der erste Schritt (T-2026-CU-9050-037).
+- **Neuer Helfer `candles_window_start(since, lookback_days)`** in `research_dataset_common` reproduziert das frühere `%s::timestamptz - INTERVAL 'N days'` in Python (Lokalisierung nach LOCAL_TZ, dann Tage abziehen). Ein Ort für die TZ-sensible Fenstergrenze; aim2/epd2 importieren ihn.
+- **Bewusst NICHT umverdrahtet (dokumentiert, nicht stillschweigend):**
+  - `fib_backtest.py` — der `pg_tables`-Case-Variant-Probe (`{symbol.lower()}_1d`) kollidiert mit der Uppercase-Validierung der API (`^[A-Z0-9]{2,24}$`). Eigener API-Gap (§2, Case-Auflösung), keine reine Umverdrahtung → bleibt roh bis der Gap geschlossen ist.
+  - `tools/audit/step7_monitor_replay.py` — flaches TZ-Forensik-Wegwerf-Skript; der `AT TIME ZONE 'UTC' AS ot`-Read ist bewusst TZ-agnostisch (±4h-Fenster, Shift-0/3-Erkennung). Historisches Fenster → forming irrelevant, CI-exkludiert, null Verhaltensnutzen bei echtem Risiko für die filigrane Shift-Logik.
+  - `trainers_x/BT2-Datagrepper-for-ML.py` — eingefrorene Provenienz (eigene hardcoded `DB_CONFIG`, hyphenierter nicht-importierbarer Dateiname, importiert `core` nicht), gleiche Klasse wie `legacy_trainers` (§2, §5.8).
+
 ---
 
 ## 5. Offene Operator-Fragen (Michi)
