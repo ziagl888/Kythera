@@ -15,10 +15,9 @@ import numpy as np
 import pandas as pd
 import scipy.signal
 from numpy.lib.stride_tricks import sliding_window_view
-from psycopg2 import extras
 from scipy import stats
 
-from core.candles import period_start
+from core.candles import latest_open_time, period_start, read_candles, upsert_indicators
 from core.config import INDICATOR_TIMEFRAMES, NUM_WORKERS
 from core.database import get_db_connection
 from core.market_utils import load_coins
@@ -686,27 +685,19 @@ def calculate_indicators_optimized(df, timeframe):
 
 
 def write_indicators_to_db_optimized(conn, df, symbol, timeframe, definitions):
-    table_name = f'"{symbol}_{timeframe}{INDICATOR_SUFFIX}"'
+    # Fixed column set (symbol, open_time, close + every indicator definition);
+    # any column the frame lacks is zero-filled, exactly as before. The columns
+    # symbol/open_time form the conflict key and are never in the UPDATE set.
+    # upsert_indicators writes every column of the frame it is handed, keyed on
+    # (symbol, open_time) — byte-equal to the old INSERT ... ON CONFLICT DO
+    # UPDATE. It does NOT commit (hard rule 8); the caller (process_coin_task)
+    # commits after this returns.
     valid_cols = ['symbol', 'open_time', 'close'] + list(definitions.keys())
     for col in valid_cols:
         if col not in df.columns:
             df[col] = 0
-
     df_to_write = df[valid_cols].copy()
-    data_values = [tuple(x) for x in df_to_write.to_numpy()]
-    cols_str = ', '.join(valid_cols)
-    update_cols = [c for c in valid_cols if c not in ['symbol', 'open_time']]
-    update_sql = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
-
-    sql = f"""
-        INSERT INTO {table_name} ({cols_str})
-        VALUES %s
-        ON CONFLICT (symbol, open_time)
-        DO UPDATE SET {update_sql}
-    """
-    with conn.cursor() as cur:
-        extras.execute_values(cur, sql, data_values)
-    conn.commit()
+    upsert_indicators(conn, df_to_write, symbol, timeframe)
 
 
 # DB-WORKER
@@ -738,9 +729,9 @@ def process_coin_task(args):
         if not table_exists(conn, ind_table):
             create_indicator_table(conn, symbol, timeframe, definitions)
 
-        with conn.cursor() as cur:
-            cur.execute(f"SELECT MAX(open_time) FROM {ind_table}")
-            last_ind_time = cur.fetchone()[0]
+        # Resume watermark = newest indicator row we wrote (forming or not).
+        # Byte-equal to the old MAX(open_time) on the indicator table.
+        last_ind_time = latest_open_time(conn, symbol, timeframe, include_forming=True, kind="indicators")
 
         if last_ind_time is None:
             start_fetch_time = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
@@ -760,8 +751,13 @@ def process_coin_task(args):
         # auf 3000 Kerzen setzte (statt der 1000 beim inkrementellen Lauf).
         # Dadurch wurde bei JEDEM 30-Min-Zyklus 3× so viel geladen wie nötig.
 
-        sql = f"SELECT * FROM {ohlcv_table} WHERE open_time >= %s ORDER BY open_time ASC"
-        df_raw = pd.read_sql(sql, conn, params=(load_start,))
+        # Kern-Fix (highest R1 impact of the whole migration): indicators are
+        # computed on CLOSED candles only. include_forming=False drops the
+        # still-forming candle the old `SELECT *` silently pulled in, so no
+        # indicator row is ever written over a forming candle (hard rule 5).
+        # Columns default to CANDLE_COLUMNS — the same 7 the SELECT * returned —
+        # and the frame arrives ASC by open_time (contract 1).
+        df_raw = read_candles(conn, symbol, timeframe, start=load_start, include_forming=False)
 
         if df_raw.empty or len(df_raw) < 50:
             return
@@ -791,6 +787,7 @@ def process_coin_task(args):
 
         if not df_save.empty:
             write_indicators_to_db_optimized(conn, df_save, symbol, timeframe, definitions)
+            conn.commit()  # hard rule 8: the caller owns the transaction
 
     except Exception as e:
         logger.error(f"Error {symbol} ({timeframe}): {e}")

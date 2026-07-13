@@ -337,5 +337,113 @@ def test_latest_open_time_matches_max_open_time(conn, probe):
         assert closed_max < c.period_start(tf, _db_now(conn))
 
 
+# ── Block-6 API-gap functions (T-2026-CU-9050-114) ────────────────────────────
+#
+# Read-shaped gaps (list_coin_tables, latest_open_time kind='indicators') are
+# verified read-only, exactly like the Phase-0 gate above. The two mutating gaps
+# (delete_candles_before, delete_indicators_from) are byte-tested against a
+# SESSION-LOCAL temp table so no live per-coin table is ever locked or written;
+# they are additionally gated behind KYTHERA_CANDLES_WRITE_PARITY so the default
+# VPS run stays strictly read-only (harte Regel 1). The operator opts in for the
+# write-path byte-test in a dedicated owner session.
+
+
+def test_list_coin_tables_matches_information_schema(conn, probe):
+    """Enumeration parity: the API returns exactly the per-coin tables the raw
+    information_schema scan would, parsed into (symbol, tf, kind)."""
+    symbol, tf = probe
+    api = set(c.list_coin_tables(conn))
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+        )
+        raw = [r[0] for r in cur.fetchall()]
+    expected = {p for p in (c._parse_coin_table(n) for n in raw) if p is not None}
+    assert api == expected
+    assert (symbol, tf, "candles") in api  # the probe's own candle table is in there
+    # filters are honoured
+    assert all(t == tf for _, t, _ in c.list_coin_tables(conn, tf))
+    assert all(k == "candles" for _, _, k in c.list_coin_tables(conn, kind="candles"))
+
+
+def test_latest_open_time_indicators_matches_max(conn, probe):
+    """kind='indicators' reads the indicator table's MAX(open_time) byte-equal."""
+    symbol, tf = probe
+    itable = c.indicators_table(symbol, tf)
+    if not c.table_exists(conn, itable):
+        pytest.skip(f"{itable} does not exist")
+    with conn.cursor() as cur:
+        cur.execute(sql.SQL("SELECT MAX(open_time) FROM {t}").format(t=sql.Identifier(itable)))
+        direct = cur.fetchone()[0]
+    if direct is not None:
+        direct = direct.astimezone(timezone.utc) if direct.tzinfo else direct.replace(tzinfo=timezone.utc)
+    api = c.latest_open_time(conn, symbol, tf, include_forming=True, kind="indicators")
+    assert canonical_cell(api) == canonical_cell(direct)
+
+
+def _require_write_parity() -> None:
+    if not os.getenv("KYTHERA_CANDLES_WRITE_PARITY"):
+        pytest.skip("write-path byte-test: set KYTHERA_CANDLES_WRITE_PARITY=1 in an owner session")
+
+
+def _seed_temp_candles(conn: Any, table: str, opens: Sequence[datetime]) -> None:
+    """Create a session-local temp candle table and seed it. ON COMMIT DROP +
+    the test's rollback make it impossible to leak into the live schema."""
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                "CREATE TEMP TABLE {t} (symbol text, open_time timestamptz, open double precision, "
+                "high double precision, low double precision, close double precision, "
+                "volume double precision, PRIMARY KEY (symbol, open_time)) ON COMMIT DROP"
+            ).format(t=sql.Identifier(table))
+        )
+        for ot in opens:
+            cur.execute(
+                sql.SQL("INSERT INTO {t} VALUES (%s, %s, 1, 1, 1, 1, 1)").format(t=sql.Identifier(table)),
+                ("ZZTESTXX", ot),
+            )
+
+
+def test_delete_candles_before_deletes_exactly_the_old_rows(conn):
+    _require_write_parity()
+    sym, tf = "ZZTESTXX", "1h"
+    table = c.candles_table(sym, tf)  # "ZZTESTXX_1h" — a temp table shadows any real one
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    opens = [base + i * c.timeframe_delta(tf) for i in range(5)]  # 5 hourly candles
+    try:
+        _seed_temp_candles(conn, table, opens)
+        cutoff = opens[3]  # rows 0,1,2 are older; 3,4 are not
+        deleted = c.delete_candles_before(conn, sym, tf, cutoff)
+        assert deleted == 3
+        with conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT open_time FROM {t} ORDER BY open_time").format(t=sql.Identifier(table)))
+            remaining = [r[0] for r in cur.fetchall()]
+        assert all(ot >= cutoff for ot in remaining)
+        assert len(remaining) == 2
+    finally:
+        conn.rollback()  # drops the temp table, undoes every write
+
+
+def test_delete_indicators_from_deletes_the_tail(conn):
+    _require_write_parity()
+    sym, tf = "ZZTESTXX", "1h"
+    table = c.indicators_table(sym, tf)  # "ZZTESTXX_1h_indicators"
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    opens = [base + i * c.timeframe_delta(tf) for i in range(5)]
+    try:
+        _seed_temp_candles(conn, table, opens)  # same shape suffices for the open_time filter
+        start = opens[2]  # rows 2,3,4 are >= start
+        deleted = c.delete_indicators_from(conn, sym, tf, start)
+        assert deleted == 3
+        with conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT open_time FROM {t} ORDER BY open_time").format(t=sql.Identifier(table)))
+            remaining = [r[0] for r in cur.fetchall()]
+        assert all(ot < start for ot in remaining)
+        assert len(remaining) == 2
+    finally:
+        conn.rollback()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
