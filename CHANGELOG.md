@@ -1,3 +1,36 @@
+## [2026-07-13] R1/TimescaleDB Block 6 Part 1 — DB-Writer auf core.candles + 4 API-Gaps (T-2026-CU-9050-114)
+
+Letzter Code-Block der R1+TimescaleDB-Migration (Umbrella T-2026-CU-9050-018): die Kerzen-/Indikator-**Writer**
+schreiben und lesen jetzt über `core.candles`. **Reine Code-Umverdrahtung (Part 1)** — die DB-Migration selbst
+(Retrain-Rollout + C-Gate) ist Part 2/3 und bleibt Michi-gegatet. Auf der Live-VPS gebaut, Live-Write-Änderung
+→ nicht autonom enqueut, Freigabe Michi vor `cu/reviews` + merge-train.
+
+- **Vier neue `core/candles.py`-Funktionen (Signaturen frozen):** `latest_open_time(kind='indicators')`
+  (Indikator-Watermark), `delete_candles_before(cutoff, *, kind)` (Retention `<`), `delete_indicators_from(start)`
+  (Gap-Invalidierung `>=`), `list_coin_tables(tf=None, *, kind=None)` (form-basierte Tabellen-Enumeration via
+  `_parse_coin_table`, ersetzt die rohen `information_schema`-Scans + den `"trades"/"telegram"`-Substring-Blacklist).
+- **`1_data_ingestion`:** `get_latest_open_time`→API; `insert_fast`→`upsert_candles` mit **closed/forming-Split**
+  an `period_start` (zwei Calls); `_flush_to_db`→`upsert_candles(closed=k['x'])` — der **WS-Buffer trägt jetzt das
+  echte Binance-Closed-Flag** (erster Eintritt von `is_closed` über den WS-Pfad), SAVEPOINT-pro-Zeile via zweitem
+  Cursor auf derselben Transaktion erhalten.
+- **`2_indicator_engine` (höchste R1-Wirkung):** Kern-Fix — die Read-Site rechnet Indikatoren nur noch auf
+  **geschlossenen** Kerzen (`include_forming=False`, harte Regel 5); Indikator-`MAX`→`latest_open_time(kind='indicators')`;
+  `write_indicators`→`upsert_indicators`, Commit zum Caller verschoben (harte Regel 8).
+- **`6_housekeeping`:** Gap-Scan→`include_forming=False`; Gap-Filler→`upsert_candles(closed=True)`
+  (`DO NOTHING`→`DO UPDATE … IS DISTINCT FROM`); Retention→`list_coin_tables` + `delete_candles_before(kind)`;
+  Indikator-Invalidierung→`delete_indicators_from`. DDL bleibt inline (entfällt in Phase C).
+- **Review-Fix:** der Gap-Filler zählte Rows-**gesendet** statt Rows-**geschrieben** (`upsert_candles` liefert
+  `len(rows)`), was den `== 0`-Guard bei unfüllbaren Lücken aushebelte (Binance-`endTime` sendet die bereits
+  vorhandene rechte Rand-Kerze mit). Behoben durch Ausschluss dieser Rand-Kerze (`>`→`>=`) — der Zähler spiegelt
+  jetzt echte Fills.
+- **Verifikation:** DB-frei (py_compile/ruff/mypy/Regression-Guard smoke 6 + verify 24, `backtest/test_candles.py`
+  47/47, 16 neu); **DB-Parität auf der Live-VPS** (`cryptodata`): read-only Byte-Tests grün, Delete-Byte-Tests via
+  session-lokale `TEMP … ON COMMIT DROP`-Tabellen (gated hinter `KYTHERA_CANDLES_WRITE_PARITY`, Default read-only)
+  grün ohne Schema-Leak. Beide Core-Reviews PASS (z-code-reviewer 3-Vote, z-spec-compliance 18/18 ACs). PR #104.
+
+Offen (Michi-gegatet): Block 6 **Parts 2/3** — ML-Fleet parken → Retrain auf R1-sauberen Labels → Version-Bump
+→ C-Gate-Phasen 0–5 (Hypertable-DDL/Dual-Write/Backfill/Cutover/Cleanup).
+
 ## [2026-07-13] Realized-PnL-Report für aktive Bots im Sentiment Tracker + targets/lev-Persistenz beim AI-Close (T-2026-CU-9050-115)
 
 Neuer 4h-Report im Sentiment-Tracker-Channel (`CH_MARKET_DATA`): pro **aktivem** Bot der
