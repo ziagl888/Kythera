@@ -31,6 +31,7 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles
 from core.database import get_db_connection
 from core.logging_setup import setup_logging
 from core.market_utils import check_cooldown, get_max_leverage, load_coins, update_cooldown
@@ -92,11 +93,11 @@ def load_daily_ohlcv(conn, symbol: str) -> pd.DataFrame | None:
 def get_live_price(conn, symbol: str) -> float | None:
     """Fetches the current price from the 1h table."""
     try:
-        with conn.cursor() as cur:
-            cur.execute(f'SELECT close FROM "{symbol}_1h" ORDER BY open_time DESC LIMIT 1')
-            row = cur.fetchone()
-        if row:
-            return float(row[0])
+        # core.candles: neuester 1h-Close, forming candle bewusst inkludiert
+        # (Live-Preis — contract 2: include_forming=True).
+        df = read_candles(conn, symbol, "1h", limit=1, include_forming=True, columns=("open_time", "close"))
+        if not df.empty:
+            return float(df["close"].iloc[-1])
     except Exception:
         pass
     return None
