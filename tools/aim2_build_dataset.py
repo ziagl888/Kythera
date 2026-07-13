@@ -54,8 +54,10 @@ from core.aim2_features import (  # noqa: E402
     build_feature_row,
 )
 from core.aim2_topn import MODEL_TAG as TOPN_TAG  # noqa: E402
+from core.candles import read_candles_with_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.trade_utils import calculate_smart_targets  # noqa: E402
+from tools.research_dataset_common import candles_window_start  # noqa: E402
 from tools.walkforward_sim import simulate_exit  # noqa: E402  (nur Import — Datei gehört dem ABR1-Rework)
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
@@ -276,15 +278,18 @@ def trail_wr(index: dict, model: str, ts64) -> tuple[float, int]:
 # 3) LABELING JE SYMBOL
 # ─────────────────────────────────────────────────────────────────────────────
 def load_candles(conn, symbol: str, since: str) -> pd.DataFrame | None:
-    fields = ["t1.open_time", "t1.open", "t1.high", "t1.low", "t1.close", "t1.volume"]
-    fields += [f"t2.{c}" for c in IND_COLS]
+    # Über core.candles: GESCHLOSSENE 1h-Kerzen + Indikator-Join (include_forming
+    # =False). process_symbol schneidet per searchsorted-1 auf die letzte
+    # geschlossene Kerze — die forming Tail-Zeile war nie Teil des Vertrags.
     try:
-        df = df_query(
+        df = read_candles_with_indicators(
             conn,
-            f'SELECT {", ".join(fields)} FROM "{symbol}_1h" t1 '
-            f'LEFT JOIN "{symbol}_1h_indicators" t2 ON t1.open_time = t2.open_time '
-            f"WHERE t1.open_time >= %s::timestamptz - INTERVAL '30 days' ORDER BY t1.open_time ASC",
-            (since,),
+            symbol,
+            "1h",
+            start=candles_window_start(since, 30),
+            include_forming=False,
+            candle_columns=("open_time", "open", "high", "low", "close", "volume"),
+            indicator_columns=IND_COLS,
         )
     except Exception:
         conn.rollback()
