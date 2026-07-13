@@ -7,8 +7,10 @@ import warnings
 import pytz
 
 # --- IMPORT CONFIGURATION FROM CORE ---
+from core.bot_catalog import has_standard_leverage
 from core.candles import read_candles
 from core.database import get_db_connection
+from core.market_utils import get_max_leverage
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
@@ -34,10 +36,47 @@ def main():
             # Timeout-Exit (gehört zur studien-validierten Bracket-Geometrie).
             cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS entry_filled BOOLEAN DEFAULT TRUE")
             cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS expiry_hours INTEGER")
+            # Realized-PnL-Report (T-2026-CU-9050-115): Target-Preise + Hebel
+            # gehen beim Close sonst verloren (die ai_signals-Row wird gelöscht,
+            # nur targets_hit blieb übrig) — ohne sie ist der tatsächlich
+            # realisierte %-Ertrag (Teilschließungen je Target × Hebel) nicht
+            # rekonstruierbar. Additive Spalten, Alt-Rows bleiben NULL und
+            # werden vom Report ausgeschlossen (exact-only, Operator-Entscheid).
+            # ai_signals.lev: der Hebel wird beim ERSTEN Poll dieses Monitors
+            # (~10s nach dem Post) gestempelt, nicht erst beim Close — eine
+            # max_leverage.json-Änderung während der Trade-Laufzeit kann den
+            # historischen Wert dann nicht mehr verfälschen (Spec-Rationale),
+            # ohne dass die ~14 Signal-Emissions-Sites angefasst werden müssen.
+            cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS lev TEXT")
+            cur.execute("ALTER TABLE closed_ai_signals ADD COLUMN IF NOT EXISTS targets JSON")
+            cur.execute("ALTER TABLE closed_ai_signals ADD COLUMN IF NOT EXISTS lev TEXT")
         conn.commit()
     except Exception as e:
         logger.warning(f"Could not migrate schema columns: {e}")
         conn.rollback()
+
+    # Fail-fast statt Crash-Loop (Review 2026-07-13): der Close-INSERT unten
+    # referenziert targets/lev hart. Schlug die Schema-Sicherung fehl (Lock,
+    # transienter DB-Fehler beim Boot), würde JEDER Close ab jetzt im 10s-Takt
+    # scheitern und dabei die Batch-Updates anderer Trades mit zurückrollen —
+    # bei nur einem Warning-Log. Lieber sichtbar sterben: der Watchdog
+    # restartet mit Backoff, der nächste Boot versucht die Migration erneut.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT table_name, column_name FROM information_schema.columns
+            WHERE (table_name = 'closed_ai_signals' AND column_name IN ('targets', 'lev'))
+               OR (table_name = 'ai_signals' AND column_name = 'lev')
+            """
+        )
+        _have = {(row[0], row[1]) for row in cur.fetchall()}
+    _need = {("closed_ai_signals", "targets"), ("closed_ai_signals", "lev"), ("ai_signals", "lev")}
+    if _need - _have:
+        logger.error(
+            f"Schema-Sicherung unvollständig, es fehlen {sorted(_need - _have)} — "
+            "Poll-/Close-Pfad wäre gebrochen, beende für Watchdog-Restart."
+        )
+        raise SystemExit(1)
 
     # FIX P2.7: In-Memory-Wasserzeichen pro Trade-ID (erste Stufe, kein DB-Schema-Change:
     # ai_signals hat keine passende Spalte). Merkt sich die open_time der zuletzt
@@ -66,10 +105,23 @@ def main():
                 # Loading ALLE aktiven AI-Trades
                 cur.execute("""
                     SELECT id, symbol, model, direction, entry1, price, sl, targets, current_target_hit, open_time,
-                           entry_filled, expiry_hours
+                           entry_filled, expiry_hours, lev
                     FROM ai_signals
                 """)
                 active_trades = cur.fetchall()
+
+                # T-2026-CU-9050-115: Hebel beim ERSTEN Poll stempeln (~10s nach
+                # Post) — damit friert der Wert ein, bevor max_leverage.json
+                # driften kann. UFI-Modelle (SL-gecappter Post-Hebel) bleiben
+                # bewusst NULL; der Realized-PnL-Report schließt sie aus.
+                stamped_lev = {}
+                for t in active_trades:
+                    if t[12] is None and has_standard_leverage(t[2]):
+                        lev_now = get_max_leverage(t[1], 20)
+                        cur.execute("UPDATE ai_signals SET lev = %s WHERE id = %s AND lev IS NULL", (lev_now, t[0]))
+                        stamped_lev[t[0]] = lev_now
+                if stamped_lev:
+                    conn.commit()
 
             # FIX P2.7: Wasserzeichen von nicht mehr aktiven Trades aufräumen
             # (sonst wächst das Dict über die Prozess-Lifetime unbegrenzt).
@@ -198,6 +250,7 @@ def main():
                         open_time,
                         entry_filled,
                         expiry_hours,
+                        trade_lev,
                     ) = trade
 
                     candles_all = coin_candles.get(symbol)
@@ -371,10 +424,34 @@ def main():
                                 logger.info(
                                     f"🔒 AI Trade {symbol} ({model}) geschlossen! Grund: {close_reason} | PnL: {pnl:.2f}%"
                                 )
+                                # T-2026-CU-9050-115: targets + lev beim Close persistieren
+                                # (Grundlage des Realized-PnL-Reports in Bot 23).
+                                # lev = derselbe Cap wie an den Post-Sites
+                                # (get_max_leverage(symbol, 20)); Bots mit
+                                # abweichendem Post-Hebel (UFI1: SL-gecappt,
+                                # P0.6/R4) bekommen NULL statt eines falschen
+                                # 20x — der Report schließt NULL-Rows aus.
+                                # Quelle: der beim ersten Poll in ai_signals.lev
+                                # eingefrorene Wert (Drift-Schutz, s. Migration
+                                # oben). Fallback auf Close-Zeit-Cap nur für
+                                # Trades, die beim Deploy schon offen waren und
+                                # in derselben Iteration schließen (bounded,
+                                # transitional).
+                                lev_text = trade_lev or stamped_lev.get(trade_id)
+                                if lev_text is None and has_standard_leverage(model):
+                                    lev_text = get_max_leverage(symbol, 20)
+                                try:
+                                    # Defensive: ein korruptes Target-Element darf
+                                    # den Close-Pfad nicht in einen 10s-Crash-Loop
+                                    # ziehen — NULL heißt "Row fällt aus dem Report"
+                                    # (wie Legacy), der Close selbst geht durch.
+                                    targets_json = json.dumps([float(t) for t in targets]) if targets else None
+                                except (TypeError, ValueError):
+                                    targets_json = None
                                 cur.execute(
                                     """
-                                    INSERT INTO closed_ai_signals (symbol, model, direction, entry, close_price, targets_hit, open_time, close_time, status)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                                    INSERT INTO closed_ai_signals (symbol, model, direction, entry, close_price, targets_hit, open_time, close_time, status, targets, lev)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s)
                                 """,
                                     (
                                         symbol,
@@ -385,6 +462,8 @@ def main():
                                         int(new_targets_hit),
                                         open_time,
                                         close_reason,
+                                        targets_json,
+                                        lev_text,
                                     ),
                                 )
                                 db_was_changed = True

@@ -1,3 +1,66 @@
+## [2026-07-13] Realized-PnL-Report für aktive Bots im Sentiment Tracker + targets/lev-Persistenz beim AI-Close (T-2026-CU-9050-115)
+
+Neuer 4h-Report im Sentiment-Tracker-Channel (`CH_MARKET_DATA`): pro **aktivem** Bot der
+**tatsächlich realisierte, gehebelte** %-Ertrag der geschlossenen Trades — Summe % und Ø % pro Trade
+je Fenster **8h/24h/3d/7d/30d**, gefenstert nach **Close-Zeit** (bewusst anders als der bestehende
+Per-Bot-Post, der nach Eröffnungszeit filtert). Positionsmodell (Operator-Spec): Einsatz gleich auf
+die N publizierten Targets gesplittet, jedes erreichte Target realisiert 1/N zum Target-Preis, der
+Rest schließt zum Close-Preis (SL/Timeout); das Ganze × Hebel, Verlust-Clamp bei −100 %.
+
+- **Datenmodell-Lücke geschlossen (`8_ai_trade_monitor`):** beim Close gingen Target-Preise und
+  Hebel verloren (ai_signals-Row wird gelöscht, nur `targets_hit` blieb). Zwei **additive** Spalten
+  `closed_ai_signals.targets` (JSON) + `.lev` (TEXT) via bestehendem Schema-Sicherungs-Pattern
+  (`ADD COLUMN IF NOT EXISTS` im Startup); der Close-Insert kopiert die publizierten Targets mit und
+  stampt `lev = get_max_leverage(symbol, 20)` — identisch zu allen Post-Sites. **Ausnahme UFI1**
+  (SL-gecappter Hebel, P0.6/R4): bekommt `NULL` statt eines falschen 20x.
+- **`core/realized_pnl.py` (neu, DB-frei):** `parse_leverage` / `weighted_move_pct` /
+  `realized_pnl_pct` — exact-only (ungültige/fehlende Werte ⇒ `None`, nie Näherung), Outlier-Bound
+  ±100 % pre-Leverage wie im Per-Bot-Post.
+- **`core/bot_catalog.py` (neu):** zentrales Mapping Model-Tag/Strategy-Name → Fleet-Skript
+  (Familien-**Präfix**, überlebt Tag-Rotation ABR1→ABR2; Falle 16) + Aktiv-Filter
+  (`core/fleet.FLEET` minus `control/parked`-Marker). Unbekannte Tags werden **sichtbar**
+  ausgelassen (Log + Footer-Zeile), nie still gedroppt.
+- **`23_market_tracker.py`:** neuer Job `job_realized_pnl_report` [XX:02:30, postet bei
+  `hour % 4 == 0`], nutzt die bestehende Dedup- (report-14-Key) und Chunking-Infrastruktur. AI-Rows
+  zählen **nur mit persistierten targets+lev** (Operator-Entscheid 2026-07-13: keine Näherung für
+  Alt-Daten — die AI-Fenster füllen sich ab Deploy, 30d nach 30 Tagen voll); klassische Bots
+  (`closed_trades_master` trägt target1-4+lev seit jeher) sind ab Tag 1 über die volle Historie
+  exakt. TZ-korrekt per Uhr-Paarung (Falle 9): AI-Alter via `LOCALTIMESTAMP − close_time`
+  (naive Lokalzeit, P1.8), Classic via `NOW() AT TIME ZONE 'UTC' − posted` (naive UTC).
+  Ausgeschlossen: `ENTRY_NOT_FILLED`, Housekeeping-Closes (DELISTED/CLEANUP/ORPHAN), geparkte Bots.
+  Reine Info-Message, kein Cornix-Block (harte Regel 4).
+
+**Review-Härtung (3× z-code-reviewer N-Vote, alle Findings verifiziert + gefixt):** (1) HIGH —
+klassische Housekeeping-Closes (`6_housekeeping` schreibt `DELISTED` auch in
+`closed_trades_master.status`) wären als voller gehebelter Move gezählt worden → gemeinsamer
+`_is_neutral_close`-Filter für BEIDE Quellen. (2) HIGH — `closed_trades_master.posted` landet
+per Session-TZ-Cast als **Lokalzeit** (UTC_POLICY §3, P2.6 offen), nicht als naive UTC → Classic-
+Uhr auf `LOCALTIMESTAMP` gedreht (sonst −3h-Fenster-Shift + stiller Drop frischer Closes);
+negative Ages werden jetzt gezählt + gewarnt statt still gedroppt. (3) Outlier-Gate zusätzlich
+auf dem ROHEN Close-Leg (Staffelung verdünnt ein Datenbug-Leg um N/(N−k)). (4) Migration-Pending-
+Erkennung via `information_schema`-Probe statt Exception-String-Match (der hätte jeden DB-Fehler
+als "Migration ausstehend" maskiert). (5) Bot 8 fail-fast, wenn targets/lev nach der Schema-
+Sicherung fehlen (statt 10s-Crash-Loop im Close-Pfad) + `json.dumps`-Guard. (6) Sniper-Präfixe
+`BB`/`TD` statt `BB_`/`TD_` (Retrain-Generation `TD2_4H` wäre unmapped gewesen).
+
+**Bewusste, dokumentierte Abweichung (Operator-Info):** die Spec wollte `ai_signals.lev` beim
+Signal-Post via `core/signal_post.py` persistieren — implementiert ist stattdessen ein Stempel
+beim **ersten Bot-8-Poll (~10s nach Post)** in die neue Spalte `ai_signals.lev` (UPDATE nur wenn
+NULL), beim Close mitkopiert. Erfüllt dieselbe Rationale (eine `max_leverage.json`-Änderung
+während der Trade-Laufzeit kann den historischen Wert nicht mehr verfälschen), ohne die ~14
+Signal-Emissions-Sites + deren Migrations-Ordering anzufassen; Rest-Skew nur noch Cache-
+Generationen-Differenz Poster↔Bot-8 im 10s-Fenster. UFI1 (SL-gecappter Hebel) bekommt bewusst
+NULL-lev und erscheint nie im Report; ROM1-Regime-Auto-Closes (Bot-28-Sync, derzeit tot)
+schreiben keine targets/lev und bleiben ausgeschlossen — Follow-up-Kandidaten.
+
+Verifikation (Build-Maschine, DB-frei): 111 neue Tests grün (`backtest/test_realized_pnl.py` 36,
+`test_bot_catalog.py` 40 inkl. Fleet-Konsistenz-Check, `test_market_tracker_realized.py` 35);
+bestehende Market-Tracker-Tests 27/27; ruff/format/mypy grün; Regression-Guard `smoke` OK.
+Volle Suite: 9 Failures identisch auf `main` vorbestehend (sniper_retest/window_features), keine
+Regression. **Reviews:** z-code-reviewer 3× unabhängig (Findings gefixt, s.o.) +
+z-spec-compliance 3× unabhängig. **Deploy-Gate (Michi):** Bot-8- und Bot-23-Restart; die AI-Query
+degradiert bis zur Bot-8-Migration graceful (Warn-Log, Classic-Teil postet).
+
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 5: geteilte Feature-Builder research_features + regime_logic auf geschlossene Kerzen (T-2026-CU-9050-112)
 
 Block 5 der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4 „Stand Block 5"): die **zwei geteilten
