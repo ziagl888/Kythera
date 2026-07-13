@@ -1,3 +1,46 @@
+## [2026-07-13] TimescaleDB-R1 Phase 1 Block 4 (Tranche 1): AI-Bot-Direktreader auf geschlossene Kerzen (T-2026-CU-9050-111)
+
+Vierter Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,
+Umbrella T-018) — hier wird **R1 im Bot live**. Umgesetzt nach Michis Leitprinzip:
+**Erkennung läuft auf geschlossenen Kerzen** (`include_forming=False`), der
+**Live-Preis wird nur zur Signal-Generierung** gebraucht und dann separat via
+`get_live_price` geholt (nicht mehr aus der forming Kerze im Analyse-Frame). Wegen
+des Money-Path-Risikos in zwei Tranchen geschnitten; **kein autonomer Merge** —
+Freigabe durch Michi vor dem Enqueue.
+
+**Tranche 1** — sechs Direktreader ohne Offset-Rework/Live-CMP-Umbau lesen jetzt
+über `core.candles` mit `include_forming=False`: `13_ai_rub` (beide Reads; No-op,
+der bisherige `< date_trunc('hour',NOW())`-Filter ist für 1h identisch zum
+Closed-Cutoff), `15_ai_master.load_market_row` (As-of `< floor(ts)`, No-op via
+`end = floor − timeframe_delta`), `9_ai_sr.get_indicators_at_time` (As-of
+`end=trade_ts`; tightening am Rand — ein Trade mitten in der laufenden Stunde
+bekam sonst Partial-Indikatoren), `10_pump_dump.get_indicators_at_time` (echte
+R1-Änderung: `DESC LIMIT 1` ohne Bound las die forming Indikatorzeile),
+`18_ai_abr1` (Selbsttest + Live; `include_forming=False` == bisheriger
+`open_time < current_hour_utc`-Schnitt, `limit=` ersetzt `.tail()`),
+`29_ufi1.load_daily_ohlcv` (echte R1-Änderung: der Read ohne Obergrenze zog die
+forming 1d-Kerze; 29 holt den Live-Preis bereits separat via `get_live_price`).
+
+Die Dict-Reader (9/10/13-ind) bauen die Feature-Dicts jetzt aus `df.iloc[-1].to_dict()`
+statt `dict(zip(cur.description, row))`. Die echten R1-Änderungen (10, 29) **senken
+bewusst die Signal-Raten** — der 24-h-A/B ist eine Post-Merge-VPS-Beobachtung,
+Schwellen werden erst nach dem Retrain getunt (§5, Frage 6).
+
+**Operator-Entscheidungen festgehalten** (`CANDLE_CALL_SITES.md` §5): Close-Grace
+`0`; Leitprinzip Erkennung=geschlossen / Live-Preis=`get_live_price`-bei-Generierung
+einheitlich für alle Block-4-Bots inkl. 11/12 (überschreibt den ersten
+§5.5-„True+Split"-Zwischenstand).
+
+**Tranche 2 (Folge-Task):** `7_pattern_detector`, `12_ai_ats` (Offset-Reworks),
+`22_ip_pattern`/`24_quasimodo`/`25_smc_ml_sniper` (Live-CMP-Deferral) und
+`11_ai_mis` (geschlossene Features + `get_live_price`-Entry + Alias-Reproduktion).
+`14_ai_atb` bleibt ausgeschlossen (geparkt → ATB2-Track T-106).
+
+Verifikation (Build-Maschine, DB-frei, Fleet-Python 3.13.12): `py_compile` aller 6
+Dateien, `ruff check`/`ruff format --check`/`mypy` grün, Regression-Guard
+`smoke` (6 Fixtures) + `verify` (24/24) grün. `docs/CANDLE_CALL_SITES.md` §4
+„Stand Block 4 — Tranche 1".
+
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 3: Monitore + Orchestrator + Preis-Fallbacks explizit auf core.candles (T-2026-CU-9050-109)
 
 Dritter Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,

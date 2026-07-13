@@ -16,6 +16,7 @@ import requests
 
 from core import config as _kcfg  # channel ids
 from core import ticker_10s
+from core.candles import read_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.funding_features import FUNDING_FEATURES, funding_features_cached
@@ -269,18 +270,23 @@ def save_state_to_disk():
 
 
 def get_indicators_at_time(conn, coin):
-    """Holt die aktuellsten 1h Indikatoren für die ML Features."""
+    """Holt die letzten GESCHLOSSENEN 1h-Indikatoren für die ML-Features.
+
+    R1: include_forming=False — die Erkennung darf nicht auf der forming Kerze
+    rechnen (vorher: DESC LIMIT 1 ohne Bound = Partial-Indikatoren der laufenden
+    Kerze).
+    """
     try:
-        with conn.cursor() as cur:
-            cur.execute(f'''
-                SELECT rsi_14, tsi_fast_12_7_7, macd_dif_normal_12_26_9, ema_9, ema_21
-                FROM "{coin}_1h_indicators"
-                ORDER BY open_time DESC LIMIT 1
-            ''')
-            row = cur.fetchone()
-            if row:
-                columns = [desc[0] for desc in cur.description]
-                return dict(zip(columns, row, strict=False))
+        df = read_indicators(
+            conn,
+            coin,
+            "1h",
+            limit=1,
+            include_forming=False,
+            columns=("open_time", "rsi_14", "tsi_fast_12_7_7", "macd_dif_normal_12_26_9", "ema_9", "ema_21"),
+        )
+        if not df.empty:
+            return df.iloc[-1].drop("open_time").to_dict()
     except Exception:
         pass
     return None

@@ -48,6 +48,7 @@ from core.aim2_features import (
 from core.aim2_topn import MODEL_TAG as TOPN_TAG
 from core.aim2_topn import TopNCandidate, select_topn
 from core.aim2_topn import load_config as load_topn_config
+from core.candles import read_candles_with_indicators, timeframe_delta
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
@@ -269,21 +270,26 @@ def load_trail_map(conn) -> dict:
 def load_market_row(conn, symbol: str, ts) -> tuple[dict, float] | None:
     """Letzte GESCHLOSSENE 1h-Kerze vor floor(ts) — Indikatoren + Close."""
     floor_utc = pd.Timestamp(ts).floor("h").tz_localize("UTC").to_pydatetime()
-    cols = ", ".join(f't2."{c}"' for c in IND_COLS)
+    # R1: Erkennung auf der letzten GESCHLOSSENEN Kerze vor floor(ts). Der API-`end`
+    # ist inklusiv, die open_times sind stunden-aligned → `end = floor_utc - 1h`
+    # reproduziert exakt den bisherigen strikten `open_time < floor_utc`-Bound.
     try:
-        df = df_from_query(
+        df = read_candles_with_indicators(
             conn,
-            f'SELECT t1.open_time, t1.close, {cols} FROM "{symbol}_1h" t1 '
-            f'LEFT JOIN "{symbol}_1h_indicators" t2 ON t1.open_time = t2.open_time '
-            f"WHERE t1.open_time < %s ORDER BY t1.open_time DESC LIMIT 1",
-            (floor_utc,),
+            symbol,
+            "1h",
+            limit=1,
+            end=floor_utc - timeframe_delta("1h"),
+            include_forming=False,
+            candle_columns=("open_time", "close"),
+            indicator_columns=list(IND_COLS),
         )
     except Exception:
         conn.rollback()
         return None
     if df.empty:
         return None
-    row = df.iloc[0]
+    row = df.iloc[-1]
     open_time = pd.Timestamp(row["open_time"])
     if open_time.tzinfo is not None:
         open_time = open_time.tz_convert("UTC").tz_localize(None)

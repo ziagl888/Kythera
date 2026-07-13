@@ -68,13 +68,16 @@ logger = setup_logging("UFI1_BOT")
 def load_daily_ohlcv(conn, symbol: str) -> pd.DataFrame | None:
     """Loads daily OHLCV data for a coin."""
     since = datetime.now(timezone.utc) - timedelta(days=DAILY_BARS_LOOKBACK)
-    table = f"{symbol}_1d"
     try:
-        df = pd.read_sql_query(
-            f'SELECT open_time, open, high, low, close, volume '
-            f'FROM "{table}" WHERE open_time >= %s ORDER BY open_time ASC',
+        # R1: nur GESCHLOSSENE Tageskerzen — die forming 1d-Kerze fließt nicht in die
+        # Erkennung. Der Live-Preis kommt separat aus get_live_price (Generierung).
+        df = read_candles(
             conn,
-            params=(since,),
+            symbol,
+            "1d",
+            start=since,
+            include_forming=False,
+            columns=("open_time", "open", "high", "low", "close", "volume"),
         )
     except Exception:
         return None
