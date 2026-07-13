@@ -21,6 +21,7 @@ import scipy.signal
 import xgboost as xgb
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
@@ -305,14 +306,13 @@ def startup_feature_selfcheck(coins):
         frames = []
         for symbol in coins[:10]:
             try:
-                df = pd.read_sql(
-                    f"""
-                    SELECT open_time, open, high, low, close, volume
-                    FROM "{symbol}_1h"
-                    WHERE open_time >= NOW() - INTERVAL '{LIVE_DATA_HISTORY_HOURS} hours'
-                    ORDER BY open_time ASC;
-                    """,
+                df = read_candles(
                     conn,
+                    symbol,
+                    "1h",
+                    limit=LIVE_DATA_HISTORY_HOURS,
+                    include_forming=False,
+                    columns=("open_time", "open", "high", "low", "close", "volume"),
                 )
             except Exception as e:
                 logger.warning(f"Selbsttest: {symbol} nicht ladbar ({e}), nächster Coin.")
@@ -580,19 +580,22 @@ def send_signal(conn, symbol, direction, prob, close_price, model_tag_override=N
 
 def process_abr_logic(conn, symbol):
     try:
-        query = f"""
-            SELECT open_time, open, high, low, close, volume
-            FROM "{symbol}_1h"
-            WHERE open_time >= NOW() - INTERVAL '{LIVE_DATA_HISTORY_HOURS + 5} hours'
-            ORDER BY open_time ASC;
-        """
-        df = pd.read_sql(query, conn)
+        # R1: die Erkennung läuft auf den jüngsten GESCHLOSSENEN Kerzen. Für 1h ist
+        # include_forming=False exakt der bisherige `open_time < current_hour_utc`-
+        # Schnitt (1h-open_times haben immer minute=0); limit=LIVE_DATA_HISTORY_HOURS
+        # ersetzt das `.tail()`, der bisherige +5h-Overfetch entfällt.
+        df = read_candles(
+            conn,
+            symbol,
+            "1h",
+            limit=LIVE_DATA_HISTORY_HOURS,
+            include_forming=False,
+            columns=("open_time", "open", "high", "low", "close", "volume"),
+        )
         if df.empty or len(df) < max(PIVOT_WINDOW * 2, 30) + RETEST_BACKWARD_LOOKUP_CANDLES + 2:
             return
 
         df['open_time'] = pd.to_datetime(df['open_time'], utc=True)
-        current_hour_utc = datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
-        df = df[df['open_time'] < current_hour_utc].tail(LIVE_DATA_HISTORY_HOURS).reset_index(drop=True)
 
         df_indicators = calculate_technical_indicators(df.copy())
         levels = find_pivot_levels(df_indicators)

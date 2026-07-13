@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles, read_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.funding_features import FUNDING_FEATURES, funding_features_asof, load_funding
@@ -110,47 +111,47 @@ def check_rubberband_conditions():
             if 'USDT_' in symbol:
                 continue
 
-            # 1. 90 Tage Daten für die Trendberechnung holen
-            # P1.19: Forming-Candle ausschließen (open_time < date_trunc('hour', NOW())),
-            # sonst rechnet die Regression mit der offenen Kerze aus ~2 min Daten.
-            query_90d = f"""
-                SELECT open_time, close
-                FROM "{symbol}_1h"
-                WHERE open_time >= NOW() - INTERVAL '95 days'
-                  AND open_time < date_trunc('hour', NOW())
-                ORDER BY open_time ASC
-            """
+            # 1. 90 Tage Daten für die Trendberechnung holen — Erkennung läuft auf
+            # GESCHLOSSENEN Kerzen (R1). core.candles mit include_forming=False ersetzt
+            # den bisherigen `open_time < date_trunc('hour', NOW())`-Filter (P1.19):
+            # der zentrale Closed-Cutoff ist für 1h identisch (period_start = Stunden-Floor).
+            df_90d = read_candles(
+                conn,
+                symbol,
+                "1h",
+                start=now - datetime.timedelta(days=95),
+                include_forming=False,
+                columns=("open_time", "close"),
+            )
+            if len(df_90d) < 50:
+                continue
 
-            # 2. Letzte Indikatoren holen
-            # P1.19: closed-candle-Filter — LIMIT 1 lieferte sonst die offene Kerze
-            # (Partial-Indikatoren). close mitziehen, damit curr_close aus DERSELBEN
-            # geschlossenen Kerze stammt wie die Indikatoren (nicht aus dem 90d-Array).
-            query_ind = f"""
-                SELECT
-                    close,
-                    rsi_14, tsi_fast_12_7_7, tsi_fast_12_7_7_signal,
-                    macd_dif_normal_12_26_9, macd_dea_normal_12_26_9,
-                    atr_14, ema_200, donchian_lower_20, donchian_upper_20
-                FROM "{symbol}_1h_indicators"
-                WHERE open_time < date_trunc('hour', NOW())
-                ORDER BY open_time DESC LIMIT 1
-            """
-
-            with conn.cursor() as cur:
-                # 1. Trend Daten
-                cur.execute(query_90d)
-                rows_90d = cur.fetchall()
-                if len(rows_90d) < 50:
-                    continue
-                df_90d = pd.DataFrame(rows_90d, columns=['open_time', 'close'])
-
-                # 2. Indikator Daten
-                cur.execute(query_ind)
-                row_ind = cur.fetchone()
-                if not row_ind:
-                    continue
-                columns_ind = [desc[0] for desc in cur.description]
-                ind = dict(zip(columns_ind, row_ind, strict=False))
+            # 2. Letzte GESCHLOSSENE Indikator-Kerze — close mitziehen, damit curr_close
+            # aus DERSELBEN Kerze stammt wie die Indikatoren (P1.19). include_forming=False
+            # ersetzt den closed-candle-Filter; open_time nur fürs Ordering, danach raus.
+            df_ind = read_indicators(
+                conn,
+                symbol,
+                "1h",
+                limit=1,
+                include_forming=False,
+                columns=(
+                    "open_time",
+                    "close",
+                    "rsi_14",
+                    "tsi_fast_12_7_7",
+                    "tsi_fast_12_7_7_signal",
+                    "macd_dif_normal_12_26_9",
+                    "macd_dea_normal_12_26_9",
+                    "atr_14",
+                    "ema_200",
+                    "donchian_lower_20",
+                    "donchian_upper_20",
+                ),
+            )
+            if df_ind.empty:
+                continue
+            ind = df_ind.iloc[-1].drop("open_time").to_dict()
 
             # --- TRENDBERECHNUNG ---
             # Regression + Vorfilter + Feature-Bau leben seit dem RUB2-Adapter

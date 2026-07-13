@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_indicators
 from core.charting import generate_minichart_image
 
 # --- CORE IMPORTE ---
@@ -93,23 +94,17 @@ def load_models() -> None:
 
 
 def get_indicators_at_time(conn, coin, timestamp):
-    """Holt die 1h Indikatoren zum Zeitpunkt des Trades aus der DB."""
-    table_name = f'"{coin}_1h_indicators"'
+    """Holt die 1h-Indikatoren zur letzten GESCHLOSSENEN Kerze <= timestamp.
+
+    R1: include_forming=False — die Features/Erkennung laufen nie auf der forming
+    Kerze. Feuerte ein Trade mitten in der laufenden Stunde, lieferte `<= timestamp`
+    sonst die Partial-Indikatoren dieser Stunde.
+    """
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT * FROM {table_name}
-                WHERE open_time <= %s
-                ORDER BY open_time DESC LIMIT 1
-            """,
-                (timestamp,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                return None
-            columns = [desc[0] for desc in cur.description]
-            return dict(zip(columns, row, strict=False))
+        df = read_indicators(conn, coin, "1h", limit=1, end=timestamp, include_forming=False)
+        if df.empty:
+            return None
+        return df.iloc[-1].to_dict()
     except Exception as e:
         logger.debug(f"Indikatoren-DB-Fehler für {coin}: {e}")
         return None
