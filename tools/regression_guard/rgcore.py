@@ -121,15 +121,24 @@ def synthetic_ohlcv(symbol: str, timeframe: str, n: int, seed: int) -> pd.DataFr
 
 
 def extract_ohlcv_from_db(conn, symbol: str, timeframe: str, n_bars: int) -> pd.DataFrame:
-    """Pull the newest ``n_bars`` rows of ``"{symbol}_{timeframe}"`` from the DB.
+    """Pull the newest ``n_bars`` CLOSED rows of ``"{symbol}_{timeframe}"`` from the DB.
 
-    Faithful ``SELECT *`` capture (mirrors what the engine reads), re-sorted
-    ascending. Injects a ``symbol`` column only if the raw table lacks one, since
-    the engine's compute reads ``df['symbol']``.
-    """
-    table = f'"{symbol}_{timeframe}"'
-    sql = f"SELECT * FROM {table} ORDER BY open_time DESC LIMIT %s"
-    df = pd.read_sql(sql, conn, params=(n_bars,))
+    Faithful ``SELECT *`` capture (mirrors what the engine reads), ascending.
+    Injects a ``symbol`` column only if the raw table lacks one, since the
+    engine's compute reads ``df['symbol']``.
+
+    Now via core.candles with ``include_forming=False`` (R1, T-2026-CU-9050-107):
+    a freshly extracted fixture no longer carries the still-forming candle. This
+    only affects the DB ``extract`` path — ``verify``/``smoke`` run DB-free on the
+    stored ``.npz`` and are untouched; existing goldens stay valid. A later
+    refresh legitimately re-freezes the forming-excluded capture (documented R1
+    change, NOT a red→green refresh, harte Regel 9).
+
+    ``core.candles`` is imported lazily so module load stays numpy+pandas only
+    (the DB-free guard paths must not pull psycopg2)."""
+    from core.candles import read_candles  # lazy: only the DB path needs it
+
+    df = read_candles(conn, symbol, timeframe, limit=n_bars, include_forming=False, columns=None)
     df = df.sort_values("open_time").reset_index(drop=True)
     if "symbol" not in df.columns:
         df["symbol"] = symbol
