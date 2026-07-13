@@ -12,11 +12,13 @@ from typing import Any
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core.bot_catalog import active_scripts, script_for_tag
 from core.bot_naming import pretty_name
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
 from core.market_utils import send_telegram
+from core.realized_pnl import realized_pnl_pct
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - MARKET_TRACKER - %(message)s')
@@ -1766,6 +1768,232 @@ async def job_per_bot_performance() -> None:
     await asyncio.sleep(1)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# REALIZED PnL REPORT (T-2026-CU-9050-115)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Every 4 hours: per ACTIVE bot the actually realised, leveraged PnL of the
+# closed trades — target-weighted (stake split equally across the published
+# targets, each hit realises 1/N at the target price, the rest closes at
+# close_price) × posted leverage. Windows are keyed on CLOSE time (realised
+# when closed), unlike job_per_bot_performance which windows on open time.
+#
+# Exact-only (operator decision 2026-07-13): AI rows count ONLY when the
+# close persisted targets + lev (8_ai_trade_monitor writes them since this
+# task); historical NULL rows are excluded, so the AI windows fill up
+# gradually after deploy. Classic rows (closed_trades_master) always carried
+# target1-4 + lev and are exact over the full history.
+
+REALIZED_WINDOWS: tuple[tuple[str, float], ...] = (
+    ("8h", 8.0),
+    ("24h", 24.0),
+    ("3d", 72.0),
+    ("7d", 168.0),
+    ("30d", 720.0),
+)
+
+# Housekeeping-style closes are externally caused — neither a bot win nor a
+# bot loss (same rationale as _classify_outcome in job_per_bot_performance).
+REALIZED_NEUTRAL_FRAGMENTS = ("DELISTED", "CLEANUP", "ORPHAN")
+
+
+def _aggregate_realized_pnl(rows: list[tuple[str, float, float]]) -> dict[str, dict[str, dict[str, float]]]:
+    """(bot, age_hours, pnl_pct)-Zeilen in per-Bot/per-Fenster-Stats falten.
+
+    Returns {bot: {window: {'sum': x, 'n': k, 'avg': x/k}}} — windows without
+    trades are absent. Pure + module-scope so backtest/test_market_tracker_
+    realized.py can drive it without a DB (same pattern as _build_chunks).
+    """
+    stats: dict[str, dict[str, dict[str, float]]] = {}
+    for bot, age_h, pnl in rows:
+        if age_h < 0:
+            continue  # clock skew artefact — a close "in the future" fits no window
+        per_bot = stats.setdefault(bot, {})
+        for win_name, hours in REALIZED_WINDOWS:
+            if age_h <= hours:
+                w = per_bot.setdefault(win_name, {'sum': 0.0, 'n': 0.0})
+                w['sum'] += pnl
+                w['n'] += 1
+    for per_bot in stats.values():
+        for w in per_bot.values():
+            w['avg'] = w['sum'] / w['n']
+    return stats
+
+
+def _format_realized_pnl_blocks(stats: dict[str, dict[str, dict[str, float]]]) -> list[str]:
+    """Ein Telegram-<pre>-Block pro Bot, sortiert nach 30d-Summe (absteigend)."""
+
+    def sort_key(item: tuple[str, dict]) -> tuple[float, str]:
+        w30 = item[1].get("30d")
+        return (-(w30['sum'] if w30 else float('-inf')), item[0].casefold())
+
+    blocks = []
+    for bot, per_bot in sorted(stats.items(), key=sort_key):
+        lines = [f"<b>{bot}</b>"]
+        for win_name, _hours in REALIZED_WINDOWS:
+            w = per_bot.get(win_name)
+            if w:
+                lines.append(f"  {win_name:<3}: Σ {w['sum']:>+8.1f}% │ Ø {w['avg']:>+7.2f}% │ n={int(w['n'])}")
+            else:
+                lines.append(f"  {win_name:<3}: —")
+        blocks.append("\n".join(lines))
+    return blocks
+
+
+async def job_realized_pnl_report() -> None:
+    """Postet den Leveraged-Realized-PnL-Report für aktive Bots (alle 4h)."""
+    # Der Scheduler tickt stündlich (minutes-Liste) — die 4h-Cadence lebt hier.
+    now = datetime.now(timezone.utc)
+    if now.hour % 4 != 0:
+        return
+
+    logger.info("Generiere Realized-PnL-Report (aktive Bots)...")
+
+    try:
+        with get_db_connection() as conn:
+            # ── AI closes ────────────────────────────────────────────────
+            # Dedup over the FULL table first, filters outside (report-14
+            # survivor rule, see AI_DEDUP_KEY comment at module top).
+            #
+            # age_h statt Timestamps: closed_ai_signals.close_time ist eine
+            # NAIVE Spalte, die Bot 8 per NOW() füllt — also Server-LOKALZEIT
+            # (P1.8: +3h gegen UTC). LOCALTIMESTAMP - close_time ist reine
+            # naive-naive-Arithmetik mit derselben Uhr wie der Writer; ein
+            # Vergleich gegen ein UTC-now aus Python läge 3h daneben
+            # (OPUS-HANDOFF Falle 9 / R3).
+            try:
+                df_ai = pd.read_sql_query(
+                    f"""
+                    SELECT * FROM (
+                        SELECT DISTINCT ON ({AI_DEDUP_KEY})
+                               model AS strategy, upper(btrim(direction)) AS direction,
+                               entry, close_price, targets_hit, targets, lev,
+                               status AS close_reason,
+                               EXTRACT(EPOCH FROM (LOCALTIMESTAMP - close_time)) / 3600.0 AS age_h
+                        FROM closed_ai_signals
+                        ORDER BY {AI_DEDUP_ORDER}
+                    ) d
+                    WHERE d.entry > 0 AND d.close_price > 0
+                      AND d.targets IS NOT NULL AND d.lev IS NOT NULL
+                      AND d.age_h <= 720.0
+                      AND d.close_reason IS DISTINCT FROM 'ENTRY_NOT_FILLED'
+                    """,
+                    conn,
+                )
+            except Exception as e:
+                # Erwartbar bis Bot 8 nach dem Deploy einmal lief und die
+                # Spalten targets/lev angelegt hat (Schema-Sicherung dort).
+                if "targets" in str(e) or "lev" in str(e):
+                    logger.warning(
+                        "Realized-PnL: closed_ai_signals hat targets/lev noch nicht (Bot-8-Migration ausstehend) — AI-Teil übersprungen."
+                    )
+                    conn.rollback()
+                    df_ai = pd.DataFrame()
+                else:
+                    raise
+
+            # ── Classic closes ───────────────────────────────────────────
+            # posted (= Close-Zeit) wird von 5_trade_monitor als naive UTC
+            # geschrieben — hier passt die naive-UTC-Uhr, nicht LOCALTIMESTAMP.
+            df_cls = pd.read_sql_query(
+                f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON ({CLS_DEDUP_KEY})
+                           strategy, upper(btrim(direction)) AS direction,
+                           entry, close_price, lev,
+                           target1, target2, target3, target4, status,
+                           EXTRACT(EPOCH FROM ((NOW() AT TIME ZONE 'UTC') - posted)) / 3600.0 AS age_h
+                    FROM closed_trades_master
+                    ORDER BY {CLS_DEDUP_ORDER}
+                ) d
+                WHERE d.entry > 0 AND d.close_price > 0 AND d.age_h <= 720.0
+                """,
+                conn,
+            )
+    except Exception as e:
+        logger.error(f"Error loading der Realized-PnL-Daten: {e}", exc_info=True)
+        return
+
+    active = active_scripts()
+    rows: list[tuple[str, float, float]] = []
+    n_neutral = 0
+    n_invalid = 0
+    n_inactive = 0
+    unmapped: set[str] = set()
+
+    def add_row(tag: str, age_h: float, pnl: float | None) -> None:
+        nonlocal n_invalid, n_inactive
+        if pnl is None:
+            n_invalid += 1
+            return
+        script = script_for_tag(tag)
+        if script is None:
+            unmapped.add(pretty_name(tag))
+            return
+        if script not in active:
+            n_inactive += 1
+            return
+        rows.append((pretty_name(tag), float(age_h), pnl))
+
+    for r in df_ai.itertuples(index=False):
+        reason = str(r.close_reason or '').upper()
+        if any(frag in reason for frag in REALIZED_NEUTRAL_FRAGMENTS):
+            n_neutral += 1
+            continue
+        targets = r.targets
+        if isinstance(targets, str):
+            try:
+                targets = json.loads(targets)
+            except ValueError:
+                targets = None
+        pnl = realized_pnl_pct(r.direction, r.entry, r.close_price, targets or [], r.targets_hit, r.lev)
+        add_row(str(r.strategy), r.age_h, pnl)
+
+    for r in df_cls.itertuples(index=False):
+        targets = [t for t in (r.target1, r.target2, r.target3, r.target4) if t is not None and float(t) > 0]
+        try:
+            hits = int(float(r.status))
+        except (TypeError, ValueError):
+            hits = 0
+        pnl = realized_pnl_pct(r.direction, r.entry, r.close_price, targets, hits, r.lev)
+        add_row(str(r.strategy), r.age_h, pnl)
+
+    if unmapped:
+        # No silent drops: an unmapped tag means core/bot_catalog.py lacks the
+        # family of a new/renamed model — surface it instead of hiding trades.
+        logger.warning(f"Realized-PnL: {len(unmapped)} Tag(s) ohne Bot-Zuordnung ausgelassen: {sorted(unmapped)}")
+
+    stats = _aggregate_realized_pnl(rows)
+    if not stats:
+        logger.info("Realized-PnL: keine berechenbaren Trades aktiver Bots im 30d-Fenster — Post skipped.")
+        return
+
+    header_first = (
+        '<pre>💵 <b>REALIZED PnL — ACTIVE BOTS</b> 💵\n<i>leveraged, target-weighted, windows by CLOSE time</i>\n\n'
+    )
+    header_continued = '<pre>💵 <b>REALIZED PnL — ACTIVE BOTS</b> (continued) 💵\n\n'
+    unmapped_note = f'\n  {len(unmapped)} unmapped tag(s) skipped (see bot log)' if unmapped else ''
+    footer = (
+        '\n\n<b>Legend:</b>\n'
+        '  Σ = sum of realized % per window | Ø = avg per trade\n'
+        '  stake split equally across targets, rest closes at exit\n'
+        '  AI trades: only closes with persisted targets+lev (exact-only)\n'
+        '  excluded: unfilled entries, housekeeping closes'
+        f'{unmapped_note}'
+        '</pre>'
+    )
+
+    chunks = _build_chunks(_format_realized_pnl_blocks(stats), header_first, header_continued, footer)
+    for chunk in chunks:
+        send_telegram(chunk, TELEGRAM_CHANNEL_ID)
+        await asyncio.sleep(1)
+
+    logger.info(
+        f"✅ Realized-PnL-Post gesendet ({len(stats)} Bots, {len(rows)} Trades im 30d-Fenster; "
+        f"skipped: {n_neutral} neutral, {n_invalid} invalid, {n_inactive} inactive)."
+    )
+
+
 # ⏰ SCHEDULER ENGINE
 #
 # KNOWN RISK (P2.41, T-2026-CU-9050-081) — the jobs are `async def` but every
@@ -1832,6 +2060,10 @@ async def main():
         # Läuft 30s after der Signal-Summary damit der Telegram-Worker nicht
         # zwei große Posts im gleichen Takt in denselben Channel drückt.
         asyncio.create_task(schedule_job([0], 30, job_per_bot_performance, "Per_Bot_Performance")),
+        # 7. Realized PnL (T-2026-CU-9050-115): stündlich getriggert [XX:02:30],
+        # der Job selbst postet nur alle 4h (hour % 4 == 0). Minute 2 hält den
+        # XX:00/XX:01-Takt der bestehenden Posts frei.
+        asyncio.create_task(schedule_job([2], 30, job_realized_pnl_report, "Realized_PnL")),
     ]
 
     await asyncio.gather(*tasks)

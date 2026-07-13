@@ -7,8 +7,10 @@ import warnings
 import pytz
 
 # --- IMPORT CONFIGURATION FROM CORE ---
+from core.bot_catalog import has_standard_leverage
 from core.candles import read_candles
 from core.database import get_db_connection
+from core.market_utils import get_max_leverage
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
@@ -34,6 +36,14 @@ def main():
             # Timeout-Exit (gehört zur studien-validierten Bracket-Geometrie).
             cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS entry_filled BOOLEAN DEFAULT TRUE")
             cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS expiry_hours INTEGER")
+            # Realized-PnL-Report (T-2026-CU-9050-115): Target-Preise + Hebel
+            # gehen beim Close sonst verloren (die ai_signals-Row wird gelöscht,
+            # nur targets_hit blieb übrig) — ohne sie ist der tatsächlich
+            # realisierte %-Ertrag (Teilschließungen je Target × Hebel) nicht
+            # rekonstruierbar. Additive Spalten, Alt-Rows bleiben NULL und
+            # werden vom Report ausgeschlossen (exact-only, Operator-Entscheid).
+            cur.execute("ALTER TABLE closed_ai_signals ADD COLUMN IF NOT EXISTS targets JSON")
+            cur.execute("ALTER TABLE closed_ai_signals ADD COLUMN IF NOT EXISTS lev TEXT")
         conn.commit()
     except Exception as e:
         logger.warning(f"Could not migrate schema columns: {e}")
@@ -371,10 +381,18 @@ def main():
                                 logger.info(
                                     f"🔒 AI Trade {symbol} ({model}) geschlossen! Grund: {close_reason} | PnL: {pnl:.2f}%"
                                 )
+                                # T-2026-CU-9050-115: targets + lev beim Close persistieren
+                                # (Grundlage des Realized-PnL-Reports in Bot 23).
+                                # lev = derselbe Cap wie an den Post-Sites
+                                # (get_max_leverage(symbol, 20)); Bots mit
+                                # abweichendem Post-Hebel (UFI1: SL-gecappt,
+                                # P0.6/R4) bekommen NULL statt eines falschen
+                                # 20x — der Report schließt NULL-Rows aus.
+                                lev_text = get_max_leverage(symbol, 20) if has_standard_leverage(model) else None
                                 cur.execute(
                                     """
-                                    INSERT INTO closed_ai_signals (symbol, model, direction, entry, close_price, targets_hit, open_time, close_time, status)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                                    INSERT INTO closed_ai_signals (symbol, model, direction, entry, close_price, targets_hit, open_time, close_time, status, targets, lev)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s)
                                 """,
                                     (
                                         symbol,
@@ -385,6 +403,8 @@ def main():
                                         int(new_targets_hit),
                                         open_time,
                                         close_reason,
+                                        json.dumps([float(t) for t in targets]) if targets else None,
+                                        lev_text,
                                     ),
                                 )
                                 db_was_changed = True
