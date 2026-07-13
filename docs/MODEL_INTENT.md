@@ -526,6 +526,17 @@ model_id=ATB2). Der alte Trainer (Close-Regressionsgeraden) ist verworfen;
 Bot bleibt geparkt, bis ATB2 out-of-time validiert ist. Kein Backtest-Vertrauen
 in das Script selbst — dessen „Winrate" ist TP1-Touch (Report-16-Falle).
 
+**Status (T-2026-CU-9050-104, 2026-07-12):** Labeling-/Trainings-Pipeline
+DB-frei gebaut + getestet — `core/atb2_features.py` (Kanal-Detektor + 5
+Setup-Features + Kanalgeometrie, geteilt Bot/Simulator/Trainer),
+`tools/walkforward_sim.py --strategy atb2` (Measured-Move-Label via
+`simulate_exit`, Smart-Targets als Vergleich) und
+`tools/retrain_from_replay.py --strategy atb2` (je Richtung, 3d-Purge-Split,
+Isotonic, `pick_threshold_safe`, Artefakt `model_id=ATB2` → `staging_models/`).
+Run-Book + Verdikt-Kriterien: `docs/ATB2_REBUILD.md`. Offen: Label/Train-Lauf
+auf dem VPS (hinter T-061, Sequential-Jobs); Bot-Serving-Rewire + P1.45 +
+Entparken erst nach deploybarem out-of-time-Verdikt (C-Gate).
+
 ---
 
 ## 12. Support Resistance (Classic) ✅ (Intent bestätigt 2026-07-06)

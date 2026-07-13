@@ -83,6 +83,7 @@ from core.mis_features import (
 )
 from core.funding_features import funding_features_asof, load_funding  # noqa: E402
 from core.rub_features import build_rub_features, rub_event_type, rub_trend  # noqa: E402
+from core import atb2_features as atb  # noqa: E402
 from core.time import utc_now  # noqa: E402
 from core.trade_utils import (  # noqa: E402
     calculate_smart_targets,
@@ -103,7 +104,13 @@ MAX_CPU_AT_START = 90.0  # health_monitor CPU_SATURATED nicht triggern
 
 # Wie viele TPs der jeweilige Bot tatsächlich publiziert (Cornix-Message) —
 # bestimmt die Positions-Fraktionierung im Ladder-Exit.
-PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5, "rub": 3}
+PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5, "rub": 3, "atb2": 3}
+
+# ATB2 (§11): Warmup so groß, dass EMA200 vor dem 1. Event konvergiert
+# (MIN_HISTORY_CANDLES=1500 Kerzen ≈ 62,5 Tage → 65d Puffer); Cooldown je
+# Richtung wie die anderen Ausbruch-Bots.
+ATB2_WARMUP_DAYS = 65
+ATB2_COOLDOWN_H = 4
 
 
 def set_low_priority() -> None:
@@ -903,6 +910,75 @@ def run_rub1(conn, symbol: str, days: int) -> list[dict]:
     return trades
 
 
+def run_atb2(conn, symbol: str, days: int) -> list[dict]:
+    """Walk-forward des ATB2-Converging-Channel-Detektors (MODEL_INTENT §11).
+
+    EINE Quelle mit Bot 14: ``core.atb2_features`` (bestätigte Pivots, Kanal-Fit,
+    geschlossener Ausbruch, Feature-Vertrag). Je geschlossener 1h-Kerze wird
+    geprüft, ob ein konvergierender Kanal (Wedge/Triangle/Pennant) ausbricht.
+
+    Label-Geometrie = Measured-Move (§11: ⅓/⅔/1× Kanalbreite) — die
+    kanal-native Geometrie, die der Bot postet (kein DB-Level-Pool nötig →
+    Train==Serve exakt). Zusätzlich werden die Fleet-Smart-Targets derselben
+    Kerze simuliert und als Vergleich (``smart_*``) ins Record geschrieben —
+    §11 will Measured-Move GEGEN Smart-Targets im Replay bewertet sehen, ohne
+    dafür die Trainings-Label-Quelle zu verwässern.
+
+    4h-Cooldown je Richtung; Entry = Close der frisch geschlossenen
+    Ausbruchskerze."""
+    df = load_ohlcv(conn, symbol, "1h", days + ATB2_WARMUP_DAYS)
+    # hist deckt Kanal-Lookback UND EMA200-Konvergenz (Paritäts-Kontrakt) ab.
+    hist = max(atb.CHANNEL_MAX_SPAN + atb.CONFIRM_BARS + atb.ATR_PERIOD, atb.MIN_HISTORY_CANDLES)
+    if df is None or len(df) < hist + 2:
+        return []
+    df_ind = atb.compute_indicators(df)
+    t1h = df["open_time"].values
+    H, L, C = df["high"].values, df["low"].values, df["close"].values
+
+    start_t = max(hist, len(df) - days * 24)
+    cooldown = {"LONG": pd.Timestamp.min, "SHORT": pd.Timestamp.min}
+    trades: list[dict] = []
+    # -1: simulate_exit braucht mindestens eine Folgekerze nach dem Break.
+    for t in range(start_t, len(df) - 1):
+        setup = atb.find_channel_breakout(df_ind, t)
+        if setup is None:
+            continue
+        direction = setup["direction"]
+        ts_decision = pd.Timestamp(t1h[t]) + pd.Timedelta(hours=1)
+        if ts_decision < cooldown[direction]:
+            continue
+        cooldown[direction] = ts_decision + pd.Timedelta(hours=ATB2_COOLDOWN_H)
+
+        entry = setup["entry"]
+        mm = atb.measured_move_targets(setup["channel"], setup["breakout"], entry)
+        if not mm["targets"] or mm["sl"] <= 0:
+            continue
+        res = simulate_exit(t1h, H, L, C, t + 1, direction,
+                            mm["entry1"], mm["sl"], mm["targets"], PUBLISHED_TARGETS["atb2"])
+
+        # §11-Vergleich: dieselbe Kerze mit den Fleet-Smart-Targets.
+        win1h = df.iloc[max(0, t + 1 - 1000): t + 1][["open", "high", "low", "close", "volume"]]
+        try:
+            smart = calculate_smart_targets(None, symbol, direction, entry, df=win1h)
+            res_smart = simulate_exit(t1h, H, L, C, t + 1, direction,
+                                      smart["entry1"], smart["sl"], smart["targets"],
+                                      PUBLISHED_TARGETS["atb2"])
+        except Exception:
+            res_smart = {"outcome_tp1": None, "net_pnl_pct": None, "exit_reason": "smart_error"}
+
+        trades.append({
+            "strategy": "atb2", "tf": "1h", "symbol": symbol, "direction": direction,
+            "signal_time": str(ts_decision), "entry": float(entry), "entry2": mm["entry2"],
+            "sl": mm["sl"], "targets": mm["targets"][:PUBLISHED_TARGETS["atb2"]],
+            "channel_type": setup["channel"]["channel_type"],
+            "features": setup["features"], **res,
+            "smart_outcome_tp1": res_smart.get("outcome_tp1"),
+            "smart_net_pnl_pct": res_smart.get("net_pnl_pct"),
+            "smart_exit_reason": res_smart.get("exit_reason"),
+        })
+    return trades
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DRIVER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -929,7 +1005,8 @@ def summarize(trades: list[dict], label: str) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Walk-Forward-Simulator (P0.10/P0.11)")
-    ap.add_argument("--strategy", required=True, choices=["ufi1", "td", "bb", "abr1", "mis1", "rub"])
+    ap.add_argument("--strategy", required=True,
+                    choices=["ufi1", "td", "bb", "abr1", "mis1", "rub", "atb2"])
     ap.add_argument("--tf", default="1h", choices=["1h", "4h"], help="nur für td/bb")
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--stride", type=int, default=24,
@@ -1010,6 +1087,8 @@ def main() -> None:
                             trades = run_mis1(conn, symbol, args.days, args.stride)
                         elif args.strategy == "rub":
                             trades = run_rub1(conn, symbol, args.days)
+                        elif args.strategy == "atb2":
+                            trades = run_atb2(conn, symbol, args.days)
                         else:
                             trades = run_abr1(conn, symbol, args.days, abr1_mod)
                         break
