@@ -1,3 +1,45 @@
+## [2026-07-13] TimescaleDB-R1 Phase 1 Block 5: geteilte Feature-Builder research_features + regime_logic auf geschlossene Kerzen (T-2026-CU-9050-112)
+
+Block 5 der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4 „Stand Block 5"): die **zwei geteilten
+Feature-Builder** lesen jetzt über `core.candles` mit `include_forming=False` — je mit ihren
+Trainer-/Replay-Aufrufern im selben Commit (harte Regel 7: Trainer == Serving == Replay). Zwei
+Commits mit gegensätzlichem Risiko.
+
+- **5a `core/research_features.fetch_context_frame`** (Research-Bots 30-33) — rohe DESC-f-String-SQL
+  → `read_candles_with_indicators(include_forming=False)`; die `.iloc[::-1]`-Umkehr **entfällt** (API
+  liefert ASC — bliebe sie drin, würde der Frame wieder DESC und `searchsorted` läge daneben; INVERSE
+  der Block-2-Falle). `CONTEXT_IND_COLS` ist jetzt **eine Quelle** in `core/research_features` (aus
+  `CONTEXT_SQL_SELECT` abgeleitet), importiert von `tools/research_dataset_common.load_candles_ctx`
+  → Live- und Offline-/Trainings-Frame-Spalten byte-identisch per Konstruktion. **Feature-Parität =
+  No-op** (die Feature-Kerze wählt `searchsorted` über open_time, unabhängig von der forming Zeile).
+  **Aber kein voller No-op:** die Bots 30/31/32 nehmen `live_price = df["close"].iloc[-1]` als
+  Entry-Anker — vorher forming-1h-Kerze (≈Live), jetzt letzte GESCHLOSSENE (bis ~59 min stale). Bot
+  `33_ai_fif1` (einziger deployter) **nicht betroffen** (nutzt `sig["entry"]`). 30/31/32 sind gated
+  (`NEW_IDEAS_LIVE_POSTING`, worthless/blocked) → kein Real-Money-Impact; Umstellung auf
+  `get_live_price` als Follow-up **T-2026-CU-9050-113**.
+- **5b `core/regime_logic.compute_features`** (`26_regime_detector` live + `backtest/backfill_regime_history`
+  replay, eine Funktion) — beide 15m-Reads (`BTCUSDT_15m`/`BTCDOMUSDT_15m`) → `read_candles(include_forming=False)`.
+  **Live-Gating-Änderung:** die forming 15m-Kerze treibt nicht mehr `classify_regime → apply_debounce
+  → regime_current → Orchestrator-Whitelist`. Backfill braucht `end=` — **Achtung, der ursprüngliche
+  Handoff-Mechanismus war falsch:** der `include_forming`-Cutoff ist **DB-`now()`-basiert**, droppt
+  also NICHT die bei einem historischen `as_of` laufende Kerze; korrekt ist
+  `end=last_closed_open_time("15m", as_of)` (API-`end` inklusiv → die bei `as_of` forming Kerze fällt
+  raus). Live: kein `end`. Damit wird ein regeneriertes `regime_history` closed-candle-korrekt.
+  Expliziter Float-Cast auf `high/low/close` (+ BTCDOM `close`) — `core.candles` liefert rohes
+  NUMERIC/Decimal (Block-4-Bot-22-Falle).
+- **Schwellen unverändert (§5 q6):** R1 senkt Regime-Transition-Raten bewusst; keine Konstante
+  (TREND/CHOP-Schwellen, ATR-Multiplikatoren, Debounce-Counts, Perzentile) wurde nachgezogen — das
+  ist Post-Retrain-Operator-Sache.
+
+Verifikation (Build-Maschine, DB-frei, Fleet-Python 3.13.12): `ruff`/`format --check`/`mypy` grün auf
+`core/research_features.py` + `core/regime_logic.py`; `backtest/test_feature_lookahead.py` 20/20 (zwei
+`fetch_context_frame`-Tests auf Fake-Reader migriert + neuer `compute_features`-Read-Kontrakt-Test, der
+Live-ohne-`end` vs Backfill-`end=last_closed_open_time` festnagelt); `test_regime_detector` +
+`test_bot_regime_analyzer` 79/79; Regression-Guard `smoke`+`verify` 24/24. **Reviews:** z-code-reviewer
+3/3 PASS (unabhängiges N-Vote) + z-spec-compliance PASS (7/7). PR #102 gemergt (Michi-Go).
+**Post-Merge-VPS (offen):** `backfill_regime_history.py` neu → `regime_history` closed-korrekt →
+TRM1-Retrain (Train + Serve lesen dieselbe Tabelle, Sequential-Jobs).
+
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 4 (Tranche 2 komplett): 22/24/25/11 + core/live_price.py auf geschlossene Kerzen (T-2026-CU-9050-111)
 
 Abschluss von Block 4 (R1 im Bot live; `docs/CANDLE_CALL_SITES.md` §4 „Stand Block 4 —
