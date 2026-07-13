@@ -1,3 +1,24 @@
+## [2026-07-13] TimescaleDB-R1 Phase 1 Block 4 (Tranche 2, Teil): 12_ai_ats + 7_pattern_detector auf geschlossene Kerzen (T-2026-CU-9050-111)
+
+Fortsetzung von Block 4 (R1 im Bot live; `docs/CANDLE_CALL_SITES.md` §4). Die zwei
+**Offset-Rework-Bots** ohne Live-CMP-Deferral lesen jetzt über `core.candles` mit
+`include_forming=False`; die restlichen vier (`22`/`24`/`25`/`11`) folgen fokussiert.
+
+- `12_ai_ats`: `read_candles_with_indicators(include_forming=False, limit=500)`,
+  DESC-Umkehr entfällt. Die TSI-Crossover-Detektion lief schon auf `iloc[-2]`
+  (geschlossen) → ohne forming Kerze ist die jüngste geschlossene `iloc[-1]`, also
+  `current_idx −2→−1`, `prev_idx −3→−2` (dieselbe Detektions-Kerze). Entry bleibt aus
+  der geschlossenen Kerze (Operator-Ausnahme). Transitional: 500er-OBV-Baseline
+  verschiebt sich um eine Kerze, bis zum ATS-Retrain vernachlässigbar (§5 q6).
+- `7_pattern_detector`: `read_candles(include_forming=False, limit=168)`, DESC-Umkehr
+  entfällt. Breakout-Kerze war `len(df)−2` (geschlossen) → jetzt `len(df)−1`. Der
+  `iloc[:-4]`-Pivot-Puffer bleibt (Index `len−4` ist durch `rolling(9,center)` ohnehin
+  NaN-geflaggt); der Rand-Pivot verliert nur seinen bisherigen Forming-Repaint.
+
+Verifikation (Build-Maschine, DB-frei, Fleet-Python 3.13.12): `py_compile` +
+`ruff check`/`ruff format --check` + `mypy` grün auf beiden Dateien.
+`docs/CANDLE_CALL_SITES.md` §4 „Stand Block 4 — Tranche 2 Teilmenge".
+
 ## [2026-07-13] TimescaleDB-R1 Phase 1 Block 4 (Tranche 1): AI-Bot-Direktreader auf geschlossene Kerzen (T-2026-CU-9050-111)
 
 Vierter Umverdrahtungs-Block der R1-Migration (`docs/CANDLE_CALL_SITES.md` §4,
