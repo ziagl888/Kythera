@@ -266,6 +266,38 @@ def _assert_legacy_backend() -> None:
         )
 
 
+# ── Phase-2 dual-write (forward-only, off by default) ─────────────────────────
+#
+# When KYTHERA_CANDLES_DUAL_WRITE is truthy, upsert_candles/upsert_indicators
+# write the `candles`/`indicators` hypertables IN ADDITION to the legacy per-coin
+# tables — a second INSERT in the CALLER's transaction, committed together (so a
+# crash between the two never leaves the two stores disagreeing). READS stay
+# legacy until the Phase-4 cutover (KYTHERA_CANDLES_SOURCE), so this is invisible
+# to every reader; the hypertables just start accumulating the forward stream.
+# Read at call time (like KYTHERA_CANDLES_SOURCE) so a per-process flip needs no
+# reimport. Backfilling the pre-flag history is a separate one-shot (tools/).
+
+
+def _dual_write_enabled() -> bool:
+    return os.getenv("KYTHERA_CANDLES_DUAL_WRITE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Fixed table name → plain SQL string is injection-safe; the row values go through
+# execute_values. is_closed is part of both the SET and the IS DISTINCT FROM guard
+# so a forming→closed re-upsert (same OHLCV, flag flips true) still writes, while a
+# genuinely unchanged re-upsert stays a no-op (no WAL churn — audit D3).
+_CANDLES_HYPER_UPSERT = (
+    "INSERT INTO candles AS t "
+    "(symbol, tf, open_time, open, high, low, close, volume, is_closed) VALUES %s "
+    "ON CONFLICT (symbol, tf, open_time) DO UPDATE SET "
+    "open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, "
+    "close=EXCLUDED.close, volume=EXCLUDED.volume, is_closed=EXCLUDED.is_closed "
+    "WHERE (t.open, t.high, t.low, t.close, t.volume, t.is_closed) "
+    "IS DISTINCT FROM "
+    "(EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.close, EXCLUDED.volume, EXCLUDED.is_closed)"
+)
+
+
 # ── Reads ─────────────────────────────────────────────────────────────────────
 
 
@@ -572,6 +604,12 @@ def upsert_candles(
     ).format(tbl=_ident(table))
     with conn.cursor() as cur:
         extras.execute_values(cur, query.as_string(cur), rows, page_size=page_size)
+    if _dual_write_enabled():
+        # rows: (symbol, open_time, open, high, low, close, volume) → the hypertable
+        # adds tf (position 1) and the R1 is_closed flag (last). Same transaction.
+        hyper_rows = [(r[0], tf, r[1], r[2], r[3], r[4], r[5], r[6], closed) for r in rows]
+        with conn.cursor() as cur:
+            extras.execute_values(cur, _CANDLES_HYPER_UPSERT, hyper_rows, page_size=page_size)
     return len(rows)
 
 
@@ -605,7 +643,36 @@ def upsert_indicators(conn: Any, df: pd.DataFrame, symbol: str, tf: str, *, page
     values = [tuple(x) for x in df[cols].to_numpy()]
     with conn.cursor() as cur:
         extras.execute_values(cur, query.as_string(cur), values, page_size=page_size)
+    if _dual_write_enabled():
+        _upsert_indicators_hyper(conn, df, tf, page_size=page_size)
     return len(values)
+
+
+def _upsert_indicators_hyper(conn: Any, df: pd.DataFrame, tf: str, *, page_size: int) -> None:
+    """Dual-write the indicator frame into the `indicators` hypertable.
+
+    The frame carries `symbol`, `open_time`, `close` and the indicator columns but
+    no `tf`/`is_closed`; both are added here. **is_closed is always True**: post-R1
+    the engine computes indicators only on CLOSED candles
+    (`read_candles(include_forming=False)`, Block 6 Part 1), so every persisted
+    indicator row belongs to a closed candle. Columns are re-selected by name so
+    the value order is independent of the frame's incoming column order. Runs in
+    the caller's transaction; does not commit.
+    """
+    payload_cols = [c for c in df.columns if c not in ("symbol", "open_time")]
+    insert_cols = ["symbol", "tf", "open_time", "is_closed", *payload_cols]
+    update_cols = ["is_closed", *payload_cols]  # symbol/tf/open_time are the conflict key
+    query = sql.SQL(
+        "INSERT INTO indicators ({cols}) VALUES %s ON CONFLICT (symbol, tf, open_time) DO UPDATE SET {sets}"
+    ).format(
+        cols=_columns_sql(insert_cols),
+        sets=sql.SQL(", ").join(
+            sql.SQL("{c} = EXCLUDED.{c}").format(c=sql.Identifier(_valid_col(c))) for c in update_cols
+        ),
+    )
+    values = [(r[0], tf, r[1], True, *r[2:]) for r in df[["symbol", "open_time", *payload_cols]].to_numpy()]
+    with conn.cursor() as cur:
+        extras.execute_values(cur, query.as_string(cur), values, page_size=page_size)
 
 
 def _valid_col(col: str) -> str:
