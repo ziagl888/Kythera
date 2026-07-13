@@ -27,11 +27,11 @@ except Exception:
     pass
 
 from core.candles import read_candles_with_indicators  # noqa: E402
-from core.research_features import CONTEXT_SQL_SELECT  # noqa: E402
 
-# CONTEXT_SQL_SELECT ist ein "i.<col>, …"-SQL-Fragment; für read_candles_with_
-# indicators brauchen wir die reinen Spaltennamen (Präfix/Whitespace entfernt).
-CONTEXT_IND_COLS = [c.strip().split(".")[-1] for c in CONTEXT_SQL_SELECT.split(",") if c.strip()]
+# CONTEXT_IND_COLS ist die EINE Quelle (core/research_features), aus der auch der
+# Live-Join (fetch_context_frame) seine Indikator-Spalten zieht — so bleiben die
+# Frame-Spalten von Serving und Training/Replay byte-identisch (harte Regel 7).
+from core.research_features import CONTEXT_IND_COLS  # noqa: E402
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))

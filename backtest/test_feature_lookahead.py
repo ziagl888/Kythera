@@ -406,94 +406,163 @@ def test_sra2_row_scoped():
     print("OK  sra.build_sra2_features: deterministisch, row-scoped, Input unmutiert, Key-Vertrag")
 
 
-# ── fetch_context_frame: R1 / Forming-Candle via Stub-Cursor ─────────────────
-class _StubCursor:
-    def __init__(self, rows, cols):
-        self._rows, self._cols = rows, cols
-
-    def execute(self, query):
-        pass
-
-    def fetchall(self):
-        return self._rows
-
-    @property
-    def description(self):
-        return [(c,) for c in self._cols]
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-class _StubConn:
-    def __init__(self, rows, cols):
-        self._rows, self._cols = rows, cols
-
-    def cursor(self):
-        return _StubCursor(self._rows, self._cols)
-
-
+# ── fetch_context_frame: R1 / Forming-Candle via Fake-Reader ─────────────────
+# Nach der Block-5-Umverdrahtung liest fetch_context_frame über core.candles
+# (read_candles_with_indicators, include_forming=False) — die forming Kerze
+# fällt schon im Read raus (DB-Uhr-Cutoff, mechanisch getestet in
+# test_candles.py), nicht mehr erst im floor-1-Join. Der Fake-Reader unten
+# (_fake_reader) bildet den include_forming-Cutoff pandas-seitig nach; er wird
+# via monkeypatch von research_features.read_candles_with_indicators eingehängt,
+# analog zu den walkforward-Loadern. Der Test bleibt damit DB-frei.
 _CTX_COLS = ["open_time", "close", "volume", "rsi_14", "ema_21", "ema_200", "atr_14", "boll_upper_20", "boll_lower_20"]
 
 
-def _db_rows_desc(n=60, seed=17, until=None):
-    """Synthetische DB-Zeilen wie der ORDER BY open_time DESC LIMIT-Fetch sie liefert."""
+def _ctx_frame_asc(n=60, tf="1h", end_offset_h=0, seed=17):
+    """ASC 1h-Frame, now-relativ: n geschlossene Kerzen PLUS die laufende
+    (open_time == period_start) — so wie die per-Coin-Tabelle sie heute wirklich
+    enthält. ``end_offset_h`` schiebt das ganze Fenster um h Stunden in die
+    Vergangenheit (für den Staleness-Fall)."""
+    from core import candles
+
+    forming_open = candles.period_start(tf, dt.datetime.now(dt.timezone.utc)) - dt.timedelta(hours=end_offset_h)
+    step = candles.timeframe_delta(tf)
+    times = [forming_open - i * step for i in range(n, -1, -1)]  # ASC, letzte Zeile = forming
     rng = np.random.default_rng(seed)
-    until = until or dt.datetime(2026, 1, 10, 12, 0)
-    times = [until - dt.timedelta(hours=i) for i in range(n)]  # DESC
-    rows = []
-    for t in times:
-        close = float(rng.uniform(90, 110))
-        rows.append((
-            t, close, float(rng.uniform(1000, 50000)), float(rng.uniform(20, 80)),
-            close * 1.01, close * 0.99, close * 0.02, close * 1.03, close * 0.97,
-        ))
-    return rows
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, len(times))))
+    df = pd.DataFrame({
+        "open_time": times,
+        "close": close,
+        "volume": rng.uniform(1000, 50000, len(times)),
+        "rsi_14": rng.uniform(20, 80, len(times)),
+        "ema_21": close * 1.01,
+        "ema_200": close * 0.99,
+        "atr_14": close * 0.02,
+        "boll_upper_20": close * 1.03,
+        "boll_lower_20": close * 0.97,
+    })
+    return df[_CTX_COLS], forming_open
+
+
+def _run_fetch_context(frame, as_of):
+    """fetch_context_frame mit eingehängtem Fake-Reader ausführen; gibt
+    (result, calls) zurück."""
+    calls: list[dict] = []
+    original = research_features.read_candles_with_indicators
+    try:
+        research_features.read_candles_with_indicators = _fake_reader(frame, calls)
+        res = research_features.fetch_context_frame(object(), "TESTUSDT", as_of=as_of)
+    finally:
+        research_features.read_candles_with_indicators = original
+    return res, calls
 
 
 def test_fetch_context_frame_ignores_forming_candle():
-    """R1 mechanisch: is_closed ist in der DB nicht durchgesetzt (Falle 1) —
-    liegt die Forming Candle der aktuellen Stunde in der Tabelle, darf sie
-    weder die gewählte Feature-Kerze noch deren Features ändern."""
-    last_closed_open = dt.datetime(2026, 1, 10, 11, 0)  # 11:00-Kerze, geschlossen um 12:00
-    as_of = dt.datetime(2026, 1, 10, 12, 25)            # Entscheidung 12:25 → Forming Candle = 12:00
+    """R1: die forming Kerze der laufenden Stunde darf weder die gewählte
+    Feature-Kerze noch deren Features speisen. Nach Block 5 droppt sie der Read
+    (include_forming=False) — ihr Wert ist irrelevant. Gegenprobe: eine
+    vergiftete forming Zeile ändert das Ergebnis nicht."""
+    frame, forming_open = _ctx_frame_asc()
+    as_of = dt.datetime.now(dt.timezone.utc)  # Entscheidung in der laufenden Stunde
+    poisoned = frame.copy()
+    poisoned.iloc[-1, 1:] = PERTURB_VALUE  # forming Kerze (letzte Zeile) vergiften
 
-    rows_closed = _db_rows_desc(until=last_closed_open)
-    forming = (dt.datetime(2026, 1, 10, 12, 0), PERTURB_VALUE, PERTURB_VALUE, PERTURB_VALUE,
-               PERTURB_VALUE, PERTURB_VALUE, PERTURB_VALUE, PERTURB_VALUE, PERTURB_VALUE)
+    (res_a, calls_a) = _run_fetch_context(frame, as_of)
+    (res_b, _) = _run_fetch_context(poisoned, as_of)
+    assert res_a is not None and res_b is not None, "fetch_context_frame lieferte None trotz ausreichender Historie"
+    df_a, idx_a = res_a
+    df_b, idx_b = res_b
 
-    df_a, idx_a = research_features.fetch_context_frame(_StubConn(rows_closed, _CTX_COLS), "TESTUSDT", as_of=as_of)
-    df_b, idx_b = research_features.fetch_context_frame(
-        _StubConn([forming] + rows_closed, _CTX_COLS), "TESTUSDT", as_of=as_of
+    # Der Read MUSS geschlossen-only angefordert worden sein (mechanische R1-Prüfung).
+    assert calls_a and calls_a[0]["include_forming"] is False, "fetch_context_frame liest die forming Kerze"
+    assert calls_a[0]["tf"] == "1h", f"falscher Timeframe angefordert: {calls_a[0]['tf']}"
+    assert calls_a[0]["indicator_columns"] == research_features.CONTEXT_IND_COLS, (
+        "Indikator-Spalten weichen von der geteilten Quelle ab (harte Regel 7)"
     )
 
-    for df, idx, label in ((df_a, idx_a, "ohne"), (df_b, idx_b, "mit")):
+    forming_naive = pd.Timestamp(forming_open).tz_convert("UTC").tz_localize(None)
+    last_closed = forming_naive - pd.Timedelta(hours=1)
+    for df, idx, label in ((df_a, idx_a, "sauber"), (df_b, idx_b, "vergiftet")):
         chosen = df["open_time"].iloc[idx]
-        assert chosen < pd.Timestamp(as_of).floor("h"), (
-            f"Feature-Kerze ({label} Forming Candle) liegt nicht strikt vor der as_of-Stunde: {chosen}"
-        )
-        assert chosen == pd.Timestamp(last_closed_open), f"floor-1-Join wählt falsche Kerze ({label}): {chosen}"
+        assert chosen < forming_naive, f"Feature-Kerze ({label}) nicht strikt vor der as_of-Stunde: {chosen}"
+        assert chosen == last_closed, f"floor-1-Join wählt nicht die letzte geschlossene Kerze ({label}): {chosen}"
 
     assert_dicts_equal(
         research_features.candle_context_features(df_a, idx_a),
         research_features.candle_context_features(df_b, idx_b),
         "fetch_context_frame(forming candle)",
     )
-    print("OK  fetch_context_frame: Forming Candle der aktuellen Stunde wird ignoriert (floor-1-Join, R1)")
+    print("OK  fetch_context_frame: forming Kerze der laufenden Stunde ausgeschlossen (include_forming=False)")
 
 
 def test_fetch_context_frame_staleness_guard():
     """Feature-Kerze älter als CONTEXT_MAX_STALENESS_H → None (Training hätte
     das Event verworfen; Live darf es kein Signal speisen)."""
-    stale_open = dt.datetime(2026, 1, 10, 6, 0)
-    as_of = dt.datetime(2026, 1, 10, 12, 25)  # 6h Lücke > 3h
-    got = research_features.fetch_context_frame(_StubConn(_db_rows_desc(until=stale_open), _CTX_COLS),
-                                                "TESTUSDT", as_of=as_of)
+    frame, _ = _ctx_frame_asc(end_offset_h=6)  # jüngste geschlossene Kerze ~6h alt
+    as_of = dt.datetime.now(dt.timezone.utc)  # 6h Lücke > 3h
+    got, _ = _run_fetch_context(frame, as_of)
     assert got is None, "Staleness-Guard greift nicht (stale Feature-Kerze wurde geliefert)"
     print("OK  fetch_context_frame: Staleness-Guard (>3h) liefert None")
+
+
+# ── regime_logic.compute_features: 15m closed-candle Read-Kontrakt (Block 5) ──
+# Der Regime-Detektor speist über classify_regime → apply_debounce das
+# Orchestrator-Gating. Die bei der Entscheidung laufende 15m-Kerze darf die
+# Klassifikation nicht mehr treiben (R1). Mechanisch, DB-frei via Fake-read_candles:
+#   * Live (as_of=None): include_forming=False, KEIN end (DB-Uhr-Cutoff).
+#   * Backfill (as_of=historisch): end=last_closed_open_time('15m', as_of) —
+#     NICHT end=as_of (das ließe die bei as_of forming Kerze drin = Look-ahead).
+def test_regime_compute_features_read_contract():
+    from core import candles, regime_logic
+
+    now = dt.datetime.now(dt.timezone.utc)
+    forming_open = candles.period_start("15m", now).replace(tzinfo=None)  # naive, wie die DB
+    step = candles.timeframe_delta("15m")
+    calls: list[dict] = []
+
+    def fake_read(conn, symbol, tf, **kw):
+        calls.append({"symbol": symbol, "tf": tf, **kw})
+        n = 700  # > MIN_DATA_POINTS_15M (480) auch nach 5h-Backfill-Schnitt
+        times = [forming_open - i * step for i in range(n, -1, -1)]  # ASC, letzte Zeile = forming
+        df = pd.DataFrame({"open_time": times})
+        for c in kw["columns"]:
+            if c != "open_time":
+                df[c] = 100.0 + np.arange(len(df)) * 0.01  # leicht variabel für pct_change/ewm
+        if not kw.get("include_forming", False):
+            df = df[df["open_time"] < forming_open]
+        if kw.get("end") is not None:
+            df = df[df["open_time"] <= pd.Timestamp(kw["end"])]
+        return df.reset_index(drop=True)[list(kw["columns"])]
+
+    def run(as_of):
+        calls.clear()
+        original = regime_logic.read_candles
+        try:
+            regime_logic.read_candles = fake_read
+            feats = regime_logic.compute_features(object(), as_of)  # conn ist 1. Positional
+        finally:
+            regime_logic.read_candles = original
+        return feats, [dict(c) for c in calls]
+
+    # ── Live ──
+    feats_live, calls_live = run(None)
+    assert feats_live is not None, "compute_features(None) lieferte None trotz ausreichender Historie"
+    for sym in ("BTCUSDT", "BTCDOMUSDT"):
+        c = next(x for x in calls_live if x["symbol"] == sym)
+        assert c["tf"] == "15m" and c["include_forming"] is False, f"{sym}: liest die forming 15m-Kerze"
+        assert c["end"] is None, f"{sym}: Live darf keine obere Grenze setzen (DB-Uhr-Cutoff, kein Look-ahead-Fix nötig)"
+
+    # ── Backfill ──
+    as_of = now - dt.timedelta(hours=5)
+    feats_bf, calls_bf = run(as_of)
+    assert feats_bf is not None, "compute_features(as_of) lieferte None trotz ausreichender Historie"
+    expected_end = candles.last_closed_open_time("15m", as_of).replace(tzinfo=None)
+    for sym in ("BTCUSDT", "BTCDOMUSDT"):
+        c = next(x for x in calls_bf if x["symbol"] == sym)
+        assert c["include_forming"] is False, f"{sym}: Backfill liest die forming Kerze"
+        assert c["end"] == expected_end, (
+            f"{sym}: Backfill-end muss last_closed_open_time sein (nicht as_of): {c['end']} != {expected_end}"
+        )
+    print("OK  compute_features: 15m closed-only — Live ohne end, Backfill end=last_closed_open_time (kein Look-ahead)")
 
 
 # ── walkforward_sim: Loader-Kontrakt (die einzige Label-Quelle des Retrains) ──
@@ -644,6 +713,7 @@ if __name__ == "__main__":
     test_sra2_row_scoped()
     test_fetch_context_frame_ignores_forming_candle()
     test_fetch_context_frame_staleness_guard()
+    test_regime_compute_features_read_contract()
     test_walkforward_loaders_drop_the_forming_candle()
     test_walkforward_joined_loader_drops_the_forming_candle()
     test_walkforward_joined_loader_never_backfills_warmup_indicators()
