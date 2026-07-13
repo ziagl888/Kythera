@@ -40,9 +40,8 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     ("MSI", "11_ai_mis_bot.py"),  # historical typo family, see core/bot_naming
     ("PEX", "30_ai_pex1_bot.py"),
     ("QM", "24_quasimodo_bot.py"),
-    # ROM1 caveat: only bot-8-closed ROM1 rows carry targets/lev — regime
-    # auto-closes (28_signal_orchestrator sync path) insert without them and
-    # stay excluded from exact-only reports. Partial coverage by design.
+    # ROM1: both close writers persist targets/lev — bot 8 (SL/TP path,
+    # T-115) and the regime auto-close in 28_signal_orchestrator (T-116).
     ("ROM", "28_signal_orchestrator.py"),
     ("RUB", "13_ai_rub_bot.py"),
     ("SRA", "9_ai_sr_bot.py"),
