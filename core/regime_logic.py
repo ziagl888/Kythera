@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
+from core.candles import last_closed_open_time, read_candles
+
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ──────────────────────────────────────────────────────────────
@@ -65,25 +67,43 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
         vola_p75, vola_p40
     Or None if data is insufficient.
     """
+    live = as_of is None
     if as_of is None:
         as_of = datetime.now(timezone.utc)
 
-    # Naive UTC for SQL (the tables store naive timestamps)
+    # Aware UTC for the closed-candle boundary; naive UTC for the window start
+    # (the legacy per-coin tables store naive timestamps). For the real callers
+    # as_of is always UTC-aware, so this is byte-equal to the old
+    # `as_of.replace(tzinfo=None)` — the astimezone only hardens a non-UTC input.
     if as_of.tzinfo is not None:
-        as_of_naive = as_of.replace(tzinfo=None)
+        as_of_aware = as_of.astimezone(timezone.utc)
     else:
-        as_of_naive = as_of
+        as_of_aware = as_of.replace(tzinfo=timezone.utc)
+    as_of_naive = as_of_aware.replace(tzinfo=None)
 
     lookback_start = as_of_naive - pd.Timedelta(days=VOLA_LOOKBACK_DAYS + 1)
 
+    # R1 (Block 5): read only CLOSED 15m candles via core.candles.
+    #   * Live (as_of=now): include_forming=False drops the forming candle by
+    #     the DB-clock cutoff — one clock, the writer's; no upper bound needed.
+    #   * Backfill (as_of=historical): the DB-now() cutoff can't express "closed
+    #     AT as_of", so bound the read explicitly with end=last_closed_open_time
+    #     ('15m', as_of) (API `end` is inclusive → the candle still forming at
+    #     as_of is excluded). This removes the look-ahead the old `<= as_of`
+    #     window carried and makes a regenerated regime_history closed-candle-
+    #     correct (prerequisite for the TRM1 retrain follow-up).
+    end_15m = None if live else last_closed_open_time("15m", as_of_aware).replace(tzinfo=None)
+
     # ── BTC data ──
     try:
-        df_btc = pd.read_sql_query(
-            'SELECT open_time, high, low, close FROM "BTCUSDT_15m" '
-            'WHERE open_time >= %s AND open_time <= %s '
-            'ORDER BY open_time ASC',
+        df_btc = read_candles(
             conn,
-            params=(lookback_start, as_of_naive),
+            "BTCUSDT",
+            "15m",
+            start=lookback_start,
+            end=end_15m,
+            include_forming=False,
+            columns=("open_time", "high", "low", "close"),
         )
     except Exception as e:
         logger.error(f"Error loading von BTCUSDT_15m: {e}")
@@ -93,7 +113,12 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
         logger.warning(f"Insufficient BTC data: {len(df_btc)} < {MIN_DATA_POINTS_15M} Kerzen")
         return None
 
+    # core.candles hands back raw psycopg2 NUMERIC (Decimal); the old
+    # pd.read_sql_query returned float. pct_change/ewm/nanpercentile below need
+    # float — cast explicitly (Block 4 bot-22 Decimal trap).
     df_btc = df_btc.set_index("open_time")
+    for _c in ("high", "low", "close"):
+        df_btc[_c] = pd.to_numeric(df_btc[_c], errors="coerce")
 
     close = df_btc["close"]
     high = df_btc["high"]
@@ -133,15 +158,17 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
     lookback_btcdom = as_of_naive - pd.Timedelta(days=2)
 
     try:
-        df_dom = pd.read_sql_query(
-            'SELECT open_time, close FROM "BTCDOMUSDT_15m" '
-            'WHERE open_time >= %s AND open_time <= %s '
-            'ORDER BY open_time ASC',
+        df_dom = read_candles(
             conn,
-            params=(lookback_btcdom, as_of_naive),
+            "BTCDOMUSDT",
+            "15m",
+            start=lookback_btcdom,
+            end=end_15m,
+            include_forming=False,
+            columns=("open_time", "close"),
         )
         if len(df_dom) >= 96:  # 96 × 15min = 24h minimum
-            dom_close = df_dom["close"]
+            dom_close = pd.to_numeric(df_dom["close"], errors="coerce")  # Decimal → float (s.o.)
             btcdom_value = float(dom_close.iloc[-1])
             btcdom_return_24h = float((dom_close.iloc[-1] - dom_close.iloc[-96]) / dom_close.iloc[-96] * 100)
         else:

@@ -504,6 +504,67 @@ def test_fetch_context_frame_staleness_guard():
     print("OK  fetch_context_frame: Staleness-Guard (>3h) liefert None")
 
 
+# ── regime_logic.compute_features: 15m closed-candle Read-Kontrakt (Block 5) ──
+# Der Regime-Detektor speist über classify_regime → apply_debounce das
+# Orchestrator-Gating. Die bei der Entscheidung laufende 15m-Kerze darf die
+# Klassifikation nicht mehr treiben (R1). Mechanisch, DB-frei via Fake-read_candles:
+#   * Live (as_of=None): include_forming=False, KEIN end (DB-Uhr-Cutoff).
+#   * Backfill (as_of=historisch): end=last_closed_open_time('15m', as_of) —
+#     NICHT end=as_of (das ließe die bei as_of forming Kerze drin = Look-ahead).
+def test_regime_compute_features_read_contract():
+    from core import candles, regime_logic
+
+    now = dt.datetime.now(dt.timezone.utc)
+    forming_open = candles.period_start("15m", now).replace(tzinfo=None)  # naive, wie die DB
+    step = candles.timeframe_delta("15m")
+    calls: list[dict] = []
+
+    def fake_read(conn, symbol, tf, **kw):
+        calls.append({"symbol": symbol, "tf": tf, **kw})
+        n = 700  # > MIN_DATA_POINTS_15M (480) auch nach 5h-Backfill-Schnitt
+        times = [forming_open - i * step for i in range(n, -1, -1)]  # ASC, letzte Zeile = forming
+        df = pd.DataFrame({"open_time": times})
+        for c in kw["columns"]:
+            if c != "open_time":
+                df[c] = 100.0 + np.arange(len(df)) * 0.01  # leicht variabel für pct_change/ewm
+        if not kw.get("include_forming", False):
+            df = df[df["open_time"] < forming_open]
+        if kw.get("end") is not None:
+            df = df[df["open_time"] <= pd.Timestamp(kw["end"])]
+        return df.reset_index(drop=True)[list(kw["columns"])]
+
+    def run(as_of):
+        calls.clear()
+        original = regime_logic.read_candles
+        try:
+            regime_logic.read_candles = fake_read
+            feats = regime_logic.compute_features(object(), as_of)  # conn ist 1. Positional
+        finally:
+            regime_logic.read_candles = original
+        return feats, [dict(c) for c in calls]
+
+    # ── Live ──
+    feats_live, calls_live = run(None)
+    assert feats_live is not None, "compute_features(None) lieferte None trotz ausreichender Historie"
+    for sym in ("BTCUSDT", "BTCDOMUSDT"):
+        c = next(x for x in calls_live if x["symbol"] == sym)
+        assert c["tf"] == "15m" and c["include_forming"] is False, f"{sym}: liest die forming 15m-Kerze"
+        assert c["end"] is None, f"{sym}: Live darf keine obere Grenze setzen (DB-Uhr-Cutoff, kein Look-ahead-Fix nötig)"
+
+    # ── Backfill ──
+    as_of = now - dt.timedelta(hours=5)
+    feats_bf, calls_bf = run(as_of)
+    assert feats_bf is not None, "compute_features(as_of) lieferte None trotz ausreichender Historie"
+    expected_end = candles.last_closed_open_time("15m", as_of).replace(tzinfo=None)
+    for sym in ("BTCUSDT", "BTCDOMUSDT"):
+        c = next(x for x in calls_bf if x["symbol"] == sym)
+        assert c["include_forming"] is False, f"{sym}: Backfill liest die forming Kerze"
+        assert c["end"] == expected_end, (
+            f"{sym}: Backfill-end muss last_closed_open_time sein (nicht as_of): {c['end']} != {expected_end}"
+        )
+    print("OK  compute_features: 15m closed-only — Live ohne end, Backfill end=last_closed_open_time (kein Look-ahead)")
+
+
 # ── walkforward_sim: Loader-Kontrakt (die einzige Label-Quelle des Retrains) ──
 def _import_walkforward_sim():
     """`tools/walkforward_sim.py` ist DB-frei importierbar, sobald die zwei
@@ -652,6 +713,7 @@ if __name__ == "__main__":
     test_sra2_row_scoped()
     test_fetch_context_frame_ignores_forming_candle()
     test_fetch_context_frame_staleness_guard()
+    test_regime_compute_features_read_contract()
     test_walkforward_loaders_drop_the_forming_candle()
     test_walkforward_joined_loader_drops_the_forming_candle()
     test_walkforward_joined_loader_never_backfills_warmup_indicators()
