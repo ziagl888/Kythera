@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles_with_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
@@ -114,41 +115,57 @@ def check_tsi_crossovers():
             # cumuliert, daher systematischer Feature-Drift (train/test mismatch).
             # Jetzt laden wir 500 Kerzen UND normalisieren OBV auf `obv - obv.iloc[0]`,
             # sodass der absolute Wert unabhängig vom Datenfenster-Start ist.
-            query = f"""
-                SELECT
-                    p.open_time, p.high, p.low, p.close, p.volume,
-                    i.rsi_14, i.rsi_6, i.tsi_fast_12_7_7, i.tsi_fast_12_7_7_signal,
-                    i.ema_9, i.ema_21, i.ema_50, i.ema_200,
-                    i.kama_9, i.kama_21, i.kama_55,
-                    i.macd_dif_normal_12_26_9, i.macd_dea_normal_12_26_9,
-                    i.atr_14, i.boll_upper_20, i.boll_lower_20,
-                    i.donchian_upper_20, i.donchian_lower_20,
-                    i.trendline_slope, i.support_price, i.resistance_price
-                FROM "{symbol}_1h" p
-                LEFT JOIN "{symbol}_1h_indicators" i ON p.open_time = i.open_time
-                ORDER BY p.open_time DESC LIMIT 500
-            """
-            with conn.cursor() as cur:
-                cur.execute(query)
-                rows = cur.fetchall()
-                if len(rows) < 50:
-                    continue
-                columns = [desc[0] for desc in cur.description]
-                df = pd.DataFrame(rows, columns=columns)
-
-            # Umdrehen (Index 0 = Alt, Index -1 = Neu)
-            df = df.iloc[::-1].reset_index(drop=True)
+            # R1: Erkennung auf GESCHLOSSENEN Kerzen (include_forming=False). Die
+            # TSI-Crossover-Detektion lief schon auf iloc[-2] (geschlossen); ohne die
+            # forming Kerze ist die jüngste geschlossene jetzt iloc[-1]. core.candles
+            # liefert ASC → die bisherige DESC-Umkehr entfällt. (Transitional: der
+            # 500er-OBV-Baseline-Start verschiebt sich um genau eine Kerze — bis zum
+            # ATS-Retrain vernachlässigbar, §5 q6.)
+            df = read_candles_with_indicators(
+                conn,
+                symbol,
+                "1h",
+                limit=500,
+                include_forming=False,
+                candle_columns=("open_time", "high", "low", "close", "volume"),
+                indicator_columns=(
+                    "rsi_14",
+                    "rsi_6",
+                    "tsi_fast_12_7_7",
+                    "tsi_fast_12_7_7_signal",
+                    "ema_9",
+                    "ema_21",
+                    "ema_50",
+                    "ema_200",
+                    "kama_9",
+                    "kama_21",
+                    "kama_55",
+                    "macd_dif_normal_12_26_9",
+                    "macd_dea_normal_12_26_9",
+                    "atr_14",
+                    "boll_upper_20",
+                    "boll_lower_20",
+                    "donchian_upper_20",
+                    "donchian_lower_20",
+                    "trendline_slope",
+                    "support_price",
+                    "resistance_price",
+                ),
+            )
+            if len(df) < 50:
+                continue
 
             # Alle Spalten zu Float konvertieren
             num_cols = [c for c in df.columns if c != 'open_time']
             for col in num_cols:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-            # 2. CROSSOVER PRÜFEN (Vorletzte Kerze vs Drittletzte Kerze)
-            # Da Bot 13 Min after Stunde läuft, ist Index -1 die offene Kerze.
-            # Index -2 ist die completede. Index -3 ist die davor.
-            current_idx = -2
-            prev_idx = -3
+            # 2. CROSSOVER PRÜFEN (letzte GESCHLOSSENE Kerze vs vorletzte)
+            # R1: der Frame enthält keine forming Kerze mehr (include_forming=False),
+            # daher ist Index -1 die jüngste GESCHLOSSENE Kerze, Index -2 die davor.
+            # (Detektion bleibt auf derselben Kerze wie zuvor iloc[-2].)
+            current_idx = -1
+            prev_idx = -2
 
             tsi_curr = df.iloc[current_idx]['tsi_fast_12_7_7']
             sig_curr = df.iloc[current_idx]['tsi_fast_12_7_7_signal']
