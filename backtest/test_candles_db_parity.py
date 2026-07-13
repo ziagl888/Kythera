@@ -42,6 +42,7 @@ from typing import Any, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pandas as pd
 import pytest
 from psycopg2 import sql
 
@@ -443,6 +444,90 @@ def test_delete_indicators_from_deletes_the_tail(conn):
         assert len(remaining) == 2
     finally:
         conn.rollback()
+
+
+def _create_temp_legacy_tables(conn: Any, sym: str, tf: str, ind_payload: Sequence[str]) -> None:
+    """Session-local temp per-coin candle + indicator tables (ON COMMIT DROP) so the
+    legacy write half of upsert_* lands somewhere harmless; the DUAL write half goes
+    to the real `candles`/`indicators` hypertables, which the test reads back and the
+    finally-rollback then undoes. No live per-coin table is ever touched."""
+    ctable, itable = c.candles_table(sym, tf), c.indicators_table(sym, tf)
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                "CREATE TEMP TABLE {t} (symbol text, open_time timestamptz, open double precision, "
+                "high double precision, low double precision, close double precision, "
+                "volume double precision, PRIMARY KEY (symbol, open_time)) ON COMMIT DROP"
+            ).format(t=sql.Identifier(ctable))
+        )
+        col_defs = sql.SQL(", ").join(
+            sql.SQL("{c} {typ}").format(
+                c=sql.Identifier(col), typ=sql.SQL("text" if col == "trend_direction" else "double precision")
+            )
+            for col in ind_payload
+        )
+        cur.execute(
+            sql.SQL(
+                "CREATE TEMP TABLE {t} (symbol text, open_time timestamptz, {cols}, "
+                "PRIMARY KEY (symbol, open_time)) ON COMMIT DROP"
+            ).format(t=sql.Identifier(itable), cols=col_defs)
+        )
+
+
+def test_dual_write_mirrors_into_hypertables(conn, monkeypatch):
+    """With KYTHERA_CANDLES_DUAL_WRITE on, upsert_* mirror into candles/indicators
+    with tf + is_closed added; the forming→closed flag transition updates in place;
+    with the flag off nothing reaches the hypertables. All writes rolled back."""
+    _require_write_parity()
+    monkeypatch.setenv("KYTHERA_CANDLES_DUAL_WRITE", "1")
+    sym, tf = "ZZTESTXX", "1h"
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    d = c.timeframe_delta(tf)
+    try:
+        _create_temp_legacy_tables(conn, sym, tf, ["close", "rsi_14", "trend_direction"])
+        closed_rows = [(sym, base + i * d, 1.0, 2.0, 0.5, 1.5, 10.0) for i in range(2)]
+        forming_rows = [(sym, base + 2 * d, 3.0, 4.0, 2.0, 3.5, 20.0)]
+        c.upsert_candles(conn, sym, tf, closed_rows, closed=True)
+        c.upsert_candles(conn, sym, tf, forming_rows, closed=False)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT is_closed, count(*) FROM candles WHERE symbol=%s AND tf=%s GROUP BY is_closed", (sym, tf)
+            )
+            assert dict(cur.fetchall()) == {True: 2, False: 1}
+            # value + tf parity on one closed row
+            cur.execute(
+                "SELECT open, high, low, close, volume FROM candles WHERE symbol=%s AND tf=%s AND open_time=%s",
+                (sym, tf, base),
+            )
+            assert cur.fetchone() == (1.0, 2.0, 0.5, 1.5, 10.0)
+        # forming → closed: the flag flips in place, no duplicate row
+        c.upsert_candles(conn, sym, tf, forming_rows, closed=True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM candles WHERE symbol=%s AND tf=%s", (sym, tf))
+            assert cur.fetchone()[0] == 3
+            cur.execute(
+                "SELECT is_closed FROM candles WHERE symbol=%s AND tf=%s AND open_time=%s", (sym, tf, base + 2 * d)
+            )
+            assert cur.fetchone()[0] is True
+        # indicators: tf added, is_closed=True (engine writes closed-only), text col preserved
+        df = pd.DataFrame(
+            {"symbol": [sym], "open_time": [base], "close": [1.5], "rsi_14": [55.0], "trend_direction": ["UP"]}
+        )
+        c.upsert_indicators(conn, df, sym, tf)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tf, is_closed, close, rsi_14, trend_direction FROM indicators WHERE symbol=%s", (sym,)
+            )
+            assert cur.fetchone() == (tf, True, 1.5, 55.0, "UP")
+        # flag OFF → no hypertable write
+        monkeypatch.setenv("KYTHERA_CANDLES_DUAL_WRITE", "0")
+        _create_temp_legacy_tables(conn, "ZZTESTYY", tf, ["close"])
+        c.upsert_candles(conn, "ZZTESTYY", tf, [("ZZTESTYY", base, 1.0, 1.0, 1.0, 1.0, 1.0)], closed=True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM candles WHERE symbol=%s", ("ZZTESTYY",))
+            assert cur.fetchone()[0] == 0
+    finally:
+        conn.rollback()  # undoes every hypertable write + drops the temp tables
 
 
 if __name__ == "__main__":

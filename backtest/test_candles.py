@@ -197,6 +197,20 @@ def test_upsert_indicators_needs_key_columns():
         c.upsert_indicators(None, pd.DataFrame({"rsi": [1.0]}), "BTCUSDT", "1h")
 
 
+def test_dual_write_flag_parsing(monkeypatch):
+    """Phase-2 dual-write is OFF unless the flag is explicitly truthy. Read at call
+    time (per-process override, no reimport). The behaviour itself is byte-tested
+    against the live hypertables in test_candles_db_parity.py."""
+    monkeypatch.delenv("KYTHERA_CANDLES_DUAL_WRITE", raising=False)
+    assert c._dual_write_enabled() is False
+    for on in ("1", "true", "TRUE", "yes", "on", " On "):
+        monkeypatch.setenv("KYTHERA_CANDLES_DUAL_WRITE", on)
+        assert c._dual_write_enabled() is True, on
+    for off in ("0", "false", "no", "off", "", "  "):
+        monkeypatch.setenv("KYTHERA_CANDLES_DUAL_WRITE", off)
+        assert c._dual_write_enabled() is False, off
+
+
 # ── Block-6 API-gap functions (T-2026-CU-9050-114) ────────────────────────────
 
 
