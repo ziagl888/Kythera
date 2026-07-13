@@ -317,6 +317,16 @@ C-Gate Phase 0 = die zwei **leeren** Ziel-Hypertables anlegen; `core.candles` li
 
 ---
 
+### Stand C-Gate Phase 2 (Build) — Dual-Write + Backfill + 1d/1w-WS-Removal (T-2026-CU-9050-119, 2026-07-13)
+
+Drei reversible, dormante Code-Slices, jede eigenes PR + beide Core-Reviews PASS. **Aktivierung (Flag an + Deploy + Backfill + Paritäts-Beobachtung → Phase 3) vollständig operator-gegatet;** kein Merge ändert Live-Verhalten. Reads bleiben Legacy bis Phase 4.
+
+- **2a Dual-Write (PR #110, gemergt):** `KYTHERA_CANDLES_DUAL_WRITE` (Default AUS) → `upsert_candles`/`upsert_indicators` schreiben die Hypertables ZUSÄTZLICH in der Caller-Transaktion. Keine Bot-Änderung (`closed`+`tf` kamen in Part 1 dafür in die Signaturen). `is_closed` in SET + `IS DISTINCT FROM` (forming→closed flippt in-place); indicators `is_closed`=true (Engine rechnet nur auf geschlossenen Kerzen).
+- **2b Backfill (PR #111):** `tools/candles_backfill.py` kopiert die Per-Coin-Historie einmalig in die Hypertables (Komplement zum forward-only Dual-Write). Idempotent (`ON CONFLICT DO NOTHING`), resumable (Progress-Datei). Per-Zeile `is_closed=(open_time<period_start(tf,now))` statt des `…,true`-Sketches (Alt-Tabellen tragen die forming-Kerze). Indikatoren copy/cast, KEIN Recompute (D-109 #4). Default Dry-Run; `--execute` schreibt.
+- **2c 1d/1w-WS-Removal (PR #112):** `1_data_ingestion` — `WS_TIMEFRAMES = TIMEFRAMES − {1d,1w}` an beiden `@kline`-Buildern; REST/Catch-up unverändert (1d/1w kommen weiter per REST). Spart ~1.300 Streams (D-109 #3). WS bleibt 5m–4h.
+
+Verifikation: DB-freie Tests + DB-gated Byte-Tests hinter `KYTHERA_CANDLES_WRITE_PARITY` (schreiben in reale Hypertables, `conn.rollback()` = null Persistenz, Hypertables verifiziert leer); Guard 24/24; ruff/format/mypy clean, Whole-Repo-`ruff check .` grün. **Offen: Aktivierung + Phase 3–5** (Michi-gegatet). Hinweis: forward Dual-Write produziert nichts, solange die Live-Ingestion steht (Outage ~14h); der historische Backfill ist davon unabhängig.
+
 ## 5. Offene Operator-Fragen (Michi)
 
 Diese Fragen blockieren den Start von Phase 1. Keine davon ist in diesem Task entschieden worden.
