@@ -261,6 +261,15 @@ Block 4 (AI-Bot-Direktreader) wird nach **Michis Leitprinzip** umgesetzt (§5): 
 - **Bewusst in Tranche 2 (T-…-folge):** die Bots mit **Offset-Rework** (`7_pattern_detector` `len−2→len−1`/`:-4→:-3`; `12_ai_ats` `−2/−3 → −1/−2`) und die mit **Live-CMP-Deferral** (`22_ip_pattern`, `24_quasimodo`, `25_smc_ml_sniper`: Pivots/Struktur auf geschlossen, `current_price` für Entry/Targets aus `get_live_price` statt `closes[-1]`) plus `11_ai_mis` (geschlossene Features + `get_live_price`-Entry + Alias-Reproduktion `tsi_fast`/`macd_dif`/`macd_dea`). `14_ai_atb` bleibt ausgeschlossen (geparkt → ATB2-Track T-106).
 - **Verifikation (Build-Maschine, DB-frei — Fleet-Python 3.13.12):** `py_compile` aller 6 Dateien; `ruff check` + `ruff format --check` + `mypy` grün; Regression-Guard `smoke` (6 Fixtures) + `verify` (24/24) grün. Die **echten R1-Änderungen (10, 29)** senken bewusst die Signal-Raten — der 24-h-A/B ist eine Post-Merge-VPS-Beobachtung; Schwellen erst nach Retrain tunen (§5, Frage 6).
 
+### Stand Block 4 — Tranche 2 Teilmenge (Offset-Rework 12 + 7) erledigt (T-2026-CU-9050-111, 2026-07-13)
+
+Die zwei **Offset-Rework-Bots** ohne Live-CMP-Deferral sind umverdrahtet — die restlichen vier (`22`/`24`/`25`/`11`) folgen in einem fokussierten Schritt.
+
+- **`12_ai_ats`** — `read_candles_with_indicators(include_forming=False, limit=500)`, DESC-Umkehr entfällt. Die TSI-Crossover-Detektion lief schon auf `iloc[-2]` (geschlossen) → mit ausgeschlossener forming Kerze ist die jüngste geschlossene `iloc[-1]`, also `current_idx −2→−1`, `prev_idx −3→−2` (**dieselbe** Detektions-Kerze). Entry-Preis bleibt aus der geschlossenen Kerze (Operator-Ausnahme). Transitional: der 500er-OBV-Baseline-Start verschiebt sich um genau eine Kerze — bis zum ATS-Retrain vernachlässigbar (§5 q6).
+- **`7_pattern_detector`** — `read_candles(include_forming=False, limit=168)`, DESC-Umkehr entfällt. Die Breakout-Kerze lief schon auf `len(df)−2` (geschlossen) → jetzt `len(df)−1`. Der `iloc[:-4]`-Pivot-Confirm-Puffer bleibt unverändert (Index `len−4` ist durch `rolling(9,center)` ohnehin NaN-geflaggt); der Rand-Pivot verliert nur seinen bisherigen Forming-Repaint (korrekte R1-Wirkung).
+- **Verifikation (DB-frei, Fleet-Python 3.13.12):** `py_compile` + `ruff check`/`format` + `mypy` grün auf beiden Dateien.
+- **Offen (Tranche 2 Rest, Folge-Task):** `22_ip_pattern`/`24_quasimodo`/`25_smc_ml_sniper` (Struktur/Pivots auf geschlossen, `current_price` = Entry/Targets via `get_live_price` **nach** erkanntem Signal statt `closes[-1]`) und `11_ai_mis` (geschlossene Features + `get_live_price`-Entry + Alias-Reproduktion `tsi_fast`/`macd_dif`/`macd_dea`). Klärungspunkt für den Folge-Task: **welche `get_live_price`-Quelle** diese Bots nutzen (`3_detectors.get_live_price` ist in einer numerisch benannten, nicht importierbaren Datei — ggf. Helfer nach `core/` heben oder den bestehenden Batch-Ticker anziehen).
+
 ---
 
 ## 5. Offene Operator-Fragen (Michi)
