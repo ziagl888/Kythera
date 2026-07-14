@@ -112,13 +112,16 @@ def test_classify_suppressed_both_block():
 
 def test_classify_fallback_paths_unaffected():
     snap = _snapshot()
+    # fallback prefixes = the REAL is_regime_detector_reliable status vocabulary
+    # (28_signal_orchestrator.py): no_regime / regime_is_transition / regime_unstable
     for side, path in (
         ("forwarded", "no_whitelist_entry"),
         ("forwarded", "whitelist_stale:fallback_wr_above_50"),
-        ("forwarded", "detector_unreliable:fallback_wr_above_50"),
+        ("forwarded", "no_regime:fallback_insufficient_data"),
+        ("forwarded", "regime_is_transition:fallback_wr_above_50"),
         ("forwarded", ""),  # pre-B8 NULL wl_reason
         ("suppressed", "whitelist_stale:fallback_wr_below_50"),
-        ("suppressed", "detector_unreliable:fallback_wr_below_50"),
+        ("suppressed", "regime_unstable:fallback_wr_below_50"),
     ):
         res = fe.classify_flip_effect(_event(side, path), snap)
         assert not res["affected"], f"{side}/{path} must be flip-unaffected"
@@ -157,6 +160,75 @@ def test_classify_normalizes_bot_name():
     assert res["affected"]
 
 
+# ── row→event mappers (the layer where the combined-regime HIGH lived) ──────
+def test_suppressed_row_splits_combined_regime_string():
+    # log_suppressed (bot 28) writes regime_at_signal = f"{regime}/{alt_context}"
+    # from regime_current — the join key must use the SPLIT parts, and the
+    # embedded alt beats the regime_history fallback (debounced > RAW, P2.22).
+    row = (
+        7,
+        "2026-07-12 10:00:00",
+        "BotA",
+        "XYZUSDT",
+        "LONG",
+        "CHOP/ALT_NEUTRAL",
+        "bot_not_whitelisted:wr_below_overall",
+        99,
+        "ALT_WEAK",
+    )
+    ev = fe.suppressed_row_to_event(row)
+    assert ev["regime"] == "CHOP"
+    assert ev["alt_context"] == "ALT_NEUTRAL"  # NOT the history value ALT_WEAK
+    assert ev["v1_path"] == "wr_below_overall"
+    assert ev["regime_at_signal"] == "CHOP/ALT_NEUTRAL"  # raw value preserved
+    # end-to-end: the split key resolves a real snapshot cell
+    res = fe.classify_flip_effect(ev, _snapshot())
+    assert res["affected"] and res["flip_class"] != "cell_missing"
+
+
+def test_suppressed_row_without_slash_falls_back_to_history_alt():
+    row = (
+        8,
+        "2026-07-12 10:00:00",
+        "BotA",
+        "XYZUSDT",
+        "LONG",
+        "CHOP",
+        "bot_not_whitelisted:wr_below_overall",
+        99,
+        "ALT_NEUTRAL",
+    )
+    ev = fe.suppressed_row_to_event(row)
+    assert ev["regime"] == "CHOP"
+    assert ev["alt_context"] == "ALT_NEUTRAL"  # legacy row → history fallback
+
+
+def test_suppressed_row_null_regime_is_none_not_empty():
+    row = (
+        9,
+        "2026-07-12 10:00:00",
+        "BotA",
+        "XYZUSDT",
+        "LONG",
+        None,
+        "bot_not_whitelisted:wr_below_overall",
+        None,
+        None,
+    )
+    ev = fe.suppressed_row_to_event(row)
+    assert ev["regime"] is None and ev["alt_context"] is None
+
+
+def test_forwarded_row_maps_native_columns():
+    row = (3, "2026-07-12 10:00:00", "BotA", "XYZUSDT", "SHORT", "CHOP", "ALT_NEUTRAL", "insufficient_data", 42, 1.25)
+    ev = fe.forwarded_row_to_event(row)
+    assert ev["regime"] == "CHOP" and ev["alt_context"] == "ALT_NEUTRAL"
+    assert ev["v1_path"] == "insufficient_data"
+    assert ev["recorded_entry"] == 1.25
+    res = fe.classify_flip_effect(ev, _snapshot())
+    assert res["flip_class"] == fe.V2_WOULD_BLOCK  # BotA/CHOP/ALT_NEUTRAL/SHORT
+
+
 # ── AK5: drift metric ────────────────────────────────────────────────────────
 def test_drift_counts_only_comparable_events():
     snap = _snapshot()
@@ -179,13 +251,17 @@ def test_volume_rates_and_projection():
         + [{"flip_class": fe.V2_WOULD_BLOCK, "side": "forwarded"}] * 2
         + [{"flip_class": fe.V2_WOULD_OPEN, "side": "suppressed"}] * 1
         + [{"flip_class": fe.BOTH_BLOCK, "side": "suppressed"}] * 1
-        + [{"flip_class": "unaffected", "side": "forwarded"}] * 10
+        + [{"flip_class": "unaffected", "side": "forwarded"}] * 8
+        # undecidable forwarded traffic DID forward under v1 → constant baseline
+        # in both projections, excluded from the open-rate comparison
+        + [{"flip_class": "cell_missing", "side": "forwarded"}] * 1
+        + [{"flip_class": fe.V2_MISSING, "side": "forwarded"}] * 1
     )
     v = fe.volume_effect(events, window_days=2.0)
     assert v["n_cell_decided"] == 10
     assert v["v1_open_rate_pct"] == 80.0  # (6+2)/10
     assert v["v2_open_rate_pct"] == 70.0  # (6+1)/10
-    # per day: v1 = (8 cell-open + 10 unaffected-forwarded)/2, v2 = (7+10)/2
+    # per day: v1 = (8 cell-open + 8 unaffected + 2 undecidable fwd)/2 = 9.0
     assert v["forwarded_per_day_v1"] == 9.0
     assert v["forwarded_per_day_v2_projected"] == 8.5
 

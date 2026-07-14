@@ -52,7 +52,7 @@ import os
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
@@ -280,7 +280,11 @@ def volume_effect(events: list[dict], window_days: float) -> dict:
     v1 open  = both_open + v2_would_block   (what v1 actually forwarded)
     v2 open  = both_open + v2_would_open    (what v2 would forward)
     Unaffected traffic forwards identically under both gates and is reported
-    separately (it dampens the relative volume change fleet-wide).
+    separately (it dampens the relative volume change fleet-wide). Forwarded
+    events whose flip effect is undecidable (cell_missing/v2_missing) DID
+    forward under v1 and are treated as constant baseline traffic in both
+    per-day projections — they are excluded only from the open-RATE
+    comparison, which needs the same decidable population on both sides.
     """
     counts: dict[str, int] = defaultdict(int)
     for e in events:
@@ -288,7 +292,9 @@ def volume_effect(events: list[dict], window_days: float) -> dict:
     n_cell = counts[BOTH_OPEN] + counts[BOTH_BLOCK] + counts[V2_WOULD_BLOCK] + counts[V2_WOULD_OPEN]
     v1_open = counts[BOTH_OPEN] + counts[V2_WOULD_BLOCK]
     v2_open = counts[BOTH_OPEN] + counts[V2_WOULD_OPEN]
-    n_unaffected_fwd = sum(1 for e in events if e["flip_class"] == "unaffected" and e["side"] == "forwarded")
+    n_unaffected_fwd = sum(
+        1 for e in events if e["side"] == "forwarded" and e["flip_class"] in ("unaffected", "cell_missing", V2_MISSING)
+    )
     days = max(window_days, 1e-9)
     return {
         "n_events_total": len(events),
@@ -362,17 +368,76 @@ def snapshot_prereqs(conn) -> dict:
     }
 
 
+def forwarded_row_to_event(row: tuple) -> dict:
+    """Maps one orchestrator_open_trades row to an event dict (pure, testable).
+
+    Row shape: (id, opened_at, bot_name, coin, direction, regime_at_open,
+    alt_context_at_open, wl_reason, original_outbox_id, entry_price).
+    """
+    return {
+        "side": "forwarded",
+        "row_id": row[0],
+        "ts": row[1],
+        "bot_name": row[2],
+        "coin": row[3],
+        "direction": row[4],
+        "regime": row[5],
+        "regime_at_signal": row[5],
+        "alt_context": row[6],
+        "v1_path": row[7],
+        "reason": row[7],
+        "original_outbox_id": row[8],
+        "recorded_entry": float(row[9]) if row[9] is not None else None,
+    }
+
+
+def suppressed_row_to_event(row: tuple) -> dict:
+    """Maps one orchestrator_suppressed_signals row to an event dict (pure).
+
+    Row shape: (id, ts, bot_name, coin, direction, regime_at_signal, reason,
+    original_outbox_id, alt_context_history).
+
+    `regime_at_signal` is the COMBINED string `f"{regime}/{alt_context}"` from
+    regime_current (28_signal_orchestrator.log_suppressed) — i.e. exactly the
+    debounced state the gate read for its decision. We split it and prefer the
+    embedded alt_context over the regime_history lookup (which carries the RAW
+    P2.22 skew); the history value is only the fallback for legacy rows
+    without a "/".
+    """
+    reason = row[6] or ""
+    combined = row[5] or ""
+    regime, sep, alt = combined.partition("/")
+    if not sep:
+        regime = combined or None
+        alt = row[8]
+    return {
+        "side": "suppressed",
+        "row_id": row[0],
+        "ts": row[1],
+        "bot_name": row[2],
+        "coin": row[3],
+        "direction": row[4],
+        "regime": regime or None,
+        "regime_at_signal": row[5],
+        "alt_context": alt or None,
+        "v1_path": reason.partition(":")[2],
+        "reason": reason,
+        "original_outbox_id": row[7],
+        "recorded_entry": None,
+    }
+
+
 def load_gate_events(conn, since: datetime, limit: int | None) -> list[dict]:
     """Forwarded + whitelist-suppressed signal events since `since`.
 
     Suppressed side: only the `bot_not_whitelisted:*` family — the other
     suppression families (dedupe/cooldown/plumbing) are untouched by the flip
-    and already measured by T-047. alt_context is reconstructed from
-    regime_history at ts (the analyzer's own attribution pattern, P2.22 skew
-    documented). Forwarded side carries alt_context_at_open natively.
+    and already measured by T-047. regime + alt_context come from the combined
+    `regime_at_signal` string (debounced regime_current — what the gate read);
+    the regime_history subquery is only the legacy fallback (see
+    suppressed_row_to_event). Forwarded side carries alt_context_at_open
+    natively.
     """
-    events: list[dict] = []
-
     sql_fwd = """
         SELECT id, opened_at, bot_name, coin, direction,
                regime_at_open, alt_context_at_open, wl_reason,
@@ -397,48 +462,14 @@ def load_gate_events(conn, since: datetime, limit: int | None) -> list[dict]:
     if limit:
         sql_fwd += " LIMIT %s"
         sql_sup += " LIMIT %s"
-    fwd_params: tuple = (since, limit) if limit else (since,)
+    params: tuple = (since, limit) if limit else (since,)
 
+    events: list[dict] = []
     with conn.cursor() as cur:
-        cur.execute(sql_fwd, fwd_params)
-        for r in cur.fetchall():
-            events.append(
-                {
-                    "side": "forwarded",
-                    "row_id": r[0],
-                    "ts": r[1],
-                    "bot_name": r[2],
-                    "coin": r[3],
-                    "direction": r[4],
-                    "regime": r[5],
-                    "regime_at_signal": r[5],
-                    "alt_context": r[6],
-                    "v1_path": r[7],
-                    "reason": r[7],
-                    "original_outbox_id": r[8],
-                    "recorded_entry": float(r[9]) if r[9] is not None else None,
-                }
-            )
-        cur.execute(sql_sup, fwd_params)
-        for r in cur.fetchall():
-            reason = r[6] or ""
-            events.append(
-                {
-                    "side": "suppressed",
-                    "row_id": r[0],
-                    "ts": r[1],
-                    "bot_name": r[2],
-                    "coin": r[3],
-                    "direction": r[4],
-                    "regime": r[5],
-                    "regime_at_signal": r[5],
-                    "alt_context": r[8],
-                    "v1_path": reason.partition(":")[2],
-                    "reason": reason,
-                    "original_outbox_id": r[7],
-                    "recorded_entry": None,
-                }
-            )
+        cur.execute(sql_fwd, params)
+        events.extend(forwarded_row_to_event(r) for r in cur.fetchall())
+        cur.execute(sql_sup, params)
+        events.extend(suppressed_row_to_event(r) for r in cur.fetchall())
     return events
 
 
@@ -562,6 +593,13 @@ def print_console_report(meta: dict) -> None:
         f"  Gate-Rate offen: v1 {v['v1_open_rate_pct']}%  →  v2 {v['v2_open_rate_pct']}%\n"
         f"  ROM1-Forwards/Tag: v1 {v['forwarded_per_day_v1']}  →  v2 (Prognose) {v['forwarded_per_day_v2_projected']}"
     )
+    n_cm = v["counts"].get("cell_missing", 0)
+    n_vm = v["counts"].get(V2_MISSING, 0)
+    if n_cm or n_vm:
+        print(
+            f"  ⚠️ nicht zuordenbar: cell_missing {n_cm}, v2_missing {n_vm} "
+            f"(zählen als konstanter Forward-Sockel, fehlen im Raten-Vergleich)"
+        )
 
     if meta.get("buckets"):
         hdr = f"{'bucket':40} {'n':>6} {'scored':>7} {'wr%':>7} {'avgPnL%':>9} {'sumPnL%':>10}"
@@ -606,6 +644,10 @@ def main() -> None:
         pass
 
     since = datetime.fromisoformat(args.since)
+    if since.tzinfo is not None:
+        # DB timestamps are naive UTC — normalize a tz-aware --since up front
+        # instead of crashing in the window arithmetic after the DB queries ran.
+        since = since.astimezone(timezone.utc).replace(tzinfo=None)
     set_low_priority()
     check_cpu_headroom()
 
@@ -648,11 +690,14 @@ def main() -> None:
         conn.close()
 
     os.makedirs(args.out, exist_ok=True)
-    jsonl_path = os.path.join(args.out, "whitelist_v2_flip_eval.jsonl")
+    # Parameterized names (047 pattern) — comparison runs (e.g. 72h vs 168h
+    # horizon) must not overwrite each other.
+    tag = f"whitelist_v2_flip_eval_{since.date()}_{args.horizon_hours}h"
+    jsonl_path = os.path.join(args.out, f"{tag}.jsonl")
     with open(jsonl_path, "w", encoding="utf-8") as fh:
         for r in records:
             fh.write(json.dumps(r, default=str) + "\n")
-    with open(os.path.join(args.out, "whitelist_v2_flip_eval_summary.json"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(args.out, f"{tag}_summary.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2, default=str)
 
     print_console_report(meta)

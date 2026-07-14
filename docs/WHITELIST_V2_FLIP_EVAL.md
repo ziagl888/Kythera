@@ -35,7 +35,7 @@ Seit dem T-068-Deploy (2026-07-11) schreibt `27_bot_regime_analyzer` die Shadow-
 ## Methodik & Caveats (im Report wiederholt)
 
 1. **Snapshot-Näherung:** Der v2-Verdict pro Event kommt aus dem *heutigen* Whitelist-Snapshot, nicht dem Stand zur Signal-Zeit (Bot 28 loggt v2 nicht pro Signal; `bot_regime_whitelist` ist UPSERT-only ohne Historie). Bei ≤7 Tagen Abstand und 30d-Statistikfenstern driftet das langsam; die **AK5-Drift-Metrik misst die Näherung** an v1 (dort sind beide Stände bekannt). Hohe v1-Drift (>15%) ⇒ Snapshot-Zahlen nur als Tendenz lesen, Auswertung ggf. um as-of-Rekonstruktion erweitern.
-2. **Alt-Context der Suppressed-Seite** wird aus `regime_history` zur Signal-Zeit rekonstruiert (dasselbe Attributionsmuster wie der Analyzer, inkl. dessen P2.22-RAW-vs-debounced-Skew). Die Forwarded-Seite hat `alt_context_at_open` nativ.
+2. **Regime + Alt-Context der Suppressed-Seite** kommen aus dem kombinierten `regime_at_signal`-String (`"REGIME/ALT"`, geschrieben aus `regime_current` — also exakt der debounced Stand, den der Gate beim Entscheid gelesen hat; kein P2.22-Skew). Nur Legacy-Rows ohne `/` fallen auf den `regime_history`-Lookup zur Signal-Zeit zurück (RAW, P2.22-Skew dort dokumentiert). Die Forwarded-Seite hat `alt_context_at_open` nativ.
 3. **Counterfactual statt realisiertem PnL auf BEIDEN Seiten** (auch für tatsächlich geforwardete Trades): gleiche Messlatte, keine Monitor-Label-Abhängigkeit (Report-17-Vorbehalt: Monitor-Scoring nur 63,4% replay-konform).
 4. **Kurzes Fenster:** Signale der letzten Tage erreichen den Horizont noch nicht — `open_at_horizon`-Trades zählen mark-to-market in die PnL-Summe, nicht in die WR (047-Semantik). Default-Horizont hier 72h (nicht 168h), passend zum kurzen Shadow-Fenster.
 5. **Outage 2026-07-13** (~14h Ingestion tot): per-Tag-Zähler zeigen die Lücke; Bot-27-Freshness-Check zeigt, ob der Analyzer durchlief. Bei dünnem Fenster: Auswertung verschieben statt überinterpretieren.
@@ -50,4 +50,4 @@ python tools/whitelist_v2_flip_eval.py --skip-replay
 python tools/whitelist_v2_flip_eval.py --since 2026-07-11T00:00:00 --horizon-hours 72
 ```
 
-Output: `KYTHERA_REPLAY_DIR/whitelist_v2_flip_eval.jsonl` + `whitelist_v2_flip_eval_summary.json` + Konsolen-Report. Interpretation: `v2_would_block` mit positiver Counterfactual-Summe = v2 würde Geld wegnehmen; `v2_would_open` mit positiver Summe = v2 würde Geld freischalten; Portfolio-Vergleich v1-Auswahl vs. v2-Auswahl auf identischem Traffic steht am Reportende.
+Output: `KYTHERA_REPLAY_DIR/whitelist_v2_flip_eval_<since-datum>_<horizont>h.jsonl` + `..._summary.json` (parametrisierte Namen — Vergleichsläufe überschreiben einander nicht) + Konsolen-Report. Interpretation: `v2_would_block` mit positiver Counterfactual-Summe = v2 würde Geld wegnehmen; `v2_would_open` mit positiver Summe = v2 würde Geld freischalten; Portfolio-Vergleich v1-Auswahl vs. v2-Auswahl auf identischem Traffic steht am Reportende.
