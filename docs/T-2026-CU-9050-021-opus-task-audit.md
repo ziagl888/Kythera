@@ -95,8 +95,8 @@ Bereits geschlossen: **P3.13** (Cooldown-Tag-Längennetz um die MIS-Horizonte er
 **Vorentscheid:** `core/time.py` mit `utc_now()`; `-c timezone=UTC` im Pool (`core/database.py`); Money-Zeitspalten → `timestamptz` (DDL-Wechsel nur repo-seitig vorbereiten, Live-`ALTER TABLE` ist Eskalation → C-Gate); ruff `DTZ`-Regeln aktivieren. Danach erst P2.1/P2.3–P2.6/P2.21 mechanisch nachziehen.
 **Warum so:** Einzel-TZ-Fixes ohne zentrale Policy erzeugen neue Drift — das ist die dokumentierte Audit-Lektion. Step-2-Befund: die timestamptz-Variante hat live gewonnen (P2.2).
 
-### B2 · R4 `cap_leverage_to_sl()` auf restliche Signal-Bots ausrollen (BUILD, ~2-3h)
-**Vorentscheid:** existierende Funktion `core/trade_utils.py` verwenden (Muster: Bots 21/29/ROM1). Kein neues Konzept erfinden. Jeder Bot einzeln committen (Geld-Pfad, klein + kohäsiv).
+### ~~B2 · R4 `cap_leverage_to_sl()` auf restliche Signal-Bots ausrollen~~ — **GESTRICHEN (Operator-Entscheid Michi 2026-07-14)**
+Die gesamte Fleet handelt Cross-Margin (jeder Signal-Poster schreibt `🚨 Margin: Cross`, Emitter-Sweep 2026-07-14). Damit greift die Isolated-`1/lev`-Liquidationsannahme hinter `cap_leverage_to_sl` fleet-weit nicht — dieselbe Begründung wie der ROM1-/MIS2-Ausschluss (T-101). Kein Rollout; R4 im Ledger geschlossen. Die Bestands-Caps in 21/29 bleiben unangetastet, der 15%-SL-Distanz-Cap (P2.27) bleibt der einzige relevante Leverage-Schutz. Details: `AUDIT_TODO.md` R4.
 
 ### B3 · R2 Fleet-/Schema-Single-Source (BUILD) — **R2(a) erledigt, R2(b) offen**
 **R2(a) erledigt 2026-07-11 (T-2026-CU-9050-091):** `core/fleet.py` ist die eine Prozess-Definition (Name/Script/Group/Delays); `main_watchdog.py` + `dashboard.py` importieren sie — Drift geschlossen, das Dashboard zeigt automatisch die volle Fleet inkl. Bots 26–34, per `backtest/test_fleet_definition.py` festgenagelt, keine Verhaltensänderung am Watchdog. Miterledigt: der Prozesslisten-Teil von **P1.38** (CSRF/Log-Streaming/`/api/status`-Perf bleiben offen).
@@ -137,7 +137,7 @@ Erst nach Z2 (B4). Tech-Entscheidung (Flask vs FastAPI+HTMX/React, SSE/WS, Mobil
 **1. BUILD, ohne Michi ausführbar (Rest):**
 - **P2.12** (Wilder-RSI-Migration) — bewusste Migration mit Retrain-Kopplung; jetzt frei, seit T-092 die Datenpipeline-Fläche (P2.13/15/20) geräumt hat. Nächster Indikator-Engine-Punkt.
 - **B1 · R3 zentrale UTC-Policy** (`core/time.py` liegt, T-032) — der Pool-Flip auf `timezone=UTC` + der **TZ-Cluster P2.1–P2.6/P2.21** hängen daran; eigener Task mit Fleet-Restart-Fenster (Details `docs/UTC_POLICY.md`).
-- **B2 · R4-Rest** (`cap_leverage_to_sl()` auf die restlichen signal-emittierenden Bots), **R1** (Forming-Candle-Vertrag repo-weit — teils via C1-Call-Site-Inventar), **P2.22/P2.23** (Regime-Attribution/„Unreliable"-Heuristik), **P2.38** (ABR1 `SUCCESS_CLASS_IDX`), **P3.12** (`REAL`→`double`, DB-nah).
+- ~~**B2 · R4-Rest**~~ **GESTRICHEN 2026-07-14** (Fleet fleet-weit Cross-Margin, `cap_leverage_to_sl` nicht anwendbar — s. B2 oben), **R1** (Forming-Candle-Vertrag repo-weit — teils via C1-Call-Site-Inventar), **P2.22/P2.23** (Regime-Attribution/„Unreliable"-Heuristik), **P2.38** (ABR1 `SUCCESS_CLASS_IDX`), **P3.12** (`REAL`→`double`, DB-nah).
 - **A5 · P3-Batch** (P3.1-Rest, P3.2/P3.3/P3.5/P3.7/P3.8/P3.10/P3.11) — Lückenfüller, nicht in Geld-Pfad-PRs mischen.
 
 **2. VPS/Ops — braucht Live-Host, Michi gibt die Session frei:**
