@@ -255,3 +255,6 @@ bot_config.json
 
 # Claude Code local environment
 .claude/
+
+# Regenerated live-state config (fleet rewrites it continuously — not tracked, T-2026-CU-9050-124)
+max_leverage.json
