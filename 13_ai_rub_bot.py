@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core import shadow_gate
 from core.candles import read_candles, read_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
@@ -20,6 +21,7 @@ from core.funding_features import FUNDING_FEATURES, funding_features_asof, load_
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.model_artifacts import load_artifact, maybe_reload
 from core.rub_features import RUB_FEATURES, build_rub_features, rub_event_type, rub_trend
+from core.signal_post import post_shadow_ai_signal
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_RUB_BOT - %(message)s')
@@ -52,6 +54,15 @@ RUB_LONG_TAG = "RUB2"
 RUB_LEGACY_TAG = "RUB2"
 
 MODEL_LONG = None
+
+# RUB3-Shadow (T-2026-CU-9050-125): der rub2_model_LONG-Retrain war "nicht
+# deploybar" (kein positiver LONG-Operating-Point). Das LIVE-LONG-Bein fährt
+# weiter das Legacy-Modell und postet unter Tag "RUB2"; der Retrain-Shadow läuft
+# deshalb PARALLEL unter dem eigenen Generations-Tag "RUB3" (Operator-Entscheid
+# Michi, Regel 6) — nie live, nur überwachte Shadow-Trades, damit sich zeigt, ob
+# der saubere Retrain das Legacy-LONG schlägt (Regime-Frage §8/Teil 3). Der Tag
+# unterscheidet sich per RICHTUNG von einem etwaigen künftigen RUB3-SHORT.
+SHADOW_RUB3_LONG = None
 # Volle load_artifact-Contract-Form (KEIN Teil-Dict): loaded_at=0.0 erzwingt den
 # ersten maybe_reload-Load, und threshold/features/model existieren als Keys, damit
 # kein Zugriffspfad vor load_models() auf einem halben Contract in KeyError läuft.
@@ -81,6 +92,53 @@ def load_models():
         logger.error(f"❌ Error loading LONG-Modell: {e} — LONG-Seite aus.")
 
     RUB2_SHORT = load_artifact(RUB2_SHORT_ARTIFACT_PATH, RUB2_EXPECTED_FEATURES, "RUB2")
+
+    global SHADOW_RUB3_LONG
+    SHADOW_RUB3_LONG = shadow_gate.load_shadow_artifact("RUB3", "LONG")
+    if SHADOW_RUB3_LONG is not None:
+        logger.info("👻 RUB3 (rub2_model_LONG) Shadow-Modell geladen.")
+
+
+def _emit_rub3_shadow(conn, symbol, curr_close, base_features, now):
+    """RUB3-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+
+    Scored denselben LONG-Vorfilter-Kandidaten wie der Live-Legacy-LONG-Pfad, aber
+    mit dem sauberen rub2_model_LONG-Retrain (15 Features = 9 rub + 6 Funding,
+    Funding as-of zum Candle-Close wie die SHORT-Seite/der Replay). Threshold ist
+    null (kein deploybarer Operating-Point) → jeder Kandidat wird als überwachter
+    Shadow-Trade unter Tag ``RUB3`` getrackt (kein Cornix). Geometrie = dieselbe
+    LONG-HVN/S-R-Konstruktion wie der Live-Pfad (bewusst dupliziert). Fehler
+    bleiben gekapselt — der Live-RUB-Pfad darf nie betroffen sein.
+    """
+    if not shadow_gate.shadow_posting_enabled() or not shadow_gate.is_shadow("RUB3", "LONG"):
+        return
+    if SHADOW_RUB3_LONG is None:
+        return
+    try:
+        feats = dict(base_features)
+        ts_decision = now.replace(minute=0, second=0, microsecond=0)
+        fund_by_sym = load_funding(conn, [symbol], since=now - datetime.timedelta(days=95))
+        feats.update(funding_features_asof(fund_by_sym, symbol, ts_decision))
+        prob = shadow_gate.score_artifact(SHADOW_RUB3_LONG, feats)
+        thr = shadow_gate.artifact_threshold(SHADOW_RUB3_LONG)
+        if thr is not None and prob < thr:
+            return
+        entry1 = curr_close
+        entry2 = entry1 * 0.95
+        supps, resis = get_hvn_and_sr_levels(conn, symbol, curr_close)
+        sl = max([x for x in supps if x < entry2 * 0.99]) if any(x < entry2 * 0.99 for x in supps) else entry2 * 0.975
+        t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
+        targets = ensure_min_tp_distance(t_cands[:20], entry1, True, min_pct=0.05)
+        if not targets:
+            return
+        if post_shadow_ai_signal(conn, "RUB3", symbol, "LONG", prob, entry1, entry2, sl, targets, n_show=3):
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"RUB3 Shadow für {symbol} fehlgeschlagen: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 # --- HAUPT CHECKER FUNKTION ---
@@ -306,6 +364,11 @@ def check_rubberband_conditions():
                 prob = RUB2_SHORT["model"].predict_proba(ml_input)[0, 1]
 
             logger.info(f"RUB1 Trigger: {symbol} {direction} | ML-Conf: {prob:.1%} (Thresh: {threshold:.2f})")
+
+            # RUB3-Shadow (T-2026-CU-9050-125): denselben LONG-Kandidaten mit dem
+            # sauberen Retrain scoren + überwacht tracken, unabhängig vom Live-Pfad.
+            if is_long:
+                _emit_rub3_shadow(conn, symbol, curr_close, base_features, now)
 
             # --- SHADOW MODE LOGGING ---
             # Direction-Gate ENTFERNT (Operator 2026-07-06): LONG handelt wieder

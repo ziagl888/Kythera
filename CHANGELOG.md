@@ -1,3 +1,42 @@
+## [2026-07-14] Fleet-weites Shadow-Mode-Posting + 3-Wege-Report + Regime-Gating-Evidenz (T-2026-CU-9050-125)
+
+Drei zusammenhängende Teile. **Nichts geht live** — Shadow postet nie in einen Kanal,
+Artefakte bleiben in `staging_models/`, Aktivierung braucht einen Fleet-Restart (Michi).
+
+**Teil 1 — Shadow-Mode-Posting (fleet-weit).** Jedes nicht-promotete Retrain-Bein erzeugt jetzt
+einen ÜBERWACHTEN Shadow-Trade statt Stille: eine `ai_signals`-Zeile OHNE `telegram_outbox` →
+der AI-Monitor (Bot 8, enthält keinen Posting-Code) verfolgt sie bis zum realisierten Close in
+`closed_ai_signals`, ohne dass je ein Zeichen einen Kanal erreicht (verifiziert). Neu:
+`core/shadow_gate.py` (per-`(tag,direction)`-Lifecycle mit **Default-LIVE** — der Gate darf nie
+einen bestehenden Live-Post stummschalten; toleranter Loader für BEIDE Artefakt-Formate inkl. der
+`null`-Threshold-Retrains, die die Produktions-Loader ablehnen) + `core.signal_post.post_shadow_ai_signal`.
+Verdrahtet: **ATS2** (Bot 12), **ATB2** (Bot 14), **SRA2** (Bot 9), **RUB3** (Bot 13,
+`rub2_model_LONG`), **EPD3** (Bot 10, `epd2_*`). RUB3/EPD3 = **kollisionsfreie Challenger-Tags**
+(Regel 6, Operator-Entscheid Michi): die Live-Beine posten schon unter `RUB2`/`EPD2`, ein Shadow
+unter demselben Tag würde über den Active-Trade-Check einen Live-Post blockieren. SRA2/EPD3 zeigen
+den Kern: „nicht deploybar" war ein TRAININGS-Problem (tote Label-Quelle) — Shadow REVIVED sie,
+weil der AI-Monitor die frischen Outcomes liefert. Rein additiv, jeder Shadow-Pfad fehler-gekapselt
+(der Live-Pfad ist nie betroffen). Master-Schalter `KYTHERA_SHADOW_POSTING`. Spec: `docs/SHADOW_MODE_POSTING.md`.
+Bekannter Erb-Caveat (EPD3): das epd2-Artefakt wurde auf leicht verschobenen Feature-Defs gefittet
+(P1.41 / T-035), Drift nur bei Gap-Ticks — gilt für den Shadow wie für ein etwaiges Live-EPD2.
+
+**Teil 2 — Sentiment-Report 3-Wege-Gliederung.** `23_market_tracker.py:job_realized_pnl_report`
+gliedert die Realized-PnL jetzt in **ACTIVE (live) / SHADOW (getrackt, nie live) / RETIRED
+(alte Tags)** je `(tag,direction)` über `shadow_gate.leg_status`. Klassifikation als reine,
+testbare Funktion `realized_lifecycle_bucket`.
+
+**Teil 3 — Regime-konditioniertes Gating (Evidenz, keine Live-Änderung).** `docs/REGIME_CONDITIONED_GATING_EVAL.md`
++ read-only `tools/regime_conditioned_gating_scan.py`: Ja, global-negative Quellen laufen
+regime-positiv — aber der Punktschätzer ködert (ATS1-LONG/TRANSITION est +1,45 %, lb −0,26 →
+v2 blockt korrekt). **18 Zellen** unter global-negativen Beinen überleben die v2-EB-Shrinkage
+(z. B. BR1H-LONG/HIGH_VOLA lb +1,39 % n_eff 1505). Vehikel existiert bereits (v2-Whitelist) →
+Empfehlung: den T-069-Flip auf FRISCHEN Daten scharf schalten + `per_source × regime`-Kreuztabelle
+im AIM2-Report; kein neuer Gate, kein pauschales Aus.
+
+Verifikation: `backtest/test_shadow_gate.py` (14) + `backtest/test_market_tracker_lifecycle.py` (5)
+neu, DB-frei; volle Report-/Shadow-Suite 67/67, ruff/format grün, Regression-Guard smoke grün.
+Live-Wirkung erst nach Fleet-Restart (Michi); Promotion eines Shadow-Beins bleibt Operator-Entscheid.
+
 ## [2026-07-14] v1-vs-v2 Whitelist-Flip-Auswertung gebaut (048-Shadow-Gate, T-2026-CU-9050-069)
 
 Neues read-only VPS-Tool `tools/whitelist_v2_flip_eval.py` — die Datengrundlage für Michis

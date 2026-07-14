@@ -15,14 +15,14 @@ import pandas as pd
 import requests
 
 from core import config as _kcfg  # channel ids
-from core import ticker_10s
+from core import shadow_gate, ticker_10s
 from core.candles import read_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.funding_features import FUNDING_FEATURES, funding_features_cached
 from core.market_utils import get_max_leverage
 from core.model_artifacts import load_artifact, maybe_reload
-from core.signal_post import log_prediction
+from core.signal_post import log_prediction, post_shadow_ai_signal
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR - %(message)s')
@@ -144,12 +144,80 @@ _ml_model = None
 _ml_model_time = None
 _epd2: dict[str, dict] = {}
 
+# EPD3-Shadow (T-2026-CU-9050-125): der epd2-Retrain (beide Richtungen "nicht
+# deploybar" im 4,5-Monats-Fenster ohne Alt-Pump-Phase) läuft PARALLEL als Shadow
+# aus staging_models/. WICHTIG: Bot 10 postet das LIVE-EPD-Bein bereits unter Tag
+# "EPD2" (EPD_LEGACY_TAG); der Shadow bekommt deshalb den kollisionsfreien Tag
+# "EPD3" (analog RUB3) — sonst würde ein Shadow-Trade über den Active-Trade-Check
+# `model IN ('EPD2','EPD2')` einen LIVE-Post unterdrücken. Nie live; der AI-Monitor
+# sammelt die frischen Outcomes (closed_ai_signals) für die Wiedervorlage.
+_shadow_epd3: dict[str, object | None] = {"LONG": None, "SHORT": None}
+
 
 def load_epd2_artifacts():
     """Lädt die Retrain-Artefakte (dict-Format) — leer, solange keine deployt sind."""
     for direction, path in EPD2_ARTIFACT_PATHS.items():
         _epd2[direction] = load_artifact(path, EPD_EXPECTED_FEATURES, EPD_LEGACY_TAG)
+    # EPD3-Shadow-Modelle aus staging_models/ (fail-soft; Tag EPD3, Datei epd2_*).
+    for direction in ("LONG", "SHORT"):
+        _shadow_epd3[direction] = shadow_gate.load_shadow_artifact("EPD3", direction)
+    if any(_shadow_epd3.values()):
+        loaded = [d for d, m in _shadow_epd3.items() if m is not None]
+        logger.info(f"👻 EPD3 Shadow-Modelle geladen: {', '.join(loaded)}")
     return {d: a for d, a in _epd2.items() if a["loaded"]}
+
+
+def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
+    """EPD3-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+
+    Baut den IDENTISCHEN 16-Feature-Vektor wie der Live-EPD2-Pfad (base_features
+    + Funding as-of, gecacht — Regel 7), scored die staging-Artefakte je Richtung,
+    nimmt den stärksten Kandidaten und schreibt bei prob>=threshold (oder immer,
+    wenn der Threshold null ist) einen überwachten Shadow-Trade (kein Cornix) unter
+    Tag ``EPD3``. Geometrie = dieselbe HVN/S-R-Konstruktion wie der Live-Pfad
+    (bewusst dupliziert). Fehler bleiben gekapselt.
+    """
+    if not shadow_gate.shadow_posting_enabled():
+        return
+    arts = {d: a for d, a in _shadow_epd3.items() if a is not None}
+    if not arts:
+        return
+    try:
+        feats = {**base_features, **funding_features_cached(conn, symbol, now)}
+        cands = [(shadow_gate.score_artifact(a, feats), d, a) for d, a in arts.items()]
+        best_prob, best_dir, best_art = max(cands, key=lambda c: c[0])
+        thr = shadow_gate.artifact_threshold(best_art)
+        if thr is not None and best_prob < thr:
+            return
+        is_long = best_dir == "LONG"
+        entry1 = current_price
+        entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
+        supps, resis = get_hvn_and_sr_levels(conn, symbol, current_price)
+        if is_long:
+            sl = (
+                max([x for x in supps if x < entry2 * 0.99])
+                if any(x < entry2 * 0.99 for x in supps)
+                else entry2 * 0.975
+            )
+            t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
+        else:
+            sl = (
+                min([x for x in resis if x > entry2 * 1.01])
+                if any(x > entry2 * 1.01 for x in resis)
+                else entry2 * 1.025
+            )
+            t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
+        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        if not targets:
+            return
+        if post_shadow_ai_signal(conn, "EPD3", symbol, best_dir, best_prob, entry1, entry2, sl, targets, n_show=3):
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"EPD3 Shadow für {symbol} fehlgeschlagen: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def load_pump_model():
@@ -910,6 +978,10 @@ def process_coin_logics(conn, symbol):
         "e9_dist": e9_dist,
         "e21_dist": e21_dist,
     }
+
+    # EPD3-Shadow (T-2026-CU-9050-125): den staging-Retrain parallel scoren +
+    # überwacht tracken, unabhängig vom Live-EPD-Pfad (kein Cornix, Tag EPD3).
+    _emit_epd3_shadow(conn, symbol, base_features, now, current_price)
 
     try:
         if epd2:

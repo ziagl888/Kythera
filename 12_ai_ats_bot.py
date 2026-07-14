@@ -12,6 +12,7 @@ import joblib
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core import shadow_gate
 from core.ats_features import (
     ATS_CANDLE_COLUMNS,
     ATS_FEATURES,
@@ -25,6 +26,7 @@ from core.candles import read_candles_with_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.signal_post import log_prediction, post_shadow_ai_signal
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATS_BOT - %(message)s')
@@ -50,6 +52,13 @@ TSI_FEATURES = ATS_FEATURES
 MODEL_LONG = None
 MODEL_SHORT = None
 
+# ATS2-Shadow (T-2026-CU-9050-125): der Retrain von ATS1 läuft PARALLEL zum
+# weiter-live ATS1 und postet nie live — nur überwachte Shadow-Trades (Contract-
+# Artefakt aus staging_models/, geladen wenn vorhanden). Der Feature-Vektor ist
+# identisch zum ATS1-Serving (build_ats_features / ATS_FEATURES), daher scored
+# ATS2 exakt dieselbe Event-Population.
+SHADOW_ATS2: dict[str, object | None] = {"LONG": None, "SHORT": None}
+
 
 def load_models():
     """Loads the TSI models once at startup (or hourly)."""
@@ -69,6 +78,51 @@ def load_models():
             logger.info("✅ TSI Sniper Modelle (ATS1) loaded successfully.")
     except Exception as e:
         logger.error(f"❌ Error loading der TSI Modelle: {e}")
+
+    # Shadow-Modelle fail-soft nachladen — fehlen sie, läuft Bot 12 unverändert.
+    for d in ("LONG", "SHORT"):
+        SHADOW_ATS2[d] = shadow_gate.load_shadow_artifact("ATS2", d)
+    if any(SHADOW_ATS2.values()):
+        loaded = [d for d, m in SHADOW_ATS2.items() if m is not None]
+        logger.info(f"👻 ATS2 Shadow-Modelle geladen: {', '.join(loaded)}")
+
+
+def _emit_ats2_shadow(conn, symbol, direction, is_long, feature_row, entry1, now):
+    """ATS2-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+
+    Gleiches TSI-Crossover-Event und derselbe Feature-Vektor wie der Live-ATS1-
+    Score. Feuert ATS2 auf der ROHEN prob >= optimal_threshold, wird die
+    IDENTISCHE HVN/S-R-Geometrie wie im Live-Pfad gebaut und ein überwachter
+    Shadow-Trade (kein Cornix) unter Tag ``ATS2`` geschrieben. Unter Threshold:
+    nur die Prediction-Zeile wie heute. Jeder Fehler bleibt hier gekapselt —
+    der Live-ATS1-Pfad darf davon NIE betroffen sein.
+    """
+    if not shadow_gate.shadow_posting_enabled() or not shadow_gate.is_shadow("ATS2", direction):
+        return
+    art = SHADOW_ATS2.get(direction)
+    if art is None:
+        return
+    try:
+        prob = shadow_gate.score_artifact(art, feature_row)
+        thr = shadow_gate.artifact_threshold(art)
+        if thr is not None and prob < thr:
+            if prob >= 0.25:  # SHADOW_FLOOR-Parität mit dem ATS1-Prediction-Log
+                log_prediction(conn, "ATS2", symbol, direction, entry1, prob, posted=False)
+                conn.commit()
+            return
+        supps, resis = get_hvn_and_sr_levels(conn, symbol, entry1)
+        entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
+        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        if not targets:
+            return
+        if post_shadow_ai_signal(conn, "ATS2", symbol, direction, prob, entry1, entry2, sl, targets, n_show=3):
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"ATS2 Shadow für {symbol} {direction} fehlgeschlagen: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 # --- HAUPT CHECKER FUNKTION ---
@@ -155,6 +209,11 @@ def check_tsi_crossovers():
                 threshold = TSI_THRESH_SHORT
 
             module_tag = "ATS1"
+
+            # ATS2-Shadow (T-2026-CU-9050-125): neue Generation parallel scoren
+            # und überwacht mit-tracken, BEVOR die ATS1-Band-Logik greift — der
+            # ATS2-Score ist von der ATS1-Entscheidung unabhängig.
+            _emit_ats2_shadow(conn, symbol, direction, long_cross, features, current_price, now)
 
             # --- SHADOW MODE LOGGING ---
             if prob_profit < 0.25:

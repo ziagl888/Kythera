@@ -180,3 +180,75 @@ def log_prediction(
                VALUES (0, %s, %s, %s, %s, %s, %s, %s)""",
             (model_tag, now, symbol, direction, float(entry_price), float(confidence), posted),
         )
+
+
+def post_shadow_ai_signal(
+    conn,
+    model_tag: str,
+    symbol: str,
+    direction: str,
+    confidence: float,
+    entry1: float,
+    entry2: float,
+    sl: float,
+    targets: list[float],
+    n_show: int = 3,
+    dedup_hours: int = 4,
+    legacy_tag: str | None = None,
+) -> bool:
+    """Monitored-but-unposted Shadow-Trade (T-2026-CU-9050-125).
+
+    Schreibt NUR die ``ai_signals``-Zeile — KEINE ``telegram_outbox``-Zeile.
+    Damit greift der AI-Monitor (8_ai_trade_monitor, ungefilterter Read) das
+    Bein auf, verfolgt Entry/TP/SL und schreibt beim Close eine
+    ``closed_ai_signals``-Zeile unter ``model_tag`` — OHNE dass je eine Nachricht
+    einen Kanal erreicht (ein Post braucht zwingend eine telegram_outbox-Zeile;
+    der Monitor postet selbst nichts). So bekommt ein unterdrücktes/geshadowtes
+    Bein eine realisierte Ergebnis-Historie für die spätere Auswertung.
+
+    Zusätzlich wird die ``ml_predictions_master``-Shadow-Zeile (``posted=False``)
+    via :func:`log_prediction` geschrieben — dieselbe Prediction-Historie wie
+    heute, plus jetzt der überwachte Trade.
+
+    Kein Commit (der Caller schließt die Transaktion). Rückgabe: True, wenn eine
+    Shadow-Zeile geschrieben wurde; False, wenn bereits ein offener Shadow-Trade
+    für (symbol, direction, model_tag) im Monitor läuft (Dedup gegen den
+    Monitor-Arbeitssatz — spiegelt die Live-Dedup von :func:`has_open_ai_signal`).
+
+    Der Aufrufer ruft das NUR am Nicht-Live-Zweig (leg ist SHADOW) — nie statt
+    eines Live-Posts. targets[:n_show] werden getrackt (P2.31-Parität mit dem
+    Live-Post: der Monitor scored genau die veröffentlichten TPs).
+    """
+    if has_open_ai_signal(conn, symbol, direction, model_tag):
+        return False
+    tps = [float(t) for t in targets[:n_show]]
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO ai_signals (symbol, price, model, direction, confidence,
+                                       entry1, entry2, sl, targets)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (
+                symbol,
+                float(entry1),
+                model_tag,
+                direction,
+                float(confidence),
+                float(entry1),
+                float(entry2),
+                float(sl),
+                json.dumps(tps),
+            ),
+        )
+    log_prediction(
+        conn,
+        model_tag,
+        symbol,
+        direction,
+        entry1,
+        confidence,
+        posted=False,
+        dedup_hours=dedup_hours,
+        legacy_tag=legacy_tag,
+    )
+    logger.info("👻 %s SHADOW-Trade für %s %s in ai_signals (kein Cornix).", model_tag, symbol, direction)
+    return True
