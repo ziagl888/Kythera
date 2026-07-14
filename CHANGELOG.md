@@ -1,3 +1,59 @@
+## [2026-07-13] ROM1-Regime-Auto-Closes in den Realized-PnL-Report: Bot-28-Close-Writer persistiert targets+lev (T-2026-CU-9050-116)
+
+Follow-up zu T-115 auf Operator-Anweisung ("rom trades sollten auch drinnen sein"): der **zweite**
+`closed_ai_signals`-Writer — der Regime-Auto-Close in `28_signal_orchestrator.py`
+(`force_close_trades_for_regime_change`, Status `CLOSED_REGIME_CHANGE`) — schrieb keine
+targets/lev; unter der exact-only-Regel des Realized-PnL-Reports blieben ROM1-Auto-Closes damit
+dauerhaft unsichtbar. Jetzt: SELECT der ROM1-Rows holt `targets` + `ai_signals.lev` (First-Poll-
+Stempel aus T-115) mit, der Close-INSERT reicht beide durch; lev-Fallback für ungestempelte
+Übergangs-Rows = `get_max_leverage(symbol, ROM1_DESIRED_LEVERAGE)` (ROM1 postet immer den
+20x-Standard-Cap). **Deploy-Ordering abgesichert:** deterministische `information_schema`-Probe —
+läuft Bot 28 vor der Bot-8-Migration, schließt er im Legacy-Format weiter (Close hat Vorrang vor
+Report-Sichtbarkeit), statt den Regime-Close lahmzulegen. Der Housekeeping-Writer
+(`6_housekeeping`, DELISTED) bleibt bewusst unangetastet — neutral, vom Report gefiltert.
+
+Verifikation (DB-frei): `backtest/test_signal_orchestrator.py` 88/88 — zwei bestehende
+Regime-Close-Tests auf den neuen Column-Contract erweitert (targets/lev-Passthrough), zwei neue
+Tests (Legacy-INSERT vor Bot-8-Migration; lev-Fallback auf ROM1-Default) + Fix eines vorbestehend
+roten Tests (seit T-109 liest `_get_last_close_price` über `core.candles.read_candles` — Mock
+gepatcht). ruff/mypy grün, Guard-Smoke OK. Deploy am selben Michi-Gate wie T-115 (zusätzlich
+Bot-28-Restart).
+
+## [2026-07-13] R1/TimescaleDB C-Gate Phase 2 (Build) — Dual-Write + Backfill + 1d/1w-WS-Removal (T-2026-CU-9050-119)
+
+Zweite DB-Migrations-Phase der R1+TimescaleDB-Umstellung (Umbrella T-2026-CU-9050-018,
+D-2026-CLD-109), aufbauend auf Phase 0. **Drei reversible, dormante Code-Slices** — jede
+eigenes PR + beide Core-Reviews PASS. **Die Aktivierung (Flag an + Fleet-Deploy + Backfill
+laufen lassen + Paritäts-Beobachtung → Phase 3) bleibt vollständig operator-gegatet;** kein
+Slice ändert Live-Verhalten beim Merge. Reads bleiben Legacy bis zum Phase-4-Cutover.
+
+- **2a — Dual-Write (PR #110, gemergt):** bei gesetztem `KYTHERA_CANDLES_DUAL_WRITE` (Default
+  AUS) schreiben `core.candles.upsert_candles`/`upsert_indicators` die `candles`/`indicators`-
+  Hypertables ZUSÄTZLICH zu den Alt-Tabellen — ein zweiter INSERT in der Transaktion des
+  Callers (gemeinsam committed). **Keine Bot-Änderung** (der `closed`-Flag + `tf` kamen in
+  Part 1 genau dafür in die Signaturen). candles: `tf` + R1-`is_closed`, `ON CONFLICT
+  (symbol,tf,open_time)` mit `is_closed` in SET UND `IS DISTINCT FROM` (forming→closed flippt
+  in-place, unveränderter Re-Upsert = No-op, kein WAL-Churn). indicators: `tf` + `is_closed`=true
+  (Engine rechnet post-R1 nur auf geschlossenen Kerzen).
+- **2b — Backfill-Copy (PR #111, enqueued):** `tools/candles_backfill.py` kopiert die Per-Coin-
+  HISTORIE einmalig in die Hypertables (Komplement zum forward-only Dual-Write). Idempotent
+  (`ON CONFLICT DO NOTHING` — überschreibt nie eine forward-geschriebene Zeile), resumable
+  (Progress-Datei, Commit pro Tabelle). Per-Zeile `is_closed = (open_time < period_start(tf,now))`
+  statt des `…, true`-Sketches aus §3 (die Alt-Tabellen tragen die forming-Kerze). Indikatoren
+  copy/cast (KEIN Recompute — D-109 #4; Alt-Indikatoren behalten den Forming-Kontaminationswert).
+  Default = Dry-Run-Plan (9669 Zieltabellen enumeriert, read-only), `--execute` schreibt.
+- **2c — 1d/1w-WS-Removal (PR #112, enqueued):** `1_data_ingestion` streamt 1d/1w nicht mehr
+  über WebSocket (`WS_TIMEFRAMES` = `TIMEFRAMES` − {1d,1w} an beiden `@kline`-Buildern) — spart
+  ~1.300 Streams (IP-Drossel-Risiko). Der REST-/Catch-up-Pfad ist UNVERÄNDERT (iteriert weiter
+  das volle `TIMEFRAMES`), 1d/1w kommen weiter per REST (mit Catch-up-Zyklus-Latenz, akzeptiert
+  per D-109 #3). WS bleibt für 5m–4h.
+
+**Verifikation:** DB-freie Tests (Flag-Parsing, Backfill-Progress/Guard, WS/REST-Split);
+DB-gated Byte-Tests hinter `KYTHERA_CANDLES_WRITE_PARITY` (Dual-Write + Backfill schreiben in
+die realen Hypertables, per `conn.rollback()` null Persistenz — Hypertables verifiziert leer);
+Guard smoke+verify 24/24; `core.candles`/`1_data_ingestion` ruff/format/mypy clean, Whole-Repo-
+`ruff check .` grün. **Offen:** Aktivierung (jeder Schritt Michi-gegatet) + Phase 3–5.
+
 ## [2026-07-13] R1/TimescaleDB C-Gate Phase 0 — leere candles/indicators-Hypertables angelegt (T-2026-CU-9050-118)
 
 Erste **DB-Migrations-Phase** der R1+TimescaleDB-Umstellung (Umbrella T-2026-CU-9050-018, Entscheidungen

@@ -529,6 +529,15 @@ def _flush_to_db(buffer_copy):
 # (P1.42: "fapi-Cap ~200/Conn"). 180 = Sicherheitsmarge unter dem Cap.
 WS_STREAMS_PER_WORKER = 180
 
+# 1d/1w vom WebSocket nehmen (C-Gate Phase 2, D-2026-CLD-109 #3): die zwei
+# langsamsten Frames aktualisieren höchstens einmal pro Tag bzw. Woche, ein
+# Live-Kline-Stream dafür sind ~1.300 verschwendete Streams (IP-Drossel-Risiko)
+# für eine Kerze, die der REST-Catch-up ohnehin jeden Zyklus holt. Sie BLEIBEN
+# auf dem REST-/Catch-up-Pfad (dort weiter `TIMEFRAMES`, unverändert) — NUR die
+# WS-Subscription-Menge lässt sie fallen. WS bleibt für 5m–4h.
+WS_EXCLUDED_TIMEFRAMES = frozenset({"1d", "1w"})
+WS_TIMEFRAMES = [tf for tf in TIMEFRAMES if tf not in WS_EXCLUDED_TIMEFRAMES]
+
 # SUBSCRIBE-Chunk-Größe und Abstand. Binance erlaubt 10 msg/s pro Connection
 # (Futures); wir bleiben bei 1 msg/s = 10x Sicherheitsmarge, wichtig beim
 # gleichzeitigen Startup vieler Worker.
@@ -605,7 +614,7 @@ def compute_new_symbols(current: set, tracked: set) -> list:
 def _new_symbol_stream_chunks(new_symbols: list) -> list:
     """Baut die kline-Stream-Namen fuer neue Symbole und shardet sie wie der
     initiale Fleet (<= WS_STREAMS_PER_WORKER Streams/Connection)."""
-    all_streams = [f"{sym.lower()}@kline_{tf}" for sym in new_symbols for tf in TIMEFRAMES]
+    all_streams = [f"{sym.lower()}@kline_{tf}" for sym in new_symbols for tf in WS_TIMEFRAMES]
     return [all_streams[i : i + WS_STREAMS_PER_WORKER] for i in range(0, len(all_streams), WS_STREAMS_PER_WORKER)]
 
 
@@ -799,7 +808,7 @@ async def start_websocket_fleet(symbols):
     """
     all_streams = []
     for sym in symbols:
-        for tf in TIMEFRAMES:
+        for tf in WS_TIMEFRAMES:
             all_streams.append(f"{sym.lower()}@kline_{tf}")
 
     stream_chunks = [
