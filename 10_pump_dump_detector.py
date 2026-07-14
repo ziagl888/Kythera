@@ -22,7 +22,7 @@ from core.database import get_db_connection
 from core.funding_features import FUNDING_FEATURES, funding_features_cached
 from core.market_utils import get_max_leverage
 from core.model_artifacts import load_artifact, maybe_reload
-from core.signal_post import log_prediction, post_shadow_ai_signal
+from core.signal_post import has_open_ai_signal, log_prediction, post_shadow_ai_signal
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR - %(message)s')
@@ -188,6 +188,14 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
         best_prob, best_dir, best_art = max(cands, key=lambda c: c[0])
         thr = shadow_gate.artifact_threshold(best_art)
         if thr is not None and best_prob < thr:
+            return
+        # Hot-Path-Guard (P1.41-Lehre): Bot 10 läuft je 10s-Tick, und der 900s-
+        # Timer wird nur im Live-Trade-Zweig zurückgesetzt — ohne diesen Early-Out
+        # liefe die teure HVN/S-R-Geometrie (DB-Query) auf JEDEM Tick, solange ein
+        # EPD3-Shadow-Trade dieses Coins offen ist (LONG-Threshold ist null → feuert
+        # immer). Der has_open-Check in post_shadow_ai_signal käme erst NACH der
+        # Geometrie — deshalb hier vorziehen.
+        if has_open_ai_signal(conn, symbol, best_dir, "EPD3"):
             return
         is_long = best_dir == "LONG"
         entry1 = current_price
