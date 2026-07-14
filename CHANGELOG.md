@@ -1,3 +1,43 @@
+## [2026-07-14] ATS/TSI-Trainer (Bot 12) DB-basiert neu gebaut → ATS2-Staging + Trainer==Serving-Parity (T-2026-CU-9050-121)
+
+Der letzte CSV-basierte Legacy-Trainer der Fleet (Bot 12 TSI-Sniper) ist auf das moderne
+Replay-Muster umgestellt: DB → Features → Walk-Forward-Label → Train → Staging, jederzeit
+wiederholbar, R1-clean über `core.candles`, **kein CSV-Zwischenschritt** mehr. Modell-Artefakte
+NUR nach `staging_models/` (ATS2, harte Regel 2/6) — **kein Rollout** (Michi-gegated).
+
+**Befund-Korrektur zum Task-Brief (verifiziert gegen `audit_reports/13_x_ml_trainers.md` + die
+Bot-Inference):** das Brief-Mapping der Legacy-Trainer war auf beiden Achsen falsch — `BT1-*`
+speist Bot 14 (ATB, geparkt; `BT1-ML-Trainer.py` ist toter Code), `BT3-*` speist Bot 13 (RUB).
+**Bot 10 (Pump)** lädt ein 10s-Tick-Modell (`vol_ratio/p_chg_60s/…` aus dem Ticker-Puffer, NICHT
+aus `core.candles` rekonstruierbar) und hat mit EPD2 bereits einen DB-Retrain. **Nur Bot 12
+(ATS/TSI)** war ein echtes `core.candles`-Ziel — Scope entsprechend auf ATS2 fokussiert
+(Operator-Entscheid via AskUserQuestion), EPD2-Pfad auditiert.
+
+- **Neu `core/ats_features.py`** — geteilter Feature-/Detektions-Builder (X-R1-Regel): `ATS_FEATURES`
+  (29er-Vertrag), `ats_cross` (TSI-Signallinien-Crossover), `build_ats_features` (OBV/VWAP +
+  29 Features), `assert_features_alive`. Aus der inline-Logik von `12_ai_ats_bot` gehoben.
+- **`12_ai_ats_bot.py` verkabelt** auf den geteilten Builder + `core.trade_utils.hvn_sr_trade_geometry`
+  (byte-identisch zur bisherigen inline-Geometrie) — **verhaltensneutral**: der Bot lädt weiter
+  `model_tsi_*_robust.pkl`, Live-Semantik unverändert. Der 5. HVN/SR-Geometrie-Klon fällt weg.
+- **Walk-Forward-Adapter** `tools/walkforward_sim.py --strategy ats` — je geschlossener 1h-Kerze
+  ein Crossover-Check, OBV-Baseline-Parität über das 500-Kerzen-Fenster, Label = First-Touch
+  TP1-vor-SL der geposteten HVN/SR-Geometrie via `simulate_exit` (Fees inkl.).
+- **Trainer** `tools/retrain_from_replay.py --strategy ats` — Binärmodell je Richtung, chronologischer
+  70/15/15-Split + 7d-Purge, `pick_threshold_safe`, Isotonic-Kalibrierung → `ats2_model_{LONG,SHORT}.pkl`
+  + `_meta.json` (`model_id=ATS2`). **Ein-Kommando-Wrapper** `tools/retrain_ats.py --days/--since`.
+- **Parity-Test `backtest/test_ats_features.py`** (harte Regel 7) — beweist `build_ats_features` ==
+  die frühere Bot-12-Serving-Konstruktion (wortwörtliche Referenz-Kopie), über mehrere Seeds UND
+  Fensterlängen (die OBV-Baseline hängt vom Fensterstart ab); + Feature-Vertrag, `ats_cross`,
+  Alive-Guard, DB-freier Adapter-Smoke. 5/5 grün.
+- **EPD2/Pump-Pfad auditiert** — bereits DB-basiert (`pump_dump_events` + `ticker_10s` + `core.candles`,
+  R1-clean), CSV-frei, staging-output; kein Fix nötig (10s-Tick-Features sind nicht candle-basiert
+  reproduzierbar). Für Symmetrie neu: Ein-Kommando-Wrapper `tools/retrain_pump.py --days/--since`.
+- `docs/MODEL_INTENT.md` §6 (ATS2-Infrastruktur) + §7 (EPD2-Audit) fortgeschrieben.
+
+Verifikation: `backtest/test_ats_features.py` 5/5, `backtest/test_atb2_features.py` 10/10 (Adapter-Import
+unverändert), ruff/format/mypy grün auf den CI-geprüften Dateien (`core/ats_features.py`,
+`12_ai_ats_bot.py`); `tools/` bleibt bewusst außerhalb des Lint-Bars (Falle 12, nicht reformatiert).
+
 ## [2026-07-13] ROM1-Regime-Auto-Closes in den Realized-PnL-Report: Bot-28-Close-Writer persistiert targets+lev (T-2026-CU-9050-116)
 
 Follow-up zu T-115 auf Operator-Anweisung ("rom trades sollten auch drinnen sein"): der **zweite**

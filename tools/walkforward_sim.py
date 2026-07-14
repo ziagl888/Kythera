@@ -82,6 +82,14 @@ from core.mis_features import (
     add_advanced_features as mis1_add_features,
 )
 from core.funding_features import funding_features_asof, load_funding  # noqa: E402
+from core.ats_features import (  # noqa: E402
+    ATS_CANDLE_COLUMNS,
+    ATS_INDICATOR_COLUMNS,
+    TSI_LINE_COL,
+    TSI_SIGNAL_COL,
+    ats_cross,
+    build_ats_features,
+)
 from core.rub_features import build_rub_features, rub_event_type, rub_trend  # noqa: E402
 from core import atb2_features as atb  # noqa: E402
 from core.time import utc_now  # noqa: E402
@@ -104,7 +112,17 @@ MAX_CPU_AT_START = 90.0  # health_monitor CPU_SATURATED nicht triggern
 
 # Wie viele TPs der jeweilige Bot tatsächlich publiziert (Cornix-Message) —
 # bestimmt die Positions-Fraktionierung im Ladder-Exit.
-PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5, "rub": 3, "atb2": 3}
+PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5, "rub": 3, "atb2": 3, "ats": 3}
+
+# ATS/TSI (Bot 12): Live liest der Bot die NEUESTEN 500 geschlossenen 1h-Kerzen
+# und normalisiert OBV auf den Fensterstart — der Replay muss dasselbe 500er-
+# Fenster durchreichen. Warmup 100 Tage deckt sowohl das 500-Kerzen-OBV-Fenster
+# (~21 d) als auch den 95d-S/R-Level-Pool ab, damit JEDES Event im angeforderten
+# Zeitraum ein vollständiges Fenster hat (OBV-Baseline-Parität, harte Regel 7).
+ATS_WARMUP_DAYS = 100
+ATS_FEATURE_WINDOW = 500   # Bot 12: read_candles_with_indicators(limit=500)
+ATS_SR_WINDOW_H = 95 * 24  # get_hvn_and_sr_levels nutzt 95 Tage 1h-Kerzen
+ATS_MIN_HISTORY = 50       # Bot-12-Floor: `if len(df) < 50: continue`
 
 # ATB2 (§11): Warmup so groß, dass EMA200 vor dem 1. Event konvergiert
 # (MIN_HISTORY_CANDLES=1500 Kerzen ≈ 62,5 Tage → 65d Puffer); Cooldown je
@@ -910,6 +928,103 @@ def run_rub1(conn, symbol: str, days: int) -> list[dict]:
     return trades
 
 
+def load_ats_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
+    """1h-Kerzen + exakt die Indikatoren, die Bot 12 joint (core.ats_features),
+    NUR geschlossene Kerzen (R1). Numerisch + fillna(0) wie Bot 12 (Zeile 120),
+    damit die abgeleiteten Features bit-gleich sind."""
+    try:
+        df = read_candles_with_indicators(
+            conn,
+            symbol,
+            "1h",
+            start=_window_start(days + ATS_WARMUP_DAYS),
+            include_forming=False,
+            candle_columns=ATS_CANDLE_COLUMNS,
+            indicator_columns=ATS_INDICATOR_COLUMNS,
+        )
+    except Exception:
+        conn.rollback()
+        return None
+    if df.empty:
+        return None
+    df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
+    for c in df.columns:
+        if c != "open_time":
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    return df.reset_index(drop=True)
+
+
+def run_ats(conn, symbol: str, days: int) -> list[dict]:
+    """Walk-forward des ATS/TSI-Snipers (Bot 12) für den ATS2-Retrain.
+
+    EINE Quelle mit dem Bot: core.ats_features (TSI-Crossover-Vorfilter,
+    29-Feature-Vertrag, OBV/VWAP) + dieselbe HVN/S-R-Geometrie
+    (core.trade_utils.hvn_sr_trade_geometry, byte-identisch zur Bot-Inline-
+    Geometrie). Je geschlossener 1h-Kerze wird auf einen TSI-Signallinien-
+    Crossover geprüft (== stündlicher Live-Scan von Bot 12); Entry = Close der
+    frisch geschlossenen Kerze, Label = First-Touch TP1-vor-SL der geposteten
+    Geometrie (simulate_exit, Fees inkl.).
+
+    Kein Cooldown: TSI-Crossovers sind flankengetriggert und alternieren je
+    Richtung — anders als der RUB-Schwellwert-Vorfilter feuern sie nicht mehrfach
+    hintereinander in dieselbe Richtung.
+
+    OBV-Baseline-Parität (harte Regel 7): der Bot normalisiert OBV auf den Start
+    seines 500-Kerzen-Fensters; der Replay reicht für jedes Event exakt dieses
+    Fenster durch (df.iloc[t+1-500 : t+1]). Der Warmup (ATS_WARMUP_DAYS) sorgt
+    dafür, dass alte Coins ein volles 500er-Fenster haben; junge Coins sind
+    ebenfalls deckungsgleich, weil ihr Fenster wie beim Bot am Coin-Start
+    anliegt."""
+    df = load_ats_frame(conn, symbol, days)
+    if df is None or len(df) < ATS_MIN_HISTORY + 2:
+        return []
+
+    t1h = df["open_time"].values
+    h1h, l1h, c1h = df["high"].values, df["low"].values, df["close"].values
+    tsi_line = df[TSI_LINE_COL].values
+    tsi_sig = df[TSI_SIGNAL_COL].values
+    n = len(df)
+
+    # Events nur im angeforderten Zeitraum; der Warmup davor garantiert je Event
+    # ein volles 500-Kerzen-/95d-Fenster.
+    start_t = max(ATS_MIN_HISTORY, n - days * 24)
+    trades: list[dict] = []
+    for t in range(start_t, n - 1):
+        direction = ats_cross(tsi_line[t - 1], tsi_sig[t - 1], tsi_line[t], tsi_sig[t])
+        if direction is None:
+            continue
+        curr_close = float(c1h[t])
+        if not np.isfinite(curr_close) or curr_close <= 0:
+            continue
+
+        feat_lo = max(0, t + 1 - ATS_FEATURE_WINDOW)
+        window = df.iloc[feat_lo: t + 1]
+        if len(window) < ATS_MIN_HISTORY:
+            continue
+        features = build_ats_features(window)
+
+        is_long = direction == "LONG"
+        sr_lo = max(0, t + 1 - ATS_SR_WINDOW_H)
+        win95 = df.iloc[sr_lo: t + 1][["high", "low", "close"]]
+        supps, resis = get_hvn_and_sr_levels(None, symbol, curr_close, df=win95)
+        entry1 = curr_close
+        entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
+        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        if not targets or sl <= 0:
+            continue
+
+        ts_decision = pd.Timestamp(t1h[t]) + pd.Timedelta(hours=1)
+        res = simulate_exit(t1h, h1h, l1h, c1h, t + 1, direction,
+                            entry1, sl, targets, PUBLISHED_TARGETS["ats"])
+        trades.append({
+            "strategy": "ats", "tf": "1h", "symbol": symbol, "direction": direction,
+            "signal_time": str(ts_decision), "entry": entry1, "entry2": entry2,
+            "sl": sl, "targets": targets[:PUBLISHED_TARGETS["ats"]],
+            "features": features, **res,
+        })
+    return trades
+
+
 def run_atb2(conn, symbol: str, days: int) -> list[dict]:
     """Walk-forward des ATB2-Converging-Channel-Detektors (MODEL_INTENT §11).
 
@@ -1006,7 +1121,7 @@ def summarize(trades: list[dict], label: str) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Walk-Forward-Simulator (P0.10/P0.11)")
     ap.add_argument("--strategy", required=True,
-                    choices=["ufi1", "td", "bb", "abr1", "mis1", "rub", "atb2"])
+                    choices=["ufi1", "td", "bb", "abr1", "mis1", "rub", "atb2", "ats"])
     ap.add_argument("--tf", default="1h", choices=["1h", "4h"], help="nur für td/bb")
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--stride", type=int, default=24,
@@ -1089,6 +1204,8 @@ def main() -> None:
                             trades = run_rub1(conn, symbol, args.days)
                         elif args.strategy == "atb2":
                             trades = run_atb2(conn, symbol, args.days)
+                        elif args.strategy == "ats":
+                            trades = run_ats(conn, symbol, args.days)
                         else:
                             trades = run_abr1(conn, symbol, args.days, abr1_mod)
                         break

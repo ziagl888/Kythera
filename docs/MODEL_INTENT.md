@@ -211,6 +211,22 @@ Confidence-Ordnung), Label 2,5 %/1,5 %-Bracket ≠ Live-Geometrie, Daten stale.
       Label = gepostete Geometrie via Replay, frische Daten, eigener
       Walkforward-Adapter (Event-gated wie live).
 
+**ATS2-Retrain-Infrastruktur gebaut (T-2026-CU-9050-121):** DB-basiert über
+`core.candles` (R1-clean, `include_forming=False`; kein CSV — die alten
+`X8-TSI-EXPORT/-ML`-Skripte in `_X` sind abgelöst). Der geteilte Feature-Builder
+`core/ats_features.py` wird von Bot 12 UND dem Trainer aufgerufen
+(`build_ats_features` → Trainer==Serving, bewiesen vom Parity-Test
+`backtest/test_ats_features.py`) und behebt so den OBV-Train/Serve-Skew; Label =
+First-Touch der geposteten HVN/S-R-Geometrie via `simulate_exit`
+(`core.trade_utils.hvn_sr_trade_geometry`, byte-identisch zur Bot-Geometrie)
+statt des alten 2,5/1,5 %-Brackets. Event-gated Walkforward-Adapter
+`tools/walkforward_sim.py --strategy ats`, Training
+`tools/retrain_from_replay.py --strategy ats` (bzw. Ein-Kommando
+`tools/retrain_ats.py --days/--since`) → `staging_models/ats2_model_{LONG,SHORT}.pkl`
+(`model_id=ATS2`, chronologischer Split + 7d-Purge, `pick_threshold_safe`,
+Isotonic-Kalibrierung). **Noch KEIN VPS-Trainingslauf/Deploy** — Artefakt-Erzeugung
++ Rollout-Empfehlung sind Michi-gegated (harte Regel 2).
+
 ---
 
 ## 7. EPD1 — Echtzeit-Pump-Ignition ✅ (Intent bestätigt 2026-07-06)
@@ -268,6 +284,16 @@ Chrono-Split, 7d-Purge, Safe-Threshold):
   bleibt Pflicht. Artefakte liegen in staging (`epd2_model_{LONG,SHORT}.pkl`),
   Stats `retrain_epd2_stats.json`. Wiedervorlage: Retrain erneut, sobald
   eine echte Alt-Pump-Phase in den Logs ist (Regime-Fenster-These §8).
+
+**EPD2-DB-Pfad auditiert (T-2026-CU-9050-121):** bestätigt bereits DB-basiert,
+R1-clean und CSV-frei — `tools/epd2_build_dataset.py` liest die Events aus
+`pump_dump_events`, den Entry aus `ticker_10s` und Geometrie/Indikatoren über
+`core.candles` (`read_candles_with_indicators(include_forming=False)`), schreibt
+JSONL (kein CSV) nach staging. **Kein candle-basierter Pump-Trainer möglich** —
+die Live-Features sind 10s-Tick-basiert (nicht aus 1h-OHLCV rekonstruierbar,
+harte Regel 7); die Event-Log-Route IST der DB-Retrain. Kein Fix nötig; für
+symmetrische Ein-Kommando-Bedienung neu: `tools/retrain_pump.py --days/--since`
+(kettet Build + `retrain_from_replay --strategy epd`). Wiedervorlage unverändert.
 
 ---
 
