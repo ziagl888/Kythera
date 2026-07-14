@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core import shadow_gate
 from core.bot_catalog import active_scripts, script_for_tag
 from core.bot_naming import pretty_name
 
@@ -1892,6 +1893,26 @@ def _format_realized_pnl_blocks(stats: dict[str, dict[str, dict[str, float]]]) -
     return blocks
 
 
+def realized_lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[str]) -> str:
+    """Report-Bucket eines (tag, direction)-Beins (T-2026-CU-9050-125).
+
+    Returns 'active' | 'shadow' | 'retired' | 'inactive' | 'unmapped'. Quelle der
+    Lifecycle-Wahrheit ist core.shadow_gate; nur LIVE-Beine unterliegen zusätzlich
+    dem Läuft-das-Skript-Gate (active_scripts). Pure + module-scope → testbar ohne
+    DB (backtest/test_market_tracker_lifecycle.py)."""
+    status = shadow_gate.leg_status(tag, direction)
+    if status == shadow_gate.RETIRED:
+        return "retired"
+    if status == shadow_gate.SHADOW:
+        return "shadow"
+    script = script_for_tag(tag)
+    if script is None:
+        return "unmapped"
+    if script not in active_scripts_set:
+        return "inactive"
+    return "active"
+
+
 async def job_realized_pnl_report() -> None:
     """Postet den Leveraged-Realized-PnL-Report für aktive Bots (alle 4h)."""
     # Der Scheduler tickt stündlich (minutes-Liste) — die 4h-Cadence lebt hier.
@@ -1982,14 +2003,19 @@ async def job_realized_pnl_report() -> None:
         return
 
     active = active_scripts()
-    rows: list[tuple[str, float, float]] = []
+    # T-2026-CU-9050-125: drei Lifecycle-Blöcke je (tag, direction) statt eines
+    # flachen ACTIVE-Blocks — aktiv (live postend) / shadow (getrackt, nie live) /
+    # retired (alte Generation). Quelle der Wahrheit: core.shadow_gate.leg_status.
+    active_rows: list[tuple[str, float, float]] = []
+    shadow_rows: list[tuple[str, float, float]] = []
+    retired_rows: list[tuple[str, float, float]] = []
     n_neutral = 0
     n_invalid = 0
     n_inactive = 0
     n_future = 0
     unmapped: set[str] = set()
 
-    def add_row(tag: str, age_h: float, pnl: float | None) -> None:
+    def add_row(tag: str, direction: str, age_h: float, pnl: float | None) -> None:
         nonlocal n_invalid, n_inactive, n_future
         if pnl is None:
             n_invalid += 1
@@ -2000,14 +2026,20 @@ async def job_realized_pnl_report() -> None:
             # wachsender Wert hier heißt: die Clock-Paarung oben ist kaputt.
             n_future += 1
             return
-        script = script_for_tag(tag)
-        if script is None:
-            unmapped.add(pretty_name(tag))
-            return
-        if script not in active:
+        label = pretty_name(tag)
+        bucket = realized_lifecycle_bucket(tag, direction, active)
+        if bucket == "retired":
+            # Alte Generation: historisch zeigen, unabhängig vom Live-Zustand.
+            retired_rows.append((label, float(age_h), pnl))
+        elif bucket == "shadow":
+            # Getrackt, aber nie live gepostet (staging/neuer Tag oder geparktes Bein).
+            shadow_rows.append((label, float(age_h), pnl))
+        elif bucket == "active":
+            active_rows.append((label, float(age_h), pnl))
+        elif bucket == "unmapped":
+            unmapped.add(label)
+        else:  # "inactive": LIVE-Bein, aber Skript geparkt (wie bisher gedroppt)
             n_inactive += 1
-            return
-        rows.append((pretty_name(tag), float(age_h), pnl))
 
     for r in df_ai.itertuples(index=False):
         if _is_neutral_close(r.close_reason):
@@ -2015,7 +2047,7 @@ async def job_realized_pnl_report() -> None:
             continue
         targets = _parse_targets(r.targets)
         pnl = realized_pnl_pct(r.direction, r.entry, r.close_price, targets or [], r.targets_hit, r.lev)
-        add_row(str(r.strategy), r.age_h, pnl)
+        add_row(str(r.strategy), str(r.direction), r.age_h, pnl)
 
     for r in df_cls.itertuples(index=False):
         # 6_housekeeping schreibt "DELISTED"-Marker auch in die classic
@@ -2025,44 +2057,56 @@ async def job_realized_pnl_report() -> None:
             continue
         targets = _classic_targets(r.target1, r.target2, r.target3, r.target4)
         pnl = realized_pnl_pct(r.direction, r.entry, r.close_price, targets, _parse_hits(r.status), r.lev)
-        add_row(str(r.strategy), r.age_h, pnl)
+        add_row(str(r.strategy), str(r.direction), r.age_h, pnl)
 
     if unmapped:
         # No silent drops: an unmapped tag means core/bot_catalog.py lacks the
         # family of a new/renamed model — surface it instead of hiding trades.
         logger.warning(f"Realized-PnL: {len(unmapped)} Tag(s) ohne Bot-Zuordnung ausgelassen: {sorted(unmapped)}")
 
-    stats = _aggregate_realized_pnl(rows)
-    if not stats:
-        logger.info("Realized-PnL: keine berechenbaren Trades aktiver Bots im 30d-Fenster — Post skipped.")
+    active_stats = _aggregate_realized_pnl(active_rows)
+    shadow_stats = _aggregate_realized_pnl(shadow_rows)
+    retired_stats = _aggregate_realized_pnl(retired_rows)
+    if not (active_stats or shadow_stats or retired_stats):
+        logger.info("Realized-PnL: keine berechenbaren Trades im 30d-Fenster — Post skipped.")
         return
 
-    header_first = (
-        '<pre>💵 <b>REALIZED PnL — ACTIVE BOTS</b> 💵\n<i>leveraged, target-weighted, windows by CLOSE time</i>\n\n'
-    )
-    header_continued = '<pre>💵 <b>REALIZED PnL — ACTIVE BOTS</b> (continued) 💵\n\n'
     unmapped_note = f'\n  {len(unmapped)} unmapped tag(s) skipped (see bot log)' if unmapped else ''
-    footer = (
+    legend = (
         '\n\n<b>Legend:</b>\n'
         '  Σ = sum of realized % per window | Ø = avg per trade\n'
+        '  ACTIVE = live posting · SHADOW = tracked, not posted · RETIRED = old tag\n'
         '  stake split equally across targets, rest closes at exit\n'
         '  AI trades: only closes with persisted targets+lev (exact-only)\n'
         '  excluded: unfilled entries, housekeeping closes'
         f'{unmapped_note}'
-        '</pre>'
     )
 
-    chunks = _build_chunks(_format_realized_pnl_blocks(stats), header_first, header_continued, footer)
-    for chunk in chunks:
-        send_telegram(chunk, TELEGRAM_CHANNEL_ID)
-        await asyncio.sleep(1)
+    sections = [
+        ("💵 <b>REALIZED PnL — ACTIVE</b> (live posting) 💵", active_stats),
+        ("👻 <b>REALIZED PnL — SHADOW</b> (tracked, not live) 👻", shadow_stats),
+        ("🗄 <b>REALIZED PnL — RETIRED</b> (old model versions) 🗄", retired_stats),
+    ]
+    sections = [(title, st) for title, st in sections if st]
+
+    for idx, (title, st) in enumerate(sections):
+        is_last = idx == len(sections) - 1
+        header_first = f'<pre>{title}\n<i>leveraged, target-weighted, windows by CLOSE time</i>\n\n'
+        header_continued = f'<pre>{title} (continued)\n\n'
+        footer = (legend if is_last else '') + '</pre>'
+        chunks = _build_chunks(_format_realized_pnl_blocks(st), header_first, header_continued, footer)
+        for chunk in chunks:
+            send_telegram(chunk, TELEGRAM_CHANNEL_ID)
+            await asyncio.sleep(1)
 
     if n_future:
         logger.warning(
             f"Realized-PnL: {n_future} Close(s) mit negativer Age gedroppt — Writer-/Query-Uhr prüfen (Falle 9)."
         )
+    n_total = len(active_rows) + len(shadow_rows) + len(retired_rows)
     logger.info(
-        f"✅ Realized-PnL-Post gesendet ({len(stats)} Bots, {len(rows)} Trades im 30d-Fenster; "
+        f"✅ Realized-PnL-Post gesendet (active={len(active_stats)}, shadow={len(shadow_stats)}, "
+        f"retired={len(retired_stats)} Bots, {n_total} Trades im 30d-Fenster; "
         f"skipped: {n_neutral} neutral, {n_invalid} invalid, {n_inactive} inactive, {n_future} future-age)."
     )
 

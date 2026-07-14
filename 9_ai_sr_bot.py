@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core import shadow_gate
 from core.candles import read_indicators
 from core.charting import generate_minichart_image
 
@@ -18,6 +19,7 @@ from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.model_artifacts import load_artifact_json, maybe_reload
+from core.signal_post import post_shadow_ai_signal
 from core.sra_features import SRA2_FEATURES, build_sra2_features
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
@@ -48,6 +50,14 @@ SRA_LEGACY_THRESHOLD = 0.65
 SRA_SHADOW_THRESHOLD = 0.35
 
 MODELS: dict[str, dict] = {}
+
+# SRA2-Shadow (T-2026-CU-9050-125): der SRA2-Retrain war "nicht deploybar", WEIL
+# die Label-Quelle closed_trades3 tot ist — ein reines TRAININGS-Problem. Shadow-
+# Serving umgeht das: es scored den live S/R-Kandidatenstrom durch den geteilten
+# core.sra_features-Builder + das staging-Artefakt und lässt den AI-Monitor die
+# frischen Outcomes (closed_ai_signals) sammeln — genau die Labels, die der tote
+# Tracker nicht mehr liefert. SRA1 bleibt unangetastet live.
+SHADOW_SRA2: dict[str, object | None] = {"LONG": None, "SHORT": None}
 
 
 def sra_expected_features() -> list[str]:
@@ -88,6 +98,70 @@ def load_models() -> None:
         MODELS[direction] = load_artifact_json(path, expected, SRA_LEGACY_TAG, SRA_LEGACY_THRESHOLD)
     if not any(a['loaded'] for a in MODELS.values()):
         logger.error("❌ Kein SRA-Artefakt ladbar — Bot läuft im Idle-Modus bis zum Deploy.")
+
+    # SRA2-Shadow-Modelle aus staging_models/ fail-soft nachladen.
+    for direction in ("LONG", "SHORT"):
+        SHADOW_SRA2[direction] = shadow_gate.load_shadow_artifact("SRA2", direction)
+    if any(SHADOW_SRA2.values()):
+        loaded = [d for d, m in SHADOW_SRA2.items() if m is not None]
+        logger.info(f"👻 SRA2 Shadow-Modelle geladen: {', '.join(loaded)}")
+
+
+def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
+    """SRA2-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+
+    Scored denselben S/R-Kandidaten wie der Live-SRA1-Pfad über den geteilten
+    core.sra_features-Builder + das SRA2-Staging-Artefakt und schreibt bei
+    prob>=threshold (oder immer, wenn der SHORT-Threshold null ist) einen
+    überwachten Shadow-Trade (kein Cornix) unter Tag ``SRA2``. Geometrie =
+    dieselbe HVN/S-R-Konstruktion wie process_ai_trade (bewusst dupliziert, um
+    den Live-Pfad nicht anzufassen). Fehler bleiben gekapselt.
+    """
+    if not shadow_gate.shadow_posting_enabled() or not shadow_gate.is_shadow("SRA2", direction):
+        return
+    art = SHADOW_SRA2.get(direction)
+    if art is None:
+        return
+    try:
+        inds = get_indicators_at_time(conn, coin, t_time)
+        if not inds:
+            return
+        serving = build_serving_row(direction, inds)
+        if not serving:
+            return
+        prob = shadow_gate.score_artifact(art, serving)
+        thr = shadow_gate.artifact_threshold(art)
+        if thr is not None and prob < thr:
+            return
+        is_long = direction == "LONG"
+        entry1 = float(live_price)
+        entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
+        supps, resis = get_hvn_and_sr_levels(conn, coin, live_price)
+        if is_long:
+            sl = (
+                max([x for x in supps if x < entry2 * 0.99])
+                if any(x < entry2 * 0.99 for x in supps)
+                else entry2 * 0.975
+            )
+            t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
+        else:
+            sl = (
+                min([x for x in resis if x > entry2 * 1.01])
+                if any(x > entry2 * 1.01 for x in resis)
+                else entry2 * 1.025
+            )
+            t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
+        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        if not targets:
+            return
+        if post_shadow_ai_signal(conn, "SRA2", coin, direction, prob, entry1, entry2, sl, targets, n_show=3):
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"SRA2 Shadow für {coin} {direction} fehlgeschlagen: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 # FEATURE & INDIKATOR HELFER
@@ -334,6 +408,10 @@ def main():
                     # verarbeiteten Trades. Jetzt: commit pro Trade, rollback
                     # betrifft nur den einen.
                     try:
+                        # SRA2-Shadow (T-2026-CU-9050-125): denselben Kandidaten
+                        # unabhängig vom SRA1-Live-Pfad scoren + überwacht tracken.
+                        _emit_sra2_shadow(conn, coin, direction, t_time, entry)
+
                         artifact = MODELS.get(direction)
                         if not artifact or not artifact['loaded']:
                             continue  # Idle-Modus dieser Richtung (Falle 3)

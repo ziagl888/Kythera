@@ -23,11 +23,21 @@ import pandas_ta as ta
 import scipy.signal
 import scipy.stats as stats
 
+from core import atb2_features as atb
 from core import config as _kcfg  # channel ids
+from core import shadow_gate
+from core.candles import read_candles
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.signal_post import post_shadow_ai_signal
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+
+# OHLCV-Spalten für den R1-cleanen ATB2-Read (geschlossene Kerzen).
+_ATB2_OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
+# Fenster für den Converging-Channel-Detektor: MIN_HISTORY_CANDLES (EMA200-SMA-
+# Seed-Parität) + Kanal-Lookback. Etwas Reserve über atb.MIN_HISTORY_CANDLES.
+_ATB2_LIMIT = max(atb.MIN_HISTORY_CANDLES + atb.CHANNEL_MAX_SPAN + atb.CONFIRM_BARS + atb.ATR_PERIOD + 5, 1700)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATB_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -48,6 +58,14 @@ TL_THRESH_SHORT = 0.75
 
 MODELS = {'LONG': None, 'SHORT': None}
 TRENDLINE_STATE = {}
+
+# ATB2-Shadow (T-2026-CU-9050-125): der Converging-Channel-Neuaufbau läuft
+# PARALLEL zum weiter-live ATB1 und postet nie live — nur überwachte Shadow-
+# Trades. ATB2 hat einen EIGENEN Detektor (core.atb2_features, bestätigte
+# Pivots + geschlossener Ausbruch) statt der ATB1-Regressionsgeraden; der
+# optimal_threshold ist null (zu dünne Daten) → Emission auf JEDEM Setup, damit
+# überhaupt Shadow-Daten für eine spätere Threshold-Wahl entstehen.
+SHADOW_ATB2: dict[str, object | None] = {"LONG": None, "SHORT": None}
 
 # FIX: Persistenz für TRENDLINE_STATE. Vorher war der State nur in-memory →
 # after jedem Restart war prev_relation="unknown" für ALLE Coins → der
@@ -113,12 +131,67 @@ def load_models_and_coins():
     except Exception as e:
         logger.error(f"❌ Error loading der ATB1 Modelle: {e}")
 
+    # ATB2-Shadow-Modelle fail-soft nachladen — fehlen sie, läuft Bot 14 unverändert.
+    for d in ("LONG", "SHORT"):
+        SHADOW_ATB2[d] = shadow_gate.load_shadow_artifact("ATB2", d)
+    if any(SHADOW_ATB2.values()):
+        loaded = [d for d, m in SHADOW_ATB2.items() if m is not None]
+        logger.info(f"👻 ATB2 Shadow-Modelle geladen: {', '.join(loaded)}")
+
     try:
         with open('coins.json') as f:
             data = json.load(f)
             return data.get('coins', data) if isinstance(data, dict) else data
     except Exception:
         return []
+
+
+def _emit_atb2_shadow(conn, symbol, now):
+    """ATB2-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+
+    Eigener Detektor-Pfad (core.atb2_features, EINE Quelle mit Trainer/Replay
+    ``run_atb2``): R1-cleaner OHLCV-Read (geschlossene Kerzen), Converging-
+    Channel-Fit auf der letzten geschlossenen Kerze, geschlossener Ausbruch →
+    Measured-Move-Geometrie. ATB2 hat keinen Operating-Point (optimal_threshold
+    null) → jedes Setup wird als überwachter Shadow-Trade (kein Cornix) unter
+    Tag ``ATB2`` getrackt; mit gesetztem Threshold würde bei prob>=thr emittiert.
+    Fehler bleiben gekapselt — der Live-ATB1-Pfad darf nie betroffen sein.
+    """
+    if not shadow_gate.shadow_posting_enabled():
+        return
+    if SHADOW_ATB2["LONG"] is None and SHADOW_ATB2["SHORT"] is None:
+        return
+    try:
+        df = read_candles(conn, symbol, "1h", limit=_ATB2_LIMIT, include_forming=False, columns=_ATB2_OHLCV_COLUMNS)
+        if df is None or len(df) < atb.MIN_HISTORY_CANDLES + 2:
+            return
+        df_ind = atb.compute_indicators(df)
+        setup = atb.find_channel_breakout(df_ind)  # default break_idx = letzte geschlossene Kerze
+        if setup is None:
+            return
+        direction = setup["direction"]
+        if not shadow_gate.is_shadow("ATB2", direction):
+            return
+        art = SHADOW_ATB2.get(direction)
+        if art is None:
+            return
+        prob = shadow_gate.score_artifact(art, setup["features"])
+        thr = shadow_gate.artifact_threshold(art)
+        if thr is not None and prob < thr:
+            return
+        mm = atb.measured_move_targets(setup["channel"], setup["breakout"], setup["entry"])
+        if not mm["targets"] or mm["sl"] <= 0:
+            return
+        if post_shadow_ai_signal(
+            conn, "ATB2", symbol, direction, prob, mm["entry1"], mm["entry2"], mm["sl"], mm["targets"], n_show=3
+        ):
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"ATB2 Shadow für {symbol} fehlgeschlagen: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 # 🧠 BERECHNUNGS-LOGIKEN (NEU: Index-Basiert!)
@@ -672,6 +745,10 @@ def run_trendline_detector():
             if 'USDT_' in symbol:
                 continue
             stats_dict["total"] += 1
+
+            # ATB2-Shadow (T-2026-CU-9050-125): eigener Converging-Channel-Detektor,
+            # unabhängig von der ATB1-Trendlinien-Logik und deren last_alert-Gate.
+            _emit_atb2_shadow(conn, symbol, now)
 
             state = TRENDLINE_STATE.get(
                 symbol,
