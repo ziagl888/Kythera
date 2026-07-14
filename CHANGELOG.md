@@ -1,3 +1,27 @@
+## [2026-07-14] v1-vs-v2 Whitelist-Flip-Auswertung gebaut (048-Shadow-Gate, T-2026-CU-9050-069)
+
+Neues read-only VPS-Tool `tools/whitelist_v2_flip_eval.py` — die Datengrundlage für Michis
+Flip-Entscheid v1→v2 des Whitelist-Gates (Shadow-Spalten aus T-048, live seit T-068-Deploy
+2026-07-11). Beantwortet die vier T-069-Fragen: **(1)** Divergenz-Matrix v1×v2 über den
+`bot_regime_whitelist`-Snapshot (inkl. lb-Verteilungen aus `reason_v2`), **(2)** Counterfactual-PnL
+des echten Gate-Traffics seit Deploy, gebucketed nach Flip-Klasse (`v2_would_block` /
+`v2_would_open` / Agreement) — Replay ausschließlich über die T-047-Mechanik (`score_row`/
+`load_1h`/`aggregate` importiert, X-R1: keine nachgebaute Geometrie), **(3)** Volumen-Effekt
+(Gate-Raten, ROM1-Forwards/Tag-Prognose), **(4)** Summary-JSON + Konsolen-Report als
+Entscheidungsbasis — Empfehlung + Flip bleiben bei der VPS-Session + Operator (Stop-B gültig).
+
+- Fallback-Pfade (`no_whitelist_entry`, `whitelist_stale:*`, `*fallback*`, NULL) sind vom Flip
+  unberührt (Bot 28 tauscht nur den 4D-Zellen-Read) → klassifiziert als `unaffected`, nie gescored.
+- **v1-Drift-Metrik** quantifiziert die Snapshot-Näherung (Bot 28 loggt v2 nicht pro Signal,
+  die Whitelist-Tabelle ist UPSERT-only): aufgezeichnete v1-Entscheidung vs. heutiger Snapshot.
+- Prereq-Checks (Bot-27-Freshness, v2-Coverage) + per-Tag-Zähler machen die Outage-Lücke vom
+  2026-07-13 sichtbar; `cell_missing`/`v2_missing` werden gezählt statt still verworfen.
+- Doku/Spec: `docs/WHITELIST_V2_FLIP_EVAL.md` (AK1–AK8, Methodik-Caveats, VPS-Anleitung).
+
+Verifikation: `backtest/test_whitelist_v2_flip_eval.py` 18/18 (reine Klassifikations-Schicht,
+DB-frei), `backtest/test_rom1_counterfactual.py` unverändert grün; ruff/format grün, repo-mypy
+grün (`tools/` bewusst excluded, Falle 12). Lauf selbst braucht die Live-DB → VPS ~17./18.07.
+
 ## [2026-07-14] ATS/TSI-Trainer (Bot 12) DB-basiert neu gebaut → ATS2-Staging + Trainer==Serving-Parity (T-2026-CU-9050-121)
 
 Der letzte CSV-basierte Legacy-Trainer der Fleet (Bot 12 TSI-Sniper) ist auf das moderne
