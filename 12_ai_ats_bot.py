@@ -9,15 +9,23 @@ import os
 import time
 
 import joblib
-import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core.ats_features import (
+    ATS_CANDLE_COLUMNS,
+    ATS_FEATURES,
+    ATS_INDICATOR_COLUMNS,
+    TSI_LINE_COL,
+    TSI_SIGNAL_COL,
+    ats_cross,
+    build_ats_features,
+)
 from core.candles import read_candles_with_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATS_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,37 +43,9 @@ TSI_THRESH_LONG = 0.60
 TSI_THRESH_SHORT = 0.60
 TSI_PROB_CAP = 0.80
 
-TSI_FEATURES = [
-    "rsi_14",
-    "rsi_6",
-    "macd_hist",
-    "atr_pct",
-    "vol_ratio",
-    "bb_width",
-    "bb_pos",
-    "dist_ema200",
-    "dist_ema9_21",
-    "rsi_ratio",
-    "slope_norm",
-    "dist_supp",
-    "dist_res",
-    "dist_kama9",
-    "dist_kama21",
-    "dist_kama55",
-    "dist_kama9_21",
-    "dist_donch_up",
-    "dist_donch_low",
-    "macd_cross_bearish",
-    "ema9_21_cross_bearish",
-    "kama9_21_cross_bearish",
-    "bollinger_lower_break",
-    "close_below_ema50",
-    "obv_ratio",
-    "close_to_vwap_pct",
-    "obv_val",
-    "volume_spike",
-    "volume_trend_up",
-]
+# Feature-Vertrag + Serving-Konstruktion liegen in core.ats_features (EINE Quelle
+# mit dem ATS2-Replay/Trainer, harte Regel 7). Alias für die Lesbarkeit unten.
+TSI_FEATURES = ATS_FEATURES
 
 MODEL_LONG = None
 MODEL_SHORT = None
@@ -127,30 +107,8 @@ def check_tsi_crossovers():
                 "1h",
                 limit=500,
                 include_forming=False,
-                candle_columns=("open_time", "high", "low", "close", "volume"),
-                indicator_columns=(
-                    "rsi_14",
-                    "rsi_6",
-                    "tsi_fast_12_7_7",
-                    "tsi_fast_12_7_7_signal",
-                    "ema_9",
-                    "ema_21",
-                    "ema_50",
-                    "ema_200",
-                    "kama_9",
-                    "kama_21",
-                    "kama_55",
-                    "macd_dif_normal_12_26_9",
-                    "macd_dea_normal_12_26_9",
-                    "atr_14",
-                    "boll_upper_20",
-                    "boll_lower_20",
-                    "donchian_upper_20",
-                    "donchian_lower_20",
-                    "trendline_slope",
-                    "support_price",
-                    "resistance_price",
-                ),
+                candle_columns=ATS_CANDLE_COLUMNS,
+                indicator_columns=ATS_INDICATOR_COLUMNS,
             )
             if len(df) < 50:
                 continue
@@ -167,78 +125,23 @@ def check_tsi_crossovers():
             current_idx = -1
             prev_idx = -2
 
-            tsi_curr = df.iloc[current_idx]['tsi_fast_12_7_7']
-            sig_curr = df.iloc[current_idx]['tsi_fast_12_7_7_signal']
-            tsi_prev = df.iloc[prev_idx]['tsi_fast_12_7_7']
-            sig_prev = df.iloc[prev_idx]['tsi_fast_12_7_7_signal']
-
-            long_cross = (tsi_prev <= sig_prev) and (tsi_curr > sig_curr)
-            short_cross = (tsi_prev >= sig_prev) and (tsi_curr < sig_curr)
-
-            if not (long_cross or short_cross):
+            direction = ats_cross(
+                df.iloc[prev_idx][TSI_LINE_COL],
+                df.iloc[prev_idx][TSI_SIGNAL_COL],
+                df.iloc[current_idx][TSI_LINE_COL],
+                df.iloc[current_idx][TSI_SIGNAL_COL],
+            )
+            if direction is None:
                 continue
+            long_cross = direction == "LONG"
 
-            direction = "LONG" if long_cross else "SHORT"
-
-            # 3. LIVE FEATURE ENGINEERING (OBV, VWAP)
-            # FIX: OBV auf Startpunkt normalisieren → absoluter Wert ist egal,
-            # entscheidend sind die relativen Veränderungen über das Fenster.
-            obv_raw = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
-            df['obv'] = obv_raw - obv_raw.iloc[0]
-            df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
-            df['vwap_20'] = (df['volume'] * df['typical_price']).rolling(20).sum() / df['volume'].rolling(20).sum()
-            df['vwap_20'] = df['vwap_20'].fillna(df['close'])
-
-            row = df.iloc[current_idx]
-            row_prev = df.iloc[prev_idx]
-            current_price = float(row['close'])
-
-            vol_sma20 = df['volume'].rolling(20).mean().iloc[current_idx]
-            if vol_sma20 == 0:
-                vol_sma20 = 1.0
-
-            features = {
-                "rsi_14": row['rsi_14'],
-                "rsi_6": row['rsi_6'],
-                "macd_hist": row['macd_dif_normal_12_26_9'] - row['macd_dea_normal_12_26_9'],
-                "atr_pct": (row['atr_14'] / row['close']) * 100 if row['close'] else 0,
-                "vol_ratio": row['volume'] / vol_sma20,
-                "bb_width": (row['boll_upper_20'] - row['boll_lower_20']) / row['boll_lower_20']
-                if row['boll_lower_20']
-                else 0,
-                "bb_pos": (row['close'] - row['boll_lower_20']) / (row['boll_upper_20'] - row['boll_lower_20'])
-                if (row['boll_upper_20'] - row['boll_lower_20']) != 0
-                else 0,
-                "dist_ema200": (row['close'] / row['ema_200']) - 1 if row['ema_200'] else 0,
-                "dist_ema9_21": (row['ema_9'] / row['ema_21']) - 1 if row['ema_21'] else 0,
-                "dist_kama9": (row['close'] / row['kama_9']) - 1 if row['kama_9'] else 0,
-                "dist_kama21": (row['close'] / row['kama_21']) - 1 if row['kama_21'] else 0,
-                "dist_kama55": (row['close'] / row['kama_55']) - 1 if row['kama_55'] else 0,
-                "dist_kama9_21": (row['kama_9'] / row['kama_21']) - 1 if row['kama_21'] else 0,
-                "dist_donch_up": (row['close'] / row['donchian_upper_20']) - 1 if row['donchian_upper_20'] else 0,
-                "dist_donch_low": (row['close'] / row['donchian_lower_20']) - 1 if row['donchian_lower_20'] else 0,
-                "rsi_ratio": row['rsi_6'] / row['rsi_14'] if row['rsi_14'] else 0,
-                "slope_norm": (row['trendline_slope'] / row['close']) * 1000 if row['close'] else 0,
-                "dist_supp": (row['close'] - row['support_price']) / row['close'] if row['close'] else 0,
-                "dist_res": (row['resistance_price'] - row['close']) / row['close'] if row['close'] else 0,
-                "macd_cross_bearish": int(
-                    row_prev['macd_dif_normal_12_26_9'] >= row_prev['macd_dea_normal_12_26_9']
-                    and row['macd_dif_normal_12_26_9'] < row['macd_dea_normal_12_26_9']
-                ),
-                "ema9_21_cross_bearish": int(row_prev['ema_9'] >= row_prev['ema_21'] and row['ema_9'] < row['ema_21']),
-                "kama9_21_cross_bearish": int(
-                    row_prev['kama_9'] >= row_prev['kama_21'] and row['kama_9'] < row['kama_21']
-                ),
-                "bollinger_lower_break": int(row['close'] < row['boll_lower_20']),
-                "close_below_ema50": int(row['close'] < row['ema_50']),
-                "obv_ratio": row['obv'] / df['obv'].rolling(20).mean().iloc[current_idx]
-                if df['obv'].rolling(20).mean().iloc[current_idx] != 0
-                else 0,
-                "close_to_vwap_pct": (row['close'] / row['vwap_20']) - 1 if row['vwap_20'] else 0,
-                "obv_val": row['obv'],
-                "volume_spike": int(row['volume'] > vol_sma20 * 2),
-                "volume_trend_up": int(df['volume'].rolling(5).mean().iloc[current_idx] > vol_sma20),
-            }
+            # 3. LIVE FEATURE ENGINEERING — EINE Quelle mit dem ATS2-Trainer/Replay
+            # (core.ats_features.build_ats_features, harte Regel 7). OBV-Normalisierung
+            # auf den 500-Kerzen-Fensterstart, VWAP, der 29-Feature-Vertrag und die
+            # Reihenfolge liegen dort; tools/walkforward_sim.run_ats ruft dieselbe
+            # Funktion — der Parity-Test beweist trainer==serving.
+            current_price = float(df.iloc[current_idx]['close'])
+            features = build_ats_features(df)
 
             # Prediction DataFrame erstellen (Spaltenreihenfolge erzwingen)
             X_live = pd.DataFrame([features])
@@ -280,23 +183,11 @@ def check_tsi_crossovers():
 
                 is_long = direction == "LONG"
                 entry1 = current_price
-                entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
                 supps, resis = get_hvn_and_sr_levels(conn, symbol, current_price)
-
-                if is_long:
-                    sl = (
-                        max([x for x in supps if x < entry2 * 0.99])
-                        if any(x < entry2 * 0.99 for x in supps)
-                        else entry2 * 0.975
-                    )
-                    t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
-                else:
-                    sl = (
-                        min([x for x in resis if x > entry2 * 1.01])
-                        if any(x > entry2 * 1.01 for x in resis)
-                        else entry2 * 1.025
-                    )
-                    t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
+                # EINE Quelle mit dem ATS2-Replay (core.trade_utils.hvn_sr_trade_geometry;
+                # byte-identisch zur bisherigen inline-Geometrie) → Replay-Geometrie ==
+                # Live-Geometrie (harte Regel 7). Entry2 = ±5 %, SL/TP aus HVN/SR-Leveln.
+                entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
 
                 # FIX: echte Zonen + ggf. 5%-Target wenn letzte Zone zu nah
                 targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)

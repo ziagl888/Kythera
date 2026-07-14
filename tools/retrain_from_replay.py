@@ -41,6 +41,7 @@ from sklearn.isotonic import IsotonicRegression
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+from core.ats_features import ATS_FEATURES  # noqa: E402
 from core.funding_features import FUNDING_FEATURES  # noqa: E402
 from core.mis_features import FEATURE_COLS as MIS1_FEATURES  # noqa: E402
 from core.mis_features import assert_features_alive  # noqa: E402
@@ -69,6 +70,11 @@ EPD2_FEATURES = [
     "e9_dist",
     "e21_dist",
 ] + list(FUNDING_FEATURES)
+
+# ATS2 (Bot 12 TSI-Sniper): der 29-Feature-Vertrag von core.ats_features (EINE
+# Quelle mit dem Bot + dem walkforward_sim-Adapter). KEINE Funding-Features —
+# Bot 12 liest keine (anders als RUB2/EPD2).
+ATS2_FEATURES = list(ATS_FEATURES)
 
 # Operator-Konzept (2026-07-06): Move-Label = "±X% Bewegung INNERHALB des
 # Horizonts" (Close-Basis), Schwelle wächst mit dem Horizont. Quelle:
@@ -683,6 +689,79 @@ def run_rub(replay_path: str) -> dict:
     return results
 
 
+def run_ats(replay_path: str) -> dict:
+    """ATS2-Retrain (Bot 12 TSI-Sniper, T-2026-CU-9050-121): Binärmodell je
+    Richtung auf den Replay-Events des geteilten TSI-Crossover-Vorfilters
+    (core/ats_features), Label = First-Touch TP1-vor-SL der eigenen HVN/S-R-
+    Geometrie inkl. SL-Pfad + Fees (behebt das Max-Favorable-Proxy-Label des
+    alten X8-TSI-Trainers), chronologischer Split mit Purge-Gap (behebt die
+    Episoden-Memorization des Random-Splits), Threshold via pick_threshold_safe.
+
+    29-Feature-Parität Trainer==Serving: der Bot baut den Feature-Vektor mit
+    derselben core.ats_features.build_ats_features (Parity-Test
+    backtest/test_ats_features)."""
+    df = load_replay(replay_path)
+    if df.empty or len(df) < 600:
+        raise SystemExit(f"Zu wenig Replay-Events ({len(df)}) in {replay_path}")
+    print(
+        f"ats: {len(df)} Events, {df['symbol'].nunique()} Coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
+    )
+
+    results: dict = {"strategy": "ats2", "features": ATS2_FEATURES}
+    for direction in ("LONG", "SHORT"):
+        d = df[df["direction"] == direction].reset_index(drop=True)
+        if len(d) < 300:
+            print(f"ats2 {direction}: nur {len(d)} Events — übersprungen")
+            continue
+        # Purge-Gap 7 Tage: TSI-Trades können über mehrere Tage laufen; großzügig
+        # gegen Zwillings-Leakage zwischen Train/Val/Test.
+        train, val, test = chrono_split(d, gap_hours=7 * 24)
+        print(
+            f"ats2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
+            f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%"
+        )
+
+        model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
+            train, val, test, ATS2_FEATURES, picker=pick_threshold_safe
+        )
+
+        meta = {
+            "trainer": "tools/retrain_from_replay.py",
+            "strategy": "ats2",
+            "model_id": "ATS2",
+            "direction": direction,
+            "model_type": "binary (1=TP1-first-touch)",
+            "success_proba": "predict_proba[:, 1]",
+            "features": ATS2_FEATURES,
+            "optimal_threshold": thresh,
+            "label_source": os.path.basename(replay_path),
+            "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-12-Parität), Fees inkl.",
+            "changes_vs_ats1": "DB-basiert über core.candles (R1-clean, kein CSV-Zwischenschritt), "
+            "Label mit SL-Pfad statt Max-Favorable-Move-Proxy, chronologischer Split mit "
+            "7d-Purge statt Random-Split, geteilter Feature-Builder core.ats_features",
+            "split": "chronological 70/15/15 + 7d purge gap",
+            "xgboost_version": xgb.__version__,
+            "n_train": len(train),
+            "n_val": len(val),
+            "n_test": len(test),
+            "val_stats": val_stats,
+            "test_stats": test_stats,
+        }
+        save_artifact(os.path.join(STAGING_DIR, f"ats2_model_{direction}.pkl"), model, ATS2_FEATURES, thresh, iso, meta)
+        with open(os.path.join(STAGING_DIR, f"ats2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        results[direction] = {
+            "n_events": len(d),
+            "base_rate": round(d["outcome"].mean() * 100, 1),
+            "threshold": thresh,
+            "val_stats": val_stats,
+            "test_stats": test_stats,
+            "calibration_new_test": calib_new,
+            "feature_importance_top": top_importance(model, ATS2_FEATURES),
+        }
+    return results
+
+
 def run_epd(events_path: str) -> dict:
     """EPD2-Retrain (MODEL_INTENT §7): Binärmodell je Richtung auf den
     Detektor-Events aus tools/epd2_build_dataset.py (nur vol_ratio≥5 wie live,
@@ -853,7 +932,7 @@ def main():
         pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--strategy", required=True,
-                    choices=["td", "bb", "abr1", "mis1", "rub", "epd", "atb2"])
+                    choices=["td", "bb", "abr1", "mis1", "rub", "epd", "atb2", "ats"])
     ap.add_argument("--tf", default="4h", choices=["1h", "4h"])
     ap.add_argument("--replay", default=None)
     ap.add_argument("--days", type=int, default=540)
@@ -890,13 +969,14 @@ def main():
             days = args.days if args.strategy in ("td", "bb", "mis1") else 365
             args.replay = os.path.join(REPLAY_DIR, f"{tag}_replay_{days}d.jsonl")
 
-    if args.strategy in ("rub", "epd", "atb2"):
+    if args.strategy in ("rub", "epd", "atb2", "ats"):
         # Ein Dispatch statt Zwillings-Ternaries — die nächste Event-Strategie
         # ergänzt genau einen Eintrag (Runner + Artefakt-Name zusammen).
         runner, name = {
             "rub": (run_rub, "rub2"),
             "epd": (run_epd, "epd2"),
             "atb2": (run_atb, "atb2"),
+            "ats": (run_ats, "ats2"),
         }[args.strategy]
         result = runner(args.replay)
         out = os.path.join(STAGING_DIR, f"retrain_{name}_stats.json")
