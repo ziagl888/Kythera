@@ -70,10 +70,11 @@ def shadow_posting_enabled() -> bool:
 #       geladen, aber die Richtung geht (noch) nicht live.
 _LIFECYCLE: dict[tuple[str, str], str] = {
     # ── (A) Neue-Generation-Shadow-Kandidaten (staging, nicht promotet) ──
-    # ATS2: Retrain von ATS1 (Bot 12). ATS1 bleibt live; ATS2 sammelt Shadow.
+    # ATS2: Retrain von ATS1 (Bot 12). ATS1 ist stummgeschaltet (Block (C),
+    # T-2026-CU-9050-127) — Bot 12 läuft nur für die ATS2-Shadow-Sammlung.
     ("ATS2", "LONG"): SHADOW,
     ("ATS2", "SHORT"): SHADOW,
-    # ATB2: Converging-Channel-Neuaufbau (Bot 14). ATB1 bleibt live; ATB2 hat
+    # ATB2: Converging-Channel-Neuaufbau (Bot 14). ATB1 ist stummgeschaltet (C); ATB2 hat
     # optimal_threshold=null (LONG) bzw. ist nicht deploybar (SHORT) → braucht
     # zwingend Shadow-Datensammlung, bevor je ein Operating-Point wählbar ist.
     ("ATB2", "LONG"): SHADOW,
