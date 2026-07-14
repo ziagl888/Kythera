@@ -79,12 +79,13 @@ def _artifact(threshold):
 
 # ── 1. shadow_gate: Default-LIVE + Klassifikation ────────────────────────────
 def test_default_is_live_for_unlisted_legs():
-    # Kein bestehendes Live-Bein darf versehentlich geshadowt werden.
-    assert sg.leg_status("ATS1", "LONG") == sg.LIVE
+    # Kein bestehendes Live-Bein darf versehentlich geshadowt werden. (ATS1/ATB1
+    # sind seit T-2026-CU-9050-127 bewusst SILENT — hier MAX1 als noch-live Beispiel.)
+    assert sg.leg_status("MAX1", "SHORT") == sg.LIVE
     assert sg.leg_status("RUB2", "SHORT") == sg.LIVE
     assert sg.leg_status("SomeBrandNewTag", "LONG") == sg.LIVE
-    assert sg.is_live("ATS1", "SHORT")
-    assert not sg.is_shadow("ATS1", "SHORT")
+    assert sg.is_live("MAX1", "SHORT")
+    assert not sg.is_shadow("MAX1", "SHORT")
 
 
 def test_new_gen_candidates_are_shadow():
@@ -115,6 +116,22 @@ def test_retired_tags_classified_retired():
     assert sg.leg_status("AIM1", "SHORT") == sg.RETIRED
     assert sg.is_retired("MSI1")  # typo-family alias
     assert not sg.is_retired("MIS2")
+
+
+def test_silent_legs_are_neither_live_nor_shadow():
+    # T-2026-CU-9050-127: ATS1/ATB1 stummgeschaltet (Bots 12/14 entparkt für
+    # ATS2/ATB2-Shadow, aber die Alt-Modelle geben NICHTS aus). Der Bot fragt
+    # is_live() am Ausgabe-Zweig -> False -> übersprungen; is_shadow() False ->
+    # das Alt-Bein wird auch nicht shadow-emittiert.
+    for tag in ("ATS1", "ATB1"):
+        for d in ("LONG", "SHORT"):
+            assert sg.leg_status(tag, d) == sg.SILENT
+            assert sg.is_silent(tag, d)
+            assert not sg.is_live(tag, d)
+            assert not sg.is_shadow(tag, d)
+    # Der Retrain daneben bleibt Shadow, andere Live-Beine bleiben live.
+    assert sg.is_shadow("ATS2", "LONG") and sg.is_shadow("ATB2", "SHORT")
+    assert sg.is_live("RUB2", "SHORT") and sg.is_live("SRA1", "LONG")
 
 
 def test_leg_status_is_case_insensitive():

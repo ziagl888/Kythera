@@ -47,6 +47,12 @@ _dashboard_proc: subprocess.Popen | None = None
 # seiner Cmdline. Läuft so ein Prozess ohne uns als Parent, ist er verwaist.
 FLEET_SCRIPTS: frozenset = frozenset([os.path.basename(p["script"]) for p in PROCESSES_TO_RUN] + [DASHBOARD_SCRIPT])
 
+# Der Watchdog selbst — NICHT in FLEET_SCRIPTS (kein PROCESSES_TO_RUN-Eintrag).
+# Für die Mutex-Deadlock-Recovery (T-2026-CU-9050-127): ein Vor-Watchdog, der einen
+# Tree-Stop als WMI-Waise überlebt, hält den Single-Instance-Mutex und blockiert
+# jeden Neustart. Der neue Watchdog muss diese Waise gezielt reapen können.
+_WATCHDOG_SCRIPT: str = os.path.basename(__file__)
+
 # Named Mutex Handle (Windows) — muss über die gesamte Prozess-Lebensdauer
 # referenziert bleiben, sonst gibt der GC das Handle frei und die zweite
 # Instanz käme durch. P0.2.
@@ -79,13 +85,24 @@ GRACEFUL_STOP_TIMEOUT_S = int(os.getenv("KYTHERA_GRACEFUL_STOP_S", "10"))
 # ── Single-Instance-Guard (P0.2) ─────────────────────────────────────────────
 
 
-def _acquire_single_instance_lock() -> None:
+def _acquire_single_instance_lock(_allow_orphan_reap: bool = True) -> None:
     """Verhindert eine zweite Watchdog-Instanz (P0.2 — geld-kritisch).
 
     Ein zweiter Watchdog spawnt eine zweite komplette Fleet → jedes Cornix-Signal
     doppelt. Windows Named Mutex (Global\\-Namespace, session-übergreifend): existiert
     er schon, läuft bereits ein Watchdog → hart abbrechen. Nur ctypes/kernel32,
     kein pywin32.
+
+    Waisen-Recovery (T-2026-CU-9050-127): Ein Vor-Watchdog, der einen
+    ``Stop-ScheduledTask``-Tree-Stop als WMI-Waise überlebt, hält den Mutex
+    weiter und blockierte bisher JEDEN Neustart (Deadlock: der Waisen-Reaper lief
+    erst NACH diesem Guard, und er reapt ohnehin nur Bots, nicht den Watchdog).
+    Jetzt: bei Mutex-Konflikt gezielt verwaiste WATCHDOG-Prozesse reapen; starb
+    der Halter wirklich (Rückgabe > 0), gibt das OS den benannten Mutex frei →
+    genau EIN Retry. Nur wenn der Halter NICHT reapbar ist (andere Elevation/
+    User, AccessDenied) bleibt es beim harten Abbruch wie bisher — kein Regress.
+    Mutex-first bleibt für den Normalstart: gereapt wird ausschliesslich im
+    echten Konfliktfall.
     """
     global _instance_mutex
     if os.name != "nt":
@@ -105,6 +122,26 @@ def _acquire_single_instance_lock() -> None:
     # laufende zweite Instanz.
     _ERROR_ACCESS_DENIED = 5
     if last_error == _ERROR_ALREADY_EXISTS or (not _instance_mutex and last_error == _ERROR_ACCESS_DENIED):
+        if _allow_orphan_reap and _reap_orphans(frozenset([_WATCHDOG_SCRIPT])) > 0:
+            # WICHTIG: Bei ALREADY_EXISTS lieferte CreateMutexW einen gültigen Handle
+            # auf den BESTEHENDEN Mutex — DIESER eigene Handle hält das benannte
+            # Objekt selbst dann am Leben, wenn die Waise gerade starb. Ohne
+            # CloseHandle sähe der Retry wieder ALREADY_EXISTS. Erst nach Reap
+            # (Waisen-Handle zu) UND CloseHandle (unser Handle zu) ist der letzte
+            # Handle weg und das Objekt zerstört.
+            if _instance_mutex:
+                try:
+                    ctypes.windll.kernel32.CloseHandle(_instance_mutex)
+                except Exception:  # noqa: BLE001
+                    pass
+                _instance_mutex = None
+            logger.warning(
+                "🧟 Verwaister Vor-Watchdog hielt den Single-Instance-Mutex — gereapt, "
+                "einmaliger Retry der Mutex-Akquise (P0.2, T-2026-CU-9050-127)."
+            )
+            time.sleep(1)  # dem OS Zeit geben, den benannten Mutex freizugeben
+            _acquire_single_instance_lock(_allow_orphan_reap=False)
+            return
         logger.error(
             "🚨 Ein zweiter Watchdog läuft bereits (Mutex 'Global\\KytheraWatchdog' existiert, "
             f"GetLastError={last_error}) — Abbruch, um doppelte Fleet/doppelte Cornix-Signale "
@@ -118,14 +155,18 @@ def _acquire_single_instance_lock() -> None:
         logger.warning(f"⚠️  CreateMutexW lieferte NULL (GetLastError={last_error}) — Start ohne Mutex-Guard.")
 
 
-def _terminate_orphan_fleet() -> None:
-    """Killt verwaiste Fleet-Prozesse eines abgestürzten Vor-Watchdogs (P0.2).
+def _reap_orphans(script_names: frozenset) -> int:
+    """Beendet non-child python-Prozesse, deren Cmdline eines von ``script_names``
+    nennt, und gibt die Zahl der TATSÄCHLICH beendeten Prozesse zurück (P0.2).
 
-    Ein hartes ``taskkill /F`` auf den alten Watchdog läuft nicht durch dessen
-    SIGTERM-Handler → die Kinder überleben verwaist weiter und produzieren
-    weiter Signale. Beim Start suchen wir daher python-Prozesse, deren Cmdline
-    ein Fleet-Skript enthält und die NICHT unsere eigenen Kinder sind, und
-    beenden sie (5s Grace, dann kill).
+    Ein hartes ``taskkill /F`` auf einen alten Prozess läuft nicht durch dessen
+    SIGTERM-Handler → er/seine Kinder überleben verwaist weiter. Wir suchen daher
+    python-Prozesse, deren Cmdline ein Zielskript enthält und die NICHT unsere
+    eigenen Kinder (und nicht wir selbst) sind, und beenden sie (5s Grace, dann
+    kill). Geteilt von der Fleet-Waisen-Reinigung UND der Mutex-Deadlock-Recovery
+    (T-2026-CU-9050-127): der Rückgabewert sagt Letzterer, ob der Mutex-Halter
+    wirklich starb (nur dann lohnt der Retry). Elevation-Grenze: was der Reaper
+    nicht killen darf (AccessDenied), zählt NICHT als beendet → kein falscher Retry.
     """
     self_pid = os.getpid()
     try:
@@ -142,17 +183,16 @@ def _terminate_orphan_fleet() -> None:
             if "python" not in name:
                 continue
             cmdline = proc.info.get("cmdline") or []
-            if any(os.path.basename(tok) in FLEET_SCRIPTS for tok in cmdline):
+            if any(os.path.basename(tok) in script_names for tok in cmdline):
                 orphans.append(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
     if not orphans:
-        return
+        return 0
 
     logger.warning(
-        f"🧟 {len(orphans)} verwaiste Fleet-Prozesse gefunden (PIDs: "
-        f"{[p.pid for p in orphans]}) — beende sie vor dem Start (P0.2)."
+        f"🧟 {len(orphans)} verwaiste Prozesse gefunden (PIDs: {[p.pid for p in orphans]}) — beende sie (P0.2)."
     )
     for proc in orphans:
         try:
@@ -167,6 +207,14 @@ def _terminate_orphan_fleet() -> None:
             proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+    # Wirklich tot? (AccessDenied-Überlebende zählen nicht als beendet.)
+    _gone2, still_alive = psutil.wait_procs(alive, timeout=3)
+    return len(orphans) - len(still_alive)
+
+
+def _terminate_orphan_fleet() -> None:
+    """Reapt verwaiste Fleet-Prozesse eines abgestürzten Vor-Watchdogs (P0.2)."""
+    _reap_orphans(FLEET_SCRIPTS)
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────

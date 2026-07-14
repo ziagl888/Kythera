@@ -821,6 +821,19 @@ def run_trendline_detector():
 
                 if event:
                     stats_dict["events"] += 1
+                    # ATB1 stummgeschaltet (T-2026-CU-9050-127, Operator Michi): ist das
+                    # ATB1-Bein per shadow_gate auf SILENT gesetzt, gibt das alte Modell
+                    # NICHTS aus (kein Info-Post, kein Trade, kein Log) — der Bot läuft
+                    # nur für die ATB2-Shadow-Sammlung (oben, _emit_atb2_shadow). State
+                    # trotzdem fortschreiben (Relation + last_alert), damit derselbe
+                    # Event nicht jeden Scan neu erkannt wird. Default-LIVE ⇒ No-op.
+                    _atb1_dir = "LONG" if "UP" in event else "SHORT"
+                    if not shadow_gate.is_live("ATB1", _atb1_dir):
+                        state["last_alert"] = now
+                        state["prev_relation"] = current_relation
+                        TRENDLINE_STATE[symbol] = state
+                        continue
+
                     ml_prob, threshold = get_ml_prediction(df_90d, event, slope, last_close)
                     logger.info(f"Signal: {symbol} {event} | ML Score: {ml_prob:.2f} (Thresh: {threshold:.2f})")
 

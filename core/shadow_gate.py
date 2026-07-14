@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 LIVE = "live"  # postet live (Cornix + ai_signals) — Default
 SHADOW = "shadow"  # erzeugt einen überwachten Shadow-Trade, kein Cornix-Post
 RETIRED = "retired"  # alte Generation, wird nicht mehr emittiert (nur Historie)
+SILENT = "silent"  # bewusst stummgeschaltetes Bein: KEIN Live-Post UND KEIN Shadow —
+# das Modell läuft (der Bot ist entparkt), gibt aber nichts aus. Genutzt, um ein
+# altes Bein (ATS1/ATB1) abzuschalten, während der Retrain (ATS2/ATB2) im Shadow
+# datensammelt (Operator-Entscheid Michi, T-2026-CU-9050-127).
 
 _DIRECTIONS = ("LONG", "SHORT")
 
@@ -94,6 +98,15 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # Live-Post unterdrücken). Deshalb eigener Tag "EPD3" — analog zu RUB3.
     ("EPD3", "LONG"): SHADOW,
     ("EPD3", "SHORT"): SHADOW,
+    # ── (C) Stummgeschaltete Alt-Beine (Operator Michi, T-2026-CU-9050-127) ──
+    # Bots 12/14 werden entparkt, damit ATS2/ATB2 im Shadow laufen — aber die
+    # ALTEN Modelle ATS1/ATB1 sollen NICHT live posten und auch nicht shadowen:
+    # sie gehen komplett still. Der Bot fragt is_live() am Post-Zweig; SILENT ⇒
+    # nicht live ⇒ der ganze ATS1/ATB1-Ausgabe-Zweig wird übersprungen.
+    ("ATS1", "LONG"): SILENT,
+    ("ATS1", "SHORT"): SILENT,
+    ("ATB1", "LONG"): SILENT,
+    ("ATB1", "SHORT"): SILENT,
 }
 
 # RETIRED: Tags, die in der closed_ai_signals-Historie vorkommen, aber von keinem
@@ -152,6 +165,10 @@ def is_live(tag: str, direction: str) -> bool:
 
 def is_shadow(tag: str, direction: str) -> bool:
     return leg_status(tag, direction) == SHADOW
+
+
+def is_silent(tag: str, direction: str) -> bool:
+    return leg_status(tag, direction) == SILENT
 
 
 def shadow_artifact_path(tag: str, direction: str) -> str | None:
