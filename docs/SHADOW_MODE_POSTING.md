@@ -197,5 +197,16 @@ Vervielfachung pro Bein.
   Repo-Root kopieren (harte Regel 2, Michi), Registry-Eintrag entfernen (Bein wird
   wieder Default-LIVE) bzw. den Live-Serving-Pfad des Bots umstellen, Tag ggf.
   auf die neue Generation heben. Ausschließlich Operator-Entscheid.
+- **⚠ PROMOTIONS-FALLE (natürlicher-Tag-Shadow ATS2/ATB2/SRA2):** Diese Shadow-Tags
+  sind IDENTISCH mit dem künftigen Live-Generations-Tag. Beim Promoten in den
+  Live-Slot MUSS der `_LIFECYCLE`-Eintrag **zuerst** entfernt werden. Sonst greift
+  der Active-Trade-Check des Bots (z. B. Bot 9: `model IN (artifact_tag, legacy_tag)`
+  → `IN ('SRA2','SRA1')`) auf die noch offenen SRA2-**Shadow**-Zeilen und
+  unterdrückt den ersten Live-SRA2-Post (Verletzung der additiven Invariante,
+  gefunden im adversarialen Review T-125). Nicht durch den Code auslösbar — nur
+  durch Promotion OHNE Registry-Update. Die Challenger-Tags RUB3/EPD3 sind hiervon
+  frei (eigener Tag ≠ Live-Tag); Bots 12/14 ebenfalls (hartkodierte Live-Tags
+  ATS1/ATB1). Merke: **Promotion = Artefakt kopieren UND `_LIFECYCLE`-Zeile löschen,
+  in einem Schritt.**
 - **Abschalten:** `KYTHERA_SHADOW_POSTING=0` (fleet-weit) oder Registry-Eintrag
   entfernen (einzelnes Bein zurück auf Default-LIVE-Verhalten des Bots).
