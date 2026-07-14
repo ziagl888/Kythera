@@ -697,6 +697,10 @@ def write_indicators_to_db_optimized(conn, df, symbol, timeframe, definitions):
         if col not in df.columns:
             df[col] = 0
     df_to_write = df[valid_cols].copy()
+    # DB columns are lowercase; upsert_indicators quotes identifiers case-sensitively,
+    # so the UPPERCASE definition keys (RSI_6 ...) must be lowercased to match rsi_6
+    # (T-114 rewire regression: the old unquoted INSERT case-folded and matched).
+    df_to_write.columns = [c.lower() for c in df_to_write.columns]
     upsert_indicators(conn, df_to_write, symbol, timeframe)
 
 
