@@ -71,6 +71,16 @@ def test_live_leg_active_when_script_runs():
     assert mt.realized_lifecycle_bucket(tag, "SHORT", {script}) == "active"
 
 
+def test_silent_old_leg_buckets_retired_even_when_script_runs():
+    # T-2026-CU-9050-127: ATS1/ATB1 sind SILENT (Bots 12/14 laufen für ATS2/ATB2-
+    # Shadow, aber die Alt-Beine posten nichts). Trotz laufendem Skript -> retired,
+    # nicht active — sonst behauptete der Report, ATS1 poste noch live.
+    active = {script_for_tag("ATS1"), script_for_tag("ATB1")}
+    assert None not in active
+    assert mt.realized_lifecycle_bucket("ATS1", "LONG", active) == "retired"
+    assert mt.realized_lifecycle_bucket("ATB1", "SHORT", active) == "retired"
+
+
 def test_live_leg_inactive_when_script_parked():
     tag = "RUB2"
     assert mt.realized_lifecycle_bucket(tag, "SHORT", set()) == "inactive"

@@ -1905,6 +1905,11 @@ def realized_lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[
         return "retired"
     if status == shadow_gate.SHADOW:
         return "shadow"
+    if status == shadow_gate.SILENT:
+        # Stummgeschaltetes Alt-Bein (T-2026-CU-9050-127): das Skript LÄUFT (Bot
+        # entparkt für den Retrain-Shadow), aber das Bein postet nichts mehr — die
+        # historischen Trades gehören in den RETIRED-Block, nicht ACTIVE.
+        return "retired"
     script = script_for_tag(tag)
     if script is None:
         return "unmapped"

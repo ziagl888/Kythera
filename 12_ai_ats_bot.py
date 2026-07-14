@@ -215,6 +215,13 @@ def check_tsi_crossovers():
             # ATS2-Score ist von der ATS1-Entscheidung unabhängig.
             _emit_ats2_shadow(conn, symbol, direction, long_cross, features, current_price, now)
 
+            # ATS1 stummgeschaltet (T-2026-CU-9050-127, Operator Michi): ist das
+            # ATS1-Bein per shadow_gate auf SILENT gesetzt, läuft der Bot NUR für
+            # die ATS2-Shadow-Sammlung — kein ATS1-Ausgang (weder Shadow-Log noch
+            # Live-Post). Default-LIVE ⇒ No-op, solange ATS1 nicht stummgeschaltet ist.
+            if not shadow_gate.is_live(module_tag, direction):
+                continue
+
             # --- SHADOW MODE LOGGING ---
             if prob_profit < 0.25:
                 continue
