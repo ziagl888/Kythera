@@ -1,3 +1,45 @@
+## [2026-07-16] Hyper-Read-Backend in core/candles.py — C-Gate Phase 4 (dormant hinter Flag) (T-2026-CU-9050-128)
+
+Der einzige Code-Blocker für den Read-Cutover. `core/candles.py` liest bei
+`KYTHERA_CANDLES_SOURCE=hyper` jetzt aus den beiden Hypertables `candles`/`indicators`
+(gefiltert nach `symbol, tf`) statt aus den ~9,3k Per-Coin-Tabellen — **dormant**, Default bleibt
+`legacy` → null Live-Wirkung bis Michi flippt (+ Restart, trivial rollbar). Kein Bot angefasst
+(Design-Intent Phase C): die core.candles-Read-Call-Sites routen automatisch.
+
+**Hyper-Pfad** für `read_candles`, `read_indicators`, `read_candles_with_indicators`,
+`latest_open_time` + Shape-Helfer `indicator_column_names`. Das alte `_assert_legacy_backend()`
+(warf für alles ≠ legacy) wird zu `_candle_source()`: validiert den Flag, dispatcht die Reads und
+lässt WRITES/DELETES bei `hyper` weiterlaufen — die schreiben immer die Legacy-Tabellen, die
+Hypertables hält der separate `KYTHERA_CANDLES_DUAL_WRITE`-Mirror frisch (muss über das
+Phase-4→5-Fenster AN bleiben). Ein Source-Flip schaltet so nur um, was die Fleet LIEST, ohne die
+Ingestion zu stoppen.
+
+**Exakte Legacy-Semantik erhalten** (verhaltensneutraler Cutover): der Forming-Filter bleibt
+**uhr-basiert** (`open_time < period_start(tf, now())`), NICHT die `is_closed`-Spalte — die kann am
+Rand-Kerzen-Race dem Clock nachhängen und würde eine Zeile droppen, die der Legacy-Read behält
+(Paritätsbruch). `tf`/`is_closed` sind echte Hypertable-Spalten, die den Per-Coin-Tabellen fehlen →
+aus jeder Projektion ausgeschlossen (Legacy-Shape + Ordinal-Ordnung; `indicator_column_names` droppt
+sie, damit `SELECT *`-Reads byte-gleich bleiben). Der JOIN-Read fenced BEIDE Seiten in
+`(SELECT … OFFSET 0)`-Subqueries: zwei Hypertables auf der Partitionsspalte zu joinen lässt
+TimescaleDB einen Merge-Join über die Ordered-Append-Pfade wählen, der serverseitig
+`mergejoin input data is out of order` wirft — die Fence entfernt diese Pfade.
+
+**`table_exists`/`list_coin_tables` bleiben phasen-agnostisch** (kein Hyper-Branch): sie proben die
+Per-Coin-RELATIONEN, die unter beiden Backends bis zum Phase-5-Drop existieren. Ein
+`SELECT DISTINCT symbol, tf` über die 40M-Zeilen-Hypertable ist gemessen >20 s (die
+Chunk-Partitionierung schlägt auch einen Loose-Index-Scan) und würde die 6_housekeeping-Retention
+blockieren, die in hyper-Read-Mode ohnehin die Legacy-Tabellen löscht. Nach dem Phase-5-Drop
+liefern beide leer/False — genau das dokumentierte Endverhalten.
+
+Akzeptanz (Live-VPS, read-only): `backtest/test_candles_db_parity.py` beweist **hyper-Read ==
+legacy-Read** für BTC/ETH/SOL + kleinere Coins über mehrere TFs, mit/ohne forming, verschiedene
+Fenster/Limits — Kerzen byte-für-byte, Indikatoren auf **float4-Präzision** (die Legacy-REAL-Spalten
+tragen weniger Bits als die Hyper-`double`; das ist der gewollte P3.12-Upgrade, kein Drift — der
+float32-Cast reproduziert die REAL bit-genau, ein echter Wertunterschied fällt weiterhin auf).
+28 Coin/TF-Kerzen-Reads + 21 mit Indikatoren grün. DB-frei: `test_candles.py` (Source-Resolver,
+Unknown-Backend-Reject, Hyper-Validierung vor der Connection). Regression-Guard smoke+verify grün,
+ruff/format/mypy grün. Der Flip selbst (`SOURCE=hyper` + Fleet-Restart) bleibt Michi-gegatet.
+
 ## [2026-07-14] Fleet-weites Shadow-Mode-Posting + 3-Wege-Report + Regime-Gating-Evidenz (T-2026-CU-9050-125)
 
 Drei zusammenhängende Teile. **Nichts geht live** — Shadow postet nie in einen Kanal,

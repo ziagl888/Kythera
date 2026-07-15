@@ -92,7 +92,7 @@ _WHITELIST: frozenset[str] | None = None
 
 
 class CandleSourceError(RuntimeError):
-    """Raised when KYTHERA_CANDLES_SOURCE names a backend that is not built yet."""
+    """Raised when KYTHERA_CANDLES_SOURCE names a backend that does not exist."""
 
 
 # ── Identifier hygiene (P3.3) ─────────────────────────────────────────────────
@@ -254,16 +254,68 @@ def _forming_filter(tf: str, include_forming: bool, alias: str | None = None) ->
     return sql.SQL(" AND {col} < {cutoff}").format(col=col, cutoff=_period_start_sql(tf))
 
 
-# ── Backend switch (Phase 4 seam, not yet built) ──────────────────────────────
+# ── Backend switch (Phase 4 read-cutover) ─────────────────────────────────────
+#
+# KYTHERA_CANDLES_SOURCE selects the READ backend and nothing else:
+#   'legacy' (default) — the ~9.3k per-coin `{SYM}_{tf}[_indicators]` tables.
+#   'hyper'            — the two `candles` / `indicators` hypertables, filtered by
+#                        (symbol, tf). Dormant until the operator flips the flag
+#                        and restarts the fleet (docs/TIMESCALE_R1_MIGRATION.md
+#                        Phase 4); rollback is the flag back to 'legacy' + restart.
+#
+# WRITES DO NOT BRANCH ON IT. upsert_candles/upsert_indicators and the two DELETE
+# helpers always target the legacy per-coin tables; the hypertables are kept fresh
+# by the separate KYTHERA_CANDLES_DUAL_WRITE mirror (which must stay ON across the
+# Phase 4→5 window). So a source flip switches what the fleet READS without ever
+# stopping ingestion — the writers only validate the flag (to reject a typo'd
+# backend) and otherwise ignore it.
+#
+# The hyper read path preserves EXACT legacy semantics so the cutover is
+# behaviour-neutral (byte-parity gate: backtest/test_candles_db_parity.py):
+#   * the forming filter stays CLOCK-based (open_time < period_start(tf, now())),
+#     NOT the is_closed column. The clock is the one both sides share; the
+#     is_closed flag can lag the clock by the WS close-tick race at the boundary
+#     candle, so filtering on it would drop a row the legacy read keeps — a parity
+#     break. is_closed is the R1 storage contract, not a read filter in Phase 4.
+#   * `tf` and `is_closed` are real hypertable columns that do NOT exist on the
+#     per-coin tables, so they are EXCLUDED from every projection — a hyper read
+#     returns the legacy column shape, in legacy ordinal order.
+
+_KNOWN_CANDLE_SOURCES = ("legacy", "hyper")
+_CANDLES_HYPER_TABLE = "candles"
+_INDICATORS_HYPER_TABLE = "indicators"
+# Present on the hypertables, absent on the legacy per-coin tables → never
+# projected, so a hyper read keeps the legacy shape.
+_HYPER_ONLY_COLUMNS = ("tf", "is_closed")
 
 
-def _assert_legacy_backend() -> None:
+def _candle_source() -> str:
+    """Resolve KYTHERA_CANDLES_SOURCE to a known read backend, or raise on a typo.
+
+    Governs reads only; the write/delete helpers call this purely to reject a
+    misconfigured flag, then always operate on the legacy per-coin tables.
+    """
     source = os.getenv("KYTHERA_CANDLES_SOURCE", "legacy")
-    if source != "legacy":
+    if source not in _KNOWN_CANDLE_SOURCES:
         raise CandleSourceError(
-            f"KYTHERA_CANDLES_SOURCE={source!r}: only 'legacy' (per-coin tables) is implemented. "
-            "The hypertable backend lands with migration phase 4 (docs/TIMESCALE_R1_MIGRATION.md)."
+            f"KYTHERA_CANDLES_SOURCE={source!r}: known backends are {_KNOWN_CANDLE_SOURCES} "
+            "(docs/TIMESCALE_R1_MIGRATION.md)."
         )
+    return source
+
+
+def _hyper_scope(symbol: str, tf: str, alias: str | None = None) -> tuple[sql.Composable, list[Any]]:
+    """`symbol = %s AND tf = %s` — the predicate that scopes a hypertable read to
+    one (symbol, tf), the hyper equivalent of picking a per-coin table by name.
+
+    Validates symbol/tf (so a hyper read rejects a bad identifier before the
+    connection is touched, exactly like candles_table() does for legacy) and
+    returns the composed predicate plus its params.
+    """
+    sym_col = sql.Identifier(alias, "symbol") if alias else sql.Identifier("symbol")
+    tf_col = sql.Identifier(alias, "tf") if alias else sql.Identifier("tf")
+    pred = sql.SQL("{sym} = %s AND {tf} = %s").format(sym=sym_col, tf=tf_col)
+    return pred, [validate_symbol(symbol), validate_timeframe(tf)]
 
 
 # ── Phase-2 dual-write (forward-only, off by default) ─────────────────────────
@@ -319,14 +371,26 @@ def _windowed_select(
     start: datetime | None,
     end: datetime | None,
     limit: int | None,
+    *,
+    scope: tuple[sql.Composable, Sequence[Any]] | None = None,
 ) -> tuple[sql.Composable, list[Any]]:
     """SELECT the newest `limit` rows of the window, returned ASC.
 
     The LIMIT has to bite on a DESC ordering (newest N candles), the result has
     to arrive ASC (contract 1) — hence the wrapping subselect.
+
+    `scope` is the hypertable `symbol = %s AND tf = %s` predicate (with its
+    params); None → the legacy per-coin table, whose name already encodes both.
+    Either way the open_time window, forming filter and DESC→ASC wrapping are
+    byte-identical.
     """
     params: list[Any] = []
-    where = sql.SQL("WHERE true")
+    if scope is not None:
+        pred, scope_params = scope
+        where = sql.SQL("WHERE ") + pred
+        params.extend(scope_params)
+    else:
+        where = sql.SQL("WHERE true")
     if start is not None:
         where += sql.SQL(" AND open_time >= %s")
         params.append(start)
@@ -364,10 +428,15 @@ def read_candles(
     `limit` selects the NEWEST n candles of the window (not the oldest).
     `include_forming=True` is reserved for pure price checks — see contract 2.
     """
-    _assert_legacy_backend()
-    table = candles_table(symbol, tf)
+    source = _candle_source()
     _require_open_time(columns)
-    query, params = _windowed_select(table, _columns_sql(columns), tf, include_forming, start, end, limit)
+    cols_sql = _columns_sql(columns)
+    if source == "hyper":
+        query, params = _windowed_select(
+            _CANDLES_HYPER_TABLE, cols_sql, tf, include_forming, start, end, limit, scope=_hyper_scope(symbol, tf)
+        )
+    else:
+        query, params = _windowed_select(candles_table(symbol, tf), cols_sql, tf, include_forming, start, end, limit)
     return _fetch_df(conn, query, params)
 
 
@@ -387,10 +456,84 @@ def read_indicators(
     `columns=None` means SELECT * — the ~120 indicator columns are schema-driven
     (2_indicator_engine.get_indicator_definitions), not enumerable here.
     """
-    _assert_legacy_backend()
-    table = indicators_table(symbol, tf)
+    source = _candle_source()
     _require_open_time(columns)
-    query, params = _windowed_select(table, _columns_sql(columns), tf, include_forming, start, end, limit)
+    if source == "hyper":
+        scope = _hyper_scope(symbol, tf)  # validates symbol/tf before touching conn
+        # `SELECT *` on the hypertable would leak the tf/is_closed columns and thus
+        # break shape parity; expand `columns=None` to the explicit legacy list.
+        proj = list(columns) if columns is not None else indicator_column_names(conn, symbol, tf)
+        query, params = _windowed_select(
+            _INDICATORS_HYPER_TABLE, _columns_sql(proj), tf, include_forming, start, end, limit, scope=scope
+        )
+    else:
+        query, params = _windowed_select(
+            indicators_table(symbol, tf), _columns_sql(columns), tf, include_forming, start, end, limit
+        )
+    return _fetch_df(conn, query, params)
+
+
+def _hyper_side_subquery(
+    table: str,
+    tf: str,
+    symbol: str,
+    include_forming: bool,
+    start: datetime | None,
+    end: datetime | None,
+) -> tuple[sql.Composable, list[Any]]:
+    """`(SELECT * FROM <hypertable> WHERE symbol=%s AND tf=%s [window] [forming] OFFSET 0)`.
+
+    The trailing `OFFSET 0` is an optimization fence: it stops the subquery from
+    being pulled up, so its ordered-append hypertable path is not visible to the
+    join above it. Both join sides get one, which is what keeps the two-hypertable
+    join off TimescaleDB's buggy merge-over-ordered-append path (see
+    _read_joined_hyper). Validates symbol/tf and returns the subquery plus params.
+    """
+    params: list[Any] = [validate_symbol(symbol), validate_timeframe(tf)]
+    where = sql.SQL("WHERE symbol = %s AND tf = %s")
+    if start is not None:
+        where += sql.SQL(" AND open_time >= %s")
+        params.append(start)
+    if end is not None:
+        where += sql.SQL(" AND open_time <= %s")
+        params.append(end)
+    where += _forming_filter(tf, include_forming)
+    return sql.SQL("(SELECT * FROM {t} {w} OFFSET 0)").format(t=_ident(table), w=where), params
+
+
+def _read_joined_hyper(
+    conn: Any,
+    symbol: str,
+    tf: str,
+    ccols: sql.Composable,
+    icols: sql.Composable,
+    limit: int | None,
+    start: datetime | None,
+    end: datetime | None,
+    include_forming: bool,
+) -> pd.DataFrame:
+    """read_candles_with_indicators on the hypertables.
+
+    Unlike the per-coin join — whose two tables already encode (symbol, tf) — both
+    sides here are the SAME two hypertables, so each is fenced in its own
+    (symbol, tf)- and window-scoped `(SELECT … OFFSET 0)` subquery. The fence is
+    load-bearing: joining two hypertables on the partitioning column lets
+    TimescaleDB choose a merge join over its ordered-append paths, which raises the
+    server-side error `mergejoin input data is out of order`. Fencing both sides
+    removes those ordered paths, so any merge the planner still picks sits on a
+    genuine Sort. The join is on open_time alone (both sides already scoped to one
+    symbol/tf), reproducing the legacy per-coin join byte-for-byte.
+    """
+    h_sub, hp = _hyper_side_subquery(_CANDLES_HYPER_TABLE, tf, symbol, include_forming, start, end)
+    i_sub, ip = _hyper_side_subquery(_INDICATORS_HYPER_TABLE, tf, symbol, include_forming, start, end)
+    inner = sql.SQL(
+        "SELECT {ccols}, {icols} FROM {h} h LEFT JOIN {i} i ON h.open_time = i.open_time ORDER BY h.open_time DESC"
+    ).format(ccols=ccols, icols=icols, h=h_sub, i=i_sub)
+    params = hp + ip
+    if limit is not None:
+        inner += sql.SQL(" LIMIT %s")
+        params.append(int(limit))
+    query = sql.SQL("SELECT * FROM ({inner}) s ORDER BY open_time ASC").format(inner=inner)
     return _fetch_df(conn, query, params)
 
 
@@ -422,23 +565,32 @@ def read_candles_with_indicators(
     an unqualified `i.*` would hand the caller a DataFrame with three duplicate
     column labels, which pandas resolves by position, silently.
     """
-    _assert_legacy_backend()
+    source = _candle_source()
     _require_open_time(candle_columns)
-    ctab, itab = candles_table(symbol, tf), indicators_table(symbol, tf)
+    # Validate up front (both backends) so a bad symbol/tf raises before the
+    # indicator_column_names() catalog probe ever touches the connection.
+    validate_symbol(symbol)
+    validate_timeframe(tf)
     if indicator_columns is None:
         indicator_columns = indicator_column_names(conn, symbol, tf)
     indicator_columns = [c for c in indicator_columns if c not in ("symbol", "open_time", "close")]
     if not indicator_columns:
-        raise ValueError(f"no indicator columns to join for {itab}")
+        raise ValueError(f"no indicator columns to join for {symbol}_{tf}")
+
+    ccols = _columns_sql(candle_columns, prefix="h")
+    icols = _columns_sql(indicator_columns, prefix="i")
+    if source == "hyper":
+        return _read_joined_hyper(conn, symbol, tf, ccols, icols, limit, start, end, include_forming)
 
     params: list[Any] = []
-    inner = sql.SQL("SELECT {ccols}, {icols} FROM {ctab} h LEFT JOIN {itab} i ON h.open_time = i.open_time").format(
-        ccols=_columns_sql(candle_columns, prefix="h"),
-        icols=_columns_sql(indicator_columns, prefix="i"),
-        ctab=_ident(ctab),
-        itab=_ident(itab),
+    inner = sql.SQL(
+        "SELECT {ccols}, {icols} FROM {ctab} h LEFT JOIN {itab} i ON h.open_time = i.open_time WHERE true"
+    ).format(
+        ccols=ccols,
+        icols=icols,
+        ctab=_ident(candles_table(symbol, tf)),
+        itab=_ident(indicators_table(symbol, tf)),
     )
-    inner += sql.SQL(" WHERE true")
     if start is not None:
         inner += sql.SQL(" AND h.open_time >= %s")
         params.append(start)
@@ -468,15 +620,29 @@ def latest_open_time(
     FROM {sym}_{tf}_indicators`). Same forming semantics; the indicator table
     only ever holds rows the engine wrote, so include_forming=True is a plain MAX.
     """
-    _assert_legacy_backend()
-    table = _table_for_kind(symbol, tf, kind)
-    if not table_exists(conn, table):
-        return None
-    query = sql.SQL("SELECT MAX(open_time) FROM {tbl} WHERE true").format(tbl=_ident(table))
-    query += _forming_filter(tf, include_forming)
-    with conn.cursor() as cur:
-        cur.execute(query)
-        row = cur.fetchone()
+    source = _candle_source()
+    if source == "hyper":
+        if kind not in ("candles", "indicators"):
+            raise ValueError(f"kind must be 'candles' or 'indicators', got {kind!r}")
+        pred, params = _hyper_scope(symbol, tf)  # validates symbol/tf
+        table = _INDICATORS_HYPER_TABLE if kind == "indicators" else _CANDLES_HYPER_TABLE
+        # No table_exists probe: the hypertable always exists, and MAX over an
+        # absent (symbol, tf) returns NULL → None, the same "no data" answer the
+        # legacy missing-table check gives.
+        query = sql.SQL("SELECT MAX(open_time) FROM {tbl} WHERE ").format(tbl=_ident(table)) + pred
+        query += _forming_filter(tf, include_forming)
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+    else:
+        table = _table_for_kind(symbol, tf, kind)
+        if not table_exists(conn, table):
+            return None
+        query = sql.SQL("SELECT MAX(open_time) FROM {tbl} WHERE true").format(tbl=_ident(table))
+        query += _forming_filter(tf, include_forming)
+        with conn.cursor() as cur:
+            cur.execute(query)
+            row = cur.fetchone()
     if not row or row[0] is None:
         return None
     ts: datetime = row[0]
@@ -489,6 +655,13 @@ def table_exists(conn: Any, table: str) -> bool:
     to_regclass takes the identifier as TEXT and applies the normal casefolding
     rules, so the name has to arrive quoted — 'BTCUSDT_1h' would be folded to
     lowercase and never match.
+
+    Phase-agnostic on purpose: it probes the per-coin RELATION, which still exists
+    under either KYTHERA_CANDLES_SOURCE until the Phase-5 table drop, so no hyper
+    branch is needed (and reconstructing it from the 40M-row hypertable would be a
+    needless full scan). Once Phase 5 drops the per-coin tables it returns False —
+    which is exactly "no data". No hyper reader depends on it: latest_open_time's
+    hyper path skips the probe entirely (MAX over an absent coin is already NULL).
     """
     with conn.cursor() as cur:
         cur.execute("SELECT to_regclass(%s)", (sql.Identifier(table).as_string(cur),))
@@ -502,7 +675,25 @@ def indicator_column_names(conn: Any, symbol: str, tf: str) -> list[str]:
     The ~120 indicator columns are generated at runtime
     (2_indicator_engine.get_indicator_definitions), so any code that wants an
     explicit projection instead of `SELECT *` has to ask the catalog.
+
+    Hyper: the one shared `indicators` hypertable carries two extra columns the
+    per-coin tables never had (`tf`, `is_closed`); they are dropped so the returned
+    list is byte-equal to the legacy per-coin catalog — same names, same ordinal
+    order (hyper prepends `tf` after `symbol` and inserts `is_closed` before
+    `close`, so removing exactly those two restores symbol, open_time, close, …).
     """
+    if _candle_source() == "hyper":
+        validate_symbol(symbol)
+        validate_timeframe(tf)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = %s "
+                "ORDER BY ordinal_position",
+                (_INDICATORS_HYPER_TABLE,),
+            )
+            cols = [r[0] for r in cur.fetchall()]
+        return [col for col in cols if col not in _HYPER_ONLY_COLUMNS]
     with conn.cursor() as cur:
         cur.execute(
             # Schema-qualified: an identically named table in another schema on
@@ -527,10 +718,18 @@ def list_coin_tables(conn: Any, tf: str | None = None, *, kind: str | None = Non
 
     Read-only. Replaces the raw `information_schema.tables` scans (6_housekeeping
     retention/delisted-scan; the audit tools stay raw for now). `tf` restricts to
-    one timeframe, `kind` to 'candles' or 'indicators'. In phase C the per-coin
-    tables are gone and this returns an empty list.
+    one timeframe, `kind` to 'candles' or 'indicators'.
+
+    Phase-agnostic on purpose (like table_exists): it enumerates the per-coin
+    RELATIONS, which exist under either KYTHERA_CANDLES_SOURCE until the Phase-5
+    drop — so no hyper branch. Reconstructing this from the hypertables would mean
+    a `SELECT DISTINCT symbol, tf` over ~40M rows (measured >20 s, the chunk
+    partitioning defeats even a loose index scan), which would stall the caller
+    (6_housekeeping retention). The retention caller also DELETES from the per-coin
+    tables in hyper-read mode (writes stay legacy), so the relation list is exactly
+    what it needs. Once Phase 5 drops the per-coin tables this returns an empty list.
     """
-    _assert_legacy_backend()
+    _candle_source()  # reject a typo'd backend; the per-coin relations back this in every phase
     if tf is not None:
         validate_timeframe(tf)
     if kind is not None and kind not in ("candles", "indicators"):
@@ -587,7 +786,7 @@ def upsert_candles(
 
     Does NOT commit (contract 3).
     """
-    _assert_legacy_backend()
+    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
     # `closed` arrives from the Binance kline flag k['x'] and must not be a
     # truthy int — the hypertable column is boolean and would silently coerce.
     if closed is not True and closed is not False:
@@ -622,7 +821,7 @@ def upsert_indicators(conn: Any, df: pd.DataFrame, symbol: str, tf: str, *, page
 
     Does NOT commit (contract 3).
     """
-    _assert_legacy_backend()
+    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
     if df.empty:
         return 0
     if "symbol" not in df.columns or "open_time" not in df.columns:
@@ -693,7 +892,7 @@ def delete_candles_before(conn: Any, symbol: str, tf: str, cutoff: datetime, *, 
 
     Does NOT commit (contract 3).
     """
-    _assert_legacy_backend()
+    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
     if cutoff.tzinfo is None:
         raise ValueError("delete_candles_before() requires a timezone-aware cutoff")
     table = _table_for_kind(symbol, tf, kind)
@@ -714,7 +913,7 @@ def delete_indicators_from(conn: Any, symbol: str, tf: str, start: datetime) -> 
 
     Does NOT commit (contract 3).
     """
-    _assert_legacy_backend()
+    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
     if start.tzinfo is None:
         raise ValueError("delete_indicators_from() requires a timezone-aware start")
     table = indicators_table(symbol, tf)
