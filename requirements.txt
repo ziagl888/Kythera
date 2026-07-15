@@ -33,3 +33,9 @@ python-telegram-bot>=22,<23
 # --- Dashboard (Flask Web-UI + Prozess-Monitoring) ---
 flask
 psutil
+
+# --- Analytics substrate (Z1, T-2026-CU-9050-131) ---
+# DuckDB is the columnar analytics store + native Parquet reader/writer for
+# tools/analytics_export.py — no pyarrow needed. Runs on the VPS export job and
+# behind the read-only success-rate endpoint; never touches the live PG path.
+duckdb>=1.0,<2.0
