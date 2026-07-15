@@ -430,13 +430,18 @@ def read_candles(
     """
     source = _candle_source()
     _require_open_time(columns)
-    cols_sql = _columns_sql(columns)
     if source == "hyper":
+        # `SELECT *` on the hypertable would leak the tf/is_closed columns the
+        # per-coin tables never had; None → the explicit legacy candle shape
+        # (CANDLE_COLUMNS == the per-coin table's `SELECT *` ordinal order).
+        proj = _columns_sql(columns if columns is not None else CANDLE_COLUMNS)
         query, params = _windowed_select(
-            _CANDLES_HYPER_TABLE, cols_sql, tf, include_forming, start, end, limit, scope=_hyper_scope(symbol, tf)
+            _CANDLES_HYPER_TABLE, proj, tf, include_forming, start, end, limit, scope=_hyper_scope(symbol, tf)
         )
     else:
-        query, params = _windowed_select(candles_table(symbol, tf), cols_sql, tf, include_forming, start, end, limit)
+        query, params = _windowed_select(
+            candles_table(symbol, tf), _columns_sql(columns), tf, include_forming, start, end, limit
+        )
     return _fetch_df(conn, query, params)
 
 
@@ -489,8 +494,8 @@ def _hyper_side_subquery(
     join off TimescaleDB's buggy merge-over-ordered-append path (see
     _read_joined_hyper). Validates symbol/tf and returns the subquery plus params.
     """
-    params: list[Any] = [validate_symbol(symbol), validate_timeframe(tf)]
-    where = sql.SQL("WHERE symbol = %s AND tf = %s")
+    scope_pred, params = _hyper_scope(symbol, tf)  # one source of the (symbol, tf) predicate + validation
+    where = sql.SQL("WHERE ") + scope_pred
     if start is not None:
         where += sql.SQL(" AND open_time >= %s")
         params.append(start)
@@ -577,11 +582,15 @@ def read_candles_with_indicators(
     if not indicator_columns:
         raise ValueError(f"no indicator columns to join for {symbol}_{tf}")
 
-    ccols = _columns_sql(candle_columns, prefix="h")
     icols = _columns_sql(indicator_columns, prefix="i")
     if source == "hyper":
+        # None → explicit legacy candle shape, else `h.*` would leak tf/is_closed
+        # from the hypertable (mirrors read_candles / read_indicators).
+        hyper_candle_cols = candle_columns if candle_columns is not None else CANDLE_COLUMNS
+        ccols = _columns_sql(hyper_candle_cols, prefix="h")
         return _read_joined_hyper(conn, symbol, tf, ccols, icols, limit, start, end, include_forming)
 
+    ccols = _columns_sql(candle_columns, prefix="h")
     params: list[Any] = []
     inner = sql.SQL(
         "SELECT {ccols}, {icols} FROM {ctab} h LEFT JOIN {itab} i ON h.open_time = i.open_time WHERE true"

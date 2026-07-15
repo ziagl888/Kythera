@@ -805,6 +805,89 @@ def test_hyper_list_coin_tables_matches_legacy(conn, hyper_probe):
         assert all(k == "candles" for _, _, k in c.list_coin_tables(conn, kind="candles"))
 
 
+def test_hyper_read_candles_columns_none_matches_legacy(conn, hyper_probe):
+    """columns=None must NOT leak tf/is_closed under hyper. Legacy `SELECT *` on a
+    per-coin candle table yields the 7 CANDLE_COLUMNS; the hypertable's `SELECT *`
+    would add tf/is_closed. This guards the rgcore `columns=None` capture path."""
+    symbol, tf = hyper_probe
+    start, end = _closed_window(conn, tf, 120)
+    legacy = _read_via(
+        "legacy", c.read_candles, conn, symbol, tf, start=start, end=end, include_forming=True, columns=None
+    )
+    hyper = _read_via(
+        "hyper", c.read_candles, conn, symbol, tf, start=start, end=end, include_forming=True, columns=None
+    )
+    assert list(hyper.columns) == list(legacy.columns)  # no tf/is_closed leak, legacy order
+    assert "tf" not in hyper.columns and "is_closed" not in hyper.columns
+    shared = list(legacy.columns)
+    assert len(hyper) == len(legacy) > 0
+    assert canonical_rows(frame_to_rows(hyper, shared)) == canonical_rows(frame_to_rows(legacy, shared))
+
+
+def test_hyper_joined_candle_columns_none_matches_legacy(conn, hyper_probe):
+    """Same guard for the joined read's candle_columns=None path (`h.*`)."""
+    symbol, tf = hyper_probe
+    if not c.table_exists(conn, c.indicators_table(symbol, tf)):
+        pytest.skip("no legacy indicator table for the probe symbol")
+    start, end = _closed_window(conn, tf, 80)
+    legacy = _read_via(
+        "legacy",
+        c.read_candles_with_indicators,
+        conn,
+        symbol,
+        tf,
+        start=start,
+        end=end,
+        include_forming=True,
+        candle_columns=None,
+    )
+    hyper = _read_via(
+        "hyper",
+        c.read_candles_with_indicators,
+        conn,
+        symbol,
+        tf,
+        start=start,
+        end=end,
+        include_forming=True,
+        candle_columns=None,
+    )
+    assert list(hyper.columns) == list(legacy.columns)
+    assert "tf" not in hyper.columns and "is_closed" not in hyper.columns
+    shared = list(legacy.columns)
+    assert len(hyper) == len(legacy) > 0
+    assert canonical_rows_f4(frame_to_rows(hyper, shared)) == canonical_rows_f4(frame_to_rows(legacy, shared))
+
+
+def test_hyper_indicator_column_names_matches_legacy_fleetwide(conn, hyper_probe):
+    """Not just the sample: EVERY per-coin `_indicators` table must carry the exact
+    column set + ordinal order the hyper catalog returns (minus tf/is_closed).
+
+    `2_indicator_engine.create_indicator_table` uses CREATE TABLE IF NOT EXISTS with
+    no ALTER-migration path, so a coin whose table predates a newer indicator column
+    could carry a stale set — and read_indicators(columns=None) /
+    read_candles_with_indicators(indicator_columns=None) would then project a
+    different feature vector under hyper vs legacy for that outlier. This is the
+    fleet-wide cutover gate for that risk (one bulk catalog query, not N)."""
+    expected = _read_via("hyper", c.indicator_column_names, conn, hyper_probe[0], hyper_probe[1])
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name LIKE '%indicators' "
+            "ORDER BY table_name, ordinal_position"
+        )
+        rows = cur.fetchall()
+    per_table: dict[str, list[str]] = {}
+    for tname, cname in rows:
+        if c._parse_coin_table(tname) is not None:  # only real {SYM}_{tf}_indicators tables
+            per_table.setdefault(tname, []).append(cname)
+    assert len(per_table) > 100, f"expected the full per-coin fleet, saw {len(per_table)} indicator tables"
+    diverged = {t: cols for t, cols in per_table.items() if cols != expected}
+    assert not diverged, (
+        f"{len(diverged)} per-coin indicator tables diverge from the hyper column list: {list(diverged)[:5]}"
+    )
+
+
 @pytest.fixture(scope="module")
 def hyper_sample(conn):
     """A spread of (symbol, tf) present in BOTH backends with ≥_MIN_ROWS in the
