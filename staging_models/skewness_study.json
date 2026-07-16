@@ -2,14 +2,17 @@
   "meta": {
     "study": "K7 \u00b7 SKW1 (realized skewness / moments)",
     "task": "T-2026-CU-9050-141",
-    "mode": "SMOKE \u2014 full run pending (Ein-Job deferred)",
-    "generated_at": "2026-07-16T15:55:35.985134+00:00",
+    "generated_at": "2026-07-16T23:18:44.183618+00:00",
+    "status": "complete",
     "tf": "15m",
-    "limit_symbols": 3,
-    "max_weeks": 6,
-    "n_coins_loaded": 3,
-    "n_weeks": 6,
-    "n_rows_post_liquidity": 12,
+    "limit_symbols": null,
+    "max_weeks": null,
+    "n_universe": 530,
+    "n_coins_loaded": 527,
+    "n_weeks": 51,
+    "n_rows_post_liquidity": 15923,
+    "peak_rss_mb": 163.2,
+    "skip_cpu_check": true,
     "moment_features": [
       "mom_rv_24h",
       "mom_rv_7d",
@@ -19,275 +22,342 @@
       "mom_kurt_7d"
     ],
     "fee_per_side": 0.0005,
-    "min_coins_per_week": 20
+    "min_coins_per_week": 20,
+    "reverdict_at": "2026-07-17T00:13:59.694212+00:00"
+  },
+  "verdict": {
+    "verdict": "skw1-robust-spread",
+    "min_robust_net_spread": 0.001,
+    "all_avg_net_spread": 0.02504,
+    "val_avg_net_spread": 0.02513,
+    "test_avg_net_spread": 0.02484,
+    "both_halves_net_positive": true,
+    "note": "The SKW1 L/S net spread (short high-positive-skew, long low-skew) is +0.02504/week and stays net-positive in BOTH chrono halves (val 0.02513, test 0.02484) \u2014 an OOS sign-stable, funding/fee-aware edge. Deployment as a short-candidate filter remains an operator decision (Michi); the moment feature-block is now also a validated retrain input."
   },
   "skw1_spread": {
     "sort_feature": "mom_skew_7d",
-    "n_weeks": 0,
-    "note": "no week reached MIN_COINS_PER_WEEK (smoke caps)"
+    "direction": "LONG low decile, SHORT high decile (SKW1: short high-positive-skew)",
+    "fee_drag_per_week": 0.002,
+    "all": {
+      "n_weeks": 51,
+      "avg_gross_spread": 0.03172,
+      "avg_funding_contrib": -0.004685,
+      "avg_net_spread": 0.02504,
+      "median_net_spread": 0.0143,
+      "pct_weeks_net_pos": 0.6471
+    },
+    "val_first70pct": {
+      "n_weeks": 35,
+      "avg_gross_spread": 0.03359,
+      "avg_funding_contrib": -0.006465,
+      "avg_net_spread": 0.02513,
+      "median_net_spread": 0.01007,
+      "pct_weeks_net_pos": 0.6
+    },
+    "test_last30pct": {
+      "n_weeks": 16,
+      "avg_gross_spread": 0.02764,
+      "avg_funding_contrib": -0.000791,
+      "avg_net_spread": 0.02484,
+      "median_net_spread": 0.02176,
+      "pct_weeks_net_pos": 0.75
+    }
+  },
+  "skew_24h_spread": {
+    "sort_feature": "mom_skew_24h",
+    "direction": "LONG low decile, SHORT high decile (SKW1: short high-positive-skew)",
+    "fee_drag_per_week": 0.002,
+    "all": {
+      "n_weeks": 51,
+      "avg_gross_spread": 0.01446,
+      "avg_funding_contrib": 0.000343,
+      "avg_net_spread": 0.0128,
+      "median_net_spread": 0.00228,
+      "pct_weeks_net_pos": 0.5294
+    },
+    "val_first70pct": {
+      "n_weeks": 35,
+      "avg_gross_spread": 0.01815,
+      "avg_funding_contrib": -0.000155,
+      "avg_net_spread": 0.01599,
+      "median_net_spread": 0.00228,
+      "pct_weeks_net_pos": 0.5143
+    },
+    "test_last30pct": {
+      "n_weeks": 16,
+      "avg_gross_spread": 0.00639,
+      "avg_funding_contrib": 0.001434,
+      "avg_net_spread": 0.00583,
+      "median_net_spread": 0.0046,
+      "pct_weeks_net_pos": 0.5625
+    }
   },
   "decile_sorts": [
     {
       "sort_feature": "mom_skew_7d",
-      "n_weeks_used": 0,
+      "n_weeks_used": 51,
+      "decile_monotonicity": -0.8808,
       "deciles": [
         {
           "decile": 0,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1614,
+          "avg_mn_ret": 0.01508,
+          "wr": 0.4195
         },
         {
           "decile": 1,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": 0.00924,
+          "wr": 0.3807
         },
         {
           "decile": 2,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": -0.00328,
+          "wr": 0.383
         },
         {
           "decile": 3,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1584,
+          "avg_mn_ret": -0.00317,
+          "wr": 0.3788
         },
         {
           "decile": 4,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1592,
+          "avg_mn_ret": 0.00143,
+          "wr": 0.3631
         },
         {
           "decile": 5,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1594,
+          "avg_mn_ret": -0.00505,
+          "wr": 0.3827
         },
         {
           "decile": 6,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1593,
+          "avg_mn_ret": -0.00316,
+          "wr": 0.376
         },
         {
           "decile": 7,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": -0.00512,
+          "wr": 0.3763
         },
         {
           "decile": 8,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": -0.00919,
+          "wr": 0.3736
         },
         {
           "decile": 9,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1572,
+          "avg_mn_ret": -0.01493,
+          "wr": 0.341
         }
       ]
     },
     {
       "sort_feature": "mom_skew_24h",
-      "n_weeks_used": 0,
+      "n_weeks_used": 51,
+      "decile_monotonicity": -0.1716,
       "deciles": [
         {
           "decile": 0,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1614,
+          "avg_mn_ret": -0.00123,
+          "wr": 0.368
         },
         {
           "decile": 1,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": -0.00329,
+          "wr": 0.3858
         },
         {
           "decile": 2,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": 0.00873,
+          "wr": 0.378
         },
         {
           "decile": 3,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1584,
+          "avg_mn_ret": -0.007,
+          "wr": 0.3826
         },
         {
           "decile": 4,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1592,
+          "avg_mn_ret": -0.00182,
+          "wr": 0.3668
         },
         {
           "decile": 5,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1594,
+          "avg_mn_ret": -0.00785,
+          "wr": 0.3695
         },
         {
           "decile": 6,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1593,
+          "avg_mn_ret": 0.00204,
+          "wr": 0.3666
         },
         {
           "decile": 7,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": -0.00218,
+          "wr": 0.3845
         },
         {
           "decile": 8,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": 0.0081,
+          "wr": 0.4036
         },
         {
           "decile": 9,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1572,
+          "avg_mn_ret": -0.01354,
+          "wr": 0.3702
         }
       ]
     },
     {
       "sort_feature": "mom_rv_7d",
-      "n_weeks_used": 0,
+      "n_weeks_used": 51,
+      "decile_monotonicity": 0.6966,
       "deciles": [
         {
           "decile": 0,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1614,
+          "avg_mn_ret": -0.00413,
+          "wr": 0.391
         },
         {
           "decile": 1,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": -0.00836,
+          "wr": 0.36
         },
         {
           "decile": 2,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": -0.00952,
+          "wr": 0.3717
         },
         {
           "decile": 3,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1584,
+          "avg_mn_ret": -0.01129,
+          "wr": 0.3718
         },
         {
           "decile": 4,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1592,
+          "avg_mn_ret": -0.00989,
+          "wr": 0.3706
         },
         {
           "decile": 5,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1594,
+          "avg_mn_ret": -0.00792,
+          "wr": 0.3821
         },
         {
           "decile": 6,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1593,
+          "avg_mn_ret": -0.0067,
+          "wr": 0.376
         },
         {
           "decile": 7,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": 0.01433,
+          "wr": 0.3946
         },
         {
           "decile": 8,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": 0.00033,
+          "wr": 0.3767
         },
         {
           "decile": 9,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1572,
+          "avg_mn_ret": 0.02572,
+          "wr": 0.381
         }
       ]
     },
     {
       "sort_feature": "mom_kurt_7d",
-      "n_weeks_used": 0,
+      "n_weeks_used": 51,
+      "decile_monotonicity": 0.2567,
       "deciles": [
         {
           "decile": 0,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1614,
+          "avg_mn_ret": -0.00247,
+          "wr": 0.3928
         },
         {
           "decile": 1,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": -0.00653,
+          "wr": 0.3726
         },
         {
           "decile": 2,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": -0.01001,
+          "wr": 0.3755
         },
         {
           "decile": 3,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1584,
+          "avg_mn_ret": -0.00764,
+          "wr": 0.3649
         },
         {
           "decile": 4,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1592,
+          "avg_mn_ret": 0.02193,
+          "wr": 0.3693
         },
         {
           "decile": 5,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1594,
+          "avg_mn_ret": -0.00865,
+          "wr": 0.3758
         },
         {
           "decile": 6,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1593,
+          "avg_mn_ret": -0.0106,
+          "wr": 0.3867
         },
         {
           "decile": 7,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1589,
+          "avg_mn_ret": -0.00356,
+          "wr": 0.3908
         },
         {
           "decile": 8,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1598,
+          "avg_mn_ret": 0.0043,
+          "wr": 0.3861
         },
         {
           "decile": 9,
-          "n": 0,
-          "avg_mn_ret": null,
-          "wr": null
+          "n": 1572,
+          "avg_mn_ret": 0.0055,
+          "wr": 0.3607
         }
       ]
     }
