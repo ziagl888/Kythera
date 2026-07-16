@@ -9,18 +9,27 @@ question is whether the ABR2 gate — LONG only when ``fund_24h > +3 bps`` and a
 SHORT-veto at ``fund_24h > +1.5 bps`` — generalizes across the whole fleet, or
 whether it is an ABR-family idiosyncrasy.
 
+The §K3 feature list is PRESCRIPTIVE, so we analyze the full set:
+  * fund_24h   — mean of the last 3 settlements (bps); the ABR gate quantity.
+  * fund_72h   — mean of the last 9 settlements (bps).
+  * fund_7d_cum— sum of the last 21 settlements (bps).
+  * cs_pctl    — GENUINE cross-section percentile: the trade's coin ranked, at
+                 its entry instant, against ALL other coins' as-of fund_24h
+                 (in [0,1]). This is the ABR2 cross-section construct. NOTE:
+                 the builder's ``fund_pctl_90d`` is a per-SYMBOL self-history
+                 percentile, NOT cross-section — we do not substitute it.
+
 This script is READ-ONLY. It runs SELECTs against the live DB, computes the
 SHARED funding features as-of entry (``core.funding_features``), buckets the
 deduped fleet trade log by funding zone × direction (× model tag), and reports
-per bucket: n, win-rate, average NET PnL (round-trip taker fee included),
-month-split and a chronological val/test split. WR alone is worthless (repo
-Rule 8) — the verdict hangs on net-PnL expectancy that is *stable across both
-time halves*.
+per bucket: n, win-rate, average NET PnL (round-trip taker fee included, both
+winsorized AND raw), median, month-split and a chronological val/test split. WR
+alone is worthless (repo Rule 8) — the verdict hangs on net-PnL expectancy and
+on a monotone funding→PnL gradient that is *stable across both time halves*.
 
 Contracts reused (no reinvention):
   * core.funding_features.load_funding / funding_features_asof — the canonical
-    as-of funding builder (fund_last/24h/72h/7d_cum/pctl/trend, bps). fund_24h
-    is the ABR gate/veto quantity, so it is our zoning variable.
+    as-of funding builder (fund_last/24h/72h/7d_cum/pctl/trend, bps).
   * tools.walkforward_sim.FEE_PER_SIDE = 0.0005 (taker 0.05%/side → 0.10%
     round-trip, P3.6). Net PnL = gross − 2·FEE_PER_SIDE. We do NOT invent a fee.
   * core.time.LEGACY_WRITER_TZ = "Europe/Bucharest" — closed_ai_signals.open_time
@@ -75,6 +84,12 @@ EXTREME_NEG_BPS = -3.0
 
 # Materiality floor for a per-half bucket to count toward the verdict.
 MIN_HALF_N = 100
+# Economic-magnitude floor for a per-half Spearman to count as more than "just a
+# sign". |ρ| below this is directionally consistent but economically negligible
+# (with n≈40k/half even |ρ|≈0.017 is >3 SE "significant" yet trivially small —
+# significance is not materiality, so we gate on magnitude, not p-value).
+MIN_ABS_SPEARMAN = 0.03
+
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "staging_models")
 
 
@@ -104,20 +119,25 @@ def load_signals(conn, limit_symbols: int | None) -> pd.DataFrame:
         )
     query = f"""
         SELECT DISTINCT ON (symbol, model, direction, open_time)
-               id, symbol, model, direction, entry, close_price, targets_hit,
-               open_time, status
+               id, symbol, model, direction, entry, close_price, open_time
         FROM closed_ai_signals
         {sym_filter}
         ORDER BY symbol, model, direction, open_time, id
     """
-    df = pd.read_sql_query(query, conn)
-    return df
+    return pd.read_sql_query(query, conn)
 
 
 def to_utc_aware(open_time: pd.Series) -> pd.Series:
     """Naive local (Europe/Bucharest) → tz-aware UTC, DST-correct. Same recipe as
     tools/aim2_build_dataset.py: localize with DST handling, then convert. The
-    2026-03-29 spring-forward means a constant +3h is wrong for Feb/Mar rows."""
+    2026-03-29 spring-forward means a constant +3h is wrong for Feb/Mar rows.
+
+    ``ambiguous="NaT"`` maps the autumn fall-back hour (last Sunday of October,
+    ~1h/yr where the wall clock repeats) to NaT, and those rows are dropped by
+    the caller. In THIS study's window (2026-02-24 .. 2026-07-16) there is no
+    fall-back transition, so zero rows are affected; the flag is correctness
+    hygiene for a wider re-run, not a live drop here.
+    """
     s = pd.to_datetime(open_time)
     localized = s.dt.tz_localize(LEGACY_WRITER_TZ, nonexistent="shift_forward", ambiguous="NaT")
     return localized.dt.tz_convert("UTC")
@@ -128,10 +148,11 @@ def compute_pnl(df: pd.DataFrame) -> pd.Series:
 
     gross = realized price move close-vs-entry (unlevered). The fleet log records
     close_price as the raw exit price, which for legacy rows and un-SL-truncated
-    SHORT squeezes reaches ±200%+ — real price moves the bot would NOT have
-    realized (SL caps). We keep the raw value here; the *mean* is winsorized
-    downstream (bucket_stats) so a handful of squeeze/data tails cannot dominate
-    a bucket average, while WR and median (both tail-robust) use the raw value.
+    SHORT squeezes reaches ±200%+. We keep the raw value here; downstream we
+    report BOTH a winsorized mean (tail-safe expectancy) AND the raw mean, plus
+    the raw median — so the squeeze/tail-risk claim can be judged on unclipped
+    losses (winsorizing at the 1st pct would attenuate exactly the SHORT-squeeze
+    signal under test). WR and median are inherently tail-robust.
     """
     entry = df["entry"].astype(float)
     close = df["close_price"].astype(float)
@@ -141,65 +162,111 @@ def compute_pnl(df: pd.DataFrame) -> pd.Series:
 
 
 def attach_funding(df: pd.DataFrame, conn) -> pd.DataFrame:
-    """Compute fund_24h (+ context features) as-of entry for every trade via the
-    shared as-of builder. Trades whose symbol lacks funding history drop out."""
+    """Compute the full §K3 as-of funding feature set for every trade.
+
+    fund_24h/72h/7d_cum come straight from the shared builder. cs_pctl is the
+    genuine cross-section percentile (see compute_cross_section_pctl). Trades
+    whose symbol lacks funding history drop out of the funded population.
+    """
     symbols = sorted(df["symbol"].dropna().unique().tolist())
     by_sym = load_funding(conn, symbols)  # full history, as-of over whole span
+
     fund_24h = np.full(len(df), np.nan)
-    fund_last = np.full(len(df), np.nan)
-    fund_pctl = np.full(len(df), np.nan)
+    fund_72h = np.full(len(df), np.nan)
+    fund_7d_cum = np.full(len(df), np.nan)
+    fund_pctl_self = np.full(len(df), np.nan)  # per-symbol self-history (NOT cross-section)
     ts = df["open_time_utc"].values
     syms = df["symbol"].values
     for pos in range(len(df)):
         feats = funding_features_asof(by_sym, syms[pos], pd.Timestamp(ts[pos]))
         if feats:
             fund_24h[pos] = feats["fund_24h"]
-            fund_last[pos] = feats["fund_last"]
-            fund_pctl[pos] = feats["fund_pctl_90d"]
+            fund_72h[pos] = feats["fund_72h"]
+            fund_7d_cum[pos] = feats["fund_7d_cum"]
+            fund_pctl_self[pos] = feats["fund_pctl_90d"]
+
     df = df.copy()
     df["fund_24h"] = fund_24h
-    df["fund_last"] = fund_last
-    df["fund_pctl_90d"] = fund_pctl
+    df["fund_72h"] = fund_72h
+    df["fund_7d_cum"] = fund_7d_cum
+    df["fund_pctl_self_90d"] = fund_pctl_self
+    df["cs_pctl"] = compute_cross_section_pctl(df, by_sym)
     return df
 
 
-def zone_of(fund_24h: float, q_edges: list[float]) -> str:
-    """Funding zone label: extreme zones first (ABR thresholds), else quintile."""
-    if np.isnan(fund_24h):
-        return "NA"
-    if fund_24h > EXTREME_POS_BPS:
-        return "EXTREME_POS(>+3bps)"
-    if fund_24h < EXTREME_NEG_BPS:
-        return "EXTREME_NEG(<-3bps)"
-    # quintiles over the (non-extreme-agnostic) fund_24h distribution
-    for k, edge in enumerate(q_edges):
-        if fund_24h <= edge:
-            return f"Q{k + 1}"
-    return f"Q{len(q_edges) + 1}"
+def compute_cross_section_pctl(df: pd.DataFrame, by_sym: dict) -> np.ndarray:
+    """GENUINE cross-section funding percentile per trade, in [0,1].
+
+    For each trade at its entry instant, rank the trade's coin's as-of fund_24h
+    against ALL coins' as-of fund_24h at that same instant. fund_24h here is the
+    rolling mean of each coin's last 3 settlements (identical definition to the
+    shared builder), evaluated as-of the latest settlement ≤ entry.
+
+    Efficiency: no per-trade DB round-trips and no 82k×530 feature recompute.
+    We build a per-coin settlement→rolling-fund_24h panel once, floor entry
+    timestamps to the hour (funding steps on an ~8h grid, so hour-flooring moves
+    the as-of peer set negligibly while collapsing ~82k timestamps to a few
+    thousand), merge_asof each coin onto that small hour grid to form a wide
+    (hour × coin) matrix, percentile-rank across coins per hour, and map each
+    trade back by (hour, symbol). All in-memory (~few thousand × 530 floats).
+
+    The whole cross-section is computed in naive-UTC (values are UTC; tz stripped
+    only to keep merge_asof / MultiIndex joins simple).
+    """
+    # Per-coin rolling-3 fund_24h (bps) at each settlement time (naive UTC).
+    panels: dict[str, pd.DataFrame] = {}
+    for sym, g in by_sym.items():
+        if len(g) < 3:
+            continue
+        rates = g["funding_rate"].to_numpy() * 1e4  # → bps
+        roll3 = pd.Series(rates).rolling(3).mean().to_numpy()
+        ft = g["funding_time"].dt.tz_convert("UTC").dt.tz_localize(None).reset_index(drop=True)
+        p = pd.DataFrame({"funding_time": ft, "f24": roll3}).dropna().sort_values("funding_time")
+        if not p.empty:
+            panels[sym] = p.reset_index(drop=True)
+
+    floored = df["open_time_utc"].dt.tz_convert("UTC").dt.tz_localize(None).dt.floor("h")
+    uniq_hours = pd.DatetimeIndex(pd.Series(floored.dropna().unique())).sort_values()
+    if len(uniq_hours) == 0 or not panels:
+        return np.full(len(df), np.nan)
+    uniq = pd.DataFrame({"funding_time": uniq_hours})
+
+    wide: dict[str, np.ndarray] = {}
+    for sym, p in panels.items():
+        merged = pd.merge_asof(uniq, p, on="funding_time", direction="backward")
+        wide[sym] = merged["f24"].to_numpy()
+    panel_wide = pd.DataFrame(wide, index=uniq["funding_time"].to_numpy())
+
+    # Percentile rank across coins per hour (NaN peers excluded automatically).
+    ranks_long = panel_wide.rank(axis=1, pct=True).stack()  # MultiIndex (hour, symbol)
+    key = pd.MultiIndex.from_arrays([floored.to_numpy(), df["symbol"].to_numpy()])
+    return ranks_long.reindex(key).to_numpy()
 
 
 def bucket_stats(g: pd.DataFrame) -> dict:
     n = int(len(g))
     if n == 0:
         return {"n": 0}
-    pnl = g["net_pnl"]  # raw — for WR (sign) and median (tail-robust)
-    pnl_w = g["net_pnl_w"]  # winsorized — for the mean (tail-safe expectancy)
+    pnl = g["net_pnl"]  # raw — for WR (sign), median (tail-robust) and raw mean
+    pnl_w = g["net_pnl_w"]  # winsorized — for the tail-safe mean
     return {
         "n": n,
         "wr": round(float((pnl > 0).mean()), 4),
-        "avg_net_pnl_pct": round(float(pnl_w.mean()) * 100, 4),
+        "avg_net_pnl_pct": round(float(pnl_w.mean()) * 100, 4),  # winsorized
+        "avg_net_pnl_raw_pct": round(float(pnl.mean()) * 100, 4),  # unclipped
         "median_net_pnl_pct": round(float(pnl.median()) * 100, 4),
         "avg_fund_24h_bps": round(float(g["fund_24h"].mean()), 3),
     }
 
 
-def month_split(g: pd.DataFrame) -> dict:
+def month_split(g: pd.DataFrame, min_n: int = 20) -> dict:
     out = {}
     for m, gm in g.groupby(g["open_time_utc"].dt.strftime("%Y-%m")):
-        if len(gm) >= 20:
+        if len(gm) >= min_n:
             out[m] = {
                 "n": int(len(gm)),
                 "avg_net_pnl_pct": round(float(gm["net_pnl"].mean()) * 100, 4),
+                "avg_net_pnl_raw_pct": round(float(gm["net_pnl"].mean()) * 100, 4),
                 "wr": round(float((gm["net_pnl"] > 0).mean()), 4),
             }
     return out
@@ -216,35 +283,45 @@ def spearman(x: np.ndarray, y: np.ndarray) -> float | None:
     return float(np.corrcoef(rx, ry)[0, 1])
 
 
+def gradient_test(gd: pd.DataFrame, feature: str, median_ts: pd.Timestamp, expected: str) -> dict:
+    """Per-trade rank correlation between ``feature`` and net PnL, per chrono
+    half. ABR predicts LONG corr>0 (higher funding → better LONG), SHORT corr<0.
+    Records both sign-stability AND magnitude (|ρ|≥MIN_ABS_SPEARMAN) per half."""
+    sub = gd[gd[feature].notna()]
+    h1 = sub[sub["open_time_utc"] < median_ts]
+    h2 = sub[sub["open_time_utc"] >= median_ts]
+    c_all = spearman(sub[feature].values, sub["net_pnl_w"].values)
+    c1 = spearman(h1[feature].values, h1["net_pnl_w"].values)
+    c2 = spearman(h2[feature].values, h2["net_pnl_w"].values)
+
+    def sign_ok(c):
+        if c is None:
+            return None
+        return (c > 0) if expected == "positive" else (c < 0)
+
+    sign_both = bool(sign_ok(c1)) and bool(sign_ok(c2))
+    mag_val = c1 is not None and abs(c1) >= MIN_ABS_SPEARMAN
+    mag_test = c2 is not None and abs(c2) >= MIN_ABS_SPEARMAN
+    return {
+        "expected_sign": expected,
+        "spearman_all": None if c_all is None else round(c_all, 4),
+        "spearman_val": None if c1 is None else round(c1, 4),
+        "spearman_test": None if c2 is None else round(c2, 4),
+        "n_val": int(len(h1)),
+        "n_test": int(len(h2)),
+        "sign_holds_both_halves": sign_both,
+        "abs_ge_floor_val": bool(mag_val),
+        "abs_ge_floor_test": bool(mag_test),
+        "magnitude_stable_both_halves": bool(mag_val and mag_test),
+    }
+
+
 def funding_pnl_correlation(funded: pd.DataFrame, median_ts: pd.Timestamp) -> dict:
-    """The decisive monotonicity test: per-trade rank correlation between
-    fund_24h and net PnL, per direction, per chrono half. The ABR hypothesis
-    predicts a POSITIVE corr for LONG (higher funding → better LONG) and a
-    NEGATIVE corr for SHORT (higher funding → worse SHORT). An effect counts as
-    real only if the predicted sign holds in BOTH halves."""
+    """fund_24h gradient per direction — the canonical verdict basis."""
     out: dict = {}
     for direction, gd in funded.groupby("direction"):
-        h1 = gd[gd["open_time_utc"] < median_ts]
-        h2 = gd[gd["open_time_utc"] >= median_ts]
         expected = "positive" if direction.upper() == "LONG" else "negative"
-        c_all = spearman(gd["fund_24h"].values, gd["net_pnl_w"].values)
-        c1 = spearman(h1["fund_24h"].values, h1["net_pnl_w"].values)
-        c2 = spearman(h2["fund_24h"].values, h2["net_pnl_w"].values)
-
-        def sign_ok(c, expected=expected):
-            if c is None:
-                return None
-            return (c > 0) if expected == "positive" else (c < 0)
-
-        out[direction] = {
-            "expected_sign": expected,
-            "spearman_all": None if c_all is None else round(c_all, 4),
-            "spearman_val": None if c1 is None else round(c1, 4),
-            "spearman_test": None if c2 is None else round(c2, 4),
-            "sign_holds_both_halves": bool(sign_ok(c1)) and bool(sign_ok(c2)),
-            "n_val": int(len(h1)),
-            "n_test": int(len(h2)),
-        }
+        out[direction] = gradient_test(gd, "fund_24h", median_ts, expected)
     return out
 
 
@@ -254,25 +331,56 @@ def half_split_stats(g: pd.DataFrame, median_ts: pd.Timestamp) -> dict:
     return {"val_firsthalf": bucket_stats(h1), "test_secondhalf": bucket_stats(h2)}
 
 
+def extreme_expectancy(gd: pd.DataFrame, feature: str, lo_edge: float, hi_edge: float, median_ts) -> dict:
+    """Bottom-quintile vs top-quintile expectancy for a feature (global 20/80
+    edges), with the chrono val/test split. Reports raw AND winsorized means."""
+    sub = gd[gd[feature].notna()]
+    bottom = sub[sub[feature] <= lo_edge]
+    top = sub[sub[feature] >= hi_edge]
+    return {
+        "bottom_quintile": {**bucket_stats(bottom), **half_split_stats(bottom, median_ts)},
+        "top_quintile": {**bucket_stats(top), **half_split_stats(top, median_ts)},
+    }
+
+
 def analyze(df: pd.DataFrame) -> dict:
     funded = df[df["fund_24h"].notna()].copy()
     median_ts = funded["open_time_utc"].median()
 
-    # Winsorize net PnL at the global 1/99 pct of the funded population — tames
-    # the ±200% squeeze/legacy tails so a bucket MEAN reflects typical
-    # expectancy, not three catastrophic outliers. WR/median use the raw value.
+    # Winsorize net PnL at the global 1/99 pct of the funded population — used
+    # only for the tail-safe MEAN; the raw mean, median and WR are reported
+    # alongside so tail-risk is not hidden. WR/median/raw-mean use the raw value.
     lo, hi = float(np.quantile(funded["net_pnl"], 0.01)), float(np.quantile(funded["net_pnl"], 0.99))
     funded["net_pnl_w"] = funded["net_pnl"].clip(lo, hi)
-    analyze.winsor_bounds = (round(lo * 100, 3), round(hi * 100, 3))  # type: ignore[attr-defined]
 
-    # quintile edges over the non-extreme core (so extreme zones don't collapse
-    # a whole quintile). Edges are the 20/40/60/80 pctl of the full fund_24h.
+    # Quintile edges over the FULL fund_24h distribution (extremes included) —
+    # 20/40/60/80 pct. Funding piles up at the exchange default rate, so interior
+    # edges can TIE and collapse a quintile (Q4 typically empty). We detect and
+    # document that rather than silently dropping the bin (see degeneracy note).
     core = funded["fund_24h"]
     q_edges = [float(np.quantile(core, q)) for q in (0.2, 0.4, 0.6, 0.8)]
     funded["zone"] = funded["fund_24h"].apply(lambda x: zone_of(x, q_edges))
+    rounded_edges = [round(e, 6) for e in q_edges]
+    degenerate = len(set(rounded_edges)) < len(rounded_edges)
+    present_zones = sorted(funded["zone"].unique().tolist())
+    collapsed = [f"Q{i + 1}" for i in range(5) if f"Q{i + 1}" not in present_zones and i < len(q_edges) + 1]
 
     result: dict = {
         "quintile_edges_fund_24h_bps": [round(e, 3) for e in q_edges],
+        "quintile_degeneracy": {
+            "edges_tie": degenerate,
+            "collapsed_quintiles": collapsed,
+            "present_zones": present_zones,
+            "note": (
+                "fund_24h ties at the exchange default funding rate: the 60th and 80th pct "
+                "edges coincide, so the interior quintile between them is empty (collapsed). "
+                "The gradient/verdict do not depend on quintile bins (they use per-trade "
+                "Spearman + the ±3bps extreme cuts); the collapsed bin is simply omitted from "
+                "the zone table, documented here rather than silently dropped."
+            )
+            if degenerate
+            else "no quintile collapse.",
+        },
         "winsor_bounds_net_pnl_pct": [round(lo * 100, 3), round(hi * 100, 3)],
         "median_open_time_utc": str(median_ts),
         "by_direction_zone": {},
@@ -280,6 +388,7 @@ def analyze(df: pd.DataFrame) -> dict:
         "by_model_extremes": {},
         "direction_baseline": {},
         "funding_pnl_correlation": funding_pnl_correlation(funded, median_ts),
+        "multi_feature": {},
     }
 
     # Direction baselines (all funded trades of that direction)
@@ -287,6 +396,7 @@ def analyze(df: pd.DataFrame) -> dict:
         result["direction_baseline"][direction] = {
             **bucket_stats(gd),
             **half_split_stats(gd, median_ts),
+            "months": month_split(gd),
         }
 
     # direction × zone
@@ -325,7 +435,29 @@ def analyze(df: pd.DataFrame) -> dict:
         },
     }
 
-    # Per major model tag: extreme zone effect (only tags with enough funded n)
+    # Multi-feature: gradient + top/bottom-quintile expectancy per direction, for
+    # the full §K3 feature set. cs_pctl is the ABR2 cross-section construct.
+    for feat in ("fund_24h", "fund_72h", "fund_7d_cum", "cs_pctl"):
+        sub = funded[funded[feat].notna()]
+        if sub.empty:
+            continue
+        lo_edge = float(np.quantile(sub[feat], 0.2))
+        hi_edge = float(np.quantile(sub[feat], 0.8))
+        entry: dict = {
+            "n": int(len(sub)),
+            "lo_edge_q20": round(lo_edge, 4),
+            "hi_edge_q80": round(hi_edge, 4),
+            "by_direction": {},
+        }
+        for direction, gd in sub.groupby("direction"):
+            expected = "positive" if direction.upper() == "LONG" else "negative"
+            entry["by_direction"][direction] = {
+                "gradient": gradient_test(gd, feat, median_ts, expected),
+                "extreme": extreme_expectancy(gd, feat, lo_edge, hi_edge, median_ts),
+            }
+        result["multi_feature"][feat] = entry
+
+    # Per major model tag: extreme zone effect + month-split (only tags w/ n>=300)
     for model, gm in funded.groupby("model"):
         if len(gm) < 300:
             continue
@@ -335,34 +467,50 @@ def analyze(df: pd.DataFrame) -> dict:
                 "baseline": bucket_stats(gd),
                 "extreme_pos": bucket_stats(gd[gd["fund_24h"] > EXTREME_POS_BPS]),
                 "extreme_neg": bucket_stats(gd[gd["fund_24h"] < EXTREME_NEG_BPS]),
+                "months": month_split(gd, min_n=40),
             }
         result["by_model_extremes"][model] = entry
 
     return result
 
 
-def derive_verdict(analysis: dict) -> dict:
-    """Two independent tests, both requiring stability across the chrono halves:
+def zone_of(fund_24h: float, q_edges: list[float]) -> str:
+    """Funding zone label: extreme zones first (ABR thresholds), else quintile."""
+    if np.isnan(fund_24h):
+        return "NA"
+    if fund_24h > EXTREME_POS_BPS:
+        return "EXTREME_POS(>+3bps)"
+    if fund_24h < EXTREME_NEG_BPS:
+        return "EXTREME_NEG(<-3bps)"
+    for k, edge in enumerate(q_edges):
+        if fund_24h <= edge:
+            return f"Q{k + 1}"
+    return f"Q{len(q_edges) + 1}"
 
-    PRIMARY — monotone funding→PnL gradient (per-trade Spearman fund_24h vs net
-      PnL, per direction, per half). ABR predicts LONG corr>0, SHORT corr<0. The
-      edge is real if BOTH directions hold their predicted sign in BOTH halves.
-    SECONDARY — the hard extreme-zone claims vs baseline (kept for context; more
-      fragile out-of-sample because an extreme bin is thin and regime-sensitive):
-      (A) SHORT at extreme-positive funding worse than SHORT baseline
-      (B) LONG at extreme-negative funding worse than LONG baseline
+
+def derive_verdict(analysis: dict) -> dict:
+    """The machine verdict must not fire "edge-found" on sign-stability alone.
+
+    PRIMARY (fund_24h gradient, per-trade Spearman, per chrono half):
+      * sign_ok    = both directions hold the ABR-predicted sign in both halves
+      * magnitude_ok = additionally |ρ| ≥ MIN_ABS_SPEARMAN in both halves
+      verdict = "edge-found"                        if magnitude_ok
+                "direction-confirmed, magnitude-weak" if sign_ok but not magnitude_ok
+                "no-op/no-edge"                       otherwise
+    SECONDARY — the hard extreme-zone claims vs baseline (context; fragile
+      out-of-sample because an extreme bin is thin and regime-sensitive).
     """
     corr = analysis["funding_pnl_correlation"]
-    gradient_both_dirs = (
-        all(corr.get(d, {}).get("sign_holds_both_halves") for d in ("LONG", "SHORT")) and len(corr) >= 2
-    )
+    dirs = [d for d in ("LONG", "SHORT") if d in corr]
+    sign_ok = len(dirs) == 2 and all(corr[d].get("sign_holds_both_halves") for d in dirs)
+    magnitude_ok = sign_ok and all(corr[d].get("magnitude_stable_both_halves") for d in dirs)
 
     findings = []
     extreme_stable_any = False
 
     def half_pnl(d, key):
         v = d.get(key, {})
-        return v.get("avg_net_pnl_pct"), v.get("n")
+        return v.get("avg_net_pnl_raw_pct"), v.get("n")
 
     baselines = analysis["direction_baseline"]
     for label, direction, zone_key in [
@@ -370,8 +518,8 @@ def derive_verdict(analysis: dict) -> dict:
         ("LONG@extreme-negative", "LONG", "LONG_extreme_neg_lt_-3bps"),
     ]:
         base = baselines.get(direction, {})
-        base_h1 = base.get("val_firsthalf", {}).get("avg_net_pnl_pct")
-        base_h2 = base.get("test_secondhalf", {}).get("avg_net_pnl_pct")
+        base_h1 = base.get("val_firsthalf", {}).get("avg_net_pnl_raw_pct")
+        base_h2 = base.get("test_secondhalf", {}).get("avg_net_pnl_raw_pct")
         zone = analysis["abr2_gate_check"][zone_key]
         z_h1, n_h1 = half_pnl(zone, "val_firsthalf")
         z_h2, n_h2 = half_pnl(zone, "test_secondhalf")
@@ -383,20 +531,27 @@ def derive_verdict(analysis: dict) -> dict:
             {
                 "claim": label,
                 "zone_n_total": zone.get("n"),
-                "zone_pnl_h1": z_h1,
-                "zone_pnl_h2": z_h2,
-                "baseline_pnl_h1": base_h1,
-                "baseline_pnl_h2": base_h2,
+                "zone_raw_pnl_h1": z_h1,
+                "zone_raw_pnl_h2": z_h2,
+                "baseline_raw_pnl_h1": base_h1,
+                "baseline_raw_pnl_h2": base_h2,
                 "worse_than_baseline_both_halves": stable,
                 "sufficient_n_both_halves": (n_h1 or 0) >= MIN_HALF_N and (n_h2 or 0) >= MIN_HALF_N,
             }
         )
 
-    edge = gradient_both_dirs or extreme_stable_any
+    if magnitude_ok:
+        verdict = "edge-found"
+    elif sign_ok:
+        verdict = "direction-confirmed, magnitude-weak"
+    else:
+        verdict = "no-op/no-edge"
+
     return {
-        "edge_found": edge,
-        "verdict": "edge-found" if edge else "no-op/no-edge",
-        "gradient_both_directions_stable": gradient_both_dirs,
+        "verdict": verdict,
+        "sign_stable_both_directions": sign_ok,
+        "magnitude_stable_both_directions": magnitude_ok,
+        "min_abs_spearman_floor": MIN_ABS_SPEARMAN,
         "extreme_zone_stable_any": extreme_stable_any,
         "correlation": corr,
         "findings": findings,
@@ -412,48 +567,101 @@ def build_markdown(meta: dict, analysis: dict, verdict: dict) -> str:
     )
     L.append(f"**VERDICT: {verdict['verdict']}**\n")
     L.append(
-        f"- monotone funding→PnL gradient stable in BOTH directions & BOTH halves: "
-        f"**{verdict['gradient_both_directions_stable']}** (primary)"
+        f"- fund_24h gradient sign-stable both directions & halves: **{verdict['sign_stable_both_directions']}**; "
+        f"magnitude-stable (|ρ|≥{verdict['min_abs_spearman_floor']} both halves): "
+        f"**{verdict['magnitude_stable_both_directions']}** (primary)"
     )
     L.append(f"- hard extreme-zone claim stable in both halves: {verdict['extreme_zone_stable_any']} (secondary)\n")
 
-    L.append("## Primary test — monotone funding→PnL gradient (per-trade Spearman)\n")
+    L.append("## Primary test — fund_24h → PnL gradient (per-trade Spearman)\n")
     L.append("ABR predicts LONG corr>0 (higher funding → better LONG), SHORT corr<0.\n")
-    L.append("| dir | expected | Spearman all | val | test | sign holds both halves |")
-    L.append("|---|---|--:|--:|--:|:--:|")
+    L.append("| dir | expected | Spearman all | val | test | sign both | |ρ|≥floor both |")
+    L.append("|---|---|--:|--:|--:|:--:|:--:|")
     for d, c in verdict["correlation"].items():
         L.append(
             f"| {d} | {c['expected_sign']} | {c['spearman_all']} | {c['spearman_val']} "
-            f"| {c['spearman_test']} | {c['sign_holds_both_halves']} |"
+            f"| {c['spearman_test']} | {c['sign_holds_both_halves']} | {c['magnitude_stable_both_halves']} |"
         )
     L.append("")
+
+    L.append("## Multi-feature gradient — full §K3 set incl. cross-section percentile\n")
+    L.append(
+        "Same per-trade Spearman on fund_72h, fund_7d_cum and **cs_pctl** (the genuine ABR2 "
+        "cross-section percentile: each trade's coin ranked vs ALL coins' as-of fund_24h at entry).\n"
+    )
+    L.append("| feature | dir | Spearman all | val | test | sign both | |ρ|≥floor both |")
+    L.append("|---|---|--:|--:|--:|:--:|:--:|")
+    for feat in ("fund_24h", "fund_72h", "fund_7d_cum", "cs_pctl"):
+        mf = analysis["multi_feature"].get(feat)
+        if not mf:
+            continue
+        for direction, e in mf["by_direction"].items():
+            gr = e["gradient"]
+            L.append(
+                f"| {feat} | {direction} | {gr['spearman_all']} | {gr['spearman_val']} | {gr['spearman_test']} "
+                f"| {gr['sign_holds_both_halves']} | {gr['magnitude_stable_both_halves']} |"
+            )
+    L.append("")
+
+    L.append("## Cross-section percentile (cs_pctl) — top vs bottom quintile expectancy\n")
+    L.append(
+        "Bottom quintile = coin's funding low vs peers; top quintile = high vs peers. "
+        "ABR expects LONG better / SHORT worse as cs_pctl rises. Means shown winsorized AND raw.\n"
+    )
+    L.append(
+        "| dir | bucket | n | WR | avg net PnL % (wins) | avg net PnL % (raw) | median % | val raw% (n) | test raw% (n) |"
+    )
+    L.append("|---|---|--:|--:|--:|--:|--:|--:|--:|")
+    csf = analysis["multi_feature"].get("cs_pctl", {})
+    for direction, e in csf.get("by_direction", {}).items():
+        for bname, bkey in [("bottom Q1", "bottom_quintile"), ("top Q5", "top_quintile")]:
+            b = e["extreme"][bkey]
+            v = b.get("val_firsthalf", {})
+            t = b.get("test_secondhalf", {})
+            L.append(
+                f"| {direction} | {bname} | {b.get('n')} | {b.get('wr')} | {b.get('avg_net_pnl_pct')} "
+                f"| {b.get('avg_net_pnl_raw_pct')} | {b.get('median_net_pnl_pct')} "
+                f"| {v.get('avg_net_pnl_raw_pct')} ({v.get('n')}) | {t.get('avg_net_pnl_raw_pct')} ({t.get('n')}) |"
+            )
+    L.append("")
+
     L.append("## Population\n")
     L.append(f"- raw closed_ai_signals rows: {meta['n_raw']:,}")
     L.append(f"- deduped (symbol,model,direction,open_time): {meta['n_dedup']:,}")
     L.append(f"- priced (entry>0 & close_price present): {meta['n_priced']:,}")
     L.append(f"- with as-of funding (fund_24h): {meta['n_funded']:,}")
+    L.append(f"- with cross-section pctl (cs_pctl): {meta['n_cs_pctl']:,}")
     L.append(f"- open_time span (UTC): {meta['span_utc']}")
     L.append(f"- median split (val|test): {analysis['median_open_time_utc']}")
     L.append(f"- fund_24h quintile edges (bps): {analysis['quintile_edges_fund_24h_bps']}")
+    deg = analysis["quintile_degeneracy"]
+    L.append(
+        f"- quintile degeneracy: edges_tie={deg['edges_tie']}, collapsed={deg['collapsed_quintiles']} — {deg['note']}"
+    )
     L.append(
         f"- winsor bounds for mean net-PnL (1/99 pct, %): {analysis['winsor_bounds_net_pnl_pct']} "
-        f"— WR & median use raw values\n"
+        f"— WR, median & raw mean use raw values\n"
     )
 
-    L.append("## Hypothesis test (chrono val/test must agree)\n")
+    L.append("## Hypothesis test (chrono val/test must agree; RAW means)\n")
     for f in verdict["findings"]:
         L.append(f"### {f['claim']}")
         L.append(f"- zone n (total): {f['zone_n_total']}")
-        L.append(f"- zone net-PnL/trade  val: {f['zone_pnl_h1']}%  |  test: {f['zone_pnl_h2']}%")
-        L.append(f"- baseline net-PnL/trade  val: {f['baseline_pnl_h1']}%  |  test: {f['baseline_pnl_h2']}%")
+        L.append(f"- zone RAW net-PnL/trade  val: {f['zone_raw_pnl_h1']}%  |  test: {f['zone_raw_pnl_h2']}%")
+        L.append(
+            f"- baseline RAW net-PnL/trade  val: {f['baseline_raw_pnl_h1']}%  |  test: {f['baseline_raw_pnl_h2']}%"
+        )
         L.append(
             f"- worse-than-baseline in BOTH halves: {f['worse_than_baseline_both_halves']} "
             f"(sufficient n both halves: {f['sufficient_n_both_halves']})\n"
         )
 
     L.append("## Direction × funding zone (fleet-wide, funded trades)\n")
-    L.append("| dir | zone | n | WR | avg net PnL % | avg fund_24h bps | val PnL% (n) | test PnL% (n) |")
-    L.append("|---|---|--:|--:|--:|--:|--:|--:|")
+    L.append(
+        "| dir | zone | n | WR | avg net PnL % (wins) | avg net PnL % (raw) | avg fund_24h bps "
+        "| val raw% (n) | test raw% (n) |"
+    )
+    L.append("|---|---|--:|--:|--:|--:|--:|--:|--:|")
     zone_order = ["EXTREME_NEG(<-3bps)", "Q1", "Q2", "Q3", "Q4", "Q5", "EXTREME_POS(>+3bps)"]
     for direction in sorted(analysis["by_direction_zone"].keys()):
         zones = analysis["by_direction_zone"][direction]
@@ -465,45 +673,36 @@ def build_markdown(meta: dict, analysis: dict, verdict: dict) -> str:
             t = b.get("test_secondhalf", {})
             L.append(
                 f"| {direction} | {z} | {b['n']} | {b.get('wr')} | {b.get('avg_net_pnl_pct')} "
-                f"| {b.get('avg_fund_24h_bps')} | {v.get('avg_net_pnl_pct')} ({v.get('n')}) "
-                f"| {t.get('avg_net_pnl_pct')} ({t.get('n')}) |"
+                f"| {b.get('avg_net_pnl_raw_pct')} | {b.get('avg_fund_24h_bps')} "
+                f"| {v.get('avg_net_pnl_raw_pct')} ({v.get('n')}) | {t.get('avg_net_pnl_raw_pct')} ({t.get('n')}) |"
             )
     L.append("")
 
-    L.append("## ABR2 gate generalization (fleet-wide)\n")
+    L.append("## ABR2 gate generalization (fleet-wide, RAW means)\n")
     g = analysis["abr2_gate_check"]
     lg = g["LONG_gate_fund24h_gt_+3bps"]
     sv = g["SHORT_veto_fund24h_gt_+1.5bps"]
-    L.append("| test | n | WR | avg net PnL % |")
-    L.append("|---|--:|--:|--:|")
-    L.append(
-        f"| LONG in-gate (fund_24h>+3bps) | {lg['in_zone']['n']} | {lg['in_zone'].get('wr')} "
-        f"| {lg['in_zone'].get('avg_net_pnl_pct')} |"
-    )
-    L.append(
-        f"| LONG out-gate | {lg['out_zone']['n']} | {lg['out_zone'].get('wr')} "
-        f"| {lg['out_zone'].get('avg_net_pnl_pct')} |"
-    )
-    L.append(
-        f"| SHORT in-veto (fund_24h>+1.5bps) | {sv['in_veto']['n']} | {sv['in_veto'].get('wr')} "
-        f"| {sv['in_veto'].get('avg_net_pnl_pct')} |"
-    )
-    L.append(
-        f"| SHORT out-veto | {sv['out_veto']['n']} | {sv['out_veto'].get('wr')} "
-        f"| {sv['out_veto'].get('avg_net_pnl_pct')} |"
-    )
+    L.append("| test | n | WR | avg net PnL % (wins) | avg net PnL % (raw) |")
+    L.append("|---|--:|--:|--:|--:|")
+    for lbl, b in [
+        ("LONG in-gate (fund_24h>+3bps)", lg["in_zone"]),
+        ("LONG out-gate", lg["out_zone"]),
+        ("SHORT in-veto (fund_24h>+1.5bps)", sv["in_veto"]),
+        ("SHORT out-veto", sv["out_veto"]),
+    ]:
+        L.append(f"| {lbl} | {b['n']} | {b.get('wr')} | {b.get('avg_net_pnl_pct')} | {b.get('avg_net_pnl_raw_pct')} |")
     L.append("")
 
-    L.append("## Per-model extreme-zone effect (funded n>=300)\n")
-    L.append("| model | dir | base n | base PnL% | ext-pos n | ext-pos PnL% | ext-neg n | ext-neg PnL% |")
+    L.append("## Per-model extreme-zone effect (funded n>=300; RAW means; month-split in JSON)\n")
+    L.append("| model | dir | base n | base raw PnL% | ext-pos n | ext-pos raw% | ext-neg n | ext-neg raw% |")
     L.append("|---|---|--:|--:|--:|--:|--:|--:|")
     for model in sorted(analysis["by_model_extremes"].keys()):
         for direction, e in analysis["by_model_extremes"][model].items():
             base, ep, en = e["baseline"], e["extreme_pos"], e["extreme_neg"]
             L.append(
-                f"| {model} | {direction} | {base.get('n')} | {base.get('avg_net_pnl_pct')} "
-                f"| {ep.get('n')} | {ep.get('avg_net_pnl_pct')} "
-                f"| {en.get('n')} | {en.get('avg_net_pnl_pct')} |"
+                f"| {model} | {direction} | {base.get('n')} | {base.get('avg_net_pnl_raw_pct')} "
+                f"| {ep.get('n')} | {ep.get('avg_net_pnl_raw_pct')} "
+                f"| {en.get('n')} | {en.get('avg_net_pnl_raw_pct')} |"
             )
     L.append("")
 
@@ -517,20 +716,29 @@ def build_markdown(meta: dict, analysis: dict, verdict: dict) -> str:
         "outcome, not a re-simulation. Many legacy rows carry fixed ±2.5% outcomes."
     )
     L.append(
-        "- Funding zoning uses fund_24h (the ABR gate quantity). Extreme zones use the ABR ±3bps "
-        "cut; quintiles cover the whole fund_24h distribution incl. extremes."
+        "- Means are shown BOTH winsorized (global 1/99 pct, tail-safe) AND raw (unclipped). "
+        "The raw mean and median are the honest read on SHORT-squeeze tail losses — winsorizing "
+        "attenuates exactly the tail the hypothesis is about."
     )
     L.append(
-        f"- WR alone is not decisive (Rule 8). Verdict rests on net-PnL stable across the "
-        f"chrono val/test halves with n>={MIN_HALF_N} in each."
+        "- cs_pctl is a genuine cross-section rank (coin vs ALL peers' as-of fund_24h at entry), "
+        "NOT the builder's per-symbol self-history fund_pctl_90d. Entry timestamps are hour-floored "
+        "for the cross-section panel (funding steps on an ~8h grid → negligible as-of error)."
+    )
+    L.append(
+        "- Autumn DST fall-back rows would map to NaT (ambiguous='NaT') and drop; the study window "
+        "(Feb–Jul 2026) has no fall-back transition, so zero rows are affected here."
+    )
+    L.append(
+        f"- WR alone is not decisive (Rule 8). Verdict rests on the fund_24h gradient being both "
+        f"sign- AND magnitude-stable (|ρ|≥{MIN_ABS_SPEARMAN}) across the chrono halves; sign-only "
+        f"yields 'direction-confirmed, magnitude-weak', not 'edge-found'."
     )
     L.append(
         "- **Effect is modest and ATTENUATING**: |Spearman| ≈ 0.06–0.12 in the val half but "
-        "collapses toward zero in the test half (LONG +0.017, SHORT -0.018). The SIGN is "
-        "consistent (ABR direction), the STRENGTH is weak and weakening recently. This confirms "
-        "the ABR gate *direction* fleet-wide, but does not license a hard fleet-wide extreme-zone "
-        "veto — the SHORT extreme-positive bin fails strict both-halves stability (test-half "
-        "regime compression)."
+        "collapses toward zero in the test half. The SIGN is consistent (ABR direction) across "
+        "fund_24h/72h/7d_cum/cs_pctl, the STRENGTH is weak and weakening. This confirms the ABR "
+        "gate *direction* fleet-wide, but does NOT license a hard fleet-wide extreme-zone veto."
     )
     return "\n".join(L)
 
@@ -560,6 +768,7 @@ def main() -> int:
         df = attach_funding(df, conn)
 
     n_funded = int(df["fund_24h"].notna().sum())
+    n_cs = int(df["cs_pctl"].notna().sum())
     analysis = analyze(df)
     verdict = derive_verdict(analysis)
 
@@ -574,6 +783,7 @@ def main() -> int:
         "n_dedup": int(n_dedup),
         "n_priced": int(n_priced),
         "n_funded": n_funded,
+        "n_cs_pctl": n_cs,
         "span_utc": f"{span[0]} .. {span[1]}",
         "limit_symbols": args.limit_symbols,
     }
@@ -589,23 +799,23 @@ def main() -> int:
     print(f"VERDICT: {verdict['verdict']}")
     print(
         f"n_raw={meta['n_raw']:,} n_dedup={meta['n_dedup']:,} n_priced={meta['n_priced']:,} "
-        f"n_funded={meta['n_funded']:,}"
+        f"n_funded={meta['n_funded']:,} n_cs_pctl={meta['n_cs_pctl']:,}"
     )
     print(
-        f"gradient_both_dirs_stable={verdict['gradient_both_directions_stable']} "
+        f"sign_stable={verdict['sign_stable_both_directions']} "
+        f"magnitude_stable={verdict['magnitude_stable_both_directions']} "
         f"extreme_zone_stable={verdict['extreme_zone_stable_any']}"
     )
-    for d, c in verdict["correlation"].items():
-        print(
-            f"  Spearman {d}: all={c['spearman_all']} val={c['spearman_val']} "
-            f"test={c['spearman_test']} sign_holds_both={c['sign_holds_both_halves']}"
-        )
-    for f in verdict["findings"]:
-        print(
-            f"  {f['claim']}: worse_both_halves={f['worse_than_baseline_both_halves']} "
-            f"zone_pnl val/test={f['zone_pnl_h1']}/{f['zone_pnl_h2']} "
-            f"base val/test={f['baseline_pnl_h1']}/{f['baseline_pnl_h2']}"
-        )
+    for feat in ("fund_24h", "fund_72h", "fund_7d_cum", "cs_pctl"):
+        mf = analysis["multi_feature"].get(feat)
+        if not mf:
+            continue
+        for d, e in mf["by_direction"].items():
+            gr = e["gradient"]
+            print(
+                f"  {feat} {d}: all={gr['spearman_all']} val={gr['spearman_val']} test={gr['spearman_test']} "
+                f"sign_both={gr['sign_holds_both_halves']} mag_both={gr['magnitude_stable_both_halves']}"
+            )
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
     return 0

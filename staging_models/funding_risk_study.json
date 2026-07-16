@@ -2,60 +2,68 @@
   "meta": {
     "study": "K3 \u00b7 FRL (Funding-Risk-Layer)",
     "task": "T-2026-CU-9050-134",
-    "generated_at": "2026-07-16T06:50:08.487727+00:00",
+    "generated_at": "2026-07-16T07:18:20.286551+00:00",
     "fee_per_side": 0.0005,
     "round_trip_fee": 0.001,
-    "n_raw": 445675,
-    "n_dedup": 88192,
-    "n_priced": 88192,
-    "n_funded": 82657,
+    "n_raw": 445685,
+    "n_dedup": 88202,
+    "n_priced": 88202,
+    "n_funded": 82667,
+    "n_cs_pctl": 82826,
     "span_utc": "2026-02-24 10:43:59.650539+00:00 .. 2026-07-16 06:26:13.088268+00:00",
     "limit_symbols": null
   },
   "verdict": {
-    "edge_found": true,
-    "verdict": "edge-found",
-    "gradient_both_directions_stable": true,
-    "extreme_zone_stable_any": true,
+    "verdict": "direction-confirmed, magnitude-weak",
+    "sign_stable_both_directions": true,
+    "magnitude_stable_both_directions": false,
+    "min_abs_spearman_floor": 0.03,
+    "extreme_zone_stable_any": false,
     "correlation": {
       "LONG": {
         "expected_sign": "positive",
-        "spearman_all": 0.0593,
+        "spearman_all": 0.0592,
         "spearman_val": 0.0441,
-        "spearman_test": 0.0174,
-        "sign_holds_both_halves": true,
+        "spearman_test": 0.0173,
         "n_val": 25197,
-        "n_test": 22106
+        "n_test": 22110,
+        "sign_holds_both_halves": true,
+        "abs_ge_floor_val": true,
+        "abs_ge_floor_test": false,
+        "magnitude_stable_both_halves": false
       },
       "SHORT": {
         "expected_sign": "negative",
-        "spearman_all": -0.0884,
-        "spearman_val": -0.1207,
+        "spearman_all": -0.0885,
+        "spearman_val": -0.1208,
         "spearman_test": -0.0182,
+        "n_val": 16136,
+        "n_test": 19224,
         "sign_holds_both_halves": true,
-        "n_val": 16131,
-        "n_test": 19223
+        "abs_ge_floor_val": true,
+        "abs_ge_floor_test": false,
+        "magnitude_stable_both_halves": false
       }
     },
     "findings": [
       {
         "claim": "SHORT@extreme-positive",
         "zone_n_total": 1855,
-        "zone_pnl_h1": -4.105,
-        "zone_pnl_h2": 2.3036,
-        "baseline_pnl_h1": 5.8276,
-        "baseline_pnl_h2": 0.747,
+        "zone_raw_pnl_h1": -16.9842,
+        "zone_raw_pnl_h2": 2.4442,
+        "baseline_raw_pnl_h1": 3.5656,
+        "baseline_raw_pnl_h2": 0.7631,
         "worse_than_baseline_both_halves": false,
         "sufficient_n_both_halves": true
       },
       {
         "claim": "LONG@extreme-negative",
         "zone_n_total": 4036,
-        "zone_pnl_h1": -5.0172,
-        "zone_pnl_h2": -0.9104,
-        "baseline_pnl_h1": -3.7501,
-        "baseline_pnl_h2": 1.3567,
-        "worse_than_baseline_both_halves": true,
+        "zone_raw_pnl_h1": 2.9893,
+        "zone_raw_pnl_h2": 0.0098,
+        "baseline_raw_pnl_h1": -2.5598,
+        "baseline_raw_pnl_h2": 1.5708,
+        "worse_than_baseline_both_halves": false,
         "sufficient_n_both_halves": true
       }
     ]
@@ -67,30 +75,48 @@
       0.5,
       0.5
     ],
+    "quintile_degeneracy": {
+      "edges_tie": true,
+      "collapsed_quintiles": [
+        "Q4"
+      ],
+      "present_zones": [
+        "EXTREME_NEG(<-3bps)",
+        "EXTREME_POS(>+3bps)",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q5"
+      ],
+      "note": "fund_24h ties at the exchange default funding rate: the 60th and 80th pct edges coincide, so the interior quintile between them is empty (collapsed). The gradient/verdict do not depend on quintile bins (they use per-trade Spearman + the \u00b13bps extreme cuts); the collapsed bin is simply omitted from the zone table, documented here rather than silently dropped."
+    },
     "winsor_bounds_net_pnl_pct": [
       -55.666,
-      60.0
+      59.993
     ],
-    "median_open_time_utc": "2026-04-07 00:14:22.182900992+00:00",
+    "median_open_time_utc": "2026-04-07 00:19:25.687913984+00:00",
     "by_direction_zone": {
       "LONG": {
         "EXTREME_NEG(<-3bps)": {
           "n": 4036,
           "wr": 0.3067,
-          "avg_net_pnl_pct": -3.5896,
+          "avg_net_pnl_pct": -3.5899,
+          "avg_net_pnl_raw_pct": 1.9535,
           "median_net_pnl_pct": -3.9874,
           "avg_fund_24h_bps": -20.864,
           "val_firsthalf": {
             "n": 2633,
             "wr": 0.3107,
-            "avg_net_pnl_pct": -5.0172,
+            "avg_net_pnl_pct": -5.0176,
+            "avg_net_pnl_raw_pct": 2.9893,
             "median_net_pnl_pct": -4.4557,
             "avg_fund_24h_bps": -20.78
           },
           "test_secondhalf": {
             "n": 1403,
             "wr": 0.2994,
-            "avg_net_pnl_pct": -0.9104,
+            "avg_net_pnl_pct": -0.9106,
+            "avg_net_pnl_raw_pct": 0.0098,
             "median_net_pnl_pct": -3.0141,
             "avg_fund_24h_bps": -21.022
           },
@@ -98,31 +124,37 @@
             "2026-02": {
               "n": 1206,
               "avg_net_pnl_pct": 6.2795,
+              "avg_net_pnl_raw_pct": 6.2795,
               "wr": 0.257
             },
             "2026-03": {
               "n": 1193,
               "avg_net_pnl_pct": -0.323,
+              "avg_net_pnl_raw_pct": -0.323,
               "wr": 0.3504
             },
             "2026-04": {
               "n": 816,
               "avg_net_pnl_pct": 1.1521,
+              "avg_net_pnl_raw_pct": 1.1521,
               "wr": 0.3627
             },
             "2026-05": {
               "n": 157,
               "avg_net_pnl_pct": 0.929,
+              "avg_net_pnl_raw_pct": 0.929,
               "wr": 0.2611
             },
             "2026-06": {
               "n": 353,
               "avg_net_pnl_pct": 0.7404,
+              "avg_net_pnl_raw_pct": 0.7404,
               "wr": 0.255
             },
             "2026-07": {
               "n": 311,
               "avg_net_pnl_pct": -2.092,
+              "avg_net_pnl_raw_pct": -2.092,
               "wr": 0.2669
             }
           }
@@ -130,20 +162,23 @@
         "EXTREME_POS(>+3bps)": {
           "n": 1469,
           "wr": 0.3662,
-          "avg_net_pnl_pct": 1.3241,
+          "avg_net_pnl_pct": 1.3239,
+          "avg_net_pnl_raw_pct": 4.288,
           "median_net_pnl_pct": -0.1581,
           "avg_fund_24h_bps": 6.469,
           "val_firsthalf": {
             "n": 444,
             "wr": 0.3739,
-            "avg_net_pnl_pct": 2.1027,
+            "avg_net_pnl_pct": 2.1022,
+            "avg_net_pnl_raw_pct": 9.0473,
             "median_net_pnl_pct": -0.4312,
             "avg_fund_24h_bps": 5.866
           },
           "test_secondhalf": {
             "n": 1025,
             "wr": 0.3629,
-            "avg_net_pnl_pct": 0.9869,
+            "avg_net_pnl_pct": 0.9867,
+            "avg_net_pnl_raw_pct": 2.2265,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 6.73
           },
@@ -151,52 +186,61 @@
             "2026-02": {
               "n": 101,
               "avg_net_pnl_pct": 39.8451,
+              "avg_net_pnl_raw_pct": 39.8451,
               "wr": 0.4257
             },
             "2026-03": {
               "n": 272,
               "avg_net_pnl_pct": -1.4042,
+              "avg_net_pnl_raw_pct": -1.4042,
               "wr": 0.3235
             },
             "2026-04": {
               "n": 571,
               "avg_net_pnl_pct": 2.0433,
+              "avg_net_pnl_raw_pct": 2.0433,
               "wr": 0.3783
             },
             "2026-05": {
               "n": 111,
               "avg_net_pnl_pct": 1.3232,
+              "avg_net_pnl_raw_pct": 1.3232,
               "wr": 0.3243
             },
             "2026-06": {
               "n": 222,
               "avg_net_pnl_pct": 7.249,
+              "avg_net_pnl_raw_pct": 7.249,
               "wr": 0.4009
             },
             "2026-07": {
               "n": 192,
               "avg_net_pnl_pct": -1.3863,
+              "avg_net_pnl_raw_pct": -1.3863,
               "wr": 0.3438
             }
           }
         },
         "Q1": {
-          "n": 5499,
-          "wr": 0.3764,
-          "avg_net_pnl_pct": -3.3196,
-          "median_net_pnl_pct": -0.1549,
+          "n": 5500,
+          "wr": 0.3765,
+          "avg_net_pnl_pct": -3.3182,
+          "avg_net_pnl_raw_pct": -2.846,
+          "median_net_pnl_pct": -0.1546,
           "avg_fund_24h_bps": -1.481,
           "val_firsthalf": {
-            "n": 3915,
-            "wr": 0.3645,
-            "avg_net_pnl_pct": -5.2685,
-            "median_net_pnl_pct": -0.2481,
-            "avg_fund_24h_bps": -1.494
+            "n": 3916,
+            "wr": 0.3647,
+            "avg_net_pnl_pct": -5.2659,
+            "avg_net_pnl_raw_pct": -4.7028,
+            "median_net_pnl_pct": -0.2472,
+            "avg_fund_24h_bps": -1.493
           },
           "test_secondhalf": {
             "n": 1584,
             "wr": 0.4059,
-            "avg_net_pnl_pct": 1.4971,
+            "avg_net_pnl_pct": 1.497,
+            "avg_net_pnl_raw_pct": 1.7444,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -1.451
           },
@@ -204,31 +248,37 @@
             "2026-02": {
               "n": 1389,
               "avg_net_pnl_pct": -16.787,
+              "avg_net_pnl_raw_pct": -16.787,
               "wr": 0.1893
             },
             "2026-03": {
-              "n": 2228,
-              "avg_net_pnl_pct": 1.8263,
-              "wr": 0.4627
+              "n": 2229,
+              "avg_net_pnl_pct": 1.8278,
+              "avg_net_pnl_raw_pct": 1.8278,
+              "wr": 0.463
             },
             "2026-04": {
               "n": 954,
               "avg_net_pnl_pct": 2.9421,
+              "avg_net_pnl_raw_pct": 2.9421,
               "wr": 0.4644
             },
             "2026-05": {
               "n": 208,
               "avg_net_pnl_pct": 1.3029,
+              "avg_net_pnl_raw_pct": 1.3029,
               "wr": 0.3077
             },
             "2026-06": {
               "n": 375,
               "avg_net_pnl_pct": 1.2013,
+              "avg_net_pnl_raw_pct": 1.2013,
               "wr": 0.3707
             },
             "2026-07": {
               "n": 345,
               "avg_net_pnl_pct": 0.1783,
+              "avg_net_pnl_raw_pct": 0.1783,
               "wr": 0.3768
             }
           }
@@ -236,73 +286,85 @@
         "Q2": {
           "n": 9936,
           "wr": 0.4095,
-          "avg_net_pnl_pct": -1.8408,
+          "avg_net_pnl_pct": -1.841,
+          "avg_net_pnl_raw_pct": -1.7637,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": -0.038,
           "val_firsthalf": {
-            "n": 5988,
-            "wr": 0.3863,
-            "avg_net_pnl_pct": -3.9884,
-            "median_net_pnl_pct": -0.1751,
+            "n": 5987,
+            "wr": 0.3862,
+            "avg_net_pnl_pct": -3.99,
+            "avg_net_pnl_raw_pct": -3.9089,
+            "median_net_pnl_pct": -0.1753,
             "avg_fund_24h_bps": -0.057
           },
           "test_secondhalf": {
-            "n": 3948,
-            "wr": 0.4448,
-            "avg_net_pnl_pct": 1.4164,
+            "n": 3949,
+            "wr": 0.4449,
+            "avg_net_pnl_pct": 1.4169,
+            "avg_net_pnl_raw_pct": 1.4885,
             "median_net_pnl_pct": -0.1,
-            "avg_fund_24h_bps": -0.008
+            "avg_fund_24h_bps": -0.009
           },
           "months": {
             "2026-02": {
               "n": 1590,
               "avg_net_pnl_pct": -17.9031,
+              "avg_net_pnl_raw_pct": -17.9031,
               "wr": 0.2101
             },
             "2026-03": {
-              "n": 3826,
-              "avg_net_pnl_pct": 0.8294,
-              "wr": 0.4511
+              "n": 3825,
+              "avg_net_pnl_pct": 0.8282,
+              "avg_net_pnl_raw_pct": 0.8282,
+              "wr": 0.451
             },
             "2026-04": {
               "n": 2135,
               "avg_net_pnl_pct": 3.1817,
+              "avg_net_pnl_raw_pct": 3.1817,
               "wr": 0.5026
             },
             "2026-05": {
               "n": 681,
               "avg_net_pnl_pct": -0.7932,
+              "avg_net_pnl_raw_pct": -0.7932,
               "wr": 0.2702
             },
             "2026-06": {
               "n": 855,
               "avg_net_pnl_pct": 1.387,
+              "avg_net_pnl_raw_pct": 1.387,
               "wr": 0.4374
             },
             "2026-07": {
-              "n": 849,
-              "avg_net_pnl_pct": 0.3903,
-              "wr": 0.4452
+              "n": 850,
+              "avg_net_pnl_pct": 0.3939,
+              "avg_net_pnl_raw_pct": 0.3939,
+              "wr": 0.4459
             }
           }
         },
         "Q3": {
-          "n": 18977,
-          "wr": 0.3837,
-          "avg_net_pnl_pct": -0.8985,
+          "n": 18979,
+          "wr": 0.3836,
+          "avg_net_pnl_pct": -0.8989,
+          "avg_net_pnl_raw_pct": -0.7556,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": 0.485,
           "val_firsthalf": {
             "n": 8923,
             "wr": 0.3427,
             "avg_net_pnl_pct": -3.5938,
+            "avg_net_pnl_raw_pct": -3.3572,
             "median_net_pnl_pct": -0.348,
             "avg_fund_24h_bps": 0.482
           },
           "test_secondhalf": {
-            "n": 10054,
-            "wr": 0.42,
-            "avg_net_pnl_pct": 1.4936,
+            "n": 10056,
+            "wr": 0.4199,
+            "avg_net_pnl_pct": 1.4923,
+            "avg_net_pnl_raw_pct": 1.5528,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 0.487
           },
@@ -310,52 +372,61 @@
             "2026-02": {
               "n": 2388,
               "avg_net_pnl_pct": -14.2941,
+              "avg_net_pnl_raw_pct": -14.2941,
               "wr": 0.2291
             },
             "2026-03": {
               "n": 5423,
               "avg_net_pnl_pct": 0.1668,
+              "avg_net_pnl_raw_pct": 0.1668,
               "wr": 0.3745
             },
             "2026-04": {
               "n": 4545,
               "avg_net_pnl_pct": 3.0956,
+              "avg_net_pnl_raw_pct": 3.0956,
               "wr": 0.4913
             },
             "2026-05": {
               "n": 1553,
               "avg_net_pnl_pct": -0.126,
+              "avg_net_pnl_raw_pct": -0.126,
               "wr": 0.2853
             },
             "2026-06": {
               "n": 2307,
               "avg_net_pnl_pct": 2.0996,
+              "avg_net_pnl_raw_pct": 2.0996,
               "wr": 0.4105
             },
             "2026-07": {
-              "n": 2761,
-              "avg_net_pnl_pct": 0.0656,
-              "wr": 0.3912
+              "n": 2763,
+              "avg_net_pnl_pct": 0.0618,
+              "avg_net_pnl_raw_pct": 0.0618,
+              "wr": 0.3909
             }
           }
         },
         "Q5": {
-          "n": 7386,
-          "wr": 0.3989,
-          "avg_net_pnl_pct": 0.2218,
+          "n": 7387,
+          "wr": 0.3988,
+          "avg_net_pnl_pct": 0.2208,
+          "avg_net_pnl_raw_pct": 0.4825,
           "median_net_pnl_pct": -0.1,
-          "avg_fund_24h_bps": 1.142,
+          "avg_fund_24h_bps": 1.143,
           "val_firsthalf": {
             "n": 3294,
             "wr": 0.3676,
             "avg_net_pnl_pct": -1.7118,
+            "avg_net_pnl_raw_pct": -1.4005,
             "median_net_pnl_pct": -0.2094,
             "avg_fund_24h_bps": 1.094
           },
           "test_secondhalf": {
-            "n": 4092,
-            "wr": 0.424,
-            "avg_net_pnl_pct": 1.7782,
+            "n": 4093,
+            "wr": 0.4239,
+            "avg_net_pnl_pct": 1.7763,
+            "avg_net_pnl_raw_pct": 1.9979,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 1.182
           },
@@ -363,54 +434,63 @@
             "2026-02": {
               "n": 691,
               "avg_net_pnl_pct": -8.5224,
+              "avg_net_pnl_raw_pct": -8.5224,
               "wr": 0.2909
             },
             "2026-03": {
               "n": 2242,
               "avg_net_pnl_pct": 0.1882,
+              "avg_net_pnl_raw_pct": 0.1882,
               "wr": 0.3903
             },
             "2026-04": {
               "n": 1815,
               "avg_net_pnl_pct": 2.7353,
+              "avg_net_pnl_raw_pct": 2.7353,
               "wr": 0.4485
             },
             "2026-05": {
               "n": 579,
               "avg_net_pnl_pct": 1.6699,
+              "avg_net_pnl_raw_pct": 1.6699,
               "wr": 0.3109
             },
             "2026-06": {
               "n": 871,
               "avg_net_pnl_pct": 2.9564,
+              "avg_net_pnl_raw_pct": 2.9564,
               "wr": 0.411
             },
             "2026-07": {
-              "n": 1188,
-              "avg_net_pnl_pct": 0.447,
-              "wr": 0.436
+              "n": 1189,
+              "avg_net_pnl_pct": 0.4414,
+              "avg_net_pnl_raw_pct": 0.4414,
+              "wr": 0.4357
             }
           }
         }
       },
       "SHORT": {
         "EXTREME_NEG(<-3bps)": {
-          "n": 3322,
-          "wr": 0.5467,
-          "avg_net_pnl_pct": 5.6631,
-          "median_net_pnl_pct": 2.3198,
-          "avg_fund_24h_bps": -21.031,
+          "n": 3323,
+          "wr": 0.5468,
+          "avg_net_pnl_pct": 5.6629,
+          "avg_net_pnl_raw_pct": -1.1765,
+          "median_net_pnl_pct": 2.3213,
+          "avg_fund_24h_bps": -21.032,
           "val_firsthalf": {
             "n": 2060,
             "wr": 0.5947,
-            "avg_net_pnl_pct": 7.1212,
+            "avg_net_pnl_pct": 7.1211,
+            "avg_net_pnl_raw_pct": -3.9612,
             "median_net_pnl_pct": 5.5494,
             "avg_fund_24h_bps": -19.923
           },
           "test_secondhalf": {
-            "n": 1262,
-            "wr": 0.4683,
-            "avg_net_pnl_pct": 3.2829,
+            "n": 1263,
+            "wr": 0.4687,
+            "avg_net_pnl_pct": 3.2844,
+            "avg_net_pnl_raw_pct": 3.3655,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -22.84
           },
@@ -418,52 +498,61 @@
             "2026-02": {
               "n": 1200,
               "avg_net_pnl_pct": -7.3227,
+              "avg_net_pnl_raw_pct": -7.3227,
               "wr": 0.74
             },
             "2026-03": {
               "n": 670,
               "avg_net_pnl_pct": 1.2428,
+              "avg_net_pnl_raw_pct": 1.2428,
               "wr": 0.406
             },
             "2026-04": {
               "n": 676,
               "avg_net_pnl_pct": 0.1571,
+              "avg_net_pnl_raw_pct": 0.1571,
               "wr": 0.3728
             },
             "2026-05": {
               "n": 109,
               "avg_net_pnl_pct": 5.4889,
+              "avg_net_pnl_raw_pct": 5.4889,
               "wr": 0.5505
             },
             "2026-06": {
               "n": 305,
               "avg_net_pnl_pct": 6.8625,
+              "avg_net_pnl_raw_pct": 6.8625,
               "wr": 0.5574
             },
             "2026-07": {
-              "n": 362,
-              "avg_net_pnl_pct": 3.4321,
-              "wr": 0.4807
+              "n": 363,
+              "avg_net_pnl_pct": 3.437,
+              "avg_net_pnl_raw_pct": 3.437,
+              "wr": 0.4821
             }
           }
         },
         "EXTREME_POS(>+3bps)": {
           "n": 1855,
           "wr": 0.372,
-          "avg_net_pnl_pct": 0.2895,
+          "avg_net_pnl_pct": 0.2894,
+          "avg_net_pnl_raw_pct": -3.6618,
           "median_net_pnl_pct": -0.1797,
           "avg_fund_24h_bps": 6.641,
           "val_firsthalf": {
             "n": 583,
             "wr": 0.3122,
             "avg_net_pnl_pct": -4.105,
+            "avg_net_pnl_raw_pct": -16.9842,
             "median_net_pnl_pct": -2.5397,
             "avg_fund_24h_bps": 7.199
           },
           "test_secondhalf": {
             "n": 1272,
             "wr": 0.3994,
-            "avg_net_pnl_pct": 2.3036,
+            "avg_net_pnl_pct": 2.3035,
+            "avg_net_pnl_raw_pct": 2.4442,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 6.385
           },
@@ -471,31 +560,37 @@
             "2026-02": {
               "n": 285,
               "avg_net_pnl_pct": -34.7567,
+              "avg_net_pnl_raw_pct": -34.7567,
               "wr": 0.2491
             },
             "2026-03": {
               "n": 240,
               "avg_net_pnl_pct": 0.5506,
+              "avg_net_pnl_raw_pct": 0.5506,
               "wr": 0.3833
             },
             "2026-04": {
               "n": 703,
               "avg_net_pnl_pct": -1.7498,
+              "avg_net_pnl_raw_pct": -1.7498,
               "wr": 0.303
             },
             "2026-05": {
               "n": 136,
               "avg_net_pnl_pct": 8.5817,
+              "avg_net_pnl_raw_pct": 8.5817,
               "wr": 0.4926
             },
             "2026-06": {
               "n": 310,
               "avg_net_pnl_pct": 7.6003,
+              "avg_net_pnl_raw_pct": 7.6003,
               "wr": 0.5355
             },
             "2026-07": {
               "n": 181,
               "avg_net_pnl_pct": 3.7997,
+              "avg_net_pnl_raw_pct": 3.7997,
               "wr": 0.4475
             }
           }
@@ -504,12 +599,14 @@
           "n": 3675,
           "wr": 0.4882,
           "avg_net_pnl_pct": 5.9483,
+          "avg_net_pnl_raw_pct": 5.541,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": -1.481,
           "val_firsthalf": {
             "n": 2399,
             "wr": 0.5506,
             "avg_net_pnl_pct": 9.0601,
+            "avg_net_pnl_raw_pct": 8.4348,
             "median_net_pnl_pct": 2.1335,
             "avg_fund_24h_bps": -1.52
           },
@@ -517,6 +614,7 @@
             "n": 1276,
             "wr": 0.3707,
             "avg_net_pnl_pct": 0.0979,
+            "avg_net_pnl_raw_pct": 0.1005,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -1.407
           },
@@ -524,31 +622,37 @@
             "2026-02": {
               "n": 1146,
               "avg_net_pnl_pct": 19.3468,
+              "avg_net_pnl_raw_pct": 19.3468,
               "wr": 0.8377
             },
             "2026-03": {
               "n": 1058,
               "avg_net_pnl_pct": -1.2082,
+              "avg_net_pnl_raw_pct": -1.2082,
               "wr": 0.31
             },
             "2026-04": {
               "n": 667,
               "avg_net_pnl_pct": -2.809,
+              "avg_net_pnl_raw_pct": -2.809,
               "wr": 0.2354
             },
             "2026-05": {
               "n": 157,
               "avg_net_pnl_pct": 4.7583,
+              "avg_net_pnl_raw_pct": 4.7583,
               "wr": 0.5987
             },
             "2026-06": {
               "n": 404,
               "avg_net_pnl_pct": 0.3285,
+              "avg_net_pnl_raw_pct": 0.3285,
               "wr": 0.4109
             },
             "2026-07": {
               "n": 243,
               "avg_net_pnl_pct": 1.9095,
+              "avg_net_pnl_raw_pct": 1.9095,
               "wr": 0.3663
             }
           }
@@ -556,20 +660,23 @@
         "Q2": {
           "n": 6598,
           "wr": 0.4657,
-          "avg_net_pnl_pct": 3.5514,
+          "avg_net_pnl_pct": 3.5513,
+          "avg_net_pnl_raw_pct": 3.5048,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": -0.029,
           "val_firsthalf": {
-            "n": 3287,
-            "wr": 0.4965,
-            "avg_net_pnl_pct": 6.6105,
+            "n": 3288,
+            "wr": 0.4964,
+            "avg_net_pnl_pct": 6.6064,
+            "avg_net_pnl_raw_pct": 6.5059,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.057
           },
           "test_secondhalf": {
-            "n": 3311,
-            "wr": 0.4352,
-            "avg_net_pnl_pct": 0.5144,
+            "n": 3310,
+            "wr": 0.4353,
+            "avg_net_pnl_pct": 0.5165,
+            "avg_net_pnl_raw_pct": 0.5237,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.002
           },
@@ -577,52 +684,61 @@
             "2026-02": {
               "n": 1221,
               "avg_net_pnl_pct": 20.1436,
+              "avg_net_pnl_raw_pct": 20.1436,
               "wr": 0.8043
             },
             "2026-03": {
               "n": 1702,
               "avg_net_pnl_pct": -0.9966,
+              "avg_net_pnl_raw_pct": -0.9966,
               "wr": 0.3461
             },
             "2026-04": {
               "n": 1668,
               "avg_net_pnl_pct": -2.506,
+              "avg_net_pnl_raw_pct": -2.506,
               "wr": 0.2668
             },
             "2026-05": {
               "n": 665,
               "avg_net_pnl_pct": 5.8188,
+              "avg_net_pnl_raw_pct": 5.8188,
               "wr": 0.7338
             },
             "2026-06": {
               "n": 764,
               "avg_net_pnl_pct": 1.0691,
+              "avg_net_pnl_raw_pct": 1.0691,
               "wr": 0.4935
             },
             "2026-07": {
               "n": 578,
               "avg_net_pnl_pct": -0.4858,
+              "avg_net_pnl_raw_pct": -0.4858,
               "wr": 0.3322
             }
           }
         },
         "Q3": {
-          "n": 14330,
+          "n": 14334,
           "wr": 0.4505,
-          "avg_net_pnl_pct": 2.5669,
+          "avg_net_pnl_pct": 2.5649,
+          "avg_net_pnl_raw_pct": 2.3533,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": 0.486,
           "val_firsthalf": {
-            "n": 5835,
-            "wr": 0.4891,
-            "avg_net_pnl_pct": 5.7043,
+            "n": 5836,
+            "wr": 0.489,
+            "avg_net_pnl_pct": 5.7031,
+            "avg_net_pnl_raw_pct": 5.1783,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 0.486
           },
           "test_secondhalf": {
-            "n": 8495,
+            "n": 8498,
             "wr": 0.424,
-            "avg_net_pnl_pct": 0.4119,
+            "avg_net_pnl_pct": 0.4098,
+            "avg_net_pnl_raw_pct": 0.4133,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 0.486
           },
@@ -630,52 +746,61 @@
             "2026-02": {
               "n": 2142,
               "avg_net_pnl_pct": 16.3266,
+              "avg_net_pnl_raw_pct": 16.3266,
               "wr": 0.7694
             },
             "2026-03": {
               "n": 3013,
               "avg_net_pnl_pct": -0.9361,
+              "avg_net_pnl_raw_pct": -0.9361,
               "wr": 0.3508
             },
             "2026-04": {
               "n": 3166,
               "avg_net_pnl_pct": -2.294,
+              "avg_net_pnl_raw_pct": -2.294,
               "wr": 0.2783
             },
             "2026-05": {
               "n": 1462,
               "avg_net_pnl_pct": 5.4182,
+              "avg_net_pnl_raw_pct": 5.4182,
               "wr": 0.6443
             },
             "2026-06": {
               "n": 2339,
               "avg_net_pnl_pct": 0.8381,
+              "avg_net_pnl_raw_pct": 0.8381,
               "wr": 0.4805
             },
             "2026-07": {
-              "n": 2208,
-              "avg_net_pnl_pct": -0.462,
-              "wr": 0.3641
+              "n": 2212,
+              "avg_net_pnl_pct": -0.4689,
+              "avg_net_pnl_raw_pct": -0.4689,
+              "wr": 0.3639
             }
           }
         },
         "Q5": {
-          "n": 5574,
-          "wr": 0.4286,
-          "avg_net_pnl_pct": 1.2451,
+          "n": 5575,
+          "wr": 0.4287,
+          "avg_net_pnl_pct": 1.2452,
+          "avg_net_pnl_raw_pct": 1.0196,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": 1.223,
           "val_firsthalf": {
-            "n": 1967,
-            "wr": 0.4377,
-            "avg_net_pnl_pct": 2.5321,
-            "median_net_pnl_pct": -0.1402,
+            "n": 1970,
+            "wr": 0.4376,
+            "avg_net_pnl_pct": 2.5218,
+            "avg_net_pnl_raw_pct": 1.9028,
+            "median_net_pnl_pct": -0.141,
             "avg_fund_24h_bps": 1.192
           },
           "test_secondhalf": {
-            "n": 3607,
-            "wr": 0.4236,
-            "avg_net_pnl_pct": 0.5433,
+            "n": 3605,
+            "wr": 0.4239,
+            "avg_net_pnl_pct": 0.5477,
+            "avg_net_pnl_raw_pct": 0.537,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 1.24
           },
@@ -683,32 +808,38 @@
             "2026-02": {
               "n": 572,
               "avg_net_pnl_pct": 9.6225,
+              "avg_net_pnl_raw_pct": 9.6225,
               "wr": 0.6731
             },
             "2026-03": {
               "n": 1138,
               "avg_net_pnl_pct": -0.8546,
+              "avg_net_pnl_raw_pct": -0.8546,
               "wr": 0.362
             },
             "2026-04": {
               "n": 1444,
               "avg_net_pnl_pct": -2.7209,
+              "avg_net_pnl_raw_pct": -2.7209,
               "wr": 0.2735
             },
             "2026-05": {
               "n": 628,
               "avg_net_pnl_pct": 4.8663,
+              "avg_net_pnl_raw_pct": 4.8663,
               "wr": 0.6258
             },
             "2026-06": {
               "n": 873,
               "avg_net_pnl_pct": 1.9878,
+              "avg_net_pnl_raw_pct": 1.9878,
               "wr": 0.4926
             },
             "2026-07": {
-              "n": 919,
-              "avg_net_pnl_pct": 0.3134,
-              "wr": 0.407
+              "n": 920,
+              "avg_net_pnl_pct": 0.3157,
+              "avg_net_pnl_raw_pct": 0.3157,
+              "wr": 0.4076
             }
           }
         }
@@ -719,29 +850,33 @@
         "in_zone": {
           "n": 1469,
           "wr": 0.3662,
-          "avg_net_pnl_pct": 1.3241,
+          "avg_net_pnl_pct": 1.3239,
+          "avg_net_pnl_raw_pct": 4.288,
           "median_net_pnl_pct": -0.1581,
           "avg_fund_24h_bps": 6.469,
           "val_firsthalf": {
             "n": 444,
             "wr": 0.3739,
-            "avg_net_pnl_pct": 2.1027,
+            "avg_net_pnl_pct": 2.1022,
+            "avg_net_pnl_raw_pct": 9.0473,
             "median_net_pnl_pct": -0.4312,
             "avg_fund_24h_bps": 5.866
           },
           "test_secondhalf": {
             "n": 1025,
             "wr": 0.3629,
-            "avg_net_pnl_pct": 0.9869,
+            "avg_net_pnl_pct": 0.9867,
+            "avg_net_pnl_raw_pct": 2.2265,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 6.73
           }
         },
         "out_zone": {
-          "n": 45834,
+          "n": 45838,
           "wr": 0.3841,
-          "avg_net_pnl_pct": -1.4497,
-          "median_net_pnl_pct": -0.1105,
+          "avg_net_pnl_pct": -1.4499,
+          "avg_net_pnl_raw_pct": -0.7869,
+          "median_net_pnl_pct": -0.1106,
           "avg_fund_24h_bps": -1.638
         }
       },
@@ -749,28 +884,32 @@
         "in_veto": {
           "n": 3333,
           "wr": 0.408,
-          "avg_net_pnl_pct": 1.38,
+          "avg_net_pnl_pct": 1.3799,
+          "avg_net_pnl_raw_pct": -0.9628,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": 4.65,
           "val_firsthalf": {
             "n": 1076,
             "wr": 0.3885,
-            "avg_net_pnl_pct": 0.2329,
+            "avg_net_pnl_pct": 0.2327,
+            "avg_net_pnl_raw_pct": -7.2116,
             "median_net_pnl_pct": -0.5193,
             "avg_fund_24h_bps": 4.87
           },
           "test_secondhalf": {
             "n": 2257,
             "wr": 0.4174,
-            "avg_net_pnl_pct": 1.9269,
+            "avg_net_pnl_pct": 1.9268,
+            "avg_net_pnl_raw_pct": 2.0163,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 4.545
           }
         },
         "out_veto": {
-          "n": 32021,
+          "n": 32027,
           "wr": 0.464,
-          "avg_net_pnl_pct": 3.2406,
+          "avg_net_pnl_pct": 3.2396,
+          "avg_net_pnl_raw_pct": 2.3546,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": -2.027
         }
@@ -778,20 +917,23 @@
       "SHORT_extreme_pos_gt_+3bps": {
         "n": 1855,
         "wr": 0.372,
-        "avg_net_pnl_pct": 0.2895,
+        "avg_net_pnl_pct": 0.2894,
+        "avg_net_pnl_raw_pct": -3.6618,
         "median_net_pnl_pct": -0.1797,
         "avg_fund_24h_bps": 6.641,
         "val_firsthalf": {
           "n": 583,
           "wr": 0.3122,
           "avg_net_pnl_pct": -4.105,
+          "avg_net_pnl_raw_pct": -16.9842,
           "median_net_pnl_pct": -2.5397,
           "avg_fund_24h_bps": 7.199
         },
         "test_secondhalf": {
           "n": 1272,
           "wr": 0.3994,
-          "avg_net_pnl_pct": 2.3036,
+          "avg_net_pnl_pct": 2.3035,
+          "avg_net_pnl_raw_pct": 2.4442,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": 6.385
         }
@@ -799,20 +941,23 @@
       "LONG_extreme_neg_lt_-3bps": {
         "n": 4036,
         "wr": 0.3067,
-        "avg_net_pnl_pct": -3.5896,
+        "avg_net_pnl_pct": -3.5899,
+        "avg_net_pnl_raw_pct": 1.9535,
         "median_net_pnl_pct": -3.9874,
         "avg_fund_24h_bps": -20.864,
         "val_firsthalf": {
           "n": 2633,
           "wr": 0.3107,
-          "avg_net_pnl_pct": -5.0172,
+          "avg_net_pnl_pct": -5.0176,
+          "avg_net_pnl_raw_pct": 2.9893,
           "median_net_pnl_pct": -4.4557,
           "avg_fund_24h_bps": -20.78
         },
         "test_secondhalf": {
           "n": 1403,
           "wr": 0.2994,
-          "avg_net_pnl_pct": -0.9104,
+          "avg_net_pnl_pct": -0.9106,
+          "avg_net_pnl_raw_pct": 0.0098,
           "median_net_pnl_pct": -3.0141,
           "avg_fund_24h_bps": -21.022
         }
@@ -824,23 +969,52 @@
           "baseline": {
             "n": 878,
             "wr": 0.3474,
-            "avg_net_pnl_pct": 0.3189,
+            "avg_net_pnl_pct": 0.3187,
+            "avg_net_pnl_raw_pct": 1.2937,
             "median_net_pnl_pct": -0.5853,
             "avg_fund_24h_bps": -3.18
           },
           "extreme_pos": {
             "n": 109,
             "wr": 0.3394,
-            "avg_net_pnl_pct": 1.0853,
+            "avg_net_pnl_pct": 1.0849,
+            "avg_net_pnl_raw_pct": 3.0407,
             "median_net_pnl_pct": -2.3202,
             "avg_fund_24h_bps": 6.502
           },
           "extreme_neg": {
             "n": 150,
             "wr": 0.2733,
-            "avg_net_pnl_pct": -0.5972,
+            "avg_net_pnl_pct": -0.5975,
+            "avg_net_pnl_raw_pct": 2.4074,
             "median_net_pnl_pct": -7.6431,
             "avg_fund_24h_bps": -25.684
+          },
+          "months": {
+            "2026-03": {
+              "n": 318,
+              "avg_net_pnl_pct": -0.9882,
+              "avg_net_pnl_raw_pct": -0.9882,
+              "wr": 0.3365
+            },
+            "2026-04": {
+              "n": 389,
+              "avg_net_pnl_pct": 2.2981,
+              "avg_net_pnl_raw_pct": 2.2981,
+              "wr": 0.3702
+            },
+            "2026-05": {
+              "n": 48,
+              "avg_net_pnl_pct": 1.7326,
+              "avg_net_pnl_raw_pct": 1.7326,
+              "wr": 0.2917
+            },
+            "2026-06": {
+              "n": 106,
+              "avg_net_pnl_pct": 4.6132,
+              "avg_net_pnl_raw_pct": 4.6132,
+              "wr": 0.3208
+            }
           }
         },
         "SHORT": {
@@ -848,38 +1022,75 @@
             "n": 2181,
             "wr": 0.331,
             "avg_net_pnl_pct": -1.367,
+            "avg_net_pnl_raw_pct": -1.3082,
             "median_net_pnl_pct": -0.7837,
             "avg_fund_24h_bps": -1.93
           },
           "extreme_pos": {
             "n": 429,
             "wr": 0.2424,
-            "avg_net_pnl_pct": -3.2502,
+            "avg_net_pnl_pct": -3.2503,
+            "avg_net_pnl_raw_pct": -3.1737,
             "median_net_pnl_pct": -7.5203,
             "avg_fund_24h_bps": 7.457
           },
           "extreme_neg": {
             "n": 323,
             "wr": 0.4025,
-            "avg_net_pnl_pct": 1.5691,
+            "avg_net_pnl_pct": 1.569,
+            "avg_net_pnl_raw_pct": 1.7166,
             "median_net_pnl_pct": -0.2187,
             "avg_fund_24h_bps": -25.143
+          },
+          "months": {
+            "2026-02": {
+              "n": 183,
+              "avg_net_pnl_pct": -8.3251,
+              "avg_net_pnl_raw_pct": -8.3251,
+              "wr": 0.1202
+            },
+            "2026-03": {
+              "n": 653,
+              "avg_net_pnl_pct": -1.5075,
+              "avg_net_pnl_raw_pct": -1.5075,
+              "wr": 0.3691
+            },
+            "2026-04": {
+              "n": 693,
+              "avg_net_pnl_pct": -2.0134,
+              "avg_net_pnl_raw_pct": -2.0134,
+              "wr": 0.3117
+            },
+            "2026-05": {
+              "n": 150,
+              "avg_net_pnl_pct": 5.1803,
+              "avg_net_pnl_raw_pct": 5.1803,
+              "wr": 0.4667
+            },
+            "2026-06": {
+              "n": 468,
+              "avg_net_pnl_pct": 0.4144,
+              "avg_net_pnl_raw_pct": 0.4144,
+              "wr": 0.3419
+            }
           }
         }
       },
       "AIM2": {
         "LONG": {
           "baseline": {
-            "n": 829,
-            "wr": 0.3486,
-            "avg_net_pnl_pct": -0.0661,
+            "n": 831,
+            "wr": 0.349,
+            "avg_net_pnl_pct": -0.068,
+            "avg_net_pnl_raw_pct": -0.0629,
             "median_net_pnl_pct": -0.1,
-            "avg_fund_24h_bps": -0.636
+            "avg_fund_24h_bps": -0.634
           },
           "extreme_pos": {
             "n": 24,
             "wr": 0.4583,
-            "avg_net_pnl_pct": 3.2005,
+            "avg_net_pnl_pct": 3.2002,
+            "avg_net_pnl_raw_pct": 3.3751,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 5.937
           },
@@ -887,8 +1098,17 @@
             "n": 47,
             "wr": 0.1915,
             "avg_net_pnl_pct": -4.9604,
+            "avg_net_pnl_raw_pct": -4.9604,
             "median_net_pnl_pct": -5.7565,
             "avg_fund_24h_bps": -20.752
+          },
+          "months": {
+            "2026-07": {
+              "n": 831,
+              "avg_net_pnl_pct": -0.0629,
+              "avg_net_pnl_raw_pct": -0.0629,
+              "wr": 0.349
+            }
           }
         },
         "SHORT": {
@@ -896,6 +1116,7 @@
             "n": 490,
             "wr": 0.4082,
             "avg_net_pnl_pct": 1.29,
+            "avg_net_pnl_raw_pct": 1.29,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -2.639
           },
@@ -903,6 +1124,7 @@
             "n": 29,
             "wr": 0.4483,
             "avg_net_pnl_pct": 3.5548,
+            "avg_net_pnl_raw_pct": 3.5548,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 4.981
           },
@@ -910,8 +1132,17 @@
             "n": 50,
             "wr": 0.5,
             "avg_net_pnl_pct": 3.8401,
+            "avg_net_pnl_raw_pct": 3.8401,
             "median_net_pnl_pct": 1.6641,
             "avg_fund_24h_bps": -32.742
+          },
+          "months": {
+            "2026-07": {
+              "n": 490,
+              "avg_net_pnl_pct": 1.29,
+              "avg_net_pnl_raw_pct": 1.29,
+              "wr": 0.4082
+            }
           }
         }
       },
@@ -920,46 +1151,128 @@
           "baseline": {
             "n": 3120,
             "wr": 0.3737,
-            "avg_net_pnl_pct": -3.7678,
+            "avg_net_pnl_pct": -3.7679,
+            "avg_net_pnl_raw_pct": -2.8749,
             "median_net_pnl_pct": -0.7633,
             "avg_fund_24h_bps": -1.556
           },
           "extreme_pos": {
             "n": 125,
             "wr": 0.328,
-            "avg_net_pnl_pct": -1.8008,
+            "avg_net_pnl_pct": -1.8009,
+            "avg_net_pnl_raw_pct": -0.5142,
             "median_net_pnl_pct": -0.5853,
             "avg_fund_24h_bps": 6.378
           },
           "extreme_neg": {
             "n": 307,
             "wr": 0.329,
-            "avg_net_pnl_pct": -3.4986,
+            "avg_net_pnl_pct": -3.4989,
+            "avg_net_pnl_raw_pct": 0.5646,
             "median_net_pnl_pct": -4.2391,
             "avg_fund_24h_bps": -19.317
+          },
+          "months": {
+            "2026-02": {
+              "n": 1514,
+              "avg_net_pnl_pct": -7.0972,
+              "avg_net_pnl_raw_pct": -7.0972,
+              "wr": 0.2754
+            },
+            "2026-03": {
+              "n": 396,
+              "avg_net_pnl_pct": 2.017,
+              "avg_net_pnl_raw_pct": 2.017,
+              "wr": 0.4924
+            },
+            "2026-04": {
+              "n": 457,
+              "avg_net_pnl_pct": 2.1418,
+              "avg_net_pnl_raw_pct": 2.1418,
+              "wr": 0.4989
+            },
+            "2026-05": {
+              "n": 112,
+              "avg_net_pnl_pct": -0.9839,
+              "avg_net_pnl_raw_pct": -0.9839,
+              "wr": 0.375
+            },
+            "2026-06": {
+              "n": 169,
+              "avg_net_pnl_pct": 2.1995,
+              "avg_net_pnl_raw_pct": 2.1995,
+              "wr": 0.5089
+            },
+            "2026-07": {
+              "n": 472,
+              "avg_net_pnl_pct": -0.5587,
+              "avg_net_pnl_raw_pct": -0.5587,
+              "wr": 0.4195
+            }
           }
         },
         "SHORT": {
           "baseline": {
             "n": 2266,
             "wr": 0.5993,
-            "avg_net_pnl_pct": 5.8633,
+            "avg_net_pnl_pct": 5.8632,
+            "avg_net_pnl_raw_pct": 4.7025,
             "median_net_pnl_pct": 2.5056,
             "avg_fund_24h_bps": -2.329
           },
           "extreme_pos": {
             "n": 134,
             "wr": 0.4328,
-            "avg_net_pnl_pct": 4.6874,
+            "avg_net_pnl_pct": 4.6872,
+            "avg_net_pnl_raw_pct": 4.7707,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 7.025
           },
           "extreme_neg": {
             "n": 269,
             "wr": 0.6394,
-            "avg_net_pnl_pct": 5.5163,
+            "avg_net_pnl_pct": 5.5162,
+            "avg_net_pnl_raw_pct": 2.1043,
             "median_net_pnl_pct": 3.0836,
             "avg_fund_24h_bps": -23.864
+          },
+          "months": {
+            "2026-02": {
+              "n": 1477,
+              "avg_net_pnl_pct": 6.8593,
+              "avg_net_pnl_raw_pct": 6.8593,
+              "wr": 0.671
+            },
+            "2026-03": {
+              "n": 158,
+              "avg_net_pnl_pct": -1.0645,
+              "avg_net_pnl_raw_pct": -1.0645,
+              "wr": 0.481
+            },
+            "2026-04": {
+              "n": 272,
+              "avg_net_pnl_pct": 0.0931,
+              "avg_net_pnl_raw_pct": 0.0931,
+              "wr": 0.4044
+            },
+            "2026-05": {
+              "n": 40,
+              "avg_net_pnl_pct": 8.2233,
+              "avg_net_pnl_raw_pct": 8.2233,
+              "wr": 0.625
+            },
+            "2026-06": {
+              "n": 121,
+              "avg_net_pnl_pct": 2.015,
+              "avg_net_pnl_raw_pct": 2.015,
+              "wr": 0.5289
+            },
+            "2026-07": {
+              "n": 198,
+              "avg_net_pnl_pct": 0.4788,
+              "avg_net_pnl_raw_pct": 0.4788,
+              "wr": 0.4646
+            }
           }
         }
       },
@@ -968,7 +1281,8 @@
           "baseline": {
             "n": 476,
             "wr": 0.0882,
-            "avg_net_pnl_pct": -33.1343,
+            "avg_net_pnl_pct": -33.1344,
+            "avg_net_pnl_raw_pct": -30.9772,
             "median_net_pnl_pct": -38.9746,
             "avg_fund_24h_bps": -1.701
           },
@@ -976,22 +1290,33 @@
             "n": 1,
             "wr": 1.0,
             "avg_net_pnl_pct": 7.3849,
+            "avg_net_pnl_raw_pct": 7.3849,
             "median_net_pnl_pct": 7.3849,
             "avg_fund_24h_bps": 10.576
           },
           "extreme_neg": {
             "n": 58,
             "wr": 0.1724,
-            "avg_net_pnl_pct": -22.7599,
+            "avg_net_pnl_pct": -22.7604,
+            "avg_net_pnl_raw_pct": -10.9763,
             "median_net_pnl_pct": -34.2679,
             "avg_fund_24h_bps": -13.012
+          },
+          "months": {
+            "2026-02": {
+              "n": 476,
+              "avg_net_pnl_pct": -30.9772,
+              "avg_net_pnl_raw_pct": -30.9772,
+              "wr": 0.0882
+            }
           }
         },
         "SHORT": {
           "baseline": {
             "n": 473,
             "wr": 0.9112,
-            "avg_net_pnl_pct": 32.7055,
+            "avg_net_pnl_pct": 32.705,
+            "avg_net_pnl_raw_pct": 29.7512,
             "median_net_pnl_pct": 37.6573,
             "avg_fund_24h_bps": -1.709
           },
@@ -999,15 +1324,25 @@
             "n": 1,
             "wr": 0.0,
             "avg_net_pnl_pct": -11.3504,
+            "avg_net_pnl_raw_pct": -11.3504,
             "median_net_pnl_pct": -11.3504,
             "avg_fund_24h_bps": 10.576
           },
           "extreme_neg": {
             "n": 58,
             "wr": 0.8276,
-            "avg_net_pnl_pct": 22.249,
+            "avg_net_pnl_pct": 22.2489,
+            "avg_net_pnl_raw_pct": 10.2578,
             "median_net_pnl_pct": 32.2418,
             "avg_fund_24h_bps": -13.012
+          },
+          "months": {
+            "2026-02": {
+              "n": 473,
+              "avg_net_pnl_pct": 29.7512,
+              "avg_net_pnl_raw_pct": 29.7512,
+              "wr": 0.9112
+            }
           }
         }
       },
@@ -1017,6 +1352,7 @@
             "n": 1700,
             "wr": 0.3876,
             "avg_net_pnl_pct": 1.3626,
+            "avg_net_pnl_raw_pct": 1.5357,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.044
           },
@@ -1024,15 +1360,43 @@
             "n": 35,
             "wr": 0.2857,
             "avg_net_pnl_pct": -0.7779,
+            "avg_net_pnl_raw_pct": -0.7779,
             "median_net_pnl_pct": -5.581,
             "avg_fund_24h_bps": 5.253
           },
           "extreme_neg": {
             "n": 69,
             "wr": 0.4348,
-            "avg_net_pnl_pct": 2.745,
+            "avg_net_pnl_pct": 2.7449,
+            "avg_net_pnl_raw_pct": 3.3648,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -10.145
+          },
+          "months": {
+            "2026-03": {
+              "n": 745,
+              "avg_net_pnl_pct": 0.4198,
+              "avg_net_pnl_raw_pct": 0.4198,
+              "wr": 0.3544
+            },
+            "2026-04": {
+              "n": 687,
+              "avg_net_pnl_pct": 3.4405,
+              "avg_net_pnl_raw_pct": 3.4405,
+              "wr": 0.4643
+            },
+            "2026-05": {
+              "n": 99,
+              "avg_net_pnl_pct": -1.2681,
+              "avg_net_pnl_raw_pct": -1.2681,
+              "wr": 0.202
+            },
+            "2026-06": {
+              "n": 154,
+              "avg_net_pnl_pct": 0.1257,
+              "avg_net_pnl_raw_pct": 0.1257,
+              "wr": 0.2857
+            }
           }
         },
         "SHORT": {
@@ -1040,6 +1404,7 @@
             "n": 2339,
             "wr": 0.2766,
             "avg_net_pnl_pct": -1.4517,
+            "avg_net_pnl_raw_pct": -1.4517,
             "median_net_pnl_pct": -0.5178,
             "avg_fund_24h_bps": -0.225
           },
@@ -1047,6 +1412,7 @@
             "n": 42,
             "wr": 0.2619,
             "avg_net_pnl_pct": -1.3369,
+            "avg_net_pnl_raw_pct": -1.3369,
             "median_net_pnl_pct": -0.253,
             "avg_fund_24h_bps": 4.907
           },
@@ -1054,8 +1420,41 @@
             "n": 128,
             "wr": 0.2891,
             "avg_net_pnl_pct": -0.1351,
+            "avg_net_pnl_raw_pct": -0.1351,
             "median_net_pnl_pct": -0.6222,
             "avg_fund_24h_bps": -8.142
+          },
+          "months": {
+            "2026-03": {
+              "n": 1216,
+              "avg_net_pnl_pct": -0.8476,
+              "avg_net_pnl_raw_pct": -0.8476,
+              "wr": 0.3174
+            },
+            "2026-04": {
+              "n": 757,
+              "avg_net_pnl_pct": -3.5783,
+              "avg_net_pnl_raw_pct": -3.5783,
+              "wr": 0.1849
+            },
+            "2026-05": {
+              "n": 70,
+              "avg_net_pnl_pct": 6.0433,
+              "avg_net_pnl_raw_pct": 6.0433,
+              "wr": 0.5571
+            },
+            "2026-06": {
+              "n": 163,
+              "avg_net_pnl_pct": 0.4786,
+              "avg_net_pnl_raw_pct": 0.4786,
+              "wr": 0.3067
+            },
+            "2026-07": {
+              "n": 133,
+              "avg_net_pnl_pct": -1.1819,
+              "avg_net_pnl_raw_pct": -1.1819,
+              "wr": 0.2406
+            }
           }
         }
       },
@@ -1065,6 +1464,7 @@
             "n": 1126,
             "wr": 0.4156,
             "avg_net_pnl_pct": 1.454,
+            "avg_net_pnl_raw_pct": 1.454,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.072
           },
@@ -1072,6 +1472,7 @@
             "n": 11,
             "wr": 0.3636,
             "avg_net_pnl_pct": -2.0488,
+            "avg_net_pnl_raw_pct": -2.0488,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 5.794
           },
@@ -1079,8 +1480,41 @@
             "n": 40,
             "wr": 0.475,
             "avg_net_pnl_pct": 3.1575,
+            "avg_net_pnl_raw_pct": 3.1575,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -11.49
+          },
+          "months": {
+            "2026-03": {
+              "n": 385,
+              "avg_net_pnl_pct": -0.9042,
+              "avg_net_pnl_raw_pct": -0.9042,
+              "wr": 0.3169
+            },
+            "2026-04": {
+              "n": 469,
+              "avg_net_pnl_pct": 3.7867,
+              "avg_net_pnl_raw_pct": 3.7867,
+              "wr": 0.5117
+            },
+            "2026-05": {
+              "n": 76,
+              "avg_net_pnl_pct": 2.8279,
+              "avg_net_pnl_raw_pct": 2.8279,
+              "wr": 0.5
+            },
+            "2026-06": {
+              "n": 60,
+              "avg_net_pnl_pct": -0.5874,
+              "avg_net_pnl_raw_pct": -0.5874,
+              "wr": 0.3167
+            },
+            "2026-07": {
+              "n": 136,
+              "avg_net_pnl_pct": 0.2183,
+              "avg_net_pnl_raw_pct": 0.2183,
+              "wr": 0.3603
+            }
           }
         },
         "SHORT": {
@@ -1088,6 +1522,7 @@
             "n": 1343,
             "wr": 0.3224,
             "avg_net_pnl_pct": -0.8062,
+            "avg_net_pnl_raw_pct": -0.8062,
             "median_net_pnl_pct": -0.3111,
             "avg_fund_24h_bps": -0.266
           },
@@ -1095,6 +1530,7 @@
             "n": 17,
             "wr": 0.2941,
             "avg_net_pnl_pct": 0.9369,
+            "avg_net_pnl_raw_pct": 0.9369,
             "median_net_pnl_pct": -1.4605,
             "avg_fund_24h_bps": 6.018
           },
@@ -1102,8 +1538,41 @@
             "n": 73,
             "wr": 0.3014,
             "avg_net_pnl_pct": -0.5977,
+            "avg_net_pnl_raw_pct": -0.5977,
             "median_net_pnl_pct": -0.4931,
             "avg_fund_24h_bps": -7.695
+          },
+          "months": {
+            "2026-03": {
+              "n": 641,
+              "avg_net_pnl_pct": -0.6348,
+              "avg_net_pnl_raw_pct": -0.6348,
+              "wr": 0.3526
+            },
+            "2026-04": {
+              "n": 332,
+              "avg_net_pnl_pct": -3.1861,
+              "avg_net_pnl_raw_pct": -3.1861,
+              "wr": 0.2018
+            },
+            "2026-05": {
+              "n": 109,
+              "avg_net_pnl_pct": 6.8372,
+              "avg_net_pnl_raw_pct": 6.8372,
+              "wr": 0.6789
+            },
+            "2026-06": {
+              "n": 100,
+              "avg_net_pnl_pct": 0.1871,
+              "avg_net_pnl_raw_pct": 0.1871,
+              "wr": 0.4
+            },
+            "2026-07": {
+              "n": 161,
+              "avg_net_pnl_pct": -2.3729,
+              "avg_net_pnl_raw_pct": -2.3729,
+              "wr": 0.1615
+            }
           }
         }
       },
@@ -1113,13 +1582,15 @@
             "n": 3519,
             "wr": 0.4138,
             "avg_net_pnl_pct": 1.3059,
+            "avg_net_pnl_raw_pct": 1.3647,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.136
           },
           "extreme_pos": {
             "n": 79,
             "wr": 0.4177,
-            "avg_net_pnl_pct": 1.2162,
+            "avg_net_pnl_pct": 1.2161,
+            "avg_net_pnl_raw_pct": 2.6399,
             "median_net_pnl_pct": -0.1072,
             "avg_fund_24h_bps": 5.666
           },
@@ -1127,8 +1598,35 @@
             "n": 162,
             "wr": 0.3765,
             "avg_net_pnl_pct": 0.0352,
+            "avg_net_pnl_raw_pct": 0.0352,
             "median_net_pnl_pct": -0.1674,
             "avg_fund_24h_bps": -9.409
+          },
+          "months": {
+            "2026-02": {
+              "n": 165,
+              "avg_net_pnl_pct": -0.7382,
+              "avg_net_pnl_raw_pct": -0.7382,
+              "wr": 0.4364
+            },
+            "2026-03": {
+              "n": 1719,
+              "avg_net_pnl_pct": -0.0149,
+              "avg_net_pnl_raw_pct": -0.0149,
+              "wr": 0.3351
+            },
+            "2026-04": {
+              "n": 1543,
+              "avg_net_pnl_pct": 3.3233,
+              "avg_net_pnl_raw_pct": 3.3233,
+              "wr": 0.512
+            },
+            "2026-07": {
+              "n": 89,
+              "avg_net_pnl_pct": -2.0202,
+              "avg_net_pnl_raw_pct": -2.0202,
+              "wr": 0.191
+            }
           }
         },
         "SHORT": {
@@ -1136,6 +1634,7 @@
             "n": 3228,
             "wr": 0.2723,
             "avg_net_pnl_pct": -2.1776,
+            "avg_net_pnl_raw_pct": -2.1919,
             "median_net_pnl_pct": -1.7564,
             "avg_fund_24h_bps": -0.137
           },
@@ -1143,6 +1642,7 @@
             "n": 67,
             "wr": 0.2537,
             "avg_net_pnl_pct": -3.2168,
+            "avg_net_pnl_raw_pct": -3.2168,
             "median_net_pnl_pct": -5.9317,
             "avg_fund_24h_bps": 5.563
           },
@@ -1150,8 +1650,29 @@
             "n": 158,
             "wr": 0.3291,
             "avg_net_pnl_pct": -1.216,
+            "avg_net_pnl_raw_pct": -1.216,
             "median_net_pnl_pct": -0.6012,
             "avg_fund_24h_bps": -9.857
+          },
+          "months": {
+            "2026-02": {
+              "n": 201,
+              "avg_net_pnl_pct": -0.5326,
+              "avg_net_pnl_raw_pct": -0.5326,
+              "wr": 0.5423
+            },
+            "2026-03": {
+              "n": 1625,
+              "avg_net_pnl_pct": -1.2582,
+              "avg_net_pnl_raw_pct": -1.2582,
+              "wr": 0.3255
+            },
+            "2026-04": {
+              "n": 1394,
+              "avg_net_pnl_pct": -3.5156,
+              "avg_net_pnl_raw_pct": -3.5156,
+              "wr": 0.1722
+            }
           }
         }
       },
@@ -1161,6 +1682,7 @@
             "n": 333,
             "wr": 0.3063,
             "avg_net_pnl_pct": -0.5428,
+            "avg_net_pnl_raw_pct": -0.5428,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 0.339
           },
@@ -1168,6 +1690,7 @@
             "n": 2,
             "wr": 1.0,
             "avg_net_pnl_pct": 5.0827,
+            "avg_net_pnl_raw_pct": 5.0827,
             "median_net_pnl_pct": 5.0827,
             "avg_fund_24h_bps": 3.193
           },
@@ -1175,8 +1698,17 @@
             "n": 6,
             "wr": 0.3333,
             "avg_net_pnl_pct": -0.5354,
+            "avg_net_pnl_raw_pct": -0.5354,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -5.13
+          },
+          "months": {
+            "2026-07": {
+              "n": 333,
+              "avg_net_pnl_pct": -0.5428,
+              "avg_net_pnl_raw_pct": -0.5428,
+              "wr": 0.3063
+            }
           }
         },
         "SHORT": {
@@ -1184,6 +1716,7 @@
             "n": 345,
             "wr": 0.2609,
             "avg_net_pnl_pct": -1.0831,
+            "avg_net_pnl_raw_pct": -1.0831,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 0.164
           },
@@ -1191,6 +1724,7 @@
             "n": 4,
             "wr": 0.5,
             "avg_net_pnl_pct": 2.6927,
+            "avg_net_pnl_raw_pct": 2.6927,
             "median_net_pnl_pct": 0.6622,
             "avg_fund_24h_bps": 5.109
           },
@@ -1198,8 +1732,17 @@
             "n": 13,
             "wr": 0.3077,
             "avg_net_pnl_pct": 0.5485,
+            "avg_net_pnl_raw_pct": 0.5485,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -9.627
+          },
+          "months": {
+            "2026-07": {
+              "n": 345,
+              "avg_net_pnl_pct": -1.0831,
+              "avg_net_pnl_raw_pct": -1.0831,
+              "wr": 0.2609
+            }
           }
         }
       },
@@ -1209,13 +1752,15 @@
             "n": 1932,
             "wr": 0.3913,
             "avg_net_pnl_pct": 0.8821,
+            "avg_net_pnl_raw_pct": 0.8936,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.049
           },
           "extreme_pos": {
             "n": 39,
             "wr": 0.4359,
-            "avg_net_pnl_pct": 3.1001,
+            "avg_net_pnl_pct": 3.0999,
+            "avg_net_pnl_raw_pct": 3.4396,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 4.834
           },
@@ -1223,8 +1768,35 @@
             "n": 92,
             "wr": 0.3913,
             "avg_net_pnl_pct": -0.6982,
+            "avg_net_pnl_raw_pct": -0.6982,
             "median_net_pnl_pct": -0.2645,
             "avg_fund_24h_bps": -7.626
+          },
+          "months": {
+            "2026-02": {
+              "n": 91,
+              "avg_net_pnl_pct": 0.7525,
+              "avg_net_pnl_raw_pct": 0.7525,
+              "wr": 0.3736
+            },
+            "2026-03": {
+              "n": 914,
+              "avg_net_pnl_pct": -0.212,
+              "avg_net_pnl_raw_pct": -0.212,
+              "wr": 0.3468
+            },
+            "2026-04": {
+              "n": 705,
+              "avg_net_pnl_pct": 2.9707,
+              "avg_net_pnl_raw_pct": 2.9707,
+              "wr": 0.4879
+            },
+            "2026-07": {
+              "n": 213,
+              "avg_net_pnl_pct": -1.2054,
+              "avg_net_pnl_raw_pct": -1.2054,
+              "wr": 0.2629
+            }
           }
         },
         "SHORT": {
@@ -1232,6 +1804,7 @@
             "n": 1903,
             "wr": 0.2985,
             "avg_net_pnl_pct": -1.6529,
+            "avg_net_pnl_raw_pct": -1.6506,
             "median_net_pnl_pct": -0.3793,
             "avg_fund_24h_bps": -0.019
           },
@@ -1239,6 +1812,7 @@
             "n": 27,
             "wr": 0.3704,
             "avg_net_pnl_pct": -1.3714,
+            "avg_net_pnl_raw_pct": -1.3714,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 5.108
           },
@@ -1246,8 +1820,35 @@
             "n": 83,
             "wr": 0.3614,
             "avg_net_pnl_pct": -1.5495,
+            "avg_net_pnl_raw_pct": -1.5495,
             "median_net_pnl_pct": -0.3298,
             "avg_fund_24h_bps": -6.511
+          },
+          "months": {
+            "2026-02": {
+              "n": 108,
+              "avg_net_pnl_pct": -0.1886,
+              "avg_net_pnl_raw_pct": -0.1886,
+              "wr": 0.6204
+            },
+            "2026-03": {
+              "n": 786,
+              "avg_net_pnl_pct": -0.5511,
+              "avg_net_pnl_raw_pct": -0.5511,
+              "wr": 0.3601
+            },
+            "2026-04": {
+              "n": 672,
+              "avg_net_pnl_pct": -3.5536,
+              "avg_net_pnl_raw_pct": -3.5536,
+              "wr": 0.186
+            },
+            "2026-07": {
+              "n": 321,
+              "avg_net_pnl_pct": -0.7928,
+              "avg_net_pnl_raw_pct": -0.7928,
+              "wr": 0.2804
+            }
           }
         }
       },
@@ -1257,6 +1858,7 @@
             "n": 859,
             "wr": 0.4284,
             "avg_net_pnl_pct": 1.3264,
+            "avg_net_pnl_raw_pct": 1.3536,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.13
           },
@@ -1264,6 +1866,7 @@
             "n": 26,
             "wr": 0.4615,
             "avg_net_pnl_pct": 1.3963,
+            "avg_net_pnl_raw_pct": 1.3963,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 5.887
           },
@@ -1271,8 +1874,35 @@
             "n": 37,
             "wr": 0.2162,
             "avg_net_pnl_pct": -2.4914,
+            "avg_net_pnl_raw_pct": -2.4914,
             "median_net_pnl_pct": -5.5387,
             "avg_fund_24h_bps": -13.563
+          },
+          "months": {
+            "2026-02": {
+              "n": 46,
+              "avg_net_pnl_pct": 1.2396,
+              "avg_net_pnl_raw_pct": 1.2396,
+              "wr": 0.3696
+            },
+            "2026-03": {
+              "n": 321,
+              "avg_net_pnl_pct": -0.4266,
+              "avg_net_pnl_raw_pct": -0.4266,
+              "wr": 0.3551
+            },
+            "2026-04": {
+              "n": 349,
+              "avg_net_pnl_pct": 3.2995,
+              "avg_net_pnl_raw_pct": 3.2995,
+              "wr": 0.5244
+            },
+            "2026-07": {
+              "n": 101,
+              "avg_net_pnl_pct": 0.6712,
+              "avg_net_pnl_raw_pct": 0.6712,
+              "wr": 0.4059
+            }
           }
         },
         "SHORT": {
@@ -1280,6 +1910,7 @@
             "n": 810,
             "wr": 0.3074,
             "avg_net_pnl_pct": -1.5216,
+            "avg_net_pnl_raw_pct": -1.5216,
             "median_net_pnl_pct": -0.3333,
             "avg_fund_24h_bps": -0.058
           },
@@ -1287,6 +1918,7 @@
             "n": 10,
             "wr": 0.2,
             "avg_net_pnl_pct": -2.6784,
+            "avg_net_pnl_raw_pct": -2.6784,
             "median_net_pnl_pct": -4.4284,
             "avg_fund_24h_bps": 5.311
           },
@@ -1294,8 +1926,35 @@
             "n": 37,
             "wr": 0.2703,
             "avg_net_pnl_pct": -2.5696,
+            "avg_net_pnl_raw_pct": -2.5696,
             "median_net_pnl_pct": -1.3461,
             "avg_fund_24h_bps": -5.233
+          },
+          "months": {
+            "2026-02": {
+              "n": 46,
+              "avg_net_pnl_pct": 0.2892,
+              "avg_net_pnl_raw_pct": 0.2892,
+              "wr": 0.587
+            },
+            "2026-03": {
+              "n": 365,
+              "avg_net_pnl_pct": -0.7887,
+              "avg_net_pnl_raw_pct": -0.7887,
+              "wr": 0.3753
+            },
+            "2026-04": {
+              "n": 234,
+              "avg_net_pnl_pct": -3.8027,
+              "avg_net_pnl_raw_pct": -3.8027,
+              "wr": 0.1624
+            },
+            "2026-07": {
+              "n": 125,
+              "avg_net_pnl_pct": -1.5648,
+              "avg_net_pnl_raw_pct": -1.5648,
+              "wr": 0.208
+            }
           }
         }
       },
@@ -1304,62 +1963,128 @@
           "baseline": {
             "n": 1466,
             "wr": 0.3349,
-            "avg_net_pnl_pct": -5.681,
+            "avg_net_pnl_pct": -5.6815,
+            "avg_net_pnl_raw_pct": 6.0156,
             "median_net_pnl_pct": -7.475,
             "avg_fund_24h_bps": -16.132
           },
           "extreme_pos": {
             "n": 142,
             "wr": 0.3873,
-            "avg_net_pnl_pct": 5.3115,
+            "avg_net_pnl_pct": 5.3103,
+            "avg_net_pnl_raw_pct": 25.007,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 12.143
           },
           "extreme_neg": {
             "n": 422,
             "wr": 0.3697,
-            "avg_net_pnl_pct": 0.2084,
+            "avg_net_pnl_pct": 0.2075,
+            "avg_net_pnl_raw_pct": 31.7189,
             "median_net_pnl_pct": -7.6236,
             "avg_fund_24h_bps": -60.465
+          },
+          "months": {
+            "2026-02": {
+              "n": 829,
+              "avg_net_pnl_pct": 9.7993,
+              "avg_net_pnl_raw_pct": 9.7993,
+              "wr": 0.3088
+            },
+            "2026-04": {
+              "n": 162,
+              "avg_net_pnl_pct": -0.7807,
+              "avg_net_pnl_raw_pct": -0.7807,
+              "wr": 0.3951
+            },
+            "2026-05": {
+              "n": 148,
+              "avg_net_pnl_pct": 2.7201,
+              "avg_net_pnl_raw_pct": 2.7201,
+              "wr": 0.3108
+            },
+            "2026-06": {
+              "n": 284,
+              "avg_net_pnl_pct": 1.354,
+              "avg_net_pnl_raw_pct": 1.354,
+              "wr": 0.3873
+            }
           }
         },
         "SHORT": {
           "baseline": {
             "n": 5449,
             "wr": 0.6269,
-            "avg_net_pnl_pct": 5.2039,
+            "avg_net_pnl_pct": 5.2038,
+            "avg_net_pnl_raw_pct": 0.617,
             "median_net_pnl_pct": 4.6991,
             "avg_fund_24h_bps": -1.934
           },
           "extreme_pos": {
             "n": 315,
             "wr": 0.546,
-            "avg_net_pnl_pct": 3.4893,
+            "avg_net_pnl_pct": 3.489,
+            "avg_net_pnl_raw_pct": -19.3668,
             "median_net_pnl_pct": 4.1597,
             "avg_fund_24h_bps": 7.555
           },
           "extreme_neg": {
             "n": 492,
             "wr": 0.6118,
-            "avg_net_pnl_pct": 4.4861,
+            "avg_net_pnl_pct": 4.486,
+            "avg_net_pnl_raw_pct": -28.9168,
             "median_net_pnl_pct": 6.7244,
             "avg_fund_24h_bps": -29.802
+          },
+          "months": {
+            "2026-02": {
+              "n": 1065,
+              "avg_net_pnl_pct": -10.9467,
+              "avg_net_pnl_raw_pct": -10.9467,
+              "wr": 0.7418
+            },
+            "2026-04": {
+              "n": 175,
+              "avg_net_pnl_pct": -1.2599,
+              "avg_net_pnl_raw_pct": -1.2599,
+              "wr": 0.4
+            },
+            "2026-05": {
+              "n": 1578,
+              "avg_net_pnl_pct": 5.8272,
+              "avg_net_pnl_raw_pct": 5.8272,
+              "wr": 0.7237
+            },
+            "2026-06": {
+              "n": 2499,
+              "avg_net_pnl_pct": 1.6065,
+              "avg_net_pnl_raw_pct": 1.6065,
+              "wr": 0.5278
+            },
+            "2026-07": {
+              "n": 101,
+              "avg_net_pnl_pct": 19.662,
+              "avg_net_pnl_raw_pct": 19.662,
+              "wr": 0.802
+            }
           }
         }
       },
       "EPD3": {
         "LONG": {
           "baseline": {
-            "n": 630,
-            "wr": 0.5095,
-            "avg_net_pnl_pct": 0.7916,
-            "median_net_pnl_pct": 0.9188,
-            "avg_fund_24h_bps": 0.334
+            "n": 631,
+            "wr": 0.5087,
+            "avg_net_pnl_pct": 0.7806,
+            "avg_net_pnl_raw_pct": 0.7817,
+            "median_net_pnl_pct": 0.9184,
+            "avg_fund_24h_bps": 0.337
           },
           "extreme_pos": {
             "n": 37,
             "wr": 0.5135,
             "avg_net_pnl_pct": 0.0677,
+            "avg_net_pnl_raw_pct": 0.0677,
             "median_net_pnl_pct": 1.024,
             "avg_fund_24h_bps": 5.389
           },
@@ -1367,31 +2092,51 @@
             "n": 21,
             "wr": 0.3333,
             "avg_net_pnl_pct": -0.1036,
+            "avg_net_pnl_raw_pct": -0.1036,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -7.883
+          },
+          "months": {
+            "2026-07": {
+              "n": 631,
+              "avg_net_pnl_pct": 0.7817,
+              "avg_net_pnl_raw_pct": 0.7817,
+              "wr": 0.5087
+            }
           }
         },
         "SHORT": {
           "baseline": {
-            "n": 553,
-            "wr": 0.3924,
-            "avg_net_pnl_pct": -0.4744,
+            "n": 558,
+            "wr": 0.3943,
+            "avg_net_pnl_pct": -0.4655,
+            "avg_net_pnl_raw_pct": -0.4655,
             "median_net_pnl_pct": -0.1,
-            "avg_fund_24h_bps": -0.398
+            "avg_fund_24h_bps": -0.431
           },
           "extreme_pos": {
             "n": 28,
             "wr": 0.3214,
             "avg_net_pnl_pct": -3.0806,
+            "avg_net_pnl_raw_pct": -3.0806,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 5.402
           },
           "extreme_neg": {
-            "n": 46,
-            "wr": 0.4783,
-            "avg_net_pnl_pct": 0.8031,
+            "n": 47,
+            "wr": 0.4894,
+            "avg_net_pnl_pct": 0.8971,
+            "avg_net_pnl_raw_pct": 0.8971,
             "median_net_pnl_pct": -0.1,
-            "avg_fund_24h_bps": -12.617
+            "avg_fund_24h_bps": -12.836
+          },
+          "months": {
+            "2026-07": {
+              "n": 558,
+              "avg_net_pnl_pct": -0.4655,
+              "avg_net_pnl_raw_pct": -0.4655,
+              "wr": 0.3943
+            }
           }
         }
       },
@@ -1400,7 +2145,8 @@
           "baseline": {
             "n": 7056,
             "wr": 0.3934,
-            "avg_net_pnl_pct": 1.0428,
+            "avg_net_pnl_pct": 1.0427,
+            "avg_net_pnl_raw_pct": 1.1538,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.615
           },
@@ -1408,39 +2154,83 @@
             "n": 162,
             "wr": 0.4012,
             "avg_net_pnl_pct": 3.4748,
+            "avg_net_pnl_raw_pct": 3.5915,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 5.226
           },
           "extreme_neg": {
             "n": 517,
             "wr": 0.3559,
-            "avg_net_pnl_pct": 0.2265,
+            "avg_net_pnl_pct": 0.2264,
+            "avg_net_pnl_raw_pct": 0.8487,
             "median_net_pnl_pct": -0.2821,
             "avg_fund_24h_bps": -12.771
+          },
+          "months": {
+            "2026-02": {
+              "n": 749,
+              "avg_net_pnl_pct": -1.2397,
+              "avg_net_pnl_raw_pct": -1.2397,
+              "wr": 0.275
+            },
+            "2026-03": {
+              "n": 2803,
+              "avg_net_pnl_pct": 0.627,
+              "avg_net_pnl_raw_pct": 0.627,
+              "wr": 0.4039
+            },
+            "2026-04": {
+              "n": 1439,
+              "avg_net_pnl_pct": 3.5255,
+              "avg_net_pnl_raw_pct": 3.5255,
+              "wr": 0.4934
+            },
+            "2026-05": {
+              "n": 828,
+              "avg_net_pnl_pct": 0.2017,
+              "avg_net_pnl_raw_pct": 0.2017,
+              "wr": 0.2826
+            },
+            "2026-06": {
+              "n": 1110,
+              "avg_net_pnl_pct": 1.4436,
+              "avg_net_pnl_raw_pct": 1.4436,
+              "wr": 0.3856
+            },
+            "2026-07": {
+              "n": 127,
+              "avg_net_pnl_pct": 3.6995,
+              "avg_net_pnl_raw_pct": 3.6995,
+              "wr": 0.5197
+            }
           }
         },
         "SHORT": {
           "baseline": {
             "n": 98,
             "wr": 0.4592,
-            "avg_net_pnl_pct": 3.2738,
+            "avg_net_pnl_pct": 3.2737,
+            "avg_net_pnl_raw_pct": 3.4767,
             "median_net_pnl_pct": -0.1308,
             "avg_fund_24h_bps": -10.374
           },
           "extreme_pos": {
             "n": 36,
             "wr": 0.5556,
-            "avg_net_pnl_pct": 6.5398,
+            "avg_net_pnl_pct": 6.5396,
+            "avg_net_pnl_raw_pct": 6.88,
             "median_net_pnl_pct": 2.7268,
             "avg_fund_24h_bps": 9.227
           },
           "extreme_neg": {
             "n": 27,
             "wr": 0.3704,
-            "avg_net_pnl_pct": 2.9177,
+            "avg_net_pnl_pct": 2.9174,
+            "avg_net_pnl_raw_pct": 3.2003,
             "median_net_pnl_pct": -0.3757,
             "avg_fund_24h_bps": -51.004
-          }
+          },
+          "months": {}
         }
       },
       "MIS1-168h_dump": {
@@ -1448,7 +2238,8 @@
           "baseline": {
             "n": 513,
             "wr": 0.8655,
-            "avg_net_pnl_pct": 24.9095,
+            "avg_net_pnl_pct": 24.9088,
+            "avg_net_pnl_raw_pct": 22.9737,
             "median_net_pnl_pct": 29.9282,
             "avg_fund_24h_bps": -4.692
           },
@@ -1456,15 +2247,25 @@
             "n": 1,
             "wr": 1.0,
             "avg_net_pnl_pct": 37.9983,
+            "avg_net_pnl_raw_pct": 37.9983,
             "median_net_pnl_pct": 37.9983,
             "avg_fund_24h_bps": 10.576
           },
           "extreme_neg": {
             "n": 126,
             "wr": 0.8571,
-            "avg_net_pnl_pct": 22.5867,
+            "avg_net_pnl_pct": 22.5863,
+            "avg_net_pnl_raw_pct": 17.7277,
             "median_net_pnl_pct": 30.5388,
             "avg_fund_24h_bps": -18.737
+          },
+          "months": {
+            "2026-02": {
+              "n": 513,
+              "avg_net_pnl_pct": 22.9737,
+              "avg_net_pnl_raw_pct": 22.9737,
+              "wr": 0.8655
+            }
           }
         }
       },
@@ -1473,7 +2274,8 @@
           "baseline": {
             "n": 530,
             "wr": 0.1283,
-            "avg_net_pnl_pct": -25.6716,
+            "avg_net_pnl_pct": -25.6718,
+            "avg_net_pnl_raw_pct": -23.6314,
             "median_net_pnl_pct": -30.7856,
             "avg_fund_24h_bps": -2.244
           },
@@ -1481,15 +2283,25 @@
             "n": 1,
             "wr": 0.0,
             "avg_net_pnl_pct": -20.7742,
+            "avg_net_pnl_raw_pct": -20.7742,
             "median_net_pnl_pct": -20.7742,
             "avg_fund_24h_bps": 10.576
           },
           "extreme_neg": {
             "n": 76,
             "wr": 0.2105,
-            "avg_net_pnl_pct": -17.789,
+            "avg_net_pnl_pct": -17.7894,
+            "avg_net_pnl_raw_pct": -2.6934,
             "median_net_pnl_pct": -27.7241,
             "avg_fund_24h_bps": -15.362
+          },
+          "months": {
+            "2026-02": {
+              "n": 530,
+              "avg_net_pnl_pct": -23.6314,
+              "avg_net_pnl_raw_pct": -23.6314,
+              "wr": 0.1283
+            }
           }
         }
       },
@@ -1498,30 +2310,48 @@
           "baseline": {
             "n": 191,
             "wr": 0.3455,
-            "avg_net_pnl_pct": 4.2073,
+            "avg_net_pnl_pct": 4.207,
+            "avg_net_pnl_raw_pct": 5.5344,
             "median_net_pnl_pct": -6.3101,
             "avg_fund_24h_bps": -2.961
           },
           "extreme_pos": {
             "n": 21,
             "wr": 0.381,
-            "avg_net_pnl_pct": 4.5776,
+            "avg_net_pnl_pct": 4.577,
+            "avg_net_pnl_raw_pct": 8.0741,
             "median_net_pnl_pct": -0.3752,
             "avg_fund_24h_bps": 7.406
           },
           "extreme_neg": {
             "n": 33,
             "wr": 0.2424,
-            "avg_net_pnl_pct": 0.3811,
+            "avg_net_pnl_pct": 0.3806,
+            "avg_net_pnl_raw_pct": 4.6207,
             "median_net_pnl_pct": -9.698,
             "avg_fund_24h_bps": -23.093
+          },
+          "months": {
+            "2026-03": {
+              "n": 49,
+              "avg_net_pnl_pct": -5.8808,
+              "avg_net_pnl_raw_pct": -5.8808,
+              "wr": 0.1429
+            },
+            "2026-04": {
+              "n": 45,
+              "avg_net_pnl_pct": 1.4174,
+              "avg_net_pnl_raw_pct": 1.4174,
+              "wr": 0.3778
+            }
           }
         },
         "SHORT": {
           "baseline": {
             "n": 204,
             "wr": 0.4167,
-            "avg_net_pnl_pct": 1.5783,
+            "avg_net_pnl_pct": 1.5782,
+            "avg_net_pnl_raw_pct": 1.5795,
             "median_net_pnl_pct": -0.2947,
             "avg_fund_24h_bps": -8.12
           },
@@ -1529,15 +2359,31 @@
             "n": 43,
             "wr": 0.3721,
             "avg_net_pnl_pct": -0.4888,
+            "avg_net_pnl_raw_pct": -0.4888,
             "median_net_pnl_pct": -0.4749,
             "avg_fund_24h_bps": 5.778
           },
           "extreme_neg": {
             "n": 60,
             "wr": 0.4667,
-            "avg_net_pnl_pct": 5.0265,
+            "avg_net_pnl_pct": 5.0264,
+            "avg_net_pnl_raw_pct": 5.0305,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -32.723
+          },
+          "months": {
+            "2026-03": {
+              "n": 40,
+              "avg_net_pnl_pct": -1.7371,
+              "avg_net_pnl_raw_pct": -1.7371,
+              "wr": 0.4
+            },
+            "2026-04": {
+              "n": 106,
+              "avg_net_pnl_pct": -2.2095,
+              "avg_net_pnl_raw_pct": -2.2095,
+              "wr": 0.3302
+            }
           }
         }
       },
@@ -1546,7 +2392,8 @@
           "baseline": {
             "n": 639,
             "wr": 0.8482,
-            "avg_net_pnl_pct": 21.2361,
+            "avg_net_pnl_pct": 21.2358,
+            "avg_net_pnl_raw_pct": 19.762,
             "median_net_pnl_pct": 27.9724,
             "avg_fund_24h_bps": -5.013
           },
@@ -1554,6 +2401,7 @@
             "n": 1,
             "wr": 1.0,
             "avg_net_pnl_pct": 52.6061,
+            "avg_net_pnl_raw_pct": 52.6061,
             "median_net_pnl_pct": 52.6061,
             "avg_fund_24h_bps": 10.576
           },
@@ -1561,8 +2409,17 @@
             "n": 167,
             "wr": 0.8263,
             "avg_net_pnl_pct": 16.0746,
+            "avg_net_pnl_raw_pct": 12.7189,
             "median_net_pnl_pct": 27.9222,
             "avg_fund_24h_bps": -18.841
+          },
+          "months": {
+            "2026-02": {
+              "n": 639,
+              "avg_net_pnl_pct": 19.762,
+              "avg_net_pnl_raw_pct": 19.762,
+              "wr": 0.8482
+            }
           }
         }
       },
@@ -1571,7 +2428,8 @@
           "baseline": {
             "n": 488,
             "wr": 0.1619,
-            "avg_net_pnl_pct": -21.6961,
+            "avg_net_pnl_pct": -21.6964,
+            "avg_net_pnl_raw_pct": -20.8498,
             "median_net_pnl_pct": -29.2548,
             "avg_fund_24h_bps": -6.243
           },
@@ -1579,15 +2437,25 @@
             "n": 1,
             "wr": 0.0,
             "avg_net_pnl_pct": -51.2384,
+            "avg_net_pnl_raw_pct": -51.2384,
             "median_net_pnl_pct": -51.2384,
             "avg_fund_24h_bps": 10.576
           },
           "extreme_neg": {
             "n": 135,
             "wr": 0.1185,
-            "avg_net_pnl_pct": -21.6363,
+            "avg_net_pnl_pct": -21.6365,
+            "avg_net_pnl_raw_pct": -17.7537,
             "median_net_pnl_pct": -29.2035,
             "avg_fund_24h_bps": -22.276
+          },
+          "months": {
+            "2026-02": {
+              "n": 488,
+              "avg_net_pnl_pct": -20.8498,
+              "avg_net_pnl_raw_pct": -20.8498,
+              "wr": 0.1619
+            }
           }
         }
       },
@@ -1597,45 +2465,109 @@
             "n": 11561,
             "wr": 0.4404,
             "avg_net_pnl_pct": 1.3935,
+            "avg_net_pnl_raw_pct": 1.56,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.581
           },
           "extreme_pos": {
             "n": 336,
             "wr": 0.3601,
-            "avg_net_pnl_pct": 1.2222,
+            "avg_net_pnl_pct": 1.2221,
+            "avg_net_pnl_raw_pct": 2.4694,
             "median_net_pnl_pct": -0.3555,
             "avg_fund_24h_bps": 5.619
           },
           "extreme_neg": {
             "n": 757,
             "wr": 0.3355,
-            "avg_net_pnl_pct": -0.0935,
+            "avg_net_pnl_pct": -0.0936,
+            "avg_net_pnl_raw_pct": 0.4779,
             "median_net_pnl_pct": -0.2392,
             "avg_fund_24h_bps": -14.566
+          },
+          "months": {
+            "2026-02": {
+              "n": 173,
+              "avg_net_pnl_pct": 0.4244,
+              "avg_net_pnl_raw_pct": 0.4244,
+              "wr": 0.4451
+            },
+            "2026-03": {
+              "n": 5399,
+              "avg_net_pnl_pct": 0.9813,
+              "avg_net_pnl_raw_pct": 0.9813,
+              "wr": 0.4742
+            },
+            "2026-04": {
+              "n": 2761,
+              "avg_net_pnl_pct": 2.7761,
+              "avg_net_pnl_raw_pct": 2.7761,
+              "wr": 0.448
+            },
+            "2026-05": {
+              "n": 1262,
+              "avg_net_pnl_pct": -0.3353,
+              "avg_net_pnl_raw_pct": -0.3353,
+              "wr": 0.2559
+            },
+            "2026-06": {
+              "n": 1701,
+              "avg_net_pnl_pct": 2.5161,
+              "avg_net_pnl_raw_pct": 2.5161,
+              "wr": 0.4274
+            },
+            "2026-07": {
+              "n": 265,
+              "avg_net_pnl_pct": 4.3092,
+              "avg_net_pnl_raw_pct": 4.3092,
+              "wr": 0.6302
+            }
           }
         },
         "SHORT": {
           "baseline": {
             "n": 298,
             "wr": 0.4463,
-            "avg_net_pnl_pct": 2.4914,
+            "avg_net_pnl_pct": 2.4913,
+            "avg_net_pnl_raw_pct": 2.5331,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -7.317
           },
           "extreme_pos": {
             "n": 65,
             "wr": 0.3846,
-            "avg_net_pnl_pct": 1.6502,
+            "avg_net_pnl_pct": 1.65,
+            "avg_net_pnl_raw_pct": 1.9031,
             "median_net_pnl_pct": -0.1351,
             "avg_fund_24h_bps": 6.999
           },
           "extreme_neg": {
             "n": 79,
             "wr": 0.3671,
-            "avg_net_pnl_pct": 1.0387,
+            "avg_net_pnl_pct": 1.0385,
+            "avg_net_pnl_raw_pct": 0.9129,
             "median_net_pnl_pct": -0.6934,
             "avg_fund_24h_bps": -34.514
+          },
+          "months": {
+            "2026-03": {
+              "n": 106,
+              "avg_net_pnl_pct": 1.116,
+              "avg_net_pnl_raw_pct": 1.116,
+              "wr": 0.5189
+            },
+            "2026-04": {
+              "n": 90,
+              "avg_net_pnl_pct": -3.0765,
+              "avg_net_pnl_raw_pct": -3.0765,
+              "wr": 0.2667
+            },
+            "2026-06": {
+              "n": 59,
+              "avg_net_pnl_pct": 7.398,
+              "avg_net_pnl_raw_pct": 7.398,
+              "wr": 0.4746
+            }
           }
         }
       },
@@ -1644,7 +2576,8 @@
           "baseline": {
             "n": 608,
             "wr": 0.852,
-            "avg_net_pnl_pct": 22.5008,
+            "avg_net_pnl_pct": 22.5003,
+            "avg_net_pnl_raw_pct": 21.0425,
             "median_net_pnl_pct": 28.8432,
             "avg_fund_24h_bps": -4.673
           },
@@ -1652,15 +2585,25 @@
             "n": 1,
             "wr": 1.0,
             "avg_net_pnl_pct": 52.6061,
+            "avg_net_pnl_raw_pct": 52.6061,
             "median_net_pnl_pct": 52.6061,
             "avg_fund_24h_bps": 10.576
           },
           "extreme_neg": {
             "n": 148,
             "wr": 0.7973,
-            "avg_net_pnl_pct": 15.6647,
+            "avg_net_pnl_pct": 15.6645,
+            "avg_net_pnl_raw_pct": 11.8615,
             "median_net_pnl_pct": 28.9865,
             "avg_fund_24h_bps": -18.806
+          },
+          "months": {
+            "2026-02": {
+              "n": 608,
+              "avg_net_pnl_pct": 21.0425,
+              "avg_net_pnl_raw_pct": 21.0425,
+              "wr": 0.852
+            }
           }
         }
       },
@@ -1669,7 +2612,8 @@
           "baseline": {
             "n": 633,
             "wr": 0.1122,
-            "avg_net_pnl_pct": -27.0296,
+            "avg_net_pnl_pct": -27.0297,
+            "avg_net_pnl_raw_pct": -25.7526,
             "median_net_pnl_pct": -32.1236,
             "avg_fund_24h_bps": -4.073
           },
@@ -1677,15 +2621,25 @@
             "n": 1,
             "wr": 0.0,
             "avg_net_pnl_pct": -10.5334,
+            "avg_net_pnl_raw_pct": -10.5334,
             "median_net_pnl_pct": -10.5334,
             "avg_fund_24h_bps": 10.576
           },
           "extreme_neg": {
             "n": 135,
             "wr": 0.1037,
-            "avg_net_pnl_pct": -22.9197,
+            "avg_net_pnl_pct": -22.9199,
+            "avg_net_pnl_raw_pct": -17.9552,
             "median_net_pnl_pct": -29.3058,
             "avg_fund_24h_bps": -18.467
+          },
+          "months": {
+            "2026-02": {
+              "n": 633,
+              "avg_net_pnl_pct": -25.7526,
+              "avg_net_pnl_raw_pct": -25.7526,
+              "wr": 0.1122
+            }
           }
         }
       },
@@ -1694,7 +2648,8 @@
           "baseline": {
             "n": 207,
             "wr": 0.2367,
-            "avg_net_pnl_pct": -1.6169,
+            "avg_net_pnl_pct": -1.617,
+            "avg_net_pnl_raw_pct": -1.1916,
             "median_net_pnl_pct": -8.7336,
             "avg_fund_24h_bps": -7.833
           },
@@ -1702,22 +2657,39 @@
             "n": 29,
             "wr": 0.2759,
             "avg_net_pnl_pct": 0.1861,
+            "avg_net_pnl_raw_pct": 0.1861,
             "median_net_pnl_pct": -6.3388,
             "avg_fund_24h_bps": 7.375
           },
           "extreme_neg": {
             "n": 55,
             "wr": 0.2364,
-            "avg_net_pnl_pct": -1.907,
+            "avg_net_pnl_pct": -1.9073,
+            "avg_net_pnl_raw_pct": -0.3775,
             "median_net_pnl_pct": -12.1,
             "avg_fund_24h_bps": -34.206
+          },
+          "months": {
+            "2026-03": {
+              "n": 54,
+              "avg_net_pnl_pct": -6.4104,
+              "avg_net_pnl_raw_pct": -6.4104,
+              "wr": 0.1852
+            },
+            "2026-04": {
+              "n": 81,
+              "avg_net_pnl_pct": -0.1351,
+              "avg_net_pnl_raw_pct": -0.1351,
+              "wr": 0.2716
+            }
           }
         },
         "SHORT": {
           "baseline": {
             "n": 379,
             "wr": 0.4459,
-            "avg_net_pnl_pct": 2.4438,
+            "avg_net_pnl_pct": 2.4437,
+            "avg_net_pnl_raw_pct": 2.5023,
             "median_net_pnl_pct": -0.113,
             "avg_fund_24h_bps": -4.297
           },
@@ -1725,15 +2697,43 @@
             "n": 65,
             "wr": 0.3077,
             "avg_net_pnl_pct": -0.669,
+            "avg_net_pnl_raw_pct": -0.669,
             "median_net_pnl_pct": -1.6235,
             "avg_fund_24h_bps": 7.757
           },
           "extreme_neg": {
             "n": 85,
             "wr": 0.4941,
-            "avg_net_pnl_pct": 5.2722,
+            "avg_net_pnl_pct": 5.2721,
+            "avg_net_pnl_raw_pct": 5.5331,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -26.422
+          },
+          "months": {
+            "2026-02": {
+              "n": 52,
+              "avg_net_pnl_pct": 10.8156,
+              "avg_net_pnl_raw_pct": 10.8156,
+              "wr": 0.6538
+            },
+            "2026-03": {
+              "n": 76,
+              "avg_net_pnl_pct": 1.1537,
+              "avg_net_pnl_raw_pct": 1.1537,
+              "wr": 0.4211
+            },
+            "2026-04": {
+              "n": 167,
+              "avg_net_pnl_pct": -0.9711,
+              "avg_net_pnl_raw_pct": -0.9711,
+              "wr": 0.3413
+            },
+            "2026-06": {
+              "n": 42,
+              "avg_net_pnl_pct": 8.8225,
+              "avg_net_pnl_raw_pct": 8.8225,
+              "wr": 0.5952
+            }
           }
         }
       },
@@ -1742,23 +2742,34 @@
           "baseline": {
             "n": 718,
             "wr": 0.837,
-            "avg_net_pnl_pct": 20.8264,
+            "avg_net_pnl_pct": 20.8259,
+            "avg_net_pnl_raw_pct": 18.8573,
             "median_net_pnl_pct": 25.6991,
             "avg_fund_24h_bps": -4.551
           },
           "extreme_pos": {
             "n": 2,
             "wr": 0.5,
-            "avg_net_pnl_pct": -1.5301,
+            "avg_net_pnl_pct": -1.53,
+            "avg_net_pnl_raw_pct": -115.2468,
             "median_net_pnl_pct": -115.2468,
             "avg_fund_24h_bps": 7.392
           },
           "extreme_neg": {
             "n": 171,
             "wr": 0.807,
-            "avg_net_pnl_pct": 15.4807,
+            "avg_net_pnl_pct": 15.4804,
+            "avg_net_pnl_raw_pct": 11.3265,
             "median_net_pnl_pct": 28.0579,
             "avg_fund_24h_bps": -18.68
+          },
+          "months": {
+            "2026-02": {
+              "n": 718,
+              "avg_net_pnl_pct": 18.8573,
+              "avg_net_pnl_raw_pct": 18.8573,
+              "wr": 0.837
+            }
           }
         }
       },
@@ -1767,23 +2778,34 @@
           "baseline": {
             "n": 846,
             "wr": 0.2293,
-            "avg_net_pnl_pct": -16.8396,
+            "avg_net_pnl_pct": -16.8399,
+            "avg_net_pnl_raw_pct": -14.4783,
             "median_net_pnl_pct": -19.9825,
             "avg_fund_24h_bps": -3.724
           },
           "extreme_pos": {
             "n": 2,
             "wr": 0.5,
-            "avg_net_pnl_pct": 17.682,
+            "avg_net_pnl_pct": 17.6784,
+            "avg_net_pnl_raw_pct": 129.1317,
             "median_net_pnl_pct": 129.1317,
             "avg_fund_24h_bps": 7.392
           },
           "extreme_neg": {
             "n": 167,
             "wr": 0.1677,
-            "avg_net_pnl_pct": -18.3642,
+            "avg_net_pnl_pct": -18.3647,
+            "avg_net_pnl_raw_pct": -13.5222,
             "median_net_pnl_pct": -29.1447,
             "avg_fund_24h_bps": -18.708
+          },
+          "months": {
+            "2026-02": {
+              "n": 846,
+              "avg_net_pnl_pct": -14.4783,
+              "avg_net_pnl_raw_pct": -14.4783,
+              "wr": 0.2293
+            }
           }
         }
       },
@@ -1793,6 +2815,7 @@
             "n": 1506,
             "wr": 0.3891,
             "avg_net_pnl_pct": 0.3246,
+            "avg_net_pnl_raw_pct": 0.3246,
             "median_net_pnl_pct": -0.112,
             "avg_fund_24h_bps": -0.45
           },
@@ -1800,6 +2823,7 @@
             "n": 28,
             "wr": 0.3929,
             "avg_net_pnl_pct": 1.2683,
+            "avg_net_pnl_raw_pct": 1.2683,
             "median_net_pnl_pct": -0.1284,
             "avg_fund_24h_bps": 5.02
           },
@@ -1807,8 +2831,23 @@
             "n": 115,
             "wr": 0.3652,
             "avg_net_pnl_pct": -0.5557,
+            "avg_net_pnl_raw_pct": -0.5557,
             "median_net_pnl_pct": -0.1284,
             "avg_fund_24h_bps": -9.012
+          },
+          "months": {
+            "2026-03": {
+              "n": 916,
+              "avg_net_pnl_pct": 0.2862,
+              "avg_net_pnl_raw_pct": 0.2862,
+              "wr": 0.3897
+            },
+            "2026-04": {
+              "n": 582,
+              "avg_net_pnl_pct": 0.3812,
+              "avg_net_pnl_raw_pct": 0.3812,
+              "wr": 0.39
+            }
           }
         },
         "SHORT": {
@@ -1816,6 +2855,7 @@
             "n": 1467,
             "wr": 0.3292,
             "avg_net_pnl_pct": -0.4033,
+            "avg_net_pnl_raw_pct": -0.4033,
             "median_net_pnl_pct": -0.1552,
             "avg_fund_24h_bps": -0.388
           },
@@ -1823,6 +2863,7 @@
             "n": 33,
             "wr": 0.2121,
             "avg_net_pnl_pct": -1.1613,
+            "avg_net_pnl_raw_pct": -1.1613,
             "median_net_pnl_pct": -0.667,
             "avg_fund_24h_bps": 4.762
           },
@@ -1830,8 +2871,23 @@
             "n": 81,
             "wr": 0.321,
             "avg_net_pnl_pct": -0.1112,
+            "avg_net_pnl_raw_pct": -0.1112,
             "median_net_pnl_pct": -0.1479,
             "avg_fund_24h_bps": -12.264
+          },
+          "months": {
+            "2026-03": {
+              "n": 856,
+              "avg_net_pnl_pct": -0.417,
+              "avg_net_pnl_raw_pct": -0.417,
+              "wr": 0.3259
+            },
+            "2026-04": {
+              "n": 589,
+              "avg_net_pnl_pct": -0.4466,
+              "avg_net_pnl_raw_pct": -0.4466,
+              "wr": 0.3277
+            }
           }
         }
       },
@@ -1841,6 +2897,7 @@
             "n": 145,
             "wr": 0.3724,
             "avg_net_pnl_pct": 0.7566,
+            "avg_net_pnl_raw_pct": 0.7566,
             "median_net_pnl_pct": -0.1612,
             "avg_fund_24h_bps": -1.78
           },
@@ -1848,6 +2905,7 @@
             "n": 6,
             "wr": 0.6667,
             "avg_net_pnl_pct": 8.8389,
+            "avg_net_pnl_raw_pct": 8.8389,
             "median_net_pnl_pct": 9.3492,
             "avg_fund_24h_bps": 5.467
           },
@@ -1855,8 +2913,23 @@
             "n": 18,
             "wr": 0.3889,
             "avg_net_pnl_pct": 2.3325,
+            "avg_net_pnl_raw_pct": 2.3325,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -17.908
+          },
+          "months": {
+            "2026-03": {
+              "n": 92,
+              "avg_net_pnl_pct": -0.7085,
+              "avg_net_pnl_raw_pct": -0.7085,
+              "wr": 0.2935
+            },
+            "2026-04": {
+              "n": 52,
+              "avg_net_pnl_pct": 3.3653,
+              "avg_net_pnl_raw_pct": 3.3653,
+              "wr": 0.5192
+            }
           }
         },
         "SHORT": {
@@ -1864,6 +2937,7 @@
             "n": 377,
             "wr": 0.2069,
             "avg_net_pnl_pct": -1.1205,
+            "avg_net_pnl_raw_pct": -1.1205,
             "median_net_pnl_pct": -0.5222,
             "avg_fund_24h_bps": -0.255
           },
@@ -1871,6 +2945,7 @@
             "n": 7,
             "wr": 0.1429,
             "avg_net_pnl_pct": -7.6624,
+            "avg_net_pnl_raw_pct": -7.6624,
             "median_net_pnl_pct": -0.79,
             "avg_fund_24h_bps": 7.012
           },
@@ -1878,8 +2953,23 @@
             "n": 20,
             "wr": 0.15,
             "avg_net_pnl_pct": 0.0144,
+            "avg_net_pnl_raw_pct": 0.0144,
             "median_net_pnl_pct": -0.4246,
             "avg_fund_24h_bps": -10.705
+          },
+          "months": {
+            "2026-03": {
+              "n": 187,
+              "avg_net_pnl_pct": -0.8626,
+              "avg_net_pnl_raw_pct": -0.8626,
+              "wr": 0.262
+            },
+            "2026-04": {
+              "n": 176,
+              "avg_net_pnl_pct": -1.6072,
+              "avg_net_pnl_raw_pct": -1.6072,
+              "wr": 0.1136
+            }
           }
         }
       },
@@ -1889,22 +2979,51 @@
             "n": 2713,
             "wr": 0.3819,
             "avg_net_pnl_pct": -0.0215,
+            "avg_net_pnl_raw_pct": 0.1213,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.734
           },
           "extreme_pos": {
             "n": 95,
             "wr": 0.3263,
-            "avg_net_pnl_pct": 0.5025,
+            "avg_net_pnl_pct": 0.5023,
+            "avg_net_pnl_raw_pct": 3.0377,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 6.895
           },
           "extreme_neg": {
             "n": 181,
             "wr": 0.3149,
-            "avg_net_pnl_pct": -0.1222,
+            "avg_net_pnl_pct": -0.1223,
+            "avg_net_pnl_raw_pct": 0.2499,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -20.283
+          },
+          "months": {
+            "2026-04": {
+              "n": 443,
+              "avg_net_pnl_pct": 0.9939,
+              "avg_net_pnl_raw_pct": 0.9939,
+              "wr": 0.4537
+            },
+            "2026-05": {
+              "n": 268,
+              "avg_net_pnl_pct": 0.0148,
+              "avg_net_pnl_raw_pct": 0.0148,
+              "wr": 0.2612
+            },
+            "2026-06": {
+              "n": 427,
+              "avg_net_pnl_pct": 1.2584,
+              "avg_net_pnl_raw_pct": 1.2584,
+              "wr": 0.363
+            },
+            "2026-07": {
+              "n": 1575,
+              "avg_net_pnl_pct": -0.4144,
+              "avg_net_pnl_raw_pct": -0.4144,
+              "wr": 0.3873
+            }
           }
         },
         "SHORT": {
@@ -1912,6 +3031,7 @@
             "n": 3972,
             "wr": 0.4539,
             "avg_net_pnl_pct": 0.4251,
+            "avg_net_pnl_raw_pct": 0.4346,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.459
           },
@@ -1919,6 +3039,7 @@
             "n": 156,
             "wr": 0.4423,
             "avg_net_pnl_pct": 1.6925,
+            "avg_net_pnl_raw_pct": 1.8432,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 6.005
           },
@@ -1926,8 +3047,35 @@
             "n": 221,
             "wr": 0.4796,
             "avg_net_pnl_pct": 1.7431,
+            "avg_net_pnl_raw_pct": 1.7558,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -18.599
+          },
+          "months": {
+            "2026-04": {
+              "n": 1373,
+              "avg_net_pnl_pct": -0.9322,
+              "avg_net_pnl_raw_pct": -0.9322,
+              "wr": 0.4079
+            },
+            "2026-05": {
+              "n": 665,
+              "avg_net_pnl_pct": 3.3408,
+              "avg_net_pnl_raw_pct": 3.3408,
+              "wr": 0.5534
+            },
+            "2026-06": {
+              "n": 862,
+              "avg_net_pnl_pct": 1.1814,
+              "avg_net_pnl_raw_pct": 1.1814,
+              "wr": 0.4849
+            },
+            "2026-07": {
+              "n": 1072,
+              "avg_net_pnl_pct": -0.2184,
+              "avg_net_pnl_raw_pct": -0.2184,
+              "wr": 0.4263
+            }
           }
         }
       },
@@ -1936,23 +3084,58 @@
           "baseline": {
             "n": 1062,
             "wr": 0.3757,
-            "avg_net_pnl_pct": 3.0311,
+            "avg_net_pnl_pct": 3.0309,
+            "avg_net_pnl_raw_pct": 3.3265,
             "median_net_pnl_pct": -0.2848,
             "avg_fund_24h_bps": -2.111
           },
           "extreme_pos": {
             "n": 55,
             "wr": 0.2727,
-            "avg_net_pnl_pct": -1.6223,
+            "avg_net_pnl_pct": -1.6224,
+            "avg_net_pnl_raw_pct": -1.2219,
             "median_net_pnl_pct": -6.7049,
             "avg_fund_24h_bps": 7.123
           },
           "extreme_neg": {
             "n": 124,
             "wr": 0.1935,
-            "avg_net_pnl_pct": -2.489,
+            "avg_net_pnl_pct": -2.4891,
+            "avg_net_pnl_raw_pct": -2.4725,
             "median_net_pnl_pct": -7.475,
             "avg_fund_24h_bps": -23.161
+          },
+          "months": {
+            "2026-02": {
+              "n": 83,
+              "avg_net_pnl_pct": 5.4673,
+              "avg_net_pnl_raw_pct": 5.4673,
+              "wr": 0.4217
+            },
+            "2026-03": {
+              "n": 288,
+              "avg_net_pnl_pct": 1.0453,
+              "avg_net_pnl_raw_pct": 1.0453,
+              "wr": 0.3507
+            },
+            "2026-04": {
+              "n": 221,
+              "avg_net_pnl_pct": 5.7911,
+              "avg_net_pnl_raw_pct": 5.7911,
+              "wr": 0.3982
+            },
+            "2026-05": {
+              "n": 77,
+              "avg_net_pnl_pct": 2.1771,
+              "avg_net_pnl_raw_pct": 2.1771,
+              "wr": 0.2857
+            },
+            "2026-06": {
+              "n": 371,
+              "avg_net_pnl_pct": 3.6585,
+              "avg_net_pnl_raw_pct": 3.6585,
+              "wr": 0.3935
+            }
           }
         },
         "SHORT": {
@@ -1960,22 +3143,51 @@
             "n": 1473,
             "wr": 0.4229,
             "avg_net_pnl_pct": 1.007,
+            "avg_net_pnl_raw_pct": 1.045,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -1.468
           },
           "extreme_pos": {
             "n": 193,
             "wr": 0.3575,
-            "avg_net_pnl_pct": -0.4029,
+            "avg_net_pnl_pct": -0.4031,
+            "avg_net_pnl_raw_pct": -0.4225,
             "median_net_pnl_pct": -0.4525,
             "avg_fund_24h_bps": 5.65
           },
           "extreme_neg": {
             "n": 173,
             "wr": 0.5318,
-            "avg_net_pnl_pct": 3.6793,
+            "avg_net_pnl_pct": 3.6791,
+            "avg_net_pnl_raw_pct": 4.112,
             "median_net_pnl_pct": 1.3983,
             "avg_fund_24h_bps": -22.488
+          },
+          "months": {
+            "2026-03": {
+              "n": 380,
+              "avg_net_pnl_pct": 0.5745,
+              "avg_net_pnl_raw_pct": 0.5745,
+              "wr": 0.4395
+            },
+            "2026-04": {
+              "n": 670,
+              "avg_net_pnl_pct": -1.6507,
+              "avg_net_pnl_raw_pct": -1.6507,
+              "wr": 0.3507
+            },
+            "2026-05": {
+              "n": 173,
+              "avg_net_pnl_pct": 5.5032,
+              "avg_net_pnl_raw_pct": 5.5032,
+              "wr": 0.5145
+            },
+            "2026-06": {
+              "n": 180,
+              "avg_net_pnl_pct": 8.19,
+              "avg_net_pnl_raw_pct": 8.19,
+              "wr": 0.5889
+            }
           }
         }
       },
@@ -1985,6 +3197,7 @@
             "n": 307,
             "wr": 0.5472,
             "avg_net_pnl_pct": 0.8119,
+            "avg_net_pnl_raw_pct": 0.8119,
             "median_net_pnl_pct": 1.0122,
             "avg_fund_24h_bps": -0.251
           },
@@ -1992,6 +3205,7 @@
             "n": 3,
             "wr": 0.6667,
             "avg_net_pnl_pct": -0.3848,
+            "avg_net_pnl_raw_pct": -0.3848,
             "median_net_pnl_pct": 1.1154,
             "avg_fund_24h_bps": 3.515
           },
@@ -1999,8 +3213,35 @@
             "n": 15,
             "wr": 0.2,
             "avg_net_pnl_pct": -1.1294,
+            "avg_net_pnl_raw_pct": -1.1294,
             "median_net_pnl_pct": -0.4363,
             "avg_fund_24h_bps": -10.928
+          },
+          "months": {
+            "2026-04": {
+              "n": 74,
+              "avg_net_pnl_pct": 2.0694,
+              "avg_net_pnl_raw_pct": 2.0694,
+              "wr": 0.6757
+            },
+            "2026-05": {
+              "n": 40,
+              "avg_net_pnl_pct": -0.4257,
+              "avg_net_pnl_raw_pct": -0.4257,
+              "wr": 0.525
+            },
+            "2026-06": {
+              "n": 53,
+              "avg_net_pnl_pct": 0.3786,
+              "avg_net_pnl_raw_pct": 0.3786,
+              "wr": 0.434
+            },
+            "2026-07": {
+              "n": 130,
+              "avg_net_pnl_pct": 0.5449,
+              "avg_net_pnl_raw_pct": 0.5449,
+              "wr": 0.5308
+            }
           }
         },
         "SHORT": {
@@ -2008,6 +3249,7 @@
             "n": 348,
             "wr": 0.5029,
             "avg_net_pnl_pct": -0.0487,
+            "avg_net_pnl_raw_pct": -0.0487,
             "median_net_pnl_pct": 0.4323,
             "avg_fund_24h_bps": 0.048
           },
@@ -2015,6 +3257,7 @@
             "n": 9,
             "wr": 0.4444,
             "avg_net_pnl_pct": -0.7976,
+            "avg_net_pnl_raw_pct": -0.7976,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 5.147
           },
@@ -2022,8 +3265,29 @@
             "n": 12,
             "wr": 0.5,
             "avg_net_pnl_pct": -0.0967,
+            "avg_net_pnl_raw_pct": -0.0967,
             "median_net_pnl_pct": 0.58,
             "avg_fund_24h_bps": -14.205
+          },
+          "months": {
+            "2026-04": {
+              "n": 157,
+              "avg_net_pnl_pct": -1.1172,
+              "avg_net_pnl_raw_pct": -1.1172,
+              "wr": 0.4395
+            },
+            "2026-06": {
+              "n": 49,
+              "avg_net_pnl_pct": 0.7341,
+              "avg_net_pnl_raw_pct": 0.7341,
+              "wr": 0.5918
+            },
+            "2026-07": {
+              "n": 101,
+              "avg_net_pnl_pct": -0.386,
+              "avg_net_pnl_raw_pct": -0.386,
+              "wr": 0.4653
+            }
           }
         }
       },
@@ -2033,13 +3297,15 @@
             "n": 1323,
             "wr": 0.4082,
             "avg_net_pnl_pct": 1.7491,
+            "avg_net_pnl_raw_pct": 1.8183,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -0.45
           },
           "extreme_pos": {
             "n": 19,
             "wr": 0.3158,
-            "avg_net_pnl_pct": 2.1654,
+            "avg_net_pnl_pct": 2.165,
+            "avg_net_pnl_raw_pct": 5.1244,
             "median_net_pnl_pct": -5.5689,
             "avg_fund_24h_bps": 4.761
           },
@@ -2047,8 +3313,41 @@
             "n": 83,
             "wr": 0.4217,
             "avg_net_pnl_pct": 1.2879,
+            "avg_net_pnl_raw_pct": 1.2879,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -10.831
+          },
+          "months": {
+            "2026-03": {
+              "n": 483,
+              "avg_net_pnl_pct": 0.9653,
+              "avg_net_pnl_raw_pct": 0.9653,
+              "wr": 0.3582
+            },
+            "2026-04": {
+              "n": 222,
+              "avg_net_pnl_pct": 4.5598,
+              "avg_net_pnl_raw_pct": 4.5598,
+              "wr": 0.545
+            },
+            "2026-05": {
+              "n": 217,
+              "avg_net_pnl_pct": 0.0762,
+              "avg_net_pnl_raw_pct": 0.0762,
+              "wr": 0.3502
+            },
+            "2026-06": {
+              "n": 350,
+              "avg_net_pnl_pct": 2.5574,
+              "avg_net_pnl_raw_pct": 2.5574,
+              "wr": 0.4314
+            },
+            "2026-07": {
+              "n": 51,
+              "avg_net_pnl_pct": 0.3036,
+              "avg_net_pnl_raw_pct": 0.3036,
+              "wr": 0.3725
+            }
           }
         },
         "SHORT": {
@@ -2056,6 +3355,7 @@
             "n": 1062,
             "wr": 0.3635,
             "avg_net_pnl_pct": 0.3636,
+            "avg_net_pnl_raw_pct": 0.3636,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 0.105
           },
@@ -2063,6 +3363,7 @@
             "n": 55,
             "wr": 0.4364,
             "avg_net_pnl_pct": 1.2132,
+            "avg_net_pnl_raw_pct": 1.2132,
             "median_net_pnl_pct": -0.6551,
             "avg_fund_24h_bps": 5.235
           },
@@ -2070,8 +3371,41 @@
             "n": 32,
             "wr": 0.4375,
             "avg_net_pnl_pct": 2.4235,
+            "avg_net_pnl_raw_pct": 2.4235,
             "median_net_pnl_pct": -0.1637,
             "avg_fund_24h_bps": -17.831
+          },
+          "months": {
+            "2026-03": {
+              "n": 326,
+              "avg_net_pnl_pct": -0.5706,
+              "avg_net_pnl_raw_pct": -0.5706,
+              "wr": 0.3129
+            },
+            "2026-04": {
+              "n": 293,
+              "avg_net_pnl_pct": -1.9773,
+              "avg_net_pnl_raw_pct": -1.9773,
+              "wr": 0.3038
+            },
+            "2026-05": {
+              "n": 137,
+              "avg_net_pnl_pct": 7.195,
+              "avg_net_pnl_raw_pct": 7.195,
+              "wr": 0.6569
+            },
+            "2026-06": {
+              "n": 225,
+              "avg_net_pnl_pct": 1.2109,
+              "avg_net_pnl_raw_pct": 1.2109,
+              "wr": 0.3689
+            },
+            "2026-07": {
+              "n": 81,
+              "avg_net_pnl_pct": -1.3171,
+              "avg_net_pnl_raw_pct": -1.3171,
+              "wr": 0.2716
+            }
           }
         }
       },
@@ -2081,6 +3415,7 @@
             "n": 390,
             "wr": 0.359,
             "avg_net_pnl_pct": 1.5723,
+            "avg_net_pnl_raw_pct": 1.5914,
             "median_net_pnl_pct": -0.1842,
             "avg_fund_24h_bps": -0.58
           },
@@ -2088,6 +3423,7 @@
             "n": 10,
             "wr": 0.4,
             "avg_net_pnl_pct": 1.4694,
+            "avg_net_pnl_raw_pct": 1.4694,
             "median_net_pnl_pct": -0.6213,
             "avg_fund_24h_bps": 5.401
           },
@@ -2095,8 +3431,35 @@
             "n": 31,
             "wr": 0.2903,
             "avg_net_pnl_pct": -1.3335,
+            "avg_net_pnl_raw_pct": -1.3335,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": -9.855
+          },
+          "months": {
+            "2026-03": {
+              "n": 193,
+              "avg_net_pnl_pct": 1.0899,
+              "avg_net_pnl_raw_pct": 1.0899,
+              "wr": 0.3264
+            },
+            "2026-04": {
+              "n": 83,
+              "avg_net_pnl_pct": 4.185,
+              "avg_net_pnl_raw_pct": 4.185,
+              "wr": 0.4217
+            },
+            "2026-05": {
+              "n": 58,
+              "avg_net_pnl_pct": 0.6968,
+              "avg_net_pnl_raw_pct": 0.6968,
+              "wr": 0.3793
+            },
+            "2026-06": {
+              "n": 48,
+              "avg_net_pnl_pct": 0.7204,
+              "avg_net_pnl_raw_pct": 0.7204,
+              "wr": 0.375
+            }
           }
         },
         "SHORT": {
@@ -2104,6 +3467,7 @@
             "n": 266,
             "wr": 0.4323,
             "avg_net_pnl_pct": 1.4966,
+            "avg_net_pnl_raw_pct": 1.5027,
             "median_net_pnl_pct": -0.1,
             "avg_fund_24h_bps": 0.015
           },
@@ -2111,81 +3475,739 @@
             "n": 8,
             "wr": 0.125,
             "avg_net_pnl_pct": -5.0386,
+            "avg_net_pnl_raw_pct": -5.0386,
             "median_net_pnl_pct": -10.2315,
             "avg_fund_24h_bps": 5.824
           },
           "extreme_neg": {
             "n": 12,
             "wr": 0.25,
-            "avg_net_pnl_pct": 0.5307,
+            "avg_net_pnl_pct": 0.5301,
+            "avg_net_pnl_raw_pct": 0.6669,
             "median_net_pnl_pct": -6.8604,
             "avg_fund_24h_bps": -11.324
+          },
+          "months": {
+            "2026-03": {
+              "n": 75,
+              "avg_net_pnl_pct": 0.1899,
+              "avg_net_pnl_raw_pct": 0.1899,
+              "wr": 0.3467
+            },
+            "2026-04": {
+              "n": 70,
+              "avg_net_pnl_pct": -2.012,
+              "avg_net_pnl_raw_pct": -2.012,
+              "wr": 0.3
+            },
+            "2026-05": {
+              "n": 44,
+              "avg_net_pnl_pct": 7.4091,
+              "avg_net_pnl_raw_pct": 7.4091,
+              "wr": 0.6136
+            },
+            "2026-07": {
+              "n": 46,
+              "avg_net_pnl_pct": 1.0341,
+              "avg_net_pnl_raw_pct": 1.0341,
+              "wr": 0.5652
+            }
           }
         }
       }
     },
     "direction_baseline": {
       "LONG": {
-        "n": 47303,
+        "n": 47307,
         "wr": 0.3835,
-        "avg_net_pnl_pct": -1.3636,
-        "median_net_pnl_pct": -0.1118,
-        "avg_fund_24h_bps": -1.387,
+        "avg_net_pnl_pct": -1.3638,
+        "avg_net_pnl_raw_pct": -0.6293,
+        "median_net_pnl_pct": -0.1119,
+        "avg_fund_24h_bps": -1.386,
         "val_firsthalf": {
           "n": 25197,
           "wr": 0.3569,
-          "avg_net_pnl_pct": -3.7501,
+          "avg_net_pnl_pct": -3.7502,
+          "avg_net_pnl_raw_pct": -2.5598,
           "median_net_pnl_pct": -0.286,
           "avg_fund_24h_bps": -2.0
         },
         "test_secondhalf": {
-          "n": 22106,
-          "wr": 0.4139,
-          "avg_net_pnl_pct": 1.3567,
+          "n": 22110,
+          "wr": 0.4138,
+          "avg_net_pnl_pct": 1.3558,
+          "avg_net_pnl_raw_pct": 1.5708,
           "median_net_pnl_pct": -0.1,
           "avg_fund_24h_bps": -0.687
+        },
+        "months": {
+          "2026-02": {
+            "n": 7365,
+            "avg_net_pnl_pct": -10.8905,
+            "avg_net_pnl_raw_pct": -10.8905,
+            "wr": 0.2305
+          },
+          "2026-03": {
+            "n": 15184,
+            "avg_net_pnl_pct": 0.5138,
+            "avg_net_pnl_raw_pct": 0.5138,
+            "wr": 0.4063
+          },
+          "2026-04": {
+            "n": 10836,
+            "avg_net_pnl_pct": 2.8369,
+            "avg_net_pnl_raw_pct": 2.8369,
+            "wr": 0.4683
+          },
+          "2026-05": {
+            "n": 3289,
+            "avg_net_pnl_pct": 0.2416,
+            "avg_net_pnl_raw_pct": 0.2416,
+            "wr": 0.2882
+          },
+          "2026-06": {
+            "n": 4983,
+            "avg_net_pnl_pct": 2.1926,
+            "avg_net_pnl_raw_pct": 2.1926,
+            "wr": 0.4008
+          },
+          "2026-07": {
+            "n": 5650,
+            "avg_net_pnl_pct": 0.031,
+            "avg_net_pnl_raw_pct": 0.031,
+            "wr": 0.3993
+          }
         }
       },
       "SHORT": {
-        "n": 35354,
+        "n": 35360,
         "wr": 0.4587,
-        "avg_net_pnl_pct": 3.0652,
+        "avg_net_pnl_pct": 3.0643,
+        "avg_net_pnl_raw_pct": 2.0419,
         "median_net_pnl_pct": -0.1,
-        "avg_fund_24h_bps": -1.397,
+        "avg_fund_24h_bps": -1.398,
         "val_firsthalf": {
-          "n": 16131,
-          "wr": 0.5006,
-          "avg_net_pnl_pct": 5.8276,
-          "median_net_pnl_pct": 0.1128,
+          "n": 16136,
+          "wr": 0.5005,
+          "avg_net_pnl_pct": 5.8245,
+          "avg_net_pnl_raw_pct": 3.5656,
+          "median_net_pnl_pct": 0.1013,
           "avg_fund_24h_bps": -2.2
         },
         "test_secondhalf": {
-          "n": 19223,
-          "wr": 0.4236,
-          "avg_net_pnl_pct": 0.747,
+          "n": 19224,
+          "wr": 0.4237,
+          "avg_net_pnl_pct": 0.7475,
+          "avg_net_pnl_raw_pct": 0.7631,
           "median_net_pnl_pct": -0.1,
-          "avg_fund_24h_bps": -0.723
+          "avg_fund_24h_bps": -0.724
+        },
+        "months": {
+          "2026-02": {
+            "n": 6566,
+            "avg_net_pnl_pct": 10.4401,
+            "avg_net_pnl_raw_pct": 10.4401,
+            "wr": 0.7514
+          },
+          "2026-03": {
+            "n": 7821,
+            "avg_net_pnl_pct": -0.7419,
+            "avg_net_pnl_raw_pct": -0.7419,
+            "wr": 0.3516
+          },
+          "2026-04": {
+            "n": 8324,
+            "avg_net_pnl_pct": -2.2068,
+            "avg_net_pnl_raw_pct": -2.2068,
+            "wr": 0.2815
+          },
+          "2026-05": {
+            "n": 3157,
+            "avg_net_pnl_pct": 5.4987,
+            "avg_net_pnl_raw_pct": 5.4987,
+            "wr": 0.6475
+          },
+          "2026-06": {
+            "n": 4995,
+            "avg_net_pnl_pct": 1.8207,
+            "avg_net_pnl_raw_pct": 1.8207,
+            "wr": 0.4871
+          },
+          "2026-07": {
+            "n": 4497,
+            "avg_net_pnl_pct": 0.3051,
+            "avg_net_pnl_raw_pct": 0.3051,
+            "wr": 0.3818
+          }
         }
       }
     },
     "funding_pnl_correlation": {
       "LONG": {
         "expected_sign": "positive",
-        "spearman_all": 0.0593,
+        "spearman_all": 0.0592,
         "spearman_val": 0.0441,
-        "spearman_test": 0.0174,
-        "sign_holds_both_halves": true,
+        "spearman_test": 0.0173,
         "n_val": 25197,
-        "n_test": 22106
+        "n_test": 22110,
+        "sign_holds_both_halves": true,
+        "abs_ge_floor_val": true,
+        "abs_ge_floor_test": false,
+        "magnitude_stable_both_halves": false
       },
       "SHORT": {
         "expected_sign": "negative",
-        "spearman_all": -0.0884,
-        "spearman_val": -0.1207,
+        "spearman_all": -0.0885,
+        "spearman_val": -0.1208,
         "spearman_test": -0.0182,
+        "n_val": 16136,
+        "n_test": 19224,
         "sign_holds_both_halves": true,
-        "n_val": 16131,
-        "n_test": 19223
+        "abs_ge_floor_val": true,
+        "abs_ge_floor_test": false,
+        "magnitude_stable_both_halves": false
+      }
+    },
+    "multi_feature": {
+      "fund_24h": {
+        "n": 82667,
+        "lo_edge_q20": -0.6154,
+        "hi_edge_q80": 0.5,
+        "by_direction": {
+          "LONG": {
+            "gradient": {
+              "expected_sign": "positive",
+              "spearman_all": 0.0592,
+              "spearman_val": 0.0441,
+              "spearman_test": 0.0173,
+              "n_val": 25197,
+              "n_test": 22110,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": true,
+              "abs_ge_floor_test": false,
+              "magnitude_stable_both_halves": false
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 9536,
+                "wr": 0.347,
+                "avg_net_pnl_pct": -3.4332,
+                "avg_net_pnl_raw_pct": -0.8147,
+                "median_net_pnl_pct": -0.2976,
+                "avg_fund_24h_bps": -9.685,
+                "val_firsthalf": {
+                  "n": 6549,
+                  "wr": 0.343,
+                  "avg_net_pnl_pct": -5.1661,
+                  "avg_net_pnl_raw_pct": -1.6103,
+                  "median_net_pnl_pct": -0.6812,
+                  "avg_fund_24h_bps": -9.248
+                },
+                "test_secondhalf": {
+                  "n": 2987,
+                  "wr": 0.3559,
+                  "avg_net_pnl_pct": 0.3662,
+                  "avg_net_pnl_raw_pct": 0.9297,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -10.643
+                }
+              },
+              "top_quintile": {
+                "n": 24495,
+                "wr": 0.3863,
+                "avg_net_pnl_pct": -0.4018,
+                "avg_net_pnl_raw_pct": -0.0361,
+                "median_net_pnl_pct": -0.1,
+                "avg_fund_24h_bps": 1.052,
+                "val_firsthalf": {
+                  "n": 10880,
+                  "wr": 0.3498,
+                  "avg_net_pnl_pct": -2.8923,
+                  "avg_net_pnl_raw_pct": -2.3228,
+                  "median_net_pnl_pct": -0.3352,
+                  "avg_fund_24h_bps": 0.899
+                },
+                "test_secondhalf": {
+                  "n": 13615,
+                  "wr": 0.4155,
+                  "avg_net_pnl_pct": 1.5885,
+                  "avg_net_pnl_raw_pct": 1.7912,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 1.174
+                }
+              }
+            }
+          },
+          "SHORT": {
+            "gradient": {
+              "expected_sign": "negative",
+              "spearman_all": -0.0885,
+              "spearman_val": -0.1208,
+              "spearman_test": -0.0182,
+              "n_val": 16136,
+              "n_test": 19224,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": true,
+              "abs_ge_floor_test": false,
+              "magnitude_stable_both_halves": false
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 6998,
+                "wr": 0.516,
+                "avg_net_pnl_pct": 5.8128,
+                "avg_net_pnl_raw_pct": 2.3512,
+                "median_net_pnl_pct": 1.1038,
+                "avg_fund_24h_bps": -10.765,
+                "val_firsthalf": {
+                  "n": 4459,
+                  "wr": 0.571,
+                  "avg_net_pnl_pct": 8.1643,
+                  "avg_net_pnl_raw_pct": 2.708,
+                  "median_net_pnl_pct": 2.9314,
+                  "avg_fund_24h_bps": -10.022
+                },
+                "test_secondhalf": {
+                  "n": 2539,
+                  "wr": 0.4195,
+                  "avg_net_pnl_pct": 1.683,
+                  "avg_net_pnl_raw_pct": 1.7246,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -12.069
+                }
+              },
+              "top_quintile": {
+                "n": 19447,
+                "wr": 0.4381,
+                "avg_net_pnl_pct": 1.9979,
+                "avg_net_pnl_raw_pct": 1.3987,
+                "median_net_pnl_pct": -0.1,
+                "avg_fund_24h_bps": 1.293,
+                "val_firsthalf": {
+                  "n": 7456,
+                  "wr": 0.4665,
+                  "avg_net_pnl_pct": 4.2493,
+                  "avg_net_pnl_raw_pct": 2.6655,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 1.207
+                },
+                "test_secondhalf": {
+                  "n": 11991,
+                  "wr": 0.4205,
+                  "avg_net_pnl_pct": 0.5979,
+                  "avg_net_pnl_raw_pct": 0.6111,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 1.347
+                }
+              }
+            }
+          }
+        }
+      },
+      "fund_72h": {
+        "n": 82667,
+        "lo_edge_q20": -0.7004,
+        "hi_edge_q80": 0.5778,
+        "by_direction": {
+          "LONG": {
+            "gradient": {
+              "expected_sign": "positive",
+              "spearman_all": 0.0587,
+              "spearman_val": 0.0469,
+              "spearman_test": 0.0066,
+              "n_val": 25197,
+              "n_test": 22110,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": true,
+              "abs_ge_floor_test": false,
+              "magnitude_stable_both_halves": false
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 9518,
+                "wr": 0.3397,
+                "avg_net_pnl_pct": -3.8034,
+                "avg_net_pnl_raw_pct": -0.7883,
+                "median_net_pnl_pct": -0.4309,
+                "avg_fund_24h_bps": -9.447,
+                "val_firsthalf": {
+                  "n": 6700,
+                  "wr": 0.3321,
+                  "avg_net_pnl_pct": -5.5413,
+                  "avg_net_pnl_raw_pct": -1.4873,
+                  "median_net_pnl_pct": -2.0328,
+                  "avg_fund_24h_bps": -8.819
+                },
+                "test_secondhalf": {
+                  "n": 2818,
+                  "wr": 0.3577,
+                  "avg_net_pnl_pct": 0.3285,
+                  "avg_net_pnl_raw_pct": 0.8738,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -10.942
+                }
+              },
+              "top_quintile": {
+                "n": 8793,
+                "wr": 0.3878,
+                "avg_net_pnl_pct": 0.0245,
+                "avg_net_pnl_raw_pct": 0.3019,
+                "median_net_pnl_pct": -0.1,
+                "avg_fund_24h_bps": 1.942,
+                "val_firsthalf": {
+                  "n": 3588,
+                  "wr": 0.3645,
+                  "avg_net_pnl_pct": -2.4928,
+                  "avg_net_pnl_raw_pct": -2.5183,
+                  "median_net_pnl_pct": -0.3457,
+                  "avg_fund_24h_bps": 1.574
+                },
+                "test_secondhalf": {
+                  "n": 5205,
+                  "wr": 0.4038,
+                  "avg_net_pnl_pct": 1.7597,
+                  "avg_net_pnl_raw_pct": 2.246,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 2.195
+                }
+              }
+            }
+          },
+          "SHORT": {
+            "gradient": {
+              "expected_sign": "negative",
+              "spearman_all": -0.0887,
+              "spearman_val": -0.1267,
+              "spearman_test": -0.0113,
+              "n_val": 16136,
+              "n_test": 19224,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": true,
+              "abs_ge_floor_test": false,
+              "magnitude_stable_both_halves": false
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 7016,
+                "wr": 0.5349,
+                "avg_net_pnl_pct": 6.2543,
+                "avg_net_pnl_raw_pct": 1.7701,
+                "median_net_pnl_pct": 1.6963,
+                "avg_fund_24h_bps": -10.479,
+                "val_firsthalf": {
+                  "n": 4671,
+                  "wr": 0.5872,
+                  "avg_net_pnl_pct": 8.402,
+                  "avg_net_pnl_raw_pct": 1.6409,
+                  "median_net_pnl_pct": 3.7349,
+                  "avg_fund_24h_bps": -9.37
+                },
+                "test_secondhalf": {
+                  "n": 2345,
+                  "wr": 0.4307,
+                  "avg_net_pnl_pct": 1.9764,
+                  "avg_net_pnl_raw_pct": 2.0276,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -12.688
+                }
+              },
+              "top_quintile": {
+                "n": 7742,
+                "wr": 0.4253,
+                "avg_net_pnl_pct": 1.6591,
+                "avg_net_pnl_raw_pct": 1.6086,
+                "median_net_pnl_pct": -0.1,
+                "avg_fund_24h_bps": 2.385,
+                "val_firsthalf": {
+                  "n": 2628,
+                  "wr": 0.4349,
+                  "avg_net_pnl_pct": 2.8211,
+                  "avg_net_pnl_raw_pct": 2.6158,
+                  "median_net_pnl_pct": -0.1718,
+                  "avg_fund_24h_bps": 2.342
+                },
+                "test_secondhalf": {
+                  "n": 5114,
+                  "wr": 0.4204,
+                  "avg_net_pnl_pct": 1.062,
+                  "avg_net_pnl_raw_pct": 1.0911,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 2.407
+                }
+              }
+            }
+          }
+        }
+      },
+      "fund_7d_cum": {
+        "n": 82667,
+        "lo_edge_q20": -15.3354,
+        "hi_edge_q80": 13.0895,
+        "by_direction": {
+          "LONG": {
+            "gradient": {
+              "expected_sign": "positive",
+              "spearman_all": 0.0438,
+              "spearman_val": 0.0208,
+              "spearman_test": 0.0022,
+              "n_val": 25197,
+              "n_test": 22110,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": false,
+              "abs_ge_floor_test": false,
+              "magnitude_stable_both_halves": false
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 9492,
+                "wr": 0.3452,
+                "avg_net_pnl_pct": -3.1143,
+                "avg_net_pnl_raw_pct": -0.1092,
+                "median_net_pnl_pct": -0.3009,
+                "avg_fund_24h_bps": -9.173,
+                "val_firsthalf": {
+                  "n": 6605,
+                  "wr": 0.3385,
+                  "avg_net_pnl_pct": -4.6085,
+                  "avg_net_pnl_raw_pct": -0.5349,
+                  "median_net_pnl_pct": -0.6278,
+                  "avg_fund_24h_bps": -8.738
+                },
+                "test_secondhalf": {
+                  "n": 2887,
+                  "wr": 0.3606,
+                  "avg_net_pnl_pct": 0.3043,
+                  "avg_net_pnl_raw_pct": 0.8646,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -10.168
+                }
+              },
+              "top_quintile": {
+                "n": 8735,
+                "wr": 0.3864,
+                "avg_net_pnl_pct": 0.1088,
+                "avg_net_pnl_raw_pct": 0.4272,
+                "median_net_pnl_pct": -0.1,
+                "avg_fund_24h_bps": 1.821,
+                "val_firsthalf": {
+                  "n": 3582,
+                  "wr": 0.3632,
+                  "avg_net_pnl_pct": -2.3805,
+                  "avg_net_pnl_raw_pct": -2.3325,
+                  "median_net_pnl_pct": -0.4656,
+                  "avg_fund_24h_bps": 1.51
+                },
+                "test_secondhalf": {
+                  "n": 5153,
+                  "wr": 0.4025,
+                  "avg_net_pnl_pct": 1.8391,
+                  "avg_net_pnl_raw_pct": 2.3456,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 2.038
+                }
+              }
+            }
+          },
+          "SHORT": {
+            "gradient": {
+              "expected_sign": "negative",
+              "spearman_all": -0.0704,
+              "spearman_val": -0.0942,
+              "spearman_test": -0.0052,
+              "n_val": 16136,
+              "n_test": 19224,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": true,
+              "abs_ge_floor_test": false,
+              "magnitude_stable_both_halves": false
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 7042,
+                "wr": 0.5361,
+                "avg_net_pnl_pct": 5.7864,
+                "avg_net_pnl_raw_pct": 1.2188,
+                "median_net_pnl_pct": 1.665,
+                "avg_fund_24h_bps": -10.174,
+                "val_firsthalf": {
+                  "n": 4563,
+                  "wr": 0.5862,
+                  "avg_net_pnl_pct": 7.6947,
+                  "avg_net_pnl_raw_pct": 0.6222,
+                  "median_net_pnl_pct": 3.5967,
+                  "avg_fund_24h_bps": -9.382
+                },
+                "test_secondhalf": {
+                  "n": 2479,
+                  "wr": 0.4437,
+                  "avg_net_pnl_pct": 2.2739,
+                  "avg_net_pnl_raw_pct": 2.3168,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -11.633
+                }
+              },
+              "top_quintile": {
+                "n": 7799,
+                "wr": 0.424,
+                "avg_net_pnl_pct": 1.9133,
+                "avg_net_pnl_raw_pct": 1.9472,
+                "median_net_pnl_pct": -0.1,
+                "avg_fund_24h_bps": 2.277,
+                "val_firsthalf": {
+                  "n": 2686,
+                  "wr": 0.4367,
+                  "avg_net_pnl_pct": 3.4774,
+                  "avg_net_pnl_raw_pct": 3.5051,
+                  "median_net_pnl_pct": -0.1809,
+                  "avg_fund_24h_bps": 2.215
+                },
+                "test_secondhalf": {
+                  "n": 5113,
+                  "wr": 0.4174,
+                  "avg_net_pnl_pct": 1.0916,
+                  "avg_net_pnl_raw_pct": 1.1288,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 2.31
+                }
+              }
+            }
+          }
+        }
+      },
+      "cs_pctl": {
+        "n": 82667,
+        "lo_edge_q20": 0.1755,
+        "hi_edge_q80": 0.8012,
+        "by_direction": {
+          "LONG": {
+            "gradient": {
+              "expected_sign": "positive",
+              "spearman_all": 0.0207,
+              "spearman_val": 0.0055,
+              "spearman_test": 0.0397,
+              "n_val": 25197,
+              "n_test": 22110,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": false,
+              "abs_ge_floor_test": true,
+              "magnitude_stable_both_halves": false
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 9447,
+                "wr": 0.3518,
+                "avg_net_pnl_pct": -2.021,
+                "avg_net_pnl_raw_pct": 0.4836,
+                "median_net_pnl_pct": -0.2138,
+                "avg_fund_24h_bps": -9.577,
+                "val_firsthalf": {
+                  "n": 5085,
+                  "wr": 0.3361,
+                  "avg_net_pnl_pct": -4.145,
+                  "avg_net_pnl_raw_pct": 0.1472,
+                  "median_net_pnl_pct": -0.7873,
+                  "avg_fund_24h_bps": -11.523
+                },
+                "test_secondhalf": {
+                  "n": 4362,
+                  "wr": 0.37,
+                  "avg_net_pnl_pct": 0.4551,
+                  "avg_net_pnl_raw_pct": 0.8758,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -7.308
+                }
+              },
+              "top_quintile": {
+                "n": 9255,
+                "wr": 0.3741,
+                "avg_net_pnl_pct": -2.1106,
+                "avg_net_pnl_raw_pct": -1.1488,
+                "median_net_pnl_pct": -0.1459,
+                "avg_fund_24h_bps": 1.93,
+                "val_firsthalf": {
+                  "n": 4680,
+                  "wr": 0.3363,
+                  "avg_net_pnl_pct": -5.9241,
+                  "avg_net_pnl_raw_pct": -4.4873,
+                  "median_net_pnl_pct": -1.8719,
+                  "avg_fund_24h_bps": 1.394
+                },
+                "test_secondhalf": {
+                  "n": 4575,
+                  "wr": 0.4127,
+                  "avg_net_pnl_pct": 1.7904,
+                  "avg_net_pnl_raw_pct": 2.2665,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 2.479
+                }
+              }
+            }
+          },
+          "SHORT": {
+            "gradient": {
+              "expected_sign": "negative",
+              "spearman_all": -0.0594,
+              "spearman_val": -0.0568,
+              "spearman_test": -0.0585,
+              "n_val": 16136,
+              "n_test": 19224,
+              "sign_holds_both_halves": true,
+              "abs_ge_floor_val": true,
+              "abs_ge_floor_test": true,
+              "magnitude_stable_both_halves": true
+            },
+            "extreme": {
+              "bottom_quintile": {
+                "n": 7089,
+                "wr": 0.5046,
+                "avg_net_pnl_pct": 4.4309,
+                "avg_net_pnl_raw_pct": 1.2038,
+                "median_net_pnl_pct": 0.3115,
+                "avg_fund_24h_bps": -10.404,
+                "val_firsthalf": {
+                  "n": 3434,
+                  "wr": 0.5635,
+                  "avg_net_pnl_pct": 7.0981,
+                  "avg_net_pnl_raw_pct": 0.3977,
+                  "median_net_pnl_pct": 2.7826,
+                  "avg_fund_24h_bps": -12.553
+                },
+                "test_secondhalf": {
+                  "n": 3655,
+                  "wr": 0.4492,
+                  "avg_net_pnl_pct": 1.9251,
+                  "avg_net_pnl_raw_pct": 1.9612,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": -8.385
+                }
+              },
+              "top_quintile": {
+                "n": 7843,
+                "wr": 0.4557,
+                "avg_net_pnl_pct": 3.7329,
+                "avg_net_pnl_raw_pct": 2.2254,
+                "median_net_pnl_pct": -0.1,
+                "avg_fund_24h_bps": 2.435,
+                "val_firsthalf": {
+                  "n": 3448,
+                  "wr": 0.5116,
+                  "avg_net_pnl_pct": 7.2651,
+                  "avg_net_pnl_raw_pct": 3.7739,
+                  "median_net_pnl_pct": 1.0996,
+                  "avg_fund_24h_bps": 2.008
+                },
+                "test_secondhalf": {
+                  "n": 4395,
+                  "wr": 0.4118,
+                  "avg_net_pnl_pct": 0.9618,
+                  "avg_net_pnl_raw_pct": 1.0106,
+                  "median_net_pnl_pct": -0.1,
+                  "avg_fund_24h_bps": 2.77
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
