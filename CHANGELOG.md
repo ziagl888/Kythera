@@ -1,3 +1,31 @@
+## [2026-07-16] K8 · SET — Settlement-/Tageszeit-Studie über die Fleet (read-only, kein Modell) (T-2026-CU-9050-135)
+
+Neues `tools/settlement_timing_study.py` (read-only) prüft die K8-Hypothese (F9): beeinflusst die
+Entry-Nähe zu den Funding-Settlements (00/08/16 UTC) bzw. die Tageszeit die Expectancy unserer
+Trades? Rein zeit-abgeleitet, **kein Funding-Join nötig** — je Trade wird (a) der vorzeichenbehaftete
+Entry-Offset zum nächsten Settlement (−240…+240 min in 30-min-Buckets) und (b) die Entry-Stunde UTC
+berechnet, dann Expectancy je Bucket × Richtung × Modell-Tag: n, WR, Ø-Netto-PnL (Round-Trip-Fee in,
+winsorisiert UND roh), Median, ein einfaches Bootstrap-CI (1000 Resamples, kein Signifikanz-Theater),
+Monats-Split und ein Chrono-Val/Test-Halbieren. Geteilte Contracts wiederverwendet:
+`walkforward_sim.FEE_PER_SIDE=0.0005` (Round-Trip 0,10 %, keine erfundene Fee) und
+`core/time.LEGACY_WRITER_TZ` — `open_time` ist naiv-lokal Bukarest (TZ-Cluster P2.1–P2.6) und wird
+**DST-korrekt** nach UTC konvertiert (ein Konstant-Offset würde jeden Offset über den 29.03-DST-Sprung
+um eine Stunde verschmieren). Dedup von `closed_ai_signals` auf (symbol, model, direction, open_time)
+mit niedrigster id: 445.750 roh → 88.267 dedup (alle mit gültiger UTC-Zeit analysiert).
+
+**Verdikt: timing-edge-found — aber sign-stabil, magnitude-schwach & stark attenuierend.** 34 stabile
+prefer/avoid-Fenster (18 fleet-weit), definiert als vorzeichen-konsistent über BEIDE Chrono-Hälften mit
+n≥300 und einem Magnitude-Floor |Δ|≥0,5pp/Trade vs. Gruppe×Richtung-Baseline (winsorisierte Means,
+damit kein einzelner Legacy-Tail ein Bucket kippt). Das Muster ist richtungs-kohärent (LONG bevorzugt
+Abend-Stunden 17–23 UTC, SHORT meidet Nacht/Früh 00–04 UTC; SHORT meidet die 0–30 min NACH dem
+Settlement), aber die **Stärke bricht out-of-sample ein**: Median |Δ| val 3,18pp → test 1,00pp
+(val/test ≈ 3,18×) — der K3-Attenuations-Befund wiederholt sich. Darum low-conviction: taugt allenfalls
+als Scan-Minuten-Verschiebung je Bot, **kein hartes Gate**. Wesentliche Confounder dokumentiert (Rule
+9): die Population ist auf tatsächlich eröffnete/geschlossene Trades konditioniert — inkl. der
+**Scan-Schedule je Bot**, die Entries an bestimmten Minuten/Stunden clustert; ein Tageszeit-„Effekt"
+kann ein Kompositions-/Scan-Confound statt echter Mikrostruktur sein. WR allein ist nicht entscheidend
+(Rule 8). Ergebnisse in `staging_models/settlement_timing_study.{json,md}` (Rule 2: nur staging).
+
 ## [2026-07-16] K3 · FRL — Funding-Risk-Layer-Studie über die Fleet (read-only, kein Modell) (T-2026-CU-9050-134)
 
 Neues `tools/funding_risk_study.py` (read-only) prüft die K3-Hypothese: haben Fleet-SHORTs bei
