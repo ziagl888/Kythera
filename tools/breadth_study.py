@@ -361,12 +361,12 @@ def incremental_logit_vs_regime(df: pd.DataFrame) -> dict | None:
     cut = int(len(sub) * 0.7)
     y_tr, y_te = y[:cut], y[cut:]
     auc_reg = _logit_auc(
-        sub[BTC_REGIME_FEATURES].to_numpy(float)[:cut], y_tr,
-        sub[BTC_REGIME_FEATURES].to_numpy(float)[cut:], y_te,
+        sub[BTC_REGIME_FEATURES].to_numpy(float)[:cut],
+        y_tr,
+        sub[BTC_REGIME_FEATURES].to_numpy(float)[cut:],
+        y_te,
     )
-    auc_both = _logit_auc(
-        sub[need].to_numpy(float)[:cut], y_tr, sub[need].to_numpy(float)[cut:], y_te
-    )
+    auc_both = _logit_auc(sub[need].to_numpy(float)[:cut], y_tr, sub[need].to_numpy(float)[cut:], y_te)
     return {
         "target": "RUB-LONG win (net_pnl_pct>0)",
         "split": "chrono 70/30",
@@ -423,9 +423,7 @@ def load_regime_history(conn, max_rows: int | None) -> pd.DataFrame:
     if df.empty:
         return df
     # ts is naive local Bucharest → DST-aware UTC (same recipe as funding_risk_study).
-    localized = pd.to_datetime(df["ts"]).dt.tz_localize(
-        LEGACY_WRITER_TZ, nonexistent="shift_forward", ambiguous="NaT"
-    )
+    localized = pd.to_datetime(df["ts"]).dt.tz_localize(LEGACY_WRITER_TZ, nonexistent="shift_forward", ambiguous="NaT")
     df["ts_utc"] = localized.dt.tz_convert("UTC")
     for c in BTC_REGIME_FEATURES:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -458,12 +456,12 @@ def analyze_regime(df: pd.DataFrame) -> dict:
     tr, te = labelled.iloc[:cut], labelled.iloc[cut:]
     y_tr = (tr["regime"] == TREND_UP).astype(int).to_numpy()
     y_te = (te["regime"] == TREND_UP).astype(int).to_numpy()
-    auc_btc = _logit_auc(
-        tr[BTC_REGIME_FEATURES].to_numpy(float), y_tr, te[BTC_REGIME_FEATURES].to_numpy(float), y_te
-    )
+    auc_btc = _logit_auc(tr[BTC_REGIME_FEATURES].to_numpy(float), y_tr, te[BTC_REGIME_FEATURES].to_numpy(float), y_te)
     auc_both = _logit_auc(
-        tr[BTC_REGIME_FEATURES + present].to_numpy(float), y_tr,
-        te[BTC_REGIME_FEATURES + present].to_numpy(float), y_te,
+        tr[BTC_REGIME_FEATURES + present].to_numpy(float),
+        y_tr,
+        te[BTC_REGIME_FEATURES + present].to_numpy(float),
+        y_te,
     )
     result["incremental_logit"] = {
         "target": "TREND_UP vs rest",

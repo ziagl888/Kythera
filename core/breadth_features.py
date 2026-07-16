@@ -139,9 +139,7 @@ def load_universe_panels(
             continue
         missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
         if missing:
-            raise BreadthFeatureError(
-                f"{sym}_{tf}: fehlende Pflicht-Spalten {missing} — X-R1-Vertrag, kein fillna(0)"
-            )
+            raise BreadthFeatureError(f"{sym}_{tf}: fehlende Pflicht-Spalten {missing} — X-R1-Vertrag, kein fillna(0)")
         df = df.copy()
         df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
         for col in ("close", "volume", "ema_50", "ema_200"):
