@@ -1,3 +1,28 @@
+## [2026-07-16] K3 · FRL — Funding-Risk-Layer-Studie über die Fleet (read-only, kein Modell) (T-2026-CU-9050-134)
+
+Neues `tools/funding_risk_study.py` (read-only) prüft die K3-Hypothese: haben Fleet-SHORTs bei
+extrem-positivem Funding systematisch schlechtere Expectancy (Squeeze), symmetrisch LONGs bei
+extrem-negativem Funding — und **generalisiert das ABR2-Gate** (LONG nur `fund_24h > +3 bps`,
+SHORT-Veto `> +1.5 bps`) fleet-weit? Nutzt die geteilten Contracts: `core/funding_features`
+(as-of-Builder, fund_24h als Zoning-Größe), `walkforward_sim.FEE_PER_SIDE=0.0005` (Round-Trip
+0,10 %, keine erfundene Fee) und `core/time.LEGACY_WRITER_TZ` (open_time = naive Bukarest →
+DST-korrekt nach UTC, kein Konstant-Offset über den 29.03-DST-Sprung). Dedup von
+`closed_ai_signals` auf (symbol, model, direction, open_time) mit niedrigster id: 445.675 roh →
+88.192 dedup, 82.657 mit as-of-Funding.
+
+**Verdikt: edge-found (schwach, richtungsstabil).** Primärtest ist ein monotoner
+Funding→PnL-Gradient (Per-Trade-Spearman, pro Richtung, pro Chrono-Hälfte): LONG +0,059
+(val +0,044 / test +0,017, Vorzeichen>0 in beiden Hälften), SHORT −0,088 (val −0,121 / test
+−0,018, Vorzeichen<0 in beiden Hälften) — beide bestätigen die ABR-Richtung. Zone-Gradient monoton
+und materiell: LONG-Expectancy steigt −3,6 % (extrem-neg) → +1,3 % (extrem-pos), SHORT fällt
++5,7 % → +0,3 %. ABR2-Gate-Check fleet-weit stimmt: LONG in-gate +1,32 % vs. out-gate −1,45 %,
+SHORT in-veto +1,38 % vs. out-veto +3,24 %. **Aber**: Effekt ist schwach (|ρ|≈0,06–0,12) und
+attenuiert in der Test-Hälfte gegen null; der harte SHORT-extrem-positiv-Veto besteht die strikte
+Both-Halves-Stabilität NICHT (Regime-Kompression 2. Hälfte). Fazit: ABR-*Richtung* generalisiert,
+ein harter fleet-weiter Extremzonen-Veto ist damit nicht lizenziert. Ergebnisse in
+`staging_models/funding_risk_study.{json,md}` (Rule 2: nur staging). Bekannter Bias:
+Survivorship (530 Funding- vs. 716 Signal-Symbole).
+
 ## [2026-07-16] Hyper-Read-Backend in core/candles.py — C-Gate Phase 4 (dormant hinter Flag) (T-2026-CU-9050-128)
 
 Der einzige Code-Blocker für den Read-Cutover. `core/candles.py` liest bei
