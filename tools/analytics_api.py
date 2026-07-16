@@ -36,8 +36,10 @@ Invariants:
 from __future__ import annotations
 
 import datetime
+import os
+import threading
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import duckdb
 
@@ -245,7 +247,116 @@ def _parse_bots(raw: str | None) -> list[str] | None:
     return bots or None
 
 
-def create_app(duckdb_path: str | Path):
+# ─────────────────────────────────────────────────────────────────────────────
+# Serving infrastructure — D-2026-CLD-110 stack auflagen (T-2026-CU-9050-136)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Auflage 2 (Amplituden-Budget): the dashboard shares the VPS with ~25 bots, so
+# its DuckDB reads must not grab the whole box. Every read connection is capped
+# to a small thread pool and a hard memory ceiling. (The companion
+# BELOW_NORMAL_PRIORITY_CLASS spawn flag belongs in the watchdog spawn — the
+# Z2/deploy moment — not in this code.)
+DUCKDB_THREADS = 2
+DUCKDB_MEMORY_LIMIT = "512MB"
+
+# Waitress thread pool for the prod serving path (one kill-fest process under
+# the watchdog, D-110). Small on purpose — these are light JSON reads behind a
+# 30-60 s poll from 1-2 tabs.
+WAITRESS_THREADS = 4
+
+
+def connect_ro(
+    path: str | Path,
+    *,
+    threads: int = DUCKDB_THREADS,
+    memory_limit: str = DUCKDB_MEMORY_LIMIT,
+) -> duckdb.DuckDBPyConnection:
+    """Open a throttled read-only DuckDB connection (D-110 Auflage 2).
+
+    ``read_only=True`` keeps readers off the writer's toes (single-writer export
+    job / many-reader dashboard); the two PRAGMAs bound CPU and RAM so a heavy
+    query can never starve the bots sharing the VPS.
+    """
+    con = duckdb.connect(str(path), read_only=True)
+    con.execute(f"PRAGMA threads={int(threads)}")
+    con.execute(f"PRAGMA memory_limit='{memory_limit}'")
+    return con
+
+
+def _file_token(path: str) -> tuple[int, int] | None:
+    """Cheap, connection-free freshness token for the single-writer DuckDB file.
+
+    The exporter refreshes its ``synced_at`` sequence on every run — including a
+    no-new-rows run (see analytics_export ``_write_freshness``) — and that write
+    rewrites the file, so the file's ``(mtime_ns, size)`` is the observable
+    proxy for the synced_at sequence key: unchanged ⇒ the data cannot have
+    changed. Reading it costs one ``stat`` and never opens a connection. Returns
+    None if the file is not there yet (nothing to cache against).
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+_MISS = object()
+
+
+class _PollCache:
+    """In-memory, rebuildable response cache for the Stufe-1 polling endpoints.
+
+    Keyed by the request's parameters, invalidated wholesale whenever the DuckDB
+    file's freshness token advances (see :func:`_file_token`). On an unchanged
+    file a poll is served straight from memory — no DuckDB connection, no
+    re-scan of the trade history — which is the whole point of the 30-60 s
+    poll + server-cache update channel (D-110). The state is a plain dict, fully
+    rebuildable from the file, so the process stays TerminateProcess-safe
+    (D-110 Auflage 1): a hard kill loses nothing.
+    """
+
+    def __init__(
+        self,
+        path: str,
+        *,
+        token: Callable[[str], Any] = _file_token,
+        enabled: bool = True,
+    ) -> None:
+        self._path = path
+        self._token_fn = token
+        self._enabled = enabled
+        self._lock = threading.Lock()
+        self._current: Any = _MISS
+        self._entries: dict[Any, Any] = {}
+
+    def get(self, key: Any, build: Callable[[], Any]) -> Any:
+        """Return the cached payload for ``key``, or ``build()`` it and cache it.
+
+        The whole cache is dropped the moment the file token advances, so a hit
+        is always exact for the current data snapshot.
+        """
+        if not self._enabled:
+            return build()
+        token = self._token_fn(self._path)
+        with self._lock:
+            if token != self._current:
+                self._entries.clear()
+                self._current = token
+            hit = self._entries.get(key, _MISS)
+        if hit is not _MISS:
+            return hit
+        # Build outside the lock — it opens its own DuckDB connection and may be
+        # slow; two concurrent misses for the same key just build twice
+        # (idempotent, read-only) instead of serialising every poll behind one
+        # query.
+        payload = build()
+        with self._lock:
+            if token == self._current:  # still the freshness we built against
+                self._entries[key] = payload
+        return payload
+
+
+def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app exposing the read-only analytics endpoints over ``duckdb_path``.
 
     Each request opens its own read-only DuckDB connection — the file is a
@@ -256,9 +367,10 @@ def create_app(duckdb_path: str | Path):
 
     app = Flask(__name__)
     path = str(duckdb_path)
+    cache = _PollCache(path, enabled=cache_enabled)
 
     def _ro_con() -> duckdb.DuckDBPyConnection:
-        return duckdb.connect(path, read_only=True)
+        return connect_ro(path)
 
     @app.get("/api/analytics/success-rate")
     def success_rate():
@@ -279,40 +391,87 @@ def create_app(duckdb_path: str | Path):
             # that one space instead of silently mixing naive and aware.
             if as_of.tzinfo is not None:
                 as_of = as_of.replace(tzinfo=None)
-        con = _ro_con()
-        try:
-            payload = success_rate_timeseries(con, bots=bots, windows=windows, as_of=as_of)
-        finally:
-            con.close()
-        return jsonify(payload)
+
+        key = (
+            "success-rate",
+            tuple(windows),
+            tuple(bots) if bots else None,
+            as_of.isoformat() if as_of is not None else None,
+        )
+
+        def _build() -> dict[str, Any]:
+            con = _ro_con()
+            try:
+                return success_rate_timeseries(con, bots=bots, windows=windows, as_of=as_of)
+            finally:
+                con.close()
+
+        return jsonify(cache.get(key, _build))
 
     @app.get("/api/analytics/bots")
     def bots():
-        con = _ro_con()
-        try:
-            return jsonify({"bots": available_bots(con)})
-        finally:
-            con.close()
+        def _build() -> dict[str, Any]:
+            con = _ro_con()
+            try:
+                return {"bots": available_bots(con)}
+            finally:
+                con.close()
+
+        return jsonify(cache.get(("bots",), _build))
 
     @app.get("/api/analytics/freshness")
     def freshness():
         from tools.analytics_export import data_freshness
 
-        con = _ro_con()
-        try:
-            return jsonify({"freshness": data_freshness(con)})
-        finally:
-            con.close()
+        def _build() -> dict[str, Any]:
+            con = _ro_con()
+            try:
+                return {"freshness": data_freshness(con)}
+            finally:
+                con.close()
+
+        return jsonify(cache.get(("freshness",), _build))
 
     return app
 
 
-if __name__ == "__main__":  # pragma: no cover
+def _serve(
+    app: Any,
+    *,
+    host: str,
+    port: int,
+    dev: bool = False,
+    serve_fn: Callable[..., None] | None = None,
+) -> None:
+    """Serve ``app``. Prod runs one kill-fest Waitress process under the watchdog
+    (D-110); ``--dev`` falls back to the Flask dev server for local smoke only.
+
+    ``serve_fn`` is injectable so the wiring is verifiable without importing
+    Waitress on the DB-free build machine.
+    """
+    if dev:
+        app.run(host=host, port=port)
+        return
+    resolved = serve_fn
+    if resolved is None:
+        from waitress import serve as waitress_serve
+
+        resolved = waitress_serve
+    resolved(app, host=host, port=port, threads=WAITRESS_THREADS)
+
+
+def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     import argparse
 
     parser = argparse.ArgumentParser(description="Serve the Z1 analytics endpoints (read-only DuckDB)")
     parser.add_argument("--duckdb", default="staging_models/analytics/analytics.duckdb")
     parser.add_argument("--host", default="127.0.0.1")  # never bind public — Z2/B4 gates that
     parser.add_argument("--port", type=int, default=8099)
-    args = parser.parse_args()
-    create_app(args.duckdb).run(host=args.host, port=args.port)
+    parser.add_argument("--dev", action="store_true",
+                        help="Flask dev server instead of Waitress (local smoke only)")
+    args = parser.parse_args(argv)
+    _serve(create_app(args.duckdb), host=args.host, port=args.port, dev=args.dev)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
