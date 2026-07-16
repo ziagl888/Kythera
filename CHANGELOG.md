@@ -1,3 +1,33 @@
+## [2026-07-16] K3 · FRL — Funding-Risk-Layer-Studie über die Fleet (read-only, kein Modell) (T-2026-CU-9050-134)
+
+Neues `tools/funding_risk_study.py` (read-only) prüft die K3-Hypothese: haben Fleet-SHORTs bei
+extrem-positivem Funding systematisch schlechtere Expectancy (Squeeze), symmetrisch LONGs bei
+extrem-negativem Funding — und **generalisiert das ABR2-Gate** (LONG nur `fund_24h > +3 bps`,
+SHORT-Veto `> +1.5 bps`) fleet-weit? Analysiert die **komplette (präskriptive) §K3-Feature-Liste**:
+fund_24h, fund_72h, fund_7d_cum plus eine **echte Cross-Section-Perzentile** `cs_pctl` (Coin zum
+Entry-Zeitpunkt gegen ALLE anderen Coins' as-of fund_24h gerankt — der ABR2-Konstrukt; NICHT die
+Per-Symbol-Selbsthistorie `fund_pctl_90d` des Builders). Nutzt die geteilten Contracts:
+`core/funding_features` (as-of-Builder), `walkforward_sim.FEE_PER_SIDE=0.0005` (Round-Trip 0,10 %,
+keine erfundene Fee) und `core/time.LEGACY_WRITER_TZ` (open_time = naive Bukarest → DST-korrekt
+nach UTC, kein Konstant-Offset über den 29.03-DST-Sprung). Dedup von `closed_ai_signals` auf
+(symbol, model, direction, open_time) mit niedrigster id: 445.685 roh → 88.202 dedup, 82.667 mit
+as-of-Funding (82.826 mit cs_pctl). Mittelwerte werden winsorisiert (1/99-Pct, tail-safe) UND roh
+ausgewiesen — die Roh-/Median-Werte zeigen den SHORT-Squeeze-Tail ungeschnitten.
+
+**Verdikt: direction-confirmed, magnitude-weak** (die ABR-*Richtung* generalisiert fleet-weit, ein
+harter fleet-weiter Extremzonen-Veto ist NICHT lizenziert). Primärtest = Per-Trade-Spearman
+fund_24h↔net-PnL, pro Richtung, pro Chrono-Hälfte, mit **Magnitude-Floor** (|ρ|≥0,03): das
+Vorzeichen ist ABR-konform und stabil über beide Hälften für ALLE vier Features (LONG>0, SHORT<0),
+aber die Stärke ist schwach (|ρ|≈0,06–0,12 in der val-Hälfte) und **attenuiert in der Test-Hälfte
+gegen null** — der Magnitude-Floor wird über beide Hälften nur von **cs_pctl SHORT** gehalten
+(−0,057 val / −0,059 test, bemerkenswert stabil; die Cross-Section ist robuster als absolutes
+Funding). Roh-Means enthüllen den Squeeze: SHORT@extrem-positiv val −16,98 % vs. Baseline +3,57 %,
+kippt aber in der Test-Hälfte auf +2,44 % → nicht both-halves-stabil. ABR2-Gate-Check fleet-weit
+richtungskonform (LONG in-gate > out-gate, SHORT in-veto < out-veto). Q4-Quintil kollabiert (Ties
+am Default-Funding-Satz — dokumentiert, nicht still gedroppt). Ergebnisse in
+`staging_models/funding_risk_study.{json,md}` (Rule 2: nur staging). Bekannter Bias: Survivorship
+(530 Funding- vs. 716 Signal-Symbole).
+
 ## [2026-07-16] Hyper-Read-Backend in core/candles.py — C-Gate Phase 4 (dormant hinter Flag) (T-2026-CU-9050-128)
 
 Der einzige Code-Blocker für den Read-Cutover. `core/candles.py` liest bei
