@@ -15,6 +15,7 @@ from core import config as _kcfg  # channel ids
 from core import shadow_gate
 from core.bot_catalog import active_scripts, script_for_tag
 from core.bot_naming import pretty_name
+from core.candles import read_candles
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
@@ -167,29 +168,33 @@ async def get_volume_data(symbols, hours_ago):
 
     try:
         with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                for sym in symbols:
-                    # FIX (#72): `volume * close` war eine Näherung (volume ist Coin-Menge,
-                    # close ist End-Preis). Binance liefert quote_volume direkt, aber das
-                    # ist nicht in unserer DB saved. Als bessere Näherung nutzen wir
-                    # jetzt den MID-Preis (open + close)/2 statt nur close — reduziert
-                    # Error for Kerzen mit großer Intra-Candle-Bewegung.
-                    query = f"""
-                        SELECT
-                            COALESCE(SUM(volume * (open + close) / 2), 0),
-                            COALESCE(SUM(CASE WHEN close >= open THEN volume * (open + close) / 2 ELSE 0 END), 0),
-                            COALESCE(SUM(CASE WHEN close < open THEN volume * (open + close) / 2 ELSE 0 END), 0)
-                        FROM "{sym}_30m" WHERE open_time >= %s AND open_time <= %s
-                    """
-                    try:
-                        cur.execute(query, (start, now))
-                        row = cur.fetchone()
-                        if row:
-                            usd_totals += float(row[0])
-                            buy_totals += float(row[1])
-                            sell_totals += float(row[2])
-                    except Exception:
-                        conn.rollback()
+            for sym in symbols:
+                # FIX (#72): `volume * close` war eine Näherung (volume ist Coin-Menge,
+                # close ist End-Preis). Binance liefert quote_volume direkt, aber das
+                # ist nicht in unserer DB saved. Als bessere Näherung nutzen wir
+                # jetzt den MID-Preis (open + close)/2 statt nur close — reduziert
+                # Error for Kerzen mit großer Intra-Candle-Bewegung.
+                # R1: `FROM "{sym}_30m"` → core.candles. include_forming=True (price/
+                # volume monitor read, harte Regel 5). The SUM/CASE aggregation moves to
+                # pandas over the Decimal (NUMERIC) OHLCV, so float() of the sum stays
+                # byte-equal to the SQL SUM. Empty window ⇒ no rows added (== COALESCE 0).
+                try:
+                    df = read_candles(
+                        conn,
+                        sym,
+                        "30m",
+                        start=start,
+                        end=now,
+                        include_forming=True,
+                        columns=["open_time", "open", "close", "volume"],
+                    )
+                    if not df.empty:
+                        mid = df["volume"] * (df["open"] + df["close"]) / 2
+                        usd_totals += float(mid.sum())
+                        buy_totals += float(mid[df["close"] >= df["open"]].sum())
+                        sell_totals += float(mid[df["close"] < df["open"]].sum())
+                except Exception:
+                    conn.rollback()
     except Exception:
         pass
     return usd_totals, buy_totals, sell_totals
@@ -202,21 +207,29 @@ async def get_price_change(symbols, hours_ago):
 
     try:
         with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                for sym in symbols:
-                    try:
-                        cur.execute(
-                            f'SELECT close FROM "{sym}_30m" WHERE open_time >= %s ORDER BY open_time ASC LIMIT 1',
-                            (start,),
-                        )
-                        r_old = cur.fetchone()
-                        cur.execute(f'SELECT close FROM "{sym}_30m" ORDER BY open_time DESC LIMIT 1')
-                        r_new = cur.fetchone()
-                        if r_old and r_new and float(r_old[0]) > 0:
-                            total_change += ((float(r_new[0]) - float(r_old[0])) / float(r_old[0])) * 100
+            for sym in symbols:
+                # R1: two `FROM "{sym}_30m"` reads (oldest close in window + latest close
+                # overall) collapse into one core.candles window read: the ASC frame's
+                # first row is the oldest ≥ start, its last row is the latest candle
+                # (the window runs to now), == the old `ORDER BY DESC LIMIT 1` subquery.
+                # include_forming=True (monitor price check).
+                try:
+                    df = read_candles(
+                        conn,
+                        sym,
+                        "30m",
+                        start=start,
+                        include_forming=True,
+                        columns=["open_time", "close"],
+                    )
+                    if not df.empty:
+                        old_c = float(df["close"].iloc[0])
+                        new_c = float(df["close"].iloc[-1])
+                        if old_c > 0:
+                            total_change += ((new_c - old_c) / old_c) * 100
                             valid_coins += 1
-                    except Exception:
-                        conn.rollback()
+                except Exception:
+                    conn.rollback()
     except Exception:
         pass
     return (total_change / valid_coins) if valid_coins > 0 else 0.0
@@ -291,35 +304,38 @@ async def job_gainers_losers():
 
     try:
         with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                for sym in coins:
-                    try:
-                        # Holt die gesamten letzten 24h für den Coin in einem Rutsch
-                        cur.execute(
-                            f'SELECT open_time, close FROM "{sym}_30m" WHERE open_time >= %s ORDER BY open_time ASC',
-                            (t24,),
-                        )
-                        rows = cur.fetchall()
-                        if not rows:
-                            continue
-                        df = pd.DataFrame(rows, columns=['ot', 'c'])
+            for sym in coins:
+                try:
+                    # Holt die gesamten letzten 24h für den Coin in einem Rutsch.
+                    # R1: `FROM "{sym}_30m"` → core.candles (include_forming=True, monitor).
+                    df = read_candles(
+                        conn,
+                        sym,
+                        "30m",
+                        start=t24,
+                        include_forming=True,
+                        columns=["open_time", "close"],
+                    )
+                    if df.empty:
+                        continue
+                    df = df.rename(columns={"open_time": "ot", "close": "c"})
 
-                        curr_p = df['c'].iloc[-1]
-                        p24 = df['c'].iloc[0]
+                    curr_p = df['c'].iloc[-1]
+                    p24 = df['c'].iloc[0]
 
-                        df_4h = df[df['ot'] >= t4]
-                        p4 = df_4h['c'].iloc[0] if not df_4h.empty else curr_p
+                    df_4h = df[df['ot'] >= t4]
+                    p4 = df_4h['c'].iloc[0] if not df_4h.empty else curr_p
 
-                        df_1h = df[df['ot'] >= t1]
-                        p1 = df_1h['c'].iloc[0] if not df_1h.empty else curr_p
+                    df_1h = df[df['ot'] >= t1]
+                    p1 = df_1h['c'].iloc[0] if not df_1h.empty else curr_p
 
-                        c1 = ((curr_p - p1) / p1) * 100 if p1 > 0 else 0
-                        c4 = ((curr_p - p4) / p4) * 100 if p4 > 0 else 0
-                        c24 = ((curr_p - p24) / p24) * 100 if p24 > 0 else 0
+                    c1 = ((curr_p - p1) / p1) * 100 if p1 > 0 else 0
+                    c4 = ((curr_p - p4) / p4) * 100 if p4 > 0 else 0
+                    c24 = ((curr_p - p24) / p24) * 100 if p24 > 0 else 0
 
-                        stats.append({'sym': sym.replace("USDT", ""), '1h': c1, '4h': c4, '24h': c24})
-                    except Exception:
-                        conn.rollback()
+                    stats.append({'sym': sym.replace("USDT", ""), '1h': c1, '4h': c4, '24h': c24})
+                except Exception:
+                    conn.rollback()
     except Exception:
         pass
 
@@ -379,37 +395,54 @@ async def job_volume_spikes():
 
     try:
         with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                for sym in coins:
-                    try:
-                        cur.execute(
-                            f'SELECT SUM(volume), (SELECT close FROM "{sym}_30m" ORDER BY open_time DESC LIMIT 1) FROM "{sym}_30m" WHERE open_time >= %s',
-                            (t4,),
-                        )
-                        r = cur.fetchone()
-                        if not r or not r[0]:
-                            continue
+            for sym in coins:
+                try:
+                    # R1: `FROM "{sym}_30m"` → core.candles (include_forming=True, monitor).
+                    # SUM(volume) moves to pandas over the Decimal volume; the old
+                    # `(SELECT close DESC LIMIT 1)` global-latest == the ASC frame's last row.
+                    df4 = read_candles(
+                        conn,
+                        sym,
+                        "30m",
+                        start=t4,
+                        include_forming=True,
+                        columns=["open_time", "close", "volume"],
+                    )
+                    if df4.empty:
+                        continue
+                    vol_4h = df4["volume"].sum()
+                    if not vol_4h:
+                        continue
 
-                        usd_4h = float(r[0]) * float(r[1])
-                        if usd_4h < 250000:
-                            continue  # Mindestens 250k Volumen
+                    usd_4h = float(vol_4h) * float(df4["close"].iloc[-1])
+                    if usd_4h < 250000:
+                        continue  # Mindestens 250k Volumen
 
-                        cur.execute(
-                            f'SELECT SUM(volume) FROM "{sym}_30m" WHERE open_time >= %s AND open_time < %s', (t7, t4)
-                        )
-                        r7 = cur.fetchone()
-                        if not r7 or not r7[0]:
-                            continue
+                    # [t7, t4): core.candles' end is INCLUSIVE, the old query used
+                    # `open_time < t4`, so read [t7, t4] and drop the boundary candle.
+                    df7 = read_candles(
+                        conn,
+                        sym,
+                        "30m",
+                        start=t7,
+                        end=t4,
+                        include_forming=True,
+                        columns=["open_time", "volume"],
+                    )
+                    df7 = df7[df7["open_time"] < t4]
+                    vol_7d = df7["volume"].sum() if not df7.empty else 0
+                    if not vol_7d:
+                        continue
 
-                        avg_4h_vol_over_7d = float(r7[0]) / 42.0  # 7 Tage = 42x 4h-Perioden
-                        if avg_4h_vol_over_7d <= 0:
-                            continue
+                    avg_4h_vol_over_7d = float(vol_7d) / 42.0  # 7 Tage = 42x 4h-Perioden
+                    if avg_4h_vol_over_7d <= 0:
+                        continue
 
-                        ratio = float(r[0]) / avg_4h_vol_over_7d
-                        if ratio >= 2.5:  # Zeigt alles ab 2.5x
-                            spikes.append({'sym': sym.replace("USDT", ""), 'rat': ratio, 'usd': usd_4h})
-                    except Exception:
-                        conn.rollback()
+                    ratio = float(vol_4h) / avg_4h_vol_over_7d
+                    if ratio >= 2.5:  # Zeigt alles ab 2.5x
+                        spikes.append({'sym': sym.replace("USDT", ""), 'rat': ratio, 'usd': usd_4h})
+                except Exception:
+                    conn.rollback()
     except Exception:
         pass
 
@@ -442,26 +475,35 @@ async def job_volatile_coins():
 
     try:
         with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                for sym in coins:
-                    try:
-                        cur.execute(
-                            f'SELECT MAX(high), MIN(low), (SELECT close FROM "{sym}_30m" ORDER BY open_time DESC LIMIT 1) FROM "{sym}_30m" WHERE open_time >= %s',
-                            (t4,),
-                        )
-                        r = cur.fetchone()
-                        if not r or not r[0] or not r[1]:
-                            continue
+            for sym in coins:
+                try:
+                    # R1: `FROM "{sym}_30m"` → core.candles (include_forming=True, monitor).
+                    # MAX(high)/MIN(low) move to pandas over the Decimal OHLC (element-wise
+                    # max/min == the SQL aggregate); the old global-latest close subquery
+                    # == the ASC frame's last row.
+                    dfg = read_candles(
+                        conn,
+                        sym,
+                        "30m",
+                        start=t4,
+                        include_forming=True,
+                        columns=["open_time", "high", "low", "close"],
+                    )
+                    if dfg.empty:
+                        continue
+                    h_max, low_min = dfg["high"].max(), dfg["low"].min()
+                    if not h_max or not low_min:
+                        continue
 
-                        h, low, c = float(r[0]), float(r[1]), float(r[2])
-                        if low <= 0:
-                            continue
+                    h, low, c = float(h_max), float(low_min), float(dfg["close"].iloc[-1])
+                    if low <= 0:
+                        continue
 
-                        range_pct = ((h - low) / low) * 100
-                        if range_pct >= 5.0:  # Zeigt alles über 5% Range
-                            volatile.append({'sym': sym.replace("USDT", ""), 'r': range_pct, 'h': h, 'l': low, 'c': c})
-                    except Exception:
-                        conn.rollback()
+                    range_pct = ((h - low) / low) * 100
+                    if range_pct >= 5.0:  # Zeigt alles über 5% Range
+                        volatile.append({'sym': sym.replace("USDT", ""), 'r': range_pct, 'h': h, 'l': low, 'c': c})
+                except Exception:
+                    conn.rollback()
     except Exception:
         pass
 

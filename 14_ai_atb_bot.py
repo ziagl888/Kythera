@@ -26,7 +26,7 @@ import scipy.stats as stats
 from core import atb2_features as atb
 from core import config as _kcfg  # channel ids
 from core import shadow_gate
-from core.candles import read_candles
+from core.candles import read_candles, read_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
@@ -409,21 +409,17 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
 # 🎨 MEGAGEILER INFO-CHART FUNKTION
 def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
     try:
-        df_7d = pd.read_sql_query(
-            f'SELECT * FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'8 days\' ORDER BY open_time ASC',
-            conn,
-            parse_dates=['open_time'],
+        # R1: the three `SELECT *` chart reads → core.candles. Default columns give
+        # the legacy per-coin SELECT * shape; columns=None on read_indicators is the
+        # full indicator SELECT *. include_forming=True keeps the old no-closed-filter
+        # behaviour (a chart shows the live forming bar). The 8d/95d starts are soft
+        # bounds, so Python-vs-DB now() skew cannot straddle an hourly candle.
+        now = datetime.datetime.now(datetime.timezone.utc)
+        df_7d = read_candles(conn, symbol, "1h", start=now - datetime.timedelta(days=8), include_forming=True)
+        df_ind = read_indicators(
+            conn, symbol, "1h", start=now - datetime.timedelta(days=8), include_forming=True, columns=None
         )
-        df_ind = pd.read_sql_query(
-            f'SELECT * FROM "{symbol}_1h_indicators" WHERE open_time >= NOW() - INTERVAL \'8 days\' ORDER BY open_time ASC',
-            conn,
-            parse_dates=['open_time'],
-        )
-        df_90d = pd.read_sql_query(
-            f'SELECT * FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL \'95 days\' ORDER BY open_time ASC',
-            conn,
-            parse_dates=['open_time'],
-        )
+        df_90d = read_candles(conn, symbol, "1h", start=now - datetime.timedelta(days=95), include_forming=True)
 
         if df_7d.empty or df_ind.empty:
             return None
@@ -758,8 +754,17 @@ def run_trendline_detector():
                 continue
 
             try:
-                query = f"""SELECT open_time, open, high, low, close, volume FROM "{symbol}_1h" WHERE open_time >= NOW() - INTERVAL '95 days' ORDER BY open_time ASC"""
-                df_90d = pd.read_sql_query(query, conn, parse_dates=['open_time'])
+                # R1: `FROM "{symbol}_1h"` → core.candles. include_forming=True keeps
+                # the old no-closed-filter behaviour (df_recent.tail(4) intentionally
+                # includes the live forming bar). 95d start is a soft bound.
+                df_90d = read_candles(
+                    conn,
+                    symbol,
+                    "1h",
+                    start=now - datetime.timedelta(days=95),
+                    include_forming=True,
+                    columns=["open_time", "open", "high", "low", "close", "volume"],
+                )
                 if len(df_90d) < 50:
                     stats_dict["no_data"] += 1
                     continue

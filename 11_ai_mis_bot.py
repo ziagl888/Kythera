@@ -20,8 +20,8 @@ from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.mis_features import (
     BINARY_FLAG_FEATURES,
-    RAW_LINE_COLS,
-    RSI_COLS,
+    MIS_INDICATOR_COLUMNS,
+    MIS_RENAME_MAP,
     add_advanced_features,
     assert_features_alive,
 )
@@ -204,20 +204,10 @@ def _fetch_mis_frame(conn, symbol):
 
     R1 (Block 4): liest geschlossene Kerzen via core.candles (ASC, forming bar
     dropped — kein manuelles reverse mehr). Die API liefert die ROHEN
-    Indikatornamen; die drei MIS_SQL_INDICATOR_SELECT-Aliase (tsi_fast, macd_dif,
-    macd_dea) werden nach dem Read reproduziert, damit der Frame byte-gleich zur
-    geteilten SELECT-Liste (und damit zu tools/walkforward_sim.py) bleibt und
-    add_advanced_features seine REQUIRED_INPUT_COLS findet."""
-    indicator_cols = (
-        RSI_COLS
-        + RAW_LINE_COLS
-        + [
-            "tsi_fast_12_7_7",
-            "macd_dif_normal_12_26_9",
-            "macd_dea_normal_12_26_9",
-            "atr_14",
-        ]
-    )
+    Indikatornamen; MIS_RENAME_MAP reproduziert danach die drei tsi/macd-Aliase,
+    damit der Frame byte-gleich zur geteilten MIS_INDICATOR_COLUMNS-Liste (und
+    damit zu tools/walkforward_sim.py) bleibt und add_advanced_features seine
+    REQUIRED_INPUT_COLS findet (harte Regel 7, EINE Quelle in core.mis_features)."""
     df = read_candles_with_indicators(
         conn,
         symbol,
@@ -225,17 +215,11 @@ def _fetch_mis_frame(conn, symbol):
         limit=100,
         include_forming=False,
         candle_columns=("open_time", "close", "volume"),
-        indicator_columns=indicator_cols,
+        indicator_columns=MIS_INDICATOR_COLUMNS,
     )
     if len(df) < 10:
         return None
-    return df.rename(
-        columns={
-            "tsi_fast_12_7_7": "tsi_fast",
-            "macd_dif_normal_12_26_9": "macd_dif",
-            "macd_dea_normal_12_26_9": "macd_dea",
-        }
-    )
+    return df.rename(columns=MIS_RENAME_MAP)
 
 
 def check_mis_models():
