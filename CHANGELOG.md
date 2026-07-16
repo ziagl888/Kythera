@@ -27,6 +27,25 @@ Smoke: Mini-Datensatz (600 synthetische Events) → Retrain-Scaffold end-to-end 
 **CODE-PREP: kein echter Retrain, kein Bot** — der Voll-Retrain (Ein-Job-Regel) und der Bot-31-Exit-Loop
 (Close-Command → `telegram_outbox`, `closed_ai_signals status='CLOSED_FUNDING_NORMALIZED'`, `CH_FMR1`) sind
 Operator-gegated (Michi) und NICHT ausgeführt.
+## [2026-07-17] K2 · XSM1/XSR1 — Cross-Section Momentum/Reversal-Studie (Code-Prep) (T-2026-CU-9050-143)
+
+Neues read-only Studien-Skript `tools/xs_momentum_study.py` gebaut (Code-Prep, **Full-Run offen** —
+gehört in einen Orchestrator-gegateten Ein-Job-Slot, hier nur Smoke). Zweistufige Cross-Section-Studie
+auf 1d-Kandles über die ~430d-Historie: Formations-Fenster F∈{7,14,28,56,84}d × Halte-Fenster
+H∈{7,14,28}d, wöchentliches Rebalance-Raster, je Zelle **zwei Signal-Varianten** (roher F-Return /
+Anchored = Distanz zum Formations-Low, F5) × **zwei Bezugsgrößen** (absolut / marktneutral =
+Coin−BTC) × **zwei Richtungen** (XSM1-LONG Top-Dezil / XSR1-SHORT Top-Dezil-Reversal) = 120 Zellen.
+Liquiditätsfilter (unteres Volumen-Terzil via Median-Quote-Volumen über F ausgeschlossen). Stufe 1
+= Dezil-Spreads Close-to-Close über H, netto mit Fees (Regel 10, `walkforward_sim.FEE_PER_SIDE`) plus
+Short-Seiten-Funding aus `funding_rates` (Short erhält +Σ funding_rate, zahlt bei negativem Funding).
+Chrono Val/Test-Split (BTC-1d-Mittelpunkt), Zellenauswahl NUR auf Val. Stufe 2 (nur Val-positive
+Zellen) = Event-Replay mit unserer Geometrie (`get_hvn_and_sr_levels(df=as-of)` → `simulate_exit`,
+Entry = erster 1h-Close nach Rebalance, strikt as-of). Stop-Kriterium → No-op-Verdikt gültig.
+Resume/Checkpoint-Maschinerie (Streaming-Akkumulatoren O(cells), atomic State im OS-Temp-Dir NICHT im
+Repo, `--resume`) nach dem Muster von `tools/tsmom_study.py`; RAM-Guard + Peak-RSS im Report.
+Smoke-verifiziert (`--limit-symbols 4 --max-weeks 6 --skip-cpu-check`, Exit 0, alle 120 Zellen,
+Status `partial (sampling cap)`, Verdikt `no-op/structure-does-not-replicate`). Survivorship (Regel 9,
+hier am stärksten) dokumentiert, `fill_method=None`. Artefakte nach `staging_models/` (Regel 2/7).
 
 ## [2026-07-17] Merge-Train: CHANGELOG.md union-Merge-Driver gegen serielle Rebase-Konflikte (T-2026-CU-9050-142)
 
