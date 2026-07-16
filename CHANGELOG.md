@@ -88,6 +88,44 @@ heute in `coins.json` handelbare Coins, delistete Paare fehlen. Nur geschlossene
 trailing/as-of; exakte Quantile (Median/p5/p95) bewusst weggelassen (unvereinbar mit dem O(Zellen)-
 Speicherbudget, nicht verdikt-tragend — n, WR und Ø-Netto sind exakt). Ergebnisse in
 `staging_models/tsmom_study.{json,md}` (Regel 2: nur staging).
+## [2026-07-16] K6 · BRD — Markt-Breadth/Dispersion-Feature-Builder + Studie (CODE-PREP, Full-Run offen) (T-2026-CU-9050-140)
+## [2026-07-16] K6 · BRD — Markt-Breadth/Dispersion: Full-Run-Verdikt „weak/mixed, nicht deploybar" (T-2026-CU-9050-140)
+
+Geteilter X-R1-Builder `core/breadth_features.py` + read-only Studie `tools/breadth_study.py` (§K6).
+Der Builder rechnet as-of über das USDT-Perp-Universum (1d-Kerzen + `_indicators`, EMA50/EMA200) elf
+Breadth/Dispersion-Features: Anteil Coins > EMA200 / > EMA50, Median-7d-Return, Advance/Decline-Ratio,
+Return-Dispersion vs. BTC sowie einen **TOTAL3-Preis-Proxy OHNE BTC/ETH** gleich- UND volumengewichtet
+(Level Basis 100, Abstand zur 90d-Regression, 90d-Breakout). **Ehrlichkeits-Hinweis:** keine echten
+Marktkap-Gewichte — der Preis-Index über ~530 Perps ist ein PROXY. **Effizienz:** EINE Query je Coin
+(`load_universe_panels`), Cross-Section-Gerüst EINMAL in-memory (`build_breadth_panel`), As-of =
+O(log n)-Lookup ins Tagespanel; R1 (nur geschlossene Kerzen, D+1d ≤ ts, kein Lookahead). X-R1-Vertrag:
+fehlende SPALTEN ⇒ `BreadthFeatureError`, NIE `fillna(0)`; fehlende WERTE = Ausschluss aus der
+Cross-Section (nicht Null). Survivorship-safe: `pct_change(fill_method=None)` (kein Forward-Fill
+delisteter Coins → keine fabrizierten 0-Returns), Dispersion ohne BTC-Eigenspalte.
+
+**Resume-/Checkpoint-Maschinerie** (der Live-Watchdog reapt Fremd-Python reproduzierbar — Muster wie
+K1/`tsmom_study.py`): Checkpoint-Einheit ist das per-Coin-Tagespanel (kill-anfällige Ladephase = EINE
+DB-Query je Coin); alle 25 Coins werden der kompakte Panel-Store + die processed-Menge atomar in einen
+transienten JSON-State im OS-TEMP (nie im Repo) geschrieben. `--resume` überspringt bereits geladene
+Coins und faltet den Rest; ein Kill zwischen Checkpoints lädt nur den <25-Coin-Schwanz neu (idempotent,
+per Symbol → kein Doppelzählen). Phase 2 (Build+Analyse) ist re-entrant; RAM-Guard bricht < 500 MB ab,
+Speicher gedeckelt (~18 MB Store, Peak-RSS 187 MB), State bei sauberem Exit gelöscht. Der Full-Run lief
+read-only + BELOW_NORMAL in EINEM Anlauf durch (527/530 Coins, 3 delisted; kein Watchdog-Kill nötig).
+
+**VERDIKT (§K6, ehrlich, dreiwertig): `weak/mixed-breadth-signal (not deployable)`.** Datenbasis:
+21.604 RUB-LONG-Events (`rub_replay_365d.jsonl`, gestreamt, kein neuer Sim), 873 Tages-Breadth-Zeilen,
+71.588 `regime_history`-Zeilen. (a) Das entscheidende Head-to-Head — Win-Logit RUB-LONG (net_pnl>0),
+Chrono-70/30 — hebt die Test-AUC von 0,580 (nur BTC-Regime) auf 0,622 mit Breadth (Δ **+0,042**,
+n_test=3.641, Overlap 12.134 ab regime_history-Start 18.01.). Aber die Stützung fehlt: nur **2 von 11**
+Features sind OOS sign+magnitude-stabil (`brd_adv_decline_ratio`, `total3_vw_dist_reg90d`, beide
+grenzwertig), **6 kippen** das Vorzeichen val→test (Overfit-Signatur, z. B. `total3_ew_level`
+val +0,075 → test −0,224). (b) Der unabhängige `regime_history`-TREND_UP-Test WIDERSPRICHT: Breadth
+SENKT die Test-AUC 0,824 → 0,677 (Δ **−0,147**). Zwei OOS-Tests uneins ⇒ kein sauberer, robuster Edge —
+§K6-Nah-No-op. RUB-LONG ist über die Monate im Schnitt negativ (Ø net −0,62 %, WR 0,45). **Der Builder
+bleibt als Infrastruktur** (HMM T-020, Whitelist-Umbau §23); ein RUB-LONG-Breadth-Gate ist NICHT
+lizenziert und wäre ohnehin Operator-Entscheid (Michi). Artefakte: `staging_models/breadth_study.{json,md}`
+(voller Lauf, kein SMOKE-Header). Geteilte Contracts wiederverwendet
+(`read_candles_with_indicators` include_forming=False, `LEGACY_WRITER_TZ`, `walkforward_sim`).
 
 ## [2026-07-16] K15 · SRX — Scratch-Reload-Exit-Studie auf ABR-Events (read-only, kein Modell) (T-2026-CU-9050-137)
 
