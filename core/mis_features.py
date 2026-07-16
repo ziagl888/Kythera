@@ -49,19 +49,20 @@ RSI_COLS = ["rsi_6", "rsi_9", "rsi_12", "rsi_14", "rsi_24"]
 # tsi_fast_12_7_7→tsi_fast, macd_*_normal_12_26_9→macd_dif/macd_dea).
 REQUIRED_INPUT_COLS = ["close", "volume"] + RSI_COLS + RAW_LINE_COLS + ["tsi_fast", "macd_dif", "macd_dea", "atr_14"]
 
-# Gemeinsame SELECT-Liste für Bot und Simulator (h = Kerzen-Tabelle, i = Indikator-Join).
-MIS_SQL_INDICATOR_SELECT = """
-    i.rsi_6, i.rsi_9, i.rsi_12, i.rsi_14, i.rsi_24,
-    i.ema_7, i.ema_9, i.ema_12, i.ema_21, i.ema_26, i.ema_34, i.ema_50, i.ema_55, i.ema_89, i.ema_99, i.ema_200,
-    i.wma_7, i.wma_9, i.wma_12, i.wma_21, i.wma_26, i.wma_34, i.wma_50, i.wma_55, i.wma_89, i.wma_99, i.wma_200,
-    i.kama_7, i.kama_9, i.kama_12, i.kama_21, i.kama_26, i.kama_34, i.kama_50, i.kama_55, i.kama_89, i.kama_99,
-    i.boll_upper_20, i.boll_mid_20, i.boll_lower_20,
-    i.donchian_upper_20, i.donchian_mid_20, i.donchian_lower_20,
-    i.tsi_fast_12_7_7 AS tsi_fast,
-    i.macd_dif_normal_12_26_9 AS macd_dif,
-    i.macd_dea_normal_12_26_9 AS macd_dea,
-    i.atr_14
-"""
+# Gemeinsame Indikator-Spalten für Bot und Simulator — EINE Quelle (harte Regel 7:
+# Trainer == Serving). Rohe DB-Namen (kein SQL-Aliasing mehr): read_candles_with_
+# indicators liefert sie, danach reproduziert MIS_RENAME_MAP die drei Aliase, die
+# add_advanced_features in REQUIRED_INPUT_COLS erwartet. R1: ersetzt die alte
+# MIS_SQL_INDICATOR_SELECT (i.-präfigierte JOIN-SELECT-Liste), damit weder 11_ai_mis
+# noch tools/walkforward_sim die Per-Coin-Tabellen direkt lesen (C-Gate Phase 5).
+MIS_INDICATOR_COLUMNS = (
+    RSI_COLS + RAW_LINE_COLS + ["tsi_fast_12_7_7", "macd_dif_normal_12_26_9", "macd_dea_normal_12_26_9", "atr_14"]
+)
+MIS_RENAME_MAP = {
+    "tsi_fast_12_7_7": "tsi_fast",
+    "macd_dif_normal_12_26_9": "macd_dif",
+    "macd_dea_normal_12_26_9": "macd_dea",
+}
 
 # ── Feature-Katalog (explizit, geordnet — Artefakt-meta speichert ihn mit) ───
 DELTA_FEATURES = [f"{c}_delta_1" for c in RSI_COLS] + [

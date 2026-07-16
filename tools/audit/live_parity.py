@@ -13,7 +13,9 @@ warnings.filterwarnings("ignore")
 import joblib
 import pandas as pd
 import numpy as np
+from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
+from core.mis_features import MIS_INDICATOR_COLUMNS, MIS_RENAME_MAP
 
 # --- replicate bot code exactly (copied from 11_ai_mis_bot.py) ---
 def pct_distance(price_series, indicator_series):
@@ -78,29 +80,20 @@ SUS = ["ema_9_cross_above_21_dist_pct", "boll_upper_dist_atr_dist_pct",
        "above_ema_200_dist_pct"]
 
 for symbol in symbols:
-    query = f"""
-        SELECT
-            h.open_time, h.close, h.volume,
-            i.rsi_6, i.rsi_9, i.rsi_12, i.rsi_14, i.rsi_24,
-            i.ema_7, i.ema_9, i.ema_12, i.ema_21, i.ema_26, i.ema_34, i.ema_50, i.ema_55, i.ema_89, i.ema_99, i.ema_200,
-            i.wma_7, i.wma_9, i.wma_12, i.wma_21, i.wma_26, i.wma_34, i.wma_50, i.wma_55, i.wma_89, i.wma_99, i.wma_200,
-            i.kama_7, i.kama_9, i.kama_12, i.kama_21, i.kama_26, i.kama_34, i.kama_50, i.kama_55, i.kama_89, i.kama_99,
-            i.boll_upper_20, i.boll_mid_20, i.boll_lower_20,
-            i.donchian_upper_20, i.donchian_mid_20, i.donchian_lower_20,
-            i.tsi_fast_12_7_7 AS tsi_fast,
-            i.macd_dif_normal_12_26_9 AS macd_dif,
-            i.macd_dea_normal_12_26_9 AS macd_dea,
-            i.atr_14
-        FROM "{symbol}_1h" h
-        LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time
-        ORDER BY h.open_time DESC LIMIT 100
-    """
-    with conn.cursor() as cur:
-        cur.execute(query)
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-    df = pd.DataFrame(rows, columns=columns)
-    df = df.iloc[::-1].reset_index(drop=True)
+    # R1: h⋈i JOIN → core.candles, indicator side = the shared MIS_INDICATOR_COLUMNS
+    # (+ MIS_RENAME_MAP aliases), same source as 11_ai_mis/walkforward. The API returns
+    # ASC (newest 100), so the old `ORDER BY DESC LIMIT 100` + iloc[::-1] reverse is
+    # gone. include_forming=True keeps the forming candle this parity check inspects.
+    df = read_candles_with_indicators(
+        conn,
+        symbol,
+        "1h",
+        limit=100,
+        include_forming=True,
+        candle_columns=("open_time", "close", "volume"),
+        indicator_columns=MIS_INDICATOR_COLUMNS,
+    ).rename(columns=MIS_RENAME_MAP)
+    columns = list(df.columns)
 
     # check indicator NaNs on last (forming) candle BEFORE fillna
     raw_last = df.iloc[-1]

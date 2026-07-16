@@ -57,7 +57,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -76,7 +76,8 @@ from core.mis_features import (
     LEGACY_ONLY_COLS as MIS1_LEGACY_COLS,
 )
 from core.mis_features import (
-    MIS_SQL_INDICATOR_SELECT,
+    MIS_INDICATOR_COLUMNS,
+    MIS_RENAME_MAP,
 )
 from core.mis_features import (
     add_advanced_features as mis1_add_features,
@@ -682,22 +683,29 @@ def load_mis1_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
     """1h-Kerzen + Indikator-Join mit der geteilten Spaltenliste aus
     core.mis_features. NUR geschlossene Kerzen (R1-Disziplin) — die laufende
     Stunde fliegt am date_trunc-Filter raus."""
+    # R1: the h⋈i JOIN → read_candles_with_indicators. The candle side keeps full
+    # OHLCV (labeling needs high/low); the indicator side is the shared
+    # MIS_INDICATOR_COLUMNS. include_forming=False == the old
+    # `h.open_time < date_trunc('hour', NOW())` closed filter; MIS_RENAME_MAP
+    # reproduces the three tsi/macd aliases so the frame stays byte-equal to
+    # 11_ai_mis (harte Regel 7, Trainer == Serving). The days-window is a soft
+    # lower bound (Python-vs-DB now() skew can't straddle an hourly candle).
     try:
-        df = pd.read_sql_query(
-            f"""SELECT h.open_time, h.open, h.high, h.low, h.close, h.volume,
-                {MIS_SQL_INDICATOR_SELECT}
-                FROM "{symbol}_1h" h
-                LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time
-                WHERE h.open_time >= NOW() - INTERVAL '{int(days)} days'
-                  AND h.open_time < date_trunc('hour', NOW())
-                ORDER BY h.open_time ASC""",
+        df = read_candles_with_indicators(
             conn,
+            symbol,
+            "1h",
+            start=datetime.now(timezone.utc) - timedelta(days=int(days)),
+            include_forming=False,
+            candle_columns=("open_time", "open", "high", "low", "close", "volume"),
+            indicator_columns=MIS_INDICATOR_COLUMNS,
         )
     except Exception:
         conn.rollback()
         return None
     if df.empty:
         return None
+    df = df.rename(columns=MIS_RENAME_MAP)
     df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
     for c in df.columns:
         if c != "open_time":
@@ -796,26 +804,39 @@ RUB_REG_WINDOW_H = 95 * 24   # Regressions-/Level-Fenster wie im Bot (95d-Query)
 RUB_MIN_REG_ROWS = 50        # Bot: len(rows_90d) < 50 → skip
 RUB_COOLDOWN_H = 4           # Live-Cooldown je Coin/Richtung (Bot 13)
 
-RUB_SQL_INDICATORS = (
-    "i.rsi_14, i.tsi_fast_12_7_7, i.tsi_fast_12_7_7_signal, "
-    "i.macd_dif_normal_12_26_9, i.macd_dea_normal_12_26_9, "
-    "i.atr_14, i.ema_200, i.donchian_lower_20, i.donchian_upper_20"
-)
+# The 9 indicator columns bot 13/34 (RUB2/MAX1) read as-of each closed candle —
+# same set as 34_ai_max1_bot's query_ind (Trainer == Serving). Raw DB names, no
+# aliasing, so read_candles_with_indicators needs no rename. R1: replaced the old
+# i.-prefixed RUB_SQL_INDICATORS JOIN-SELECT fragment.
+_RUB_INDICATOR_COLUMNS = [
+    "rsi_14",
+    "tsi_fast_12_7_7",
+    "tsi_fast_12_7_7_signal",
+    "macd_dif_normal_12_26_9",
+    "macd_dea_normal_12_26_9",
+    "atr_14",
+    "ema_200",
+    "donchian_lower_20",
+    "donchian_upper_20",
+]
 
 
 def load_rub_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
     """1h-Kerzen + exakt die Indikatoren, die Bot 13 abfragt (as-of pro Kerze).
     NUR geschlossene Kerzen (R1-Disziplin)."""
+    # R1: h⋈i JOIN → read_candles_with_indicators (OHLCV candle side for labeling +
+    # _RUB_INDICATOR_COLUMNS, raw names, no rename). include_forming=False == the old
+    # `h.open_time < date_trunc('hour', NOW())` closed filter; the days+100 window is
+    # a soft lower bound.
     try:
-        df = pd.read_sql_query(
-            f"""SELECT h.open_time, h.open, h.high, h.low, h.close, h.volume,
-                {RUB_SQL_INDICATORS}
-                FROM "{symbol}_1h" h
-                LEFT JOIN "{symbol}_1h_indicators" i ON h.open_time = i.open_time
-                WHERE h.open_time >= NOW() - INTERVAL '{int(days) + 100} days'
-                  AND h.open_time < date_trunc('hour', NOW())
-                ORDER BY h.open_time ASC""",
+        df = read_candles_with_indicators(
             conn,
+            symbol,
+            "1h",
+            start=datetime.now(timezone.utc) - timedelta(days=int(days) + 100),
+            include_forming=False,
+            candle_columns=("open_time", "open", "high", "low", "close", "volume"),
+            indicator_columns=_RUB_INDICATOR_COLUMNS,
         )
     except Exception:
         conn.rollback()

@@ -57,6 +57,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg
+from core.candles import read_candles, read_indicators
 from core.database import get_db_connection
 from core.funding_features import FUNDING_FEATURES, funding_features_cached
 from core.market_utils import check_cooldown, update_cooldown
@@ -81,6 +82,23 @@ EXPECTED_FEATURES = RUB_FEATURES + FUNDING_FEATURES  # 9 rub + 6 funding, RUB2 c
 COOLDOWN_HOURS = 4  # per coin — same frequency lock RUB2/the replay use
 ARTIFACT_RETRY_S = 1800  # idle mode: look for a fresh deploy every 30 min
 SCAN_MINUTE = 15
+
+# The 10 indicator columns the RUB2-SHORT feature build reads from the latest
+# closed 1h row. open_time is required by read_indicators' projection (it anchors
+# the shape) and is simply unused downstream — the features key by name.
+_MAX1_IND_COLUMNS = [
+    "open_time",
+    "close",
+    "rsi_14",
+    "tsi_fast_12_7_7",
+    "tsi_fast_12_7_7_signal",
+    "macd_dif_normal_12_26_9",
+    "macd_dea_normal_12_26_9",
+    "atr_14",
+    "ema_200",
+    "donchian_lower_20",
+    "donchian_upper_20",
+]
 
 ARTIFACT = load_artifact(ARTIFACT_PATH, EXPECTED_FEATURES, MODEL_ID)
 
@@ -143,41 +161,33 @@ def score_symbol(conn, symbol: str, now: datetime.datetime, gate: float) -> Max1
     RUB2 is live and stays untouched (T-2026-CU-9050-050).
     """
     # 90d closes for the regression. P1.19: exclude the forming candle, otherwise
-    # the regression fits on an open candle made of ~2 minutes of data.
-    query_90d = f"""
-        SELECT open_time, close
-        FROM "{symbol}_1h"
-        WHERE open_time >= NOW() - INTERVAL '95 days'
-          AND open_time < date_trunc('hour', NOW())
-        ORDER BY open_time ASC
-    """
-    # P1.19: closed-candle filter — LIMIT 1 would otherwise return the open candle
-    # (partial indicators). `close` comes from the SAME closed candle as the
-    # indicators, so features and entry price never mix live price with partials.
-    query_ind = f"""
-        SELECT
-            close,
-            rsi_14, tsi_fast_12_7_7, tsi_fast_12_7_7_signal,
-            macd_dif_normal_12_26_9, macd_dea_normal_12_26_9,
-            atr_14, ema_200, donchian_lower_20, donchian_upper_20
-        FROM "{symbol}_1h_indicators"
-        WHERE open_time < date_trunc('hour', NOW())
-        ORDER BY open_time DESC LIMIT 1
-    """
+    # the regression fits on an open candle made of ~2 minutes of data. R1: the raw
+    # `FROM "{symbol}_1h"` read is now core.candles (hyper-cutover-safe, T-128/T-139).
+    # include_forming=False is the `open_time < period_start(1h)` closed cutoff (DB
+    # epoch-floor, byte-equal to the old date_trunc('hour', NOW()) on a whole-hour
+    # session TZ). start reproduces `NOW() - INTERVAL '95 days'` — a SOFT lower bound
+    # (fetch >=50 rows over 90d), so Python-vs-DB now() skew cannot straddle an
+    # hourly candle. _fetch_df returns the identical pd.DataFrame(rows, columns=…).
+    df_90d = read_candles(
+        conn,
+        symbol,
+        "1h",
+        start=now - datetime.timedelta(days=95),
+        include_forming=False,
+        columns=["open_time", "close"],
+    )
+    if len(df_90d) < 50:
+        return None
+    df_90d = df_90d.reset_index(drop=True)
 
-    with conn.cursor() as cur:
-        cur.execute(query_90d)
-        rows_90d = cur.fetchall()
-        if len(rows_90d) < 50:
-            return None
-        df_90d = pd.DataFrame(rows_90d, columns=['open_time', 'close'])
-
-        cur.execute(query_ind)
-        row_ind = cur.fetchone()
-        if not row_ind:
-            return None
-        columns_ind = [desc[0] for desc in cur.description]
-        ind = dict(zip(columns_ind, row_ind, strict=False))
+    # P1.19: the LATEST closed 1h indicator row. limit=1 selects the newest of the
+    # closed window; the frame arrives ASC (contract 1) so the single row is .iloc[-1].
+    # `close` comes from the SAME closed candle as the indicators, so features and
+    # entry price never mix live price with partials.
+    df_ind = read_indicators(conn, symbol, "1h", limit=1, include_forming=False, columns=_MAX1_IND_COLUMNS)
+    if df_ind.empty:
+        return None
+    ind = df_ind.iloc[-1].to_dict()
 
     df_90d['ts'] = pd.to_datetime(df_90d['open_time'], utc=True).apply(lambda x: x.timestamp())
     ts_values = df_90d['ts'].values

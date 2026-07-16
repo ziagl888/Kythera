@@ -292,6 +292,22 @@ def test_candle_source_resolves_known_backends():
             os.environ.pop("KYTHERA_CANDLES_SOURCE", None)
 
 
+def test_write_primary_resolves_known_backends(monkeypatch):
+    """KYTHERA_CANDLES_WRITE_PRIMARY selects the primary WRITE backend (AK7):
+    default 'legacy', 'hyper' for the Phase-5 perf-trial, typo fails closed."""
+    monkeypatch.delenv("KYTHERA_CANDLES_WRITE_PRIMARY", raising=False)
+    assert c._write_primary() == "legacy"  # default
+    for primary in ("legacy", "hyper"):
+        monkeypatch.setenv("KYTHERA_CANDLES_WRITE_PRIMARY", primary)
+        assert c._write_primary() == primary
+
+
+def test_write_primary_unknown_is_rejected(monkeypatch):
+    monkeypatch.setenv("KYTHERA_CANDLES_WRITE_PRIMARY", "banana")
+    with pytest.raises(c.CandleSourceError):
+        c._write_primary()
+
+
 def test_unknown_backend_is_rejected_everywhere():
     """A typo'd backend must fail closed — on reads, writes and deletes alike —
     before the connection is ever touched."""

@@ -580,6 +580,45 @@ def test_dual_write_mirrors_into_hypertables(conn, monkeypatch):
         conn.rollback()  # undoes every hypertable write + drops the temp tables
 
 
+def test_write_primary_hyper_writes_hyper_and_skips_legacy(conn, monkeypatch):
+    """AK7 (T-2026-CU-9050-139): with KYTHERA_CANDLES_WRITE_PRIMARY=hyper the write
+    helpers write the candles/indicators HYPERTABLES as the primary store and SKIP
+    the legacy per-coin write entirely (DUAL_WRITE is moot). The default 'legacy'
+    still writes the per-coin table. All writes rolled back; the per-coin side lands
+    in ON COMMIT DROP temp tables, so no live table is touched."""
+    _require_write_parity()
+    sym, tf = "ZZTESTHP", "1h"
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ctable, itable = c.candles_table(sym, tf), c.indicators_table(sym, tf)
+    rows = [(sym, base, 1.0, 2.0, 0.5, 1.5, 10.0)]
+    df = pd.DataFrame({"symbol": [sym], "open_time": [base], "close": [1.5], "rsi_14": [55.0]})
+    try:
+        _create_temp_legacy_tables(conn, sym, tf, ["close", "rsi_14"])
+        # hyper-primary + DUAL_WRITE explicitly OFF → proves hyper is the PRIMARY, not
+        # the mirror: the row must still reach the hypertable and NOT the per-coin table.
+        monkeypatch.setenv("KYTHERA_CANDLES_WRITE_PRIMARY", "hyper")
+        monkeypatch.setenv("KYTHERA_CANDLES_DUAL_WRITE", "0")
+        c.upsert_candles(conn, sym, tf, rows, closed=True)
+        c.upsert_indicators(conn, df, sym, tf)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM candles WHERE symbol=%s AND tf=%s", (sym, tf))
+            assert cur.fetchone()[0] == 1  # hypertable = primary
+            cur.execute("SELECT count(*) FROM indicators WHERE symbol=%s AND tf=%s", (sym, tf))
+            assert cur.fetchone()[0] == 1
+            cur.execute(sql.SQL("SELECT count(*) FROM {t}").format(t=sql.Identifier(ctable)))
+            assert cur.fetchone()[0] == 0  # legacy per-coin skipped
+            cur.execute(sql.SQL("SELECT count(*) FROM {t}").format(t=sql.Identifier(itable)))
+            assert cur.fetchone()[0] == 0
+        # default 'legacy' still writes the per-coin table (behaviour-preserving)
+        monkeypatch.setenv("KYTHERA_CANDLES_WRITE_PRIMARY", "legacy")
+        c.upsert_candles(conn, sym, tf, rows, closed=True)
+        with conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT count(*) FROM {t}").format(t=sql.Identifier(ctable)))
+            assert cur.fetchone()[0] == 1
+    finally:
+        conn.rollback()  # undoes every hypertable write + drops the temp tables
+
+
 # ── Phase-4 read-cutover: hyper backend == legacy backend (T-2026-CU-9050-128) ─
 #
 # The read-cutover flips KYTHERA_CANDLES_SOURCE from 'legacy' to 'hyper'. It must

@@ -334,6 +334,40 @@ def _dual_write_enabled() -> bool:
     return os.getenv("KYTHERA_CANDLES_DUAL_WRITE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+# ── Phase-5 write-primary cutover (reversible, off by default) ────────────────
+#
+# KYTHERA_CANDLES_WRITE_PRIMARY selects which store the WRITE helpers treat as
+# primary:
+#   'legacy' (default) — write the ~9.3k per-coin tables; mirror the hypertables
+#                        when KYTHERA_CANDLES_DUAL_WRITE is on. Today's behaviour,
+#                        byte-for-byte.
+#   'hyper'            — write the `candles`/`indicators` hypertables as the PRIMARY
+#                        store and SKIP the per-coin write entirely (DUAL_WRITE
+#                        becomes moot). The C-Gate Phase-5 perf-trial mode: reads are
+#                        already on the hypertables (KYTHERA_CANDLES_SOURCE=hyper), so
+#                        this stops maintaining the per-coin sprawl and lets the
+#                        write/WAL/storage gain be measured before the tables drop.
+# Read at call time (like the read/dual-write flags) so a per-process flip needs no
+# reimport; the flip itself is an operator decision (.env + fleet restart).
+# ROLLBACK ASYMMETRY: flipping back to 'legacy' resumes per-coin writes, but the
+# per-coin tables went UNWRITTEN during the hyper window → they carry a gap. A
+# read-cutover back to legacy therefore needs a backfill of that gap first; the
+# hyper store, being continuously written, never needs one.
+_KNOWN_WRITE_PRIMARIES = ("legacy", "hyper")
+
+
+def _write_primary() -> str:
+    """Resolve KYTHERA_CANDLES_WRITE_PRIMARY to the primary write backend, or raise
+    on a typo (same fail-fast contract as _candle_source)."""
+    primary = os.getenv("KYTHERA_CANDLES_WRITE_PRIMARY", "legacy")
+    if primary not in _KNOWN_WRITE_PRIMARIES:
+        raise CandleSourceError(
+            f"KYTHERA_CANDLES_WRITE_PRIMARY={primary!r}: known write backends are {_KNOWN_WRITE_PRIMARIES} "
+            "(docs/TIMESCALE_R1_MIGRATION.md)."
+        )
+    return primary
+
+
 # Fixed table name → plain SQL string is injection-safe; the row values go through
 # execute_values. is_closed is part of both the SET and the IS DISTINCT FROM guard
 # so a forming→closed re-upsert (same OHLCV, flag flips true) still writes, while a
@@ -795,7 +829,7 @@ def upsert_candles(
 
     Does NOT commit (contract 3).
     """
-    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
+    _candle_source()  # validate the read-backend flag; the write backend follows _write_primary() below
     # `closed` arrives from the Binance kline flag k['x'] and must not be a
     # truthy int — the hypertable column is boolean and would silently coerce.
     if closed is not True and closed is not False:
@@ -810,11 +844,15 @@ def upsert_candles(
         "WHERE (t.open, t.high, t.low, t.close, t.volume) "
         "IS DISTINCT FROM (EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.close, EXCLUDED.volume)"
     ).format(tbl=_ident(table))
-    with conn.cursor() as cur:
-        extras.execute_values(cur, query.as_string(cur), rows, page_size=page_size)
-    if _dual_write_enabled():
-        # rows: (symbol, open_time, open, high, low, close, volume) → the hypertable
-        # adds tf (position 1) and the R1 is_closed flag (last). Same transaction.
+    primary = _write_primary()
+    if primary == "legacy":
+        with conn.cursor() as cur:
+            extras.execute_values(cur, query.as_string(cur), rows, page_size=page_size)
+    # Hyper write: the PRIMARY store when write-primary=hyper (legacy skipped), else
+    # the dual-write mirror. rows: (symbol, open_time, open, high, low, close, volume)
+    # → the hypertable adds tf (position 1) and the R1 is_closed flag (last). Same
+    # transaction as any legacy write (a crash never splits the two stores).
+    if primary == "hyper" or _dual_write_enabled():
         hyper_rows = [(r[0], tf, r[1], r[2], r[3], r[4], r[5], r[6], closed) for r in rows]
         with conn.cursor() as cur:
             extras.execute_values(cur, _CANDLES_HYPER_UPSERT, hyper_rows, page_size=page_size)
@@ -830,7 +868,7 @@ def upsert_indicators(conn: Any, df: pd.DataFrame, symbol: str, tf: str, *, page
 
     Does NOT commit (contract 3).
     """
-    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
+    _candle_source()  # validate the read-backend flag; the write backend follows _write_primary() below
     if df.empty:
         return 0
     if "symbol" not in df.columns or "open_time" not in df.columns:
@@ -849,9 +887,12 @@ def upsert_indicators(conn: Any, df: pd.DataFrame, symbol: str, tf: str, *, page
         ),
     )
     values = [tuple(x) for x in df[cols].to_numpy()]
-    with conn.cursor() as cur:
-        extras.execute_values(cur, query.as_string(cur), values, page_size=page_size)
-    if _dual_write_enabled():
+    primary = _write_primary()
+    if primary == "legacy":
+        with conn.cursor() as cur:
+            extras.execute_values(cur, query.as_string(cur), values, page_size=page_size)
+    # Hyper write: PRIMARY when write-primary=hyper (legacy skipped), else the mirror.
+    if primary == "hyper" or _dual_write_enabled():
         _upsert_indicators_hyper(conn, df, tf, page_size=page_size)
     return len(values)
 
@@ -901,7 +942,7 @@ def delete_candles_before(conn: Any, symbol: str, tf: str, cutoff: datetime, *, 
 
     Does NOT commit (contract 3).
     """
-    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
+    _candle_source()  # validate the read-backend flag; delete is NOT part of the write-primary cutover — always the legacy per-coin table
     if cutoff.tzinfo is None:
         raise ValueError("delete_candles_before() requires a timezone-aware cutoff")
     table = _table_for_kind(symbol, tf, kind)
@@ -922,7 +963,7 @@ def delete_indicators_from(conn: Any, symbol: str, tf: str, start: datetime) -> 
 
     Does NOT commit (contract 3).
     """
-    _candle_source()  # validate the read-backend flag; writes always target the legacy per-coin tables
+    _candle_source()  # validate the read-backend flag; delete is NOT part of the write-primary cutover — always the legacy per-coin table
     if start.tzinfo is None:
         raise ValueError("delete_indicators_from() requires a timezone-aware start")
     table = indicators_table(symbol, tf)

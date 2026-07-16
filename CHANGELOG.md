@@ -1,3 +1,38 @@
+## [2026-07-16] R1/TimescaleDB C-Gate Phase 5 prep — aktive Bypass-Reader auf core.candles + reversibler Write-Primary-Flag (T-2026-CU-9050-139)
+
+Vorbereitung für den Phase-5-Table-Drop (~9,3k Per-Coin-`{SYM}_{tf}[_indicators]`): jeder **laufende**
+Code, der die Per-Coin-Tabellen noch per Raw-SQL las, liest jetzt über `core.candles` (hyper-fähig seit
+T-128, live seit dem Read-Cutover 2026-07-16) — sonst bräche er beim Drop. Jede Site byte-Parität gegen
+das alte Raw-SQL verifiziert (read-only Live-VPS; Indikatoren auf **float4**-Präzision — der gewollte
+P3.12 `REAL→double`-Upgrade, den der Read-Cutover fleet-weit schon vollzog).
+
+**Read-Rewiring (7 Dateien):**
+- **34_ai_max1_bot** (LIVE MAX1): `score_symbol` 90d-Closes + letzte geschlossene Indikator-Zeile →
+  `read_candles`/`read_indicators` (`include_forming=False`).
+- **23_market_tracker** (LIVE Bot 23): 7 `_30m`-Reads in 5 Report-Funktionen → `read_candles`; SUM/CASE/
+  MAX/MIN wandern in pandas über die `Decimal`-OHLCV (float-Parität), `include_forming=True` (Monitor,
+  Regel 5), `[t7,t4)`-Exclusive-End via pandas-Filter.
+- **14_ai_atb_bot**: Info-Chart-`SELECT *` + 95d-ATB1-Detection → `core.candles` (`include_forming=True`,
+  die forming-Kerze bleibt bewusst drin).
+- **tools/walkforward_sim** (Trainer): `load_mis1_frame` + `load_rub_frame` h⋈i-JOINs →
+  `read_candles_with_indicators`; **Train==Serving-Parität** (Regel 7) gegen 11_ai_mis verifiziert.
+- **core/mis_features**: `MIS_SQL_INDICATOR_SELECT` (i.-präfigiertes SQL-Fragment) → geteilte
+  `MIS_INDICATOR_COLUMNS` + `MIS_RENAME_MAP` — **EINE Quelle** für Bot (11) UND Trainer (walkforward);
+  11_ai_mis darauf konsolidiert.
+- **tools/audit/live_parity**: JOIN → `core.candles` (ASC → altes `iloc[::-1]` entfällt).
+
+**Write-Primary-Flag (reversibel, Default aus):** neuer `KYTHERA_CANDLES_WRITE_PRIMARY ∈ {legacy, hyper}`
+(`_write_primary()`, read-at-call-time). `legacy` (Default) = heutiges Verhalten byte-genau. `hyper` =
+`upsert_candles`/`upsert_indicators` schreiben die `candles`/`indicators`-Hypertables **primär** und
+**überspringen** den Per-Coin-Write (DUAL_WRITE moot) — der Phase-5-Perf-Trial-Modus (Reads sind schon
+hyper). Rollback-Asymmetrie dokumentiert (Legacy-Lücke → Backfill vor einem Read-Rollback nötig).
+
+Verifikation: `test_candles.py` +2 Resolver-Tests (Default/legacy/hyper/unknown-reject); `test_candles_db_parity.py`
++1 DB-gated Write-Parität hinter `KYTHERA_CANDLES_WRITE_PARITY` (hyper-primary → Hypertable, **nicht** Legacy;
+rollback = null Persistenz). Regression-Guard smoke+verify grün, ruff/format/mypy grün (CI-relevante Dateien).
+**Out of scope** (bricht bewusst am Drop): `legacy_trainers/*`, `db_schema_analysis.py`, `tools/audit/step7_monitor_replay.py`
+(TZ-forensic Wegwerf). Der `WRITE_PRIMARY=hyper`-Flip + Fleet-Restart und der Table-Drop selbst bleiben Michi-gegatet.
+
 ## [2026-07-16] K15 · SRX — Scratch-Reload-Exit-Studie auf ABR-Events (read-only, kein Modell) (T-2026-CU-9050-137)
 
 Neues `tools/scratch_exit_study.py` (read-only) prüft OFFLINE die Praktiker-These (§K15, KB
