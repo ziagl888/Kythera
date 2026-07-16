@@ -575,6 +575,73 @@ def test_poll_cache_disabled_builds_every_call():
     assert calls["n"] == 2
 
 
+def test_file_token_reflects_wal_sidecar(tmp_path):
+    """A committed-but-uncheckpointed write lands in <file>.wal; the token must
+    advance on it even though the main file is untouched (read-only readers
+    replay the WAL, so the cache must not serve stale rows)."""
+    p = tmp_path / "a.duckdb"
+    p.write_bytes(b"main")
+    base = analytics_api._file_token(str(p))
+    (tmp_path / "a.duckdb.wal").write_bytes(b"waldata")
+    assert analytics_api._file_token(str(p)) != base
+
+
+def test_poll_cache_evicts_when_over_max_entries():
+    """Between exports (stable token) the cache is FIFO-bounded, so a run of
+    distinct keys cannot grow it without limit."""
+    cache = analytics_api._PollCache("ignored", token=lambda _p: 1, max_entries=2)
+    cache.get(("a",), lambda: "A")
+    cache.get(("b",), lambda: "B")
+    cache.get(("c",), lambda: "C")  # len hits 2 → evicts the oldest ("a")
+
+    rebuilt = {"n": 0}
+
+    def build_a():
+        rebuilt["n"] += 1
+        return "A2"
+
+    assert cache.get(("a",), build_a) == "A2"
+    assert rebuilt["n"] == 1  # ("a") was evicted, so it had to rebuild
+    # ("c") stayed cached across the eviction.
+    assert cache.get(("c",), lambda: pytest.fail("c should be cached")) == "C"
+
+
+def test_poll_cache_thread_safe_under_concurrent_get():
+    """The lock-guarded check-then-act must hold under Waitress's real thread
+    pool: many threads on one key get a consistent payload and, once cached,
+    further gets never rebuild."""
+    import threading
+
+    build_calls = {"n": 0}
+    count_lock = threading.Lock()
+
+    def build():
+        with count_lock:
+            build_calls["n"] += 1
+        return {"v": "same"}
+
+    cache = analytics_api._PollCache("ignored", token=lambda _p: 1)
+    results: list[Any] = []
+    barrier = threading.Barrier(16)
+
+    def worker():
+        barrier.wait()  # maximise overlap on the get()
+        results.append(cache.get(("k",), build))
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    assert len(results) == 16
+    assert all(r == {"v": "same"} for r in results)
+    # Once the entry is cached, further gets are served from memory (no rebuild).
+    n_after = build_calls["n"]
+    assert cache.get(("k",), build) == {"v": "same"}
+    assert build_calls["n"] == n_after
+
+
 def test_success_rate_cache_invalidates_on_new_export(tmp_path):
     """End-to-end: a poll is served from cache while the file is unchanged, and
     rebuilds once a new export advances the file token."""

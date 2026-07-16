@@ -278,26 +278,47 @@ def connect_ro(
     query can never starve the bots sharing the VPS.
     """
     con = duckdb.connect(str(path), read_only=True)
-    con.execute(f"PRAGMA threads={int(threads)}")
-    con.execute(f"PRAGMA memory_limit='{memory_limit}'")
+    try:
+        con.execute(f"PRAGMA threads={int(threads)}")
+        con.execute(f"PRAGMA memory_limit='{memory_limit}'")
+    except Exception:
+        con.close()  # never leak a half-configured connection on the poll path
+        raise
     return con
 
 
-def _file_token(path: str) -> tuple[int, int] | None:
+def _stat_token(path: str) -> tuple[int, int] | None:
+    """``(mtime_ns, size)`` of ``path``, or None if it is absent."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _file_token(path: str) -> tuple[Any, Any] | None:
     """Cheap, connection-free freshness token for the single-writer DuckDB file.
 
     The exporter refreshes its ``synced_at`` sequence on every run — including a
     no-new-rows run (see analytics_export ``_write_freshness``) — and that write
     rewrites the file, so the file's ``(mtime_ns, size)`` is the observable
     proxy for the synced_at sequence key: unchanged ⇒ the data cannot have
-    changed. Reading it costs one ``stat`` and never opens a connection. Returns
-    None if the file is not there yet (nothing to cache against).
+    changed. Reading it costs one ``stat`` and never opens a connection.
+
+    We also fold in the DuckDB WAL sidecar (``<file>.wal``): a committed write
+    can land in the WAL and not touch the main file's ``(mtime, size)`` until
+    the writer's connection closes and checkpoints. Read-only readers still
+    replay that WAL data, so the token must advance on it too — otherwise the
+    cache could serve stale rows while a fresh read already reflects the new
+    ones. In the steady state (a clean, checkpointed run removes the WAL) the
+    sidecar is absent and contributes a constant; the coupling to the exporter's
+    checkpoint-on-close is thus defended here rather than assumed. Returns None
+    if the main file is not there yet (nothing to cache against).
     """
-    try:
-        st = os.stat(path)
-    except OSError:
+    main = _stat_token(path)
+    if main is None:
         return None
-    return (st.st_mtime_ns, st.st_size)
+    return (main, _stat_token(path + ".wal"))
 
 
 _MISS = object()
@@ -315,16 +336,24 @@ class _PollCache:
     (D-110 Auflage 1): a hard kill loses nothing.
     """
 
+    # Between two export runs the token is stable, so the cache is not cleared;
+    # this bounds how many distinct (windows, bots, as_of) combinations can
+    # accumulate in that window. Far above the handful a 1-2-tab dashboard
+    # produces, but a hard ceiling against pathological/varied querying.
+    MAX_ENTRIES = 256
+
     def __init__(
         self,
         path: str,
         *,
         token: Callable[[str], Any] = _file_token,
         enabled: bool = True,
+        max_entries: int = MAX_ENTRIES,
     ) -> None:
         self._path = path
         self._token_fn = token
         self._enabled = enabled
+        self._max_entries = max_entries
         self._lock = threading.Lock()
         self._current: Any = _MISS
         self._entries: dict[Any, Any] = {}
@@ -352,6 +381,9 @@ class _PollCache:
         payload = build()
         with self._lock:
             if token == self._current:  # still the freshness we built against
+                if key not in self._entries and len(self._entries) >= self._max_entries:
+                    # FIFO-evict the oldest entry (dicts preserve insertion order).
+                    self._entries.pop(next(iter(self._entries)))
                 self._entries[key] = payload
         return payload
 
@@ -392,10 +424,14 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
             if as_of.tzinfo is not None:
                 as_of = as_of.replace(tzinfo=None)
 
+        # Sort the multi-value params so logically identical requests
+        # (bots=A,B vs B,A; windows in any order) share one cache entry — the
+        # payload is order-independent (windows keyed by value, bots is a set
+        # filter), so this only removes avoidable misses.
         key = (
             "success-rate",
-            tuple(windows),
-            tuple(bots) if bots else None,
+            tuple(sorted(windows)),
+            tuple(sorted(bots)) if bots else None,
             as_of.isoformat() if as_of is not None else None,
         )
 
