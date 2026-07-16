@@ -65,6 +65,28 @@ Per-Rebalance-Skalar-Shift (argsort-invariant) und die PnL ist absolut, also sin
 byte-identisch zu `absolute` (Beta-Removal NICHT getestet; Fix = Returns/Spread beta-adjustieren). (2) Stufe-2
 (nur Diagnostik) tritt ~1 Tages-Balken zu früh ein (`dates[t]`=Tages-Open via `floor('D')`, Signal aber `close[t]`)
 ⇒ Look-ahead im Replay; der Stufe-1-getriebene Verdict ist unberührt (Fix = Entry `dates[t]+86400`).
+## [2026-07-17] K5 · LIS1 Post-Listing-Drift-Kohortenstudie + Fade-Replay (Code-Prep) (T-2026-CU-9050-144)
+
+Neues read-only Studien-Skript `tools/listing_drift_study.py` (K5, Kandidat LIS1) — Code-Prep, der
+Full-Universe-Lauf bleibt für den orchestrator-gegateten Ein-Job-Slot offen. Prüft die These (F10),
+dass frisch gelistete USDT-Perps in den ersten Wochen/Monaten underperformen. Elemente: Listing-Datum
+je Coin via EINEM `GET /fapi/v1/exchangeInfo` (`onboardDate`, ms-Epoch UTC), gecacht nach
+`staging_models/listing_onboard_dates.json` (einziger externer HTTP-Call, public, keine Keys) — bei
+Netzfehler Fallback auf die erste 1h-Kerze je Coin (Quelle je Coin dokumentiert). Kohorte = onboardDate
+im Datenfenster (strikt nach dem ~1-Jahres-Retention-Floor, sonst ist der Drift nicht beobachtbar).
+Forward-Returns Tag 0 → {7,30,90,180} auf 1d-Kerzen, **absolut UND marktneutral** (minus BTC über
+dasselbe Fenster — Beta-Confound behoben); Verteilung, Median, %-positiv, n je Horizont. Fade-Replay
+SHORT Tag {3,7,14} × Limit {+0 %,+5 %} über `simulate_exit` (First-Touch, Taker-Fee) mit **zwingender
+Funding-Kosten-Verrechnung** — ein SHORT wird bei positivem Funding GUTGESCHRIEBEN (Longs zahlen Shorts),
+also `+Σ funding_rate` über den Hold (Vorzeichen bewusst gesetzt; frische Perps mit Extrem-Funding
+können die Short-Seite bezahlen). Kleines-n wird ehrlich ausgewiesen (n je Kohorte/Horizont/Zelle,
+keine vorgetäuschte Signifikanz). Minimal-Deliverable auch ohne Short-Edge: quantifizierte Empfehlung
+„Coin-Alter < X Tage ⇒ kein LONG" (Umsetzung = Gating-Change ⇒ Michi). Resume/Checkpoint-Maschinerie
+nach `tools/tsmom_study.py`-Muster (Per-Coin-Streaming-Akkumulatoren, atomarer Checkpoint des
+Processed-Sets ins OS-Temp — nie ins Repo — alle N Coins, `--resume`, RAM-Guard <500 MB, Peak-RSS im
+Report). Wiederverwendet den Exit-/Geometrie-/Funding-Stack (kein neuer Fee-/Geometrie-Code). Read-only,
+SELECT-only, BELOW_NORMAL; Artefakte nur nach `staging_models/`. Smoke-verifiziert (10 frische Listings:
+Drift überlebt Beta-Adjust, Median −8 % bis −40 % marktneutral). Voller Universe-Lauf offen.
 
 ## [2026-07-17] Merge-Train: CHANGELOG.md union-Merge-Driver gegen serielle Rebase-Konflikte (T-2026-CU-9050-142)
 
