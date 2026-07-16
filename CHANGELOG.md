@@ -1,3 +1,18 @@
+## [2026-07-17] Merge-Train: CHANGELOG.md union-Merge-Driver gegen serielle Rebase-Konflikte (T-2026-CU-9050-142)
+
+Wiederkehrendes „merge-train failed" behoben (2 PRs hingen). Ursache: pro Merge wird ein
+CHANGELOG.md-Eintrag **oben** an dieselbe Datei geprependet — der Hetzner-Merge-Train-Daemon
+rebased jede PR seriell, also kollidieren zwei gleichzeitige PRs garantiert am identischen
+obersten Hunk. `.gitattributes` hatte für CHANGELOG.md keine Regel. Fix: `CHANGELOG.md merge=union`
+(git-eigener union-Driver) — bei Konflikt behält git **beide** Blöcke statt den Rebase abzubrechen,
+parallele Changelog-Appends lösen sich automatisch auf. Die Regel muss nur auf `main` liegen (der
+Daemon rebased *auf* main), löst also auch die aktuell hängenden PRs beim Re-Trigger mit. Bewusst
+**nicht** auf `AUDIT_TODO.md` angewandt (Checkbox-Toggles auf bestehenden Zeilen — union würde dort
+gecheckte und ungecheckte Variante beide behalten). Verifiziert per synthetischem Zwei-Branch-Rebase:
+ohne Regel Konflikt, mit Regel sauber + beide Einträge erhalten. Reihenfolge zweier gleichzeitiger
+Einträge nicht garantiert (kosmetisch). Folge-Option (separater Task): `changelog.d/`-Fragmente für
+eine Null-Konflikt-Garantie.
+
 ## [2026-07-16] R1/TimescaleDB C-Gate Phase 5 prep — aktive Bypass-Reader auf core.candles + reversibler Write-Primary-Flag (T-2026-CU-9050-139)
 
 Vorbereitung für den Phase-5-Table-Drop (~9,3k Per-Coin-`{SYM}_{tf}[_indicators]`): jeder **laufende**
