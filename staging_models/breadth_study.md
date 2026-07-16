@@ -4,8 +4,8 @@
 > prove the builder + study run end to end. The full-universe report is deferred to the
 > queue (Ein-Job-Regel: a second heavy study must not run while another is live).
 
-_Generated 2026-07-16T13:14:35.982083+00:00 · read-only · limit_symbols=6 · 
-max_events=300 · universe_loaded=6_
+_Generated 2026-07-16T13:33:40.093324+00:00 · read-only · limit_symbols=3 · 
+max_events=200 · universe_loaded=3_
 
 Breadth is a PRICE proxy over active USDT-perps (survivorship-biased); TOTAL3 has no real
 market-cap weights — see core/breadth_features docstring.
@@ -18,46 +18,46 @@ market-cap weights — see core/breadth_features docstring.
 
 ## (a) RUB-LONG events vs breadth as-of
 
-- RUB LONG events streamed: 300 (with as-of breadth: 300)
-- overall: avg net PnL -0.3381% · WR 0.52
+- RUB LONG events streamed: 200 (with as-of breadth: 200)
+- overall: avg net PnL -1.1883% · WR 0.465
 
 ### Per-feature gradient (Spearman vs net_pnl_pct; sign must survive the chrono split)
 
 | feature | Spearman all | val | test |
 |---|--:|--:|--:|
-| brd_pct_above_ema200 | 0.1656 | 0.3602 | -0.2197 |
-| brd_pct_above_ema50 | 0.1282 | 0.3337 | -0.124 |
-| brd_median_ret_7d | 0.0882 | 0.2125 | -0.032 |
-| brd_adv_decline_ratio | 0.0015 | 0.0014 | -0.0375 |
-| brd_dispersion_vs_btc | -0.2023 | -0.2208 | -0.1647 |
-| total3_ew_level | 0.0856 | 0.3102 | -0.0293 |
-| total3_ew_dist_reg90d | 0.1042 | 0.1746 | 0.0528 |
-| total3_ew_breakout | -0.0961 | -0.1406 | None |
-| total3_vw_level | 0.0836 | 0.3076 | -0.0333 |
-| total3_vw_dist_reg90d | 0.022 | 0.2172 | -0.2076 |
-| total3_vw_breakout | -0.0961 | -0.1406 | None |
+| brd_pct_above_ema200 | 0.2267 | 0.3453 | 0.2268 |
+| brd_pct_above_ema50 | 0.2146 | 0.3269 | 0.074 |
+| brd_median_ret_7d | 0.1752 | 0.2583 | 0.0931 |
+| brd_adv_decline_ratio | 0.0531 | -0.0616 | 0.2289 |
+| brd_dispersion_vs_btc | -0.1412 | -0.1416 | -0.141 |
+| total3_ew_level | 0.1108 | 0.2263 | -0.0249 |
+| total3_ew_dist_reg90d | 0.2069 | 0.0671 | 0.3481 |
+| total3_ew_breakout | None | None | None |
+| total3_vw_level | 0.1108 | 0.2263 | -0.0249 |
+| total3_vw_dist_reg90d | 0.2069 | 0.0671 | 0.3481 |
+| total3_vw_breakout | None | None | None |
 
 ### Top vs bottom tercile net-PnL expectancy
 
 | feature | bottom n | bottom PnL% | bottom WR | top n | top PnL% | top WR |
 |---|--:|--:|--:|--:|--:|--:|
-| brd_pct_above_ema200 | 222 | -1.031 | 0.4505 | 228 | -0.0932 | 0.5526 |
-| brd_pct_above_ema50 | 182 | -0.8997 | 0.4615 | 118 | 0.5281 | 0.6102 |
-| brd_median_ret_7d | 102 | 0.113 | 0.5 | 100 | 0.9489 | 0.64 |
-| brd_adv_decline_ratio | 135 | 0.1471 | 0.5185 | 154 | -0.8124 | 0.5065 |
-| brd_dispersion_vs_btc | 101 | 1.5852 | 0.6733 | 100 | -1.0653 | 0.49 |
-| total3_ew_level | 103 | -1.6254 | 0.4272 | 109 | 1.4317 | 0.6514 |
-| total3_ew_dist_reg90d | 102 | -0.9409 | 0.451 | 103 | 0.8836 | 0.6117 |
-| total3_ew_breakout | 299 | -0.3101 | 0.5217 | 300 | -0.3381 | 0.52 |
-| total3_vw_level | 103 | -1.6254 | 0.4272 | 107 | 1.5982 | 0.6636 |
-| total3_vw_dist_reg90d | 103 | 0.9658 | 0.6019 | 104 | 0.3308 | 0.5577 |
-| total3_vw_breakout | 299 | -0.3101 | 0.5217 | 300 | -0.3381 | 0.52 |
+| brd_pct_above_ema200 | 126 | -2.303 | 0.3651 | 74 | 0.7097 | 0.6351 |
+| brd_pct_above_ema50 | 147 | -2.0114 | 0.3946 | 200 | -1.1883 | 0.465 |
+| brd_median_ret_7d | 73 | -2.5621 | 0.3151 | 70 | 0.1234 | 0.6 |
+| brd_adv_decline_ratio | 135 | -1.4898 | 0.4296 | 182 | -1.2404 | 0.4505 |
+| brd_dispersion_vs_btc | 67 | -1.469 | 0.4328 | 70 | -2.5721 | 0.3571 |
+| total3_ew_level | 67 | -2.2577 | 0.3881 | 67 | 0.0697 | 0.5672 |
+| total3_ew_dist_reg90d | 70 | -3.7407 | 0.2714 | 67 | -1.0667 | 0.4776 |
+| total3_ew_breakout | 200 | -1.1883 | 0.465 | 200 | -1.1883 | 0.465 |
+| total3_vw_level | 67 | -2.2577 | 0.3881 | 67 | 0.0697 | 0.5672 |
+| total3_vw_dist_reg90d | 70 | -3.7407 | 0.2714 | 67 | -1.0667 | 0.4776 |
+| total3_vw_breakout | 200 | -1.1883 | 0.465 | 200 | -1.1883 | 0.465 |
 
 ## (b) regime_history diagnostic — does breadth add over BTC-only?
 
-- regime rows: 800 · usable (breadth+BTC non-NaN): 800
+- regime rows: 500 · usable (breadth+BTC non-NaN): 500
 - NOTE: no TREND_UP rows in the (smoke-capped) regime_history window — AUC undefined (single class); the full run over all regime_history includes TREND_UP.
-- incremental logit (TREND_UP vs rest, chrono 70/30, n_test=240): AUC BTC-only=None → BTC+breadth=None (Δ=None)
+- incremental logit (TREND_UP vs rest, chrono 70/30, n_test=150): AUC BTC-only=None → BTC+breadth=None (Δ=None)
 
 ### Single-feature AUC (TREND_UP vs rest)
 

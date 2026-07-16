@@ -44,6 +44,13 @@ Marktkap-Index. Der Praktiker-Gate-Gedanke „Alt-Trades nur wenn TOTAL3 über L
 (KB ingest-c1e5112dea7f) ist damit als Proxy testbar, aber als Proxy zu
 dokumentieren — nie als echter TOTAL3 auszugeben.
 
+Konsumenten-Hinweis: Das rohe ``total3_*_level`` ist ab Zeile 0 nicht-NaN (der
+Basis-100-Anker steht schon, bevor das Universum voll besetzt ist) und sein
+Absolut-Niveau ist ein willkürlicher Anker ohne Cross-Coin-Vergleichbarkeit. Für
+Gates/Features sind die skalenfreien Ableitungen ``total3_*_dist_reg90d`` (Abstand
+zur 90d-Regression) und ``total3_*_breakout`` (90d-Hoch) vorzuziehen; das Level
+dient primär deren Berechnung, nicht dem direkten Vergleich.
+
 Survivorship (Regel 9): coins.json führt die AKTIVEN USDT-Perps; delistete Coins
 fehlen teils. Jede Breadth-Zeile ist damit über ein survivorship-verzerrtes
 Universum gerechnet — bekannte, dokumentierte Bias-Quelle.
@@ -240,7 +247,13 @@ def build_breadth_panel(panels: dict[str, pd.DataFrame]) -> pd.DataFrame:
     pct_above_ema200 = above200.sum(axis=1) / n200.where(n200 > 0)
     pct_above_ema50 = above50.sum(axis=1) / n50.where(n50 > 0)
 
-    daily_ret = close_wide.pct_change()
+    # fill_method=None: gaps stay NaN. The pandas default (pad) would forward-fill
+    # a delisted coin's trailing NaNs into fabricated 0.0 daily returns for every
+    # day after it stopped trading, diluting the equal-weighted TOTAL3 index toward
+    # flat — a silent survivorship bias. With None a delisted coin drops out cleanly
+    # (ret7d, the / shift form, is already unpadded). The VW path is likewise clean:
+    # its weights come from unpadded turnover → NaN weight → excluded.
+    daily_ret = close_wide.pct_change(fill_method=None)
     ret7d = close_wide / close_wide.shift(RET_LOOKBACK_BARS) - 1.0
     median_ret_7d = ret7d.median(axis=1, skipna=True)
 
@@ -249,7 +262,13 @@ def build_breadth_panel(panels: dict[str, pd.DataFrame]) -> pd.DataFrame:
     adv_decline_ratio = adv / dec.where(dec > 0)
 
     if BTC_SYMBOL in ret7d.columns:
-        rel = ret7d.sub(ret7d[BTC_SYMBOL], axis=0)
+        # Cross-section dispersion of the universe's 7d returns relative to the BTC
+        # benchmark. BTC is the reference, so its own column would be a constant 0 —
+        # excluded from the std columns so it does not damp the dispersion toward
+        # zero. ETH stays in (it is a genuine universe member, not the benchmark).
+        btc_ret7d = ret7d[BTC_SYMBOL]
+        non_btc = [c for c in ret7d.columns if c != BTC_SYMBOL]
+        rel = ret7d[non_btc].sub(btc_ret7d, axis=0)
         dispersion_vs_btc = rel.std(axis=1, skipna=True)
     else:
         dispersion_vs_btc = pd.Series(np.nan, index=close_wide.index)
