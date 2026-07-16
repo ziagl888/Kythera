@@ -11,6 +11,7 @@ the VPS via `python tools/candles_parity.py --self-check`.
 
 Run with: pytest backtest/test_candles.py -v
 """
+
 from __future__ import annotations
 
 import os
@@ -278,21 +279,59 @@ def test_list_coin_tables_validates_before_the_connection():
         c.list_coin_tables(None, kind="junk")
 
 
-# ── Backend switch (phase-4 seam) ─────────────────────────────────────────────
+# ── Backend switch (phase-4 read-cutover) ─────────────────────────────────────
 
 
-def test_hypertable_backend_is_not_silently_accepted():
+def test_candle_source_resolves_known_backends():
+    assert c._candle_source() == "legacy"  # default
+    for src in ("legacy", "hyper"):
+        os.environ["KYTHERA_CANDLES_SOURCE"] = src
+        try:
+            assert c._candle_source() == src
+        finally:
+            os.environ.pop("KYTHERA_CANDLES_SOURCE", None)
+
+
+def test_unknown_backend_is_rejected_everywhere():
+    """A typo'd backend must fail closed — on reads, writes and deletes alike —
+    before the connection is ever touched."""
+    os.environ["KYTHERA_CANDLES_SOURCE"] = "banana"
+    row = ("BTCUSDT", _utc(2026, 1, 1), 1, 1, 1, 1, 1)
+    try:
+        for call in (
+            lambda: c.read_candles(None, "BTCUSDT", "1h"),
+            lambda: c.read_indicators(None, "BTCUSDT", "1h"),
+            lambda: c.read_candles_with_indicators(None, "BTCUSDT", "1h"),
+            lambda: c.latest_open_time(None, "BTCUSDT", "1h"),
+            lambda: c.list_coin_tables(None),
+            lambda: c.upsert_candles(None, "BTCUSDT", "1h", [row], closed=True),
+            lambda: c.delete_candles_before(None, "BTCUSDT", "1h", _utc(2026, 1, 1)),
+            lambda: c.delete_indicators_from(None, "BTCUSDT", "1h", _utc(2026, 1, 1)),
+        ):
+            with pytest.raises(c.CandleSourceError):
+                call()
+    finally:
+        os.environ.pop("KYTHERA_CANDLES_SOURCE", None)
+
+
+def test_hyper_backend_is_accepted_and_still_validates():
+    """'hyper' is a real backend now — no CandleSourceError. Identifier hygiene
+    still bites first, so a bad symbol/tf raises ValueError before the (None)
+    connection is dereferenced (proves the hyper read path validates up front)."""
     os.environ["KYTHERA_CANDLES_SOURCE"] = "hyper"
     try:
-        with pytest.raises(c.CandleSourceError):
-            c.read_candles(None, "BTCUSDT", "1h")
-        # the new gap functions honour the same phase-4 seam
-        with pytest.raises(c.CandleSourceError):
-            c.list_coin_tables(None)
-        with pytest.raises(c.CandleSourceError):
-            c.delete_candles_before(None, "BTCUSDT", "1h", _utc(2026, 1, 1))
-        with pytest.raises(c.CandleSourceError):
-            c.delete_indicators_from(None, "BTCUSDT", "1h", _utc(2026, 1, 1))
+        for fn in (c.read_candles, c.read_indicators, c.read_candles_with_indicators):
+            with pytest.raises(ValueError):
+                fn(None, "bad-symbol", "1h")
+        with pytest.raises(ValueError):
+            c.latest_open_time(None, "BTCUSDT", "3m")  # unknown tf
+        with pytest.raises(ValueError):
+            c.latest_open_time(None, "BTCUSDT", "1h", kind="junk")  # bad kind
+        # the hyper scope predicate validates and carries the params in order
+        pred, params = c._hyper_scope("BTCUSDT", "1h")
+        assert params == ["BTCUSDT", "1h"]
+        with pytest.raises(ValueError):
+            c._hyper_scope("bad-symbol", "1h")
     finally:
         os.environ.pop("KYTHERA_CANDLES_SOURCE", None)
 

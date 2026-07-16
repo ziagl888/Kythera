@@ -33,9 +33,11 @@ Build machine (only the DB-free comparator tests run, the rest skip):
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import sys
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Sequence
@@ -94,6 +96,43 @@ def canonical_rows(rows: Sequence[Sequence[Any]]) -> list[tuple[str, ...]]:
     return [tuple(canonical_cell(v) for v in row) for row in rows]
 
 
+def canonical_cell_f4(value: Any) -> str:
+    """Like canonical_cell, but reals are compared at float4 (REAL) precision.
+
+    The legacy per-coin indicator columns are REAL (float4, ~7 significant
+    digits); the hyper `indicators` columns are `double precision` (P3.12 /
+    D-2026-CLD-109 #2), so a forward dual-written row carries the engine's fuller
+    float64 in the hypertable and the float4-rounded value in legacy — a real,
+    intended precision UPGRADE, not drift. Casting both sides to float32
+    reproduces the legacy REAL bit-for-bit (round-to-nearest-even, same on the
+    PG float8→float4 and numpy float64→float32 paths), so this compares the
+    precision the two backends genuinely share. It is NOT a repr fudge: a value
+    that actually differs at float4 resolution still differs here.
+    """
+    import numpy as np
+
+    if value is None:
+        return _MISSING
+    if isinstance(value, (datetime, bool)):
+        return canonical_cell(value)
+    if isinstance(value, Decimal):
+        value = float(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return _MISSING
+        return "f4:" + repr(float(np.float32(value)))
+    if isinstance(value, int):
+        return "i" + str(value)
+    if hasattr(value, "item"):
+        return canonical_cell_f4(value.item())
+    return "s" + str(value)
+
+
+def canonical_rows_f4(rows: Sequence[Sequence[Any]]) -> list[tuple[str, ...]]:
+    """canonical_rows at float4 precision — for legacy-REAL vs hyper-double columns."""
+    return [tuple(canonical_cell_f4(v) for v in row) for row in rows]
+
+
 def frame_to_rows(df: Any, columns: Sequence[str]) -> list[tuple[Any, ...]]:
     """DataFrame → list of row tuples in `columns` order (nothing else touched)."""
     return [tuple(row) for row in df[list(columns)].itertuples(index=False, name=None)]
@@ -114,6 +153,19 @@ def test_canonical_cell_is_representation_independent():
     # above it is.
     assert canonical_cell(1.5) == canonical_cell(1.5 + 1e-13)
     assert canonical_cell(1.5) != canonical_cell(1.51)
+
+
+def test_canonical_cell_f4_reconciles_real_vs_double_but_not_real_drift():
+    import numpy as np
+
+    # a value the engine computed as float64; legacy stored only its float4 rounding
+    v = 44.037921905517578
+    legacy_real = float(np.float32(v))  # what psycopg2 hands back from a REAL column
+    assert canonical_cell_f4(v) == canonical_cell_f4(legacy_real)  # double vs REAL of same value
+    # a genuine difference at float4 resolution is still caught (not masked)
+    assert canonical_cell_f4(44.04) != canonical_cell_f4(44.05)
+    assert canonical_cell_f4(None) == canonical_cell_f4(float("nan"))
+    assert canonical_cell_f4(Decimal("1.5")) == canonical_cell_f4(1.5)
 
 
 def test_canonical_rows_is_order_sensitive():
@@ -515,9 +567,7 @@ def test_dual_write_mirrors_into_hypertables(conn, monkeypatch):
         )
         c.upsert_indicators(conn, df, sym, tf)
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT tf, is_closed, close, rsi_14, trend_direction FROM indicators WHERE symbol=%s", (sym,)
-            )
+            cur.execute("SELECT tf, is_closed, close, rsi_14, trend_direction FROM indicators WHERE symbol=%s", (sym,))
             assert cur.fetchone() == (tf, True, 1.5, 55.0, "UP")
         # flag OFF → no hypertable write
         monkeypatch.setenv("KYTHERA_CANDLES_DUAL_WRITE", "0")
@@ -528,6 +578,400 @@ def test_dual_write_mirrors_into_hypertables(conn, monkeypatch):
             assert cur.fetchone()[0] == 0
     finally:
         conn.rollback()  # undoes every hypertable write + drops the temp tables
+
+
+# ── Phase-4 read-cutover: hyper backend == legacy backend (T-2026-CU-9050-128) ─
+#
+# The read-cutover flips KYTHERA_CANDLES_SOURCE from 'legacy' to 'hyper'. It must
+# be behaviour-neutral: for a real (symbol, tf) the hyper backend has to return
+# rows byte-equal — same rows, order, values, column shape — to the legacy
+# backend. These VPS-only tests prove that directly, and are the acceptance gate
+# for the task.
+#
+# Determinism: both reads in a test run inside the SAME uncommitted transaction on
+# the pooled `conn`, so now() (transaction_timestamp) — and thus the clock-based
+# forming cutoff both backends share — is identical between them. That makes even
+# include_forming=False parity race-free: no candle-boundary flake. (The DB-free
+# comparator tests above guard the harness, so a green run here cannot be a false
+# pass from a broken comparator; without hyper data the tests skip, never fake.)
+
+
+@contextlib.contextmanager
+def _use_source(name: str) -> Iterator[None]:
+    """Force KYTHERA_CANDLES_SOURCE for the duration of a read, then restore it —
+    core.candles reads the flag at call time, so this switches the backend."""
+    prev = os.environ.get("KYTHERA_CANDLES_SOURCE")
+    os.environ["KYTHERA_CANDLES_SOURCE"] = name
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("KYTHERA_CANDLES_SOURCE", None)
+        else:
+            os.environ["KYTHERA_CANDLES_SOURCE"] = prev
+
+
+def _read_via(source: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
+    with _use_source(source):
+        return fn(*args, **kwargs)
+
+
+@pytest.fixture(scope="module")
+def hyper_probe(conn, probe):
+    """The probe (symbol, tf), but only once the hypertables exist AND hold it. A
+    box where C-Gate Phase 0/backfill has not run must skip, never fabricate a pass."""
+    symbol, tf = probe
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('candles'), to_regclass('indicators')")
+        ctbl, itbl = cur.fetchone()
+    if ctbl is None or itbl is None:
+        pytest.skip("candles/indicators hypertables absent (C-Gate Phase 0 not run on this box)")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM candles WHERE symbol = %s AND tf = %s", (symbol, tf))
+        if cur.fetchone()[0] < _MIN_ROWS:
+            pytest.skip(f"candles hypertable holds <{_MIN_ROWS} rows for {symbol} {tf} (not backfilled here)")
+    return symbol, tf
+
+
+def test_hyper_read_candles_is_byte_equal_to_legacy(conn, hyper_probe):
+    """read_candles: hyper == legacy over a closed window, every limit shape."""
+    symbol, tf = hyper_probe
+    start, end = _closed_window(conn, tf, 200)
+    for limit in (None, 50, 1):
+        legacy = _read_via(
+            "legacy",
+            c.read_candles,
+            conn,
+            symbol,
+            tf,
+            start=start,
+            end=end,
+            limit=limit,
+            include_forming=True,
+            columns=_DIRECT_CANDLE_COLS,
+        )
+        hyper = _read_via(
+            "hyper",
+            c.read_candles,
+            conn,
+            symbol,
+            tf,
+            start=start,
+            end=end,
+            limit=limit,
+            include_forming=True,
+            columns=_DIRECT_CANDLE_COLS,
+        )
+        assert len(hyper) == len(legacy) > 0, limit
+        assert canonical_rows(frame_to_rows(hyper, _DIRECT_CANDLE_COLS)) == canonical_rows(
+            frame_to_rows(legacy, _DIRECT_CANDLE_COLS)
+        ), limit
+
+
+def test_hyper_read_candles_forming_filter_matches_legacy(conn, hyper_probe):
+    """include_forming=False: both backends apply the same clock cutoff (shared
+    now() in one transaction), so the closed set is identical — and a subset of the
+    forming-inclusive read, which proves the filter is actually doing something."""
+    symbol, tf = hyper_probe
+    start = c.period_start(tf, _db_now(conn)) - 50 * c.timeframe_delta(tf)
+    legacy = _read_via(
+        "legacy", c.read_candles, conn, symbol, tf, start=start, include_forming=False, columns=_DIRECT_CANDLE_COLS
+    )
+    hyper = _read_via(
+        "hyper", c.read_candles, conn, symbol, tf, start=start, include_forming=False, columns=_DIRECT_CANDLE_COLS
+    )
+    assert len(hyper) == len(legacy) > 0
+    assert canonical_rows(frame_to_rows(hyper, _DIRECT_CANDLE_COLS)) == canonical_rows(
+        frame_to_rows(legacy, _DIRECT_CANDLE_COLS)
+    )
+    hyper_all = _read_via(
+        "hyper", c.read_candles, conn, symbol, tf, start=start, include_forming=True, columns=_DIRECT_CANDLE_COLS
+    )
+    assert len(hyper) <= len(hyper_all)
+
+
+def test_hyper_indicator_column_names_matches_legacy(conn, hyper_probe):
+    """The hyper catalog drops tf/is_closed → byte-equal to the legacy per-coin
+    catalog: same names, same ordinal order."""
+    symbol, tf = hyper_probe
+    if not c.table_exists(conn, c.indicators_table(symbol, tf)):
+        pytest.skip("no legacy indicator table for the probe symbol")
+    legacy_cols = _read_via("legacy", c.indicator_column_names, conn, symbol, tf)
+    hyper_cols = _read_via("hyper", c.indicator_column_names, conn, symbol, tf)
+    assert hyper_cols == legacy_cols
+    assert "tf" not in hyper_cols and "is_closed" not in hyper_cols
+    assert hyper_cols[:3] == ["symbol", "open_time", "close"]
+
+
+def test_hyper_read_indicators_is_byte_equal_to_legacy(conn, hyper_probe):
+    """read_indicators over an explicit projection, and via columns=None (SELECT-*
+    shape): the hyper read must not leak tf/is_closed and must match legacy values."""
+    symbol, tf = hyper_probe
+    if not c.table_exists(conn, c.indicators_table(symbol, tf)):
+        pytest.skip("no legacy indicator table for the probe symbol")
+    start, end = _closed_window(conn, tf, 200)
+    cols = _read_via("legacy", c.indicator_column_names, conn, symbol, tf)
+
+    legacy = _read_via(
+        "legacy", c.read_indicators, conn, symbol, tf, start=start, end=end, include_forming=True, columns=cols
+    )
+    hyper = _read_via(
+        "hyper", c.read_indicators, conn, symbol, tf, start=start, end=end, include_forming=True, columns=cols
+    )
+    assert len(hyper) == len(legacy) > 0
+    # float4 precision: legacy indicators are REAL, hyper is double (P3.12).
+    assert canonical_rows_f4(frame_to_rows(hyper, cols)) == canonical_rows_f4(frame_to_rows(legacy, cols))
+
+    # columns=None: each backend expands to its own catalog; shape + values must match
+    legacy_star = _read_via("legacy", c.read_indicators, conn, symbol, tf, start=start, end=end, include_forming=True)
+    hyper_star = _read_via("hyper", c.read_indicators, conn, symbol, tf, start=start, end=end, include_forming=True)
+    assert list(hyper_star.columns) == list(legacy_star.columns)  # no tf/is_closed leak, legacy order
+    shared = list(legacy_star.columns)
+    assert canonical_rows_f4(frame_to_rows(hyper_star, shared)) == canonical_rows_f4(frame_to_rows(legacy_star, shared))
+
+
+def test_hyper_joined_read_is_byte_equal_to_legacy(conn, hyper_probe):
+    """read_candles_with_indicators: the (symbol,tf,open_time) join reproduces the
+    legacy per-coin open_time join byte-for-byte, same columns and order."""
+    symbol, tf = hyper_probe
+    if not c.table_exists(conn, c.indicators_table(symbol, tf)):
+        pytest.skip("no legacy indicator table for the probe symbol")
+    start, end = _closed_window(conn, tf, 120)
+    legacy = _read_via(
+        "legacy",
+        c.read_candles_with_indicators,
+        conn,
+        symbol,
+        tf,
+        start=start,
+        end=end,
+        include_forming=True,
+        candle_columns=_DIRECT_CANDLE_COLS,
+    )
+    hyper = _read_via(
+        "hyper",
+        c.read_candles_with_indicators,
+        conn,
+        symbol,
+        tf,
+        start=start,
+        end=end,
+        include_forming=True,
+        candle_columns=_DIRECT_CANDLE_COLS,
+    )
+    assert list(hyper.columns) == list(legacy.columns)
+    assert len(hyper) == len(legacy) > 0
+    shared = list(legacy.columns)
+    # float4: the candle side is double==double (already proven byte-equal at 12g
+    # in test_hyper_read_candles), the indicator side is REAL vs double (P3.12).
+    assert canonical_rows_f4(frame_to_rows(hyper, shared)) == canonical_rows_f4(frame_to_rows(legacy, shared))
+
+
+def test_hyper_latest_open_time_matches_legacy(conn, hyper_probe):
+    """latest_open_time: hyper MAX(open_time) == legacy, both kinds, both forming
+    settings (the resume watermark must not shift at the cutover)."""
+    symbol, tf = hyper_probe
+    for kind in ("candles", "indicators"):
+        if kind == "indicators" and not c.table_exists(conn, c.indicators_table(symbol, tf)):
+            continue
+        for forming in (True, False):
+            legacy = _read_via("legacy", c.latest_open_time, conn, symbol, tf, include_forming=forming, kind=kind)
+            hyper = _read_via("hyper", c.latest_open_time, conn, symbol, tf, include_forming=forming, kind=kind)
+            assert canonical_cell(hyper) == canonical_cell(legacy), (kind, forming)
+
+
+def test_hyper_table_exists_probes_the_persistent_relation(conn, hyper_probe):
+    """table_exists is phase-agnostic: under source='hyper' it still probes the
+    per-coin relation (present until the Phase-5 drop) — True for the probe, False
+    for a never-ingested symbol. No 40M-row hypertable scan."""
+    symbol, tf = hyper_probe
+    with _use_source("hyper"):
+        assert c.table_exists(conn, c.candles_table(symbol, tf)) is True
+        assert c.table_exists(conn, c.candles_table("ZZNOPEXX", tf)) is False
+
+
+def test_hyper_list_coin_tables_matches_legacy(conn, hyper_probe):
+    """list_coin_tables is phase-agnostic too (it enumerates the per-coin relations,
+    NOT a >20 s DISTINCT over the 40M-row hypertable): under source='hyper' it
+    returns exactly the legacy set, with the probe present and tf/kind filters
+    honoured."""
+    symbol, tf = hyper_probe
+    legacy = set(_read_via("legacy", c.list_coin_tables, conn))
+    hyper = set(_read_via("hyper", c.list_coin_tables, conn))
+    assert hyper == legacy
+    assert (symbol, tf, "candles") in hyper
+    with _use_source("hyper"):
+        assert all(t == tf for _, t, _ in c.list_coin_tables(conn, tf))
+        assert all(k == "candles" for _, _, k in c.list_coin_tables(conn, kind="candles"))
+
+
+def test_hyper_read_candles_columns_none_matches_legacy(conn, hyper_probe):
+    """columns=None must NOT leak tf/is_closed under hyper. Legacy `SELECT *` on a
+    per-coin candle table yields the 7 CANDLE_COLUMNS; the hypertable's `SELECT *`
+    would add tf/is_closed. This guards the rgcore `columns=None` capture path."""
+    symbol, tf = hyper_probe
+    start, end = _closed_window(conn, tf, 120)
+    legacy = _read_via(
+        "legacy", c.read_candles, conn, symbol, tf, start=start, end=end, include_forming=True, columns=None
+    )
+    hyper = _read_via(
+        "hyper", c.read_candles, conn, symbol, tf, start=start, end=end, include_forming=True, columns=None
+    )
+    assert list(hyper.columns) == list(legacy.columns)  # no tf/is_closed leak, legacy order
+    assert "tf" not in hyper.columns and "is_closed" not in hyper.columns
+    shared = list(legacy.columns)
+    assert len(hyper) == len(legacy) > 0
+    assert canonical_rows(frame_to_rows(hyper, shared)) == canonical_rows(frame_to_rows(legacy, shared))
+
+
+def test_hyper_joined_candle_columns_none_matches_legacy(conn, hyper_probe):
+    """Same guard for the joined read's candle_columns=None path (`h.*`)."""
+    symbol, tf = hyper_probe
+    if not c.table_exists(conn, c.indicators_table(symbol, tf)):
+        pytest.skip("no legacy indicator table for the probe symbol")
+    start, end = _closed_window(conn, tf, 80)
+    legacy = _read_via(
+        "legacy",
+        c.read_candles_with_indicators,
+        conn,
+        symbol,
+        tf,
+        start=start,
+        end=end,
+        include_forming=True,
+        candle_columns=None,
+    )
+    hyper = _read_via(
+        "hyper",
+        c.read_candles_with_indicators,
+        conn,
+        symbol,
+        tf,
+        start=start,
+        end=end,
+        include_forming=True,
+        candle_columns=None,
+    )
+    assert list(hyper.columns) == list(legacy.columns)
+    assert "tf" not in hyper.columns and "is_closed" not in hyper.columns
+    shared = list(legacy.columns)
+    assert len(hyper) == len(legacy) > 0
+    assert canonical_rows_f4(frame_to_rows(hyper, shared)) == canonical_rows_f4(frame_to_rows(legacy, shared))
+
+
+def test_hyper_indicator_column_names_matches_legacy_fleetwide(conn, hyper_probe):
+    """Not just the sample: EVERY per-coin `_indicators` table must carry the exact
+    column set + ordinal order the hyper catalog returns (minus tf/is_closed).
+
+    `2_indicator_engine.create_indicator_table` uses CREATE TABLE IF NOT EXISTS with
+    no ALTER-migration path, so a coin whose table predates a newer indicator column
+    could carry a stale set — and read_indicators(columns=None) /
+    read_candles_with_indicators(indicator_columns=None) would then project a
+    different feature vector under hyper vs legacy for that outlier. This is the
+    fleet-wide cutover gate for that risk (one bulk catalog query, not N)."""
+    expected = _read_via("hyper", c.indicator_column_names, conn, hyper_probe[0], hyper_probe[1])
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name LIKE '%indicators' "
+            "ORDER BY table_name, ordinal_position"
+        )
+        rows = cur.fetchall()
+    per_table: dict[str, list[str]] = {}
+    for tname, cname in rows:
+        if c._parse_coin_table(tname) is not None:  # only real {SYM}_{tf}_indicators tables
+            per_table.setdefault(tname, []).append(cname)
+    assert len(per_table) > 100, f"expected the full per-coin fleet, saw {len(per_table)} indicator tables"
+    diverged = {t: cols for t, cols in per_table.items() if cols != expected}
+    assert not diverged, (
+        f"{len(diverged)} per-coin indicator tables diverge from the hyper column list: {list(diverged)[:5]}"
+    )
+
+
+@pytest.fixture(scope="module")
+def hyper_sample(conn):
+    """A spread of (symbol, tf) present in BOTH backends with ≥_MIN_ROWS in the
+    comparison window — BTC/ETH/SOL plus a few smaller coins across timeframes, so
+    the parity claim is not resting on a single pair. Skips if the hypertables are
+    not populated here."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('candles')")
+        if cur.fetchone()[0] is None:
+            pytest.skip("candles hypertable absent (C-Gate Phase 0 not run on this box)")
+    preferred = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    others = sorted({s for s, _, _ in c.list_coin_tables(conn, kind="candles") if s.endswith("USDT")} - set(preferred))
+    # a handful spread across the alphabet = a mix of large- and small-cap coins
+    smalls = others[:: max(1, len(others) // 4)][:4] if others else []
+    sample: list[tuple[str, str]] = []
+    for sym in preferred + smalls:
+        for tf in ("5m", "1h", "4h", "1d"):
+            if not c.table_exists(conn, c.candles_table(sym, tf)):
+                continue
+            start, end = _closed_window(conn, tf, 150)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM candles WHERE symbol = %s AND tf = %s AND open_time >= %s AND open_time <= %s",
+                    (sym, tf, start, end),
+                )
+                if cur.fetchone()[0] >= _MIN_ROWS:
+                    sample.append((sym, tf))
+    if len(sample) < 3:
+        pytest.skip("could not assemble a multi-coin / multi-tf hyper sample")
+    return sample
+
+
+def test_hyper_read_parity_across_coin_and_tf_sample(conn, hyper_sample):
+    """The behaviour-neutral cutover claim, widened: for every (symbol, tf) in the
+    sample the hyper read equals the legacy read — candles byte-for-byte, indicators
+    at float4 precision (P3.12)."""
+    checked_candles = checked_indicators = 0
+    for symbol, tf in hyper_sample:
+        start, end = _closed_window(conn, tf, 150)
+        legacy = _read_via(
+            "legacy",
+            c.read_candles,
+            conn,
+            symbol,
+            tf,
+            start=start,
+            end=end,
+            include_forming=True,
+            columns=_DIRECT_CANDLE_COLS,
+        )
+        hyper = _read_via(
+            "hyper",
+            c.read_candles,
+            conn,
+            symbol,
+            tf,
+            start=start,
+            end=end,
+            include_forming=True,
+            columns=_DIRECT_CANDLE_COLS,
+        )
+        assert len(hyper) == len(legacy) > 0, (symbol, tf)
+        assert canonical_rows(frame_to_rows(hyper, _DIRECT_CANDLE_COLS)) == canonical_rows(
+            frame_to_rows(legacy, _DIRECT_CANDLE_COLS)
+        ), (symbol, tf)
+        checked_candles += 1
+
+        if c.table_exists(conn, c.indicators_table(symbol, tf)):
+            cols = _read_via("legacy", c.indicator_column_names, conn, symbol, tf)
+            li = _read_via(
+                "legacy", c.read_indicators, conn, symbol, tf, start=start, end=end, include_forming=True, columns=cols
+            )
+            hi = _read_via(
+                "hyper", c.read_indicators, conn, symbol, tf, start=start, end=end, include_forming=True, columns=cols
+            )
+            assert len(hi) == len(li), (symbol, tf, "indicator len")
+            assert canonical_rows_f4(frame_to_rows(hi, cols)) == canonical_rows_f4(frame_to_rows(li, cols)), (
+                symbol,
+                tf,
+                "indicators",
+            )
+            checked_indicators += 1
+    assert checked_candles >= 3
+    print(f"\nhyper parity sample: {checked_candles} coin/tf candle reads, {checked_indicators} with indicators")
 
 
 if __name__ == "__main__":
