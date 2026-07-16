@@ -1,0 +1,295 @@
+{
+  "meta": {
+    "study": "K7 \u00b7 SKW1 (realized skewness / moments)",
+    "task": "T-2026-CU-9050-141",
+    "mode": "SMOKE \u2014 full run pending (Ein-Job deferred)",
+    "generated_at": "2026-07-16T15:55:35.985134+00:00",
+    "tf": "15m",
+    "limit_symbols": 3,
+    "max_weeks": 6,
+    "n_coins_loaded": 3,
+    "n_weeks": 6,
+    "n_rows_post_liquidity": 12,
+    "moment_features": [
+      "mom_rv_24h",
+      "mom_rv_7d",
+      "mom_skew_24h",
+      "mom_skew_7d",
+      "mom_kurt_24h",
+      "mom_kurt_7d"
+    ],
+    "fee_per_side": 0.0005,
+    "min_coins_per_week": 20
+  },
+  "skw1_spread": {
+    "sort_feature": "mom_skew_7d",
+    "n_weeks": 0,
+    "note": "no week reached MIN_COINS_PER_WEEK (smoke caps)"
+  },
+  "decile_sorts": [
+    {
+      "sort_feature": "mom_skew_7d",
+      "n_weeks_used": 0,
+      "deciles": [
+        {
+          "decile": 0,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 1,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 2,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 3,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 4,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 5,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 6,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 8,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 9,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        }
+      ]
+    },
+    {
+      "sort_feature": "mom_skew_24h",
+      "n_weeks_used": 0,
+      "deciles": [
+        {
+          "decile": 0,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 1,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 2,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 3,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 4,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 5,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 6,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 8,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 9,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        }
+      ]
+    },
+    {
+      "sort_feature": "mom_rv_7d",
+      "n_weeks_used": 0,
+      "deciles": [
+        {
+          "decile": 0,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 1,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 2,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 3,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 4,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 5,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 6,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 8,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 9,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        }
+      ]
+    },
+    {
+      "sort_feature": "mom_kurt_7d",
+      "n_weeks_used": 0,
+      "deciles": [
+        {
+          "decile": 0,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 1,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 2,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 3,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 4,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 5,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 6,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 8,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        },
+        {
+          "decile": 9,
+          "n": 0,
+          "avg_mn_ret": null,
+          "wr": null
+        }
+      ]
+    }
+  ]
+}

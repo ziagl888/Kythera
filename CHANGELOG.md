@@ -12,6 +12,42 @@ gecheckte und ungecheckte Variante beide behalten). Verifiziert per synthetische
 ohne Regel Konflikt, mit Regel sauber + beide Einträge erhalten. Reihenfolge zweier gleichzeitiger
 Einträge nicht garantiert (kosmetisch). Folge-Option (separater Task): `changelog.d/`-Fragmente für
 eine Null-Konflikt-Garantie.
+## [2026-07-16] K7 · MOM/SKW1 — Realized-Moments-Feature-Block + Skewness-Studie + Retrain-Anschluss (CODE-PREP) (T-2026-CU-9050-141)
+
+Neuer geteilter X-R1-Builder `core/moment_features.py` (kanonisch für Studie, Trainer und später Bot —
+kein Train/Serve-Skew, wie `core/funding_features.py`/`core/breadth_features.py`): realisierte
+**Vol/Schiefe/Wölbung** aus **15m**-Kerzen (bewusst 15m statt 5m — 5m hat nur ~1 Monat Retention, 15m ~1
+Jahr), rollierende Fenster {24h, 7d} = {96, 672} geschlossene Balken, 6 Features
+(`mom_rv_24h/7d`, `mom_skew_24h/7d`, `mom_kurt_24h/7d`, parallel zu den 6 Funding-Features). As-of nur
+geschlossene Kerzen (R1, `include_forming=False`, kein Lookahead); **native-NaN-Politik** (P1.20 — fehlende
+Werte bleiben NaN/`None`, NIE `fillna(0)`); fehlende Pflicht-**Spalten** → `MomentFeatureError` (X-R1-Vertrag).
+**FALLE (§K7, F6):** das ist REALISIERTE SCHIEFE (drittes Moment), KEIN MAX-/Lotterie-Feature — MAX-Shorts
+sind in Krypto kontraindiziert; es wird bewusst kein „Max-Return im Fenster" gebaut.
+
+Neues read-only `tools/skewness_study.py` (§K7): wöchentliche Dezil-Sorts auf realisierter Skewness —
+marktneutral (Coin − BTC), Liquiditätsfilter (unteres Dollar-Volumen-Terzil je Woche verworfen),
+Funding-Kosten auf der Short-Seite (Wiederverwendung `core/funding_features.load_funding`, roher
+`funding_rate` über die Halte-Woche summiert), Richtung Short-High-Positive-Skew vs. Long-Low-Skew,
+Fees beidbeinig (`walkforward_sim.FEE_PER_SIDE`); RV/Kurtosis-Dezile als Nebenprodukt; chronologischer
+Val/Test-Split (Vorzeichen muss beide Hälften überleben — Regel 8). BELOW_NORMAL + CPU-Headroom-Guards
+wie die Schwester-Studien (K3/K6). Artefakte nach `staging_models/skewness_study.{json,md}` mit
+`SMOKE — full run pending`-Header.
+
+Additiver Retrain-Anschluss in `tools/retrain_from_replay.py`: neues **DEFAULT-OFF** `--features moments`-Flag
+(`FEATURE_HOOKS`/`resolve_extra_features`/`with_extra_features`) hängt den `MOMENT_FEATURES`-Block an den
+Feature-Vertrag jeder Strategie an — Vorbild ist der eingebackene Funding-Block. **Strikt additiv:** ohne
+das Flag ist `extra_features` leer und das Retrain byte-identisch zu vorher (No-op-Anschluss, alle 7 Runner
+mit `extra_features=()`-Default durchgereicht). Anhängen der Namen triggert KEIN Retrain — der Replay-Writer
+muss die Moment-Spalten erst liefern (Queue).
+
+**MODE = CODE-PREP:** nur ein winziger read-only BELOW_NORMAL-Smoke lief end-to-end gegen die Live-DB
+(`--limit-symbols 3 --max-weeks 6 --start 2026-04-01 --skip-cpu-check`: DB-Connect, eine Query je Coin,
+Panel-Bau, Wochen-Cross-Section, Funding-Load, Liquiditätsfilter, Dezil/Spread-Maschinerie, Artefakt-Write
+— mit 3 Coins erwartungsgemäß unter `MIN_COINS_PER_WEEK`, Zahlen nicht aussagekräftig). Der Full-Universe-Lauf
+UND ein `--features moments`-Retrain sind der Queue vorbehalten (Ein-Job-Regel: K1-Studie läuft live).
+Offline-Builder-Assertions grün (NaN-Politik, R1-As-of ohne Lookahead, Skew≠MAX); ruff grün
+(`core/moment_features.py` strenge Latte + `tools/skewness_study.py`; die 2 Findings in
+`retrain_from_replay.py` sind vorbestehende Baseline unter ruff 0.15.17, keine neuen).
 
 ## [2026-07-16] R1/TimescaleDB C-Gate Phase 5 prep — aktive Bypass-Reader auf core.candles + reversibler Write-Primary-Flag (T-2026-CU-9050-139)
 
