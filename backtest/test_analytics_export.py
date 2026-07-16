@@ -473,3 +473,240 @@ def test_import_is_db_free(monkeypatch):
     # Constructing the fetcher must not connect either.
     fetcher = mod.PostgresFetcher(dsn="postg://unused")
     assert fetcher._conn is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D-2026-CLD-110 stack auflagen (T-2026-CU-9050-136)
+#   1. Amplituden-Budget: read connections throttled (PRAGMA threads + memory)
+#   2. Waitress serving (one kill-fest process), app.run() only for --dev smoke
+#   3. Server-cache with mtime/synced_at sequence check for the 30-60 s polling
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _mem_echo_to_bytes(value: Any) -> float:
+    """Parse a DuckDB ``current_setting('memory_limit')`` echo to bytes.
+
+    Tolerant of the format differences across DuckDB versions ("512.0 MiB",
+    "512MB", a raw byte count) so the throttle assertion does not hinge on the
+    exact human string."""
+    import re
+
+    s = str(value).strip()
+    if s.isdigit():
+        return float(s)
+    m = re.match(r"([\d.]+)\s*([KMGT]i?B|bytes|B)$", s)
+    assert m, f"unparseable memory_limit echo: {s!r}"
+    factor = {
+        "B": 1, "bytes": 1,
+        "KB": 1000, "KiB": 1024,
+        "MB": 1000 ** 2, "MiB": 1024 ** 2,
+        "GB": 1000 ** 3, "GiB": 1024 ** 3,
+        "TB": 1000 ** 4, "TiB": 1024 ** 4,
+    }[m.group(2)]
+    return float(m.group(1)) * factor
+
+
+def test_ro_connection_is_throttled(tmp_path):
+    """Auflage 2: connect_ro caps threads and memory_limit, stays read-only."""
+    duckdb_path, _ = _build_success_fixture(tmp_path)
+    con = analytics_api.connect_ro(duckdb_path)
+    try:
+        threads = con.execute("SELECT current_setting('threads')").fetchone()[0]
+        mem = con.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+        # The throttled connection is still usable for the read path.
+        n = con.execute('SELECT COUNT(*) FROM "closed_ai_signals"').fetchone()[0]
+    finally:
+        con.close()
+    # threads is the definitive proof the PRAGMAs were applied.
+    assert int(threads) == analytics_api.DUCKDB_THREADS == 2
+    # memory_limit is constrained to our cap, well under any machine default.
+    assert _mem_echo_to_bytes(mem) <= 1024 ** 3
+    assert n >= 1
+
+
+def test_file_token_tracks_mtime_and_size(tmp_path):
+    """The freshness token is None pre-file and advances on any rewrite."""
+    p = tmp_path / "analytics.duckdb"
+    assert analytics_api._file_token(str(p)) is None
+    p.write_bytes(b"abc")
+    t1 = analytics_api._file_token(str(p))
+    assert t1 is not None
+    p.write_bytes(b"abcd")  # size change alone advances the token
+    assert analytics_api._file_token(str(p)) != t1
+
+
+def test_poll_cache_hits_until_token_advances():
+    """A cached key is served without rebuilding until the token advances; a
+    token bump drops the whole cache (D-110 server-cache + Auflage 1)."""
+    calls = {"n": 0}
+
+    def build():
+        calls["n"] += 1
+        return {"v": calls["n"]}
+
+    token = {"t": 1}
+    cache = analytics_api._PollCache("ignored", token=lambda _p: token["t"])
+
+    first = cache.get(("k",), build)
+    second = cache.get(("k",), build)
+    assert first == second == {"v": 1}
+    assert calls["n"] == 1  # second poll served from memory, no rebuild
+
+    # A different key builds separately under the same token.
+    assert cache.get(("other",), build) == {"v": 2}
+    assert calls["n"] == 2
+
+    # Token advances (new export) → whole cache invalidated → next get rebuilds.
+    token["t"] = 2
+    assert cache.get(("k",), build) == {"v": 3}
+    assert calls["n"] == 3
+
+
+def test_poll_cache_disabled_builds_every_call():
+    calls = {"n": 0}
+
+    def build():
+        calls["n"] += 1
+        return calls["n"]
+
+    cache = analytics_api._PollCache("ignored", token=lambda _p: 1, enabled=False)
+    assert cache.get(("k",), build) == 1
+    assert cache.get(("k",), build) == 2
+    assert calls["n"] == 2
+
+
+def test_file_token_reflects_wal_sidecar(tmp_path):
+    """A committed-but-uncheckpointed write lands in <file>.wal; the token must
+    advance on it even though the main file is untouched (read-only readers
+    replay the WAL, so the cache must not serve stale rows)."""
+    p = tmp_path / "a.duckdb"
+    p.write_bytes(b"main")
+    base = analytics_api._file_token(str(p))
+    (tmp_path / "a.duckdb.wal").write_bytes(b"waldata")
+    assert analytics_api._file_token(str(p)) != base
+
+
+def test_poll_cache_evicts_when_over_max_entries():
+    """Between exports (stable token) the cache is FIFO-bounded, so a run of
+    distinct keys cannot grow it without limit."""
+    cache = analytics_api._PollCache("ignored", token=lambda _p: 1, max_entries=2)
+    cache.get(("a",), lambda: "A")
+    cache.get(("b",), lambda: "B")
+    cache.get(("c",), lambda: "C")  # len hits 2 → evicts the oldest ("a")
+
+    rebuilt = {"n": 0}
+
+    def build_a():
+        rebuilt["n"] += 1
+        return "A2"
+
+    assert cache.get(("a",), build_a) == "A2"
+    assert rebuilt["n"] == 1  # ("a") was evicted, so it had to rebuild
+    # ("c") stayed cached across the eviction.
+    assert cache.get(("c",), lambda: pytest.fail("c should be cached")) == "C"
+
+
+def test_poll_cache_thread_safe_under_concurrent_get():
+    """The lock-guarded check-then-act must hold under Waitress's real thread
+    pool: many threads on one key get a consistent payload and, once cached,
+    further gets never rebuild."""
+    import threading
+
+    build_calls = {"n": 0}
+    count_lock = threading.Lock()
+
+    def build():
+        with count_lock:
+            build_calls["n"] += 1
+        return {"v": "same"}
+
+    cache = analytics_api._PollCache("ignored", token=lambda _p: 1)
+    results: list[Any] = []
+    barrier = threading.Barrier(16)
+
+    def worker():
+        barrier.wait()  # maximise overlap on the get()
+        results.append(cache.get(("k",), build))
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    assert len(results) == 16
+    assert all(r == {"v": "same"} for r in results)
+    # Once the entry is cached, further gets are served from memory (no rebuild).
+    n_after = build_calls["n"]
+    assert cache.get(("k",), build) == {"v": "same"}
+    assert build_calls["n"] == n_after
+
+
+def test_success_rate_cache_invalidates_on_new_export(tmp_path):
+    """End-to-end: a poll is served from cache while the file is unchanged, and
+    rebuilds once a new export advances the file token."""
+    as_of = datetime.datetime(2026, 7, 15, 12, 0)  # noqa: DTZ001
+    recent = as_of - datetime.timedelta(days=1)
+    data = {
+        "closed_ai_signals": [
+            _ai_row(1, model="ABR2", direction="LONG", entry=100, close=110, close_time=recent),
+        ]
+    }
+    fetcher = ListFetcher(data)
+    src = [SOURCES_BY_NAME["closed_ai_signals"]]
+    _make_exporter(tmp_path, fetcher, sources=src).run()
+
+    duckdb_path = _paths(tmp_path)[0]
+    client = analytics_api.create_app(duckdb_path).test_client()
+    q = f"/api/analytics/success-rate?windows=7&bots=ABR2&as_of={as_of.isoformat()}"
+
+    body1 = client.get(q).get_json()
+    assert {e["bot"]: e for e in body1["windows"]["7"]}["ABR2"]["n"] == 1
+    # File unchanged → identical cached response.
+    assert client.get(q).get_json() == body1
+
+    # A second export appends another decisive ABR2 win (keyset cursor pulls only
+    # the new row) → file token advances → cache rebuilds with the new count.
+    data["closed_ai_signals"].append(
+        _ai_row(2, model="ABR2", direction="LONG", entry=100, close=120, close_time=as_of)
+    )
+    _make_exporter(tmp_path, fetcher, sources=src).run()
+
+    body2 = client.get(q).get_json()
+    assert {e["bot"]: e for e in body2["windows"]["7"]}["ABR2"]["n"] == 2
+
+
+def test_serve_uses_waitress_with_thread_cap():
+    """Prod serving path hands the app to Waitress with the bounded thread pool
+    (D-110). serve_fn is injected so no Waitress import is needed here."""
+    calls = []
+
+    def fake_serve(app, **kwargs):
+        calls.append((app, kwargs))
+
+    sentinel_app = object()
+    analytics_api._serve(sentinel_app, host="127.0.0.1", port=8099, serve_fn=fake_serve)
+
+    assert len(calls) == 1
+    app_arg, kwargs = calls[0]
+    assert app_arg is sentinel_app
+    assert kwargs == {
+        "host": "127.0.0.1",
+        "port": 8099,
+        "threads": analytics_api.WAITRESS_THREADS,
+    }
+
+
+def test_serve_dev_uses_flask_run_not_waitress():
+    """--dev falls back to the Flask dev server and never touches Waitress."""
+    ran = []
+
+    class FakeApp:
+        def run(self, **kwargs):
+            ran.append(kwargs)
+
+    def fake_serve(*_a, **_k):
+        raise AssertionError("dev mode must not invoke Waitress")
+
+    analytics_api._serve(FakeApp(), host="0.0.0.0", port=1234, dev=True, serve_fn=fake_serve)
+    assert ran == [{"host": "0.0.0.0", "port": 1234}]

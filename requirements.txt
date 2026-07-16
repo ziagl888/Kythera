@@ -33,6 +33,10 @@ python-telegram-bot>=22,<23
 # --- Dashboard (Flask Web-UI + Prozess-Monitoring) ---
 flask
 psutil
+# Waitress is the prod WSGI server for the Z1 analytics/dashboard endpoints
+# (D-2026-CLD-110, T-2026-CU-9050-136): one kill-fest thread-pool process under
+# the watchdog on Windows — app.run() stays a --dev local-smoke fallback only.
+waitress
 
 # --- Analytics substrate (Z1, T-2026-CU-9050-131) ---
 # DuckDB is the columnar analytics store + native Parquet reader/writer for
