@@ -942,7 +942,7 @@ def delete_candles_before(conn: Any, symbol: str, tf: str, cutoff: datetime, *, 
 
     Does NOT commit (contract 3).
     """
-    _candle_source()  # validate the read-backend flag; the write backend follows _write_primary() below
+    _candle_source()  # validate the read-backend flag; delete is NOT part of the write-primary cutover — always the legacy per-coin table
     if cutoff.tzinfo is None:
         raise ValueError("delete_candles_before() requires a timezone-aware cutoff")
     table = _table_for_kind(symbol, tf, kind)
@@ -963,7 +963,7 @@ def delete_indicators_from(conn: Any, symbol: str, tf: str, start: datetime) -> 
 
     Does NOT commit (contract 3).
     """
-    _candle_source()  # validate the read-backend flag; the write backend follows _write_primary() below
+    _candle_source()  # validate the read-backend flag; delete is NOT part of the write-primary cutover — always the legacy per-coin table
     if start.tzinfo is None:
         raise ValueError("delete_indicators_from() requires a timezone-aware start")
     table = indicators_table(symbol, tf)
