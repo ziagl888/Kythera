@@ -40,6 +40,36 @@ float32-Cast reproduziert die REAL bit-genau, ein echter Wertunterschied fällt 
 Unknown-Backend-Reject, Hyper-Validierung vor der Connection). Regression-Guard smoke+verify grün,
 ruff/format/mypy grün. Der Flip selbst (`SOURCE=hyper` + Fleet-Restart) bleibt Michi-gegatet.
 
+## [2026-07-16] Z1-Analytics-Substrat: inkrementeller DuckDB/Parquet-Export + erster Erfolgsraten-Endpoint (T-2026-CU-9050-131)
+
+Erster Implementierungs-Task der Z1-Stufe-1 (Ideation-Council T-129, Kuratierung Michi 2026-07-16).
+Baut den **einzigen Analytics-Datenpfad** des kommenden Dashboards (Gutachten-Option A): das
+Dashboard liest nie mehr direkt Live-PG, sondern ein columnar Substrat, das ein Task-Scheduler-Job
+(kein Bot-Prozess, Watchdog bleibt Owner) inkrementell befüllt.
+
+- **`tools/analytics_export.py`** — watermark-getriebener Export von vier Quellen
+  (`closed_trades_master`, `closed_ai_signals` inkl. ROM1, `ml_predictions_master`, `regime_history`)
+  in DuckDB-Tabellen + datums-partitioniertes Parquet (`<src>/dt=YYYY-MM-DD/data.parquet`). Nur
+  **geschlossene** Rows (`posted`/`close_time IS NOT NULL`, kein `ENTRY_NOT_FILLED`). Inkrementell
+  per **Keyset-Cursor `(ts, id)`** mit strikter `>`-Grenze — kein Skip an gleichen Timestamps, keine
+  Dubletten, ohne Import-Dedup. LIMIT-Batches + per-Session `statement_timeout` (CPU-Blip-Guard).
+  Watermark + Batch committen atomar (Crash-safe Resume). **Datenstand-Feld** pro Quelle
+  (`last_row_ts` + `synced_at` [UTC] + `rows_total`) als First-Class-Output für den Panel-Indikator.
+  R3-Disziplin: naive-lokale Legacy-Timestamps werden verbatim durchgereicht, nie als UTC umgedeutet.
+- **`tools/analytics_api.py`** — erster Endpoint (dünner Flask-Blueprint, Framework-Entscheid T-130
+  offen): Erfolgsraten-Zeitreihe (Rolling 7/30/90d, Bot-Multiselect, Tages-Serie), liest **nur** die
+  DuckDB-Datei. Outcome PnL-basiert wie der Realized-PnL-Report (23_market_tracker) — neutral bei
+  Housekeeping/Micro/Outlier, Winrate über decisive Trades. User-Input parametrisiert (keine
+  SQL-Injection), read-only-Connection pro Request.
+- **Timescale-Forward-Kompatibilität:** Quellen als austauschbare `SourceSpec`-Config; Kerzen bewusst
+  out-of-scope (Folge-Task, nur 5m-Basis-TF).
+
+Verifikation (DB-frei, Build-Maschine ohne Credentials): `backtest/test_analytics_export.py` 15/15 —
+synthetischer Fetcher (spiegelt den PostgresFetcher-SELECT-Vertrag) + echte DuckDB/Parquet-Materialisierung;
+deckt Watermark-Tie, Batching==Single-Batch, Closed-Filter, Freshness, Rolling-Window, DB-freien Import.
+ruff/mypy grün (tools/backtest sind CI-exkludiert — lokal geprüft). Beide Kern-Reviews PASS. `duckdb>=1.0`
+neu in `requirements.txt` (nativer Parquet-Reader/Writer, kein pyarrow). **Echter Lauf nur in VPS-Session.**
+
 ## [2026-07-14] Fleet-weites Shadow-Mode-Posting + 3-Wege-Report + Regime-Gating-Evidenz (T-2026-CU-9050-125)
 
 Drei zusammenhängende Teile. **Nichts geht live** — Shadow postet nie in einen Kanal,
