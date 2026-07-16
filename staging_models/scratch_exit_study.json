@@ -1,0 +1,298 @@
+{
+  "study": "K15 · SRX — Scratch-Reload-Exit (ABR1-Events)",
+  "task": "T-2026-CU-9050-137",
+  "generated_utc": "2026-07-16T08:49:15.305272+00:00",
+  "replay_source": "C:\\Users\\Michael\\Documents\\_X\\staging_models\\replay\\abr1_replay_365d.jsonl",
+  "read_only": true,
+  "fee_per_side": 0.0005,
+  "fee_roundtrip_pct": 0.1,
+  "window_days": 14,
+  "n_cycles_grid": [
+    2,
+    4,
+    8
+  ],
+  "sampling": {
+    "stride": 1,
+    "limit_symbols": 0,
+    "events_in_file": 288281,
+    "events_usable": 288281,
+    "events_simulated": 288211,
+    "events_skipped_no_candles": 70,
+    "symbols_used": 526
+  },
+  "verdict": "no_op_thesis_falsified",
+  "verdict_cells": {
+    "b_N2": {
+      "val_delta": -0.4046,
+      "test_delta": -0.2128,
+      "beats_baseline_both_halves": false
+    },
+    "b_N4": {
+      "val_delta": -0.491,
+      "test_delta": -0.327,
+      "beats_baseline_both_halves": false
+    },
+    "b_N8": {
+      "val_delta": -0.4926,
+      "test_delta": -0.3366,
+      "beats_baseline_both_halves": false
+    }
+  },
+  "variants": {
+    "a_baseline_recorded": {
+      "n": 288211,
+      "wr_pct": 43.05,
+      "avg_net_pct": -0.1007,
+      "median_net_pct": -2.1621,
+      "p5_net_pct": -9.0305,
+      "p95_net_pct": 10.7387,
+      "sum_net_pct": -29011.06
+    },
+    "aux_geom_tp1_touchsl": {
+      "n": 288211,
+      "wr_pct": 55.84,
+      "avg_net_pct": -0.1571,
+      "median_net_pct": 2.101,
+      "p5_net_pct": -8.9935,
+      "p95_net_pct": 7.6518,
+      "sum_net_pct": -45292.09
+    },
+    "b_scratch_touchSL_N2": {
+      "n": 288211,
+      "wr_pct": 46.45,
+      "avg_net_pct": -0.4094,
+      "median_net_pct": -0.6443,
+      "p5_net_pct": -7.7949,
+      "p95_net_pct": 6.498,
+      "sum_net_pct": -118001.76,
+      "avg_cycles": 0.814,
+      "max_cycles": 2,
+      "pct_with_reentry": 59.03
+    },
+    "b_scratch_touchSL_N4": {
+      "n": 288211,
+      "wr_pct": 48.89,
+      "avg_net_pct": -0.5097,
+      "median_net_pct": -0.178,
+      "p5_net_pct": -9.6039,
+      "p95_net_pct": 6.6594,
+      "sum_net_pct": -146911.11,
+      "avg_cycles": 0.938,
+      "max_cycles": 4,
+      "pct_with_reentry": 59.03
+    },
+    "b_scratch_touchSL_N8": {
+      "n": 288211,
+      "wr_pct": 48.98,
+      "avg_net_pct": -0.5153,
+      "median_net_pct": -0.1613,
+      "p5_net_pct": -9.6765,
+      "p95_net_pct": 6.6695,
+      "sum_net_pct": -148521.52,
+      "avg_cycles": 0.958,
+      "max_cycles": 8,
+      "pct_with_reentry": 59.03
+    },
+    "c_scratch_closeSL_N2": {
+      "n": 288211,
+      "wr_pct": 47.25,
+      "avg_net_pct": -0.435,
+      "median_net_pct": -0.4986,
+      "p5_net_pct": -8.1145,
+      "p95_net_pct": 6.5868,
+      "sum_net_pct": -125376.48,
+      "avg_cycles": 0.868,
+      "max_cycles": 2,
+      "pct_with_reentry": 62.46
+    },
+    "c_scratch_closeSL_N4": {
+      "n": 288211,
+      "wr_pct": 49.84,
+      "avg_net_pct": -0.5457,
+      "median_net_pct": -0.0263,
+      "p5_net_pct": -10.2008,
+      "p95_net_pct": 6.7757,
+      "sum_net_pct": -157276.7,
+      "avg_cycles": 1.009,
+      "max_cycles": 4,
+      "pct_with_reentry": 62.46
+    },
+    "c_scratch_closeSL_N8": {
+      "n": 288211,
+      "wr_pct": 49.94,
+      "avg_net_pct": -0.5506,
+      "median_net_pct": -0.009,
+      "p5_net_pct": -10.3112,
+      "p95_net_pct": 6.7921,
+      "sum_net_pct": -158697.89,
+      "avg_cycles": 1.033,
+      "max_cycles": 8,
+      "pct_with_reentry": 62.46
+    }
+  },
+  "chrono_split": {
+    "val_n": 144105,
+    "test_n": 144106,
+    "val_cut": "2026-01-31T06:00:00+00:00",
+    "base": {
+      "val": -0.012,
+      "test": -0.1894
+    },
+    "b_N2": {
+      "val": -0.4166,
+      "test": -0.4022
+    },
+    "b_N4": {
+      "val": -0.503,
+      "test": -0.5164
+    },
+    "b_N8": {
+      "val": -0.5046,
+      "test": -0.526
+    },
+    "c_N2": {
+      "val": -0.4499,
+      "test": -0.4201
+    },
+    "c_N4": {
+      "val": -0.5445,
+      "test": -0.5469
+    },
+    "c_N8": {
+      "val": -0.5436,
+      "test": -0.5577
+    }
+  },
+  "outcomes": {
+    "b_N2": {
+      "tp": 167703,
+      "timeout_flat": 27989,
+      "scratch_exhausted": 64403,
+      "sl": 25615,
+      "timeout_open": 2501
+    },
+    "b_N4": {
+      "tp": 199100,
+      "timeout_flat": 45356,
+      "scratch_exhausted": 10185,
+      "sl": 28229,
+      "timeout_open": 5341
+    },
+    "b_N8": {
+      "tp": 202825,
+      "timeout_flat": 49800,
+      "sl": 28633,
+      "timeout_open": 6798,
+      "scratch_exhausted": 155
+    },
+    "c_N2": {
+      "tp": 172970,
+      "timeout_flat": 30177,
+      "scratch_exhausted": 70247,
+      "sl": 12061,
+      "timeout_open": 2756
+    },
+    "c_N4": {
+      "tp": 207319,
+      "timeout_flat": 49603,
+      "scratch_exhausted": 11748,
+      "sl": 13451,
+      "timeout_open": 6090
+    },
+    "c_N8": {
+      "tp": 211603,
+      "timeout_flat": 54853,
+      "sl": 13678,
+      "timeout_open": 7888,
+      "scratch_exhausted": 189
+    }
+  },
+  "month_split": {
+    "2025-07": {
+      "n": 6585,
+      "base_avg": -0.3846,
+      "b_N4_avg": -0.302,
+      "c_N4_avg": -0.3687
+    },
+    "2025-08": {
+      "n": 21616,
+      "base_avg": -0.9516,
+      "b_N4_avg": -0.865,
+      "c_N4_avg": -0.8847
+    },
+    "2025-09": {
+      "n": 22160,
+      "base_avg": -0.4629,
+      "b_N4_avg": -0.8721,
+      "c_N4_avg": -0.915
+    },
+    "2025-10": {
+      "n": 22985,
+      "base_avg": -0.0178,
+      "b_N4_avg": -0.6591,
+      "c_N4_avg": -0.7634
+    },
+    "2025-11": {
+      "n": 21396,
+      "base_avg": 0.8785,
+      "b_N4_avg": -0.4324,
+      "c_N4_avg": -0.4505
+    },
+    "2025-12": {
+      "n": 25309,
+      "base_avg": -0.2727,
+      "b_N4_avg": -0.4956,
+      "c_N4_avg": -0.5544
+    },
+    "2026-01": {
+      "n": 24525,
+      "base_avg": 0.9902,
+      "b_N4_avg": 0.331,
+      "c_N4_avg": 0.3409
+    },
+    "2026-02": {
+      "n": 21023,
+      "base_avg": -0.613,
+      "b_N4_avg": -0.4355,
+      "c_N4_avg": -0.399
+    },
+    "2026-03": {
+      "n": 28060,
+      "base_avg": -0.4066,
+      "b_N4_avg": -0.5186,
+      "c_N4_avg": -0.5446
+    },
+    "2026-04": {
+      "n": 27307,
+      "base_avg": -0.4124,
+      "b_N4_avg": -0.9249,
+      "c_N4_avg": -1.0264
+    },
+    "2026-05": {
+      "n": 28322,
+      "base_avg": 0.357,
+      "b_N4_avg": -0.354,
+      "c_N4_avg": -0.3388
+    },
+    "2026-06": {
+      "n": 26598,
+      "base_avg": -0.0979,
+      "b_N4_avg": -0.4813,
+      "c_N4_avg": -0.5348
+    },
+    "2026-07": {
+      "n": 12325,
+      "base_avg": -0.2736,
+      "b_N4_avg": -0.5096,
+      "c_N4_avg": -0.5742
+    }
+  },
+  "caveats": {
+    "close_based_sl": "Variante (c) unterschätzt bei Hebel das Liquidationsrisiko — Liquidation ist Touch-basiert; Cross-Margin mildert, eliminiert das nicht.",
+    "survivorship": "Event-Population = ABR1-Walkforward über heute in coins.json handelbare Coins; delistete Paare fehlen → Verlust-Tail optimistisch (gilt für alle Varianten gleich, Vergleich intern konsistent).",
+    "baseline_asymmetry": "(a) ist die Original-Ladder (mehrere Targets); (b)/(c) verwenden TP1-First-Touch. `aux_geom_tp1_touchsl` isoliert den TP1-statt-Ladder-Effekt von der Scratch-Mechanik.",
+    "intra_candle": "Bei TP+SL in derselben 4h-Kerze gewinnt der SL (pessimistisch, wie walkforward_sim SL-first).",
+    "offline_only": "Der Trade-Monitor kennt weder Scratch-Exits noch Re-Entries — reine Offline-Studie, nichts geht in einen Bot."
+  }
+}
