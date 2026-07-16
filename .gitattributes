@@ -3,3 +3,14 @@
 *.joblib binary
 *.mp4 binary
 *.json -text
+
+# Append-only changelog: every PR prepends a new block at the top, so any two
+# concurrent PRs collide on the exact same first hunk when the merge-train daemon
+# rebases them serially (T-2026-CU-9050-142). The built-in union merge driver
+# keeps BOTH sides on conflict instead of aborting the rebase — so parallel
+# changelog appends auto-resolve and the train stops stalling on CHANGELOG.md.
+# Ordering of two simultaneous entries is not guaranteed (cosmetic); both survive.
+# Deliberately NOT applied to AUDIT_TODO.md: its edits are checkbox toggles on
+# existing lines, where union would wrongly keep both the checked and unchecked
+# variant.
+CHANGELOG.md merge=union
