@@ -47,6 +47,47 @@ Verifikation: `test_candles.py` +2 Resolver-Tests (Default/legacy/hyper/unknown-
 rollback = null Persistenz). Regression-Guard smoke+verify grün, ruff/format/mypy grün (CI-relevante Dateien).
 **Out of scope** (bricht bewusst am Drop): `legacy_trainers/*`, `db_schema_analysis.py`, `tools/audit/step7_monitor_replay.py`
 (TZ-forensic Wegwerf). Der `WRITE_PRIMARY=hyper`-Flip + Fleet-Restart und der Table-Drop selbst bleiben Michi-gegatet.
+## [2026-07-16] K1 · TSM1 — Time-Series-Momentum auf 6h-Aggregaten (read-only, kein Modell) (T-2026-CU-9050-138)
+
+Neues `tools/tsmom_study.py` (read-only) prüft die K1-Hypothese (§K1, Evidenz F8 / arXiv 2602.11708v1,
+„2,41 Netto-Sharpe" — Overfitting-Verdacht durch monatliche Re-Optimierung): Hat ein ROC-Lookback-
+Momentum-Signal auf 6h-Kerzen fleet-weit positiven Netto-Edge — auch mit UNSERER Geometrie
+(Smart-Targets + fixer SL) statt des Paper-ATR-Trailings? **Festes Grid, KEIN Re-Fitting im Zeitverlauf**
+(genau der Overfitting-Vektor des Papers): L ∈ {8,12,16,24,32} Bars × Threshold k ∈ {0, 0.5σ, 1.0σ}
+(σ = rollierende 90d-StdAbw von ROC_L, as-of) auf 6h-Resample (UTC-Anker 00/06/12/18, nur volle
+geschlossene Fenster) UND nativen 4h-Kerzen (Resample-Artefakt-Check) = 30 Grid-Zellen. Signal =
+ROC_L-Bandkreuzung (Vorzeichen = Richtung); Dedupe je Coin/Richtung/Zelle max. 1 offenes Event
+(Re-Entry erst nach dem Geometrie-Exit). Labels DOPPELT je Event: (a) unsere Geometrie
+`get_hvn_and_sr_levels(df=as-of) → hvn_sr_trade_geometry → ensure_min_tp_distance → simulate_exit`
+(First-Touch TP-vs-SL auf 1h-Kerzen, Round-Trip-Taker-Fee — die deploybare Wahrheit); (b) Paper-
+Approximation = Zeit-Exit nach H ∈ {8,16,28} Bars mit weitem 15%-Katastrophen-SL. Val/Test-Chrono-Split
+(fixer Kalender-Teiler = Mittelpunkt des BTC-1h-Fensters, 2026-01-13); Threshold NUR auf Val, Test einmal
+angefasst. Geteilte Contracts wiederverwendet (keine Neuerfindung): `core/trade_utils` (Geometrie),
+`walkforward_sim` (`simulate_exit`, `FEE_PER_SIDE=0.0005` → 0,10 % Round-Trip, `set_low_priority`,
+`check_cpu_headroom`), `core/candles.read_candles` (nur geschlossene Kerzen, R1). CPU-Check per
+`--skip-cpu-check` bewusst umgangen (VPS 100 % CPU-saturiert; read-only + BELOW_NORMAL, dokumentiert).
+Der VPS-Watchdog reapt streunende python.exe (~alle paar Minuten, exit 1) → Studie streaming-refaktoriert
+(Akkumulatoren O(Zellen), NICHT O(Events)) + resumierbar (`--resume` + Zustands-Checkpoint alle 25 Coins
+in den OS-Temp, NIE ins Repo) + Relaunch-Wrapper; **Peak-RSS 291 MB** über die volle Population (der
+erste ununterbrechbare Lauf starb OOM-artig bei ~75 Coins an Event-Liste + DataFrame-Slice-Cache).
+
+**Verdikt: no-op / Paper für unseren Stack falsifiziert.** VOLLE Population: **527 Coins, 1.178.990 Events**,
+Zeitraum 2025-07-14 … 2026-07-16 (KEIN Sampling). KEINE der 30 Grid-Zellen erfüllt das Stop-Kriterium
+(Val UND Test positiver Netto-PnL bei n_test ≥ 200) — nur 3 Zellen überhaupt Val-positiv, ALLE drei kippen
+im Test negativ: die beste Val-Zelle 4h|L12|k0.5 Val **+0,128 %** (n=11.171) → Test **−0,053 %** (n=32.902);
+6h|L8|k0.5 Val +0,028 → Test −0,046; 6h|L32|k0.0 Val +0,010 → Test −0,107. WR liegt fleet-weit hoch
+(~0,66–0,68), Ø-Netto-PnL aber durchgehend negativ — der klassische Regel-8-Fall (hohe Trefferquote,
+größere Verlierer). Geometrie-(a)-vs-Paper-(b)-Divergenz (Kosten der Cornix-Substitution): Ø-Netto (a)
+−0,13 % vs. (b) −0,20/−0,32/−0,27 % je H; unsere Geometrie schneidet je Event um +0,07/+0,19/+0,15 pp
+BESSER ab als der Paper-Zeit-Exit (Smart-Targets/fixer SL kappen Verluste besser als der 15%-Katastrophen-
+SL), aber BEIDE sind netto-negativ; Korrelation (a)↔(b) nur 0,40/0,35/0,23 → die Geometrie-Substitution
+ändert die Per-Trade-Ausgänge materiell. Beide Label-Wege sind sich einig: das Momentum-Paper repliziert
+NICHT auf 2025–26er USDT-Perps mit unserem Exit-Stack. Kein Folge-Task „Bot TSM1". Ein negatives Ergebnis
+ist hier der Erfolg — dem Paper-Monats-Refitting NICHT nacheifern. Survivorship (Regel 9): Population =
+heute in `coins.json` handelbare Coins, delistete Paare fehlen. Nur geschlossene Kerzen (R1), σ/ROC
+trailing/as-of; exakte Quantile (Median/p5/p95) bewusst weggelassen (unvereinbar mit dem O(Zellen)-
+Speicherbudget, nicht verdikt-tragend — n, WR und Ø-Netto sind exakt). Ergebnisse in
+`staging_models/tsmom_study.{json,md}` (Regel 2: nur staging).
 
 ## [2026-07-16] K15 · SRX — Scratch-Reload-Exit-Studie auf ABR-Events (read-only, kein Modell) (T-2026-CU-9050-137)
 
