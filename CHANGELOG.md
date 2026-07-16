@@ -1,3 +1,38 @@
+## [2026-07-16] K15 · SRX — Scratch-Reload-Exit-Studie auf ABR-Events (read-only, kein Modell) (T-2026-CU-9050-137)
+
+Neues `tools/scratch_exit_study.py` (read-only) prüft OFFLINE die Praktiker-These (§K15, KB
+`ingest-9f6511a5f951`), dass bei Break-&-Retest-Setups ein „Scratch-Reload"-Exit den fixen SL schlägt:
+Position sofort scratchen, wenn eine 4h-Kerze ZURÜCK jenseits des gebrochenen Levels `level_price`
+schließt (kleiner Verlust + Fees), Re-Entry beim nächsten Cross + Retest desselben Levels, max.
+N ∈ {2,4,8} Zyklen, 14-Tage-Fenster je Event — statt einen vollen 4–12 %-SL-Hit zu nehmen. **Kein
+neuer Detektor, kein neuer Walkforward-Lauf:** die Event-Population ist der vorhandene ABR1-Replay
+`_X/staging_models/replay/abr1_replay_365d.jsonl` (288.281 Events, 526 Coins), zeilenweise gestreamt
+(378 MB nie im RAM). Variante (a) = das bereits simulierte First-Touch-`net_pnl_pct` des Records (NICHT
+neu simuliert, Spec-Vorgabe); (b)/(c) ersetzen NUR die Verlust-Seite. Trigger-Feld ist bewusst
+`level_price` (die gebrochene Linie), nicht der Füllpreis `entry`. Grid: (b) harter SL touch-basiert,
+(c) harter SL close-basiert (eigene Zelle, mit explizitem Liquidations-Caveat — close-basierte Stops
+unterschätzen bei Hebel das Touch-basierte Liquidationsrisiko). Effizienz: 4h-Kerzen je Coin EINMAL
+über alle 14d-Fenster geladen (526 Coin-Queries statt 288k), Simulation in-memory, EIN Durchlauf je
+SL-Modus liefert alle N per Cap-Ableitung. Geteilte Contracts wiederverwendet: `walkforward_sim`
+(`FEE_PER_SIDE=0.0005` → 0,10 % Round-Trip je Leg, keine erfundene Fee; `set_low_priority`/
+`check_cpu_headroom`). `signal_time` ist naiv-UTC (Writer = UTC-Instant), `open_time` TIMESTAMPTZ →
+robust nach UTC-naiv konvertiert; nur geschlossene Kerzen (R1).
+
+**Verdikt: no-op / These falsifiziert.** 288.211 Events simuliert (VOLLE Population, 70 ohne 4h-Kerzen
+übersprungen, KEIN Sampling). Variante (b) schlägt (a) in KEINER Zelle und KEINER Chrono-Hälfte:
+Ø-Netto (a) −0,10 % vs. (b) −0,41…−0,52 % je N; Δ(b−a) durchgängig negativ in Val UND Test
+(z. B. N=4: Val −0,49, Test −0,33). Der erhoffte Tail-Tausch tritt nicht ein — der Scratch kappt vor
+allem die GEWINNER (p95 6,5–6,8 % vs. Baseline 10,7 %, weil frühe Scratch-Exits vor TP1 die großen
+Läufe abschneiden), während der Verlust-Tail bei gestapelten Re-Entries sogar WÄCHST (p5 bis −10,3 %
+in (c)·N8 vs. Baseline −9,03 %). Die Aux-Zelle (reine TP1-vs-Touch-SL-Geometrie ohne Scratch, WR
+55,8 %, Median +2,1, Ø −0,16 %) zeigt: der Malus kommt aus der Scratch-Mechanik selbst, nicht aus
+TP1-statt-Ladder. Monats- und Chrono-Split bestätigen: (b)/(c) liegen fast durchgehend unter (a).
+Cornix-Fit/Bot-Verdrahtung damit hinfällig — der Trade-Monitor kennt ohnehin weder Scratch-Exits noch
+Re-Entries; die Studie ist bewusst offline, nichts geht in einen Bot. Survivorship (Regel 9): Population
+= heute in `coins.json` handelbare Coins, delistete Paare fehlen → Verlust-Tail für ALLE Varianten
+gleich optimistisch, der (b)-vs-(a)-Vergleich bleibt intern konsistent. Ergebnisse in
+`staging_models/scratch_exit_study.{json,md}` (Regel 2: nur staging).
+
 ## [2026-07-16] K8 · SET — Settlement-/Tageszeit-Studie über die Fleet (read-only, kein Modell) (T-2026-CU-9050-135)
 
 Neues `tools/settlement_timing_study.py` (read-only) prüft die K8-Hypothese (F9): beeinflusst die
