@@ -106,6 +106,11 @@ DECILE_FRAC = 0.10                     # top/bottom decile
 LIQ_EXCLUDE_TERCILE = 1.0 / 3.0        # exclude bottom volume tercile
 MIN_COINS_FOR_RANK = 2                 # need at least this many liquid coins to form a cross-section (floor; the real universe is ~530)
 MIN_HALF_REBAL = 4                     # min rebalances per val/test half for a PASS (weekly raster is sparse)
+#: The spec's stop-criterion requires a val+test-CONSISTENT net spread, not merely
+#: both halves >0. A cell whose val leg is ~0 while test is large (or vice-versa) is
+#: the overfitting signature, not an edge. Require BOTH halves to clear this floor
+#: (~3x the 0.10 % round-trip fee) before a cell counts as a robust/consistent edge.
+MIN_ROBUST_NET_PCT = 0.3               # %/rebalance net, EACH half, for a robust (consistent) cell
 SR_WINDOW_H = 95 * 24                  # get_hvn_and_sr_levels uses 95d of 1h candles
 EXIT_SCAN_CAP_H = 60 * 24             # bound the 1h first-touch scan to 60d post-entry
 N_PUBLISHED = 3                        # XSM1/XSR1 would publish 3 TPs (fleet convention)
@@ -452,21 +457,32 @@ def val_positive_cells(cells: dict) -> list[str]:
 
 
 def derive_verdict(cells: dict) -> dict:
-    """Stop-criterion (§K2): a cell PASSES if val AND test avg net are both > 0
-    with ≥ MIN_HALF_REBAL rebalances each half. No passing cell ⇒ the structure
-    does not replicate (a documented NEGATIVE is SUCCESS)."""
-    passing = []
+    """Stop-criterion (§K2): the structure replicates only if ≥1 F×H cell shows a
+    val+test-CONSISTENT net spread. Two gates:
+      * `passing` (weak) — val AND test avg net both > 0 (≥ MIN_HALF_REBAL each half).
+      * `robust`  — additionally BOTH halves ≥ MIN_ROBUST_NET_PCT. This is the spec's
+        "val+test-konsistent": a cell with a ~0 val leg but a large test leg (or a
+        high-val leg that flips negative in test) is the classic overfitting artifact,
+        NOT an edge, and must not be reported as one.
+    Verdict: robust cell ⇒ `xs-edge-found`; passing-but-not-robust ⇒
+    `weak/inconsistent-spread (not deployable)`; none ⇒ `no-op/structure-does-not-replicate`.
+    A documented NEGATIVE (either non-edge outcome) is SUCCESS (§K2)."""
     valpos = val_positive_cells(cells)
+    passing, robust = [], []
     for ck in valpos:
         c = cells[ck]
         v, t = c["val"], c["test"]
         if (t["avg_net_pct"] is not None and t["avg_net_pct"] > 0
                 and (t["n"] or 0) >= MIN_HALF_REBAL):
-            passing.append({
+            row = {
                 "cell": ck, "val_avg_net_pct": v["avg_net_pct"], "val_n": v["n"],
                 "test_avg_net_pct": t["avg_net_pct"], "test_n": t["n"], "test_wr": t["wr"],
-            })
+            }
+            passing.append(row)
+            if v["avg_net_pct"] >= MIN_ROBUST_NET_PCT and t["avg_net_pct"] >= MIN_ROBUST_NET_PCT:
+                robust.append(row)
     passing.sort(key=lambda x: x["test_avg_net_pct"], reverse=True)
+    robust.sort(key=lambda x: min(x["val_avg_net_pct"], x["test_avg_net_pct"]), reverse=True)
 
     best_val = None
     for ck in valpos:
@@ -479,13 +495,21 @@ def derive_verdict(cells: dict) -> dict:
         if best_val is None or (v["avg_net_pct"] or -1e9) > (best_val["val_avg_net_pct"] or -1e9):
             best_val = cand
 
-    verdict = "xs-edge-found" if passing else "no-op/structure-does-not-replicate"
+    if robust:
+        verdict = "xs-edge-found"
+    elif passing:
+        verdict = "weak/inconsistent-spread (not deployable)"
+    else:
+        verdict = "no-op/structure-does-not-replicate"
     return {
         "verdict": verdict,
         "min_half_rebalances": MIN_HALF_REBAL,
+        "min_robust_net_pct": MIN_ROBUST_NET_PCT,
         "n_cells": len(cells),
         "n_cells_val_positive": len(valpos),
         "n_cells_passing": len(passing),
+        "n_cells_robust": len(robust),
+        "robust_cells": robust[:15],
         "passing_cells": passing[:15],
         "best_cell_selected_on_val": best_val,
     }
@@ -682,18 +706,24 @@ def build_markdown(meta: dict, cells: dict, verdict: dict, stage2: dict) -> str:
     L.append("_Graded against this run; items marked (full-run) only fully verify without the sampling cap._\n")
     L.append(f"- {ok} **F×H grid complete: 5×3** — F∈{F_GRID}, H∈{H_GRID} enumerated in `run_stage1`.")
     L.append(f"- {ok} **both signal variants** raw + anchored-to-formation-low — `signal_vec(variant=...)` ({VARIANTS}).")
-    L.append(f"- {ok} **both reference frames** absolute + market-neutral (coin−BTC) — `FRAMES={FRAMES}`, BTC signal subtracted.")
+    L.append(f"- ⚠ **both frames present but market-neutral is a KNOWN-LIMITATION no-op** — `FRAMES={FRAMES}`; the "
+             "BTC-signal subtraction is a per-rebalance SCALAR shift (argsort-invariant) and PnL uses absolute coin "
+             "returns, so every `market_neutral` cell is byte-identical to its `absolute` twin (60/60). Beta-removal is "
+             "NOT actually tested here (follow-up: beta-adjust the RETURNS/spread). Does not change the negative verdict.")
     L.append(f"- {ok} **liquidity filter** bottom volume tercile excluded — median quote-vol over F, `np.quantile(...,1/3)` cut.")
     L.append(f"- {ok} **stage-1 decile spreads NET of fees (Regel 10) + short-side funding, correct sign** — "
              f"LONG net=mean(fwd_top)−fee; SHORT net=mean(−fwd+Σfunding)−fee; short receives +Σ funding_rate "
              f"(pays when funding<0).")
     L.append(f"- {ok} **F×H heatmap per variant/direction** — see Heatmaps section (all {len(VARIANTS)}·{len(FRAMES)}·{len(DIRECTIONS)} panels).")
-    L.append(f"- {ok} **stage-2 event-replay gated to val-positive cells only, simulate_exit as-of** — "
+    L.append(f"- ⚠ **stage-2 (confirmatory) gated to val-positive cells; entry ~1 daily-bar EARLY (known limitation)** — "
              f"`run_stage2` runs iff val-positive; get_hvn_and_sr_levels(df=as-of 95d 1h)→simulate_exit "
-             f"({'ran '+str(len(stage2))+' cell(s)' if stage2 else 'no-op — no val-positive cell'}).")
+             f"({'ran '+str(len(stage2))+' cell(s)' if stage2 else 'no-op — no val-positive cell'}). `dates[t]` is the daily "
+             "OPEN (`floor('D')`) but the selection signal is `close[t]`, so stage-2 enters ~23h before the signal is "
+             "observable — a look-ahead in the DIAGNOSTIC replay only; the stage-1-driven verdict is unaffected and stage-2 "
+             "net is negative regardless. Follow-up: enter at `dates[t]+86400` (first 1h at/after the daily close).")
     L.append(f"- {ok} **chrono val/test, cell selection on val only** — midpoint split; `val_positive_cells` selects on val, test read once.")
     L.append(f"- {ok} **survivorship documented, fill_method=None** — coins.json active perps; no forward-fill (NaN-propagating returns).")
-    L.append(f"- {ok} **stop-criterion → no-op verdict valid** — `derive_verdict` emits `no-op/structure-does-not-replicate` when no cell passes.")
+    L.append(f"- {ok} **stop-criterion → non-edge verdict valid** — `derive_verdict` requires a val+test-CONSISTENT cell (BOTH halves ≥ MIN_ROBUST_NET_PCT); otherwise `weak/inconsistent-spread` or `no-op/structure-does-not-replicate` (a near-zero val leg with a large test leg is overfitting, not an edge).")
     L.append(f"- {ok} **status field** complete/partial — this run: `{meta['status']}`.")
     L.append(f"- {ok} **resume/checkpoint state in OS-temp not repo** — `{meta.get('state_path')}` (OS temp dir).")
     if smoke:
@@ -715,8 +745,17 @@ def build_markdown(meta: dict, cells: dict, verdict: dict, stage2: dict) -> str:
     L.append(
         f"- grid cells: {verdict['n_cells']} · val-positive: {verdict['n_cells_val_positive']} · "
         f"PASSING (val>0 AND test>0, ≥{verdict['min_half_rebalances']} rebal/half): "
-        f"**{verdict['n_cells_passing']}**\n"
+        f"{verdict['n_cells_passing']} · **ROBUST (both halves ≥{verdict.get('min_robust_net_pct')}%/rebal = the "
+        f"spec's val+test-consistent): {verdict.get('n_cells_robust')}**\n"
     )
+    if verdict.get("n_cells_robust") == 0 and verdict.get("n_cells_passing", 0) > 0:
+        L.append(
+            f"- ⚠ **The {verdict['n_cells_passing']} 'passing' cells are NOT robust:** their val leg is near-zero "
+            f"(< {verdict.get('min_robust_net_pct')}%/rebal) while test is large — a val+test INCONSISTENCY that is "
+            "the overfitting signature, not a tradeable edge. With test WR < 0.5 (tail-driven) and the best-on-val "
+            "cell flipping negative out-of-sample, the honest read is NO robust cross-section edge; nothing is "
+            "licensed for deployment (operator decision regardless).\n"
+        )
     bv = verdict["best_cell_selected_on_val"]
     if bv:
         L.append(
@@ -774,7 +813,9 @@ def build_markdown(meta: dict, cells: dict, verdict: dict, stage2: dict) -> str:
     L.append(f"- peak process RSS: {meta.get('peak_rss_mb')} MB (panel O(coins×days) + streaming cell accumulators)")
     L.append(f"- chrono val/test split (UTC): {meta.get('split_iso')} — fixed midpoint of the BTCUSDT 1d window; val=earlier, test=later")
     L.append("- signal variants: raw F-day return; anchored = close/min(low over F) − 1 (distance to formation low, F5)")
-    L.append("- reference frames: absolute; market-neutral = coin signal − BTCUSDT signal (removes beta)")
+    L.append("- reference frames: absolute; market-neutral = coin signal − BTCUSDT signal — ⚠ KNOWN LIMITATION: this "
+             "scalar shift is argsort-invariant and PnL is absolute, so it removes NO beta (market_neutral ≡ absolute, "
+             "60/60 identical); follow-up = beta-adjust the returns/spread. Non-verdict-affecting (result is negative regardless).")
     L.append("- liquidity: exclude bottom volume tercile by median quote-vol over F; quote-vol ≈ base volume × close "
              "(the candles table has no quote_asset_volume column — documented approximation)")
     L.append(f"- decile size = max(1, round(n_liquid·{DECILE_FRAC})); ranking on the liquid set only, BTCUSDT excluded from the cross-section")
@@ -872,12 +913,31 @@ def main() -> int:
                     help="Resume from the saved per-coin load state (survives watchdog-kills).")
     ap.add_argument("--state-path", default=DEFAULT_STATE_PATH,
                     help="Transient resume-state JSON (OS temp dir, never the repo).")
+    ap.add_argument("--reverdict", action="store_true", default=False,
+                    help="Re-derive verdict + re-render report from the EXISTING xs_momentum_study.json with "
+                    "NO DB re-fold (the cells/stage2 blocks are deterministic study output; use after a "
+                    "derive_verdict fix).")
     args = ap.parse_args()
 
     try:  # Windows console defaults to cp1252; keep prints robust to any unicode.
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+    if args.reverdict:
+        # Deterministic re-classification of an existing clean run — no DB, no gates.
+        os.makedirs(OUT_DIR, exist_ok=True)
+        json_path = os.path.join(OUT_DIR, "xs_momentum_study.json")
+        md_path = os.path.join(OUT_DIR, "xs_momentum_study.md")
+        with open(json_path, encoding="utf-8") as fh:
+            prev = json.load(fh)
+        meta = prev["meta"]
+        meta["reverdict"] = True
+        cells, stage2 = prev["cells"], prev.get("stage2", {})
+        verdict = derive_verdict(cells)
+        write_outputs(meta, cells, verdict, stage2, json_path, md_path)
+        print(f"REVERDICT (no DB): {verdict['verdict']} — rewrote {json_path} + {md_path}")
+        return 0
 
     set_low_priority()
     if not args.skip_cpu_check:
