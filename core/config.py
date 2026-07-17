@@ -108,6 +108,14 @@ CH_NEW_IDEAS = _ch("CH_NEW_IDEAS")
 # channel forces shadow-only in 15_ai_master_bot.py — never silently falls back
 # onto the base AIM2 channel.
 CH_AIM2_TOPN = _ch("CH_AIM2_TOPN")
+# Shadow-Sichtbarkeits-Channel (T-2026-CU-9050-150): OPTIONALE reine Vorschau der
+# Shadow-Trades. Ungesetzt/0 = AUS (Default, rückwärtskompatibel — Shadow bleibt
+# DB-only). Ist er gesetzt, echot core.signal_post.post_shadow_ai_signal je Shadow-
+# Trade EINE bewusst NICHT-Cornix-parsebare Preview hierher — reine Sichtbarkeit.
+# Cornix hört laut REGIME_TRADING_CHANNEL_ID EXKLUSIV auf den Handels-Channel; dieser
+# hier ist ein Nicht-Handels-Channel (kein Cornix) → null Trade-Risiko. Nie den
+# Handels-Channel hier eintragen (Regel 4).
+CH_SHADOW_TEST = _ch("CH_SHADOW_TEST")
 
 
 # Per-Bot-Override (Operator 2026-07-07): ungesetzt → Fallback auf den

@@ -182,6 +182,47 @@ def log_prediction(
         )
 
 
+def _shadow_test_channel() -> int:
+    """Der optionale Shadow-Sichtbarkeits-Channel (``config.CH_SHADOW_TEST``); 0 = aus.
+
+    Lazy import, damit signal_post entkoppelt/testbar bleibt; DB-freie Tests
+    monkeypatchen diese Funktion statt die Import-Reihenfolge von config zu stellen.
+
+    HARTE Schranke (Defense-in-Depth, Review-Fix): ist CH_SHADOW_TEST versehentlich
+    auf den HANDELS-Channel gesetzt (den einzigen, den Cornix liest), wird der Echo
+    UNTERDRÜCKT (return 0) — die "nie der Handels-Channel"-Invariante ist damit im
+    Code erzwungen, nicht bloß Operator-Disziplin (Regel 4).
+    """
+    from core import config
+
+    ch = int(getattr(config, "CH_SHADOW_TEST", 0) or 0)
+    trading = int(getattr(config, "REGIME_TRADING_CHANNEL_ID", 0) or 0)
+    if ch and ch == trading:
+        logger.warning("CH_SHADOW_TEST == Handels-Channel — Shadow-Echo unterdrückt (Regel 4).")
+        return 0
+    return ch
+
+
+def _shadow_preview_message(
+    model_tag: str, symbol: str, direction: str, entry1: float, sl: float, tps: list[float]
+) -> str:
+    """Bewusst NICHT-Cornix-parsebare Shadow-Vorschau — reine Sichtbarkeit.
+
+    Klar als Nicht-Handelssignal markiert; Zahlen als ``Ref-``-Text OHNE die
+    Cornix-Signal-Struktur (keine ``Entry:``/``Stop``/``Targets:``-Trigger, kein
+    Entry-Zonen/Ziel-Listen-Layout), damit selbst ein mitlesender Cornix-Parser
+    NICHTS aufgreift. Doppelt sicher: Cornix hört ohnehin nur auf den Handels-
+    Channel (REGIME_TRADING_CHANNEL_ID), dieser Channel ist ein Nicht-Handels-Kanal.
+    """
+    tp_txt = " / ".join(format_price(t) for t in tps) if tps else "—"
+    return (
+        "👻 SHADOW-VORSCHAU — KEIN Handelssignal, kein Cornix\n"
+        f"Modell {model_tag} · Coin {symbol} · Richtung {direction}\n"
+        f"Ref-Entry {format_price(entry1)} · Ref-SL {format_price(sl)} · Ref-Ziele {tp_txt}\n"
+        "(nur überwacht in ai_signals — erreicht nie einen Handelskanal)"
+    )
+
+
 def post_shadow_ai_signal(
     conn,
     model_tag: str,
@@ -198,13 +239,19 @@ def post_shadow_ai_signal(
 ) -> bool:
     """Monitored-but-unposted Shadow-Trade (T-2026-CU-9050-125).
 
-    Schreibt NUR die ``ai_signals``-Zeile — KEINE ``telegram_outbox``-Zeile.
+    Schreibt die ``ai_signals``-Zeile und — sofern ``config.CH_SHADOW_TEST``
+    gesetzt ist (Default 0 = aus) — EINE bewusst NICHT-Cornix-parsebare Vorschau
+    an genau diesen Sichtbarkeits-Channel. Es wird NIEMALS eine Cornix-parsebare
+    telegram_outbox-Zeile und NIEMALS eine Zeile an den Handels-Channel
+    geschrieben (T-2026-CU-9050-150). Ohne CH_SHADOW_TEST bleibt das Verhalten
+    exakt wie bisher (nur ai_signals, kein Kanal).
+
     Damit greift der AI-Monitor (8_ai_trade_monitor, ungefilterter Read) das
     Bein auf, verfolgt Entry/TP/SL und schreibt beim Close eine
-    ``closed_ai_signals``-Zeile unter ``model_tag`` — OHNE dass je eine Nachricht
-    einen Kanal erreicht (ein Post braucht zwingend eine telegram_outbox-Zeile;
-    der Monitor postet selbst nichts). So bekommt ein unterdrücktes/geshadowtes
-    Bein eine realisierte Ergebnis-Historie für die spätere Auswertung.
+    ``closed_ai_signals``-Zeile unter ``model_tag``. Ein ECHTER (Cornix-)Post
+    braucht eine Cornix-parsebare Zeile im HANDELS-Channel — die entsteht hier
+    NIE; der Monitor postet selbst nichts. So bleibt der Shadow-Trade risikofrei
+    und liefert eine realisierte Ergebnis-Historie für die spätere Auswertung.
 
     Zusätzlich wird die ``ml_predictions_master``-Shadow-Zeile (``posted=False``)
     via :func:`log_prediction` geschrieben — dieselbe Prediction-Historie wie
@@ -250,5 +297,16 @@ def post_shadow_ai_signal(
         dedup_hours=dedup_hours,
         legacy_tag=legacy_tag,
     )
+    # Optionaler Sichtbarkeits-Echo (T-2026-CU-9050-150): NUR wenn CH_SHADOW_TEST
+    # gesetzt ist, und ausschließlich als NICHT-Cornix-Vorschau an DIESEN Channel —
+    # nie an den Handels-Channel, nie in Cornix-Format. In derselben offenen
+    # Transaktion (Regel 8, der Caller committet atomar mit dem ai_signals-Insert).
+    test_ch = _shadow_test_channel()
+    if test_ch:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
+                (test_ch, _shadow_preview_message(model_tag, symbol, direction, entry1, sl, tps)),
+            )
     logger.info("👻 %s SHADOW-Trade für %s %s in ai_signals (kein Cornix).", model_tag, symbol, direction)
     return True
