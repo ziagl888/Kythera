@@ -1,10 +1,10 @@
 # K5 · LIS1 — Post-Listing-Drift cohort study + fade-replay (T-2026-CU-9050-144)
 
-_Generated 2026-07-16T23:53:21.792017+00:00 · read-only cohort study · fee/side 0.0005 (round-trip 0.0010) · status **partial (sampling cap)**_
+_Generated 2026-07-17T01:14:51.390760+00:00 · read-only cohort study · fee/side 0.0005 (round-trip 0.0010) · status **complete**_
 
-**VERDICT: n-too-small — descriptive-only (No-op-Done)**
+**VERDICT: fade-short-candidate (needs follow-up bot task)**
 
-- cohort n: 10 coins · small-n flag: **True** · max fade-cell n: 10 (floor 15)
+- cohort n: 152 coins · small-n flag: **False** · max fade-cell n: 152 (floor 15)
 
 - **Minimal deliverable**: coin age < 180 days => no LONG — market-neutral forward-return median negative at this horizon (n>=10). _implementation = orchestrator/bot gating change => Michi decides (not in this study)_
 
@@ -14,14 +14,14 @@ _Generated 2026-07-16T23:53:21.792017+00:00 · read-only cohort study · fee/sid
 |--:|---|:--:|---|
 | 1 | Listing date via exchangeInfo onboardDate, cached to listing_onboard_dates.json | ✅ | source=cache (C:\Users\Michael\Documents\Kythera\.claude\worktrees\feat+t-2026-cu-9050-144\staging_models\listing_onboard_dates.json); cache_present=True |
 | 2 | Network-failure fallback = first 1h candle proxy per coin | ✅ | proxy path coded; coins on proxy=0 |
-| 3 | Cohort = onboardDate inside data window (post-floor) | ✅ | cohort_n=10, excluded_pre_floor=0 |
+| 3 | Cohort = onboardDate inside data window (post-floor) | ✅ | cohort_n=152, excluded_pre_floor=375 |
 | 4 | Forward returns Day0→{7,30,90,180} ABSOLUTE and MARKET-NEUTRAL (−BTC) | ✅ | both columns populated; beta confound fixed via market-neutral |
 | 5 | Distribution + median + % positive per horizon | ✅ | median/mean/pct_positive/p5/p95 per horizon below |
 | 6 | Fade-replay day{3,7,14} × limit{+0%,+5%} SHORT via simulate_exit | ✅ | 6 cells, simulate_exit first-touch on 1h |
 | 7 | Funding cost MANDATORY, correctly signed (SHORT credited +Σrate) | ✅ | net_with_funding = geo_net + 100·Σ funding_rate over (entry,exit] |
-| 8 | Small-n honesty (n per cohort/horizon/cell; no faked significance) | ✅ | per-horizon n reported; small_n_flag=True |
+| 8 | Small-n honesty (n per cohort/horizon/cell; no faked significance) | ✅ | per-horizon n reported; small_n_flag=False |
 | 9 | Survivorship (Rule 9) documented; as-of/closed candles only (R1) | ✅ | coins.json=active perps; read_candles include_forming=False |
-| 10 | Resume/checkpoint machinery (temp state, --resume, RAM guard, peak-RSS) | ✅ | state in OS temp; peak_rss=148.1MB |
+| 10 | Resume/checkpoint machinery (temp state, --resume, RAM guard, peak-RSS) | ✅ | state in OS temp; peak_rss=460.4MB |
 
 **Reuse-vs-Build verdict:** REUSE the exit/geometry/funding stack (simulate_exit + get_hvn_and_sr_levels + hvn_sr_trade_geometry + ensure_min_tp_distance + load_funding) and the tsmom_study resume machinery; BUILD only the listing-cohort layer (exchangeInfo onboardDate cache, forward-return + fade-replay harness). No new geometry/fee/funding math.
 
@@ -31,10 +31,10 @@ Day 0 = first 1d candle at/after onboardDate. Market-neutral = coin return − B
 
 | horizon (d) | n | abs median% | abs mean% | abs %pos | mkt median% | mkt mean% | mkt %pos | mkt p5% | mkt p95% |
 |--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| 7 | 10 | -10.2948 | -5.5173 | 0.3 | -7.9957 | -5.6974 | 0.2 | -28.6806 | 30.9062 |
-| 30 | 10 | -24.9272 | -11.5582 | 0.2 | -19.9846 | -6.9271 | 0.2 | -38.6492 | 56.8606 |
-| 90 | 10 | -49.5914 | -36.0907 | 0.2 | -39.7544 | -28.4359 | 0.2 | -62.407 | 40.1265 |
-| 180 | 10 | -63.7048 | -0.8489 | 0.2 | -37.1783 | 24.022 | 0.2 | -61.9714 | 299.7929 |
+| 7 | 152 | -10.0759 | -2.2689 | 0.3684 | -8.2637 | -0.6966 | 0.3553 | -43.4125 | 74.7601 |
+| 30 | 146 | -27.7888 | 12.5931 | 0.2877 | -22.0158 | 18.6287 | 0.3014 | -59.2007 | 105.5986 |
+| 90 | 137 | -53.0376 | -32.8217 | 0.1752 | -34.3061 | -15.8285 | 0.2482 | -62.6587 | 94.1465 |
+| 180 | 112 | -64.222 | -35.6619 | 0.1339 | -34.0618 | -2.725 | 0.2411 | -56.2825 | 190.9494 |
 
 _n shrinks at long horizons: a 180d return needs 180d of post-listing 1d candles. Reported explicitly, never extrapolated._
 
@@ -42,10 +42,10 @@ _n shrinks at long horizons: a 180d return needs 180d of post-listing 1d candles
 
 | horizon (d) | n | abs median% | mkt median% | mkt %pos | beta flips sign |
 |--:|--:|--:|--:|--:|:--:|
-| 7 | 10 | -10.2948 | -7.9957 | 0.2 | False |
-| 30 | 10 | -24.9272 | -19.9846 | 0.2 | False |
-| 90 | 10 | -49.5914 | -39.7544 | 0.2 | False |
-| 180 | 10 | -63.7048 | -37.1783 | 0.2 | False |
+| 7 | 152 | -10.0759 | -8.2637 | 0.3553 | False |
+| 30 | 146 | -27.7888 | -22.0158 | 0.3014 | False |
+| 90 | 137 | -53.0376 | -34.3061 | 0.2482 | False |
+| 180 | 112 | -64.222 | -34.0618 | 0.2411 | False |
 
 ## Fade-replay — SHORT, day{3,7,14} × limit{+0%,+5%}, with funding
 
@@ -53,21 +53,21 @@ net_with_funding = simulate_exit net (first-touch TP-vs-SL, round-trip taker fee
 
 | cell | n | net+fund avg% | net+fund median% | WR | geo-only avg% | net p5% | net p95% |
 |---|--:|--:|--:|--:|--:|--:|--:|
-| d14|l0.0 ⚠small-n | 10 | 1.5262 | 4.3166 | 0.7 | 1.3362 | -12.7363 | 12.1091 |
-| d14|l0.05 ⚠small-n | 6 | 5.2842 | 6.3888 | 0.6667 | 4.9015 | -5.7132 | 16.997 |
-| d3|l0.0 ⚠small-n | 10 | -6.9853 | 5.2263 | 0.6 | -6.7432 | -44.7343 | 9.6874 |
-| d3|l0.05 ⚠small-n | 9 | -0.2493 | 7.3254 | 0.5556 | 0.0039 | -22.4761 | 13.5282 |
-| d7|l0.0 ⚠small-n | 10 | 0.1614 | 4.8702 | 0.6 | 0.0196 | -14.1715 | 14.3899 |
-| d7|l0.05 ⚠small-n | 8 | 6.4759 | 8.6809 | 0.75 | 6.5039 | -6.5429 | 16.0016 |
+| d14|l0.0 | 151 | -0.0572 | 3.55 | 0.6424 | 0.139 | -22.5023 | 15.2287 |
+| d14|l0.05 | 124 | 0.7335 | 4.1966 | 0.5887 | 0.7967 | -20.1681 | 18.2594 |
+| d3|l0.0 | 152 | 1.0735 | 4.7077 | 0.7039 | 1.1959 | -32.304 | 18.8945 |
+| d3|l0.05 | 136 | 1.9392 | 6.7479 | 0.6765 | 1.9229 | -26.9803 | 18.8017 |
+| d7|l0.0 | 152 | -1.1264 | 3.897 | 0.6184 | -0.9296 | -27.9712 | 15.8675 |
+| d7|l0.05 | 129 | 0.0241 | 5.354 | 0.5969 | 0.1288 | -29.4689 | 18.267 |
 
-No fade cell has positive avg net-with-funding at n≥floor.
+Positive fade cells (avg net+funding > 0 at n≥floor): `d3|l0.05` (1.9392%, n=136), `d3|l0.0` (1.0735%, n=152), `d14|l0.05` (0.7335%, n=124), `d7|l0.05` (0.0241%, n=129)
 
 ## Population & caveats
 
-- run status: partial (sampling cap) · coins processed: 10 of 10 requested (universe 527)
-- listing-date source: cache (C:\Users\Michael\Documents\Kythera\.claude\worktrees\feat+t-2026-cu-9050-144\staging_models\listing_onboard_dates.json); per-coin source counts: {'exchangeInfo': 10, 'first_candle_proxy': 0}
-- coins excluded (onboardDate at/before ~1y candle retention floor, drift not observable): 0
-- peak process RSS: 148.1 MB
+- run status: complete · coins processed: 527 of 527 requested (universe 527)
+- listing-date source: cache (C:\Users\Michael\Documents\Kythera\.claude\worktrees\feat+t-2026-cu-9050-144\staging_models\listing_onboard_dates.json); per-coin source counts: {'exchangeInfo': 152, 'first_candle_proxy': 0}
+- coins excluded (onboardDate at/before ~1y candle retention floor, drift not observable): 375
+- peak process RSS: 460.4 MB
 - forward returns on 1d candles (00:00 UTC anchor); fade entries/exits on 1h candles
 - fade geometry: get_hvn_and_sr_levels on the as-of listing→entry frame (≤95d), SHORT geometry, 3 published TPs, first-touch exit scan capped 60d
 - **Funding sign**: a SHORT is CREDITED positive funding (longs pay shorts) ⇒ short funding PnL = +Σ funding_rate over settlements in (entry, exit]; fresh perps' extreme positive funding therefore HELPS the short (correctly added, not subtracted)
@@ -75,4 +75,3 @@ No fade cell has positive avg net-with-funding at n≥floor.
 - **Only closed candles (R1)**: read_candles(include_forming=False); returns and geometry are as-of (no lookahead).
 - **Small n (§K5)**: ~40–60 listings/yr ⇒ n is small, especially at 90/180d. n is reported per horizon and per fade cell; the verdict flags small-n rather than claiming significance.
 - CPU-check override: --skip-cpu-check=True (read-only BELOW_NORMAL job; the walkforward_sim guard would abort on the CPU-saturated VPS).
-- ⚠ SAMPLING CAP (NOT a full run): ['ERAUSDT', 'TAUSDT', 'CVXUSDT', 'SLPUSDT', 'ZORAUSDT', 'ESPORTSUSDT', 'TREEUSDT', 'PLAYUSDT', 'PROVEUSDT', 'TOWNSUSDT']. Full universe run deferred to the orchestrator Ein-Job slot.
