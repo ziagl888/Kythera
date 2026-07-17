@@ -28,6 +28,44 @@ Smoke: Mini-Datensatz (600 synthetische Events) → Retrain-Scaffold end-to-end 
 (Close-Command → `telegram_outbox`, `closed_ai_signals status='CLOSED_FUNDING_NORMALIZED'`, `CH_FMR1`) sind
 Operator-gegated (Michi) und NICHT ausgeführt.
 
+## [2026-07-17] K2 · XSM1/XSR1 — Cross-Section Momentum/Reversal-Studie (Voll-Lauf) (T-2026-CU-9050-143)
+
+Neues read-only Studien-Skript `tools/xs_momentum_study.py` gebaut (Code-Prep, **Full-Run offen** —
+gehört in einen Orchestrator-gegateten Ein-Job-Slot, hier nur Smoke). Zweistufige Cross-Section-Studie
+auf 1d-Kandles über die ~430d-Historie: Formations-Fenster F∈{7,14,28,56,84}d × Halte-Fenster
+H∈{7,14,28}d, wöchentliches Rebalance-Raster, je Zelle **zwei Signal-Varianten** (roher F-Return /
+Anchored = Distanz zum Formations-Low, F5) × **zwei Bezugsgrößen** (absolut / marktneutral =
+Coin−BTC) × **zwei Richtungen** (XSM1-LONG Top-Dezil / XSR1-SHORT Top-Dezil-Reversal) = 120 Zellen.
+Liquiditätsfilter (unteres Volumen-Terzil via Median-Quote-Volumen über F ausgeschlossen). Stufe 1
+= Dezil-Spreads Close-to-Close über H, netto mit Fees (Regel 10, `walkforward_sim.FEE_PER_SIDE`) plus
+Short-Seiten-Funding aus `funding_rates` (Short erhält +Σ funding_rate, zahlt bei negativem Funding).
+Chrono Val/Test-Split (BTC-1d-Mittelpunkt), Zellenauswahl NUR auf Val. Stufe 2 (nur Val-positive
+Zellen) = Event-Replay mit unserer Geometrie (`get_hvn_and_sr_levels(df=as-of)` → `simulate_exit`,
+Entry = erster 1h-Close nach Rebalance, strikt as-of). Stop-Kriterium → No-op-Verdikt gültig.
+Resume/Checkpoint-Maschinerie (Streaming-Akkumulatoren O(cells), atomic State im OS-Temp-Dir NICHT im
+Repo, `--resume`) nach dem Muster von `tools/tsmom_study.py`; RAM-Guard + Peak-RSS im Report.
+**VOLL-LAUF (527 Coins, 120 Zellen):** Verdikt **`weak/inconsistent-spread (not deployable)`** — 58 Zellen
+val-positiv, 8 „passing" (Val>0 UND Test>0), aber **0 robust**. Die 8 Passing-Zellen sind NICHT
+Val+Test-konsistent: Val-Bein ~0 (≤0,075 %/Rebalance) bei großem Test-Bein (0,75–3,11 %) — die klassische
+Overfitting-Signatur, kein handelbarer Edge; Test-WR < 0,5 (tail-getrieben) und die best-on-val-Zelle
+(Val +4,74 %) **kippt out-of-sample negativ (Test −1,61 %)**. Struktur repliziert NICHT robust.
+
+**Verdict-Konsistenz-Fix:** das ursprüngliche `derive_verdict` labelte „xs-edge-found" schon bei Val>0 UND
+Test>0 — das ignoriert die Spec-Anforderung „Val+Test-**konsistenter** Netto-Spread" und labelt Overfit-
+Rauschen als Edge. Neu: `MIN_ROBUST_NET_PCT = 0,3 %/Rebalance` (~3× der 0,10 % Round-Trip-Fee), BEIDE Hälften
+müssen den Floor klären ⇒ Tiers `xs-edge-found` / `weak/inconsistent-spread` / `no-op`. Neuer `--reverdict`-
+Modus (Verdikt+Report deterministisch aus bestehendem JSON neu ableiten, KEIN DB-Re-Fold — genutzt, da der
+Fix nach dem teuren Lauf kam). Survivorship (Regel 9, hier am stärksten) dokumentiert, `fill_method=None`.
+Artefakte nach `staging_models/` (Regel 2/7). Nichts deployt/promotet — Folge-Tasks je Richtung wären
+Operator-Entscheidung (Michi), hier NICHT lizenziert.
+
+**Bekannte Limitationen (im Review gefunden, NICHT verdict-relevant — Netto-Ergebnis bleibt negativ, als
+Follow-ups notiert):** (1) der `market_neutral`-Frame ist ein No-op — die BTC-Signal-Subtraktion ist ein
+Per-Rebalance-Skalar-Shift (argsort-invariant) und die PnL ist absolut, also sind alle 60 `market_neutral`-Zellen
+byte-identisch zu `absolute` (Beta-Removal NICHT getestet; Fix = Returns/Spread beta-adjustieren). (2) Stufe-2
+(nur Diagnostik) tritt ~1 Tages-Balken zu früh ein (`dates[t]`=Tages-Open via `floor('D')`, Signal aber `close[t]`)
+⇒ Look-ahead im Replay; der Stufe-1-getriebene Verdict ist unberührt (Fix = Entry `dates[t]+86400`).
+
 ## [2026-07-17] Merge-Train: CHANGELOG.md union-Merge-Driver gegen serielle Rebase-Konflikte (T-2026-CU-9050-142)
 
 Wiederkehrendes „merge-train failed" behoben (2 PRs hingen). Ursache: pro Merge wird ein
