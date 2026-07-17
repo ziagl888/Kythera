@@ -1,3 +1,26 @@
+## [2026-07-17] Shadow-Sichtbarkeits-Echo in optionalen Test-Channel (T-2026-CU-9050-150)
+
+Optionale reine Sichtbarkeit der Shadow-Trades in Telegram, mit **null Trade-Risiko** — auf Michi-Wunsch. Neue
+env-Config `CH_SHADOW_TEST` (Default 0 = AUS, voll rückwärtskompatibel: ohne sie bleibt Shadow DB-only). Ist sie
+gesetzt, echot `core.signal_post.post_shadow_ai_signal` je Shadow-Trade **zusätzlich** EINE bewusst
+**NICHT-Cornix-parsebare** Vorschau an genau diesen Channel — nie an den Handels-Channel, nie im Cornix-Format.
+
+- `core/config.py`: `CH_SHADOW_TEST = _ch("CH_SHADOW_TEST")` (0 = aus). Channel-ID gehört in die VPS-`.env`
+  (Regel 3, nie hardcoden).
+- `core/signal_post.py`: `_shadow_test_channel()` (lazy config-Read, testbar) + `_shadow_preview_message()`
+  (Vorschau als „👻 SHADOW-VORSCHAU — KEIN Handelssignal", Ref-Entry/SL/Ziele als Text, KEINE Cornix-Trigger-
+  Keywords/Signal-Struktur). Der Echo läuft in der offenen Caller-Transaktion (Regel 8, kein Commit hier).
+  **Dreifach sicher:** (1) Cornix hört laut `REGIME_TRADING_CHANNEL_ID` EXKLUSIV auf den Handels-Channel — der
+  Test-Channel ist außerhalb; (2) die Nachricht ist selbst bei Mitlesen nicht parsebar; (3) harte Code-Schranke
+  in `_shadow_test_channel()` — ist CH_SHADOW_TEST versehentlich == Handels-Channel, wird der Echo unterdrückt
+  (return 0 + Warnung), die „nie der Handels-Channel"-Invariante ist im Code erzwungen (Review-Fix). Zentral →
+  alle Shadow-Beine (LIS1/TSM1/SKW1/XSM1/XSR1/FMR2 + ATS2/ATB2/SRA2/RUB3/EPD3) echoen einheitlich.
+- `backtest/test_shadow_test_channel.py`: 3 DB-freie Tests — Default-aus schreibt KEINE outbox (Backward-Compat),
+  gesetzt schreibt GENAU EINE Zeile an genau DIESEN Channel, Vorschau ist nicht Cornix-parsebar.
+
+Aktivierung: `CH_SHADOW_TEST=<id>` in der VPS-`.env` + Watchdog-Restart (Operator-Gate). Der Telegram-Bot muss
+Mitglied/Admin des Ziel-Channels sein.
+
 ## [2026-07-17] FMR2 (K4) Shadow-Bein am FMR1-Bot — überwacht, nie gepostet (T-2026-CU-9050-149)
 
 FMR2 als Klasse-(A)-Shadow neben dem live FMR1-Bot (Bot 31) angelegt, damit der Normalisierungs-Exit-Retrain
