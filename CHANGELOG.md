@@ -12,7 +12,7 @@ gecheckte und ungecheckte Variante beide behalten). Verifiziert per synthetische
 ohne Regel Konflikt, mit Regel sauber + beide Einträge erhalten. Reihenfolge zweier gleichzeitiger
 Einträge nicht garantiert (kosmetisch). Folge-Option (separater Task): `changelog.d/`-Fragmente für
 eine Null-Konflikt-Garantie.
-## [2026-07-16] K7 · MOM/SKW1 — Realized-Moments-Feature-Block + Skewness-Studie + Retrain-Anschluss (CODE-PREP) (T-2026-CU-9050-141)
+
 ## [2026-07-16] K7 · MOM/SKW1 — Realized-Moments-Feature-Block + Skewness-Studie + Retrain-Anschluss (VOLL-LAUF) (T-2026-CU-9050-141)
 
 Neuer geteilter X-R1-Builder `core/moment_features.py` (kanonisch für Studie, Trainer und später Bot —
