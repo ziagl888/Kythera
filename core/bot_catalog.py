@@ -35,6 +35,7 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     ("EPD", "10_pump_dump_detector.py"),
     ("FIF", "33_ai_fif1_bot.py"),
     ("FMR", "31_ai_fmr1_bot.py"),
+    ("LIS", "36_ai_lis1_bot.py"),  # K5 Post-Listing-Drift-Fade (Shadow-only, T-149)
     ("MAX", "34_ai_max1_bot.py"),
     ("MIS", "11_ai_mis_bot.py"),
     ("MSI", "11_ai_mis_bot.py"),  # historical typo family, see core/bot_naming
@@ -44,10 +45,14 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     # T-115) and the regime auto-close in 28_signal_orchestrator (T-116).
     ("ROM", "28_signal_orchestrator.py"),
     ("RUB", "13_ai_rub_bot.py"),
+    ("SKW", "38_ai_skw1_bot.py"),  # K7 Cross-Sectional Skewness (Shadow-only, T-149)
     ("SRA", "9_ai_sr_bot.py"),
     ("TD", "25_smc_ml_sniper.py"),  # TD_4H and retrain generations (TD2_4H)
     ("TRM", "32_ai_trm1_bot.py"),
+    ("TSM", "37_ai_tsm1_bot.py"),  # K1 Time-Series-Momentum (Shadow-only, T-149)
     ("UFI", "29_ufi1_bot.py"),
+    ("XSM", "39_ai_xsm1_bot.py"),  # K2 Cross-Sectional Momentum (Shadow-only, T-149)
+    ("XSR", "39_ai_xsm1_bot.py"),  # K2 Cross-Sectional Reversal (same bot 39)
 )
 
 # Classic strategies all run inside 3_detectors.py (strategies/strat_*.py are

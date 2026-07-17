@@ -117,6 +117,30 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     ("ATS1", "SHORT"): SILENT,
     ("ATB1", "LONG"): SILENT,
     ("ATB1", "SHORT"): SILENT,
+    # ── (D) Regelbasierte Shadow-Forwarder (T-2026-CU-9050-149) ──
+    # Studien-Kandidaten K1/K2/K5/K7 sind REGELN, kein Modell — kein Artefakt in
+    # SHADOW_ARTIFACTS. Der Bot rechnet das Signal selbst und emittiert auf dem
+    # ROH-Signal (ROM1-Präzedenz), gegated NUR über diese SHADOW-Zeile. Alle
+    # Backtests negativ/schwach → Shadow = Live-Gegenprüfung, kein Rollout.
+    # LIS1 (K5): Post-Listing-Drift-Fade, nur SHORT (LONG-Blacklist ist ein
+    # separates Gate, Operator-Sache). Bot 36 postet NIE live (fail-safe: ist das
+    # Bein nicht SHADOW, schweigt der Bot — die Regel hat keinen Edge).
+    ("LIS1", "SHORT"): SHADOW,
+    # TSM1 (K1): 4h-Zeitreihen-Momentum-Crossing, NUR SHORT — die Studie ist
+    # insgesamt paper-falsifiziert, aber das LONG-Bein trägt den ganzen Verlust;
+    # SHORT ist in jeder Zelle positiv (nicht-falsifiziert). Bot 37, shadow-only.
+    ("TSM1", "SHORT"): SHADOW,
+    # SKW1 (K7): wöchentliche Querschnitts-Skew-Rotation, BEIDE Beine (LONG
+    # unterstes, SHORT oberstes Skew-Dezil). Validiertes Feature, kein turnkey
+    # Edge (Long-Bein tail-getrieben WR<0,5). Bot 38, shadow-only.
+    ("SKW1", "LONG"): SHADOW,
+    ("SKW1", "SHORT"): SHADOW,
+    # XSM1/XSR1 (K2): wöchentliche Querschnitts-Rotation, zwei KONKURRIERENDE
+    # Hypothesen auf demselben obersten F-Rendite-Dezil — XSM1 LONG (Momentum),
+    # XSR1 SHORT (Reversal). Studie weak/inconsistent/overfit (0 robuste Zellen).
+    # Bot 39, shadow-only; beide Beine unabhängig überwacht.
+    ("XSM1", "LONG"): SHADOW,
+    ("XSR1", "SHORT"): SHADOW,
 }
 
 # RETIRED: Tags, die in der closed_ai_signals-Historie vorkommen, aber von keinem

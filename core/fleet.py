@@ -297,4 +297,37 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 231,
         "restart_interval": None,
     },
+    # ── Regelbasierte Shadow-Forwarder (Studien K1/K2/K5/K7, T-2026-CU-9050-149) ─
+    # Reine Shadow-Bots (kein Live-Post): validieren negative/schwache Studien-
+    # Signale live über überwachte, nie gepostete Trades. Neuer Eintrag wird erst
+    # nach Watchdog-Restart supervised (FLEET beim Watchdog-Import gelesen) ⇒
+    # Operator-Gate; unter 100 % CPU zuerst Kapazität prüfen (Restart-Incident 07-15).
+    {
+        "name": "AI LIS1 Detector",
+        "script": "36_ai_lis1_bot.py",
+        "group": "ai",
+        "start_delay": 239,
+        "restart_interval": None,
+    },
+    {
+        "name": "AI TSM1 Detector",
+        "script": "37_ai_tsm1_bot.py",
+        "group": "ai",
+        "start_delay": 247,
+        "restart_interval": None,
+    },
+    {
+        "name": "AI SKW1 Detector",
+        "script": "38_ai_skw1_bot.py",
+        "group": "ai",
+        "start_delay": 255,
+        "restart_interval": None,
+    },
+    {
+        "name": "AI XSM1 Detector",
+        "script": "39_ai_xsm1_bot.py",
+        "group": "ai",
+        "start_delay": 263,
+        "restart_interval": None,
+    },
 ]
