@@ -1,3 +1,28 @@
+## [2026-07-17] LIS1 (K5) Shadow-Forwarder — Post-Listing-Drift-Fade, Bot 36 (T-2026-CU-9050-149)
+
+Erster regelbasierter Shadow-Forwarder der Studien-Kandidaten-Kohorte: ein neuer Bot 36 (`36_ai_lis1_bot.py`)
+fadet frisch gelistete Coins am Tag 3 nach dem Binance-onboardDate SHORT — als **reiner Shadow-Bot ohne
+Live-Post**. Es gibt kein Modell und keinen deploybaren Edge (Studie K5: Fade-SHORT fragil, nur Tag-3-Zelle
+materiell positiv, hoher WR ~0,70 aber tiefer Links-Tail); der Bot validiert das Signal live über überwachte,
+nie gepostete Trades (`ai_signals` ohne `telegram_outbox`, Tag `LIS1`).
+
+- **Artefaktlose Forwarder-Klasse (D)** in `core/shadow_gate.py`: `("LIS1","SHORT") → SHADOW`, aber KEIN
+  Eintrag in `SHADOW_ARTIFACTS` — der Bot rechnet die Regel selbst und emittiert auf dem Roh-Signal
+  (ROM1-Präzedenz), kein `score_artifact`. Fail-safe: ist das Bein nicht SHADOW (z. B. versehentlich promotet),
+  schweigt der Bot — er postet NIE live (die Regel hat keinen Edge).
+- **Signal-Parität zur Studie** (`tools/listing_drift_study.py::fade_events`, Zelle d3|l0.0, n=152): Trigger =
+  reines Alters-Event (Coin erreicht Tag 3, unbedingt); onboardDate aus `GET /fapi/v1/exchangeInfo` (Cache
+  `staging_models/listing_onboard_dates.json`, Fallback erste 1h-Kerze); Geometrie = geteilte
+  `hvn_sr_trade_geometry` (SHORT-SL/Targets, `ensure_min_tp_distance(min_pct=0.05)`, 3 TPs); Market-Fill
+  (`entry1==entry2`). Dokumentierte Divergenz: Live-Fill ist der aktuelle Close (≤1h nach dem Tag-3-Anchor);
+  Alters-Fenster `[3d, 4d)` (kein Backfill alter Coins); Geometrie-Load-Floor 48 1h-Zeilen (Tag-3-tauglich,
+  NICHT der 120er-Studien-Voll-Historie-Floor). Das LONG-Blacklist-Ergebnis (Alter < 180d ⇒ kein LONG) ist ein
+  separates Gate und wird bewusst NICHT umgesetzt (Operator-Entscheid Michi).
+- **Fleet-Registrierung:** `core/fleet.py` (Bot 36, group `ai`, start_delay 239) + `core/bot_catalog.py`
+  (Prefix `LIS` → Bot 36). 6 DB-freie Tests (`backtest/test_lis1_bot.py`): SHADOW-ohne-Artefakt, Tag→Skript,
+  `in_fade_window`-Grenzen, `process_coin`-Gating/Shadow-Emit (nie Live). Aktivierung braucht einen
+  Watchdog-Restart (Michi-Gate; unter 100 % CPU zuerst Kapazität prüfen).
+
 ## [2026-07-17] FMR2 (K4) Phase 1 — Voll-Retrain nach staging: NICHT deploybar (T-2026-CU-9050-148)
 
 Der gemergte FMR2-Builder/Scaffold (PR #132) wurde nach Operator-Freigabe ausgeführt: voller V2-Datensatz +

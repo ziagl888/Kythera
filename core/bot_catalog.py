@@ -35,6 +35,7 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     ("EPD", "10_pump_dump_detector.py"),
     ("FIF", "33_ai_fif1_bot.py"),
     ("FMR", "31_ai_fmr1_bot.py"),
+    ("LIS", "36_ai_lis1_bot.py"),  # K5 Post-Listing-Drift-Fade (Shadow-only, T-149)
     ("MAX", "34_ai_max1_bot.py"),
     ("MIS", "11_ai_mis_bot.py"),
     ("MSI", "11_ai_mis_bot.py"),  # historical typo family, see core/bot_naming

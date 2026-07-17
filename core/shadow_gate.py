@@ -108,6 +108,15 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     ("ATS1", "SHORT"): SILENT,
     ("ATB1", "LONG"): SILENT,
     ("ATB1", "SHORT"): SILENT,
+    # ── (D) Regelbasierte Shadow-Forwarder (T-2026-CU-9050-149) ──
+    # Studien-Kandidaten K1/K2/K5/K7 sind REGELN, kein Modell — kein Artefakt in
+    # SHADOW_ARTIFACTS. Der Bot rechnet das Signal selbst und emittiert auf dem
+    # ROH-Signal (ROM1-Präzedenz), gegated NUR über diese SHADOW-Zeile. Alle
+    # Backtests negativ/schwach → Shadow = Live-Gegenprüfung, kein Rollout.
+    # LIS1 (K5): Post-Listing-Drift-Fade, nur SHORT (LONG-Blacklist ist ein
+    # separates Gate, Operator-Sache). Bot 36 postet NIE live (fail-safe: ist das
+    # Bein nicht SHADOW, schweigt der Bot — die Regel hat keinen Edge).
+    ("LIS1", "SHORT"): SHADOW,
 }
 
 # RETIRED: Tags, die in der closed_ai_signals-Historie vorkommen, aber von keinem
