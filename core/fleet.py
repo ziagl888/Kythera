@@ -309,4 +309,25 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 239,
         "restart_interval": None,
     },
+    {
+        "name": "AI TSM1 Detector",
+        "script": "37_ai_tsm1_bot.py",
+        "group": "ai",
+        "start_delay": 247,
+        "restart_interval": None,
+    },
+    {
+        "name": "AI SKW1 Detector",
+        "script": "38_ai_skw1_bot.py",
+        "group": "ai",
+        "start_delay": 255,
+        "restart_interval": None,
+    },
+    {
+        "name": "AI XSM1 Detector",
+        "script": "39_ai_xsm1_bot.py",
+        "group": "ai",
+        "start_delay": 263,
+        "restart_interval": None,
+    },
 ]

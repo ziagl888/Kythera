@@ -126,6 +126,21 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # separates Gate, Operator-Sache). Bot 36 postet NIE live (fail-safe: ist das
     # Bein nicht SHADOW, schweigt der Bot — die Regel hat keinen Edge).
     ("LIS1", "SHORT"): SHADOW,
+    # TSM1 (K1): 4h-Zeitreihen-Momentum-Crossing, NUR SHORT — die Studie ist
+    # insgesamt paper-falsifiziert, aber das LONG-Bein trägt den ganzen Verlust;
+    # SHORT ist in jeder Zelle positiv (nicht-falsifiziert). Bot 37, shadow-only.
+    ("TSM1", "SHORT"): SHADOW,
+    # SKW1 (K7): wöchentliche Querschnitts-Skew-Rotation, BEIDE Beine (LONG
+    # unterstes, SHORT oberstes Skew-Dezil). Validiertes Feature, kein turnkey
+    # Edge (Long-Bein tail-getrieben WR<0,5). Bot 38, shadow-only.
+    ("SKW1", "LONG"): SHADOW,
+    ("SKW1", "SHORT"): SHADOW,
+    # XSM1/XSR1 (K2): wöchentliche Querschnitts-Rotation, zwei KONKURRIERENDE
+    # Hypothesen auf demselben obersten F-Rendite-Dezil — XSM1 LONG (Momentum),
+    # XSR1 SHORT (Reversal). Studie weak/inconsistent/overfit (0 robuste Zellen).
+    # Bot 39, shadow-only; beide Beine unabhängig überwacht.
+    ("XSM1", "LONG"): SHADOW,
+    ("XSR1", "SHORT"): SHADOW,
 }
 
 # RETIRED: Tags, die in der closed_ai_signals-Historie vorkommen, aber von keinem

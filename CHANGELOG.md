@@ -17,6 +17,34 @@ FMR1-Live-Pfad ist unverändert und nie betroffen (eigener Tag, eigene Dedup, al
 
 Wie bei ATS2/ATB2/RUB3/EPD3 liegt das reale `fmr2_model.pkl` NICHT im Git, sondern in `staging_models/` auf dem
 VPS (Platzierung = Operator-Schritt, harte Regel 2). Aktivierung des Beins braucht Bot-31-Restart (Michi-Gate).
+## [2026-07-17] Rule-based Shadow-Forwarder K1/K7/K2 — Bots 37/38/39 (T-2026-CU-9050-149)
+
+Drei weitere regelbasierte (artefaktlose) Shadow-Forwarder der Studien-Kandidaten-Kohorte, alle **reine
+Shadow-Bots ohne Live-Post** (Forwarder-Klasse (D) in `core/shadow_gate.py`: Tag → SHADOW, KEIN Artefakt; der
+Bot rechnet die Regel selbst und emittiert auf dem Roh-Signal; fail-safe zu Stille, nie live). Kein Modell, kein
+deploybarer Edge — Live-Gegenprüfung via überwachte, nie gepostete Trades (`ai_signals` ohne `telegram_outbox`).
+
+- **TSM1 (K1) — Bot 37, event-driven, NUR SHORT:** 4h-Zeitreihen-Momentum-Crossing (`4h|L12|k0.5`) — ROC[t]=
+  close/close[t−12]−1 kreuzt von außen nach innen des ±0,5σ-Bands (σ=90d-Rolling-Std). Die Studie ist
+  paper-falsifiziert, aber der Verlust kommt komplett vom LONG-Bein; SHORT ist in jeder Zelle positiv
+  (nicht-falsifiziert) → nur `("TSM1","SHORT")` registriert. Geteilte `hvn_sr_trade_geometry` (== Studien-Label),
+  Market-Fill, läuft alle 4h (00:29/04:29/… UTC). Pure `short_crossing`-Prädikat DB-frei getestet.
+- **SKW1 (K7) — Bot 38, wöchentlich, BEIDE Beine:** Querschnitts-Skew-Rotation via geteiltem
+  `core/moment_features.build_moment_panel` (Regel 7) — LONG unterstes, SHORT oberstes `mom_skew_7d`-Dezil
+  (ρ=−0,88). Validiertes Feature, kein turnkey Edge. Liquiditäts-Filter (unteres Dollar-Vol-Terzil raus),
+  MIN_COINS_PER_WEEK, Montag 00:31 UTC. Pure `select_deciles` getestet.
+- **XSM1/XSR1 (K2) — Bot 39, wöchentlich, zwei konkurrierende Hypothesen:** rohe F=84d-Rendite-Dezil-Rotation;
+  XSM1 LONG (Momentum) UND XSR1 SHORT (Reversal) auf DEMSELBEN obersten Dezil, unabhängig überwacht. Studie
+  weak/inconsistent/overfit (0 robuste Zellen). BTC aus der handelbaren Menge, Liquiditäts-Filter, Montag 00:37
+  UTC. Pure `select_top_decile` getestet.
+
+**Dokumentierte Divergenz (SKW1/XSM1/XSR1):** die Studien messen einen WOCHEN-Timeout-Halte-Exit; der
+Shadow-Monitor verfolgt First-Touch-TP/SL (geteilte Geometrie). Der Shadow-PnL ist damit eine richtungs-getreue
+First-Touch-Validierung, NICHT die Studien-Timeout-PnL — bewusst, da der Monitor keinen Timeout-Exit kennt (kein
+Monitor-Umbau auf Live-Money). Fleet-Registrierung (`core/fleet.py` Bots 37/38/39 group ai; `core/bot_catalog.py`
+Prefixe TSM/SKW/XSM/XSR); je Bot DB-freie Tests. Aktivierung braucht einen Watchdog-Restart (Michi-Gate; unter
+100 % CPU zuerst Kapazität prüfen — die wöchentlichen Querschnitts-Scans + Dezil-Shadows sind Last-relevant).
+
 ## [2026-07-17] LIS1 (K5) Shadow-Forwarder — Post-Listing-Drift-Fade, Bot 36 (T-2026-CU-9050-149)
 
 Erster regelbasierter Shadow-Forwarder der Studien-Kandidaten-Kohorte: ein neuer Bot 36 (`36_ai_lis1_bot.py`)
