@@ -65,7 +65,7 @@ Per-Rebalance-Skalar-Shift (argsort-invariant) und die PnL ist absolut, also sin
 byte-identisch zu `absolute` (Beta-Removal NICHT getestet; Fix = Returns/Spread beta-adjustieren). (2) Stufe-2
 (nur Diagnostik) tritt ~1 Tages-Balken zu früh ein (`dates[t]`=Tages-Open via `floor('D')`, Signal aber `close[t]`)
 ⇒ Look-ahead im Replay; der Stufe-1-getriebene Verdict ist unberührt (Fix = Entry `dates[t]+86400`).
-## [2026-07-17] K5 · LIS1 Post-Listing-Drift-Kohortenstudie + Fade-Replay (Code-Prep) (T-2026-CU-9050-144)
+
 ## [2026-07-17] K5 · LIS1 Post-Listing-Drift-Kohortenstudie + Fade-Replay (Voll-Lauf) (T-2026-CU-9050-144)
 
 Neues read-only Studien-Skript `tools/listing_drift_study.py` (K5, Kandidat LIS1) — Code-Prep, der
