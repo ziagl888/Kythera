@@ -1,3 +1,23 @@
+## [2026-07-17] FMR2 (K4) Phase 1 — Voll-Retrain nach staging: NICHT deploybar (T-2026-CU-9050-148)
+
+Der gemergte FMR2-Builder/Scaffold (PR #132) wurde nach Operator-Freigabe ausgeführt: voller V2-Datensatz +
+Retrain + Auswertung — read-only, nichts Live. **Verdikt: nicht deploybar.**
+
+- **Datensatz:** 12.165 Events (V2-Normalisierungs-Exit-Labeling, since 2026-02-25; funding_cs_pctl ≥0,95 → SHORT /
+  ≤0,05 → LONG; Dedup 24 h), gewichtete WR 0,453, Basis-Ø-PnL **−0,475 %/Trade**.
+- **Modell** (binär, 15 FMR2-Features, Chrono train 8229 / val 1580 / test 1811, Purge 3 d, isotonisch kalibriert):
+  **AUC val 0,548 / test 0,540** (kaum über Zufall).
+- **Val-Operating-Point** (thr 0,46): ΣPnL **−27,5 %**, Ø −0,048 %/Trade — schon in-sample negativ.
+- **Gate-Uplift test:** Basis Ø −0,478 %/Trade → mit Gate Ø **−0,251 %/Trade** (WR 0,472, n 741/1811). Das Modell
+  HALBIERT den Verlust, dreht ihn aber NICHT ins Plus.
+- **Richtungs-Split** (voller Event-Satz): SHORT Ø −0,538 % / LONG Ø −0,418 % — **beide negativ**, kein versteckter
+  positiver Teil.
+
+**Fazit:** Der V2-Normalisierungs-Exit behebt den FMR1-First-Touch-Fehler konzeptionell, aber der Funding-MR-Edge
+existiert auf 2026er-Daten nicht (keine positive Erwartung in beiden Richtungen). **Phase 2 (Bot-31-Exit-Loop)
+NICHT gestartet** — kein deploybarer Standalone. Artefakt `staging_models/fmr2_model.pkl` + Report nur in staging;
+keine Promotion ins Repo-Root (P1.35, Operator-Gate).
+
 ## [2026-07-17] K4 · FMR2 — Funding-Extreme-MR mit Normalisierungs-Exit (Builder + V2-Labeling + Retrain-Scaffold, CODE-PREP) (T-2026-CU-9050-146)
 
 Die S8-These sauber testbar gemacht: FMR1 labelte First-Touch-TP/SL und testete damit NIE die
