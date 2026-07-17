@@ -42,6 +42,7 @@ if REPO_ROOT not in sys.path:
 from core.research_features import (  # noqa: E402
     FIF1_FEATURES,
     FMR1_FEATURES,
+    FMR2_FEATURES,
     PEX1_FEATURES,
     TRM1_CLASS_DOWN,
     TRM1_CLASS_UP,
@@ -53,10 +54,12 @@ REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay")
 
 # purge_days >= Replay-Horizont des jeweiligen Builders, sonst überlappen die
 # PnL-Fenster der Threshold-Wahl über die Split-Grenze (Review-Fix 2026-07-06):
-# pex1/fmr1/fif1 simulieren 7 Tage, trm1 (BTC-Smart-Targets) 14 Tage.
+# pex1/fmr1/fif1 simulieren 7 Tage, trm1 (BTC-Smart-Targets) 14 Tage, fmr2
+# (Normalisierungs-/Timeout-Exit) höchstens 9 Settlements = 3 Tage.
 STRATEGIES = {
     "pex1": {"model_id": "PEX1", "features": PEX1_FEATURES, "kind": "binary", "purge_days": 7},
     "fmr1": {"model_id": "FMR1", "features": FMR1_FEATURES, "kind": "binary", "purge_days": 7},
+    "fmr2": {"model_id": "FMR2", "features": FMR2_FEATURES, "kind": "binary", "purge_days": 3},
     "trm1": {"model_id": "TRM1", "features": TRM1_FEATURES, "kind": "multiclass", "purge_days": 14},
     "fif1": {"model_id": "FIF1", "features": FIF1_FEATURES, "kind": "binary", "purge_days": 7},
 }
