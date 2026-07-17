@@ -47,7 +47,15 @@ from core.research_features import (
     fetch_context_frame,
     funding_stats,
 )
-from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal
+from core.shadow_gate import (
+    SHADOW,
+    artifact_threshold,
+    leg_status,
+    load_shadow_artifact,
+    score_artifact,
+    shadow_posting_enabled,
+)
+from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal, post_shadow_ai_signal
 from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - FMR1_BOT - %(message)s')
@@ -173,6 +181,62 @@ def startup_feature_selfcheck() -> None:
         conn.close()
 
 
+# ── K4 / FMR2 Klasse-(A)-Shadow (T-2026-CU-9050-149) ─────────────────────────
+# FMR2 = Normalisierungs-Exit-Retrain neben dem live FMR1-Bot. FMR2_FEATURES ==
+# FMR1_FEATURES → derselbe `build_fmr1_row`-Feature-Row wird nur zusätzlich mit
+# dem FMR2-Modell gescored und als überwachter-aber-nicht-geposteter Shadow-Trade
+# unter Tag "FMR2" geschrieben. Rein additiv am Nicht-Post-Zweig; der FMR1-Live-
+# Pfad ist nie betroffen (eigener Tag, eigene Dedup, alles gekapselt).
+_FMR2_ART = None
+_FMR2_LOADED = False
+
+
+def _fmr2_artifact():
+    """Lädt das FMR2-Shadow-Artefakt EINMAL (fail-soft; ein Modell für beide
+    Richtungen, side_short ist ein Feature). Fehlt es in staging_models/, läuft
+    der Bot ohne FMR2-Bein weiter (harte Regel 2)."""
+    global _FMR2_ART, _FMR2_LOADED
+    if not _FMR2_LOADED:
+        _FMR2_ART = load_shadow_artifact("FMR2", "SHORT")  # richtungs-agnostisch
+        _FMR2_LOADED = True
+        if _FMR2_ART is None:
+            logger.info("FMR2-Shadow-Artefakt fehlt (staging_models/fmr2_model.pkl) — kein FMR2-Bein.")
+    return _FMR2_ART
+
+
+def _emit_fmr2_shadow(conn, symbol: str, direction: str, feature_row: dict, live_price: float) -> None:
+    """Scored DENSELBEN FMR1-Feature-Row mit dem FMR2-Modell und emittiert nach
+    der Shadow-Emit-Regel (§3 SHADOW_MODE_POSTING). Voll gekapselt."""
+    if not shadow_posting_enabled():
+        return
+    if leg_status("FMR2", direction) != SHADOW:
+        return
+    art = _fmr2_artifact()
+    if art is None:
+        return
+    if has_open_ai_signal(conn, symbol, direction, "FMR2"):
+        return
+    prob = score_artifact(art, feature_row)
+    thr = artifact_threshold(art)
+    if thr is not None and prob < thr:
+        # unter Threshold: nur Prediction-Log wie heute (kein Shadow-Trade)
+        log_prediction(conn, "FMR2", symbol, direction, live_price, prob, posted=False)
+        return
+    setup = calculate_smart_targets(conn, symbol, direction, live_price)
+    if post_shadow_ai_signal(
+        conn,
+        "FMR2",
+        symbol,
+        direction,
+        prob,
+        setup["entry1"],
+        setup["entry2"],
+        setup["sl"],
+        setup["targets"],
+    ):
+        logger.info(f"👻 FMR2-Shadow {symbol} {direction} | p={prob:.3f} (Gate {thr}) — überwacht, nicht gepostet.")
+
+
 def process_candidate(conn, symbol: str, direction: str, rate: float, pctl: float) -> None:
     if check_cooldown(conn, MODEL_ID, symbol, direction, COOLDOWN_HOURS):
         return
@@ -201,6 +265,13 @@ def process_candidate(conn, symbol: str, direction: str, rate: float, pctl: floa
     prob = float(ARTIFACT["model"].predict_proba(X)[0, 1])
     conf = calibrated_confidence(ARTIFACT, prob)
     live_price = float(df["close"].iloc[-1])
+
+    # FMR2 (K4) Klasse-(A)-Shadow — VOR der FMR1-Post-Logik, unabhängig, gekapselt:
+    # der Live-FMR1-Pfad darf nie von einem FMR2-Fehler betroffen sein.
+    try:
+        _emit_fmr2_shadow(conn, symbol, direction, feature_row, live_price)
+    except Exception as e:  # pragma: no cover - defensiv, Bot darf nicht sterben
+        logger.warning(f"FMR2-Shadow {symbol} {direction} übersprungen: {e}")
 
     logger.info(
         f"FMR1 Funding-Extrem {symbol} {direction} | Rate {rate * 1e4:+.1f} bps "

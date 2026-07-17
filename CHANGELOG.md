@@ -1,3 +1,23 @@
+## [2026-07-17] FMR2 (K4) Shadow-Bein am FMR1-Bot — überwacht, nie gepostet (T-2026-CU-9050-149)
+
+FMR2 als Klasse-(A)-Shadow neben dem live FMR1-Bot (Bot 31) angelegt, damit der Normalisierungs-Exit-Retrain
+gegen echte Live-Preise eine realisierte Ergebnis-Historie sammelt. **Shadow = Bestätigung, kein Rollout** —
+der Backtest (T-148) war nicht deploybar; das Shadow-Bein postet NIE einen Trade (kein `telegram_outbox`),
+schreibt nur `ai_signals`/`closed_ai_signals` unter Tag `FMR2` und `ml_predictions_master(posted=False)`. Der
+FMR1-Live-Pfad ist unverändert und nie betroffen (eigener Tag, eigene Dedup, alles gekapselt in try/except).
+
+- `core/shadow_gate.py`: FMR2 in `_LIFECYCLE` (LONG+SHORT → SHADOW) und `SHADOW_ARTIFACTS` (ein binäres Modell
+  `fmr2_model.pkl` für BEIDE Richtungen — `side_short` ist ein Feature). FMR1 bleibt Default-LIVE (keine Zeile).
+- `31_ai_fmr1_bot.py`: `_emit_fmr2_shadow()` scored DENSELBEN `build_fmr1_row`-Feature-Row (FMR2_FEATURES ==
+  FMR1_FEATURES) mit dem FMR2-Modell und emittiert nach der §3-Shadow-Regel (Threshold gesetzt → nur bei
+  `prob ≥ thr`; sonst `log_prediction(posted=False)`). Fail-soft: fehlt das Artefakt, läuft der Bot als reiner
+  FMR1-Bot weiter. Aufruf VOR der FMR1-Post-Logik, voll gekapselt.
+- `backtest/test_shadow_gate.py`: 3 DB-freie Tests — FMR2 beidseitig SHADOW (FMR1 bleibt LIVE), ein pkl für
+  beide Richtungen, und ein End-to-End-Load/Score/Gate des realen Artefakts (skippt, wenn das VPS-pkl fehlt).
+
+Wie bei ATS2/ATB2/RUB3/EPD3 liegt das reale `fmr2_model.pkl` NICHT im Git, sondern in `staging_models/` auf dem
+VPS (Platzierung = Operator-Schritt, harte Regel 2). Aktivierung des Beins braucht Bot-31-Restart (Michi-Gate).
+
 ## [2026-07-17] FMR2 (K4) Phase 1 — Voll-Retrain nach staging: NICHT deploybar (T-2026-CU-9050-148)
 
 Der gemergte FMR2-Builder/Scaffold (PR #132) wurde nach Operator-Freigabe ausgeführt: voller V2-Datensatz +
