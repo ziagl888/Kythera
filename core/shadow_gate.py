@@ -86,6 +86,15 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # mehr gibt → Shadow REVIVED SRA2. SHORT-Threshold ist null (jedes Setup).
     ("SRA2", "LONG"): SHADOW,
     ("SRA2", "SHORT"): SHADOW,
+    # FMR2: Normalisierungs-Exit-Retrain (K4, T-2026-CU-9050-148) neben dem FMR1-Bot
+    # (Bot 31). FMR1 bleibt unverändert unter eigenem Tag "FMR1"; FMR2 nutzt DENSELBEN
+    # Funding-Extrem-Detektor + `build_fmr1_row`-Feature-Row (FMR2_FEATURES ==
+    # FMR1_FEATURES, nur das Label unterscheidet sich) → getreue Parität. Der Retrain
+    # war nicht deploybar (beide Richtungen netto-negativ, AUC ~0,54) → Shadow zur
+    # Live-Gegenprüfung; ein Modell für beide Richtungen (side_short ist Feature),
+    # optimal_threshold 0,46. KEINE Tag-Kollision (FMR1 postet unter "FMR1").
+    ("FMR2", "LONG"): SHADOW,
+    ("FMR2", "SHORT"): SHADOW,
     # ── (B) Challenger-Beine: der Retrain fordert ein LIVE-Bein heraus, das bereits
     #        unter DEMSELBEN Tag postet → eigener Generations-Tag, sonst würde der
     #        Shadow-Trade über den Active-Trade-Check des Bots einen LIVE-Post
@@ -135,6 +144,9 @@ SHADOW_ARTIFACTS: dict[str, dict[str, str]] = {
     # Retrain-Generation, der Tag darüber ist der kollisionsfreie Shadow-Tag.
     "RUB3": {"LONG": "rub2_model_LONG.pkl"},
     "EPD3": {"LONG": "epd2_model_LONG.pkl", "SHORT": "epd2_model_SHORT.pkl"},
+    # FMR2: ein binäres Modell für BEIDE Richtungen (side_short ist ein Feature) →
+    # dieselbe Datei je Richtung; nicht promotet, nur Shadow (T-2026-CU-9050-148/149).
+    "FMR2": {"LONG": "fmr2_model.pkl", "SHORT": "fmr2_model.pkl"},
 }
 
 

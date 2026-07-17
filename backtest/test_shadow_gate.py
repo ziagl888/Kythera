@@ -181,6 +181,60 @@ def test_shadow_signal_tracks_only_n_show_targets():
     assert len(ins) == 1
 
 
+# ── 3. FMR2 (K4) Klasse-(A)-Shadow — Registry + committetes Artefakt ──────────
+def test_fmr2_leg_is_shadow_both_directions():
+    # Der FMR2-Retrain läuft SHADOW neben dem live FMR1-Bein; FMR1 selbst bleibt
+    # unter eigenem Tag unangetastet (Default-LIVE, keine Registry-Zeile).
+    for d in ("LONG", "SHORT"):
+        assert sg.leg_status("FMR2", d) == sg.SHADOW
+        assert sg.is_shadow("FMR2", d)
+        assert not sg.is_live("FMR2", d)
+    assert sg.leg_status("FMR1", "SHORT") == sg.LIVE
+    assert sg.leg_status("FMR1", "LONG") == sg.LIVE
+
+
+def test_fmr2_maps_one_binary_model_to_both_directions():
+    # side_short ist ein Feature → EIN Modell bedient beide Richtungen; beide
+    # Richtungen müssen auf dieselbe Staging-Datei zeigen.
+    p_long = sg.shadow_artifact_path("FMR2", "LONG")
+    p_short = sg.shadow_artifact_path("FMR2", "SHORT")
+    assert p_long == p_short
+    assert p_long is not None and p_long.endswith("fmr2_model.pkl")
+
+
+def test_fmr2_staging_artifact_loads_scores_and_gates():
+    # Validiert das Artefakt end-to-end, WENN es vorliegt (der eigentliche Zweck
+    # des Shadow-Bots): ladbar, 15-Feature-Vertrag == FMR1_FEATURES, gültiger
+    # Operating-Threshold, rohe predict_proba in [0, 1]. Das reale pkl liegt —
+    # wie bei ATS2/ATB2/RUB3/EPD3 — NICHT im Git, sondern in staging_models/ auf
+    # dem VPS (Platzierung = Operator-Schritt, harte Regel 2); fehlt es (oder
+    # joblib/xgboost auf schlanker CI), wird der Realteil übersprungen. Die
+    # Registry-Tests oben sichern die Verdrahtung dependency- und artefaktfrei ab.
+    import pytest
+
+    pytest.importorskip("joblib")
+    pytest.importorskip("xgboost")
+
+    from core.research_features import FMR1_FEATURES
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    orig = sg.STAGING_DIR
+    sg.STAGING_DIR = os.path.join(repo_root, "staging_models")
+    try:
+        art = sg.load_shadow_artifact("FMR2", "SHORT")
+    finally:
+        sg.STAGING_DIR = orig
+    if art is None:
+        pytest.skip("staging_models/fmr2_model.pkl nicht vorhanden (VPS-Operator-Schritt)")
+    assert list(art["features"]) == list(FMR1_FEATURES)  # exakter Feature-Vertrag
+    thr = sg.artifact_threshold(art)
+    assert thr is not None and 0.0 < thr < 1.0  # FMR2 hat einen validen Operating-Point
+
+    row = dict.fromkeys(FMR1_FEATURES, 0.0)
+    prob = sg.score_artifact(art, row)
+    assert 0.0 <= prob <= 1.0
+
+
 if __name__ == "__main__":
     import traceback
 
