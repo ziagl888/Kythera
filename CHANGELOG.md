@@ -1,3 +1,27 @@
+## [2026-07-17] Z1-Dashboard-Shell — Task 0 Fundament (T-2026-CU-9050-151)
+
+Tragende Shell des Z1-Dashboards per Framework-Gate **D-2026-CLD-111** (Flask + HTMX + Interval-Polling; kein
+FastAPI, kein SPA, kein Node-Build on-box). Baut auf dem T-131-DuckDB-Substrat auf — liest NIE Live-Postgres.
+Das alte `dashboard.py` bleibt unangetastet (parallele neue Analytics-Oberfläche).
+
+- `tools/dashboard/app.py`: Flask-App-Factory `create_app(duckdb_path)`, die den read-only Analytics-Blueprint
+  (`/api/analytics/*`) mountet, das HTMX-Shell-Layout + EIN Demo-Panel (Erfolgsrate je Bot) rendert und eine
+  reine `freshness_summary()`-Funktion trägt. TZ-Falle (R3) respektiert: „Sync vor N min" wird STRIKT aus
+  `synced_at` (UTC) berechnet, nie aus dem naive-local `last_row_ts`. waitress-Entrypoint bindet **127.0.0.1**
+  (nie 0.0.0.0 — P0.8), Serving via geteiltem `analytics_api._serve` (kein Duplikat).
+- `tools/analytics_api.py`: additive, verhaltenserhaltende Extraktion von `build_analytics_blueprint()` aus
+  `create_app` (dieselben URLs/Cache) — damit die Dashboard-App die Endpoints mountet statt einen zweiten Server
+  zu fahren. Alle 25 bestehenden T-131-Tests bleiben grün.
+- `static/js/chart_lifecycle.js` (Council-Kern-Deliverable): library-agnostischer Chart-Lifecycle-Manager —
+  registriert Chart-Instanzen und ruft `dispose()`/`remove()` bei `htmx:beforeSwap` + Re-Init bei
+  `htmx:afterSwap`, damit über die späteren 9 Panels keine Canvas/WebGL-Kontexte + Listener leaken. `panels.js`
+  registriert die ECharts-`winrate-bars`-Factory dagegen.
+- `static/vendor/`: vendored (self-hosted, keine CDN-Requests) htmx 2.0.4, TradingView Lightweight Charts 4.2.3,
+  Apache ECharts 5.6.0 + `README.md` mit exakten Versionen/Bezugsquellen. Responsives `static/css/app.css`.
+- `backtest/test_dashboard_shell.py`: 14 DB-freie Tests (synthetische DuckDB via `AnalyticsExporter`) decken
+  AK1–AK7 — Blueprint gemountet, Shell/Demo-Panel/Badge rendern, `chart_lifecycle.js` ausgeliefert, Freshness-
+  Age aus synced_at only, 127.0.0.1-Bind, kein Import/Route triggert Postgres (Subprozess-Check).
+
 ## [2026-07-17] Shadow-Sichtbarkeits-Echo in optionalen Test-Channel (T-2026-CU-9050-150)
 
 Optionale reine Sichtbarkeit der Shadow-Trades in Telegram, mit **null Trade-Risiko** — auf Michi-Wunsch. Neue
