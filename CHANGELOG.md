@@ -27,7 +27,7 @@ Smoke: Mini-Datensatz (600 synthetische Events) → Retrain-Scaffold end-to-end 
 **CODE-PREP: kein echter Retrain, kein Bot** — der Voll-Retrain (Ein-Job-Regel) und der Bot-31-Exit-Loop
 (Close-Command → `telegram_outbox`, `closed_ai_signals status='CLOSED_FUNDING_NORMALIZED'`, `CH_FMR1`) sind
 Operator-gegated (Michi) und NICHT ausgeführt.
-## [2026-07-17] K2 · XSM1/XSR1 — Cross-Section Momentum/Reversal-Studie (Code-Prep) (T-2026-CU-9050-143)
+
 ## [2026-07-17] K2 · XSM1/XSR1 — Cross-Section Momentum/Reversal-Studie (Voll-Lauf) (T-2026-CU-9050-143)
 
 Neues read-only Studien-Skript `tools/xs_momentum_study.py` gebaut (Code-Prep, **Full-Run offen** —
