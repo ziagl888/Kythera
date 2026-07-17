@@ -43,6 +43,7 @@ sys.path.insert(0, REPO_ROOT)
 
 from core.ats_features import ATS_FEATURES  # noqa: E402
 from core.funding_features import FUNDING_FEATURES  # noqa: E402
+from core.moment_features import MOMENT_FEATURES  # noqa: E402
 from core.mis_features import FEATURE_COLS as MIS1_FEATURES  # noqa: E402
 from core.mis_features import assert_features_alive  # noqa: E402
 from core.rub_features import RUB_FEATURES  # noqa: E402
@@ -142,6 +143,42 @@ ABR1_FEATURES = ABR1_FEATURES_LEGACY + [
     "setup_level_age_candles",
     "setup_retest_wick_pct",
 ]
+
+
+# --- Optionaler additiver Feature-Block-Anschluss (§K7 MOM, T-2026-CU-9050-141) ---
+#
+# DEFAULT-OFF. Vorbild ist der eingebackene Funding-Block (RUB2_FEATURES =
+# RUB_FEATURES + FUNDING_FEATURES weiter oben): dort werden geteilte Feature-Namen
+# einfach an den Vertrag einer Strategie angehängt. Der Moment-Block macht dasselbe,
+# aber HINTER dem --features-Flag statt fest verdrahtet — nur wenn "moments"
+# übergeben wird, hängt ``with_extra_features`` den core.moment_features-Block an.
+#
+# Strikt additiv: ohne --features moments ist ``extra_features`` leer, und
+# ``with_extra_features(BASE, [])`` liefert eine element-identische Kopie von BASE.
+# Das Retrain-Verhalten (gewählte Spalten, Artefakt, meta) ist dann byte-identisch
+# zu vorher — der Anschluss ist ein reiner No-op, solange das Flag fehlt.
+#
+# Anhängen der Namen triggert KEIN Retrain und füllt keine Werte: der Replay-Writer
+# (tools/walkforward_sim) muss die Moment-Spalten erst liefern, bevor ein --features
+# moments-Lauf sinnvoll ist. Das Bauen dieses Writers + der Retrain-Lauf selbst sind
+# der Queue vorbehalten (§K7, Ein-Job-Regel) — hier wird NUR der Anschluss gebaut.
+FEATURE_HOOKS: dict[str, list[str]] = {"moments": list(MOMENT_FEATURES)}
+
+
+def resolve_extra_features(names) -> list[str]:
+    """Löst die --features-Auswahl in die konkreten Zusatz-Feature-Namen auf.
+
+    ``None``/leer → ``[]`` (Default-OFF-Pfad, kein Verhaltenswechsel)."""
+    extra: list[str] = []
+    for n in names or ():
+        extra.extend(FEATURE_HOOKS[n])
+    return extra
+
+
+def with_extra_features(base, extra_features) -> list[str]:
+    """``list(base)`` plus optionale Zusatz-Features. Bei leerem ``extra_features``
+    element-identisch zu ``base`` (byte-identisches Retrain-Verhalten)."""
+    return list(base) + list(extra_features)
 
 
 def load_replay(path: str, ts_key: str = "signal_time", label_key: str = "outcome_tp1") -> pd.DataFrame:
@@ -349,10 +386,11 @@ def save_artifact(path, model, feature_cols, thresh, iso, meta):
     print(f"  💾 {path}")
 
 
-def run_td_bb(strategy: str, tf: str, replay_path: str) -> dict:
+def run_td_bb(strategy: str, tf: str, replay_path: str, extra_features=()) -> dict:
     df = load_replay(replay_path)
     if df.empty or len(df) < 300:
         raise SystemExit(f"Zu wenig Replay-Trades ({len(df)}) in {replay_path}")
+    feats = with_extra_features(SNIPER_FEATURES, extra_features)
     gap_hours = 100 * (1 if tf == "1h" else 4)
     train, val, test = chrono_split(df, gap_hours)
     print(
@@ -360,7 +398,7 @@ def run_td_bb(strategy: str, tf: str, replay_path: str) -> dict:
         f"Basisrate TP1 {df['outcome'].mean() * 100:.1f}%"
     )
 
-    model, iso, thresh, val_stats, test_stats, calib_new = train_binary(train, val, test, SNIPER_FEATURES)
+    model, iso, thresh, val_stats, test_stats, calib_new = train_binary(train, val, test, feats)
     _, calib_old = old_model_calibration(strategy, tf, test)
 
     meta = {
@@ -382,7 +420,7 @@ def run_td_bb(strategy: str, tf: str, replay_path: str) -> dict:
         "test_stats": test_stats,
     }
     save_artifact(
-        os.path.join(STAGING_DIR, f"{strategy}_xgboost_model_{tf}.pkl"), model, SNIPER_FEATURES, thresh, iso, meta
+        os.path.join(STAGING_DIR, f"{strategy}_xgboost_model_{tf}.pkl"), model, feats, thresh, iso, meta
     )
     return {
         "strategy": strategy,
@@ -394,14 +432,15 @@ def run_td_bb(strategy: str, tf: str, replay_path: str) -> dict:
         "test_stats": test_stats,
         "calibration_new_test": calib_new,
         "calibration_old_same_events": calib_old,
-        "feature_importance_top": top_importance(model, SNIPER_FEATURES),
+        "feature_importance_top": top_importance(model, feats),
     }
 
 
-def run_abr1(replay_path: str) -> dict:
+def run_abr1(replay_path: str, extra_features=()) -> dict:
     df = load_replay(replay_path)
     if df.empty or len(df) < 300:
         raise SystemExit(f"Zu wenig Replay-Trades ({len(df)}) in {replay_path}")
+    feats = with_extra_features(ABR1_FEATURES, extra_features)
     results = {}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
@@ -413,7 +452,7 @@ def run_abr1(replay_path: str) -> dict:
             f"abr1 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
             f"Basisrate {d['outcome'].mean() * 100:.1f}%"
         )
-        model, iso, thresh, val_stats, test_stats, calib_new = train_binary(train, val, test, ABR1_FEATURES)
+        model, iso, thresh, val_stats, test_stats, calib_new = train_binary(train, val, test, feats)
         _, calib_old = old_model_calibration("abr1", None, test, direction=direction)
 
         # natives XGB-JSON wie das Produktions-Format + meta-Sidecar.
@@ -431,7 +470,7 @@ def run_abr1(replay_path: str) -> dict:
             "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
             "model_type": "binary (1=TP1-first-touch) — ANDERS als das alte 3-Klassen-Modell!",
             "success_proba": "predict_proba[:, 1]",
-            "features": ABR1_FEATURES,
+            "features": feats,
             "optimal_threshold": thresh,
             "split": "chronological 70/15/15 + purge gap",
             "xgboost_version": xgb.__version__,
@@ -456,7 +495,7 @@ def run_abr1(replay_path: str) -> dict:
             "test_stats": test_stats,
             "calibration_new_test": calib_new,
             "calibration_old_same_events": calib_old,
-            "feature_importance_top": top_importance(model, ABR1_FEATURES),
+            "feature_importance_top": top_importance(model, feats),
         }
     return {"strategy": "abr1", **results}
 
@@ -507,6 +546,7 @@ def run_mis1(
     label_mode: str = "geometry",
     move_path: str | None = None,
     move_basis: str = "close",
+    extra_features=(),
 ) -> dict:
     df_all = load_mis1_replay(replay_path)
     if df_all.empty or len(df_all) < 2000:
@@ -526,6 +566,7 @@ def run_mis1(
     # P0.12-Assertion auf dem Trainingsmaterial: kein kontinuierliches Feature konstant.
     assert_features_alive(df_all, context=" (mis1-Retrain)")
 
+    feats = with_extra_features(MIS1_FEATURES, extra_features)
     results: dict = {"strategy": "mis1"}
     for horizon in MIS1_HORIZONS:
         for direction in ("LONG", "SHORT"):
@@ -567,7 +608,7 @@ def run_mis1(
             )
 
             model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
-                train, val, test, MIS1_FEATURES, picker=pick_threshold_safe
+                train, val, test, feats, picker=pick_threshold_safe
             )
             _, calib_old = old_model_calibration("mis1", None, test, direction=direction, horizon=horizon)
 
@@ -605,7 +646,7 @@ def run_mis1(
                 "val_stats": val_stats,
                 "test_stats": test_stats,
             }
-            save_artifact(os.path.join(STAGING_DIR, f"{prefix}_{key}.pkl"), model, MIS1_FEATURES, thresh, iso, meta)
+            save_artifact(os.path.join(STAGING_DIR, f"{prefix}_{key}.pkl"), model, feats, thresh, iso, meta)
             with open(os.path.join(STAGING_DIR, f"{prefix}_{key}_meta.json"), "w", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=2, default=str)
             results[key] = {
@@ -616,12 +657,12 @@ def run_mis1(
                 "test_stats": test_stats,
                 "calibration_new_test": calib_new,
                 "calibration_old_same_events": calib_old,
-                "feature_importance_top": top_importance(model, MIS1_FEATURES),
+                "feature_importance_top": top_importance(model, feats),
             }
     return results
 
 
-def run_rub(replay_path: str) -> dict:
+def run_rub(replay_path: str, extra_features=()) -> dict:
     """RUB2-Retrain (Task #2): Binärmodell je Richtung auf den Replay-Events des
     geteilten Vorfilters (core/rub_features), Label = First-Touch der eigenen
     HVN/S-R-Geometrie inkl. SL-Pfad (behebt das Max-Favorable-Label des alten
@@ -634,7 +675,8 @@ def run_rub(replay_path: str) -> dict:
         f"rub: {len(df)} Events, {df['symbol'].nunique()} Coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
-    results: dict = {"strategy": "rub2", "features": RUB2_FEATURES}
+    feats = with_extra_features(RUB2_FEATURES, extra_features)
+    results: dict = {"strategy": "rub2", "features": feats}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
@@ -649,7 +691,7 @@ def run_rub(replay_path: str) -> dict:
         )
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
-            train, val, test, RUB2_FEATURES, picker=pick_threshold_safe
+            train, val, test, feats, picker=pick_threshold_safe
         )
 
         meta = {
@@ -659,7 +701,7 @@ def run_rub(replay_path: str) -> dict:
             "direction": direction,
             "model_type": "binary (1=TP1-first-touch)",
             "success_proba": "predict_proba[:, 1]",
-            "features": RUB2_FEATURES,
+            "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(replay_path),
             "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-13-Parität), Fees inkl.",
@@ -674,7 +716,7 @@ def run_rub(replay_path: str) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
         }
-        save_artifact(os.path.join(STAGING_DIR, f"rub2_model_{direction}.pkl"), model, RUB2_FEATURES, thresh, iso, meta)
+        save_artifact(os.path.join(STAGING_DIR, f"rub2_model_{direction}.pkl"), model, feats, thresh, iso, meta)
         with open(os.path.join(STAGING_DIR, f"rub2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2, default=str)
         results[direction] = {
@@ -684,12 +726,12 @@ def run_rub(replay_path: str) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
             "calibration_new_test": calib_new,
-            "feature_importance_top": top_importance(model, RUB2_FEATURES),
+            "feature_importance_top": top_importance(model, feats),
         }
     return results
 
 
-def run_ats(replay_path: str) -> dict:
+def run_ats(replay_path: str, extra_features=()) -> dict:
     """ATS2-Retrain (Bot 12 TSI-Sniper, T-2026-CU-9050-121): Binärmodell je
     Richtung auf den Replay-Events des geteilten TSI-Crossover-Vorfilters
     (core/ats_features), Label = First-Touch TP1-vor-SL der eigenen HVN/S-R-
@@ -707,7 +749,8 @@ def run_ats(replay_path: str) -> dict:
         f"ats: {len(df)} Events, {df['symbol'].nunique()} Coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
-    results: dict = {"strategy": "ats2", "features": ATS2_FEATURES}
+    feats = with_extra_features(ATS2_FEATURES, extra_features)
+    results: dict = {"strategy": "ats2", "features": feats}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
@@ -722,7 +765,7 @@ def run_ats(replay_path: str) -> dict:
         )
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
-            train, val, test, ATS2_FEATURES, picker=pick_threshold_safe
+            train, val, test, feats, picker=pick_threshold_safe
         )
 
         meta = {
@@ -732,7 +775,7 @@ def run_ats(replay_path: str) -> dict:
             "direction": direction,
             "model_type": "binary (1=TP1-first-touch)",
             "success_proba": "predict_proba[:, 1]",
-            "features": ATS2_FEATURES,
+            "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(replay_path),
             "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-12-Parität), Fees inkl.",
@@ -747,7 +790,7 @@ def run_ats(replay_path: str) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
         }
-        save_artifact(os.path.join(STAGING_DIR, f"ats2_model_{direction}.pkl"), model, ATS2_FEATURES, thresh, iso, meta)
+        save_artifact(os.path.join(STAGING_DIR, f"ats2_model_{direction}.pkl"), model, feats, thresh, iso, meta)
         with open(os.path.join(STAGING_DIR, f"ats2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2, default=str)
         results[direction] = {
@@ -757,12 +800,12 @@ def run_ats(replay_path: str) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
             "calibration_new_test": calib_new,
-            "feature_importance_top": top_importance(model, ATS2_FEATURES),
+            "feature_importance_top": top_importance(model, feats),
         }
     return results
 
 
-def run_epd(events_path: str) -> dict:
+def run_epd(events_path: str, extra_features=()) -> dict:
     """EPD2-Retrain (MODEL_INTENT §7): Binärmodell je Richtung auf den
     Detektor-Events aus tools/epd2_build_dataset.py (nur vol_ratio≥5 wie live,
     Label = First-Touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie via
@@ -776,7 +819,8 @@ def run_epd(events_path: str) -> dict:
         f"epd: {len(df)} Events, {df['symbol'].nunique()} Coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
-    results: dict = {"strategy": "epd2", "features": EPD2_FEATURES}
+    feats = with_extra_features(EPD2_FEATURES, extra_features)
+    results: dict = {"strategy": "epd2", "features": feats}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
@@ -795,7 +839,7 @@ def run_epd(events_path: str) -> dict:
             continue
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
-            train, val, test, EPD2_FEATURES, picker=pick_threshold_safe
+            train, val, test, feats, picker=pick_threshold_safe
         )
 
         meta = {
@@ -805,7 +849,7 @@ def run_epd(events_path: str) -> dict:
             "direction": direction,
             "model_type": "binary (1=TP1-first-touch)",
             "success_proba": "predict_proba[:, 1]",
-            "features": EPD2_FEATURES,
+            "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(events_path),
             "label": "first-touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie (simulate_exit, 7d), Fees inkl.",
@@ -820,7 +864,7 @@ def run_epd(events_path: str) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
         }
-        save_artifact(os.path.join(STAGING_DIR, f"epd2_model_{direction}.pkl"), model, EPD2_FEATURES, thresh, iso, meta)
+        save_artifact(os.path.join(STAGING_DIR, f"epd2_model_{direction}.pkl"), model, feats, thresh, iso, meta)
         with open(os.path.join(STAGING_DIR, f"epd2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2, default=str)
         results[direction] = {
@@ -830,12 +874,12 @@ def run_epd(events_path: str) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
             "calibration_new_test": calib_new,
-            "feature_importance_top": top_importance(model, EPD2_FEATURES),
+            "feature_importance_top": top_importance(model, feats),
         }
     return results
 
 
-def run_atb(replay_path: str) -> dict:
+def run_atb(replay_path: str, extra_features=()) -> dict:
     """ATB2-Retrain (MODEL_INTENT §11, Task-104): Binärmodell je Richtung auf den
     Converging-Channel-Ausbruchs-Events des geteilten Detektors
     (core/atb2_features). Label = First-Touch TP1-vor-SL der Measured-Move-
@@ -853,7 +897,8 @@ def run_atb(replay_path: str) -> dict:
         f"{df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
-    results: dict = {"strategy": "atb2", "features": ATB2_FEATURES}
+    feats = with_extra_features(ATB2_FEATURES, extra_features)
+    results: dict = {"strategy": "atb2", "features": feats}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 200:
@@ -870,7 +915,7 @@ def run_atb(replay_path: str) -> dict:
         )
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
-            train, val, test, ATB2_FEATURES, picker=pick_threshold_safe
+            train, val, test, feats, picker=pick_threshold_safe
         )
 
         meta = {
@@ -880,7 +925,7 @@ def run_atb(replay_path: str) -> dict:
             "direction": direction,
             "model_type": "binary (1=TP1-first-touch)",
             "success_proba": "predict_proba[:, 1]",
-            "features": ATB2_FEATURES,
+            "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(replay_path),
             "label": "first-touch TP1-vor-SL der Measured-Move-Geometrie "
@@ -901,7 +946,7 @@ def run_atb(replay_path: str) -> dict:
         }
         save_artifact(
             os.path.join(STAGING_DIR, f"atb2_model_{direction}.pkl"),
-            model, ATB2_FEATURES, thresh, iso, meta,
+            model, feats, thresh, iso, meta,
         )
         with open(os.path.join(STAGING_DIR, f"atb2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2, default=str)
@@ -912,7 +957,7 @@ def run_atb(replay_path: str) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
             "calibration_new_test": calib_new,
-            "feature_importance_top": top_importance(model, ATB2_FEATURES),
+            "feature_importance_top": top_importance(model, feats),
         }
     return results
 
@@ -958,7 +1003,19 @@ def main():
         help="mis1 move: Schlusskurs- oder Docht-Extreme als Label-Basis "
         "(Operator 2026-07-06: beide Varianten trainieren und vergleichen)",
     )
+    ap.add_argument(
+        "--features",
+        action="append",
+        choices=sorted(FEATURE_HOOKS),
+        default=None,
+        help="Optionaler additiver Feature-Block (DEFAULT-OFF, §K7 MOM). 'moments' "
+        "hängt core.moment_features.MOMENT_FEATURES an den Feature-Vertrag der "
+        "Strategie an (mehrfach angebbar). OHNE dieses Flag ist das Retrain "
+        "byte-identisch zu vorher (No-op-Anschluss). Anhängen der Namen triggert "
+        "KEIN Retrain — der Replay-Writer muss die Moment-Spalten erst liefern (Queue).",
+    )
     args = ap.parse_args()
+    extra_features = resolve_extra_features(args.features)
 
     if args.replay is None:
         if args.strategy == "epd":
@@ -978,7 +1035,7 @@ def main():
             "atb2": (run_atb, "atb2"),
             "ats": (run_ats, "ats2"),
         }[args.strategy]
-        result = runner(args.replay)
+        result = runner(args.replay, extra_features)
         out = os.path.join(STAGING_DIR, f"retrain_{name}_stats.json")
         with open(out, "w", encoding="utf-8") as fh:
             json.dump(result, fh, indent=2, default=str)
@@ -986,7 +1043,7 @@ def main():
         return
 
     if args.strategy in ("td", "bb"):
-        result = run_td_bb(args.strategy, args.tf, args.replay)
+        result = run_td_bb(args.strategy, args.tf, args.replay, extra_features)
         name = f"{args.strategy}_{args.tf}"
     elif args.strategy == "mis1":
         result = run_mis1(
@@ -995,13 +1052,14 @@ def main():
             label_mode=args.label_mode,
             move_path=args.move_labels,
             move_basis=args.move_basis,
+            extra_features=extra_features,
         )
         if args.label_mode == "move":
             name = "mis1_move" if args.move_basis == "close" else "mis1_move_wick"
         else:
             name = "mis1"
     else:
-        result = run_abr1(args.replay)
+        result = run_abr1(args.replay, extra_features)
         name = "abr1"
 
     out = os.path.join(STAGING_DIR, f"retrain_{name}_stats.json")

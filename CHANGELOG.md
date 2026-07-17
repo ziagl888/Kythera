@@ -13,6 +13,63 @@ ohne Regel Konflikt, mit Regel sauber + beide Einträge erhalten. Reihenfolge zw
 Einträge nicht garantiert (kosmetisch). Folge-Option (separater Task): `changelog.d/`-Fragmente für
 eine Null-Konflikt-Garantie.
 
+## [2026-07-16] K7 · MOM/SKW1 — Realized-Moments-Feature-Block + Skewness-Studie + Retrain-Anschluss (VOLL-LAUF) (T-2026-CU-9050-141)
+
+Neuer geteilter X-R1-Builder `core/moment_features.py` (kanonisch für Studie, Trainer und später Bot —
+kein Train/Serve-Skew, wie `core/funding_features.py`/`core/breadth_features.py`): realisierte
+**Vol/Schiefe/Wölbung** aus **15m**-Kerzen (bewusst 15m statt 5m — 5m hat nur ~1 Monat Retention, 15m ~1
+Jahr), rollierende Fenster {24h, 7d} = {96, 672} geschlossene Balken, 6 Features
+(`mom_rv_24h/7d`, `mom_skew_24h/7d`, `mom_kurt_24h/7d`, parallel zu den 6 Funding-Features). As-of nur
+geschlossene Kerzen (R1, `include_forming=False`, kein Lookahead); **native-NaN-Politik** (P1.20 — fehlende
+Werte bleiben NaN/`None`, NIE `fillna(0)`); fehlende Pflicht-**Spalten** → `MomentFeatureError` (X-R1-Vertrag).
+**FALLE (§K7, F6):** das ist REALISIERTE SCHIEFE (drittes Moment), KEIN MAX-/Lotterie-Feature — MAX-Shorts
+sind in Krypto kontraindiziert; es wird bewusst kein „Max-Return im Fenster" gebaut.
+
+Neues read-only `tools/skewness_study.py` (§K7): wöchentliche Dezil-Sorts auf realisierter Skewness —
+marktneutral (Coin − BTC), Liquiditätsfilter (unteres Dollar-Volumen-Terzil je Woche verworfen),
+Funding-Kosten auf der Short-Seite (Wiederverwendung `core/funding_features.load_funding`, roher
+`funding_rate` über die Halte-Woche summiert), Richtung Short-High-Positive-Skew vs. Long-Low-Skew,
+Fees beidbeinig (`walkforward_sim.FEE_PER_SIDE`); RV/Kurtosis-Dezile als Nebenprodukt; chronologischer
+Val/Test-Split (Vorzeichen muss beide Hälften überleben — Regel 8). BELOW_NORMAL + CPU-Headroom-Guards
+wie die Schwester-Studien (K3/K6). Voll-Lauf-Report nach `staging_models/skewness_study.{json,md}`
+(Verdict + tragende Tradeability-Caveats). Neuer `--reverdict`-Modus: leitet Verdict + Report deterministisch
+aus einem bestehenden Full-Run-JSON neu ab (KEIN DB-Re-Fold) — genutzt, als `derive_verdict` nach dem teuren
+Lauf gefixt wurde (Zahlen deterministisch; Live-DB war unter Last, kein erneutes 527-Coin-Read gerechtfertigt).
+
+Additiver Retrain-Anschluss in `tools/retrain_from_replay.py`: neues **DEFAULT-OFF** `--features moments`-Flag
+(`FEATURE_HOOKS`/`resolve_extra_features`/`with_extra_features`) hängt den `MOMENT_FEATURES`-Block an den
+Feature-Vertrag jeder Strategie an — Vorbild ist der eingebackene Funding-Block. **Strikt additiv:** ohne
+das Flag ist `extra_features` leer und das Retrain byte-identisch zu vorher (No-op-Anschluss, alle 7 Runner
+mit `extra_features=()`-Default durchgereicht). Anhängen der Namen triggert KEIN Retrain — der Replay-Writer
+muss die Moment-Spalten erst liefern (Queue).
+
+**VOLL-LAUF (527/530 Coins, 51 Wochen, 15.923 Zeilen nach Liquiditätsfilter):** Verdikt
+`skw1-robust-spread`. Der primäre SKW1-L/S-Spread (`mom_skew_7d`, SHORT High-Positive-Skew / LONG Low-Skew,
+marktneutral, liquiditäts-gefiltert, funding-/fee-verrechnet) ist **netto +2,50 %/Woche** und bleibt in BEIDEN
+Chrono-Hälften positiv (Val +2,51 %/35 Wo, Test +2,48 %/16 Wo; 64,7 % Wochen positiv), Dezil-Monotonie
+ρ=−0,88 **glatt über alle 10 Dezile** (breite Cross-Section, kein Ausreißer-Spike).
+
+**Verdict-Bug gefunden & gefixt:** der erste saubere Lauf schrieb fälschlich `no-op/no-skew-spread` — `derive_verdict`
+prüfte ein Top-Level-`n_weeks`, das auf dem Erfolgspfad in `spread["all"]` liegt (Top-Level nur im degenerierten
+Return), begrub also ein reales Spread als False-No-op. Guard auf `"all" not in spread` korrigiert; Verdict via
+`--reverdict` deterministisch aus den (verifizierten) Full-Run-Zahlen neu abgeleitet. Zusätzlich ein
+cp1252-Stdout-Crash beim WARN eines Coin-Symbols mit Nicht-ASCII-Zeichen encoding-safe gemacht (ASCII-Sanitize).
+
+**Unabhängige Artefakt-Prüfung (T-133-Orchestrierung, 2026-07-16):** Stale-Price/Survivorship/Look-ahead
+ausgeschlossen — `price_asof` hat einen Staleness-Guard (`MAX_STALE=1d`, NaN → Zeile fällt), das aktive
+`coins.json`-Universe hat NULL Mid-Window-Delistings (Survivorship biast den Short-Leg sogar nach UNTEN),
+As-of sauber, der BTC-Term kürzt sich im L/S-Spread. **Struktur ist real.**
+
+**⚠ TRAGENDE CAVEAT — reale Struktur ≠ handelbare Edge:** die +2,50 %/Woche sind netto NUR aus Fees + realisiertem
+Funding — KEIN Slippage, Market-Impact, Borrow-Verfügbarkeit oder Short-Liquidations-Risiko modelliert. Es ist ein
+wöchentlicher Full-Dezil-Rebalance-Short-Term-Reversal-Sort auf den illiquidesten High-Skew-Alts (nur unteres
+Dollar-Vol-Terzil verworfen), der LONG-Leg (Low-Skew = frisch gecrasht) ist tail-/bounce-getrieben (WR < 0,5 in
+JEDEM Dezil). Die Headline **überschätzt** realisierbaren PnL nach Mikrostruktur-Kosten. **Deshalb: `core/moment_features.py`
+ist jetzt ein VALIDIERTER Retrain-Input (§K7-Intent erfüllt), KEIN deploybarer Standalone-Spread. Ein
+`--features moments`-Retrain und jedes Deployment sind Operator-Entscheidung (Michi) — hier NICHTS deployt/promotet.**
+Retrain-Anschluss unverändert (byte-identisch zu bc3069f), kein Retrain gelaufen. ruff grün
+(`core/moment_features.py` + `tools/skewness_study.py`).
+
 ## [2026-07-16] R1/TimescaleDB C-Gate Phase 5 prep — aktive Bypass-Reader auf core.candles + reversibler Write-Primary-Flag (T-2026-CU-9050-139)
 
 Vorbereitung für den Phase-5-Table-Drop (~9,3k Per-Coin-`{SYM}_{tf}[_indicators]`): jeder **laufende**
