@@ -101,7 +101,7 @@ Instabilität; zudem stützt sich die Tag-3-Geometrie auf nur ~72 h 1h-Kerzen (d
 verrauschter „candidate", KEIN bewiesener Edge. Beide Deliverables (LONG-Blacklist-Gating
 bzw. Fade-SHORT-Bot je Richtung) = **Operator-Entscheidung (Michi); hier NICHTS deployt/promotet.**
 Listing-Daten via `exchangeInfo`-GET (`onboardDate`), gecacht, Fallback erste 1h-Kerze.
-## [2026-07-17] K11 · WSH1 — Wick-Reversal-Stop-Hunt Event-Studie (Code-Prep) (T-2026-CU-9050-145)
+
 ## [2026-07-17] K11 · WSH1 — Wick-Reversal-Stop-Hunt Event-Studie (Voll-Lauf) (T-2026-CU-9050-145)
 
 Neues read-only Studien-Skript `tools/wick_reversal_study.py` (15m-Kandles; 5m-Retention zu kurz, 15m ≈ 1 Jahr).
