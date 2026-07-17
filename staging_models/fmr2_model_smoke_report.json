@@ -1,0 +1,28 @@
+{
+  "model_id": "FMR2",
+  "kind": "binary",
+  "trained_at": "2026-07-17T00:52:18.887428+00:00",
+  "events_file": "C:/Users/Michael/AppData/Local/Temp/claude/C--Users-Michael-Documents-Kythera/46ff3913-2f13-44c1-97d2-18c9f569104b/scratchpad/fmr2_events_smoke.jsonl",
+  "purge_days": 3,
+  "auc_val": 0.9763,
+  "auc_test": 0.8431,
+  "brier_test": 0.2004,
+  "operating_point": {
+    "threshold": 0.46,
+    "total_pnl": 44.8,
+    "avg_pnl": 1.279,
+    "n": 35
+  },
+  "gate_uplift_test": {
+    "base_avg_pnl": -0.075,
+    "gate_avg_pnl": 0.937,
+    "gate_wr": 0.795,
+    "n_pass": 39,
+    "n_test": 90
+  },
+  "n_train": 408,
+  "n_val": 78,
+  "n_test_split": 90,
+  "split_t1": "2026-04-15 19:48:00",
+  "split_t2": "2026-05-08 06:54:00"
+}

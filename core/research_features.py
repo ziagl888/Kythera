@@ -191,6 +191,67 @@ def build_fmr1_row(stats: dict, cs_pctl: float, side: str, df: pd.DataFrame, idx
     return feats
 
 
+# ── K4 / FMR2 — Funding-Extreme-MR mit Normalisierungs-Exit ──────────────────
+# Bindende Quelle: docs/NEW_IDEAS_BOTS.md §"FMR2 — eigener Exit-Pfad" (+
+# docs/MODEL_CANDIDATES_SPEC_2026-07.md §K4). FMR1 labelte First-Touch-TP/SL —
+# das testete die S8-These NICHT (Report 15 skizzierte "halten bis
+# Funding-Normalisierung ODER Time-Stop"). FMR2 labelt genau diesen Exit.
+#
+# EINE Quelle für Builder UND (den operator-gegateten) Bot-31-Exit-Loop, X-R1.
+# Der Entry-Feature-Vertrag ist unverändert FMR1_FEATURES (nur das Label ändert
+# sich) — die Extreme-Selektion und die 6 Funding-Größen bleiben identisch.
+FMR2_MODEL_ID = "FMR2"
+FMR2_FEATURES = FMR1_FEATURES  # identischer Entry-Feature-Vertrag; Label = Normalisierungs-Exit
+
+# Normalisierungs-Schwellen (Design docs/NEW_IDEAS_BOTS.md §FMR2 Reihenfolge-1).
+# Die beiden Größen sind exakt die Entry-Features (funding_cs_pctl aus der
+# Cross-Section, funding_z_30d aus funding_stats) — dieselbe Rechnung, nur pro
+# Settlement der Halte-Phase erneut ausgewertet (as-of, kein Lookahead).
+#   SHORT (Top-Extrem eröffnet): normalisiert, sobald funding_cs_pctl ZURÜCK
+#     UNTER 0.80 ODER funding_z_30d ZURÜCK UNTER 1.0 fällt.
+#   LONG (Bottom-Extrem) symmetrisch: funding_cs_pctl ÜBER 0.20 ODER
+#     funding_z_30d ÜBER −1.0.
+FMR2_SHORT_EXIT_CS_PCTL = 0.80
+FMR2_SHORT_EXIT_Z = 1.0
+FMR2_LONG_EXIT_CS_PCTL = 0.20
+FMR2_LONG_EXIT_Z = -1.0
+
+#: Time-Stop: nach 9 Settlements (8h-Raster) = 3 Tage zwangsweise schließen.
+FMR2_TIME_STOP_SETTLEMENTS = 9
+#: Harter Katastrophen-SL in % vom Entry (Konvention K1-Grid / P2.27-Cap).
+#: Bleibt als Sicherheitsnetz UNTER dem Normalisierungs-Exit aktiv.
+FMR2_CATASTROPHE_SL_PCT = 15.0
+
+
+def fmr2_funding_normalized(direction: str, funding_cs_pctl: float, funding_z_30d: float) -> bool:
+    """True, sobald das Funding-Extrem als *normalisiert* gilt (Exit-Trigger).
+
+    OR-Verknüpfung: sobald EINE der beiden Größen die Extremzone verlässt, ist
+    die Mean-Reversion-These erfüllt — konservativer, früher Exit (die These ist
+    "das Extrem baut sich ab", nicht "beide Metriken kehren gemeinsam zurück").
+
+    Native-NaN-Semantik: ist eine der Größen NaN (z.B. std==0 im Z-Score oder
+    zu dünne Cross-Section), sind beide Vergleiche False → *nicht* normalisiert
+    → weiter halten bis Time-Stop. Bewusst fail-safe: eine unbestimmbare
+    Normalisierung schließt den Trade nicht vorzeitig.
+    """
+    if direction.upper() == "SHORT":
+        return funding_cs_pctl < FMR2_SHORT_EXIT_CS_PCTL or funding_z_30d < FMR2_SHORT_EXIT_Z
+    return funding_cs_pctl > FMR2_LONG_EXIT_CS_PCTL or funding_z_30d > FMR2_LONG_EXIT_Z
+
+
+def fmr2_catastrophe_sl(direction: str, entry_price: float) -> float:
+    """Harter Katastrophen-SL-Preis: entry ∓ FMR2_CATASTROPHE_SL_PCT.
+
+    LONG → unterhalb Entry, SHORT → oberhalb Entry. Touch-basiert (Liquidation
+    ist touch-basiert) — im Builder als First-Touch auf den 1h-Kerzen geprüft.
+    """
+    frac = FMR2_CATASTROPHE_SL_PCT / 100.0
+    if direction.upper() == "SHORT":
+        return entry_price * (1.0 + frac)
+    return entry_price * (1.0 - frac)
+
+
 # ── S10 / TRM1 — Transition-Resolution ───────────────────────────────────────
 # Fenster = die letzten TRM1_WINDOW_CHECKS regime_history-Zeilen (5-min-Raster)
 # bis einschließlich des Events. Alle Inputs sind bereits skalenfrei.

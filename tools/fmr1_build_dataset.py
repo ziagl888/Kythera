@@ -16,9 +16,17 @@ Pipeline je Settlement (8h-Raster, funding_time = timestamptz/UTC):
 Bekannter, bewusster Rest-Skew: live gated Bot 31 die LAUFENDE Rate
 (premiumIndex), hier die GESETTELTE — gleiche Quelle, ein Settlement Versatz.
 
+V2 / FMR2 (K4, docs/NEW_IDEAS_BOTS.md §"FMR2 — eigener Exit-Pfad"):
+  --label-version v2 tauscht Schritt 5 aus: statt First-Touch-TP/SL
+  (simulate_exit) läuft simulate_normalization_exit — Halten bis das Funding-
+  Extrem NORMALISIERT (fmr2_funding_normalized) oder Time-Stop (9 Settlements),
+  Label = Vorzeichen des Netto-PnL am Exit-Preis der Settlement-Kerze. Der harte
+  Katastrophen-SL bleibt als First-Touch-Sicherheitsnetz. Output → fmr2_events.jsonl.
+
 Beispiel:
-  python tools/fmr1_build_dataset.py
+  python tools/fmr1_build_dataset.py                          # V1 (FMR1-Bestand)
   python tools/fmr1_build_dataset.py --limit-symbols 15
+  python tools/fmr1_build_dataset.py --label-version v2       # V2 (FMR2, K4)
 """
 
 from __future__ import annotations
@@ -50,13 +58,17 @@ from tools.research_dataset_common import (  # noqa: E402
 
 from core.database import get_db_connection  # noqa: E402
 from core.research_features import (  # noqa: E402
+    FMR1_HISTORY_SETTLEMENTS,
     FMR1_LONG_PCTL,
     FMR1_SHORT_PCTL,
+    FMR2_TIME_STOP_SETTLEMENTS,
     build_fmr1_row,
+    fmr2_catastrophe_sl,
+    fmr2_funding_normalized,
     funding_stats,
 )
 from core.trade_utils import calculate_smart_targets  # noqa: E402
-from tools.walkforward_sim import simulate_exit  # noqa: E402
+from tools.walkforward_sim import FEE_PER_SIDE, simulate_exit  # noqa: E402
 
 SINCE_DEFAULT = "2026-02-25"
 HORIZON_CANDLES = 7 * 24
@@ -114,12 +126,95 @@ def build_events(fund: pd.DataFrame, since: str) -> pd.DataFrame:
     return ev[pd.Series(keep, index=ev.index)].reset_index(drop=True)
 
 
+def simulate_normalization_exit(
+    direction: str,
+    entry_price: float,
+    times: np.ndarray,
+    highs: np.ndarray,
+    lows: np.ndarray,
+    closes: np.ndarray,
+    entry_idx: int,
+    f_ts: np.ndarray,
+    f_rates: np.ndarray,
+    cs_pctl: np.ndarray,
+    ev_pos: int,
+    fee_per_side: float = FEE_PER_SIDE,
+) -> dict:
+    """V2-Label (FMR2, K4): halte den Mean-Reversion-Trade, bis das Funding-
+    Extrem NORMALISIERT (core.research_features.fmr2_funding_normalized) ODER bis
+    zum Time-Stop (FMR2_TIME_STOP_SETTLEMENTS = 9 Settlements / 3 Tage) — Exit-
+    Preis = Close der Settlement-Kerze. Das ist der Kern-Unterschied zur V1: KEIN
+    First-Touch-TP/SL (das war der FMR1-Fehler, Report 15 V2-Diagnose). Der harte
+    Katastrophen-SL (fmr2_catastrophe_sl) bleibt als First-Touch-Sicherheitsnetz.
+
+    times/highs/lows/closes: 1h-Kerzen des Symbols (naive UTC datetime64, ASC).
+    entry_idx: Index der Entry-Kerze (letzte geschlossene Kerze vor dem Event-
+      Settlement); der Walk startet bei entry_idx+1 (kein Lookahead, R1).
+    f_ts/f_rates/cs_pctl: volle Settlement-Historie des Symbols (ASC); ev_pos =
+      Position des Event-Settlements in dieser Historie. funding_z_30d wird pro
+      Settlement as-of neu gerechnet — identische Formel wie funding_stats
+      (cur vs. letzte FMR1_HISTORY_SETTLEMENTS Sätze).
+    """
+    is_long = direction.upper() == "LONG"
+    sl = fmr2_catastrophe_sl(direction, entry_price)
+    n = len(times)
+    n_settle = len(f_ts)
+    settlements = 0
+    next_j = ev_pos + 1  # nächste Settlement-Position NACH dem Entry-Settlement
+    exit_price: float | None = None
+    exit_reason: str | None = None
+    exit_time = None
+
+    i = entry_idx + 1
+    while i < n:
+        # 1) Katastrophen-SL zuerst (touch-basiert, konservativ — Liquidation ist touch).
+        if (lows[i] <= sl) if is_long else (highs[i] >= sl):
+            exit_price, exit_reason, exit_time = float(sl), "catastrophe_sl", times[i]
+            break
+        # 2) Settlement(s) erreicht? 1h-Kerzen & 8h-Settlements liegen auf dem Raster;
+        #    ein Datengap kann mehrere Settlements überspringen → while, nicht if.
+        while next_j < n_settle and times[i] >= f_ts[next_j]:
+            settlements += 1
+            cur = float(f_rates[next_j]) * 1e4
+            j0 = max(0, next_j - (FMR1_HISTORY_SETTLEMENTS - 1))
+            hist = f_rates[j0 : next_j + 1] * 1e4
+            std = float(hist.std())
+            z = (cur - float(hist.mean())) / std if std > 0 else float("nan")
+            if fmr2_funding_normalized(direction, float(cs_pctl[next_j]), z):
+                exit_price, exit_reason, exit_time = float(closes[i]), "normalized", times[i]
+                break
+            if settlements >= FMR2_TIME_STOP_SETTLEMENTS:
+                exit_price, exit_reason, exit_time = float(closes[i]), "time_stop", times[i]
+                break
+            next_j += 1
+        if exit_reason is not None:
+            break
+        i += 1
+
+    if exit_price is None:
+        return {"exit_reason": "open_at_end", "exit_price": None, "exit_time": None,
+                "net_pnl_pct": None, "settlements": settlements, "risk_pct": None}
+
+    gross = (exit_price - entry_price) / entry_price if is_long else (entry_price - exit_price) / entry_price
+    net = (gross - 2.0 * fee_per_side) * 100.0
+    risk = abs(entry_price - sl) / entry_price * 100.0 if entry_price else 0.0
+    return {"exit_reason": exit_reason, "exit_price": exit_price,
+            "exit_time": str(exit_time), "net_pnl_pct": round(net, 4),
+            "settlements": settlements, "risk_pct": round(risk, 4)}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", default=SINCE_DEFAULT)
-    ap.add_argument("--out", default=os.path.join(REPLAY_DIR, "fmr1_events.jsonl"))
+    ap.add_argument("--label-version", choices=("v1", "v2"), default="v1",
+                    help="v1 = FMR1 First-Touch-TP/SL (Bestand); v2 = FMR2 "
+                         "Normalisierungs-/Timeout-Exit (K4).")
+    ap.add_argument("--out", default=None)
     ap.add_argument("--limit-symbols", type=int, default=0)
     args = ap.parse_args()
+    if args.out is None:
+        fname = "fmr2_events.jsonl" if args.label_version == "v2" else "fmr1_events.jsonl"
+        args.out = os.path.join(REPLAY_DIR, fname)
 
     set_low_priority()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
@@ -132,12 +227,19 @@ def main() -> None:
     log(f"Extrem-Events nach Dedup: {len(ev)} "
         f"(SHORT {int((ev['direction'] == 'SHORT').sum())} / LONG {int((ev['direction'] == 'LONG').sum())})")
 
-    # Settlement-Historie je Symbol als Arrays (für funding_stats bis Event-Zeit).
-    hist: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    # Cross-Sectional-Perzentil je Settlement über ALLE Coins — dieselbe Größe
+    # wie build_events (row.pctl), hier für die V2-Halte-Phase pro Symbol
+    # verfügbar gemacht (as-of an jedem Settlement neu ausgewertet).
+    fund["cs_pctl"] = fund.groupby("funding_time")["funding_rate"].rank(pct=True)
+
+    # Settlement-Historie je Symbol als Arrays (für funding_stats bis Event-Zeit
+    # und — V2 — für den Normalisierungs-Walk).
+    hist: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     for sym, g in fund.groupby("symbol", sort=False):
         hist[sym] = (
             g["funding_time"].values.astype("datetime64[ns]"),
             g["funding_rate"].to_numpy(dtype=np.float64),
+            g["cs_pctl"].to_numpy(dtype=np.float64),
         )
 
     symbols = list(ev["symbol"].drop_duplicates())
@@ -157,7 +259,7 @@ def main() -> None:
             highs = df["high"].to_numpy(dtype=np.float64)
             lows = df["low"].to_numpy(dtype=np.float64)
             closes = df["close"].to_numpy(dtype=np.float64)
-            f_ts, f_rates = hist[sym]
+            f_ts, f_rates, f_cs = hist[sym]
 
             for row in sym_ev.itertuples():
                 ts64 = np.datetime64(row.ts)
@@ -176,20 +278,35 @@ def main() -> None:
                 try:
                     f_stats = funding_stats(list(f_rates[:hi]))
                     entry_close = float(closes[idx])
-                    win = df.iloc[max(0, idx - WINDOW_CANDLES + 1): idx + 1]
-                    setup = calculate_smart_targets(None, sym, row.direction, entry_close, df=win)
-                    entry1 = float(setup["entry1"])
-                    sl = float(setup["sl"])
-                    targets = [float(t) for t in setup["targets"][:N_PUBLISHED]]
-                    if not targets or sl <= 0 or entry1 <= 0:
-                        raise ValueError("degenerate geometry")
-                    end = min(idx + 1 + HORIZON_CANDLES, len(times))
-                    res = simulate_exit(
-                        times[:end], highs[:end], lows[:end], closes[:end],
-                        start_idx=idx + 1, direction=row.direction, entry=entry1, sl=sl,
-                        targets=targets, n_published=len(targets),
-                    )
                     feats = build_fmr1_row(f_stats, row.pctl, row.direction, df, idx)
+                    if args.label_version == "v2":
+                        # FMR2: Entry = Close der Entry-Kerze (kein Smart-Target-
+                        # Limit — V2 hält bis Normalisierung, keine TP-Leiter).
+                        if entry_close <= 0:
+                            raise ValueError("degenerate entry")
+                        ev_pos = int(np.searchsorted(f_ts, ts64, side="left"))
+                        res = simulate_normalization_exit(
+                            row.direction, entry_close, times, highs, lows, closes,
+                            entry_idx=idx, f_ts=f_ts, f_rates=f_rates, cs_pctl=f_cs,
+                            ev_pos=ev_pos,
+                        )
+                        entry_out, sl_out, targets_out = entry_close, None, None
+                    else:
+                        # V1 (FMR1-Bestand): Smart-Target-Geometrie + First-Touch.
+                        win = df.iloc[max(0, idx - WINDOW_CANDLES + 1): idx + 1]
+                        setup = calculate_smart_targets(None, sym, row.direction, entry_close, df=win)
+                        entry1 = float(setup["entry1"])
+                        sl = float(setup["sl"])
+                        targets = [float(t) for t in setup["targets"][:N_PUBLISHED]]
+                        if not targets or sl <= 0 or entry1 <= 0:
+                            raise ValueError("degenerate geometry")
+                        end = min(idx + 1 + HORIZON_CANDLES, len(times))
+                        res = simulate_exit(
+                            times[:end], highs[:end], lows[:end], closes[:end],
+                            start_idx=idx + 1, direction=row.direction, entry=entry1, sl=sl,
+                            targets=targets, n_published=len(targets),
+                        )
+                        entry_out, sl_out, targets_out = entry1, sl, targets
                 except ValueError:
                     stats["geometry_fail"] += 1
                     continue
@@ -197,15 +314,23 @@ def main() -> None:
                     stats["geometry_fail"] += 1
                     continue
 
-                label = res.get("outcome_tp1")
-                if res.get("exit_reason") == "open_at_end":
-                    label = None
+                if args.label_version == "v2":
+                    # Label = Vorzeichen des realisierten Netto-PnL am Normalisierungs-/
+                    # Timeout-Exit (NICHT First-Touch-TP/SL — der FMR1-Fehler).
+                    net = res.get("net_pnl_pct")
+                    label = None if net is None else int(net > 0)
+                else:
+                    label = res.get("outcome_tp1")
+                    if res.get("exit_reason") == "open_at_end":
+                        label = None
+
                 fh.write(json.dumps({
                     "symbol": sym, "ts": pd.Timestamp(row.ts).isoformat(),
                     "direction": row.direction, "weight": 1.0,
-                    "entry": entry1, "sl": sl, "targets": targets,
+                    "entry": entry_out, "sl": sl_out, "targets": targets_out,
                     "label": label, "net_pnl_pct": res.get("net_pnl_pct"),
                     "exit_reason": res.get("exit_reason"), "risk_pct": res.get("risk_pct"),
+                    "settlements": res.get("settlements"),
                     "features": feats,
                 }) + "\n")
                 stats["written"] += 1

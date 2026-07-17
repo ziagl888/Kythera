@@ -1,3 +1,33 @@
+## [2026-07-17] K4 · FMR2 — Funding-Extreme-MR mit Normalisierungs-Exit (Builder + V2-Labeling + Retrain-Scaffold, CODE-PREP) (T-2026-CU-9050-146)
+
+Die S8-These sauber testbar gemacht: FMR1 labelte First-Touch-TP/SL und testete damit NIE die
+eigentliche Idee („halten bis Funding-Normalisierung ODER Time-Stop") — genau der FMR1-Fehler
+(Report 15 V2-Diagnose). FMR2 labelt jetzt den Normalisierungs-/Timeout-Exit. Drei additive
+Erweiterungen der bestehenden Research-Pipeline (Reuse/Extend, nichts neu erfunden):
+
+- `core/research_features.py`: geteiltes Exit-Predikat `fmr2_funding_normalized` (EINE Quelle für
+  Builder UND künftigen Bot, X-R1) — SHORT normalisiert sobald `funding_cs_pctl < 0.80` ODER
+  `funding_z_30d < 1.0`, LONG symmetrisch (`> 0.20` / `> −1.0`); benannte Konstanten
+  (`FMR2_SHORT/LONG_EXIT_*`, `FMR2_TIME_STOP_SETTLEMENTS = 9` = 3 Tage, `FMR2_CATASTROPHE_SL_PCT = 15.0`);
+  `fmr2_catastrophe_sl`; `FMR2_FEATURES == FMR1_FEATURES` (identischer Entry-Vertrag, nur das Label ändert
+  sich). Native-NaN fail-safe (unbestimmbare Normalisierung schließt NICHT vorzeitig), as-of, R1.
+- `tools/fmr1_build_dataset.py`: neuer `--label-version v2`-Pfad (`simulate_normalization_exit`) — Label =
+  Vorzeichen des Netto-PnL am **Exit-Preis der Settlement-Kerze** (Close), NICHT First-Touch-TP/SL; harter
+  Katastrophen-SL bleibt als touch-basiertes First-Touch-Netz; `funding_z_30d` pro Settlement as-of neu
+  gerechnet (Formel identisch `funding_stats`), `funding_cs_pctl` aus vorberechneter Cross-Section.
+  V1/FMR1 bleibt bit-identisch der Default (`--label-version v1` → `fmr1_events.jsonl`), V2 → `fmr2_events.jsonl`.
+- `tools/new_models_train.py`: FMR2 in `STRATEGIES` (`kind=binary`, `features=FMR2_FEATURES`, `purge_days=3`
+  >= 9-Settlement-Horizont) — wiederverwendet den bestehenden Chrono-Split/Purge/`pick_threshold`-Pfad,
+  Artefakt `staging_models/fmr2_model_*.pkl` mit `meta.model_id=FMR2`.
+
+Neuer DB-freier Test `backtest/test_fmr2_exit.py` (9/9 grün): Predikat (SHORT/LONG/NaN/Schwellen) + Walk
+(Time-Stop@9, Normalisierungs-Exit, Katastrophen-SL-First-Touch, open_at_end, Settlement-Close-Pricing).
+Smoke: Mini-Datensatz (600 synthetische Events) → Retrain-Scaffold end-to-end exit 0, Artefakt
+`staging_models/fmr2_model_smoke.pkl` (`model_id=FMR2`, 15 Features) + Build-Report `staging_models/fmr2_build_report.md`.
+**CODE-PREP: kein echter Retrain, kein Bot** — der Voll-Retrain (Ein-Job-Regel) und der Bot-31-Exit-Loop
+(Close-Command → `telegram_outbox`, `closed_ai_signals status='CLOSED_FUNDING_NORMALIZED'`, `CH_FMR1`) sind
+Operator-gegated (Michi) und NICHT ausgeführt.
+
 ## [2026-07-17] Merge-Train: CHANGELOG.md union-Merge-Driver gegen serielle Rebase-Konflikte (T-2026-CU-9050-142)
 
 Wiederkehrendes „merge-train failed" behoben (2 PRs hingen). Ursache: pro Merge wird ein
