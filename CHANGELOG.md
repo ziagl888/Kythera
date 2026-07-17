@@ -66,6 +66,42 @@ byte-identisch zu `absolute` (Beta-Removal NICHT getestet; Fix = Returns/Spread 
 (nur Diagnostik) tritt ~1 Tages-Balken zu früh ein (`dates[t]`=Tages-Open via `floor('D')`, Signal aber `close[t]`)
 ⇒ Look-ahead im Replay; der Stufe-1-getriebene Verdict ist unberührt (Fix = Entry `dates[t]+86400`).
 
+## [2026-07-17] K5 · LIS1 Post-Listing-Drift-Kohortenstudie + Fade-Replay (Voll-Lauf) (T-2026-CU-9050-144)
+
+Neues read-only Studien-Skript `tools/listing_drift_study.py` (K5, Kandidat LIS1) — Code-Prep, der
+Full-Universe-Lauf bleibt für den orchestrator-gegateten Ein-Job-Slot offen. Prüft die These (F10),
+dass frisch gelistete USDT-Perps in den ersten Wochen/Monaten underperformen. Elemente: Listing-Datum
+je Coin via EINEM `GET /fapi/v1/exchangeInfo` (`onboardDate`, ms-Epoch UTC), gecacht nach
+`staging_models/listing_onboard_dates.json` (einziger externer HTTP-Call, public, keine Keys) — bei
+Netzfehler Fallback auf die erste 1h-Kerze je Coin (Quelle je Coin dokumentiert). Kohorte = onboardDate
+im Datenfenster (strikt nach dem ~1-Jahres-Retention-Floor, sonst ist der Drift nicht beobachtbar).
+Forward-Returns Tag 0 → {7,30,90,180} auf 1d-Kerzen, **absolut UND marktneutral** (minus BTC über
+dasselbe Fenster — Beta-Confound behoben); Verteilung, Median, %-positiv, n je Horizont. Fade-Replay
+SHORT Tag {3,7,14} × Limit {+0 %,+5 %} über `simulate_exit` (First-Touch, Taker-Fee) mit **zwingender
+Funding-Kosten-Verrechnung** — ein SHORT wird bei positivem Funding GUTGESCHRIEBEN (Longs zahlen Shorts),
+also `+Σ funding_rate` über den Hold (Vorzeichen bewusst gesetzt; frische Perps mit Extrem-Funding
+können die Short-Seite bezahlen). Kleines-n wird ehrlich ausgewiesen (n je Kohorte/Horizont/Zelle,
+keine vorgetäuschte Signifikanz). Minimal-Deliverable auch ohne Short-Edge: quantifizierte Empfehlung
+„Coin-Alter < X Tage ⇒ kein LONG" (Umsetzung = Gating-Change ⇒ Michi). Resume/Checkpoint-Maschinerie
+nach `tools/tsmom_study.py`-Muster (Per-Coin-Streaming-Akkumulatoren, atomarer Checkpoint des
+Processed-Sets ins OS-Temp — nie ins Repo — alle N Coins, `--resume`, RAM-Guard <500 MB, Peak-RSS im
+Report). Wiederverwendet den Exit-/Geometrie-/Funding-Stack (kein neuer Fee-/Geometrie-Code). Read-only,
+SELECT-only, BELOW_NORMAL; Artefakte nur nach `staging_models/`.
+
+**VOLL-LAUF (Kohorte n=152 Listings, `small_n_flag=false`):** Verdikt `fade-short-candidate (needs follow-up
+bot task)`. **Der Post-Listing-Drift ist REAL, groß und konsistent:** marktneutraler Median (minus BTC,
+Beta-adjustiert, Beta kippt das Vorzeichen NICHT) Tag 7 **−8,3 %**, Tag 30 −22,0 %, Tag 90 −34,3 %, Tag 180
+−34,1 %; nur ~25–36 % der Listings positiv. ⇒ **Robuster Befund für den Risikofilter „Coin-Alter < ~X Tage
+⇒ kein LONG" (Minimal-Deliverable, stark gestützt).** Der Fade-SHORT (Entry Tag {3,7,14} × Limit {+0 %,+5 %},
+`simulate_exit` + Funding) ist dagegen **MARGINAL und fragil:** positive Mediane (+3,5–6,7 %) und hohe WR
+(0,59–0,70), ABER Ø nahe null bis schwach positiv (2 von 6 Zellen Ø-negativ) mit fettem Short-Left-Tail
+(p5 −20 bis −32 %). Die „candidate"-Auszeichnung ruht auf den **Tag-3**-Zellen (Ø +1–2 %) — die
+benachbarte **Tag-7**-Zelle kippt Ø negativ (−1,1 %), ein Vorzeichenwechsel über einen Entry-Tag ⇒
+Instabilität; zudem stützt sich die Tag-3-Geometrie auf nur ~72 h 1h-Kerzen (dünne S/R-Basis). Also ein
+verrauschter „candidate", KEIN bewiesener Edge. Beide Deliverables (LONG-Blacklist-Gating
+bzw. Fade-SHORT-Bot je Richtung) = **Operator-Entscheidung (Michi); hier NICHTS deployt/promotet.**
+Listing-Daten via `exchangeInfo`-GET (`onboardDate`), gecacht, Fallback erste 1h-Kerze.
+
 ## [2026-07-17] Merge-Train: CHANGELOG.md union-Merge-Driver gegen serielle Rebase-Konflikte (T-2026-CU-9050-142)
 
 Wiederkehrendes „merge-train failed" behoben (2 PRs hingen). Ursache: pro Merge wird ein
