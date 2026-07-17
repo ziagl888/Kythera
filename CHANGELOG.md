@@ -102,6 +102,7 @@ verrauschter „candidate", KEIN bewiesener Edge. Beide Deliverables (LONG-Black
 bzw. Fade-SHORT-Bot je Richtung) = **Operator-Entscheidung (Michi); hier NICHTS deployt/promotet.**
 Listing-Daten via `exchangeInfo`-GET (`onboardDate`), gecacht, Fallback erste 1h-Kerze.
 ## [2026-07-17] K11 · WSH1 — Wick-Reversal-Stop-Hunt Event-Studie (Code-Prep) (T-2026-CU-9050-145)
+## [2026-07-17] K11 · WSH1 — Wick-Reversal-Stop-Hunt Event-Studie (Voll-Lauf) (T-2026-CU-9050-145)
 
 Neues read-only Studien-Skript `tools/wick_reversal_study.py` (15m-Kandles; 5m-Retention zu kurz, 15m ≈ 1 Jahr).
 Parametrisiertes Event-Grid: `lower_wick ≥ k·ATR14` (k∈{1.5,2,3}) × `volume ≥ m·vol_sma20` (m∈{3,5}) ×
@@ -116,9 +117,14 @@ Chrono-Val/Test-Split (Kalender-Mitte des BTCUSDT-15m-Fensters), Zell-Selektion 
 keine Zelle val+test-positiv ⇒ falsifiziert (gültiges No-op-Done, kein erzwungenes Positiv). Resume/Checkpoint-
 Maschinerie nach `tsmom_study.py`-Muster (Streaming-Accumulators O(cells), atomarer Temp+Rename-State im
 OS-Temp-Dir, `--resume`/`--state-path`/`--checkpoint-every`/`--progress-every`/`--skip-cpu-check`, RAM-Guard
-< 500 MB, Peak-RSS in Meta, encoding-sichere Prints gegen cp1252-Crash). Smoke-verifiziert (8 Coins →
-`status="partial (sampling cap)"`, exit 0, beide Populationen + Replay + Report-Write geübt, Peak-RSS 136 MB;
-Resume idempotent). **Full-Universe-Run offen** (orchestrator-gegateter Ein-Job-Slot). Report →
+< 500 MB, Peak-RSS in Meta, encoding-sichere Prints gegen cp1252-Crash).
+
+**VOLL-LAUF (527 Coins, 24 Zellen):** Verdikt **`no-op/WSH1-falsified`** — KEINE Zelle besteht das
+Stop-Kriterium (Val>0 UND Test>0 bei n_test≥50). Nur 3 von 24 Zellen überhaupt Val-positiv, und die
+stärksten (`cascade|k3.0|LONG` Val +0,35 %/+0,29 %) **kippen out-of-sample negativ** (Test −0,28 %/−0,25 %) —
+hohe Trefferquote (WR 0,63–0,68) aber netto-negativ, das klassische Overfitting-/Tail-Muster (wie K1). Die
+Interim-Checkpoint-Verdikte zeigten „edge-found" auf Teilpopulationen, das bei voller Population auswusch.
+Wick-Reversal-Geometrie repliziert NICHT auf unserem Stack; nichts deployt/promotet. Report →
 `staging_models/wick_reversal_study.{json,md}`. PEX1-Lektion gewahrt: Information liegt im Intraday-Fenster,
 kein Ausweichen auf 1h-Kontext.
 
