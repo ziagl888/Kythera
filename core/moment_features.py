@@ -117,9 +117,7 @@ def load_moment_candles(
         return df
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
-        raise MomentFeatureError(
-            f"{symbol}_{tf}: fehlende Pflicht-Spalten {missing} — X-R1-Vertrag, kein fillna(0)"
-        )
+        raise MomentFeatureError(f"{symbol}_{tf}: fehlende Pflicht-Spalten {missing} — X-R1-Vertrag, kein fillna(0)")
     df = df.copy()
     df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
