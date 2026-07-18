@@ -2,6 +2,25 @@
 {% block title %}Z1 Dashboard — Übersicht{% endblock %}
 
 {% block content %}
+<section class="panel" id="panel-fleet-registry">
+  <header class="panel__head">
+    <h2 class="panel__title">Fleet-Registry</h2>
+    <span class="panel__hint">Aktualisiert alle {{ panel_poll_seconds }} s</span>
+  </header>
+
+  {#
+    Feature 1 (T-2026-CU-9050-152): per-bot model-tag / config / parked-status
+    table, DB-free (core.fleet.FLEET + control/parked/ + root *_meta.json).
+    Same load/poll pattern as the success-rate demo panel below.
+  #}
+  <div id="fleet-registry-body"
+       hx-get="/panels/fleet-registry"
+       hx-trigger="load, every {{ panel_poll_seconds }}s"
+       hx-swap="innerHTML">
+    <p class="muted">Lade Fleet-Registry…</p>
+  </div>
+</section>
+
 <section class="panel" id="panel-success-rate">
   <header class="panel__head">
     <h2 class="panel__title">Erfolgsrate je Bot</h2>

@@ -92,6 +92,21 @@ def script_for_tag(tag: str | None) -> str | None:
     return None
 
 
+def families_for_script(script: str) -> list[str]:
+    """Model-tag families / classic strategy names emitted by `script`.
+
+    Reverse of script_for_tag() (T-2026-CU-9050-152 fleet-registry panel):
+    given a fleet script, which tag(s) does it post under? Most scripts map
+    to exactly one AI family; 25_smc_ml_sniper.py posts both BB and TD, and
+    3_detectors.py posts all five classic strategy names. Declaration order
+    is preserved for the AI side (matches _AI_FAMILY_TO_SCRIPT precedence);
+    classic names are sorted since there is no precedence among them.
+    """
+    families = [prefix for prefix, s in _AI_FAMILY_TO_SCRIPT if s == script]
+    classics = sorted(name for name, s in _CLASSIC_TO_SCRIPT.items() if s == script)
+    return families + classics
+
+
 def has_standard_leverage(tag: str | None) -> bool:
     """True when the bot posts get_max_leverage(symbol, 20) verbatim."""
     upper = (tag or "").strip().upper()

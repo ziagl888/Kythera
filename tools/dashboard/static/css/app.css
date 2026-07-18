@@ -105,6 +105,11 @@ body {
 
 .datatable__bot { font-weight: 600; }
 
+/* Fleet-registry panel: text-heavy columns (tags/config/status) read better
+   left-aligned than the numeric-table default. */
+.datatable--fleet th,
+.datatable--fleet td { text-align: left; }
+
 /* Small screens: let the data table scroll instead of overflowing the panel. */
 @media (max-width: 640px) {
   .content { padding: 10px; }

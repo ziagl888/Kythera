@@ -1,0 +1,38 @@
+{#
+  Fleet-registry panel fragment (HTMX swap target, T-2026-CU-9050-152).
+  Server-rendered from fleet_registry_rows(): one row per fleet bot with its
+  model tag(s), live Kernparameter (root *_meta.json only), and parked
+  status/since. DB-free — every field comes from core.fleet.FLEET,
+  control/parked/ markers, and root-level artifact meta; no Postgres read.
+#}
+{% if not rows %}
+  <p class="muted">Keine Fleet-Einträge gefunden.</p>
+{% else %}
+  <table class="datatable datatable--fleet">
+    <thead>
+      <tr>
+        <th>Bot</th>
+        <th>Model-Tag</th>
+        <th>Config</th>
+        <th>Status</th>
+        <th>Seit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="datatable__bot">{{ row.name }}</td>
+        <td>{{ row.model_tag }}</td>
+        <td>{{ row.config }}</td>
+        <td>
+          <span class="badge {% if row.parked %}badge--stale{% else %}badge--fresh{% endif %}">
+            <span class="badge__dot" aria-hidden="true"></span>
+            <span class="badge__label">{% if row.parked %}Parked{% else %}Active{% endif %}</span>
+          </span>
+        </td>
+        <td>{% if row.parked %}{{ row.parked_since or "—" }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
