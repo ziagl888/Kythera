@@ -84,4 +84,25 @@
     <p class="muted">Lade Erfolgsraten…</p>
   </div>
 </section>
+
+<section class="panel" id="panel-regime-heatmap">
+  <header class="panel__head">
+    <h2 class="panel__title">Bot &times; Regime Heatmap</h2>
+    <span class="panel__hint">Aktualisiert alle {{ panel_poll_seconds }} s</span>
+  </header>
+
+  {#
+    Feature 6 (T-2026-CU-9050-158): rows=bots, columns=regime_history states,
+    cell=performance (winrate/Ø-PnL, toggleable) over decisive trades whose
+    closed_at fell into that regime's active time window. The fragment itself
+    is the HTMX swap target (outerHTML), same self-updating pattern as the
+    success-rate-timeseries panel above.
+  #}
+  <div id="regime-heatmap-body"
+       hx-get="/panels/regime-heatmap"
+       hx-trigger="load, every {{ panel_poll_seconds }}s"
+       hx-swap="outerHTML">
+    <p class="muted">Lade Regime-Heatmap…</p>
+  </div>
+</section>
 {% endblock %}

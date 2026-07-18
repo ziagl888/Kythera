@@ -58,6 +58,7 @@ from tools.analytics_api import (
     _serve,
     available_bots,
     bot_leaderboard,
+    bot_regime_matrix,
     build_analytics_blueprint,
     connect_ro,
     rolling_success_rate_series,
@@ -191,6 +192,11 @@ PANEL_SOURCES: dict[str, tuple[str, ...]] = {
     "success-rate-timeseries": ("closed_ai_signals", "closed_trades"),
     "leaderboard": ("closed_ai_signals", "closed_trades"),
     "fleet-registry": (),
+    # Feature 6 (T-2026-CU-9050-158): the heatmap joins decisive trades against
+    # regime_history, so ITS staleness matters too, not just the outcome
+    # table's — worst_case=True (panel_freshness_summary's default) already
+    # picks whichever of the two is older.
+    "regime-heatmap": ("closed_ai_signals", "regime_history"),
 }
 
 # fleet-registry has no DuckDB sync to report a synced_at/last_row_ts for —
@@ -599,6 +605,113 @@ def _success_rate_timeseries_context(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Bot x Regime performance heatmap (Feature 6, T-2026-CU-9050-158)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The two cell metrics the heatmap can render, mirroring analytics_api's
+# REGIME_MATRIX_METRICS field names but with the toggle's own short query-
+# string keys (kept independent of Feature 5's global METRICS/METRIC_SORT_BY —
+# this panel highlights a heatmap cell, not a leaderboard sort key).
+REGIME_HEATMAP_METRICS: tuple[str, ...] = ("winrate", "expectancy")
+DEFAULT_REGIME_HEATMAP_METRIC = "winrate"
+
+REGIME_HEATMAP_METRIC_LABELS: dict[str, str] = {
+    "winrate": "Winrate",
+    "expectancy": "Ø-PnL je Trade (%)",
+}
+
+# metric -> the bot_regime_matrix() cell field it reads.
+REGIME_HEATMAP_METRIC_FIELD: dict[str, str] = {
+    "winrate": "winrate",
+    "expectancy": "expectancy_pct",
+}
+
+
+def resolve_regime_heatmap_metric(raw: str | None) -> str:
+    """Normalise a raw ``metric`` query-string value for the heatmap toggle.
+
+    Unknown/missing values fall back to :data:`DEFAULT_REGIME_HEATMAP_METRIC` —
+    same permissive-fallback contract as ``resolve_metric`` (Feature 5) and
+    ``bot_leaderboard``'s own ``sort_by``: a bad value degrades, never 500s.
+    """
+    return raw if raw in REGIME_HEATMAP_METRIC_FIELD else DEFAULT_REGIME_HEATMAP_METRIC
+
+
+def _regime_heatmap_context(
+    duckdb_path: str, *, metric: str = DEFAULT_REGIME_HEATMAP_METRIC
+) -> dict[str, Any]:
+    """Server-side render context for the Bot x Regime heatmap panel.
+
+    Thin wrapper over ``analytics_api.bot_regime_matrix`` — same throttled
+    read-only DuckDB connection pattern as every other panel context here.
+    Reshapes the matrix into TWO renderable forms so the template never has to
+    do lookup logic itself:
+      * ``table_rows`` — the no-JS table fallback, one row per bot with one
+        cell per regime IN THE SAME COLUMN ORDER as ``regimes`` (``None`` for
+        a (bot, regime) pair with no decisive trade — rendered as "—", never a
+        fabricated zero).
+      * ``chart_data`` — the ECharts heatmap's sparse ``[regime_idx, bot_idx,
+        value]`` series. A missing cell contributes NO entry at all (ECharts
+        heatmap renders an absent coordinate as empty, not a synthesised 0).
+    ``winrate`` values are surfaced as a 0-100 percentage (matching the other
+    panels' winrate rendering convention); ``expectancy_pct`` is already a
+    %-value and passes through unscaled.
+    """
+    con = connect_ro(duckdb_path)
+    try:
+        payload = bot_regime_matrix(con)
+        freshness_rows = data_freshness(con)
+    finally:
+        con.close()
+
+    field = REGIME_HEATMAP_METRIC_FIELD[metric]
+    bots = payload["bots"]
+    regimes = payload["regimes"]
+    cells = payload["cells"]
+
+    def _display_value(cell: dict[str, Any] | None) -> float | None:
+        if cell is None or cell.get(field) is None:
+            return None
+        value = cell[field]
+        return round(value * 100, 1) if field == "winrate" else value
+
+    table_rows = [
+        {
+            "bot": bot,
+            "cells": [
+                {
+                    "n": (cells.get(bot, {}).get(regime) or {}).get("n"),
+                    "value": _display_value(cells.get(bot, {}).get(regime)),
+                }
+                for regime in regimes
+            ],
+        }
+        for bot in bots
+    ]
+
+    chart_data: list[list[Any]] = []
+    for bi, bot in enumerate(bots):
+        for ri, regime in enumerate(regimes):
+            value = _display_value(cells.get(bot, {}).get(regime))
+            if value is not None:
+                chart_data.append([ri, bi, value])
+
+    return {
+        "bots": bots,
+        "regimes": regimes,
+        "table_rows": table_rows,
+        "chart_data": chart_data,
+        "metric": metric,
+        "metric_label": REGIME_HEATMAP_METRIC_LABELS[metric],
+        "metrics": REGIME_HEATMAP_METRICS,
+        "metric_labels": REGIME_HEATMAP_METRIC_LABELS,
+        "is_winrate": field == "winrate",
+        "poll_seconds": PANEL_POLL_SECONDS,
+        "freshness": panel_freshness_summary(freshness_rows, "regime-heatmap"),
+    }
+
+
 def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app for the Z1 dashboard shell.
 
@@ -664,6 +777,16 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         return render_template(
             "panels/success_rate_timeseries.html",
             **_success_rate_timeseries_context(path, raw_bots=raw_bots, filtered=filtered, window=window),
+        )
+
+    @app.get("/panels/regime-heatmap")
+    def panel_regime_heatmap():
+        # Feature 6 (T-2026-CU-9050-158): local metric toggle (winrate/
+        # expectancy), baked into this panel's own hx-get URL exactly like
+        # Feature 5's global toggle does for the leaderboard.
+        metric = resolve_regime_heatmap_metric(request.args.get("metric"))
+        return render_template(
+            "panels/regime_heatmap.html", **_regime_heatmap_context(path, metric=metric)
         )
 
     return app
