@@ -498,6 +498,107 @@ def rolling_success_rate_series(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Bot x Regime performance heatmap (Feature 6, T-2026-CU-9050-158)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Cell metrics the heatmap can render — the SAME two headline metrics
+# _leaderboard_row already computes (winrate, expectancy_pct), just per
+# (bot, regime) instead of per bot overall.
+REGIME_MATRIX_METRICS = ("winrate", "expectancy_pct")
+
+
+def _regime_history_present(con: duckdb.DuckDBPyConnection) -> bool:
+    row = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'main' AND table_name = 'regime_history'"
+    ).fetchone()
+    return row is not None
+
+
+def bot_regime_matrix(
+    con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None = None
+) -> dict[str, Any]:
+    """Per-(bot, regime) performance matrix — the Bot x Regime heatmap's data
+    source (Feature 6, T-2026-CU-9050-158).
+
+    Assigns each DECISIVE trade (the identical definition ``bot_trade_rows``/
+    ``success_rate_timeseries`` use, via the shared ``_outcomes_cte``/
+    ``_bot_filter`` helpers — pnl present, not housekeeping, ``MICRO_PNL_PCT <
+    |pnl| <= MAX_ABS_PNL_PCT``) to the regime state that was ACTIVE at its
+    ``closed_at``, via a DuckDB ``ASOF LEFT JOIN`` against ``regime_history``
+    (``ON closed_at >= ts``): for each trade this picks the LATEST
+    ``regime_history`` row whose ``ts`` does not exceed the trade's
+    ``closed_at`` — i.e. the regime classification in force at that instant.
+    ``regime_history`` is an append-only classification log (ROM1,
+    ``tools/analytics_export.py`` SOURCES), so a row's regime is valid from its
+    own ``ts`` up to (not including) the next row's ``ts`` — the ASOF join
+    encodes exactly that half-open window without materialising it.
+
+    A trade whose ``closed_at`` precedes every recorded ``regime_history`` row
+    (no regime had been classified yet at that point) has no ASOF match and is
+    DROPPED from the matrix — never fabricated into an "UNKNOWN" bucket
+    (CLAUDE.md rule: no synthesised data).
+
+    Args:
+        con: an open DuckDB connection (typically ``read_only=True``).
+        bots: optional bot-multiselect filter; None = all bots.
+
+    Returns a JSON-serialisable dict:
+        {"bots": [...], "regimes": [...],
+         "cells": {bot: {regime: {n, wins, winrate, pnl_sum_pct, expectancy_pct}}}}
+    A (bot, regime) pair with zero decisive trades in that window is simply
+    ABSENT from ``cells[bot]`` — never a zero-filled placeholder. Empty
+    (``{"bots": [], "regimes": [], "cells": {}}``) when either no outcome
+    table or no ``regime_history`` table exists yet in the substrate (mirrors
+    the empty-substrate degrade of ``success_rate_timeseries``/
+    ``bot_leaderboard``).
+    """
+    tables = _existing_outcome_tables(con)
+    if not tables or not _regime_history_present(con):
+        return {"bots": [], "regimes": [], "cells": {}}
+    cte = _outcomes_cte(tables)
+    params: list[Any] = []
+    bot_sql = _bot_filter(bots, params)
+    rows = con.execute(
+        f"{cte}, "
+        "regime_sorted AS ("
+        "    SELECT ts, regime FROM regime_history WHERE regime IS NOT NULL ORDER BY ts"
+        "), "
+        "decisive AS ("
+        "    SELECT bot, closed_at, pnl_pct, is_win FROM flagged "
+        f"    WHERE is_decisive AND bot IS NOT NULL{bot_sql}"
+        ") "
+        "SELECT d.bot, r.regime, "
+        "count(*) AS n, "
+        "count(*) FILTER (WHERE d.is_win) AS wins, "
+        "sum(d.pnl_pct) AS pnl_sum "
+        "FROM decisive d "
+        "ASOF LEFT JOIN regime_sorted r ON d.closed_at >= r.ts "
+        "WHERE r.regime IS NOT NULL "
+        "GROUP BY d.bot, r.regime "
+        "ORDER BY d.bot, r.regime",
+        params,
+    ).fetchall()
+
+    bots_seen: set[str] = set()
+    regimes_seen: set[str] = set()
+    cells: dict[str, dict[str, dict[str, Any]]] = {}
+    for bot, regime, n, wins, pnl_sum in rows:
+        n, wins = int(n), int(wins)
+        pnl_sum = float(pnl_sum)
+        bots_seen.add(bot)
+        regimes_seen.add(regime)
+        cells.setdefault(bot, {})[regime] = {
+            "n": n,
+            "wins": wins,
+            "winrate": _winrate(wins, n),
+            "pnl_sum_pct": round(pnl_sum, 4),
+            "expectancy_pct": round(pnl_sum / n, 4) if n else None,
+        }
+    return {"bots": sorted(bots_seen), "regimes": sorted(regimes_seen), "cells": cells}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Thin Flask blueprint (framework decision T-2026-CU-9050-130 still open)
 # ─────────────────────────────────────────────────────────────────────────────
 

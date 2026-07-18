@@ -1,3 +1,41 @@
+## [2026-07-18] Bot x Regime Performance-Heatmap — Z1-Dashboard Feature 6 (T-2026-CU-9050-158)
+
+Sechster Feature-Baustein auf der T-151-Shell: eine ECharts-Heatmap (Zeilen = Bots, Spalten =
+Regime-Zustaende aus `regime_history`, Zell-Wert = Winrate oder Ø-PnL/Trade, per Toggle umschaltbar). Fuer
+jede (Bot, Regime)-Zelle zaehlen die DECISIVEN Trades des Bots, deren `close_time` in das Zeitfenster faellt,
+in dem dieser Regime-Zustand aktiv war.
+
+- `tools/analytics_api.py`: neue additive Funktion `bot_regime_matrix()` — wiederverwendet
+  `_outcomes_cte`/`_bot_filter`/`_existing_outcome_tables` (dieselbe DECISIVE-Trade-Definition wie
+  `bot_trade_rows`/`success_rate_timeseries`, unveraendert). Ordnet jeden Trade seinem aktiven Regime-Zustand
+  per DuckDB `ASOF LEFT JOIN` gegen `regime_history` zu (`ON closed_at >= ts`: der letzte klassifizierte
+  Regime-Eintrag VOR/AN dem Trade-Zeitpunkt — `regime_history` ist ein Append-Only-Log, ein Zustand gilt ab
+  seinem `ts` bis zum naechsten Eintrag). Trades vor dem allerersten Regime-Eintrag haben kein ASOF-Match und
+  werden aus der Matrix ausgeschlossen statt in eine fabrizierte "UNKNOWN"-Spalte gebucht. Eine
+  (Bot, Regime)-Zelle ohne Trades fehlt in `cells` komplett (kein Nullwert-Platzhalter).
+- `tools/dashboard/app.py`: neue Route `GET /panels/regime-heatmap`, neuer `PANEL_SOURCES`-Eintrag
+  (`regime_history` + `closed_ai_signals` fuer die Datenstand-Badge), neue Kontext-Funktion
+  `_regime_heatmap_context()` (reshaped die Matrix in eine Tabellen-Fallback-Form + eine sparse ECharts-
+  Heatmap-Serie) und einen lokalen Metrik-Toggle (`resolve_regime_heatmap_metric`, Winrate/Ø-PnL, unbekannter
+  Wert faellt still auf Winrate zurueck).
+- `tools/dashboard/templates/panels/regime_heatmap.html` (neu) + `index.html`: neues Panel mit
+  Metrik-Umschalter, Datenstand-Badge, ECharts-Heatmap UND Tabellen-Fallback (leere Zellen als "—", nie
+  fabriziert).
+- `tools/dashboard/static/js/panels.js`: neue ECharts-Heatmap-Factory `bot-regime-heatmap`, via
+  `chart_lifecycle.js` registriert (dispose/re-init bei HTMX-Swap); sinnvolle Farb-Skala je Metrik (Winrate
+  0-100% sequentiell, Ø-PnL divergierend um 0), sparse Serie (fehlende Zelle = kein Eintrag, kein
+  fabrizierter Nullwert).
+- `backtest/test_dashboard_regime_heatmap.py` (neu): realistische Fixtures (echte `closed_ai_signals`- +
+  `regime_history`-Spaltennamen aus `tools/analytics_export.py`, mehrere Bots x mehrere Regime-Zustaende,
+  wiederholte Regime-Labels die zu EINER Spalte verschmelzen). Integrationstest ueber die echte
+  `AnalyticsExporter`→DuckDB→Route→HTML-Kette. Mutation-Check bestaetigt (manuell verifiziert): ein Trade
+  exakt auf der Regime-Grenze muss ins NEUE Fenster fallen — ein Flip der ASOF-Ungleichung (`>=` → `>`) macht
+  `test_bot_regime_matrix_boundary_trade_joins_new_regime_window` rot. Getestet: korrekte Zuordnung,
+  fehlende Zelle bleibt abwesend (kein Nullwert), Trade vor dem ersten Regime-Eintrag ausgeschlossen, leeres
+  Substrat degradiert sauber, kein Postgres. `ruff check .`/`ruff format --check .` gruen; `regression_guard
+  verify` gruen (24 Fixtures, 3.13-Interpreter mit numpy+duckdb); alle bestehenden + neuen Dashboard-/
+  Analytics-Tests gruen (152 passed).
+
 ## [2026-07-18] Globaler Erfolgs-Metrik-Toggle — Z1-Dashboard Feature 5 (T-2026-CU-9050-157)
 
 Fuenfter Feature-Baustein auf der T-151-Shell: ein shell-globaler Erfolgs-Metrik-Toggle (Winrate /

@@ -309,3 +309,83 @@ main/prod direkt, Push/PR (Orchestrator-Schritt).
 Panel-Routen-Signaturen aus Feature 1-4 ueber den additiven `metric`-Param
 hinaus.
 
+---
+
+## Feature 6 — Bot x Regime Performance-Heatmap (T-2026-CU-9050-158)
+
+Task: T-2026-CU-9050-158 · baut additiv auf T-131 (`regime_history`-Export,
+`_outcomes_cte`/`_bot_filter`) und T-151 (Shell/Chart-Lifecycle) auf.
+
+### Intent
+Eine ECharts-Heatmap: Zeilen = Bots, Spalten = Regime-Zustaende
+(`regime_history.regime`), Zell-Wert = Performance des Bots IN diesem Regime
+(Winrate oder Ø-PnL/Trade, umschaltbar, klar gelabelt). Fuer jede
+(Bot, Regime)-Zelle zaehlen die DECISIVEN Trades des Bots, deren `closed_at`
+in das Zeitfenster faellt, in dem dieser Regime-Zustand aktiv war — ein ASOF-
+Join gegen den `regime_history`-Log (append-only, ein Regime gilt ab seinem
+`ts` bis zum naechsten Log-Eintrag). Zellen ohne Trades bleiben leer ("—"),
+nie fabriziert. Trades, deren `closed_at` VOR dem ersten je klassifizierten
+Regime liegt, koennen keinem Fenster zugeordnet werden und werden aus der
+Matrix ausgeschlossen (nicht in eine "UNKNOWN"-Spalte gebucht).
+
+### Akzeptanzkriterien (binaer testbar)
+- [x] AK1: `analytics_api.bot_regime_matrix()` liefert additiv
+  `{bots, regimes, cells: {bot: {regime: {n, wins, winrate, pnl_sum_pct,
+  expectancy_pct}}}}` — wiederverwendet `_outcomes_cte`/`_bot_filter` (dieselbe
+  DECISIVE-Trade-Definition wie `bot_trade_rows`/`success_rate_timeseries`,
+  unveraendert). — Test: `test_bot_regime_matrix_assigns_trades_to_active_regime_window`.
+- [x] AK2: Die Bot-Regime-Zuordnung ist ein ASOF-Join (`closed_at >= ts`, letzter
+  `regime_history`-Eintrag VOR/AN dem Trade-Zeitpunkt) — ein Trade auf der
+  Regime-Grenze faellt in das NEUE Fenster, nicht ins alte; ein falsch
+  gerichteter Join (Mutation-Check) macht die Zell-Werte nachweisbar falsch. —
+  Test: `test_bot_regime_matrix_boundary_trade_joins_new_regime_window`
+  (Mutation-Check).
+- [x] AK3: Zellen ohne Trades erscheinen nicht in `cells` (kein fabrizierter
+  Nullwert); ein Bot mit Trades in nur EINEM von mehreren Regimes hat nur
+  diesen einen Eintrag. — Test: `test_bot_regime_matrix_missing_cell_absent_not_fabricated`.
+- [x] AK4: Trades vor dem ersten `regime_history`-Eintrag werden aus der Matrix
+  ausgeschlossen (kein "UNKNOWN"-Bucket). — Test:
+  `test_bot_regime_matrix_trade_before_first_regime_row_excluded`.
+- [x] AK5: `GET /panels/regime-heatmap` rendert 200, eine ECharts-Heatmap
+  (`data-chart="bot-regime-heatmap"`, gemountet via `chart_lifecycle.js`) +
+  eine Tabellen-Fallback-Ansicht, mit Metrik-Umschalter (Winrate/Ø-PnL) und
+  Datenstand-Badge (Quellen `regime_history` + `closed_ai_signals`), END-TO-END
+  gegen eine echte `AnalyticsExporter`/DuckDB-Fixture mit mehreren Bots x
+  mehreren Regimes. — Test:
+  `test_panel_regime_heatmap_renders_correct_cell_values` (Integrationstest).
+- [x] AK6: Kein Postgres-Zugriff, DB-frei testbar, leere Regime_history/leere
+  Outcome-Tabellen degradieren sauber (leere Matrix, kein 500). — Test:
+  `test_panel_regime_heatmap_never_touches_postgres`,
+  `test_bot_regime_matrix_empty_substrate_degrades_gracefully`.
+
+### Out of Scope
+- Live-Steuerung (Feature 4-Familie).
+- Die anderen Panels neu bauen.
+- Schreiben von `regime_history` (nur Lesepfad).
+- markArea-Regime-Baender-Overlays auf ANDEREN Panels (nur die Heatmap selbst).
+- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
+  `bot_regime_matrix()` direkt auf, wie die anderen additiven Panel-Routen
+  seit Feature 3 es tun).
+
+### Why Build (statt Reuse)
+Bot x Regime-ASOF-Join + Heatmap-Verdrahtung auf dem bestehenden T-131/T-151-
+Substrat ist projektspezifisch; keine Library liefert das. `_outcomes_cte`/
+`_bot_filter`/`_existing_outcome_tables` werden wiederverwendet, nicht neu
+gebaut; DuckDB liefert `ASOF JOIN` nativ (>= 1.5, hier verifiziert 1.5.4).
+
+### Scope of consent
+**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktion(en), bestehende
+unveraendert), `tools/dashboard/app.py` additiv (neue Konstanten/Funktionen +
+Route + `PANEL_SOURCES`-Eintrag), `tools/dashboard/templates/**` additiv (neues
+Partial `panels/regime_heatmap.html` + Einbindung in `index.html`),
+`tools/dashboard/static/js/panels.js` additiv (neue ECharts-Factory),
+`tools/dashboard/static/css/app.css` additiv (Heatmap-Styles),
+`backtest/test_dashboard_regime_heatmap.py` neu, `CHANGELOG.md`-Eintrag, auf
+branch `worktree-feat+t-2026-cu-9050-158`.
+**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
+Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
+`analytics_api`-Aggregatfunktionen inhaltlich umschreiben, `--no-verify`,
+main/prod direkt, Push/PR (Orchestrator-Schritt).
+**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
+Panel-Routen-Signaturen aus Feature 1-5.
+

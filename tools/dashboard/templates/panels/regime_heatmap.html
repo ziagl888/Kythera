@@ -1,0 +1,80 @@
+{#
+  Bot x Regime performance heatmap fragment (Feature 6, T-2026-CU-9050-158).
+  Rows = bots, columns = regime_history states, cell value = the bot's
+  performance (winrate or Ø-PnL/trade, toggled via ?metric=) over the
+  decisive trades whose closed_at fell into that regime's active time window
+  (analytics_api.bot_regime_matrix() — an ASOF join against regime_history).
+  A missing (bot, regime) cell (no decisive trade in that window) renders
+  "—", never a fabricated value.
+
+  Self-updating widget: THIS div (including its own hx-get) is the swap
+  target (outerHTML) so a metric-toggle change re-fetches immediately with
+  the new metric baked into the query string, and the periodic poll keeps
+  using whatever metric is CURRENTLY selected (not the original default).
+#}
+<div id="regime-heatmap-body"
+     hx-get="{{ url_for('panel_regime_heatmap') }}?metric={{ metric }}"
+     hx-trigger="load, every {{ poll_seconds }}s"
+     hx-swap="outerHTML">
+
+  {% include "_panel_freshness_badge.html" %}
+
+  <form class="panel__filters"
+        hx-get="{{ url_for('panel_regime_heatmap') }}"
+        hx-target="#regime-heatmap-body"
+        hx-swap="outerHTML"
+        hx-trigger="change">
+    <fieldset class="panel__filter-group">
+      <legend>Kennzahl</legend>
+      {% for m in metrics %}
+      <label class="panel__filter-option">
+        <input type="radio" name="metric" value="{{ m }}" {% if m == metric %}checked{% endif %}>
+        {{ metric_labels[m] }}
+      </label>
+      {% endfor %}
+    </fieldset>
+  </form>
+
+  {% if not bots or not regimes %}
+    <p class="muted">Noch keine Regime-zugeordneten, entschiedenen Trades im DuckDB-Substrat.</p>
+  {% else %}
+    <p class="panel__asof">Kennzahl: {{ metric_label }} · {{ bots | length }} Bot(s) x {{ regimes | length }} Regime(s)</p>
+
+    <div class="chart"
+         data-chart="bot-regime-heatmap"
+         data-series="regime-heatmap-series"
+         data-meta="regime-heatmap-meta"
+         style="width:100%;height:{{ (bots | length * 32 + 80) }}px"></div>
+    <script type="application/json" id="regime-heatmap-series">{{ chart_data | tojson }}</script>
+    <script type="application/json" id="regime-heatmap-meta">{{ {
+      "bots": bots,
+      "regimes": regimes,
+      "is_winrate": is_winrate,
+      "metric_label": metric_label,
+    } | tojson }}</script>
+
+    <table class="datatable datatable--regime-heatmap">
+      <thead>
+        <tr>
+          <th>Bot</th>
+          {% for regime in regimes %}
+          <th>{{ regime }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table_rows %}
+        <tr>
+          <td class="datatable__bot">{{ row.bot }}</td>
+          {% for cell in row.cells %}
+          <td class="{% if cell.value is not none %}{% if is_winrate %}{% if cell.value >= 50 %}pnl-positive{% else %}pnl-negative{% endif %}{% else %}{% if cell.value >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}{% endif %}{% endif %}"
+              title="{% if cell.n is not none %}{{ cell.n }} Trade(s){% endif %}">
+            {% if cell.value is none %}—{% elif is_winrate %}{{ "%.1f"|format(cell.value) }}%{% else %}{{ "%.3f"|format(cell.value) }}%{% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
