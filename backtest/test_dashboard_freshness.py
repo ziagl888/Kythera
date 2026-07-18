@@ -195,7 +195,7 @@ def test_freshness_summary_worst_case_picks_oldest():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AK2 — panel_freshness(): panel -> source resolution
+# AK2 — panel_freshness_summary(): panel -> source resolution
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -210,7 +210,7 @@ def test_panel_freshness_leaderboard_and_success_rate_share_sources():
     rows = _rows_ai_and_trades(ai_synced="2026-07-15T09:20:00", trades_synced="2026-07-15T08:00:00")
     now = datetime.datetime(2026, 7, 15, 9, 30, 0, tzinfo=UTC)
     for panel in ("leaderboard", "success-rate", "success-rate-timeseries"):
-        summary = dashboard_app.panel_freshness(rows, panel, now_utc=now)
+        summary = dashboard_app.panel_freshness_summary(rows, panel, now_utc=now)
         assert summary["sources"] == 2
         assert summary["stand"] == "09:00"  # worst-case: closed_trades' older last_row_ts
         assert summary["sync_age_min"] == 90  # worst-case: closed_trades' older synced_at
@@ -218,18 +218,18 @@ def test_panel_freshness_leaderboard_and_success_rate_share_sources():
 
 def test_panel_freshness_fleet_registry_is_file_based():
     rows = _rows_ai_and_trades(ai_synced="2026-07-15T09:20:00", trades_synced="2026-07-15T08:00:00")
-    summary = dashboard_app.panel_freshness(rows, "fleet-registry")
+    summary = dashboard_app.panel_freshness_summary(rows, "fleet-registry")
     assert summary["file_based"] is True
     assert summary["stand"] is None
     assert summary["sync_age_min"] is None
     assert summary["label"] == "Live (dateibasiert)"
     # Ignores rows entirely — an empty list must give the identical result.
-    assert dashboard_app.panel_freshness([], "fleet-registry") == summary
+    assert dashboard_app.panel_freshness_summary([], "fleet-registry") == summary
 
 
 def test_panel_freshness_unknown_panel_raises():
     with pytest.raises(ValueError, match="unknown panel"):
-        dashboard_app.panel_freshness([], "not-a-real-panel")
+        dashboard_app.panel_freshness_summary([], "not-a-real-panel")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,12 +242,12 @@ def test_panel_freshness_oldest_source_wins_regardless_of_which_is_stale():
     reflect whichever is OLDER, never a fixed source or the freshest."""
     now = datetime.datetime(2026, 7, 15, 9, 30, 0, tzinfo=UTC)
 
-    ai_stale = dashboard_app.panel_freshness(
+    ai_stale = dashboard_app.panel_freshness_summary(
         _rows_ai_and_trades(ai_synced="2026-07-15T08:00:00", trades_synced="2026-07-15T09:20:00"),
         "leaderboard",
         now_utc=now,
     )
-    trades_stale = dashboard_app.panel_freshness(
+    trades_stale = dashboard_app.panel_freshness_summary(
         _rows_ai_and_trades(ai_synced="2026-07-15T09:20:00", trades_synced="2026-07-15T08:00:00"),
         "leaderboard",
         now_utc=now,
@@ -265,7 +265,7 @@ def test_panel_freshness_missing_source_gives_no_stand():
     for them yet) -> stand/sync_age_min stay None, label is the non-fabricated
     placeholder — never invented from an unrelated source's freshness."""
     rows = [{"source": "regime_history", "last_row_ts": "2026-07-15T05:00:00", "synced_at": "2026-07-15T05:05:00"}]
-    summary = dashboard_app.panel_freshness(rows, "leaderboard")
+    summary = dashboard_app.panel_freshness_summary(rows, "leaderboard")
     assert summary["stand"] is None
     assert summary["sync_age_min"] is None
     assert summary["label"] == "Kein Datenstand"
@@ -299,12 +299,12 @@ def test_panel_freshness_badge_partial_missing_shows_dash(tmp_path):
 def test_panel_freshness_age_from_synced_at_not_last_row_ts():
     now = datetime.datetime(2026, 7, 15, 9, 30, 0, tzinfo=UTC)
     base = {"source": "closed_ai_signals", "synced_at": "2026-07-15T09:20:00"}
-    near = dashboard_app.panel_freshness(
+    near = dashboard_app.panel_freshness_summary(
         [{**base, "last_row_ts": "2026-07-15T09:19:00"}],
         "leaderboard",
         now_utc=now,
     )
-    far = dashboard_app.panel_freshness(
+    far = dashboard_app.panel_freshness_summary(
         [{**base, "last_row_ts": "1999-01-01T00:00:00"}],
         "leaderboard",
         now_utc=now,

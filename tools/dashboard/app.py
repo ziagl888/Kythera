@@ -196,8 +196,8 @@ PANEL_SOURCES: dict[str, tuple[str, ...]] = {
 # fleet-registry has no DuckDB sync to report a synced_at/last_row_ts for —
 # rendering a fabricated timestamp would misrepresent a file-based read as a
 # stale-or-fresh export. This fixed marker is the only value that reaches the
-# template for such a panel (panel_freshness() below never falls through to
-# freshness_summary() for it).
+# template for such a panel (panel_freshness_summary() below never falls
+# through to freshness_summary() for it).
 FILE_BASED_FRESHNESS: dict[str, Any] = {
     "stand": None,
     "stand_date": None,
@@ -209,7 +209,7 @@ FILE_BASED_FRESHNESS: dict[str, Any] = {
 }
 
 
-def panel_freshness(
+def panel_freshness_summary(
     rows: Sequence[dict[str, Any]],
     panel: str,
     *,
@@ -217,6 +217,11 @@ def panel_freshness(
 ) -> dict[str, Any]:
     """Per-panel data-freshness summary — the panel-specific refinement of the
     shell-global :func:`freshness_summary` badge.
+
+    Named distinctly from the nested ``/panels/freshness`` route handler
+    inside :func:`create_app` (T-2026-CU-9050-157 nit cleanup — the two used
+    to share the name ``panel_freshness``, a collision waiting to bite the
+    first refactor that moved either one into the other's scope).
 
     Narrows ``rows`` (the full ``analytics_export.data_freshness`` output) down
     to ``panel``'s own source(s) via :data:`PANEL_SOURCES`, then delegates to
@@ -232,7 +237,7 @@ def panel_freshness(
     panel→source mapping must be loud, not swallowed.
     """
     if panel not in PANEL_SOURCES:
-        raise ValueError(f"panel_freshness: unknown panel {panel!r}")
+        raise ValueError(f"panel_freshness_summary: unknown panel {panel!r}")
     sources = PANEL_SOURCES[panel]
     if not sources:
         return dict(FILE_BASED_FRESHNESS)
@@ -282,7 +287,7 @@ def _demo_panel_context(duckdb_path: str) -> dict[str, Any]:
         "bots": bots,
         "chart_series": chart_series,
         "poll_seconds": PANEL_POLL_SECONDS,
-        "freshness": panel_freshness(freshness_rows, "success-rate"),
+        "freshness": panel_freshness_summary(freshness_rows, "success-rate"),
     }
 
 
@@ -423,10 +428,61 @@ def _fleet_registry_context() -> dict[str, Any]:
         "rows": fleet_registry_rows(),
         "poll_seconds": PANEL_POLL_SECONDS,
         # File-based panel — no DuckDB freshness rows exist to filter, hence
-        # the empty list (panel_freshness ignores rows entirely for a panel
-        # registered with an empty PANEL_SOURCES tuple).
-        "freshness": panel_freshness([], "fleet-registry"),
+        # the empty list (panel_freshness_summary ignores rows entirely for a
+        # panel registered with an empty PANEL_SOURCES tuple).
+        "freshness": panel_freshness_summary([], "fleet-registry"),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global success-metric toggle (Feature 5, T-2026-CU-9050-157)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The three metrics the shell-global toggle switches between, in the display
+# order the Z1 curation specifies (Winrate / Expectancy / Netto-PnL).
+METRICS: tuple[str, ...] = ("winrate", "expectancy", "netto-pnl")
+
+# Netto-PnL is the sensible default — it is also the metric behind
+# analytics_api.DEFAULT_LEADERBOARD_SORT ("pnl_sum_pct"), so an unrendered or
+# absent toggle reproduces today's leaderboard behaviour exactly.
+DEFAULT_METRIC = "netto-pnl"
+
+METRIC_LABELS: dict[str, str] = {
+    "winrate": "Winrate",
+    "expectancy": "Expectancy",
+    "netto-pnl": "Netto-PnL",
+}
+
+# metric -> the analytics_api.bot_leaderboard() sort_by key it maps onto. Kept
+# in lockstep with analytics_api._LEADERBOARD_SORT_KEYS.
+METRIC_SORT_BY: dict[str, str] = {
+    "winrate": "winrate",
+    "expectancy": "expectancy_pct",
+    "netto-pnl": "pnl_sum_pct",
+}
+
+
+def resolve_metric(raw: str | None) -> str:
+    """Normalise a raw ``metric`` query-string value to a known metric key.
+
+    Unknown or missing values fall back to :data:`DEFAULT_METRIC` — the
+    global toggle must never 500 or propagate a bogus value into a downstream
+    sort_by/highlight decision. Mirrors the permissive-fallback contract
+    ``analytics_api.bot_leaderboard`` already uses for its own ``sort_by``.
+    """
+    return raw if raw in METRIC_SORT_BY else DEFAULT_METRIC
+
+
+def metric_sort_by(metric: str) -> str:
+    """The ``bot_leaderboard`` ``sort_by`` key an (already-resolved) metric
+    maps onto. Pure lookup, testable without Flask/DuckDB — the mapping logic
+    the SPEC calls out as separately verifiable. Falls back to the default
+    metric's sort key for a stray unresolved value rather than raising — the
+    route layer is the one place a bad ``metric`` must be caught (via
+    :func:`resolve_metric`); this stays permissive like ``bot_leaderboard``
+    itself.
+    """
+    return METRIC_SORT_BY.get(metric, METRIC_SORT_BY[DEFAULT_METRIC])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -434,7 +490,7 @@ def _fleet_registry_context() -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _leaderboard_context(duckdb_path: str) -> dict[str, Any]:
+def _leaderboard_context(duckdb_path: str, *, metric: str = DEFAULT_METRIC) -> dict[str, Any]:
     """Server-side render context for the leaderboard panel.
 
     Thin wrapper over ``analytics_api.bot_leaderboard`` — same throttled
@@ -443,18 +499,26 @@ def _leaderboard_context(duckdb_path: str) -> dict[str, Any]:
     substrate" (see ``bot_leaderboard`` docstring); it is NOT cross-referenced
     against the fleet-registry's parked status — that is Feature 1's concern
     (SPEC.md Out of Scope).
+
+    ``metric`` (Feature 5, T-2026-CU-9050-157) is the RESOLVED global toggle
+    value (already run through ``resolve_metric`` by the caller) — it both
+    selects ``bot_leaderboard``'s ``sort_by`` via ``metric_sort_by`` and rides
+    along in the returned context so the template can highlight the matching
+    column.
     """
     con = connect_ro(duckdb_path)
     try:
-        payload = bot_leaderboard(con)
+        payload = bot_leaderboard(con, sort_by=metric_sort_by(metric))
         freshness_rows = data_freshness(con)
     finally:
         con.close()
     return {
         "bots": payload["bots"],
         "sort_by": payload["sort_by"],
+        "metric": metric,
+        "metric_label": METRIC_LABELS[metric],
         "poll_seconds": PANEL_POLL_SECONDS,
-        "freshness": panel_freshness(freshness_rows, "leaderboard"),
+        "freshness": panel_freshness_summary(freshness_rows, "leaderboard"),
     }
 
 
@@ -531,7 +595,7 @@ def _success_rate_timeseries_context(
         "selected_bots": selected,
         "chart_series": chart_series,
         "poll_seconds": PANEL_POLL_SECONDS,
-        "freshness": panel_freshness(freshness_rows, "success-rate-timeseries"),
+        "freshness": panel_freshness_summary(freshness_rows, "success-rate-timeseries"),
     }
 
 
@@ -552,9 +616,18 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
 
     @app.get("/")
     def index():
+        # Feature 5 (T-2026-CU-9050-157): the global success-metric toggle.
+        # Resolved here (never a bogus value past this point) and threaded
+        # into the leaderboard panel's own poll URL so its "every Ns" HTMX
+        # polling keeps using the SAME metric the shell was loaded with,
+        # without a separate round-trip or JS state.
+        metric = resolve_metric(request.args.get("metric"))
         return render_template(
             "index.html",
             panel_poll_seconds=PANEL_POLL_SECONDS,
+            metric=metric,
+            metrics=METRICS,
+            metric_labels=METRIC_LABELS,
             **_freshness_context(path),
         )
 
@@ -572,7 +645,11 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
 
     @app.get("/panels/leaderboard")
     def panel_leaderboard():
-        return render_template("panels/leaderboard.html", **_leaderboard_context(path))
+        # Feature 5 (T-2026-CU-9050-157): baked into this panel's own hx-get
+        # URL by index.html (?metric=...), so both the initial load and every
+        # subsequent poll resolve the same way.
+        metric = resolve_metric(request.args.get("metric"))
+        return render_template("panels/leaderboard.html", **_leaderboard_context(path, metric=metric))
 
     @app.get("/panels/success-rate-timeseries")
     def panel_success_rate_timeseries():

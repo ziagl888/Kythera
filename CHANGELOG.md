@@ -1,3 +1,41 @@
+## [2026-07-18] Globaler Erfolgs-Metrik-Toggle — Z1-Dashboard Feature 5 (T-2026-CU-9050-157)
+
+Fuenfter Feature-Baustein auf der T-151-Shell: ein shell-globaler Erfolgs-Metrik-Toggle (Winrate /
+Expectancy / Netto-PnL) im Base-Layout bestimmt, welche Kennzahl die Panels hervorheben. Umgesetzt als
+`?metric=`-Query-Param, den das Leaderboard-Panel liest — die gewaehlte Metrik wird als hervorgehobene
+Spalte gezeigt UND als Default-Sort verwendet. Sinnvoller Default (Netto-PnL = die bestehende
+`DEFAULT_LEADERBOARD_SORT`); ein unbekannter `metric`-Wert faellt still auf den Default zurueck (kein 500);
+Panels, die die Metrik nicht kennen, ignorieren den Toggle unschaedlich.
+
+- `tools/dashboard/app.py`: neue Konstanten `METRICS`/`DEFAULT_METRIC`/`METRIC_LABELS`/`METRIC_SORT_BY` und
+  zwei reine, Flask-/DuckDB-freie Funktionen — `resolve_metric(raw)` (unbekannt/None → `DEFAULT_METRIC`) und
+  `metric_sort_by(metric)` (Mapping winrate→winrate, expectancy→expectancy_pct, netto-pnl→pnl_sum_pct, jeder
+  Wert ein Key aus `analytics_api._LEADERBOARD_SORT_KEYS`). `_leaderboard_context` bekommt einen additiven
+  `metric`-Parameter (ruft `bot_leaderboard(sort_by=metric_sort_by(metric))` und reicht `metric`/`metric_label`
+  ans Template durch). Die Routen `index()` und `panel_leaderboard()` resolven `?metric=` genau einmal; die
+  Shell backt den resolvten Wert in die eigene hx-get-URL des Leaderboard-Panels, sodass Load + `every Ns`-Poll
+  dieselbe Metrik behalten (kein zusaetzlicher Round-Trip, kein Client-JS-State).
+- `tools/dashboard/templates/base.html`: neuer Toggle-Control (`.metric-toggle`) mit drei GET-Links auf `/` mit
+  `?metric=…`, aktive Option markiert. `index.html`: `metric` in die Leaderboard-hx-get-URL gebacken.
+  `leaderboard.html`: `metric_label` in der As-of-Zeile, `metric-highlight`-Klasse auf der aktiven Metrik-Spalte
+  (Header + Zellen), konsistent mit dem Sort.
+- Eingefaltete Review-Nit-Cleanups: (1) `static/css/app.css` — eigenes `--loss`-Token fuer `.pnl-negative`
+  (statt des `--stale`-Freshness-Tokens, semantisch entkoppelt, gleicher Farbwert → kein visueller Bruch);
+  `--live` (byte-identisch zu `--accent`) entfernt, `.badge--live` nutzt jetzt `var(--accent)`. (2) Modul-Funktion
+  `panel_freshness()` → `panel_freshness_summary()` umbenannt (kollidierte namentlich mit dem nested
+  Route-Handler `def panel_freshness()` in `create_app()`); alle vier Panel-Context-Caller und die
+  Freshness-Tests angepasst, verhaltenserhaltend. (3) Test-Luecke (T-154-MEDIUM) geschlossen — `sort_by="winrate"`
+  und `sort_by="n"` mit divergenter Fixture (Reihenfolge ≠ pnl-Default), sodass ein ignorierter `sort_by`
+  auffaellt.
+- `backtest/test_dashboard_metric_toggle.py`: neue DB-freie Test-Suite mit realistischer
+  `closed_ai_signals`-Fixture, deren drei Metriken dieselben drei Bots in DREI verschiedenen Reihenfolgen
+  ranken (Mutation-Check: ein falsches/ignoriertes `metric`→`sort_by`-Mapping rendert eine der anderen
+  Reihenfolgen). Getestet: reines Mapping (alle drei Metriken + Default + unbekannt), Integrations-Test ueber
+  die echte `AnalyticsExporter`→DuckDB→Route→HTML-Kette (Sort + Highlight je Metrik), Shell-Toggle-Rendering und
+  Default-Fallback ohne 500, kein Postgres. `ruff check`/`format --check` gruen; `regression_guard verify` gruen
+  (24 Fixtures, 3.13-Interpreter mit numpy); alle bestehenden + neuen Dashboard-/Analytics-Tests gruen (111
+  passed — die Umbenennung bricht nichts).
+
 ## [2026-07-18] Datenstand-Indikator pro Panel — Z1-Dashboard Feature 4 (T-2026-CU-9050-156)
 
 Vierter Feature-Baustein auf der T-151-Shell: bisher zeigte EIN shell-globaler Badge (Base-Layout) den

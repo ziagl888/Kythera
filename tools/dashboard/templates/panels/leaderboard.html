@@ -5,20 +5,26 @@
   realized PnL, win-rate, expectancy, trade count, and two risk metrics
   (max drawdown of the cumulative-PnL curve, longest loss streak). Neutral/
   open trades never reach this table (excluded upstream in bot_trade_rows()).
+
+  Feature 5 (T-2026-CU-9050-157): the shell-global metric toggle (`metric`,
+  already resolved by the route via resolve_metric()) both DROVE the sort
+  (bot_leaderboard() was called with metric_sort_by(metric) as sort_by — see
+  app.py's _leaderboard_context) and is used here to highlight that same
+  column via `metric-highlight`, so the two never drift apart.
 #}
 {% include "_panel_freshness_badge.html" %}
 {% if not bots %}
   <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
 {% else %}
-  <p class="panel__asof">Sortiert nach {{ sort_by }} (absteigend)</p>
+  <p class="panel__asof">Metrik: {{ metric_label }} · sortiert nach {{ sort_by }} (absteigend)</p>
 
   <table class="datatable datatable--leaderboard">
     <thead>
       <tr>
         <th>Bot</th>
-        <th>PnL (Σ%)</th>
-        <th>Win-Rate</th>
-        <th>Expectancy (⌀%/Trade)</th>
+        <th{% if metric == "netto-pnl" %} class="metric-highlight"{% endif %}>PnL (Σ%)</th>
+        <th{% if metric == "winrate" %} class="metric-highlight"{% endif %}>Win-Rate</th>
+        <th{% if metric == "expectancy" %} class="metric-highlight"{% endif %}>Expectancy (⌀%/Trade)</th>
         <th>Trades</th>
         <th>Max-Drawdown (pp)</th>
         <th>Loss-Streak</th>
@@ -28,11 +34,11 @@
       {% for row in bots %}
       <tr>
         <td class="datatable__bot">{{ row.bot }}</td>
-        <td class="{% if row.pnl_sum_pct is not none and row.pnl_sum_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+        <td class="{% if metric == 'netto-pnl' %}metric-highlight {% endif %}{% if row.pnl_sum_pct is not none and row.pnl_sum_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
           {{ "%.2f"|format(row.pnl_sum_pct) }}%
         </td>
-        <td>{% if row.winrate is not none %}{{ "%.1f"|format(row.winrate * 100) }}%{% else %}–{% endif %}</td>
-        <td class="{% if row.expectancy_pct is not none and row.expectancy_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+        <td{% if metric == "winrate" %} class="metric-highlight"{% endif %}>{% if row.winrate is not none %}{{ "%.1f"|format(row.winrate * 100) }}%{% else %}–{% endif %}</td>
+        <td class="{% if metric == 'expectancy' %}metric-highlight {% endif %}{% if row.expectancy_pct is not none and row.expectancy_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
           {% if row.expectancy_pct is not none %}{{ "%.3f"|format(row.expectancy_pct) }}%{% else %}–{% endif %}
         </td>
         <td>{{ row.n }}</td>
