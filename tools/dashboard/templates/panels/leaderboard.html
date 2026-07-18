@@ -1,0 +1,44 @@
+{#
+  Leaderboard + risk-metrics panel fragment (HTMX swap target, Feature 2,
+  T-2026-CU-9050-154). Server-rendered from bot_leaderboard(): one row per
+  bot (model tag) with at least one decisive trade in the DuckDB substrate —
+  realized PnL, win-rate, expectancy, trade count, and two risk metrics
+  (max drawdown of the cumulative-PnL curve, longest loss streak). Neutral/
+  open trades never reach this table (excluded upstream in bot_trade_rows()).
+#}
+{% if not bots %}
+  <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+{% else %}
+  <p class="panel__asof">Sortiert nach {{ sort_by }} (absteigend)</p>
+
+  <table class="datatable datatable--leaderboard">
+    <thead>
+      <tr>
+        <th>Bot</th>
+        <th>PnL (Σ%)</th>
+        <th>Win-Rate</th>
+        <th>Expectancy (⌀%/Trade)</th>
+        <th>Trades</th>
+        <th>Max-Drawdown (pp)</th>
+        <th>Loss-Streak</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in bots %}
+      <tr>
+        <td class="datatable__bot">{{ row.bot }}</td>
+        <td class="{% if row.pnl_sum_pct is not none and row.pnl_sum_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+          {{ "%.2f"|format(row.pnl_sum_pct) }}%
+        </td>
+        <td>{% if row.winrate is not none %}{{ "%.1f"|format(row.winrate * 100) }}%{% else %}–{% endif %}</td>
+        <td class="{% if row.expectancy_pct is not none and row.expectancy_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+          {% if row.expectancy_pct is not none %}{{ "%.3f"|format(row.expectancy_pct) }}%{% else %}–{% endif %}
+        </td>
+        <td>{{ row.n }}</td>
+        <td>{{ "%.2f"|format(row.max_drawdown_pp) }}</td>
+        <td>{{ row.max_loss_streak }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
