@@ -38,6 +38,7 @@ from __future__ import annotations
 import datetime
 import os
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -383,6 +384,117 @@ def bot_leaderboard(
     rows = [_leaderboard_row(bot, trades) for bot, trades in by_bot.items()]
     rows.sort(key=lambda r: (r[key] if r[key] is not None else float("-inf")), reverse=True)
     return {"bots": rows, "sort_by": key}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rolling success-rate time-comparison series (Feature 3, T-2026-CU-9050-155)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Windows the time-comparison panel switches between. Distinct from
+# DEFAULT_WINDOWS (the anchored-snapshot windows success_rate_timeseries
+# reports) — this constant governs the ROLLING per-day series instead.
+TIMESERIES_WINDOWS = (7, 30, 90)
+DEFAULT_TIMESERIES_WINDOW = 30
+
+
+def _daily_buckets_by_bot(
+    trades: Sequence[dict[str, Any]],
+) -> dict[str, dict[datetime.date, tuple[int, int]]]:
+    """Group decisive trades into per-bot, per-calendar-day (n, wins) buckets.
+
+    Pure aggregation over :func:`bot_trade_rows`'s output — no I/O, no DuckDB.
+    ``closed_at`` is bucketed by its DATE component only, matching the
+    ``CAST(closed_at AS DATE)`` grouping ``success_rate_timeseries`` already
+    uses for its own daily series (same day boundary, no new convention).
+    """
+    by_bot: dict[str, dict[datetime.date, tuple[int, int]]] = {}
+    for t in trades:
+        closed_at = t["closed_at"]
+        d = closed_at.date() if hasattr(closed_at, "date") else closed_at
+        bucket = by_bot.setdefault(t["bot"], {})
+        n, wins = bucket.get(d, (0, 0))
+        bucket[d] = (n + 1, wins + (1 if t["is_win"] else 0))
+    return by_bot
+
+
+def _rolling_series_for_bot(
+    daily: dict[datetime.date, tuple[int, int]], window: int
+) -> list[dict[str, Any]]:
+    """Trailing ``window``-day rolling (n, wins, winrate) for every day this bot
+    has at least one decisive trade, in ascending date order.
+
+    A day ``d``'s rolling value sums every bucket with ``date > d - window`` and
+    ``date <= d`` — the same half-open trailing-window convention
+    ``success_rate_timeseries`` uses for its anchored snapshot (``closed_at >
+    as_of - INTERVAL w DAY AND closed_at <= as_of``), just re-anchored at every
+    day instead of once at ``as_of``. Implemented as a sliding window over the
+    bot's own sorted day list using a ``deque`` (O(days) total — O(1) eviction
+    per stale day) since the days are sparse (only days with a decisive trade
+    appear as keys) rather than a dense calendar a fixed-size ring buffer
+    could index into directly.
+    """
+    dates = sorted(daily)
+    out: list[dict[str, Any]] = []
+    included: deque[tuple[datetime.date, int, int]] = deque()
+    running_n = 0
+    running_wins = 0
+    for d in dates:
+        n, wins = daily[d]
+        included.append((d, n, wins))
+        running_n += n
+        running_wins += wins
+        cutoff = d - datetime.timedelta(days=window)
+        while included and included[0][0] <= cutoff:
+            _, old_n, old_wins = included.popleft()
+            running_n -= old_n
+            running_wins -= old_wins
+        out.append(
+            {
+                "date": d.isoformat(),
+                "n": running_n,
+                "wins": running_wins,
+                "winrate": _winrate(running_wins, running_n),
+            }
+        )
+    return out
+
+
+def rolling_success_rate_series(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    bots: Sequence[str] | None = None,
+    window: int = DEFAULT_TIMESERIES_WINDOW,
+) -> dict[str, Any]:
+    """Rolling ``window``-day win-rate TIME SERIES per bot — the time-comparison
+    chart's data source (Feature 3, T-2026-CU-9050-155).
+
+    Additive to :func:`success_rate_timeseries`, which this function does NOT
+    modify or duplicate: it reuses :func:`bot_trade_rows` for the identical
+    DECISIVE-trade definition (pnl present, not housekeeping, ``MICRO_PNL_PCT <
+    |pnl| <= MAX_ABS_PNL_PCT``) and the identical bot-multiselect filter, so a
+    trade counts here iff it counts in the anchored snapshot. What differs is
+    the SHAPE: instead of one value anchored at ``as_of``,
+    :func:`_rolling_series_for_bot` re-anchors the trailing ``window``-day sum
+    at every day that bot has data — this is what makes 7d vs. 30d vs. 90d
+    visibly DIVERGE on a line chart (7d is noisy/jumps with each new trade,
+    90d is smooth), rather than success_rate_timeseries's single-point
+    snapshot which cannot show that divergence over time.
+
+    Args:
+        con: an open DuckDB connection (typically ``read_only=True``).
+        bots: optional bot-multiselect filter; None = all bots.
+        window: trailing-day window for the rolling calculation (7/30/90).
+
+    Returns a JSON-serialisable dict:
+        {"window": window, "bots": [...], "series": {bot: [{date,n,wins,winrate}, ...]}}
+    Empty when the substrate has no outcome tables yet (mirrors
+    ``success_rate_timeseries``'s and ``bot_leaderboard``'s empty-substrate
+    degrade — never raises).
+    """
+    trades = bot_trade_rows(con, bots=bots)
+    by_bot = _daily_buckets_by_bot(trades)
+    series = {bot: _rolling_series_for_bot(daily, window) for bot, daily in by_bot.items()}
+    return {"window": window, "bots": sorted(series), "series": series}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

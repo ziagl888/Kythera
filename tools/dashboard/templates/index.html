@@ -40,6 +40,26 @@
   </div>
 </section>
 
+<section class="panel" id="panel-success-rate-timeseries">
+  <header class="panel__head">
+    <h2 class="panel__title">Erfolgsraten-Zeitvergleich</h2>
+    <span class="panel__hint">Aktualisiert alle {{ panel_poll_seconds }} s</span>
+  </header>
+
+  {#
+    Feature 3 (T-2026-CU-9050-155): rolling 7/30/90d win-rate LINE time series
+    per selected bot, bot multiselect + window switcher. The fragment itself
+    is the HTMX swap target (outerHTML) so filter changes bake straight into
+    its own polling query string — see panels/success_rate_timeseries.html.
+  #}
+  <div id="success-rate-timeseries-body"
+       hx-get="/panels/success-rate-timeseries"
+       hx-trigger="load, every {{ panel_poll_seconds }}s"
+       hx-swap="outerHTML">
+    <p class="muted">Lade Zeitvergleich…</p>
+  </div>
+</section>
+
 <section class="panel" id="panel-success-rate">
   <header class="panel__head">
     <h2 class="panel__title">Erfolgsrate je Bot</h2>

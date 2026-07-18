@@ -66,4 +66,40 @@
       chart.dispose();
     };
   });
+
+  // Success-rate time-comparison panel (Feature 3, T-2026-CU-9050-155): one
+  // rolling-winrate line per selected bot. Series shape: [{bot, points:
+  // [{date, winrate_pct}, ...]}, ...] — see rolling_success_rate_series() /
+  // _success_rate_timeseries_context() for the data source.
+  ChartLifecycle.registerFactory("winrate-timeseries", function (el) {
+    var series = readSeries(el);
+    if (!window.echarts) {
+      el.innerHTML =
+        '<p class="muted">Diagramm nicht verfügbar (ECharts-Vendor-Datei fehlt).</p>';
+      return null;
+    }
+    var chart = window.echarts.init(el);
+    chart.setOption({
+      grid: { left: 56, right: 24, top: 32, bottom: 48 },
+      tooltip: { trigger: "axis" },
+      legend: { top: 0, data: series.map(function (s) { return s.bot; }) },
+      xAxis: { type: "time" },
+      yAxis: { type: "value", name: "Winrate %", max: 100, min: 0 },
+      series: series.map(function (s) {
+        return {
+          name: s.bot,
+          type: "line",
+          showSymbol: false,
+          connectNulls: true,
+          data: s.points.map(function (p) { return [p.date, p.winrate_pct]; }),
+        };
+      }),
+    });
+    var onResizeTs = function () { chart.resize(); };
+    window.addEventListener("resize", onResizeTs);
+    return function () {
+      window.removeEventListener("resize", onResizeTs);
+      chart.dispose();
+    };
+  });
 })(window, document);
