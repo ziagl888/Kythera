@@ -1,0 +1,33 @@
+{#
+  Per-panel data-freshness badge (Feature 4, T-2026-CU-9050-156). Parametrized
+  by the panel-local `freshness` variable — the per-panel summary produced by
+  `panel_freshness()` (an additive refinement of the shell-global badge in
+  `_freshness_badge.html`, which stays unchanged). Renders inline in each of
+  the four panel fragments, so it refreshes alongside that panel's own poll
+  interval — no separate HTMX round-trip.
+
+  Three renderable states, decided from the raw fields (never the composed
+  `label`, so this partial controls its own wording independent of the
+  shell-global badge's phrasing):
+    - file-based panel (`freshness.file_based`)              -> "Live"
+    - a real stand exists (`freshness.stand` is set)          -> "Stand HH:MM, Sync vor N min"
+    - no matching freshness row for this panel's source(s)    -> "—" (never fabricated)
+#}
+<p class="panel__freshness">
+  <span class="badge
+               {% if freshness.file_based %}badge--live
+               {% elif freshness.sync_age_min is not none and freshness.sync_age_min <= 15 %}badge--fresh
+               {% else %}badge--stale{% endif %}"
+        title="{% if freshness.file_based %}Dateibasiert, kein DuckDB-Sync{% elif freshness.synced_at %}Letzter Sync (UTC): {{ freshness.synced_at }} · {{ freshness.sources }} Quelle(n){% else %}Noch kein Export für dieses Panel gelaufen{% endif %}">
+    <span class="badge__dot" aria-hidden="true"></span>
+    <span class="badge__label">
+      {%- if freshness.file_based -%}
+        Live
+      {%- elif freshness.stand -%}
+        Stand {{ freshness.stand }}, Sync vor {{ freshness.sync_age_min }} min
+      {%- else -%}
+        —
+      {%- endif -%}
+    </span>
+  </span>
+</p>

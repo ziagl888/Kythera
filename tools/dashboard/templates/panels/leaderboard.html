@@ -6,6 +6,7 @@
   (max drawdown of the cumulative-PnL curve, longest loss streak). Neutral/
   open trades never reach this table (excluded upstream in bot_trade_rows()).
 #}
+{% include "_panel_freshness_badge.html" %}
 {% if not bots %}
   <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
 {% else %}
