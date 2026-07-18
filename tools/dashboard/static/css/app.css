@@ -115,6 +115,36 @@ body {
 .pnl-positive { color: var(--fresh); }
 .pnl-negative { color: var(--stale); }
 
+/* Success-rate time-comparison panel filters (Feature 3, T-2026-CU-9050-155):
+   bot multiselect + rolling-window switcher. */
+.panel__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.panel__filter-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+
+.panel__filter-group legend {
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 0 4px;
+}
+
+.panel__filter-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
 /* Small screens: let the data table scroll instead of overflowing the panel. */
 @media (max-width: 640px) {
   .content { padding: 10px; }

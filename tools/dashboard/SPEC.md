@@ -62,3 +62,74 @@ Fleet-Restart, Modell-Artefakte, Bind an 0.0.0.0, `--no-verify`, main/prod
 direkt.
 **Frag zurueck:** neue Runtime-Dependencies (ausser flask/htmx/duckdb/waitress
 die schon da sind), echte Vendor-JS-Beschaffung mit Netzwerkzugriff.
+
+---
+
+## Feature 3 — Erfolgsraten-Zeitvergleich-Panel (T-2026-CU-9050-155)
+
+Task: T-2026-CU-9050-155 · baut auf T-131 (`success_rate_timeseries`) und
+T-151 (Shell/Chart-Lifecycle) auf.
+
+### Intent
+Volle Zeitvergleich-Version des T-151-Demo-Panels: eine ECharts-Linien-
+Zeitreihe der ROLLIERENDEN 7/30/90d-Winrate pro ausgewaehltem Bot ueber die
+Zeit (nicht nur ein aktueller Balken), mit Bot-Multiselect und
+Fenster-Umschalter. Neue Route `/panels/success-rate-timeseries` — kollidiert
+NICHT mit der bestehenden `/panels/success-rate`-Demo (die bleibt unangetastet
+fuer T-151s eigene Tests).
+
+### Akzeptanzkriterien (binaer testbar)
+- [x] AK1: `analytics_api.rolling_success_rate_series()` liefert pro Bot eine
+  Zeitreihe der rollierenden `window`-Tage-Winrate, additiv zu
+  `success_rate_timeseries` (nicht veraendert), gleiche DECISIVE-Trade-
+  Definition via `bot_trade_rows`. — Test:
+  `test_rolling_success_rate_series_multi_bot_diverges_per_window` ✅.
+- [x] AK2: Rollierende 7/30/90d-Fenster liefern am selben Tag GENUINE
+  unterschiedliche Werte (keine zufaellig identischen Fenster) — Test:
+  `test_rolling_series_for_bot_windows_diverge_at_last_day` ✅.
+- [x] AK3: Bot-Multiselect filtert die Zeitreihe korrekt (mehrere Bots ->
+  mehrere Serien, ein Bot -> eine Serie). — Test:
+  `test_panel_multiselect_two_bots_renders_two_series` +
+  `test_panel_single_bot_selection_renders_one_series` ✅.
+- [x] AK4: Explizite Leerauswahl (alle Checkboxen abgewaehlt) zeigt "Keine
+  Bots ausgewaehlt" statt stillschweigend auf "alle Bots" zurueckzufallen —
+  Test: `test_selected_bots_respects_explicit_empty_selection` +
+  `test_panel_explicit_empty_selection_shows_message` ✅.
+- [x] AK5: `GET /panels/success-rate-timeseries` rendert eine ECharts-
+  Linien-Zeitreihe (`data-chart="winrate-timeseries"`), gemountet via
+  `chart_lifecycle.js` (dispose/re-init bei htmx-Swap), Fenster-Umschalter
+  (7/30/90d) als Formular. — Test:
+  `test_panel_default_load_selects_all_bots_and_default_window` +
+  `test_winrate_timeseries_factory_registered_in_panels_js` ✅.
+- [x] AK6: Fenster-Umschaltung aendert die gerenderten Werte end-to-end (nicht
+  nur auf Funktionsebene). — Test:
+  `test_panel_window_switch_changes_rendered_values` ✅.
+- [x] AK7: Kein Postgres-Zugriff, DB-frei testbar, kein Bruch der
+  bestehenden `/panels/success-rate`-Demo. — Test:
+  `test_panel_never_touches_postgres` +
+  `test_existing_success_rate_demo_route_untouched` ✅.
+
+### Out of Scope
+- Live-Steuerung (Feature 4).
+- Die anderen Panels (Fleet-Registry, Leaderboard).
+- Aenderung/Umbau von `success_rate_timeseries` selbst (nur additive
+  Erweiterung `rolling_success_rate_series`).
+- Ein neuer `/api/analytics/success-rate-timeseries` JSON-Endpoint (die
+  Panel-Route ruft die Analytics-Funktion direkt auf, wie die anderen
+  Panel-Routen es tun — kein zusaetzlicher JSON-API-Endpunkt gefordert).
+
+### Why Build (statt Reuse)
+Rollierende Fenster-Zeitreihe + Bot-Multiselect + HTMX-Self-Update-Widget ist
+projektspezifische Verdrahtung auf dem bestehenden T-131-Substrat; keine
+Library liefert das. `success_rate_timeseries`/`bot_trade_rows` werden
+wiederverwendet, nicht neu gebaut.
+
+### Scope of consent
+**Erlaubt:** `tools/dashboard/**` additiv, `tools/analytics_api.py` additiv
+(neue Funktionen, bestehende unveraendert), `backtest/test_dashboard_success_rate_panel.py`
+neu, `CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-155`.
+**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
+Fleet-Restart, Modell-Artefakte, `success_rate_timeseries` inhaltlich
+umschreiben, `--no-verify`, main/prod direkt, Push/PR (Orchestrator-Schritt).
+**Frag zurueck:** neue Runtime-Dependencies, Aenderung der bestehenden
+`/panels/success-rate`-Demo-Route/-Tests.

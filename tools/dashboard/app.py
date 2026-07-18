@@ -53,10 +53,14 @@ from core.fleet import FLEET
 from core.process_control import list_parked, parked_since
 from core.time import from_unix_ts
 from tools.analytics_api import (
+    DEFAULT_TIMESERIES_WINDOW,
+    TIMESERIES_WINDOWS,
     _serve,
+    available_bots,
     bot_leaderboard,
     build_analytics_blueprint,
     connect_ro,
+    rolling_success_rate_series,
     success_rate_timeseries,
 )
 from tools.analytics_export import data_freshness
@@ -358,6 +362,83 @@ def _leaderboard_context(duckdb_path: str) -> dict[str, Any]:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Success-rate time-comparison panel (Feature 3, T-2026-CU-9050-155)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _selected_bots(
+    raw_bots: Sequence[str], *, filtered: bool, all_bots: Sequence[str]
+) -> list[str]:
+    """Resolve the bot-multiselect filter, distinguishing "no filter submitted
+    yet" (first ``load``, no query string at all) from "user explicitly
+    unchecked every box" (a real, submitted, empty selection).
+
+    ``rolling_success_rate_series``/``bot_trade_rows`` treat an EMPTY bots list
+    the same as ``None`` (their shared ``_bot_filter`` convention: falsy ==
+    unfiltered) — appropriate for a query parameter that is simply absent, but
+    wrong for this form: a user who deliberately unchecks every bot must see
+    "no bots selected", not silently get every bot back. ``filtered`` (a hidden
+    form field, present on every form submission but absent on the initial
+    parameterless ``hx-get`` this panel's own polling constructs) is what makes
+    that distinction observable at the route layer.
+    """
+    if filtered:
+        return list(raw_bots)
+    return list(all_bots)
+
+
+def _success_rate_timeseries_context(
+    duckdb_path: str, *, raw_bots: Sequence[str], filtered: bool, window: int
+) -> dict[str, Any]:
+    """Server-side render context for the success-rate time-comparison panel.
+
+    Builds the rolling ``window``-day win-rate line series (one line per
+    selected bot) via ``analytics_api.rolling_success_rate_series`` — additive
+    to the T-131 substrate, same DECISIVE-trade definition, same throttled
+    read-only DuckDB connection pattern as every other panel context here.
+    """
+    con = connect_ro(duckdb_path)
+    try:
+        all_bots = available_bots(con)
+        selected = _selected_bots(raw_bots, filtered=filtered, all_bots=all_bots)
+        # An explicit empty selection must never reach the query layer: passing
+        # bots=[] there is indistinguishable from bots=None ("no filter") per
+        # _bot_filter's convention, which would silently show every bot again.
+        payload = (
+            rolling_success_rate_series(con, bots=selected, window=window)
+            if selected
+            else {"window": window, "bots": [], "series": {}}
+        )
+    finally:
+        con.close()
+
+    chart_series = [
+        {
+            "bot": bot,
+            "points": [
+                {
+                    "date": p["date"],
+                    "winrate_pct": (round(p["winrate"] * 100, 1) if p["winrate"] is not None else None),
+                }
+                for p in payload["series"][bot]
+            ],
+        }
+        for bot in payload["bots"]
+    ]
+    all_dates = sorted({p["date"] for s in chart_series for p in s["points"]})
+
+    return {
+        "as_of": all_dates[-1] if all_dates else None,
+        "window": window,
+        "windows_available": list(TIMESERIES_WINDOWS),
+        "all_bots": all_bots,
+        "selected_bots": selected,
+        "chart_series": chart_series,
+        "poll_seconds": PANEL_POLL_SECONDS,
+    }
+
+
 def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app for the Z1 dashboard shell.
 
@@ -365,7 +446,7 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     serves the HTML shell + HTMX panels. ``duckdb_path`` is the single-writer
     analytics DuckDB file produced by ``tools/analytics_export.py``.
     """
-    from flask import Flask, render_template
+    from flask import Flask, render_template, request
 
     app = Flask(__name__)  # templates/ and static/ resolve under this package dir
     path = str(duckdb_path)
@@ -396,6 +477,21 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     @app.get("/panels/leaderboard")
     def panel_leaderboard():
         return render_template("panels/leaderboard.html", **_leaderboard_context(path))
+
+    @app.get("/panels/success-rate-timeseries")
+    def panel_success_rate_timeseries():
+        filtered = "filtered" in request.args
+        raw_bots = request.args.getlist("bots")
+        try:
+            window = int(request.args.get("window", DEFAULT_TIMESERIES_WINDOW))
+        except (TypeError, ValueError):
+            window = DEFAULT_TIMESERIES_WINDOW
+        if window not in TIMESERIES_WINDOWS:
+            window = DEFAULT_TIMESERIES_WINDOW
+        return render_template(
+            "panels/success_rate_timeseries.html",
+            **_success_rate_timeseries_context(path, raw_bots=raw_bots, filtered=filtered, window=window),
+        )
 
     return app
 

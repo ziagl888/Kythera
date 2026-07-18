@@ -1,0 +1,64 @@
+{#
+  Success-rate time-comparison panel fragment (Feature 3, T-2026-CU-9050-155).
+  Full version of the /panels/success-rate demo: a rolling <window>-day
+  win-rate LINE time series per selected bot, built on the T-131
+  success_rate_timeseries() substrate via the additive
+  rolling_success_rate_series() helper (same DECISIVE-trade definition, same
+  read-only DuckDB path).
+
+  Self-updating widget: THIS div (including its own hx-get/hx-trigger
+  attributes) is the swap target (outerHTML) — a form change re-fetches
+  immediately with the new filter baked into the query string, and the
+  periodic poll re-requests with whatever selection is CURRENTLY baked in
+  (not the original default), so polling never resets a user's filter.
+#}
+<div id="success-rate-timeseries-body"
+     hx-get="{{ url_for('panel_success_rate_timeseries') }}?filtered=1&amp;window={{ window }}{% for b in selected_bots %}&amp;bots={{ b }}{% endfor %}"
+     hx-trigger="load, every {{ poll_seconds }}s"
+     hx-swap="outerHTML">
+
+  {% if all_bots %}
+  <form class="panel__filters"
+        hx-get="{{ url_for('panel_success_rate_timeseries') }}"
+        hx-target="#success-rate-timeseries-body"
+        hx-swap="outerHTML"
+        hx-trigger="change">
+    <input type="hidden" name="filtered" value="1">
+    <fieldset class="panel__filter-group">
+      <legend>Bots</legend>
+      {% for bot in all_bots %}
+      <label class="panel__filter-option">
+        <input type="checkbox" name="bots" value="{{ bot }}" {% if bot in selected_bots %}checked{% endif %}>
+        {{ bot }}
+      </label>
+      {% endfor %}
+    </fieldset>
+    <fieldset class="panel__filter-group">
+      <legend>Rollierendes Fenster</legend>
+      {% for w in windows_available %}
+      <label class="panel__filter-option">
+        <input type="radio" name="window" value="{{ w }}" {% if w == window %}checked{% endif %}>
+        {{ w }}d
+      </label>
+      {% endfor %}
+    </fieldset>
+  </form>
+  {% endif %}
+
+  {% if not all_bots %}
+    <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+  {% elif not selected_bots %}
+    <p class="muted">Keine Bots ausgewählt.</p>
+  {% elif not chart_series %}
+    <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+  {% else %}
+    <p class="panel__asof">
+      Stand der Daten: {{ as_of or "unbekannt" }} · Rollierendes Fenster: {{ window }}d
+    </p>
+    <div class="chart"
+         data-chart="winrate-timeseries"
+         data-series="winrate-timeseries-series"
+         style="width:100%;height:280px"></div>
+    <script type="application/json" id="winrate-timeseries-series">{{ chart_series | tojson }}</script>
+  {% endif %}
+</div>

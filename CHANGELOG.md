@@ -1,3 +1,41 @@
+## [2026-07-18] Erfolgsraten-Zeitvergleich-Panel — Z1-Dashboard Feature 3 (T-2026-CU-9050-155)
+
+Drittes Feature-Panel auf der T-151-Shell: die volle Zeitvergleich-Version des T-151-Demo-Panels — eine
+ECharts-Linien-Zeitreihe der ROLLIERENDEN 7/30/90d-Winrate pro ausgewähltem Bot über die Zeit, mit
+Bot-Multiselect (mehrere Bots → mehrere Linien) und Fenster-Umschalter, statt nur eines aktuellen Balkens.
+Baut additiv auf dem bestehenden T-131-Substrat auf — `success_rate_timeseries()` bleibt unverändert.
+
+- `tools/analytics_api.py`: neue reine Funktionen `_daily_buckets_by_bot()` (Decisive-Trades pro Bot/Kalendertag
+  gruppiert) und `_rolling_series_for_bot()` (Zwei-Zeiger-Sliding-Window über die Tage eines Bots — trailing
+  `window`-Tage-Summe pro Tag, kein Neu-Aufsummieren pro Punkt) sowie `rolling_success_rate_series()` (öffentliche
+  API, wiederverwendet `bot_trade_rows()` — gleiche DECISIVE-Trade-Definition wie `success_rate_timeseries` und
+  `bot_leaderboard`). Neue Konstanten `TIMESERIES_WINDOWS = (7, 30, 90)` / `DEFAULT_TIMESERIES_WINDOW = 30`.
+  Kein neuer JSON-API-Endpoint — die Panel-Route ruft die Funktion direkt auf (Muster: andere Panel-Routen).
+- `tools/dashboard/app.py`: neue Route `/panels/success-rate-timeseries` (kollidiert NICHT mit der bestehenden
+  `/panels/success-rate`-Demo, die unverändert bleibt) + `_success_rate_timeseries_context()`. Neue
+  `_selected_bots()`-Hilfsfunktion unterscheidet "kein Filter übermittelt" (erster `load`, alle Bots) von "Nutzer
+  hat explizit alle Checkboxen abgewählt" (echte leere Auswahl, per verstecktem `filtered`-Formularfeld erkannt) —
+  sonst würde eine bewusste Leerauswahl über `_bot_filter`s "leer == kein Filter"-Konvention lautlos wieder alle
+  Bots zeigen.
+- `tools/dashboard/templates/panels/success_rate_timeseries.html`: Selbst-aktualisierendes HTMX-Widget — das
+  Fragment ersetzt sich selbst per `hx-swap="outerHTML"`, sodass die eigenen `hx-get`/`hx-trigger`-Attribute bei
+  jedem Formular-Wechsel (Bot-Checkboxen, Fenster-Radios) die AKTUELLE Auswahl in die Poll-Query einbacken — ein
+  Polling-Intervall setzt die Nutzerauswahl damit nie zurück. `templates/index.html`: neues Panel "Erfolgsraten-
+  Zeitvergleich" verdrahtet.
+- `tools/dashboard/static/js/panels.js`: neue ECharts-Linien-Factory `winrate-timeseries` (eine Linie pro Bot,
+  `type: "time"`-x-Achse, `connectNulls`), registriert über den bestehenden `chart_lifecycle.js`-Helper
+  (dispose/re-init bei htmx-Swap). `static/css/app.css`: neue `.panel__filters`/`.panel__filter-group`/
+  `.panel__filter-option`-Klassen für das Multiselect-/Fenster-Formular.
+- `backtest/test_dashboard_success_rate_panel.py`: 22 DB-freie Tests mit einer bewusst DIVERGENTEN Fixture (RUB2:
+  3 frühe Wins gefolgt von 4 aktuellen Losses → 7d/30d/90d-Rolling-Winrate 0 % / 20 % / ~42,9 % am selben Tag;
+  ABR2: unabhängiges, ebenfalls divergentes Muster 66,7 % / 75 % / 80 %) — Pure-Function-Tests für das
+  Sliding-Window, ein Pflicht-Integrationstest (echte `AnalyticsExporter` → echte DuckDB → echte Route →
+  gerenderte HTML/JSON-Chart-Serie), explizite Multiselect- und Fenster-Umschalt-Tests mit den exakten
+  divergenten Erwartungswerten (Mutation-Check: eine vertauschte Fensterberechnung oder ein vertauschter
+  Bot-Filter macht mindestens einen dieser sechs Werte falsch), Test dass die bestehende `/panels/success-rate`-
+  Demo-Route unangetastet bleibt. `ruff check`/`format --check` grün (3.14-Interpreter), `regression_guard verify`
+  grün (24 Fixtures, 3.13-Interpreter mit numpy), alle 52 bestehenden Dashboard-Tests weiterhin grün.
+
 ## [2026-07-18] Leaderboard + Risiko-Kennzahlen-Panel — Z1-Dashboard Feature 2 (T-2026-CU-9050-154)
 
 Zweites echtes Feature-Panel auf der T-151-Shell: pro aktivem Bot (Model-Tag mit mind. einem entschiedenen Trade
