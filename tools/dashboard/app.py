@@ -44,9 +44,14 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from core.bot_catalog import families_for_script
+from core.fleet import FLEET
+from core.process_control import list_parked, parked_since
+from core.time import from_unix_ts
 from tools.analytics_api import (
     _serve,
     build_analytics_blueprint,
@@ -198,6 +203,133 @@ def _freshness_context(duckdb_path: str) -> dict[str, Any]:
     return {"freshness": freshness_summary(rows), "badge_poll_seconds": BADGE_POLL_SECONDS}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Fleet-registry panel (Feature 1, T-2026-CU-9050-152)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Repo root: tools/dashboard/app.py -> tools/dashboard -> tools -> <root>.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _live_model_configs(repo_root: Path) -> dict[str, dict[str, dict[str, Any]]]:
+    """Model-tag family (upper-cased ``model_id``) -> {direction: {threshold, model_type}}.
+
+    Scans ROOT-level ``*_meta.json`` only — those are the LIVE artifacts
+    (CLAUDE.md rule 2: promotion into the repo root is the operator's live
+    decision; ``staging_models/`` is pre-promotion and would misrepresent what
+    a bot currently serves, so it is deliberately excluded here). Files
+    without a ``model_id`` field (legacy/orphaned artifact dumps such as
+    ``bt2_model_SHORT_meta.json``) are skipped rather than guessed from the
+    filename — a wrong family match would be worse than an absent one.
+    """
+    configs: dict[str, dict[str, dict[str, Any]]] = {}
+    for meta_path in sorted(repo_root.glob("*_meta.json")):
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        model_id = data.get("model_id")
+        if not model_id:
+            continue
+        family = str(model_id).upper()
+        direction = data.get("direction") or "?"
+        configs.setdefault(family, {})[direction] = {
+            "threshold": data.get("optimal_threshold"),
+            "model_type": data.get("model_type"),
+        }
+    return configs
+
+
+def _config_label(families: Sequence[str], configs: dict[str, dict[str, dict[str, Any]]]) -> str:
+    """Human-readable Kernparameter summary across a bot's model families.
+
+    Matching is family-PREFIX based, not exact: ``families_for_script`` yields
+    generation-agnostic prefixes (``"RUB"``, ``"MAX"``) while ``configs`` is
+    keyed by the full versioned ``model_id`` from the artifact meta (``"RUB2"``,
+    ``"MAX1"``) — a rotation-stable join, the same convention core.bot_catalog
+    uses for tag→script (OPUS-HANDOFF Falle 16). An exact ``get`` would never
+    hit and every real bot would render "—" despite live thresholds existing.
+
+    When several config keys share a family prefix (e.g. a RUB2 and a RUB3
+    both live), all their directions are merged. Returns "—" when no config
+    key matches any family — never fabricated (DB-free contract: an
+    unavailable field renders as a dash, not synthesised from an unrelated
+    source)."""
+    directions: dict[str, dict[str, Any]] = {}
+    prefixes = tuple(f.upper() for f in families)
+    for key, by_direction in configs.items():
+        if key.upper().startswith(prefixes):
+            directions.update(by_direction)
+    if not directions:
+        return "—"
+    parts: list[str] = []
+    for direction in sorted(directions):
+        thr = directions[direction].get("threshold")
+        thr_label = f"{thr:.3f}" if isinstance(thr, (int, float)) else "—"
+        parts.append(f"{direction} thr={thr_label}")
+    return ", ".join(parts)
+
+
+def fleet_registry_rows(
+    *,
+    fleet: Sequence[dict[str, Any]] | None = None,
+    parked: set[str] | None = None,
+    parked_since_fn: Callable[[str], float | None] | None = None,
+    configs: dict[str, dict[str, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Per-bot fleet-registry row: model tag(s), live Kernparameter, parked
+    status and (for parked bots only) the parked-since wall-clock label.
+
+    Every dependency is injectable so this is testable without touching the
+    filesystem or a running fleet. Defaults resolve the real read-only
+    sources: ``core.fleet.FLEET``, ``core.process_control.list_parked`` /
+    ``parked_since``, and the root-level ``*_meta.json`` artifacts — no
+    Postgres, ever (this module's DB-free invariant).
+
+    "Since when active" has no file-based source (only an unpark event would
+    carry it, and that is not recorded anywhere) — deliberately left out
+    rather than guessed; only "parked since" is ever populated.
+    """
+    if fleet is None:
+        fleet = FLEET
+    if parked is None:
+        parked = list_parked()
+    if parked_since_fn is None:
+        parked_since_fn = parked_since
+    if configs is None:
+        configs = _live_model_configs(_REPO_ROOT)
+
+    rows: list[dict[str, Any]] = []
+    for entry in fleet:
+        script = entry["script"]
+        families = families_for_script(script)
+        is_parked = script in parked
+        since_label: str | None = None
+        if is_parked:
+            ts = parked_since_fn(script)
+            if ts is not None:
+                # Marker mtime is a POSIX epoch (timezone-agnostic); render via
+                # the sanctioned UTC converter (core.time, R3 policy) rather
+                # than a bare fromtimestamp() — DTZ006-safe and unambiguous.
+                since_label = from_unix_ts(ts).strftime("%Y-%m-%d %H:%M UTC")
+        rows.append(
+            {
+                "name": entry["name"],
+                "script": script,
+                "group": entry.get("group"),
+                "model_tag": " / ".join(families) if families else "—",
+                "config": _config_label(families, configs),
+                "parked": is_parked,
+                "parked_since": since_label,
+            }
+        )
+    return rows
+
+
+def _fleet_registry_context() -> dict[str, Any]:
+    return {"rows": fleet_registry_rows(), "poll_seconds": PANEL_POLL_SECONDS}
+
+
 def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app for the Z1 dashboard shell.
 
@@ -228,6 +360,10 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     @app.get("/panels/freshness")
     def panel_freshness():
         return render_template("_freshness_badge.html", **_freshness_context(path))
+
+    @app.get("/panels/fleet-registry")
+    def panel_fleet_registry():
+        return render_template("panels/fleet_registry.html", **_fleet_registry_context())
 
     return app
 

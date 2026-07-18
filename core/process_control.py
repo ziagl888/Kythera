@@ -56,6 +56,24 @@ def list_parked() -> set[str]:
     return {p.name for p in _PARKED_DIR.iterdir() if p.is_file()}
 
 
+def parked_since(script: str) -> float | None:
+    """Epoch mtime of the parked marker, or None if `script` is not parked.
+
+    Read-only stat (T-2026-CU-9050-152 fleet-registry panel) — never creates
+    or removes the marker; that stays park()/unpark()'s job. The marker file's
+    mtime is the only file-based signal for "since when parked" (there is no
+    DB-free equivalent for "since when active" — an unpark event isn't
+    recorded anywhere, so callers must not fabricate one).
+    """
+    try:
+        return _marker(_PARKED_DIR, script).stat().st_mtime
+    except OSError:
+        # FileNotFoundError (not parked) is the common case; a broader OSError
+        # (e.g. a transient Windows file lock on .stat()) must also degrade to
+        # "unknown since" on the render path, never a 500.
+        return None
+
+
 # ── Restart (one-shot intent: "recycle this bot once") ───────────────────────
 
 

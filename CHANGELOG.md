@@ -1,3 +1,28 @@
+## [2026-07-18] Fleet-Registry-Panel — Z1-Dashboard Feature 1 (T-2026-CU-9050-152)
+
+Erstes echte Feature-Panel auf der T-151-Shell: pro Bot Model-Tag · Live-Config (Kernparameter) · Status
+(Active/Parked) · parked-seit. Vollständig DB-frei — nur `core/fleet.py` (FLEET), `control/parked/`-Marker und
+root-level `*_meta.json`-Artefakte werden gelesen, kein Postgres-Zugriff.
+
+- `core/bot_catalog.py`: neue `families_for_script(script)` — die Umkehrung von `script_for_tag()`. Liefert alle
+  Modell-Familien/klassischen Strategienamen, die ein Fleet-Skript postet (z. B. `25_smc_ml_sniper.py` → `["BB",
+  "TD"]`, `3_detectors.py` → alle 5 klassischen Namen).
+- `core/process_control.py`: neue `parked_since(script)` — reiner Read-only-Stat auf die Marker-Datei-mtime, kein
+  Schreiben/Löschen. Einzige DB-freie Quelle für „seit wann geparkt"; „seit wann aktiv" gibt es file-basiert
+  nicht (kein Unpark-Event wird persistiert) und wird bewusst NICHT fabriziert — rendert als „—".
+- `tools/dashboard/app.py`: neue Route `/panels/fleet-registry` + reine Funktion `fleet_registry_rows()`
+  (voll injizierbar für Tests) plus `_live_model_configs()` (scannt NUR root-level `*_meta.json` — die LIVE-
+  Artefakte, `staging_models/` bewusst ausgeschlossen, CLAUDE.md Regel 2) und `_config_label()`. Marker-mtime
+  wird über den sanktionierten `core.time.from_unix_ts`-UTC-Konverter gerendert (R3/DTZ-konform).
+- `tools/dashboard/templates/panels/fleet_registry.html` + `templates/index.html`: neues Panel mit
+  `hx-trigger="load, every {{ panel_poll_seconds }}s"`, wiederverwendet den Freshness-Badge-Look (`.badge`/
+  `.badge--fresh`/`.badge--stale` für Active/Parked). Neue CSS-Modifier-Klasse `.datatable--fleet` (linksbündig
+  für Text-Spalten statt des numerischen Rechtsbündig-Defaults).
+- `backtest/test_dashboard_fleet_registry.py`: 19 DB-freie Tests — `families_for_script`/`parked_since`-Unit-
+  Tests, `fleet_registry_rows()` mit synthetischen/injizierten Inputs (parked vs. active, Multi-Direction-Config,
+  fehlender Config → „—", nie fabriziertes „seit wann aktiv"), Route liefert 200 mit korrekten Zeilen, Panel im
+  Index verdrahtet, kein Postgres-Touch, plus ein Smoke-Test gegen die echten Repo-Defaults (kein
+  `control/parked/`-Verzeichnis in diesem Worktree → alle Bots rendern Active, kein Crash).
 ## [2026-07-18] Shadow-Sichtbarkeits-Vorschau auf Englisch (T-2026-CU-9050-153)
 
 Kleiner Folge-Fix zu T-150: die Shadow-Vorschau-Nachricht im Test-Channel (`_shadow_preview_message`) ist jetzt
