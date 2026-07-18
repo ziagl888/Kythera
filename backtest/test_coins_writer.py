@@ -44,6 +44,10 @@ def _exchange_info() -> dict:
             {"symbol": "BTCUSDT_260925", "quoteAsset": "USDT", "status": "TRADING", "contractType": "CURRENT_QUARTER"},
             # Junk: nicht handelbar (SETTLING/BREAK)
             {"symbol": "DEADUSDT", "quoteAsset": "USDT", "status": "SETTLING", "contractType": "PERPETUAL"},
+            # Junk: Nicht-ASCII-Base (Meme-Perp, z.B. chinesische Zeichen) — passt
+            # quote/status/contractType, ist aber kein gültiger Tabellen-Identifier
+            # → muss über die looks_like_usdt_perp-Shape rausfallen (T-162).
+            {"symbol": "龙虾USDT", "quoteAsset": "USDT", "status": "TRADING", "contractType": "PERPETUAL"},
         ]
     }
 
@@ -55,8 +59,18 @@ def test_filter_keeps_only_usdt_perpetuals():
 
 def test_filter_excludes_each_junk_shape():
     result = set(coins.filter_usdt_perpetuals(_exchange_info()))
-    for junk in ("ETHU", "ETHBTC", "BTCUSDT_260925", "DEADUSDT"):
+    for junk in ("ETHU", "ETHBTC", "BTCUSDT_260925", "DEADUSDT", "龙虾USDT"):
         assert junk not in result
+
+
+def test_filter_drops_non_ascii_symbol_base():
+    # T-162: eine Perp mit Nicht-ASCII-Base darf nicht in die Universe — sonst
+    # wirft core.candles.validate_symbol "invalid symbol for table identifier"
+    # in jedem Kerzen-lesenden Bot, der coins.json direkt lädt.
+    info = {"symbols": [{"symbol": "龙虾USDT", "quoteAsset": "USDT", "status": "TRADING", "contractType": "PERPETUAL"}]}
+    assert coins.filter_usdt_perpetuals(info) == []
+    assert coins.looks_like_usdt_perp("龙虾USDT") is False
+    assert coins.looks_like_usdt_perp("BTCUSDT") is True
 
 
 def test_filter_tolerates_missing_keys():
