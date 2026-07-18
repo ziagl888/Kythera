@@ -595,3 +595,117 @@ direkt, Push/PR (Orchestrator-Schritt).
 **Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
 Panel-Routen-Signaturen aus Feature 1-7.
 
+---
+
+## Feature 9 — Event-Annotations als READ-ONLY Event-Feed (T-2026-CU-9050-161, S10)
+
+Task: T-2026-CU-9050-161 · baut additiv auf `_regime_changes_in_window`
+(Feature 8, lag-Logik) und `_outcomes_cte_with_coin`/
+`_existing_outcome_tables_with_coin`/`_bot_filter` (Feature 7/8) auf. Letztes
+Panel des Z1-Dashboard-Rewrites.
+
+### Intent
+S10 ist ein "einfaches Eingriffs-Log", kein Annotations-EDITOR: ein
+chronologischer (neueste zuerst) Event-Feed, der notable Events aus den
+VERFUEGBAREN DuckDB-Quellen konsolidiert + typisiert anzeigt — Regime-
+Uebergaenge aus `regime_history` (Zeitpunkt + von->nach, via dieselbe
+lag-Logik wie `_regime_changes_in_window`) und Notable Trades aus
+`closed_ai_signals`/`closed_trades` (groesste Wins/Losses des Fensters —
+Coin, Bot, PnL, Close-Zeit). Konfigurierbares Fenster (`?window=`, Default
+24h, Alternative 168h/7 Tage). Ein SCHREIBENDES Annotations-Feature waere ein
+Mutations-Endpoint = F4-/Z2-gegated (CLAUDE.md harte Regel: keine Mutationen/
+Live-Hebel in der Web-UI vor Cloudflare Access) — deshalb bewusst READ-ONLY,
+kein POST/Write-Endpoint gebaut.
+
+### Akzeptanzkriterien (binaer testbar)
+- [x] AK1: `analytics_api.event_feed(con, window_hours, *, as_of=None,
+  bots=None)` liefert additiv `{as_of, window_hours, events}` mit
+  `events: [{type, ts, title, detail}, ...]`, chronologisch ABSTEIGEND
+  sortiert (neueste zuerst). `as_of=None` loest sich data-anchored auf
+  (`max(closed_at)` ueber die Outcome-Tabellen, sonst `max(ts)` aus
+  `regime_history`, sonst `None`) — nie eine wall-clock "jetzt"-Uhr. — Test:
+  `test_event_feed_basic_shape_and_sort_order` (Mutation-Check: asc statt
+  desc sortiert macht den Test rot).
+- [x] AK2: Regime-Uebergaenge (`type="regime_change"`) sind ECHTE Wechsel
+  (Wert != Vorgaenger-Wert in `regime_history`, per `LAG`-Fenster — identische
+  Logik wie `_regime_changes_in_window`, Feature 8) im Fenster, mit
+  von->nach-Detail. Eine reine Wiederholung desselben Regimes zaehlt nicht,
+  die allererste `regime_history`-Zeile (kein Vorgaenger) ist eine
+  Initialisierung, keine Transition. — Test:
+  `test_event_feed_regime_transitions_correct_and_repeats_excluded`
+  (Mutation-Check).
+- [x] AK3: Notable Trades (`type="notable_trade"`) sind die groessten Wins/
+  Losses (je Seite getrennt ueber `is_win`, nicht ueber sortierte `pnl_pct`
+  mit Ueberlappungsrisiko bei wenigen Trades) im Fenster, mit Coin+Bot+PnL im
+  Detail-Feld. — Test: `test_event_feed_notable_trades_winners_and_losers`.
+- [x] AK4: Fensterlogik ist halboffen (`> as_of - INTERVAL window_hours HOUR
+  AND <= as_of`), identisch zu `overnight_digest`/`success_rate_timeseries`
+  — ein Event ausserhalb des Fensters darf nicht erscheinen (Mutation-Check:
+  Fenstergrenze verkehrt/entfernt macht den Test rot). — Test:
+  `test_event_feed_window_boundary_excludes_outside_events` (Mutation-Check).
+- [x] AK5: Leerer Feed (kein Event im Fenster, aber Substrat hat Daten
+  ausserhalb) liefert `events: []`, nie einen Fehler, nie ein fabriziertes
+  Event. Komplett leeres Substrat degradiert identisch
+  (`as_of: None, events: []`). — Test:
+  `test_event_feed_empty_window_degrades_cleanly`,
+  `test_event_feed_empty_substrate_degrades_cleanly`.
+- [x] AK6: `GET /panels/event-feed` (und `?window=24h|168h`) rendert 200: die
+  typisierte, zeit-absteigend sortierte Event-Liste (Icon/Label je Typ +
+  Zeitstempel + Beschreibung), END-TO-END gegen eine echte
+  `AnalyticsExporter`/DuckDB-Fixture, als letztes Panel in `index.html`
+  eingehaengt (nach Coin-Drilldown). Datenstand-Badge
+  (`closed_ai_signals`/`closed_trades`/`regime_history`). KEIN
+  POST/Write-Endpoint existiert fuer dieses Panel. — Test:
+  `test_panel_event_feed_renders_events_in_descending_order`
+  (Integrationstest), `test_index_includes_event_feed_panel_last`.
+- [x] AK7: Kein Postgres-Zugriff, DB-frei testbar; unbekannter/fehlender
+  `?window=`-Wert faellt still auf den Default (24h) zurueck (kein 500). —
+  Test: `test_panel_event_feed_never_touches_postgres`,
+  `test_resolve_event_feed_window_unknown_value_falls_back_to_default`.
+
+### Out of Scope
+- **Schreibende Operator-Annotationen** (frei getippte Notizen/Tags durch
+  Michi) — das waere ein Mutations-Endpoint (POST/PUT + CSRF + Persistenz-
+  Store fuer die Annotation selbst) und ist explizit Z2-gegated (Cloudflare
+  Access + Auth muss zuerst stehen, F4-Familie). Follow-up-Task, nicht Teil
+  dieses Panels.
+- Live-Steuerung (F4-Familie).
+- Ein Hash-Journal / Audit-Trail-Signierung (R9 — gestrichen, siehe MEMORY).
+- Die anderen Panels neu bauen.
+- Weitere Event-Typen ueber Regime-Uebergaenge/Notable-Trades hinaus (z. B.
+  Fleet-Restarts, Modell-Promotions) — nur gebaut wenn trivial aus dem
+  bestehenden Substrat ableitbar, hier bewusst nicht ergaenzt (kein
+  zusaetzliches Substrat vorhanden, das sie DB-frei liefern koennte).
+- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
+  `event_feed()` direkt auf, wie die anderen additiven Panel-Routen seit
+  Feature 3 es tun).
+
+### Why Build (statt Reuse)
+Konsolidierung typisierter Events aus zwei bestehenden T-131-Aggregat-
+Bausteinen (Regime-lag-Logik, coin-aware decisive-Trade-CTE) ist
+projektspezifische Verdrahtung; keine Library liefert das. Die lag-Logik
+selbst (`_regime_changes_in_window`) und die coin-aware CTE
+(`_outcomes_cte_with_coin`/`_existing_outcome_tables_with_coin`/
+`_bot_filter`) werden wiederverwendet, nicht neu gebaut.
+
+### Scope of consent
+**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktionen `event_feed`,
+`_regime_transition_events`, `_notable_trade_events`, `_latest_event_anchor`,
+bestehende Funktionen unveraendert), `tools/dashboard/app.py` additiv (neue
+Konstanten/Funktionen + Route `/panels/event-feed`, neuer
+`PANEL_SOURCES`-Eintrag), `tools/dashboard/templates/panels/event_feed.html`
+(neu) + `index.html`-Einbindung als letztes Panel,
+`tools/dashboard/static/css/app.css` additiv (Event-Feed-Listen-Styles),
+`backtest/test_dashboard_event_feed.py` neu, `CHANGELOG.md`-Eintrag, auf
+branch `worktree-feat+t-2026-cu-9050-161`.
+**Verboten:** jeder POST/PUT/Mutations-Endpoint fuer Annotationen,
+`dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB, Fleet-Restart,
+Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
+`analytics_api`-Aggregatfunktionen (`_outcomes_cte`, `_outcomes_cte_with_coin`,
+`_regime_changes_in_window`, `bot_trade_rows`, `bot_leaderboard`,
+`success_rate_timeseries`, `bot_regime_matrix`, `coins_with_trades`,
+`coin_trade_series`, `overnight_digest`) inhaltlich umschreiben,
+Live-Steuerung bauen, `--no-verify`, main/prod direkt, Push/PR
+(Orchestrator-Schritt).
+**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
+Panel-Routen-Signaturen aus Feature 1-8.
