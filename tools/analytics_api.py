@@ -225,6 +225,167 @@ def success_rate_timeseries(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Leaderboard + risk metrics (Feature 2, T-2026-CU-9050-154)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Sort keys the leaderboard accepts; anything else falls back to the default.
+_LEADERBOARD_SORT_KEYS = ("pnl_sum_pct", "expectancy_pct", "winrate", "n")
+DEFAULT_LEADERBOARD_SORT = "pnl_sum_pct"
+
+
+def bot_trade_rows(
+    con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None = None
+) -> list[dict[str, Any]]:
+    """Ordered, per-bot DECISIVE trade rows for the leaderboard aggregation.
+
+    Reuses the exact same ``flagged``/``is_decisive`` CTE as
+    ``success_rate_timeseries`` — a trade counts here iff it would count there
+    (pnl present, not housekeeping DELISTED/CLEANUP/ORPHAN, and
+    ``MICRO_PNL_PCT < |pnl| <= MAX_ABS_PNL_PCT``). Neutral/open trades never
+    reach this function, so no downstream aggregation step needs to re-filter
+    them.
+
+    Rows are ordered ``(bot, closed_at)`` ascending — the order the
+    drawdown/loss-streak statistics in :func:`_leaderboard_row` depend on
+    (both are path-dependent, not just a groupby aggregate).
+
+    Returns one dict per trade: ``{bot, closed_at, pnl_pct, is_win}``. Empty
+    list when no outcome table exists yet (mirrors
+    ``success_rate_timeseries``'s empty-substrate degrade).
+    """
+    tables = _existing_outcome_tables(con)
+    if not tables:
+        return []
+    cte = _outcomes_cte(tables)
+    params: list[Any] = []
+    bot_sql = _bot_filter(bots, params)
+    rows = con.execute(
+        f"{cte} SELECT bot, closed_at, pnl_pct, is_win FROM flagged "
+        f"WHERE is_decisive AND bot IS NOT NULL{bot_sql} ORDER BY bot, closed_at",
+        params,
+    ).fetchall()
+    return [
+        {"bot": bot, "closed_at": closed_at, "pnl_pct": float(pnl_pct), "is_win": bool(is_win)}
+        for bot, closed_at, pnl_pct, is_win in rows
+    ]
+
+
+def _max_drawdown_pp(pnl_values: Sequence[float]) -> float:
+    """Max-drawdown in absolute %-POINTS under the running peak of the
+    additive (Σ %-PnL) equity curve, in the given (close-time-ascending) order.
+
+    Pure stdlib — deliberately NOT a numpy import into this otherwise
+    dependency-light module (this file previously depended only on
+    ``duckdb``; ``tools/analytics_export.py``'s ``PostgresFetcher`` boundary
+    keeps psycopg2 lazy for the same reason). The formula mirrors
+    ``tools.wf_significance.max_drawdown_pct`` exactly: ``dd = equity - peak``
+    (never normalised to peak height — T-2026-CU-9050-053: on fleet-wide
+    multi-coin replays the peak height is itself an artefact of trade
+    ordering, so a peak-relative ratio would measure that artefact instead of
+    the actual drawdown). Kept as a separate, tiny pure-Python implementation
+    here rather than importing that module, to avoid pulling numpy into the
+    Z1 dashboard's read path.
+    """
+    if not pnl_values:
+        return 0.0
+    equity = 0.0
+    peak = float("-inf")
+    worst = 0.0
+    for p in pnl_values:
+        equity += p
+        if equity > peak:
+            peak = equity
+        dd = equity - peak
+        if dd < worst:
+            worst = dd
+    return worst
+
+
+def _max_consecutive_losses(trades: Sequence[dict[str, Any]]) -> int:
+    """Longest run of consecutive non-win decisive trades, in the given order.
+
+    Pure/no I/O — a loss streak is a run-length statistic over ``is_win``,
+    identical in spirit to :func:`tools.wf_significance.max_drawdown_pct`'s
+    order-dependence but simple enough not to warrant its own reused module.
+    """
+    best = streak = 0
+    for t in trades:
+        if t["is_win"]:
+            streak = 0
+        else:
+            streak += 1
+            best = max(best, streak)
+    return best
+
+
+def _leaderboard_row(bot: str, trades: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Pure per-bot leaderboard row from an ordered (closed_at ascending) list
+    of decisive trades (``{pnl_pct, is_win}``). No DuckDB, no Flask — testable
+    with hand-built dicts.
+
+    ``pnl_sum_pct`` is the realized-PnL headline (additive, matching the
+    fleet's existing sum-of-%-PnL convention, e.g. 23_market_tracker /
+    wf_significance's ``summarize()``). ``expectancy_pct`` is the average
+    PnL per trade. ``max_drawdown_pp`` is the absolute (non-normalised)
+    max-drawdown of the cumulative-PnL curve in trade-close order (see
+    :func:`_max_drawdown_pp`). ``max_loss_streak`` is the longest
+    consecutive-loss run — the second risk metric.
+    """
+    n = len(trades)
+    wins = sum(1 for t in trades if t["is_win"])
+    pnl_values = [t["pnl_pct"] for t in trades]
+    pnl_sum = sum(pnl_values)
+    return {
+        "bot": bot,
+        "n": n,
+        "wins": wins,
+        "winrate": _winrate(wins, n),
+        "pnl_sum_pct": round(pnl_sum, 4),
+        "expectancy_pct": round(pnl_sum / n, 4) if n else None,
+        "max_drawdown_pp": round(_max_drawdown_pp(pnl_values), 4),
+        "max_loss_streak": _max_consecutive_losses(trades),
+    }
+
+
+def bot_leaderboard(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    bots: Sequence[str] | None = None,
+    sort_by: str = DEFAULT_LEADERBOARD_SORT,
+) -> dict[str, Any]:
+    """Per-bot performance leaderboard with risk metrics, read-only from DuckDB.
+
+    Only bots with at least one DECISIVE trade appear — a bot with only
+    neutral/housekeeping rows never produces a phantom ``n=0`` entry, because
+    it never reaches the groupby (AK5: excluded upstream in
+    :func:`bot_trade_rows`, not filtered back out here).
+
+    Args:
+        con: an open DuckDB connection (typically ``read_only=True``).
+        bots: optional bot-multiselect filter; None = all bots.
+        sort_by: one of ``pnl_sum_pct`` (default), ``expectancy_pct``,
+            ``winrate``, ``n``. An unrecognised value silently falls back to
+            the default rather than raising — the route layer validates and
+            400s on a bad value; this pure function stays permissive so it is
+            trivially callable from tests.
+
+    Returns a JSON-serialisable dict:
+        {"bots": [{bot, n, wins, winrate, pnl_sum_pct, expectancy_pct,
+                    max_drawdown_pp, max_loss_streak}, ...],
+         "sort_by": <the key actually used>}
+    Rows are sorted by ``sort_by`` descending (best first) — the highest PnL/
+    expectancy/winrate/count leads the table.
+    """
+    key = sort_by if sort_by in _LEADERBOARD_SORT_KEYS else DEFAULT_LEADERBOARD_SORT
+    by_bot: dict[str, list[dict[str, Any]]] = {}
+    for trade in bot_trade_rows(con, bots=bots):
+        by_bot.setdefault(trade["bot"], []).append(trade)
+    rows = [_leaderboard_row(bot, trades) for bot, trades in by_bot.items()]
+    rows.sort(key=lambda r: (r[key] if r[key] is not None else float("-inf")), reverse=True)
+    return {"bots": rows, "sort_by": key}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Thin Flask blueprint (framework decision T-2026-CU-9050-130 still open)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -446,6 +607,24 @@ def build_analytics_blueprint(duckdb_path: str | Path, *, cache_enabled: bool = 
             con = _ro_con()
             try:
                 return success_rate_timeseries(con, bots=bots, windows=windows, as_of=as_of)
+            finally:
+                con.close()
+
+        return jsonify(cache.get(key, _build))
+
+    @bp.get("/api/analytics/leaderboard")
+    def leaderboard():
+        bots = _parse_bots(request.args.get("bots"))
+        sort_by = request.args.get("sort_by") or DEFAULT_LEADERBOARD_SORT
+        if sort_by not in _LEADERBOARD_SORT_KEYS:
+            return jsonify({"error": f"sort_by must be one of {', '.join(_LEADERBOARD_SORT_KEYS)}"}), 400
+
+        key = ("leaderboard", tuple(sorted(bots)) if bots else None, sort_by)
+
+        def _build() -> dict[str, Any]:
+            con = _ro_con()
+            try:
+                return bot_leaderboard(con, bots=bots, sort_by=sort_by)
             finally:
                 con.close()
 

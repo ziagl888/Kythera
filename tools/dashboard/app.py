@@ -54,6 +54,7 @@ from core.process_control import list_parked, parked_since
 from core.time import from_unix_ts
 from tools.analytics_api import (
     _serve,
+    bot_leaderboard,
     build_analytics_blueprint,
     connect_ro,
     success_rate_timeseries,
@@ -330,6 +331,33 @@ def _fleet_registry_context() -> dict[str, Any]:
     return {"rows": fleet_registry_rows(), "poll_seconds": PANEL_POLL_SECONDS}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Leaderboard + risk-metrics panel (Feature 2, T-2026-CU-9050-154)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _leaderboard_context(duckdb_path: str) -> dict[str, Any]:
+    """Server-side render context for the leaderboard panel.
+
+    Thin wrapper over ``analytics_api.bot_leaderboard`` — same throttled
+    read-only DuckDB connection pattern as the other panel contexts in this
+    module. "Active bot" here means "has at least one decisive trade in the
+    substrate" (see ``bot_leaderboard`` docstring); it is NOT cross-referenced
+    against the fleet-registry's parked status — that is Feature 1's concern
+    (SPEC.md Out of Scope).
+    """
+    con = connect_ro(duckdb_path)
+    try:
+        payload = bot_leaderboard(con)
+    finally:
+        con.close()
+    return {
+        "bots": payload["bots"],
+        "sort_by": payload["sort_by"],
+        "poll_seconds": PANEL_POLL_SECONDS,
+    }
+
+
 def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app for the Z1 dashboard shell.
 
@@ -364,6 +392,10 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     @app.get("/panels/fleet-registry")
     def panel_fleet_registry():
         return render_template("panels/fleet_registry.html", **_fleet_registry_context())
+
+    @app.get("/panels/leaderboard")
+    def panel_leaderboard():
+        return render_template("panels/leaderboard.html", **_leaderboard_context(path))
 
     return app
 

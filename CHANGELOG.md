@@ -1,3 +1,33 @@
+## [2026-07-18] Leaderboard + Risiko-Kennzahlen-Panel — Z1-Dashboard Feature 2 (T-2026-CU-9050-154)
+
+Zweites echtes Feature-Panel auf der T-151-Shell: pro aktivem Bot (Model-Tag mit mind. einem entschiedenen Trade
+im DuckDB-Substrat) ein Performance-Ranking — realisierte PnL (Σ%), Win-Rate, Expectancy (⌀%/Trade), Trade-Count,
+plus zwei Risiko-Kennzahlen (Max-Drawdown der additiven PnL-Kurve, längster Loss-Streak). Sortiert nach PnL
+absteigend (Default), `sort_by` optional auf `expectancy_pct`/`winrate`/`n`. Vollständig DB-frei — liest nur die
+bestehende `flagged`-CTE (Neutral-/Housekeeping-Trades werden wie beim success-rate-Endpoint ausgeschlossen).
+
+- `tools/analytics_api.py`: neue reine Funktionen `bot_trade_rows()` (geordnete Decisive-Trade-Rows pro Bot,
+  gleiche `is_decisive`/`is_win`-Definition wie `success_rate_timeseries`), `_leaderboard_row()` (PnL-Summe,
+  Win-Rate, Expectancy, Max-Drawdown, Loss-Streak aus einer geordneten Trade-Liste — kein I/O, isoliert testbar)
+  und `bot_leaderboard()` (Gruppierung + Sortierung). Max-Drawdown als eigene, schlanke Pure-Stdlib-Implementierung
+  (`_max_drawdown_pp`, absolute %-Punkte unter dem laufenden Peak, gleiche Formel/Konvention wie
+  `tools.wf_significance.max_drawdown_pct`, T-2026-CU-9050-053) statt eines numpy-Imports — dieser Worktree hat
+  zwei getrennte Python-Interpreter (3.14 mit duckdb+Flask, 3.13 mit numpy+Flask), ein numpy-Import hätte die
+  bestehenden Dashboard-Tests unter 3.14 gebrochen. Neuer Endpoint `/api/analytics/leaderboard` (Muster:
+  success-rate-Endpoint, gleicher Poll-Cache, 400 bei ungültigem `sort_by`).
+- `tools/dashboard/app.py`: neue Route `/panels/leaderboard` + `_leaderboard_context()`. „Aktiver Bot" heißt hier
+  bewusst „hat mind. einen entschiedenen Trade im Substrat" — NICHT gegen den Fleet-Registry-Parked-Status
+  verglichen (das ist Feature 1s Zuständigkeit, SPEC.md Out-of-Scope).
+- `tools/dashboard/templates/panels/leaderboard.html` + `templates/index.html`: neues Panel mit
+  `hx-trigger="load, every {{ panel_poll_seconds }}s"`, Tabelle mit PnL/Win-Rate/Expectancy/Trades/Max-Drawdown/
+  Loss-Streak. Neue CSS-Klassen `.pnl-positive`/`.pnl-negative` für Vorzeichen-Farbcodierung.
+- `backtest/test_dashboard_leaderboard.py`: 15 DB-freie Tests mit realistischen `closed_ai_signals`-Fixtures
+  (echte Spaltennamen aus `analytics_export.py`, realistische Model-Tags RUB2/ABR2/MIS2) — Unit-Tests für
+  `bot_trade_rows`/`_leaderboard_row`/`_max_consecutive_losses`, Sortier-Tests (Mutation-Check: Sortierrichtung
+  geflippt → Test wird rot, verifiziert), ein Pflicht-Integrationstest (echte `AnalyticsExporter` → echte DuckDB
+  → echte Route → gerenderte HTML-Tabelle, inkl. Ausschluss eines Nur-Neutral-Bots), Postgres-Touch-Guard,
+  Index-Verdrahtung. `ruff check`/`format --check` grün, `regression_guard verify` grün (24 Fixtures).
+
 ## [2026-07-18] Fleet-Registry-Panel — Z1-Dashboard Feature 1 (T-2026-CU-9050-152)
 
 Erstes echte Feature-Panel auf der T-151-Shell: pro Bot Model-Tag · Live-Config (Kernparameter) · Status

@@ -110,6 +110,11 @@ body {
 .datatable--fleet th,
 .datatable--fleet td { text-align: left; }
 
+/* Leaderboard panel (Feature 2, T-2026-CU-9050-154): PnL/expectancy sign
+   coloring for at-a-glance scanning. */
+.pnl-positive { color: var(--fresh); }
+.pnl-negative { color: var(--stale); }
+
 /* Small screens: let the data table scroll instead of overflowing the panel. */
 @media (max-width: 640px) {
   .content { padding: 10px; }
