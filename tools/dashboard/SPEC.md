@@ -389,3 +389,99 @@ main/prod direkt, Push/PR (Orchestrator-Schritt).
 **Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
 Panel-Routen-Signaturen aus Feature 1-5.
 
+---
+
+## Feature 7 — Coin-Drilldown mit Ebenen-Kette (T-2026-CU-9050-159, Q11)
+
+Task: T-2026-CU-9050-159 · baut additiv auf T-131 (`_outcomes_cte`/`_bot_filter`/
+`_existing_outcome_tables`) und T-151 (Shell/Chart-Lifecycle, vendored
+Lightweight Charts 4.2.3) auf.
+
+### Intent
+Eine Ebenen-Kette: Coin-Selektor (listet nur Coins mit mindestens einem
+DECISIVEN Trade) -> das Panel zeigt fuer den gewaehlten Coin (1) eine
+Lightweight-Charts Preislinie (Entry->Exit-Punkte je Trade, verbunden in
+Close-Zeit-Reihenfolge) mit Win/Loss-farbigen Trade-Markern und (2) eine
+kompakte Trade-Tabelle (Close-Zeit, Bot/Modell, Richtung, Entry, Exit, PnL,
+Target-Hit).
+
+**SCOPING (bindend):** Volle OHLCV-Kerzen sind NICHT Teil dieses Features —
+der 25GB-Kerzen-Export wurde in T-131 vertagt und liegt nicht im
+DuckDB-Substrat. Das Panel rendert stattdessen die Preis-PFAD-Linie durch die
+Entry/Exit-Punkte der DECISIVEN Trades selbst (aus `closed_ai_signals`/
+`closed_trades`) — keine echten Marktkerzen. Dokumentiert als Follow-up (siehe
+"Out of Scope" unten + CHANGELOG.md).
+
+### Akzeptanzkriterien (binaer testbar)
+- [x] AK1: `analytics_api.coins_with_trades()` liefert die sortierte Liste der
+  Coins/Symbole mit mindestens einem DECISIVEN Trade (Trades ohne PnL /
+  Housekeeping-Status zaehlen nicht) — additive Coin-aware CTE
+  (`_outcomes_cte_with_coin`), dieselben `MICRO_PNL_PCT`/`MAX_ABS_PNL_PCT`-
+  Schwellen wie `_outcomes_cte`. — Test: `test_coins_with_trades_lists_only_decisive_coins`.
+- [x] AK2: `analytics_api.coin_trade_series(con, symbol)` liefert die nach
+  `closed_at` aufsteigend sortierten DECISIVEN Trades EINES Coins
+  (`{bot, direction, closed_at, entry, close_price, targets_hit, pnl_pct,
+  is_win}`); `targets_hit` ist `None` fuer eine `closed_trades`-Zeile (die
+  Tabelle hat keine solche Spalte) statt einer fabrizierten 0. — Test:
+  `test_coin_trade_series_returns_ordered_decisive_trades_for_one_coin`.
+- [x] AK3: Ein falscher Coin-Filter (Mutation-Check: Query auf einen ANDEREN
+  Coin als den gewaehlten) liefert eine ANDERE Trade-Menge — belegt, dass der
+  Filter tatsaechlich verdrahtet ist. — Test:
+  `test_coin_trade_series_wrong_coin_filter_yields_different_trades` (Mutation-Check).
+- [x] AK4: Unbekannter oder leerer Coin (nicht in `coins_with_trades()`)
+  liefert `{"coin": symbol, "trades": []}` statt eines Fehlers oder aller
+  Trades. — Test: `test_coin_trade_series_unknown_coin_returns_empty`.
+- [x] AK5: `GET /panels/coin-drilldown` rendert 200, den Coin-Selektor (nur
+  Coins mit Trades), eine Lightweight-Charts Preislinie
+  (`data-chart="coin-price-line"`) mit Win/Loss-Markern und die Trade-Tabelle,
+  END-TO-END gegen eine echte `AnalyticsExporter`/DuckDB-Fixture mit mehreren
+  Coins x mehreren Trades. — Test: `test_panel_coin_drilldown_renders_correct_series_and_table`
+  (Integrationstest).
+- [x] AK6: Kein Coin ausgewaehlt/unbekannter Coin degradiert sauber (kein 500,
+  Hinweistext statt Chart/Tabelle); leeres Substrat (keine Trades ueberhaupt)
+  ebenso. — Test: `test_panel_coin_drilldown_unknown_coin_shows_clean_message`,
+  `test_panel_coin_drilldown_empty_substrate`.
+- [x] AK7: Lightweight-Charts-Factory `coin-price-line` disposed via
+  `chart.remove()` (NICHT ECharts `.dispose()`), via `chart_lifecycle.js`
+  registriert. — Test: `test_coin_price_line_factory_registered_in_panels_js`.
+- [x] AK8: Kein Postgres-Zugriff, DB-frei testbar. — Test:
+  `test_panel_coin_drilldown_never_touches_postgres`.
+
+### Out of Scope
+- Volle OHLCV-Kerzen (Candlesticks) — FOLLOW-UP, gated auf den Kerzen-Export
+  aus T-131 (25GB, vertagt). Sobald der Export existiert, kann die
+  Preislinie durch eine echte Lightweight-Charts Candlestick-Series ersetzt
+  werden.
+- Die anderen Panels neu bauen.
+- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
+  `coin_trade_series()`/`coins_with_trades()` direkt auf, wie die anderen
+  additiven Panel-Routen seit Feature 3 es tun).
+- Mehrere Coins gleichzeitig im Chart (nur EIN Coin pro Panel-Zustand, wie vom
+  Q11-Kuratierungstext gefordert).
+
+### Why Build (statt Reuse)
+Coin-Level-Drilldown auf dem bestehenden T-131-Substrat + eine
+Lightweight-Charts-Preislinie mit Trade-Markern ist projektspezifische
+Verdrahtung; keine Library liefert das. `_outcomes_cte`/`_bot_filter`/
+`_existing_outcome_tables` bleiben unveraendert (Feature 2/3/6 haengen davon
+ab) — die Coin-Variante ist eine eigene, additive CTE mit derselben
+Decisive-Definition (identische Schwellen-Konstanten).
+
+### Scope of consent
+**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktion(en)
+`coins_with_trades`/`coin_trade_series`/`_outcomes_cte_with_coin`, bestehende
+Funktionen unveraendert), `tools/dashboard/app.py` additiv (neue Route
+`/panels/coin-drilldown`, neue Kontext-Funktion(en), `PANEL_SOURCES`-Eintrag),
+`tools/dashboard/templates/panels/coin_drilldown.html` (neu) +
+`index.html`-Einbindung, `tools/dashboard/static/js/panels.js` additiv (neue
+Lightweight-Charts-Factory `coin-price-line`), `backtest/test_dashboard_coin_drilldown.py`
+neu, `CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-159`.
+**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
+Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
+`analytics_api`-Aggregatfunktionen (`_outcomes_cte`/`bot_trade_rows`/
+`bot_leaderboard`/`success_rate_timeseries`/`bot_regime_matrix`) inhaltlich
+umschreiben, volle OHLCV-Kerzen bauen, `--no-verify`, main/prod direkt,
+Push/PR (Orchestrator-Schritt).
+**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
+Panel-Routen-Signaturen aus Feature 1-6.
+

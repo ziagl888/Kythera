@@ -1,0 +1,87 @@
+{#
+  Coin drill-down fragment (Feature 7, T-2026-CU-9050-159, Q11 Ebenen-Kette).
+  Coin-Selektor (only coins with decisive trades, via
+  analytics_api.coins_with_trades()) -> per-coin Lightweight Charts price
+  line (entry->exit points per trade, connected in close-time order) with
+  win/loss-coloured trade markers + a compact trade table (close_time,
+  bot/model, direction, entry, exit, pnl, target-hit).
+
+  OUT OF SCOPE: full OHLCV candles (T-131 deferred the 25GB candle export) —
+  this renders only the decisive-trade price PATH, never a fabricated market
+  candle. See tools/dashboard/SPEC.md Feature 7 "Out of Scope".
+
+  Self-updating widget: THIS div (including its own hx-get) is the swap
+  target (outerHTML), same self-updating pattern as success-rate-timeseries/
+  regime-heatmap — a coin-selector change re-fetches with the new coin baked
+  into the query string, and the periodic poll keeps using whatever coin is
+  CURRENTLY selected (not the original default).
+#}
+<div id="coin-drilldown-body"
+     hx-get="{{ url_for('panel_coin_drilldown') }}{% if selected_coin %}?coin={{ selected_coin }}{% endif %}"
+     hx-trigger="load, every {{ poll_seconds }}s"
+     hx-swap="outerHTML">
+
+  {% include "_panel_freshness_badge.html" %}
+
+  {% if coins %}
+  <form class="panel__filters"
+        hx-get="{{ url_for('panel_coin_drilldown') }}"
+        hx-target="#coin-drilldown-body"
+        hx-swap="outerHTML"
+        hx-trigger="change">
+    <fieldset class="panel__filter-group">
+      <legend>Coin</legend>
+      <select name="coin">
+        {% for c in coins %}
+        <option value="{{ c }}" {% if c == selected_coin %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </fieldset>
+  </form>
+  {% endif %}
+
+  {% if not coins %}
+    <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+  {% elif not selected_coin %}
+    <p class="muted">Unbekannter Coin{% if requested_coin %} ("{{ requested_coin }}"){% endif %} — bitte einen Coin aus der Liste waehlen.</p>
+  {% elif not trades %}
+    <p class="muted">Keine entschiedenen Trades fuer {{ selected_coin }}.</p>
+  {% else %}
+    <p class="panel__asof">{{ selected_coin }} &middot; {{ trades | length }} entschiedene(r) Trade(s)</p>
+
+    <div class="chart"
+         data-chart="coin-price-line"
+         data-series="coin-drilldown-points"
+         data-meta="coin-drilldown-meta"
+         style="width:100%;height:280px"></div>
+    <script type="application/json" id="coin-drilldown-points">{{ chart_points | tojson }}</script>
+    <script type="application/json" id="coin-drilldown-meta">{{ {"markers": chart_markers} | tojson }}</script>
+
+    <table class="datatable datatable--coin-drilldown">
+      <thead>
+        <tr>
+          <th>Close-Zeit</th>
+          <th>Bot/Modell</th>
+          <th>Richtung</th>
+          <th>Entry</th>
+          <th>Exit</th>
+          <th>PnL %</th>
+          <th>Target Hit</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in trades %}
+        <tr>
+          <td>{{ t.closed_at }}</td>
+          <td>{{ t.bot }}</td>
+          <td>{{ t.direction }}</td>
+          <td>{{ "%.6g"|format(t.entry) }}</td>
+          <td>{{ "%.6g"|format(t.close_price) }}</td>
+          <td class="{% if t.pnl_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">{{ "%.4f"|format(t.pnl_pct) }}%</td>
+          <td>{% if t.targets_hit is none %}&mdash;{% else %}{{ t.targets_hit }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
