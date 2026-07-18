@@ -23,6 +23,15 @@ root-level `*_meta.json`-Artefakte werden gelesen, kein Postgres-Zugriff.
   fehlender Config → „—", nie fabriziertes „seit wann aktiv"), Route liefert 200 mit korrekten Zeilen, Panel im
   Index verdrahtet, kein Postgres-Touch, plus ein Smoke-Test gegen die echten Repo-Defaults (kein
   `control/parked/`-Verzeichnis in diesem Worktree → alle Bots rendern Active, kein Crash).
+## [2026-07-18] Shadow-Sichtbarkeits-Vorschau auf Englisch (T-2026-CU-9050-153)
+
+Kleiner Folge-Fix zu T-150: die Shadow-Vorschau-Nachricht im Test-Channel (`_shadow_preview_message`) ist jetzt
+Englisch statt Deutsch (Operator-Wunsch — die Channel-Posts sollen englisch sein). Format bleibt bewusst
+**NICHT Cornix-parsebar** (kein `Entry:`/`Targets:`/`Stop Loss:`, keine Signal-Struktur): „👻 SHADOW PREVIEW —
+NOT a trade signal, no Cornix / Model … · Coin … · Side … / Ref-Entry … · Ref-SL … · Ref-TPs … / (monitored in
+ai_signals only — never reaches a trading channel)". Test-Assertions (`backtest/test_shadow_test_channel.py`) auf
+die englischen Strings + den Non-Cornix-Trigger-Check angepasst (4/4 grün). Reiner String-Change, keine Logik-/
+Sicherheits-Änderung. Aktivierung: bereits live über CH_SHADOW_TEST — greift nach dem nächsten Fleet-Restart.
 
 ## [2026-07-17] Z1-Dashboard-Shell — Task 0 Fundament (T-2026-CU-9050-151)
 
