@@ -56,14 +56,27 @@ def filter_usdt_perpetuals(exchange_info: dict) -> list[str]:
     ``exchangeInfo`` payload.
 
     The one canonical filter (P2.16): ``quoteAsset == 'USDT'`` and
-    ``status == 'TRADING'`` and ``contractType == 'PERPETUAL'``. Both former
-    writers converged on exactly this filter after the ETHU incident; it now
-    lives here once so the two call sites cannot drift again.
+    ``status == 'TRADING'`` and ``contractType == 'PERPETUAL'`` and the symbol
+    has the ``<BASE>USDT`` shape (``looks_like_usdt_perp``). Both former writers
+    converged on the first three checks after the ETHU incident; it now lives
+    here once so the two call sites cannot drift again.
+
+    The shape guard (T-2026-CU-9050-162) drops symbols whose base is not
+    ``[A-Z0-9]+`` — Binance occasionally lists meme perps with non-ASCII symbols
+    (e.g. Chinese-character bases). Those are NOT valid per-coin table
+    identifiers, so ``core.candles.validate_symbol`` rejects them
+    ("invalid symbol for table identifier") and every candle-reading bot that
+    loaded coins.json directly (bypassing ``load_coins``' identical
+    ``[A-Z0-9]+`` guard) errored on them per scan. Filtering at the single
+    writer keeps them out of the universe fleet-wide.
     """
     return [
         s["symbol"]
         for s in exchange_info.get("symbols", [])
-        if s.get("quoteAsset") == "USDT" and s.get("status") == "TRADING" and s.get("contractType") == "PERPETUAL"
+        if s.get("quoteAsset") == "USDT"
+        and s.get("status") == "TRADING"
+        and s.get("contractType") == "PERPETUAL"
+        and looks_like_usdt_perp(s.get("symbol", ""))
     ]
 
 

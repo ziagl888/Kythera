@@ -1,3 +1,20 @@
+## [2026-07-18] Nicht-ASCII-Meme-Symbole aus der Universe filtern (T-2026-CU-9050-162)
+
+Bugfix: Binance listet gelegentlich USDT-Perps mit Nicht-ASCII-Symbolen (chinesische Zeichen, z. B. `龙虾USDT`,
+`我踏马来了USDT`, `币安人生USDT` — 3 von 530). Der einzige coins.json-Writer (`core/coins.py::filter_usdt_perpetuals`,
+P2.16) übernahm das Binance-`symbol` verbatim (nur quote/status/contractType geprüft) → diese Symbole landeten in
+`coins.json`. Jeder Kerzen-lesende Bot, der `coins.json` DIREKT lädt (Bot 14/ATB und ~12 weitere, die
+`load_coins`' `[A-Z0-9]+`-Filter umgehen), reichte sie an `core.candles.read_candles` weiter → `validate_symbol`
+warf pro Scan **„invalid symbol for table identifier"** (u. a. schlug die ATB2-Shadow-Emission für diese Coins fehl,
+Log-Noise).
+
+**Fix am EINEN Writer:** `filter_usdt_perpetuals` wendet jetzt zusätzlich die bereits vorhandene Shape-Predikat
+`looks_like_usdt_perp` (`[A-Z0-9]+USDT`) an → Nicht-ASCII-Basen fallen an der Quelle raus, fleet-weit, ohne
+Änderung an den ~13 Direkt-Lesern. Robust auch für künftige Meme-Listings. 2 neue Tests
+(`backtest/test_coins_writer.py`: Nicht-ASCII-Symbol wird gedroppt, `looks_like_usdt_perp` False/True; 10/10 grün).
+Aktiv nach Deploy + Fleet-Restart (der coins.json-Writer in `1_data_ingestion` schreibt die bereinigte Liste beim
+nächsten Ingestion-Start). Kein Signal-/Handelspfad berührt.
+
 ## [2026-07-18] Overnight-Digest-Startseite — Z1-Dashboard Feature 8 (T-2026-CU-9050-160)
 
 Achter Feature-Baustein auf der T-151-Shell: eine Digest-Zusammenfassung ganz oben auf der Startseite
