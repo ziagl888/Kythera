@@ -599,6 +599,152 @@ def bot_regime_matrix(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Coin drill-down (Feature 7, T-2026-CU-9050-159)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Same source tables as _OUTCOME_TABLES, additionally carrying the per-row
+# coin/symbol column name (closed_ai_signals: symbol, closed_trades: coin) and
+# the target-hit column where the table has one (closed_trades does not —
+# None means "project a NULL", never a fabricated 0). Kept as its own
+# tuple/CTE builder rather than widening _OUTCOME_TABLES/_outcomes_cte in
+# place: those two feed Feature 2/3/6's bot-level aggregates and stay
+# byte-for-byte unchanged (CLAUDE.md: additive only, no core aggregate
+# rewritten to add a column three other features don't need).
+_OUTCOME_TABLES_WITH_COIN = (
+    ("closed_ai_signals", "model", "close_time", "symbol", "targets_hit"),
+    ("closed_trades", "strategy", "posted", "coin", None),
+)
+
+
+def _existing_outcome_tables_with_coin(
+    con: duckdb.DuckDBPyConnection,
+) -> list[tuple[str, str, str, str, str | None]]:
+    present = {
+        r[0]
+        for r in con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").fetchall()
+    }
+    return [t for t in _OUTCOME_TABLES_WITH_COIN if t[0] in present]
+
+
+def _outcomes_cte_with_coin(tables: Sequence[tuple[str, str, str, str, str | None]]) -> str:
+    """Build the coin-aware ``flagged`` CTE for the drill-down panel.
+
+    Uses the IDENTICAL pnl/is_decisive/is_win predicate ``_outcomes_cte``
+    builds (same ``MICRO_PNL_PCT``/``MAX_ABS_PNL_PCT`` thresholds, same
+    housekeeping-status exclusion via DELISTED/CLEANUP/ORPHAN) — a trade is
+    decisive here IFF it would be decisive in ``_outcomes_cte``. The
+    projection is wider: per-row coin, entry, close_price and targets_hit
+    columns the drill-down table/chart need, which ``_outcomes_cte`` does not
+    carry (Feature 2/3/6 never needed them).
+    """
+    parts = []
+    for table, bot_col, ts_col, coin_col, hit_col in tables:
+        hit_expr = f'"{hit_col}"' if hit_col else "CAST(NULL AS INTEGER)"
+        parts.append(
+            f'SELECT "{bot_col}" AS bot, "{coin_col}" AS coin, direction, entry, close_price, '
+            f'status, "{ts_col}" AS closed_at, {hit_expr} AS targets_hit FROM "{table}"'
+        )
+    unions = " UNION ALL ".join(parts)
+    return f"""
+WITH outcomes AS (
+    {unions}
+),
+scored AS (
+    SELECT
+        bot, coin, direction, entry, close_price, closed_at, targets_hit,
+        CASE
+            WHEN entry > 0 AND close_price > 0 AND upper(direction) IN ('LONG', 'SHORT')
+            THEN (CASE WHEN upper(direction) = 'SHORT' THEN -1.0 ELSE 1.0 END)
+                 * (close_price - entry) / entry * 100.0
+            ELSE NULL
+        END AS pnl_pct,
+        (upper(coalesce(status, '')) LIKE '%DELISTED%'
+         OR upper(coalesce(status, '')) LIKE '%CLEANUP%'
+         OR upper(coalesce(status, '')) LIKE '%ORPHAN%') AS is_housekeeping
+    FROM outcomes
+),
+flagged AS (
+    SELECT
+        bot, coin, direction, entry, close_price, closed_at, targets_hit, pnl_pct,
+        (pnl_pct IS NOT NULL AND NOT is_housekeeping
+         AND abs(pnl_pct) > {MICRO_PNL_PCT} AND abs(pnl_pct) <= {MAX_ABS_PNL_PCT}) AS is_decisive,
+        (pnl_pct IS NOT NULL AND NOT is_housekeeping
+         AND abs(pnl_pct) > {MICRO_PNL_PCT} AND abs(pnl_pct) <= {MAX_ABS_PNL_PCT}
+         AND pnl_pct > 0) AS is_win
+    FROM scored
+)"""
+
+
+def coins_with_trades(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """Distinct coin/symbol values with at least one DECISIVE trade, sorted.
+
+    Feeds the coin-selector list for the drill-down panel (Feature 7,
+    T-2026-CU-9050-159) — a coin with only neutral/housekeeping rows never
+    appears, mirroring ``bot_leaderboard``'s "only bots with a decisive trade"
+    convention. Empty list when no outcome table exists yet (mirrors every
+    other analytics_api aggregate's empty-substrate degrade).
+    """
+    tables = _existing_outcome_tables_with_coin(con)
+    if not tables:
+        return []
+    cte = _outcomes_cte_with_coin(tables)
+    rows = con.execute(
+        f"{cte} SELECT DISTINCT coin FROM flagged WHERE is_decisive AND coin IS NOT NULL ORDER BY coin"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def coin_trade_series(con: duckdb.DuckDBPyConnection, symbol: str | None) -> dict[str, Any]:
+    """Ordered DECISIVE-trade rows for ONE coin — the drill-down panel's data
+    source (Feature 7, T-2026-CU-9050-159).
+
+    Args:
+        con: an open DuckDB connection (typically ``read_only=True``).
+        symbol: the coin/symbol to filter to. ``None``, empty, or a value not
+            present in :func:`coins_with_trades` all degrade to an empty trade
+            list — never a 500, and never every coin's trades leaking through
+            on a falsy value. Unlike ``_bot_filter``'s "empty == unfiltered"
+            multiselect convention, a single-coin drill-down must show only
+            its OWN coin's trades or nothing at all.
+
+    Returns a JSON-serialisable dict:
+        {"coin": symbol, "trades": [{bot, direction, closed_at, entry,
+            close_price, targets_hit, pnl_pct, is_win}, ...]}
+    ``trades`` is ordered by ``closed_at`` ascending — the order the
+    price-line chart needs to draw entry->exit points left to right.
+    ``targets_hit`` is ``None`` for a ``closed_trades`` row (that table has no
+    such column) — never a fabricated 0. ``entry``/``close_price`` are always
+    present for a decisive row (the definition itself requires ``entry > 0
+    AND close_price > 0``).
+    """
+    if not symbol:
+        return {"coin": symbol, "trades": []}
+    tables = _existing_outcome_tables_with_coin(con)
+    if not tables:
+        return {"coin": symbol, "trades": []}
+    cte = _outcomes_cte_with_coin(tables)
+    rows = con.execute(
+        f"{cte} SELECT bot, direction, closed_at, entry, close_price, targets_hit, pnl_pct, is_win "
+        "FROM flagged WHERE is_decisive AND coin = ? ORDER BY closed_at",
+        [symbol],
+    ).fetchall()
+    trades = [
+        {
+            "bot": bot,
+            "direction": direction,
+            "closed_at": closed_at.isoformat() if hasattr(closed_at, "isoformat") else str(closed_at),
+            "entry": float(entry),
+            "close_price": float(close_price),
+            "targets_hit": int(targets_hit) if targets_hit is not None else None,
+            "pnl_pct": round(float(pnl_pct), 4),
+            "is_win": bool(is_win),
+        }
+        for bot, direction, closed_at, entry, close_price, targets_hit, pnl_pct, is_win in rows
+    ]
+    return {"coin": symbol, "trades": trades}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Thin Flask blueprint (framework decision T-2026-CU-9050-130 still open)
 # ─────────────────────────────────────────────────────────────────────────────
 

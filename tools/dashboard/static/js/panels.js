@@ -181,4 +181,49 @@
       chart.dispose();
     };
   });
+
+  // Coin drill-down panel (Feature 7, T-2026-CU-9050-159): a decisive-trade
+  // PRICE PATH (entry->exit points per trade, connected in close-time order)
+  // via TradingView Lightweight Charts (vendored 4.2.3, static/vendor/), with
+  // win/loss-coloured markers per trade. NOT full OHLCV candles — out of
+  // scope (T-131 candle export pending), see tools/dashboard/SPEC.md Feature 7.
+  // Series shape: [{time, value}, ...] (paired entry/exit points, already
+  // ordered/deduped for strictly-increasing time by app.py's
+  // _coin_chart_series()). Meta shape: {markers: [{time, position, color,
+  // shape, text}, ...]} — see app.py's _coin_drilldown_context().
+  ChartLifecycle.registerFactory("coin-price-line", function (el) {
+    var points = readSeries(el);
+    var meta = readMeta(el);
+    if (!window.LightweightCharts) {
+      el.innerHTML =
+        '<p class="muted">Diagramm nicht verfügbar (Lightweight-Charts-Vendor-Datei fehlt).</p>';
+      return null;
+    }
+    var chart = window.LightweightCharts.createChart(el, {
+      width: el.clientWidth,
+      height: el.clientHeight || 280,
+      layout: { background: { color: "transparent" }, textColor: "#8a94a3" },
+      grid: {
+        vertLines: { color: "rgba(138,148,163,0.1)" },
+        horzLines: { color: "rgba(138,148,163,0.1)" },
+      },
+      timeScale: { timeVisible: true, secondsVisible: false },
+    });
+    var series = chart.addLineSeries({ color: "#4c9aff", lineWidth: 2 });
+    series.setData(points);
+    if (meta.markers && meta.markers.length) {
+      series.setMarkers(meta.markers);
+    }
+    var onResizeCd = function () { chart.applyOptions({ width: el.clientWidth }); };
+    window.addEventListener("resize", onResizeCd);
+    // Lightweight Charts' own disposer is chart.remove() — NOT ECharts'
+    // .dispose() (chart_lifecycle.js's resolveDisposer() supports both via
+    // duck-typing, but this factory returns an explicit teardown function,
+    // same pattern as the two ECharts factories above, so the resize
+    // listener is torn down alongside the chart itself).
+    return function () {
+      window.removeEventListener("resize", onResizeCd);
+      chart.remove();
+    };
+  });
 })(window, document);

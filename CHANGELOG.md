@@ -1,3 +1,38 @@
+## [2026-07-18] Coin-Drilldown mit Ebenen-Kette — Z1-Dashboard Feature 7 (T-2026-CU-9050-159)
+
+Siebter Feature-Baustein auf der T-151-Shell: eine Ebenen-Kette — Coin-Selektor (listet nur Coins mit mindestens
+einem entschiedenen Trade) -> Preislinie + Trade-Marker + Trade-Tabelle fuer den gewaehlten Coin. Volle
+OHLCV-Kerzen sind explizit NICHT Scope (der 25GB-Kerzen-Export wurde in T-131 vertagt und liegt nicht im
+DuckDB-Substrat) — dokumentiert als Follow-up, gated auf den Kerzen-Export.
+
+- `tools/analytics_api.py`: neue additive Funktionen `coins_with_trades()` + `coin_trade_series()` ueber eine
+  eigene coin-aware CTE (`_outcomes_cte_with_coin`) — dieselben `MICRO_PNL_PCT`/`MAX_ABS_PNL_PCT`-Schwellen wie
+  `_outcomes_cte`, aber mit Coin/Entry/Exit/Target-Hit-Projektion, die die bestehende CTE nicht traegt. Die
+  bestehenden Aggregatfunktionen (`_outcomes_cte`, `bot_trade_rows`, `bot_leaderboard`,
+  `success_rate_timeseries`, `bot_regime_matrix`) bleiben byte-fuer-byte unveraendert. `targets_hit` ist `None`
+  fuer eine `closed_trades`-Zeile (die Tabelle hat keine solche Spalte) — nie eine fabrizierte 0.
+- `tools/dashboard/app.py`: neue Route `GET /panels/coin-drilldown`, neuer `PANEL_SOURCES`-Eintrag
+  (`closed_ai_signals` + `closed_trades`), `_resolve_coin()` (kein `?coin=` -> erster verfuegbarer Coin;
+  unbekannter/leerer Wert -> sauberer Hinweis statt Fehler), `_coin_chart_series()` (Entry->Exit-Punkte je Trade
+  ueber `close_time`, deterministisch monoton bei Zeit-Kollisionen) + Win/Loss-Marker.
+- `tools/dashboard/templates/panels/coin_drilldown.html` (neu) + `index.html`: neues Panel mit Coin-Selektor,
+  Lightweight-Charts-Preislinie + Markern und Trade-Tabelle (Close-Zeit, Bot/Modell, Richtung, Entry, Exit, PnL,
+  Target-Hit); leerer/unbekannter Coin und leeres Substrat degradieren sauber (kein 500).
+- `tools/dashboard/static/js/panels.js`: neue Lightweight-Charts-Factory `coin-price-line` (vendored 4.2.3,
+  `createChart`/`addLineSeries`/`setMarkers`), via `chart_lifecycle.js` registriert — Disposal ueber
+  `chart.remove()` (die Lightweight-Charts-eigene API, NICHT ECharts' `.dispose()`).
+- `backtest/test_dashboard_coin_drilldown.py` (neu, 24 Tests): realistische Fixtures ueber BEIDE Outcome-Tabellen
+  (`closed_ai_signals` + `closed_trades`), Integrationstest ueber die echte
+  `AnalyticsExporter`→DuckDB→Route→HTML-Kette, Mutation-Check bestaetigt (manuell verifiziert): ein entfernter
+  Coin-Filter macht `test_coin_trade_series_wrong_coin_filter_yields_different_trades` rot. Getestet: Coin-Liste
+  nur mit entschiedenen Trades, Coin-Filter korrekt, unbekannter/leerer Coin sauber, leeres Substrat sauber,
+  kein Postgres, Chart-Factory-Registrierung inkl. `chart.remove()`-Disposal-Vertrag.
+- `tools/dashboard/SPEC.md`: neuer Feature-7-Abschnitt (AK1-AK8, Out-of-Scope, Scope of consent).
+- `ruff check .`/`ruff format --check .` gruen; `regression_guard verify` gruen (24 Fixtures); alle 176
+  bestehenden + neuen Dashboard-/Analytics-Tests gruen. `git diff --stat`: nur Additionen (443 Zeilen, 0
+  Loeschungen) — bestehende `analytics_api`-Aggregatfunktionen unveraendert bestaetigt.
+- **Follow-up:** volle OHLCV-Kerzen (Candlesticks) sind gated auf den vertagten Kerzen-Export aus T-131 (25GB).
+
 ## [2026-07-18] Bot x Regime Performance-Heatmap — Z1-Dashboard Feature 6 (T-2026-CU-9050-158)
 
 Sechster Feature-Baustein auf der T-151-Shell: eine ECharts-Heatmap (Zeilen = Bots, Spalten =

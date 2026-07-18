@@ -43,6 +43,7 @@ Invariants:
 from __future__ import annotations
 
 import argparse
+import calendar
 import datetime
 import json
 from pathlib import Path
@@ -60,6 +61,8 @@ from tools.analytics_api import (
     bot_leaderboard,
     bot_regime_matrix,
     build_analytics_blueprint,
+    coin_trade_series,
+    coins_with_trades,
     connect_ro,
     rolling_success_rate_series,
     success_rate_timeseries,
@@ -197,6 +200,10 @@ PANEL_SOURCES: dict[str, tuple[str, ...]] = {
     # table's — worst_case=True (panel_freshness_summary's default) already
     # picks whichever of the two is older.
     "regime-heatmap": ("closed_ai_signals", "regime_history"),
+    # Feature 7 (T-2026-CU-9050-159): the coin drill-down reads the same two
+    # outcome tables as the leaderboard/success-rate panels (via the coin-
+    # aware CTE), so its freshness shares that pair.
+    "coin-drilldown": ("closed_ai_signals", "closed_trades"),
 }
 
 # fleet-registry has no DuckDB sync to report a synced_at/last_row_ts for —
@@ -712,6 +719,123 @@ def _regime_heatmap_context(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Coin drill-down panel (Feature 7, T-2026-CU-9050-159)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Deliberate scope boundary (see tools/dashboard/SPEC.md Feature 7 "Out of
+# Scope"): full OHLCV candlesticks are NOT rendered here — the 25GB candle
+# export was deferred in T-131 and is not in the DuckDB substrate. This panel
+# draws only the decisive-trade PRICE PATH (entry->exit points per trade,
+# connected in close-time order), never a fabricated market candle.
+
+
+def _resolve_coin(raw_coin: str | None, coins: Sequence[str]) -> str | None:
+    """Resolve the requested ``?coin=`` query value to one of ``coins``.
+
+    No query value at all (``raw_coin is None`` — the very first, param-less
+    load) defaults to the FIRST available coin, so the drill-down shows
+    something useful immediately rather than an empty "please choose" state.
+    An EXPLICIT but unknown/empty value (present in the query string, just
+    not a coin with decisive trades) resolves to ``None`` — the caller then
+    renders a clean "unknown coin" hint, never silently substituting a
+    different coin's data for the one that was asked for.
+    """
+    if raw_coin is None:
+        return coins[0] if coins else None
+    return raw_coin if raw_coin in coins else None
+
+
+def _epoch_utc(iso_ts: str) -> int:
+    """Naive-local ISO datetime string -> UTC-labelled epoch seconds.
+
+    ``closed_at`` timestamps in this substrate are naive-local wall clocks
+    (TIMEZONE contract, see analytics_export/app.py module docstrings) — this
+    helper does NOT apply any zone conversion, it just maps the wall-clock
+    FIELDS onto an epoch via ``calendar.timegm`` (which treats a struct_time
+    as UTC without consulting the OS zone). That keeps the mapping a pure,
+    machine-independent function of the stored fields, appropriate for a
+    Lightweight Charts ``UTCTimestamp`` x-axis that only needs strictly
+    increasing, internally-consistent ordering — never a real UTC instant.
+    """
+    return calendar.timegm(datetime.datetime.fromisoformat(iso_ts).timetuple())
+
+
+def _coin_chart_series(trades: Sequence[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build the Lightweight Charts line-series points + trade markers for one
+    coin's ordered decisive trades.
+
+    Each trade contributes TWO line points — an "entry" point just before its
+    ``closed_at`` and an "exit" point AT its ``closed_at`` — so the rendered
+    line traces the entry->exit price move of every decisive trade in close-
+    time order (SPEC.md: "Preislinie (Entry->Exit-Punkte ueber close_time)").
+    Lightweight Charts requires strictly increasing point times; consecutive
+    trades whose entry/exit epochs would collide or go backwards are bumped
+    forward by whole seconds deterministically, so ordering never depends on
+    real-world trade spacing.
+
+    Markers sit at each trade's exit point, colour/shape-coded win (green,
+    up-arrow) vs. loss (red, down-arrow) — the "Win/Loss-farbige Marker je
+    Trade" requirement.
+    """
+    points: list[dict[str, Any]] = []
+    markers: list[dict[str, Any]] = []
+    last_t: int | None = None
+    for trade in trades:
+        exit_t = _epoch_utc(trade["closed_at"])
+        entry_t = exit_t - 1
+        if last_t is not None and entry_t <= last_t:
+            entry_t = last_t + 1
+        if exit_t <= entry_t:
+            exit_t = entry_t + 1
+        points.append({"time": entry_t, "value": trade["entry"]})
+        points.append({"time": exit_t, "value": trade["close_price"]})
+        markers.append(
+            {
+                "time": exit_t,
+                "position": "aboveBar" if trade["is_win"] else "belowBar",
+                "color": "#3fb950" if trade["is_win"] else "#d29922",
+                "shape": "arrowUp" if trade["is_win"] else "arrowDown",
+                "text": f"{trade['bot']} {trade['pnl_pct']:+.2f}%",
+            }
+        )
+        last_t = exit_t
+    return points, markers
+
+
+def _coin_drilldown_context(duckdb_path: str, *, raw_coin: str | None) -> dict[str, Any]:
+    """Server-side render context for the coin drill-down panel.
+
+    ``raw_coin`` is the UNRESOLVED ``?coin=`` query value (``None`` when the
+    param is absent at all) — resolution against the actual coin list happens
+    here via :func:`_resolve_coin`, mirroring every other panel context's
+    "resolve inside the context, never trust the raw query value past this
+    point" contract.
+    """
+    con = connect_ro(duckdb_path)
+    try:
+        coins = coins_with_trades(con)
+        selected_coin = _resolve_coin(raw_coin, coins)
+        payload = coin_trade_series(con, selected_coin) if selected_coin else {"coin": raw_coin, "trades": []}
+        freshness_rows = data_freshness(con)
+    finally:
+        con.close()
+
+    trades = payload["trades"]
+    chart_points, chart_markers = _coin_chart_series(trades)
+
+    return {
+        "coins": coins,
+        "selected_coin": selected_coin,
+        "requested_coin": raw_coin,
+        "trades": trades,
+        "chart_points": chart_points,
+        "chart_markers": chart_markers,
+        "poll_seconds": PANEL_POLL_SECONDS,
+        "freshness": panel_freshness_summary(freshness_rows, "coin-drilldown"),
+    }
+
+
 def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app for the Z1 dashboard shell.
 
@@ -788,6 +912,16 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         return render_template(
             "panels/regime_heatmap.html", **_regime_heatmap_context(path, metric=metric)
         )
+
+    @app.get("/panels/coin-drilldown")
+    def panel_coin_drilldown():
+        # Feature 7 (T-2026-CU-9050-159): raw_coin stays None when the query
+        # param is absent entirely (vs. an explicit empty string) — that
+        # distinction is what lets _resolve_coin default to the first coin on
+        # a param-less first load while still showing a clean "unknown coin"
+        # message for a genuinely bad ?coin= value.
+        raw_coin = request.args.get("coin")
+        return render_template("panels/coin_drilldown.html", **_coin_drilldown_context(path, raw_coin=raw_coin))
 
     return app
 
