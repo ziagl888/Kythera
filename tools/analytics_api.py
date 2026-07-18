@@ -928,6 +928,204 @@ def overnight_digest(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Read-only event feed (Feature 9, T-2026-CU-9050-161)
+# ─────────────────────────────────────────────────────────────────────────────
+
+DEFAULT_EVENT_FEED_WINDOW_HOURS = 24
+
+# How many biggest wins / biggest losses (each side counted separately, via
+# is_win — never just the N most extreme pnl_pct values, so a window with
+# very few decisive trades can never let one side crowd out the other) become
+# "notable trade" events per event_feed() call.
+NOTABLE_TRADES_PER_SIDE = 3
+
+
+def _regime_transition_events(con: duckdb.DuckDBPyConnection, as_of: Any, window_hours: int) -> list[dict[str, Any]]:
+    """Real regime TRANSITIONS (a row whose ``regime`` differs from the
+    immediately preceding row's, via the identical ``LAG``-window logic
+    :func:`_regime_changes_in_window` uses to COUNT them) inside the trailing
+    ``window_hours`` window ending at ``as_of`` — as typed event dicts
+    carrying the full from->to detail that function's plain count discards.
+
+    Deliberately kept as its own sibling query rather than widening
+    ``_regime_changes_in_window`` in place (that function stays byte-for-byte
+    unchanged, same "additive sibling, not a rewritten core aggregate"
+    convention ``_outcomes_cte_with_coin`` already set next to
+    ``_outcomes_cte``). Assumes the caller has already verified
+    ``regime_history`` exists (mirrors ``_regime_changes_in_window``'s own
+    precondition) — not itself substrate-existence-safe.
+    """
+    rows = con.execute(
+        "WITH ordered AS ("
+        "    SELECT ts, regime, lag(regime) OVER (ORDER BY ts) AS prev_regime "
+        "    FROM regime_history WHERE regime IS NOT NULL"
+        ") "
+        "SELECT ts, prev_regime, regime FROM ordered "
+        "WHERE prev_regime IS NOT NULL AND regime != prev_regime "
+        f"AND ts > (CAST(? AS TIMESTAMP) - INTERVAL {int(window_hours)} HOUR) "
+        "AND ts <= CAST(? AS TIMESTAMP) "
+        "ORDER BY ts",
+        [as_of, as_of],
+    ).fetchall()
+    return [
+        {
+            "type": "regime_change",
+            "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            "title": f"Regime-Wechsel: {prev_regime} → {regime}",
+            "detail": f"{prev_regime} → {regime}",
+        }
+        for ts, prev_regime, regime in rows
+    ]
+
+
+def _notable_trade_events(
+    con: duckdb.DuckDBPyConnection,
+    tables: Sequence[tuple[str, str, str, str, str | None]],
+    as_of: Any,
+    window_hours: int,
+    *,
+    bots: Sequence[str] | None = None,
+    per_side: int = NOTABLE_TRADES_PER_SIDE,
+) -> list[dict[str, Any]]:
+    """Biggest win(s)/loss(es) inside the trailing ``window_hours`` window
+    ending at ``as_of`` — as typed event dicts.
+
+    Reuses the coin-aware CTE (:func:`_outcomes_cte_with_coin`, built from the
+    caller-supplied ``tables`` from :func:`_existing_outcome_tables_with_coin`)
+    and the identical half-open window convention :func:`overnight_digest`
+    uses — a trade counts here iff it would count there. Splits the decisive
+    trades on ``is_win`` (not on sorting ``pnl_pct`` and slicing both ends) so
+    the winner/loser sides never overlap even when the window holds fewer
+    than ``2 * per_side`` decisive trades.
+    """
+    cte = _outcomes_cte_with_coin(tables)
+    params: list[Any] = [as_of, as_of]
+    bot_sql = _bot_filter(bots, params)
+    rows = con.execute(
+        f"{cte} SELECT bot, coin, closed_at, pnl_pct, is_win FROM flagged "
+        "WHERE is_decisive AND bot IS NOT NULL "
+        f"AND closed_at > (CAST(? AS TIMESTAMP) - INTERVAL {int(window_hours)} HOUR) "
+        "AND closed_at <= CAST(? AS TIMESTAMP)"
+        f"{bot_sql}",
+        params,
+    ).fetchall()
+    if not rows:
+        return []
+
+    trades = [
+        {"bot": bot, "coin": coin, "closed_at": closed_at, "pnl_pct": float(pnl_pct), "is_win": bool(is_win)}
+        for bot, coin, closed_at, pnl_pct, is_win in rows
+    ]
+    winners = sorted((t for t in trades if t["is_win"]), key=lambda t: t["pnl_pct"], reverse=True)[:per_side]
+    losers = sorted((t for t in trades if not t["is_win"]), key=lambda t: t["pnl_pct"])[:per_side]
+
+    def _event(t: dict[str, Any]) -> dict[str, Any]:
+        ts = t["closed_at"]
+        return {
+            "type": "notable_trade",
+            "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            "title": f"{'Gewinn' if t['is_win'] else 'Verlust'}: {t['coin']} ({t['bot']})",
+            "detail": f"{t['pnl_pct']:+.2f}%",
+        }
+
+    return [_event(t) for t in (*winners, *losers)]
+
+
+def _latest_event_anchor(
+    con: duckdb.DuckDBPyConnection,
+    tables: Sequence[tuple[str, str, str, str, str | None]],
+    has_regime: bool,
+) -> Any:
+    """Data-anchored ``as_of`` for :func:`event_feed`: ``max(closed_at)``
+    across the outcome tables when any exist (the same data-anchored, never
+    wall-clock, convention :func:`overnight_digest` uses), falling back to
+    ``max(ts)`` from ``regime_history`` so the feed still anchors to
+    something when the substrate carries regime classifications but no trade
+    outcomes yet. ``None`` only when the substrate is fully empty of both.
+    """
+    if tables:
+        cte = _outcomes_cte_with_coin(tables)
+        row = con.execute(f"{cte} SELECT max(closed_at) FROM flagged").fetchone()
+        candidate = row[0] if row and row[0] is not None else None
+        if candidate is not None:
+            return candidate
+    if has_regime:
+        row = con.execute("SELECT max(ts) FROM regime_history").fetchone()
+        return row[0] if row and row[0] is not None else None
+    return None
+
+
+def event_feed(
+    con: duckdb.DuckDBPyConnection,
+    window_hours: int = DEFAULT_EVENT_FEED_WINDOW_HOURS,
+    *,
+    as_of: Any = None,
+    bots: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Read-only, chronologically-DESCENDING event feed over a trailing
+    ``window_hours`` window — the event-log panel's data source (Feature 9,
+    T-2026-CU-9050-161).
+
+    Consolidates two typed event kinds from the DuckDB substrate, each built
+    from a query already proven for a sibling feature (nothing here rewrites
+    an existing aggregate):
+      * ``"regime_change"`` — real regime TRANSITIONS from ``regime_history``
+        (:func:`_regime_transition_events`, the same ``LAG``-window logic
+        :func:`_regime_changes_in_window` (Feature 8) uses to count them).
+      * ``"notable_trade"`` — the biggest win(s)/loss(es) in the window
+        (:func:`_notable_trade_events`, the coin-aware decisive-trade CTE
+        Feature 7/8 already built).
+
+    WINDOW / TIMEZONE: identical convention to :func:`overnight_digest` —
+    ``as_of`` defaults to a data-anchored value (never a wall-clock "now",
+    see :func:`_latest_event_anchor`) and the window itself is the same
+    half-open trailing convention (``ts/closed_at > as_of - INTERVAL
+    window_hours HOUR AND <= as_of``) every rolling window in this module
+    already uses — never mixing the naive-local timestamp space with a real
+    UTC clock (TIMEZONE contract, see analytics_export module docstring).
+
+    Args:
+        con: an open DuckDB connection (typically ``read_only=True``).
+        window_hours: trailing-hour window width (default 24h).
+        as_of: anchor for the window; defaults to the latest data point in
+            the substrate (outcome tables, else ``regime_history``).
+        bots: optional bot-multiselect filter — narrows ``notable_trade``
+            events only; regime transitions carry no bot dimension.
+
+    Returns a JSON-serialisable dict:
+        {"as_of": ISO|None, "window_hours": int,
+         "events": [{"type", "ts", "title", "detail"}, ...]}
+    ``events`` is sorted by ``ts`` DESCENDING (newest first — an event log,
+    not a chart series) with ``type`` as a deterministic tie-breaker for
+    same-instant events. An empty window (substrate has data, but nothing
+    falls inside ``window_hours``) or a fully empty substrate both degrade to
+    ``events: []`` — never a 500, never a fabricated event.
+    """
+    empty: dict[str, Any] = {"as_of": None, "window_hours": window_hours, "events": []}
+
+    tables = _existing_outcome_tables_with_coin(con)
+    has_regime = _regime_history_present(con)
+
+    if as_of is None:
+        as_of = _latest_event_anchor(con, tables, has_regime)
+    if as_of is None:
+        return empty
+
+    events: list[dict[str, Any]] = []
+    if tables:
+        events.extend(_notable_trade_events(con, tables, as_of, window_hours, bots=bots))
+    if has_regime:
+        events.extend(_regime_transition_events(con, as_of, window_hours))
+    events.sort(key=lambda e: (e["ts"], e["type"]), reverse=True)
+
+    return {
+        "as_of": as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of),
+        "window_hours": window_hours,
+        "events": events,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Thin Flask blueprint (framework decision T-2026-CU-9050-130 still open)
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -1,3 +1,34 @@
+## [2026-07-18] Read-only Event-Feed — Z1-Dashboard Feature 9, letztes Panel (T-2026-CU-9050-161)
+
+Neunter und letzter Feature-Baustein des Z1-Dashboard-Rewrites: ein chronologischer (neueste zuerst)
+Event-Feed, der Regime-Übergänge (`regime_history`) und Notable Trades (größte Wins/Losses aus
+`closed_ai_signals`/`closed_trades`) zu einer typisierten Liste konsolidiert. S10 ist bewusst ein
+"einfaches Eingriffs-Log", kein Annotations-Editor — ein SCHREIBENDES Annotations-Feature wäre ein
+Mutations-Endpoint und damit F4-/Z2-gegated (CLAUDE.md harte Regel: keine Mutationen/Live-Hebel in der
+Web-UI vor Cloudflare Access). **Kein POST/Write-Endpoint gebaut** — Operator-geschriebene Annotationen
+sind ein dokumentierter Z2-Follow-up (Auth + CSRF + eigener Persistenz-Store müssen zuerst stehen).
+
+- `tools/analytics_api.py`: additive `event_feed(con, window_hours, *, as_of=None, bots=None)` +
+  Helfer `_regime_transition_events()` (wiederverwendet dieselbe `lag()`-Logik wie
+  `_regime_changes_in_window`, Feature 8, liefert aber das volle von→nach statt nur die Zählung),
+  `_notable_trade_events()` (wiederverwendet die coin-aware CTE `_outcomes_cte_with_coin`, Feature 7/8;
+  größte Wins/Losses getrennt über `is_win`, nie über sortierte `pnl_pct` mit Überlappungsrisiko bei
+  wenigen Trades) und `_latest_event_anchor()` (data-anchored `as_of`, mit Fallback auf
+  `regime_history` falls keine Outcome-Tabelle existiert). Halb-offenes Fenster (`> as_of-Nh AND
+  <= as_of`), identisch zu `overnight_digest`. Events chronologisch ABSTEIGEND sortiert. Bestehende
+  Aggregate (`_regime_changes_in_window`, `_outcomes_cte_with_coin`, `overnight_digest`, …) inhaltlich
+  unverändert.
+- `tools/dashboard/app.py`: `/panels/event-feed`-Route, `resolve_event_feed_window` (Default 24h,
+  Alternative 168h/7 Tage; unbekannter `?window=` → Default, kein 500), `_event_feed_context`,
+  `PANEL_SOURCES`-Eintrag (`closed_ai_signals`/`closed_trades`/`regime_history`).
+- `templates/panels/event_feed.html` (neu) + Einbindung als letztes Panel in `index.html`;
+  `static/css/app.css` additiv (Event-Feed-Listen-Styles).
+- `tools/dashboard/SPEC.md`: Feature 9 dokumentiert inkl. Out-of-Scope-Follow-up für schreibende
+  Annotationen (Z2-gegated).
+- `backtest/test_dashboard_event_feed.py` (neu, 17 Tests): DB-freie Tests inkl. realem
+  Integrationstest (AnalyticsExporter→DuckDB→Flask-Route→HTML) + Mutation-Checks (Sortierrichtung
+  desc→asc, Fenstergrenze `>`→`>=`) beide manuell verifiziert rot; zusätzlich ein Test, der bestätigt
+  dass `POST /panels/event-feed` 405 liefert (kein Write-Verb existiert).
 ## [2026-07-18] Nicht-ASCII-Meme-Symbole aus der Universe filtern (T-2026-CU-9050-162)
 
 Bugfix: Binance listet gelegentlich USDT-Perps mit Nicht-ASCII-Symbolen (chinesische Zeichen, z. B. `龙虾USDT`,

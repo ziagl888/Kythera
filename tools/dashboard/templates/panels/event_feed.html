@@ -1,0 +1,61 @@
+{#
+  Read-only event feed (Feature 9, T-2026-CU-9050-161). Renders
+  analytics_api.event_feed()'s consolidated, chronologically-DESCENDING event
+  list for a trailing window (default 24h, toggle 24h/7 Tage): regime
+  transitions from regime_history + notable trades (biggest wins/losses) from
+  closed_ai_signals/closed_trades. An empty window renders a clean "keine
+  Events" message — never a fabricated row.
+
+  READ-ONLY BY DESIGN: this is an intervention/event LOG, not an annotation
+  editor — there is no form here that writes anything. Operator-written
+  annotations are an explicit Z2 follow-up (see SPEC.md Feature 9 "Out of
+  Scope"), not built in this panel.
+
+  Self-updating widget: THIS div (including its own hx-get) is the swap
+  target (outerHTML), same pattern as overnight_digest.html/
+  regime_heatmap.html — a window-toggle change re-fetches immediately with
+  the new window baked into the query string.
+#}
+<div id="event-feed-body"
+     hx-get="{{ url_for('panel_event_feed') }}?window={{ window_hours }}"
+     hx-trigger="load, every {{ poll_seconds }}s"
+     hx-swap="outerHTML">
+
+  {% include "_panel_freshness_badge.html" %}
+
+  <form class="panel__filters"
+        hx-get="{{ url_for('panel_event_feed') }}"
+        hx-target="#event-feed-body"
+        hx-swap="outerHTML"
+        hx-trigger="change">
+    <fieldset class="panel__filter-group">
+      <legend>Fenster</legend>
+      {% for w in window_options %}
+      <label class="panel__filter-option">
+        <input type="radio" name="window" value="{{ w }}" {% if w == window_hours %}checked{% endif %}>
+        {{ window_labels[w] }}
+      </label>
+      {% endfor %}
+    </fieldset>
+  </form>
+
+  {% if feed.events|length == 0 %}
+    <p class="muted">Keine Events im Fenster.</p>
+  {% else %}
+    <ul class="event-feed">
+      {% for event in feed.events %}
+      <li class="event-feed__item event-feed__item--{{ event.type }}">
+        <span class="event-feed__icon" aria-hidden="true">
+          {%- if event.type == "regime_change" -%}⟳{%- else -%}{{ "▲" if "+" in event.detail else "▼" }}{%- endif -%}
+        </span>
+        <span class="event-feed__ts">{{ event.ts }}</span>
+        <span class="event-feed__title">{{ event.title }}</span>
+        <span class="event-feed__detail
+                     {% if event.type == 'notable_trade' %}{% if '+' in event.detail %}pnl-positive{% else %}pnl-negative{% endif %}{% endif %}">
+          {{ event.detail }}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>

@@ -55,6 +55,7 @@ from core.process_control import list_parked, parked_since
 from core.time import from_unix_ts
 from tools.analytics_api import (
     DEFAULT_DIGEST_WINDOW_HOURS,
+    DEFAULT_EVENT_FEED_WINDOW_HOURS,
     DEFAULT_TIMESERIES_WINDOW,
     TIMESERIES_WINDOWS,
     _serve,
@@ -65,6 +66,7 @@ from tools.analytics_api import (
     coin_trade_series,
     coins_with_trades,
     connect_ro,
+    event_feed,
     overnight_digest,
     rolling_success_rate_series,
     success_rate_timeseries,
@@ -211,6 +213,10 @@ PANEL_SOURCES: dict[str, tuple[str, ...]] = {
     # regime_history for its (optional) regime-transition count — all three
     # matter for the panel's own worst-case freshness.
     "overnight-digest": ("closed_ai_signals", "closed_trades", "regime_history"),
+    # Feature 9 (T-2026-CU-9050-161): the event feed consolidates notable
+    # trades (same coin-aware CTE) with regime transitions — identical
+    # three-source freshness dependency as the overnight digest.
+    "event-feed": ("closed_ai_signals", "closed_trades", "regime_history"),
 }
 
 # fleet-registry has no DuckDB sync to report a synced_at/last_row_ts for —
@@ -903,6 +909,69 @@ def _digest_context(duckdb_path: str, *, window_hours: int = DEFAULT_DIGEST_WIND
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Read-only event feed (Feature 9, T-2026-CU-9050-161)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Window choices the event feed's own toggle switches between (trailing
+# hours). 24h is the SPEC-named default; 168h (7 days) is the wider option — a
+# deliberately small set (unlike the digest's 8/24/168 triple) since an
+# event log itself is presenting individual timestamped rows, not summary
+# tiles, so a very short "Overnight" option adds little here.
+EVENT_FEED_WINDOW_OPTIONS: tuple[int, ...] = (24, 168)
+
+EVENT_FEED_WINDOW_LABELS: dict[int, str] = {
+    24: "24h",
+    168: "7 Tage",
+}
+
+
+def resolve_event_feed_window(raw: str | None) -> int:
+    """Normalise a raw ``?window=`` query value (``"24h"``, ``"168"``,
+    ``None``, …) to one of :data:`EVENT_FEED_WINDOW_OPTIONS`, in trailing
+    HOURS. Same accepted-formats/permissive-fallback contract as
+    :func:`resolve_digest_window` (Feature 8) — an optional trailing ``h``
+    suffix or a bare integer; anything that does not parse to one of the
+    known window options degrades to :data:`DEFAULT_EVENT_FEED_WINDOW_HOURS`
+    rather than raising.
+    """
+    if not raw:
+        return DEFAULT_EVENT_FEED_WINDOW_HOURS
+    text = raw.strip().lower()
+    if text.endswith("h"):
+        text = text[:-1]
+    try:
+        hours = int(text)
+    except ValueError:
+        return DEFAULT_EVENT_FEED_WINDOW_HOURS
+    return hours if hours in EVENT_FEED_WINDOW_OPTIONS else DEFAULT_EVENT_FEED_WINDOW_HOURS
+
+
+def _event_feed_context(duckdb_path: str, *, window_hours: int = DEFAULT_EVENT_FEED_WINDOW_HOURS) -> dict[str, Any]:
+    """Server-side render context for the read-only event-feed panel.
+
+    Thin wrapper over ``analytics_api.event_feed`` — same throttled read-only
+    DuckDB connection pattern as every other panel context here. READ-ONLY by
+    design (CLAUDE.md: no mutation endpoint in the web UI ahead of Cloudflare
+    Access/F4/Z2) — operator-WRITTEN annotations are an explicit Z2 follow-up,
+    not built here (see SPEC.md Feature 9 "Out of Scope").
+    """
+    con = connect_ro(duckdb_path)
+    try:
+        payload = event_feed(con, window_hours)
+        freshness_rows = data_freshness(con)
+    finally:
+        con.close()
+    return {
+        "feed": payload,
+        "window_hours": window_hours,
+        "window_options": EVENT_FEED_WINDOW_OPTIONS,
+        "window_labels": EVENT_FEED_WINDOW_LABELS,
+        "poll_seconds": PANEL_POLL_SECONDS,
+        "freshness": panel_freshness_summary(freshness_rows, "event-feed"),
+    }
+
+
 def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app for the Z1 dashboard shell.
 
@@ -986,6 +1055,14 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         # window switcher.
         window_hours = resolve_digest_window(request.args.get("window"))
         return render_template("panels/overnight_digest.html", **_digest_context(path, window_hours=window_hours))
+
+    @app.get("/panels/event-feed")
+    def panel_event_feed():
+        # Feature 9 (T-2026-CU-9050-161): local window toggle (24h/7 Tage),
+        # baked into this panel's own hx-get URL — same self-updating pattern
+        # as the overnight-digest window toggle.
+        window_hours = resolve_event_feed_window(request.args.get("window"))
+        return render_template("panels/event_feed.html", **_event_feed_context(path, window_hours=window_hours))
 
     @app.get("/panels/coin-drilldown")
     def panel_coin_drilldown():
