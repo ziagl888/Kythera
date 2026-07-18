@@ -61,9 +61,7 @@ _OUTCOME_TABLES = (
 def _existing_outcome_tables(con: duckdb.DuckDBPyConnection) -> list[tuple[str, str, str]]:
     present = {
         r[0]
-        for r in con.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
-        ).fetchall()
+        for r in con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").fetchall()
     }
     return [t for t in _OUTCOME_TABLES if t[0] in present]
 
@@ -71,8 +69,7 @@ def _existing_outcome_tables(con: duckdb.DuckDBPyConnection) -> list[tuple[str, 
 def _outcomes_cte(tables: Sequence[tuple[str, str, str]]) -> str:
     """Build the ``scored`` CTE: unified per-trade outcome flags across tables."""
     unions = " UNION ALL ".join(
-        f'SELECT "{bot_col}" AS bot, direction, entry, close_price, status, '
-        f'"{ts_col}" AS closed_at FROM "{table}"'
+        f'SELECT "{bot_col}" AS bot, direction, entry, close_price, status, "{ts_col}" AS closed_at FROM "{table}"'
         for table, bot_col, ts_col in tables
     )
     return f"""
@@ -234,9 +231,7 @@ _LEADERBOARD_SORT_KEYS = ("pnl_sum_pct", "expectancy_pct", "winrate", "n")
 DEFAULT_LEADERBOARD_SORT = "pnl_sum_pct"
 
 
-def bot_trade_rows(
-    con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None = None
-) -> list[dict[str, Any]]:
+def bot_trade_rows(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None = None) -> list[dict[str, Any]]:
     """Ordered, per-bot DECISIVE trade rows for the leaderboard aggregation.
 
     Reuses the exact same ``flagged``/``is_decisive`` CTE as
@@ -382,7 +377,7 @@ def bot_leaderboard(
     for trade in bot_trade_rows(con, bots=bots):
         by_bot.setdefault(trade["bot"], []).append(trade)
     rows = [_leaderboard_row(bot, trades) for bot, trades in by_bot.items()]
-    rows.sort(key=lambda r: (r[key] if r[key] is not None else float("-inf")), reverse=True)
+    rows.sort(key=lambda r: r[key] if r[key] is not None else float("-inf"), reverse=True)
     return {"bots": rows, "sort_by": key}
 
 
@@ -417,9 +412,7 @@ def _daily_buckets_by_bot(
     return by_bot
 
 
-def _rolling_series_for_bot(
-    daily: dict[datetime.date, tuple[int, int]], window: int
-) -> list[dict[str, Any]]:
+def _rolling_series_for_bot(daily: dict[datetime.date, tuple[int, int]], window: int) -> list[dict[str, Any]]:
     """Trailing ``window``-day rolling (n, wins, winrate) for every day this bot
     has at least one decisive trade, in ascending date order.
 
@@ -509,15 +502,12 @@ REGIME_MATRIX_METRICS = ("winrate", "expectancy_pct")
 
 def _regime_history_present(con: duckdb.DuckDBPyConnection) -> bool:
     row = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE table_schema = 'main' AND table_name = 'regime_history'"
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = 'main' AND table_name = 'regime_history'"
     ).fetchone()
     return row is not None
 
 
-def bot_regime_matrix(
-    con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None = None
-) -> dict[str, Any]:
+def bot_regime_matrix(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None = None) -> dict[str, Any]:
     """Per-(bot, regime) performance matrix — the Bot x Regime heatmap's data
     source (Feature 6, T-2026-CU-9050-158).
 
@@ -742,6 +732,199 @@ def coin_trade_series(con: duckdb.DuckDBPyConnection, symbol: str | None) -> dic
         for bot, direction, closed_at, entry, close_price, targets_hit, pnl_pct, is_win in rows
     ]
     return {"coin": symbol, "trades": trades}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Overnight digest (Feature 8, T-2026-CU-9050-160)
+# ─────────────────────────────────────────────────────────────────────────────
+
+DEFAULT_DIGEST_WINDOW_HOURS = 8
+
+
+def _regime_changes_in_window(con: duckdb.DuckDBPyConnection, as_of: Any, window_hours: int) -> int:
+    """Count REAL regime transitions (a row whose ``regime`` differs from the
+    immediately preceding row's, via a ``LAG`` window function) whose ``ts``
+    falls in the trailing ``window_hours`` window ending at ``as_of``.
+
+    A transition is counted only when a PRECEDING row exists AND the value
+    actually changed — the very first ever ``regime_history`` row (no
+    predecessor) is an initialisation, not a transition, and an append that
+    repeats the same regime is not a "change" either. Assumes the caller has
+    already verified ``regime_history`` exists (mirrors ``bot_regime_matrix``'s
+    :func:`_regime_history_present` gate — this helper is not itself
+    substrate-existence-safe).
+    """
+    row = con.execute(
+        "WITH ordered AS ("
+        "    SELECT ts, regime, lag(regime) OVER (ORDER BY ts) AS prev_regime "
+        "    FROM regime_history WHERE regime IS NOT NULL"
+        ") "
+        "SELECT count(*) FROM ordered "
+        "WHERE prev_regime IS NOT NULL AND regime != prev_regime "
+        f"AND ts > (CAST(? AS TIMESTAMP) - INTERVAL {int(window_hours)} HOUR) "
+        "AND ts <= CAST(? AS TIMESTAMP)",
+        [as_of, as_of],
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def overnight_digest(
+    con: duckdb.DuckDBPyConnection,
+    window_hours: int = DEFAULT_DIGEST_WINDOW_HOURS,
+    *,
+    as_of: Any = None,
+    bots: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Overnight-digest summary over a trailing ``window_hours`` window — the
+    landing-page digest section's data source (Feature 8, T-2026-CU-9050-160).
+
+    Reuses the coin-aware CTE built for the coin drill-down
+    (:func:`_outcomes_cte_with_coin` / :func:`_existing_outcome_tables_with_coin`,
+    Feature 7) — the IDENTICAL decisive-trade definition every other aggregate
+    in this module shares, extended with the per-row ``coin`` the notable-trade
+    fields need. Neither that CTE nor any other existing aggregate function is
+    modified here.
+
+    WINDOW / TIMEZONE: like :func:`success_rate_timeseries`,
+    ``as_of`` defaults to ``max(closed_at)`` actually present in the substrate
+    rather than a wall-clock "now" — this keeps the trailing-window comparison
+    strictly within the SAME (naive-local) timestamp space the ``closed_at``
+    columns are stored in (analytics_export TIMEZONE contract), never mixing
+    it with a real UTC clock. The window itself is the same half-open
+    trailing convention as every rolling window in this module: ``closed_at >
+    as_of - INTERVAL window_hours HOUR AND closed_at <= as_of``.
+
+    Args:
+        con: an open DuckDB connection (typically ``read_only=True``).
+        window_hours: trailing-hour window width (default 8 = "Overnight").
+        as_of: anchor for the window; defaults to the latest ``closed_at`` in
+            the data.
+        bots: optional bot-multiselect filter; None = all bots.
+
+    Returns a JSON-serialisable dict:
+        {
+          "as_of": ISO|None, "window_hours": int,
+          "n": int, "wins": int,
+          "pnl_sum_pct": float|None, "winrate": float|None,
+          "top_bot": {bot,n,wins,winrate,pnl_sum_pct,expectancy_pct}|None,
+          "flop_bot": {...}|None,
+          "best_trade": {bot,coin,pnl_pct,closed_at}|None,
+          "worst_trade": {...}|None,
+          "regime_changes": int|None,   # None only when regime_history absent
+        }
+    An empty window (no decisive trade in ``window_hours``, whether because
+    the substrate has none at all or because every trade in it falls outside
+    the window) degrades to ``n=0`` with every derived field ``None`` — never
+    a 500, never a fabricated zero standing in for "no data".
+    """
+    empty: dict[str, Any] = {
+        "as_of": None,
+        "window_hours": window_hours,
+        "n": 0,
+        "wins": 0,
+        "pnl_sum_pct": None,
+        "winrate": None,
+        "top_bot": None,
+        "flop_bot": None,
+        "best_trade": None,
+        "worst_trade": None,
+        "regime_changes": None,
+    }
+    tables = _existing_outcome_tables_with_coin(con)
+    if not tables:
+        return empty
+    cte = _outcomes_cte_with_coin(tables)
+
+    if as_of is None:
+        row = con.execute(f"{cte} SELECT max(closed_at) FROM flagged").fetchone()
+        as_of = row[0] if row and row[0] is not None else None
+    if as_of is None:
+        return empty
+
+    result = dict(empty)
+    result["as_of"] = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
+    result["regime_changes"] = (
+        _regime_changes_in_window(con, as_of, window_hours) if _regime_history_present(con) else None
+    )
+
+    params: list[Any] = [as_of, as_of]
+    bot_sql = _bot_filter(bots, params)
+    rows = con.execute(
+        f"{cte} SELECT bot, coin, closed_at, pnl_pct, is_win FROM flagged "
+        "WHERE is_decisive AND bot IS NOT NULL "
+        f"AND closed_at > (CAST(? AS TIMESTAMP) - INTERVAL {int(window_hours)} HOUR) "
+        "AND closed_at <= CAST(? AS TIMESTAMP)"
+        f"{bot_sql} ORDER BY closed_at",
+        params,
+    ).fetchall()
+    if not rows:
+        return result
+
+    trades = [
+        {
+            "bot": bot,
+            "coin": coin,
+            "closed_at": closed_at.isoformat() if hasattr(closed_at, "isoformat") else str(closed_at),
+            "pnl_pct": float(pnl_pct),
+            "is_win": bool(is_win),
+        }
+        for bot, coin, closed_at, pnl_pct, is_win in rows
+    ]
+
+    n = len(trades)
+    wins = sum(1 for t in trades if t["is_win"])
+    pnl_sum = sum(t["pnl_pct"] for t in trades)
+
+    by_bot: dict[str, list[dict[str, Any]]] = {}
+    for t in trades:
+        by_bot.setdefault(t["bot"], []).append(t)
+    bot_rows = []
+    for bot, bot_trades in by_bot.items():
+        bn = len(bot_trades)
+        bwins = sum(1 for t in bot_trades if t["is_win"])
+        bpnl = sum(t["pnl_pct"] for t in bot_trades)
+        bot_rows.append(
+            {
+                "bot": bot,
+                "n": bn,
+                "wins": bwins,
+                "winrate": _winrate(bwins, bn),
+                "pnl_sum_pct": round(bpnl, 4),
+                "expectancy_pct": round(bpnl / bn, 4) if bn else None,
+            }
+        )
+    # Highest/lowest summed PnL in the window — same headline convention as
+    # DEFAULT_LEADERBOARD_SORT ("pnl_sum_pct"). With a single bot present,
+    # top_bot and flop_bot are the same row (there is nothing to contrast).
+    top_bot = max(bot_rows, key=lambda r: r["pnl_sum_pct"])
+    flop_bot = min(bot_rows, key=lambda r: r["pnl_sum_pct"])
+
+    best = max(trades, key=lambda t: t["pnl_pct"])
+    worst = min(trades, key=lambda t: t["pnl_pct"])
+
+    result.update(
+        {
+            "n": n,
+            "wins": wins,
+            "pnl_sum_pct": round(pnl_sum, 4),
+            "winrate": _winrate(wins, n),
+            "top_bot": top_bot,
+            "flop_bot": flop_bot,
+            "best_trade": {
+                "bot": best["bot"],
+                "coin": best["coin"],
+                "pnl_pct": round(best["pnl_pct"], 4),
+                "closed_at": best["closed_at"],
+            },
+            "worst_trade": {
+                "bot": worst["bot"],
+                "coin": worst["coin"],
+                "pnl_pct": round(worst["pnl_pct"], 4),
+                "closed_at": worst["closed_at"],
+            },
+        }
+    )
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1063,8 +1246,7 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover
     parser.add_argument("--duckdb", default="staging_models/analytics/analytics.duckdb")
     parser.add_argument("--host", default="127.0.0.1")  # never bind public — Z2/B4 gates that
     parser.add_argument("--port", type=int, default=8099)
-    parser.add_argument("--dev", action="store_true",
-                        help="Flask dev server instead of Waitress (local smoke only)")
+    parser.add_argument("--dev", action="store_true", help="Flask dev server instead of Waitress (local smoke only)")
     args = parser.parse_args(argv)
     _serve(create_app(args.duckdb), host=args.host, port=args.port, dev=args.dev)
 

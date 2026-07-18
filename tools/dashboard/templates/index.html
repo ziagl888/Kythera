@@ -2,6 +2,28 @@
 {% block title %}Z1 Dashboard — Übersicht{% endblock %}
 
 {% block content %}
+<section class="panel" id="panel-overnight-digest">
+  <header class="panel__head">
+    <h2 class="panel__title">Overnight-Digest</h2>
+    <span class="panel__hint">Aktualisiert alle {{ panel_poll_seconds }} s</span>
+  </header>
+
+  {#
+    Feature 8 (T-2026-CU-9050-160, F1): landing-page digest — net PnL/count/
+    win-rate tiles, top/flop bot, notable trades (biggest win/loss) for a
+    configurable trailing window (default 8h "Overnight"). Same self-updating
+    pattern (outerHTML swap target) as success-rate-timeseries/regime-heatmap/
+    coin-drilldown above — the panel fragment carries its own hx-get with the
+    currently-selected window baked in.
+  #}
+  <div id="overnight-digest-body"
+       hx-get="/panels/overnight-digest"
+       hx-trigger="load, every {{ panel_poll_seconds }}s"
+       hx-swap="outerHTML">
+    <p class="muted">Lade Digest…</p>
+  </div>
+</section>
+
 <section class="panel" id="panel-fleet-registry">
   <header class="panel__head">
     <h2 class="panel__title">Fleet-Registry</h2>

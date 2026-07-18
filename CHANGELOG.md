@@ -1,3 +1,27 @@
+## [2026-07-18] Overnight-Digest-Startseite — Z1-Dashboard Feature 8 (T-2026-CU-9050-160)
+
+Achter Feature-Baustein auf der T-151-Shell: eine Digest-Zusammenfassung ganz oben auf der Startseite
+(oberhalb der Fleet-Registry), die für ein konfigurierbares Fenster (Default „Overnight" = letzte 8h,
+`?window=`-Umschalter) auf einen Blick zeigt, was passiert ist — aggregierte Netto-PnL (Summe %),
+Trade-Count, Gesamt-Win-Rate als Kennzahlen-Kacheln, plus Top-Bot/Flop-Bot des Fensters und die
+notable Trades (größter Win, größter Loss mit Coin + Bot).
+
+- `tools/analytics_api.py`: additive `overnight_digest(con, window_hours, *, as_of=None, bots=None)` +
+  `_regime_changes_in_window()` (echte Regime-Übergänge via `lag()`, nur bei vorhandenem
+  `regime_history`). Halb-offenes Fenster über `close_time` (`> as_of-Nh AND <= as_of`); `as_of=None`
+  → data-anchored auf `max(closed_at)`. Wiederverwendet die decisive-Trade-CTE (`_outcomes_cte_with_coin`)
+  — bestehende Aggregate (`bot_trade_rows`/`bot_leaderboard`/`success_rate_timeseries`/`bot_regime_matrix`)
+  inhaltlich unverändert. Leeres Fenster/leeres Substrat → all-None-Degrade (kein 500).
+- `tools/dashboard/app.py`: `/panels/overnight-digest`-Route, `resolve_digest_window` (unbekannter
+  `?window=` → Default, kein 500), `_digest_context`; Datenstand-Badge-Quelle closed_ai_signals.
+- `templates/panels/overnight_digest.html` (neu) + Einbindung ganz oben in `index.html`; `static/css/app.css`
+  Digest-Kacheln.
+- `backtest/test_dashboard_digest.py` (neu): DB-freie Tests inkl. realem Integrations-Test
+  (AnalyticsExporter→DuckDB→Flask-index→HTML) + Mutation-Checks (Fenster-Grenze `>`→`>=`, Top/Flop-Sort).
+- **Transparenz-Hinweis:** `ruff format` (CI-Pin 0.15.17) hat beim Formatieren einige *bestehende* Zeilen
+  in `analytics_api.py`/`app.py` mechanisch reumgebrochen (reiner Whitespace, keine Logik; `tools/` ist
+  von der CI-Format-Prüfung ohnehin ausgeschlossen) — auf 0.15.17-kanonisch belassen statt zurückgedreht.
+
 ## [2026-07-18] Coin-Drilldown mit Ebenen-Kette — Z1-Dashboard Feature 7 (T-2026-CU-9050-159)
 
 Siebter Feature-Baustein auf der T-151-Shell: eine Ebenen-Kette — Coin-Selektor (listet nur Coins mit mindestens

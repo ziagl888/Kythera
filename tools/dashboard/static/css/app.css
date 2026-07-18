@@ -182,9 +182,42 @@ body {
   white-space: nowrap;
 }
 
+/* Overnight-digest landing summary (Feature 8, T-2026-CU-9050-160): KPI
+   tiles + compact two-column lists (top/flop bot, notable trades). */
+.digest-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.digest-tile {
+  flex: 1 1 140px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.digest-tile__label { color: var(--muted); font-size: 0.78rem; }
+.digest-tile__value { font-size: 1.3rem; font-weight: 600; }
+
+.digest-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.digest-col__title { font-size: 0.85rem; margin: 0 0 4px; color: var(--muted); }
+.digest-col__body { margin: 0; }
+
 /* Small screens: let the data table scroll instead of overflowing the panel. */
 @media (max-width: 640px) {
   .content { padding: 10px; }
   .panel { padding: 12px; }
   .datatable { display: block; overflow-x: auto; white-space: nowrap; }
+  .digest-columns { grid-template-columns: 1fr; }
 }
