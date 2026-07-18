@@ -3,6 +3,7 @@
   _demo_panel_context(): a per-bot winrate table across the rolling windows plus
   a chart the chart-lifecycle helper mounts/disposes across swaps.
 #}
+{% include "_panel_freshness_badge.html" %}
 {% if not bots %}
   <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
 {% else %}

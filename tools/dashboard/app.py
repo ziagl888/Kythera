@@ -92,6 +92,8 @@ def freshness_summary(
     rows: Sequence[dict[str, Any]],
     *,
     now_utc: datetime.datetime | None = None,
+    sources: Sequence[str] | None = None,
+    worst_case: bool = False,
 ) -> dict[str, Any]:
     """Collapse the per-source freshness rows into one badge summary.
 
@@ -101,6 +103,21 @@ def freshness_summary(
             naive-local wall clock, both ISO strings or None).
         now_utc: naive datetime standing for the current UTC wall clock; defaults
             to now. Injected in tests for a deterministic age.
+        sources: additive filter (Feature 4, T-2026-CU-9050-156) — when given,
+            ``rows`` is narrowed to entries whose ``source`` is in this set
+            BEFORE aggregation, so a panel backed by only some of the exported
+            sources can get its OWN freshness rather than the fleet-wide one.
+            ``None`` (the default) reproduces the original unfiltered
+            behaviour exactly — every pre-existing caller is unaffected.
+        worst_case: additive toggle (Feature 4, T-2026-CU-9050-156). The
+            shell-global badge (default ``False``) reports the FRESHEST
+            (most-recently-synced) source across ``rows`` — "is the pipeline
+            alive at all". A per-panel badge that combines several sources
+            needs the opposite: the data a panel renders is only as fresh as
+            its STALEST contributing source, so ``True`` picks the OLDEST
+            ``synced_at``/``last_row_ts`` instead — never an average, never
+            the freshest. Default ``False`` reproduces the original
+            behaviour exactly.
 
     Returns a JSON-serialisable dict:
         {
@@ -121,11 +138,16 @@ def freshness_summary(
     elif now_utc.tzinfo is not None:
         now_utc = now_utc.replace(tzinfo=None)
 
+    if sources is not None:
+        wanted = set(sources)
+        rows = [r for r in rows if r.get("source") in wanted]
+
     synced = [ts for ts in (_parse_ts(r.get("synced_at")) for r in rows) if ts is not None]
     last_rows = [ts for ts in (_parse_ts(r.get("last_row_ts")) for r in rows) if ts is not None]
 
-    latest_sync = max(synced) if synced else None
-    latest_row = max(last_rows) if last_rows else None
+    pick = min if worst_case else max
+    latest_sync = pick(synced) if synced else None
+    latest_row = pick(last_rows) if last_rows else None
 
     sync_age_min: int | None = None
     if latest_sync is not None:
@@ -153,6 +175,70 @@ def freshness_summary(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-panel data-freshness (Feature 4, T-2026-CU-9050-156)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Panel route name -> the analytics_export source name(s) that panel actually
+# reads. Both success-rate panels and the leaderboard aggregate outcomes
+# across BOTH outcome tables (analytics_api._OUTCOME_TABLES: closed_ai_signals
+# + closed_trades), so all three share the same two-source tuple. An empty
+# tuple means "no DuckDB-synced source at all" — currently only
+# fleet-registry, which reads core.fleet.FLEET + filesystem markers directly
+# on every request and never goes through the T-131 export.
+PANEL_SOURCES: dict[str, tuple[str, ...]] = {
+    "success-rate": ("closed_ai_signals", "closed_trades"),
+    "success-rate-timeseries": ("closed_ai_signals", "closed_trades"),
+    "leaderboard": ("closed_ai_signals", "closed_trades"),
+    "fleet-registry": (),
+}
+
+# fleet-registry has no DuckDB sync to report a synced_at/last_row_ts for —
+# rendering a fabricated timestamp would misrepresent a file-based read as a
+# stale-or-fresh export. This fixed marker is the only value that reaches the
+# template for such a panel (panel_freshness() below never falls through to
+# freshness_summary() for it).
+FILE_BASED_FRESHNESS: dict[str, Any] = {
+    "stand": None,
+    "stand_date": None,
+    "sync_age_min": None,
+    "synced_at": None,
+    "sources": 0,
+    "label": "Live (dateibasiert)",
+    "file_based": True,
+}
+
+
+def panel_freshness(
+    rows: Sequence[dict[str, Any]],
+    panel: str,
+    *,
+    now_utc: datetime.datetime | None = None,
+) -> dict[str, Any]:
+    """Per-panel data-freshness summary — the panel-specific refinement of the
+    shell-global :func:`freshness_summary` badge.
+
+    Narrows ``rows`` (the full ``analytics_export.data_freshness`` output) down
+    to ``panel``'s own source(s) via :data:`PANEL_SOURCES`, then delegates to
+    ``freshness_summary(..., worst_case=True)`` — so a panel backed by two
+    sources with different sync times always shows the STALER one, never an
+    average or the fresher one (Z1-curation requirement: worst-case per panel,
+    the opposite of the shell-global badge's freshest-wins default).
+
+    A panel registered with an empty source tuple (``fleet-registry``) has no
+    DuckDB sync to report at all and resolves to :data:`FILE_BASED_FRESHNESS`
+    without touching ``rows``. An unknown ``panel`` name raises ``ValueError``
+    rather than silently degrading to that same file-based marker — a wrong
+    panel→source mapping must be loud, not swallowed.
+    """
+    if panel not in PANEL_SOURCES:
+        raise ValueError(f"panel_freshness: unknown panel {panel!r}")
+    sources = PANEL_SOURCES[panel]
+    if not sources:
+        return dict(FILE_BASED_FRESHNESS)
+    return freshness_summary(rows, now_utc=now_utc, sources=sources, worst_case=True)
+
+
 def _demo_panel_context(duckdb_path: str) -> dict[str, Any]:
     """Server-side render context for the success-rate demo panel.
 
@@ -163,6 +249,7 @@ def _demo_panel_context(duckdb_path: str) -> dict[str, Any]:
     con = connect_ro(duckdb_path)
     try:
         payload = success_rate_timeseries(con, windows=DEMO_WINDOWS)
+        freshness_rows = data_freshness(con)
     finally:
         con.close()
 
@@ -185,8 +272,7 @@ def _demo_panel_context(duckdb_path: str) -> dict[str, Any]:
     chart_series = [
         {"bot": row["bot"], "winrate_pct": row["windows"][DEMO_PRIMARY_WINDOW]["winrate_pct"]}
         for row in bots
-        if DEMO_PRIMARY_WINDOW in row["windows"]
-        and row["windows"][DEMO_PRIMARY_WINDOW]["winrate_pct"] is not None
+        if DEMO_PRIMARY_WINDOW in row["windows"] and row["windows"][DEMO_PRIMARY_WINDOW]["winrate_pct"] is not None
     ]
 
     return {
@@ -196,6 +282,7 @@ def _demo_panel_context(duckdb_path: str) -> dict[str, Any]:
         "bots": bots,
         "chart_series": chart_series,
         "poll_seconds": PANEL_POLL_SECONDS,
+        "freshness": panel_freshness(freshness_rows, "success-rate"),
     }
 
 
@@ -332,7 +419,14 @@ def fleet_registry_rows(
 
 
 def _fleet_registry_context() -> dict[str, Any]:
-    return {"rows": fleet_registry_rows(), "poll_seconds": PANEL_POLL_SECONDS}
+    return {
+        "rows": fleet_registry_rows(),
+        "poll_seconds": PANEL_POLL_SECONDS,
+        # File-based panel — no DuckDB freshness rows exist to filter, hence
+        # the empty list (panel_freshness ignores rows entirely for a panel
+        # registered with an empty PANEL_SOURCES tuple).
+        "freshness": panel_freshness([], "fleet-registry"),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -353,12 +447,14 @@ def _leaderboard_context(duckdb_path: str) -> dict[str, Any]:
     con = connect_ro(duckdb_path)
     try:
         payload = bot_leaderboard(con)
+        freshness_rows = data_freshness(con)
     finally:
         con.close()
     return {
         "bots": payload["bots"],
         "sort_by": payload["sort_by"],
         "poll_seconds": PANEL_POLL_SECONDS,
+        "freshness": panel_freshness(freshness_rows, "leaderboard"),
     }
 
 
@@ -367,9 +463,7 @@ def _leaderboard_context(duckdb_path: str) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _selected_bots(
-    raw_bots: Sequence[str], *, filtered: bool, all_bots: Sequence[str]
-) -> list[str]:
+def _selected_bots(raw_bots: Sequence[str], *, filtered: bool, all_bots: Sequence[str]) -> list[str]:
     """Resolve the bot-multiselect filter, distinguishing "no filter submitted
     yet" (first ``load``, no query string at all) from "user explicitly
     unchecked every box" (a real, submitted, empty selection).
@@ -410,6 +504,7 @@ def _success_rate_timeseries_context(
             if selected
             else {"window": window, "bots": [], "series": {}}
         )
+        freshness_rows = data_freshness(con)
     finally:
         con.close()
 
@@ -436,6 +531,7 @@ def _success_rate_timeseries_context(
         "selected_bots": selected,
         "chart_series": chart_series,
         "poll_seconds": PANEL_POLL_SECONDS,
+        "freshness": panel_freshness(freshness_rows, "success-rate-timeseries"),
     }
 
 
@@ -516,8 +612,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # Never bind public: access is via the reverse proxy / Cloudflare Access (P0.8).
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8098)
-    parser.add_argument("--dev", action="store_true",
-                        help="Flask dev server instead of Waitress (local smoke only)")
+    parser.add_argument("--dev", action="store_true", help="Flask dev server instead of Waitress (local smoke only)")
     return parser
 
 

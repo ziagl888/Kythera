@@ -1,3 +1,40 @@
+## [2026-07-18] Datenstand-Indikator pro Panel — Z1-Dashboard Feature 4 (T-2026-CU-9050-156)
+
+Vierter Feature-Baustein auf der T-151-Shell: bisher zeigte EIN shell-globaler Badge (Base-Layout) den
+Datenstand des juengsten Sync ueber ALLE Quellen. Jetzt zeigt jedes der vier Panels (Erfolgsrate,
+Erfolgsraten-Zeitvergleich, Leaderboard, Fleet-Registry) den Datenstand SEINER EIGENEN Quelle(n) — bei
+mehreren Quellen die AELTESTE (worst-case), nie eine Mischung. Der globale Badge bleibt unveraendert
+bestehen (additive Verfeinerung).
+
+- `tools/dashboard/app.py`: `freshness_summary()` bekommt zwei additive optionale Parameter — `sources`
+  (filtert die Freshness-Zeilen vor der Aggregation auf genannte Quellennamen) und `worst_case` (aggregiert
+  bei `True` die AELTESTE statt der bisherigen Default-FRISCHESTEN Quelle). Beide Defaults reproduzieren das
+  bisherige Verhalten exakt — kein bestehender Aufrufer betroffen. Neue reine Funktion `panel_freshness(rows,
+  panel, *, now_utc=None)` loest ueber die neue Konstante `PANEL_SOURCES` (Erfolgsrate/Zeitvergleich/
+  Leaderboard → `closed_ai_signals`+`closed_trades`, Fleet-Registry → leeres Tuple = kein DuckDB-Sync) die
+  Quelle(n) des Panels auf und delegiert an `freshness_summary(..., worst_case=True)`; ein unbekannter
+  Panel-Name wirft `ValueError` statt still auf einen Fallback zu vertuschen. Neue Konstante
+  `FILE_BASED_FRESHNESS` fuer die dateibasierte Fleet-Registry (kein fabrizierter Zeitstempel). Alle vier
+  Panel-Context-Funktionen liefern jetzt einen `freshness`-Eintrag.
+- `tools/dashboard/templates/_panel_freshness_badge.html`: neues parametrisiertes Badge-Partial (nimmt die
+  panel-lokale `freshness`-Variable), eingehaengt in `success_rate.html`, `success_rate_timeseries.html`,
+  `leaderboard.html`, `fleet_registry.html`. Rendert "Stand HH:MM, Sync vor N min", "Live" (dateibasiert)
+  oder "—" (fehlende Freshness — nie fabriziert), aktualisiert sich mit dem bestehenden Poll-Intervall des
+  jeweiligen Panels (kein zusaetzlicher HTMX-Round-Trip). Der bestehende globale Badge
+  (`_freshness_badge.html`/`base.html`) bleibt unangetastet. `static/css/app.css`: neue `--live`-Akzentfarbe,
+  `.badge--live`, `.panel__freshness`.
+- `backtest/test_dashboard_freshness.py`: 12 DB-freie Tests mit realistischen Freshness-Zeilen-Fixtures
+  (echte `closed_ai_signals`/`closed_trades`-Spaltennamen) — Quellenfilter- und Worst-Case-Aggregations-Tests,
+  Panel→Quelle-Zuordnung inkl. Fleet-Registry-Sonderfall und unbekanntem Panel-Namen (`ValueError`),
+  Mutation-Check fuer Age-aus-`synced_at`-statt-`last_row_ts` sowie fuer eine falsche Quellen-Zuordnung
+  (oldest-wins muss unabhaengig davon greifen, WELCHE der beiden Quellen die staler ist), fehlende
+  Freshness → `—` end-to-end ueber eine echte (leere) DuckDB, und ein Pflicht-Integrationstest (echte
+  `AnalyticsExporter` mit zwei Quellen zu UNTERSCHIEDLICHEN `synced_at` → echte DuckDB → echte
+  `/panels/*`-Routen → gerendertes HTML zeigt pro Panel den korrekten, panel-spezifischen Datenstand,
+  inklusive des Nachweises dass Fleet-Registry sich sichtbar unterscheidet). `ruff check`/`format --check`
+  grün (3.14-Interpreter), `regression_guard verify` grün (24 Fixtures, 3.13-Interpreter mit numpy), alle 86
+  bestehenden + neuen Dashboard-Tests grün.
+
 ## [2026-07-18] Erfolgsraten-Zeitvergleich-Panel — Z1-Dashboard Feature 3 (T-2026-CU-9050-155)
 
 Drittes Feature-Panel auf der T-151-Shell: die volle Zeitvergleich-Version des T-151-Demo-Panels — eine

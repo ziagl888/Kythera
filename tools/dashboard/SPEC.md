@@ -133,3 +133,94 @@ Fleet-Restart, Modell-Artefakte, `success_rate_timeseries` inhaltlich
 umschreiben, `--no-verify`, main/prod direkt, Push/PR (Orchestrator-Schritt).
 **Frag zurueck:** neue Runtime-Dependencies, Aenderung der bestehenden
 `/panels/success-rate`-Demo-Route/-Tests.
+
+---
+
+## Feature 4 — Datenstand-Indikator pro Panel (T-2026-CU-9050-156)
+
+Task: T-2026-CU-9050-156 · baut additiv auf `freshness_summary()` (T-151) und
+`analytics_export.data_freshness()` (T-131) auf.
+
+### Intent
+Heute zeigt EIN shell-globaler Badge (`_freshness_badge.html`, Base-Layout) den
+Datenstand des JUENGSTEN Sync ueber ALLE Quellen. Dieses Feature macht den
+Datenstand PANEL-SPEZIFISCH: jedes der vier Panels (`success-rate`,
+`success-rate-timeseries`, `leaderboard`, `fleet-registry`) zeigt "Stand HH:MM,
+Sync vor N min" NUR fuer die Quelle(n), die dieses Panel tatsaechlich liest —
+und bei mehreren Quellen die AELTESTE (worst-case), nie eine fabrizierte
+Mischung. Der globale Badge bleibt unveraendert bestehen (additive
+Verfeinerung, kein Ersatz).
+
+### Akzeptanzkriterien (binaer testbar)
+- [x] AK1: `freshness_summary()` bekommt zwei additive optionale Parameter:
+  `sources: Sequence[str] | None` (filtert die Zeilen VOR der Aggregation auf
+  die genannten Quellennamen) und `worst_case: bool = False` (aggregiert bei
+  `True` die AELTESTE statt der (bisherigen Default-)FRISCHESTEN Quelle —
+  der shell-globale Badge fragt "lebt die Pipeline ueberhaupt", ein
+  Panel-Badge muss dagegen worst-case zeigen). Beide Defaults reproduzieren
+  exakt das bisherige Verhalten (alle bestehenden Tests bleiben gruen, keine
+  Signatur-Bruchstelle). — Test:
+  `test_freshness_summary_sources_filter_narrows_rows`,
+  `test_freshness_summary_worst_case_picks_oldest` +
+  alle bestehenden `test_freshness_summary_*` unveraendert gruen.
+- [x] AK2: Neue reine Funktion `panel_freshness(rows, panel, *, now_utc=None)`
+  loest ueber `PANEL_SOURCES[panel]` die Quellen des Panels auf und delegiert
+  an `freshness_summary(rows, sources=..., now_utc=..., worst_case=True)`.
+  Panels mit `PANEL_SOURCES[panel] == ()` (aktuell nur `fleet-registry`,
+  dateibasiert — kein DuckDB-Sync) liefern `FILE_BASED_FRESHNESS` statt einer
+  fabrizierten Zeit. Ein unbekannter Panel-Name wirft `ValueError` (keine
+  stille Fallback-Vertuschung einer falschen Zuordnung). — Test:
+  `test_panel_freshness_leaderboard_and_success_rate_share_sources`,
+  `test_panel_freshness_fleet_registry_is_file_based`,
+  `test_panel_freshness_unknown_panel_raises`.
+- [x] AK3: Zwei Quellen mit UNTERSCHIEDLICHEM `synced_at` fuer dasselbe Panel
+  ergeben die AELTERE (kleinere) Freshness — nie der Durchschnitt, nie die
+  juengere, unabhaengig davon WELCHE der beiden Quellen die staler ist. —
+  Test: `test_panel_freshness_oldest_source_wins_regardless_of_which_is_stale`.
+- [x] AK4: Fehlt fuer die Panel-Quelle(n) jede Freshness-Zeile (leeres
+  Ergebnis nach dem Quellenfilter), rendert das Panel-Badge-Partial `—`
+  statt eines fabrizierten Zeitstempels. — Test:
+  `test_panel_freshness_badge_partial_missing_shows_dash`.
+- [x] AK5: Die Panel-Templates `success_rate.html`,
+  `success_rate_timeseries.html`, `leaderboard.html`, `fleet_registry.html`
+  binden das neue parametrisierte Badge-Partial
+  `_panel_freshness_badge.html` (nimmt die panel-lokale `freshness`-Variable)
+  ein, END-TO-END ueber die realen Routen `GET /panels/{success-rate,
+  success-rate-timeseries, leaderboard, fleet-registry}` gegen eine echte
+  `AnalyticsExporter`/DuckDB-Fixture. — Test:
+  `test_leaderboard_panel_route_renders_own_freshness`
+  (Integrationstest, echte Exporter→DuckDB→Route→HTML-Kette).
+- [x] AK6: Age bleibt STRIKT aus `synced_at` (UTC) berechnet, nie aus
+  `last_row_ts` (naive-local) — geerbt von `freshness_summary`, per
+  Mutation-Check erneut belegt (ein Swap auf `last_row_ts` macht den Test
+  rot). — Test: `test_panel_freshness_age_from_synced_at_not_last_row_ts`.
+
+### Out of Scope
+- Live-Steuerung (kein Auto-Refresh-Button, kein manueller Re-Sync-Trigger).
+- Funktionaler Neubau der vier Panels selbst (nur additive Badge-Einbettung).
+- Entfernen des shell-globalen Badges (`_freshness_badge.html`/`base.html`
+  bleiben unangetastet).
+- Ein neuer `/panels/freshness/<panel>`-JSON-Endpoint — der Badge wird
+  serverseitig als Teil des jeweiligen Panel-Fragments mitgerendert und
+  aktualisiert sich mit dessen bestehendem Poll-Intervall (kein zusaetzlicher
+  HTMX-Round-Trip).
+
+### Why Build (statt Reuse)
+Panel→Quelle-Zuordnung + Oldest-wins-Aggregation ist projektspezifische
+Verdrahtung auf dem bestehenden T-131/T-151-Substrat; keine Library liefert
+das. `freshness_summary()` wird additiv erweitert (neuer optionaler Parameter,
+Default-Pfad unveraendert), nicht umgeschrieben.
+
+### Scope of consent
+**Erlaubt:** `tools/dashboard/app.py` additiv (neuer Parameter an
+`freshness_summary`, neue Funktionen/Konstanten), `tools/dashboard/templates/**`
+additiv (neues Partial + Einbettung in die vier Panel-Templates),
+`backtest/test_dashboard_freshness.py` neu, `CHANGELOG.md`-Eintrag, auf branch
+`worktree-feat+t-2026-cu-9050-156`.
+**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
+Fleet-Restart, Modell-Artefakte, `core/**`, Entfernen/Umschreiben des
+bestehenden globalen Badges oder von `freshness_summary`s bisherigem
+Rueckgabewert bei `sources=None`, `--no-verify`, main/prod direkt, Push/PR
+(Orchestrator-Schritt).
+**Frag zurueck:** neue Runtime-Dependencies, Aenderung der bestehenden
+Panel-Routen-Signaturen/-Tests aus Feature 1-3.

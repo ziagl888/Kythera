@@ -17,6 +17,8 @@
      hx-trigger="load, every {{ poll_seconds }}s"
      hx-swap="outerHTML">
 
+  {% include "_panel_freshness_badge.html" %}
+
   {% if all_bots %}
   <form class="panel__filters"
         hx-get="{{ url_for('panel_success_rate_timeseries') }}"

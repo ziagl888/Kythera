@@ -11,6 +11,7 @@
   --accent: #4c9aff;
   --fresh: #3fb950;
   --stale: #d29922;
+  --live: #4c9aff;
   --radius: 8px;
   color-scheme: dark;
 }
@@ -84,6 +85,10 @@ body {
 
 .badge--fresh .badge__dot { background: var(--fresh); }
 .badge--stale .badge__dot { background: var(--stale); }
+.badge--live .badge__dot { background: var(--live); }
+
+/* Per-panel freshness indicator (Feature 4, T-2026-CU-9050-156). */
+.panel__freshness { margin: 0 0 8px; }
 
 .chart { margin: 12px 0; }
 
