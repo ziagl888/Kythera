@@ -215,11 +215,13 @@ def _shadow_preview_message(
     Channel (REGIME_TRADING_CHANNEL_ID), dieser Channel ist ein Nicht-Handels-Kanal.
     """
     tp_txt = " / ".join(format_price(t) for t in tps) if tps else "—"
+    # English, and deliberately NOT Cornix signal structure (no "Entry:"/"Targets:"/
+    # "Stop Loss:" keywords, no entry-zone/target-list layout) — pure visibility.
     return (
-        "👻 SHADOW-VORSCHAU — KEIN Handelssignal, kein Cornix\n"
-        f"Modell {model_tag} · Coin {symbol} · Richtung {direction}\n"
-        f"Ref-Entry {format_price(entry1)} · Ref-SL {format_price(sl)} · Ref-Ziele {tp_txt}\n"
-        "(nur überwacht in ai_signals — erreicht nie einen Handelskanal)"
+        "👻 SHADOW PREVIEW — NOT a trade signal, no Cornix\n"
+        f"Model {model_tag} · Coin {symbol} · Side {direction}\n"
+        f"Ref-Entry {format_price(entry1)} · Ref-SL {format_price(sl)} · Ref-TPs {tp_txt}\n"
+        "(monitored in ai_signals only — never reaches a trading channel)"
     )
 
 

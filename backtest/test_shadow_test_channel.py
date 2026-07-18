@@ -87,7 +87,7 @@ def test_set_writes_one_preview_to_test_channel(monkeypatch):
     _, params = rows[0]
     channel_id, message = params
     assert channel_id == TEST_CH  # nie ein anderer (Handels-)Channel
-    assert "SHADOW-VORSCHAU" in message and "KEIN Handelssignal" in message
+    assert "SHADOW PREVIEW" in message and "NOT a trade signal" in message
     assert "LIS1" in message and "TESTUSDT" in message and "SHORT" in message
     assert conn.commits == 0  # weiterhin kein Commit hier
 
@@ -113,5 +113,5 @@ def test_preview_message_is_not_cornix_parseable():
     for trigger in ("entry:", "targets:", "target:", "stop loss", "stoploss", "leverage:", "take profit"):
         assert trigger not in lower, f"Cornix-Trigger '{trigger}' in der Vorschau!"
     # Aber die Referenzwerte sind sichtbar (reine Info) — als Ref-Text.
-    assert "Ref-Entry" in msg and "Ref-SL" in msg and "Ref-Ziele" in msg
-    assert msg.startswith("👻 SHADOW-VORSCHAU")
+    assert "Ref-Entry" in msg and "Ref-SL" in msg and "Ref-TPs" in msg
+    assert msg.startswith("👻 SHADOW PREVIEW")
