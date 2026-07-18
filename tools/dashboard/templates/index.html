@@ -30,10 +30,14 @@
   {#
     Feature 2 (T-2026-CU-9050-154): per-bot realized PnL / win-rate /
     expectancy / trade count + risk metrics (max drawdown, loss streak),
-    sorted by PnL descending. Same load/poll pattern as the other panels.
+    sorted by PnL descending by default. Same load/poll pattern as the other
+    panels. Feature 5 (T-2026-CU-9050-157): the resolved global metric-toggle
+    value is baked into this panel's OWN hx-get URL so both the initial load
+    and every subsequent "every Ns" poll keep using the metric the shell was
+    last (re)loaded with — no separate round-trip, no client-side JS state.
   #}
   <div id="leaderboard-body"
-       hx-get="/panels/leaderboard"
+       hx-get="{{ url_for('panel_leaderboard') }}?metric={{ metric }}"
        hx-trigger="load, every {{ panel_poll_seconds }}s"
        hx-swap="innerHTML">
     <p class="muted">Lade Leaderboard…</p>

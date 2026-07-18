@@ -11,7 +11,11 @@
   --accent: #4c9aff;
   --fresh: #3fb950;
   --stale: #d29922;
-  --live: #4c9aff;
+  /* Loss/negative-PnL colour (T-2026-CU-9050-157 nit cleanup): its own
+     semantic token, distinct from --stale (data-freshness staleness) even
+     though the two happened to share a colour before. Same value as before
+     -> no visual change, just decoupled meaning. */
+  --loss: #d29922;
   --radius: 8px;
   color-scheme: dark;
 }
@@ -85,7 +89,9 @@ body {
 
 .badge--fresh .badge__dot { background: var(--fresh); }
 .badge--stale .badge__dot { background: var(--stale); }
-.badge--live .badge__dot { background: var(--live); }
+/* --live used to be its own token, byte-identical to --accent (T-2026-CU-9050-157
+   nit cleanup) — reference --accent directly instead of carrying a redundant alias. */
+.badge--live .badge__dot { background: var(--accent); }
 
 /* Per-panel freshness indicator (Feature 4, T-2026-CU-9050-156). */
 .panel__freshness { margin: 0 0 8px; }
@@ -118,7 +124,33 @@ body {
 /* Leaderboard panel (Feature 2, T-2026-CU-9050-154): PnL/expectancy sign
    coloring for at-a-glance scanning. */
 .pnl-positive { color: var(--fresh); }
-.pnl-negative { color: var(--stale); }
+.pnl-negative { color: var(--loss); }
+
+/* Global success-metric toggle (Feature 5, T-2026-CU-9050-157): shell-level
+   link group (base.html) + the leaderboard column it highlights. */
+.metric-toggle {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.metric-toggle__option {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.metric-toggle__option--active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(76, 154, 255, 0.12);
+}
+
+/* The leaderboard column matching the current toggle selection. */
+.metric-highlight { background: rgba(76, 154, 255, 0.08); }
 
 /* Success-rate time-comparison panel filters (Feature 3, T-2026-CU-9050-155):
    bot multiselect + rolling-window switcher. */

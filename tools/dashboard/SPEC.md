@@ -224,3 +224,88 @@ Rueckgabewert bei `sources=None`, `--no-verify`, main/prod direkt, Push/PR
 (Orchestrator-Schritt).
 **Frag zurueck:** neue Runtime-Dependencies, Aenderung der bestehenden
 Panel-Routen-Signaturen/-Tests aus Feature 1-3.
+
+---
+
+## Feature 5 — Globaler Erfolgs-Metrik-Toggle (T-2026-CU-9050-157)
+
+Task: T-2026-CU-9050-157 · baut additiv auf T-154 (`bot_leaderboard`/
+`_LEADERBOARD_SORT_KEYS`) und T-151 (Shell) auf.
+
+### Intent
+Ein shell-globaler Erfolgs-Metrik-Toggle (Winrate / Expectancy / Netto-PnL)
+im Base-Layout bestimmt, welche Kennzahl die Panels hervorheben. Cross-cutting
+via `?metric=`-Query-Param, den das Leaderboard-Panel liest: die gewaehlte
+Metrik wird als hervorgehobene Spalte gezeigt UND als Default-Sort verwendet
+(`metric`→`sort_by`: winrate→winrate, expectancy→expectancy_pct,
+netto-pnl→pnl_sum_pct). Sinnvoller Default netto-pnl (= die bestehende
+`DEFAULT_LEADERBOARD_SORT`). Unbekannter `metric`-Wert faellt still auf den
+Default zurueck (kein 500). Panels, die die Metrik nicht kennen, ignorieren
+den Toggle unschaedlich.
+
+### Akzeptanzkriterien (binaer testbar)
+- [x] AK1: Reine Mapping-Logik `resolve_metric(raw)` (unbekannt/None →
+  `DEFAULT_METRIC`) und `metric_sort_by(metric)` (→ ein Key aus
+  `analytics_api._LEADERBOARD_SORT_KEYS`), Flask-/DuckDB-frei testbar. —
+  Test: `test_resolve_metric_*`, `test_metric_sort_by_maps_onto_leaderboard_sort_keys`,
+  `test_metric_sort_by_unresolved_value_falls_back_to_default_sort_by`.
+- [x] AK2: Alle drei Metriken + Default: `GET /panels/leaderboard?metric=…`
+  sortiert nach der gemappten Metrik. Fixture rankt dieselben drei Bots in
+  DREI verschiedenen Reihenfolgen → ein falsches/ignoriertes Mapping rendert
+  eine der ANDEREN Reihenfolgen (Mutation-Check). — Test:
+  `test_leaderboard_panel_metric_{winrate,expectancy,netto_pnl}_*`.
+- [x] AK3: Unbekannter `metric`-Wert → Default (kein 500), Route 200. — Test:
+  `test_leaderboard_panel_unknown_metric_falls_back_to_default_no_500`,
+  `test_index_unknown_metric_query_param_falls_back_no_500`.
+- [x] AK4: Der Shell-Toggle (`base.html`) rendert die drei Optionen, markiert
+  die aktive, und der resolvte Wert wird in die eigene hx-get-URL des
+  Leaderboard-Panels gebacken, sodass Load + Poll dieselbe Metrik behalten. —
+  Test: `test_index_renders_metric_toggle_with_default_active`,
+  `test_index_metric_query_param_selects_active_toggle_option`.
+- [x] AK5: Die gewaehlte Metrik-Spalte wird im Leaderboard hervorgehoben
+  (`metric-highlight`), konsistent mit dem Sort. — Test:
+  `test_leaderboard_panel_metric_winrate_reorders_and_highlights`.
+- [x] AK6: Kein Postgres-Zugriff, DB-frei testbar. — Test:
+  `test_toggle_never_touches_postgres`.
+
+### Out of Scope
+- Live-Steuerung (Feature 4).
+- Die anderen Panels neu bauen — sie erben den Toggle nur unschaedlich
+  (Fleet-Registry/Erfolgsrate/Zeitvergleich ignorieren `metric`).
+- Ein neuer JSON-API-Endpoint fuer den Toggle (der `/api/analytics/leaderboard`
+  akzeptiert `sort_by` bereits direkt).
+
+### Eingefaltete Review-Nit-Cleanups (dieser Task fasst app.py/CSS/Leaderboard-Test ohnehin an)
+- CSS-Token-Hygiene: eigenes `--loss`-Token fuer `.pnl-negative` (statt des
+  `--stale`-Freshness-Tokens); `--live` (byte-identisch zu `--accent`)
+  entfernt, `var(--accent)` direkt genutzt. Rein kosmetisch, kein visueller
+  Bruch.
+- Namens-Kollision: Modul-Funktion `panel_freshness()` → `panel_freshness_summary()`
+  (kollidierte mit dem nested Route-Handler `def panel_freshness()` in
+  `create_app()`); alle vier Panel-Context-Caller + Freshness-Tests angepasst,
+  verhaltenserhaltend.
+- Test-Luecke (T-154-MEDIUM): `sort_by="winrate"` und `sort_by="n"` mit
+  divergenter Fixture (Reihenfolge ≠ pnl-Default) — ein ignorierter `sort_by`
+  wird jetzt rot.
+
+### Why Build (statt Reuse)
+Shell-globaler Metrik-Toggle + Panel-Highlight/Sort-Kopplung ist
+projektspezifische Verdrahtung auf dem bestehenden T-131/T-154-Substrat;
+keine Library liefert das. `bot_leaderboard` wird wiederverwendet (via seinem
+bereits vorhandenen `sort_by`-Parameter), nicht neu gebaut.
+
+### Scope of consent
+**Erlaubt:** `tools/dashboard/app.py` additiv (neue Konstanten/Funktionen +
+`metric`-Param an `_leaderboard_context`/den Routen), `tools/dashboard/templates/**`
+additiv (Toggle in `base.html`, `metric` in `index.html`+`leaderboard.html`),
+`tools/dashboard/static/css/app.css` (Toggle-/Highlight-Styles + `--loss`/`--live`-
+Cleanup), `backtest/test_dashboard_metric_toggle.py` neu, Ergaenzungen in
+`backtest/test_dashboard_leaderboard.py`/`test_dashboard_freshness.py` (Rename),
+`CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-157`.
+**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
+Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, `--no-verify`,
+main/prod direkt, Push/PR (Orchestrator-Schritt).
+**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
+Panel-Routen-Signaturen aus Feature 1-4 ueber den additiven `metric`-Param
+hinaus.
+

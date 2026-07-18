@@ -239,6 +239,35 @@ def test_bot_leaderboard_sort_by_expectancy(tmp_path):
     assert payload["sort_by"] == "expectancy_pct"
 
 
+def test_bot_leaderboard_sort_by_winrate_diverges_from_pnl_default(tmp_path):
+    """T-154-MEDIUM test gap: sort_by="winrate" must be REALLY wired through —
+    not just accepted-and-ignored while the query silently keeps sorting by
+    pnl_sum_pct. The shared fixture already gives winrate a DIFFERENT ranking
+    than the pnl-descending default (ABR2=1.0 > RUB2=0.5 > MIS2=0.0, vs.
+    pnl-descending's RUB2 > ABR2 > MIS2), so an ignored sort_by would leave
+    the order unchanged and this assertion would catch it."""
+    con = analytics_api.connect_ro(_build_duckdb(tmp_path))
+    try:
+        payload = bot_leaderboard(con, sort_by="winrate")
+    finally:
+        con.close()
+    assert [r["bot"] for r in payload["bots"]] == ["ABR2", "RUB2", "MIS2"]
+    assert payload["sort_by"] == "winrate"
+
+
+def test_bot_leaderboard_sort_by_n_diverges_from_pnl_default(tmp_path):
+    """Same T-154-MEDIUM gap, exercised for sort_by="n" — trade count gives yet
+    a THIRD ranking (RUB2=4 > MIS2=3 > ABR2=1), distinct from both the
+    pnl-descending default and the winrate ordering above."""
+    con = analytics_api.connect_ro(_build_duckdb(tmp_path))
+    try:
+        payload = bot_leaderboard(con, sort_by="n")
+    finally:
+        con.close()
+    assert [r["bot"] for r in payload["bots"]] == ["RUB2", "MIS2", "ABR2"]
+    assert payload["sort_by"] == "n"
+
+
 def test_bot_leaderboard_unknown_sort_key_falls_back_to_default(tmp_path):
     con = analytics_api.connect_ro(_build_duckdb(tmp_path))
     try:
@@ -301,7 +330,11 @@ def test_panel_leaderboard_renders_sorted_rows_with_all_metrics(client):
 
 def test_index_includes_leaderboard_panel(client):
     html = client.get("/").get_data(as_text=True)
-    assert 'hx-get="/panels/leaderboard"' in html
+    # Feature 5 (T-2026-CU-9050-157): the global metric toggle bakes the
+    # resolved ?metric= into the panel's own hx-get URL, so the plain
+    # "/panels/leaderboard" URL from before that feature no longer appears
+    # verbatim — this is the intentional, additive behaviour change.
+    assert 'hx-get="/panels/leaderboard?metric=netto-pnl"' in html
     assert 'id="leaderboard-body"' in html
     assert "every 30s" in html
 

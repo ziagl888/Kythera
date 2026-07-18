@@ -19,6 +19,23 @@
 <body>
   <header class="topbar">
     <h1 class="topbar__title">Z1 Dashboard</h1>
+    {#
+      Global success-metric toggle (Feature 5, T-2026-CU-9050-157). Plain GET
+      links to "/" carrying ?metric=... — a full (HTMX-free) navigation is the
+      simplest robust way to make a SHELL-level toggle propagate into every
+      panel's own initial hx-get URL (see index.html's leaderboard div), since
+      only a full render of index.html has the context to bake the resolved
+      metric into each panel container. `metric`/`metrics`/`metric_labels` are
+      only ever set by the index() route (the only route extending this base
+      template), so `default` guards keep this block inert on the rare case
+      another route ever renders base.html without them.
+    #}
+    <nav class="metric-toggle" aria-label="Erfolgs-Metrik">
+      {% for m in metrics | default([]) %}
+      <a class="metric-toggle__option{% if m == metric %} metric-toggle__option--active{% endif %}"
+         href="{{ url_for('index', metric=m) }}">{{ metric_labels[m] }}</a>
+      {% endfor %}
+    </nav>
     <div class="topbar__badge"
          id="freshness-badge"
          hx-get="/panels/freshness"
