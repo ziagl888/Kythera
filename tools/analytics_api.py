@@ -388,23 +388,30 @@ class _PollCache:
         return payload
 
 
-def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
-    """Flask app exposing the read-only analytics endpoints over ``duckdb_path``.
+def build_analytics_blueprint(duckdb_path: str | Path, *, cache_enabled: bool = True):
+    """Read-only analytics JSON endpoints as a mountable Flask blueprint.
+
+    Extracted from :func:`create_app` (behaviour-preserving — same URLs, same
+    cache) so the Z1 dashboard shell (``tools/dashboard/app.py``,
+    T-2026-CU-9050-151) can mount the same endpoints on its own Flask app rather
+    than run a second server. The blueprint closes over its own throttled
+    connection factory and poll cache, so any app that mounts it stays
+    independent.
 
     Each request opens its own read-only DuckDB connection — the file is a
     single-writer (the export job) / many-reader artifact, so read_only readers
     never block the writer and see a consistent snapshot.
     """
-    from flask import Flask, jsonify, request
+    from flask import Blueprint, jsonify, request
 
-    app = Flask(__name__)
+    bp = Blueprint("analytics", __name__)
     path = str(duckdb_path)
     cache = _PollCache(path, enabled=cache_enabled)
 
     def _ro_con() -> duckdb.DuckDBPyConnection:
         return connect_ro(path)
 
-    @app.get("/api/analytics/success-rate")
+    @bp.get("/api/analytics/success-rate")
     def success_rate():
         try:
             windows = _parse_windows(request.args.get("windows"))
@@ -444,7 +451,7 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
 
         return jsonify(cache.get(key, _build))
 
-    @app.get("/api/analytics/bots")
+    @bp.get("/api/analytics/bots")
     def bots():
         def _build() -> dict[str, Any]:
             con = _ro_con()
@@ -455,7 +462,7 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
 
         return jsonify(cache.get(("bots",), _build))
 
-    @app.get("/api/analytics/freshness")
+    @bp.get("/api/analytics/freshness")
     def freshness():
         from tools.analytics_export import data_freshness
 
@@ -468,6 +475,21 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
 
         return jsonify(cache.get(("freshness",), _build))
 
+    return bp
+
+
+def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
+    """Standalone Flask app exposing only the read-only analytics endpoints.
+
+    Thin wrapper over :func:`build_analytics_blueprint` — kept so the analytics
+    API can still be served on its own (and so the T-131 tests that hit
+    ``/api/analytics/*`` on this app stay valid). The Z1 dashboard shell mounts
+    the blueprint on its own app instead of calling this.
+    """
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.register_blueprint(build_analytics_blueprint(duckdb_path, cache_enabled=cache_enabled))
     return app
 
 

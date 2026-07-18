@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Z1 Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  {#
+    Vendored JS only — no CDN requests (offline VPS + strict serving contract).
+    Load order matters: charting libs first, then the shared lifecycle helper,
+    then the app-specific panel factories that register against it.
+  #}
+  <script src="{{ url_for('static', filename='vendor/htmx.min.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='vendor/lightweight-charts.standalone.production.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='vendor/echarts.min.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/chart_lifecycle.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/panels.js') }}" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="topbar__title">Z1 Dashboard</h1>
+    <div class="topbar__badge"
+         id="freshness-badge"
+         hx-get="/panels/freshness"
+         hx-trigger="every {{ badge_poll_seconds | default(60) }}s"
+         hx-swap="innerHTML">
+      {% include "_freshness_badge.html" %}
+    </div>
+  </header>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

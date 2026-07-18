@@ -1,0 +1,45 @@
+{#
+  Success-rate demo panel fragment (HTMX swap target). Server-rendered from
+  _demo_panel_context(): a per-bot winrate table across the rolling windows plus
+  a chart the chart-lifecycle helper mounts/disposes across swaps.
+#}
+{% if not bots %}
+  <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+{% else %}
+  <p class="panel__asof">
+    Stand der Daten: {{ as_of or "unbekannt" }} · Fenster:
+    {% for w in windows %}{{ w }}d{% if not loop.last %} / {% endif %}{% endfor %}
+  </p>
+
+  {#
+    Chart mount point. `data-chart` names the factory panels.js registered with
+    the lifecycle helper; the series lives in the sibling JSON script so the
+    helper can (re)build it on afterSwap and dispose it on beforeSwap.
+  #}
+  <div class="chart"
+       data-chart="winrate-bars"
+       data-series="winrate-series"
+       style="width:100%;height:220px"></div>
+  <script type="application/json" id="winrate-series">{{ chart_series | tojson }}</script>
+
+  <table class="datatable">
+    <thead>
+      <tr>
+        <th>Bot</th>
+        {% for w in windows %}<th>{{ w }}d Winrate</th><th>{{ w }}d n</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in bots %}
+      <tr>
+        <td class="datatable__bot">{{ row.bot }}</td>
+        {% for w in windows %}
+          {% set cell = row.windows.get(w) %}
+          <td>{% if cell and cell.winrate_pct is not none %}{{ cell.winrate_pct }}%{% else %}–{% endif %}</td>
+          <td>{% if cell %}{{ cell.n }}{% else %}0{% endif %}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}

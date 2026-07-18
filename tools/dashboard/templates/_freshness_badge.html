@@ -1,0 +1,10 @@
+{#
+  Data-freshness badge inner fragment. Rendered both inline in base.html and as
+  the standalone /panels/freshness poll response, so it carries NO outer wrapper
+  — the #freshness-badge container owns that. `freshness` = freshness_summary().
+#}
+<span class="badge {% if freshness.sync_age_min is not none and freshness.sync_age_min <= 15 %}badge--fresh{% else %}badge--stale{% endif %}"
+      title="{% if freshness.synced_at %}Letzter Sync (UTC): {{ freshness.synced_at }} · {{ freshness.sources }} Quelle(n){% else %}Noch kein Export gelaufen{% endif %}">
+  <span class="badge__dot" aria-hidden="true"></span>
+  <span class="badge__label">{{ freshness.label }}</span>
+</span>
