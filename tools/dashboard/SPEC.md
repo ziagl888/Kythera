@@ -485,3 +485,113 @@ Push/PR (Orchestrator-Schritt).
 **Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
 Panel-Routen-Signaturen aus Feature 1-6.
 
+---
+
+## Feature 8 — Overnight-Digest-Startseite (T-2026-CU-9050-160, F1)
+
+Task: T-2026-CU-9050-160 · baut additiv auf T-131 (`_outcomes_cte_with_coin`/
+`_bot_filter`/`_existing_outcome_tables_with_coin`, Feature 7) und
+`_regime_history_present` (Feature 6) auf.
+
+### Intent
+Eine Digest-/Zusammenfassungs-Sektion GANZ OBEN auf der Startseite: fuer ein
+konfigurierbares Fenster (Default "Overnight" = 8h, umschaltbar 8h/24h/7 Tage
+via `?window=`) auf einen Blick — aggregierte Netto-PnL (Σ%), Trade-Count,
+Gesamt-Win-Rate, Top-/Flop-Bot (nach PnL-Summe), groesster Win/Loss
+(Coin+Bot+PnL) und (falls das Substrat `regime_history` traegt) die Anzahl
+echter Regime-WECHSEL im Fenster (nicht blosse Log-Zeilen). Das Fenster
+verankert sich wie `success_rate_timeseries`/`rolling_success_rate_series` NIE
+an einer UTC-"jetzt"-Wanduhr, sondern an `max(closed_at)` im Substrat selbst
+(`as_of`) — das haelt die Fensterberechnung strikt in derselben naive-local
+Zeitrechnung wie die `closed_at`-Spalten selbst (TZ-Kontrakt: keine
+Vermischung mit einer echten UTC-Uhr, siehe analytics_export TIMEZONE-Note).
+Ein leeres Fenster (keine Trades) zeigt "Keine Trades im Fenster", nie einen
+500er oder fabrizierte Nullwerte.
+
+### Akzeptanzkriterien (binaer testbar)
+- [x] AK1: `analytics_api.overnight_digest(con, window_hours, *, as_of=None,
+  bots=None)` liefert additiv `{as_of, window_hours, n, wins, pnl_sum_pct,
+  winrate, top_bot, flop_bot, best_trade, worst_trade, regime_changes}` —
+  wiederverwendet die coin-aware CTE aus Feature 7
+  (`_outcomes_cte_with_coin`/`_existing_outcome_tables_with_coin`), dieselbe
+  DECISIVE-Trade-Definition wie ueberall sonst. `as_of=None` loest sich auf
+  `max(closed_at)` im Substrat auf (data-anchored, nie wall-clock-anchored). —
+  Test: `test_overnight_digest_basic_aggregates`.
+- [x] AK2: Fenstergrenze ist `closed_at > as_of - INTERVAL window_hours HOUR
+  AND closed_at <= as_of` (halboffen, identisches Muster wie
+  `success_rate_timeseries`) — ein Trade GENAU auf der unteren Grenze ist
+  ausgeschlossen, ein Trade knapp innerhalb ist eingeschlossen. Ein Trade
+  ausserhalb des Fensters (aelter) darf weder PnL-Summe/Count noch Top-/
+  Flop-Bot beeinflussen — ein Mutation-Check (Fenster-Filter entfernt/verkehrt)
+  macht `pnl_sum_pct`/`n` nachweisbar falsch. — Test:
+  `test_overnight_digest_window_boundary_excludes_outside_trade` (Mutation-Check).
+- [x] AK3: Top-Bot (hoechste Summen-PnL im Fenster) und Flop-Bot (niedrigste)
+  werden korrekt sortiert ermittelt — Fixture mit 3 Bots in eindeutiger
+  Reihenfolge, eine falsche/vertauschte Sortierung macht den Test rot
+  (Mutation-Check). — Test: `test_overnight_digest_top_and_flop_bot_correct`
+  (Mutation-Check).
+- [x] AK4: `best_trade`/`worst_trade` (groesster Win/Loss) tragen `{bot, coin,
+  pnl_pct, closed_at}` des tatsaechlichen Extremwerts im Fenster. — Test:
+  `test_overnight_digest_notable_trades_correct`.
+- [x] AK5: Leeres Fenster (kein Trade in der `window_hours`-Spanne, aber
+  Substrat hat Daten ausserhalb) liefert `n=0`, `pnl_sum_pct=None`,
+  `winrate=None`, `top_bot=None`, `flop_bot=None`, `best_trade=None`,
+  `worst_trade=None` — nie ein Fehler, nie eine fabrizierte 0. Komplett leeres
+  Substrat (keine Outcome-Tabelle) degradiert identisch. — Test:
+  `test_overnight_digest_empty_window_degrades_cleanly`,
+  `test_overnight_digest_empty_substrate_degrades_cleanly`.
+- [x] AK6: `regime_changes` zaehlt ECHTE Regime-UEBERGAENGE (Wert != Vorgaenger-
+  Wert in `regime_history`, per `LAG`-Fenster) deren `ts` im Fenster liegt —
+  nicht blosse Log-Zeilen (ein Append ohne Wertaenderung zaehlt nicht). Fehlt
+  `regime_history` im Substrat, ist `regime_changes=None` (nie fabriziert). —
+  Test: `test_overnight_digest_regime_changes_counts_real_transitions_only`,
+  `test_overnight_digest_regime_changes_none_without_regime_history`.
+- [x] AK7: `GET /panels/overnight-digest` (und `?window=8h|24h|168h`) rendert
+  200: Kennzahl-Kacheln (PnL/Count/Win-Rate), Top-/Flop-Bot, Notable-Trades und
+  einen Fenster-Umschalter, END-TO-END gegen eine echte
+  `AnalyticsExporter`/DuckDB-Fixture, ganz OBEN in `index.html` eingehaengt
+  (vor Fleet-Registry). Datenstand-Badge (`closed_ai_signals`/`closed_trades`/
+  `regime_history`). — Test:
+  `test_panel_overnight_digest_renders_correct_values` (Integrationstest),
+  `test_index_includes_digest_panel_above_fleet_registry`.
+- [x] AK8: Kein Postgres-Zugriff, DB-frei testbar; unbekannter/fehlender
+  `?window=`-Wert faellt still auf den Default (8h) zurueck (kein 500). —
+  Test: `test_panel_overnight_digest_never_touches_postgres`,
+  `test_resolve_digest_window_unknown_value_falls_back_to_default`.
+
+### Out of Scope
+- Live-Steuerung (Feature 4-Familie/F4).
+- Entscheidungsfertige Notifications (M5 = Phase 2).
+- Die anderen Panels neu bauen.
+- Ein Sparkline-Chart (bewusst weggelassen — Kacheln/Listen reichen fuer den
+  Digest; kein neuer ECharts-Factory-Eintrag noetig).
+- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
+  `overnight_digest()` direkt auf, wie die anderen additiven Panel-Routen seit
+  Feature 3 es tun).
+
+### Why Build (statt Reuse)
+Fenster-Digest-Aggregation (Top/Flop-Bot, Notable Trades, Regime-Transitions)
+auf dem bestehenden T-131-Substrat ist projektspezifische Verdrahtung; keine
+Library liefert das. `_outcomes_cte_with_coin`/`_bot_filter`/
+`_existing_outcome_tables_with_coin`/`_regime_history_present` werden
+wiederverwendet, nicht neu gebaut.
+
+### Scope of consent
+**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktion(en)
+`overnight_digest`/`_regime_changes_in_window`, bestehende Funktionen
+unveraendert), `tools/dashboard/app.py` additiv (neue Konstanten/Funktionen +
+Route `/panels/overnight-digest`, neuer `PANEL_SOURCES`-Eintrag),
+`tools/dashboard/templates/panels/overnight_digest.html` (neu) +
+`index.html`-Einbindung GANZ OBEN, `tools/dashboard/static/css/app.css`
+additiv (Kachel-/Spalten-Styles), `backtest/test_dashboard_digest.py` neu,
+`CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-160`.
+**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
+Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
+`analytics_api`-Aggregatfunktionen (`_outcomes_cte`, `_outcomes_cte_with_coin`,
+`bot_trade_rows`, `bot_leaderboard`, `success_rate_timeseries`,
+`bot_regime_matrix`, `coins_with_trades`, `coin_trade_series`) inhaltlich
+umschreiben, Live-Steuerung/Notifications bauen, `--no-verify`, main/prod
+direkt, Push/PR (Orchestrator-Schritt).
+**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
+Panel-Routen-Signaturen aus Feature 1-7.
+

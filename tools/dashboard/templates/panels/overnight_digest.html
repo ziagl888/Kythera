@@ -1,0 +1,110 @@
+{#
+  Overnight-digest landing summary (Feature 8, T-2026-CU-9050-160). Renders
+  analytics_api.overnight_digest()'s aggregation for a trailing window
+  (default 8h "Overnight", toggle 8h/24h/7 Tage): net PnL sum / trade count /
+  win-rate as KPI tiles, top/flop bot, biggest win/loss (coin+bot+PnL), and
+  (when regime_history exists) the count of REAL regime transitions in the
+  window. An empty window renders a clean "keine Trades" message — never a
+  fabricated zero standing in for missing data.
+
+  Self-updating widget: THIS div (including its own hx-get) is the swap
+  target (outerHTML), same pattern as regime_heatmap.html/
+  success_rate_timeseries.html — a window-toggle change re-fetches
+  immediately with the new window baked into the query string.
+#}
+<div id="overnight-digest-body"
+     hx-get="{{ url_for('panel_overnight_digest') }}?window={{ window_hours }}"
+     hx-trigger="load, every {{ poll_seconds }}s"
+     hx-swap="outerHTML">
+
+  {% include "_panel_freshness_badge.html" %}
+
+  <form class="panel__filters"
+        hx-get="{{ url_for('panel_overnight_digest') }}"
+        hx-target="#overnight-digest-body"
+        hx-swap="outerHTML"
+        hx-trigger="change">
+    <fieldset class="panel__filter-group">
+      <legend>Fenster</legend>
+      {% for w in window_options %}
+      <label class="panel__filter-option">
+        <input type="radio" name="window" value="{{ w }}" {% if w == window_hours %}checked{% endif %}>
+        {{ window_labels[w] }}
+      </label>
+      {% endfor %}
+    </fieldset>
+  </form>
+
+  {% if digest.n == 0 %}
+    <p class="muted">Keine Trades im Fenster.</p>
+  {% else %}
+    <div class="digest-tiles">
+      <div class="digest-tile">
+        <span class="digest-tile__label">Netto-PnL (Σ%)</span>
+        <span class="digest-tile__value {% if digest.pnl_sum_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+          {{ "%.2f"|format(digest.pnl_sum_pct) }}%
+        </span>
+      </div>
+      <div class="digest-tile">
+        <span class="digest-tile__label">Trades</span>
+        <span class="digest-tile__value">{{ digest.n }}</span>
+      </div>
+      <div class="digest-tile">
+        <span class="digest-tile__label">Win-Rate</span>
+        <span class="digest-tile__value">
+          {% if digest.winrate is not none %}{{ "%.1f"|format(digest.winrate * 100) }}%{% else %}–{% endif %}
+        </span>
+      </div>
+      {% if digest.regime_changes is not none %}
+      <div class="digest-tile">
+        <span class="digest-tile__label">Regime-Wechsel</span>
+        <span class="digest-tile__value">{{ digest.regime_changes }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="digest-columns">
+      <div class="digest-col">
+        <h3 class="digest-col__title">Top-Bot</h3>
+        {% if digest.top_bot %}
+        <p class="digest-col__body">
+          <span class="datatable__bot">{{ digest.top_bot.bot }}</span> —
+          <span class="{% if digest.top_bot.pnl_sum_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">{{ "%.2f"|format(digest.top_bot.pnl_sum_pct) }}%</span>
+          ({{ digest.top_bot.n }} Trade{% if digest.top_bot.n != 1 %}s{% endif %})
+        </p>
+        {% endif %}
+      </div>
+      <div class="digest-col">
+        <h3 class="digest-col__title">Flop-Bot</h3>
+        {% if digest.flop_bot %}
+        <p class="digest-col__body">
+          <span class="datatable__bot">{{ digest.flop_bot.bot }}</span> —
+          <span class="{% if digest.flop_bot.pnl_sum_pct >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">{{ "%.2f"|format(digest.flop_bot.pnl_sum_pct) }}%</span>
+          ({{ digest.flop_bot.n }} Trade{% if digest.flop_bot.n != 1 %}s{% endif %})
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="digest-columns">
+      <div class="digest-col">
+        <h3 class="digest-col__title">Größter Win</h3>
+        {% if digest.best_trade %}
+        <p class="digest-col__body">
+          {{ digest.best_trade.coin }} · <span class="datatable__bot">{{ digest.best_trade.bot }}</span> ·
+          <span class="pnl-positive">{{ "%.2f"|format(digest.best_trade.pnl_pct) }}%</span>
+        </p>
+        {% endif %}
+      </div>
+      <div class="digest-col">
+        <h3 class="digest-col__title">Größter Loss</h3>
+        {% if digest.worst_trade %}
+        <p class="digest-col__body">
+          {{ digest.worst_trade.coin }} · <span class="datatable__bot">{{ digest.worst_trade.bot }}</span> ·
+          <span class="pnl-negative">{{ "%.2f"|format(digest.worst_trade.pnl_pct) }}%</span>
+        </p>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+</div>

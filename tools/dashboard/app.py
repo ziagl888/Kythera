@@ -54,6 +54,7 @@ from core.fleet import FLEET
 from core.process_control import list_parked, parked_since
 from core.time import from_unix_ts
 from tools.analytics_api import (
+    DEFAULT_DIGEST_WINDOW_HOURS,
     DEFAULT_TIMESERIES_WINDOW,
     TIMESERIES_WINDOWS,
     _serve,
@@ -64,6 +65,7 @@ from tools.analytics_api import (
     coin_trade_series,
     coins_with_trades,
     connect_ro,
+    overnight_digest,
     rolling_success_rate_series,
     success_rate_timeseries,
 )
@@ -204,6 +206,11 @@ PANEL_SOURCES: dict[str, tuple[str, ...]] = {
     # outcome tables as the leaderboard/success-rate panels (via the coin-
     # aware CTE), so its freshness shares that pair.
     "coin-drilldown": ("closed_ai_signals", "closed_trades"),
+    # Feature 8 (T-2026-CU-9050-160): the overnight digest reads the same two
+    # outcome tables (via the coin-aware CTE, like the coin drill-down) PLUS
+    # regime_history for its (optional) regime-transition count — all three
+    # matter for the panel's own worst-case freshness.
+    "overnight-digest": ("closed_ai_signals", "closed_trades", "regime_history"),
 }
 
 # fleet-registry has no DuckDB sync to report a synced_at/last_row_ts for —
@@ -645,9 +652,7 @@ def resolve_regime_heatmap_metric(raw: str | None) -> str:
     return raw if raw in REGIME_HEATMAP_METRIC_FIELD else DEFAULT_REGIME_HEATMAP_METRIC
 
 
-def _regime_heatmap_context(
-    duckdb_path: str, *, metric: str = DEFAULT_REGIME_HEATMAP_METRIC
-) -> dict[str, Any]:
+def _regime_heatmap_context(duckdb_path: str, *, metric: str = DEFAULT_REGIME_HEATMAP_METRIC) -> dict[str, Any]:
     """Server-side render context for the Bot x Regime heatmap panel.
 
     Thin wrapper over ``analytics_api.bot_regime_matrix`` — same throttled
@@ -836,6 +841,68 @@ def _coin_drilldown_context(duckdb_path: str, *, raw_coin: str | None) -> dict[s
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Overnight-digest landing summary (Feature 8, T-2026-CU-9050-160)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Window choices the digest's own toggle switches between (trailing hours).
+# 8h is the "Overnight" default the SPEC names explicitly; 24h/168h (7 days)
+# are the additive "…|…" options the SPEC allows without prescribing more.
+DIGEST_WINDOW_OPTIONS: tuple[int, ...] = (8, 24, 168)
+
+DIGEST_WINDOW_LABELS: dict[int, str] = {
+    8: "Overnight (8h)",
+    24: "24h",
+    168: "7 Tage",
+}
+
+
+def resolve_digest_window(raw: str | None) -> int:
+    """Normalise a raw ``?window=`` query value (``"8h"``, ``"24"``, ``None``, …)
+    to one of :data:`DIGEST_WINDOW_OPTIONS`, in trailing HOURS.
+
+    Accepts an optional trailing ``h`` suffix (``"8h"``) or a bare integer
+    (``"8"``); anything that does not parse to one of the known window
+    options — missing, malformed, or simply a number nobody offered as a
+    toggle choice — falls back to :data:`DEFAULT_DIGEST_WINDOW_HOURS` rather
+    than raising, the same permissive-fallback contract every other
+    query-string resolver in this module already uses (``resolve_metric``,
+    ``resolve_regime_heatmap_metric``): a bad value must degrade, never 500.
+    """
+    if not raw:
+        return DEFAULT_DIGEST_WINDOW_HOURS
+    text = raw.strip().lower()
+    if text.endswith("h"):
+        text = text[:-1]
+    try:
+        hours = int(text)
+    except ValueError:
+        return DEFAULT_DIGEST_WINDOW_HOURS
+    return hours if hours in DIGEST_WINDOW_OPTIONS else DEFAULT_DIGEST_WINDOW_HOURS
+
+
+def _digest_context(duckdb_path: str, *, window_hours: int = DEFAULT_DIGEST_WINDOW_HOURS) -> dict[str, Any]:
+    """Server-side render context for the overnight-digest landing panel.
+
+    Thin wrapper over ``analytics_api.overnight_digest`` — same throttled
+    read-only DuckDB connection pattern as every other panel context here.
+    """
+    con = connect_ro(duckdb_path)
+    try:
+        payload = overnight_digest(con, window_hours)
+        freshness_rows = data_freshness(con)
+    finally:
+        con.close()
+    return {
+        "digest": payload,
+        "window_hours": window_hours,
+        "window_options": DIGEST_WINDOW_OPTIONS,
+        "window_labels": DIGEST_WINDOW_LABELS,
+        "poll_seconds": PANEL_POLL_SECONDS,
+        "freshness": panel_freshness_summary(freshness_rows, "overnight-digest"),
+    }
+
+
 def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     """Flask app for the Z1 dashboard shell.
 
@@ -909,9 +976,16 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         # expectancy), baked into this panel's own hx-get URL exactly like
         # Feature 5's global toggle does for the leaderboard.
         metric = resolve_regime_heatmap_metric(request.args.get("metric"))
-        return render_template(
-            "panels/regime_heatmap.html", **_regime_heatmap_context(path, metric=metric)
-        )
+        return render_template("panels/regime_heatmap.html", **_regime_heatmap_context(path, metric=metric))
+
+    @app.get("/panels/overnight-digest")
+    def panel_overnight_digest():
+        # Feature 8 (T-2026-CU-9050-160): local window toggle (8h/24h/7 Tage),
+        # baked into this panel's own hx-get URL — same self-updating pattern
+        # as the regime-heatmap metric toggle and success-rate-timeseries
+        # window switcher.
+        window_hours = resolve_digest_window(request.args.get("window"))
+        return render_template("panels/overnight_digest.html", **_digest_context(path, window_hours=window_hours))
 
     @app.get("/panels/coin-drilldown")
     def panel_coin_drilldown():
