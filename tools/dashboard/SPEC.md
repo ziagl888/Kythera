@@ -721,10 +721,19 @@ per Request read-only oeffnet. Stattdessen laeuft er RW auf einer persistenten
 ab dem ersten Lauf/Seed exakt erhalten) und **publisht atomar**: `shutil.copy2(build, <served>.tmp)` →
 `os.replace(<served>.tmp, served)` (atomar auf demselben Volume). Damit wird der
 served-Pfad vom Export nie exklusiv gelockt → Dashboard-Reads erroren waehrend
-eines Laufs nicht mehr. Windows-Sharing-Violation beim Replace → bis zu 5
-Retries (200 ms); scheitern alle, bleiben Build-DB + `.tmp` intakt, served
-unangetastet, Exit-Code ≠ 0 (kein Korruptions-Risiko). Reine Publish-Logik:
-`publish_duckdb()` (DB-frei testbar, `backtest/test_analytics_export_publish.py`).
+eines Laufs nicht mehr. Windows-Sharing-Violation beim Replace → Retries mit
+einem **~30 s Gesamt-Budget** (`DEFAULT_PUBLISH_RETRIES=120` × `retry_delay_s=0.25`,
+CLI `--publish-retries`/`--publish-retry-delay`, T-2026-CU-9050-167). Das Budget
+MUSS grosszuegig sein: das Dashboard HTMX-pollt mehrere Panels und oeffnet die
+served-DB per Request read-only, das alte 1 s-Budget (T-163) fand unter Live-
+Polling nie eine Luecke und der Publish schlug dauerhaft fehl. Da jeder Request
+sein Handle schliesst, ist die served-Datei >90 % der Zeit frei → ein weites
+Fenster trifft zuverlaessig eine Luecke. Scheitern ALLE Versuche, bleiben
+Build-DB + `.tmp` intakt, served unangetastet, Exit-Code ≠ 0 (kein Korruptions-
+Risiko) — **Selbstheilung:** der naechste Lauf republisht dieselben frischen
+Daten aus der Build-DB, ein verpasster Publish ist nie Datenverlust, nur
+verzoegert. Reine Publish-Logik: `publish_duckdb()` (DB-frei testbar,
+`backtest/test_analytics_export_publish.py`).
 
 Rollout-Seed: Der Wechsel auf die Build-DB ist der erste Split vom alten
 Single-File-Layout. Beim ERSTEN Lauf unter dem neuen Code seedet `main()`
