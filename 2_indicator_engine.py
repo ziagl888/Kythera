@@ -575,7 +575,9 @@ def _as_of_now_window_globals(indicators_df, timeframe):
 
 
 def calculate_indicators_optimized(df, timeframe):
-    df = df.sort_values('open_time')
+    # T-2026-CU-9050-174: no re-sort. Every caller hands the frame ASC by
+    # open_time (read_candles contract 1, the guard fixtures, recompute's
+    # ORDER BY open_time ASC) — the stable sort on sorted input was identity.
     close = df['close']
     high = df['high']
     low = df['low']
@@ -583,8 +585,12 @@ def calculate_indicators_optimized(df, timeframe):
 
     for p in [6, 9, 12, 14, 24]:
         results[f'RSI_{p}'] = calculate_rsi(close, p)
+    # T-2026-CU-9050-174: keep the raw (pre-fillna) EMA series — calc_macd below
+    # reuses EMA_9/12/21/26 instead of recomputing the same ewm(span, adjust=False).
+    emas = {}
     for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]:
-        results[f'EMA_{p}'] = close.ewm(span=p, adjust=False).mean().fillna(0)
+        emas[p] = close.ewm(span=p, adjust=False).mean()
+        results[f'EMA_{p}'] = emas[p].fillna(0)
     for p in [7, 10, 20, 25, 50, 99, 100, 200]:
         results[f'MA_{p}'] = close.rolling(window=p).mean().fillna(0)
     for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]:
@@ -611,9 +617,7 @@ def calculate_indicators_optimized(df, timeframe):
         results[f'DONCHIAN_MID_{w}'] = (results[f'DONCHIAN_UPPER_{w}'] + results[f'DONCHIAN_LOWER_{w}']) / 2
 
     def calc_macd(fast, slow, sig):
-        f_ema = close.ewm(span=fast, adjust=False).mean()
-        s_ema = close.ewm(span=slow, adjust=False).mean()
-        dif = f_ema - s_ema
+        dif = emas[fast] - emas[slow]
         dea = dif.ewm(span=sig, adjust=False).mean()
         return dif, dea
 
@@ -623,7 +627,10 @@ def calculate_indicators_optimized(df, timeframe):
     tr1 = high - low
     tr2 = (high - close.shift()).abs()
     tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    # T-2026-CU-9050-174: np.fmax (NaN-ignoring), NOT np.maximum — the first bar
+    # has NaN in tr2/tr3 from close.shift(), and the old concat(...).max(axis=1)
+    # skipped NaN there; np.maximum would propagate it into the ATR seed.
+    tr = pd.Series(np.fmax.reduce([tr1.to_numpy(), tr2.to_numpy(), tr3.to_numpy()]), index=close.index)
     for p in [9, 14, 21]:
         results[f'ATR_{p}'] = tr.ewm(alpha=1 / p, adjust=False).mean().fillna(0)
 
@@ -705,37 +712,86 @@ def write_indicators_to_db_optimized(conn, df, symbol, timeframe, definitions):
 
 
 # DB-WORKER
-def process_coin_task(args):
-    """Wrapper Funktion für den ProcessPoolExecutor"""
+# T-2026-CU-9050-174 (Finding 2): per-WORKER state instead of per-task work.
+# One pool worker process handles many (symbol, timeframe) tasks per cycle;
+# the DB connection, the (pure, constant) indicator definitions and the
+# positive table_exists probes are identical across those tasks.
+_WORKER: dict = {"conn": None, "definitions": None, "tables": set()}
 
-    # --- NEU: DIESER BLOCK MUSS GENAU HIER REIN! ---
-    import warnings
 
+def _init_worker():
+    """ProcessPoolExecutor initializer — runs once per worker process."""
     warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
 
+
+def _worker_conn():
+    """Persistent per-worker DB connection; reconnects if closed/discarded."""
+    conn = _WORKER["conn"]
+    if conn is not None and not getattr(conn, "closed", 0):
+        return conn
+    conn = get_db_connection()
+    _WORKER["conn"] = conn
+    return conn
+
+
+def _discard_worker_conn():
+    """Drop a broken connection so the next task reconnects cleanly."""
+    conn = _WORKER["conn"]
+    _WORKER["conn"] = None
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def process_coin_task(args):
+    """Wrapper Funktion für den ProcessPoolExecutor"""
     symbol, timeframe = args
 
     try:
-        # Jeder CPU-Kern macht seine eigene saubere DB-Verbindung auf
-        conn = get_db_connection()
+        conn = _worker_conn()
     except Exception as e:
         logger.error(f"DB Connect Error in Worker: {e}")
         return
 
     try:
-        definitions = get_indicator_definitions()
+        definitions = _WORKER["definitions"]
+        if definitions is None:
+            definitions = _WORKER["definitions"] = get_indicator_definitions()
         ohlcv_table = f'"{symbol}_{timeframe}"'
         ind_table = f'"{symbol}_{timeframe}{INDICATOR_SUFFIX}"'
 
-        if not table_exists(conn, ohlcv_table):
-            return  # Keine Rohdaten da, skippingn
+        # Positive-only existence cache: within a cycle an existing table never
+        # disappears, but a miss re-probes so a table created mid-cycle (or by
+        # create_indicator_table below) is still found.
+        tables = _WORKER["tables"]
+        if ohlcv_table not in tables:
+            if not table_exists(conn, ohlcv_table):
+                return  # Keine Rohdaten da, skippingn
+            tables.add(ohlcv_table)
 
-        if not table_exists(conn, ind_table):
-            create_indicator_table(conn, symbol, timeframe, definitions)
+        if ind_table not in tables:
+            if not table_exists(conn, ind_table):
+                create_indicator_table(conn, symbol, timeframe, definitions)
+            tables.add(ind_table)
 
         # Resume watermark = newest indicator row we wrote (forming or not).
         # Byte-equal to the old MAX(open_time) on the indicator table.
         last_ind_time = latest_open_time(conn, symbol, timeframe, include_forming=True, kind="indicators")
+
+        # T-2026-CU-9050-174 (Finding 1): early-skip when no CLOSED candle is newer
+        # than the watermark. The engine computes on closed candles only
+        # (include_forming=False below), so an unchanged newest-closed candle means
+        # the identical candle window as the previous run — the old code re-read,
+        # re-computed and re-upserted byte-identical rows. Late ingestion (new
+        # closed candle > watermark) and housekeeping gap-invalidation (indicator
+        # rows deleted → watermark jumps back) both fail this predicate and
+        # recompute exactly as before.
+        if last_ind_time is not None:
+            newest_closed = latest_open_time(conn, symbol, timeframe, include_forming=False, kind="candles")
+            if newest_closed is None or newest_closed <= last_ind_time:
+                return
 
         if last_ind_time is None:
             start_fetch_time = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
@@ -795,9 +851,13 @@ def process_coin_task(args):
 
     except Exception as e:
         logger.error(f"Error {symbol} ({timeframe}): {e}")
-        conn.rollback()
-    finally:
-        conn.close()
+        # Keep the persistent connection usable for the next task: roll back the
+        # aborted transaction; if even the rollback fails the connection is
+        # broken — discard it so the next task reconnects.
+        try:
+            conn.rollback()
+        except Exception:
+            _discard_worker_conn()
 
 
 # HAUPTSCHLEIFE (WATCHDOG READY)
@@ -835,14 +895,16 @@ def main():
             # Prozesse mit vollem numpy/pandas/scipy-Import). Die TF-Reihenfolge
             # und die 'updated'-Freigabe pro TF bleiben unveraendert, weil
             # exe.map pro Timeframe weiterhin blockierend abgearbeitet wird.
-            with ProcessPoolExecutor(max_workers=NUM_WORKERS) as exe:
+            with ProcessPoolExecutor(max_workers=NUM_WORKERS, initializer=_init_worker) as exe:
                 for current_tf in INDICATOR_TIMEFRAMES:
                     logger.info(f"⚙️ Starting Berechnungen für Timeframe: {current_tf}...")
                     update_timeframe_state(current_tf, 'working')
 
                     # Wir bauen die Tasks NUR für den aktuellen Timeframe
+                    # T-2026-CU-9050-174: chunksize=8 amortises the per-item IPC
+                    # round-trip of exe.map (default 1) over ~527 tasks per TF.
                     tasks = [(s, current_tf) for s in symbols]
-                    list(exe.map(process_coin_task, tasks))
+                    list(exe.map(process_coin_task, tasks, chunksize=8))
 
                     # Timeframe ist fertig -> Gib ihn für Ebene 3 (Detectors) frei!
                     update_timeframe_state(current_tf, 'updated')

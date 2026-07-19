@@ -1,3 +1,44 @@
+## [2026-07-19] Indikator-Engine CPU-Optimierung — Early-Skip + persistente Worker-Connections + Compute-Mikro-Opts, byte-identisch (T-2026-CU-9050-174)
+
+Die Engine rechnete alle 30 min 527 Coins × 6 TFs (~3.160 Tasks, NUM_WORKERS=3) komplett durch, obwohl
+bei den meisten (Symbol, TF)-Paaren seit dem letzten Zyklus keine neue GESCHLOSSENE Kerze existiert (1d
+hat z.B. nur in 1 von 48 Zyklen neue Arbeit). Alle drei Findings des Reviews vom 2026-07-19 umgesetzt;
+DB-Endzustand nachweislich byte-identisch, Trade-Charakteristik unverändert.
+
+- Finding 1 (größter Hebel, ~2/3 der Zyklus-Arbeit): Early-Skip in `process_coin_task` — nach dem
+  Watermark-Read zusätzlich `latest_open_time(kind='candles', include_forming=False)`; ist die neueste
+  geschlossene Kerze nicht neuer als der Watermark, sofortiger Return VOR `read_candles`.
+  Verhaltensneutral, weil die Engine seit T-114 nur geschlossene Kerzen lädt: gleiches Kerzenfenster →
+  die bisherigen Zwischenläufe upserteten nur byte-identische Zeilen erneut. Randfälle intakt:
+  verspätete Ingestion (neue geschlossene Kerze > Watermark) → Recompute; Housekeeping-Gap-Invalidierung
+  (Indikator-Zeilen gelöscht, Watermark springt zurück) → Recompute. Die `updated`-Freigabe pro TF
+  (`update_timeframe_state`) bleibt unverändert im Orchestrator-Loop.
+- Finding 2: EINE persistente DB-Connection pro Pool-WORKER (`initializer=_init_worker`, Lazy-Connect,
+  Reconnect-bei-Fehler) statt connect/close pro Task (~3.160 Connects/Zyklus). Rollback hält die
+  Connection nach einem Task-Fehler sauber; scheitert selbst der Rollback, wird sie verworfen und der
+  nächste Task verbindet neu. Commit bleibt beim Caller (harte Regel 8). Dazu
+  `get_indicator_definitions()` einmal pro Worker und ein Positiv-Cache für die zwei
+  `table_exists`-Probes pro Task (nur Treffer gecacht — neu angelegte Tabellen werden weiter gefunden).
+- Finding 3 (Mikro-Opts, bit-identisch): (a) `calc_macd` re-nutzt die EMA_9/12/21/26-Serien aus dem
+  EMA-Block statt vier `ewm`-Neuberechnungen; (b) redundanter `df.sort_values('open_time')` in
+  `calculate_indicators_optimized` entfernt (alle Caller liefern ASC: read_candles Contract 1,
+  Guard-Fixtures, recompute `ORDER BY`); (c) True-Range via `np.fmax.reduce` statt
+  `pd.concat(...).max(axis=1)` — bewusst fmax statt maximum, damit die NaN-Skip-Semantik der ersten
+  Bar (`close.shift()`) erhalten bleibt; (d) `exe.map(..., chunksize=8)` amortisiert die
+  IPC-Round-Trips über ~527 Tasks/TF.
+- BEWUSST NICHT angefasst: `lookback_candles=1000` (EWM-Konvergenz EMA/SMMA_200/KAMA/TSI, harte
+  Regel 7), `NUM_WORKERS=3` (VPS CPU-saturiert, T-166), KAMA-Restschleife (inhärent sequenziell).
+
+Verifikation: Regression-Guard 24/24 golden OHNE Refresh + `smoke` grün; zusätzlich
+Bit-Identitäts-Beweis alt↔neu über alle 24 Fixtures (111 Spalten, float64-Bitmuster-Vergleich:
+100% identisch). backtest: test_gap_continuity, test_wilder_rsi, test_window_features (Engine-Teil),
+test_candles_schema, test_fleet_definition, test_watchdog_backoff grün; der S/R-Reader-Teil von
+test_window_features und test_candles' Backend-Flag-Test scheitern identisch auf unverändertem main
+(stale `pd.read_sql_query`-Stub seit der read_candles-Umverdrahtung bzw. Test-Isolations-Leck — keine
+Regression, Follow-up-Kandidaten). ruff + format grün. Erwartet ~60-70% weniger Engine-Last/Zyklus +
+Postgres-Entlastung (weniger Connects/Reads), zahlt auf T-166/Z0 ein. Aktiv nach dem nächsten
+Engine-Restart (Michi-gated).
+
 ## [2026-07-19] Z1-Ops-Skript nachgezogen — Dashboard-Task auf Password-Logon + cmd.exe-Launcher (T-2026-CU-9050-170)
 
 Live-Verifikation des Z1-Deploys ergab: `tools/ops/register_kythera_dashboard_tasks.ps1` registrierte den Dashboard-Task als **S4U** — das funktioniert NICHT. Der kurze Export-Batch läuft unter S4U, aber der langlaufende waitress-Dashboard-Server bindet im Session-0-S4U-Kontext Port 8098 nie (getestet: auch nach 35s kein Bind). Der Fleet-Watchdog nutzt aus demselben Grund `LogonType=Password`. Zweiter Fund: eine Scheduled-Task-Aktion kann eine `.cmd` nicht direkt starten (kein CreateProcess auf `.cmd`) → sie muss über `cmd.exe /c "<launcher>"` laufen. Beides live gefixt (Dashboard läuft jetzt Session 0, HTTP 200) und hier ins committete Skript nachgezogen.
