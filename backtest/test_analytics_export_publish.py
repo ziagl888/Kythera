@@ -26,6 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools import analytics_export  # noqa: E402
 from tools.analytics_export import (  # noqa: E402
+    DEFAULT_PUBLISH_RETRIES,
+    DEFAULT_PUBLISH_RETRY_DELAY_S,
     SOURCES_BY_NAME,
     AnalyticsExporter,
     build_db_path,
@@ -167,6 +169,88 @@ def test_publish_succeeds_on_last_allowed_attempt(tmp_path, monkeypatch):
 
     assert flaky.calls == 5
     assert _row_count(served) == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default budget — must be generous enough for real dashboard polling
+# (regression guard for T-2026-CU-9050-167: 1 s → >20 s)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_default_publish_budget_is_generous():
+    """Guard against silently reverting to the old 5×0.2 s ≈ 1 s budget, which
+    never survived live HTMX polling. The default must give >= 20 s total."""
+    assert DEFAULT_PUBLISH_RETRIES >= 100  # not 5
+    budget_s = DEFAULT_PUBLISH_RETRIES * DEFAULT_PUBLISH_RETRY_DELAY_S
+    assert budget_s >= 20.0
+
+
+def test_publish_survives_thirty_locked_attempts_under_default_budget(tmp_path, monkeypatch):
+    """Real polling scenario: the served file is locked by the dashboard for the
+    first ~30 os.replace attempts, then a request closes its handle and the
+    replace lands. With the OLD 1 s budget (5 attempts) this failed; the new
+    default budget must absorb 30 consecutive sharing violations and still
+    publish. Uses the DEFAULT retries (no explicit kwarg) to prove the default
+    covers it."""
+    served = str(tmp_path / "analytics.duckdb")
+    build = str(tmp_path / "analytics.duckdb.build")
+    _make_duckdb(build, n_rows=11)
+
+    flaky = _FlakyReplace(fail_times=30)
+    monkeypatch.setattr(analytics_export.os, "replace", flaky)
+    monkeypatch.setattr(analytics_export.time, "sleep", lambda _s: None)
+
+    publish_duckdb(build, served)  # default budget — no retries/retry_delay kwargs
+
+    # 30 failures then the 31st attempt succeeds — comfortably inside the default.
+    assert flaky.calls == 31
+    assert 31 <= DEFAULT_PUBLISH_RETRIES
+    assert _row_count(served) == 11
+    assert not os.path.exists(served + ".tmp")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Budget input validation — a non-positive retries would make the retry loop
+# empty and publish_duckdb return SILENTLY (no replace, no raise), which main()
+# misreads as success; a negative delay would crash mid-loop in time.sleep.
+# Reject both loudly on EVERY caller (regression guard for the T-167 fix-round).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("bad_retries", [0, -1])
+def test_publish_rejects_non_positive_retries(tmp_path, bad_retries):
+    served = str(tmp_path / "analytics.duckdb")
+    build = str(tmp_path / "analytics.duckdb.build")
+    _make_duckdb(build, n_rows=3)
+
+    with pytest.raises(ValueError, match="retries"):
+        publish_duckdb(build, served, retries=bad_retries)
+
+    # The invalid call must NOT have silently "published" — served stays absent.
+    assert not os.path.exists(served)
+
+
+def test_publish_rejects_negative_retry_delay(tmp_path):
+    served = str(tmp_path / "analytics.duckdb")
+    build = str(tmp_path / "analytics.duckdb.build")
+    _make_duckdb(build, n_rows=3)
+
+    with pytest.raises(ValueError, match="retry_delay_s"):
+        publish_duckdb(build, served, retry_delay_s=-1.0)
+
+    assert not os.path.exists(served)
+
+
+@pytest.mark.parametrize(
+    "flag,value",
+    [("--publish-retries", "0"), ("--publish-retries", "-1"), ("--publish-retry-delay", "-0.5")],
+)
+def test_cli_rejects_invalid_publish_budget(flag, value):
+    """The CLI layer turns an invalid budget into argparse's Exit-2 usage error
+    (SystemExit), never a silent success or a traceback."""
+    with pytest.raises(SystemExit) as exc:
+        analytics_export.main(["--duckdb", "x.duckdb", flag, value])
+    assert exc.value.code == 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────

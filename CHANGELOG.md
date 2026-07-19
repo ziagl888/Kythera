@@ -1,3 +1,26 @@
+## [2026-07-19] Z1-Export atomic-publish — Retry-Budget 1s → ~30s gegen Dashboard-Polling (T-2026-CU-9050-167)
+
+Der atomare Publish in `tools/analytics_export.py` (`publish_duckdb`, T-163) scheiterte in der Praxis
+(verifiziert 2026-07-19) unter aktivem HTMX-Polling des Z1-Dashboards: das Dashboard öffnet die served-DuckDB
+per Request read-only und pollt über mehrere Panels quasi-durchgehend → `os.replace(<served>.tmp → served)`
+warf auf Windows `PermissionError`/`WinError 5`. Das alte Retry-Budget **5×200ms = ~1s** fand in dieser
+Zeit keine Lücke → Publish FAILED nach 5 Versuchen, served blieb der alte Snapshot. Ein registrierter
+30-min-Export-Task hätte so **nie** ans Dashboard publisht. Kein Datenverlust — die Fehlerpfad-Safety hielt
+(Build-DB + `.tmp` intakt, served unangetastet).
+
+- **Budget deutlich erhöht + konfigurierbar:** neue Konstanten `DEFAULT_PUBLISH_RETRIES=120` /
+  `DEFAULT_PUBLISH_RETRY_DELAY_S=0.25` → **~30s Gesamt-Budget** statt 1s. Da das Dashboard sein Read-Handle
+  per Request schließt, ist die served-Datei >90 % der Zeit frei; ein weites Fenster trifft zuverlässig eine
+  Lücke. Signatur `publish_duckdb(..., retries=, retry_delay_s=)` bleibt rückwärtskompatibel.
+- **CLI-Flags:** `--publish-retries` / `--publish-retry-delay` reichen das Budget an `publish_duckdb` durch —
+  Operator-Tuning ohne Code-Change.
+- **Selbstheilung dokumentiert:** scheitern alle Versuche, republisht der nächste Lauf dieselben frischen
+  Daten aus der persistenten Build-DB → ein verpasster Publish ist nie Datenverlust, nur verzögert
+  (Exit-Code ≠ 0 bleibt). Retry-WARNINGs sind gedrosselt (erste 3 + alle 20) statt ~120-fach-Spam.
+
+Verifiziert: `backtest/test_analytics_export_publish.py` (17, u.a. neu: 30 gesperrte Versuche → Publish
+gelingt im Default-Budget; Guard gegen Rückfall auf 5) + `test_analytics_export.py` (25), ruff `check`/
+`format --check` grün. SPEC.md (`tools/dashboard/`) um Budget-Rationale ergänzt.
 ## [2026-07-19] Bot-10 CPU-Optimierung — Epoch-Fenster-Scans, geteiltes Stundenfenster, kompakter State-Dump (T-2026-CU-9050-165)
 
 Der Pump/Dump-Detector hat auf JEDEM Fenster-Lookup jedes Buckets den ISO-Zeitstempel neu geparst

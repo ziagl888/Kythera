@@ -226,6 +226,18 @@ SOURCES_BY_NAME = {s.name: s for s in SOURCES}
 META_WATERMARK = "_export_watermark"
 META_FRESHNESS = "_data_freshness"
 
+# Atomic-publish retry budget (see publish_duckdb). The served DuckDB is opened
+# read-only per dashboard request and the Z1 dashboard HTMX-polls several panels
+# quasi-continuously, so ``os.replace`` needs a WIDE window to hit a moment when
+# the served file is momentarily free. The dashboard closes its handle per
+# request → the file is free >90 % of the time, so a ~30 s budget reliably lands
+# in a gap. ``retries × retry_delay_s`` is the total budget (~120 × 0.25 s ≈ 30 s).
+# NOTE the old T-163 default (5 × 0.2 s ≈ 1 s) was far too small: under live
+# polling every attempt hit ``WinError 5`` and the publish never succeeded, so a
+# 30-min export task would never reach the dashboard (T-2026-CU-9050-167).
+DEFAULT_PUBLISH_RETRIES = 120
+DEFAULT_PUBLISH_RETRY_DELAY_S = 0.25
+
 # Row cursor: (ts value, pk value). None = start from the beginning of history.
 Cursor = tuple[Any, Any]
 
@@ -611,8 +623,8 @@ def publish_duckdb(
     build_path: str | Path,
     served_path: str | Path,
     *,
-    retries: int = 5,
-    retry_delay_s: float = 0.2,
+    retries: int = DEFAULT_PUBLISH_RETRIES,
+    retry_delay_s: float = DEFAULT_PUBLISH_RETRY_DELAY_S,
 ) -> None:
     """Atomically publish the freshly built analytics DuckDB to the served path.
 
@@ -626,15 +638,39 @@ def publish_duckdb(
     Windows sharing violation: ``os.replace`` can raise ``PermissionError`` if
     the dashboard has the served file open at the exact instant of the replace.
     We retry the replace up to ``retries`` times with ``retry_delay_s`` between
-    attempts. If every attempt fails, the build DB AND the ``.tmp`` copy are
-    left intact (the served file is never touched, so there is no corruption
-    risk) and the ``PermissionError`` propagates — the caller turns that into a
-    non-zero exit; the next scheduled run resumes cleanly from the build DB.
+    attempts — ``retries × retry_delay_s`` is the total budget (default
+    ~120 × 0.25 s ≈ 30 s, see ``DEFAULT_PUBLISH_RETRIES``). This budget must be
+    GENEROUS: the Z1 dashboard HTMX-polls several panels and opens the served
+    DuckDB read-only per request, so the file is briefly locked over and over.
+    Because each request CLOSES its handle, the served file is free >90 % of the
+    time, and a ~30 s window reliably lands in one of those gaps. The former
+    ~1 s budget (T-163) never did under live polling → the publish always failed
+    and the served snapshot went stale (T-2026-CU-9050-167).
+
+    SELF-HEALING: if every attempt still fails, the build DB AND the ``.tmp``
+    copy are left intact (the served file is never touched, so there is no
+    corruption risk) and the ``PermissionError`` propagates — the caller turns
+    that into a non-zero exit. The next scheduled run simply republishes the
+    same fresh data from the persistent build DB, so a single missed publish is
+    NEVER data loss, only a delayed one.
 
     DB-free and unit-testable: ``os.replace`` is referenced at module level and
     is monkeypatchable (``tools.analytics_export.os.replace``) so the retry loop
     can be exercised without a real sharing violation.
     """
+    # Guard the retry budget on EVERY caller (CLI, tests, programmatic). A
+    # non-positive ``retries`` would make the ``range(1, retries + 1)`` loop
+    # empty → publish_duckdb would return silently WITHOUT ever calling
+    # os.replace and WITHOUT raising, which main() would misread as success
+    # (published stays True, exit 0) while the served DB was never updated —
+    # breaking the succeed-or-raise / loud-failure contract above. A negative
+    # ``retry_delay_s`` would raise from time.sleep() mid-loop instead of the
+    # designed non-zero exit. Reject both up front, loudly.
+    if retries < 1:
+        raise ValueError(f"retries must be >= 1, got {retries}")
+    if retry_delay_s < 0:
+        raise ValueError(f"retry_delay_s must be >= 0, got {retry_delay_s}")
+
     build = Path(build_path)
     served = Path(served_path)
 
@@ -655,23 +691,31 @@ def publish_duckdb(
     # os.replace is a cheap atomic rename rather than a cross-device move.
     shutil.copy2(build, tmp)
 
+    budget_s = retries * retry_delay_s
     for attempt in range(1, retries + 1):
         try:
             os.replace(tmp, served)
         except PermissionError as exc:
             if attempt < retries:
-                logger.warning(
-                    "publish attempt %d/%d hit a sharing violation on %s "
-                    "(dashboard reading?); retrying in %d ms",
-                    attempt, retries, served, int(retry_delay_s * 1000),
-                )
+                # Keep the log readable: under the ~30 s budget there can be
+                # ~120 attempts, so warn only on the first few and then
+                # periodically rather than once per attempt.
+                if attempt <= 3 or attempt % 20 == 0:
+                    logger.warning(
+                        "publish attempt %d/%d hit a sharing violation on %s "
+                        "(dashboard reading?); retrying in %d ms "
+                        "(total budget ~%.0f s)",
+                        attempt, retries, served, int(retry_delay_s * 1000), budget_s,
+                    )
                 time.sleep(retry_delay_s)
                 continue
             logger.error(
-                "publish FAILED after %d attempts: %s stayed locked (%s). "
-                "Build DB + %s left intact; served path untouched — no "
-                "corruption. Next run republishes from the build DB.",
-                retries, served, exc, tmp.name,
+                "publish FAILED after %d attempts (~%.0f s budget): %s stayed "
+                "locked (%s). Build DB + %s left intact; served path untouched "
+                "— no corruption. SELF-HEALING: the next run republishes the "
+                "same fresh data from the build DB, so this is a delayed publish, "
+                "not data loss.",
+                retries, budget_s, served, exc, tmp.name,
             )
             raise
         else:
@@ -702,8 +746,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dsn", default=None, help="Optional psycopg2 DSN (else core.config env)")
     parser.add_argument("--sources", default=None,
                         help="Comma-separated subset of source names (default: all)")
+    parser.add_argument("--publish-retries", type=int, default=DEFAULT_PUBLISH_RETRIES,
+                        help="Atomic-publish os.replace retries against a Windows sharing "
+                             "violation; publish-retries * publish-retry-delay = total budget "
+                             f"(default {DEFAULT_PUBLISH_RETRIES})")
+    parser.add_argument("--publish-retry-delay", type=float, default=DEFAULT_PUBLISH_RETRY_DELAY_S,
+                        help="Delay (seconds) between publish retries "
+                             f"(default {DEFAULT_PUBLISH_RETRY_DELAY_S}); the dashboard's per-request "
+                             "read handle means the served file is free >90 pct of the time, so a wide "
+                             "budget reliably hits a gap")
     parser.add_argument("--json", action="store_true", help="Print the run summary as JSON")
     args = parser.parse_args(argv)
+
+    # Reject a nonsensical publish budget with a friendly Exit-2 message rather
+    # than a silent no-op publish (retries < 1) or a mid-loop time.sleep crash
+    # (negative delay). publish_duckdb guards these too, but catching them here
+    # turns an operator typo into argparse's usage message, not a traceback.
+    if args.publish_retries < 1:
+        parser.error(f"--publish-retries must be >= 1, got {args.publish_retries}")
+    if args.publish_retry_delay < 0:
+        parser.error(f"--publish-retry-delay must be >= 0, got {args.publish_retry_delay}")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -745,7 +807,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     # republishes).
     published = True
     try:
-        publish_duckdb(build_duckdb, served_duckdb)
+        publish_duckdb(
+            build_duckdb,
+            served_duckdb,
+            retries=args.publish_retries,
+            retry_delay_s=args.publish_retry_delay,
+        )
     except OSError:
         published = False
 
