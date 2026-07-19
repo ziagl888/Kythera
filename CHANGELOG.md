@@ -55,6 +55,63 @@ bzw. Test-Isolations-Leck — keine Regression, Follow-up-Kandidaten). ruff + fo
 3-Vote z-code-reviewer (Findings behoben: Transaktions-Hygiene-`finally`, Doku-Korrekturen, Tests) +
 Spec-Compliance PASS. Erwartet ~60-70% weniger Engine-Last/Zyklus + Postgres-Entlastung (weniger
 Checkouts/Reads). Aktiv nach dem nächsten Engine-Restart (Michi-gated).
+## [2026-07-19] Z1-Dashboard: DuckDB-Analytics-Queries 2,8–8,5x schneller + Panel-Daten-Cache (T-2026-CU-9050-175)
+
+Profile-first gegen die reale served-DB (~824k Outcome-Rows, ~580k decisive): die beiden 11-Sekunden-
+Aggregate (`bot_leaderboard`, `rolling_success_rate_series`) transferierten JEDEN decisive Trade als
+Python-Dict über die DuckDB-Grenze — genau der beim Deploy beobachtete Cold-Start-Timeout (>10s).
+Query-seitig optimiert, ergebnis-erhaltend. **Paritäts-Umfang, ehrlich:** die drei reinen count/sum-
+Aggregate (`rolling_success_rate_series`, `success_rate_timeseries`, `bot_regime_matrix`) sind auf der
+realen DB **bit-identisch** old-vs-new verifiziert (json-identisch). Für `bot_leaderboard` gilt das für
+die order-INVARIANTEN Felder (n, wins, winrate, pnl_sum_pct, expectancy_pct); die zwei order-ABHÄNGIGEN
+Risk-Metriken (`max_drawdown_pp`, `max_loss_streak`) behalten die **SELBE vorbestehende run-to-run-
+Nichtdeterminismus-Klasse** wie der alte Code — nicht bit-identisch per Natur (siehe BEFUND unten), aber
+kein NEUER Nichtdeterminismus ggü. alt. Gemessen (reale `analytics.duckdb`, frische Connection pro Call,
+min/3):
+
+| Query | vorher | nachher |
+|---|---|---|
+| `bot_leaderboard` | 11.509 ms | 4.098 ms |
+| `rolling_success_rate_series` (w=30) | 11.812 ms | 1.395 ms |
+| `success_rate_timeseries` (7/30/90) | 1.620 ms | 1.318 ms |
+| `bot_regime_matrix` (ASOF) | 2.400 ms | 2.120 ms |
+
+- `tools/analytics_api.py`: `rolling_success_rate_series` aggregiert die Tages-Buckets jetzt in DuckDB
+  (`GROUP BY bot, d`, reine Integer-Zählungen → Parität exakt per Konstruktion) statt ~580k Rows nach
+  Python zu holen; `_daily_buckets_by_bot`/`bot_trade_rows` bleiben als Referenz-Pipeline erhalten.
+  `bot_leaderboard` läuft über einen Streamed-Column-Pfad (`_leaderboard_rows_streamed`): 3-Spalten-
+  Projektion (`closed_at` bleibt NUR Sortkey, nie 580k materialisierte datetimes), lazy-optionaler
+  numpy-`fetchnumpy`-Fast-Path mit bit-identischem Pure-Python-Fallback — beide rufen wörtlich
+  `_leaderboard_row`s eigene Mathematik (`_leaderboard_row_from_columns`: builtin `sum()`, naiver
+  Drawdown-Loop). `success_rate_timeseries` rechnet alle Fenster in EINEM Scan (FILTER-Aggregate übers
+  breiteste Fenster; Bot-Inklusion pro Fenster über Any-Row-Count rekonstruiert) statt ein Scan pro
+  Fenster. `bot_regime_matrix`: `ASOF JOIN` (inner) statt `ASOF LEFT JOIN + WHERE` (beweisbar
+  zeilenidentisch, `regime_sorted` ist NULL-frei) + redundantes inneres `ORDER BY ts` entfernt.
+- `tools/dashboard/app.py`: Panel-Daten-Cache (`_PollCache`, File-Freshness-Token — dasselbe Muster wie
+  der bestehende Blueprint-Cache): bei unveränderter Export-Datei wird jeder 30s-HTMX-Poll aus Memory
+  bedient (keine Connection, kein Scan; Steady-State ~0 ms). Gecacht werden NUR DuckDB-derivierte Daten
+  (Payload + `data_freshness`-ROWS); das „Sync vor N min"-Alter wird weiter pro Request aus der Wall-
+  Clock gerechnet, Fleet-Registry (dateibasiert) bewusst uncached. `cache=None`-Default = exakt altes
+  Verhalten.
+- Paritäts-Netz: neuer `backtest/test_analytics_query_parity.py` (23 Tests) — Referenz-Implementierungen
+  (alte Query-Shapes) vs. neu auf tmp-DuckDB-Fixtures (beide Outcome-Tabellen + regime_history), inkl.
+  Edge-Cases: closed_at-Ties, Bot-Filter, Fenster-Duplikate/-Teilmengen, explizites `as_of`, leeres
+  Substrat, numpy≡Fallback auf tie-freien Fixture-Daten (Scope ehrlich benannt, s.u.) PLUS ein
+  tie-robuster Implementierungs-Äquivalenztest über EINEN geteilten Row-Stream, Cache-Hit ohne Reconnect
+  UND Cache-Invalidierung bei neuem File-Token (echter Re-Export). 208 Dashboard-+Paritäts-Tests grün
+  (`pytest backtest/test_dashboard_*.py backtest/test_analytics_query_parity.py`), ruff 0.15.17
+  check+format clean.
+- BEFUND (vorbestehend, unverändert gelassen): das ALTE `bot_leaderboard` war bei `closed_at`-Ties
+  run-nondeterministisch, weil `ORDER BY bot, closed_at` keinen deterministischen Tiebreaker hat und
+  DuckDBs paralleler Scan (threads=2) Ties zwischen Duplikat-/Same-Instant-Rows in `closed_ai_signals`
+  je Lauf anders ordnet (real reproduziert: 6/10 Läufe divergieren, z.B. `max_drawdown_pp` ATS1 −83.003
+  vs. −80.303 pp, `max_loss_streak` ±24 auf identischem File). Betrifft nur die zwei path-abhängigen
+  Risk-Metriken; die count/sum-Felder sind order-invariant und stabil. Das gilt auch für numpy-Pfad-vs-
+  Fallback: jeder `bot_leaderboard`-Call führt die Query neu aus → eigener Tie-Stream, daher kann die
+  numpy≡Fallback-Gleichheit nur pro row-stream (nicht über getrennte Calls) garantiert werden. Die
+  Optimierung behält `ORDER BY bot, closed_at` **absichtlich unverändert** bei (gleiche Nichtdeterminismus-
+  Klasse, kein neuer). Ein deterministischer Tiebreaker würde diese geld-werten Metriken VERÄNDERN und ist
+  daher ein **separater Follow-up-Task (Verhaltensänderung)** — bewusst NICHT Teil dieser PR.
 
 ## [2026-07-19] Z1-Ops-Skript nachgezogen — Dashboard-Task auf Password-Logon + cmd.exe-Launcher (T-2026-CU-9050-170)
 
