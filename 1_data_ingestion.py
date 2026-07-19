@@ -10,7 +10,21 @@ import pytz
 import requests
 import websockets
 
-from core.candles import latest_open_time, period_start, upsert_candles
+try:
+    # Optional (T-2026-CU-9050-169, Maßnahme 5): schnelleres Parsing der
+    # ~2-3k WS-Messages/s. Nicht in den Fleet-Requirements — ohne Installation
+    # läuft unverändert stdlib-json (Parse-Ergebnis ist identisch).
+    import orjson
+except ImportError:
+    orjson = None
+
+from core.candles import (
+    candles_write_primary,
+    latest_open_time,
+    period_start,
+    upsert_candles,
+    upsert_candles_many,
+)
 from core.database import get_db_connection
 from core.http_retry import RetryBudget, backoff_seconds
 from core.market_utils import load_coins  # reines coins.json-Re-Read (P2.15)
@@ -449,51 +463,114 @@ async def db_buffer_flusher():
             logger.error(f"Fehler beim DB Flush: {e}")
 
 
-def _flush_to_db(buffer_copy):
-    """Hilfsfunktion: Schreibt asynchronen Buffer via psycopg2 in DB (mit Chunking).
+# Persistente Flush-Connection (T-2026-CU-9050-169): vorher öffnete/schloss
+# JEDER 3s-Flush eine eigene Connection. Nur der Flusher-Thread benutzt sie —
+# db_buffer_flusher awaited jeden asyncio.to_thread-Aufruf, es laufen also nie
+# zwei _flush_to_db gleichzeitig. Bei jedem Fehler wird sie verworfen und beim
+# nächsten Flush neu aufgebaut (Muster der Monitore: ensure/reset).
+_FLUSH_CONN = None
 
-    FIX: Vorher rollte ein Fehler in EINER Zeile (z.B. fehlende Tabelle für neuen
-    Coin) den kompletten Batch zurück — hunderte Kerzen verloren. Jetzt nutzen
-    wir SAVEPOINTs pro Row: eine einzelne fehlerhafte Row wird verworfen,
-    alle anderen committen sauber.
-    """
-    conn = get_db_connection()
-    failed_tables = set()
+
+def _get_flush_conn():
+    global _FLUSH_CONN
+    if _FLUSH_CONN is None or getattr(_FLUSH_CONN, "closed", 1):
+        _FLUSH_CONN = get_db_connection()
+    return _FLUSH_CONN
+
+
+def _reset_flush_conn():
+    global _FLUSH_CONN
     try:
-        with conn.cursor() as cur:
-            count = 0
-            success = 0
-            # Buffer value = (row_tuple, closed_flag); upsert_candles carries the
-            # D3 IS DISTINCT FROM no-op guard and persists is_closed=closed. It
-            # opens a second cursor on this connection (same transaction as the
-            # SAVEPOINT — the established Block-3 pattern), so the per-row
-            # sub-transaction still isolates a single bad row from the batch.
-            for (sym, tf, _open_time), (row, closed) in buffer_copy.items():
-                sp_name = f"sp_{count}"
-                try:
-                    cur.execute(f"SAVEPOINT {sp_name}")
-                    upsert_candles(conn, sym, tf, [row], closed=closed)
-                    cur.execute(f"RELEASE SAVEPOINT {sp_name}")
-                    success += 1
-                except Exception as row_err:
-                    cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
-                    # Nur einmal pro Tabelle loggen, nicht pro Zeile
-                    if (sym, tf) not in failed_tables:
-                        failed_tables.add((sym, tf))
-                        logger.warning(f"Insert-Fehler für {sym}_{tf}: {row_err}")
-                count += 1
+        if _FLUSH_CONN is not None:
+            _FLUSH_CONN.close()
+    except Exception:
+        pass
+    _FLUSH_CONN = None
 
-                if count % 100 == 0:
-                    conn.commit()
 
-            conn.commit()
-            if failed_tables:
-                logger.info(f"Flush: {success}/{count} erfolgreich, {len(failed_tables)} Tabellen mit Fehlern skipped.")
+def _flush_groups_fallback(conn, buffer_copy):
+    """Gruppen-Flush: ein upsert_candles pro (symbol, tf, closed)-Gruppe.
+
+    Fallback- und Legacy-Primary-Pfad. SAVEPOINT pro GRUPPE statt pro Row
+    (T-2026-CU-9050-169): die reale Fehlerklasse — fehlende per-Coin-Tabelle
+    auf dem Legacy-Backend — betrifft immer die ganze (symbol, tf)-Gruppe;
+    Row-genaue Isolation kostete ~2 Zusatz-Statements pro Kerze. Semantik wie
+    vorher: eine fehlerhafte Gruppe wird verworfen und geloggt, alle anderen
+    committen. upsert_candles trägt den D3 IS DISTINCT FROM No-op-Guard und
+    persistiert is_closed pro Aufruf (deshalb ist `closed` Teil des
+    Gruppen-Schlüssels — die Flag-Semantik pro Kerze bleibt exakt erhalten).
+    """
+    groups: dict = {}
+    for (sym, tf, _open_time), (row, closed) in buffer_copy.items():
+        groups.setdefault((sym, tf, closed), []).append(row)
+
+    failed_tables = set()
+    success_rows = 0
+    total_rows = len(buffer_copy)
+    with conn.cursor() as cur:
+        for i, ((sym, tf, closed), rows) in enumerate(groups.items()):
+            sp_name = f"sp_{i}"
+            try:
+                cur.execute(f"SAVEPOINT {sp_name}")
+                upsert_candles(conn, sym, tf, rows, closed=closed)
+                cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                success_rows += len(rows)
+            except Exception as grp_err:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                # Nur einmal pro Tabelle loggen, nicht pro Gruppe/Zeile
+                if (sym, tf) not in failed_tables:
+                    failed_tables.add((sym, tf))
+                    logger.warning(f"Insert-Fehler für {sym}_{tf}: {grp_err}")
+    conn.commit()
+    if failed_tables:
+        logger.info(
+            f"Flush: {success_rows}/{total_rows} erfolgreich, {len(failed_tables)} Tabellen mit Fehlern skipped."
+        )
+
+
+def _flush_to_db(buffer_copy):
+    """Hilfsfunktion: Schreibt den asynchronen Buffer via psycopg2 in die DB.
+
+    T-2026-CU-9050-169: auf dem Hyper-Primary geht der komplette Buffer als EIN
+    execute_values-Batch raus (upsert_candles_many — identisches Statement,
+    identischer IS DISTINCT FROM-Guard wie der Einzel-Pfad; der Buffer-Key
+    (sym, tf, open_time) garantiert die ON-CONFLICT-Eindeutigkeit im Batch).
+    Vorher liefen ~3.185 Einzel-INSERTs/s mit je eigenem SAVEPOINT/RELEASE —
+    der dominante DB- und Client-CPU-Posten der Ingestion. Schlägt der Batch
+    fehl (oder ist der Write-Primary 'legacy'), greift der Gruppen-Flush mit
+    SAVEPOINT-Isolation pro (symbol, tf, closed)-Gruppe.
+
+    Verlust-Semantik unverändert konservativ: ein verlorener Flush wird vom
+    24h-Catch-up-Overlap bzw. den laufenden WS-Re-Upserts geheilt.
+    """
+    try:
+        conn = _get_flush_conn()
     except Exception as e:
-        conn.rollback()
+        logger.error(f"Flush: keine DB-Connection ({e}) — Buffer verworfen (Catch-up-Overlap heilt).")
+        return
+    try:
+        if candles_write_primary() == "hyper":
+            bulk_rows = [
+                (sym, tf, row[1], row[2], row[3], row[4], row[5], row[6], closed)
+                for (sym, tf, _open_time), (row, closed) in buffer_copy.items()
+            ]
+            try:
+                upsert_candles_many(conn, bulk_rows)
+                conn.commit()
+                return
+            except Exception as batch_err:
+                # Rollback + Fallback auf den isolierenden Gruppen-Pfad — eine
+                # einzelne kaputte Row darf nicht den ganzen Flush kosten.
+                conn.rollback()
+                logger.warning(f"Batch-Flush fehlgeschlagen ({batch_err}) — Fallback auf Gruppen-Flush.")
+        _flush_groups_fallback(conn, buffer_copy)
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         logger.error(f"Flush Error (gesamt): {e}")
-    finally:
-        conn.close()
+        _reset_flush_conn()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -701,8 +778,10 @@ async def binance_ws_worker(worker_id: int, streams: list, startup_delay: float 
                         last_msg_ts = datetime.datetime.now(pytz.UTC)
 
                         try:
-                            payload = json.loads(msg)
-                        except json.JSONDecodeError:
+                            # orjson wenn installiert, sonst stdlib (identisches Ergebnis).
+                            payload = orjson.loads(msg) if orjson is not None else json.loads(msg)
+                        except ValueError:
+                            # JSONDecodeError beider Bibliotheken ist ValueError-Subklasse.
                             continue
 
                         # SUBSCRIBE-Response durchgehen lassen

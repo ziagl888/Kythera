@@ -1,3 +1,30 @@
+## [2026-07-19] Ingestion Batch-Flush — ein execute_values statt ~3.185 Einzel-INSERTs/s (T-2026-CU-9050-169)
+
+Umsetzung des T-168-Ingest-Reports (Maßnahmen 1–3): Der 3s-DB-Flusher schrieb jede Kerze als EIGENES
+Statement mit eigenem SAVEPOINT/RELEASE-Paar — live gemessen ~3.185 Einzel-INSERTs/s + ~6.400
+SAVEPOINTs/s (≈2,6s DB-Executor-Zeit/s) und der Großteil der ~59% Client-CPU der Ingestion. Jetzt geht
+der komplette Buffer auf dem Hyper-Write-Primary als EIN `execute_values`-Batch raus; DB-Endzustand
+beweisbar identisch (gleiches Statement, gleicher `IS DISTINCT FROM`-No-op-Guard, gleiche
+forming→closed-Flip-Semantik).
+
+- `core/candles.py`: neue Bulk-API `upsert_candles_many()` (hyper-only, Row-Shape = `_CANDLES_HYPER_UPSERT`-
+  Spaltenordnung mit closed pro Row, bool-strikt validiert, committet nicht — Contract 3) +
+  `candles_write_primary()` als öffentlicher Accessor. Rein additiv, Einzel-Pfad unverändert.
+- `1_data_ingestion.py`: `_flush_to_db` nutzt auf `WRITE_PRIMARY=hyper` den Batch (1 Round-Trip, 1 Commit);
+  bei Batch-Fehler Rollback + Fallback auf Gruppen-Flush mit SAVEPOINT-Isolation pro
+  (symbol, tf, closed)-Gruppe (statt pro Row — die reale Fehlerklasse „fehlende Tabelle" ist ohnehin
+  gruppenweit); Legacy-Primary geht direkt in den Gruppen-Pfad. Persistente Flusher-Connection statt
+  connect/close alle 3s (Reconnect-on-Error, Monitore-Muster). Optional orjson fürs WS-Parsing
+  (stdlib-Fallback, inert bis installiert).
+- BEWUSST NICHT: Flush-Intervall (Maßnahme 4 = Operator-Entscheid), Kerzen-Schließ-Semantik,
+  Client-Dedup von Forming-Updates, `KYTHERA_CANDLES_*`-Flags, Catch-up-Overlap (No-Go-Liste T-168).
+
+Mikro-Benchmark (DB-frei, 9.550-Row-Flush): ~28.650 Statements/590ms Client-CPU → 20 execute_values-Pages/
+1ms (614×). Verifiziert: neuer `backtest/test_ingestion_batch_flush.py` (11 Tests: Batch≡Einzel auf
+SQL-Ebene, Choreografie inkl. Fallback-Isolation + Connection-Reset), Regression-Guard 24/24 golden,
+ruff/mypy grün; die 14 vorbestehenden candles-Suite-Failures sind umgebungsbedingt (identisch auf
+unverändertem main: Live-Hyper-Flags + seit Write-Primary-Umstellung stale Legacy-Tabellen). Aktiv nach
+dem nächsten Ingestion-Restart (Michi-gated).
 ## [2026-07-19] Confidence-Posting-Floors aus Realized-Trade-Analyse — AIM2 0.70 / BB 0.50 / SRA1 0.70 (T-2026-CU-9050-171)
 
 Threshold-Analyse über die realisierten Trades (T-2026-CU-9050-170, read-only): `closed_ai_signals`
