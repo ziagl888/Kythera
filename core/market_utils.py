@@ -10,7 +10,8 @@ import json
 import logging
 import os
 import re
-from typing import TypedDict
+from collections.abc import Callable, Sequence
+from typing import Any, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -204,6 +205,121 @@ def update_cooldown(conn, module: str, coin: str, direction: str, commit: bool =
         )
     if commit:
         conn.commit()
+
+
+# ── Per-cycle detector snapshots (T-2026-CU-9050-172) ──────────────────────────
+#
+# The classic detector (3_detectors.py) used to run the guard queries above
+# (is_trade_already_active, check_cooldown, the strategies' check_recent_trades)
+# once per coin or per signal — up to ~2.000 point queries per ~530-coin cycle.
+# DetectorCycle replaces them with ONE snapshot per table per cycle. All of
+# these guards are read-only and AND-combined with the strategy conditions, so
+# the emitted signal set is invariant — only the evaluation time moves to the
+# cycle start (the same argument as the P2.44 guard reordering). The cycle's
+# own writes are mirrored back via note_signal_written, so a later in-cycle
+# lookup sees exactly what a fresh DB read would have seen.
+
+
+def load_active_trades_snapshot(conn) -> set[tuple[str, str, str]]:
+    """All WORKING rows of active_trades_master as a {(strategy, coin, direction)} set.
+
+    Same table, same status='WORKING' predicate and same exact string matching
+    as is_trade_already_active — one query instead of one per guard call.
+    """
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT strategy, coin, direction FROM active_trades_master WHERE status = 'WORKING'")
+        return {(row[0], row[1], row[2]) for row in cursor.fetchall()}
+
+
+def load_cooldown_snapshot(conn, module: str) -> dict[tuple[str, str], datetime.datetime]:
+    """All trade_cooldowns rows of one module as {(coin, direction): last_posted_at}.
+
+    (module, coin, direction) is the table's conflict key (see update_cooldown),
+    so the dict is lossless. Timestamps are stored verbatim; the to_utc
+    normalisation happens at check time, exactly where check_cooldown applies it.
+    """
+    _check_module_tag(module)
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT coin, direction, last_posted_at FROM trade_cooldowns WHERE module = %s",
+            (module,),
+        )
+        return {(row[0], row[1]): row[2] for row in cursor.fetchall()}
+
+
+class DetectorCycle:
+    """Per-cycle guard snapshots + memo cache for the classic detector.
+
+    An instance must live for exactly ONE run_detectors_for_timeframe call —
+    caching any longer would make the guards stale across cycles, which IS
+    behaviour-changing. The strategies accept it as an optional parameter and
+    fall back to the original per-call DB queries when it is None.
+    """
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+        self.active_trades = load_active_trades_snapshot(conn)
+        # Lazily loaded per module tag — the 1h cycle never touches trade_cooldowns.
+        self._cooldowns: dict[str, dict[tuple[str, str], datetime.datetime]] = {}
+        self._memo: dict[tuple[Any, ...], Any] = {}
+
+    # -- active_trades_master ----------------------------------------------
+    def is_trade_active(self, coin: str, direction: str, strategy: str) -> bool:
+        """Snapshot twin of is_trade_already_active (same key, same semantics)."""
+        return (strategy, coin, direction) in self.active_trades
+
+    def all_directions_active(self, coin: str, strategies: Sequence[str]) -> bool:
+        """True only if EVERY (strategy, direction) pair of this coin is WORKING.
+
+        This is the whole-coin prefilter condition: every emission path of every
+        classic strategy requires its own (strategy, direction) to be inactive,
+        so a fully occupied coin cannot emit anything and may be skipped before
+        its indicator read. A partially occupied coin must still be scanned.
+        """
+        return all(
+            (strategy, coin, direction) in self.active_trades
+            for strategy in strategies
+            for direction in ("LONG", "SHORT")
+        )
+
+    def note_signal_written(self, strategy: str, coin: str, direction: str, cooldown_module: str | None = None) -> None:
+        """Mirror an own write_signal_atomic into the snapshots.
+
+        The old per-signal DB reads saw the cycle's own earlier commits; the
+        snapshots must reproduce that exactly, so every write is added locally
+        (prevents a double signal within the same cycle).
+        """
+        self.active_trades.add((strategy, coin, direction))
+        if cooldown_module is not None and cooldown_module in self._cooldowns:
+            self._cooldowns[cooldown_module][(coin, direction)] = utc_now()
+
+    # -- trade_cooldowns ----------------------------------------------------
+    def cooldown_active(self, module: str, coin: str, direction: str, cd_hours: float) -> bool:
+        """Snapshot twin of check_cooldown: same tag-length guard, same to_utc
+        normalisation, same strict `>` cutoff comparison. The module's rows are
+        loaded once per cycle on first use."""
+        _check_module_tag(module)
+        if module not in self._cooldowns:
+            self._cooldowns[module] = load_cooldown_snapshot(self._conn, module)
+        last_posted_at = self._cooldowns[module].get((coin, direction))
+        if last_posted_at is None:
+            return False
+        cutoff = utc_now() - datetime.timedelta(hours=cd_hours)
+        return to_utc(last_posted_at) > cutoff
+
+    # -- generic per-cycle memoisation --------------------------------------
+    def memo(self, key: tuple[Any, ...], compute: Callable[[], Any]) -> Any:
+        """Run `compute` once per cycle per `key` and replay the result.
+
+        Used for the coin-independent check_recent_trades guard of
+        strat_5_percent/strat_fast_in_out: the strategies keep their own query
+        code path untouched and route it through here, so the SQL semantics
+        stay byte-identical — it just runs once per (direction, hours, count)
+        instead of once per coin.
+        """
+        if key not in self._memo:
+            self._memo[key] = compute()
+        return self._memo[key]
 
 
 def calculate_obv(

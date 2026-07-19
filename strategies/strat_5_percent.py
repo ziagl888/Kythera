@@ -123,7 +123,7 @@ def evaluate_conditions(data, direction):
     return False
 
 
-def analyze_coin(conn, symbol, df_indicators, live_price):
+def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
 
     for direction in ['LONG', 'SHORT']:
         if not evaluate_conditions(df_indicators, direction): continue
@@ -135,8 +135,23 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
         # bei einseitigen Märkten legitime Trend-Fortsetzungen blockiert.
         hours = 4 if direction == 'LONG' else 3
         count = 400 if direction == 'LONG' else 500
-        if check_recent_trades(conn, direction, hours=hours, count=count): continue
-        if is_trade_already_active(conn, symbol, direction, '5 Percent'): continue
+        # T-2026-CU-9050-172 (4a): check_recent_trades ist coin-unabhängig — mit
+        # DetectorCycle läuft derselbe Query-Codepfad einmal pro Zyklus und
+        # (direction, hours, count) und wird memoisiert; ohne Cycle unverändert
+        # pro Aufruf. Guard bleibt read-only + AND-verknüpft (P2.44-Argument).
+        if cycle is not None:
+            recent_blocked = cycle.memo(
+                ('recent_trades', direction, hours, count),
+                lambda: check_recent_trades(conn, direction, hours=hours, count=count),
+            )
+        else:
+            recent_blocked = check_recent_trades(conn, direction, hours=hours, count=count)
+        if recent_blocked: continue
+        if cycle is not None:
+            trade_active = cycle.is_trade_active(symbol, direction, '5 Percent')
+        else:
+            trade_active = is_trade_already_active(conn, symbol, direction, '5 Percent')
+        if trade_active: continue
 
         atr_14 = float(df_indicators['atr_14'].iloc[0])
         lev = get_max_leverage(symbol, 20)

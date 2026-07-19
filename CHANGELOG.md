@@ -1,3 +1,51 @@
+## [2026-07-19] Classic-Detector Scan-Optimierung — Spalten-Projektion, gebündelter VolIndic-Read, Zyklus-Snapshots + Active-Trade-Prefilter (T-2026-CU-9050-172)
+
+Verhaltensinvariante DB-/CPU-Entlastung des klassischen Detector-Zyklus (`3_detectors.py`, ~530 Coins,
+5 Strategien). Harte Invariante per Operator-Vorgabe: identische Signal-Dicts bei identischem DB-Zustand
+und identischen Preis-Inputs — alle betroffenen Guards sind read-only + AND-verknüpft (P2.44-Argument),
+es ändern sich nur Query-Form und Auswertungszeitpunkt.
+
+- `3_detectors.py`: Indikator-Read projiziert 27 statt ~120 Spalten (`DETECTOR_INDICATOR_COLUMNS`;
+  P2.43-gesichert — Test erzwingt Projektion ⊇ aller Strategy-Spalten-Reads UND ⊆ Engine-DDL);
+  Ganz-Coin-Prefilter überspringt Coins, deren sämtliche (Strategie, Richtung)-Paare im TF bereits
+  WORKING sind, VOR dem Indikator-Read; EIN aggregiertes ⏱-INFO-Log pro Zyklus (Snapshot-/Read-/
+  Scan-je-Strategie-/Write-Dauern, Coins/Skips/Signale) statt Per-Coin-Spam.
+- `core/market_utils.py`: neuer `DetectorCycle` — 1× `active_trades_master`-Snapshot (WORKING) als Set,
+  1× `trade_cooldowns`-Snapshot je Modul (lazy), generisches Memo für das coin-unabhängige
+  `check_recent_trades` (1 Query je (direction, hours, count) statt je Coin); eigene Signal-Writes werden
+  via `note_signal_written` zurückgespiegelt (In-Zyklus-Sicht ≡ altem DB-Read).
+- `strategies/strat_volume_indicator.py`: die zwei Spike-Reads (5d-Fenster + 10d-Baseline) sind jetzt EIN
+  zusammenhängender 15d-Read mit Pandas-Split — Fenstergrenzen exakt erhalten (Baseline-Ende =
+  `open_time_1st_hit − 30m`; Randfälle Spike@i==0 / leere Baseline / leeres Fenster paritätsgetestet);
+  Beide-Richtungen-aktiv-Skip VOR der Spike-Rechnung.
+- `strategies/strat_{5_percent,fast_in_out,support_resistance,main_channel}.py`: optionaler
+  `cycle`-Parameter (Fallback ohne Cycle = alte Einzelqueries, byte-identisch); SR/Main prüfen die durch
+  die Hit-Seite fixierte Richtung vor First-Hit-Scan/480er-OHLCV-Read (P2.44-Reorder).
+- BEWUSST AUSGELASSEN (Spec-Deliverable 2, TF-differenziertes Zeilen-Limit): der
+  `first_valid_index`-Fallback auf `support_price` (5%/FastInOut) kann, solange der
+  T-061-Head-Nulling-Recompute unvollständig ist und pre-P1.12-Broadcast-Zeilen im 480er-Fenster liegen,
+  legitim tiefer als 50 Zeilen greifen — ein kleineres 30m-Frame wäre dort nicht beweisbar
+  verhaltensinvariant. `limit=480` bleibt für beide TFs; 1h-Zweistufigkeit ebenso ausgelassen.
+- Cooldown-Contract (P1.16: 12h, Tag `VolIndic`, Write via `write_signal_atomic` in derselben Txn) und
+  `write_signal_atomic`-Transaktions-Contract unangetastet; DB-Index-Anlage nur als Empfehlung im Code
+  dokumentiert (partial Index `active_trades_master(strategy,coin,direction) WHERE status='WORKING'`;
+  `closed_trades_master(direction,posted)`) — Ausführung VPS-Session, Michi-gated.
+
+Query-Bilanz pro 30m-Zyklus (N≈530, im Code dokumentiert): vorher ≈ N×3 Reads (davon der ~120-Spalten-
+`SELECT *`) + Guard-Punktqueries ≈ 1.600+; nachher ≈ N×2 schlanke Reads + ~5 Snapshot-/Memo-Queries.
+Verifiziert: neuer `backtest/test_detector_scan_optimization.py` (19 Tests: Spike-Fenster-Parität
+alt↔neu inkl. 60-Fälle-Random-Sweep, Snapshot≡Einzelquery-Parität inkl. naiver TZ-Normalisierung,
+Signal-Dict-Parität aller 5 Strategien auf beiden Pfaden, Projektion-⊇/⊆, Wiring/Prefilter),
+Regression-Guard 24/24 golden, ruff/format/mypy grün. Test-Hygiene nebenbei (alle drei Fails vorbestehend
+auf unverändertem main, In-Repo-Worktree): `test_window_features` stubbt die Cursor-Naht statt
+`pd.read_sql_query` (stale seit der T-108-Migration); `test_candles::test_candle_source_resolves_known_backends`
+asserted den Backend-Default auf sauberem Env (die dotenv-Aufwärtssuche findet aus Worktrees das
+Operator-`.env` mit `KYTHERA_CANDLES_SOURCE=hyper`); `test_published_targets` restauriert nach seiner
+sys.modules-Chirurgie jetzt auch das `core`-PAKET-ATTRIBUT — der Split (Attribut ≠ sys.modules) ließ
+`test_shadow_gate`s `_shadow_test_channel`-Monkeypatch ins Leere laufen, sobald das Operator-`.env` ein
+`CH_SHADOW_TEST` setzt (gepatcht wurde Instanz A, aufgerufen Instanz B → Echo-Outbox-Assert rot).
+Deploy/Restart des Detectors ist NICHT Teil des Tasks (restart-gated, Michi).
+
 ## [2026-07-19] Z1-Ops-Skript nachgezogen — Dashboard-Task auf Password-Logon + cmd.exe-Launcher (T-2026-CU-9050-170)
 
 Live-Verifikation des Z1-Deploys ergab: `tools/ops/register_kythera_dashboard_tasks.ps1` registrierte den Dashboard-Task als **S4U** — das funktioniert NICHT. Der kurze Export-Batch läuft unter S4U, aber der langlaufende waitress-Dashboard-Server bindet im Session-0-S4U-Kontext Port 8098 nie (getestet: auch nach 35s kein Bind). Der Fleet-Watchdog nutzt aus demselben Grund `LogonType=Password`. Zweiter Fund: eine Scheduled-Task-Aktion kann eine `.cmd` nicht direkt starten (kein CreateProcess auf `.cmd`) → sie muss über `cmd.exe /c "<launcher>"` laufen. Beides live gefixt (Dashboard läuft jetzt Session 0, HTTP 200) und hier ins committete Skript nachgezogen.

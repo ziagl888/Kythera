@@ -282,14 +282,16 @@ def test_list_coin_tables_validates_before_the_connection():
 # ── Backend switch (phase-4 read-cutover) ─────────────────────────────────────
 
 
-def test_candle_source_resolves_known_backends():
+def test_candle_source_resolves_known_backends(monkeypatch):
+    # T-2026-CU-9050-172 hygiene: an operator .env further up the tree may
+    # legitimately set the flag (any earlier test importing core.config runs
+    # load_dotenv, whose upward search escapes a worktree). The DEFAULT must be
+    # asserted on a clean env, not on ambient operator state.
+    monkeypatch.delenv("KYTHERA_CANDLES_SOURCE", raising=False)
     assert c._candle_source() == "legacy"  # default
     for src in ("legacy", "hyper"):
-        os.environ["KYTHERA_CANDLES_SOURCE"] = src
-        try:
-            assert c._candle_source() == src
-        finally:
-            os.environ.pop("KYTHERA_CANDLES_SOURCE", None)
+        monkeypatch.setenv("KYTHERA_CANDLES_SOURCE", src)
+        assert c._candle_source() == src
 
 
 def test_write_primary_resolves_known_backends(monkeypatch):

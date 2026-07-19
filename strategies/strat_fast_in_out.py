@@ -94,7 +94,7 @@ def evaluate_conditions(data, direction):
     return False
 
 
-def analyze_coin(conn, symbol, df_indicators, live_price):
+def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
     """
     Das ist die Hauptfunktion, die vom Detector aufgerufen wird.
     Sie gibt ein fertiges Signal-Dictionary zurück oder None.
@@ -107,12 +107,27 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
             continue
 
         # 2. Cooldown checken
-        if check_recent_trades(conn, direction):
+        # T-2026-CU-9050-172 (4a): check_recent_trades ist coin-unabhängig — mit
+        # DetectorCycle läuft derselbe Query-Codepfad einmal pro Zyklus und
+        # (direction, hours, count) und wird memoisiert; ohne Cycle unverändert
+        # pro Aufruf. Guard bleibt read-only + AND-verknüpft (P2.44-Argument).
+        if cycle is not None:
+            recent_blocked = cycle.memo(
+                ('recent_trades', direction, 3, 500),  # Defaults von check_recent_trades
+                lambda: check_recent_trades(conn, direction),
+            )
+        else:
+            recent_blocked = check_recent_trades(conn, direction)
+        if recent_blocked:
             logger.info(f"[{symbol}] Zu viele {direction} Trades. Cooldown active.")
             continue
 
-        # 3. Ist der Trade schon aktiv?
-        if is_trade_already_active(conn, symbol, direction, 'Fast In And Out'):
+        # 3. Ist der Trade schon aktiv? (Cycle-Snapshot oder Einzelquery)
+        if cycle is not None:
+            trade_active = cycle.is_trade_active(symbol, direction, 'Fast In And Out')
+        else:
+            trade_active = is_trade_already_active(conn, symbol, direction, 'Fast In And Out')
+        if trade_active:
             logger.info(f"[{symbol}] {direction} Trade läuft bereits.")
             continue
 
