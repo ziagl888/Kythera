@@ -859,6 +859,64 @@ def upsert_candles(
     return len(rows)
 
 
+def candles_write_primary() -> str:
+    """Resolved write-primary backend ('legacy' | 'hyper'), fail-fast on typos.
+
+    Public accessor for callers that pick a write path per batch (the ingestion
+    flusher routes hyper primaries onto :func:`upsert_candles_many`). Read at
+    call time like every other KYTHERA_CANDLES_* flag — no reimport needed.
+    """
+    return _write_primary()
+
+
+def upsert_candles_many(
+    conn: Any,
+    rows: Sequence[Sequence[Any]],
+    *,
+    page_size: int = 500,
+) -> int:
+    """Bulk upsert of mixed-(symbol, tf) candle rows into the `candles` hypertable.
+
+    ``rows``: (symbol, tf, open_time, open, high, low, close, volume, closed) —
+    the :func:`upsert_candles` row shape with symbol/tf/closed carried PER ROW
+    instead of per call, exactly the tuple order of ``_CANDLES_HYPER_UPSERT``.
+    One ``execute_values`` round-trip replaces one statement per candle
+    (T-2026-CU-9050-169: the ingestion flusher was measured at ~3.185 single
+    INSERTs/s plus per-row SAVEPOINT/RELEASE traffic).
+
+    Hyper-only by design: the legacy backend shards rows over ~9.3k per-coin
+    tables, so a cross-symbol batch has no single-statement equivalent there —
+    raises :class:`CandleSourceError` when the write primary is 'legacy'
+    (callers keep the per-(symbol, tf) path in that case).
+
+    Same statement and therefore the same `IS DISTINCT FROM` no-op guard and
+    forming→closed flip semantics as the single-call path — the DB end state of
+    one bulk call is identical to the concatenation of per-(symbol, tf, closed)
+    :func:`upsert_candles` calls over the same rows.
+
+    Caller contract: (symbol, tf, open_time) must be unique within ``rows`` —
+    ON CONFLICT cannot update the same row twice inside one statement (the
+    ingestion buffer guarantees this via its dict key). Does NOT commit
+    (contract 3).
+    """
+    _candle_source()  # validate the read-backend flag; the write backend follows _write_primary() below
+    if _write_primary() != "hyper":
+        raise CandleSourceError(
+            "upsert_candles_many is hyper-only (write-primary='legacy' has no cross-symbol "
+            "batch equivalent) — use per-(symbol, tf) upsert_candles instead."
+        )
+    if not rows:
+        return 0
+    for r in rows:
+        # Same guard as upsert_candles: the boolean column must not coerce a
+        # truthy int, and a wrong flag would silently flip is_closed semantics.
+        if r[8] is not True and r[8] is not False:
+            raise TypeError("closed (row position 8) must be a bool")
+    with conn.cursor() as cur:
+        extras.execute_values(cur, _CANDLES_HYPER_UPSERT, rows, page_size=page_size)
+    return len(rows)
+
+
 def upsert_indicators(conn: Any, df: pd.DataFrame, symbol: str, tf: str, *, page_size: int = 500) -> int:
     """Upsert an indicator DataFrame for one (symbol, tf). Returns rows sent.
 
