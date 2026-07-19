@@ -51,6 +51,120 @@ sys.modules-Chirurgie jetzt auch das `core`-PAKET-ATTRIBUT — der Split (Attrib
 `test_shadow_gate`s `_shadow_test_channel`-Monkeypatch ins Leere laufen, sobald das Operator-`.env` ein
 `CH_SHADOW_TEST` setzt (gepatcht wurde Instanz A, aufgerufen Instanz B → Echo-Outbox-Assert rot).
 Deploy/Restart des Detectors ist NICHT Teil des Tasks (restart-gated, Michi).
+## [2026-07-19] Indikator-Engine CPU-Optimierung — Early-Skip + persistente Worker-Connections + Compute-Mikro-Opts, byte-identisch (T-2026-CU-9050-174)
+
+Die Engine rechnete alle 30 min 527 Coins × 6 TFs (~3.160 Tasks, NUM_WORKERS=3) komplett durch, obwohl
+bei den meisten (Symbol, TF)-Paaren seit dem letzten Zyklus keine neue GESCHLOSSENE Kerze existiert (1d
+hat z.B. nur in 1 von 48 Zyklen neue Arbeit). Alle drei Findings des Reviews vom 2026-07-19 umgesetzt;
+DB-Endzustand nachweislich byte-identisch, Trade-Charakteristik unverändert.
+
+- Finding 1 (größter Hebel, ~2/3 der Zyklus-Arbeit): Early-Skip in `process_coin_task` — nach dem
+  Watermark-Read zusätzlich `latest_open_time(kind='candles', include_forming=False)`; ist die neueste
+  geschlossene Kerze nicht neuer als der Watermark, sofortiger Return VOR `read_candles`.
+  End-State-Identitäts-Argument (Review-korrigiert): der FINALE Write jeder Zeile passiert immer in
+  einem New-Candle-Zyklus (dem letzten, dessen 5-Kerzen-Save-Fenster sie noch deckt) — und
+  New-Candle-Zyklen reißen das Prädikat immer und laufen exakt wie bisher; abgelöste Referenz-Bars
+  werden identisch geNULLt. Die übersprungenen Zwischenzyklen schrieben das Save-Fenster nur mit
+  einem um eine Kerze verschobenen Warmup-Fenster neu — Werte, die der nächste New-Candle-Zyklus
+  ohnehin überschrieb. **Akzeptierte, begrenzte Abweichungen** (heilen je zum nächsten Kerzenschluss;
+  Operator-Review beim Rollout): (a) die Window-Global-Spalten der Referenz-Bar bleiben auf der ersten
+  Post-Close-Berechnung eingefroren statt ~30 min später einmal aufs verschobene Fenster zu wechseln;
+  (b) eine In-Place-Korrektur einer bereits geschlossenen Kerze (Outage-Recovery-Catch-up, wie
+  2026-07-13) wird erst beim nächsten Kerzenschluss nachgerechnet statt im nächsten 30-min-Zyklus
+  (bei 1d/1w bis zu 1 Tag/1 Woche); (c) fällt eine Periodengrenze exakt zwischen Skip-Probe und
+  `read_candles`, rutscht die Kerze einen Zyklus. Randfälle intakt: verspätete Ingestion (neue
+  geschlossene Kerze > Watermark) → Recompute; Housekeeping-Gap-Invalidierung (Indikator-Zeilen
+  gelöscht, Watermark springt zurück) → Recompute. Die `updated`-Freigabe pro TF
+  (`update_timeframe_state`) bleibt unverändert im Orchestrator-Loop.
+- Finding 2: EINE persistente DB-Connection pro Pool-WORKER (`initializer=_init_worker`, Lazy-Connect,
+  Reconnect-bei-Fehler) statt Pool-Checkout/-Rückgabe pro Task (~3.160 Checkouts/Zyklus, jede Rückgabe
+  mit ROLLBACK-Round-Trip + Liveness-Probe). Transaktions-Hygiene (Review-Finding): ein `finally`
+  beendet die Task-Transaktion auf JEDEM Exit-Pfad (`get_transaction_status()`-Check, client-seitig) —
+  die persistente Connection hält nie eine offene Transaktion (und deren AccessShareLocks über
+  distinkte per-Coin-Tabellen) über Tasks hinweg, und ein von einer BaseException hinterlassener
+  Partial-Write kann nie vom Folge-Task mitcommittet werden; scheitert der Rollback, wird die
+  Connection verworfen und der nächste Task verbindet neu. Commit bleibt beim Caller (harte Regel 8).
+  Dazu `get_indicator_definitions()` einmal pro Worker und ein Positiv-Cache für die zwei
+  `table_exists`-Probes pro Task (nur Treffer gecacht — neu angelegte Tabellen werden weiter gefunden).
+- Finding 3 (Mikro-Opts, bit-identisch): (a) `calc_macd` re-nutzt die EMA_9/12/21/26-Serien aus dem
+  EMA-Block statt vier `ewm`-Neuberechnungen; (b) redundanter `df.sort_values('open_time')` in
+  `calculate_indicators_optimized` entfernt (alle Caller liefern ASC: read_candles Contract 1,
+  Guard-Fixtures, recompute `ORDER BY`); (c) True-Range via `np.fmax.reduce` statt
+  `pd.concat(...).max(axis=1)` — bewusst fmax statt maximum, damit die NaN-Skip-Semantik der ersten
+  Bar (`close.shift()`) erhalten bleibt; (d) `exe.map(..., chunksize=8)` amortisiert die
+  IPC-Round-Trips über ~527 Tasks/TF.
+- BEWUSST NICHT angefasst: `lookback_candles=1000` (EWM-Konvergenz EMA/SMMA_200/KAMA/TSI, harte
+  Regel 7), `NUM_WORKERS=3` (VPS CPU-saturiert, T-166), KAMA-Restschleife (inhärent sequenziell).
+
+Verifikation: Regression-Guard 24/24 golden OHNE Refresh + `smoke` grün; zusätzlich
+Bit-Identitäts-Beweis alt↔neu über alle 24 Fixtures (111 Spalten, float64-Bitmuster-Vergleich:
+100% identisch). Neuer DB-freier Test `backtest/test_indicator_engine_skip.py` (8 Tests: komplette
+Skip-Entscheidungstabelle inkl. Erstlauf/Gap-Rücksprung, Transaktions-Ende auf jedem Exit-Pfad,
+Positiv-Cache, Discard bei kaputter Connection). backtest: test_gap_continuity, test_wilder_rsi,
+test_window_features (Engine-Teil), test_candles_schema, test_fleet_definition, test_watchdog_backoff
+grün; der S/R-Reader-Teil von test_window_features und test_candles' Backend-Flag-Test scheitern
+identisch auf unverändertem main (stale `pd.read_sql_query`-Stub seit der read_candles-Umverdrahtung
+bzw. Test-Isolations-Leck — keine Regression, Follow-up-Kandidaten). ruff + format grün. Reviews:
+3-Vote z-code-reviewer (Findings behoben: Transaktions-Hygiene-`finally`, Doku-Korrekturen, Tests) +
+Spec-Compliance PASS. Erwartet ~60-70% weniger Engine-Last/Zyklus + Postgres-Entlastung (weniger
+Checkouts/Reads). Aktiv nach dem nächsten Engine-Restart (Michi-gated).
+## [2026-07-19] Z1-Dashboard: DuckDB-Analytics-Queries 2,8–8,5x schneller + Panel-Daten-Cache (T-2026-CU-9050-175)
+
+Profile-first gegen die reale served-DB (~824k Outcome-Rows, ~580k decisive): die beiden 11-Sekunden-
+Aggregate (`bot_leaderboard`, `rolling_success_rate_series`) transferierten JEDEN decisive Trade als
+Python-Dict über die DuckDB-Grenze — genau der beim Deploy beobachtete Cold-Start-Timeout (>10s).
+Query-seitig optimiert, ergebnis-erhaltend. **Paritäts-Umfang, ehrlich:** die drei reinen count/sum-
+Aggregate (`rolling_success_rate_series`, `success_rate_timeseries`, `bot_regime_matrix`) sind auf der
+realen DB **bit-identisch** old-vs-new verifiziert (json-identisch). Für `bot_leaderboard` gilt das für
+die order-INVARIANTEN Felder (n, wins, winrate, pnl_sum_pct, expectancy_pct); die zwei order-ABHÄNGIGEN
+Risk-Metriken (`max_drawdown_pp`, `max_loss_streak`) behalten die **SELBE vorbestehende run-to-run-
+Nichtdeterminismus-Klasse** wie der alte Code — nicht bit-identisch per Natur (siehe BEFUND unten), aber
+kein NEUER Nichtdeterminismus ggü. alt. Gemessen (reale `analytics.duckdb`, frische Connection pro Call,
+min/3):
+
+| Query | vorher | nachher |
+|---|---|---|
+| `bot_leaderboard` | 11.509 ms | 4.098 ms |
+| `rolling_success_rate_series` (w=30) | 11.812 ms | 1.395 ms |
+| `success_rate_timeseries` (7/30/90) | 1.620 ms | 1.318 ms |
+| `bot_regime_matrix` (ASOF) | 2.400 ms | 2.120 ms |
+
+- `tools/analytics_api.py`: `rolling_success_rate_series` aggregiert die Tages-Buckets jetzt in DuckDB
+  (`GROUP BY bot, d`, reine Integer-Zählungen → Parität exakt per Konstruktion) statt ~580k Rows nach
+  Python zu holen; `_daily_buckets_by_bot`/`bot_trade_rows` bleiben als Referenz-Pipeline erhalten.
+  `bot_leaderboard` läuft über einen Streamed-Column-Pfad (`_leaderboard_rows_streamed`): 3-Spalten-
+  Projektion (`closed_at` bleibt NUR Sortkey, nie 580k materialisierte datetimes), lazy-optionaler
+  numpy-`fetchnumpy`-Fast-Path mit bit-identischem Pure-Python-Fallback — beide rufen wörtlich
+  `_leaderboard_row`s eigene Mathematik (`_leaderboard_row_from_columns`: builtin `sum()`, naiver
+  Drawdown-Loop). `success_rate_timeseries` rechnet alle Fenster in EINEM Scan (FILTER-Aggregate übers
+  breiteste Fenster; Bot-Inklusion pro Fenster über Any-Row-Count rekonstruiert) statt ein Scan pro
+  Fenster. `bot_regime_matrix`: `ASOF JOIN` (inner) statt `ASOF LEFT JOIN + WHERE` (beweisbar
+  zeilenidentisch, `regime_sorted` ist NULL-frei) + redundantes inneres `ORDER BY ts` entfernt.
+- `tools/dashboard/app.py`: Panel-Daten-Cache (`_PollCache`, File-Freshness-Token — dasselbe Muster wie
+  der bestehende Blueprint-Cache): bei unveränderter Export-Datei wird jeder 30s-HTMX-Poll aus Memory
+  bedient (keine Connection, kein Scan; Steady-State ~0 ms). Gecacht werden NUR DuckDB-derivierte Daten
+  (Payload + `data_freshness`-ROWS); das „Sync vor N min"-Alter wird weiter pro Request aus der Wall-
+  Clock gerechnet, Fleet-Registry (dateibasiert) bewusst uncached. `cache=None`-Default = exakt altes
+  Verhalten.
+- Paritäts-Netz: neuer `backtest/test_analytics_query_parity.py` (23 Tests) — Referenz-Implementierungen
+  (alte Query-Shapes) vs. neu auf tmp-DuckDB-Fixtures (beide Outcome-Tabellen + regime_history), inkl.
+  Edge-Cases: closed_at-Ties, Bot-Filter, Fenster-Duplikate/-Teilmengen, explizites `as_of`, leeres
+  Substrat, numpy≡Fallback auf tie-freien Fixture-Daten (Scope ehrlich benannt, s.u.) PLUS ein
+  tie-robuster Implementierungs-Äquivalenztest über EINEN geteilten Row-Stream, Cache-Hit ohne Reconnect
+  UND Cache-Invalidierung bei neuem File-Token (echter Re-Export). 208 Dashboard-+Paritäts-Tests grün
+  (`pytest backtest/test_dashboard_*.py backtest/test_analytics_query_parity.py`), ruff 0.15.17
+  check+format clean.
+- BEFUND (vorbestehend, unverändert gelassen): das ALTE `bot_leaderboard` war bei `closed_at`-Ties
+  run-nondeterministisch, weil `ORDER BY bot, closed_at` keinen deterministischen Tiebreaker hat und
+  DuckDBs paralleler Scan (threads=2) Ties zwischen Duplikat-/Same-Instant-Rows in `closed_ai_signals`
+  je Lauf anders ordnet (real reproduziert: 6/10 Läufe divergieren, z.B. `max_drawdown_pp` ATS1 −83.003
+  vs. −80.303 pp, `max_loss_streak` ±24 auf identischem File). Betrifft nur die zwei path-abhängigen
+  Risk-Metriken; die count/sum-Felder sind order-invariant und stabil. Das gilt auch für numpy-Pfad-vs-
+  Fallback: jeder `bot_leaderboard`-Call führt die Query neu aus → eigener Tie-Stream, daher kann die
+  numpy≡Fallback-Gleichheit nur pro row-stream (nicht über getrennte Calls) garantiert werden. Die
+  Optimierung behält `ORDER BY bot, closed_at` **absichtlich unverändert** bei (gleiche Nichtdeterminismus-
+  Klasse, kein neuer). Ein deterministischer Tiebreaker würde diese geld-werten Metriken VERÄNDERN und ist
+  daher ein **separater Follow-up-Task (Verhaltensänderung)** — bewusst NICHT Teil dieser PR.
 
 ## [2026-07-19] Z1-Ops-Skript nachgezogen — Dashboard-Task auf Password-Logon + cmd.exe-Launcher (T-2026-CU-9050-170)
 
