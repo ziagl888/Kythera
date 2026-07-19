@@ -55,6 +55,17 @@ def _import_poster_hermetically():
     }
     saved = {name: sys.modules.get(name) for name in stubs}
     saved["core.signal_post"] = sys.modules.get("core.signal_post")
+    # T-2026-CU-9050-172 hygiene: the fresh import below also REBINDS the `core`
+    # package ATTRIBUTE (core.signal_post = <stub-bound instance>). Restoring only
+    # sys.modules leaves the two out of sync — a later `import core.signal_post
+    # as x` resolves via the package attribute and hands out the stale stub-bound
+    # instance while `from core.signal_post import ...` uses sys.modules. That
+    # split silently defeated test_shadow_gate's _shadow_test_channel monkeypatch
+    # (patched one instance, called the other) whenever an operator .env sets
+    # CH_SHADOW_TEST. Save/restore the attribute alongside sys.modules.
+    import core as _core_pkg
+
+    saved_pkg_attr = getattr(_core_pkg, "signal_post", None)
     try:
         for name, attrs in stubs.items():
             mod = types.ModuleType(name)
@@ -72,6 +83,11 @@ def _import_poster_hermetically():
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = prev
+        if saved_pkg_attr is None:
+            if hasattr(_core_pkg, "signal_post"):
+                delattr(_core_pkg, "signal_post")
+        else:
+            _core_pkg.signal_post = saved_pkg_attr
 
 
 post_ai_signal = _import_poster_hermetically()

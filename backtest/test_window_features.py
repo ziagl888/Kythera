@@ -201,23 +201,28 @@ def _sr_gate_frame():
     return pd.DataFrame(rows, index=idx)
 
 
-def _run_analyze_reaches_db(analyze_fn):
-    """Returns True if analyze_fn reached the OHLCV DB read (i.e. an S/R hit fired),
-    False if it returned None first. read_sql_query is stubbed to raise _Sentinel."""
-    df = _sr_gate_frame()
-    orig = pd.read_sql_query
+class _BoomConn:
+    """Any DB access (core.candles._fetch_df does conn.cursor()) raises _Sentinel.
 
-    def _boom(*a, **k):
+    T-2026-CU-9050-172 harness fix: the old stub patched pd.read_sql_query,
+    which core.candles stopped using with the cursor-based _fetch_df (T-108) —
+    the probe then died with AttributeError on the bare object() conn instead
+    of signalling "reached the DB read". Same intent, resilient seam.
+    """
+
+    def cursor(self):
         raise _Sentinel
 
-    pd.read_sql_query = _boom
+
+def _run_analyze_reaches_db(analyze_fn):
+    """Returns True if analyze_fn reached the OHLCV DB read (i.e. an S/R hit fired),
+    False if it returned None first."""
+    df = _sr_gate_frame()
     try:
-        result = analyze_fn(object(), "TESTUSDT", df, 100.5)
+        result = analyze_fn(_BoomConn(), "TESTUSDT", df, 100.5)
         return False, result
     except _Sentinel:
         return True, None
-    finally:
-        pd.read_sql_query = orig
 
 
 def test_strat_support_resistance_reads_reference_row():

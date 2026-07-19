@@ -10,7 +10,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 logger = logging.getLogger(__name__)
 
 
-def analyze_coin(conn, symbol, df_indicators, live_price):
+def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
     if len(df_indicators) < 50: return None
     current_row = df_indicators.iloc[0]
 
@@ -32,6 +32,16 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     if support_price_prev <= close_price_current <= support_price_prev * 1.0075: support_price_hit = support_price_prev
     elif resistance_price_prev * 0.9925 <= close_price_current <= resistance_price_prev: resistance_price_hit = resistance_price_prev
     if support_price_hit == 0 and resistance_price_hit == 0: return None
+
+    # T-2026-CU-9050-172 (4b): the hit side fixes the only possible direction,
+    # and the active-trade guard further down is read-only and AND-combined —
+    # with a cycle snapshot it can run BEFORE the first-hit scan, the 480-bar
+    # OHLCV read and the OBV read instead of after them (P2.44 reorder; the
+    # emitted signal set is unchanged, an occupied direction returned None
+    # either way).
+    if cycle is not None:
+        if cycle.is_trade_active(symbol, 'LONG' if support_price_hit > 0 else 'SHORT', 'Support Resistance'):
+            return None
 
     open_time_hit = current_row.name
     RSI_9_HIT, RSI_14_HIT = current_row['rsi_9'], current_row['rsi_14']
@@ -62,7 +72,9 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     margin = 'Cross'
 
     if support_price_hit > 0:
-        if is_trade_already_active(conn, symbol, 'LONG', 'Support Resistance'): return None
+        trade_active = (cycle.is_trade_active(symbol, 'LONG', 'Support Resistance') if cycle is not None
+                        else is_trade_already_active(conn, symbol, 'LONG', 'Support Resistance'))
+        if trade_active: return None
         if RSI_9_HIT > RSI_9_1ST_HIT and RSI_14_HIT > RSI_14_1ST_HIT:
             if calculate_obv(conn, symbol, open_time_1st_hit, open_time_hit) > 0:
                 targets = sorted([zone[0] for zone in resistance_zones], key=lambda x: abs(x - entry))[:4]
@@ -76,7 +88,9 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
                 return {"strategy": "Support Resistance", "coin": symbol, "direction": "LONG", "margin": margin, "entry": entry, "lev": lev, "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl}
 
     elif resistance_price_hit > 0:
-        if is_trade_already_active(conn, symbol, 'SHORT', 'Support Resistance'): return None
+        trade_active = (cycle.is_trade_active(symbol, 'SHORT', 'Support Resistance') if cycle is not None
+                        else is_trade_already_active(conn, symbol, 'SHORT', 'Support Resistance'))
+        if trade_active: return None
         if RSI_9_HIT < RSI_9_1ST_HIT and RSI_14_HIT < RSI_14_1ST_HIT:
             if calculate_obv(conn, symbol, open_time_1st_hit, open_time_hit) < 0:
                 targets = sorted([zone[0] for zone in support_zones], key=lambda x: abs(x - entry))[:4]

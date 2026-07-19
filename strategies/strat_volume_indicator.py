@@ -93,22 +93,33 @@ def detect_high_volume_zone(conn, symbol, latest_close, latest_open_time, thresh
 
 def detect_volume_spike_in_period(conn, symbol, open_time_1st_hit, open_time_hit):
     try:
-        # R1 (T-2026-CU-9050-108): via core.candles, closed candles only. Inclusive
-        # `<= open_time_hit` maps to `end=open_time_hit`; frame arrives ASC as before.
-        df_period = read_candles(
-            conn, symbol, "30m", start=open_time_1st_hit, end=open_time_hit,
-            include_forming=False, columns=("open_time", "close", "volume"),
-        )
-        if df_period.empty: return 0
-
+        # T-2026-CU-9050-172 (3): ONE contiguous 15d read instead of two
+        # overlapping window reads (5d period + 10d baseline); the split into
+        # period/baseline happens in pandas. The window semantics are exactly
+        # the two old reads (parity-tested in
+        # backtest/test_detector_scan_optimization.py):
+        #   period   = [open_time_1st_hit, open_time_hit]                (inclusive)
+        #   baseline = [open_time_1st_hit - 10d, open_time_1st_hit - 30m] (inclusive)
+        # open_times are period-aligned 30m bars, so the strict pandas split at
+        # open_time_1st_hit partitions the read losslessly:
+        # `< open_time_1st_hit` == the old baseline `end = 1st_hit - 30m`
+        # (R1/T-108 mapping) and `>= open_time_1st_hit` == the old period start.
+        # The indicator frame is NOT a substitute for this read — the indicator
+        # tables carry no volume column.
         hist_start = open_time_1st_hit - datetime.timedelta(days=10)
-        # The old strict `open_time < open_time_1st_hit` (baseline strictly before the
-        # window) maps exactly onto `end = open_time_1st_hit - 30m` (period-aligned).
-        df_hist = read_candles(
-            conn, symbol, "30m", start=hist_start,
-            end=open_time_1st_hit - timeframe_delta("30m"),
+        df_all = read_candles(
+            conn, symbol, "30m", start=hist_start, end=open_time_hit,
             include_forming=False, columns=("open_time", "close", "volume"),
         )
+        # THREE-way split, not a complement (review fix): the two old windows
+        # were [1st_hit, hit] and [1st_hit-10d, 1st_hit-30m] — a (contract-
+        # violating) misaligned bar strictly inside (1st_hit-30m, 1st_hit) was
+        # in NEITHER window and must stay excluded, or the baseline mean/std
+        # would drift from the old reads.
+        df_period = df_all[df_all['open_time'] >= open_time_1st_hit]
+        # Empty-checks in the ORDER of the old two reads: period first, then baseline.
+        if df_period.empty: return 0
+        df_hist = df_all[df_all['open_time'] <= open_time_1st_hit - timeframe_delta("30m")]
         if df_hist.empty: return 0
 
         volume_mean, volume_std = df_hist['volume'].mean(), df_hist['volume'].std()
@@ -118,7 +129,7 @@ def detect_volume_spike_in_period(conn, symbol, open_time_1st_hit, open_time_hit
         return 0
 
 
-def analyze_coin(conn, symbol, df_indicators, live_price):
+def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
     # This bot only needs the 30m indicator table for timestamps/prices
     if df_indicators.empty: return None
 
@@ -135,6 +146,16 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     # signal is otherwise emittable (spike present, not already active, not on
     # cooldown). This does NOT alter the P1.16 cooldown contract below.
 
+    # T-2026-CU-9050-172 (4b): with a cycle snapshot both directions are free to
+    # check — if LONG *and* SHORT are already WORKING, the per-direction active
+    # guard below would veto whichever direction the spike resolves to, so the
+    # spike computation (the bundled 15d read) is skipped entirely. Same P2.44
+    # argument: read-only AND-combined guards, only evaluation order changes.
+    if (cycle is not None
+            and cycle.is_trade_active(symbol, 'LONG', 'Volume Indicator')
+            and cycle.is_trade_active(symbol, 'SHORT', 'Volume Indicator')):
+        return None
+
     # 1. Spike Check (last 5 days) — ~15d of 30m rows, far cheaper than the 90d HVN read.
     five_days_ago = latest_open_time - datetime.timedelta(days=5)
     volume_spike = detect_volume_spike_in_period(conn, symbol, five_days_ago, latest_open_time)
@@ -142,8 +163,13 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
         return None
     direction = 'LONG' if volume_spike == 1 else 'SHORT'
 
-    # 2. Cheap per-direction guards (both read-only DB lookups).
-    if is_trade_already_active(conn, symbol, direction, 'Volume Indicator'):
+    # 2. Cheap per-direction guards (read-only; served from the cycle snapshot
+    #    when the detector provides one, per-call DB lookups otherwise).
+    if cycle is not None:
+        trade_active = cycle.is_trade_active(symbol, direction, 'Volume Indicator')
+    else:
+        trade_active = is_trade_already_active(conn, symbol, direction, 'Volume Indicator')
+    if trade_active:
         return None
 
     # FIX P1.16 (DO NOT TOUCH the cooldown contract — T-2026-CU-9050-085 only
@@ -162,7 +188,13 @@ def analyze_coin(conn, symbol, df_indicators, live_price):
     module_tag = 'VolIndic'
     cd_hours = 12
     # check_cooldown returns True while the lock is STILL active → skip.
-    if check_cooldown(conn, module_tag, symbol, direction, cd_hours):
+    # T-2026-CU-9050-172 (4c): the cycle path serves the same check from a
+    # per-cycle module snapshot (same to_utc normalisation, same 12h/`>` cutoff).
+    if cycle is not None:
+        on_cooldown = cycle.cooldown_active(module_tag, symbol, direction, cd_hours)
+    else:
+        on_cooldown = check_cooldown(conn, module_tag, symbol, direction, cd_hours)
+    if on_cooldown:
         return None
 
     # 3. Expensive HVN Check (90d×30m read) — reached only when a signal is emittable.
