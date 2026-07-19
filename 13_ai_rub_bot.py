@@ -63,6 +63,23 @@ MODEL_LONG = None
 # der saubere Retrain das Legacy-LONG schlägt (Regime-Frage §8/Teil 3). Der Tag
 # unterscheidet sich per RICHTUNG von einem etwaigen künftigen RUB3-SHORT.
 SHADOW_RUB3_LONG = None
+
+# RUB4 (T-2026-CU-9050-164): funding-gegatetes RUB-LONG als SHADOW-Experiment.
+# Retrospektiv (123 geschlossene RUB-LONG-Trades) dreht das ABR1-Funding-Gate das
+# Aggregat von −2,9 %/Trade ins Plus (+1,6 %), aber nur 6/123 Trades passieren es
+# → dünn, muss forward-validiert werden. RUB4 emittiert DENSELBEN RUB3-Kandidaten,
+# aber NUR wenn fund_24h > +3 bps (ABR1-LONG-Schwelle) — eigener Tag, damit der
+# Report gegatet (RUB4) vs. ungegatet (RUB3) vergleicht. Rein additiv, nie live.
+FUNDING_GATE_LONG_BPS = 3.0
+RUB4_GATED_LONG_TAG = "RUB4"
+
+
+def funding_gate_open(fund_24h_bps) -> bool:
+    """True, wenn das ABR1-Funding-Gate offen ist (fund_24h > +3 bps). Pure →
+    DB-frei testbar. None (keine Funding-Daten) ⇒ Gate ZU (kein RUB4-Post)."""
+    return fund_24h_bps is not None and fund_24h_bps > FUNDING_GATE_LONG_BPS
+
+
 # Volle load_artifact-Contract-Form (KEIN Teil-Dict): loaded_at=0.0 erzwingt den
 # ersten maybe_reload-Load, und threshold/features/model existieren als Keys, damit
 # kein Zugriffspfad vor load_models() auf einem halben Contract in KeyError läuft.
@@ -131,7 +148,16 @@ def _emit_rub3_shadow(conn, symbol, curr_close, base_features, now):
         targets = ensure_min_tp_distance(t_cands[:20], entry1, True, min_pct=0.05)
         if not targets:
             return
-        if post_shadow_ai_signal(conn, "RUB3", symbol, "LONG", prob, entry1, entry2, sl, targets, n_show=3):
+        wrote = post_shadow_ai_signal(conn, "RUB3", symbol, "LONG", prob, entry1, entry2, sl, targets, n_show=3)
+        # RUB4-Funding-Gate-Variante: dasselbe Setup, aber NUR wenn fund_24h > +3 bps
+        # (feats["fund_24h"] ist bereits berechnet). Testet, ob das Gate die
+        # RUB-LONG-Seite rettet. Eigener Tag, fail-safe zu Stille wenn nicht SHADOW.
+        if funding_gate_open(feats.get("fund_24h")) and shadow_gate.is_shadow(RUB4_GATED_LONG_TAG, "LONG"):
+            if post_shadow_ai_signal(
+                conn, RUB4_GATED_LONG_TAG, symbol, "LONG", prob, entry1, entry2, sl, targets, n_show=3
+            ):
+                wrote = True
+        if wrote:
             conn.commit()
     except Exception as e:
         logger.warning(f"RUB3 Shadow für {symbol} fehlgeschlagen: {e}")

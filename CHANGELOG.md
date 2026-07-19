@@ -1,3 +1,25 @@
+## [2026-07-19] RUB4 — funding-gegatetes RUB-LONG als Shadow-Experiment (T-2026-CU-9050-164)
+
+Das RUB-LONG-Bein blutet (live RUB2-LONG −2,5 %/Trade, Shadow-RUB3-LONG −3,7 %). Retrospektive über 123
+geschlossene RUB-LONG-Trades: das ABR1-Funding-Gate (`fund_24h > +3 bps`) dreht das Aggregat ins Plus
+(−2,90 % → **+1,61 %**), aber nur **6/123** Trades passieren es → vielversprechend, aber zu dünn zum Live-Schalten.
+Daher als **reines Shadow-Experiment** forward-validiert (Michi-Entscheid: nur Shadow, live unangetastet).
+
+- `13_ai_rub_bot.py`: neuer Tag **RUB4** — emittiert in `_emit_rub3_shadow` DENSELBEN RUB3-Kandidaten
+  (gleiches Modell, gleiche Geometrie, gleicher Entry), aber NUR wenn `funding_gate_open(feats["fund_24h"])`
+  (strikt `> 3.0 bps`, ABR1-LONG-Schwelle; `fund_24h` ist bereits in den Funding-Features berechnet). Pure
+  `funding_gate_open`-Funktion (DB-frei testbar). Rein additiv, nie live, fail-safe zu Stille wenn RUB4 nicht
+  SHADOW. Report vergleicht so **gegatet (RUB4) vs. ungegatet (RUB3)** direkt.
+- `core/shadow_gate.py`: `("RUB4","LONG") → SHADOW`. Kein eigener `SHADOW_ARTIFACTS`-Eintrag — RUB4 nutzt das
+  RUB3-Artefakt (`SHADOW_RUB3_LONG`); `bot_catalog` mappt RUB4 über den `RUB`-Prefix auf Bot 13.
+- Tests: `backtest/test_rub4_funding_gate.py` (Gate-Grenzen, Registrierung, Tag→Bot; ABR1-Schwelle). Zusätzlich
+  **Test-Hermetik-Fix** (Folge von T-150): `test_shadow_gate.py` schaltet den CH_SHADOW_TEST-Echo per autouse-
+  Fixture ab, damit die „nie telegram_outbox"-Invariante auch dann grün bleibt, wenn in der Umgebung/.env ein
+  CH_SHADOW_TEST gesetzt ist (sonst lokal falsch-rot unter dem Live-Checkout). 63/63 grün.
+
+Aktiv nach Fleet-Restart. Wird RUB4 forward-positiv (genug n), ist Promotion des Gates auf das live RUB-LONG
+eine separate Operator-Entscheidung.
+
 ## [2026-07-18] Read-only Event-Feed — Z1-Dashboard Feature 9, letztes Panel (T-2026-CU-9050-161)
 
 Neunter und letzter Feature-Baustein des Z1-Dashboard-Rewrites: ein chronologischer (neueste zuerst)

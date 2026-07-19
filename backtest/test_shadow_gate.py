@@ -22,8 +22,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DB_PASSWORD", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
 
+import pytest  # noqa: E402
+
+import core.signal_post as _sp  # noqa: E402
 from core import shadow_gate as sg  # noqa: E402
 from core.signal_post import post_shadow_ai_signal  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _shadow_echo_off(monkeypatch):
+    """T-150 gab post_shadow_ai_signal einen optionalen CH_SHADOW_TEST-Echo. Diese
+    Tests pinnen die REINE „nur ai_signals, nie telegram_outbox"-Invariante — der
+    Echo wird hier hart abgeschaltet, damit sie hermetisch bleiben, egal ob in der
+    Umgebung/.env ein CH_SHADOW_TEST gesetzt ist (T-2026-CU-9050-164)."""
+    monkeypatch.setattr(_sp, "_shadow_test_channel", lambda: 0)
 
 
 # ── Fake-DB (identisches Muster wie test_shadow_prediction_cooldown) ──────────
