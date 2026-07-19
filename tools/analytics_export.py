@@ -74,6 +74,9 @@ import dataclasses
 import datetime
 import json
 import logging
+import os
+import shutil
+import time
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
@@ -550,6 +553,136 @@ def data_freshness(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Atomic publish — build DB → served path (dashboard reads never blocked)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_db_path(served_path: str | Path) -> Path:
+    """The persistent build-DB path that shadows a served DuckDB file.
+
+    ``analytics.duckdb`` → ``analytics.duckdb.build``. The export opens THIS
+    file read-write (holding the exclusive DuckDB write lock + the watermark);
+    the served file is only ever produced by an atomic replace, never opened RW
+    by the export, so the dashboard's per-request read-only opens are never
+    blocked.
+    """
+    served = Path(served_path)
+    return served.with_name(served.name + ".build")
+
+
+def seed_build_db(build_path: str | Path, served_path: str | Path) -> bool:
+    """Rollout seed so the switch to the persistent build DB never re-pulls the
+    whole history.
+
+    The build-DB layout (``<served>.build`` carries the ``_export_watermark``)
+    is the FIRST split from the old single-file layout. On the very first run
+    under the new code the build DB does not exist yet, so ``read_cursor``
+    returns ``None`` for every source and the export would re-pull the ENTIRE
+    history from live Postgres — a multi-hour full scan competing with
+    ingestion — even though the SERVED DB already holds a full watermark.
+
+    This copies the served DB to the build path ONCE, so the persisted cursor
+    carries over and the export resumes incrementally. Idempotent — it only
+    seeds when a seed is actually needed:
+
+    * build exists                 → no-op (steady state; resume from build).
+    * build missing, served exists → seed (migration from the old layout).
+    * both missing                 → no-op (genuine first-ever run → full export
+                                     into a fresh empty build DB, as intended).
+    * build resolves to served     → no-op (defensive; the publish guard already
+                                     covers that misconfiguration).
+
+    Returns ``True`` iff a seed copy was made.
+    """
+    build = Path(build_path)
+    served = Path(served_path)
+    if build.exists() or build.resolve() == served.resolve() or not served.exists():
+        return False
+    build.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(served, build)
+    logger.info(
+        "seeding build DB from existing served DB to preserve watermark (%s → %s)",
+        served, build,
+    )
+    return True
+
+
+def publish_duckdb(
+    build_path: str | Path,
+    served_path: str | Path,
+    *,
+    retries: int = 5,
+    retry_delay_s: float = 0.2,
+) -> None:
+    """Atomically publish the freshly built analytics DuckDB to the served path.
+
+    The export writes into a persistent BUILD DB (``<served>.build``) and holds
+    the exclusive DuckDB write lock there for the whole run. Publishing then
+    copies that build DB to a sibling ``<served>.tmp`` and ``os.replace``-s it
+    onto the served path. ``os.replace`` is atomic on the same volume, so a
+    concurrent dashboard read either sees the old file or the new one in full —
+    never a half-written mix — and is never blocked on the export's write lock.
+
+    Windows sharing violation: ``os.replace`` can raise ``PermissionError`` if
+    the dashboard has the served file open at the exact instant of the replace.
+    We retry the replace up to ``retries`` times with ``retry_delay_s`` between
+    attempts. If every attempt fails, the build DB AND the ``.tmp`` copy are
+    left intact (the served file is never touched, so there is no corruption
+    risk) and the ``PermissionError`` propagates — the caller turns that into a
+    non-zero exit; the next scheduled run resumes cleanly from the build DB.
+
+    DB-free and unit-testable: ``os.replace`` is referenced at module level and
+    is monkeypatchable (``tools.analytics_export.os.replace``) so the retry loop
+    can be exercised without a real sharing violation.
+    """
+    build = Path(build_path)
+    served = Path(served_path)
+
+    # Defensive: a build path that resolves to the served path must never
+    # self-replace — os.replace(x, x) followed by the copy step would risk
+    # destroying the only copy. Nothing to publish in that (mis)configuration.
+    if build.resolve() == served.resolve():
+        logger.warning(
+            "publish skipped: build path resolves to the served path (%s) — "
+            "no atomic publish performed",
+            served,
+        )
+        return
+
+    served.parent.mkdir(parents=True, exist_ok=True)
+    tmp = served.with_name(served.name + ".tmp")
+    # Full byte copy (metadata preserved) onto the same volume, so the follow-up
+    # os.replace is a cheap atomic rename rather than a cross-device move.
+    shutil.copy2(build, tmp)
+
+    for attempt in range(1, retries + 1):
+        try:
+            os.replace(tmp, served)
+        except PermissionError as exc:
+            if attempt < retries:
+                logger.warning(
+                    "publish attempt %d/%d hit a sharing violation on %s "
+                    "(dashboard reading?); retrying in %d ms",
+                    attempt, retries, served, int(retry_delay_s * 1000),
+                )
+                time.sleep(retry_delay_s)
+                continue
+            logger.error(
+                "publish FAILED after %d attempts: %s stayed locked (%s). "
+                "Build DB + %s left intact; served path untouched — no "
+                "corruption. Next run republishes from the build DB.",
+                retries, served, exc, tmp.name,
+            )
+            raise
+        else:
+            logger.info(
+                "published analytics DuckDB → %s (attempt %d/%d)",
+                served, attempt, retries,
+            )
+            return
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -583,14 +716,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         sources = SOURCES
 
+    # The export runs against a PERSISTENT build DB next to the served path and
+    # publishes atomically at the end, so the dashboard's read-only opens are
+    # never blocked by the export's write lock. The watermark lives in the build
+    # DB → after the first run/seed, incrementality is exact (a resume reads the
+    # last cursor from there).
+    served_duckdb = Path(args.duckdb)
+    build_duckdb = build_db_path(served_duckdb)
+
+    # Rollout seed: on the first run under the build-DB layout, carry the served
+    # DB's existing watermark over so we resume incrementally instead of
+    # re-pulling the whole history from live Postgres. No-op in steady state.
+    seed_build_db(build_duckdb, served_duckdb)
+
     fetcher = PostgresFetcher(dsn=args.dsn, statement_timeout_ms=args.statement_timeout_ms)
     try:
         exporter = AnalyticsExporter(
-            args.duckdb, args.parquet_dir, fetcher, sources=sources, batch_size=args.batch_size
+            build_duckdb, args.parquet_dir, fetcher, sources=sources, batch_size=args.batch_size
         )
         results = exporter.run()
     finally:
         fetcher.close()
+
+    # Publish the built DB onto the served path atomically, BEFORE reporting: a
+    # summary printed ahead of a failed publish reads like success while the
+    # served DB is still stale. A sharing-violation failure leaves the build DB
+    # intact and yields a non-zero exit (served file never corrupted; next run
+    # republishes).
+    published = True
+    try:
+        publish_duckdb(build_duckdb, served_duckdb)
+    except OSError:
+        published = False
 
     summary = [dataclasses.asdict(r) for r in results]
     for r in summary:
@@ -600,11 +757,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(summary, default=str, indent=2))
     else:
         total = sum(r["rows_exported"] for r in summary)
-        print(f"Exported {total} new rows across {len(summary)} source(s):")
+        status = "into served DB" if published else "into BUILD DB (publish PENDING — served NOT updated)"
+        print(f"Exported {total} new rows across {len(summary)} source(s) {status}:")
         for r in summary:
             print(f"  {r['name']:<18} +{r['rows_exported']:<6} (total {r['rows_total']}, "
                   f"watermark {r['last_row_ts']})")
-    return 0
+        if not published:
+            print("  WARNING: atomic publish FAILED — see log; served DB left at its previous version.")
+
+    return 0 if published else 1
 
 
 if __name__ == "__main__":  # pragma: no cover

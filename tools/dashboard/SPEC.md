@@ -709,3 +709,35 @@ Live-Steuerung bauen, `--no-verify`, main/prod direkt, Push/PR
 (Orchestrator-Schritt).
 **Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
 Panel-Routen-Signaturen aus Feature 1-8.
+
+---
+
+## Betrieb — Atomarer Export-Publish + Scheduled Tasks (T-2026-CU-9050-163)
+
+Der Analytics-Export (`tools/analytics_export.py`) schreibt NIE direkt in die
+served DuckDB (`staging_models/analytics/analytics.duckdb`), die das Dashboard
+per Request read-only oeffnet. Stattdessen laeuft er RW auf einer persistenten
+**Build-DB** (`analytics.duckdb.build`, traegt das Watermark → Inkrementalitaet
+ab dem ersten Lauf/Seed exakt erhalten) und **publisht atomar**: `shutil.copy2(build, <served>.tmp)` →
+`os.replace(<served>.tmp, served)` (atomar auf demselben Volume). Damit wird der
+served-Pfad vom Export nie exklusiv gelockt → Dashboard-Reads erroren waehrend
+eines Laufs nicht mehr. Windows-Sharing-Violation beim Replace → bis zu 5
+Retries (200 ms); scheitern alle, bleiben Build-DB + `.tmp` intakt, served
+unangetastet, Exit-Code ≠ 0 (kein Korruptions-Risiko). Reine Publish-Logik:
+`publish_duckdb()` (DB-frei testbar, `backtest/test_analytics_export_publish.py`).
+
+Rollout-Seed: Der Wechsel auf die Build-DB ist der erste Split vom alten
+Single-File-Layout. Beim ERSTEN Lauf unter dem neuen Code seedet `main()`
+einmalig `analytics.duckdb.build` aus der bestehenden served-DB
+(`seed_build_db`), falls die Build-DB fehlt aber die served existiert → das
+`_export_watermark` bleibt erhalten, kein mehrstuendiger Voll-Re-Export aus dem
+Live-Postgres. Der Summary-Print laeuft NACH dem Publish, damit ein
+Publish-Fehler nie wie Erfolg aussieht (klare `publish PENDING`-Kennzeichnung).
+
+Die zwei Scheduled Tasks (Dashboard-Autostart @127.0.0.1:8098, Export alle
+30 min) werden reproduzierbar via `tools/ops/register_kythera_dashboard_tasks.ps1`
+registriert (elevated, S4U, `IgnoreNew` = kein ueberlappender Export). Das Skript
+ist REGISTRIERUNGS-ONLY — es stoppt keinen Prozess und startet keine Task (kein
+Live-Cutover aus einem committeten Artefakt, CLAUDE.md Harte Regel 1); Cutover +
+Registrierung sind separate, bewusste Operator-Schritte, kein Teil einer
+Dev-Session.

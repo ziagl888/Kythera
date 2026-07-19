@@ -19,6 +19,46 @@ Daher als **reines Shadow-Experiment** forward-validiert (Michi-Entscheid: nur S
 
 Aktiv nach Fleet-Restart. Wird RUB4 forward-positiv (genug n), ist Promotion des Gates auf das live RUB-LONG
 eine separate Operator-Entscheidung.
+## [2026-07-19] Atomarer Export-Publish + committete Z1-Ops-Skripte (T-2026-CU-9050-163)
+
+Der Analytics-Export (`tools/analytics_export.py`) hielt bisher den exklusiven DuckDB-Write-Lock direkt
+auf der **served** DuckDB (`staging_models/analytics/analytics.duckdb`), die das Z1-Dashboard per Request
+read-only öffnet → während eines Laufs erroren die Datenpanels transient (beim 2,5h-Erstlauf war das
+Dashboard datenseitig komplett tot). Der Export arbeitet jetzt auf einer **persistenten Build-DB**
+(`analytics.duckdb.build`, RW geöffnet, trägt das Watermark → Inkrementalität ab dem ersten Lauf/Seed exakt erhalten) und
+**publisht atomar**: `shutil.copy2(build, <served>.tmp)` → `os.replace(<served>.tmp, served)`
+(atomar auf demselben Volume). Der served-Pfad wird vom Export **nie RW geöffnet** → Dashboard-Reads
+werden nie blockiert.
+
+- `tools/analytics_export.py`: neue DB-frei testbare `publish_duckdb(build, served, *, retries=5,
+  retry_delay_s=0.2)` + `build_db_path()`-Helfer. Windows-Sharing-Violation-Retry (bis zu 5 Versuche,
+  200 ms Pause, `log.info`/`warning`/`error` pro Versuch); schlägt der Publish nach allen Retries fehl,
+  bleiben Build-DB **und** `.tmp` intakt, served bleibt unangetastet (kein Korruptions-Risiko) und `main()`
+  gibt Exit-Code ≠ 0 zurück. `os.replace` ist Modul-Level monkeypatchbar. Defensiv-Guard: `build == served`
+  → No-op (kein Self-Replace/Datenverlust). Served-Default-Pfad, alle Flags, das Parquet-Schreiben und die
+  Watermark-Semantik unverändert.
+- **Rollout-Seed (`seed_build_db`)**: Der Wechsel auf die persistente Build-DB ist der erste Split vom alten
+  Single-File-Layout. `main()` seedet daher VOR dem Export einmalig `analytics.duckdb.build` aus der
+  bestehenden served-DB (`shutil.copy2`, klare `log.info`-Zeile), falls die Build-DB fehlt aber die served
+  existiert → das persistierte `_export_watermark` bleibt erhalten, kein mehrstündiger Voll-Re-Export aus dem
+  Live-Postgres. Echter Erstlauf (beide fehlen) bleibt Voll-Export in eine leere Build-DB. Der
+  menschenlesbare „Exported N rows"-Summary-Print läuft jetzt NACH dem Publish (bei Publish-Fehler klare
+  `publish PENDING — served NOT updated`-Kennzeichnung + Warnzeile), damit ein Operator nie einen
+  Erfolgs-Look bei nicht-aktualisierter served-DB liest.
+- `tools/ops/register_kythera_dashboard_tasks.ps1` (neu, **registrierungs-only**): reproduzierbare,
+  committete Registrierung der zwei Windows Scheduled Tasks — "Kythera Z1 Dashboard" (waitress
+  @127.0.0.1:8098, AtStartup, S4U, Restart x3/1min) und "Kythera Analytics Export"
+  (`-m tools.analytics_export`, alle 30 min, S4U, `IgnoreNew` = kein überlappender Lauf, 2h-Limit). Das
+  Skript **registriert nur** — es stoppt keinen Prozess, startet keine Task und fasst die laufende Fleet
+  nicht an (CLAUDE.md Harte Regel 1: kein Live-Eingriff/Fleet-Restart aus committetem Dev-Artefakt). Cutover
+  (manuelle Instanz stoppen + `Start-ScheduledTask`) ist ein separater, bewusster Operator-Schritt, den das
+  Skript nur als Hinweiszeile ausgibt. Header dokumentiert Elevation-Pflicht, Registrierungs-only-Charakter
+  und den S4U-Fallback (→ LogonType Password).
+- `backtest/test_analytics_export_publish.py` (neu, 15 Tests, DB-frei mit tmp-DuckDB): Build→served-Kopie,
+  Erstlauf-Bootstrap, Retry-on-lock (monkeypatch `os.replace`, Retry-Zähler verifiziert), Alle-Retries-
+  scheitern (served untouched, Build-DB intakt, `.tmp` bleibt), `build == served`-No-op, Integration
+  (AnalyticsExporter→Build-DB→publish→queryable served DuckDB) + Migrations-Tests für den Rollout-Seed
+  (served mit Watermark, `.build` fehlt → Seed erhält Cursor, Folge-Export zieht 0 Zeilen statt Voll-Historie).
 
 ## [2026-07-18] Read-only Event-Feed — Z1-Dashboard Feature 9, letztes Panel (T-2026-CU-9050-161)
 
