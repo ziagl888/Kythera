@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import scipy.signal
 from numpy.lib.stride_tricks import sliding_window_view
+from psycopg2.extensions import TRANSACTION_STATUS_IDLE
 from scipy import stats
 
 from core.candles import latest_open_time, period_start, read_candles, upsert_indicators
@@ -781,13 +782,23 @@ def process_coin_task(args):
         last_ind_time = latest_open_time(conn, symbol, timeframe, include_forming=True, kind="indicators")
 
         # T-2026-CU-9050-174 (Finding 1): early-skip when no CLOSED candle is newer
-        # than the watermark. The engine computes on closed candles only
-        # (include_forming=False below), so an unchanged newest-closed candle means
-        # the identical candle window as the previous run — the old code re-read,
-        # re-computed and re-upserted byte-identical rows. Late ingestion (new
+        # than the watermark. End-state identity (review-corrected argument): every
+        # row's FINAL write happens in a new-candle cycle — the last cycle whose
+        # 5-candle save window still covers it — and new-candle cycles always fail
+        # this predicate and run exactly as before; superseded reference bars get
+        # their window-globals NULLed identically. The skipped intermediate cycles
+        # only re-wrote the save window with a one-candle-shifted warmup window,
+        # values the next new-candle cycle overwrote anyway.
+        # Accepted bounded deviations (documented in CHANGELOG/PR, heal at the
+        # next candle close): (a) the reference bar's window-global columns stay
+        # frozen on the first post-close computation instead of shifting once
+        # ~30 min later; (b) an in-place correction of an already-closed candle
+        # (outage-recovery catch-up) is recomputed at the next candle close, not
+        # the next 30-min cycle; (c) a period boundary falling between this probe
+        # and read_candles defers that candle one cycle. Late ingestion (new
         # closed candle > watermark) and housekeeping gap-invalidation (indicator
-        # rows deleted → watermark jumps back) both fail this predicate and
-        # recompute exactly as before.
+        # rows deleted → watermark jumps back) fail the predicate and recompute
+        # as before.
         if last_ind_time is not None:
             newest_closed = latest_open_time(conn, symbol, timeframe, include_forming=False, kind="candles")
             if newest_closed is None or newest_closed <= last_ind_time:
@@ -851,11 +862,20 @@ def process_coin_task(args):
 
     except Exception as e:
         logger.error(f"Error {symbol} ({timeframe}): {e}")
-        # Keep the persistent connection usable for the next task: roll back the
-        # aborted transaction; if even the rollback fails the connection is
-        # broken — discard it so the next task reconnects.
+    finally:
+        # Review T-174: end the task's transaction on EVERY exit. The old
+        # per-task close() rolled back via PooledConnection.close(); the
+        # persistent connection must not carry an open transaction (and its
+        # per-statement AccessShareLocks on distinct per-coin tables) across
+        # tasks — the skip path is the common case now — and a partial write
+        # left behind by a BaseException must never be committed by the NEXT
+        # task's commit. get_transaction_status() is client-side (no round
+        # trip); the skip/error paths pay the one ROLLBACK the old putconn
+        # paid. If even that fails the connection is broken — discard it so
+        # the next task reconnects.
         try:
-            conn.rollback()
+            if not getattr(conn, "closed", 1) and conn.get_transaction_status() != TRANSACTION_STATUS_IDLE:
+                conn.rollback()
         except Exception:
             _discard_worker_conn()
 

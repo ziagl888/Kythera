@@ -8,16 +8,30 @@ DB-Endzustand nachweislich byte-identisch, Trade-Charakteristik unverändert.
 - Finding 1 (größter Hebel, ~2/3 der Zyklus-Arbeit): Early-Skip in `process_coin_task` — nach dem
   Watermark-Read zusätzlich `latest_open_time(kind='candles', include_forming=False)`; ist die neueste
   geschlossene Kerze nicht neuer als der Watermark, sofortiger Return VOR `read_candles`.
-  Verhaltensneutral, weil die Engine seit T-114 nur geschlossene Kerzen lädt: gleiches Kerzenfenster →
-  die bisherigen Zwischenläufe upserteten nur byte-identische Zeilen erneut. Randfälle intakt:
-  verspätete Ingestion (neue geschlossene Kerze > Watermark) → Recompute; Housekeeping-Gap-Invalidierung
-  (Indikator-Zeilen gelöscht, Watermark springt zurück) → Recompute. Die `updated`-Freigabe pro TF
+  End-State-Identitäts-Argument (Review-korrigiert): der FINALE Write jeder Zeile passiert immer in
+  einem New-Candle-Zyklus (dem letzten, dessen 5-Kerzen-Save-Fenster sie noch deckt) — und
+  New-Candle-Zyklen reißen das Prädikat immer und laufen exakt wie bisher; abgelöste Referenz-Bars
+  werden identisch geNULLt. Die übersprungenen Zwischenzyklen schrieben das Save-Fenster nur mit
+  einem um eine Kerze verschobenen Warmup-Fenster neu — Werte, die der nächste New-Candle-Zyklus
+  ohnehin überschrieb. **Akzeptierte, begrenzte Abweichungen** (heilen je zum nächsten Kerzenschluss;
+  Operator-Review beim Rollout): (a) die Window-Global-Spalten der Referenz-Bar bleiben auf der ersten
+  Post-Close-Berechnung eingefroren statt ~30 min später einmal aufs verschobene Fenster zu wechseln;
+  (b) eine In-Place-Korrektur einer bereits geschlossenen Kerze (Outage-Recovery-Catch-up, wie
+  2026-07-13) wird erst beim nächsten Kerzenschluss nachgerechnet statt im nächsten 30-min-Zyklus
+  (bei 1d/1w bis zu 1 Tag/1 Woche); (c) fällt eine Periodengrenze exakt zwischen Skip-Probe und
+  `read_candles`, rutscht die Kerze einen Zyklus. Randfälle intakt: verspätete Ingestion (neue
+  geschlossene Kerze > Watermark) → Recompute; Housekeeping-Gap-Invalidierung (Indikator-Zeilen
+  gelöscht, Watermark springt zurück) → Recompute. Die `updated`-Freigabe pro TF
   (`update_timeframe_state`) bleibt unverändert im Orchestrator-Loop.
 - Finding 2: EINE persistente DB-Connection pro Pool-WORKER (`initializer=_init_worker`, Lazy-Connect,
-  Reconnect-bei-Fehler) statt connect/close pro Task (~3.160 Connects/Zyklus). Rollback hält die
-  Connection nach einem Task-Fehler sauber; scheitert selbst der Rollback, wird sie verworfen und der
-  nächste Task verbindet neu. Commit bleibt beim Caller (harte Regel 8). Dazu
-  `get_indicator_definitions()` einmal pro Worker und ein Positiv-Cache für die zwei
+  Reconnect-bei-Fehler) statt Pool-Checkout/-Rückgabe pro Task (~3.160 Checkouts/Zyklus, jede Rückgabe
+  mit ROLLBACK-Round-Trip + Liveness-Probe). Transaktions-Hygiene (Review-Finding): ein `finally`
+  beendet die Task-Transaktion auf JEDEM Exit-Pfad (`get_transaction_status()`-Check, client-seitig) —
+  die persistente Connection hält nie eine offene Transaktion (und deren AccessShareLocks über
+  distinkte per-Coin-Tabellen) über Tasks hinweg, und ein von einer BaseException hinterlassener
+  Partial-Write kann nie vom Folge-Task mitcommittet werden; scheitert der Rollback, wird die
+  Connection verworfen und der nächste Task verbindet neu. Commit bleibt beim Caller (harte Regel 8).
+  Dazu `get_indicator_definitions()` einmal pro Worker und ein Positiv-Cache für die zwei
   `table_exists`-Probes pro Task (nur Treffer gecacht — neu angelegte Tabellen werden weiter gefunden).
 - Finding 3 (Mikro-Opts, bit-identisch): (a) `calc_macd` re-nutzt die EMA_9/12/21/26-Serien aus dem
   EMA-Block statt vier `ewm`-Neuberechnungen; (b) redundanter `df.sort_values('open_time')` in
@@ -31,13 +45,16 @@ DB-Endzustand nachweislich byte-identisch, Trade-Charakteristik unverändert.
 
 Verifikation: Regression-Guard 24/24 golden OHNE Refresh + `smoke` grün; zusätzlich
 Bit-Identitäts-Beweis alt↔neu über alle 24 Fixtures (111 Spalten, float64-Bitmuster-Vergleich:
-100% identisch). backtest: test_gap_continuity, test_wilder_rsi, test_window_features (Engine-Teil),
-test_candles_schema, test_fleet_definition, test_watchdog_backoff grün; der S/R-Reader-Teil von
-test_window_features und test_candles' Backend-Flag-Test scheitern identisch auf unverändertem main
-(stale `pd.read_sql_query`-Stub seit der read_candles-Umverdrahtung bzw. Test-Isolations-Leck — keine
-Regression, Follow-up-Kandidaten). ruff + format grün. Erwartet ~60-70% weniger Engine-Last/Zyklus +
-Postgres-Entlastung (weniger Connects/Reads), zahlt auf T-166/Z0 ein. Aktiv nach dem nächsten
-Engine-Restart (Michi-gated).
+100% identisch). Neuer DB-freier Test `backtest/test_indicator_engine_skip.py` (8 Tests: komplette
+Skip-Entscheidungstabelle inkl. Erstlauf/Gap-Rücksprung, Transaktions-Ende auf jedem Exit-Pfad,
+Positiv-Cache, Discard bei kaputter Connection). backtest: test_gap_continuity, test_wilder_rsi,
+test_window_features (Engine-Teil), test_candles_schema, test_fleet_definition, test_watchdog_backoff
+grün; der S/R-Reader-Teil von test_window_features und test_candles' Backend-Flag-Test scheitern
+identisch auf unverändertem main (stale `pd.read_sql_query`-Stub seit der read_candles-Umverdrahtung
+bzw. Test-Isolations-Leck — keine Regression, Follow-up-Kandidaten). ruff + format grün. Reviews:
+3-Vote z-code-reviewer (Findings behoben: Transaktions-Hygiene-`finally`, Doku-Korrekturen, Tests) +
+Spec-Compliance PASS. Erwartet ~60-70% weniger Engine-Last/Zyklus + Postgres-Entlastung (weniger
+Checkouts/Reads). Aktiv nach dem nächsten Engine-Restart (Michi-gated).
 
 ## [2026-07-19] Z1-Ops-Skript nachgezogen — Dashboard-Task auf Password-Logon + cmd.exe-Launcher (T-2026-CU-9050-170)
 
