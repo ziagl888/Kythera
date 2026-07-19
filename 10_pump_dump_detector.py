@@ -250,6 +250,12 @@ def load_pump_model():
 
 
 # --- IN-MEMORY STATE ---
+# Bucket-Historie pro Coin (T-2026-CU-9050-165): das größte Zeitfenster im
+# Detector ist 3600s (+20s Toleranz) — bei dichtem 10s-Raster sind das 362
+# Buckets. 720 deckt 2h (doppeltes Headroom für Cadence-Lücken); die alten
+# 1440 (~4h) wurden von keinem Lookup je erreicht (alle Fenster sind
+# zeitbasiert und brechen früher ab) und verdoppelten nur State-Dump & RAM.
+BUCKET_DEQUE_MAXLEN = 720
 ONE_MINUTE_DATA = {}
 ROUND_BREAK_STATE = {}
 PRICE_VOLUME_ALERT_STATE = {}
@@ -270,8 +276,15 @@ def load_state_from_disk():
             with open(DATA_FILE, encoding="utf-8") as f:
                 raw_data = json.load(f)
             for symbol, entries in raw_data.items():
-                dq = deque(maxlen=1440)
-                for entry in entries[-1440:]:
+                dq = deque(maxlen=BUCKET_DEQUE_MAXLEN)
+                for entry in entries[-BUCKET_DEQUE_MAXLEN:]:
+                    # Epoch-Cache einmalig beim Load füllen (Alt-Dateien ohne
+                    # 'e'-Feld) — sonst zahlt der erste Tick den Parse für die
+                    # gesamte geladene Historie im Hot Path.
+                    if "e" not in entry:
+                        ts = _parse_bucket_ts(entry)
+                        if ts is not None:
+                            entry["e"] = ts.timestamp()
                     dq.append(entry)
                 ONE_MINUTE_DATA[symbol] = dq
             logger.info(f"✅ Cache: {len(ONE_MINUTE_DATA)} Coins aus {DATA_FILE} geladen.")
@@ -307,10 +320,15 @@ def save_state_to_disk():
     """Speichert den aktuellen Zustand kugelsicher auf die Festplatte (Atomic Write)."""
     try:
         # 1. Kerzen speichern (Atomic Write)
+        # Kompakt statt indent=2 (T-2026-CU-9050-165): der Dump lief alle 5min
+        # über 527 Coins × 720 Buckets — mit Pretty-Print >100MB und ~9s reine
+        # Serialisierung; kompakt ist die Datei weniger als halb so groß und der
+        # CPU-Spike entsprechend kürzer. Kein menschlicher Leser, reiner
+        # Restart-Cache.
         raw_data = {sym: list(dq) for sym, dq in ONE_MINUTE_DATA.items()}
         tmp_data_file = DATA_FILE + ".tmp"
         with open(tmp_data_file, "w", encoding="utf-8") as f:
-            json.dump(raw_data, f, indent=2, ensure_ascii=False)
+            json.dump(raw_data, f, ensure_ascii=False, separators=(",", ":"))
             f.flush()  # Zwingt das OS, den Puffer auf die Platte zu schreiben
             os.fsync(f.fileno())
         # Atomically rename file (replaces old file immediately)
@@ -332,7 +350,7 @@ def save_state_to_disk():
 
         tmp_state_file = STATE_FILE + ".tmp"
         with open(tmp_state_file, "w", encoding="utf-8") as f:
-            json.dump(save_state, f, indent=2, ensure_ascii=False)
+            json.dump(save_state, f, ensure_ascii=False, separators=(",", ":"))
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_state_file, STATE_FILE)
@@ -454,7 +472,44 @@ def _parse_bucket_ts(entry: dict) -> datetime.datetime | None:
         return None
 
 
-def _find_bucket_before(data: list, now: datetime.datetime, seconds_ago: int, tolerance: int = 20) -> dict | None:
+def _bucket_epoch(entry: dict) -> float | None:
+    """Epoch-Sekunden eines Buckets — der Vergleichsschlüssel aller Fenster-Lookups.
+
+    Neue Buckets tragen 'e' ab Erzeugung (main-Loop), Alt-Buckets aus einer
+    1minute.json von vor dem Feld (und Test-Fixtures) werden beim ersten Zugriff
+    EINMAL geparst und in-place gecacht. Vorher lief fromisoformat auf JEDEM
+    Vergleich neu — bei 527 Coins × ≤MAXLEN Buckets × ~10 Scans/Tick war das der
+    dominante CPU-Posten des gesamten Bots (T-2026-CU-9050-165: 4,3s von 10s
+    Tick-Budget nur für die Fenster-Scans; mit Epoch-Floats 1,2s). None bei
+    unparsebarem Timestamp — Caller überspringen den Bucket wie bisher.
+    """
+    e = entry.get("e")
+    if e is not None:
+        return e
+    ts = _parse_bucket_ts(entry)
+    if ts is None:
+        return None
+    e = ts.timestamp()
+    entry["e"] = e
+    return e
+
+
+def _anchor_epoch(anchor: "datetime.datetime | float") -> float:
+    """Anker (datetime oder bereits Epoch-Float) → Epoch-Sekunden.
+
+    Kein isinstance gegen datetime.datetime: die Testsuite friert die Klasse
+    per MagicMock(wraps=...) ein — isinstance gegen den Mock würfe TypeError,
+    obwohl die durchgereichten Instanzen echte datetimes sind. Der Check läuft
+    deshalb gegen die builtins (float/int), alles andere ist ein datetime.
+    """
+    if isinstance(anchor, (int, float)):
+        return float(anchor)
+    return anchor.timestamp()
+
+
+def _find_bucket_before(
+    data: list, now: "datetime.datetime | float", seconds_ago: int, tolerance: int = 20
+) -> dict | None:
     """Sucht den Bucket der ca. `seconds_ago` Sekunden in der Vergangenheit liegt.
 
     Geht die Daten von hinten after vorne durch und nimmt den ersten Bucket
@@ -474,19 +529,18 @@ def _find_bucket_before(data: list, now: datetime.datetime, seconds_ago: int, to
     if not data:
         return None
 
-    target_dt = now - datetime.timedelta(seconds=seconds_ago)
-    tolerance_delta = datetime.timedelta(seconds=tolerance)
+    target = _anchor_epoch(now) - seconds_ago
 
     # Von hinten after vorne durchgehen — der neueste passending Bucket gewinnt
     for entry in reversed(data):
-        entry_ts = _parse_bucket_ts(entry)
-        if entry_ts is None:
+        e = _bucket_epoch(entry)
+        if e is None:
             continue
-        if abs(entry_ts - target_dt) <= tolerance_delta:
+        if abs(e - target) <= tolerance:
             return entry
         # Wenn wir schon weiter in der Vergangenheit sind als target+tolerance,
         # gibt es keinen Treffer mehr
-        if entry_ts < target_dt - tolerance_delta:
+        if e < target - tolerance:
             return None
 
     return None
@@ -494,7 +548,7 @@ def _find_bucket_before(data: list, now: datetime.datetime, seconds_ago: int, to
 
 def _find_bucket_nearest(
     data: list,
-    anchor: datetime.datetime,
+    anchor: "datetime.datetime | float",
     seconds_ago: int,
     min_age: int,
     max_age: int,
@@ -518,12 +572,13 @@ def _find_bucket_nearest(
     if not data:
         return None
 
+    anchor_e = _anchor_epoch(anchor)
     best: tuple[dict, float] | None = None
     for entry in reversed(data):
-        entry_ts = _parse_bucket_ts(entry)
-        if entry_ts is None:
+        e = _bucket_epoch(entry)
+        if e is None:
             continue
-        age = (anchor - entry_ts).total_seconds()
+        age = anchor_e - e
         if age > max_age:
             break  # chronological: everything further back is older still
         if age < min_age:
@@ -533,20 +588,21 @@ def _find_bucket_nearest(
     return best
 
 
-def _window_coverage_sec(buckets: list, anchor: datetime.datetime) -> float:
+def _window_coverage_sec(buckets: list, anchor: "datetime.datetime | float") -> float:
     """How far back the oldest bucket of `buckets` actually reaches from `anchor`.
 
     A bucket COUNT says nothing about the span it covers once the cadence varies;
     this is the honest warmup signal for "do we have an hour of baseline yet".
     """
+    anchor_e = _anchor_epoch(anchor)
     for entry in buckets:  # chronological, oldest first
-        entry_ts = _parse_bucket_ts(entry)
-        if entry_ts is not None:
-            return (anchor - entry_ts).total_seconds()
+        e = _bucket_epoch(entry)
+        if e is not None:
+            return anchor_e - e
     return 0.0
 
 
-def _find_bucket_range(data: list, now: datetime.datetime, seconds_ago: int, tolerance: int = 20) -> list:
+def _find_bucket_range(data: list, now: "datetime.datetime | float", seconds_ago: int, tolerance: int = 20) -> list:
     """Gibt alle Buckets zurück die im Zeitraum [now - seconds_ago, now] liegen.
 
     Robust gegen Lücken und alte State-Daten — nutzt ausschließlich die
@@ -555,14 +611,14 @@ def _find_bucket_range(data: list, now: datetime.datetime, seconds_ago: int, tol
     if not data:
         return []
 
-    cutoff = now - datetime.timedelta(seconds=seconds_ago + tolerance)
+    cutoff = _anchor_epoch(now) - seconds_ago - tolerance
     result = []
 
     for entry in reversed(data):
-        entry_ts = _parse_bucket_ts(entry)
-        if entry_ts is None:
+        e = _bucket_epoch(entry)
+        if e is None:
             continue
-        if entry_ts < cutoff:
+        if e < cutoff:
             break
         result.append(entry)
 
@@ -644,6 +700,13 @@ def process_coin_logics(conn, symbol):
     # Nur gültige Volume-Messungen in die Baseline-Samples aufnehmen.
     if current_vol_valid:
         pd_state["volume_samples"].append(current_vol)
+
+    # Stunden-Fenster EINMAL pro Tick (T-2026-CU-9050-165): Volume-Explosion (A2)
+    # und der ML-Pfad (B) zogen sich bislang je einen eigenen 3600s-Scan über
+    # dieselben Daten mit demselben Anker — identisches Ergebnis, doppelte Kosten.
+    hour_buckets = _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
+    hour_vols = [float(e["v10s"]) for e in hour_buckets if e.get("v10s_valid", True)]
+    hour_covered = _window_coverage_sec(hour_buckets, bucket_anchor)
 
     # A) EXTREME MOVE (Market Channel)
     if (now - pv_state["last_alert_time"]).total_seconds() >= 300:
@@ -796,8 +859,6 @@ def process_coin_logics(conn, symbol):
         # Stunde. Beides schob das Fenster still, ohne dass irgendwas auffiel.
         if not alerted:
             rec_buckets = _find_bucket_range(data, bucket_anchor, 180, tolerance=WINDOW_EDGE_GUARD)
-            hour_buckets = _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
-            hour_vols = [float(e["v10s"]) for e in hour_buckets if e.get("v10s_valid", True)]
             rec_vols = [float(e["v10s"]) for e in rec_buckets if e.get("v10s_valid", True)]
             # Same band logic as the ML path below: a 3m reference that really is
             # ~3m old, carrying its true age, instead of demanding a grid point
@@ -806,7 +867,7 @@ def process_coin_logics(conn, symbol):
 
             # Warmup gate: the hour window must COVER an hour and carry enough
             # samples — not contain 360 buckets, which no real cadence does.
-            hour_covered = _window_coverage_sec(hour_buckets, bucket_anchor)
+            # hour_buckets/hour_vols/hour_covered: einmal pro Tick oben berechnet.
             if (
                 ref_3m is not None
                 and rec_vols
@@ -856,18 +917,15 @@ def process_coin_logics(conn, symbol):
     # Baseline zeit-basiert: alle gültigen Buckets der letzten Stunde. Der Deque
     # zählt Ticks, nicht Sekunden — nach einer Lücke spannte er über mehr als
     # eine Stunde. Er bleibt nur noch Warmup-Gate und Vollständigkeits-Feature.
-    # tolerance=WINDOW_EDGE_GUARD statt der Default-20s (siehe Konstante).
-    hour_buckets = _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
-    hour_vols = [float(e["v10s"]) for e in hour_buckets if e.get("v10s_valid", True)]
+    # hour_buckets/hour_vols/hour_covered: einmal pro Tick oben berechnet
+    # (tolerance=WINDOW_EDGE_GUARD, identischer Anker wie hier).
+    #
     # Same warmup floor as the Volume-Explosion path (T-2026-CU-9050-035). `not
     # hour_vols` alone let a single surviving bucket become the entire baseline
     # after a gap, and `vol_ratio = current_vol / avg_volume` is both a model
     # input AND the pump_dump_events insert gate below — a one-sample denominator
     # writes garbage events and scores the model out of distribution.
-    if (
-        len(hour_vols) < HOUR_WINDOW_MIN_SAMPLES
-        or _window_coverage_sec(hour_buckets, bucket_anchor) < HOUR_WINDOW_MIN_COVERAGE_SEC
-    ):
+    if len(hour_vols) < HOUR_WINDOW_MIN_SAMPLES or hour_covered < HOUR_WINDOW_MIN_COVERAGE_SEC:
         return
     avg_volume = sum(hour_vols) / len(hour_vols)
     pd_state["avg_volume"] = avg_volume
@@ -1312,14 +1370,24 @@ def main():
                             v10s = raw_delta
                             v10s_valid = True
 
-                    entry = {"t": ts_str, "p": price, "v10s": v10s, "v10s_valid": v10s_valid, "cum_vol": cum_vol}
+                    # 'e' = Epoch-Sekunden des Grid-Stempels — Vergleichsschlüssel
+                    # der Fenster-Lookups (_bucket_epoch), 't' bleibt das
+                    # ISO-Format für Dump-Lesbarkeit und Alt-Konsumenten.
+                    entry = {
+                        "t": ts_str,
+                        "e": tick_dt.timestamp(),
+                        "p": price,
+                        "v10s": v10s,
+                        "v10s_valid": v10s_valid,
+                        "cum_vol": cum_vol,
+                    }
                     if ticker_10s_ok:
                         # Auch v10s_valid=False persistieren (Rollover-Marker) —
                         # der Builder filtert selbst, genau wie process_coin_logics.
                         tick_rows.append((tick_dt, symbol, price, v10s, v10s_valid))
 
                     if symbol not in ONE_MINUTE_DATA:
-                        ONE_MINUTE_DATA[symbol] = deque(maxlen=1440)
+                        ONE_MINUTE_DATA[symbol] = deque(maxlen=BUCKET_DEQUE_MAXLEN)
 
                     if len(ONE_MINUTE_DATA[symbol]) > 0:
                         prev_price = ONE_MINUTE_DATA[symbol][-1]["p"]
