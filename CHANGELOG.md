@@ -1,3 +1,33 @@
+## [2026-07-19] Confidence-Posting-Floors aus Realized-Trade-Analyse — AIM2 0.70 / BB 0.50 / SRA1 0.70 (T-2026-CU-9050-171)
+
+Threshold-Analyse über die realisierten Trades (T-2026-CU-9050-170, read-only): `closed_ai_signals`
+(dedupliziert nach Audit-Key) ⨝ `ml_predictions_master`-Confidence (Nearest-Time ±10 min) = 32,4k Trades
+03–07/2026 mit Bootstrap-CI95. Befund: bei drei Bots ist das Posting-Segment unter einem Confidence-Floor
+Null-EV — weniger Trades bei gleichem/höherem PnL ist dort eine reine Gate-Frage. PR #157:
+
+- **Neu `core/prob_floor.py`:** `load_prob_floor(env_var, default)` — env-überschreibbarer Floor,
+  Clamp [0,1], Garbage/NaN/Inf → Default. Invariante überall: effektives Gate = `max(Artefakt-Threshold,
+  Floor)` — ein Floor kann nur verschärfen, nie den Operating-Point des Artefakts unterlaufen.
+- **AIM2 (Bot 15):** `AIM2_MIN_PROB` (Default **0.70**) im Live-Gate UND im TOPN-Floor. Unter p=0.70 in
+  beiden Artefakt-Ären Null-EV (Ø +0,18 %, CI [−0,27, 0,67], ~72 % des Volumens); ab 0.70 Ø 1,0–2,2 %/Trade,
+  WR +6 pp.
+- **BB-Sniper (Bot 25):** `BB_MIN_PROB` (Default **0.50**) über dem geladenen Artefakt-/Hardcode-Threshold
+  (Artefakte tragen 0.30). Unter p=0.5 Null-EV (~95 % des Volumens); darüber Ø 1,2–1,9 %/Trade. **TD bewusst
+  ohne Floor** — Confidence dort auf realisierten Trades nicht selektiv, Kanal netto positiv.
+- **SRA1 (Bot 9):** `SRA_LEGACY_THRESHOLD` 0.65 → **0.70**. Das 0.65–0.70-Band war netto negativ (Ø −0,10 %);
+  ab 0.70 bleiben 62 % der Trades mit MEHR Gesamt-PnL (302 vs. 274) und WR 52 → 55,5 %.
+- **Unangetastet (bewusst):** QM (Bot 24, Operator-Entscheid bleibt live), TD-Legs, alle Shadow-Floors
+  (AIM2 0.25, Sniper 0.25, SRA 0.35) — Datensammlung unterhalb der Gates läuft voll weiter. Keine
+  Artefakt-Änderungen, keine Gate-Flips. **Wirkt erst mit dem nächsten Fleet-Restart.**
+
+Beobachtung nebenbei (kein Code in diesem PR): RUB2 live bestätigt die Held-out-Validierung bisher nicht
+(Ø −0,15 %, n=209; TP1-WR 67,5 % vs. realisierte Win-Rate 48,8 %) — der Hebel dort ist Exit-Management,
+nicht das Gate.
+
+Verifiziert: `backtest/test_prob_floor.py` (neu, 29 mit `test_aim2_topn.py`) — Parsing-Semantik + statische
+Gate-Verdrahtung aller drei Bots (Floor-nur-verschärfen, TD-ohne-Floor, Shadow-Floors gepinnt); Regression-
+Guard smoke OK; ruff/mypy grün. Reviews: z-code-reviewer 3-Vote APPROVED + z-spec-compliance PASS.
+
 ## [2026-07-19] Z1-Export atomic-publish — Retry-Budget 1s → ~30s gegen Dashboard-Polling (T-2026-CU-9050-167)
 
 Der atomare Publish in `tools/analytics_export.py` (`publish_duckdb`, T-163) scheiterte in der Praxis
