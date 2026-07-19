@@ -58,6 +58,7 @@ from tools.analytics_api import (
     DEFAULT_EVENT_FEED_WINDOW_HOURS,
     DEFAULT_TIMESERIES_WINDOW,
     TIMESERIES_WINDOWS,
+    _PollCache,
     _serve,
     available_bots,
     bot_leaderboard,
@@ -83,6 +84,30 @@ DEMO_PRIMARY_WINDOW = 30
 # the substrate's server cache is tuned for (D-2026-CLD-110).
 PANEL_POLL_SECONDS = 30
 BADGE_POLL_SECONDS = 60
+
+
+def _cached(cache: _PollCache | None, key: Any, build: Callable[[], Any]) -> Any:
+    """Panel-data poll cache (T-2026-CU-9050-175).
+
+    The HTMX panels poll every 30-60s, but the DuckDB file only changes when
+    the exporter publishes (~30min cadence). Each panel context's DUCKDB-DERIVED
+    data (query payload + raw ``data_freshness`` rows) is therefore cached
+    behind the same file-freshness token the ``/api/analytics/*`` blueprint
+    already uses (``analytics_api._PollCache``): an unchanged file serves the
+    identical payload from memory — no connection, no re-scan. Everything
+    wall-clock-dependent (the "Sync vor N min" age in
+    :func:`panel_freshness_summary` / :func:`freshness_summary`) is computed
+    per request from the cached rows, so the rendered age keeps ticking exactly
+    as before. The filesystem-backed fleet-registry panel is deliberately NOT
+    cached — its parked-markers are not covered by the DuckDB token.
+
+    ``cache=None`` (the default of every context function) bypasses caching
+    entirely — identical to the pre-T-175 behaviour, and what the DB-free
+    tests exercise unless they opt in.
+    """
+    if cache is None:
+        return build()
+    return cache.get(key, build)
 
 
 def _parse_ts(value: str | None) -> datetime.datetime | None:
@@ -270,19 +295,24 @@ def panel_freshness_summary(
     return freshness_summary(rows, now_utc=now_utc, sources=sources, worst_case=True)
 
 
-def _demo_panel_context(duckdb_path: str) -> dict[str, Any]:
+def _demo_panel_context(duckdb_path: str, *, cache: _PollCache | None = None) -> dict[str, Any]:
     """Server-side render context for the success-rate demo panel.
 
     Opens a throttled read-only DuckDB connection, computes the rolling
     success-rate windows, and reshapes them into a per-bot table the template
     can iterate — plus a compact chart series proving the chart-lifecycle wiring.
+    The DuckDB-derived data is servable from the panel-data cache (see
+    :func:`_cached`); the freshness age stays a per-request computation.
     """
-    con = connect_ro(duckdb_path)
-    try:
-        payload = success_rate_timeseries(con, windows=DEMO_WINDOWS)
-        freshness_rows = data_freshness(con)
-    finally:
-        con.close()
+
+    def _build() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        con = connect_ro(duckdb_path)
+        try:
+            return success_rate_timeseries(con, windows=DEMO_WINDOWS), data_freshness(con)
+        finally:
+            con.close()
+
+    payload, freshness_rows = _cached(cache, ("panel-success-rate",), _build)
 
     # Reshape windows → one row per bot with each window's winrate/n.
     by_bot: dict[str, dict[str, Any]] = {}
@@ -317,12 +347,15 @@ def _demo_panel_context(duckdb_path: str) -> dict[str, Any]:
     }
 
 
-def _freshness_context(duckdb_path: str) -> dict[str, Any]:
-    con = connect_ro(duckdb_path)
-    try:
-        rows = data_freshness(con)
-    finally:
-        con.close()
+def _freshness_context(duckdb_path: str, *, cache: _PollCache | None = None) -> dict[str, Any]:
+    def _build() -> list[dict[str, Any]]:
+        con = connect_ro(duckdb_path)
+        try:
+            return data_freshness(con)
+        finally:
+            con.close()
+
+    rows = _cached(cache, ("freshness-rows",), _build)
     return {"freshness": freshness_summary(rows), "badge_poll_seconds": BADGE_POLL_SECONDS}
 
 
@@ -516,7 +549,9 @@ def metric_sort_by(metric: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _leaderboard_context(duckdb_path: str, *, metric: str = DEFAULT_METRIC) -> dict[str, Any]:
+def _leaderboard_context(
+    duckdb_path: str, *, metric: str = DEFAULT_METRIC, cache: _PollCache | None = None
+) -> dict[str, Any]:
     """Server-side render context for the leaderboard panel.
 
     Thin wrapper over ``analytics_api.bot_leaderboard`` — same throttled
@@ -532,12 +567,16 @@ def _leaderboard_context(duckdb_path: str, *, metric: str = DEFAULT_METRIC) -> d
     along in the returned context so the template can highlight the matching
     column.
     """
-    con = connect_ro(duckdb_path)
-    try:
-        payload = bot_leaderboard(con, sort_by=metric_sort_by(metric))
-        freshness_rows = data_freshness(con)
-    finally:
-        con.close()
+    sort_by = metric_sort_by(metric)
+
+    def _build() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        con = connect_ro(duckdb_path)
+        try:
+            return bot_leaderboard(con, sort_by=sort_by), data_freshness(con)
+        finally:
+            con.close()
+
+    payload, freshness_rows = _cached(cache, ("panel-leaderboard", sort_by), _build)
     return {
         "bots": payload["bots"],
         "sort_by": payload["sort_by"],
@@ -573,7 +612,12 @@ def _selected_bots(raw_bots: Sequence[str], *, filtered: bool, all_bots: Sequenc
 
 
 def _success_rate_timeseries_context(
-    duckdb_path: str, *, raw_bots: Sequence[str], filtered: bool, window: int
+    duckdb_path: str,
+    *,
+    raw_bots: Sequence[str],
+    filtered: bool,
+    window: int,
+    cache: _PollCache | None = None,
 ) -> dict[str, Any]:
     """Server-side render context for the success-rate time-comparison panel.
 
@@ -582,21 +626,29 @@ def _success_rate_timeseries_context(
     to the T-131 substrate, same DECISIVE-trade definition, same throttled
     read-only DuckDB connection pattern as every other panel context here.
     """
-    con = connect_ro(duckdb_path)
-    try:
-        all_bots = available_bots(con)
-        selected = _selected_bots(raw_bots, filtered=filtered, all_bots=all_bots)
-        # An explicit empty selection must never reach the query layer: passing
-        # bots=[] there is indistinguishable from bots=None ("no filter") per
-        # _bot_filter's convention, which would silently show every bot again.
-        payload = (
-            rolling_success_rate_series(con, bots=selected, window=window)
-            if selected
-            else {"window": window, "bots": [], "series": {}}
-        )
-        freshness_rows = data_freshness(con)
-    finally:
-        con.close()
+
+    def _build() -> tuple[list[str], list[str], dict[str, Any], list[dict[str, Any]]]:
+        con = connect_ro(duckdb_path)
+        try:
+            all_bots = available_bots(con)
+            selected = _selected_bots(raw_bots, filtered=filtered, all_bots=all_bots)
+            # An explicit empty selection must never reach the query layer: passing
+            # bots=[] there is indistinguishable from bots=None ("no filter") per
+            # _bot_filter's convention, which would silently show every bot again.
+            payload = (
+                rolling_success_rate_series(con, bots=selected, window=window)
+                if selected
+                else {"window": window, "bots": [], "series": {}}
+            )
+            return all_bots, selected, payload, data_freshness(con)
+        finally:
+            con.close()
+
+    # raw_bots order is part of the key: `selected_bots` is rendered in the
+    # submitted order, so two orderings are two distinct (cheap) cache entries.
+    all_bots, selected, payload, freshness_rows = _cached(
+        cache, ("panel-sr-timeseries", tuple(raw_bots), bool(filtered), int(window)), _build
+    )
 
     chart_series = [
         {
@@ -658,7 +710,9 @@ def resolve_regime_heatmap_metric(raw: str | None) -> str:
     return raw if raw in REGIME_HEATMAP_METRIC_FIELD else DEFAULT_REGIME_HEATMAP_METRIC
 
 
-def _regime_heatmap_context(duckdb_path: str, *, metric: str = DEFAULT_REGIME_HEATMAP_METRIC) -> dict[str, Any]:
+def _regime_heatmap_context(
+    duckdb_path: str, *, metric: str = DEFAULT_REGIME_HEATMAP_METRIC, cache: _PollCache | None = None
+) -> dict[str, Any]:
     """Server-side render context for the Bot x Regime heatmap panel.
 
     Thin wrapper over ``analytics_api.bot_regime_matrix`` — same throttled
@@ -675,13 +729,21 @@ def _regime_heatmap_context(duckdb_path: str, *, metric: str = DEFAULT_REGIME_HE
     ``winrate`` values are surfaced as a 0-100 percentage (matching the other
     panels' winrate rendering convention); ``expectancy_pct`` is already a
     %-value and passes through unscaled.
+
+    The cache key deliberately excludes ``metric``: the matrix payload is
+    metric-independent (both cell metrics ride in every cell), only the cheap
+    per-request reshaping below depends on it — so a metric toggle never
+    re-runs the ASOF join on an unchanged file.
     """
-    con = connect_ro(duckdb_path)
-    try:
-        payload = bot_regime_matrix(con)
-        freshness_rows = data_freshness(con)
-    finally:
-        con.close()
+
+    def _build() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        con = connect_ro(duckdb_path)
+        try:
+            return bot_regime_matrix(con), data_freshness(con)
+        finally:
+            con.close()
+
+    payload, freshness_rows = _cached(cache, ("panel-regime-matrix",), _build)
 
     field = REGIME_HEATMAP_METRIC_FIELD[metric]
     bots = payload["bots"]
@@ -814,23 +876,30 @@ def _coin_chart_series(trades: Sequence[dict[str, Any]]) -> tuple[list[dict[str,
     return points, markers
 
 
-def _coin_drilldown_context(duckdb_path: str, *, raw_coin: str | None) -> dict[str, Any]:
+def _coin_drilldown_context(
+    duckdb_path: str, *, raw_coin: str | None, cache: _PollCache | None = None
+) -> dict[str, Any]:
     """Server-side render context for the coin drill-down panel.
 
     ``raw_coin`` is the UNRESOLVED ``?coin=`` query value (``None`` when the
     param is absent at all) — resolution against the actual coin list happens
     here via :func:`_resolve_coin`, mirroring every other panel context's
     "resolve inside the context, never trust the raw query value past this
-    point" contract.
+    point" contract. Resolution happens inside the cached builder (the coin
+    list itself is DuckDB-derived), keyed by the raw query value.
     """
-    con = connect_ro(duckdb_path)
-    try:
-        coins = coins_with_trades(con)
-        selected_coin = _resolve_coin(raw_coin, coins)
-        payload = coin_trade_series(con, selected_coin) if selected_coin else {"coin": raw_coin, "trades": []}
-        freshness_rows = data_freshness(con)
-    finally:
-        con.close()
+
+    def _build() -> tuple[list[str], str | None, dict[str, Any], list[dict[str, Any]]]:
+        con = connect_ro(duckdb_path)
+        try:
+            coins = coins_with_trades(con)
+            selected_coin = _resolve_coin(raw_coin, coins)
+            payload = coin_trade_series(con, selected_coin) if selected_coin else {"coin": raw_coin, "trades": []}
+            return coins, selected_coin, payload, data_freshness(con)
+        finally:
+            con.close()
+
+    coins, selected_coin, payload, freshness_rows = _cached(cache, ("panel-coin-drilldown", raw_coin), _build)
 
     trades = payload["trades"]
     chart_points, chart_markers = _coin_chart_series(trades)
@@ -887,18 +956,25 @@ def resolve_digest_window(raw: str | None) -> int:
     return hours if hours in DIGEST_WINDOW_OPTIONS else DEFAULT_DIGEST_WINDOW_HOURS
 
 
-def _digest_context(duckdb_path: str, *, window_hours: int = DEFAULT_DIGEST_WINDOW_HOURS) -> dict[str, Any]:
+def _digest_context(
+    duckdb_path: str, *, window_hours: int = DEFAULT_DIGEST_WINDOW_HOURS, cache: _PollCache | None = None
+) -> dict[str, Any]:
     """Server-side render context for the overnight-digest landing panel.
 
     Thin wrapper over ``analytics_api.overnight_digest`` — same throttled
     read-only DuckDB connection pattern as every other panel context here.
+    Cache-safe because the digest's ``as_of`` anchor is data-derived
+    (``max(closed_at)``), never a wall clock.
     """
-    con = connect_ro(duckdb_path)
-    try:
-        payload = overnight_digest(con, window_hours)
-        freshness_rows = data_freshness(con)
-    finally:
-        con.close()
+
+    def _build() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        con = connect_ro(duckdb_path)
+        try:
+            return overnight_digest(con, window_hours), data_freshness(con)
+        finally:
+            con.close()
+
+    payload, freshness_rows = _cached(cache, ("panel-overnight-digest", int(window_hours)), _build)
     return {
         "digest": payload,
         "window_hours": window_hours,
@@ -947,7 +1023,9 @@ def resolve_event_feed_window(raw: str | None) -> int:
     return hours if hours in EVENT_FEED_WINDOW_OPTIONS else DEFAULT_EVENT_FEED_WINDOW_HOURS
 
 
-def _event_feed_context(duckdb_path: str, *, window_hours: int = DEFAULT_EVENT_FEED_WINDOW_HOURS) -> dict[str, Any]:
+def _event_feed_context(
+    duckdb_path: str, *, window_hours: int = DEFAULT_EVENT_FEED_WINDOW_HOURS, cache: _PollCache | None = None
+) -> dict[str, Any]:
     """Server-side render context for the read-only event-feed panel.
 
     Thin wrapper over ``analytics_api.event_feed`` — same throttled read-only
@@ -956,12 +1034,15 @@ def _event_feed_context(duckdb_path: str, *, window_hours: int = DEFAULT_EVENT_F
     Access/F4/Z2) — operator-WRITTEN annotations are an explicit Z2 follow-up,
     not built here (see SPEC.md Feature 9 "Out of Scope").
     """
-    con = connect_ro(duckdb_path)
-    try:
-        payload = event_feed(con, window_hours)
-        freshness_rows = data_freshness(con)
-    finally:
-        con.close()
+
+    def _build() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        con = connect_ro(duckdb_path)
+        try:
+            return event_feed(con, window_hours), data_freshness(con)
+        finally:
+            con.close()
+
+    payload, freshness_rows = _cached(cache, ("panel-event-feed", int(window_hours)), _build)
     return {
         "feed": payload,
         "window_hours": window_hours,
@@ -987,6 +1068,13 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
     # Mount the existing read-only analytics endpoints (T-131 substrate).
     app.register_blueprint(build_analytics_blueprint(path, cache_enabled=cache_enabled))
 
+    # Panel-data cache (T-2026-CU-9050-175, see _cached): DuckDB-derived panel
+    # payloads keyed by the file-freshness token — an unchanged export file
+    # serves every 30s poll from memory. Sibling of (not shared with) the
+    # blueprint's own JSON-endpoint cache; same TerminateProcess-safe,
+    # fully-rebuildable in-memory design (D-110 Auflage 1).
+    panel_cache = _PollCache(path, enabled=cache_enabled)
+
     @app.get("/")
     def index():
         # Feature 5 (T-2026-CU-9050-157): the global success-metric toggle.
@@ -1001,16 +1089,16 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
             metric=metric,
             metrics=METRICS,
             metric_labels=METRIC_LABELS,
-            **_freshness_context(path),
+            **_freshness_context(path, cache=panel_cache),
         )
 
     @app.get("/panels/success-rate")
     def panel_success_rate():
-        return render_template("panels/success_rate.html", **_demo_panel_context(path))
+        return render_template("panels/success_rate.html", **_demo_panel_context(path, cache=panel_cache))
 
     @app.get("/panels/freshness")
     def panel_freshness():
-        return render_template("_freshness_badge.html", **_freshness_context(path))
+        return render_template("_freshness_badge.html", **_freshness_context(path, cache=panel_cache))
 
     @app.get("/panels/fleet-registry")
     def panel_fleet_registry():
@@ -1022,7 +1110,7 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         # URL by index.html (?metric=...), so both the initial load and every
         # subsequent poll resolve the same way.
         metric = resolve_metric(request.args.get("metric"))
-        return render_template("panels/leaderboard.html", **_leaderboard_context(path, metric=metric))
+        return render_template("panels/leaderboard.html", **_leaderboard_context(path, metric=metric, cache=panel_cache))
 
     @app.get("/panels/success-rate-timeseries")
     def panel_success_rate_timeseries():
@@ -1036,7 +1124,9 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
             window = DEFAULT_TIMESERIES_WINDOW
         return render_template(
             "panels/success_rate_timeseries.html",
-            **_success_rate_timeseries_context(path, raw_bots=raw_bots, filtered=filtered, window=window),
+            **_success_rate_timeseries_context(
+                path, raw_bots=raw_bots, filtered=filtered, window=window, cache=panel_cache
+            ),
         )
 
     @app.get("/panels/regime-heatmap")
@@ -1045,7 +1135,9 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         # expectancy), baked into this panel's own hx-get URL exactly like
         # Feature 5's global toggle does for the leaderboard.
         metric = resolve_regime_heatmap_metric(request.args.get("metric"))
-        return render_template("panels/regime_heatmap.html", **_regime_heatmap_context(path, metric=metric))
+        return render_template(
+            "panels/regime_heatmap.html", **_regime_heatmap_context(path, metric=metric, cache=panel_cache)
+        )
 
     @app.get("/panels/overnight-digest")
     def panel_overnight_digest():
@@ -1054,7 +1146,9 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         # as the regime-heatmap metric toggle and success-rate-timeseries
         # window switcher.
         window_hours = resolve_digest_window(request.args.get("window"))
-        return render_template("panels/overnight_digest.html", **_digest_context(path, window_hours=window_hours))
+        return render_template(
+            "panels/overnight_digest.html", **_digest_context(path, window_hours=window_hours, cache=panel_cache)
+        )
 
     @app.get("/panels/event-feed")
     def panel_event_feed():
@@ -1062,7 +1156,9 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         # baked into this panel's own hx-get URL — same self-updating pattern
         # as the overnight-digest window toggle.
         window_hours = resolve_event_feed_window(request.args.get("window"))
-        return render_template("panels/event_feed.html", **_event_feed_context(path, window_hours=window_hours))
+        return render_template(
+            "panels/event_feed.html", **_event_feed_context(path, window_hours=window_hours, cache=panel_cache)
+        )
 
     @app.get("/panels/coin-drilldown")
     def panel_coin_drilldown():
@@ -1072,7 +1168,9 @@ def create_app(duckdb_path: str | Path, *, cache_enabled: bool = True):
         # a param-less first load while still showing a clean "unknown coin"
         # message for a genuinely bad ?coin= value.
         raw_coin = request.args.get("coin")
-        return render_template("panels/coin_drilldown.html", **_coin_drilldown_context(path, raw_coin=raw_coin))
+        return render_template(
+            "panels/coin_drilldown.html", **_coin_drilldown_context(path, raw_coin=raw_coin, cache=panel_cache)
+        )
 
     return app
 

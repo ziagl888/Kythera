@@ -108,6 +108,22 @@ def _winrate(wins: int, n: int) -> float | None:
     return round(wins / n, 6) if n else None
 
 
+def _numpy() -> Any:
+    """Lazily-imported numpy, or None when unavailable.
+
+    numpy is already a repo dependency (xgboost/wf_significance), but this
+    module deliberately imports it lazily and optionally: the module import
+    stays numpy-free (DB-free build machines without numpy keep working), and
+    every numpy fast-path below has a pure-Python fallback that produces
+    bit-identical results (T-2026-CU-9050-175 parity contract).
+    """
+    try:
+        import numpy
+    except ImportError:  # pragma: no cover - exercised via monkeypatch in tests
+        return None
+    return numpy
+
+
 def _bot_filter(bots: Sequence[str] | None, params: list[Any]) -> str:
     if not bots:
         return ""
@@ -161,30 +177,52 @@ def success_rate_timeseries(
     if as_of is None:
         return {"as_of": None, "bots": [], "windows": {}, "daily": []}
 
-    # Rolling windows.
+    # Rolling windows — ONE scan for all of them (T-2026-CU-9050-175). The old
+    # shape ran one full CTE scan per window; the merged query computes every
+    # window's aggregates as FILTER'd counts over the widest window's rows.
+    # Result parity is exact: all aggregates are integer counts, the per-window
+    # bot list is reconstructed from ``any_rows`` (a bot appears for window w
+    # iff it has >= 1 row — decisive or not — inside w, exactly the row set the
+    # old per-window ``WHERE closed_at > as_of - w`` GROUP BY produced), and
+    # ``ORDER BY bot`` preserves the old per-window entry order.
     windows_out: dict[int, list[dict[str, Any]]] = {}
     result_bots: set[str] = set()
-    for w in windows:
-        params: list[Any] = [as_of, as_of]
+    uniq_windows = sorted({int(w) for w in windows})
+    if uniq_windows:
+        max_w = uniq_windows[-1]
+        params: list[Any] = []
+        window_cols = []
+        for w in uniq_windows:
+            lower = f"closed_at > (CAST(? AS TIMESTAMP) - INTERVAL {w} DAY)"
+            window_cols.append(
+                f"count(*) FILTER (WHERE {lower}), "
+                f"count(*) FILTER (WHERE is_decisive AND {lower}), "
+                f"count(*) FILTER (WHERE is_win AND {lower})"
+            )
+            params.extend([as_of, as_of, as_of])
+        params.extend([as_of, as_of])
         bot_sql = _bot_filter(bots, params)
         rows = con.execute(
             f"{cte} "
-            "SELECT bot, "
-            "count(*) FILTER (WHERE is_decisive) AS n, "
-            "count(*) FILTER (WHERE is_win) AS wins "
+            f"SELECT bot, {', '.join(window_cols)} "
             "FROM flagged "
-            f"WHERE closed_at > (CAST(? AS TIMESTAMP) - INTERVAL {int(w)} DAY) "
+            f"WHERE closed_at > (CAST(? AS TIMESTAMP) - INTERVAL {max_w} DAY) "
             "AND closed_at <= CAST(? AS TIMESTAMP)"
             f"{bot_sql} "
             "GROUP BY bot ORDER BY bot",
             params,
         ).fetchall()
-        entries = []
-        for bot, n, wins in rows:
-            n, wins = int(n), int(wins)
-            result_bots.add(bot)
-            entries.append({"bot": bot, "n": n, "wins": wins, "winrate": _winrate(wins, n)})
-        windows_out[w] = entries
+        per_window: dict[int, list[dict[str, Any]]] = {w: [] for w in uniq_windows}
+        for row in rows:
+            bot = row[0]
+            for i, w in enumerate(uniq_windows):
+                if int(row[1 + 3 * i]) == 0:
+                    continue  # no row at all inside w — old per-window query had no group for this bot
+                n, wins = int(row[2 + 3 * i]), int(row[3 + 3 * i])
+                result_bots.add(bot)
+                per_window[w].append({"bot": bot, "n": n, "wins": wins, "winrate": _winrate(wins, n)})
+        for w in windows:
+            windows_out[w] = per_window[int(w)]
 
     # Daily decisive-trade series (for charting the time comparison).
     params = []
@@ -248,6 +286,12 @@ def bot_trade_rows(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None
     Returns one dict per trade: ``{bot, closed_at, pnl_pct, is_win}``. Empty
     list when no outcome table exists yet (mirrors
     ``success_rate_timeseries``'s empty-substrate degrade).
+
+    Since T-2026-CU-9050-175 the leaderboard/rolling-series hot paths no
+    longer flow through this function (they aggregate column-wise /
+    DB-side instead of materialising ~580k per-trade dicts); it stays as the
+    canonical, readable definition of the decisive-trade row stream and as
+    the reference pipeline the parity tests compare those fast paths against.
     """
     tables = _existing_outcome_tables(con)
     if not tables:
@@ -304,9 +348,16 @@ def _max_consecutive_losses(trades: Sequence[dict[str, Any]]) -> int:
     identical in spirit to :func:`tools.wf_significance.max_drawdown_pct`'s
     order-dependence but simple enough not to warrant its own reused module.
     """
+    return _max_loss_streak_from_flags(t["is_win"] for t in trades)
+
+
+def _max_loss_streak_from_flags(win_flags: Any) -> int:
+    """Longest run of consecutive falsy flags — the column-shaped core of
+    :func:`_max_consecutive_losses` (which delegates here), shared with the
+    streamed leaderboard path so both compute the identical statistic."""
     best = streak = 0
-    for t in trades:
-        if t["is_win"]:
+    for win in win_flags:
+        if win:
             streak = 0
         else:
             streak += 1
@@ -327,9 +378,25 @@ def _leaderboard_row(bot: str, trades: Sequence[dict[str, Any]]) -> dict[str, An
     :func:`_max_drawdown_pp`). ``max_loss_streak`` is the longest
     consecutive-loss run — the second risk metric.
     """
-    n = len(trades)
-    wins = sum(1 for t in trades if t["is_win"])
-    pnl_values = [t["pnl_pct"] for t in trades]
+    return _leaderboard_row_from_columns(
+        bot, [t["pnl_pct"] for t in trades], [t["is_win"] for t in trades]
+    )
+
+
+def _leaderboard_row_from_columns(
+    bot: str, pnl_values: Sequence[float], win_flags: Sequence[bool]
+) -> dict[str, Any]:
+    """Column-shaped core of :func:`_leaderboard_row` (which delegates here).
+
+    Same math on the same values in the same order — ``sum()`` (CPython's
+    builtin, Neumaier-compensated since 3.12) for ``pnl_sum_pct``, the naive
+    sequential loop of :func:`_max_drawdown_pp` for the drawdown — so the
+    dict-shaped and column-shaped callers produce bit-identical rows. Exists
+    so the streamed leaderboard path (:func:`_leaderboard_rows_streamed`) can
+    aggregate without materialising one dict per trade.
+    """
+    n = len(pnl_values)
+    wins = sum(1 for w in win_flags if w)
     pnl_sum = sum(pnl_values)
     return {
         "bot": bot,
@@ -339,8 +406,92 @@ def _leaderboard_row(bot: str, trades: Sequence[dict[str, Any]]) -> dict[str, An
         "pnl_sum_pct": round(pnl_sum, 4),
         "expectancy_pct": round(pnl_sum / n, 4) if n else None,
         "max_drawdown_pp": round(_max_drawdown_pp(pnl_values), 4),
-        "max_loss_streak": _max_consecutive_losses(trades),
+        "max_loss_streak": _max_loss_streak_from_flags(win_flags),
     }
+
+
+def _leaderboard_rows_streamed(
+    con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None = None
+) -> list[dict[str, Any]]:
+    """Per-bot leaderboard rows without a per-trade dict (T-2026-CU-9050-175).
+
+    Runs the SAME decisive-row query :func:`bot_trade_rows` runs (identical
+    CTE, identical ``WHERE is_decisive AND bot IS NOT NULL``, identical
+    ``ORDER BY bot, closed_at``) but projects only the three columns the
+    aggregation consumes — ``closed_at`` stays a sort key without ever being
+    materialised as 580k Python datetimes. Aggregation happens in one pass via
+    :func:`_leaderboard_row_from_columns`, i.e. literally
+    :func:`_leaderboard_row`'s own math, so **for a given row stream** a row
+    here is bit-identical to a row the old bot_trade_rows→dict→_leaderboard_row
+    pipeline produced (~11.5s → ~4.5s on the live substrate).
+
+    DETERMINISM CAVEAT (T-2026-CU-9050-175, honest scope): the two
+    ORDER-DEPENDENT risk metrics (``max_drawdown_pp``, ``max_loss_streak``)
+    are only reproducible run-to-run to the extent the row STREAM is. The
+    ``ORDER BY bot, closed_at`` has no deterministic tie-breaker, so trades
+    that share a ``closed_at`` (real duplicate/same-instant rows exist in
+    ``closed_ai_signals``) can come back in a different relative order on
+    different executions under DuckDB's parallel scan — which shifts those two
+    path-dependent metrics. This is the SAME pre-existing nondeterminism class
+    the old bot_trade_rows→_leaderboard_row pipeline already had (it used the
+    identical ORDER BY): this function adds none. The pure count/sum fields
+    (n, wins, winrate, pnl_sum_pct, expectancy_pct) are order-invariant and
+    therefore stable. A deterministic tie-breaker would change those
+    money-valued metrics and is deliberately a SEPARATE follow-up, not part of
+    this behaviour-preserving optimisation.
+
+    When numpy is importable (lazy, optional — see :func:`_numpy`) the column
+    transfer uses ``fetchnumpy`` and per-bot slicing over run boundaries;
+    ``.tolist()`` hands the identical Python floats/bools to the identical
+    aggregation functions, so **on one and the same row stream** the fast path
+    and the pure fallback produce identical rows (verified on tie-free /
+    value-identical fixture data). At production scale both paths re-execute
+    the query independently and therefore inherit the SAME tie-order
+    nondeterminism described above — the equality is between the two
+    aggregation implementations, not a promise that two separate leaderboard
+    calls yield byte-identical risk metrics. Masked arrays (NULLs — impossible
+    for decisive rows, defensively handled anyway) fall back to the pure path
+    rather than risking filled sentinel values.
+    """
+    tables = _existing_outcome_tables(con)
+    if not tables:
+        return []
+    cte = _outcomes_cte(tables)
+    params: list[Any] = []
+    bot_sql = _bot_filter(bots, params)
+    sql = (
+        f"{cte} SELECT bot, pnl_pct, is_win FROM flagged "
+        f"WHERE is_decisive AND bot IS NOT NULL{bot_sql} ORDER BY bot, closed_at"
+    )
+    np = _numpy()
+    if np is not None:
+        cols = con.execute(sql, params).fetchnumpy()
+        bot_col, pnl_col, win_col = cols["bot"], cols["pnl_pct"], cols["is_win"]
+        masked = any(isinstance(a, np.ma.MaskedArray) for a in (bot_col, pnl_col, win_col))
+        if not masked:
+            n_rows = len(bot_col)
+            if n_rows == 0:
+                return []
+            change = np.empty(n_rows, dtype=bool)
+            change[0] = True
+            change[1:] = bot_col[1:] != bot_col[:-1]
+            starts = np.flatnonzero(change)
+            ends = np.append(starts[1:], n_rows)
+            return [
+                _leaderboard_row_from_columns(
+                    str(bot_col[s]), pnl_col[s:e].tolist(), win_col[s:e].tolist()
+                )
+                for s, e in zip(starts, ends, strict=True)
+            ]
+    rows = con.execute(sql, params).fetchall()
+    by_bot: dict[str, tuple[list[float], list[bool]]] = {}
+    for bot, pnl, win in rows:
+        acc = by_bot.get(bot)
+        if acc is None:
+            acc = by_bot[bot] = ([], [])
+        acc[0].append(float(pnl))
+        acc[1].append(bool(win))
+    return [_leaderboard_row_from_columns(bot, pnl, win) for bot, (pnl, win) in by_bot.items()]
 
 
 def bot_leaderboard(
@@ -373,10 +524,7 @@ def bot_leaderboard(
     expectancy/winrate/count leads the table.
     """
     key = sort_by if sort_by in _LEADERBOARD_SORT_KEYS else DEFAULT_LEADERBOARD_SORT
-    by_bot: dict[str, list[dict[str, Any]]] = {}
-    for trade in bot_trade_rows(con, bots=bots):
-        by_bot.setdefault(trade["bot"], []).append(trade)
-    rows = [_leaderboard_row(bot, trades) for bot, trades in by_bot.items()]
+    rows = _leaderboard_rows_streamed(con, bots=bots)
     rows.sort(key=lambda r: r[key] if r[key] is not None else float("-inf"), reverse=True)
     return {"bots": rows, "sort_by": key}
 
@@ -483,9 +631,36 @@ def rolling_success_rate_series(
     Empty when the substrate has no outcome tables yet (mirrors
     ``success_rate_timeseries``'s and ``bot_leaderboard``'s empty-substrate
     degrade — never raises).
+
+    PERFORMANCE (T-2026-CU-9050-175): the per-day (n, wins) buckets are
+    aggregated in DuckDB (``GROUP BY bot, d``) instead of transferring every
+    decisive trade row into Python and bucketing there
+    (:func:`bot_trade_rows` + :func:`_daily_buckets_by_bot`, the previous
+    shape — ~580k rows / ~12s on the live substrate vs ~1.2s now). Result
+    parity is exact by construction: the SQL groups by the same ``d =
+    CAST(closed_at AS DATE)`` day boundary over the same DECISIVE row set,
+    both counts are integers, and ``ORDER BY bot, d`` reproduces the old
+    first-occurrence bot insertion order. :func:`_daily_buckets_by_bot`
+    remains as the pure-Python reference implementation the parity test
+    (backtest/test_analytics_query_parity.py) checks this SQL against.
     """
-    trades = bot_trade_rows(con, bots=bots)
-    by_bot = _daily_buckets_by_bot(trades)
+    tables = _existing_outcome_tables(con)
+    if not tables:
+        return {"window": window, "bots": [], "series": {}}
+    cte = _outcomes_cte(tables)
+    params: list[Any] = []
+    bot_sql = _bot_filter(bots, params)
+    rows = con.execute(
+        f"{cte} SELECT bot, d, count(*) AS n, count(*) FILTER (WHERE is_win) AS wins "
+        f"FROM flagged WHERE is_decisive AND bot IS NOT NULL{bot_sql} "
+        "GROUP BY bot, d ORDER BY bot, d",
+        params,
+    ).fetchall()
+    by_bot: dict[str, dict[datetime.date, tuple[int, int]]] = {}
+    for bot, d, n, wins in rows:
+        if isinstance(d, datetime.datetime):  # DuckDB returns DATE; guard a datetime anyway
+            d = d.date()
+        by_bot.setdefault(bot, {})[d] = (int(n), int(wins))
     series = {bot: _rolling_series_for_bot(daily, window) for bot, daily in by_bot.items()}
     return {"window": window, "bots": sorted(series), "series": series}
 
@@ -515,7 +690,7 @@ def bot_regime_matrix(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | N
     ``success_rate_timeseries`` use, via the shared ``_outcomes_cte``/
     ``_bot_filter`` helpers — pnl present, not housekeeping, ``MICRO_PNL_PCT <
     |pnl| <= MAX_ABS_PNL_PCT``) to the regime state that was ACTIVE at its
-    ``closed_at``, via a DuckDB ``ASOF LEFT JOIN`` against ``regime_history``
+    ``closed_at``, via a DuckDB ``ASOF JOIN`` against ``regime_history``
     (``ON closed_at >= ts``): for each trade this picks the LATEST
     ``regime_history`` row whose ``ts`` does not exceed the trade's
     ``closed_at`` — i.e. the regime classification in force at that instant.
@@ -549,10 +724,18 @@ def bot_regime_matrix(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | N
     cte = _outcomes_cte(tables)
     params: list[Any] = []
     bot_sql = _bot_filter(bots, params)
+    # ASOF **inner** join (T-2026-CU-9050-175): the old shape was ``ASOF LEFT
+    # JOIN … WHERE r.regime IS NOT NULL``. ``regime_sorted`` filters NULL
+    # regimes out up front, so the only NULL ``r.regime`` a LEFT join can emit
+    # is the null-extension of a non-matching trade — exactly the rows the
+    # WHERE clause then discarded. The inner join drops them without the
+    # null-extend + refilter detour (~2.5s → ~2.0s on the live substrate),
+    # provably row-identical. The inner ``ORDER BY ts`` is gone too — the ASOF
+    # operator orders its build side itself; the clause only added a sort.
     rows = con.execute(
         f"{cte}, "
         "regime_sorted AS ("
-        "    SELECT ts, regime FROM regime_history WHERE regime IS NOT NULL ORDER BY ts"
+        "    SELECT ts, regime FROM regime_history WHERE regime IS NOT NULL"
         "), "
         "decisive AS ("
         "    SELECT bot, closed_at, pnl_pct, is_win FROM flagged "
@@ -563,8 +746,7 @@ def bot_regime_matrix(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | N
         "count(*) FILTER (WHERE d.is_win) AS wins, "
         "sum(d.pnl_pct) AS pnl_sum "
         "FROM decisive d "
-        "ASOF LEFT JOIN regime_sorted r ON d.closed_at >= r.ts "
-        "WHERE r.regime IS NOT NULL "
+        "ASOF JOIN regime_sorted r ON d.closed_at >= r.ts "
         "GROUP BY d.bot, r.regime "
         "ORDER BY d.bot, r.regime",
         params,

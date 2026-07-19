@@ -750,3 +750,24 @@ ist REGISTRIERUNGS-ONLY — es stoppt keinen Prozess und startet keine Task (kei
 Live-Cutover aus einem committeten Artefakt, CLAUDE.md Harte Regel 1); Cutover +
 Registrierung sind separate, bewusste Operator-Schritte, kein Teil einer
 Dev-Session.
+
+## Performance (T-2026-CU-9050-175)
+
+Die Panel-Kontexte cachen ihre DuckDB-derivierten Daten (Query-Payload +
+`data_freshness`-Rows) hinter dem File-Freshness-Token (`analytics_api._PollCache`,
+dasselbe Muster wie der `/api/analytics/*`-Blueprint-Cache): bei unveraenderter
+Export-Datei wird jeder Poll aus Memory bedient. Das "Sync vor N min"-Alter wird
+weiterhin pro Request gerechnet; Fleet-Registry (dateibasiert) bleibt uncached.
+Query-seitig: Rolling-Serie via SQL-Daily-Aggregation, Leaderboard via
+Streamed-Column-Pfad (optionaler numpy-Fast-Path mit Pure-Python-Fallback),
+success-rate-Fenster in einem Scan, Regime-Matrix als ASOF-Inner-Join.
+Ergebnis-Paritaet ist HARTE Anforderung — Netz:
+`backtest/test_analytics_query_parity.py`. Umfang ehrlich: die drei reinen
+count/sum-Aggregate (rolling / success-rate / regime-matrix) sind bit-
+identisch old-vs-new. Beim Leaderboard sind die order-invarianten Felder
+(n, wins, winrate, pnl_sum_pct, expectancy_pct) bit-identisch; die zwei
+order-abhaengigen Risk-Metriken (max_drawdown_pp, max_loss_streak) erben die
+VORBESTEHENDE run-to-run-Nichtdeterminismus-Klasse (Duplikat-`closed_at` +
+kein deterministischer Tiebreaker unter DuckDB-Parallelitaet) — der alte Code
+hatte sie identisch, es kommt keine neue hinzu. Ein deterministischer
+Tiebreaker (= Verhaltensaenderung an Geld-Werten) ist ein separater Follow-up.
