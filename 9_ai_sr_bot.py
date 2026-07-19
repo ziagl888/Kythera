@@ -45,7 +45,10 @@ SRA_ARTIFACT_PATHS = {
 SRA_LEGACY_TAG = 'SRA1'
 # Posting-Schwelle des Legacy-Modells. Ein Artefakt mit Meta bringt seine eigene
 # mit (optimal_threshold aus dem Validation-Slice) und überschreibt sie.
-SRA_LEGACY_THRESHOLD = 0.65
+# 0.65→0.70 (T-2026-CU-9050-171): auf den realisierten SRA1-Trades (n=748,
+# 03–07/2026) ist das Segment 0.65–0.70 netto negativ (Ø −0,10 %); ab 0.70
+# bleiben 62 % der Trades mit MEHR Gesamt-PnL (302 vs. 274) und WR 52→55,5 %.
+SRA_LEGACY_THRESHOLD = 0.70
 # Shadow-Log-Untergrenze: alles darüber landet in ml_predictions_master.
 SRA_SHADOW_THRESHOLD = 0.35
 

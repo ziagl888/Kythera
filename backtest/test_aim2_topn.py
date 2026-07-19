@@ -171,7 +171,9 @@ def test_topn_tag_excluded_from_candidate_stream():
 
 
 def test_topn_min_never_below_base_gate():
-    assert 'topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"])' in SRC
+    # Since T-2026-CU-9050-171 the base gate includes the AIM2_MIN_PROB floor,
+    # so the TOPN floor must include it too — TOPN never gates looser than base.
+    assert 'topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"], MIN_PROB)' in SRC
 
 
 def test_topn_posts_via_single_message_helper():

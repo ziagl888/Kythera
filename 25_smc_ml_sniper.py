@@ -25,6 +25,7 @@ from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import COOLDOWN_MODULE_MAX_LEN, check_cooldown, get_max_leverage, load_coins, update_cooldown
+from core.prob_floor import load_prob_floor
 from core.trade_utils import calculate_smart_targets
 
 # 🛠️ CONFIGURATION
@@ -47,6 +48,18 @@ MAX_BB_AGE = 20  # P2.39: Breakout/Breakdown darf max 20 geschlossene Kerzen alt
 THRESHOLDS = {
     'bb': 0.40,  # Breaker Block
     'td': 0.30,  # Three-Drive
+}
+
+# Posting-Floor NUR für BB (T-2026-CU-9050-171): auf den realisierten Trades
+# (BB_1H n=2685, BB_4H n=2130, 03–07/2026) ist das Segment unter p=0.50
+# Null-EV (Ø ≤0,20 %, CI95 enthält 0) bei ~95 % des Volumens; darüber
+# Ø 1,2–1,9 %/Trade. TD bekommt bewusst KEINEN Floor — dort ist die
+# Confidence auf realisierten Trades nicht selektiv (Kept/Cut-CIs
+# überlappen voll) und der Kanal ist netto positiv. Der Floor verschärft
+# nur: max(Artefakt-Threshold, Floor), Shadow-Logging (0.25) unberührt.
+MIN_PROB_FLOORS = {
+    'bb': load_prob_floor("BB_MIN_PROB", 0.50),
+    'td': 0.0,
 }
 
 PRICE_BASED_INDICATORS = [
@@ -76,19 +89,21 @@ for tf in TIMEFRAMES:
         path = f"{strategy}_xgboost_model_{tf}.pkl"
         try:
             data = joblib.load(path)
+            base_threshold = (
+                float(data['optimal_threshold']) if data.get('optimal_threshold') is not None else THRESHOLDS[strategy]
+            )
             MODELS[strategy][tf] = {
                 'model': data['model'],
                 'features': data['features'],
-                'threshold': float(data['optimal_threshold'])
-                if data.get('optimal_threshold') is not None
-                else THRESHOLDS[strategy],
+                'threshold': max(base_threshold, MIN_PROB_FLOORS[strategy]),
                 'calibrator': data.get('calibrator_isotonic'),
                 'model_id': (data.get('meta') or {}).get('model_id'),
             }
             logger.info(
                 f"✅ ML-Modell ({strategy.upper()} | {tf}) geladen — Threshold "
-                f"{MODELS[strategy][tf]['threshold']:.2f}"
-                f"{' (Artefakt)' if data.get('optimal_threshold') is not None else ' (Hardcode)'}, "
+                f"{MODELS[strategy][tf]['threshold']:.2f} (Basis {base_threshold:.2f}"
+                f"{' Artefakt' if data.get('optimal_threshold') is not None else ' Hardcode'}, "
+                f"Floor {MIN_PROB_FLOORS[strategy]:.2f}), "
                 f"Tag {MODELS[strategy][tf]['model_id'] or f'{strategy.upper()}_{tf.upper()}'}"
             )
         except Exception as e:
@@ -140,7 +155,7 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
 
     prob = model_data['model'].predict_proba(ml_input)[0][1]
     confidence = prob * 100
-    min_thresh = model_data['threshold']  # aus dem Artefakt (Fallback: Hardcode, s. Loader)
+    min_thresh = model_data['threshold']  # max(Artefakt/Hardcode, Strategie-Floor) — s. Loader
 
     # 3. Shadow Log
     if prob >= 0.25:

@@ -52,6 +52,7 @@ from core.candles import read_candles_with_indicators, timeframe_delta
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
+from core.prob_floor import load_prob_floor
 from core.signal_post import has_open_ai_signal, post_ai_signal
 from core.time import utc_now_naive
 from core.trade_utils import calculate_smart_targets
@@ -66,6 +67,13 @@ MODEL_PATH = "master_meta_model_aim2.pkl"
 MODEL_NAME = "AIM2"
 LIVE_POSTING = os.getenv("AIM2_LIVE_POSTING", "0") == "1"  # Default: Shadow-only
 SHADOW_FLOOR = 0.25  # darunter nicht mal Shadow loggen
+# Posting-Floor über dem Artefakt-Threshold (T-2026-CU-9050-171): auf den
+# realisierten Trades beider Artefakt-Ären (Splits vor/nach 14.07.) ist das
+# Segment unter p=0.70 Null-EV (Ø +0,18 %, CI95 [−0,27, 0,67]) bei ~72 % des
+# Volumens; ab 0.70 Ø 1,0–2,2 %/Trade. Effektives Gate ist IMMER
+# max(ARTIFACT["threshold"], MIN_PROB) — der Floor kann nur verschärfen.
+# Shadow-Logging (SHADOW_FLOOR) bleibt unberührt, die Datensammlung läuft voll.
+MIN_PROB = load_prob_floor("AIM2_MIN_PROB", 0.70)
 MODEL_RELOAD_S = 24 * 3600  # R07-AIM1-b: Modell täglich neu laden
 CANDIDATE_WINDOW_MIN = 60  # P2.35: Catch-up nach Downtime; Doppel-Processing hält dedup_key ab
 MAX_JOIN_STALENESS_H = 3
@@ -102,7 +110,9 @@ def load_model() -> None:
         ARTIFACT["loaded_at"] = time.time()
         logger.info(
             f"✅ AIM2-Artefakt geladen: {len(ARTIFACT['features'])} Features, "
-            f"Threshold {ARTIFACT['threshold']}, Vokabular {len(ARTIFACT['vocab'])} Quellen, "
+            f"Threshold {ARTIFACT['threshold']} (effektives Gate "
+            f"{max(ARTIFACT['threshold'], MIN_PROB):.2f}, Floor {MIN_PROB:.2f}), "
+            f"Vokabular {len(ARTIFACT['vocab'])} Quellen, "
             f"Posting={'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}"
         )
     except Exception as e:
@@ -405,7 +415,7 @@ def process_master_trades():
         # Kandidaten dieses Zyklus und selektieren NACH der Schleife die Top-N
         # unter der rollierenden 24h-Kappe. topn_min: nie unter dem Basis-Gate.
         topn_cfg = load_topn_config()
-        topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"])
+        topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"], MIN_PROB)
         topn_pool: list[TopNCandidate] = []
 
         for signal in candidates.itertuples():
@@ -486,7 +496,7 @@ def process_master_trades():
             if prob < SHADOW_FLOOR:
                 continue
 
-            wants_post = prob >= ARTIFACT["threshold"] and trusted
+            wants_post = prob >= max(ARTIFACT["threshold"], MIN_PROB) and trusted
             if not (wants_post and LIVE_POSTING):
                 shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, False))
                 if wants_post:
