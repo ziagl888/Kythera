@@ -102,6 +102,11 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # RUB3 = rub2_model_LONG-Retrain vs. LIVE-RUB-LONG (Bot 13 postet Legacy unter
     # "RUB2"). Operator-Entscheid Michi (Regel 6). SHORT bleibt live "RUB2".
     ("RUB3", "LONG"): SHADOW,
+    # RUB4 (T-2026-CU-9050-164): funding-gegatetes RUB-LONG — DERSELBE RUB3-
+    # Kandidat, aber nur wenn fund_24h > +3 bps (ABR1-LONG-Gate). Experiment, ob
+    # das Gate das blutende RUB-LONG rettet; RUB4 vs. RUB3 = gegatet vs. ungegatet
+    # im Report. Nutzt das RUB3-Artefakt (kein eigener SHADOW_ARTIFACTS-Eintrag).
+    ("RUB4", "LONG"): SHADOW,
     # EPD3 = epd2_model_{LONG,SHORT}-Retrain vs. LIVE-EPD (Bot 10 postet das Legacy-
     # Modell bereits unter Tag "EPD2" = EPD_LEGACY_TAG; ein Shadow unter "EPD2"
     # würde über den dortigen Active-Trade-Check `model IN ('EPD2','EPD2')` einen
