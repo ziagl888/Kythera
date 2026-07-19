@@ -1,3 +1,25 @@
+## [2026-07-19] Bot-10 CPU-Optimierung — Epoch-Fenster-Scans, geteiltes Stundenfenster, kompakter State-Dump (T-2026-CU-9050-165)
+
+Der Pump/Dump-Detector hat auf JEDEM Fenster-Lookup jedes Buckets den ISO-Zeitstempel neu geparst
+(`fromisoformat`) — bei 527 Coins × bis zu 1440 Buckets × ~10 Scans pro 10s-Tick der dominante CPU-Posten
+des Bots: gemessen **4,4s des 10s-Tick-Budgets** (Dev-Maschine, voller Bestand). Auf dem gesättigten VPS
+ist das der plausibelste Treiber der bimodalen Bucket-Kadenz aus T-035 (p90 = 70s statt 10s) — der Bot kam
+mit seinem eigenen Tick nicht hinterher. Alles verhaltensneutral:
+
+- **Epoch-Schlüssel:** Buckets tragen ab Erzeugung ein `e`-Feld (Epoch-Sekunden des Grid-Stempels); alle
+  `_find_bucket_*`-Helper vergleichen Floats statt datetime-Objekte (`_bucket_epoch`, Lazy-Parse-Once-Cache
+  für Alt-State-Dateien und Test-Fixtures; Anker akzeptieren datetime ODER Epoch via `_anchor_epoch`).
+- **Stundenfenster einmal pro Tick:** Volume-Explosion-Pfad (A2) und ML-Pfad (B) zogen sich je einen
+  eigenen, identischen 3600s-Scan (gleicher Anker, gleiche Daten) — jetzt einmal berechnet, geteilt.
+- **State-Dump entschärft:** `1minute.json`/`pump_dump_state.json` kompakt statt `indent=2` (vorher >100MB
+  und ~9s reine Serialisierung ALLE 5 MINUTEN); Bucket-Deque 1440 → 720 (`BUCKET_DEQUE_MAXLEN`): das größte
+  Fenster ist 3600s+20s Toleranz, die ältere Hälfte wurde von keinem zeitbasierten Lookup je erreicht.
+
+Steady State danach: **1,68s/Tick (2,6×)**; der erste Tick nach Restart füllt den Epoch-Cache einmalig.
+Verifiziert: `backtest/test_pump_dump_time_windows.py` (18) + `test_epd2_entry_from_ticker.py` +
+`test_shadow_prediction_cooldown.py` (9), Regression-Guard 24/24 golden, ruff/mypy grün. Aktiv nach
+Bot-10-Restart. Monitore 5/8 bewusst NICHT angefasst (deutlich kleinerer Posten; Batched-Candle-Read als
+Follow-up geprüft).
 ## [2026-07-19] RUB4 — funding-gegatetes RUB-LONG als Shadow-Experiment (T-2026-CU-9050-164)
 
 Das RUB-LONG-Bein blutet (live RUB2-LONG −2,5 %/Trade, Shadow-RUB3-LONG −3,7 %). Retrospektive über 123
