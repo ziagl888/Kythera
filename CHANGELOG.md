@@ -30,6 +30,12 @@ es ändern sich nur Query-Form und Auswertungszeitpunkt.
   `write_signal_atomic`-Transaktions-Contract unangetastet; DB-Index-Anlage nur als Empfehlung im Code
   dokumentiert (partial Index `active_trades_master(strategy,coin,direction) WHERE status='WORKING'`;
   `closed_trades_master(direction,posted)`) — Ausführung VPS-Session, Michi-gated.
+- Adversarial-Review-Fixes (Vote 2): (a) `conn.rollback()` im Read-Except von `3_detectors.py` — ein
+  fehlgeschlagener Indikator-Read (fehlende Tabelle/Spalte) hätte sonst die Transaktion für alle
+  Folge-Coins des Zyklus vergiftet (InFailedSqlTransaction; Muster latent auch auf main); (b) der
+  15d-Split ist ein DREI-Wege-Split (`>= 1st_hit` / `<= 1st_hit − 30m`) statt Komplement — ein
+  contract-verletzender, nicht-30m-alignter Bar in `(1st_hit−30m, 1st_hit)` lag in KEINEM der alten
+  Fenster und bleibt jetzt auch im gebündelten Read ausgeschlossen (Paritätstest ergänzt).
 
 Query-Bilanz pro 30m-Zyklus (N≈530, im Code dokumentiert): vorher ≈ N×3 Reads (davon der ~120-Spalten-
 `SELECT *`) + Guard-Punktqueries ≈ 1.600+; nachher ≈ N×2 schlanke Reads + ~5 Snapshot-/Memo-Queries.

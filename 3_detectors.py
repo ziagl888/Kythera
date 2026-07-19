@@ -259,6 +259,14 @@ def run_detectors_for_timeframe(timeframe):
                 )
                 df_indexed = df.set_index('open_time')  # Vorbereiten für die komplexen Bots
             except Exception:
+                # T-2026-CU-9050-172 (review fix): a failed SQL read (missing
+                # table, missing projected column on a drifted DDL) aborts the
+                # transaction — without a rollback every later coin's read in
+                # this cycle would die with InFailedSqlTransaction. Same
+                # per-coin isolation contract as the P1.15 catch below; the
+                # read path holds no uncommitted work (live-price fallback and
+                # guards are read-only, signal writes commit atomically).
+                conn.rollback()
                 continue
             finally:
                 timings['reads'] += time.perf_counter() - t0

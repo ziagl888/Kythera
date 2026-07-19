@@ -127,7 +127,7 @@ class FakeConn:
         pass
 
     def rollback(self):
-        pass
+        self.rollbacks = getattr(self, "rollbacks", 0) + 1
 
     def close(self):
         pass
@@ -275,6 +275,25 @@ def test_spike_parity_boundary_candles():
     old, new, _, _ = _spike_parity(_candles(list(zip(times, closes, vols))), first_hit, hit)
     assert old == new == -1
     print("OK  spike parity: inclusive/exclusive window boundaries identical")
+
+
+def test_spike_parity_misaligned_bar_excluded_from_both_windows():
+    """A (contract-violating) bar strictly inside (1st_hit-30m, 1st_hit) was in
+    NEITHER old window. A naive complement split would pull it into the baseline
+    and shift mean/std — the three-way split must keep it excluded."""
+    times = _grid(BASE, 20)
+    first_hit, hit = times[10], times[19]
+    vols = [10.0] * 20
+    vols[15] = 500.0  # real in-period spike (close up → buy)
+    closes = [100.0 + i * 0.1 for i in range(20)]
+    rows = list(zip(times, closes, vols))
+    # Misaligned monster bar 15 minutes before the period start: with it in the
+    # baseline, std explodes and the threshold would swallow the 500-spike.
+    rows.append((first_hit - datetime.timedelta(minutes=15), 100.0, 50000.0))
+    df = _candles(rows).sort_values("open_time").reset_index(drop=True)
+    old, new, _, _ = _spike_parity(df, first_hit, hit)
+    assert old == new == 1
+    print("OK  spike parity: misaligned bar stays outside both windows (3-way split)")
 
 
 def test_spike_parity_randomised_sweep():
@@ -684,6 +703,52 @@ def test_run_detectors_wiring_and_prefilter():
     print("OK  wiring: projection + prefilter applied, cycle passed to strategies")
 
 
+def test_failed_indicator_read_rolls_back_and_isolates_the_coin():
+    """A failed read (missing table / drifted DDL missing a projected column)
+    aborts the transaction — without a rollback every later coin's read would
+    die with InFailedSqlTransaction (review fix). The detector must roll back
+    and continue scanning the remaining coins."""
+    read_calls, scan_calls = [], []
+
+    def fake_read_indicators(conn, symbol, timeframe, *, limit=None, include_forming=True, columns=None):
+        read_calls.append(symbol)
+        if symbol == "AAAUSDT":
+            raise RuntimeError("relation does not exist")
+        times = pd.date_range("2026-01-01", periods=3, freq="30min", tz="UTC")
+        frame = {col: [1.0, 1.0, 1.0] for col in DET.DETECTOR_INDICATOR_COLUMNS if col != "open_time"}
+        frame["open_time"] = times
+        return pd.DataFrame(frame)
+
+    def fake_analyze(conn, symbol, frame, live_price, cycle=None):
+        scan_calls.append(symbol)
+        return None
+
+    conn = FakeConn()
+    saved = {name: getattr(DET, name) for name in
+             ("read_indicators", "analyze_fast", "analyze_vol", "get_db_connection", "get_live_prices_batch")}
+    tmpdir = tempfile.mkdtemp()
+    cwd = os.getcwd()
+    try:
+        with open(os.path.join(tmpdir, "coins.json"), "w", encoding="utf-8") as f:
+            json.dump(["AAAUSDT", "BBBUSDT"], f)
+        os.chdir(tmpdir)
+        DET.read_indicators = fake_read_indicators
+        DET.analyze_fast = fake_analyze
+        DET.analyze_vol = fake_analyze
+        DET.get_db_connection = lambda: conn
+        DET.get_live_prices_batch = lambda: {"AAAUSDT": 100.0, "BBBUSDT": 100.0}
+        DET.run_detectors_for_timeframe("30m")
+    finally:
+        os.chdir(cwd)
+        for name, value in saved.items():
+            setattr(DET, name, value)
+
+    assert read_calls == ["AAAUSDT", "BBBUSDT"]
+    assert getattr(conn, "rollbacks", 0) >= 1, "failed read must roll back the aborted transaction"
+    assert scan_calls == ["BBBUSDT", "BBBUSDT"], "the next coin must still be scanned"
+    print("OK  wiring: failed indicator read rolls back and does not poison the cycle")
+
+
 if __name__ == "__main__":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -695,6 +760,7 @@ if __name__ == "__main__":
         test_spike_parity_empty_baseline,
         test_spike_parity_empty_period,
         test_spike_parity_boundary_candles,
+        test_spike_parity_misaligned_bar_excluded_from_both_windows,
         test_spike_parity_randomised_sweep,
         test_active_trade_snapshot_parity,
         test_whole_coin_prefilter_condition,
@@ -709,6 +775,7 @@ if __name__ == "__main__":
         test_projection_superset_of_every_strategy_read,
         test_projection_subset_of_engine_ddl,
         test_run_detectors_wiring_and_prefilter,
+        test_failed_indicator_read_rolls_back_and_isolates_the_coin,
     ]
     for fn in fns:
         fn()

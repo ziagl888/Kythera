@@ -111,11 +111,15 @@ def detect_volume_spike_in_period(conn, symbol, open_time_1st_hit, open_time_hit
             conn, symbol, "30m", start=hist_start, end=open_time_hit,
             include_forming=False, columns=("open_time", "close", "volume"),
         )
-        in_period = df_all['open_time'] >= open_time_1st_hit
+        # THREE-way split, not a complement (review fix): the two old windows
+        # were [1st_hit, hit] and [1st_hit-10d, 1st_hit-30m] — a (contract-
+        # violating) misaligned bar strictly inside (1st_hit-30m, 1st_hit) was
+        # in NEITHER window and must stay excluded, or the baseline mean/std
+        # would drift from the old reads.
+        df_period = df_all[df_all['open_time'] >= open_time_1st_hit]
         # Empty-checks in the ORDER of the old two reads: period first, then baseline.
-        df_period = df_all[in_period]
         if df_period.empty: return 0
-        df_hist = df_all[~in_period]
+        df_hist = df_all[df_all['open_time'] <= open_time_1st_hit - timeframe_delta("30m")]
         if df_hist.empty: return 0
 
         volume_mean, volume_std = df_hist['volume'].mean(), df_hist['volume'].std()
