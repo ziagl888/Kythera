@@ -1,3 +1,9 @@
+## [2026-07-19] Z1-Ops-Skript nachgezogen — Dashboard-Task auf Password-Logon + cmd.exe-Launcher (T-2026-CU-9050-170)
+
+Live-Verifikation des Z1-Deploys ergab: `tools/ops/register_kythera_dashboard_tasks.ps1` registrierte den Dashboard-Task als **S4U** — das funktioniert NICHT. Der kurze Export-Batch läuft unter S4U, aber der langlaufende waitress-Dashboard-Server bindet im Session-0-S4U-Kontext Port 8098 nie (getestet: auch nach 35s kein Bind). Der Fleet-Watchdog nutzt aus demselben Grund `LogonType=Password`. Zweiter Fund: eine Scheduled-Task-Aktion kann eine `.cmd` nicht direkt starten (kein CreateProcess auf `.cmd`) → sie muss über `cmd.exe /c "<launcher>"` laufen. Beides live gefixt (Dashboard läuft jetzt Session 0, HTTP 200) und hier ins committete Skript nachgezogen.
+
+- `tools/ops/register_kythera_dashboard_tasks.ps1`: Dashboard-Task (A) jetzt **Password-Logon** (`Read-Host`-Passwort-Prompt → `-User`/`-Password`, `-RunLevel Highest`) + Aktion **`cmd.exe /c`** auf einen zur Laufzeit geschriebenen **Logging-Launcher-`.cmd`** (leitet stdout/stderr in `staging_models/analytics/dashboard_scheduled.log`, damit ein Startfehler sichtbar ist). Export-Task (B) **unverändert S4U** (kurzer Batch, kein Passwort nötig). Header/`.NOTES` + Footer entsprechend aktualisiert. Bleibt **registrierungs-only** (kein Live-Cutover — CLAUDE.md Hard-Regel 1). Nur Ops-Skript, kein Python/Fleet-Code; `.ps1` parse-verifiziert (kein DB-freier Test möglich).
+
 ## [2026-07-19] Ingestion Batch-Flush — ein execute_values statt ~3.185 Einzel-INSERTs/s (T-2026-CU-9050-169)
 
 Umsetzung des T-168-Ingest-Reports (Maßnahmen 1–3): Der 3s-DB-Flusher schrieb jede Kerze als EIGENES
