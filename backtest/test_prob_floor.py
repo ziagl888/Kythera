@@ -3,8 +3,10 @@
 The realized-trade analysis (closed_ai_signals ⨝ ml_predictions_master, 32.4k
 trades 2026-03..07) showed zero-EV segments below a confidence floor for AIM2
 (p<0.70, ~72 % of volume) and the BB sniper legs (p<0.50, ~95 % of volume),
-plus a net-negative 0.65-0.70 band for SRA1. Three floors were raised; TD was
-deliberately left alone (confidence not selective on realized trades there).
+plus a net-negative 0.65-0.70 band for SRA1. Two env floors were added (AIM2,
+BB) and one legacy fallback constant bumped (SRA1 — an artifact WITH meta
+still brings its own operating point); TD was deliberately left alone
+(confidence not selective on realized trades there).
 
 Pinned here:
   * core.prob_floor.load_prob_floor parsing semantics (env override, garbage
@@ -76,6 +78,13 @@ def test_values_clamp_into_unit_interval():
     assert _with_env(BB_MIN_PROB="-0.3")["BB_MIN_PROB"] == 0.0
 
 
+def test_non_finite_values_fall_back_to_default():
+    # nan would collapse to 0.0 in the clamp and silently disable the floor.
+    assert _with_env(BB_MIN_PROB="nan")["BB_MIN_PROB"] == 0.5
+    assert _with_env(BB_MIN_PROB="inf")["BB_MIN_PROB"] == 0.5
+    assert _with_env(BB_MIN_PROB="-inf")["BB_MIN_PROB"] == 0.5
+
+
 # ------------------------------------------------- static wiring in bot 15 (AIM2)
 
 
@@ -101,12 +110,19 @@ def test_aim2_shadow_floor_untouched():
 
 
 def test_bb_floor_default_is_050_and_td_has_none():
-    assert re.search(r"'bb': load_prob_floor\(\"BB_MIN_PROB\", 0\.50\)", SNIPER_SRC), (
-        "the BB posting floor (default 0.50) is gone or renamed"
+    # Anchored to the MIN_PROB_FLOORS block so a 'td: 0.0' elsewhere can't satisfy it.
+    assert re.search(
+        r"MIN_PROB_FLOORS = \{\s*'bb': load_prob_floor\(\"BB_MIN_PROB\", 0\.50\),\s*'td': 0\.0,",
+        SNIPER_SRC,
+    ), (
+        "the BB posting floor (default 0.50) is gone/renamed, or TD grew a floor — "
+        "TD confidence is not selective on realized trades; leave TD at its artifact operating point"
     )
-    assert re.search(r"'td': 0\.0", SNIPER_SRC), (
-        "TD grew a floor — confidence is not selective on realized TD trades; leave TD at its artifact operating point"
-    )
+
+
+def test_sniper_shadow_log_floor_untouched():
+    # Data collection below the raised posting gate must keep running.
+    assert "if prob >= 0.25:" in SNIPER_SRC, "the sniper shadow-log floor changed — shadow coverage would shrink"
 
 
 def test_sniper_floor_only_tightens_the_loaded_threshold():
