@@ -1,0 +1,95 @@
+{
+  "trainer": "tools/retrain_from_replay.py",
+  "strategy": "rub2",
+  "model_id": "RUB2",
+  "direction": "LONG",
+  "model_type": "binary (1=TP1-first-touch)",
+  "success_proba": "predict_proba[:, 1]",
+  "features": [
+    "dist_to_trend",
+    "rsi",
+    "atr_pct",
+    "dist_ema200",
+    "slope_trend",
+    "MACD_Line",
+    "MACD_Signal",
+    "TSI_Line",
+    "TSI_Signal",
+    "fund_last",
+    "fund_24h",
+    "fund_72h",
+    "fund_7d_cum",
+    "fund_pctl_90d",
+    "fund_trend"
+  ],
+  "optimal_threshold": null,
+  "label_source": "rub_replay_365d.jsonl",
+  "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-13-Parit\u00e4t), Fees inkl.",
+  "changes_vs_rub1": "MACD auf normal_12_26_9 fixiert (Live-Parit\u00e4t), Label mit SL-Pfad statt Max-Favorable-72h, chronologischer Split mit 7d-Purge statt Random-Split, +6 Funding-Features",
+  "split": "chronological 70/15/15 + 7d purge gap",
+  "xgboost_version": "3.1.2",
+  "n_train": 14931,
+  "n_val": 3045,
+  "n_test": 2439,
+  "val_stats": {
+    "deployable": false,
+    "best": {
+      "threshold": 0.6507,
+      "n": 913,
+      "avg_net_pnl_pct": -0.792,
+      "sum_net_pnl_pct": -722.76,
+      "wr": 67.1
+    },
+    "curve": [
+      {
+        "threshold": 0.6001,
+        "n": 1522,
+        "avg_net_pnl_pct": -0.89,
+        "sum_net_pnl_pct": -1355.0,
+        "wr": 66.9
+      },
+      {
+        "threshold": 0.6507,
+        "n": 913,
+        "avg_net_pnl_pct": -0.792,
+        "sum_net_pnl_pct": -722.76,
+        "wr": 67.1
+      },
+      {
+        "threshold": 0.6783,
+        "n": 609,
+        "avg_net_pnl_pct": -0.989,
+        "sum_net_pnl_pct": -602.47,
+        "wr": 65.5
+      },
+      {
+        "threshold": 0.6942,
+        "n": 457,
+        "avg_net_pnl_pct": -0.908,
+        "sum_net_pnl_pct": -414.84,
+        "wr": 66.1
+      },
+      {
+        "threshold": 0.7158,
+        "n": 305,
+        "avg_net_pnl_pct": -0.978,
+        "sum_net_pnl_pct": -298.18,
+        "wr": 66.2
+      },
+      {
+        "threshold": 0.7295,
+        "n": 229,
+        "avg_net_pnl_pct": -0.922,
+        "sum_net_pnl_pct": -211.05,
+        "wr": 66.4
+      }
+    ]
+  },
+  "test_stats": {
+    "n_taken": 0,
+    "wr": null,
+    "sum_net_pnl_pct": null,
+    "base_rate_test": 67.3,
+    "n_test_total": 2439
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "model_id": "FIF1",
+  "kind": "binary",
+  "trained_at": "2026-07-14T01:46:07.807875+00:00",
+  "events_file": "C:/Users/Michael/Documents/_X/staging_models/replay/fif1_events.jsonl",
+  "purge_days": 7,
+  "auc_val": 0.5367,
+  "auc_test": 0.5652,
+  "brier_test": 0.235,
+  "operating_point": {
+    "threshold": 0.69,
+    "total_pnl": 60.4,
+    "avg_pnl": 0.097,
+    "n": 625
+  },
+  "gate_uplift_test": {
+    "base_avg_pnl": -0.105,
+    "gate_avg_pnl": 0.196,
+    "gate_wr": 0.685,
+    "n_pass": 882,
+    "n_test": 18033
+  },
+  "n_train": 78293,
+  "n_val": 16494,
+  "n_test_split": 18033,
+  "split_t1": "2026-04-16 19:12:09.863290112",
+  "split_t2": "2026-05-12 03:10:23.857071104"
+}

@@ -1,0 +1,67 @@
+{
+  "trainer": "tools/retrain_sra2.py",
+  "strategy": "sra2",
+  "model_id": "SRA2",
+  "direction": "SHORT",
+  "model_type": "binary (1 = TP1 erreicht: status SL1/SL2/SL3/4)",
+  "success_proba": "predict_proba[:, 1]",
+  "features": [
+    "rsi_9",
+    "rsi_14",
+    "rsi_24",
+    "tsi_fast_12_7_7",
+    "tsi_fast_12_7_7_signal",
+    "macd_dif_pct",
+    "macd_dea_pct",
+    "atr_pct",
+    "r_squared",
+    "trend_direction_num",
+    "pct_ema9",
+    "pct_ema21",
+    "pct_wma9",
+    "pct_kama9",
+    "pct_support",
+    "pct_resist",
+    "pct_boll_mid",
+    "ema9_ema21_pct",
+    "kama9_kama21_pct",
+    "support_atr",
+    "resist_atr",
+    "boll_width_atr"
+  ],
+  "optimal_threshold": null,
+  "label_source": "closed_trades3 (Meta-Labeling; Semantik Operator+Code-verifiziert 2026-07-06)",
+  "changes_vs_sra1": "Preis-Rohspalten raus (22 skalenfreie Features), Look-ahead-Fix (nur geschlossene 1h-Kerze), NaN nativ statt Median-Imputation, Isotonic + pick_threshold_safe",
+  "split": "chronological 70/15/15 + 7d purge gap",
+  "xgboost_version": "3.1.2",
+  "n_train": 2040,
+  "n_val": 306,
+  "n_test": 240,
+  "val_stats": {
+    "deployable": false,
+    "best": {
+      "threshold": 0.6638,
+      "n": 148,
+      "avg_net_pnl_pct": -0.079,
+      "sum_net_pnl_pct": -11.62,
+      "wr": 70.9
+    },
+    "curve": [
+      {
+        "threshold": 0.6638,
+        "n": 148,
+        "avg_net_pnl_pct": -0.079,
+        "sum_net_pnl_pct": -11.62,
+        "wr": 70.9
+      }
+    ]
+  },
+  "test_stats": {
+    "n_taken": 0,
+    "wr": null,
+    "avg_net_pnl_pct": null,
+    "sum_net_pnl_pct": null,
+    "base_rate_test": 70.8,
+    "n_test_total": 240
+  }
+}

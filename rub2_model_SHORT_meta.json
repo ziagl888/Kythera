@@ -22,72 +22,58 @@
     "fund_pctl_90d",
     "fund_trend"
   ],
-  "optimal_threshold": 0.829,
+  "optimal_threshold": 0.7929,
   "label_source": "rub_replay_365d.jsonl",
   "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-13-Parit\u00e4t), Fees inkl.",
   "changes_vs_rub1": "MACD auf normal_12_26_9 fixiert (Live-Parit\u00e4t), Label mit SL-Pfad statt Max-Favorable-72h, chronologischer Split mit 7d-Purge statt Random-Split, +6 Funding-Features",
   "split": "chronological 70/15/15 + 7d purge gap",
   "xgboost_version": "3.1.2",
-  "n_train": 31894,
-  "n_val": 3775,
-  "n_test": 4725,
+  "n_train": 15012,
+  "n_val": 1675,
+  "n_test": 1844,
   "val_stats": {
     "deployable": true,
-    "threshold": 0.829,
-    "n": 758,
-    "avg_net_pnl_pct": 0.248,
-    "sum_net_pnl_pct": 188.02,
-    "wr": 81.5,
+    "threshold": 0.7929,
+    "n": 837,
+    "avg_net_pnl_pct": 0.169,
+    "sum_net_pnl_pct": 141.36,
+    "wr": 80.2,
     "curve": [
       {
-        "threshold": 0.7934,
-        "n": 1886,
-        "avg_net_pnl_pct": 0.09,
-        "sum_net_pnl_pct": 170.17,
-        "wr": 81.2
+        "threshold": 0.7929,
+        "n": 837,
+        "avg_net_pnl_pct": 0.169,
+        "sum_net_pnl_pct": 141.36,
+        "wr": 80.2
       },
       {
-        "threshold": 0.8174,
-        "n": 1131,
-        "avg_net_pnl_pct": 0.232,
-        "sum_net_pnl_pct": 261.86,
-        "wr": 82.2
+        "threshold": 0.8245,
+        "n": 503,
+        "avg_net_pnl_pct": 0.009,
+        "sum_net_pnl_pct": 4.48,
+        "wr": 80.1
       },
       {
-        "threshold": 0.829,
-        "n": 758,
-        "avg_net_pnl_pct": 0.248,
-        "sum_net_pnl_pct": 188.02,
-        "wr": 81.5
+        "threshold": 0.8389,
+        "n": 335,
+        "avg_net_pnl_pct": -0.057,
+        "sum_net_pnl_pct": -19.08,
+        "wr": 79.7
       },
       {
-        "threshold": 0.8351,
-        "n": 567,
-        "avg_net_pnl_pct": 0.146,
-        "sum_net_pnl_pct": 83.06,
-        "wr": 81.1
-      },
-      {
-        "threshold": 0.8422,
-        "n": 379,
-        "avg_net_pnl_pct": 0.179,
-        "sum_net_pnl_pct": 67.94,
-        "wr": 81.5
-      },
-      {
-        "threshold": 0.8468,
-        "n": 285,
-        "avg_net_pnl_pct": 0.118,
-        "sum_net_pnl_pct": 33.55,
-        "wr": 81.1
+        "threshold": 0.8467,
+        "n": 251,
+        "avg_net_pnl_pct": 0.029,
+        "sum_net_pnl_pct": 7.26,
+        "wr": 79.3
       }
     ]
   },
   "test_stats": {
-    "n_taken": 680,
-    "wr": 81.9,
-    "sum_net_pnl_pct": 432.15,
-    "base_rate_test": 79.1,
-    "n_test_total": 4725
+    "n_taken": 526,
+    "wr": 83.3,
+    "sum_net_pnl_pct": 564.59,
+    "base_rate_test": 76.1,
+    "n_test_total": 1844
   }
 }

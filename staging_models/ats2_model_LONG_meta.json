@@ -1,0 +1,135 @@
+{
+  "trainer": "tools/retrain_from_replay.py",
+  "strategy": "ats2",
+  "model_id": "ATS2",
+  "direction": "LONG",
+  "model_type": "binary (1=TP1-first-touch)",
+  "success_proba": "predict_proba[:, 1]",
+  "features": [
+    "rsi_14",
+    "rsi_6",
+    "macd_hist",
+    "atr_pct",
+    "vol_ratio",
+    "bb_width",
+    "bb_pos",
+    "dist_ema200",
+    "dist_ema9_21",
+    "rsi_ratio",
+    "slope_norm",
+    "dist_supp",
+    "dist_res",
+    "dist_kama9",
+    "dist_kama21",
+    "dist_kama55",
+    "dist_kama9_21",
+    "dist_donch_up",
+    "dist_donch_low",
+    "macd_cross_bearish",
+    "ema9_21_cross_bearish",
+    "kama9_21_cross_bearish",
+    "bollinger_lower_break",
+    "close_below_ema50",
+    "obv_ratio",
+    "close_to_vwap_pct",
+    "obv_val",
+    "volume_spike",
+    "volume_trend_up"
+  ],
+  "optimal_threshold": 0.7825,
+  "label_source": "ats_replay_365d.jsonl",
+  "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-12-Parit\u00e4t), Fees inkl.",
+  "changes_vs_ats1": "DB-basiert \u00fcber core.candles (R1-clean, kein CSV-Zwischenschritt), Label mit SL-Pfad statt Max-Favorable-Move-Proxy, chronologischer Split mit 7d-Purge statt Random-Split, geteilter Feature-Builder core.ats_features",
+  "split": "chronological 70/15/15 + 7d purge gap",
+  "xgboost_version": "3.1.2",
+  "n_train": 185106,
+  "n_val": 34528,
+  "n_test": 34496,
+  "val_stats": {
+    "deployable": true,
+    "threshold": 0.7825,
+    "n": 10353,
+    "avg_net_pnl_pct": 1.685,
+    "sum_net_pnl_pct": 17444.17,
+    "wr": 93.2,
+    "curve": [
+      {
+        "threshold": 0.7384,
+        "n": 17256,
+        "avg_net_pnl_pct": 1.59,
+        "sum_net_pnl_pct": 27430.52,
+        "wr": 91.1
+      },
+      {
+        "threshold": 0.7825,
+        "n": 10353,
+        "avg_net_pnl_pct": 1.685,
+        "sum_net_pnl_pct": 17444.17,
+        "wr": 93.2
+      },
+      {
+        "threshold": 0.8045,
+        "n": 6903,
+        "avg_net_pnl_pct": 1.658,
+        "sum_net_pnl_pct": 11441.94,
+        "wr": 93.5
+      },
+      {
+        "threshold": 0.8183,
+        "n": 5178,
+        "avg_net_pnl_pct": 1.669,
+        "sum_net_pnl_pct": 8643.12,
+        "wr": 93.3
+      },
+      {
+        "threshold": 0.8355,
+        "n": 3449,
+        "avg_net_pnl_pct": 1.578,
+        "sum_net_pnl_pct": 5441.67,
+        "wr": 92.7
+      },
+      {
+        "threshold": 0.845,
+        "n": 2592,
+        "avg_net_pnl_pct": 1.429,
+        "sum_net_pnl_pct": 3704.31,
+        "wr": 91.9
+      },
+      {
+        "threshold": 0.8572,
+        "n": 1725,
+        "avg_net_pnl_pct": 1.267,
+        "sum_net_pnl_pct": 2185.34,
+        "wr": 90.8
+      },
+      {
+        "threshold": 0.8699,
+        "n": 1039,
+        "avg_net_pnl_pct": 1.101,
+        "sum_net_pnl_pct": 1143.56,
+        "wr": 89.3
+      },
+      {
+        "threshold": 0.8787,
+        "n": 693,
+        "avg_net_pnl_pct": 0.847,
+        "sum_net_pnl_pct": 586.73,
+        "wr": 87.0
+      },
+      {
+        "threshold": 0.8971,
+        "n": 345,
+        "avg_net_pnl_pct": 0.373,
+        "sum_net_pnl_pct": 128.55,
+        "wr": 84.1
+      }
+    ]
+  },
+  "test_stats": {
+    "n_taken": 7048,
+    "wr": 86.0,
+    "sum_net_pnl_pct": 7513.59,
+    "base_rate_test": 66.7,
+    "n_test_total": 34496
+  }
+}
