@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
-from core.candles import read_candles_with_indicators
+from core.candles import history_start, read_candles_with_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
@@ -213,6 +213,10 @@ def _fetch_mis_frame(conn, symbol):
         symbol,
         "1h",
         limit=100,
+        # TimescaleDB chunk-exclusion hint (T-2026-CU-9050-180): bound the read to
+        # a window that comfortably holds the newest 100 closed 1h candles so the
+        # returned rows are unchanged while ~120 of 126 chunks are pruned.
+        start=history_start("1h", 100),
         include_forming=False,
         candle_columns=("open_time", "close", "volume"),
         indicator_columns=MIS_INDICATOR_COLUMNS,

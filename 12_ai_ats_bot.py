@@ -22,7 +22,7 @@ from core.ats_features import (
     ats_cross,
     build_ats_features,
 )
-from core.candles import read_candles_with_indicators
+from core.candles import history_start, read_candles_with_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
@@ -160,6 +160,14 @@ def check_tsi_crossovers():
                 symbol,
                 "1h",
                 limit=500,
+                # TimescaleDB chunk-exclusion hint (T-2026-CU-9050-180): the window
+                # (safety=3 → ~62.5 d) holds well over the newest 500 closed 1h
+                # candles for any listed pair, so the returned rows — and the OBV
+                # baseline at iloc[0] below — are unchanged while the read stops
+                # scanning all 126 chunks. The `< 50` guard does NOT enforce this
+                # (it deliberately accepts short-history coins); parity rests on the
+                # window margin — see history_start's parity caveat.
+                start=history_start("1h", 500),
                 include_forming=False,
                 candle_columns=ATS_CANDLE_COLUMNS,
                 indicator_columns=ATS_INDICATOR_COLUMNS,

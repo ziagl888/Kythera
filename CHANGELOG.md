@@ -1,3 +1,37 @@
+## [2026-07-20] TimescaleDB-Chunk-Exclusion an den AI-Bot-Feature-Reads (T-2026-CU-9050-180)
+
+Der dominante DB-Read der Fleet — `read_candles_with_indicators` (candles⋈indicators) — lief auf dem
+hyper-Pfad OHNE untere Zeitgrenze. TimescaleDB konnte daher KEINEN Chunk ausschließen: jeder Read scannte
+alle 126 Chunks von `candles` (9 GB) + `indicators` (19 GB). In `pg_stat_statements` war das die Query #1
+(≈28 % der gesamten DB-Executor-Zeit, ~215–245 ms/Call, 337k Calls) — auf dem gesättigten VPS trieb sie
+Postgres auf ~4,3 Kerne (Analyse T-166/T-173/T-179 + Root-Cause-Session).
+
+Fix, verhaltensneutral: neuer Helfer `core/candles.history_start(tf, n_candles, *, anchor=None, safety=3,
+min_days=60)` liefert eine untere `start`-Grenze, die die neuesten `n_candles` geschlossenen Kerzen sicher
+abdeckt (`max(n·TF_SECONDS·safety, min_days)`, tz-aware UTC). Die Read-Helfer geben ohnehin die neuesten
+`limit` Kerzen zurück (`ORDER BY open_time DESC LIMIT`), daher liefert jede ausreichend weit zurückreichende
+`start`-Grenze BYTE-IDENTISCHE Rows — sie wirkt rein als Chunk-Exclusion-Hint. Übergeben an den fünf
+Hot-Call-Sites:
+- `11_ai_mis_bot.py` (1h, 100), `12_ai_ats_bot.py` (1h, 500 — deckt die OBV-`iloc[0]`-Baseline ab),
+  `24_quasimodo_bot.py` (tf, 100), `25_smc_ml_sniper.py` (tf, 150);
+- `15_ai_master_bot.py` (As-of, `limit=1`, `anchor=end`): Kandidaten sind auf die letzten
+  `CANDIDATE_WINDOW_MIN`=60 min gefiltert, `end`≈jetzt → der 60-Tage-Floor kann den Lookup nie kürzen.
+
+Bewusst NICHT angefasst: `core/research_features.fetch_context_frame` (führt einen `as_of`-Parameter, dessen
+Fenster-Semantik separat zu klären ist — Backfill/Replay-Pfad), `core/breadth_features` (nimmt `start=`
+bereits durch), `core/ats_features` (kein echter Call-Site). Regel-7-Grenze: der Shared-Read-Pfad selbst
+bleibt unverändert; nur die Call-Sites setzen die Grenze.
+
+Beweis (EXPLAIN, live, read-only): dieselbe Query ohne `start` = 252 Per-Chunk-Index-Scans; mit
+`open_time >= now()-60d` = 18 (~14× weniger Chunks). Verhaltens-Parität mathematisch (Fenster ≥ n·TF) +
+Tests. Residual: eine extrem lückenhaft handelnde Coin (< 1/safety der Wall-Clock-Kadenz über min_days)
+bekäme ihre neuesten Kerzen INNERHALB des Fensters statt weiter zurück — jeder Call-Site hat aber bereits
+einen Mindest-Row-Guard (`len(df) < N`), so eine Coin wird übersprungen, nicht fehlbewertet.
+
+Verifiziert: `backtest/test_candles.py` (59, davon 7 neu für `history_start`), Parität/Feature/Detector-Suiten
+(115 passed), Regression-Guard 24/24, ruff/mypy grün. Aktiv nach dem nächsten Fleet-Restart (Operator-Gate);
+kein Live-Eingriff, keine Schema-/Index-Änderung.
+
 ## [2026-07-20] Z1-Leaderboard: Risk-Metriken deterministisch — (src, id)-Tiebreaker in der Outcomes-Order (T-2026-CU-9050-177)
 
 VERHALTENSÄNDERUNG (bewusst, der Zweck des Tasks): die Leaderboard-Risk-Metriken

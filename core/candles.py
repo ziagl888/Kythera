@@ -446,6 +446,57 @@ def _windowed_select(
     return sql.SQL("SELECT * FROM ({inner}) s ORDER BY open_time ASC").format(inner=inner), params
 
 
+# Default headroom multiplier and floor for history_start (T-2026-CU-9050-180).
+# The read helpers return the newest `limit` closed candles via ORDER BY DESC
+# LIMIT, so any lower `start` bound that leaves >= limit closed candles in
+# [start, anchor] yields byte-identical rows. safety/min_days pick a window that
+# does so with generous margin against gaps (weekends, thin listings, delistings)
+# while still letting TimescaleDB exclude the bulk of the candles/indicators
+# chunks (measured: an unbounded read scans all 126 chunks; a 30-day bound ~5).
+_HISTORY_SAFETY = 3
+_HISTORY_MIN_DAYS = 60
+
+
+def history_start(
+    tf: str,
+    n_candles: int,
+    *,
+    anchor: datetime | None = None,
+    safety: int = _HISTORY_SAFETY,
+    min_days: int = _HISTORY_MIN_DAYS,
+) -> datetime:
+    """Lower `start` bound covering the newest `n_candles` closed candles of `tf`.
+
+    Returns ``anchor - max(n_candles * TF_SECONDS[tf] * safety, min_days)`` as a
+    timezone-aware UTC datetime. Purpose is purely a TimescaleDB chunk-exclusion
+    hint for the hot ``read_candles_with_indicators`` call sites: passing this as
+    ``start=`` prunes chunks without changing the returned rows, PROVIDED the
+    window still holds at least ``n_candles`` closed candles — which the safety
+    multiplier and the ``min_days`` floor guarantee for any coin trading at more
+    than ``1/safety`` of the wall-clock cadence over ``min_days``.
+
+    Parity caveat (why the window is sized this generously): a coin with MORE
+    than ``n_candles`` of total history but so many gaps that its newest
+    ``n_candles`` span more than the window would return fewer rows here than an
+    unbounded read, and a feature computed from the frame's first row (e.g. the
+    ATS OBV baseline) would then shift. The per-site minimum-row guards sit below
+    ``n_candles`` (they accept genuinely short-history/new coins on purpose), so
+    such a coin is NOT skipped — it is scored on a shorter frame. Reaching this
+    requires >``(safety-1)/safety`` of the candles missing across ``min_days``
+    (>41 days of holes in 500 hourly candles at safety=3), which a listed
+    Binance-futures pair — emitting contiguous klines every interval while
+    listed — cannot produce; the largest observed ingestion outage (~14h) is
+    three orders of magnitude too small. The margin, not a runtime guard, is the
+    protection. `anchor` defaults to now (UTC); an as-of read passes its `end`.
+    """
+    validate_timeframe(tf)
+    base = anchor if anchor is not None else datetime.now(timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    span_seconds = max(n_candles * TF_SECONDS[tf] * safety, min_days * 86400)
+    return base - timedelta(seconds=span_seconds)
+
+
 def read_candles(
     conn: Any,
     symbol: str,
