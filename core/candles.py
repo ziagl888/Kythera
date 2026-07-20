@@ -473,11 +473,21 @@ def history_start(
     ``start=`` prunes chunks without changing the returned rows, PROVIDED the
     window still holds at least ``n_candles`` closed candles — which the safety
     multiplier and the ``min_days`` floor guarantee for any coin trading at more
-    than ``1/safety`` of the wall-clock cadence over ``min_days``. A coin sparser
-    than that (heavily gapped/near-delisted) would get its newest available
-    candles inside the window instead of reaching further back; every call site
-    already guards on a minimum row count, so such a coin is skipped, not
-    mis-scored. `anchor` defaults to now (UTC); an as-of read passes its `end`.
+    than ``1/safety`` of the wall-clock cadence over ``min_days``.
+
+    Parity caveat (why the window is sized this generously): a coin with MORE
+    than ``n_candles`` of total history but so many gaps that its newest
+    ``n_candles`` span more than the window would return fewer rows here than an
+    unbounded read, and a feature computed from the frame's first row (e.g. the
+    ATS OBV baseline) would then shift. The per-site minimum-row guards sit below
+    ``n_candles`` (they accept genuinely short-history/new coins on purpose), so
+    such a coin is NOT skipped — it is scored on a shorter frame. Reaching this
+    requires >``(safety-1)/safety`` of the candles missing across ``min_days``
+    (>41 days of holes in 500 hourly candles at safety=3), which a listed
+    Binance-futures pair — emitting contiguous klines every interval while
+    listed — cannot produce; the largest observed ingestion outage (~14h) is
+    three orders of magnitude too small. The margin, not a runtime guard, is the
+    protection. `anchor` defaults to now (UTC); an as-of read passes its `end`.
     """
     validate_timeframe(tf)
     base = anchor if anchor is not None else datetime.now(timezone.utc)

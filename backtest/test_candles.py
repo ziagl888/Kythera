@@ -418,5 +418,23 @@ def test_history_start_rejects_unknown_timeframe():
         c.history_start("3m", 100)
 
 
+def test_history_start_module_defaults_keep_the_parity_margin():
+    """Pin the module-level defaults (T-2026-CU-9050-180): the safety multiplier
+    and min_days floor are the ONLY protection for the gappy-coin parity residual
+    (see history_start docstring). The other tests pass safety/min_days
+    explicitly, so shrinking _HISTORY_SAFETY→1 / _HISTORY_MIN_DAYS→0 would leave
+    them green while erasing that margin. This test exercises the DEFAULT path and
+    fails if the margin is silently narrowed.
+    """
+    assert c._HISTORY_SAFETY >= 3
+    assert c._HISTORY_MIN_DAYS >= 60
+    anchor = _utc(2026, 7, 20)
+    # Default-parameter call: window must exceed the nominal n*TF by >= safety,
+    # and never fall below the min_days floor.
+    span = (anchor - c.history_start("1h", 100, anchor=anchor)).total_seconds()
+    assert span >= 100 * 3600 * 3
+    assert span >= 60 * 86400
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
