@@ -1,3 +1,22 @@
+## [2026-07-20] Retired/silenced Modelle aus den aktiven Per-Bot-Report-Blöcken (T-2026-CU-9050-182)
+
+Der 4h-Sentiment-Tracker-Post (`23_market_tracker.py`, `job_per_bot_performance`) listete abgelöste
+Generationen (AIM1, MIS1-*) und stummgeschaltete Alt-Beine (ATS1/ATB1) weiterhin in den drei aktiven
+Blöcken PER-BOT PERFORMANCE, HALF-KELLY POSITION SIZING und MODELS A–Z (compact) — obwohl der
+Realized-PnL-Report sie längst in einen eigenen RETIRED-Block trennt.
+
+Fix, display-only: neuer module-scope Pure-Helper `is_display_retired(tag)` an EINEM Punkt auf die
+gemeinsame `strategy_short`-Quelle angewandt (upstream aller drei Blöcke). Ein Tag ist display-retired,
+wenn BEIDE Richtungs-Legs `shadow_gate.leg_status ∈ {RETIRED, SILENT}` sind — die konservative per-Tag-
+Hebung des per-Leg-Buckets aus dem Realized-Report (ein Tag mit noch einem LIVE-/SHADOW-Bein bleibt
+sichtbar). SHADOW- und LIVE-Tags bleiben bewusst sichtbar, weil die Shadow-Perf die Entscheidungsgrundlage
+für die anstehenden Modell-Promotionen ist. Kein Posting-/Geld-Effekt.
+
+Tests: `backtest/test_market_tracker_lifecycle.py` +4 Fälle (retired/silenced raus, shadow/live rein,
+MIS2-Prefix-Grenze, rohe Vor-Normalisierungs-Formen), 11/11 grün; alle market_tracker-Tests 72/72 grün.
+Beide Kern-Reviews (z-code-reviewer, z-spec-compliance-review) PASS; zwei LOW-Notes (Docstring-Präzision,
+pretty↔raw-Testpfad) eingearbeitet.
+
 ## [2026-07-20] TimescaleDB-Chunk-Exclusion an den AI-Bot-Feature-Reads (T-2026-CU-9050-180)
 
 Der dominante DB-Read der Fleet — `read_candles_with_indicators` (candles⋈indicators) — lief auf dem
