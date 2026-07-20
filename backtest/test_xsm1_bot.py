@@ -1,11 +1,12 @@
 # backtest/test_xsm1_bot.py
 """DB-freie Tests für den XSM1/XSR1-Shadow-Forwarder (Bot 39, K2, T-2026-CU-9050-149).
 
-  1. shadow_gate: XSM1-LONG + XSR1-SHORT sind SHADOW, ohne Artefakt.
+  1. shadow_gate: XSM1-LONG + XSR1-SHORT sind LIVE (T-2026-CU-9050-183, → CH_ATS),
+     ohne Artefakt.
   2. bot_catalog: Tags "XSM1"/"XSR1" → 39_ai_xsm1_bot.py.
   3. select_top_decile: Liquiditäts-Filter + oberstes F-Rendite-Dezil.
-  4. emit: schreibt einen SHADOW-Trade je (tag,direction) nur bei SHADOW + kein
-     Cooldown/offener Trade + Targets — nie live.
+  4. emit: emittiert je (tag,direction) über post_ai_signal_gated nur bei
+     LIVE/SHADOW + kein Cooldown/offener Trade + Targets; SILENT → nichts. → CH_ATS.
 
 Run: pytest backtest/test_xsm1_bot.py -v
 """
@@ -39,9 +40,10 @@ xsm1 = _import_xsm1()
 
 
 # ── 1. shadow_gate ────────────────────────────────────────────────────────────
-def test_xsm1_xsr1_legs_shadow_no_artifact():
-    assert sg.leg_status("XSM1", "LONG") == sg.SHADOW
-    assert sg.leg_status("XSR1", "SHORT") == sg.SHADOW
+def test_xsm1_xsr1_legs_live_no_artifact():
+    # T-2026-CU-9050-183: die emittierten Beine live promotet (→ CH_ATS), kein Artefakt.
+    assert sg.leg_status("XSM1", "LONG") == sg.LIVE
+    assert sg.leg_status("XSR1", "SHORT") == sg.LIVE
     assert sg.shadow_artifact_path("XSM1", "LONG") is None
     assert sg.shadow_artifact_path("XSR1", "SHORT") is None
     # die jeweils NICHT emittierte Gegenrichtung bleibt Default-LIVE (kein Bot postet sie)
@@ -97,19 +99,20 @@ class _FakeConn:
 
 def _wire(monkeypatch, *, leg=None, cooldown=False, has_open=False, targets=(95.0, 90.0, 85.0)):
     posts: list[tuple] = []
+    eff_leg = leg if leg is not None else sg.LIVE
     monkeypatch.setattr(xsm1, "shadow_posting_enabled", lambda: True)
-    monkeypatch.setattr(xsm1, "leg_status", lambda *_: leg if leg is not None else sg.SHADOW)
+    monkeypatch.setattr(xsm1, "leg_status", lambda *_: eff_leg)
     monkeypatch.setattr(xsm1, "check_cooldown", lambda *a, **k: cooldown)
     monkeypatch.setattr(xsm1, "has_open_ai_signal", lambda *a, **k: has_open)
     monkeypatch.setattr(xsm1, "get_hvn_and_sr_levels", lambda *a, **k: ([80.0, 85.0, 90.0], [110.0, 120.0]))
     monkeypatch.setattr(xsm1, "ensure_min_tp_distance", lambda *a, **k: list(targets))
     monkeypatch.setattr(xsm1, "update_cooldown", lambda *a, **k: None)
 
-    def _post(conn, tag, sym, direction, conf, e1, e2, sl, tgts, **k):
-        posts.append((tag, sym, direction, e1, e2, sl))
-        return True
+    def _gated(conn, tag, direction, channel_id, sym, conf, e1, e2, sl, tgts, **k):
+        posts.append((tag, direction, channel_id, sym, e1, e2, sl))
+        return "live" if eff_leg == sg.LIVE else "shadow"
 
-    monkeypatch.setattr(xsm1, "post_shadow_ai_signal", _post)
+    monkeypatch.setattr(xsm1, "post_ai_signal_gated", _gated)
     return posts
 
 
@@ -118,15 +121,16 @@ def test_emit_both_hypotheses(monkeypatch):
     xsm1.emit(_FakeConn(), "TOPUSDT", "XSM1", "LONG", 100.0)
     xsm1.emit(_FakeConn(), "TOPUSDT", "XSR1", "SHORT", 100.0)
     assert len(posts) == 2
-    xsm = next(p for p in posts if p[0] == "XSM1")
+    xsm = next(p for p in posts if p[0] == "XSM1")  # (tag, dir, ch, sym, e1, e2, sl)
     xsr = next(p for p in posts if p[0] == "XSR1")
-    assert xsm[2] == "LONG" and xsm[5] < xsm[3]  # LONG-SL unter Entry
-    assert xsr[2] == "SHORT" and xsr[5] > xsr[3]  # SHORT-SL über Entry
-    assert xsm[3] == xsm[4] and xsr[3] == xsr[4]  # Market-Fill
+    assert xsm[1] == "LONG" and xsm[6] < xsm[4]  # LONG-SL unter Entry (sl < e1)
+    assert xsr[1] == "SHORT" and xsr[6] > xsr[4]  # SHORT-SL über Entry
+    assert xsm[2] == xsm1._kcfg.CH_ATS and xsr[2] == xsm1._kcfg.CH_ATS  # ehem. ATS-Channel
+    assert xsm[4] == xsm[5] and xsr[4] == xsr[5]  # Market-Fill (e1==e2)
 
 
-def test_emit_skips_when_gated(monkeypatch):
-    posts = _wire(monkeypatch, leg=sg.LIVE)
+def test_emit_skips_when_silent_or_gated(monkeypatch):
+    posts = _wire(monkeypatch, leg=sg.SILENT)  # SILENT → nichts (LIVE/SHADOW würden emittieren)
     xsm1.emit(_FakeConn(), "TOPUSDT", "XSM1", "LONG", 100.0)
     posts2 = _wire(monkeypatch, cooldown=True)
     xsm1.emit(_FakeConn(), "TOPUSDT", "XSM1", "LONG", 100.0)

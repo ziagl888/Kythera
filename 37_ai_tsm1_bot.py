@@ -1,16 +1,17 @@
-# 37_ai_tsm1_bot.py — TSM1 "Time-Series-Momentum" (Studie K1, SHADOW-ONLY).
+# 37_ai_tsm1_bot.py — TSM1 "Time-Series-Momentum" (Studie K1; SHORT LIVE seit T-2026-CU-9050-183).
 """
 Zeitreihen-Momentum-Ausbruch auf dem 4h-Chart: die Rate-of-Change über L=12
 4h-Kerzen kreuzt von AUSSERHALB nach INNERHALB des ±k·σ-Bands (σ = 90d-Rolling-
 Std der ROC, k=0,5) → Momentum-Signal. Studien-Bestzelle `4h|L12|k0.5`.
 
-**Reiner Shadow-Bot (kein Live-Post), NUR SHORT.** Die Studie (tsmom_study) ist
-insgesamt `no-op/paper-falsified` (bestes OOS-Cell test −0,05 %/Trade); der EINZIGE
-nicht-falsifizierte Teil ist die SHORT-Richtung (in JEDER Zelle positiv, während
-LONG tief negativ ist — der Netto-Verlust kommt komplett vom LONG-Bein). Das
-LONG-Bein wird daher gar nicht erst emittiert (nur `("TSM1","SHORT")` ist als
-SHADOW registriert). Der Bot validiert das SHORT-Momentum live über überwachte,
-nie gepostete Trades (`ai_signals` ohne `telegram_outbox`, Tag `TSM1`).
+**NUR SHORT; das SHORT-Bein ist seit T-2026-CU-9050-183 LIVE (→ CH_FIF1, ersetzt
+den geparkten FIF1).** Die Studie (tsmom_study) ist insgesamt `no-op/paper-
+falsified` (bestes OOS-Cell test −0,05 %/Trade); der EINZIGE nicht-falsifizierte
+Teil ist die SHORT-Richtung (in JEDER Zelle positiv, während LONG tief negativ
+ist — der Netto-Verlust kommt komplett vom LONG-Bein). Das LONG-Bein wird daher
+gar nicht erst emittiert. Der Post läuft über `signal_post.post_ai_signal_gated`
+(LIVE → Cornix-Post in CH_FIF1; ein Rückzug in den Shadow = `("TSM1","SHORT")` in
+`_LIFECYCLE` wieder auf SHADOW setzen, Tag `TSM1`).
 
 Signal-Vertrag == Studie `tools/tsmom_study.py::signal_events` (Zelle 4h|L12|k0.5):
   * ROC_L[t] = close[t]/close[t−12] − 1 auf nativen 4h-Closes.
@@ -34,11 +35,12 @@ import time
 import numpy as np
 import pandas as pd
 
+from core import config as _kcfg
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, load_coins, update_cooldown
-from core.shadow_gate import SHADOW, leg_status, shadow_posting_enabled
-from core.signal_post import has_open_ai_signal, post_shadow_ai_signal
+from core.shadow_gate import LIVE, SHADOW, leg_status, shadow_posting_enabled
+from core.signal_post import has_open_ai_signal, post_ai_signal_gated
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - TSM1_BOT - %(message)s")
@@ -76,7 +78,7 @@ def process_coin(conn, symbol: str) -> bool:
     """True, wenn ein Shadow-Trade geschrieben wurde (für die Kandidaten-Kappe)."""
     if not shadow_posting_enabled():
         return False
-    if leg_status(MODEL_ID, DIRECTION) != SHADOW:  # fail-safe: nie live posten
+    if leg_status(MODEL_ID, DIRECTION) not in (LIVE, SHADOW):  # SILENT/retired → nichts emittieren
         return False
     if check_cooldown(conn, MODEL_ID, symbol, DIRECTION, COOLDOWN_HOURS):
         return False
@@ -99,13 +101,30 @@ def process_coin(conn, symbol: str) -> bool:
     if not targets:
         return False
 
-    wrote = post_shadow_ai_signal(conn, MODEL_ID, symbol, DIRECTION, SHADOW_CONF, entry1, entry1, sl, targets, n_show=3)
-    if wrote:
+    outcome = post_ai_signal_gated(
+        conn,
+        MODEL_ID,
+        DIRECTION,
+        _kcfg.CH_FIF1,  # von FIF1 geerbter Ziel-Channel (T-2026-CU-9050-183)
+        symbol,
+        SHADOW_CONF,
+        entry1,
+        entry1,
+        sl,
+        targets,
+        source_desc="AI TSM1 4h Time-Series-Momentum (K1)",
+        n_show=3,
+    )
+    if outcome == "live":
+        logger.info(
+            f"📈 TSM1 LIVE SHORT {symbol} | 4h-ROC-Crossing @ {entry1:g} (SL {sl:g}, {len(targets)} TP) → CH_FIF1."
+        )
+    elif outcome == "shadow":
         logger.info(
             f"👻 TSM1-Shadow SHORT {symbol} | 4h-ROC-Crossing @ {entry1:g} (SL {sl:g}, {len(targets)} TP) — überwacht."
         )
     update_cooldown(conn, MODEL_ID, symbol, DIRECTION)  # committet atomar
-    return bool(wrote)
+    return outcome is not None
 
 
 def run_scan() -> None:
@@ -135,7 +154,7 @@ def run_scan() -> None:
 
 
 def main() -> None:
-    logger.info("=== 📈 AI TSM1 BOT (Time-Series-Momentum, K1) GESTARTET — SHADOW-ONLY, SHORT ===")
+    logger.info("=== 📈 AI TSM1 BOT (Time-Series-Momentum, K1) GESTARTET — LIVE SHORT → CH_FIF1 ===")
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""

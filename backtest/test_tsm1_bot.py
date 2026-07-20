@@ -1,13 +1,14 @@
 # backtest/test_tsm1_bot.py
 """DB-freie Tests für den TSM1-Shadow-Forwarder (Bot 37, K1, T-2026-CU-9050-149).
 
-  1. shadow_gate: TSM1-SHORT ist SHADOW, ohne Artefakt (Forwarder-Klasse D);
-     die nicht-emittierte LONG-Richtung bleibt Default-LIVE (kein Bot postet sie).
+  1. shadow_gate: TSM1-SHORT ist LIVE (T-2026-CU-9050-183, → CH_FIF1), ohne
+     Artefakt (Forwarder-Klasse D); die nicht-emittierte LONG-Richtung ebenfalls LIVE.
   2. bot_catalog: Tag "TSM1" → 37_ai_tsm1_bot.py.
   3. short_crossing: das 4h-ROC-Crossing-Prädikat (außen→innen) feuert genau am
      Bar mit dem Durchbruch, nicht davor.
-  4. process_coin: emittiert einen SHADOW-Trade nur bei Crossing + SHADOW-Bein +
-     kein Cooldown/offener Trade + genug Kerzen + Targets — nie live.
+  4. process_coin: emittiert über post_ai_signal_gated nur bei Crossing +
+     LIVE/SHADOW-Bein + kein Cooldown/offener Trade + genug Kerzen + Targets;
+     SILENT/retired → nichts. Live-Post geht an den geerbten CH_FIF1.
 
 Run: pytest backtest/test_tsm1_bot.py -v
 """
@@ -66,12 +67,14 @@ def _quiet_closes():
 
 
 # ── 1. shadow_gate ────────────────────────────────────────────────────────────
-def test_tsm1_short_is_shadow_but_has_no_artifact():
-    assert sg.leg_status("TSM1", "SHORT") == sg.SHADOW
-    assert sg.is_shadow("TSM1", "SHORT")
+def test_tsm1_short_is_live_no_artifact():
+    # T-2026-CU-9050-183: TSM1 SHORT live promotet (→ CH_FIF1); Forwarder ohne
+    # Artefakt (Klasse D), also weiterhin kein Staging-Modell.
+    assert sg.leg_status("TSM1", "SHORT") == sg.LIVE
+    assert not sg.is_shadow("TSM1", "SHORT")
     assert sg.shadow_artifact_path("TSM1", "SHORT") is None
     assert sg.load_shadow_artifact("TSM1", "SHORT") is None
-    # LONG wird nicht emittiert → bleibt Default-LIVE (kein Bot postet es).
+    # LONG wird nicht emittiert → ebenfalls Default-LIVE (kein Bot postet es).
     assert sg.leg_status("TSM1", "LONG") == sg.LIVE
 
 
@@ -125,8 +128,9 @@ def _df(close):
 
 def _wire(monkeypatch, *, leg=None, cooldown=False, has_open=False, closes=None, targets=(95.0, 90.0, 85.0)):
     posts: list[tuple] = []
+    eff_leg = leg if leg is not None else sg.LIVE
     monkeypatch.setattr(tsm1, "shadow_posting_enabled", lambda: True)
-    monkeypatch.setattr(tsm1, "leg_status", lambda *_: leg if leg is not None else sg.SHADOW)
+    monkeypatch.setattr(tsm1, "leg_status", lambda *_: eff_leg)
     monkeypatch.setattr(tsm1, "check_cooldown", lambda *a, **k: cooldown)
     monkeypatch.setattr(tsm1, "has_open_ai_signal", lambda *a, **k: has_open)
     monkeypatch.setattr(tsm1, "read_candles", lambda *a, **k: _df(_crossing_closes() if closes is None else closes))
@@ -134,11 +138,11 @@ def _wire(monkeypatch, *, leg=None, cooldown=False, has_open=False, closes=None,
     monkeypatch.setattr(tsm1, "ensure_min_tp_distance", lambda *a, **k: list(targets))
     monkeypatch.setattr(tsm1, "update_cooldown", lambda *a, **k: None)
 
-    def _post(conn, tag, sym, direction, conf, e1, e2, sl, tgts, **k):
-        posts.append((tag, sym, direction, e1, e2, sl, tuple(tgts)))
-        return True
+    def _gated(conn, tag, direction, channel_id, sym, conf, e1, e2, sl, tgts, **k):
+        posts.append((tag, direction, channel_id, sym, e1, e2, sl, tuple(tgts)))
+        return "live" if eff_leg == sg.LIVE else "shadow"
 
-    monkeypatch.setattr(tsm1, "post_shadow_ai_signal", _post)
+    monkeypatch.setattr(tsm1, "post_ai_signal_gated", _gated)
     return posts
 
 
@@ -146,8 +150,9 @@ def test_process_coin_emits_on_crossing(monkeypatch):
     posts = _wire(monkeypatch)
     assert tsm1.process_coin(_FakeConn(), "NEWUSDT") is True
     assert len(posts) == 1
-    tag, sym, direction, e1, e2, sl, _ = posts[0]
-    assert (tag, sym, direction) == ("TSM1", "NEWUSDT", "SHORT")
+    tag, direction, channel_id, sym, e1, e2, sl, _ = posts[0]
+    assert (tag, direction, sym) == ("TSM1", "SHORT", "NEWUSDT")
+    assert channel_id == tsm1._kcfg.CH_FIF1  # von FIF1 geerbter Ziel-Channel
     assert e1 == e2  # Market-Fill
     assert sl > e1  # SHORT-SL über Entry
 
@@ -158,8 +163,15 @@ def test_process_coin_no_emit_without_crossing(monkeypatch):
     assert posts == []
 
 
-def test_process_coin_no_emit_when_leg_not_shadow(monkeypatch):
-    posts = _wire(monkeypatch, leg=sg.LIVE)
+def test_process_coin_emits_when_leg_shadow(monkeypatch):
+    # Rückzug in den Shadow (SHADOW-Bein) → emittiert weiter, aber als Shadow.
+    posts = _wire(monkeypatch, leg=sg.SHADOW)
+    assert tsm1.process_coin(_FakeConn(), "NEWUSDT") is True
+    assert len(posts) == 1
+
+
+def test_process_coin_no_emit_when_silent(monkeypatch):
+    posts = _wire(monkeypatch, leg=sg.SILENT)
     assert tsm1.process_coin(_FakeConn(), "NEWUSDT") is False
     assert posts == []
 

@@ -1,3 +1,28 @@
+## [2026-07-20] WS2-Batch 1: 4 Studien-Forwarder live + FIF1 geparkt (T-2026-CU-9050-183)
+
+Erster Batch der Shadow→Live-Promotionen aus Michis 14:00-Report-Review. Vier bisher
+shadow-only Regel-Forwarder gehen live, FIF1 wird von TSM1 abgelöst:
+- TSM1 SHORT → CH_FIF1 (ersetzt FIF1). FIF1 (Bot 33) gated seinen Live-Post jetzt auf
+  `shadow_gate.is_live` und ist über die neuen `("FIF1", *) = SILENT`-Registereinträge
+  geparkt — kein `CH_FIF1=0`, das würde TSM1s geerbten Ziel-Channel mitkillen.
+- SKW1 LONG+SHORT, XSM1 LONG, XSR1 SHORT → CH_ATS (ehem. ATS-Channel).
+
+Zentralisiert im neuen `signal_post.post_ai_signal_gated`: routet ein (tag, direction)-
+Bein durch `shadow_gate` — LIVE → `post_ai_signal` (Cornix + Outbox + ai_signals, genau
+EINE Cornix-Message, Regel 4), SHADOW → `post_shadow_ai_signal` (überwacht), SILENT/
+retired → No-op. Eine Promotion ist damit ein reiner `_LIFECYCLE`-Flip; die Bots
+37/38/39 rufen nur noch den Gate-Router (früh-Guard `leg_status ∈ {LIVE, SHADOW}`).
+Reine Regel-Forwarder (Klasse D, kein Artefakt) → kein Regel-2-Promotionsschritt nötig.
+
+NICHT in diesem Batch: EPD3 und SRA2 (Koexistenz-Entscheid Michi). Beide laden ihr
+Modell aus `staging_models/`; ein Live-Post daraus verletzt Regel 2 — sie brauchen eine
+Artefakt-Promotion staging→root + Load-from-Root-Rewiring (Folge-Batch).
+
+Aktivierung ist Michi-gegatet: die Flips wirken erst nach Deploy/Restart der Bots
+33/37/38/39. Tests: neuer `post_ai_signal_gated`-Routing-Test (LIVE/SHADOW/SILENT an
+echten Beinen) + die drei Bot-Tests auf Live umgestellt (27 grün). Der vorbestehende
+`test_sra_tag`-Fail (Bot 9 unangetastet) ist keine Regression dieses Diffs.
+
 ## [2026-07-20] Retired/silenced Modelle aus den aktiven Per-Bot-Report-Blöcken (T-2026-CU-9050-182)
 
 Der 4h-Sentiment-Tracker-Post (`23_market_tracker.py`, `job_per_bot_performance`) listete abgelöste

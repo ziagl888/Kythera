@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg
+from core import shadow_gate
 from core.database import get_db_connection
 from core.model_artifacts import calibrated_confidence, load_artifact, maybe_reload
 from core.research_features import (
@@ -242,6 +243,10 @@ def process_signal(conn, sig: dict) -> None:
     if (
         prob >= ARTIFACT["threshold"]
         and LIVE_POSTING
+        # FIF1 von TSM1 abgelöst (T-2026-CU-9050-183): SILENT-Leg im shadow_gate
+        # parkt den Live-Post, ohne CH_FIF1=0 zu setzen (das würde TSM1s geerbten
+        # Ziel-Channel mitkillen). Entpark = FIF1-Zeilen aus _LIFECYCLE entfernen.
+        and shadow_gate.is_live(ARTIFACT["tag"], direction)
         and not has_open_ai_signal(conn, symbol, direction, ARTIFACT["tag"])
     ):
         # ORIGINAL-FIFO-Geometrie durchreichen — die Selektion ist der einzige
