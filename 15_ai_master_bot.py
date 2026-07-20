@@ -48,7 +48,7 @@ from core.aim2_features import (
 from core.aim2_topn import MODEL_TAG as TOPN_TAG
 from core.aim2_topn import TopNCandidate, select_topn
 from core.aim2_topn import load_config as load_topn_config
-from core.candles import read_candles_with_indicators, timeframe_delta
+from core.candles import history_start, read_candles_with_indicators, timeframe_delta
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
@@ -284,12 +284,18 @@ def load_market_row(conn, symbol: str, ts) -> tuple[dict, float] | None:
     # ist inklusiv, die open_times sind stunden-aligned → `end = floor_utc - 1h`
     # reproduziert exakt den bisherigen strikten `open_time < floor_utc`-Bound.
     try:
+        as_of_end = floor_utc - timeframe_delta("1h")
         df = read_candles_with_indicators(
             conn,
             symbol,
             "1h",
             limit=1,
-            end=floor_utc - timeframe_delta("1h"),
+            # As-of read: newest closed 1h row at/before `as_of_end`. Candidates are
+            # filtered to signals from the last CANDIDATE_WINDOW_MIN (60) minutes, so
+            # `ts` — and thus `as_of_end` — is always ~now; the 60-day floor of
+            # history_start cannot truncate the lookup while it prunes ~120 chunks.
+            start=history_start("1h", 1, anchor=as_of_end),
+            end=as_of_end,
             include_forming=False,
             candle_columns=("open_time", "close"),
             indicator_columns=list(IND_COLS),

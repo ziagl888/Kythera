@@ -21,7 +21,7 @@ import scipy.signal
 from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
-from core.candles import read_candles_with_indicators
+from core.candles import history_start, read_candles_with_indicators
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import check_cooldown, get_max_leverage, load_coins, update_cooldown
@@ -125,6 +125,10 @@ def scan_market():
                     symbol,
                     tf,
                     limit=100,
+                    # TimescaleDB chunk-exclusion hint (T-2026-CU-9050-180): window
+                    # scoped to `tf` holds the newest 100 closed candles unchanged
+                    # while pruning the bulk of the 126 chunks.
+                    start=history_start(tf, 100),
                     include_forming=False,
                     candle_columns=("open_time", "open", "high", "low", "close", "volume"),
                     indicator_columns=indicator_cols,

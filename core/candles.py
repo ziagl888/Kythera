@@ -446,6 +446,47 @@ def _windowed_select(
     return sql.SQL("SELECT * FROM ({inner}) s ORDER BY open_time ASC").format(inner=inner), params
 
 
+# Default headroom multiplier and floor for history_start (T-2026-CU-9050-180).
+# The read helpers return the newest `limit` closed candles via ORDER BY DESC
+# LIMIT, so any lower `start` bound that leaves >= limit closed candles in
+# [start, anchor] yields byte-identical rows. safety/min_days pick a window that
+# does so with generous margin against gaps (weekends, thin listings, delistings)
+# while still letting TimescaleDB exclude the bulk of the candles/indicators
+# chunks (measured: an unbounded read scans all 126 chunks; a 30-day bound ~5).
+_HISTORY_SAFETY = 3
+_HISTORY_MIN_DAYS = 60
+
+
+def history_start(
+    tf: str,
+    n_candles: int,
+    *,
+    anchor: datetime | None = None,
+    safety: int = _HISTORY_SAFETY,
+    min_days: int = _HISTORY_MIN_DAYS,
+) -> datetime:
+    """Lower `start` bound covering the newest `n_candles` closed candles of `tf`.
+
+    Returns ``anchor - max(n_candles * TF_SECONDS[tf] * safety, min_days)`` as a
+    timezone-aware UTC datetime. Purpose is purely a TimescaleDB chunk-exclusion
+    hint for the hot ``read_candles_with_indicators`` call sites: passing this as
+    ``start=`` prunes chunks without changing the returned rows, PROVIDED the
+    window still holds at least ``n_candles`` closed candles — which the safety
+    multiplier and the ``min_days`` floor guarantee for any coin trading at more
+    than ``1/safety`` of the wall-clock cadence over ``min_days``. A coin sparser
+    than that (heavily gapped/near-delisted) would get its newest available
+    candles inside the window instead of reaching further back; every call site
+    already guards on a minimum row count, so such a coin is skipped, not
+    mis-scored. `anchor` defaults to now (UTC); an as-of read passes its `end`.
+    """
+    validate_timeframe(tf)
+    base = anchor if anchor is not None else datetime.now(timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    span_seconds = max(n_candles * TF_SECONDS[tf] * safety, min_days * 86400)
+    return base - timedelta(seconds=span_seconds)
+
+
 def read_candles(
     conn: Any,
     symbol: str,
