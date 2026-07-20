@@ -1,4 +1,4 @@
-# 39_ai_xsm1_bot.py — XSM1/XSR1 "Cross-Sectional Momentum/Reversal" (K2, SHADOW-ONLY).
+# 39_ai_xsm1_bot.py — XSM1/XSR1 "Cross-Sectional Momentum/Reversal" (K2; LIVE seit T-2026-CU-9050-183).
 """
 Wöchentliche Querschnitts-Rotation nach F-Tage-Rendite (F=84d, Bestzelle): ranke
 das liquiditätsgefilterte Universum nach roher Formations-Rendite
@@ -7,12 +7,13 @@ Zwei KONKURRIERENDE Hypothesen auf derselben Dezil-Menge:
   * **XSM1 (Momentum)** = LONG das oberste Dezil (Fortsetzung).
   * **XSR1 (Reversal)** = SHORT das oberste Dezil (Mean-Reversion).
 
-**Reiner Shadow-Bot (kein Live-Post).** Die Studie K2 ist `weak/inconsistent-
-spread, NICHT deploybar` (0 robuste Zellen; die beste Val-Zelle F84|XSR1_SHORT
-kippt OOS auf −1,6 % = Overfit). Es gibt KEINEN Edge — der Bot lässt beide
-Hypothesen live gegeneinander laufen (jeweils eigener Tag, unabhängig überwacht),
-um zu sehen, ob eine Seite überhaupt trägt. Überwachte, nie gepostete Trades
-(`ai_signals` ohne `telegram_outbox`).
+**BEIDE Beine seit T-2026-CU-9050-183 LIVE (→ CH_ATS).** Die Studie K2 ist
+`weak/inconsistent-spread, NICHT deploybar` (0 robuste Zellen; die beste Val-Zelle
+F84|XSR1_SHORT kippt OOS auf −1,6 % = Overfit). Es gibt KEINEN turnkey Edge — der
+Bot lässt beide Hypothesen live gegeneinander laufen (jeweils eigener Tag,
+unabhängig getrackt), um zu sehen, ob eine Seite trägt. Der Post läuft über
+`signal_post.post_ai_signal_gated` (LIVE → Cornix-Post in CH_ATS; ein Rückzug in
+den Shadow = `(tag, dir)` in `_LIFECYCLE` wieder auf SHADOW).
 
 Signal-Vertrag == Studie `tools/xs_momentum_study.py` (Zelle F84|raw|absolute):
 roher F-Tage-Return auf geschlossenen 1d-Closes, Dezil-Rang, BTC aus der
@@ -35,11 +36,12 @@ import time
 
 import numpy as np
 
+from core import config as _kcfg
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, load_coins, update_cooldown
-from core.shadow_gate import SHADOW, leg_status, shadow_posting_enabled
-from core.signal_post import has_open_ai_signal, post_shadow_ai_signal
+from core.shadow_gate import LIVE, SHADOW, leg_status, shadow_posting_enabled
+from core.signal_post import has_open_ai_signal, post_ai_signal_gated
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - XSM1_BOT - %(message)s")
@@ -111,7 +113,7 @@ def gather(conn, coins: list[str], now: datetime.datetime) -> tuple[list[tuple[s
 
 def emit(conn, symbol: str, tag: str, direction: str, entry: float) -> None:
     """Ein Shadow-Bein unter ``tag``/``direction`` mit geteilter Geometrie."""
-    if not shadow_posting_enabled() or leg_status(tag, direction) != SHADOW:
+    if not shadow_posting_enabled() or leg_status(tag, direction) not in (LIVE, SHADOW):
         return
     if check_cooldown(conn, tag, symbol, direction, COOLDOWN_HOURS):
         return
@@ -123,7 +125,25 @@ def emit(conn, symbol: str, tag: str, direction: str, entry: float) -> None:
     targets = ensure_min_tp_distance(t_cands[:20], entry, is_long, min_pct=0.05)
     if not targets:
         return
-    if post_shadow_ai_signal(conn, tag, symbol, direction, SHADOW_CONF, entry, entry, sl, targets, n_show=3):
+    outcome = post_ai_signal_gated(
+        conn,
+        tag,
+        direction,
+        _kcfg.CH_ATS,  # ehem. ATS-Channel (T-2026-CU-9050-183)
+        symbol,
+        SHADOW_CONF,
+        entry,
+        entry,
+        sl,
+        targets,
+        source_desc=f"AI {tag} weekly cross-sectional rotation, top F-decile (K2)",
+        n_show=3,
+    )
+    if outcome == "live":
+        logger.info(
+            f"📈 {tag} LIVE {direction} {symbol} | Top-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP) → CH_ATS."
+        )
+    elif outcome == "shadow":
         logger.info(f"👻 {tag}-Shadow {direction} {symbol} | Top-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP).")
     update_cooldown(conn, tag, symbol, direction)  # committet atomar
 
@@ -155,7 +175,7 @@ def run_scan() -> None:
 
 
 def main() -> None:
-    logger.info("=== 🔄 AI XSM1/XSR1 BOT (Cross-Sectional Momentum/Reversal, K2) GESTARTET — SHADOW-ONLY ===")
+    logger.info("=== 🔄 AI XSM1/XSR1 BOT (Cross-Sectional Momentum/Reversal, K2) GESTARTET — LIVE → CH_ATS ===")
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""

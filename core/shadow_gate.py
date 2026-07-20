@@ -122,6 +122,13 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     ("ATS1", "SHORT"): SILENT,
     ("ATB1", "LONG"): SILENT,
     ("ATB1", "SHORT"): SILENT,
+    # FIF1: von TSM1 (SHORT → CH_FIF1) abgelöst (T-2026-CU-9050-183, Operator-
+    # Entscheid Michi aus dem 14:00-Report-Review). Bot 33 gated seinen Live-Post
+    # jetzt auf is_live("FIF1", direction) → SILENT parkt BEIDE Beine (kein Live-
+    # Post, kein Shadow), ohne CH_FIF1=0 zu setzen — das würde TSM1s geerbten
+    # Ziel-Channel mitkillen. Entpark = diese zwei Zeilen entfernen.
+    ("FIF1", "LONG"): SILENT,
+    ("FIF1", "SHORT"): SILENT,
     # ── (D) Regelbasierte Shadow-Forwarder (T-2026-CU-9050-149) ──
     # Studien-Kandidaten K1/K2/K5/K7 sind REGELN, kein Modell — kein Artefakt in
     # SHADOW_ARTIFACTS. Der Bot rechnet das Signal selbst und emittiert auf dem
@@ -131,21 +138,14 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # separates Gate, Operator-Sache). Bot 36 postet NIE live (fail-safe: ist das
     # Bein nicht SHADOW, schweigt der Bot — die Regel hat keinen Edge).
     ("LIS1", "SHORT"): SHADOW,
-    # TSM1 (K1): 4h-Zeitreihen-Momentum-Crossing, NUR SHORT — die Studie ist
-    # insgesamt paper-falsifiziert, aber das LONG-Bein trägt den ganzen Verlust;
-    # SHORT ist in jeder Zelle positiv (nicht-falsifiziert). Bot 37, shadow-only.
-    ("TSM1", "SHORT"): SHADOW,
-    # SKW1 (K7): wöchentliche Querschnitts-Skew-Rotation, BEIDE Beine (LONG
-    # unterstes, SHORT oberstes Skew-Dezil). Validiertes Feature, kein turnkey
-    # Edge (Long-Bein tail-getrieben WR<0,5). Bot 38, shadow-only.
-    ("SKW1", "LONG"): SHADOW,
-    ("SKW1", "SHORT"): SHADOW,
-    # XSM1/XSR1 (K2): wöchentliche Querschnitts-Rotation, zwei KONKURRIERENDE
-    # Hypothesen auf demselben obersten F-Rendite-Dezil — XSM1 LONG (Momentum),
-    # XSR1 SHORT (Reversal). Studie weak/inconsistent/overfit (0 robuste Zellen).
-    # Bot 39, shadow-only; beide Beine unabhängig überwacht.
-    ("XSM1", "LONG"): SHADOW,
-    ("XSR1", "SHORT"): SHADOW,
+    # TSM1 (K1, SHORT), SKW1 (K7, LONG+SHORT), XSM1 (K2, LONG) und XSR1 (K2,
+    # SHORT) wurden am 2026-07-20 LIVE promotet (T-2026-CU-9050-183, Operator-
+    # Entscheid Michi aus dem 14:00-Report-Review) — sie stehen daher NICHT mehr
+    # hier (Default LIVE). Routing: TSM1 SHORT → CH_FIF1 (ersetzt FIF1, s. Block
+    # (C)); SKW1 LONG+SHORT + XSM1 LONG + XSR1 SHORT → CH_ATS (ehem. ATS-Channel).
+    # Der Live-Post läuft über signal_post.post_ai_signal_gated in Bot 37/38/39;
+    # ein Rückzug in den Shadow = die jeweilige (tag, dir)-Zeile hier wieder mit
+    # SHADOW eintragen. LIS1 SHORT bleibt shadow-only (weiter falsifiziert).
 }
 
 # RETIRED: Tags, die in der closed_ai_signals-Historie vorkommen, aber von keinem
