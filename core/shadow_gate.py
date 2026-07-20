@@ -177,7 +177,14 @@ SHADOW_ARTIFACTS: dict[str, dict[str, str]] = {
     # Challenger-Tags (siehe _LIFECYCLE (B)) — Artefakt-Dateiname trägt weiter die
     # Retrain-Generation, der Tag darüber ist der kollisionsfreie Shadow-Tag.
     "RUB3": {"LONG": "rub2_model_LONG.pkl"},
-    "EPD3": {"LONG": "epd2_model_LONG.pkl", "SHORT": "epd2_model_SHORT.pkl"},
+    # EPD3 SHORT ist LIVE promotet (T-2026-CU-9050-185) → challenger-DISTINKTER
+    # Root-Dateiname epd3_model_SHORT.pkl, damit die Promotion NICHT den Legacy-
+    # EPD2-Loader-Slot kapert (Bot 10: EPD2_ARTIFACT_PATHS["SHORT"]=
+    # "epd2_model_SHORT.pkl") — sonst lädt der EPD2-Live-Pfad dieselbe Datei und
+    # postet SHORT doppelt (Tag EPD2 + EPD3, Regel-4-Doppel-Trade; Review T-185).
+    # LONG bleibt Shadow aus staging unter dem epd2-Namen (kollidiert nicht: der
+    # Legacy liest ROOT, der Shadow staging).
+    "EPD3": {"LONG": "epd2_model_LONG.pkl", "SHORT": "epd3_model_SHORT.pkl"},
     # FMR2: ein binäres Modell für BEIDE Richtungen (side_short ist ein Feature) →
     # dieselbe Datei je Richtung; nicht promotet, nur Shadow (T-2026-CU-9050-148/149).
     "FMR2": {"LONG": "fmr2_model.pkl", "SHORT": "fmr2_model.pkl"},

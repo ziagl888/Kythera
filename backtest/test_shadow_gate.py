@@ -225,8 +225,18 @@ def test_promoted_live_leg_loads_from_root_shadow_from_staging():
     # Repo-Root (Regel 2 = live), das verbliebene SHADOW-Bein weiter aus staging.
     assert sg.shadow_artifact_path("SRA2", "LONG") == "sra2_model_LONG.json"
     assert sg.shadow_artifact_path("SRA2", "SHORT").startswith(sg.STAGING_DIR)
-    assert sg.shadow_artifact_path("EPD3", "SHORT") == "epd2_model_SHORT.pkl"
+    assert sg.shadow_artifact_path("EPD3", "SHORT") == "epd3_model_SHORT.pkl"
     assert sg.shadow_artifact_path("EPD3", "LONG").startswith(sg.STAGING_DIR)
+
+
+def test_promoted_challenger_root_filename_does_not_alias_legacy_loader():
+    # Review T-2026-CU-9050-185 (CRITICAL): ein LIVE-promotetes Challenger-Artefakt
+    # darf NICHT den Root-Dateinamen tragen, den der Legacy-Live-Loader liest —
+    # sonst lädt der Legacy dieselbe Datei und postet SHORT doppelt (Regel 4). Das
+    # EPD3-SHORT-Live-Artefakt muss vom EPD2-Legacy-SHORT-Slot verschieden sein.
+    live_epd3_short = sg.shadow_artifact_path("EPD3", "SHORT")
+    assert live_epd3_short == "epd3_model_SHORT.pkl"
+    assert live_epd3_short != "epd2_model_SHORT.pkl"  # Bot 10 EPD2_ARTIFACT_PATHS["SHORT"]
 
 
 def test_fmr2_staging_artifact_loads_scores_and_gates():

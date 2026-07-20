@@ -4,8 +4,16 @@ Zweiter Batch der Shadow→Live-Promotionen. Nur die zwei Beine MIT validem
 Operating-Point gehen live, koexistierend mit ihren Legacies:
 - **SRA2 LONG** (@0.6424) → CH_AI_SR (neben SRA1). Artefakt `sra2_model_LONG.*`
   aus `staging_models/` nach Repo-Root promotet (Regel 2, Operator-Entscheid Michi).
-- **EPD3 SHORT** (@0.6737) → CH_PUMP_AI (neben EPD2). `epd2_model_SHORT.pkl` nach
-  Repo-Root promotet.
+- **EPD3 SHORT** (@0.6737) → CH_PUMP_AI (neben EPD2). Artefakt als
+  `epd3_model_SHORT.pkl` nach Repo-Root promotet — bewusst challenger-DISTINKTER
+  Dateiname, damit es NICHT den Legacy-EPD2-Loader-Slot `epd2_model_SHORT.pkl`
+  (Bot 10 `EPD2_ARTIFACT_PATHS["SHORT"]`) kapert; sonst lädt der EPD2-Live-Pfad
+  dieselbe Datei und postet SHORT doppelt (Regel-4-Doppel-Trade — Review-Fund
+  T-185, gefixt). Die eingebettete `meta.model_id` des pkl ist noch "EPD2"
+  (kosmetisch: der Tag "EPD3" wird explizit am Call-Site übergeben, und der
+  distinkte Dateiname verhindert die Legacy-Adoption; ein sauberer Rebuild mit
+  model_id="EPD3" bleibt Folge-Arbeit, Re-Dump hier wegen py3.14↔3.13-Mismatch
+  vermieden).
 
 SRA2 SHORT und EPD3 LONG bleiben SHADOW — sie haben **keinen deploybaren Edge**
 (nicht bloß keinen Threshold): SRA2-SHORTs Label-Quelle `closed_trades3` ist seit
