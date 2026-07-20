@@ -1,3 +1,40 @@
+## [2026-07-21] WS2-Batch 2 (deployable-only): SRA2-LONG + EPD3-SHORT live (T-2026-CU-9050-185)
+
+Zweiter Batch der Shadow→Live-Promotionen. Nur die zwei Beine MIT validem
+Operating-Point gehen live, koexistierend mit ihren Legacies:
+- **SRA2 LONG** (@0.6424) → CH_AI_SR (neben SRA1). Artefakt `sra2_model_LONG.*`
+  aus `staging_models/` nach Repo-Root promotet (Regel 2, Operator-Entscheid Michi).
+- **EPD3 SHORT** (@0.6737) → CH_PUMP_AI (neben EPD2). Artefakt als
+  `epd3_model_SHORT.pkl` nach Repo-Root promotet — bewusst challenger-DISTINKTER
+  Dateiname, damit es NICHT den Legacy-EPD2-Loader-Slot `epd2_model_SHORT.pkl`
+  (Bot 10 `EPD2_ARTIFACT_PATHS["SHORT"]`) kapert; sonst lädt der EPD2-Live-Pfad
+  dieselbe Datei und postet SHORT doppelt (Regel-4-Doppel-Trade — Review-Fund
+  T-185, gefixt). Die eingebettete `meta.model_id` des pkl ist noch "EPD2"
+  (kosmetisch: der Tag "EPD3" wird explizit am Call-Site übergeben, und der
+  distinkte Dateiname verhindert die Legacy-Adoption; ein sauberer Rebuild mit
+  model_id="EPD3" bleibt Folge-Arbeit, Re-Dump hier wegen py3.14↔3.13-Mismatch
+  vermieden).
+
+SRA2 SHORT und EPD3 LONG bleiben SHADOW — sie haben **keinen deploybaren Edge**
+(nicht bloß keinen Threshold): SRA2-SHORTs Label-Quelle `closed_trades3` ist seit
+2026-02-23 eingefroren und liefert bei 3027 Events keinen positiv-Edge-Threshold;
+EPD3-LONG war „kein positiver Monat". Ein Retrain reproduziert nur das `threshold=
+None` — daher kein Retrain (VPS-CPU gespart, read-only auf der Live-DB verifiziert).
+
+Mechanik: `shadow_gate.shadow_artifact_path` löst jetzt is_live-abhängig auf — ein
+LIVE-Bein lädt sein Artefakt aus dem Repo-Root (= live, Regel 2), ein SHADOW-Bein
+weiter aus `staging_models/`; so kann ein einzelnes Richtungs-Bein eines Tags live
+gehen, während das andere Shadow bleibt. Die Bots 9/10 emittieren über den
+`post_ai_signal_gated`-Router aus T-183 (LIVE → Cornix, SHADOW → überwacht) — die
+„best-direction"-Selektion in Bot 10 lässt den Live-SHORT nur feuern, wenn das
+Modell SHORT über Threshold favorisiert. Bot 9 bekam einen expliziten `has_open`-
+Duplikat-Schutz für den Live-Leg (post_ai_signal prüft das nicht selbst).
+
+Aktivierung ist Michi-gegatet: Restart der Bots 9/10. Tests: shadow_gate-Registry +
+Promotions-Pfadauflösung (live⇒root/shadow⇒staging) grün (77 passed). Der
+vorbestehende `test_sra_tag::test_active_trade_check`-Fail (veralteter Test-Anker,
+Bot 9 auf der Basis identisch rot) ist keine Regression dieses Diffs.
+
 ## [2026-07-20] WS2-Batch 1: 4 Studien-Forwarder live + FIF1 geparkt (T-2026-CU-9050-183)
 
 Erster Batch der Shadow→Live-Promotionen aus Michis 14:00-Report-Review. Vier bisher
