@@ -120,6 +120,17 @@ def test_display_retired_keeps_live_tags():
         assert mt.is_display_retired(tag) is False, tag
 
 
+def test_display_retired_on_raw_pre_normalization_tags():
+    # Der Call-Site füttert strategy_short = pretty_name(strategy); is_retired hebt
+    # aber über die Prefix-Grenze, sodass auch die ROHEN Vor-Normalisierungs-Formen
+    # (MIS-pump/dump, MSI1-Typo-Family) korrekt als retired erkannt werden. Pinnt
+    # die pretty↔raw-Äquivalenz, damit eine pretty_name-Regression nicht still
+    # durchrutscht.
+    assert mt.is_display_retired("MIS1-8H_pump") is True
+    assert mt.is_display_retired("MIS1-72h_dump") is True
+    assert mt.is_display_retired("MSI1-24h") is True
+
+
 if __name__ == "__main__":
     import traceback
 

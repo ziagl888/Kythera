@@ -1978,13 +1978,16 @@ def is_display_retired(tag: str) -> bool:
     """True, wenn ein Tag NICHT mehr in die aktiven Perf-/Kelly-/A–Z-Blöcke des
     Per-Bot-Reports gehört (T-2026-CU-9050-182).
 
-    Deckungsgleich mit dem RETIRED-Bucket des Realized-Reports: ein Tag ist
-    display-retired, wenn BEIDE Richtungs-Legs shadow_gate.leg_status ∈
-    {RETIRED, SILENT} sind — also abgelöste Generationen (AIM1, MIS1-*,
-    is_retired-Prefix) UND stummgeschaltete Alt-Beine (ATS1/ATB1, T-2026-CU-9050-
-    127). SHADOW- und LIVE-Tags bleiben sichtbar (Shadow-Perf ist die
-    Entscheidungsgrundlage für Promotionen). Pure + module-scope → DB-frei
-    testbar (backtest/test_market_tracker_lifecycle.py)."""
+    Retired-Bucket-konsistent, aber per-TAG statt per-LEG: der Realized-Report
+    bucketet jedes Bein einzeln (realized_lifecycle_bucket), dieser Report
+    aggregiert ohne Richtungssplit — deshalb ist ein Tag display-retired nur,
+    wenn BEIDE Richtungs-Legs shadow_gate.leg_status ∈ {RETIRED, SILENT} sind.
+    Das ist die konservative Hebung: ein Tag mit noch einem LIVE-/SHADOW-Bein
+    bleibt sichtbar. Trifft abgelöste Generationen (AIM1, MIS1-*, is_retired-
+    Prefix) UND stummgeschaltete Alt-Beine (ATS1/ATB1, T-2026-CU-9050-127);
+    SHADOW- und LIVE-Tags bleiben sichtbar (Shadow-Perf ist die Entscheidungs-
+    grundlage für Promotionen). Pure + module-scope → DB-frei testbar
+    (backtest/test_market_tracker_lifecycle.py)."""
     dead = {shadow_gate.RETIRED, shadow_gate.SILENT}
     return all(shadow_gate.leg_status(tag, d) in dead for d in ("LONG", "SHORT"))
 
