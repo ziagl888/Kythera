@@ -22,7 +22,7 @@ from core.ats_features import (
     ats_cross,
     build_ats_features,
 )
-from core.candles import read_candles_with_indicators
+from core.candles import read_candles_with_indicators, window_start
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
@@ -160,6 +160,11 @@ def check_tsi_crossovers():
                 symbol,
                 "1h",
                 limit=500,
+                # Lower open_time bound → the hyper read excludes old chunks
+                # instead of scanning all 126 (T-2026-CU-9050-181). Window ≫ 500
+                # candles, so the newest 500 closed candles (and thus the OBV
+                # iloc[0] baseline) are byte-identical to the un-bounded read.
+                start=window_start("1h", 500),
                 include_forming=False,
                 candle_columns=ATS_CANDLE_COLUMNS,
                 indicator_columns=ATS_INDICATOR_COLUMNS,

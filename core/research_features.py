@@ -13,7 +13,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from core.candles import read_candles_with_indicators
+from core.candles import read_candles_with_indicators, window_start
 
 # ── Gemeinsamer Markt-Kontext (1h-Kerzen + Indikator-Join) ───────────────────
 # SELECT-Fragment für den Indikator-Join (h = Kerzen-Tabelle, i = Indikatoren).
@@ -389,6 +389,13 @@ def fetch_context_frame(conn, symbol: str, lookback: int = 60, as_of=None):
         symbol,
         "1h",
         limit=int(lookback),
+        # Lower open_time bound → the hyper read excludes old chunks instead of
+        # scanning all 126 (T-2026-CU-9050-181). Anchored to `now` (NOT as_of): the
+        # read has no `end`, so it must keep fetching the newest `lookback` candles;
+        # the 30-day window dwarfs both `lookback` and CONTEXT_MAX_STALENESS_H, so
+        # the frame the searchsorted below indexes into is byte-identical. Serving
+        # only — the offline builder (research_dataset_common) is untouched (rule 7).
+        start=window_start("1h", int(lookback)),
         include_forming=False,
         candle_columns=("open_time", "close", "volume"),
         indicator_columns=CONTEXT_IND_COLS,

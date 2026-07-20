@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
-from core.candles import read_candles_with_indicators
+from core.candles import read_candles_with_indicators, window_start
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
@@ -213,6 +213,10 @@ def _fetch_mis_frame(conn, symbol):
         symbol,
         "1h",
         limit=100,
+        # Lower open_time bound so the hyper read excludes old chunks instead of
+        # scanning all 126 (T-2026-CU-9050-181). Window ≫ 100 candles → the newest
+        # 100 closed candles are byte-identical to the un-bounded read.
+        start=window_start("1h", 100),
         include_forming=False,
         candle_columns=("open_time", "close", "volume"),
         indicator_columns=MIS_INDICATOR_COLUMNS,

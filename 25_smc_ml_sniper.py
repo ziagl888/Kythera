@@ -21,7 +21,7 @@ import scipy.signal
 from core import config as _kcfg  # channel ids
 
 # --- Eigene DB Connection importieren ---
-from core.candles import read_candles_with_indicators
+from core.candles import read_candles_with_indicators, window_start
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import COOLDOWN_MODULE_MAX_LEN, check_cooldown, get_max_leverage, load_coins, update_cooldown
@@ -296,6 +296,11 @@ def scan_market():
                     symbol,
                     tf,
                     limit=150,
+                    # Lower open_time bound → the hyper read excludes old chunks
+                    # instead of scanning all 126 (T-2026-CU-9050-181). Window ≫ 150
+                    # candles (per tf) → the newest 150 closed candles are
+                    # byte-identical to the un-bounded read.
+                    start=window_start(tf, 150),
                     include_forming=False,
                     candle_columns=("open_time", "open", "high", "low", "close", "volume"),
                     indicator_columns=indicator_cols,

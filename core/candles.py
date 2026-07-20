@@ -1042,3 +1042,65 @@ def timeframe_delta(tf: str) -> timedelta:
 def last_closed_open_time(tf: str, now: datetime) -> datetime:
     """open_time of the newest candle that is closed at `now`."""
     return period_start(tf, now) - timeframe_delta(tf)
+
+
+# ── Serving-read lower bound: TimescaleDB chunk exclusion (T-2026-CU-9050-181) ─
+#
+# A "newest `limit` candles" read that passes NO lower open_time bound forces the
+# planner to walk EVERY chunk of the candles/indicators hypertables — EXPLAIN
+# shows "Chunks excluded: 0", and each read index-scans all 126 seven-day chunks
+# (candles 9 GB / indicators 19 GB). It also lets the join materialise the full
+# per-symbol history before the outer LIMIT bites, because the OFFSET-0 fence that
+# core.candles needs against TimescaleDB's "mergejoin input out of order" bug also
+# blocks the LIMIT/ordering push-down. Both symptoms disappear once the read
+# carries a lower bound: TimescaleDB excludes the old chunks it never needed, and
+# each fenced subquery only materialises the bounded window.
+#
+# window_start() derives that lower bound WITHOUT shortening the served history:
+#
+#   start = anchor − limit·tf − CANDLE_READ_GAP_BUFFER
+#
+#   * anchor    — the read's effective upper bound: `end` when the call bounds the
+#                 window from above (as-of reads), else `now` (the forming cutoff
+#                 caps an un-`end`-ed read at ≈ now()).
+#   * limit·tf  — the gap-free time span of the requested `limit` candles.
+#   * GAP_BUFFER— slack so that a data gap (ingestion outage; the largest observed
+#                 was ~14 h) can never push the oldest of the `limit` newest
+#                 candles below `start`. 30 days is >50× the largest observed gap,
+#                 so for a continuously-ingested coin the returned rows are
+#                 byte-identical to the un-bounded read — only fewer chunks are
+#                 scanned. A coin whose whole history is older than the window was
+#                 already stale and rejected downstream (staleness guards, `len(df)`
+#                 floors), so its now-empty read reaches the same decision.
+#
+# This reproduces the brief's worked example exactly: the widest serving read is
+# ATB2 at limit=MIN_HISTORY_CANDLES=1500 on 1h → 62.5 d + 30 d ≈ 90 d; the in-fleet
+# reads here (limit ≤ 500) yield ≤ ~51-day windows → ≤ ~8 of 126 chunks.
+CANDLE_READ_GAP_BUFFER = timedelta(days=30)
+
+
+def window_start(
+    tf: str,
+    limit: int,
+    *,
+    end: datetime | None = None,
+    now: datetime | None = None,
+) -> datetime:
+    """Lower `open_time` bound for a "newest `limit` candles" read (chunk exclusion).
+
+    Returns `anchor − limit·timeframe_delta(tf) − CANDLE_READ_GAP_BUFFER`, where
+    `anchor` is `end` if the call bounds the window from above, else `now`
+    (defaulting to the current UTC instant). The bound sits far enough below the
+    newest `limit` candles that realistic ingestion gaps cannot shorten the served
+    history — see the module comment above. Serving-only sugar: the trainer/replay
+    read explicit windows, so this never touches Trainer==Serving parity (rule #7).
+
+    `now` is injectable so the derivation is deterministic under test.
+    """
+    validate_timeframe(tf)
+    if not isinstance(limit, int) or limit <= 0:
+        raise ValueError(f"window_start() needs a positive int limit, got {limit!r}")
+    anchor = end if end is not None else (now if now is not None else datetime.now(timezone.utc))
+    if anchor.tzinfo is None:
+        raise ValueError("window_start() requires a timezone-aware anchor (end/now)")
+    return anchor - limit * timeframe_delta(tf) - CANDLE_READ_GAP_BUFFER

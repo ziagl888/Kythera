@@ -48,7 +48,7 @@ from core.aim2_features import (
 from core.aim2_topn import MODEL_TAG as TOPN_TAG
 from core.aim2_topn import TopNCandidate, select_topn
 from core.aim2_topn import load_config as load_topn_config
-from core.candles import read_candles_with_indicators, timeframe_delta
+from core.candles import read_candles_with_indicators, timeframe_delta, window_start
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
@@ -284,12 +284,19 @@ def load_market_row(conn, symbol: str, ts) -> tuple[dict, float] | None:
     # ist inklusiv, die open_times sind stunden-aligned → `end = floor_utc - 1h`
     # reproduziert exakt den bisherigen strikten `open_time < floor_utc`-Bound.
     try:
+        end = floor_utc - timeframe_delta("1h")
         df = read_candles_with_indicators(
             conn,
             symbol,
             "1h",
             limit=1,
-            end=floor_utc - timeframe_delta("1h"),
+            end=end,
+            # Lower open_time bound anchored to `end` → the hyper read excludes old
+            # chunks instead of scanning all 126 (T-2026-CU-9050-181). The 30-day
+            # window dwarfs the MAX_JOIN_STALENESS_H (3 h) gate, so any candle this
+            # read would have kept is still in the window; a candle older than the
+            # window was staler than the gate and rejected anyway.
+            start=window_start("1h", 1, end=end),
             include_forming=False,
             candle_columns=("open_time", "close"),
             indicator_columns=list(IND_COLS),

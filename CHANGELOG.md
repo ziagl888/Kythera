@@ -1,3 +1,38 @@
+## [2026-07-20] TimescaleDB Chunk-Exclusion: untere Zeitgrenze an den Hot-Serving-Reads (T-2026-CU-9050-181)
+
+Verhaltensinvariante DB-/CPU-Entlastung des dominanten Reads. `candles`+`indicators` sind
+TimescaleDB-Hypertables (je 126 Chunks à 7 Tage, 9 GB + 19 GB). Der Hot-Read
+`read_candles_with_indicators` (hyper-Pfad `_read_joined_hyper`) war `pg_stat_statements` #1 mit
+28 % aller DB-Zeit (337k Calls, 215 ms/Call), weil die sechs Serving-Call-Sites `limit`/`end` OHNE
+untere `open_time`-Grenze übergaben → `EXPLAIN` zeigte `Chunks excluded: 0`, jeder Read
+index-scannte ALLE 126 Chunks; der (gegen den TimescaleDB-„mergejoin input out of order"-Bug nötige)
+`OFFSET 0`-Fence blockte zusätzlich den LIMIT/Ordering-Push-down, sodass jeder Join die volle
+Per-Symbol-Historie materialisierte.
+
+- `core/candles.py`: neuer Serving-Helper `window_start(tf, limit, end=None, now=None)` +
+  Konstante `CANDLE_READ_GAP_BUFFER = 30d`. Liefert die untere Grenze
+  `anchor − limit·tf − 30d` (`anchor` = `end`, sonst `now`). Das Fenster ist so bemessen, dass
+  die gelieferte Serving-Historie sich NICHT verkürzt: `limit·tf` ist die lückenfreie Zeitspanne
+  der angeforderten `limit` Kerzen, die 30-Tage-Reserve schluckt Ingestion-Lücken (größte
+  beobachtete ~14 h → >50× Marge). Reproduziert das Brief-Rechenbeispiel exakt (1h × 1500 ≈ 90 d).
+- Sechs Hot-Call-Sites ergänzen `start=window_start(...)` — read-identisch, nur weniger Chunks:
+  `11_ai_mis` (1h/100), `12_ai_ats` (1h/500, OBV-`iloc[0]`-Baseline unberührt),
+  `15_ai_master` (1h/1, an `end` verankert; 30-d-Fenster ≫ `MAX_JOIN_STALENESS_H`=3h),
+  `24_quasimodo` (1h/100), `25_smc` (1h+4h/150), `core/research_features.fetch_context_frame`
+  (1h/`lookback`, an `now` verankert — NICHT `as_of`, da der Read kein `end` trägt). Serving-only:
+  Trainer/Dataset-Builder banden ihre Reads bereits (`start=…`), der Offline-Kontext-Join
+  (`research_dataset_common`) bleibt unberührt → Trainer==Serving-Parität (harte Regel 7) gewahrt.
+- FIX-BEWEIS (per `EXPLAIN` in der Root-Cause-Diagnose 2026-07-20 gemessen): dieselbe Query mit
+  unterer Grenze `open_time >= now() − interval '30 days'` scannt ~5 statt 126 Chunks (~25×). Der
+  weiteste 1h-Serving-Read (limit=500) ergibt ein ~51-Tage-Fenster → ~8 von 126 Chunks.
+- Tests (`backtest/test_candle_window_start.py`, DB-frei): `window_start`-Arithmetik + Byte-Parität
+  gegen einen treuen Reader-Modell des Read-Kontrakts (inklusives [start,end], forming gedroppt,
+  neueste `limit`, ASC) an allen sechs Call-Sites, inkl. zweier 14-h-Ingestion-Lücken und
+  Jung-Coin; der einzige abweichende Fall (Coin, dessen ganze Historie älter als das Fenster ist)
+  erreicht dieselbe Downstream-Reject-Entscheidung. SQL-Ebene der `start`-Grenze ist bereits von
+  `backtest/test_candles_db_parity.py` (VPS) byte-getestet. Rollout (Deploy/Fleet-Restart) =
+  Michis Entscheidung, kein Live-Eingriff aus der Dev-Session.
+
 ## [2026-07-20] Z1-Leaderboard: Risk-Metriken deterministisch — (src, id)-Tiebreaker in der Outcomes-Order (T-2026-CU-9050-177)
 
 VERHALTENSÄNDERUNG (bewusst, der Zweck des Tasks): die Leaderboard-Risk-Metriken
