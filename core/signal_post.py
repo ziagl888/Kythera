@@ -18,6 +18,7 @@ import datetime
 import json
 import logging
 
+from core import shadow_gate
 from core.charting import generate_minichart_image
 from core.market_utils import get_max_leverage
 from core.trade_utils import format_price
@@ -312,3 +313,79 @@ def post_shadow_ai_signal(
             )
     logger.info("👻 %s SHADOW-Trade für %s %s in ai_signals (kein Cornix).", model_tag, symbol, direction)
     return True
+
+
+def post_ai_signal_gated(
+    conn,
+    tag: str,
+    direction: str,
+    channel_id: int,
+    symbol: str,
+    confidence: float,
+    entry1: float,
+    entry2: float,
+    sl: float,
+    targets: list[float],
+    source_desc: str,
+    n_show: int = 3,
+    with_chart: bool = True,
+    extra_info_lines: list[str] | None = None,
+    dedup_hours: int = 4,
+    legacy_tag: str | None = None,
+) -> str | None:
+    """Emittiert ein (tag, direction)-Bein durch das shadow_gate-Register geroutet
+    (T-2026-CU-9050-183) — das zentrale Shadow→Live-Promotions-Muster:
+
+      * ``LIVE``   → :func:`post_ai_signal` (Cornix + HTML + ``ai_signals`` an
+        ``channel_id``, genau EINE Cornix-Message, Regel 4).
+      * ``SHADOW`` → :func:`post_shadow_ai_signal` (überwacht, kein Cornix-Post).
+      * sonst (``SILENT``/``RETIRED``) → No-op.
+
+    So flippt eine Promotion allein über den ``_LIFECYCLE``-Eintrag: SHADOW→LIVE
+    schaltet denselben Bot vom überwachten auf den echten Post, ohne den
+    Post-Zweig zu duplizieren. Der Aufrufer hat Cooldown/has_open bereits geprüft
+    und committet die Transaktion selbst (Regel 8). Rückgabe: ``'live'`` |
+    ``'shadow'`` | ``None`` (nichts emittiert)."""
+    st = shadow_gate.leg_status(tag, direction)
+    if st == shadow_gate.LIVE and not channel_id:
+        # Fail-safe (T-2026-CU-9050-183 Review): ein LIVE-Bein OHNE konfigurierten
+        # Ziel-Channel (channel_id == 0, z. B. CH_ATS auf einem falsch aufgesetzten
+        # Host) darf NIE eine Cornix-Zeile an Channel 0 schreiben — es fällt auf den
+        # überwachten Shadow-Pfad zurück (analog Bot 33: CH_FIF1==0 ⇒ shadow-only).
+        logger.warning("%s/%s ist LIVE, aber channel_id=0 — Fallback auf Shadow-Post.", tag, direction)
+        st = shadow_gate.SHADOW
+    if st == shadow_gate.LIVE:
+        post_ai_signal(
+            conn,
+            channel_id,
+            tag,
+            symbol,
+            direction,
+            confidence,
+            entry1,
+            entry2,
+            sl,
+            targets,
+            source_desc,
+            n_show=n_show,
+            with_chart=with_chart,
+            extra_info_lines=extra_info_lines,
+        )
+        return "live"
+    if st == shadow_gate.SHADOW:
+        wrote = post_shadow_ai_signal(
+            conn,
+            tag,
+            symbol,
+            direction,
+            confidence,
+            entry1,
+            entry2,
+            sl,
+            targets,
+            n_show=n_show,
+            dedup_hours=dedup_hours,
+            legacy_tag=legacy_tag,
+        )
+        return "shadow" if wrote else None
+    return None

@@ -1,12 +1,13 @@
 # backtest/test_skw1_bot.py
 """DB-freie Tests für den SKW1-Shadow-Forwarder (Bot 38, K7, T-2026-CU-9050-149).
 
-  1. shadow_gate: SKW1 LONG+SHORT sind SHADOW, ohne Artefakt (Forwarder-Klasse D).
+  1. shadow_gate: SKW1 LONG+SHORT sind LIVE (T-2026-CU-9050-183, → CH_ATS),
+     ohne Artefakt (Forwarder-Klasse D).
   2. bot_catalog: Tag "SKW1" → 38_ai_skw1_bot.py.
   3. select_deciles: Liquiditäts-Filter (unteres Terzil raus) + Skew-Dezil-Rang
      (LONG unterstes, SHORT oberstes Dezil), MIN_COINS-Guard.
-  4. emit: schreibt einen SHADOW-Trade je Bein nur wenn SHADOW + kein
-     Cooldown/offener Trade + Targets — nie live.
+  4. emit: emittiert je Bein über post_ai_signal_gated nur wenn LIVE/SHADOW +
+     kein Cooldown/offener Trade + Targets; SILENT → nichts. Live-Post an CH_ATS.
 
 Run: pytest backtest/test_skw1_bot.py -v
 """
@@ -40,10 +41,11 @@ skw1 = _import_skw1()
 
 
 # ── 1. shadow_gate ────────────────────────────────────────────────────────────
-def test_skw1_both_legs_shadow_no_artifact():
+def test_skw1_both_legs_live_no_artifact():
+    # T-2026-CU-9050-183: beide Beine live promotet (→ CH_ATS), Forwarder ohne Artefakt.
     for d in ("LONG", "SHORT"):
-        assert sg.leg_status("SKW1", d) == sg.SHADOW
-        assert sg.is_shadow("SKW1", d)
+        assert sg.leg_status("SKW1", d) == sg.LIVE
+        assert not sg.is_shadow("SKW1", d)
         assert sg.shadow_artifact_path("SKW1", d) is None
     assert sg.load_shadow_artifact("SKW1", "SHORT") is None
 
@@ -96,19 +98,20 @@ class _FakeConn:
 
 def _wire(monkeypatch, *, leg=None, cooldown=False, has_open=False, targets=(95.0, 90.0, 85.0)):
     posts: list[tuple] = []
+    eff_leg = leg if leg is not None else sg.LIVE
     monkeypatch.setattr(skw1, "shadow_posting_enabled", lambda: True)
-    monkeypatch.setattr(skw1, "leg_status", lambda *_: leg if leg is not None else sg.SHADOW)
+    monkeypatch.setattr(skw1, "leg_status", lambda *_: eff_leg)
     monkeypatch.setattr(skw1, "check_cooldown", lambda *a, **k: cooldown)
     monkeypatch.setattr(skw1, "has_open_ai_signal", lambda *a, **k: has_open)
     monkeypatch.setattr(skw1, "get_hvn_and_sr_levels", lambda *a, **k: ([80.0, 85.0, 90.0], [110.0, 120.0]))
     monkeypatch.setattr(skw1, "ensure_min_tp_distance", lambda *a, **k: list(targets))
     monkeypatch.setattr(skw1, "update_cooldown", lambda *a, **k: None)
 
-    def _post(conn, tag, sym, direction, conf, e1, e2, sl, tgts, **k):
-        posts.append((tag, sym, direction, e1, e2, sl))
-        return True
+    def _gated(conn, tag, direction, channel_id, sym, conf, e1, e2, sl, tgts, **k):
+        posts.append((tag, direction, channel_id, sym, e1, e2, sl))
+        return "live" if eff_leg == sg.LIVE else "shadow"
 
-    monkeypatch.setattr(skw1, "post_shadow_ai_signal", _post)
+    monkeypatch.setattr(skw1, "post_ai_signal_gated", _gated)
     return posts
 
 
@@ -117,15 +120,17 @@ def test_emit_short_and_long(monkeypatch):
     skw1.emit(_FakeConn(), "HIUSDT", "SHORT", 100.0)
     skw1.emit(_FakeConn(), "LOUSDT", "LONG", 100.0)
     assert len(posts) == 2
-    short = next(p for p in posts if p[2] == "SHORT")
-    long = next(p for p in posts if p[2] == "LONG")
-    assert short[0] == "SKW1" and short[5] > short[3]  # SHORT-SL über Entry
-    assert long[5] < long[3]  # LONG-SL unter Entry
-    assert short[3] == short[4] and long[3] == long[4]  # Market-Fill
+    short = next(p for p in posts if p[1] == "SHORT")  # (tag, dir, ch, sym, e1, e2, sl)
+    long = next(p for p in posts if p[1] == "LONG")
+    assert short[0] == "SKW1"
+    assert short[2] == skw1._kcfg.CH_ATS and long[2] == skw1._kcfg.CH_ATS  # ehem. ATS-Channel
+    assert short[6] > short[4]  # SHORT-SL über Entry (sl > e1)
+    assert long[6] < long[4]  # LONG-SL unter Entry
+    assert short[4] == short[5] and long[4] == long[5]  # Market-Fill (e1==e2)
 
 
-def test_emit_skips_when_not_shadow_or_gated(monkeypatch):
-    posts = _wire(monkeypatch, leg=sg.LIVE)
+def test_emit_skips_when_silent_or_gated(monkeypatch):
+    posts = _wire(monkeypatch, leg=sg.SILENT)  # SILENT → nichts (LIVE/SHADOW würden emittieren)
     skw1.emit(_FakeConn(), "HIUSDT", "SHORT", 100.0)
     posts2 = _wire(monkeypatch, cooldown=True)
     skw1.emit(_FakeConn(), "HIUSDT", "SHORT", 100.0)

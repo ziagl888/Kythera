@@ -1,4 +1,4 @@
-# 38_ai_skw1_bot.py — SKW1 "Cross-Sectional Skewness L/S" (Studie K7, SHADOW-ONLY).
+# 38_ai_skw1_bot.py — SKW1 "Cross-Sectional Skewness L/S" (Studie K7; LIVE seit T-2026-CU-9050-183).
 """
 Wöchentliche Querschnitts-Rotation nach realisierter Return-Schiefe: ranke das
 liquiditätsgefilterte Universum nach `mom_skew_7d` (7d-Skew der 15m-Log-Returns);
@@ -6,11 +6,12 @@ liquiditätsgefilterte Universum nach `mom_skew_7d` (7d-Skew der 15m-Log-Returns
 unterste Dezil** (negative Schiefe). Studie K7: Dezil-Monotonie ρ=−0,88,
 Netto-Spread ≈ +2,5 %/Woche val+test-stabil.
 
-**Reiner Shadow-Bot (kein Live-Post), BEIDE Beine.** Die Studie stuft SKW1 als
+**BEIDE Beine seit T-2026-CU-9050-183 LIVE (→ CH_ATS).** Die Studie stuft SKW1 als
 VALIDIERTES Feature/Retrain-Input ein, NICHT als schlüsselfertigen Edge (Netto nur
 Fees+Funding modelliert, kein Slippage/Impact/Borrow; das LONG-Low-Skew-Bein ist
-tail-getrieben, WR<0,5 in jedem Dezil). Der Bot validiert das Signal live über
-überwachte, nie gepostete Trades (`ai_signals` ohne `telegram_outbox`, Tag `SKW1`).
+tail-getrieben, WR<0,5 in jedem Dezil). Der Post läuft über
+`signal_post.post_ai_signal_gated` (LIVE → Cornix-Post in CH_ATS; ein Rückzug in
+den Shadow = `("SKW1", dir)` in `_LIFECYCLE` wieder auf SHADOW, Tag `SKW1`).
 
 Signal-Vertrag == Studie `tools/skewness_study.py` + geteilter Builder
 `core/moment_features.py` (Regel 7): `build_moment_panel`→`moment_features_asof`
@@ -35,12 +36,13 @@ import time
 
 import numpy as np
 
+from core import config as _kcfg
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, load_coins, update_cooldown
 from core.moment_features import build_moment_panel, moment_features_asof
-from core.shadow_gate import SHADOW, leg_status, shadow_posting_enabled
-from core.signal_post import has_open_ai_signal, post_shadow_ai_signal
+from core.shadow_gate import LIVE, SHADOW, leg_status, shadow_posting_enabled
+from core.signal_post import has_open_ai_signal, post_ai_signal_gated
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - SKW1_BOT - %(message)s")
@@ -121,7 +123,7 @@ def gather(conn, coins: list[str], now: datetime.datetime) -> tuple[list[tuple[s
 
 def emit(conn, symbol: str, direction: str, entry: float) -> None:
     """Ein Shadow-Bein (LONG/SHORT) mit geteilter Geometrie. Fail-safe: nie live."""
-    if not shadow_posting_enabled() or leg_status(MODEL_ID, direction) != SHADOW:
+    if not shadow_posting_enabled() or leg_status(MODEL_ID, direction) not in (LIVE, SHADOW):
         return
     if check_cooldown(conn, MODEL_ID, symbol, direction, COOLDOWN_HOURS):
         return
@@ -133,7 +135,25 @@ def emit(conn, symbol: str, direction: str, entry: float) -> None:
     targets = ensure_min_tp_distance(t_cands[:20], entry, is_long, min_pct=0.05)
     if not targets:
         return
-    if post_shadow_ai_signal(conn, MODEL_ID, symbol, direction, SHADOW_CONF, entry, entry, sl, targets, n_show=3):
+    outcome = post_ai_signal_gated(
+        conn,
+        MODEL_ID,
+        direction,
+        _kcfg.CH_ATS,  # ehem. ATS-Channel (T-2026-CU-9050-183)
+        symbol,
+        SHADOW_CONF,
+        entry,
+        entry,
+        sl,
+        targets,
+        source_desc="AI SKW1 weekly cross-sectional skew rotation (K7)",
+        n_show=3,
+    )
+    if outcome == "live":
+        logger.info(
+            f"📈 SKW1 LIVE {direction} {symbol} | Skew-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP) → CH_ATS."
+        )
+    elif outcome == "shadow":
         logger.info(f"👻 SKW1-Shadow {direction} {symbol} | Skew-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP).")
     update_cooldown(conn, MODEL_ID, symbol, direction)  # committet atomar
 
@@ -164,7 +184,7 @@ def run_scan() -> None:
 
 
 def main() -> None:
-    logger.info("=== 🎲 AI SKW1 BOT (Cross-Sectional Skewness L/S, K7) GESTARTET — SHADOW-ONLY ===")
+    logger.info("=== 🎲 AI SKW1 BOT (Cross-Sectional Skewness L/S, K7) GESTARTET — LIVE L/S → CH_ATS ===")
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""
