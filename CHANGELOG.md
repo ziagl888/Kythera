@@ -1,3 +1,40 @@
+## [2026-07-20] Z1-Leaderboard: Risk-Metriken deterministisch — (src, id)-Tiebreaker in der Outcomes-Order (T-2026-CU-9050-177)
+
+VERHALTENSÄNDERUNG (bewusst, der Zweck des Tasks): die Leaderboard-Risk-Metriken
+`max_drawdown_pp`/`max_loss_streak` sind jetzt deterministisch/stabil — vorher flackerten sie
+run-to-run (real: ein Bot −83,0 vs. −80,3 pp zwischen zwei Polls ohne Datenänderung), weil
+`ORDER BY bot, closed_at` bei Duplikat-`closed_at`-Zeilen (8.696 Tie-Gruppen in `closed_ai_signals`,
+898 in `closed_trades`) die Tie-Reihenfolge DuckDBs parallelem Scan (threads=2) überließ und beide
+Metriken pfadabhängig sind. Die angezeigten Werte ändern sich damit einmalig gegenüber den bisherigen
+zufälligen Ständen; die drei reinen Aggregate (rolling / success-rate / regime-matrix) und die
+order-invarianten Leaderboard-Felder (n, wins, winrate, pnl_sum_pct, expectancy_pct) sind unberührt.
+
+- `tools/analytics_api.py`: `_outcomes_cte` führt pro Zeile das Tiebreaker-Paar `(src, id)` mit —
+  `id` = monoton steigender serieller Postgres-PK der jeweiligen Outcome-Tabelle (Insertion-Order;
+  dieselbe Spalte, die der Export-Keyset-Cursor schon als Eindeutigkeits-Tiebreaker nutzt — die beste
+  DETERMINISTISCHE Ordnung, die das Schema hergibt), `src` = Union-Zweig-Rang
+  (nötig, weil die id-Räume beider Tabellen überlappen: 371k Kollisionen im Live-Export).
+  **Grenze:** `id`-Order garantiert KEINE echte Close-Chronologie, wo Upstream `closed_at`
+  batch-stempelt — ein bekannter ~340k-Zeilen-Legacy-Reclassify-Block in `closed_ai_signals` teilt
+  sich EINEN Zeitstempel; dort sind die Risk-Metriken deterministische Order-Artefakte (stabil, aber
+  nicht chronologisch belastbar; betrifft ATS1/EPD1/MIS1-pump ~85-93% ihrer Historie). `open_time`
+  als Tiebreaker fuer den Legacy-Zweig = moeglicher Follow-up.
+  `bot_trade_rows` + `_leaderboard_rows_streamed` ordnen `ORDER BY bot, closed_at, src, id` — eine
+  TOTALE Order; damit ist auch numpy-Fast-Path ≡ Pure-Fallback unbedingt bit-identisch (beide
+  konsumieren denselben deterministischen Row-Stream), nicht mehr nur auf tie-freien Daten.
+- Beweis auf der realen DuckDB (threads=2, frische `connect_ro`-Connection pro Lauf wie im
+  Poll-Pfad): vorher 23 von 68 Bots mit divergierenden Risk-Metriken über 10 Läufe (z. B. ATS1
+  −80.386,27 pp/Streak 97 vs. −83.011,02 pp/Streak 80); nachher 10/10 Läufe bit-identisch
+  (0 von 71 Bots divergent).
+- Tests (`backtest/test_analytics_query_parity.py`): neuer Akzeptanz-Test (rot vor dem Fix, per
+  `git stash` verifiziert) mit wert-verschiedenen Duplikat-`closed_at`-Rows, physisch außerhalb der
+  id-Order gespeichert + Cross-Table-id-Kollision auf gleichem Bot/Zeitstempel (pinnt `src`) —
+  10 Läufe identisch UND gleich den hand-gerechneten id-Order-Erwartungswerten; Parity-Fixture-Ties
+  (ids 5/6) auf wert-verschieden verschärft, sodass die ganze Parity-Suite tie-sensitiv prüft;
+  numpy≡Fallback-Test entschärft von „on tie-free fixture" auf unbedingt. T-175-Determinismus-
+  Caveats in Docstrings/SPEC.md entsprechend aufgehoben (`tools/dashboard/SPEC.md` §Deterministische
+  Leaderboard-Risk-Metriken).
+
 ## [2026-07-19] Classic-Detector Scan-Optimierung — Spalten-Projektion, gebündelter VolIndic-Read, Zyklus-Snapshots + Active-Trade-Prefilter (T-2026-CU-9050-172)
 
 Verhaltensinvariante DB-/CPU-Entlastung des klassischen Detector-Zyklus (`3_detectors.py`, ~530 Coins,

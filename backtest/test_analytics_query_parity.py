@@ -143,19 +143,21 @@ def _ts(days: int, hours: int = 0) -> datetime.datetime:
 
 def _fixture_data() -> dict[str, list[dict[str, Any]]]:
     """Two outcome tables + regime history, covering: multi-bot, LONG+SHORT,
-    micro/housekeeping exclusions, closed_at TIES (ids 5/6: value-identical
-    duplicate rows at the same timestamp — aggregates must be order-invariant
-    for them), a trade BEFORE the first regime row (must drop from the
-    matrix), and a bot living only in closed_trades (UNION coverage)."""
+    micro/housekeeping exclusions, closed_at TIES (ids 5/6: VALUE-DIFFERENT
+    rows at the same timestamp — since the deterministic ``(src, id)``
+    tie-breaker of T-2026-CU-9050-177 the whole parity suite is exercised on
+    tie-sensitive data, not just value-identical duplicates), a trade BEFORE
+    the first regime row (must drop from the matrix), and a bot living only
+    in closed_trades (UNION coverage)."""
     ai = [
         # RUB2: mixed wins/losses incl. a SHORT win
         _ai_row(1, model="RUB2", direction="LONG", entry=100, close=110, close_time=_ts(1)),
         _ai_row(2, model="RUB2", direction="SHORT", entry=100, close=90, close_time=_ts(2)),
         _ai_row(3, model="RUB2", direction="LONG", entry=100, close=95, close_time=_ts(3)),
         _ai_row(4, model="RUB2", direction="LONG", entry=100, close=70, close_time=_ts(40)),
-        # ties: two value-identical MIS2 rows at the same close_time
+        # ties: two value-DIFFERENT MIS2 rows at the same close_time
         _ai_row(5, model="MIS2", direction="LONG", entry=100, close=92, close_time=_ts(2, 6), symbol="TIEUSDT"),
-        _ai_row(6, model="MIS2", direction="LONG", entry=100, close=92, close_time=_ts(2, 6), symbol="TIEUSDT"),
+        _ai_row(6, model="MIS2", direction="LONG", entry=100, close=88, close_time=_ts(2, 6), symbol="TIEUSDT"),
         _ai_row(7, model="MIS2", direction="LONG", entry=100, close=112, close_time=_ts(5)),
         # pre-regime trade (before first regime_history ts) — drops from matrix
         _ai_row(8, model="ABR2", direction="LONG", entry=100, close=104, close_time=_ts(0, -30)),
@@ -361,25 +363,19 @@ def test_leaderboard_parity_bot_filter(con):
     assert new["bots"][0]["n"] == 3
 
 
-def test_leaderboard_numpy_and_fallback_agree_on_tie_free_fixture(con, monkeypatch):
+def test_leaderboard_numpy_and_fallback_agree(con, monkeypatch):
     """The lazy numpy fast path and the pure-Python fallback agree bit-for-bit
-    ON THIS FIXTURE — an honest, scoped claim (T-2026-CU-9050-175 fix round).
+    — UNCONDITIONALLY, on tied, value-different data (T-2026-CU-9050-177).
 
-    SCOPE / why this is NOT a production-determinism proof: each
-    ``bot_leaderboard`` call re-executes the ``ORDER BY bot, closed_at`` query,
-    which has no deterministic tie-breaker; at production scale two calls can
-    return duplicate-``closed_at`` rows in a different relative order and so
-    diverge on the two path-dependent risk metrics (``max_drawdown_pp`` /
-    ``max_loss_streak``) — the SAME pre-existing nondeterminism class the old
-    pipeline had. This fixture avoids that: its only tied rows (ids 5/6) are
-    VALUE-identical (same pnl, same is_win), so the per-bot aggregation is
-    order-invariant here regardless of which tie order each execution picks.
-    What this test therefore proves is that the two aggregation
-    IMPLEMENTATIONS compute the same result from an equivalent row stream — not
-    that two separate leaderboard calls yield byte-identical risk metrics on
-    tied production data (they need not; see the module/`_leaderboard_rows_streamed`
-    docstrings). The order-invariant fields (n/wins/winrate/pnl_sum_pct/
-    expectancy_pct) are stable in either case."""
+    Under T-175 this claim had to be scoped to tie-free/value-identical
+    fixtures: each ``bot_leaderboard`` call re-executes the query, and without
+    a deterministic tie-breaker two executions could return
+    duplicate-``closed_at`` rows in a different relative order and diverge on
+    the two path-dependent risk metrics. Since the total
+    ``ORDER BY bot, closed_at, src, id`` both branches consume the identical
+    row stream on every execution, so full-payload equality holds even though
+    this fixture's tied rows (ids 5/6, same close_time) carry DIFFERENT pnl
+    values."""
     with_numpy = bot_leaderboard(con)
     monkeypatch.setattr(analytics_api, "_numpy", lambda: None)
     without_numpy = bot_leaderboard(con)
@@ -387,11 +383,12 @@ def test_leaderboard_numpy_and_fallback_agree_on_tie_free_fixture(con, monkeypat
 
 
 def test_leaderboard_numpy_and_fallback_identical_on_one_shared_row_stream():
-    """Stronger, tie-robust proof: run BOTH aggregation implementations over
-    ONE already-materialised row stream (with VALUE-DIFFERENT tied rows) and
-    assert equality — this isolates "the two implementations agree" from "the
-    query returns a stable order", so it holds even where a live re-execution
-    would reorder ties.
+    """Implementation-isolation proof: run BOTH aggregation implementations
+    over ONE already-materialised row stream (with VALUE-DIFFERENT tied rows)
+    and assert equality — this isolates "the two implementations agree" from
+    "the query returns a stable order". Since T-2026-CU-9050-177 the query
+    order is total anyway (``(src, id)`` tie-breaker), but this test keeps the
+    two claims independently pinned.
 
     Builds the numpy fast path (run-boundary slicing + ``.tolist()``) and the
     pure dict-grouping fallback by hand from the SAME ``rows`` list, mirroring
@@ -445,6 +442,114 @@ def test_leaderboard_includes_union_only_bot(con):
     bots = [r["bot"] for r in bot_leaderboard(con)["bots"]]
     assert "Main Channel" in bots  # closed_trades-only bot survives the UNION
     assert "NEU1" not in bots  # zero decisive trades → absent, not n=0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deterministic tie-breaker (T-2026-CU-9050-177) — risk metrics reproducible
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _tied_fixture_db(tmp_path) -> str:  # noqa: ANN001
+    """A DuckDB whose tied rows are PHYSICALLY stored out of id order.
+
+    Built with direct INSERTs (not the exporter, whose keyset cursor would
+    re-impose id order) so the storage order genuinely differs from the
+    ``(src, id)`` tie-breaker order. Without the tie-breaker, DuckDB returns
+    same-``closed_at`` rows in storage order — the exact pre-T-177 failure:
+    this fixture's expected values below were RED against the plain
+    ``ORDER BY bot, closed_at`` (storage order gives TIE1 dd=-7.0/streak=3
+    instead of the id-order -9.0/2).
+
+    Two tie scenarios:
+      * TIE1 — five value-different rows in closed_ai_signals sharing ONE
+        close_time, inserted in order id 2,4,5,1,3. Deterministic (id-order)
+        pnl stream: +10,-8,+6,-4,-3.
+      * XBOT — one row in EACH outcome table, SAME id (=7, the live export
+        really has 371k cross-table id collisions) and SAME closed_at; only
+        the ``src`` union-branch rank separates them. Deterministic stream:
+        closed_ai_signals first (-5), closed_trades second (+8).
+    """
+    path = str(tmp_path / "tied.duckdb")
+    con = duckdb.connect(path)
+    try:
+        con.execute(
+            "CREATE TABLE closed_ai_signals (id BIGINT, symbol VARCHAR, model VARCHAR,"
+            " direction VARCHAR, entry DOUBLE, close_price DOUBLE, targets_hit INTEGER,"
+            " open_time TIMESTAMP, close_time TIMESTAMP, status VARCHAR, lev VARCHAR)"
+        )
+        con.execute(
+            "CREATE TABLE closed_trades (id BIGINT, strategy VARCHAR, coin VARCHAR,"
+            " direction VARCHAR, lev VARCHAR, entry DOUBLE, close_price DOUBLE,"
+            " time TIMESTAMP, posted TIMESTAMP, status VARCHAR)"
+        )
+        tie_ts = _ts(1)
+        closes = {1: 110.0, 2: 92.0, 3: 106.0, 4: 96.0, 5: 97.0}
+        for i in (2, 4, 5, 1, 3):  # physical order != id order
+            con.execute(
+                "INSERT INTO closed_ai_signals VALUES (?, 'TIEUSDT', 'TIE1', 'LONG', 100.0, ?, 1, ?, ?, 'TP1', '20x')",
+                [i, closes[i], tie_ts - datetime.timedelta(hours=1), tie_ts],
+            )
+        xbot_ts = _ts(2)
+        con.execute(
+            "INSERT INTO closed_ai_signals VALUES (7, 'XUSDT', 'XBOT', 'LONG', 100.0, 95.0, 0, ?, ?, 'SL', '20x')",
+            [xbot_ts - datetime.timedelta(hours=1), xbot_ts],
+        )
+        con.execute(
+            "INSERT INTO closed_trades VALUES (7, 'XBOT', 'XUSDT', 'LONG', '10x', 50.0, 54.0, ?, ?, 'CLOSED')",
+            [xbot_ts - datetime.timedelta(hours=2), xbot_ts],
+        )
+    finally:
+        con.close()
+    return path
+
+
+def test_leaderboard_risk_metrics_deterministic_across_runs_with_ties(tmp_path):
+    """THE T-2026-CU-9050-177 acceptance test (red before the ``(src, id)``
+    tie-breaker): value-different duplicate-``closed_at`` rows, stored out of
+    id order, must yield IDENTICAL ``max_drawdown_pp``/``max_loss_streak`` on
+    every execution — pinned to the hand-computed id-order expectation, so a
+    "stable but wrong/storage-dependent" order also fails, not just a
+    flickering one. Runs on ``connect_ro``'s production PRAGMA threads=2."""
+    path = _tied_fixture_db(tmp_path)
+    payloads = []
+    for _ in range(10):
+        c = connect_ro(path)
+        try:
+            payloads.append(bot_leaderboard(c))
+        finally:
+            c.close()
+    for later in payloads[1:]:
+        assert _j(later) == _j(payloads[0])
+
+    rows = {r["bot"]: r for r in payloads[0]["bots"]}
+    # TIE1 id-order stream +10,-8,+6,-4,-3: equity 10,2,8,4,1 under peak 10
+    # → dd 0,-8,-2,-6,-9 → worst -9.0; win flags W,L,W,L,L → streak 2.
+    # (Storage order -8,-4,-3,+10,+6 would give -7.0 / 3.)
+    assert rows["TIE1"]["max_drawdown_pp"] == pytest.approx(-9.0)
+    assert rows["TIE1"]["max_loss_streak"] == 2
+    assert rows["TIE1"]["n"] == 5
+    # XBOT src-order stream -5 (ai, src 0) then +8 (trades, src 1): equity
+    # -5,3, peaks -5,3 → dd 0,0 → 0.0. (Reversed order would give -5.0.)
+    assert rows["XBOT"]["max_drawdown_pp"] == pytest.approx(0.0)
+    assert rows["XBOT"]["max_loss_streak"] == 1
+
+
+def test_leaderboard_reference_pipeline_matches_on_tied_out_of_order_fixture(tmp_path, monkeypatch):
+    """On the SAME adversarial fixture: streamed numpy path ≡ streamed pure
+    fallback ≡ old bot_trade_rows reference pipeline — all three consume the
+    identical deterministic row stream now, so parity holds on tie-heavy,
+    value-different data (T-175 could only claim this for tie-free fixtures)."""
+    path = _tied_fixture_db(tmp_path)
+    c = connect_ro(path)
+    try:
+        fast = bot_leaderboard(c)
+        ref = _ref_leaderboard(c)
+        monkeypatch.setattr(analytics_api, "_numpy", lambda: None)
+        fallback = bot_leaderboard(c)
+    finally:
+        c.close()
+    assert _j(fast) == _j(fallback)
+    assert _j(fast) == _j(ref)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

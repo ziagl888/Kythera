@@ -67,10 +67,31 @@ def _existing_outcome_tables(con: duckdb.DuckDBPyConnection) -> list[tuple[str, 
 
 
 def _outcomes_cte(tables: Sequence[tuple[str, str, str]]) -> str:
-    """Build the ``scored`` CTE: unified per-trade outcome flags across tables."""
+    """Build the ``scored`` CTE: unified per-trade outcome flags across tables.
+
+    Besides the outcome columns, every row carries a deterministic tie-breaker
+    pair (T-2026-CU-9050-177): ``src`` (the row's UNION-branch rank — needed
+    because the two source tables' serial ``id`` ranges overlap, 371k
+    collisions on the live export) and ``id`` (each table's monotonically
+    increasing Postgres serial PK, i.e. insertion order — the same column the
+    exporter's keyset cursor already uses as its uniqueness tie-breaker).
+    ``ORDER BY bot, closed_at, src, id`` is therefore a TOTAL order: for
+    same-instant closes it replays the order the close-processor wrote the
+    rows -- the truest DETERMINISTIC ordering derivable from the exported
+    schema. Caveat (T-177 review): this is NOT a guarantee of real
+    close-chronology where an upstream writer batch-stamps ``closed_at``. A
+    known ~340k-row legacy-reclassified ``closed_ai_signals`` block shares one
+    exact timestamp; within such a block ``id`` order is essentially arbitrary
+    insertion order, so the resulting ``max_drawdown_pp``/``max_loss_streak``
+    are deterministic order-artifacts (now stable + reproducible) rather than
+    chronologically-meaningful values (affects ATS1/EPD1/MIS1-pump-family,
+    ~85-93% of their trade history). Evaluating ``open_time`` as the tie-break
+    for the legacy-status branch is a possible follow-up.
+    """
     unions = " UNION ALL ".join(
-        f'SELECT "{bot_col}" AS bot, direction, entry, close_price, status, "{ts_col}" AS closed_at FROM "{table}"'
-        for table, bot_col, ts_col in tables
+        f'SELECT "{bot_col}" AS bot, direction, entry, close_price, status, "{ts_col}" AS closed_at, '
+        f'{src} AS src, id FROM "{table}"'
+        for src, (table, bot_col, ts_col) in enumerate(tables)
     )
     return f"""
 WITH outcomes AS (
@@ -81,6 +102,8 @@ scored AS (
         bot,
         CAST(closed_at AS DATE) AS d,
         closed_at,
+        src,
+        id,
         CASE
             WHEN entry > 0 AND close_price > 0 AND upper(direction) IN ('LONG', 'SHORT')
             THEN (CASE WHEN upper(direction) = 'SHORT' THEN -1.0 ELSE 1.0 END)
@@ -94,7 +117,7 @@ scored AS (
 ),
 flagged AS (
     SELECT
-        bot, d, closed_at, pnl_pct,
+        bot, d, closed_at, src, id, pnl_pct,
         (pnl_pct IS NOT NULL AND NOT is_housekeeping
          AND abs(pnl_pct) > {MICRO_PNL_PCT} AND abs(pnl_pct) <= {MAX_ABS_PNL_PCT}) AS is_decisive,
         (pnl_pct IS NOT NULL AND NOT is_housekeeping
@@ -279,9 +302,12 @@ def bot_trade_rows(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None
     reach this function, so no downstream aggregation step needs to re-filter
     them.
 
-    Rows are ordered ``(bot, closed_at)`` ascending — the order the
-    drawdown/loss-streak statistics in :func:`_leaderboard_row` depend on
-    (both are path-dependent, not just a groupby aggregate).
+    Rows are ordered ``(bot, closed_at, src, id)`` ascending — a TOTAL,
+    deterministic order (T-2026-CU-9050-177; see :func:`_outcomes_cte` for the
+    tie-breaker rationale). The drawdown/loss-streak statistics in
+    :func:`_leaderboard_row` depend on this order (both are path-dependent,
+    not just a groupby aggregate), so the tie-breaker is what makes them
+    reproducible run-to-run even under DuckDB's parallel scan (threads=2).
 
     Returns one dict per trade: ``{bot, closed_at, pnl_pct, is_win}``. Empty
     list when no outcome table exists yet (mirrors
@@ -301,7 +327,7 @@ def bot_trade_rows(con: duckdb.DuckDBPyConnection, *, bots: Sequence[str] | None
     bot_sql = _bot_filter(bots, params)
     rows = con.execute(
         f"{cte} SELECT bot, closed_at, pnl_pct, is_win FROM flagged "
-        f"WHERE is_decisive AND bot IS NOT NULL{bot_sql} ORDER BY bot, closed_at",
+        f"WHERE is_decisive AND bot IS NOT NULL{bot_sql} ORDER BY bot, closed_at, src, id",
         params,
     ).fetchall()
     return [
@@ -417,41 +443,35 @@ def _leaderboard_rows_streamed(
 
     Runs the SAME decisive-row query :func:`bot_trade_rows` runs (identical
     CTE, identical ``WHERE is_decisive AND bot IS NOT NULL``, identical
-    ``ORDER BY bot, closed_at``) but projects only the three columns the
-    aggregation consumes — ``closed_at`` stays a sort key without ever being
+    ``ORDER BY bot, closed_at, src, id``) but projects only the three columns
+    the aggregation consumes — the sort keys stay sort keys without ever being
     materialised as 580k Python datetimes. Aggregation happens in one pass via
     :func:`_leaderboard_row_from_columns`, i.e. literally
     :func:`_leaderboard_row`'s own math, so **for a given row stream** a row
     here is bit-identical to a row the old bot_trade_rows→dict→_leaderboard_row
     pipeline produced (~11.5s → ~4.5s on the live substrate).
 
-    DETERMINISM CAVEAT (T-2026-CU-9050-175, honest scope): the two
-    ORDER-DEPENDENT risk metrics (``max_drawdown_pp``, ``max_loss_streak``)
-    are only reproducible run-to-run to the extent the row STREAM is. The
-    ``ORDER BY bot, closed_at`` has no deterministic tie-breaker, so trades
-    that share a ``closed_at`` (real duplicate/same-instant rows exist in
-    ``closed_ai_signals``) can come back in a different relative order on
-    different executions under DuckDB's parallel scan — which shifts those two
-    path-dependent metrics. This is the SAME pre-existing nondeterminism class
-    the old bot_trade_rows→_leaderboard_row pipeline already had (it used the
-    identical ORDER BY): this function adds none. The pure count/sum fields
-    (n, wins, winrate, pnl_sum_pct, expectancy_pct) are order-invariant and
-    therefore stable. A deterministic tie-breaker would change those
-    money-valued metrics and is deliberately a SEPARATE follow-up, not part of
-    this behaviour-preserving optimisation.
+    DETERMINISM (T-2026-CU-9050-177, superseding the T-175 caveat): the
+    ``ORDER BY bot, closed_at, src, id`` is a TOTAL order (see
+    :func:`_outcomes_cte` for the tie-breaker rationale), so the row stream —
+    and with it the two ORDER-DEPENDENT risk metrics (``max_drawdown_pp``,
+    ``max_loss_streak``) — is reproducible run-to-run, including under
+    DuckDB's parallel scan (``connect_ro``'s threads=2). Before the
+    tie-breaker, duplicate/same-instant ``closed_at`` rows (which really exist
+    in ``closed_ai_signals``) could come back in a different relative order on
+    different executions and shift those two path-dependent metrics; the pure
+    count/sum fields (n, wins, winrate, pnl_sum_pct, expectancy_pct) were and
+    remain order-invariant.
 
     When numpy is importable (lazy, optional — see :func:`_numpy`) the column
     transfer uses ``fetchnumpy`` and per-bot slicing over run boundaries;
     ``.tolist()`` hands the identical Python floats/bools to the identical
-    aggregation functions, so **on one and the same row stream** the fast path
-    and the pure fallback produce identical rows (verified on tie-free /
-    value-identical fixture data). At production scale both paths re-execute
-    the query independently and therefore inherit the SAME tie-order
-    nondeterminism described above — the equality is between the two
-    aggregation implementations, not a promise that two separate leaderboard
-    calls yield byte-identical risk metrics. Masked arrays (NULLs — impossible
-    for decisive rows, defensively handled anyway) fall back to the pure path
-    rather than risking filled sentinel values.
+    aggregation functions. Both branches re-execute the query independently,
+    but since the query's order is now total, they consume the identical row
+    stream — the fast path and the pure fallback therefore produce identical
+    rows unconditionally, not just on tie-free data. Masked arrays (NULLs —
+    impossible for decisive rows, defensively handled anyway) fall back to the
+    pure path rather than risking filled sentinel values.
     """
     tables = _existing_outcome_tables(con)
     if not tables:
@@ -461,7 +481,7 @@ def _leaderboard_rows_streamed(
     bot_sql = _bot_filter(bots, params)
     sql = (
         f"{cte} SELECT bot, pnl_pct, is_win FROM flagged "
-        f"WHERE is_decisive AND bot IS NOT NULL{bot_sql} ORDER BY bot, closed_at"
+        f"WHERE is_decisive AND bot IS NOT NULL{bot_sql} ORDER BY bot, closed_at, src, id"
     )
     np = _numpy()
     if np is not None:
