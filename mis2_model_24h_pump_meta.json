@@ -1,0 +1,104 @@
+{
+  "trainer": "tools/retrain_from_replay.py",
+  "strategy": "mis1",
+  "model_id": "MIS2",
+  "label_mode": "move",
+  "horizon_hours": 24,
+  "direction": "LONG",
+  "label_source": "mis1_replay_540d.jsonl",
+  "label": "Close-Move +10.0% INNERHALB 24h (Operator-Konzept; Quelle tools/mis1_move_labels.py)",
+  "features": "core.mis_features.FEATURE_COLS (63, skalenfrei \u2014 Leakage-Fix Report 13)",
+  "split": "chronological 70/15/15 + purge gap 48h",
+  "threshold_selected_on": "validation (\u00d8-Netto-PnL/Trade, min_n=200 \u2014 pick_threshold_safe)",
+  "xgboost_version": "3.1.2",
+  "n_train": 119143,
+  "n_val": 24510,
+  "n_test": 24485,
+  "val_stats": {
+    "deployable": true,
+    "threshold": 0.3898,
+    "n": 491,
+    "avg_net_pnl_pct": 1.303,
+    "sum_net_pnl_pct": 639.88,
+    "wr": 44.2,
+    "curve": [
+      {
+        "threshold": 0.0395,
+        "n": 12251,
+        "avg_net_pnl_pct": 0.31,
+        "sum_net_pnl_pct": 3803.82,
+        "wr": 13.8
+      },
+      {
+        "threshold": 0.0657,
+        "n": 7356,
+        "avg_net_pnl_pct": 0.349,
+        "sum_net_pnl_pct": 2568.45,
+        "wr": 18.6
+      },
+      {
+        "threshold": 0.0951,
+        "n": 4907,
+        "avg_net_pnl_pct": 0.421,
+        "sum_net_pnl_pct": 2066.9,
+        "wr": 22.8
+      },
+      {
+        "threshold": 0.125,
+        "n": 3675,
+        "avg_net_pnl_pct": 0.484,
+        "sum_net_pnl_pct": 1777.8,
+        "wr": 25.9
+      },
+      {
+        "threshold": 0.1792,
+        "n": 2451,
+        "avg_net_pnl_pct": 0.416,
+        "sum_net_pnl_pct": 1020.7,
+        "wr": 29.6
+      },
+      {
+        "threshold": 0.2177,
+        "n": 1839,
+        "avg_net_pnl_pct": 0.485,
+        "sum_net_pnl_pct": 892.8,
+        "wr": 32.3
+      },
+      {
+        "threshold": 0.2798,
+        "n": 1227,
+        "avg_net_pnl_pct": 0.853,
+        "sum_net_pnl_pct": 1046.59,
+        "wr": 38.1
+      },
+      {
+        "threshold": 0.3493,
+        "n": 735,
+        "avg_net_pnl_pct": 1.203,
+        "sum_net_pnl_pct": 884.1,
+        "wr": 43.4
+      },
+      {
+        "threshold": 0.3898,
+        "n": 491,
+        "avg_net_pnl_pct": 1.303,
+        "sum_net_pnl_pct": 639.88,
+        "wr": 44.2
+      },
+      {
+        "threshold": 0.4462,
+        "n": 245,
+        "avg_net_pnl_pct": 0.667,
+        "sum_net_pnl_pct": 163.36,
+        "wr": 44.5
+      }
+    ]
+  },
+  "test_stats": {
+    "n_taken": 541,
+    "wr": 41.0,
+    "sum_net_pnl_pct": -78.0,
+    "base_rate_test": 7.6,
+    "n_test_total": 24485
+  }
+}

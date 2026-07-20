@@ -1,0 +1,304 @@
+{
+  "name": "AIM2",
+  "trained_at": "2026-07-14T03:02:32.687271+00:00",
+  "events_file": "C:\\Users\\Michael\\Documents\\_X\\staging_models\\replay\\aim2_events.jsonl",
+  "n_train": 70062,
+  "n_val": 12975,
+  "n_test": 16892,
+  "split_t1": "2026-04-24 20:12:29.555309312",
+  "split_t2": "2026-06-07 05:02:44.106733312",
+  "purge_days": 7,
+  "auc_val": 0.6716,
+  "auc_test": 0.6782,
+  "brier_test": 0.2249,
+  "operating_point": {
+    "threshold": 0.67,
+    "total_pnl": 21226.8,
+    "avg_pnl": 1.775,
+    "n": 5939
+  },
+  "gate_uplift_test": {
+    "base_avg_pnl": -1.007,
+    "gate_avg_pnl": 1.378,
+    "gate_wr": 0.679,
+    "n_pass": 6860,
+    "n_test": 16892
+  },
+  "reliability_test": [
+    {
+      "bucket": "0.0-0.1",
+      "n": 49,
+      "mean_prob": 0.0,
+      "wr": 0.454,
+      "avg_pnl": 1.349
+    },
+    {
+      "bucket": "0.2-0.3",
+      "n": 1949,
+      "mean_prob": 0.29,
+      "wr": 0.219,
+      "avg_pnl": -4.774
+    },
+    {
+      "bucket": "0.3-0.4",
+      "n": 357,
+      "mean_prob": 0.347,
+      "wr": 0.295,
+      "avg_pnl": -5.745
+    },
+    {
+      "bucket": "0.4-0.5",
+      "n": 5392,
+      "mean_prob": 0.447,
+      "wr": 0.397,
+      "avg_pnl": -2.661
+    },
+    {
+      "bucket": "0.5-0.6",
+      "n": 2285,
+      "mean_prob": 0.518,
+      "wr": 0.573,
+      "avg_pnl": -0.265
+    },
+    {
+      "bucket": "0.6-0.7",
+      "n": 4297,
+      "mean_prob": 0.683,
+      "wr": 0.664,
+      "avg_pnl": 1.282
+    },
+    {
+      "bucket": "0.7-0.8",
+      "n": 1626,
+      "mean_prob": 0.736,
+      "wr": 0.656,
+      "avg_pnl": 0.711
+    },
+    {
+      "bucket": "0.8-0.9",
+      "n": 937,
+      "mean_prob": 0.841,
+      "wr": 0.791,
+      "avg_pnl": 2.999
+    }
+  ],
+  "per_source_test": [
+    {
+      "source": "Fast In And Out",
+      "n": 2419,
+      "pass_rate": 0.433,
+      "wr_all": 0.487,
+      "avg_pnl_all": -1.201
+    },
+    {
+      "source": "Volume Indicator",
+      "n": 2391,
+      "pass_rate": 0.424,
+      "wr_all": 0.569,
+      "avg_pnl_all": -0.419
+    },
+    {
+      "source": "EPD1",
+      "n": 2134,
+      "pass_rate": 0.295,
+      "wr_all": 0.364,
+      "avg_pnl_all": -3.672
+    },
+    {
+      "source": "5 Percent",
+      "n": 2031,
+      "pass_rate": 0.24,
+      "wr_all": 0.394,
+      "avg_pnl_all": -2.558
+    },
+    {
+      "source": "MIS1-72H",
+      "n": 1883,
+      "pass_rate": 0.494,
+      "wr_all": 0.619,
+      "avg_pnl_all": 0.472
+    },
+    {
+      "source": "Support Resistance",
+      "n": 1121,
+      "pass_rate": 0.474,
+      "wr_all": 0.566,
+      "avg_pnl_all": -0.027
+    },
+    {
+      "source": "MIS1-168H",
+      "n": 1029,
+      "pass_rate": 0.492,
+      "wr_all": 0.577,
+      "avg_pnl_all": -0.197
+    },
+    {
+      "source": "ATS1",
+      "n": 901,
+      "pass_rate": 0.333,
+      "wr_all": 0.509,
+      "avg_pnl_all": -0.997
+    },
+    {
+      "source": "TD_1H",
+      "n": 545,
+      "pass_rate": 0.615,
+      "wr_all": 0.6,
+      "avg_pnl_all": 0.149
+    },
+    {
+      "source": "RUB1",
+      "n": 480,
+      "pass_rate": 0.562,
+      "wr_all": 0.631,
+      "avg_pnl_all": 0.961
+    },
+    {
+      "source": "BB_1H",
+      "n": 280,
+      "pass_rate": 0.286,
+      "wr_all": 0.468,
+      "avg_pnl_all": -1.591
+    },
+    {
+      "source": "SRA1",
+      "n": 266,
+      "pass_rate": 0.41,
+      "wr_all": 0.53,
+      "avg_pnl_all": -0.712
+    },
+    {
+      "source": "MIS2-8H",
+      "n": 222,
+      "pass_rate": 0.374,
+      "wr_all": 0.491,
+      "avg_pnl_all": -1.081
+    },
+    {
+      "source": "BB_4H",
+      "n": 196,
+      "pass_rate": 0.245,
+      "wr_all": 0.587,
+      "avg_pnl_all": -0.294
+    },
+    {
+      "source": "BB2_4H",
+      "n": 189,
+      "pass_rate": 0.302,
+      "wr_all": 0.302,
+      "avg_pnl_all": -3.007
+    },
+    {
+      "source": "RUB2",
+      "n": 112,
+      "pass_rate": 0.679,
+      "wr_all": 0.536,
+      "avg_pnl_all": -0.137
+    },
+    {
+      "source": "MIS1-8H",
+      "n": 100,
+      "pass_rate": 0.5,
+      "wr_all": 0.5,
+      "avg_pnl_all": -1.174
+    },
+    {
+      "source": "MIS2-24H",
+      "n": 97,
+      "pass_rate": 0.474,
+      "wr_all": 0.536,
+      "avg_pnl_all": 0.685
+    },
+    {
+      "source": "MIS1-24H",
+      "n": 78,
+      "pass_rate": 0.346,
+      "wr_all": 0.462,
+      "avg_pnl_all": -0.674
+    },
+    {
+      "source": "Main Channel",
+      "n": 78,
+      "pass_rate": 0.346,
+      "wr_all": 0.436,
+      "avg_pnl_all": -1.114
+    },
+    {
+      "source": "TD_4H",
+      "n": 76,
+      "pass_rate": 0.737,
+      "wr_all": 0.618,
+      "avg_pnl_all": 0.527
+    },
+    {
+      "source": "MIS2-72H",
+      "n": 75,
+      "pass_rate": 0.52,
+      "wr_all": 0.493,
+      "avg_pnl_all": 0.045
+    },
+    {
+      "source": "TD2_4H",
+      "n": 54,
+      "pass_rate": 0.722,
+      "wr_all": 0.63,
+      "avg_pnl_all": 1.145
+    },
+    {
+      "source": "EPD2",
+      "n": 53,
+      "pass_rate": 0.415,
+      "wr_all": 0.434,
+      "avg_pnl_all": -1.275
+    },
+    {
+      "source": "MIS2-168H",
+      "n": 37,
+      "pass_rate": 0.514,
+      "wr_all": 0.649,
+      "avg_pnl_all": 2.502
+    },
+    {
+      "source": "FIF1",
+      "n": 15,
+      "pass_rate": 0.667,
+      "wr_all": 0.6,
+      "avg_pnl_all": 0.934
+    },
+    {
+      "source": "MAX1",
+      "n": 13,
+      "pass_rate": 0.923,
+      "wr_all": 0.692,
+      "avg_pnl_all": 0.663
+    },
+    {
+      "source": "QM_4H",
+      "n": 9,
+      "pass_rate": 0.333,
+      "wr_all": 0.333,
+      "avg_pnl_all": -4.148
+    },
+    {
+      "source": "QM_1H",
+      "n": 8,
+      "pass_rate": 0.75,
+      "wr_all": 0.625,
+      "avg_pnl_all": -0.214
+    }
+  ],
+  "monthly_test": [
+    {
+      "month": "2026-06",
+      "n": 4863,
+      "wr": 0.683,
+      "avg_pnl": 1.302
+    },
+    {
+      "month": "2026-07",
+      "n": 1997,
+      "wr": 0.684,
+      "avg_pnl": 1.802
+    }
+  ]
+}

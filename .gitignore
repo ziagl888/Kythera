@@ -258,3 +258,6 @@ bot_config.json
 
 # Regenerated live-state config (fleet rewrites it continuously — not tracked, T-2026-CU-9050-124)
 max_leverage.json
+
+# Generated analytics export (DuckDB + Parquet) — regenerable, not versioned
+staging_models/analytics/

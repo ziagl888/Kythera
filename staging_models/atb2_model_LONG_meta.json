@@ -1,0 +1,52 @@
+{
+  "trainer": "tools/retrain_from_replay.py",
+  "strategy": "atb2",
+  "model_id": "ATB2",
+  "direction": "LONG",
+  "model_type": "binary (1=TP1-first-touch)",
+  "success_proba": "predict_proba[:, 1]",
+  "features": [
+    "pen_depth_atr",
+    "body_ratio",
+    "body_commitment",
+    "vol_spike",
+    "rsi_momentum",
+    "chan_width_atr",
+    "chan_convergence",
+    "chan_touch_upper",
+    "chan_touch_lower",
+    "chan_slope_upper_atr",
+    "chan_slope_lower_atr",
+    "chan_span",
+    "chan_vol_contraction",
+    "is_wedge",
+    "is_triangle",
+    "is_pennant",
+    "atr_pct",
+    "dist_ema200",
+    "rsi",
+    "break_up"
+  ],
+  "optimal_threshold": null,
+  "label_source": "atb2_replay_365d.jsonl",
+  "label": "first-touch TP1-vor-SL der Measured-Move-Geometrie (\u2153/\u2154/1\u00d7 Kanalbreite), Fees inkl.",
+  "changes_vs_atb1": "Converging-Channel-Detektor (best\u00e4tigte Pivots, geschlossener Ausbruch, \u00a711) statt 90d-Close-Regressionsgerade; Label MIT SL-Pfad statt +10%-Touch/72h; chronologischer Split mit 3d-Purge statt Random-Split \u00fcber \u00fcberlappende Fenster; Threshold auf Validation statt Test-Set; 5 WillyAlgoTrader-Setup-Features + Kanalgeometrie als XGB-Features",
+  "split": "chronological 70/15/15 + 3d purge gap",
+  "threshold_selected_on": "validation",
+  "xgboost_version": "3.1.2",
+  "n_train": 350,
+  "n_val": 57,
+  "n_test": 73,
+  "val_stats": {
+    "deployable": false,
+    "best": null,
+    "curve": []
+  },
+  "test_stats": {
+    "n_taken": 0,
+    "wr": null,
+    "sum_net_pnl_pct": null,
+    "base_rate_test": 87.7,
+    "n_test_total": 73
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "model_id": "PEX1",
+  "kind": "binary",
+  "trained_at": "2026-07-14T01:53:41.007456+00:00",
+  "events_file": "C:/Users/Michael/Documents/_X/staging_models/replay/pex1_events.jsonl",
+  "purge_days": 7,
+  "auc_val": 0.569,
+  "auc_test": 0.5679,
+  "brier_test": 0.2396,
+  "operating_point": {
+    "threshold": 0.7,
+    "total_pnl": 342.1,
+    "avg_pnl": 0.683,
+    "n": 501
+  },
+  "gate_uplift_test": {
+    "base_avg_pnl": -0.072,
+    "gate_avg_pnl": 0.32,
+    "gate_wr": 0.64,
+    "n_pass": 899,
+    "n_test": 4121
+  },
+  "n_train": 18885,
+  "n_val": 2966,
+  "n_test_split": 4121,
+  "split_t1": "2026-05-22 06:51:41.715815424",
+  "split_t2": "2026-06-18 16:56:33.601995008"
+}

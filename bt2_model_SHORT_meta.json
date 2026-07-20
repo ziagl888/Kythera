@@ -2,6 +2,7 @@
   "trainer": "tools/retrain_from_replay.py",
   "strategy": "abr1",
   "direction": "SHORT",
+  "model_id": "ABR2",
   "label_source": "abr1_replay_365d.jsonl",
   "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
   "model_type": "binary (1=TP1-first-touch) \u2014 ANDERS als das alte 3-Klassen-Modell!",
@@ -31,22 +32,22 @@
     "setup_level_age_candles",
     "setup_retest_wick_pct"
   ],
-  "optimal_threshold": 0.7499999999999999,
+  "optimal_threshold": 0.7999999999999998,
   "split": "chronological 70/15/15 + purge gap",
-  "xgboost_version": "3.2.0",
-  "n_train": 24149,
-  "n_val": 4669,
-  "n_test": 4756,
+  "xgboost_version": "3.1.2",
+  "n_train": 113372,
+  "n_val": 22059,
+  "n_test": 21330,
   "val_stats": {
-    "n": 66,
-    "sum_net_pnl_pct": -122.29,
-    "wr": 47.0
+    "n": 25,
+    "sum_net_pnl_pct": 0.66,
+    "wr": 72.0
   },
   "test_stats": {
-    "n_taken": 75,
-    "wr": 68.0,
-    "sum_net_pnl_pct": 115.57,
-    "base_rate_test": 63.7,
-    "n_test_total": 4756
+    "n_taken": 32,
+    "wr": 81.2,
+    "sum_net_pnl_pct": -11.3,
+    "base_rate_test": 57.2,
+    "n_test_total": 21330
   }
 }
