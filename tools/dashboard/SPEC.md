@@ -762,12 +762,35 @@ Query-seitig: Rolling-Serie via SQL-Daily-Aggregation, Leaderboard via
 Streamed-Column-Pfad (optionaler numpy-Fast-Path mit Pure-Python-Fallback),
 success-rate-Fenster in einem Scan, Regime-Matrix als ASOF-Inner-Join.
 Ergebnis-Paritaet ist HARTE Anforderung — Netz:
-`backtest/test_analytics_query_parity.py`. Umfang ehrlich: die drei reinen
-count/sum-Aggregate (rolling / success-rate / regime-matrix) sind bit-
-identisch old-vs-new. Beim Leaderboard sind die order-invarianten Felder
-(n, wins, winrate, pnl_sum_pct, expectancy_pct) bit-identisch; die zwei
-order-abhaengigen Risk-Metriken (max_drawdown_pp, max_loss_streak) erben die
-VORBESTEHENDE run-to-run-Nichtdeterminismus-Klasse (Duplikat-`closed_at` +
-kein deterministischer Tiebreaker unter DuckDB-Parallelitaet) — der alte Code
-hatte sie identisch, es kommt keine neue hinzu. Ein deterministischer
-Tiebreaker (= Verhaltensaenderung an Geld-Werten) ist ein separater Follow-up.
+`backtest/test_analytics_query_parity.py`. Die drei reinen count/sum-Aggregate
+(rolling / success-rate / regime-matrix) sind bit-identisch old-vs-new; beim
+Leaderboard sind SEIT T-2026-CU-9050-177 ALLE Felder deterministisch (s.u.).
+
+## Deterministische Leaderboard-Risk-Metriken (T-2026-CU-9050-177)
+
+Die unter T-175 offen dokumentierte Nichtdeterminismus-Klasse ist behoben: die
+Leaderboard-Query ordnet mit `ORDER BY bot, closed_at, src, id` — `id` ist der
+monoton steigende serielle Postgres-PK jeder Outcome-Tabelle (Insertion-Order,
+dieselbe Spalte, die der Export-Keyset-Cursor als Eindeutigkeits-Tiebreaker
+nutzt; die beste DETERMINISTISCHE Ordnung, die das exportierte Schema
+hergibt), `src` der Union-Zweig-Rang (noetig, weil die id-Raeume beider
+Tabellen ueberlappen — 371k Kollisionen im Live-Export). Die Order ist damit
+TOTAL: `max_drawdown_pp`/`max_loss_streak` sind run-to-run reproduzierbar,
+auch unter DuckDB-Parallelitaet (`connect_ro` PRAGMA threads=2; Beweis:
+10/10 identische Laeufe auf der realen DB, vorher divergierten 23 von 68
+Bots), und numpy-Fast-Path ≡ Pure-Fallback gilt unbedingt (identischer
+deterministischer Row-Stream), nicht mehr nur auf tie-freien Fixtures.
+
+**Grenze (T-177-Review):** `id`-Order ist KEINE Garantie echter Close-Chronologie,
+wo ein Upstream-Writer `closed_at` batch-stempelt. Ein bekannter ~340k-Zeilen-
+Legacy-Reclassify-Block in `closed_ai_signals` teilt sich EINEN exakten Zeitstempel
+— dort ist die `id`-Reihenfolge im Wesentlichen willkuerliche Insertion-Order, die
+resultierenden Risk-Metriken sind also deterministische Order-Artefakte (jetzt
+stabil + reproduzierbar), nicht chronologisch belastbar (betrifft ATS1/EPD1/
+MIS1-pump-Familie, ~85-93% ihrer Historie). `open_time` als Tiebreaker fuer den
+Legacy-Status-Zweig ist ein moeglicher Follow-up.
+BEWUSSTE VERHALTENSAENDERUNG: die vorher zufallsbehafteten Anzeigenwerte sind
+jetzt stabil (Fixierung auf die id-Order-Sequenz). Netz:
+`test_leaderboard_risk_metrics_deterministic_across_runs_with_ties` (rot vor
+dem Fix: wert-verschiedene Duplikat-`closed_at`-Rows, physisch ausserhalb der
+id-Order gespeichert) + Referenz-Pipeline-Paritaet auf derselben Fixture.
