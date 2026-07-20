@@ -1346,6 +1346,20 @@ async def job_per_bot_performance() -> None:
 
     df_all['strategy_short'] = df_all['strategy'].apply(pretty_name)
 
+    # ─── Retired/silenced Generationen ausblenden (T-2026-CU-9050-182) ───
+    # Abgelöste (AIM1, MIS1-*) und stummgeschaltete Alt-Beine (ATS1/ATB1) gehören
+    # — wie im RETIRED-Block des Realized-Reports — NICHT in die aktiven Blöcke
+    # PER-BOT PERFORMANCE / HALF-KELLY / MODELS A–Z. EIN Filter hier räumt alle
+    # drei auf, weil strategy_short ihre gemeinsame Quelle ist. SHADOW + LIVE
+    # bleiben sichtbar (Shadow-Perf ist die Entscheidungsgrundlage für Swaps).
+    _retired_tags = {t for t in df_all['strategy_short'].unique() if is_display_retired(t)}
+    if _retired_tags:
+        logger.info("Per-Bot-Report: retired/silenced Tags ausgeblendet: %s", sorted(_retired_tags))
+        df_all = df_all[~df_all['strategy_short'].isin(_retired_tags)]
+        if df_all.empty:
+            logger.info("Nach Retired-Filter keine aktiven Trades — Per-Bot Post skipped.")
+            return
+
     # ─── Pro Strategie & Zeitfenster Stats berechnen ───
     #
     # Zeitfenster-Semantik (neu April 2026):
@@ -1958,6 +1972,21 @@ def realized_lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[
     if script not in active_scripts_set:
         return "inactive"
     return "active"
+
+
+def is_display_retired(tag: str) -> bool:
+    """True, wenn ein Tag NICHT mehr in die aktiven Perf-/Kelly-/A–Z-Blöcke des
+    Per-Bot-Reports gehört (T-2026-CU-9050-182).
+
+    Deckungsgleich mit dem RETIRED-Bucket des Realized-Reports: ein Tag ist
+    display-retired, wenn BEIDE Richtungs-Legs shadow_gate.leg_status ∈
+    {RETIRED, SILENT} sind — also abgelöste Generationen (AIM1, MIS1-*,
+    is_retired-Prefix) UND stummgeschaltete Alt-Beine (ATS1/ATB1, T-2026-CU-9050-
+    127). SHADOW- und LIVE-Tags bleiben sichtbar (Shadow-Perf ist die
+    Entscheidungsgrundlage für Promotionen). Pure + module-scope → DB-frei
+    testbar (backtest/test_market_tracker_lifecycle.py)."""
+    dead = {shadow_gate.RETIRED, shadow_gate.SILENT}
+    return all(shadow_gate.leg_status(tag, d) in dead for d in ("LONG", "SHORT"))
 
 
 async def job_realized_pnl_report() -> None:

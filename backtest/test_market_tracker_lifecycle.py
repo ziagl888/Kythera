@@ -91,6 +91,35 @@ def test_unknown_tag_is_unmapped():
     assert mt.realized_lifecycle_bucket("ZZZ_NOT_A_MODEL", "LONG", set()) == "unmapped"
 
 
+# ─── is_display_retired: Perf-/Kelly-/A–Z-Filter (T-2026-CU-9050-182) ───
+# Deckungsgleich mit dem RETIRED-Bucket: retired UND silent raus, shadow+live rein.
+
+
+def test_display_retired_hides_old_generations():
+    # Abgelöste Tags (is_retired-Prefix) — beide Richtungen RETIRED.
+    assert mt.is_display_retired("AIM1") is True
+    assert mt.is_display_retired("MIS1-8h") is True
+    assert mt.is_display_retired("MIS1-168h") is True
+
+
+def test_display_retired_hides_silenced_legs():
+    # ATS1/ATB1 sind SILENT (Bots laufen für ATS2/ATB2-Shadow) → raus.
+    assert mt.is_display_retired("ATS1") is True
+    assert mt.is_display_retired("ATB1") is True
+
+
+def test_display_retired_keeps_shadow_tags():
+    # Shadow-Perf ist die Entscheidungsgrundlage für Swaps → sichtbar bleiben.
+    for tag in ("ATS2", "ATB2", "SRA2", "EPD3", "TSM1"):
+        assert mt.is_display_retired(tag) is False, tag
+
+
+def test_display_retired_keeps_live_tags():
+    # Default-LIVE + der Prefix-Nachbar MIS2 dürfen NICHT gefiltert werden.
+    for tag in ("RUB2", "FastInOut", "MIS2-8h"):
+        assert mt.is_display_retired(tag) is False, tag
+
+
 if __name__ == "__main__":
     import traceback
 
