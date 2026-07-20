@@ -19,7 +19,7 @@ from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.model_artifacts import load_artifact_json, maybe_reload
-from core.signal_post import post_shadow_ai_signal
+from core.signal_post import has_open_ai_signal, post_ai_signal_gated
 from core.sra_features import SRA2_FEATURES, build_sra2_features
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
@@ -111,16 +111,20 @@ def load_models() -> None:
 
 
 def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
-    """SRA2-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+    """SRA2-Emission über das shadow_gate-Routing (T-2026-CU-9050-125/185).
 
     Scored denselben S/R-Kandidaten wie der Live-SRA1-Pfad über den geteilten
-    core.sra_features-Builder + das SRA2-Staging-Artefakt und schreibt bei
-    prob>=threshold (oder immer, wenn der SHORT-Threshold null ist) einen
-    überwachten Shadow-Trade (kein Cornix) unter Tag ``SRA2``. Geometrie =
-    dieselbe HVN/S-R-Konstruktion wie process_ai_trade (bewusst dupliziert, um
-    den Live-Pfad nicht anzufassen). Fehler bleiben gekapselt.
+    core.sra_features-Builder + das SRA2-Artefakt und emittiert bei prob>=threshold
+    via post_ai_signal_gated: das LIVE-Bein SRA2 LONG (@0.6424, T-185, Artefakt im
+    Repo-Root) postet Cornix an CH_AI_SR (koexistierend mit SRA1), das SHADOW-Bein
+    SRA2 SHORT (threshold=None, staging) bleibt ein überwachter Shadow-Trade (kein
+    Cornix). Geometrie = dieselbe HVN/S-R-Konstruktion wie process_ai_trade (bewusst
+    dupliziert, um den Live-Pfad nicht anzufassen). Fehler bleiben gekapselt.
     """
-    if not shadow_gate.shadow_posting_enabled() or not shadow_gate.is_shadow("SRA2", direction):
+    if not shadow_gate.shadow_posting_enabled() or shadow_gate.leg_status("SRA2", direction) not in (
+        shadow_gate.LIVE,
+        shadow_gate.SHADOW,
+    ):
         return
     art = SHADOW_SRA2.get(direction)
     if art is None:
@@ -135,6 +139,11 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
         prob = shadow_gate.score_artifact(art, serving)
         thr = shadow_gate.artifact_threshold(art)
         if thr is not None and prob < thr:
+            return
+        # Duplikat-Schutz für den LIVE-Leg (SRA2 LONG, T-185): post_ai_signal (live)
+        # macht KEINEN has_open-Check — nur post_shadow_ai_signal tat das intern.
+        # Deshalb hier explizit vor der teuren Geometrie prüfen (analog Bot 10).
+        if has_open_ai_signal(conn, coin, direction, "SRA2"):
             return
         is_long = direction == "LONG"
         entry1 = float(live_price)
@@ -157,7 +166,21 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
         targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
         if not targets:
             return
-        if post_shadow_ai_signal(conn, "SRA2", coin, direction, prob, entry1, entry2, sl, targets, n_show=3):
+        outcome = post_ai_signal_gated(
+            conn,
+            "SRA2",
+            direction,
+            _kcfg.CH_AI_SR,  # LIVE-Leg SRA2 LONG → SRA-Channel (T-185); SHORT bleibt Shadow
+            coin,
+            prob,
+            entry1,
+            entry2,
+            sl,
+            targets,
+            source_desc="AI SRA2 S/R Meta-Filter",
+            n_show=3,
+        )
+        if outcome is not None:
             conn.commit()
     except Exception as e:
         logger.warning(f"SRA2 Shadow für {coin} {direction} fehlgeschlagen: {e}")

@@ -22,7 +22,7 @@ from core.database import get_db_connection
 from core.funding_features import FUNDING_FEATURES, funding_features_cached
 from core.market_utils import get_max_leverage
 from core.model_artifacts import load_artifact, maybe_reload
-from core.signal_post import has_open_ai_signal, log_prediction, post_shadow_ai_signal
+from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal_gated
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR - %(message)s')
@@ -168,14 +168,17 @@ def load_epd2_artifacts():
 
 
 def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
-    """EPD3-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+    """EPD3-Emission über das shadow_gate-Routing (T-2026-CU-9050-125/185).
 
     Baut den IDENTISCHEN 16-Feature-Vektor wie der Live-EPD2-Pfad (base_features
-    + Funding as-of, gecacht — Regel 7), scored die staging-Artefakte je Richtung,
-    nimmt den stärksten Kandidaten und schreibt bei prob>=threshold (oder immer,
-    wenn der Threshold null ist) einen überwachten Shadow-Trade (kein Cornix) unter
-    Tag ``EPD3``. Geometrie = dieselbe HVN/S-R-Konstruktion wie der Live-Pfad
-    (bewusst dupliziert). Fehler bleiben gekapselt.
+    + Funding as-of, gecacht — Regel 7), scored die Artefakte je Richtung, nimmt den
+    stärksten Kandidaten und emittiert bei prob>=threshold via post_ai_signal_gated:
+    das LIVE-Bein EPD3 SHORT (@0.6737, T-185, Artefakt im Repo-Root) postet Cornix an
+    CH_PUMP_AI (koexistierend mit EPD2), das SHADOW-Bein EPD3 LONG (threshold=None,
+    staging) bleibt ein überwachter Shadow-Trade (kein Cornix). Der Live-SHORT feuert
+    nur, wenn das Modell SHORT als stärkste Richtung über seinem Threshold wählt.
+    Geometrie = dieselbe HVN/S-R-Konstruktion wie der Live-Pfad (bewusst dupliziert).
+    Fehler bleiben gekapselt.
     """
     if not shadow_gate.shadow_posting_enabled():
         return
@@ -218,7 +221,21 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
         targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
         if not targets:
             return
-        if post_shadow_ai_signal(conn, "EPD3", symbol, best_dir, best_prob, entry1, entry2, sl, targets, n_show=3):
+        outcome = post_ai_signal_gated(
+            conn,
+            "EPD3",
+            best_dir,
+            _kcfg.CH_PUMP_AI,  # LIVE-Leg EPD3 SHORT → Pump-AI-Channel (T-185); LONG bleibt Shadow
+            symbol,
+            best_prob,
+            entry1,
+            entry2,
+            sl,
+            targets,
+            source_desc="AI EPD3 Pump/Dump Retrain",
+            n_show=3,
+        )
+        if outcome is not None:
             conn.commit()
     except Exception as e:
         logger.warning(f"EPD3 Shadow für {symbol} fehlgeschlagen: {e}")

@@ -84,7 +84,10 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # reines TRAININGS-Problem. Shadow-Serving umgeht das komplett: der AI-Monitor
     # liefert die frischen Outcomes (closed_ai_signals), die der tote Tracker nicht
     # mehr gibt → Shadow REVIVED SRA2. SHORT-Threshold ist null (jedes Setup).
-    ("SRA2", "LONG"): SHADOW,
+    # SRA2 LONG am 2026-07-21 LIVE promotet (T-2026-CU-9050-185, @0.6424 → CH_AI_SR,
+    # koexistierend mit SRA1). Artefakt sra2_model_LONG.* nach Repo-Root promotet
+    # (Regel 2, Operator-Entscheid Michi). SHORT bleibt SHADOW — kein deploybarer
+    # Edge (threshold=None; Label-Quelle closed_trades3 tot seit 23.02).
     ("SRA2", "SHORT"): SHADOW,
     # FMR2: Normalisierungs-Exit-Retrain (K4, T-2026-CU-9050-148) neben dem FMR1-Bot
     # (Bot 31). FMR1 bleibt unverändert unter eigenem Tag "FMR1"; FMR2 nutzt DENSELBEN
@@ -111,8 +114,10 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # Modell bereits unter Tag "EPD2" = EPD_LEGACY_TAG; ein Shadow unter "EPD2"
     # würde über den dortigen Active-Trade-Check `model IN ('EPD2','EPD2')` einen
     # Live-Post unterdrücken). Deshalb eigener Tag "EPD3" — analog zu RUB3.
+    # EPD3 SHORT am 2026-07-21 LIVE promotet (T-2026-CU-9050-185, @0.6737 →
+    # CH_PUMP_AI, koexistierend mit EPD2). epd2_model_SHORT.pkl nach Repo-Root
+    # promotet (Regel 2). LONG bleibt SHADOW — kein positiver Monat (threshold=None).
     ("EPD3", "LONG"): SHADOW,
-    ("EPD3", "SHORT"): SHADOW,
     # ── (C) Stummgeschaltete Alt-Beine (Operator Michi, T-2026-CU-9050-127) ──
     # Bots 12/14 werden entparkt, damit ATS2/ATB2 im Shadow laufen — aber die
     # ALTEN Modelle ATS1/ATB1 sollen NICHT live posten und auch nicht shadowen:
@@ -214,11 +219,18 @@ def is_silent(tag: str, direction: str) -> bool:
 
 
 def shadow_artifact_path(tag: str, direction: str) -> str | None:
-    """Absoluter/relativer Pfad des Staging-Artefakts eines Klasse-(A)-Shadow-
-    Tags, oder None, wenn der Tag kein Staging-Artefakt hat."""
+    """Pfad des Artefakts eines Klasse-(A)/Challenger-Tags, oder None ohne Eintrag.
+
+    Regel-2-Promotion (T-2026-CU-9050-185): ein LIVE-Bein lädt sein Artefakt aus
+    dem Repo-ROOT (dorthin promotet = live, Operator-Entscheid), ein SHADOW-Bein
+    weiter aus ``staging_models/``. So kann ein einzelnes Richtungs-Bein eines
+    Tags live gehen (z. B. SRA2 LONG @ Root), während das andere Shadow bleibt
+    (SRA2 SHORT im Staging) — der Loader greift automatisch die richtige Datei."""
     fname = SHADOW_ARTIFACTS.get(_norm(tag), {}).get(_norm(direction))
     if not fname:
         return None
+    if is_live(tag, direction):
+        return fname  # promotet nach Repo-Root
     return os.path.join(STAGING_DIR, fname)
 
 

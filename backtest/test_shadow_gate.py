@@ -101,11 +101,15 @@ def test_default_is_live_for_unlisted_legs():
 
 
 def test_new_gen_candidates_are_shadow():
-    for tag in ("ATS2", "ATB2", "SRA2"):
+    for tag in ("ATS2", "ATB2"):
         for d in ("LONG", "SHORT"):
             assert sg.leg_status(tag, d) == sg.SHADOW
             assert sg.is_shadow(tag, d)
             assert not sg.is_live(tag, d)
+    # SRA2 (T-2026-CU-9050-185): LONG live promotet (@0.6424 → Repo-Root), SHORT
+    # bleibt shadow (kein deploybarer Edge, closed_trades3 tot seit 23.02).
+    assert sg.leg_status("SRA2", "LONG") == sg.LIVE
+    assert sg.leg_status("SRA2", "SHORT") == sg.SHADOW
 
 
 def test_challenger_tags_are_shadow_and_dont_collide_with_live_leg():
@@ -114,7 +118,9 @@ def test_challenger_tags_are_shadow_and_dont_collide_with_live_leg():
     # ein Shadow-Trade über den Active-Trade-Check einen Live-Post blockieren.
     assert sg.is_shadow("RUB3", "LONG")
     assert sg.is_shadow("EPD3", "LONG")
-    assert sg.is_shadow("EPD3", "SHORT")
+    # EPD3 SHORT (T-2026-CU-9050-185): live promotet (@0.6737 → Repo-Root),
+    # koexistierend mit dem weiter-live EPD2.
+    assert sg.leg_status("EPD3", "SHORT") == sg.LIVE
     # Die Live-Tags, unter denen die Bots real posten, dürfen NIE shadow sein.
     assert sg.leg_status("RUB2", "SHORT") == sg.LIVE
     assert sg.leg_status("RUB2", "LONG") == sg.LIVE  # Live-Legacy-LONG unter RUB2
@@ -212,6 +218,15 @@ def test_fmr2_maps_one_binary_model_to_both_directions():
     p_short = sg.shadow_artifact_path("FMR2", "SHORT")
     assert p_long == p_short
     assert p_long is not None and p_long.endswith("fmr2_model.pkl")
+
+
+def test_promoted_live_leg_loads_from_root_shadow_from_staging():
+    # T-2026-CU-9050-185: das promotete LIVE-Bein lädt sein Artefakt aus dem
+    # Repo-Root (Regel 2 = live), das verbliebene SHADOW-Bein weiter aus staging.
+    assert sg.shadow_artifact_path("SRA2", "LONG") == "sra2_model_LONG.json"
+    assert sg.shadow_artifact_path("SRA2", "SHORT").startswith(sg.STAGING_DIR)
+    assert sg.shadow_artifact_path("EPD3", "SHORT") == "epd2_model_SHORT.pkl"
+    assert sg.shadow_artifact_path("EPD3", "LONG").startswith(sg.STAGING_DIR)
 
 
 def test_fmr2_staging_artifact_loads_scores_and_gates():
