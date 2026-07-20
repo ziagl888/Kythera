@@ -69,6 +69,16 @@ def test_silent_leg_is_noop(monkeypatch):
     assert calls["live"] == [] and calls["shadow"] == []
 
 
+def test_live_leg_with_zero_channel_falls_back_to_shadow(monkeypatch):
+    # Fail-safe: LIVE-Bein, aber channel_id=0 (unkonfigurierter Channel) → NIE ein
+    # Cornix-Post an Channel 0, sondern überwachter Shadow-Post.
+    assert sg.leg_status("TSM1", "SHORT") == sg.LIVE
+    calls = _capture(monkeypatch)
+    out = sp.post_ai_signal_gated(None, "TSM1", "SHORT", 0, **ARGS)
+    assert out == "shadow"
+    assert calls["live"] == [] and len(calls["shadow"]) == 1
+
+
 def test_shadow_dedup_returns_none(monkeypatch):
     # post_shadow_ai_signal meldet False (offener Shadow-Trade → Dedup) → gated None.
     _capture(monkeypatch)

@@ -129,6 +129,17 @@ def test_emit_both_hypotheses(monkeypatch):
     assert xsm[4] == xsm[5] and xsr[4] == xsr[5]  # Market-Fill (e1==e2)
 
 
+def test_run_scan_pairs_xsm1_long_xsr1_short():
+    # Seit T-2026-CU-9050-183 sind die Beine default-LIVE — die Richtung wird NUR
+    # noch durch das run_scan-Pairing gesichert (nicht mehr durch die SHADOW-
+    # Registrierung). Diese Invariante pinnen (Review-LOW): keine invertierte Emission.
+    import inspect
+
+    src = inspect.getsource(xsm1.run_scan)
+    assert '(XSM_TAG, "LONG")' in src and '(XSR_TAG, "SHORT")' in src
+    assert '(XSM_TAG, "SHORT")' not in src and '(XSR_TAG, "LONG")' not in src
+
+
 def test_emit_skips_when_silent_or_gated(monkeypatch):
     posts = _wire(monkeypatch, leg=sg.SILENT)  # SILENT → nichts (LIVE/SHADOW würden emittieren)
     xsm1.emit(_FakeConn(), "TOPUSDT", "XSM1", "LONG", 100.0)
