@@ -226,6 +226,51 @@ def _fetch_mis_frame(conn, symbol):
     return df.rename(columns=MIS_RENAME_MAP)
 
 
+def _score_models_batched(collected_frames, models):
+    """Batched MIS2 inference (T-2026-CU-9050-186).
+
+    ``collected_frames``: list of the per-coin 1-row feature DataFrames
+    (``df_features.iloc[-1:]``) in scan order — already built by
+    ``add_advanced_features`` PER COIN, never concatenated before feature
+    building (rolling windows must not cross coin boundaries).
+    ``models``: mapping horizon-key -> cfg for the LOADED models.
+
+    Returns ``{key: np.ndarray}`` where the array holds ``predict_proba[:, 1]``
+    for every collected coin IN THE SAME ORDER. ``NaN`` marks a coin/model whose
+    inference failed — the caller skips exactly that (coin, model), reproducing
+    the old per-coin ``try/except`` that dropped a single failing prediction.
+
+    Why this is behaviour-neutral: XGBoost scores each row independently, so one
+    ``predict_proba`` over the stacked matrix yields the identical per-row
+    probability as scoring each row alone — it only amortises the ~66ms per-call
+    overhead (sklearn name-validation + DMatrix build) across all coins (527x8 =
+    4216 calls/scan -> 8). The per-model column selection ``cfg["features"]``
+    fixes column order identically to the single-row path.
+
+    Fast path = one batched call per model. On ANY batch exception (e.g. a single
+    corrupt row poisoning the concat/predict) it falls back to per-row scoring
+    for THAT model only, so the failure semantics stay exactly as before: a bad
+    coin loses just its own prediction, every other coin still scores.
+    """
+    n = len(collected_frames)
+    probs_by_model = {}
+    for key, cfg in models.items():
+        feats = cfg["features"]
+        try:
+            X_all = pd.concat([f[feats] for f in collected_frames], axis=0)
+            probs_by_model[key] = np.asarray(cfg["model"].predict_proba(X_all)[:, 1], dtype=float)
+        except Exception as e:
+            logger.error(f"MIS batch predict {key} fehlgeschlagen — per-Coin-Fallback: {e}")
+            arr = np.full(n, np.nan, dtype=float)
+            for i, f in enumerate(collected_frames):
+                try:
+                    arr[i] = float(cfg["model"].predict_proba(f[feats])[0, 1])
+                except Exception as e2:
+                    logger.error(f"{key} row {i}: predict fehlgeschlagen: {e2}")
+            probs_by_model[key] = arr
+    return probs_by_model
+
+
 def check_mis_models():
     # FIX P2.32: kein autocommit mehr — Outbox-Post, ai_signals-Insert und
     # master-Log gehören pro Signal in EINE Transaktion (Commit übernimmt
@@ -257,6 +302,12 @@ def check_mis_models():
     price_map = get_live_prices_batch()
 
     conn_dead = False
+
+    # === PHASE A: per-coin feature build (UNCHANGED math), collect for batched scoring ===
+    # add_advanced_features stays PER COIN — its rolling windows must never span
+    # coin boundaries. We only collect the finished 1-row feature frames so the
+    # 8 models can be scored in one batched predict_proba each below.
+    collected = []  # list of (symbol, df_current, current_price) in scan order
     for symbol in coins:
         try:
             df = _fetch_mis_frame(conn, symbol)
@@ -274,34 +325,65 @@ def check_mis_models():
             live_price = price_map.get(symbol) or get_live_price(symbol, conn)
             if not live_price:
                 continue
-            current_price = float(live_price)
+            collected.append((symbol, df_current, float(live_price)))
+        except Exception as e:
+            logger.error(f"Error building MIS features for {symbol}: {e}")
+        finally:
+            # Keep the read transaction clean between coins (P2.32): an aborted read
+            # would poison every following coin, and a single open read transaction
+            # across the whole scan would freeze NOW() on the scan start.
+            try:
+                conn.rollback()
+            except Exception:
+                logger.error("MIS1: rollback fehlgeschlagen (tote Connection) — Scan-Abbruch.")
+                conn_dead = True
+        if conn_dead:
+            break
 
-            # Alle Modelle für diesen Coin testen — Feature-Auswahl je Modell
-            # NAMENSBASIERT über das DataFrame (P1.18: `.values` hatte die
-            # sklearn-Namensvalidierung deaktiviert; Kompatibilität wurde beim
-            # Startup-Selbsttest bereits hart geprüft).
+    if conn_dead or not collected:
+        if conn:
+            conn.close()
+        logger.info("🏁 MIS1 Model Check stopped.")
+        return
+
+    # === PHASE B: ONE predict_proba per model over ALL collected coins ===
+    # Was 527 coins x 8 models = 4216 single-row calls per scan; now 8 batched
+    # calls. Row-independent XGBoost => byte-identical per-coin probabilities
+    # (T-2026-CU-9050-186). Order of `probs[key]` matches `collected`.
+    loaded_models = {h: cfg for h, cfg in PUMP_MODELS.items() if cfg["loaded"]}
+    probs_by_model = _score_models_batched([dc for (_, dc, _) in collected], loaded_models)
+
+    # === PHASE C: per-coin candidate build + posting (identical logic, per-coin txn) ===
+    for idx, (symbol, _df_current, current_price) in enumerate(collected):
+        try:
+            # Alle Modelle für diesen Coin — dieselbe namensbasierte Feature-Auswahl
+            # und dasselbe 0.25-Gate wie zuvor, nur die Probability kommt jetzt aus
+            # dem Batch-Score (Phase B) statt aus einem Einzel-predict_proba.
             candidates = []
             for horizon, cfg in PUMP_MODELS.items():
                 if not cfg["loaded"]:
                     continue
-
-                try:
-                    X_current = df_current[cfg["features"]]
-                    prob = float(cfg["model"].predict_proba(X_current)[0, 1])
-                    if prob >= 0.25:
-                        direction = "LONG" if "pump" in horizon.lower() else "SHORT"
-                        clean_horizon = horizon.upper().replace("_PUMP", "").replace("_DUMP", "")
-                        # Kalibrierte Confidence (Isotonic aus dem Retrain-Artefakt)
-                        # für Anzeige/Logging; das GATING läuft weiter über die rohe
-                        # Probability, denn der Threshold wurde auf rohen Val-Probs
-                        # gewählt (tools/retrain_from_replay.py).
-                        if cfg["calibrator"] is not None:
-                            conf = float(np.clip(cfg["calibrator"].predict([prob])[0], 0.0, 1.0))
-                        else:
-                            conf = prob
-                        candidates.append((prob, clean_horizon, direction, cfg["threshold"], conf, cfg["generation"]))
-                except Exception as e:
-                    logger.error(f"{symbol} {horizon}: predict fehlgeschlagen: {e}")
+                arr = probs_by_model.get(horizon)
+                if arr is None:
+                    continue
+                prob = arr[idx]
+                # NaN = Inferenz dieses (Coin, Modell) fehlgeschlagen (Batch-Fallback);
+                # exakt wie das alte per-Coin-try/except diese eine Prediction fallen ließ.
+                if not np.isfinite(prob):
+                    continue
+                prob = float(prob)
+                if prob >= 0.25:
+                    direction = "LONG" if "pump" in horizon.lower() else "SHORT"
+                    clean_horizon = horizon.upper().replace("_PUMP", "").replace("_DUMP", "")
+                    # Kalibrierte Confidence (Isotonic aus dem Retrain-Artefakt)
+                    # für Anzeige/Logging; das GATING läuft weiter über die rohe
+                    # Probability, denn der Threshold wurde auf rohen Val-Probs
+                    # gewählt (tools/retrain_from_replay.py).
+                    if cfg["calibrator"] is not None:
+                        conf = float(np.clip(cfg["calibrator"].predict([prob])[0], 0.0, 1.0))
+                    else:
+                        conf = prob
+                    candidates.append((prob, clean_horizon, direction, cfg["threshold"], conf, cfg["generation"]))
 
             if not candidates:
                 continue

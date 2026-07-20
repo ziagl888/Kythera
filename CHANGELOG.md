@@ -34,6 +34,25 @@ Aktivierung ist Michi-gegatet: Restart der Bots 9/10. Tests: shadow_gate-Registr
 Promotions-Pfadauflösung (live⇒root/shadow⇒staging) grün (77 passed). Der
 vorbestehende `test_sra_tag::test_active_trade_check`-Fail (veralteter Test-Anker,
 Bot 9 auf der Basis identisch rot) ist keine Regression dieses Diffs.
+## [2026-07-21] Bot-11 Inferenz-Vektorisierung: 4.216 → 8 predict_proba-Calls/Scan (T-2026-CU-9050-186)
+
+Ein Fleet-CPU-Audit fand Bot 11 (`11_ai_mis_bot.py`, MIS2) als einzigen Bot mit einem echten Vektorisierungs-Loch: er scort JEDEN der 527 Coins bedingungslos mit
+8 Modellen per `predict_proba` auf einem **1-Zeilen-DataFrame** — 527×8 = **4.216 Einzel-Calls pro Scan**. Gemessen kostet ein 1-Zeilen-`predict_proba` ~66ms fast
+reinen Per-Call-Overhead (sklearn-Namensvalidierung + DMatrix-Bau), ein Batch über 527 Zeilen ~54ms **total** (0,10ms/Zeile) — pro Coin ~600×. Verhaltensneutraler Fix:
+
+- **`check_mis_models` in drei Phasen restrukturiert.** Phase A baut die Features **weiter pro Coin** (`add_advanced_features` mit Rolling-Windows darf NIE über
+  Coin-Grenzen concateniert werden) und sammelt die fertigen 1-Zeilen-Frames. Phase B scort pro Modell in **einem** `predict_proba` über die gestapelte Coin-Matrix
+  (neuer reiner Helfer `_score_models_batched`). Phase C baut Kandidaten + Posting **unverändert pro Coin** (gleiches 0.25-Gate, Kalibrator, Threshold-Ranking, Cooldown,
+  Outbox/ai_signals/master-Log, per-Coin-Transaktion mit Rollback).
+- **Byte-identische Probabilities:** XGBoost scort zeilenunabhängig → ein Batch-Call liefert exakt dieselbe Per-Coin-Wahrscheinlichkeit wie der Einzel-Call; die
+  namensbasierte Feature-Auswahl je Modell fixiert die Spaltenreihenfolge identisch. Ein Coin-Ausfall in Phase A (kein Frame / kein Live-Preis) landet nicht in der Matrix
+  und verschiebt die Index-Rückverteilung nicht. Bei einem Batch-Fehler (z. B. eine korrupte Zeile) fällt der Helfer für dieses Modell auf den alten Per-Zeilen-Pfad zurück
+  → Fehler-Semantik bleibt: eine kaputte Zeile verliert nur ihre eigene Prediction (NaN), alle anderen scoren.
+- **Nur die Inferenz gebündelt**, kein Touch an `core/mis_features` (Regel 7, geteilt mit Trainer/Sim). `predict_proba`-Calls/Scan **4.216 → 8**; Mikro-Benchmark auf den
+  echten 8 mis2-Modellen 11× schneller selbst auf der gesättigten Box (auf unbelasteter deutlich mehr).
+
+Verifiziert: neuer `backtest/test_mis_batch_inference.py` (5 — Parität Batch≡Einzel, Zeilen-Reihenfolge, Batch-Fehler-Fallback, Ein-Zeilen-NaN, Mehr-Modell-Spalten),
+`test_mis_features.py` 7/7, Regression-Guard 24/24, ruff/mypy grün. Aktiv nach Bot-11-Restart (kein Live-Eingriff, keine Trading-Entscheidung).
 
 ## [2026-07-20] WS2-Batch 1: 4 Studien-Forwarder live + FIF1 geparkt (T-2026-CU-9050-183)
 
