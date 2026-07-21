@@ -14,9 +14,9 @@ Kythera ist Michis produktiver Crypto-Trading-Bot (~29 Bots, ~530 Coins, Binance
 
 0. **`git fetch origin` + Stand prüfen** — vor jeder Priorisierung, vor dem ersten Edit (Falle 15).
 1. **Task wählen** — Backlog-Reihenfolge aus dem Task-Audit-Doc; pro Task zuerst `read_doc` des KB-Task-Docs (die Briefs dort sind eine Interpretation vom Stand-Datum, die KB kann weitergedreht sein).
-2. **KB-Task starten** (`/task-start T-2026-CU-9050-NNN`), Worktree, Branch `feat/<t-id>`.
+2. **KB-Task starten** (`/task-start T-2026-KYT-9050-NNN` — Nummernkreis seit 2026-07-21, siehe CLAUDE.md §Workflow; der alte `T-2026-CU-9050-NNN`-Kreis ist geschlossen, neue Tasks via `add_task` mit `customer/project_id="kythera"`), Worktree, Branch `feat/<t-id>`.
 3. **Vor Lösungsideen: Problem in 4 Fragen zerlegen** (Skill `z-fable-judgment`): Outcome / Population / Messung / Stop-Kriterium. Wenn eine nicht beantwortbar ist → Rückfrage, nicht Annahme.
-4. **KB-first:** `search_kb` nach Präzedenzfall (Decisions, 9050-Tasks, Audit-Reports). Fast alles hier hat einen dokumentierten Vorentscheid.
+4. **KB-first:** `search_kb` nach Präzedenzfall (Decisions, Kythera-Tasks im KYT- **und** dem geschlossenen CU-9050-Korpus, Audit-Reports). Fast alles hier hat einen dokumentierten Vorentscheid.
 5. **Implementieren** — Konventionen aus §4/§5. Bei Bot-Edits vorher die DO-NOT/WARNING/forming/lookahead-Kommentare in der Datei greppen (~69 Stück über 40 Dateien — sie markieren die Minenfelder).
 6. **Verifizieren** (§7) — CI reicht nicht.
 7. **PR** (Englisch, conventional commits — ziagl888-Repo, kein Org-Titel-Format), Kern-Reviews (z-code-reviewer + z-spec-compliance-review). **Merge via merge-train (Default seit 2026-07-10):** nach PASS `cu/reviews` auf den Head-SHA stempeln, `gh pr edit <PR#> --add-label merge-train`, Session schließen — der Daemon (`services/merge_train/` in knowledge_base_internal, Hetzner) merged seriell und rebased jeden PR höchstens einmal. **NICHT selbst `gh pr merge`** — parallele Fleet-Sessions erzeugen sonst die O(n²)-Rebase-Kaskade über die CHANGELOG-Top-Insertion (die Konflikt-Mühle vom 2026-07-10). Bounce = Label `merge-train:failed` + Daemon-Kommentar; Re-Queue braucht neuen Commit + Re-Stamp + Re-Label (Label-Re-Add allein ist bewusster No-op, und ein Rebase/Force-Push verwirft den `cu/reviews`-Status mit). Nach dem Enqueue nicht auf den Merge idle-pollen — CHANGELOG-/AUDIT_TODO-Nachlauf gehört in den PR selbst.
@@ -66,7 +66,7 @@ Kythera ist Michis produktiver Crypto-Trading-Bot (~29 Bots, ~530 Coins, Binance
 - Artifact-Promotion aus `staging_models/` in den Live-Pfad; jeder Retrain-**Rollout** (Training selbst + Staging-Kandidat + Empfehlung sind ok).
 - Gate-Flips: `AIM2_LIVE_POSTING`, `NEW_IDEAS_LIVE_POSTING`, Orchestrator-Gating-Parameter, Parken/Entparken.
 - Fleet-Restarts, `.env`-Änderungen, alles was laufende Prozesse auf dem VPS berührt.
-- Schema-Änderungen/Migrationen an Live-Tabellen (insb. T-2026-CU-9050-018 — dort sind Operator-Entscheidungen explizit offen).
+- Schema-Änderungen/Migrationen an Live-Tabellen (insb. T-2026-KYT-9050-002, ex-CU-9050-018 — dort sind Operator-Entscheidungen explizit offen).
 - Löschen von Daten/Tabellen (auch "tote" — D5 nur nach Freigabe).
 - Zwei gleichwertige Wege mit strategischer Konsequenz (z.B. Scope-Erweiterung Staged-C).
 
@@ -95,4 +95,4 @@ Die Denkmuster liegen im Skill **`z-fable-judgment`** (Problem-Zerlegung in 4 Fr
 - **AIM1 (P0.13):** Naheliegend wäre "Vokabular retrainen". Entscheid: NEIN — der Retrain hätte das invertierte Volatilitäts-Modell reproduziert. Muster: Root-Cause vor Mechanik-Fix; ein totes Modell aus lassen ist ein gültiges Done. AIM2 wurde stattdessen sauber neu gebaut (Replay-Labels, shadow-first).
 - **Walk-Forward-Regel (P0.10):** 7/8 Trainer-Familien labelten idealisierte Fills, die die Bots nie handeln. Entscheid: EIN gemeinsamer Simulator statt acht Einzel-Fixes. Muster: Root-Cause-Werkzeug vor Punkt-Fixes.
 - **Staged-C statt v4-Rewrite:** Der Big-Bang-Rewrite war schon einmal gestorben (40 Commits in 3 Tagen → 3 Monate Stille). Entscheid: Strangler-Fig im Bestand, Guard zuerst, WIP=1. Muster: Momentum-Risiko schlägt Architektur-Eleganz.
-- **Batch-E-Disziplin:** Jede Strategie-Idee wird billig falsifizierbar gemacht (Replay entscheidet, ~1 Tag), bevor Live-Code entsteht — siehe T-2026-CU-9050-020 (HMM-Studie) als Vorlage.
+- **Batch-E-Disziplin:** Jede Strategie-Idee wird billig falsifizierbar gemacht (Replay entscheidet, ~1 Tag), bevor Live-Code entsteht — siehe T-2026-KYT-9050-003 (ex-CU-9050-020, HMM-Studie) als Vorlage.

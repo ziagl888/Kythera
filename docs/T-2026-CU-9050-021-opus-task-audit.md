@@ -1,5 +1,7 @@
 # Opus Task-Audit Kythera — geranktes Backlog mit Reasoning
 
+> **⚠ Nummernkreis-Migration (2026-07-21):** Die in diesem Dokument gerankten Tasks tragen noch die alten `T-2026-CU-9050-NNN`-IDs (dated Snapshot). Der Nummernkreis ist inzwischen auf `T-2026-KYT-9050-NNN` (Slug `kythera`) umgestellt — siehe CLAUDE.md §Workflow. Die zuletzt offenen 15 Tasks wurden migriert (018→002, 020→003, 035→004, 041→005, 061→006, 069→007, 071→008, 097→009, 106→010, 113→011, 117→012, 147→013, 178→014, 184→015, 185→016; alte Docs tombstoned + Pointer), der Rest ist done/wontfix. Beim Priorisieren die **KB als Single Source of Truth** nehmen (`list_kb_docs customer=kythera`), nicht die IDs hier — dieses Ranking bleibt als historische Reasoning-Referenz.
+
 **Stand:** 2026-07-11 (Orchestrierungs-Welle T-2026-CU-9050-075 nachgezogen — T-2026-CU-9050-094; davor Ledger-Verifikation T-028 vom 2026-07-09, Basis Fable-5-Extraktion vom 2026-07-07, T-021). Quellen: `AUDIT_TODO.md` (frisch gepflegt, Single Source of Truth), KB-Tasks Projekt 9050, `audit_reports/`, CHANGELOG.
 **Arbeitsregel:** in Ranking-Reihenfolge; pro Task erst das KB-Task-Doc lesen (die KB kann weitergedreht sein als dieses Dokument); Zyklus nach `docs/OPUS-HANDOFF.md` §2. Environment-Spalte beachten — **BUILD** = Build-Maschine reicht, **VPS** = braucht Live-DB/VPS-Session. **Vor dem Priorisieren `git fetch`** — mehrere Sessions arbeiten am selben Repo (siehe Falle 15 im Handoff).
 

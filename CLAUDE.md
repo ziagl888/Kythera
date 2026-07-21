@@ -18,7 +18,8 @@ Multi-Bot Crypto-Trading-System (Binance Futures) auf einem Windows-VPS. **Hier 
 
 ## Workflow
 
-- Pro Task: KB-Task (Projekt 9050) + Worktree + Branch `feat/<t-id>`, PR auf `main` (ziagl888-Repo → autonomer Merge-Pfad nach bestandenen Kern-Reviews: z-code-reviewer + z-spec-compliance-review). **Merge-Default: merge-train** — nach PASS `cu/reviews` stempeln + Label `merge-train`, der Hetzner-Daemon merged seriell; kein eigenes `gh pr merge` (Details: OPUS-HANDOFF §2 Schritt 7).
+- Pro Task: KB-Task + Worktree + Branch `feat/<t-id>`, PR auf `main` (ziagl888-Repo → autonomer Merge-Pfad nach bestandenen Kern-Reviews: z-code-reviewer + z-spec-compliance-review). **Merge-Default: merge-train** — nach PASS `cu/reviews` stempeln + Label `merge-train`, der Hetzner-Daemon merged seriell; kein eigenes `gh pr merge` (Details: OPUS-HANDOFF §2 Schritt 7).
+- **KB-Task-Nummernkreis (seit 2026-07-21):** Kythera-Tasks laufen im Kreis `T-2026-KYT-9050-NNN` unter dem Canonical-Slug `kythera` (`add_task` mit `customer="kythera"`, `project_id="kythera"`, task_id-Prefix `"T-2026-KYT-9050-"` → Server alloziert NNN atomar; oder `next_id(prefix="T-2026-KYT-9050-")`). Der alte `T-2026-CU-9050-NNN`-Kreis (customer `cloudunify_internal`) ist **geschlossen** — dort keine neuen Tasks mehr anlegen. Bestehende CU-9050er behalten ihre IDs; die 15 zuletzt offenen wurden nach KYT-002…016 migriert (alte Docs tombstoned + Pointer). Historische CU-9050-Verweise in Doku/Code bleiben als Provenienz stehen.
 - Commits/PRs/Code-Kommentare in Englisch, Author Michael Ziegler.
 - CI gated nur ruff/format, mypy, Syntax/Imports, Secret-Regex — **grünes CI ≠ korrekt.** Verhalten verifizieren über `backtest/test_*.py` (standalone, DB-frei) und `python tools/regression_guard/guard.py verify|smoke`.
 - Nach jedem Merge: `CHANGELOG.md`-Eintrag (Deutsch, wie bestehende), betroffene `AUDIT_TODO.md`-Checkboxen pflegen, KB-Task-Status aktualisieren.

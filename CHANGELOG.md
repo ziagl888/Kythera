@@ -1,3 +1,21 @@
+## [2026-07-21] Doku: KB-Task-Nummernkreis auf T-2026-KYT-9050-NNN umgestellt (T-2026-KYT-9050-001)
+
+Reine Doku-Änderung, kein Verhaltens-/Code-Effekt. Kythera-Tasks laufen ab
+sofort unter dem Canonical-Slug `kythera` im ID-Kreis `T-2026-KYT-9050-NNN`
+statt im geschlossenen `T-2026-CU-9050-NNN`-Block (Operator-Entscheid Michi
+2026-07-21). Nachgezogen:
+- `CLAUDE.md` §Workflow: neuer Bullet mit der Nummernkreis-Konvention (add_task
+  `customer/project_id="kythera"`, Prefix `T-2026-KYT-9050-`) + Hinweis, dass
+  der alte Kreis geschlossen ist und historische CU-9050-Verweise als Provenienz
+  stehen bleiben.
+- `docs/OPUS-HANDOFF.md` §2: `/task-start`-Template auf KYT umgestellt,
+  Präzedenz-Suche über beide Korpora; zwei aktive Task-Verweise (Eskalation §6
+  + Batch-E-Präzedenzfall) auf die migrierten IDs nachgezogen (018→KYT-002,
+  020→KYT-003).
+- `docs/T-2026-CU-9050-021-opus-task-audit.md`: Migrations-Banner mit vollem
+  Mapping (15 offene Tasks nach KYT-002…016 migriert, Rest done/wontfix; KB ist
+  Single Source of Truth). Dateiname bleibt als Pfad-Verweis unverändert.
+
 ## [2026-07-21] WS2-Batch 2 (deployable-only): SRA2-LONG + EPD3-SHORT live (T-2026-CU-9050-185)
 
 Zweiter Batch der Shadow→Live-Promotionen. Nur die zwei Beine MIT validem
