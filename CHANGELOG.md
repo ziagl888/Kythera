@@ -1,3 +1,31 @@
+## [2026-07-21] Bot 10 (EPD): Hot-Path-Fenster-Scans gefaltet, redundanter ISO-Parse + Deque-Kopie entfernt (T-2026-KYT-9050-019)
+
+CPU-Optimierung des Pump/Dump-Detectors (Bot 10) — laut Per-Bot-Messung
+2026-07-21 der Top-Fresser der Fleet (bursty, p90 ~30% / max ~46%). Vier
+verhaltenserhaltende Änderungen im pro-Tick-×-527-Coin-Hot-Path von
+`process_coin_logics`, restart-gated (keine Live-Semantik-Änderung), aufbauend
+auf dem Epoch-Cache aus T-165:
+- **Anker über gecachten Epoch-Float** statt `_parse_bucket_ts`: `bucket_anchor =
+  _bucket_epoch(data[-1])` — der neueste Bucket trägt `'e'` ab Erzeugung im
+  main-Loop, der frühere ISO-`fromisoformat` lief pro Coin/Tick umsonst (die eine
+  von T-165 übersehene Anker-Stelle). `latest_age_sec` aus Epochs.
+- **Deque direkt lesen** statt `list(ONE_MINUTE_DATA[symbol])`-Kopie pro Tick
+  (`data` wird nur über `data[-1]` und `reversed(data)` angefasst, nie gesliced).
+- **Stunden-Scan + die 6 Price-Move-Lookbacks in EINEM Reverse-Pass**
+  (`_scan_hour_and_lookbacks`) statt 1×`_find_bucket_range(3600)` + 6×
+  `_find_bucket_before` — ~886 → ~362 Bucket-Iterationen/Coin/Tick. Byte-identisch
+  zu den Einzelaufrufen konstruiert und mit 3000-Fall-Fuzz-Test + Band-Edge- +
+  Empty/None-Tests gepinnt (`hour_buckets` speist `avg_volume` = Modell-Input UND
+  `pump_dump_events`-Insert-Gate — jede Abweichung wäre stiller Regel-7-Skew).
+
+P1.39-Zeitstempel-Fenster, T-035-Nearest-Bänder, `now`=Wanduhr (Staleness/
+Cooldowns/`spike_time`) und die „kein erfundener Ersatz-Bucket"-Regel bleiben
+unangetastet. Bewusst NICHT in Scope: inkrementeller Stunden-Aggregat statt
+Rescan (eigener Regression-Guard nötig, Folge-Task). Verifiziert:
+`test_pump_dump_time_windows.py` 21/21 (18 + 3 neue Äquivalenz), Kern-Reviews
+(z-code-reviewer + z-spec-compliance-review) PASS, `regression_guard verify`
+(24 Fixtures) + `smoke` clean, ruff clean. Deploy = Watchdog-Restart (Michi-gegatet).
+
 ## [2026-07-21] Doku: KB-Task-Nummernkreis auf T-2026-KYT-9050-NNN umgestellt (T-2026-KYT-9050-001)
 
 Reine Doku-Änderung, kein Verhaltens-/Code-Effekt. Kythera-Tasks laufen ab
