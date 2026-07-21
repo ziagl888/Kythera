@@ -424,3 +424,106 @@ def test_volume_explosion_fires_at_a_realistic_cadence(monkeypatch):
     det.process_coin_logics(FakeConn(), SYMBOL)
 
     assert any("VOLUME EXPLOSION" in h for h in sent), f"volume explosion never fired at a 70s cadence; sent={sent}"
+
+
+# ── T-2026-KYT-9050-019: the merged single-pass scan is byte-identical ────────
+#
+# _scan_hour_and_lookbacks folds one _find_bucket_range(hour) and the six
+# _find_bucket_before(lookback) scans into a single reverse pass. hour_buckets
+# feeds avg_volume — a model input AND the pump_dump_events insert gate — so any
+# divergence would be a silent Regel-7 skew. These pin exact equivalence.
+
+import random  # noqa: E402
+
+
+def _ref_scan(data, anchor, lookbacks, hour_sec, hour_tol, lb_tol):
+    """The originals, called independently — the contract the merge must match."""
+    hour = det._find_bucket_range(data, anchor, hour_sec, tolerance=hour_tol)
+    refs = {sb: det._find_bucket_before(data, anchor, sb, tolerance=lb_tol) for sb in lookbacks}
+    return hour, refs
+
+
+# The exact production parameters (process_coin_logics).
+_PROD_LOOKBACKS = [120, 180, 300, 420, 600, 3600]
+_PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL = 3600, det.WINDOW_EDGE_GUARD, 20
+
+
+def _random_buckets(rng, now):
+    """A gappy, variable-cadence deque like a real WS feed under load."""
+    n = rng.randint(0, 500)
+    buckets, t = [], now - datetime.timedelta(seconds=rng.randint(0, 4000))
+    for _ in range(n):
+        # Mixed cadence: mostly 10s, sometimes big gaps — the load regime that
+        # made index math wrong in the first place.
+        t = t + datetime.timedelta(seconds=rng.choice([10, 10, 10, 10, 20, 30, 70, 130, 300]))
+        if t > now:
+            break
+        buckets.append(_bucket(t, 100.0 + rng.uniform(-5, 5), rng.uniform(0.1, 5.0)))
+    return buckets
+
+
+def _same_identity(a, b):
+    """Bucket refs must be the SAME objects, not just equal dicts."""
+    if a is None or b is None:
+        return a is b
+    return a is b
+
+
+def test_scan_windows_matches_originals():
+    """Fuzz the merge against the independent originals over gappy feeds."""
+    rng = random.Random(20260721)
+    for _ in range(3000):
+        now = datetime.datetime.now(UTC)
+        buckets = _random_buckets(rng, now)
+        # Anchor on the newest bucket's epoch (as process_coin_logics does), or
+        # occasionally on a raw datetime/float to exercise _anchor_epoch too.
+        if buckets and rng.random() < 0.7:
+            anchor = det._bucket_epoch(buckets[-1])
+        else:
+            anchor = now if rng.random() < 0.5 else now.timestamp()
+
+        exp_hour, exp_refs = _ref_scan(buckets, anchor, _PROD_LOOKBACKS, _PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL)
+        got_hour, got_refs = det._scan_hour_and_lookbacks(
+            buckets, anchor, _PROD_LOOKBACKS, _PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL
+        )
+
+        assert [id(x) for x in got_hour] == [id(x) for x in exp_hour], "hour_buckets diverged"
+        for sb in _PROD_LOOKBACKS:
+            assert _same_identity(got_refs[sb], exp_refs[sb]), f"lookback {sb}s diverged"
+
+
+def test_scan_windows_edge_bands():
+    """Buckets landing exactly on band edges (age = sb ± tol) must match."""
+    now = datetime.datetime.now(UTC)
+    for sb in _PROD_LOOKBACKS:
+        for edge in (sb - _PROD_LB_TOL, sb - _PROD_LB_TOL - 1, sb + _PROD_LB_TOL, sb + _PROD_LB_TOL + 1):
+            data = [
+                _bucket(now - datetime.timedelta(seconds=edge), 100.0, 1.0),
+                _bucket(now, 101.0, 1.0),
+            ]
+            _, exp_refs = _ref_scan(data, now, _PROD_LOOKBACKS, _PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL)
+            _, got_refs = det._scan_hour_and_lookbacks(
+                data, now, _PROD_LOOKBACKS, _PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL
+            )
+            for k in _PROD_LOOKBACKS:
+                assert _same_identity(got_refs[k], exp_refs[k]), f"edge {edge}s (sb={sb}) lookback {k} diverged"
+
+
+def test_scan_windows_empty_and_none_timestamps():
+    now = datetime.datetime.now(UTC)
+    # Empty
+    h, r = det._scan_hour_and_lookbacks([], now, _PROD_LOOKBACKS, _PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL)
+    assert h == [] and all(v is None for v in r.values())
+    # Unparseable 't' (no 'e') must be skipped exactly like the originals.
+    data = [
+        {"t": "not-a-timestamp", "p": "100", "v10s": "1", "v10s_valid": True},
+        _bucket(now - datetime.timedelta(seconds=60), 100.0, 1.0),
+        _bucket(now, 101.0, 1.0),
+    ]
+    exp_h, exp_r = _ref_scan(data, now, _PROD_LOOKBACKS, _PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL)
+    got_h, got_r = det._scan_hour_and_lookbacks(
+        data, now, _PROD_LOOKBACKS, _PROD_HOUR_SEC, _PROD_HOUR_TOL, _PROD_LB_TOL
+    )
+    assert [id(x) for x in got_h] == [id(x) for x in exp_h]
+    for k in _PROD_LOOKBACKS:
+        assert _same_identity(got_r[k], exp_r[k])

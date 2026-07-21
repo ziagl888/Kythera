@@ -642,9 +642,92 @@ def _find_bucket_range(data: list, now: "datetime.datetime | float", seconds_ago
     return list(reversed(result))  # wieder chronologisch
 
 
+def _scan_hour_and_lookbacks(
+    data: list,
+    anchor: "datetime.datetime | float",
+    lookback_secs: "list[int]",
+    hour_sec: int,
+    hour_tol: int,
+    lb_tol: int,
+) -> "tuple[list, dict[int, dict | None]]":
+    """EIN Reverse-Pass statt 1×_find_bucket_range(hour) + N×_find_bucket_before(lb).
+
+    T-2026-KYT-9050-019: der Stunden-Scan (Volume-Explosion + ML-Baseline) und die
+    6 Price-Move-Lookbacks scannen im Steady State (kein Alert) jeden Tick dieselbe
+    Deque bis ~3600s zurück — zusammen ~886 Bucket-Iterationen/Coin/Tick. Diese
+    Funktion faltet beide in eine Traversierung (~362 Iter). Sie ist BYTE-IDENTISCH
+    zu den Einzelaufrufen konstruiert (Fuzz-Test test_scan_windows_matches_originals):
+
+      - hour_buckets == _find_bucket_range(data, anchor, hour_sec, tolerance=hour_tol)
+      - lb_refs[sb]  == _find_bucket_before(data, anchor, sb,       tolerance=lb_tol)
+                        für jedes sb in lookback_secs
+
+    Ankern, None-Semantik (fehlender Bucket ⇒ None ⇒ Caller skippt) und die
+    „jüngster Treffer im Band"-Wahl von _find_bucket_before bleiben unverändert.
+    """
+    anchor_e = _anchor_epoch(anchor)
+    lb_pending = sorted(lookback_secs)  # aufsteigende Sekunden = aufsteigendes Ziel-Alter
+    lb_refs: dict[int, dict | None] = {sb: None for sb in lookback_secs}
+    if not data:
+        return [], lb_refs
+
+    hour_cutoff = anchor_e - hour_sec - hour_tol
+    hour_rev: list = []  # newest-first, am Ende chronologisch gedreht
+    hour_done = False
+    lb_idx = 0
+
+    for entry in reversed(data):
+        e = _bucket_epoch(entry)
+        if e is None:
+            continue
+
+        # (a) Stunden-Fenster: sammeln solange e >= cutoff, dann dicht (break-Äquiv.)
+        if not hour_done:
+            if e >= hour_cutoff:
+                hour_rev.append(entry)
+            else:
+                hour_done = True
+
+        # (b) Lookback-Referenzen: age steigt monoton mit dem Scan. Für die aktuell
+        #     flachste offene Bande gilt exakt _find_bucket_before(tol=lb_tol):
+        #       age < sb-tol  → noch nicht im Band, dieser Entry ist zu jung → break
+        #       age <= sb+tol → jüngster Treffer, festhalten und Bande schließen
+        #       age >  sb+tol → Band übersprungen ⇒ None, Bande schließen
+        #     Nach einem Match/None denselben Entry gegen die nächste (tiefere)
+        #     Bande prüfen (continue), bis er zu jung ist (break).
+        age = anchor_e - e
+        while lb_idx < len(lb_pending):
+            sb = lb_pending[lb_idx]
+            if age < sb - lb_tol:
+                break
+            if age <= sb + lb_tol:
+                lb_refs[sb] = entry
+            # sonst: age > sb+tol → lb_refs[sb] bleibt None
+            lb_idx += 1
+
+        if hour_done and lb_idx >= len(lb_pending):
+            break
+
+    return list(reversed(hour_rev)), lb_refs
+
+
+# (seconds_back, min_pct) je Extreme-Move-Lookback (10s-Buckets: 12/18/30/42/60/360
+# Buckets = 120…3600s). Die Sekunden-Spalte ist ZUGLEICH die Lookback-Liste für
+# _scan_hour_and_lookbacks — eine Quelle, damit Single-Pass-Scan und Alert-Schleife
+# nie auseinanderdriften.
+PRICE_MOVE_LOOKBACKS = [(120, 3.0), (180, 4.0), (300, 5.0), (420, 7.5), (600, 10.0), (3600, 20.0)]
+PRICE_MOVE_LOOKBACK_SECS = [sb for sb, _ in PRICE_MOVE_LOOKBACKS]
+
+
 # 2. EXTREME MOVE & PUMP/DUMP DETECTOR
 def process_coin_logics(conn, symbol):
-    data = list(ONE_MINUTE_DATA[symbol])
+    # T-2026-KYT-9050-019: die Deque direkt lesen statt sie pro Coin/Tick in eine
+    # Liste zu kopieren. `data` wird ausschliesslich über `data[-1]` (O(1) am
+    # Ende) und `reversed(data)` (in den _find_bucket_*-Helfern) angefasst, nie
+    # gesliced — beides kann die Deque nativ. Der Loop ist single-threaded und
+    # main() appended den frischen Bucket VOR diesem Aufruf, es gibt also keine
+    # nebenläufige Mutation, gegen die die Snapshot-Kopie schützen müsste.
+    data = ONE_MINUTE_DATA[symbol]
     if len(data) < 36:
         return  # Brauchen etwas Historie
 
@@ -668,10 +751,6 @@ def process_coin_logics(conn, symbol):
     # die alten NICHT als "vor 2 Minuten" behandeln. Wenn die Daten stale
     # sind, skippingn wir diesen Cycle — beim nächsten Tick ist der neueste
     # Bucket schon wieder frisch.
-    latest_ts = _parse_bucket_ts(data[-1])
-    if latest_ts is None:
-        return
-
     # P1.39: ALLE Bucket-Lookups ankern auf dem jüngsten Bucket-Zeitstempel,
     # nicht auf der Wanduhr. Die Bucket-Stempel sind auf das 10s-Raster gefloort
     # (`_tick_epoch - _tick_epoch % 10`), `now` ist der Aufrufzeitpunkt irgendwo
@@ -680,12 +759,22 @@ def process_coin_logics(conn, symbol):
     # Gegen `now` gemessen läge die 60s-Grenze mal vor, mal hinter dem Bucket von
     # vor 60s: das Fenster kippte je nach Aufrufzeitpunkt zwischen 6 und 7
     # Buckets, und ein Modell-Feature sprang, ohne dass sich der Markt bewegte.
-    # Gegen `latest_ts` liegt jeder Zielzeitpunkt exakt auf einem Rasterpunkt.
-    # `now` bleibt für alles Wanduhr-Artige zuständig (Staleness, Alert-Gates,
-    # spike_time).
-    bucket_anchor = latest_ts
+    # Gegen den Bucket-Stempel liegt jeder Zielzeitpunkt exakt auf einem
+    # Rasterpunkt. `now` bleibt für alles Wanduhr-Artige zuständig (Staleness,
+    # Alert-Gates, spike_time).
+    #
+    # T-2026-KYT-9050-019: der Anker ist der gecachte Epoch-Float (`_bucket_epoch`),
+    # nicht `_parse_bucket_ts`. Der neueste Bucket trägt 'e' ab Erzeugung im
+    # main-Loop, hier las der frühere ISO-Parse also pro Coin pro Tick umsonst neu.
+    # T-165 hatte fromisoformat als dominanten CPU-Posten identifiziert und in den
+    # Fenster-Helfern bereits auf 'e' umgestellt — diese eine Anker-Stelle blieb
+    # übrig. Ein Float-Anker ist zudem robuster: alle _find_bucket_*-Helfer
+    # normalisieren ihn über _anchor_epoch (kein isinstance gegen datetime).
+    bucket_anchor = _bucket_epoch(data[-1])
+    if bucket_anchor is None:
+        return
 
-    latest_age_sec = (now - latest_ts).total_seconds()
+    latest_age_sec = now.timestamp() - bucket_anchor
     if latest_age_sec > 60:
         # Daten-Gap zu groß — nicht aussagekräftig für Pump-Detection.
         # Kann after Restart oder after WS-Ausfall passieren.
@@ -718,10 +807,15 @@ def process_coin_logics(conn, symbol):
     if current_vol_valid:
         pd_state["volume_samples"].append(current_vol)
 
-    # Stunden-Fenster EINMAL pro Tick (T-2026-CU-9050-165): Volume-Explosion (A2)
-    # und der ML-Pfad (B) zogen sich bislang je einen eigenen 3600s-Scan über
-    # dieselben Daten mit demselben Anker — identisches Ergebnis, doppelte Kosten.
-    hour_buckets = _find_bucket_range(data, bucket_anchor, 3600, tolerance=WINDOW_EDGE_GUARD)
+    # Stunden-Fenster + die 6 Price-Move-Lookbacks in EINEM Reverse-Pass
+    # (T-2026-KYT-9050-019, baut auf T-2026-CU-9050-165 auf): Volume-Explosion (A2),
+    # der ML-Pfad (B) und die 6 _find_bucket_before-Lookbacks der Extreme-Move-Schleife
+    # scannten dieselbe Deque bis ~3600s zurück — im Steady State jeden Tick ~886
+    # Bucket-Iterationen/Coin. `_scan_hour_and_lookbacks` faltet sie in ~362 und ist
+    # byte-identisch zu den Einzelaufrufen (Fuzz-Pin test_scan_windows_matches_originals).
+    hour_buckets, lb_refs = _scan_hour_and_lookbacks(
+        data, bucket_anchor, PRICE_MOVE_LOOKBACK_SECS, 3600, WINDOW_EDGE_GUARD, 20
+    )
     hour_vols = [float(e["v10s"]) for e in hour_buckets if e.get("v10s_valid", True)]
     hour_covered = _window_coverage_sec(hour_buckets, bucket_anchor)
 
@@ -732,23 +826,15 @@ def process_coin_logics(conn, symbol):
 
         # 1. Price Move
         # WICHTIG: Der Lookback ist ZEITSTEMPEL-basiert, nicht Index-basiert.
-        # Das tuple (lookback, min_pct, _) bedeutet: "vor `lookback` BUCKETS"
-        # was bei 10s-Buckets `lookback * 10` SEKUNDEN entspricht.
-        # Nach einem Restart kann die Deque aber alte + neue Buckets mischen
-        # — dann ist data[-12] NICHT mehr "vor 120 Sekunden". Deshalb suchen
-        # wir den Vergleichs-Bucket per Zeitstempel.
-        for lookback, min_pct, _ in [
-            (12, 3.0, 2),
-            (18, 4.0, 3),
-            (30, 5.0, 5),
-            (42, 7.5, 7),
-            (60, 10.0, 10),
-            (360, 20.0, 60),
-        ]:
-            seconds_back = lookback * 10
-
-            # Bucket vor genau `seconds_back` Sekunden suchen (mit 20s Toleranz)
-            past_entry = _find_bucket_before(data, bucket_anchor, seconds_back, tolerance=20)
+        # `seconds_back` ist der Fensterabstand in SEKUNDEN (120…3600). Nach einem
+        # Restart kann die Deque alte + neue Buckets mischen — dann ist data[-12]
+        # NICHT mehr "vor 120 Sekunden". Deshalb suchen wir den Vergleichs-Bucket
+        # per Zeitstempel (hier via lb_refs aus dem gemeinsamen Reverse-Pass).
+        for seconds_back, min_pct in PRICE_MOVE_LOOKBACKS:
+            # Referenz-Bucket vor `seconds_back` Sekunden (±20s Toleranz) — im
+            # gemeinsamen Reverse-Pass oben vorberechnet (byte-identisch zum früheren
+            # _find_bucket_before(data, bucket_anchor, seconds_back, tolerance=20)).
+            past_entry = lb_refs[seconds_back]
             if past_entry is None:
                 # Kein Bucket im gewünschten Zeitfenster — entweder zu wenig
                 # Historie oder Daten-Lücke. Diesen Lookback skippingn.
@@ -761,7 +847,7 @@ def process_coin_logics(conn, symbol):
             chg_pct = (current_price / past_price - 1) * 100
             if abs(chg_pct) >= min_pct:
                 direction = "PUMP" if chg_pct > 0 else "DUMP"
-                mins, secs = divmod(lookback * 10, 60)
+                mins, secs = divmod(seconds_back, 60)
                 t_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
 
                 # Dead-Cat-Bounce-Check: 10-Minuten-Trend vs. Signal-Richtung
