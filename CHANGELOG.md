@@ -9,8 +9,9 @@ statt im geschlossenen `T-2026-CU-9050-NNN`-Block (Operator-Entscheid Michi
   der alte Kreis geschlossen ist und historische CU-9050-Verweise als Provenienz
   stehen bleiben.
 - `docs/OPUS-HANDOFF.md` §2: `/task-start`-Template auf KYT umgestellt,
-  Präzedenz-Suche über beide Korpora; §6/§5 zwei aktive Task-Verweise auf die
-  migrierten IDs nachgezogen (018→KYT-002, 020→KYT-003).
+  Präzedenz-Suche über beide Korpora; zwei aktive Task-Verweise (Eskalation §6
+  + Batch-E-Präzedenzfall) auf die migrierten IDs nachgezogen (018→KYT-002,
+  020→KYT-003).
 - `docs/T-2026-CU-9050-021-opus-task-audit.md`: Migrations-Banner mit vollem
   Mapping (15 offene Tasks nach KYT-002…016 migriert, Rest done/wontfix; KB ist
   Single Source of Truth). Dateiname bleibt als Pfad-Verweis unverändert.
