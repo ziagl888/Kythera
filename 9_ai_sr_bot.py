@@ -167,9 +167,11 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
     Scored denselben S/R-Kandidaten wie der Live-SRA1-Pfad über den geteilten
     core.sra_features-Builder + das SRA2-Artefakt und emittiert bei prob>=threshold
     via post_ai_signal_gated: das LIVE-Bein SRA2 LONG (@0.6424, T-185, Artefakt im
-    Repo-Root) postet Cornix an CH_AI_SR (koexistierend mit SRA1), das SHADOW-Bein
-    SRA2 SHORT (threshold=None, staging) bleibt ein überwachter Shadow-Trade (kein
-    Cornix). Geometrie = dieselbe HVN/S-R-Konstruktion wie process_ai_trade (bewusst
+    Repo-Root) emittiert eine Cornix-Format-Message an CH_AI_SR (koexistierend mit
+    SRA1) — Cornix ist auf CH_AI_SR NICHT subscribed (informativ/Orchestrator),
+    weshalb der MAX2-Fork denselben Trade kollisionsfrei nach CH_MAIN spiegeln kann
+    (siehe _emit_max2). Das SHADOW-Bein SRA2 SHORT (threshold=None, staging) bleibt
+    ein überwachter Shadow-Trade (kein Cornix). Geometrie = dieselbe HVN/S-R-Konstruktion wie process_ai_trade (bewusst
     dupliziert, um den Live-Pfad nicht anzufassen). Fehler bleiben gekapselt.
     """
     if not shadow_gate.shadow_posting_enabled() or shadow_gate.leg_status("SRA2", direction) not in (

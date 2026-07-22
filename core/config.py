@@ -153,7 +153,10 @@ CH_MAX1 = _ch_override("CH_MAX1", CH_MAIN)
 TELEGRAM_CHANNELS = {
     "Fast In And Out": CH_FAST_IN_OUT,
     "5 Percent": CH_5_PERCENT,
-    "Main Channel": CH_MAIN,
+    # "Main Channel" retired (T-2026-KYT-9050-020) → durch MAX2 ersetzt (SRA2-LONG-
+    # Trade coin-gefiltert nach CH_MAIN, 9_ai_sr_bot.py). Kein Detektor emittiert
+    # mehr die Strategie "Main Channel"; der Map-Eintrag wäre toter Code. CH_MAIN
+    # selbst bleibt (CH_MAX1-Fallback + MAX2-Ziel).
     "Support Resistance": CH_SUPPORT_RESISTANCE,
     "Volume Indicator": CH_VOLUME_INDICATOR,
     "Pattern Detector": CH_PATTERN_DETECTOR,
