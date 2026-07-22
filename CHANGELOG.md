@@ -1,3 +1,40 @@
+## [2026-07-22] Klassischen Main-Channel-Bot retired, ersetzt durch MAX2 (SRA2-LONG-Trade → CH_MAIN) (T-2026-KYT-9050-020)
+
+Der klassische „Main Channel"-Detektor (`strategies/strat_main_channel.py`, im
+Konzept-Audit Grade C−/−77 PnL, „Duplikat von Support Resistance") wird retired
+und durch **MAX2** ersetzt. MAX2 ist KEIN eigenes Modell und kein neuer Prozess,
+sondern ein Inline-Fork der SRA2-LONG-Emission in Bot 9 (`_emit_max2` in
+`9_ai_sr_bot.py`): feuert SRA2 LONG (prob≥Threshold) für einen Coin aus
+`config.MAIN_CHANNEL_COINS`, wird DERSELBE Trade (gleiche prob + Entry/SL/Target-
+Geometrie) zusätzlich unter Tag `MAX2` nach `CH_MAIN` gepostet. Einziger Filter =
+die 37er-Coin-Whitelist, exakt wie der retirete Bot (Operator-Entscheid Michi).
+- **LONG-only:** SRA2 SHORT ist ein toter Shadow-Leg (threshold=None, Label-Quelle
+  `closed_trades3` seit 23.02 tot) → kein handelbarer SHORT-Edge.
+- **MAX2 default-LIVE** (`leg_status("MAX2","LONG")`=LIVE, bewusst NICHT im
+  `_LIFECYCLE`-Register gelistet): kollisionsfrei mit dem bestehenden SRA2-Post
+  nach `CH_AI_SR`, WEIL `CH_AI_SR` NICHT Cornix-executed ist (informativ/
+  Orchestrator, Operator-bestätigt) — sonst wäre es ein Regel-4-Doppel-Trade auf
+  den 37 Coins. Rollback in den Shadow = die auskommentierte Register-Zeile
+  `("MAX2","LONG"): SHADOW` aktivieren.
+- **Eigener Tag ⇒ eigener Cooldown-/Dedup-Namespace** via `has_open("MAX2")`
+  (Regel 6); MAX2 blockt/wird nicht vom SRA2-Active-Trade-Check berührt.
+- **Retirement in `3_detectors.py`:** Dispatch + `analyze_main`-Import +
+  `MAIN_CHANNEL_COINS`-Import entfernt, `'Main Channel'` aus dem 1h-Strategie-
+  Roster (`_strategies_for` + Dispatch) raus. `strategies/strat_main_channel.py`
+  bleibt ungenutzt liegen (Operator-Entscheid). `MAIN_CHANNEL_COINS`/`CH_MAIN`
+  bleiben — jetzt vom MAX2-Fork konsumiert.
+
+Verifiziert: neuer `backtest/test_max2_forward.py` (11 Checks: Fork-Wiring,
+Geometrie-Reuse-Reihenfolge, eigener Dedup-Namespace, Gate-Guard, Retirement in
+3_detectors, MAX2-LONG=default-LIVE), `test_sra_tag.py` grün nach Anker-Fix
+(`_emit_sra2_shadow` überschattete seit T-125 das erste `get_indicators_at_time`-
+Vorkommen → Suche der process_ai_trade-Anker ab dem Active-Trade-Check),
+Detector-Tests 4/4 + 21/21, `regression_guard verify` 24 Fixtures, ruff clean.
+Ein `test_shadow_gate`-Fall bleibt rot = pre-existing env-Fail (xgboost-Pickle-
+Load auf der Build-Maschine, byte-identisch zu origin/main). Live-Effekt =
+Watchdog-Restart (Michi-gegatet); Deploy-Vorbedingung erfüllt (CH_AI_SR nicht
+Cornix-executed → kein Doppel-Trade).
+
 ## [2026-07-21] Bot 10 (EPD): Hot-Path-Fenster-Scans gefaltet, redundanter ISO-Parse + Deque-Kopie entfernt (T-2026-KYT-9050-019)
 
 CPU-Optimierung des Pump/Dump-Detectors (Bot 10) — laut Per-Bot-Messung

@@ -27,7 +27,7 @@ Zahlen: dedupliziert, ungehebelt, netto −0,10% Fee; Vorbehalt Monitor-Replay (
 |---|---|---|---|
 | [Support Resistance](Support_Resistance.md) | B− | +596 | einzige netto-positive Classic (SHORT trägt) |
 | [Volume Indicator](Volume_Indicator.md) | D+ | −705 | ≈ break-even brutto; Scoring nur 44% replay-konsistent |
-| [Main Channel](Main_Channel.md) | C− | −77 | Duplikat von Support Resistance — mergen |
+| [Main Channel](Main_Channel.md) | C− | −77 | RETIRED 2026-07-22 (T-2026-KYT-9050-020) → ersetzt durch MAX2 (SRA2-LONG-Trade coin-gefiltert → CH_MAIN) |
 | [5 Percent](Five_Percent.md) | D | −5.766 | 71% "WR" und klar negativ |
 | [Fast In And Out](Fast_In_And_Out.md) | **F** | **−25.843** | Masse ohne Edge; Kandidat für S11-Filter oder Abschaltung |
 

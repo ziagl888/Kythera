@@ -111,8 +111,12 @@ def test_active_trade_check_runs_before_the_expensive_prediction():
     Anchored on the actual call, not on the string `predict_proba` — that also appears
     in the P1.20 comment far above and would make the ordering assertion vacuous."""
     check = SRC.index("SELECT 1 FROM ai_signals")
-    inds = SRC.index("inds = get_indicators_at_time")
-    predict = SRC.index("artifact['model'].predict_proba")
+    # _emit_sra2_shadow (T-2026-CU-9050-125) also calls get_indicators_at_time ABOVE
+    # the main loop, so a bare .index() would anchor on that occurrence instead of the
+    # process_ai_trade one and make this ordering assertion meaningless. Search for the
+    # main-loop occurrences from the active-trade check onward (T-2026-KYT-9050-020).
+    inds = SRC.index("inds = get_indicators_at_time", check)
+    predict = SRC.index("artifact['model'].predict_proba", check)
     assert check < inds < predict, "the active-trade check moved below the indicator fetch / prediction"
 
 

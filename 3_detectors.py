@@ -8,7 +8,7 @@ import logging
 import time
 
 from core.candles import read_indicators
-from core.config import MAIN_CHANNEL_COINS, TELEGRAM_CHANNELS
+from core.config import TELEGRAM_CHANNELS
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import DetectorCycle, update_cooldown
@@ -16,7 +16,10 @@ from strategies.strat_5_percent import analyze_coin as analyze_5_pct
 from strategies.strat_fast_in_out import analyze_coin as analyze_fast
 
 # --- IMPORT ALL STRATEGIES ---
-from strategies.strat_main_channel import analyze_coin as analyze_main
+# strat_main_channel retired (T-2026-KYT-9050-020): der klassische "Main Channel"-
+# Detektor (Grade C−/−77 PnL, Quasi-Duplikat von Support Resistance) ist durch MAX2
+# ersetzt — der SRA2-LONG-Trade coin-gefiltert nach CH_MAIN (9_ai_sr_bot.py:_emit_max2).
+# strategies/strat_main_channel.py bleibt ungenutzt liegen (Operator-Entscheid Michi).
 from strategies.strat_support_resistance import analyze_coin as analyze_sr
 from strategies.strat_volume_indicator import analyze_coin as analyze_vol
 
@@ -76,8 +79,7 @@ def _strategies_for(timeframe, symbol):
     if timeframe == '30m':
         return ('Fast In And Out', 'Volume Indicator')
     if timeframe == '1h':
-        if symbol in MAIN_CHANNEL_COINS:
-            return ('5 Percent', 'Support Resistance', 'Main Channel')
+        # 'Main Channel' retired (T-2026-KYT-9050-020) → durch MAX2 (Bot 9) ersetzt.
         return ('5 Percent', 'Support Resistance')
     return ()
 
@@ -315,10 +317,9 @@ def run_detectors_for_timeframe(timeframe):
                     if s4:
                         signals.append(s4)
 
-                    if symbol in MAIN_CHANNEL_COINS:
-                        s5 = timed_scan('Main Channel', analyze_main, df_indexed, symbol, live_price)
-                        if s5:
-                            signals.append(s5)
+                    # 'Main Channel' retired (T-2026-KYT-9050-020): der klassische
+                    # Detektor ist durch MAX2 ersetzt (SRA2-LONG-Trade coin-gefiltert
+                    # → CH_MAIN, 9_ai_sr_bot.py). Kein Dispatch mehr hier.
 
                 for signal in signals:
                     logger.info(f"🚀 SIGNAL FOUND: [{signal['strategy']}] {signal['coin']} {signal['direction']}!")
