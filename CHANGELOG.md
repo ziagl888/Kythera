@@ -1,3 +1,39 @@
+## [2026-07-22] GARCH-Vol-Targeting-Modul + Validierungs-Harness geliftet (T-2026-KYT-9050-021, -022)
+
+Neues self-contained Research-Paket `tools/research/garch/`, aus dem Repo-Audit
+`milesdeutscher/garchmethod` portiert (Verdict **ADAPT**, MIT — `LICENSE.upstream`
+beibehalten). GARCH beantwortet *wie viel* (Magnitude/Sizing), nie *welche
+Richtung* — orthogonal zur Signal-Engine, komponiert als `signal × size_multiplier`.
+**Kein Fleet-/Live-/DB-Code berührt; nichts deployt.**
+
+- **`garch_forecast.walkforward_garch()`** — walk-forward GARCH(1,1)-Vol-Forecast,
+  lookahead-frei (prefix-stabil per Test bewiesen). Kythera-Anpassungen ggü.
+  Upstream: **Rolling-Window-Cap** (`max_window`, Default 1500; `None` = Upstream
+  Expanding Window), **injizierbarer `fit_fn`** (die DB-freien Tests laufen ohne
+  `arch`), Regime calm/normal/storm.
+- **`vol_target`** — `size_from_vol`/`size_series` (= `target/forecast`, gecappt
+  `[0.25, 2.0]`, NaN/≤0 → `MIN_SIZE`) + `apply_sizing` (Kompositions-Naht, dreht
+  nie das Vorzeichen).
+- **`GarchSizer`** — stateful Per-Coin-Sizer für den Live-538-Coin-Pfad:
+  Param-Cache + Refit nur nach Zeitplan, reproduziert die walk-forward-
+  Forecast-Serie bar-für-bar (Parität + Refit-Count getestet).
+- **`ccxt_data`** — OHLCV → `date,close`-Contract (ersetzt yfinance).
+- **`compare.py` (T-022)** — Fixed-vs-Vol-Targeted-Harness + `compare_coins`/
+  `verdict_from_stats`-Gate (Sharpe-Delta + Max-DD/Worst-Month-Risiko-Achse →
+  PULLS/MIXED/NO-PULL/NO-DATA). Timing-Disziplin `next_ret = ret.shift(-1)`.
+  `--signals date,signal`-CSV = der Plug für eine `signals.csv` (z.B. Stoic-1-2-3,
+  T-2026-KYT-9050-024).
+- **Deps:** `arch`/`ccxt` in `requirements-garch.txt`, **NICHT** in die Fleet-
+  `requirements.txt` (lazy imports, Lockfile bleibt sauber).
+- **Verifikation:** 28 DB-freie Tests (`backtest/test_garch_*.py`) grün; realer
+  `arch`+`ccxt`-Smoke auf Binance BTC/USDT (40,6 % ann. Vol, Regime calm, 0,37×).
+  Beide Kern-Reviews PASS (z-code-reviewer: 0 CRITICAL/HIGH, 2 MEDIUM + LOW
+  adressiert; z-spec-compliance: AK1–AK11 erfüllt).
+- **Gate/Grenze:** Das *reale* Kythera-Signal-Verdikt (zieht Vol-Targeting bei
+  Kythera?) ist DB-gebunden (harte Regel 1) → läuft in einer VPS-Session mit
+  echten Signalen; hier ist der Harness auf ccxt-Preise + Demo-/Proxy-Signalen
+  validiert. Live-Wiring in einen Bot ist bewusst out-of-scope (separater,
+  operator-gegateter Task). Korrelations-Layer = T-2026-KYT-9050-023 (Backlog).
 ## [2026-07-22] Watchdog-Launcher-Crash (0xC0000005) gefixt + Outer-Net-Self-Heal (T-2026-KYT-9050-025)
 
 Der Launcher der „Kythera Watchdog"-Task starb intermittierend mit
