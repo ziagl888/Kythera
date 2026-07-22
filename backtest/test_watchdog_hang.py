@@ -275,3 +275,29 @@ def test_probe_exempts_on_spawn_failure(monkeypatch):
 
     monkeypatch.setattr(wd.subprocess, "run", _boom)
     assert wd._probe_open_log_files(1) is None
+
+
+# ── Integration: the REAL child-process probe actually runs ──────────────────
+# Every test above mocks subprocess.run, so the embedded _HEARTBEAT_PROBE_SRC and
+# the real spawn/argv/returncode contract are never exercised. This one runs the
+# unmocked path against the current interpreter, so a broken probe source, a bad
+# argv, or a returncode-contract regression can't ship green (the crux of the
+# T-2026-KYT-9050-025 fix). psutil is imported by the CHILD, so the module-level
+# psutil mock does not touch this path.
+
+
+def test_probe_real_child_finds_an_open_log(tmp_path):
+    log = tmp_path / "heartbeat_probe_self.log"
+    fh = open(log, "w", encoding="utf-8")
+    try:
+        fh.write("alive\n")
+        fh.flush()
+        paths = wd._probe_open_log_files(os.getpid())
+    finally:
+        fh.close()
+    # A clean child run returns a list (never None); our own open .log is in it.
+    assert isinstance(paths, list), "real probe must spawn, import psutil, and exit 0"
+    norm = {os.path.normcase(os.path.abspath(p)) for p in paths}
+    assert os.path.normcase(os.path.abspath(str(log))) in norm
+    # End-to-end selection also resolves it (prefers logs/, but any .log is valid).
+    assert wd._pick_heartbeat_log(paths) is not None

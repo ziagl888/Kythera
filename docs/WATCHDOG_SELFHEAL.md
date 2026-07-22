@@ -103,8 +103,18 @@ $s.RestartCount = 3; $s.RestartInterval = 'PT1M'
 Set-ScheduledTask -TaskName 'Kythera Watchdog' -Settings $s
 ```
 
-If `Set-ScheduledTask` demands the credential (password-logon task), re-run with
-`-User 'Michael' -Password '<password>'`.
+This is a **password-logon** task (`LogonType=Password`). `Set-ScheduledTask
+-Settings` without a credential can succeed while silently converting the
+principal to an S4U/interactive-token logon (dropping the stored password), which
+would break `RunLevel Highest` / boot start. The script snapshots the principal
+and **fails (exit 4) if `LogonType`/`UserId` changed**; the safest apply passes
+the credential explicitly:
+
+```powershell
+$s = (Get-ScheduledTask -TaskName 'Kythera Watchdog').Settings
+$s.RestartCount = 3; $s.RestartInterval = 'PT1M'
+Set-ScheduledTask -TaskName 'Kythera Watchdog' -Settings $s -User 'Michael' -Password '<password>'
+```
 
 ### Why RestartOnFailure (not a repetition trigger)
 A **repetition trigger** ("repeat every N min") would also re-launch a dead task

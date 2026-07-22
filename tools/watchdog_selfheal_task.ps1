@@ -60,8 +60,10 @@
       0 - already configured (no-op) OR applied+verified OR dry run printed
       1 - task not found / not readable
       2 - launcher is not v6+ (arm refused) - pull the fix first
-      3 - apply failed (see message; password-logon tasks may need -User/-Password)
-      4 - applied but verification did not read back the expected values
+      3 - apply failed, OR an invalid parameter (RestartCount/RestartInterval out
+          of range); password-logon tasks may need -User/-Password
+      4 - applied but verification did not read back the expected values, OR the
+          principal (LogonType/UserId) changed - re-apply with -User/-Password
 
 .EXAMPLE
     # 1. dry run - shows the planned change, changes nothing
@@ -146,6 +148,14 @@ if (-not $Apply) {
 }
 
 # --- Apply --------------------------------------------------------------------
+# Snapshot the principal so the read-back can prove it was NOT altered. On a
+# password-logon task, Set-ScheduledTask -Settings without -User/-Password can
+# succeed while silently converting the principal to an S4U/interactive-token
+# logon (dropping the stored password) - which would break RunLevel Highest /
+# boot start. We verify LogonType + UserId are unchanged, not just the two
+# restart fields.
+$beforeLogon = $task.Principal.LogonType
+$beforeUser = $task.Principal.UserId
 $settings = $task.Settings
 $settings.RestartCount = $RestartCount
 $settings.RestartInterval = $RestartInterval
@@ -155,18 +165,27 @@ try {
     Write-Line ("Set-ScheduledTask failed: {0}" -f $_.Exception.Message) 'ERROR'
     Write-Line "Password-logon tasks sometimes require the credential to be re-supplied. Retry with:" 'ERROR'
     Write-Line ("  Set-ScheduledTask -TaskName '{0}' -Settings `$s -User '{1}' -Password '<password>'" -f `
-            $TaskName, $task.Principal.UserId) 'ERROR'
+            $TaskName, $beforeUser) 'ERROR'
     exit 3
 }
 
 # --- Verify -------------------------------------------------------------------
 $after = Get-ScheduledTask -TaskName $TaskName
-Write-Line ("After: RestartCount={0}, RestartInterval={1}, MultipleInstances={2}" -f `
-        $after.Settings.RestartCount, $after.Settings.RestartInterval, $after.Settings.MultipleInstances)
-if (($after.Settings.RestartCount -eq $RestartCount) -and ($after.Settings.RestartInterval -eq $RestartInterval)) {
-    Write-Line "Restart-on-failure configured and verified. The outer supervision net now self-heals." 'INFO'
+Write-Line ("After: RestartCount={0}, RestartInterval={1}, MultipleInstances={2}, LogonType={3}, User={4}" -f `
+        $after.Settings.RestartCount, $after.Settings.RestartInterval, $after.Settings.MultipleInstances, `
+        $after.Principal.LogonType, $after.Principal.UserId)
+$fieldsOk = ($after.Settings.RestartCount -eq $RestartCount) -and ($after.Settings.RestartInterval -eq $RestartInterval)
+$principalOk = ($after.Principal.LogonType -eq $beforeLogon) -and ($after.Principal.UserId -eq $beforeUser)
+if ($fieldsOk -and $principalOk) {
+    Write-Line "Restart-on-failure configured and verified (principal preserved). The outer supervision net now self-heals." 'INFO'
     exit 0
+} elseif (-not $principalOk) {
+    Write-Line ("Principal CHANGED (LogonType {0}->{1}, User {2}->{3}) - Set-ScheduledTask dropped the password logon." -f `
+            $beforeLogon, $after.Principal.LogonType, $beforeUser, $after.Principal.UserId) 'ERROR'
+    Write-Line ("Re-apply preserving the credential: Set-ScheduledTask -TaskName '{0}' -Settings `$s -User '{1}' -Password '<password>'" -f `
+            $TaskName, $beforeUser) 'ERROR'
+    exit 4
 } else {
-    Write-Line "Verification MISMATCH - the task did not read back the expected values. Inspect manually." 'ERROR'
+    Write-Line "Verification MISMATCH - the task did not read back the expected restart values. Inspect manually." 'ERROR'
     exit 4
 }
