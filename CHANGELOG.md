@@ -1,3 +1,31 @@
+## [2026-07-23] GARCH-Vol-Targeting LIVE-Verdikt auf echten Trades (T-2026-KYT-9050-030)
+
+Die offene Hälfte von T-022 beantwortet: **zieht GARCH-Vol-Targeting bei Kythera?**
+Read-only-Studie auf dem Live-VPS (SRV02, `cryptodata@localhost`,
+`set_session(readonly=True)` + `statement_timeout`, nur SELECT) — misst, verdrahtet
+nichts. **Kein Fleet-/DB-Write, keine Artefakt-Promotion, keine Gate-Flips, kein
+Live-Wiring.** Neuer Treiber `tools/research/garch/t030_live_verdict.py` + Report
+`T030_live_verdict_report.md` + Ergebnis-JSON.
+
+- **Population:** 16.613 realisierte Trades (nur echte Geometrie-Exits; die
+  synthetischen `LEGACY … (±2.5%)`-Zeilen ausgeschlossen) über die empirisch
+  bestätigten edge-positiven Bots (AIM2, EPD1/EPD3, MIS1-Familie, RUB2-SHORT, MAX1),
+  318 Coins mit ≥510 Tageskerzen (46% Trade-Coverage), GARCH-Forecast as-of Entry
+  (lookahead-frei, geteilter Candle-Reader) via `walkforward_garch`.
+- **Fairer Test:** `target_vol` auf den Sample-Median-Forecast (99% ann.) kalibriert
+  → Multiplikator um 1.0 zentriert (Median 1.00, p10–p90 0.70–1.34) = echte
+  Regime-Reallokation, **kein** uniformes Deleverage. Der naive `target=15%`-Default
+  ist ein 6,6×-Größen-Schnitt (Sharpe-Δ +0,0006) — als Sensitivitäts-Falle dokumentiert.
+- **Verdikt: NO-PULL (immaterielles MIXED).** Pooled-Sharpe 0,1515 → 0,1601
+  (**Δ +0,009**), Median über 9 Bots **Δ +0,013** — eine Größenordnung unter der
+  +0,10-Schwelle. **Kein** edge-positiver Bot besteht den Test. σ sinkt (−8%), aber
+  der Mittelwert sinkt fast proportional → risikoadjustiert flach; Win-Rate invariant
+  (Vorzeichen bleibt). Ursache: GARCH prognostiziert Magnitude, nicht Richtung — auf
+  bereits edge-positiven Signalen reshuffelt Inverse-Vol-Sizing nur Notional, ohne
+  Kapital auf die Gewinner-Trades zu konzentrieren.
+- **Empfehlung:** **Kein gated Live-Wiring-Follow-up.** T-022 beantwortet, Idee
+  billig retired (deckt sich mit dem Combo-Study-Befund: Edge sitzt in der Regime-/
+  Exit-Infra, nicht im Sizing-Overlay). Korrelations-Layer T-023 bleibt separat.
 ## [2026-07-23] Regime-Weighting-Study: soft Confidence-Smoothing schlägt die Live-Regel, HMM widerlegt (T-2026-KYT-9050-029)
 
 DB-freie Research-Study (`tools/research/regime_switch/`, Stoic/GARCH-Muster,
