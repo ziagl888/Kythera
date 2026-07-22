@@ -1,3 +1,119 @@
+## [2026-07-22] Stoic-1-2-3-Direction-Modul + Multi-Timeframe-Backtest (T-2026-KYT-9050-024)
+
+Neues self-contained Research-Paket `tools/research/stoic123/`: das diskretionäre
+„Stoic Edge System / 1-2-3 Sequence" in einen **deterministischen, lookahead-freien**
+Signal-Generator übersetzt + ein Multi-Timeframe-Backtest mit OOS-Split und
+Edge/kein-Edge-Verdikt. Emittiert eine `date,signal`-CSV, die direkt in den
+GARCH-Harness (`compare.py --signals`, T-022) läuft. Direction-System (welche
+Richtung) — komplementär zum GARCH-Sizing (wie viel). **Kein Fleet-/Live-/DB-Code
+berührt; nichts deployt.**
+
+- **`rules.py` (Phase 1)** — EMA/SMA, Wilder-ATR, close-basierter „meaningful
+  break" bei k·ATR (kein Wick), Base/Consolidation-Detektor, **as-of HTF-Location-
+  Gate** (merge_asof gegen HTF-`close_time`, nur voll geschlossene HTF-Kerzen).
+- **`state_machine.py` (Phase 2)** — kausale State-Machine `WAIT → Step1(Break
+  beide MAs) → Step2(Retest+Base, Boundary FIXIERT) → Step3(Boundary-Break+Close
+  = Entry)`, Stop-and-Reverse-Exit. Die **5 Distortions** als explizite Guards +
+  Tests (wick-not-close, HTF-invented, boundary-after-break, skipped-retest,
+  repaint); Prefix-Stabilität beweist Lookahead-/Repaint-Freiheit.
+- **`signals.py`** — Positions-Serie → `signals.csv` (compare.py-Kontrakt).
+- **`backtest.py` (Phase 3)** — ccxt-MTF-Fetch (vorwärts-paginierte Historie),
+  0,6-OOS-Split, 24-Kombi-Sensitivitäts-Sweep, Inline-Metriken (Sharpe/MaxDD/
+  Winrate/Trades/Worst-Month), Edge/kein-Edge-Verdikt, optionaler GARCH-Direkt-
+  Anschluss.
+- **Verifikation:** 29 DB-freie Tests (`backtest/test_stoic123_*.py`) grün; realer
+  ccxt-Lauf BTC/ETH/SOL (4h/1d).
+- **Verdikt (ehrlich):** nach dem Lookahead-Fix (siehe unten) alle drei Coins
+  **INSUFFICIENT** — OOS-Sharpe BTC 0,82 / ETH −0,12 / SOL −0,2, je < 10 OOS-Trades.
+  Die strikte 1-2-3-Sequenz ist auf 4h/1d **zu selten**, der marginale Edge sitzt
+  am lockeren Parameter-Ende; **kein belastbarer Edge auf diesem kleinen Sample**.
+  Folge-Kandidat: größeres Coin-Sample / feinere Timeframe für mehr Trades.
+- **Review-Befund (HIGH, gefixt):** die erste HTF-Gate-Fassung matchte gegen die
+  HTF-**Open**-Zeit → eine LTF-Kerze las die noch-formende HTF-Kerze (Distortion #2,
+  genau die Falle, die das Modul verhindern soll). Fix = Match gegen HTF-`close_time`.
+  Empirischer Beleg für die Realität des Lecks: der Fix drehte SOL von einem
+  (leck-inflationierten) EDGE @Sharpe 0,76 auf INSUFFICIENT @−0,2 — die Validierungs-
+  Disziplin, die das Modul selbst predigt. Beide Kern-Reviews adressiert.
+
+## [2026-07-22] GARCH-Vol-Targeting-Modul + Validierungs-Harness geliftet (T-2026-KYT-9050-021, -022)
+
+Neues self-contained Research-Paket `tools/research/garch/`, aus dem Repo-Audit
+`milesdeutscher/garchmethod` portiert (Verdict **ADAPT**, MIT — `LICENSE.upstream`
+beibehalten). GARCH beantwortet *wie viel* (Magnitude/Sizing), nie *welche
+Richtung* — orthogonal zur Signal-Engine, komponiert als `signal × size_multiplier`.
+**Kein Fleet-/Live-/DB-Code berührt; nichts deployt.**
+
+- **`garch_forecast.walkforward_garch()`** — walk-forward GARCH(1,1)-Vol-Forecast,
+  lookahead-frei (prefix-stabil per Test bewiesen). Kythera-Anpassungen ggü.
+  Upstream: **Rolling-Window-Cap** (`max_window`, Default 1500; `None` = Upstream
+  Expanding Window), **injizierbarer `fit_fn`** (die DB-freien Tests laufen ohne
+  `arch`), Regime calm/normal/storm.
+- **`vol_target`** — `size_from_vol`/`size_series` (= `target/forecast`, gecappt
+  `[0.25, 2.0]`, NaN/≤0 → `MIN_SIZE`) + `apply_sizing` (Kompositions-Naht, dreht
+  nie das Vorzeichen).
+- **`GarchSizer`** — stateful Per-Coin-Sizer für den Live-538-Coin-Pfad:
+  Param-Cache + Refit nur nach Zeitplan, reproduziert die walk-forward-
+  Forecast-Serie bar-für-bar (Parität + Refit-Count getestet).
+- **`ccxt_data`** — OHLCV → `date,close`-Contract (ersetzt yfinance).
+- **`compare.py` (T-022)** — Fixed-vs-Vol-Targeted-Harness + `compare_coins`/
+  `verdict_from_stats`-Gate (Sharpe-Delta + Max-DD/Worst-Month-Risiko-Achse →
+  PULLS/MIXED/NO-PULL/NO-DATA). Timing-Disziplin `next_ret = ret.shift(-1)`.
+  `--signals date,signal`-CSV = der Plug für eine `signals.csv` (z.B. Stoic-1-2-3,
+  T-2026-KYT-9050-024).
+- **Deps:** `arch`/`ccxt` in `requirements-garch.txt`, **NICHT** in die Fleet-
+  `requirements.txt` (lazy imports, Lockfile bleibt sauber).
+- **Verifikation:** 28 DB-freie Tests (`backtest/test_garch_*.py`) grün; realer
+  `arch`+`ccxt`-Smoke auf Binance BTC/USDT (40,6 % ann. Vol, Regime calm, 0,37×).
+  Beide Kern-Reviews PASS (z-code-reviewer: 0 CRITICAL/HIGH, 2 MEDIUM + LOW
+  adressiert; z-spec-compliance: AK1–AK11 erfüllt).
+- **Gate/Grenze:** Das *reale* Kythera-Signal-Verdikt (zieht Vol-Targeting bei
+  Kythera?) ist DB-gebunden (harte Regel 1) → läuft in einer VPS-Session mit
+  echten Signalen; hier ist der Harness auf ccxt-Preise + Demo-/Proxy-Signalen
+  validiert. Live-Wiring in einen Bot ist bewusst out-of-scope (separater,
+  operator-gegateter Task). Korrelations-Layer = T-2026-KYT-9050-023 (Backlog).
+## [2026-07-22] Watchdog-Launcher-Crash (0xC0000005) gefixt + Outer-Net-Self-Heal (T-2026-KYT-9050-025)
+
+Der Launcher der „Kythera Watchdog"-Task starb intermittierend mit
+`0xC0000005` (ACCESS_VIOLATION, nativer Segfault; `logs/watchdog_launch.log`
+2026-07-19 20:08 + 2026-07-22 12:50). Folge: die Scheduled-Task flippte
+`Running→Ready`, die gespawnte Fleet lief detached als Waisen weiter, und das
+**äußere Supervisions-Netz war weg** — stirbt danach ein Bot, restartet nichts
+(Task `Ready`, kein lebender Watchdog). Am 2026-07-22 → ~1h unüberwachte
+Waisen-Fleet + manuelle Recovery.
+
+- **Root-Cause (via `-X faulthandler`):** beide Crashes tragen denselben Stack —
+  `psutil.open_files()` → `main_watchdog._resolve_heartbeat_log` →
+  `check_heartbeat`. Die native psutil-`open_files()`-Enumeration (Handle-Dup +
+  `NtQueryObject`) access-violated auf diesem Windows/Py-3.13-Host. Ein nativer
+  Segfault ist **nicht** per try/except fangbar → riss den ganzen Watchdog mit.
+  Timing (~20 min nach Start = `HANG_LIMIT_S`) bestätigt: erste Heartbeat-Auflösung
+  pro Bot nach der Grace-Phase.
+- **Fix `main_watchdog.py`:** die `open_files()`-Enumeration läuft jetzt in einem
+  **Wegwerf-Kindprozess** (`_probe_open_log_files`). Ein Crash dort kommt beim
+  Parent nur als Non-Zero-Exit an, ein Hang ist per 10s-Timeout begrenzt — in
+  beiden Fällen gilt der Prozess als *unauflösbar → exempt* (wie ein Bot ohne
+  Log). Der Supervisor kann durch diesen Call nicht mehr sterben; Verhalten sonst
+  unverändert (mapping-frei, `logs/`-Präferenz). Zusätzlicher Gewinn: der bisher
+  unbegrenzte In-Process-Hang von `open_files()` ist ebenfalls beseitigt.
+- **Fix `launch_watchdog.cmd` (v5→v6):** propagiert den Python-Exit-Code
+  (`set WD_EXIT=%ERRORLEVEL%` vor dem Ledger-Echo, dann `exit /b %WD_EXIT%`). v5
+  meldete durch das abschließende `echo` **immer** Exit 0 an die Task → ein Crash
+  war für Monitoring UND Restart-on-Failure unsichtbar.
+- **Outer-Net-Self-Heal (Operator-gegatet, NICHT angewendet):**
+  `tools/watchdog_selfheal_task.ps1` (DryRun-Default) + `docs/WATCHDOG_SELFHEAL.md`
+  konfigurieren Restart-on-Failure (`RestartCount=3`/`RestartInterval=PT1M`) auf
+  der Task, unter Erhalt aller anderen Settings. Feuert nur bei echtem Fehler
+  (Non-Zero-Exit) — ein `Stop-ScheduledTask` bleibt gestoppt. Kollisionsfrei mit
+  Mutex + `MultipleInstances=IgnoreNew` + `_terminate_orphan_fleet` (P0.2) +
+  `restart_fleet.ps1` (Analyse im Doc).
+
+Verifiziert: `backtest/test_watchdog_hang.py` 19/19 (neue Fälle: Crash-Exit,
+Timeout, Spawn-Failure → exempt; reine Selektionslogik), Watchdog-Suite 51/52
+(der eine rote = pre-existing `test_fleet_definition::test_watchdog_view_is_unchanged`,
+stale Golden aus T-149, unberührt von diesem PR), ruff+mypy clean, Batch-Exit-Code-
+Propagation isoliert getestet (42→42), Self-Heal-Script-DryRun gegen die Live-Task
+gelaufen. Live-Effekt = Watchdog-Restart (Michi-gegatet) + elevated Task-Config-Apply.
+
 ## [2026-07-22] Klassischen Main-Channel-Bot retired, ersetzt durch MAX2 (SRA2-LONG-Trade → CH_MAIN) (T-2026-KYT-9050-020)
 
 Der klassische „Main Channel"-Detektor (`strategies/strat_main_channel.py`, im

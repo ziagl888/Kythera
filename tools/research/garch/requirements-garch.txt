@@ -1,0 +1,13 @@
+# Self-contained dependency set for the GARCH vol-targeting research package
+# (tools/research/garch/). Deliberately NOT merged into the fleet
+# requirements.txt — the live trading fleet never imports this package, and its
+# lockfile stays clean (T-2026-KYT-9050-021, audit verdict ADAPT).
+#
+#   python -m pip install -r tools/research/garch/requirements-garch.txt
+#
+# pandas / numpy come from the fleet requirements.txt already (>=3.0 / any).
+# matplotlib (also a fleet dep) is only needed for the optional equity chart in
+# compare.py — the numeric harness runs without it.
+
+arch>=6.0        # GARCH(1,1) MLE (Student-t, constant mean) — the vol forecaster
+ccxt>=4.0        # public OHLCV fetch (Binance USD-M futures), replaces yfinance
