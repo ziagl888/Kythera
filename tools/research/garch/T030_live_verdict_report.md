@@ -132,3 +132,35 @@ threshold. If risk-of-ruin (not Sharpe) ever becomes the objective, the naive
 low-target deleverage is a simpler, transparent lever — but that's a position-sizing
 policy choice for Michi, not a GARCH feature. **T-022 is answered: vol-targeting does
 not pull at Kythera. Idea retired.** (Correlation layer T-023 remains separate backlog.)
+
+---
+
+## Appendix A — Edge-discovery evidence (AC1)
+
+The `EDGE_MODELS` whitelist is the positive-mean subset of the realized WR/mean scan
+over **all** tags (real-geometry exits, n ≥ 50), reproducible via
+`python tools/research/garch/t030_live_verdict.py --edge-scan` (full output saved to
+`T030_edge_scan.txt`). Top of the ranked scan (mean return per trade, direction-split):
+
+| model | dir | n | WR% | mean% |
+|---|---|---:|---:|---:|
+| MIS2-24H | SHORT | 69 | 68.1 | +4.36 |
+| MIS1-24H | LONG | 221 | 31.7 | +4.05 |
+| EPD1 | SHORT | 4633 | 60.1 | +3.53 |
+| MIS2-72H | SHORT | 57 | 54.4 | +3.23 |
+| MIS1-8H | SHORT | 400 | 45.8 | +2.89 |
+| MIS1-72H | SHORT | 312 | 44.9 | +2.46 |
+| MIS1-168H | SHORT | 106 | 44.3 | +2.29 |
+| MIS1-72H | LONG | 12203 | 44.0 | +1.56 |
+| AIM2 | SHORT | 1091 | 41.3 | +1.15 |
+| RUB2 | SHORT | 234 | 53.8 | +0.60 |
+| MAX1 | SHORT | 127 | 60.6 | +0.72 |
+| … | | | | |
+| RUB2 | LONG | 99 | 31.3 | −1.97 (dropped) |
+
+The named T-022 families (AIM2, EPD1/EPD3, MIS1/MIS2, RUB2-SHORT, MAX1) are confirmed
+edge-positive on their kept legs; negative legs (e.g. RUB2-LONG) are excluded by the
+`mean > 0` keep-gate. Tags outside these families that also scan positive (ABR1-LONG,
+RUB1, TD/BB long legs, SRA2, ATS) are legacy/other-strategy bots outside this study's
+edge scope; they can be folded into a wider rerun if ever revisited — the pooled
+NO-PULL is very unlikely to flip.

@@ -217,7 +217,10 @@ def leg_metrics(r_frac: np.ndarray, dates: pd.Series) -> dict:
     (mean/std); the annualization factor is identical across fixed/vol so it
     cancels in the delta."""
     r = np.asarray(r_frac, dtype=float)
-    r = r[~np.isnan(r)]
+    dates = pd.Series(pd.to_datetime(pd.Series(dates).values))
+    mask = ~np.isnan(r)
+    r = r[mask]
+    dates = dates[np.asarray(mask)].reset_index(drop=True)  # keep r and dates aligned
     if len(r) == 0:
         return {}
     mean = float(r.mean())
@@ -388,13 +391,54 @@ def run(limit_coins: int | None, statement_timeout_ms: int, verbose: bool) -> di
     }
 
 
+def edge_scan(statement_timeout_ms: int = 40000) -> pd.DataFrame:
+    """The empirical edge-discovery scan behind ``EDGE_MODELS``: realized WR and
+    mean return per (model, direction) over ALL tags, real-geometry exits only,
+    n >= 50. This is the reproducible evidence for AC1 ("identify edge-positive
+    bots empirically") — run with ``--edge-scan``; the positive-mean legs of the
+    named families are what ``EDGE_MODELS`` whitelists."""
+    conn = _connect_readonly(statement_timeout_ms)
+    try:
+        sql = """
+            with base as (
+              select model, direction,
+                case when direction = 'LONG' then (close_price - entry) / entry
+                     else (entry - close_price) / entry end as r
+              from closed_ai_signals
+              where status not like 'LEGACY%%'
+                and status <> all(%s)
+                and entry is not null and close_price is not null
+                and entry > 0 and close_price > 0
+            )
+            select model, direction, count(*) n,
+              round(100 * avg((r > 0)::int)::numeric, 1) wr_pct,
+              round(100 * avg(r)::numeric, 3) mean_pct,
+              round(100 * stddev_samp(r)::numeric, 3) sd_pct
+            from base group by model, direction
+            having count(*) >= 50
+            order by avg(r) desc
+        """
+        df = pd.read_sql(sql, conn, params=(list(_EXCLUDE_STATUS),))
+    finally:
+        conn.close()
+    return df
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="GARCH vol-targeting live verdict (read-only study).")
     ap.add_argument("--limit-coins", type=int, default=None, help="sample the top-N coins by trade count")
     ap.add_argument("--statement-timeout-ms", type=int, default=20000)
     ap.add_argument("--json-out", help="write the full result JSON here")
+    ap.add_argument(
+        "--edge-scan", action="store_true", help="print the realized WR/mean edge scan (AC1 evidence) and exit"
+    )
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
+
+    if args.edge_scan:
+        df = edge_scan(args.statement_timeout_ms)
+        print(df.to_string(index=False))
+        return
 
     result = run(args.limit_coins, args.statement_timeout_ms, verbose=not args.quiet)
     payload = json.dumps(result, indent=2, default=str)
