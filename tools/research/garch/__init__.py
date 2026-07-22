@@ -14,7 +14,13 @@ LICENSE.upstream.
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The flat modules import each other by bare name (from garch_forecast import
+# ...), so the package dir must be importable. Accepted trade-off: this exposes
+# generic top-level names (compare, vol_target, ...) — no collision exists in
+# the repo today; keep the insert idempotent so re-import does not stack it.
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PKG_DIR not in sys.path:
+    sys.path.insert(0, _PKG_DIR)
 
 from ccxt_data import (  # noqa: E402
     fetch_ohlcv_df,

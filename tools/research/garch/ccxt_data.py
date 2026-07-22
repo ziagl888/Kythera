@@ -91,6 +91,11 @@ def fetch_ohlcv_df(
     if not rows:
         sys.exit(f"No OHLCV returned for {symbol} on {exchange_id}")
 
+    # a batch appends whole -> keep the most recent max_bars (a trailing vol
+    # forecast only ever wants the freshest history).
+    if len(rows) > max_bars:
+        rows = rows[-max_bars:]
+
     df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
     df["date"] = pd.to_datetime(df["ts"], unit="ms")
     return normalize_prices(df[["date", "close"]])

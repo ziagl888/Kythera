@@ -151,8 +151,35 @@ def test_verdict_mixed_when_sharpe_helps_but_drawdown_pays():
     assert cmp.verdict_from_stats(per_coin)["verdict"] == "MIXED"
 
 
+def test_verdict_mixed_when_worst_month_pays():
+    # sharpe +0.4, max-DD flat, but worst-month worsens past its tolerance
+    per_coin = {f"C{i}": _pair(0.5, 0.9, f_wm=-8.0, v_wm=-20.0) for i in range(3)}
+    assert cmp.verdict_from_stats(per_coin)["verdict"] == "MIXED"
+
+
+def test_verdict_drops_coin_with_nan_on_either_side():
+    # one coin has a NaN fixed Sharpe (zero-variance leg) — it must be dropped,
+    # not poison the median. The two clean coins decide the verdict.
+    per_coin = {
+        "GOOD1": _pair(0.5, 0.9),
+        "GOOD2": _pair(0.5, 0.9),
+        "DEGEN": _pair(float("nan"), 0.9),
+    }
+    v = cmp.verdict_from_stats(per_coin)
+    assert v["verdict"] == "PULLS", v
+    assert v["median_sharpe_delta"] == 0.4  # median over the 2 clean coins only
+
+
 def test_verdict_no_data_on_empty():
     assert cmp.verdict_from_stats({})["verdict"] == "NO-DATA"
+
+
+def test_compare_coins_skips_thin_history_not_aborts():
+    good = make_prices(600)
+    thin = make_prices(30)  # < min_train+10 -> run_comparison raises ValueError
+    out = cmp.compare_coins({"GOOD": good, "THIN": thin}, fit_fn=StubFitter())
+    assert "THIN" in out["skipped"] and "GOOD" in out["per_coin"]
+    assert out["verdict"]["verdict"] in {"PULLS", "MIXED", "NO-PULL"}  # not NO-DATA
 
 
 # --------------------------------------------------------------------- runner

@@ -20,7 +20,9 @@ backtests quietly cheat:
 Invariants:
   * ``next_ret = ret.shift(-1)``: the position sized/decided at t earns the
     return of t+1. No same-bar fill.
-  * A coin/signal pair that never trades yields empty stats, not a crash.
+  * A coin/signal pair with no valid bars yields empty stats, not a crash; a
+    flat (never-trading) signal yields an all-zero return series -> stats with
+    a NaN Sharpe (zero variance), which the verdict aggregation drops.
 
 Usage:
   python compare.py --coin BTC/USDT                       # EMA 9/21 demo signal
@@ -40,9 +42,11 @@ from vol_target import apply_sizing, size_series
 
 # Verdict thresholds (documented heuristic gate, not a law). Vol-targeting
 # "pulls" if it lifts the median Sharpe by at least SHARPE_MIN_DELTA without
-# making the median max-drawdown materially worse than DD_TOLERANCE.
+# making the median max-drawdown OR worst-month materially worse than the
+# respective tolerance (both are the "risk axis" of AK11).
 SHARPE_MIN_DELTA = 0.10
-DD_TOLERANCE = -2.0  # percentage points of max-drawdown we allow to worsen
+DD_TOLERANCE = -2.0  # pp of max-drawdown we allow the median to worsen
+WM_TOLERANCE = -2.0  # pp of worst-month we allow the median to worsen
 
 
 # ---------------------------------------------------------------- strategies
@@ -75,7 +79,13 @@ def perf_stats(daily_ret: pd.Series, periods_per_year: int) -> dict:
         return {}
     equity = (1 + r).cumprod()
     yrs = len(r) / periods_per_year
-    cagr = equity.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan
+    final = float(equity.iloc[-1])
+    # leverage on a < -100% bar can drive equity <= 0; a fractional power of a
+    # non-positive base is NaN, so report a wipeout as -100% CAGR explicitly.
+    if final <= 0:
+        cagr = -1.0
+    else:
+        cagr = final ** (1 / yrs) - 1 if yrs > 0 else np.nan
     ann_vol = r.std() * np.sqrt(periods_per_year)
     sharpe = (r.mean() * periods_per_year) / ann_vol if ann_vol > 0 else np.nan
     dd = (equity / equity.cummax() - 1).min()
@@ -147,23 +157,33 @@ def compare_coins(
     """Run the comparison over a coin sample and attach the aggregate verdict."""
     signals_by_coin = signals_by_coin or {}
     per_coin: dict[str, dict] = {}
+    skipped: dict[str, str] = {}
     for coin, prices in prices_by_coin.items():
-        stats, _ = run_comparison(
-            prices,
-            signals=signals_by_coin.get(coin),
-            target_vol=target_vol,
-            periods_per_year=periods_per_year,
-            fit_fn=fit_fn,
-        )
+        try:
+            stats, _ = run_comparison(
+                prices,
+                signals=signals_by_coin.get(coin),
+                target_vol=target_vol,
+                periods_per_year=periods_per_year,
+                fit_fn=fit_fn,
+            )
+        except (ValueError, KeyError) as exc:
+            # one thin-history coin (< min_train+10 bars) must not abort the
+            # whole sample verdict — record it and carry on.
+            skipped[coin] = str(exc)
+            continue
         per_coin[coin] = stats
-    return {"per_coin": per_coin, "verdict": verdict_from_stats(per_coin)}
+    return {"per_coin": per_coin, "skipped": skipped, "verdict": verdict_from_stats(per_coin)}
 
 
 # -------------------------------------------------------------------- verdict
 def _delta(volt: dict, fixed: dict, key: str) -> float | None:
     a, b = volt.get(key), fixed.get(key)
-    if a is None or b is None or (isinstance(a, float) and np.isnan(a)):
-        return None
+    # drop the pair if EITHER side is missing or NaN — a single degenerate coin
+    # must not poison the plain np.median aggregation downstream.
+    for v in (a, b):
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return None
     return a - b
 
 
@@ -173,10 +193,11 @@ def verdict_from_stats(per_coin: dict[str, dict]) -> dict:
     Kythera's risk-adjusted return, T-021 gets shelved.
 
     Rule:
-      * PULLS   — median Sharpe delta >= SHARPE_MIN_DELTA AND median max-DD does
-                  not worsen by more than |DD_TOLERANCE|.
+      * PULLS   — median Sharpe delta >= SHARPE_MIN_DELTA AND the risk axis holds
+                  (median max-DD and median worst-month each worsen by no more
+                  than their tolerance).
       * NO-PULL — median Sharpe delta <= 0.
-      * MIXED   — anything between (Sharpe helps but drawdown pays for it, etc.).
+      * MIXED   — anything between (Sharpe helps but drawdown/worst-month pays).
     """
     sharpe_deltas, dd_deltas, wm_deltas = [], [], []
     for stats in per_coin.values():
@@ -198,8 +219,9 @@ def verdict_from_stats(per_coin: dict[str, dict]) -> dict:
     med_dd = float(np.median(dd_deltas)) if dd_deltas else float("nan")
     med_wm = float(np.median(wm_deltas)) if wm_deltas else float("nan")
     dd_ok = np.isnan(med_dd) or med_dd >= DD_TOLERANCE
+    wm_ok = np.isnan(med_wm) or med_wm >= WM_TOLERANCE
 
-    if med_sharpe >= SHARPE_MIN_DELTA and dd_ok:
+    if med_sharpe >= SHARPE_MIN_DELTA and dd_ok and wm_ok:
         verdict = "PULLS"
     elif med_sharpe <= 0:
         verdict = "NO-PULL"
@@ -212,7 +234,11 @@ def verdict_from_stats(per_coin: dict[str, dict]) -> dict:
         "median_sharpe_delta": round(med_sharpe, 3),
         "median_max_dd_delta_pct": round(med_dd, 2) if not np.isnan(med_dd) else None,
         "median_worst_month_delta_pct": round(med_wm, 2) if not np.isnan(med_wm) else None,
-        "thresholds": {"sharpe_min_delta": SHARPE_MIN_DELTA, "dd_tolerance_pct": DD_TOLERANCE},
+        "thresholds": {
+            "sharpe_min_delta": SHARPE_MIN_DELTA,
+            "dd_tolerance_pct": DD_TOLERANCE,
+            "wm_tolerance_pct": WM_TOLERANCE,
+        },
         "reason": (
             f"median Sharpe {'+' if med_sharpe >= 0 else ''}{med_sharpe:.2f} across "
             f"{len(sharpe_deltas)} coins; median max-DD change "
