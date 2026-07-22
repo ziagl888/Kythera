@@ -76,6 +76,35 @@ def test_trade_stats_no_trades():
     assert ts["n_trades"] == 0
 
 
+def test_trade_returns_matches_trade_stats():
+    df = _df([100, 102, 101, 100, 101, 103])
+    bar_ret = bt.bar_returns_pct(df)
+    positions = np.array([1, 1, 0, -1, -1, 0])
+    tr = bt.trade_returns(positions, bar_ret)
+    assert len(tr) == bt.trade_stats(positions, bar_ret)["n_trades"] == 2
+
+
+# ------------------------------------------------------- pooled universe verdict
+def test_pooled_verdict_insufficient_below_100_trades():
+    pooled = {"n_trades": 40, "avg_trade_pct": 1.0, "pooled_sharpe": 2.0}
+    assert bt._pooled_verdict(pooled)["verdict"] == "INSUFFICIENT"
+
+
+def test_pooled_verdict_edge_and_no_edge():
+    assert bt._pooled_verdict({"n_trades": 500, "avg_trade_pct": 0.4, "pooled_sharpe": 0.8})["verdict"] == "EDGE"
+    assert bt._pooled_verdict({"n_trades": 500, "avg_trade_pct": -0.2, "pooled_sharpe": 0.8})["verdict"] == "NO-EDGE"
+    assert bt._pooled_verdict({"n_trades": 500, "avg_trade_pct": 0.4, "pooled_sharpe": 0.1})["verdict"] == "NO-EDGE"
+
+
+def test_pooled_metrics_pools_trades():
+    trades = [0.05, -0.02, 0.03, -0.01]
+    chunks = [np.array([1.0, -0.5, 0.8]), np.array([0.2, -0.3])]
+    m = bt._pooled_metrics(trades, chunks, ppy=365 * 6)
+    assert m["n_trades"] == 4
+    assert m["winrate_pct"] == 50.0
+    assert "pooled_sharpe" in m
+
+
 # -------------------------------------------------------------- OOS + verdict
 def test_oos_split_sizes():
     df = _df(list(range(100)))

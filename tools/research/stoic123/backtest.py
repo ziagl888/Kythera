@@ -76,15 +76,14 @@ def perf_metrics(strat_ret_pct: np.ndarray, dates: pd.Series, periods_per_year: 
     }
 
 
-def trade_stats(positions: np.ndarray, bar_ret: pd.Series) -> dict:
-    """Winrate + trade count from maximal runs of constant non-zero position.
-    A trade's return compounds the strategy bar-returns over the run."""
+def trade_returns(positions: np.ndarray, bar_ret: pd.Series) -> list[float]:
+    """Per-trade compounded returns (fractions) — one per maximal run of constant
+    non-zero position, each earning the next bar's return over its span."""
     pos = np.asarray(positions, int)
     next_ret = bar_ret.to_numpy()[1:] / 100.0
     p = pos[:-1]
-    trades = []
-    i = 0
-    n = len(p)
+    trades: list[float] = []
+    i, n = 0, len(p)
     while i < n:
         if p[i] == 0:
             i += 1
@@ -92,9 +91,13 @@ def trade_stats(positions: np.ndarray, bar_ret: pd.Series) -> dict:
         j = i
         while j < n and p[j] == p[i]:
             j += 1
-        seg = p[i] * next_ret[i:j]
-        trades.append(float(np.prod(1 + seg) - 1))
+        trades.append(float(np.prod(1 + p[i] * next_ret[i:j]) - 1))
         i = j
+    return trades
+
+
+def trade_stats_from_returns(trades: list[float]) -> dict:
+    """Winrate + count + average from a list of per-trade returns (fractions)."""
     if not trades:
         return {"n_trades": 0, "winrate_pct": float("nan"), "avg_trade_pct": float("nan")}
     wins = sum(1 for t in trades if t > 0)
@@ -103,6 +106,11 @@ def trade_stats(positions: np.ndarray, bar_ret: pd.Series) -> dict:
         "winrate_pct": round(100 * wins / len(trades), 1),
         "avg_trade_pct": round(100 * float(np.mean(trades)), 2),
     }
+
+
+def trade_stats(positions: np.ndarray, bar_ret: pd.Series) -> dict:
+    """Winrate + trade count from maximal runs of constant non-zero position."""
+    return trade_stats_from_returns(trade_returns(positions, bar_ret))
 
 
 def run_backtest(df: pd.DataFrame, htf: pd.DataFrame, p: StoicParams, periods_per_year: int) -> dict:
@@ -195,6 +203,121 @@ def backtest_coin(df: pd.DataFrame, htf: pd.DataFrame, base: StoicParams, ppy: i
     }
 
 
+# ------------------------------------------------- universe-wide pooled test
+# A single FIXED rule (no per-coin fitting) applied across the whole universe,
+# pooling the out-of-sample trades into one large sample. This is the honest
+# "does the 1-2-3 have an edge at all" test — it cannot data-mine a per-coin
+# parameter set, and a few-hundred-coin pool gives enough trades to judge. The
+# fixed rule is the loose end of the sweep (the strict default is too rare).
+LOOSE_PARAMS = {"break_k_atr": 0.1, "base_window": 3, "base_max_range_atr": 3.0, "retest_touch": False}
+
+_BARS_PER_DAY = {"1d": 1, "12h": 2, "8h": 3, "4h": 6, "2h": 12, "1h": 24, "30m": 48, "15m": 96}
+
+
+def list_universe(exchange_id: str = "binanceusdm", quote: str = "USDT") -> list[str]:
+    """Active USDT-settled perpetual swaps on the exchange (the Kythera-style
+    universe), via ccxt ``load_markets``."""
+    try:
+        import ccxt
+    except ImportError:  # pragma: no cover
+        sys.exit("ccxt not installed. pip install -r tools/research/garch/requirements-garch.txt")
+    ex = getattr(ccxt, exchange_id)({"enableRateLimit": True})
+    markets = ex.load_markets()
+    syms = [
+        m["symbol"]
+        for m in markets.values()
+        if m.get("swap") and m.get("active") and m.get("quote") == quote and m.get("settle") == quote
+    ]
+    return sorted(syms)
+
+
+def pooled_universe_backtest(
+    symbols: list[str],
+    exchange: str,
+    ltf: str,
+    htf: str,
+    ppy: int,
+    is_frac: float,
+    days: int,
+    params: StoicParams,
+    progress: bool = False,
+) -> dict:
+    """Run a FIXED rule across ``symbols`` over the trailing ``days`` and pool the
+    out-of-sample trades into one aggregate verdict. Per-coin sweep is skipped by
+    design (universe test = no per-coin overfitting)."""
+    ltf_max = days * _BARS_PER_DAY.get(ltf, 6) + 250  # +warmup headroom
+    htf_max = days + 250
+    pooled_trades: list[float] = []
+    pooled_bar_ret: list[np.ndarray] = []
+    per_coin: dict[str, dict] = {}
+    skipped: dict[str, str] = {}
+    for k, sym in enumerate(symbols):
+        try:
+            df = fetch_ohlcv_full(sym, exchange, ltf, max_bars=ltf_max)
+            h = fetch_ohlcv_full(sym, exchange, htf, max_bars=htf_max)
+            _, df_oos = oos_split(df, is_frac)
+            if len(df_oos) < params.ma_slow + params.atr_period + 5:
+                skipped[sym] = "too few OOS bars"
+                continue
+            pos = generate_signals(df_oos, h, params).to_numpy()
+            bar_ret = bar_returns_pct(df_oos)
+            tr = trade_returns(pos, bar_ret)
+            pooled_trades.extend(tr)
+            pooled_bar_ret.append(strategy_bar_returns(pos, bar_ret))
+            per_coin[sym] = {
+                **perf_metrics(strategy_bar_returns(pos, bar_ret), df_oos["date"], ppy),
+                **trade_stats_from_returns(tr),
+            }
+        except (ValueError, KeyError) as exc:
+            skipped[sym] = str(exc)
+        if progress:
+            print(
+                f"  [{k + 1}/{len(symbols)}] {sym}: {per_coin.get(sym, {}).get('n_trades', 'skip')} trades",
+                file=sys.stderr,
+            )
+
+    pooled = _pooled_metrics(pooled_trades, pooled_bar_ret, ppy)
+    return {
+        "n_coins": len(symbols),
+        "n_evaluated": len(per_coin),
+        "n_skipped": len(skipped),
+        "fixed_params": {k: getattr(params, k) for k in LOOSE_PARAMS},
+        "pooled_oos": pooled,
+        "verdict": _pooled_verdict(pooled),
+        "per_coin": per_coin,
+    }
+
+
+def _pooled_metrics(trades: list[float], bar_ret_chunks: list[np.ndarray], ppy: int) -> dict:
+    if not trades:
+        return {"n_trades": 0}
+    arr = np.array(trades)
+    allbars = np.concatenate(bar_ret_chunks) if bar_ret_chunks else np.array([])
+    r = pd.Series(allbars).dropna() / 100.0
+    ann_vol = r.std() * np.sqrt(ppy) if len(r) else float("nan")
+    sharpe = (r.mean() * ppy) / ann_vol if ann_vol and ann_vol > 0 else float("nan")
+    wins = int((arr > 0).sum())
+    return {
+        "n_trades": len(trades),
+        "winrate_pct": round(100 * wins / len(trades), 1),
+        "avg_trade_pct": round(100 * float(arr.mean()), 3),
+        "median_trade_pct": round(100 * float(np.median(arr)), 3),
+        "pooled_sharpe": round(float(sharpe), 2) if np.isfinite(sharpe) else None,
+        "total_expectancy_pct": round(100 * float(arr.sum()), 1),
+    }
+
+
+def _pooled_verdict(pooled: dict) -> dict:
+    n = pooled.get("n_trades", 0)
+    if n < 100:
+        return {"verdict": "INSUFFICIENT", "reason": f"only {n} pooled OOS trades (< 100)"}
+    avg = pooled.get("avg_trade_pct", 0.0)
+    sharpe = pooled.get("pooled_sharpe")
+    if avg > 0 and sharpe is not None and sharpe >= EDGE_MIN_SHARPE:
+        return {"verdict": "EDGE", "reason": f"pooled avg trade {avg}% > 0, Sharpe {sharpe} >= {EDGE_MIN_SHARPE}"}
+    return {"verdict": "NO-EDGE", "reason": f"pooled avg trade {avg}%, Sharpe {sharpe}"}
+
+
 # ------------------------------------------------------------- ccxt fetch
 def fetch_ohlcv_full(symbol: str, exchange_id: str, timeframe: str, max_bars: int = 4000) -> pd.DataFrame:
     try:
@@ -232,19 +355,62 @@ def fetch_ohlcv_full(symbol: str, exchange_id: str, timeframe: str, max_bars: in
 # ------------------------------------------------------------------- CLI
 def main() -> None:
     ap = argparse.ArgumentParser(description="Stoic 1-2-3 multi-timeframe backtest.")
-    ap.add_argument("--coins", required=True, help="comma list of ccxt symbols")
+    ap.add_argument("--coins", help="comma list of ccxt symbols")
+    ap.add_argument("--all", action="store_true", help="use the full USDT-perp universe (ccxt)")
+    ap.add_argument("--max-coins", type=int, default=None, help="cap the universe to the first N symbols")
     ap.add_argument("--exchange", default="binanceusdm")
     ap.add_argument("--ltf", default="4h", help="signal timeframe")
     ap.add_argument("--htf", default="1d", help="location timeframe")
+    ap.add_argument("--days", type=int, default=None, help="history window in days (default: as much as fits)")
     ap.add_argument("--is-frac", type=float, default=0.6, help="in-sample fraction for the OOS split")
     ap.add_argument("--ppy", type=int, default=None, help="periods/year (default inferred from LTF)")
+    ap.add_argument(
+        "--pool", action="store_true", help="universe pooled test: one FIXED rule across all coins, pool OOS trades"
+    )
     ap.add_argument("--with-garch", action="store_true", help="also run signals through the GARCH harness")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     ppy = args.ppy or {"1d": 365, "4h": 365 * 6, "1h": 365 * 24}.get(args.ltf, 365)
     base = StoicParams()
-    coins = [c.strip() for c in args.coins.split(",") if c.strip()]
+
+    if args.all:
+        coins = list_universe(args.exchange)
+        if args.max_coins:
+            coins = coins[: args.max_coins]
+    elif args.coins:
+        coins = [c.strip() for c in args.coins.split(",") if c.strip()]
+    else:
+        raise SystemExit("provide --coins or --all")
+
+    # ---- universe pooled test (one fixed rule, pool OOS trades) ----
+    if args.pool:
+        days = args.days or 365
+        res = pooled_universe_backtest(
+            coins,
+            args.exchange,
+            args.ltf,
+            args.htf,
+            ppy,
+            args.is_frac,
+            days,
+            replace(base, **LOOSE_PARAMS),
+            progress=not args.json,
+        )
+        if args.json:
+            print(json.dumps(res, indent=2, default=str))
+        else:
+            pv, po = res["verdict"], res["pooled_oos"]
+            print(
+                f"\n  POOLED UNIVERSE TEST ({res['n_evaluated']}/{res['n_coins']} coins, "
+                f"{args.days or 365}d, {args.ltf}/{args.htf}, fixed loose rule)"
+            )
+            print(f"    pooled OOS trades : {po.get('n_trades')}")
+            print(f"    winrate           : {po.get('winrate_pct')}%")
+            print(f"    avg / median trade: {po.get('avg_trade_pct')}% / {po.get('median_trade_pct')}%")
+            print(f"    pooled Sharpe     : {po.get('pooled_sharpe')}")
+            print(f"    VERDICT           : {pv['verdict']} — {pv['reason']}\n")
+        return
 
     report: dict = {
         "config": {
@@ -258,10 +424,12 @@ def main() -> None:
         "coins": {},
         "skipped": {},
     }
+    ltf_max = (args.days * _BARS_PER_DAY.get(args.ltf, 6) + 250) if args.days else 4000
+    htf_max = (args.days + 250) if args.days else 1500
     for coin in coins:
         try:
-            df = fetch_ohlcv_full(coin, args.exchange, args.ltf)
-            htf = fetch_ohlcv_full(coin, args.exchange, args.htf)
+            df = fetch_ohlcv_full(coin, args.exchange, args.ltf, max_bars=ltf_max)
+            htf = fetch_ohlcv_full(coin, args.exchange, args.htf, max_bars=htf_max)
             res = backtest_coin(df, htf, base, ppy, args.is_frac)
             if args.with_garch and res["chosen_params"] is not None:
                 res["garch_direct_anschluss"] = _garch_compare(df, htf, replace(base, **res["chosen_params"]))
