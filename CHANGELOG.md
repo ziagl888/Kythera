@@ -1,3 +1,40 @@
+## [2026-07-22] Stoic-1-2-3-Direction-Modul + Multi-Timeframe-Backtest (T-2026-KYT-9050-024)
+
+Neues self-contained Research-Paket `tools/research/stoic123/`: das diskretionäre
+„Stoic Edge System / 1-2-3 Sequence" in einen **deterministischen, lookahead-freien**
+Signal-Generator übersetzt + ein Multi-Timeframe-Backtest mit OOS-Split und
+Edge/kein-Edge-Verdikt. Emittiert eine `date,signal`-CSV, die direkt in den
+GARCH-Harness (`compare.py --signals`, T-022) läuft. Direction-System (welche
+Richtung) — komplementär zum GARCH-Sizing (wie viel). **Kein Fleet-/Live-/DB-Code
+berührt; nichts deployt.**
+
+- **`rules.py` (Phase 1)** — EMA/SMA, Wilder-ATR, close-basierter „meaningful
+  break" bei k·ATR (kein Wick), Base/Consolidation-Detektor, **as-of HTF-Location-
+  Gate** (merge_asof gegen HTF-`close_time`, nur voll geschlossene HTF-Kerzen).
+- **`state_machine.py` (Phase 2)** — kausale State-Machine `WAIT → Step1(Break
+  beide MAs) → Step2(Retest+Base, Boundary FIXIERT) → Step3(Boundary-Break+Close
+  = Entry)`, Stop-and-Reverse-Exit. Die **5 Distortions** als explizite Guards +
+  Tests (wick-not-close, HTF-invented, boundary-after-break, skipped-retest,
+  repaint); Prefix-Stabilität beweist Lookahead-/Repaint-Freiheit.
+- **`signals.py`** — Positions-Serie → `signals.csv` (compare.py-Kontrakt).
+- **`backtest.py` (Phase 3)** — ccxt-MTF-Fetch (vorwärts-paginierte Historie),
+  0,6-OOS-Split, 24-Kombi-Sensitivitäts-Sweep, Inline-Metriken (Sharpe/MaxDD/
+  Winrate/Trades/Worst-Month), Edge/kein-Edge-Verdikt, optionaler GARCH-Direkt-
+  Anschluss.
+- **Verifikation:** 29 DB-freie Tests (`backtest/test_stoic123_*.py`) grün; realer
+  ccxt-Lauf BTC/ETH/SOL (4h/1d).
+- **Verdikt (ehrlich):** nach dem Lookahead-Fix (siehe unten) alle drei Coins
+  **INSUFFICIENT** — OOS-Sharpe BTC 0,82 / ETH −0,12 / SOL −0,2, je < 10 OOS-Trades.
+  Die strikte 1-2-3-Sequenz ist auf 4h/1d **zu selten**, der marginale Edge sitzt
+  am lockeren Parameter-Ende; **kein belastbarer Edge auf diesem kleinen Sample**.
+  Folge-Kandidat: größeres Coin-Sample / feinere Timeframe für mehr Trades.
+- **Review-Befund (HIGH, gefixt):** die erste HTF-Gate-Fassung matchte gegen die
+  HTF-**Open**-Zeit → eine LTF-Kerze las die noch-formende HTF-Kerze (Distortion #2,
+  genau die Falle, die das Modul verhindern soll). Fix = Match gegen HTF-`close_time`.
+  Empirischer Beleg für die Realität des Lecks: der Fix drehte SOL von einem
+  (leck-inflationierten) EDGE @Sharpe 0,76 auf INSUFFICIENT @−0,2 — die Validierungs-
+  Disziplin, die das Modul selbst predigt. Beide Kern-Reviews adressiert.
+
 ## [2026-07-22] GARCH-Vol-Targeting-Modul + Validierungs-Harness geliftet (T-2026-KYT-9050-021, -022)
 
 Neues self-contained Research-Paket `tools/research/garch/`, aus dem Repo-Audit

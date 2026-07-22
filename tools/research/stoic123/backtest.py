@@ -169,6 +169,10 @@ def verdict(oos: dict) -> dict:
 
 
 def backtest_coin(df: pd.DataFrame, htf: pd.DataFrame, base: StoicParams, ppy: int, is_frac: float = 0.6) -> dict:
+    # NOTE: the OOS segment recomputes indicators from its own start, so the
+    # first ~(ma_slow + atr_period + base_window) OOS bars have warmup NaNs and
+    # produce no signal (a small silent dead-zone). This is conservative (never a
+    # leak) — it can only understate OOS trade count, never inflate the verdict.
     df_is, df_oos = oos_split(df, is_frac)
     sweep = sensitivity_sweep(df_is, htf, base, default_grid(), ppy)
     best = pick_best(sweep)
