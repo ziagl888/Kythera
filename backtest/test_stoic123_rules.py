@@ -108,25 +108,28 @@ def test_detect_base_retest_touch_gate():
 
 # ------------------------------------------------------ HTF location as-of
 def test_htf_location_is_as_of_no_future_leak():
+    """An LTF bar may only use an HTF bar that has fully CLOSED by its timestamp
+    -> the still-forming HTF bar (open <= t < close) must not leak in."""
     p = StoicParams(htf_ma_period=3, htf_slope_lookback=1, htf_require_price_side=False)
-    # LTF hourly bars across 3 days
-    df = pd.DataFrame({"date": pd.date_range("2022-01-01", periods=72, freq="h")})
+    df = pd.DataFrame({"date": pd.date_range("2022-01-01", periods=150, freq="h")})
     df["open"] = df["high"] = df["low"] = df["close"] = 100.0
-    # HTF: rising for 2 days then a sharp drop on day 4 (in the future for most LTF bars)
+    # HTF daily: rising for 5 days, then a crash on day 6 (opens 2022-01-06 00:00,
+    # closes 2022-01-07 00:00). close_time(bar D) = open(D) + 1 day.
     htf = pd.DataFrame(
         {
-            "date": pd.date_range("2022-01-01", periods=5, freq="D"),
-            "close": [100.0, 101.0, 102.0, 103.0, 50.0],
+            "date": pd.date_range("2022-01-01", periods=6, freq="D"),
+            "close": [100.0, 101.0, 102.0, 103.0, 104.0, 50.0],
         }
     )
     loc = htf_location_series(df, htf, p)
-    # LTF bars on day 1 / day 2 map (as-of, backward) to the rising HTF bars ->
-    # long-ok; the day-4 crash is entirely in the future and never leaks in.
-    assert bool(loc.iloc[30]["htf_long_ok"]) is True  # ~day 1, rising HTF
-    assert bool(loc.iloc[50]["htf_long_ok"]) is True  # ~day 2, rising HTF
     assert len(loc) == len(df)
-    # no LTF bar reaches the day-4 crash, so nothing is ever short-ok here
-    assert not loc["htf_short_ok"].any()
+    # hour 132 = 2022-01-06 12:00 sits INSIDE the still-forming crash bar (opens
+    # 00:00, closes next day). The last CLOSED HTF bar is day-4 (rising) -> the
+    # crash has not leaked: still long-ok, not short-ok.
+    assert bool(loc.iloc[132]["htf_long_ok"]) is True
+    assert bool(loc.iloc[132]["htf_short_ok"]) is False
+    # hour 145 = 2022-01-07 01:00 is AFTER the crash bar closed -> now short-ok.
+    assert bool(loc.iloc[145]["htf_short_ok"]) is True
 
 
 # --------------------------------------------------- compute_indicators wiring

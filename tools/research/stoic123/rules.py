@@ -86,10 +86,18 @@ def detect_base(
 def htf_location_series(df: pd.DataFrame, htf: pd.DataFrame, p: StoicParams) -> pd.DataFrame:
     """As-of HTF trend gate aligned to the LTF frame (distortion #2).
 
-    For each LTF bar at date t, take the last CLOSED HTF bar with date <= t,
+    For each LTF bar at date t, take the last HTF bar that has fully CLOSED by t,
     and read whether the HTF trend is up/down (HTF MA rising/falling over
     htf_slope_lookback) and which side of the HTF MA price sits on. Returns a
     frame aligned to ``df`` with boolean ``htf_long_ok`` / ``htf_short_ok``.
+
+    ``htf["date"]`` carries each HTF bar's OPEN time (ccxt kline convention). An
+    HTF bar's close-derived gate is only known once the bar closes — one HTF
+    period after its open — so we match the LTF bar against the HTF bar's
+    ``close_time`` (open + period), not its open. Merging on the open time would
+    let an LTF bar read the still-forming HTF bar's final close: a lookahead leak
+    on the location gate (distortion #2). The period is inferred from the HTF
+    timestamp spacing.
     """
     h = htf.copy().reset_index(drop=True)
     h["htf_ma"] = moving_average(h["close"], p.htf_ma_period, p.htf_ma_type)
@@ -100,13 +108,19 @@ def htf_location_series(df: pd.DataFrame, htf: pd.DataFrame, p: StoicParams) -> 
         h["htf_long_ok"] &= h["close"] > h["htf_ma"]
         h["htf_short_ok"] &= h["close"] < h["htf_ma"]
 
+    h["date"] = pd.to_datetime(h["date"])
+    period = h["date"].diff().median()
+    if pd.isna(period) or period <= pd.Timedelta(0):
+        period = pd.Timedelta(0)  # single/degenerate HTF frame -> fall back to open time
+    h["close_time"] = h["date"] + period
+
     left = df[["date"]].copy()
     left["date"] = pd.to_datetime(left["date"])
-    h["date"] = pd.to_datetime(h["date"])
     merged = pd.merge_asof(
         left.sort_values("date"),
-        h[["date", "htf_long_ok", "htf_short_ok"]].sort_values("date"),
-        on="date",
+        h[["close_time", "htf_long_ok", "htf_short_ok"]].sort_values("close_time"),
+        left_on="date",
+        right_on="close_time",
         direction="backward",
     )
     merged["htf_long_ok"] = merged["htf_long_ok"].fillna(False).astype(bool)
