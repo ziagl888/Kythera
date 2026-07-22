@@ -75,6 +75,9 @@ _IS_WINDOWS = os.name == "nt"
 # CREATE_NEW_PROCESS_GROUP existiert nur auf Windows; 0 ist der neutrale
 # creationflags-Wert auf POSIX (der Parameter existiert dort, muss aber 0 sein).
 _CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+# CREATE_NO_WINDOW (Windows) — der Heartbeat-Probe-Kindprozess soll kein
+# Konsolenfenster aufblitzen lassen; 0 ist der neutrale Wert auf POSIX.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # CTRL_BREAK_EVENT existiert nur auf Windows.
 _CTRL_BREAK_EVENT = getattr(signal, "CTRL_BREAK_EVENT", None)
 # Sekunden, die ein Bot nach dem Graceful-Signal zum sauberen Beenden bekommt,
@@ -321,23 +324,94 @@ _HANG_ALERT_COOLDOWN_S = 30 * 60
 _hang_alerted: dict[str, float] = {}  # name -> epoch of last hang warning
 
 
-def _resolve_heartbeat_log(pid: int) -> str | None:
-    """Best-effort: the process's own open ``.log`` file, mapping-free.
+# The psutil ``open_files()`` call used to discover a process's own log handle is
+# a NATIVE C call that has intermittently access-violated (0xC0000005) on this
+# Windows/Python 3.13 box, taking the ENTIRE watchdog down with it — and with the
+# watchdog the outer supervision net, leaving the fleet running unsupervised
+# (T-2026-KYT-9050-025; faulthandler stacks 2026-07-19 20:08 + 2026-07-22 12:50 both
+# name open_files → _resolve_heartbeat_log). A native segfault cannot be caught
+# with try/except, so the only safe way to keep using open_files() from the
+# supervisor is to run it in a THROWAWAY CHILD process: a crash there returns a
+# non-zero exit code and a hang is bounded by a timeout, and either way the parent
+# treats the process as unresolvable (exempt) — exactly like a bot with no
+# observable log. The probe runs once per process lifetime (check_heartbeat caches
+# the result in the tracker), so the subprocess cost is negligible.
+#
+# Runs in the CHILD only: print the target PID's open ``.log`` handles, one per
+# line. Any psutil failure → exit 4 (parent maps a non-zero exit to "exempt").
+_HEARTBEAT_PROBE_SRC = (
+    "import sys\n"
+    "try:\n"
+    "    import psutil\n"
+    "    of = psutil.Process(int(sys.argv[1])).open_files()\n"
+    "except Exception:\n"
+    "    sys.exit(4)\n"
+    "for f in of:\n"
+    "    p = getattr(f, 'path', '') or ''\n"
+    "    if p.lower().endswith('.log'):\n"
+    "        sys.stdout.write(p + '\\n')\n"
+)
+# open_files() can also HANG on Windows; bound the isolated probe so a wedged
+# child can never stall the supervision loop (the old in-process call had no such
+# bound — a hang there froze the whole watchdog).
+_HEARTBEAT_PROBE_TIMEOUT_S = 10
+
+
+def _pick_heartbeat_log(paths: list[str]) -> str | None:
+    """Choose the best heartbeat ``.log`` from candidate open-file paths (pure).
 
     Prefers a file under ``logs/`` (core.logging_setup convention) over a
     root-level ``*.log`` (a few bots use a plain FileHandler). Returns None when
-    nothing usable is open — that process is then exempt from hang-detection, so
-    a bot that only logs to stdout is never mistaken for wedged.
+    nothing usable is present — that process is then exempt from hang-detection,
+    so a bot that only logs to stdout is never mistaken for wedged.
     """
-    try:
-        open_files = psutil.Process(pid).open_files()
-    except Exception:  # noqa: BLE001 — a heartbeat probe must never crash the watchdog.
-        return None
-    logs: list[str] = [f.path for f in open_files if f.path.lower().endswith(".log")]
+    logs: list[str] = [p for p in paths if p.lower().endswith(".log")]
     if not logs:
         return None
     logs.sort(key=lambda p: (os.sep + "logs" + os.sep) not in p.lower())
     return logs[0]
+
+
+def _probe_open_log_files(pid: int) -> list[str] | None:
+    """Enumerate ``pid``'s open ``.log`` files in an ISOLATED child process.
+
+    Returns the list of open ``.log`` paths, or None when the probe could not
+    produce a trustworthy answer (child crashed/hung/failed to spawn). Isolation
+    contains the psutil ``open_files()`` access-violation that used to kill the
+    watchdog (T-2026-KYT-9050-025): a native crash surfaces here only as a
+    non-zero return code, never as a fault in the supervisor process.
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _HEARTBEAT_PROBE_SRC, str(pid)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_HEARTBEAT_PROBE_TIMEOUT_S,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # SubprocessError covers TimeoutExpired (subprocess.run kills the child);
+        # OSError/ValueError cover a failed spawn. All → exempt.
+        return None
+    if proc.returncode != 0:
+        # Non-zero includes the native crash code (-1073741819 / 0xC0000005) and
+        # the probe's own exit 4 on a psutil error.
+        return None
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _resolve_heartbeat_log(pid: int) -> str | None:
+    """Best-effort: the process's own open ``.log`` file, mapping-free.
+
+    The open-file enumeration is isolated in a child process because the psutil
+    call it relies on has native-crashed the watchdog (see _probe_open_log_files).
+    """
+    paths = _probe_open_log_files(pid)
+    if not paths:
+        return None
+    return _pick_heartbeat_log(paths)
 
 
 def check_heartbeat(p_info: dict, current_time: float) -> None:

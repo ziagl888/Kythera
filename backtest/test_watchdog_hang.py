@@ -210,21 +210,68 @@ def test_autorestart_starts_immediately_when_delay_zero(env, monkeypatch):
     assert "bot_a" not in wd._restart_not_before
 
 
-# ── Resolver: prefers logs/ dir, tolerates psutil failure ────────────────────
+# ── Selection logic: prefers logs/ dir (pure, no psutil/subprocess) ──────────
 
 
-def test_resolver_prefers_logs_dir_and_survives_psutil_errors():
-    class _F:
-        def __init__(self, path):
-            self.path = path
-
-    proc = mock.MagicMock()
-    proc.open_files.return_value = [_F(r"C:\Kythera\indicator_calculation.log"), _F(r"C:\Kythera\logs\DATA.log")]
-    with mock.patch.object(wd.psutil, "Process", return_value=proc):
-        got = wd._resolve_heartbeat_log(1)
+def test_pick_prefers_logs_dir():
+    got = wd._pick_heartbeat_log([r"C:\Kythera\indicator_calculation.log", r"C:\Kythera\logs\DATA.log"])
     assert got.replace("\\", "/").endswith("logs/DATA.log")
 
-    boom = mock.MagicMock()
-    boom.open_files.side_effect = OSError("denied")
-    with mock.patch.object(wd.psutil, "Process", return_value=boom):
-        assert wd._resolve_heartbeat_log(1) is None
+
+def test_pick_returns_none_without_a_log():
+    assert wd._pick_heartbeat_log([]) is None
+    assert wd._pick_heartbeat_log([r"C:\Kythera\notes.txt"]) is None
+
+
+def test_resolve_uses_isolated_probe(monkeypatch):
+    monkeypatch.setattr(wd, "_probe_open_log_files", lambda pid: [r"C:\Kythera\logs\DATA.log"])
+    assert wd._resolve_heartbeat_log(1).replace("\\", "/").endswith("logs/DATA.log")
+
+
+def test_resolve_exempts_when_probe_unresolvable(monkeypatch):
+    monkeypatch.setattr(wd, "_probe_open_log_files", lambda pid: None)
+    assert wd._resolve_heartbeat_log(1) is None
+
+
+# ── Probe isolation: a native crash / hang / spawn failure → exempt, never fatal ──
+
+
+def _completed(returncode, stdout=""):
+    cp = mock.MagicMock()
+    cp.returncode = returncode
+    cp.stdout = stdout
+    return cp
+
+
+def test_probe_returns_paths_on_clean_exit(monkeypatch):
+    monkeypatch.setattr(
+        wd.subprocess, "run", lambda *a, **k: _completed(0, "C:\\Kythera\\logs\\DATA.log\n\n")
+    )
+    assert wd._probe_open_log_files(1) == [r"C:\Kythera\logs\DATA.log"]
+
+
+def test_probe_exempts_on_access_violation_exit(monkeypatch):
+    # The crash that took the whole watchdog down is now just a child return code.
+    monkeypatch.setattr(wd.subprocess, "run", lambda *a, **k: _completed(-1073741819))
+    assert wd._probe_open_log_files(1) is None
+
+
+def test_probe_exempts_on_psutil_error_exit(monkeypatch):
+    monkeypatch.setattr(wd.subprocess, "run", lambda *a, **k: _completed(4))
+    assert wd._probe_open_log_files(1) is None
+
+
+def test_probe_exempts_on_timeout(monkeypatch):
+    def _boom(*a, **k):
+        raise wd.subprocess.TimeoutExpired(cmd="probe", timeout=10)
+
+    monkeypatch.setattr(wd.subprocess, "run", _boom)
+    assert wd._probe_open_log_files(1) is None
+
+
+def test_probe_exempts_on_spawn_failure(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("cannot spawn")
+
+    monkeypatch.setattr(wd.subprocess, "run", _boom)
+    assert wd._probe_open_log_files(1) is None
