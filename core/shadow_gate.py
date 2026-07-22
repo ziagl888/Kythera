@@ -89,6 +89,15 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # (Regel 2, Operator-Entscheid Michi). SHORT bleibt SHADOW — kein deploybarer
     # Edge (threshold=None; Label-Quelle closed_trades3 tot seit 23.02).
     ("SRA2", "SHORT"): SHADOW,
+    # MAX2 (T-2026-KYT-9050-020): KEIN Modell — ein Fork der SRA2-LONG-Emission in
+    # Bot 9 (_emit_max2), der denselben SRA2-LONG-Trade coin-gefiltert (config.
+    # MAIN_CHANNEL_COINS) nach CH_MAIN postet und den retireten klassischen
+    # "Main Channel"-Detektor ersetzt. Bewusst NICHT gelistet ⇒ default LIVE
+    # (Operator-Entscheid Michi): kollisionsfrei mit dem SRA2-Post nach CH_AI_SR,
+    # weil CH_AI_SR NICHT Cornix-executed ist (kein Regel-4-Doppel-Trade). Nur
+    # LONG (SRA2 SHORT tot). Rollback in den Shadow = die folgende Zeile
+    # einkommentieren (kein Cornix mehr, nur überwachter Shadow-Trade):
+    # ("MAX2", "LONG"): SHADOW,
     # FMR2: Normalisierungs-Exit-Retrain (K4, T-2026-CU-9050-148) neben dem FMR1-Bot
     # (Bot 31). FMR1 bleibt unverändert unter eigenem Tag "FMR1"; FMR2 nutzt DENSELBEN
     # Funding-Extrem-Detektor + `build_fmr1_row`-Feature-Row (FMR2_FEATURES ==

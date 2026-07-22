@@ -110,6 +110,57 @@ def load_models() -> None:
         logger.info(f"👻 SRA2 Shadow-Modelle geladen: {', '.join(loaded)}")
 
 
+def _emit_max2(conn, coin, prob, entry1, entry2, sl, targets) -> None:
+    """MAX2 (T-2026-KYT-9050-020): der SRA2-LONG-Trade in den Main-Channel.
+
+    MAX2 ist KEIN eigenes Modell und kein eigener Prozess — es ist ein Fork der
+    SRA2-LONG-Emission (Aufruf aus _emit_sra2_shadow): feuert SRA2 LONG
+    (prob>=threshold) für einen Coin aus config.MAIN_CHANNEL_COINS, wird DERSELBE
+    Trade (gleiche prob + Entry/SL/Target-Geometrie) zusätzlich unter Tag "MAX2"
+    nach CH_MAIN emittiert. Ersetzt den retireten klassischen "Main Channel"-
+    Detektor (3_detectors.py), der auf genau dieser Coin-Whitelist lief — der
+    einzige Filter ist die Whitelist, exakt wie zuvor (Operator-Entscheid Michi).
+
+    LONG-only: SRA2 SHORT ist ein toter Shadow-Leg (threshold=None, Labels seit
+    23.02 tot). MAX2 postet default-LIVE (leg_status("MAX2","LONG")=LIVE) — das
+    ist kollisionsfrei mit dem SRA2-Post nach CH_AI_SR, WEIL CH_AI_SR NICHT
+    Cornix-executed ist (informativ/Orchestrator, Operator-bestätigt); sonst wäre
+    es ein Regel-4-Doppel-Trade auf den 37 Coins. Eigener Tag ⇒ eigener Cooldown-/
+    Dedup-Namespace via has_open("MAX2") (Regel 6). Fehler bleiben gekapselt; der
+    bereits committete SRA2-Post ist unberührt (eigene Txn, eigenes Rollback).
+    """
+    if not shadow_gate.shadow_posting_enabled() or shadow_gate.leg_status("MAX2", "LONG") not in (
+        shadow_gate.LIVE,
+        shadow_gate.SHADOW,
+    ):
+        return
+    try:
+        if has_open_ai_signal(conn, coin, "LONG", "MAX2"):
+            return
+        outcome = post_ai_signal_gated(
+            conn,
+            "MAX2",
+            "LONG",
+            _kcfg.CH_MAIN,
+            coin,
+            prob,
+            entry1,
+            entry2,
+            sl,
+            targets,
+            source_desc="AI MAX2 (SRA2 S/R, Main-Channel-Filter)",
+            n_show=3,
+        )
+        if outcome is not None:
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"MAX2 für {coin} LONG fehlgeschlagen: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
     """SRA2-Emission über das shadow_gate-Routing (T-2026-CU-9050-125/185).
 
@@ -182,6 +233,11 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
         )
         if outcome is not None:
             conn.commit()
+        # MAX2 (T-2026-KYT-9050-020): denselben SRA2-LONG-Trade coin-gefiltert in
+        # den Main-Channel forken — ersetzt den retireten klassischen Main-Channel-
+        # Bot, der auf genau MAIN_CHANNEL_COINS lief. Nur LONG (SRA2 SHORT ist tot).
+        if direction == "LONG" and coin in _kcfg.MAIN_CHANNEL_COINS:
+            _emit_max2(conn, coin, prob, entry1, entry2, sl, targets)
     except Exception as e:
         logger.warning(f"SRA2 Shadow für {coin} {direction} fehlgeschlagen: {e}")
         try:
