@@ -1,0 +1,8 @@
+# Regime-weighting study (T-2026-KYT-9050-029) — extra deps beyond the repo base.
+# Self-contained / DB-free; not a fleet dependency. Install into the study venv:
+#   pip install -r tools/research/regime_switch/requirements-regime.txt
+ccxt>=4.5
+hmmlearn>=0.3
+scikit-learn>=1.4
+pandas>=2.0
+numpy>=1.24

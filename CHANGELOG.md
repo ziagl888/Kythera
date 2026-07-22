@@ -26,6 +26,43 @@ Live-Wiring.** Neuer Treiber `tools/research/garch/t030_live_verdict.py` + Repor
 - **Empfehlung:** **Kein gated Live-Wiring-Follow-up.** T-022 beantwortet, Idee
   billig retired (deckt sich mit dem Combo-Study-Befund: Edge sitzt in der Regime-/
   Exit-Infra, nicht im Sizing-Overlay). Korrelations-Layer T-023 bleibt separat.
+## [2026-07-23] Regime-Weighting-Study: soft Confidence-Smoothing schlägt die Live-Regel, HMM widerlegt (T-2026-KYT-9050-029)
+
+DB-freie Research-Study (`tools/research/regime_switch/`, Stoic/GARCH-Muster,
+NO-EDGE-tolerant) auf den HMM-Regime-Thread. Frage: Reduziert eine
+probabilistische (HMM) oder soft (confidence-gewichtete) Regime-Timeline
+Whipsaw + den TREND-Halte-Defekt gegenüber ROM1s Live-Regel (Debounce +
+§22-Hysterese), OHNE die Regime-Trennschärfe zu verlieren? Kein Fleet-Code
+berührt, kein DB-Write. Die **echten** `core.regime_logic`-Klassifikatoren
+importiert (Hard Rule 7); nur `compute_features` (DB-Read → reine ccxt-Klines-
+Rekonstruktion) und der Debounce-State (DB-Persist → In-Memory-State-Machine)
+portiert — Letzterer per Fake-`regime_current`-Conn an die echte `apply_debounce`
+gepinnt.
+- **Vier Timelines** über identische, kausale Features: RAW (kein Damping) /
+  RULE (Live-Baseline) / HMM (3-State-GaussianHMM, kausaler Forward-Filter, kein
+  Intra-Block-Lookahead) / SOFT (EMA-geglättete Classifier-Confidence).
+- **Befund (307d BTC/BTCDOM off ccxt):** (1) **RULE ≈ RAW** (450 vs 491
+  Switches/30d) — der 5-min-Kadenz-Debounce ist fast ein No-op, nur die
+  TREND-Hysterese dämpft. (2) **SOFT dominiert RULE monoton** — Half-Life-Sweep:
+  mehr Glättung → gleichzeitig weniger Switches UND bessere Trennschärfe, kein
+  Trade-off (hl64: 23 sw/30d = −95%, η²@24h 0.0129 = 4× RULE); Modifikation am
+  bestehenden regelbasierten Detektor, kein ML. (3) **Der kausale HMM widerlegt
+  den Thread** — ohne Viterbi-Smoothing-Lookahead whipst er stärker als RAW (620)
+  und seine benannten States invertieren (BULL → −255% ann fwd) = der
+  Transition-Lag, vor dem der Autor selbst warnt.
+- **Ehrliche Grenze:** Absolute Trennschärfe bleibt winzig (η² < 1,5% auf jedem
+  Horizont); jeder Live-RULE-State (inkl. TREND_UP) hat negativen Forward-Return
+  = Vola-Schlechtigkeits-Gradient, keine Richtung. Misst Timeline/Separation, NICHT
+  PnL auf echten Bot-Forwards — das ist DB-gebunden (`tools/rom1_counterfactual.py`,
+  VPS). Diese Study ist die Vorstufen-Gate. **Verdikt: EDGE für SOFT** als
+  Churn-Sieg, nicht als Richtungs-Edge. Jede ROM1-Änderung (Bot 28) bleibt
+  Michi-gegatet.
+
+Verifiziert: `backtest/test_regime_switch_study.py` (4 DB-freie Tests grün —
+Debounce-Port ≡ Live-`apply_debounce`, Feature-Kausalität, Rekonstruktions-
+Mathematik, Metrik-Grenzen), ein Voll-Lauf + Half-Life-Sweep (reproduzierbar aus
+dem Klines-Cache), ruff 0.15.17 clean. Follow-up: DB-gebundener VPS-Counterfactual
+der SOFT-Timeline gegen echte Forwards.
 
 ## [2026-07-22] Stoic-1-2-3-Direction-Modul + Multi-Timeframe-Backtest (T-2026-KYT-9050-024)
 
