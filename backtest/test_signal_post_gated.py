@@ -61,10 +61,12 @@ def test_shadow_leg_routes_to_monitored(monkeypatch):
 
 
 def test_silent_leg_is_noop(monkeypatch):
-    assert sg.leg_status("FIF1", "LONG") == sg.SILENT  # von TSM1 abgelöst, geparkt
-    assert sg.leg_status("FIF1", "SHORT") == sg.SILENT
+    # ATS1 ist stummgeschaltet (T-2026-CU-9050-127). (FIF1 war früher das SILENT-
+    # Beispiel, ist aber seit T-2026-KYT-9050-033 als SHADOW revived.)
+    assert sg.leg_status("ATS1", "LONG") == sg.SILENT
+    assert sg.leg_status("ATS1", "SHORT") == sg.SILENT
     calls = _capture(monkeypatch)
-    out = sp.post_ai_signal_gated(None, "FIF1", "LONG", 123, **ARGS)
+    out = sp.post_ai_signal_gated(None, "ATS1", "LONG", 123, **ARGS)
     assert out is None
     assert calls["live"] == [] and calls["shadow"] == []
 

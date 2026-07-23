@@ -389,3 +389,76 @@ def post_ai_signal_gated(
         )
         return "shadow" if wrote else None
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LEGACY-DIREKTPOST-ROUTER  —  fleet-lifecycle gate für Bots, die NICHT über
+# post_ai_signal_gated posten (T-2026-KYT-9050-033).
+# ─────────────────────────────────────────────────────────────────────────────
+# Rückgabewerte (Aufrufer verzweigt darauf):
+LEG_LIVE = "live"  # Default (nicht-registriertes Bein): Aufrufer postet live wie bisher.
+LEG_SHADOW = "shadow"  # HIER wurde ein überwachter Shadow-Trade geschrieben (kein Cornix).
+LEG_SKIP = "skip"  # SILENT/RETIRED, Shadow global aus, oder Dedup-Block: nichts schreiben.
+
+
+def route_legacy_leg(
+    conn,
+    tag: str,
+    direction: str,
+    symbol: str,
+    confidence: float,
+    entry1: float,
+    entry2: float,
+    sl: float,
+    targets: list[float],
+    *,
+    n_show: int = 3,
+    dedup_hours: int = 4,
+    legacy_tag: str | None = None,
+) -> str:
+    """Fleet-Lifecycle-Routing an der Emissions-Stelle eines LEGACY-Direktpost-Bots
+    (BR/BB/QM-Pattern, SRA1, RUB2, EPD2, ABR2, MIS2, … — Bots 7/9/10/11/13/18/24/25),
+    die ihre Cornix-Message inline bauen und NICHT über :func:`post_ai_signal_gated`
+    laufen (T-2026-KYT-9050-033, Audit T-032 Reconfig).
+
+    Anders als der Gated-Router baut dieser Helper KEINE Message — der Bot behält
+    sein eigenes Format/Chart. Er entscheidet nur, OB der Bot live posten darf:
+
+      * :data:`LEG_LIVE`   — Bein ist LIVE (Default für JEDES nicht im shadow_gate-
+        Register gelistete Bein): der Aufrufer führt seinen bestehenden
+        Cornix + ``ai_signals``-Write unverändert aus.
+      * :data:`LEG_SHADOW` — Bein ist SHADOW: HIER wurde bereits ein überwachter
+        Shadow-Trade (``ai_signals``, KEIN Cornix, Regel 4) geschrieben; der
+        Aufrufer überspringt seinen Live-Write und committet die Transaktion
+        (Regel 8 — der Helper committet nicht selbst).
+      * :data:`LEG_SKIP`   — Bein ist SILENT/RETIRED, ``KYTHERA_SHADOW_POSTING=0``,
+        ODER ein offener Shadow-Trade dedupt das Bein (has_open): nichts schreiben.
+
+    Sicherheitsvertrag (harte Regeln 1/2/4, identisch zu :mod:`core.shadow_gate`):
+    Default = LIVE ⇒ ein Bot, dessen (tag, direction)-Beine NICHT registriert sind,
+    verhält sich BYTE-IDENTISCH wie zuvor. Die Verdrahtung ist rein ADDITIV am
+    Post-Zweig und kann NIE aus einem Live-Post einen Shadow machen, solange das
+    Bein nicht explizit SHADOW eingetragen ist. Der Aufrufer hat Cooldown/has_open
+    seines Live-Tags bereits geprüft; der Shadow-Zweig dedupt zusätzlich über
+    :func:`post_shadow_ai_signal`s eigenen has_open gegen den Monitor-Arbeitssatz.
+    """
+    st = shadow_gate.leg_status(tag, direction)
+    if st == shadow_gate.LIVE:
+        return LEG_LIVE
+    if st == shadow_gate.SHADOW and shadow_gate.shadow_posting_enabled():
+        wrote = post_shadow_ai_signal(
+            conn,
+            tag,
+            symbol,
+            direction,
+            confidence,
+            entry1,
+            entry2,
+            sl,
+            targets,
+            n_show=n_show,
+            dedup_hours=dedup_hours,
+            legacy_tag=legacy_tag,
+        )
+        return LEG_SHADOW if wrote else LEG_SKIP
+    return LEG_SKIP

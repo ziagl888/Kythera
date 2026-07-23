@@ -26,7 +26,7 @@ from core.candles import history_start, read_candles_with_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
-from core.signal_post import log_prediction, post_shadow_ai_signal
+from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal_gated
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATS_BOT - %(message)s')
@@ -87,17 +87,29 @@ def load_models():
         logger.info(f"👻 ATS2 Shadow-Modelle geladen: {', '.join(loaded)}")
 
 
-def _emit_ats2_shadow(conn, symbol, direction, is_long, feature_row, entry1, now):
-    """ATS2-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+def _emit_ats2(conn, symbol, direction, is_long, feature_row, entry1, now):
+    """ATS2-Emission über das shadow_gate-Routing (T-2026-CU-9050-125 → -033).
 
     Gleiches TSI-Crossover-Event und derselbe Feature-Vektor wie der Live-ATS1-
-    Score. Feuert ATS2 auf der ROHEN prob >= optimal_threshold, wird die
-    IDENTISCHE HVN/S-R-Geometrie wie im Live-Pfad gebaut und ein überwachter
-    Shadow-Trade (kein Cornix) unter Tag ``ATS2`` geschrieben. Unter Threshold:
-    nur die Prediction-Zeile wie heute. Jeder Fehler bleibt hier gekapselt —
-    der Live-ATS1-Pfad darf davon NIE betroffen sein.
+    Score. Feuert ATS2 auf der ROHEN prob >= optimal_threshold, baut die IDENTISCHE
+    HVN/S-R-Geometrie wie der Live-Pfad und emittiert via ``post_ai_signal_gated``.
+
+    T-2026-KYT-9050-033 (Audit T-032): ATS2 ist SHADOW→LIVE promotet. Dieselbe
+    Funktion routet jetzt beide Zustände (Muster wie Bot 9 _emit_sra2_shadow, Bot 10
+    _emit_epd3_shadow): das shadow_gate entscheidet LIVE (Cornix an CH_ATS + ai_signals)
+    vs. SHADOW (überwacht, kein Cornix). Der Gate-Guard lässt LIVE **und** SHADOW durch;
+    SILENT/RETIRED fällt raus. Unter Threshold: nur die Prediction-Zeile wie bisher.
+    Jeder Fehler bleibt gekapselt — der Live-ATS1-Pfad darf davon NIE betroffen sein.
+
+    DEPLOY-VORBEDINGUNG (Michi, harte Regel 2): das LIVE-Bein lädt sein Artefakt aus
+    dem Repo-ROOT (shadow_artifact_path). Solange ats2_model_{LONG,SHORT}.pkl in
+    staging_models/ statt Root liegt, liefert der Loader None (``art is None`` → return)
+    und ATS2 schweigt — die Promotion wird erst mit dem Artefakt-Move + Restart aktiv.
     """
-    if not shadow_gate.shadow_posting_enabled() or not shadow_gate.is_shadow("ATS2", direction):
+    if not shadow_gate.shadow_posting_enabled() or shadow_gate.leg_status("ATS2", direction) not in (
+        shadow_gate.LIVE,
+        shadow_gate.SHADOW,
+    ):
         return
     art = SHADOW_ATS2.get(direction)
     if art is None:
@@ -110,15 +122,38 @@ def _emit_ats2_shadow(conn, symbol, direction, is_long, feature_row, entry1, now
                 log_prediction(conn, "ATS2", symbol, direction, entry1, prob, posted=False)
                 conn.commit()
             return
+        # has_open-Guard (Review T-2026-KYT-9050-033, CRITICAL): der LIVE-Zweig von
+        # post_ai_signal_gated ist post_ai_signal — der macht KEINEN has_open-Check und
+        # KEINEN Cooldown. Ohne diesen Guard würde ein persistierendes TSI-Crossover auf
+        # JEDEM 60s-Scan einen doppelten LIVE-ATS2-Post feuern (Regel-4-Doppel-Trade),
+        # solange die Crossover-Kerze die jüngste geschlossene bleibt (~1 h). Muster:
+        # Bot 9 _emit_sra2_shadow:199 / Bot 10 _emit_epd3_shadow:201. Deckt auch den
+        # SHADOW-Zweig ab (spart die teure Geometrie vor post_shadow's eigenem has_open).
+        if has_open_ai_signal(conn, symbol, direction, "ATS2"):
+            return
         supps, resis = get_hvn_and_sr_levels(conn, symbol, entry1)
         entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
         targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
         if not targets:
             return
-        if post_shadow_ai_signal(conn, "ATS2", symbol, direction, prob, entry1, entry2, sl, targets, n_show=3):
+        outcome = post_ai_signal_gated(
+            conn,
+            "ATS2",
+            direction,
+            AI_CHANNEL_ID,  # LIVE-Bein → CH_ATS (T-033); SHADOW-Bein bleibt monitored-only
+            symbol,
+            prob,
+            entry1,
+            entry2,
+            sl,
+            targets,
+            source_desc="AI ATS2 TSI-Sniper",
+            n_show=3,
+        )
+        if outcome is not None:
             conn.commit()
     except Exception as e:
-        logger.warning(f"ATS2 Shadow für {symbol} {direction} fehlgeschlagen: {e}")
+        logger.warning(f"ATS2 Emission für {symbol} {direction} fehlgeschlagen: {e}")
         try:
             conn.rollback()
         except Exception:
@@ -218,10 +253,11 @@ def check_tsi_crossovers():
 
             module_tag = "ATS1"
 
-            # ATS2-Shadow (T-2026-CU-9050-125): neue Generation parallel scoren
-            # und überwacht mit-tracken, BEVOR die ATS1-Band-Logik greift — der
-            # ATS2-Score ist von der ATS1-Entscheidung unabhängig.
-            _emit_ats2_shadow(conn, symbol, direction, long_cross, features, current_price, now)
+            # ATS2 (T-2026-CU-9050-125 → -033): neue Generation parallel scoren und
+            # emittieren, BEVOR die ATS1-Band-Logik greift — der ATS2-Score ist von der
+            # ATS1-Entscheidung unabhängig. Seit T-033 ist ATS2 LIVE promotet; das
+            # shadow_gate-Routing in _emit_ats2 entscheidet LIVE (Cornix) vs. SHADOW.
+            _emit_ats2(conn, symbol, direction, long_cross, features, current_price, now)
 
             # ATS1 stummgeschaltet (T-2026-CU-9050-127, Operator Michi): ist das
             # ATS1-Bein per shadow_gate auf SILENT gesetzt, läuft der Bot NUR für

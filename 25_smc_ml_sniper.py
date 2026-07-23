@@ -26,6 +26,7 @@ from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import COOLDOWN_MODULE_MAX_LEN, check_cooldown, get_max_leverage, load_coins, update_cooldown
 from core.prob_floor import load_prob_floor
+from core.signal_post import LEG_LIVE, LEG_SHADOW, route_legacy_leg
 from core.trade_utils import calculate_smart_targets
 
 # 🛠️ CONFIGURATION
@@ -541,6 +542,19 @@ def send_cornix_signal(
     # keyword arg: a future call site that forgets it should fail loudly
     # instead of silently reintroducing the old-tag bug.
     strategy_name = "Breaker Block" if strategy_code == 'bb' else "Three-Drive"
+
+    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
+    # Verhaltensänderung. BB_1H/BB_4H SHORT + BB2_4H (beide) sind geparkt → SHADOW
+    # (überwachter Trade statt Cornix); TD bleibt komplett live. Rein additiv am
+    # Post-Zweig (Regel 4). ai_signals-confidence ist wie im Live-Pfad prob
+    # (= confidence/100); der Bot speichert die volle Target-Liste → n_show=len(targets).
+    _route = route_legacy_leg(
+        conn, module_tag, direction, symbol, confidence / 100, entry1, entry2, sl, targets, n_show=len(targets)
+    )
+    if _route != LEG_LIVE:
+        if _route == LEG_SHADOW:
+            conn.commit()
+        return
 
     # 💥 NEU: Bestimme den richtigen Channel für dieses Pattern
     target_channel = SMC_CHANNELS.get(strategy_code, list(SMC_CHANNELS.values())[0])
