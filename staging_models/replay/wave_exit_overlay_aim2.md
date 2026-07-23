@@ -36,10 +36,9 @@ n_arts = 683 (leveraged, gescort). Metrik = REALIZED (locked-in) — unlev Summe
 ### KERNBEFUND
 
 - **Leveraged Realized: keine Overlay-Variante schlägt hold.** Baseline +8209.6% vs (a) 4565.1…5163.1% / (c) 4164.2…4720.7% — robust über den GANZEN Sweep schlechter. Der leveraged-Summe wird von wenigen Fat-Tail-Wellen-Treffern dominiert (−100%-Clamp-Asymmetrie), die jedes Overlay kappt.
-- **Unlevered Realized: Overlays sind BESSER.** Baseline +173.01% vs (a) 244.45…284.15% / (c) 245.24…275.68% — die Regeln schneiden die Underwater-Tails, ohne die (unhebelte) Verteilung so stark von den Winnern abzuhängen.
-- **Drawdown: (c) ist ein Risk-Tool.** MaxDD-Welle 43.2 (hold) → 5.0…6.4 (~9× kleiner) — gegen ~44% weniger leveraged Upside.
-- **L/S:** der leveraged-Verlust sitzt fast ganz im LONG; SHORT-unlev vervielfacht sich (Tabelle unten). Bestätigt T-032/029/031: der Edge ist RICHTUNGS-, nicht Timing-bedingt.
-- **Fazit:** Michis Wellen-Intuition fängt out-of-sample **kein** leveraged-Edge (Markt-Timing), aber (c) konvertiert Upside-Varianz in Drawdown-Schutz. Kein Deploy-Signal für Return-Maximierung; als reiner Portfolio-Circuit-Breaker diskutabel. **NO-EDGE auf der Headline-Metrik.**
+- **Unlevered Realized:** Baseline 173.01% vs (a) 244.45…284.15% / (c) 245.24…275.68% — Overlays überwiegend BESSER (schneiden Underwater-Tails).
+- **Drawdown: (c) ist ein Risk-Tool.** MaxDD-Welle 43.2 (hold) → 5.0…6.4 (~9× kleiner).
+- **Fazit:** Wellen-Intuition fängt out-of-sample **kein** leveraged-Edge; (c) konvertiert Upside-Varianz in Drawdown-Schutz. **NO-EDGE auf der Headline-Metrik.**
 
 > ⚠ **WR(TP1)% ist unter Overlays irreführend** (die Regel schließt auf MTM-Retrace, nicht auf TP-Touch → tp1=False obwohl profitabel geschlossen). Realized ist die Metrik, nicht WR. Overlay (a) triggert bei ~95% (Peak-Retrace feuert auch auf kleinen Wellen — eine Aktivierungs-Schwelle würde nur große Wellen trailen, ist hier aber nicht nötig: das Vorzeichen ist schon klar).
 

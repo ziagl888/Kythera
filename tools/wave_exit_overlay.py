@@ -142,6 +142,11 @@ def load_cornix_geometry(conn, model: str, start: str, end: str, parse_fn) -> di
     Only the plain-text (Cornix-parseable) message carries the geometry; the
     HTML info twin is skipped by the parser (it rejects <pre>). Entry2 is pulled
     with a dedicated regex — the shared parser only exposes the single CMP entry.
+
+    The bot tag appears in the footer in bot-specific shapes — AIM2 as "(AIM2)",
+    EPD3 as "AI module EPD3" — so we scope by the bare tag substring `%model%`,
+    not `%(model)%`. The <pre> HTML twin (which also carries "Modul: EPD3") is
+    excluded, so the surviving match is the plain Cornix leg.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -150,7 +155,7 @@ def load_cornix_geometry(conn, model: str, start: str, end: str, parse_fn) -> di
             WHERE message LIKE %s AND message LIKE %s AND message NOT LIKE %s
               AND created_at >= %s AND created_at < %s
             """,
-            ("%Signal for%", f"%({model})%", "%<pre>%", start, end),
+            ("%Signal for%", f"%{model}%", "%<pre>%", start, end),
         )
         rows = cur.fetchall()
     idx: dict = defaultdict(list)
@@ -805,20 +810,57 @@ def render_overlay_md(ov: dict) -> list[str]:
         "",
         "### KERNBEFUND",
         "",
-        f"- **Leveraged Realized: keine Overlay-Variante schlägt hold.** Baseline +{base_lev}% vs "
-        f"(a) {a_lev[0]}…{a_lev[1]}% / (c) {c_lev[0]}…{c_lev[1]}% — robust über den GANZEN Sweep schlechter. "
-        "Der leveraged-Summe wird von wenigen Fat-Tail-Wellen-Treffern dominiert (−100%-Clamp-Asymmetrie), "
-        "die jedes Overlay kappt.",
-        f"- **Unlevered Realized: Overlays sind BESSER.** Baseline +{base_unlev}% vs "
-        f"(a) {a_unlev[0]}…{a_unlev[1]}% / (c) {c_unlev[0]}…{c_unlev[1]}% — die Regeln schneiden die "
-        "Underwater-Tails, ohne die (unhebelte) Verteilung so stark von den Winnern abzuhängen.",
+    ]
+
+    # Datengetrieben statt hartkodiert: schlägt IRGENDEINE Overlay-Variante die
+    # Baseline auf leveraged Realized? (Vorzeichen zählt, nicht die AIM2-Story.)
+    n = ov["n_arts"]
+    ov_lev_hi = max(v for v in (a_lev[1], c_lev[1]) if v is not None)
+    beats = base_lev is not None and ov_lev_hi > base_lev
+    thin = n < 30
+    if thin:
+        lines.append(
+            f"> ⚠ **THIN (n={n} < 30): unter der Signifikanzschwelle — nur illustrativ, kein Verdikt.** "
+            "Bei so wenigen Legs bestimmt ein einzelnes Fenster das Vorzeichen."
+        )
+        lines.append("")
+    if beats:
+        lines.append(
+            f"- **Leveraged Realized: mindestens eine Overlay-Variante schlägt hold.** Baseline {base_lev}% vs "
+            f"(a) {a_lev[0]}…{a_lev[1]}% / (c) {c_lev[0]}…{c_lev[1]}%. "
+            + (
+                "Da die Baseline hier NEGATIV/schwach ist, schlägt jede Früh-Exit-Regel einen ungünstigen Halt — "
+                "das ist ein Fenster-Artefakt, kein bewiesener Timing-Edge (n klein, Baseline-Vorzeichen prüfen)."
+                if (base_lev is not None and base_lev < 0)
+                else "Robustheit über den Sweep + gegen die AIM2/EPD3-Evidenz prüfen, bevor das als Edge gilt."
+            )
+        )
+    else:
+        lines.append(
+            f"- **Leveraged Realized: keine Overlay-Variante schlägt hold.** Baseline +{base_lev}% vs "
+            f"(a) {a_lev[0]}…{a_lev[1]}% / (c) {c_lev[0]}…{c_lev[1]}% — robust über den GANZEN Sweep schlechter. "
+            "Der leveraged-Summe wird von wenigen Fat-Tail-Wellen-Treffern dominiert (−100%-Clamp-Asymmetrie), "
+            "die jedes Overlay kappt."
+        )
+    ov_unlev_better = base_unlev is not None and a_unlev[1] is not None and max(a_unlev[1], c_unlev[1]) > base_unlev
+    lines += [
+        f"- **Unlevered Realized:** Baseline {base_unlev}% vs (a) {a_unlev[0]}…{a_unlev[1]}% / "
+        f"(c) {c_unlev[0]}…{c_unlev[1]}% — Overlays "
+        + ("überwiegend BESSER (schneiden Underwater-Tails)." if ov_unlev_better else "nicht besser."),
         f"- **Drawdown: (c) ist ein Risk-Tool.** MaxDD-Welle {base_dd} (hold) → {min(c_dd)}…{max(c_dd)} "
-        f"(~{base_dd / max(min(c_dd), 1e-9):.0f}× kleiner) — gegen ~44% weniger leveraged Upside.",
-        "- **L/S:** der leveraged-Verlust sitzt fast ganz im LONG; SHORT-unlev vervielfacht sich (Tabelle unten). "
-        "Bestätigt T-032/029/031: der Edge ist RICHTUNGS-, nicht Timing-bedingt.",
-        "- **Fazit:** Michis Wellen-Intuition fängt out-of-sample **kein** leveraged-Edge (Markt-Timing), "
-        "aber (c) konvertiert Upside-Varianz in Drawdown-Schutz. Kein Deploy-Signal für Return-Maximierung; "
-        "als reiner Portfolio-Circuit-Breaker diskutabel. **NO-EDGE auf der Headline-Metrik.**",
+        f"(~{base_dd / max(min(c_dd), 1e-9):.0f}× kleiner).",
+        "- **Fazit:** "
+        + (
+            "Zu dünn für ein Verdikt — siehe THIN-Hinweis oben."
+            if thin
+            else (
+                "Overlays schlagen hold NUR weil die Baseline in diesem Fenster schwach war (Artefakt), "
+                "kein robuster Timing-Edge."
+                if beats
+                else "Wellen-Intuition fängt out-of-sample **kein** leveraged-Edge; (c) konvertiert Upside-Varianz "
+                "in Drawdown-Schutz. **NO-EDGE auf der Headline-Metrik.**"
+            )
+        ),
         "",
         "> ⚠ **WR(TP1)% ist unter Overlays irreführend** (die Regel schließt auf MTM-Retrace, nicht auf "
         "TP-Touch → tp1=False obwohl profitabel geschlossen). Realized ist die Metrik, nicht WR. "
