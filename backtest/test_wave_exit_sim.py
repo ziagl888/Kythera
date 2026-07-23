@@ -248,17 +248,19 @@ def test_trailing_tp_trigger() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 def test_portfolio_circuit_breaker() -> None:
     print("test_portfolio_circuit_breaker")
-    # Trade A: steps 0..3, a big wave up then giving back (peaks at +1.0).
-    # Trade B: enters step 6 AFTER A has fully closed — a small, calm wave.
-    a = {"gi": np.array([0, 1, 2, 3]), "lm": np.array([0.0, 0.6, 1.0, 0.5])}
+    # Regression pin for the stale-peak bug: trade A must leave via NATURAL close
+    # (not a flatten — a flatten already resets peak) with its peak still high, so
+    # only the `if not open_set: peak = 0.0` reset can protect the next trade.
+    # A rides up to +1.0 then gives back only 15% (0.85 > 1.0*0.7) → no flatten →
+    # naturally closes at step 3 leaving peak=1.0. B enters the EMPTY book at 6.
+    a = {"gi": np.array([0, 1, 2, 3]), "lm": np.array([0.0, 0.6, 1.0, 0.85])}
     b = {"gi": np.array([6, 7, 8]), "lm": np.array([0.0, 0.02, 0.03])}
     flat = portfolio_circuit_breaker([a, b], glen=9, y_frac=0.30)
-    # A retraces 30% from its +1.0 peak (0.5 <= 0.7) → flattened at step 3.
-    check("A flattened on its own retrace", flat.get(0) == 3, str(flat.get(0)))
-    # B must NOT be flattened: A's stale peak may not carry over an empty book.
+    check("A rides to natural close (not flattened)", 0 not in flat, str(flat))
+    # Without the empty-book reset, A's stale peak=1.0 flattens B at its entry.
     check("B not flattened at entry (peak reset)", 1 not in flat, str(flat))
 
-    # Sanity: a single calm-then-retrace wave still fires normally.
+    # Positive fire: a lone calm-then-retrace wave still triggers.
     c = {"gi": np.array([0, 1, 2, 3]), "lm": np.array([0.0, 0.5, 1.0, 0.6])}
     only = portfolio_circuit_breaker([c], glen=4, y_frac=0.30)
     check("lone wave flattens on retrace", only.get(0) == 3, str(only))

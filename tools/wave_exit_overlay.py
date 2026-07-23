@@ -815,8 +815,9 @@ def render_overlay_md(ov: dict) -> list[str]:
     # Datengetrieben statt hartkodiert: schlägt IRGENDEINE Overlay-Variante die
     # Baseline auf leveraged Realized? (Vorzeichen zählt, nicht die AIM2-Story.)
     n = ov["n_arts"]
-    ov_lev_hi = max(v for v in (a_lev[1], c_lev[1]) if v is not None)
-    beats = base_lev is not None and ov_lev_hi > base_lev
+    _lev_his = [v for v in (a_lev[1], c_lev[1]) if v is not None]
+    ov_lev_hi = max(_lev_his) if _lev_his else None
+    beats = base_lev is not None and ov_lev_hi is not None and ov_lev_hi > base_lev
     thin = n < 30
     if thin:
         lines.append(
@@ -837,12 +838,13 @@ def render_overlay_md(ov: dict) -> list[str]:
         )
     else:
         lines.append(
-            f"- **Leveraged Realized: keine Overlay-Variante schlägt hold.** Baseline +{base_lev}% vs "
+            f"- **Leveraged Realized: keine Overlay-Variante schlägt hold.** Baseline {base_lev:+g}% vs "
             f"(a) {a_lev[0]}…{a_lev[1]}% / (c) {c_lev[0]}…{c_lev[1]}% — robust über den GANZEN Sweep schlechter. "
             "Der leveraged-Summe wird von wenigen Fat-Tail-Wellen-Treffern dominiert (−100%-Clamp-Asymmetrie), "
             "die jedes Overlay kappt."
         )
-    ov_unlev_better = base_unlev is not None and a_unlev[1] is not None and max(a_unlev[1], c_unlev[1]) > base_unlev
+    _unlev_his = [v for v in (a_unlev[1], c_unlev[1]) if v is not None]
+    ov_unlev_better = base_unlev is not None and _unlev_his and max(_unlev_his) > base_unlev
     lines += [
         f"- **Unlevered Realized:** Baseline {base_unlev}% vs (a) {a_unlev[0]}…{a_unlev[1]}% / "
         f"(c) {c_unlev[0]}…{c_unlev[1]}% — Overlays "
