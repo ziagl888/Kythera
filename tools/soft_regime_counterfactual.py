@@ -446,6 +446,25 @@ def wr_by_agreement_sweep(rows: list[dict], timelines: dict[str, pd.Series], hal
     return out
 
 
+def agreement_summary(rows: list[dict]) -> dict:
+    """SOFT-vs-recorded-RULE agreement rate over annotated rows (outcome-agnostic)."""
+    n = agree = disagree = 0
+    for r in rows:
+        a = r.get("soft_agrees_rule")
+        if a is True:
+            n += 1
+            agree += 1
+        elif a is False:
+            n += 1
+            disagree += 1
+    return {
+        "n_comparable": n,
+        "n_agree": agree,
+        "n_disagree": disagree,
+        "pct_disagree": round(100 * disagree / n, 1) if n else None,
+    }
+
+
 def whitelist_reflip_proxy(rows: list[dict], wl: dict) -> dict:
     """FLAGGED PROXY: re-gate forwarded rows under SOFT regime via the CURRENT
     whitelist snapshot. Circular (snapshot derived from these trades) + single
@@ -589,6 +608,22 @@ def build_report(meta: dict) -> str:
                f"{b['sum_net_pnl_pct']} | {b['replay_tp1_wr_pct']}% |")
         ap("")
 
+    sa = meta.get("suppressed_agreement")
+    if sa:
+        ap("## 5b · Suppressed side (gate-class, replay-only — no live outcome)\n")
+        ap(f"`bot_not_whitelisted:*` suppressions carry no `status`, so they are scored by "
+           f"first-touch replay only. SOFT disagrees with the recorded RULE regime on "
+           f"**{sa['pct_disagree']}%** of {sa['n_comparable']} comparable suppressions.\n")
+        rps = meta.get("replay_pnl_suppressed")
+        if rps:
+            ap("| bucket | n scored | avg net PnL% | median | sum net PnL% | replay TP1 WR |")
+            ap("|---|--:|--:|--:|--:|--:|")
+            for label, key in [("SOFT agrees RULE", "agree"), ("SOFT disagrees RULE", "disagree")]:
+                b = rps[key]
+                ap(f"| {label} | {b['n_scored']} | {b['avg_net_pnl_pct']} | {b['median_net_pnl_pct']} | "
+                   f"{b['sum_net_pnl_pct']} | {b['replay_tp1_wr_pct']}% |")
+            ap("\n(Suppressed replay PnL is hypothetical — these trades were blocked, never taken.)\n")
+
     if meta.get("whitelist_reflip"):
         ap("## 6 · Whitelist reflip (FLAGGED PROXY — not a verdict)\n")
         wl = meta["whitelist_reflip"]
@@ -722,13 +757,22 @@ def main() -> None:
         wl = load_whitelist_snapshot(conn)
         reflip = whitelist_reflip_proxy(forwarded, wl)
 
-        replay_pnl = None
+        # Suppressed side (gate-class): no live outcome (`status`), so it is
+        # replay-only — SOFT-vs-recorded-RULE agreement + first-touch replay PnL.
+        suppressed = load_suppressed_gate(conn, args.days)
+        print(f"suppressed (gate-class): {len(suppressed)} rows ({args.days}d)", flush=True)
+        sup_fidelity = annotate_soft_rule(suppressed, timelines, args.feature_hl)
+        sup_agreement = agreement_summary(suppressed)
+
+        replay_pnl = replay_pnl_suppressed = None
         if args.replay:
-            check_cpu_headroom()
             orch = import_bot_module("28_signal_orchestrator.py", "signal_orchestrator")
+            check_cpu_headroom()
             print(f"replaying {len(forwarded)} forwarded rows (horizon {args.replay_horizon_hours}h)…", flush=True)
-            records = score_all(conn, orch, forwarded, args.replay_horizon_hours)
-            replay_pnl = replay_pnl_by_bucket(records)
+            replay_pnl = replay_pnl_by_bucket(score_all(conn, orch, forwarded, args.replay_horizon_hours))
+            check_cpu_headroom()
+            print(f"replaying {len(suppressed)} suppressed rows…", flush=True)
+            replay_pnl_suppressed = replay_pnl_by_bucket(score_all(conn, orch, suppressed, args.replay_horizon_hours))
     finally:
         conn.close()
 
@@ -744,12 +788,16 @@ def main() -> None:
         "cadence_gaps_over_10min": int((gaps > 10).sum()) if len(gaps) else 0,
         "cadence_max_gap_min": round(float(gaps.max()), 1) if len(gaps) else None,
         "n_forwarded": len(forwarded),
+        "n_suppressed_gate": len(suppressed),
         "churn": {name: whipsaw(s) for name, s in timelines.items()},
         "fidelity": fidelity,
         "wr_by_agreement": wr_agr,
         "wr_sweep": wr_sweep,
         "whitelist_reflip": reflip,
+        "suppressed_fidelity": sup_fidelity,
+        "suppressed_agreement": sup_agreement,
         "replay_pnl": replay_pnl,
+        "replay_pnl_suppressed": replay_pnl_suppressed,
         "join_limits": [
             "bot_regime_whitelist is overwritten wholesale each analyzer cycle (PK on the 4-tuple, "
             "no history) → the as-of whitelist for a past signal under a DIFFERENT regime is not "

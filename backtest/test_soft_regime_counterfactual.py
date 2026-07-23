@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.regime_logic import REGIME_DEBOUNCE_COUNT, TREND_DEBOUNCE_COUNT  # noqa: E402
 from tools.soft_regime_counterfactual import (  # noqa: E402
+    agreement_summary,
     annotate_soft_rule,
     asof_indexer,
     build_timelines,
@@ -140,6 +141,19 @@ def test_annotate_soft_rule_fidelity_and_agreement():
     assert fid["rule_recon_vs_recorded_agreement_pct"] == round(100 * 2 / 3, 2)
     assert rows[0]["soft_agrees_rule"] is True and rows[0]["soft_shift"] is None
     assert rows[1]["soft_agrees_rule"] is False and rows[1]["soft_shift"] == "TREND_UP->CHOP"
+
+
+def test_agreement_summary_counts_disagreements():
+    rows = [
+        {"soft_agrees_rule": True},
+        {"soft_agrees_rule": False},
+        {"soft_agrees_rule": False},
+        {"soft_agrees_rule": None},  # not comparable → excluded
+    ]
+    s = agreement_summary(rows)
+    assert s["n_comparable"] == 3
+    assert s["n_agree"] == 1 and s["n_disagree"] == 2
+    assert s["pct_disagree"] == round(100 * 2 / 3, 1)
 
 
 def test_build_timelines_soft_consumes_raw_features_frame():
