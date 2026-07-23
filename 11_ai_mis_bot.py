@@ -663,8 +663,13 @@ def check_mis_models():
     # FIX: Einmalig VOR der Coin-Schleife prüfen ob überhaupt ein Modell geladen ist.
     # Vorher stand der Check in der Schleife mit `return` → der ganze Scan brach
     # ab sobald ein einziger Coin kein Modell fand.
-    if not any(cfg["loaded"] for cfg in PUMP_MODELS.values()):
-        logger.error("No MIS1 model loaded. Scan aborted.")
+    # T-2026-KYT-9050-034: Scan nur abbrechen, wenn WEDER MIS2 NOCH MIS1 ein Modell
+    # geladen hat — MIS1 ist jetzt eine First-Class-Generation (Revive), die auch
+    # dann laufen soll, wenn (hypothetisch) die MIS2-Slots leer wären.
+    if not any(cfg["loaded"] for cfg in PUMP_MODELS.values()) and not any(
+        cfg["loaded"] for cfg in MIS1_MODELS.values()
+    ):
+        logger.error("Kein MIS-Modell geladen (weder MIS2 noch MIS1). Scan aborted.")
         conn.close()  # Pool-Slot freigeben (Review Batch 4)
         return
 
