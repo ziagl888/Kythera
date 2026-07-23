@@ -1,3 +1,47 @@
+## [2026-07-23] Fleet-Realized-Trade-Audit (DB-direkt) + Regime-Gate-Edge-Test — Retire-Kandidaten (T-2026-KYT-9050-032)
+
+DB-gebundener (strikt read-only) VPS-Fleet-Audit in zwei Phasen, reine Analyse +
+Empfehlung an Michi (Retire = Eskalation, kein Live-Eingriff). Zwei neue Tools +
+je DB-freie Tests, Artefakte (Markdown + JSON) nach `staging_models/replay/`.
+
+**Phase A — `tools/fleet_realized_audit.py` (11 DB-freie Tests):** reviewbare
+Kontroll-Tabelle des realisierten Edge JEDES Bots direkt aus der DB, pro **Tag ×
+Richtung × Lifecycle (active/shadow/retired)**. Quellen: `closed_ai_signals`
+(AI) + `closed_trades_master` (classic), dedupliziert auf dem Report-14-Survivor-
+Key (die 357k-Duplikat-Falle). Edge-Metrik = TARGET-gestaffelter unlevered Move
+(`core.realized_pnl.weighted_move_pct`, korrekt für laddered-TP-Bots) netto − Fee;
+leveraged Realized-PnL + R-Multiple (classic, mit sl) als sekundär; synthetische
+LEGACY-Closes (±2.5%) quarantänisiert; Lifecycle aus `core.shadow_gate`.
+- **Retire-Kandidaten (netto-negativer Edge, n≥30):** klassische Volumen-Bots
+  `FastInOut`, `VolIndic`, `5Percent`, `Main Channel` (beide Richtungen netto
+  negativ — die größten Blutungen, `FastInOut` allein ≈ −419k% leveraged), die
+  Pattern/Sniper/Rubberband-**SHORT**-Beine (`BR1H/BR2H/BR4H`, `BB_1H/BB_4H`,
+  `QM_1H/QM_4H`, `BR1Hv2`), `AIM1` (retired, bestätigt tot). **Keeper:** `AIM2`,
+  `SRA2`, `ROM1`, `MAX1`, `RUB2-SHORT`, `RUB1`, `EPD1-SHORT`, `TD_*`, `MIS1-72h/168h`.
+  Kernmuster: die Verlust-Familien haben LONG-Edge und SHORT-Blutung (Richtung,
+  nicht Regime).
+
+**Phase B — `tools/regime_gate_edge_test.py` (6 DB-freie Tests):** würde ein
+BTC-Regime-Gate die Negativ-Edge-Bots retten? Jeder Trade wird as-of an das
+RULE_recon-/SOFT-Regime (T-029/T-031-Infra aus `regime_history`) gebunden;
+günstige Regimes werden auf der ersten Trade-Hälfte gelernt und **out-of-sample**
+auf der zweiten angewandt (kein In-Sample-Selbstbetrug).
+- **Verdikt: KEIN Negativ-Edge-Leg wird gerettet (0 RESCUED).** 15 Legs bluten in
+  JEDEM Regime (kein günstiges Regime existiert → Gate blockt alles), 4 werden
+  gemildert bleiben aber negativ. Positiv-Edge-Legs gewinnen nur bescheiden
+  (meist <+0,3%/Trade, teils bei niedriger kept-fraction). **Kernbefund: der Edge
+  ist richtungs-, nicht regime-bedingt** → der Hebel ist die Richtungs-/Retire-
+  Entscheidung, nicht ein BTC-Regime-Gate (deckt sich mit T-029/T-031, η²≈0).
+- **Join-Grenzen (ehrlich):** `closed_ai_signals` ohne `sl` → kein R-Multiple für
+  AI; targets+lev für Alt-Tags dünn → leveraged exact-only; Monitor-Outcomes
+  ~63% first-touch-treu → Vorzeichen/Kohorten-Diffs robuster als Absolutniveau;
+  historische per-Bot-Whitelist nicht rekonstruierbar (T-031) → Phase B misst die
+  Regime-Achse allein (Obergrenze), nicht die Live-Whitelist-Mechanik.
+
+Kein Fleet-Code berührt, kein DB-Write, kein Retire/Gate-Flip (reine Analyse).
+CPU-Höflichkeit: `set_low_priority` + weicher Headroom-Check (Phase A/B haben
+Vorrang, VPS zeitweise 100%). Verifiziert: 17/17 DB-freie Tests grün, ruff clean.
+
 ## [2026-07-23] SOFT-Regime-Gate Counterfactual auf echten ROM1-Forwards — NO-EDGE (Churn bestätigt) (T-2026-KYT-9050-031)
 
 DB-gebundener (strikt read-only) VPS-Follow-up zu T-029: misst, ob die dort
