@@ -1,3 +1,41 @@
+## [2026-07-23] Deploy-Voraussetzungen für T-033 — MIS1-Revive + EPD3-Staging + SRA2-SHORT-Diagnose (T-2026-KYT-9050-034)
+
+Interaktive, operator-begleitete Session (Michi live). Macht die drei aus T-033
+geflaggten Deploy-Vorbedingungen aktionabel — DB strikt read-only (`set_session(readonly=True)`,
+nur SELECTs), Staging-Artefakte only (kein Root-Move, harte Regel 2), kein Restart/
+Deploy/env-Flip. Report: `staging_models/replay/deploy_preconditions_t034.md`.
+
+- **MIS1-Revive (Paket 1) — EXAKTE Restauration, kein Retrain (Operator-Entscheid Michi).**
+  Bot 11 lädt die unveränderten MIS1-Artefakte (`pump_model_*_final.pkl` +
+  `threshold_*_final.pkl`, Repo-Root) wieder — PARALLEL zu MIS2 unter Tags `MIS1-*`.
+  Feature-Feed über `add_advanced_features(include_legacy=True)`: der 71-Spalten-
+  Superset deckt die 67 MIS1-Features EXAKT (0 missing über alle 8 Modelle verifiziert)
+  UND die 63 sauberen MIS2-Features (additiv-neutral, EIN Feature-Build/Coin). Geometrie
+  generations-treu (`_mis_geometry`): MIS1 = `calculate_smart_targets` beide Richtungen
+  (immediate CMP-Entry); MIS2-SHORT behält die DUMP_RULES-Bracket. MIS2-Emit byte-neutral
+  über den geteilten `_post_mis_live_leg`/`_process_mis_candidates`-Pfad. Lifecycle im
+  `shadow_gate`-Register: MIS1 aus `_RETIRED_TAGS`; gute Beine Default-LIVE
+  (MIS1-24H/72H/168H LONG + MIS1-8H SHORT), schwache SHADOW — belebt genau die von T-033
+  geparkten MIS2-Beine, pro (Horizont, Richtung) genau EINE live Generation (kein Cornix-
+  Doppel-Post). Zwei alte Bugs bewusst NICHT reproduziert (harte Regeln): Cornix-Block-in-
+  HTML (Regel 4) und volle-Targets-statt-`[:5]` (P2.31).
+- **EPD3-SHORT-Staging (Paket 3):** `epd3_model_SHORT.pkl` (Root) nach `staging_models/`
+  kopiert, damit der SHADOW-Loader es findet (verifiziert) — der EPD3-SHORT-Park erzeugt
+  jetzt echte Shadow-Historie statt stiller Silence.
+- **SRA2-SHORT-Diagnose korrigiert (Paket 2, kein Code):** die T-033-„Flood-Hazard"-
+  Sorge war eine Fehldiagnose — die realisierte Shadow-Historie zeigt den ungegateten Leg
+  als PROFITABEL (+1.06 %/Trade, n=232, deckt den Audit +1.00 %×222). Das −0.079 %-Val-
+  Signal stammte aus der toten `closed_trades3`-Feb-Labelquelle. Ein Threshold ist weder
+  nötig noch aus den Daten bestimmbar (Basisrate 90 % WR); ein Funding-Gate rettet keinen
+  Edge (breit positiv über alle Zonen), trimmt nur Volumen. → deploybar ungegatet, offene
+  Frage ist Cornix-Volumen (~29 Posts/Tag) — Operator-Entscheidung.
+
+Tests (DB-frei): `backtest/test_mis1_revive.py` (Load + Threshold + 67-Feature-Coverage +
+Geometrie-Verzweigung), `test_shadow_gate.py::test_mis1_revive_lifecycle`, `test_mis_tag.py`
+an den geteilten Prozessor angepasst. ruff + mypy clean; MIS/shadow/signal-Suites grün.
+Beide Kern-Reviews PASS (z-code-reviewer APPROVED nach 1 LOW-Fix, z-spec-compliance PASS).
+Deploy (MIS1 live, SRA2-SHORT/EPD3-Artefakt-Moves, Fleet-Restart) = Operator-Entscheid.
+
 ## [2026-07-23] Fleet-Reconfig nach Audit T-032 — Lifecycle-Flips pro Bot × Richtung (T-2026-KYT-9050-033)
 
 Operator-freigegebene Umverdrahtung des Money-Pfads auf Basis des T-032-Realized-
