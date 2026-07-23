@@ -67,6 +67,7 @@ from core.realized_pnl import parse_leverage, realized_pnl_pct, weighted_move_pc
 from core.time import utc_now  # noqa: E402
 from core.wave_exit_sim import (  # noqa: E402
     mark_to_market_series,
+    portfolio_circuit_breaker,
     simulate_signal,
     trailing_tp_trigger,
 )
@@ -362,7 +363,14 @@ def _cornix_mtm(art: dict) -> np.ndarray:
     entries = _entries(rec, True)
     targets = _targets(rec, "cornix")
     return mark_to_market_series(
-        art["c"], rec["direction"], entries, rec["orig_sl"], targets, highs=art["h"], lows=art["l"]
+        art["c"],
+        rec["direction"],
+        entries,
+        rec["orig_sl"],
+        targets,
+        highs=art["h"],
+        lows=art["l"],
+        order_resolver=art["resolver"],
     )
 
 
@@ -454,7 +462,7 @@ def _open_wave(arts: list[dict], glen: int, close_k: dict | None = None) -> np.n
     return wave
 
 
-def run_overlays(arts: list[dict], offset) -> dict:
+def run_overlays(arts: list[dict]) -> dict:
     """Compute baseline + overlay (a) and (c) sweeps, direction-split, with MaxDD."""
     arts = [a for a in arts if len(a["c"]) >= 1 and parse_leverage(a["rec"]["lev"]) is not None]
     if not arts:
@@ -469,17 +477,21 @@ def run_overlays(arts: list[dict], offset) -> dict:
         a["_gi"] = np.array([_grid_index(t, grid0) for t in a["t"]], dtype=int)
 
     # ---- baseline (cornix3 hold-to-natural-close) ----
-    base_rows = [
-        {
-            "dir": a["rec"]["direction"],
-            **{
-                k: _realized_at(a, len(a["c"]))[v]
-                for k, v in (("unlev", "unlev_pct"), ("net", "net_pct"), ("lev", "levered_pct"), ("tp1", "tp1"))
-            },
-            "triggered": False,
-        }
-        for a in arts
-    ]
+    base_rows = []
+    for a in arts:
+        r = _realized_at(a, len(a["c"]))  # one replay per art, not one per field
+        if not r or not r.get("filled"):
+            continue
+        base_rows.append(
+            {
+                "dir": a["rec"]["direction"],
+                "unlev": r["unlev_pct"],
+                "net": r["net_pct"],
+                "lev": r["levered_pct"],
+                "tp1": r["tp1"],
+                "triggered": False,
+            }
+        )
     baseline = _dir_agg(base_rows)
     baseline["maxdd_open_wave"] = round(portfolio_maxdd(_open_wave(arts, glen)), 1)
 
@@ -502,36 +514,17 @@ def overlay_c(arts: list[dict], y: float, glen: int) -> dict:
     """(c) Portfolio circuit-breaker: flatten ALL open trades on a y% retrace of the
     aggregate open-position wave; new signals after a flatten start a fresh wave
     ("im Tal wieder Signale nehmen"). Returns realised + MaxDD, direction-split.
+
+    The flatten decision (which trade at which grid step) is the pure, DB-free
+    `core.wave_exit_sim.portfolio_circuit_breaker`; here we only map the flatten
+    grid step to a candle index and realise each trade there.
     """
-    enters: dict = defaultdict(list)
-    nat_close: dict = defaultdict(list)
-    for idx, a in enumerate(arts):
-        enters[a["_gi"][0]].append(idx)
-        nat_close[a["_gi"][-1]].append(idx)
-
-    open_set: dict = {}
-    close_k: dict = {}
-    peak = 0.0
-
-    def mark_at(a: dict, g: int) -> float:
-        pos = int(np.searchsorted(a["_gi"], g, side="right")) - 1
-        pos = max(0, min(pos, len(a["_lm"]) - 1))
-        return float(a["_lm"][pos])
-
-    for g in range(glen):
-        for idx in enters.get(g, []):
-            open_set[idx] = None
-        agg = sum(mark_at(arts[idx], g) for idx in open_set)
-        if agg > peak:
-            peak = agg
-        if peak > 0 and open_set and agg <= peak * (1.0 - y):
-            for idx in list(open_set):
-                pos = int(np.searchsorted(arts[idx]["_gi"], g, side="right"))
-                close_k[idx] = max(1, min(pos, len(arts[idx]["c"])))
-                del open_set[idx]
-            peak = 0.0
-        for idx in nat_close.get(g, []):
-            open_set.pop(idx, None)
+    trades = [{"gi": a["_gi"], "lm": a["_lm"]} for a in arts]
+    flat_at = portfolio_circuit_breaker(trades, glen, y)
+    close_k = {
+        idx: max(1, min(int(np.searchsorted(arts[idx]["_gi"], g, side="right")), len(arts[idx]["c"])))
+        for idx, g in flat_at.items()
+    }
 
     rows = []
     for idx, a in enumerate(arts):
@@ -611,7 +604,7 @@ def run_validate(conn, model: str, start: str, end: str, limit: int | None, coll
     summary = summarize(records, model, start, end, len(closed), unmatched)
     out = {"records": records, "summary": summary}
     if collect_arts:
-        out["overlay"] = run_overlays(arts, offset)
+        out["overlay"] = run_overlays(arts)
         summary["overlay"] = out["overlay"]["summary"]
     return out
 
@@ -907,9 +900,9 @@ def main() -> None:
 
     conn = get_db_connection()
     try:
-        conn.set_session(readonly=True)
-    except Exception:
-        pass
+        conn.set_session(readonly=True)  # Regel #1: never write the live-money DB
+    except Exception as e:
+        print(f"⚠ set_session(readonly=True) failed ({e}) — proceeding; all queries are SELECT-only.")
     try:
         result = run_validate(conn, args.model, args.start, args.end, args.limit, collect_arts=(args.mode == "overlay"))
     finally:

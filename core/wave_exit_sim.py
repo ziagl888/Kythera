@@ -224,6 +224,7 @@ def mark_to_market_series(
     highs: np.ndarray | None = None,
     lows: np.ndarray | None = None,
     entry1_market: bool = True,
+    order_resolver=None,
 ) -> np.ndarray:
     """Per-step open-position PnL fraction (locked + unrealised), for overlays.
 
@@ -235,9 +236,10 @@ def mark_to_market_series(
 
     `prices` is the per-step mark price (5m close, or the 10s tape for a finer
     wave). `highs`/`lows` default to `prices` (using closes for touch too); pass
-    the candle wicks to detect ladder crossings the closes would miss. Used ONLY
-    to drive Phase-2 close rules; the headline realised metric goes through
-    `core.realized_pnl`.
+    the candle wicks to detect ladder crossings the closes would miss. Pass the
+    same `order_resolver` as the realised replay so the wave's exit index agrees
+    with it on both-touch candles. Used ONLY to drive Phase-2 close rules; the
+    headline realised metric goes through `core.realized_pnl`.
     """
     is_long = str(direction).upper() == "LONG"
     prices = np.asarray(prices, dtype=float)
@@ -261,7 +263,7 @@ def mark_to_market_series(
             fidx = _fill_index(hi, lo, is_long, ep, 0)
         if fidx is None:
             continue
-        res = _leg_exit(hi, lo, prices, fidx, is_long, ep, sl, tps)
+        res = _leg_exit(hi, lo, prices, fidx, is_long, ep, sl, tps, order_resolver)
         exit_idx = int(res["exit_idx"])
         next_tp = 0
         locked = 0.0
@@ -315,3 +317,51 @@ def portfolio_trailing_trigger(agg: np.ndarray, y_frac: float, activation: float
     portfolio wave. The caller flattens every open trade at the returned index.
     """
     return trailing_tp_trigger(agg, y_frac, activation)
+
+
+def portfolio_circuit_breaker(trades: list[dict], glen: int, y_frac: float) -> dict[int, int]:
+    """Overlay (c) walk — decide which open trades get flattened at which grid step.
+
+    `trades[i] = {"gi": grid-index array, "lm": levered-mark array}` (same length,
+    a trade's per-candle account mark placed on the common grid). Walks the grid:
+    trades enter at `gi[0]`, contribute their current mark to the aggregate open
+    wave, and leave naturally at `gi[-1]`. When the aggregate retraces `y_frac`
+    from its running peak, EVERY open trade is flattened at that grid step. The
+    peak is reset both after a flatten AND whenever the open book empties — a wave
+    has no peak when nothing is open, so the next cohort starts fresh (this reset
+    is the fix for the stale-peak bug that otherwise flattens every newly-entered
+    trade at its entry candle).
+
+    Returns `{trade_index: flatten_grid_step}` for the flattened trades; trades
+    absent from the map ran to their natural close.
+    """
+    enters: dict[int, list[int]] = {}
+    nat_close: dict[int, list[int]] = {}
+    for idx, t in enumerate(trades):
+        enters.setdefault(int(t["gi"][0]), []).append(idx)
+        nat_close.setdefault(int(t["gi"][-1]), []).append(idx)
+
+    def mark_at(t: dict, g: int) -> float:
+        pos = int(np.searchsorted(t["gi"], g, side="right")) - 1
+        pos = max(0, min(pos, len(t["lm"]) - 1))
+        return float(t["lm"][pos])
+
+    open_set: dict[int, None] = {}
+    flat_at: dict[int, int] = {}
+    peak = 0.0
+    for g in range(glen):
+        for idx in enters.get(g, []):
+            open_set[idx] = None
+        agg = sum(mark_at(trades[idx], g) for idx in open_set)
+        if agg > peak:
+            peak = agg
+        if peak > 0 and open_set and agg <= peak * (1.0 - y_frac):
+            for idx in list(open_set):
+                flat_at[idx] = g
+                del open_set[idx]
+            peak = 0.0
+        for idx in nat_close.get(g, []):
+            open_set.pop(idx, None)
+        if not open_set:  # no open wave → no peak; next cohort starts fresh
+            peak = 0.0
+    return flat_at

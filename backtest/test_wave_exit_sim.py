@@ -26,6 +26,7 @@ from core.realized_pnl import weighted_move_pct  # noqa: E402
 from core.wave_exit_sim import (  # noqa: E402
     FIRST_TP,
     mark_to_market_series,
+    portfolio_circuit_breaker,
     simulate_signal,
     trailing_tp_trigger,
 )
@@ -241,6 +242,28 @@ def test_trailing_tp_trigger() -> None:
     check("monotonic up never fires", trailing_tp_trigger(np.array([0.0, 0.02, 0.05, 0.09]), 0.30) is None)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. Overlay (c) portfolio circuit-breaker: peak resets when the book empties
+#     (regression pin for the stale-peak bug that flattened fresh trades at entry)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_portfolio_circuit_breaker() -> None:
+    print("test_portfolio_circuit_breaker")
+    # Trade A: steps 0..3, a big wave up then giving back (peaks at +1.0).
+    # Trade B: enters step 6 AFTER A has fully closed — a small, calm wave.
+    a = {"gi": np.array([0, 1, 2, 3]), "lm": np.array([0.0, 0.6, 1.0, 0.5])}
+    b = {"gi": np.array([6, 7, 8]), "lm": np.array([0.0, 0.02, 0.03])}
+    flat = portfolio_circuit_breaker([a, b], glen=9, y_frac=0.30)
+    # A retraces 30% from its +1.0 peak (0.5 <= 0.7) → flattened at step 3.
+    check("A flattened on its own retrace", flat.get(0) == 3, str(flat.get(0)))
+    # B must NOT be flattened: A's stale peak may not carry over an empty book.
+    check("B not flattened at entry (peak reset)", 1 not in flat, str(flat))
+
+    # Sanity: a single calm-then-retrace wave still fires normally.
+    c = {"gi": np.array([0, 1, 2, 3]), "lm": np.array([0.0, 0.5, 1.0, 0.6])}
+    only = portfolio_circuit_breaker([c], glen=4, y_frac=0.30)
+    check("lone wave flattens on retrace", only.get(0) == 3, str(only))
+
+
 def main() -> int:
     for t in [
         test_long_all_targets,
@@ -253,6 +276,7 @@ def main() -> int:
         test_open_at_end,
         test_mtm_matches_realised,
         test_trailing_tp_trigger,
+        test_portfolio_circuit_breaker,
     ]:
         t()
     print()
