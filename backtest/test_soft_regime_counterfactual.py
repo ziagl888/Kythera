@@ -47,9 +47,9 @@ def test_reconstruct_rule_trend_vs_nontrend_thresholds():
     raw = ["CHOP", "CHOP", "TREND_UP", "TREND_UP", "TREND_UP", "TREND_UP", "CHOP", "CHOP"]
     alt = ["ALT_NEUTRAL"] * len(raw)
     eff = reconstruct_rule(raw, alt, _idx(len(raw)))
-    assert list(eff.values) == [
-        "CHOP", "CHOP", "CHOP", "CHOP", "TREND_UP", "TREND_UP", "TREND_UP", "CHOP"
-    ], list(eff.values)
+    assert list(eff.values) == ["CHOP", "CHOP", "CHOP", "CHOP", "TREND_UP", "TREND_UP", "TREND_UP", "CHOP"], list(
+        eff.values
+    )
 
 
 def test_reconstruct_rule_resets_pending_on_break():

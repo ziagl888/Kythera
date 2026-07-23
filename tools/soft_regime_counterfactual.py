@@ -103,9 +103,7 @@ from tools.walkforward_sim import (  # noqa: E402
     set_low_priority,
 )
 
-DEFAULT_OUT_DIR = os.getenv(
-    "KYTHERA_REPLAY_DIR", r"C:\Users\Michael\Documents\_X\staging_models\replay"
-)
+DEFAULT_OUT_DIR = os.getenv("KYTHERA_REPLAY_DIR", r"C:\Users\Michael\Documents\_X\staging_models\replay")
 
 # regime_history cadence = 5 min → 12 checks/h, 288/day, 30d = 8640 checks.
 CHECKS_PER_HOUR = 12
@@ -115,6 +113,7 @@ CHECKS_PER_30D = 30 * 288
 DEFAULT_HALF_LIVES = (12, 48, 96, 192, 288)  # 1h, 4h, 8h, 16h, 24h
 # Feature half-life for the PnL bucketing (study-headline strength).
 DEFAULT_FEATURE_HL = 192
+
 
 def _na(v) -> bool:
     """True for None or NaN (pandas may coerce list-None → NaN in object series)."""
@@ -198,16 +197,27 @@ def load_forwarded(conn, days: int) -> list[dict]:
         rows = cur.fetchall()
     out = []
     for r in rows:
-        out.append({
-            "side": "forwarded", "row_id": r[0], "ts": r[1], "bot_name": r[2],
-            "coin": r[3], "direction": r[4], "recorded_regime": r[5],
-            "alt_context": r[6], "status": r[7], "close_reason": r[8],
-            "regime_close_action": r[9], "wl_reason": r[10],
-            "recorded_entry": float(r[11]) if r[11] is not None else None,
-            # bucket/bucket_class kept for score_all compatibility (unused here).
-            "bucket": "forwarded", "bucket_class": "forward",
-            "original_outbox_id": None,
-        })
+        out.append(
+            {
+                "side": "forwarded",
+                "row_id": r[0],
+                "ts": r[1],
+                "bot_name": r[2],
+                "coin": r[3],
+                "direction": r[4],
+                "recorded_regime": r[5],
+                "alt_context": r[6],
+                "status": r[7],
+                "close_reason": r[8],
+                "regime_close_action": r[9],
+                "wl_reason": r[10],
+                "recorded_entry": float(r[11]) if r[11] is not None else None,
+                # bucket/bucket_class kept for score_all compatibility (unused here).
+                "bucket": "forwarded",
+                "bucket_class": "forward",
+                "original_outbox_id": None,
+            }
+        )
     return out
 
 
@@ -232,14 +242,26 @@ def load_suppressed_gate(conn, days: int) -> list[dict]:
         rows = cur.fetchall()
     out = []
     for r in rows:
-        out.append({
-            "side": "suppressed", "row_id": r[0], "ts": r[1], "bot_name": r[2],
-            "coin": r[3], "direction": r[4], "recorded_regime": r[5],
-            "alt_context": None, "status": None, "close_reason": None,
-            "regime_close_action": None, "wl_reason": r[6],
-            "recorded_entry": None, "bucket": "suppressed_gate",
-            "bucket_class": "gate", "original_outbox_id": None,
-        })
+        out.append(
+            {
+                "side": "suppressed",
+                "row_id": r[0],
+                "ts": r[1],
+                "bot_name": r[2],
+                "coin": r[3],
+                "direction": r[4],
+                "recorded_regime": r[5],
+                "alt_context": None,
+                "status": None,
+                "close_reason": None,
+                "regime_close_action": None,
+                "wl_reason": r[6],
+                "recorded_entry": None,
+                "bucket": "suppressed_gate",
+                "bucket_class": "gate",
+                "original_outbox_id": None,
+            }
+        )
     return out
 
 
@@ -250,9 +272,7 @@ def load_whitelist_snapshot(conn) -> dict[tuple[str, str, str, str], bool]:
     the very trades we score. Used exclusively for the flagged reflip appendix.
     """
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT bot_name, regime, alt_context, direction, whitelisted FROM bot_regime_whitelist"
-        )
+        cur.execute("SELECT bot_name, regime, alt_context, direction, whitelisted FROM bot_regime_whitelist")
         return {(r[0], r[1], r[2], r[3]): bool(r[4]) for r in cur.fetchall()}
 
 
@@ -362,9 +382,7 @@ def annotate_soft_rule(rows: list[dict], timelines: dict[str, pd.Series], featur
             fid_total += 1
             fid_match += int(rr == rec)
         r["soft_agrees_rule"] = (sr == rec) if (sr is not None and rec is not None) else None
-        r["soft_shift"] = (
-            f"{rec}->{sr}" if (sr is not None and rec is not None and sr != rec) else None
-        )
+        r["soft_shift"] = f"{rec}->{sr}" if (sr is not None and rec is not None and sr != rec) else None
     return {
         "rule_recon_vs_recorded_n": fid_total,
         "rule_recon_vs_recorded_agreement_pct": round(100 * fid_match / fid_total, 2) if fid_total else None,
@@ -395,8 +413,10 @@ def wr_by_agreement(rows: list[dict]) -> dict:
     agree, disagree = buckets[True], buckets[False]
     z = two_proportion_z(agree["TP"], agree["TP"] + agree["SL"], disagree["TP"], disagree["TP"] + disagree["SL"])
     top_shifts = sorted(
-        ((k, v["TP"] + v["SL"], round(100 * v["TP"] / (v["TP"] + v["SL"]), 1) if (v["TP"] + v["SL"]) else None)
-         for k, v in shift_counter.items()),
+        (
+            (k, v["TP"] + v["SL"], round(100 * v["TP"] / (v["TP"] + v["SL"]), 1) if (v["TP"] + v["SL"]) else None)
+            for k, v in shift_counter.items()
+        ),
         key=lambda t: -t[1],
     )[:12]
     return {
@@ -427,22 +447,26 @@ def wr_by_agreement_sweep(rows: list[dict], timelines: dict[str, pd.Series], hal
                 n_diff += 1
             if st in ("CLOSED_TP", "CLOSED_SL"):
                 b[agrees]["TP" if st == "CLOSED_TP" else "SL"] += 1
-        z = two_proportion_z(b[True]["TP"], b[True]["TP"] + b[True]["SL"], b[False]["TP"], b[False]["TP"] + b[False]["SL"])
+        z = two_proportion_z(
+            b[True]["TP"], b[True]["TP"] + b[True]["SL"], b[False]["TP"], b[False]["TP"] + b[False]["SL"]
+        )
 
         def wr(d):
             tot = d["TP"] + d["SL"]
             return round(100 * d["TP"] / tot, 2) if tot else None
 
-        out.append({
-            "half_life_checks": hl,
-            "half_life_hours": round(hl / CHECKS_PER_HOUR, 1),
-            "pct_forwarded_disagree": round(100 * n_diff / len(rows), 1) if rows else None,
-            "agree_decided": b[True]["TP"] + b[True]["SL"],
-            "agree_wr_pct": wr(b[True]),
-            "disagree_decided": b[False]["TP"] + b[False]["SL"],
-            "disagree_wr_pct": wr(b[False]),
-            "z_test": z,
-        })
+        out.append(
+            {
+                "half_life_checks": hl,
+                "half_life_hours": round(hl / CHECKS_PER_HOUR, 1),
+                "pct_forwarded_disagree": round(100 * n_diff / len(rows), 1) if rows else None,
+                "agree_decided": b[True]["TP"] + b[True]["SL"],
+                "agree_wr_pct": wr(b[True]),
+                "disagree_decided": b[False]["TP"] + b[False]["SL"],
+                "disagree_wr_pct": wr(b[False]),
+                "z_test": z,
+            }
+        )
     return out
 
 
@@ -543,8 +567,10 @@ def build_report(meta: dict) -> str:
     L: list[str] = []
     ap = L.append
     ap("# SOFT-Regime Gate Counterfactual — T-2026-KYT-9050-031\n")
-    ap(f"_generated {meta['generated_at']} · {meta['days']}d window · feature hl="
-       f"{meta['feature_half_life']} checks ({meta['feature_half_life'] / CHECKS_PER_HOUR:.1f}h)_\n")
+    ap(
+        f"_generated {meta['generated_at']} · {meta['days']}d window · feature hl="
+        f"{meta['feature_half_life']} checks ({meta['feature_half_life'] / CHECKS_PER_HOUR:.1f}h)_\n"
+    )
     ap(f"**Verdict: {meta['verdict']}** — {meta['verdict_reason']}\n")
 
     ap("## 1 · Churn (live regime_history reconstruction)\n")
@@ -556,18 +582,24 @@ def build_report(meta: dict) -> str:
     rr = meta["churn"]["rule_recon"]["switches_per_30d"]
     sf = meta["churn"][f"soft_{meta['feature_half_life']}"]["switches_per_30d"]
     if rr and sf is not None:
-        ap(f"\nSOFT(hl={meta['feature_half_life']}) cuts RULE switches by "
-           f"**{round(100 * (1 - sf / rr))}%** ({rr}→{sf} /30d).\n")
+        ap(
+            f"\nSOFT(hl={meta['feature_half_life']}) cuts RULE switches by "
+            f"**{round(100 * (1 - sf / rr))}%** ({rr}→{sf} /30d).\n"
+        )
 
     ap("## 2 · Reconstruction fidelity\n")
     f = meta["fidelity"]
-    ap(f"RULE_recon vs recorded `regime_at_open`: **{f['rule_recon_vs_recorded_agreement_pct']}%** "
-       f"agreement over {f['rule_recon_vs_recorded_n']} forwarded trades. "
-       f"(Residual = warm-up cold-start + ingestion-outage debounce desync.)\n")
+    ap(
+        f"RULE_recon vs recorded `regime_at_open`: **{f['rule_recon_vs_recorded_agreement_pct']}%** "
+        f"agreement over {f['rule_recon_vs_recorded_n']} forwarded trades. "
+        f"(Residual = warm-up cold-start + ingestion-outage debounce desync.)\n"
+    )
 
     ap("## 3 · PnL signal — forwarded TP/SL win-rate by SOFT-vs-RULE agreement\n")
-    ap("Ground-truth outcome (`status`), zero replay, zero whitelist proxy. "
-       "SOFT smooths only the BTC regime; `alt_context` held fixed.\n")
+    ap(
+        "Ground-truth outcome (`status`), zero replay, zero whitelist proxy. "
+        "SOFT smooths only the BTC regime; `alt_context` held fixed.\n"
+    )
     w = meta["wr_by_agreement"]
     ap("| bucket | decided (TP+SL) | TP | SL | win-rate |")
     ap("|---|--:|--:|--:|--:|")
@@ -575,8 +607,10 @@ def build_report(meta: dict) -> str:
         b = w[key]
         ap(f"| {label} | {b['decided']} | {b['TP']} | {b['SL']} | {b['wr_pct']}% |")
     z = w["z_test_agree_vs_disagree"]
-    ap(f"\nΔ = **{z['delta_pp']}pp** (agree − disagree), z={z['z']}, p={z['p_value']}. "
-       f"{w['n_closed_regime_change_excluded']} `CLOSED_REGIME_CHANGE` auto-closes excluded (no TP/SL label).\n")
+    ap(
+        f"\nΔ = **{z['delta_pp']}pp** (agree − disagree), z={z['z']}, p={z['p_value']}. "
+        f"{w['n_closed_regime_change_excluded']} `CLOSED_REGIME_CHANGE` auto-closes excluded (no TP/SL label).\n"
+    )
     if w["top_disagree_shifts"]:
         ap("Top disagreement shifts (recorded RULE → SOFT), disagree bucket:\n")
         ap("| shift | n | win-rate |")
@@ -590,38 +624,48 @@ def build_report(meta: dict) -> str:
     ap("|--:|--:|--:|--:|--:|--:|--:|")
     for s in meta["wr_sweep"]:
         z = s["z_test"]
-        ap(f"| {s['half_life_checks']} | {s['half_life_hours']} | {s['pct_forwarded_disagree']}% | "
-           f"{s['agree_wr_pct']}% | {s['disagree_wr_pct']}% | {z['delta_pp']} | {z['p_value']} |")
+        ap(
+            f"| {s['half_life_checks']} | {s['half_life_hours']} | {s['pct_forwarded_disagree']}% | "
+            f"{s['agree_wr_pct']}% | {s['disagree_wr_pct']}% | {z['delta_pp']} | {z['p_value']} |"
+        )
     ap("")
 
     if meta.get("replay_pnl"):
         ap("## 5 · PnL magnitude — first-touch replay by bucket\n")
-        ap("ROM1 geometry replay (`rom1_counterfactual`) — WR is not PnL (R:R matters). "
-           "Absolute level reflects a fixed ROM1 geometry, not per-bot realized PnL; the "
-           "cross-bucket comparison is the signal.\n")
+        ap(
+            "ROM1 geometry replay (`rom1_counterfactual`) — WR is not PnL (R:R matters). "
+            "Absolute level reflects a fixed ROM1 geometry, not per-bot realized PnL; the "
+            "cross-bucket comparison is the signal.\n"
+        )
         rp = meta["replay_pnl"]
         ap("| bucket | n scored | avg net PnL% | median | sum net PnL% | replay TP1 WR |")
         ap("|---|--:|--:|--:|--:|--:|")
         for label, key in [("SOFT agrees RULE", "agree"), ("SOFT disagrees RULE", "disagree")]:
             b = rp[key]
-            ap(f"| {label} | {b['n_scored']} | {b['avg_net_pnl_pct']} | {b['median_net_pnl_pct']} | "
-               f"{b['sum_net_pnl_pct']} | {b['replay_tp1_wr_pct']}% |")
+            ap(
+                f"| {label} | {b['n_scored']} | {b['avg_net_pnl_pct']} | {b['median_net_pnl_pct']} | "
+                f"{b['sum_net_pnl_pct']} | {b['replay_tp1_wr_pct']}% |"
+            )
         ap("")
 
     sa = meta.get("suppressed_agreement")
     if sa:
         ap("## 5b · Suppressed side (gate-class, replay-only — no live outcome)\n")
-        ap(f"`bot_not_whitelisted:*` suppressions carry no `status`, so they are scored by "
-           f"first-touch replay only. SOFT disagrees with the recorded RULE regime on "
-           f"**{sa['pct_disagree']}%** of {sa['n_comparable']} comparable suppressions.\n")
+        ap(
+            f"`bot_not_whitelisted:*` suppressions carry no `status`, so they are scored by "
+            f"first-touch replay only. SOFT disagrees with the recorded RULE regime on "
+            f"**{sa['pct_disagree']}%** of {sa['n_comparable']} comparable suppressions.\n"
+        )
         rps = meta.get("replay_pnl_suppressed")
         if rps:
             ap("| bucket | n scored | avg net PnL% | median | sum net PnL% | replay TP1 WR |")
             ap("|---|--:|--:|--:|--:|--:|")
             for label, key in [("SOFT agrees RULE", "agree"), ("SOFT disagrees RULE", "disagree")]:
                 b = rps[key]
-                ap(f"| {label} | {b['n_scored']} | {b['avg_net_pnl_pct']} | {b['median_net_pnl_pct']} | "
-                   f"{b['sum_net_pnl_pct']} | {b['replay_tp1_wr_pct']}% |")
+                ap(
+                    f"| {label} | {b['n_scored']} | {b['avg_net_pnl_pct']} | {b['median_net_pnl_pct']} | "
+                    f"{b['sum_net_pnl_pct']} | {b['replay_tp1_wr_pct']}% |"
+                )
             ap("\n(Suppressed replay PnL is hypothetical — these trades were blocked, never taken.)\n")
 
     if meta.get("whitelist_reflip"):
@@ -670,8 +714,10 @@ def derive_verdict(meta: dict) -> tuple[str, str]:
     # at the ≥16h smoothing that gates out ~half the flow?
     moderate = [s for s in meta.get("wr_sweep", []) if s["half_life_checks"] <= 96]
     robust_sig = any(
-        s["z_test"].get("p_value") is not None and s["z_test"]["p_value"] < 0.05
-        and s["z_test"].get("delta_pp") and s["z_test"]["delta_pp"] > 0
+        s["z_test"].get("p_value") is not None
+        and s["z_test"]["p_value"] < 0.05
+        and s["z_test"].get("delta_pp")
+        and s["z_test"]["delta_pp"] > 0
         for s in moderate
     )
     # Is there a positive-expectancy side to steer toward in replay?
@@ -714,8 +760,12 @@ def derive_verdict(meta: dict) -> tuple[str, str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="SOFT-regime gate counterfactual (T-2026-KYT-9050-031)")
     ap.add_argument("--days", type=int, default=90, help="lookback over regime_history + orchestrator rows")
-    ap.add_argument("--history-days", type=int, default=None, help="regime_history lookback (default: days + 30 warmup)")
-    ap.add_argument("--feature-hl", type=int, default=DEFAULT_FEATURE_HL, help="SOFT half-life (5-min checks) for bucketing")
+    ap.add_argument(
+        "--history-days", type=int, default=None, help="regime_history lookback (default: days + 30 warmup)"
+    )
+    ap.add_argument(
+        "--feature-hl", type=int, default=DEFAULT_FEATURE_HL, help="SOFT half-life (5-min checks) for bucketing"
+    )
     ap.add_argument("--half-lives", type=int, nargs="+", default=list(DEFAULT_HALF_LIVES))
     ap.add_argument("--replay", action="store_true", help="run first-touch replay for PnL magnitude (heavier)")
     ap.add_argument("--replay-horizon-hours", type=int, default=72)
