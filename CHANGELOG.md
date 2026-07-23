@@ -102,6 +102,60 @@ FIF1→ATS1 nachgezogen), `test_bot_catalog.py`/`test_published_targets.py`/
 `test_signal_orchestrator.py`, ruff + `ruff format --check` (0.15.17) clean. Pre-existing
 rot `test_fleet_definition::test_watchdog_view_is_unchanged` (Watchdog-Golden vermisst
 Bots 36–39) von diesem Task NICHT berührt.
+## [2026-07-23] Wave-Exit-Overlay — High-Fidelity-Sim + regelbasiertes Auto-Close (7d Vorab, T-2026-KYT-9050-035)
+
+Interaktive, read-only VPS-Session zur Prüfung von Michis Wellen-Hypothese (an der
+Unrealized-Wellen-Spitze closen statt sie verdampfen zu lassen). Zwei Phasen, reine
+Analyse, kein Live-Eingriff. Neue reine Engine + Harness + DB-freie Tests, Artefakte
+(Markdown + JSON) nach `staging_models/replay/`.
+
+**Phase 1 — High-Fidelity-Replay-Harness + Validierung (`core/wave_exit_sim.py`,
+`tools/wave_exit_overlay.py`, 10 DB-freie Tests):** spielt ein Signal (Multi-Entry-DCA,
+SL, laddered TPs) gegen wick-aware Kerzen durch (Fill → laddered TPs + Trailing-SL,
+Monitor-treu). Die %-Mathe bleibt in `core.realized_pnl` (Regel #7). Drei Discovery-
+Befunde bestimmten das Design: (1) **Geometrie nur aus dem immutable Cornix-Text**
+(`telegram_outbox`) — `ai_signals.sl` wird vom Monitor beim Trailing überschrieben.
+(2) **`ticker_10s` ist als Exit-Detektor untauglich** — ~40s-Snapshot mit Lücken
+(Coverage-Median 0.25), verpasst ~81% der SL-Touch-Events → reine Tick-Sim verzerrt
+Realized ~2.7×. (3) **5m-Kerzen sind vollständig & wick-aware** (12× feiner als der
+1h-Live-Monitor) → als Touch-Backbone gewählt; die 10s-Ticks bleiben nur als
+Order-Resolver für SL-vs-TP-Reihenfolge innerhalb einer 5m-Kerze.
+- **Validierung (AIM2, 673 Legs, matched immutable Cornix-Geometrie vs recorded
+  `closed_ai_signals`):** targets_hit **exakt 97,9%**, Win/Loss **99,3%**, unlev
+  per-Trade **corr 0,994**, leveraged Summe +9%. Harness ist treu (bewusst *feiner*
+  als die 1h-Ground-Truth). Coverage 673/1285 durch Outbox-Retention begrenzt
+  (Set zu jüngeren Trades verzerrt — ehrlich ausgewiesen).
+
+**Phase 2 — regelbasiertes Auto-Close-Overlay (Sweep, L/S-getrennt):** Baseline =
+hold-to-TP/SL (`cornix3`, real-money DCA/3-TP). (a) Per-Trade-Trailing-TP (X% Retrace
+vom Trade-MTM-Peak), (c) Portfolio-Circuit-Breaker (close-ALL bei Y% Retrace der
+Aggregat-Welle). Metrik = REALIZED locked-in mit/ohne Hebel + WR + MaxDD.
+- **KERNBEFUND (robust über den ganzen X/Y-Sweep + beide Richtungen):** Kein Overlay
+  schlägt hold auf der **leveraged** Headline (Baseline +8256% vs (a) 4539–5115% /
+  (c) 4165–4718%) — der leveraged-Summe wird von wenigen Fat-Tail-Wellen-Treffern
+  dominiert, die jedes Overlay kappt. **Unlevered** sind Overlays besser (+176% →
+  ~245–282%, sie schneiden die Underwater-Tails); (c) drückt die MaxDD-Welle
+  **~8× kleiner** (41,3 → 5,0–6,4) gegen ~44% weniger leveraged Upside. Der
+  leveraged-Verlust sitzt fast ganz im **LONG**. **Verdikt: NO-EDGE** auf der
+  Return-Metrik (Wellen-Capture = Markt-Timing, out-of-sample nicht gefangen —
+  bestätigt T-029/031/032: Edge ist richtungs-, nicht timing-bedingt); (c) allenfalls
+  als reiner Portfolio-Drawdown-Schutz diskutabel. WR(TP1) unter Overlays irreführend.
+
+**Reviews + Multi-Bot-Erweiterung:** z-spec-compliance = PASS, z-code-reviewer =
+ISSUES → alle Findings gefixt (HIGH: `overlay_c` stale-peak — Circuit-Breaker
+resettete den Peak nicht beim Leeren des offenen Buchs → spurios-Flatten neuer
+Trades; Effekt aufs Aggregat ~0, aber gefixt via reiner
+`core.wave_exit_sim.portfolio_circuit_breaker` + Regressions-Test; plus CPU-/
+Konsistenz-LOWs). Overlay dann auf **EPD3 (604 Legs)** + **SRA2 (29)** ausgeweitet:
+NO-EDGE hält robust auf den zwei aussagekräftigen Bots (AIM2 674 + EPD3 604 — bei
+EPD3 schaden die Overlays sogar unlev), SRA2 ist unter der n≥30-Schwelle (nur
+illustrativ). (c) drückt den Drawdown ~3–9× über alle drei. Zwei Report-Bugs
+gefixt, die die Multi-Bot-Läufe erst korrekt machten: bot-spezifisches
+Cornix-Footer-Format (`%(AIM2)%` vs `AI module EPD3` → `%model%`) und der
+hartkodierte AIM2-KERNBEFUND-Text (jetzt datengetrieben + THIN-Guard).
+
+Read-only (nur SELECTs), BELOW_NORMAL, coin-gewindowte Reads. Kein Deploy, kein
+Restart, keine Artefakt-Root-Moves. Operator entscheidet über Konsequenzen.
 
 ## [2026-07-23] Fleet-Realized-Trade-Audit (DB-direkt) + Regime-Gate-Edge-Test — Retire-Kandidaten (T-2026-KYT-9050-032)
 
