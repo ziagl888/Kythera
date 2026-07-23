@@ -160,10 +160,36 @@ def test_t033_fif1_revived_as_shadow():
 
 
 def test_retired_tags_classified_retired():
-    assert sg.leg_status("MIS1", "LONG") == sg.RETIRED
+    # T-2026-KYT-9050-034: MIS1 ist NICHT mehr retired (Revive, Bot 11 lädt die
+    # pump_model_*_final.pkl wieder — Operator-Entscheid Michi, Audit T-032). Die
+    # bare "MIS1"-Klassifikation ist damit LIVE-Default; das echte Lifecycle je
+    # (tag, direction) prüft test_mis1_revive_lifecycle. AIM1 bleibt retired.
+    assert not sg.is_retired("MIS1")
     assert sg.leg_status("AIM1", "SHORT") == sg.RETIRED
-    assert sg.is_retired("MSI1")  # typo-family alias
+    assert sg.is_retired("MSI1")  # typo-family alias bleibt retired
     assert not sg.is_retired("MIS2")
+
+
+def test_mis1_revive_lifecycle():
+    # T-2026-KYT-9050-034: MIS1-Revive — die GUTEN Beine (Audit T-032) sind
+    # Default-LIVE und beleben die von T-033 geparkten MIS2-Beine; die schwachen
+    # MIS1-Beine sind SHADOW. Pro (Horizont, Richtung) genau EINE live Generation.
+    assert sg.is_live("MIS1-8H", "SHORT")  # gut (Dump-Seite 8h)
+    assert sg.is_live("MIS1-24H", "LONG")
+    assert sg.is_live("MIS1-72H", "LONG")
+    assert sg.is_live("MIS1-168H", "LONG")
+    # schwache Beine geparkt
+    assert sg.is_shadow("MIS1-8H", "LONG")
+    assert sg.is_shadow("MIS1-24H", "SHORT")
+    assert sg.is_shadow("MIS1-72H", "SHORT")
+    assert sg.is_shadow("MIS1-168H", "SHORT")
+    # Kein Cornix-Doppel-Post: wo MIS1 live ist, ist die MIS2-Gegenseite geparkt.
+    assert sg.is_live("MIS1-24H", "LONG") and sg.is_shadow("MIS2-24H", "LONG")
+    assert sg.is_live("MIS1-8H", "SHORT") and sg.is_shadow("MIS2-8H", "SHORT")
+    # Umgekehrt bleibt MIS2-SHORT (24/72/168) live, MIS1-SHORT dort geparkt.
+    assert sg.is_live("MIS2-24H", "SHORT") and sg.is_shadow("MIS1-24H", "SHORT")
+    # case-insensitiv (leg_status _norm()t).
+    assert sg.leg_status("mis1-8h", "short") == sg.LIVE
 
 
 def test_silent_legs_are_neither_live_nor_shadow():

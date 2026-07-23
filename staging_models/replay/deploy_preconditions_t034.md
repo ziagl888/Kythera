@@ -7,7 +7,7 @@ _generated 2026-07-23 · INTERAKTIVE Session (Operator Michi live) · CODE + Sta
 Die drei aus T-033 geflaggten Deploy-Vorbedingungen wurden read-only durchleuchtet (alle DB-Zugriffe `set_session(readonly=True)`, nur SELECTs). Ergebnis:
 - **Paket 3 (EPD3-Staging): erledigt** (nach staging kopiert, Loader verifiziert).
 - **Paket 2 (SRA2-SHORT): Diagnose korrigiert — der Leg ist ungegatet PROFITABEL (+1.06 %/Trade, 232 Trades).** Die T-033-„Flood-Hazard"-Sorge verwechselte Volumen mit Unprofitabilität; ein Threshold ist weder nötig noch aus den Daten bestimmbar. → deploybar, offene Frage ist Volumen-Toleranz.
-- **Paket 1 (MIS1): nicht sauber rekonstruierbar** (Leakage-67-Feature-Generation; sauberer Retrain = MIS2). Der auf Operator-Wunsch gestartete frische MIS2-Replay brach bei CPU 100 % selbst ab → Follow-up in ruhigem CPU-Fenster.
+- **Paket 1 (MIS1): REVIVED (Code fertig, Operator-Entscheid Michi).** Kein Retrain — die MIS1-Generation wird EXAKT wiederhergestellt: Bot 11 lädt die unveränderten `pump_model_*_final.pkl` (+ `threshold_*_final.pkl`) wieder, gefüttert über den include_legacy-Superset. Die guten Beine (MIS1-24H/72H/168H LONG + MIS1-8H SHORT) sind Default-LIVE, die schwachen SHADOW-geparkt. Greift bei Michis nächstem Fleet-Restart.
 
 ## 1. Paket 3 — EPD3-SHORT-Staging ✅ ERLEDIGT
 
@@ -15,7 +15,20 @@ Die drei aus T-033 geflaggten Deploy-Vorbedingungen wurden read-only durchleucht
 - **Verifiziert:** `shadow_gate.load_shadow_artifact("EPD3","SHORT")` lädt jetzt (dict, 16 Features, threshold 0.6737). Vorher: EPD3-SHORT-Park war stille Silence, weil der SHADOW-Loader `staging_models/epd3_model_SHORT.pkl` las (fehlte). Jetzt echte Shadow-Historie in `closed_ai_signals`.
 - Kein Root-Move, kein Restart nötig (der Bot lädt beim nächsten regulären Restart/Reload).
 
-## 2. Paket 1 — MIS1-Revive: technisch nicht sauber rekonstruierbar
+## 2b. Paket 1 — MIS1-Revive: UMGESETZT (exakte Restauration, kein Retrain)
+
+**Operator-Entscheid Michi (2. Runde):** MIS1 mit seiner Erfolgsrate GENAU wiederherstellen. Die Artefakte waren nie weg (`pump_model_*_final.pkl` + `threshold_*_final.pkl` im Repo-Root), und der alte Bot-11-Ladepfad steckt in der Git-Historie (`99e9de3^`). Kein Retrain nötig.
+
+**Umgesetzt (Bot 11 + shadow_gate):**
+- Bot 11 lädt die 8 MIS1-Modelle wieder (`load_mis1_models`), PARALLEL zu MIS2 unter eigenen Tags `MIS1-*`. Feature-Feed über `add_advanced_features(include_legacy=True)` — der Superset (71 Spalten) deckt die 67 MIS1-Features exakt (verifiziert 0 missing über alle 8) UND die 63 sauberen MIS2-Features (additiv-neutral, EIN Feature-Build pro Coin, kein doppelter DB-Read).
+- Geometrie generations-treu: `_mis_geometry` gibt MIS1 `calculate_smart_targets` für BEIDE Richtungen (immediate CMP-Entry) — exakt der Pfad, der die Audit-Erfolgsrate produziert hat; MIS2-SHORT behält seine DUMP_RULES-Bracket. MIS2-Emit byte-neutral (geteilter `_post_mis_live_leg`-Helper, MIS2-Tests grün).
+- Lifecycle im shadow_gate-Register: MIS1 aus `_RETIRED_TAGS` entfernt; gute Beine Default-LIVE (MIS1-24H/72H/168H LONG + MIS1-8H SHORT), schwache SHADOW (MIS1-8H LONG + MIS1-24H/72H/168H SHORT). Pro (Horizont, Richtung) genau EINE live Generation → kein Cornix-Doppel-Post; MIS1 belebt genau die von T-033 geparkten MIS2-Beine.
+
+**Zwei Pflicht-Abweichungen von der alten Fidelity (harte Regeln, bewusst NICHT reproduziert):** (1) die alte HTML-Message bettete den Cornix-Block ein = Doppel-Post-Bug (Regel 4, gefixt 2026-07-06) → gefixte HTML; (2) alte MIS1 speicherte volle Targets statt `[:5]` (P2.31-Monitor-Phantom-TP-Bug) → `[:5]`. **Caveat:** `calculate_smart_targets` wurde seit der MIS1-Ära auf `core.candles` umverdrahtet (5856bc6) — funktional gleich, nicht garantiert byte-identisch; es ist dieselbe Funktion, die die Fleet heute nutzt.
+
+**Tests (DB-frei):** `backtest/test_mis1_revive.py` (Load + Threshold + 67-Feature-Coverage + Geometrie-Verzweigung), `test_shadow_gate.py::test_mis1_revive_lifecycle`, `test_mis_tag.py` an den geteilten Prozessor angepasst. ruff + mypy clean. Deploy = Michis Fleet-Restart.
+
+## 2. (Vorbefund) Warum MIS1 als reiner Retrain NICHT ging
 
 **Feature-Kompatibilitäts-Prüfung (DB-frei, alle 8 Artefakte):** Die MIS1-`pump_model_*_final.pkl` sind nackte `XGBClassifier` mit **67 Features** und konsumieren je **alle 8 Leakage-Spalten** (`atr_14` roh, `macd_hist` roh, `macd_dif_delta_1`, `macd_hist_delta_1` + die 4 „Unfall"-Features `boll_upper/lower/ema_200_dist_atr_dist_pct`, `ema_9_cross_above_21_dist_pct`) = exakt die Preisklassen-Leakage aus Report 13-P1 (`core.mis_features.LEGACY_ONLY_COLS`).
 
@@ -52,9 +65,9 @@ Der `threshold=null`-„Flood" realisiert **+1.057 %/Trade** über 232 Trades. D
 
 ## 4. Offene Operator-Entscheidungen (Michi-gegatet)
 
-1. **MIS2-Replay-Neugenerierung:** braucht ein ruhiges CPU-Fenster — der Job brach sich bei CPU 100 % selbst ab (§2). Follow-up: `walkforward_sim --strategy mis1 --days 400` in einer Low-Load-Phase, dann `retrain_from_replay --strategy mis1 --label-mode move` → Artefakte aus `_X/staging_models` nach Repo-`staging_models/` kopieren. **Caveat bleibt:** das Ergebnis ist ein aktualisiertes MIS2, KEIN „MIS1" (der Leakage-Edge kehrt nicht zurück).
+1. **MIS1-Revive (Code fertig, §2b):** greift erst nach `tools/restart_fleet.ps1` / Watchdog-Restart (Michi). Nach dem Restart im Log prüfen: `✅ 8/8 MIS1-Modelle (Revive) loaded` + `n MIS2 + 8 MIS1 Modelle kompatibel` (Selfcheck). Die MIS1-Live-Beine posten dann nach den MIS_CHANNELS.
 2. **SRA2-SHORT-Promotion (deploybar!):** kein Threshold nötig (+1.06 %/Trade ungegatet). Entscheidung ist **Volumen-Toleranz** (~29 Posts/Tag): (a) `sra2_model_SHORT.json` nach Root promoten und ungegatet live nehmen; ODER (b) optionales additives Funding-/Volumen-Gate im Bot-9-Emit (eigener kleiner Code-Task). Root-Move = Michi (Hard Rule 2).
-3. **MIS1-Revive** grundsätzlich: nur über einen bewusst NEUEN Modelltyp (nicht die MIS2-identische Move-Pipeline) rekonstruierbar — eigener Konzept-Task.
+3. **MIS2 daneben:** MIS2 läuft unverändert weiter (die MIS1-Live-Beine belegen genau die von T-033 geparkten MIS2-Beine; MIS2-SHORT 24/72/168 bleibt live). Ein optionaler frischer MIS2-Move-Retrain (Replay-Regen, braucht ruhiges CPU-Fenster — der Job brach bei CPU 100 % selbst ab) ist NICHT mehr nötig für den MIS1-Revive; nur falls du MIS2 separat auffrischen willst.
 
 ## 5. Sicherheitsvertrag (Regel 1/2/4)
 

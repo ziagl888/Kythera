@@ -220,6 +220,20 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # MIS2-8H (Bot 11): beide Beine geparkt (8h-Horizont laut Studie ohnehin negativ).
     ("MIS2-8H", "LONG"): SHADOW,
     ("MIS2-8H", "SHORT"): SHADOW,
+    # ── (E-MIS1) MIS1-Revive (T-2026-KYT-9050-034, Operator-Entscheid Michi) ──
+    # Bot 11 belebt die MIS1-Generation (pump_model_*_final.pkl) PARALLEL zu MIS2
+    # unter eigenen Tags MIS1-* wieder (Audit T-032: MIS1 realisierte besser). Die
+    # GUTEN Beine sind Default-LIVE (NICHT gelistet) und beleben genau die von T-033
+    # geparkten MIS2-Beine: MIS1-24H/72H/168H LONG (Pump) + MIS1-8H SHORT (Dump).
+    # Die SCHWACHEN MIS1-Beine werden hier auf SHADOW geparkt (überwachter Trade,
+    # kein Cornix) — MIS1-8H LONG (8h-Pump negativ) + MIS1-24H/72H/168H SHORT (dort
+    # ist die MIS2-SHORT/Dump-Seite die live-gehaltene Generation, T-033). Kein
+    # Cornix-Doppel-Post je Leg: pro (Horizont, Richtung) ist genau EINE Generation
+    # live. Keys UPPER (leg_status _norm()t den Lookup).
+    ("MIS1-8H", "LONG"): SHADOW,
+    ("MIS1-24H", "SHORT"): SHADOW,
+    ("MIS1-72H", "SHORT"): SHADOW,
+    ("MIS1-168H", "SHORT"): SHADOW,
     # RUB2 (Bot 13, Rubberband — Legacy-LONG + RUB2_SHORT-Modell, beide Direktpost):
     # beide Beine geparkt. RUB3/RUB4 (LONG-Challenger) bleiben unverändert Shadow (oben).
     ("RUB2", "LONG"): SHADOW,
@@ -250,7 +264,12 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
 # Posting-Effekt. Richtung ist hier egal (beide Richtungen retired).
 _RETIRED_TAGS: set[str] = {
     "AIM1",  # §9: AIM1-Konzept offiziell abgelöst durch AIM2 (Ranker/Gate).
-    "MIS1",  # §1: MIS1 beim MIS2-Go-Live abgeschaltet, Bot 11 ohne Legacy-Load.
+    # MIS1 (T-2026-KYT-9050-034): NICHT mehr retired — die MIS1-Generation ist
+    # REVIVED (Bot 11 lädt pump_model_*_final.pkl wieder, Operator-Entscheid Michi;
+    # Audit T-032: MIS1 realisierte besser als MIS2). Lifecycle je (tag, direction)
+    # steuert jetzt der _LIFECYCLE-Block (E-MIS1) unten: die guten Beine
+    # (MIS1-24H/72H/168H LONG + MIS1-8H SHORT) sind Default-LIVE, die schwachen
+    # dort auf SHADOW geparkt.
     "MSI1",  # historischer MIS-Typo-Family-Tag (bot_naming normalisiert → MIS1).
 }
 

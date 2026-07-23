@@ -72,13 +72,22 @@ def test_active_check_covers_the_legacy_tag():
     MIS2-72H position would stop blocking a re-fire on the same symbol/direction and
     the bot would open a SECOND live position next to it. The active-trade check must
     therefore cover the tag the pre-fix code would have posted (sniper precedent,
-    T-2026-CU-9050-026). While constant and artifact generation agree, the IN is a no-op."""
-    body = re.search(r"def check_mis_models\(.*?\):\n(.*?)\ndef ", SRC, re.DOTALL)
-    assert body, "check_mis_models body not found"
+    T-2026-CU-9050-026). While constant and artifact generation agree, the IN is a no-op.
+
+    T-2026-KYT-9050-034: die per-Coin-Kandidatenlogik wohnt jetzt im geteilten
+    Prozessor `_process_mis_candidates` (MIS2 UND MIS1-Revive teilen einen Pfad);
+    der Active-Trade-Check ist dorthin relokiert (Invariante unverändert)."""
+    body = re.search(r"def _process_mis_candidates\(.*?\):\n(.*?)\ndef ", SRC, re.DOTALL)
+    assert body, "_process_mis_candidates body not found"
     body = body.group(1)
     assert "model IN (%s, %s)" in body, "active-trade check no longer covers the legacy tag"
-    assert re.search(r"legacy_tag\s*=\s*f\"\{MODEL_GENERATION\}-\{best_horizon\}\"", body), (
-        "legacy_tag must be the pre-fix tag (MODEL_GENERATION constant + horizon)"
+    # legacy_tag ist jetzt generations-parametrisch: f"{legacy_generation}-{best_horizon}".
+    # Der MIS2-Aufruf übergibt MODEL_GENERATION → identisches Vor-Fix-Verhalten.
+    assert re.search(r"legacy_tag\s*=\s*f\"\{legacy_generation\}-\{best_horizon\}\"", body), (
+        "legacy_tag must be the pre-fix tag (legacy_generation + horizon)"
+    )
+    assert re.search(r"PUMP_MODELS,\s*probs_by_model,\s*MODEL_GENERATION", SRC), (
+        "the MIS2 call must pass MODEL_GENERATION as legacy_generation (MIS2→MIS3 rename guard)"
     )
 
 
