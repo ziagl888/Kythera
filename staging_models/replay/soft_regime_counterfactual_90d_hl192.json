@@ -1,0 +1,285 @@
+{
+  "task": "T-2026-KYT-9050-031",
+  "generated_at": "2026-07-23 02:51:41.707899+00:00",
+  "days": 90,
+  "history_days": 120,
+  "feature_half_life": 192,
+  "half_lives": [
+    12,
+    48,
+    96,
+    192,
+    288
+  ],
+  "regime_history_rows": 54566,
+  "cadence_gap_min_median": 4.98,
+  "cadence_gaps_over_10min": 2,
+  "cadence_max_gap_min": 1030.7,
+  "n_forwarded": 7902,
+  "churn": {
+    "rule_recon": {
+      "n_checks": 54566,
+      "n_switches": 1074,
+      "switches_per_30d": 170.06,
+      "mean_dwell_hours": 4.23,
+      "median_dwell_hours": 1.25,
+      "n_episodes": 1075,
+      "pct_episodes_under_1h": 43.6
+    },
+    "raw_stored": {
+      "n_checks": 54566,
+      "n_switches": 17250,
+      "switches_per_30d": 2731.37,
+      "mean_dwell_hours": 0.26,
+      "median_dwell_hours": 0.08,
+      "n_episodes": 17251,
+      "pct_episodes_under_1h": 95.8
+    },
+    "soft_12": {
+      "n_checks": 54566,
+      "n_switches": 1325,
+      "switches_per_30d": 209.8,
+      "mean_dwell_hours": 3.43,
+      "median_dwell_hours": 0.67,
+      "n_episodes": 1326,
+      "pct_episodes_under_1h": 54.4
+    },
+    "soft_48": {
+      "n_checks": 54566,
+      "n_switches": 474,
+      "switches_per_30d": 75.05,
+      "mean_dwell_hours": 9.57,
+      "median_dwell_hours": 3.67,
+      "n_episodes": 475,
+      "pct_episodes_under_1h": 30.3
+    },
+    "soft_96": {
+      "n_checks": 54566,
+      "n_switches": 237,
+      "switches_per_30d": 37.53,
+      "mean_dwell_hours": 19.11,
+      "median_dwell_hours": 8.75,
+      "n_episodes": 238,
+      "pct_episodes_under_1h": 15.5
+    },
+    "soft_192": {
+      "n_checks": 54566,
+      "n_switches": 143,
+      "switches_per_30d": 22.64,
+      "mean_dwell_hours": 31.58,
+      "median_dwell_hours": 11.38,
+      "n_episodes": 144,
+      "pct_episodes_under_1h": 17.4
+    },
+    "soft_288": {
+      "n_checks": 54566,
+      "n_switches": 70,
+      "switches_per_30d": 11.08,
+      "mean_dwell_hours": 64.04,
+      "median_dwell_hours": 18.58,
+      "n_episodes": 71,
+      "pct_episodes_under_1h": 12.7
+    }
+  },
+  "fidelity": {
+    "rule_recon_vs_recorded_n": 7902,
+    "rule_recon_vs_recorded_agreement_pct": 91.85
+  },
+  "wr_by_agreement": {
+    "agree": {
+      "TP": 951,
+      "SL": 573,
+      "decided": 1524,
+      "wr_pct": 62.4
+    },
+    "disagree": {
+      "TP": 710,
+      "SL": 549,
+      "decided": 1259,
+      "wr_pct": 56.39
+    },
+    "z_test_agree_vs_disagree": {
+      "z": 3.216,
+      "p_value": 0.0013,
+      "delta_pp": 6.01
+    },
+    "n_closed_regime_change_excluded": 4286,
+    "top_disagree_shifts": [
+      {
+        "shift": "TRANSITION->CHOP",
+        "n": 459,
+        "wr_pct": 55.8
+      },
+      {
+        "shift": "HIGH_VOLA->CHOP",
+        "n": 188,
+        "wr_pct": 49.5
+      },
+      {
+        "shift": "TRANSITION->TREND_UP",
+        "n": 113,
+        "wr_pct": 49.6
+      },
+      {
+        "shift": "TRANSITION->TREND_DOWN",
+        "n": 89,
+        "wr_pct": 55.1
+      },
+      {
+        "shift": "TRANSITION->HIGH_VOLA",
+        "n": 75,
+        "wr_pct": 66.7
+      },
+      {
+        "shift": "CHOP->TREND_DOWN",
+        "n": 74,
+        "wr_pct": 54.1
+      },
+      {
+        "shift": "CHOP->TRANSITION",
+        "n": 54,
+        "wr_pct": 63.0
+      },
+      {
+        "shift": "CHOP->TREND_UP",
+        "n": 50,
+        "wr_pct": 54.0
+      },
+      {
+        "shift": "TREND_UP->CHOP",
+        "n": 42,
+        "wr_pct": 69.0
+      },
+      {
+        "shift": "TREND_DOWN->CHOP",
+        "n": 40,
+        "wr_pct": 75.0
+      },
+      {
+        "shift": "CHOP->HIGH_VOLA",
+        "n": 37,
+        "wr_pct": 64.9
+      },
+      {
+        "shift": "HIGH_VOLA->TREND_DOWN",
+        "n": 12,
+        "wr_pct": 58.3
+      }
+    ]
+  },
+  "wr_sweep": [
+    {
+      "half_life_checks": 12,
+      "half_life_hours": 1.0,
+      "pct_forwarded_disagree": 25.9,
+      "agree_decided": 2026,
+      "agree_wr_pct": 60.27,
+      "disagree_decided": 757,
+      "disagree_wr_pct": 58.12,
+      "z_test": {
+        "z": 1.025,
+        "p_value": 0.30524,
+        "delta_pp": 2.14
+      }
+    },
+    {
+      "half_life_checks": 48,
+      "half_life_hours": 4.0,
+      "pct_forwarded_disagree": 39.4,
+      "agree_decided": 1685,
+      "agree_wr_pct": 60.59,
+      "disagree_decided": 1098,
+      "disagree_wr_pct": 58.29,
+      "z_test": {
+        "z": 1.212,
+        "p_value": 0.22554,
+        "delta_pp": 2.31
+      }
+    },
+    {
+      "half_life_checks": 96,
+      "half_life_hours": 8.0,
+      "pct_forwarded_disagree": 45.0,
+      "agree_decided": 1563,
+      "agree_wr_pct": 60.72,
+      "disagree_decided": 1220,
+      "disagree_wr_pct": 58.36,
+      "z_test": {
+        "z": 1.257,
+        "p_value": 0.20869,
+        "delta_pp": 2.36
+      }
+    },
+    {
+      "half_life_checks": 192,
+      "half_life_hours": 16.0,
+      "pct_forwarded_disagree": 47.7,
+      "agree_decided": 1524,
+      "agree_wr_pct": 62.4,
+      "disagree_decided": 1259,
+      "disagree_wr_pct": 56.39,
+      "z_test": {
+        "z": 3.216,
+        "p_value": 0.0013,
+        "delta_pp": 6.01
+      }
+    },
+    {
+      "half_life_checks": 288,
+      "half_life_hours": 24.0,
+      "pct_forwarded_disagree": 48.8,
+      "agree_decided": 1499,
+      "agree_wr_pct": 63.38,
+      "disagree_decided": 1284,
+      "disagree_wr_pct": 55.37,
+      "z_test": {
+        "z": 4.29,
+        "p_value": 2e-05,
+        "delta_pp": 8.0
+      }
+    }
+  ],
+  "whitelist_reflip": {
+    "note": "PROXY \u2014 current whitelist snapshot, circular + single-timepoint. NOT a verdict.",
+    "would_suppress": {
+      "TP": 205,
+      "SL": 108,
+      "n": 1888,
+      "wr_pct": 65.5
+    },
+    "would_keep": {
+      "TP": 1456,
+      "SL": 1014,
+      "n": 6014,
+      "wr_pct": 58.95
+    },
+    "n_unknown_alt_or_soft": 0
+  },
+  "replay_pnl": {
+    "agree": {
+      "n_scored": 4100,
+      "sum_net_pnl_pct": -240.28,
+      "avg_net_pnl_pct": -0.0586,
+      "median_net_pnl_pct": 1.3396,
+      "replay_tp1_wr_pct": 77.68,
+      "n_decided": 3405
+    },
+    "disagree": {
+      "n_scored": 3747,
+      "sum_net_pnl_pct": -768.08,
+      "avg_net_pnl_pct": -0.205,
+      "median_net_pnl_pct": 1.3406,
+      "replay_tp1_wr_pct": 77.08,
+      "n_decided": 3080
+    }
+  },
+  "join_limits": [
+    "bot_regime_whitelist is overwritten wholesale each analyzer cycle (PK on the 4-tuple, no history) \u2192 the as-of whitelist for a past signal under a DIFFERENT regime is not reconstructable; the \u00a76 reflip uses the current snapshot as a circular proxy only.",
+    "prob\u2194outcome not reliably joinable in the live DB \u2192 outcome proxied by orchestrator trade `status` (CLOSED_TP/SL), not realized PnL.",
+    "orchestrator_suppressed_signals carries no alt_context \u2192 whitelist reflip is forwarded-only.",
+    "SOFT smooths the BTC regime axis only; alt_context held at its recorded value.",
+    "CLOSED_REGIME_CHANGE auto-closes (majority of forwarded exits) carry no TP/SL label and are excluded from the win-rate \u2014 they are themselves regime-driven, so SOFT would also change their timing (interaction not modelled here)."
+  ],
+  "verdict": "NO-EDGE for a proven PnL uplift (churn-confirmed; live A/B is the only settler)",
+  "verdict_reason": "SOFT robustly cuts churn 87% and the churn-affected (disagree) forwarded trades DO underperform (6.01pp lower WR, p=0.0013) \u2014 a real directional signal. But it is not a demonstrable PnL uplift: (a) the WR gap reaches significance only at heavy smoothing (hl\u226516h, gating ~half the flow) and is insignificant at \u22648h; (b) first-touch replay PnL is near-zero and NEGATIVE in both buckets (agree -0.0586%, disagree -0.205%/trade) \u2014 consistent with T-029's \u03b7\u00b2\u22480, you are choosing between losers, not toward a winner; (c) 'disagree' \u2260 'SOFT would suppress' \u2014 that mapping needs the historical whitelist, which is overwritten each cycle (unreconstructable), and the only available proxy (current snapshot, circular) points the OTHER way. Verdict: the churn win does not convert to a proven PnL gain on the joinable evidence; only a live shadow A/B of a SOFT gate can settle it."
+}
