@@ -1,0 +1,3569 @@
+{
+  "task": "T-2026-KYT-9050-032",
+  "phase": "B",
+  "generated_at": "2026-07-23 06:37:56.810035+00:00",
+  "rh_rows": 73435,
+  "rh_span": [
+    "2026-01-18 18:15:00",
+    "2026-07-23 06:35:01.202806"
+  ],
+  "n_trades": 276213,
+  "min_leg_n": 150,
+  "min_cell": 20,
+  "soft_hl": 192,
+  "legs": [
+    {
+      "tag": "AIM1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 2190,
+      "n_regime_joined": 2190,
+      "overall_mean_net": -1.7818,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 446,
+          "mean_net": -2.2663
+        },
+        "CHOP": {
+          "n": 710,
+          "mean_net": -1.4031
+        },
+        "TRANSITION": {
+          "n": 1030,
+          "mean_net": -1.815
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": -0.6974
+        },
+        "TREND_DOWN": {
+          "n": 2,
+          "mean_net": -12.1418
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1095,
+        "n_test": 1095,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.8662,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1095,
+        "n_test": 1095,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.8662,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "AIM2",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1230,
+      "n_regime_joined": 1230,
+      "overall_mean_net": 0.0886,
+      "cells": {
+        "TREND_DOWN": {
+          "n": 126,
+          "mean_net": -0.2448
+        },
+        "CHOP": {
+          "n": 512,
+          "mean_net": -0.0086
+        },
+        "HIGH_VOLA": {
+          "n": 194,
+          "mean_net": 0.0077
+        },
+        "TRANSITION": {
+          "n": 310,
+          "mean_net": 0.2576
+        },
+        "TREND_UP": {
+          "n": 88,
+          "mean_net": 0.7148
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 615,
+        "n_test": 615,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_DOWN",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.1394,
+        "gated_mean_net": 0.1257,
+        "kept_frac": 0.4,
+        "n_kept": 246,
+        "delta": -0.0138
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 615,
+        "n_test": 615,
+        "favorable_regimes": [
+          "TREND_DOWN",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.1394,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-HELP",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "AIM2",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1099,
+      "n_regime_joined": 1099,
+      "overall_mean_net": 1.1843,
+      "cells": {
+        "CHOP": {
+          "n": 512,
+          "mean_net": 1.173
+        },
+        "HIGH_VOLA": {
+          "n": 178,
+          "mean_net": 1.77
+        },
+        "TREND_DOWN": {
+          "n": 112,
+          "mean_net": 0.0841
+        },
+        "TRANSITION": {
+          "n": 211,
+          "mean_net": 1.0843
+        },
+        "TREND_UP": {
+          "n": 86,
+          "mean_net": 1.7172
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 549,
+        "n_test": 550,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.2203,
+        "gated_mean_net": 0.1489,
+        "kept_frac": 0.887,
+        "n_kept": 488,
+        "delta": -0.0714
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 549,
+        "n_test": 550,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TREND_DOWN",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.2203,
+        "gated_mean_net": 0.2203,
+        "kept_frac": 1.0,
+        "n_kept": 550,
+        "delta": 0.0
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "ATS1",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 1738,
+      "n_regime_joined": 1738,
+      "overall_mean_net": 0.297,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 383,
+          "mean_net": -0.1936
+        },
+        "CHOP": {
+          "n": 717,
+          "mean_net": -0.0889
+        },
+        "TRANSITION": {
+          "n": 544,
+          "mean_net": 1.1165
+        },
+        "TREND_UP": {
+          "n": 50,
+          "mean_net": 0.7797
+        },
+        "TREND_DOWN": {
+          "n": 44,
+          "mean_net": 0.1745
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 869,
+        "n_test": 869,
+        "favorable_regimes": [
+          "CHOP",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": -0.3666,
+        "gated_mean_net": -0.5352,
+        "kept_frac": 0.699,
+        "n_kept": 607,
+        "delta": -0.1686
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 869,
+        "n_test": 869,
+        "favorable_regimes": [
+          "CHOP",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -0.3666,
+        "gated_mean_net": -0.7371,
+        "kept_frac": 0.704,
+        "n_kept": 612,
+        "delta": -0.3705
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "ATS1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 825,
+      "n_regime_joined": 825,
+      "overall_mean_net": 0.2031,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 163,
+          "mean_net": 1.9143
+        },
+        "TRANSITION": {
+          "n": 324,
+          "mean_net": -0.7826
+        },
+        "CHOP": {
+          "n": 299,
+          "mean_net": 0.5498
+        },
+        "TREND_UP": {
+          "n": 19,
+          "mean_net": -0.602
+        },
+        "TREND_DOWN": {
+          "n": 20,
+          "mean_net": -2.1928
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 412,
+        "n_test": 413,
+        "favorable_regimes": [],
+        "ungated_mean_net": 0.9347,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 412,
+        "n_test": 413,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.9347,
+        "gated_mean_net": 3.2096,
+        "kept_frac": 0.257,
+        "n_kept": 106,
+        "delta": 2.2749
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "ATS2",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "shadow",
+      "n": 612,
+      "n_regime_joined": 612,
+      "overall_mean_net": 0.3091,
+      "cells": {
+        "TRANSITION": {
+          "n": 112,
+          "mean_net": 0.8497
+        },
+        "CHOP": {
+          "n": 260,
+          "mean_net": 0.1412
+        },
+        "HIGH_VOLA": {
+          "n": 130,
+          "mean_net": 0.225
+        },
+        "TREND_DOWN": {
+          "n": 58,
+          "mean_net": 0.0421
+        },
+        "TREND_UP": {
+          "n": 52,
+          "mean_net": 0.4926
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 306,
+        "n_test": 306,
+        "favorable_regimes": [],
+        "ungated_mean_net": 1.1673,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 306,
+        "n_test": 306,
+        "favorable_regimes": [],
+        "ungated_mean_net": 1.1673,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "BB_1H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1726,
+      "n_regime_joined": 1726,
+      "overall_mean_net": 1.2516,
+      "cells": {
+        "CHOP": {
+          "n": 624,
+          "mean_net": 0.7274
+        },
+        "TRANSITION": {
+          "n": 759,
+          "mean_net": 1.3489
+        },
+        "HIGH_VOLA": {
+          "n": 336,
+          "mean_net": 1.8464
+        },
+        "TREND_UP": {
+          "n": 6,
+          "mean_net": 7.5371
+        },
+        "TREND_DOWN": {
+          "n": 1,
+          "mean_net": 16.9173
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 863,
+        "n_test": 863,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 2.116,
+        "gated_mean_net": 2.385,
+        "kept_frac": 0.606,
+        "n_kept": 523,
+        "delta": 0.269
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 863,
+        "n_test": 863,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 2.116,
+        "gated_mean_net": 2.1668,
+        "kept_frac": 0.983,
+        "n_kept": 848,
+        "delta": 0.0508
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "BB_1H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 2362,
+      "n_regime_joined": 2362,
+      "overall_mean_net": -1.5436,
+      "cells": {
+        "TRANSITION": {
+          "n": 949,
+          "mean_net": -1.6855
+        },
+        "CHOP": {
+          "n": 1045,
+          "mean_net": -1.4136
+        },
+        "HIGH_VOLA": {
+          "n": 364,
+          "mean_net": -1.4977
+        },
+        "TREND_DOWN": {
+          "n": 4,
+          "mean_net": -6.0067
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1181,
+        "n_test": 1181,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": -2.4928,
+        "gated_mean_net": -2.3257,
+        "kept_frac": 0.209,
+        "n_kept": 247,
+        "delta": 0.1671
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1181,
+        "n_test": 1181,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -2.4928,
+        "gated_mean_net": -0.2575,
+        "kept_frac": 0.13,
+        "n_kept": 153,
+        "delta": 2.2353
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "BB_4H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1265,
+      "n_regime_joined": 1265,
+      "overall_mean_net": 1.1746,
+      "cells": {
+        "TRANSITION": {
+          "n": 489,
+          "mean_net": 0.9671
+        },
+        "CHOP": {
+          "n": 537,
+          "mean_net": 1.4109
+        },
+        "HIGH_VOLA": {
+          "n": 193,
+          "mean_net": 1.7389
+        },
+        "TREND_DOWN": {
+          "n": 29,
+          "mean_net": -1.5264
+        },
+        "TREND_UP": {
+          "n": 17,
+          "mean_net": -2.1181
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 632,
+        "n_test": 633,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 1.3839,
+        "gated_mean_net": 1.6291,
+        "kept_frac": 0.927,
+        "n_kept": 587,
+        "delta": 0.2452
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 632,
+        "n_test": 633,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 1.3839,
+        "gated_mean_net": 1.42,
+        "kept_frac": 0.877,
+        "n_kept": 555,
+        "delta": 0.0362
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "BB_4H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1681,
+      "n_regime_joined": 1681,
+      "overall_mean_net": -0.7936,
+      "cells": {
+        "CHOP": {
+          "n": 644,
+          "mean_net": -0.3727
+        },
+        "TRANSITION": {
+          "n": 660,
+          "mean_net": -1.2627
+        },
+        "TREND_DOWN": {
+          "n": 65,
+          "mean_net": -0.3594
+        },
+        "HIGH_VOLA": {
+          "n": 269,
+          "mean_net": -0.82
+        },
+        "TREND_UP": {
+          "n": 43,
+          "mean_net": -0.3912
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 840,
+        "n_test": 841,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.4376,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 840,
+        "n_test": 841,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.4376,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "BR1D",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 186,
+      "n_regime_joined": 186,
+      "overall_mean_net": -0.4734,
+      "cells": {
+        "TRANSITION": {
+          "n": 72,
+          "mean_net": -0.0141
+        },
+        "CHOP": {
+          "n": 55,
+          "mean_net": 0.528
+        },
+        "HIGH_VOLA": {
+          "n": 58,
+          "mean_net": -1.9995
+        },
+        "TREND_DOWN": {
+          "n": 1,
+          "mean_net": -0.1
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 93,
+        "n_test": 93,
+        "favorable_regimes": [],
+        "ungated_mean_net": 2.692,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 93,
+        "n_test": 93,
+        "favorable_regimes": [],
+        "ungated_mean_net": 2.692,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "BR1H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 3627,
+      "n_regime_joined": 3627,
+      "overall_mean_net": 1.1925,
+      "cells": {
+        "CHOP": {
+          "n": 1118,
+          "mean_net": 0.5196
+        },
+        "TRANSITION": {
+          "n": 1715,
+          "mean_net": 1.2593
+        },
+        "HIGH_VOLA": {
+          "n": 792,
+          "mean_net": 1.9937
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": 2.9357
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1813,
+        "n_test": 1814,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 2.6299,
+        "gated_mean_net": 2.6425,
+        "kept_frac": 0.415,
+        "n_kept": 753,
+        "delta": 0.0126
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1813,
+        "n_test": 1814,
+        "favorable_regimes": [
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 2.6299,
+        "gated_mean_net": 3.5291,
+        "kept_frac": 0.015,
+        "n_kept": 27,
+        "delta": 0.8992
+      },
+      "rule_verdict": "NO-HELP",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "BR1H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 3328,
+      "n_regime_joined": 3328,
+      "overall_mean_net": -2.2327,
+      "cells": {
+        "TRANSITION": {
+          "n": 1735,
+          "mean_net": -1.9548
+        },
+        "CHOP": {
+          "n": 1014,
+          "mean_net": -2.2997
+        },
+        "HIGH_VOLA": {
+          "n": 565,
+          "mean_net": -2.8809
+        },
+        "TREND_DOWN": {
+          "n": 12,
+          "mean_net": -6.1766
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": -2.5059
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1664,
+        "n_test": 1664,
+        "favorable_regimes": [],
+        "ungated_mean_net": -3.7415,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1664,
+        "n_test": 1664,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -3.7415,
+        "gated_mean_net": -1.8007,
+        "kept_frac": 0.141,
+        "n_kept": 234,
+        "delta": 1.9408
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "BR1Hv2",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 725,
+      "n_regime_joined": 725,
+      "overall_mean_net": -0.1597,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 137,
+          "mean_net": -1.1503
+        },
+        "CHOP": {
+          "n": 325,
+          "mean_net": -0.2112
+        },
+        "TRANSITION": {
+          "n": 134,
+          "mean_net": 0.67
+        },
+        "TREND_UP": {
+          "n": 91,
+          "mean_net": -0.17
+        },
+        "TREND_DOWN": {
+          "n": 38,
+          "mean_net": 0.9519
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 362,
+        "n_test": 363,
+        "favorable_regimes": [
+          "TRANSITION",
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 0.1542,
+        "gated_mean_net": 0.6685,
+        "kept_frac": 0.218,
+        "n_kept": 79,
+        "delta": 0.5143
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 362,
+        "n_test": 363,
+        "favorable_regimes": [
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 0.1542,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "BR1Hv2",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 811,
+      "n_regime_joined": 811,
+      "overall_mean_net": -0.5881,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 109,
+          "mean_net": -0.9966
+        },
+        "TREND_DOWN": {
+          "n": 103,
+          "mean_net": -1.5142
+        },
+        "CHOP": {
+          "n": 371,
+          "mean_net": -0.2546
+        },
+        "TRANSITION": {
+          "n": 206,
+          "mean_net": -0.7144
+        },
+        "TREND_UP": {
+          "n": 22,
+          "mean_net": 1.3289
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 405,
+        "n_test": 406,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": -0.9666,
+        "gated_mean_net": -0.8318,
+        "kept_frac": 0.586,
+        "n_kept": 238,
+        "delta": 0.1348
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 405,
+        "n_test": 406,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": -0.9666,
+        "gated_mean_net": -0.9666,
+        "kept_frac": 1.0,
+        "n_kept": 406,
+        "delta": 0.0
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "BR2H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 2193,
+      "n_regime_joined": 2193,
+      "overall_mean_net": 0.6802,
+      "cells": {
+        "TRANSITION": {
+          "n": 948,
+          "mean_net": 0.6249
+        },
+        "TREND_UP": {
+          "n": 66,
+          "mean_net": -0.1579
+        },
+        "HIGH_VOLA": {
+          "n": 510,
+          "mean_net": 0.6043
+        },
+        "CHOP": {
+          "n": 643,
+          "mean_net": 0.9593
+        },
+        "TREND_DOWN": {
+          "n": 26,
+          "mean_net": -0.5872
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1096,
+        "n_test": 1097,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 1.5707,
+        "gated_mean_net": 0.9902,
+        "kept_frac": 0.219,
+        "n_kept": 240,
+        "delta": -0.5805
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1096,
+        "n_test": 1097,
+        "favorable_regimes": [
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 1.5707,
+        "gated_mean_net": 0.595,
+        "kept_frac": 0.098,
+        "n_kept": 108,
+        "delta": -0.9756
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "BR2H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 2242,
+      "n_regime_joined": 2242,
+      "overall_mean_net": -1.4868,
+      "cells": {
+        "TRANSITION": {
+          "n": 1016,
+          "mean_net": -1.1276
+        },
+        "CHOP": {
+          "n": 785,
+          "mean_net": -1.6395
+        },
+        "HIGH_VOLA": {
+          "n": 324,
+          "mean_net": -2.2045
+        },
+        "TREND_DOWN": {
+          "n": 109,
+          "mean_net": -1.7325
+        },
+        "TREND_UP": {
+          "n": 8,
+          "mean_net": 0.2785
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1121,
+        "n_test": 1121,
+        "favorable_regimes": [],
+        "ungated_mean_net": -1.9421,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1121,
+        "n_test": 1121,
+        "favorable_regimes": [
+          "TRANSITION",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -1.9421,
+        "gated_mean_net": -1.2376,
+        "kept_frac": 0.032,
+        "n_kept": 36,
+        "delta": 0.7045
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "BR4H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 908,
+      "n_regime_joined": 908,
+      "overall_mean_net": -1.6176,
+      "cells": {
+        "TRANSITION": {
+          "n": 388,
+          "mean_net": -1.4099
+        },
+        "CHOP": {
+          "n": 313,
+          "mean_net": -2.0196
+        },
+        "HIGH_VOLA": {
+          "n": 146,
+          "mean_net": -1.25
+        },
+        "TREND_DOWN": {
+          "n": 54,
+          "mean_net": -1.6946
+        },
+        "TREND_UP": {
+          "n": 7,
+          "mean_net": -2.2277
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 454,
+        "n_test": 454,
+        "favorable_regimes": [],
+        "ungated_mean_net": -2.3581,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 454,
+        "n_test": 454,
+        "favorable_regimes": [
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": -2.3581,
+        "gated_mean_net": -1.5943,
+        "kept_frac": 0.134,
+        "n_kept": 61,
+        "delta": 0.7638
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "EPD3",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "shadow",
+      "n": 2632,
+      "n_regime_joined": 2632,
+      "overall_mean_net": 0.1494,
+      "cells": {
+        "TREND_UP": {
+          "n": 281,
+          "mean_net": 0.2718
+        },
+        "CHOP": {
+          "n": 1381,
+          "mean_net": 0.2572
+        },
+        "HIGH_VOLA": {
+          "n": 326,
+          "mean_net": -0.4757
+        },
+        "TRANSITION": {
+          "n": 507,
+          "mean_net": 0.2441
+        },
+        "TREND_DOWN": {
+          "n": 137,
+          "mean_net": -0.0503
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1316,
+        "n_test": 1316,
+        "favorable_regimes": [
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.6133,
+        "gated_mean_net": 0.2658,
+        "kept_frac": 0.106,
+        "n_kept": 139,
+        "delta": -0.3475
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1316,
+        "n_test": 1316,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 0.6133,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "EPD3",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 3579,
+      "n_regime_joined": 3579,
+      "overall_mean_net": -0.062,
+      "cells": {
+        "CHOP": {
+          "n": 1741,
+          "mean_net": -0.1185
+        },
+        "HIGH_VOLA": {
+          "n": 522,
+          "mean_net": 0.2234
+        },
+        "TRANSITION": {
+          "n": 656,
+          "mean_net": -0.1601
+        },
+        "TREND_UP": {
+          "n": 397,
+          "mean_net": -0.1746
+        },
+        "TREND_DOWN": {
+          "n": 263,
+          "mean_net": 0.1601
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1789,
+        "n_test": 1790,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_DOWN",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -0.4513,
+        "gated_mean_net": -0.4513,
+        "kept_frac": 1.0,
+        "n_kept": 1790,
+        "delta": 0.0
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1789,
+        "n_test": 1790,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": -0.4513,
+        "gated_mean_net": -0.4513,
+        "kept_frac": 1.0,
+        "n_kept": 1790,
+        "delta": 0.0
+      },
+      "rule_verdict": "NO-HELP",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "MIS1-168h",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 7301,
+      "n_regime_joined": 7301,
+      "overall_mean_net": 0.9741,
+      "cells": {
+        "TRANSITION": {
+          "n": 3519,
+          "mean_net": 0.9257
+        },
+        "HIGH_VOLA": {
+          "n": 1130,
+          "mean_net": 0.3489
+        },
+        "CHOP": {
+          "n": 2647,
+          "mean_net": 1.3042
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": -6.343
+        },
+        "TREND_DOWN": {
+          "n": 3,
+          "mean_net": 6.7537
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 3650,
+        "n_test": 3651,
+        "favorable_regimes": [
+          "CHOP",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 1.7478,
+        "gated_mean_net": 1.9502,
+        "kept_frac": 0.808,
+        "n_kept": 2951,
+        "delta": 0.2024
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 3650,
+        "n_test": 3651,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 1.7478,
+        "gated_mean_net": 1.7182,
+        "kept_frac": 0.918,
+        "n_kept": 3352,
+        "delta": -0.0296
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "MIS1-72h",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 11869,
+      "n_regime_joined": 11869,
+      "overall_mean_net": 1.2518,
+      "cells": {
+        "TRANSITION": {
+          "n": 6659,
+          "mean_net": 1.5523
+        },
+        "CHOP": {
+          "n": 3497,
+          "mean_net": 0.7161
+        },
+        "HIGH_VOLA": {
+          "n": 1713,
+          "mean_net": 1.1777
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 5934,
+        "n_test": 5935,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 1.7682,
+        "gated_mean_net": 2.0512,
+        "kept_frac": 0.419,
+        "n_kept": 2485,
+        "delta": 0.2829
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 5934,
+        "n_test": 5935,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_DOWN",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 1.7682,
+        "gated_mean_net": 1.4186,
+        "kept_frac": 0.351,
+        "n_kept": 2084,
+        "delta": -0.3496
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "QM_1H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1599,
+      "n_regime_joined": 1599,
+      "overall_mean_net": 0.3165,
+      "cells": {
+        "CHOP": {
+          "n": 541,
+          "mean_net": -0.0326
+        },
+        "HIGH_VOLA": {
+          "n": 289,
+          "mean_net": 0.2743
+        },
+        "TRANSITION": {
+          "n": 765,
+          "mean_net": 0.5829
+        },
+        "TREND_DOWN": {
+          "n": 3,
+          "mean_net": 1.9108
+        },
+        "TREND_UP": {
+          "n": 1,
+          "mean_net": -7.1059
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 799,
+        "n_test": 800,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 0.3996,
+        "gated_mean_net": 0.5819,
+        "kept_frac": 0.626,
+        "n_kept": 501,
+        "delta": 0.1823
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 799,
+        "n_test": 800,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.3996,
+        "gated_mean_net": 0.4068,
+        "kept_frac": 0.996,
+        "n_kept": 797,
+        "delta": 0.0073
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "QM_1H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1561,
+      "n_regime_joined": 1561,
+      "overall_mean_net": -0.4135,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 288,
+          "mean_net": -1.0257
+        },
+        "TRANSITION": {
+          "n": 709,
+          "mean_net": -0.2853
+        },
+        "CHOP": {
+          "n": 560,
+          "mean_net": -0.2482
+        },
+        "TREND_UP": {
+          "n": 1,
+          "mean_net": -1.0413
+        },
+        "TREND_DOWN": {
+          "n": 3,
+          "mean_net": -2.5971
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 780,
+        "n_test": 781,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.4274,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 780,
+        "n_test": 781,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.4274,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "QM_4H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 155,
+      "n_regime_joined": 155,
+      "overall_mean_net": 1.0514,
+      "cells": {
+        "TRANSITION": {
+          "n": 82,
+          "mean_net": 0.5442
+        },
+        "CHOP": {
+          "n": 44,
+          "mean_net": 1.4002
+        },
+        "HIGH_VOLA": {
+          "n": 28,
+          "mean_net": 2.2423
+        },
+        "TREND_DOWN": {
+          "n": 1,
+          "mean_net": -6.0439
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 77,
+        "n_test": 78,
+        "favorable_regimes": [],
+        "ungated_mean_net": 3.4552,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 77,
+        "n_test": 78,
+        "favorable_regimes": [],
+        "ungated_mean_net": 3.4552,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "ROM1",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1449,
+      "n_regime_joined": 1449,
+      "overall_mean_net": -0.0249,
+      "cells": {
+        "TRANSITION": {
+          "n": 392,
+          "mean_net": 0.5433
+        },
+        "TREND_UP": {
+          "n": 59,
+          "mean_net": 0.4246
+        },
+        "CHOP": {
+          "n": 597,
+          "mean_net": -0.0874
+        },
+        "HIGH_VOLA": {
+          "n": 353,
+          "mean_net": -0.6552
+        },
+        "TREND_DOWN": {
+          "n": 48,
+          "mean_net": 0.1961
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 724,
+        "n_test": 725,
+        "favorable_regimes": [
+          "CHOP",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": -0.437,
+        "gated_mean_net": -0.4339,
+        "kept_frac": 0.742,
+        "n_kept": 538,
+        "delta": 0.0031
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 724,
+        "n_test": 725,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -0.437,
+        "gated_mean_net": -0.8858,
+        "kept_frac": 0.101,
+        "n_kept": 73,
+        "delta": -0.4488
+      },
+      "rule_verdict": "NO-HELP",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "ROM1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 3141,
+      "n_regime_joined": 3141,
+      "overall_mean_net": 0.4756,
+      "cells": {
+        "CHOP": {
+          "n": 1414,
+          "mean_net": 0.7069
+        },
+        "TRANSITION": {
+          "n": 1128,
+          "mean_net": 0.4756
+        },
+        "HIGH_VOLA": {
+          "n": 424,
+          "mean_net": 0.1687
+        },
+        "TREND_UP": {
+          "n": 94,
+          "mean_net": -0.9828
+        },
+        "TREND_DOWN": {
+          "n": 81,
+          "mean_net": -0.2626
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1570,
+        "n_test": 1571,
+        "favorable_regimes": [
+          "CHOP",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 0.4284,
+        "gated_mean_net": 0.5016,
+        "kept_frac": 0.766,
+        "n_kept": 1204,
+        "delta": 0.0731
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1570,
+        "n_test": 1571,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 0.4284,
+        "gated_mean_net": 0.475,
+        "kept_frac": 0.819,
+        "n_kept": 1287,
+        "delta": 0.0466
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "RUB1",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1082,
+      "n_regime_joined": 1082,
+      "overall_mean_net": 2.4834,
+      "cells": {
+        "TRANSITION": {
+          "n": 490,
+          "mean_net": 3.0724
+        },
+        "HIGH_VOLA": {
+          "n": 264,
+          "mean_net": 0.3455
+        },
+        "CHOP": {
+          "n": 325,
+          "mean_net": 3.3693
+        },
+        "TREND_UP": {
+          "n": 3,
+          "mean_net": -1.5791
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 541,
+        "n_test": 541,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 2.3418,
+        "gated_mean_net": 2.3637,
+        "kept_frac": 0.994,
+        "n_kept": 538,
+        "delta": 0.0219
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 541,
+        "n_test": 541,
+        "favorable_regimes": [
+          "CHOP",
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 2.3418,
+        "gated_mean_net": 3.6356,
+        "kept_frac": 0.453,
+        "n_kept": 245,
+        "delta": 1.2938
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "RUB2",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 240,
+      "n_regime_joined": 240,
+      "overall_mean_net": 0.6642,
+      "cells": {
+        "TRANSITION": {
+          "n": 39,
+          "mean_net": 0.3481
+        },
+        "TREND_DOWN": {
+          "n": 22,
+          "mean_net": 1.7574
+        },
+        "CHOP": {
+          "n": 102,
+          "mean_net": 0.5728
+        },
+        "TREND_UP": {
+          "n": 32,
+          "mean_net": -0.3714
+        },
+        "HIGH_VOLA": {
+          "n": 45,
+          "mean_net": 1.3472
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 120,
+        "n_test": 120,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 0.3576,
+        "gated_mean_net": 0.0678,
+        "kept_frac": 0.608,
+        "n_kept": 73,
+        "delta": -0.2899
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 120,
+        "n_test": 120,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 0.3576,
+        "gated_mean_net": 0.3576,
+        "kept_frac": 1.0,
+        "n_kept": 120,
+        "delta": 0.0
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "SRA1",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 363,
+      "n_regime_joined": 363,
+      "overall_mean_net": 0.624,
+      "cells": {
+        "TRANSITION": {
+          "n": 109,
+          "mean_net": 0.697
+        },
+        "CHOP": {
+          "n": 134,
+          "mean_net": 0.86
+        },
+        "HIGH_VOLA": {
+          "n": 77,
+          "mean_net": 0.233
+        },
+        "TREND_UP": {
+          "n": 22,
+          "mean_net": 1.4191
+        },
+        "TREND_DOWN": {
+          "n": 21,
+          "mean_net": -0.6599
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 181,
+        "n_test": 182,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 0.0077,
+        "gated_mean_net": -0.0192,
+        "kept_frac": 0.78,
+        "n_kept": 142,
+        "delta": -0.0269
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 181,
+        "n_test": 182,
+        "favorable_regimes": [
+          "CHOP",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.0077,
+        "gated_mean_net": -0.239,
+        "kept_frac": 0.687,
+        "n_kept": 125,
+        "delta": -0.2467
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "SRA2",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 319,
+      "n_regime_joined": 319,
+      "overall_mean_net": 0.8534,
+      "cells": {
+        "CHOP": {
+          "n": 163,
+          "mean_net": 0.6986
+        },
+        "HIGH_VOLA": {
+          "n": 49,
+          "mean_net": 0.9632
+        },
+        "TRANSITION": {
+          "n": 65,
+          "mean_net": 0.7353
+        },
+        "TREND_DOWN": {
+          "n": 18,
+          "mean_net": 0.6482
+        },
+        "TREND_UP": {
+          "n": 24,
+          "mean_net": 2.1536
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 159,
+        "n_test": 160,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 0.9397,
+        "gated_mean_net": 0.8627,
+        "kept_frac": 0.863,
+        "n_kept": 138,
+        "delta": -0.077
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 159,
+        "n_test": 160,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": 0.9397,
+        "gated_mean_net": 0.9397,
+        "kept_frac": 1.0,
+        "n_kept": 160,
+        "delta": 0.0
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "TD_1H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1366,
+      "n_regime_joined": 1366,
+      "overall_mean_net": 1.4805,
+      "cells": {
+        "TRANSITION": {
+          "n": 567,
+          "mean_net": 0.9763
+        },
+        "CHOP": {
+          "n": 388,
+          "mean_net": 1.4593
+        },
+        "HIGH_VOLA": {
+          "n": 397,
+          "mean_net": 2.258
+        },
+        "TREND_DOWN": {
+          "n": 11,
+          "mean_net": 2.9012
+        },
+        "TREND_UP": {
+          "n": 3,
+          "mean_net": -8.6043
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 683,
+        "n_test": 683,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 1.6119,
+        "gated_mean_net": 1.6365,
+        "kept_frac": 0.98,
+        "n_kept": 669,
+        "delta": 0.0246
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 683,
+        "n_test": 683,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": 1.6119,
+        "gated_mean_net": 0.6078,
+        "kept_frac": 0.42,
+        "n_kept": 287,
+        "delta": -1.0041
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "TSM1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 376,
+      "n_regime_joined": 376,
+      "overall_mean_net": -0.22,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 53,
+          "mean_net": 0.2134
+        },
+        "CHOP": {
+          "n": 223,
+          "mean_net": -0.0353
+        },
+        "TRANSITION": {
+          "n": 69,
+          "mean_net": -1.0066
+        },
+        "TREND_DOWN": {
+          "n": 26,
+          "mean_net": -0.7751
+        },
+        "TREND_UP": {
+          "n": 5,
+          "mean_net": 0.6903
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 188,
+        "n_test": 188,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": -0.4335,
+        "gated_mean_net": -0.6775,
+        "kept_frac": 0.09,
+        "n_kept": 17,
+        "delta": -0.244
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 188,
+        "n_test": 188,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.4335,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "BR4H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 949,
+      "n_regime_joined": 949,
+      "overall_mean_net": 1.0976,
+      "cells": {
+        "TRANSITION": {
+          "n": 429,
+          "mean_net": 1.1129
+        },
+        "CHOP": {
+          "n": 287,
+          "mean_net": 1.3752
+        },
+        "HIGH_VOLA": {
+          "n": 196,
+          "mean_net": 0.776
+        },
+        "TREND_UP": {
+          "n": 19,
+          "mean_net": 1.5793
+        },
+        "TREND_DOWN": {
+          "n": 18,
+          "mean_net": -0.6991
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 474,
+        "n_test": 475,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": 1.9831,
+        "gated_mean_net": 0.9823,
+        "kept_frac": 0.375,
+        "n_kept": 178,
+        "delta": -1.0008
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 474,
+        "n_test": 475,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": 1.9831,
+        "gated_mean_net": 2.2738,
+        "kept_frac": 0.739,
+        "n_kept": 351,
+        "delta": 0.2907
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "EPD1",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 622,
+      "n_regime_joined": 622,
+      "overall_mean_net": -0.0918,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 136,
+          "mean_net": -1.1367
+        },
+        "CHOP": {
+          "n": 244,
+          "mean_net": -1.8172
+        },
+        "TRANSITION": {
+          "n": 240,
+          "mean_net": 2.1099
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": 17.2594
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 311,
+        "n_test": 311,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 0.2045,
+        "gated_mean_net": 1.2313,
+        "kept_frac": 0.743,
+        "n_kept": 231,
+        "delta": 1.0269
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 311,
+        "n_test": 311,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 0.2045,
+        "gated_mean_net": 0.1192,
+        "kept_frac": 0.331,
+        "n_kept": 103,
+        "delta": -0.0853
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "EPD1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 4141,
+      "n_regime_joined": 4141,
+      "overall_mean_net": 3.3583,
+      "cells": {
+        "CHOP": {
+          "n": 1677,
+          "mean_net": 3.2535
+        },
+        "HIGH_VOLA": {
+          "n": 1179,
+          "mean_net": 2.5569
+        },
+        "TRANSITION": {
+          "n": 1264,
+          "mean_net": 4.2639
+        },
+        "TREND_DOWN": {
+          "n": 13,
+          "mean_net": 2.9888
+        },
+        "TREND_UP": {
+          "n": 8,
+          "mean_net": 0.9816
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 2070,
+        "n_test": 2071,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 1.8355,
+        "gated_mean_net": 1.8388,
+        "kept_frac": 0.997,
+        "n_kept": 2064,
+        "delta": 0.0033
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 2070,
+        "n_test": 2071,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION",
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 1.8355,
+        "gated_mean_net": 0.77,
+        "kept_frac": 0.89,
+        "n_kept": 1843,
+        "delta": -1.0655
+      },
+      "rule_verdict": "NO-HELP",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "RUB1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1492,
+      "n_regime_joined": 1492,
+      "overall_mean_net": 0.7809,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 285,
+          "mean_net": -1.0426
+        },
+        "TRANSITION": {
+          "n": 688,
+          "mean_net": 1.319
+        },
+        "CHOP": {
+          "n": 515,
+          "mean_net": 1.1745
+        },
+        "TREND_UP": {
+          "n": 4,
+          "mean_net": -12.5209
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 746,
+        "n_test": 746,
+        "favorable_regimes": [],
+        "ungated_mean_net": 2.7223,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 746,
+        "n_test": 746,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 2.7223,
+        "gated_mean_net": 5.4819,
+        "kept_frac": 0.07,
+        "n_kept": 52,
+        "delta": 2.7596
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "SRA1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 388,
+      "n_regime_joined": 388,
+      "overall_mean_net": 0.0467,
+      "cells": {
+        "CHOP": {
+          "n": 131,
+          "mean_net": 0.8867
+        },
+        "TRANSITION": {
+          "n": 123,
+          "mean_net": 0.3018
+        },
+        "HIGH_VOLA": {
+          "n": 100,
+          "mean_net": -1.1079
+        },
+        "TREND_DOWN": {
+          "n": 26,
+          "mean_net": -0.9794
+        },
+        "TREND_UP": {
+          "n": 8,
+          "mean_net": 0.1365
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 194,
+        "n_test": 194,
+        "favorable_regimes": [
+          "CHOP",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 0.0521,
+        "gated_mean_net": 0.0666,
+        "kept_frac": 0.665,
+        "n_kept": 129,
+        "delta": 0.0146
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 194,
+        "n_test": 194,
+        "favorable_regimes": [
+          "CHOP",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.0521,
+        "gated_mean_net": 0.1262,
+        "kept_frac": 0.701,
+        "n_kept": 136,
+        "delta": 0.0742
+      },
+      "rule_verdict": "NO-HELP",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "TD_1H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 1049,
+      "n_regime_joined": 1049,
+      "overall_mean_net": -0.0017,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 220,
+          "mean_net": 0.2806
+        },
+        "CHOP": {
+          "n": 399,
+          "mean_net": -0.3836
+        },
+        "TREND_UP": {
+          "n": 9,
+          "mean_net": -2.8709
+        },
+        "TRANSITION": {
+          "n": 414,
+          "mean_net": 0.283
+        },
+        "TREND_DOWN": {
+          "n": 7,
+          "mean_net": -0.2517
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 524,
+        "n_test": 525,
+        "favorable_regimes": [],
+        "ungated_mean_net": 1.5535,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 524,
+        "n_test": 525,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 1.5535,
+        "gated_mean_net": 0.1688,
+        "kept_frac": 0.194,
+        "n_kept": 102,
+        "delta": -1.3847
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "ATB1",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 268,
+      "n_regime_joined": 268,
+      "overall_mean_net": -0.3917,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 100,
+          "mean_net": -0.5522
+        },
+        "TRANSITION": {
+          "n": 105,
+          "mean_net": -0.3219
+        },
+        "CHOP": {
+          "n": 63,
+          "mean_net": -0.2531
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 134,
+        "n_test": 134,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.6526,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 134,
+        "n_test": 134,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": -0.6526,
+        "gated_mean_net": 2.249,
+        "kept_frac": 0.015,
+        "n_kept": 2,
+        "delta": 2.9016
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "RESCUED"
+    },
+    {
+      "tag": "QM_4H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 401,
+      "n_regime_joined": 401,
+      "overall_mean_net": -1.0967,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 108,
+          "mean_net": -1.7317
+        },
+        "TRANSITION": {
+          "n": 195,
+          "mean_net": -0.442
+        },
+        "CHOP": {
+          "n": 98,
+          "mean_net": -1.6998
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 200,
+        "n_test": 201,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": -1.3986,
+        "gated_mean_net": -1.1879,
+        "kept_frac": 0.413,
+        "n_kept": 83,
+        "delta": 0.2107
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 200,
+        "n_test": 201,
+        "favorable_regimes": [],
+        "ungated_mean_net": -1.3986,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "SRA2",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "shadow",
+      "n": 222,
+      "n_regime_joined": 222,
+      "overall_mean_net": 0.9969,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 23,
+          "mean_net": 0.7483
+        },
+        "CHOP": {
+          "n": 102,
+          "mean_net": 1.1455
+        },
+        "TREND_DOWN": {
+          "n": 36,
+          "mean_net": 0.6311
+        },
+        "TREND_UP": {
+          "n": 15,
+          "mean_net": 1.3092
+        },
+        "TRANSITION": {
+          "n": 46,
+          "mean_net": 0.976
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 111,
+        "n_test": 111,
+        "favorable_regimes": [
+          "CHOP",
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 1.05,
+        "gated_mean_net": 0.7391,
+        "kept_frac": 0.595,
+        "n_kept": 66,
+        "delta": -0.311
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 111,
+        "n_test": 111,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": 1.05,
+        "gated_mean_net": 1.05,
+        "kept_frac": 1.0,
+        "n_kept": 111,
+        "delta": 0.0
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "TD_4H",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 414,
+      "n_regime_joined": 414,
+      "overall_mean_net": 1.2772,
+      "cells": {
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": 3.0078
+        },
+        "HIGH_VOLA": {
+          "n": 95,
+          "mean_net": 2.054
+        },
+        "CHOP": {
+          "n": 117,
+          "mean_net": 0.0608
+        },
+        "TRANSITION": {
+          "n": 199,
+          "mean_net": 1.6355
+        },
+        "TREND_DOWN": {
+          "n": 1,
+          "mean_net": -4.9429
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 207,
+        "n_test": 207,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 2.0151,
+        "gated_mean_net": 2.308,
+        "kept_frac": 0.623,
+        "n_kept": 129,
+        "delta": 0.2929
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 207,
+        "n_test": 207,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": 2.0151,
+        "gated_mean_net": 1.6278,
+        "kept_frac": 0.671,
+        "n_kept": 139,
+        "delta": -0.3873
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "TD_4H",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "active",
+      "n": 256,
+      "n_regime_joined": 256,
+      "overall_mean_net": 0.7171,
+      "cells": {
+        "TRANSITION": {
+          "n": 93,
+          "mean_net": 2.4598
+        },
+        "HIGH_VOLA": {
+          "n": 58,
+          "mean_net": -2.6637
+        },
+        "TREND_UP": {
+          "n": 6,
+          "mean_net": 4.4753
+        },
+        "CHOP": {
+          "n": 91,
+          "mean_net": 1.0436
+        },
+        "TREND_DOWN": {
+          "n": 8,
+          "mean_net": -1.5636
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 128,
+        "n_test": 128,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 2.756,
+        "gated_mean_net": 4.6127,
+        "kept_frac": 0.281,
+        "n_kept": 36,
+        "delta": 1.8566
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 128,
+        "n_test": 128,
+        "favorable_regimes": [],
+        "ungated_mean_net": 2.756,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "AIM1",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 909,
+      "n_regime_joined": 909,
+      "overall_mean_net": -0.2113,
+      "cells": {
+        "CHOP": {
+          "n": 351,
+          "mean_net": -0.8737
+        },
+        "TRANSITION": {
+          "n": 412,
+          "mean_net": 0.1113
+        },
+        "HIGH_VOLA": {
+          "n": 141,
+          "mean_net": 0.4031
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": -0.8264
+        },
+        "TREND_DOWN": {
+          "n": 3,
+          "mean_net": 4.4999
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 454,
+        "n_test": 455,
+        "favorable_regimes": [],
+        "ungated_mean_net": 0.3964,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 454,
+        "n_test": 455,
+        "favorable_regimes": [
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 0.3964,
+        "gated_mean_net": -2.2005,
+        "kept_frac": 0.088,
+        "n_kept": 40,
+        "delta": -2.5969
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "MIS1-24h",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 214,
+      "n_regime_joined": 214,
+      "overall_mean_net": 2.1701,
+      "cells": {
+        "CHOP": {
+          "n": 77,
+          "mean_net": 1.4678
+        },
+        "TRANSITION": {
+          "n": 92,
+          "mean_net": 2.3688
+        },
+        "HIGH_VOLA": {
+          "n": 42,
+          "mean_net": 3.3337
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": 2.7673
+        },
+        "TREND_DOWN": {
+          "n": 1,
+          "mean_net": -12.1
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 107,
+        "n_test": 107,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 2.7631,
+        "gated_mean_net": 0.6091,
+        "kept_frac": 0.346,
+        "n_kept": 37,
+        "delta": -2.154
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 107,
+        "n_test": 107,
+        "favorable_regimes": [],
+        "ungated_mean_net": 2.7631,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "MIS2-8h",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "active",
+      "n": 245,
+      "n_regime_joined": 245,
+      "overall_mean_net": -0.0336,
+      "cells": {
+        "TREND_UP": {
+          "n": 30,
+          "mean_net": 1.2578
+        },
+        "CHOP": {
+          "n": 83,
+          "mean_net": 1.2488
+        },
+        "TREND_DOWN": {
+          "n": 26,
+          "mean_net": -1.9235
+        },
+        "TRANSITION": {
+          "n": 64,
+          "mean_net": 0.0894
+        },
+        "HIGH_VOLA": {
+          "n": 42,
+          "mean_net": -2.5075
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 122,
+        "n_test": 123,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 1.126,
+        "gated_mean_net": -0.4709,
+        "kept_frac": 0.22,
+        "n_kept": 27,
+        "delta": -1.597
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 122,
+        "n_test": 123,
+        "favorable_regimes": [
+          "TREND_DOWN",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 1.126,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "MIS1-24h",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 239,
+      "n_regime_joined": 239,
+      "overall_mean_net": 0.6628,
+      "cells": {
+        "TRANSITION": {
+          "n": 106,
+          "mean_net": 0.0719
+        },
+        "CHOP": {
+          "n": 92,
+          "mean_net": 1.6054
+        },
+        "HIGH_VOLA": {
+          "n": 39,
+          "mean_net": -1.4629
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": 30.07
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 119,
+        "n_test": 120,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": 1.7057,
+        "gated_mean_net": 2.2332,
+        "kept_frac": 0.4,
+        "n_kept": 48,
+        "delta": 0.5275
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 119,
+        "n_test": 120,
+        "favorable_regimes": [
+          "CHOP",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": 1.7057,
+        "gated_mean_net": 1.6625,
+        "kept_frac": 0.775,
+        "n_kept": 93,
+        "delta": -0.0432
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "MIS1-8h",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 385,
+      "n_regime_joined": 385,
+      "overall_mean_net": 2.3724,
+      "cells": {
+        "CHOP": {
+          "n": 128,
+          "mean_net": 0.4244
+        },
+        "HIGH_VOLA": {
+          "n": 61,
+          "mean_net": 1.7421
+        },
+        "TRANSITION": {
+          "n": 195,
+          "mean_net": 3.9265
+        },
+        "TREND_DOWN": {
+          "n": 1,
+          "mean_net": -12.8808
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 192,
+        "n_test": 193,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 1.5815,
+        "gated_mean_net": 1.6568,
+        "kept_frac": 0.995,
+        "n_kept": 192,
+        "delta": 0.0753
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 192,
+        "n_test": 193,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": 1.5815,
+        "gated_mean_net": 1.6369,
+        "kept_frac": 0.819,
+        "n_kept": 158,
+        "delta": 0.0554
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "IMPROVED"
+    },
+    {
+      "tag": "MIS1-72h",
+      "direction": "SHORT",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 302,
+      "n_regime_joined": 302,
+      "overall_mean_net": 1.5541,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 79,
+          "mean_net": -0.7088
+        },
+        "CHOP": {
+          "n": 81,
+          "mean_net": 0.0084
+        },
+        "TREND_DOWN": {
+          "n": 1,
+          "mean_net": 17.4843
+        },
+        "TRANSITION": {
+          "n": 140,
+          "mean_net": 3.3722
+        },
+        "TREND_UP": {
+          "n": 1,
+          "mean_net": 35.0625
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 151,
+        "n_test": 151,
+        "favorable_regimes": [
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": 3.5412,
+        "gated_mean_net": 2.9107,
+        "kept_frac": 0.662,
+        "n_kept": 100,
+        "delta": -0.6306
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 151,
+        "n_test": 151,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": 3.5412,
+        "gated_mean_net": -1.3159,
+        "kept_frac": 0.199,
+        "n_kept": 30,
+        "delta": -4.8571
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "MIS1-8h",
+      "direction": "LONG",
+      "source": "ai",
+      "bucket": "retired",
+      "n": 221,
+      "n_regime_joined": 221,
+      "overall_mean_net": -2.3238,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 47,
+          "mean_net": -0.4544
+        },
+        "CHOP": {
+          "n": 85,
+          "mean_net": -5.3834
+        },
+        "TRANSITION": {
+          "n": 87,
+          "mean_net": -0.1139
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": -12.35
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 110,
+        "n_test": 111,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.0358,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 110,
+        "n_test": 111,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.0358,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "5Percent",
+      "direction": "LONG",
+      "source": "classic",
+      "bucket": "active",
+      "n": 1252,
+      "n_regime_joined": 1252,
+      "overall_mean_net": -0.3378,
+      "cells": {
+        "HIGH_VOLA": {
+          "n": 210,
+          "mean_net": -0.3174
+        },
+        "CHOP": {
+          "n": 456,
+          "mean_net": -0.3302
+        },
+        "TRANSITION": {
+          "n": 563,
+          "mean_net": -0.3285
+        },
+        "TREND_DOWN": {
+          "n": 10,
+          "mean_net": 0.0234
+        },
+        "TREND_UP": {
+          "n": 13,
+          "mean_net": -1.6144
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 626,
+        "n_test": 626,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.2015,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 626,
+        "n_test": 626,
+        "favorable_regimes": [
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": -0.2015,
+        "gated_mean_net": 0.1114,
+        "kept_frac": 0.054,
+        "n_kept": 34,
+        "delta": 0.3129
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "RESCUED"
+    },
+    {
+      "tag": "5Percent",
+      "direction": "SHORT",
+      "source": "classic",
+      "bucket": "active",
+      "n": 18618,
+      "n_regime_joined": 18618,
+      "overall_mean_net": -0.4906,
+      "cells": {
+        "TRANSITION": {
+          "n": 9202,
+          "mean_net": -0.6828
+        },
+        "HIGH_VOLA": {
+          "n": 4315,
+          "mean_net": -0.1188
+        },
+        "CHOP": {
+          "n": 5038,
+          "mean_net": -0.4631
+        },
+        "TREND_DOWN": {
+          "n": 46,
+          "mean_net": 0.1146
+        },
+        "TREND_UP": {
+          "n": 17,
+          "mean_net": -0.6331
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 9309,
+        "n_test": 9309,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.3382,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 9309,
+        "n_test": 9309,
+        "favorable_regimes": [
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": -0.3382,
+        "gated_mean_net": 0.0703,
+        "kept_frac": 0.194,
+        "n_kept": 1802,
+        "delta": 0.4086
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "RESCUED"
+    },
+    {
+      "tag": "FastInOut",
+      "direction": "LONG",
+      "source": "classic",
+      "bucket": "active",
+      "n": 10319,
+      "n_regime_joined": 10319,
+      "overall_mean_net": -0.3343,
+      "cells": {
+        "TRANSITION": {
+          "n": 4877,
+          "mean_net": -0.3062
+        },
+        "CHOP": {
+          "n": 3153,
+          "mean_net": -0.4233
+        },
+        "HIGH_VOLA": {
+          "n": 2050,
+          "mean_net": -0.2949
+        },
+        "TREND_DOWN": {
+          "n": 100,
+          "mean_net": -0.312
+        },
+        "TREND_UP": {
+          "n": 139,
+          "mean_net": 0.1013
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 5159,
+        "n_test": 5160,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.1931,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 5159,
+        "n_test": 5160,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.1931,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "FastInOut",
+      "direction": "SHORT",
+      "source": "classic",
+      "bucket": "active",
+      "n": 104189,
+      "n_regime_joined": 104189,
+      "overall_mean_net": -0.3046,
+      "cells": {
+        "TRANSITION": {
+          "n": 49487,
+          "mean_net": -0.3602
+        },
+        "HIGH_VOLA": {
+          "n": 22590,
+          "mean_net": -0.3608
+        },
+        "CHOP": {
+          "n": 31506,
+          "mean_net": -0.1731
+        },
+        "TREND_DOWN": {
+          "n": 291,
+          "mean_net": -0.4577
+        },
+        "TREND_UP": {
+          "n": 315,
+          "mean_net": -0.5569
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 52094,
+        "n_test": 52095,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.2183,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 52094,
+        "n_test": 52095,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.2183,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "NO-FAV-REGIME"
+    },
+    {
+      "tag": "SR",
+      "direction": "LONG",
+      "source": "classic",
+      "bucket": "active",
+      "n": 2240,
+      "n_regime_joined": 2240,
+      "overall_mean_net": -0.2019,
+      "cells": {
+        "TRANSITION": {
+          "n": 665,
+          "mean_net": -0.2199
+        },
+        "CHOP": {
+          "n": 809,
+          "mean_net": -0.1737
+        },
+        "HIGH_VOLA": {
+          "n": 457,
+          "mean_net": -0.2027
+        },
+        "TREND_UP": {
+          "n": 161,
+          "mean_net": 0.0615
+        },
+        "TREND_DOWN": {
+          "n": 148,
+          "mean_net": -0.5594
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1120,
+        "n_test": 1120,
+        "favorable_regimes": [
+          "CHOP",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -0.2375,
+        "gated_mean_net": -0.3456,
+        "kept_frac": 0.544,
+        "n_kept": 609,
+        "delta": -0.1081
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1120,
+        "n_test": 1120,
+        "favorable_regimes": [
+          "TRANSITION",
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -0.2375,
+        "gated_mean_net": -0.246,
+        "kept_frac": 0.068,
+        "n_kept": 76,
+        "delta": -0.0085
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "NO-HELP"
+    },
+    {
+      "tag": "VolIndic",
+      "direction": "LONG",
+      "source": "classic",
+      "bucket": "active",
+      "n": 29535,
+      "n_regime_joined": 29535,
+      "overall_mean_net": -0.254,
+      "cells": {
+        "TRANSITION": {
+          "n": 12395,
+          "mean_net": -0.2103
+        },
+        "HIGH_VOLA": {
+          "n": 6706,
+          "mean_net": -0.1028
+        },
+        "CHOP": {
+          "n": 10026,
+          "mean_net": -0.433
+        },
+        "TREND_UP": {
+          "n": 250,
+          "mean_net": 0.4181
+        },
+        "TREND_DOWN": {
+          "n": 158,
+          "mean_net": 0.1989
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 14767,
+        "n_test": 14768,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.1974,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 14767,
+        "n_test": 14768,
+        "favorable_regimes": [
+          "TREND_DOWN"
+        ],
+        "ungated_mean_net": -0.1974,
+        "gated_mean_net": -0.3794,
+        "kept_frac": 0.056,
+        "n_kept": 830,
+        "delta": -0.182
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "VolIndic",
+      "direction": "SHORT",
+      "source": "classic",
+      "bucket": "active",
+      "n": 27352,
+      "n_regime_joined": 27352,
+      "overall_mean_net": -0.1853,
+      "cells": {
+        "TRANSITION": {
+          "n": 12050,
+          "mean_net": -0.2862
+        },
+        "CHOP": {
+          "n": 8410,
+          "mean_net": -0.0663
+        },
+        "HIGH_VOLA": {
+          "n": 6474,
+          "mean_net": -0.1076
+        },
+        "TREND_DOWN": {
+          "n": 199,
+          "mean_net": -1.1206
+        },
+        "TREND_UP": {
+          "n": 219,
+          "mean_net": -0.6578
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 13676,
+        "n_test": 13676,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.0072,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 13676,
+        "n_test": 13676,
+        "favorable_regimes": [
+          "TRANSITION"
+        ],
+        "ungated_mean_net": -0.0072,
+        "gated_mean_net": -0.0414,
+        "kept_frac": 0.032,
+        "n_kept": 437,
+        "delta": -0.0342
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "SR",
+      "direction": "SHORT",
+      "source": "classic",
+      "bucket": "active",
+      "n": 2010,
+      "n_regime_joined": 2010,
+      "overall_mean_net": -0.0259,
+      "cells": {
+        "CHOP": {
+          "n": 803,
+          "mean_net": 0.0179
+        },
+        "HIGH_VOLA": {
+          "n": 388,
+          "mean_net": 0.0419
+        },
+        "TRANSITION": {
+          "n": 657,
+          "mean_net": 0.0234
+        },
+        "TREND_DOWN": {
+          "n": 110,
+          "mean_net": -0.6255
+        },
+        "TREND_UP": {
+          "n": 52,
+          "mean_net": -0.5642
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 1005,
+        "n_test": 1005,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA",
+          "TRANSITION"
+        ],
+        "ungated_mean_net": -0.2214,
+        "gated_mean_net": -0.1557,
+        "kept_frac": 0.843,
+        "n_kept": 847,
+        "delta": 0.0657
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 1005,
+        "n_test": 1005,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": -0.2214,
+        "gated_mean_net": -0.2794,
+        "kept_frac": 0.823,
+        "n_kept": 827,
+        "delta": -0.058
+      },
+      "rule_verdict": "IMPROVED",
+      "soft_verdict": "WORSE"
+    },
+    {
+      "tag": "Main Channel",
+      "direction": "LONG",
+      "source": "classic",
+      "bucket": "active",
+      "n": 216,
+      "n_regime_joined": 216,
+      "overall_mean_net": -0.5289,
+      "cells": {
+        "TRANSITION": {
+          "n": 69,
+          "mean_net": -0.1054
+        },
+        "CHOP": {
+          "n": 56,
+          "mean_net": -0.5904
+        },
+        "HIGH_VOLA": {
+          "n": 52,
+          "mean_net": -1.0805
+        },
+        "TREND_UP": {
+          "n": 19,
+          "mean_net": -0.0122
+        },
+        "TREND_DOWN": {
+          "n": 20,
+          "mean_net": -0.8743
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 108,
+        "n_test": 108,
+        "favorable_regimes": [],
+        "ungated_mean_net": -0.6104,
+        "gated_mean_net": null,
+        "kept_frac": 0.0,
+        "n_kept": 0,
+        "delta": null
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 108,
+        "n_test": 108,
+        "favorable_regimes": [
+          "TREND_UP"
+        ],
+        "ungated_mean_net": -0.6104,
+        "gated_mean_net": 0.0122,
+        "kept_frac": 0.056,
+        "n_kept": 6,
+        "delta": 0.6226
+      },
+      "rule_verdict": "NO-FAV-REGIME",
+      "soft_verdict": "RESCUED"
+    },
+    {
+      "tag": "Main Channel",
+      "direction": "SHORT",
+      "source": "classic",
+      "bucket": "active",
+      "n": 172,
+      "n_regime_joined": 172,
+      "overall_mean_net": -0.283,
+      "cells": {
+        "TRANSITION": {
+          "n": 66,
+          "mean_net": -0.4331
+        },
+        "HIGH_VOLA": {
+          "n": 45,
+          "mean_net": -0.6109
+        },
+        "CHOP": {
+          "n": 55,
+          "mean_net": 0.0552
+        },
+        "TREND_UP": {
+          "n": 2,
+          "mean_net": 0.0125
+        },
+        "TREND_DOWN": {
+          "n": 4,
+          "mean_net": 1.0834
+        }
+      },
+      "rule_gate": {
+        "insufficient": false,
+        "n_train": 86,
+        "n_test": 86,
+        "favorable_regimes": [
+          "CHOP",
+          "HIGH_VOLA"
+        ],
+        "ungated_mean_net": -0.4629,
+        "gated_mean_net": -0.5456,
+        "kept_frac": 0.605,
+        "n_kept": 52,
+        "delta": -0.0826
+      },
+      "soft_gate": {
+        "insufficient": false,
+        "n_train": 86,
+        "n_test": 86,
+        "favorable_regimes": [
+          "CHOP"
+        ],
+        "ungated_mean_net": -0.4629,
+        "gated_mean_net": -0.2516,
+        "kept_frac": 0.779,
+        "n_kept": 67,
+        "delta": 0.2114
+      },
+      "rule_verdict": "WORSE",
+      "soft_verdict": "IMPROVED"
+    }
+  ],
+  "join_limits": [
+    "Regime = RULE_recon (debounced) aus dem gespeicherten regime-Stream; T-031 validierte das zu 91.85% gegen aufgezeichnetes regime_at_open. Residual = Warm-up + Ingestion-Outage-Desync.",
+    "Der OOS-Gate-Uplift misst die REGIME-Achse allein \u2014 NICHT die Live-Whitelist-Mechanik (nicht historisch rekonstruierbar, T-031), Cornix-Routing oder Regime-Auto-Close. Er ist eine Obergrenze dessen, was Regime-Konditionierung theoretisch bringt; Live-Gating kann darunter liegen.",
+    "Outcome = realized status (TP1-Touch-Win) \u2192 gestaffelter Move, Monitor-Rauschen (P1.2/P2.7) trifft gated+ungated gleich \u2192 der DIFF ist robuster als das Absolutniveau.",
+    "G\u00fcnstige Regimes werden datengetrieben gew\u00e4hlt (mean-net>0 auf Train) \u2014 bei 5 Regimes ist die Multiple-Comparison-Gefahr gering, aber der OOS-Split ist die eigentliche Absicherung; ein In-Sample-Gate w\u00e4re wertlos.",
+    "TREND_UP/DOWN sind selten (je ~3-4% der Zeit) \u2192 in vielen Legs unter MIN_CELL und damit weder als g\u00fcnstig noch ung\u00fcnstig klassifizierbar (Gate l\u00e4sst sie NICHT durch \u2014 konservativ, kept-frac zeigt es).",
+    "alt_context bleibt au\u00dfen vor (SOFT smoothed nur die BTC-Achse; die per-Bot-Whitelist \u00fcber bot\u00d7regime\u00d7alt\u00d7dir ist der eigentliche Live-Gate, aber nicht rekonstruierbar)."
+  ]
+}
