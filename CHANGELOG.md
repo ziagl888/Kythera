@@ -1,3 +1,40 @@
+## [2026-07-23] SOFT-Regime-Gate Counterfactual auf echten ROM1-Forwards — NO-EDGE (Churn bestätigt) (T-2026-KYT-9050-031)
+
+DB-gebundener (strikt read-only) VPS-Follow-up zu T-029: misst, ob die dort
+DB-frei gewinnende SOFT-Regime-Timeline (EMA-geglättete Classifier-Confidence)
+auf **echten** ROM1-Forwards einen PnL-Uplift bringt oder nur Churn spart. Neues
+`tools/soft_regime_counterfactual.py` (+ 11 DB-freie Tests): rekonstruiert RULE-
+(Port von `apply_debounce._step_debounce`) UND SOFT-Timeline (`build_soft_timeline`
+aus T-029) **direkt aus `regime_history`** — kein Kerzen-Re-Read nötig, weil
+`raw_features` JSON `vola_p75/p40` trägt — und bucketiert echte Orchestrator-
+Forwards nach SOFT-vs-RULE-Regime-Übereinstimmung.
+- **Verdikt NO-EDGE für einen bewiesenen PnL-Uplift** (Churn bestätigt): SOFT(hl≈16h)
+  senkt RULE-Switches um **87%** (170→23/30d, der T-029-Whipsaw-Sieg reproduziert
+  live); Rekonstruktion trifft `regime_at_open` auf 91,8% der Forwards. Forwards
+  mit SOFT≠RULE gewinnen **6,0pp weniger** (56,4% vs 62,4% TP/SL, p=0,001) — ein
+  echtes Richtungs-Signal.
+- **Warum trotzdem NO-EDGE:** (a) die WR-Lücke wird erst bei starker Glättung
+  signifikant (hl≥16h, gated ~halben Flow), bei ≤8h ~2pp/p>0,2; (b) First-Touch-
+  Replay-PnL ist in BEIDEN Buckets negativ (agree −0,06% / disagree −0,21%/Trade)
+  = T-029s η²≈0 bestätigt, man wählt zwischen Verlierern; (c) **„SOFT weicht ab" ≠
+  „SOFT würde unterdrücken"** — dafür bräuchte man die historische Whitelist, die
+  jeder Analyzer-Zyklus komplett überschreibt (keine Historie → unrekonstruierbar);
+  der einzige Proxy (aktueller Snapshot) ist zirkulär + gegenläufig. → **Nur ein
+  Live-Shadow-A/B eines SOFT-Gates kann das entscheiden** (Gate-Entscheidung,
+  Michi-gegatet).
+- **Join-Grenzen (ehrlich):** prob↔outcome nicht zuverlässig joinbar → Outcome via
+  Trade-`status` (CLOSED_TP/SL), nicht realized PnL; `orchestrator_suppressed_signals`
+  ohne `alt_context` → Whitelist-Reflip nur forwarded-seitig; SOFT glättet nur die
+  BTC-Achse; die CLOSED_REGIME_CHANGE-Auto-Closes (Mehrheit der Exits) tragen kein
+  TP/SL-Label und sind ausgeschlossen.
+
+Kein Fleet-Code berührt, kein DB-Write, keine Orchestrator-/Gate-Änderung (reine
+Analyse). Ein suppressed-§5b-Zahlen-Rerun wurde vom CPU-Höflichkeits-Gate (VPS
+100%) vertagt — das Verdikt hängt nicht davon ab. Verifiziert: 11/11 DB-freie
+Tests grün (RULE-Port ≡ Debounce, SOFT-aus-raw_features, As-of-No-Lookahead,
+z-Test), ruff clean; beide Kern-Reviews im autonomen Lauf PASS (z-spec-Lücke
+suppressed-Seite nachgezogen). Follow-up-Kandidat: Live-Shadow-A/B.
+
 ## [2026-07-23] GARCH-Vol-Targeting LIVE-Verdikt auf echten Trades (T-2026-KYT-9050-030)
 
 Die offene Hälfte von T-022 beantwortet: **zieht GARCH-Vol-Targeting bei Kythera?**
