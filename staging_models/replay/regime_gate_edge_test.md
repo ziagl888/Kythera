@@ -1,6 +1,6 @@
 # Regime-Gate Edge Test (Phase B) — T-2026-KYT-9050-032
 
-_generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435 rows (2026-01-18→2026-07-23) · 276213 regime-joined trades · legs with n≥150: 61_
+_generated 2026-07-23 06:42:50.388954+00:00 · read-only · regime_history 73436 rows (2026-01-18→2026-07-23) · 276221 regime-joined trades · legs with n≥150: 61_
 
 **Gate-Test:** günstige BTC-Regimes (mean-net>0, cell-n≥20) auf der ERSTEN Trade-Hälfte gelernt, auf der ZWEITEN angewandt (OUT-OF-SAMPLE). `ungated`/`gated net%` = mean gestaffelter unlevered Move − Fee auf dem Test-Split; `Δ`=gated−ungated; `kept`=Anteil des Test-Flows, den das Gate durchlässt. RULE-Regime = debounced RULE_recon (T-031, 91.85% fidelity). RESCUED = ungated<0→gated>0. **Empfehlung, kein Rollout.**
 
@@ -9,7 +9,7 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 - **RESCUED (Negativ→Positiv durch Gate): 0** — KEIN Leg. Kein Regime-Gate flippt einen Negativ-Edge-Leg out-of-sample ins Plus.
 - **Retire bestätigt (kein günstiges Regime existiert, Gate blockt alles): 15** — AIM1/S, BB_4H/S, BR1H/S, BR2H/S, BR4H/S, QM_1H/S, ATB1/S, MIS1-8h/L, 5Percent/L, 5Percent/S, FastInOut/L, FastInOut/S, VolIndic/L, VolIndic/S, Main Channel/L. Diese bluten in JEDEM Regime → Gating hilft nicht, Retire/Richtungs-Abschaltung steht.
 - **Negativ-Edge nur verbessert, bleibt aber negativ: 4** — BB_1H/S (-2.49→-2.33), BR1Hv2/S (-0.97→-0.83), QM_4H/S (-1.40→-1.19), SR/S (-0.22→-0.16). Gate mildert, rettet aber nicht.
-- **Positiv-Edge durch Gate verbessert (OOS): 14** — BB_1H/L (Δ+0.27), BB_4H/L (Δ+0.25), BR1Hv2/L (Δ+0.51), MIS1-168h/L (Δ+0.20), MIS1-72h/L (Δ+0.28), QM_1H/L (Δ+0.18), ROM1/S (Δ+0.07), RUB1/L (Δ+0.02), TD_1H/L (Δ+0.02), EPD1/L (Δ+1.03), TD_4H/L (Δ+0.29), TD_4H/S (Δ+1.86), MIS1-24h/S (Δ+0.53), MIS1-8h/S (Δ+0.08). Meist bescheiden (<+0.3%/Trade) und/oder bei niedriger kept-fraction; das existierende Whitelist-v2-Vehikel (T-069) ist der Live-Weg, kein neues Gate.
+- **Positiv-Edge durch Gate verbessert (OOS): 14** — BB_1H/L (Δ+0.27), BB_4H/L (Δ+0.25), BR1Hv2/L (Δ+0.52), MIS1-168h/L (Δ+0.20), MIS1-72h/L (Δ+0.28), QM_1H/L (Δ+0.18), ROM1/S (Δ+0.07), RUB1/L (Δ+0.02), TD_1H/L (Δ+0.02), EPD1/L (Δ+1.03), TD_4H/L (Δ+0.29), TD_4H/S (Δ+1.86), MIS1-24h/S (Δ+0.53), MIS1-8h/S (Δ+0.08). Meist bescheiden (<+0.3%/Trade) und/oder bei niedriger kept-fraction; das existierende Whitelist-v2-Vehikel (T-069) ist der Live-Weg, kein neues Gate.
 - **Kernbefund:** Der Edge der Verlust-Legs ist RICHTUNGS-, nicht regime-bedingt (Pattern/Sniper/Rubberband-Familien: LONG-Edge, SHORT-Blutung über ALLE Regimes) → der Hebel ist die Richtungs-/Retire-Entscheidung, nicht ein BTC-Regime-Gate. Deckt sich mit T-029/T-031 (η²≈0, Regime trennt Churn, nicht Richtung).
 
 ## RULE-Gate — Negativ-Edge-Legs (rettet ein Gate sie?)
@@ -26,16 +26,16 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | BR1H | SHORT | act | 3328 | -3.741 | — | — | 0.00 | — | NO-FAV-REGIME |
 | BR2H | SHORT | act | 2242 | -1.942 | — | — | 0.00 | — | NO-FAV-REGIME |
 | BR4H | SHORT | act | 908 | -2.358 | — | — | 0.00 | — | NO-FAV-REGIME |
-| EPD3 | SHORT | act | 3579 | -0.451 | -0.451 | +0.000 | 1.00 | CHOP,HIGH,TRAN,TREN,TREN | NO-HELP |
+| EPD3 | SHORT | act | 3580 | -0.455 | -0.455 | +0.000 | 1.00 | CHOP,HIGH,TRAN,TREN,TREN | NO-HELP |
 | QM_1H | SHORT | act | 1561 | -0.427 | — | — | 0.00 | — | NO-FAV-REGIME |
 | ATB1 | SHORT | ret | 268 | -0.653 | — | — | 0.00 | — | NO-FAV-REGIME |
 | MIS1-8h | LONG | ret | 221 | -0.036 | — | — | 0.00 | — | NO-FAV-REGIME |
 | 5Percent | LONG | act | 1252 | -0.202 | — | — | 0.00 | — | NO-FAV-REGIME |
 | 5Percent | SHORT | act | 18618 | -0.338 | — | — | 0.00 | — | NO-FAV-REGIME |
-| FastInOut | LONG | act | 10319 | -0.193 | — | — | 0.00 | — | NO-FAV-REGIME |
-| FastInOut | SHORT | act | 104189 | -0.218 | — | — | 0.00 | — | NO-FAV-REGIME |
+| FastInOut | LONG | act | 10320 | -0.192 | — | — | 0.00 | — | NO-FAV-REGIME |
+| FastInOut | SHORT | act | 104191 | -0.218 | — | — | 0.00 | — | NO-FAV-REGIME |
 | VolIndic | LONG | act | 29535 | -0.197 | — | — | 0.00 | — | NO-FAV-REGIME |
-| VolIndic | SHORT | act | 27352 | -0.007 | — | — | 0.00 | — | NO-FAV-REGIME |
+| VolIndic | SHORT | act | 27354 | -0.007 | — | — | 0.00 | — | NO-FAV-REGIME |
 | Main Channel | LONG | act | 216 | -0.610 | — | — | 0.00 | — | NO-FAV-REGIME |
 | Main Channel | SHORT | act | 172 | -0.463 | -0.546 | -0.083 | 0.60 | CHOP,HIGH | WORSE |
 | SR | LONG | act | 2240 | -0.237 | -0.346 | -0.108 | 0.54 | CHOP,TREN | WORSE |
@@ -49,7 +49,7 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | TD_4H | SHORT | act | 256 | +2.756 | +4.613 | +1.857 | 0.28 | TRAN | IMPROVED |
 | EPD1 | LONG | act | 622 | +0.204 | +1.231 | +1.027 | 0.74 | HIGH,TRAN | IMPROVED |
 | MIS1-24h | SHORT | ret | 239 | +1.706 | +2.233 | +0.527 | 0.40 | CHOP | IMPROVED |
-| BR1Hv2 | LONG | act | 725 | +0.154 | +0.668 | +0.514 | 0.22 | TRAN,TREN | IMPROVED |
+| BR1Hv2 | LONG | act | 726 | +0.149 | +0.668 | +0.520 | 0.22 | TRAN,TREN | IMPROVED |
 | TD_4H | LONG | act | 414 | +2.015 | +2.308 | +0.293 | 0.62 | HIGH,TRAN | IMPROVED |
 | MIS1-72h | LONG | ret | 11869 | +1.768 | +2.051 | +0.283 | 0.42 | TRAN | IMPROVED |
 | BB_1H | LONG | act | 1726 | +2.116 | +2.385 | +0.269 | 0.61 | HIGH,TRAN | IMPROVED |
@@ -76,7 +76,7 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | SRA2 | LONG | act | 319 | +0.940 | +0.863 | -0.077 | 0.86 | CHOP,HIGH,TRAN | WORSE |
 | RUB2 | SHORT | act | 240 | +0.358 | +0.068 | -0.290 | 0.61 | CHOP,HIGH | WORSE |
 | SRA2 | SHORT | sha | 222 | +1.050 | +0.739 | -0.311 | 0.59 | CHOP,TREN | WORSE |
-| EPD3 | LONG | sha | 2632 | +0.613 | +0.266 | -0.347 | 0.11 | TREN | WORSE |
+| EPD3 | LONG | sha | 2633 | +0.614 | +0.266 | -0.349 | 0.11 | TREN | WORSE |
 | BR2H | LONG | act | 2193 | +1.571 | +0.990 | -0.581 | 0.22 | HIGH | WORSE |
 | MIS1-72h | SHORT | ret | 302 | +3.541 | +2.911 | -0.631 | 0.66 | HIGH,TRAN | WORSE |
 | BR4H | LONG | act | 949 | +1.983 | +0.982 | -1.001 | 0.38 | CHOP | WORSE |
@@ -113,10 +113,10 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | ATS2 | LONG | sha | 612 | +1.167 | — | — | 0.00 | — | NO-FAV-REGIME |
 | BB_4H | SHORT | act | 1681 | -0.438 | — | — | 0.00 | — | NO-FAV-REGIME |
 | BR1D | SHORT | act | 186 | +2.692 | — | — | 0.00 | — | NO-FAV-REGIME |
-| BR1Hv2 | LONG | act | 725 | +0.154 | — | — | 0.00 | TREN | NO-FAV-REGIME |
+| BR1Hv2 | LONG | act | 726 | +0.149 | — | — | 0.00 | TREN | NO-FAV-REGIME |
 | BR1Hv2 | SHORT | act | 811 | -0.967 | -0.967 | +0.000 | 1.00 | CHOP,HIGH | NO-HELP |
-| EPD3 | LONG | sha | 2632 | +0.613 | — | — | 0.00 | HIGH | NO-FAV-REGIME |
-| EPD3 | SHORT | act | 3579 | -0.451 | -0.451 | +0.000 | 1.00 | CHOP,HIGH | NO-HELP |
+| EPD3 | LONG | sha | 2633 | +0.614 | — | — | 0.00 | HIGH | NO-FAV-REGIME |
+| EPD3 | SHORT | act | 3580 | -0.455 | -0.455 | +0.000 | 1.00 | CHOP,HIGH | NO-HELP |
 | QM_1H | SHORT | act | 1561 | -0.427 | — | — | 0.00 | — | NO-FAV-REGIME |
 | QM_4H | LONG | act | 155 | +3.455 | — | — | 0.00 | — | NO-FAV-REGIME |
 | RUB2 | SHORT | act | 240 | +0.358 | +0.358 | +0.000 | 1.00 | CHOP,HIGH | NO-HELP |
@@ -128,11 +128,11 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | MIS1-24h | LONG | ret | 214 | +2.763 | — | — | 0.00 | — | NO-FAV-REGIME |
 | MIS2-8h | LONG | act | 245 | +1.126 | — | — | 0.00 | TREN,TREN | NO-FAV-REGIME |
 | MIS1-8h | LONG | ret | 221 | -0.036 | — | — | 0.00 | — | NO-FAV-REGIME |
-| FastInOut | LONG | act | 10319 | -0.193 | — | — | 0.00 | — | NO-FAV-REGIME |
-| FastInOut | SHORT | act | 104189 | -0.218 | — | — | 0.00 | — | NO-FAV-REGIME |
+| FastInOut | LONG | act | 10320 | -0.192 | — | — | 0.00 | — | NO-FAV-REGIME |
+| FastInOut | SHORT | act | 104191 | -0.218 | — | — | 0.00 | — | NO-FAV-REGIME |
 | SR | LONG | act | 2240 | -0.237 | -0.246 | -0.009 | 0.07 | TRAN,TREN | NO-HELP |
 | MIS1-168h | LONG | ret | 7301 | +1.748 | +1.718 | -0.030 | 0.92 | CHOP,HIGH,TREN | WORSE |
-| VolIndic | SHORT | act | 27352 | -0.007 | -0.041 | -0.034 | 0.03 | TRAN | WORSE |
+| VolIndic | SHORT | act | 27354 | -0.007 | -0.041 | -0.034 | 0.03 | TRAN | WORSE |
 | MIS1-24h | SHORT | ret | 239 | +1.706 | +1.663 | -0.043 | 0.78 | CHOP,TREN | WORSE |
 | SR | SHORT | act | 2010 | -0.221 | -0.279 | -0.058 | 0.82 | CHOP,HIGH | WORSE |
 | EPD1 | LONG | act | 622 | +0.204 | +0.119 | -0.085 | 0.33 | HIGH | WORSE |
@@ -164,7 +164,7 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | BR1D | SHORT | act | -0.473 | — | -0.10×1 | +0.53×55 | -2.00×58 | -0.01×72 |
 | BR1H | LONG | act | +1.192 | +2.94×2 | — | +0.52×1118 | +1.99×792 | +1.26×1715 |
 | BR1H | SHORT | act | -2.233 | -2.51×2 | -6.18×12 | -2.30×1014 | -2.88×565 | -1.95×1735 |
-| BR1Hv2 | LONG | act | -0.160 | -0.17×91 | +0.95×38 | -0.21×325 | -1.15×137 | +0.67×134 |
+| BR1Hv2 | LONG | act | -0.159 | -0.17×91 | +0.95×38 | -0.21×325 | -1.14×138 | +0.67×134 |
 | BR1Hv2 | SHORT | act | -0.588 | +1.33×22 | -1.51×103 | -0.25×371 | -1.00×109 | -0.71×206 |
 | BR2H | LONG | act | +0.680 | -0.16×66 | -0.59×26 | +0.96×643 | +0.60×510 | +0.62×948 |
 | BR2H | SHORT | act | -1.487 | +0.28×8 | -1.73×109 | -1.64×785 | -2.20×324 | -1.13×1016 |
@@ -172,9 +172,9 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | BR4H | SHORT | act | -1.618 | -2.23×7 | -1.69×54 | -2.02×313 | -1.25×146 | -1.41×388 |
 | EPD1 | LONG | act | -0.092 | +17.26×2 | — | -1.82×244 | -1.14×136 | +2.11×240 |
 | EPD1 | SHORT | act | +3.358 | +0.98×8 | +2.99×13 | +3.25×1677 | +2.56×1179 | +4.26×1264 |
-| EPD3 | SHORT | act | -0.062 | -0.17×397 | +0.16×263 | -0.12×1741 | +0.22×522 | -0.16×656 |
-| FastInOut | LONG | act | -0.334 | +0.10×139 | -0.31×100 | -0.42×3153 | -0.29×2050 | -0.31×4877 |
-| FastInOut | SHORT | act | -0.305 | -0.56×315 | -0.46×291 | -0.17×31506 | -0.36×22590 | -0.36×49487 |
+| EPD3 | SHORT | act | -0.062 | -0.17×397 | +0.16×263 | -0.12×1742 | +0.22×522 | -0.16×656 |
+| FastInOut | LONG | act | -0.334 | +0.10×139 | -0.31×100 | -0.42×3154 | -0.29×2050 | -0.31×4877 |
+| FastInOut | SHORT | act | -0.305 | -0.56×315 | -0.46×291 | -0.17×31508 | -0.36×22590 | -0.36×49487 |
 | MIS2-8h | LONG | act | -0.034 | +1.26×30 | -1.92×26 | +1.25×83 | -2.51×42 | +0.09×64 |
 | Main Channel | LONG | act | -0.529 | -0.01×19 | -0.87×20 | -0.59×56 | -1.08×52 | -0.11×69 |
 | Main Channel | SHORT | act | -0.283 | +0.01×2 | +1.08×4 | +0.06×55 | -0.61×45 | -0.43×66 |
@@ -198,7 +198,7 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | TD_4H | SHORT | act | +0.717 | +4.48×6 | -1.56×8 | +1.04×91 | -2.66×58 | +2.46×93 |
 | TSM1 | SHORT | act | -0.220 | +0.69×5 | -0.78×26 | -0.04×223 | +0.21×53 | -1.01×69 |
 | VolIndic | LONG | act | -0.254 | +0.42×250 | +0.20×158 | -0.43×10026 | -0.10×6706 | -0.21×12395 |
-| VolIndic | SHORT | act | -0.185 | -0.66×219 | -1.12×199 | -0.07×8410 | -0.11×6474 | -0.29×12050 |
+| VolIndic | SHORT | act | -0.185 | -0.66×219 | -1.14×200 | -0.07×8411 | -0.11×6474 | -0.29×12050 |
 | AIM1 | LONG | ret | -0.211 | -0.83×2 | +4.50×3 | -0.87×351 | +0.40×141 | +0.11×412 |
 | AIM1 | SHORT | ret | -1.782 | -0.70×2 | -12.14×2 | -1.40×710 | -2.27×446 | -1.81×1030 |
 | ATB1 | SHORT | ret | -0.392 | — | — | -0.25×63 | -0.55×100 | -0.32×105 |
@@ -212,12 +212,13 @@ _generated 2026-07-23 06:37:56.810035+00:00 · read-only · regime_history 73435
 | MIS1-8h | LONG | ret | -2.324 | -12.35×2 | — | -5.38×85 | -0.45×47 | -0.11×87 |
 | MIS1-8h | SHORT | ret | +2.372 | — | -12.88×1 | +0.42×128 | +1.74×61 | +3.93×195 |
 | ATS2 | LONG | sha | +0.309 | +0.49×52 | +0.04×58 | +0.14×260 | +0.23×130 | +0.85×112 |
-| EPD3 | LONG | sha | +0.149 | +0.27×281 | -0.05×137 | +0.26×1381 | -0.48×326 | +0.24×507 |
+| EPD3 | LONG | sha | +0.150 | +0.27×281 | -0.05×137 | +0.26×1382 | -0.48×326 | +0.24×507 |
 | SRA2 | SHORT | sha | +0.997 | +1.31×15 | +0.63×36 | +1.15×102 | +0.75×23 | +0.98×46 |
 
 ## Join-Grenzen (ehrlich)
 
 - Regime = RULE_recon (debounced) aus dem gespeicherten regime-Stream; T-031 validierte das zu 91.85% gegen aufgezeichnetes regime_at_open. Residual = Warm-up + Ingestion-Outage-Desync.
+- As-of-Join setzt voraus, dass trade.open_time (AI) / time (classic) und regime_history.ts DIESELBE naive Uhr tragen (R3-TZ-Baustelle, P1.8/UTC_POLICY). Ein systematischer Offset (z.B. +3h) würde die Regime-Zuordnung zeitlich verschieben; da Gated+Ungated denselben Offset teilen, bleibt der DIFF (und damit RESCUED/IMPROVED) robust, nur die absolute Zell-Attribution kann verschmieren.
 - Der OOS-Gate-Uplift misst die REGIME-Achse allein — NICHT die Live-Whitelist-Mechanik (nicht historisch rekonstruierbar, T-031), Cornix-Routing oder Regime-Auto-Close. Er ist eine Obergrenze dessen, was Regime-Konditionierung theoretisch bringt; Live-Gating kann darunter liegen.
 - Outcome = realized status (TP1-Touch-Win) → gestaffelter Move, Monitor-Rauschen (P1.2/P2.7) trifft gated+ungated gleich → der DIFF ist robuster als das Absolutniveau.
 - Günstige Regimes werden datengetrieben gewählt (mean-net>0 auf Train) — bei 5 Regimes ist die Multiple-Comparison-Gefahr gering, aber der OOS-Split ist die eigentliche Absicherung; ein In-Sample-Gate wäre wertlos.

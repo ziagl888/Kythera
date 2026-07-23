@@ -1,13 +1,13 @@
 {
   "task": "T-2026-KYT-9050-032",
   "phase": "B",
-  "generated_at": "2026-07-23 06:37:56.810035+00:00",
-  "rh_rows": 73435,
+  "generated_at": "2026-07-23 06:42:50.388954+00:00",
+  "rh_rows": 73436,
   "rh_span": [
     "2026-01-18 18:15:00",
-    "2026-07-23 06:35:01.202806"
+    "2026-07-23 06:40:00.422724"
   ],
-  "n_trades": 276213,
+  "n_trades": 276221,
   "min_leg_n": 150,
   "min_cell": 20,
   "soft_hl": 192,
@@ -775,13 +775,13 @@
       "direction": "LONG",
       "source": "ai",
       "bucket": "active",
-      "n": 725,
-      "n_regime_joined": 725,
-      "overall_mean_net": -0.1597,
+      "n": 726,
+      "n_regime_joined": 726,
+      "overall_mean_net": -0.1591,
       "cells": {
         "HIGH_VOLA": {
-          "n": 137,
-          "mean_net": -1.1503
+          "n": 138,
+          "mean_net": -1.1401
         },
         "CHOP": {
           "n": 325,
@@ -802,26 +802,26 @@
       },
       "rule_gate": {
         "insufficient": false,
-        "n_train": 362,
+        "n_train": 363,
         "n_test": 363,
         "favorable_regimes": [
           "TRANSITION",
           "TREND_DOWN"
         ],
-        "ungated_mean_net": 0.1542,
+        "ungated_mean_net": 0.1488,
         "gated_mean_net": 0.6685,
         "kept_frac": 0.218,
         "n_kept": 79,
-        "delta": 0.5143
+        "delta": 0.5197
       },
       "soft_gate": {
         "insufficient": false,
-        "n_train": 362,
+        "n_train": 363,
         "n_test": 363,
         "favorable_regimes": [
           "TREND_DOWN"
         ],
-        "ungated_mean_net": 0.1542,
+        "ungated_mean_net": 0.1488,
         "gated_mean_net": null,
         "kept_frac": 0.0,
         "n_kept": 0,
@@ -1069,17 +1069,17 @@
       "direction": "LONG",
       "source": "ai",
       "bucket": "shadow",
-      "n": 2632,
-      "n_regime_joined": 2632,
-      "overall_mean_net": 0.1494,
+      "n": 2633,
+      "n_regime_joined": 2633,
+      "overall_mean_net": 0.1502,
       "cells": {
         "TREND_UP": {
           "n": 281,
           "mean_net": 0.2718
         },
         "CHOP": {
-          "n": 1381,
-          "mean_net": 0.2572
+          "n": 1382,
+          "mean_net": 0.2585
         },
         "HIGH_VOLA": {
           "n": 326,
@@ -1097,24 +1097,24 @@
       "rule_gate": {
         "insufficient": false,
         "n_train": 1316,
-        "n_test": 1316,
+        "n_test": 1317,
         "favorable_regimes": [
           "TREND_UP"
         ],
-        "ungated_mean_net": 0.6133,
+        "ungated_mean_net": 0.6144,
         "gated_mean_net": 0.2658,
         "kept_frac": 0.106,
         "n_kept": 139,
-        "delta": -0.3475
+        "delta": -0.3486
       },
       "soft_gate": {
         "insufficient": false,
         "n_train": 1316,
-        "n_test": 1316,
+        "n_test": 1317,
         "favorable_regimes": [
           "HIGH_VOLA"
         ],
-        "ungated_mean_net": 0.6133,
+        "ungated_mean_net": 0.6144,
         "gated_mean_net": null,
         "kept_frac": 0.0,
         "n_kept": 0,
@@ -1128,13 +1128,13 @@
       "direction": "SHORT",
       "source": "ai",
       "bucket": "active",
-      "n": 3579,
-      "n_regime_joined": 3579,
-      "overall_mean_net": -0.062,
+      "n": 3580,
+      "n_regime_joined": 3580,
+      "overall_mean_net": -0.0617,
       "cells": {
         "CHOP": {
-          "n": 1741,
-          "mean_net": -0.1185
+          "n": 1742,
+          "mean_net": -0.1178
         },
         "HIGH_VOLA": {
           "n": 522,
@@ -1155,7 +1155,7 @@
       },
       "rule_gate": {
         "insufficient": false,
-        "n_train": 1789,
+        "n_train": 1790,
         "n_test": 1790,
         "favorable_regimes": [
           "CHOP",
@@ -1164,22 +1164,22 @@
           "TREND_DOWN",
           "TREND_UP"
         ],
-        "ungated_mean_net": -0.4513,
-        "gated_mean_net": -0.4513,
+        "ungated_mean_net": -0.4545,
+        "gated_mean_net": -0.4545,
         "kept_frac": 1.0,
         "n_kept": 1790,
         "delta": 0.0
       },
       "soft_gate": {
         "insufficient": false,
-        "n_train": 1789,
+        "n_train": 1790,
         "n_test": 1790,
         "favorable_regimes": [
           "CHOP",
           "HIGH_VOLA"
         ],
-        "ungated_mean_net": -0.4513,
-        "gated_mean_net": -0.4513,
+        "ungated_mean_net": -0.4545,
+        "gated_mean_net": -0.4545,
         "kept_frac": 1.0,
         "n_kept": 1790,
         "delta": 0.0
@@ -3098,17 +3098,17 @@
       "direction": "LONG",
       "source": "classic",
       "bucket": "active",
-      "n": 10319,
-      "n_regime_joined": 10319,
-      "overall_mean_net": -0.3343,
+      "n": 10320,
+      "n_regime_joined": 10320,
+      "overall_mean_net": -0.3341,
       "cells": {
         "TRANSITION": {
           "n": 4877,
           "mean_net": -0.3062
         },
         "CHOP": {
-          "n": 3153,
-          "mean_net": -0.4233
+          "n": 3154,
+          "mean_net": -0.4228
         },
         "HIGH_VOLA": {
           "n": 2050,
@@ -3125,10 +3125,10 @@
       },
       "rule_gate": {
         "insufficient": false,
-        "n_train": 5159,
+        "n_train": 5160,
         "n_test": 5160,
         "favorable_regimes": [],
-        "ungated_mean_net": -0.1931,
+        "ungated_mean_net": -0.1924,
         "gated_mean_net": null,
         "kept_frac": 0.0,
         "n_kept": 0,
@@ -3136,10 +3136,10 @@
       },
       "soft_gate": {
         "insufficient": false,
-        "n_train": 5159,
+        "n_train": 5160,
         "n_test": 5160,
         "favorable_regimes": [],
-        "ungated_mean_net": -0.1931,
+        "ungated_mean_net": -0.1924,
         "gated_mean_net": null,
         "kept_frac": 0.0,
         "n_kept": 0,
@@ -3153,9 +3153,9 @@
       "direction": "SHORT",
       "source": "classic",
       "bucket": "active",
-      "n": 104189,
-      "n_regime_joined": 104189,
-      "overall_mean_net": -0.3046,
+      "n": 104191,
+      "n_regime_joined": 104191,
+      "overall_mean_net": -0.3047,
       "cells": {
         "TRANSITION": {
           "n": 49487,
@@ -3166,8 +3166,8 @@
           "mean_net": -0.3608
         },
         "CHOP": {
-          "n": 31506,
-          "mean_net": -0.1731
+          "n": 31508,
+          "mean_net": -0.1733
         },
         "TREND_DOWN": {
           "n": 291,
@@ -3180,10 +3180,10 @@
       },
       "rule_gate": {
         "insufficient": false,
-        "n_train": 52094,
-        "n_test": 52095,
+        "n_train": 52095,
+        "n_test": 52096,
         "favorable_regimes": [],
-        "ungated_mean_net": -0.2183,
+        "ungated_mean_net": -0.2184,
         "gated_mean_net": null,
         "kept_frac": 0.0,
         "n_kept": 0,
@@ -3191,10 +3191,10 @@
       },
       "soft_gate": {
         "insufficient": false,
-        "n_train": 52094,
-        "n_test": 52095,
+        "n_train": 52095,
+        "n_test": 52096,
         "favorable_regimes": [],
-        "ungated_mean_net": -0.2183,
+        "ungated_mean_net": -0.2184,
         "gated_mean_net": null,
         "kept_frac": 0.0,
         "n_kept": 0,
@@ -3326,25 +3326,25 @@
       "direction": "SHORT",
       "source": "classic",
       "bucket": "active",
-      "n": 27352,
-      "n_regime_joined": 27352,
-      "overall_mean_net": -0.1853,
+      "n": 27354,
+      "n_regime_joined": 27354,
+      "overall_mean_net": -0.1855,
       "cells": {
         "TRANSITION": {
           "n": 12050,
           "mean_net": -0.2862
         },
         "CHOP": {
-          "n": 8410,
-          "mean_net": -0.0663
+          "n": 8411,
+          "mean_net": -0.0662
         },
         "HIGH_VOLA": {
           "n": 6474,
           "mean_net": -0.1076
         },
         "TREND_DOWN": {
-          "n": 199,
-          "mean_net": -1.1206
+          "n": 200,
+          "mean_net": -1.1405
         },
         "TREND_UP": {
           "n": 219,
@@ -3353,10 +3353,10 @@
       },
       "rule_gate": {
         "insufficient": false,
-        "n_train": 13676,
-        "n_test": 13676,
+        "n_train": 13677,
+        "n_test": 13677,
         "favorable_regimes": [],
-        "ungated_mean_net": -0.0072,
+        "ungated_mean_net": -0.0071,
         "gated_mean_net": null,
         "kept_frac": 0.0,
         "n_kept": 0,
@@ -3364,12 +3364,12 @@
       },
       "soft_gate": {
         "insufficient": false,
-        "n_train": 13676,
-        "n_test": 13676,
+        "n_train": 13677,
+        "n_test": 13677,
         "favorable_regimes": [
           "TRANSITION"
         ],
-        "ungated_mean_net": -0.0072,
+        "ungated_mean_net": -0.0071,
         "gated_mean_net": -0.0414,
         "kept_frac": 0.032,
         "n_kept": 437,
@@ -3560,6 +3560,7 @@
   ],
   "join_limits": [
     "Regime = RULE_recon (debounced) aus dem gespeicherten regime-Stream; T-031 validierte das zu 91.85% gegen aufgezeichnetes regime_at_open. Residual = Warm-up + Ingestion-Outage-Desync.",
+    "As-of-Join setzt voraus, dass trade.open_time (AI) / time (classic) und regime_history.ts DIESELBE naive Uhr tragen (R3-TZ-Baustelle, P1.8/UTC_POLICY). Ein systematischer Offset (z.B. +3h) w\u00fcrde die Regime-Zuordnung zeitlich verschieben; da Gated+Ungated denselben Offset teilen, bleibt der DIFF (und damit RESCUED/IMPROVED) robust, nur die absolute Zell-Attribution kann verschmieren.",
     "Der OOS-Gate-Uplift misst die REGIME-Achse allein \u2014 NICHT die Live-Whitelist-Mechanik (nicht historisch rekonstruierbar, T-031), Cornix-Routing oder Regime-Auto-Close. Er ist eine Obergrenze dessen, was Regime-Konditionierung theoretisch bringt; Live-Gating kann darunter liegen.",
     "Outcome = realized status (TP1-Touch-Win) \u2192 gestaffelter Move, Monitor-Rauschen (P1.2/P2.7) trifft gated+ungated gleich \u2192 der DIFF ist robuster als das Absolutniveau.",
     "G\u00fcnstige Regimes werden datengetrieben gew\u00e4hlt (mean-net>0 auf Train) \u2014 bei 5 Regimes ist die Multiple-Comparison-Gefahr gering, aber der OOS-Split ist die eigentliche Absicherung; ein In-Sample-Gate w\u00e4re wertlos.",

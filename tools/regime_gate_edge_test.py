@@ -116,7 +116,9 @@ def oos_gate_test(trades: list[dict], min_cell: int = MIN_CELL) -> dict:
     """Temporaler OOS-Gate-Test. `trades` je {ts, regime, net}, chronologisch
     sortierbar. Günstige Regimes auf der ersten Hälfte lernen, auf der zweiten
     anwenden. Gibt ungated/gated Mean + kept-fraction + Delta zurück."""
-    ts_sorted = sorted(trades, key=lambda t: (t["ts"] is None, t["ts"]))
+    # None-ts sinkt ans Ende (zweiter Key-Wert nur bei vorhandenem ts vergleichen
+    # → kein None<None-TypeError, falls je ein Trade ohne Open-Zeit durchkommt).
+    ts_sorted = sorted(trades, key=lambda t: (t["ts"] is None, t["ts"] if t["ts"] is not None else 0))
     n = len(ts_sorted)
     if n < 2 * min_cell:
         return {"insufficient": True, "n": n}
@@ -493,6 +495,10 @@ def build_report(meta: dict) -> str:
 _JOIN_LIMITS = [
     "Regime = RULE_recon (debounced) aus dem gespeicherten regime-Stream; T-031 validierte das zu "
     "91.85% gegen aufgezeichnetes regime_at_open. Residual = Warm-up + Ingestion-Outage-Desync.",
+    "As-of-Join setzt voraus, dass trade.open_time (AI) / time (classic) und regime_history.ts DIESELBE "
+    "naive Uhr tragen (R3-TZ-Baustelle, P1.8/UTC_POLICY). Ein systematischer Offset (z.B. +3h) würde die "
+    "Regime-Zuordnung zeitlich verschieben; da Gated+Ungated denselben Offset teilen, bleibt der DIFF "
+    "(und damit RESCUED/IMPROVED) robust, nur die absolute Zell-Attribution kann verschmieren.",
     "Der OOS-Gate-Uplift misst die REGIME-Achse allein — NICHT die Live-Whitelist-Mechanik "
     "(nicht historisch rekonstruierbar, T-031), Cornix-Routing oder Regime-Auto-Close. Er ist eine "
     "Obergrenze dessen, was Regime-Konditionierung theoretisch bringt; Live-Gating kann darunter liegen.",
