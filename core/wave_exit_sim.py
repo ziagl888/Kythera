@@ -74,7 +74,7 @@ def _leg_exit(
     next_tp = 0
     exit_reason = None
     close_price = None
-    exit_idx = None
+    exit_idx = fill_idx  # always overwritten below; init to a valid int (not None)
 
     i = fill_idx
     while i < n:
