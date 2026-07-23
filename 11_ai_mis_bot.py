@@ -25,6 +25,7 @@ from core.mis_features import (
     add_advanced_features,
     assert_features_alive,
 )
+from core.signal_post import LEG_LIVE, LEG_SHADOW, route_legacy_leg
 from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_MIS_BOT - %(message)s')
@@ -474,6 +475,21 @@ def check_mis_models():
                     entry2 = entry1  # Einzel-Entry — exakt die simulierte Geometrie
                     sl = entry1 * (1 + rules["sl_pct"] / 100.0)
                     targets = [current_price * (1 - rules["tp_pct"] / 100.0)]  # TP ab Signalkurs
+
+                # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒
+                # keine Verhaltensänderung. MIS2-8H (beide Beine) + MIS2-24H/72H/168H LONG
+                # (Pump-Seite) sind geparkt → SHADOW (überwachter Trade statt Cornix); die
+                # SHORT/Dump-Seite von 24H/72H/168H bleibt live (realisiert besser, Audit).
+                # Rein additiv am Post-Zweig (Regel 4). Der Live-Block postet 5 Targets →
+                # n_show=5 hält die Monitor-Parität (P2.31). best_conf = kalibrierte Conf.
+                _route = route_legacy_leg(
+                    conn, module_tag, best_direction, symbol, float(best_conf), entry1, entry2, sl, targets, n_show=5
+                )
+                if _route != LEG_LIVE:
+                    if _route == LEG_SHADOW:
+                        conn.commit()
+                    continue
+
                 lev = get_max_leverage(symbol, 20)
                 emoji = "🚀 PUMP SIGNAL (MIS)" if is_long else "💥 DUMP SIGNAL (MIS)"
                 strength = "STRONG" if best_prob >= best_threshold + 0.1 else "MODERATE"

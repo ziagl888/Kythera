@@ -22,7 +22,14 @@ from core.database import get_db_connection
 from core.funding_features import FUNDING_FEATURES, funding_features_cached
 from core.market_utils import get_max_leverage
 from core.model_artifacts import load_artifact, maybe_reload
-from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal_gated
+from core.signal_post import (
+    LEG_LIVE,
+    LEG_SHADOW,
+    has_open_ai_signal,
+    log_prediction,
+    post_ai_signal_gated,
+    route_legacy_leg,
+)
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR - %(message)s')
@@ -1297,6 +1304,22 @@ def process_coin_logics(conn, symbol):
 
         # FIX: echte Zonen + ggf. 5%-Target wenn letzte Zone zu nah
         targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+
+        # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate für das Legacy-EPD2-
+        # Direktpost-Bein. Default LIVE ⇒ keine Verhaltensänderung. EPD2 ist in BEIDEN
+        # Richtungen geparkt → SHADOW (überwachter Trade statt Cornix); der EPD3-Retrain
+        # (SHORT jetzt ebenfalls geparkt, LONG weiter Shadow) läuft separat über
+        # _emit_epd3_shadow/post_ai_signal_gated. Rein additiv am Post-Zweig (Regel 4).
+        # n_show=len(targets): der Legacy-EPD2-LIVE-Pfad speichert die VOLLE Target-Liste
+        # in ai_signals (json.dumps(targets), Cornix zeigt nur [:3]) — der geparkte
+        # Shadow spiegelt das für Audit-Kontinuität mit der historischen EPD2-Serie.
+        _route = route_legacy_leg(
+            conn, module_tag, best_direction, symbol, best_prob, entry1, entry2, sl, targets, n_show=len(targets)
+        )
+        if _route != LEG_LIVE:
+            if _route == LEG_SHADOW:
+                conn.commit()
+            return
 
         lev = get_max_leverage(symbol, 20)
 

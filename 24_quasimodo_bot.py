@@ -25,6 +25,7 @@ from core.candles import history_start, read_candles_with_indicators
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import check_cooldown, get_max_leverage, load_coins, update_cooldown
+from core.signal_post import LEG_LIVE, LEG_SHADOW, route_legacy_leg
 
 # 🛠️ CONFIGURATION
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - QM_SNIPER - %(message)s')
@@ -445,6 +446,19 @@ def send_cornix_signal(conn, df, symbol, direction, entry, sl, tp, confidence, p
     tp2 = tp
 
     targets = [float(tp1), float(tp2)]
+
+    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
+    # Verhaltensänderung. QM_1H SHORT ist geparkt → SHADOW (überwachter Trade statt
+    # Cornix); LONG bleibt live. QM_4H fährt der Bot ohnehin nicht mehr. Rein additiv
+    # am Post-Zweig (Regel 4). Entry ist ein Einzel-Entry (entry1==entry2); die
+    # ai_signals-confidence ist wie im Live-Pfad prob (= confidence/100).
+    _route = route_legacy_leg(
+        conn, module_tag, direction, symbol, confidence / 100, entry, entry, sl, targets, n_show=len(targets)
+    )
+    if _route != LEG_LIVE:
+        if _route == LEG_SHADOW:
+            conn.commit()
+        return
 
     cornix_msg = f"""📈 Signal for {symbol} 📈
 🚨 Direction: {direction}

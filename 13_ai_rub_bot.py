@@ -21,7 +21,7 @@ from core.funding_features import FUNDING_FEATURES, funding_features_asof, load_
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.model_artifacts import load_artifact, maybe_reload
 from core.rub_features import RUB_FEATURES, build_rub_features, rub_event_type, rub_trend
-from core.signal_post import post_shadow_ai_signal
+from core.signal_post import LEG_LIVE, LEG_SHADOW, post_shadow_ai_signal, route_legacy_leg
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_RUB_BOT - %(message)s')
@@ -444,6 +444,18 @@ def check_rubberband_conditions():
             # whatever is stored in ai_signals.targets. Storing the full 20-zone list
             # made the monitor score phantom TPs the subscriber never saw.
             n_show = 3
+
+            # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒
+            # keine Verhaltensänderung. RUB2 ist in BEIDEN Richtungen geparkt → SHADOW
+            # (überwachter Trade statt Cornix); der RUB3/RUB4-LONG-Challenger bleibt
+            # unverändert Shadow (oben, _emit_rub3_shadow). Rein additiv (Regel 4).
+            _route = route_legacy_leg(
+                conn, module_tag, direction, symbol, prob, entry1, entry2, sl, targets, n_show=n_show
+            )
+            if _route != LEG_LIVE:
+                if _route == LEG_SHADOW:
+                    conn.commit()
+                continue
 
             lev = get_max_leverage(symbol, 20)
 

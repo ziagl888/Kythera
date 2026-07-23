@@ -42,7 +42,7 @@ from core.research_features import (
     build_fif1_row,
     fetch_context_frame,
 )
-from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal
+from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal_gated
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - FIF1_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -240,39 +240,46 @@ def process_signal(conn, sig: dict) -> None:
         f"FIF1 Kandidat {symbol} {direction} (FIFO #{sig['id']}) | Prob {prob:.3f} (Gate {ARTIFACT['threshold']:.2f})"
     )
 
-    if (
-        prob >= ARTIFACT["threshold"]
-        and LIVE_POSTING
-        # FIF1 von TSM1 abgelöst (T-2026-CU-9050-183): SILENT-Leg im shadow_gate
-        # parkt den Live-Post, ohne CH_FIF1=0 zu setzen (das würde TSM1s geerbten
-        # Ziel-Channel mitkillen). Entpark = FIF1-Zeilen aus _LIFECYCLE entfernen.
-        and shadow_gate.is_live(ARTIFACT["tag"], direction)
-        and not has_open_ai_signal(conn, symbol, direction, ARTIFACT["tag"])
-    ):
-        # ORIGINAL-FIFO-Geometrie durchreichen — die Selektion ist der einzige
-        # Unterschied zum Quell-Signal (sonst misst der A/B-Vergleich nichts).
-        post_ai_signal(
+    # FIF1 von TSM1 abgelöst (T-2026-CU-9050-183) → SILENT parkte den Live-Post ohne
+    # CH_FIF1=0 zu setzen. T-2026-KYT-9050-033 (Audit T-032) revived FIF1 als SHADOW:
+    # der Bot hatte nur einen LIVE-oder-nichts-Zweig, jetzt routet er über
+    # post_ai_signal_gated (Muster wie Bot 9/10/12) — der shadow_gate-Lifecycle
+    # entscheidet LIVE (Cornix an CH_FIF1) vs. SHADOW (monitored, kein Cornix) vs.
+    # SILENT/RETIRED (No-op). LIVE braucht zusätzlich den NEW_IDEAS-Master-Switch;
+    # SHADOW nicht (ohnehin kein Cornix). ORIGINAL-FIFO-Geometrie bleibt (Selektion
+    # ist der einzige Unterschied zum Quell-Signal).
+    tag = ARTIFACT["tag"]
+    st = shadow_gate.leg_status(tag, direction)
+    fire = prob >= ARTIFACT["threshold"] and not has_open_ai_signal(conn, symbol, direction, tag)
+    if fire and ((st == shadow_gate.LIVE and LIVE_POSTING) or st == shadow_gate.SHADOW):
+        outcome = post_ai_signal_gated(
             conn,
-            TARGET_CHANNEL_ID,
-            ARTIFACT["tag"],
-            symbol,
+            tag,
             direction,
+            TARGET_CHANNEL_ID,
+            symbol,
             conf,
-            entry1=entry,
-            entry2=entry,
-            sl=sl,
-            targets=[target1],
+            entry,
+            entry,
+            sl,
+            [target1],
+            "AI FIFO Filter Model",
             n_show=1,
-            source_desc="AI FIFO Filter Model",
+            dedup_hours=0,
             extra_info_lines=[f"Quelle: Fast In And Out #{sig['id']}"],
         )
-        log_prediction(conn, ARTIFACT["tag"], symbol, direction, entry, conf, posted=True, dedup_hours=0)
+        if outcome == "live":
+            log_prediction(conn, tag, symbol, direction, entry, conf, posted=True, dedup_hours=0)
+        elif outcome is None:
+            # SILENT/RETIRED oder Shadow-Dedup: A/B-Vollständigkeit weiter loggen.
+            log_prediction(conn, tag, symbol, direction, entry, conf, posted=False, dedup_hours=0)
+        # outcome == "shadow": post_shadow_ai_signal hat die Prediction bereits geloggt.
     else:
-        if prob >= ARTIFACT["threshold"] and not LIVE_POSTING:
+        if prob >= ARTIFACT["threshold"] and st == shadow_gate.LIVE and not LIVE_POSTING:
             logger.info(f"👻 SHADOW-Post {symbol} {direction} (p={prob:.2f}) — Live-Posting deaktiviert.")
         # dedup_hours=0: JEDER FIFO-Kandidat wird geloggt (A/B-Vollständigkeit) —
         # Dedupe übernimmt das Seen-Set des Zeitfenster-Pollings.
-        log_prediction(conn, ARTIFACT["tag"], symbol, direction, entry, conf, posted=False, dedup_hours=0)
+        log_prediction(conn, tag, symbol, direction, entry, conf, posted=False, dedup_hours=0)
     conn.commit()
 
 

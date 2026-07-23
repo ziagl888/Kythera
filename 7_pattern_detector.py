@@ -19,6 +19,7 @@ from core.candles import read_candles
 from core.config import TELEGRAM_CHANNELS
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.signal_post import LEG_LIVE, LEG_SHADOW, route_legacy_leg
 from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PATTERN_DET - %(message)s')
@@ -188,6 +189,18 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
     targets = trade_setup['targets']
 
     lev = get_max_leverage(symbol, 20)
+
+    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
+    # Verhaltensänderung, bis ein (module, direction)-Bein im shadow_gate-Register
+    # steht. BR SHORT-Beine (2h/4h) + BR1D/BR1Hv2 (beide) sind geparkt → SHADOW:
+    # überwachter Trade (ai_signals) statt Cornix. Rein additiv am Post-Zweig
+    # (Regel 4: kein Doppel-Post/Orphan). BR-Posts tragen confidence=1.0 (kein Modell);
+    # ai_signals speichert die volle Target-Liste → n_show=len(targets) spiegelt das.
+    _route = route_legacy_leg(conn, module, direction, symbol, 1.0, entry1, entry2, sl, targets, n_show=len(targets))
+    if _route != LEG_LIVE:
+        if _route == LEG_SHADOW:
+            conn.commit()
+        return
 
     # Cornix Nachricht bauen
     lines = [

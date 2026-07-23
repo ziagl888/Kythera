@@ -70,10 +70,15 @@ def shadow_posting_enabled() -> bool:
 #       geladen, aber die Richtung geht (noch) nicht live.
 _LIFECYCLE: dict[tuple[str, str], str] = {
     # ── (A) Neue-Generation-Shadow-Kandidaten (staging, nicht promotet) ──
-    # ATS2: Retrain von ATS1 (Bot 12). ATS1 ist stummgeschaltet (Block (C),
-    # T-2026-CU-9050-127) — Bot 12 läuft nur für die ATS2-Shadow-Sammlung.
-    ("ATS2", "LONG"): SHADOW,
-    ("ATS2", "SHORT"): SHADOW,
+    # ATS2 (Bot 12): am 2026-07-23 SHADOW→LIVE promotet (T-2026-KYT-9050-033, Audit
+    # T-032 — ATS2-Shadow schlägt das stummgeschaltete ATS1 in beiden Richtungen:
+    # LONG +0.31%×612, SHORT dünn). BEIDE Beine daher NICHT mehr gelistet ⇒ Default
+    # LIVE. Bot 12 postet ATS2 jetzt über post_ai_signal_gated (T-033-Rewire von
+    # _emit_ats2_shadow), sodass der LIVE-Zustand echten Cornix-Post erzeugt.
+    #   DEPLOY-VORBEDINGUNG (Michi, harte Regel 2): ats2_model_{LONG,SHORT}.pkl aus
+    #   staging_models/ nach Repo-Root promoten — der LIVE-Loader liest den Root-Pfad
+    #   (shadow_artifact_path), sonst lädt ATS2 nichts und schweigt. Thresholds sind
+    #   real (LONG 0.7825 / SHORT 0.9084), also KEIN Flood-Risiko.
     # ATB2: Converging-Channel-Neuaufbau (Bot 14). ATB1 ist stummgeschaltet (C); ATB2 hat
     # optimal_threshold=null (LONG) bzw. ist nicht deploybar (SHORT) → braucht
     # zwingend Shadow-Datensammlung, bevor je ein Operating-Point wählbar ist.
@@ -86,9 +91,15 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # mehr gibt → Shadow REVIVED SRA2. SHORT-Threshold ist null (jedes Setup).
     # SRA2 LONG am 2026-07-21 LIVE promotet (T-2026-CU-9050-185, @0.6424 → CH_AI_SR,
     # koexistierend mit SRA1). Artefakt sra2_model_LONG.* nach Repo-Root promotet
-    # (Regel 2, Operator-Entscheid Michi). SHORT bleibt SHADOW — kein deploybarer
-    # Edge (threshold=None; Label-Quelle closed_trades3 tot seit 23.02).
-    ("SRA2", "SHORT"): SHADOW,
+    # (Regel 2, Operator-Entscheid Michi).
+    # SRA2 SHORT am 2026-07-23 SHADOW→LIVE promotet (T-2026-KYT-9050-033, Audit T-032:
+    # SRA2-SHORT-Shadow +1.00%×222). NICHT mehr gelistet ⇒ Default LIVE; Bot 9 postet
+    # SRA2 SHORT bereits über post_ai_signal_gated (kein Rewire nötig).
+    #   DEPLOY-VORBEDINGUNGEN (Michi): (1) sra2_model_SHORT.json aus staging_models/
+    #   nach Repo-Root (Regel 2); (2) ⚠ optimal_threshold ist NULL (Meta: deployable
+    #   false, val avg_net_pnl −0.079%) → LIVE würde auf JEDEM S/R-SHORT-Kandidaten
+    #   posten (Cornix-Flood, kein Prob-Gate). Vor Go-Live einen Threshold setzen bzw.
+    #   retrainen — sonst ist die Promotion ein Flood-Risiko (im Report geflaggt).
     # MAX2 (T-2026-KYT-9050-020): KEIN Modell — ein Fork der SRA2-LONG-Emission in
     # Bot 9 (_emit_max2), der denselben SRA2-LONG-Trade coin-gefiltert (config.
     # MAIN_CHANNEL_COINS) nach CH_MAIN postet und den retireten klassischen
@@ -123,10 +134,17 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # Modell bereits unter Tag "EPD2" = EPD_LEGACY_TAG; ein Shadow unter "EPD2"
     # würde über den dortigen Active-Trade-Check `model IN ('EPD2','EPD2')` einen
     # Live-Post unterdrücken). Deshalb eigener Tag "EPD3" — analog zu RUB3.
-    # EPD3 SHORT am 2026-07-21 LIVE promotet (T-2026-CU-9050-185, @0.6737 →
-    # CH_PUMP_AI, koexistierend mit EPD2). epd2_model_SHORT.pkl nach Repo-Root
-    # promotet (Regel 2). LONG bleibt SHADOW — kein positiver Monat (threshold=None).
+    # EPD3 SHORT war am 2026-07-21 LIVE promotet (T-2026-CU-9050-185, @0.6737 →
+    # CH_PUMP_AI). Am 2026-07-23 LIVE→SHADOW GEPARKT (T-2026-KYT-9050-033, Audit T-032:
+    # EPD3-SHORT [act] net −0.06%×3568 — Edge weg). Bot 10 routet EPD3 über
+    # post_ai_signal_gated ⇒ reiner Register-Flip. LONG bleibt SHADOW (threshold=None).
+    #   ⚠ DEPLOY-HINWEIS (Michi): das Live-Artefakt liegt als epd3_model_SHORT.pkl im
+    #   Repo-ROOT; als SHADOW-Bein liest shadow_artifact_path staging_models/
+    #   epd3_model_SHORT.pkl — die Datei fehlt dort. Ohne sie lädt EPD3 SHORT nicht und
+    #   wird effektiv STILL (statt shadow-getrackt). Für echte Shadow-Historie das
+    #   Artefakt nach staging_models/ kopieren; sonst ist der Park schlicht Silence (ok).
     ("EPD3", "LONG"): SHADOW,
+    ("EPD3", "SHORT"): SHADOW,
     # ── (C) Stummgeschaltete Alt-Beine (Operator Michi, T-2026-CU-9050-127) ──
     # Bots 12/14 werden entparkt, damit ATS2/ATB2 im Shadow laufen — aber die
     # ALTEN Modelle ATS1/ATB1 sollen NICHT live posten und auch nicht shadowen:
@@ -136,13 +154,15 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     ("ATS1", "SHORT"): SILENT,
     ("ATB1", "LONG"): SILENT,
     ("ATB1", "SHORT"): SILENT,
-    # FIF1: von TSM1 (SHORT → CH_FIF1) abgelöst (T-2026-CU-9050-183, Operator-
-    # Entscheid Michi aus dem 14:00-Report-Review). Bot 33 gated seinen Live-Post
-    # jetzt auf is_live("FIF1", direction) → SILENT parkt BEIDE Beine (kein Live-
-    # Post, kein Shadow), ohne CH_FIF1=0 zu setzen — das würde TSM1s geerbten
-    # Ziel-Channel mitkillen. Entpark = diese zwei Zeilen entfernen.
-    ("FIF1", "LONG"): SILENT,
-    ("FIF1", "SHORT"): SILENT,
+    # FIF1: von TSM1 (SHORT → CH_FIF1) abgelöst (T-2026-CU-9050-183). Am 2026-07-23
+    # SILENT→SHADOW revived (T-2026-KYT-9050-033, Audit T-032: FIF1 weiter als
+    # überwachter Shadow beobachten statt ganz still). Bot 33 hatte nur einen
+    # LIVE-oder-nichts-Zweig; T-033 ergänzt einen SHADOW-Zweig (post_shadow_ai_signal),
+    # sonst erzeugt die Revive keine monitored Trades. TSM1 bleibt der Live-Nachfolger
+    # auf CH_FIF1 (Block (D)); der FIF1-Shadow kollidiert nicht (eigener Tag, kein
+    # Cornix). Vollständiges Silence wieder = diese zwei Zeilen auf SILENT setzen.
+    ("FIF1", "LONG"): SHADOW,
+    ("FIF1", "SHORT"): SHADOW,
     # ── (D) Regelbasierte Shadow-Forwarder (T-2026-CU-9050-149) ──
     # Studien-Kandidaten K1/K2/K5/K7 sind REGELN, kein Modell — kein Artefakt in
     # SHADOW_ARTIFACTS. Der Bot rechnet das Signal selbst und emittiert auf dem
@@ -160,6 +180,69 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # Der Live-Post läuft über signal_post.post_ai_signal_gated in Bot 37/38/39;
     # ein Rückzug in den Shadow = die jeweilige (tag, dir)-Zeile hier wieder mit
     # SHADOW eintragen. LIS1 SHORT bleibt shadow-only (weiter falsifiziert).
+    #
+    # ══════════════════════════════════════════════════════════════════════════
+    # (E) Fleet-Reconfig nach Audit T-032 (T-2026-KYT-9050-033, Operator-Entscheid
+    #     Michi aus bot_results.xlsx). Alle Beine hier bluten realisiert und werden
+    #     geparkt (Cornix aus, monitored Shadow an) bzw. beide Beine stummgeschaltet.
+    #     Diese Tags posten NICHT über post_ai_signal_gated, sondern legacy-direkt;
+    #     ihre Bots konsultieren den Gate seit T-033 an der Emissions-Stelle über
+    #     core.signal_post.route_legacy_leg — der Register-Eintrag wird damit wirksam.
+    #     Keys sind UPPER-normalisiert (leg_status _norm()t den Lookup, nicht den Key).
+    # ── Park SHORT →SHADOW (LONG bleibt LIVE), Audit: SHORT-Bein netto-negativ ──
+    # BR (Bot 7, Pattern-Breakout): 2h/4h SHORT geparkt; LONG live. BR1H ist der
+    # PRE-Rename-Tag (Bot 7 postet 1h heute als BR1Hv2 = BR1HV2, s. (E)-Ganz-Block) —
+    # die BR1H-Zeile ist dokumentarisch (kein aktiver Emitter mehr).
+    ("BR1H", "SHORT"): SHADOW,
+    ("BR2H", "SHORT"): SHADOW,
+    ("BR4H", "SHORT"): SHADOW,
+    # BB (Bot 25, SMC-Sniper): 1h/4h SHORT geparkt; LONG live. TD (gleicher Bot)
+    # bleibt komplett LIVE (Audit KEEP) → keine TD-Zeile.
+    ("BB_1H", "SHORT"): SHADOW,
+    ("BB_4H", "SHORT"): SHADOW,
+    # QM (Bot 24, Quasimodo): 1h SHORT geparkt; LONG live. QM_4H fährt der Bot ohnehin
+    # nicht mehr (TIMEFRAMES=['1h']) → die QM_4H-Zeile ist dokumentarisch.
+    ("QM_1H", "SHORT"): SHADOW,
+    ("QM_4H", "SHORT"): SHADOW,
+    # ── Park LONG →SHADOW (SHORT bleibt LIVE), Audit: LONG-Bein netto-negativ ──
+    # MIS2 (Bot 11): 24h/72h/168h LONG geparkt (Pump-Seite bleibt hinter der besser
+    # realisierenden SHORT/Dump-Seite zurück); SHORT live. MIS2-8H steht im Ganz-Block.
+    ("MIS2-24H", "LONG"): SHADOW,
+    ("MIS2-72H", "LONG"): SHADOW,
+    ("MIS2-168H", "LONG"): SHADOW,
+    # EPD1: PRE-Rename-Tag (Bot 10 postet heute EPD2 = EPD_LEGACY_TAG). Kein aktiver
+    # EPD1-Emitter mehr → dokumentarisch; der Park wirkt über den EPD2-Ganz-Block.
+    ("EPD1", "LONG"): SHADOW,
+    # ── Ganz →SHADOW (beide Beine), Audit: beide Richtungen netto-negativ ──
+    # EPD2 (Bot 10, Legacy-Pump/Dump-Direktpost): beide Beine geparkt.
+    ("EPD2", "LONG"): SHADOW,
+    ("EPD2", "SHORT"): SHADOW,
+    # MIS2-8H (Bot 11): beide Beine geparkt (8h-Horizont laut Studie ohnehin negativ).
+    ("MIS2-8H", "LONG"): SHADOW,
+    ("MIS2-8H", "SHORT"): SHADOW,
+    # RUB2 (Bot 13, Rubberband — Legacy-LONG + RUB2_SHORT-Modell, beide Direktpost):
+    # beide Beine geparkt. RUB3/RUB4 (LONG-Challenger) bleiben unverändert Shadow (oben).
+    ("RUB2", "LONG"): SHADOW,
+    ("RUB2", "SHORT"): SHADOW,
+    # SRA1 (Bot 9, S/R-Legacy-Direktpost): beide Beine geparkt. SRA2 ist der Nachfolger
+    # (LONG + SHORT jetzt LIVE, s. (A)) → SRA1 tritt ab in den Shadow.
+    ("SRA1", "LONG"): SHADOW,
+    ("SRA1", "SHORT"): SHADOW,
+    # BB2_4H (Bot 25, BB-Retrain-Generation): beide Beine geparkt (Audit RETIRE beidseitig).
+    ("BB2_4H", "LONG"): SHADOW,
+    ("BB2_4H", "SHORT"): SHADOW,
+    # BR1D + BR1Hv2 (Bot 7): beide Beine geparkt (1d + der aktuelle 1h-Tag BR1HV2).
+    ("BR1D", "LONG"): SHADOW,
+    ("BR1D", "SHORT"): SHADOW,
+    ("BR1HV2", "LONG"): SHADOW,
+    ("BR1HV2", "SHORT"): SHADOW,
+    # ABR2 (Bot 18, Break&Retest Gen-2 — SHORT-Binärmodell + LONG-Funding-Gate, beide
+    # posten als ABR2): beide Beine geparkt. ABR1 (Legacy-Fallback-Tag) bleibt Default
+    # LIVE, wird vom Bot aber nur bei fehlender Binär-Meta emittiert (heute nicht).
+    ("ABR2", "LONG"): SHADOW,
+    ("ABR2", "SHORT"): SHADOW,
+    # "Main Channel" (klassisch): bereits retired via Detektor-Dispatch-Removal
+    # (T-2026-KYT-9050-020, ersetzt durch MAX2) → kein Emitter, kein Eintrag nötig.
 }
 
 # RETIRED: Tags, die in der closed_ai_signals-Historie vorkommen, aber von keinem

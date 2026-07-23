@@ -25,6 +25,7 @@ from core.candles import read_candles
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
+from core.signal_post import LEG_LIVE, LEG_SHADOW, route_legacy_leg
 from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - ABR1_BOT - %(message)s')
@@ -520,6 +521,19 @@ def send_signal(conn, symbol, direction, prob, close_price, model_tag_override=N
     model_tag = MODELS[direction].get('model_id', MODEL_ID) if MODELS.get(direction) else MODEL_ID
     if model_tag_override:
         model_tag = model_tag_override  # z. B. Funding-Gate-LONG postet als Generation 2
+
+    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
+    # Verhaltensänderung. ABR2 ist in beiden Richtungen geparkt → SHADOW (überwachter
+    # Trade statt Cornix); ABR1 (Legacy-Fallback-Tag) bleibt Default LIVE. Rein additiv
+    # am Post-Zweig (Regel 4). ai_signals speichert die volle Target-Liste →
+    # n_show=len(targets); confidence ist wie im Live-Pfad prob.
+    _route = route_legacy_leg(
+        conn, model_tag, direction, symbol, prob, entry1, entry2, sl, targets, n_show=len(targets)
+    )
+    if _route != LEG_LIVE:
+        if _route == LEG_SHADOW:
+            conn.commit()
+        return
 
     lines = [
         f"📈 Signal for {symbol} 📈",

@@ -1,3 +1,49 @@
+## [2026-07-23] Fleet-Reconfig nach Audit T-032 — Lifecycle-Flips pro Bot × Richtung (T-2026-KYT-9050-033)
+
+Operator-freigegebene Umverdrahtung des Money-Pfads auf Basis des T-032-Realized-
+Audits — reiner Code-Change: kein Deploy, kein Live-DB-Write, keine Artefakt-Root-
+Moves (alle Deploy-Vorbedingungen an Michi geflaggt). Report:
+`staging_models/replay/fleet_reconfig_t033.md`.
+
+**Kernbefund (Mechanismus-Mapping):** Der Plan war als reiner `shadow_gate`-Register-
+Flip gedacht, aber nur ein Teil der Beine läuft über `post_ai_signal_gated` (dort
+genügt der Flip). Die Mehrheit der zu parkenden Beine (BR/BB/QM-Pattern, SRA1, RUB2,
+EPD2-Legacy, ABR2, MIS2) postet **legacy-direkt** und konsultierte den Gate gar nicht
+— ein reiner Register-Eintrag wäre dort ein stiller No-op gewesen. Lösung: ein
+zentraler, rein-additiver Router `core.signal_post.route_legacy_leg` (Default LIVE ⇒
+byte-identisch; SHADOW ⇒ monitored `ai_signals` ohne Cornix; SILENT/RETIRED ⇒ No-op),
+den die Legacy-Bots (7/9/10/11/13/18/24/25) an ihrer Emissions-Stelle aufrufen. Das
+`shadow_gate`-Register ist damit die einzige Lifecycle-Quelle für gated- UND
+legacy-Bots.
+
+- **Promote SHADOW→LIVE:** ATS2 (beide Beine — Bot 12 `_emit_ats2_shadow`→`_emit_ats2`
+  auf `post_ai_signal_gated` umverdrahtet), SRA2-SHORT (Bot 9 schon gated).
+- **Park SHORT→SHADOW (LONG live):** BR2H/BR4H (Bot 7), BB_1H/BB_4H (Bot 25), QM_1H
+  (Bot 24).
+- **Park LONG→SHADOW (SHORT live):** MIS2-24H/72H/168H (Bot 11), EPD3-SHORT (Bot 10,
+  Register-Flip).
+- **Ganz →SHADOW (beide Beine):** EPD2, MIS2-8H, RUB2, SRA1, BB2_4H, BR1D, BR1Hv2,
+  ABR2. „Main Channel" bereits retired (T-020).
+- **Revive SILENT→SHADOW:** FIF1 (Bot 33 von `post_ai_signal` auf `post_ai_signal_gated`
+  umverdrahtet, damit SHADOW monitored Trades erzeugt).
+- **Bereits im Zielzustand (RETIRE/SILENT):** AIM1 (retired), ATS1/ATB1 (silent) —
+  keine Code-Änderung.
+
+**Deploy-Vorbedingungen (Michi, Regel 2 — NICHT Teil des Tasks):** ATS2- +
+SRA2-SHORT-Artefakte aus `staging_models/` → Repo-Root; ⚠ SRA2-SHORT hat
+`optimal_threshold=null` → vor Go-Live einen Threshold setzen (sonst Cornix-Flood auf
+jedem S/R-SHORT-Kandidaten); EPD3-SHORT-Artefakt für echte Shadow-Historie nach
+`staging_models/` kopieren; Fleet-Restart. **Nicht umsetzbar (geflaggt):** MIS1-Revive
+— Bot 11 lädt keine MIS1-Generation mehr (`kein Legacy-Fallback`); reines
+`leg_status`-Flip wäre ein Fake ohne Emitter → eigener Rebuild-Task.
+
+Verifikation: `test_shadow_gate.py` (Register-Goldens bewusst auf T-033-Stand refresht
++ neue `route_legacy_leg`-Tests, 23 grün), `test_signal_post_gated.py` (SILENT-Beispiel
+FIF1→ATS1 nachgezogen), `test_bot_catalog.py`/`test_published_targets.py`/
+`test_signal_orchestrator.py`, ruff + `ruff format --check` (0.15.17) clean. Pre-existing
+rot `test_fleet_definition::test_watchdog_view_is_unchanged` (Watchdog-Golden vermisst
+Bots 36–39) von diesem Task NICHT berührt.
+
 ## [2026-07-23] Fleet-Realized-Trade-Audit (DB-direkt) + Regime-Gate-Edge-Test — Retire-Kandidaten (T-2026-KYT-9050-032)
 
 DB-gebundener (strikt read-only) VPS-Fleet-Audit in zwei Phasen, reine Analyse +

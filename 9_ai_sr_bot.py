@@ -19,7 +19,7 @@ from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.model_artifacts import load_artifact_json, maybe_reload
-from core.signal_post import has_open_ai_signal, post_ai_signal_gated
+from core.signal_post import LEG_LIVE, LEG_SHADOW, has_open_ai_signal, post_ai_signal_gated, route_legacy_leg
 from core.sra_features import SRA2_FEATURES, build_sra2_features
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
@@ -417,6 +417,19 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
     # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne eingebetteten
     # Cornix-Block — Cornix parste sonst beide Nachrichten als Signale.
     html_caption = f"<b>💥 AI {module} {direction} SIGNAL</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n→ Direction: {direction}\n→ ML Confidence: <b>{confidence:.1%}</b>\n→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC"
+
+    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
+    # Verhaltensänderung. SRA1 ist in beiden Richtungen geparkt → SHADOW (überwachter
+    # Trade statt Cornix); SRA2 ist der Live-Nachfolger (s. shadow_gate). Rein additiv
+    # (Regel 4). Rückgabe False ⇒ der Caller loggt ml_predictions_master posted=False
+    # (wie bei Cooldown-Suppression). Hinweis: post_shadow_ai_signal loggt zusätzlich
+    # EINE Shadow-Prediction (trade_id=0) — bewusst in Kauf genommen; der monitored
+    # ai_signals-Trade (Audit-Datenquelle) bleibt via has_open singulär.
+    _route = route_legacy_leg(conn, module, direction, symbol, confidence, entry1, entry2, sl, targets, n_show=n_show)
+    if _route != LEG_LIVE:
+        if _route == LEG_SHADOW:
+            conn.commit()
+        return False
 
     with conn.cursor() as cur:
         # Cornix Text
