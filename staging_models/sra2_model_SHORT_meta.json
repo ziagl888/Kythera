@@ -29,7 +29,8 @@
     "resist_atr",
     "boll_width_atr"
   ],
-  "optimal_threshold": null,
+  "optimal_threshold": 0.58,
+  "optimal_threshold_source": "Operator-Entscheid Michi 2026-07-23 (T-2026-KYT-9050-036) aus den LIVE-realisierten SRA2-SHORT-Trades (188 Trades 2026-07-15..23, ml_predictions_master.confidence <-> closed_ai_signals-Outcome): +0.9%/Trade, 88% WR auf jedem Threshold (bestaetigt T-032-Audit +1.00% shadow). Das val_stats.deployable=false unten ist das STALE Trainings-Verdikt (Label-Quelle closed_trades3 seit Feb tot) und wird durch die Live-Shadow-Evidenz ueberholt. 0.58 schneidet den rausch-nahen Low-Conf-Tail (~78% Volumen behalten, +0.71% mean/88% WR). Caveat: 8d-Fenster/eine Marktphase = Start-Operating-Point, nach mehr Live-Daten nachjustieren.",
   "label_source": "closed_trades3 (Meta-Labeling; Semantik Operator+Code-verifiziert 2026-07-06)",
   "changes_vs_sra1": "Preis-Rohspalten raus (22 skalenfreie Features), Look-ahead-Fix (nur geschlossene 1h-Kerze), NaN nativ statt Median-Imputation, Isotonic + pick_threshold_safe",
   "split": "chronological 70/15/15 + 7d purge gap",

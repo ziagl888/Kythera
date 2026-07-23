@@ -1,3 +1,24 @@
+## [2026-07-23] SRA2-SHORT optimal_threshold=0.58 gesetzt — Flood-Hazard geschlossen (T-2026-KYT-9050-036)
+
+Schließt den in T-033/034 geflaggten Deploy-Hazard: SRA2-SHORT war auf LIVE
+promotet, aber `staging_models/sra2_model_SHORT_meta.json` trug
+`optimal_threshold: null` (stale Trainings-Verdikt, Label-Quelle `closed_trades3`
+seit Feb tot) → LIVE würde auf JEDEM S/R-SHORT-Kandidaten posten (Cornix-Flood)
+und der strikte LIVE-Loader `build_contract` crasht auf `float(None)`. Read-only
+Threshold-Analyse auf den **echten 188 SRA2-SHORT-Trades** (2026-07-15..23,
+`ml_predictions_master.confidence` ↔ `closed_ai_signals`-Outcome, `weighted_move_pct`
+−Fee): SRA2-SHORT ist auf **jedem** Threshold positiv (+0,9 %/Trade, 88 % WR —
+bestätigt den T-032-Audit +1,00 % shadow; das `deployable=false` war ein
+Trainings-Artefakt, nicht die Live-Realität), die Confidence diskriminiert kaum.
+Operator-Entscheid Michi: **0,58** — schneidet den rausch-nahen Low-Conf-Tail
+(~78 % Volumen, +0,71 % mean/88 % WR, Frequenz ~23→18/Tag), voller Edge erhalten.
+Nur `optimal_threshold` + eine Provenienz-Zeile im Staging-Meta geändert (Wert
+stammt aus Live-Trades, nicht aus dem toten-Label-Training); `val_stats` bleibt als
+historisches Trainings-Verdikt stehen. Gepinnt via `backtest/test_sra2_short_threshold.py`
+(Meta = 0,58 float + `load_shadow_artifact('SRA2','SHORT').threshold == 0,58` end-to-end).
+**Nur Staging** (Hard Rule 2) — Go-Live = Michi zieht Artefakt+Meta+Calib nach Root
++ Restart. Caveat: 8d-Fenster/eine Marktphase = Start-Operating-Point.
+
 ## [2026-07-23] Deploy-Voraussetzungen für T-033 — MIS1-Revive + EPD3-Staging + SRA2-SHORT-Diagnose (T-2026-KYT-9050-034)
 
 Interaktive, operator-begleitete Session (Michi live). Macht die drei aus T-033
