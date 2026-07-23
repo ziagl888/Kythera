@@ -141,6 +141,19 @@ Aggregat-Welle). Metrik = REALIZED locked-in mit/ohne Hebel + WR + MaxDD.
   bestätigt T-029/031/032: Edge ist richtungs-, nicht timing-bedingt); (c) allenfalls
   als reiner Portfolio-Drawdown-Schutz diskutabel. WR(TP1) unter Overlays irreführend.
 
+**Reviews + Multi-Bot-Erweiterung:** z-spec-compliance = PASS, z-code-reviewer =
+ISSUES → alle Findings gefixt (HIGH: `overlay_c` stale-peak — Circuit-Breaker
+resettete den Peak nicht beim Leeren des offenen Buchs → spurios-Flatten neuer
+Trades; Effekt aufs Aggregat ~0, aber gefixt via reiner
+`core.wave_exit_sim.portfolio_circuit_breaker` + Regressions-Test; plus CPU-/
+Konsistenz-LOWs). Overlay dann auf **EPD3 (604 Legs)** + **SRA2 (29)** ausgeweitet:
+NO-EDGE hält robust auf den zwei aussagekräftigen Bots (AIM2 674 + EPD3 604 — bei
+EPD3 schaden die Overlays sogar unlev), SRA2 ist unter der n≥30-Schwelle (nur
+illustrativ). (c) drückt den Drawdown ~3–9× über alle drei. Zwei Report-Bugs
+gefixt, die die Multi-Bot-Läufe erst korrekt machten: bot-spezifisches
+Cornix-Footer-Format (`%(AIM2)%` vs `AI module EPD3` → `%model%`) und der
+hartkodierte AIM2-KERNBEFUND-Text (jetzt datengetrieben + THIN-Guard).
+
 Read-only (nur SELECTs), BELOW_NORMAL, coin-gewindowte Reads. Kein Deploy, kein
 Restart, keine Artefakt-Root-Moves. Operator entscheidet über Konsequenzen.
 
