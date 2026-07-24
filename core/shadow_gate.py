@@ -122,9 +122,14 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     #        unter DEMSELBEN Tag postet → eigener Generations-Tag, sonst würde der
     #        Shadow-Trade über den Active-Trade-Check des Bots einen LIVE-Post
     #        blockieren (Verletzung der rein-additiven Invariante). ──
-    # RUB3 = rub2_model_LONG-Retrain vs. LIVE-RUB-LONG (Bot 13 postet Legacy unter
-    # "RUB2"). Operator-Entscheid Michi (Regel 6). SHORT bleibt live "RUB2".
+    # RUB3 = rub2_model_LONG-Retrain vs. LIVE-RUB-LONG (Bot 13 postet die Legacy-
+    # Modelle seit T-037 wieder unter "RUB1"). Operator-Entscheid Michi (Regel 6).
     ("RUB3", "LONG"): SHADOW,
+    # RUB3 SHORT (T-2026-KYT-9050-037, Michi bot_results.xlsx): explizit geparkt →
+    # SHADOW beide Richtungen. RUB3 emittiert real nur den LONG-Shadow-Kandidaten
+    # (_emit_rub3_shadow, Bot 13); die SHORT-Richtung ist inert (n=0/60d) — der
+    # Eintrag ist primär Register-Hygiene, damit RUB3 nie versehentlich SHORT live geht.
+    ("RUB3", "SHORT"): SHADOW,
     # RUB4 (T-2026-CU-9050-164): funding-gegatetes RUB-LONG — DERSELBE RUB3-
     # Kandidat, aber nur wenn fund_24h > +3 bps (ABR1-LONG-Gate). Experiment, ob
     # das Gate das blutende RUB-LONG rettet; RUB4 vs. RUB3 = gegatet vs. ungegatet
@@ -234,10 +239,22 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     ("MIS1-24H", "SHORT"): SHADOW,
     ("MIS1-72H", "SHORT"): SHADOW,
     ("MIS1-168H", "SHORT"): SHADOW,
-    # RUB2 (Bot 13, Rubberband — Legacy-LONG + RUB2_SHORT-Modell, beide Direktpost):
-    # beide Beine geparkt. RUB3/RUB4 (LONG-Challenger) bleiben unverändert Shadow (oben).
+    # RUB2 (Bot 13, Rubberband — die RUB2-Retrain-Generation): beide Beine geparkt →
+    # SHADOW. Seit dem RUB1-Revive (T-2026-KYT-9050-037, Michi bot_results.xlsx) postet
+    # Bot 13 nicht mehr unter "RUB2" (LONG-Legacy + RUB2_SHORT-Retrain sind durch die
+    # Original-RUB1-Legacy-Modelle ersetzt) → diese Zeilen sind jetzt dokumentarisch:
+    # sie halten die gebenchte RUB2-Generation als SHADOW fest, falls sie je ein Emitter
+    # wieder aufgreift. RUB3/RUB4 (LONG-Challenger) bleiben unverändert Shadow (oben).
     ("RUB2", "LONG"): SHADOW,
     ("RUB2", "SHORT"): SHADOW,
+    # RUB1 (Bot 13, Rubberband — die ORIGINAL-Legacy-Generation, beide Richtungen live
+    # unter Tag RUB1, T-2026-KYT-9050-037 Revive). AUSNAHME zur "nur NICHT-live listen"-
+    # Regel dieses Registers: explizit LIVE eingetragen als DEFENSE-IN-DEPTH (Spec §2 #1
+    # Punkt 4). route_legacy_leg("RUB1", …) gäbe zwar per Default schon LIVE zurück, aber
+    # der explizite Eintrag garantiert, dass die revivte Live-Generation nie versehentlich
+    # in denselben Park gerät wie die daneben SHADOW-gehaltene RUB2-Generation.
+    ("RUB1", "LONG"): LIVE,
+    ("RUB1", "SHORT"): LIVE,
     # SRA1 (Bot 9, S/R-Legacy-Direktpost): beide Beine geparkt. SRA2 ist der Nachfolger
     # (LONG + SHORT jetzt LIVE, s. (A)) → SRA1 tritt ab in den Shadow.
     ("SRA1", "LONG"): SHADOW,
@@ -264,6 +281,19 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
 # Posting-Effekt. Richtung ist hier egal (beide Richtungen retired).
 _RETIRED_TAGS: set[str] = {
     "AIM1",  # §9: AIM1-Konzept offiziell abgelöst durch AIM2 (Ranker/Gate).
+    # T-2026-KYT-9050-037 (Michi bot_results.xlsx) — beide Richtungen RETIRE:
+    #   AIM2-TOPN: „zu dünn" (High-Conviction-Top-N-Kanal, Bot 15). Keys UPPER
+    #     (is_retired _norm()t). Der Bot-15-Emitter konsultiert dieses Register NICHT
+    #     (eigenes AIM2_TOPN-Config-Gate) → die RETIRE-Zeile ist Register-/Report-
+    #     Klassifikation; das tatsächliche Abschalten (Config-Gate + Restart) ist ein
+    #     Operator-Schritt (Michi). Die zugehörigen Live-Trades löscht ein separater,
+    #     einzeln freigegebener DB-DELETE (Hard Rule 1) — NICHT in diesem Code-PR.
+    "AIM2-TOPN",
+    #   ATS1_ROBUST: „nur synthetisch" — toter/zensierter Historien-Tag in
+    #     closed_ai_signals (SYNTHETIC/CENSORED-ONLY, kein Live-Emitter). Retire =
+    #     reine Report-Klassifikation; die synthetischen Trades löscht derselbe
+    #     operator-gegatete DB-DELETE-Schritt.
+    "ATS1_ROBUST",
     # MIS1 (T-2026-KYT-9050-034): NICHT mehr retired — die MIS1-Generation ist
     # REVIVED (Bot 11 lädt pump_model_*_final.pkl wieder, Operator-Entscheid Michi;
     # Audit T-032: MIS1 realisierte besser als MIS2). Lifecycle je (tag, direction)

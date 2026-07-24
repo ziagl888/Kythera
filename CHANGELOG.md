@@ -1,3 +1,53 @@
+## [2026-07-24] Fleet-Reconfig aus bot_results.xlsx — RUB1-Revive + Gate-Flips + Retires (T-2026-KYT-9050-037)
+
+Setzt Michis Wunsch-Spalte aus `bot_results.xlsx` gegen den Live-Registerstand um
+(PR-Kern, Klasse A Gate-Flips + Klasse B Bot-13-Code). Die DB-Deletes (#6/#7) und
+alle Live-Wirkungen (Restart/Deploy) bleiben bewusst außerhalb dieses Code-PRs
+(Hard Rule 1 / Eskalation §6). DB strikt read-only diagnostiziert.
+
+- **#1 RUB1-Revive (Bot 13, `13_ai_rub_bot.py`).** Beide Richtungen zurück auf die
+  **originalen Legacy-Reversion-Modelle**, live unter dem Original-Tag **RUB1**:
+  - `RUB_LONG_TAG="RUB2"` → **`RUB_TAG="RUB1"`** (revertiert den T-030-LONG-Rename);
+    `module_tag = RUB_TAG` für beide Richtungen (kein richtungsabhängiger
+    meta.model_id-Lookup mehr).
+  - **Legacy-SHORT-Zweig reaktiviert** (revertiert den PR-#9-Removal): `MODEL_SHORT`
+    lädt `short_reversion_model.joblib`, scored die rohe predict_proba auf den 9
+    rub-Features (KEIN Funding) bei `REVERSION_THRESH_SHORT=0.85` — **Parität** zur
+    Vor-PR-#9-RUB1-Logik (git `07c8874^`), kein neu erfundener Threshold.
+  - Der **RUB2-Retrain** (`rub2_model_SHORT.pkl`, Artefakt-Contract via
+    `load_artifact`/`maybe_reload`) ist entfernt → **gebencht**: RUB2 bleibt im
+    Register `SHADOW` (beide Richtungen, dokumentarisch). Der RUB3/RUB4-LONG-Shadow-
+    Challenger (`_emit_rub3_shadow`) läuft **unverändert**.
+  - **Transitionaler Dedup** (Regel 4) bleibt intakt: Active-Trade-Check +
+    Cooldown binden zusätzlich `RUB_LEGACY_TAG="RUB2"`, damit über den Tag-Wechsel
+    RUB2 → RUB1 keine offene RUB2-Position doppelt gepostet wird (has_open-Guard).
+  - Genau **EINE Cornix-Message** je Signal (unverändert); die Legacy-Modelle sind
+    **md5-unverändert** (`0227bb4a…` / `16ca3711…`, Regel 7).
+- **#2 RUB3-SHORT → SHADOW** (`core/shadow_gate.py`): `("RUB3","SHORT"): SHADOW`
+  ergänzt (RUB3 emittiert real nur den LONG-Shadow; SHORT inert → Register-Hygiene).
+- **#1 Register (Defense-in-Depth):** `("RUB1","LONG"): LIVE` + `("RUB1","SHORT"): LIVE`
+  explizit eingetragen (bewusste Ausnahme zur „nur NICHT-live listen"-Regel), damit
+  die revivte Live-Generation garantiert live routet, während RUB2 daneben SHADOW ist.
+- **#6/#7 Retire (Register-Teil):** `AIM2-TOPN` („zu dünn") + `ATS1_Robust`
+  („nur synthetisch") in `_RETIRED_TAGS` → `leg_status == RETIRED` beide Richtungen.
+  Rein Register-/Report-Klassifikation; **kein DB-Delete** (separater Operator-Schritt,
+  Preview-first). Der AIM2-TOPN-Emitter (Bot 15) konsultiert das Register nicht — das
+  tatsächliche Abschalten braucht den Config-Gate-Flip + Restart (Michi).
+- **#8 Main Channel — geklärt (dokumentarisch):** kein Live-Emitter mehr (klassischer
+  Detektor via T-020 retired, durch **MAX2** ersetzt). Kein Register-Eintrag nötig.
+- **Blocker (vertagt, im PR-Body + `AUDIT_TODO.md` dokumentiert):** #3 ATB2-LONG
+  (`optimal_threshold=None`, nicht im Root) und #4 EPD3-LONG (Dateiname-Kollision mit
+  Legacy-EPD2 → Doppel-Post-Hazard) — beide brauchen zuerst ein deploybares,
+  challenger-distinktes Root-Artefakt (Hard Rule 2, Michi-Entscheid).
+
+Register-Assert (Spec §5): `leg_status('RUB1','LONG'/'SHORT'), ('RUB2','LONG'),
+('RUB3','SHORT')` → **`live live shadow shadow`**. Verifikation DB-frei: erweiterter
+`backtest/test_rub_tag.py` (Tag==RUB1, beide Richtungen, Legacy-Modelle geladen, EINE
+Cornix-Message, Threshold-Parität, md5-Assert) + neue T-037-Tests in
+`backtest/test_shadow_gate.py`; Regression-Guard `verify` (24/24) + `smoke` grün.
+**Nur Code** — Wirksamwerden (RUB1 live, RUB3/Retires still, ATS2-Load) erst mit
+Fleet-Restart (Michi). Blocker/Operator-Schritte in `AUDIT_TODO.md`.
+
 ## [2026-07-23] SRA2-SHORT optimal_threshold=0.58 gesetzt — Flood-Hazard geschlossen (T-2026-KYT-9050-036)
 
 Schließt den in T-033/034 geflaggten Deploy-Hazard: SRA2-SHORT war auf LIVE
