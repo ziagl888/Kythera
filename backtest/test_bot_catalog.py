@@ -66,6 +66,27 @@ def test_abr_wins_over_br():
     assert bc.script_for_tag("ABR2") != "7_pattern_detector.py"
 
 
+@pytest.mark.parametrize(
+    ("tag", "family"),
+    [
+        ("RUB2", "RUB"),
+        ("MIS1-8h", "MIS"),
+        ("MIS2-72H", "MIS"),
+        ("ABR2", "ABR"),  # longest-prefix wins, not BR
+        ("BB_4H", "BB"),
+        ("ATS1_Robust", "ATS"),
+        ("Main Channel", None),  # classic strategy → no family prefix
+        ("TOTALLY_NEW_MODEL_9000", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_family_for_tag(tag, family):
+    # Reverse companion of script_for_tag for the bot-variant index
+    # (T-2026-KYT-9050-038): tag → stable family prefix, same normalisation.
+    assert bc.family_for_tag(tag) == family
+
+
 def test_mis_pump_dump_and_typo_variants_normalise_first():
     # pretty_name folds MIS1-8h_pump/_dump and the MSI typo before matching.
     assert bc.script_for_tag("MIS1-8H_pump") == "11_ai_mis_bot.py"

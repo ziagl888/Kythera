@@ -1,0 +1,1794 @@
+{
+  "generation_count": 48,
+  "generations": [
+    {
+      "artifacts": [
+        {
+          "bytes": 4499474,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "bt2_model_LONG.json",
+          "location": "root",
+          "md5": "a25ba51b5c15b3953bb3050f1d7bd69d",
+          "meta": null,
+          "path": "bt2_model_LONG.json"
+        },
+        {
+          "bytes": 1203378,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "bt2_model_SHORT.json",
+          "location": "root",
+          "md5": "4d56f667c34a43dee5fb1ce7a09a1890",
+          "meta": {
+            "deployable": null,
+            "model_id": "ABR2",
+            "n_features": 23,
+            "strategy": "abr1",
+            "threshold": 0.7999999999999998,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "bt2_model_SHORT.json"
+        }
+      ],
+      "code_ref": null,
+      "family": "ABR",
+      "generation": "ABR2",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "ABR2"
+      ],
+      "notes": [],
+      "provenance": "Break&Retest binary + Funding-Gate (bot 18)",
+      "script": "18_ai_abr1_bot.py",
+      "tag": "ABR2"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "AIM",
+      "generation": "AIM1",
+      "lifecycle": {
+        "LONG": "retired",
+        "SHORT": "retired"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Master-Ranker/Gate über Kandidaten (bot 15)",
+      "script": "15_ai_master_bot.py",
+      "tag": "AIM1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 155988,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "master_meta_model_aim2.pkl",
+          "location": "root",
+          "md5": "5ef8df539ba36590aaaea5b67d51bb59",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 86,
+            "strategy": null,
+            "threshold": 0.67,
+            "trained_at": "2026-07-14T03:02:32.687271+00:00",
+            "trainer": null
+          },
+          "path": "master_meta_model_aim2.pkl"
+        },
+        {
+          "bytes": 155988,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "master_meta_model_aim2.pkl",
+          "location": "root",
+          "md5": "5ef8df539ba36590aaaea5b67d51bb59",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 86,
+            "strategy": null,
+            "threshold": 0.67,
+            "trained_at": "2026-07-14T03:02:32.687271+00:00",
+            "trainer": null
+          },
+          "path": "master_meta_model_aim2.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "AIM",
+      "generation": "AIM2",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Master-Ranker/Gate über Kandidaten (bot 15)",
+      "script": "15_ai_master_bot.py",
+      "tag": "AIM2"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "AIM",
+      "generation": "AIM2-TOPN",
+      "lifecycle": {
+        "LONG": "retired",
+        "SHORT": "retired"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "High-Conviction-Top-N-Kanal über AIM2; retired T-037",
+      "script": "15_ai_master_bot.py",
+      "tag": "AIM2-TOPN"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "ATB",
+      "generation": "ATB1",
+      "lifecycle": {
+        "LONG": "silent",
+        "SHORT": "silent"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Converging-Channel Break (bot 14); ATB2-Neuaufbau",
+      "script": "14_ai_atb_bot.py",
+      "tag": "ATB1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 406623,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "atb2_model_LONG.pkl",
+          "location": "staging",
+          "md5": "3fb8a0f351c73130803151802da8c6de",
+          "meta": {
+            "deployable": false,
+            "model_id": "ATB2",
+            "n_features": 20,
+            "strategy": "atb2",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/atb2_model_LONG.pkl"
+        },
+        {
+          "bytes": 431240,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "atb2_model_SHORT.pkl",
+          "location": "staging",
+          "md5": "3d27c650106dbba1e8bdccb9cef61052",
+          "meta": {
+            "deployable": false,
+            "model_id": "ATB2",
+            "n_features": 20,
+            "strategy": "atb2",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/atb2_model_SHORT.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "ATB",
+      "generation": "ATB2",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "ATB2"
+      ],
+      "notes": [],
+      "provenance": "Converging-Channel Break (bot 14); ATB2-Neuaufbau",
+      "script": "14_ai_atb_bot.py",
+      "tag": "ATB2"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "ATS",
+      "generation": "ATS1",
+      "lifecycle": {
+        "LONG": "silent",
+        "SHORT": "silent"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Trend-Strength-Sniper TSI (bot 12)",
+      "script": "12_ai_ats_bot.py",
+      "tag": "ATS1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 2267489,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "model_tsi_long_robust.pkl",
+          "location": "root",
+          "md5": "73ea915e0ccc6148620ef1de16ed8cd8",
+          "meta": null,
+          "path": "model_tsi_long_robust.pkl"
+        },
+        {
+          "bytes": 2248095,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "model_tsi_short_robust.pkl",
+          "location": "root",
+          "md5": "cf090013c47fa0d007d6d1372916ded5",
+          "meta": null,
+          "path": "model_tsi_short_robust.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "ATS",
+      "generation": "ATS1_ROBUST",
+      "lifecycle": {
+        "LONG": "retired",
+        "SHORT": "retired"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "ATS1_Robust Legacy (model_tsi_*_robust.pkl); ATS2 ist der Nachfolger",
+      "script": "12_ai_ats_bot.py",
+      "tag": "ATS1_ROBUST"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 838751,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "ats2_model_LONG.pkl",
+          "location": "staging",
+          "md5": "5d27eca57a9d93190eae90b1d3a346a9",
+          "meta": {
+            "deployable": true,
+            "model_id": "ATS2",
+            "n_features": 29,
+            "strategy": "ats2",
+            "threshold": 0.7825,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/ats2_model_LONG.pkl"
+        },
+        {
+          "bytes": 835680,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "ats2_model_SHORT.pkl",
+          "location": "staging",
+          "md5": "121b548ae0cb4774380e513ae2e6f7a4",
+          "meta": {
+            "deployable": true,
+            "model_id": "ATS2",
+            "n_features": 29,
+            "strategy": "ats2",
+            "threshold": 0.9084,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/ats2_model_SHORT.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "ATS",
+      "generation": "ATS2",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [
+        "ATS2"
+      ],
+      "notes": [],
+      "provenance": "Trend-Strength-Sniper TSI (bot 12)",
+      "script": "12_ai_ats_bot.py",
+      "tag": "ATS2"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "BB",
+      "generation": "BB2_4H",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "SMC-ML-Sniper Break (bot 25)",
+      "script": "25_smc_ml_sniper.py",
+      "tag": "BB2_4H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 802997,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "bb_xgboost_model_1h.pkl",
+          "location": "root",
+          "md5": "19094767adc66b676481ff2d1bedc7d5",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "bb_xgboost_model_1h.pkl"
+        },
+        {
+          "bytes": 802997,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "bb_xgboost_model_1h.pkl",
+          "location": "root",
+          "md5": "19094767adc66b676481ff2d1bedc7d5",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "bb_xgboost_model_1h.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "BB",
+      "generation": "BB_1H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "SMC-ML-Sniper Break (bot 25)",
+      "script": "25_smc_ml_sniper.py",
+      "tag": "BB_1H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 771851,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "bb_xgboost_model_4h.pkl",
+          "location": "root",
+          "md5": "a0c3117adfb4c61ddc99fcec24278514",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "bb_xgboost_model_4h.pkl"
+        },
+        {
+          "bytes": 771851,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "bb_xgboost_model_4h.pkl",
+          "location": "root",
+          "md5": "a0c3117adfb4c61ddc99fcec24278514",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "bb_xgboost_model_4h.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "BB",
+      "generation": "BB_4H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "SMC-ML-Sniper Break (bot 25)",
+      "script": "25_smc_ml_sniper.py",
+      "tag": "BB_4H"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "BR",
+      "generation": "BR1D",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Pattern-Breakout-Detector (bot 7)",
+      "script": "7_pattern_detector.py",
+      "tag": "BR1D"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "BR",
+      "generation": "BR1H",
+      "lifecycle": {
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Pattern-Breakout-Detector (bot 7)",
+      "script": "7_pattern_detector.py",
+      "tag": "BR1H"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "BR",
+      "generation": "BR1HV2",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Pattern-Breakout-Detector (bot 7)",
+      "script": "7_pattern_detector.py",
+      "tag": "BR1HV2"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "BR",
+      "generation": "BR2H",
+      "lifecycle": {
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Pattern-Breakout-Detector (bot 7)",
+      "script": "7_pattern_detector.py",
+      "tag": "BR2H"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "BR",
+      "generation": "BR4H",
+      "lifecycle": {
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Pattern-Breakout-Detector (bot 7)",
+      "script": "7_pattern_detector.py",
+      "tag": "BR4H"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "EPD",
+      "generation": "EPD1",
+      "lifecycle": {
+        "LONG": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Pump/Dump-Detector (bot 10); EPD2=EPD_LEGACY_TAG",
+      "script": "10_pump_dump_detector.py",
+      "tag": "EPD1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 781347,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "epd2_model_LONG.pkl",
+          "location": "staging",
+          "md5": "2702a57b80bbad32f2a203756cab5592",
+          "meta": {
+            "deployable": false,
+            "model_id": "EPD2",
+            "n_features": 16,
+            "strategy": "epd2",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/epd2_model_LONG.pkl"
+        },
+        {
+          "bytes": 6795627,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "pump_dump_model.pkl",
+          "location": "root",
+          "md5": "6c09741a9bafad72da94773fd4fca334",
+          "meta": null,
+          "path": "pump_dump_model.pkl"
+        },
+        {
+          "bytes": null,
+          "direction": "SHORT",
+          "exists": false,
+          "filename": "epd2_model_SHORT.pkl",
+          "location": "MISSING",
+          "md5": null,
+          "meta": null,
+          "path": null
+        },
+        {
+          "bytes": 6795627,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "pump_dump_model.pkl",
+          "location": "root",
+          "md5": "6c09741a9bafad72da94773fd4fca334",
+          "meta": null,
+          "path": "pump_dump_model.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "EPD",
+      "generation": "EPD2",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "EPD2"
+      ],
+      "notes": [
+        "Artefakt fehlt auf Platte: epd2_model_SHORT.pkl"
+      ],
+      "provenance": "Pump/Dump-Detector (bot 10); EPD2=EPD_LEGACY_TAG",
+      "script": "10_pump_dump_detector.py",
+      "tag": "EPD2"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 781347,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "epd2_model_LONG.pkl",
+          "location": "staging",
+          "md5": "2702a57b80bbad32f2a203756cab5592",
+          "meta": {
+            "deployable": false,
+            "model_id": "EPD2",
+            "n_features": 16,
+            "strategy": "epd2",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/epd2_model_LONG.pkl"
+        },
+        {
+          "bytes": 779800,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "epd3_model_SHORT.pkl",
+          "location": "root",
+          "md5": "e0f7bfb3773fbcab85914866126e3ac6",
+          "meta": {
+            "deployable": true,
+            "model_id": "EPD2",
+            "n_features": 16,
+            "strategy": "epd2",
+            "threshold": 0.6737,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "epd3_model_SHORT.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "EPD",
+      "generation": "EPD3",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "EPD2"
+      ],
+      "notes": [],
+      "provenance": "EPD2-Retrain-Challenger; LONG teilt epd2_model_LONG.pkl mit EPD2",
+      "script": "10_pump_dump_detector.py",
+      "tag": "EPD3"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 543925,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "fif1_model.pkl",
+          "location": "root",
+          "md5": "c95b6194c519e10ae770b3ea454a5fbc",
+          "meta": {
+            "deployable": null,
+            "model_id": "FIF1",
+            "n_features": 21,
+            "strategy": null,
+            "threshold": 0.69,
+            "trained_at": "2026-07-14T01:46:07.807875+00:00",
+            "trainer": null
+          },
+          "path": "fif1_model.pkl"
+        },
+        {
+          "bytes": 543925,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "fif1_model.pkl",
+          "location": "root",
+          "md5": "c95b6194c519e10ae770b3ea454a5fbc",
+          "meta": {
+            "deployable": null,
+            "model_id": "FIF1",
+            "n_features": 21,
+            "strategy": null,
+            "threshold": 0.69,
+            "trained_at": "2026-07-14T01:46:07.807875+00:00",
+            "trainer": null
+          },
+          "path": "fif1_model.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "FIF",
+      "generation": "FIF1",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "FIF1"
+      ],
+      "notes": [],
+      "provenance": "First-In-First-Out (bot 33)",
+      "script": "33_ai_fif1_bot.py",
+      "tag": "FIF1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 124933,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "fmr2_model.pkl",
+          "location": "staging",
+          "md5": "576bc33988a2f7f8c98690d89abb15a5",
+          "meta": {
+            "deployable": null,
+            "model_id": "FMR2",
+            "n_features": 15,
+            "strategy": null,
+            "threshold": 0.46,
+            "trained_at": "2026-07-17T07:53:49.588248+00:00",
+            "trainer": null
+          },
+          "path": "staging_models/fmr2_model.pkl"
+        },
+        {
+          "bytes": 124933,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "fmr2_model.pkl",
+          "location": "staging",
+          "md5": "576bc33988a2f7f8c98690d89abb15a5",
+          "meta": {
+            "deployable": null,
+            "model_id": "FMR2",
+            "n_features": 15,
+            "strategy": null,
+            "threshold": 0.46,
+            "trained_at": "2026-07-17T07:53:49.588248+00:00",
+            "trainer": null
+          },
+          "path": "staging_models/fmr2_model.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "FMR",
+      "generation": "FMR2",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "FMR2"
+      ],
+      "notes": [],
+      "provenance": "Funding-Mean-Reversion-Exit (bot 31)",
+      "script": "31_ai_fmr1_bot.py",
+      "tag": "FMR2"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "LIS",
+      "generation": "LIS1",
+      "lifecycle": {
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Post-Listing-Drift-Fade (bot 36)",
+      "script": "36_ai_lis1_bot.py",
+      "tag": "LIS1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 769202,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "max1_model_SHORT.pkl",
+          "location": "root",
+          "md5": "e33b6df87d0a57bf2cadeb0fc4b13dee",
+          "meta": {
+            "deployable": true,
+            "model_id": "MAX1",
+            "n_features": 15,
+            "strategy": "rub2",
+            "threshold": 0.7929,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "max1_model_SHORT.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MAX",
+      "generation": "MAX1",
+      "lifecycle": {
+        "SHORT": "live"
+      },
+      "model_ids": [
+        "MAX1"
+      ],
+      "notes": [],
+      "provenance": "MAX1 (bot 34) / MAX2 SRA2-LONG-Fork (bot 9)",
+      "script": "34_ai_max1_bot.py",
+      "tag": "MAX1"
+    },
+    {
+      "artifacts": [],
+      "code_ref": "HEAD",
+      "family": "MAX",
+      "generation": "MAX2",
+      "lifecycle": {
+        "LONG": "live"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "kein Modell — SRA2-LONG-Fork nach CH_MAIN (bot 9)",
+      "script": "34_ai_max1_bot.py",
+      "tag": "MAX2"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 1656733,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "pump_model_168h_pump_final.pkl",
+          "location": "root",
+          "md5": "7bfa9049fecf1a0aed85da822575b546",
+          "meta": null,
+          "path": "pump_model_168h_pump_final.pkl"
+        },
+        {
+          "bytes": 1694745,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "pump_model_168h_dump_final.pkl",
+          "location": "root",
+          "md5": "0e1fb9174933b3408bc5112c8a15f961",
+          "meta": null,
+          "path": "pump_model_168h_dump_final.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MIS",
+      "generation": "MIS1-168H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS1-168H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 1686313,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "pump_model_24h_pump_final.pkl",
+          "location": "root",
+          "md5": "65eca3c06b9bd7331fbf4b09e0c1a083",
+          "meta": null,
+          "path": "pump_model_24h_pump_final.pkl"
+        },
+        {
+          "bytes": 1690529,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "pump_model_24h_dump_final.pkl",
+          "location": "root",
+          "md5": "371c3c815aaa2e56ff67e968878be862",
+          "meta": null,
+          "path": "pump_model_24h_dump_final.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MIS",
+      "generation": "MIS1-24H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS1-24H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 1689575,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "pump_model_72h_pump_final.pkl",
+          "location": "root",
+          "md5": "d2aee5488301dca45e0f9c00e56659b7",
+          "meta": null,
+          "path": "pump_model_72h_pump_final.pkl"
+        },
+        {
+          "bytes": 1692093,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "pump_model_72h_dump_final.pkl",
+          "location": "root",
+          "md5": "440244f87d9dd037dde5da41d63c5032",
+          "meta": null,
+          "path": "pump_model_72h_dump_final.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MIS",
+      "generation": "MIS1-72H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS1-72H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 1703857,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "pump_model_8h_pump_final.pkl",
+          "location": "root",
+          "md5": "23d59d70d84ef97ee04ea9c9e36d1953",
+          "meta": null,
+          "path": "pump_model_8h_pump_final.pkl"
+        },
+        {
+          "bytes": 1712561,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "pump_model_8h_dump_final.pkl",
+          "location": "root",
+          "md5": "aefc8e3755f65b5ef2fa8c6789fef02c",
+          "meta": null,
+          "path": "pump_model_8h_dump_final.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MIS",
+      "generation": "MIS1-8H",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS1-8H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 803937,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "mis2_model_168h_pump.pkl",
+          "location": "root",
+          "md5": "675275749dcbc8689b9c13adce7f1519",
+          "meta": {
+            "deployable": true,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_168h_pump.pkl"
+        },
+        {
+          "bytes": 794860,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "mis2_model_168h_dump.pkl",
+          "location": "root",
+          "md5": "cd6b461fe65b21666e19805f2685d242",
+          "meta": {
+            "deployable": true,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_168h_dump.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MIS",
+      "generation": "MIS2-168H",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "live"
+      },
+      "model_ids": [
+        "MIS2"
+      ],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS2-168H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 791371,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "mis2_model_24h_pump.pkl",
+          "location": "root",
+          "md5": "2f2208114cc9a04ec1f513ce789859ae",
+          "meta": {
+            "deployable": true,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_24h_pump.pkl"
+        },
+        {
+          "bytes": 798374,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "mis2_model_24h_dump.pkl",
+          "location": "root",
+          "md5": "cc38ff4df433b1a695ee773a855cbf4d",
+          "meta": {
+            "deployable": true,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_24h_dump.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MIS",
+      "generation": "MIS2-24H",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "live"
+      },
+      "model_ids": [
+        "MIS2"
+      ],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS2-24H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 795563,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "mis2_model_72h_pump.pkl",
+          "location": "root",
+          "md5": "859064c97649fe6aaeff867efa6994e3",
+          "meta": {
+            "deployable": true,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_72h_pump.pkl"
+        },
+        {
+          "bytes": 806936,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "mis2_model_72h_dump.pkl",
+          "location": "root",
+          "md5": "08c87fc5471d6809a9ea2d2c13f750ff",
+          "meta": {
+            "deployable": true,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_72h_dump.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "MIS",
+      "generation": "MIS2-72H",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "live"
+      },
+      "model_ids": [
+        "MIS2"
+      ],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS2-72H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 797309,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "mis2_model_8h_pump.pkl",
+          "location": "root",
+          "md5": "7eb5fc6415f4d296d26bff76cbc86e39",
+          "meta": {
+            "deployable": true,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_8h_pump.pkl"
+        },
+        {
+          "bytes": 801661,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "mis2_model_8h_dump.pkl",
+          "location": "root",
+          "md5": "7e51f58f19137e0df3acb4dc6f301283",
+          "meta": {
+            "deployable": false,
+            "model_id": "MIS2",
+            "n_features": null,
+            "strategy": "mis1",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "mis2_model_8h_dump.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "MIS",
+      "generation": "MIS2-8H",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "MIS2"
+      ],
+      "notes": [],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MIS2-8H"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "MIS",
+      "generation": "MSI1",
+      "lifecycle": {
+        "LONG": "retired",
+        "SHORT": "retired"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+      "script": "11_ai_mis_bot.py",
+      "tag": "MSI1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 152235,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "pex1_model.pkl",
+          "location": "root",
+          "md5": "70a5bf630fa26e67d90cb7327079d771",
+          "meta": {
+            "deployable": null,
+            "model_id": "PEX1",
+            "n_features": 13,
+            "strategy": null,
+            "threshold": 0.7,
+            "trained_at": "2026-07-14T01:53:41.007456+00:00",
+            "trainer": null
+          },
+          "path": "pex1_model.pkl"
+        },
+        {
+          "bytes": 152235,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "pex1_model.pkl",
+          "location": "root",
+          "md5": "70a5bf630fa26e67d90cb7327079d771",
+          "meta": {
+            "deployable": null,
+            "model_id": "PEX1",
+            "n_features": 13,
+            "strategy": null,
+            "threshold": 0.7,
+            "trained_at": "2026-07-14T01:53:41.007456+00:00",
+            "trainer": null
+          },
+          "path": "pex1_model.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "PEX",
+      "generation": "PEX1",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [
+        "PEX1"
+      ],
+      "notes": [],
+      "provenance": "Price-Extension (bot 30)",
+      "script": "30_ai_pex1_bot.py",
+      "tag": "PEX1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 765389,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "qm_xgboost_model_1h.pkl",
+          "location": "root",
+          "md5": "c217d694fe46ef96c22c5c35c8aa5b3e",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": null
+          },
+          "path": "qm_xgboost_model_1h.pkl"
+        },
+        {
+          "bytes": 765389,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "qm_xgboost_model_1h.pkl",
+          "location": "root",
+          "md5": "c217d694fe46ef96c22c5c35c8aa5b3e",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": null
+          },
+          "path": "qm_xgboost_model_1h.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "QM",
+      "generation": "QM_1H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Quasimodo-Pattern (bot 24)",
+      "script": "24_quasimodo_bot.py",
+      "tag": "QM_1H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 687937,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "qm_xgboost_model_4h.pkl",
+          "location": "root",
+          "md5": "8759d9eeb95987cfaaebb63ede500e56",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": null
+          },
+          "path": "qm_xgboost_model_4h.pkl"
+        },
+        {
+          "bytes": 687937,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "qm_xgboost_model_4h.pkl",
+          "location": "root",
+          "md5": "8759d9eeb95987cfaaebb63ede500e56",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": null
+          },
+          "path": "qm_xgboost_model_4h.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "QM",
+      "generation": "QM_4H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Quasimodo-Pattern (bot 24)",
+      "script": "24_quasimodo_bot.py",
+      "tag": "QM_4H"
+    },
+    {
+      "artifacts": [],
+      "code_ref": "HEAD",
+      "family": "ROM",
+      "generation": "ROM1",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Regime-Orchestrator Re-Forwarder (bot 28)",
+      "script": "28_signal_orchestrator.py",
+      "tag": "ROM1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 775754,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "long_reversion_model.joblib",
+          "location": "root",
+          "md5": "0227bb4a793444e2dddb5bf4f70ad69b",
+          "meta": null,
+          "path": "long_reversion_model.joblib"
+        },
+        {
+          "bytes": 769362,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "short_reversion_model.joblib",
+          "location": "root",
+          "md5": "16ca37114f1239ac12fa4a503aebce72",
+          "meta": null,
+          "path": "short_reversion_model.joblib"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "RUB",
+      "generation": "RUB1",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "Rubberband HVN/S-R-Reversion (bot 13); RUB1 revived T-037",
+      "script": "13_ai_rub_bot.py",
+      "tag": "RUB1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 784009,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "rub2_model_LONG.pkl",
+          "location": "staging",
+          "md5": "162ddb95f6c0f8d93d7d4479737add41",
+          "meta": {
+            "deployable": false,
+            "model_id": "RUB2",
+            "n_features": 15,
+            "strategy": "rub2",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/rub2_model_LONG.pkl"
+        },
+        {
+          "bytes": 768789,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "rub2_model_SHORT.pkl",
+          "location": "root",
+          "md5": "24fb499c5fd1cc2fecf2a99dc379aaf9",
+          "meta": {
+            "deployable": true,
+            "model_id": "RUB2",
+            "n_features": 15,
+            "strategy": "rub2",
+            "threshold": 0.7929,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "rub2_model_SHORT.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "RUB",
+      "generation": "RUB2",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [
+        "RUB2"
+      ],
+      "notes": [],
+      "provenance": "Rubberband HVN/S-R-Reversion (bot 13); RUB1 revived T-037",
+      "script": "13_ai_rub_bot.py",
+      "tag": "RUB2"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 784009,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "rub2_model_LONG.pkl",
+          "location": "staging",
+          "md5": "162ddb95f6c0f8d93d7d4479737add41",
+          "meta": {
+            "deployable": false,
+            "model_id": "RUB2",
+            "n_features": 15,
+            "strategy": "rub2",
+            "threshold": null,
+            "trained_at": null,
+            "trainer": "tools/retrain_from_replay.py"
+          },
+          "path": "staging_models/rub2_model_LONG.pkl"
+        }
+      ],
+      "code_ref": null,
+      "family": "RUB",
+      "generation": "RUB3",
+      "lifecycle": {
+        "LONG": "shadow"
+      },
+      "model_ids": [
+        "RUB2"
+      ],
+      "notes": [],
+      "provenance": "rub2_model_LONG-Challenger vs. live RUB1-LONG",
+      "script": "13_ai_rub_bot.py",
+      "tag": "RUB3"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "RUB",
+      "generation": "RUB4",
+      "lifecycle": {
+        "LONG": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "funding-gegatetes RUB3 (fund_24h>+3bps); nutzt RUB3-Artefakt",
+      "script": "13_ai_rub_bot.py",
+      "tag": "RUB4"
+    },
+    {
+      "artifacts": [],
+      "code_ref": null,
+      "family": "SRA",
+      "generation": "SRA1",
+      "lifecycle": {
+        "LONG": "shadow",
+        "SHORT": "shadow"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "Support/Resistance-AI (bot 9)",
+      "script": "9_ai_sr_bot.py",
+      "tag": "SRA1"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 113989,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "sra2_model_LONG.json",
+          "location": "root",
+          "md5": "a51bd5bcc65c3cae2fafd056c5cdf908",
+          "meta": {
+            "deployable": true,
+            "model_id": "SRA2",
+            "n_features": 22,
+            "strategy": "sra2",
+            "threshold": 0.6424,
+            "trained_at": null,
+            "trainer": "tools/retrain_sra2.py"
+          },
+          "path": "sra2_model_LONG.json"
+        },
+        {
+          "bytes": 201426,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "sra2_model_SHORT.json",
+          "location": "staging",
+          "md5": "ce4ce83c5d02c6534253f22255578d5d",
+          "meta": {
+            "deployable": false,
+            "model_id": "SRA2",
+            "n_features": 22,
+            "strategy": "sra2",
+            "threshold": 0.58,
+            "trained_at": null,
+            "trainer": "tools/retrain_sra2.py"
+          },
+          "path": "staging_models/sra2_model_SHORT.json"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "SRA",
+      "generation": "SRA2",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [
+        "SRA2"
+      ],
+      "notes": [],
+      "provenance": "Support/Resistance-AI (bot 9)",
+      "script": "9_ai_sr_bot.py",
+      "tag": "SRA2"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 672161,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "td_xgboost_model_1h.pkl",
+          "location": "root",
+          "md5": "5607f1649d5b4e65edd58de4ea1b51a4",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "td_xgboost_model_1h.pkl"
+        },
+        {
+          "bytes": 672161,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "td_xgboost_model_1h.pkl",
+          "location": "root",
+          "md5": "5607f1649d5b4e65edd58de4ea1b51a4",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "td_xgboost_model_1h.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "TD",
+      "generation": "TD_1H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "SMC-ML-Sniper Trend-Detect (bot 25)",
+      "script": "25_smc_ml_sniper.py",
+      "tag": "TD_1H"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 549828,
+          "direction": "LONG",
+          "exists": true,
+          "filename": "td_xgboost_model_4h.pkl",
+          "location": "root",
+          "md5": "e6065bcb4a579b601a0d871462827c48",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "td_xgboost_model_4h.pkl"
+        },
+        {
+          "bytes": 549828,
+          "direction": "SHORT",
+          "exists": true,
+          "filename": "td_xgboost_model_4h.pkl",
+          "location": "root",
+          "md5": "e6065bcb4a579b601a0d871462827c48",
+          "meta": {
+            "deployable": null,
+            "model_id": null,
+            "n_features": 20,
+            "strategy": null,
+            "threshold": 0.3,
+            "trained_at": null,
+            "trainer": "smc_ml_trainer.py"
+          },
+          "path": "td_xgboost_model_4h.pkl"
+        }
+      ],
+      "code_ref": "HEAD",
+      "family": "TD",
+      "generation": "TD_4H",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [],
+      "provenance": "SMC-ML-Sniper Trend-Detect (bot 25)",
+      "script": "25_smc_ml_sniper.py",
+      "tag": "TD_4H"
+    },
+    {
+      "artifacts": [],
+      "code_ref": "HEAD",
+      "family": "TRM",
+      "generation": "TRM1",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "TRM1 (bot 32)",
+      "script": "32_ai_trm1_bot.py",
+      "tag": "TRM1"
+    },
+    {
+      "artifacts": [],
+      "code_ref": "HEAD",
+      "family": "UFI",
+      "generation": "UFI1",
+      "lifecycle": {
+        "LONG": "live",
+        "SHORT": "live"
+      },
+      "model_ids": [],
+      "notes": [
+        "regelbasiert / kein Modell-Artefakt"
+      ],
+      "provenance": "UFI1 (bot 29)",
+      "script": "29_ufi1_bot.py",
+      "tag": "UFI1"
+    }
+  ],
+  "schema": "bot_variants_index/v1",
+  "shared_filename_count": 2,
+  "shared_filenames": [
+    {
+      "filename": "epd2_model_LONG.pkl",
+      "location": "staging",
+      "tags": [
+        "EPD2",
+        "EPD3"
+      ]
+    },
+    {
+      "filename": "rub2_model_LONG.pkl",
+      "location": "staging",
+      "tags": [
+        "RUB2",
+        "RUB3"
+      ]
+    }
+  ],
+  "unclassified_artifacts": [
+    {
+      "filename": "long_trend_prediction_model.joblib",
+      "location": "root",
+      "md5": "7870b61e4ba3e7bd4ab152488c8d5f61",
+      "path": "long_trend_prediction_model.joblib"
+    },
+    {
+      "filename": "master_trade_model_xgboost_combined_signals.pkl",
+      "location": "root",
+      "md5": "f43b4212299e3e47d51e98a4a5dafed7",
+      "path": "master_trade_model_xgboost_combined_signals.pkl"
+    },
+    {
+      "filename": "qm_xgboost_model_v2.pkl",
+      "location": "root",
+      "md5": "90b4b9db9649967660f07acfd50cf33f",
+      "path": "qm_xgboost_model_v2.pkl"
+    },
+    {
+      "filename": "short_trend_prediction_model.joblib",
+      "location": "root",
+      "md5": "024605cd60d730a22039c8f48f170153",
+      "path": "short_trend_prediction_model.joblib"
+    },
+    {
+      "filename": "trade_success_xgb_LONG_v2.json",
+      "location": "root",
+      "md5": "eadb7640eba7d56b7db5d660654477c2",
+      "path": "trade_success_xgb_LONG_v2.json"
+    },
+    {
+      "filename": "trade_success_xgb_SHORT_v2.json",
+      "location": "root",
+      "md5": "5d9d19620853d878a7c793271b7ed2b1",
+      "path": "trade_success_xgb_SHORT_v2.json"
+    }
+  ],
+  "unclassified_count": 6,
+  "unknown_tag_count": 0,
+  "unknown_tags": []
+}
