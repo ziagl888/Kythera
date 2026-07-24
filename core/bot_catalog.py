@@ -99,9 +99,11 @@ def family_for_tag(tag: str | None) -> str | None:
     (T-2026-KYT-9050-038): a generation tag like ``RUB2`` / ``MIS1-8h`` /
     ``BB_4H`` collapses onto its stable family prefix (``RUB`` / ``MIS`` /
     ``BB``), the grouping key under which every generation of a bot lives.
-    Matching mirrors script_for_tag exactly — pretty_name normalisation +
-    longest-prefix-wins — so ``ABR2`` resolves to ``ABR`` (bot 18), not ``BR``
-    (bot 7). Classic strategy names have no family prefix and return None (the
+    Matching mirrors script_for_tag exactly — same loop, same precedence:
+    pretty_name normalisation + first-match in _AI_FAMILY_TO_SCRIPT table order,
+    which is ordered so the more specific ``ABR`` precedes ``BR`` ⇒ ``ABR2``
+    resolves to ``ABR`` (bot 18), not ``BR`` (bot 7). Classic strategy names have
+    no family prefix and return None (the
     caller treats the pretty name itself as the group). Unknown tags → None.
     """
     if not tag:

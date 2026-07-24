@@ -308,29 +308,38 @@ def _read_meta(path: str, load_embedded: bool) -> dict[str, Any] | None:
 
 
 def _build_artifact_entry(direction: str, filename: str, load_embedded: bool) -> dict[str, Any]:
-    """Ein Artefakt-Eintrag: Fundort + md5 + meta (oder MISSING, wenn nicht da)."""
+    """Ein Artefakt-Eintrag: Fundort + md5 + meta (oder MISSING, wenn nicht da).
+
+    Resilienz (Modul-Invariante „Discovery darf nicht sterben"): der Fundort ist
+    per isfile() geprüft, aber zwischen Prüfung und Read kann die Datei auf dem
+    Live-VPS von einem Trainings-Lauf gesperrt/überschrieben werden (TOCTOU). Ein
+    OSError beim md5/stat degradiert deshalb DIESEN Eintrag (exists=False), statt
+    den ganzen Index-Lauf zu reißen — analog zum fail-soft joblib-Pfad."""
     found = _locate(filename)
-    if found is None:
-        return {
-            "direction": direction,
-            "filename": filename,
-            "location": "MISSING",
-            "path": None,
-            "exists": False,
-            "md5": None,
-            "bytes": None,
-            "meta": None,
-        }
-    label, abspath = found
+    if found is not None:
+        label, abspath = found
+        try:
+            return {
+                "direction": direction,
+                "filename": filename,
+                "location": label,
+                "path": _rel(abspath),
+                "exists": True,
+                "md5": _md5(abspath),
+                "bytes": os.path.getsize(abspath),
+                "meta": _read_meta(abspath, load_embedded),
+            }
+        except OSError as exc:  # pragma: no cover - TOCTOU/Lock/Permission-Race
+            logger.warning("Artefakt %s nicht lesbar (%s): %s", filename, abspath, exc)
     return {
         "direction": direction,
         "filename": filename,
-        "location": label,
-        "path": _rel(abspath),
-        "exists": True,
-        "md5": _md5(abspath),
-        "bytes": os.path.getsize(abspath),
-        "meta": _read_meta(abspath, load_embedded),
+        "location": "MISSING",
+        "path": None,
+        "exists": False,
+        "md5": None,
+        "bytes": None,
+        "meta": None,
     }
 
 
@@ -470,7 +479,12 @@ def _unclassified_artifacts(filename_to_tags: dict[str, set[str]]) -> list[dict[
     for label, directory in _SEARCH_LOCATIONS:
         if not os.path.isdir(directory):
             continue
-        for filename in sorted(os.listdir(directory)):
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError as exc:  # pragma: no cover - Permission/Race
+            logger.warning("Verzeichnis %s nicht lesbar: %s", directory, exc)
+            continue
+        for filename in entries:
             if filename in seen or filename in classified:
                 continue
             if not _is_model_file(filename):
@@ -478,13 +492,18 @@ def _unclassified_artifacts(filename_to_tags: dict[str, set[str]]) -> list[dict[
             abspath = os.path.join(directory, filename)
             if not os.path.isfile(abspath):
                 continue
+            try:
+                md5 = _md5(abspath)
+            except OSError as exc:  # pragma: no cover - TOCTOU/Lock/Permission-Race
+                logger.warning("Artefakt %s nicht lesbar: %s", abspath, exc)
+                continue
             seen.add(filename)
             out.append(
                 {
                     "filename": filename,
                     "location": label,
                     "path": _rel(abspath),
-                    "md5": _md5(abspath),
+                    "md5": md5,
                 }
             )
     out.sort(key=lambda e: (e["location"], e["filename"]))
