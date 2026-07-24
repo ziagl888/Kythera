@@ -1,3 +1,18 @@
+## [2026-07-24] Artefakt-Promotion EPD3-LONG + ATB2-LONG nach Repo-Root (Operator, T-2026-KYT-9050-037)
+
+Operator-Promotion (Michi, harte Regel 2): die beiden in PR #187 gestagten LONG-Deploy-
+Artefakte werden **byte-identisch** aus `staging_models/` in den Repo-Root gehoben, wo der
+LIVE-Loader sie liest (der Register-Flip in #187 macht `shadow_artifact_path` → Root-Pfad):
+- `epd3_model_LONG.pkl` (md5 `3375ccf5…`, `optimal_threshold=0.76`)
+- `atb2_model_LONG.pkl` (md5 `b8c46fa5…`, `optimal_threshold=0.60`)
+
+Reiner Datei-Move (kein Code, keine Modell-Änderung) — Inhalt identisch zu den in #187
+kern-reviewten Staging-pkls (md5-Parität verifiziert). **Wirksamwerden erst mit dem
+Fleet-Restart** (Michi): bis dahin lädt der LIVE-Loader zwar aus Root, aber die laufenden
+Bot-Prozesse haben die Artefakte noch nicht im Speicher. ⚠ Ehrliche Einordnung unverändert:
+EPD3-LONG ~0 Live-Edge (Volume-Cap 0.76), ATB2-LONG blind (n=17, 0.60) — operator-gewollte
+Live-Experimente.
+
 ## [2026-07-24] Bot-Varianten-Index (Phase 1) — read-only Discovery über alle Generationen (T-2026-KYT-9050-038)
 
 Phase 1 (D1) des Bot-Varianten-Index/-Archivs: ein **read-only Discovery-Tool**,
