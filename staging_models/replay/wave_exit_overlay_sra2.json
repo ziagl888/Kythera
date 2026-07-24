@@ -1,0 +1,1883 @@
+{
+  "summary": {
+    "model": "SRA2",
+    "window": [
+      "2026-07-07 14:20:00",
+      "2026-07-23 00:00:00"
+    ],
+    "n_closed_in_window": 552,
+    "n_unmatched_geometry": 515,
+    "n_scored": 29,
+    "scored_span": [
+      "2026-07-16 20:54:18.284426",
+      "2026-07-22 23:31:39.601055"
+    ],
+    "validation_vs_monitor": {
+      "targets_hit_exact_pct": 96.55,
+      "targets_hit_within1_pct": 100.0,
+      "win_agreement_pct": 96.55
+    },
+    "configs": {
+      "monitor": {
+        "n": 29,
+        "unlev_mean_pct": -0.4006,
+        "unlev_sum_pct": -11.62,
+        "net_sum_pct": -14.52,
+        "levered_sum_pct": 92.0,
+        "levered_n": 29,
+        "wr_tp1_pct": 79.31,
+        "dur_median_h": 8.67,
+        "dur_mean_h": 14.65
+      },
+      "dca10": {
+        "n": 29,
+        "unlev_mean_pct": -0.4547,
+        "unlev_sum_pct": -13.19,
+        "net_sum_pct": -14.94,
+        "levered_sum_pct": -84.6,
+        "levered_n": 29,
+        "wr_tp1_pct": 79.31,
+        "dur_median_h": 8.67,
+        "dur_mean_h": 14.65
+      },
+      "cornix3": {
+        "n": 29,
+        "unlev_mean_pct": -0.4547,
+        "unlev_sum_pct": -13.19,
+        "net_sum_pct": -14.94,
+        "levered_sum_pct": -84.6,
+        "levered_n": 29,
+        "wr_tp1_pct": 79.31,
+        "dur_median_h": 8.67,
+        "dur_mean_h": 14.65
+      }
+    },
+    "generated_at": "2026-07-23 16:49:24.694603+00:00",
+    "overlay": {
+      "n_arts": 29,
+      "baseline_cornix3": {
+        "ALL": {
+          "n": 29,
+          "unlev_sum": -13.19,
+          "net_sum": -14.94,
+          "lev_sum": -84.6,
+          "wr_tp1": 79.3,
+          "trig_pct": 0.0
+        },
+        "LONG": {
+          "n": 29,
+          "unlev_sum": -13.19,
+          "net_sum": -14.94,
+          "lev_sum": -84.6,
+          "wr_tp1": 79.3,
+          "trig_pct": 0.0
+        },
+        "SHORT": null,
+        "maxdd_open_wave": 2.9
+      },
+      "overlay_a_trailing_tp": {
+        "10": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 3.21,
+            "net_sum": 1.71,
+            "lev_sum": 70.7,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 3.21,
+            "net_sum": 1.71,
+            "lev_sum": 70.7,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "SHORT": null
+        },
+        "15": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 3.16,
+            "net_sum": 1.66,
+            "lev_sum": 69.5,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 3.16,
+            "net_sum": 1.66,
+            "lev_sum": 69.5,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "SHORT": null
+        },
+        "20": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 3.37,
+            "net_sum": 1.87,
+            "lev_sum": 73.3,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 3.37,
+            "net_sum": 1.87,
+            "lev_sum": 73.3,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "SHORT": null
+        },
+        "25": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 2.97,
+            "net_sum": 1.47,
+            "lev_sum": 65.2,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 2.97,
+            "net_sum": 1.47,
+            "lev_sum": 65.2,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "SHORT": null
+        },
+        "30": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 2.85,
+            "net_sum": 1.35,
+            "lev_sum": 62.8,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 2.85,
+            "net_sum": 1.35,
+            "lev_sum": 62.8,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "SHORT": null
+        },
+        "40": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 1.41,
+            "net_sum": -0.09,
+            "lev_sum": 39.3,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 1.41,
+            "net_sum": -0.09,
+            "lev_sum": 39.3,
+            "wr_tp1": 24.1,
+            "trig_pct": 82.8
+          },
+          "SHORT": null
+        }
+      },
+      "overlay_c_portfolio": {
+        "10": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 1.25,
+            "net_sum": -0.25,
+            "lev_sum": 47.1,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 1.25,
+            "net_sum": -0.25,
+            "lev_sum": 47.1,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "SHORT": null,
+          "maxdd_open_wave": 1.0,
+          "n_flattened": 25
+        },
+        "15": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 1.24,
+            "net_sum": -0.26,
+            "lev_sum": 46.8,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 1.24,
+            "net_sum": -0.26,
+            "lev_sum": 46.8,
+            "wr_tp1": 20.7,
+            "trig_pct": 86.2
+          },
+          "SHORT": null,
+          "maxdd_open_wave": 1.0,
+          "n_flattened": 25
+        },
+        "20": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 1.46,
+            "net_sum": -0.04,
+            "lev_sum": 51.2,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 1.46,
+            "net_sum": -0.04,
+            "lev_sum": 51.2,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "SHORT": null,
+          "maxdd_open_wave": 1.0,
+          "n_flattened": 25
+        },
+        "25": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 1.0,
+            "net_sum": -0.5,
+            "lev_sum": 42.1,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 1.0,
+            "net_sum": -0.5,
+            "lev_sum": 42.1,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "SHORT": null,
+          "maxdd_open_wave": 1.0,
+          "n_flattened": 25
+        },
+        "30": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": 0.88,
+            "net_sum": -0.62,
+            "lev_sum": 39.6,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": 0.88,
+            "net_sum": -0.62,
+            "lev_sum": 39.6,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "SHORT": null,
+          "maxdd_open_wave": 1.0,
+          "n_flattened": 25
+        },
+        "40": {
+          "ALL": {
+            "n": 29,
+            "unlev_sum": -0.5,
+            "net_sum": -2.0,
+            "lev_sum": 15.9,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "LONG": {
+            "n": 29,
+            "unlev_sum": -0.5,
+            "net_sum": -2.0,
+            "lev_sum": 15.9,
+            "wr_tp1": 24.1,
+            "trig_pct": 86.2
+          },
+          "SHORT": null,
+          "maxdd_open_wave": 1.0,
+          "n_flattened": 25
+        }
+      },
+      "x_sweep": [
+        0.1,
+        0.15,
+        0.2,
+        0.25,
+        0.3,
+        0.4
+      ],
+      "y_sweep": [
+        0.1,
+        0.15,
+        0.2,
+        0.25,
+        0.3,
+        0.4
+      ]
+    }
+  },
+  "records": [
+    {
+      "id": 458477,
+      "symbol": "1000CATUSDT",
+      "direction": "LONG",
+      "entry1": 0.001343,
+      "entry2": 0.001276,
+      "orig_sl": 0.001258,
+      "lev": "20x",
+      "open_time": "2026-07-21 19:23:45.911707",
+      "close_time": "2026-07-22 18:48:12.497516",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.001343)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.44676,
+          "net_pct": 0.34676,
+          "levered_pct": 8.9352,
+          "filled_weight": 1.0,
+          "dur_h": 23.333,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.22338,
+          "net_pct": 0.17338,
+          "levered_pct": 4.4676,
+          "filled_weight": 0.5,
+          "dur_h": 23.333,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.22338,
+          "net_pct": 0.17338,
+          "levered_pct": 4.4676,
+          "filled_weight": 0.5,
+          "dur_h": 23.333,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458533,
+      "symbol": "API3USDT",
+      "direction": "LONG",
+      "entry1": 0.226,
+      "entry2": 0.214985,
+      "orig_sl": 0.2086,
+      "lev": "20x",
+      "open_time": "2026-07-16 20:54:18.284426",
+      "close_time": "2026-07-22 19:05:21.297012",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.226)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -7.69912,
+          "net_pct": -7.79912,
+          "levered_pct": -100.0,
+          "filled_weight": 1.0,
+          "dur_h": 83.25,
+          "exit_reason": "sl_after_tp0"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -5.33454,
+          "net_pct": -5.43454,
+          "levered_pct": -79.6997,
+          "filled_weight": 1.0,
+          "dur_h": 83.25,
+          "exit_reason": "sl_after_tp0"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -5.33454,
+          "net_pct": -5.43454,
+          "levered_pct": -79.6997,
+          "filled_weight": 1.0,
+          "dur_h": 83.25,
+          "exit_reason": "sl_after_tp0"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 457823,
+      "symbol": "ARKMUSDT",
+      "direction": "LONG",
+      "entry1": 0.1099,
+      "entry2": 0.104405,
+      "orig_sl": 0.1028,
+      "lev": "20x",
+      "open_time": "2026-07-21 13:50:26.682458",
+      "close_time": "2026-07-22 10:40:16.754112",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.1099)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.75827,
+          "net_pct": 0.65827,
+          "levered_pct": 15.1653,
+          "filled_weight": 1.0,
+          "dur_h": 20.75,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.37913,
+          "net_pct": 0.32913,
+          "levered_pct": 7.5827,
+          "filled_weight": 0.5,
+          "dur_h": 20.75,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.37913,
+          "net_pct": 0.32913,
+          "levered_pct": 7.5827,
+          "filled_weight": 0.5,
+          "dur_h": 20.75,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458087,
+      "symbol": "BMTUSDT",
+      "direction": "LONG",
+      "entry1": 0.01225,
+      "entry2": 0.011638,
+      "orig_sl": 0.01152,
+      "lev": "20x",
+      "open_time": "2026-07-22 14:29:13.000713",
+      "close_time": "2026-07-22 14:31:25.708570",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.55102,
+          "net_pct": 1.45102,
+          "levered_pct": 31.0204,
+          "filled_weight": 1.0,
+          "dur_h": 0.0,
+          "exit_reason": "all_targets"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 0.77551,
+          "net_pct": 0.72551,
+          "levered_pct": 15.5102,
+          "filled_weight": 0.5,
+          "dur_h": 0.0,
+          "exit_reason": "all_targets"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 0.77551,
+          "net_pct": 0.72551,
+          "levered_pct": 15.5102,
+          "filled_weight": 0.5,
+          "dur_h": 0.0,
+          "exit_reason": "all_targets"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 459303,
+      "symbol": "BMTUSDT",
+      "direction": "LONG",
+      "entry1": 0.01219,
+      "entry2": 0.01158,
+      "orig_sl": 0.01134,
+      "lev": "20x",
+      "open_time": "2026-07-22 14:54:35.295836",
+      "close_time": "2026-07-23 07:37:09.581243",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 2.05086,
+          "net_pct": 1.95086,
+          "levered_pct": 41.0172,
+          "filled_weight": 1.0,
+          "dur_h": 16.667,
+          "exit_reason": "all_targets"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.02543,
+          "net_pct": 0.97543,
+          "levered_pct": 20.5086,
+          "filled_weight": 0.5,
+          "dur_h": 16.667,
+          "exit_reason": "all_targets"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.02543,
+          "net_pct": 0.97543,
+          "levered_pct": 20.5086,
+          "filled_weight": 0.5,
+          "dur_h": 16.667,
+          "exit_reason": "all_targets"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 460143,
+      "symbol": "BOMEUSDT",
+      "direction": "LONG",
+      "entry1": 0.000427,
+      "entry2": 0.00040565,
+      "orig_sl": 0.0004013,
+      "lev": "20x",
+      "open_time": "2026-07-22 18:24:18.095891",
+      "close_time": "2026-07-23 17:38:01.205330",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 3.6612,
+          "net_pct": 3.5612,
+          "levered_pct": 73.224,
+          "filled_weight": 1.0,
+          "dur_h": 23.167,
+          "exit_reason": "all_targets"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.8306,
+          "net_pct": 1.7806,
+          "levered_pct": 36.612,
+          "filled_weight": 0.5,
+          "dur_h": 23.167,
+          "exit_reason": "all_targets"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.8306,
+          "net_pct": 1.7806,
+          "levered_pct": 36.612,
+          "filled_weight": 0.5,
+          "dur_h": 23.167,
+          "exit_reason": "all_targets"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458153,
+      "symbol": "BTRUSDT",
+      "direction": "LONG",
+      "entry1": 0.01775,
+      "entry2": 0.016862,
+      "orig_sl": 0.01643,
+      "lev": "10x",
+      "open_time": "2026-07-21 19:28:58.410118",
+      "close_time": "2026-07-22 15:31:00.298855",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.01775)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.6385,
+          "net_pct": 0.5385,
+          "levered_pct": 6.385,
+          "filled_weight": 1.0,
+          "dur_h": 20.0,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.31925,
+          "net_pct": 0.26925,
+          "levered_pct": 3.1925,
+          "filled_weight": 0.5,
+          "dur_h": 20.0,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.31925,
+          "net_pct": 0.26925,
+          "levered_pct": 3.1925,
+          "filled_weight": 0.5,
+          "dur_h": 20.0,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458119,
+      "symbol": "CRVUSDT",
+      "direction": "LONG",
+      "entry1": 0.2138,
+      "entry2": 0.20311,
+      "orig_sl": 0.1997,
+      "lev": "20x",
+      "open_time": "2026-07-21 19:18:06.298505",
+      "close_time": "2026-07-22 15:07:01.495732",
+      "real_targets_hit": 2,
+      "real_status": "SL Hit (SL: 0.2168)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.43436,
+          "net_pct": 1.33436,
+          "levered_pct": 28.6872,
+          "filled_weight": 1.0,
+          "dur_h": 19.75,
+          "exit_reason": "open_at_end"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.71718,
+          "net_pct": 0.66718,
+          "levered_pct": 14.3436,
+          "filled_weight": 0.5,
+          "dur_h": 19.75,
+          "exit_reason": "open_at_end"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.71718,
+          "net_pct": 0.66718,
+          "levered_pct": 14.3436,
+          "filled_weight": 0.5,
+          "dur_h": 19.75,
+          "exit_reason": "open_at_end"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458009,
+      "symbol": "DODOXUSDT",
+      "direction": "LONG",
+      "entry1": 0.019346,
+      "entry2": 0.018379,
+      "orig_sl": 0.018129,
+      "lev": "20x",
+      "open_time": "2026-07-22 12:24:58.695167",
+      "close_time": "2026-07-22 13:24:18.194501",
+      "real_targets_hit": 0,
+      "real_status": "SL Hit (SL: 0.018129)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -6.29071,
+          "net_pct": -6.39071,
+          "levered_pct": -100.0,
+          "filled_weight": 1.0,
+          "dur_h": 0.917,
+          "exit_reason": "sl_after_tp0"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -3.82548,
+          "net_pct": -3.92548,
+          "levered_pct": -63.6025,
+          "filled_weight": 1.0,
+          "dur_h": 0.917,
+          "exit_reason": "sl_after_tp0"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -3.82548,
+          "net_pct": -3.92548,
+          "levered_pct": -63.6025,
+          "filled_weight": 1.0,
+          "dur_h": 0.917,
+          "exit_reason": "sl_after_tp0"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458373,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 17:27:55.399543",
+      "close_time": "2026-07-22 17:52:24.240730",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.50133,
+          "net_pct": 1.40133,
+          "levered_pct": 30.0266,
+          "filled_weight": 1.0,
+          "dur_h": 0.333,
+          "exit_reason": "all_targets"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 0.75067,
+          "net_pct": 0.70067,
+          "levered_pct": 15.0133,
+          "filled_weight": 0.5,
+          "dur_h": 0.333,
+          "exit_reason": "all_targets"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 0.75067,
+          "net_pct": 0.70067,
+          "levered_pct": 15.0133,
+          "filled_weight": 0.5,
+          "dur_h": 0.333,
+          "exit_reason": "all_targets"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458376,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 17:53:04.007090",
+      "close_time": "2026-07-22 17:53:15.601193",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 458380,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 17:58:09.004802",
+      "close_time": "2026-07-22 17:58:23.590218",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 458385,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 18:03:12.605870",
+      "close_time": "2026-07-22 18:03:51.210554",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 458392,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 18:08:23.013727",
+      "close_time": "2026-07-22 18:09:11.202893",
+      "real_targets_hit": 2,
+      "real_status": "SL Hit (SL: 0.003555)",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 458401,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 18:13:33.697236",
+      "close_time": "2026-07-22 18:14:01.312224",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 458416,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 18:18:43.395551",
+      "close_time": "2026-07-22 18:19:11.114634",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 458421,
+      "symbol": "FIGHTUSDT",
+      "direction": "LONG",
+      "entry1": 0.003508,
+      "entry2": 0.003333,
+      "orig_sl": 0.003281,
+      "lev": "20x",
+      "open_time": "2026-07-22 18:24:07.183226",
+      "close_time": "2026-07-22 18:24:42.183750",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 457187,
+      "symbol": "HEMIUSDT",
+      "direction": "LONG",
+      "entry1": 0.00533,
+      "entry2": 0.005063,
+      "orig_sl": 0.004807,
+      "lev": "20x",
+      "open_time": "2026-07-22 03:26:40.510642",
+      "close_time": "2026-07-22 03:52:14.561682",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.00533)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.43152,
+          "net_pct": 0.33152,
+          "levered_pct": 8.6304,
+          "filled_weight": 1.0,
+          "dur_h": 0.333,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.21576,
+          "net_pct": 0.16576,
+          "levered_pct": 4.3152,
+          "filled_weight": 0.5,
+          "dur_h": 0.333,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.21576,
+          "net_pct": 0.16576,
+          "levered_pct": 4.3152,
+          "filled_weight": 0.5,
+          "dur_h": 0.333,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 457696,
+      "symbol": "HOLOUSDT",
+      "direction": "LONG",
+      "entry1": 0.06482,
+      "entry2": 0.061579,
+      "orig_sl": 0.06069,
+      "lev": "20x",
+      "open_time": "2026-07-22 07:25:09.798617",
+      "close_time": "2026-07-22 09:21:50.804281",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.06482)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.34454,
+          "net_pct": 0.24454,
+          "levered_pct": 6.8909,
+          "filled_weight": 1.0,
+          "dur_h": 1.833,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.17227,
+          "net_pct": 0.12227,
+          "levered_pct": 3.4454,
+          "filled_weight": 0.5,
+          "dur_h": 1.833,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.17227,
+          "net_pct": 0.12227,
+          "levered_pct": 3.4454,
+          "filled_weight": 0.5,
+          "dur_h": 1.833,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458504,
+      "symbol": "HOLOUSDT",
+      "direction": "LONG",
+      "entry1": 0.06588,
+      "entry2": 0.062586,
+      "orig_sl": 0.06152,
+      "lev": "20x",
+      "open_time": "2026-07-22 15:26:05.605446",
+      "close_time": "2026-07-22 18:54:28.098211",
+      "real_targets_hit": 2,
+      "real_status": "SL Hit (SL: 0.0679)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 3.1522,
+          "net_pct": 3.0522,
+          "levered_pct": 63.0439,
+          "filled_weight": 1.0,
+          "dur_h": 3.333,
+          "exit_reason": "open_at_end"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.5761,
+          "net_pct": 1.5261,
+          "levered_pct": 31.522,
+          "filled_weight": 0.5,
+          "dur_h": 3.333,
+          "exit_reason": "open_at_end"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.5761,
+          "net_pct": 1.5261,
+          "levered_pct": 31.522,
+          "filled_weight": 0.5,
+          "dur_h": 3.333,
+          "exit_reason": "open_at_end"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 457333,
+      "symbol": "INITUSDT",
+      "direction": "LONG",
+      "entry1": 0.05542,
+      "entry2": 0.052649,
+      "orig_sl": 0.05179,
+      "lev": "20x",
+      "open_time": "2026-07-22 01:49:27.586022",
+      "close_time": "2026-07-22 06:07:00.712032",
+      "real_targets_hit": 2,
+      "real_status": "SL Hit (SL: 0.05635)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.9668,
+          "net_pct": 1.8668,
+          "levered_pct": 39.336,
+          "filled_weight": 1.0,
+          "dur_h": 4.25,
+          "exit_reason": "sl_after_tp2"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.9834,
+          "net_pct": 0.9334,
+          "levered_pct": 19.668,
+          "filled_weight": 0.5,
+          "dur_h": 4.25,
+          "exit_reason": "sl_after_tp2"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.9834,
+          "net_pct": 0.9334,
+          "levered_pct": 19.668,
+          "filled_weight": 0.5,
+          "dur_h": 4.25,
+          "exit_reason": "sl_after_tp2"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458512,
+      "symbol": "INITUSDT",
+      "direction": "LONG",
+      "entry1": 0.05627,
+      "entry2": 0.053456,
+      "orig_sl": 0.05272,
+      "lev": "20x",
+      "open_time": "2026-07-22 06:23:52.088369",
+      "close_time": "2026-07-22 18:56:49.096745",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 3.31734,
+          "net_pct": 3.21734,
+          "levered_pct": 66.3468,
+          "filled_weight": 1.0,
+          "dur_h": 12.5,
+          "exit_reason": "all_targets"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.65867,
+          "net_pct": 1.60867,
+          "levered_pct": 33.1734,
+          "filled_weight": 0.5,
+          "dur_h": 12.5,
+          "exit_reason": "all_targets"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.65867,
+          "net_pct": 1.60867,
+          "levered_pct": 33.1734,
+          "filled_weight": 0.5,
+          "dur_h": 12.5,
+          "exit_reason": "all_targets"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458935,
+      "symbol": "JELLYJELLYUSDT",
+      "direction": "LONG",
+      "entry1": 0.05542,
+      "entry2": 0.052649,
+      "orig_sl": 0.05196,
+      "lev": "20x",
+      "open_time": "2026-07-22 19:26:31.000044",
+      "close_time": "2026-07-23 01:54:45.106930",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 2.39986,
+          "net_pct": 2.29986,
+          "levered_pct": 47.9971,
+          "filled_weight": 1.0,
+          "dur_h": 6.333,
+          "exit_reason": "all_targets"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.19993,
+          "net_pct": 1.14993,
+          "levered_pct": 23.9986,
+          "filled_weight": 0.5,
+          "dur_h": 6.333,
+          "exit_reason": "all_targets"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.19993,
+          "net_pct": 1.14993,
+          "levered_pct": 23.9986,
+          "filled_weight": 0.5,
+          "dur_h": 6.333,
+          "exit_reason": "all_targets"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458528,
+      "symbol": "JOEUSDT",
+      "direction": "LONG",
+      "entry1": 0.02807,
+      "entry2": 0.026666,
+      "orig_sl": 0.02636,
+      "lev": "20x",
+      "open_time": "2026-07-22 19:00:18.715929",
+      "close_time": "2026-07-22 19:00:35.995381",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": null,
+      "skip": "no_candles_in_window"
+    },
+    {
+      "id": 458679,
+      "symbol": "JOEUSDT",
+      "direction": "LONG",
+      "entry1": 0.02807,
+      "entry2": 0.026666,
+      "orig_sl": 0.02636,
+      "lev": "20x",
+      "open_time": "2026-07-22 19:05:27.890599",
+      "close_time": "2026-07-22 20:27:14.705735",
+      "real_targets_hit": 2,
+      "real_status": "SL Hit (SL: 0.02856)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 2.11376,
+          "net_pct": 2.01376,
+          "levered_pct": 42.2753,
+          "filled_weight": 1.0,
+          "dur_h": 1.25,
+          "exit_reason": "sl_after_tp2"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.05688,
+          "net_pct": 1.00688,
+          "levered_pct": 21.1376,
+          "filled_weight": 0.5,
+          "dur_h": 1.25,
+          "exit_reason": "sl_after_tp2"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.05688,
+          "net_pct": 1.00688,
+          "levered_pct": 21.1376,
+          "filled_weight": 0.5,
+          "dur_h": 1.25,
+          "exit_reason": "sl_after_tp2"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458767,
+      "symbol": "LISTAUSDT",
+      "direction": "LONG",
+      "entry1": 0.0505,
+      "entry2": 0.047975,
+      "orig_sl": 0.04727,
+      "lev": "20x",
+      "open_time": "2026-07-22 20:35:42.508208",
+      "close_time": "2026-07-22 22:17:40.505720",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.0505)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.27723,
+          "net_pct": 0.17723,
+          "levered_pct": 5.5446,
+          "filled_weight": 1.0,
+          "dur_h": 1.583,
+          "exit_reason": "open_at_end"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.13861,
+          "net_pct": 0.08861,
+          "levered_pct": 2.7723,
+          "filled_weight": 0.5,
+          "dur_h": 1.583,
+          "exit_reason": "open_at_end"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.13861,
+          "net_pct": 0.08861,
+          "levered_pct": 2.7723,
+          "filled_weight": 0.5,
+          "dur_h": 1.583,
+          "exit_reason": "open_at_end"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 457678,
+      "symbol": "MIRAUSDT",
+      "direction": "LONG",
+      "entry1": 0.04777,
+      "entry2": 0.045381,
+      "orig_sl": 0.04348,
+      "lev": "20x",
+      "open_time": "2026-07-22 05:28:12.911895",
+      "close_time": "2026-07-22 09:12:00.293604",
+      "real_targets_hit": 0,
+      "real_status": "SL Hit (SL: 0.04348)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -8.98053,
+          "net_pct": -9.08053,
+          "levered_pct": -100.0,
+          "filled_weight": 1.0,
+          "dur_h": 3.667,
+          "exit_reason": "sl_after_tp0"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -6.58475,
+          "net_pct": -6.68475,
+          "levered_pct": -91.8898,
+          "filled_weight": 1.0,
+          "dur_h": 3.667,
+          "exit_reason": "sl_after_tp0"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -6.58475,
+          "net_pct": -6.68475,
+          "levered_pct": -91.8898,
+          "filled_weight": 1.0,
+          "dur_h": 3.667,
+          "exit_reason": "sl_after_tp0"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 459328,
+      "symbol": "MYXUSDT",
+      "direction": "LONG",
+      "entry1": 0.08296,
+      "entry2": 0.078812,
+      "orig_sl": 0.0772,
+      "lev": "10x",
+      "open_time": "2026-07-22 02:25:41.594936",
+      "close_time": "2026-07-23 08:03:20.700171",
+      "real_targets_hit": 0,
+      "real_status": "SL Hit (SL: 0.0772)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -6.94311,
+          "net_pct": -7.04311,
+          "levered_pct": -69.4311,
+          "filled_weight": 1.0,
+          "dur_h": 29.5,
+          "exit_reason": "sl_after_tp0"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -4.49424,
+          "net_pct": -4.59424,
+          "levered_pct": -44.9424,
+          "filled_weight": 1.0,
+          "dur_h": 29.5,
+          "exit_reason": "sl_after_tp0"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -4.49424,
+          "net_pct": -4.59424,
+          "levered_pct": -44.9424,
+          "filled_weight": 1.0,
+          "dur_h": 29.5,
+          "exit_reason": "sl_after_tp0"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 460209,
+      "symbol": "NEOUSDT",
+      "direction": "LONG",
+      "entry1": 2.024,
+      "entry2": 1.9228,
+      "orig_sl": 1.889,
+      "lev": "20x",
+      "open_time": "2026-07-22 15:20:08.110924",
+      "close_time": "2026-07-23 18:10:30.808154",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 2.024)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.75758,
+          "net_pct": 0.65758,
+          "levered_pct": 15.1515,
+          "filled_weight": 1.0,
+          "dur_h": 26.75,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.37879,
+          "net_pct": 0.32879,
+          "levered_pct": 7.5758,
+          "filled_weight": 0.5,
+          "dur_h": 26.75,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.37879,
+          "net_pct": 0.32879,
+          "levered_pct": 7.5758,
+          "filled_weight": 0.5,
+          "dur_h": 26.75,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 451374,
+      "symbol": "QTUMUSDT",
+      "direction": "LONG",
+      "entry1": 0.7098,
+      "entry2": 0.67336,
+      "orig_sl": 0.6648,
+      "lev": "20x",
+      "open_time": "2026-07-18 20:48:25.983084",
+      "close_time": "2026-07-19 03:01:37.198037",
+      "real_targets_hit": 3,
+      "real_status": "ALL TARGETS HIT",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 1.31492,
+          "net_pct": 1.21492,
+          "levered_pct": 26.2985,
+          "filled_weight": 1.0,
+          "dur_h": 6.167,
+          "exit_reason": "all_targets"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 0.65746,
+          "net_pct": 0.60746,
+          "levered_pct": 13.1492,
+          "filled_weight": 0.5,
+          "dur_h": 6.167,
+          "exit_reason": "all_targets"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 3,
+          "tp1": true,
+          "unlev_pct": 0.65746,
+          "net_pct": 0.60746,
+          "levered_pct": 13.1492,
+          "filled_weight": 0.5,
+          "dur_h": 6.167,
+          "exit_reason": "all_targets"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 459633,
+      "symbol": "QTUMUSDT",
+      "direction": "LONG",
+      "entry1": 0.7088,
+      "entry2": 0.67336,
+      "orig_sl": 0.6648,
+      "lev": "20x",
+      "open_time": "2026-07-22 21:23:32.597892",
+      "close_time": "2026-07-23 12:14:59.707100",
+      "real_targets_hit": 2,
+      "real_status": "SL Hit (SL: 0.718)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.23213,
+          "net_pct": 1.13213,
+          "levered_pct": 24.6426,
+          "filled_weight": 1.0,
+          "dur_h": 14.75,
+          "exit_reason": "open_at_end"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.61606,
+          "net_pct": 0.56606,
+          "levered_pct": 12.3213,
+          "filled_weight": 0.5,
+          "dur_h": 14.75,
+          "exit_reason": "open_at_end"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.61606,
+          "net_pct": 0.56606,
+          "levered_pct": 12.3213,
+          "filled_weight": 0.5,
+          "dur_h": 14.75,
+          "exit_reason": "open_at_end"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 458479,
+      "symbol": "STARUSDT",
+      "direction": "LONG",
+      "entry1": 0.14704,
+      "entry2": 0.139688,
+      "orig_sl": 0.1378,
+      "lev": "10x",
+      "open_time": "2026-07-22 11:29:17.908281",
+      "close_time": "2026-07-22 18:49:51.382377",
+      "real_targets_hit": 0,
+      "real_status": "SL Hit (SL: 0.1378)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -6.284,
+          "net_pct": -6.384,
+          "levered_pct": -62.84,
+          "filled_weight": 1.0,
+          "dur_h": 7.25,
+          "exit_reason": "sl_after_tp0"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -3.81779,
+          "net_pct": -3.91779,
+          "levered_pct": -38.1779,
+          "filled_weight": 1.0,
+          "dur_h": 7.25,
+          "exit_reason": "sl_after_tp0"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -3.81779,
+          "net_pct": -3.91779,
+          "levered_pct": -38.1779,
+          "filled_weight": 1.0,
+          "dur_h": 7.25,
+          "exit_reason": "sl_after_tp0"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 459133,
+      "symbol": "TWTUSDT",
+      "direction": "LONG",
+      "entry1": 0.3377,
+      "entry2": 0.320815,
+      "orig_sl": 0.312795,
+      "lev": "20x",
+      "open_time": "2026-07-21 20:24:59.295138",
+      "close_time": "2026-07-23 05:05:50.902073",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.3377)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.60211,
+          "net_pct": 0.50211,
+          "levered_pct": 12.0422,
+          "filled_weight": 1.0,
+          "dur_h": 32.667,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.30106,
+          "net_pct": 0.25106,
+          "levered_pct": 6.0211,
+          "filled_weight": 0.5,
+          "dur_h": 32.667,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.30106,
+          "net_pct": 0.25106,
+          "levered_pct": 6.0211,
+          "filled_weight": 0.5,
+          "dur_h": 32.667,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 456599,
+      "symbol": "VELODROMEUSDT",
+      "direction": "LONG",
+      "entry1": 0.01884,
+      "entry2": 0.017898,
+      "orig_sl": 0.01739,
+      "lev": "20x",
+      "open_time": "2026-07-21 17:25:02.112782",
+      "close_time": "2026-07-21 18:01:16.996777",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.01884)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.4954,
+          "net_pct": 0.3954,
+          "levered_pct": 9.908,
+          "filled_weight": 1.0,
+          "dur_h": 0.5,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.2477,
+          "net_pct": 0.1977,
+          "levered_pct": 4.954,
+          "filled_weight": 0.5,
+          "dur_h": 0.5,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.2477,
+          "net_pct": 0.1977,
+          "levered_pct": 4.954,
+          "filled_weight": 0.5,
+          "dur_h": 0.5,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 459869,
+      "symbol": "VELODROMEUSDT",
+      "direction": "LONG",
+      "entry1": 0.01884,
+      "entry2": 0.017898,
+      "orig_sl": 0.01739,
+      "lev": "20x",
+      "open_time": "2026-07-21 18:06:08.781563",
+      "close_time": "2026-07-23 15:42:45.294576",
+      "real_targets_hit": 0,
+      "real_status": "SL Hit (SL: 0.01739)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -7.69639,
+          "net_pct": -7.79639,
+          "levered_pct": -100.0,
+          "filled_weight": 1.0,
+          "dur_h": 45.5,
+          "exit_reason": "sl_after_tp0"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -5.26735,
+          "net_pct": -5.36735,
+          "levered_pct": -78.3831,
+          "filled_weight": 1.0,
+          "dur_h": 45.5,
+          "exit_reason": "sl_after_tp0"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 0,
+          "tp1": false,
+          "unlev_pct": -5.26735,
+          "net_pct": -5.36735,
+          "levered_pct": -78.3831,
+          "filled_weight": 1.0,
+          "dur_h": 45.5,
+          "exit_reason": "sl_after_tp0"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 457553,
+      "symbol": "WLFIUSDT",
+      "direction": "LONG",
+      "entry1": 0.05652,
+      "entry2": 0.053694,
+      "orig_sl": 0.0511,
+      "lev": "20x",
+      "open_time": "2026-07-21 23:27:25.388406",
+      "close_time": "2026-07-22 08:11:10.302345",
+      "real_targets_hit": 1,
+      "real_status": "SL Hit (SL: 0.05652)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.34206,
+          "net_pct": 0.24206,
+          "levered_pct": 6.8412,
+          "filled_weight": 1.0,
+          "dur_h": 8.667,
+          "exit_reason": "sl_after_tp1"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.17103,
+          "net_pct": 0.12103,
+          "levered_pct": 3.4206,
+          "filled_weight": 0.5,
+          "dur_h": 8.667,
+          "exit_reason": "sl_after_tp1"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 1,
+          "tp1": true,
+          "unlev_pct": 0.17103,
+          "net_pct": 0.12103,
+          "levered_pct": 3.4206,
+          "filled_weight": 0.5,
+          "dur_h": 8.667,
+          "exit_reason": "sl_after_tp1"
+        }
+      },
+      "skip": null
+    },
+    {
+      "id": 459437,
+      "symbol": "ZESTUSDT",
+      "direction": "LONG",
+      "entry1": 0.2312,
+      "entry2": 0.21964,
+      "orig_sl": 0.216,
+      "lev": "10x",
+      "open_time": "2026-07-22 23:31:39.601055",
+      "close_time": "2026-07-23 09:33:21.187138",
+      "real_targets_hit": 2,
+      "real_status": "SL Hit (SL: 0.23424)",
+      "sim": {
+        "monitor": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 1.48645,
+          "net_pct": 1.38645,
+          "levered_pct": 14.8645,
+          "filled_weight": 1.0,
+          "dur_h": 9.917,
+          "exit_reason": "open_at_end"
+        },
+        "dca10": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.74322,
+          "net_pct": 0.69322,
+          "levered_pct": 7.4322,
+          "filled_weight": 0.5,
+          "dur_h": 9.917,
+          "exit_reason": "open_at_end"
+        },
+        "cornix3": {
+          "filled": true,
+          "targets_hit": 2,
+          "tp1": true,
+          "unlev_pct": 0.74322,
+          "net_pct": 0.69322,
+          "levered_pct": 7.4322,
+          "filled_weight": 0.5,
+          "dur_h": 9.917,
+          "exit_reason": "open_at_end"
+        }
+      },
+      "skip": null
+    }
+  ]
+}
