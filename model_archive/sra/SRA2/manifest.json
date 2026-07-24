@@ -1,0 +1,93 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 113989,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "sra2_model_LONG.json",
+      "git_tracked": true,
+      "md5": "a51bd5bcc65c3cae2fafd056c5cdf908",
+      "meta": {
+        "deployable": true,
+        "model_id": "SRA2",
+        "n_features": 22,
+        "strategy": "sra2",
+        "threshold": 0.6424,
+        "trained_at": null,
+        "trainer": "tools/retrain_sra2.py"
+      },
+      "source_commit": "c6db433abbd539caf13e2f54aa73a698b567970d",
+      "source_origin": {
+        "location": "root",
+        "path": "sra2_model_LONG.json"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 201426,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "sra2_model_SHORT.json",
+      "git_tracked": true,
+      "md5": "ce4ce83c5d02c6534253f22255578d5d",
+      "meta": {
+        "deployable": false,
+        "model_id": "SRA2",
+        "n_features": 22,
+        "strategy": "sra2",
+        "threshold": 0.58,
+        "trained_at": null,
+        "trainer": "tools/retrain_sra2.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/sra2_model_SHORT.json"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "SRA",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "SRA2",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-22",
+      "sha": "ab34224",
+      "subject": "feat(bot-9): retire classic Main-Channel bot, replace with MAX2 (SRA2 LONG â†’ CH_MAIN) (T-2026-KYT-9050-020)"
+    },
+    {
+      "date": "2026-07-21",
+      "sha": "c6db433",
+      "subject": "feat(shadow-gate): WS2 batch 2 (deployable-only) â€” SRA2-LONG + EPD3-SHORT live (T-2026-CU-9050-185)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [
+    "SRA2"
+  ],
+  "notes": [],
+  "provenance": "Support/Resistance-AI (bot 9)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "9_ai_sr_bot.py",
+  "tag": "SRA2"
+}

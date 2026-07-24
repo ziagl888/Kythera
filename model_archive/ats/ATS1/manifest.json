@@ -1,0 +1,46 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "ATS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "ATS1",
+  "lifecycle": {
+    "LONG": "silent",
+    "SHORT": "silent"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "3a29093",
+      "subject": "feat(fleet): RUB1-revive + gate-flips + retires from bot_results.xlsx (T-2026-KYT-9050-037)"
+    },
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-15",
+      "sha": "d4d4c41",
+      "subject": "fix(watchdog+shadow): mutex-before-reap deadlock + bots 12/14 shadow-only mode (T-2026-CU-9050-127)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Trend-Strength-Sniper TSI (bot 12)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "12_ai_ats_bot.py",
+  "tag": "ATS1"
+}

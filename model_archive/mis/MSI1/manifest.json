@@ -1,0 +1,33 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "git-log-S",
+    "note": "letzte Kommit-Berührung; für den Live-Swap ggf. <ref>^ (T-037-Muster)",
+    "ref": "f760ba03c4a69e875fe5780fedd14b12cea7ff14",
+    "sha": "f760ba03c4a69e875fe5780fedd14b12cea7ff14",
+    "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)",
+    "token": "MSI1"
+  },
+  "family": "MIS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "MSI1",
+  "lifecycle": {
+    "LONG": "retired",
+    "SHORT": "retired"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+  "schema": "bot_variants_manifest/v1",
+  "script": "11_ai_mis_bot.py",
+  "tag": "MSI1"
+}

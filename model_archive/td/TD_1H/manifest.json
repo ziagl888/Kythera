@@ -1,0 +1,70 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 672161,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "td_xgboost_model_1h.pkl",
+      "git_tracked": true,
+      "md5": "5607f1649d5b4e65edd58de4ea1b51a4",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": "smc_ml_trainer.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "td_xgboost_model_1h.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 672161,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "td_xgboost_model_1h.pkl",
+      "git_tracked": true,
+      "md5": "5607f1649d5b4e65edd58de4ea1b51a4",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": "smc_ml_trainer.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "td_xgboost_model_1h.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "TD",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "TD_1H",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "SMC-ML-Sniper Trend-Detect (bot 25)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "25_smc_ml_sniper.py",
+  "tag": "TD_1H"
+}

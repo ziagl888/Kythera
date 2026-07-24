@@ -1,0 +1,62 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 2267489,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "model_tsi_long_robust.pkl",
+      "git_tracked": true,
+      "md5": "73ea915e0ccc6148620ef1de16ed8cd8",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "model_tsi_long_robust.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 2248095,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "model_tsi_short_robust.pkl",
+      "git_tracked": true,
+      "md5": "cf090013c47fa0d007d6d1372916ded5",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "model_tsi_short_robust.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "git-log-S",
+    "note": "letzte Kommit-Berührung; für den Live-Swap ggf. <ref>^ (T-037-Muster)",
+    "ref": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+    "sha": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+    "subject": "feat: initial import â€” Kythera canonical bot (live state 2026-07-01)",
+    "token": "model_tsi_long_robust.pkl"
+  },
+  "family": "ATS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "ATS1_ROBUST",
+  "lifecycle": {
+    "LONG": "retired",
+    "SHORT": "retired"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "3a29093",
+      "subject": "feat(fleet): RUB1-revive + gate-flips + retires from bot_results.xlsx (T-2026-KYT-9050-037)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "ATS1_Robust Legacy (model_tsi_*_robust.pkl); ATS2 ist der Nachfolger",
+  "schema": "bot_variants_manifest/v1",
+  "script": "12_ai_ats_bot.py",
+  "tag": "ATS1_ROBUST"
+}

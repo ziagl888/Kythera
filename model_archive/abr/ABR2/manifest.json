@@ -1,0 +1,70 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 4499474,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "bt2_model_LONG.json",
+      "git_tracked": true,
+      "md5": "a25ba51b5c15b3953bb3050f1d7bd69d",
+      "meta": null,
+      "source_commit": "9ddaa8d093682ead0958da60622ddef0ad2c23fb",
+      "source_origin": {
+        "location": "root",
+        "path": "bt2_model_LONG.json"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 1203378,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "bt2_model_SHORT.json",
+      "git_tracked": true,
+      "md5": "4d56f667c34a43dee5fb1ce7a09a1890",
+      "meta": {
+        "deployable": null,
+        "model_id": "ABR2",
+        "n_features": 23,
+        "strategy": "abr1",
+        "threshold": 0.7999999999999998,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "bt2_model_SHORT.json"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "ABR",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "ABR2",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [
+    "ABR2"
+  ],
+  "notes": [],
+  "provenance": "Break&Retest binary + Funding-Gate (bot 18)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "18_ai_abr1_bot.py",
+  "tag": "ABR2"
+}

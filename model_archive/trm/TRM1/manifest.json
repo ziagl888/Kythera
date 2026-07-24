@@ -1,0 +1,25 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "TRM",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "TRM1",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "TRM1 (bot 32)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "32_ai_trm1_bot.py",
+  "tag": "TRM1"
+}

@@ -1,0 +1,48 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 769202,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "max1_model_SHORT.pkl",
+      "git_tracked": true,
+      "md5": "e33b6df87d0a57bf2cadeb0fc4b13dee",
+      "meta": {
+        "deployable": true,
+        "model_id": "MAX1",
+        "n_features": 15,
+        "strategy": "rub2",
+        "threshold": 0.7929,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "max1_model_SHORT.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "MAX",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "MAX1",
+  "lifecycle": {
+    "SHORT": "live"
+  },
+  "lifecycle_history": [],
+  "model_ids": [
+    "MAX1"
+  ],
+  "notes": [],
+  "provenance": "MAX1 (bot 34) / MAX2 SRA2-LONG-Fork (bot 9)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "34_ai_max1_bot.py",
+  "tag": "MAX1"
+}

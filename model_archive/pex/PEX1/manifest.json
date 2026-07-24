@@ -1,0 +1,72 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 152235,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "pex1_model.pkl",
+      "git_tracked": true,
+      "md5": "70a5bf630fa26e67d90cb7327079d771",
+      "meta": {
+        "deployable": null,
+        "model_id": "PEX1",
+        "n_features": 13,
+        "strategy": null,
+        "threshold": 0.7,
+        "trained_at": "2026-07-14T01:53:41.007456+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "pex1_model.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 152235,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "pex1_model.pkl",
+      "git_tracked": true,
+      "md5": "70a5bf630fa26e67d90cb7327079d771",
+      "meta": {
+        "deployable": null,
+        "model_id": "PEX1",
+        "n_features": 13,
+        "strategy": null,
+        "threshold": 0.7,
+        "trained_at": "2026-07-14T01:53:41.007456+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "pex1_model.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "PEX",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "PEX1",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [],
+  "model_ids": [
+    "PEX1"
+  ],
+  "notes": [],
+  "provenance": "Price-Extension (bot 30)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "30_ai_pex1_bot.py",
+  "tag": "PEX1"
+}

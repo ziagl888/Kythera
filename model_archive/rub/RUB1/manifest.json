@@ -1,0 +1,65 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 775754,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "long_reversion_model.joblib",
+      "git_tracked": true,
+      "md5": "0227bb4a793444e2dddb5bf4f70ad69b",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "long_reversion_model.joblib"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 769362,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "short_reversion_model.joblib",
+      "git_tracked": true,
+      "md5": "16ca37114f1239ac12fa4a503aebce72",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "short_reversion_model.joblib"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "RUB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "RUB1",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "be48f2f",
+      "subject": "feat(fleet): deploy EPD3-LONG + ATB2-LONG live (operator override, blockers #3/#4) (T-2026-KYT-9050-037)"
+    },
+    {
+      "date": "2026-07-24",
+      "sha": "3a29093",
+      "subject": "feat(fleet): RUB1-revive + gate-flips + retires from bot_results.xlsx (T-2026-KYT-9050-037)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "Rubberband HVN/S-R-Reversion (bot 13); RUB1 revived T-037",
+  "schema": "bot_variants_manifest/v1",
+  "script": "13_ai_rub_bot.py",
+  "tag": "RUB1"
+}

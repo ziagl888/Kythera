@@ -1,0 +1,88 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 787564,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "epd3_model_LONG.pkl",
+      "git_tracked": true,
+      "md5": "3375ccf5cedbe0d7ea958d6f97b69fc8",
+      "meta": {
+        "deployable": false,
+        "model_id": "EPD2",
+        "n_features": 16,
+        "strategy": "epd2",
+        "threshold": 0.76,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "a054b15c047dcae2b70109f64825c0923b4842bf",
+      "source_origin": {
+        "location": "root",
+        "path": "epd3_model_LONG.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 779800,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "epd3_model_SHORT.pkl",
+      "git_tracked": true,
+      "md5": "e0f7bfb3773fbcab85914866126e3ac6",
+      "meta": {
+        "deployable": true,
+        "model_id": "EPD2",
+        "n_features": 16,
+        "strategy": "epd2",
+        "threshold": 0.6737,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "5ed5d05e67d8395031d70d039352ab5428d64e82",
+      "source_origin": {
+        "location": "root",
+        "path": "epd3_model_SHORT.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "EPD",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "EPD3",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-21",
+      "sha": "5ed5d05",
+      "subject": "fix(shadow-gate): CRITICAL â€” challenger-distinct root filename for EPD3-SHORT (T-2026-CU-9050-185)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [
+    "EPD2"
+  ],
+  "notes": [],
+  "provenance": "EPD2-Retrain-Challenger; LONG teilt epd2_model_LONG.pkl mit EPD2",
+  "schema": "bot_variants_manifest/v1",
+  "script": "10_pump_dump_detector.py",
+  "tag": "EPD3"
+}

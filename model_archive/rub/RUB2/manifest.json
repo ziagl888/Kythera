@@ -1,0 +1,88 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 784009,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "rub2_model_LONG.pkl",
+      "git_tracked": true,
+      "md5": "162ddb95f6c0f8d93d7d4479737add41",
+      "meta": {
+        "deployable": false,
+        "model_id": "RUB2",
+        "n_features": 15,
+        "strategy": "rub2",
+        "threshold": null,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/rub2_model_LONG.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 768789,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "rub2_model_SHORT.pkl",
+      "git_tracked": true,
+      "md5": "24fb499c5fd1cc2fecf2a99dc379aaf9",
+      "meta": {
+        "deployable": true,
+        "model_id": "RUB2",
+        "n_features": 15,
+        "strategy": "rub2",
+        "threshold": 0.7929,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "rub2_model_SHORT.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "RUB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "RUB2",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "3a29093",
+      "subject": "feat(fleet): RUB1-revive + gate-flips + retires from bot_results.xlsx (T-2026-KYT-9050-037)"
+    },
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [
+    "RUB2"
+  ],
+  "notes": [],
+  "provenance": "Rubberband HVN/S-R-Reversion (bot 13); RUB1 revived T-037",
+  "schema": "bot_variants_manifest/v1",
+  "script": "13_ai_rub_bot.py",
+  "tag": "RUB2"
+}

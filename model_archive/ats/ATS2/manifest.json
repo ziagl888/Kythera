@@ -1,0 +1,83 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 838751,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "ats2_model_LONG.pkl",
+      "git_tracked": true,
+      "md5": "5d27eca57a9d93190eae90b1d3a346a9",
+      "meta": {
+        "deployable": true,
+        "model_id": "ATS2",
+        "n_features": 29,
+        "strategy": "ats2",
+        "threshold": 0.7825,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/ats2_model_LONG.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 835680,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "ats2_model_SHORT.pkl",
+      "git_tracked": true,
+      "md5": "121b548ae0cb4774380e513ae2e6f7a4",
+      "meta": {
+        "deployable": true,
+        "model_id": "ATS2",
+        "n_features": 29,
+        "strategy": "ats2",
+        "threshold": 0.9084,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/ats2_model_SHORT.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "ATS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "ATS2",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-15",
+      "sha": "d4d4c41",
+      "subject": "fix(watchdog+shadow): mutex-before-reap deadlock + bots 12/14 shadow-only mode (T-2026-CU-9050-127)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [
+    "ATS2"
+  ],
+  "notes": [],
+  "provenance": "Trend-Strength-Sniper TSI (bot 12)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "12_ai_ats_bot.py",
+  "tag": "ATS2"
+}

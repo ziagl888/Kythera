@@ -1,0 +1,33 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "git-log-S",
+    "note": "letzte Kommit-Berührung; für den Live-Swap ggf. <ref>^ (T-037-Muster)",
+    "ref": "3a290931a2321a6c45869b6b84441bca29e9e3f9",
+    "sha": "3a290931a2321a6c45869b6b84441bca29e9e3f9",
+    "subject": "feat(fleet): RUB1-revive + gate-flips + retires from bot_results.xlsx (T-2026-KYT-9050-037)",
+    "token": "AIM2-TOPN"
+  },
+  "family": "AIM",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "AIM2-TOPN",
+  "lifecycle": {
+    "LONG": "retired",
+    "SHORT": "retired"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "3a29093",
+      "subject": "feat(fleet): RUB1-revive + gate-flips + retires from bot_results.xlsx (T-2026-KYT-9050-037)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "High-Conviction-Top-N-Kanal über AIM2; retired T-037",
+  "schema": "bot_variants_manifest/v1",
+  "script": "15_ai_master_bot.py",
+  "tag": "AIM2-TOPN"
+}

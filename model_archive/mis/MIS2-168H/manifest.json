@@ -1,0 +1,78 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 803937,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "mis2_model_168h_pump.pkl",
+      "git_tracked": true,
+      "md5": "675275749dcbc8689b9c13adce7f1519",
+      "meta": {
+        "deployable": true,
+        "model_id": "MIS2",
+        "n_features": null,
+        "strategy": "mis1",
+        "threshold": null,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "mis2_model_168h_pump.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 794860,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "mis2_model_168h_dump.pkl",
+      "git_tracked": true,
+      "md5": "cd6b461fe65b21666e19805f2685d242",
+      "meta": {
+        "deployable": true,
+        "model_id": "MIS2",
+        "n_features": null,
+        "strategy": "mis1",
+        "threshold": null,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "mis2_model_168h_dump.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "MIS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "MIS2-168H",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [
+    "MIS2"
+  ],
+  "notes": [],
+  "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+  "schema": "bot_variants_manifest/v1",
+  "script": "11_ai_mis_bot.py",
+  "tag": "MIS2-168H"
+}
