@@ -1,3 +1,42 @@
+## [2026-07-24] Bot-Varianten-Index (Phase 1) — read-only Discovery über alle Generationen (T-2026-KYT-9050-038)
+
+Phase 1 (D1) des Bot-Varianten-Index/-Archivs: ein **read-only Discovery-Tool**,
+das den verstreuten Ist-Zustand (Root-/Staging-Artefakte + Lifecycle-Register +
+Fleet-Script-Mapping + git) je **Bot × Generation** in eine deterministisch
+regenerierbare Join-Sicht bringt. Grundlage für den späteren Live-Swap
+(T-037-Muster) und Sim-A/B jeder Generation. **Kein Live-Eingriff**, keine
+DB-Writes, keine Modell-Promotion — nur lesen/joinen (Hard Rules 1/2/7).
+
+- **`tools/bot_variants/index.py`** — joint `core.bot_catalog`
+  (Tag→Family/Script), `core.shadow_gate` (Lifecycle je (Tag,Richtung) +
+  `SHADOW_ARTIFACTS`), Artefakt-meta (Sidecar `*_meta.json` oder eingebettet),
+  das Dateisystem (root/staging/archive) und git. Ausgabe:
+  **`docs/bot_variants_index.md`** (menschenlesbar) + **`model_archive/index.json`**
+  (maschinenlesbar). CLI: `--write` / `--check` (Drift) / `--stdout` /
+  `--no-model-meta` (schnell, ohne joblib).
+- **Deterministisch/idempotent:** alle Sammlungen stabil sortiert, **kein**
+  `now()`/Zufall in den Ausgabezeilen ⇒ zweimal laufen = byte-identisch
+  (`--check` findet direkt nach `--write` keine Drift).
+- **Kein Silent-Drop** (wie `bot_catalog`): unbekannte Tags (kein Fleet-Script)
+  und nicht klassifizierbare Modell-Files werden **gezählt und gelistet**
+  (aktuell 6 unklassifizierte Root-Artefakte, u.a. `qm_xgboost_model_v2.pkl`,
+  `master_trade_model_xgboost_combined_signals.pkl`).
+- **Geteilte Dateinamen sichtbar** (Root-Kollisions-Hazard): der Index flaggt
+  `rub2_model_LONG.pkl` (RUB2+RUB3) und `epd2_model_LONG.pkl` (EPD2+EPD3) — den
+  in der Spec genannten EPD3-LONG-auf-Legacy-Dateinamen-Fall.
+- **48 Generationen** erfasst (RUB1–4, EPD1–3, MIS1/2 × 4 Horizonte, ATS1_Robust/
+  ATS2, ATB1/2, BB/TD/QM je Timeframe, ABR2 (auf Platte `bt2_model_*.json`!),
+  SRA1/2, AIM1/2, MAX1/2, FIF1, PEX1, FMR2, ROM1/UFI1/TRM1 …) inkl. `md5`,
+  Fundort, `deployable`/`threshold` (wo meta vorhanden) und konservativem
+  `code_ref` (`HEAD` wenn live; exakte git-SHA je Alt-Generation folgt in Phase 2).
+- **`core/bot_catalog.py`:** additiver Public-Helper **`family_for_tag()`**
+  (Reverse zu `script_for_tag`, gleiche pretty_name+longest-prefix-Logik) — die
+  Familien-Gruppierung des Index; kein Verhalten bestehender Aufrufer geändert.
+- **Tests:** `backtest/test_bot_variant_index.py` (family/script/lifecycle,
+  Unknown-Tag-Zählung, Idempotenz, geteilte Dateinamen, md5==Quelle) +
+  `family_for_tag`-Fälle in `backtest/test_bot_catalog.py`. Guard `verify`+`smoke`
+  grün. Phase 2 (Archiv-Layout + Manifeste + code_ref-SHAs) und Phase 3
+  (stage/compare-Tooling) sind Follow-ups.
 ## [2026-07-24] EPD3-LONG + ATB2-LONG live deployen (Operator-Override, Blocker #3/#4) (T-2026-KYT-9050-037)
 
 Hebt die in der T-037-Spec als **BLOCKIERT** vertagten LONG-Beine #3/#4 auf
