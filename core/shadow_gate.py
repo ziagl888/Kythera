@@ -79,10 +79,19 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     #   staging_models/ nach Repo-Root promoten — der LIVE-Loader liest den Root-Pfad
     #   (shadow_artifact_path), sonst lädt ATS2 nichts und schweigt. Thresholds sind
     #   real (LONG 0.7825 / SHORT 0.9084), also KEIN Flood-Risiko.
-    # ATB2: Converging-Channel-Neuaufbau (Bot 14). ATB1 ist stummgeschaltet (C); ATB2 hat
-    # optimal_threshold=null (LONG) bzw. ist nicht deploybar (SHORT) → braucht
-    # zwingend Shadow-Datensammlung, bevor je ein Operating-Point wählbar ist.
-    ("ATB2", "LONG"): SHADOW,
+    # ATB2: Converging-Channel-Neuaufbau (Bot 14). ATB1 ist stummgeschaltet (C).
+    # ATB2 SHORT bleibt SHADOW (nicht deploybar, Datensammlung). ATB2 LONG ist per
+    # Operator-Entscheid (T-2026-KYT-9050-037, Michi bot_results.xlsx) SHADOW→LIVE
+    # promotet — Threshold BLIND auf 0.60 gesetzt (nur n=17 Shadow-Trades → kein daten-
+    # basierter Operating-Point; ATB1s 0.80 ist ein anderes, inkompatibles Modell und
+    # NICHT übertragbar). Bot 14 routet ATB2 seit T-037 über post_ai_signal_gated
+    # (Rewire von _emit_atb2_shadow → _emit_atb2), sodass LIVE echten Cornix-Post an
+    # CH_ATB_TARGET erzeugt (has_open-Guard gegen Regel-4-Doppel-Post, Muster Bot 12).
+    # Explizit LIVE (Defense-in-Depth, wie RUB1 T-037).
+    #   DEPLOY-VORBEDINGUNG (Michi, harte Regel 2): atb2_model_LONG.pkl aus
+    #   staging_models/ (Threshold 0.60) nach Repo-Root promoten — der LIVE-Loader liest
+    #   den Root-Pfad, sonst lädt ATB2 LONG nichts und schweigt.
+    ("ATB2", "LONG"): LIVE,
     ("ATB2", "SHORT"): SHADOW,
     # SRA2: Meta-Filter-Retrain (Bot 9). SRA1 bleibt live. SRA2 war "nicht
     # deploybar", WEIL die Label-Quelle closed_trades3 seit Feb tot ist — ein
@@ -136,19 +145,23 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # im Report. Nutzt das RUB3-Artefakt (kein eigener SHADOW_ARTIFACTS-Eintrag).
     ("RUB4", "LONG"): SHADOW,
     # EPD3 = epd2_model_{LONG,SHORT}-Retrain vs. LIVE-EPD (Bot 10 postet das Legacy-
-    # Modell bereits unter Tag "EPD2" = EPD_LEGACY_TAG; ein Shadow unter "EPD2"
-    # würde über den dortigen Active-Trade-Check `model IN ('EPD2','EPD2')` einen
-    # Live-Post unterdrücken). Deshalb eigener Tag "EPD3" — analog zu RUB3.
-    # EPD3 SHORT war am 2026-07-21 LIVE promotet (T-2026-CU-9050-185, @0.6737 →
-    # CH_PUMP_AI). Am 2026-07-23 LIVE→SHADOW GEPARKT (T-2026-KYT-9050-033, Audit T-032:
-    # EPD3-SHORT [act] net −0.06%×3568 — Edge weg). Bot 10 routet EPD3 über
-    # post_ai_signal_gated ⇒ reiner Register-Flip. LONG bleibt SHADOW (threshold=None).
-    #   ⚠ DEPLOY-HINWEIS (Michi): das Live-Artefakt liegt als epd3_model_SHORT.pkl im
-    #   Repo-ROOT; als SHADOW-Bein liest shadow_artifact_path staging_models/
-    #   epd3_model_SHORT.pkl — die Datei fehlt dort. Ohne sie lädt EPD3 SHORT nicht und
-    #   wird effektiv STILL (statt shadow-getrackt). Für echte Shadow-Historie das
-    #   Artefakt nach staging_models/ kopieren; sonst ist der Park schlicht Silence (ok).
-    ("EPD3", "LONG"): SHADOW,
+    # Modell bereits unter Tag "EPD2" = EPD_LEGACY_TAG). Eigener Tag "EPD3" — analog RUB3.
+    # Bot 10 routet EPD3 über post_ai_signal_gated ⇒ LIVE erzeugt Cornix an CH_PUMP_AI.
+    # EPD3 SHORT: 2026-07-21 LIVE (@0.6737), 2026-07-23 LIVE→SHADOW geparkt (T-033,
+    # Audit T-032: [act] net −0.06%×3568 — Edge weg). BLEIBT SHADOW.
+    #   ⚠ DEPLOY-HINWEIS SHORT: als SHADOW-Bein liest shadow_artifact_path
+    #   staging_models/epd3_model_SHORT.pkl — fehlt die Datei dort, ist der Park Silence (ok).
+    # EPD3 LONG: per Operator-Entscheid (T-2026-KYT-9050-037, Michi bot_results.xlsx)
+    # SHADOW→LIVE promotet, Threshold 0.76 (VOLUME-Cap: 2578 Shadow-Trades zeigten ~0
+    # Edge + nicht-diskriminierende Confidence [corr −0.04] → 0.76 = Median, kappt den
+    # ~258/d-Flood auf ~130/d; KEIN Edge-Filter, bewusster Operator-Entscheid). Der
+    # challenger-DISTINKTE Dateiname epd3_model_LONG.pkl (SHADOW_ARTIFACTS) verhindert die
+    # Kollision mit dem Legacy-EPD2-Loader-Slot (epd2_model_LONG.pkl), analog SHORT.
+    # Explizit LIVE (Defense-in-Depth, wie RUB1 T-037).
+    #   DEPLOY-VORBEDINGUNG LONG (Michi, harte Regel 2): epd3_model_LONG.pkl aus
+    #   staging_models/ (Threshold 0.76) nach Repo-Root promoten — sonst lädt EPD3 LONG
+    #   nichts und schweigt.
+    ("EPD3", "LONG"): LIVE,
     ("EPD3", "SHORT"): SHADOW,
     # ── (C) Stummgeschaltete Alt-Beine (Operator Michi, T-2026-CU-9050-127) ──
     # Bots 12/14 werden entparkt, damit ATS2/ATB2 im Shadow laufen — aber die
@@ -318,14 +331,14 @@ SHADOW_ARTIFACTS: dict[str, dict[str, str]] = {
     # Challenger-Tags (siehe _LIFECYCLE (B)) — Artefakt-Dateiname trägt weiter die
     # Retrain-Generation, der Tag darüber ist der kollisionsfreie Shadow-Tag.
     "RUB3": {"LONG": "rub2_model_LONG.pkl"},
-    # EPD3 SHORT ist LIVE promotet (T-2026-CU-9050-185) → challenger-DISTINKTER
-    # Root-Dateiname epd3_model_SHORT.pkl, damit die Promotion NICHT den Legacy-
-    # EPD2-Loader-Slot kapert (Bot 10: EPD2_ARTIFACT_PATHS["SHORT"]=
-    # "epd2_model_SHORT.pkl") — sonst lädt der EPD2-Live-Pfad dieselbe Datei und
-    # postet SHORT doppelt (Tag EPD2 + EPD3, Regel-4-Doppel-Trade; Review T-185).
-    # LONG bleibt Shadow aus staging unter dem epd2-Namen (kollidiert nicht: der
-    # Legacy liest ROOT, der Shadow staging).
-    "EPD3": {"LONG": "epd2_model_LONG.pkl", "SHORT": "epd3_model_SHORT.pkl"},
+    # EPD3 SHORT (T-2026-CU-9050-185) + LONG (T-2026-KYT-9050-037) sind LIVE promotet →
+    # challenger-DISTINKTE Root-Dateinamen epd3_model_{SHORT,LONG}.pkl, damit die
+    # Promotion NICHT den Legacy-EPD2-Loader-Slot kapert (Bot 10: EPD2_ARTIFACT_PATHS
+    # ["{SHORT,LONG}"]="epd2_model_{SHORT,LONG}.pkl") — sonst lädt der EPD2-Live-Pfad
+    # dieselbe Datei und postet doppelt (Tag EPD2 + EPD3, Regel-4-Doppel-Trade; Review
+    # T-185). Der epd3_model_LONG.pkl-Rename (T-037) zog den bislang unter dem epd2-Namen
+    # shadow-geladenen LONG-Slot nach, als LONG live ging (Threshold 0.76 im Artefakt).
+    "EPD3": {"LONG": "epd3_model_LONG.pkl", "SHORT": "epd3_model_SHORT.pkl"},
     # FMR2: ein binäres Modell für BEIDE Richtungen (side_short ist ein Feature) →
     # dieselbe Datei je Richtung; nicht promotet, nur Shadow (T-2026-CU-9050-148/149).
     "FMR2": {"LONG": "fmr2_model.pkl", "SHORT": "fmr2_model.pkl"},

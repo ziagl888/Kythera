@@ -27,10 +27,10 @@
     "rsi",
     "break_up"
   ],
-  "optimal_threshold": null,
+  "optimal_threshold": 0.6,
   "label_source": "atb2_replay_365d.jsonl",
-  "label": "first-touch TP1-vor-SL der Measured-Move-Geometrie (\u2153/\u2154/1\u00d7 Kanalbreite), Fees inkl.",
-  "changes_vs_atb1": "Converging-Channel-Detektor (best\u00e4tigte Pivots, geschlossener Ausbruch, \u00a711) statt 90d-Close-Regressionsgerade; Label MIT SL-Pfad statt +10%-Touch/72h; chronologischer Split mit 3d-Purge statt Random-Split \u00fcber \u00fcberlappende Fenster; Threshold auf Validation statt Test-Set; 5 WillyAlgoTrader-Setup-Features + Kanalgeometrie als XGB-Features",
+  "label": "first-touch TP1-vor-SL der Measured-Move-Geometrie (⅓/⅔/1× Kanalbreite), Fees inkl.",
+  "changes_vs_atb1": "Converging-Channel-Detektor (bestätigte Pivots, geschlossener Ausbruch, §11) statt 90d-Close-Regressionsgerade; Label MIT SL-Pfad statt +10%-Touch/72h; chronologischer Split mit 3d-Purge statt Random-Split über überlappende Fenster; Threshold auf Validation statt Test-Set; 5 WillyAlgoTrader-Setup-Features + Kanalgeometrie als XGB-Features",
   "split": "chronological 70/15/15 + 3d purge gap",
   "threshold_selected_on": "validation",
   "xgboost_version": "3.1.2",
@@ -48,5 +48,6 @@
     "sum_net_pnl_pct": null,
     "base_rate_test": 87.7,
     "n_test_total": 73
-  }
+  },
+  "threshold_provenance": "operator-set blind threshold (T-2026-KYT-9050-037, Michi). The trainer left optimal_threshold=null and only n=17 closed shadow trades exist -> no data-based operating point. 0.60 was chosen by the operator (ATB1's 0.80 is a different, incompatible model and not transferable). No statistical backing; deployed per operator decision to gather live evidence."
 }

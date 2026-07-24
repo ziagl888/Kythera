@@ -1,0 +1,104 @@
+{
+  "trainer": "tools/retrain_from_replay.py",
+  "strategy": "epd2",
+  "model_id": "EPD2",
+  "direction": "LONG",
+  "model_type": "binary (1=TP1-first-touch)",
+  "success_proba": "predict_proba[:, 1]",
+  "features": [
+    "vol_ratio",
+    "p_chg_60s",
+    "buy_pres",
+    "volat",
+    "sample_fill",
+    "rsi",
+    "tsi",
+    "macd",
+    "e9_dist",
+    "e21_dist",
+    "fund_last",
+    "fund_24h",
+    "fund_72h",
+    "fund_7d_cum",
+    "fund_pctl_90d",
+    "fund_trend"
+  ],
+  "optimal_threshold": 0.76,
+  "label_source": "epd2_events.jsonl",
+  "label": "first-touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie (simulate_exit, 7d), Fees inkl.",
+  "changes_vs_epd1": "nur vol_ratio>=5-Events (Training==Serving statt OOD), Label = gepostete Geometrie statt Fix-Bracket, chronologischer Split mit 7d-Purge statt Random-Split, +6 Funding-Features (Operator 2026-07-06)",
+  "split": "chronological 70/15/15 + 7d purge gap",
+  "xgboost_version": "3.1.2",
+  "n_train": 32032,
+  "n_val": 5303,
+  "n_test": 5236,
+  "val_stats": {
+    "deployable": false,
+    "best": {
+      "threshold": 0.6238,
+      "n": 2652,
+      "avg_net_pnl_pct": -0.97,
+      "sum_net_pnl_pct": -2572.17,
+      "wr": 64.7
+    },
+    "curve": [
+      {
+        "threshold": 0.6238,
+        "n": 2652,
+        "avg_net_pnl_pct": -0.97,
+        "sum_net_pnl_pct": -2572.17,
+        "wr": 64.7
+      },
+      {
+        "threshold": 0.6712,
+        "n": 1591,
+        "avg_net_pnl_pct": -1.253,
+        "sum_net_pnl_pct": -1993.04,
+        "wr": 65.2
+      },
+      {
+        "threshold": 0.6969,
+        "n": 1061,
+        "avg_net_pnl_pct": -1.082,
+        "sum_net_pnl_pct": -1148.13,
+        "wr": 66.3
+      },
+      {
+        "threshold": 0.7122,
+        "n": 797,
+        "avg_net_pnl_pct": -1.048,
+        "sum_net_pnl_pct": -835.34,
+        "wr": 66.8
+      },
+      {
+        "threshold": 0.7317,
+        "n": 531,
+        "avg_net_pnl_pct": -1.163,
+        "sum_net_pnl_pct": -617.32,
+        "wr": 66.5
+      },
+      {
+        "threshold": 0.7441,
+        "n": 398,
+        "avg_net_pnl_pct": -1.238,
+        "sum_net_pnl_pct": -492.54,
+        "wr": 65.6
+      },
+      {
+        "threshold": 0.7625,
+        "n": 265,
+        "avg_net_pnl_pct": -1.013,
+        "sum_net_pnl_pct": -268.53,
+        "wr": 67.2
+      }
+    ]
+  },
+  "test_stats": {
+    "n_taken": 0,
+    "wr": null,
+    "sum_net_pnl_pct": null,
+    "base_rate_test": 63.1,
+    "n_test_total": 5236
+  },
+  "threshold_provenance": "operator-set volume-cap (T-2026-KYT-9050-037, Michi). The trainer left optimal_threshold=null (no positive operating point). Read-only analysis of 2578 real EPD3-LONG shadow trades (2026-07-15..24, ml_predictions_master.confidence <-> closed_ai_signals weighted_move_pct - fee) showed ~0 net edge and confidence that does NOT discriminate (corr -0.04; higher thr -> worse). 0.76 = median confidence, chosen purely to cap the ~258/day ungated flood to ~130/day; it is a VOLUME cap, not an edge filter. Deployed per operator decision."
+}
