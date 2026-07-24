@@ -1,0 +1,30 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "BR",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "BR4H",
+  "lifecycle": {
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Pattern-Breakout-Detector (bot 7)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "7_pattern_detector.py",
+  "tag": "BR4H"
+}

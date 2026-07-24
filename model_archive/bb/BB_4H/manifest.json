@@ -1,0 +1,76 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 771851,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "bb_xgboost_model_4h.pkl",
+      "git_tracked": true,
+      "md5": "a0c3117adfb4c61ddc99fcec24278514",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": "smc_ml_trainer.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "bb_xgboost_model_4h.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 771851,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "bb_xgboost_model_4h.pkl",
+      "git_tracked": true,
+      "md5": "a0c3117adfb4c61ddc99fcec24278514",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": "smc_ml_trainer.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "bb_xgboost_model_4h.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "BB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "BB_4H",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "SMC-ML-Sniper Break (bot 25)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "25_smc_ml_sniper.py",
+  "tag": "BB_4H"
+}

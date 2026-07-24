@@ -1,0 +1,41 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "ATB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "ATB1",
+  "lifecycle": {
+    "LONG": "silent",
+    "SHORT": "silent"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "be48f2f",
+      "subject": "feat(fleet): deploy EPD3-LONG + ATB2-LONG live (operator override, blockers #3/#4) (T-2026-KYT-9050-037)"
+    },
+    {
+      "date": "2026-07-15",
+      "sha": "d4d4c41",
+      "subject": "fix(watchdog+shadow): mutex-before-reap deadlock + bots 12/14 shadow-only mode (T-2026-CU-9050-127)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Converging-Channel Break (bot 14); ATB2-Neuaufbau",
+  "schema": "bot_variants_manifest/v1",
+  "script": "14_ai_atb_bot.py",
+  "tag": "ATB1"
+}

@@ -1,0 +1,122 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 781347,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "epd2_model_LONG.pkl",
+      "git_tracked": true,
+      "md5": "2702a57b80bbad32f2a203756cab5592",
+      "meta": {
+        "deployable": false,
+        "model_id": "EPD2",
+        "n_features": 16,
+        "strategy": "epd2",
+        "threshold": null,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/epd2_model_LONG.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 6795627,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "pump_dump_model.pkl",
+      "git_tracked": true,
+      "md5": "6c09741a9bafad72da94773fd4fca334",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "pump_dump_model.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": null,
+      "direction": "SHORT",
+      "exists": false,
+      "filename": "epd2_model_SHORT.pkl",
+      "git_tracked": false,
+      "md5": null,
+      "meta": null,
+      "source_commit": null,
+      "source_origin": {
+        "location": "MISSING",
+        "path": null
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 6795627,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "pump_dump_model.pkl",
+      "git_tracked": true,
+      "md5": "6c09741a9bafad72da94773fd4fca334",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "pump_dump_model.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "EPD",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "EPD2",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "be48f2f",
+      "subject": "feat(fleet): deploy EPD3-LONG + ATB2-LONG live (operator override, blockers #3/#4) (T-2026-KYT-9050-037)"
+    },
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-21",
+      "sha": "5ed5d05",
+      "subject": "fix(shadow-gate): CRITICAL â€” challenger-distinct root filename for EPD3-SHORT (T-2026-CU-9050-185)"
+    },
+    {
+      "date": "2026-07-21",
+      "sha": "c6db433",
+      "subject": "feat(shadow-gate): WS2 batch 2 (deployable-only) â€” SRA2-LONG + EPD3-SHORT live (T-2026-CU-9050-185)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [
+    "EPD2"
+  ],
+  "notes": [
+    "Artefakt fehlt auf Platte: epd2_model_SHORT.pkl"
+  ],
+  "provenance": "Pump/Dump-Detector (bot 10); EPD2=EPD_LEGACY_TAG",
+  "schema": "bot_variants_manifest/v1",
+  "script": "10_pump_dump_detector.py",
+  "tag": "EPD2"
+}

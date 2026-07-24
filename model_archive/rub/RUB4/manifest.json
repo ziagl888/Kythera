@@ -1,0 +1,35 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "RUB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "RUB4",
+  "lifecycle": {
+    "LONG": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-19",
+      "sha": "9740bd3",
+      "subject": "feat(rub): RUB4 funding-gated LONG shadow experiment (T-2026-CU-9050-164)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "funding-gegatetes RUB3 (fund_24h>+3bps); nutzt RUB3-Artefakt",
+  "schema": "bot_variants_manifest/v1",
+  "script": "13_ai_rub_bot.py",
+  "tag": "RUB4"
+}

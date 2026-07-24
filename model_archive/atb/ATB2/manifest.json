@@ -1,0 +1,88 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 412664,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "atb2_model_LONG.pkl",
+      "git_tracked": true,
+      "md5": "b8c46fa5797c605538948c218f458882",
+      "meta": {
+        "deployable": false,
+        "model_id": "ATB2",
+        "n_features": 20,
+        "strategy": "atb2",
+        "threshold": 0.6,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "a054b15c047dcae2b70109f64825c0923b4842bf",
+      "source_origin": {
+        "location": "root",
+        "path": "atb2_model_LONG.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 431240,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "atb2_model_SHORT.pkl",
+      "git_tracked": true,
+      "md5": "3d27c650106dbba1e8bdccb9cef61052",
+      "meta": {
+        "deployable": false,
+        "model_id": "ATB2",
+        "n_features": 20,
+        "strategy": "atb2",
+        "threshold": null,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/atb2_model_SHORT.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "ATB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "ATB2",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "be48f2f",
+      "subject": "feat(fleet): deploy EPD3-LONG + ATB2-LONG live (operator override, blockers #3/#4) (T-2026-KYT-9050-037)"
+    },
+    {
+      "date": "2026-07-15",
+      "sha": "d4d4c41",
+      "subject": "fix(watchdog+shadow): mutex-before-reap deadlock + bots 12/14 shadow-only mode (T-2026-CU-9050-127)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [
+    "ATB2"
+  ],
+  "notes": [],
+  "provenance": "Converging-Channel Break (bot 14); ATB2-Neuaufbau",
+  "schema": "bot_variants_manifest/v1",
+  "script": "14_ai_atb_bot.py",
+  "tag": "ATB2"
+}

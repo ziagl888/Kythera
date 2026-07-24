@@ -1,0 +1,83 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 543925,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "fif1_model.pkl",
+      "git_tracked": true,
+      "md5": "c95b6194c519e10ae770b3ea454a5fbc",
+      "meta": {
+        "deployable": null,
+        "model_id": "FIF1",
+        "n_features": 21,
+        "strategy": null,
+        "threshold": 0.69,
+        "trained_at": "2026-07-14T01:46:07.807875+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "fif1_model.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 543925,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "fif1_model.pkl",
+      "git_tracked": true,
+      "md5": "c95b6194c519e10ae770b3ea454a5fbc",
+      "meta": {
+        "deployable": null,
+        "model_id": "FIF1",
+        "n_features": 21,
+        "strategy": null,
+        "threshold": 0.69,
+        "trained_at": "2026-07-14T01:46:07.807875+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "fif1_model.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "FIF",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "FIF1",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-20",
+      "sha": "cdcbb33",
+      "subject": "feat(shadow-gate): WS2 batch 1 â€” promote 4 study forwarders live, park FIF1 (T-2026-CU-9050-183)"
+    }
+  ],
+  "model_ids": [
+    "FIF1"
+  ],
+  "notes": [],
+  "provenance": "First-In-First-Out (bot 33)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "33_ai_fif1_bot.py",
+  "tag": "FIF1"
+}

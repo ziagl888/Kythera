@@ -1,0 +1,76 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 687937,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "qm_xgboost_model_4h.pkl",
+      "git_tracked": true,
+      "md5": "8759d9eeb95987cfaaebb63ede500e56",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": null
+      },
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "qm_xgboost_model_4h.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 687937,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "qm_xgboost_model_4h.pkl",
+      "git_tracked": true,
+      "md5": "8759d9eeb95987cfaaebb63ede500e56",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": null
+      },
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "qm_xgboost_model_4h.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "QM",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "QM_4H",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "Quasimodo-Pattern (bot 24)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "24_quasimodo_bot.py",
+  "tag": "QM_4H"
+}

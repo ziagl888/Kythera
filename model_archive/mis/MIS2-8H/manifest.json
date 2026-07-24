@@ -1,0 +1,78 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 797309,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "mis2_model_8h_pump.pkl",
+      "git_tracked": true,
+      "md5": "7eb5fc6415f4d296d26bff76cbc86e39",
+      "meta": {
+        "deployable": true,
+        "model_id": "MIS2",
+        "n_features": null,
+        "strategy": "mis1",
+        "threshold": null,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "mis2_model_8h_pump.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 801661,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "mis2_model_8h_dump.pkl",
+      "git_tracked": true,
+      "md5": "7e51f58f19137e0df3acb4dc6f301283",
+      "meta": {
+        "deployable": false,
+        "model_id": "MIS2",
+        "n_features": null,
+        "strategy": "mis1",
+        "threshold": null,
+        "trained_at": null,
+        "trainer": "tools/retrain_from_replay.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "mis2_model_8h_dump.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "MIS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "MIS2-8H",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [
+    "MIS2"
+  ],
+  "notes": [],
+  "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+  "schema": "bot_variants_manifest/v1",
+  "script": "11_ai_mis_bot.py",
+  "tag": "MIS2-8H"
+}

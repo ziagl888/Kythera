@@ -1,0 +1,81 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 155988,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "master_meta_model_aim2.pkl",
+      "git_tracked": true,
+      "md5": "5ef8df539ba36590aaaea5b67d51bb59",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 86,
+        "strategy": null,
+        "threshold": 0.67,
+        "trained_at": "2026-07-14T03:02:32.687271+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "master_meta_model_aim2.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 155988,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "master_meta_model_aim2.pkl",
+      "git_tracked": true,
+      "md5": "5ef8df539ba36590aaaea5b67d51bb59",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 86,
+        "strategy": null,
+        "threshold": 0.67,
+        "trained_at": "2026-07-14T03:02:32.687271+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "master_meta_model_aim2.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "AIM",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "AIM2",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-24",
+      "sha": "3a29093",
+      "subject": "feat(fleet): RUB1-revive + gate-flips + retires from bot_results.xlsx (T-2026-KYT-9050-037)"
+    },
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "Master-Ranker/Gate über Kandidaten (bot 15)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "15_ai_master_bot.py",
+  "tag": "AIM2"
+}

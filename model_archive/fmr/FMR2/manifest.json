@@ -1,0 +1,78 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 124933,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "fmr2_model.pkl",
+      "git_tracked": true,
+      "md5": "576bc33988a2f7f8c98690d89abb15a5",
+      "meta": {
+        "deployable": null,
+        "model_id": "FMR2",
+        "n_features": 15,
+        "strategy": null,
+        "threshold": 0.46,
+        "trained_at": "2026-07-17T07:53:49.588248+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/fmr2_model.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 124933,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "fmr2_model.pkl",
+      "git_tracked": true,
+      "md5": "576bc33988a2f7f8c98690d89abb15a5",
+      "meta": {
+        "deployable": null,
+        "model_id": "FMR2",
+        "n_features": 15,
+        "strategy": null,
+        "threshold": 0.46,
+        "trained_at": "2026-07-17T07:53:49.588248+00:00",
+        "trainer": null
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "staging",
+        "path": "staging_models/fmr2_model.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "FMR",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "FMR2",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-17",
+      "sha": "91421ab",
+      "subject": "feat(fmr1-bot): FMR2 (K4) Class-A shadow leg â€” monitored, never posted (T-2026-CU-9050-149)"
+    }
+  ],
+  "model_ids": [
+    "FMR2"
+  ],
+  "notes": [],
+  "provenance": "Funding-Mean-Reversion-Exit (bot 31)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "31_ai_fmr1_bot.py",
+  "tag": "FMR2"
+}

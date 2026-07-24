@@ -1,0 +1,60 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 1703857,
+      "direction": "LONG",
+      "exists": true,
+      "filename": "pump_model_8h_pump_final.pkl",
+      "git_tracked": true,
+      "md5": "23d59d70d84ef97ee04ea9c9e36d1953",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "pump_model_8h_pump_final.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 1712561,
+      "direction": "SHORT",
+      "exists": true,
+      "filename": "pump_model_8h_dump_final.pkl",
+      "git_tracked": true,
+      "md5": "aefc8e3755f65b5ef2fa8c6789fef02c",
+      "meta": null,
+      "source_commit": "b6735d90cd99827448bd1fa4d9aed8e73155dcbf",
+      "source_origin": {
+        "location": "root",
+        "path": "pump_model_8h_dump_final.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "MIS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "MIS1-8H",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "6c13e74",
+      "subject": "feat(mis): revive MIS1 generation in bot 11 alongside MIS2 (T-2026-KYT-9050-034)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
+  "schema": "bot_variants_manifest/v1",
+  "script": "11_ai_mis_bot.py",
+  "tag": "MIS1-8H"
+}
