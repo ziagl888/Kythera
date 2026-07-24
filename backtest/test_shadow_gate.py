@@ -109,11 +109,12 @@ def test_default_is_live_for_unlisted_legs():
 
 
 def test_new_gen_candidates_and_t033_promotions():
-    # ATB2 bleibt Klasse-(A)-Shadow (threshold=null → braucht weiter Daten).
-    for d in ("LONG", "SHORT"):
-        assert sg.leg_status("ATB2", d) == sg.SHADOW
-        assert sg.is_shadow("ATB2", d)
-        assert not sg.is_live("ATB2", d)
+    # ATB2 SHORT bleibt Klasse-(A)-Shadow (threshold=null → braucht weiter Daten);
+    # ATB2 LONG ist per T-2026-KYT-9050-037 (Operator) LIVE promotet (siehe
+    # test_t037_epd3_long_atb2_long_deployed).
+    assert sg.leg_status("ATB2", "SHORT") == sg.SHADOW
+    assert sg.is_shadow("ATB2", "SHORT")
+    assert not sg.is_live("ATB2", "SHORT")
     # T-2026-KYT-9050-033 (Audit T-032): ATS2 SHADOW→LIVE promotet (beide Beine);
     # SRA2 LONG war schon live (T-185), SHORT jetzt ebenfalls LIVE promotet.
     assert sg.leg_status("ATS2", "LONG") == sg.LIVE
@@ -124,10 +125,10 @@ def test_new_gen_candidates_and_t033_promotions():
 
 def test_t033_parked_legs_are_shadow():
     # Fleet-Reconfig T-032 (T-2026-KYT-9050-033): die realisiert blutenden Legacy-Live-
-    # Beine sind geparkt → SHADOW (Cornix aus, monitored an). RUB3/EPD3-LONG-Challenger
-    # bleiben unverändert Shadow.
+    # Beine sind geparkt → SHADOW (Cornix aus, monitored an). RUB3-LONG-Challenger bleibt
+    # Shadow. EPD3 SHORT bleibt geparkt; EPD3 LONG ist per T-037 (Operator) LIVE promotet
+    # (siehe test_t037_epd3_long_atb2_long_deployed).
     assert sg.is_shadow("RUB3", "LONG")
-    assert sg.is_shadow("EPD3", "LONG")
     assert sg.leg_status("EPD3", "SHORT") == sg.SHADOW  # war live (T-185), T-033 geparkt
     # Ganz →SHADOW (beide Beine).
     for tag in ("EPD2", "RUB2", "SRA1", "ABR2", "BB2_4H", "BR1D", "MIS2-8H"):
@@ -207,6 +208,51 @@ def test_t037_retires_aim2_topn_and_ats1_robust():
     assert not sg.is_retired("ATS1")
 
 
+def test_t037_epd3_long_atb2_long_deployed():
+    # T-2026-KYT-9050-037 (Operator-Entscheid Michi, bot_results.xlsx #3/#4): EPD3-LONG
+    # + ATB2-LONG SHADOW→LIVE promotet (Deploy „gemäß Anforderung" trotz Shadow-No-Edge
+    # bei EPD3-LONG bzw. n=17 bei ATB2-LONG — Threshold-Cap 0.76 / blind 0.60). Die
+    # jeweils andere Richtung bleibt SHADOW.
+    assert sg.leg_status("EPD3", "LONG") == sg.LIVE
+    assert sg.leg_status("EPD3", "SHORT") == sg.SHADOW
+    assert sg.leg_status("ATB2", "LONG") == sg.LIVE
+    assert sg.leg_status("ATB2", "SHORT") == sg.SHADOW
+    # LIVE-Beine laden aus dem Repo-Root unter CHALLENGER-DISTINKTEN Dateinamen —
+    # epd3_model_LONG.pkl darf NIE der Legacy-EPD2-LONG-Slot (epd2_model_LONG.pkl) sein,
+    # sonst kapert die Promotion den EPD2-Live-Loader → Doppel-Post (Regel 4).
+    assert sg.shadow_artifact_path("EPD3", "LONG") == "epd3_model_LONG.pkl"
+    assert sg.shadow_artifact_path("EPD3", "LONG") != "epd2_model_LONG.pkl"
+    assert sg.shadow_artifact_path("ATB2", "LONG") == "atb2_model_LONG.pkl"
+    # ATB2-SHORT bleibt Shadow aus staging (nicht aliasing der LONG-Root-Datei).
+    assert sg.shadow_artifact_path("ATB2", "SHORT").startswith(sg.STAGING_DIR)
+
+
+def test_t037_deploy_staging_artifacts_carry_operator_thresholds():
+    # Validiert die operator-gesetzten Thresholds im gestagten Artefakt, WENN es
+    # vorliegt (VPS-Operator-Schritt, harte Regel 2; fehlt joblib/das pkl auf schlanker
+    # CI, wird der Realteil übersprungen — die Registry-Tests oben sichern die
+    # Verdrahtung dependency-frei ab).
+    import pytest
+
+    pytest.importorskip("joblib")
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    orig = sg.STAGING_DIR
+    sg.STAGING_DIR = os.path.join(repo_root, "staging_models")
+    try:
+        # EPD3-LONG lädt live aus Root; für den Threshold-Check das gestagte pkl direkt.
+        import joblib
+
+        for fname, want in (("epd3_model_LONG.pkl", 0.76), ("atb2_model_LONG.pkl", 0.60)):
+            path = os.path.join(sg.STAGING_DIR, fname)
+            if not os.path.exists(path):
+                pytest.skip(f"{fname} nicht vorhanden (VPS-Operator-Schritt)")
+            art = joblib.load(path)
+            assert art.get("optimal_threshold") == want, (fname, art.get("optimal_threshold"))
+            assert "threshold_provenance" in (art.get("meta") or {}), f"{fname} ohne Provenienz-Note"
+    finally:
+        sg.STAGING_DIR = orig
+
+
 def test_mis1_revive_lifecycle():
     # T-2026-KYT-9050-034: MIS1-Revive — die GUTEN Beine (Audit T-032) sind
     # Default-LIVE und beleben die von T-033 geparkten MIS2-Beine; die schwachen
@@ -240,16 +286,15 @@ def test_silent_legs_are_neither_live_nor_shadow():
             assert sg.is_silent(tag, d)
             assert not sg.is_live(tag, d)
             assert not sg.is_shadow(tag, d)
-    # Der ATB2-Retrain daneben bleibt Shadow; noch-live Referenz-Beine bleiben live.
-    # (ATS2 ist seit T-033 LIVE promotet; SRA1/RUB2 sind seit T-033 geparkt → hier
-    # MAX1/TD_4H als stabile KEEP-Live-Referenzen.)
-    assert sg.is_shadow("ATB2", "LONG") and sg.is_shadow("ATB2", "SHORT")
+    # Der ATB2-SHORT-Retrain daneben bleibt Shadow (ATB2 LONG ist per T-037 live);
+    # noch-live Referenz-Beine bleiben live (MAX1/TD_4H als stabile KEEP-Live-Referenzen).
+    assert sg.is_shadow("ATB2", "SHORT")
     assert sg.is_live("MAX1", "SHORT") and sg.is_live("TD_4H", "LONG")
 
 
 def test_leg_status_is_case_insensitive():
-    # ATB2 bleibt Shadow (ATS2 ist seit T-033 LIVE) — case-/whitespace-insensitiv.
-    assert sg.leg_status("atb2", "long") == sg.SHADOW
+    # ATB2 SHORT bleibt Shadow (LONG ist per T-037 live) — case-/whitespace-insensitiv.
+    assert sg.leg_status("atb2", "short") == sg.SHADOW
     assert sg.leg_status("  Atb2 ", " Short ") == sg.SHADOW
     # gemischt-case Legacy-Tag BR1Hv2 (Bot 7) normalisiert auf den geparkten Key.
     assert sg.leg_status("br1hv2", "long") == sg.SHADOW
@@ -320,16 +365,16 @@ def test_fmr2_maps_one_binary_model_to_both_directions():
 
 def test_promoted_live_leg_loads_from_root_shadow_from_staging():
     # Ein LIVE-Bein lädt sein Artefakt aus dem Repo-Root (Regel 2 = live), ein
-    # SHADOW-Bein weiter aus staging. Stand nach T-2026-KYT-9050-033:
-    #   * SRA2 LONG+SHORT jetzt LIVE (T-033) → Root (Artefakt-Move = Operator-Vorbedingung).
-    #   * ATS2 LONG+SHORT jetzt LIVE (T-033) → Root (dito).
-    #   * EPD3 SHORT jetzt SHADOW (T-033-Park) + EPD3 LONG SHADOW → staging.
+    # SHADOW-Bein weiter aus staging. Stand nach T-2026-KYT-9050-037:
+    #   * SRA2 LONG+SHORT + ATS2 LONG+SHORT LIVE (T-033) → Root.
+    #   * EPD3 LONG jetzt LIVE (T-037, Operator) → Root (bare filename);
+    #     EPD3 SHORT bleibt SHADOW (T-033-Park) → staging.
     assert sg.shadow_artifact_path("SRA2", "LONG") == "sra2_model_LONG.json"
     assert sg.shadow_artifact_path("SRA2", "SHORT") == "sra2_model_SHORT.json"
     assert sg.shadow_artifact_path("ATS2", "LONG") == "ats2_model_LONG.pkl"
     assert sg.shadow_artifact_path("ATS2", "SHORT") == "ats2_model_SHORT.pkl"
-    assert sg.shadow_artifact_path("EPD3", "SHORT").startswith(sg.STAGING_DIR)
-    assert sg.shadow_artifact_path("EPD3", "LONG").startswith(sg.STAGING_DIR)
+    assert sg.shadow_artifact_path("EPD3", "LONG") == "epd3_model_LONG.pkl"  # LIVE → Root
+    assert sg.shadow_artifact_path("EPD3", "SHORT").startswith(sg.STAGING_DIR)  # SHADOW → staging
 
 
 def test_challenger_filename_never_aliases_legacy_loader():

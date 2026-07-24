@@ -1,3 +1,45 @@
+## [2026-07-24] EPD3-LONG + ATB2-LONG live deployen (Operator-Override, Blocker #3/#4) (T-2026-KYT-9050-037)
+
+Hebt die in der T-037-Spec als **BLOCKIERT** vertagten LONG-Beine #3/#4 auf
+**expliziten Operator-Entscheid (Michi, „gemäß Anforderung deployen")** — trotz
+gegenteiliger Datenlage. Read-only-DB-Diagnose vorab (VPS): der Blocker war bei beiden
+`optimal_threshold=None` (kein Trainings-Operating-Point).
+
+- **Edge-Analyse EPD3-LONG (T-036-Playbook, 2578 echte Shadow-Trades, 10 d):** mean net
+  **≈0 %/Trade** (median +0,83 %, WR 78 %, aber fette Loser), und die Confidence
+  **anti-diskriminiert** (corr −0,04; höherer Threshold → schlechtere Expectancy).
+  **Kein deploybarer Threshold-Edge** — Gegenteil von SRA2-SHORT (T-036). Deploy per
+  Operator-Entscheid als **volumen-gekapptes Live-Experiment**.
+- **ATB2-LONG:** nur **n=17** geschlossene Shadow-Trades → statistisch unentscheidbar;
+  Threshold **blind auf 0,60** gesetzt (ATB1s 0,80 ist ein inkompatibles Modell, nicht
+  übertragbar).
+
+Umsetzung (Klasse A Gate + B Code + gestagte Artefakte, Root-Promote + Restart = Michi):
+- **`core/shadow_gate.py`:** `("EPD3","LONG"): LIVE` + `("ATB2","LONG"): LIVE` (explizit,
+  Defense-in-Depth); die jeweilige Gegenrichtung bleibt SHADOW. `SHADOW_ARTIFACTS["EPD3"]
+  ["LONG"]` → **`epd3_model_LONG.pkl`** (challenger-DISTINKT, verhindert die Kollision mit
+  dem Legacy-EPD2-Loader-Slot `epd2_model_LONG.pkl` → Doppel-Post, analog dem SHORT-Fix
+  aus PR #185).
+- **Bot 14 (`14_ai_atb_bot.py`) Rewire:** `_emit_atb2_shadow` → `_emit_atb2` routet ATB2
+  jetzt über `post_ai_signal_gated` (Muster Bot 12 `_emit_ats2`). Vorher SHADOW-ONLY (der
+  `if not is_shadow(...)`-Guard hätte ein LIVE-Bein STILL geschluckt → nichts gepostet).
+  **has_open-Guard** vor dem gated Post (der LIVE-Zweig macht keinen has_open/Cooldown-
+  Check; die 1h-Breakout-Kerze bleibt ~1 h neueste → sonst Doppel-Post je Scan, Regel 4).
+  Live-Cornix an `CH_ATB_TARGET`. Bot 10 (EPD3) routete schon über den gated Router → nur
+  Register + Artefakt (+ 2 stale Kommentare gefixt).
+- **Staging-Artefakte (harte Regel 2):** `staging_models/epd3_model_LONG.pkl` (Kopie des
+  epd2-LONG-Retrains, `optimal_threshold=0.76`) + `staging_models/atb2_model_LONG.pkl`
+  (`optimal_threshold=0.60`), je mit `threshold_provenance`-Note (Operator-gesetzt, nicht
+  trainiert). Modelle byte-gleich (nur Threshold + Meta-Note). **Nur Staging** — der
+  Root-Move (= live) ist Michis Schritt.
+
+Verifikation DB-frei: `backtest/test_shadow_gate.py` (neue `test_t037_epd3_long_atb2_long_
+deployed` + Threshold-Artefakt-Test), neuer `backtest/test_atb2_deploy.py` (statischer
+Rewire-Guard: gated Router + has_open + LIVE-and-SHADOW-Gate), Guard `verify` 24/24 +
+`smoke` grün, ruff/format clean. **Wirksamwerden erst mit Michis Root-Promote der zwei
+Artefakte + Fleet-Restart.** ⚠ Ehrliche Einordnung: EPD3-LONG hat live ~0 Edge, ATB2-LONG
+keine Datenbasis — beide sind operator-gewollte Live-Experimente, keine belegten Edges.
+
 ## [2026-07-24] Fleet-Reconfig aus bot_results.xlsx — RUB1-Revive + Gate-Flips + Retires (T-2026-KYT-9050-037)
 
 Setzt Michis Wunsch-Spalte aus `bot_results.xlsx` gegen den Live-Registerstand um

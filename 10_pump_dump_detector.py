@@ -179,13 +179,14 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
 
     Baut den IDENTISCHEN 16-Feature-Vektor wie der Live-EPD2-Pfad (base_features
     + Funding as-of, gecacht — Regel 7), scored die Artefakte je Richtung, nimmt den
-    stärksten Kandidaten und emittiert bei prob>=threshold via post_ai_signal_gated:
-    das LIVE-Bein EPD3 SHORT (@0.6737, T-185, Artefakt im Repo-Root) postet Cornix an
-    CH_PUMP_AI (koexistierend mit EPD2), das SHADOW-Bein EPD3 LONG (threshold=None,
-    staging) bleibt ein überwachter Shadow-Trade (kein Cornix). Der Live-SHORT feuert
-    nur, wenn das Modell SHORT als stärkste Richtung über seinem Threshold wählt.
-    Geometrie = dieselbe HVN/S-R-Konstruktion wie der Live-Pfad (bewusst dupliziert).
-    Fehler bleiben gekapselt.
+    stärksten Kandidaten und emittiert bei prob>=threshold via post_ai_signal_gated.
+    Lifecycle je Richtung (shadow_gate): EPD3 LONG ist LIVE (@0.76, T-2026-KYT-9050-037
+    Operator-Entscheid — Volume-Cap, kein Edge-Filter) → postet Cornix an CH_PUMP_AI;
+    EPD3 SHORT ist SHADOW (T-033-Park) → überwachter Shadow-Trade (kein Cornix). Es
+    feuert nur die STÄRKSTE Richtung, und nur wenn sie über ihrem Threshold liegt. Das
+    LIVE-Bein lädt sein Artefakt aus dem Repo-ROOT (challenger-distinkt
+    epd3_model_{LONG,SHORT}.pkl), das SHADOW-Bein aus staging. Geometrie = dieselbe
+    HVN/S-R-Konstruktion wie der Live-Pfad (bewusst dupliziert). Fehler bleiben gekapselt.
     """
     if not shadow_gate.shadow_posting_enabled():
         return
@@ -232,7 +233,7 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
             conn,
             "EPD3",
             best_dir,
-            _kcfg.CH_PUMP_AI,  # LIVE-Leg EPD3 SHORT → Pump-AI-Channel (T-185); LONG bleibt Shadow
+            _kcfg.CH_PUMP_AI,  # EPD3 → Pump-AI-Channel: LONG live (T-037), SHORT shadow (T-033-Park)
             symbol,
             best_prob,
             entry1,

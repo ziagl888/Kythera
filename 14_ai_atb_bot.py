@@ -30,7 +30,7 @@ from core.candles import read_candles, read_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
-from core.signal_post import post_shadow_ai_signal
+from core.signal_post import has_open_ai_signal, post_ai_signal_gated
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
 # OHLCV-Spalten für den R1-cleanen ATB2-Read (geschlossene Kerzen).
@@ -146,16 +146,26 @@ def load_models_and_coins():
         return []
 
 
-def _emit_atb2_shadow(conn, symbol, now):
-    """ATB2-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+def _emit_atb2(conn, symbol, now):
+    """ATB2-Emission über das shadow_gate-Routing (T-2026-CU-9050-125 → T-037).
 
     Eigener Detektor-Pfad (core.atb2_features, EINE Quelle mit Trainer/Replay
     ``run_atb2``): R1-cleaner OHLCV-Read (geschlossene Kerzen), Converging-
     Channel-Fit auf der letzten geschlossenen Kerze, geschlossener Ausbruch →
-    Measured-Move-Geometrie. ATB2 hat keinen Operating-Point (optimal_threshold
-    null) → jedes Setup wird als überwachter Shadow-Trade (kein Cornix) unter
-    Tag ``ATB2`` getrackt; mit gesetztem Threshold würde bei prob>=thr emittiert.
-    Fehler bleiben gekapselt — der Live-ATB1-Pfad darf nie betroffen sein.
+    Measured-Move-Geometrie.
+
+    T-2026-KYT-9050-037 (Operator-Entscheid Michi, bot_results.xlsx): ATB2 LONG ist
+    SHADOW→LIVE promotet (Threshold 0.60 BLIND — n=17 Shadow-Trades, kein daten-
+    basierter Operating-Point). Diese Funktion routet jetzt BEIDE Zustände über
+    ``post_ai_signal_gated`` (Muster Bot 12 _emit_ats2 / Bot 10 _emit_epd3): LIVE →
+    Cornix an CH_ATB_TARGET + ai_signals, SHADOW (ATB2 SHORT) → überwacht ohne Cornix;
+    SILENT/RETIRED fällt raus. Jeder Fehler bleibt gekapselt — der Live-ATB1-Pfad darf
+    davon nie betroffen sein.
+
+    DEPLOY-VORBEDINGUNG (Michi, harte Regel 2): das LIVE-Bein lädt sein Artefakt aus
+    dem Repo-ROOT (shadow_artifact_path). Solange atb2_model_LONG.pkl in staging_models/
+    statt Root liegt, liefert der Loader None (``art is None`` → return) und ATB2 LONG
+    schweigt — die Promotion wird erst mit dem Artefakt-Move + Restart aktiv.
     """
     if not shadow_gate.shadow_posting_enabled():
         return
@@ -170,7 +180,7 @@ def _emit_atb2_shadow(conn, symbol, now):
         if setup is None:
             return
         direction = setup["direction"]
-        if not shadow_gate.is_shadow("ATB2", direction):
+        if shadow_gate.leg_status("ATB2", direction) not in (shadow_gate.LIVE, shadow_gate.SHADOW):
             return
         art = SHADOW_ATB2.get(direction)
         if art is None:
@@ -179,15 +189,34 @@ def _emit_atb2_shadow(conn, symbol, now):
         thr = shadow_gate.artifact_threshold(art)
         if thr is not None and prob < thr:
             return
+        # has_open-Guard (CRITICAL, Muster Bot 12 _emit_ats2): der LIVE-Zweig von
+        # post_ai_signal_gated (= post_ai_signal) macht KEINEN has_open/Cooldown-Check.
+        # Die ATB2-Breakout-Kerze bleibt ~1 h die jüngste geschlossene → ohne Guard
+        # feuerte JEDER Scan einen doppelten LIVE-Post (Regel-4-Doppel-Trade). Deckt
+        # auch den SHADOW-Zweig ab (spart die Geometrie vor post_shadow's eigenem has_open).
+        if has_open_ai_signal(conn, symbol, direction, "ATB2"):
+            return
         mm = atb.measured_move_targets(setup["channel"], setup["breakout"], setup["entry"])
         if not mm["targets"] or mm["sl"] <= 0:
             return
-        if post_shadow_ai_signal(
-            conn, "ATB2", symbol, direction, prob, mm["entry1"], mm["entry2"], mm["sl"], mm["targets"], n_show=3
-        ):
+        outcome = post_ai_signal_gated(
+            conn,
+            "ATB2",
+            direction,
+            TARGET_CHANNEL_ID,
+            symbol,
+            prob,
+            mm["entry1"],
+            mm["entry2"],
+            mm["sl"],
+            mm["targets"],
+            source_desc="AI ATB2 Converging-Channel Breakout",
+            n_show=3,
+        )
+        if outcome is not None:
             conn.commit()
     except Exception as e:
-        logger.warning(f"ATB2 Shadow für {symbol} fehlgeschlagen: {e}")
+        logger.warning(f"ATB2 für {symbol} fehlgeschlagen: {e}")
         try:
             conn.rollback()
         except Exception:
@@ -742,9 +771,10 @@ def run_trendline_detector():
                 continue
             stats_dict["total"] += 1
 
-            # ATB2-Shadow (T-2026-CU-9050-125): eigener Converging-Channel-Detektor,
-            # unabhängig von der ATB1-Trendlinien-Logik und deren last_alert-Gate.
-            _emit_atb2_shadow(conn, symbol, now)
+            # ATB2 (T-2026-CU-9050-125 → T-037): eigener Converging-Channel-Detektor,
+            # unabhängig von der ATB1-Trendlinien-Logik und deren last_alert-Gate. Routet
+            # LONG live (Cornix) + SHORT shadow via shadow_gate (post_ai_signal_gated).
+            _emit_atb2(conn, symbol, now)
 
             state = TRENDLINE_STATE.get(
                 symbol,
@@ -829,7 +859,7 @@ def run_trendline_detector():
                     # ATB1 stummgeschaltet (T-2026-CU-9050-127, Operator Michi): ist das
                     # ATB1-Bein per shadow_gate auf SILENT gesetzt, gibt das alte Modell
                     # NICHTS aus (kein Info-Post, kein Trade, kein Log) — der Bot läuft
-                    # nur für die ATB2-Shadow-Sammlung (oben, _emit_atb2_shadow). State
+                    # nur für die ATB2-Emission (oben, _emit_atb2). State
                     # trotzdem fortschreiben (Relation + last_alert), damit derselbe
                     # Event nicht jeden Scan neu erkannt wird. Default-LIVE ⇒ No-op.
                     _atb1_dir = "LONG" if "UP" in event else "SHORT"
