@@ -170,6 +170,43 @@ def test_retired_tags_classified_retired():
     assert not sg.is_retired("MIS2")
 
 
+def test_t037_rub1_revive_and_rub3_short_park():
+    # T-2026-KYT-9050-037 (Michi bot_results.xlsx): Bot 13 auf die Original-RUB1-Legacy-
+    # Modelle zurückgebaut, beide Richtungen LIVE unter Tag RUB1 (explizit registriert,
+    # Defense-in-Depth). Die gebenchte RUB2-Generation bleibt SHADOW. RUB3-SHORT geparkt.
+    assert sg.leg_status("RUB1", "LONG") == sg.LIVE
+    assert sg.leg_status("RUB1", "SHORT") == sg.LIVE
+    assert sg.is_live("RUB1", "LONG") and sg.is_live("RUB1", "SHORT")
+    assert sg.leg_status("RUB2", "LONG") == sg.SHADOW
+    assert sg.leg_status("RUB2", "SHORT") == sg.SHADOW
+    # RUB3 jetzt beide Richtungen SHADOW (LONG-Challenger + SHORT-Park).
+    assert sg.leg_status("RUB3", "LONG") == sg.SHADOW
+    assert sg.leg_status("RUB3", "SHORT") == sg.SHADOW
+    # Spec §5 Register-Assert (exakter erwarteter Vektor).
+    assert (
+        sg.leg_status("RUB1", "LONG"),
+        sg.leg_status("RUB1", "SHORT"),
+        sg.leg_status("RUB2", "LONG"),
+        sg.leg_status("RUB3", "SHORT"),
+    ) == (sg.LIVE, sg.LIVE, sg.SHADOW, sg.SHADOW)
+
+
+def test_t037_retires_aim2_topn_and_ats1_robust():
+    # T-2026-KYT-9050-037: AIM2-TOPN („zu dünn") + ATS1_Robust („nur synthetisch")
+    # RETIRE beide Richtungen (Register-/Report-Klassifikation; DB-Delete ist ein
+    # separater Operator-Schritt). Case-insensitiv (is_retired _norm()t).
+    for tag in ("AIM2-TOPN", "aim2-topn", "ATS1_Robust", "ats1_robust"):
+        assert sg.is_retired(tag), tag
+        for d in ("LONG", "SHORT"):
+            assert sg.leg_status(tag, d) == sg.RETIRED, (tag, d)
+    # Die lebende Basis-AIM2-Generation darf NICHT mit-retired werden (Prefix-Grenze).
+    assert not sg.is_retired("AIM2")
+    assert sg.leg_status("AIM2", "LONG") == sg.LIVE
+    # ATS1 bleibt SILENT (T-127), nicht RETIRED — anderer Tag als ATS1_Robust.
+    assert sg.leg_status("ATS1", "LONG") == sg.SILENT
+    assert not sg.is_retired("ATS1")
+
+
 def test_mis1_revive_lifecycle():
     # T-2026-KYT-9050-034: MIS1-Revive — die GUTEN Beine (Audit T-032) sind
     # Default-LIVE und beleben die von T-033 geparkten MIS2-Beine; die schwachen
@@ -346,7 +383,8 @@ def test_fmr2_staging_artifact_loads_scores_and_gates():
 # monitored ai_signals-Trade (nie telegram_outbox); SILENT/RETIRED/Kill-Switch ⇒ skip.
 def test_route_legacy_leg_live_leaves_write_to_caller():
     conn = FakeConn(fetch=None)
-    # RUB1 = KEEP-Live-Tag (nicht registriert) → LIVE, der Helper schreibt NICHTS.
+    # RUB1 = revivte Original-Legacy-Generation, seit T-037 EXPLIZIT LIVE registriert
+    # (Defense-in-Depth) → LIVE, der Helper schreibt NICHTS (der Bot postet selbst).
     r = route_legacy_leg(conn, "RUB1", "SHORT", "X", 0.8, 100.0, 95.0, 90.0, [110.0, 120.0], n_show=2)
     assert r == LEG_LIVE
     assert conn.statements == []  # keine Zeile — der Aufrufer postet selbst

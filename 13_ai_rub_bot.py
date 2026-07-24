@@ -17,10 +17,9 @@ from core import shadow_gate
 from core.candles import read_candles, read_indicators
 from core.charting import generate_minichart_image
 from core.database import get_db_connection
-from core.funding_features import FUNDING_FEATURES, funding_features_asof, load_funding
+from core.funding_features import funding_features_asof, load_funding
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
-from core.model_artifacts import load_artifact, maybe_reload
-from core.rub_features import RUB_FEATURES, build_rub_features, rub_event_type, rub_trend
+from core.rub_features import build_rub_features, rub_event_type, rub_trend
 from core.signal_post import LEG_LIVE, LEG_SHADOW, post_shadow_ai_signal, route_legacy_leg
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
@@ -32,28 +31,31 @@ logger = logging.getLogger(__name__)
 RUBBERBAND_CHANNEL_ID = _kcfg.CH_RUBBERBAND
 
 # --- LOAD ML MODELS ---
+# RUB1-Revive (T-2026-KYT-9050-037, Operator-Entscheid Michi aus bot_results.xlsx):
+# Bot 13 fährt BEIDE Richtungen wieder auf den ORIGINALEN Legacy-Reversion-Modellen
+# und postet sie live unter dem Original-Tag RUB1 (LONG 2.48 % / SHORT 0.78 %,
+# historisch beide positiv). Das revertiert (a) den T-030-LONG-Tag-Rename (→ RUB2)
+# und (b) den PR-#9-Removal des Legacy-SHORT-Zweigs (rub2_model_SHORT-Retrain).
+# Der RUB2-Retrain wird gebencht: RUB2 bleibt im shadow_gate-Register SHADOW (beide
+# Richtungen, block E); der RUB3/RUB4-LONG-Challenger läuft unverändert als Shadow.
 MODEL_LONG_PATH = 'long_reversion_model.joblib'
-# RUB2-SHORT (Deploy 2026-07-07, MODEL_INTENT §8): Artefakt aus
-# tools/retrain_from_replay.py --strategy rub — geladen über den geteilten
-# Loader core/model_artifacts (P0.12-Feature-Contract, tägliches maybe_reload,
-# Kalibrator nur für Anzeige). 15 Features (9 rub + 6 Funding). Threshold gilt
-# auf der ROHEN predict_proba (so hat ihn pick_threshold_safe gewählt).
-# KEIN Legacy-Fallback mehr (Review PR #9): das Legacy-SHORT-Modell ist
-# falsifiziert, und ein Fallback unter dem Tag RUB2 würde die Attribution
-# vergiften — fehlt/bricht das Artefakt, ist SHORT aus (loaded=False).
-RUB2_SHORT_ARTIFACT_PATH = 'rub2_model_SHORT.pkl'
-RUB2_EXPECTED_FEATURES = RUB_FEATURES + FUNDING_FEATURES
+MODEL_SHORT_PATH = 'short_reversion_model.joblib'
+# Original-RUB1-Thresholds auf der ROHEN predict_proba der Legacy-Modelle (9 rub-
+# Features, KEIN Funding — Parität zur Vor-PR-#9-Logik, git 07c8874^). Bewusst nicht
+# neu erfunden.
 REVERSION_THRESH_LONG = 0.75
-# Posting-Tag der LONG-Seite. Konstante mit Absicht: LONG fährt das Legacy-Modell
-# ohne Artefakt-Meta und postet per Operator-Entscheid (2026-07-06) unter RUB2.
-# Die SHORT-Seite zieht ihren Tag dagegen aus RUB2_SHORT["tag"] (= meta.model_id).
-RUB_LONG_TAG = "RUB2"
-# Gleicher Wert, ANDERE Bedeutung: das Tag, unter dem dieser Bot vor
-# T-2026-CU-9050-030 BEIDE Richtungen postete. Nur für den transitionalen
-# Cooldown-Dedup — siehe check_rubberband_conditions.
+REVERSION_THRESH_SHORT = 0.85
+# Posting-Tag BEIDER Richtungen: das Original-RUB1. Die Legacy-Modelle tragen keine
+# Artefakt-Meta, also eine benannte Konstante (kein meta.model_id-Lookup mehr).
+RUB_TAG = "RUB1"
+# Der Tag, unter dem dieser Bot ZULETZT (RUB2-Generation, T-030…T-033) postete und
+# unter dem noch offene Trades/Cooldowns liegen können. Nur für den transitionalen
+# Dedup über den Tag-Wechsel RUB2 → RUB1 (Active-Trade-Check + Cooldown, Regel 4) —
+# damit kein Doppel-Post entsteht, solange alte RUB2-Positionen noch offen sind.
 RUB_LEGACY_TAG = "RUB2"
 
 MODEL_LONG = None
+MODEL_SHORT = None
 
 # RUB3-Shadow (T-2026-CU-9050-125): der rub2_model_LONG-Retrain war "nicht
 # deploybar" (kein positiver LONG-Operating-Point). Das LIVE-LONG-Bein fährt
@@ -80,25 +82,9 @@ def funding_gate_open(fund_24h_bps) -> bool:
     return fund_24h_bps is not None and fund_24h_bps > FUNDING_GATE_LONG_BPS
 
 
-# Volle load_artifact-Contract-Form (KEIN Teil-Dict): loaded_at=0.0 erzwingt den
-# ersten maybe_reload-Load, und threshold/features/model existieren als Keys, damit
-# kein Zugriffspfad vor load_models() auf einem halben Contract in KeyError läuft.
-RUB2_SHORT: dict = {
-    "loaded": False,
-    "model": None,
-    "features": None,
-    "threshold": 1.0,
-    "calibrator": None,
-    "tag": "RUB2",
-    "meta": {},
-    "loaded_at": 0.0,
-    "path": RUB2_SHORT_ARTIFACT_PATH,
-}
-
-
 def load_models():
-    """Loads the Mean Reversion models."""
-    global MODEL_LONG, RUB2_SHORT
+    """Loads the Mean Reversion models (RUB1 Legacy, beide Richtungen)."""
+    global MODEL_LONG, MODEL_SHORT
     try:
         if os.path.exists(MODEL_LONG_PATH):
             MODEL_LONG = joblib.load(MODEL_LONG_PATH)
@@ -108,7 +94,14 @@ def load_models():
     except Exception as e:
         logger.error(f"❌ Error loading LONG-Modell: {e} — LONG-Seite aus.")
 
-    RUB2_SHORT = load_artifact(RUB2_SHORT_ARTIFACT_PATH, RUB2_EXPECTED_FEATURES, "RUB2")
+    try:
+        if os.path.exists(MODEL_SHORT_PATH):
+            MODEL_SHORT = joblib.load(MODEL_SHORT_PATH)
+            logger.info("✅ Rubberband SHORT-Modell (Legacy RUB1) loaded successfully.")
+        else:
+            logger.warning(f"Modell fehlt: {MODEL_SHORT_PATH} — SHORT-Seite aus.")
+    except Exception as e:
+        logger.error(f"❌ Error loading SHORT-Modell: {e} — SHORT-Seite aus.")
 
     global SHADOW_RUB3_LONG
     SHADOW_RUB3_LONG = shadow_gate.load_shadow_artifact("RUB3", "LONG")
@@ -169,12 +162,10 @@ def _emit_rub3_shadow(conn, symbol, curr_close, base_features, now):
 
 # --- HAUPT CHECKER FUNKTION ---
 def check_rubberband_conditions():
-    global RUB2_SHORT
-    RUB2_SHORT = maybe_reload(RUB2_SHORT, RUB2_EXPECTED_FEATURES)
-    # Review-Fix (PR #9): kein UND-Guard mehr — ein fehlendes LONG-Legacy-Modell
-    # darf den deployten RUB2-SHORT-Pfad nicht mit abschalten (und umgekehrt).
-    # Die Richtungs-Guards im Loop überspringen die nicht ladbare Seite einzeln.
-    if not (MODEL_LONG or RUB2_SHORT["loaded"]):
+    # Entkoppelter Guard (PR-#9-Muster, bewahrt): ein fehlendes Legacy-Modell einer
+    # Richtung darf die andere nicht mit abschalten. Die Richtungs-Guards im Loop
+    # überspringen die nicht ladbare Seite einzeln (MODEL_LONG / MODEL_SHORT is None).
+    if not (MODEL_LONG or MODEL_SHORT):
         logger.error("Modelle not loaded. Skipping Scan.")
         return
 
@@ -306,19 +297,13 @@ def check_rubberband_conditions():
 
             is_long = event_type == "REVERSION_UP"
             direction = "LONG" if is_long else "SHORT"
-            # Der Posting-Tag ist RICHTUNGSABHÄNGIG (T-2026-CU-9050-030):
-            #   LONG  — fährt das Legacy-Modell long_reversion_model.joblib, das gar
-            #           kein Artefakt-Meta hat. Es postet per Operator-Entscheid
-            #           (2026-07-06) trotzdem unter RUB2: das LONG-Gate wurde mit der
-            #           RUB2-Generation wieder geöffnet (Intent: Idee ist symmetrisch,
-            #           LONG-Schwäche womöglich Artefakt des kaputten ML), und der neue
-            #           Tag trennt die wieder-offene Seite von der RUB1-Historie.
-            #           Bewusst eine Konstante — RUB2_SHORT["tag"] hier zu ziehen wäre
-            #           schlicht falsch, es ist nicht das Modell, das gefeuert hat.
-            #   SHORT — zieht den Tag aus der Artefakt-Meta (load_artifact setzt
-            #           tag = meta.model_id). Ein RUB3-Retrain im selben Slot postet
-            #           damit als RUB3, statt still mit RUB2 zu verschmelzen (Regel 6).
-            module_tag = RUB_LONG_TAG if is_long else RUB2_SHORT["tag"]
+            # Posting-Tag BEIDER Richtungen: das Original-RUB1 (T-2026-KYT-9050-037
+            # Revive). Beide Seiten fahren wieder das Legacy-Reversion-Modell ohne
+            # Artefakt-Meta, also eine einzige benannte Konstante — kein richtungs-
+            # abhängiger meta.model_id-Lookup mehr (der galt der RUB2-SHORT-Generation,
+            # jetzt gebencht). Der RUB3/RUB4-LONG-Challenger postet weiter unter eigenem
+            # Tag (siehe _emit_rub3_shadow) und kollidiert damit nicht mit RUB1.
+            module_tag = RUB_TAG
 
             # 1. Aktiver Trade Check (T-2026-CU-9050-043) — prüft, ob für genau dieses
             #    Modul/Coin/Richtung bereits ein nicht-geschlossener Trade läuft.
@@ -327,10 +312,10 @@ def check_rubberband_conditions():
             #    sein Cooldown, und ohne diesen Check öffnete das Folgesignal eine
             #    ZWEITE Live-Position neben der ersten. Muster: 11_ai_mis_bot.py.
             #
-            #    Der Check läuft über den Tag, und der Tag wechselt beim Retrain-
-            #    Rollout der SHORT-Seite (RUB2 → RUB3). Ohne den Alt-Tag im IN würde
-            #    eine offene RUB2-Position denselben Coin/Direction nicht mehr blocken.
-            #    Solange die Tags übereinstimmen (heute), ist das IN ein No-op.
+            #    Der Check läuft über den Tag, und der Tag wechselt mit dem RUB1-Revive
+            #    (RUB2 → RUB1, T-037). Ohne den Alt-Tag im IN würde eine noch offene
+            #    RUB2-Position denselben Coin/Direction nicht mehr blocken → möglicher
+            #    Doppel-Post über den Tag-Wechsel (Regel 4).
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -350,11 +335,10 @@ def check_rubberband_conditions():
             # Der Shadow-Log unterhalb bleibt erhalten — er dokumentiert alle
             # potenziellen Trades, auch die abgelehnten. Beim Skip durch Cooldown
             # loggen wir weiterhin fürs Monitoring.
-            # Transitionaler Dedup (T-2026-CU-9050-030): der Cooldown-Key ist der Tag,
-            # und der wechselt beim RUB3-Rollout auf der SHORT-Seite. Eine frische
-            # RUB2-Cooldown-Row würde ein RUB3-Signal auf demselben Coin dann nicht mehr
-            # sperren. Also zusätzlich gegen den Alt-Tag prüfen; solange die Tags gleich
-            # sind (heute), fällt der zweite Query weg. Dieselbe Transitional-Logik trägt
+            # Transitionaler Dedup (T-037 Revive): der Cooldown-Key ist der Tag, und der
+            # wechselt mit dem RUB1-Revive (RUB2 → RUB1). Eine frische RUB2-Cooldown-Row
+            # würde ein RUB1-Signal auf demselben Coin sonst nicht mehr sperren. Also
+            # zusätzlich gegen den Alt-Tag prüfen. Dieselbe Transitional-Logik trägt
             # der Active-Trade-Check oben — beide Sperren müssen den Generationswechsel
             # überstehen, sonst reißt der Schutz an der jeweils anderen Stelle auf.
             cooldown_tags = [module_tag] if module_tag == RUB_LEGACY_TAG else [module_tag, RUB_LEGACY_TAG]
@@ -362,32 +346,19 @@ def check_rubberband_conditions():
                 logger.debug(f"RUB1 Prediction für {symbol} {direction} im Cooldown — skip.")
                 continue
 
-            # Prediction (teuer, erst after Cooldown-Check)
+            # Prediction (teuer, erst after Cooldown-Check). Beide Richtungen fahren das
+            # ORIGINALE Legacy-Reversion-Modell auf den 9 rub-Features (KEIN Funding) mit
+            # ihrem Original-Threshold — Parität zur Vor-PR-#9-RUB1-Logik (git 07c8874^).
             if is_long:
                 if MODEL_LONG is None:
                     continue
                 threshold = REVERSION_THRESH_LONG
                 prob = MODEL_LONG.predict_proba(pd.DataFrame([base_features]))[0, 1]
             else:
-                if not RUB2_SHORT["loaded"]:
+                if MODEL_SHORT is None:
                     continue
-                # RUB2-SHORT: Funding-Features as-of aus funding_rates — exakt
-                # dieselbe Quelle/Funktion wie der Replay (walkforward_sim
-                # --strategy rub). As-of-Zeitpunkt ist der CANDLE-CLOSE (hh:00),
-                # nicht das Scan-now (hh:10) — der Trainer hat mit ts_decision =
-                # Kerzengrenze gerechnet, und an Settlement-Stunden läge sonst
-                # genau ein Funding-Satz zwischen Training und Serving (PR #9).
-                # Fehlende Funding-Historie ⇒ Spalten fehlen ⇒ unten 0 wie
-                # fillna(0) im Trainer (Serving-Parität, kein Skip) — sicher,
-                # weil load_artifact die Feature-NAMEN hart validiert hat.
-                # Lazy je Event (Vorfilter feuert selten — kein Voll-Load je Scan);
-                # since-Schranke: as-of nutzt maximal die letzten 270 Sätze (~90d).
-                threshold = RUB2_SHORT["threshold"]
-                ts_decision = now.replace(minute=0, second=0, microsecond=0)
-                fund_by_sym = load_funding(conn, [symbol], since=now - datetime.timedelta(days=95))
-                base_features.update(funding_features_asof(fund_by_sym, symbol, ts_decision))
-                ml_input = pd.DataFrame([base_features]).reindex(columns=RUB2_SHORT["features"]).fillna(0)
-                prob = RUB2_SHORT["model"].predict_proba(ml_input)[0, 1]
+                threshold = REVERSION_THRESH_SHORT
+                prob = MODEL_SHORT.predict_proba(pd.DataFrame([base_features]))[0, 1]
 
             logger.info(f"RUB1 Trigger: {symbol} {direction} | ML-Conf: {prob:.1%} (Thresh: {threshold:.2f})")
 
@@ -445,10 +416,12 @@ def check_rubberband_conditions():
             # made the monitor score phantom TPs the subscriber never saw.
             n_show = 3
 
-            # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒
-            # keine Verhaltensänderung. RUB2 ist in BEIDEN Richtungen geparkt → SHADOW
-            # (überwachter Trade statt Cornix); der RUB3/RUB4-LONG-Challenger bleibt
-            # unverändert Shadow (oben, _emit_rub3_shadow). Rein additiv (Regel 4).
+            # Fleet-Lifecycle-Gate (T-2026-KYT-9050-033) an der Emissions-Stelle.
+            # module_tag == RUB1 ist im Register explizit LIVE (T-037, Defense-in-Depth)
+            # ⇒ route_legacy_leg gibt LEG_LIVE zurück und der Bot postet wie unten (Cornix
+            # + ai_signals). Die gebenchte RUB2-Generation bleibt daneben SHADOW; der
+            # RUB3/RUB4-LONG-Challenger unverändert Shadow (oben, _emit_rub3_shadow).
+            # Rein additiv (Regel 4).
             _route = route_legacy_leg(
                 conn, module_tag, direction, symbol, prob, entry1, entry2, sl, targets, n_show=n_show
             )
