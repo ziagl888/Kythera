@@ -153,8 +153,12 @@ def load_trades(conn, model_prefixes: list[str], lev: float, start: str | None =
     """
     from core.bot_naming import pretty_name
 
-    where = ["entry IS NOT NULL", "close_price IS NOT NULL", "close_time IS NOT NULL",
-             "(status IS NULL OR status NOT ILIKE %s)"]
+    where = [
+        "entry IS NOT NULL",
+        "close_price IS NOT NULL",
+        "close_time IS NOT NULL",
+        "(status IS NULL OR status NOT ILIKE %s)",
+    ]
     params: list = ["%LEGACY%"]
     if model_prefixes != ["ALL"]:
         where.append("(" + " OR ".join(["model ILIKE %s"] * len(model_prefixes)) + ")")
@@ -179,7 +183,7 @@ def load_trades(conn, model_prefixes: list[str], lev: float, start: str | None =
     with conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
-    for sym, model, d, entry, close, hit, status, ot, ct in rows:
+    for sym, model, d, entry, close, hit, _status, ot, ct in rows:
         if d not in ("LONG", "SHORT"):
             continue
         mv = signed_move_pct(d, entry, close)
@@ -291,14 +295,21 @@ def reconstruct(conn, trades: list[dict], lev: float, tf: str, build_wave: bool 
             fav = ((hh - e) / e * 100.0) if is_long else ((e - ll) / e * 100.0)
             adv = ((ll - e) / e * 100.0) if is_long else ((e - hh) / e * 100.0)
             t["wick_peak_lev"] = float(fav.max()) * lev
-            t["W_at_open"] = W["ALL"][gi0] if 0 <= gi0 < glen else np.nan
             t["trail"] = {x: trail_capture(fav, adv, x, lev, t["real_unlev"], t["real_lev"]) for x in X_SWEEP}
             marked += 1
         if ci % 100 == 0 or ci == len(by_coin):
             print(f"  [{ci}/{len(by_coin)}] marked={marked} ({time.time() - t0:.0f}s)", flush=True)
 
-    return {"grid": grid, "gmin": gmin, "glen": glen, "W": W, "nopen": nopen, "keys": keys,
-            "marked": marked, "no_candle": no_candle}
+    return {
+        "grid": grid,
+        "gmin": gmin,
+        "glen": glen,
+        "W": W,
+        "nopen": nopen,
+        "keys": keys,
+        "marked": marked,
+        "no_candle": no_candle,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -425,7 +436,7 @@ def render_md(meta: dict) -> str:
     c1 = a["c1_asymmetry"]["ALL"]
     L = []
     ap = L.append
-    ap(f"# Wave-Buildup — Realized-vs-Unrealized (Phase A, T-2026-KYT-9050-041)\n")
+    ap("# Wave-Buildup — Realized-vs-Unrealized (Phase A, T-2026-KYT-9050-041)\n")
     ap(
         f"_generated {meta['generated_at']} · read-only · models {'+'.join(s['models'])} · "
         f"{s['lev']:.0f}x assumed · window {s['span'][0]} → {s['span'][1]}_\n"
@@ -483,7 +494,7 @@ def render_md(meta: dict) -> str:
     ap("## CEIL — Capture-Ceiling & risiko-adjustierte Auflösung\n")
     ap(
         f"HOLD (actual) Σ lev **{ce['hold_sum_lev']:+.0f}** · PERFECT-PEAK (Hindsight-Obergrenze) "
-        f"Σ lev {ce['perfect_peak_sum_lev']:+.0f} (~{ce['perfect_peak_sum_lev']/max(ce['hold_sum_lev'],1):.1f}× "
+        f"Σ lev {ce['perfect_peak_sum_lev']:+.0f} (~{ce['perfect_peak_sum_lev'] / max(ce['hold_sum_lev'], 1):.1f}× "
         "hold, unerreichbar).\n"
     )
     ap("| Trailing X% | Σ lev | mean lev% | vs hold | % der Ceiling | **Sharpe lev** | mean unlev% | trig% |")
@@ -495,7 +506,7 @@ def render_md(meta: dict) -> str:
     for x in X_SWEEP:
         sw = ce["sweep"][x]
         ap(
-            f"| {int(x*100)}% | {sw['sum_lev']:+.0f} | {sw['mean_lev']:+} | {sw['vs_hold_lev']:+.0f} | "
+            f"| {int(x * 100)}% | {sw['sum_lev']:+.0f} | {sw['mean_lev']:+} | {sw['vs_hold_lev']:+.0f} | "
             f"{sw['pct_of_ceiling']}% | **{sw['sharpe_lev']:+}** | {sw['mean_unlev']:+.3f} | {sw['trig_pct']} |"
         )
     ap(
@@ -514,7 +525,7 @@ def render_md(meta: dict) -> str:
         h = ce["compounding"]["hold"][f]
         tr = ce["compounding"]["trail"][f][0.10]
         ap(
-            f"| {f*100:.0f}% | ×{h['final_mult']:.3g} | **{h['maxdd_pct']}%** | "
+            f"| {f * 100:.0f}% | ×{h['final_mult']:.3g} | **{h['maxdd_pct']}%** | "
             f"×{tr['final_mult']:.3g} | **{tr['maxdd_pct']}%** |"
         )
     ap(
@@ -578,7 +589,7 @@ def analyse_rank(trades: list[dict], lev: float) -> list[dict]:
         wp = np.array([t["wick_peak_lev"] for t in sel])
         sh_hold = sharpe(rl)
         by_x = {x: sharpe(np.array([t["trail"][x][1] for t in sel])) for x in X_SWEEP}
-        best_x = max(by_x, key=lambda x: (by_x[x] if not np.isnan(by_x[x]) else -1e9))
+        best_x = max(by_x, key=lambda x: by_x[x] if not np.isnan(by_x[x]) else -1e9)
         ss = sorted(sel, key=lambda t: t["ct"])
         _, mdd_hold = compound_equity(np.array([t["real_lev"] / 100.0 for t in ss]), RANK_F)
         _, mdd_best = compound_equity(np.array([t["trail"][best_x][1] / 100.0 for t in ss]), RANK_F)
@@ -593,7 +604,9 @@ def analyse_rank(trades: list[dict], lev: float) -> list[dict]:
                 "sharpe_t10": round(float(by_x[0.10]), 3) if not np.isnan(by_x[0.10]) else None,
                 "best_x": int(best_x * 100),
                 "sharpe_best": round(float(by_x[best_x]), 3) if not np.isnan(by_x[best_x]) else None,
-                "uplift": round(float(by_x[best_x] - sh_hold), 3) if not (np.isnan(by_x[best_x]) or np.isnan(sh_hold)) else None,
+                "uplift": round(float(by_x[best_x] - sh_hold), 3)
+                if not (np.isnan(by_x[best_x]) or np.isnan(sh_hold))
+                else None,
                 "maxdd_hold": round(float(mdd_hold), 1),
                 "maxdd_best": round(float(mdd_best), 1),
                 "thin": len(sel) < THIN_N,
@@ -615,11 +628,13 @@ def render_rank_md(meta: dict) -> str:
     ap(
         "**Frage:** bei welchen Bots hebt ein enger **Trailing-Close** den risiko-adjustierten Ertrag? "
         "Pro Bot (bot_catalog-Familie): per-Trade leveraged **Sharpe** hold vs Trailing 10 % vs best-X, "
-        f"und die kompoundierende **MaxDD** (fixe {RANK_F*100:.0f}%-Fraktion) hold vs best-X. Sortiert nach "
+        f"und die kompoundierende **MaxDD** (fixe {RANK_F * 100:.0f}%-Fraktion) hold vs best-X. Sortiert nach "
         "**Sharpe-Uplift (best − hold)**. Methodik + Caveats wie Phase A (First-Order, entry1-only, "
         f"{s['lev']:.0f}x, Trigger-Optimismus). LEGACY-Status + Feb-Backfill ausgeschlossen (from {s['start']}).\n"
     )
-    ap("| Bot | tags | n | WR% | Ø giveback | **Sharpe hold** | Sharpe t10% | best-X | **Sharpe best** | **uplift** | MaxDD hold→best | verdict |")
+    ap(
+        "| Bot | tags | n | WR% | Ø giveback | **Sharpe hold** | Sharpe t10% | best-X | **Sharpe best** | **uplift** | MaxDD hold→best | verdict |"
+    )
     ap("|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|")
 
     def sf(v, spec="+"):  # None-safe signed formatter
@@ -647,8 +662,12 @@ def render_rank_md(meta: dict) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Wave-buildup study (T-2026-KYT-9050-041, Phase A/B)")
-    ap.add_argument("--mode", default="study", choices=["study", "rank"],
-                    help="study = Phase-A wave+asymmetry for --models; rank = Phase-B per-bot trailing ranking")
+    ap.add_argument(
+        "--mode",
+        default="study",
+        choices=["study", "rank"],
+        help="study = Phase-A wave+asymmetry for --models; rank = Phase-B per-bot trailing ranking",
+    )
     ap.add_argument("--models", default="AIM,SRA", help="comma-separated family prefixes, or ALL (rank mode)")
     ap.add_argument("--lev", type=float, default=20.0)
     ap.add_argument("--tf", default=None, help="candle timeframe for wave/peak (default: study 1h, rank 15m)")
@@ -677,9 +696,11 @@ def main() -> None:
             print(f"WARN {e} — läuft dennoch (read-only, BELOW_NORMAL).", flush=True)
 
     is_rank = args.mode == "rank"
-    prefixes = ["ALL"] if (is_rank and args.models.strip().upper() == "ALL") else [
-        p.strip().upper() for p in args.models.split(",") if p.strip()
-    ]
+    prefixes = (
+        ["ALL"]
+        if (is_rank and args.models.strip().upper() == "ALL")
+        else [p.strip().upper() for p in args.models.split(",") if p.strip()]
+    )
     start = args.start or ("2026-03-01" if is_rank else None)
     tf = args.tf or ("15m" if is_rank else "1h")  # explicit --tf respected; sensible per-mode default
 
@@ -701,19 +722,39 @@ def main() -> None:
     if is_rank:
         ranking = analyse_rank(trades, args.lev)
         meta = {
-            "task": "T-2026-KYT-9050-041", "phase": "B", "generated_at": str(utc_now()), "limits": LIMITS,
+            "task": "T-2026-KYT-9050-041",
+            "phase": "B",
+            "generated_at": str(utc_now()),
+            "limits": LIMITS,
             "ranking": ranking,
-            "summary": {"models": prefixes, "lev": args.lev, "tf": tf, "start": start, "span": span,
-                        "n_trades": len(trades), "no_candle": rec["no_candle"]},
+            "summary": {
+                "models": prefixes,
+                "lev": args.lev,
+                "tf": tf,
+                "start": start,
+                "span": span,
+                "n_trades": len(trades),
+                "no_candle": rec["no_candle"],
+            },
         }
         tag = "wave_buildup_rank_allbots"
         md = render_rank_md(meta)
     else:
         analysis = analyse(trades, rec, args.lev)
         meta = {
-            "task": "T-2026-KYT-9050-041", "phase": "A", "generated_at": str(utc_now()), "limits": LIMITS,
-            "summary": {"models": prefixes, "lev": args.lev, "tf": tf, "span": span,
-                        "n_trades": len(trades), "no_candle": rec["no_candle"], "analysis": analysis},
+            "task": "T-2026-KYT-9050-041",
+            "phase": "A",
+            "generated_at": str(utc_now()),
+            "limits": LIMITS,
+            "summary": {
+                "models": prefixes,
+                "lev": args.lev,
+                "tf": tf,
+                "span": span,
+                "n_trades": len(trades),
+                "no_candle": rec["no_candle"],
+                "analysis": analysis,
+            },
         }
         tag = "wave_buildup_study_" + "".join(p.lower() for p in prefixes)
         md = render_md(meta)
