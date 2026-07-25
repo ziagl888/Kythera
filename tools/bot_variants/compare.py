@@ -96,9 +96,13 @@ def load_contract(path: str) -> dict[str, Any]:
     return {"model": art, "features": features, "threshold": None}
 
 
-def resolve_artifact_path(tag: str, direction: str) -> str:
-    """Fundort-Pfad des Artefakts einer (tag, direction) aus dem Index."""
-    index = ix.build_index(load_embedded=False)
+def resolve_artifact_path(tag: str, direction: str, index: dict[str, Any] | None = None) -> str:
+    """Fundort-Pfad des Artefakts einer (tag, direction) aus dem Index.
+
+    ``index`` erlaubt es dem Caller, den (teuren) FS-Scan EINMAL zu bauen und
+    für beide Generationen wiederzuverwenden."""
+    if index is None:
+        index = ix.build_index(load_embedded=False)
     norm = tag.strip().upper()
     for gen in index["generations"]:
         if gen["tag"].upper() != norm:
@@ -176,8 +180,9 @@ def compare(
     if replay.empty:
         raise ValueError(f"Replay {replay_path} enthält keine gelabelten Events.")
 
-    contract_a = load_contract(resolve_artifact_path(tag_a, direction))
-    contract_b = load_contract(resolve_artifact_path(tag_b, direction))
+    index = ix.build_index(load_embedded=False)  # einmal bauen, für beide nutzen
+    contract_a = load_contract(resolve_artifact_path(tag_a, direction, index))
+    contract_b = load_contract(resolve_artifact_path(tag_b, direction, index))
     eval_a = evaluate(contract_a, replay, threshold_a)
     eval_b = evaluate(contract_b, replay, threshold_b)
 

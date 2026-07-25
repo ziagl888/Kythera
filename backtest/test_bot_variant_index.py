@@ -75,8 +75,9 @@ def test_family_for_tag_reverse_helper():
 def test_lifecycle_matches_shadow_gate(index):
     # RUB1 wurde per T-037 in beiden Richtungen live revived.
     assert _gen(index, "RUB1")["lifecycle"] == {"LONG": "live", "SHORT": "live"}
-    # ATB2 sammelt in beiden Richtungen Shadow.
-    assert _gen(index, "ATB2")["lifecycle"] == {"LONG": "shadow", "SHORT": "shadow"}
+    # ATB2: LONG per Operator nach Root promotet+live (T-037-promote, PR #189),
+    # SHORT sammelt weiter Shadow.
+    assert _gen(index, "ATB2")["lifecycle"] == {"LONG": "live", "SHORT": "shadow"}
     # MIS1-8H: LONG geparkt (shadow), SHORT (dump) live — pro Leg genau 1 Generation.
     assert _gen(index, "MIS1-8H")["lifecycle"] == {"LONG": "shadow", "SHORT": "live"}
     # AIM1 ist retired.
@@ -158,9 +159,11 @@ def test_shared_filenames_flagged(index):
     shared = {s["filename"]: set(s["tags"]) for s in index["shared_filenames"]}
     # rub2_model_LONG.pkl: RUB2-Retrain UND RUB3-Challenger nutzen dieselbe Datei.
     assert shared.get("rub2_model_LONG.pkl") == {"RUB2", "RUB3"}
-    # epd2_model_LONG.pkl: EPD2-Retrain UND EPD3-LONG-Shadow — der im Spec genannte
-    # Root-Kollisions-Hazard.
-    assert shared.get("epd2_model_LONG.pkl") == {"EPD2", "EPD3"}
+    # HINWEIS: epd2_model_LONG.pkl war bis PR #189 EPD2+EPD3-geteilt; seit der
+    # EPD3-LONG-Root-Promotion (eigener Dateiname epd3_model_LONG.pkl) ist die
+    # Kollision aufgelöst → nicht mehr geteilt. Der Mechanismus bleibt via
+    # rub2_model_LONG.pkl gepinnt.
+    assert "epd2_model_LONG.pkl" not in shared
 
 
 # ── AK5: md5 == echtes File-md5 ──────────────────────────────────────────────

@@ -128,7 +128,7 @@ def test_compare_winner_by_avg(monkeypatch, replay, tmp_path):
         "BBB": {"model": _StubModel(), "features": ["f1", "f2"], "threshold": None},
     }
     monkeypatch.setattr(cmp, "load_contract", lambda path: contracts[path])
-    monkeypatch.setattr(cmp, "resolve_artifact_path", lambda tag, direction: tag.upper())
+    monkeypatch.setattr(cmp, "resolve_artifact_path", lambda tag, direction, index=None: tag.upper())
     path = tmp_path / "demo_replay_1d.jsonl"
     _write_replay(path, _replay_rows())
     res = cmp.compare("AAA", "BBB", "LONG", str(path))

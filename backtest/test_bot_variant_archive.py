@@ -101,6 +101,16 @@ def test_lifecycle_mirrors_shadow_gate(manifests):
             assert status == sg.leg_status(m["tag"], d)
 
 
+def test_manifest_carries_feature_contract(manifests):
+    # D2: der volle Feature-Kontrakt (nicht nur der Count) gehört ins Manifest.
+    # ATS2 trägt ein Sidecar-*_meta.json mit einer echten features-LISTE.
+    art = next(a for a in _m(manifests, "ATS2")["artifacts"] if a["exists"] and a["features"])
+    assert isinstance(art["features"], list) and len(art["features"]) > 0
+    # n_features bleibt in der summarischen meta, features ist NICHT dupliziert.
+    assert art["meta"]["n_features"] == len(art["features"])
+    assert "features" not in art["meta"]
+
+
 # ── Determinismus ────────────────────────────────────────────────────────────
 
 

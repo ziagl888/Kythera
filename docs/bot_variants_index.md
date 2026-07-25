@@ -4,7 +4,7 @@
 >
 > Join über `core.bot_catalog` (Tag→Family/Script) · `core.shadow_gate` (Lifecycle je (Tag,Richtung) + SHADOW_ARTIFACTS) · Artefakt-meta · Dateisystem (root/staging/archive) · git. Deterministisch/idempotent.
 
-**Generationen:** 48 · **geteilte Dateinamen:** 2 · **unklassifizierte Artefakte:** 6 · **unbekannte Tags:** 0
+**Generationen:** 48 · **geteilte Dateinamen:** 1 · **unklassifizierte Artefakte:** 6 · **unbekannte Tags:** 0
 
 `code_ref` in Phase 1 konservativ: `HEAD` wenn die Generation live/aktiv ist, sonst leer (exakte git-SHA je Alt-Generation folgt in Phase 2 / D4).
 
@@ -17,7 +17,7 @@
 | AIM | `AIM2` | 15_ai_master_bot.py | LONG:live, SHORT:live | LONG:`master_meta_model_aim2.pkl`@root#5ef8df53<br>SHORT:`master_meta_model_aim2.pkl`@root#5ef8df53 | — | HEAD | Master-Ranker/Gate über Kandidaten (bot 15) |
 | AIM | `AIM2-TOPN` | 15_ai_master_bot.py | LONG:retired, SHORT:retired | —<br>_regelbasiert / kein Modell-Artefakt_ | — | — | High-Conviction-Top-N-Kanal über AIM2; retired T-037 |
 | ATB | `ATB1` | 14_ai_atb_bot.py | LONG:silent, SHORT:silent | —<br>_regelbasiert / kein Modell-Artefakt_ | — | — | Converging-Channel Break (bot 14); ATB2-Neuaufbau |
-| ATB | `ATB2` | 14_ai_atb_bot.py | LONG:shadow, SHORT:shadow | LONG:`atb2_model_LONG.pkl`@staging#3fb8a0f3<br>SHORT:`atb2_model_SHORT.pkl`@staging#3d27c650 | ATB2 | — | Converging-Channel Break (bot 14); ATB2-Neuaufbau |
+| ATB | `ATB2` | 14_ai_atb_bot.py | LONG:live, SHORT:shadow | LONG:`atb2_model_LONG.pkl`@root#b8c46fa5<br>SHORT:`atb2_model_SHORT.pkl`@staging#3d27c650 | ATB2 | HEAD | Converging-Channel Break (bot 14); ATB2-Neuaufbau |
 | ATS | `ATS1` | 12_ai_ats_bot.py | LONG:silent, SHORT:silent | —<br>_regelbasiert / kein Modell-Artefakt_ | — | — | Trend-Strength-Sniper TSI (bot 12) |
 | ATS | `ATS1_ROBUST` | 12_ai_ats_bot.py | LONG:retired, SHORT:retired | LONG:`model_tsi_long_robust.pkl`@root#73ea915e<br>SHORT:`model_tsi_short_robust.pkl`@root#cf090013 | — | — | ATS1_Robust Legacy (model_tsi_*_robust.pkl); ATS2 ist der Nachfolger |
 | ATS | `ATS2` | 12_ai_ats_bot.py | LONG:live, SHORT:live | LONG:`ats2_model_LONG.pkl`@staging#5d27eca5<br>SHORT:`ats2_model_SHORT.pkl`@staging#121b548a | ATS2 | HEAD | Trend-Strength-Sniper TSI (bot 12) |
@@ -31,7 +31,7 @@
 | BR | `BR4H` | 7_pattern_detector.py | SHORT:shadow | —<br>_regelbasiert / kein Modell-Artefakt_ | — | — | Pattern-Breakout-Detector (bot 7) |
 | EPD | `EPD1` | 10_pump_dump_detector.py | LONG:shadow | —<br>_regelbasiert / kein Modell-Artefakt_ | — | — | Pump/Dump-Detector (bot 10); EPD2=EPD_LEGACY_TAG |
 | EPD | `EPD2` | 10_pump_dump_detector.py | LONG:shadow, SHORT:shadow | LONG:`epd2_model_LONG.pkl`@staging#2702a57b<br>LONG:`pump_dump_model.pkl`@root#6c09741a<br>SHORT:`epd2_model_SHORT.pkl`@MISSING#—<br>SHORT:`pump_dump_model.pkl`@root#6c09741a<br>_Artefakt fehlt auf Platte: epd2_model_SHORT.pkl_ | EPD2 | — | Pump/Dump-Detector (bot 10); EPD2=EPD_LEGACY_TAG |
-| EPD | `EPD3` | 10_pump_dump_detector.py | LONG:shadow, SHORT:shadow | LONG:`epd2_model_LONG.pkl`@staging#2702a57b<br>SHORT:`epd3_model_SHORT.pkl`@root#e0f7bfb3 | EPD2 | — | EPD2-Retrain-Challenger; LONG teilt epd2_model_LONG.pkl mit EPD2 |
+| EPD | `EPD3` | 10_pump_dump_detector.py | LONG:live, SHORT:shadow | LONG:`epd3_model_LONG.pkl`@root#3375ccf5<br>SHORT:`epd3_model_SHORT.pkl`@root#e0f7bfb3 | EPD2 | HEAD | EPD2-Retrain-Challenger; LONG+SHORT nach Root promotet (epd3_model_*.pkl, PR #189) |
 | FIF | `FIF1` | 33_ai_fif1_bot.py | LONG:shadow, SHORT:shadow | LONG:`fif1_model.pkl`@root#c95b6194<br>SHORT:`fif1_model.pkl`@root#c95b6194 | FIF1 | — | First-In-First-Out (bot 33) |
 | FMR | `FMR2` | 31_ai_fmr1_bot.py | LONG:shadow, SHORT:shadow | LONG:`fmr2_model.pkl`@staging#576bc339<br>SHORT:`fmr2_model.pkl`@staging#576bc339 | FMR2 | — | Funding-Mean-Reversion-Exit (bot 31) |
 | LIS | `LIS1` | 36_ai_lis1_bot.py | SHORT:shadow | —<br>_regelbasiert / kein Modell-Artefakt_ | — | — | Post-Listing-Drift-Fade (bot 36) |
@@ -65,7 +65,6 @@
 
 | Datei | Tags | Ort |
 |---|---|---|
-| `epd2_model_LONG.pkl` | EPD2, EPD3 | staging |
 | `rub2_model_LONG.pkl` | RUB2, RUB3 | staging |
 
 ## Unklassifizierte Artefakte

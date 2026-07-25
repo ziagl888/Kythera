@@ -184,7 +184,7 @@ _RULE_ONLY_GENERATIONS: dict[str, list[str]] = {
 
 _PROVENANCE_TAG: dict[str, str] = {
     "ATS1_ROBUST": "ATS1_Robust Legacy (model_tsi_*_robust.pkl); ATS2 ist der Nachfolger",
-    "EPD3": "EPD2-Retrain-Challenger; LONG teilt epd2_model_LONG.pkl mit EPD2",
+    "EPD3": "EPD2-Retrain-Challenger; LONG+SHORT nach Root promotet (epd3_model_*.pkl, PR #189)",
     "RUB3": "rub2_model_LONG-Challenger vs. live RUB1-LONG",
     "RUB4": "funding-gegatetes RUB3 (fund_24h>+3bps); nutzt RUB3-Artefakt",
     "MAX2": "kein Modell — SRA2-LONG-Fork nach CH_MAIN (bot 9)",
@@ -246,8 +246,12 @@ def _lifecycle_directions(tag: str) -> list[str]:
     return [d for d in _DIRECTIONS if d in dirs]
 
 
-def _extract_meta_fields(meta: dict[str, Any]) -> dict[str, Any]:
-    """Vereinheitlicht die für den Index relevanten Felder aus einem meta-Dict."""
+def _extract_meta_fields(meta: dict[str, Any], include_features: bool = False) -> dict[str, Any]:
+    """Vereinheitlicht die für den Index relevanten Felder aus einem meta-Dict.
+
+    ``include_features`` hängt die VOLLE Feature-Liste an (für das Archiv-Manifest,
+    D2 — der Feature-Kontrakt). Default aus, damit der D1-Index (docs/…md +
+    index.json) schlank/unverändert bleibt (nur ``n_features``)."""
     threshold = meta.get("optimal_threshold", meta.get("threshold"))
     deployable = meta.get("deployable")
     val_stats = meta.get("val_stats")
@@ -255,7 +259,7 @@ def _extract_meta_fields(meta: dict[str, Any]) -> dict[str, Any]:
         deployable = val_stats.get("deployable")
     features = meta.get("features")
     n_features = len(features) if isinstance(features, list) else None
-    return {
+    fields = {
         "model_id": meta.get("model_id"),
         "strategy": meta.get("strategy"),
         "trainer": meta.get("trainer"),
@@ -264,9 +268,12 @@ def _extract_meta_fields(meta: dict[str, Any]) -> dict[str, Any]:
         "deployable": deployable if isinstance(deployable, bool) else None,
         "n_features": n_features,
     }
+    if include_features:
+        fields["features"] = features if isinstance(features, list) else None
+    return fields
 
 
-def _read_meta(path: str, load_embedded: bool) -> dict[str, Any] | None:
+def _read_meta(path: str, load_embedded: bool, include_features: bool = False) -> dict[str, Any] | None:
     """Meta eines Artefakts: Sidecar *_meta.json bevorzugt, sonst eingebettet.
 
     Sidecar ist billig und deckt die Retrain-Generation (retrain_from_replay).
@@ -278,7 +285,7 @@ def _read_meta(path: str, load_embedded: bool) -> dict[str, Any] | None:
     if os.path.isfile(sidecar):
         try:
             with open(sidecar, encoding="utf-8") as fh:
-                return _extract_meta_fields(json.load(fh))
+                return _extract_meta_fields(json.load(fh), include_features)
         except (OSError, ValueError) as exc:  # pragma: no cover - defensiv
             logger.warning("meta-Sidecar %s nicht lesbar: %s", sidecar, exc)
             return None
@@ -304,10 +311,12 @@ def _read_meta(path: str, load_embedded: bool) -> dict[str, Any] | None:
     for key in ("model_id", "optimal_threshold", "threshold", "features", "trainer", "trained_at", "deployable"):
         if key in art and key not in merged:
             merged[key] = art[key]
-    return _extract_meta_fields(merged)
+    return _extract_meta_fields(merged, include_features)
 
 
-def _build_artifact_entry(direction: str, filename: str, load_embedded: bool) -> dict[str, Any]:
+def _build_artifact_entry(
+    direction: str, filename: str, load_embedded: bool, include_features: bool = False
+) -> dict[str, Any]:
     """Ein Artefakt-Eintrag: Fundort + md5 + meta (oder MISSING, wenn nicht da).
 
     Resilienz (Modul-Invariante „Discovery darf nicht sterben"): der Fundort ist
@@ -327,7 +336,7 @@ def _build_artifact_entry(direction: str, filename: str, load_embedded: bool) ->
                 "exists": True,
                 "md5": _md5(abspath),
                 "bytes": os.path.getsize(abspath),
-                "meta": _read_meta(abspath, load_embedded),
+                "meta": _read_meta(abspath, load_embedded, include_features),
             }
         except OSError as exc:  # pragma: no cover - TOCTOU/Lock/Permission-Race
             logger.warning("Artefakt %s nicht lesbar (%s): %s", filename, abspath, exc)
@@ -351,12 +360,14 @@ def _provenance(family: str | None, tag: str) -> str:
     return ""
 
 
-def build_index(load_embedded: bool = True) -> dict[str, Any]:
+def build_index(load_embedded: bool = True, include_features: bool = False) -> dict[str, Any]:
     """Baut den vollständigen Varianten-Index als (JSON-serialisierbares) Dict.
 
     Deterministisch: alle Generationen/Artefakte/Listen stabil sortiert; kein
     now()/Zufall. ``load_embedded=False`` überspringt das teure joblib-Laden
     (nur Sidecar-meta) — für schnelle/Dependency-arme Läufe und Tests.
+    ``include_features`` hängt die volle Feature-Liste an die Artefakt-meta an
+    (Archiv-Manifest, D2); Default aus ⇒ der D1-Index bleibt unverändert.
     """
     registry = _artifact_registry()
     all_tags = set(registry) | _lifecycle_tags() | set(_RULE_ONLY_GENERATIONS)
@@ -387,7 +398,7 @@ def build_index(load_embedded: bool = True) -> dict[str, Any]:
         artifacts: list[dict[str, Any]] = []
         for direction in _DIRECTIONS:
             for filename in sorted(art_map.get(direction, [])):
-                artifacts.append(_build_artifact_entry(direction, filename, load_embedded))
+                artifacts.append(_build_artifact_entry(direction, filename, load_embedded, include_features))
                 filename_to_tags.setdefault(filename, set()).add(tag)
         artifacts.sort(key=lambda a: (a["direction"], a["filename"]))
 

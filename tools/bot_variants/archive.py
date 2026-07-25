@@ -149,8 +149,16 @@ def archive_dir_for(gen: dict[str, Any]) -> str:
 
 
 def _artifact_manifest_entry(art: dict[str, Any]) -> dict[str, Any]:
-    """Index-Artefakt-Eintrag → Manifest-Eintrag (+ source_commit / git_tracked)."""
+    """Index-Artefakt-Eintrag → Manifest-Eintrag (+ source_commit / git_tracked).
+
+    Der volle Feature-Kontrakt (D2 „features") wird aus der meta an die
+    Manifest-Ebene gehoben; die summarische meta behält ``n_features``."""
     source_commit = _source_commit(art["path"]) if art["exists"] and art["path"] else None
+    meta = art["meta"]
+    features = None
+    if isinstance(meta, dict):
+        features = meta.get("features")
+        meta = {k: v for k, v in meta.items() if k != "features"}
     return {
         "direction": art["direction"],
         "filename": art["filename"],
@@ -161,7 +169,8 @@ def _artifact_manifest_entry(art: dict[str, Any]) -> dict[str, Any]:
         "source_commit": source_commit,
         "git_tracked": source_commit is not None,
         "archived_copy": None,  # von copy_binaries gesetzt
-        "meta": art["meta"],
+        "features": features,
+        "meta": meta,
     }
 
 
@@ -191,7 +200,7 @@ def build_manifest(gen: dict[str, Any]) -> dict[str, Any]:
 
 def build_manifests(load_embedded: bool = True) -> list[dict[str, Any]]:
     """Manifeste für alle Generationen des Index (deterministisch sortiert)."""
-    index = ix.build_index(load_embedded=load_embedded)
+    index = ix.build_index(load_embedded=load_embedded, include_features=True)
     return [build_manifest(gen) for gen in index["generations"]]
 
 
@@ -324,6 +333,13 @@ def main(argv: list[str] | None = None) -> int:
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if callable(reconfigure):
         reconfigure(encoding="utf-8")
+
+    # --copy-binaries mutiert die Manifeste (archived_copy) → nur mit --write
+    # sinnvoll (sonst verwaiste, unpersistierte Kopien bzw. Schein-Drift bei
+    # --check). Als harte Vorbedingung, nicht als stiller No-op.
+    if args.copy_binaries and not args.write:
+        print("FEHLER: --copy-binaries erfordert --write (sonst verwaiste, unpersistierte Kopien).")
+        return 2
 
     manifests = build_manifests(load_embedded=not args.no_model_meta)
 
