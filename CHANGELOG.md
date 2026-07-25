@@ -1,3 +1,25 @@
+## [2026-07-26] DCA-Weglassen auf längerem Fenster bestätigt (T-2026-KYT-9050-044)
+
+Follow-up zu T-043: den „DCA schadet"-Befund auf einem **längeren Zeitraum**
+gegengeprüft. **Read-only**, gemergte T-043-Harness (`--mode entrysl`) auf
+breiteren Outbox-Geometrie-Fenstern — `telegram_outbox` reicht weiter zurück als
+die in T-035 vermuteten ~7d (AIM2 bis 11.07. = 2 Wochen; **MIS1-168H bis 14.05. =
+2,5 Monate**, 527 real-Cornix-Trades — der einzige Bot mit Monats-Fenster).
+`ai_signals` ist die kleine Live-Tabelle, kein Historie-Quell.
+
+- **„DCA schadet" ist robust und über die lange Zeit STÄRKER.** AIM2 2 Wochen
+  (n=600): Sharpe A 0,18 → B 0,27 (identisch zum 8-Tage-Lauf). MIS1-168H **2,5
+  Monate** (n=342, mehrere Marktregime): Sharpe A **0,06 → B 0,16** (fast 3×) —
+  das Weglassen des entry2-Nachkaufs trägt zeitfest.
+- **entry2-als-SL (C) ist bot-typ-abhängig.** Auf MIS1 (Momentum) der klare
+  Sieger auf **beiden** Achsen (Sharpe 0,22 / MaxDD 13 %); auf AIM2 (Mean-Reversion
+  S/R) nur Drawdown-Tool. Mechanistik: enger Stop@entry2 hilft Trend-Bots (Dip zu
+  entry2 = Trend gebrochen), schadet Mean-Reversion (Dip dreht zurück).
+- Reports: `staging_models/replay/entry2_sl_test_aim2.*` (jetzt 2-Wochen-Fenster,
+  supersedet den 8-Tage-Lauf) + neu `entry2_sl_test_mis1-168h.*`.
+
+Reine read-only Analyse; DCA-Weglassen = eigener Deploy-Kandidat (Michi-Entscheid).
+
 ## [2026-07-25] entry2-als-SL vs DCA — 3-Arm-Test auf dem T-035-Harness (T-2026-KYT-9050-043)
 
 Follow-up zu T-041. Michi-Frage: die Bots handeln DCA (entry1 Market + entry2
