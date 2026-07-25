@@ -1,3 +1,30 @@
+## [2026-07-25] entry2-als-SL vs DCA — 3-Arm-Test auf dem T-035-Harness (T-2026-KYT-9050-043)
+
+Follow-up zu T-041. Michi-Frage: die Bots handeln DCA (entry1 Market + entry2
+Nachkauf-Limit, SL hinter entry2) — wäre nur ein Entry mit entry2-Level als SL
+besser? **Read-only**, auf der T-035-High-Fidelity-Harness (5m-Wick + 10s-Resolver
++ immutable Cornix-Geometrie, ~7d-Fenster, AIM2/SRA2/EPD3). Neuer `--mode entrysl`
+in `tools/wave_exit_overlay.py` + SL-Selektor in `replay_record`; 3-Arm-Zerlegung
+auf dem entry2-vorhandenen Set, risiko-adjustiert (per-Trade-Sharpe +
+kompoundierende MaxDD, Risk-Helfer aus T-041 wiederverwendet):
+
+- **A = DCA real** (Baseline), **B = Single entry1 + Original-SL**, **C = Single
+  entry1 + SL@entry2** (Michis Idee).
+- **Robuster Befund (alle 3 Bots): der DCA schadet.** entry1 ohne Nachkauf (B)
+  hebt den Sharpe jedes Mal (AIM2 0,19→0,27, SRA2 −0,09→+0,03, EPD3 0,14→0,20) —
+  der Nachkauf bei entry2 mittelt in die Verlierer nach. **Aufschlag:** B erhöht
+  die MaxDD (weniger Averaging = größere Einzeltrade-Schwankung) → Risiko/Return-
+  Tradeoff, kein Free Lunch.
+- **entry2-als-SL (C): kein robuster Gewinn.** Auf keinem Bot besser im Sharpe als
+  B; Drawdown-Effekt inkonsistent (AIM2 16→11 % besser, EPD3 14→24 % schlechter —
+  enger Stop schneidet Pump/Dump-Gewinner ab).
+- `backtest/test_wave_exit_sim.py`: Pin `test_sl_at_entry2_is_tighter` (DB-frei).
+  Reports `staging_models/replay/entry2_sl_test_{aim2,sra2,epd3}.{md,json}`.
+
+Ehrliche Grenzen: ~7d/Outbox-Fenster, entry2-Set (nicht alle Trades publizieren
+entry2), Compounding sequenziell-nach-close. Der DCA-Effekt ist ein eigener
+Deploy-Kandidat (Michi-Entscheid) — hier reine read-only Analyse.
+
 ## [2026-07-25] Wave-Buildup / Trailing-Close — Realized-vs-Unrealized-Studie (T-2026-KYT-9050-041)
 
 Follow-up zu T-035 (Wave-Exit-Overlay, PR #185). Michis Beobachtung geprüft: die
