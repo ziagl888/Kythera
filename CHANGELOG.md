@@ -1,3 +1,19 @@
+## [2026-07-25] Live-Root-Artefakte ATS2 + SRA2-SHORT in git getrackt (T-2026-KYT-9050-040)
+
+Fünf Modell-Artefakte, die der Live-main-Checkout im Repo-Root fährt, waren nie
+committed (damals nur auf Platte promotet). Read-only verifiziert: **nicht**
+gitignored, **byte-identisch** (md5) zu den `staging_models/`-Versionen (= die
+deploybaren Artefakte), und die Repo-Konvention trackt Root-Live-Artefakte
+(`sra2_model_LONG.*` war committed, SHORT nicht). Jetzt nachgetragen:
+
+- `ats2_model_LONG.pkl`, `ats2_model_SHORT.pkl` (ATS2 — live per T-037 #5 / bot_results.xlsx)
+- `sra2_model_SHORT.json` (+`_calib.pkl`, +`_meta.json`) (SRA2-SHORT — live-intendiert, xlsx „ACTIVE SHORT")
+
+Reine Binär-Nachverfolgung, **kein Code, keine Verhaltensänderung** — der Commit
+dokumentiert nur die bereits getroffene Promotion (Hard Rule 2, Operator Michi).
+ATS2 wird nicht durch diesen Commit scharf, sondern erst durch den Fleet-Restart.
+`coins.json` (Laufzeit-Double-Writer) bewusst **nicht** committed.
+
 ## [2026-07-25] Bot-Varianten-Archiv (Phase 2) + stage/compare-Tooling (Phase 3) (T-2026-KYT-9050-039)
 
 Follow-up zu T-038 (Index, PR #188): Phase 2 (D2+D4 Archiv) + Phase 3 (D3
