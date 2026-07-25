@@ -1,0 +1,35 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "MAX",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "MAX2",
+  "lifecycle": {
+    "LONG": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    },
+    {
+      "date": "2026-07-22",
+      "sha": "ab34224",
+      "subject": "feat(bot-9): retire classic Main-Channel bot, replace with MAX2 (SRA2 LONG â†’ CH_MAIN) (T-2026-KYT-9050-020)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "kein Modell — SRA2-LONG-Fork nach CH_MAIN (bot 9)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "34_ai_max1_bot.py",
+  "tag": "MAX2"
+}

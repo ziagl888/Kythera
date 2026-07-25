@@ -1,0 +1,30 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "EPD",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "EPD1",
+  "lifecycle": {
+    "LONG": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Pump/Dump-Detector (bot 10); EPD2=EPD_LEGACY_TAG",
+  "schema": "bot_variants_manifest/v1",
+  "script": "10_pump_dump_detector.py",
+  "tag": "EPD1"
+}

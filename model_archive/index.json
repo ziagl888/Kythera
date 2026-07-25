@@ -153,22 +153,22 @@
     {
       "artifacts": [
         {
-          "bytes": 406623,
+          "bytes": 412664,
           "direction": "LONG",
           "exists": true,
           "filename": "atb2_model_LONG.pkl",
-          "location": "staging",
-          "md5": "3fb8a0f351c73130803151802da8c6de",
+          "location": "root",
+          "md5": "b8c46fa5797c605538948c218f458882",
           "meta": {
             "deployable": false,
             "model_id": "ATB2",
             "n_features": 20,
             "strategy": "atb2",
-            "threshold": null,
+            "threshold": 0.6,
             "trained_at": null,
             "trainer": "tools/retrain_from_replay.py"
           },
-          "path": "staging_models/atb2_model_LONG.pkl"
+          "path": "atb2_model_LONG.pkl"
         },
         {
           "bytes": 431240,
@@ -189,11 +189,11 @@
           "path": "staging_models/atb2_model_SHORT.pkl"
         }
       ],
-      "code_ref": null,
+      "code_ref": "HEAD",
       "family": "ATB",
       "generation": "ATB2",
       "lifecycle": {
-        "LONG": "shadow",
+        "LONG": "live",
         "SHORT": "shadow"
       },
       "model_ids": [
@@ -601,22 +601,22 @@
     {
       "artifacts": [
         {
-          "bytes": 781347,
+          "bytes": 787564,
           "direction": "LONG",
           "exists": true,
-          "filename": "epd2_model_LONG.pkl",
-          "location": "staging",
-          "md5": "2702a57b80bbad32f2a203756cab5592",
+          "filename": "epd3_model_LONG.pkl",
+          "location": "root",
+          "md5": "3375ccf5cedbe0d7ea958d6f97b69fc8",
           "meta": {
             "deployable": false,
             "model_id": "EPD2",
             "n_features": 16,
             "strategy": "epd2",
-            "threshold": null,
+            "threshold": 0.76,
             "trained_at": null,
             "trainer": "tools/retrain_from_replay.py"
           },
-          "path": "staging_models/epd2_model_LONG.pkl"
+          "path": "epd3_model_LONG.pkl"
         },
         {
           "bytes": 779800,
@@ -637,18 +637,18 @@
           "path": "epd3_model_SHORT.pkl"
         }
       ],
-      "code_ref": null,
+      "code_ref": "HEAD",
       "family": "EPD",
       "generation": "EPD3",
       "lifecycle": {
-        "LONG": "shadow",
+        "LONG": "live",
         "SHORT": "shadow"
       },
       "model_ids": [
         "EPD2"
       ],
       "notes": [],
-      "provenance": "EPD2-Retrain-Challenger; LONG teilt epd2_model_LONG.pkl mit EPD2",
+      "provenance": "EPD2-Retrain-Challenger; LONG+SHORT nach Root promotet (epd3_model_*.pkl, PR #189)",
       "script": "10_pump_dump_detector.py",
       "tag": "EPD3"
     },
@@ -1731,16 +1731,8 @@
     }
   ],
   "schema": "bot_variants_index/v1",
-  "shared_filename_count": 2,
+  "shared_filename_count": 1,
   "shared_filenames": [
-    {
-      "filename": "epd2_model_LONG.pkl",
-      "location": "staging",
-      "tags": [
-        "EPD2",
-        "EPD3"
-      ]
-    },
     {
       "filename": "rub2_model_LONG.pkl",
       "location": "staging",

@@ -1,0 +1,31 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "ROM",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "ROM1",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-17",
+      "sha": "9ecff26",
+      "subject": "feat(lis1-bot): K5 post-listing-drift fade shadow-forwarder â€” bot 36, monitored, never posted (T-2026-CU-9050-149)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Regime-Orchestrator Re-Forwarder (bot 28)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "28_signal_orchestrator.py",
+  "tag": "ROM1"
+}

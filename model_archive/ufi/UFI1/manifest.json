@@ -1,0 +1,25 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "UFI",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "UFI1",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "live"
+  },
+  "lifecycle_history": [],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "UFI1 (bot 29)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "29_ufi1_bot.py",
+  "tag": "UFI1"
+}

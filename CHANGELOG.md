@@ -1,3 +1,43 @@
+## [2026-07-25] Bot-Varianten-Archiv (Phase 2) + stage/compare-Tooling (Phase 3) (T-2026-KYT-9050-039)
+
+Follow-up zu T-038 (Index, PR #188): Phase 2 (D2+D4 Archiv) + Phase 3 (D3
+Tooling) auf dem read-only Index aufgesetzt. **Kein Live-Eingriff**, read-only
+außer `model_archive/` (+ `staging_models/` nur via `stage --apply`).
+
+- **Phase 2 — `tools/bot_variants/archive.py`** erzeugt je Generation
+  **`model_archive/<family>/<tag>/manifest.json`** (model_id, threshold,
+  deployable, features, trained_at, trainer, md5, `source_origin`,
+  **`source_commit`** = git-SHA der Artefakt-Bytes, lifecycle je Richtung +
+  **`lifecycle_history`** aus `git log -S<tag> -- core/shadow_gate.py`,
+  provenance, **`code_ref`**) + generiertes `model_archive/ARCHIVE.md`.
+  48 Manifeste, deterministisch/idempotent (`--check` = kein Drift).
+- **D4 `code_ref`:** symbolisch `HEAD` für aktive Generationen (Logik im
+  aktuellen Baum), konkrete historische SHA für entfernte Logik
+  (`git log -S<datei> -- <script>` — der T-037-Anker, RUB1-SHORT lag bei
+  `07c8874^`). Kein volatiler HEAD-SHA im Manifest ⇒ drift-frei.
+- **Entscheidung Groß-Artefakte (Spec §3 D2):** **reference-based** statt
+  Voll-Copy — alle ~48 MB Artefakte sind bereits git-getrackt (root+staging),
+  das Manifest (md5 + `source_commit`) macht jede Generation via
+  `git show <source_commit>:<path>` byte-genau reproduzierbar; ein Binär-Copy
+  würde das Repo grundlos verdoppeln. `--copy-binaries [--max-copy-mb]` (opt-in)
+  erzeugt bei Bedarf ein self-contained Export (md5-verifiziert, Größen-Skip
+  wird gelistet — kein Silent-Skip).
+- **Phase 3 — `tools/bot_variants/stage.py`:** Live-Swap-Helfer im T-037-Muster.
+  Default DRY-RUN druckt den Plan (Artefakt→`staging_models/`, code_ref-Checkout,
+  Register-Flip, Restart als Operator-Schritt); `--apply` kopiert **nur** nach
+  `staging_models/` (md5-verifiziert), **nie** nach Repo-Root/live (Hard Rule 2),
+  kein Restart.
+- **Phase 3 — `tools/bot_variants/compare.py`:** Generation-A/B-Sim **DB-frei**
+  über die bestehende Replay-Infra (`retrain_from_replay.load_replay` +
+  rohe `predict_proba` + Operating-Threshold). Metriken je Generation: `n`,
+  Ø/Σ `net_pnl_pct`, `win_rate`, `max_drawdown_pct`; Sieger nach Ø-PnL. Baut
+  `walkforward_sim` (DB-gebunden) NICHT neu, konsumiert nur dessen `*_replay_*.jsonl`.
+- **Tests:** `backtest/test_bot_variant_archive.py` (Manifest-Schema, code_ref
+  aktiv→HEAD / retired→git-log-S, md5==Quelle, copy-Größen-Skip, stage-Plan +
+  --apply-nur-staging) + `backtest/test_bot_variant_compare.py` (evaluate/MaxDD
+  gegen bekannte Kurve, threshold=None-Fallback, Feature-Vertrag-Fehlerpfade,
+  Sieger-Logik). Guard `verify`+`smoke` grün.
+
 ## [2026-07-24] Artefakt-Promotion EPD3-LONG + ATB2-LONG nach Repo-Root (Operator, T-2026-KYT-9050-037)
 
 Operator-Promotion (Michi, harte Regel 2): die beiden in PR #187 gestagten LONG-Deploy-

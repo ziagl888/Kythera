@@ -1,0 +1,35 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "LIS",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "LIS1",
+  "lifecycle": {
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-20",
+      "sha": "cdcbb33",
+      "subject": "feat(shadow-gate): WS2 batch 1 â€” promote 4 study forwarders live, park FIF1 (T-2026-CU-9050-183)"
+    },
+    {
+      "date": "2026-07-17",
+      "sha": "9ecff26",
+      "subject": "feat(lis1-bot): K5 post-listing-drift fade shadow-forwarder â€” bot 36, monitored, never posted (T-2026-CU-9050-149)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Post-Listing-Drift-Fade (bot 36)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "36_ai_lis1_bot.py",
+  "tag": "LIS1"
+}

@@ -1,0 +1,31 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "BB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "BB2_4H",
+  "lifecycle": {
+    "LONG": "shadow",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "SMC-ML-Sniper Break (bot 25)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "25_smc_ml_sniper.py",
+  "tag": "BB2_4H"
+}

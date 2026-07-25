@@ -1,0 +1,120 @@
+{
+  "artifacts": [
+    {
+      "archived_copy": null,
+      "bytes": 771851,
+      "direction": "LONG",
+      "exists": true,
+      "features": [
+        "dir_num",
+        "atr_14_pct",
+        "rsi_14",
+        "tsi_25_13_13",
+        "macd_dif_normal_12_26_9",
+        "macd_dea_normal_12_26_9",
+        "ema_9_dist_pct",
+        "ema_21_dist_pct",
+        "ema_50_dist_pct",
+        "ema_200_dist_pct",
+        "kama_21_dist_pct",
+        "wma_21_dist_pct",
+        "donchian_upper_20_dist_pct",
+        "donchian_lower_20_dist_pct",
+        "donchian_mid_20_dist_pct",
+        "boll_upper_20_dist_pct",
+        "boll_lower_20_dist_pct",
+        "trend_UP",
+        "trend_DOWN",
+        "trend_SIDEWAYS"
+      ],
+      "filename": "bb_xgboost_model_4h.pkl",
+      "git_tracked": true,
+      "md5": "a0c3117adfb4c61ddc99fcec24278514",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": "smc_ml_trainer.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "bb_xgboost_model_4h.pkl"
+      }
+    },
+    {
+      "archived_copy": null,
+      "bytes": 771851,
+      "direction": "SHORT",
+      "exists": true,
+      "features": [
+        "dir_num",
+        "atr_14_pct",
+        "rsi_14",
+        "tsi_25_13_13",
+        "macd_dif_normal_12_26_9",
+        "macd_dea_normal_12_26_9",
+        "ema_9_dist_pct",
+        "ema_21_dist_pct",
+        "ema_50_dist_pct",
+        "ema_200_dist_pct",
+        "kama_21_dist_pct",
+        "wma_21_dist_pct",
+        "donchian_upper_20_dist_pct",
+        "donchian_lower_20_dist_pct",
+        "donchian_mid_20_dist_pct",
+        "boll_upper_20_dist_pct",
+        "boll_lower_20_dist_pct",
+        "trend_UP",
+        "trend_DOWN",
+        "trend_SIDEWAYS"
+      ],
+      "filename": "bb_xgboost_model_4h.pkl",
+      "git_tracked": true,
+      "md5": "a0c3117adfb4c61ddc99fcec24278514",
+      "meta": {
+        "deployable": null,
+        "model_id": null,
+        "n_features": 20,
+        "strategy": null,
+        "threshold": 0.3,
+        "trained_at": null,
+        "trainer": "smc_ml_trainer.py"
+      },
+      "source_commit": "14e1c6f3364cd5943674b5c568ebcb567f5746d5",
+      "source_origin": {
+        "location": "root",
+        "path": "bb_xgboost_model_4h.pkl"
+      }
+    }
+  ],
+  "code_ref": {
+    "method": "active-in-tree",
+    "note": "Logik im aktuellen Baum — checkout HEAD",
+    "ref": "HEAD",
+    "sha": null
+  },
+  "family": "BB",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "BB_4H",
+  "lifecycle": {
+    "LONG": "live",
+    "SHORT": "shadow"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-23",
+      "sha": "66632fd",
+      "subject": "feat(fleet): reconfigure bot lifecycle per Audit T-032 (T-2026-KYT-9050-033)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [],
+  "provenance": "SMC-ML-Sniper Break (bot 25)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "25_smc_ml_sniper.py",
+  "tag": "BB_4H"
+}

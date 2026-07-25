@@ -1,0 +1,33 @@
+{
+  "artifacts": [],
+  "code_ref": {
+    "method": "git-log-S",
+    "note": "letzte Kommit-Berührung; für den Live-Swap ggf. <ref>^ (T-037-Muster)",
+    "ref": "f760ba03c4a69e875fe5780fedd14b12cea7ff14",
+    "sha": "f760ba03c4a69e875fe5780fedd14b12cea7ff14",
+    "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)",
+    "token": "AIM1"
+  },
+  "family": "AIM",
+  "generated_by": "tools/bot_variants/archive.py",
+  "generation": "AIM1",
+  "lifecycle": {
+    "LONG": "retired",
+    "SHORT": "retired"
+  },
+  "lifecycle_history": [
+    {
+      "date": "2026-07-14",
+      "sha": "f760ba0",
+      "subject": "feat(shadow): fleet-wide shadow-mode posting + 3-way report + regime-gating evidence (T-2026-CU-9050-125)"
+    }
+  ],
+  "model_ids": [],
+  "notes": [
+    "regelbasiert / kein Modell-Artefakt"
+  ],
+  "provenance": "Master-Ranker/Gate über Kandidaten (bot 15)",
+  "schema": "bot_variants_manifest/v1",
+  "script": "15_ai_master_bot.py",
+  "tag": "AIM1"
+}
