@@ -76,6 +76,7 @@ from tools.walkforward_sim import (  # noqa: E402
     import_bot_module,
     set_low_priority,
 )
+from tools.wave_buildup_study import compound_equity, sharpe  # noqa: E402  reuse tested risk helpers (T-041)
 
 # Reports live next to the T-032 audit in the repo tree (not the _X env dir),
 # so the whole wave-exit investigation stays together and reviewable.
@@ -281,7 +282,14 @@ def make_order_resolver(cand_times: np.ndarray, tick_t: np.ndarray, tick_p: np.n
 CONFIGS = {
     "monitor": {"dca": False, "ladder": "internal"},  # entry1-only, full targets
     "dca10": {"dca": True, "ladder": "internal"},  # DCA, full targets
-    "cornix3": {"dca": True, "ladder": "cornix"},  # DCA, 3 published TPs
+    "cornix3": {"dca": True, "ladder": "cornix"},  # DCA, 3 published TPs  (entry-SL arm A)
+    # entry2-as-SL experiment (T-2026-KYT-9050-043). Arm A = cornix3 (DCA, SL beyond
+    # entry2). Arm B strips the DCA (entry1 only, original SL) to isolate the
+    # averaging-down effect. Arm C is the operator's idea: entry1 only, the entry2
+    # PRICE used as the (tight) stop instead of a DCA add. `sl` selects the stop
+    # level per config; absent → the original Cornix stop (unchanged for the others).
+    "single_origsl": {"dca": False, "ladder": "cornix", "sl": "orig"},  # arm B
+    "single_slE2": {"dca": False, "ladder": "cornix", "sl": "entry2"},  # arm C
 }
 
 
@@ -303,9 +311,10 @@ def replay_record(
         return None
     entries = _entries(rec, cfg["dca"])
     targets = _targets(rec, cfg["ladder"])
-    sim = simulate_signal(
-        highs, lows, closes, rec["direction"], entries, rec["orig_sl"], targets, order_resolver=resolver
-    )
+    sl = rec["orig_sl"] if cfg.get("sl", "orig") == "orig" else rec.get("entry2")
+    if sl is None:  # arm C (SL@entry2) can only score trades that published an entry2
+        return {"filled": False}
+    sim = simulate_signal(highs, lows, closes, rec["direction"], entries, sl, targets, order_resolver=resolver)
     if not sim["any_filled"]:
         return {"filled": False}
 
@@ -696,14 +705,19 @@ def summarize(records: list[dict], model: str, start: str, end: str, n_closed: i
 
 def write_report(out_dir: str, model: str, result: dict, mode: str = "validate") -> tuple[str, str]:
     os.makedirs(out_dir, exist_ok=True)
-    kind = "overlay" if mode == "overlay" else "validation"
-    tag = f"wave_exit_{kind}_{model.lower()}"
+    if mode == "entrysl":
+        tag = f"entry2_sl_test_{model.lower()}"
+        md = render_entrysl_md(result["summary"])
+    else:
+        kind = "overlay" if mode == "overlay" else "validation"
+        tag = f"wave_exit_{kind}_{model.lower()}"
+        md = render_md(result["summary"])
     jpath = os.path.join(out_dir, f"{tag}.json")
     with open(jpath, "w", encoding="utf-8") as fh:
         json.dump({"summary": result["summary"], "records": result["records"]}, fh, indent=2, default=str)
     mpath = os.path.join(out_dir, f"{tag}.md")
     with open(mpath, "w", encoding="utf-8") as fh:
-        fh.write(render_md(result["summary"]))
+        fh.write(md)
     return jpath, mpath
 
 
@@ -914,9 +928,159 @@ def render_overlay_md(ov: dict) -> list[str]:
     return lines
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ENTRY2-AS-SL EXPERIMENT (T-2026-KYT-9050-043) — 3-arm decomposition
+# ─────────────────────────────────────────────────────────────────────────────
+# Operator question: the bots DCA (entry1 market + entry2 limit, SL beyond
+# entry2). Would a single entry with the entry2 PRICE as a tight stop do better?
+# Three arms on the shared entry2-present trade set (so all are comparable),
+# risk-adjusted like T-041 (leveraged sum is a fat-tail/-100%-clamp artefact →
+# per-trade Sharpe + fixed-2%-fraction compounding MaxDD are the real signal):
+#   A = cornix3        DCA real (entry1+entry2, original SL)      — baseline
+#   B = single_origsl  entry1 only, original SL (isolates DCA)
+#   C = single_slE2    entry1 only, SL = entry2 (the proposal)
+ENTRYSL_ARMS = [
+    ("A", "cornix3", "DCA (entry1+entry2, orig SL)"),
+    ("B", "single_origsl", "Single entry1, orig SL"),
+    ("C", "single_slE2", "Single entry1, SL@entry2"),
+]
+
+
+def analyse_entrysl(records: list[dict]) -> dict:
+    """Compare the 3 entry/SL arms on the entry2-present, cornix3-filled subset."""
+    scored = [
+        r
+        for r in records
+        if r.get("sim")
+        and r.get("entry2") is not None
+        and r["sim"].get("cornix3")
+        and r["sim"]["cornix3"].get("filled")
+    ]
+    scored.sort(key=lambda r: str(r.get("close_time")))  # chronological for compounding
+    out: dict = {"n_scored": len(scored), "arms_meta": {a: desc for a, _, desc in ENTRYSL_ARMS}, "by_dir": {}}
+    for key in ("ALL", "LONG", "SHORT"):
+        sel = scored if key == "ALL" else [r for r in scored if r["direction"] == key]
+        out["by_dir"][key] = {}
+        for arm, cfg, _desc in ENTRYSL_ARMS:
+            filled = [r for r in sel if r["sim"].get(cfg) and r["sim"][cfg].get("filled")]
+            unlev = [r["sim"][cfg]["unlev_pct"] for r in filled]
+            lev = [r["sim"][cfg]["levered_pct"] for r in filled if r["sim"][cfg]["levered_pct"] is not None]
+            lev_series = np.array(
+                [r["sim"][cfg]["levered_pct"] / 100.0 for r in filled if r["sim"][cfg]["levered_pct"] is not None]
+            )
+            _fm, mdd = compound_equity(lev_series, 0.02) if len(lev_series) else (None, None)
+            out["by_dir"][key][arm] = {
+                "n": len(filled),
+                "unlev_sum": round(float(np.sum(unlev)), 2) if unlev else None,
+                "unlev_mean": round(float(np.mean(unlev)), 4) if unlev else None,
+                "lev_sum": round(float(np.sum(lev)), 1) if lev else None,
+                "lev_mean": round(float(np.mean(lev)), 2) if lev else None,
+                "wr_tp1": round(sum(1 for r in filled if r["sim"][cfg]["tp1"]) / len(filled) * 100, 1)
+                if filled
+                else None,
+                "sharpe_lev": round(sharpe(np.array(lev)), 3) if len(lev) > 1 else None,
+                "maxdd_2pct": round(mdd, 1) if mdd is not None else None,
+            }
+    return out
+
+
+def render_entrysl_md(s: dict) -> str:
+    e = s["entrysl"]
+    a = e["by_dir"]["ALL"]
+    thin = e["n_scored"] < 30
+
+    def cell(arm: str, field: str):
+        v = a.get(arm, {}).get(field)
+        return "—" if v is None else v
+
+    lines = [
+        f"# entry2-als-SL vs DCA — 3-Arm-Test ({s['model']}) — T-2026-KYT-9050-043",
+        "",
+        f"_generated {s['generated_at']} · read-only · window {s['window'][0]} → {s['window'][1]}_",
+        "",
+        "**High-Fidelity-Harness (T-035):** 5m-Wick-Kerzen (Touch-Backbone) + 10s-Order-Resolver, "
+        "Geometrie aus immutablem Cornix-Text (`telegram_outbox`, entry1/entry2/orig-SL/TP1-3), "
+        "Realized via `core.realized_pnl`. Verglichen auf dem **entry2-vorhandenen** Trade-Set "
+        "(alle 3 Arme definiert). Metrik risiko-adjustiert (T-041): der leveraged **Sum** ist ein "
+        "Fat-Tail/−100%-Clamp-Artefakt → **Sharpe (per-Trade lev) + kompoundierende MaxDD (fixe 2%)** "
+        "sind das Signal.",
+        "",
+        f"Gescort (entry2-Set): **{e['n_scored']}**"
+        + ("  ⚠ **THIN (<30) — nur illustrativ, kein Verdikt.**" if thin else "")
+        + "\n",
+        "## Die 3 Arme",
+        "",
+        "| Arm | Setup | n | unlev sum% | unlev mean% | lev sum% | **Sharpe lev** | **MaxDD (2%)** | WR(TP1)% |",
+        "|---|---|--:|--:|--:|--:|--:|--:|--:|",
+    ]
+    for arm, _cfg, desc in ENTRYSL_ARMS:
+        lines.append(
+            f"| {arm} | {desc} | {cell(arm, 'n')} | {cell(arm, 'unlev_sum')} | {cell(arm, 'unlev_mean')} "
+            f"| {cell(arm, 'lev_sum')} | **{cell(arm, 'sharpe_lev')}** | **{cell(arm, 'maxdd_2pct')}%** "
+            f"| {cell(arm, 'wr_tp1')} |"
+        )
+
+    # data-driven verdict on the ALL row (Sharpe primary, MaxDD secondary)
+    shA, shB, shC = (a.get(k, {}).get("sharpe_lev") for k in ("A", "B", "C"))
+    ddA, ddB, ddC = (a.get(k, {}).get("maxdd_2pct") for k in ("A", "B", "C"))
+    verdict = []
+    if not thin and None not in (shA, shC):
+        dca_eff = f"A→B Sharpe {shA:+}→{shB:+}" if shB is not None else "A→B n/a"
+        e2_eff = f"B→C Sharpe {shB:+}→{shC:+}" if shB is not None else f"A→C Sharpe {shA:+}→{shC:+}"
+        best = max((v for v in (shA, shB, shC) if v is not None), default=None)
+        winner = next((arm for arm in ("C", "B", "A") if a.get(arm, {}).get("sharpe_lev") == best), "?")
+        verdict = [
+            "",
+            "### Befund",
+            "",
+            f"- **DCA weglassen ({dca_eff}):** "
+            + ("hilft." if (shB is not None and shA is not None and shB > shA) else "hilft nicht / neutral."),
+            f"- **SL@entry2 statt DCA-Add ({e2_eff}):** "
+            + ("hilft." if (shC is not None and shB is not None and shC > shB) else "hilft nicht / neutral."),
+            f"- **MaxDD (2%):** A {ddA}% · B {ddB}% · C {ddC}% "
+            + (
+                "→ engster Stop (C) drückt den Drawdown." if (ddC is not None and ddA is not None and ddC < ddA) else ""
+            ),
+            f"- **Bester Arm (Sharpe): {winner}.** "
+            + (
+                "Michis entry2-als-SL (C) trägt."
+                if winner == "C"
+                else "Michis entry2-als-SL (C) schlägt DCA nicht robust — siehe Zahlen."
+            ),
+        ]
+    elif thin:
+        verdict = [
+            "",
+            "### Befund",
+            "",
+            "> Zu dünn (n<30) — kein belastbares Vorzeichen. Fenster/Bot mit mehr Legs nötig.",
+        ]
+    lines += verdict
+
+    # direction split
+    lines += ["", "### Long/Short getrennt (Sharpe lev / MaxDD%)", "", "| Arm | LONG | SHORT |", "|---|--:|--:|"]
+    for arm, _cfg, _desc in ENTRYSL_ARMS:
+        lo = e["by_dir"].get("LONG", {}).get(arm, {})
+        sh = e["by_dir"].get("SHORT", {}).get(arm, {})
+        f = lambda d: (  # noqa: E731
+            f"{d.get('sharpe_lev')}/{d.get('maxdd_2pct')}%" if d.get("sharpe_lev") is not None else "—"
+        )
+        lines.append(f"| {arm} | {f(lo)} | {f(sh)} |")
+
+    lines += [
+        "",
+        "**Ehrliche Grenzen:** ~7d/Outbox-Fenster (Geometrie-Retention), entry2-Set (nicht alle Trades "
+        "publizieren entry2). SL@entry2 ist ein **enger** Stop (näher als der Original-SL) → mehr kleine "
+        "Stops, weniger tiefe Verlierer; ob das netto trägt, hängt an entry2-fill→recover vs →SL. "
+        "Compounding sequenziell-nach-close (ignoriert Gleichzeitigkeit). NO-EDGE ist ein valides Ergebnis.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Wave-Exit-Overlay harness (T-2026-KYT-9050-035)")
-    ap.add_argument("--mode", default="validate", choices=["validate", "overlay"])
+    ap.add_argument("--mode", default="validate", choices=["validate", "overlay", "entrysl"])
     ap.add_argument("--model", default="AIM2")
     ap.add_argument("--start", default="2026-07-07 14:20:00")
     ap.add_argument("--end", default="2026-07-23 00:00:00")
@@ -952,8 +1116,12 @@ def main() -> None:
     finally:
         conn.close()
 
+    if args.mode == "entrysl":
+        result["summary"]["entrysl"] = analyse_entrysl(result["records"])
+
     jpath, mpath = write_report(args.out, args.model, result, args.mode)
-    print("\n" + render_md(result["summary"]))
+    render = render_entrysl_md if args.mode == "entrysl" else render_md
+    print("\n" + render(result["summary"]))
     print(f"\nJSON: {jpath}\nMD:   {mpath}")
 
 

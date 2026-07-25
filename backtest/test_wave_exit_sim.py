@@ -266,8 +266,28 @@ def test_portfolio_circuit_breaker() -> None:
     check("lone wave flattens on retrace", only.get(0) == 3, str(only))
 
 
+def test_sl_at_entry2_is_tighter() -> None:
+    """entry2-as-SL (T-2026-KYT-9050-043 arm C): feeding the entry2 price as the
+    stop exits a trade that the original (wider) SL would have ridden to target —
+    the engine picks up whichever stop the harness passes, so the arm-C wiring in
+    tools/wave_exit_overlay.replay_record only has to choose the level."""
+    print("test_sl_at_entry2_is_tighter")
+    entry, orig_sl, entry2 = 100.0, 95.0, 98.0
+    targets = [102.0, 104.0, 106.0]
+    # dip to 97.5 touches entry2 (98) but not the original SL (95), then rallies to TP1
+    highs, lows, closes = hlc([(100.1, 99.9, 100.0), (100.5, 97.5, 99.0), (103.0, 99.0, 103.0)])
+    wide = simulate_signal(highs, lows, closes, "LONG", [(entry, 1.0)], orig_sl, targets)["legs"][0]
+    check("orig SL: TP1 reached", wide["targets_hit"] >= 1, str(wide["targets_hit"]))
+    check("orig SL: not stopped", not wide["exit_reason"].startswith("sl"), wide["exit_reason"])
+    tight = simulate_signal(highs, lows, closes, "LONG", [(entry, 1.0)], entry2, targets)["legs"][0]
+    check("SL@entry2: 0 targets", tight["targets_hit"] == 0, str(tight["targets_hit"]))
+    check("SL@entry2: stopped", tight["exit_reason"].startswith("sl"), tight["exit_reason"])
+    check("SL@entry2: close at 98", approx(tight["close_price"], 98.0))
+
+
 def main() -> int:
     for t in [
+        test_sl_at_entry2_is_tighter,
         test_long_all_targets,
         test_long_sl_first,
         test_long_trailing_stop,
