@@ -1,3 +1,34 @@
+## [2026-07-25] Wave-Buildup / Trailing-Close — Realized-vs-Unrealized-Studie (T-2026-KYT-9050-041)
+
+Follow-up zu T-035 (Wave-Exit-Overlay, PR #185). Michis Beobachtung geprüft: die
+kuratierten Bots halten Trades tagelang offen, realisieren Verluste voll, lassen
+Gewinne verdampfen. **Read-only, kein Live-Eingriff.** Neues, DB-frei getestetes
+Tool `tools/wave_buildup_study.py` rekonstruiert die aggregierte offene
+unrealized-Welle + realized-Ergebnisse aus RECORDED Trades (`closed_ai_signals`,
+Report-14-Survivor-Key) + Kerzen — **ohne** die Cornix-Geometrie (die T-035 auf
+~7d Outbox-Retention deckelte), Hebel pauschal 20x.
+
+- **Phase A (AIM+SRA, volle Historie, `--mode study`):** Prämisse hart bestätigt —
+  Ø realized +38 % vs Ø wick-Peak +184 % (**+146 % Giveback**); 85 % der Verlierer
+  standen mal ≥+10 %, 36 % ≥+100 % im Plus. Cooldown-Idee **widerlegt** (Tag 2–7
+  nach Wellen-Peak nicht schwächer). **Trailing-Close 10–15 % risiko-adjustiert
+  überlegen:** per-Trade Sharpe (lev) **+0,20 → +0,53**, kompoundierende MaxDD
+  **74 % → 12 %** — T-035s „hold gewinnt" war ein Leveraged-**Summen**-Artefakt
+  (uncapped Fat-Tails). Report `staging_models/replay/wave_buildup_study_aimsra.*`.
+- **Phase B (alle Bots, 15m, `--mode rank`, 91.547 Trades):** per-Bot-Ranking
+  hold-vs-Trailing. **Trailing-Close 10 % hebt bei 15/17 Bots den Sharpe und senkt
+  die kompoundierende MaxDD fleet-weit drastisch** (MIS 100 %→10 %, BR 99,9 %→35 %,
+  EPD 83 %→7 %, Sniper 79 %→6 %, ROM 63 %→9 %, AIM 57 %→8 %); nur UFI1 (Low-Lev,
+  SL-capped) + MAX neutral. Report `staging_models/replay/wave_buildup_rank_allbots.*`.
+- `backtest/test_wave_buildup_study.py`: 16 DB-freie Pins (signed-move, kausaler
+  Trailing-Capture, Sharpe, Compounding + MaxDD).
+
+Ehrliche Grenzen im Report: First-Order (kein DCA/TP-Laddering, entry1-only),
+20x-Annahme, Wick + Trigger-Optimismus, Compounding sequenziell-nach-close
+(ignoriert Gleichzeitigkeit) → absolute Multiples nicht wörtlich, Ratio + MaxDD
+sind das Signal. Nächster Schritt: Finalisten auf der T-035-High-Fidelity-Harness
+(5m + 10s + DCA-treu) bestätigen; **Phase C = Trailing-Bot → Telegram (T-042)**.
+
 ## [2026-07-25] Live-Root-Artefakte ATS2 + SRA2-SHORT in git getrackt (T-2026-KYT-9050-040)
 
 Fünf Modell-Artefakte, die der Live-main-Checkout im Repo-Root fährt, waren nie

@@ -1,0 +1,356 @@
+{
+  "task": "T-2026-KYT-9050-041",
+  "phase": "A",
+  "generated_at": "2026-07-25 17:36:59.201921+00:00",
+  "limits": [
+    "First-Order-Welle: recorded entry/close als Ground-Truth, KEIN intra-trade DCA/TP-Laddering \u2014 die unrealized-Amplitude ist leicht \u00fcbersch\u00e4tzt (Peak-Timing unber\u00fchrt). Die T-035-Phase-2-Harness ist die laddering-treue Referenz (dort aber nur ~7d Outbox-Fenster).",
+    "Hebel pauschal 20x (vor ~Juli nicht persistiert). Das Muster (Giveback, Sharpe-Umkehr) ist hebel-agnostisch; die absoluten leveraged-Zahlen skalieren mit dieser Annahme + dem -100%-Clamp.",
+    "Trailing-Sim: 1h-Wick, Peak-vor-Trigger auf derselben Kerze (leicht optimistisch beim Trigger-Level). Ein 5m/10s-Resolver (T-035) versch\u00e4rft das; die RICHTUNG (Sharpe/MaxDD-Vorteil) ist robust.",
+    "Compounding sequenziell nach close \u2192 ignoriert Gleichzeitigkeit (bis zu den oben genannten gleichzeitig offenen Trades, Cross-Margin). Die absoluten Multiples (\u00d71e26) sind NICHT w\u00f6rtlich \u2014 Ratio + MaxDD sind das Signal.",
+    "Live/Shadow-Gate-Zustand ist zeit-variabel; hier keine Gate-Filterung \u2014 es sind die AIM/SRA-Strategien \u00fcber alle Generationen (AIM1\u2192AIM2, SRA1\u2192SRA2)."
+  ],
+  "summary": {
+    "models": [
+      "AIM",
+      "SRA"
+    ],
+    "lev": 20.0,
+    "tf": "1h",
+    "span": [
+      "2026-02-27 02:32:26.790675",
+      "2026-07-25 20:20:50.181014"
+    ],
+    "n_trades": 7417,
+    "no_candle": 467,
+    "analysis": {
+      "n_scored": 6950,
+      "c1_asymmetry": {
+        "ALL": {
+          "n": 6950,
+          "mean_real_lev": 38.2,
+          "mean_peak_lev": 184.44,
+          "mean_giveback": 146.25,
+          "wr_pct": 39.1,
+          "giveback_pctiles": {
+            "50": 118.7,
+            "90": 287.8,
+            "95": 371.8
+          }
+        },
+        "AIM": {
+          "n": 5566,
+          "mean_real_lev": 43.35,
+          "mean_peak_lev": 209.02,
+          "mean_giveback": 165.67,
+          "wr_pct": 35.9,
+          "giveback_pctiles": {
+            "50": 134.9,
+            "90": 307.1,
+            "95": 405.1
+          }
+        },
+        "AIM-LONG": {
+          "n": 2170,
+          "mean_real_lev": 34.51,
+          "mean_peak_lev": 207.84,
+          "mean_giveback": 173.32,
+          "wr_pct": 33.9,
+          "giveback_pctiles": {
+            "50": 122.3,
+            "90": 345.8,
+            "95": 502.2
+          }
+        },
+        "AIM-SHORT": {
+          "n": 3396,
+          "mean_real_lev": 49.0,
+          "mean_peak_lev": 209.78,
+          "mean_giveback": 160.78,
+          "wr_pct": 37.2,
+          "giveback_pctiles": {
+            "50": 140.9,
+            "90": 295.5,
+            "95": 360.4
+          }
+        },
+        "SRA": {
+          "n": 1384,
+          "mean_real_lev": 17.46,
+          "mean_peak_lev": 85.59,
+          "mean_giveback": 68.13,
+          "wr_pct": 51.9,
+          "giveback_pctiles": {
+            "50": 44.0,
+            "90": 146.9,
+            "95": 191.4
+          }
+        },
+        "SRA-LONG": {
+          "n": 725,
+          "mean_real_lev": 14.93,
+          "mean_peak_lev": 90.66,
+          "mean_giveback": 75.73,
+          "wr_pct": 48.8,
+          "giveback_pctiles": {
+            "50": 52.5,
+            "90": 150.6,
+            "95": 204.7
+          }
+        },
+        "SRA-SHORT": {
+          "n": 659,
+          "mean_real_lev": 20.24,
+          "mean_peak_lev": 80.02,
+          "mean_giveback": 59.78,
+          "wr_pct": 55.2,
+          "giveback_pctiles": {
+            "50": 37.1,
+            "90": 141.9,
+            "95": 176.7
+          }
+        }
+      },
+      "losers_in_profit_pct": {
+        "10": 85.4,
+        "25": 77.6,
+        "50": 60.3,
+        "100": 36.3,
+        "200": 16.2
+      },
+      "wave": {
+        "max_open_unrealised": 39269.0,
+        "max_at": "2026-06-06 07:00:00",
+        "max_concurrent_open": 507,
+        "mean_concurrent_open": 112.5
+      },
+      "c2_cooldown": {
+        "n_peak_events": 27,
+        "baseline_real_unlev": 0.0342,
+        "cohorts": {
+          "1": {
+            "n": 1467,
+            "real_unlev": -0.3058,
+            "real_lev": 32.2,
+            "delta_vs_base": -0.34
+          },
+          "2": {
+            "n": 2644,
+            "real_unlev": 0.0643,
+            "real_lev": 35.63,
+            "delta_vs_base": 0.0301
+          },
+          "3": {
+            "n": 3115,
+            "real_unlev": 0.0834,
+            "real_lev": 37.38,
+            "delta_vs_base": 0.0492
+          },
+          "5": {
+            "n": 3756,
+            "real_unlev": 0.188,
+            "real_lev": 39.18,
+            "delta_vs_base": 0.1538
+          },
+          "7": {
+            "n": 4211,
+            "real_unlev": 0.2257,
+            "real_lev": 38.12,
+            "delta_vs_base": 0.1914
+          }
+        }
+      },
+      "ceiling": {
+        "hold_sum_lev": 265461.0,
+        "perfect_peak_sum_lev": 1281882.0,
+        "hold_sharpe_lev": 0.204,
+        "hold_sharpe_unlev": 0.003,
+        "hold_mean_unlev": 0.0342,
+        "sweep": {
+          "0.1": {
+            "sum_lev": 313269.0,
+            "mean_lev": 45.07,
+            "vs_hold_lev": 47808.0,
+            "pct_of_ceiling": 4.7,
+            "mean_unlev": 1.9553,
+            "sharpe_lev": 0.534,
+            "sharpe_unlev": 0.395,
+            "trig_pct": 93.7
+          },
+          "0.15": {
+            "sum_lev": 293636.0,
+            "mean_lev": 42.25,
+            "vs_hold_lev": 28175.0,
+            "pct_of_ceiling": 2.8,
+            "mean_unlev": 1.8141,
+            "sharpe_lev": 0.526,
+            "sharpe_unlev": 0.38,
+            "trig_pct": 93.7
+          },
+          "0.2": {
+            "sum_lev": 274228.0,
+            "mean_lev": 39.46,
+            "vs_hold_lev": 8767.0,
+            "pct_of_ceiling": 0.9,
+            "mean_unlev": 1.6745,
+            "sharpe_lev": 0.517,
+            "sharpe_unlev": 0.365,
+            "trig_pct": 93.7
+          },
+          "0.25": {
+            "sum_lev": 255094.0,
+            "mean_lev": 36.7,
+            "vs_hold_lev": -10367.0,
+            "pct_of_ceiling": -1.0,
+            "mean_unlev": 1.5368,
+            "sharpe_lev": 0.507,
+            "sharpe_unlev": 0.348,
+            "trig_pct": 93.7
+          },
+          "0.3": {
+            "sum_lev": 236228.0,
+            "mean_lev": 33.99,
+            "vs_hold_lev": -29233.0,
+            "pct_of_ceiling": -2.9,
+            "mean_unlev": 1.4011,
+            "sharpe_lev": 0.495,
+            "sharpe_unlev": 0.329,
+            "trig_pct": 93.7
+          },
+          "0.4": {
+            "sum_lev": 199268.0,
+            "mean_lev": 28.67,
+            "vs_hold_lev": -66192.0,
+            "pct_of_ceiling": -6.5,
+            "mean_unlev": 1.1352,
+            "sharpe_lev": 0.467,
+            "sharpe_unlev": 0.287,
+            "trig_pct": 93.6
+          },
+          "0.5": {
+            "sum_lev": 166791.0,
+            "mean_lev": 24.0,
+            "vs_hold_lev": -98670.0,
+            "pct_of_ceiling": -9.7,
+            "mean_unlev": 0.9015,
+            "sharpe_lev": 0.409,
+            "sharpe_unlev": 0.235,
+            "trig_pct": 93.1
+          }
+        },
+        "compounding": {
+          "f": [
+            0.01,
+            0.02,
+            0.05
+          ],
+          "hold": {
+            "0.01": {
+              "final_mult": 100642956225.98851,
+              "maxdd_pct": 73.8
+            },
+            "0.02": {
+              "final_mult": 1.0859333329906426e+21,
+              "maxdd_pct": 93.3
+            },
+            "0.05": {
+              "final_mult": 1.6474210525750675e+46,
+              "maxdd_pct": 99.9
+            }
+          },
+          "trail": {
+            "0.01": {
+              "0.1": {
+                "final_mult": 29498251568004.54,
+                "maxdd_pct": 11.6
+              },
+              "0.15": {
+                "final_mult": 4272489732963.637,
+                "maxdd_pct": 11.8
+              },
+              "0.2": {
+                "final_mult": 631578216400.6375,
+                "maxdd_pct": 11.9
+              },
+              "0.25": {
+                "final_mult": 95711386440.82022,
+                "maxdd_pct": 12.1
+              },
+              "0.3": {
+                "final_mult": 14863148400.77526,
+                "maxdd_pct": 12.3
+              },
+              "0.4": {
+                "final_mult": 385203301.2669715,
+                "maxdd_pct": 12.7
+              },
+              "0.5": {
+                "final_mult": 15276368.53620865,
+                "maxdd_pct": 13.0
+              }
+            },
+            "0.02": {
+              "0.1": {
+                "final_mult": 4.7879948887742335e+26,
+                "maxdd_pct": 22.0
+              },
+              "0.15": {
+                "final_mult": 1.0647536189598418e+25,
+                "maxdd_pct": 22.3
+              },
+              "0.2": {
+                "final_mult": 2.457246349743594e+23,
+                "maxdd_pct": 22.6
+              },
+              "0.25": {
+                "final_mult": 5.932777078597535e+21,
+                "maxdd_pct": 22.9
+              },
+              "0.3": {
+                "final_mult": 1.4977707276557785e+20,
+                "maxdd_pct": 23.3
+              },
+              "0.4": {
+                "final_mult": 1.0918331868095686e+17,
+                "maxdd_pct": 23.9
+              },
+              "0.5": {
+                "final_mult": 178969370840367.12,
+                "maxdd_pct": 24.5
+              }
+            },
+            "0.05": {
+              "0.1": {
+                "final_mult": 7.800608628307309e+64,
+                "maxdd_pct": 46.9
+              },
+              "0.15": {
+                "final_mult": 8.500762534250913e+60,
+                "maxdd_pct": 47.5
+              },
+              "0.2": {
+                "final_mult": 9.930269583370544e+56,
+                "maxdd_pct": 48.0
+              },
+              "0.25": {
+                "final_mult": 1.2619462770632641e+53,
+                "maxdd_pct": 48.6
+              },
+              "0.3": {
+                "final_mult": 1.746377905300122e+49,
+                "maxdd_pct": 49.1
+              },
+              "0.4": {
+                "final_mult": 4.393385132799212e+41,
+                "maxdd_pct": 50.1
+              },
+              "0.5": {
+                "final_mult": 6.529201520385515e+34,
+                "maxdd_pct": 51.1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
