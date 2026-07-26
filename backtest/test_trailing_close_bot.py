@@ -84,6 +84,8 @@ class FakeCursor:
         self.store["sql"].append((" ".join(sql.split()), params))
         if "FROM ai_signals" in sql:
             self._rows = self.store["ai_signals"]
+        elif "DISTINCT symbol FROM trailing_positions" in sql:
+            self._rows = [(x,) for x in self.store["cooling"]]
         elif "FROM trailing_positions" in sql:
             self._rows = self.store["mirrors"]
         else:
@@ -115,6 +117,7 @@ class FakeConn:
             "sql": [],
             "outbox": [],
             "inserted": [],
+            "cooling": [],
             "ai_signals": list(ai_signals),
             "mirrors": list(mirrors),
         }
@@ -683,6 +686,64 @@ def test_shadow_mode_keeps_its_book():
     conn = FakeConn()
     assert shadow.clear_unposted_carryover(conn) == 0
     assert not [s for s, _ in conn.store["sql"] if s.startswith("UPDATE trailing_positions")]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Symbol cooldown after a close. Measured live on 2026-07-27: XTZUSDT `Close` and
+# a fresh entry in the SAME SECOND (SRA2 SHORT -> MIS1-72h LONG), ENAUSDT 3s apart
+# (ATS2 LONG -> MAX1 SHORT). The outbox delivers in order, but Cornix then fires
+# two opposite market orders at Binance almost simultaneously.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_symbol_with_a_close_in_flight_is_not_re_admitted():
+    """The race we refuse to take: overtaking our own Close with a counter-order."""
+    cands = [_cand(1, "XTZUSDT", "MIS1-72h", "LONG")]
+    admitted, rejected = bot.admit(cands, held_symbols=set(), free_slots=500, cooling={"XTZUSDT"})
+    assert admitted == []
+    assert [(sid, why) for sid, _, why in rejected] == [(1, "SYMBOL_COOLING")]
+
+    # Once the window has passed the same symbol is admitted normally.
+    admitted, rejected = bot.admit(cands, set(), 500, cooling=set())
+    assert [sid for sid, _ in admitted] == [1] and rejected == []
+
+
+def test_open_mirrors_actually_applies_the_cooldown():
+    """Wiring pin. `admit` and `read_cooling_symbols` are both correct in isolation;
+    this is the one that fails if open_mirrors forgets to pass the cooling set —
+    the exact defect a mutation test exposed when the pins tested only the parts."""
+    conn = FakeConn(ai_signals=[_src_row(1, "XTZUSDT", "MIS1-72h", "LONG")])
+    conn.store["cooling"] = ["XTZUSDT"]
+    sources, _ = bot.read_source_signals(conn)
+    assert bot.open_mirrors(conn, sources, {}, set()) == 0
+    assert conn.store["outbox"] == [], conn.store["outbox"]
+
+    conn.store["cooling"] = []
+    assert bot.open_mirrors(conn, sources, {}, set()) == 1
+
+
+def test_cooling_only_counts_posted_closes():
+    """A shadow close published no command, so it cannot race with anything."""
+    conn = FakeConn()
+    bot.read_cooling_symbols(conn)
+    sql = [s for s, _ in conn.store["sql"] if "trailing_positions" in s]
+    assert sql, conn.store["sql"]
+    assert "posted" in sql[0] and "closed_at IS NOT NULL" in sql[0], sql[0]
+    # The window is computed by the DB against its own NOW(), not in Python (R3).
+    assert "NOW()" in sql[0] and "make_interval" in sql[0], sql[0]
+
+
+def test_cooldown_is_long_enough_to_outlive_a_poll():
+    """A window shorter than the poll interval could not block anything: the next
+    cycle would arrive after it had already expired."""
+    assert bot.SYMBOL_COOLDOWN_SEC >= bot.POLL_SECONDS, (bot.SYMBOL_COOLDOWN_SEC, bot.POLL_SECONDS)
+
+
+def test_symbol_held_still_wins_over_cooling():
+    """An already-open position is the stronger reason — the operator reading the
+    log should see the real cause, not the milder one."""
+    admitted, rejected = bot.admit([_cand(1, "BTCUSDT", "MIS1-72h", "LONG")], {"BTCUSDT"}, 500, cooling={"BTCUSDT"})
+    assert admitted == [] and rejected[0][2] == "SYMBOL_HELD"
 
 
 if __name__ == "__main__":

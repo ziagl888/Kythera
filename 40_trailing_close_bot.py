@@ -110,6 +110,22 @@ POLL_SECONDS = 10
 # Rückwirkend-Scoring von Alt-Trades nach Prozess-Neustart").
 MAX_MIRROR_AGE_MIN = float(os.getenv("TRAILING_BOT_MAX_AGE_MIN", "15"))
 
+# Wie lange ein Symbol nach einem GEPOSTETEN Close gesperrt bleibt, bevor es neu
+# belegt werden darf.
+#
+# Die Outbox liefert je Channel streng FIFO (4_telegram_bot.py, P0.1(d)), Cornix
+# bekommt `Close X` also garantiert vor dem neuen Entry auf X. Das reicht aber nur
+# bis zur Telegram-Grenze: Cornix setzt daraufhin ZWEI Markt-Orders in Gegenrichtung
+# fast gleichzeitig an Binance ab. Ist der Close dort noch nicht abgerechnet, wenn
+# die Gegenposition aufgeht, macht der nachlaufende Close die neue Position gleich
+# wieder flach. Gemessen am 2026-07-27: XTZUSDT Close + neuer Entry in DERSELBEN
+# Sekunde (SHORT → LONG), ENAUSDT 3 s auseinander (LONG → SHORT). Nichts davon ist
+# schiefgegangen — aber das war Glück, nicht Konstruktion.
+#
+# Der Preis sind ein paar verspätete Einstiege; bei 33 Beinen auf ~530 Coins sind
+# Symbol-Kollisionen häufig, die Sperre verschiebt sie nur.
+SYMBOL_COOLDOWN_SEC = float(os.getenv("TRAILING_BOT_SYMBOL_COOLDOWN_SEC", "60"))
+
 # Exit-Gründe (landen in trailing_positions.close_reason)
 REASON_TRAIL = "TRAIL"
 REASON_SOURCE_CLOSED = "SOURCE_CLOSED"
@@ -285,6 +301,27 @@ def read_mirrored_src_ids(conn, src_ids: set[int]) -> set[int]:
         return {int(r[0]) for r in cur.fetchall()}
 
 
+def read_cooling_symbols(conn) -> set[str]:
+    """Symbole, für die gerade ein `Close` bei Cornix in Arbeit sein könnte.
+
+    Nur GEPOSTETE Closes kühlen ab: ein Shadow-Close hat nie ein Kommando gesendet
+    und kann deshalb mit nichts rennen. Das Fenster rechnet die DB gegen ihre eigene
+    ``NOW()`` — dieselbe Begründung wie beim Altersfilter (TZ-Kontrakt R3).
+    """
+    if SYMBOL_COOLDOWN_SEC <= 0:
+        return set()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT symbol FROM trailing_positions
+            WHERE posted AND closed_at IS NOT NULL
+              AND closed_at > NOW() - make_interval(secs => %s)
+            """,
+            (SYMBOL_COOLDOWN_SEC,),
+        )
+        return {r[0] for r in cur.fetchall()}
+
+
 def read_open_mirrors(conn) -> dict[int, dict]:
     """Eigene offene Spiegel-Positionen, ``src_signal_id`` → Zeile."""
     with conn.cursor() as cur:
@@ -387,12 +424,19 @@ def close_messages(row: dict, reason: str, mark: float | None) -> tuple[str, str
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def admit(candidates: list[tuple[int, dict]], held_symbols: set[str], free_slots: int) -> tuple[list, list]:
+def admit(
+    candidates: list[tuple[int, dict]],
+    held_symbols: set[str],
+    free_slots: int,
+    cooling: set[str] | None = None,
+) -> tuple[list, list]:
     """Wer darf in den Channel? Gibt ``(zugelassen, abgewiesen_mit_grund)`` zurück.
 
     Zwei Gründe, beide hart:
       * ``SYMBOL_HELD`` — auf dem Symbol läuft schon eine Spiegel-Position, und
         Cornix' Close ist symbol-weit.
+      * ``SYMBOL_COOLING`` — auf dem Symbol wurde gerade ein `Close` gepostet, das
+        bei Cornix noch in Arbeit sein kann.
       * ``SLOT_CAP`` — der Channel ist voll. Sortiert wird nach Bein-Dichte, damit
         bei Knappheit dasselbe Kriterium entscheidet, das die Auswahl überhaupt
         getroffen hat: Ertrag je belegtem Slot-Tag.
@@ -402,9 +446,15 @@ def admit(candidates: list[tuple[int, dict]], held_symbols: set[str], free_slots
     """
     admitted, rejected = [], []
     taken = set(held_symbols)
+    cooling = cooling or set()
     for sid, sig in sorted(candidates, key=lambda c: -c[1]["density"]):
         if sig["symbol"] in taken:
             rejected.append((sid, sig, "SYMBOL_HELD"))
+            continue
+        if sig["symbol"] in cooling:
+            # Auf diesem Symbol ist ein Close unterwegs — ihn mit einer Gegenorder
+            # zu überholen ist genau das Rennen, das wir nicht eingehen.
+            rejected.append((sid, sig, "SYMBOL_COOLING"))
             continue
         if len(admitted) >= free_slots:
             rejected.append((sid, sig, "SLOT_CAP"))
@@ -476,7 +526,7 @@ def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], alrea
         return 0
 
     held = {m["symbol"] for m in mirrors.values()}
-    admitted, rejected = admit(new, held, SLOT_CAP - len(mirrors))
+    admitted, rejected = admit(new, held, SLOT_CAP - len(mirrors), read_cooling_symbols(conn))
 
     # Gebündelt statt je Kandidat: die Abweisungen wiederholen sich in JEDEM
     # 10s-Zyklus, solange der Quell-Trade offen ist. Im ersten Shadow-Lauf waren
