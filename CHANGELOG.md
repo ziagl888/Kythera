@@ -1,3 +1,26 @@
+## [2026-07-26] DCA-Effekt fleet-weit bestätigt — A vs B über 24 Bots (T-2026-KYT-9050-045)
+
+Michi: den DCA-Test (Arm A=DCA vs B=single-entry1) auf ALLEN Bots mit genug
+Outbox-Geometrie fahren. **Read-only.** Neuer Aggregator `tools/dca_all_bots.py`
+auto-discovert je `closed_ai_signals.model` die `telegram_outbox`-Coverage
+(≥30 entry2-Cornix-Msgs) + Max-Fenster, ruft die gemergte T-043-Harness
+(`run_validate` + `analyse_entrysl`) je Bot, bündelt zu **einem** Ranking. Grund
+für per-Bot-Fenster (T-044): `closed_ai_signals` hat kein entry2 → seine Realized
+ist schon ≈ Arm B; der DCA-Effekt lebt nur im Cornix-Text (per-Bot-Retention),
+entry2/SL sind keine festen Offsets → nicht rekonstruierbar.
+
+- **DCA schadet bei 15/17 soliden Bots (n≥30), Median-Drag B−A +0,073** — konsistent
+  über S/R, Pump/Dump, Momentum, Pattern-Detektoren (MIS2-8H +0,12, RUB2 +0,11,
+  AIM2/TD_1H +0,10, MIS1-72H/168H +0,07, SRA2 +0,07, EPD3 +0,06).
+- **Ausnahmen (neutral):** ROM1 (2507 Trades/2,5 Mo, Drag +0,014 aber DCA gibt
+  MaxDD-Schutz 10→14,5 %) + BR1Hv2. entry2-als-SL (C) schlägt B nur bei 2/17
+  (bot-typ-abhängig). Nebenbefund: BR2H/BR1Hv2 mit katastrophaler MaxDD (42–62 %).
+- `backtest/test_dca_all_bots.py`: 8 DB-freie Pins (Drag/Verdikt/Fleet-Count).
+  Report `staging_models/replay/dca_all_bots.*`.
+
+DCA-Weglassen = fleet-weit belegter Deploy-Kandidat (mit MaxDD-Aufschlag) —
+Signal-Emissions-/Fleet-Änderung, **Michi-Entscheid**. Reine read-only Analyse.
+
 ## [2026-07-26] DCA-Weglassen auf längerem Fenster bestätigt (T-2026-KYT-9050-044)
 
 Follow-up zu T-043: den „DCA schadet"-Befund auf einem **längeren Zeitraum**
