@@ -336,12 +336,43 @@ def test_no_price_means_no_decision():
     row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
-    with (
-        mock.patch.object(bot, "get_live_prices_batch", return_value={}),
-        mock.patch.object(bot, "get_live_price", return_value=None),
-    ):
+    with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
         bot.poll_open_mirrors(conn, sources={42: {"symbol": "BTCUSDT"}}, mirrors=mirrors)
     assert conn.store["outbox"] == []
+
+
+def test_a_failed_batch_never_falls_back_to_per_coin_calls():
+    """Ban guard (operator, Michi 2026-07-26). core.live_price.get_live_price makes
+    ONE HTTP call per symbol; at the ~285 concurrent positions this operating point
+    expects, a 10s poll would be ~28 req/s against fapi.binance.com. A ban costs the
+    whole fleet; a trailing exit delayed by one poll costs almost nothing."""
+    assert not hasattr(bot, "get_live_price"), "per-coin fallback must not be reachable from the bot"
+
+    src = open(os.path.join(ROOT, "40_trailing_close_bot.py"), encoding="utf-8").read()
+    code = chr(10).join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+    assert "get_live_price(" not in code, "no per-symbol price call may remain in the bot"
+
+    # And behaviourally: a dead batch produces no calls and no decisions at all.
+    rows = [(i, 40 + i, f"C{i}USDT", "MIS1-72h", "LONG", 100.0, 10.0, True) for i in range(30)]
+    conn = FakeConn(mirrors=rows)
+    mirrors = bot.read_open_mirrors(conn)
+    with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
+        bot.poll_open_mirrors(conn, sources={40 + i: {"symbol": f"C{i}USDT"} for i in range(30)}, mirrors=mirrors)
+    assert conn.store["outbox"] == []
+    assert not [s for s, _ in conn.store["sql"] if s.startswith("UPDATE trailing_positions SET peak_pct")]
+
+
+def test_source_gone_without_a_price_closes_with_an_unknown_mark():
+    """The source no longer holds it, so holding is wrong — but the ledger must not
+    claim a mark nobody measured."""
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True)
+    conn = FakeConn(mirrors=[row])
+    mirrors = bot.read_open_mirrors(conn)
+    with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
+        bot.poll_open_mirrors(conn, sources={}, mirrors=mirrors, all_open=set())
+    assert conn.store["outbox"][0] == (CHANNEL, "Close BTCUSDT")
+    closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
+    assert closes and closes[0][1] is None, closes  # close_mark_pct stays NULL
 
 
 # ─────────────────────────────────────────────────────────────────────────────
