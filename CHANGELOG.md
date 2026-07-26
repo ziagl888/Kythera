@@ -1,3 +1,20 @@
+## [2026-07-26] Trailing-Bot: Shadow-Reste beim Scharfschalten räumen (T-2026-KYT-9050-042)
+
+Beim Umschalten von Shadow auf Live standen **460 offene Spiegel-Zeilen** in
+`trailing_positions`, alle mit `posted = FALSE`. Sie entsprechen keiner Position im
+Channel — sie wurden nie gepostet —, blockierten aber je ihr Symbol (höchstens eine
+Position pro Symbol) und einen Slot. Der Live-Channel hätte also mit 460 Phantom-Plätzen
+begonnen und echte Signale abgewiesen.
+
+**Fix:** beim Start schließt der Bot offene, nie veröffentlichte Zeilen als
+`SHADOW_CARRYOVER` — aber **nur im Live-Modus**. Im Shadow-Betrieb sind genau diese Zeilen
+das Buch; sie dort zu räumen würde bei jedem Neustart die Aufzeichnung löschen. Nur beim
+Start, nicht im Poll: im laufenden Live-Betrieb entstehen unveröffentlichte offene Zeilen
+gar nicht (Insert und Outbox-Zeilen liegen in derselben Transaktion).
+
+Damit ist auch kein Hand-Eingriff in die Live-DB nötig — die Regel steht im Code, ist
+gepinnt (30 Pins) und gilt für jeden künftigen Shadow→Live-Wechsel.
+
 ## [2026-07-26] Trailing-Bot: Altbestand nicht spiegeln + Log-Flut (T-2026-KYT-9050-042, Nachtrag)
 
 Zwei Defekte, die **erst der erste Shadow-Lauf auf der Live-VPS** gezeigt hat — beide in
