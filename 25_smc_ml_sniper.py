@@ -560,12 +560,13 @@ def send_cornix_signal(
     target_channel = SMC_CHANNELS.get(strategy_code, list(SMC_CHANNELS.values())[0])
 
     # --- CORNIX TEXT ---
+    # T-2026-KYT-9050-042: entry2 is still computed and stored, but no longer
+    # published — the fleet trades single-entry (arm B). See core/signal_post.py.
     cornix_msg = f"""📈 Signal for {symbol} 📈
 🚨 Direction: {direction}
 🚨 Leverage: {lev}
 🚨 Margin: Cross
-🏦 CMP Entry: $ {entry1:.6f}
-🏦 Entry 2: $ {entry2:.6f}"""
+🏦 CMP Entry: $ {entry1:.6f}"""
 
     for i, t in enumerate(targets[:5], 1):
         cornix_msg += f"\n💰 TP{i}: $ {t:.6f}"
@@ -586,8 +587,7 @@ def send_cornix_signal(
 <b>├─ RRR (T1):</b> <b>1:{rrr:.2f}</b>
 <b>└─ AI Confidence:</b> <b>{confidence:.1f}%</b>
 
-<b>├─ Entry 1:</b> <b>${entry1:,.8f}</b>
-<b>└─ Entry 2:</b> <b>${entry2:,.8f}</b>
+<b>└─ Entry 1:</b> <b>${entry1:,.8f}</b>
 
 <b>├─ Take Profits:</b>
 """
