@@ -1,3 +1,26 @@
+## [2026-07-27] Trailing-Bot: Per-Coin-Preis-Fallback abgeschaltet (T-2026-KYT-9050-048)
+
+Operator-Auftrag Michi, direkt nach dem Live-Start: Bot 40 fällt bei einem Ausfall von
+`get_live_prices_batch()` **nicht mehr** auf `get_live_price(symbol)` je Position zurück.
+
+**Warum:** der Fallback macht einen HTTP-Call **pro offener Position pro Poll**. Bei den für
+act=2 % erwarteten ~285 gleichzeitigen Positionen im 10s-Takt sind das ~28 Requests/s gegen
+`fapi.binance.com`. Ein Ban trifft die **ganze** Fleet; ein um einen Poll verzögerter
+Trailing-Exit kostet fast nichts. In der ersten Live-Stunde ist der Batch 2× ausgefallen —
+bei 20 Positionen folgenlos, bei 285 nicht.
+
+- **Nur in Bot 40.** `core/live_price.get_live_price` bleibt unverändert — die Detektoren und
+  die Bots 11/22/24/25 nutzen ihn weiter.
+- Kein Batch-Preis ⇒ Position wird in diesem Zyklus übersprungen (die Regel „kein Preis heißt
+  keine Entscheidung" stand schon im Bot). Eine Warn-Summenzeile je Zyklus macht die Lücke
+  sichtbar — ein stilles Aussetzen des Trailings wäre schlimmer als ein lautes.
+- **Sonderfall Quelle verschwunden:** der Spiegel wird trotzdem geschlossen (Halten wäre
+  falsch), aber mit `close_mark_pct = NULL` statt einer erfundenen 0.0 — das Buch soll keinen
+  Wert behaupten, den niemand gemessen hat.
+- Ban-Guard gepinnt (32 Pins): das Symbol darf im Bot nicht mehr erreichbar sein, im Quelltext
+  kein Aufruf mehr stehen, und ein toter Batch darf über 30 Positionen null Entscheidungen und
+  null Schreibvorgänge erzeugen. Per Mutationstest belegt.
+
 ## [2026-07-26] Trailing-Bot: Shadow-Reste beim Scharfschalten räumen (T-2026-KYT-9050-042)
 
 Beim Umschalten von Shadow auf Live standen **460 offene Spiegel-Zeilen** in

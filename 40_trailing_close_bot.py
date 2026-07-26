@@ -73,7 +73,7 @@ import time
 from core import config as _kcfg
 from core import shadow_gate
 from core.database import PooledConnection, get_db_connection
-from core.live_price import get_live_price, get_live_prices_batch
+from core.live_price import get_live_prices_batch
 from core.market_utils import get_max_leverage
 from core.signal_post import build_cornix_block
 from core.trailing_roster import (
@@ -358,7 +358,7 @@ def entry_messages(sig: dict) -> tuple[str, str]:
     return cornix, info
 
 
-def close_messages(row: dict, reason: str, mark: float) -> tuple[str, str]:
+def close_messages(row: dict, reason: str, mark: float | None) -> tuple[str, str]:
     """(Close-Kommando, HTML-Info) für einen Exit.
 
     ``Close <SYMBOL>`` ist Cornix' Schließ-Kommando (``core/config.py:123``) und
@@ -374,7 +374,7 @@ def close_messages(row: dict, reason: str, mark: float) -> tuple[str, str]:
                 f"<b>🔒 TRAILING CLOSE — {row['model']} {row['direction']}</b>",
                 f"<b>{row['symbol']}</b>",
                 f"<b>→ Reason: {why}</b>",
-                f"<b>→ Mark: {mark:+.2f}% (unlevered)</b>",
+                f"<b>→ Mark: {'n/a' if mark is None else f'{mark:+.2f}%'} (unlevered)</b>",
             ]
         )
         + "</pre>"
@@ -530,7 +530,7 @@ def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], alrea
     return opened
 
 
-def close_mirror(conn, row: dict, reason: str, mark: float) -> None:
+def close_mirror(conn, row: dict, reason: str, mark: float | None) -> None:
     """Spiegel-Position schließen: Close-Kommando + eigene Zeile stempeln."""
     cmd, info = close_messages(row, reason, mark)
     if LIVE_POSTING and TARGET_CHANNEL_ID and row["posted"]:
@@ -548,7 +548,14 @@ def close_mirror(conn, row: dict, reason: str, mark: float) -> None:
             (reason, mark, row["id"]),
         )
     conn.commit()
-    logger.info(f"🔒 Close {row['symbol']} ({row['model']} {row['direction']}) — {reason} @ {mark:+.2f}%")
+    logger.info(
+        "🔒 Close %s (%s %s) — %s @ %s",
+        row["symbol"],
+        row["model"],
+        row["direction"],
+        reason,
+        "n/a" if mark is None else f"{mark:+.2f}%",
+    )
 
 
 def poll_open_mirrors(
@@ -559,6 +566,7 @@ def poll_open_mirrors(
         return
     prices = get_live_prices_batch()
     open_ids = all_open if all_open is not None else set(sources)
+    missing = 0
 
     for sid, row in mirrors.items():
         if sid not in sources:
@@ -571,21 +579,31 @@ def poll_open_mirrors(
             #     gefallen. Auch dann hört das Spiegeln auf, aber aus einem anderen
             #     Grund, und das gehört unterscheidbar ins Protokoll.
             reason = REASON_LEG_RETIRED if sid in open_ids else REASON_SOURCE_CLOSED
-            price = prices.get(row["symbol"]) or get_live_price(row["symbol"], conn)
-            mark = 0.0
-            if price:
+            price = prices.get(row["symbol"])
+            mark = None
+            if price is not None:
                 st = TrailingState(row["entry"], row["direction"] == "LONG", RETRACE_FRAC, ACTIVATION_PCT)
                 mark = st.update(float(price))[1]
+            # Ohne Preis wird trotzdem geschlossen — die Quelle hält die Position
+            # nicht mehr, Halten wäre also falsch. Der Mark bleibt dann NULL statt
+            # einer erfundenen 0.0: das Buch soll keinen Wert behaupten, den
+            # niemand gemessen hat.
             close_mirror(conn, row, reason, mark)
             continue
 
         price = prices.get(row["symbol"])
         if price is None:
-            price = get_live_price(row["symbol"], conn)
-        if price is None:
             # Kein Preis heißt keine Entscheidung. Eine Position auf einem Coin ohne
             # Tick bleibt offen — sie zu schließen wäre eine Aussage über einen Markt,
             # den wir gerade nicht sehen.
+            #
+            # BEWUSST OHNE Einzelabfrage-Fallback (Operator-Auftrag Michi, 2026-07-26):
+            # `core.live_price.get_live_price` würde einen HTTP-Call PRO Position PRO
+            # Poll machen. Bei den für act=2 % erwarteten ~285 gleichzeitigen
+            # Positionen im 10s-Takt sind das ~28 Requests/s gegen fapi.binance.com —
+            # ein Ban kostet die ganze Fleet, ein um 10 s verzögerter Trailing-Exit
+            # kostet fast nichts. Der nächste Poll versucht den Batch erneut.
+            missing += 1
             continue
 
         state = TrailingState(
@@ -613,6 +631,11 @@ def poll_open_mirrors(
                 )
             conn.commit()
             row["peak_pct"] = state.peak_pct
+
+    if missing:
+        # Sichtbar machen, dass Positionen diesen Zyklus ohne Entscheidung blieben —
+        # eine stille Lücke im Trailing wäre schlimmer als eine laute.
+        logger.warning("⏸ %d Position(en) ohne Batch-Preis — Zyklus übersprungen, kein Einzelabruf.", missing)
 
 
 def main() -> None:
