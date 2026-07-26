@@ -45,7 +45,7 @@ THIN_N = 30  # below this a bot's arm-sign is not trusted
 DEFAULT_END = "2026-07-27 00:00:00"
 
 
-def discover_bots(conn, end: str) -> list[dict]:
+def discover_bots(conn) -> list[dict]:
     """closed models (real, post-Feb-backfill) with >=MIN_OUTBOX entry2 Cornix
     msgs → [{model, start, outbox_n}], start = the earliest such message (its max
     window). Harness-accurate: same %model% substring the geometry loader uses."""
@@ -180,7 +180,7 @@ def main() -> None:
 
     bots_meta: list[dict] = []
     try:
-        discovered = discover_bots(conn, args.end)
+        discovered = discover_bots(conn)
         if args.only:
             keep = {m.strip() for m in args.only.split(",")}
             discovered = [d for d in discovered if d["model"] in keep]
