@@ -67,6 +67,21 @@ hinein, und schließt keinen bestehenden Trade. Sein einziges Schreibrecht sind
 - [x] **AK12** — Der Bot schreibt nie in `ai_signals` und schließt nie einen Fremd-Trade.
   *Test:* `test_bot_never_writes_ai_signals` (Quelltext-Negativbeweis)
 
+- [x] **AK13** — Ein Quell-Trade, der beim Start des Bots **schon lief**, wird nicht gespiegelt,
+  sondern als Altbestand vermerkt — und danach nie wieder als Neuzugang betrachtet.
+  *Test:* `test_already_running_trades_are_recorded_not_mirrored`, `test_missing_open_time_counts_as_old`
+  *Warum:* der Spiegel übernimmt die Geometrie des Quell-Signals, aber Cornix füllt zum
+  **aktuellen** Markt. Bei einem drei Tage alten Trade misst der Trailing-Arm dann nicht mehr
+  denselben Trade wie der Hold-Arm — der Vergleich ist aber der Zweck des Bots. Im ersten
+  Shadow-Lauf (2026-07-26) traf das **465 Positionen auf einen Schlag**. Die Grenze
+  (`TRAILING_BOT_MAX_AGE_MIN`, default 15 min) deckt bewusst ein Restart-Fenster ab, damit
+  Trades, die während eines Neustarts aufgehen, nicht verloren gehen.
+  *Test:* `test_the_age_cutoff_covers_a_restart_window`
+- [x] **AK14** — Abweisungen werden je Zyklus **gebündelt** protokolliert, nicht je Kandidat;
+  die Zähler pro Grund bleiben sichtbar. *Test:* `test_rejections_are_summarised_not_logged_per_item`
+  *Warum:* die Abweisung wiederholt sich in jedem 10s-Zyklus, solange der Quell-Trade offen ist —
+  gemessen 34 691 Zeilen in 33 min (~1,5 Mio/Tag) in den **gemeinsamen** Watchdog-Log.
+
 ## Out of Scope
 
 - **Kein Deploy, kein Fleet-Restart.** Der Watchdog liest `core/fleet.py` beim Import;
