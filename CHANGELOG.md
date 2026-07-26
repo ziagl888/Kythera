@@ -1,3 +1,63 @@
+## [2026-07-26] Trailing-Close-Bot mit eigenem Channel (T-2026-KYT-9050-042, Phase C)
+
+Der Trailing-Arm aus T-041 wird ein eigener Fleet-Prozess: **`40_trailing_close_bot.py`**
+spiegelt die 33 in PR #198 ausgewählten Beine in einen **eigenen Telegram-Channel** und
+schließt sie dort per Trailing-Close (Operator-Betriebspunkt Michi: Aktivierung **2 %**,
+Rückgabe **10 %**), statt sie bis SL/TP laufen zu lassen. Michi hängt Cornix selbst dran.
+Damit läuft der Trailing-Arm live gegen den Hold-Arm der bestehenden Fleet — **ohne dass
+ein einziger bestehender Bot sein Verhalten ändert**. Spec: `docs/T-2026-KYT-9050-042-trailing-bot-spec.md`.
+
+- **Der Bot entscheidet nichts über Einstiege.** Er liest `ai_signals` (fremde Tabelle,
+  ausschließlich SELECT), spiegelt was die Fleet ohnehin postet, und trifft genau eine
+  eigene Entscheidung: wann geschlossen wird. Sein einziges Schreibrecht sind
+  `telegram_outbox` (eigener Channel) und seine eigene Tabelle `trailing_positions` —
+  er schließt **nie** einen Fremd-Trade und schreibt **nie** in `ai_signals`.
+- **Zwei Zulassungs-Gates, beide aus der Datenlage, nicht aus Vorsicht:**
+  (1) **Höchstens eine Position je Symbol.** Cornix' `Close <SYMBOL>` wirkt symbol-weit
+  (`core/config.py:123`) — zwei Positionen auf einem Symbol hieße, der Trailing-Exit der
+  einen macht die andere mit flach. `28_signal_orchestrator.py:1562` löst denselben
+  Konflikt durch Zurückstellen des Close; hier wäre das falsch, weil der rechtzeitige
+  Exit der ganze Zweck ist.
+  (2) **Eigener Slot-Deckel (500).** Die gewählte p95-sichere Auswahl hat eine
+  Belegungs-Spitze von **2001** = 4× den Cornix-Deckel. Ohne eigene Kontrolle entschiede
+  in der Spitze Cornix, welche ~1500 Trades abgelehnt werden; der Bot deckelt deshalb
+  selbst — **nach Bein-Dichte**, also nach demselben Kriterium, das die Auswahl getroffen hat.
+  Abweisungen werden geloggt, nicht verschluckt.
+- **Erst schreiben, dann posten.** Der Entry geht in die Outbox nur, wenn der
+  `INSERT ... RETURNING id` wirklich eine Zeile erzeugt hat — dasselbe Muster wie
+  `DELETE ... RETURNING` im AI-Monitor (P2.8). Die erste Fassung postete zuerst und
+  fing den Konflikt danach mit `ON CONFLICT DO NOTHING` ab; da der Trailing-Exit
+  typischerweise feuert, **während der Quell-Trade noch läuft**, sah dieselbe
+  `ai_signals`-Zeile beim nächsten Poll wieder neu aus — der Bot hätte den Entry alle
+  10 Sekunden neu gepostet, bis die Fleet den Quell-Trade schließt. Gefunden im
+  Kern-Review des eigenen Codes, gefixt, und mit einem Pin belegt, der den Fehler bei
+  Wiedereinführung rot zeigt (per Mutationstest verifiziert).
+- **Eine Quelle für den Cornix-Block.** `core/signal_post.build_cornix_block` ist aus
+  `post_ai_signal` **extrahiert** (reine Extraktion, Byte-Identität gepinnt) und wird von
+  beiden Seiten benutzt. Eine private Kopie im Bot wäre der Weg, auf dem die entry2-Entfernung
+  aus PR #197 bei einem Publisher ankommt und beim anderen nicht.
+- **Eine Quelle für die Trailing-Semantik (Regel 7).** `core/trailing_state.TrailingState` ist
+  die Streaming-Form von `core.wave_exit_sim.trailing_tp_trigger`; ein Paritäts-Pin bindet
+  beide (dieselbe Mark-Folge → derselbe Auslöse-Index). Der laufende Peak wird persistiert —
+  ohne ihn re-armt der Trail nach einem Neustart unterhalb eines längst gegebenen Peaks, und
+  genau der verdampfte Gewinn, gegen den der Bot gebaut ist, würde nie geschlossen.
+- **Default ist Shadow, doppelt.** `TRAILING_BOT_LIVE_POSTING=0` **und** ungesetztes
+  `CH_TRAILING`: der Bot läuft, trackt und loggt vollständig, schreibt aber keine
+  Outbox-Zeile. Ein Deploy allein postet nichts.
+- **24 DB-freie Pins** (`backtest/test_trailing_close_bot.py`) über alle 12 Akzeptanzkriterien,
+  inklusive der drei, bei denen die Alternative ein Geld-Bug ist: eine parsebare Nachricht
+  pro Entry (Harte Regel 4), Symbol-Eindeutigkeit, und „ein Deploy postet nichts".
+
+**Nachbesserungen an der Slot-Budget-Analyse** aus deren Kern-Reviews (selber PR), alle **ohne Zahlen-Impact** (der Report
+wurde deterministisch aus seinem JSON neu gerendert — kein einziger Wert bewegt sich):
+die „Ehrlichen Grenzen" nennen jetzt die Belegungs-Spitze von 2001 und die an der Exit-Seite
+nicht bündige Kerzen-Maske; die Haltedauer-Spalte ist als „über Beine" beschriftet (sie ist ein
+Median von Bein-Medianen, nicht trade-gewichtet); vier neue Pins decken `leg_stats` und die
+Kerzen-Fensterung ab — die beiden Funktionen mit dem höchsten Defekt-Risiko waren ungepinnt.
+
+**Nicht Teil dieses PRs (Michi):** Channel-ID nach `.env`, Live-Gate-Flip, Fleet-Restart,
+Cornix an den Channel hängen. Siehe `AUDIT_TODO.md` #T42-1..#T42-5.
+
 ## [2026-07-26] Single-Entry-Posting — Entry-2-Zeile fleet-weit raus (T-2026-KYT-9050-042)
 
 Operator-Entscheid (Michi) auf der Datenlage aus T-043/T-044/T-045: der
@@ -30,6 +90,43 @@ jetzt live — **ausschließlich über das Posting**:
 auf, fährt die Fleet nach dieser Änderung halbe statt voller Position — die
 Cornix-Konfiguration muss mitziehen. Scharf wird das Ganze erst mit dem
 Fleet-Restart (Michi-Entscheid).
+
+## [2026-07-26] Slot-Budget für den Trailing-Bot-Channel (T-2026-KYT-9050-042, Phase C Vorstufe)
+
+Michi: Cornix deckelt einen Channel bei **500 gleichzeitig offenen Trades** (Deckel gilt
+PRO Channel — der neue Trailing-Bot-Kanal hat sein eigenes Budget). Vor dem Bot-Bau also
+die Frage: welche Beine verdienen dort einen Platz? **Read-only.** Neues Tool
+`tools/trailing_slot_budget.py` bewertet pro **(Tag, Richtung)** gegen
+`shadow_gate.leg_status` — Ertrag *und* Slot-Bedarf, jeweils hold vs. Trailing — und
+füllt den Kanal greedy nach Netto-Dichte, mit exakt gerechneter Gleichzeitigkeit der
+Auswahl. Report `staging_models/replay/trailing_slot_budget_live.{md,json}`.
+
+- **Auswahl-Metrik ist Ertrag pro belegtem Slot-Tag**, nicht per-Trade-Sharpe: unter
+  einem harten Deckel verdrängt jedes Bein ein anderes. Auf Hold-Verhalten zieht
+  `MIS1-72h LONG` allein ~283 der 500 Plätze.
+- **Zwei Messfallen, beide gepinnt** (`backtest/test_trailing_slot_budget.py`, 11 DB-frei):
+  (1) Die geerbte `trail_capture`-Logik bewertet Peak und Trigger auf DERSELBEN Kerze —
+  eine Kerze, die den Entry umschließt, schärft und reißt den Trail zugleich, der Trade
+  fliegt auf Kerze 0 raus. Für T-041 folgenlos (nur der Ertrag wurde genutzt, Optimismus
+  dokumentiert), hier fatal, weil der Ausstiegs-ZEITPUNKT die Slots zählt: erster Lauf
+  ergab Median-Haltedauer 0 h über ALLE 43 Beine. Fix = strikt vorheriger Peak.
+  (2) Ein skalenfreier Trail ist ein Micro-Scalper: „10 % Rückgabe vom Peak" feuert auch
+  auf einem 0,5-%-Peak. Fix = **Aktivierungsschwelle** (`core.wave_exit_sim` hat den
+  Parameter, T-035/T-046 ließen ihn auf 0), hier als Sweep statt Annahme.
+- **Werte netto** nach Repo-Konvention (0,10 % Taker-Round-Trip, `tools/audit/step4_results.py`).
+- **Befund fleet-weit:** Trailing schlägt Halten erst ab act≈10 % (73 897 vs 64 478 netto);
+  bei act=0 vernichtet es ein Drittel des Ertrags. **Befund für den Kanal:** dort gewinnt
+  die niedrige Schwelle, weil sie Plätze schneller freigibt — **act=2 %: 33 Beine,
+  49 204 % netto bei Ø 285 Slots / p95 498**, also 76 % des Fleet-Ertrags mit 23 % der
+  Plätze. Konservativ act=1 %: alle 37 Beine, p95 426, 46 064 %.
+- Nicht aufgenommen (hätten den Deckel gerissen): `BB_1H LONG`, `BR2H LONG`,
+  `EPD3 LONG`, `TSM1 SHORT`.
+
+Ehrliche Grenzen im Report: 15m-Auflösung (die DCA-treue T-035-Harness ist die nächste
+Verschärfung), Slippage nicht modelliert, heutiger Registerstand auf ganze Historie
+gelegt, Greedy nicht beweisbar optimal, und selbst die p95-sichere Auswahl hat eine
+Spitze von 2001 — in den obersten 5 % der Stunden lehnt Cornix ab. Reine Analyse; die
+Auswahl und der Bot-Bau sind Michi-Entscheid.
 
 ## [2026-07-26] Trailing-Close finalisiert auf High-Fidelity-Harness (T-2026-KYT-9050-046)
 
