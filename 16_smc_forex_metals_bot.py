@@ -343,7 +343,8 @@ def send_signal(conn, channel, symbol, direction, price, targets, sl, setup_type
         f"🚨 Direction: {direction}",
         "🚨 Leverage: 20x-10x",
         f"🏦 CMP Entry: $ {price:.5f}",
-        f"🏦 Entry 2: $ {price * (0.98 if direction == 'LONG' else 1.02):.5f}",
+        # T-2026-KYT-9050-042: the entry2 leg (a flat ∓2 % off the CMP here) is no
+        # longer published — single-entry (arm B). See core/signal_post.py.
     ]
     for i, t in enumerate(targets[:3], 1):
         lines.append(f"💰 TP{i}: $ {t:.5f}")

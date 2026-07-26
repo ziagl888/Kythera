@@ -63,11 +63,14 @@ def post_ai_signal(
         "🚨 Margin: Cross",
         f"🏦 CMP Entry: $ {format_price(entry1)}",
     ]
-    # Einzel-Entry-Signale (FIF1: Original-FIFO-Geometrie) posten wie das
-    # Quell-Format nur EINE Entry-Zeile — Cornix' Verhalten bei zwei
-    # identischen Preis-Strings ist nicht verifiziert (vgl. format_price-Fix).
-    if format_price(entry2) != format_price(entry1):
-        lines.append(f"🏦 Entry 2: $ {format_price(entry2)}")
+    # T-2026-KYT-9050-042 (operator decision, Michi): the entry2 DCA leg is no
+    # longer PUBLISHED. The fleet trades single-entry — arm B of T-043/T-044/T-045,
+    # where dropping the entry2 top-up lifted the Sharpe on 15/17 bots (median drag
+    # +0.073) because the top-up averages into the losers. Nothing about the
+    # GEOMETRY changes: entry2 is still computed, the SL still sits behind it, and
+    # ai_signals.entry2 is still written — only the Cornix line is gone, so Cornix
+    # fills the whole size at entry1. ROM1 (28_signal_orchestrator) deliberately
+    # keeps publishing its own entry2 (its DCA was the one measured as neutral).
     for i, t in enumerate(targets[:n_show], 1):
         lines.append(f"💰 TP{i}: $ {format_price(t)}")
     lines += [

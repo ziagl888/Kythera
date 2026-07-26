@@ -209,7 +209,8 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
         f"🚨 Leverage: {lev}",
         "🚨 Margin: Cross",
         f"🏦 CMP Entry: $ {entry1:.8f}",
-        f"🏦 Entry 2: $ {entry2:.8f}",
+        # T-2026-KYT-9050-042: entry2 is still computed and stored, but no longer
+        # published — the fleet trades single-entry (arm B). See core/signal_post.py.
     ]
     for i, target in enumerate(targets, 1):
         lines.append(f"💰 TP{i}: $ {target:.8f}")

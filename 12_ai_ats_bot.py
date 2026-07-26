@@ -315,7 +315,8 @@ def check_tsi_crossovers():
                     f"🚨 Leverage: {lev}",
                     "🚨 Margin: Cross",
                     f"🏦 CMP Entry: $ {entry1:.8f}",
-                    f"🏦 Entry 2: $ {entry2:.8f}",
+                    # T-2026-KYT-9050-042: entry2 is still computed and stored, but no
+                    # longer published — single-entry (arm B). See core/signal_post.py.
                 ]
                 for i, t in enumerate(targets[:n_show], 1):
                     lines.append(f"💰 TP{i}: $ {t:.8f}")

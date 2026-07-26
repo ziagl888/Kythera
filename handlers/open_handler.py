@@ -91,7 +91,8 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     entry1 = live_price if order_type == "CMP" else setup['entry1']
-    entry2 = setup['entry2']
+    # setup['entry2'] is still computed by calculate_smart_targets (the SL sits
+    # behind it) — it is simply no longer read here, see the Cornix block below.
     sl = setup['sl']
     targets = setup['targets']
 
@@ -108,7 +109,8 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
     cornix_msg += f"🚨 Margin: Cross\n"
     # P1.4: signifikante Stellen statt :.6f, sonst kollabieren Sub-0.001-TPs
     cornix_msg += f"🏦 CMP Entry: $ {format_price(entry1)}\n"
-    cornix_msg += f"🏦 Entry 2: $ {format_price(entry2)}\n"
+    # T-2026-KYT-9050-042: the entry2 DCA leg is no longer published — manual /open
+    # posts single-entry like the fleet (arm B). See core/signal_post.py.
 
     for i, t in enumerate(targets[:10], 1):
         cornix_msg += f"💰 TP{i}: $ {format_price(t)}\n"

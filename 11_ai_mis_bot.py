@@ -417,12 +417,13 @@ def _post_mis_live_leg(
     n_show = 5
 
     # Cornix Text
+    # T-2026-KYT-9050-042: entry2 is still computed and stored, but no longer
+    # published — the fleet trades single-entry (arm B). See core/signal_post.py.
     cornix_msg = f"""📈 Signal for {symbol} 📈
 🚨 Direction: {best_direction}
 🚨 Leverage: {lev}
 🚨 Margin: Cross
-🏦 CMP Entry: $ {entry1:.8f}
-🏦 Entry 2: $ {entry2:.8f}"""
+🏦 CMP Entry: $ {entry1:.8f}"""
 
     for i, t in enumerate(targets[:n_show], 1):
         cornix_msg += f"\n💰 TP{i}: $ {t:.8f}"
@@ -438,8 +439,7 @@ def _post_mis_live_leg(
 <b>├─ RRR (T1):</b> <b>1:{rrr:.2f}</b>
 <b>└─ ML Confidence:</b> <b>{strength} – {best_conf:.1%}</b>
 
-<b>├─ Entry 1:</b> <b>${entry1:,.8f}</b>
-<b>└─ Entry 2:</b> <b>${entry2:,.8f}</b>
+<b>└─ Entry 1:</b> <b>${entry1:,.8f}</b>
 
 <b>├─ Take Profits:</b>
 """

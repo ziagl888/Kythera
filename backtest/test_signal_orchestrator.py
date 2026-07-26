@@ -127,6 +127,18 @@ def test_parse_cornix_signal_entry2_variant():
     assert result["entry"] == pytest.approx(64321.5)
 
 
+def test_parse_cornix_signal_single_entry():
+    """T-2026-KYT-9050-042: the fleet stopped publishing the entry2 line (arm B). The
+    gating path must still parse those messages — ROM1 only re-forwards what it can
+    parse, so a stricter parser would silently mute the whole fleet for ROM1."""
+    assert "Entry 2" not in LONG_SIGNAL  # the fixture is already single-entry
+    result = orch.parse_cornix_signal(LONG_SIGNAL)
+    assert result is not None
+    assert result["entry"] == pytest.approx(64321.5)
+    assert result["sl"] == pytest.approx(63800.0)
+    assert len(result["targets"]) == 3
+
+
 def test_parse_non_cornix_returns_none():
     assert orch.parse_cornix_signal("Hello world") is None
     assert orch.parse_cornix_signal("") is None

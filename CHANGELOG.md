@@ -1,3 +1,36 @@
+## [2026-07-26] Single-Entry-Posting — Entry-2-Zeile fleet-weit raus (T-2026-KYT-9050-042)
+
+Operator-Entscheid (Michi) auf der Datenlage aus T-043/T-044/T-045: der
+DCA-Nachkauf auf `entry2` **schadet** — Arm B (nur `entry1`, Original-SL) hebt den
+per-Trade-Sharpe bei **15 von 17** Bots mit belastbarer Stichprobe (Median-Drag
+B−A **+0,073**), konsistent über S/R, Pump/Dump, Momentum und Pattern, und auf dem
+längsten Fenster (MIS1-168H, 2,5 Monate) verstärkt (0,06 → **0,16**). Arm B geht
+jetzt live — **ausschließlich über das Posting**:
+
+- Die `🏦 Entry 2`-Zeile verschwindet aus dem Cornix-Block von `core/signal_post.py`
+  (geteilter Poster) und den Inline-Buildern in 7, 9, 10, 11, 12, 13, 14, 15, 16,
+  18, 25 sowie dem manuellen `/open`-Handler. Cornix füllt damit die volle Größe
+  auf `entry1`. Die Info-/HTML-Nachrichten von 11 und 25 zeigen entsprechend nur
+  noch eine Entry-Zeile.
+- **Die Geometrie bleibt unangetastet:** `entry2` wird weiter berechnet, der SL
+  bleibt dahinter, `ai_signals.entry2` wird weiter geschrieben (Monitor,
+  Realized-Report und die Outbox-Harnessen lesen es). Kein Modell, kein Threshold,
+  kein Gate angefasst.
+- **ROM1 (`28_signal_orchestrator`) ist die Ausnahme** und postet sein `entry2`
+  weiter: einer der beiden Bots ohne DCA-Schaden (Drag +0,014), dessen Nachkauf
+  messbaren MaxDD-Schutz gibt (10 → 14,5 % ohne). ROM1 rechnet sein `entry2`
+  ohnehin selbst und hängt nicht an den Upstream-Bots; sein Gating-Parser
+  (`parse_cornix_signal`) verlangt keine Entry-2-Zeile — jetzt explizit gepinnt.
+- `backtest/test_single_entry_posting.py`: 7 DB-freie Pins (Source-Pins je Modul,
+  ROM1-Carve-out, genau eine Entry-Zeile im real gebauten Cornix-Text,
+  `ai_signals.entry2`/SL unverändert) + `test_parse_cornix_signal_single_entry`.
+  Spec: `docs/T-2026-KYT-9050-042-single-entry-spec.md`.
+
+**Operator-Seite (nicht im Code):** teilt Cornix die Margin auf die Entry-Targets
+auf, fährt die Fleet nach dieser Änderung halbe statt voller Position — die
+Cornix-Konfiguration muss mitziehen. Scharf wird das Ganze erst mit dem
+Fleet-Restart (Michi-Entscheid).
+
 ## [2026-07-26] Trailing-Close finalisiert auf High-Fidelity-Harness (T-2026-KYT-9050-046)
 
 Michi: den Trailing-Close-Befund aus T-041 finalisieren = auf der T-035-High-
