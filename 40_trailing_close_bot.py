@@ -118,6 +118,9 @@ REASON_LEG_RETIRED = "LEG_RETIRED"
 #: startete. Er wird nie gespiegelt — die Zeile existiert nur, damit er auch nie
 #: wieder als Neuzugang erscheint (dieselbe Sperre wie ein geschlossener Spiegel).
 REASON_PREEXISTING = "PREEXISTING"
+#: Beim Umschalten von Shadow auf Live geschlossen: die Zeile war offen, aber nie
+#: veröffentlicht, kann also keiner Position im Channel entsprechen.
+REASON_SHADOW_CARRYOVER = "SHADOW_CARRYOVER"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trailing_positions (
@@ -153,6 +156,40 @@ def ensure_schema(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(SCHEMA)
     conn.commit()
+
+
+def clear_unposted_carryover(conn) -> int:
+    """Offene Spiegel-Zeilen ohne Veröffentlichung schließen — nur im Live-Modus.
+
+    Eine offene Zeile mit ``posted = FALSE`` kann keiner Position im Channel
+    entsprechen: sie wurde nie gepostet. Im Shadow-Betrieb ist das der Normalfall
+    und muss stehen bleiben (es IST das Shadow-Buch). Sobald aber live gepostet
+    wird, ist so eine Zeile Altlast aus der Shadow-Phase — und eine schädliche:
+    sie belegt ihr Symbol (höchstens eine Position je Symbol) und einen Slot,
+    beides für etwas, das es im Channel nicht gibt. Beim Umschalten am 2026-07-26
+    waren das 460 Zeilen, also 460 blockierte Symbole.
+
+    Läuft nur beim Start, nicht im Poll: im laufenden Live-Betrieb entstehen
+    unveröffentlichte offene Zeilen gar nicht (Insert und Outbox-Zeilen liegen in
+    derselben Transaktion), ein Aufräumen im Zyklus hätte also nichts zu tun und
+    könnte nur schaden.
+    """
+    if not (LIVE_POSTING and TARGET_CHANNEL_ID):
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE trailing_positions
+            SET closed_at = NOW(), close_reason = %s
+            WHERE closed_at IS NULL AND posted = FALSE
+            """,
+            (REASON_SHADOW_CARRYOVER,),
+        )
+        n = cur.rowcount
+    conn.commit()
+    if n:
+        logger.info("🧹 %d unveröffentlichte Shadow-Zeile(n) geschlossen — Symbole/Slots freigegeben.", n)
+    return n
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -597,6 +634,7 @@ def main() -> None:
     # den `if conn is None`-Guard.
     conn: PooledConnection | None = get_db_connection()
     ensure_schema(conn)
+    clear_unposted_carryover(conn)
 
     while True:
         try:

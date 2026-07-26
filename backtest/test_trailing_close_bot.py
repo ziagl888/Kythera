@@ -96,6 +96,8 @@ class FakeCursor:
                 self.store["inserted"].append(params)
                 self._rows = [(len(self.store["inserted"]),)]
 
+    rowcount = 0
+
     def executemany(self, sql, seq):
         for params in seq:
             self.execute(sql, params)
@@ -622,6 +624,34 @@ def test_rejections_are_summarised_not_logged_per_item():
     infos = [r for r in records if r.levelno >= _logging.INFO and "nicht aufgenommen" in r.getMessage()]
     assert len(infos) == 1, [r.getMessage() for r in infos]
     assert "49" in infos[0].getMessage(), infos[0].getMessage()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shadow -> live carryover. On 2026-07-26 the switch would have started with 460
+# open mirror rows that were never published: 460 symbols and 460 slots blocked
+# for positions the channel does not contain.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_unposted_rows_are_cleared_when_going_live():
+    """An open row that was never published cannot be a channel position."""
+    conn = FakeConn()
+    n = bot.clear_unposted_carryover(conn)
+    updates = [(sql, p) for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions")]
+    assert updates, conn.store["sql"]
+    sql, params = updates[0]
+    assert "posted = FALSE" in sql and "closed_at IS NULL" in sql, sql
+    assert params == (bot.REASON_SHADOW_CARRYOVER,)
+    assert n == 0  # FakeCursor reports rowcount 0; the SQL shape is what matters here
+
+
+def test_shadow_mode_keeps_its_book():
+    """In shadow the unposted open rows ARE the book — clearing them would wipe it
+    on every restart."""
+    shadow = _load_bot(live_posting=False)
+    conn = FakeConn()
+    assert shadow.clear_unposted_carryover(conn) == 0
+    assert not [s for s, _ in conn.store["sql"] if s.startswith("UPDATE trailing_positions")]
 
 
 if __name__ == "__main__":
