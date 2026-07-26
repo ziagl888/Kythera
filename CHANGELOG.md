@@ -1,3 +1,26 @@
+## [2026-07-26] Trailing-Close finalisiert auf High-Fidelity-Harness (T-2026-KYT-9050-046)
+
+Michi: den Trailing-Close-Befund aus T-041 finalisieren = auf der T-035-High-
+Fidelity-Harness (5m-Wick + 10s-Resolver + DCA-treue cornix3-Geometrie) statt der
+First-Order-1h-Rekonstruktion. **Read-only.** T-035 hatte Overlay (a) nur auf der
+leveraged **Summe** gewertet (Fat-Tail/−100%-Clamp-Artefakt → schien NO-EDGE);
+neuer `--mode trailing` in `tools/wave_exit_overlay.py` wertet ihn **risiko-
+adjustiert** aus (per-Trade leveraged Sharpe + kompoundierende MaxDD fixe 2%, wie
+T-041), hold vs Trailing-X-Sweep, je Max-Outbox-Fenster.
+
+- **S/R-Bots bestätigt:** AIM2 (n=491) Sharpe 0,19→**0,35**, MaxDD 9,5→**2,8 %**;
+  SRA2 (n=116) 0,02→**0,15**, MaxDD 11,6→**2,6 %**. Die T-041-Umkehr hält DCA-treu.
+- **Pump/Dump NICHT:** EPD3 (n=1157) Sharpe 0,15→**0,08** (Trailing kappt die
+  explosiven Pump-Gewinner). → **bot-typ-abhängig** (wie entry2-als-SL): Reversion/
+  S/R profitieren, Trend/Pump nicht. Korrigiert T-041s First-Order-Ranking (das
+  EPD3 noch als Gewinner sah).
+- Harness-Erweiterung: `run_validate` bekommt ein `run_overlay`-Flag + exponiert
+  `arts`. `backtest/test_trailing_risk.py`: 7 DB-freie Pins. Reports
+  `staging_models/replay/trailing_risk_test_{aim2,sra2,epd3}.*`.
+
+Trailing-Close-Deploy (für S/R-Bots) = eigener Operator-Entscheid (Michi). Reine
+read-only Analyse.
+
 ## [2026-07-26] DCA-Effekt fleet-weit bestätigt — A vs B über 24 Bots (T-2026-KYT-9050-045)
 
 Michi: den DCA-Test (Arm A=DCA vs B=single-entry1) auf ALLEN Bots mit genug

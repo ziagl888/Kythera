@@ -564,7 +564,9 @@ def overlay_c(arts: list[dict], y: float, glen: int) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # DRIVER
 # ─────────────────────────────────────────────────────────────────────────────
-def run_validate(conn, model: str, start: str, end: str, limit: int | None, collect_arts: bool = False) -> dict:
+def run_validate(
+    conn, model: str, start: str, end: str, limit: int | None, collect_arts: bool = False, run_overlay: bool = True
+) -> dict:
     orch = import_bot_module("28_signal_orchestrator.py", "signal_orchestrator")
     offset = tick_utc_offset(conn)
     print(f"tick tz offset: {offset}")
@@ -618,8 +620,10 @@ def run_validate(conn, model: str, start: str, end: str, limit: int | None, coll
     summary = summarize(records, model, start, end, len(closed), unmatched)
     out = {"records": records, "summary": summary}
     if collect_arts:
-        out["overlay"] = run_overlays(arts)
-        summary["overlay"] = out["overlay"]["summary"]
+        out["arts"] = arts
+        if run_overlay:
+            out["overlay"] = run_overlays(arts)
+            summary["overlay"] = out["overlay"]["summary"]
     return out
 
 
@@ -708,6 +712,9 @@ def write_report(out_dir: str, model: str, result: dict, mode: str = "validate")
     if mode == "entrysl":
         tag = f"entry2_sl_test_{model.lower()}"
         md = render_entrysl_md(result["summary"])
+    elif mode == "trailing":
+        tag = f"trailing_risk_test_{model.lower()}"
+        md = render_trailing_md(result["summary"])
     else:
         kind = "overlay" if mode == "overlay" else "validation"
         tag = f"wave_exit_{kind}_{model.lower()}"
@@ -1078,9 +1085,115 @@ def render_entrysl_md(s: dict) -> str:
     return "\n".join(lines)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TRAILING-CLOSE FINALISE (T-2026-KYT-9050-046) — risk-adjusted overlay (a)
+# ─────────────────────────────────────────────────────────────────────────────
+# T-035's overlay (a) — per-trade trailing-TP on the DCA-aware cornix3 MTM (5m
+# wick + 10s resolver) — was only scored on the leveraged SUM, where the fat-tail
+# / -100%-clamp artefact made it look NO-EDGE. T-041 showed the risk-adjusted view
+# flips that on a first-order 1h reconstruction. This finalises it on the high-
+# fidelity harness: per-trade leveraged Sharpe + fixed-2% compounding MaxDD, hold
+# vs the X trailing sweep — same metric as T-041, higher fidelity.
+TRAIL_F = 0.02
+
+
+def _trail_lev_series(arts: list[dict], k_of) -> np.ndarray:
+    """Chronological (by close_time) leveraged-return fractions when each art is
+    force-closed at candle `k_of(art)` (hold = its last candle)."""
+    rows = []
+    for a in arts:
+        r = _realized_at(a, k_of(a))
+        if r and r.get("filled") and r.get("levered_pct") is not None:
+            rows.append((str(a["rec"]["close_time"]), r["levered_pct"]))
+    rows.sort(key=lambda x: x[0])
+    return np.array([v / 100.0 for _, v in rows], dtype=float)
+
+
+def trailing_risk(arts: list[dict]) -> dict:
+    """hold vs per-trade trailing-X, risk-adjusted (per-trade lev Sharpe + fixed-2%
+    compounding MaxDD) on the high-fidelity cornix3 replay."""
+    arts = [a for a in arts if len(a["c"]) >= 1 and parse_leverage(a["rec"]["lev"]) is not None]
+    for a in arts:
+        a["_mtm"] = _cornix_mtm(a)  # cache the DCA-aware MTM once per art
+
+    def stat(s: np.ndarray) -> dict:
+        _, mdd = compound_equity(s, TRAIL_F) if len(s) else (None, None)
+        return {
+            "n": len(s),
+            "mean_lev": round(float(s.mean() * 100), 2) if len(s) else None,
+            "sharpe_lev": round(sharpe(s), 3) if len(s) > 1 else None,
+            "maxdd_2pct": round(mdd, 1) if mdd is not None else None,
+        }
+
+    out = {"n_arts": len(arts), "variants": {"hold": stat(_trail_lev_series(arts, lambda a: len(a["c"])))}}
+    for x in X_SWEEP:
+
+        def k_of(a, x=x):
+            tr = trailing_tp_trigger(a["_mtm"], x)
+            return (tr + 1) if tr is not None else len(a["c"])
+
+        out["variants"][f"{int(x * 100)}"] = stat(_trail_lev_series(arts, k_of))
+    return out
+
+
+def render_trailing_md(s: dict) -> str:
+    tr = s["trailing"]
+    v = tr["variants"]
+    hold = v["hold"]
+    lines = [
+        f"# Trailing-Close FINALISE (risk-adjusted, High-Fidelity) — {s['model']} — T-2026-KYT-9050-046",
+        "",
+        f"_generated {s['generated_at']} · read-only · window {s['window'][0]} → {s['window'][1]}_",
+        "",
+        "**High-Fidelity-Harness (T-035):** per-Trade-Trailing-TP (Overlay a) auf dem **DCA-treuen** "
+        "cornix3-MTM, 5m-Wick + 10s-Resolver. T-035 wertete das nur auf der leveraged **Summe** aus "
+        "(Fat-Tail/−100%-Clamp-Artefakt → schien NO-EDGE). Hier **risiko-adjustiert** (T-041): per-Trade "
+        "leveraged **Sharpe** + kompoundierende **MaxDD (fixe 2%)**, hold vs Trailing-X.",
+        "",
+        f"Gescort (leveraged Arts): **{tr['n_arts']}**\n",
+        "| Variante | n | mean lev% | **Sharpe lev** | **MaxDD (2%)** |",
+        "|---|--:|--:|--:|--:|",
+        f"| **hold** | {hold['n']} | {hold['mean_lev']} | **{hold['sharpe_lev']}** | **{hold['maxdd_2pct']}%** |",
+    ]
+    for x in X_SWEEP:
+        a = v[f"{int(x * 100)}"]
+        lines.append(
+            f"| Trailing {int(x * 100)}% | {a['n']} | {a['mean_lev']} | **{a['sharpe_lev']}** | **{a['maxdd_2pct']}%** |"
+        )
+
+    shs = {k: v[k]["sharpe_lev"] for k in v if v[k]["sharpe_lev"] is not None}
+    best = max((k for k in shs if k != "hold"), key=lambda k: shs[k], default=None)
+    hold_sh = shs.get("hold")
+    lines += ["", "### Befund", ""]
+    if best is not None and hold_sh is not None:
+        best_sh = shs[best]
+        dd_hold, dd_best = hold["maxdd_2pct"], v[best]["maxdd_2pct"]
+        beats = best_sh > hold_sh
+        lines += [
+            f"- **Bester Trailing-X = {best}%: Sharpe {best_sh:+} vs hold {hold_sh:+}** "
+            + ("→ Trailing hebt den risiko-adjustierten Ertrag." if beats else "→ kein Sharpe-Gewinn."),
+            f"- **MaxDD (2%): hold {dd_hold}% → Trailing {best}% {dd_best}%** "
+            + (
+                f"(~{dd_hold / max(dd_best, 1e-9):.1f}× kleiner)."
+                if (dd_best and dd_hold and dd_best < dd_hold)
+                else "."
+            ),
+            "- **Fidelity-Vergleich:** T-041 (First-Order 1h) fand dieselbe Richtung (Sharpe rauf, MaxDD runter). "
+            + ("Hier auf 5m+10s+DCA **bestätigt**." if beats else "Hier abgeschwächt/nicht bestätigt — siehe Zahlen."),
+        ]
+    lines += [
+        "",
+        "**Ehrliche Grenzen:** ~Outbox-Fenster (Geometrie-Retention), leveraged Arts, Compounding "
+        "sequenziell-nach-close (ignoriert Gleichzeitigkeit) → MaxDD-Ratio ist das Signal, nicht der absolute "
+        "Multiple. Trailing-Deploy = eigener Operator-Entscheid (Michi).",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Wave-Exit-Overlay harness (T-2026-KYT-9050-035)")
-    ap.add_argument("--mode", default="validate", choices=["validate", "overlay", "entrysl"])
+    ap.add_argument("--mode", default="validate", choices=["validate", "overlay", "entrysl", "trailing"])
     ap.add_argument("--model", default="AIM2")
     ap.add_argument("--start", default="2026-07-07 14:20:00")
     ap.add_argument("--end", default="2026-07-23 00:00:00")
@@ -1112,15 +1225,25 @@ def main() -> None:
     except Exception as e:
         print(f"⚠ set_session(readonly=True) failed ({e}) — proceeding; all queries are SELECT-only.")
     try:
-        result = run_validate(conn, args.model, args.start, args.end, args.limit, collect_arts=(args.mode == "overlay"))
+        result = run_validate(
+            conn,
+            args.model,
+            args.start,
+            args.end,
+            args.limit,
+            collect_arts=(args.mode in ("overlay", "trailing")),
+            run_overlay=(args.mode != "trailing"),
+        )
     finally:
         conn.close()
 
     if args.mode == "entrysl":
         result["summary"]["entrysl"] = analyse_entrysl(result["records"])
+    elif args.mode == "trailing":
+        result["summary"]["trailing"] = trailing_risk(result["arts"])
 
     jpath, mpath = write_report(args.out, args.model, result, args.mode)
-    render = render_entrysl_md if args.mode == "entrysl" else render_md
+    render = {"entrysl": render_entrysl_md, "trailing": render_trailing_md}.get(args.mode, render_md)
     print("\n" + render(result["summary"]))
     print(f"\nJSON: {jpath}\nMD:   {mpath}")
 
