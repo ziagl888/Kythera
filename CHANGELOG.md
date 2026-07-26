@@ -1,3 +1,32 @@
+## [2026-07-26] Trailing-Bot: Altbestand nicht spiegeln + Log-Flut (T-2026-KYT-9050-042, Nachtrag)
+
+Zwei Defekte, die **erst der erste Shadow-Lauf auf der Live-VPS** gezeigt hat — beide in
+DB-freien Tests strukturell unsichtbar, beide gefunden, weil das Live-Gate default AUS ist
+und der Bot 33 Minuten folgenlos mitlaufen konnte.
+
+- **Altbestand wurde gespiegelt.** Beim Start hat der Bot **alle 465 bereits offenen**
+  Quell-Trades als Neuzugang behandelt — teils Tage alt. Der Spiegel übernimmt die
+  Geometrie des Quell-Signals (Entry, SL, TPs), aber Cornix füllt zum **aktuellen** Markt:
+  bei einem drei Tage alten Trade misst der Trailing-Arm damit nicht mehr denselben Trade
+  wie der Hold-Arm, und genau dieser Vergleich ist der Zweck des Bots. Mit offenem Gate
+  wären das 465 Fehl-Entries in einem Schwung gewesen. **Fix:** Altersgrenze
+  `TRAILING_BOT_MAX_AGE_MIN` (default 15 min, deckt bewusst ein Restart-Fenster ab);
+  ältere Quell-Trades bekommen eine geschlossene `PREEXISTING`-Zeile — dieselbe Sperre,
+  die einen ausgetrailten Trade vor dem Wiedereinstieg schützt, also werden sie auch nie
+  wieder als Neuzugang betrachtet. Dieselbe Klasse wie **P2.7** im AI-Monitor („kein
+  Rückwirkend-Scoring von Alt-Trades nach Prozess-Neustart"). Das Alter rechnet die **DB**
+  (`NOW() - open_time`), nicht Python — `ai_signals.open_time` ist naiv/PG-lokal, ein
+  Python-Vergleich wäre der Offset-Fehler aus dem TZ-Cluster P2.1–P2.6.
+- **Ablehnungen fluteten den gemeinsamen Watchdog-Log.** Jede abgewiesene Kandidatur wurde
+  einzeln geloggt, und sie wiederholt sich in **jedem 10s-Zyklus**, solange der Quell-Trade
+  offen ist: gemessen **34 691 Zeilen in 33 Minuten** (~870 pro Zyklus, hochgerechnet
+  ~1,5 Mio/Tag) — die Logs aller anderen Bots wären darin ertrunken. **Fix:** eine
+  Summenzeile je Zyklus mit Zählern pro Grund, Einzelfälle auf DEBUG. Die Zahlen bleiben
+  sichtbar (keine stille Deckelung).
+
+4 neue DB-freie Pins (jetzt 28); beide Fixes per **Mutationstest** belegt — Fehler wieder
+einbauen macht genau den zugehörigen Pin rot.
+
 ## [2026-07-26] Trailing-Close-Bot mit eigenem Channel (T-2026-KYT-9050-042, Phase C)
 
 Der Trailing-Arm aus T-041 wird ein eigener Fleet-Prozess: **`40_trailing_close_bot.py`**

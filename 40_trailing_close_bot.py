@@ -96,10 +96,28 @@ TARGET_CHANNEL_ID = _kcfg.CH_TRAILING
 LIVE_POSTING = os.getenv("TRAILING_BOT_LIVE_POSTING", "0") == "1"
 POLL_SECONDS = 10
 
+# Wie alt darf ein Quell-Trade höchstens sein, damit ihn zu spiegeln noch DERSELBE
+# Trade ist? Der Spiegel übernimmt die Geometrie des Quell-Signals (Entry, SL, TPs),
+# aber Cornix füllt zum AKTUELLEN Markt. Bei einem Trade von vor zwei Tagen misst
+# der Trailing-Arm damit nicht mehr denselben Trade wie der Hold-Arm — und genau
+# dieser Vergleich ist der Zweck des Bots.
+#
+# Der Wert deckt bewusst ein Restart-Fenster ab (der Fleet-Restart dauert ~5 min):
+# Trades, die während des Neustarts aufgingen, will man noch mitnehmen, Altbestand
+# nicht. Ohne diese Grenze spiegelt der Bot beim ersten Start den GESAMTEN offenen
+# Bestand — im ersten Shadow-Lauf am 2026-07-26 waren das 465 Positionen auf einen
+# Schlag, teils Tage alt. Dieselbe Klasse wie P2.7 im AI-Monitor ("kein
+# Rückwirkend-Scoring von Alt-Trades nach Prozess-Neustart").
+MAX_MIRROR_AGE_MIN = float(os.getenv("TRAILING_BOT_MAX_AGE_MIN", "15"))
+
 # Exit-Gründe (landen in trailing_positions.close_reason)
 REASON_TRAIL = "TRAIL"
 REASON_SOURCE_CLOSED = "SOURCE_CLOSED"
 REASON_LEG_RETIRED = "LEG_RETIRED"
+#: Kein Exit, sondern ein Vermerk: dieser Quell-Trade lief schon, als der Bot
+#: startete. Er wird nie gespiegelt — die Zeile existiert nur, damit er auch nie
+#: wieder als Neuzugang erscheint (dieselbe Sperre wie ein geschlossener Spiegel).
+REASON_PREEXISTING = "PREEXISTING"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trailing_positions (
@@ -156,7 +174,8 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, symbol, model, direction, entry1, price, sl, targets, lev
+            SELECT id, symbol, model, direction, entry1, price, sl, targets, lev,
+                   EXTRACT(EPOCH FROM (NOW() - open_time)) / 60.0 AS age_min
             FROM ai_signals
             """
         )
@@ -164,7 +183,11 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
 
     out: dict[int, dict] = {}
     all_open: set[int] = set()
-    for sid, symbol, model, direction, entry1, price, sl, targets, lev in rows:
+    # Das Alter rechnet die DB, nicht Python: `ai_signals.open_time` ist naiv und
+    # wird PG-lokal geschrieben (TZ-Kontrakt R3). Ein Vergleich gegen eine in
+    # Python gebildete "jetzt"-Zeit wäre genau der Offset-Fehler aus dem TZ-Cluster
+    # P2.1–P2.6; `NOW() - open_time` kann ihn gar nicht erst machen.
+    for sid, symbol, model, direction, entry1, price, sl, targets, lev, age_min in rows:
         all_open.add(int(sid))
         if not is_rostered(model, direction):
             continue
@@ -194,6 +217,8 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
             "targets": [float(t) for t in (tgt or [])],
             "lev": lev,
             "density": density(model, direction),
+            # None (open_time NULL) gilt als beliebig alt — im Zweifel nicht spiegeln.
+            "age_min": float(age_min) if age_min is not None else float("inf"),
         }
     return out, all_open
 
@@ -357,6 +382,40 @@ def admit(candidates: list[tuple[int, dict]], held_symbols: set[str], free_slots
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def record_preexisting(conn, stale: list[tuple[int, dict]]) -> None:
+    """Quell-Trades als „gesehen, nie gespiegelt" vermerken.
+
+    Die Zeile wird sofort geschlossen eingetragen (``closed_at = NOW()``): sie ist
+    kein Spiegel, sondern eine Sperre. ``read_mirrored_src_ids`` fragt ohne
+    ``closed_at``-Filter, also taucht dieser Quell-Trade nie wieder als Neuzugang
+    auf — dieselbe Mechanik, die einen ausgetrailten Trade vor dem Wiedereinstieg
+    schützt. Ein geschlossener Eintrag kollidiert auch nicht mit dem partiellen
+    Symbol-Index (der greift nur auf offenen Zeilen), belegt also keinen Platz.
+    """
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO trailing_positions
+                (src_signal_id, symbol, model, direction, entry, peak_pct, posted,
+                 closed_at, close_reason)
+            VALUES (%s, %s, %s, %s, %s, NULL, FALSE, NOW(), %s)
+            ON CONFLICT DO NOTHING
+            """,
+            [
+                (sid, sig["symbol"], sig["model"], sig["direction"], sig["entry"], REASON_PREEXISTING)
+                for sid, sig in stale
+            ],
+        )
+    conn.commit()
+    oldest = max(sig["age_min"] for _sid, sig in stale)
+    logger.info(
+        "📎 %d Quell-Trade(s) als Altbestand vermerkt, nicht gespiegelt (ältester %.0f min, Grenze %.0f min).",
+        len(stale),
+        oldest,
+        MAX_MIRROR_AGE_MIN,
+    )
+
+
 def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], already: set[int]) -> int:
     """Neue Quell-Signale spiegeln. Gibt die Zahl der eröffneten Positionen zurück.
 
@@ -366,15 +425,36 @@ def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], alrea
     weiter, seine Zeile sähe wieder neu aus, und der Bot würde alle 10 s neu
     eröffnen. Ein einmal getrailter Trade ist erledigt.
     """
-    new = [(sid, sig) for sid, sig in sources.items() if sid not in mirrors and sid not in already]
+    unseen = [(sid, sig) for sid, sig in sources.items() if sid not in mirrors and sid not in already]
+    if not unseen:
+        return 0
+
+    # Altbestand: lief schon, bevor der Bot ihn sehen konnte. Wird NICHT gespiegelt,
+    # aber als Zeile vermerkt, damit er nie wieder als Neuzugang auftaucht.
+    stale = [(sid, sig) for sid, sig in unseen if sig["age_min"] > MAX_MIRROR_AGE_MIN]
+    if stale:
+        record_preexisting(conn, stale)
+    new = [(sid, sig) for sid, sig in unseen if sig["age_min"] <= MAX_MIRROR_AGE_MIN]
     if not new:
         return 0
 
     held = {m["symbol"] for m in mirrors.values()}
     admitted, rejected = admit(new, held, SLOT_CAP - len(mirrors))
 
-    for _sid, sig, why in rejected:
-        logger.info(f"⛔ {sig['symbol']} {sig['tag']} {sig['direction']}: nicht aufgenommen ({why})")
+    # Gebündelt statt je Kandidat: die Abweisungen wiederholen sich in JEDEM
+    # 10s-Zyklus, solange der Quell-Trade offen ist. Im ersten Shadow-Lauf waren
+    # das ~870 Zeilen pro Zyklus = ~1,5 Mio/Tag in den gemeinsamen Watchdog-Log —
+    # die Logs aller anderen Bots wären darin ertrunken. Die Zahlen bleiben
+    # sichtbar (keine stille Deckelung), die Einzelfälle stehen auf DEBUG.
+    if rejected:
+        tally: dict[str, int] = {}
+        for _sid, _sig, why in rejected:
+            tally[why] = tally.get(why, 0) + 1
+        logger.info(
+            "⛔ %d nicht aufgenommen (%s)", len(rejected), ", ".join(f"{k} {v}" for k, v in sorted(tally.items()))
+        )
+        for _sid, sig, why in rejected:
+            logger.debug("⛔ %s %s %s: %s", sig["symbol"], sig["tag"], sig["direction"], why)
 
     opened = 0
     live = bool(LIVE_POSTING and TARGET_CHANNEL_ID)

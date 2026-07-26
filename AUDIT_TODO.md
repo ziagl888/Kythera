@@ -18,7 +18,13 @@
 **Trailing-Close-Arm T-2026-KYT-9050-042 Phase C (Bot 40, PR #198).** Gebaut, gepinnt (21 DB-freie
 Pins), **nicht deployt**. Der Bot spiegelt die 33 in PR #198 ausgewählten Beine in `CH_TRAILING`
 und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-gegatete Punkte:
-- [ ] **#T42-1 Channel-ID + Live-Gate (Michi).** `CH_TRAILING` (Secret, nur `.env`) und
+- [x] **#T42-1 Channel-ID + Live-Gate — ID gesetzt 2026-07-26**, `CH_TRAILING` in der Live-`.env`;
+  Gate-Flip auf `TRAILING_BOT_LIVE_POSTING=1` per Operator-Auftrag Michi nach dem Altbestand-Fix.
+- [x] **#T42-6 Altbestand + Log-Flut (aus dem ersten Shadow-Lauf).** Der Bot spiegelte beim Start
+  alle 465 offenen Quell-Trades (teils Tage alt) und loggte ~870 Ablehnungen pro 10s-Zyklus
+  (34 691 Zeilen in 33 min). Beide gefixt: Altersgrenze + `PREEXISTING`-Vermerk, Summenzeile
+  statt Einzelzeilen. Nur sichtbar geworden, weil das Gate default AUS war.
+- [ ] **#T42-1b Channel-ID + Live-Gate (Michi).** `CH_TRAILING` (Secret, nur `.env`) und
   `TRAILING_BOT_LIVE_POSTING=1`. **Beide** sind default aus — bis dahin läuft der Bot vollständig,
   trackt und loggt, postet aber keine Zeile. Ein Deploy allein postet nichts.
 - [ ] **#T42-2 Fleet-Restart (Michi).** `core/fleet.py` ist beim Watchdog-Import gelesen; der neue
