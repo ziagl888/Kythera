@@ -30,6 +30,42 @@ jetzt live — **ausschließlich über das Posting**:
 auf, fährt die Fleet nach dieser Änderung halbe statt voller Position — die
 Cornix-Konfiguration muss mitziehen. Scharf wird das Ganze erst mit dem
 Fleet-Restart (Michi-Entscheid).
+## [2026-07-26] Slot-Budget für den Trailing-Bot-Channel (T-2026-KYT-9050-042, Phase C Vorstufe)
+
+Michi: Cornix deckelt einen Channel bei **500 gleichzeitig offenen Trades** (Deckel gilt
+PRO Channel — der neue Trailing-Bot-Kanal hat sein eigenes Budget). Vor dem Bot-Bau also
+die Frage: welche Beine verdienen dort einen Platz? **Read-only.** Neues Tool
+`tools/trailing_slot_budget.py` bewertet pro **(Tag, Richtung)** gegen
+`shadow_gate.leg_status` — Ertrag *und* Slot-Bedarf, jeweils hold vs. Trailing — und
+füllt den Kanal greedy nach Netto-Dichte, mit exakt gerechneter Gleichzeitigkeit der
+Auswahl. Report `staging_models/replay/trailing_slot_budget_live.{md,json}`.
+
+- **Auswahl-Metrik ist Ertrag pro belegtem Slot-Tag**, nicht per-Trade-Sharpe: unter
+  einem harten Deckel verdrängt jedes Bein ein anderes. Auf Hold-Verhalten zieht
+  `MIS1-72h LONG` allein ~283 der 500 Plätze.
+- **Zwei Messfallen, beide gepinnt** (`backtest/test_trailing_slot_budget.py`, 11 DB-frei):
+  (1) Die geerbte `trail_capture`-Logik bewertet Peak und Trigger auf DERSELBEN Kerze —
+  eine Kerze, die den Entry umschließt, schärft und reißt den Trail zugleich, der Trade
+  fliegt auf Kerze 0 raus. Für T-041 folgenlos (nur der Ertrag wurde genutzt, Optimismus
+  dokumentiert), hier fatal, weil der Ausstiegs-ZEITPUNKT die Slots zählt: erster Lauf
+  ergab Median-Haltedauer 0 h über ALLE 43 Beine. Fix = strikt vorheriger Peak.
+  (2) Ein skalenfreier Trail ist ein Micro-Scalper: „10 % Rückgabe vom Peak" feuert auch
+  auf einem 0,5-%-Peak. Fix = **Aktivierungsschwelle** (`core.wave_exit_sim` hat den
+  Parameter, T-035/T-046 ließen ihn auf 0), hier als Sweep statt Annahme.
+- **Werte netto** nach Repo-Konvention (0,10 % Taker-Round-Trip, `tools/audit/step4_results.py`).
+- **Befund fleet-weit:** Trailing schlägt Halten erst ab act≈10 % (73 897 vs 64 478 netto);
+  bei act=0 vernichtet es ein Drittel des Ertrags. **Befund für den Kanal:** dort gewinnt
+  die niedrige Schwelle, weil sie Plätze schneller freigibt — **act=2 %: 33 Beine,
+  49 204 % netto bei Ø 285 Slots / p95 498**, also 76 % des Fleet-Ertrags mit 23 % der
+  Plätze. Konservativ act=1 %: alle 37 Beine, p95 426, 46 064 %.
+- Nicht aufgenommen (hätten den Deckel gerissen): `BB_1H LONG`, `BR2H LONG`,
+  `EPD3 LONG`, `TSM1 SHORT`.
+
+Ehrliche Grenzen im Report: 15m-Auflösung (die DCA-treue T-035-Harness ist die nächste
+Verschärfung), Slippage nicht modelliert, heutiger Registerstand auf ganze Historie
+gelegt, Greedy nicht beweisbar optimal, und selbst die p95-sichere Auswahl hat eine
+Spitze von 2001 — in den obersten 5 % der Stunden lehnt Cornix ab. Reine Analyse; die
+Auswahl und der Bot-Bau sind Michi-Entscheid.
 
 ## [2026-07-26] Trailing-Close finalisiert auf High-Fidelity-Harness (T-2026-KYT-9050-046)
 
