@@ -96,6 +96,10 @@ class FakeCursor:
                 self.store["inserted"].append(params)
                 self._rows = [(len(self.store["inserted"]),)]
 
+    def executemany(self, sql, seq):
+        for params in seq:
+            self.execute(sql, params)
+
     def fetchall(self):
         return self._rows
 
@@ -123,9 +127,12 @@ class FakeConn:
         pass
 
 
-def _src_row(sid, symbol, model, direction, entry=100.0):
-    """One ai_signals row in the shape read_source_signals SELECTs."""
-    return (sid, symbol, model, direction, entry, entry, entry * 0.95, '[110.0, 120.0]', "20x")
+def _src_row(sid, symbol, model, direction, entry=100.0, age_min=1.0):
+    """One ai_signals row in the shape read_source_signals SELECTs.
+
+    `age_min` is what the DB computes as `NOW() - open_time`; default is a fresh
+    signal so the existing pins keep exercising the mirroring path."""
+    return (sid, symbol, model, direction, entry, entry, entry * 0.95, "[110.0, 120.0]", "20x", age_min)
 
 
 def _cand(sid, symbol, tag, direction):
@@ -164,8 +171,8 @@ def test_non_live_leg_is_never_mirrored():
 
 def test_signal_without_geometry_is_not_mirrored():
     """A half order-geometry in a Cornix channel is worse than no mirror."""
-    no_sl = (1, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 100.0, None, "[110.0]", "20x")
-    no_tgt = (2, "ETHUSDT", "MIS1-72h", "LONG", 100.0, 100.0, 95.0, "[]", "20x")
+    no_sl = (1, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 100.0, None, "[110.0]", "20x", 1.0)
+    no_tgt = (2, "ETHUSDT", "MIS1-72h", "LONG", 100.0, 100.0, 95.0, "[]", "20x", 1.0)
     assert bot.read_source_signals(FakeConn(ai_signals=[no_sl, no_tgt]))[0] == {}
 
 
@@ -525,6 +532,96 @@ def test_retired_leg_closes_with_its_own_reason():
         # filtered out of `sources`, but still an OPEN ai_signals row
         bot.poll_open_mirrors(conn, sources={}, mirrors=mirrors, all_open={42})
     assert any(p and bot.REASON_LEG_RETIRED in p for _, p in conn.store["sql"] if p)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pre-existing source trades — found in the FIRST live shadow run (2026-07-26):
+# the bot mirrored all 465 already-open trades on start, some of them days old.
+# In shadow that was free; with the gate open it would have been 465 entries
+# published at once, whose geometry belongs to a price the market left long ago.
+# Same class as P2.7 in the AI monitor ("no retroactive scoring of old trades
+# after a process restart").
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_already_running_trades_are_recorded_not_mirrored():
+    """An old trade is remembered so it is never mirrored — and never re-considered."""
+    conn = FakeConn(
+        ai_signals=[
+            _src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_min=4000.0),  # ~3 days old
+            _src_row(2, "ETHUSDT", "RUB1", "LONG", age_min=2.0),  # opened just now
+        ]
+    )
+    sources, _ = bot.read_source_signals(conn)
+    assert bot.open_mirrors(conn, sources, {}, set()) == 1  # only the fresh one
+
+    published = [m for _ch, m in conn.store["outbox"]]
+    assert not any("BTCUSDT" in m for m in published), published
+    assert any("ETHUSDT" in m for m in published)
+
+    # The old one got a closed PREEXISTING row — the same lock that stops a
+    # trailed-out trade from being re-entered.
+    marks = [p for _sql, p in conn.store["sql"] if p and bot.REASON_PREEXISTING in str(p)]
+    assert marks, conn.store["sql"]
+
+
+def test_the_age_cutoff_covers_a_restart_window():
+    """A trade that opened DURING a fleet restart (~5 min) is still the same trade
+    and must be mirrored; the default cutoff has to leave room for that."""
+    assert bot.MAX_MIRROR_AGE_MIN >= 10.0, bot.MAX_MIRROR_AGE_MIN
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_min=6.0)])
+    sources, _ = bot.read_source_signals(conn)
+    assert bot.open_mirrors(conn, sources, {}, set()) == 1
+
+
+def test_missing_open_time_counts_as_old():
+    """A NULL open_time is unknowable age — in doubt, do not mirror."""
+    row = (1, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 100.0, 95.0, "[110.0]", "20x", None)
+    conn = FakeConn(ai_signals=[row])
+    sources, _ = bot.read_source_signals(conn)
+    assert sources[1]["age_min"] == float("inf")
+    assert bot.open_mirrors(conn, sources, {}, set()) == 0
+    assert conn.store["outbox"] == []
+
+
+def test_rejections_are_summarised_not_logged_per_item():
+    """~870 rejections per 10s cycle would be ~1.5M log lines a day into the SHARED
+    watchdog log (measured in the first shadow run). The counts stay visible; the
+    per-item detail drops to DEBUG."""
+    import logging as _logging
+
+    records = []
+
+    class Grab(_logging.Handler):
+        def emit(self, r):
+            records.append(r)
+
+    h = Grab()
+    bot.logger.addHandler(h)
+    bot.logger.setLevel(_logging.INFO)
+    try:
+        conn = FakeConn()
+        sources = {
+            i: {
+                "symbol": "BTCUSDT",
+                "model": "MIS1-72h",
+                "tag": "MIS1-72h",
+                "direction": "LONG",
+                "entry": 100.0,
+                "sl": 95.0,
+                "targets": [110.0],
+                "lev": "20x",
+                "density": 0.959,
+                "age_min": 1.0,
+            }
+            for i in range(50)
+        }
+        bot.open_mirrors(conn, sources, {}, set())
+    finally:
+        bot.logger.removeHandler(h)
+    infos = [r for r in records if r.levelno >= _logging.INFO and "nicht aufgenommen" in r.getMessage()]
+    assert len(infos) == 1, [r.getMessage() for r in infos]
+    assert "49" in infos[0].getMessage(), infos[0].getMessage()
 
 
 if __name__ == "__main__":
