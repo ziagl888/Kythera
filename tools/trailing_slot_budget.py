@@ -115,8 +115,10 @@ def _naive(dt):
 def simulate(conn, trades: list[dict], lev: float, tf: str, x: float, activations: list[float]) -> int:
     """Attach a trailing outcome per activation level to every trade, in place.
 
-    Sets `t["trail"][a] = (ru, rl, exit_time)`. One candle pass covers all activation
-    levels — the DB read is the expensive part, the sweep is vectorised on top.
+    Sets `t["trail"][a] = (ru, rl, exit_time)`. One candle READ covers all activation
+    levels — the DB round-trip is the expensive part, so the sweep loops over the
+    already-fetched series rather than re-querying per level (the per-level work
+    itself is a plain loop, not vectorised).
     Trades without candle coverage keep their recorded (hold) outcome.
     """
     import time
@@ -292,8 +294,8 @@ def render_md(meta: dict) -> str:
         "bevor der Trail scharf wird. `unter Gebühr` = Anteil Trades, deren Trailing-Ertrag die "
         "0,10-%-Gebühr nicht deckt.",
         "",
-        "| act % | Σ netto (alle Live-Beine) | Ø/Trade netto | unter Gebühr | Median Haltedauer h | "
-        "Ø Slots (alle) | netto/Slot | **Füllung 500 netto** | Beine |",
+        "| act % | Σ netto (alle Live-Beine) | Ø/Trade netto | unter Gebühr | Median Haltedauer h "
+        "(über Beine) | Ø Slots (alle) | netto/Slot | **Füllung 500 netto** | Beine |",
         "|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
     ]
     for a in meta["activations"]:
@@ -307,7 +309,7 @@ def render_md(meta: dict) -> str:
     L += [
         "",
         f"_Referenz hold (ohne Trailing), netto: **{meta['hold_total_net']:.0f}** · "
-        f"Ø Slots {meta['hold_occ_mean']:.0f} · Median Haltedauer {meta['hold_median_h']:.1f} h_",
+        f"Ø Slots {meta['hold_occ_mean']:.0f} · Median Haltedauer {meta['hold_median_h']:.1f} h (über Beine)_",
         "",
         f"## Beine bei act = {meta['chosen_act']:.0f} %",
         "",
@@ -342,6 +344,17 @@ def render_md(meta: dict) -> str:
         "- **15m-Auflösung.** Der Trail wird auf Kerzen-Extremen ausgewertet, mit strikt vorherigem "
         "Peak (keine Gleich-Kerzen-Trigger). Ein 5m/10s-Resolver (T-035-Harness) ist die nächste "
         "Verschärfung; die DCA-treue Bestätigung der Finalisten steht noch aus.",
+        "- **Die Kerzen-Maske schließt an der Exit-Seite nicht bündig ab.** Selektiert wird über "
+        "`open_time`, also reicht die letzte Kerze eines Trades bis zu einem `tf`-Intervall über den "
+        "erfassten Close hinaus; ihr Extrem kann den Trail noch scharfstellen. Der Ausstiegs-ZEITPUNKT "
+        "ist gedeckelt (nie nach dem erfassten Close), der Ausstiegs-WERT nicht. Einseitig — "
+        "Zusatzdaten erzeugen Trigger, sie entfernen keine — und auf ≤1 Kerze pro Trade begrenzt "
+        "(bei den Langhaltern ~1 % der Kerzen). Bündig wäre `open_time + tf <= close_time`; das "
+        "kostet einen Re-Lauf und damit neue Zahlen.",
+        "- **Auch die p95-sichere Auswahl reißt den Deckel in der Spitze:** die gemeinsame Belegung "
+        "erreicht 2001 = 4× die 500. In den obersten ~5 % der Stunden lehnt Cornix also ab, und ohne "
+        "eigene Zulassungskontrolle entscheidet nicht die Auswahl, sondern der Zufall, welche Trades "
+        "das trifft (Bot 40 deckelt deshalb selbst).",
         "- **Wert = Σ unlevered %-Bewegung minus Gebühr**, Gleichgewichtung, kein Compounding: als "
         "Dichte-Maß robust, als absolute Rendite nicht wörtlich.",
         "- **Slippage ist NICHT modelliert.** Bei niedriger Aktivierungsschwelle sind die Exits klein "

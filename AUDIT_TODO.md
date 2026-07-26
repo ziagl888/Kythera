@@ -15,6 +15,28 @@
 - [ ] **#6/#7 DB-Delete AIM2-TOPN + ATS1_Robust — Operator-gegatet (Hard Rule 1, irreversibel).** Register-RETIRE ist gemergt; das „Trades löschen" ist ein separater, **einzeln von Michi freigegebener** Schritt gegen die Live-DB (`ai_signals`/`ml_predictions_master`/`closed_ai_signals`): exaktes SELECT-Preview (count je Tabelle) → Freigabe → DELETE in Transaktion, Backup-Hinweis (`tools/backup_db.ps1`). **Hinweis Wirksamkeit:** der AIM2-TOPN-Emitter (Bot 15) konsultiert das shadow_gate-Register nicht (eigenes `AIM2_TOPN`-Config-Gate) → das tatsächliche Stummschalten braucht den Config-Gate-Flip + Restart (Operator). ATS1_Robust hat keinen Live-Emitter (synthetisch).
 - [x] **#8 Main Channel — geklärt (dokumentarisch).** Kein Live-Emitter mehr: der klassische „Main Channel"-Detektor ist via Dispatch-Removal (T-020) retired und durch **MAX2** (Bot 9, SRA2-LONG-Fork → CH_MAIN) ersetzt. `strategies/strat_main_channel.py` ist toter, nicht-dispatchter Code. Kein Register-Eintrag nötig.
 
+**Trailing-Close-Arm T-2026-KYT-9050-042 Phase C (Bot 40, PR #198).** Gebaut, gepinnt (21 DB-freie
+Pins), **nicht deployt**. Der Bot spiegelt die 33 in PR #198 ausgewählten Beine in `CH_TRAILING`
+und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-gegatete Punkte:
+- [ ] **#T42-1 Channel-ID + Live-Gate (Michi).** `CH_TRAILING` (Secret, nur `.env`) und
+  `TRAILING_BOT_LIVE_POSTING=1`. **Beide** sind default aus — bis dahin läuft der Bot vollständig,
+  trackt und loggt, postet aber keine Zeile. Ein Deploy allein postet nichts.
+- [ ] **#T42-2 Fleet-Restart (Michi).** `core/fleet.py` ist beim Watchdog-Import gelesen; der neue
+  Eintrag (start_delay 271) wird erst nach Restart supervised. Beim ersten Start legt der Bot seine
+  eigene Tabelle `trailing_positions` an (keine bestehende Live-Tabelle wird angefasst).
+- [ ] **#T42-3 Cornix an den Channel hängen (Michi).** Inklusive Sizing — der Bot postet
+  single-entry (Arm B, PR #197).
+- [ ] **#T42-4 `test_fleet_definition.py::test_watchdog_view_is_unchanged` ist stale — VORBESTEHEND.**
+  Die Golden-Liste wurde bei der Registrierung der Bots 36–39 nie nachgezogen; der Test ist ohne
+  Bot 40 identisch rot (verifiziert 2026-07-26 durch Stash der `fleet.py`-Änderung). Bewusst NICHT
+  in diesem PR refreshed: einen Guard im selben PR grün zu drehen, den dieser PR auslöst, ist genau
+  das Muster aus Harte Regel 9. Eigener Fix-Moment — Golden auf 36–40 nachziehen.
+- [ ] **#T42-5 Kerzen-Maske der Studie bündig machen (offen, Re-Lauf nötig).** `tools/trailing_slot_budget.py:143`
+  selektiert über `open_time`, die letzte Kerze eines Trades reicht damit über den erfassten Close
+  hinaus; der Exit-ZEITPUNKT ist gedeckelt, der Exit-WERT nicht. Einseitig und ≤1 Kerze/Trade, kippt
+  die Empfehlung nicht (Core-Review PR #198). Bündig wäre `open_time + tf <= close_time` — kostet
+  neue Zahlen, deshalb Operator-Entscheid. In den „Ehrlichen Grenzen" des Reports dokumentiert.
+
 **Ledger-Verifikation (2026-07-09, T-2026-CU-9050-028):** Fünf Checkboxen widersprachen ihrer eigenen Annotation. Jede wurde am Code nachgeprüft statt blind geflippt — mit einem Treffer: **die Annotation von P1.26 war selbst falsch**, das Finding ist ein realer offener Dead-Code-Bug (Step 2 hatte sich von Cooldown-Rows einer älteren Codeversion täuschen lassen). Geflippt: P1.5, P1.11, P1.18, P2.50. Offen geblieben mit geschärfter Annotation: P1.26 (echter Bug), P2.2 (nur die TZ-Dimension ist gelöst, die Spaltenbreite nicht). Neu abgespalten/gefunden: **P1.45** (Post-Pfade verwerfen die Artefakt-`model_id` — latente Regel-6-Verstösse in MIS/RUB/QM), **P2.51** (Guard disarmt still bei gelöschten Goldens), **P3.13** (Tag-Längennetz deckt nur Mayank ab). Ausserdem am Code verifiziert und weiterhin offen: P1.37, P1.39, P1.41, P1.43, P1.44 — die PRs #13/#15 haben keines davon miterledigt.
 
 **Step 3 (2026-07-03) ist gelaufen** — ML-Trainer-Audit über `Documents\_X` (6 parallele Reviews, Trainer ↔ Live-Bot ↔ Artefakt-Introspektion): `audit_reports/13_x_ml_trainers.md`. Kurzfassung: ABR1-11/18-Features-Bug im Trainer bewiesen (Split-Counts=0), AIM1-Inversion code-erklärt (Volatilitäts-Label + round-Join-Lookahead + totes Vokabular), RUB1 mit stillem MACD-9/21↔12/26-Bruch, ATB1 trainiert auf anderem Event-Typ als es handelt, EPD1 wird live ohne das Trainings-Gate befragt, MIS1 ohne jede Provenienz + Ticker-Leakage; P1.18 widerlegt; SRA1-v2 = bewiesene Formatkonvertierung von v1.

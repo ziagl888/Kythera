@@ -23,10 +23,15 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+import unittest.mock as mock  # noqa: E402
+
+from tools import trailing_slot_budget as tsb  # noqa: E402
 from tools.trailing_slot_budget import (  # noqa: E402
     capture_at,
     fill_channel,
+    leg_stats,
     occupancy,
+    simulate,
     slot_index,
     trail_exit,
 )
@@ -174,6 +179,127 @@ def test_fill_channel_skips_thin_and_negative_legs():
     }
     res = fill_channel(stats, 10, budget=500, measure="mean", fee=0.10)
     assert res["accepted"] == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# leg_stats + simulate — the two composing functions (added after the PR #198
+# core review found them unpinned; they carry the grid-boundary and the candle-
+# window logic, i.e. exactly where an off-by-one would be invisible).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _stat_trade(tag, direction, ot_h, ct_h, ru, act=0.0):
+    ot = BASE + timedelta(hours=ot_h)
+    ct = BASE + timedelta(hours=ct_h)
+    return {
+        "sym": "BTCUSDT",
+        "tag": tag,
+        "dir": direction,
+        "ot": ot,
+        "ct": ct,
+        "real_unlev": ru,
+        "real_lev": ru * LEV,
+        "trail": {act: (ru, ru * LEV, ct.replace(tzinfo=None))},
+    }
+
+
+def test_leg_stats_scores_live_legs_on_a_grid_spanning_all_trades():
+    """Grid bounds come from ALL trades, evaluation only from LIVE legs.
+
+    Both halves matter: scoring a shadow leg would put a leg that never reaches
+    Cornix into a Cornix budget, while cutting the GRID to the live trades would
+    move every leg's occupancy denominator as soon as the register changes."""
+    live = _stat_trade("MIS1-72h", "LONG", 0, 10, 5.0)
+    shadow = _stat_trade("SHADOWTAG", "LONG", 0, 400, 99.0)  # much later close
+
+    # Patch the real register's function, not sys.modules: leg_stats does
+    # `from core import shadow_gate`, which reads the PACKAGE attribute — a
+    # sys.modules patch only lands if nothing imported it earlier in the run.
+    from core import shadow_gate as sg
+
+    def fake_status(tag, direction):
+        return sg.SHADOW if tag == "SHADOWTAG" else sg.LIVE
+
+    with mock.patch.object(sg, "leg_status", fake_status):
+        out, _grid0, glen = leg_stats([live, shadow], live_only=True, act=0.0, fee=0.10)
+        assert set(out) == {"MIS1-72h LONG"}, out  # shadow leg not scored
+        assert glen > 400, glen  # …but the grid still spans its 400h close
+        assert out["MIS1-72h LONG"]["n"] == 1
+        assert abs(out["MIS1-72h LONG"]["value_trail_net"] - (5.0 - 0.10)) < 1e-9
+
+        out_all, _, _ = leg_stats([live, shadow], live_only=False, act=0.0, fee=0.10)
+    assert set(out_all) == {"MIS1-72h LONG", "SHADOWTAG LONG"}
+
+
+def test_simulate_uses_only_candles_inside_the_trade():
+    """The candle window is `open_time` between entry and recorded close.
+
+    Pins BOTH edges, because they are asymmetric on purpose (documented in the
+    report's honest limits): the candle straddling the ENTRY is excluded, so no
+    pre-entry peak can arm the trail — while the last candle may open at the close
+    and therefore still reach past it."""
+    seen = {}
+
+    def fake_wick(conn, sym, lo, hi, tf):
+        t = np.array(
+            [np.datetime64(BASE.replace(tzinfo=None) + timedelta(hours=h)) for h in (-1, 0, 1, 2, 3, 4)],
+            dtype="datetime64[ns]",
+        )
+        return {"t": t, "h": np.full(6, 101.0), "l": np.full(6, 99.0), "c": np.full(6, 100.0)}
+
+    trade = {
+        "sym": "BTCUSDT",
+        "tag": "X",
+        "dir": "LONG",
+        "entry": 100.0,
+        "ot": BASE + timedelta(hours=1),
+        "ct": BASE + timedelta(hours=3),
+        "real_unlev": 0.0,
+        "real_lev": 0.0,
+    }
+
+    def spy_trail_exit(fav, adv, x, activation=0.0):
+        seen["n"] = len(fav)
+        return None
+
+    with mock.patch.object(tsb, "read_coin_wick", fake_wick), mock.patch.object(tsb, "trail_exit", spy_trail_exit):
+        simulate(None, [trade], LEV, "1h", 0.10, [0.0])
+
+    # Candles at h=1,2,3 — the h=-1 and h=0 candles (before the entry) are out,
+    # and h=4 (after the recorded close) is out.
+    assert seen["n"] == 3, seen
+    # No trigger → the trade keeps its recorded close (stored naive, like all times here).
+    assert trade["trail"][0.0][2] == trade["ct"].replace(tzinfo=None)
+
+
+def test_trailing_never_outlives_the_recorded_close():
+    """Invariant from the module docstring: trailing can only pull an exit EARLIER."""
+
+    def fake_wick(conn, sym, lo, hi, tf):
+        t = np.array(
+            [np.datetime64(BASE.replace(tzinfo=None) + timedelta(hours=h)) for h in (0, 1, 2)],
+            dtype="datetime64[ns]",
+        )
+        return {
+            "t": t,
+            "h": np.array([100.0, 120.0, 120.0]),
+            "l": np.array([100.0, 119.0, 100.0]),
+            "c": t.astype(float),
+        }
+
+    trade = {
+        "sym": "BTCUSDT",
+        "tag": "X",
+        "dir": "LONG",
+        "entry": 100.0,
+        "ot": BASE,
+        "ct": BASE + timedelta(hours=2),
+        "real_unlev": 0.0,
+        "real_lev": 0.0,
+    }
+    with mock.patch.object(tsb, "read_coin_wick", fake_wick):
+        simulate(None, [trade], LEV, "1h", 0.10, [0.0])
+    assert trade["trail"][0.0][2] <= trade["ct"].replace(tzinfo=None)
 
 
 if __name__ == "__main__":

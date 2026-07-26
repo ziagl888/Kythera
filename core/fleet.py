@@ -330,4 +330,18 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 263,
         "restart_interval": None,
     },
+    # ── Trailing-Close-Arm in eigenem Channel (T-2026-KYT-9050-042 Phase C) ───
+    # Kein Detector: spiegelt die 33 gerosterten Beine (core/trailing_roster.py)
+    # in CH_TRAILING und schliesst sie dort per Trailing-Close — der A/B-Arm gegen
+    # den Hold-Arm der bestehenden Fleet. Schreibt NIE in ai_signals. Postet nur
+    # bei TRAILING_BOT_LIVE_POSTING=1 UND gesetztem CH_TRAILING (beides default
+    # aus). Neuer Eintrag wird erst nach Watchdog-Restart supervised (FLEET wird
+    # beim Watchdog-Import gelesen) ⇒ Operator-Gate.
+    {
+        "name": "Trailing Close Bot",
+        "script": "40_trailing_close_bot.py",
+        "group": "ai",
+        "start_delay": 271,
+        "restart_interval": None,
+    },
 ]

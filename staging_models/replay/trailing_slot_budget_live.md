@@ -8,7 +8,7 @@ _generated 2026-07-26T14:21:06.702998+00:00 · read-only · nur LIVE-Beine · tr
 
 Ein skalenfreier Trail (`schließe bei X % Rückgabe vom Peak`) feuert auch auf einem 0,5-%-Peak und macht die Fleet zum Micro-Scalper. `act` = geforderter Peak (unlev %), bevor der Trail scharf wird. `unter Gebühr` = Anteil Trades, deren Trailing-Ertrag die 0,10-%-Gebühr nicht deckt.
 
-| act % | Σ netto (alle Live-Beine) | Ø/Trade netto | unter Gebühr | Median Haltedauer h | Ø Slots (alle) | netto/Slot | **Füllung 500 netto** | Beine |
+| act % | Σ netto (alle Live-Beine) | Ø/Trade netto | unter Gebühr | Median Haltedauer h (über Beine) | Ø Slots (alle) | netto/Slot | **Füllung 500 netto** | Beine |
 |--:|--:|--:|--:|--:|--:|--:|--:|--:|
 | 0 | 36416 | 0.584 | 18 % | 0.4 | 50 | 731 | **36442** | 36 |
 | 1 | 46034 | 0.738 | 15 % | 2.0 | 189 | 244 | **46064** | 37 |
@@ -17,7 +17,7 @@ Ein skalenfreier Trail (`schließe bei X % Rückgabe vom Peak`) feuert auch auf 
 | 5 | 63145 | 1.012 | 42 % | 12.3 | 674 | 94 | **54692** | 30 |
 | 10 | 73897 | 1.185 | 52 % | 15.8 | 948 | 78 | **50980** | 23 |
 
-_Referenz hold (ohne Trailing), netto: **64478** · Ø Slots 1221 · Median Haltedauer 27.0 h_
+_Referenz hold (ohne Trailing), netto: **64478** · Ø Slots 1221 · Median Haltedauer 27.0 h (über Beine)_
 
 ## Beine bei act = 2 %
 
@@ -87,6 +87,8 @@ _Referenz hold (ohne Trailing), netto: **64478** · Ø Slots 1221 · Median Halt
 
 - **Registerstand ist zeit-variabel** — der heutige `leg_status` liegt auf der ganzen Historie.
 - **15m-Auflösung.** Der Trail wird auf Kerzen-Extremen ausgewertet, mit strikt vorherigem Peak (keine Gleich-Kerzen-Trigger). Ein 5m/10s-Resolver (T-035-Harness) ist die nächste Verschärfung; die DCA-treue Bestätigung der Finalisten steht noch aus.
+- **Die Kerzen-Maske schließt an der Exit-Seite nicht bündig ab.** Selektiert wird über `open_time`, also reicht die letzte Kerze eines Trades bis zu einem `tf`-Intervall über den erfassten Close hinaus; ihr Extrem kann den Trail noch scharfstellen. Der Ausstiegs-ZEITPUNKT ist gedeckelt (nie nach dem erfassten Close), der Ausstiegs-WERT nicht. Einseitig — Zusatzdaten erzeugen Trigger, sie entfernen keine — und auf ≤1 Kerze pro Trade begrenzt (bei den Langhaltern ~1 % der Kerzen). Bündig wäre `open_time + tf <= close_time`; das kostet einen Re-Lauf und damit neue Zahlen.
+- **Auch die p95-sichere Auswahl reißt den Deckel in der Spitze:** die gemeinsame Belegung erreicht 2001 = 4× die 500. In den obersten ~5 % der Stunden lehnt Cornix also ab, und ohne eigene Zulassungskontrolle entscheidet nicht die Auswahl, sondern der Zufall, welche Trades das trifft (Bot 40 deckelt deshalb selbst).
 - **Wert = Σ unlevered %-Bewegung minus Gebühr**, Gleichgewichtung, kein Compounding: als Dichte-Maß robust, als absolute Rendite nicht wörtlich.
 - **Slippage ist NICHT modelliert.** Bei niedriger Aktivierungsschwelle sind die Exits klein und zahlreich — dort frisst Slippage überproportional. Das spricht zusätzlich gegen act=0.
 - Greedy ist nicht beweisbar optimal (Knapsack).

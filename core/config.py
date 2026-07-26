@@ -116,6 +116,15 @@ CH_AIM2_TOPN = _ch("CH_AIM2_TOPN")
 # hier ist ein Nicht-Handels-Channel (kein Cornix) → null Trade-Risiko. Nie den
 # Handels-Channel hier eintragen (Regel 4).
 CH_SHADOW_TEST = _ch("CH_SHADOW_TEST")
+# Trailing-Close-Bot (Bot 40, T-2026-KYT-9050-042 Phase C): EIGENER Channel, in den
+# der Bot die 33 ausgewählten Beine spiegelt und per Trailing schließt. Michi hängt
+# Cornix selbst dran — der Channel ist der Trailing-Arm gegen den Hold-Arm der
+# bestehenden Fleet. Ungesetzt/0 ⇒ der Bot läuft, trackt und loggt, postet aber
+# nichts (Shadow) — zusammen mit TRAILING_BOT_LIVE_POSTING das doppelte Sicherheits-
+# netz gegen einen Live-Post, den niemand entschieden hat. NIE einen bestehenden
+# Handels-Channel hier eintragen: der Bot postet `Close <SYMBOL>`, und das wirkt
+# symbol-weit auf ALLE Trades des Channels (s. Kommentar bei _ch_override unten).
+CH_TRAILING = _ch("CH_TRAILING")
 
 
 # Per-Bot-Override (Operator 2026-07-07): ungesetzt → Fallback auf den
