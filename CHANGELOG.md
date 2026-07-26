@@ -1,3 +1,28 @@
+## [2026-07-27] Trailing-Bot: Symbol-Abkühlzeit nach einem Close (T-2026-KYT-9050-049)
+
+Befund aus der Trade-Kontrolle nach ~3 h Live-Betrieb (Michi): zwischen einem `Close <SYMBOL>`
+und einem neuen Entry auf demselben Symbol lag **keinerlei Wartezeit** — `XTZUSDT` Close und
+neuer Entry in DERSELBEN Sekunde (SRA2 SHORT → MIS1-72h LONG), `ENAUSDT` 3 s auseinander
+(ATS2 LONG → MAX1 SHORT), beide mit Richtungswechsel.
+
+Die Outbox liefert je Channel streng FIFO, Cornix bekommt den Close also garantiert zuerst.
+Das reicht aber nur bis zur Telegram-Grenze: Cornix setzt daraufhin **zwei Markt-Orders in
+Gegenrichtung fast gleichzeitig** an Binance ab. Ist der Close dort noch nicht abgerechnet,
+wenn die Gegenposition aufgeht, macht der nachlaufende Close die neue Position gleich wieder
+flach. Eingetreten ist das nicht (das Buch stimmt: 123 Entries = 123 Positionen, 21 Closes =
+21 geschlossene, **kein** Close gegen eine zweite offene Position) — aber es war Glück.
+
+**Fix:** ein Symbol bleibt nach einem GEPOSTETEN Close `TRAILING_BOT_SYMBOL_COOLDOWN_SEC`
+(default 60 s) gesperrt. Neue Abweis-Kategorie `SYMBOL_COOLING` neben `SYMBOL_HELD`/`SLOT_CAP`,
+in der Zyklus-Summenzeile mitgezählt. Nur geposteten Closes kühlen ab — ein Shadow-Close hat
+nie ein Kommando gesendet. Fenster rechnet die DB gegen ihre eigene `NOW()` (TZ-Kontrakt R3).
+
+**Aus dem Mutationstest gelernt:** die erste Pin-Fassung prüfte `admit` und
+`read_cooling_symbols` je einzeln — beide korrekt, aber das Abklemmen der Verdrahtung in
+`open_mirrors` machte **keinen** Pin rot. Dieselbe Lücken-Klasse, die der PR-#198-Review an
+`leg_stats`/`simulate` bemängelt hatte: Primitiven gepinnt, Komposition nicht. Ein
+Verdrahtungs-Pin ist nachgezogen (37 Pins) und per Mutation belegt.
+
 ## [2026-07-27] Trailing-Bot: Per-Coin-Preis-Fallback abgeschaltet (T-2026-KYT-9050-048)
 
 Operator-Auftrag Michi, direkt nach dem Live-Start: Bot 40 fällt bei einem Ausfall von
