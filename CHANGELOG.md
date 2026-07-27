@@ -1,3 +1,30 @@
+## [2026-07-27] Trailing-Arm: Exit-Regeln am offenen Buch gemessen — Verdikt (T-2026-KYT-9050-052)
+
+**Anlass:** Bot 40s offenes Buch entmischte sich binnen eines Tages selbst (gemessen ~19:30:
+128 LONG / 5 SHORT, Ø −1,84 %, 91/128 im Minus — der Hold-Arm derselben Beine: 789/324,
+Shorts bei Ø +3,90 %). Der Trail wird erst bei Peak > 2 % scharf und kann per Konstruktion
+**nur Gewinner schließen**; der Arm hat sich seine eigene Short-Absicherung weggetrailt
+(88 × TRAIL @ Ø +3,13 %). Realisierte Summen sehen dabei gut aus — das war das methodische
+Loch von PR #198.
+
+**Neu:** `tools/trailing_book_health.py` misst jede Exit-Regel an beiden Seiten: realisiert
+(netto, Dichte/Slot-Tag) UND offenes Buch (Counts je Richtung, Ø Mark, Unterwasser-Anteil,
+Equity-MaxDD = realisiert + offenes MTM; Tages-Zeitreihen im JSON). 15 Regeln über März–Juli,
+44 144 Roster-Trades, **ROM1 ausgeschlossen** — dessen Re-Forwards standen für 10 334 % der
+49 204-%-Erwartung aus PR #198 (Doppelzählung); ohne ROM1 erwartet derselbe Trail 39 116 %.
+Pins: `backtest/test_trailing_book_health.py` (9 Tests, DB-frei).
+
+**Verdikt** (`staging_models/replay/trailing_arm_verdict_t052.md`): Kein `act` heilt das Buch
+(act=2/5/10 → Ø Mark −2,73/−1,96/−0,89 %, nie positiv) — ein Winners-only-Exit erzeugt zwingend
+ein Losers-only-Buch. Es gibt aber Regeln, die es können, gegen realisierten Ertrag:
+**Zeit-Stop 24 h** auf nie-scharfe Trades (Buch −1,17 %, beste Dichte 1,431, MaxDD −31 %,
+Preis −11k netto) und **Exposure-Cap ±50** (MaxDD 683 statt 4 377, deckelt aber nur).
+Hard-Stop, Portfolio-Trail und Nur-SHORT-Trail sind gemessen und verworfen. Grundproblem
+bleibt: der Arm läuft additiv zum Hold-Arm auf demselben Konto und hält bevorzugt dessen
+Verlierer doppelt. Empfehlung an Michi: Zeit-Stop 24 h in Bot 40 ODER Arm parken und T-041
+als Teilschließung in der Fleet weiterverfolgen (dominiert Hold auf Netto UND MaxDD).
+Read-only-Session, kein Eingriff in den laufenden Bot.
+
 ## [2026-07-27] Trailing-Bot: Einstieg zum Markt statt zum Quell-Entry (T-2026-KYT-9050-051)
 
 **Messung der ersten sauberen Live-Stunden:** von 24 gespiegelten Signalen füllten nur **5

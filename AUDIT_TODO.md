@@ -42,6 +42,22 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   hinaus; der Exit-ZEITPUNKT ist gedeckelt, der Exit-WERT nicht. Einseitig und ≤1 Kerze/Trade, kippt
   die Empfehlung nicht (Core-Review PR #198). Bündig wäre `open_time + tf <= close_time` — kostet
   neue Zahlen, deshalb Operator-Entscheid. In den „Ehrlichen Grenzen" des Reports dokumentiert.
+- [x] **#T52-1 Offenes-Buch-Loch der Studie geschlossen (T-2026-KYT-9050-052, 2026-07-27).** Die
+  Slot-Budget-Metrik (realisierte Summen) übersah, dass ein aktivierungs-gegateter Trail per
+  Konstruktion nur Gewinner schließt — Bot 40s Buch entmischte sich live binnen eines Tages
+  (128 L / 5 S, Ø −1,84 %). Neu: `tools/trailing_book_health.py` (Equity = realisiert + offenes
+  MTM, Buch-Zusammensetzung über die Zeit) + 9 DB-freie Pins. Verdikt inkl. Regel-Vergleich:
+  `staging_models/replay/trailing_arm_verdict_t052.md`.
+- [x] **#T52-2 ROM1-Doppelzählung in der PR-#198-Erwartung beziffert.** ROM1 ist Re-Forwarder
+  (Bot 28); seine Beine standen für 10 334 % der 49 204-%-Erwartung (21 %). Ohne ROM1 erwartet
+  Trail act=2 **39 116 %** (März–Juli). Die Roster-Auswahl selbst bleibt unverändert — AK3
+  (ein Symbol je Position) unterdrückt die Duplikate im Live-Bot ohnehin größtenteils.
+- [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi).** Simuliert und empfohlen:
+  **Zeit-Stop 24 h** auf nie-scharfe Spiegel (Buch-Mark −1,17 % statt −2,73 %, Dichte 1,431,
+  MaxDD −31 %, Preis −11k netto) — ODER Arm parken und T-041 als Teilschließung in der Fleet
+  (Roadmap B) weiterverfolgen. Kombination Zeit-Stop + Exposure-Cap ist NICHT simuliert und
+  müsste vor Aktivierung einmal durch `tools/trailing_book_health.py`. Bis zum Entscheid läuft
+  der Bot unverändert (Operator-Vorgabe dieser Session).
 
 **Ledger-Verifikation (2026-07-09, T-2026-CU-9050-028):** Fünf Checkboxen widersprachen ihrer eigenen Annotation. Jede wurde am Code nachgeprüft statt blind geflippt — mit einem Treffer: **die Annotation von P1.26 war selbst falsch**, das Finding ist ein realer offener Dead-Code-Bug (Step 2 hatte sich von Cooldown-Rows einer älteren Codeversion täuschen lassen). Geflippt: P1.5, P1.11, P1.18, P2.50. Offen geblieben mit geschärfter Annotation: P1.26 (echter Bug), P2.2 (nur die TZ-Dimension ist gelöst, die Spaltenbreite nicht). Neu abgespalten/gefunden: **P1.45** (Post-Pfade verwerfen die Artefakt-`model_id` — latente Regel-6-Verstösse in MIS/RUB/QM), **P2.51** (Guard disarmt still bei gelöschten Goldens), **P3.13** (Tag-Längennetz deckt nur Mayank ab). Ausserdem am Code verifiziert und weiterhin offen: P1.37, P1.39, P1.41, P1.43, P1.44 — die PRs #13/#15 haben keines davon miterledigt.
 
