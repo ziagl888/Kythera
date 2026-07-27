@@ -43,6 +43,13 @@ from core.wave_exit_sim import trailing_tp_trigger  # noqa: E402
 CHANNEL = -1002222222222  # test-local, never a real channel id
 
 
+def _recent(minutes_ago: float = 0.5):
+    """opened_at as the DB hands it back: timezone-aware."""
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=minutes_ago)
+
+
 def _load_bot(live_posting: bool = True):
     """Load the numerically named bot module with DB + config stubbed out."""
     env = {"TRAILING_BOT_LIVE_POSTING": "1"} if live_posting else {}
@@ -132,12 +139,12 @@ class FakeConn:
         pass
 
 
-def _src_row(sid, symbol, model, direction, entry=100.0, age_min=1.0):
+def _src_row(sid, symbol, model, direction, entry=100.0, age_sec=5.0):
     """One ai_signals row in the shape read_source_signals SELECTs.
 
     `age_min` is what the DB computes as `NOW() - open_time`; default is a fresh
     signal so the existing pins keep exercising the mirroring path."""
-    return (sid, symbol, model, direction, entry, entry, entry * 0.95, "[110.0, 120.0]", "20x", age_min)
+    return (sid, symbol, model, direction, entry, entry, entry * 0.95, "[110.0, 120.0]", "20x", age_sec)
 
 
 def _cand(sid, symbol, tag, direction):
@@ -311,7 +318,7 @@ def test_only_new_highs_are_worth_persisting():
 def test_source_close_mirrors_into_a_close():
     """AK8. When the fleet closes the trade (SL/TP/timeout), the mirror must close
     too — otherwise the A/B arm stops measuring the same trades."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True)
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={"BTCUSDT": 104.0}):
@@ -323,7 +330,7 @@ def test_source_close_mirrors_into_a_close():
 
 def test_trailing_trigger_closes_the_mirror():
     """The bot's one own decision: peak +10 %, give back to +9 % → close."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True)
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     src = {42: {"symbol": "BTCUSDT"}}
@@ -336,7 +343,7 @@ def test_trailing_trigger_closes_the_mirror():
 def test_no_price_means_no_decision():
     """A coin without a tick keeps its position — closing it would be a statement
     about a market we cannot see."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True)
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
@@ -356,7 +363,7 @@ def test_a_failed_batch_never_falls_back_to_per_coin_calls():
     assert "get_live_price(" not in code, "no per-symbol price call may remain in the bot"
 
     # And behaviourally: a dead batch produces no calls and no decisions at all.
-    rows = [(i, 40 + i, f"C{i}USDT", "MIS1-72h", "LONG", 100.0, 10.0, True) for i in range(30)]
+    rows = [(i, 40 + i, f"C{i}USDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, None) for i in range(30)]
     conn = FakeConn(mirrors=rows)
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
@@ -368,7 +375,7 @@ def test_a_failed_batch_never_falls_back_to_per_coin_calls():
 def test_source_gone_without_a_price_closes_with_an_unknown_mark():
     """The source no longer holds it, so holding is wrong — but the ledger must not
     claim a mark nobody measured."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True)
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
@@ -561,7 +568,7 @@ def test_retired_leg_closes_with_its_own_reason():
     """A leg that leaves the register while its trade runs still ends the mirror —
     but it is not the same event as the fleet closing the trade, and the ledger
     must be able to tell them apart."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True)
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={"BTCUSDT": 104.0}):
@@ -584,8 +591,8 @@ def test_already_running_trades_are_recorded_not_mirrored():
     """An old trade is remembered so it is never mirrored — and never re-considered."""
     conn = FakeConn(
         ai_signals=[
-            _src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_min=4000.0),  # ~3 days old
-            _src_row(2, "ETHUSDT", "RUB1", "LONG", age_min=2.0),  # opened just now
+            _src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_sec=240000.0),  # ~3 days old
+            _src_row(2, "ETHUSDT", "RUB1", "LONG", age_sec=5.0),  # opened just now
         ]
     )
     sources, _ = bot.read_source_signals(conn)
@@ -601,11 +608,12 @@ def test_already_running_trades_are_recorded_not_mirrored():
     assert marks, conn.store["sql"]
 
 
-def test_the_age_cutoff_covers_a_restart_window():
-    """A trade that opened DURING a fleet restart (~5 min) is still the same trade
-    and must be mirrored; the default cutoff has to leave room for that."""
-    assert bot.MAX_MIRROR_AGE_MIN >= 10.0, bot.MAX_MIRROR_AGE_MIN
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_min=6.0)])
+def test_the_age_cutoff_keeps_the_entry_at_the_market():
+    """The cutoff is what keeps the mirrored entry reachable for Cornix. At a 15 min
+    window, 18 of 101 open mirrors sat >1 % away from the market (measured
+    2026-07-27) and Cornix never opened them."""
+    assert bot.MAX_MIRROR_AGE_SEC <= 180.0, bot.MAX_MIRROR_AGE_SEC
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_sec=60.0)])
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set()) == 1
 
@@ -615,7 +623,7 @@ def test_missing_open_time_counts_as_old():
     row = (1, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 100.0, 95.0, "[110.0]", "20x", None)
     conn = FakeConn(ai_signals=[row])
     sources, _ = bot.read_source_signals(conn)
-    assert sources[1]["age_min"] == float("inf")
+    assert sources[1]["age_sec"] == float("inf")
     assert bot.open_mirrors(conn, sources, {}, set()) == 0
     assert conn.store["outbox"] == []
 
@@ -648,7 +656,7 @@ def test_rejections_are_summarised_not_logged_per_item():
                 "targets": [110.0],
                 "lev": "20x",
                 "density": 0.959,
-                "age_min": 1.0,
+                "age_sec": 5.0,
             }
             for i in range(50)
         }
@@ -744,6 +752,90 @@ def test_symbol_held_still_wins_over_cooling():
     log should see the real cause, not the milder one."""
     admitted, rejected = bot.admit([_cand(1, "BTCUSDT", "MIS1-72h", "LONG")], {"BTCUSDT"}, 500, cooling={"BTCUSDT"})
     assert admitted == [] and rejected[0][2] == "SYMBOL_HELD"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fill tracking. Operator finding (Michi, 2026-07-27): Cornix had not opened some
+# trades because the entry was never reached — and the bot had already sent the
+# Close. ENAUSDT MAX1 SHORT was posted at 0.08867 with the market at 0.09000, so
+# Cornix waited for a fall that never came while our book trailed it out.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_fill_needs_the_market_to_reach_the_entry():
+    """Direction-agnostic on purpose: the pin asserts only that the price must touch
+    the entry from the side it was on when we mirrored — it makes no claim about how
+    Cornix treats LONG vs SHORT, which we cannot verify from here."""
+    # Market ABOVE the entry when mirrored -> must come down.
+    assert bot.has_filled(entry=100.0, mirror_price=101.5, price=101.0) is False
+    assert bot.has_filled(entry=100.0, mirror_price=101.5, price=100.0) is True
+    # Market BELOW the entry when mirrored -> must come up.
+    assert bot.has_filled(entry=100.0, mirror_price=98.5, price=99.0) is False
+    assert bot.has_filled(entry=100.0, mirror_price=98.5, price=100.0) is True
+    # Mirrored exactly at the entry -> already there.
+    assert bot.has_filled(entry=100.0, mirror_price=100.0, price=100.0) is True
+
+    # The ENAUSDT case, with its real numbers.
+    assert bot.has_filled(entry=0.08867, mirror_price=0.09000, price=0.09000) is False
+
+
+def test_an_unfilled_mirror_is_never_trailed():
+    """The phantom exit this task removes: no fill means Cornix holds nothing, so
+    there is nothing to trail and nothing to close."""
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, 101.5, _recent())
+    conn = FakeConn(mirrors=[row])
+    mirrors = bot.read_open_mirrors(conn)
+    assert mirrors[42]["filled"] is False
+    # A price that would trigger the trail on a FILLED position …
+    bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 108.9})
+    assert conn.store["outbox"] == [], conn.store["outbox"]  # … publishes nothing
+    assert not [s for s, _ in conn.store["sql"] if "closed_at = NOW()" in s]
+
+
+def test_reaching_the_entry_marks_the_fill_and_then_trailing_starts():
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, None, True, None, 101.5, _recent())
+    conn = FakeConn(mirrors=[row])
+    mirrors = bot.read_open_mirrors(conn)
+    bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 100.0})
+    assert any("filled_at = NOW()" in s for s, _ in conn.store["sql"]), conn.store["sql"]
+    assert mirrors[42]["filled"] is True
+
+
+def test_an_entry_never_reached_expires_instead_of_hanging():
+    """A pending order must not sit in Cornix for days and fill unattended."""
+    old = _recent(minutes_ago=bot.FILL_TIMEOUT_MIN + 5)
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, None, True, None, 101.5, old)
+    conn = FakeConn(mirrors=[row])
+    mirrors = bot.read_open_mirrors(conn)
+    bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 101.4})
+    assert conn.store["outbox"][0] == (CHANNEL, "Close BTCUSDT")
+    assert any(p and bot.REASON_NOT_FILLED in str(p) for _s, p in conn.store["sql"] if p)
+
+
+def test_legacy_rows_without_a_mirror_price_stay_filled():
+    """Rows written before this change carry no mirror_price. Declaring ~100 live
+    positions unfilled on a suspicion would silence the whole channel."""
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, _recent())
+    conn = FakeConn(mirrors=[row])
+    assert bot.read_open_mirrors(conn)[42]["filled"] is True
+
+
+def test_a_new_mirror_records_the_market_price_it_was_posted_at():
+    """Wiring pin — without mirror_price the fill check cannot know which side the
+    entry has to be reached from, and every new row would silently count as filled."""
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    sources, _ = bot.read_source_signals(conn)
+    assert bot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.5}) == 1
+    ins = [p for s, p in conn.store["sql"] if s.startswith("INSERT INTO trailing_positions")][0]
+    assert 101.5 in ins, ins
+
+
+def test_without_a_market_price_nothing_is_mirrored():
+    """No mirror_price would mean no fill check — better to wait one poll."""
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    sources, _ = bot.read_source_signals(conn)
+    assert bot.open_mirrors(conn, sources, {}, set(), prices={}) == 0
+    assert conn.store["outbox"] == []
 
 
 if __name__ == "__main__":
