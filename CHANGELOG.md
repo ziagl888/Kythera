@@ -1,3 +1,41 @@
+## [2026-07-27] Trailing-Bot: enges Spiegel-Fenster + echte Fill-Verfolgung (T-2026-KYT-9050-050)
+
+**Befund (Michi, live):** Cornix hatte manche Trades nie geöffnet, weil der Entry nicht
+erreicht wurde — und der Bot hatte den Close trotzdem schon gesendet. `ENAUSDT` MAX1 SHORT
+wurde mit `CMP Entry 0.08867` gepostet, während der Markt bei `0.09000` stand: Cornix wartete
+auf einen Rückgang, der nicht kam, und unser Buch trailte die Position derweil aus.
+
+**Ausmaß:** über das offene Buch lagen **18 von 101** Spiegeln mehr als 1 % vom Markt entfernt
+(Median 0,40 %, max 2,13 %). Die verbuchten Trailing-Exits sind für diese Positionen Phantom —
+und dieses Buch ist die Grundlage des A/B-Vergleichs gegen den Hold-Arm.
+
+**Ursache:** die Altersgrenze aus T-048 stand auf 15 Minuten. Sie war bewusst so weit gewählt,
+damit ein Fleet-Restart (~5 min) keine Signale verschluckt — der Markt läuft in dieser Zeit
+aber weit genug, dass der geposteten Entry nicht mehr trifft.
+
+**Zwei Fixes, beide vom Operator gefordert:**
+
+- **Fenster auf 90 s** (`TRAILING_BOT_MAX_AGE_SEC`, vorher 15 min). Der Poll läuft alle 10 s,
+  ein frisches Signal wird also normalerweise binnen einer Runde gesehen; der Entry liegt damit
+  praktisch am Markt. Preis: Signale während eines Fleet-Restarts fallen weg — bewusst, denn
+  ein Trade, den Cornix nie öffnet, ist schlimmer als einer, den wir auslassen.
+- **Fill-Verfolgung.** Eine Spiegel-Position gilt erst als offen, wenn der Markt den Entry
+  **berührt** hat (`filled_at`); vorher wird nicht getrailt und nichts geschlossen. Die Prüfung
+  ist bewusst **richtungsunabhängig**: der Preis muss den Entry von der Seite erreichen, auf der
+  er beim Spiegeln stand (`mirror_price`). Sie trifft damit keine Annahme darüber, wie Cornix
+  LONG und SHORT unterschiedlich behandelt — das ließe sich von hier aus nicht verifizieren.
+  Bleibt der Fill `TRAILING_BOT_FILL_TIMEOUT_MIN` (10 min) aus, wird die Zeile als
+  `ENTRY_NOT_FILLED` geschlossen und ein `Close` gepostet, damit in Cornix keine Alt-Order
+  liegen bleibt, die Tage später doch noch füllt.
+
+Alt-Zeilen ohne `mirror_price` gelten weiter als gefüllt — rund 100 Live-Positionen auf einen
+Verdacht hin stillzulegen wäre der schlechtere Fehler. Die Zahlen VOR diesem Commit sind für
+T-2026-KYT-9050-047 nicht auswertbar.
+
+44 Pins (7 neu). Alle drei Zusicherungen per Mutationstest einzeln belegt — **mit Assertion,
+dass die Mutation überhaupt greift**: ein Mutations-Loop ohne diesen Check hatte zuvor ein
+falsch-negatives „Pin hat Zähne" geliefert.
+
 ## [2026-07-27] Trailing-Bot: Symbol-Abkühlzeit nach einem Close (T-2026-KYT-9050-049)
 
 Befund aus der Trade-Kontrolle nach ~3 h Live-Betrieb (Michi): zwischen einem `Close <SYMBOL>`

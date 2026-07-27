@@ -97,18 +97,26 @@ LIVE_POSTING = os.getenv("TRAILING_BOT_LIVE_POSTING", "0") == "1"
 POLL_SECONDS = 10
 
 # Wie alt darf ein Quell-Trade höchstens sein, damit ihn zu spiegeln noch DERSELBE
-# Trade ist? Der Spiegel übernimmt die Geometrie des Quell-Signals (Entry, SL, TPs),
-# aber Cornix füllt zum AKTUELLEN Markt. Bei einem Trade von vor zwei Tagen misst
-# der Trailing-Arm damit nicht mehr denselben Trade wie der Hold-Arm — und genau
-# dieser Vergleich ist der Zweck des Bots.
+# Trade ist?
 #
-# Der Wert deckt bewusst ein Restart-Fenster ab (der Fleet-Restart dauert ~5 min):
-# Trades, die während des Neustarts aufgingen, will man noch mitnehmen, Altbestand
-# nicht. Ohne diese Grenze spiegelt der Bot beim ersten Start den GESAMTEN offenen
-# Bestand — im ersten Shadow-Lauf am 2026-07-26 waren das 465 Positionen auf einen
-# Schlag, teils Tage alt. Dieselbe Klasse wie P2.7 im AI-Monitor ("kein
-# Rückwirkend-Scoring von Alt-Trades nach Prozess-Neustart").
-MAX_MIRROR_AGE_MIN = float(os.getenv("TRAILING_BOT_MAX_AGE_MIN", "15"))
+# Der Spiegel postet den Entry-Preis des Quell-Signals, und Cornix legt darauf eine
+# Order, die erst füllt, wenn der Markt diesen Preis erreicht. Läuft der Markt in der
+# Zwischenzeit weg, öffnet Cornix nie — während unser Buch die Position als offen
+# führte und beim Trail ein `Close` ins Leere schickte. Am 2026-07-27 gemessen: bei
+# einem 15-min-Fenster lagen 18 von 101 offenen Spiegeln mehr als 1 % vom Markt
+# entfernt (Median 0,40 %, max 2,13 %).
+#
+# 90 s ist eng genug, dass der Entry praktisch am Markt liegt (der Poll läuft alle
+# 10 s, ein frisches Signal wird also normalerweise binnen einer Runde gesehen), und
+# weit genug, dass ein kurzer Aussetzer nichts verschluckt. Der Preis: Signale, die
+# während eines Fleet-Restarts (~5 min) aufgehen, fallen weg — bewusst, denn ein
+# Trade, den Cornix nie öffnet, ist schlimmer als einer, den wir auslassen.
+MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "90"))
+
+# Wie lange auf den Fill gewartet wird, bevor die Order als verfallen gilt. Danach
+# wird die Zeile geschlossen und ein `Close` gepostet, damit in Cornix keine
+# Alt-Order liegen bleibt, die Tage später doch noch füllt.
+FILL_TIMEOUT_MIN = float(os.getenv("TRAILING_BOT_FILL_TIMEOUT_MIN", "10"))
 
 # Wie lange ein Symbol nach einem GEPOSTETEN Close gesperrt bleibt, bevor es neu
 # belegt werden darf.
@@ -137,6 +145,8 @@ REASON_PREEXISTING = "PREEXISTING"
 #: Beim Umschalten von Shadow auf Live geschlossen: die Zeile war offen, aber nie
 #: veröffentlicht, kann also keiner Position im Channel entsprechen.
 REASON_SHADOW_CARRYOVER = "SHADOW_CARRYOVER"
+#: Cornix hat den Entry nie erreicht — die Order verfiel, ohne je zu füllen.
+REASON_NOT_FILLED = "ENTRY_NOT_FILLED"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trailing_positions (
@@ -159,6 +169,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS trailing_positions_open_symbol_uniq
     ON trailing_positions (symbol) WHERE closed_at IS NULL;
 """
 
+# Additiv nachgezogen (T-2026-KYT-9050-050): CREATE TABLE IF NOT EXISTS rührt eine
+# bestehende Tabelle nicht an, die Spalten müssen also einzeln kommen — dasselbe
+# Muster wie die Schema-Sicherung in 8_ai_trade_monitor.
+SCHEMA_ADD = [
+    "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS filled_at TIMESTAMPTZ",
+    "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS mirror_price DOUBLE PRECISION",
+]
+
 
 def ensure_schema(conn) -> None:
     """Eigene Tabelle anlegen. Rührt keine bestehende Fleet-Tabelle an.
@@ -171,6 +189,8 @@ def ensure_schema(conn) -> None:
     """
     with conn.cursor() as cur:
         cur.execute(SCHEMA)
+        for stmt in SCHEMA_ADD:
+            cur.execute(stmt)
     conn.commit()
 
 
@@ -228,7 +248,7 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
         cur.execute(
             """
             SELECT id, symbol, model, direction, entry1, price, sl, targets, lev,
-                   EXTRACT(EPOCH FROM (NOW() - open_time)) / 60.0 AS age_min
+                   EXTRACT(EPOCH FROM (NOW() - open_time)) AS age_sec
             FROM ai_signals
             """
         )
@@ -240,7 +260,7 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
     # wird PG-lokal geschrieben (TZ-Kontrakt R3). Ein Vergleich gegen eine in
     # Python gebildete "jetzt"-Zeit wäre genau der Offset-Fehler aus dem TZ-Cluster
     # P2.1–P2.6; `NOW() - open_time` kann ihn gar nicht erst machen.
-    for sid, symbol, model, direction, entry1, price, sl, targets, lev, age_min in rows:
+    for sid, symbol, model, direction, entry1, price, sl, targets, lev, age_sec in rows:
         all_open.add(int(sid))
         if not is_rostered(model, direction):
             continue
@@ -271,7 +291,7 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
             "lev": lev,
             "density": density(model, direction),
             # None (open_time NULL) gilt als beliebig alt — im Zweifel nicht spiegeln.
-            "age_min": float(age_min) if age_min is not None else float("inf"),
+            "age_sec": float(age_sec) if age_sec is not None else float("inf"),
         }
     return out, all_open
 
@@ -327,7 +347,8 @@ def read_open_mirrors(conn) -> dict[int, dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, src_signal_id, symbol, model, direction, entry, peak_pct, posted
+            SELECT id, src_signal_id, symbol, model, direction, entry, peak_pct, posted,
+                   filled_at, mirror_price, opened_at
             FROM trailing_positions
             WHERE closed_at IS NULL
             """
@@ -342,8 +363,15 @@ def read_open_mirrors(conn) -> dict[int, dict]:
             "entry": float(entry),
             "peak_pct": float(peak) if peak is not None else None,
             "posted": bool(posted),
+            # Alt-Zeilen (vor T-050) tragen keine mirror_price. Sie liefen unter der
+            # alten Logik bereits als offen und werden weiter so behandelt — sie
+            # nachträglich als ungefüllt zu erklären hieße, ~100 Live-Positionen auf
+            # einen Verdacht hin stillzulegen.
+            "filled": filled is not None or mprice is None,
+            "mirror_price": float(mprice) if mprice is not None else None,
+            "opened_at": opened,
         }
-        for rid, src, symbol, model, direction, entry, peak, posted in rows
+        for rid, src, symbol, model, direction, entry, peak, posted, filled, mprice, opened in rows
     }
 
 
@@ -494,16 +522,22 @@ def record_preexisting(conn, stale: list[tuple[int, dict]]) -> None:
             ],
         )
     conn.commit()
-    oldest = max(sig["age_min"] for _sid, sig in stale)
+    oldest = max(sig["age_sec"] for _sid, sig in stale)
     logger.info(
-        "📎 %d Quell-Trade(s) als Altbestand vermerkt, nicht gespiegelt (ältester %.0f min, Grenze %.0f min).",
+        "📎 %d Quell-Trade(s) als Altbestand vermerkt, nicht gespiegelt (ältester %.0f s, Grenze %.0f s).",
         len(stale),
         oldest,
-        MAX_MIRROR_AGE_MIN,
+        MAX_MIRROR_AGE_SEC,
     )
 
 
-def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], already: set[int]) -> int:
+def open_mirrors(
+    conn,
+    sources: dict[int, dict],
+    mirrors: dict[int, dict],
+    already: set[int],
+    prices: dict[str, float] | None = None,
+) -> int:
     """Neue Quell-Signale spiegeln. Gibt die Zahl der eröffneten Positionen zurück.
 
     ``already`` sind die Quell-ids, die der Bot schon einmal gespiegelt hat —
@@ -518,10 +552,10 @@ def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], alrea
 
     # Altbestand: lief schon, bevor der Bot ihn sehen konnte. Wird NICHT gespiegelt,
     # aber als Zeile vermerkt, damit er nie wieder als Neuzugang auftaucht.
-    stale = [(sid, sig) for sid, sig in unseen if sig["age_min"] > MAX_MIRROR_AGE_MIN]
+    stale = [(sid, sig) for sid, sig in unseen if sig["age_sec"] > MAX_MIRROR_AGE_SEC]
     if stale:
         record_preexisting(conn, stale)
-    new = [(sid, sig) for sid, sig in unseen if sig["age_min"] <= MAX_MIRROR_AGE_MIN]
+    new = [(sid, sig) for sid, sig in unseen if sig["age_sec"] <= MAX_MIRROR_AGE_SEC]
     if not new:
         return 0
 
@@ -545,7 +579,15 @@ def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], alrea
 
     opened = 0
     live = bool(LIVE_POSTING and TARGET_CHANNEL_ID)
+    prices = get_live_prices_batch() if prices is None else prices
     for sid, sig in admitted:
+        # Der Marktpreis im Moment des Spiegelns entscheidet, von welcher Seite der
+        # Entry erreicht werden muss. Ohne ihn liesse sich der Fill nicht feststellen,
+        # also lieber diesen Zyklus auslassen — das Signal ist im 90s-Fenster noch da.
+        sig["mirror_price"] = prices.get(sig["symbol"])
+        if sig["mirror_price"] is None:
+            logger.info("⏸ %s: kein Marktpreis beim Spiegeln — nächster Zyklus.", sig["symbol"])
+            continue
         # SCHREIBEN ZUERST, posten nur bei echtem Insert — dasselbe Muster wie
         # `DELETE ... RETURNING` im AI-Monitor (P2.8). Anders herum wäre die
         # Outbox-Zeile schon geschrieben, wenn der Insert am Unique-Index
@@ -556,12 +598,12 @@ def open_mirrors(conn, sources: dict[int, dict], mirrors: dict[int, dict], alrea
             cur.execute(
                 """
                 INSERT INTO trailing_positions
-                    (src_signal_id, symbol, model, direction, entry, peak_pct, posted)
-                VALUES (%s, %s, %s, %s, %s, NULL, %s)
+                    (src_signal_id, symbol, model, direction, entry, peak_pct, posted, mirror_price)
+                VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)
                 ON CONFLICT DO NOTHING
                 RETURNING id
                 """,
-                (sid, sig["symbol"], sig["model"], sig["direction"], sig["entry"], live),
+                (sid, sig["symbol"], sig["model"], sig["direction"], sig["entry"], live, sig.get("mirror_price")),
             )
             created = cur.fetchone()
         if created is None:
@@ -608,15 +650,36 @@ def close_mirror(conn, row: dict, reason: str, mark: float | None) -> None:
     )
 
 
+def has_filled(entry: float, mirror_price: float, price: float) -> bool:
+    """Hat der Markt den Entry seit dem Spiegeln erreicht?
+
+    Cornix legt auf den geposteten Entry eine Order und öffnet erst, wenn der Markt
+    dort handelt — richtungsunabhängig, wie Michi am 2026-07-27 beobachtet hat
+    (ENAUSDT SHORT, Entry 1,5 % unter Markt, blieb ungeöffnet). Die Prüfung bildet
+    genau das ab: der Preis muss den Entry von der Seite erreichen, auf der er beim
+    Spiegeln stand. Sie trifft KEINE Annahme darüber, wie Cornix LONG und SHORT
+    unterschiedlich behandelt — nur darüber, dass der Preis den Entry berühren muss.
+    """
+    if mirror_price >= entry:
+        return price <= entry
+    return price >= entry
+
+
 def poll_open_mirrors(
-    conn, sources: dict[int, dict], mirrors: dict[int, dict], all_open: set[int] | None = None
+    conn,
+    sources: dict[int, dict],
+    mirrors: dict[int, dict],
+    all_open: set[int] | None = None,
+    prices: dict[str, float] | None = None,
 ) -> None:
     """Preis-Poll über alle offenen Spiegel-Positionen (Trailing + Quell-Close)."""
     if not mirrors:
         return
-    prices = get_live_prices_batch()
+    if prices is None:
+        prices = get_live_prices_batch()
     open_ids = all_open if all_open is not None else set(sources)
     missing = 0
+    unfilled = 0
 
     for sid, row in mirrors.items():
         if sid not in sources:
@@ -656,6 +719,30 @@ def poll_open_mirrors(
             missing += 1
             continue
 
+        if not row["filled"]:
+            # Noch nicht gefüllt: Cornix hat die Position nicht offen, also gibt es
+            # nichts zu trailen. Ein Trail auf einer ungefüllten Order erzeugt genau
+            # den Phantom-Exit, den dieser Task behebt.
+            if has_filled(row["entry"], row["mirror_price"], float(price)):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE trailing_positions SET filled_at = NOW() WHERE id = %s AND filled_at IS NULL",
+                        (row["id"],),
+                    )
+                conn.commit()
+                row["filled"] = True
+                logger.info("✅ Fill: %s %s @ %s", row["symbol"], row["direction"], row["entry"])
+            else:
+                age = (datetime.datetime.now(datetime.timezone.utc) - row["opened_at"]).total_seconds() / 60
+                if age > FILL_TIMEOUT_MIN:
+                    # Verfallen. Der Close räumt eine etwaige Alt-Order in Cornix ab,
+                    # damit sie nicht Tage später doch noch füllt und eine Position
+                    # aufmacht, die niemand mehr überwacht.
+                    close_mirror(conn, row, REASON_NOT_FILLED, None)
+                else:
+                    unfilled += 1
+            continue
+
         state = TrailingState(
             entry=row["entry"],
             is_long=row["direction"] == "LONG",
@@ -682,6 +769,8 @@ def poll_open_mirrors(
             conn.commit()
             row["peak_pct"] = state.peak_pct
 
+    if unfilled:
+        logger.info("⏳ %d Spiegel warten noch auf ihren Fill (Cornix hat den Entry nicht erreicht).", unfilled)
     if missing:
         # Sichtbar machen, dass Positionen diesen Zyklus ohne Entscheidung blieben —
         # eine stille Lücke im Trailing wäre schlimmer als eine laute.
@@ -724,8 +813,10 @@ def main() -> None:
             # Symbol rausgeht: die Outbox ist per Channel strikt FIFO nach id
             # (4_telegram_bot.py, P0.1(d)/P1.3). Andersherum würde das Close den
             # frisch eröffneten Trade gleich wieder flach machen.
-            poll_open_mirrors(conn, sources, mirrors, all_open)
-            open_mirrors(conn, sources, read_open_mirrors(conn), read_mirrored_src_ids(conn, set(sources)))
+            # EIN Binance-Batch-Call pro Zyklus, geteilt von beiden Schritten.
+            prices = get_live_prices_batch()
+            poll_open_mirrors(conn, sources, mirrors, all_open, prices)
+            open_mirrors(conn, sources, read_open_mirrors(conn), read_mirrored_src_ids(conn, set(sources)), prices)
 
         except KeyboardInterrupt:
             raise
