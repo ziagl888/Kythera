@@ -106,12 +106,12 @@ POLL_SECONDS = 10
 # einem 15-min-Fenster lagen 18 von 101 offenen Spiegeln mehr als 1 % vom Markt
 # entfernt (Median 0,40 %, max 2,13 %).
 #
-# 90 s ist eng genug, dass der Entry praktisch am Markt liegt (der Poll läuft alle
+# 30 s ist eng genug, dass der Entry praktisch am Markt liegt (der Poll läuft alle
 # 10 s, ein frisches Signal wird also normalerweise binnen einer Runde gesehen), und
 # weit genug, dass ein kurzer Aussetzer nichts verschluckt. Der Preis: Signale, die
 # während eines Fleet-Restarts (~5 min) aufgehen, fallen weg — bewusst, denn ein
 # Trade, den Cornix nie öffnet, ist schlimmer als einer, den wir auslassen.
-MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "90"))
+MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "30"))
 
 # Wie lange auf den Fill gewartet wird, bevor die Order als verfallen gilt. Danach
 # wird die Zeile geschlossen und ein `Close` gepostet, damit in Cornix keine
@@ -147,6 +147,11 @@ REASON_PREEXISTING = "PREEXISTING"
 REASON_SHADOW_CARRYOVER = "SHADOW_CARRYOVER"
 #: Cornix hat den Entry nie erreicht — die Order verfiel, ohne je zu füllen.
 REASON_NOT_FILLED = "ENTRY_NOT_FILLED"
+#: Der SL wurde erreicht — Cornix schließt die Position selbst über die Order auf der
+#: Börse. Wir buchen den Exit nur nach und posten BEWUSST NICHTS: ein zusätzliches
+#: `Close` wäre bestenfalls überflüssig und behauptete einen Exit, den nicht wir
+#: ausgelöst haben (Operator-Hinweis Michi, 2026-07-27).
+REASON_SL_HIT = "SL_HIT"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trailing_positions (
@@ -175,6 +180,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS trailing_positions_open_symbol_uniq
 SCHEMA_ADD = [
     "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS filled_at TIMESTAMPTZ",
     "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS mirror_price DOUBLE PRECISION",
+    "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS sl DOUBLE PRECISION",
 ]
 
 
@@ -348,7 +354,7 @@ def read_open_mirrors(conn) -> dict[int, dict]:
         cur.execute(
             """
             SELECT id, src_signal_id, symbol, model, direction, entry, peak_pct, posted,
-                   filled_at, mirror_price, opened_at
+                   filled_at, mirror_price, opened_at, sl
             FROM trailing_positions
             WHERE closed_at IS NULL
             """
@@ -370,8 +376,9 @@ def read_open_mirrors(conn) -> dict[int, dict]:
             "filled": filled is not None or mprice is None,
             "mirror_price": float(mprice) if mprice is not None else None,
             "opened_at": opened,
+            "sl": float(sl) if sl is not None else None,
         }
-        for rid, src, symbol, model, direction, entry, peak, posted, filled, mprice, opened in rows
+        for rid, src, symbol, model, direction, entry, peak, posted, filled, mprice, opened, sl in rows
     }
 
 
@@ -584,10 +591,29 @@ def open_mirrors(
         # Der Marktpreis im Moment des Spiegelns entscheidet, von welcher Seite der
         # Entry erreicht werden muss. Ohne ihn liesse sich der Fill nicht feststellen,
         # also lieber diesen Zyklus auslassen — das Signal ist im 90s-Fenster noch da.
-        sig["mirror_price"] = prices.get(sig["symbol"])
-        if sig["mirror_price"] is None:
+        market = prices.get(sig["symbol"])
+        if market is None:
             logger.info("⏸ %s: kein Marktpreis beim Spiegeln — nächster Zyklus.", sig["symbol"])
             continue
+        if not mirrorable_at(sig["direction"], market, sig["sl"], sig["targets"]):
+            logger.info(
+                "⛔ %s %s %s: Markt %s liegt ausserhalb SL/TP1 — nicht mehr spiegelbar.",
+                sig["symbol"],
+                sig["tag"],
+                sig["direction"],
+                market,
+            )
+            continue
+        # ENTRY = MARKT (Operator-Entscheid Michi, 2026-07-27). Vorher wurde der Entry
+        # des Quell-Signals gepostet — bis der Bot spiegelt, hat die auslösende
+        # Bewegung aber stattgefunden, und der Markt kam zu diesem Preis meist nicht
+        # zurück: von 24 Spiegeln füllten 5 (21 %), bei 15 der 18 Stornos hatte der
+        # Markt den Entry laut 5m-Kerzen nie berührt. Der Arm handelte damit eine
+        # Auswahl, die er selbst erzeugt — bevorzugt Trades, deren Bewegung sich
+        # zurückbildet. Zum Markt einzusteigen füllt praktisch immer und lässt beide
+        # Arme dieselben Signale handeln.
+        sig["entry"] = market
+        sig["mirror_price"] = market
         # SCHREIBEN ZUERST, posten nur bei echtem Insert — dasselbe Muster wie
         # `DELETE ... RETURNING` im AI-Monitor (P2.8). Anders herum wäre die
         # Outbox-Zeile schon geschrieben, wenn der Insert am Unique-Index
@@ -598,12 +624,22 @@ def open_mirrors(
             cur.execute(
                 """
                 INSERT INTO trailing_positions
-                    (src_signal_id, symbol, model, direction, entry, peak_pct, posted, mirror_price)
-                VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)
+                    (src_signal_id, symbol, model, direction, entry, peak_pct, posted,
+                     mirror_price, filled_at, sl)
+                VALUES (%s, %s, %s, %s, %s, NULL, %s, %s, NOW(), %s)
                 ON CONFLICT DO NOTHING
                 RETURNING id
                 """,
-                (sid, sig["symbol"], sig["model"], sig["direction"], sig["entry"], live, sig.get("mirror_price")),
+                (
+                    sid,
+                    sig["symbol"],
+                    sig["model"],
+                    sig["direction"],
+                    sig["entry"],
+                    live,
+                    sig.get("mirror_price"),
+                    sig["sl"],
+                ),
             )
             created = cur.fetchone()
         if created is None:
@@ -622,10 +658,15 @@ def open_mirrors(
     return opened
 
 
-def close_mirror(conn, row: dict, reason: str, mark: float | None) -> None:
-    """Spiegel-Position schließen: Close-Kommando + eigene Zeile stempeln."""
+def close_mirror(conn, row: dict, reason: str, mark: float | None, post: bool = True) -> None:
+    """Spiegel-Position schließen: Close-Kommando + eigene Zeile stempeln.
+
+    ``post=False`` für Exits, die Cornix selbst ausgelöst hat (SL) — dort wäre ein
+    eigenes `Close` überflüssig, und es würde einen Exit behaupten, den wir nicht
+    verursacht haben.
+    """
     cmd, info = close_messages(row, reason, mark)
-    if LIVE_POSTING and TARGET_CHANNEL_ID and row["posted"]:
+    if post and LIVE_POSTING and TARGET_CHANNEL_ID and row["posted"]:
         # Nur schließen, was auch eröffnet wurde. Ein `Close` auf eine nie gepostete
         # Position wäre im Live-Channel ein Kommando gegen einen fremden Trade.
         _post(conn, cmd)
@@ -648,6 +689,35 @@ def close_mirror(conn, row: dict, reason: str, mark: float | None) -> None:
         reason,
         "n/a" if mark is None else f"{mark:+.2f}%",
     )
+
+
+def mirrorable_at(direction: str, market: float, sl: float, targets: list[float]) -> bool:
+    """Ergibt ein Markt-Einstieg auf dieser Geometrie überhaupt noch Sinn?
+
+    Der Spiegel steigt zum aktuellen Markt ein, behält aber SL und Targets des
+    Quell-Signals auf ihren ABSOLUTEN Preisen — es sind S/R-Level, sie mitzuschieben
+    löste sie von den Leveln, und der SL soll derselbe Katastrophen-Stop sein wie im
+    Hold-Arm. Genau deshalb braucht es diesen Riegel: ist der Markt schon über TP1
+    hinaus, wäre die Position im selben Moment im Ziel; ist er jenseits des SL, wäre
+    sie sofort ausgestoppt. Beides ist kein Trade, sondern eine Gebühr.
+    """
+    if not targets or sl is None:
+        return False
+    tp1 = targets[0]
+    if direction == "LONG":
+        return sl < market < tp1
+    return tp1 < market < sl
+
+
+def sl_reached(direction: str, sl: float | None, price: float) -> bool:
+    """Hat der Markt den Stop-Loss erreicht?
+
+    Cornix hält den SL als Order auf der Börse und schließt selbst. Wir erkennen es
+    nur, um unser Buch nachzuziehen — und um KEIN eigenes `Close` zu senden.
+    """
+    if sl is None:
+        return False
+    return price <= sl if direction == "LONG" else price >= sl
 
 
 def has_filled(entry: float, mirror_price: float, price: float) -> bool:
@@ -717,6 +787,11 @@ def poll_open_mirrors(
             # ein Ban kostet die ganze Fleet, ein um 10 s verzögerter Trailing-Exit
             # kostet fast nichts. Der nächste Poll versucht den Batch erneut.
             missing += 1
+            continue
+
+        if row["filled"] and sl_reached(row["direction"], row["sl"], float(price)):
+            # Cornix hat hier schon geschlossen. Nur nachbuchen, nichts posten.
+            close_mirror(conn, row, REASON_SL_HIT, None, post=False)
             continue
 
         if not row["filled"]:

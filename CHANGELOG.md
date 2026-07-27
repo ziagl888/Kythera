@@ -1,3 +1,40 @@
+## [2026-07-27] Trailing-Bot: Einstieg zum Markt statt zum Quell-Entry (T-2026-KYT-9050-051)
+
+**Messung der ersten sauberen Live-Stunden:** von 24 gespiegelten Signalen füllten nur **5
+(21 %)**. Gegen 5m-Kerzen geprüft: bei **15 der 18** Stornos hatte der Markt den Quell-Entry
+**nie berührt** — er lief weg und kam nicht zurück. Das ist kein Bug, sondern im Verfahren
+angelegt: bis der Bot ein Signal sieht, hat die auslösende Bewegung stattgefunden.
+
+**Warum das das Experiment beschädigt:** der Arm handelte damit eine Auswahl, die er selbst
+erzeugt — nur Trades, deren Bewegung sich zurückbildet. Das ist keine neutrale Teilmenge,
+sondern vermutlich die schlechtere Hälfte. Die 49 204-%-Erwartung aus PR #198 setzt handelbare
+Trades aller Beine voraus.
+
+- **Entry = aktueller Markt** beim Spiegeln (Operator-Entscheid Michi). Füllt praktisch immer,
+  beide Arme handeln dieselben Signale.
+- **SL und Targets behalten ihre absoluten Preise.** Sie sind S/R-Level; sie mitzuschieben löste
+  sie von den Leveln, und der SL soll derselbe Katastrophen-Stop sein wie im Hold-Arm. Die R:R
+  verschiebt sich leicht — der ehrliche Preis des späteren Einstiegs.
+- **Plausibilitäts-Riegel:** liegt der Markt schon jenseits TP1 oder jenseits des SL, wird nicht
+  gespiegelt. Sonst wäre die Position im selben Moment im Ziel oder ausgestoppt — kein Trade,
+  nur eine Gebühr.
+- **Fenster 90 s → 30 s.** Es schützt jetzt nicht mehr die Erreichbarkeit des Entries, sondern
+  die **Aktualität der Entscheidung**: ein zehn Minuten altes Signal, zum heutigen Markt
+  eingestiegen, ist ein anderer Trade als der des Hold-Arms.
+- **Kein `Close` mehr beim SL** (Operator-Hinweis Michi): Cornix hält den Stop als Order auf der
+  Börse und schließt selbst. Wir buchen den Exit nur nach — ein eigenes `Close` wäre überflüssig
+  und behauptete einen Exit, den wir nicht ausgelöst haben. Dafür wird der SL jetzt in
+  `trailing_positions` mitgeführt.
+- Der Markt-Entry füllt per Konstruktion, `filled_at` wird beim Insert gesetzt. Damit entfällt
+  auch die Fehlstorno-Rate der Fill-Prüfung (3 von 18 waren falsch: der Markt HATTE den Entry
+  berührt, unsere 10-s-Stichprobe hat es verpasst, während Cornix bei jedem Tick füllt).
+
+52 Pins. Alle vier neuen Zusicherungen einzeln per Mutationstest belegt, jeweils mit Assertion,
+dass die Mutation überhaupt greift.
+
+**Für T-2026-KYT-9050-047:** die Messreihe startet mit diesem Deploy erneut. Alles davor ist
+entweder Phantom (vor 03:51) oder selektions-verzerrt (03:51 bis hier).
+
 ## [2026-07-27] Trailing-Bot: enges Spiegel-Fenster + echte Fill-Verfolgung (T-2026-KYT-9050-050)
 
 **Befund (Michi, live):** Cornix hatte manche Trades nie geöffnet, weil der Entry nicht
