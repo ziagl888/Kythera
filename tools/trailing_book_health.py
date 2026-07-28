@@ -153,14 +153,14 @@ def _gi_of(t: dict, k: int, grid0: np.datetime64) -> int:
     return max(t["gi0"] + 1, min(g, t["gie"]))
 
 
-def exit_trail(t: dict, grid0: np.datetime64, act: float) -> tuple[int, float]:
-    """The live rule: x=10 % give-back once the prior peak cleared `act`."""
+def exit_trail(t: dict, grid0: np.datetime64, act: float, x: float = X_FRAC) -> tuple[int, float]:
+    """The live rule: `x` give-back once the prior peak cleared `act`."""
     if not t["series"]:
         return t["gie"], t["real_unlev"]
-    k = trail_exit(t["fav"], t["adv"], X_FRAC, act)
+    k = trail_exit(t["fav"], t["adv"], x, act)
     if k is None:
         return t["gie"], t["real_unlev"]
-    val = float(prior_peak(t["fav"])[k] * (1.0 - X_FRAC))
+    val = float(prior_peak(t["fav"])[k] * (1.0 - x))
     return _gi_of(t, k, grid0), val
 
 
@@ -207,6 +207,35 @@ def exit_one_sided(t: dict, grid0: np.datetime64, act: float, trail_dir: str) ->
     if t["dir"] != trail_dir:
         return t["gie"], t["real_unlev"]
     return exit_trail(t, grid0, act)
+
+
+def exit_breakeven(t: dict, grid0: np.datetime64, act: float, ts_hours: float | None = None) -> tuple[int, float]:
+    """SL-Nachzug instead of a full trail: once the prior peak clears `act`, the
+    stop ratchets to BREAKEVEN (entry). The trade then rides until it touches the
+    entry again (exit at 0.0) or reaches its natural close — evaporation is
+    bounded at zero instead of captured at peak*(1-x), keeping the upside open.
+
+    With `ts_hours`, never-armed trades additionally get the time-stop (the
+    loser bound the ratchet alone cannot provide — an unarmed trade has no stop
+    to ratchet).
+    """
+    if not t["series"]:
+        return t["gie"], t["real_unlev"]
+    pk = prior_peak(t["fav"])
+    armed = np.flatnonzero(pk > act)
+    k_arm = int(armed[0]) if len(armed) else None
+    if k_arm is not None:
+        touch = np.flatnonzero(t["adv"][k_arm:] <= 0.0)
+        if len(touch):
+            return _gi_of(t, k_arm + int(touch[0]), grid0), 0.0
+        return t["gie"], t["real_unlev"]
+    if ts_hours is None:
+        return t["gie"], t["real_unlev"]
+    deadline = np.datetime64(_naive(t["ot"])) + np.timedelta64(int(ts_hours * 3600), "s")
+    j = int(np.searchsorted(t["tt"], deadline.astype("datetime64[ns]"), side="left"))
+    if j >= len(t["tt"]):
+        return t["gie"], t["real_unlev"]
+    return _gi_of(t, j, grid0), float(t["cm"][j])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -315,15 +344,24 @@ def run_partial(trades: list[dict], glen: int, grid0: np.datetime64, act: float)
     return book
 
 
-def run_exposure_cap(trades: list[dict], glen: int, grid0: np.datetime64, act: float, cap: int) -> Book:
-    """Trail act=2 plus an ADMISSION rule: a new entry whose direction is already
-    `cap` positions ahead of the other side is not taken at all.
+def run_exposure_cap(
+    trades: list[dict],
+    glen: int,
+    grid0: np.datetime64,
+    act: float,
+    cap: int,
+    exits: dict[int, tuple[int, float]] | None = None,
+) -> Book:
+    """Per-trade exits plus an ADMISSION rule: a new entry whose direction is
+    already `cap` positions ahead of the other side is not taken at all.
 
-    This is the only rule here that changes the trade SET, not just the exits —
-    its `n` shrinks, so its net is not comparable 1:1; density and the book
-    metrics are the honest comparison.
+    `exits` defaults to the plain trail; pass a different map to combine the cap
+    with another exit rule. This is the only rule family that changes the trade
+    SET, not just the exits — its `n` shrinks, so its net is not comparable 1:1;
+    density and the book metrics are the honest comparison.
     """
-    exits = {i: exit_trail(t, grid0, act) for i, t in enumerate(trades)}
+    if exits is None:
+        exits = {i: exit_trail(t, grid0, act) for i, t in enumerate(trades)}
     order = sorted(range(len(trades)), key=lambda i: trades[i]["gi0"])
     exit_events: dict[int, list[int]] = defaultdict(list)  # hour → trade indices
     open_cnt = {"LONG": 0, "SHORT": 0}
@@ -344,6 +382,106 @@ def run_exposure_cap(trades: list[dict], glen: int, grid0: np.datetime64, act: f
             open_cnt[d] += 1
             exit_events[max(trades[i]["gi0"] + 1, min(gi, glen - 1))].append(i)
     return book
+
+
+def run_feedback_gate(
+    trades: list[dict],
+    glen: int,
+    grid0: np.datetime64,
+    act: float,
+    thresh: float = -1.0,
+    min_n: int = 10,
+) -> Book:
+    """Regime-fit WITHOUT a forecast: the arm's own open book is the sensor.
+
+    A new entry of direction D is admitted only while the CURRENT mean mark of
+    the arm's open D-positions is above `thresh` — i.e. keep taking longs only
+    as long as the longs already on the book are working. Below `min_n` open
+    positions the gate is open (no signal to read). Exits stay the plain trail,
+    so the measurement isolates the admission effect.
+
+    This is the operator's question (b): "nur posten, wenn es zur Marktlage
+    passt" — implemented as feedback from realised market state instead of a
+    regime classifier (ROM's whitelist measured ~zero discriminative power).
+    """
+    exits = {i: exit_trail(t, grid0, act) for i, t in enumerate(trades)}
+    order = sorted(range(len(trades)), key=lambda i: trades[i]["gi0"])
+    exit_events: dict[int, list[int]] = defaultdict(list)
+    open_set: dict[str, dict[int, None]] = {"LONG": {}, "SHORT": {}}
+    book = Book(glen)
+    ei = 0
+    for h in range(glen):
+        for i in exit_events.get(h, ()):
+            open_set[trades[i]["dir"]].pop(i, None)
+        while ei < len(order) and trades[order[ei]]["gi0"] == h:
+            i = order[ei]
+            ei += 1
+            t = trades[i]
+            d = t["dir"]
+            cur = open_set[d]
+            if len(cur) >= min_n:
+                marks = [
+                    trades[j]["hm"][min(h - trades[j]["gi0"], len(trades[j]["hm"]) - 1)]
+                    for j in cur
+                    if trades[j]["series"]
+                ]
+                if marks and float(np.mean(marks)) <= thresh:
+                    continue  # book of this direction is bleeding — stop feeding it
+            gi, val = exits[i]
+            book.add(t, gi, val)
+            open_set[d][i] = None
+            exit_events[max(t["gi0"] + 1, min(gi, glen - 1))].append(i)
+    return book
+
+
+def run_direction_gate(
+    trades: list[dict],
+    glen: int,
+    grid0: np.datetime64,
+    act: float,
+    allow_long: np.ndarray,
+    allow_short: np.ndarray,
+) -> Book:
+    """Regime-fit via the bluntest observable: BTC 24h momentum sign at entry.
+
+    `allow_long`/`allow_short` are per-grid-hour booleans (LONG admitted only
+    while BTC's trailing 24h return is positive, SHORT only while negative).
+    Baseline for question (b) — the repo's regime classifiers repeatedly
+    measured no edge, so this is the simplest possible directional gate to
+    beat, not a recommendation.
+    """
+    book = Book(glen)
+    for t in trades:
+        h = min(t["gi0"], glen - 1)
+        ok = allow_long[h] if t["dir"] == "LONG" else allow_short[h]
+        if not ok:
+            continue
+        gi, val = exit_trail(t, grid0, act)
+        book.add(t, gi, val)
+    return book
+
+
+def btc_momentum_gates(conn, grid0: np.datetime64, glen: int, tf: str) -> tuple[np.ndarray, np.ndarray]:
+    """(allow_long, allow_short) per grid hour from BTCUSDT's trailing 24h return.
+
+    Hours before the first candle (or without BTC data at all) stay open on both
+    sides — an absent signal must not silently veto trades.
+    """
+    lo = (grid0 - np.timedelta64(26, "h")).astype("datetime64[us]").astype(object)
+    hi = (grid0 + np.timedelta64(int(glen) + 1, "h")).astype("datetime64[us]").astype(object)
+    cd = read_coin_wick(conn, "BTCUSDT", lo, hi, tf)
+    allow_long = np.ones(glen, dtype=bool)
+    allow_short = np.ones(glen, dtype=bool)
+    if len(cd["t"]) == 0:
+        return allow_long, allow_short
+    hours = (grid0 + np.arange(glen) * HOUR).astype("datetime64[ns]")
+    pos_now = np.clip(np.searchsorted(cd["t"], hours, side="right") - 1, 0, len(cd["t"]) - 1)
+    pos_24h = np.clip(np.searchsorted(cd["t"], hours - np.timedelta64(24, "h"), side="right") - 1, 0, len(cd["t"]) - 1)
+    ret24 = cd["c"][pos_now] / cd["c"][pos_24h] - 1.0
+    covered = pos_now > pos_24h  # both lookups resolved to distinct candles
+    allow_long = ~covered | (ret24 > 0.0)
+    allow_short = ~covered | (ret24 < 0.0)
+    return allow_long, allow_short
 
 
 def run_portfolio(trades: list[dict], glen: int, y: float) -> Book:
@@ -369,6 +507,9 @@ RULE_ORDER = [
     ("trail-a2", "Trail act=2 % (Bot 40 heute)"),
     ("trail-a5", "Trail act=5 %"),
     ("trail-a10", "Trail act=10 %"),
+    ("trail-a2-x20", "Trail act=2 %, x=20 % (langsamer closen)"),
+    ("trail-a2-x30", "Trail act=2 %, x=30 %"),
+    ("trail-a10-x20", "Trail act=10 %, x=20 %"),
     ("trail-a2+ts24", "Trail 2 % + Zeit-Stop 24 h"),
     ("trail-a2+ts48", "Trail 2 % + Zeit-Stop 48 h"),
     ("trail-a2+ts72", "Trail 2 % + Zeit-Stop 72 h"),
@@ -378,6 +519,11 @@ RULE_ORDER = [
     ("trail-a2-partial50", "Trail 2 %, 50 % Teilschließung"),
     ("trail-a2-cap50", "Trail 2 % + Exposure-Cap ±50"),
     ("trail-a2-cap100", "Trail 2 % + Exposure-Cap ±100"),
+    ("trail-a2+ts24+cap50", "Trail 2 % + Zeit-Stop 24 h + Cap ±50"),
+    ("be2", "SL-Nachzug: Breakeven ab +2 % (kein Trail)"),
+    ("be2+ts24", "Breakeven ab +2 % + Zeit-Stop 24 h"),
+    ("feedback-gate", "Buch-Feedback-Gate (D nur wenn offenes D-Buch > −1 %)"),
+    ("btc-dir-gate", "BTC-Richtungs-Gate (LONG nur bei 24h-Ret > 0)"),
     ("ptf-y10", "Portfolio-Trail 10 % (kein Einzel-Trail)"),
     ("ptf-y15", "Portfolio-Trail 15 % (kein Einzel-Trail)"),
 ]
@@ -454,6 +600,7 @@ def main() -> None:
     grid0 = np.datetime64(lo, "h")
     glen = int((np.datetime64(hi, "h") - grid0) / HOUR) + 2
     no_candle = attach_series(conn, trades, args.tf, grid0, glen)
+    btc_gates = btc_momentum_gates(conn, grid0, glen, args.tf)
     conn.close()
     print(f"series attached; {no_candle} trades without candle coverage", flush=True)
 
@@ -473,6 +620,8 @@ def main() -> None:
     score("hold", run_rule(trades, glen, {}))
     for act, key in [(2.0, "trail-a2"), (5.0, "trail-a5"), (10.0, "trail-a10")]:
         score(key, run_rule(trades, glen, {i: exit_trail(t, grid0, act) for i, t in enumerate(trades)}))
+    for act, x, key in [(2.0, 0.20, "trail-a2-x20"), (2.0, 0.30, "trail-a2-x30"), (10.0, 0.20, "trail-a10-x20")]:
+        score(key, run_rule(trades, glen, {i: exit_trail(t, grid0, act, x) for i, t in enumerate(trades)}))
     for ts, key in [(24.0, "trail-a2+ts24"), (48.0, "trail-a2+ts48"), (72.0, "trail-a2+ts72")]:
         score(
             key,
@@ -487,6 +636,15 @@ def main() -> None:
     score("trail-a2-partial50", run_partial(trades, glen, grid0, ACT_LIVE))
     score("trail-a2-cap50", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50))
     score("trail-a2-cap100", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 100))
+    ts24_exits = {i: exit_trail_timestop(t, grid0, ACT_LIVE, 24.0) for i, t in enumerate(trades)}
+    score("trail-a2+ts24+cap50", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50, exits=ts24_exits))
+    score("be2", run_rule(trades, glen, {i: exit_breakeven(t, grid0, ACT_LIVE) for i, t in enumerate(trades)}))
+    score(
+        "be2+ts24",
+        run_rule(trades, glen, {i: exit_breakeven(t, grid0, ACT_LIVE, 24.0) for i, t in enumerate(trades)}),
+    )
+    score("feedback-gate", run_feedback_gate(trades, glen, grid0, ACT_LIVE))
+    score("btc-dir-gate", run_direction_gate(trades, glen, grid0, ACT_LIVE, *btc_gates))
     score("ptf-y10", run_portfolio(trades, glen, 0.10))
     score("ptf-y15", run_portfolio(trades, glen, 0.15))
 

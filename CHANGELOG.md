@@ -1,3 +1,22 @@
+## [2026-07-28] Trailing-Arm: x-Sweep, SL-Nachzug und Marktlagen-Gates — Nachtrag (T-2026-KYT-9050-052)
+
+**Live-Ereignis:** Das saubere Market-Entry-Buch entmischte sich binnen ~9 h von Ø −0,23 % auf
+−2,50 % (95 % unter Wasser, 199:3 LONG) — der strukturelle Mechanismus, live bestätigt. Auf
+Operator-Auftrag wurde Bot 40 um 05:29 geparkt („keine Stops mehr senden") und um 05:43 wieder
+entparkt („neue Trades können raus"); dazwischen read-only verifiziert, dass der Wiederanlauf
+gefahrlos ist (1 SOURCE_CLOSED, 0 sofortige Trail-Exits).
+
+**Acht neue Regeln in `tools/trailing_book_health.py`** (jetzt 23, 15 DB-freie Pins): x-Sweep
+(20/30 %), Zeit-Stop+Cap-Kombination, SL-Nachzug (Breakeven-Ratchet ab +2 %, allein und mit
+Zeit-Stop), Buch-Feedback-Gate (eigenes Buch als Regime-Sensor) und BTC-Richtungs-Gate.
+Antworten auf die Operator-Fragen: (a) „zu schnell closen" gilt NICHT für die Rückgabe x —
+x=20/30 % verliert auf beiden Achsen; wer Läufer nicht kappen will, nimmt den SL-Nachzug:
+**be2+ts24 hat mit +2,85 % das gesündeste Buch aller Regeln** (28,8k netto). (b) Marktlagen-
+Gates sind von den Exit-Regeln **dominiert** (Feedback-Gate würgt ab, BTC-Gate unterliegt dem
+Zeit-Stop) — konsistent mit der ROM/HMM/SOFT-Historie. (c) Dump-Schutz: **Zeit-Stop 24 h +
+Cap ±50 = MaxDD 588** (7× besser als der Live-Trail). Empfehlung + Zahlen:
+`staging_models/replay/trailing_arm_verdict_t052.md` (Nachtrag). Umbau bleibt Michi-gegatet.
+
 ## [2026-07-27] Trailing-Arm: Exit-Regeln am offenen Buch gemessen — Verdikt (T-2026-KYT-9050-052)
 
 **Anlass:** Bot 40s offenes Buch entmischte sich binnen eines Tages selbst (gemessen ~19:30:
