@@ -1,3 +1,21 @@
+## [2026-07-28] Trailing-Arm: KORREKTUR — Look-ahead in den Breakeven-Regeln, Empfehlung revidiert (T-2026-KYT-9050-052)
+
+**Die be+ts-Ergebnisse der beiden vorigen Einträge sind zurückgezogen.** Der Zeit-Stop in
+`exit_breakeven` prüfte das Scharfwerden über die GESAMTE Trade-Lebensdauer statt bis zur
+Deadline — späte Gewinner entkamen dem Stop, den der Live-Bot gesetzt hätte (Look-ahead;
+gefunden beim Portieren der Regel in die Bot-Logik, bevor Geld darauf allokiert wurde).
+Kausal gefixt + gepinnt (`test_breakeven_timestop_is_causal_for_late_armers`), Lauf 8:
+be5+ts24 fällt von 58 994 auf **7 004**, be5+ts24@1000 von 53 068 auf **3 843** — der gesamte
+Vorsprung war der Artefakt. Die be-Familie und die Channel-Skalierungskurve sind verworfen;
+Trail-/ts-/Cap-/Hold-Zahlen waren immer kausal und stehen unverändert.
+
+**Revidierte Empfehlung** (Operator-Kontext: 800 USD verfügbar, 1 Channel, Sizing nach
+Belegung): **Trail act=2 + Zeit-Stop 24 h + Exposure-Cap ±50** — pro gebundenem Kapital-Slot
+die beste Regel (278 %-Pkt/Ø-Slot = 1,9× reiner Trail) bei absolutem MaxDD 588 (1/7 des
+Trails); p95-Belegung 130 erlaubt ~3,8× größere Positionen im selben Margin-Budget.
+Vor der 2-Channel-Erweiterung (~ab 2000 USD) neuer Lauf unter Cap 1000 (Kandidat Trail act=5).
+Details: Verdikt-Nachtrag 4.
+
 ## [2026-07-28] Trailing-Arm: 3-Channel-Nachprüfung — der zweite Channel ist der Sprung (T-2026-KYT-9050-052)
 
 Lauf 7 (`cap=1500`): be5+ts24@1500 = 56 639 (+3 571 / +6,7 % gegenüber 2 Channels; 98 %

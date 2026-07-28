@@ -61,10 +61,13 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   gemessen und dominiert — nicht bauen. x=20/30 % verliert auf beiden Achsen (kein „langsamer
   closen" über x). **Prio-Upside-Nachtrag (Läufe 4+5, 500-Cap-fair):** be5+ts24@500 = 34,5k
   Equity-final (90 % des Trails) bei MaxDD 4 124 und Buch +3,36 % — Empfehlung für Prio Upside;
-  be2-Schwelle zu früh, be+Richtungs-Cap abgewürgt. **Zwei-Channel-Szenario (Operator-Idee,
-  Lauf 6): be5+ts24@1000 = 53,0k** — finale Prio-Upside-Empfehlung: 2 Channels + be5+ts24
-  (Details Verdikt-Nachtrag 3; Multi-Channel-Umbau von Bot 40 + zweiter Channel + Sizing
-  + Restart = Operator-gegateter Folge-Task).
+  be2-Schwelle zu früh, be+Richtungs-Cap abgewürgt. **KORREKTUR (Lauf 8): die gesamte
+  be-Familie ist verworfen — Look-ahead im Zeit-Stop (Scharfwerden über die ganze
+  Lebensdauer statt bis zur Deadline geprüft); kausal fällt be5+ts24 von 59,0k auf 7,0k.**
+  Revidierte Empfehlung (Start mit 800 USD, 1 Channel, Sizing nach Belegung): **Trail act=2
+  + Zeit-Stop 24 h + Cap ±50** (278 %-Pkt/Ø-Slot = 1,9× Trail, MaxDD 588). 2-Channel-
+  Erweiterung ab ~2000 USD Equity, davor neuer Lauf unter Cap 1000 (Kandidat Trail act=5).
+  Umbau-Task = Operator-gegateter Folge-Task (Verdikt-Nachtrag 4).
 
 **Ledger-Verifikation (2026-07-09, T-2026-CU-9050-028):** Fünf Checkboxen widersprachen ihrer eigenen Annotation. Jede wurde am Code nachgeprüft statt blind geflippt — mit einem Treffer: **die Annotation von P1.26 war selbst falsch**, das Finding ist ein realer offener Dead-Code-Bug (Step 2 hatte sich von Cooldown-Rows einer älteren Codeversion täuschen lassen). Geflippt: P1.5, P1.11, P1.18, P2.50. Offen geblieben mit geschärfter Annotation: P1.26 (echter Bug), P2.2 (nur die TZ-Dimension ist gelöst, die Spaltenbreite nicht). Neu abgespalten/gefunden: **P1.45** (Post-Pfade verwerfen die Artefakt-`model_id` — latente Regel-6-Verstösse in MIS/RUB/QM), **P2.51** (Guard disarmt still bei gelöschten Goldens), **P3.13** (Tag-Längennetz deckt nur Mayank ab). Ausserdem am Code verifiziert und weiterhin offen: P1.37, P1.39, P1.41, P1.43, P1.44 — die PRs #13/#15 haben keines davon miterledigt.
 

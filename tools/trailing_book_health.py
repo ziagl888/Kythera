@@ -215,27 +215,34 @@ def exit_breakeven(t: dict, grid0: np.datetime64, act: float, ts_hours: float | 
     entry again (exit at 0.0) or reaches its natural close — evaporation is
     bounded at zero instead of captured at peak*(1-x), keeping the upside open.
 
-    With `ts_hours`, never-armed trades additionally get the time-stop (the
-    loser bound the ratchet alone cannot provide — an unarmed trade has no stop
-    to ratchet).
+    With `ts_hours`, trades not armed BY THE DEADLINE additionally get the
+    time-stop (the loser bound the ratchet alone cannot provide — an unarmed
+    trade has no stop to ratchet).
+
+    CAUSALITY: the time-stop decision uses only what is on the tape at the
+    deadline. A trade that first clears `act` AFTER `ts_hours` is stopped at
+    the deadline all the same — the live bot cannot know it would have armed
+    later. The first version of this function checked arming over the whole
+    series and thereby let every late winner escape the stop (look-ahead that
+    inflated the be+ts results; found while porting the rule to the bot).
     """
     if not t["series"]:
         return t["gie"], t["real_unlev"]
     pk = prior_peak(t["fav"])
     armed = np.flatnonzero(pk > act)
     k_arm = int(armed[0]) if len(armed) else None
+    if ts_hours is not None:
+        deadline = np.datetime64(_naive(t["ot"])) + np.timedelta64(int(ts_hours * 3600), "s")
+        j = int(np.searchsorted(t["tt"], deadline.astype("datetime64[ns]"), side="left"))
+        if j < len(t["tt"]) and (k_arm is None or k_arm > j):
+            # Not armed by the deadline → time-stop, regardless of what the
+            # trade would have done afterwards.
+            return _gi_of(t, j, grid0), float(t["cm"][j])
     if k_arm is not None:
         touch = np.flatnonzero(t["adv"][k_arm:] <= 0.0)
         if len(touch):
             return _gi_of(t, k_arm + int(touch[0]), grid0), 0.0
-        return t["gie"], t["real_unlev"]
-    if ts_hours is None:
-        return t["gie"], t["real_unlev"]
-    deadline = np.datetime64(_naive(t["ot"])) + np.timedelta64(int(ts_hours * 3600), "s")
-    j = int(np.searchsorted(t["tt"], deadline.astype("datetime64[ns]"), side="left"))
-    if j >= len(t["tt"]):
-        return t["gie"], t["real_unlev"]
-    return _gi_of(t, j, grid0), float(t["cm"][j])
+    return t["gie"], t["real_unlev"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
