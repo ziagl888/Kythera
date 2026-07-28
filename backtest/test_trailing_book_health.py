@@ -274,6 +274,30 @@ def test_total_cap_refuses_entries_while_full():
     assert np.isclose(s["net"], 1.0 + 2.0 - 2 * FEE_RT), s["net"]
 
 
+def test_chase_gate_spares_counter_move_entries():
+    """A SHORT into a +60% pump is counter-move (the MIS edge) and must pass; a
+    LONG into the same pump chases and is gated; unknown history never vetoes."""
+    from tools.trailing_book_health import chases_the_move
+
+    assert chases_the_move("LONG", 60.0, 50.0) is True
+    assert chases_the_move("SHORT", 60.0, 50.0) is False  # shorting the pump = fine
+    assert chases_the_move("SHORT", -60.0, 50.0) is True
+    assert chases_the_move("LONG", -60.0, 50.0) is False  # longing the dump = fine
+    assert chases_the_move("LONG", None, 50.0) is False
+
+
+def test_move_gate_filters_admission_only():
+    from tools.trailing_book_health import run_move_gate
+
+    hot = _trade(0, 10, fav=[1.0] * 10, adv=[-1.0] * 10, cm=[0.0] * 10, real=2.0)
+    hot["mv24"] = 80.0
+    calm = _trade(0, 10, fav=[1.0] * 10, adv=[-1.0] * 10, cm=[0.0] * 10, real=1.0)
+    calm["mv24"] = 5.0
+    book = run_move_gate([hot, calm], 20, {}, abs_thresh=50.0)
+    s = book.stats()
+    assert s["n"] == 1 and np.isclose(s["net"], 1.0 - FEE_RT), (s["n"], s["net"])
+
+
 def test_no_series_trade_keeps_recorded_outcome_under_every_rule():
     """A trade without candle coverage must fall back to its recorded close."""
     t = {
