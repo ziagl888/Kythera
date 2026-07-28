@@ -1,3 +1,13 @@
+## [2026-07-28] Trailing-Arm: Mover-Frage beantwortet — Coins mit ±50 %/24 h NICHT filtern (T-2026-KYT-9050-052)
+
+Operator-Frage (Anlass COTI +57,9 %/24 h): solche Coins ab einem Prozentsatz ignorieren?
+Gemessen (`tools/trailing_book_health.py`, 24h-Vorbewegung kausal je Entry, Buckets je
+Richtung + 4 Gate-Varianten): **Mover sind pro Trade die besten Trades des Arms** — Pump-Shorts
++2,96/Trade (MIS-Edge, n=297), Dump-Shorts +9,11 (n=41), selbst Pump-Longs +3,97 unter dem
+Trail; einzige giftige Zelle (LONG in frischen Dump, hold −3,53) neutralisiert der Trail
+(+0,38). Alle vier Gates (abs 30/50 %, chase 20/50 %) verlieren netto ohne DD-Gewinn →
+**verworfen, kein Filter.** Buckets dünn (n=41–73) aber konsistent; Details Verdikt-Nachtrag 5.
+
 ## [2026-07-28] Bot 40: Grandfather-Stichtag für den Zeit-Stop (T-2026-KYT-9050-052, Operator-Entscheid)
 
 **Operator-Entscheid Michi:** der Altbestand reitet auf explizites eigenes Risiko zu seinem

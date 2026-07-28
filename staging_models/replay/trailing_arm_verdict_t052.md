@@ -322,6 +322,33 @@ beibehalten + Zeit-Stop 24 h + Exposure-Cap ±50** in Bot 40. Vor der 2-Channel-
 (ab ~2000 USD Equity) einen Lauf mit den dann relevanten Kandidaten unter Cap 1000 (u. a.
 Trail act=5, p95 917 — passt erst in zwei Channels).
 
+## Nachtrag 5 (2026-07-28) — Operator-Frage: „Coins mit ±50 % in 24 h überhaupt traden?"
+
+Anlass COTI (+57,9 %/24 h, 4 offene Fleet-Trades, davon 3 Pump-Shorts der MIS-Familie).
+Gemessen: 24h-Vorbewegung des Coins beim Entry (strikt kausal aus Kerzen vor dem Trade),
+Buckets je Richtung + vier Gate-Varianten auf Trail act=2.
+
+| Bucket (24h-Move) | Dir | n | Ø/Trade hold | Ø/Trade Trail |
+|---|---|--:|--:|--:|
+| < −50 % | LONG | 50 | −3,53 | +0,38 |
+| < −50 % | SHORT | 41 | +11,57 | **+9,11** |
+| ±20 % (ruhig) | LONG | 33 183 | +1,18 | +0,71 |
+| ±20 % (ruhig) | SHORT | 8 854 | +1,96 | +1,42 |
+| > +50 % | LONG | 73 | +2,63 | +3,97 |
+| > +50 % | SHORT | 297 | +2,97 | **+2,96** |
+
+**Befund: Mover sind pro Trade die BESTEN Trades des Arms, nicht die schlechtesten.** Jeder
+Extrem-Bucket ist unter dem Trail positiv und schlägt das ruhige Mittelfeld; die Pump-Shorts
+(COTI-Muster, MIS-Edge) liefern +2,96/Trade, Dump-Shorts sogar +9,11. Die einzige historisch
+giftige Zelle — LONG in den frischen Dump auf hold (−3,53) — neutralisiert der Trail selbst
+(+0,38). Konsequent verlieren ALLE vier Gates Geld ohne DD-Gewinn: abs>30 % −4 255 netto,
+abs>50 % −1 494, chase>20 % −2 301, chase>50 % −652 (MaxDD jeweils unverändert ~4,4k).
+
+**Antwort an den Operator: Mover NICHT filtern.** Die Roster-Beine selektieren diese Coins
+bereits richtig (MIS existiert genau dafür); ein Prozent-Gate ist in jeder Variante gemessen
+und verworfen. Grenze: Extrem-Buckets sind dünn (n=41–73), aber Richtung konsistent und die
+Gate-Aggregate bestätigen sie.
+
 ## Ehrliche Grenzen
 
 - Sim-Entries = `closed_ai_signals`-Entry (Hold-Arm-Geometrie); der Live-Bot steigt seit

@@ -100,12 +100,23 @@ def attach_series(conn, trades: list[dict], tf: str, grid0: np.datetime64, glen:
     t0 = time.time()
     no_candle = 0
     for ci, (sym, tl) in enumerate(sorted(by_coin.items()), 1):
-        lo = min(t["ot"] for t in tl) - timedelta(hours=2)
+        # 26h Vorlauf statt 2h: die trailing 24h-Vorbewegung des Coins zum
+        # Entry-Zeitpunkt (Mover-Gate, Operator-Frage 2026-07-28) braucht Kerzen
+        # VOR dem Trade.
+        lo = min(t["ot"] for t in tl) - timedelta(hours=26)
         hi = max(t["ct"] for t in tl) + timedelta(hours=2)
         cd = read_coin_wick(conn, sym, lo, hi, tf)
         covered = len(cd["t"]) > 0
         for t in tl:
             ot64 = np.datetime64(_naive(t["ot"]))
+            # 24h-Vorbewegung strikt aus Kerzen VOR dem Entry (kausal); None,
+            # wenn der Coin nicht weit genug zurückreicht (junges Listing).
+            t["mv24"] = None
+            if covered:
+                p_now = int(np.searchsorted(cd["t"], ot64, side="left")) - 1
+                p_24h = int(np.searchsorted(cd["t"], ot64 - np.timedelta64(24, "h"), side="left")) - 1
+                if p_now > p_24h >= 0:
+                    t["mv24"] = float((cd["c"][p_now] / cd["c"][p_24h] - 1.0) * 100.0)
             ct64 = np.datetime64(_naive(t["ct"]))
             t["gi0"] = int((ot64.astype("datetime64[h]") - grid0) / HOUR)
             gie = int((ct64.astype("datetime64[h]") - grid0) / HOUR)
@@ -482,6 +493,75 @@ def run_total_cap(
     return book
 
 
+def chases_the_move(direction: str, mv24: float | None, thresh: float) -> bool:
+    """True if the entry runs AFTER the coin's prior 24h move: a LONG into a coin
+    already up more than `thresh` %, or a SHORT into one already down that far.
+    Counter-move entries (shorting a pump, longing a dump) are never 'chasing' —
+    that is the MIS family's entire edge and must not be gated away."""
+    if mv24 is None:
+        return False
+    if direction == "LONG":
+        return mv24 > thresh
+    return mv24 < -thresh
+
+
+def run_move_gate(
+    trades: list[dict],
+    glen: int,
+    exits: dict[int, tuple[int, float]],
+    *,
+    abs_thresh: float | None = None,
+    chase_thresh: float | None = None,
+) -> Book:
+    """Admission gate on the coin's prior 24h move (operator question 2026-07-28:
+    'Coins mit ±50 % in ein paar Stunden überhaupt traden?').
+
+    `abs_thresh`: skip every entry on a coin whose |24h move| exceeds it (blanket).
+    `chase_thresh`: skip only entries that chase the move (see chases_the_move).
+    Trades without coverage (young listings) pass — an absent signal must not veto.
+    """
+    book = Book(glen)
+    for i, t in enumerate(trades):
+        mv = t.get("mv24")
+        if abs_thresh is not None and mv is not None and abs(mv) > abs_thresh:
+            continue
+        if chase_thresh is not None and chases_the_move(t["dir"], mv, chase_thresh):
+            continue
+        gi, val = exits.get(i, (t["gie"], t["real_unlev"]))
+        book.add(t, gi, val)
+    return book
+
+
+def mover_buckets(trades: list[dict], exits: dict[int, tuple[int, float]]) -> list[dict]:
+    """Per-trade expectancy by prior-24h-move bucket and direction — the empirical
+    answer to 'should movers be traded at all', separated so the counter-move edge
+    (MIS shorting pumps) is visible instead of averaged away."""
+    edges = [(-1e9, -50.0), (-50.0, -20.0), (-20.0, 20.0), (20.0, 50.0), (50.0, 1e9)]
+    labels = ["<-50", "-50..-20", "-20..20", "+20..+50", ">+50"]
+    out = []
+    for (lo, hi), label in zip(edges, labels, strict=True):
+        for d in ("LONG", "SHORT"):
+            sel = [
+                (i, t)
+                for i, t in enumerate(trades)
+                if t["dir"] == d and t.get("mv24") is not None and lo <= t["mv24"] < hi
+            ]
+            if not sel:
+                continue
+            hold = float(np.mean([t["real_unlev"] for _i, t in sel]))
+            ruled = float(np.mean([exits.get(i, (t["gie"], t["real_unlev"]))[1] for i, t in sel]))
+            out.append(
+                {
+                    "bucket": label,
+                    "dir": d,
+                    "n": len(sel),
+                    "hold_per_trade": round(hold, 3),
+                    "rule_per_trade": round(ruled, 3),
+                }
+            )
+    return out
+
+
 def run_direction_gate(
     trades: list[dict],
     glen: int,
@@ -582,6 +662,10 @@ RULE_ORDER = [
     ("be5+ts24@1500", "Breakeven 5 % + Zeit-Stop 24 h @ 1500 (3 Channels)"),
     ("feedback-gate", "Buch-Feedback-Gate (D nur wenn offenes D-Buch > −1 %)"),
     ("btc-dir-gate", "BTC-Richtungs-Gate (LONG nur bei 24h-Ret > 0)"),
+    ("mover-abs30", "Mover-Gate: Coin |24h| > 30 % ignorieren (Trail a2)"),
+    ("mover-abs50", "Mover-Gate: Coin |24h| > 50 % ignorieren (Trail a2)"),
+    ("mover-chase20", "Chase-Gate: nur Hinterherlaufen > 20 % ignorieren"),
+    ("mover-chase50", "Chase-Gate: nur Hinterherlaufen > 50 % ignorieren"),
     ("ptf-y10", "Portfolio-Trail 10 % (kein Einzel-Trail)"),
     ("ptf-y15", "Portfolio-Trail 15 % (kein Einzel-Trail)"),
 ]
@@ -718,6 +802,16 @@ def main() -> None:
     score("be5+ts24@1500", run_total_cap(trades, glen, be5_exits, cap=1500))
     score("feedback-gate", run_feedback_gate(trades, glen, grid0, ACT_LIVE))
     score("btc-dir-gate", run_direction_gate(trades, glen, grid0, ACT_LIVE, *btc_gates))
+    a2_exits = {i: exit_trail(t, grid0, ACT_LIVE) for i, t in enumerate(trades)}
+    score("mover-abs30", run_move_gate(trades, glen, a2_exits, abs_thresh=30.0))
+    score("mover-abs50", run_move_gate(trades, glen, a2_exits, abs_thresh=50.0))
+    score("mover-chase20", run_move_gate(trades, glen, a2_exits, chase_thresh=20.0))
+    score("mover-chase50", run_move_gate(trades, glen, a2_exits, chase_thresh=50.0))
+    buckets = mover_buckets(trades, a2_exits)
+    print("\nMover-Buckets (24h-Vorbewegung beim Entry, Ø/Trade unlev %):")
+    print(f"  {'Bucket':<10}{'Dir':<7}{'n':>7}{'hold':>8}{'trail-a2':>10}")
+    for b in buckets:
+        print(f"  {b['bucket']:<10}{b['dir']:<7}{b['n']:>7}{b['hold_per_trade']:>8.3f}{b['rule_per_trade']:>10.3f}")
     score("ptf-y10", run_portfolio(trades, glen, 0.10))
     score("ptf-y15", run_portfolio(trades, glen, 0.15))
 
@@ -732,6 +826,7 @@ def main() -> None:
         "n_rom1_excluded": n_rom1,
         "no_candle": no_candle,
         "rules": {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")} for k, v in rules.items()},
+        "mover_buckets": buckets,
         "daily_series": series,
     }
     os.makedirs(args.out, exist_ok=True)
