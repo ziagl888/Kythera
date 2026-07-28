@@ -298,6 +298,12 @@ class Book:
             "cnt_short_mean": round(float(self.cnt["SHORT"].mean()), 1),
             "equity_final": round(float(equity[-1]), 1),
             "equity_maxdd": round(float(dd.max()), 1),
+            # Equal-capital view: what one AVERAGE occupied slot earned / drew
+            # down over the whole period. Raw net favours whichever rule binds
+            # the most capital; these two make rules with different book sizes
+            # comparable "at the end of the period".
+            "net_per_slot": round(net / float(cnt_all.mean()), 2) if cnt_all.mean() > 0 else 0.0,
+            "dd_per_slot": round(float(dd.max()) / float(cnt_all.mean()), 2) if cnt_all.mean() > 0 else 0.0,
             "_equity": equity,
             "_cnt": (self.cnt["LONG"], self.cnt["SHORT"]),
             "_mark_mean": np.where(live, msum_all / np.maximum(cnt_all, 1e-9), np.nan),
@@ -434,6 +440,41 @@ def run_feedback_gate(
     return book
 
 
+def run_total_cap(
+    trades: list[dict],
+    glen: int,
+    exits: dict[int, tuple[int, float]],
+    cap: int = 500,
+) -> Book:
+    """The deployable view: a hard TOTAL slot cap (Cornix' 500 per channel).
+
+    A new entry is refused while `cap` positions are open — the sim's admission
+    is arrival-ordered, while Bot 40's real layer (AK4) refuses by leg density
+    within a cycle; arrival order is the more conservative approximation. Rules
+    whose occupancy p95 bursts the cap lose exactly the trades the live bot
+    would have to reject, which makes their end-of-period result comparable to
+    rules that fit under the cap naturally.
+    """
+    order = sorted(range(len(trades)), key=lambda i: trades[i]["gi0"])
+    exit_events: dict[int, list[int]] = defaultdict(list)
+    book = Book(glen)
+    open_n = 0
+    ei = 0
+    for h in range(glen):
+        for _i in exit_events.get(h, ()):
+            open_n -= 1
+        while ei < len(order) and trades[order[ei]]["gi0"] == h:
+            i = order[ei]
+            ei += 1
+            if open_n >= cap:
+                continue
+            gi, val = exits.get(i, (trades[i]["gie"], trades[i]["real_unlev"]))
+            book.add(trades[i], gi, val)
+            open_n += 1
+            exit_events[max(trades[i]["gi0"] + 1, min(gi, glen - 1))].append(i)
+    return book
+
+
 def run_direction_gate(
     trades: list[dict],
     glen: int,
@@ -522,6 +563,12 @@ RULE_ORDER = [
     ("trail-a2+ts24+cap50", "Trail 2 % + Zeit-Stop 24 h + Cap ±50"),
     ("be2", "SL-Nachzug: Breakeven ab +2 % (kein Trail)"),
     ("be2+ts24", "Breakeven ab +2 % + Zeit-Stop 24 h"),
+    ("be2+ts24+cap50", "Breakeven 2 % + Zeit-Stop 24 h + Cap ±50"),
+    ("be2+ts24+cap100", "Breakeven 2 % + Zeit-Stop 24 h + Cap ±100"),
+    ("be5+ts24", "Breakeven ab +5 % + Zeit-Stop 24 h"),
+    ("hold@500", "Hold unter hartem 500-Slot-Cap"),
+    ("be2+ts24@500", "Breakeven 2 % + Zeit-Stop 24 h @ 500-Cap"),
+    ("be5+ts24@500", "Breakeven 5 % + Zeit-Stop 24 h @ 500-Cap"),
     ("feedback-gate", "Buch-Feedback-Gate (D nur wenn offenes D-Buch > −1 %)"),
     ("btc-dir-gate", "BTC-Richtungs-Gate (LONG nur bei 24h-Ret > 0)"),
     ("ptf-y10", "Portfolio-Trail 10 % (kein Einzel-Trail)"),
@@ -542,8 +589,8 @@ def render_md(meta: dict) -> str:
         "UND Zusammensetzung des offenen Buchs (Equity = realisierte Summe + offenes MTM,",
         "gleichgewichtet, unlevered %-Punkte).",
         "",
-        "| Regel | n | Σ netto | Ø/Trade | Ø Slots | p95 | netto/Slot-Tag | Equity final | **Equity MaxDD** | Ø Buch-Mark | Buch unter Wasser | Ø L offen | Ø S offen |",
-        "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
+        "| Regel | n | Σ netto | Ø/Trade | Ø Slots | p95 | netto/Slot-Tag | Equity final | **Equity MaxDD** | netto/Ø-Slot | DD/Ø-Slot | Ø Buch-Mark | Buch unter Wasser | Ø L offen | Ø S offen |",
+        "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
     ]
     for key, label in RULE_ORDER:
         s = meta["rules"].get(key)
@@ -552,6 +599,7 @@ def render_md(meta: dict) -> str:
         L.append(
             f"| {label} | {s['n']} | {s['net']:.0f} | {s['per_trade_net']:.3f} | {s['occ_mean']:.0f} | "
             f"{s['occ_p95']:.0f} | {s['density']:.3f} | {s['equity_final']:.0f} | **{s['equity_maxdd']:.0f}** | "
+            f"{s['net_per_slot']:.0f} | {s['dd_per_slot']:.1f} | "
             f"{s['book_mark_mean']:+.2f} % | {s['book_underwater_mean']:.0f} % | "
             f"{s['cnt_long_mean']:.0f} | {s['cnt_short_mean']:.0f} |"
         )
@@ -643,6 +691,14 @@ def main() -> None:
         "be2+ts24",
         run_rule(trades, glen, {i: exit_breakeven(t, grid0, ACT_LIVE, 24.0) for i, t in enumerate(trades)}),
     )
+    be_ts_exits = {i: exit_breakeven(t, grid0, ACT_LIVE, 24.0) for i, t in enumerate(trades)}
+    score("be2+ts24+cap50", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50, exits=be_ts_exits))
+    score("be2+ts24+cap100", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 100, exits=be_ts_exits))
+    score("be5+ts24", run_rule(trades, glen, {i: exit_breakeven(t, grid0, 5.0, 24.0) for i, t in enumerate(trades)}))
+    be5_exits = {i: exit_breakeven(t, grid0, 5.0, 24.0) for i, t in enumerate(trades)}
+    score("hold@500", run_total_cap(trades, glen, {}))
+    score("be2+ts24@500", run_total_cap(trades, glen, be_ts_exits))
+    score("be5+ts24@500", run_total_cap(trades, glen, be5_exits))
     score("feedback-gate", run_feedback_gate(trades, glen, grid0, ACT_LIVE))
     score("btc-dir-gate", run_direction_gate(trades, glen, grid0, ACT_LIVE, *btc_gates))
     score("ptf-y10", run_portfolio(trades, glen, 0.10))

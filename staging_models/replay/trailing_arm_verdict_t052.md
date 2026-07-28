@@ -192,6 +192,48 @@ heilt das Buch nicht; zusammen begrenzen sie Tiefe UND Dauer des Schadens.
   simuliert — bei Interesse ein weiterer Lauf vor dem Umbau.
 - Marktlagen-Gates (a la ROM oder einfacher): **nicht bauen** — gemessen und dominiert.
 
+## Nachtrag 2 (2026-07-28) — Prio-Vergleich: „Wer hat März–Juli am Ende die beste Performance?"
+
+Operator-Frage (Prio Upside). Läufe 4+5: Breakeven-Varianten (be+cap, be5) und — entscheidend
+für Vergleichbarkeit — alle großen Kandidaten **unter dem harten Cornix-500-Slot-Cap**
+(`run_total_cap`, Ankunftsreihenfolge; konservativ gegenüber der Dichte-Auswahl des Bots).
+Ohne den Cap gewinnt automatisch die Regel mit dem größten Buch: Hold zieht Ø 1008 Slots,
+be5+ts24 Ø 583/p95 1083 — beides nicht deploybar wie simuliert.
+
+**Rangliste deploybar (Equity am Periodenende, unlevered %-Punkte, gleicher Zeitraum, gleiche Population):**
+
+| Platz | Regel | Equity final | MaxDD | netto/Ø-Slot | Ø Buch-Mark | Monats-Δ (Mär…Jul) |
+|--:|---|--:|--:|--:|--:|---|
+| 1 | **Trail act=2 (Bot 40 heute)** | **38 157** | 4 377 | 147 | **−2,73 %** (78 % u.W.) | +7,8/+8,0/+6,3/+8,2/+8,5 |
+| 2 | **be5+ts24 @ 500-Cap** | **34 471** | **4 124** | 85 | **+3,36 %** | +5,1/+8,0/+7,8/+7,8/+6,2 |
+| 3 | Hold @ 500-Cap | 26 752 | 6 933 | 56 | +2,71 % | +0,5/+5,5/+9,9/+6,8/+4,7 |
+| 4 | be2+ts24 @ 500-Cap | 21 781 | 4 324 | 67 | +2,87 % | +3,1/+6,1/+3,2/+4,9/+4,9 |
+| 5 | Trail a2 + ts24 + Cap ±50 | 18 756 | **588** | **278** | −1,22 % | +1,4/+2,7/+3,1/+4,6/+7,1 |
+
+Ohne Kapazitätsgrenze (theoretisch): be5+ts24 59 0k ≈ Hold 58,1k — aber der Cap kostet Hold
+54 % (sein fettes Buch klebt am Limit und lehnt Ankünfte ab), be5+ts24 nur 42 %.
+
+**Lesart:**
+1. **Der heutige Trail hat auch deploybar das beste absolute Endergebnis** — sein Problem war
+   nie die realisierte Ökonomie, sondern das strukturell kranke Buch (−2,73 %, 78 % unter
+   Wasser, in jedem Monat negativ) und die Konto-Schlagseite daraus (Verlierer doppelt).
+   Der Live-Vorfall dieser Woche IST diese Kennzahl.
+2. **Prio Upside → be5+ts24** (Breakeven-Ratchet ab +5 % + Zeit-Stop 24 h): ~90 % des
+   Trail-Endergebnisses (34,5k vs. 38,2k), dafür niedrigster MaxDD der großen Regeln (4 124),
+   **gesündestes Buch der ganzen Messreihe (+3,36 %)**, kein Läufer wird je gekappt, monatlich
+   der gleichmäßigste Verlauf. Die Konto-Schlagseite (Arm hält bevorzugt Verlierer) verschwindet.
+3. **be2 ist die falsche Ratchet-Schwelle** (21,8k) — bei +2 % werden zu viele Läufer auf 0
+   zurückgeholt. +5 % lässt die Aufwärtsbewegung atmen; die Richtungs-Caps (±50/100) würgen
+   den Breakeven-Ansatz zusätzlich ab (9–12k, Lauf 4) — nicht kombinieren.
+4. **Maximale Kapitaleffizienz + Dump-Schutz bleibt ts24+cap50** (278/Slot, MaxDD 588) —
+   das ist die „kleiner, aber extrem robuster Arm"-Konfiguration.
+
+**Empfehlung Prio Upside: Bot 40 auf be5+ts24 umbauen** — Trail-Exit ersetzen durch:
+(1) Peak ≥ +5 % → SL auf Entry nachziehen (ein `Close` erst, wenn der Markt den Entry wieder
+berührt; alternativ echtes SL-Update, falls Cornix das im Channel kann), (2) Spiegel ohne
++2-%-Peak nach 24 h schließen (`TIME_STOP`), (3) Slot-Cap 500 bleibt (AK4). Alle drei Bausteine
+existieren im Bot (peak_pct, filled_at, Cap-Layer). Umbau + Restart sind Michi-gegatet.
+
 ## Ehrliche Grenzen
 
 - Sim-Entries = `closed_ai_signals`-Entry (Hold-Arm-Geometrie); der Live-Bot steigt seit
