@@ -1,3 +1,11 @@
+## [2026-07-28] Trailing-Arm: 3-Channel-Nachprüfung — der zweite Channel ist der Sprung (T-2026-KYT-9050-052)
+
+Lauf 7 (`cap=1500`): be5+ts24@1500 = 56 639 (+3 571 / +6,7 % gegenüber 2 Channels; 98 %
+zugelassen), hold@1500 = 53 113 bei 3× MaxDD. Skalierungskurve 500→1000→1500→∞:
+34,5k → 53,1k (+18,6k) → 56,6k (+3,6k) → 59,0k. **Empfehlung bleibt 2 Channels + be5+ts24**
+— der dritte Channel kauft +6,7 % für 50 % mehr Exposure-Kapazität und ein drittes
+Integrationsziel; kapitalneutrale Alternative ist größeres Sizing in zwei Channels.
+
 ## [2026-07-28] Trailing-Arm: Zwei-Channel-Szenario — be5+ts24 @ 1000 gewinnt (T-2026-KYT-9050-052)
 
 **Operator-Idee:** Trades auf 2 Channels aufteilen → 1000 Slots. Mit least-loaded-Zuweisung

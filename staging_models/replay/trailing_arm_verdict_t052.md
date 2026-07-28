@@ -254,6 +254,20 @@ Channel" ist das exakt ein globaler 1000er-Cap (der leerere Channel hat Platz, s
 von dessen MaxDD. Hold profitiert vom zweiten Channel weit weniger (sein Buch klebt auch
 bei 1000 am Limit, März fast bei null).
 
+**3-Channel-Nachprüfung (Lauf 7):** die Skalierungskurve von be5+ts24 über den Slot-Deckel:
+
+| Channels (Cap) | Equity final | Δ zum Vorherigen | MaxDD | zugelassen |
+|--:|--:|--:|--:|--:|
+| 1 (500) | 34 509 | — | 4 124 | 72 % |
+| 2 (1000) | 53 068 | **+18 559** | 5 676 | 95 % |
+| 3 (1500) | 56 639 | +3 571 | 5 997 | 98 % |
+| ∞ (theor.) | 59 034 | +2 395 | 6 989 | 100 % |
+
+Der zweite Channel ist der große Sprung, der dritte kauft nur noch +6,7 % — bei 50 % mehr
+Exposure-Kapazität und einem dritten Integrationsziel. Hold@1500 (53 113) bleibt auch mit drei
+Channels unter be5+ts24@1500, bei 3× dessen MaxDD (18 890). Kapitalneutral wäre statt eines
+dritten Channels die Positionsgröße in zwei Channels zu erhöhen.
+
 **Finale Empfehlung (Prio Upside): zwei Channels + be5+ts24.** Operativ: zweiter Channel +
 Cornix-Anbindung + Sizing (Michi); Bot 40 multi-channel (least-loaded-Zuweisung, `channel_id`
 in `trailing_positions`, Close-Routing, AK3 global); Kapital-Hinweis: 1000 Slots ×
