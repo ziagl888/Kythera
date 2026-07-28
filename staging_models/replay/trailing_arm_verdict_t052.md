@@ -274,6 +274,54 @@ in `trailing_positions`, Close-Routing, AK3 global); Kapital-Hinweis: 1000 Slots
 Positionsgröße = bis zu doppeltes gleichzeitiges Exposure — Sizing pro Channel ist die
 Stellschraube. Umbau + Restart Michi-gegatet.
 
+## Nachtrag 4 (2026-07-28) — KORREKTUR: Look-ahead in den Breakeven+Zeit-Stop-Regeln
+
+**Die be+ts-Zahlen der Nachträge 2 und 3 waren durch einen Look-ahead aufgebläht und sind
+zurückgezogen.** Der Zeit-Stop in `exit_breakeven` prüfte „wurde der Trade JEMALS scharf?"
+über die gesamte Lebensdauer statt „war er BIS ZUR DEADLINE scharf?" — jeder späte Gewinner
+(scharf erst nach 24 h) entkam damit dem Stop, den der Live-Bot ihm bei Stunde 24 gegeben
+hätte. Gefunden beim Übersetzen der Regel in die Bot-Logik, kausal gefixt (Pin
+`test_breakeven_timestop_is_causal_for_late_armers`), Lauf 8:
+
+| Regel | Nachtrag 2/3 (Look-ahead) | **kausal (Lauf 8)** | MaxDD kausal |
+|---|--:|--:|--:|
+| be2+ts24 | 28 812 | **7 430** | 7 708 |
+| be5+ts24 | 58 994 | **7 004** | 8 592 |
+| be5+ts24@1000 (2 Ch.) | 53 068 | **3 843** | 7 266 |
+| be5+ts24@1500 (3 Ch.) | 56 639 | **5 394** | 7 852 |
+
+Der gesamte Vorsprung der Breakeven-Familie WAR der Look-ahead: kausal tötet der 24h-Stop
+die späten Gewinner zu ihrem (meist negativen) 24h-Mark, und die früh Scharfen werden bei 0
+ausgebucht. **Die be-Familie ist damit verworfen; die Channel-Skalierungskurve aus Nachtrag 3
+ist gegenstandslos.** NICHT betroffen (Deadline-Prüfung war dort immer kausal): hold, alle
+Trail-Varianten, trail+ts24/48/72, Caps, Gates, Portfolio.
+
+**Bereinigte deploybare Rangliste (1 Channel, Equity März–Juli):**
+
+| Regel | Equity final | MaxDD | **netto/Ø-Slot** | DD/Ø-Slot | p95 Slots | Ø Buch-Mark |
+|---|--:|--:|--:|--:|--:|--:|
+| Trail act=2 (heute) | 38 181 | 4 377 | 147 | 16,8 | 495 | −2,73 % |
+| Trail 2 + Zeit-Stop 48 h | 32 215 | 4 316 | 180 | 24,1* | 359 | −1,58 % |
+| Trail 2 + Zeit-Stop 24 h | 27 438 | 3 015 | 207 | 22,7* | 267 | −1,17 % |
+| Hold @ 500 | 26 798 | 6 933 | 56 | 14,6 | 500 | +2,71 % |
+| **Trail 2 + ts24 + Cap ±50** | 18 776 | **588** | **278** | **8,7** | 130 | −1,22 % |
+
+_*DD/Ø-Slot der ts-Regeln liegt über dem Trail, weil ihr kleines Buch denselben Rest-DD auf
+weniger Slots verteilt — der absolute MaxDD ist trotzdem kleiner._
+
+**Kapital-Lesart (Operator-Kontext: 800 USD verfügbar, 1 Channel):** Bei fixem Kapital wird
+nach Belegung skaliert — die Positionsgröße darf so groß sein, wie die p95-Belegung × Margin
+ins Risiko-Budget passt. Dann zählt **netto pro Ø-Slot**, nicht die absolute Summe: Trail 2 +
+ts24 + Cap ±50 verdient pro gebundenem Kapital das 1,9-fache des reinen Trails (278 vs. 147)
+bei einem Siebtel des absoluten MaxDD (588) — und erlaubt bei p95 = 130 Slots eine ~3,8×
+größere Position im selben Margin-Rahmen. Konzentrations-Caveat: weniger, größere Positionen
+— bei 130 Stück gleichzeitig noch breit diversifiziert.
+
+**Korrigierte Empfehlung:** Für den Start (800 USD, bestehender Channel): **Trail act=2
+beibehalten + Zeit-Stop 24 h + Exposure-Cap ±50** in Bot 40. Vor der 2-Channel-Erweiterung
+(ab ~2000 USD Equity) einen Lauf mit den dann relevanten Kandidaten unter Cap 1000 (u. a.
+Trail act=5, p95 917 — passt erst in zwei Channels).
+
 ## Ehrliche Grenzen
 
 - Sim-Entries = `closed_ai_signals`-Entry (Hold-Arm-Geometrie); der Live-Bot steigt seit

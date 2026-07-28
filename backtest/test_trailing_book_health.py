@@ -200,6 +200,20 @@ def test_breakeven_with_timestop_bounds_the_never_armed():
     assert (gi, val) == (24, -0.9)
 
 
+def test_breakeven_timestop_is_causal_for_late_armers():
+    """A trade that first clears the activation AFTER the deadline must be
+    time-stopped at the deadline — the live bot cannot see the future. (The
+    original sim checked arming over the whole series; every late winner
+    escaped the stop, inflating the be+ts results.)"""
+    fav = [1.0] * 30 + [8.0] * 70  # arms at hour ~30, deadline is 24
+    late = _trade(0, 100, fav=fav, adv=[-0.5] * 100, cm=[-0.4] * 100, real=6.0)
+    gi, val = exit_breakeven(late, GRID0, 2.0, ts_hours=24.0)
+    assert (gi, val) == (24, -0.4), (gi, val)  # stopped at the deadline mark
+    # Armed BEFORE the deadline → the ratchet governs, no time-stop.
+    early = _trade(0, 100, fav=[6.0] * 100, adv=[3.0] * 100, real=6.0)
+    assert exit_breakeven(early, GRID0, 2.0, ts_hours=24.0) == (early["gie"], 6.0)
+
+
 def test_exposure_cap_composes_with_custom_exits():
     """The cap must apply the exits it is given, not silently fall back to the trail."""
     t = _trade(0, 100, fav=[0.5] * 100, adv=[-1.0] * 100, cm=[-0.8] * 100, real=-8.0)
