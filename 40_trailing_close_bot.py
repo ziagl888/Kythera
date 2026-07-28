@@ -54,14 +54,28 @@ schreibt aber keine einzige Outbox-Zeile. Ein Deploy allein postet nichts.
 
 Watchdog: start_delay=271.
 
+Verlustbegrenzung (T-2026-KYT-9050-052, Operator-Entscheid Michi 2026-07-28)
+----------------------------------------------------------------------------
+Der Trail kann per Konstruktion nur Gewinner schließen — ohne Gegenstück entmischt
+sich das Buch zu einem reinen Verlierer-Buch (live: 95 % unter Wasser in 9 h).
+Deshalb zwei zusätzliche, strikt kausale Schranken (Zahlen: Verdikt
+``staging_models/replay/trailing_arm_verdict_t052.md``):
+  * **Zeit-Stop** (``TIME_STOP_H``, default 24 h): nie über die Aktivierungsschwelle
+    gekommen → Close zum Markt, Grund ``TIME_STOP``.
+  * **Exposure-Cap** (``EXPOSURE_CAP``, default ±50): eine Richtung darf der anderen
+    höchstens 50 offene Spiegel voraus sein — neue Entries der Überhang-Richtung
+    werden abgewiesen (kein Close, reine Zulassung).
+
 Invariants:
   * Schreibt NIE in ``ai_signals`` und schließt NIE einen Fremd-Trade — sein einziges
     Schreibrecht sind ``telegram_outbox`` (eigener Channel) und ``trailing_positions``.
   * Höchstens eine offene Spiegel-Position je Symbol (Cornix-Close ist symbol-weit).
-  * Offene Spiegel-Positionen ≤ ``SLOT_CAP``.
+  * Offene Spiegel-Positionen ≤ ``SLOT_CAP``; Richtungs-Überhang ≤ ``EXPOSURE_CAP``.
   * Genau EINE Cornix-parsebare Nachricht je Entry (harte Regel 4).
   * Ein Bein ohne LIVE-Status in ``shadow_gate`` wird nie gespiegelt, auch wenn es
     im Roster steht.
+  * Der Zeit-Stop entscheidet nur auf dem Peak-Stand von JETZT (kausal) und trifft
+    nie einen scharfen Spiegel — der gehört dem Trail.
 """
 
 import datetime
@@ -118,6 +132,28 @@ MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "30"))
 # Alt-Order liegen bleibt, die Tage später doch noch füllt.
 FILL_TIMEOUT_MIN = float(os.getenv("TRAILING_BOT_FILL_TIMEOUT_MIN", "10"))
 
+# Zeit-Stop (T-2026-KYT-9050-052, Operator-Entscheid Michi 2026-07-28): ein Spiegel,
+# dessen Peak binnen dieser Frist nie über die Aktivierungsschwelle kam, wird zum
+# Markt geschlossen. Begründung aus dem Buch-Gesundheits-Verdikt: der Trail kann per
+# Konstruktion nur Gewinner schließen — die Nie-Scharfen liegen sonst bis zum
+# Katastrophen-SL (live gemessen: SOURCE_CLOSED Ø −4,8 %, 34 SL-Hits an einem Tag),
+# und das Buch entmischt sich zu einem reinen Verlierer-Buch (95 % unter Wasser in
+# 9 h). Der Stop verkauft Erholungen — das ist sein simulierter, akzeptierter Preis
+# (−11k auf 5 Monate gegen MaxDD −31 % und halbe Slot-Bindung).
+TIME_STOP_H = float(os.getenv("TRAILING_BOT_TIME_STOP_H", "24"))
+
+# Flutschutz: höchstens so viele Zeit-Stop-Closes je 10s-Zyklus. Nach einem Restart
+# mit Altbestand wären sonst ~150 `Close`-Kommandos in EINEM Zyklus in der Outbox —
+# der Telegram-Sender arbeitet FIFO, der Stau würde alle anderen Fleet-Messages
+# verzögern. So verteilt sich die Bereinigung über einige Minuten.
+TIME_STOP_MAX_PER_CYCLE = int(os.getenv("TRAILING_BOT_TIME_STOP_MAX_PER_CYCLE", "25"))
+
+# Netto-Exposure-Deckel je Richtung (T-2026-KYT-9050-052): ein neuer Entry, dessen
+# Richtung bereits EXPOSURE_CAP Positionen vor der Gegenrichtung liegt, wird nicht
+# aufgenommen. Kein Marktlagen-Modell (die wurden gemessen und verworfen), sondern
+# eine strukturelle Schranke: das Buch darf nicht beliebig einseitig werden. 0 = aus.
+EXPOSURE_CAP = int(os.getenv("TRAILING_BOT_EXPOSURE_CAP", "50"))
+
 # Wie lange ein Symbol nach einem GEPOSTETEN Close gesperrt bleibt, bevor es neu
 # belegt werden darf.
 #
@@ -136,6 +172,8 @@ SYMBOL_COOLDOWN_SEC = float(os.getenv("TRAILING_BOT_SYMBOL_COOLDOWN_SEC", "60"))
 
 # Exit-Gründe (landen in trailing_positions.close_reason)
 REASON_TRAIL = "TRAIL"
+#: Zeit-Stop: nie über die Aktivierungsschwelle gekommen und älter als TIME_STOP_H.
+REASON_TIME_STOP = "TIME_STOP"
 REASON_SOURCE_CLOSED = "SOURCE_CLOSED"
 REASON_LEG_RETIRED = "LEG_RETIRED"
 #: Kein Exit, sondern ein Vermerk: dieser Quell-Trade lief schon, als der Bot
@@ -438,7 +476,12 @@ def close_messages(row: dict, reason: str, mark: float | None) -> tuple[str, str
     Positionen auf einem Symbol. Das Kommando enthält keine Entry-Felder und ist
     damit nicht als neues Signal parsebar.
     """
-    why = "trailing stop" if reason == REASON_TRAIL else "source trade closed"
+    if reason == REASON_TRAIL:
+        why = "trailing stop"
+    elif reason == REASON_TIME_STOP:
+        why = f"time stop ({TIME_STOP_H:.0f}h below +{ACTIVATION_PCT:.0f}% activation)"
+    else:
+        why = "source trade closed"
     info = (
         "<pre>"
         + "\n".join(
@@ -464,24 +507,32 @@ def admit(
     held_symbols: set[str],
     free_slots: int,
     cooling: set[str] | None = None,
+    open_by_dir: dict[str, int] | None = None,
 ) -> tuple[list, list]:
     """Wer darf in den Channel? Gibt ``(zugelassen, abgewiesen_mit_grund)`` zurück.
 
-    Zwei Gründe, beide hart:
+    Vier Gründe, alle hart:
       * ``SYMBOL_HELD`` — auf dem Symbol läuft schon eine Spiegel-Position, und
         Cornix' Close ist symbol-weit.
       * ``SYMBOL_COOLING`` — auf dem Symbol wurde gerade ein `Close` gepostet, das
         bei Cornix noch in Arbeit sein kann.
+      * ``EXPOSURE_CAP`` — die Richtung des Kandidaten liegt schon ``EXPOSURE_CAP``
+        offene Positionen vor der Gegenrichtung. Das Buch darf nicht beliebig
+        einseitig werden (T-052: das einseitige LONG-Buch WAR der Konto-Schaden;
+        die strukturelle Schranke schlug in der Messung jedes Marktlagen-Modell).
       * ``SLOT_CAP`` — der Channel ist voll. Sortiert wird nach Bein-Dichte, damit
         bei Knappheit dasselbe Kriterium entscheidet, das die Auswahl überhaupt
         getroffen hat: Ertrag je belegtem Slot-Tag.
 
-    Abweisungen werden zurückgegeben, nicht verschluckt — eine stille Deckelung
-    liest sich später wie "alles gespiegelt".
+    ``open_by_dir`` sind die BEREITS offenen Spiegel je Richtung; zugelassene
+    Kandidaten zählen sofort mit, damit ein einzelner Zyklus den Deckel nicht
+    überrennen kann. Abweisungen werden zurückgegeben, nicht verschluckt — eine
+    stille Deckelung liest sich später wie "alles gespiegelt".
     """
     admitted, rejected = [], []
     taken = set(held_symbols)
     cooling = cooling or set()
+    dir_cnt = {"LONG": 0, "SHORT": 0, **(open_by_dir or {})}
     for sid, sig in sorted(candidates, key=lambda c: -c[1]["density"]):
         if sig["symbol"] in taken:
             rejected.append((sid, sig, "SYMBOL_HELD"))
@@ -491,10 +542,16 @@ def admit(
             # zu überholen ist genau das Rennen, das wir nicht eingehen.
             rejected.append((sid, sig, "SYMBOL_COOLING"))
             continue
+        d = sig["direction"]
+        other = "SHORT" if d == "LONG" else "LONG"
+        if EXPOSURE_CAP > 0 and dir_cnt.get(d, 0) - dir_cnt.get(other, 0) >= EXPOSURE_CAP:
+            rejected.append((sid, sig, "EXPOSURE_CAP"))
+            continue
         if len(admitted) >= free_slots:
             rejected.append((sid, sig, "SLOT_CAP"))
             continue
         taken.add(sig["symbol"])
+        dir_cnt[d] = dir_cnt.get(d, 0) + 1
         admitted.append((sid, sig))
     return admitted, rejected
 
@@ -567,7 +624,10 @@ def open_mirrors(
         return 0
 
     held = {m["symbol"] for m in mirrors.values()}
-    admitted, rejected = admit(new, held, SLOT_CAP - len(mirrors), read_cooling_symbols(conn))
+    open_by_dir = {"LONG": 0, "SHORT": 0}
+    for m in mirrors.values():
+        open_by_dir[m["direction"]] = open_by_dir.get(m["direction"], 0) + 1
+    admitted, rejected = admit(new, held, SLOT_CAP - len(mirrors), read_cooling_symbols(conn), open_by_dir)
 
     # Gebündelt statt je Kandidat: die Abweisungen wiederholen sich in JEDEM
     # 10s-Zyklus, solange der Quell-Trade offen ist. Im ersten Shadow-Lauf waren
@@ -750,6 +810,7 @@ def poll_open_mirrors(
     open_ids = all_open if all_open is not None else set(sources)
     missing = 0
     unfilled = 0
+    time_stopped = 0
 
     for sid, row in mirrors.items():
         if sid not in sources:
@@ -831,6 +892,26 @@ def poll_open_mirrors(
             close_mirror(conn, row, REASON_TRAIL, mark)
             continue
 
+        # Zeit-Stop (T-052): NICHT scharf und älter als die Frist → zum Markt raus.
+        # Strikt kausal — entschieden wird auf dem Peak-Stand von JETZT, nie darauf,
+        # ob der Trade später noch scharf würde (genau dieser Look-ahead hat in der
+        # Studie die Breakeven-Regeln um den Faktor 8 geschönt, Verdikt-Nachtrag 4).
+        # Scharfe Spiegel gehören dem Trail: sein Stop liegt über +1,8 %, tiefe
+        # Verlierer kann es dort nicht geben. `opened_at` statt `filled_at`, weil
+        # Alt-Zeilen (vor T-050) kein filled_at tragen; seit dem Markt-Entry (T-051)
+        # fallen beide ohnehin zusammen.
+        if (
+            TIME_STOP_H > 0
+            and not state.armed
+            and time_stopped < TIME_STOP_MAX_PER_CYCLE
+            and row.get("opened_at") is not None
+        ):
+            age_h = (datetime.datetime.now(datetime.timezone.utc) - row["opened_at"]).total_seconds() / 3600
+            if age_h > TIME_STOP_H:
+                close_mirror(conn, row, REASON_TIME_STOP, mark)
+                time_stopped += 1
+                continue
+
         if peak_advanced:
             # Der Peak ist monoton — nur neue Hochs ändern dauerhaften Zustand. Das
             # hält die Schreibrate bei einer Handvoll pro Position statt einer pro
@@ -844,6 +925,13 @@ def poll_open_mirrors(
             conn.commit()
             row["peak_pct"] = state.peak_pct
 
+    if time_stopped:
+        logger.info(
+            "⏱ %d Spiegel per Zeit-Stop geschlossen (nie über +%.0f %% in %.0f h).",
+            time_stopped,
+            ACTIVATION_PCT,
+            TIME_STOP_H,
+        )
     if unfilled:
         logger.info("⏳ %d Spiegel warten noch auf ihren Fill (Cornix hat den Entry nicht erreicht).", unfilled)
     if missing:
