@@ -351,7 +351,10 @@ def test_time_stop_closes_only_stale_unarmed_mirrors():
     mirrors = bot.read_open_mirrors(conn)
     src = {41: {"symbol": "AAAUSDT"}, 42: {"symbol": "BBBUSDT"}, 43: {"symbol": "CCCUSDT"}}
     prices = {"AAAUSDT": 99.0, "BBBUSDT": 102.9, "CCCUSDT": 99.0}
-    with mock.patch.object(bot, "get_live_prices_batch", return_value=prices):
+    with (
+        mock.patch.object(bot, "TIME_STOP_SINCE", _ts_since(1000)),
+        mock.patch.object(bot, "get_live_prices_batch", return_value=prices),
+    ):
         bot.poll_open_mirrors(conn, sources=src, mirrors=mirrors)
     assert conn.store["outbox"][0] == (CHANNEL, "Close AAAUSDT")
     closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
@@ -370,7 +373,10 @@ def test_arming_at_the_deadline_poll_beats_the_time_stop():
     row = (1, 41, "AAAUSDT", "MIS1-72h", "LONG", 100.0, 1.5, True, None, None, _recent(60 * 25), 90.0)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
-    with mock.patch.object(bot, "get_live_prices_batch", return_value={"AAAUSDT": 103.0}):
+    with (
+        mock.patch.object(bot, "TIME_STOP_SINCE", _ts_since(1000)),
+        mock.patch.object(bot, "get_live_prices_batch", return_value={"AAAUSDT": 103.0}),
+    ):
         bot.poll_open_mirrors(conn, sources={41: {"symbol": "AAAUSDT"}}, mirrors=mirrors)
     closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
     assert closes == [], closes  # no close of any kind — the trail owns it now
@@ -390,10 +396,42 @@ def test_time_stop_wave_is_rate_limited():
     mirrors = bot.read_open_mirrors(conn)
     src = {100 + i: {"symbol": f"C{i}USDT"} for i in range(len(rows))}
     prices = {f"C{i}USDT": 99.0 for i in range(len(rows))}
-    with mock.patch.object(bot, "get_live_prices_batch", return_value=prices):
+    with (
+        mock.patch.object(bot, "TIME_STOP_SINCE", _ts_since(1000)),
+        mock.patch.object(bot, "get_live_prices_batch", return_value=prices),
+    ):
         bot.poll_open_mirrors(conn, sources=src, mirrors=mirrors)
     closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
     assert len(closes) == bot.TIME_STOP_MAX_PER_CYCLE, len(closes)
+
+
+def _ts_since(hours_ago: float):
+    """Patch target for TIME_STOP_SINCE — the real cutoff is 'deploy day', so any
+    >24h-old test mirror would be grandfathered by accident; the time-stop pins pin
+    the RULE, not the calendar."""
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours_ago)
+
+
+def test_grandfathered_legacy_book_rides_past_the_time_stop():
+    """Operator decision (Michi, 2026-07-28): mirrors opened BEFORE the cutoff ride
+    to their natural SL/TP at the operator's explicit risk — the time-stop governs
+    only the new regime. The cutoff is a fixed timestamp, not 'process start', so a
+    later restart cannot silently exempt a fresh cohort."""
+    legacy = (1, 41, "AAAUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 72), 90.0)
+    fresh_stale = (2, 42, "BBBUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 25), 90.0)
+    conn = FakeConn(mirrors=[legacy, fresh_stale])
+    mirrors = bot.read_open_mirrors(conn)
+    src = {41: {"symbol": "AAAUSDT"}, 42: {"symbol": "BBBUSDT"}}
+    with (
+        mock.patch.object(bot, "TIME_STOP_SINCE", _ts_since(48)),  # cutoff between the two
+        mock.patch.object(bot, "get_live_prices_batch", return_value={"AAAUSDT": 99.0, "BBBUSDT": 99.0}),
+    ):
+        bot.poll_open_mirrors(conn, sources=src, mirrors=mirrors)
+    closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
+    assert len(closes) == 1 and closes[0][2] == 2, closes  # only the post-cutoff mirror
+    assert conn.store["outbox"][0] == (CHANNEL, "Close BBBUSDT")
 
 
 def test_exposure_cap_refuses_only_the_stretching_side():

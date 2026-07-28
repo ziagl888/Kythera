@@ -148,6 +148,16 @@ TIME_STOP_H = float(os.getenv("TRAILING_BOT_TIME_STOP_H", "24"))
 # verzögern. So verteilt sich die Bereinigung über einige Minuten.
 TIME_STOP_MAX_PER_CYCLE = int(os.getenv("TRAILING_BOT_TIME_STOP_MAX_PER_CYCLE", "25"))
 
+# Grandfather-Stichtag (Operator-Entscheid Michi, 2026-07-28): der Zeit-Stop gilt nur
+# für Spiegel, die AB diesem Zeitpunkt geöffnet wurden. Der Altbestand davor reitet
+# auf explizites Operator-Risiko zu seinem natürlichen SL/TP weiter — die Datenlage
+# (SOURCE_CLOSED Ø −4,8 % vs. Zeit-Stop bei ~−2,4 %) wurde gesehen und bewusst
+# überstimmt. Als fester Stichtag statt "beim Start berechnet", damit ein späterer
+# Restart nicht still eine neue Kohorte exemptiert.
+TIME_STOP_SINCE = datetime.datetime.fromisoformat(
+    os.getenv("TRAILING_BOT_TIME_STOP_SINCE", "2026-07-28T14:00:00+00:00")
+)
+
 # Netto-Exposure-Deckel je Richtung (T-2026-KYT-9050-052): ein neuer Entry, dessen
 # Richtung bereits EXPOSURE_CAP Positionen vor der Gegenrichtung liegt, wird nicht
 # aufgenommen. Kein Marktlagen-Modell (die wurden gemessen und verworfen), sondern
@@ -905,6 +915,8 @@ def poll_open_mirrors(
             and not state.armed
             and time_stopped < TIME_STOP_MAX_PER_CYCLE
             and row.get("opened_at") is not None
+            # Grandfather: Altbestand vor dem Stichtag reitet (Operator-Risiko).
+            and row["opened_at"] >= TIME_STOP_SINCE
         ):
             age_h = (datetime.datetime.now(datetime.timezone.utc) - row["opened_at"]).total_seconds() / 3600
             if age_h > TIME_STOP_H:
