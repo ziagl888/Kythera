@@ -1,3 +1,14 @@
+## [2026-07-28] Bot 40: Grandfather-Stichtag für den Zeit-Stop (T-2026-KYT-9050-052, Operator-Entscheid)
+
+**Operator-Entscheid Michi:** der Altbestand reitet auf explizites eigenes Risiko zu seinem
+natürlichen SL/TP weiter — die Datenlage (SOURCE_CLOSED Ø −4,8 % vs. Zeit-Stop bei ~−2,4 %)
+wurde gesehen und bewusst überstimmt. Umsetzung: `TRAILING_BOT_TIME_STOP_SINCE` (default
+**2026-07-28T14:00Z**, fester Stichtag statt Prozess-Start, damit ein späterer Restart nicht
+still eine neue Kohorte exemptiert) — der Zeit-Stop gilt nur für ab dann geöffnete Spiegel.
+Damit entfällt die Altbestand-Bereinigungswelle beim Restart; Exposure-Cap und Trail gelten
+unverändert für alles. Pin `test_grandfathered_legacy_book_rides_past_the_time_stop`; die
+bestehenden Zeit-Stop-Pins patchen den Stichtag (Echtzeit-Fixtures lägen sonst davor).
+
 ## [2026-07-28] Bot 40: Zeit-Stop 24 h + Exposure-Cap ±50 (T-2026-KYT-9050-052, Operator-Go Michi)
 
 **Umbau nach dem T-052-Verdikt** (Regel-Wahl: beste Dichte pro gebundenem Kapital bei 800-USD-

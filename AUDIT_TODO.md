@@ -59,6 +59,8 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   Offen (Michi): Restart · Cornix-Sizing m ≈ Equity/400 · ab ~2000 USD Equity neuer Lauf
   unter Cap 1000 für die 2-Channel-Erweiterung. KB-Task-Anlage für den Umbau steht aus
   (KB-MCP in der Session nicht verbunden) — bei nächster verbundener Session nachziehen.
+  **Nachtrag:** Grandfather-Stichtag `TIME_STOP_SINCE=2026-07-28T14:00Z` (Operator-Entscheid:
+  Altbestand reitet auf eigenes Risiko; Bereinigungswelle beim Restart entfällt).
 - [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi) — AKTUALISIERT 2026-07-28.** Nach
   Live-Bestätigung der Entmischung (sauberes Fenster in ~9 h auf 95 % unter Wasser; Bot auf
   Operator-Auftrag 05:29 geparkt, 05:43 entparkt) und Lauf 3 (23 Regeln, inkl. x-Sweep,
