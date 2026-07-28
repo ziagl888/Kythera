@@ -246,6 +246,20 @@ def test_direction_gate_filters_by_hourly_allowance():
     assert np.isclose(s["net"], 1.5 - FEE_RT)
 
 
+def test_total_cap_refuses_entries_while_full():
+    """With cap=1 the second, overlapping trade is refused; after the first
+    exits, a later arrival gets the freed seat."""
+    from tools.trailing_book_health import run_total_cap
+
+    first = _trade(0, 10, fav=[0.1] * 10, adv=[-0.1] * 10, real=1.0)
+    overlapping = _trade(5, 20, fav=[0.1] * 15, adv=[-0.1] * 15, real=99.0)
+    later = _trade(12, 20, fav=[0.1] * 8, adv=[-0.1] * 8, real=2.0)
+    book = run_total_cap([first, overlapping, later], 30, {}, cap=1)
+    s = book.stats()
+    assert s["n"] == 2, s["n"]  # the overlapping trade never got a seat
+    assert np.isclose(s["net"], 1.0 + 2.0 - 2 * FEE_RT), s["net"]
+
+
 def test_no_series_trade_keeps_recorded_outcome_under_every_rule():
     """A trade without candle coverage must fall back to its recorded close."""
     t = {

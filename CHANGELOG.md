@@ -1,3 +1,18 @@
+## [2026-07-28] Trailing-Arm: deploybarer Prio-Vergleich unter dem 500-Slot-Cap (T-2026-KYT-9050-052)
+
+**Operator-Frage:** Prio Upside — wer hat März–Juli am Periodenende die beste Performance,
+vergleichbar gerechnet? Läufe 4+5 (`tools/trailing_book_health.py`, jetzt 29 Regeln, 16 Pins):
+Breakeven-Varianten (be2/be5, ±Cap) und **alle großen Kandidaten unter dem harten
+Cornix-500-Slot-Cap** (`run_total_cap`) plus Equal-Capital-Spalten (netto/Ø-Slot, DD/Ø-Slot).
+
+**Ergebnis (deploybar):** 1. Trail act=2 (heute) 38,2k — beste absolute Zahl, aber das
+strukturell kranke Buch (−2,73 %, 78 % u.W.). 2. **be5+ts24@500 34,5k** — ~90 % davon bei
+niedrigstem MaxDD der großen Regeln (4 124), gesündestem Buch der Messreihe (+3,36 %) und
+gleichmäßigstem Monatsverlauf; ohne Cap sogar 59,0k ≈ Hold. 3. Hold@500 26,8k (der Cap kostet
+Hold 54 %). be2-Schwelle ist zu früh (21,8k), Richtungs-Caps würgen den Breakeven-Ansatz ab.
+**Empfehlung Prio Upside: be5+ts24** (Ratchet ab +5 % auf Entry + 24h-Zeit-Stop + bestehender
+Slot-Cap); Details + Umbau-Skizze im Verdikt-Nachtrag 2. Umbau/Restart Michi-gegatet (#T52-3).
+
 ## [2026-07-28] Trailing-Arm: x-Sweep, SL-Nachzug und Marktlagen-Gates — Nachtrag (T-2026-KYT-9050-052)
 
 **Live-Ereignis:** Das saubere Market-Entry-Buch entmischte sich binnen ~9 h von Ø −0,23 % auf
