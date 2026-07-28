@@ -569,6 +569,8 @@ RULE_ORDER = [
     ("hold@500", "Hold unter hartem 500-Slot-Cap"),
     ("be2+ts24@500", "Breakeven 2 % + Zeit-Stop 24 h @ 500-Cap"),
     ("be5+ts24@500", "Breakeven 5 % + Zeit-Stop 24 h @ 500-Cap"),
+    ("hold@1000", "Hold @ 1000 (2 Channels, least-loaded)"),
+    ("be5+ts24@1000", "Breakeven 5 % + Zeit-Stop 24 h @ 1000 (2 Channels)"),
     ("feedback-gate", "Buch-Feedback-Gate (D nur wenn offenes D-Buch > −1 %)"),
     ("btc-dir-gate", "BTC-Richtungs-Gate (LONG nur bei 24h-Ret > 0)"),
     ("ptf-y10", "Portfolio-Trail 10 % (kein Einzel-Trail)"),
@@ -699,6 +701,10 @@ def main() -> None:
     score("hold@500", run_total_cap(trades, glen, {}))
     score("be2+ts24@500", run_total_cap(trades, glen, be_ts_exits))
     score("be5+ts24@500", run_total_cap(trades, glen, be5_exits))
+    # 2 Channels + least-loaded assignment == one global 1000 cap: the emptier
+    # channel has room exactly while total open < 1000 (operator idea 2026-07-28).
+    score("hold@1000", run_total_cap(trades, glen, {}, cap=1000))
+    score("be5+ts24@1000", run_total_cap(trades, glen, be5_exits, cap=1000))
     score("feedback-gate", run_feedback_gate(trades, glen, grid0, ACT_LIVE))
     score("btc-dir-gate", run_direction_gate(trades, glen, grid0, ACT_LIVE, *btc_gates))
     score("ptf-y10", run_portfolio(trades, glen, 0.10))

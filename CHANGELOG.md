@@ -1,3 +1,14 @@
+## [2026-07-28] Trailing-Arm: Zwei-Channel-Szenario — be5+ts24 @ 1000 gewinnt (T-2026-KYT-9050-052)
+
+**Operator-Idee:** Trades auf 2 Channels aufteilen → 1000 Slots. Mit least-loaded-Zuweisung
+exakt ein globaler 1000er-Cap (Lauf 6, `run_total_cap(cap=1000)`). **Ergebnis: be5+ts24@1000 =
+53 028 Equity-final** (90 % des ungedeckelten Potenzials, 95 % der Trades bekommen einen Platz)
+— +39 % gegenüber dem heutigen Trail (38,2k) bei gesundem Buch (+3,27 %), +23 % gegenüber
+Hold@1000 (43,2k) bei 40 % von dessen MaxDD (5 676 vs. 14 193); monatlich +11,0/+14,7/+11,3/
++9,6/+6,8. **Finale Prio-Upside-Empfehlung: zwei Channels + be5+ts24** (Ratchet ab +5 % auf
+Entry + 24h-Zeit-Stop + Slot-Caps). Umbau-Skizze im Verdikt-Nachtrag 3; Umbau/Channel/Sizing/
+Restart Michi-gegatet (#T52-3).
+
 ## [2026-07-28] Trailing-Arm: deploybarer Prio-Vergleich unter dem 500-Slot-Cap (T-2026-KYT-9050-052)
 
 **Operator-Frage:** Prio Upside — wer hat März–Juli am Periodenende die beste Performance,
