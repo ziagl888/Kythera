@@ -52,6 +52,13 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   (Bot 28); seine Beine standen für 10 334 % der 49 204-%-Erwartung (21 %). Ohne ROM1 erwartet
   Trail act=2 **39 116 %** (März–Juli). Die Roster-Auswahl selbst bleibt unverändert — AK3
   (ein Symbol je Position) unterdrückt die Duplikate im Live-Bot ohnehin größtenteils.
+- [x] **#T52-4 Umbau Bot 40 auf Trail + Zeit-Stop 24 h + Exposure-Cap ±50 — GEBAUT (Operator-Go
+  Michi 2026-07-28), Restart-gated.** `TIME_STOP` (kausal, Grenzfall + Raten-Limit 25/Zyklus
+  gepinnt) + `EXPOSURE_CAP` (Netto-Schranke in `admit`, gepinnt). Wirksam erst nach
+  Fleet-Restart; erster Zyklus räumt nie-scharfen Altbestand (~150 Spiegel, gestaffelt).
+  Offen (Michi): Restart · Cornix-Sizing m ≈ Equity/400 · ab ~2000 USD Equity neuer Lauf
+  unter Cap 1000 für die 2-Channel-Erweiterung. KB-Task-Anlage für den Umbau steht aus
+  (KB-MCP in der Session nicht verbunden) — bei nächster verbundener Session nachziehen.
 - [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi) — AKTUALISIERT 2026-07-28.** Nach
   Live-Bestätigung der Entmischung (sauberes Fenster in ~9 h auf 95 % unter Wasser; Bot auf
   Operator-Auftrag 05:29 geparkt, 05:43 entparkt) und Lauf 3 (23 Regeln, inkl. x-Sweep,

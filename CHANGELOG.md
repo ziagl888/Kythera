@@ -1,3 +1,22 @@
+## [2026-07-28] Bot 40: Zeit-Stop 24 h + Exposure-Cap ±50 (T-2026-KYT-9050-052, Operator-Go Michi)
+
+**Umbau nach dem T-052-Verdikt** (Regel-Wahl: beste Dichte pro gebundenem Kapital bei 800-USD-
+Start, 1 Channel): der Trail act=2 bleibt, dazu zwei strikt kausale Schranken:
+- **Zeit-Stop** (`TRAILING_BOT_TIME_STOP_H`, default 24): ein Spiegel, der nie über die
+  Aktivierungsschwelle kam, wird zum Markt geschlossen (`TIME_STOP`). Entscheidet nur auf dem
+  Peak-Stand von JETZT — ein im Deadline-Poll scharf werdender Spiegel gehört dem Trail
+  (Grenz-Semantik gepinnt). Flutschutz `TIME_STOP_MAX_PER_CYCLE=25`: die Altbestand-
+  Bereinigung nach dem Restart verteilt sich über Minuten statt die FIFO-Outbox zu stauen.
+- **Exposure-Cap** (`TRAILING_BOT_EXPOSURE_CAP`, default ±50): neue Entries der Überhang-
+  Richtung werden abgewiesen (Grund `EXPOSURE_CAP`, gebündelt geloggt) — Netto-Schranke,
+  ein zugelassener Gegen-Trade öffnet den Deckel wieder (gepinnt).
+6 neue Pins in `backtest/test_trailing_close_bot.py` (Zeit-Stop-Population, Kausalitäts-
+Grenzfall, Raten-Limit, Cap-Semantik). **Wirksam erst nach Fleet-Restart (Michi).** Beim
+ersten Zyklus danach räumt der Zeit-Stop den nie-scharfen Altbestand (~150 Spiegel, je 25/
+Zyklus) — beabsichtigte Bereinigung des Verlierer-Buchs. Sizing-Empfehlung (Cornix, Operator):
+m ≈ Equity/400 bei p95 ≈ 130 Slots; 2-Channel-Erweiterung ab ~2000 USD Equity nach neuem
+Lauf unter Cap 1000.
+
 ## [2026-07-28] Trailing-Arm: KORREKTUR — Look-ahead in den Breakeven-Regeln, Empfehlung revidiert (T-2026-KYT-9050-052)
 
 **Die be+ts-Ergebnisse der beiden vorigen Einträge sind zurückgezogen.** Der Zeit-Stop in

@@ -340,6 +340,86 @@ def test_trailing_trigger_closes_the_mirror():
     assert any(p and bot.REASON_TRAIL in p for _, p in conn.store["sql"] if p)
 
 
+def test_time_stop_closes_only_stale_unarmed_mirrors():
+    """T-052 loss bound. A mirror that never cleared the activation and is older
+    than TIME_STOP_H closes at the market; an ARMED mirror of the same age belongs
+    to the trail, a YOUNG unarmed one keeps its chance."""
+    stale = (1, 41, "AAAUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 25), 90.0)
+    armed = (2, 42, "BBBUSDT", "MIS1-72h", "LONG", 100.0, 3.0, True, None, None, _recent(60 * 25), 90.0)
+    young = (3, 43, "CCCUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60), 90.0)
+    conn = FakeConn(mirrors=[stale, armed, young])
+    mirrors = bot.read_open_mirrors(conn)
+    src = {41: {"symbol": "AAAUSDT"}, 42: {"symbol": "BBBUSDT"}, 43: {"symbol": "CCCUSDT"}}
+    prices = {"AAAUSDT": 99.0, "BBBUSDT": 102.9, "CCCUSDT": 99.0}
+    with mock.patch.object(bot, "get_live_prices_batch", return_value=prices):
+        bot.poll_open_mirrors(conn, sources=src, mirrors=mirrors)
+    assert conn.store["outbox"][0] == (CHANNEL, "Close AAAUSDT")
+    closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
+    assert len(closes) == 1 and closes[0][0] == bot.REASON_TIME_STOP, closes
+    # The armed one stays with the trail (mark +2.9 > stop 2.7), the young one lives.
+    assert not any("BBBUSDT" in str(m) or "CCCUSDT" in str(m) for m in conn.store["outbox"])
+
+
+def test_arming_at_the_deadline_poll_beats_the_time_stop():
+    """Boundary semantics, deliberately: a stale mirror whose CURRENT price arms it
+    in the same poll is a winner now — it goes to the trail, not the time-stop
+    ('der Zeit-Stop trifft nie einen scharfen Spiegel'). Causality is preserved:
+    the decision uses only the peak as of THIS price, never a future one — the
+    look-ahead the study retracted was arming from prices hours ahead (Nachtrag 4),
+    not one poll of granularity."""
+    row = (1, 41, "AAAUSDT", "MIS1-72h", "LONG", 100.0, 1.5, True, None, None, _recent(60 * 25), 90.0)
+    conn = FakeConn(mirrors=[row])
+    mirrors = bot.read_open_mirrors(conn)
+    with mock.patch.object(bot, "get_live_prices_batch", return_value={"AAAUSDT": 103.0}):
+        bot.poll_open_mirrors(conn, sources={41: {"symbol": "AAAUSDT"}}, mirrors=mirrors)
+    closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
+    assert closes == [], closes  # no close of any kind — the trail owns it now
+    peaks = [s for s, _ in conn.store["sql"] if s.startswith("UPDATE trailing_positions SET peak_pct")]
+    assert peaks, "the new peak must be persisted (restart safety)"
+
+
+def test_time_stop_wave_is_rate_limited():
+    """After a restart over an old book, hundreds of stale mirrors qualify at once.
+    At most TIME_STOP_MAX_PER_CYCLE close per cycle — the Telegram outbox is FIFO
+    for the whole fleet, a 150-message burst would stall everyone else's posts."""
+    rows = [
+        (i, 100 + i, f"C{i}USDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 30), 90.0)
+        for i in range(bot.TIME_STOP_MAX_PER_CYCLE + 10)
+    ]
+    conn = FakeConn(mirrors=rows)
+    mirrors = bot.read_open_mirrors(conn)
+    src = {100 + i: {"symbol": f"C{i}USDT"} for i in range(len(rows))}
+    prices = {f"C{i}USDT": 99.0 for i in range(len(rows))}
+    with mock.patch.object(bot, "get_live_prices_batch", return_value=prices):
+        bot.poll_open_mirrors(conn, sources=src, mirrors=mirrors)
+    closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
+    assert len(closes) == bot.TIME_STOP_MAX_PER_CYCLE, len(closes)
+
+
+def test_exposure_cap_refuses_only_the_stretching_side():
+    """T-052 structural bound: with the book already EXPOSURE_CAP longs ahead, a
+    new LONG is refused with its own reason while a SHORT is still admitted."""
+    full = {"LONG": bot.EXPOSURE_CAP, "SHORT": 0}
+    admitted, rejected = bot.admit([_cand(1, "AAAUSDT", "MIS1-72h", "LONG")], set(), 500, open_by_dir=dict(full))
+    assert admitted == [] and rejected[0][2] == "EXPOSURE_CAP"
+    admitted, rejected = bot.admit([_cand(2, "BBBUSDT", "MIS1-8h", "SHORT")], set(), 500, open_by_dir=dict(full))
+    assert [sid for sid, _ in admitted] == [2] and rejected == []
+    # The cap is a NET bound: an admitted SHORT reduces the imbalance, so a LONG
+    # arriving in the same cycle fits again — that is intended, not a leak.
+    both = [_cand(1, "AAAUSDT", "MIS1-72h", "LONG"), _cand(2, "BBBUSDT", "MIS1-8h", "SHORT")]
+    admitted, _ = bot.admit(both, set(), 500, open_by_dir=dict(full))
+    assert {sid for sid, _ in admitted} == {1, 2}
+
+
+def test_exposure_cap_counts_admissions_within_the_cycle():
+    """A single cycle full of one-sided candidates must not overrun the cap: the
+    counter advances with every admission, not only with the DB state."""
+    cands = [_cand(i, f"C{i}USDT", "MIS1-72h", "LONG") for i in range(bot.EXPOSURE_CAP + 10)]
+    admitted, rejected = bot.admit(cands, held_symbols=set(), free_slots=500)
+    assert len(admitted) == bot.EXPOSURE_CAP
+    assert {why for _sid, _sig, why in rejected} == {"EXPOSURE_CAP"}
+
+
 def test_no_price_means_no_decision():
     """A coin without a tick keeps its position — closing it would be a statement
     about a market we cannot see."""
