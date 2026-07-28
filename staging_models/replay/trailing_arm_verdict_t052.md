@@ -234,6 +234,32 @@ berührt; alternativ echtes SL-Update, falls Cornix das im Channel kann), (2) Sp
 +2-%-Peak nach 24 h schließen (`TIME_STOP`), (3) Slot-Cap 500 bleibt (AK4). Alle drei Bausteine
 existieren im Bot (peak_pct, filled_at, Cap-Layer). Umbau + Restart sind Michi-gegatet.
 
+## Nachtrag 3 (2026-07-28) — Zwei-Channel-Idee des Operators: 2 × 500 = 1000 Slots
+
+Operator-Vorschlag: die Trades auf zwei Channels aufteilen. Mit „neuer Trade → in den leereren
+Channel" ist das exakt ein globaler 1000er-Cap (der leerere Channel hat Platz, solange gesamt
+< 1000 offen sind; Symbol-Eindeutigkeit bleibt global). Lauf 6:
+
+| Regel | n | Equity final | MaxDD | Ø Slots / p95 | netto/Ø-Slot | Ø Buch-Mark | Monats-Δ |
+|---|--:|--:|--:|--:|--:|--:|---|
+| **be5+ts24 @ 1000 (2 Ch.)** | 42 456 | **53 028** | 5 676 | 560 / 975 | 95 | +3,27 % | +11,0/+14,7/+11,3/+9,6/+6,8 |
+| Hold @ 1000 (2 Ch.) | 36 060 | 43 167 | 14 193 | 812 / 1000 | 53 | +2,33 % | +0,1/+11,8/+13,9/+13,1/+5,1 |
+| be5+ts24 @ 500 (1 Ch.) | 32 372 | 34 469 | 4 124 | 408 / 500 | 85 | +3,36 % | — |
+| Trail act=2 (heute, 1 Ch.) | 44 748 | 38 155 | 4 377 | 260 / 495 | 147 | −2,73 % | — |
+| be5+ts24 ungedeckelt (theor.) | 44 748 | 58 994 | 6 989 | 583 / 1083 | 101 | +3,26 % | — |
+
+**Mit zwei Channels holt be5+ts24 90 % seines ungedeckelten Potenzials** (53,0k von 59,0k;
+95 % der Trades bekommen einen Platz) und schlägt jede deploybare Alternative deutlich:
++39 % gegenüber dem heutigen Trail bei gesundem Buch, +23 % gegenüber Hold@1000 bei 40 %
+von dessen MaxDD. Hold profitiert vom zweiten Channel weit weniger (sein Buch klebt auch
+bei 1000 am Limit, März fast bei null).
+
+**Finale Empfehlung (Prio Upside): zwei Channels + be5+ts24.** Operativ: zweiter Channel +
+Cornix-Anbindung + Sizing (Michi); Bot 40 multi-channel (least-loaded-Zuweisung, `channel_id`
+in `trailing_positions`, Close-Routing, AK3 global); Kapital-Hinweis: 1000 Slots ×
+Positionsgröße = bis zu doppeltes gleichzeitiges Exposure — Sizing pro Channel ist die
+Stellschraube. Umbau + Restart Michi-gegatet.
+
 ## Ehrliche Grenzen
 
 - Sim-Entries = `closed_ai_signals`-Entry (Hold-Arm-Geometrie); der Live-Bot steigt seit
