@@ -26,10 +26,13 @@ sys.path.insert(0, ROOT)
 
 from tools.trailing_book_health import (  # noqa: E402
     FEE_RT,
+    exit_breakeven,
     exit_trail,
     exit_trail_hardstop,
     exit_trail_timestop,
+    run_direction_gate,
     run_exposure_cap,
+    run_feedback_gate,
     run_partial,
     run_rule,
 )
@@ -174,6 +177,73 @@ def test_exposure_cap_refuses_the_stretching_side_only():
     assert s["cnt_short_mean"] > 0  # the SHORT was
     # net = admitted trades only: 0.0 + 1.0 − 2 fees
     assert np.isclose(s["net"], 1.0 - 2 * FEE_RT), s["net"]
+
+
+def test_breakeven_ratchet_bounds_giveback_at_zero():
+    """Armed at candle 1 (prior peak 5 > 2), touches entry again at candle 3 → exit 0.0.
+    The ratchet may not exit before arming, and never at a negative value."""
+    t = _trade(0, 50, fav=[0.0, 5.0, 5.0, 5.0], adv=[-1.0, 1.0, 2.0, -0.5], real=3.0)
+    gi, val = exit_breakeven(t, GRID0, 2.0)
+    assert val == 0.0
+    assert gi == 3  # candle 0's entry-touch is pre-arming and must not fire
+    # Armed but never back to entry → rides to its natural close.
+    rider = _trade(0, 10, fav=[0.0, 5.0] + [6.0] * 8, adv=[0.0, 1.0] + [3.0] * 8, real=4.0)
+    assert exit_breakeven(rider, GRID0, 2.0) == (rider["gie"], 4.0)
+
+
+def test_breakeven_with_timestop_bounds_the_never_armed():
+    """Without ts_hours a never-armed loser rides to its close; with ts_hours it
+    time-stops — the ratchet alone has no stop to ratchet on an unarmed trade."""
+    loser = _trade(0, 100, fav=[0.5] * 100, adv=[-1.0] * 100, cm=[-0.9] * 100, real=-7.0)
+    assert exit_breakeven(loser, GRID0, 2.0) == (loser["gie"], -7.0)
+    gi, val = exit_breakeven(loser, GRID0, 2.0, ts_hours=24.0)
+    assert (gi, val) == (24, -0.9)
+
+
+def test_exposure_cap_composes_with_custom_exits():
+    """The cap must apply the exits it is given, not silently fall back to the trail."""
+    t = _trade(0, 100, fav=[0.5] * 100, adv=[-1.0] * 100, cm=[-0.8] * 100, real=-8.0)
+    exits = {0: exit_trail_timestop(t, GRID0, 2.0, 24.0)}
+    book = run_exposure_cap([t], 120, GRID0, 2.0, cap=5, exits=exits)
+    s = book.stats()
+    assert np.isclose(s["net"], -0.8 - FEE_RT), s["net"]  # time-stop value, not hold's -8
+
+
+def test_wider_giveback_exits_later_and_captures_less():
+    """x=30 % must never fire before x=10 % and fills lower on the same peak."""
+    t = _trade(0, 50, fav=[0.0, 10.0, 10.0, 10.0], adv=[0.0, 9.5, 8.5, 6.5], real=1.0)
+    gi10, val10 = exit_trail(t, GRID0, 2.0, x=0.10)
+    gi30, val30 = exit_trail(t, GRID0, 2.0, x=0.30)
+    assert gi10 == 2 and np.isclose(val10, 9.0)
+    assert gi30 == 3 and np.isclose(val30, 7.0)
+    assert gi30 >= gi10 and val30 < val10
+
+
+def test_feedback_gate_stops_feeding_a_bleeding_side():
+    """Once >= min_n open LONGs sit below thresh, the next LONG is refused;
+    a SHORT is still admitted (the gate reads each side separately)."""
+    bleeders = [
+        _trade(0, 100, fav=[0.5] * 100, adv=[-2.0] * 100, cm=[-2.0] * 100, real=-5.0, direction="LONG")
+        for _ in range(3)
+    ]
+    late_long = _trade(5, 100, fav=[0.5] * 95, adv=[-1.0] * 95, cm=[-1.0] * 95, real=-4.0, direction="LONG")
+    late_short = _trade(5, 100, fav=[0.5] * 95, adv=[-1.0] * 95, cm=[-1.0] * 95, real=2.0, direction="SHORT")
+    book = run_feedback_gate(bleeders + [late_long, late_short], 120, GRID0, 2.0, thresh=-1.0, min_n=3)
+    s = book.stats()
+    assert s["n"] == 4, s["n"]  # the late LONG was refused, everything else admitted
+    # the admitted set realises: 3 * -5.0 + 2.0 - 4 fees
+    assert np.isclose(s["net"], 3 * -5.0 + 2.0 - 4 * FEE_RT), s["net"]
+
+
+def test_direction_gate_filters_by_hourly_allowance():
+    long_t = _trade(2, 30, fav=[0.5] * 28, adv=[-0.5] * 28, real=1.0, direction="LONG")
+    short_t = _trade(2, 30, fav=[0.5] * 28, adv=[-0.5] * 28, real=1.5, direction="SHORT")
+    allow_long = np.zeros(40, dtype=bool)  # BTC falling the whole time
+    allow_short = np.ones(40, dtype=bool)
+    book = run_direction_gate([long_t, short_t], 40, GRID0, 2.0, allow_long, allow_short)
+    s = book.stats()
+    assert s["n"] == 1
+    assert np.isclose(s["net"], 1.5 - FEE_RT)
 
 
 def test_no_series_trade_keeps_recorded_outcome_under_every_rule():
