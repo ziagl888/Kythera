@@ -298,6 +298,31 @@ def test_move_gate_filters_admission_only():
     assert s["n"] == 1 and np.isclose(s["net"], 1.0 - FEE_RT), (s["n"], s["net"])
 
 
+def test_hardstop_tie_is_sl_first():
+    """Same-candle touch of trail level AND stop → the stop fills (monitor
+    convention; the earlier trail-first tie-break flattered the stop rule)."""
+    t = _trade(0, 5, fav=[0.0, 5.0, 5.0], adv=[0.0, 0.0, -6.0], real=1.0)
+    gi, val = exit_trail_hardstop(t, GRID0, 2.0, 5.0)
+    assert (gi, val) == (2, -5.0), (gi, val)
+
+
+def test_deployed_slcap_takes_the_earliest_event():
+    """Composite rule: stop, trail and causal time-stop compete on candle index;
+    the earliest fires, the time-stop only when unarmed at its deadline."""
+    from tools.trailing_book_health import exit_deployed_slcap
+
+    # Dips through −5 at hour 3, would have armed at hour 30 → stop wins.
+    dip = _trade(0, 100, fav=[1.0] * 30 + [8.0] * 70, adv=[-1.0] * 3 + [-6.0] + [-1.0] * 96, cm=[-1.0] * 100, real=4.0)
+    assert exit_deployed_slcap(dip, GRID0, 2.0, 24.0, 5.0) == (3, -5.0)
+    # Never armed, never below −5 → causal time-stop at 24h.
+    limbo = _trade(0, 100, fav=[0.5] * 100, adv=[-2.0] * 100, cm=[-1.5] * 100, real=-4.0)
+    assert exit_deployed_slcap(limbo, GRID0, 2.0, 24.0, 5.0) == (24, -1.5)
+    # Arms early and trails out before anything else.
+    winner = _trade(0, 100, fav=[0.0, 4.0] + [4.0] * 98, adv=[0.0, 2.0] + [1.0] * 98, real=3.0)
+    gi, val = exit_deployed_slcap(winner, GRID0, 2.0, 24.0, 5.0)
+    assert gi == 2 and np.isclose(val, 3.6), (gi, val)
+
+
 def test_no_series_trade_keeps_recorded_outcome_under_every_rule():
     """A trade without candle coverage must fall back to its recorded close."""
     t = {

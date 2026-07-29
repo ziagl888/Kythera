@@ -206,11 +206,38 @@ def exit_trail_hardstop(t: dict, grid0: np.datetime64, act: float, stop: float) 
     k = trail_exit(t["fav"], t["adv"], X_FRAC, act)
     hs = np.flatnonzero(t["adv"] <= -stop)
     j = int(hs[0]) if len(hs) else None
-    if j is not None and (k is None or j < k):
+    # SL-first on the same candle (monitor convention; PR-#206-review finding —
+    # the earlier j<k tie-break was optimistic for the stop rule).
+    if j is not None and (k is None or j <= k):
         return _gi_of(t, j, grid0), -stop
     if k is None:
         return t["gie"], t["real_unlev"]
     return _gi_of(t, k, grid0), float(prior_peak(t["fav"])[k] * (1.0 - X_FRAC))
+
+
+def exit_deployed_slcap(t: dict, grid0: np.datetime64, act: float, ts_hours: float, stop: float) -> tuple[int, float]:
+    """The DEPLOYED rule (trail + causal time-stop) plus an SL cap at −`stop` %
+    unlevered (operator question 2026-07-29: 'SL auf 5 % movement = max −100 %
+    bei 20x?'). Earliest event wins; on the same candle the stop is filled first
+    (monitor convention)."""
+    if not t["series"]:
+        return t["gie"], t["real_unlev"]
+    pk = prior_peak(t["fav"])
+    cands: list[tuple[int, int, float]] = []  # (candle_idx, prio, value)
+    hs = np.flatnonzero(t["adv"] <= -stop)
+    if len(hs):
+        cands.append((int(hs[0]), 0, -stop))
+    k = trail_exit(t["fav"], t["adv"], X_FRAC, act)
+    if k is not None:
+        cands.append((k, 1, float(pk[k] * (1.0 - X_FRAC))))
+    deadline = np.datetime64(_naive(t["ot"])) + np.timedelta64(int(ts_hours * 3600), "s")
+    j = int(np.searchsorted(t["tt"], deadline.astype("datetime64[ns]"), side="left"))
+    if j < len(t["tt"]) and not (pk[j] > act or (k is not None and k <= j)):
+        cands.append((j, 2, float(t["cm"][j])))
+    if not cands:
+        return t["gie"], t["real_unlev"]
+    idx, _prio, val = min(cands)
+    return _gi_of(t, idx, grid0), val
 
 
 def exit_one_sided(t: dict, grid0: np.datetime64, act: float, trail_dir: str) -> tuple[int, float]:
@@ -666,6 +693,9 @@ RULE_ORDER = [
     ("mover-abs50", "Mover-Gate: Coin |24h| > 50 % ignorieren (Trail a2)"),
     ("mover-chase20", "Chase-Gate: nur Hinterherlaufen > 20 % ignorieren"),
     ("mover-chase50", "Chase-Gate: nur Hinterherlaufen > 50 % ignorieren"),
+    ("trail-a2+slcap5", "Trail a2 + SL-Deckel −5 % unlev (−100 % @20x)"),
+    ("deployed+slcap5", "DEPLOYED (Trail+ts24+Cap50) + SL-Deckel −5 %"),
+    ("deployed", "DEPLOYED heute: Trail+ts24+Cap50 (kausal, Referenz)"),
     ("ptf-y10", "Portfolio-Trail 10 % (kein Einzel-Trail)"),
     ("ptf-y15", "Portfolio-Trail 15 % (kein Einzel-Trail)"),
 ]
@@ -807,6 +837,26 @@ def main() -> None:
     score("mover-abs50", run_move_gate(trades, glen, a2_exits, abs_thresh=50.0))
     score("mover-chase20", run_move_gate(trades, glen, a2_exits, chase_thresh=20.0))
     score("mover-chase50", run_move_gate(trades, glen, a2_exits, chase_thresh=50.0))
+    score(
+        "trail-a2+slcap5",
+        run_rule(trades, glen, {i: exit_trail_hardstop(t, grid0, ACT_LIVE, 5.0) for i, t in enumerate(trades)}),
+    )
+    dep_exits = {i: exit_trail_timestop(t, grid0, ACT_LIVE, 24.0) for i, t in enumerate(trades)}
+    score("deployed", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50, exits=dep_exits))
+    depcap_exits = {i: exit_deployed_slcap(t, grid0, ACT_LIVE, 24.0, 5.0) for i, t in enumerate(trades)}
+    score("deployed+slcap5", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50, exits=depcap_exits))
+
+    # Erholungs-Statistik: was gibt ein −5 %-Deckel her, was frisst er?
+    dipped = [t for t in trades if t["series"] and len(t["adv"]) and float(np.min(t["adv"])) <= -5.0]
+    if dipped:
+        holds = np.array([t["real_unlev"] for t in dipped])
+        rec_pos = float((holds >= 0).mean() * 100)
+        rec_5 = float((holds > -5.0).mean() * 100)
+        print(
+            f"\nErholungs-Statistik SL-Deckel −5 %: {len(dipped)}/{len(trades)} Trades tauchten unter −5 % unlev."
+            f"\n  davon endeten auf hold: >= 0 %: {rec_pos:.1f} %  ·  besser als −5 %: {rec_5:.1f} %"
+            f"  ·  Ø hold-Ergebnis der Getauchten: {holds.mean():+.3f} %"
+        )
     buckets = mover_buckets(trades, a2_exits)
     print("\nMover-Buckets (24h-Vorbewegung beim Entry, Ø/Trade unlev %):")
     print(f"  {'Bucket':<10}{'Dir':<7}{'n':>7}{'hold':>8}{'trail-a2':>10}")
