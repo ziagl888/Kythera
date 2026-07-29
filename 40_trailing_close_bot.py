@@ -95,6 +95,7 @@ from core.trailing_roster import (
     EXPECTED_OCC_MEAN,
     EXPECTED_OCC_P95,
     RETRACE_FRAC,
+    ROSTER,
     SLOT_CAP,
     SOURCE_REPORT,
     density,
@@ -120,12 +121,16 @@ POLL_SECONDS = 10
 # einem 15-min-Fenster lagen 18 von 101 offenen Spiegeln mehr als 1 % vom Markt
 # entfernt (Median 0,40 %, max 2,13 %).
 #
-# 30 s ist eng genug, dass der Entry praktisch am Markt liegt (der Poll läuft alle
-# 10 s, ein frisches Signal wird also normalerweise binnen einer Runde gesehen), und
-# weit genug, dass ein kurzer Aussetzer nichts verschluckt. Der Preis: Signale, die
-# während eines Fleet-Restarts (~5 min) aufgehen, fallen weg — bewusst, denn ein
-# Trade, den Cornix nie öffnet, ist schlimmer als einer, den wir auslassen.
-MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "30"))
+# 30 s war die T-051-Annahme („ein frisches Signal wird binnen einer Poll-Runde
+# gesehen") — gemessen am 2026-07-29 stimmt sie nicht: die Kette Signal →
+# Orchestrator → ai_signals-Insert braucht real 30–120 s (Median 95 s), und das
+# 30-s-Fenster verwarf damit ~85 % der echten Roster-Signale als „zu alt"
+# (~130 in 12 h; die Shorts, die der Operator vermisste). 180 s deckt die
+# gemessene Latenz; die T-051-Schutzidee bleibt: Market-Entry + der
+# Plausibilitäts-Riegel (Markt zwischen SL und TP1) verhindern weiterhin das
+# Spiegeln weggelaufener Trades, und ROM1s stunden-alte Re-Forwards filtert
+# jetzt der Roster selbst (EXCLUDED_AS_DUPLICATE) statt zufällig dieses Fenster.
+MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "180"))
 
 # Wie lange auf den Fill gewartet wird, bevor die Order als verfallen gilt. Danach
 # wird die Zeile geschlossen und ein `Close` gepostet, damit in Cornix keine
@@ -956,7 +961,7 @@ def main() -> None:
     mode = "LIVE" if (LIVE_POSTING and TARGET_CHANNEL_ID) else "SHADOW"
     logger.info(f"=== 🪝 TRAILING CLOSE BOT STARTED ({mode}) ===")
     logger.info(
-        f"Roster: 33 Beine aus {SOURCE_REPORT} · act={ACTIVATION_PCT}% · x={RETRACE_FRAC:.0%} · "
+        f"Roster: {len(ROSTER)} Beine aus {SOURCE_REPORT} · act={ACTIVATION_PCT}% · x={RETRACE_FRAC:.0%} · "
         f"cap={SLOT_CAP} (erwartet Ø {EXPECTED_OCC_MEAN:.0f} / p95 {EXPECTED_OCC_P95:.0f})"
     )
     if mode == "SHADOW":

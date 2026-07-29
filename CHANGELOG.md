@@ -1,3 +1,17 @@
+## [2026-07-29] Bot 40: Aktualitätsfenster 30→180 s + ROM1 aus dem Roster (T-2026-KYT-9050-052, Operator-Go)
+
+**Operator-Befund „es kommen zu wenige Shorts durch" bestätigt und Root-Cause gemessen:** die
+Kette Signal → Orchestrator → `ai_signals`-Insert braucht real 30–120 s (Median 95 s) — das
+T-051-Fenster von 30 s verwarf damit ~85 % der echten Roster-Signale als PREEXISTING (~130 in
+12 h, zugelassen nur ~1,5/h). Die auffällige ~3h-Gruppe war ausschließlich ROM1 (Re-Forwards
+mit Original-open_time). Fix: **`TRAILING_BOT_MAX_AGE_SEC` default 180 s** (deckt die
+gemessene Latenz; Market-Entry + SL/TP1-Riegel tragen den T-051-Schutz weiter) und **ROM1
+LONG/SHORT explizit aus dem Roster** (`EXCLUDED_AS_DUPLICATE` — Doppelzählungs-Befund; bisher
+filterte das Fenster ROM1 nur zufällig, was mit dem breiteren Fenster unsicher würde). Boot-Log
+zählt jetzt `len(ROSTER)` (31). Pins auf den neuen Kontrakt nachgezogen (95-s-Fall = zugelassen,
+600 s = nicht; ROM1-Ausschluss gepinnt). Erwartung: Zulassungen ×5–7, beidseitig; Cap regelt
+die Balance. **Wirksam nach Fleet-Restart (Michi).**
+
 ## [2026-07-29] Trailing-Arm: SL-Deckel-Frage beantwortet — −5 %-Cap verschlechtert massiv (T-2026-KYT-9050-052)
 
 Operator-Frage (Anlass CHRUSDT bei −160 % Margin, Quell-SL 12,2 % = −243 % @20x): SL künftig

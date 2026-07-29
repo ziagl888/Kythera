@@ -75,12 +75,10 @@ ROSTER: dict[tuple[str, str], float] = {
     ("ABR1", "SHORT"): 4.135,
     ("RUB1", "SHORT"): 3.943,
     ("MIS1-24h", "LONG"): 2.875,
-    ("ROM1", "LONG"): 2.791,
     ("SKW1", "SHORT"): 2.380,
     ("RUB1", "LONG"): 2.346,
     ("EPD1", "SHORT"): 2.238,
     ("SRA2", "SHORT"): 1.852,
-    ("ROM1", "SHORT"): 1.837,
     ("UFI1", "SHORT"): 1.770,
     ("SKW1", "LONG"): 1.591,
     ("AIM2", "LONG"): 1.409,
@@ -98,6 +96,18 @@ ROSTER: dict[tuple[str, str], float] = {
     ("MIS1-168h", "LONG"): 0.541,
     ("QM_4H", "LONG"): 0.352,
     ("ATS2", "LONG"): 0.054,
+}
+
+#: ROM1 removed from the roster (T-2026-KYT-9050-052, operator decision Michi
+#: 2026-07-29): bot 28 is a RE-FORWARDER — its rows are the same trades the
+#: original legs already post, carrying the ORIGINAL signal's open_time. In the
+#: PR #198 selection it double-counted 10 334 % of the 49 204 % headline; in the
+#: live bot the 30 s freshness window happened to filter it (hours-old
+#: open_time), which stopped being a safe accident once that window widened to
+#: cover the fleet's real insert latency. The seats it held go to fresh signals.
+EXCLUDED_AS_DUPLICATE: dict[tuple[str, str], float] = {
+    ("ROM1", "LONG"): 2.791,
+    ("ROM1", "SHORT"): 1.837,
 }
 
 #: Legs that earned their density but would have burst the cap, with the joint p95

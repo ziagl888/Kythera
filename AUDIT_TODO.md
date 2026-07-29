@@ -61,6 +61,11 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   (KB-MCP in der Session nicht verbunden) — bei nächster verbundener Session nachziehen.
   **Nachtrag:** Grandfather-Stichtag `TIME_STOP_SINCE=2026-07-28T14:00Z` (Operator-Entscheid:
   Altbestand reitet auf eigenes Risiko; Bereinigungswelle beim Restart entfällt).
+  **Nachtrag 2 (29.07.):** Aktualitätsfenster 30→180 s (Insert-Latenz gemessen: Median 95 s,
+  85 % der Signale fielen raus) + ROM1 aus dem Roster (`EXCLUDED_AS_DUPLICATE`) — Restart-gated.
+  Monitoring läuft als Scheduled Task „Bot40 Tripwire Monitor" (stündlich :53, parkt bei
+  Tripwire, Log `.local/bot40_monitor.log`) — der LLM-Session-Spawn aus Agent-Kontext
+  scheiterte (Fallen im Memory dokumentiert).
 - [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi) — AKTUALISIERT 2026-07-28.** Nach
   Live-Bestätigung der Entmischung (sauberes Fenster in ~9 h auf 95 % unter Wasser; Bot auf
   Operator-Auftrag 05:29 geparkt, 05:43 entparkt) und Lauf 3 (23 Regeln, inkl. x-Sweep,
