@@ -349,6 +349,36 @@ bereits richtig (MIS existiert genau dafür); ein Prozent-Gate ist in jeder Vari
 und verworfen. Grenze: Extrem-Buckets sind dünn (n=41–73), aber Richtung konsistent und die
 Gate-Aggregate bestätigen sie.
 
+## Nachtrag 6 (2026-07-29) — Operator-Frage: „SL auf 5 % Movement deckeln (max −100 % bei 20x)?"
+
+Anlass CHRUSDT: Altbestand-Spiegel bei −8 % unlev (−160 % Margin), Quell-SL 12,2 % unterm
+Entry (S/R-Level = −243 % Margin bei 20x). Frage: verschlechtert ein −5-%-Deckel das Ergebnis
+massiv, weil sich viele Trades erholen?
+
+**Erholungs-Statistik (45 082 Trades):** 18 955 (42 %) tauchten irgendwann unter −5 % unlev.
+Davon endeten auf hold **29,7 % im Plus** und **42,1 % besser als −5 %**; das Ø-Endergebnis
+der Getauchten ist **−2,74 %** — deutlich besser als die −5,00, die der Deckel realisiert.
+Der Deckel verkauft also im Schnitt jeden getauchten Trade ~2,3 %-Punkte unter seinem
+tatsächlichen Ausgang.
+
+| Regel | Σ netto | Equity MaxDD | Ø Buch-Mark |
+|---|--:|--:|--:|
+| Trail a2 (Referenz) | 37 887 | 4 377 | −2,73 % |
+| Trail a2 + SL-Deckel −5 % | 21 862 (−42 %) | 3 679 | −0,82 % |
+| **DEPLOYED (Trail+ts24+Cap50)** | **18 930** | **588** | −1,22 % |
+| DEPLOYED + SL-Deckel −5 % | 12 687 (−33 %) | **653 (schlechter!)** | −0,56 % |
+
+**Antwort: Ja — der Deckel verschlechtert massiv (−33 % auf der deployten Regel) und senkt
+den MaxDD nicht einmal** (588 → 653: die −5-Realisierungen ziehen die Equity-Kurve selbst
+herunter). SL-first-Semantik bei Gleich-Kerzen-Berührung (konservativ), Pins
+`test_hardstop_tie_is_sl_first` + `test_deployed_slcap_takes_the_earliest_event`.
+
+**Einordnung des CHR-Schmerzes:** −176 % Margin-MTM ist ein **Altbestands-Phänomen** — im
+neuen Regime räumt der 24h-Zeit-Stop die Nie-Scharfen, bevor sie so tief reiten können
+(deployed-MaxDD 588 zeigt das Buch-Risiko bereits gedeckelt). Der richtige Hebel gegen
+Einzelposition-Margin-Frass ist die Positionsgröße (m ≈ Equity/400), nicht ein Preis-Deckel,
+der 42 % aller Trades zu früh realisiert. **Empfehlung: keinen SL-Deckel einführen.**
+
 ## Ehrliche Grenzen
 
 - Sim-Entries = `closed_ai_signals`-Entry (Hold-Arm-Geometrie); der Live-Bot steigt seit

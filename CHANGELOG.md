@@ -1,3 +1,15 @@
+## [2026-07-29] Trailing-Arm: SL-Deckel-Frage beantwortet — −5 %-Cap verschlechtert massiv (T-2026-KYT-9050-052)
+
+Operator-Frage (Anlass CHRUSDT bei −160 % Margin, Quell-SL 12,2 % = −243 % @20x): SL künftig
+bei 5 % Movement deckeln? Gemessen: **42 % aller Trades tauchen unter −5 %, davon enden 29,7 %
+im Plus und 42,1 % besser als −5** (Ø der Getauchten −2,74 statt der realisierten −5,00) —
+die Erholungen sind real und groß. Regel-Ergebnis: Deckel kostet auf der deployten Konfiguration
+**−33 % netto (18 930 → 12 687) und verschlechtert sogar den MaxDD** (588 → 653). Auf dem
+reinen Trail −42 %. → **Verworfen.** Der CHR-Schmerz ist ein Altbestands-Phänomen (Zeit-Stop
+deckelt die Nie-Scharfen im neuen Regime zeitlich); Hebel gegen Einzelpositions-Margin-Frass
+ist die Positionsgröße. Tie-Break der Stop-Regeln auf SL-first geschärft (Review-Finding
+PR #206, 2 neue Pins, 21 gesamt). Details Verdikt-Nachtrag 6.
+
 ## [2026-07-28] Trailing-Arm: Mover-Frage beantwortet — Coins mit ±50 %/24 h NICHT filtern (T-2026-KYT-9050-052)
 
 Operator-Frage (Anlass COTI +57,9 %/24 h): solche Coins ab einem Prozentsatz ignorieren?
