@@ -1,3 +1,38 @@
+## [2026-07-30] Trailing-Bot: SL-Treffer mit Mark buchen (T-2026-KYT-9050-053)
+
+Reporting-Defekt, in T-049 selbst eingebaut: der SL-Treffer wurde mit
+`close_mark_pct = NULL` gebucht. Die Begründung damals — „das Buch soll keinen Wert
+behaupten, den niemand gemessen hat" — gilt für einen fehlenden **Marktpreis**, nicht für
+einen SL: dort liegt der Fill auf dem Stop-Level, und das Level steht in der Zeile.
+
+**Folge:** die schlechtesten Exits fehlten in jeder Summe. Über die saubere Reihe (ab
+Stichtag 2026-07-27 15:32:16) waren das **66 Treffer zu Ø −5,78 %** (Median −5,14 %, bis
+−12,73 %), Σ **−381 %**. Eine Abfrage über `close_mark_pct` zeigte damit netto **−186 %
+statt −575 %** — Faktor 3 zu optimistisch, und zwar ausgerechnet bei den Verlusten.
+
+- Der Mark kommt aus `core.trailing_state.mark_pct(entry, sl, is_long)` — dieselbe Quelle
+  wie im Live-Trailing (Regel 7). Annahme bewusst und wie in der Studie für Hard-Stops:
+  **Fill am Stop-Level, keine Slippage** — ein Gap realisiert schlechter, der Wert ist also
+  die optimistische Kante.
+- Alt-Zeilen ohne `sl` (vor T-049) bleiben NULL: dort ist das Level unbekannt, und es zu
+  raten wäre genau der Fehler, den die alte Begründung vermeiden wollte.
+- **Kein Verhaltens-Eingriff:** `post=False` bleibt (Cornix schließt selbst), Exits, Roster
+  und Gates unverändert.
+
+**Nebenfix im Test-Runner, der drei Fehlmessungen erklärt:** der Standalone-Runner fing nur
+`AssertionError`. Ein Pin, der durch **Absturz** fehlschlägt (TypeError auf einem None),
+riss damit den ganzen Lauf ab — alle späteren Pins blieben unberichtet, und ein
+`grep "^FAIL"` kam leer zurück, was sich wie „alles grün" liest. Genau das hat in
+T-049/T-053 dreimal einen korrekten Pin als zahnlos erscheinen lassen. Er fängt jetzt
+`Exception` und meldet einen Absturz als Fehlschlag.
+
+61 Pins. Alle drei Zusicherungen einzeln per Mutationstest belegt (NULL-Rückfall,
+invertierte Richtung, fehlender Alt-Zeilen-Schutz) — mit Assertion, dass die Mutation greift.
+
+**Offen, separat freizugeben:** Backfill der 66 historischen SL-Zeilen wäre eine
+Schreib-Query gegen die Live-DB (harte Regel 1) — nur mit SELECT-Preview und expliziter
+Freigabe, nicht Teil dieses PRs.
+
 ## [2026-07-30] Bot 40: Aktualitätsfenster auf 240 s nachkalibriert — die Kerzen-Zyklus-Wand (T-2026-KYT-9050-052)
 
 Nach dem 180-s-Fix flossen die Shorts (11/2 zugelassen/verworfen), aber die LONGs blieben

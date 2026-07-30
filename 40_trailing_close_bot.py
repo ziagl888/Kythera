@@ -102,7 +102,7 @@ from core.trailing_roster import (
     is_rostered,
     leg_key,
 )
-from core.trailing_state import TrailingState
+from core.trailing_state import TrailingState, mark_pct
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - TRAILING_BOT - %(message)s")
 logger = logging.getLogger(__name__)
@@ -798,6 +798,32 @@ def sl_reached(direction: str, sl: float | None, price: float) -> bool:
     return price <= sl if direction == "LONG" else price >= sl
 
 
+def sl_exit_mark(row: dict) -> float | None:
+    """Realisierter Mark eines SL-Treffers — berechnet, nicht gemessen.
+
+    Der Fill liegt auf dem Stop-Level: dort lag die Order, die Cornix an der Börse
+    hält. Der Wert ist damit bekannt und wird gebucht.
+
+    Er wurde bis T-2026-KYT-9050-053 als NULL gebucht, mit der Begründung „das Buch
+    soll keinen Wert behaupten, den niemand gemessen hat". Die gilt für einen
+    fehlenden MARKTPREIS — für den SL nicht: das Level steht in der Zeile. Die Folge
+    war ein Reporting-Defekt, der genau die schlechtesten Exits unsichtbar machte:
+    über die saubere Reihe fehlten 66 Treffer zu Ø −5,78 % (Σ −381 %), womit eine
+    Summe über ``close_mark_pct`` netto −186 % statt −575 % zeigte.
+
+    Annahme, bewusst und wie in der Studie für Hard-Stops: **Fill am Stop-Level,
+    keine Slippage.** Ein Gap durch den Stop realisiert schlechter als hier gebucht —
+    der Wert ist also die optimistische Kante, nicht der Erwartungswert.
+
+    Alt-Zeilen ohne ``sl`` (vor T-2026-KYT-9050-049) bleiben NULL: dort ist das Level
+    nicht bekannt, und es zu raten wäre genau der Fehler, den die alte Begründung
+    vermeiden wollte.
+    """
+    if row.get("sl") is None:
+        return None
+    return mark_pct(row["entry"], row["sl"], row["direction"] == "LONG")
+
+
 def has_filled(entry: float, mirror_price: float, price: float) -> bool:
     """Hat der Markt den Entry seit dem Spiegeln erreicht?
 
@@ -869,8 +895,9 @@ def poll_open_mirrors(
             continue
 
         if row["filled"] and sl_reached(row["direction"], row["sl"], float(price)):
-            # Cornix hat hier schon geschlossen. Nur nachbuchen, nichts posten.
-            close_mirror(conn, row, REASON_SL_HIT, None, post=False)
+            # Cornix hat hier schon geschlossen. Nur nachbuchen, nichts posten —
+            # aber MIT dem realisierten Mark: der Fill liegt auf dem Stop-Level.
+            close_mirror(conn, row, REASON_SL_HIT, sl_exit_mark(row), post=False)
             continue
 
         if not row["filled"]:

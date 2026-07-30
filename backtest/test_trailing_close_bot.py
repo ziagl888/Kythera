@@ -1085,7 +1085,53 @@ def test_the_window_is_tight_enough_that_the_entry_is_the_market():
     assert bot.MAX_MIRROR_AGE_SEC <= 240.0, bot.MAX_MIRROR_AGE_SEC
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SL mark (T-2026-KYT-9050-053). Booking the stop-out with a NULL mark hid the
+# worst exits from every sum: over the clean series 66 hits at avg -5.78 %
+# (sum -381 %) were missing, so a query over close_mark_pct showed net -186 %
+# instead of -575 % - a factor of 3 optimistic, exactly on the losses.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_the_stop_mark_is_the_stop_level():
+    """The fill is the level the order sat at — known, so booked."""
+    long_row = {"entry": 100.0, "sl": 95.0, "direction": "LONG"}
+    assert abs(bot.sl_exit_mark(long_row) - (-5.0)) < 1e-9
+    short_row = {"entry": 100.0, "sl": 105.0, "direction": "SHORT"}
+    assert abs(bot.sl_exit_mark(short_row) - (-5.0)) < 1e-9
+    # A stop far behind the entry realises far worse — the CHR case was -12.2 %.
+    assert abs(bot.sl_exit_mark({"entry": 100.0, "sl": 87.8, "direction": "LONG"}) - (-12.2)) < 1e-9
+
+
+def test_a_row_without_a_stop_level_stays_null():
+    """Legacy rows (pre-T-049) carry no sl. Guessing one would be the very error the
+    old NULL was meant to avoid."""
+    assert bot.sl_exit_mark({"entry": 100.0, "sl": None, "direction": "LONG"}) is None
+    assert bot.sl_exit_mark({"entry": 100.0, "direction": "LONG"}) is None
+
+
+def test_the_stop_out_books_that_mark_and_still_posts_nothing():
+    """Wiring pin: the mark reaches the row, and the exit stays unpublished — Cornix
+    closed it, so a Close of ours would claim an exit we did not cause."""
+    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, _recent(), 100.0, _recent(), 95.0)
+    conn = FakeConn(mirrors=[row])
+    mirrors = bot.read_open_mirrors(conn)
+    bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 94.0})
+    assert conn.store["outbox"] == [], conn.store["outbox"]
+    closes = [p for sql, p in conn.store["sql"] if sql.startswith("UPDATE trailing_positions SET closed_at")]
+    assert closes, conn.store["sql"]
+    reason, mark, _rid = closes[0]
+    assert reason == bot.REASON_SL_HIT
+    assert mark is not None and abs(mark - (-5.0)) < 1e-9, mark
+
+
 if __name__ == "__main__":
+    # Catches Exception, not just AssertionError. A pin that fails by CRASHING (a
+    # TypeError on a None, a missing key) used to abort the whole run at that point:
+    # every later pin went unreported, and a grep for "^FAIL" came back empty — which
+    # reads exactly like "all green". That cost three false "the pin has no teeth"
+    # readings during T-2026-KYT-9050-049/053 mutation testing, each time sending me
+    # after a pin that was in fact correct.
     failures = 0
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
@@ -1095,5 +1141,8 @@ if __name__ == "__main__":
             except AssertionError as exc:
                 failures += 1
                 print(f"FAIL {name}: {exc}")
+            except Exception as exc:  # noqa: BLE001 — a crashing pin is a failing pin
+                failures += 1
+                print(f"FAIL {name}: {type(exc).__name__}: {exc}")
     print(f"\n{failures} failure(s)")
     sys.exit(1 if failures else 0)
