@@ -741,19 +741,21 @@ def test_the_age_cutoff_keeps_the_decision_current():
     """The window protects the relevance of the decision, sized to REALITY: the
     fleet's signal→ai_signals insert latency is 30–120 s (median 95 s, measured
     2026-07-29), so a 95-second-old row is a FRESH signal, not a stale one — the
-    30 s window silently discarded ~85 % of real roster signals. 180 s covers the
-    measured latency; a signal beyond that is a genuinely old trade and stays out
-    (operator decision Michi 2026-07-29, supersedes the T-051 30 s)."""
-    assert bot.MAX_MIRROR_AGE_SEC <= 180.0, bot.MAX_MIRROR_AGE_SEC
+    30 s window silently discarded ~85 % of real roster signals; the candle-cycle
+    legs (the LONG side) sit deterministically at ~185–195 s, a wall just past
+    180. 240 s covers both leg families; a signal beyond that is a genuinely old
+    trade and stays out (operator decision Michi, supersedes the T-051 30 s)."""
+    assert bot.MAX_MIRROR_AGE_SEC <= 240.0, bot.MAX_MIRROR_AGE_SEC
     conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_sec=10.0)])
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.0}) == 1
 
-    # 95 s = the measured median insert latency — this is the case the old
-    # window wrongly rejected and the reason the arm saw almost no shorts.
-    lagged = FakeConn(ai_signals=[_src_row(2, "ETHUSDT", "MIS1-72h", "LONG", age_sec=95.0)])
-    src2, _ = bot.read_source_signals(lagged)
-    assert bot.open_mirrors(lagged, src2, {}, set(), prices={"ETHUSDT": 101.0}) == 1
+    # 95 s = tick-leg median insert latency; 190 s = the candle-cycle wall that
+    # rejected 139 longs in 6 h under the 180 s window. Both must admit.
+    for sid, sym, age in ((2, "ETHUSDT", 95.0), (3, "ADAUSDT", 190.0)):
+        lagged = FakeConn(ai_signals=[_src_row(sid, sym, "MIS1-72h", "LONG", age_sec=age)])
+        src2, _ = bot.read_source_signals(lagged)
+        assert bot.open_mirrors(lagged, src2, {}, set(), prices={sym: 101.0}) == 1, age
 
     stale = FakeConn(ai_signals=[_src_row(3, "SOLUSDT", "MIS1-72h", "LONG", age_sec=600.0)])
     src3, _ = bot.read_source_signals(stale)
@@ -1076,10 +1078,11 @@ def test_the_trail_still_posts_its_own_close():
 
 
 def test_the_window_is_tight_enough_that_the_entry_is_the_market():
-    """<= 180 s: covers the measured insert latency without admitting genuinely
+    """<= 240 s: covers the measured insert latency of BOTH leg families (tick
+    legs ~95 s median, candle-cycle legs ~185–195 s) without admitting genuinely
     old trades. The market-entry + SL/TP1 plausibility gate carry the rest of the
     original T-051 protection."""
-    assert bot.MAX_MIRROR_AGE_SEC <= 180.0, bot.MAX_MIRROR_AGE_SEC
+    assert bot.MAX_MIRROR_AGE_SEC <= 240.0, bot.MAX_MIRROR_AGE_SEC
 
 
 if __name__ == "__main__":
