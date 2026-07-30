@@ -1,3 +1,12 @@
+## [2026-07-30] Bot 40: Aktualitätsfenster auf 240 s nachkalibriert — die Kerzen-Zyklus-Wand (T-2026-KYT-9050-052)
+
+Nach dem 180-s-Fix flossen die Shorts (11/2 zugelassen/verworfen), aber die LONGs blieben
+draußen: **139 verworfene Longs in 6 h mit p25–p90 = 184–193 s** — keine Alters-Verteilung,
+sondern eine Wand direkt hinter der Grenze. Ursache: die Kerzen-Zyklus-Beine (MIS1-72h, TD_1H,
+AIM2, SRA2 — die LONG-Seite des Rosters) haben deterministisch ~3:10 min Pipeline-Latenz,
+die Tick-Beine (Shorts) nur ~95 s. **`TRAILING_BOT_MAX_AGE_SEC` default 240 s** deckt beide
+Familien; Pins ergänzt (190-s-Fall muss zulassen). Wirksam nach Fleet-Restart (Michi).
+
 ## [2026-07-29] Bot 40: Aktualitätsfenster 30→180 s + ROM1 aus dem Roster (T-2026-KYT-9050-052, Operator-Go)
 
 **Operator-Befund „es kommen zu wenige Shorts durch" bestätigt und Root-Cause gemessen:** die

@@ -122,15 +122,18 @@ POLL_SECONDS = 10
 # entfernt (Median 0,40 %, max 2,13 %).
 #
 # 30 s war die T-051-Annahme („ein frisches Signal wird binnen einer Poll-Runde
-# gesehen") — gemessen am 2026-07-29 stimmt sie nicht: die Kette Signal →
-# Orchestrator → ai_signals-Insert braucht real 30–120 s (Median 95 s), und das
-# 30-s-Fenster verwarf damit ~85 % der echten Roster-Signale als „zu alt"
-# (~130 in 12 h; die Shorts, die der Operator vermisste). 180 s deckt die
-# gemessene Latenz; die T-051-Schutzidee bleibt: Market-Entry + der
-# Plausibilitäts-Riegel (Markt zwischen SL und TP1) verhindern weiterhin das
-# Spiegeln weggelaufener Trades, und ROM1s stunden-alte Re-Forwards filtert
-# jetzt der Roster selbst (EXCLUDED_AS_DUPLICATE) statt zufällig dieses Fenster.
-MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "180"))
+# gesehen") — gemessen stimmt sie nicht, und zwar je Bein-Familie verschieden:
+#   * Tick-Beine (MIS2-Pumps u. a.): Insert-Latenz 30–120 s (Median 95 s) —
+#     das 30-s-Fenster verwarf ~85 % ihrer Signale (Messung 2026-07-29).
+#   * Kerzen-Zyklus-Beine (MIS1-72h, TD_1H, AIM2, SRA2 — die LONG-Seite):
+#     deterministisch ~185–195 s (p25–p90 der 139 Verworfenen: 184–193 s;
+#     Messung 2026-07-30) — eine WAND direkt hinter der 180-s-Grenze, keine
+#     Alters-Verteilung.
+# 240 s deckt beide Familien mit Puffer. Die T-051-Schutzidee bleibt: Market-
+# Entry + der Plausibilitäts-Riegel (Markt zwischen SL und TP1) verhindern das
+# Spiegeln weggelaufener Trades, und ROM1s stunden-alte Re-Forwards filtert der
+# Roster selbst (EXCLUDED_AS_DUPLICATE) statt zufällig dieses Fenster.
+MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "240"))
 
 # Wie lange auf den Fill gewartet wird, bevor die Order als verfallen gilt. Danach
 # wird die Zeile geschlossen und ein `Close` gepostet, damit in Cornix keine
