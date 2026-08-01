@@ -44,6 +44,183 @@ also nicht Vorsorge, sondern korrekt und scharf, nur aktuell hinter einem toten 
 `backtest/test_research_bots_live_price.py` (8 Tests, DB-frei): Anker == Live-Preis statt
 Frame-Close, None ⇒ kein Post und kein Prediction-Log, Cooldown-Semantik je Bot, der
 Freshness-Guard von 32 und ein Quell-Pin gegen den Rückbau.
+## [2026-08-01] Challenger-Promotion-Namensguard + EPD3-`model_id`-Re-Dump (T-2026-KYT-9050-057)
+
+Eine Challenger-Promotion war bisher genau zwei Handgriffe: die Register-Zeile in
+`core/shadow_gate.py` von `SHADOW` auf `LIVE` drehen und das Artefakt in den Repo-Root kopieren.
+`shadow_artifact_path` gibt für ein LIVE-Bein den **nackten Root-Dateinamen** zurück — und
+`SHADOW_ARTIFACTS` trägt für Challenger-Tags historisch den Dateinamen der Retrain-*Generation*,
+nicht den des Tags (`"RUB3": {"LONG": "rub2_model_LONG.pkl"}`). Wer so promotet, legt die
+Challenger-Datei in genau den Slot, aus dem der **Legacy-Loader** sein Live-Modell liest: beide
+Tags scoren dasselbe Modell und posten es doppelt (harte Regel 4, echtes Geld). Bei **EPD3-SHORT**
+war das am 2026-07-21 real — `epd2_model_SHORT.pkl` ist Bot 10s `EPD2_ARTIFACT_PATHS["SHORT"]` —
+und wurde von Hand durch den challenger-distinkten Namen `epd3_model_SHORT.pkl` abgewendet; bei
+**EPD3-LONG** (T-037) dieselbe Handarbeit ein zweites Mal.
+
+**Neu: `tools/promotion_guard.py`** — genau diese Handarbeit, automatisiert. Für jedes Bein in
+`SHADOW_ARTIFACTS` prüft der Guard, ob sein Promotions-Ziel challenger-distinkt ist, und nennt
+sonst den fremden Eigentümer plus den Rename-Vorschlag (`RUB3 → rub3_model_LONG.pkl`). Zwei
+unabhängige Belege: der Root-Slot wird von einem fremden Tag beansprucht (harter Beleg — da liest
+wirklich ein anderer Loader), oder der Dateiname trägt nicht den tag-eigenen Präfix (fängt auch
+den Loader, der in keiner Registry steht). Die Tag→Dateiname-Brücke kommt aus
+`tools/bot_variants/index.py` (neuer Accessor `legacy_artifact_slots()`) — eine bereits getestete
+Quelle statt eines zweiten kuratierten Dicts.
+
+**Die Schwere kommt aus dem Lifecycle, nicht aus dem Dateinamen.** Ein **LIVE**-Bein auf einem
+fremden Slot ist FAIL (Exit 1, Promotions-Stopp) — es liest den fremden Root-Namen bereits. Ein
+noch geparktes Bein ist WARN: latenter Blocker, ohne Live-Effekt. Damit ist der Guard heute grün
+und wird genau in dem Moment rot, in dem jemand ohne Rename flippt. Er hängt an drei Stellen:
+als pre-commit-Hook (`kythera-promotion-name-guard`, blockt diesen Commit), als Check 8 in
+`tools/verify_staging_artifacts.py` (Register-Scan am Ende + WARN je Staging-Datei, deren Name
+von >1 Tag beansprucht wird) und als CLI.
+
+`core/shadow_gate.py` bleibt **unverändert** — der Gate wird von Bots *und* Trainer/Replay
+importiert (harte Regel 7); ein geänderter Rückgabewert von `shadow_artifact_path` hätte
+Serving-Verhalten mitverschoben. Der Guard liest das Register, er schreibt nicht hinein.
+
+**Offen und bewusst nicht mit-gefixt:** `RUB3-LONG` zeigt weiter auf `rub2_model_LONG.pkl` (WARN).
+Solange RUB3 per T-037 auf SHADOW geparkt ist, ist der Slot nicht bedroht; das Umbenennen gehört
+in den Promotions-Schritt (Artefakt + Register in einem Zug, Operator-Entscheid), nicht in einen
+Hygiene-PR, der sonst einen Shadow-Ladepfad ohne Not verschiebt.
+
+**Teil 2 (EPD3-Artefakt `model_id`) ist nachgeliefert — und eine Begründung dazu war falsch.**
+Das promotete `epd3_model_SHORT.pkl` trug eingebettet `meta.model_id='EPD2'` (harte Regel 6).
+Wirkungslos ist das live, weil Bot 10 den Tag `EPD3` explizit an der Call-Site übergibt und
+`shadow_gate.load_shadow_artifact` auf `{model, features, threshold}` normalisiert, `model_id`
+also gar nicht liest — aber `core.model_artifacts.build_contract` nimmt den Posting-Tag **nur**
+aus `meta.model_id`, und `tools/verify_staging_artifacts.py` prüft genau dieses Feld.
+
+Eine frühere Fassung dieses Eintrags behauptete, ein Neu-Dumpen sei ein verlustbehafteter
+Cross-Version-Round-Trip, weil der eingebettete `IsotonicRegression` mit scikit-learn 1.9.0
+gepickelt sei und die Fleet-Umgebung 1.7.1 habe. **Das war für dieses Artefakt falsch und hat die
+Messung vertauscht:** `py -3.13` hat sklearn **1.7.1**, `py -3.14` hat **1.9.0**, und
+`epd3_model_SHORT.pkl` trägt eingebettet **1.7.1** — es lädt unter der Fleet-Python 3.13 ohne eine
+einzige Warnung. Der Re-Dump dort ist ein *Same-Version-Round-Trip*, kein Downgrade. Mit 1.9.0
+gepickelt ist das **LONG**-Artefakt (im 3.14-Env, T-037); dort stimmt das Argument, und nur dort.
+Der zweite Teil der alten Begründung — ein echter Retrain braucht DB, Replay-Labels und CPU —
+stimmt, beantwortet aber eine Frage, die der Task nicht stellte: es ging um Re-Serialisierung.
+
+**Neu: `tools/retag_artifact.py`.** Lädt ein Format-A-dict-Artefakt, setzt ausschliesslich
+`meta.model_id` und schreibt nach `staging_models/`. Zwei nicht abschaltbare Guards: das Ziel muss
+in STAGING liegen (harte Regel 2 — der Root-Promote bleibt Michis Entscheidung), und das Artefakt
+muss unter dem laufenden Interpreter *warnungsfrei* laden — meldet sklearn eine
+`InconsistentVersionWarning`, bricht das Tool ab und nennt die Version, unter der der Re-Dump
+sauber wäre. Genau dieser Guard hätte den Denkfehler oben verhindert; an `epd3_model_LONG.pkl`
+greift er und verweigert. Nach dem Schreiben verifiziert das Tool das Ergebnis gegen die Quelle
+(Scores auf fixer Probe-Matrix, Kalibrator-Kurve, Features, Threshold, Meta-Diff) und meldet
+Erfolg nur bei **genau einem** Unterschied.
+
+`staging_models/epd3_model_SHORT.pkl` trägt damit `model_id='EPD3'`, sonst nichts Neues; gepinnt
+in `backtest/test_epd3_artifact_model_id.py` (lädt über `core.model_artifacts` als `EPD3`, alle
+übrigen Felder identisch zum Root-Artefakt, alle mechanischen Checks des Staging-Verifiers grün).
+Das Root-Artefakt ist **unangetastet** — der Promote ist Operator-Entscheid. Zwei ehrliche
+Restposten: `epd3_model_LONG.pkl` hat denselben Tag-Defekt, ist aber wegen der 1.9.0-Serialisierung
+hier nicht re-dumpbar, und `verify_staging_artifacts.py` globt für EPD nur `epd2_model_*.pkl`,
+sieht die EPD3-Dateien im CLI-Lauf also gar nicht (AUDIT_TODO #T57-5/#T57-6).
+## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
+
+Die Frage aus T-042 Phase C: liegt der Live-Umschlag systematisch über dem simulierten? Falls ja,
+wäre die Slot-Rechnung der PR-#198-Studie (Ø 285 / p95 498) zu optimistisch **und** die
+Gebührenlast höher als die 0,10 % Taker-Round-Trip, mit denen die 49 204 % gerechnet wurden.
+
+**Antwort: nein — und der Auslöser der Frage war ein Bootstrap-Artefakt.** Die „~80 Trail-Feuer
+pro Stunde bei ~460 offenen Positionen" sind exakt 80 Feuer in **1,2 Stunden am 26.07. zwischen
+19 und 20 UTC**: der erste Shadow-Zyklus spiegelte ein bereits laufendes Buch auf einmal, diese
+Spiegel erbten einen Peak über der Aktivierungsschwelle und feuerten beim ersten Poll. Im
+Live-Betrieb sind es **4,0 Feuer pro Stunde**, geschäftigste Einzelstunde 21.
+
+**Haltedauer live eher LÄNGER als simuliert.** Median 6,00 h über die 999 geschlossenen
+Live-Positionen, mit den 96 offenen als rechts-zensiert **[6,71; 7,40] h** — gegen **6,59 h** aus
+derselben Studie, mix-gematcht auf die Live-Bein-Anzahlen. Die 4,6 h der Studien-Kopfzeile sind
+ein Median **über Beine**, kein Median über Trades: dort zählt MIS2-168h SHORT (3 Live-Spiegel)
+so viel wie MIS1-72h LONG (370). Bei den fünf größten Beinen — 65 % des Buchs — hält der Arm
+1,24× bis 1,64× länger als die Simulation. Beide Messverzerrungen laufen dabei in Richtung „live
+ist schneller" (Zensierung nach 5,6 Tagen; der 24-h-Zeit-Stop, den die Studie nicht kennt), und
+das Ergebnis fällt trotzdem andersherum aus.
+
+**Die Slot-Rechnung war zu pessimistisch, nicht zu optimistisch.** Belegung live Ø 126 · p95 221 ·
+max 291, eingeschwungen über die letzten 48 h **Ø 106** — gegen eine roster-gematchte Erwartung
+von **251,6** (die Ø 284,6 der Studie enthalten die inzwischen als Re-Forwarder ausgeschlossenen
+ROM1-Beine mit 33 Sitzen; mittlere Belegung ist eine Summe von Indikatorfunktionen und damit exakt
+additiv, p95 nicht). Der Cornix-Deckel von 500 war nie in Reichweite. Ursache der Lücke ist der
+**Zulauf** — 195 Positionen/Tag live gegen 365 simulierte —, nicht der Umschlag: der Live-Bot hat
+vier Zulassungsfilter, die die Simulation nicht hatte (ein Spiegel je Symbol, 240-s-Frische,
+Symbol-Cooldown, Exposure-Cap), plus den ROM1-Ausschluss und Beine, die zwischenzeitlich nicht
+LIVE sind — EPD1 SHORT, das zweitgrößte Bein der Studie, hat kein einziges Mal gespiegelt.
+
+**Umschlag pro belegtem Slot-Tag — das mix-robuste Maß und die Einheit, in der die Gebühr
+anfällt:** live 1,405 gegen 1,291 (Studien-Aggregat) bzw. 1,146 (mix-gematcht) = **1,09–1,23×**.
+Gebühr entsprechend **0,141 % gegen 0,129 % je Slot-Tag**. Der Anteil unter Gebühr liegt bei 38 %
+gegen erwartete 25 %, kommt aber vollständig aus `SOURCE_CLOSED` (77 %) und `SL_HIT` (100 %) —
+also aus dem Tape, nicht aus der Umschlaghäufigkeit; `TRAIL` liegt bei 0 %, was Konstruktion ist
+(ein bewaffneter Trail schließt frühestens bei 0,9 × 2,0 % = 1,8 %).
+
+**Der Auflösungs-Verdacht ist real und beziffert: rund 20 Minuten.** Die Studie wertet auf
+15m-Kerzen-Extremen mit strikt vorherigem Peak aus, der Bot auf 10s-Preisen. Statt das zu
+behaupten, spielt das neue Werkzeug die **importierte** Studien-Regel (Regel 7, keine
+Zweitimplementierung) auf **denselben** Live-Spiegeln nach: bei den eigenen Exits des Arms
+(n = 586) landet der 15m-Exit **Median +0,33 h, p95 +0,63 h** nach dem Live-Exit, in **10 %** der
+Fälle sogar **früher** (ein Docht, den der 10s-Poll nie druckte), in 17 % in derselben Kerze.
+Slot-Kosten des feineren Rasters: **≤ 33,1 Slot-Tage = +4,7 %** (Untergrenze — 325 zensierte
+Fälle sind nicht mitgezählt). Preisunterschied bei gleicher Kerze: **+0,02 %-Punkte je Trade**.
+
+**Neu: `tools/trailing_live_vs_study.py`** (read-only, baut auf `trailing_arm_report.py` und
+`trailing_slot_budget.py` auf) + 17 DB-freie Pins in `backtest/test_trailing_live_vs_study.py`,
+Report unter `docs/T-2026-KYT-9050-047-live-vs-study-report.md`. Zwei Fehlschlüsse sind darin
+festgeschrieben, weil die erste Fassung der Auswertung beide gemacht hat: der Median nur über
+geschlossene Zeilen meldet den Arm schneller, als er ist (deshalb das Zensierungs-Intervall), und
+ein Nachspiel, das nur bis zum Live-Exit reicht, schiebt 88 % der Arm-Exits in ein „die Studie
+hätte gehalten" — der Trigger sitzt fast immer in genau der Kerze, die ein bündiges Fenster
+ausschließt. Deshalb ist `same-bar` ein eigener, benannter Ausgang.
+
+**Empfehlung an den Operator (#T52-3): `act = 2 %` beibehalten.** Die Hypothese, die eine Änderung
+motiviert hätte, ist widerlegt; der einzige gemessene Abweichungspfad kostet ≤ 5 % Slot-Tage. Und
+für die Richtung einer späteren Änderung: `act` zu **senken** würde die freie Kapazität nicht
+nutzen, sondern vergrößern (kürzere Haltedauer → weniger Belegung). Die leere Hälfte des Channels
+ist ein Zulauf-Thema, und der Engpass ist ohnehin nicht Kapazität, sondern Ertrag — das Live-Buch
+steht bei −906 %-Punkten netto, Ursache Tape (T-054), kein Bein-Defekt.
+## [2026-08-01] Zulauf-Analyse Bot 40: der Engpass ist der Exposure-Cap, nicht das Fenster (T-2026-KYT-9050-060)
+
+Operator-Auftrag: die Trade-Zahl soll steigen, aber **nichts wird geändert, bevor eine
+vollständige Analyse vorliegt**. Genau das hat sich gelohnt — die naheliegende Maßnahme wäre
+die falsche gewesen.
+
+**Der Reflex war das Aktualitätsfenster.** Die abgelehnten Signale liegen bei p10 = 243 s,
+p90 = 256 s gegen eine 240-s-Grenze, zu **707:24 LONG-lastig** — eine Wand, kein
+Altersprofil, dasselbe Muster wie damals bei 180 s. Ein 300-s-Fenster ließe 706 davon zu.
+
+**Der bindende Engpass ist ein anderer.** Ein Kandidat muss fünf Stufen passieren, und nur
+zwei hinterlassen eine DB-Zeile — wer gegen die DB allein misst, sieht deshalb systematisch
+das falsche Gate. Aus dem Fleet-Log rekonstruiert: `EXPOSURE_CAP` feuert in **Ø 3,2 → 6,0 →
+6,6** Kandidaten pro Zyklus mit steigender Tendenz, `SLOT_CAP` dagegen in drei Tagen **kein
+einziges Mal**. Das Buch klebt bei **+42 bis +52** Schieflage an der ±50-Decke; der
+LONG-Spielraum liegt durchgehend zwischen **0 und 8**. LONG-Kandidaten werden also längst
+abgewiesen, *nachdem* sie den Aktualitätstest bestanden haben — ein weiteres Fenster
+verschiebt Ablehnungen nur von `PREEXISTING` nach `EXPOSURE_CAP`.
+
+**Die Identität, die die Empfehlung umdreht:** der Cap begrenzt die *Differenz*, also gilt
+bei anliegender Decke `Kapazität = 2 × min(LONG, SHORT) + Cap` — aktuell 2 × 21 + 50 = **92**.
+Jede zusätzliche SHORT-Position hebt die LONG-Decke um eins. **Die SHORT-Seite drosselt das
+Gesamtvolumen**, nicht die LONG-Seite, an der die auffälligen Ablehnungen liegen.
+
+**Empfehlung, nach Wirkung geordnet:** (A) **TSM1 SHORT in den Roster** — 66 Signale/Tag,
+live, Dichte 525, seinerzeit **allein wegen des Slot-Caps** verworfen, der seither nie
+gebunden hat; Kapazität ~92 → ~150. (B) Die Grandfather-Kohorte neu bewerten: **28 der 30
+Spiegel sind LONG** und belegen dauerhaft **28 der 50 Einheiten** LONG-Spielraum, also 56 %
+— der Entscheid vom selben Tag fiel ohne diese Zahl. (C) Das Fenster **danach**, als
+Qualitäts- statt Mengenmaßnahme: `admit()` sortiert nach Bein-Dichte, ein 300-s-Fenster gibt
+demselben LONG-Budget rund fünfmal so viele Kandidaten zur Auswahl. (D) Den Cap anheben
+**nicht** — T-052 hat gemessen, dass das einseitige LONG-Buch der Konto-Schaden war.
+
+**Adverse Selection ausgeschlossen:** die abgelehnten LONGs liefern im Quell-Trade Ø +2,39 %
+gegen +1,28 % der zugelassenen (t ≈ 1,3, nicht signifikant) — die 240-s-Kante selektiert
+nicht die besseren Signale.
+
+Neu: `tools/trailing_intake_audit.py` (read-only, Log + DB) und das Verdikt
+`staging_models/replay/trailing_intake_verdict_t060.md` mit den ehrlichen Grenzen — vor
+allem, dass die Log-Gates **Druck** messen und keine Stückzahlen: Abweisungen wiederholen
+sich in jedem 10-s-Zyklus, „Ø 6,6" heißt „6,6 Kandidaten stehen gerade an", nicht „6,6
+Signale/Tag verloren". 13 DB-freie Pins, 5 Mutationen belegt. **Keine Code-Änderung am Bot.**
 
 ## [2026-08-01] SL-Backfill ausgeführt + Grandfather-Kohorte bleibt (T-2026-KYT-9050-058)
 

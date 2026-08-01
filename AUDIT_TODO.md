@@ -8,6 +8,52 @@
 
 **Legende:** `[ ]` offen · Schweregrad **P0** (geld-kritisch, sofort) → **P3** (Kosmetik). `[DB]` = in Step 2 verifizieren. Datei:Zeile ist anklickbar.
 
+**Challenger-Promotion-Hygiene T-2026-KYT-9050-057 (Namensguard + EPD3-`model_id`).** Zwei
+Follow-ups aus dem z-code-reviewer-Verdikt zu T-185 (PR #170).
+- [x] **#T57-1 Namensguard gebaut** (`tools/promotion_guard.py`, PR dieses Tasks). Ein Challenger-Tag,
+  dessen `SHADOW_ARTIFACTS`-Dateiname zugleich der Root-Loader-Slot einer fremden Generation ist,
+  postet nach der Promotion unter ZWEI Tags (harte Regel 4 — bei EPD3-SHORT am 2026-07-21 beinahe
+  passiert, damals per Hand-Rename abgewendet). LIVE-Bein auf fremdem Slot = FAIL, geparktes Bein =
+  WARN. Hängt als pre-commit-Hook, als Check 8 in `tools/verify_staging_artifacts.py` und als CLI.
+  `core/shadow_gate.py` bewusst unverändert (harte Regel 7).
+- [ ] **#T57-2 RUB3-LONG umbenennen — beim Promoten, nicht vorher.** `SHADOW_ARTIFACTS["RUB3"]["LONG"]`
+  zeigt weiter auf `rub2_model_LONG.pkl` (Guard: WARN). Harmlos, solange RUB3 per T-037 auf SHADOW
+  geparkt ist; vor einem RUB3-Go-Live muss das Artefakt `rub3_model_LONG.pkl` heissen (Artefakt +
+  Register in einem Zug). Der Guard blockt den Flip ohne Rename.
+- [x] **#T57-3 EPD3-SHORT-Artefakt `model_id='EPD2'` (harte Regel 6) — Staging-Fassung liegt korrekt
+  getaggt bereit; offen ist nur noch der Root-Promote (Michi).** `staging_models/epd3_model_SHORT.pkl`
+  trägt jetzt `meta.model_id='EPD3'`, erzeugt mit `tools/retag_artifact.py` unter der Fleet-Python
+  3.13. Gepinnt in `backtest/test_epd3_artifact_model_id.py`: das Artefakt lädt über
+  `core.model_artifacts` als Tag `EPD3`, und jedes andere Feld ist mit dem promoteten Root-Artefakt
+  identisch (Feature-Liste, Threshold, `predict_proba` auf fixer Probe-Matrix, Kalibrator-Kurve,
+  übrige Meta). **Korrektur einer früheren Aussage in diesem Punkt:** die Behauptung, ein Neu-Dumpen
+  sei ein verlustbehafteter Cross-Version-Round-Trip, war für dieses Artefakt falsch und hat die
+  Messung vertauscht. `py -3.13` hat sklearn **1.7.1**, `py -3.14` hat **1.9.0** — und
+  `epd3_model_SHORT.pkl` ist eingebettet mit **1.7.1** gepickelt, lädt unter 3.13 also warnungsfrei.
+  Der Re-Dump dort ist ein Same-Version-Round-Trip. Was wirklich mit 1.9.0 gepickelt ist, ist das
+  **LONG**-Artefakt (s. #T57-5).
+- [ ] **#T57-5 EPD3-LONG trägt denselben Tag-Defekt, ist aber nicht re-dumpbar (neu, 2026-08-01).**
+  `epd3_model_LONG.pkl` (Root + Staging) trägt ebenfalls `meta.model_id='EPD2'`, wurde aber im
+  3.14-Env mit sklearn **1.9.0** gepickelt; unter der Fleet-Python 3.13 (1.7.1) lädt es mit
+  `InconsistentVersionWarning` auf dem `IsotonicRegression`. `tools/retag_artifact.py` verweigert das
+  Artefakt deshalb — ein Re-Dump wäre dort ein echter Formatwechsel des Kalibrators. Live folgenlos:
+  Bot 10 lädt EPD3 über `shadow_gate.load_shadow_artifact`, das auf `{model, features, threshold}`
+  normalisiert — der Kalibrator wird gar nicht gelesen (und predicted unter 1.7.1 nachgemessen
+  korrekt, nur eben mit Warnung). Fix = Re-Dump unter dem 3.14-Interpreter **oder** ein Retrain;
+  beides ausserhalb dieses Tasks.
+- [ ] **#T57-6 `verify_staging_artifacts.py` sieht die EPD3-Dateien nicht (neu, 2026-08-01).**
+  `build_registry()` globt für die EPD-Familie nur `epd2_model_*.pkl`; `epd3_model_*.pkl` wird vom
+  CLI-Lauf still übersprungen — der Tag-Check (HR-6), wegen dem #T57-3 überhaupt gefixt wurde, läuft
+  über diese Dateien also gar nicht. `test_epd3_artifact_model_id.py` fährt den Contract deshalb
+  direkt über `verify_artifact()` mit einer EPD3-Spec. Die Registry-Erweiterung ist bewusst NICHT in
+  diesem PR: sie zieht `epd3_model_LONG.pkl` mit herein, das nach #T57-5 hier nicht reparierbar ist,
+  und würde einen FAIL erzeugen, den dieser PR nicht schliessen kann.
+- [ ] **#T57-4 `test_bot_variant_archive.py::test_manifest_carries_feature_contract` rot —
+  VORBESTEHEND**, verifiziert 2026-08-01 gegen den unveränderten `index.py`. Ursache: ATS2 wurde ohne
+  seine `*_meta.json`-Sidecars nach Root promotet → `_read_meta` findet dort kein Sidecar, der Test
+  läuft in `StopIteration`. Fix = Sidecars mit-promoten (Operator) oder den Test auf die
+  Artefakt-Realität ziehen. Nicht in diesem PR (kein Guard grün drehen, den man nicht ausgelöst hat).
+
 **Fleet-Reconfig T-2026-KYT-9050-037 (RUB1-Revive + Gate-Flips + Retires, aus `bot_results.xlsx`).** PR-Kern gemergt: Bot 13 zurück auf die Original-RUB1-Legacy-Modelle (beide Richtungen live unter Tag `RUB1`, RUB2-Retrain gebencht → SHADOW), RUB3-SHORT → SHADOW, AIM2-TOPN + ATS1_Robust → RETIRED im Register. **Offene Follow-ups (nicht in diesem PR):**
 - [x] **#3 ATB2-LONG — LIVE deployed per Operator-Override** (Code-PR, pending Michi Root-Promote + Restart). War BLOCKIERT (`optimal_threshold=None`, nicht im Root). Read-only-Diagnose: nur **n=17** Shadow-Trades → statistisch unentscheidbar, kein Daten-Operating-Point. Michi-Entscheid „gemäß Anforderung deployen": Threshold **blind 0,60** (ATB1s 0,80 ist inkompatibles Modell), `("ATB2","LONG"): LIVE`, **Bot-14-Rewire** `_emit_atb2_shadow`→`_emit_atb2` (gated Router + has_open-Guard, war shadow-only → hätte LIVE still geschluckt), Artefakt `staging_models/atb2_model_LONG.pkl` @0,60. **Offen (Michi):** Root-Promote `atb2_model_LONG.pkl` + Restart. ⚠ Keine Datenbasis — operator-gewolltes Live-Experiment.
 - [x] **#4 EPD3-LONG — LIVE deployed per Operator-Override** (Code-PR, pending Michi Root-Promote + Restart). War BLOCKIERT (Kollisions-Hazard + `threshold=None`). Read-only-Edge-Analyse (2578 echte Shadow-Trades, T-036-Playbook): mean net **≈0 %**, Confidence **anti-diskriminiert** (corr −0,04) → **kein deploybarer Threshold-Edge**. Michi-Entscheid „gemäß Anforderung deployen": Threshold **0,76** (Volumen-Cap ~258→~130/d, KEIN Edge-Filter), `("EPD3","LONG"): LIVE`, `SHADOW_ARTIFACTS["EPD3"]["LONG"]`→**`epd3_model_LONG.pkl`** (challenger-distinkt, killt die Legacy-EPD2-Kollision analog SHORT/PR #185), Artefakt `staging_models/epd3_model_LONG.pkl` @0,76. Bot 10 routete schon gated → nur Register+Artefakt. **Offen (Michi):** Root-Promote `epd3_model_LONG.pkl` + Restart. ⚠ Live ~0 Edge — operator-gewolltes Volumen-gekapptes Experiment.
@@ -81,7 +127,32 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   +122 = **−101 Residuum**. Der naive Blick aufs Buch (LONG −644 / SHORT −5) legt die
   genau falsche Konsequenz nahe. beta = 1 → Markt-Anteil ist Unter-, Residuum Obergrenze.
   **LONG bleibt an** (Operator-Befund Michi 2026-08-01, jetzt quantifiziert).
-- [x] **#T54-3 Grandfather-Kohorte — ENTSCHIEDEN 2026-08-01: sie reitet weiter (Michi).** Der
+- [x] **#T60-1 Zulauf-Engpass Bot 40 identifiziert (T-2026-KYT-9050-060, 2026-08-01).** Nicht
+  das Aktualitätsfenster, sondern der **Exposure-Cap**. `SLOT_CAP` fiel in drei Tagen nie,
+  `EXPOSURE_CAP` dagegen in Ø 3,2 → 6,0 → 6,6 Kandidaten/Zyklus; das Buch klebt bei +42…+52
+  an der ±50-Decke, LONG-Spielraum durchgehend 0–8. Weil der Cap die *Differenz* begrenzt,
+  gilt `Kapazität = 2 × min(L,S) + Cap` = aktuell 92 — **die SHORT-Seite drosselt das
+  Gesamtvolumen.** Werkzeug `tools/trailing_intake_audit.py`, Verdikt
+  `staging_models/replay/trailing_intake_verdict_t060.md`.
+- [ ] **#T60-2 TSM1 SHORT in den Roster (Empfehlung A, Operator-Entscheid + Restart).**
+  66 Signale/Tag, **live**, Dichte 525 — seinerzeit **allein wegen des Slot-Caps** verworfen,
+  der seither nie gebunden hat. Greift genau an der drosselnden Seite; Kapazität ~92 → ~150.
+  Eigener Task, eine Roster-Zeile, wirksam nach Fleet-Restart. Schätzung, keine Messung:
+  unterstellt TSM1 dieselbe Konversion (~45 %) und Haltedauer (~0,73 d) wie die
+  bestehenden SHORT-Beine.
+- [ ] **#T60-3 Fenster 240 → 300 s — NACH #T60-2, als Qualitäts- nicht Mengenmaßnahme.**
+  Solange der Cap bindet, verschiebt ein weiteres Fenster Ablehnungen nur von `PREEXISTING`
+  nach `EXPOSURE_CAP`. Wert liegt woanders: `admit()` sortiert nach Bein-Dichte, 300 s gibt
+  demselben LONG-Budget ~5× so viele Kandidaten. Adverse Selection ausgeschlossen (abgelehnte
+  LONGs Ø +2,39 % vs +1,28 % zugelassene, t ≈ 1,3).
+- [ ] **#T60-4 `EXPOSURE_CAP` anheben — NICHT ohne eigene Studie.** T-052 hat gemessen, dass
+  das einseitige LONG-Buch der Konto-Schaden war und die strukturelle Schranke jedes
+  Marktlagen-Modell schlug. Hier als bewusst verworfene Option protokolliert, damit sie nicht
+  später als „übersehen" wiederkehrt.
+- [x] **#T54-3 Grandfather-Kohorte — ENTSCHIEDEN 2026-08-01: sie reitet weiter (Michi).
+  NEU ZU BEWERTEN (T-060):** 28 der 30 Spiegel sind LONG und belegen dauerhaft **28 der 50
+  Einheiten** LONG-Spielraum (56 %) plus 28 Symbole gegen `SYMBOL_HELD`. Der Entscheid fiel
+  ohne diese Zahl — er ist damit nicht falsch, aber die Kosten sind höher als bekannt war.** Der
   Stichtag `TIME_STOP_SINCE=2026-07-28T14:00Z` hält **30** Spiegel vom Zeit-Stop frei:
   Median-Alter 108 h, max 126 h, **null davon scharf**, Σ −81 % offen. Sie können strukturell
   nie getrailt werden (Peak < Aktivierung) und blockieren je den einzigen Spiegel-Slot ihres
@@ -94,6 +165,34 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   −172,0 vorhandene + −387,3 nachgetragene), keine als Gewinn gebucht, die Ablehnungs-Zeilen
   (`PREEXISTING`/`SHADOW_CARRYOVER`/`ENTRY_NOT_FILLED`) unangetastet NULL. Eine Summe über
   `close_mark_pct` liest damit nicht mehr Faktor 3 zu optimistisch.
+- [x] **#T47-1 Live-Umschlag gegen die Studie gemessen — WIDERLEGT (T-2026-KYT-9050-047,
+  2026-08-01).** Der Live-Umschlag liegt **nicht** systematisch über dem simulierten.
+  Haltedauer live Median 6,00 h (nur geschlossene) bzw. **[6,71; 7,40] h** mit den 96 offenen
+  als rechts-zensiert, gegen **6,59 h** aus derselben Studie, mix-gematcht auf die
+  Live-Bein-Anzahlen (die 4,6 h der Kopfzeile sind ein Median **über Beine**, nicht über
+  Trades). Bei den fünf größten Beinen — 65 % des Buchs — hält der Arm **länger** als die
+  Simulation. Umschlag pro belegtem Slot-Tag: live 1,405 gegen 1,291 (Aggregat) bzw. 1,146
+  (mix-gematcht) → **1,09–1,23×**, Gebühr entsprechend 0,141 % gegen 0,129 % pro Slot-Tag.
+  Neu: `tools/trailing_live_vs_study.py` + 17 DB-freie Pins,
+  `docs/T-2026-KYT-9050-047-live-vs-study-report.md`.
+- [x] **#T47-2 Der Auslöser war ein Bootstrap-Artefakt, und die Slot-Rechnung war zu
+  PESSIMISTISCH.** Die „~80 Trail-Feuer/h bei ~460 offenen Positionen" sind 80 Feuer in
+  **1,2 h am 26.07. 19–20 UTC** — der erste Shadow-Zyklus, dessen Spiegel einen Peak über der
+  Aktivierungsschwelle erbten und sofort feuerten. Live: **4,0/h**, geschäftigste Stunde 21.
+  Belegung live Ø 126 / p95 221 / max 291, eingeschwungen (48 h) **Ø 106**, gegen
+  roster-gematchte **251,6** (die Ø 284,6 der Studie enthalten die inzwischen ausgeschlossenen
+  ROM1-Beine mit 33 Sitzen; mittlere Belegung ist exakt additiv). Ursache der Lücke ist der
+  **Zulauf** (195/Tag live gegen 365/Tag simuliert = 53 %) — vier Zulassungsfilter, die die
+  Simulation nicht hatte —, nicht der Umschlag. Der Cornix-Deckel 500 war nie in Reichweite.
+- [x] **#T47-3 Auflösungs-Effekt 15m-Kerze vs. 10s-Poll beziffert: ~20 Minuten.** Die
+  importierte Studien-Regel auf **denselben** Live-Spiegeln nachgespielt (act 2 %, x 10 %,
+  strikt vorheriger Peak): bei den eigenen Exits des Arms (n=586) landet der 15m-Exit
+  **Median +0,33 h, p95 +0,63 h** nach dem Live-Exit; in **10 %** feuert das 15m-Raster sogar
+  **früher** (Docht, den der 10s-Poll nie druckte), in 17 % in derselben Kerze. Slot-Kosten des
+  feineren Rasters: **≤ 33,1 Slot-Tage = +4,7 %** (Untergrenze, 325 zensierte nicht gezählt).
+  Preisunterschied bei gleicher Kerze: **+0,02 %-Punkte/Trade**. Real, aber kein verschobener
+  Betriebspunkt. **Empfehlung: `act = 2 %` beibehalten** — und `act` zu SENKEN würde die freie
+  Kapazität nicht nutzen, sondern vergrößern (kürzere Haltedauer → weniger Belegung).
 - [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi) — AKTUALISIERT 2026-07-28.** Nach
   Live-Bestätigung der Entmischung (sauberes Fenster in ~9 h auf 95 % unter Wasser; Bot auf
   Operator-Auftrag 05:29 geparkt, 05:43 entparkt) und Lauf 3 (23 Regeln, inkl. x-Sweep,
