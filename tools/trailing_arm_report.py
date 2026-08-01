@@ -135,6 +135,27 @@ def entry_scale_ok(mirror_entry: float, source_entry: float, tol: float = ENTRY_
     return abs(source_entry / mirror_entry - 1.0) <= tol
 
 
+def classify_arm_exit(m: dict) -> tuple[str, float | None]:
+    """Does this arm exit have a usable hold counterfactual? ("resolved", hold) or
+    ("unresolved-<why>", None).
+
+    Order matters and is the whole point. ``src_still_open`` is checked FIRST: the
+    lateral join is keyed on (symbol, model, direction) + time, NOT on the source id,
+    so while the real source is still live the join can match an EARLIER trade of the
+    same leg that opened inside the window and closed after the mirror did. Booking
+    that as "what holding returned" would compare against a different trade entirely
+    — the same class of error as the id-join, just quieter.
+    """
+    if m.get("src_still_open"):
+        return "unresolved-source-open", None
+    if m.get("src_close_price") is None or m.get("src_entry") is None:
+        return "unresolved-no-match", None
+    if not entry_scale_ok(m.get("entry"), m.get("src_entry")):
+        return "unresolved-entry-mismatch", None
+    hold = mark_pct(float(m["entry"]), float(m["src_close_price"]), m["direction"] == "LONG")
+    return "resolved", hold
+
+
 def market_implied(market_move_pct: float, is_long: bool) -> float:
     """The part of a trade's mark the market alone would have delivered (beta = 1).
 
@@ -199,8 +220,33 @@ def build_index(rows: list[tuple]) -> list[tuple[datetime, float]]:
 
 def index_move_pct(index: list[tuple[datetime, float]], t0: datetime, t1: datetime) -> float | None:
     """Percent move of the index between two instants, using the last level at or
-    before each. Returns None when the window is not covered on both ends."""
+    before each.
+
+    None when either end falls outside coverage, with ONE bar of tolerance on the
+    right. The distinction matters and is easy to get wrong in both directions:
+
+      * A trade that closed mid-bar (the ordinary case — the index is hourly and
+        trades are not) is measured to the last completed hour. That sub-bar gap is
+        inherent granularity, not missing data, so it must NOT be rejected.
+      * A trade that closed well past the newest index point is a different animal:
+        clamping it to the last level attributes it against a stale tape, and since
+        that can only ever hit the most RECENT trades it biases the freshest numbers
+        in one direction. Those are reported as uncovered — the same stance the tool
+        takes on an SL row without a stop level: an unknown stays unknown rather than
+        being filled in with the nearest plausible value.
+
+    The bar width is inferred from the index spacing rather than hard-coded, so the
+    rule survives a caller passing a different timeframe.
+    """
     if not index or t0 is None or t1 is None:
+        return None
+    if t0 < index[0][0]:
+        return None
+    if len(index) >= 2:
+        bar = min(b[0] - a[0] for a, b in zip(index, index[1:]))
+        if t1 > index[-1][0] + bar:
+            return None
+    elif t1 > index[-1][0]:
         return None
     lo = _level_at(index, t0)
     hi = _level_at(index, t1)
@@ -414,15 +460,13 @@ def report(mirrors: list[dict], index, prices: dict) -> None:
     arm = [(m, mk) for m, mk in recs if m["close_reason"] in ARM_REASONS]
     resolved, unresolved, mismatched = [], [], 0
     for m, mk in arm:
-        if m["src_close_price"] is not None and m["src_entry"] is not None:
-            if not entry_scale_ok(m["entry"], m["src_entry"]):
-                mismatched += 1
-                unresolved.append((m, mk))
-                continue
-            hold = mark_pct(float(m["entry"]), float(m["src_close_price"]), m["direction"] == "LONG")
+        state, hold = classify_arm_exit(m)
+        if state == "resolved":
             resolved.append((m, mk, hold))
-        else:
-            unresolved.append((m, mk))
+            continue
+        if state == "unresolved-entry-mismatch":
+            mismatched += 1
+        unresolved.append((m, mk))
 
     print("  arm decisions=%d | resolved=%d | unresolved=%d (source still open=%d, entry mismatch=%d)"
           % (len(arm), len(resolved), len(unresolved),

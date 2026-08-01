@@ -29,6 +29,7 @@ from tools.trailing_arm_report import (  # noqa: E402
     ENTRY_TOL,
     FEE_RT,
     build_index,
+    classify_arm_exit,
     entry_scale_ok,
     index_move_pct,
     market_implied,
@@ -156,6 +157,52 @@ def test_index_move_is_none_when_the_window_predates_coverage():
     idx = build_index(_candles("A", 5, [100.0, 110.0]) + _candles("B", 5, [10.0, 11.0]))
     assert index_move_pct(idx, T0, T0 + timedelta(hours=1)) is None
     assert index_move_pct([], T0, T0 + timedelta(hours=1)) is None
+
+
+def test_index_move_is_none_well_past_the_right_edge_rather_than_clamped():
+    """Far past coverage the last level is a stale tape, and clamping to it would bias
+    exactly the newest trades in one direction."""
+    idx = build_index(_candles("A", 0, [100.0, 110.0, 121.0]) + _candles("B", 0, [10.0, 11.0, 12.1]))
+    assert index_move_pct(idx, T0 + timedelta(hours=1), T0 + timedelta(hours=99)) is None
+
+
+def test_index_move_tolerates_a_close_inside_the_current_bar():
+    """The ordinary case: the index is hourly, trades are not. A sub-bar gap is
+    granularity, not missing data — rejecting it would drop every recent trade."""
+    idx = build_index(_candles("A", 0, [100.0, 110.0, 121.0]) + _candles("B", 0, [10.0, 11.0, 12.1]))
+    mv = index_move_pct(idx, T0 + timedelta(hours=1), T0 + timedelta(hours=2, minutes=30))
+    assert mv is not None and abs(mv - 10.0) < 1e-9, mv
+
+
+# ------------------------------------------------------ counterfactual gate --
+def _mirror(**kw) -> dict:
+    m = {"src_still_open": False, "src_close_price": 90.0, "src_entry": 100.0,
+         "entry": 100.0, "direction": "LONG"}
+    m.update(kw)
+    return m
+
+
+def test_a_live_source_is_never_resolved_even_when_the_join_found_a_match():
+    """The quiet twin of the id-join trap: the lateral match is keyed on
+    (symbol, model, direction) + time, so while the source is still open it can match
+    an EARLIER trade of the same leg. Booking that as 'what holding returned' compares
+    against a different trade."""
+    state, hold = classify_arm_exit(_mirror(src_still_open=True))
+    assert state == "unresolved-source-open" and hold is None, (state, hold)
+
+
+def test_a_closed_source_with_a_plausible_entry_resolves():
+    state, hold = classify_arm_exit(_mirror())
+    assert state == "resolved" and hold == -10.0, (state, hold)
+
+
+def test_entry_mismatch_is_reported_as_its_own_unresolved_reason():
+    state, hold = classify_arm_exit(_mirror(src_entry=12.987, entry=5.836e-05))
+    assert state == "unresolved-entry-mismatch" and hold is None, (state, hold)
+
+
+def test_no_match_at_all_is_unresolved():
+    assert classify_arm_exit(_mirror(src_close_price=None))[0] == "unresolved-no-match"
 
 
 # ----------------------------------------------------------------- sums ----
