@@ -11,15 +11,19 @@ of 1-2-week returns outperforms over 1-2-week holds (LONG). (b) XSR1 — coins w
 a strong 4-12-week run revert (SHORT). Evidence F4 (structure high, exact 0-3 spec
 refuted → a MATRIX not a single spec) + F5 (anchored-to-formation-low variant,
 medium). Reference frames matter: an ABSOLUTE ranking only measures beta, so we
-also run a MARKET-NEUTRAL frame (coin return minus BTC return).
+also run a MARKET-NEUTRAL frame — the beta adjustment sits on the scored RETURNS
+(coin return minus BTCUSDT's return over the identical hold), NOT on the signal:
+subtracting BTC's signal is a per-rebalance SCALAR shift and therefore argsort-
+invariant, i.e. a no-op (T-2026-KYT-9050-013 fixed exactly that).
 
 Design — full grid (§K2), NO time-varying refit:
   * Formation F ∈ {7,14,28,56,84} d × Hold H ∈ {7,14,28} d, weekly rebalance
     raster over the ~430d 1d history.
   * TWO signal variants: (raw) F-day return; (anchored) distance above the
     formation-window LOW = close[t]/min(low[t-F+1..t]) - 1 (F5).
-  * TWO reference frames: (absolute) the signal itself; (market-neutral) the
-    coin's signal minus BTCUSDT's same-variant signal.
+  * TWO reference frames: (absolute) the raw coin return; (market-neutral) the
+    coin return minus BTCUSDT's return over the same hold — beta-adjusted scoring
+    of the SAME ranking (the ranking itself is frame-invariant, see above).
   * TWO directions: XSM1 = LONG the top decile; XSR1 = SHORT the top decile
     (reversal). Grid = 5·3·2·2·2 = 120 cells.
   * Liquidity filter: exclude the bottom volume TERCILE at each rebalance by the
@@ -28,7 +32,8 @@ Design — full grid (§K2), NO time-varying refit:
 
 Stage 1 (portfolio level): per rebalance, rank the liquid coins by the cell's
 signal, take the top decile (and bottom decile for the long-short spread
-diagnostic), and score the H-day close-to-close forward return:
+diagnostic), and score the H-day close-to-close forward return (in the
+market-neutral frame: MINUS BTCUSDT's return over the identical window):
   * XSM1 LONG  net = mean(fwd[top]) − round-trip taker fee.
   * XSR1 SHORT net = mean(−fwd[top] + Σfunding[hold]) − round-trip taker fee.
     Short funding sign: a short RECEIVES funding when the rate is positive and
@@ -40,10 +45,16 @@ Chrono val/test split on the rebalance calendar (midpoint of the BTCUSDT 1d
 window); val = earlier half, test = later half. Cell selection ONLY on val.
 
 Stage 2 (ONLY for val-positive cells): event-replay with OUR geometry — entry =
-first 1h close at/after the rebalance, get_hvn_and_sr_levels(df=as-of 95d 1h) →
-hvn_sr_trade_geometry → ensure_min_tp_distance → simulate_exit (first-touch
-TP-vs-SL on 1h candles AFTER entry, round-trip taker fee). Strictly as-of, no
-lookahead. If NO cell is val-positive in stage 1, stage 2 is correctly a no-op.
+first 1h close at/after the rebalance DAY'S CLOSE (`dates[t] + 86400`, since the
+ranking signal is close[t] and `dates[t]` is the daily OPEN — entering at the
+daily open would trade ~23h of unobservable information; T-2026-KYT-9050-013),
+get_hvn_and_sr_levels(df=as-of 95d 1h) → hvn_sr_trade_geometry →
+ensure_min_tp_distance → simulate_exit (first-touch TP-vs-SL on 1h candles AFTER
+entry, round-trip taker fee). Strictly as-of, no lookahead. If NO cell is
+val-positive in stage 1, stage 2 is correctly a no-op. Stage 2 replays the COIN
+leg only (our deployable geometry has no BTC hedge), so a market_neutral cell's
+stage-2 row equals its absolute twin by construction — the frames differ in
+stage-1 scoring, not in the replayed trade.
 
 Stop-criterion (§K2): no F×H cell with a val+test-consistent net spread ⇒ the
 structure does not replicate on 2024-26 perps — a documented NEGATIVE verdict is
@@ -94,6 +105,16 @@ from tools.walkforward_sim import (  # noqa: E402
 )
 
 ROUND_TRIP_FEE = 2.0 * FEE_PER_SIDE  # 0.001 = 0.10 %
+
+#: Semantics version of the study machinery. Bumped whenever a fix changes what the
+#: numbers MEAN (not merely how they are rendered), so a report rendered from an
+#: older run can flag itself as stale instead of silently claiming the new semantics.
+#:   1 → original K2 run (T-2026-CU-9050-143): market-neutral frame was a no-op
+#:       (argsort-invariant signal shift, absolute PnL) and stage-2 entered ~1 daily
+#:       bar early (daily OPEN vs. the close[t] signal).
+#:   2 → T-2026-KYT-9050-013: beta-adjust on the RETURNS; stage-2 entry at the
+#:       rebalance day's CLOSE.
+STUDY_SEMANTICS_VERSION = 2
 
 # ── Fixed grid (§K2) ─────────────────────────────────────────────────────────
 F_GRID = [7, 14, 28, 56, 84]          # formation window (days)
@@ -352,6 +373,11 @@ def run_stage1(panel: dict, split_mid: float, max_weeks: int | None) -> dict:
                 btc_sig = sig_abs[btc_j] if (btc_j is not None and not np.isnan(sig_abs[btc_j])) else np.nan
                 for frame in FRAMES:
                     if frame == "market_neutral":
+                        # NOTE: this subtraction is a per-rebalance SCALAR shift and
+                        # therefore argsort-invariant — both frames rank identically.
+                        # It is kept only so the market-neutral frame inherits the
+                        # "BTC signal must exist" precondition; the actual beta
+                        # removal happens on the scored RETURNS below.
                         if np.isnan(btc_sig):
                             continue
                         sig = sig_abs - btc_sig
@@ -383,6 +409,16 @@ def run_stage1(panel: dict, split_mid: float, max_weeks: int | None) -> dict:
                         c_te = close[te, :]
                         with np.errstate(invalid="ignore", divide="ignore"):
                             fwd = c_te / c_t - 1.0
+                        if frame == "market_neutral":
+                            # Beta adjustment on the RETURNS (K5 convention:
+                            # r_abs − (btc_H/btc_0 − 1)) over the IDENTICAL hold
+                            # window. This is what actually removes market beta;
+                            # shifting the ranking signal does not (see above).
+                            b0 = close[t, btc_j] if btc_j is not None else np.nan
+                            b1 = close[te, btc_j] if btc_j is not None else np.nan
+                            if not np.isfinite(b0) or not np.isfinite(b1) or b0 <= 0:
+                                continue  # no BTC benchmark for this window → cell skips it
+                            fwd = fwd - float(b1 / b0 - 1.0)
                         top_fwd = fwd[top]
                         top_fwd = top_fwd[~np.isnan(top_fwd)]
                         bot_fwd = fwd[bottom]
@@ -639,7 +675,12 @@ def run_stage2(conn, panel: dict, cells: dict, valpos: list[str], stage2_state: 
             order = liquid[np.argsort(sig[liquid])]
             ndec = max(1, int(round(liquid.size * DECILE_FRAC)))
             top = order[-ndec:]
-            rebal_ep = float(dates[t])
+            # `dates[t]` is the daily bar's OPEN (load_1d floors open_time to 'D'),
+            # but the ranking signal is close[t] — only observable one full day
+            # later. Entering at dates[t] would trade ~23h of unobservable
+            # information (T-2026-KYT-9050-013). Enter at the first 1h close at/after
+            # the rebalance day's CLOSE.
+            entry_ep = float(dates[t]) + DAY_SEC
             for j in top:
                 if n_ev >= MAX_STAGE2_EVENTS:
                     break
@@ -647,12 +688,12 @@ def run_stage2(conn, panel: dict, cells: dict, valpos: list[str], stage2_state: 
                 if fr is None:
                     continue
                 t1h, h1h, l1h, c1h = fr
-                key = np.datetime64(dt.datetime.fromtimestamp(rebal_ep, dt.timezone.utc)
+                key = np.datetime64(dt.datetime.fromtimestamp(entry_ep, dt.timezone.utc)
                                     .replace(tzinfo=None))
                 start_idx = int(np.searchsorted(t1h, key, side="left"))
                 if start_idx <= 0 or start_idx >= len(t1h):
                     continue
-                entry = float(c1h[start_idx])  # first 1h close at/after the rebalance
+                entry = float(c1h[start_idx])  # first 1h close at/after the signal's daily close
                 if not np.isfinite(entry) or entry <= 0:
                     continue
                 gnet = _geo_net(entry, is_long, t1h, h1h, l1h, c1h, start_idx)
@@ -699,6 +740,23 @@ def build_markdown(meta: dict, cells: dict, verdict: dict, stage2: dict) -> str:
         f"(round-trip {ROUND_TRIP_FEE:.4f}) · {meta['n_coins']} coins · status {meta['status']}_\n"
     )
 
+    # A report re-rendered from an OLDER run must not claim the current semantics.
+    run_sv = int(meta.get("semantics_version", 1))
+    if run_sv < STUDY_SEMANTICS_VERSION:
+        L.append(
+            f"> ⚠ **STALE NUMBERS — this run was produced by study semantics v{run_sv}, the code is now "
+            f"v{STUDY_SEMANTICS_VERSION}** (T-2026-KYT-9050-013). Two machinery defects were fixed AFTER "
+            "this run and are NOT reflected in the tables below:\n"
+            "> 1. the `market_neutral` frame was a no-op (the BTC-signal subtraction is an argsort-invariant "
+            "scalar shift and the PnL used absolute returns), so **every `market_neutral` cell below is a "
+            "duplicate of its `absolute` twin** — no beta was removed;\n"
+            "> 2. the stage-2 replay entered at the rebalance day's OPEN while the ranking signal is that "
+            "day's CLOSE, i.e. **~23 h of look-ahead** in the confirmatory replay.\n"
+            "> The stage-1-driven VERDICT is unaffected by both (it rests on the `absolute` cells, whose "
+            "scoring did not change). Re-running the full study under v"
+            f"{STUDY_SEMANTICS_VERSION} is a follow-up (DB-heavy, single-job slot on the VPS).\n"
+        )
+
     # ── Acceptance Criteria (z-code-dev Phase 0/3, binary) ──
     smoke = bool(meta.get("limit_symbols") or meta.get("max_weeks"))
     ok = "✅"
@@ -706,21 +764,25 @@ def build_markdown(meta: dict, cells: dict, verdict: dict, stage2: dict) -> str:
     L.append("_Graded against this run; items marked (full-run) only fully verify without the sampling cap._\n")
     L.append(f"- {ok} **F×H grid complete: 5×3** — F∈{F_GRID}, H∈{H_GRID} enumerated in `run_stage1`.")
     L.append(f"- {ok} **both signal variants** raw + anchored-to-formation-low — `signal_vec(variant=...)` ({VARIANTS}).")
-    L.append(f"- ⚠ **both frames present but market-neutral is a KNOWN-LIMITATION no-op** — `FRAMES={FRAMES}`; the "
-             "BTC-signal subtraction is a per-rebalance SCALAR shift (argsort-invariant) and PnL uses absolute coin "
-             "returns, so every `market_neutral` cell is byte-identical to its `absolute` twin (60/60). Beta-removal is "
-             "NOT actually tested here (follow-up: beta-adjust the RETURNS/spread). Does not change the negative verdict.")
+    L.append(f"- {ok} **both frames scored** — `FRAMES={FRAMES}`; market-neutral = the SAME ranking scored on "
+             "**beta-adjusted returns** (coin fwd − BTCUSDT fwd over the identical hold, K5 convention). The BTC-signal "
+             "subtraction alone is argsort-invariant, i.e. a no-op — fixed in T-2026-KYT-9050-013 by moving the "
+             "adjustment onto the returns. Cost basis is deliberately identical to `absolute` (one round-trip taker "
+             f"fee, {ROUND_TRIP_FEE:.4f}) so the two frames are cell-by-cell comparable: the BTC hedge leg's own fee "
+             "(~another round-trip) and funding are NOT modelled, so a market-neutral cell clearing the robust floor "
+             "would need re-costing before any deployment reading.")
     L.append(f"- {ok} **liquidity filter** bottom volume tercile excluded — median quote-vol over F, `np.quantile(...,1/3)` cut.")
     L.append(f"- {ok} **stage-1 decile spreads NET of fees (Regel 10) + short-side funding, correct sign** — "
              f"LONG net=mean(fwd_top)−fee; SHORT net=mean(−fwd+Σfunding)−fee; short receives +Σ funding_rate "
              f"(pays when funding<0).")
     L.append(f"- {ok} **F×H heatmap per variant/direction** — see Heatmaps section (all {len(VARIANTS)}·{len(FRAMES)}·{len(DIRECTIONS)} panels).")
-    L.append(f"- ⚠ **stage-2 (confirmatory) gated to val-positive cells; entry ~1 daily-bar EARLY (known limitation)** — "
+    L.append(f"- {ok} **stage-2 (confirmatory) gated to val-positive cells, entry tape-causal** — "
              f"`run_stage2` runs iff val-positive; get_hvn_and_sr_levels(df=as-of 95d 1h)→simulate_exit "
              f"({'ran '+str(len(stage2))+' cell(s)' if stage2 else 'no-op — no val-positive cell'}). `dates[t]` is the daily "
-             "OPEN (`floor('D')`) but the selection signal is `close[t]`, so stage-2 enters ~23h before the signal is "
-             "observable — a look-ahead in the DIAGNOSTIC replay only; the stage-1-driven verdict is unaffected and stage-2 "
-             "net is negative regardless. Follow-up: enter at `dates[t]+86400` (first 1h at/after the daily close).")
+             "OPEN (`floor('D')`) while the selection signal is `close[t]`, so the entry is anchored at "
+             "`dates[t]+86400` — the first 1h close at/after the day's close, i.e. after the signal is observable "
+             "(fixed in T-2026-KYT-9050-013; the old daily-OPEN anchor traded ~23h of unobservable information). "
+             "Stage 2 replays the coin leg only, so a market-neutral cell's row equals its absolute twin by construction.")
     L.append(f"- {ok} **chrono val/test, cell selection on val only** — midpoint split; `val_positive_cells` selects on val, test read once.")
     L.append(f"- {ok} **survivorship documented, fill_method=None** — coins.json active perps; no forward-fill (NaN-propagating returns).")
     L.append(f"- {ok} **stop-criterion → non-edge verdict valid** — `derive_verdict` requires a val+test-CONSISTENT cell (BOTH halves ≥ MIN_ROBUST_NET_PCT); otherwise `weak/inconsistent-spread` or `no-op/structure-does-not-replicate` (a near-zero val leg with a large test leg is overfitting, not an edge).")
@@ -813,9 +875,11 @@ def build_markdown(meta: dict, cells: dict, verdict: dict, stage2: dict) -> str:
     L.append(f"- peak process RSS: {meta.get('peak_rss_mb')} MB (panel O(coins×days) + streaming cell accumulators)")
     L.append(f"- chrono val/test split (UTC): {meta.get('split_iso')} — fixed midpoint of the BTCUSDT 1d window; val=earlier, test=later")
     L.append("- signal variants: raw F-day return; anchored = close/min(low over F) − 1 (distance to formation low, F5)")
-    L.append("- reference frames: absolute; market-neutral = coin signal − BTCUSDT signal — ⚠ KNOWN LIMITATION: this "
-             "scalar shift is argsort-invariant and PnL is absolute, so it removes NO beta (market_neutral ≡ absolute, "
-             "60/60 identical); follow-up = beta-adjust the returns/spread. Non-verdict-affecting (result is negative regardless).")
+    L.append("- reference frames: absolute = raw coin return; market-neutral = **beta-adjusted return** "
+             "(coin fwd − BTCUSDT fwd over the identical hold). Both frames rank identically — the BTC-signal "
+             "subtraction is an argsort-invariant scalar shift — so the frames differ ONLY in scoring, and the "
+             "top-minus-bottom spread is beta-invariant (identical across frames by construction). The BTC hedge "
+             "leg's fee/funding are not modelled (see AC).")
     L.append("- liquidity: exclude bottom volume tercile by median quote-vol over F; quote-vol ≈ base volume × close "
              "(the candles table has no quote_asset_volume column — documented approximation)")
     L.append(f"- decile size = max(1, round(n_liquid·{DECILE_FRAC})); ranking on the liquid set only, BTCUSDT excluded from the cross-section")
@@ -933,6 +997,9 @@ def main() -> int:
             prev = json.load(fh)
         meta = prev["meta"]
         meta["reverdict"] = True
+        # Deliberately NOT stamping semantics_version: --reverdict re-classifies the
+        # EXISTING cells, it does not re-fold them. A run produced under older
+        # semantics keeps its version so the report renders the STALE banner.
         cells, stage2 = prev["cells"], prev.get("stage2", {})
         verdict = derive_verdict(cells)
         write_outputs(meta, cells, verdict, stage2, json_path, md_path)
@@ -1022,6 +1089,7 @@ def main() -> int:
             meta = {
                 "study": "K2 · XSM1/XSR1 (cross-section momentum/reversal)",
                 "task": "T-2026-CU-9050-143",
+                "semantics_version": STUDY_SEMANTICS_VERSION,
                 "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "status": "partial (sampling cap)" if (args.limit_symbols or args.max_weeks) else "complete",
                 "n_universe": len(universe), "n_coins": len(coins_sel), "n_coins_done": len(coin_data),
@@ -1062,6 +1130,7 @@ def main() -> int:
         meta = {
             "study": "K2 · XSM1/XSR1 (cross-section momentum/reversal)",
             "task": "T-2026-CU-9050-143",
+            "semantics_version": STUDY_SEMANTICS_VERSION,
             "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "status": "partial (sampling cap)" if (args.limit_symbols or args.max_weeks) else "complete",
             "fee_per_side": FEE_PER_SIDE, "round_trip_fee": ROUND_TRIP_FEE,

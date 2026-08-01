@@ -36,6 +36,46 @@ Read-only, kein Code angefasst.
   überhaupt so stark korreliert, dass Beta-Konzentration bindet. Kostennotiz für den Fall:
   538×538 ≈ 145k Paare pro Rebalance, ohne Shrinkage bei T ≪ N numerisch wertlos — und SRV02 lag
   am 2026-08-01 über drei 2-s-Samples konstant bei 100 % CPU (10 logische Kerne, `Get-Counter`).
+## [2026-08-01] K2-Studien-Maschinerie: marktneutraler Frame + tape-kausaler Stufe-2-Entry (T-2026-KYT-9050-013)
+
+Die zwei im K2-Review (T-2026-CU-9050-143, PR #133) gefundenen und dort als bekannte Limitationen
+dokumentierten Maschinen-Defekte in `tools/xs_momentum_study.py` sind behoben. **Das Verdikt der
+Studie ändert sich nicht** — es bleibt `weak/inconsistent-spread (not deployable)`: es ruht auf den
+`absolute`-Zellen, deren Bewertung unangetastet ist (geschlossene-Form-Test pinnt das). Repariert ist
+die Messmaschine, nicht das Ergebnis. Kein Bot, kein Gate, kein Artefakt berührt.
+
+**(1) Der `market_neutral`-Frame war ein No-op.** Der Beta-Abzug lag auf dem SIGNAL
+(`sig = sig_abs − btc_sig`) — ein Per-Rebalance-**Skalar**-Shift, also argsort-invariant — während die
+PnL absolute Coin-Returns benutzte. Ergebnis: alle 60 `market_neutral`-Zellen waren byte-identisch zu
+ihrem `absolute`-Zwilling; Beta wurde nie entfernt (im eingecheckten Voll-Lauf-Artefakt nachgezählt:
+60/60, und synthetisch reproduziert, bevor gefixt wurde). Der Adjust sitzt jetzt auf den **Returns**
+(`fwd − (btc_H/btc_0 − 1)` über dasselbe Halte-Fenster, K5-Konvention) — genau das, was Spec §K2
+Punkt 2 immer schon forderte („marktneutral (Coin-Return minus BTC-Return)"). Die Signal-Subtraktion
+bleibt als Vorbedingung („BTC-Signal muss existieren") stehen, jetzt aber als solche kommentiert. Da
+beide Frames identisch ranken, ändert der Fix nur die **Bewertung**, nie die Auswahl; der
+Top-minus-Bottom-Spread ist beta-invariant und bleibt zwischen den Frames gleich. Kostenbasis bewusst
+identisch zu `absolute` (ein Round-Trip), damit die Frames zellenweise vergleichbar bleiben — Fee und
+Funding des BTC-Hedge-Beins sind NICHT modelliert und im Report als solches ausgewiesen.
+
+**(2) Der Stufe-2-Entry lag ~1 Tages-Balken zu früh (Look-ahead).** `load_1d` floored `open_time` auf
+`'D'`, also ist `dates[t]` der Tages-**Open**; das Ranking-Signal ist aber `close[t]`. Der Entry am
+ersten 1h-Close ab `dates[t]` handelte damit ~23 h, bevor das Signal überhaupt beobachtbar war (die
+Entry-Kerze öffnete volle 24 h zu früh — im Test gemessen). Anker jetzt `dates[t] + 86400`: erster
+1h-Close ab dem Tages-Close. Betroffen war nur die konfirmatorische Stufe 2, nie das Stufe-1-Verdikt.
+Dieselbe Falle wie in T-052 (be-Familie, 59k→7k nach Korrektur): Bedingungen tape-kausal pinnen.
+
+**Stale-Schutz statt stiller Neu-Beschriftung:** `STUDY_SEMANTICS_VERSION` (jetzt 2) wandert in die
+Report-Meta. Ein Report, der aus einem Lauf mit älterer Semantik gerendert wird, trägt einen
+**STALE-Banner** mit beiden Defekten statt zu behaupten, er sei nach der neuen Rechnung entstanden.
+Genau das gilt für das eingecheckte Voll-Lauf-Artefakt (527 Coins, 2026-07-17): es via `--reverdict`
+DB-frei neu gerendert (Zellen/Stufe 2/Verdikt byte-identisch, nur Text) — seine `market_neutral`- und
+Stufe-2-Zahlen bleiben Pre-Fix. **Ein Voll-Lauf unter v2 ist ein offener Folge-Schritt**
+(DB-schwer ⇒ Ein-Job-Slot auf dem VPS, in dieser Session bewusst nicht gefahren).
+
+Neue DB-freie Tests `backtest/test_xs_momentum_study.py` (9): beide Defekte wurden damit ZUERST
+reproduziert (60/60 identisch bzw. 24 h Entry-Vorlauf), dann gefixt. Sie pinnen zusätzlich, dass der
+`absolute`-Frame unverändert bleibt (Signal-Vertrag von Bot 39, Zelle F84|raw|absolute), dass Auswahl
+und Spread frame-invariant sind, und die Resume-Semantik der Stufe 2.
 
 ## [2026-08-01] Research-Bots 30/31/32: Entry-Anker auf get_live_price (T-2026-KYT-9050-011)
 
@@ -156,6 +196,52 @@ Das Root-Artefakt ist **unangetastet** — der Promote ist Operator-Entscheid. Z
 Restposten: `epd3_model_LONG.pkl` hat denselben Tag-Defekt, ist aber wegen der 1.9.0-Serialisierung
 hier nicht re-dumpbar, und `verify_staging_artifacts.py` globt für EPD nur `epd2_model_*.pkl`,
 sieht die EPD3-Dateien im CLI-Lauf also gar nicht (AUDIT_TODO #T57-5/#T57-6).
+## [2026-08-01] SHORT-Beine unter der Trail-Regel bewertet — der Maßstab war das Problem (T-2026-KYT-9050-062)
+
+Operator-Auftrag: mehr Shorts für Bot 40. Vier Kandidaten geprüft, und der wichtigste
+Befund war zunächst, dass **mein eigener Maßstab unfair** war.
+
+**Der Fehler:** ein Bein gegen die **volle** Index-Bewegung seines Haltefensters zu
+messen bestraft jedes Take-Profit-Bein per Konstruktion — es steigt bei TP1 aus,
+während der Tape weiterläuft. In einem Markt mit −50 % fiel damit fast jede SHORT-Seite
+negativ aus, ohne dass sich „schlechte Auswahl" von „TP kappt den Trend" trennen ließe.
+Die LONG-Analyse aus T-054 ist davon nicht betroffen (Longs im fallenden Markt laufen
+in den SL, nicht in den TP).
+
+**Der Umbau:** `tools/short_leg_trail_value.py` stellt **beide Seiten unter dieselbe
+Trail-Regel** (act 2 %, x 10 %) — das Bein auf seinem Coin-Pfad, den Benchmark auf dem
+Index-Pfad über dasselbe Fenster. Die eigene TP-Politik fällt damit auf beiden Seiten
+heraus. Der Index trägt ein synthetisches Hoch/Tief (Median-Stunden-Ratios), weil ein
+Trail auf Dochten feuert und ein Close-only-Benchmark jedes Bein geschmeichelt hätte.
+Trail-Mechanik, Dedup-Loader und Kerzen kommen aus `trailing_slot_budget` bzw.
+`wave_buildup_study` — keine zweite Implementierung (Regel 7).
+
+**Zwei eigene Fehlurteile, die der faire Maßstab korrigiert:**
+
+- **Die Dichte-Rangliste ist kein Artefakt.** In T-060 hatte ich die MIS2-Beine als
+  Mikro-Scalper abgetan, deren Roster-Rang nur aus einem fast leeren Slot-Tage-Nenner
+  stammt. Falsch: unter der Exit-Regel des Arms erreichen sie **+5,5 bis +8,1**
+  Residuum bei t = 3,5 bis 9,5. Die Auswahl vom 26.07. hat die richtigen Beine gezogen.
+- **TSM1 SHORT war die falsche Empfehlung.** Über zwei Runden auf Basis von Menge
+  vertreten (107 Signale/Tag, live, nur wegen des nie bindenden Slot-Caps draußen) und
+  nie auf Qualität gemessen: **−0,72 bei t = −4,58**, unter beiden Maßstäben negativ.
+
+**Was unter beiden Maßstäben hält** — und deshalb trägt: TSM1 SHORT und EPD3 SHORT
+sind negativ. Der T-032-Park von EPD3 steht; die EPD-Familie hat in keiner Generation
+eine Kante.
+
+**Die eigentliche Erkenntnis:** Kante und Volumen sind auf der SHORT-Seite entkoppelt.
+MIS2 liefert 0,9–6,3 Signale/Tag bei Residuum +7, TSM1 107/Tag bei −0,72, EPD3 337/Tag
+bei −0,38. Ein hochvolumiges SHORT-Bein mit positiver Kante gibt es nicht, außer AIM2
+(bereits im Roster) und ROM1 (Re-Forwarder, Doppelzählung). **Mehr Volumen ist mit den
+vorhandenen Beinen nur zulasten der Qualität zu haben** — das Cap-Problem aus T-060
+ist über die SHORT-Zufuhr nicht lösbar, sondern nur über die Grandfather-Kohorte.
+
+Verdikt mit allen Grenzen: `staging_models/replay/short_leg_trail_verdict_t062.md` —
+insbesondere, dass die MIS2-Mittelwerte auf n = 47–132 stehen und vermutlich
+fettschwänzig sind (Vorzeichen und Rangfolge tragen, die Größenordnung noch nicht).
+12 DB-freie Pins, 5 Mutationen belegt. **Keine Code-Änderung an einem Bot.**
+
 ## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
 
 Die Frage aus T-042 Phase C: liegt der Live-Umschlag systematisch über dem simulierten? Falls ja,
