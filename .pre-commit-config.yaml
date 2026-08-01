@@ -56,3 +56,18 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # Challenger-Promotion-Namensguard (T-2026-KYT-9050-057). Ein Challenger-
+      # Tag, dessen Artefakt-Dateiname zugleich der Root-Loader-Slot einer
+      # anderen Generation ist, postet nach der Promotion unter ZWEI Tags
+      # (Regel-4-Doppel-Trade — bei EPD3-SHORT am 2026-07-21 beinahe passiert,
+      # damals von Hand abgewendet). Der Hook blockt den Commit, der ein solches
+      # Bein auf LIVE flippt, ohne das Artefakt challenger-distinkt zu benennen.
+      # Latente Fälle (Bein noch SHADOW, z.B. RUB3→rub2_*) sind WARN, kein Block.
+      # Registry-basiert: kein DB-/Dateisystem-Zugriff, läuft in Millisekunden.
+      - id: kythera-promotion-name-guard
+        name: Kythera challenger promotion name guard
+        entry: python tools/promotion_guard.py
+        language: system
+        pass_filenames: false
+        always_run: true

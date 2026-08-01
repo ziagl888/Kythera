@@ -1,3 +1,54 @@
+## [2026-08-01] Challenger-Promotion-Namensguard (T-2026-KYT-9050-057)
+
+Eine Challenger-Promotion war bisher genau zwei Handgriffe: die Register-Zeile in
+`core/shadow_gate.py` von `SHADOW` auf `LIVE` drehen und das Artefakt in den Repo-Root kopieren.
+`shadow_artifact_path` gibt für ein LIVE-Bein den **nackten Root-Dateinamen** zurück — und
+`SHADOW_ARTIFACTS` trägt für Challenger-Tags historisch den Dateinamen der Retrain-*Generation*,
+nicht den des Tags (`"RUB3": {"LONG": "rub2_model_LONG.pkl"}`). Wer so promotet, legt die
+Challenger-Datei in genau den Slot, aus dem der **Legacy-Loader** sein Live-Modell liest: beide
+Tags scoren dasselbe Modell und posten es doppelt (harte Regel 4, echtes Geld). Bei **EPD3-SHORT**
+war das am 2026-07-21 real — `epd2_model_SHORT.pkl` ist Bot 10s `EPD2_ARTIFACT_PATHS["SHORT"]` —
+und wurde von Hand durch den challenger-distinkten Namen `epd3_model_SHORT.pkl` abgewendet; bei
+**EPD3-LONG** (T-037) dieselbe Handarbeit ein zweites Mal.
+
+**Neu: `tools/promotion_guard.py`** — genau diese Handarbeit, automatisiert. Für jedes Bein in
+`SHADOW_ARTIFACTS` prüft der Guard, ob sein Promotions-Ziel challenger-distinkt ist, und nennt
+sonst den fremden Eigentümer plus den Rename-Vorschlag (`RUB3 → rub3_model_LONG.pkl`). Zwei
+unabhängige Belege: der Root-Slot wird von einem fremden Tag beansprucht (harter Beleg — da liest
+wirklich ein anderer Loader), oder der Dateiname trägt nicht den tag-eigenen Präfix (fängt auch
+den Loader, der in keiner Registry steht). Die Tag→Dateiname-Brücke kommt aus
+`tools/bot_variants/index.py` (neuer Accessor `legacy_artifact_slots()`) — eine bereits getestete
+Quelle statt eines zweiten kuratierten Dicts.
+
+**Die Schwere kommt aus dem Lifecycle, nicht aus dem Dateinamen.** Ein **LIVE**-Bein auf einem
+fremden Slot ist FAIL (Exit 1, Promotions-Stopp) — es liest den fremden Root-Namen bereits. Ein
+noch geparktes Bein ist WARN: latenter Blocker, ohne Live-Effekt. Damit ist der Guard heute grün
+und wird genau in dem Moment rot, in dem jemand ohne Rename flippt. Er hängt an drei Stellen:
+als pre-commit-Hook (`kythera-promotion-name-guard`, blockt diesen Commit), als Check 8 in
+`tools/verify_staging_artifacts.py` (Register-Scan am Ende + WARN je Staging-Datei, deren Name
+von >1 Tag beansprucht wird) und als CLI.
+
+`core/shadow_gate.py` bleibt **unverändert** — der Gate wird von Bots *und* Trainer/Replay
+importiert (harte Regel 7); ein geänderter Rückgabewert von `shadow_artifact_path` hätte
+Serving-Verhalten mitverschoben. Der Guard liest das Register, er schreibt nicht hinein.
+
+**Offen und bewusst nicht mit-gefixt:** `RUB3-LONG` zeigt weiter auf `rub2_model_LONG.pkl` (WARN).
+Solange RUB3 per T-037 auf SHADOW geparkt ist, ist der Slot nicht bedroht; das Umbenennen gehört
+in den Promotions-Schritt (Artefakt + Register in einem Zug, Operator-Entscheid), nicht in einen
+Hygiene-PR, der sonst einen Shadow-Ladepfad ohne Not verschiebt.
+
+**Teil 2 (EPD3-Artefakt `model_id`) bleibt offen — mit Grund.** Das promotete
+`epd3_model_SHORT.pkl` trägt eingebettet `meta.model_id='EPD2'` (harte Regel 6). Wirkungslos ist
+das heute, weil Bot 10 den Tag `EPD3` explizit an der Call-Site übergibt und der Shadow-Loader
+`model_id` gar nicht liest. Ein sauberer Rebuild ist auf dieser Box **nicht** machbar: ein echter
+Retrain bräuchte DB + Replay-Labels + CPU (die Box läuft bei ~98 %), und ein blosses Neu-Dumpen
+der Meta wäre kein Rebuild, sondern ein verlustbehafteter Cross-Version-Round-Trip — der
+eingebettete `IsotonicRegression`-Kalibrator wurde mit **scikit-learn 1.9.0** gepickelt, die
+Fleet-Python-3.13-Umgebung hier hat **1.7.1** (`InconsistentVersionWarning` beim Laden
+nachgewiesen), und auch der XGBoost-Booster warnt beim Entpickeln. Ein Artefakt-Downgrade zum
+Reparieren eines inerten Metadatenfeldes ist der schlechtere Tausch. Der Root-Promote wäre
+ohnehin ein expliziter Operator-Entscheid (harte Regel 2) und war nie Teil dieses Tasks.
+
 ## [2026-08-01] SL-Backfill ausgeführt + Grandfather-Kohorte bleibt (T-2026-KYT-9050-058)
 
 Zwei Nachträge zum Merge von PR #218 — kein Code, nur Protokoll.
