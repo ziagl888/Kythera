@@ -1,3 +1,23 @@
+## [2026-08-01] SL-Backfill ausgeführt + Grandfather-Kohorte bleibt (T-2026-KYT-9050-058)
+
+Zwei Nachträge zum Merge von PR #218 — kein Code, nur Protokoll.
+
+**Der SL-Mark-Backfill ist gelaufen** (Operator-Freigabe Michi, nach dem Merge wie vereinbart):
+**67 Zeilen, Σ −387,3 %**, Ø −5,78 %, Median −5,18 %, schlechteste −12,73 %, keine einzige
+verweigert. Unabhängig nachgeprüft statt dem Skript geglaubt: alle **90** `SL_HIT`-Zeilen tragen
+jetzt einen Mark, Σ **−559,3 %** — exakt −172,0 vorhandene plus −387,3 nachgetragene. Keine
+Zeile als Gewinn gebucht (der Wrong-Side-Guard hätte sie verweigert), und die Ablehnungs-Zeilen
+(`PREEXISTING`, `SHADOW_CARRYOVER`, `ENTRY_NOT_FILLED`) sind unangetastet NULL geblieben. Damit
+ist der Reporting-Defekt aus T-049/T-053 zu Ende repariert: eine Summe über `close_mark_pct`
+liest nicht mehr Faktor 3 zu optimistisch, und zwar nicht mehr ausgerechnet bei den Verlusten.
+
+**Operator-Entscheid zu #T54-3: die Grandfather-Kohorte läuft weiter.** Der Stichtag
+`TRAILING_BOT_TIME_STOP_SINCE=2026-07-28T14:00Z` bleibt, es gibt keine Bereinigungswelle. Da das
+der Status quo im Code ist, fällt bewusst **keine** Verhaltensänderung an — der Eintrag hält
+fest, dass die Alternative geprüft und verworfen wurde, nicht übersehen. Akzeptierter Preis: 30
+Spiegel mit Median-Alter 108 h, keiner davon scharf, Σ −81 % offenes Buch, je ein blockierter
+Symbol-Slot; ihr Exit läuft nur noch über SL oder Fleet-Close.
+
 ## [2026-08-01] Trailing-Arm-Report + SL-Mark-Backfill (T-2026-KYT-9050-054)
 
 Die Bot-40-Auswertung lief bisher ad hoc. Zwei Join-Fallen haben dabei einen kompletten

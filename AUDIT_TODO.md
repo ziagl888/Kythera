@@ -81,12 +81,19 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   +122 = **−101 Residuum**. Der naive Blick aufs Buch (LONG −644 / SHORT −5) legt die
   genau falsche Konsequenz nahe. beta = 1 → Markt-Anteil ist Unter-, Residuum Obergrenze.
   **LONG bleibt an** (Operator-Befund Michi 2026-08-01, jetzt quantifiziert).
-- [ ] **#T54-3 Grandfather-Kohorte bereinigen (Operator-Entscheid Michi).** Der Stichtag
-  `TIME_STOP_SINCE=2026-07-28T14:00Z` hält **30** Spiegel vom Zeit-Stop frei: Median-Alter
-  108 h, max 126 h, **null davon scharf**, Σ −81 % offen. Sie können strukturell nie
-  getrailt werden (Peak < Aktivierung) und blockieren je den einzigen Spiegel-Slot ihres
-  Symbols. Optionen: Stichtag aufheben, einmalig auf die Kohorte anwenden, oder bewusst
-  weiterreiten.
+- [x] **#T54-3 Grandfather-Kohorte — ENTSCHIEDEN 2026-08-01: sie reitet weiter (Michi).** Der
+  Stichtag `TIME_STOP_SINCE=2026-07-28T14:00Z` hält **30** Spiegel vom Zeit-Stop frei:
+  Median-Alter 108 h, max 126 h, **null davon scharf**, Σ −81 % offen. Sie können strukturell
+  nie getrailt werden (Peak < Aktivierung) und blockieren je den einzigen Spiegel-Slot ihres
+  Symbols; Exit nur noch über SL oder Fleet-Close. Operator-Entscheid: **weiterlaufen lassen**
+  — Stichtag bleibt, keine Bereinigungswelle. Das ist der Status quo im Code, es fällt also
+  bewusst **keine** Änderung an; die Kosten oben sind der akzeptierte Preis.
+- [x] **#T54-4 SL-Mark-Backfill vollzogen (2026-08-01, Operator-Freigabe Michi).** 67 Zeilen aus
+  der Zeit vor dem T-053-Fix, Σ **−387,3 %** (Ø −5,78 %, schlechteste −12,73 %), keine
+  verweigert. Verifiziert: alle 90 `SL_HIT`-Zeilen tragen jetzt einen Mark (Σ **−559,3 %** =
+  −172,0 vorhandene + −387,3 nachgetragene), keine als Gewinn gebucht, die Ablehnungs-Zeilen
+  (`PREEXISTING`/`SHADOW_CARRYOVER`/`ENTRY_NOT_FILLED`) unangetastet NULL. Eine Summe über
+  `close_mark_pct` liest damit nicht mehr Faktor 3 zu optimistisch.
 - [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi) — AKTUALISIERT 2026-07-28.** Nach
   Live-Bestätigung der Entmischung (sauberes Fenster in ~9 h auf 95 % unter Wasser; Bot auf
   Operator-Auftrag 05:29 geparkt, 05:43 entparkt) und Lauf 3 (23 Regeln, inkl. x-Sweep,
