@@ -26,6 +26,14 @@ Gemeinsame Bausteine (eine Quelle für Bot, Builder und Trainer — X-R1-Regel):
 - `core/signal_post.py` — Outbox + `ai_signals` + Shadow-Log (atomar, kein
   Cornix-Block in der Info-Nachricht)
 
+**Entry-Anker (T-2026-KYT-9050-011, 2026-08-01):** 30/31/32 holen den Preis für
+`calculate_smart_targets` + `log_prediction` über
+`core.live_price.get_live_price(symbol, conn)` — `core.candles` contract 2:
+Erkennung auf geschlossenen Kerzen, Preis separat. Der Kontext-Frame liefert ihn
+NICHT (seit Block 5 closed-only → bis ~59 min stale); bei 32 bleibt er nur als
+Daten-Freshness-Guard. Liefert `get_live_price` None (Binance + DB-Fallback tot),
+wird das Signal übersprungen. FIF1 nimmt weiterhin `sig["entry"]` der Quell-Zeile.
+
 Alle vier folgen den Flotten-Konventionen: Closed-Candle-Features (R1),
 Startup-Feature-Selbsttest (P0.12), Gate auf roher Probability (Threshold aus
 dem Val-Operating-Point), kalibrierte Confidence nur für Anzeige, Cooldowns via

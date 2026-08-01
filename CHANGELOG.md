@@ -53,6 +53,249 @@ Feature-Rekonstruktion → Funding-Schranke → Threshold-Kurve). `core/funding_
 **unangetastet** — der Root-Cause sitzt nicht dort. Kein Retrain, keine Promotion, kein Gate-Flip,
 kein Restart, keine Schreib-Query gegen Live-Tabellen. Report:
 `docs/T-2026-KYT-9050-008-rub2-replay-skew.md`.
+## [2026-08-01] Korrelations-Layer über Vol-Targeting: VERTAGT, Substrat fehlt (T-2026-KYT-9050-023)
+
+Prämissen-Prüfung statt Design. Der Task fordert einen Portfolio-Korrelations-Layer **über** dem
+GARCH-Vol-Targeting (Begründung im Ticket: der unabhängige Per-Coin-Throttle ignoriere
+Cross-Coin-Korrelation, im 538-Coin-Buch bleibe konzentriertes Beta übrig). Geprüft wurde zuerst,
+ob es diese Unterschicht überhaupt gibt — **sie gibt es nicht**, aus zwei unabhängigen Gründen.
+Ergebnis: **kein Design gebaut**, Akte `docs/T-2026-KYT-9050-023-correlation-layer-deferred.md`.
+Read-only, kein Code angefasst.
+
+- **Die Vol-Targeting-Schicht ist nicht verdrahtet.** `tools/research/garch/` wird außerhalb des
+  Pakets nur von `backtest/test_garch_*.py` (+ einem Kommentar in `test_stoic123_signals.py`) und
+  vom CHANGELOG referenziert. Kein Bot (`NN_*.py`) und kein `core/*.py` importiert es — die Bots
+  importieren aus `core/`, nie aus `tools/` (verifiziert per Grep, nicht per Doku).
+- **Es existiert kein Gate.** Die Live-`.env` trägt 60 Schlüssel (nur Namen gelesen, keine Werte):
+  Credentials, 44 `CH_*`, und die Gates `AIM2_LIVE_POSTING`, `NEW_IDEAS_LIVE_POSTING`,
+  `AIM2_TOPN_*`, `MAX1_*`, `TRAILING_BOT_LIVE_POSTING`, `KYTHERA_CANDLES_*`. Kein `GARCH_*`,
+  kein `VOL_TARGET_*`, kein `SIZING_*`. Nichts zu flippen — die Schicht ist nicht default-off,
+  sie ist gar nicht da.
+- **T-030 hatte sie explizit retired.** `T030_live_verdict_report.md`: Pooled-Sharpe-Δ +0,009,
+  Median über 9 Bots +0,013 gegen eine +0,10-Schwelle → NO-PULL, wörtliche Empfehlung *„do not
+  wire GARCH vol-targeting into any bot's sizing"*. Die Prämisse des Tasks (ausgerollte Schicht
+  mit Restfehler) ist damit stale.
+- **Zweiter, unabhängiger Befund: Kythera sized überhaupt keine Positionen.**
+  `build_cornix_block` (`core/signal_post.py:63-84`) emittiert Direction, Leverage, Margin, Entry,
+  TPs, SL — **keine** Größen-/Notional-Zeile. `lev` ist `get_max_leverage(symbol, 20)`, also der
+  Börsen-Cap aus `max_leverage.json`, keine Risiko-Entscheidung pro Trade (Ausnahme UFI1 = geparkt).
+  Der Positions-Umfang ist eine Cornix-seitige Operator-Einstellung. Ein „Per-Position-Throttle"
+  hätte also kein Ausgabefeld; eines zu schaffen ändert, was Cornix mit echtem Geld tut → Michi.
+- **Was live wirklich Konzentration steuert, ist platz- statt beta-basiert:**
+  `has_open_ai_signal` (ein offenes Signal je Symbol×Richtung×Tag), `SLOT_CAP = 500`
+  (`core/trailing_roster.py:49`, Cornix-Channel-Deckel) und die Regime-Whitelist 26/27/28 —
+  gemessen und optimiert wird das bereits in T-042/T-052.
+- **Wieder-Eintritts-Bedingung** (in der Akte festgehalten): erst wenn (1) Kythera selbst eine
+  Positionsgröße setzt **und** (2) ein wirksamer Per-Position-Throttle ausgerollt ist. Davor ist
+  die nächste sinnvolle Frage nicht „Layer bauen", sondern die reine Messung, ob das Buch
+  überhaupt so stark korreliert, dass Beta-Konzentration bindet. Kostennotiz für den Fall:
+  538×538 ≈ 145k Paare pro Rebalance, ohne Shrinkage bei T ≪ N numerisch wertlos — und SRV02 lag
+  am 2026-08-01 über drei 2-s-Samples konstant bei 100 % CPU (10 logische Kerne, `Get-Counter`).
+## [2026-08-01] K2-Studien-Maschinerie: marktneutraler Frame + tape-kausaler Stufe-2-Entry (T-2026-KYT-9050-013)
+
+Die zwei im K2-Review (T-2026-CU-9050-143, PR #133) gefundenen und dort als bekannte Limitationen
+dokumentierten Maschinen-Defekte in `tools/xs_momentum_study.py` sind behoben. **Das Verdikt der
+Studie ändert sich nicht** — es bleibt `weak/inconsistent-spread (not deployable)`: es ruht auf den
+`absolute`-Zellen, deren Bewertung unangetastet ist (geschlossene-Form-Test pinnt das). Repariert ist
+die Messmaschine, nicht das Ergebnis. Kein Bot, kein Gate, kein Artefakt berührt.
+
+**(1) Der `market_neutral`-Frame war ein No-op.** Der Beta-Abzug lag auf dem SIGNAL
+(`sig = sig_abs − btc_sig`) — ein Per-Rebalance-**Skalar**-Shift, also argsort-invariant — während die
+PnL absolute Coin-Returns benutzte. Ergebnis: alle 60 `market_neutral`-Zellen waren byte-identisch zu
+ihrem `absolute`-Zwilling; Beta wurde nie entfernt (im eingecheckten Voll-Lauf-Artefakt nachgezählt:
+60/60, und synthetisch reproduziert, bevor gefixt wurde). Der Adjust sitzt jetzt auf den **Returns**
+(`fwd − (btc_H/btc_0 − 1)` über dasselbe Halte-Fenster, K5-Konvention) — genau das, was Spec §K2
+Punkt 2 immer schon forderte („marktneutral (Coin-Return minus BTC-Return)"). Die Signal-Subtraktion
+bleibt als Vorbedingung („BTC-Signal muss existieren") stehen, jetzt aber als solche kommentiert. Da
+beide Frames identisch ranken, ändert der Fix nur die **Bewertung**, nie die Auswahl; der
+Top-minus-Bottom-Spread ist beta-invariant und bleibt zwischen den Frames gleich. Kostenbasis bewusst
+identisch zu `absolute` (ein Round-Trip), damit die Frames zellenweise vergleichbar bleiben — Fee und
+Funding des BTC-Hedge-Beins sind NICHT modelliert und im Report als solches ausgewiesen.
+
+**(2) Der Stufe-2-Entry lag ~1 Tages-Balken zu früh (Look-ahead).** `load_1d` floored `open_time` auf
+`'D'`, also ist `dates[t]` der Tages-**Open**; das Ranking-Signal ist aber `close[t]`. Der Entry am
+ersten 1h-Close ab `dates[t]` handelte damit ~23 h, bevor das Signal überhaupt beobachtbar war (die
+Entry-Kerze öffnete volle 24 h zu früh — im Test gemessen). Anker jetzt `dates[t] + 86400`: erster
+1h-Close ab dem Tages-Close. Betroffen war nur die konfirmatorische Stufe 2, nie das Stufe-1-Verdikt.
+Dieselbe Falle wie in T-052 (be-Familie, 59k→7k nach Korrektur): Bedingungen tape-kausal pinnen.
+
+**Stale-Schutz statt stiller Neu-Beschriftung:** `STUDY_SEMANTICS_VERSION` (jetzt 2) wandert in die
+Report-Meta. Ein Report, der aus einem Lauf mit älterer Semantik gerendert wird, trägt einen
+**STALE-Banner** mit beiden Defekten statt zu behaupten, er sei nach der neuen Rechnung entstanden.
+Genau das gilt für das eingecheckte Voll-Lauf-Artefakt (527 Coins, 2026-07-17): es via `--reverdict`
+DB-frei neu gerendert (Zellen/Stufe 2/Verdikt byte-identisch, nur Text) — seine `market_neutral`- und
+Stufe-2-Zahlen bleiben Pre-Fix. **Ein Voll-Lauf unter v2 ist ein offener Folge-Schritt**
+(DB-schwer ⇒ Ein-Job-Slot auf dem VPS, in dieser Session bewusst nicht gefahren).
+
+Neue DB-freie Tests `backtest/test_xs_momentum_study.py` (9): beide Defekte wurden damit ZUERST
+reproduziert (60/60 identisch bzw. 24 h Entry-Vorlauf), dann gefixt. Sie pinnen zusätzlich, dass der
+`absolute`-Frame unverändert bleibt (Signal-Vertrag von Bot 39, Zelle F84|raw|absolute), dass Auswahl
+und Spread frame-invariant sind, und die Resume-Semantik der Stufe 2.
+
+## [2026-08-01] Research-Bots 30/31/32: Entry-Anker auf get_live_price (T-2026-KYT-9050-011)
+
+Der offene Follow-up aus Block 5 der R1-Migration (T-2026-CU-9050-112) ist geschlossen. Seit
+`core.research_features.fetch_context_frame` mit `include_forming=False` liest, ist
+`df["close"].iloc[-1]` die letzte **geschlossene** 1h-Kerze — als Entry-Preis-Anker damit bis zu
+~59 min stale. Genau diesen Anker nahmen `30_ai_pex1`, `31_ai_fmr1` und `32_ai_trm1`. Sie holen
+ihn jetzt über `core.live_price.get_live_price(symbol, conn)` (Binance-REST, Fallback neuester
+5m-Close) — der Pfad der Block-4-Bots 11/22/24/25 und exakt das, was `core.candles` contract 2
+vorschreibt: **Erkennung auf geschlossenen Kerzen, Preis separat**. `33_ai_fif1` war nie betroffen
+(nimmt `sig["entry"]`).
+
+Die Feature-Seite ist unangetastet: die Feature-Kerze kommt weiter aus dem `searchsorted`-floor-1-
+Join über `open_time`, der Frame bleibt ASC und closed-only. Verschoben hat sich **nur** der Preis,
+der Entry/SL/Targets (`calculate_smart_targets`) und die `entry_price`-Spalte des Prediction-Logs
+speist.
+
+**Neu: liefert `get_live_price` None** (Binance tot UND DB-Fallback leer), wird das Signal
+übersprungen statt mit `None` gepostet — vorher konnte dieser Fall gar nicht auftreten, weil der
+Frame immer einen Close hatte. Die Cooldown-Semantik bleibt bewusst unverändert: 30/31 setzen den
+Cooldown auch auf dem None-Pfad (er spiegelt das unbedingte Trainings-Dedup und hängt am Scoring,
+nicht am Posting), 32 weiterhin nur auf dem Post-Pfad. Bei 31 fällt auf dem None-Pfad auch das
+FMR2-Shadow-Bein aus — es benutzt denselben Anker. Bei 32 bleibt `fetch_context_frame` als
+Daten-Freshness-Guard stehen (BTCUSDT-1h-Join vorhanden und nicht staler als
+`CONTEXT_MAX_STALENESS_H`), obwohl er dort keinen Preis mehr liefert; die TRM1-Features kommen
+ohnehin aus `regime_history`.
+
+**Live-Stand (korrigiert 2026-08-01, ursprünglich falsch protokolliert):** die Bots sind **nicht**
+gegatet und 30 ist **nicht** un-deployt. Das Gate ist offen — `.env` trägt
+`NEW_IDEAS_LIVE_POSTING=1`, der Code-Default ist ohnehin `1`
+(`os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"` in 30/31/32/33), und die Bots loggen beim Start
+`Posting: LIVE`. `pex1_model.pkl` ist git-getrackt und wird geladen (`✅ Artefakt geladen:
+pex1_model.pkl — 13 Features, Threshold 0.70, Tag PEX1, Kalibrator: ja`, zuletzt 2026-08-01 07:32);
+artefaktlos im Idle-Modus laufen nur 31 und 32 (`Artefakt fehlt: fmr1_model.pkl` bzw.
+`trm1_model.pkl`). Kein Live-Delta hat die Änderung trotzdem — aber aus einem anderen Grund: der
+PEX1-Scan bricht in **jedem** Zyklus ab (`PEX1-Scan-Fehler: can't subtract offset-naive and
+offset-aware datetimes`), und zwar im `try`-Block **vor** der Event-Schleife
+(`detect_spike_time_offset_h` subtrahiert ein naives `now` von `MAX(spike_time)`; `fetch_new_events`
+vergleicht in SQL). Damit wird `process_event` — wo dieser Fix sitzt — derzeit nie erreicht. Beleglage
+aus `logs/watchdog_debug_*`: durchgehend ~1 Fehler/min vom 2026-07-19 21:37:56 bis 2026-08-01
+16:10:10, allein die vier jüngsten Logs tragen 8166 Fehlschläge, kein einziger erfolgreicher Scan
+(der Onset kann früher liegen — weiter zurück wurde nicht geprüft). Erfasst als
+**T-2026-KYT-9050-061**; sobald der Abbruch dort gefixt ist, wirkt dieser Fix sofort live. Er ist
+also nicht Vorsorge, sondern korrekt und scharf, nur aktuell hinter einem toten Scan. Neu gepinnt in
+`backtest/test_research_bots_live_price.py` (8 Tests, DB-frei): Anker == Live-Preis statt
+Frame-Close, None ⇒ kein Post und kein Prediction-Log, Cooldown-Semantik je Bot, der
+Freshness-Guard von 32 und ein Quell-Pin gegen den Rückbau.
+## [2026-08-01] Challenger-Promotion-Namensguard + EPD3-`model_id`-Re-Dump (T-2026-KYT-9050-057)
+
+Eine Challenger-Promotion war bisher genau zwei Handgriffe: die Register-Zeile in
+`core/shadow_gate.py` von `SHADOW` auf `LIVE` drehen und das Artefakt in den Repo-Root kopieren.
+`shadow_artifact_path` gibt für ein LIVE-Bein den **nackten Root-Dateinamen** zurück — und
+`SHADOW_ARTIFACTS` trägt für Challenger-Tags historisch den Dateinamen der Retrain-*Generation*,
+nicht den des Tags (`"RUB3": {"LONG": "rub2_model_LONG.pkl"}`). Wer so promotet, legt die
+Challenger-Datei in genau den Slot, aus dem der **Legacy-Loader** sein Live-Modell liest: beide
+Tags scoren dasselbe Modell und posten es doppelt (harte Regel 4, echtes Geld). Bei **EPD3-SHORT**
+war das am 2026-07-21 real — `epd2_model_SHORT.pkl` ist Bot 10s `EPD2_ARTIFACT_PATHS["SHORT"]` —
+und wurde von Hand durch den challenger-distinkten Namen `epd3_model_SHORT.pkl` abgewendet; bei
+**EPD3-LONG** (T-037) dieselbe Handarbeit ein zweites Mal.
+
+**Neu: `tools/promotion_guard.py`** — genau diese Handarbeit, automatisiert. Für jedes Bein in
+`SHADOW_ARTIFACTS` prüft der Guard, ob sein Promotions-Ziel challenger-distinkt ist, und nennt
+sonst den fremden Eigentümer plus den Rename-Vorschlag (`RUB3 → rub3_model_LONG.pkl`). Zwei
+unabhängige Belege: der Root-Slot wird von einem fremden Tag beansprucht (harter Beleg — da liest
+wirklich ein anderer Loader), oder der Dateiname trägt nicht den tag-eigenen Präfix (fängt auch
+den Loader, der in keiner Registry steht). Die Tag→Dateiname-Brücke kommt aus
+`tools/bot_variants/index.py` (neuer Accessor `legacy_artifact_slots()`) — eine bereits getestete
+Quelle statt eines zweiten kuratierten Dicts.
+
+**Die Schwere kommt aus dem Lifecycle, nicht aus dem Dateinamen.** Ein **LIVE**-Bein auf einem
+fremden Slot ist FAIL (Exit 1, Promotions-Stopp) — es liest den fremden Root-Namen bereits. Ein
+noch geparktes Bein ist WARN: latenter Blocker, ohne Live-Effekt. Damit ist der Guard heute grün
+und wird genau in dem Moment rot, in dem jemand ohne Rename flippt. Er hängt an drei Stellen:
+als pre-commit-Hook (`kythera-promotion-name-guard`, blockt diesen Commit), als Check 8 in
+`tools/verify_staging_artifacts.py` (Register-Scan am Ende + WARN je Staging-Datei, deren Name
+von >1 Tag beansprucht wird) und als CLI.
+
+`core/shadow_gate.py` bleibt **unverändert** — der Gate wird von Bots *und* Trainer/Replay
+importiert (harte Regel 7); ein geänderter Rückgabewert von `shadow_artifact_path` hätte
+Serving-Verhalten mitverschoben. Der Guard liest das Register, er schreibt nicht hinein.
+
+**Offen und bewusst nicht mit-gefixt:** `RUB3-LONG` zeigt weiter auf `rub2_model_LONG.pkl` (WARN).
+Solange RUB3 per T-037 auf SHADOW geparkt ist, ist der Slot nicht bedroht; das Umbenennen gehört
+in den Promotions-Schritt (Artefakt + Register in einem Zug, Operator-Entscheid), nicht in einen
+Hygiene-PR, der sonst einen Shadow-Ladepfad ohne Not verschiebt.
+
+**Teil 2 (EPD3-Artefakt `model_id`) ist nachgeliefert — und eine Begründung dazu war falsch.**
+Das promotete `epd3_model_SHORT.pkl` trug eingebettet `meta.model_id='EPD2'` (harte Regel 6).
+Wirkungslos ist das live, weil Bot 10 den Tag `EPD3` explizit an der Call-Site übergibt und
+`shadow_gate.load_shadow_artifact` auf `{model, features, threshold}` normalisiert, `model_id`
+also gar nicht liest — aber `core.model_artifacts.build_contract` nimmt den Posting-Tag **nur**
+aus `meta.model_id`, und `tools/verify_staging_artifacts.py` prüft genau dieses Feld.
+
+Eine frühere Fassung dieses Eintrags behauptete, ein Neu-Dumpen sei ein verlustbehafteter
+Cross-Version-Round-Trip, weil der eingebettete `IsotonicRegression` mit scikit-learn 1.9.0
+gepickelt sei und die Fleet-Umgebung 1.7.1 habe. **Das war für dieses Artefakt falsch und hat die
+Messung vertauscht:** `py -3.13` hat sklearn **1.7.1**, `py -3.14` hat **1.9.0**, und
+`epd3_model_SHORT.pkl` trägt eingebettet **1.7.1** — es lädt unter der Fleet-Python 3.13 ohne eine
+einzige Warnung. Der Re-Dump dort ist ein *Same-Version-Round-Trip*, kein Downgrade. Mit 1.9.0
+gepickelt ist das **LONG**-Artefakt (im 3.14-Env, T-037); dort stimmt das Argument, und nur dort.
+Der zweite Teil der alten Begründung — ein echter Retrain braucht DB, Replay-Labels und CPU —
+stimmt, beantwortet aber eine Frage, die der Task nicht stellte: es ging um Re-Serialisierung.
+
+**Neu: `tools/retag_artifact.py`.** Lädt ein Format-A-dict-Artefakt, setzt ausschliesslich
+`meta.model_id` und schreibt nach `staging_models/`. Zwei nicht abschaltbare Guards: das Ziel muss
+in STAGING liegen (harte Regel 2 — der Root-Promote bleibt Michis Entscheidung), und das Artefakt
+muss unter dem laufenden Interpreter *warnungsfrei* laden — meldet sklearn eine
+`InconsistentVersionWarning`, bricht das Tool ab und nennt die Version, unter der der Re-Dump
+sauber wäre. Genau dieser Guard hätte den Denkfehler oben verhindert; an `epd3_model_LONG.pkl`
+greift er und verweigert. Nach dem Schreiben verifiziert das Tool das Ergebnis gegen die Quelle
+(Scores auf fixer Probe-Matrix, Kalibrator-Kurve, Features, Threshold, Meta-Diff) und meldet
+Erfolg nur bei **genau einem** Unterschied.
+
+`staging_models/epd3_model_SHORT.pkl` trägt damit `model_id='EPD3'`, sonst nichts Neues; gepinnt
+in `backtest/test_epd3_artifact_model_id.py` (lädt über `core.model_artifacts` als `EPD3`, alle
+übrigen Felder identisch zum Root-Artefakt, alle mechanischen Checks des Staging-Verifiers grün).
+Das Root-Artefakt ist **unangetastet** — der Promote ist Operator-Entscheid. Zwei ehrliche
+Restposten: `epd3_model_LONG.pkl` hat denselben Tag-Defekt, ist aber wegen der 1.9.0-Serialisierung
+hier nicht re-dumpbar, und `verify_staging_artifacts.py` globt für EPD nur `epd2_model_*.pkl`,
+sieht die EPD3-Dateien im CLI-Lauf also gar nicht (AUDIT_TODO #T57-5/#T57-6).
+## [2026-08-01] SHORT-Beine unter der Trail-Regel bewertet — der Maßstab war das Problem (T-2026-KYT-9050-062)
+
+Operator-Auftrag: mehr Shorts für Bot 40. Vier Kandidaten geprüft, und der wichtigste
+Befund war zunächst, dass **mein eigener Maßstab unfair** war.
+
+**Der Fehler:** ein Bein gegen die **volle** Index-Bewegung seines Haltefensters zu
+messen bestraft jedes Take-Profit-Bein per Konstruktion — es steigt bei TP1 aus,
+während der Tape weiterläuft. In einem Markt mit −50 % fiel damit fast jede SHORT-Seite
+negativ aus, ohne dass sich „schlechte Auswahl" von „TP kappt den Trend" trennen ließe.
+Die LONG-Analyse aus T-054 ist davon nicht betroffen (Longs im fallenden Markt laufen
+in den SL, nicht in den TP).
+
+**Der Umbau:** `tools/short_leg_trail_value.py` stellt **beide Seiten unter dieselbe
+Trail-Regel** (act 2 %, x 10 %) — das Bein auf seinem Coin-Pfad, den Benchmark auf dem
+Index-Pfad über dasselbe Fenster. Die eigene TP-Politik fällt damit auf beiden Seiten
+heraus. Der Index trägt ein synthetisches Hoch/Tief (Median-Stunden-Ratios), weil ein
+Trail auf Dochten feuert und ein Close-only-Benchmark jedes Bein geschmeichelt hätte.
+Trail-Mechanik, Dedup-Loader und Kerzen kommen aus `trailing_slot_budget` bzw.
+`wave_buildup_study` — keine zweite Implementierung (Regel 7).
+
+**Zwei eigene Fehlurteile, die der faire Maßstab korrigiert:**
+
+- **Die Dichte-Rangliste ist kein Artefakt.** In T-060 hatte ich die MIS2-Beine als
+  Mikro-Scalper abgetan, deren Roster-Rang nur aus einem fast leeren Slot-Tage-Nenner
+  stammt. Falsch: unter der Exit-Regel des Arms erreichen sie **+5,5 bis +8,1**
+  Residuum bei t = 3,5 bis 9,5. Die Auswahl vom 26.07. hat die richtigen Beine gezogen.
+- **TSM1 SHORT war die falsche Empfehlung.** Über zwei Runden auf Basis von Menge
+  vertreten (107 Signale/Tag, live, nur wegen des nie bindenden Slot-Caps draußen) und
+  nie auf Qualität gemessen: **−0,72 bei t = −4,58**, unter beiden Maßstäben negativ.
+
+**Was unter beiden Maßstäben hält** — und deshalb trägt: TSM1 SHORT und EPD3 SHORT
+sind negativ. Der T-032-Park von EPD3 steht; die EPD-Familie hat in keiner Generation
+eine Kante.
+
+**Die eigentliche Erkenntnis:** Kante und Volumen sind auf der SHORT-Seite entkoppelt.
+MIS2 liefert 0,9–6,3 Signale/Tag bei Residuum +7, TSM1 107/Tag bei −0,72, EPD3 337/Tag
+bei −0,38. Ein hochvolumiges SHORT-Bein mit positiver Kante gibt es nicht, außer AIM2
+(bereits im Roster) und ROM1 (Re-Forwarder, Doppelzählung). **Mehr Volumen ist mit den
+vorhandenen Beinen nur zulasten der Qualität zu haben** — das Cap-Problem aus T-060
+ist über die SHORT-Zufuhr nicht lösbar, sondern nur über die Grandfather-Kohorte.
+
+Verdikt mit allen Grenzen: `staging_models/replay/short_leg_trail_verdict_t062.md` —
+insbesondere, dass die MIS2-Mittelwerte auf n = 47–132 stehen und vermutlich
+fettschwänzig sind (Vorzeichen und Rangfolge tragen, die Größenordnung noch nicht).
+12 DB-freie Pins, 5 Mutationen belegt. **Keine Code-Änderung an einem Bot.**
 
 ## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
 

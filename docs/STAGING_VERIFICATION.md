@@ -41,6 +41,37 @@ Read-only. Kein DB-Zugriff, kein Live-Touch. Exit-Code **1**, sobald ein
 | 5 | `meta.xgboost_version` == Serving-xgboost | P3.4 | Major-Drift → stiller `predict_proba`-Skew |
 | 6 | Format B: `model_type` startswith `binary` + `_calib.pkl` | Contract | Loader läse die falsche Wahrscheinlichkeitsspalte |
 | 7 | Modell hat `predict_proba` | Contract | kein Klassifikator geladen |
+| 8 | Promotions-Slot ist nicht doppelt belegt (`tools/promotion_guard.py`) | HR-4 / HR-6 | ein LIVE-Challenger liest den Root-Slot einer fremden Generation → Doppel-Post |
+
+### Check 8 — Challenger-Promotions-Namensguard (T-2026-KYT-9050-057)
+
+`shadow_gate.shadow_artifact_path` liefert für ein **LIVE**-Bein den nackten
+Root-Dateinamen. Trägt ein Challenger-Tag (RUB3, EPD3, …) in `SHADOW_ARTIFACTS`
+den Dateinamen der Retrain-**Generation** statt seinen eigenen, belegt die
+Promotion einen Slot, den zugleich der **Legacy-Loader** liest — beide Tags
+posten dasselbe Modell (Regel-4-Doppel-Trade). Bei **EPD3-SHORT** war das am
+2026-07-21 real (`epd2_model_SHORT.pkl` = Bot-10-`EPD2_ARTIFACT_PATHS["SHORT"]`)
+und wurde von Hand durch den challenger-distinkten Namen `epd3_model_SHORT.pkl`
+abgewendet; bei **EPD3-LONG** (T-037) dieselbe Handarbeit ein zweites Mal.
+
+Der Guard prüft das jetzt automatisch — registry-basiert, ohne Dateisystem:
+
+| Fall | Schwere |
+|---|---|
+| Bein ist **LIVE** und der Dateiname gehört einem fremden Tag | **FAIL** (Exit 1, Promotions-Stopp) |
+| Bein ist SHADOW/SILENT/RETIRED, Dateiname nicht challenger-distinkt | WARN (latenter Blocker vor dem nächsten Flip) |
+| eine Staging-**Datei** wird von >1 Tag beansprucht | WARN je Datei (die Absicht steht nicht im Dateinamen) |
+
+```bash
+python tools/promotion_guard.py            # Exit 1 nur bei FAIL
+python tools/promotion_guard.py --strict   # WARNs ebenfalls als Fehler
+```
+
+Er läuft zusätzlich als pre-commit-Hook (`kythera-promotion-name-guard`) und
+blockt damit den Commit, der ein Bein auf LIVE flippt, ohne umzubenennen.
+**Offen (heute WARN):** `RUB3-LONG` zeigt weiter auf `rub2_model_LONG.pkl` —
+harmlos, solange RUB3 geparkt ist (T-037); vor einer RUB3-Promotion muss das
+Artefakt `rub3_model_LONG.pkl` heissen.
 
 ## C2-Metrik-Report (advisory — Michi entscheidet)
 

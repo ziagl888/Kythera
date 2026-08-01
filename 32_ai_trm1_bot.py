@@ -29,6 +29,7 @@ import pandas as pd
 
 from core import config as _kcfg
 from core.database import get_db_connection
+from core.live_price import get_live_price
 from core.market_utils import check_cooldown, update_cooldown
 from core.model_artifacts import calibrated_confidence, load_artifact, maybe_reload
 from core.research_features import (
@@ -176,11 +177,24 @@ def run_check() -> None:
             return
         conf = calibrated_confidence(ARTIFACT, prob)
 
-        res = fetch_context_frame(conn, TRADE_SYMBOL)
-        if res is None:
+        # Der Kontext-Frame speist seit T-2026-KYT-9050-011 NICHT mehr den
+        # Entry-Preis; er bleibt der Daten-Freshness-Guard, hinter dem TRM1
+        # bisher schwieg: genug 1h-Historie für BTCUSDT UND ein Join, der nicht
+        # staler als CONTEXT_MAX_STALENESS_H ist (Ingestion lebt). TRM1-Features
+        # kommen aus regime_history, nicht aus diesem Frame.
+        if fetch_context_frame(conn, TRADE_SYMBOL) is None:
             return
-        df, _ = res
-        live_price = float(df["close"].iloc[-1])
+        # Entry-Anker = LIVE-Preis (core.live_price, core.candles contract 2:
+        # Erkennung auf geschlossenen Kerzen, Preis separat). Der Frame trägt
+        # seit Block 5 (T-2026-CU-9050-112) nur geschlossene Kerzen — sein
+        # letzter Close wäre bis zu ~59 min alt.
+        live_price = get_live_price(TRADE_SYMBOL, conn)
+        if live_price is None:
+            # Ohne Preis-Anker kein Signal und kein Prediction-Log; TRM1 prüft
+            # ohnehin alle 5 min erneut. Kein Cooldown — der wird hier nur auf
+            # dem Post-Pfad gesetzt (unverändert).
+            logger.warning(f"{TRADE_SYMBOL}: kein Live-Preis (Binance + DB-Fallback) — Check übersprungen.")
+            return
 
         logger.info(
             f"TRM1 TRANSITION seit {minutes_in:.0f} min | P(up)={p_up:.3f} "

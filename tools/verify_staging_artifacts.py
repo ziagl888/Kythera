@@ -29,10 +29,19 @@ Prüft jedes Retrain-Artefakt in STAGING_DIR gegen die Fleet-Verträge:
                               retrain_<name>_stats.json → Go/No-Go-Hinweis (ADVISORY,
                               kein Hard-Fail — Michi-Urteil). Die Kalibrierungs-
                               Monotonie der Buckets bleibt manuelle Sichtung (Doku).
+  9. Regel 4/6 Promotions-Slot — würde die Promotion dieses Dateinamens einen
+                              LOADER-SLOT belegen, den ein ZWEITER Generations-Tag
+                              liest? (tools/promotion_guard.py — der EPD3-SHORT-Fall
+                              vom 2026-07-21, T-2026-KYT-9050-057.) Pro Datei WARN,
+                              weil die Absicht am Dateinamen nicht ablesbar ist;
+                              zusätzlich läuft am Ende der Register-Scan des Guards,
+                              dessen FAIL (LIVE-Bein auf fremdem Slot) den Exit-Code
+                              auf 1 setzt.
 
 Exit-Code: 1, wenn irgendein MECHANISCHER Contract-Check FAIL ist (lädt nicht /
-Feature-Drift / xgb-Version-Skew / Tag falsch / Threshold ungültig); sonst 0.
-Metrik-Bedenken (Check 8) sind WARN und ändern den Exit-Code NICHT — ob ein
+Feature-Drift / xgb-Version-Skew / Tag falsch / Threshold ungültig / LIVE-Bein auf
+fremdem Root-Slot); sonst 0. Metrik-Bedenken (Check 8) und der Slot-Hinweis pro
+Datei (Check 9) sind WARN und ändern den Exit-Code NICHT — ob ein
 unterdurchschnittliches Modell trotzdem promotet wird, entscheidet der Operator.
 
 Beispiele:
@@ -59,6 +68,7 @@ if REPO_ROOT not in sys.path:
 # core.model_artifacts ist der Loader, den die Live-Bots benutzen — genau der
 # soll das Artefakt akzeptieren. Import ist DB-frei.
 from core import model_artifacts  # noqa: E402
+from tools import promotion_guard  # noqa: E402
 
 # Statusmarken
 OK = "PASS"
@@ -394,6 +404,7 @@ def verify_artifact(path: str, spec: dict, staging_dir: str) -> dict:
 
     st, msg = check_residency(path, staging_dir)
     checks.append(("residency", st, msg))
+    checks.append(("promotion_slot", *promotion_guard.check_staging_filename(fn)))
 
     # Rohes Laden (granulare Meta-Checks)
     try:
@@ -494,6 +505,18 @@ def main() -> int:
             seen_stats.add(stats_name)
             for label, st, msg in report_metrics(staging_dir, stats_name):
                 print(f"     📊 [{label}] {ICON.get(st, '')}{msg}")
+        print()
+
+    # Register-Scan (Check 9, zweite Hälfte): unabhängig davon, welche Dateien in
+    # STAGING_DIR liegen — er liest NUR core.shadow_gate. Ein FAIL heisst: ein
+    # bereits auf LIVE geflipptes Challenger-Bein lädt aus dem Root-Slot einer
+    # fremden Generation (Regel-4-Doppel-Post). Das ist ein harter Promotions-Stopp.
+    findings = promotion_guard.scan()
+    if findings:
+        print("── PROMOTIONS-NAMENSGUARD " + "─" * 35)
+        for f in findings:
+            print(f"  {ICON[f.severity]}{f.as_line()}")
+        any_fail = any_fail or any(f.severity == FAIL for f in findings)
         print()
 
     print("─" * 60)
