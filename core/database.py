@@ -40,8 +40,13 @@ _POOL_MAX = int(os.getenv("KYTHERA_DB_POOL_MAX", "8"))
 #   - lock_timeout (pre-existing) caps how long a query waits for a lock.
 #   - TCP keepalives make a silently-dropped VPS↔Postgres socket fail fast
 #     instead of hanging the caller forever on a half-open connection.
-# NOTE: no timezone change here — the TZ line (R3/UTC_POLICY.md) is deliberately
-# out of scope for this fix.
+# The timezone GUC is the R3 flip (T-2026-KYT-9050-005, docs/UTC_POLICY.md §4):
+# it decides how Postgres casts between timestamptz and the legacy naive
+# TIMESTAMP columns, i.e. what NOW() writes into them and how they compare
+# against an aware parameter. Pinned to UTC so the fleet has ONE time domain
+# regardless of the VPS timezone (Europe/Bucharest). Landed together with the
+# naive-local writer in 3_detectors.py and the six drift compensations — a flip
+# on its own would have moved the writers without moving the readers.
 #
 # statement_timeout default = 300s (not 30s): this DB has closed_trades_master /
 # closed_ai_signals without usable indexes (full-table scans), an hourly
@@ -52,6 +57,7 @@ _POOL_MAX = int(os.getenv("KYTHERA_DB_POOL_MAX", "8"))
 # audit fights. 300s still kills real runaways/hangs while sparing hourly
 # analytics. Tightening to 30s is an OPERATOR decision to make only AFTER the Z0
 # query-runtime measurement on the VPS confirms nothing legitimate runs that long.
+_DEFAULT_SESSION_TZ = "UTC"
 _DEFAULT_LOCK_TIMEOUT_MS = 30000
 _DEFAULT_STATEMENT_TIMEOUT_MS = 300000
 _DEFAULT_KEEPALIVES_IDLE_S = 30
@@ -66,7 +72,7 @@ def _connect_options() -> str:
     effect and the value stays testable.
     """
     lock_ms = int(os.getenv("KYTHERA_DB_LOCK_TIMEOUT_MS", str(_DEFAULT_LOCK_TIMEOUT_MS)))
-    parts = [f"-c lock_timeout={lock_ms}"]
+    parts = [f"-c lock_timeout={lock_ms}", f"-c timezone={_DEFAULT_SESSION_TZ}"]
     stmt_ms = int(os.getenv("KYTHERA_DB_STATEMENT_TIMEOUT_MS", str(_DEFAULT_STATEMENT_TIMEOUT_MS)))
     if stmt_ms > 0:  # 0 disables the cap — long trainer/housekeeping queries.
         parts.append(f"-c statement_timeout={stmt_ms}")

@@ -3,8 +3,10 @@ tools/fif1_build_dataset.py — Trainings-Events + Replay-Labels für FIF1
 "FIFO-Filter" (Report 15, S11). Läuft auf dem VPS (Step 2).
 
 Events = ALLE Fast-In-And-Out-Signale aus active_trades_master +
-closed_trades_master (der 111k-Trades-Datensatz, E6). Zeiten sind PG-Lokalzeit
-(Europe/Bucharest) → UTC-Konvertierung wie in aim2_build_dataset.
+closed_trades_master (der 111k-Trades-Datensatz, E6). Zeiten sind seit dem
+R3-Flip (T-2026-KYT-9050-005) naives UTC; die Lesart der älteren Zeilen liegt
+zentral in core.time (docs/UTC_POLICY.md §6), aufgerufen über to_utc_naive
+aus research_dataset_common — wie in aim2_build_dataset.
 
 Label: simulate_exit über die AUFGEZEICHNETE FIFO-Geometrie (entry/target1/sl,
 n_published=1) ab der Kerze nach dem floor-1-Join — die Selektion ist die

@@ -6,8 +6,10 @@ Baut das komplette Trainingsmaterial für das neue Master-Meta-Modell
 <staging>/replay/aim2_events.jsonl.
 
 Pipeline je Event (Quellsignal):
-  1. Zeitstempel: ml_predictions_master/*_trades_master schreiben PG-Lokalzeit
-     (Europe/Bucharest, vermessen 2026-07-05) → Konvertierung nach UTC.
+  1. Zeitstempel: ml_predictions_master/*_trades_master schreiben seit dem
+     R3-Flip (T-2026-KYT-9050-005) naives UTC. Wie die Zeilen DAVOR gelesen
+     werden (Backfill vs. Cutover-Konstante), entscheidet core.time —
+     docs/UTC_POLICY.md §6. Der Builder rechnet selbst nichts mehr um.
   2. floor-1-Join: letzte GESCHLOSSENE 1h-Kerze vor dem Event (kein Lookahead —
      der round('1h')-Fehler des AIM1-Trainers ist hiermit strukturell tot).
   3. Geometrie as-of: calculate_smart_targets auf dem Kerzenfenster bis zu
@@ -58,12 +60,12 @@ from core.candles import read_candles_with_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.trade_utils import calculate_smart_targets  # noqa: E402
 from tools.research_dataset_common import candles_window_start  # noqa: E402
+from tools.research_dataset_common import to_utc_naive as _shared_to_utc_naive  # noqa: E402
 from tools.walkforward_sim import simulate_exit  # noqa: E402  (nur Import — Datei gehört dem ABR1-Rework)
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
 
-LOCAL_TZ = "Europe/Bucharest"
 SINCE_DEFAULT = "2026-02-25"
 HORIZON_CANDLES = 14 * 24          # 14 Tage à 1h
 WINDOW_CANDLES = 500               # Smart-Targets-Fenster
@@ -96,11 +98,13 @@ def set_low_priority() -> None:
 
 
 def to_utc_naive(series: pd.Series) -> pd.Series:
-    """Naive Lokalzeit (Europe/Bucharest) → naive UTC. DST-Frühjahrslücke wird
-    vorwärts geschoben; ambige Herbststunden → NaT (im Feb–Jul-Fenster leer)."""
-    s = pd.to_datetime(series, errors="coerce")
-    s = s.dt.tz_localize(LOCAL_TZ, nonexistent="shift_forward", ambiguous="NaT")
-    return s.dt.tz_convert("UTC").dt.tz_localize(None)
+    """Signal-/Close-Zeiten als naives UTC — EIN Pfad mit den Research-Buildern.
+
+    Der feste Bucharest→UTC-Schritt ist mit dem R3-Flip (T-2026-KYT-9050-005)
+    entfallen: die Writer stempeln UTC. Die Lesart der Historie hängt an
+    core.time.R3_CUTOVER_UTC (docs/UTC_POLICY.md §6); DST-Frühjahrslücke wird
+    dort vorwärts geschoben, die ambige Herbststunde wird NaT."""
+    return _shared_to_utc_naive(series)
 
 
 def df_query(conn, sql: str, params=None) -> pd.DataFrame:

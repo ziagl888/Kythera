@@ -83,8 +83,15 @@ def fetch_latest_regime(conn) -> tuple[dict | None, float]:
 
 def fifo_burst_counts(conn, symbol: str, direction: str) -> tuple[int, int]:
     """Signal-Burst-Dichte aus BEIDEN Master-Tabellen (Trades wandern von
-    active nach closed). Zeitvergleich DB-seitig — die time-Spalten tragen
-    PG-Lokalzeit, NOW() castet konsistent in dieselbe Domäne."""
+    active nach closed). Zeitvergleich DB-seitig — die time-Spalten tragen seit
+    dem R3-Flip naives UTC (3_detectors.write_signal_atomic), NOW() castet unter
+    der UTC-Session in dieselbe Domäne. Die Konsistenz hängt an genau diesem
+    Paar: Writer und Session-TZ mussten zusammen umgestellt werden
+    (T-2026-KYT-9050-005, docs/UTC_POLICY.md §4).
+
+    Restart-Effekt: die 1h-/24h-Fenster sehen die Zeilen von VOR dem Restart um
+    +2/3h in der Zukunft, die Burst-Dichte ist also für maximal 24 h zu hoch;
+    danach läuft das Fenster leer."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -179,7 +186,12 @@ def fetch_recent_signals(conn) -> list[dict]:
       * Zeitfenster statt id-Watermark: nach Idle-/Ausfall-Phasen wird kein
         Backlog tage-alter Signale mit verfallener Original-Geometrie gepostet
         (Analogon zum 30-min-Guard in Bot 30). Zeitvergleich DB-seitig — die
-        time-Spalten tragen PG-Lokalzeit, NOW() castet in dieselbe Domäne."""
+        time-Spalten tragen seit dem R3-Flip naives UTC, NOW() castet unter der
+        UTC-Session in dieselbe Domäne (T-2026-KYT-9050-005). Zeilen von vor dem
+        Restart liegen scheinbar +2/3h in der Zukunft; das Fenster hat keine
+        Obergrenze, sie sind also beim ersten Poll nach dem Restart alle drin —
+        und werden genau dort vom Startup-Marking in main() als `seen`
+        abgehakt, bevor die Schleife postet. Nach ~3h fallen sie unten heraus."""
     with conn.cursor() as cur:
         cur.execute(
             f"""

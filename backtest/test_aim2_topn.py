@@ -167,7 +167,9 @@ def test_topn_path_is_behind_default_off_gate():
 def test_topn_tag_excluded_from_candidate_stream():
     # F6 self-feedback: TOPN rows are meta-gate output, never a base signal.
     assert "NOT IN ('AIM1', 'AIM2', %s)" in SRC
-    assert "(TOPN_TAG, since_local)" in SRC
+    # `since_local` heisst seit dem R3-Flip `since_bound` (T-2026-KYT-9050-005):
+    # die Grenze geht in der Domäne der Spalte in die SQL, und die ist jetzt UTC.
+    assert "(TOPN_TAG, since_bound)" in SRC
 
 
 def test_topn_min_never_below_base_gate():
