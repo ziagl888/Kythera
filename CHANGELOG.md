@@ -1,3 +1,63 @@
+## [2026-08-01] Trailing-Arm-Report + SL-Mark-Backfill (T-2026-KYT-9050-054)
+
+Die Bot-40-Auswertung lief bisher ad hoc. Zwei Join-Fallen haben dabei einen kompletten
+Analyse-Durchlauf mit einem konfident falschen Verdikt beendet — beide gehören als
+Kontrakt ins Repo, nicht in ein Scratchpad:
+
+- **`closed_ai_signals.id` ist eine EIGENE Sequenz, nicht `ai_signals.id`.** Ein Join über
+  `trailing_positions.src_signal_id` sieht plausibel aus und ist fast reines Rauschen: von
+  4611 so verbundenen Zeilen hatten **9** überhaupt dasselbe Symbol. Ergebnis war
+  „Halten hätte +2 600 837 % gebracht" und ein invertiertes Verdikt. Der Quell-Trade wird
+  jetzt über (Symbol, Modell, Richtung) + Zeit gematcht und **jeder Match gegen den
+  Entry-Preis geprüft** (3 % Toleranz — der Spiegel kauft bis zu 240 s später zum Markt).
+- **`closed_ai_signals.open_time`/`close_time` sind naiv in PG-Lokalzeit (+03)**, während
+  `trailing_positions.opened_at` `timestamptz` ist. Wer die Spiegel-Seite mit
+  `AT TIME ZONE 'UTC'` normalisiert, verschiebt um −3 h und trifft nichts (2 von 461).
+  Verglichen wird gegen `opened_at::timestamp`. `candles.open_time` ist tz-aware, der
+  Benchmark-Pfad also nicht betroffen.
+
+**Neu: `tools/trailing_arm_report.py`** (read-only). Realisiert inkl. SL-Rekonstruktion,
+offenes Buch mark-to-market, Counterfactual **nur auf den eigenen Exits des Arms**
+(`TRAIL`/`TIME_STOP`; bei `SOURCE_CLOSED`/`SL_HIT` ist Arm == Halten per Konstruktion, ihr
+Einschluss verdünnt den gemessenen Effekt gegen null), getrennt nach aufgelöst und
+noch-offen — die aufgelöste Teilmenge ist zu schnellen Closes, also Stop-Outs, verzerrt und
+schmeichelt dem Arm, wenn man sie allein liest.
+
+**Marktkontext ist dabei kein Beiwerk.** Wenige Tage nach Go-Live lief ein Markt-Dump. Ohne
+ihn liest sich das Buch als LONG −644 gegen SHORT −5 %-Punkte und legt genau eine Konsequenz
+nahe — LONG abschalten. Der Report trägt deshalb einen gleichgewichteten Altcoin-Index
+(Median-Stundenrendite über das Coin-Universum; Median, damit ein frisches Listing mit
++300 % nicht selbst der Markt wird) und attribuiert jeden Trade gegen die Index-Bewegung
+**seines eigenen Haltefensters**. Ergebnis über die Live-Reihe: der Index fiel **−8,3 %**,
+die LONG-Seite realisierte −596 gegen **−858 markt-impliziert**, also **+262 Residuum** —
+die LONG-Beine haben den Markt geschlagen, nicht verloren. Die SHORT-Seite liegt mit
+**−101 Residuum** unter dem, was der fallende Tape ihr geschenkt hat. Attribution mit
+beta = 1; Alts laufen typisch heißer, der Markt-Anteil ist damit eine **Unter**grenze und
+das Bein-Residuum eine Obergrenze.
+
+**Neu: `tools/backfill_trailing_sl_marks.py`.** Repariert die **67** SL-Zeilen aus der Zeit
+vor dem T-053-Fix (bis 2026-07-30 07:50), die `close_mark_pct = NULL` tragen, obwohl der
+Fill exakt bekannt ist: **Σ −387,3 %, Ø −5,78 %, Median −5,18 %, schlechtester −12,73 %**.
+Ein `SUM(close_mark_pct)` liest ohne sie **−188 statt −575 %** brutto — Faktor 3, und
+optimistisch ausgerechnet bei den Verlusten. Wert aus `core.trailing_state.mark_pct`
+(Regel 7, gleiche Quelle wie Live-Pfad und Report), Annahme **Fill am Stop-Level ohne
+Slippage** = optimistische Kante. Dry-Run ist Default; Schreiben verlangt `--apply` **und**
+`--yes-write-live-db`, läuft in EINER Transaktion, wiederholt den Guard in der `UPDATE`-
+`WHERE` (ein Mark, den der Bot zwischen Vorschau und Write selbst bucht, gewinnt) und rollt
+zurück, wenn die getroffene Zeilenzahl von der Vorschau abweicht. Ein Stop, der sich zu
+einem **Gewinn** rekonstruiert, wird verweigert statt geschrieben — das kann nur heißen,
+dass `sl` auf der falschen Seite von `entry` steht.
+
+**Nebenbefund, unabhängig von der Exit-Regel:** der Grandfather-Stichtag hält **30** Spiegel
+vom Zeit-Stop frei (Median-Alter 108 h, max 126 h, **null davon scharf**, Σ −81 %). Sie
+können strukturell nie getrailt werden und blockieren je den einzigen Spiegel-Slot ihres
+Symbols.
+
+31 DB-freie Pins (19 + 12). Alle neun Kern-Zusicherungen einzeln per Mutationstest belegt
+(SL-Rekonstruktion entfernt, Entry-Guard aus, Attributions-Vorzeichen, Index-Median→Mean,
+Erst-Beobachtung als Rendite, Richtungs-Vorzeichen im Backfill, Wrong-Side-Stop geschrieben,
+Guard aus dem `UPDATE`, Kandidaten-Query verbreitert) — jede Mutation wurde gefangen.
+
 ## [2026-07-30] Trailing-Bot: SL-Treffer mit Mark buchen (T-2026-KYT-9050-053)
 
 Reporting-Defekt, in T-049 selbst eingebaut: der SL-Treffer wurde mit
