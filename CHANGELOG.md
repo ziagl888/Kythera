@@ -46,6 +46,70 @@ Das `bfill` in `24_quasimodo_bot.py:140-141` und `25_smc_ml_sniper.py:311-312` i
 (die Ticket-Zeilen `:126`/`:220` sind veraltet) — es fällt erst mit einem Artefakt-Rollout, und der
 findet nicht statt. Nichts promotet, kein Deploy, kein Gate-Flip, kein Restart. Details und die
 Rollout-Tabelle: `docs/T-2026-KYT-9050-006-td-bb-qm-retrain-verdict.md`.
+## [2026-08-01] EPD-Detektor-Retrain auf den post-P1.39-Definitionen: nicht ausführbar (Kalender) — Wiedervorlage 2026-11-09 (T-2026-KYT-9050-004)
+
+Auftrag war der Retrain von `pump_dump_model.pkl` auf den seit P1.39 zeit-basierten
+Feature-Fenstern. **Ergebnis: kein Artefakt — und keins, das man erzeugen sollte.**
+Der Blocker ist der Kalender, nicht die Datenqualität. Bericht:
+`docs/T-2026-KYT-9050-004-epd-retrain-feasibility.md`, Zahlen
+`staging_models/replay/epd4_feasibility.{json,md}` + `staging_models/retrain_epd4_stats.json`.
+
+**Cut-Point selbst nachgezählt statt übernommen:** die stündliche
+`pump_dump_events`-Zählung am 2026-07-10 (UTC) bricht auf der Stunde des
+Bot-10-Restarts (17:08:29Z) von 56–170/h auf 10–33/h. Der Restart schaltete P1.39, die
+T-035-Ratennormierung und den wiederbelebten Stunden-Warmup gemeinsam scharf; der Sprung
+ist ein **Gate-** kein Feature-Effekt (der Coverage-Floor entfernt die Events, die aus
+einem Ein-Sample-Nenner entstanden).
+
+**Der Datensatz ist sauber, nur zu kurz.** `epd2_build_dataset.py --since '2026-07-10
+17:00:00'` schreibt 4698 von 4712 Events (0,3 % Verlust: 11 `no_candles`, 3 `no_ticker`,
+sonst null), 4327 gelabelt, Spanne **22,0 d**. `chrono_split` gibt Val und Test je das
+15 %-Quantilsband = 3,3 d, und der 7-d-Purge-Gap (= Label-Horizont des Builders) frisst es
+ganz: `split 1664/0/0` (LONG) und `1364/0/0` (SHORT). Für ≥50 Zeilen je Slice braucht es
+~50 d Spanne, für einen Operating-Point mit Rückhalt ~122 d.
+
+**Harte Obergrenze ist `ticker_10s`, nicht der Cut-Point.** Der Builder nimmt den Entry
+seit T-2026-CU-9050-035 aus der Hypertable, und die beginnt am 2026-07-07 11:19Z — drei
+Tage VOR dem Cut-Point. Der Feb–Juli-Datensatz (85 031 Events, Basis von EPD2/EPD3) ist
+mit dem heutigen Builder **nicht mehr reproduzierbar**; der geforderte Schnitt am
+Cut-Point kostet folglich drei Tage. Retention 365 d ⇒ das Fenster wächst.
+
+**Die Prämisse des Tasks hält der Messung nicht stand.** Zwei-Stichproben-KS je Feature
+(14 d vor gegen 14 d nach) liegt für alle vier betroffenen Inputs **im Nullband**
+benachbarter 14-d-Fensterpaare der Vor-Cut-Historie: 0,036–0,174 gegen Nullband-Median
+0,058–0,080 und Nullband-Max 0,204–0,434. Und das deployte, auf VOR-Cut-Daten gefittete
+`epd3_model_LONG.pkl` diskriminiert auf den Post-Cut-Events out-of-sample weiter
+(AUC(TP1) 0,586, Kalibrierung monoton 38,3 → 66,7 % TP1; SHORT 0,537). Es gibt kein
+Anzeichen für ein durch die Definitionsänderung kaputtes Serving-Modell — Bot 10 läuft
+unverändert weiter. Einschränkung: nur Randverteilungen gemessen.
+
+**Tag EPD4 reserviert, bewusst noch nicht registriert.** EPD1/EPD2/EPD3 sind belegt
+(geprüft gegen `bot_variants/index.legacy_artifact_slots()`, `shadow_gate.SHADOW_ARTIFACTS`,
+`_LIFECYCLE`, `_RETIRED_TAGS` und die DB-Historie); `epd4_model_*.pkl` beansprucht keinen
+fremden Loader-Slot. Ein `shadow_gate`-Eintrag ohne Artefakt wäre tote Konfiguration —
+gepinnt ist stattdessen die Belegung selbst, samt der Falle, dass der Gate-Default LIVE
+ist. **P1.45 bewusst nicht weiter verdrahtet:** der Artefakt-Pfad liest die `model_id`
+längst; im Challenger-Pfad muss der Tag eine Konstante bleiben, weil das **live** laufende
+`epd3_model_LONG.pkl` in seiner Meta `model_id='EPD2'` trägt (bekannter, per
+`retag_artifact.py`-Versionsguard blockierter Defekt) — ein Rewire würde es unter dem
+Alt-Tag posten lassen und `has_open_ai_signal` blind machen.
+
+**Code:** `--model-id` an `tools/retrain_from_replay.py` und `tools/retrain_pump.py`; der
+Tag setzt `meta.model_id` **und** den Dateinamen-Präfix gemeinsam (`artifact_slot`,
+identisch zu `promotion_guard.tag_prefix`) — auseinanderlaufen zu lassen ist genau der
+Slot-Kaper-Fehler vom 2026-07-21. Default `EPD2` ⇒ unveränderter Lauf. Der degenerierte
+Split meldet jetzt die Rechnung (Spanne, Band, Gap, Dichte, fehlende Tage) statt nur
+„übersprungen" und legt sie maschinenlesbar in `retrain_<slot>_stats.json` ab.
+
+**Offen vor einem EPD4-Go-Live (nicht in diesem Task verifiziert):** die Serving-Population
+ist 2,7× (LONG) bzw. 5,4× (SHORT) dichter als die Trainings-Population — der 900s-Dedup des
+Builders spiegelt einen Alert-Throttle, dessen Timer nur im Live-Trade-Zweig zurückgesetzt
+wird und für ein nicht-live postendes Bein inert ist.
+
+Verifikation: `backtest/test_retrain_model_id.py` (14/14, DB-frei),
+`backtest/test_epd_tag.py` + `test_promotion_guard.py` + `test_epd3_artifact_model_id.py`
+(43/43), `ruff check .` + `ruff format --check .`, `regression_guard verify` (24/24).
+Alle DB-Zugriffe read-only, Trainings-/Build-Läufe unter dem Job-Lock.
 
 ## [2026-08-01] Bot 30 (PEX1) scheiterte an JEDEM Scan — aware/naiv-Mix in `spike_time` (T-2026-KYT-9050-061)
 
