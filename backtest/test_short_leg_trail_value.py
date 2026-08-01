@@ -29,7 +29,12 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from tools.short_leg_trail_value import benchmark_trail, build_index_ohlc, cluster_t  # noqa: E402
+from tools.short_leg_trail_value import (  # noqa: E402
+    benchmark_trail,
+    build_index_ohlc,
+    cluster_t,
+    tail_profile,
+)
 
 T0 = datetime(2026, 6, 1)
 
@@ -134,6 +139,47 @@ def test_cluster_t_weights_days_equally_not_trades():
     vals = [(T0.date(), 10.0)] * 100 + [((T0 + timedelta(days=1)).date(), 0.0)]
     n_days, mean, _t = cluster_t(vals)
     assert n_days == 2 and abs(mean - 5.0) < 1e-12, mean
+
+
+# ------------------------------------------------------------ distribution --
+def test_a_lottery_ticket_is_flagged_by_its_top5_share():
+    """One 100-point win among losers averages positive while being unrepeatable.
+    The share is what separates that from a broad edge; the mean cannot."""
+    vals = [100.0] + [-1.0] * 50
+    p = tail_profile(vals)
+    assert p["mean"] > 0
+    assert p["median"] == -1.0
+    assert p["top5_share"] > 0.5, p
+
+
+def test_a_broad_edge_has_a_low_top5_share_and_a_median_near_its_mean():
+    vals = [2.0] * 100
+    p = tail_profile(vals)
+    assert abs(p["mean"] - p["median"]) < 1e-12
+    assert p["top5_share"] < 0.1, p
+    assert p["win_rate"] == 100.0
+
+
+def test_top5_share_uses_the_absolute_total_so_a_losing_leg_still_shows_concentration():
+    """With a negative sum a raw ratio flips sign and reads as 'no concentration' —
+    exactly the leg where concentration matters most."""
+    vals = [50.0] + [-10.0] * 10
+    p = tail_profile(vals)
+    assert p["mean"] < 0 and p["top5_share"] > 0, p
+
+
+def test_quartiles_bracket_the_median():
+    p = tail_profile([float(i) for i in range(100)])
+    assert p["p25"] <= p["median"] <= p["p75"]
+
+
+def test_win_rate_counts_strictly_positive_only():
+    p = tail_profile([1.0, 0.0, -1.0])
+    assert abs(p["win_rate"] - 100.0 / 3) < 1e-9, p
+
+
+def test_empty_population_does_not_crash():
+    assert tail_profile([])["n"] == 0
 
 
 if __name__ == "__main__":
