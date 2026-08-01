@@ -1,4 +1,4 @@
-## [2026-08-01] Challenger-Promotion-Namensguard (T-2026-KYT-9050-057)
+## [2026-08-01] Challenger-Promotion-Namensguard + EPD3-`model_id`-Re-Dump (T-2026-KYT-9050-057)
 
 Eine Challenger-Promotion war bisher genau zwei Handgriffe: die Register-Zeile in
 `core/shadow_gate.py` von `SHADOW` auf `LIVE` drehen und das Artefakt in den Repo-Root kopieren.
@@ -37,17 +37,40 @@ Solange RUB3 per T-037 auf SHADOW geparkt ist, ist der Slot nicht bedroht; das U
 in den Promotions-Schritt (Artefakt + Register in einem Zug, Operator-Entscheid), nicht in einen
 Hygiene-PR, der sonst einen Shadow-Ladepfad ohne Not verschiebt.
 
-**Teil 2 (EPD3-Artefakt `model_id`) bleibt offen — mit Grund.** Das promotete
-`epd3_model_SHORT.pkl` trägt eingebettet `meta.model_id='EPD2'` (harte Regel 6). Wirkungslos ist
-das heute, weil Bot 10 den Tag `EPD3` explizit an der Call-Site übergibt und der Shadow-Loader
-`model_id` gar nicht liest. Ein sauberer Rebuild ist auf dieser Box **nicht** machbar: ein echter
-Retrain bräuchte DB + Replay-Labels + CPU (die Box läuft bei ~98 %), und ein blosses Neu-Dumpen
-der Meta wäre kein Rebuild, sondern ein verlustbehafteter Cross-Version-Round-Trip — der
-eingebettete `IsotonicRegression`-Kalibrator wurde mit **scikit-learn 1.9.0** gepickelt, die
-Fleet-Python-3.13-Umgebung hier hat **1.7.1** (`InconsistentVersionWarning` beim Laden
-nachgewiesen), und auch der XGBoost-Booster warnt beim Entpickeln. Ein Artefakt-Downgrade zum
-Reparieren eines inerten Metadatenfeldes ist der schlechtere Tausch. Der Root-Promote wäre
-ohnehin ein expliziter Operator-Entscheid (harte Regel 2) und war nie Teil dieses Tasks.
+**Teil 2 (EPD3-Artefakt `model_id`) ist nachgeliefert — und eine Begründung dazu war falsch.**
+Das promotete `epd3_model_SHORT.pkl` trug eingebettet `meta.model_id='EPD2'` (harte Regel 6).
+Wirkungslos ist das live, weil Bot 10 den Tag `EPD3` explizit an der Call-Site übergibt und
+`shadow_gate.load_shadow_artifact` auf `{model, features, threshold}` normalisiert, `model_id`
+also gar nicht liest — aber `core.model_artifacts.build_contract` nimmt den Posting-Tag **nur**
+aus `meta.model_id`, und `tools/verify_staging_artifacts.py` prüft genau dieses Feld.
+
+Eine frühere Fassung dieses Eintrags behauptete, ein Neu-Dumpen sei ein verlustbehafteter
+Cross-Version-Round-Trip, weil der eingebettete `IsotonicRegression` mit scikit-learn 1.9.0
+gepickelt sei und die Fleet-Umgebung 1.7.1 habe. **Das war für dieses Artefakt falsch und hat die
+Messung vertauscht:** `py -3.13` hat sklearn **1.7.1**, `py -3.14` hat **1.9.0**, und
+`epd3_model_SHORT.pkl` trägt eingebettet **1.7.1** — es lädt unter der Fleet-Python 3.13 ohne eine
+einzige Warnung. Der Re-Dump dort ist ein *Same-Version-Round-Trip*, kein Downgrade. Mit 1.9.0
+gepickelt ist das **LONG**-Artefakt (im 3.14-Env, T-037); dort stimmt das Argument, und nur dort.
+Der zweite Teil der alten Begründung — ein echter Retrain braucht DB, Replay-Labels und CPU —
+stimmt, beantwortet aber eine Frage, die der Task nicht stellte: es ging um Re-Serialisierung.
+
+**Neu: `tools/retag_artifact.py`.** Lädt ein Format-A-dict-Artefakt, setzt ausschliesslich
+`meta.model_id` und schreibt nach `staging_models/`. Zwei nicht abschaltbare Guards: das Ziel muss
+in STAGING liegen (harte Regel 2 — der Root-Promote bleibt Michis Entscheidung), und das Artefakt
+muss unter dem laufenden Interpreter *warnungsfrei* laden — meldet sklearn eine
+`InconsistentVersionWarning`, bricht das Tool ab und nennt die Version, unter der der Re-Dump
+sauber wäre. Genau dieser Guard hätte den Denkfehler oben verhindert; an `epd3_model_LONG.pkl`
+greift er und verweigert. Nach dem Schreiben verifiziert das Tool das Ergebnis gegen die Quelle
+(Scores auf fixer Probe-Matrix, Kalibrator-Kurve, Features, Threshold, Meta-Diff) und meldet
+Erfolg nur bei **genau einem** Unterschied.
+
+`staging_models/epd3_model_SHORT.pkl` trägt damit `model_id='EPD3'`, sonst nichts Neues; gepinnt
+in `backtest/test_epd3_artifact_model_id.py` (lädt über `core.model_artifacts` als `EPD3`, alle
+übrigen Felder identisch zum Root-Artefakt, alle mechanischen Checks des Staging-Verifiers grün).
+Das Root-Artefakt ist **unangetastet** — der Promote ist Operator-Entscheid. Zwei ehrliche
+Restposten: `epd3_model_LONG.pkl` hat denselben Tag-Defekt, ist aber wegen der 1.9.0-Serialisierung
+hier nicht re-dumpbar, und `verify_staging_artifacts.py` globt für EPD nur `epd2_model_*.pkl`,
+sieht die EPD3-Dateien im CLI-Lauf also gar nicht (AUDIT_TODO #T57-5/#T57-6).
 
 ## [2026-08-01] SL-Backfill ausgeführt + Grandfather-Kohorte bleibt (T-2026-KYT-9050-058)
 
