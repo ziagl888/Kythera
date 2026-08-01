@@ -134,12 +134,28 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   gilt `Kapazität = 2 × min(L,S) + Cap` = aktuell 92 — **die SHORT-Seite drosselt das
   Gesamtvolumen.** Werkzeug `tools/trailing_intake_audit.py`, Verdikt
   `staging_models/replay/trailing_intake_verdict_t060.md`.
-- [ ] **#T60-2 TSM1 SHORT in den Roster (Empfehlung A, Operator-Entscheid + Restart).**
-  66 Signale/Tag, **live**, Dichte 525 — seinerzeit **allein wegen des Slot-Caps** verworfen,
-  der seither nie gebunden hat. Greift genau an der drosselnden Seite; Kapazität ~92 → ~150.
-  Eigener Task, eine Roster-Zeile, wirksam nach Fleet-Restart. Schätzung, keine Messung:
-  unterstellt TSM1 dieselbe Konversion (~45 %) und Haltedauer (~0,73 d) wie die
-  bestehenden SHORT-Beine.
+- [x] **#T60-2 TSM1 SHORT in den Roster — ZURÜCKGEZOGEN (T-2026-KYT-9050-062, 2026-08-01).**
+  Die Empfehlung stand auf Menge (107 Signale/Tag, live, nur wegen des nie bindenden
+  Slot-Caps draußen) und hat die **Qualität nie gemessen**. Unter der Trail-Regel
+  gemessen: **Residuum −0,72 bei t = −4,58**, negativ auch unter dem zweiten Maßstab.
+  Der Roster-Platz wäre negativ belegt. Verdikt:
+  `staging_models/replay/short_leg_trail_verdict_t062.md`.
+- [x] **#T62-1 SHORT-Beine unter der Trail-Regel bewertet (2026-08-01).** Beide Seiten
+  unter demselben Exit (Bein-Pfad vs. Index-Pfad), damit die eigene TP-Politik
+  herausfällt — der Vorgänger-Maßstab (gegen die volle Fensterbewegung) bestrafte jedes
+  TP-Bein konstruktionsbedingt. **Korrigiert #T60 Punkt „Dichte ist ein Artefakt":** die
+  MIS2-Beine erreichen +5,5 bis +8,1 Residuum (t 3,5–9,5) und verdienen ihren Roster-Rang.
+  Werkzeug `tools/short_leg_trail_value.py`, 12 DB-freie Pins.
+- [ ] **#T62-2 Verteilungen der MIS2-Residuen (offen, vor jeder Größenordnungs-Aussage).**
+  Die Mittelwerte von 5,5–9,1 %/Trade stehen auf n = 47–132 und sind vermutlich
+  fettschwänzig (wenige Coins, die nach einem Pump 30 % einbrechen). Vorzeichen und
+  Rangfolge tragen; die **Größenordnung** braucht Median und Quantile.
+- [ ] **#T62-3 Gate-Flip-Kandidaten, falls mehr SHORT-Volumen gewünscht (Michi).**
+  MIS1-24h (+4,94, t 3,81), MIS1-72h (+2,12, t 2,27), MIS2-8h (+5,53, t 3,48) — alle im
+  Shadow, zusammen ~13 Signale/Tag. Kleine Menge, gemessene Kante. **Kein hochvolumiges
+  SHORT-Bein mit positiver Kante existiert** (TSM1 −0,72 bei 107/Tag, EPD3 −0,38 bei
+  337/Tag); Ausnahmen nur AIM2 (schon im Roster) und ROM1 (Re-Forwarder,
+  Doppelzählung). Das Cap-Problem aus #T60-1 ist über die SHORT-Zufuhr **nicht** lösbar.
 - [ ] **#T60-3 Fenster 240 → 300 s — NACH #T60-2, als Qualitäts- nicht Mengenmaßnahme.**
   Solange der Cap bindet, verschiebt ein weiteres Fenster Ablehnungen nur von `PREEXISTING`
   nach `EXPOSURE_CAP`. Wert liegt woanders: `admit()` sortiert nach Bein-Dichte, 300 s gibt
