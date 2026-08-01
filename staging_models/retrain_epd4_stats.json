@@ -1,0 +1,44 @@
+{
+  "strategy": "epd2",
+  "model_id": "EPD4",
+  "features": [
+    "vol_ratio",
+    "p_chg_60s",
+    "buy_pres",
+    "volat",
+    "sample_fill",
+    "rsi",
+    "tsi",
+    "macd",
+    "e9_dist",
+    "e21_dist",
+    "fund_last",
+    "fund_24h",
+    "fund_72h",
+    "fund_7d_cum",
+    "fund_pctl_90d",
+    "fund_trend"
+  ],
+  "LONG": {
+    "n_events": 2378,
+    "skipped": "degenerate_split",
+    "span_days": 21.8,
+    "band_days": 3.3,
+    "gap_days": 7,
+    "min_rows": 50,
+    "rows_per_day": 108.9,
+    "required_span_days": 49.7,
+    "missing_days": 27.9
+  },
+  "SHORT": {
+    "n_events": 1949,
+    "skipped": "degenerate_split",
+    "span_days": 22.0,
+    "band_days": 3.3,
+    "gap_days": 7,
+    "min_rows": 50,
+    "rows_per_day": 88.6,
+    "required_span_days": 50.4,
+    "missing_days": 28.4
+  }
+}

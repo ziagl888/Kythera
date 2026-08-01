@@ -30,7 +30,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+from functools import partial
 
 import joblib
 import numpy as np
@@ -233,6 +235,33 @@ def chrono_split(df: pd.DataFrame, gap_hours: int):
     val = df[(df["signal_time"] > t_train + gap) & (df["signal_time"] <= t_val)]
     test = df[df["signal_time"] > t_val + gap]
     return train, val, test
+
+
+def split_shortfall(df: pd.DataFrame, gap_days: int, min_rows: int = 50, band: float = 0.15) -> dict:
+    """Warum ``chrono_split`` leere Slices liefert — und wieviel Kalender fehlt.
+
+    ``chrono_split`` gibt Val und Test je das ``band``-Quantilsband der
+    Signalzeiten; der Purge-Gap schneidet davon vorne ``gap_days`` Tage weg. Ist
+    das Band kürzer als der Gap, sind beide Slices LEER — unabhängig davon, wie
+    viele Zeilen der Datensatz hat. Die Abhilfe ist deshalb nie "mehr Coins",
+    sondern immer "mehr Kalender".
+
+    Rechnung (gleichmäßige Dichte ``rows_per_day`` unterstellt — bei stark
+    schwankender Event-Rate ist ``required_span_days`` nur eine Schätzung):
+        (band · span − gap_days) · rows_per_day ≥ min_rows
+    """
+    span_days = (df["signal_time"].max() - df["signal_time"].min()).total_seconds() / 86400
+    rows_per_day = len(df) / span_days if span_days > 0 else 0.0
+    required = (gap_days + (min_rows / rows_per_day if rows_per_day > 0 else float("inf"))) / band
+    return {
+        "span_days": round(span_days, 1),
+        "band_days": round(band * span_days, 1),
+        "gap_days": gap_days,
+        "min_rows": min_rows,
+        "rows_per_day": round(rows_per_day, 1),
+        "required_span_days": round(required, 1),
+        "missing_days": round(max(0.0, required - span_days), 1),
+    }
 
 
 def bucket_calibration(probs: np.ndarray, outcomes: np.ndarray, pnl: np.ndarray) -> list[dict]:
@@ -805,13 +834,32 @@ def run_ats(replay_path: str, extra_features=()) -> dict:
     return results
 
 
-def run_epd(events_path: str, extra_features=()) -> dict:
+def artifact_slot(model_id: str) -> str:
+    """Dateinamen-Präfix, der zu einem Generations-Tag gehört (harte Regel 6).
+
+    ``EPD4`` → ``epd4``, ``MIS2-8H`` → ``mis28h``. Der Präfix MUSS aus dem Tag
+    kommen: ein Challenger, den man unter dem Dateinamen einer FREMDEN Generation
+    ablegt, kapert bei der Promotion deren Loader-Slot und postet dasselbe Modell
+    unter zwei Tags (der EPD3-SHORT-Fall vom 2026-07-21, T-2026-KYT-9050-057).
+    Identisch zu ``tools.promotion_guard.tag_prefix`` — hier lokal gehalten, damit
+    der Trainer nicht core.shadow_gate + die Variant-Registry importieren muss;
+    die Gleichheit pinnt backtest/test_retrain_model_id.py."""
+    return model_id.strip().upper().replace("-", "").lower()
+
+
+def run_epd(events_path: str, extra_features=(), model_id: str = "EPD2") -> dict:
     """EPD2-Retrain (MODEL_INTENT §7): Binärmodell je Richtung auf den
     Detektor-Events aus tools/epd2_build_dataset.py (nur vol_ratio≥5 wie live,
     Label = First-Touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie via
     simulate_exit, 7d-Horizont; offene Trades ungelabelt). Der Builder
     schreibt ts/label/features statt signal_time/outcome_tp1 → Key-Mapping
-    im geteilten Loader."""
+    im geteilten Loader.
+
+    ``model_id`` ist der Generations-Tag der ERZEUGTEN Artefakte (harte Regel 6).
+    Er setzt ``meta.model_id`` UND den Dateinamen-Präfix gemeinsam — beide
+    auseinanderlaufen zu lassen ist genau der Slot-Kaper-Fehler oben. Default
+    ``EPD2`` hält den bisherigen Lauf byte-identisch; ein Retrain auf einer neuen
+    Feature-Definition läuft unter einem freien Tag (EPD1/2/3 sind vergeben)."""
     df = load_replay(events_path, ts_key="ts", label_key="label")
     if df.empty or len(df) < 600:
         raise SystemExit(f"Zu wenig gelabelte EPD2-Events ({len(df)}) in {events_path}")
@@ -820,14 +868,20 @@ def run_epd(events_path: str, extra_features=()) -> dict:
     )
 
     feats = with_extra_features(EPD2_FEATURES, extra_features)
-    results: dict = {"strategy": "epd2", "features": feats}
+    # Register-Keys sind UPPER (core/shadow_gate._norm) — hier normalisieren, damit
+    # ein `--model-id epd4` nicht als kleingeschriebener Tag in die meta wandert
+    # und dort am Lifecycle-Lookup vorbeiläuft.
+    model_id = model_id.strip().upper()
+    slot = artifact_slot(model_id)
+    results: dict = {"strategy": "epd2", "model_id": model_id, "features": feats}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
             print(f"epd2 {direction}: nur {len(d)} Events — übersprungen")
             continue
         # Purge-Gap 7 Tage = Label-Horizont des Builders (HORIZON_CANDLES).
-        train, val, test = chrono_split(d, gap_hours=7 * 24)
+        gap_days = 7
+        train, val, test = chrono_split(d, gap_hours=gap_days * 24)
         print(
             f"epd2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
             f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%"
@@ -835,7 +889,23 @@ def run_epd(events_path: str, extra_features=()) -> dict:
         if min(len(train), len(val), len(test)) < 50:
             # Zeitraum zu kurz für den Purge-Gap (z. B. abgeschnittener Builder-
             # Lauf): iso.fit/Picker würden auf leeren Slices crashen.
-            print(f"epd2 {direction}: degenerierter Split — übersprungen")
+            #
+            # Das ist der Regelfall für JEDEN Post-P1.39-Schnitt, solange die
+            # Historie jung ist (T-2026-KYT-9050-004). Die nackte Meldung
+            # "übersprungen" hat dort wie ein Datenfehler ausgesehen, obwohl sie
+            # eine reine Kalender-Aussage ist — deshalb die Rechnung dazu:
+            # Val und Test bekommen je das 15%-Quantilsband, und davon frisst der
+            # Purge-Gap die ersten `gap_days` Tage. Ein Band muss den Gap also
+            # ÜBERSTEIGEN, bevor überhaupt eine Zeile in Val/Test landet.
+            diag = split_shortfall(d, gap_days, min_rows=50)
+            print(
+                f"epd2 {direction}: degenerierter Split — übersprungen. "
+                f"Spanne {diag['span_days']:.1f}d, 15%-Band {diag['band_days']:.1f}d < Purge-Gap {gap_days}d "
+                f"(Dichte {diag['rows_per_day']:.0f} Zeilen/Tag) ⇒ Val/Test leer. "
+                f"Für ≥{diag['min_rows']} Zeilen je Slice braucht es ~{diag['required_span_days']:.0f}d Spanne "
+                f"(~{diag['missing_days']:.0f}d mehr Datensammlung)."
+            )
+            results[direction] = {"n_events": len(d), "skipped": "degenerate_split", **diag}
             continue
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
@@ -845,7 +915,7 @@ def run_epd(events_path: str, extra_features=()) -> dict:
         meta = {
             "trainer": "tools/retrain_from_replay.py",
             "strategy": "epd2",
-            "model_id": "EPD2",
+            "model_id": model_id,
             "direction": direction,
             "model_type": "binary (1=TP1-first-touch)",
             "success_proba": "predict_proba[:, 1]",
@@ -864,8 +934,8 @@ def run_epd(events_path: str, extra_features=()) -> dict:
             "val_stats": val_stats,
             "test_stats": test_stats,
         }
-        save_artifact(os.path.join(STAGING_DIR, f"epd2_model_{direction}.pkl"), model, feats, thresh, iso, meta)
-        with open(os.path.join(STAGING_DIR, f"epd2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
+        save_artifact(os.path.join(STAGING_DIR, f"{slot}_model_{direction}.pkl"), model, feats, thresh, iso, meta)
+        with open(os.path.join(STAGING_DIR, f"{slot}_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2, default=str)
         results[direction] = {
             "n_events": len(d),
@@ -1014,8 +1084,22 @@ def main():
         "byte-identisch zu vorher (No-op-Anschluss). Anhängen der Namen triggert "
         "KEIN Retrain — der Replay-Writer muss die Moment-Spalten erst liefern (Queue).",
     )
+    ap.add_argument(
+        "--model-id",
+        default="EPD2",
+        help="epd: Generations-Tag der erzeugten Artefakte (harte Regel 6). Setzt meta.model_id "
+        "UND den Dateinamen-Präfix (EPD4 -> staging_models/epd4_model_{LONG,SHORT}.pkl, "
+        "retrain_epd4_stats.json). Default EPD2 = unveränderter Lauf. Nur für --strategy epd.",
+    )
     args = ap.parse_args()
     extra_features = resolve_extra_features(args.features)
+    args.model_id = args.model_id.strip().upper()
+    if args.model_id != "EPD2" and args.strategy != "epd":
+        # Lieber abbrechen als das Flag still schlucken: der Aufrufer glaubt sonst,
+        # ein neuer Tag sei gesetzt, und promotet ein Artefakt unter dem alten.
+        raise SystemExit("--model-id ist heute nur für --strategy epd verdrahtet.")
+    if not re.fullmatch(r"[A-Z][A-Z0-9]*(-[A-Z0-9]+)*", args.model_id):
+        raise SystemExit(f"--model-id {args.model_id!r} ist kein gültiger Modell-Tag (z. B. EPD4, MIS2-8H).")
 
     if args.replay is None:
         if args.strategy == "epd":
@@ -1031,7 +1115,8 @@ def main():
         # ergänzt genau einen Eintrag (Runner + Artefakt-Name zusammen).
         runner, name = {
             "rub": (run_rub, "rub2"),
-            "epd": (run_epd, "epd2"),
+            # Artefakt-Name UND Stats-Name folgen dem Tag (Regel 6, s. artifact_slot).
+            "epd": (partial(run_epd, model_id=args.model_id), artifact_slot(args.model_id)),
             "atb2": (run_atb, "atb2"),
             "ats": (run_ats, "ats2"),
         }[args.strategy]

@@ -16,13 +16,19 @@ tools/retrain_ats.py). KEIN Rollout (harte Regel 2). Zur Provenienz-Analyse
 audit_reports/13_x_ml_trainers.md.
 
   Stufe 1: tools/epd2_build_dataset.py   --since DATE   → epd2_events.jsonl
-  Stufe 2: tools/retrain_from_replay.py  --strategy epd → epd2_model_{LONG,SHORT}.pkl
+  Stufe 2: tools/retrain_from_replay.py  --strategy epd → <slot>_model_{LONG,SHORT}.pkl
+
+``--model-id`` benennt die erzeugte Generation (harte Regel 6) und bestimmt damit
+Tag UND Dateinamen-Präfix. Ein Retrain auf einer geänderten Feature-Definition
+gehört unter einen FREIEN Tag: EPD1/EPD2/EPD3 sind vergeben (core/shadow_gate.py
+und die closed_ai_signals-Historie), der nächste freie ist EPD4.
 
 Beispiele:
   python tools/retrain_pump.py                     # ab Beginn der Event-Historie (2026-02-25)
   python tools/retrain_pump.py --since 2026-03-01
   python tools/retrain_pump.py --days 90           # letzte 90 Tage
   python tools/retrain_pump.py --skip-build        # JSONL existiert schon, nur Stufe 2
+  python tools/retrain_pump.py --since 2026-07-11 --model-id EPD4   # Post-P1.39-Schnitt
 """
 
 from __future__ import annotations
@@ -69,9 +75,16 @@ def main() -> None:
     ap.add_argument("--limit-symbols", type=int, default=0, help="nur die ersten N Coins (Smoke-Test)")
     ap.add_argument("--allow-pre-ticker", action="store_true", help="Events vor dem ersten ticker_10s-Tick zulassen")
     ap.add_argument("--skip-build", action="store_true", help="Stufe 1 überspringen (epd2_events.jsonl existiert)")
+    ap.add_argument(
+        "--model-id",
+        default="EPD2",
+        help="Generations-Tag der erzeugten Artefakte (Regel 6); setzt Tag + Dateinamen-Präfix. "
+        "Default EPD2 = unveränderter Lauf; EPD1/2/3 sind vergeben, frei ist EPD4.",
+    )
     args = ap.parse_args()
 
     since = _resolve_since(args)
+    slot = args.model_id.strip().upper().replace("-", "").lower()
     py = sys.executable
 
     if not args.skip_build:
@@ -82,8 +95,11 @@ def main() -> None:
             cmd += ["--allow-pre-ticker"]
         _run(cmd)
 
-    _run([py, os.path.join("tools", "retrain_from_replay.py"), "--strategy", "epd"])
-    print("\n✅ EPD2-Retrain fertig — Artefakte in staging_models (epd2_model_{LONG,SHORT}.pkl). KEIN Rollout.")
+    _run([py, os.path.join("tools", "retrain_from_replay.py"), "--strategy", "epd", "--model-id", args.model_id])
+    print(
+        f"\n✅ EPD-Retrain fertig — Artefakte in staging_models "
+        f"({slot}_model_{{LONG,SHORT}}.pkl, Tag {args.model_id.strip().upper()}). KEIN Rollout."
+    )
 
 
 if __name__ == "__main__":
