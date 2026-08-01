@@ -1,3 +1,58 @@
+## [2026-08-01] C-Gate ist seit 16 Tagen live, nicht dormant — Ist-Stand vermessen, zwei Bots lesen eingefrorene Tabellen (T-2026-KYT-9050-002)
+
+Auftrag war, die Bereitschaft der dormanten Phase-2/4-Slices zu prüfen und das Mengengerüst
+für Michis Startzeitpunkt-Entscheidung zu messen. **Der Befund kippt die Prämisse: die
+C-Gate läuft bereits.** Bericht mit allen Zahlen:
+`docs/T-2026-KYT-9050-002-c-gate-status.md`. Kein Flag gesetzt, kein Restart, keine
+Schreib-Query — alles read-only auf der Live-DB.
+
+**Der Umschwung ist datiert, nicht geschätzt.** Die `.env` trägt
+`KYTHERA_CANDLES_SOURCE=hyper`, `WRITE_PRIMARY=hyper`, `DUAL_WRITE=1`. Alle per-Coin-Tabellen
+enden exakt bei `open_time = 2026-07-16 16:00 UTC`, davor liegt der Watchdog-Restart
+`watchdog_debug_20260716_192326.log` (16:23 UTC), und `core/candles.py` überspringt bei
+`write_primary=hyper` den per-Coin-Write. **Phase 3 (Paritäts-Cron ≥5–7 Tage) wurde dabei
+übersprungen** — Read-Cutover und Write-Primary liefen im selben Restart. Nachholbar ist das
+Gate nicht: `candles_parity.py` vergleicht legacy gegen hyper, und die Legacy-Seite ist seit
+16 Tagen leer (jeder Live-Lauf meldet `rows old=0`). Das Tool selbst ist intakt — Self-Check
+und Dry-Run laufen unter Session-3.14 **und** Fleet-3.13 grün.
+
+**Der UTC-Flip ist NICHT mit aktiviert worden** (`3ba3bbd` ist kein Ancestor des laufenden
+`e3181d5`) — die im Auftrag befürchtete Kopplung ist nicht eingetreten. Sie war strukturell
+auch nie möglich: `open_time` ist auf 9.804 von 9.806 per-Coin-Tabellen `timestamptz`, der
+Backfill-Cast also nie session-TZ-abhängig; die einzigen zwei naiven Spalten liegen in
+`ai_signals`/`closed_ai_signals`.
+
+**Mengengerüst — die Design-Doc-Annahmen sind überholt.** Legacy per-Coin: **64 GB**
+(nicht 25 GB), davon 54 GB Indikator-Tabellen. Hypertables: `candles` 45,0 Mio. Zeilen /
+9.954 MB, `indicators` 18,6 Mio. Zeilen / 20 GB. Datenbank gesamt 98 GB, C: hat **78 GB frei**
+(nicht ~160 GB). **Compression ist auf beiden Hypertables nicht aktiv** — 0 von je 128
+Chunks, keine Policy; der erwartete Gewinn ist bis heute unrealisiert. Als Anker dient eine
+Messung aus derselben DB statt einer Schätzung: `oi_5m` komprimiert 652 MB → 78 MB (8,35×);
+für die 108-Spalten-Float-Tabelle `indicators` ist das eine Obergrenze, die ehrliche Spanne
+liegt bei 30 GB → 4–10 GB. Die echte Zahl kostet einen Probe-Chunk (reversibel) und ist damit
+eine Operator-Entscheidung. Backfill-Deckung: 9.669 von 9.683; die 14 Fehlenden sind
+ausnahmslos `GRVTUSDT`, dessen Legacy-Tabellen leer sind — **keine Historie verloren**.
+
+**Der eine echte Defekt: zwei Bots lesen seit 16 Tagen eingefrorene Tabellen.**
+`16_smc_forex_metals_bot.py:87` und `21_btc_smc_strategy.py:136` sind die einzigen
+verbliebenen Roh-SELECTs auf per-Coin-Tabellen im Live-Code. Beide standen in
+`CANDLE_CALL_SITES.md` bewusst zurück („Index-gekoppelt, nur mit Offset-Rework") — die
+Zurückstellung setzte voraus, dass die Legacy-Tabellen maßgeblich bleiben, was am 07-16
+entfiel. Blast-Radius verifiziert und **bisher folgenlos**: `CH_SMC_METALS` postete zuletzt
+am 2026-07-16 09:35 UTC (9 Posts im gesamten Outbox-Fenster), `CH_BTC_SMC` hat null Posts.
+Das ist Glück, kein Design — beide emittieren einen Cornix-parsebaren Block. **Kein Fix
+committet:** beide Bots sind faktisch stillgelegt, sie wieder an Live-Daten zu hängen ist ein
+Entparken (OPUS-HANDOFF §6) und damit Michis Entscheidung — reparieren oder bewusst parken.
+
+**Rollback ist nicht mehr trivial**, entgegen der Design-Zusage. `KYTHERA_CANDLES_SOURCE=legacy`
+setzt die Fleet heute still auf 16 Tage alte Kerzen; ein Rollback der Leseseite bräuchte
+zuerst einen Rückwärts-Backfill. Die Asymmetrie war in `core/candles.py` vorhergesagt und ist
+jetzt eingetreten. Offen bleiben damit drei Entscheidungen mit Zahlen (Compression
+aktivieren, Legacy-Tabellen droppen — 64 GB, aber erst nach `pg_dump`-Restore-Test **und**
+Entfernen der `CREATE TABLE`-Schleife in `6_housekeeping.py:67`, sonst wachsen sie nach —
+sowie das Verdikt zu den zwei Bots) plus ein vorab definierter Ersatz-Paritätsplan G1–G6
+gegen den Bestand statt gegen den Live-Strom.
+
 ## [2026-08-01] TD2/BB2/QM2-Retrain: NO-GO für alle vier — und die Rerun-Artefakte waren still überschrieben (T-2026-KYT-9050-006)
 
 Zu bewerten waren die Artefakte des Post-Wilder-Reruns vom 14.07. **Sie existieren nicht mehr.**
