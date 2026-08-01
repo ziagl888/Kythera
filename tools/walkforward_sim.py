@@ -93,7 +93,7 @@ from core.ats_features import (  # noqa: E402
 )
 from core.rub_features import build_rub_features, rub_event_type, rub_trend  # noqa: E402
 from core import atb2_features as atb  # noqa: E402
-from core.time import utc_now  # noqa: E402
+from core.time import epoch_seconds, utc_now  # noqa: E402
 from core.trade_utils import (  # noqa: E402
     calculate_smart_targets,
     compute_smart_target_levels,
@@ -880,7 +880,13 @@ def run_rub1(conn, symbol: str, days: int) -> list[dict]:
 
     t1h = df["open_time"].values
     h1h, l1h, c1h = df["high"].values, df["low"].values, df["close"].values
-    ts_sec = df["open_time"].astype("int64").to_numpy() / 1e9
+    # Epoch axis of rub_trend's regression. NOT `astype("int64") / 1e9`: that
+    # divides by the column's own resolution, so under pandas >= 3.0 (datetime64[us])
+    # the axis shrinks 1000x and `slope_trend` — a RUB2 model input — comes out
+    # 1000x too large, while `dist_to_trend` still matches. The live bot goes
+    # through datetime.timestamp() and is always in seconds; this keeps the replay
+    # on the same axis regardless of the generating interpreter (T-2026-KYT-9050-008).
+    ts_sec = epoch_seconds(df["open_time"])
     n = len(df)
 
     # Replay-Fenster: die Warmup-Historie (Regressions-Lookback) liegt VOR dem
