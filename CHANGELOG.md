@@ -1,3 +1,35 @@
+## [2026-08-01] Research-Bots 30/31/32: Entry-Anker auf get_live_price (T-2026-KYT-9050-011)
+
+Der offene Follow-up aus Block 5 der R1-Migration (T-2026-CU-9050-112) ist geschlossen. Seit
+`core.research_features.fetch_context_frame` mit `include_forming=False` liest, ist
+`df["close"].iloc[-1]` die letzte **geschlossene** 1h-Kerze — als Entry-Preis-Anker damit bis zu
+~59 min stale. Genau diesen Anker nahmen `30_ai_pex1`, `31_ai_fmr1` und `32_ai_trm1`. Sie holen
+ihn jetzt über `core.live_price.get_live_price(symbol, conn)` (Binance-REST, Fallback neuester
+5m-Close) — der Pfad der Block-4-Bots 11/22/24/25 und exakt das, was `core.candles` contract 2
+vorschreibt: **Erkennung auf geschlossenen Kerzen, Preis separat**. `33_ai_fif1` war nie betroffen
+(nimmt `sig["entry"]`).
+
+Die Feature-Seite ist unangetastet: die Feature-Kerze kommt weiter aus dem `searchsorted`-floor-1-
+Join über `open_time`, der Frame bleibt ASC und closed-only. Verschoben hat sich **nur** der Preis,
+der Entry/SL/Targets (`calculate_smart_targets`) und die `entry_price`-Spalte des Prediction-Logs
+speist.
+
+**Neu: liefert `get_live_price` None** (Binance tot UND DB-Fallback leer), wird das Signal
+übersprungen statt mit `None` gepostet — vorher konnte dieser Fall gar nicht auftreten, weil der
+Frame immer einen Close hatte. Die Cooldown-Semantik bleibt bewusst unverändert: 30/31 setzen den
+Cooldown auch auf dem None-Pfad (er spiegelt das unbedingte Trainings-Dedup und hängt am Scoring,
+nicht am Posting), 32 weiterhin nur auf dem Post-Pfad. Bei 31 fällt auf dem None-Pfad auch das
+FMR2-Shadow-Bein aus — es benutzt denselben Anker. Bei 32 bleibt `fetch_context_frame` als
+Daten-Freshness-Guard stehen (BTCUSDT-1h-Join vorhanden und nicht staler als
+`CONTEXT_MAX_STALENESS_H`), obwohl er dort keinen Preis mehr liefert; die TRM1-Features kommen
+ohnehin aus `regime_history`.
+
+Alle drei Bots sind über `NEW_IDEAS_LIVE_POSTING` gegatet und nicht deployt — die Änderung ist
+Vorsorge für ein mögliches Un-Gating, kein Live-Eingriff. Neu gepinnt in
+`backtest/test_research_bots_live_price.py` (8 Tests, DB-frei): Anker == Live-Preis statt
+Frame-Close, None ⇒ kein Post und kein Prediction-Log, Cooldown-Semantik je Bot, der
+Freshness-Guard von 32 und ein Quell-Pin gegen den Rückbau.
+
 ## [2026-08-01] SL-Backfill ausgeführt + Grandfather-Kohorte bleibt (T-2026-KYT-9050-058)
 
 Zwei Nachträge zum Merge von PR #218 — kein Code, nur Protokoll.

@@ -35,6 +35,7 @@ import requests
 
 from core import config as _kcfg
 from core.database import get_db_connection
+from core.live_price import get_live_price
 from core.market_utils import check_cooldown, update_cooldown
 from core.model_artifacts import calibrated_confidence, load_artifact, maybe_reload
 from core.research_features import (
@@ -264,7 +265,29 @@ def process_candidate(conn, symbol: str, direction: str, rate: float, pctl: floa
 
     prob = float(ARTIFACT["model"].predict_proba(X)[0, 1])
     conf = calibrated_confidence(ARTIFACT, prob)
-    live_price = float(df["close"].iloc[-1])
+
+    logger.info(
+        f"FMR1 Funding-Extrem {symbol} {direction} | Rate {rate * 1e4:+.1f} bps "
+        f"(Pctl {pctl:.2f}) | Prob {prob:.3f} (Gate {ARTIFACT['threshold']:.2f})"
+    )
+
+    # Entry-Anker = LIVE-Preis (core.live_price, core.candles contract 2:
+    # Erkennung auf geschlossenen Kerzen, Preis separat). `df` trägt seit
+    # Block 5 (T-2026-CU-9050-112) NUR geschlossene Kerzen — `df["close"].iloc[-1]`
+    # wäre die letzte GESCHLOSSENE 1h-Kerze und damit bis zu ~59 min alt
+    # (T-2026-KYT-9050-011). Die Feature-Kerze (idx, floor-1-Join) ist davon
+    # unberührt: der Live-Preis speist ausschließlich Entry/Geometrie — auch die
+    # des FMR2-Shadow-Beins, das denselben Anker benutzt.
+    live_price = get_live_price(symbol, conn)
+    if live_price is None:
+        # Weder Binance-REST noch DB-Fallback liefern einen Preis: kein Signal,
+        # kein FMR2-Shadow, kein Prediction-Log (eine Shadow-Zeile ohne
+        # Entry-Preis ist für die Auswertung wertlos). Der Cooldown läuft
+        # trotzdem — der Kandidat WURDE gescort, und das unbedingte 24h-Dedup
+        # des Trainings hängt am Scoring, nicht am Posting.
+        logger.warning(f"{symbol} {direction}: kein Live-Preis (Binance + DB-Fallback) — Signal übersprungen.")
+        update_cooldown(conn, MODEL_ID, symbol, direction)
+        return
 
     # FMR2 (K4) Klasse-(A)-Shadow — VOR der FMR1-Post-Logik, unabhängig, gekapselt:
     # der Live-FMR1-Pfad darf nie von einem FMR2-Fehler betroffen sein.
@@ -272,11 +295,6 @@ def process_candidate(conn, symbol: str, direction: str, rate: float, pctl: floa
         _emit_fmr2_shadow(conn, symbol, direction, feature_row, live_price)
     except Exception as e:  # pragma: no cover - defensiv, Bot darf nicht sterben
         logger.warning(f"FMR2-Shadow {symbol} {direction} übersprungen: {e}")
-
-    logger.info(
-        f"FMR1 Funding-Extrem {symbol} {direction} | Rate {rate * 1e4:+.1f} bps "
-        f"(Pctl {pctl:.2f}) | Prob {prob:.3f} (Gate {ARTIFACT['threshold']:.2f})"
-    )
 
     if prob >= ARTIFACT["threshold"] and LIVE_POSTING:
         setup = calculate_smart_targets(conn, symbol, direction, live_price)

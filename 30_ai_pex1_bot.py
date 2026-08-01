@@ -33,6 +33,7 @@ import pandas as pd
 
 from core import config as _kcfg
 from core.database import get_db_connection
+from core.live_price import get_live_price
 from core.market_utils import check_cooldown, update_cooldown
 from core.model_artifacts import calibrated_confidence, load_artifact, maybe_reload
 from core.research_features import (
@@ -182,12 +183,28 @@ def process_event(conn, event: dict, offset_h: int) -> None:
 
     prob = float(ARTIFACT["model"].predict_proba(X)[0, 1])
     conf = calibrated_confidence(ARTIFACT, prob)
-    live_price = float(df["close"].iloc[-1])
 
     logger.info(
         f"PEX1 Pump-Event {symbol} | vol_ratio {float(event['volume_ratio']):.1f} | "
         f"Prob {prob:.3f} (Gate {ARTIFACT['threshold']:.2f})"
     )
+
+    # Entry-Anker = LIVE-Preis (core.live_price, core.candles contract 2:
+    # Erkennung auf geschlossenen Kerzen, Preis separat). `df` trägt seit
+    # Block 5 (T-2026-CU-9050-112) NUR geschlossene Kerzen — `df["close"].iloc[-1]`
+    # wäre die letzte GESCHLOSSENE 1h-Kerze und damit bis zu ~59 min alt
+    # (T-2026-KYT-9050-011). Die Feature-Kerze (idx, floor-1-Join) ist davon
+    # unberührt: der Live-Preis speist ausschließlich Entry/Geometrie.
+    live_price = get_live_price(symbol, conn)
+    if live_price is None:
+        # Weder Binance-REST noch DB-Fallback liefern einen Preis: kein Signal
+        # und kein Prediction-Log (eine Shadow-Zeile ohne Entry-Preis ist für
+        # die Auswertung wertlos). Der Cooldown läuft trotzdem — das Event WURDE
+        # gescort, und das unbedingte 4h-Dedup des Trainings hängt am Scoring,
+        # nicht am Posting.
+        logger.warning(f"{symbol}: kein Live-Preis (Binance + DB-Fallback) — Signal übersprungen.")
+        update_cooldown(conn, MODEL_ID, symbol, direction)
+        return
 
     if prob >= ARTIFACT["threshold"] and LIVE_POSTING:
         setup = calculate_smart_targets(conn, symbol, direction, live_price)
