@@ -24,8 +24,23 @@ Daten-Freshness-Guard stehen (BTCUSDT-1h-Join vorhanden und nicht staler als
 `CONTEXT_MAX_STALENESS_H`), obwohl er dort keinen Preis mehr liefert; die TRM1-Features kommen
 ohnehin aus `regime_history`.
 
-Alle drei Bots sind über `NEW_IDEAS_LIVE_POSTING` gegatet und nicht deployt — die Änderung ist
-Vorsorge für ein mögliches Un-Gating, kein Live-Eingriff. Neu gepinnt in
+**Live-Stand (korrigiert 2026-08-01, ursprünglich falsch protokolliert):** die Bots sind **nicht**
+gegatet und 30 ist **nicht** un-deployt. Das Gate ist offen — `.env` trägt
+`NEW_IDEAS_LIVE_POSTING=1`, der Code-Default ist ohnehin `1`
+(`os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"` in 30/31/32/33), und die Bots loggen beim Start
+`Posting: LIVE`. `pex1_model.pkl` ist git-getrackt und wird geladen (`✅ Artefakt geladen:
+pex1_model.pkl — 13 Features, Threshold 0.70, Tag PEX1, Kalibrator: ja`, zuletzt 2026-08-01 07:32);
+artefaktlos im Idle-Modus laufen nur 31 und 32 (`Artefakt fehlt: fmr1_model.pkl` bzw.
+`trm1_model.pkl`). Kein Live-Delta hat die Änderung trotzdem — aber aus einem anderen Grund: der
+PEX1-Scan bricht in **jedem** Zyklus ab (`PEX1-Scan-Fehler: can't subtract offset-naive and
+offset-aware datetimes`), und zwar im `try`-Block **vor** der Event-Schleife
+(`detect_spike_time_offset_h` subtrahiert ein naives `now` von `MAX(spike_time)`; `fetch_new_events`
+vergleicht in SQL). Damit wird `process_event` — wo dieser Fix sitzt — derzeit nie erreicht. Beleglage
+aus `logs/watchdog_debug_*`: durchgehend ~1 Fehler/min vom 2026-07-19 21:37:56 bis 2026-08-01
+16:10:10, allein die vier jüngsten Logs tragen 8166 Fehlschläge, kein einziger erfolgreicher Scan
+(der Onset kann früher liegen — weiter zurück wurde nicht geprüft). Erfasst als
+**T-2026-KYT-9050-061**; sobald der Abbruch dort gefixt ist, wirkt dieser Fix sofort live. Er ist
+also nicht Vorsorge, sondern korrekt und scharf, nur aktuell hinter einem toten Scan. Neu gepinnt in
 `backtest/test_research_bots_live_price.py` (8 Tests, DB-frei): Anker == Live-Preis statt
 Frame-Close, None ⇒ kein Post und kein Prediction-Log, Cooldown-Semantik je Bot, der
 Freshness-Guard von 32 und ein Quell-Pin gegen den Rückbau.
