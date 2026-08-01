@@ -66,6 +66,27 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   Monitoring läuft als Scheduled Task „Bot40 Tripwire Monitor" (stündlich :53, parkt bei
   Tripwire, Log `.local/bot40_monitor.log`) — der LLM-Session-Spawn aus Agent-Kontext
   scheiterte (Fallen im Memory dokumentiert).
+- [x] **#T54-1 Live-Auswertung des Arms als Repo-Tool (T-2026-KYT-9050-054, 2026-08-01).**
+  `tools/trailing_arm_report.py` (read-only) misst, was Bot 40 wirklich getan hat — im
+  Unterschied zu `trailing_book_health.py`, das Regeln auf historischen Fleet-Trades
+  simuliert. Zwei Join-Kontrakte sind darin festgeschrieben, weil beide je einen kompletten
+  Durchlauf mit falschem Verdikt beendet haben: `closed_ai_signals.id` ist **nicht**
+  `ai_signals.id` (eigene Sequenz — 9 von 4611 Zeilen symbol-matched), und
+  `closed_ai_signals.open_time/close_time` sind **naiv PG-lokal (+03)** gegen `timestamptz`
+  in `trailing_positions`. Counterfactual nur auf `TRAIL`/`TIME_STOP`, getrennt nach
+  aufgelöst/noch-offen. 19 DB-freie Pins, 5 Mutationen belegt.
+- [x] **#T54-2 Markt-Attribution: die LONG-Zahl ist Tape, nicht Bein-Defekt.** Über die
+  Live-Reihe fiel der gleichgewichtete Altcoin-Index (Median-Stundenrendite) **−8,3 %**.
+  LONG realisierte −596 gegen −858 markt-impliziert = **+262 Residuum**; SHORT +20 gegen
+  +122 = **−101 Residuum**. Der naive Blick aufs Buch (LONG −644 / SHORT −5) legt die
+  genau falsche Konsequenz nahe. beta = 1 → Markt-Anteil ist Unter-, Residuum Obergrenze.
+  **LONG bleibt an** (Operator-Befund Michi 2026-08-01, jetzt quantifiziert).
+- [ ] **#T54-3 Grandfather-Kohorte bereinigen (Operator-Entscheid Michi).** Der Stichtag
+  `TIME_STOP_SINCE=2026-07-28T14:00Z` hält **30** Spiegel vom Zeit-Stop frei: Median-Alter
+  108 h, max 126 h, **null davon scharf**, Σ −81 % offen. Sie können strukturell nie
+  getrailt werden (Peak < Aktivierung) und blockieren je den einzigen Spiegel-Slot ihres
+  Symbols. Optionen: Stichtag aufheben, einmalig auf die Kohorte anwenden, oder bewusst
+  weiterreiten.
 - [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi) — AKTUALISIERT 2026-07-28.** Nach
   Live-Bestätigung der Entmischung (sauberes Fenster in ~9 h auf 95 % unter Wasser; Bot auf
   Operator-Auftrag 05:29 geparkt, 05:43 entparkt) und Lauf 3 (23 Regeln, inkl. x-Sweep,
