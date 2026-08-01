@@ -1,3 +1,52 @@
+## [2026-08-01] TD2/BB2/QM2-Retrain: NO-GO für alle vier — und die Rerun-Artefakte waren still überschrieben (T-2026-KYT-9050-006)
+
+Zu bewerten waren die Artefakte des Post-Wilder-Reruns vom 14.07. **Sie existieren nicht mehr.**
+`tools/retrain_from_replay.py:423` und `smc_ml_trainer.py:376` schreiben denselben Pfad im selben
+Staging-Verzeichnis; ein Legacy-Trainer-Lauf hat am 14.07. zwischen 05:21 und 05:24 alle vier
+frisch retrainierten TD/BB-Artefakte überschrieben. Zwei unabhängige Belege: die pkl-mtimes liegen
+**nach** den zugehörigen `retrain_*_stats.json` (bei `td_4h` um 2,6 h), und die heutigen Dateien
+tragen `meta.trainer = 'smc_ml_trainer.py'`, `optimal_threshold = 0.3`, **kein**
+`calibrator_isotonic` und **keine** `meta.model_id` — Keys, die `save_artifact` immer schreibt.
+Nebenwirkung: die replay-retrainierte Generation war vom 06.–13.07. live (Tags `TD2_4H`/`BB2_4H`
+in `ml_predictions_master`) und ist beim Überschreiben ohne Ledger-Spur auf die Alt-Tags
+zurückgefallen.
+
+**Verdikt trotzdem gefällt** — die Metriken (`retrain_*_stats.json`) haben überlebt, und sie sind
+bei allen vier negativ: **TD_1H** anti-kalibriert (Live-Gate-Bucket 0,8–1,0 → Ø **−2,28 %**, der
+schlechteste von sieben; Bucket 0,0–0,3 → +4,04 %; Validation bereits −78,2 — `pick_threshold`
+liefert trotzdem einen Threshold, weil ihm der Deployability-Abbruch von `pick_threshold_safe`
+fehlt); **BB_1H** nimmt bei Threshold 0,40 **98,6 %** der Test-Events, das Gate ist ein No-op;
+**BB_4H** filter-only wie in Batch E (Test Σ −686); **TD_4H** selektiert mit WR 59,2 % **unter**
+der Basisrate 60,7 %. Der Wilder-Rewrite hat die Kohorte verschlechtert — die einzige
+Promotions-Empfehlung des 12.07.-Reports (TD2_4H, damals +185,8) trägt nicht mehr.
+
+**Live-Gegenprobe** (`closed_ai_signals`, dedupliziert, unhebelter gestaffelter Move je Bein,
+03.–08.2026): die einzige je live gegangene Replay-Retrain-Generation `BB2_4H` bucht **−1,57 %/Bein
+über 99 Beine**, das Legacy-Artefakt daneben **+0,25 %/Bein über 3.076 Beine**. TD_1H +0,91 %,
+TD_4H +1,08 %, QM_1H +0,07 %, BB_1H −0,26 %. **Die TD/BB-Replay-Retrain-Linie ist damit als NO-GO
+geschlossen**; der Live-Bestand bleibt unverändert. Offen und ausdrücklich nicht aufgelöst: auf der
+Richtungs-Achse widerspricht die Live-Realisierung der 540d-Studie im **Vorzeichen** (live trägt
+LONG, im Replay ist LONG p≈1,0 negativ) — das entwertet Replay-PnL als Promotions-Kriterium für
+diese Bot-Familie, bis geklärt ist, ob es an der Grundgesamtheit oder an der Exit-Ökonomie liegt.
+
+**QM2 begründet ausgeklammert** (kein Replay-Pfad gebaut): `walkforward_sim.py:1151` und
+`retrain_from_replay.py:980` kennen beide kein `qm`; der Hauptertrag eines Replay-Retrains — der
+auf Validation kalibrierte Threshold — erreicht Bot 24 gar nicht, weil `24_quasimodo_bot.py:45`
+hart auf `MIN_CONFIDENCE = 0.65` gatet und `optimal_threshold` nie liest; QM_4H ist im Code geparkt
+(`:42`); und QM_1H bucht live Null-EV (+0,07 %/Bein, 31 Posts in 5 Wochen).
+
+**Code-Änderung** (Gegenmaßnahme, keine Verhaltensänderung an Bots):
+`core/staging_guard.assert_no_foreign_overwrite` weigert sich, ein Artefakt mit fremdem
+`meta.trainer` zu überschreiben — verdrahtet in `retrain_from_replay`, `smc_ml_trainer` und
+`qm_ml_trainer`. Bewusst fail-open (fehlende/unlesbare Provenienz blockt nie), Override
+`KYTHERA_ALLOW_TRAINER_OVERWRITE=1`. `backtest/test_staging_guard.py` (8 Tests, DB-frei) pinnt den
+realen 07-14-Fall in beide Richtungen.
+
+Das `bfill` in `24_quasimodo_bot.py:140-141` und `25_smc_ml_sniper.py:311-312` ist **unangetastet**
+(die Ticket-Zeilen `:126`/`:220` sind veraltet) — es fällt erst mit einem Artefakt-Rollout, und der
+findet nicht statt. Nichts promotet, kein Deploy, kein Gate-Flip, kein Restart. Details und die
+Rollout-Tabelle: `docs/T-2026-KYT-9050-006-td-bb-qm-retrain-verdict.md`.
+
 ## [2026-08-01] Bot 30 (PEX1) scheiterte an JEDEM Scan — aware/naiv-Mix in `spike_time` (T-2026-KYT-9050-061)
 
 `30_ai_pex1_bot.detect_spike_time_offset_h` subtrahierte ein naives `now` von `MAX(spike_time)` und

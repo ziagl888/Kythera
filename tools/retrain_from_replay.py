@@ -47,6 +47,7 @@ from core.moment_features import MOMENT_FEATURES  # noqa: E402
 from core.mis_features import FEATURE_COLS as MIS1_FEATURES  # noqa: E402
 from core.mis_features import assert_features_alive  # noqa: E402
 from core.rub_features import RUB_FEATURES  # noqa: E402
+from core.staging_guard import assert_no_foreign_overwrite  # noqa: E402
 from core.atb2_features import ATB2_FEATURES  # noqa: E402
 from core.atb2_features import assert_features_alive as assert_atb2_alive  # noqa: E402
 
@@ -373,6 +374,9 @@ def save_artifact(path, model, feature_cols, thresh, iso, meta):
     os.makedirs(STAGING_DIR, exist_ok=True)
     if os.path.abspath(os.path.dirname(path)) != os.path.abspath(STAGING_DIR):
         raise SystemExit(f"Refuse: Artefakt-Ziel liegt nicht in STAGING_DIR: {path}")
+    # td/bb teilen den Dateinamen mit smc_ml_trainer.py — ein Legacy-Lauf hat am
+    # 2026-07-14 vier fertige Replay-Artefakte still überschrieben (T-2026-KYT-9050-006).
+    assert_no_foreign_overwrite(path, meta.get("trainer", "tools/retrain_from_replay.py"))
     joblib.dump(
         {
             "model": model,
