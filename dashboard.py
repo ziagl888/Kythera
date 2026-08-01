@@ -1,12 +1,14 @@
 """
 dashboard.py — Bot Control Dashboard
 Run alongside main_watchdog.py:  python dashboard.py
-Opens on http://localhost:5000
+Opens on http://127.0.0.1:5000 — loopback only unless deliberately configured
+otherwise (see core/dashboard_security.py and docs/DASHBOARD_SECURITY.md).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import queue as queue_module
 import sys
 import threading
@@ -19,6 +21,18 @@ from typing import Any, Iterator
 import psutil
 from flask import Flask, Response, jsonify, request, stream_with_context
 
+from core.dashboard_security import (
+    TOKEN_COOKIE,
+    TOKEN_HEADER,
+    TOKEN_QUERY_PARAM,
+    authorize,
+    bind_policy_error,
+    resolve_allowed_hosts,
+    resolve_bind_host,
+    resolve_extra_hosts,
+    resolve_token,
+    token_matches,
+)
 from core.fleet import FLEET
 from core.process_control import is_parked, park, request_restart, unpark
 
@@ -27,6 +41,32 @@ from core.process_control import is_parked, park, request_restart, unpark
 BASE_DIR = Path(__file__).parent
 LOG_DIR = BASE_DIR / "logs"
 PORT = 5000
+
+
+# Security configuration (P0.8 / P1.38-CSRF, T-2026-KYT-9050-056). Everything
+# here defaults to the hardened state: loopback bind, no exposure, host
+# allowlist on. Secrets live in .env (hard rule 3) — the fleet's bots load it
+# via core/config, but the watchdog spawns this process without importing that
+# module, so the values are read here explicitly. dotenv_values() with an
+# explicit path (never load_dotenv's upward search, which would pick up a
+# parent checkout's .env from a worktree) and os.environ wins over the file.
+def _dashboard_env() -> dict[str, str | None]:
+    env: dict[str, str | None] = {}
+    try:
+        from dotenv import dotenv_values
+
+        env.update(dotenv_values(BASE_DIR / ".env"))
+    except Exception:  # noqa: BLE001 — a missing/unreadable .env must not stop the dashboard
+        pass
+    env.update(os.environ)
+    return env
+
+
+_ENV = _dashboard_env()
+BIND_HOST = resolve_bind_host(_ENV)
+AUTH_TOKEN = resolve_token(_ENV)
+EXTRA_HOSTS = resolve_extra_hosts(_ENV)
+ALLOWED_HOSTS = resolve_allowed_hosts(BIND_HOST, _ENV)
 
 # Prozessliste — zentral in core/fleet.py definiert (Single Source, geteilt mit
 # main_watchdog.py; T-2026-CU-9050-091, R2(a)). Das Dashboard nutzt name/script/
@@ -251,6 +291,64 @@ threading.Thread(target=_stats_poller, daemon=True).start()
 app = Flask(__name__)
 
 
+# ── Request guard (P0.8 / P1.38-CSRF) ───────────────────────────────────────
+# Three O(1) checks per request — host allowlist, optional shared secret,
+# Origin on state-changing calls. No DB, no process scan, no file access: the
+# guard must not add measurable cost to a dashboard whose /api/status already
+# sweeps psutil once per fleet entry every 6s. Rationale and threat model:
+# core/dashboard_security.py.
+
+
+def _presented_token() -> str | None:
+    return request.headers.get(TOKEN_HEADER) or request.cookies.get(TOKEN_COOKIE) or request.args.get(TOKEN_QUERY_PARAM)
+
+
+@app.before_request
+def _guard_request():
+    decision = authorize(
+        method=request.method,
+        host_header=request.headers.get("Host"),
+        origin=request.headers.get("Origin"),
+        presented_token=_presented_token(),
+        expected_token=AUTH_TOKEN,
+        allowed_hosts=ALLOWED_HOSTS,
+    )
+    if decision.allowed:
+        return None
+    return jsonify({"ok": False, "error": decision.reason}), decision.status
+
+
+@app.after_request
+def _persist_token_cookie(response):
+    """Turn a one-off ``?token=…`` visit into a session cookie for the UI's XHRs.
+
+    SameSite=Strict means the cookie is not attached to cross-site requests, so
+    it never becomes the thing that authenticates a CSRF attempt; HttpOnly
+    keeps it out of reach of injected script. Not marked Secure: the dashboard
+    speaks plain HTTP on loopback, and a Secure cookie would simply never be
+    stored there. Behind a TLS-terminating tunnel the browser upgrades this to
+    an HTTPS-only context anyway.
+    """
+    if AUTH_TOKEN and token_matches(request.args.get(TOKEN_QUERY_PARAM), AUTH_TOKEN):
+        response.set_cookie(TOKEN_COOKIE, AUTH_TOKEN, httponly=True, samesite="Strict", path="/")
+    return response
+
+
+def _known_script_or_404(script: str) -> tuple[Any, int] | None:
+    """404 for a script that is not in the fleet definition.
+
+    The control endpoints used to accept ANY name and hand it straight to
+    park()/request_restart(), which create a marker file from it (audit report
+    10, [LOW] "Park/stop endpoints accept arbitrary script names"). The marker
+    name was already separator-sanitised, so this was never a traversal — but
+    an unknown name silently produced a marker no watchdog cycle ever reads.
+    /api/logs already validated this way; the control endpoints now match it.
+    """
+    if script in SCRIPT_MAP:
+        return None
+    return jsonify({"ok": False, "error": "Unknown script"}), 404
+
+
 @app.route("/")
 def index():
     return HTML_PAGE
@@ -263,17 +361,17 @@ def api_status():
 
 @app.route("/api/process/<script>/start", methods=["POST"])
 def api_start(script: str):
-    return jsonify(start_process(script))
+    return _known_script_or_404(script) or jsonify(start_process(script))
 
 
 @app.route("/api/process/<script>/stop", methods=["POST"])
 def api_stop(script: str):
-    return jsonify(stop_process(script))
+    return _known_script_or_404(script) or jsonify(stop_process(script))
 
 
 @app.route("/api/process/<script>/restart", methods=["POST"])
 def api_restart(script: str):
-    return jsonify(restart_process(script))
+    return _known_script_or_404(script) or jsonify(restart_process(script))
 
 
 @app.route("/api/system/restart_all", methods=["POST"])
@@ -1113,14 +1211,24 @@ if __name__ == "__main__":
         # Python <3.7 or non-standard stdout — fallback: replace emojis
         pass
 
+    # Fail closed BEFORE the listener opens: a non-loopback bind without a
+    # shared secret is exactly the P0.8 state and must not be reachable by
+    # setting one env var. Exposure itself (tunnel + Access) stays an operator
+    # decision — docs/DASHBOARD_SECURITY.md.
+    _policy_error = bind_policy_error(BIND_HOST, AUTH_TOKEN, EXTRA_HOSTS)
+    if _policy_error:
+        print(f"[FATAL] {_policy_error}")
+        raise SystemExit(2)
+
     LOG_DIR.mkdir(exist_ok=True)
+    _auth_state = "token required" if AUTH_TOKEN else "no token (loopback only)"
     try:
-        print(f"🟢  Bot Dashboard läuft auf  http://localhost:{PORT}")
+        print(f"🟢  Bot Dashboard läuft auf  http://{BIND_HOST}:{PORT}  [{_auth_state}]")
         print(f"📁  Basis-Verzeichnis: {BASE_DIR}")
         print(f"📋  Log-Verzeichnis:   {LOG_DIR}")
     except UnicodeEncodeError:
         # Absolute fallback if reconfigure() did not work
-        print(f"[OK] Bot Dashboard laeuft auf  http://localhost:{PORT}")
+        print(f"[OK] Bot Dashboard laeuft auf  http://{BIND_HOST}:{PORT}  [{_auth_state}]")
         print(f"[DIR] Basis-Verzeichnis: {BASE_DIR}")
         print(f"[LOG] Log-Verzeichnis:   {LOG_DIR}")
-    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
+    app.run(host=BIND_HOST, port=PORT, debug=False, threaded=True)

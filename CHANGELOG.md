@@ -1,3 +1,56 @@
+## [2026-08-02] Dashboard-Absicherung: Loopback-Bind, Host-Allowlist, CSRF-Guard, Fail-closed-Startpolitik (T-2026-KYT-9050-056)
+
+P0.8 war „Dashboard ohne Auth auf `0.0.0.0`". Die Messung auf der Box bestätigt den Bind
+(`0.0.0.0:5000`, PID 100120) und beantwortet zugleich die offene DB-Phasen-Frage aus
+`audit_reports/10`: **extern erreichbar war der Port nicht** — Windows-Firewall auf allen drei
+Profilen aktiv, effektive Inbound-Default-Aktion `Block`, keine Allow-Regel für TCP 5000 oder
+`python.exe`. Der Schutz hing damit an genau einer Einstellung, auf einer Box mit direkt
+geroutetem öffentlichem IPv4. Vollständige Messtabelle und Belegkommandos:
+`docs/DASHBOARD_SECURITY.md`.
+
+**Der eigentliche Befund: zwei Angriffe liefen trotz Firewall.** Ein Form-POST bzw.
+`fetch(…, {mode:'no-cors'})` aus einer beliebigen Seite im Browser **auf** der VPS erreicht
+`POST /api/system/stop_all` ohne Preflight — die Antwort ist opak, die Nebenwirkung (persistente
+Park-Marker, reboot-fest) tritt trotzdem ein. Und DNS-Rebinding kommt an dieselben Endpoints,
+gegen das ein reiner Same-Origin-Vergleich nichts ausrichtet, weil Angreifer-`Host` und
+-`Origin` übereinstimmen. Beides ist unabhängig von der Exposure-Frage und war offen.
+
+**Neu `core/dashboard_security.py`** — drei O(1)-Prüfungen pro Request, keine DB, kein
+Prozess-Scan: Host-Allowlist (gegen Rebinding), optionaler Konstantzeit-Token
+(`KYTHERA_DASHBOARD_TOKEN`, Header/Cookie/einmalig `?token=`), Origin-Check auf
+zustandsändernden Methoden (gegen CSRF; fehlender `Origin` bleibt erlaubt, damit
+curl/PowerShell weiterlaufen). Bind-Default `0.0.0.0` → `127.0.0.1`. Control-Endpoints
+validieren den Skriptnamen gegen `SCRIPT_MAP` (404 statt Marker-Datei für unbekannte Namen,
+`audit_reports/10` [LOW]).
+
+**Fail-closed-Startpolitik:** Der Prozess startet nicht, wenn nicht-Loopback gebunden wird
+**oder** ein Off-Box-Hostname allowlisted ist, solange kein Token gesetzt ist. Der zweite Zweig
+ist der Tunnel-Fall — `cloudflared` verbindet nach `127.0.0.1:5000`, die Bind-Adresse bleibt
+also harmlos, während das Dashboard weltweit erreichbar wäre. Exposure kann damit nicht mehr
+still den P0.8-Zustand reproduzieren.
+
+**Kein Live-Eingriff:** kein Restart, kein Port, keine Firewall-Regel, kein `cloudflared`, keine
+`.env`-Änderung. Der laufende Dashboard-Prozess ist unangetastet; der Fix wird beim nächsten
+Dashboard-Start wirksam (Watchdog-Crash-Restart oder Reboot — ohne Operator-Aktion). Der
+Bind-Wechsel kappt nachweislich keinen bestehenden Zugriffsweg (Off-Box-Zugriff ist heute nicht
+möglich; die `restart_fleet.ps1`-Erfolgsprobe läuft über `localhost` und fällt schon heute auf
+IPv4 zurück). Verifikation: 58 neue Tests in `backtest/test_dashboard_security.py`,
+`guard.py verify` 24/24 ohne Refresh, ruff/format/mypy in CI-Form grün (der eine mypy-Fund in
+`1_data_ingestion.py:19` ist vorbestehend, optionaler `orjson`-Import).
+
+**Offen und bewusst nicht gebaut — Michi-Entscheid:** `cloudflared` + Cloudflare Access (Z2/B4,
+Vorbedingung der Z1-Quick-Actions F4). Die drei Optionen samt beziffertem Restrisiko stehen in
+`docs/DASHBOARD_SECURITY.md` §4. Kurzfassung: abgesichert ist das Dashboard nach diesem PR auch
+ohne Tunnel; der Tunnel bringt Komfort und die F4-Vorbedingung, erhöht die Angriffsfläche aber
+netto. Empfehlung: Token (`.env`, Michi-Gate) beim nächsten Dashboard-Neustart mitnehmen,
+Tunnel separat entscheiden.
+
+**Nebenbefund, Aktenkorrektur:** Die Auftragsprämisse „das Dashboard ist der größte einzelne
+DB-Lastverursacher" stammt aus T-2026-CU-9050-166 und wurde bereits von T-2026-CU-9050-179
+korrigiert (der teure `candles ⋈ indicators`-JOIN ist der AI-Bot-Feature-Ladepfad).
+`dashboard.py` importiert überhaupt keinen DB-Code und stellt null Queries — seine Last ist
+CPU (psutil-Sweeps, P1.38, weiterhin offen).
+
 ## [2026-08-01] C-Gate ist seit 16 Tagen live, nicht dormant — Ist-Stand vermessen, zwei Bots lesen eingefrorene Tabellen (T-2026-KYT-9050-002)
 
 Auftrag war, die Bereitschaft der dormanten Phase-2/4-Slices zu prüfen und das Mengengerüst
