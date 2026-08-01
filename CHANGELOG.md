@@ -60,6 +60,48 @@ für die Richtung einer späteren Änderung: `act` zu **senken** würde die frei
 nutzen, sondern vergrößern (kürzere Haltedauer → weniger Belegung). Die leere Hälfte des Channels
 ist ein Zulauf-Thema, und der Engpass ist ohnehin nicht Kapazität, sondern Ertrag — das Live-Buch
 steht bei −906 %-Punkten netto, Ursache Tape (T-054), kein Bein-Defekt.
+## [2026-08-01] Zulauf-Analyse Bot 40: der Engpass ist der Exposure-Cap, nicht das Fenster (T-2026-KYT-9050-060)
+
+Operator-Auftrag: die Trade-Zahl soll steigen, aber **nichts wird geändert, bevor eine
+vollständige Analyse vorliegt**. Genau das hat sich gelohnt — die naheliegende Maßnahme wäre
+die falsche gewesen.
+
+**Der Reflex war das Aktualitätsfenster.** Die abgelehnten Signale liegen bei p10 = 243 s,
+p90 = 256 s gegen eine 240-s-Grenze, zu **707:24 LONG-lastig** — eine Wand, kein
+Altersprofil, dasselbe Muster wie damals bei 180 s. Ein 300-s-Fenster ließe 706 davon zu.
+
+**Der bindende Engpass ist ein anderer.** Ein Kandidat muss fünf Stufen passieren, und nur
+zwei hinterlassen eine DB-Zeile — wer gegen die DB allein misst, sieht deshalb systematisch
+das falsche Gate. Aus dem Fleet-Log rekonstruiert: `EXPOSURE_CAP` feuert in **Ø 3,2 → 6,0 →
+6,6** Kandidaten pro Zyklus mit steigender Tendenz, `SLOT_CAP` dagegen in drei Tagen **kein
+einziges Mal**. Das Buch klebt bei **+42 bis +52** Schieflage an der ±50-Decke; der
+LONG-Spielraum liegt durchgehend zwischen **0 und 8**. LONG-Kandidaten werden also längst
+abgewiesen, *nachdem* sie den Aktualitätstest bestanden haben — ein weiteres Fenster
+verschiebt Ablehnungen nur von `PREEXISTING` nach `EXPOSURE_CAP`.
+
+**Die Identität, die die Empfehlung umdreht:** der Cap begrenzt die *Differenz*, also gilt
+bei anliegender Decke `Kapazität = 2 × min(LONG, SHORT) + Cap` — aktuell 2 × 21 + 50 = **92**.
+Jede zusätzliche SHORT-Position hebt die LONG-Decke um eins. **Die SHORT-Seite drosselt das
+Gesamtvolumen**, nicht die LONG-Seite, an der die auffälligen Ablehnungen liegen.
+
+**Empfehlung, nach Wirkung geordnet:** (A) **TSM1 SHORT in den Roster** — 66 Signale/Tag,
+live, Dichte 525, seinerzeit **allein wegen des Slot-Caps** verworfen, der seither nie
+gebunden hat; Kapazität ~92 → ~150. (B) Die Grandfather-Kohorte neu bewerten: **28 der 30
+Spiegel sind LONG** und belegen dauerhaft **28 der 50 Einheiten** LONG-Spielraum, also 56 %
+— der Entscheid vom selben Tag fiel ohne diese Zahl. (C) Das Fenster **danach**, als
+Qualitäts- statt Mengenmaßnahme: `admit()` sortiert nach Bein-Dichte, ein 300-s-Fenster gibt
+demselben LONG-Budget rund fünfmal so viele Kandidaten zur Auswahl. (D) Den Cap anheben
+**nicht** — T-052 hat gemessen, dass das einseitige LONG-Buch der Konto-Schaden war.
+
+**Adverse Selection ausgeschlossen:** die abgelehnten LONGs liefern im Quell-Trade Ø +2,39 %
+gegen +1,28 % der zugelassenen (t ≈ 1,3, nicht signifikant) — die 240-s-Kante selektiert
+nicht die besseren Signale.
+
+Neu: `tools/trailing_intake_audit.py` (read-only, Log + DB) und das Verdikt
+`staging_models/replay/trailing_intake_verdict_t060.md` mit den ehrlichen Grenzen — vor
+allem, dass die Log-Gates **Druck** messen und keine Stückzahlen: Abweisungen wiederholen
+sich in jedem 10-s-Zyklus, „Ø 6,6" heißt „6,6 Kandidaten stehen gerade an", nicht „6,6
+Signale/Tag verloren". 13 DB-freie Pins, 5 Mutationen belegt. **Keine Code-Änderung am Bot.**
 
 ## [2026-08-01] SL-Backfill ausgeführt + Grandfather-Kohorte bleibt (T-2026-KYT-9050-058)
 

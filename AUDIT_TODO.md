@@ -81,7 +81,32 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   +122 = **−101 Residuum**. Der naive Blick aufs Buch (LONG −644 / SHORT −5) legt die
   genau falsche Konsequenz nahe. beta = 1 → Markt-Anteil ist Unter-, Residuum Obergrenze.
   **LONG bleibt an** (Operator-Befund Michi 2026-08-01, jetzt quantifiziert).
-- [x] **#T54-3 Grandfather-Kohorte — ENTSCHIEDEN 2026-08-01: sie reitet weiter (Michi).** Der
+- [x] **#T60-1 Zulauf-Engpass Bot 40 identifiziert (T-2026-KYT-9050-060, 2026-08-01).** Nicht
+  das Aktualitätsfenster, sondern der **Exposure-Cap**. `SLOT_CAP` fiel in drei Tagen nie,
+  `EXPOSURE_CAP` dagegen in Ø 3,2 → 6,0 → 6,6 Kandidaten/Zyklus; das Buch klebt bei +42…+52
+  an der ±50-Decke, LONG-Spielraum durchgehend 0–8. Weil der Cap die *Differenz* begrenzt,
+  gilt `Kapazität = 2 × min(L,S) + Cap` = aktuell 92 — **die SHORT-Seite drosselt das
+  Gesamtvolumen.** Werkzeug `tools/trailing_intake_audit.py`, Verdikt
+  `staging_models/replay/trailing_intake_verdict_t060.md`.
+- [ ] **#T60-2 TSM1 SHORT in den Roster (Empfehlung A, Operator-Entscheid + Restart).**
+  66 Signale/Tag, **live**, Dichte 525 — seinerzeit **allein wegen des Slot-Caps** verworfen,
+  der seither nie gebunden hat. Greift genau an der drosselnden Seite; Kapazität ~92 → ~150.
+  Eigener Task, eine Roster-Zeile, wirksam nach Fleet-Restart. Schätzung, keine Messung:
+  unterstellt TSM1 dieselbe Konversion (~45 %) und Haltedauer (~0,73 d) wie die
+  bestehenden SHORT-Beine.
+- [ ] **#T60-3 Fenster 240 → 300 s — NACH #T60-2, als Qualitäts- nicht Mengenmaßnahme.**
+  Solange der Cap bindet, verschiebt ein weiteres Fenster Ablehnungen nur von `PREEXISTING`
+  nach `EXPOSURE_CAP`. Wert liegt woanders: `admit()` sortiert nach Bein-Dichte, 300 s gibt
+  demselben LONG-Budget ~5× so viele Kandidaten. Adverse Selection ausgeschlossen (abgelehnte
+  LONGs Ø +2,39 % vs +1,28 % zugelassene, t ≈ 1,3).
+- [ ] **#T60-4 `EXPOSURE_CAP` anheben — NICHT ohne eigene Studie.** T-052 hat gemessen, dass
+  das einseitige LONG-Buch der Konto-Schaden war und die strukturelle Schranke jedes
+  Marktlagen-Modell schlug. Hier als bewusst verworfene Option protokolliert, damit sie nicht
+  später als „übersehen" wiederkehrt.
+- [x] **#T54-3 Grandfather-Kohorte — ENTSCHIEDEN 2026-08-01: sie reitet weiter (Michi).
+  NEU ZU BEWERTEN (T-060):** 28 der 30 Spiegel sind LONG und belegen dauerhaft **28 der 50
+  Einheiten** LONG-Spielraum (56 %) plus 28 Symbole gegen `SYMBOL_HELD`. Der Entscheid fiel
+  ohne diese Zahl — er ist damit nicht falsch, aber die Kosten sind höher als bekannt war.** Der
   Stichtag `TIME_STOP_SINCE=2026-07-28T14:00Z` hält **30** Spiegel vom Zeit-Stop frei:
   Median-Alter 108 h, max 126 h, **null davon scharf**, Σ −81 % offen. Sie können strukturell
   nie getrailt werden (Peak < Aktivierung) und blockieren je den einzigen Spiegel-Slot ihres
