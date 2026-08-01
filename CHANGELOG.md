@@ -1,3 +1,42 @@
+## [2026-08-01] Korrelations-Layer über Vol-Targeting: VERTAGT, Substrat fehlt (T-2026-KYT-9050-023)
+
+Prämissen-Prüfung statt Design. Der Task fordert einen Portfolio-Korrelations-Layer **über** dem
+GARCH-Vol-Targeting (Begründung im Ticket: der unabhängige Per-Coin-Throttle ignoriere
+Cross-Coin-Korrelation, im 538-Coin-Buch bleibe konzentriertes Beta übrig). Geprüft wurde zuerst,
+ob es diese Unterschicht überhaupt gibt — **sie gibt es nicht**, aus zwei unabhängigen Gründen.
+Ergebnis: **kein Design gebaut**, Akte `docs/T-2026-KYT-9050-023-correlation-layer-deferred.md`.
+Read-only, kein Code angefasst.
+
+- **Die Vol-Targeting-Schicht ist nicht verdrahtet.** `tools/research/garch/` wird außerhalb des
+  Pakets nur von `backtest/test_garch_*.py` (+ einem Kommentar in `test_stoic123_signals.py`) und
+  vom CHANGELOG referenziert. Kein Bot (`NN_*.py`) und kein `core/*.py` importiert es — die Bots
+  importieren aus `core/`, nie aus `tools/` (verifiziert per Grep, nicht per Doku).
+- **Es existiert kein Gate.** Die Live-`.env` trägt 60 Schlüssel (nur Namen gelesen, keine Werte):
+  Credentials, 44 `CH_*`, und die Gates `AIM2_LIVE_POSTING`, `NEW_IDEAS_LIVE_POSTING`,
+  `AIM2_TOPN_*`, `MAX1_*`, `TRAILING_BOT_LIVE_POSTING`, `KYTHERA_CANDLES_*`. Kein `GARCH_*`,
+  kein `VOL_TARGET_*`, kein `SIZING_*`. Nichts zu flippen — die Schicht ist nicht default-off,
+  sie ist gar nicht da.
+- **T-030 hatte sie explizit retired.** `T030_live_verdict_report.md`: Pooled-Sharpe-Δ +0,009,
+  Median über 9 Bots +0,013 gegen eine +0,10-Schwelle → NO-PULL, wörtliche Empfehlung *„do not
+  wire GARCH vol-targeting into any bot's sizing"*. Die Prämisse des Tasks (ausgerollte Schicht
+  mit Restfehler) ist damit stale.
+- **Zweiter, unabhängiger Befund: Kythera sized überhaupt keine Positionen.**
+  `build_cornix_block` (`core/signal_post.py:63-84`) emittiert Direction, Leverage, Margin, Entry,
+  TPs, SL — **keine** Größen-/Notional-Zeile. `lev` ist `get_max_leverage(symbol, 20)`, also der
+  Börsen-Cap aus `max_leverage.json`, keine Risiko-Entscheidung pro Trade (Ausnahme UFI1 = geparkt).
+  Der Positions-Umfang ist eine Cornix-seitige Operator-Einstellung. Ein „Per-Position-Throttle"
+  hätte also kein Ausgabefeld; eines zu schaffen ändert, was Cornix mit echtem Geld tut → Michi.
+- **Was live wirklich Konzentration steuert, ist platz- statt beta-basiert:**
+  `has_open_ai_signal` (ein offenes Signal je Symbol×Richtung×Tag), `SLOT_CAP = 500`
+  (`core/trailing_roster.py:49`, Cornix-Channel-Deckel) und die Regime-Whitelist 26/27/28 —
+  gemessen und optimiert wird das bereits in T-042/T-052.
+- **Wieder-Eintritts-Bedingung** (in der Akte festgehalten): erst wenn (1) Kythera selbst eine
+  Positionsgröße setzt **und** (2) ein wirksamer Per-Position-Throttle ausgerollt ist. Davor ist
+  die nächste sinnvolle Frage nicht „Layer bauen", sondern die reine Messung, ob das Buch
+  überhaupt so stark korreliert, dass Beta-Konzentration bindet. Kostennotiz für den Fall:
+  538×538 ≈ 145k Paare pro Rebalance, ohne Shrinkage bei T ≪ N numerisch wertlos — und SRV02 lag
+  am 2026-08-01 über drei 2-s-Samples konstant bei 100 % CPU (10 logische Kerne, `Get-Counter`).
+
 ## [2026-08-01] Research-Bots 30/31/32: Entry-Anker auf get_live_price (T-2026-KYT-9050-011)
 
 Der offene Follow-up aus Block 5 der R1-Migration (T-2026-CU-9050-112) ist geschlossen. Seit
