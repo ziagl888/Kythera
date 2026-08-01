@@ -549,3 +549,21 @@ Vollständige Einzel-Findings mit Evidence/Snippets liegen unter
 `audit_reports/01_core_infra.md … 12_cross_cutting.md`
 (01 Core, 02 Datenpipeline, 03 Telegram/Monitore, 04 Orchestrator/Regime, 05 Classic-Strats, 06 AI 9/11/12/13, 07 AI 14/15/18, 08 SMC-Bots, 09 Market-Intelligence, 10 Dashboard/Tools, 11 ML-Trainer/Backtests, 12 Cross-Cutting).
 Dazu: 13 ML-Trainer-Audit (`Documents\_X`), 14 Live-Performance aus der DB, 15 Strategie-Vorschläge, 16 Strategie-/Modell-Konzeptbewertung (Noten A–F + Portfolio-Empfehlungen), 16b Regime-Orchestrator-Gesamtanalyse, 17 Monitor-Replay & Lücken-Check, 18 DB-Architektur/Performance/Berechnungs-Konsistenz (TimescaleDB, Indexe, ATR/RSI/Win-Varianten), STEP2_DB_VERIFICATION (Live-Beweise).
+
+- [x] **#T66-1 ROM1-Netto-Gate EXISTIERT BEREITS — nichts zu bauen
+  (T-2026-KYT-9050-066, 2026-08-01).** Vor dem Bauen geprüft: `_v2_whitelist_decision`
+  in `27_bot_regime_analyzer.py:677` rechnet genau das geforderte Gate — Untergrenze des
+  **Netto-Erwartungswerts** mit hierarchischer EB-Shrinkage (Bot×Regime×Alt →
+  Bot×Regime → Bot×ALL), geschrieben in die Shadow-Spalten `whitelisted_v2`/`reason_v2`,
+  vom Live-Gate NICHT gelesen (T-2026-CU-9050-048). Der Code hält ausdrücklich fest:
+  „The flip to v2 is Michi's call after the counterfactual comparison — never here."
+  **Gemessene Divergenz (1 590 Zellen):** v1 öffnet **94 %**, v2 nur **6 %**, sie
+  widersprechen sich in **88 %** der Zellen. Das ist kein Feintuning, sondern ein
+  anderes Regime — ROM1s Durchlass (heute 28 %) fiele drastisch.
+- [ ] **#T66-2 Counterfactual-Lauf offen — durch CPU-Schutz blockiert.**
+  `tools/rom1_counterfactual.py --side both` ist das für den v1→v2-Flip vorgesehene
+  Werkzeug (scored BEIDE Gate-Seiten, gebucketed nach Suppression-Grund und Gate-Pfad).
+  Es bricht selbst ab: „System-CPU bei 100 % — Fleet nicht zusätzlich belasten". Ursache
+  war `tools/backfill_funding_rates.py` (PID 85492, seit 19:35, 959 CPU-s) — **fremder
+  Job, nicht abgebrochen.** Lauf nachholen, wenn die VPS Luft hat; erst danach ist der
+  v2-Flip überhaupt entscheidbar.
