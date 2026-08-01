@@ -135,6 +135,11 @@ def headroom(open_long: int, open_short: int, cap: int) -> dict:
     }
 
 
+#: The age at rejection is only recoverable while the SOURCE trade is still in
+#: `ai_signals`. Once the fleet closes it the row moves to `closed_ai_signals` and this
+#: join drops it, so the counts are a LOWER BOUND that shrinks as sources close — two
+#: runs on the same day returned 767 and later 707 LONG. Harmless for the shape question
+#: ("do rejections cluster just past the limit"), misleading for absolute volume.
 SQL_PREEXISTING_AGES = """
     SELECT t.direction,
            count(*),

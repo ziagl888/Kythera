@@ -126,6 +126,12 @@ nicht als Nebeneffekt einer Durchsatz-Maßnahme.
 
 ## 5. Ehrliche Grenzen dieser Analyse
 
+- **Die `PREEXISTING`-Zahlen sind eine Untergrenze und schrumpfen mit der Zeit.** Das Alter
+  bei Zurückweisung ist nur berechenbar, solange der Quell-Trade noch in `ai_signals` steht;
+  schließt die Fleet ihn, wandert die Zeile nach `closed_ai_signals` und der Join verliert
+  sie. Zwei Läufe am selben Tag ergaben deshalb 767 und später 707 LONG. Für die Frage
+  „liegt die Ablehnung knapp hinter der Grenze" ist das unschädlich (die Verteilung bleibt
+  dieselbe), für „wie viele sind es absolut" nicht — dort ist die Zahl konservativ.
 - **Die Log-Gates sind Druck, keine Stückzahlen.** Abweisungen wiederholen sich in jedem
   10-s-Zyklus, solange der Quell-Trade offen ist. „Ø 6,6 EXPOSURE_CAP" heißt „zu jedem
   Zeitpunkt stehen ~6,6 Kandidaten an der Decke an", **nicht** „6,6 Signale/Tag verloren".
