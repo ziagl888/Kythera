@@ -6,6 +6,29 @@ One table, three sources that until now had to be read side by side:
   gate         live / shadow / silent / retired (core.shadow_gate)
   roster       whether the trailing arm mirrors it today (core.trailing_roster)
 
+WRONG METRIC FOR A ROSTER DECISION — read this before acting on the DROP column
+-------------------------------------------------------------------------------
+`leg_net_economics` scores a leg under ITS OWN take-profit/stop exit. The trailing arm
+does not take that exit — it takes the SIGNAL and applies its own trail. A leg can
+therefore lose money for itself and earn for the arm, and this table cannot see it.
+
+The effect is not marginal. Of the six legs this table first flagged as DROP, the
+trail turns FOUR profitable — one of them the best leg in the whole field:
+
+    leg                own exit    under the trail
+    MIS2-168h SHORT      -1.490          +9.074
+    BR4H LONG            -0.445          +0.512
+    BB_4H LONG           -0.392          +0.460
+    SRA2 LONG            -0.036          +0.236
+    ATS2 LONG            -0.907          -0.342   (still negative, but beats the tape by +1.99)
+    BR1H LONG                 —          ~0       (residual -0.009, outlier-carried, n=98)
+
+Acting on the DROP column alone would have removed four legs the arm makes money on.
+
+**Use `tools/short_leg_trail_value.py` for roster decisions.** This table answers a
+different question — "does the leg earn for ITSELF" — which bears on whether a leg
+should keep POSTING to its own channel, not on whether the arm should mirror it.
+
 Why absolute contribution and not density
 -----------------------------------------
 The current roster was selected on net-per-SLOT-DAY. That is the right metric when
