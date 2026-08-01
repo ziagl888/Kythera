@@ -81,7 +81,7 @@ from core.breadth_features import (  # noqa: E402
     load_universe_panels,
 )
 from core.database import db_connection  # noqa: E402
-from core.time import LEGACY_WRITER_TZ  # noqa: E402
+from core.time import LEGACY_WRITER_TZ, epoch_seconds  # noqa: E402
 from tools.walkforward_sim import check_cpu_headroom, set_low_priority  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -175,7 +175,9 @@ def _logit_auc(x_train, y_train, x_test, y_test) -> float | None:
 def panel_to_compact(df: pd.DataFrame) -> dict:
     """A loaded per-coin panel → JSON-safe compact arrays (epoch-seconds + floats)."""
     return {
-        "t": (df["open_time"].astype("int64") // 10**9).tolist(),
+        # epoch_seconds, not astype("int64")//10**9: the latter follows the column's
+        # datetime resolution (T-2026-KYT-9050-008).
+        "t": [int(x) for x in epoch_seconds(df["open_time"])],
         "c": df["close"].tolist(),
         "v": df["volume"].tolist(),
         "e50": df["ema_50"].tolist(),

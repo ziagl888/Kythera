@@ -1,0 +1,195 @@
+{
+  "task": "T-2026-KYT-9050-008",
+  "inputs": {
+    "replay": "C:\\Users\\Michael\\Documents\\_X\\staging_models\\replay\\rub_replay_365d.jsonl",
+    "artifacts": [
+      [
+        "rub2_model_SHORT.pkl",
+        0.7929
+      ],
+      [
+        "max1_model_SHORT.pkl",
+        0.829
+      ]
+    ]
+  },
+  "window": {
+    "start": "2026-07-01 00:00:00+00:00",
+    "end": "2026-08-01 00:00:00+00:00"
+  },
+  "match": {
+    "n_matched": 229,
+    "n_symbols": 128,
+    "n_live_total": 1671,
+    "n_replay_in_window": 536
+  },
+  "pooled": {
+    "rub2_model_SHORT.pkl": {
+      "n": 229,
+      "pearson": 0.4663,
+      "spearman": 0.5066,
+      "mean_abs_diff": 0.06562,
+      "p90_abs_diff": 0.1137,
+      "pct_identical": 0.0
+    },
+    "max1_model_SHORT.pkl": {
+      "n": 229,
+      "pearson": 0.5841,
+      "spearman": 0.7329,
+      "mean_abs_diff": 0.02875,
+      "p90_abs_diff": 0.05987,
+      "pct_identical": 12.2
+    }
+  },
+  "primary_artifact": "max1_model_SHORT.pkl",
+  "per_day": [
+    {
+      "day": "2026-07-06",
+      "best_artifact": "rub2_model_SHORT.pkl",
+      "n": 26,
+      "pearson": -0.4523,
+      "spearman": -0.3579,
+      "mean_abs_diff": 0.16063,
+      "p90_abs_diff": 0.32429,
+      "pct_identical": 0.0
+    },
+    {
+      "day": "2026-07-07",
+      "best_artifact": "max1_model_SHORT.pkl",
+      "n": 19,
+      "pearson": 0.6015,
+      "spearman": 0.6298,
+      "mean_abs_diff": 0.02964,
+      "p90_abs_diff": 0.03379,
+      "pct_identical": 0.0
+    },
+    {
+      "day": "2026-07-08",
+      "best_artifact": "max1_model_SHORT.pkl",
+      "n": 21,
+      "pearson": 0.98,
+      "spearman": 0.9675,
+      "mean_abs_diff": 0.01538,
+      "p90_abs_diff": 0.03408,
+      "pct_identical": 0.0
+    },
+    {
+      "day": "2026-07-09",
+      "best_artifact": "max1_model_SHORT.pkl",
+      "n": 38,
+      "pearson": 0.9801,
+      "spearman": 0.9265,
+      "mean_abs_diff": 0.01114,
+      "p90_abs_diff": 0.02065,
+      "pct_identical": 0.0
+    },
+    {
+      "day": "2026-07-10",
+      "best_artifact": "max1_model_SHORT.pkl",
+      "n": 59,
+      "pearson": 0.9738,
+      "spearman": 0.9645,
+      "mean_abs_diff": 0.00949,
+      "p90_abs_diff": 0.02402,
+      "pct_identical": 3.4
+    },
+    {
+      "day": "2026-07-11",
+      "best_artifact": "max1_model_SHORT.pkl",
+      "n": 38,
+      "pearson": 0.9695,
+      "spearman": 0.9532,
+      "mean_abs_diff": 0.014,
+      "p90_abs_diff": 0.02479,
+      "pct_identical": 0.0
+    },
+    {
+      "day": "2026-07-12",
+      "best_artifact": "max1_model_SHORT.pkl",
+      "n": 25,
+      "pearson": 1.0,
+      "spearman": 0.9992,
+      "mean_abs_diff": 0.00025,
+      "p90_abs_diff": 0.0,
+      "pct_identical": 92.0
+    },
+    {
+      "day": "2026-07-13",
+      "best_artifact": "max1_model_SHORT.pkl",
+      "n": 3,
+      "pearson": 1.0,
+      "spearman": 1.0,
+      "mean_abs_diff": 0.0,
+      "p90_abs_diff": 0.0,
+      "pct_identical": 100.0
+    }
+  ],
+  "curve": {
+    "slice": {
+      "n": 1844,
+      "days": 62.3,
+      "from": "2026-05-11 20:00:00+00:00",
+      "to": "2026-07-13 03:00:00+00:00",
+      "p99_prob": 0.8412,
+      "max_prob": 0.8744
+    },
+    "replay": [
+      {
+        "threshold": 0.829,
+        "n": 44,
+        "per_day": 0.71,
+        "wr_pct": 93.2,
+        "avg_pnl_pct": 2.76,
+        "sum_pnl_pct": 121.3
+      },
+      {
+        "threshold": 0.85,
+        "n": 11,
+        "per_day": 0.18,
+        "wr_pct": 100.0,
+        "avg_pnl_pct": 3.53,
+        "sum_pnl_pct": 38.9
+      },
+      {
+        "threshold": 0.88,
+        "n": 0,
+        "per_day": 0.0,
+        "wr_pct": null,
+        "avg_pnl_pct": null,
+        "sum_pnl_pct": null
+      },
+      {
+        "threshold": 0.9,
+        "n": 0,
+        "per_day": 0.0,
+        "wr_pct": null,
+        "avg_pnl_pct": null,
+        "sum_pnl_pct": null
+      },
+      {
+        "threshold": 0.91,
+        "n": 0,
+        "per_day": 0.0,
+        "wr_pct": null,
+        "avg_pnl_pct": null,
+        "sum_pnl_pct": null
+      },
+      {
+        "threshold": 0.93,
+        "n": 0,
+        "per_day": 0.0,
+        "wr_pct": null,
+        "avg_pnl_pct": null,
+        "sum_pnl_pct": null
+      },
+      {
+        "threshold": 0.94,
+        "n": 0,
+        "per_day": 0.0,
+        "wr_pct": null,
+        "avg_pnl_pct": null,
+        "sum_pnl_pct": null
+      }
+    ]
+  }
+}

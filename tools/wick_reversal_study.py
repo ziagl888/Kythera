@@ -88,6 +88,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.candles import read_candles  # noqa: E402
 from core.database import db_connection  # noqa: E402
 from core.market_utils import load_coins  # noqa: E402
+from core.time import epoch_seconds  # noqa: E402
 from core.trade_utils import (  # noqa: E402
     ensure_min_tp_distance,
     get_hvn_and_sr_levels,
@@ -227,7 +228,7 @@ def replay_coin(conn, symbol: str) -> list[dict]:
     n = len(c)
     # naive-UTC open_time array for the first-touch exit scan; close-epoch per candle.
     t_naive = df["open_time"].dt.tz_convert("UTC").dt.tz_localize(None).to_numpy()
-    open_epoch = df["open_time"].astype("int64").to_numpy() / 1e9
+    open_epoch = epoch_seconds(df["open_time"])  # resolution-safe (T-2026-KYT-9050-008)
     close_epoch = open_epoch + BAR_SECONDS
 
     atr = trailing_atr14(h, l, c)

@@ -2,17 +2,22 @@
 
 _Generated 2026-07-17T00:57:38.896426+00:00 · read-only two-stage study · fee/side 0.0005 (round-trip 0.0010) · 527 coins · status complete_
 
+> ⚠ **STALE NUMBERS — this run was produced by study semantics v1, the code is now v2** (T-2026-KYT-9050-013). Two machinery defects were fixed AFTER this run and are NOT reflected in the tables below:
+> 1. the `market_neutral` frame was a no-op (the BTC-signal subtraction is an argsort-invariant scalar shift and the PnL used absolute returns), so **every `market_neutral` cell below is a duplicate of its `absolute` twin** — no beta was removed;
+> 2. the stage-2 replay entered at the rebalance day's OPEN while the ranking signal is that day's CLOSE, i.e. **~23 h of look-ahead** in the confirmatory replay.
+> The stage-1-driven VERDICT is unaffected by both (it rests on the `absolute` cells, whose scoring did not change). Re-running the full study under v2 is a follow-up (DB-heavy, single-job slot on the VPS).
+
 ## Acceptance Criteria (§K2, binary)
 
 _Graded against this run; items marked (full-run) only fully verify without the sampling cap._
 
 - ✅ **F×H grid complete: 5×3** — F∈[7, 14, 28, 56, 84], H∈[7, 14, 28] enumerated in `run_stage1`.
 - ✅ **both signal variants** raw + anchored-to-formation-low — `signal_vec(variant=...)` (['raw', 'anchored']).
-- ⚠ **both frames present but market-neutral is a KNOWN-LIMITATION no-op** — `FRAMES=['absolute', 'market_neutral']`; the BTC-signal subtraction is a per-rebalance SCALAR shift (argsort-invariant) and PnL uses absolute coin returns, so every `market_neutral` cell is byte-identical to its `absolute` twin (60/60). Beta-removal is NOT actually tested here (follow-up: beta-adjust the RETURNS/spread). Does not change the negative verdict.
+- ✅ **both frames scored** — `FRAMES=['absolute', 'market_neutral']`; market-neutral = the SAME ranking scored on **beta-adjusted returns** (coin fwd − BTCUSDT fwd over the identical hold, K5 convention). The BTC-signal subtraction alone is argsort-invariant, i.e. a no-op — fixed in T-2026-KYT-9050-013 by moving the adjustment onto the returns. Cost basis is deliberately identical to `absolute` (one round-trip taker fee, 0.0010) so the two frames are cell-by-cell comparable: the BTC hedge leg's own fee (~another round-trip) and funding are NOT modelled, so a market-neutral cell clearing the robust floor would need re-costing before any deployment reading.
 - ✅ **liquidity filter** bottom volume tercile excluded — median quote-vol over F, `np.quantile(...,1/3)` cut.
 - ✅ **stage-1 decile spreads NET of fees (Regel 10) + short-side funding, correct sign** — LONG net=mean(fwd_top)−fee; SHORT net=mean(−fwd+Σfunding)−fee; short receives +Σ funding_rate (pays when funding<0).
 - ✅ **F×H heatmap per variant/direction** — see Heatmaps section (all 2·2·2 panels).
-- ⚠ **stage-2 (confirmatory) gated to val-positive cells; entry ~1 daily-bar EARLY (known limitation)** — `run_stage2` runs iff val-positive; get_hvn_and_sr_levels(df=as-of 95d 1h)→simulate_exit (ran 58 cell(s)). `dates[t]` is the daily OPEN (`floor('D')`) but the selection signal is `close[t]`, so stage-2 enters ~23h before the signal is observable — a look-ahead in the DIAGNOSTIC replay only; the stage-1-driven verdict is unaffected and stage-2 net is negative regardless. Follow-up: enter at `dates[t]+86400` (first 1h at/after the daily close).
+- ✅ **stage-2 (confirmatory) gated to val-positive cells, entry tape-causal** — `run_stage2` runs iff val-positive; get_hvn_and_sr_levels(df=as-of 95d 1h)→simulate_exit (ran 58 cell(s)). `dates[t]` is the daily OPEN (`floor('D')`) while the selection signal is `close[t]`, so the entry is anchored at `dates[t]+86400` — the first 1h close at/after the day's close, i.e. after the signal is observable (fixed in T-2026-KYT-9050-013; the old daily-OPEN anchor traded ~23h of unobservable information). Stage 2 replays the coin leg only, so a market-neutral cell's row equals its absolute twin by construction.
 - ✅ **chrono val/test, cell selection on val only** — midpoint split; `val_positive_cells` selects on val, test read once.
 - ✅ **survivorship documented, fill_method=None** — coins.json active perps; no forward-fill (NaN-propagating returns).
 - ✅ **stop-criterion → non-edge verdict valid** — `derive_verdict` requires a val+test-CONSISTENT cell (BOTH halves ≥ MIN_ROBUST_NET_PCT); otherwise `weak/inconsistent-spread` or `no-op/structure-does-not-replicate` (a near-zero val leg with a large test leg is overfitting, not an edge).
@@ -324,7 +329,7 @@ Stop-criterion (§K2): no F×H cell with a val+test-consistent net spread ⇒ th
 - peak process RSS: 298.8 MB (panel O(coins×days) + streaming cell accumulators)
 - chrono val/test split (UTC): 2025-05-05T12:00:00+00:00 — fixed midpoint of the BTCUSDT 1d window; val=earlier, test=later
 - signal variants: raw F-day return; anchored = close/min(low over F) − 1 (distance to formation low, F5)
-- reference frames: absolute; market-neutral = coin signal − BTCUSDT signal — ⚠ KNOWN LIMITATION: this scalar shift is argsort-invariant and PnL is absolute, so it removes NO beta (market_neutral ≡ absolute, 60/60 identical); follow-up = beta-adjust the returns/spread. Non-verdict-affecting (result is negative regardless).
+- reference frames: absolute = raw coin return; market-neutral = **beta-adjusted return** (coin fwd − BTCUSDT fwd over the identical hold). Both frames rank identically — the BTC-signal subtraction is an argsort-invariant scalar shift — so the frames differ ONLY in scoring, and the top-minus-bottom spread is beta-invariant (identical across frames by construction). The BTC hedge leg's fee/funding are not modelled (see AC).
 - liquidity: exclude bottom volume tercile by median quote-vol over F; quote-vol ≈ base volume × close (the candles table has no quote_asset_volume column — documented approximation)
 - decile size = max(1, round(n_liquid·0.1)); ranking on the liquid set only, BTCUSDT excluded from the cross-section
 - short-side funding: net_short = mean(−fwd + Σ funding_rate[hold]) − fee; a short RECEIVES funding when funding_rate>0 and PAYS when <0 (spec: Shorts zahlen bei negativem Funding); funding summed over [t, t+H)

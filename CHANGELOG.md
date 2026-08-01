@@ -1,3 +1,137 @@
+## [2026-08-01] RUB2 Replay↔Live-Skew: Hypothese widerlegt, Root-Cause war das Messfenster (T-2026-KYT-9050-008)
+
+Zu klären war der 070-Befund: für dieselben (Symbol, Kerze)-Signale korrelierten Live-Confidence
+und Replay-Prob **−0,37** — gleiches Modell, gleiche Kerze, also Feature-Skew. Verdächtigt waren
+die Funding-Features.
+
+**Die Funding-Hypothese ist widerlegt.** Alle sechs Funding-Features lassen sich für **alle 229**
+gematchten Signale **bit-exakt** aus der heutigen `funding_rates` rekonstruieren (mean|Δ| = 0,0 in
+jeder Spalte). Auch die neun RUB-Features stimmen — `dist_to_trend` und `slope_trend` exakt, der
+Rest bis auf float32-Speicherrundung. Es gibt keinen Feature-Skew zwischen Serving und Replay.
+
+**Die −0,37 waren das Messfenster.** Der Überlappungszeitraum 06./07.07. liegt auf dem Go-Live-Tag
+von RUB2-SHORT (`07c8874`, Umschaltpunkt in den Daten sichtbar: 07.07. ~07:00 UTC). Am 06.07. trug
+das Tag `RUB2` noch den alten 9-Feature-Legacy-Pfad. Über die Generationsgrenze gepoolt misst eine
+Korrelation den Modellwechsel, nicht den Skew: Tag 06.07. −0,45, ab 08.07. **+0,97 bis +1,00**, ab
+12.07. auf 92–100 % der Zeilen **exakt** identisch. 229 Paare über 128 Coins statt der 49 von T-070.
+
+**Zwei Voraussetzungen des Tickets waren bereits überholt.** Der Replay ist am 14.07. neu erzeugt
+worden — nach dem Funding-Backfill (11.07.) und nach den beiden Look-ahead-Fixes in
+`walkforward_sim` (10.07.) —, und aus demselben Lauf wurde RUB2 neu trainiert (Threshold 0,7929
+statt 0,829) und in den Root promotet. Schritt 2 des Auftrags war damit erledigt, bevor die Session
+begann; **kein Sim-Lauf gefahren**. Das Juli-Modell steckt nur noch in
+`staging_models/max1_model_SHORT.pkl` — der Probe wählt das Artefakt per Fit, nicht per Dateiname.
+
+**Der Rest-Unterschied 07.–11.07. ist datiert.** mean|Δp| 0,009–0,015, Sprung auf 0,0003 am 12.07.:
+`logs/rsi_rewrite_execute_20260712.log` weist einen **ausgeführten** Wilder-RSI-Rewrite der
+Indikator-Historie aus (3831 Tabellen, 88,4 Mio. Zellen). Der Bot las beim Scoring span-RSI, der
+Replay vom 14.07. liest für dieselben Kerzen den überschriebenen Wilder-Wert. Das ist das in P2.12
+vorhergesagte Mixed-History-Risiko — hier erstmals gemessen: **≈1 Prozentpunkt** Wahrscheinlichkeit.
+Die AUDIT_TODO-Zeile „Execute bleibt C-Gate" war stale und ist korrigiert.
+
+**Schritt 3 (MAX1-Kalibrierung) dreht sich mit.** Der Satz „live gibt es 0,93+ mit ~1,1 Posts/Tag"
+stammt aus denselben Prä-Deploy-Zeilen. RUB2-SHORT hat live **nie** 0,93 erreicht: max 0,876 in der
+Generation @0,829, max 0,920 nach dem 14.07.-Retrain, null Zeilen darüber in 1543 Predictions. Damit
+stimmen Replay und Live auch in der Verteilung überein (Test-Slice p99 0,841 / max 0,874 gegen live
+p99 0,865 / max 0,876) — **die Replay-Kurve trägt für die Gate-Kalibrierung wieder**. Ist-Stand MAX1
+selbst nachgesehen (`.env` + DB, 01.08.): `MAX1_LIVE_POSTING=1`, `MIN_PROB=0.829`,
+`MAX_PER_DAY=100000`, 308 Posts seit 11.07., max Confidence 0,9199 — der dokumentierte Default 0,93
+hätte in 21 Tagen null Posts erzeugt. Abgleich des Regimes ist Operator-Entscheid, hier nur ausgewiesen.
+
+**Latent-Defekt gefunden und behoben.** `tools/walkforward_sim.py` baute die Epoch-Achse der
+RUB-Regression mit `open_time.astype("int64") / 1e9` — keine Einheitenumrechnung, sondern eine Wette
+auf die **Auflösung** der Spalte. Unter der Fleet-Umgebung (pandas 2.3.2, `datetime64[ns]`) stimmt
+es; unter pandas ≥ 3.0 (`datetime64[us]`) schrumpft die Achse um Faktor 1000 und `slope_trend` —
+einer der 15 Modell-Inputs — kommt 1000× zu groß heraus, während `dist_to_trend` daneben weiter
+passt. Genau das ist dieser Session beim ersten Rekonstruktionslauf passiert. Behoben mit
+`core.time.epoch_seconds()` (normalisiert auf ns vor der Division), eingesetzt in `walkforward_sim`
+und den drei Studien-Tools mit demselben Muster — unter dem Fleet-Interpreter **byte-gleich** zum
+Vorzustand, verifiziert. Gepinnt in `backtest/test_epoch_seconds.py`, mutations-geprüft.
+
+Neu: `tools/rub2_replay_skew_probe.py` (read-only, fünf Schichten: Match → Artefakt-Attribution →
+Feature-Rekonstruktion → Funding-Schranke → Threshold-Kurve). `core/funding_features.py` bewusst
+**unangetastet** — der Root-Cause sitzt nicht dort. Kein Retrain, keine Promotion, kein Gate-Flip,
+kein Restart, keine Schreib-Query gegen Live-Tabellen. Report:
+`docs/T-2026-KYT-9050-008-rub2-replay-skew.md`.
+## [2026-08-01] Korrelations-Layer über Vol-Targeting: VERTAGT, Substrat fehlt (T-2026-KYT-9050-023)
+
+Prämissen-Prüfung statt Design. Der Task fordert einen Portfolio-Korrelations-Layer **über** dem
+GARCH-Vol-Targeting (Begründung im Ticket: der unabhängige Per-Coin-Throttle ignoriere
+Cross-Coin-Korrelation, im 538-Coin-Buch bleibe konzentriertes Beta übrig). Geprüft wurde zuerst,
+ob es diese Unterschicht überhaupt gibt — **sie gibt es nicht**, aus zwei unabhängigen Gründen.
+Ergebnis: **kein Design gebaut**, Akte `docs/T-2026-KYT-9050-023-correlation-layer-deferred.md`.
+Read-only, kein Code angefasst.
+
+- **Die Vol-Targeting-Schicht ist nicht verdrahtet.** `tools/research/garch/` wird außerhalb des
+  Pakets nur von `backtest/test_garch_*.py` (+ einem Kommentar in `test_stoic123_signals.py`) und
+  vom CHANGELOG referenziert. Kein Bot (`NN_*.py`) und kein `core/*.py` importiert es — die Bots
+  importieren aus `core/`, nie aus `tools/` (verifiziert per Grep, nicht per Doku).
+- **Es existiert kein Gate.** Die Live-`.env` trägt 60 Schlüssel (nur Namen gelesen, keine Werte):
+  Credentials, 44 `CH_*`, und die Gates `AIM2_LIVE_POSTING`, `NEW_IDEAS_LIVE_POSTING`,
+  `AIM2_TOPN_*`, `MAX1_*`, `TRAILING_BOT_LIVE_POSTING`, `KYTHERA_CANDLES_*`. Kein `GARCH_*`,
+  kein `VOL_TARGET_*`, kein `SIZING_*`. Nichts zu flippen — die Schicht ist nicht default-off,
+  sie ist gar nicht da.
+- **T-030 hatte sie explizit retired.** `T030_live_verdict_report.md`: Pooled-Sharpe-Δ +0,009,
+  Median über 9 Bots +0,013 gegen eine +0,10-Schwelle → NO-PULL, wörtliche Empfehlung *„do not
+  wire GARCH vol-targeting into any bot's sizing"*. Die Prämisse des Tasks (ausgerollte Schicht
+  mit Restfehler) ist damit stale.
+- **Zweiter, unabhängiger Befund: Kythera sized überhaupt keine Positionen.**
+  `build_cornix_block` (`core/signal_post.py:63-84`) emittiert Direction, Leverage, Margin, Entry,
+  TPs, SL — **keine** Größen-/Notional-Zeile. `lev` ist `get_max_leverage(symbol, 20)`, also der
+  Börsen-Cap aus `max_leverage.json`, keine Risiko-Entscheidung pro Trade (Ausnahme UFI1 = geparkt).
+  Der Positions-Umfang ist eine Cornix-seitige Operator-Einstellung. Ein „Per-Position-Throttle"
+  hätte also kein Ausgabefeld; eines zu schaffen ändert, was Cornix mit echtem Geld tut → Michi.
+- **Was live wirklich Konzentration steuert, ist platz- statt beta-basiert:**
+  `has_open_ai_signal` (ein offenes Signal je Symbol×Richtung×Tag), `SLOT_CAP = 500`
+  (`core/trailing_roster.py:49`, Cornix-Channel-Deckel) und die Regime-Whitelist 26/27/28 —
+  gemessen und optimiert wird das bereits in T-042/T-052.
+- **Wieder-Eintritts-Bedingung** (in der Akte festgehalten): erst wenn (1) Kythera selbst eine
+  Positionsgröße setzt **und** (2) ein wirksamer Per-Position-Throttle ausgerollt ist. Davor ist
+  die nächste sinnvolle Frage nicht „Layer bauen", sondern die reine Messung, ob das Buch
+  überhaupt so stark korreliert, dass Beta-Konzentration bindet. Kostennotiz für den Fall:
+  538×538 ≈ 145k Paare pro Rebalance, ohne Shrinkage bei T ≪ N numerisch wertlos — und SRV02 lag
+  am 2026-08-01 über drei 2-s-Samples konstant bei 100 % CPU (10 logische Kerne, `Get-Counter`).
+## [2026-08-01] K2-Studien-Maschinerie: marktneutraler Frame + tape-kausaler Stufe-2-Entry (T-2026-KYT-9050-013)
+
+Die zwei im K2-Review (T-2026-CU-9050-143, PR #133) gefundenen und dort als bekannte Limitationen
+dokumentierten Maschinen-Defekte in `tools/xs_momentum_study.py` sind behoben. **Das Verdikt der
+Studie ändert sich nicht** — es bleibt `weak/inconsistent-spread (not deployable)`: es ruht auf den
+`absolute`-Zellen, deren Bewertung unangetastet ist (geschlossene-Form-Test pinnt das). Repariert ist
+die Messmaschine, nicht das Ergebnis. Kein Bot, kein Gate, kein Artefakt berührt.
+
+**(1) Der `market_neutral`-Frame war ein No-op.** Der Beta-Abzug lag auf dem SIGNAL
+(`sig = sig_abs − btc_sig`) — ein Per-Rebalance-**Skalar**-Shift, also argsort-invariant — während die
+PnL absolute Coin-Returns benutzte. Ergebnis: alle 60 `market_neutral`-Zellen waren byte-identisch zu
+ihrem `absolute`-Zwilling; Beta wurde nie entfernt (im eingecheckten Voll-Lauf-Artefakt nachgezählt:
+60/60, und synthetisch reproduziert, bevor gefixt wurde). Der Adjust sitzt jetzt auf den **Returns**
+(`fwd − (btc_H/btc_0 − 1)` über dasselbe Halte-Fenster, K5-Konvention) — genau das, was Spec §K2
+Punkt 2 immer schon forderte („marktneutral (Coin-Return minus BTC-Return)"). Die Signal-Subtraktion
+bleibt als Vorbedingung („BTC-Signal muss existieren") stehen, jetzt aber als solche kommentiert. Da
+beide Frames identisch ranken, ändert der Fix nur die **Bewertung**, nie die Auswahl; der
+Top-minus-Bottom-Spread ist beta-invariant und bleibt zwischen den Frames gleich. Kostenbasis bewusst
+identisch zu `absolute` (ein Round-Trip), damit die Frames zellenweise vergleichbar bleiben — Fee und
+Funding des BTC-Hedge-Beins sind NICHT modelliert und im Report als solches ausgewiesen.
+
+**(2) Der Stufe-2-Entry lag ~1 Tages-Balken zu früh (Look-ahead).** `load_1d` floored `open_time` auf
+`'D'`, also ist `dates[t]` der Tages-**Open**; das Ranking-Signal ist aber `close[t]`. Der Entry am
+ersten 1h-Close ab `dates[t]` handelte damit ~23 h, bevor das Signal überhaupt beobachtbar war (die
+Entry-Kerze öffnete volle 24 h zu früh — im Test gemessen). Anker jetzt `dates[t] + 86400`: erster
+1h-Close ab dem Tages-Close. Betroffen war nur die konfirmatorische Stufe 2, nie das Stufe-1-Verdikt.
+Dieselbe Falle wie in T-052 (be-Familie, 59k→7k nach Korrektur): Bedingungen tape-kausal pinnen.
+
+**Stale-Schutz statt stiller Neu-Beschriftung:** `STUDY_SEMANTICS_VERSION` (jetzt 2) wandert in die
+Report-Meta. Ein Report, der aus einem Lauf mit älterer Semantik gerendert wird, trägt einen
+**STALE-Banner** mit beiden Defekten statt zu behaupten, er sei nach der neuen Rechnung entstanden.
+Genau das gilt für das eingecheckte Voll-Lauf-Artefakt (527 Coins, 2026-07-17): es via `--reverdict`
+DB-frei neu gerendert (Zellen/Stufe 2/Verdikt byte-identisch, nur Text) — seine `market_neutral`- und
+Stufe-2-Zahlen bleiben Pre-Fix. **Ein Voll-Lauf unter v2 ist ein offener Folge-Schritt**
+(DB-schwer ⇒ Ein-Job-Slot auf dem VPS, in dieser Session bewusst nicht gefahren).
+
+Neue DB-freie Tests `backtest/test_xs_momentum_study.py` (9): beide Defekte wurden damit ZUERST
+reproduziert (60/60 identisch bzw. 24 h Entry-Vorlauf), dann gefixt. Sie pinnen zusätzlich, dass der
+`absolute`-Frame unverändert bleibt (Signal-Vertrag von Bot 39, Zelle F84|raw|absolute), dass Auswahl
+und Spread frame-invariant sind, und die Resume-Semantik der Stufe 2.
+
 ## [2026-08-01] Research-Bots 30/31/32: Entry-Anker auf get_live_price (T-2026-KYT-9050-011)
 
 Der offene Follow-up aus Block 5 der R1-Migration (T-2026-CU-9050-112) ist geschlossen. Seit
