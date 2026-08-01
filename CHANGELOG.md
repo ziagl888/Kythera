@@ -1,3 +1,49 @@
+## [2026-08-01] Research-Bots 30/31/32: Entry-Anker auf get_live_price (T-2026-KYT-9050-011)
+
+Der offene Follow-up aus Block 5 der R1-Migration (T-2026-CU-9050-112) ist geschlossen. Seit
+`core.research_features.fetch_context_frame` mit `include_forming=False` liest, ist
+`df["close"].iloc[-1]` die letzte **geschlossene** 1h-Kerze — als Entry-Preis-Anker damit bis zu
+~59 min stale. Genau diesen Anker nahmen `30_ai_pex1`, `31_ai_fmr1` und `32_ai_trm1`. Sie holen
+ihn jetzt über `core.live_price.get_live_price(symbol, conn)` (Binance-REST, Fallback neuester
+5m-Close) — der Pfad der Block-4-Bots 11/22/24/25 und exakt das, was `core.candles` contract 2
+vorschreibt: **Erkennung auf geschlossenen Kerzen, Preis separat**. `33_ai_fif1` war nie betroffen
+(nimmt `sig["entry"]`).
+
+Die Feature-Seite ist unangetastet: die Feature-Kerze kommt weiter aus dem `searchsorted`-floor-1-
+Join über `open_time`, der Frame bleibt ASC und closed-only. Verschoben hat sich **nur** der Preis,
+der Entry/SL/Targets (`calculate_smart_targets`) und die `entry_price`-Spalte des Prediction-Logs
+speist.
+
+**Neu: liefert `get_live_price` None** (Binance tot UND DB-Fallback leer), wird das Signal
+übersprungen statt mit `None` gepostet — vorher konnte dieser Fall gar nicht auftreten, weil der
+Frame immer einen Close hatte. Die Cooldown-Semantik bleibt bewusst unverändert: 30/31 setzen den
+Cooldown auch auf dem None-Pfad (er spiegelt das unbedingte Trainings-Dedup und hängt am Scoring,
+nicht am Posting), 32 weiterhin nur auf dem Post-Pfad. Bei 31 fällt auf dem None-Pfad auch das
+FMR2-Shadow-Bein aus — es benutzt denselben Anker. Bei 32 bleibt `fetch_context_frame` als
+Daten-Freshness-Guard stehen (BTCUSDT-1h-Join vorhanden und nicht staler als
+`CONTEXT_MAX_STALENESS_H`), obwohl er dort keinen Preis mehr liefert; die TRM1-Features kommen
+ohnehin aus `regime_history`.
+
+**Live-Stand (korrigiert 2026-08-01, ursprünglich falsch protokolliert):** die Bots sind **nicht**
+gegatet und 30 ist **nicht** un-deployt. Das Gate ist offen — `.env` trägt
+`NEW_IDEAS_LIVE_POSTING=1`, der Code-Default ist ohnehin `1`
+(`os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"` in 30/31/32/33), und die Bots loggen beim Start
+`Posting: LIVE`. `pex1_model.pkl` ist git-getrackt und wird geladen (`✅ Artefakt geladen:
+pex1_model.pkl — 13 Features, Threshold 0.70, Tag PEX1, Kalibrator: ja`, zuletzt 2026-08-01 07:32);
+artefaktlos im Idle-Modus laufen nur 31 und 32 (`Artefakt fehlt: fmr1_model.pkl` bzw.
+`trm1_model.pkl`). Kein Live-Delta hat die Änderung trotzdem — aber aus einem anderen Grund: der
+PEX1-Scan bricht in **jedem** Zyklus ab (`PEX1-Scan-Fehler: can't subtract offset-naive and
+offset-aware datetimes`), und zwar im `try`-Block **vor** der Event-Schleife
+(`detect_spike_time_offset_h` subtrahiert ein naives `now` von `MAX(spike_time)`; `fetch_new_events`
+vergleicht in SQL). Damit wird `process_event` — wo dieser Fix sitzt — derzeit nie erreicht. Beleglage
+aus `logs/watchdog_debug_*`: durchgehend ~1 Fehler/min vom 2026-07-19 21:37:56 bis 2026-08-01
+16:10:10, allein die vier jüngsten Logs tragen 8166 Fehlschläge, kein einziger erfolgreicher Scan
+(der Onset kann früher liegen — weiter zurück wurde nicht geprüft). Erfasst als
+**T-2026-KYT-9050-061**; sobald der Abbruch dort gefixt ist, wirkt dieser Fix sofort live. Er ist
+also nicht Vorsorge, sondern korrekt und scharf, nur aktuell hinter einem toten Scan. Neu gepinnt in
+`backtest/test_research_bots_live_price.py` (8 Tests, DB-frei): Anker == Live-Preis statt
+Frame-Close, None ⇒ kein Post und kein Prediction-Log, Cooldown-Semantik je Bot, der
+Freshness-Guard von 32 und ein Quell-Pin gegen den Rückbau.
 ## [2026-08-01] Challenger-Promotion-Namensguard + EPD3-`model_id`-Re-Dump (T-2026-KYT-9050-057)
 
 Eine Challenger-Promotion war bisher genau zwei Handgriffe: die Register-Zeile in
