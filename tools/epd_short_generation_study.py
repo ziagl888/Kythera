@@ -84,7 +84,7 @@ SQL_TRADES = """
         SELECT DISTINCT ON (symbol, model, upper(btrim(direction)), open_time)
                model, direction, entry, close_price, open_time, close_time
         FROM closed_ai_signals
-        WHERE upper(model) LIKE 'EPD%%'
+        WHERE upper(model) LIKE %(family)s
           AND upper(btrim(direction)) = %(dir)s
           AND close_price IS NOT NULL AND close_price > 0
           AND entry IS NOT NULL AND entry > 0
@@ -191,6 +191,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--since", default="2026-02-24", help="earliest close_time to include")
     ap.add_argument("--direction", default="SHORT", choices=("SHORT", "LONG"))
+    ap.add_argument("--family", default="EPD%",
+                    help="SQL LIKE over upper(model), e.g. 'EPD%%' or 'MIS%%' (default: EPD%%)")
     args = ap.parse_args()
     is_long = args.direction == "LONG"
 
@@ -201,7 +203,8 @@ def main() -> int:
         with conn.cursor() as cur:
             cur.execute(SQL_INDEX, {"since": args.since})
             index = compound(cur.fetchall())
-            cur.execute(SQL_TRADES, {"tz": LEGACY_WRITER_TZ, "dir": args.direction, "since": args.since})
+            cur.execute(SQL_TRADES, {"tz": LEGACY_WRITER_TZ, "dir": args.direction,
+                                     "since": args.since, "family": args.family})
             trades = cur.fetchall()
     finally:
         conn.close()
