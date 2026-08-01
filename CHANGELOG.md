@@ -1,3 +1,35 @@
+## [2026-08-01] Bot 30 (PEX1) scheiterte an JEDEM Scan — aware/naiv-Mix in `spike_time` (T-2026-KYT-9050-061)
+
+`30_ai_pex1_bot.detect_spike_time_offset_h` subtrahierte ein naives `now` von `MAX(spike_time)` und
+warf damit `can't subtract offset-naive and offset-aware datetimes` — im `try`-Block **vor** der
+Event-Schleife, also stirbt der ganze Zyklus. **Selbst nachgezählt** in den vier jüngsten
+`logs/watchdog_debug_*` (Stand 2026-08-01 20:18): **5.876 Fehlschläge, 0 erfolgreiche Scans**, der
+jüngste Fehler Minuten alt; das Ticket zählte in seinem früheren Log-Fenster 8.166. Der Bot lädt
+sein Artefakt sauber und tut seit mindestens 2026-07-19 trotzdem nichts.
+
+**Root-Cause:** `pump_dump_events.spike_time` ist auf der Live-DB `timestamp WITH time zone`
+(read-only vermessen 2026-08-01) — die Repo-DDL in `10_pump_dump_detector.py:1409` sagt `TIMESTAMP`,
+die Tabelle wurde irgendwann gealtert. psycopg2 liefert deshalb **aware** datetimes, und die
+Offset-Heuristik war für eine naive Spalte geschrieben. Die Notiz in T-2026-KYT-9050-005, die
+Funktion „heile sich nach dem Flip von selbst", ist damit widerlegt und in `docs/UTC_POLICY.md` §4
+korrigiert.
+
+**Fix auf der R3-Linie:** ein aware Wert IST ein Instant — kein Domänen-Raten, Offset 0, und
+`spike_time_to_utc_naive()` normalisiert beide Domänen an **einer** Stelle (aware → UTC-Instant
+ohne tzinfo, naiv → gemessener Offset abgezogen). Dieselbe Normalisierung greift in
+`process_event`, wo derselbe Mix gewartet hätte. Dazu zwei latente Zünder entschärft: der
+Boot-Sentinel bei leerer Tabelle ist jetzt aware, und der Watermark kommt ohne
+`max(sentinel, spalte)` aus (die Query liefert ASC und filtert strikt `> watermark`).
+
+**Achtung, Gate:** sobald der Scan lebt, postet PEX1 **live** — selbst nachgesehen: die `.env`
+trägt `NEW_IDEAS_LIVE_POSTING=1`, der Code-Default ist ohnehin `"1"`, und `pex1_model.pkl` ist
+git-getrackt und deployt. Ob das erwünscht ist, ist ein Gate-Flip und Michis Entscheidung — hier
+wurde nichts daran geändert.
+
+Verifikation DB-frei: `backtest/test_pex1_spike_time_domain.py` (13/13, aware **und** naiv über
+Offset-Detektor, Normalisierung und die Alters-Arithmetik). Gegenprobe: derselbe aware-Fall gegen
+den Vorgänger-Stand (`git show HEAD:30_ai_pex1_bot.py`) wirft exakt die Live-Fehlermeldung.
+
 ## [2026-08-01] R3 Teil 2: Pool auf `timezone=UTC`, P2.3-Writer und sechs Kompensationen → eine Konstante (T-2026-KYT-9050-005)
 
 Die zweite Hälfte der UTC-Politik. Bisher entschied die Session-TZ des VPS (`Europe/Bucharest`),
