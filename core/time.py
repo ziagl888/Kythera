@@ -27,6 +27,10 @@ resolves to the stdlib module (absolute imports); this one is ``core.time``.
 from __future__ import annotations
 
 import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the import cost off the bots
+    import numpy as np
 
 UTC = datetime.timezone.utc
 
@@ -38,7 +42,16 @@ UTC = datetime.timezone.utc
 # ``AT TIME ZONE`` against THIS zone, never current_setting('TimeZone').
 LEGACY_WRITER_TZ = "Europe/Bucharest"
 
-__all__ = ["LEGACY_WRITER_TZ", "UTC", "as_naive_utc", "from_unix_ts", "to_utc", "utc_now", "utc_now_naive"]
+__all__ = [
+    "LEGACY_WRITER_TZ",
+    "UTC",
+    "as_naive_utc",
+    "epoch_seconds",
+    "from_unix_ts",
+    "to_utc",
+    "utc_now",
+    "utc_now_naive",
+]
 
 
 def utc_now() -> datetime.datetime:
@@ -81,3 +94,39 @@ def from_unix_ts(ts: float, *, ms: bool = False) -> datetime.datetime:
     store epoch seconds.
     """
     return datetime.datetime.fromtimestamp(ts / 1000.0 if ms else ts, tz=UTC)
+
+
+def epoch_seconds(values: Any) -> np.ndarray:
+    """Epoch SECONDS (float64) from a pandas datetime Series/Index/array.
+
+    The idiom this replaces — ``series.astype("int64") / 1e9`` — is not a unit
+    conversion, it is a bet on the datetime RESOLUTION of the column. ``astype``
+    yields the integer count of the dtype's own unit, so the ``/ 1e9`` only lands
+    on seconds while the dtype happens to be ``datetime64[ns]``:
+
+        pandas 2.3.2 (fleet, Python 3.13)  → datetime64[ns] → /1e9 = seconds  ✔
+        pandas 3.0.x  (Python 3.14)        → datetime64[us] → /1e9 = kiloseconds ✘
+
+    The failure is silent and scale-shaped: under ``us`` the epoch axis shrinks
+    1000x, so a regression slope over it comes out 1000x too LARGE while the
+    fitted value at the window's end — and with it ``dist_to_trend`` — stays
+    intact. In ``core/rub_features.rub_trend`` that is exactly one of the fifteen
+    RUB2 model inputs (``slope_trend``) silently off by three orders of magnitude
+    while its neighbour still matches: a train/serve skew that no feature-contract
+    check can see, because the column is present and finite.
+
+    Measured on this repo (T-2026-KYT-9050-008): the replay generated under the
+    fleet interpreter reproduces ``slope_trend`` bit-exactly; the same code under
+    pandas 3.0.3 returns exactly 1000x that value on all 229 probed events.
+
+    Normalising to ``ns`` first makes the result resolution-independent, so the
+    live bot (which goes through ``datetime.timestamp()`` and is therefore always
+    in seconds) and the replay agree no matter which interpreter generated the
+    replay.
+    """
+    import pandas as pd
+
+    idx = pd.DatetimeIndex(values)
+    if idx.tz is not None:
+        idx = idx.tz_convert(UTC).tz_localize(None)
+    return idx.to_numpy(dtype="datetime64[ns]").astype("int64") / 1e9

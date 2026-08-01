@@ -440,14 +440,29 @@ Threshold-Entscheids — nicht überlesen):
       (06.–11.07., 44 posted/28 closed): höchste WR im Band 0,829–0,85
       (81–82 %, n=21–28); ab 0,88 **fällt** die WR (60–71 %) und nur der Ø-PnL
       steigt. ≥0,88-Kandidaten clustern zudem in Funding-Episoden (24h-Kappe
-      liefert dann ~0,7/Tag). Achtung: die **Replay-Kurve ist für dieses Gate
+      liefert dann ~0,7/Tag). ~~Achtung: die **Replay-Kurve ist für dieses Gate
       unbrauchbar** — Live↔Replay-Prob-Korrelation −0,37 auf gematchten
-      Signalen, Feature-Skew-Verdacht Funding (T-2026-CU-9050-071). **Finale**
+      Signalen, Feature-Skew-Verdacht Funding (T-2026-CU-9050-071).~~ **Finale**
       Zahlen nach 1–2 Wochen Shadow (dann misst `ml_predictions_master` die
       kappen-gebundene Selektions-WR direkt); wenn die WR-Inversion hält, auch
       Selektionsreihenfolge/Prob-Band statt Floor prüfen.
+      **Korrektur 2026-08-01 (T-2026-KYT-9050-008,
+      `docs/T-2026-KYT-9050-008-rub2-replay-skew.md`):** der Feature-Skew-Verdacht
+      ist widerlegt — die Funding-Features sind über 229 gematchte Signale
+      bit-exakt, die −0,37 waren das Messfenster (06./07.07. liegt auf dem
+      RUB2-Go-Live, davor trug das Tag ein anderes Modell). Ab 12.07. stimmen
+      Live und Replay auf 92–100 % der Zeilen exakt überein, **die Replay-Kurve
+      trägt wieder**. Mit-korrigiert: „live gibt es 0,93+" stammt aus denselben
+      Prä-Deploy-Zeilen — RUB2-SHORT hat live nie 0,93 erreicht (max 0,876 bzw.
+      0,920 nach dem 14.07.-Retrain), der Default 0,93 hätte MAX1 stumm gestellt.
 - [ ] **Scharf-Schalten** (`MAX1_LIVE_POSTING=1` + Cornix-Konfiguration des
       Main-Channels) — nach Shadow-Auswertung, ausschliesslich Michis Entscheidung.
+      **Ist-Stand 2026-08-01 nachgesehen** (T-2026-KYT-9050-008, Beobachtung, kein
+      Entscheid): `.env` trägt `MAX1_LIVE_POSTING=1`, `MAX1_MIN_PROB=0.829`,
+      `MAX1_MAX_PER_DAY=100000`; `ml_predictions_master` hat 308 MAX1-SHORT-Zeilen
+      (11.07.–01.08.), alle posted, max Confidence 0,9199. Der Operator hat also
+      scharf geschaltet und dabei ein anderes Regime gewählt als die oben notierten
+      0,85 + Kappe 3 — der Throttle ist faktisch offen. Abgleich = Michis Entscheid.
 
 ---
 

@@ -1,3 +1,59 @@
+## [2026-08-01] RUB2 Replay↔Live-Skew: Hypothese widerlegt, Root-Cause war das Messfenster (T-2026-KYT-9050-008)
+
+Zu klären war der 070-Befund: für dieselben (Symbol, Kerze)-Signale korrelierten Live-Confidence
+und Replay-Prob **−0,37** — gleiches Modell, gleiche Kerze, also Feature-Skew. Verdächtigt waren
+die Funding-Features.
+
+**Die Funding-Hypothese ist widerlegt.** Alle sechs Funding-Features lassen sich für **alle 229**
+gematchten Signale **bit-exakt** aus der heutigen `funding_rates` rekonstruieren (mean|Δ| = 0,0 in
+jeder Spalte). Auch die neun RUB-Features stimmen — `dist_to_trend` und `slope_trend` exakt, der
+Rest bis auf float32-Speicherrundung. Es gibt keinen Feature-Skew zwischen Serving und Replay.
+
+**Die −0,37 waren das Messfenster.** Der Überlappungszeitraum 06./07.07. liegt auf dem Go-Live-Tag
+von RUB2-SHORT (`07c8874`, Umschaltpunkt in den Daten sichtbar: 07.07. ~07:00 UTC). Am 06.07. trug
+das Tag `RUB2` noch den alten 9-Feature-Legacy-Pfad. Über die Generationsgrenze gepoolt misst eine
+Korrelation den Modellwechsel, nicht den Skew: Tag 06.07. −0,45, ab 08.07. **+0,97 bis +1,00**, ab
+12.07. auf 92–100 % der Zeilen **exakt** identisch. 229 Paare über 128 Coins statt der 49 von T-070.
+
+**Zwei Voraussetzungen des Tickets waren bereits überholt.** Der Replay ist am 14.07. neu erzeugt
+worden — nach dem Funding-Backfill (11.07.) und nach den beiden Look-ahead-Fixes in
+`walkforward_sim` (10.07.) —, und aus demselben Lauf wurde RUB2 neu trainiert (Threshold 0,7929
+statt 0,829) und in den Root promotet. Schritt 2 des Auftrags war damit erledigt, bevor die Session
+begann; **kein Sim-Lauf gefahren**. Das Juli-Modell steckt nur noch in
+`staging_models/max1_model_SHORT.pkl` — der Probe wählt das Artefakt per Fit, nicht per Dateiname.
+
+**Der Rest-Unterschied 07.–11.07. ist datiert.** mean|Δp| 0,009–0,015, Sprung auf 0,0003 am 12.07.:
+`logs/rsi_rewrite_execute_20260712.log` weist einen **ausgeführten** Wilder-RSI-Rewrite der
+Indikator-Historie aus (3831 Tabellen, 88,4 Mio. Zellen). Der Bot las beim Scoring span-RSI, der
+Replay vom 14.07. liest für dieselben Kerzen den überschriebenen Wilder-Wert. Das ist das in P2.12
+vorhergesagte Mixed-History-Risiko — hier erstmals gemessen: **≈1 Prozentpunkt** Wahrscheinlichkeit.
+Die AUDIT_TODO-Zeile „Execute bleibt C-Gate" war stale und ist korrigiert.
+
+**Schritt 3 (MAX1-Kalibrierung) dreht sich mit.** Der Satz „live gibt es 0,93+ mit ~1,1 Posts/Tag"
+stammt aus denselben Prä-Deploy-Zeilen. RUB2-SHORT hat live **nie** 0,93 erreicht: max 0,876 in der
+Generation @0,829, max 0,920 nach dem 14.07.-Retrain, null Zeilen darüber in 1543 Predictions. Damit
+stimmen Replay und Live auch in der Verteilung überein (Test-Slice p99 0,841 / max 0,874 gegen live
+p99 0,865 / max 0,876) — **die Replay-Kurve trägt für die Gate-Kalibrierung wieder**. Ist-Stand MAX1
+selbst nachgesehen (`.env` + DB, 01.08.): `MAX1_LIVE_POSTING=1`, `MIN_PROB=0.829`,
+`MAX_PER_DAY=100000`, 308 Posts seit 11.07., max Confidence 0,9199 — der dokumentierte Default 0,93
+hätte in 21 Tagen null Posts erzeugt. Abgleich des Regimes ist Operator-Entscheid, hier nur ausgewiesen.
+
+**Latent-Defekt gefunden und behoben.** `tools/walkforward_sim.py` baute die Epoch-Achse der
+RUB-Regression mit `open_time.astype("int64") / 1e9` — keine Einheitenumrechnung, sondern eine Wette
+auf die **Auflösung** der Spalte. Unter der Fleet-Umgebung (pandas 2.3.2, `datetime64[ns]`) stimmt
+es; unter pandas ≥ 3.0 (`datetime64[us]`) schrumpft die Achse um Faktor 1000 und `slope_trend` —
+einer der 15 Modell-Inputs — kommt 1000× zu groß heraus, während `dist_to_trend` daneben weiter
+passt. Genau das ist dieser Session beim ersten Rekonstruktionslauf passiert. Behoben mit
+`core.time.epoch_seconds()` (normalisiert auf ns vor der Division), eingesetzt in `walkforward_sim`
+und den drei Studien-Tools mit demselben Muster — unter dem Fleet-Interpreter **byte-gleich** zum
+Vorzustand, verifiziert. Gepinnt in `backtest/test_epoch_seconds.py`, mutations-geprüft.
+
+Neu: `tools/rub2_replay_skew_probe.py` (read-only, fünf Schichten: Match → Artefakt-Attribution →
+Feature-Rekonstruktion → Funding-Schranke → Threshold-Kurve). `core/funding_features.py` bewusst
+**unangetastet** — der Root-Cause sitzt nicht dort. Kein Retrain, keine Promotion, kein Gate-Flip,
+kein Restart, keine Schreib-Query gegen Live-Tabellen. Report:
+`docs/T-2026-KYT-9050-008-rub2-replay-skew.md`.
+
 ## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
 
 Die Frage aus T-042 Phase C: liegt der Live-Umschlag systematisch über dem simulierten? Falls ja,

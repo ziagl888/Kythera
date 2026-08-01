@@ -81,6 +81,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.candles import read_candles  # noqa: E402
 from core.database import db_connection  # noqa: E402
 from core.market_utils import load_coins  # noqa: E402
+from core.time import epoch_seconds  # noqa: E402
 from core.trade_utils import (  # noqa: E402
     ensure_min_tp_distance,
     get_hvn_and_sr_levels,
@@ -182,7 +183,7 @@ def coin_arrays(conn, symbol: str) -> dict | None:
     df = load_1d(conn, symbol)
     if df is None:
         return None
-    d = (df["open_time"].astype("int64") // 10**9).to_numpy().tolist()  # epoch seconds
+    d = [int(x) for x in epoch_seconds(df["open_time"])]  # epoch seconds, resolution-safe
     ft, fr = load_funding(conn, symbol)
     return {
         "d": [int(x) for x in d],
