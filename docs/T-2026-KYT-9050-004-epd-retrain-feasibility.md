@@ -235,7 +235,7 @@ in `retrain_pump.py`:
 python tools/retrain_pump.py --since 2026-07-11 --model-id EPD4
 ```
 
-## 8. Wiedervorlage
+## 8. Wiedervorlage — **T-2026-KYT-9050-067**
 
 `(0,15 · Spanne − 7 d) · Dichte ≥ Zielzeilen`, Dichte konstant bei 108,9 (LONG) /
 88,6 (SHORT) gelabelten Zeilen/Tag angenommen:

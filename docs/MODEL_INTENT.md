@@ -324,8 +324,8 @@ symmetrische Ein-Kommando-Bedienung neu: `tools/retrain_pump.py --days/--since`
   `shadow_gate` und die DB-Historie). NOCH NICHT in `core/shadow_gate` registriert —
   ohne Artefakt wäre das tote Konfiguration; die Belegung selbst ist in
   `backtest/test_retrain_model_id.py` gepinnt. ⚠ Gate-Default ist LIVE.
-- **Wiedervorlage 2026-11-09** (~1000 Val/Test-Zeilen je Richtung, erster
-  Operating-Point mit `min_n=200`-Rückhalt). Kommando:
+- **Wiedervorlage 2026-11-09 → T-2026-KYT-9050-067** (~1000 Val/Test-Zeilen je
+  Richtung, erster Operating-Point mit `min_n=200`-Rückhalt). Kommando:
   `python tools/retrain_pump.py --since 2026-07-11 --model-id EPD4`.
 - **Offen vor einem EPD4-Go-Live:** die Serving-Population ist 2,7× (LONG) bzw.
   5,4× (SHORT) dichter als die Trainings-Population — der 900s-Dedup des Builders
