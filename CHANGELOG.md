@@ -71,6 +71,110 @@ Das Root-Artefakt ist **unangetastet** — der Promote ist Operator-Entscheid. Z
 Restposten: `epd3_model_LONG.pkl` hat denselben Tag-Defekt, ist aber wegen der 1.9.0-Serialisierung
 hier nicht re-dumpbar, und `verify_staging_artifacts.py` globt für EPD nur `epd2_model_*.pkl`,
 sieht die EPD3-Dateien im CLI-Lauf also gar nicht (AUDIT_TODO #T57-5/#T57-6).
+## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
+
+Die Frage aus T-042 Phase C: liegt der Live-Umschlag systematisch über dem simulierten? Falls ja,
+wäre die Slot-Rechnung der PR-#198-Studie (Ø 285 / p95 498) zu optimistisch **und** die
+Gebührenlast höher als die 0,10 % Taker-Round-Trip, mit denen die 49 204 % gerechnet wurden.
+
+**Antwort: nein — und der Auslöser der Frage war ein Bootstrap-Artefakt.** Die „~80 Trail-Feuer
+pro Stunde bei ~460 offenen Positionen" sind exakt 80 Feuer in **1,2 Stunden am 26.07. zwischen
+19 und 20 UTC**: der erste Shadow-Zyklus spiegelte ein bereits laufendes Buch auf einmal, diese
+Spiegel erbten einen Peak über der Aktivierungsschwelle und feuerten beim ersten Poll. Im
+Live-Betrieb sind es **4,0 Feuer pro Stunde**, geschäftigste Einzelstunde 21.
+
+**Haltedauer live eher LÄNGER als simuliert.** Median 6,00 h über die 999 geschlossenen
+Live-Positionen, mit den 96 offenen als rechts-zensiert **[6,71; 7,40] h** — gegen **6,59 h** aus
+derselben Studie, mix-gematcht auf die Live-Bein-Anzahlen. Die 4,6 h der Studien-Kopfzeile sind
+ein Median **über Beine**, kein Median über Trades: dort zählt MIS2-168h SHORT (3 Live-Spiegel)
+so viel wie MIS1-72h LONG (370). Bei den fünf größten Beinen — 65 % des Buchs — hält der Arm
+1,24× bis 1,64× länger als die Simulation. Beide Messverzerrungen laufen dabei in Richtung „live
+ist schneller" (Zensierung nach 5,6 Tagen; der 24-h-Zeit-Stop, den die Studie nicht kennt), und
+das Ergebnis fällt trotzdem andersherum aus.
+
+**Die Slot-Rechnung war zu pessimistisch, nicht zu optimistisch.** Belegung live Ø 126 · p95 221 ·
+max 291, eingeschwungen über die letzten 48 h **Ø 106** — gegen eine roster-gematchte Erwartung
+von **251,6** (die Ø 284,6 der Studie enthalten die inzwischen als Re-Forwarder ausgeschlossenen
+ROM1-Beine mit 33 Sitzen; mittlere Belegung ist eine Summe von Indikatorfunktionen und damit exakt
+additiv, p95 nicht). Der Cornix-Deckel von 500 war nie in Reichweite. Ursache der Lücke ist der
+**Zulauf** — 195 Positionen/Tag live gegen 365 simulierte —, nicht der Umschlag: der Live-Bot hat
+vier Zulassungsfilter, die die Simulation nicht hatte (ein Spiegel je Symbol, 240-s-Frische,
+Symbol-Cooldown, Exposure-Cap), plus den ROM1-Ausschluss und Beine, die zwischenzeitlich nicht
+LIVE sind — EPD1 SHORT, das zweitgrößte Bein der Studie, hat kein einziges Mal gespiegelt.
+
+**Umschlag pro belegtem Slot-Tag — das mix-robuste Maß und die Einheit, in der die Gebühr
+anfällt:** live 1,405 gegen 1,291 (Studien-Aggregat) bzw. 1,146 (mix-gematcht) = **1,09–1,23×**.
+Gebühr entsprechend **0,141 % gegen 0,129 % je Slot-Tag**. Der Anteil unter Gebühr liegt bei 38 %
+gegen erwartete 25 %, kommt aber vollständig aus `SOURCE_CLOSED` (77 %) und `SL_HIT` (100 %) —
+also aus dem Tape, nicht aus der Umschlaghäufigkeit; `TRAIL` liegt bei 0 %, was Konstruktion ist
+(ein bewaffneter Trail schließt frühestens bei 0,9 × 2,0 % = 1,8 %).
+
+**Der Auflösungs-Verdacht ist real und beziffert: rund 20 Minuten.** Die Studie wertet auf
+15m-Kerzen-Extremen mit strikt vorherigem Peak aus, der Bot auf 10s-Preisen. Statt das zu
+behaupten, spielt das neue Werkzeug die **importierte** Studien-Regel (Regel 7, keine
+Zweitimplementierung) auf **denselben** Live-Spiegeln nach: bei den eigenen Exits des Arms
+(n = 586) landet der 15m-Exit **Median +0,33 h, p95 +0,63 h** nach dem Live-Exit, in **10 %** der
+Fälle sogar **früher** (ein Docht, den der 10s-Poll nie druckte), in 17 % in derselben Kerze.
+Slot-Kosten des feineren Rasters: **≤ 33,1 Slot-Tage = +4,7 %** (Untergrenze — 325 zensierte
+Fälle sind nicht mitgezählt). Preisunterschied bei gleicher Kerze: **+0,02 %-Punkte je Trade**.
+
+**Neu: `tools/trailing_live_vs_study.py`** (read-only, baut auf `trailing_arm_report.py` und
+`trailing_slot_budget.py` auf) + 17 DB-freie Pins in `backtest/test_trailing_live_vs_study.py`,
+Report unter `docs/T-2026-KYT-9050-047-live-vs-study-report.md`. Zwei Fehlschlüsse sind darin
+festgeschrieben, weil die erste Fassung der Auswertung beide gemacht hat: der Median nur über
+geschlossene Zeilen meldet den Arm schneller, als er ist (deshalb das Zensierungs-Intervall), und
+ein Nachspiel, das nur bis zum Live-Exit reicht, schiebt 88 % der Arm-Exits in ein „die Studie
+hätte gehalten" — der Trigger sitzt fast immer in genau der Kerze, die ein bündiges Fenster
+ausschließt. Deshalb ist `same-bar` ein eigener, benannter Ausgang.
+
+**Empfehlung an den Operator (#T52-3): `act = 2 %` beibehalten.** Die Hypothese, die eine Änderung
+motiviert hätte, ist widerlegt; der einzige gemessene Abweichungspfad kostet ≤ 5 % Slot-Tage. Und
+für die Richtung einer späteren Änderung: `act` zu **senken** würde die freie Kapazität nicht
+nutzen, sondern vergrößern (kürzere Haltedauer → weniger Belegung). Die leere Hälfte des Channels
+ist ein Zulauf-Thema, und der Engpass ist ohnehin nicht Kapazität, sondern Ertrag — das Live-Buch
+steht bei −906 %-Punkten netto, Ursache Tape (T-054), kein Bein-Defekt.
+## [2026-08-01] Zulauf-Analyse Bot 40: der Engpass ist der Exposure-Cap, nicht das Fenster (T-2026-KYT-9050-060)
+
+Operator-Auftrag: die Trade-Zahl soll steigen, aber **nichts wird geändert, bevor eine
+vollständige Analyse vorliegt**. Genau das hat sich gelohnt — die naheliegende Maßnahme wäre
+die falsche gewesen.
+
+**Der Reflex war das Aktualitätsfenster.** Die abgelehnten Signale liegen bei p10 = 243 s,
+p90 = 256 s gegen eine 240-s-Grenze, zu **707:24 LONG-lastig** — eine Wand, kein
+Altersprofil, dasselbe Muster wie damals bei 180 s. Ein 300-s-Fenster ließe 706 davon zu.
+
+**Der bindende Engpass ist ein anderer.** Ein Kandidat muss fünf Stufen passieren, und nur
+zwei hinterlassen eine DB-Zeile — wer gegen die DB allein misst, sieht deshalb systematisch
+das falsche Gate. Aus dem Fleet-Log rekonstruiert: `EXPOSURE_CAP` feuert in **Ø 3,2 → 6,0 →
+6,6** Kandidaten pro Zyklus mit steigender Tendenz, `SLOT_CAP` dagegen in drei Tagen **kein
+einziges Mal**. Das Buch klebt bei **+42 bis +52** Schieflage an der ±50-Decke; der
+LONG-Spielraum liegt durchgehend zwischen **0 und 8**. LONG-Kandidaten werden also längst
+abgewiesen, *nachdem* sie den Aktualitätstest bestanden haben — ein weiteres Fenster
+verschiebt Ablehnungen nur von `PREEXISTING` nach `EXPOSURE_CAP`.
+
+**Die Identität, die die Empfehlung umdreht:** der Cap begrenzt die *Differenz*, also gilt
+bei anliegender Decke `Kapazität = 2 × min(LONG, SHORT) + Cap` — aktuell 2 × 21 + 50 = **92**.
+Jede zusätzliche SHORT-Position hebt die LONG-Decke um eins. **Die SHORT-Seite drosselt das
+Gesamtvolumen**, nicht die LONG-Seite, an der die auffälligen Ablehnungen liegen.
+
+**Empfehlung, nach Wirkung geordnet:** (A) **TSM1 SHORT in den Roster** — 66 Signale/Tag,
+live, Dichte 525, seinerzeit **allein wegen des Slot-Caps** verworfen, der seither nie
+gebunden hat; Kapazität ~92 → ~150. (B) Die Grandfather-Kohorte neu bewerten: **28 der 30
+Spiegel sind LONG** und belegen dauerhaft **28 der 50 Einheiten** LONG-Spielraum, also 56 %
+— der Entscheid vom selben Tag fiel ohne diese Zahl. (C) Das Fenster **danach**, als
+Qualitäts- statt Mengenmaßnahme: `admit()` sortiert nach Bein-Dichte, ein 300-s-Fenster gibt
+demselben LONG-Budget rund fünfmal so viele Kandidaten zur Auswahl. (D) Den Cap anheben
+**nicht** — T-052 hat gemessen, dass das einseitige LONG-Buch der Konto-Schaden war.
+
+**Adverse Selection ausgeschlossen:** die abgelehnten LONGs liefern im Quell-Trade Ø +2,39 %
+gegen +1,28 % der zugelassenen (t ≈ 1,3, nicht signifikant) — die 240-s-Kante selektiert
+nicht die besseren Signale.
+
+Neu: `tools/trailing_intake_audit.py` (read-only, Log + DB) und das Verdikt
+`staging_models/replay/trailing_intake_verdict_t060.md` mit den ehrlichen Grenzen — vor
+allem, dass die Log-Gates **Druck** messen und keine Stückzahlen: Abweisungen wiederholen
+sich in jedem 10-s-Zyklus, „Ø 6,6" heißt „6,6 Kandidaten stehen gerade an", nicht „6,6
+Signale/Tag verloren". 13 DB-freie Pins, 5 Mutationen belegt. **Keine Code-Änderung am Bot.**
 
 ## [2026-08-01] SL-Backfill ausgeführt + Grandfather-Kohorte bleibt (T-2026-KYT-9050-058)
 
