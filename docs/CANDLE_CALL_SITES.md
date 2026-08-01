@@ -337,6 +337,42 @@ Der Read-Cutover-Code ist gebaut, **hinter dem Flag `KYTHERA_CANDLES_SOURCE=hype
 - **Akzeptanz (Live-VPS, read-only):** `backtest/test_candles_db_parity.py` beweist **hyper == legacy** für BTC/ETH/SOL + kleinere Coins über 5m/1h/4h/1d, mit/ohne forming, verschiedene Fenster/Limits — Kerzen byte-für-byte, Indikatoren auf **float4-Präzision** (Legacy-REAL vs Hyper-`double` = gewollter P3.12-Upgrade, kein Drift; float32-Cast reproduziert die REAL bit-genau, echter Wertunterschied fällt weiter auf). 28 Coin/TF-Kerzen-Reads + 21 mit Indikatoren grün. DB-frei: `test_candles.py` (Source-Resolver, Unknown-Backend-Reject, Hyper-Validierung vor der Connection). Regression-Guard smoke+verify 24/24, ruff/format/mypy grün.
 - **Bewusst NICHT in diesem Task:** die 6 Direkt-SQL-Bypass-Reader (`11_ai_mis`, `14_ai_atb`, `34_ai_max1`, `core/mis_features`, `core/research_features`, `db_schema_analysis`) umgehen core.candles und lesen `_indicators` direkt — Rewire ist für den Phase-5-Drop nötig, NICHT für den Cutover (Legacy bleibt via Dual-Write frisch). Der Flip `SOURCE=hyper` + Restart selbst (Michi).
 
+### Stand C-Gate Phasen 3–5 — AKTIV seit 2026-07-16, zwei Leser hängen fest (T-2026-KYT-9050-002, 2026-08-01)
+
+Read-only am Live-System vermessen; volle Zahlen in `docs/T-2026-KYT-9050-002-c-gate-status.md`.
+
+- **Die Migration ist live, nicht dormant.** Die `.env` trägt `KYTHERA_CANDLES_SOURCE=hyper`,
+  `KYTHERA_CANDLES_WRITE_PRIMARY=hyper`, `KYTHERA_CANDLES_DUAL_WRITE=1`. Der Write-Primary-Flip
+  ist am **2026-07-16 16:23 UTC** wirksam geworden (Watchdog-Restart
+  `watchdog_debug_20260716_192326.log`; alle per-Coin-Tabellen enden exakt bei
+  `open_time = 2026-07-16 16:00 UTC`). Der Hyper-Store ist vollständig und aktuell
+  (527 Symbole, Kerzen **und** Indikatoren lückenlos über die Grenze, `is_closed=false`
+  auf genau 527 Zeilen je TF).
+- **Phase 3 (Paritäts-Cron ≥5–7 Tage) ist übersprungen worden** und nachträglich nicht
+  nachholbar: `tools/candles_parity.py` vergleicht legacy vs. hyper, und die Legacy-Seite
+  ist seit 16 Tagen leer — der Live-Lauf meldet für jedes Symbol `rows old=0`. Das Tool
+  selbst ist intakt (Self-Check und Dry-Run grün unter 3.14 **und** Fleet-3.13).
+- **Zwei Leser sind an der Zurückstellung hängengeblieben.** `16_smc_forex_metals_bot.py:87`
+  und `21_btc_smc_strategy.py:136` sind die **einzigen** verbliebenen Roh-SELECTs auf
+  per-Coin-Tabellen im Live-Code (die in „Stand Phase 4" genannten Bypass-Reader 11/14/34 +
+  `core/*_features` sind seit `e5bddde` umverdrahtet). Beide standen hier als
+  „Index-gekoppelt — Flip nur zusammen mit Offset-Rework" bewusst zurück. Diese
+  Zurückstellung setzte voraus, dass die Legacy-Tabellen maßgeblich bleiben — genau das ist
+  am 07-16 entfallen. **Beide Bots laufen und lesen seither 16 Tage alte Kerzen.**
+- **Blast-Radius verifiziert, bisher folgenlos:** `CH_SMC_METALS` hat zuletzt am
+  2026-07-16 09:35 UTC gepostet (9 Posts im gesamten Outbox-Fenster seit 04-17),
+  `CH_BTC_SMC` hat **null** Posts. Es ist also kein Signal aus veralteten Daten entstanden —
+  aber beide Bots emittieren einen Cornix-parsebaren Block, der Fall wäre also
+  geld-wirksam gewesen.
+- **Kein Fix in diesem Task**: beide Bots sind faktisch seit 16 Tagen stillgelegt; sie an
+  Live-Daten zu hängen ist ein **Entparken** (OPUS-HANDOFF §6 → Michi). Alternative: bewusst
+  über `control/parked/` parken. Erst danach dürfen die Zeilen in §2 Block C schließen.
+- **Phase 5 offen:** Compression ist auf beiden Hypertables **nicht** aktiv (0 von je 128
+  Chunks, keine Policy), die Legacy-Tabellen (**64 GB**, nicht die im Design-Doc genannten
+  25 GB) stehen noch. Ein Drop braucht zusätzlich das Entfernen der
+  `CREATE TABLE IF NOT EXISTS`-Schleife in `6_housekeeping.py:67`, sonst legt der nächste
+  Housekeeping-Zyklus ~4.200 leere Tabellen neu an.
+
 ## 5. Offene Operator-Fragen (Michi)
 
 Diese Fragen blockieren den Start von Phase 1. Keine davon ist in diesem Task entschieden worden.
