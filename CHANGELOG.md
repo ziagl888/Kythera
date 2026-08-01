@@ -1,3 +1,87 @@
+## [2026-08-01] Bot 30 (PEX1) scheiterte an JEDEM Scan — aware/naiv-Mix in `spike_time` (T-2026-KYT-9050-061)
+
+`30_ai_pex1_bot.detect_spike_time_offset_h` subtrahierte ein naives `now` von `MAX(spike_time)` und
+warf damit `can't subtract offset-naive and offset-aware datetimes` — im `try`-Block **vor** der
+Event-Schleife, also stirbt der ganze Zyklus. **Selbst nachgezählt** in den vier jüngsten
+`logs/watchdog_debug_*` (Stand 2026-08-01 20:18): **5.876 Fehlschläge, 0 erfolgreiche Scans**, der
+jüngste Fehler Minuten alt; das Ticket zählte in seinem früheren Log-Fenster 8.166. Der Bot lädt
+sein Artefakt sauber und tut seit mindestens 2026-07-19 trotzdem nichts.
+
+**Root-Cause:** `pump_dump_events.spike_time` ist auf der Live-DB `timestamp WITH time zone`
+(read-only vermessen 2026-08-01) — die Repo-DDL in `10_pump_dump_detector.py:1409` sagt `TIMESTAMP`,
+die Tabelle wurde irgendwann gealtert. psycopg2 liefert deshalb **aware** datetimes, und die
+Offset-Heuristik war für eine naive Spalte geschrieben. Die Notiz in T-2026-KYT-9050-005, die
+Funktion „heile sich nach dem Flip von selbst", ist damit widerlegt und in `docs/UTC_POLICY.md` §4
+korrigiert.
+
+**Fix auf der R3-Linie:** ein aware Wert IST ein Instant — kein Domänen-Raten, Offset 0, und
+`spike_time_to_utc_naive()` normalisiert beide Domänen an **einer** Stelle (aware → UTC-Instant
+ohne tzinfo, naiv → gemessener Offset abgezogen). Dieselbe Normalisierung greift in
+`process_event`, wo derselbe Mix gewartet hätte. Dazu zwei latente Zünder entschärft: der
+Boot-Sentinel bei leerer Tabelle ist jetzt aware, und der Watermark kommt ohne
+`max(sentinel, spalte)` aus (die Query liefert ASC und filtert strikt `> watermark`).
+
+**Achtung, Gate:** sobald der Scan lebt, postet PEX1 **live** — selbst nachgesehen: die `.env`
+trägt `NEW_IDEAS_LIVE_POSTING=1`, der Code-Default ist ohnehin `"1"`, und `pex1_model.pkl` ist
+git-getrackt und deployt. Ob das erwünscht ist, ist ein Gate-Flip und Michis Entscheidung — hier
+wurde nichts daran geändert.
+
+Verifikation DB-frei: `backtest/test_pex1_spike_time_domain.py` (13/13, aware **und** naiv über
+Offset-Detektor, Normalisierung und die Alters-Arithmetik). Gegenprobe: derselbe aware-Fall gegen
+den Vorgänger-Stand (`git show HEAD:30_ai_pex1_bot.py`) wirft exakt die Live-Fehlermeldung.
+
+## [2026-08-01] R3 Teil 2: Pool auf `timezone=UTC`, P2.3-Writer und sechs Kompensationen → eine Konstante (T-2026-KYT-9050-005)
+
+Die zweite Hälfte der UTC-Politik. Bisher entschied die Session-TZ des VPS (`Europe/Bucharest`),
+wie Postgres zwischen `timestamptz` und den naiven Legacy-Spalten castet — also was `NOW()` in eine
+naive Spalte schreibt und wie sie gegen einen aware-Wert verglichen wird. Der Flip auf UTC ist
+deshalb **kein Einzeiler**: er bewegt die Writer, und sechs Leser rechneten die +2/+3h bisher
+korrekt heraus. Beides musste in **einem** Changeset landen, sonst erzeugt jede Hälfte für sich neue
+Drift (P0.13-Klasse, Train/Serve-Skew).
+
+**Was drin ist.** (1) `core/database._connect_options()` trägt `-c timezone=UTC`. (2)
+`3_detectors.write_signal_atomic` stempelt `utc_now_naive()` statt naiver Server-Lokalzeit — ein
+Aufruf für beide Spalten (`time`, `posted`), P2.3. Das ist Pflicht und nicht Kür: `33_ai_fif1_bot`
+vergleicht `time` DB-seitig gegen `NOW()`, ohne den Writer-Fix wäre seine 1h/24h-Burst-Dichte vom
+Flip gekippt worden statt repariert. (3) Die sechs Drift-Kompensationen (`15_ai_master_bot`
+`to_utc_naive`/`since_local` plus `research_dataset_common`, `aim2_build_dataset`,
+`fif1_build_dataset`, `pex1_build_dataset`, `retrain_sra2`) rechnen nichts mehr selbst — sie gehen
+durch `core.time.legacy_naive_to_utc` / `utc_to_legacy_naive`. (4) Die Docstrings, die
+„PG-Lokalzeit" behaupteten, sind nachgezogen.
+
+**Eine Ausnahme, mit Begründung.** `pex1_build_dataset.spike_time_to_utc` lokalisiert weiterhin —
+aber nur, wenn `detect_offset_h` den Offset **an den Daten gemessen** hat. Eine Messung kann der
+Flip nicht falsch machen (sie ergibt danach 0), und für die Live-Tabelle ist der Zweig ohnehin tot,
+weil `spike_time` `timestamptz` ist. Gelöscht hätte er nur das Lesen alter Dumps gekostet. Die
+DST-Rezeptur liegt trotzdem zentral (`assume_legacy=True`, der einzige solche Aufruf im Repo).
+
+**Die Historien-Entscheidung ist NICHT getroffen** — sie gehört Michi (`docs/UTC_POLICY.md` §6).
+Der Code hält beide Wege offen, und zwar an genau einer Stelle: `core.time.R3_CUTOVER_UTC`
+(`None` = uniform-UTC, also die Welt nach einem Backfill; gesetzt = Zeilen davor werden als
+Bukarest gelesen). Der frühere Einwand „dann trägt jeder Trainer dauerhaft eine Verzweigung" gilt
+damit nicht mehr. Zahlen dafür, read-only vermessen: ein Backfill fasst **≈2,00 Mio Zeilen / 420
+MiB** in sechs Tabellen an (`ml_predictions_master` 1,13 Mio, `closed_ai_signals` 477k,
+`closed_trades_master` 383k, `closed_trades3` 8,2k, `ai_signals` 3,2k, `active_trades_master` 539);
+der `regime_*`/`orchestrator_*`-Cluster bleibt draussen. Rest-Unschärfe beider Wege: 113 Werte in
+der ambigen Herbststunde, beim Cutover zusätzlich ein ≤3h-Band um den Restart.
+
+**Drei Inventar-Zeilen waren falsch und sind korrigiert** (live gemessen, nicht angenommen):
+`pump_dump_events.spike_time` und `master_ai_processed_signals.processed_at` sind `timestamptz`;
+`closed_ai_signals.close_time` ist **naiv**, nicht `timestamptz` wie behauptet (die `CREATE TABLE
+IF NOT EXISTS` hat nie verbreitert — dieselbe Falle wie P2.2). Und `regime_history.ts` trägt
+beweisbar naiv-**UTC**: die lokale Wanduhr 03:00–03:59 existiert am 2026-03-29 nicht, die Spalte
+hat dort 12 Zeilen. Nebenbefund, nicht mitgefixt: `tools/breadth_study.py:428` lokalisiert genau
+diese Spalte als Bukarest — ihr As-of-Join steht heute schon 2–3h daneben (eigener Task, weil ein
+Fix das Studien-Ergebnis ändert).
+
+**Wirksam wird alles erst mit dem Fleet-Restart**, prozessweise. Restart-Effekt: Zeilen von vor dem
+Restart erscheinen +2/+3h in der Zukunft, betroffen sind die kurzen Fenster (60min Trade-Monitor,
+1h/24h FIF1, 5d AIM2-Stream); FIF1 postet daraus nichts, weil das Startup-Marking in `main()` alles
+abhakt, was beim ersten Poll im Fenster liegt. Verifikation DB-frei: `backtest/test_r3_utc_flip.py`
+(12/12), dazu die berührte Fläche (`test_aim2_topn`, `test_aim2_event_source_symmetry`, `test_time`,
+`test_detector_*`, `test_research_bots_live_price`, `test_pump_dump_time_windows`) und
+`regression_guard verify` 24/24 ohne Refresh.
+
 ## [2026-08-01] RUB2 Replay↔Live-Skew: Hypothese widerlegt, Root-Cause war das Messfenster (T-2026-KYT-9050-008)
 
 Zu klären war der 070-Befund: für dieselben (Symbol, Kerze)-Signale korrelierten Live-Confidence

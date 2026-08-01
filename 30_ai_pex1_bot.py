@@ -70,15 +70,47 @@ def ensure_artifact() -> None:
         ARTIFACT = load_artifact(ARTIFACT_PATH, PEX1_FEATURES, MODEL_ID)
 
 
+def spike_time_to_utc_naive(value, offset_h: int):
+    """Ein spike_time-Wert → naives UTC, aware wie naiv.
+
+    T-2026-KYT-9050-061: die Live-Spalte ist `timestamp WITH time zone` (die
+    Repo-DDL in 10_pump_dump_detector.py sagt `TIMESTAMP`, die Tabelle wurde
+    irgendwann gealtert — read-only vermessen 2026-08-01). psycopg2 liefert für
+    sie also AWARE datetimes, und jede Subtraktion gegen ein naives `now` warf
+    `can't subtract offset-naive and offset-aware datetimes`.
+
+    Aware ⇒ echter Instant, in UTC umrechnen und tzinfo abstreifen; der
+    gemessene Offset ist dann per Definition unbeteiligt. Naiv ⇒ Legacy-Dump
+    oder alte Spalte, Offset abziehen (Domäne kommt aus
+    detect_spike_time_offset_h). Beides ergibt dieselbe Domäne wie `now` und
+    wie `fetch_context_frame`."""
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is not None:
+        return value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return value - datetime.timedelta(hours=offset_h)
+
+
 def detect_spike_time_offset_h(conn) -> int:
-    """pump_dump_events.spike_time ist TIMESTAMP ohne TZ — je nach Session-TZ
-    des Detectors kann dort Lokalzeit statt UTC stehen. Der Offset wird gegen
-    die Wanduhr gemessen (Events laufen bei 538 Coins quasi kontinuierlich auf),
-    damit spike_age korrekt ist. Watermark-Vergleiche bleiben in Roh-Domäne."""
+    """Domänen-Offset der Spalte `pump_dump_events.spike_time` in Stunden.
+
+    Historisch war die Spalte TIMESTAMP ohne TZ, und je nach Session-TZ des
+    Detectors stand dort Lokalzeit statt UTC. Der Offset wird gegen die Wanduhr
+    gemessen (Events laufen bei 538 Coins quasi kontinuierlich auf), damit
+    spike_age korrekt ist. Watermark-Vergleiche bleiben in Roh-Domäne.
+
+    Ist die Spalte `timestamptz` (Live-Zustand seit der Alterung), liefert der
+    Treiber einen echten Instant — dann gibt es keine Domänen-Frage und der
+    Offset ist 0. Vorher subtrahierte diese Funktion ein naives `now` von genau
+    diesem aware Wert und riss damit JEDEN Scan-Zyklus ab (T-2026-KYT-9050-061:
+    ~1x/min seit mindestens 2026-07-19, 8166 Fehlschläge in den vier jüngsten
+    logs/watchdog_debug_*, kein einziger erfolgreicher Scan)."""
     with conn.cursor() as cur:
         cur.execute("SELECT MAX(spike_time) FROM pump_dump_events")
         row = cur.fetchone()
     if not row or row[0] is None:
+        return 0
+    if getattr(row[0], "tzinfo", None) is not None:
         return 0
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     diff_h = (row[0] - now).total_seconds() / 3600.0
@@ -156,7 +188,11 @@ def process_event(conn, event: dict, offset_h: int) -> None:
     direction = "SHORT"
 
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    spike_utc = event["spike_time"] - datetime.timedelta(hours=offset_h)
+    # Dieselbe Normalisierung wie im Offset-Detektor — der aware/naiv-Mix hätte
+    # hier genauso geworfen wie dort (T-2026-KYT-9050-061).
+    spike_utc = spike_time_to_utc_naive(event["spike_time"], offset_h)
+    if spike_utc is None:
+        return
     spike_age_min = max(0.0, (now - spike_utc).total_seconds() / 60.0)
     if spike_age_min > 30.0:
         return  # stale Event (Bot-Downtime/Catch-up) — Exhaustion-These verfallen
@@ -261,10 +297,12 @@ def main() -> None:
         row = cur.fetchone()
     conn.commit()
     # Nur Events NACH dem Start verarbeiten (kein Replay alter Pumps beim Boot).
-    # Bewusst naiv (R3, DTZ001 unterdrückt): der Sentinel wird gegen `pump_dump_events.spike_time`
-    # gehalten — eine naive Spalte. Ein aware Wert würde den Vergleich sprengen; die
-    # Spalte selbst trägt UTC (siehe docs/UTC_POLICY.md, Migrationsliste).
-    watermark = row[0] if row and row[0] else datetime.datetime(2000, 1, 1)  # noqa: DTZ001
+    # Sentinel AWARE (T-2026-KYT-9050-061): `pump_dump_events.spike_time` ist live
+    # `timestamptz`, MAX() liefert also aware — ein naiver Sentinel wäre bei leerer
+    # Tabelle beim ersten `max(watermark, event[...])` gegen einen aware Wert
+    # gelaufen und hätte denselben offset-naive/aware-TypeError geworfen. Der
+    # SQL-Vergleich bleibt in der Roh-Domäne der Spalte (Cast macht Postgres).
+    watermark = row[0] if row and row[0] else datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)
     conn.close()
 
     startup_feature_selfcheck()
@@ -281,7 +319,12 @@ def main() -> None:
             events = fetch_new_events(conn, watermark)
             conn_dead = False
             for event in events:
-                watermark = max(watermark, event["spike_time"])
+                # fetch_new_events liefert ORDER BY spike_time ASC und filtert
+                # strikt `> watermark` — die Zuweisung ist damit monoton. Ein
+                # max() über beide Werte wäre der zweite Ort, an dem sich ein
+                # aware-Sentinel und eine naive Legacy-Spalte treffen könnten
+                # (T-2026-KYT-9050-061); den braucht es hier nicht.
+                watermark = event["spike_time"]
                 try:
                     process_event(conn, event, offset_h)
                 except Exception as e:
