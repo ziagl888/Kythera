@@ -144,6 +144,37 @@ def benchmark_trail(index: dict, ot, ct, is_long: bool, x: float, activation: fl
     return ru
 
 
+def tail_profile(values: list[float]) -> dict:
+    """Is a leg's mean carried by the body of its trades, or by a handful of them?
+
+    A leg that shorts after pumps lives on rare coins that collapse 30 %, so its MEAN
+    can be several points while its MEDIAN sits near zero. That distinction decides
+    whether a positive average is something an operator can expect to repeat, or an
+    artefact of a few outliers that may not recur — which is why sign and rank can be
+    trusted from the mean while the MAGNITUDE cannot.
+
+    ``top5_share`` is the fraction of the total sum contributed by the five best
+    trades. Above ~0.5 the leg is a lottery ticket, whatever its average says.
+    """
+    if not values:
+        return {"n": 0, "mean": 0.0, "median": 0.0, "p25": 0.0, "p75": 0.0,
+                "win_rate": 0.0, "top5_share": 0.0}
+    s = sorted(values)
+    total = sum(s)
+    top5 = sum(sorted(values, reverse=True)[:5])
+    return {
+        "n": len(s),
+        "mean": statistics.mean(s),
+        "median": statistics.median(s),
+        "p25": s[len(s) // 4],
+        "p75": s[(3 * len(s)) // 4],
+        "win_rate": 100.0 * len([v for v in s if v > 0]) / len(s),
+        # A negative total would flip the ratio's sign and read as "no concentration";
+        # the magnitude of the share is what matters, so compare against |total|.
+        "top5_share": (top5 / abs(total)) if total != 0 else 0.0,
+    }
+
+
 def cluster_t(day_values: list[tuple]) -> tuple[int, float, float]:
     """t over per-DAY means. See epd_short_generation_study for the rationale."""
     by_day: dict = defaultdict(list)
@@ -220,6 +251,25 @@ def main() -> int:
     for tag, n, nd, lv, bv, rv, t_cl in sorted(rows, key=lambda r: -r[5]):
         flag = "  (thin)" if n < args.min_trades else ""
         print("  %-14s %7d %6d %11.3f %11.3f %11.3f %9.2f%s" % (tag, n, nd, lv, bv, rv, t_cl, flag))
+
+    print()
+    print("=" * 92)
+    print("IS THE MEAN CARRIED BY THE BODY OR BY A FEW TRADES?  (residual distribution)")
+    print("=" * 92)
+    print("  %-14s %7s %9s %9s %9s %9s %8s %11s"
+          % ("leg", "n", "mean", "MEDIAN", "p25", "p75", "win%", "top5 share"))
+    for tag, n, _nd, _lv, _bv, rv, _t in sorted(rows, key=lambda r: -r[5]):
+        if n < args.min_trades:
+            continue
+        prof = tail_profile([v - b for _d, v, b in per_leg[tag]])
+        warn = "  <== carried by outliers" if prof["top5_share"] > 0.5 else ""
+        print("  %-14s %7d %9.3f %9.3f %9.3f %9.3f %8.0f %10.2f%s"
+              % (tag, prof["n"], prof["mean"], prof["median"], prof["p25"], prof["p75"],
+                 prof["win_rate"], prof["top5_share"], warn))
+    print()
+    print("  A mean far above its median, or a top5 share past ~0.5, means the average")
+    print("  is a few collapsed coins rather than something to expect again. Sign and")
+    print("  rank still carry; the MAGNITUDE does not.")
 
     print()
     print("  %d trade(s) dropped: window outside index coverage" % uncovered)
