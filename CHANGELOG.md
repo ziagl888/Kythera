@@ -158,6 +158,52 @@ Das Root-Artefakt ist **unangetastet** — der Promote ist Operator-Entscheid. Z
 Restposten: `epd3_model_LONG.pkl` hat denselben Tag-Defekt, ist aber wegen der 1.9.0-Serialisierung
 hier nicht re-dumpbar, und `verify_staging_artifacts.py` globt für EPD nur `epd2_model_*.pkl`,
 sieht die EPD3-Dateien im CLI-Lauf also gar nicht (AUDIT_TODO #T57-5/#T57-6).
+## [2026-08-01] SHORT-Beine unter der Trail-Regel bewertet — der Maßstab war das Problem (T-2026-KYT-9050-062)
+
+Operator-Auftrag: mehr Shorts für Bot 40. Vier Kandidaten geprüft, und der wichtigste
+Befund war zunächst, dass **mein eigener Maßstab unfair** war.
+
+**Der Fehler:** ein Bein gegen die **volle** Index-Bewegung seines Haltefensters zu
+messen bestraft jedes Take-Profit-Bein per Konstruktion — es steigt bei TP1 aus,
+während der Tape weiterläuft. In einem Markt mit −50 % fiel damit fast jede SHORT-Seite
+negativ aus, ohne dass sich „schlechte Auswahl" von „TP kappt den Trend" trennen ließe.
+Die LONG-Analyse aus T-054 ist davon nicht betroffen (Longs im fallenden Markt laufen
+in den SL, nicht in den TP).
+
+**Der Umbau:** `tools/short_leg_trail_value.py` stellt **beide Seiten unter dieselbe
+Trail-Regel** (act 2 %, x 10 %) — das Bein auf seinem Coin-Pfad, den Benchmark auf dem
+Index-Pfad über dasselbe Fenster. Die eigene TP-Politik fällt damit auf beiden Seiten
+heraus. Der Index trägt ein synthetisches Hoch/Tief (Median-Stunden-Ratios), weil ein
+Trail auf Dochten feuert und ein Close-only-Benchmark jedes Bein geschmeichelt hätte.
+Trail-Mechanik, Dedup-Loader und Kerzen kommen aus `trailing_slot_budget` bzw.
+`wave_buildup_study` — keine zweite Implementierung (Regel 7).
+
+**Zwei eigene Fehlurteile, die der faire Maßstab korrigiert:**
+
+- **Die Dichte-Rangliste ist kein Artefakt.** In T-060 hatte ich die MIS2-Beine als
+  Mikro-Scalper abgetan, deren Roster-Rang nur aus einem fast leeren Slot-Tage-Nenner
+  stammt. Falsch: unter der Exit-Regel des Arms erreichen sie **+5,5 bis +8,1**
+  Residuum bei t = 3,5 bis 9,5. Die Auswahl vom 26.07. hat die richtigen Beine gezogen.
+- **TSM1 SHORT war die falsche Empfehlung.** Über zwei Runden auf Basis von Menge
+  vertreten (107 Signale/Tag, live, nur wegen des nie bindenden Slot-Caps draußen) und
+  nie auf Qualität gemessen: **−0,72 bei t = −4,58**, unter beiden Maßstäben negativ.
+
+**Was unter beiden Maßstäben hält** — und deshalb trägt: TSM1 SHORT und EPD3 SHORT
+sind negativ. Der T-032-Park von EPD3 steht; die EPD-Familie hat in keiner Generation
+eine Kante.
+
+**Die eigentliche Erkenntnis:** Kante und Volumen sind auf der SHORT-Seite entkoppelt.
+MIS2 liefert 0,9–6,3 Signale/Tag bei Residuum +7, TSM1 107/Tag bei −0,72, EPD3 337/Tag
+bei −0,38. Ein hochvolumiges SHORT-Bein mit positiver Kante gibt es nicht, außer AIM2
+(bereits im Roster) und ROM1 (Re-Forwarder, Doppelzählung). **Mehr Volumen ist mit den
+vorhandenen Beinen nur zulasten der Qualität zu haben** — das Cap-Problem aus T-060
+ist über die SHORT-Zufuhr nicht lösbar, sondern nur über die Grandfather-Kohorte.
+
+Verdikt mit allen Grenzen: `staging_models/replay/short_leg_trail_verdict_t062.md` —
+insbesondere, dass die MIS2-Mittelwerte auf n = 47–132 stehen und vermutlich
+fettschwänzig sind (Vorzeichen und Rangfolge tragen, die Größenordnung noch nicht).
+12 DB-freie Pins, 5 Mutationen belegt. **Keine Code-Änderung an einem Bot.**
+
 ## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
 
 Die Frage aus T-042 Phase C: liegt der Live-Umschlag systematisch über dem simulierten? Falls ja,
