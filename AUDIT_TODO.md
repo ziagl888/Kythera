@@ -599,3 +599,23 @@ Dazu: 13 ML-Trainer-Audit (`Documents\_X`), 14 Live-Performance aus der DB, 15 S
   Formate oder Kanäle fallen durch. Durchlassquote gesamt 28 % (3 393 von 11 906).
   Whitelist selbst ist frisch (täglich, 30-Tage-Fenster) — die Daten sind aktuell, die
   Kennzahl ist das Problem (#T65-1).
+
+- [x] **#T69-1 Streichliste der Verlust-Beine war auf der FALSCHEN Kennzahl gebaut —
+  nicht ausgeführt (T-2026-KYT-9050-069, 2026-08-02).** Operator-Auftrag „Verlust-Beine
+  rausnehmen"; vor der Ausführung geprüft und verworfen. `tools/roster_proposal.py`
+  rankt über `leg_net_economics`, und das misst ein Bein unter **seinem eigenen**
+  TP/SL-Ausstieg. Der Trailing-Arm übernimmt aber nur das **Signal** und legt seinen
+  eigenen Trail darüber. Richtige Kennzahl für die Roster-Frage ist
+  `tools/short_leg_trail_value.py`.
+  **Von den sechs DROP-Kandidaten dreht der Trail VIER ins Positive:**
+  MIS2-168h SHORT −1,490 → **+9,074** (bestes Bein im ganzen Feld), BR4H LONG
+  −0,445 → +0,512, BB_4H LONG −0,392 → +0,460, SRA2 LONG −0,036 → +0,236.
+  BR1H LONG liegt bei Residuum −0,009 (Top5-Anteil 57,9 → Rauschen, n=98).
+  Ausführung hätte vier Beine entfernt, auf denen der Arm verdient. Warnung ist jetzt
+  im Docstring von `roster_proposal.py`.
+- [ ] **#T69-2 ATS2 LONG — Richtungsentscheid, keine Qualitätsfrage (Michi).** Einziges
+  Bein, das auch unter dem Trail absolut verliert: **−0,342/Trade über 1 252 Trades**.
+  Es schlägt den Markt aber um **+1,987** (t = 9,31), weil der Index Longs in diesem
+  Fenster −2,329 gab. Damit hängt die Entscheidung nicht am Bein, sondern an der
+  Zielgröße: **absolut profitabel** sein wollen (dann raus — und dann konsequent die
+  LONG-Seite insgesamt prüfen) oder **den Markt schlagen** wollen (dann bleibt es drin).
