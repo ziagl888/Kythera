@@ -2,6 +2,8 @@
 
 **Tool:** `tools/whitelist_v2_flip_eval.py` · **Läuft nur auf dem VPS** (braucht Live-DB, strikt read-only) · **Zweck:** Datengrundlage für Michis Flip-Entscheid v1→v2 des Whitelist-Gates (T-2026-CU-9050-048, MODEL_INTENT §23).
 
+> **Schwester-Tool (T-2026-KYT-9050-007):** `tools/whitelist_v2_realized_eval.py` beantwortet dieselbe Flip-Frage gegen **realisierte** Trades statt gegen den Counterfactual-Replay. Es importiert die Gate-Semantik und die Divergenz-Klassen aus diesem Modul (eine Wahrheit) und tauscht nur die Scoring-Schicht. Doku: `docs/WHITELIST_V2_REALIZED_EVAL.md`, Verdikt: `docs/T-2026-KYT-9050-007-whitelist-v2-flip-decision.md`.
+
 ## Intent
 
 Seit dem T-068-Deploy (2026-07-11) schreibt `27_bot_regime_analyzer` die Shadow-Spalten `whitelisted_v2`/`reason_v2` (Netto-Expectancy-Untergrenze mit EB-Shrinkage) parallel zum live gelesenen v1-Gate (`wr_bot >= wr_overall`). Dieses Tool beantwortet die vier Fragen aus T-069:

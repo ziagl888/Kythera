@@ -1,3 +1,73 @@
+## [2026-08-02] whitelist_v2-Flip an echten Forwards gemessen: kein PnL-Beleg, −55 % Durchsatz, null Out-of-Sample (T-2026-KYT-9050-007)
+
+Auftrag war, den v1→v2-Flip des Whitelist-Gates entscheidbar zu machen — gegen die
+**realisierten** Trades, nicht gegen einen Replay der Regel. Neues read-only VPS-Tool
+`tools/whitelist_v2_realized_eval.py` + Entscheidungsvorlage
+`docs/T-2026-KYT-9050-007-whitelist-v2-flip-decision.md`. **Kein Flip, kein Restart, keine
+Schreib-Query** — der Gate liest unverändert `whitelisted` (Michi-Entscheid, OPUS-HANDOFF §6).
+
+**Das Tool tauscht nur die Scoring-Schicht.** Gate-Semantik und Divergenz-Klassen kommen per
+Import aus `tools/whitelist_v2_flip_eval.py` (T-069), die Realized-Mathematik aus
+`core/realized_pnl.py` + `tools/fleet_realized_audit.py` (T-115/T-032) — eine Wahrheit, kein
+Nachbau. Neu ist die Messlatte: statt Counterfactual-Replay der **tatsächlich geschlossene,
+vom Monitor gescorte Trade**. Zwei Beine, bewusst getrennt: das **Trigger-Leg** (eigener Trade
+des Quell-Bots, existiert auf BEIDEN Gate-Seiten → symmetrisch) und das **ROM1-Leg** (das echte
+Geld, strukturell nur auf der geforwardeten Seite).
+
+**Mengengerüst (Fenster 2026-07-11 → 08-01, 22.660 Gate-Events, 14.234 zell-entschieden).**
+v2 würde **4.848 Signale zusätzlich blocken** und **264 zusätzlich durchlassen**; Gate-Rate
+36,28 % → 4,07 %, ROM1-Forwards/Tag **377 → 168 (−55 %)**. Auf Zellebene blockt v2 **1.395 von
+1.590 Zellen (87,7 %)** und öffnet **drei** (AIM2/TREND_UP/ALT_NEUTRAL/SHORT,
+QM_4H/HIGH_VOLA/ALT_WEAK/LONG, SRA2/CHOP/ALT_NEUTRAL/SHORT).
+
+**Die 89-%-Default-Open-Prämisse stimmt — beschreibt aber den Traffic nicht.** 1.410 von 1.590
+Zellen (88,7 %) tragen `insufficient_data`, wie in Step 6 berichtet. Auf dem Verkehr ist es
+umgekehrt: **81,8 % der zusätzlich geblockten Events (3.964 von 4.848) kamen über den
+Merit-Pfad `wr_above_overall`**, nur 18,2 % über die Krücke. Der Flip räumt nicht leere Zellen
+auf, er überstimmt Entscheidungen, die v1 auf Datenbasis getroffen hat.
+
+**Der Befund kippt am Geld-Bein.** Auf dem Trigger-Leg sieht v2 gut aus (saubere Teilmenge:
+3.160 entschiedene Trades, Σ −274,9 %, Ø −0,187 %/Trade netto) — **aber genau dieses Bein ist
+das, worauf v2 gefittet wurde**: `27_bot_regime_analyzer` baut `bot_regime_performance` aus den
+Trigger-Trades der letzten 30 Tage, und `_v2_whitelist_decision` entscheidet allein aus deren
+`avg_pnl_pct`/`pnl_stddev`. Auf dem ROM1-Leg — denselben Signalen, aber der Geometrie, die
+wirklich gehandelt wurde — bleibt **nichts** übrig: **Σ +2,0 % über 21 Tage** auf 1.342
+entschiedene Trades und **Σ −61,6 % über 7 Tage**. Vorzeichen instabil, Betrag Rauschen. Das ist
+P1.10 in Zahlen. Die „v2 schaltet frei"-Seite hängt an **einem Bein** (AIM2-SHORT; im
+7-Tage-Fenster noch 7 entschiedene Trades) und ist in ROM1-Geld **prinzipiell** nicht messbar —
+diese Signale wurden nie gehandelt.
+
+**Out-of-Sample gibt es keinen einzigen belastbaren Punkt.** Der Lauf, der vor dem Fit-Fenster
+endet (05-15 → 07-02), enthält **0** `v2_would_block`-Events: `orchestrator_open_trades.wl_reason`
+wird erst ab Anfang Juli befüllt (B8), die gesamte geforwardete Seite jener Ära trägt NULL. Die
+einzige dort vorhandene divergente Klasse (190 Events, ausnahmslos EPD1-SHORT) ist zu 100 %
+drift-kontaminiert. **Der T-031-Befund „historische Whitelist nicht rekonstruierbar" ist erneut
+geprüft und bestätigt** — beide Tabellen sind UPSERT-only ohne Historie, und Bot 28 loggt pro
+Signal nur den v1-Pfad. Daraus folgt konkret: ein Flip wäre umschaltbar, aber nicht sauber
+rückblickend auswertbar. Die billigste Abhilfe ist eine additive Log-Spalte in
+`get_whitelist_decision` (Option C in der Vorlage) — **nicht gebaut**, weil Geld-Pfad + Restart.
+
+**Drei Messfallen, jede hat im Test eine Zahl bewegt.** (1) **Zwei Zeit-Domänen in derselben
+Spalte:** Orchestrator-Tabellen und ROM1-Zeilen tragen UTC, die eigenen Zeilen der Bots in
+`closed_ai_signals`/`closed_trades_master` weiter `Europe/Bucharest`-Wanduhr (+3 h) — ein Join,
+der das ignoriert, matcht **0,0 %**; das Tool entscheidet die Lesart pro Tag aus den Daten und
+weist beide Trefferzahlen aus. (2) **Drift kontaminiert die Klasse, nicht nur die Genauigkeit:**
+wo die heutige v1-Zelle nicht mehr zur aufgezeichneten Entscheidung passt, vergleicht die
+„Divergenz" zwei v1-Stände — getrennt als `v1_agree`/`v1_drifted` ausgewiesen; die
+drift-kontaminierte Hälfte trug 79 % der naiven Headline-Zahl. (3) **`closed_trades_master` ist
+NICHT die Realized-Quelle für ROM1** (0 Zeilen dort, gemessen) — ROM1 und alle AI-Bots leben in
+`closed_ai_signals`, dedupliziert über den Report-14-Survivor-Key.
+
+Nebenbefund (eigener Hebel, nichts mit v1-vs-v2 zu tun): **60 % der ROM1-Legs sind zensiert** —
+6.500 `CLOSED_REGIME_CHANGE` gegen 4.421 lifecycle-geschlossene Trades in 60 Tagen. Nur 40 % der
+geforwardeten Trades erreichen überhaupt ein bewertbares Outcome.
+
+Verifikation: `backtest/test_whitelist_v2_realized_eval.py` 25/25 (DB-frei, standalone),
+`test_whitelist_v2_flip_eval.py` 22/22 unverändert grün, `ruff check .` + `ruff format --check .`
+in CI-Form sauber, pre-commit inkl. gitleaks und `guard.py verify` grün. Die drei Läufe liefen
+unter Job-Lock bei gemessenen 72,7/90,4/96,9 % System-CPU (`--force-on-busy`, BELOW_NORMAL,
+read-only); Berichte in `staging_models/replay/whitelist_v2_realized_eval_*.md`.
+
 ## [2026-08-01] C-Gate ist seit 16 Tagen live, nicht dormant — Ist-Stand vermessen, zwei Bots lesen eingefrorene Tabellen (T-2026-KYT-9050-002)
 
 Auftrag war, die Bereitschaft der dormanten Phase-2/4-Slices zu prüfen und das Mengengerüst
