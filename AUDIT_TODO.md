@@ -156,6 +156,32 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   SHORT-Bein mit positiver Kante existiert** (TSM1 −0,72 bei 107/Tag, EPD3 −0,38 bei
   337/Tag); Ausnahmen nur AIM2 (schon im Roster) und ROM1 (Re-Forwarder,
   Doppelzählung). Das Cap-Problem aus #T60-1 ist über die SHORT-Zufuhr **nicht** lösbar.
+- [x] **#T64-1 ROM1 SHORT in den Roster — NICHT UMGESETZT, wäre wirkungslos
+  (T-2026-KYT-9050-064, 2026-08-01, Operator-Auftrag Michi „nehmen wir den ROM1 short").**
+  Zwei Messungen, zwei unabhängige Gründe:
+  1. **ROM1 re-forwarded mit exakt 3 h Versatz.** Alter bei Insert: p10 = 10 798 s,
+     Median = 10 799 s, p90 = 10 800 s — ein hartes Band, die Regel von Bot 28, kein
+     Streuwert (AIM2 SHORT zum Vergleich: Median 0 s). **Von 87 Signalen liegt genau
+     eines unter der 240-s-Grenze** → 99 % würden als `PREEXISTING` verworfen. Die
+     Roster-Zeile wäre inert; das Fenster hat ROM1 nicht „zufällig" gefiltert, sondern
+     strukturell.
+  2. **Das gemessene Residuum +0,86 gilt nicht für den Arm.** Es wurde über das Fenster
+     `open_time → close_time` gerechnet, also den Trade wie das ORIGINAL-Bein ihn
+     erlebte. Ein Spiegel, der 3 h später zum Markt einsteigt (Market-Entry,
+     Operator-Entscheid 27.07.), handelt eine andere Bewegung — der Großteil hat
+     stattgefunden. Die Kante ist für ihn nicht erreichbar.
+  **Entkräftet dagegen:** der ursprüngliche Doppelzählungs-Einwand trägt im Live-Betrieb
+  kaum — nur **17 %** der ROM1-SHORT-Signale träfen ein bereits gespiegeltes Symbol
+  (`SYMBOL_HELD`), 83 % wären echter Neuzugang. Der Ausschluss bleibt trotzdem richtig,
+  nur aus dem anderen Grund.
+  **Was es bräuchte:** entweder das Fenster für ROM1 über 3 h öffnen — genau die
+  Verschalung, gegen die es existiert (T-042: von 24 Spiegeln füllten 5, bei 15 der 18
+  Stornos berührte der Markt den Entry nie) — oder Bot 28 seine eigene `open_time`
+  stempeln lassen, was ROM1s Semantik und Auswertung ändert.
+- [ ] **#T64-2 ROM1-Kante ab `inserted_at` neu messen (offen, vor jeder Fenster-Debatte).**
+  Die Zahl, die der Arm tatsächlich bekäme: Residuum über das Fenster ab Weiterleitung
+  statt ab Original-Entry. Überlebt der Vorteil den 3-h-Versatz nicht, ist die
+  ROM1-Frage endgültig erledigt und eine riskante Fenster-Änderung gespart.
 - [ ] **#T60-3 Fenster 240 → 300 s — NACH #T60-2, als Qualitäts- nicht Mengenmaßnahme.**
   Solange der Cap bindet, verschiebt ein weiteres Fenster Ablehnungen nur von `PREEXISTING`
   nach `EXPOSURE_CAP`. Wert liegt woanders: `admit()` sortiert nach Bein-Dichte, 300 s gibt
@@ -549,3 +575,24 @@ Vollständige Einzel-Findings mit Evidence/Snippets liegen unter
 `audit_reports/01_core_infra.md … 12_cross_cutting.md`
 (01 Core, 02 Datenpipeline, 03 Telegram/Monitore, 04 Orchestrator/Regime, 05 Classic-Strats, 06 AI 9/11/12/13, 07 AI 14/15/18, 08 SMC-Bots, 09 Market-Intelligence, 10 Dashboard/Tools, 11 ML-Trainer/Backtests, 12 Cross-Cutting).
 Dazu: 13 ML-Trainer-Audit (`Documents\_X`), 14 Live-Performance aus der DB, 15 Strategie-Vorschläge, 16 Strategie-/Modell-Konzeptbewertung (Noten A–F + Portfolio-Empfehlungen), 16b Regime-Orchestrator-Gesamtanalyse, 17 Monitor-Replay & Lücken-Check, 18 DB-Architektur/Performance/Berechnungs-Konsistenz (TimescaleDB, Indexe, ATR/RSI/Win-Varianten), STEP2_DB_VERIFICATION (Live-Beweise).
+
+- [ ] **#T65-1 ROM1 gated auf TREFFERQUOTE statt Ertrag — misst bei 32 % der Beine falsch
+  (T-2026-KYT-9050-065, 2026-08-01).** `27_bot_regime_analyzer.py:789` entscheidet
+  `wr_bot >= wr_overall`; Trefferquote ignoriert die Gewinn/Verlust-Größenverhältnisse.
+  Gemessen über 57 Beine (Fenster 02.07.–01.08., Gebühren + Funding realistisch):
+  **18 Widersprüche.** Durchgelassen und verlustig: ATS2 LONG (WR 45,2 %, −0,903/Trade —
+  zugleich der größte Roster-Verlierer mit −23 162), ROM1 SHORT selbst (45,9 %, −0,174),
+  EPD3 LONG (43,0 %, −0,392), SRA1 LONG, FIF1 beide Richtungen. Blockiert und profitabel:
+  MIS2-168H LONG (WR 32,8 %, +0,002). Fix wäre ein Gate auf Netto-Erwartungswert nach
+  Gebühren statt WR — Geld-wirksam, Operator-Entscheid.
+- [ ] **#T65-2 ROM1 sieht Shadow-Beine strukturell nicht.** Er scannt `telegram_outbox`
+  (`28_signal_orchestrator.py:731`); ein Shadow-Bein schreibt per Konstruktion KEINE
+  Outbox-Zeile, nur `ai_signals`. Die Annahme „ROM1 kann Shadow-Bots nutzen, wenn das
+  Regime passt" (Operator) trifft auf den heutigen Code nicht zu — das wäre ein Umbau
+  der Quelle, kein Schalter.
+- [ ] **#T65-3 ROM1: 1 059 unidentifizierte Signale in 7 Tagen (~9 %).**
+  `orchestrator_suppressed_signals.reason='bot_unidentified'`, `bot_name=NULL`.
+  `identify_bot` nutzt Regex auf dem Nachrichtentext plus Kanal-Fallback; geänderte
+  Formate oder Kanäle fallen durch. Durchlassquote gesamt 28 % (3 393 von 11 906).
+  Whitelist selbst ist frisch (täglich, 30-Tage-Fenster) — die Daten sind aktuell, die
+  Kennzahl ist das Problem (#T65-1).
