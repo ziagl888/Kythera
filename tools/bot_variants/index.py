@@ -192,6 +192,20 @@ _PROVENANCE_TAG: dict[str, str] = {
 }
 
 
+def legacy_artifact_slots() -> dict[str, dict[str, list[str]]]:
+    """Öffentliche Sicht auf die kuratierte Legacy-/Live-Registry (Tag → Richtung
+    → Root-Dateiname(n)).
+
+    Zweite Konsumentin neben dem Index selbst: ``tools/promotion_guard.py``
+    braucht genau diese Tag↔Dateiname-Brücke, um zu erkennen, ob ein Challenger-
+    Artefakt bei der Promotion in den Repo-Root den Loader-Slot eines FREMDEN
+    Tags kapern würde (T-2026-KYT-9050-057). Bewusst ein Accessor statt eines
+    zweiten kuratierten Dicts — eine Quelle, die schon im Index getestet ist.
+    Kopie, damit ein Aufrufer die Registry nicht mutieren kann.
+    """
+    return {tag: {d: list(files) for d, files in dirs.items()} for tag, dirs in _LEGACY_ARTIFACTS.items()}
+
+
 def _md5(path: str) -> str:
     h = hashlib.md5()  # noqa: S324 — Integritäts-/Identitäts-Hash, nicht kryptografisch
     with open(path, "rb") as fh:

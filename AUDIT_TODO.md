@@ -8,6 +8,52 @@
 
 **Legende:** `[ ]` offen · Schweregrad **P0** (geld-kritisch, sofort) → **P3** (Kosmetik). `[DB]` = in Step 2 verifizieren. Datei:Zeile ist anklickbar.
 
+**Challenger-Promotion-Hygiene T-2026-KYT-9050-057 (Namensguard + EPD3-`model_id`).** Zwei
+Follow-ups aus dem z-code-reviewer-Verdikt zu T-185 (PR #170).
+- [x] **#T57-1 Namensguard gebaut** (`tools/promotion_guard.py`, PR dieses Tasks). Ein Challenger-Tag,
+  dessen `SHADOW_ARTIFACTS`-Dateiname zugleich der Root-Loader-Slot einer fremden Generation ist,
+  postet nach der Promotion unter ZWEI Tags (harte Regel 4 — bei EPD3-SHORT am 2026-07-21 beinahe
+  passiert, damals per Hand-Rename abgewendet). LIVE-Bein auf fremdem Slot = FAIL, geparktes Bein =
+  WARN. Hängt als pre-commit-Hook, als Check 8 in `tools/verify_staging_artifacts.py` und als CLI.
+  `core/shadow_gate.py` bewusst unverändert (harte Regel 7).
+- [ ] **#T57-2 RUB3-LONG umbenennen — beim Promoten, nicht vorher.** `SHADOW_ARTIFACTS["RUB3"]["LONG"]`
+  zeigt weiter auf `rub2_model_LONG.pkl` (Guard: WARN). Harmlos, solange RUB3 per T-037 auf SHADOW
+  geparkt ist; vor einem RUB3-Go-Live muss das Artefakt `rub3_model_LONG.pkl` heissen (Artefakt +
+  Register in einem Zug). Der Guard blockt den Flip ohne Rename.
+- [x] **#T57-3 EPD3-SHORT-Artefakt `model_id='EPD2'` (harte Regel 6) — Staging-Fassung liegt korrekt
+  getaggt bereit; offen ist nur noch der Root-Promote (Michi).** `staging_models/epd3_model_SHORT.pkl`
+  trägt jetzt `meta.model_id='EPD3'`, erzeugt mit `tools/retag_artifact.py` unter der Fleet-Python
+  3.13. Gepinnt in `backtest/test_epd3_artifact_model_id.py`: das Artefakt lädt über
+  `core.model_artifacts` als Tag `EPD3`, und jedes andere Feld ist mit dem promoteten Root-Artefakt
+  identisch (Feature-Liste, Threshold, `predict_proba` auf fixer Probe-Matrix, Kalibrator-Kurve,
+  übrige Meta). **Korrektur einer früheren Aussage in diesem Punkt:** die Behauptung, ein Neu-Dumpen
+  sei ein verlustbehafteter Cross-Version-Round-Trip, war für dieses Artefakt falsch und hat die
+  Messung vertauscht. `py -3.13` hat sklearn **1.7.1**, `py -3.14` hat **1.9.0** — und
+  `epd3_model_SHORT.pkl` ist eingebettet mit **1.7.1** gepickelt, lädt unter 3.13 also warnungsfrei.
+  Der Re-Dump dort ist ein Same-Version-Round-Trip. Was wirklich mit 1.9.0 gepickelt ist, ist das
+  **LONG**-Artefakt (s. #T57-5).
+- [ ] **#T57-5 EPD3-LONG trägt denselben Tag-Defekt, ist aber nicht re-dumpbar (neu, 2026-08-01).**
+  `epd3_model_LONG.pkl` (Root + Staging) trägt ebenfalls `meta.model_id='EPD2'`, wurde aber im
+  3.14-Env mit sklearn **1.9.0** gepickelt; unter der Fleet-Python 3.13 (1.7.1) lädt es mit
+  `InconsistentVersionWarning` auf dem `IsotonicRegression`. `tools/retag_artifact.py` verweigert das
+  Artefakt deshalb — ein Re-Dump wäre dort ein echter Formatwechsel des Kalibrators. Live folgenlos:
+  Bot 10 lädt EPD3 über `shadow_gate.load_shadow_artifact`, das auf `{model, features, threshold}`
+  normalisiert — der Kalibrator wird gar nicht gelesen (und predicted unter 1.7.1 nachgemessen
+  korrekt, nur eben mit Warnung). Fix = Re-Dump unter dem 3.14-Interpreter **oder** ein Retrain;
+  beides ausserhalb dieses Tasks.
+- [ ] **#T57-6 `verify_staging_artifacts.py` sieht die EPD3-Dateien nicht (neu, 2026-08-01).**
+  `build_registry()` globt für die EPD-Familie nur `epd2_model_*.pkl`; `epd3_model_*.pkl` wird vom
+  CLI-Lauf still übersprungen — der Tag-Check (HR-6), wegen dem #T57-3 überhaupt gefixt wurde, läuft
+  über diese Dateien also gar nicht. `test_epd3_artifact_model_id.py` fährt den Contract deshalb
+  direkt über `verify_artifact()` mit einer EPD3-Spec. Die Registry-Erweiterung ist bewusst NICHT in
+  diesem PR: sie zieht `epd3_model_LONG.pkl` mit herein, das nach #T57-5 hier nicht reparierbar ist,
+  und würde einen FAIL erzeugen, den dieser PR nicht schliessen kann.
+- [ ] **#T57-4 `test_bot_variant_archive.py::test_manifest_carries_feature_contract` rot —
+  VORBESTEHEND**, verifiziert 2026-08-01 gegen den unveränderten `index.py`. Ursache: ATS2 wurde ohne
+  seine `*_meta.json`-Sidecars nach Root promotet → `_read_meta` findet dort kein Sidecar, der Test
+  läuft in `StopIteration`. Fix = Sidecars mit-promoten (Operator) oder den Test auf die
+  Artefakt-Realität ziehen. Nicht in diesem PR (kein Guard grün drehen, den man nicht ausgelöst hat).
+
 **Fleet-Reconfig T-2026-KYT-9050-037 (RUB1-Revive + Gate-Flips + Retires, aus `bot_results.xlsx`).** PR-Kern gemergt: Bot 13 zurück auf die Original-RUB1-Legacy-Modelle (beide Richtungen live unter Tag `RUB1`, RUB2-Retrain gebencht → SHADOW), RUB3-SHORT → SHADOW, AIM2-TOPN + ATS1_Robust → RETIRED im Register. **Offene Follow-ups (nicht in diesem PR):**
 - [x] **#3 ATB2-LONG — LIVE deployed per Operator-Override** (Code-PR, pending Michi Root-Promote + Restart). War BLOCKIERT (`optimal_threshold=None`, nicht im Root). Read-only-Diagnose: nur **n=17** Shadow-Trades → statistisch unentscheidbar, kein Daten-Operating-Point. Michi-Entscheid „gemäß Anforderung deployen": Threshold **blind 0,60** (ATB1s 0,80 ist inkompatibles Modell), `("ATB2","LONG"): LIVE`, **Bot-14-Rewire** `_emit_atb2_shadow`→`_emit_atb2` (gated Router + has_open-Guard, war shadow-only → hätte LIVE still geschluckt), Artefakt `staging_models/atb2_model_LONG.pkl` @0,60. **Offen (Michi):** Root-Promote `atb2_model_LONG.pkl` + Restart. ⚠ Keine Datenbasis — operator-gewolltes Live-Experiment.
 - [x] **#4 EPD3-LONG — LIVE deployed per Operator-Override** (Code-PR, pending Michi Root-Promote + Restart). War BLOCKIERT (Kollisions-Hazard + `threshold=None`). Read-only-Edge-Analyse (2578 echte Shadow-Trades, T-036-Playbook): mean net **≈0 %**, Confidence **anti-diskriminiert** (corr −0,04) → **kein deploybarer Threshold-Edge**. Michi-Entscheid „gemäß Anforderung deployen": Threshold **0,76** (Volumen-Cap ~258→~130/d, KEIN Edge-Filter), `("EPD3","LONG"): LIVE`, `SHADOW_ARTIFACTS["EPD3"]["LONG"]`→**`epd3_model_LONG.pkl`** (challenger-distinkt, killt die Legacy-EPD2-Kollision analog SHORT/PR #185), Artefakt `staging_models/epd3_model_LONG.pkl` @0,76. Bot 10 routete schon gated → nur Register+Artefakt. **Offen (Michi):** Root-Promote `epd3_model_LONG.pkl` + Restart. ⚠ Live ~0 Edge — operator-gewolltes Volumen-gekapptes Experiment.

@@ -1,3 +1,76 @@
+## [2026-08-01] Challenger-Promotion-Namensguard + EPD3-`model_id`-Re-Dump (T-2026-KYT-9050-057)
+
+Eine Challenger-Promotion war bisher genau zwei Handgriffe: die Register-Zeile in
+`core/shadow_gate.py` von `SHADOW` auf `LIVE` drehen und das Artefakt in den Repo-Root kopieren.
+`shadow_artifact_path` gibt für ein LIVE-Bein den **nackten Root-Dateinamen** zurück — und
+`SHADOW_ARTIFACTS` trägt für Challenger-Tags historisch den Dateinamen der Retrain-*Generation*,
+nicht den des Tags (`"RUB3": {"LONG": "rub2_model_LONG.pkl"}`). Wer so promotet, legt die
+Challenger-Datei in genau den Slot, aus dem der **Legacy-Loader** sein Live-Modell liest: beide
+Tags scoren dasselbe Modell und posten es doppelt (harte Regel 4, echtes Geld). Bei **EPD3-SHORT**
+war das am 2026-07-21 real — `epd2_model_SHORT.pkl` ist Bot 10s `EPD2_ARTIFACT_PATHS["SHORT"]` —
+und wurde von Hand durch den challenger-distinkten Namen `epd3_model_SHORT.pkl` abgewendet; bei
+**EPD3-LONG** (T-037) dieselbe Handarbeit ein zweites Mal.
+
+**Neu: `tools/promotion_guard.py`** — genau diese Handarbeit, automatisiert. Für jedes Bein in
+`SHADOW_ARTIFACTS` prüft der Guard, ob sein Promotions-Ziel challenger-distinkt ist, und nennt
+sonst den fremden Eigentümer plus den Rename-Vorschlag (`RUB3 → rub3_model_LONG.pkl`). Zwei
+unabhängige Belege: der Root-Slot wird von einem fremden Tag beansprucht (harter Beleg — da liest
+wirklich ein anderer Loader), oder der Dateiname trägt nicht den tag-eigenen Präfix (fängt auch
+den Loader, der in keiner Registry steht). Die Tag→Dateiname-Brücke kommt aus
+`tools/bot_variants/index.py` (neuer Accessor `legacy_artifact_slots()`) — eine bereits getestete
+Quelle statt eines zweiten kuratierten Dicts.
+
+**Die Schwere kommt aus dem Lifecycle, nicht aus dem Dateinamen.** Ein **LIVE**-Bein auf einem
+fremden Slot ist FAIL (Exit 1, Promotions-Stopp) — es liest den fremden Root-Namen bereits. Ein
+noch geparktes Bein ist WARN: latenter Blocker, ohne Live-Effekt. Damit ist der Guard heute grün
+und wird genau in dem Moment rot, in dem jemand ohne Rename flippt. Er hängt an drei Stellen:
+als pre-commit-Hook (`kythera-promotion-name-guard`, blockt diesen Commit), als Check 8 in
+`tools/verify_staging_artifacts.py` (Register-Scan am Ende + WARN je Staging-Datei, deren Name
+von >1 Tag beansprucht wird) und als CLI.
+
+`core/shadow_gate.py` bleibt **unverändert** — der Gate wird von Bots *und* Trainer/Replay
+importiert (harte Regel 7); ein geänderter Rückgabewert von `shadow_artifact_path` hätte
+Serving-Verhalten mitverschoben. Der Guard liest das Register, er schreibt nicht hinein.
+
+**Offen und bewusst nicht mit-gefixt:** `RUB3-LONG` zeigt weiter auf `rub2_model_LONG.pkl` (WARN).
+Solange RUB3 per T-037 auf SHADOW geparkt ist, ist der Slot nicht bedroht; das Umbenennen gehört
+in den Promotions-Schritt (Artefakt + Register in einem Zug, Operator-Entscheid), nicht in einen
+Hygiene-PR, der sonst einen Shadow-Ladepfad ohne Not verschiebt.
+
+**Teil 2 (EPD3-Artefakt `model_id`) ist nachgeliefert — und eine Begründung dazu war falsch.**
+Das promotete `epd3_model_SHORT.pkl` trug eingebettet `meta.model_id='EPD2'` (harte Regel 6).
+Wirkungslos ist das live, weil Bot 10 den Tag `EPD3` explizit an der Call-Site übergibt und
+`shadow_gate.load_shadow_artifact` auf `{model, features, threshold}` normalisiert, `model_id`
+also gar nicht liest — aber `core.model_artifacts.build_contract` nimmt den Posting-Tag **nur**
+aus `meta.model_id`, und `tools/verify_staging_artifacts.py` prüft genau dieses Feld.
+
+Eine frühere Fassung dieses Eintrags behauptete, ein Neu-Dumpen sei ein verlustbehafteter
+Cross-Version-Round-Trip, weil der eingebettete `IsotonicRegression` mit scikit-learn 1.9.0
+gepickelt sei und die Fleet-Umgebung 1.7.1 habe. **Das war für dieses Artefakt falsch und hat die
+Messung vertauscht:** `py -3.13` hat sklearn **1.7.1**, `py -3.14` hat **1.9.0**, und
+`epd3_model_SHORT.pkl` trägt eingebettet **1.7.1** — es lädt unter der Fleet-Python 3.13 ohne eine
+einzige Warnung. Der Re-Dump dort ist ein *Same-Version-Round-Trip*, kein Downgrade. Mit 1.9.0
+gepickelt ist das **LONG**-Artefakt (im 3.14-Env, T-037); dort stimmt das Argument, und nur dort.
+Der zweite Teil der alten Begründung — ein echter Retrain braucht DB, Replay-Labels und CPU —
+stimmt, beantwortet aber eine Frage, die der Task nicht stellte: es ging um Re-Serialisierung.
+
+**Neu: `tools/retag_artifact.py`.** Lädt ein Format-A-dict-Artefakt, setzt ausschliesslich
+`meta.model_id` und schreibt nach `staging_models/`. Zwei nicht abschaltbare Guards: das Ziel muss
+in STAGING liegen (harte Regel 2 — der Root-Promote bleibt Michis Entscheidung), und das Artefakt
+muss unter dem laufenden Interpreter *warnungsfrei* laden — meldet sklearn eine
+`InconsistentVersionWarning`, bricht das Tool ab und nennt die Version, unter der der Re-Dump
+sauber wäre. Genau dieser Guard hätte den Denkfehler oben verhindert; an `epd3_model_LONG.pkl`
+greift er und verweigert. Nach dem Schreiben verifiziert das Tool das Ergebnis gegen die Quelle
+(Scores auf fixer Probe-Matrix, Kalibrator-Kurve, Features, Threshold, Meta-Diff) und meldet
+Erfolg nur bei **genau einem** Unterschied.
+
+`staging_models/epd3_model_SHORT.pkl` trägt damit `model_id='EPD3'`, sonst nichts Neues; gepinnt
+in `backtest/test_epd3_artifact_model_id.py` (lädt über `core.model_artifacts` als `EPD3`, alle
+übrigen Felder identisch zum Root-Artefakt, alle mechanischen Checks des Staging-Verifiers grün).
+Das Root-Artefakt ist **unangetastet** — der Promote ist Operator-Entscheid. Zwei ehrliche
+Restposten: `epd3_model_LONG.pkl` hat denselben Tag-Defekt, ist aber wegen der 1.9.0-Serialisierung
+hier nicht re-dumpbar, und `verify_staging_artifacts.py` globt für EPD nur `epd2_model_*.pkl`,
+sieht die EPD3-Dateien im CLI-Lauf also gar nicht (AUDIT_TODO #T57-5/#T57-6).
 ## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
 
 Die Frage aus T-042 Phase C: liegt der Live-Umschlag systematisch über dem simulierten? Falls ja,
