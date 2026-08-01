@@ -119,6 +119,34 @@ und schließt sie dort per Trailing (act 2 %, x 10 %). Offene, bewusst Operator-
   −172,0 vorhandene + −387,3 nachgetragene), keine als Gewinn gebucht, die Ablehnungs-Zeilen
   (`PREEXISTING`/`SHADOW_CARRYOVER`/`ENTRY_NOT_FILLED`) unangetastet NULL. Eine Summe über
   `close_mark_pct` liest damit nicht mehr Faktor 3 zu optimistisch.
+- [x] **#T47-1 Live-Umschlag gegen die Studie gemessen — WIDERLEGT (T-2026-KYT-9050-047,
+  2026-08-01).** Der Live-Umschlag liegt **nicht** systematisch über dem simulierten.
+  Haltedauer live Median 6,00 h (nur geschlossene) bzw. **[6,71; 7,40] h** mit den 96 offenen
+  als rechts-zensiert, gegen **6,59 h** aus derselben Studie, mix-gematcht auf die
+  Live-Bein-Anzahlen (die 4,6 h der Kopfzeile sind ein Median **über Beine**, nicht über
+  Trades). Bei den fünf größten Beinen — 65 % des Buchs — hält der Arm **länger** als die
+  Simulation. Umschlag pro belegtem Slot-Tag: live 1,405 gegen 1,291 (Aggregat) bzw. 1,146
+  (mix-gematcht) → **1,09–1,23×**, Gebühr entsprechend 0,141 % gegen 0,129 % pro Slot-Tag.
+  Neu: `tools/trailing_live_vs_study.py` + 17 DB-freie Pins,
+  `docs/T-2026-KYT-9050-047-live-vs-study-report.md`.
+- [x] **#T47-2 Der Auslöser war ein Bootstrap-Artefakt, und die Slot-Rechnung war zu
+  PESSIMISTISCH.** Die „~80 Trail-Feuer/h bei ~460 offenen Positionen" sind 80 Feuer in
+  **1,2 h am 26.07. 19–20 UTC** — der erste Shadow-Zyklus, dessen Spiegel einen Peak über der
+  Aktivierungsschwelle erbten und sofort feuerten. Live: **4,0/h**, geschäftigste Stunde 21.
+  Belegung live Ø 126 / p95 221 / max 291, eingeschwungen (48 h) **Ø 106**, gegen
+  roster-gematchte **251,6** (die Ø 284,6 der Studie enthalten die inzwischen ausgeschlossenen
+  ROM1-Beine mit 33 Sitzen; mittlere Belegung ist exakt additiv). Ursache der Lücke ist der
+  **Zulauf** (195/Tag live gegen 365/Tag simuliert = 53 %) — vier Zulassungsfilter, die die
+  Simulation nicht hatte —, nicht der Umschlag. Der Cornix-Deckel 500 war nie in Reichweite.
+- [x] **#T47-3 Auflösungs-Effekt 15m-Kerze vs. 10s-Poll beziffert: ~20 Minuten.** Die
+  importierte Studien-Regel auf **denselben** Live-Spiegeln nachgespielt (act 2 %, x 10 %,
+  strikt vorheriger Peak): bei den eigenen Exits des Arms (n=586) landet der 15m-Exit
+  **Median +0,33 h, p95 +0,63 h** nach dem Live-Exit; in **10 %** feuert das 15m-Raster sogar
+  **früher** (Docht, den der 10s-Poll nie druckte), in 17 % in derselben Kerze. Slot-Kosten des
+  feineren Rasters: **≤ 33,1 Slot-Tage = +4,7 %** (Untergrenze, 325 zensierte nicht gezählt).
+  Preisunterschied bei gleicher Kerze: **+0,02 %-Punkte/Trade**. Real, aber kein verschobener
+  Betriebspunkt. **Empfehlung: `act = 2 %` beibehalten** — und `act` zu SENKEN würde die freie
+  Kapazität nicht nutzen, sondern vergrößern (kürzere Haltedauer → weniger Belegung).
 - [ ] **#T52-3 Operator-Entscheid Exit-Regel Bot 40 (Michi) — AKTUALISIERT 2026-07-28.** Nach
   Live-Bestätigung der Entmischung (sauberes Fenster in ~9 h auf 95 % unter Wasser; Bot auf
   Operator-Auftrag 05:29 geparkt, 05:43 entparkt) und Lauf 3 (23 Regeln, inkl. x-Sweep,

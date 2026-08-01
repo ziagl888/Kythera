@@ -1,3 +1,65 @@
+## [2026-08-01] Live-Umschlag von Bot 40 gegen die Studie gemessen (T-2026-KYT-9050-047)
+
+Die Frage aus T-042 Phase C: liegt der Live-Umschlag systematisch über dem simulierten? Falls ja,
+wäre die Slot-Rechnung der PR-#198-Studie (Ø 285 / p95 498) zu optimistisch **und** die
+Gebührenlast höher als die 0,10 % Taker-Round-Trip, mit denen die 49 204 % gerechnet wurden.
+
+**Antwort: nein — und der Auslöser der Frage war ein Bootstrap-Artefakt.** Die „~80 Trail-Feuer
+pro Stunde bei ~460 offenen Positionen" sind exakt 80 Feuer in **1,2 Stunden am 26.07. zwischen
+19 und 20 UTC**: der erste Shadow-Zyklus spiegelte ein bereits laufendes Buch auf einmal, diese
+Spiegel erbten einen Peak über der Aktivierungsschwelle und feuerten beim ersten Poll. Im
+Live-Betrieb sind es **4,0 Feuer pro Stunde**, geschäftigste Einzelstunde 21.
+
+**Haltedauer live eher LÄNGER als simuliert.** Median 6,00 h über die 999 geschlossenen
+Live-Positionen, mit den 96 offenen als rechts-zensiert **[6,71; 7,40] h** — gegen **6,59 h** aus
+derselben Studie, mix-gematcht auf die Live-Bein-Anzahlen. Die 4,6 h der Studien-Kopfzeile sind
+ein Median **über Beine**, kein Median über Trades: dort zählt MIS2-168h SHORT (3 Live-Spiegel)
+so viel wie MIS1-72h LONG (370). Bei den fünf größten Beinen — 65 % des Buchs — hält der Arm
+1,24× bis 1,64× länger als die Simulation. Beide Messverzerrungen laufen dabei in Richtung „live
+ist schneller" (Zensierung nach 5,6 Tagen; der 24-h-Zeit-Stop, den die Studie nicht kennt), und
+das Ergebnis fällt trotzdem andersherum aus.
+
+**Die Slot-Rechnung war zu pessimistisch, nicht zu optimistisch.** Belegung live Ø 126 · p95 221 ·
+max 291, eingeschwungen über die letzten 48 h **Ø 106** — gegen eine roster-gematchte Erwartung
+von **251,6** (die Ø 284,6 der Studie enthalten die inzwischen als Re-Forwarder ausgeschlossenen
+ROM1-Beine mit 33 Sitzen; mittlere Belegung ist eine Summe von Indikatorfunktionen und damit exakt
+additiv, p95 nicht). Der Cornix-Deckel von 500 war nie in Reichweite. Ursache der Lücke ist der
+**Zulauf** — 195 Positionen/Tag live gegen 365 simulierte —, nicht der Umschlag: der Live-Bot hat
+vier Zulassungsfilter, die die Simulation nicht hatte (ein Spiegel je Symbol, 240-s-Frische,
+Symbol-Cooldown, Exposure-Cap), plus den ROM1-Ausschluss und Beine, die zwischenzeitlich nicht
+LIVE sind — EPD1 SHORT, das zweitgrößte Bein der Studie, hat kein einziges Mal gespiegelt.
+
+**Umschlag pro belegtem Slot-Tag — das mix-robuste Maß und die Einheit, in der die Gebühr
+anfällt:** live 1,405 gegen 1,291 (Studien-Aggregat) bzw. 1,146 (mix-gematcht) = **1,09–1,23×**.
+Gebühr entsprechend **0,141 % gegen 0,129 % je Slot-Tag**. Der Anteil unter Gebühr liegt bei 38 %
+gegen erwartete 25 %, kommt aber vollständig aus `SOURCE_CLOSED` (77 %) und `SL_HIT` (100 %) —
+also aus dem Tape, nicht aus der Umschlaghäufigkeit; `TRAIL` liegt bei 0 %, was Konstruktion ist
+(ein bewaffneter Trail schließt frühestens bei 0,9 × 2,0 % = 1,8 %).
+
+**Der Auflösungs-Verdacht ist real und beziffert: rund 20 Minuten.** Die Studie wertet auf
+15m-Kerzen-Extremen mit strikt vorherigem Peak aus, der Bot auf 10s-Preisen. Statt das zu
+behaupten, spielt das neue Werkzeug die **importierte** Studien-Regel (Regel 7, keine
+Zweitimplementierung) auf **denselben** Live-Spiegeln nach: bei den eigenen Exits des Arms
+(n = 586) landet der 15m-Exit **Median +0,33 h, p95 +0,63 h** nach dem Live-Exit, in **10 %** der
+Fälle sogar **früher** (ein Docht, den der 10s-Poll nie druckte), in 17 % in derselben Kerze.
+Slot-Kosten des feineren Rasters: **≤ 33,1 Slot-Tage = +4,7 %** (Untergrenze — 325 zensierte
+Fälle sind nicht mitgezählt). Preisunterschied bei gleicher Kerze: **+0,02 %-Punkte je Trade**.
+
+**Neu: `tools/trailing_live_vs_study.py`** (read-only, baut auf `trailing_arm_report.py` und
+`trailing_slot_budget.py` auf) + 17 DB-freie Pins in `backtest/test_trailing_live_vs_study.py`,
+Report unter `docs/T-2026-KYT-9050-047-live-vs-study-report.md`. Zwei Fehlschlüsse sind darin
+festgeschrieben, weil die erste Fassung der Auswertung beide gemacht hat: der Median nur über
+geschlossene Zeilen meldet den Arm schneller, als er ist (deshalb das Zensierungs-Intervall), und
+ein Nachspiel, das nur bis zum Live-Exit reicht, schiebt 88 % der Arm-Exits in ein „die Studie
+hätte gehalten" — der Trigger sitzt fast immer in genau der Kerze, die ein bündiges Fenster
+ausschließt. Deshalb ist `same-bar` ein eigener, benannter Ausgang.
+
+**Empfehlung an den Operator (#T52-3): `act = 2 %` beibehalten.** Die Hypothese, die eine Änderung
+motiviert hätte, ist widerlegt; der einzige gemessene Abweichungspfad kostet ≤ 5 % Slot-Tage. Und
+für die Richtung einer späteren Änderung: `act` zu **senken** würde die freie Kapazität nicht
+nutzen, sondern vergrößern (kürzere Haltedauer → weniger Belegung). Die leere Hälfte des Channels
+ist ein Zulauf-Thema, und der Engpass ist ohnehin nicht Kapazität, sondern Ertrag — das Live-Buch
+steht bei −906 %-Punkten netto, Ursache Tape (T-054), kein Bein-Defekt.
 ## [2026-08-01] Zulauf-Analyse Bot 40: der Engpass ist der Exposure-Cap, nicht das Fenster (T-2026-KYT-9050-060)
 
 Operator-Auftrag: die Trade-Zahl soll steigen, aber **nichts wird geändert, bevor eine
