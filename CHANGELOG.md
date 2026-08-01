@@ -1,3 +1,44 @@
+## [2026-08-01] K2-Studien-Maschinerie: marktneutraler Frame + tape-kausaler Stufe-2-Entry (T-2026-KYT-9050-013)
+
+Die zwei im K2-Review (T-2026-CU-9050-143, PR #133) gefundenen und dort als bekannte Limitationen
+dokumentierten Maschinen-Defekte in `tools/xs_momentum_study.py` sind behoben. **Das Verdikt der
+Studie ändert sich nicht** — es bleibt `weak/inconsistent-spread (not deployable)`: es ruht auf den
+`absolute`-Zellen, deren Bewertung unangetastet ist (geschlossene-Form-Test pinnt das). Repariert ist
+die Messmaschine, nicht das Ergebnis. Kein Bot, kein Gate, kein Artefakt berührt.
+
+**(1) Der `market_neutral`-Frame war ein No-op.** Der Beta-Abzug lag auf dem SIGNAL
+(`sig = sig_abs − btc_sig`) — ein Per-Rebalance-**Skalar**-Shift, also argsort-invariant — während die
+PnL absolute Coin-Returns benutzte. Ergebnis: alle 60 `market_neutral`-Zellen waren byte-identisch zu
+ihrem `absolute`-Zwilling; Beta wurde nie entfernt (im eingecheckten Voll-Lauf-Artefakt nachgezählt:
+60/60, und synthetisch reproduziert, bevor gefixt wurde). Der Adjust sitzt jetzt auf den **Returns**
+(`fwd − (btc_H/btc_0 − 1)` über dasselbe Halte-Fenster, K5-Konvention) — genau das, was Spec §K2
+Punkt 2 immer schon forderte („marktneutral (Coin-Return minus BTC-Return)"). Die Signal-Subtraktion
+bleibt als Vorbedingung („BTC-Signal muss existieren") stehen, jetzt aber als solche kommentiert. Da
+beide Frames identisch ranken, ändert der Fix nur die **Bewertung**, nie die Auswahl; der
+Top-minus-Bottom-Spread ist beta-invariant und bleibt zwischen den Frames gleich. Kostenbasis bewusst
+identisch zu `absolute` (ein Round-Trip), damit die Frames zellenweise vergleichbar bleiben — Fee und
+Funding des BTC-Hedge-Beins sind NICHT modelliert und im Report als solches ausgewiesen.
+
+**(2) Der Stufe-2-Entry lag ~1 Tages-Balken zu früh (Look-ahead).** `load_1d` floored `open_time` auf
+`'D'`, also ist `dates[t]` der Tages-**Open**; das Ranking-Signal ist aber `close[t]`. Der Entry am
+ersten 1h-Close ab `dates[t]` handelte damit ~23 h, bevor das Signal überhaupt beobachtbar war (die
+Entry-Kerze öffnete volle 24 h zu früh — im Test gemessen). Anker jetzt `dates[t] + 86400`: erster
+1h-Close ab dem Tages-Close. Betroffen war nur die konfirmatorische Stufe 2, nie das Stufe-1-Verdikt.
+Dieselbe Falle wie in T-052 (be-Familie, 59k→7k nach Korrektur): Bedingungen tape-kausal pinnen.
+
+**Stale-Schutz statt stiller Neu-Beschriftung:** `STUDY_SEMANTICS_VERSION` (jetzt 2) wandert in die
+Report-Meta. Ein Report, der aus einem Lauf mit älterer Semantik gerendert wird, trägt einen
+**STALE-Banner** mit beiden Defekten statt zu behaupten, er sei nach der neuen Rechnung entstanden.
+Genau das gilt für das eingecheckte Voll-Lauf-Artefakt (527 Coins, 2026-07-17): es via `--reverdict`
+DB-frei neu gerendert (Zellen/Stufe 2/Verdikt byte-identisch, nur Text) — seine `market_neutral`- und
+Stufe-2-Zahlen bleiben Pre-Fix. **Ein Voll-Lauf unter v2 ist ein offener Folge-Schritt**
+(DB-schwer ⇒ Ein-Job-Slot auf dem VPS, in dieser Session bewusst nicht gefahren).
+
+Neue DB-freie Tests `backtest/test_xs_momentum_study.py` (9): beide Defekte wurden damit ZUERST
+reproduziert (60/60 identisch bzw. 24 h Entry-Vorlauf), dann gefixt. Sie pinnen zusätzlich, dass der
+`absolute`-Frame unverändert bleibt (Signal-Vertrag von Bot 39, Zelle F84|raw|absolute), dass Auswahl
+und Spread frame-invariant sind, und die Resume-Semantik der Stufe 2.
+
 ## [2026-08-01] Research-Bots 30/31/32: Entry-Anker auf get_live_price (T-2026-KYT-9050-011)
 
 Der offene Follow-up aus Block 5 der R1-Migration (T-2026-CU-9050-112) ist geschlossen. Seit
