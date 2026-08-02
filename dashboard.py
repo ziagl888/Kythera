@@ -7,6 +7,7 @@ Opens on http://localhost:5000
 from __future__ import annotations
 
 import json
+import os
 import queue as queue_module
 import sys
 import threading
@@ -27,6 +28,20 @@ from core.process_control import is_parked, park, request_restart, unpark
 BASE_DIR = Path(__file__).parent
 LOG_DIR = BASE_DIR / "logs"
 PORT = 5000
+
+# P0.8 / audit item B4-Z2 (T-2026-KYT-9050-009): the bind address is an
+# OPERATOR knob, not a constant. The default stays the historical "0.0.0.0" on
+# purpose — narrowing it here would silently cut off remote access at the next
+# fleet restart, and that is Michi's call, not a PR's.
+#
+# Measured on the live VPS 2026-08-02: port 5000 answers from the public
+# internet (ESTABLISHED session from a foreign address at measurement time) and
+# is scanned daily — logs/dashboard.log shows "GET / HTTP/1.1" 200 to
+# 66.132.172.102, plus probes like "GET /v404/exec?jwt=..." from 34.79.154.21 —
+# while /api/system/stop_all and the per-process stop/start endpoints carry NO
+# authentication whatsoever. Until the Cloudflare tunnel (audit item Z2) exists,
+# `DASHBOARD_BIND_HOST=127.0.0.1` in .env is the one-flip mitigation.
+BIND_HOST = os.getenv("DASHBOARD_BIND_HOST", "0.0.0.0")
 
 # Prozessliste — zentral in core/fleet.py definiert (Single Source, geteilt mit
 # main_watchdog.py; T-2026-CU-9050-091, R2(a)). Das Dashboard nutzt name/script/
@@ -1123,4 +1138,12 @@ if __name__ == "__main__":
         print(f"[OK] Bot Dashboard laeuft auf  http://localhost:{PORT}")
         print(f"[DIR] Basis-Verzeichnis: {BASE_DIR}")
         print(f"[LOG] Log-Verzeichnis:   {LOG_DIR}")
-    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
+    # Make the exposure legible at every start instead of only in an audit:
+    # the unauthenticated control endpoints are only as safe as this address.
+    if BIND_HOST not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            f"[WARN] Dashboard bindet auf {BIND_HOST}:{PORT} — /api/system/stop_all ist "
+            f"ohne Auth erreichbar. DASHBOARD_BIND_HOST=127.0.0.1 setzen, sobald der "
+            f"Cloudflare-Tunnel steht (Audit Z2/P0.8)."
+        )
+    app.run(host=BIND_HOST, port=PORT, debug=False, threaded=True)

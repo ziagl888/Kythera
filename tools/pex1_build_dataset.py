@@ -35,8 +35,8 @@ import pandas as pd
 # (Henne-Ei; Spec-Review-Fix 2026-07-06, Muster tools/aim2_build_dataset.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.time import legacy_naive_to_utc  # noqa: E402
 from tools.research_dataset_common import (  # noqa: E402
-    LOCAL_TZ,
     MIN_WINDOW,
     REPLAY_DIR,
     WINDOW_CANDLES,
@@ -76,9 +76,16 @@ def detect_offset_h(conn) -> int:
 def spike_time_to_utc(series: pd.Series, offset_h: int) -> pd.Series:
     """spike_time → naive UTC. Ein konstanter Offset über Monate wäre DST-blind
     (Review-Fix 2026-07-06: Pre-DST-Events würden 1h verschoben → Kerze VOR dem
-    Event im Label). Offset 2/3h ⇒ Domäne ist die PG-Lokalzeit Europe/Bucharest
-    → DST-aware konvertieren; 0 ⇒ bereits UTC; alles andere: konstanter Shift
-    mit Warnung (unbekannte Domäne)."""
+    Event im Label). Offset 2/3h ⇒ Domäne ist die Legacy-Writer-TZ
+    (Europe/Bucharest) → DST-aware konvertieren; 0 ⇒ bereits UTC; alles andere:
+    konstanter Shift mit Warnung (unbekannte Domäne).
+
+    Live-Ist (read-only vermessen 2026-08-01, T-2026-KYT-9050-005):
+    ``pump_dump_events.spike_time`` ist ``timestamp WITH time zone`` — der
+    aware-Zweig unten greift, die Offset-Heuristik ist heute schon tot Code für
+    diese Tabelle und misst nach dem R3-Flip ohnehin 0. Der naive Zweig bleibt
+    als Fallback für ältere Dumps; er geht durch dieselbe zentrale Lesart wie
+    alle anderen Legacy-Spalten (core.time, docs/UTC_POLICY.md §6)."""
     # Awareness am ROHWERT prüfen, nicht an der geparsten Spalte: timestamptz
     # über eine DST-Grenze (z. B. 2026-03-29 EET→EEST) liefert GEMISCHTE
     # Offsets (+02/+03). pd.to_datetime ohne utc=True fixiert dann den Offset
@@ -93,8 +100,10 @@ def spike_time_to_utc(series: pd.Series, offset_h: int) -> pd.Series:
     if offset_h == 0:
         return s
     if offset_h in (2, 3):
-        s = s.dt.tz_localize(LOCAL_TZ, nonexistent="shift_forward", ambiguous="NaT")
-        return s.dt.tz_convert("UTC").dt.tz_localize(None)
+        # Domäne HIER gemessen (detect_offset_h), nicht angenommen — daher der
+        # einzige sanktionierte assume_legacy-Aufruf; die DST-Rezeptur selbst
+        # liegt zentral in core.time (eine Stelle, nicht sechs).
+        return legacy_naive_to_utc(s, assume_legacy=True)
     log(f"WARNUNG: spike_time-Offset {offset_h:+d}h passt zu keiner bekannten TZ-Domäne — "
         f"konstanter Shift (DST-blind).")
     return s - pd.Timedelta(hours=offset_h)

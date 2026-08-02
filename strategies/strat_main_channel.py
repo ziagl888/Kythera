@@ -1,5 +1,11 @@
 from core.candles import read_candles
-from core.market_utils import calculate_obv, find_support_resistance_zones, get_max_leverage, is_trade_already_active
+from core.market_utils import (
+    calculate_obv,
+    find_support_resistance_zones,
+    get_max_leverage,
+    is_trade_already_active,
+    select_zone_targets,
+)
 # strategies/strat_main_channel.py
 import logging
 import pandas as pd
@@ -91,13 +97,14 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
         if RSI_9_HIT > RSI_9_1ST_HIT and RSI_14_HIT > RSI_14_1ST_HIT:
             if calculate_obv(conn, symbol, open_time_1st_hit, open_time_hit) > 0:
 
-                targets = sorted([zone[0] for zone in resistance_zones], key=lambda x: abs(x - entry))[:4]
+                targets = select_zone_targets(resistance_zones, entry, 'LONG')
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
 
-                # FIX P0.7: 0 gefundene Zonen → t1==0 lief ungeguarded in die
-                # Interpolation und erzeugte LONG-TPs UNTER dem Entry (TP1 =
-                # 0.75·Entry). Ohne echte Zonen gibt es kein valides Signal.
+                # FIX P0.7: keine Zone ÜBER dem Entry → t1==0 lief ungeguarded
+                # in die Interpolation und erzeugte LONG-TPs UNTER dem Entry
+                # (TP1 = 0.75·Entry). Ohne Zone auf der Gewinnseite gibt es kein
+                # valides Signal — Seitenfilter in select_zone_targets.
                 if t1 == 0:
                     return None
 
@@ -144,12 +151,13 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
         if RSI_9_HIT < RSI_9_1ST_HIT and RSI_14_HIT < RSI_14_1ST_HIT:
             if calculate_obv(conn, symbol, open_time_1st_hit, open_time_hit) < 0:
 
-                targets = sorted([zone[0] for zone in support_zones], key=lambda x: abs(x - entry))[:4]
+                targets = select_zone_targets(support_zones, entry, 'SHORT')
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
 
-                # FIX P0.7: siehe LONG-Pfad — ohne Zonen kein Signal (SHORT-
-                # Interpolation hätte TPs bei -25/-50/-75% erzeugt).
+                # FIX P0.7: siehe LONG-Pfad — ohne Zone UNTER dem Entry kein
+                # Signal (SHORT-Interpolation hätte TPs über dem Entry bzw. bei
+                # -25/-50/-75% erzeugt).
                 if t1 == 0:
                     return None
 

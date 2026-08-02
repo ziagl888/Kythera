@@ -2,7 +2,6 @@ import warnings
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-import datetime
 import json
 import logging
 import time
@@ -12,6 +11,7 @@ from core.config import TELEGRAM_CHANNELS
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
 from core.market_utils import DetectorCycle, update_cooldown
+from core.time import utc_now_naive
 from strategies.strat_5_percent import analyze_coin as analyze_5_pct
 from strategies.strat_fast_in_out import analyze_coin as analyze_fast
 
@@ -92,7 +92,13 @@ def write_signal_atomic(conn, signal):
     in active_trades_master ist er drin, aber in der Outbox nicht → niemand weiß
     dass er existiert, aber der Trade-Monitor verfolgt ihn trotzdem.
     """
-    now = datetime.datetime.now()  # noqa: DTZ005 — P2.3: naive Server-Lokalzeit, Fix kommt mit dem R3-Pool-Flip (docs/UTC_POLICY.md §5)
+    # P2.3 (R3-Flip, T-2026-KYT-9050-005): war naive Server-Lokalzeit. Beide
+    # Spalten — `time` und `posted` — tragen jetzt naives UTC, dieselbe Domäne,
+    # in die NOW() unter der UTC-Session castet. Genau davon leben die
+    # DB-seitigen Fenster von 33_ai_fif1_bot (fifo_burst_counts, 1h/24h) und
+    # der Classic-Cooldown; ohne diesen Writer-Fix hätte der Pool-Flip sie
+    # gekippt statt repariert.
+    now = utc_now_naive()
     t2, t3, t4 = signal.get('target2', 0), signal.get('target3', 0), signal.get('target4', 0)
 
     msg = f"📈 Signal for {signal['coin']} 📈\n\n🚨 Direction: {signal['direction']}\n🚨 Leverage: {signal['lev']}\n🚨 Margin: Cross\n🏦 CMP Entry: $ {signal['entry']:.8f}\n"

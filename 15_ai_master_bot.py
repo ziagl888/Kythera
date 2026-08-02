@@ -9,8 +9,10 @@ Posting-Flow, aber Modell + Feature-Aufbau sind neu:
     derselbe Builder wie im Trainer (tools/aim2_build_dataset.py). Kein
     Train/Serve-Skew mehr (P0.13-Fehlermodus).
   * Kandidaten/Schwarm NUR posted=true und OHNE AIM1/AIM2 (F6-Selbst-Feedback-Fix).
-  * ml_predictions_master/*_trades_master-Zeiten sind PG-Lokalzeit → UTC-Konvertierung
-    (R07-AIM1-a-Fix); Kerzen-Join strikt auf die letzte GESCHLOSSENE 1h-Kerze.
+  * ml_predictions_master/*_trades_master-Zeiten sind naives UTC (R3-Flip,
+    T-2026-KYT-9050-005 — vorher PG-Lokalzeit, daher der R07-AIM1-a-Fix);
+    Domänen-Umrechnung liegt zentral in core.time. Kerzen-Join strikt auf die
+    letzte GESCHLOSSENE 1h-Kerze.
   * Kalibrierte Wahrscheinlichkeit (Isotonic aus dem Artefakt), Threshold aus dem
     Artefakt (Val-Operating-Point), Parity-Guard gegen totes Vokabular.
   * SHADOW-FIRST: Ohne AIM2_LIVE_POSTING=1 in der Umgebung schreibt der Bot nur
@@ -25,7 +27,6 @@ import os
 import time
 import warnings
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import joblib
 import numpy as np
@@ -54,7 +55,7 @@ from core.database import get_db_connection
 from core.market_utils import get_max_leverage
 from core.prob_floor import load_prob_floor
 from core.signal_post import has_open_ai_signal, post_ai_signal
-from core.time import utc_now_naive
+from core.time import legacy_naive_to_utc, r3_history_mode, utc_now_naive, utc_to_legacy_naive
 from core.trade_utils import calculate_smart_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_MASTER_BOT - %(message)s')
@@ -78,7 +79,6 @@ MODEL_RELOAD_S = 24 * 3600  # R07-AIM1-b: Modell täglich neu laden
 CANDIDATE_WINDOW_MIN = 60  # P2.35: Catch-up nach Downtime; Doppel-Processing hält dedup_key ab
 MAX_JOIN_STALENESS_H = 3
 PARITY_MIN_NONZERO = 0.40  # OOD-Wache (P0.13): zu viele Null-Features → nicht handeln
-LOCAL_TZ = ZoneInfo("Europe/Bucharest")
 
 IND_COLS = MARKET_PRICE_COLS + MARKET_ABS_COLS + ATR_COLS + ["trend_direction"]
 
@@ -121,10 +121,14 @@ def load_model() -> None:
 
 
 def to_utc_naive(series: pd.Series) -> pd.Series:
-    """Naive PG-Lokalzeit (Europe/Bucharest) → naive UTC (vermessen 2026-07-05)."""
-    s = pd.to_datetime(series, errors="coerce")
-    s = s.dt.tz_localize(LOCAL_TZ, nonexistent="shift_forward", ambiguous="NaT")
-    return s.dt.tz_convert("UTC").dt.tz_localize(None)
+    """Signal-Zeiten als naives UTC.
+
+    Bis zum R3-Flip (T-2026-KYT-9050-005) rechnete diese Funktion die
+    PG-Lokalzeit (Europe/Bucharest) heraus — nach dem Flip schreiben die Writer
+    UTC, eine feste Kompensation wäre also eine zweite Verschiebung. Die
+    Entscheidung, wie ALTE Zeilen zu lesen sind, liegt an genau einer Stelle:
+    core.time.R3_CUTOVER_UTC (docs/UTC_POLICY.md §6)."""
+    return legacy_naive_to_utc(series)
 
 
 def df_from_query(conn, query, params=None):
@@ -184,10 +188,12 @@ def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
     Der AIM2-TOPN-Tag wird ebenfalls ausgeschlossen: die Top-N-Zeilen sind
     Meta-Gate-Ausgaben derselben Pipeline, kein Basissignal — sie als Kandidat
     oder in den Schwarm zurückzulassen wäre dieselbe F6-Selbst-Feedback-Schleife
-    wie bei AIM1/AIM2 (T-2026-CU-9050-051)."""
-    since_local = (
-        pd.Timestamp(since_utc_naive).tz_localize("UTC").tz_convert(LOCAL_TZ).tz_localize(None)
-    ).to_pydatetime()
+    wie bei AIM1/AIM2 (T-2026-CU-9050-051).
+
+    Die untere Fenstergrenze geht in der Domäne der Spalte in die SQL (nach dem
+    R3-Flip = UTC, also unverändert). Umgerechnet wird sie nur, wenn eine
+    Cutover-Konstante gesetzt ist — core.time.utc_to_legacy_naive."""
+    since_bound = utc_to_legacy_naive(pd.Timestamp(since_utc_naive).to_pydatetime())
 
     ai = df_from_query(
         conn,
@@ -196,7 +202,7 @@ def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
         FROM ml_predictions_master
         WHERE posted = true AND model_name NOT IN ('AIM1', 'AIM2', %s) AND time > %s
         """,
-        (TOPN_TAG, since_local),
+        (TOPN_TAG, since_bound),
     )
     if not ai.empty:
         ai["source_type"] = "ai"
@@ -210,7 +216,7 @@ def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
         SELECT id, strategy AS source, time, coin, direction, entry, NULL AS confidence
         FROM closed_trades_master WHERE time > %s
         """,
-        (since_local, since_local),
+        (since_bound, since_bound),
     )
     if not conv.empty:
         conv["source_type"] = "conv"
@@ -339,15 +345,13 @@ def count_topn_posts_24h(conn, now_utc_naive) -> int:
 
     Zählt Shadow UND Live (jede Selektion schreibt eine Zeile), damit die
     harte Tages-Kappe im Shadow exakt so greift wie live — der Shadow ist so
-    eine getreue Vorschau. `time` ist PG-Lokalzeit (Bucharest); der Cutoff wird
-    identisch zu load_signal_stream nach lokal konvertiert (R3-Vertrag)."""
-    since_local = (
-        pd.Timestamp(now_utc_naive - pd.Timedelta(hours=24)).tz_localize("UTC").tz_convert(LOCAL_TZ).tz_localize(None)
-    ).to_pydatetime()
+    eine getreue Vorschau. `time` trägt seit dem R3-Flip naives UTC; der Cutoff
+    geht identisch zu load_signal_stream durch utc_to_legacy_naive."""
+    since_bound = utc_to_legacy_naive(pd.Timestamp(now_utc_naive - pd.Timedelta(hours=24)).to_pydatetime())
     df = df_from_query(
         conn,
         "SELECT count(*) AS n FROM ml_predictions_master WHERE model_name = %s AND time > %s",
-        (TOPN_TAG, since_local),
+        (TOPN_TAG, since_bound),
     )
     if df.empty:
         return 0
@@ -675,6 +679,9 @@ def process_master_trades():
 
 def main():
     logger.info(f"=== 🧠 AI MASTER BOT (AIM2) GESTARTET — {'LIVE-POSTING' if LIVE_POSTING else 'SHADOW-ONLY'} ===")
+    # R3: unter welcher Lesart der Signal-Stream interpretiert wird, steht im Log —
+    # eine stille Fehlannahme über die Historie wäre genau der P0.13-Fehlermodus.
+    logger.info(f"    R3-Zeitdomäne: {r3_history_mode()} (docs/UTC_POLICY.md §6)")
     _topn = load_topn_config()
     if _topn.enabled:
         _topn_mode = "LIVE" if (_topn.live and TOPN_CHANNEL_ID != 0) else "SHADOW-ONLY"

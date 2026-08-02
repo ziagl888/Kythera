@@ -1,3 +1,353 @@
+## [2026-08-02] VPS-Audit-Rest nachgemessen: P0.7 hat eine zweite Tür, das Dashboard hängt offen im Netz, Z0 misst sich selbst (T-2026-KYT-9050-009)
+
+Auftrag war die Rest-Kette der VPS-Orchestrierung (Jobs 7/8/10/11 + Doku-PR). Regel der Session:
+jeder Punkt wird erst am heutigen Code und an der heutigen Live-Umgebung nachgemessen, dann
+bearbeitet. Fünf von acht Punkten haben sich gegen ihre Aktenlage gedreht — in beide Richtungen.
+Voller Bericht mit allen Zahlen: `docs/T-2026-KYT-9050-009-vps-audit-rest.md`. Read-only auf der
+Live-DB, kein Restart, kein Gate-Flip, kein Deploy.
+
+### Fixed
+- **`strategies/strat_support_resistance.py` + `strat_main_channel.py` — P0.7 hatte eine zweite Tür,
+  und sie stand offen.** Der DB-Rest des Findings ist erledigt (0 Zeilen mit der P0.7-Signatur in
+  `active_trades_master`, die letzte im Archiv 2026-05-27, also vor dem Fix vom 04.07.) — aber die
+  Fehlerklasse produziert weiter: **342 von 3.463 Support-Resistance- und 12 von 188
+  Main-Channel-Trades seit 01.07. gingen mit TP1 auf der falschen Seite des Entry raus**, der neueste
+  am 2026-08-01 23:33, einer stand aktiv im Buch. Ursache: `find_support_resistance_zones` filtert
+  seine Zonen gegen den Close der letzten geschlossenen Kerze, die Ziel-Leiter wird aber gegen
+  `entry = live_price` gebaut. Läuft der Live-Preis über eine Resistance-Zone, wählt
+  `sorted(zones, key=|zone−entry|)` genau diese als TP1, und die Interpolation `x = (t1−entry)/4`
+  wird negativ und zieht TP2/TP3 hinterher — dieselbe Schadensform wie P0.7, nur durch eine andere
+  Tür. Der 2026-07-04 gebaute Guard `if t1 == 0` deckt ausschließlich „gar keine Zonen" ab.
+  Dass ausgerechnet die drei nicht-zonenbasierten Strategien (5 Percent, Fast In And Out, Volume
+  Indicator; zusammen 17.792 Trades) **null** Fälle haben, ist der Fingerabdruck der Ursache.
+  Nicht nur Geometrie: 96,5 % dieser Trades schlossen mit `status ≥ 1` („TP getroffen") gegen 66,2 %
+  der sauberen — ein TP auf der Verlustseite wird beim ersten Gegenlauf „getroffen". Diese
+  Phantom-Treffer stehen in der Per-Bot-Statistik, auf der das Orchestrator-Gating entscheidet.
+  Fix: neuer geteilter Helfer `core.market_utils.select_zone_targets(zones, entry, direction)`
+  filtert gegen den Preis, gegen den die Leiter gerechnet wird (beide Strategien × beide Richtungen,
+  4 Stellen); die Leiter ist damit zusätzlich monoton in Handelsrichtung. Gemessene Rollout-Wirkung:
+  Support Resistance verliert 1,1 % seiner Signale ganz und korrigiert 10,1 % der Leitern, Main
+  Channel 2,1 % / 6,4 % — die entfallenden sind genau die, deren TP1 auf der Verlustseite lag.
+  Nebenwirkung, die dazugehört: die Trefferquote von „Support Resistance" wird nach dem Rollout
+  **sinken**. **Wirksam erst nach Fleet-Restart — Michi-Entscheid.**
+  Test: `backtest/test_zone_target_side.py` (8 Fälle, DB-frei, inkl. LABUSDT-Live-Regression).
+- **`tools/restart_fleet.ps1` — „Pull failed" bei erfolgreichem Pull.** Zweimal belegt
+  (`logs/fleet_restart_20260726_232251.log`, `_20260801_192843.log`): `ERROR - Pull failed: From
+  https://github.com/ziagl888/Kythera`, danach „Fleet untouched" und Exit 1 — obwohl der Pull
+  durchlief (HEAD 0e432d5 → e3181d5, im Folgelauf zwei Minuten später als „nothing to pull"
+  bestätigt). git schreibt Fortschritt auf stderr; PowerShell 5.1 macht daraus ErrorRecords, sobald
+  der Strom in die Pipeline gemergt wird — und das passiert, wenn der Operator das Skript mit `2>&1`
+  aufruft. Mit `$ErrorActionPreference = 'Stop'` terminiert schon die erste Fortschrittszeile, und
+  die Exception-Message ist genau der erste stderr-Text. `Invoke-Git` mergt stderr jetzt explizit,
+  demotet Fehler für die Dauer des Aufrufs und macht den **Exit-Code zum einzigen Urteil**;
+  Fortschrittszeilen landen als INFO im Log statt zu terminieren. Echte git-Fehler werfen weiterhin,
+  jetzt mit git's Text statt nur einem Exit-Code. Verifiziert im Scratch-Repo (alt: Abbruch mit
+  identischer Signatur, neu: sauberer Durchlauf) und end-to-end am echten Skript per `-DryRun` unter
+  `2>&1`.
+
+### Added
+- **`tools/ops/measure_cpu_baseline.ps1`** — read-only CPU-Sampler für das Z0/C3-Programm
+  (WMI-Perf-Counter statt kumulativer `Get-Process .CPU`-Sekunden). Erster Lauf, 10 min / 35 Samples
+  / 10 Kerne: **Box-Mittel 78 %**, nicht 100 %. Und der wichtigste Posten der Messung ist die Messung:
+  **~34 Prozentpunkte gehen auf die Agent-Session selbst** (claude 16,4 %, der Sampler via WmiPrvSE
+  4,4 %). Fleet-python 18,5 % + 10,6 % Pool-Worker, postgres 14,1 % (120 verschiedene PIDs in
+  10 min = Connection-Churn), Symantec 5,5 %. Ohne Beobachter läge die Grundlast bei ≈48–50 %, also
+  am Z0-Ziel — das ist aber eine Subtraktion, keine Abnahme. Der Beobachtereffekt steht deshalb im
+  Docstring des Werkzeugs: eine Z0-Abnahme braucht einen Lauf **ohne** Session. Per-Bot-Attribution
+  ist unelevated nicht möglich (`Win32_Process.CommandLine` ist für die elevated Fleet `$null`) und
+  wird bewusst nicht geraten.
+- **`DASHBOARD_BIND_HOST`** (`dashboard.py`, `.env.example`) — Bind-Adresse als Operator-Knopf,
+  **Default unverändert `0.0.0.0`**, plus Startup-Warnung solange nicht auf Loopback gebunden wird.
+  Anlass: Ist-Messung zu Z2/B4. `cloudflared` ist auf SRV02 gar nicht installiert, der Port hängt
+  offen im Internet (ESTABLISHED-Verbindung von einer fremden IP zum Messzeitpunkt), `dashboard.log`
+  belegt laufende Scans inkl. `GET / → 200` an Fremde, und `grep -i auth dashboard.py` findet nichts
+  — `POST /api/system/stop_all` ist unauthentifiziert exponiert. Der Flip auf `127.0.0.1` schließt
+  das sofort, kostet aber den Fernzugriff bis der Tunnel steht: Michi-Entscheid, kein PR-Entscheid.
+
+### Verifiziert (kein Code nötig)
+- **Query 9 (P2.25)** live gefahren: `bot_regime_whitelist` = 1590 Rows, **alle** aus dem letzten
+  Stundenlauf, 0 Rohnamen-Keys, 0 stale Rows. Beide DELETE-Kriterien greifen.
+- **P2.15 gegen ein echtes Listing**: GRVTUSDT wurde am 2026-08-01 06:01:38 auf **laufender** Fleet
+  erkannt (letzter Restart davor 30.07.), `candles` führt es ab 2026-07-31 15:00 bis aktuell. Die
+  leere `GRVTUSDT_1h` ist der C-Gate-Zustand, kein Defekt. Rest: die erste `ticker_10s`-Zeile kam
+  erst nach dem Restart — Schreiber ist `10_pump_dump_detector.py`, nie Teil des P2.15-Scopes.
+- **P2.2**: live ist `trade_cooldowns.module` heute `character varying(50)` — der ALTER ist gelaufen
+  und war nirgends dokumentiert. **Checkbox bleibt trotzdem offen**: `26_regime_detector.py:242` legt
+  weiter `module TEXT` + `TIMESTAMP WITHOUT TIME ZONE` an, die Bootstrap-Reihenfolge entscheidet auf
+  einer frischen DB also unverändert. Der `COOLDOWN_MODULE_MAX_LEN = 10`-Kommentar begründete sich
+  mit der inzwischen falschen Prämisse „live ist varchar(10)" — Kommentar korrigiert, Wert bewusst
+  nicht angehoben (ändert Cooldown-Keys auf dem Geld-Pfad).
+- **Job 10 / B7 obsolet in der beauftragten Form**: MIS2 postet live (offene Signale bis 01.08.),
+  ATB2/ATS2 sind gebaut; Adapter existieren für `ufi1, td, bb, abr1, mis1, rub, atb2, ats` (+`epd`).
+  Wirklich offen sind nur noch **QM und SRA1** — ein kleiner Folge-Task, keine VPS-Sitzung.
+- **Job 11 / Signal-Raten-Delta**: geschlossen als **nicht rekonstruierbar**. Das Zielfenster
+  (13./14.07.) liegt drei Wochen und >20 Restarts zurück; `ai_signals` ist das offene Buch (eine
+  Tageszählung misst dort Survivorship, nicht Rate — der scheinbare Anstieg 102 → 1.061 ist genau
+  das), und die deduplizierte Vereinigung mit `closed_ai_signals` ist für ältere Tage retentions-
+  verzerrt. Belastbar ist nur die klassische Seite: `closed_trades_master` liegt stabil bei
+  ~700–900 Signalen/Tag ohne erkennbaren Bruch. Eine Zahl für das Delta wird nicht erfunden.
+- **RSI-Execute** war bereits im CHANGELOG (Eintrag `[2026-07-12]`, 88.426.142 Zellen / 3.831
+  Tabellen / 9,6 h) — kein zweiter Eintrag.
+
+### Betrieb
+- **Der lokale Secret-Guard aus harter Regel 3 ist auf SRV02 nicht scharf**: weder `pre-commit` noch
+  `gitleaks` liegen auf dem PATH (auch `ruff`/`mypy` nur als Python-Module). Auf diesem Host läuft
+  beim Commit also **kein** Secret-Scan und **kein** `guard.py verify`; es bleibt der CI-Regex.
+  Für diese Session wurden die Äquivalente von Hand gefahren. Kein `--no-verify` — es gibt hier
+  schlicht nichts zu umgehen. Host-Setup-Punkt, kein Code-Punkt.
+
+## [2026-08-01] C-Gate ist seit 16 Tagen live, nicht dormant — Ist-Stand vermessen, zwei Bots lesen eingefrorene Tabellen (T-2026-KYT-9050-002)
+
+Auftrag war, die Bereitschaft der dormanten Phase-2/4-Slices zu prüfen und das Mengengerüst
+für Michis Startzeitpunkt-Entscheidung zu messen. **Der Befund kippt die Prämisse: die
+C-Gate läuft bereits.** Bericht mit allen Zahlen:
+`docs/T-2026-KYT-9050-002-c-gate-status.md`. Kein Flag gesetzt, kein Restart, keine
+Schreib-Query — alles read-only auf der Live-DB.
+
+**Der Umschwung ist datiert, nicht geschätzt.** Die `.env` trägt
+`KYTHERA_CANDLES_SOURCE=hyper`, `WRITE_PRIMARY=hyper`, `DUAL_WRITE=1`. Alle per-Coin-Tabellen
+enden exakt bei `open_time = 2026-07-16 16:00 UTC`, davor liegt der Watchdog-Restart
+`watchdog_debug_20260716_192326.log` (16:23 UTC), und `core/candles.py` überspringt bei
+`write_primary=hyper` den per-Coin-Write. **Phase 3 (Paritäts-Cron ≥5–7 Tage) wurde dabei
+übersprungen** — Read-Cutover und Write-Primary liefen im selben Restart. Nachholbar ist das
+Gate nicht: `candles_parity.py` vergleicht legacy gegen hyper, und die Legacy-Seite ist seit
+16 Tagen leer (jeder Live-Lauf meldet `rows old=0`). Das Tool selbst ist intakt — Self-Check
+und Dry-Run laufen unter Session-3.14 **und** Fleet-3.13 grün.
+
+**Der UTC-Flip ist NICHT mit aktiviert worden** (`3ba3bbd` ist kein Ancestor des laufenden
+`e3181d5`) — die im Auftrag befürchtete Kopplung ist nicht eingetreten. Sie war strukturell
+auch nie möglich: `open_time` ist auf 9.804 von 9.806 per-Coin-Tabellen `timestamptz`, der
+Backfill-Cast also nie session-TZ-abhängig; die einzigen zwei naiven Spalten liegen in
+`ai_signals`/`closed_ai_signals`.
+
+**Mengengerüst — die Design-Doc-Annahmen sind überholt.** Legacy per-Coin: **64 GB**
+(nicht 25 GB), davon 54 GB Indikator-Tabellen. Hypertables: `candles` 45,0 Mio. Zeilen /
+9.954 MB, `indicators` 18,6 Mio. Zeilen / 20 GB. Datenbank gesamt 98 GB, C: hat **78 GB frei**
+(nicht ~160 GB). **Compression ist auf beiden Hypertables nicht aktiv** — 0 von je 128
+Chunks, keine Policy; der erwartete Gewinn ist bis heute unrealisiert. Als Anker dient eine
+Messung aus derselben DB statt einer Schätzung: `oi_5m` komprimiert 652 MB → 78 MB (8,35×);
+für die 108-Spalten-Float-Tabelle `indicators` ist das eine Obergrenze, die ehrliche Spanne
+liegt bei 30 GB → 4–10 GB. Die echte Zahl kostet einen Probe-Chunk (reversibel) und ist damit
+eine Operator-Entscheidung. Backfill-Deckung: 9.669 von 9.683; die 14 Fehlenden sind
+ausnahmslos `GRVTUSDT`, dessen Legacy-Tabellen leer sind — **keine Historie verloren**.
+
+**Der eine echte Defekt: zwei Bots lesen seit 16 Tagen eingefrorene Tabellen.**
+`16_smc_forex_metals_bot.py:87` und `21_btc_smc_strategy.py:136` sind die einzigen
+verbliebenen Roh-SELECTs auf per-Coin-Tabellen im Live-Code. Beide standen in
+`CANDLE_CALL_SITES.md` bewusst zurück („Index-gekoppelt, nur mit Offset-Rework") — die
+Zurückstellung setzte voraus, dass die Legacy-Tabellen maßgeblich bleiben, was am 07-16
+entfiel. Blast-Radius verifiziert und **bisher folgenlos**: `CH_SMC_METALS` postete zuletzt
+am 2026-07-16 09:35 UTC (9 Posts im gesamten Outbox-Fenster), `CH_BTC_SMC` hat null Posts.
+Das ist Glück, kein Design — beide emittieren einen Cornix-parsebaren Block. **Kein Fix
+committet:** beide Bots sind faktisch stillgelegt, sie wieder an Live-Daten zu hängen ist ein
+Entparken (OPUS-HANDOFF §6) und damit Michis Entscheidung — reparieren oder bewusst parken.
+
+**Rollback ist nicht mehr trivial**, entgegen der Design-Zusage. `KYTHERA_CANDLES_SOURCE=legacy`
+setzt die Fleet heute still auf 16 Tage alte Kerzen; ein Rollback der Leseseite bräuchte
+zuerst einen Rückwärts-Backfill. Die Asymmetrie war in `core/candles.py` vorhergesagt und ist
+jetzt eingetreten. Offen bleiben damit drei Entscheidungen mit Zahlen (Compression
+aktivieren, Legacy-Tabellen droppen — 64 GB, aber erst nach `pg_dump`-Restore-Test **und**
+Entfernen der `CREATE TABLE`-Schleife in `6_housekeeping.py:67`, sonst wachsen sie nach —
+sowie das Verdikt zu den zwei Bots) plus ein vorab definierter Ersatz-Paritätsplan G1–G6
+gegen den Bestand statt gegen den Live-Strom.
+
+## [2026-08-01] TD2/BB2/QM2-Retrain: NO-GO für alle vier — und die Rerun-Artefakte waren still überschrieben (T-2026-KYT-9050-006)
+
+Zu bewerten waren die Artefakte des Post-Wilder-Reruns vom 14.07. **Sie existieren nicht mehr.**
+`tools/retrain_from_replay.py:423` und `smc_ml_trainer.py:376` schreiben denselben Pfad im selben
+Staging-Verzeichnis; ein Legacy-Trainer-Lauf hat am 14.07. zwischen 05:21 und 05:24 alle vier
+frisch retrainierten TD/BB-Artefakte überschrieben. Zwei unabhängige Belege: die pkl-mtimes liegen
+**nach** den zugehörigen `retrain_*_stats.json` (bei `td_4h` um 2,6 h), und die heutigen Dateien
+tragen `meta.trainer = 'smc_ml_trainer.py'`, `optimal_threshold = 0.3`, **kein**
+`calibrator_isotonic` und **keine** `meta.model_id` — Keys, die `save_artifact` immer schreibt.
+Nebenwirkung: die replay-retrainierte Generation war vom 06.–13.07. live (Tags `TD2_4H`/`BB2_4H`
+in `ml_predictions_master`) und ist beim Überschreiben ohne Ledger-Spur auf die Alt-Tags
+zurückgefallen.
+
+**Verdikt trotzdem gefällt** — die Metriken (`retrain_*_stats.json`) haben überlebt, und sie sind
+bei allen vier negativ: **TD_1H** anti-kalibriert (Live-Gate-Bucket 0,8–1,0 → Ø **−2,28 %**, der
+schlechteste von sieben; Bucket 0,0–0,3 → +4,04 %; Validation bereits −78,2 — `pick_threshold`
+liefert trotzdem einen Threshold, weil ihm der Deployability-Abbruch von `pick_threshold_safe`
+fehlt); **BB_1H** nimmt bei Threshold 0,40 **98,6 %** der Test-Events, das Gate ist ein No-op;
+**BB_4H** filter-only wie in Batch E (Test Σ −686); **TD_4H** selektiert mit WR 59,2 % **unter**
+der Basisrate 60,7 %. Der Wilder-Rewrite hat die Kohorte verschlechtert — die einzige
+Promotions-Empfehlung des 12.07.-Reports (TD2_4H, damals +185,8) trägt nicht mehr.
+
+**Live-Gegenprobe** (`closed_ai_signals`, dedupliziert, unhebelter gestaffelter Move je Bein,
+03.–08.2026): die einzige je live gegangene Replay-Retrain-Generation `BB2_4H` bucht **−1,57 %/Bein
+über 99 Beine**, das Legacy-Artefakt daneben **+0,25 %/Bein über 3.076 Beine**. TD_1H +0,91 %,
+TD_4H +1,08 %, QM_1H +0,07 %, BB_1H −0,26 %. **Die TD/BB-Replay-Retrain-Linie ist damit als NO-GO
+geschlossen**; der Live-Bestand bleibt unverändert. Offen und ausdrücklich nicht aufgelöst: auf der
+Richtungs-Achse widerspricht die Live-Realisierung der 540d-Studie im **Vorzeichen** (live trägt
+LONG, im Replay ist LONG p≈1,0 negativ) — das entwertet Replay-PnL als Promotions-Kriterium für
+diese Bot-Familie, bis geklärt ist, ob es an der Grundgesamtheit oder an der Exit-Ökonomie liegt.
+
+**QM2 begründet ausgeklammert** (kein Replay-Pfad gebaut): `walkforward_sim.py:1151` und
+`retrain_from_replay.py:980` kennen beide kein `qm`; der Hauptertrag eines Replay-Retrains — der
+auf Validation kalibrierte Threshold — erreicht Bot 24 gar nicht, weil `24_quasimodo_bot.py:45`
+hart auf `MIN_CONFIDENCE = 0.65` gatet und `optimal_threshold` nie liest; QM_4H ist im Code geparkt
+(`:42`); und QM_1H bucht live Null-EV (+0,07 %/Bein, 31 Posts in 5 Wochen).
+
+**Code-Änderung** (Gegenmaßnahme, keine Verhaltensänderung an Bots):
+`core/staging_guard.assert_no_foreign_overwrite` weigert sich, ein Artefakt mit fremdem
+`meta.trainer` zu überschreiben — verdrahtet in `retrain_from_replay`, `smc_ml_trainer` und
+`qm_ml_trainer`. Bewusst fail-open (fehlende/unlesbare Provenienz blockt nie), Override
+`KYTHERA_ALLOW_TRAINER_OVERWRITE=1`. `backtest/test_staging_guard.py` (8 Tests, DB-frei) pinnt den
+realen 07-14-Fall in beide Richtungen.
+
+Das `bfill` in `24_quasimodo_bot.py:140-141` und `25_smc_ml_sniper.py:311-312` ist **unangetastet**
+(die Ticket-Zeilen `:126`/`:220` sind veraltet) — es fällt erst mit einem Artefakt-Rollout, und der
+findet nicht statt. Nichts promotet, kein Deploy, kein Gate-Flip, kein Restart. Details und die
+Rollout-Tabelle: `docs/T-2026-KYT-9050-006-td-bb-qm-retrain-verdict.md`.
+## [2026-08-01] EPD-Detektor-Retrain auf den post-P1.39-Definitionen: nicht ausführbar (Kalender) — Wiedervorlage 2026-11-09 (T-2026-KYT-9050-004)
+
+Auftrag war der Retrain von `pump_dump_model.pkl` auf den seit P1.39 zeit-basierten
+Feature-Fenstern. **Ergebnis: kein Artefakt — und keins, das man erzeugen sollte.**
+Der Blocker ist der Kalender, nicht die Datenqualität. Bericht:
+`docs/T-2026-KYT-9050-004-epd-retrain-feasibility.md`, Zahlen
+`staging_models/replay/epd4_feasibility.{json,md}` + `staging_models/retrain_epd4_stats.json`.
+
+**Cut-Point selbst nachgezählt statt übernommen:** die stündliche
+`pump_dump_events`-Zählung am 2026-07-10 (UTC) bricht auf der Stunde des
+Bot-10-Restarts (17:08:29Z) von 56–170/h auf 10–33/h. Der Restart schaltete P1.39, die
+T-035-Ratennormierung und den wiederbelebten Stunden-Warmup gemeinsam scharf; der Sprung
+ist ein **Gate-** kein Feature-Effekt (der Coverage-Floor entfernt die Events, die aus
+einem Ein-Sample-Nenner entstanden).
+
+**Der Datensatz ist sauber, nur zu kurz.** `epd2_build_dataset.py --since '2026-07-10
+17:00:00'` schreibt 4698 von 4712 Events (0,3 % Verlust: 11 `no_candles`, 3 `no_ticker`,
+sonst null), 4327 gelabelt, Spanne **22,0 d**. `chrono_split` gibt Val und Test je das
+15 %-Quantilsband = 3,3 d, und der 7-d-Purge-Gap (= Label-Horizont des Builders) frisst es
+ganz: `split 1664/0/0` (LONG) und `1364/0/0` (SHORT). Für ≥50 Zeilen je Slice braucht es
+~50 d Spanne, für einen Operating-Point mit Rückhalt ~122 d.
+
+**Harte Obergrenze ist `ticker_10s`, nicht der Cut-Point.** Der Builder nimmt den Entry
+seit T-2026-CU-9050-035 aus der Hypertable, und die beginnt am 2026-07-07 11:19Z — drei
+Tage VOR dem Cut-Point. Der Feb–Juli-Datensatz (85 031 Events, Basis von EPD2/EPD3) ist
+mit dem heutigen Builder **nicht mehr reproduzierbar**; der geforderte Schnitt am
+Cut-Point kostet folglich drei Tage. Retention 365 d ⇒ das Fenster wächst.
+
+**Die Prämisse des Tasks hält der Messung nicht stand.** Zwei-Stichproben-KS je Feature
+(14 d vor gegen 14 d nach) liegt für alle vier betroffenen Inputs **im Nullband**
+benachbarter 14-d-Fensterpaare der Vor-Cut-Historie: 0,036–0,174 gegen Nullband-Median
+0,058–0,080 und Nullband-Max 0,204–0,434. Und das deployte, auf VOR-Cut-Daten gefittete
+`epd3_model_LONG.pkl` diskriminiert auf den Post-Cut-Events out-of-sample weiter
+(AUC(TP1) 0,586, Kalibrierung monoton 38,3 → 66,7 % TP1; SHORT 0,537). Es gibt kein
+Anzeichen für ein durch die Definitionsänderung kaputtes Serving-Modell — Bot 10 läuft
+unverändert weiter. Einschränkung: nur Randverteilungen gemessen.
+
+**Tag EPD4 reserviert, bewusst noch nicht registriert.** EPD1/EPD2/EPD3 sind belegt
+(geprüft gegen `bot_variants/index.legacy_artifact_slots()`, `shadow_gate.SHADOW_ARTIFACTS`,
+`_LIFECYCLE`, `_RETIRED_TAGS` und die DB-Historie); `epd4_model_*.pkl` beansprucht keinen
+fremden Loader-Slot. Ein `shadow_gate`-Eintrag ohne Artefakt wäre tote Konfiguration —
+gepinnt ist stattdessen die Belegung selbst, samt der Falle, dass der Gate-Default LIVE
+ist. **P1.45 bewusst nicht weiter verdrahtet:** der Artefakt-Pfad liest die `model_id`
+längst; im Challenger-Pfad muss der Tag eine Konstante bleiben, weil das **live** laufende
+`epd3_model_LONG.pkl` in seiner Meta `model_id='EPD2'` trägt (bekannter, per
+`retag_artifact.py`-Versionsguard blockierter Defekt) — ein Rewire würde es unter dem
+Alt-Tag posten lassen und `has_open_ai_signal` blind machen.
+
+**Code:** `--model-id` an `tools/retrain_from_replay.py` und `tools/retrain_pump.py`; der
+Tag setzt `meta.model_id` **und** den Dateinamen-Präfix gemeinsam (`artifact_slot`,
+identisch zu `promotion_guard.tag_prefix`) — auseinanderlaufen zu lassen ist genau der
+Slot-Kaper-Fehler vom 2026-07-21. Default `EPD2` ⇒ unveränderter Lauf. Der degenerierte
+Split meldet jetzt die Rechnung (Spanne, Band, Gap, Dichte, fehlende Tage) statt nur
+„übersprungen" und legt sie maschinenlesbar in `retrain_<slot>_stats.json` ab.
+
+**Offen vor einem EPD4-Go-Live (nicht in diesem Task verifiziert):** die Serving-Population
+ist 2,7× (LONG) bzw. 5,4× (SHORT) dichter als die Trainings-Population — der 900s-Dedup des
+Builders spiegelt einen Alert-Throttle, dessen Timer nur im Live-Trade-Zweig zurückgesetzt
+wird und für ein nicht-live postendes Bein inert ist.
+
+Verifikation: `backtest/test_retrain_model_id.py` (14/14, DB-frei),
+`backtest/test_epd_tag.py` + `test_promotion_guard.py` + `test_epd3_artifact_model_id.py`
+(43/43), `ruff check .` + `ruff format --check .`, `regression_guard verify` (24/24).
+Alle DB-Zugriffe read-only, Trainings-/Build-Läufe unter dem Job-Lock.
+
+## [2026-08-01] Bot 30 (PEX1) scheiterte an JEDEM Scan — aware/naiv-Mix in `spike_time` (T-2026-KYT-9050-061)
+
+`30_ai_pex1_bot.detect_spike_time_offset_h` subtrahierte ein naives `now` von `MAX(spike_time)` und
+warf damit `can't subtract offset-naive and offset-aware datetimes` — im `try`-Block **vor** der
+Event-Schleife, also stirbt der ganze Zyklus. **Selbst nachgezählt** in den vier jüngsten
+`logs/watchdog_debug_*` (Stand 2026-08-01 20:18): **5.876 Fehlschläge, 0 erfolgreiche Scans**, der
+jüngste Fehler Minuten alt; das Ticket zählte in seinem früheren Log-Fenster 8.166. Der Bot lädt
+sein Artefakt sauber und tut seit mindestens 2026-07-19 trotzdem nichts.
+
+**Root-Cause:** `pump_dump_events.spike_time` ist auf der Live-DB `timestamp WITH time zone`
+(read-only vermessen 2026-08-01) — die Repo-DDL in `10_pump_dump_detector.py:1409` sagt `TIMESTAMP`,
+die Tabelle wurde irgendwann gealtert. psycopg2 liefert deshalb **aware** datetimes, und die
+Offset-Heuristik war für eine naive Spalte geschrieben. Die Notiz in T-2026-KYT-9050-005, die
+Funktion „heile sich nach dem Flip von selbst", ist damit widerlegt und in `docs/UTC_POLICY.md` §4
+korrigiert.
+
+**Fix auf der R3-Linie:** ein aware Wert IST ein Instant — kein Domänen-Raten, Offset 0, und
+`spike_time_to_utc_naive()` normalisiert beide Domänen an **einer** Stelle (aware → UTC-Instant
+ohne tzinfo, naiv → gemessener Offset abgezogen). Dieselbe Normalisierung greift in
+`process_event`, wo derselbe Mix gewartet hätte. Dazu zwei latente Zünder entschärft: der
+Boot-Sentinel bei leerer Tabelle ist jetzt aware, und der Watermark kommt ohne
+`max(sentinel, spalte)` aus (die Query liefert ASC und filtert strikt `> watermark`).
+
+**Achtung, Gate:** sobald der Scan lebt, postet PEX1 **live** — selbst nachgesehen: die `.env`
+trägt `NEW_IDEAS_LIVE_POSTING=1`, der Code-Default ist ohnehin `"1"`, und `pex1_model.pkl` ist
+git-getrackt und deployt. Ob das erwünscht ist, ist ein Gate-Flip und Michis Entscheidung — hier
+wurde nichts daran geändert.
+
+Verifikation DB-frei: `backtest/test_pex1_spike_time_domain.py` (13/13, aware **und** naiv über
+Offset-Detektor, Normalisierung und die Alters-Arithmetik). Gegenprobe: derselbe aware-Fall gegen
+den Vorgänger-Stand (`git show HEAD:30_ai_pex1_bot.py`) wirft exakt die Live-Fehlermeldung.
+
+## [2026-08-01] R3 Teil 2: Pool auf `timezone=UTC`, P2.3-Writer und sechs Kompensationen → eine Konstante (T-2026-KYT-9050-005)
+
+Die zweite Hälfte der UTC-Politik. Bisher entschied die Session-TZ des VPS (`Europe/Bucharest`),
+wie Postgres zwischen `timestamptz` und den naiven Legacy-Spalten castet — also was `NOW()` in eine
+naive Spalte schreibt und wie sie gegen einen aware-Wert verglichen wird. Der Flip auf UTC ist
+deshalb **kein Einzeiler**: er bewegt die Writer, und sechs Leser rechneten die +2/+3h bisher
+korrekt heraus. Beides musste in **einem** Changeset landen, sonst erzeugt jede Hälfte für sich neue
+Drift (P0.13-Klasse, Train/Serve-Skew).
+
+**Was drin ist.** (1) `core/database._connect_options()` trägt `-c timezone=UTC`. (2)
+`3_detectors.write_signal_atomic` stempelt `utc_now_naive()` statt naiver Server-Lokalzeit — ein
+Aufruf für beide Spalten (`time`, `posted`), P2.3. Das ist Pflicht und nicht Kür: `33_ai_fif1_bot`
+vergleicht `time` DB-seitig gegen `NOW()`, ohne den Writer-Fix wäre seine 1h/24h-Burst-Dichte vom
+Flip gekippt worden statt repariert. (3) Die sechs Drift-Kompensationen (`15_ai_master_bot`
+`to_utc_naive`/`since_local` plus `research_dataset_common`, `aim2_build_dataset`,
+`fif1_build_dataset`, `pex1_build_dataset`, `retrain_sra2`) rechnen nichts mehr selbst — sie gehen
+durch `core.time.legacy_naive_to_utc` / `utc_to_legacy_naive`. (4) Die Docstrings, die
+„PG-Lokalzeit" behaupteten, sind nachgezogen.
+
+**Eine Ausnahme, mit Begründung.** `pex1_build_dataset.spike_time_to_utc` lokalisiert weiterhin —
+aber nur, wenn `detect_offset_h` den Offset **an den Daten gemessen** hat. Eine Messung kann der
+Flip nicht falsch machen (sie ergibt danach 0), und für die Live-Tabelle ist der Zweig ohnehin tot,
+weil `spike_time` `timestamptz` ist. Gelöscht hätte er nur das Lesen alter Dumps gekostet. Die
+DST-Rezeptur liegt trotzdem zentral (`assume_legacy=True`, der einzige solche Aufruf im Repo).
+
+**Die Historien-Entscheidung ist NICHT getroffen** — sie gehört Michi (`docs/UTC_POLICY.md` §6).
+Der Code hält beide Wege offen, und zwar an genau einer Stelle: `core.time.R3_CUTOVER_UTC`
+(`None` = uniform-UTC, also die Welt nach einem Backfill; gesetzt = Zeilen davor werden als
+Bukarest gelesen). Der frühere Einwand „dann trägt jeder Trainer dauerhaft eine Verzweigung" gilt
+damit nicht mehr. Zahlen dafür, read-only vermessen: ein Backfill fasst **≈2,00 Mio Zeilen / 420
+MiB** in sechs Tabellen an (`ml_predictions_master` 1,13 Mio, `closed_ai_signals` 477k,
+`closed_trades_master` 383k, `closed_trades3` 8,2k, `ai_signals` 3,2k, `active_trades_master` 539);
+der `regime_*`/`orchestrator_*`-Cluster bleibt draussen. Rest-Unschärfe beider Wege: 113 Werte in
+der ambigen Herbststunde, beim Cutover zusätzlich ein ≤3h-Band um den Restart.
+
+**Drei Inventar-Zeilen waren falsch und sind korrigiert** (live gemessen, nicht angenommen):
+`pump_dump_events.spike_time` und `master_ai_processed_signals.processed_at` sind `timestamptz`;
+`closed_ai_signals.close_time` ist **naiv**, nicht `timestamptz` wie behauptet (die `CREATE TABLE
+IF NOT EXISTS` hat nie verbreitert — dieselbe Falle wie P2.2). Und `regime_history.ts` trägt
+beweisbar naiv-**UTC**: die lokale Wanduhr 03:00–03:59 existiert am 2026-03-29 nicht, die Spalte
+hat dort 12 Zeilen. Nebenbefund, nicht mitgefixt: `tools/breadth_study.py:428` lokalisiert genau
+diese Spalte als Bukarest — ihr As-of-Join steht heute schon 2–3h daneben (eigener Task, weil ein
+Fix das Studien-Ergebnis ändert).
+
+**Wirksam wird alles erst mit dem Fleet-Restart**, prozessweise. Restart-Effekt: Zeilen von vor dem
+Restart erscheinen +2/+3h in der Zukunft, betroffen sind die kurzen Fenster (60min Trade-Monitor,
+1h/24h FIF1, 5d AIM2-Stream); FIF1 postet daraus nichts, weil das Startup-Marking in `main()` alles
+abhakt, was beim ersten Poll im Fenster liegt. Verifikation DB-frei: `backtest/test_r3_utc_flip.py`
+(12/12), dazu die berührte Fläche (`test_aim2_topn`, `test_aim2_event_source_symmetry`, `test_time`,
+`test_detector_*`, `test_research_bots_live_price`, `test_pump_dump_time_windows`) und
+`regression_guard verify` 24/24 ohne Refresh.
+
 ## [2026-08-01] RUB2 Replay↔Live-Skew: Hypothese widerlegt, Root-Cause war das Messfenster (T-2026-KYT-9050-008)
 
 Zu klären war der 070-Befund: für dieselben (Symbol, Kerze)-Signale korrelierten Live-Confidence

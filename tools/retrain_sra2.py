@@ -45,6 +45,7 @@ sys.path.insert(0, REPO_ROOT)
 from core.candles import read_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.sra_features import SRA2_FEATURES, build_sra2_features  # noqa: E402
+from core.time import legacy_naive_to_utc  # noqa: E402
 from tools.retrain_from_replay import STAGING_DIR, pick_threshold_safe  # noqa: E402
 
 # Feature-Vertrag + Builder leben in core/sra_features.py — EIN Builder fuer
@@ -126,16 +127,14 @@ def load_dataset(conn) -> pd.DataFrame:
         if dfi is None or dfi.empty:
             continue
         # LOOK-AHEAD-FIX (Verbesserung 2): letzte GESCHLOSSENE 1h-Kerze —
-        # open_time + 1h <= Signalzeit. TZ-Vertrag (AIM2-Vermessung 2026-07-05):
-        # closed_trades3-Writer stempeln PG-LOKALZEIT (Europe/Bucharest) —
-        # naive Zeiten deshalb dort lokalisieren, dann UTC; Kerzen sind UTC.
-        t_sig = pd.Timestamp(tr["time"])
-        if t_sig.tzinfo is None:
-            # DST-Kanten deterministisch auflösen (ambiguous: Herbst-Doppelstunde
-            # → DST-Variante; nonexistent: Frühjahrs-Lücke → vorwärts schieben).
-            # Fehler von ±1h an 2 Stunden/Jahr ist fürs Training immateriell.
-            t_sig = t_sig.tz_localize("Europe/Bucharest", ambiguous=True, nonexistent="shift_forward")
-        t_sig = t_sig.tz_convert("UTC")
+        # open_time + 1h <= Signalzeit. TZ-Vertrag seit dem R3-Flip
+        # (T-2026-KYT-9050-005): die feste Bucharest-Lokalisierung ist raus, die
+        # Lesart der Historie steht zentral in core.time (docs/UTC_POLICY.md §6).
+        # closed_trades3 ist eine reine Legacy-Quelle (letzte Zeile 2026-02-23,
+        # 8.245 Zeilen, read-only vermessen 2026-08-01) — sie liegt komplett vor
+        # dem Flip und gehört damit in den Backfill-Umfang bzw. unter jede
+        # Cutover-Konstante. Kerzen sind UTC.
+        t_sig = pd.Timestamp(legacy_naive_to_utc(pd.Timestamp(tr["time"]).to_pydatetime())).tz_localize("UTC")
         ot = pd.to_datetime(dfi["open_time"], utc=True)
         mask = ot <= (t_sig - pd.Timedelta(hours=1))
         if not mask.any():

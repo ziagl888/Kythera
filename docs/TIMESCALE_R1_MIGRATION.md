@@ -2,6 +2,13 @@
 
 **Status:** Entwurf (2026-07-04) · **Autor:** Audit-Session · **Voraussetzung:** Fleet läuft stabil auf dem Stand nach Batch 4 + WS-Fixes.
 
+> **⚠ Dieses Dokument ist der ENTWURF von 2026-07-04. Die Phasen 3–5 sind seit 2026-07-16
+> live — die Phasentabelle in §3 beschreibt Zukunft, die längst Vergangenheit ist.**
+> Gemessener Ist-Stand, Mengengerüst und die noch offenen Operator-Entscheidungen:
+> **`docs/T-2026-KYT-9050-002-c-gate-status.md`** (2026-08-01). Insbesondere überholt sind
+> hier: die 25-GB-Ausgangsgröße (real 64 GB), „C: hat ~160 GB frei" (real 78 GB) und die
+> Zusage „Rollback ist in jeder Phase trivial" (gilt seit dem Write-Primary-Flip nicht mehr).
+
 **Ziel:** Ein Projekt, zwei Root-Causes:
 1. **R1 (Audit #1):** Forming-Candle-Vertrag festnageln — Look-ahead/Repaint in ~allen Strategien und ML-Bots beenden. Voraussetzung für das gesamte Retrain-Programm (Report 16, Abschnitt 8).
 2. **Tabellen-Sprawl (Report 18):** 9.297 per-Symbol-Tabellen → 2 Hypertables. Erwartete Effekte: Storage 25 GB → ~4–6 GB (Compression), WAL-Kollaps, autovacuum-Entlastung, globale Queries, Schema-Änderungen in einer Spalte statt 9.297 Rollouts.
@@ -70,6 +77,23 @@ upsert_indicators(conn, df, symbol, tf)                         # Engine
 | **5. Cleanup** | Dual-Write aus; alte Tabellen erst **nach 7 weiteren Tagen** droppen (vorher pg_dump-Sicherung); Compression-/Retention-Policies aktiv; `open_time`-Einzelindexe entfallen mit den Tabellen | Restore-Test des Dumps; DB-Größe & WAL-Rate dokumentieren (Erwartung: −70–80%) |
 
 **Rollback ist in jeder Phase trivial:** Bis Phase 4 liest die Fleet die alten Tabellen; der Cutover selbst ist ein Env-Flag + Restart zurück.
+
+> **⚠ Diese Zusage gilt seit 2026-07-16 nicht mehr.** Mit `KYTHERA_CANDLES_WRITE_PRIMARY=hyper`
+> werden die per-Coin-Tabellen nicht mehr geschrieben; sie enden am 2026-07-16 16:00 UTC.
+> Ein Zurückflippen von `KYTHERA_CANDLES_SOURCE` auf `legacy` setzt die Fleet still auf
+> 16 Tage alte Kerzen. Die Asymmetrie ist in `core/candles.py` (§ Phase-5-Write-Primary)
+> beschrieben und in `docs/T-2026-KYT-9050-002-c-gate-status.md` §6 vermessen.
+
+**Ist-Stand der Phasen (gemessen 2026-08-01, Details im Status-Doc):**
+
+| Phase | Design-Stand | Realität |
+|---|---|---|
+| 0 Prep | Gate | ✅ 2026-07-13, Hypertables angelegt |
+| 1 Reader-Umverdrahtung | Gate | ✅ bis auf **2 bewusst zurückgestellte** Leser (`16_smc_forex_metals_bot:87`, `21_btc_smc_strategy:136`) — die lesen seit dem Write-Primary-Flip eingefrorene Tabellen, Status-Doc §5 |
+| 2 Dual-Write + Backfill | Gate | ✅ Backfill 2026-07-14 (9.669 Tabellen) |
+| 3 Parität ≥5–7 Tage | „0 Drift an 3 Tagen" | ❌ **übersprungen** — Read-Cutover und Write-Primary liefen zusammen; das Gate ist nachträglich nicht erfüllbar (Status-Doc §3) |
+| 4 Read-Cutover | Gate | ✅ live (`KYTHERA_CANDLES_SOURCE=hyper`) |
+| 5 Cleanup | Gate | ⏸ **offen** — Compression nicht aktiv (0 von 128 Chunks je Hypertable), Legacy-Tabellen (64 GB) nicht gedroppt |
 
 ## 4. Risiken & Gegenmaßnahmen
 

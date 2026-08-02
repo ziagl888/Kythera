@@ -15,6 +15,7 @@ import xgboost as xgb
 from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
 from core.market_utils import load_coins as _core_load_coins
+from core.staging_guard import assert_no_foreign_overwrite
 from core.time import utc_now
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - SMC_ML_TRAINER - %(message)s')
@@ -374,6 +375,9 @@ def train_model(trades_df, pattern_name, tf):
     prefix = "bb" if "Breaker" in pattern_name else "td"
     os.makedirs(STAGING_DIR, exist_ok=True)
     save_path = os.path.join(STAGING_DIR, f"{prefix}_xgboost_model_{tf}.pkl")
+    # Gleicher Dateiname wie tools/retrain_from_replay.py — dieser Trainer hat am
+    # 2026-07-14 vier fertige Replay-Artefakte überschrieben (T-2026-KYT-9050-006).
+    assert_no_foreign_overwrite(save_path, 'smc_ml_trainer.py')
     joblib.dump(
         {
             'model': model,

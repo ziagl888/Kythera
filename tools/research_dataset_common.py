@@ -32,11 +32,16 @@ from core.candles import read_candles_with_indicators  # noqa: E402
 # Live-Join (fetch_context_frame) seine Indikator-Spalten zieht — so bleiben die
 # Frame-Spalten von Serving und Training/Replay byte-identisch (harte Regel 7).
 from core.research_features import CONTEXT_IND_COLS  # noqa: E402
+from core.time import LEGACY_WRITER_TZ, legacy_naive_to_utc, r3_history_mode  # noqa: E402
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
 
-LOCAL_TZ = "Europe/Bucharest"      # PG-Lokalzeit der *_trades_master-Tabellen (vermessen 2026-07-05)
+# Die TZ, in der die *_trades_master-Writer VOR dem R3-Flip gestempelt haben
+# (T-2026-KYT-9050-005). Kein laufender Writer benutzt sie mehr — sie ist nur
+# noch die Lesart der Historie, und ob die überhaupt gebraucht wird, entscheidet
+# core.time.R3_CUTOVER_UTC. Re-Export unter dem alten Namen für die Builder.
+LOCAL_TZ = LEGACY_WRITER_TZ
 MAX_JOIN_STALENESS_H = 3           # Kerzen-Lücke → Event verwerfen
 MIN_WINDOW = 60                    # Mindest-Kerzen vor dem Event
 WINDOW_CANDLES = 500               # Smart-Targets-Fenster
@@ -64,11 +69,26 @@ def df_query(conn, sql: str, params=None) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
+_R3_MODE_LOGGED = False
+
+
 def to_utc_naive(series: pd.Series) -> pd.Series:
-    """Naive Lokalzeit (Europe/Bucharest) → naive UTC (aim2-Konvention)."""
-    s = pd.to_datetime(series, errors="coerce")
-    s = s.dt.tz_localize(LOCAL_TZ, nonexistent="shift_forward", ambiguous="NaT")
-    return s.dt.tz_convert("UTC").dt.tz_localize(None)
+    """Event-Zeiten einer Legacy-Spalte als naives UTC.
+
+    Vor dem R3-Flip (T-2026-KYT-9050-005) rechnete das fest die PG-Lokalzeit
+    heraus. Die Writer stempeln jetzt UTC; eine feste Kompensation wäre eine
+    zweite Verschiebung. Ob und ab wann ALTE Zeilen noch lokalisiert werden
+    müssen, hängt an einer einzigen Konstante (core.time.R3_CUTOVER_UTC,
+    docs/UTC_POLICY.md §6) — deshalb hier keine eigene TZ-Logik mehr.
+
+    Trainings-relevant: die Lesart wird beim ersten Aufruf geloggt. Ein Trainer,
+    der Historie unter der falschen Lesart liest, baut Train/Serve-Skew (P0.13)
+    — das darf nicht still passieren."""
+    global _R3_MODE_LOGGED
+    if not _R3_MODE_LOGGED:
+        _R3_MODE_LOGGED = True
+        log(f"R3-Zeitdomäne der Legacy-Spalten: {r3_history_mode()} (docs/UTC_POLICY.md §6)")
+    return legacy_naive_to_utc(series)
 
 
 def candles_window_start(since: str, lookback_days: int):
@@ -80,6 +100,12 @@ def candles_window_start(since: str, lookback_days: int):
     Das ist nur eine Warmup-Untergrenze weit vor den Events — DST-Granularität
     (≤1h) ist immateriell, und die Bucharest-Lesart schneidet nie SPÄTER als die
     alte SQL, verliert also keine Kerzen.
+
+    Bewusst NICHT Teil des R3-Flips (T-2026-KYT-9050-005): hier wird kein
+    Spaltenwert in seine Domäne übersetzt, sondern ein Kalenderdatum in eine
+    absichtlich konservative Untergrenze. Bucharest liegt (2–3h) VOR der
+    UTC-Lesart, die Grenze bleibt also unter beiden Regimen gültig — sie fügt
+    höchstens Warmup-Kerzen hinzu, verliert nie welche.
     """
     ts = pd.Timestamp(since)
     if ts.tzinfo is None:

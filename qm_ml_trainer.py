@@ -16,6 +16,7 @@ import xgboost as xgb
 from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
 from core.market_utils import load_coins as _core_load_coins
+from core.staging_guard import assert_no_foreign_overwrite
 from core.time import utc_now
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - QM_ML_TRAINER - %(message)s')
@@ -400,6 +401,9 @@ def train_and_optimize(trades_df, tf):
     # überschrieben, der Rollout ist eine bewusste Operator-Entscheidung.
     os.makedirs(STAGING_DIR, exist_ok=True)
     save_path = os.path.join(STAGING_DIR, f"qm_xgboost_model_{tf}.pkl")
+    # Symmetrisch zu smc_ml_trainer: kein stilles Überschreiben einer fremden
+    # Trainer-Generation im geteilten STAGING_DIR (T-2026-KYT-9050-006).
+    assert_no_foreign_overwrite(save_path, 'qm_ml_trainer.py')
     save_data = {
         'model': model,
         'features': feature_cols,

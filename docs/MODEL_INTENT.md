@@ -295,6 +295,43 @@ harte Regel 7); die Event-Log-Route IST der DB-Retrain. Kein Fix nötig; für
 symmetrische Ein-Kommando-Bedienung neu: `tools/retrain_pump.py --days/--since`
 (kettet Build + `retrain_from_replay --strategy epd`). Wiedervorlage unverändert.
 
+**EPD-Retrain auf den post-P1.39-Definitionen NICHT AUSFÜHRBAR — Kalender
+(T-2026-KYT-9050-004, 2026-08-01).** Bericht:
+`docs/T-2026-KYT-9050-004-epd-retrain-feasibility.md`, Zahlen:
+`staging_models/replay/epd4_feasibility.{json,md}`. Kein Artefakt erzeugt.
+- **Cut-Point belegt:** stündliche `pump_dump_events`-Zählung am 2026-07-10 bricht
+  auf der Stunde des Bot-10-Restarts (17:08:29Z) von 56–170/h auf 10–33/h. Der
+  Restart schaltete P1.39, die T-035-Ratennormierung und den wiederbelebten
+  Stunden-Warmup gemeinsam scharf; die Ereignisrate fiel ~5× (Gate-, kein
+  Feature-Effekt).
+- **Datensatz sauber, aber zu kurz:** 4698 von 4712 Events geschrieben (0,3 %
+  Verlust), 4327 gelabelt, Spanne 22,0 d. `chrono_split` gibt Val/Test je das
+  15 %-Band = 3,3 d, der 7-d-Purge-Gap (= Label-Horizont) frisst es ganz →
+  `split 1664/0/0` (LONG) bzw. `1364/0/0` (SHORT).
+- **Harte Obergrenze ist `ticker_10s`,** nicht der Cut-Point: der Builder nimmt den
+  Entry seit T-2026-CU-9050-035 von dort, und die Hypertable beginnt am
+  2026-07-07 11:19Z. Der Feb–Juli-Datensatz (85 031 Events) ist mit dem heutigen
+  Builder **nicht mehr reproduzierbar**. Retention 365 d ⇒ das Fenster wächst.
+- **Die Verschiebung ist kleiner als die Marktdrift:** Zwei-Stichproben-KS je
+  Feature (14 d vor/nach) liegt für ALLE vier Inputs im Nullband benachbarter
+  14-d-Fensterpaare (KS 0,036–0,174 gegen Nullband-Median 0,058–0,080,
+  Nullband-Max 0,204–0,434). Nur Randverteilungen gemessen.
+- **Das deployte Modell hält out-of-sample:** `epd3_model_LONG.pkl` auf den
+  Post-Cut-Events AUC(TP1) 0,586 bei monotoner Kalibrierung (38,3 → 66,7 % TP1),
+  SHORT 0,537. Kein Hinweis auf ein durch die Definitionsänderung kaputtes
+  Serving-Modell → Bot 10 läuft unverändert weiter.
+- **Tag reserviert: EPD4** (EPD1/2/3 belegt, geprüft gegen Variant-Registry,
+  `shadow_gate` und die DB-Historie). NOCH NICHT in `core/shadow_gate` registriert —
+  ohne Artefakt wäre das tote Konfiguration; die Belegung selbst ist in
+  `backtest/test_retrain_model_id.py` gepinnt. ⚠ Gate-Default ist LIVE.
+- **Wiedervorlage 2026-11-09 → T-2026-KYT-9050-067** (~1000 Val/Test-Zeilen je
+  Richtung, erster Operating-Point mit `min_n=200`-Rückhalt). Kommando:
+  `python tools/retrain_pump.py --since 2026-07-11 --model-id EPD4`.
+- **Offen vor einem EPD4-Go-Live:** die Serving-Population ist 2,7× (LONG) bzw.
+  5,4× (SHORT) dichter als die Trainings-Population — der 900s-Dedup des Builders
+  spiegelt einen Alert-Throttle, dessen Timer nur im Live-Trade-Zweig
+  zurückgesetzt wird und für ein nicht-live postendes Bein inert ist.
+
 ---
 
 ## 8. RUB1 — Rubberband Mean Reversion ✅ (Intent bestätigt 2026-07-06)

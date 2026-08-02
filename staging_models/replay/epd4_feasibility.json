@@ -1,0 +1,379 @@
+{
+  "task": "T-2026-KYT-9050-004",
+  "question": "EPD-Detektor-Retrain auf den post-P1.39-Feature-Definitionen — ausführbar?",
+  "verdict": "NICHT AUSFÜHRBAR (Kalender, nicht Datenqualität). Kein Artefakt erzeugt.",
+  "measured_at_utc": "2026-08-01T19:00Z",
+  "cut_point_utc": "2026-07-10T17:00Z",
+  "cut_point_evidence": {
+    "method": "Stündliche pump_dump_events-Zählung am 2026-07-10 (UTC), Detector ist einziger Writer",
+    "hourly_counts_before_17h": [
+      124,
+      170,
+      68,
+      72,
+      75,
+      98,
+      135,
+      127,
+      103,
+      91,
+      91,
+      62,
+      93,
+      97,
+      126,
+      56,
+      148
+    ],
+    "hourly_counts_from_17h": [
+      24,
+      33,
+      20,
+      10,
+      20,
+      21,
+      29
+    ],
+    "note": "Bruch bei 17:00 UTC ⇒ Restart 2026-07-10 17:08:29Z (Bot-10-Neustart) aktivierte P1.39 + die T-035-Ratennormierung + den wiederbelebten Stunden-Warmup gemeinsam. Ereignisrate ~5× gesunken."
+  },
+  "dataset": {
+    "builder": "tools/epd2_build_dataset.py --since '2026-07-10 17:00:00'",
+    "events_after_gates_and_dedup": 4712,
+    "written": 4698,
+    "labeled": 4327,
+    "unlabeled_share_pct": 7.9,
+    "labeled_span_days": 22.0,
+    "losses": {
+      "no_candles": 11,
+      "no_ticker": 3,
+      "no_window": 0,
+      "stale_join": 0,
+      "geometry_fail": 0
+    },
+    "note": "Verlustquote 0,3 % — die Datenqualität ist NICHT der Blocker."
+  },
+  "blocker_split": {
+    "strategy": "epd2",
+    "model_id": "EPD4",
+    "features": [
+      "vol_ratio",
+      "p_chg_60s",
+      "buy_pres",
+      "volat",
+      "sample_fill",
+      "rsi",
+      "tsi",
+      "macd",
+      "e9_dist",
+      "e21_dist",
+      "fund_last",
+      "fund_24h",
+      "fund_72h",
+      "fund_7d_cum",
+      "fund_pctl_90d",
+      "fund_trend"
+    ],
+    "LONG": {
+      "n_events": 2378,
+      "skipped": "degenerate_split",
+      "span_days": 21.8,
+      "band_days": 3.3,
+      "gap_days": 7,
+      "min_rows": 50,
+      "rows_per_day": 108.9,
+      "required_span_days": 49.7,
+      "missing_days": 27.9
+    },
+    "SHORT": {
+      "n_events": 1949,
+      "skipped": "degenerate_split",
+      "span_days": 22.0,
+      "band_days": 3.3,
+      "gap_days": 7,
+      "min_rows": 50,
+      "rows_per_day": 88.6,
+      "required_span_days": 50.4,
+      "missing_days": 28.4
+    }
+  },
+  "blocker_ticker_history": {
+    "ticker_10s_first_tick_utc": "2026-07-07T11:19:51Z",
+    "retention": "365 Tage (core/ticker_10s.RETAIN_FOR) — das Fenster WÄCHST, es ist nicht gedeckelt",
+    "note": "Der Builder nimmt den Entry seit T-2026-CU-9050-035 aus ticker_10s und verweigert ein früheres --since. Der Feb-Juli-Datensatz (85k Events) ist mit dem heutigen Builder NICHT mehr reproduzierbar — die trainierbare Historie beginnt am 2026-07-07, drei Tage VOR dem Cut-Point. Der Schnitt am Cut-Point kostet daher fast nichts."
+  },
+  "distribution_shift": {
+    "method": "Zwei-Stichproben-KS je Feature, 14d vor vs. 14d nach dem Cut-Point, gegen ein Nullband aus 15 benachbarten 14d-Fensterpaaren der Vor-Cut-Historie (gewöhnliche Marktdrift).",
+    "n_pre": 20084,
+    "n_post": 4682,
+    "ks_at_cut": {
+      "volume_ratio": 0.0361,
+      "abs_pchg": 0.0796,
+      "buy_pressure": 0.1737,
+      "volatility": 0.0363
+    },
+    "null_median": {
+      "volume_ratio": 0.0624,
+      "abs_pchg": 0.058,
+      "buy_pressure": 0.0798,
+      "volatility": 0.0627
+    },
+    "null_max": {
+      "volume_ratio": 0.4342,
+      "abs_pchg": 0.3355,
+      "buy_pressure": 0.2039,
+      "volatility": 0.3536
+    },
+    "exceeds_null_max": {
+      "volume_ratio": false,
+      "abs_pchg": false,
+      "buy_pressure": false,
+      "volatility": false
+    },
+    "conclusion": "KEIN Feature verlässt das Nullband. Auf der Population, die das Alert-Gate passiert, ist die Verschiebung nicht von gewöhnlicher Marktdrift zu trennen. Strukturell geändert hat sich die EREIGNISRATE (Gate), nicht die Feature-Verteilung. Einschränkung: nur Randverteilungen, gemeinsame Verschiebungen sind damit nicht ausgeschlossen.",
+    "buy_pressure_note": "p90 0.8333 -> 1.0000: Granularitäts-Artefakt der kürzeren Fenster (buy_pres ist ein Anteil über len(window)-1 Diffs, kadenzabhängig — 10_pump_dump_detector.py:1070-1074)."
+  },
+  "deployed_model_on_postcut": {
+    "LONG": {
+      "artifact": "epd3_model_LONG.pkl",
+      "meta_model_id": "EPD2",
+      "threshold": 0.76,
+      "n": 2378,
+      "auc": 0.5859,
+      "corr_prob_netpnl": 0.0704,
+      "n_at_threshold": 81,
+      "wr_at_threshold_pct": 60.5,
+      "avg_net_pnl_at_threshold_pct": -0.76,
+      "wr_all_pct": 58.9,
+      "avg_net_pnl_all_pct": -0.364,
+      "calibration": [
+        {
+          "bucket": "0.0-0.3",
+          "n": 115,
+          "tp1_rate": 38.3,
+          "avg_net_pnl_pct": -5.33
+        },
+        {
+          "bucket": "0.3-0.4",
+          "n": 165,
+          "tp1_rate": 45.5,
+          "avg_net_pnl_pct": -1.68
+        },
+        {
+          "bucket": "0.4-0.5",
+          "n": 241,
+          "tp1_rate": 51.0,
+          "avg_net_pnl_pct": -0.76
+        },
+        {
+          "bucket": "0.5-0.6",
+          "n": 534,
+          "tp1_rate": 57.9,
+          "avg_net_pnl_pct": 0.17
+        },
+        {
+          "bucket": "0.6-0.7",
+          "n": 915,
+          "tp1_rate": 63.6,
+          "avg_net_pnl_pct": 0.25
+        },
+        {
+          "bucket": "0.7-0.8",
+          "n": 384,
+          "tp1_rate": 65.4,
+          "avg_net_pnl_pct": -0.32
+        },
+        {
+          "bucket": "0.8-1.0",
+          "n": 24,
+          "tp1_rate": 66.7,
+          "avg_net_pnl_pct": 0.36
+        }
+      ],
+      "postcut_threshold_scan": {
+        "deployable": true,
+        "threshold": 0.6156,
+        "n": 1189,
+        "avg_net_pnl_pct": 0.154,
+        "sum_net_pnl_pct": 182.61,
+        "wr": 65.1,
+        "curve": [
+          {
+            "threshold": 0.6156,
+            "n": 1189,
+            "avg_net_pnl_pct": 0.154,
+            "sum_net_pnl_pct": 182.61,
+            "wr": 65.1
+          },
+          {
+            "threshold": 0.6629,
+            "n": 714,
+            "avg_net_pnl_pct": -0.155,
+            "sum_net_pnl_pct": -110.75,
+            "wr": 66.4
+          },
+          {
+            "threshold": 0.6906,
+            "n": 476,
+            "avg_net_pnl_pct": -0.179,
+            "sum_net_pnl_pct": -85.3,
+            "wr": 65.3
+          },
+          {
+            "threshold": 0.7051,
+            "n": 357,
+            "avg_net_pnl_pct": -0.346,
+            "sum_net_pnl_pct": -123.35,
+            "wr": 65.0
+          },
+          {
+            "threshold": 0.7246,
+            "n": 238,
+            "avg_net_pnl_pct": -0.192,
+            "sum_net_pnl_pct": -45.73,
+            "wr": 64.7
+          }
+        ]
+      }
+    },
+    "SHORT": {
+      "artifact": "epd3_model_SHORT.pkl",
+      "meta_model_id": "EPD2",
+      "threshold": 0.6737,
+      "n": 1949,
+      "auc": 0.5373,
+      "corr_prob_netpnl": 0.0407,
+      "n_at_threshold": 756,
+      "wr_at_threshold_pct": 72.6,
+      "avg_net_pnl_at_threshold_pct": 0.065,
+      "wr_all_pct": 69.5,
+      "avg_net_pnl_all_pct": -0.424,
+      "calibration": [
+        {
+          "bucket": "0.0-0.3",
+          "n": 18,
+          "tp1_rate": 50.0,
+          "avg_net_pnl_pct": -5.86
+        },
+        {
+          "bucket": "0.3-0.4",
+          "n": 62,
+          "tp1_rate": 67.7,
+          "avg_net_pnl_pct": -0.33
+        },
+        {
+          "bucket": "0.4-0.5",
+          "n": 119,
+          "tp1_rate": 68.9,
+          "avg_net_pnl_pct": -0.11
+        },
+        {
+          "bucket": "0.5-0.6",
+          "n": 381,
+          "tp1_rate": 66.7,
+          "avg_net_pnl_pct": -0.39
+        },
+        {
+          "bucket": "0.6-0.7",
+          "n": 857,
+          "tp1_rate": 68.5,
+          "avg_net_pnl_pct": -1.08
+        },
+        {
+          "bucket": "0.7-0.8",
+          "n": 447,
+          "tp1_rate": 74.3,
+          "avg_net_pnl_pct": 0.8
+        },
+        {
+          "bucket": "0.8-1.0",
+          "n": 65,
+          "tp1_rate": 73.8,
+          "avg_net_pnl_pct": 0.38
+        }
+      ],
+      "postcut_threshold_scan": {
+        "deployable": true,
+        "threshold": 0.7297,
+        "n": 293,
+        "avg_net_pnl_pct": 1.282,
+        "sum_net_pnl_pct": 375.66,
+        "wr": 76.5,
+        "curve": [
+          {
+            "threshold": 0.6482,
+            "n": 975,
+            "avg_net_pnl_pct": -0.245,
+            "sum_net_pnl_pct": -238.88,
+            "wr": 71.4
+          },
+          {
+            "threshold": 0.6912,
+            "n": 584,
+            "avg_net_pnl_pct": 0.412,
+            "sum_net_pnl_pct": 240.77,
+            "wr": 73.8
+          },
+          {
+            "threshold": 0.7149,
+            "n": 390,
+            "avg_net_pnl_pct": 0.853,
+            "sum_net_pnl_pct": 332.62,
+            "wr": 74.1
+          },
+          {
+            "threshold": 0.7297,
+            "n": 293,
+            "avg_net_pnl_pct": 1.282,
+            "sum_net_pnl_pct": 375.66,
+            "wr": 76.5
+          }
+        ]
+      }
+    }
+  },
+  "trainer_vs_serving_population": {
+    "training_rows_per_day": {
+      "LONG": 108.9,
+      "SHORT": 88.6
+    },
+    "live_emissions_per_day": {
+      "LONG": 295.9,
+      "SHORT": 478.6
+    },
+    "source": "closed_ai_signals model='EPD3', open_time >= 2026-07-11 (Shadow + Live gemeinsam)",
+    "ratio": {
+      "LONG": 2.7,
+      "SHORT": 5.4
+    },
+    "note": "Der Builder dedupt Events auf 900s je Symbol (Bot-10-Alert-Throttle). Der Throttle-Timer wird aber NUR im Live-Trade-Zweig zurückgesetzt (10_pump_dump_detector.py:1112 vs. der Reset im Post-Zweig) — für ein Bein, das nicht live postet, ist er inert; gebremst wird nur über has_open_ai_signal. Serving-Population ist damit 2,7-5,4× dichter als die Trainings-Population. Offen (nicht in diesem Task verifiziert): ob ein auf der deduplizierten Population gewählter Threshold die Live-Emissionsrate überhaupt trifft."
+  },
+  "earliest_run_dates": {
+    "assumption": "Dichte bleibt bei 108,9 (LONG) / 88,6 (SHORT) gelabelten Zeilen/Tag; Formel (0,15·Spanne − 7d)·Dichte >= Zielzeilen. Bei schwankender Ereignisrate nur eine Schätzung — der Ist-Wert steht nach jedem Lauf in retrain_epd4_stats.json (missing_days).",
+    "2026-08-30": "Split nicht mehr degeneriert (>=50 Zeilen je Slice) — statistisch noch wertlos",
+    "2026-09-17": "Val/Test ~300 Zeilen je Richtung — Threshold-Scan nur mit min_n weit unter 200",
+    "2026-11-09": "Val/Test ~1000 Zeilen je Richtung — erster Operating-Point mit Rückhalt (pick_threshold_safe min_n=200 trägt bis ~p80). EMPFEHLUNG."
+  },
+  "tag": {
+    "chosen": "EPD4",
+    "occupied": [
+      "EPD1",
+      "EPD2",
+      "EPD3"
+    ],
+    "checked_against": [
+      "tools/bot_variants/index.legacy_artifact_slots()",
+      "core/shadow_gate.SHADOW_ARTIFACTS",
+      "core/shadow_gate._LIFECYCLE",
+      "core/shadow_gate._RETIRED_TAGS",
+      "ai_signals.model / closed_ai_signals.model / ml_predictions_master.model_name"
+    ],
+    "artifact_slot": "epd4_model_{LONG,SHORT}.pkl — von keinem fremden Loader beansprucht (tools/promotion_guard.check_staging_filename == PASS)",
+    "not_registered_yet": "Kein Eintrag in core/shadow_gate — ohne Artefakt wäre das tote Konfiguration. ACHTUNG beim späteren Lauf: der Gate-Default ist LIVE; eine EPD4-Emission braucht VOR dem ersten Post eine explizite _LIFECYCLE-Zeile (gepinnt in backtest/test_retrain_model_id.py)."
+  },
+  "open_items_for_the_later_run": [
+    "core/shadow_gate: EPD4 in _LIFECYCLE (SHADOW) + SHADOW_ARTIFACTS eintragen, bevor Bot 10 emittiert.",
+    "10_pump_dump_detector: Emissions-Zweig für EPD4 (Muster _emit_epd3_shadow) — erst mit Artefakt.",
+    "tools/verify_staging_artifacts.build_registry(): epd-Familie globt nur epd2_model_*.pkl, ein epd4-Artefakt würde still übersprungen. Eigener Familien-Eintrag nötig.",
+    "Trainings- vs. Serving-Population (oben) klären, bevor ein Threshold live geht."
+  ]
+}
