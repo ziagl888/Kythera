@@ -1,3 +1,53 @@
+## [2026-08-02] Staging-MAX1 entfernt: es war keine Kandidatur, sondern die abgelöste Live-Generation (T-2026-KYT-9050-017)
+
+`staging_models/max1_model_SHORT.pkl` + `_meta.json` sind raus. Kein Code, kein Live-Eingriff —
+die Root-Artefakte (= live) bleiben unberührt.
+
+**Das Ticket hatte die Zahlen der falschen Datei zugeordnet.** Es hielt fest, das *Staging*-MAX1
+trage `n_train=15012` und sei damit gegen eine alte RUB2-Generation gebaut. Gemessen ist es
+umgekehrt — und die Git-Historie macht es eindeutig:
+
+| Zeitpunkt | Datei | n_train | Threshold |
+|---|---|---:|---:|
+| 07-07 `07c8874` | RUB2-SHORT Deploy | 31894 | 0,829 |
+| 07-11 `eafc0c2` | MAX1 Root-Promote | 31894 | 0,829 |
+| **07-20 `14e1c6f`** | **beide Root-Dateien** | **15012** | **0,7929** |
+| 07-20 `14e1c6f` | Staging-MAX1 angelegt | 31894 | 0,829 |
+
+Das Staging-Artefakt ist also die **vorherige Live-Generation**, die beim Sync am 20.07. zur
+Seite gelegt wurde — kein Challenger. Live-MAX1 und Live-RUB2 sind untereinander konsistent
+(beide 15012/0,7929), wie es `tools/make_max1_artifact.py` verlangt (es kopiert die RUB2-SHORT
+**verbatim** und ändert nur die Identitätsfelder).
+
+**Warum entfernt statt neu erzeugt oder aufbewahrt** — die drei Ticket-Optionen, durchgerechnet:
+
+* *Neu erzeugen gegen die Live-RUB2* macht das Staging-File zu einem Byte-Duplikat des
+  Live-MAX1. Ein Kandidat, der mit dem Amtsinhaber identisch ist, ist keiner.
+* *Das alte `rub2_model_SHORT.pkl` für die Provenienz mit-committen* ist bereits erfüllt: beide
+  Formen dieser Generation liegen in der Historie (`07c8874` als RUB2, `eafc0c2` als MAX1). Eine
+  zweite Kopie in `staging_models/` fügt nichts hinzu.
+* Bleibt: **entfernen.** `staging_models/` ist per Konvention die Menge der
+  Promotions-*Kandidaten*, und die Werkzeuge lesen es so (`verify_staging_artifacts.py`,
+  Bot-Varianten-Index). Eine abgelöste Live-Generation in diesem Slot behauptet eine Kandidatur,
+  die es nicht gibt. Nichts geht verloren — der Stand ist über die genannten Commits jederzeit
+  wiederherstellbar.
+
+**Nicht angefasst, aber benannt:** der Sync vom 20.07. hat die Live-RUB2/MAX1 auf eine Generation
+mit **kleinerem** Trainingssatz (15012 statt 31894) und schlechterer Val-Erwartung (Ø netto 0,169
+statt 0,248 %) gewechselt — auf dem Test-Fenster ist es umgekehrt (Σ 565 statt 432 %). Der Commit
+begründet den Wechsel nicht. Das ist eine Live-Modell-Frage und ein Operator-Entscheid, kein
+Aufräumen; hier nur festgehalten.
+
+**Kein Defekt, obwohl es so aussieht:** `.env` trägt `MAX1_MIN_PROB=0.829` — den Threshold der
+alten Generation. Laut `make_max1_artifact.py` ist MIN_PROB bewusst ein vom Artefakt
+unabhängiger Drosselwert („so Michi kann ihn nachziehen, ohne etwas neu zu erzeugen"), und
+0,829 > 0,7929 macht MAX1 selektiver, nicht inkonsistent.
+
+Verifiziert: `tools/promotion_guard.py` unverändert 1 WARN / 0 FAIL (RUB3/LONG, vorbestehend);
+`verify_staging_artifacts.py` erwähnt MAX1 nicht mehr und endet mit demselben Exit-Code wie auf
+`main` (1, wegen fehlender `meta.model_id` in den `td_`/`bb_`-Staging-Artefakten — vorbestehend,
+gegengeprüft).
+
 ## [2026-08-02] Z2 gestrichen: kein Cloudflare-Tunnel, das Dashboard bleibt loopback-only (T-2026-KYT-9050-074)
 
 Kein Code. Operator-Entscheid: **„Dashboard sehe ich ohnehin nur via RDP."** Damit ist der
