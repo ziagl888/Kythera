@@ -164,8 +164,12 @@ def realized_from_ai(row: dict) -> dict:
     lev_pnl = None
     if oc in (WIN, LOSS):
         tlist = _parse_targets(row.get("targets"))
+        # `model` mitgeben: ROM1/AIM2 persistieren mehr Targets als sie posten
+        # (T-2026-KYT-9050-012). Ohne das rechnet die Staffelung auf 20 Beinen
+        # statt auf den 3 gehandelten und unterschätzt beide Bots.
+        model = row.get("model")
         move, staffed = unlev_move(
-            row.get("direction"), row.get("entry"), row.get("close_price"), tlist, row.get("targets_hit")
+            row.get("direction"), row.get("entry"), row.get("close_price"), tlist, row.get("targets_hit"), model
         )
         lev_pnl = realized_pnl_pct(
             row.get("direction"),
@@ -174,6 +178,7 @@ def realized_from_ai(row: dict) -> dict:
             tlist,
             row.get("targets_hit"),
             row.get("lev"),
+            model,
         )
     return {"outcome": oc, "move": move, "staffed": staffed, "lev_pnl": lev_pnl, "r": None}
 
@@ -335,6 +340,10 @@ def load_ai_closes(conn, since: datetime) -> list[dict]:
             out.append(
                 {
                     "tag": pretty_name(str(r[0])),
+                    # Rohes Modell zusätzlich zum pretty_name: der
+                    # PUBLISHED_TARGET_COUNT-Lookup (T-2026-KYT-9050-012) geht
+                    # gegen den DB-Tag, nicht gegen den Anzeigenamen.
+                    "model": r[0],
                     "coin": r[1],
                     "direction": r[2],
                     "entry": r[3],

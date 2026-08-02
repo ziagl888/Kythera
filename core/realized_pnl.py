@@ -46,17 +46,63 @@ def _signed_move_pct(sign: float, entry: float, price: float) -> float:
     return sign * (price - entry) / entry * 100.0
 
 
+# ── Persistiert ≠ gehandelt (T-2026-KYT-9050-012) ────────────────────────────
+#
+# Das Positionsmodell unten teilt den Einsatz in `n` gleiche Beine, mit
+# n = len(targets) aus der DB. Das stimmt nur, solange ein Emitter genau die
+# Targets persistiert, die er auch nach Cornix postet. Zwei tun das nicht:
+#
+#   ROM1 (28_signal_orchestrator:525/574)  persistiert t_cands[:20], postet 3
+#   AIM2 (15_ai_master_bot:544/589)        persistiert die volle Liste, postet 3
+#
+# Cornix hat die übrigen TPs nie gesehen — der Einsatz ritt real auf 3 Beinen,
+# nicht auf 20. Das Modell verdünnt den TP-Gewinn dadurch um (n-k)/n und
+# UNTERSCHÄTZT beide Bots systematisch: für ROM1 über 7.769 geschlossene Trades
+# (30 Tage) um Faktor 1,43 auf der Summe, Median 1,51 % statt 5,18 %; für AIM2
+# über 2.345 Trades um Faktor 1,05.
+#
+# Die Zahl gehört hierher und nicht in jeden Report: `weighted_move_pct` und
+# `realized_pnl_pct` nehmen jetzt optional das Modell entgegen und schneiden
+# selbst zu. Ohne `model` verhalten sie sich byte-gleich wie bisher — kein
+# Aufrufer ändert sich still.
+#
+# Die Bots selbst bleiben unangetastet (Operator-Entscheid 2026-08-02: nur die
+# Messung korrigieren). Ein Kürzen der persistierten Liste würde die
+# Scoring-Semantik von Monitor 8 für LAUFENDE Trades ändern — SL-Trailing und
+# die ALL-TARGETS-Close-Bedingung sähen 3 statt 20 Stufen.
+PUBLISHED_TARGET_COUNT: dict[str, int] = {
+    "ROM1": 3,
+    "AIM2": 3,
+}
+
+
+def traded_targets(model: object, targets: list[float]) -> list[float]:
+    """Die Targets, gegen die der Trade wirklich lief (Cornix-Sicht).
+
+    Für Emitter ohne Persist/Publish-Lücke die unveränderte Liste.
+    """
+    n = PUBLISHED_TARGET_COUNT.get(str(model or "").strip().upper())
+    return list(targets)[:n] if n else list(targets)
+
+
 def weighted_move_pct(
     direction: str,
     entry: float,
     close_price: float,
     targets: list[float],
     targets_hit: int,
+    model: object = None,
 ) -> float | None:
     """Target-gewichteter Preis-Move in % (ohne Hebel), direction-korrigiert.
 
     Returns None on invalid input (no targets, non-positive prices, unknown
     direction) — the report skips those rows rather than approximating.
+
+    `model` ist optional und ändert für Emitter ohne Persist/Publish-Lücke
+    nichts. Für ROM1/AIM2 schneidet es die Target-Liste auf die tatsächlich
+    gepostete Länge und deckelt `targets_hit` entsprechend — sonst bekäme ein
+    Trade Gutschrift für TPs, die Cornix nie hatte (gemessen: 139 von 7.769
+    ROM1-Trades mit targets_hit > 3). Siehe PUBLISHED_TARGET_COUNT.
     """
     try:
         entry_f = float(entry)
@@ -76,6 +122,11 @@ def weighted_move_pct(
     except (TypeError, ValueError):
         return None
     if any(t <= 0 for t in target_prices):
+        return None
+
+    # Vor der Bein-Zählung zuschneiden: n IST das Positionsmodell.
+    target_prices = traded_targets(model, target_prices)
+    if not target_prices:
         return None
 
     n = len(target_prices)
@@ -104,8 +155,13 @@ def realized_pnl_pct(
     targets: list[float],
     targets_hit: int,
     leverage: object,
+    model: object = None,
 ) -> float | None:
     """Realisierter PnL in % des Einsatzes: gewichteter Move × Hebel.
+
+    `model` durchgereicht an :func:`weighted_move_pct` — ohne es bleibt das
+    Verhalten unverändert, mit ihm rechnet der Aufrufer auf der real
+    gehandelten Bein-Zahl statt auf der persistierten (T-2026-KYT-9050-012).
 
     Clamped at -100% (liquidation floor). Returns None when the move is not
     computable, the leverage is missing/invalid, or the pre-leverage move
@@ -115,7 +171,7 @@ def realized_pnl_pct(
     lev = parse_leverage(leverage)
     if lev is None:
         return None
-    move = weighted_move_pct(direction, entry, close_price, targets, targets_hit)
+    move = weighted_move_pct(direction, entry, close_price, targets, targets_hit, model)
     if move is None or abs(move) > MAX_ABS_MOVE_PCT:
         return None
     return max(move * lev, -100.0)

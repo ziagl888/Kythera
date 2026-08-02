@@ -1,3 +1,52 @@
+## [2026-08-02] Persistiert ≠ gehandelt: ROM1 und AIM2 wurden in jedem Realized-Report zu klein gerechnet (T-2026-KYT-9050-012)
+
+Das Realized-Positionsmodell teilt den Einsatz in `n` gleiche Beine, mit `n` = Anzahl der in
+`ai_signals` **persistierten** Targets. Das stimmt nur, solange ein Emitter genau das speichert,
+was er nach Cornix postet. **Zwei tun das nicht** — und es sind die beiden mit dem meisten
+Volumen: `28_signal_orchestrator` (ROM1) persistiert `t_cands[:20]` und postet 3;
+`15_ai_master_bot` (AIM2) persistiert die volle Liste und postet 3. Beide schreiben **eigene**
+`INSERT INTO ai_signals` und wurden deshalb vom P2.31-Fix (2026-07-11, Bots 9/11/12/13 plus
+`post_ai_signal`) nicht erfasst.
+
+**Gemessen über 30 Tage:** ROM1 persistiert in 199 von 250 Signalen volle 20 Targets. Über 7.774
+geschlossene Trades rechnet das Modell auf ~20 statt 3 Beinen und **unterschätzt ROM1 um Faktor
+1,41** — Σ 17.700 → 24.955 %, Ø 2,277 → 3,210 %/Trade, Median 1,51 statt 5,18 %. AIM2: Faktor
+1,05 über 2.350 Trades. Zusätzlich hatten **139 von 7.774** ROM1-Trades `targets_hit > 3`, also
+Gutschrift für TPs, die Cornix nie bekommen hat.
+
+**Operator-Entscheid: nur die Messung korrigieren.** Die Bots bleiben unangetastet — die
+persistierte Liste zu kürzen würde die Scoring-Semantik von Monitor 8 für **laufende** Trades
+ändern (SL-Trailing und die ALL-TARGETS-Close-Bedingung sähen 3 statt 20 Stufen). Kein
+Restart nötig, kein Geld-Pfad berührt.
+
+Umgesetzt als **eine** Quelle: `core/realized_pnl.PUBLISHED_TARGET_COUNT` + `traded_targets()`.
+`weighted_move_pct`, `realized_pnl_pct` und `unlev_move` nehmen optional das Modell entgegen und
+schneiden **vor** der Bein-Zählung zu — `n` *ist* das Positionsmodell, deshalb muss der Schnitt
+davor liegen; `targets_hit` wird über die bestehende `min(k, n)`-Deckelung automatisch
+mitgekappt. **Ohne `model` byte-gleich wie bisher**, kein Aufrufer ändert sich still.
+
+Nachgezogen: `23_market_tracker` (T-115-Report), `tools/fleet_realized_audit`,
+`tools/whitelist_v2_realized_eval`. Beim letzten wäre der Fix fast ein stiller No-op geworden:
+sein Leg-Dict trug nur `pretty_name(model)`, nicht den rohen DB-Tag, gegen den der Lookup geht —
+der Tag wird jetzt zusätzlich mitgeführt.
+
+**Wirkung:** alle ROM1/AIM2-Zahlen in Reports und Roster-Entscheiden waren zu klein. Das betrifft
+rückwirkend auch das T-007-Verdikt von heute — dort aber vorzeichen-neutral, weil beide
+Gate-Seiten gleich betroffen sind.
+
+**Korrektur am Ticket:** T-012 stand auf `low` mit der Begründung „ROM1-Sync tot seit 04.07,
+Pfad dormant". ROM1 ist hochaktiv (250 Signale in 7 Tagen, jüngstes während der Messung). Die
+zweite Ticket-Prämisse — „ROM1-spezifisch" — hat dagegen gehalten: eine erste Messung über alle
+Modelle unterstellte `n=3` für jeden Emitter und produzierte spektakuläre Zahlen inklusive einer
+Vorzeichenumkehr bei BR2H. Im Code nachgeprüft posten `7_pattern_detector` und
+`25_smc_ml_sniper` `n_show=len(targets)` und `11_ai_mis` fünf — dort gibt es keine Lücke, die
+Zahlen waren ein Messartefakt.
+
+Verifiziert: `backtest/test_traded_targets.py` 13/13 (DB-frei), 83 Tests der Nachbar-Suites
+unverändert grün, ruff + format + mypy sauber, Regression-Guard 24/24 ohne Refresh. Der eine
+Ausfall (`test_fleet_realized_audit::test_lifecycle_bucket`, `shadow` vs `inactive`) ist
+**vorbestehend** — gegen `main` gegengeprüft, dort identisch. Alle Messungen read-only.
+
 ## [2026-08-02] whitelist_v2 nachjustiert: keine Parametrisierung überlebt out-of-sample — Stop-B, v1 bleibt (T-2026-KYT-9050-007)
 
 Auftrag war, den v2-Gate **nachzujustieren** statt ihn zu flippen oder zu lassen: Wilson-Grenze
