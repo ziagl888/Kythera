@@ -1,3 +1,43 @@
+## [2026-08-03] Root cause of the detached watchdog task: the boot clock jump, not a failure (T-2026-KYT-9050-076)
+
+The state that cost 13 hours of undeployed code on 2026-08-02 — task `State=Ready` with
+`LastTaskResult=15` while a live watchdog supervises the fleet, so `Stop-ScheduledTask` grabs
+nothing — is now root-caused. New doc: `docs/WATCHDOG_TASK_DETACH.md`.
+
+**Nothing is broken.** Exit 15 is the correct propagation of a deliberate kill:
+
+1. The box boots with a clock three hours behind; the boot trigger fires and launcher #1 starts
+   watchdog #1.
+2. At **05:29:44** Windows time sync corrects the clock **+3 h** (UTC `23:29:43Z` →
+   `02:29:44Z`) — System log, Kernel-General event 1.
+3. The forward jump makes the Task Scheduler **re-fire the boot trigger**. `svchost` PID 1748
+   starts `launch_watchdog.cmd` again as cmd PID 6232, the same second as the jump.
+   `MultipleInstances=IgnoreNew` does not suppress it.
+4. Watchdog #2 finds the `Global\KytheraWatchdog` mutex held and runs the documented
+   mutex-deadlock recovery from T-2026-CU-9050-127: `_reap_orphans` → `psutil.terminate()`.
+5. **`psutil.Process.terminate()` on Windows yields exit code 15** — measured on this host
+   (psutil 7.2.2), not inferred. `main_watchdog.py` itself only ever exits 0 or 1.
+6. Launcher v6 propagates it faithfully, so the task records the **reaped** instance's code and
+   falls back to `Ready` — while the survivor runs on, detached.
+
+The self-healing did its job: exactly one fleet came up, no double Cornix signals (P0.2 held).
+The only casualty is the Scheduler's ownership link, and with it the UAC-free stop path.
+
+**The fix is a boot-trigger delay.** The trigger currently has none; firing at boot+2 min lets
+the time service settle before the task starts, so there is no jump left to re-fire. Elevated
+one-time re-registration, command in the doc — including the warning that `Set-ScheduledTask`
+silently drops the Principal (T-025), so `RunLevel=Highest` must be verified afterwards.
+
+**Deliberately not claimed:** that this happens at *every* reboot. 2026-08-02 is the only boot
+since 2026-07-08, so there is exactly one observation. The mechanism is boot-specific and recurs
+whenever the correction is large enough — "every reboot" is not measured. One loose end is left
+open and named rather than guessed: watchdog #2's output lands in run #1's debug log and no
+second debug file exists; the launcher-v5 locked-redirect failure mode is the obvious suspect but
+is unproven, and nothing depends on it.
+
+`tools/restart_fleet.ps1` now names the pattern and points at the doc when it detects the state,
+instead of leaving the next operator to rediscover it.
+
 ## [2026-08-03] LQE1: forceOrder-Liquidations-Collector — Ground-Truth für die MPS-Heatmap-Kalibrierung (T-2026-KYT-9050-077)
 
 Follow-up 2 aus der MPS1-Studie (T-073): die Liquidations-Heatmap ist eine Schätzung ohne
