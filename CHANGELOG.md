@@ -1,3 +1,23 @@
+## [2026-08-02] English-only policy for the whole repository (T-2026-KYT-9050-075)
+
+`CLAUDE.md` gains hard rule 10: everything written into this repository is English — code,
+identifiers, comments, docstrings, log messages, exception texts, Telegram/HTML output, commit
+messages, PR bodies, Markdown docs and this changelog. The chat with Claude stays German; that
+is the only exception and it never lands in a file. `CLAUDE.md` itself was translated in the
+same commit, and the post-merge instruction "add a `CHANGELOG.md` entry (German, like the
+existing ones)" now reads English. This entry is the first one under the new rule; the existing
+German entries stay untouched for now and are part of the follow-up sweep.
+
+No behaviour change. The inventory that motivates the sweep: ~5,000 German hits across 224 `.py`
+files (~2,410 of them pure comment lines, ~1,171 lines with German inside string literals or
+docstrings across 191 files), plus ~6,470 lines across 128 Markdown files, of which
+`CHANGELOG.md` alone carries 2,541. Two findings bound the risk of the follow-up: a grep for
+German literals in comparisons (`==`, `!=`, `in`, `startswith`, `endswith`, `.get`) returns
+**zero** hits — no program logic hangs off a German string — and only two German strings sit
+inside Telegram HTML (`10_pump_dump_detector.py:932/934`), so hard rule 4 has a very small
+contact surface. Model artifact metadata (`model_archive/**/manifest.json`, `*_meta.json`) is
+provenance and stays untouched.
+
 ## [2026-08-02] Staging-MAX1 entfernt: es war keine Kandidatur, sondern die abgelöste Live-Generation (T-2026-KYT-9050-017)
 
 `staging_models/max1_model_SHORT.pkl` + `_meta.json` sind raus. Kein Code, kein Live-Eingriff —
