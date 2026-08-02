@@ -1,3 +1,55 @@
+## [2026-08-02] C-Gate-Nachlauf: die letzten zwei Roh-SELECTs umgehängt, Legacy-Backend bekommt einen Staleness-Guard (T-2026-KYT-9050-068)
+
+`16_smc_forex_metals_bot.py` und `21_btc_smc_strategy.py` bauten als einzige verbliebene
+Live-Stellen rohes SQL gegen die per-Coin-Tabellen (`SELECT ... FROM "{symbol}_{tf}"`) und
+umgingen damit `core.candles`. Das war tragfähig, solange die per-Coin-Tabellen maßgeblich
+waren. Seit dem Write-Primary-Cutover am 2026-07-16 schreibt sie niemand mehr — beide Bots
+lasen 17 Tage lang einen bei `open_time 2026-07-16 16:00 UTC` eingefrorenen Frame und
+schwiegen. Leerer Input erzeugte **keinen** Output statt falschem Output: Glück, kein Design.
+
+**Beide lesen jetzt über `read_candles(..., include_forming=False)`.** Michi-Entscheid vom
+02.08.: wieder **scharf schalten**, nicht parken — ab dem nächsten Fleet-Restart posten sie
+wieder.
+
+**Die Falle beim Umhängen.** Beide warfen die neueste Zeile per `.iloc[:-1]` weg, weil ihr rohes
+SELECT die laufende Kerze mitbrachte. `include_forming=False` filtert die bereits in der Query —
+der Drop musste also **raus**, sonst hätte er die neueste **geschlossene** Kerze verworfen und
+jedes Signal um eine Kerze verzögert. Bei Bot 16 saß derselbe Drop an der **gemeinsamen**
+Aufrufstelle beider Quellen und musste für den yfinance-Pfad erhalten bleiben, der seine forming
+Kerze weiterhin liefert. Genau die Sorte Vereinfachung, die harte Regel 5 verbietet.
+
+**Korrektur am Befund aus T-002:** Bot 16 war nur zur Hälfte betroffen. Nur die METALS-Gruppe
+(`source="database"`, acht Binance-Symbole) liest die DB; die FOREX-Gruppe holt live über
+`yfinance` und hat die per-Coin-Tabellen nie angefasst. Die Tabelle `EURUSD=X_1h` (eingefroren
+seit 2026-02-25) ist unbenutzter Altbestand, `GC=F_1h` existiert gar nicht. Ein Forex-Ingester,
+kurz erwogen, wäre Arbeit für ein Problem gewesen, das es nicht gibt.
+
+**Nebenbefund, nicht behoben:** `XAUUSDT` und `XAGUSDT` enden auch in der Hypertable am
+2026-07-06 — zwei der acht METALS-Paare bleiben ohne frische Daten, unabhängig vom C-Gate.
+
+**Die geladene Waffe ist entschärft.** `KYTHERA_CANDLES_SOURCE=legacy` galt als trivialer
+Rollback; seit dem Cutover hätte ein Zurückflippen die Fleet **still** auf 17 Tage alte Kerzen
+gesetzt. Neuer Staleness-Guard in `core/candles.py`: beim ersten Legacy-Read eines Prozesses wird
+gemessen, wie alt die jüngste Kerze im Backend tatsächlich ist, und über der Schwelle
+(`KYTHERA_CANDLES_LEGACY_MAX_AGE_MIN`, Default 180 min) bricht der Read mit `CandleSourceError`
+ab, statt eingefrorene Preise zu liefern. Eine Probe pro Prozess, dann gecacht; hyper-Reads
+zahlen nichts. Zwei bewusste Entscheidungen: eine **nicht messbare** Probe (Tabelle fehlt,
+Rechte, Test-Fixture) gilt NICHT als Staleness — sie warnt und tritt zurück; und `latest_open_time`
+bleibt ungeschützt, weil das die Frische-Abfrage selbst ist.
+
+**Vom eigenen Test gefunden:** der Guard cachte anfangs auch das **negative** Verdikt und kehrte
+danach still zurück — erster Read blockiert, alle folgenden wieder mit toten Daten bedient, also
+exakt der Fehler, den er verhindern soll. Fällt nur auf, wenn man die Testdateien **gemeinsam**
+laufen lässt. Ein Verdikt `stale` wirft jetzt bei jedem weiteren Aufruf.
+
+Verifiziert: `backtest/test_c_gate_bot_readers.py` 15/15 (DB-frei), ruff + format + mypy
+(`--python-version 3.12`) grün, Regression-Guard 24/24 ohne Refresh. Die Ausfälle in
+`test_candles_db_parity.py` bei gemeinsamem Lauf sind **vorbestehend** und nicht von dieser
+Änderung: eine unveränderte Repo-Testdatei (`test_atb1_posted_flag.py`) erzeugt in derselben
+Kombination sogar mehr davon — Ursache ist das repo-weite `os.environ.setdefault("DB_PASSWORD",
+"test")` in bot-ladenden Tests plus das fehlende `.env` im Worktree, nicht der Guard.
+**Wirksam erst nach einem Fleet-Restart.**
+
 ## [2026-08-02] Symantec-Firewallregeln: Exposure gemessen, Operator-Entscheid WONTFIX (T-2026-KYT-9050-070)
 
 Kein Code. Schließt den Punkt, den die Korrektur an P0.8 aufgeworfen hatte: zwei
