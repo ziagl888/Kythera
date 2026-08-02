@@ -70,6 +70,7 @@ import pandas as pd  # noqa: E402
 from core.candles import read_candles  # noqa: E402
 from core.database import db_connection  # noqa: E402
 from core.market_utils import load_coins  # noqa: E402
+from core.time import epoch_seconds  # noqa: E402
 from tools.mps1_liq_heatmap import HeatmapConfig, build_heatmap  # noqa: E402
 from tools.walkforward_sim import (  # noqa: E402
     FEE_PER_SIDE,
@@ -187,7 +188,10 @@ def replay_symbol(acc: dict, counters: dict, candles, oi, split_epoch: float, cf
     close = hm["close"].to_numpy()
     high = candles["high"].to_numpy()
     low = candles["low"].to_numpy()
-    close_epoch = (candles["open_time"].astype("int64").to_numpy() / 1e9) + 300.0
+    # epoch_seconds, NOT astype("int64")/1e9 — the astype idiom silently yields
+    # kiloseconds on datetime64[us] frames (pandas 3.x), which put EVERY event
+    # into the val half on the first full run of this study.
+    close_epoch = epoch_seconds(candles["open_time"]) + 300.0
 
     ub = hm["upper_band"].to_numpy()
     lb = hm["lower_band"].to_numpy()
