@@ -54,6 +54,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections.abc import Iterable, Sequence
@@ -62,6 +63,8 @@ from typing import Any
 
 import pandas as pd
 from psycopg2 import extras, sql
+
+_logger = logging.getLogger(__name__)
 
 # Mirrors core.config.TIMEFRAMES, but duplicated on purpose: importing
 # core.config requires DB_PASSWORD and would make this module unimportable on a
@@ -304,6 +307,107 @@ def _candle_source() -> str:
     return source
 
 
+# ── Staleness guard for the legacy backend (T-2026-KYT-9050-068) ─────────────
+#
+# `KYTHERA_CANDLES_SOURCE=legacy` used to be the documented rollback ("Rollback
+# ist in jeder Phase trivial", docs/TIMESCALE_R1_MIGRATION.md). Since the
+# write-primary cutover on 2026-07-16 that promise is FALSE: the per-coin tables
+# stopped receiving writes, so flipping back does not restore the old state — it
+# silently serves candles frozen at 2026-07-16 16:00 UTC to a trading fleet. No
+# error, no warning, just stale prices.
+#
+# So the flag is checked against the DATA, not trusted as configuration: on the
+# first legacy read of a process, probe how old the newest candle in a canonical
+# high-liquidity table actually is and refuse to serve if it is beyond the
+# threshold. One query per process, then cached.
+#
+# Deliberately NOT a hard failure when the probe itself cannot run (table
+# missing, permissions, a test fixture DB): an unmeasurable probe is not
+# evidence of staleness, and turning it into one would break every offline
+# fixture. It warns and stands down — the same discipline the refuted firewall
+# finding of 2026-08-02 taught: do not read a failed measurement as a verdict.
+_LEGACY_PROBE_SYMBOL = "BTCUSDT"
+_LEGACY_PROBE_TF = "1h"
+_LEGACY_MAX_AGE_ENV = "KYTHERA_CANDLES_LEGACY_MAX_AGE_MIN"
+_LEGACY_MAX_AGE_DEFAULT_MIN = 180
+# None = not probed yet in this process; True = verified fresh or unmeasurable;
+# False = probed and STALE. The False case keeps raising on every later call —
+# caching a negative verdict and then returning silently would turn the guard
+# into exactly the failure it exists to prevent (first read blocked, every
+# following read served frozen data).
+_legacy_freshness_ok: bool | None = None
+_legacy_staleness_error: str | None = None
+
+
+def _legacy_max_age_minutes() -> int:
+    raw = (os.getenv(_LEGACY_MAX_AGE_ENV) or "").strip()
+    if not raw:
+        return _LEGACY_MAX_AGE_DEFAULT_MIN
+    try:
+        value = int(raw)
+    except ValueError:
+        return _LEGACY_MAX_AGE_DEFAULT_MIN
+    return value if value > 0 else _LEGACY_MAX_AGE_DEFAULT_MIN
+
+
+def _assert_legacy_not_stale(conn: Any) -> None:
+    """Raise CandleSourceError when the legacy backend is serving frozen candles.
+
+    Called on legacy reads only. Probes once per process and caches the verdict;
+    a hyper-backed fleet never pays for it at all.
+    """
+    global _legacy_freshness_ok, _legacy_staleness_error
+    if _legacy_freshness_ok is True:
+        return
+    if _legacy_freshness_ok is False:
+        raise CandleSourceError(_legacy_staleness_error or "legacy candle backend is stale")
+
+    table = candles_table(_LEGACY_PROBE_SYMBOL, _LEGACY_PROBE_TF)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT max(open_time) FROM {}").format(_ident(table)))
+            row = cur.fetchone()
+        newest = row[0] if row else None
+    except Exception as exc:  # noqa: BLE001 — an unmeasurable probe must not become a verdict
+        _legacy_freshness_ok = True
+        _logger.warning(
+            "candles: legacy staleness probe on %s.%s failed (%s) — guard stands down for this "
+            "process. It cannot confirm the backend is fresh; verify manually before trusting a "
+            "legacy read (T-2026-KYT-9050-068).",
+            _LEGACY_PROBE_SYMBOL,
+            _LEGACY_PROBE_TF,
+            exc,
+        )
+        return
+
+    if newest is None:
+        _legacy_freshness_ok = True
+        _logger.warning(
+            "candles: legacy staleness probe found no rows in %s — guard stands down (empty fixture or fresh install).",
+            _LEGACY_PROBE_SYMBOL,
+        )
+        return
+
+    max_age = _legacy_max_age_minutes()
+    now = datetime.now(timezone.utc)
+    if newest.tzinfo is None:
+        # Per-coin open_time is naive UTC under the R3 pool session (T-005).
+        now = now.replace(tzinfo=None)
+    age_min = (now - newest).total_seconds() / 60.0
+    if age_min > max_age:
+        _legacy_freshness_ok = False
+        _legacy_staleness_error = (
+            f"KYTHERA_CANDLES_SOURCE=legacy, but the per-coin tables are stale: the newest "
+            f"{_LEGACY_PROBE_SYMBOL} {_LEGACY_PROBE_TF} candle is {age_min / 60:.1f}h old "
+            f"(limit {max_age} min). Since the write-primary cutover the per-coin tables are no "
+            f"longer written, so 'legacy' is NOT a rollback — it would feed frozen prices to the "
+            f"fleet. Use KYTHERA_CANDLES_SOURCE=hyper, or raise {_LEGACY_MAX_AGE_ENV} "
+            f"deliberately for offline work on historical data (T-2026-KYT-9050-068)."
+        )
+        raise CandleSourceError(_legacy_staleness_error)
+    _legacy_freshness_ok = True
+
+
 def _hyper_scope(symbol: str, tf: str, alias: str | None = None) -> tuple[sql.Composable, list[Any]]:
     """`symbol = %s AND tf = %s` — the predicate that scopes a hypertable read to
     one (symbol, tf), the hyper equivalent of picking a per-coin table by name.
@@ -514,6 +618,8 @@ def read_candles(
     `include_forming=True` is reserved for pure price checks — see contract 2.
     """
     source = _candle_source()
+    if source == "legacy":
+        _assert_legacy_not_stale(conn)
     _require_open_time(columns)
     if source == "hyper":
         # `SELECT *` on the hypertable would leak the tf/is_closed columns the
@@ -547,6 +653,8 @@ def read_indicators(
     (2_indicator_engine.get_indicator_definitions), not enumerable here.
     """
     source = _candle_source()
+    if source == "legacy":
+        _assert_legacy_not_stale(conn)
     _require_open_time(columns)
     if source == "hyper":
         scope = _hyper_scope(symbol, tf)  # validates symbol/tf before touching conn
@@ -656,6 +764,8 @@ def read_candles_with_indicators(
     column labels, which pandas resolves by position, silently.
     """
     source = _candle_source()
+    if source == "legacy":
+        _assert_legacy_not_stale(conn)
     _require_open_time(candle_columns)
     # Validate up front (both backends) so a bad symbol/tf raises before the
     # indicator_column_names() catalog probe ever touches the connection.

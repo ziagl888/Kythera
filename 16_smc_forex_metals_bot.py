@@ -16,6 +16,7 @@ import pandas as pd
 import yfinance as yf
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import calculate_pivots, check_cooldown, update_cooldown
 
@@ -82,16 +83,34 @@ MARKETS = {
 
 # 📊 DATA FETCHING
 def fetch_db_data(conn, symbol, tf):
+    """Neueste 300 GESCHLOSSENE Kerzen, aufsteigend — nur für MARKETS-Gruppen mit
+    ``source == "database"`` (METALS: XAUUSDT/BTCUSDT/…, alles Binance-Symbole).
+
+    C-Gate-Nachlauf (T-2026-KYT-9050-068): das rohe
+    ``SELECT ... FROM "{symbol}_{tf}"`` umging core.candles. Seit dem
+    Write-Primary-Cutover am 2026-07-16 schreibt niemand mehr in die per-Coin-
+    Tabellen; der METALS-Pfad bekam einen eingefrorenen Frame und der Bot
+    schwieg. Der FOREX-Pfad war nie betroffen — der holt live über yfinance
+    (``fetch_yfinance_data``) und fasst die DB nicht an.
+
+    Gibt closed-only zurück (``include_forming=False``, harte Regel 5): der
+    gemeinsame ``.iloc[:-1]`` in ``run_analysis`` gilt deshalb nur noch für die
+    yfinance-Quelle, die ihre laufende Kerze weiterhin mitliefert.
+    """
     try:
-        query = (
-            f'SELECT open_time, open, high, low, close, volume FROM "{symbol}_{tf}" ORDER BY open_time DESC LIMIT 300'
+        # `limit` liefert die NEUESTEN n Kerzen aufsteigend — identisch zum
+        # bisherigen DESC-LIMIT-300 + Reverse.
+        df = read_candles(
+            conn,
+            symbol,
+            tf,
+            limit=300,
+            include_forming=False,
+            columns=("open_time", "open", "high", "low", "close", "volume"),
         )
-        df = pd.read_sql_query(query, conn)
         if df.empty:
             return df
-        # Sort database data chronologically!
-        df = df.iloc[::-1].reset_index(drop=True)
-        return df
+        return df.reset_index(drop=True)
     except Exception as e:
         logger.error(f"Error loading aus DB für {symbol} ({tf}): {e}")
         return pd.DataFrame()
@@ -385,11 +404,19 @@ def run_smc_analysis():
 
             for tf in SMC_TIMEFRAMES:
                 try:
-                    df = fetch_db_data(conn, symbol, tf) if source == "database" else fetch_yfinance_data(symbol, tf)
-                    # P1.27: letzte (noch offene) Kerze für BEIDE Datenquellen droppen —
-                    # sonst hält eine forming 1d/1w-Kerze die Signal-Bedingung tagelang
-                    # und refired über den Cooldown die ganze Woche.
-                    df = df.iloc[:-1].reset_index(drop=True)
+                    if source == "database":
+                        # Seit T-2026-KYT-9050-068 liefert fetch_db_data über
+                        # core.candles closed-only (include_forming=False) — die
+                        # laufende Kerze ist hier bereits raus.
+                        df = fetch_db_data(conn, symbol, tf)
+                    else:
+                        df = fetch_yfinance_data(symbol, tf)
+                        # P1.27: letzte (noch offene) Kerze droppen — sonst hält eine
+                        # forming 1d/1w-Kerze die Signal-Bedingung tagelang und refired
+                        # über den Cooldown die ganze Woche. Gilt nur noch für yfinance:
+                        # der DB-Pfad filtert die forming Kerze jetzt in der Query, ein
+                        # zweiter Drop würde die neueste GESCHLOSSENE Kerze wegwerfen.
+                        df = df.iloc[:-1].reset_index(drop=True)
                     if df.empty or len(df) < 50:
                         continue
 

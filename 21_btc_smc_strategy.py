@@ -9,6 +9,7 @@ import time
 import pandas as pd
 
 from core import config as _kcfg  # channel ids
+from core.candles import read_candles
 
 # --- Eigene DB Connection importieren ---
 from core.database import get_db_connection
@@ -128,28 +129,39 @@ Stop-Loss: {sl:.2f}
 
 # 📊 DATA FETCHING (LOKALE DATENBANK)
 def fetch_db_data():
+    # C-Gate-Nachlauf (T-2026-KYT-9050-068): das rohe
+    # `SELECT ... FROM "{SYMBOL}_{TIMEFRAME}"` las die per-Coin-Tabelle direkt und
+    # umging damit core.candles. Seit dem Write-Primary-Cutover am 2026-07-16
+    # (KYTHERA_CANDLES_WRITE_PRIMARY=hyper) schreibt niemand mehr in diese Tabelle
+    # — `BTCUSDT_1h` endet exakt bei open_time 2026-07-16 16:00 UTC. Der Bot bekam
+    # seither einen eingefrorenen Frame und schwieg (leerer Input → kein Output,
+    # nicht falscher Output). Über core.candles folgt er dem Backend-Schalter.
     try:
         conn = get_db_connection()
-        # FIX: Vorher ASC → lud Daten von 2020. Jetzt DESC LIMIT 500 +
-        # Reverse, damit wir die NEUESTEN 500 Kerzen chronologisch sortiert bekommen.
-        query = (
-            f'SELECT open_time, open, high, low, close FROM "{SYMBOL}_{TIMEFRAME}" ORDER BY open_time DESC LIMIT 500'
-        )
-        df = pd.read_sql_query(query, conn)
-        conn.close()
+        try:
+            # `limit` liefert die NEUESTEN n Kerzen, aufsteigend sortiert — genau
+            # das, was das alte DESC-LIMIT-500 + Reverse erzeugt hat. Der frühere
+            # `.iloc[:-1]`-Drop entfällt BEWUSST: er entfernte die laufende Kerze,
+            # die das rohe SELECT mitbrachte. `include_forming=False` schließt sie
+            # bereits aus (harte Regel 5), ein zusätzlicher Drop würde die neueste
+            # GESCHLOSSENE Kerze wegwerfen und jedes Signal um eine Kerze verzögern.
+            df = read_candles(
+                conn,
+                SYMBOL,
+                TIMEFRAME,
+                limit=500,
+                include_forming=False,
+                columns=("open_time", "open", "high", "low", "close"),
+            )
+        finally:
+            conn.close()
 
         if df.empty:
             return df
 
-        # Chronologisch sortieren (älteste zuerst), damit alle Indizes und Pivots passen
-        df = df.iloc[::-1].reset_index(drop=True)
-
+        df = df.reset_index(drop=True)
         for c in ['open', 'high', 'low', 'close']:
             df[c] = df[c].astype(float)
-
-        # Die laufende/aktuelle Kerze ignorieren, wir handeln nur harte Closes!
-        if not df.empty:
-            df = df.iloc[:-1].reset_index(drop=True)
 
         return df
     except Exception as e:
