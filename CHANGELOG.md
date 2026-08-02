@@ -1,3 +1,32 @@
+## [2026-08-02] Z2 gestrichen: kein Cloudflare-Tunnel, das Dashboard bleibt loopback-only (T-2026-KYT-9050-074)
+
+Kein Code. Operator-Entscheid: **„Dashboard sehe ich ohnehin nur via RDP."** Damit ist der
+Audit-Punkt **Z2** (cloudflared + Cloudflare Access) gegenstandslos und die letzte offene
+Dashboard-Frage aus T-2026-KYT-9050-009 und -056 beantwortet — es gilt **D1** aus der
+Optionsmatrix in `docs/DASHBOARD_SECURITY.md` §4.
+
+**Zu tun ist nichts.** Der Loopback-Default aus PR #237 ist bereits der gewünschte Zustand;
+weder `KYTHERA_DASHBOARD_HOST` noch `KYTHERA_DASHBOARD_TOKEN` gehören in die `.env`. Ab dem
+nächsten Start von `dashboard.py` ist die UI nur noch aus einer RDP-Sitzung auf der Box
+erreichbar.
+
+**Warum gestrichen und nicht vertagt:** ohne Fernzugriffs-Bedarf kauft der Tunnel nichts und
+vergrößert gegenüber „gar nicht erreichbar" die Angriffsfläche — Access-Policy als zusätzlicher
+Fehlerpfad (ein bekannter Fehlerfall bei Zero-Trust-Setups), TLS-Terminierung beim Anbieter, ein
+Dienst mehr auf der Box. Das Runbook in §5 bleibt als Referenz stehen und wird nicht ausgeführt.
+
+**Einziger Wiedervorlage-Auslöser:** die Z1-Quick-Actions (F4). Für Live-Hebel in der Web-UI
+bleibt ein Auth-Layer Vorbedingung; kommt F4 nicht, kommt Z2 nicht.
+
+Abzugrenzen von **T-2026-KYT-9050-070** (Symantec-Firewallregeln, eigener wontfix): jener
+Entscheid lässt 135/445/3389/5985 offen, dieser betrifft nur den Fernzugriffsweg des Dashboards.
+Der Loopback-Bind wirkt unabhängig davon — er nimmt Port 5000 aus dem Netz, egal was die
+Firewall erlaubt.
+
+Vollzugs-Hinweis: `dashboard.py` steht **nicht** in `core/fleet.py` (eigene Scheduled Task), der
+Marker-basierte Fleet-Restart vom 02.08. hat es deshalb nicht erfasst. Die Härtung greift beim
+nächsten Start dieses Prozesses.
+
 ## [2026-08-02] Persistiert ≠ gehandelt: ROM1 und AIM2 wurden in jedem Realized-Report zu klein gerechnet (T-2026-KYT-9050-012)
 
 Das Realized-Positionsmodell teilt den Einsatz in `n` gleiche Beine, mit `n` = Anzahl der in
