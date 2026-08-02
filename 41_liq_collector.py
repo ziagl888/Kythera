@@ -113,9 +113,9 @@ class _Flusher:
             logger.error(f"Puffer-Überlauf: {dropped} älteste Liquidations-Rows verworfen (DB tot?)")
 
     def due(self) -> bool:
-        return len(self.rows) >= FLUSH_MAX_ROWS or (
-            self.rows and time.monotonic() - self.last_flush >= FLUSH_INTERVAL_S
-        )
+        if not self.rows:
+            return False
+        return len(self.rows) >= FLUSH_MAX_ROWS or time.monotonic() - self.last_flush >= FLUSH_INTERVAL_S
 
     def flush(self) -> None:
         self.last_flush = time.monotonic()
