@@ -160,7 +160,7 @@ def signed_move_pct(direction: object, entry: object, close: object) -> float | 
 
 
 def unlev_move(
-    direction: object, entry: object, close: object, targets: list, targets_hit: object
+    direction: object, entry: object, close: object, targets: list, targets_hit: object, model: object = None
 ) -> tuple[float | None, bool]:
     """Unlevered realisierter Move in % + staffed-Flag.
 
@@ -173,9 +173,13 @@ def unlev_move(
 
     Fallback auf den rohen signed_move_pct (entry→close), wenn keine Targets
     persistiert sind (Alt-Tags vor der Bot-8-Monitor-Migration). Rückgabe
-    (move, staffed): staffed=True nur, wenn der gestaffelte Pfad genutzt wurde."""
+    (move, staffed): staffed=True nur, wenn der gestaffelte Pfad genutzt wurde.
+
+    `model` durchgereicht: ROM1 und AIM2 persistieren mehr Targets als sie nach
+    Cornix posten, die Staffelung muss auf der gehandelten Bein-Zahl rechnen
+    (T-2026-KYT-9050-012, core.realized_pnl.PUBLISHED_TARGET_COUNT)."""
     if targets:
-        m = weighted_move_pct(direction, entry, close, targets, targets_hit)
+        m = weighted_move_pct(direction, entry, close, targets, targets_hit, model)
         if m is not None:
             return m, True
     return signed_move_pct(direction, entry, close), False
@@ -448,8 +452,8 @@ def load_ai_rows(conn) -> list[dict]:
             lev_pnl = None
             if oc in (WIN, LOSS):
                 tlist = _parse_targets(targets)
-                move, staffed = unlev_move(direction, entry, close, tlist, hit)
-                lev_pnl = realized_pnl_pct(direction, entry, close, tlist, hit, lev)
+                move, staffed = unlev_move(direction, entry, close, tlist, hit, model)
+                lev_pnl = realized_pnl_pct(direction, entry, close, tlist, hit, lev, model)
             out.append(
                 {
                     "tag": pretty_name(str(model)),

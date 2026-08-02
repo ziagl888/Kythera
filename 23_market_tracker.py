@@ -2125,7 +2125,10 @@ async def job_realized_pnl_report() -> None:
             n_neutral += 1
             continue
         targets = _parse_targets(r.targets)
-        pnl = realized_pnl_pct(r.direction, r.entry, r.close_price, targets or [], r.targets_hit, r.lev)
+        # r.strategy trägt den DB-Modell-Tag: ROM1/AIM2 persistieren mehr
+        # Targets als sie nach Cornix posten, die Staffelung muss auf der
+        # gehandelten Bein-Zahl rechnen (T-2026-KYT-9050-012).
+        pnl = realized_pnl_pct(r.direction, r.entry, r.close_price, targets or [], r.targets_hit, r.lev, r.strategy)
         add_row(str(r.strategy), str(r.direction), r.age_h, pnl)
 
     for r in df_cls.itertuples(index=False):
