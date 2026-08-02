@@ -25,7 +25,7 @@ K9-Lektion). Neu:
 
 **Dokumentierter Daten-Contract:** Binance drosselt den Stream auf max. EINE Order pro
 Sekunde PRO SYMBOL — `liq_events` ist ein SAMPLE (in Kaskaden am stärksten unterschätzt),
-brauchbar für Cluster-Lokalisierung, NICHT für Volumens-Summen. 13 DB-freie Tests pinnen
+brauchbar für Cluster-Lokalisierung, NICHT für Volumens-Summen. 12 DB-freie Tests pinnen
 DDL-/Insert-Contract, Event-Parsing und die Puffer-Invarianten des Collectors.
 ## [2026-08-03] bot_regime_performance keeps a daily snapshot history (T-2026-KYT-9050-072)
 
