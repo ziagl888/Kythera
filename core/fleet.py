@@ -297,6 +297,18 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 231,
         "restart_interval": None,
     },
+    # ── Liquidations-Collector (LQE1, T-2026-KYT-9050-077) ────────────────────
+    # Websocket !forceOrder@arr → Hypertable liq_events (Ground-Truth für die
+    # MPS1-Heatmap-Kalibrierung). Eigene Failure-Domain wie K9; DB-Connection
+    # pro Flush aus dem Pool. Neuer Eintrag wird erst nach Watchdog-Restart
+    # supervised (FLEET wird beim Watchdog-Import gelesen) ⇒ Operator-Gate.
+    {
+        "name": "Liq Collector",
+        "script": "41_liq_collector.py",
+        "group": "logger",
+        "start_delay": 247,
+        "restart_interval": None,
+    },
     # ── Regelbasierte Shadow-Forwarder (Studien K1/K2/K5/K7, T-2026-CU-9050-149) ─
     # Reine Shadow-Bots (kein Live-Post): validieren negative/schwache Studien-
     # Signale live über überwachte, nie gepostete Trades. Neuer Eintrag wird erst

@@ -262,6 +262,35 @@ format grün, mypy auf der neuen Datei **0** Fehler (die 47 in importierten Modu
 vorbestehend, Baseline auf `main` identisch), Regression-Guard 24/24 ohne Refresh. Beide Läufe
 read-only gegen die Live-DB (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`),
 BELOW_NORMAL, `TELEGRAM_BOT_TOKEN` bewusst auf einen ungültigen Platzhalter gesetzt.
+## [2026-08-03] LQE1: forceOrder-Liquidations-Collector — Ground-Truth für die MPS-Heatmap-Kalibrierung (T-2026-KYT-9050-077)
+
+Follow-up 2 aus der MPS1-Studie (T-073): die Liquidations-Heatmap ist eine Schätzung ohne
+Ground-Truth — Binance streamt echte Zwangsliquidationen aber live über den Websocket
+`!forceOrder@arr`, und es gibt KEINEN REST-Endpoint für Historie (allForceOrders 2021
+entfernt). Jeder Tag ohne Collector ist unwiederbringlich verlorene Historie (ticker_10s/
+K9-Lektion). Neu:
+
+* **`core/liq_events.py`** — Hypertable `liq_events` nach oi_5m-Konventionen (TIMESTAMPTZ
+  UTC-aware, Chunk 1 Tag, Compression nach 3 Tagen segmentby=symbol, Retention 730 Tage,
+  ON CONFLICT DO NOTHING gegen Doppel-Delivery nach Reconnects). `value_usdt` = z·ap
+  (exekutiertes Notional, nicht Order-Größe); malformte Events werden verworfen, nie
+  genullt (P0.12).
+* **`41_liq_collector.py`** — eigener schlanker Prozess (getrennte Failure-Domain):
+  websockets-Sync-Client, Reconnect-Loop mit Backoff (24h-Rotation von Binance ist
+  Normalbetrieb; Sofort-Closes backoffen statt im Sekundentakt zu hämmern), batched
+  Inserts alle 10 s / 500 Rows, Connection PRO Flush aus dem Pool (P1.33), Puffer-Deckel
+  10k Rows mit sichtbarem Datenverlust statt unbegrenztem Speicher, Kill-Switch
+  `KYTHERA_LIQ_PERSIST=0` (idlet supervised). Live-Smoke: Verbindung + Parse verifiziert
+  (ohne DB-Write).
+* **`core/fleet.py`** — Registrierung (group=logger, start_delay=247). Wie bei K9 gilt:
+  der neue Eintrag wird erst nach einem **Watchdog-Restart** supervised — die Aktivierung
+  ist eine Operator-Entscheidung (Michi) und NICHT Teil dieses PRs.
+
+**Dokumentierter Daten-Contract:** Binance drosselt den Stream auf max. EINE Order pro
+Sekunde PRO SYMBOL — `liq_events` ist ein SAMPLE (in Kaskaden am stärksten unterschätzt),
+brauchbar für Cluster-Lokalisierung, NICHT für Volumens-Summen. 11 DB-freie Tests pinnen
+DDL-/Insert-Contract, Event-Parsing und die Puffer-Invarianten des Collectors.
+
 ## [2026-08-02] MPS1: Liquidations-Heatmap + Max-Pain-Event-Study — Spread-Strategie widerlegt, Short-Drift nach Upper-Band-Touch bleibt (T-2026-KYT-9050-073)
 
 Prüfung der MartyParty-These „trade the spread between 24hr Max Pains" (Futures-Max-Pain =
