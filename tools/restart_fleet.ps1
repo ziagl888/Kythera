@@ -54,9 +54,17 @@
 param(
     [switch]$DryRun,
     [switch]$SkipPull,
+    # T-2026-KYT-9050-071: recycle the fleet through the watchdog's own restart
+    # markers instead of stopping and starting the scheduled task. Works
+    # UNELEVATED and is the only path that exists when the fleet runs detached
+    # from the task (State=Ready + processes alive) - see the abort branch below.
+    # Restarts the 40 core.fleet.FLEET bots ONLY: not the watchdog itself, and
+    # not dashboard.py (main_watchdog starts that through start_dashboard()).
+    [switch]$MarkerRestart,
     [string]$TaskName = 'Kythera Watchdog',
     [int]$StopTimeoutSec = 90,
     [int]$StartTimeoutSec = 240,
+    [int]$MarkerTimeoutSec = 180,
     [int]$DashboardPort = 5000
 )
 
@@ -191,6 +199,20 @@ if ($behind -gt 0) {
         Select-Object -First 20 | ForEach-Object { Write-Log ("  incoming: {0}" -f $_) }
 }
 
+# Code-age canary (T-2026-KYT-9050-071): is what is RUNNING older than what is
+# CHECKED OUT? "behind origin/main" above answers a different question - the
+# checkout can sit on HEAD while the fleet still runs last week's processes,
+# which is what a reboot leaves behind (it starts the fleet without pulling).
+# Advisory only: it never changes the exit code, it just makes the state loud.
+try {
+    # --repo explicitly: run from a worktree the canary would otherwise compare
+    # the LIVE processes against the WORKTREE's HEAD and read as stale.
+    $ageOut = & python (Join-Path $RepoRoot 'tools\ops\fleet_code_age.py') '--repo' $RepoRoot 2>&1
+    foreach ($line in @($ageOut)) { if ("$line".Trim()) { Write-Log ("  age: {0}" -f "$line".Trim()) } }
+} catch {
+    Write-Log ("  age: canary could not run ({0}) - not treated as a verdict." -f $_.Exception.Message) 'WARN'
+}
+
 if ($DryRun) {
     Write-Log ("DryRun - nothing pulled, stopped, or started. Log: {0}" -f $LogFile)
     exit 0
@@ -221,6 +243,63 @@ if ($SkipPull) {
 }
 
 # --- Step 2: stop the fleet via the scheduled task -----------------------------
+
+# --- Step 2a: marker restart (T-2026-KYT-9050-071) ------------------------------
+#
+# The UAC-free path the task-based stop/start cannot offer: write one
+# control/restart/<script> marker per FLEET entry and let the RUNNING watchdog
+# recycle each bot on its next cycle. This is exactly what the dashboard's
+# restart button does (dashboard.restart_all -> core.process_control.request_restart).
+#
+# Deliberately NOT calling unpark() as restart_process() does - a parked bot is
+# parked on purpose, and quietly re-arming it during a code rollout is the kind
+# of surprise this script exists to avoid. A parked bot simply never consumes
+# its marker (main_watchdog checks is_parked BEFORE consume_restart), which
+# leaves a harmless leftover file.
+#
+# LIMITS, both real: the watchdog does not restart ITSELF, so changes to
+# main_watchdog.py or core/fleet.py still need the task; and dashboard.py is
+# started through main_watchdog.start_dashboard(), not from core.fleet.FLEET, so
+# it keeps running whatever it booted with.
+if ($MarkerRestart) {
+    Write-Log "MarkerRestart: recycling the FLEET bots through control/restart markers (unelevated, watchdog-driven)."
+    $before = @{}
+    foreach ($p in (Get-FleetBotProcesses)) { $before[[int64]$p.ProcessId] = $p.CreationDate }
+    Write-Log ("  {0} fleet process(es) before" -f $before.Count)
+
+    $py = Join-Path $RepoRoot 'tools\ops\_write_restart_markers.py'
+    $written = & python $py 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log ("Writing restart markers failed: {0}" -f ($written -join ' | ')) 'ERROR'
+        Write-Log "Fleet untouched." 'ERROR'
+        exit 1
+    }
+    foreach ($line in @($written)) { if ("$line".Trim()) { Write-Log ("  {0}" -f "$line".Trim()) } }
+
+    $markerDir = Join-Path $RepoRoot 'control\restart'
+    $deadline = (Get-Date).AddSeconds($MarkerTimeoutSec)
+    do {
+        Start-Sleep -Seconds 5
+        $left = @(Get-ChildItem -Path $markerDir -File -ErrorAction SilentlyContinue).Count
+        Write-Log ("  waiting for the watchdog to consume markers - {0} left" -f $left)
+    } while (((Get-Date) -lt $deadline) -and ($left -gt 0))
+
+    if ($left -gt 0) {
+        Write-Log ("{0} marker(s) still unconsumed after {1}s - the watchdog is not cycling. Some bots may already have restarted; check logs\watchdog.log." -f $left, $MarkerTimeoutSec) 'ERROR'
+        exit 2
+    }
+
+    # Consumed markers alone are not proof: verify the PIDs actually turned over.
+    $after = @(Get-FleetBotProcesses)
+    $survivors = @($after | Where-Object { $before.ContainsKey([int64]$_.ProcessId) })
+    Write-Log ("All markers consumed. {0} process(es) now, {1} of the old PIDs still alive." -f $after.Count, $survivors.Count)
+    if ($survivors.Count -gt 0) {
+        Write-Log ("  still on old PIDs (expected for parked bots, the watchdog itself and dashboard.py): {0}" -f (($survivors | ForEach-Object { $_.ProcessId }) -join ', ')) 'WARN'
+    }
+    Write-Log "MarkerRestart done. Watchdog and dashboard.py were NOT restarted - see the header."
+    Write-Log ("Log: {0}" -f $LogFile)
+    exit 0
+}
 
 # Snapshot the fleet PIDs while their parent is still alive: after the stop
 # the parent is dead and the fingerprint goes blind, so orphan detection MUST
@@ -276,6 +355,21 @@ if ($task.State -eq 'Running') {
     # workers. The fingerprint cannot tell them apart.
     Write-Log ("Task is not running (State={0}) but {1} python parent/child pair(s) are alive (PIDs: {2})." -f $task.State, $preStopPids.Count, ($preStopPids -join ', ')) 'ERROR'
     Write-Log "Either a watchdog running OUTSIDE the scheduled task (no UAC-free stop path exists for it) or a trainer's workers - identify the PIDs before stopping ANYTHING, then re-run. Fleet untouched." 'ERROR'
+    # T-2026-KYT-9050-071: this state is not exotic - it is what a REBOOT leaves
+    # behind (observed 2026-08-02: task Ready with LastTaskResult=15, watchdog
+    # alive and supervising 41 children). Refusing was correct but left no way
+    # forward, so 45 merged commits sat undeployed for 13 h, a money-path fix
+    # among them. There IS an unelevated path: the running watchdog consumes
+    # control/restart/<script> markers within one cycle. Name it here instead of
+    # making the next operator rediscover it.
+    Write-Log "Two ways forward:" 'ERROR'
+    Write-Log ("  (a) UNELEVATED, recycles the {0} FLEET bots on the pulled code (NOT the watchdog, NOT dashboard.py):" -f $preStopPids.Count) 'ERROR'
+    Write-Log ("      powershell -ExecutionPolicy Bypass -File tools\restart_fleet.ps1 -MarkerRestart") 'ERROR'
+    Write-Log "  (b) ELEVATED, restores task ownership - watchdog FIRST, else it respawns the children:" 'ERROR'
+    Write-Log "      Stop-Process -Id <watchdog-pid> -Force" 'ERROR'
+    Write-Log "      Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | ? ParentProcessId -eq <watchdog-pid> | % { Stop-Process -Id `$_.ProcessId -Force }" 'ERROR'
+    Write-Log ("      Start-ScheduledTask -TaskName '{0}'" -f $TaskName) 'ERROR'
+    Write-Log "      (the watchdog is the python process with the most python children; its CommandLine is unreadable unelevated)" 'ERROR'
     exit 1
 } else {
     Write-Log ("Task not running (State={0}) and no fleet processes found - skipping stop, going straight to start." -f $task.State) 'WARN'
@@ -293,7 +387,13 @@ if ($portBusy -and -not $stopVerified) {
     exit 1
 }
 if ($portBusy) {
-    Write-Log ("Port {0} is still bound after the stop (orphan dashboard) - the watchdog start reaps it (dashboard.py is in FLEET_SCRIPTS); relying on the re-confirmation below." -f $DashboardPort) 'WARN'
+    # Corrected 2026-08-02 (T-2026-KYT-9050-071): dashboard.py is NOT in
+    # core.fleet.FLEET - main_watchdog starts it through its own
+    # start_dashboard(). The gate below still holds (the watchdog does bring the
+    # dashboard back), but the reason stated here was wrong, and it matters:
+    # because dashboard.py is outside FLEET, the -MarkerRestart path does not
+    # recycle it.
+    Write-Log ("Port {0} is still bound after the stop (orphan dashboard) - the watchdog start reaps it (main_watchdog.start_dashboard, NOT core.fleet.FLEET); relying on the re-confirmation below." -f $DashboardPort) 'WARN'
 }
 
 Write-Log ("Starting task '{0}'..." -f $TaskName)
