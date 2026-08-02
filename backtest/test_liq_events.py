@@ -106,6 +106,9 @@ def test_ensure_schema_ddl_contract():
     assert "PRIMARY KEY (ts, symbol, side, price)" in create
     assert any("create_hypertable" in s and "1 day" in s for s in sqls)
     assert any("compress_segmentby = 'symbol'" in s for s in sqls)
+    # segmentby + orderby must cover the FULL primary key — older Timescale
+    # versions hard-reject the compression config otherwise (alive-but-dead).
+    assert any("compress_orderby = 'ts DESC, side, price'" in s for s in sqls)
     assert any("add_compression_policy" in s and "3 days" in s for s in sqls)
     assert any("add_retention_policy" in s and "730 days" in s for s in sqls)
     assert conn.commits == 1
@@ -137,6 +140,13 @@ def test_row_from_force_order_parses_valid_event():
 def test_row_from_force_order_ignores_other_event_types():
     assert liq_events.row_from_force_order({"e": "aggTrade", "o": {}}) is None
     assert liq_events.row_from_force_order({}) is None
+
+
+def test_row_from_force_order_handles_non_dict_payload():
+    # The stream is named @arr — a format change to a JSON array (or any
+    # non-dict) must be dropped, never escalate to the connection.
+    assert liq_events.row_from_force_order([_valid_event()]) is None  # type: ignore[arg-type]
+    assert liq_events.row_from_force_order({"e": "forceOrder", "o": ["not", "a", "dict"]}) is None
 
 
 def test_row_from_force_order_drops_malformed_never_zero_fills():

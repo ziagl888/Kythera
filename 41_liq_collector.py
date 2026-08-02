@@ -34,7 +34,7 @@
 # Job dieses Prozesses — bei 0 idlet er supervised weiter (Watchdog-ruhig),
 # statt sich zu beenden (Exit würde die Crash-Backoff-Schleife triggern).
 #
-# Registrierung: core/fleet.py (group=logger, start_delay=247). Der Watchdog
+# Registrierung: core/fleet.py (group=logger, start_delay=279). Der Watchdog
 # liest FLEET beim Import — der NEUE Fleet-Eintrag wird erst nach einem
 # Watchdog-Restart supervised (= Fleet-Eingriff ⇒ Operator/Michi, wie K9).
 #
@@ -153,7 +153,9 @@ def _stream_once(flusher: _Flusher) -> None:
                 continue
             try:
                 row = liq_events.row_from_force_order(json.loads(raw))
-            except (ValueError, TypeError) as e:
+            except Exception as e:
+                # Breiter Fang mit Absicht: ein einzelnes Frame — egal wie
+                # kaputt — darf die Verbindung nie kosten (Flush-Philosophie).
                 logger.error(f"Unparsebares Websocket-Frame verworfen: {e}")
                 row = None
             if row is not None:
@@ -194,6 +196,8 @@ def main() -> None:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, RECONNECT_BACKOFF_CAP_S)
         except Exception as e:
+            if time.monotonic() - connected_at >= 60.0:
+                backoff = RECONNECT_BACKOFF_START_S  # lange gelebte Verbindung → frischer Backoff
             logger.error(f"Stream-Fehler: {e} — Reconnect in {backoff:.0f}s")
             time.sleep(backoff)
             backoff = min(backoff * 2, RECONNECT_BACKOFF_CAP_S)
@@ -206,4 +210,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("🛑 Liq Collector manuell gestoppt (Strg+C).")

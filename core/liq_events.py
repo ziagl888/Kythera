@@ -85,11 +85,15 @@ def _ensure_schema_inner(conn) -> None:
             f"SELECT create_hypertable(%s, 'ts', chunk_time_interval => INTERVAL '{CHUNK_INTERVAL}', if_not_exists => TRUE)",
             (TABLE,),
         )
+        # orderby deckt zusammen mit segmentby den vollen PRIMARY KEY ab —
+        # ältere Timescale-Versionen (≤~2.17) lehnen eine Compression-Config
+        # sonst hart ab und ensure_schema würde JEDEN Flush killen
+        # (alive-but-dead-Collector auf einem Stream ohne Backfill).
         cur.execute(
             f"""ALTER TABLE {TABLE} SET (
                     timescaledb.compress,
                     timescaledb.compress_segmentby = 'symbol',
-                    timescaledb.compress_orderby = 'ts DESC'
+                    timescaledb.compress_orderby = 'ts DESC, side, price'
                 )"""
         )
         cur.execute(
@@ -131,7 +135,9 @@ def row_from_force_order(msg: dict) -> tuple | None:
             filled,
             filled * avg_price,
         )
-    except (KeyError, TypeError, ValueError) as e:
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        # AttributeError deckt Nicht-Dict-Payloads (z.B. ein JSON-Array) ab —
+        # ein Format-Wechsel des Streams darf nie bis zur Verbindung eskalieren.
         logger.error(f"liq_events: malformtes forceOrder-Event verworfen: {e} — {msg!r}")
         return None
 
