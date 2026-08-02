@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import statistics
 import sys
 import warnings
@@ -596,8 +597,129 @@ def compute_and_upsert_performance(conn, df: pd.DataFrame, window_days: int) -> 
             """,
             rows,
         )
+    append_performance_history(conn, rows)
     conn.commit()
     return len(rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SNAPSHOT HISTORY (T-2026-KYT-9050-072)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# bot_regime_performance is a SNAPSHOT: exactly one row per
+# (bot, regime, alt_context, direction, window_days), overwritten on every run.
+# Measured 2026-08-02: zero cells with more than one row.
+#
+# Consequence: the cell statistics the whitelist gate decided on at the time of
+# any past event no longer exist. No gate variant — v1, v2 or a future one — can
+# therefore be checked cleanly against its own past. T-2026-KYT-9050-007 had to
+# score today's statistics against yesterday's traffic and could not separate the
+# parameter effect from cell drift; T-031 hit the same wall.
+#
+# One row per cell per DAY fixes that going forward. Volume: ~2272 cells per
+# 30d window x 3 windows ~ 6900 rows/day, ~2.5M/year — trivial for Postgres and
+# capped by retention.
+HISTORY_TABLE = "bot_regime_performance_history"
+HISTORY_RETENTION_ENV = "KYTHERA_REGIME_HISTORY_RETENTION_DAYS"
+HISTORY_RETENTION_DEFAULT_DAYS = 400  # a year of hindsight plus buffer
+
+
+def _history_retention_days() -> int:
+    raw = (os.getenv(HISTORY_RETENTION_ENV) or "").strip()
+    if not raw:
+        return HISTORY_RETENTION_DEFAULT_DAYS
+    try:
+        value = int(raw)
+    except ValueError:
+        return HISTORY_RETENTION_DEFAULT_DAYS
+    return value if value > 0 else HISTORY_RETENTION_DEFAULT_DAYS
+
+
+def append_performance_history(conn, rows: list[tuple]) -> int:
+    """Append today's state as its own row per cell.
+
+    `rows` is the IDENTICAL tuple list the main upsert writes — one source, not a
+    second computation that can drift. The snapshot key is the calendar DAY
+    (UTC): if the analyzer runs several times a day the later run overwrites the
+    earlier one, so exactly one row per cell per day survives.
+
+    RUNS IN A SAVEPOINT. This history is a measurement aid; the gate beneath it
+    is the money path. A failure here (missing rights, full disk) must not drag
+    the main upsert into the rollback — without the savepoint it would, because
+    both live in the same transaction. Returns rows written, 0 if the append
+    failed.
+    """
+    if not rows:
+        return 0
+    snapshot_day = datetime.now(timezone.utc).date()
+    hist_rows = [(snapshot_day, *r) for r in rows]
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT regime_history")
+            try:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {HISTORY_TABLE} (
+                        snapshot_date   date NOT NULL,
+                        bot_name        text NOT NULL,
+                        regime          text NOT NULL,
+                        alt_context     text NOT NULL,
+                        direction       text NOT NULL,
+                        window_days     integer NOT NULL,
+                        n_trades        integer,
+                        win_rate        double precision,
+                        avg_pnl_pct     double precision,
+                        median_pnl_pct  double precision,
+                        pnl_stddev      double precision,
+                        sharpe_like     double precision,
+                        worst_trade_pct double precision,
+                        best_trade_pct  double precision,
+                        last_computed   timestamp,
+                        PRIMARY KEY (snapshot_date, bot_name, regime, alt_context, direction, window_days)
+                    )
+                    """
+                )
+                pg_extras.execute_values(
+                    cur,
+                    f"""
+                    INSERT INTO {HISTORY_TABLE}
+                        (snapshot_date, bot_name, regime, alt_context, direction, window_days,
+                         n_trades, win_rate, avg_pnl_pct, median_pnl_pct,
+                         pnl_stddev, sharpe_like, worst_trade_pct, best_trade_pct,
+                         last_computed)
+                    VALUES %s
+                    ON CONFLICT (snapshot_date, bot_name, regime, alt_context, direction, window_days)
+                    DO UPDATE SET
+                        n_trades = EXCLUDED.n_trades,
+                        win_rate = EXCLUDED.win_rate,
+                        avg_pnl_pct = EXCLUDED.avg_pnl_pct,
+                        median_pnl_pct = EXCLUDED.median_pnl_pct,
+                        pnl_stddev = EXCLUDED.pnl_stddev,
+                        sharpe_like = EXCLUDED.sharpe_like,
+                        worst_trade_pct = EXCLUDED.worst_trade_pct,
+                        best_trade_pct = EXCLUDED.best_trade_pct,
+                        last_computed = EXCLUDED.last_computed
+                    """,
+                    hist_rows,
+                )
+                cur.execute(
+                    f"DELETE FROM {HISTORY_TABLE} WHERE snapshot_date < %s",
+                    (snapshot_day - timedelta(days=_history_retention_days()),),
+                )
+                cur.execute("RELEASE SAVEPOINT regime_history")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT regime_history")
+                raise
+    except Exception as exc:  # noqa: BLE001 - never break the gate for a measurement aid
+        logger.warning(
+            "%s: snapshot history could not be written (%s) - the main upsert stands. "
+            "Without this history no gate variant can be checked against its own past "
+            "(T-2026-KYT-9050-072).",
+            HISTORY_TABLE,
+            exc,
+        )
+        return 0
+    return len(hist_rows)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
