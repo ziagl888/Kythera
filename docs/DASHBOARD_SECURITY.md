@@ -31,12 +31,22 @@ Alle Werte am 2026-08-01/02 auf srv02 selbst erhoben (read-only, kein Eingriff).
 > Loopback — und dann trotzdem der Konfiguration geglaubt statt der Empirie im eigenen Log.
 >
 > **Folge für dieses Dokument:** §"Was daraus folgt" unten argumentiert an mehreren Stellen mit
-> „die Firewall blockt" — diese Begründung entfällt, die daraus abgeleiteten Maßnahmen bleiben
-> richtig und werden dringlicher. Die Regeln abzuschalten
-> (`Disable-NetFirewallRule -DisplayName "SNAC Service","SMC Service"`, elevated) schließt
-> 5000/5432/445/5555/8098 und lässt **RDP unberührt** — RDP hat eigene Regeln. Postgres (5432)
-> ist zwar erreichbar, `pg_hba.conf` kennt aber nur `127.0.0.1/32`, `::1/128` und den lokalen
-> Socket → Fremde werden abgewiesen, kein Datenzugriff.
+> „die Firewall blockt" — diese Begründung entfällt. Die daraus abgeleiteten Maßnahmen bleiben
+> richtig; die Härtung dieses PRs steht nicht mehr hinter einer Firewall, sondern trägt allein.
+>
+> **Entscheid dazu (2026-08-02, Operator): die beiden Symantec-Regeln bleiben aktiv —
+> WONTFIX, Risiko akzeptiert (`T-2026-KYT-9050-070`).** Das ist kein offener Punkt mehr und
+> soll nicht erneut als Finding aufgemacht werden. Begrenzend wirken zwei Dinge, die
+> unabhängig von der Firewall greifen: Postgres (5432) ist zwar erreichbar, `pg_hba.conf`
+> kennt aber nur `127.0.0.1/32`, `::1/128` und den lokalen Socket → Fremde werden abgewiesen,
+> kein Datenzugriff; und das Dashboard bindet ab dem nächsten Start per Default auf Loopback,
+> womit der unauthentifizierte `POST /api/system/stop_all` aus dem Netz verschwindet.
+> Exponiert bleiben 135 (RPC), 445 (SMB), 3389 (RDP) und 5985 (WinRM).
+>
+> Wiedervorlage nur bei: (a) einem Fremd-Treffer auf einem Control-Endpoint im
+> Dashboard-Log, (b) einer `pg_hba`-Zeile für eine externe IP, (c) Symantec-Deinstallation.
+> Die Umkehrung bliebe jederzeit ein Kommando, elevated, sofort reversibel, **RDP unberührt**
+> (RDP hat eigene Regeln): `Disable-NetFirewallRule -DisplayName "SNAC Service","SMC Service"`.
 
 | Was | Messung | Wie gemessen |
 |---|---|---|
@@ -128,9 +138,15 @@ Dashboard bleibt unverändert `/api/status` (ein `psutil.process_iter`-Sweep pro
 alle 6 s pro Tab — P1.38, offen). Der Guard erzeugt **keine** zusätzliche Query und keinen
 zusätzlichen Prozess-Scan.
 
-**Verhaltens-Neutralität des Bind-Wechsels (gemessen, nicht angenommen):** Off-Box-Zugriff ist
-heute nicht möglich (Firewall blockt, keine Allow-Regel, nur ein Nicht-Loopback-Interface), also
-kann der Loopback-Bind keinen bestehenden Zugriffsweg kappen. Die Erfolgsprobe von
+**~~Verhaltens-Neutralität des Bind-Wechsels~~ — KORRIGIERT 2026-08-02, der Bind-Wechsel ist
+NICHT neutral.** Die ursprüngliche Begründung („Off-Box-Zugriff ist heute nicht möglich, also
+kann der Loopback-Bind keinen bestehenden Zugriffsweg kappen") steht auf der widerlegten
+Firewall-Annahme (siehe Kasten oben). Off-Box-Zugriff **ist** möglich und wird genutzt — 537
+beantwortete Fremd-Requests seit dem 04.07. **Der Loopback-Bind kappt also einen real
+bestehenden Weg:** ab dem nächsten Dashboard-Start ist das Dashboard nur noch aus einer
+RDP-Sitzung auf der Box erreichbar (und für Fremde gar nicht mehr — das ist der Zweck).
+Fernzugriff braucht dann `KYTHERA_DASHBOARD_HOST` **plus** `KYTHERA_DASHBOARD_TOKEN` in `.env`
+(ohne Token verweigert die Fail-closed-Politik den Start), oder den Tunnel aus Z2. Die Erfolgsprobe von
 `tools/restart_fleet.ps1` (`Test-NetConnection -ComputerName localhost -Port 5000`) bleibt gültig:
 Sie liefert schon heute gegen einen reinen IPv4-Listener `True`, obwohl `localhost` zuerst nach
 `::1` auflöst — die Namensauflösung fällt auf IPv4 zurück (nachgemessen).
@@ -188,7 +204,7 @@ Zugriff** das Dashboard haben soll. Drei Optionen, mit dem, was jeweils übrig b
   outbound-only. Zugleich die harte Vorbedingung für die Z1-Quick-Actions (F4): ohne
   Auth-Layer kein Live-Hebel in der Web-UI.
 * **Restrisiko, ehrlich beziffert:** Nach D3 hängt die Fleet-Stop-Fähigkeit an
-  **zwei** Faktoren statt an einer Firewall-Default-Regel — der Access-Policy (falsch
+  **zwei** Faktoren — der Access-Policy (falsch
   gescoped = weltweit offen, ein bekannter Fehlerfall bei Zero-Trust-Setups) und dem Token.
   Der Token ist der Grund, warum eine fehlkonfigurierte Access-Policy allein nicht reicht;
   erzwungen wird er durch die Startpolitik. Zusätzlich verlagert D3 Vertrauen zu Cloudflare
@@ -224,7 +240,8 @@ Nur zur Vorbereitung notiert; jeder Schritt ist ein Live-Eingriff.
    Policy ist offen), Login-Policy für Michi; Service-Tokens später für Maschinen (Idee I9).
 6. Verifizieren: (a) Tunnel-Hostname ohne Access-Login → abgewiesen; (b) mit Login, ohne
    Dashboard-Token → `401 token_invalid`; (c) mit beidem → UI; (d) `http://45.134.39.167:5000`
-   von außen → weiterhin unerreichbar.
+   von außen → unerreichbar (vorher erreichbar — das ist der Beleg, dass der Bind gegriffen
+   hat, nicht eine Bestätigung des Ausgangszustands).
 
 ---
 

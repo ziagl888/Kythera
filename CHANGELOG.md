@@ -1,3 +1,33 @@
+## [2026-08-02] Symantec-Firewallregeln: Exposure gemessen, Operator-Entscheid WONTFIX (T-2026-KYT-9050-070)
+
+Kein Code. Schließt den Punkt, den die Korrektur an P0.8 aufgeworfen hatte: zwei
+Symantec-Regeln (`SMC Service`, `SNAC Service` — Enabled/Inbound/**Allow**/Public,
+`LocalPort: Any`, `RemoteIP: Any`) erlauben eingehendes TCP auf jedem Port von jeder IP;
+`DefaultInboundAction` ist auf allen drei Profilen `NotConfigured`. Die Box hängt mit
+öffentlicher IP direkt am Interface, kein NAT.
+
+**Gemessen (read-only, nach dem Reboot vom 02.08. erneut bestätigt):** exponierte Listener
+135/445/3389/5000/5432/5985; `logs/dashboard.log` zählt seit dem 04.07. **537** beantwortete
+`GET / HTTP` inklusive laufender Fremdzugriffe und Scans (`/.env.production`,
+`/v404/exec?jwt=…`); am 02.08. zeitweise neun gleichzeitige SMB-Verbindungen von einer fremden
+IP. **Nicht verifizierbar** aus der Agent-Session: ob diese SMB-Verbindungen authentifiziert
+waren — `Get-SmbSession` läuft unelevated in „Access is denied", das Security-Log liefert für
+4624/4625 nichts. Belegt ist, dass jemand die Sockets hielt, nicht dass eine Anmeldung gelang.
+
+**Entscheid Michi: die Regeln bleiben, Risiko akzeptiert.** Kein offener Handlungspunkt mehr.
+Begrenzend wirken zwei Dinge unabhängig von der Firewall: `pg_hba.conf` kennt nur
+`127.0.0.1/32`, `::1/128` und den lokalen Socket → die Live-Handels-DB weist Fremde ab; und der
+Loopback-Bind aus T-056 nimmt den unauthentifizierten `stop_all` beim nächsten Dashboard-Start
+vom Netz. Wiedervorlage nur bei einem Fremd-Treffer auf einem Control-Endpoint, einer
+`pg_hba`-Zeile für eine externe IP oder einer Symantec-Deinstallation.
+
+**Nebenbefund, der aus derselben Korrektur folgt:** die Zusage „der Bind-Wechsel ist
+verhaltensneutral" in `docs/DASHBOARD_SECURITY.md` stand auf der widerlegten Firewall-Annahme
+und ist zurückgezogen. Der Loopback-Bind kappt einen real bestehenden Zugriffsweg — nach dem
+nächsten Dashboard-Start ist die UI nur noch aus einer RDP-Sitzung erreichbar. Fernzugriff
+braucht dann `KYTHERA_DASHBOARD_HOST` **plus** `KYTHERA_DASHBOARD_TOKEN` (ohne Token verweigert
+die Fail-closed-Politik den Start) oder den Tunnel aus Z2.
+
 ## [2026-08-02] Dashboard-Absicherung: Loopback-Bind, Host-Allowlist, CSRF-Guard, Fail-closed-Startpolitik (T-2026-KYT-9050-056)
 
 P0.8 war „Dashboard ohne Auth auf `0.0.0.0`". Die Messung auf der Box bestätigt den Bind
