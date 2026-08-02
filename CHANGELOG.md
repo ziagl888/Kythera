@@ -1,3 +1,61 @@
+## [2026-08-02] „Gemergt heißt nicht live": Kanarienvogel + UAC-freier Marker-Restart (T-2026-KYT-9050-071)
+
+Am 2026-08-02 lag der Live-Checkout **45 Commits** hinter `origin/main`, während die Fleet
+fröhlich auf dem Code vom Vorabend handelte — darunter ein nicht ausgelieferter Geld-Pfad-Fix
+(T-009, TP1 auf der Verlustseite). **Nichts hat Alarm geschlagen.** Aufgefallen ist es nur, weil
+ein Bot seit 17 Tagen denselben Fehler warf und jemand zufällig ins Log sah.
+
+Die Lücke entsteht still: **ein Reboot startet die Fleet ohne Pull.** Nur `restart_fleet.ps1`
+pullt — ein Reboot sieht aus wie ein Restart und ist keiner.
+
+**Neu: `tools/ops/fleet_code_age.py`.** Vergleicht die Startzeit der laufenden Fleet-Prozesse
+gegen den HEAD-Commit. Ist ein Prozess älter als HEAD, kann er HEAD nicht ausführen. Read-only,
+ohne DB, ohne Elevation, und im Preflight von `restart_fleet.ps1` verdrahtet (rein beratend, der
+Exit-Code ändert sich nicht).
+
+Zwei Präzisierungen, beide am selben Tag teuer gelernt und als Test festgenagelt:
+
+* **Die Prozessmenge sind die Kinder des Watchdogs**, nicht „Python, dessen Elternteil Python
+  ist". Die weitere Menge enthält die Worker eines Trainers oder Backfills, und ein einziger
+  langlebiger Fremdjob zieht das Urteil nach hinten — gemessen: ein Funding-Backfill-Worker von
+  02:29 ließ eine um 19:30 neu gestartete Fleet 13 h veraltet aussehen.
+* **Der Watchdog wird strukturell gefunden** (Python-Prozess mit den meisten Python-Kindern),
+  nie über die CommandLine — die ist für die elevated Fleet aus einer nicht-elevated Session
+  unlesbar, ein Namensabgleich findet also stillschweigend nichts.
+
+Und eine Unterscheidung, die den Unterschied macht: **„1 von 41" ist nicht „41 von 41".** Der
+Ein-von-Fall ist hier der Normalfall, weil `main_watchdog` `dashboard.py` über sein eigenes
+`start_dashboard()` startet und nicht über `core.fleet.FLEET`.
+
+**Neu: `restart_fleet.ps1 -MarkerRestart`.** Der UAC-freie Weg, den das Skript bisher nicht
+kannte. Er schreibt je FLEET-Eintrag einen `control/restart/<script>`-Marker; der **laufende**
+Watchdog recycelt den Bot im nächsten Zyklus. Genau der Mechanismus hinter dem Dashboard-Knopf —
+und der einzige, der funktioniert, wenn die Fleet losgelöst von ihrer Scheduled Task läuft
+(State=Ready bei lebenden Prozessen, der Zustand nach einem Reboot). Bisher hat das Skript in
+diesem Fall nur verweigert; deshalb standen 45 gemergte Commits 13 h lang ungenutzt.
+
+Bewusst **ohne `unpark`** — anders als `dashboard.restart_process`. Ein geparkter Bot ist mit
+Absicht geparkt, und ihn während eines Code-Rollouts still scharf zu schalten ist genau die
+Überraschung, die dieses Skript verhindern soll. Er konsumiert seinen Marker dann nicht
+(`main_watchdog` prüft `is_parked` **vor** `consume_restart`), was eine harmlose Restdatei
+hinterlässt; das Skript benennt sie.
+
+Grenzen, beide echt und im Header wie im Log genannt: der Watchdog startet **sich selbst** nicht
+neu (Änderungen an `main_watchdog.py`/`core/fleet.py` brauchen weiter die Task), und
+`dashboard.py` bleibt stehen. Der Abbruch-Zweig für den losgelösten Zustand nennt jetzt beide
+Wege — den unelevated Marker-Pfad und die elevated Sequenz zur Rückgabe der Task-Ownership,
+Watchdog zuerst.
+
+**Korrigiert:** die Log-Zeile behauptete, `dashboard.py` stehe in `FLEET_SCRIPTS`. Tut es nicht.
+Das Erfolgskriterium auf Port 5000 trägt trotzdem (der Watchdog bringt das Dashboard zurück), aber
+die genannte Begründung war falsch — und sie ist genau der Grund, warum `-MarkerRestart` das
+Dashboard nicht erfasst.
+
+Verifiziert: `backtest/test_fleet_code_age.py` 10/10 (DB-frei), PowerShell parst sauber
+(`[Parser]::ParseFile`), `-DryRun` end-to-end gelaufen, ruff + format + mypy sauber, Guard 24/24.
+Der Kanarienvogel gegen den Live-Checkout meldet aktuell korrekt **„1 von 41"** — das Dashboard,
+das seit dem Marker-Restart bewusst auf altem Code läuft.
+
 ## [2026-08-02] Staging-MAX1 entfernt: es war keine Kandidatur, sondern die abgelöste Live-Generation (T-2026-KYT-9050-017)
 
 `staging_models/max1_model_SHORT.pkl` + `_meta.json` sind raus. Kein Code, kein Live-Eingriff —
