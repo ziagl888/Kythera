@@ -362,6 +362,13 @@ if ($task.State -eq 'Running') {
     # among them. There IS an unelevated path: the running watchdog consumes
     # control/restart/<script> markers within one cycle. Name it here instead of
     # making the next operator rediscover it.
+    # Root cause, measured in T-2026-KYT-9050-076: the boot-time clock correction
+    # makes the Task Scheduler fire the boot trigger twice; the second watchdog
+    # reaps the first through the documented mutex recovery (psutil terminate =
+    # exit 15 on Windows), and the task records the reaped instance. Nothing is
+    # broken - only the Scheduler's ownership of the survivor is lost. The
+    # permanent fix is a boot-trigger delay; see the doc.
+    Write-Log "This is the known clock-jump pattern (LastTaskResult=15) - docs\WATCHDOG_TASK_DETACH.md" 'ERROR'
     Write-Log "Two ways forward:" 'ERROR'
     Write-Log ("  (a) UNELEVATED, recycles the {0} FLEET bots on the pulled code (NOT the watchdog, NOT dashboard.py):" -f $preStopPids.Count) 'ERROR'
     Write-Log ("      powershell -ExecutionPolicy Bypass -File tools\restart_fleet.ps1 -MarkerRestart") 'ERROR'
