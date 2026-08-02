@@ -167,10 +167,28 @@ Bind-Adresse. Der laufende Dashboard-Prozess (PID 100120) ist unangetastet.
 
 ---
 
-## 4. Offener Entscheid für Michi
+## 4. ~~Offener Entscheid für Michi~~ — ENTSCHIEDEN 2026-08-02: **D1**
 
-Der Code-Teil ist fertig und für sich wirksam. Was noch aussteht, ist die Frage, **wie viel
-Zugriff** das Dashboard haben soll. Drei Optionen, mit dem, was jeweils übrig bleibt:
+> **Operator-Entscheid (T-2026-KYT-9050-074): „Dashboard sehe ich ohnehin nur via RDP."**
+>
+> Damit gilt **D1** — Loopback-only, kein Token. **Es ist nichts zu tun und nichts zu
+> konfigurieren:** weder `KYTHERA_DASHBOARD_HOST` noch `KYTHERA_DASHBOARD_TOKEN` gehören in die
+> `.env`. Der Default aus diesem PR ist bereits der gewünschte Zustand; ab dem nächsten Start
+> von `dashboard.py` ist die UI nur noch aus einer RDP-Sitzung auf der Box erreichbar.
+>
+> **D3 (cloudflared + Access) ist damit gestrichen**, nicht vertagt. Fernzugriff wird nicht
+> gebraucht, und gegenüber „gar nicht erreichbar" vergrößert ein Tunnel die Angriffsfläche.
+> Das Runbook in §5 bleibt als Referenz stehen und wird **nicht** ausgeführt.
+>
+> **Einziger Wiedervorlage-Auslöser:** die Z1-Quick-Actions (Audit-Punkt F4). Ein Live-Hebel in
+> der Web-UI braucht einen Auth-Layer — kommt F4, kommt die Frage zurück. Sonst nicht.
+>
+> Vollzugs-Hinweis: `dashboard.py` steht **nicht** in `core/fleet.py` (eigene Scheduled Task).
+> Der Marker-basierte Fleet-Restart erfasst es nicht; die Härtung greift erst beim nächsten
+> Start dieses Prozesses.
+
+Der Code-Teil ist fertig und für sich wirksam. Die ursprüngliche Optionsmatrix bleibt zur
+Nachvollziehbarkeit stehen — entschieden ist **D1**:
 
 ### D1 — Loopback-only, kein Token (was nach dem Merge automatisch gilt)
 
