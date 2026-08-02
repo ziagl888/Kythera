@@ -866,9 +866,14 @@ def wait_for_cpu_headroom(max_wait_min: int, force: bool, poll_sec: int = 60) ->
                 cpu = _cpu_now()
                 if not force:
                     raise
-                print(f"⚠️ CPU {cpu}% — --force-on-busy gesetzt, Lauf startet trotzdem (read-only, BELOW_NORMAL).")
+                # ASCII on purpose: this is the ONLY line on the --force-on-busy
+                # path, and a Windows console defaults to cp1252 — an emoji here
+                # raised UnicodeEncodeError and killed the run at the exact
+                # moment the operator had asked it to proceed anyway. The
+                # documented escape hatch must not depend on the code page.
+                print(f"[WARN] CPU {cpu}% - --force-on-busy gesetzt, Lauf startet trotzdem (read-only, BELOW_NORMAL).")
                 return cpu
-            print(f"CPU busy — warte {poll_sec}s auf Headroom (bis zu {max_wait_min} min) …", flush=True)
+            print(f"CPU busy - warte {poll_sec}s auf Headroom (bis zu {max_wait_min} min) ...", flush=True)
             time.sleep(poll_sec)
 
 

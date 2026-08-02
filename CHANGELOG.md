@@ -1,3 +1,63 @@
+## [2026-08-02] whitelist_v2 nachjustiert: keine Parametrisierung überlebt out-of-sample — Stop-B, v1 bleibt (T-2026-KYT-9050-007)
+
+Auftrag war, den v2-Gate **nachzujustieren** statt ihn zu flippen oder zu lassen: Wilson-Grenze
+und Break-even-Schwelle ändern und gegen die realisierten Forwards neu messen. Neues read-only
+Werkzeug `tools/whitelist_v2_recalibration.py`, Verdikt in
+`docs/T-2026-KYT-9050-007-whitelist-v2-recalibration.md`. **Kein Flip, kein Restart, keine
+Schreib-Query.**
+
+**Der vorgeschlagene Hebel ist der falsche.** Über 45 Konfigurationen bewegt der Break-even die
+Öffnungsrate um **1,7 pp**, die Shrinkage-Stärke um **1,3 pp** — der z-Multiplikator der
+Untergrenze dagegen um **10 bis 47 pp**. v2 ist kein Erwartungswert-Gate mit einer Schwelle,
+sondern ein Konfidenz-Gate; die Konfidenz *ist* der Gate. Und selbst am permissivsten Ende
+öffnet v2 nur ~53 % der Zellen gegen v1s 94 %: der −55-%-Durchsatzverlust aus PR #239 ist
+strukturell, kein Tuning-Artefakt.
+
+**In-sample sah eine Region hervorragend aus** (Fenster 07-11 → 08-02, 8.367 Beine, v1-Referenz
+Ø +0,033 %/Trade): `z 0,67 / k 10 / be 0,1` verdoppelt den Durchsatz auf 13,9 %, hebt die
+behaltene Erwartung auf **Ø +0,558 %** und entfernt Verkehr mit **Ø −0,076 %**. Als Backtest
+gelesen wäre das ein Treffer.
+
+**Out-of-sample invertiert es vollständig.** Fenster 04-18 → 07-03, also **vor** dem
+30-Tage-Fit-Fenster der Zellstatistiken, 4.356 Beine, 99,9 % Leg-Abdeckung, v1-Referenz
+Ø +0,689 %/Trade: **42 der 45 Konfigurationen entfernen Gewinner.** Der Mittelwert der
+geblockten Beine liegt über das ganze Gitter bei **+0,55 bis +0,60 %/Trade** — v2 hätte in jeder
+Parametrisierung rund **80 % des realisierten ROM1-Gewinns** weggeschnitten und 3–6 % des
+Volumens behalten. Dieselbe Zelle `z 0,67 / be 0,1` geht von „entfernt Verlierer" auf
+**„entfernt GEWINNER"** (Ø geblockt +0,594). Die drei Ausnahmen behalten 95 % des Verkehrs —
+ein Gate, das nicht gatet.
+
+**Warum in-sample so gut aussah:** Selektionseffekt. Die Zellstatistiken stammen aus den letzten
+30 Tagen, die in-sample gescorten Beine liegen in genau diesem Fenster. Eine Zelle passiert,
+weil ihre jüngsten Trades gut liefen — und dieselben Trades werden dann als Beleg gezählt.
+Dieselbe Fehlerklasse, die PR #239 auf dem Trigger-Leg benannt hat, hier über den Umweg der
+Parametrisierung.
+
+**Neu gegenüber PR #239:** dieser Out-of-Sample-Lauf war dort unmöglich. Die Flip-Auswertung
+braucht `orchestrator_open_trades.wl_reason`, das erst ab Anfang Juli befüllt ist. Dieses
+Werkzeug entscheidet die Zelle **neu** aus `bot_regime_performance` und braucht `wl_reason`
+nicht — damit werden 4.359 Forwards von April bis Anfang Juli auswertbar. Die „null
+Out-of-Sample"-Lücke des Ursprungsberichts ist geschlossen, mit einem negativen Befund.
+
+**Grenze, auf jedem Lauf gemessen statt behauptet:** `bot_regime_performance` ist ein Snapshot
+(**0** Zellen mit mehr als einer Zeile). Beide Läufe benutzen heutige Zellstatistiken und
+unterscheiden sich nur darin, ob die gescorten Trades im Fit-Fenster liegen. Für einen
+Leakage-Test ist das die richtige Trennung, für eine Rollout-Rechtfertigung reicht es nicht.
+Folge-Task **T-2026-KYT-9050-072** (Historisierung) macht die Frage in 30 Tagen erstmals ehrlich
+beantwortbar.
+
+**Nebenbefund, mitgefixt:** `wait_for_cpu_headroom` in `tools/whitelist_v2_realized_eval.py`
+brach auf dem `--force-on-busy`-Pfad mit `UnicodeEncodeError` ab — ein Emoji in der einzigen
+Zeile dieses Pfads, auf einer cp1252-Konsole. Die dokumentierte Notausstiegs-Option starb genau
+dann, wenn der Operator sie angefordert hatte. Jetzt ASCII.
+
+Verifiziert: `backtest/test_whitelist_v2_recalibration.py` 9/9 (DB-frei),
+`test_whitelist_v2_realized_eval` + `test_whitelist_v2_flip_eval` 47/47 unverändert grün, ruff +
+format grün, mypy auf der neuen Datei **0** Fehler (die 47 in importierten Modulen sind
+vorbestehend, Baseline auf `main` identisch), Regression-Guard 24/24 ohne Refresh. Beide Läufe
+read-only gegen die Live-DB (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`),
+BELOW_NORMAL, `TELEGRAM_BOT_TOKEN` bewusst auf einen ungültigen Platzhalter gesetzt.
+
 ## [2026-08-02] C-Gate-Nachlauf: die letzten zwei Roh-SELECTs umgehängt, Legacy-Backend bekommt einen Staleness-Guard (T-2026-KYT-9050-068)
 
 `16_smc_forex_metals_bot.py` und `21_btc_smc_strategy.py` bauten als einzige verbliebene

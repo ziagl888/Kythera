@@ -596,6 +596,27 @@ Dazu: 13 ML-Trainer-Audit (`Documents\_X`), 14 Live-Performance aus der DB, 15 S
   war `tools/backfill_funding_rates.py` (PID 85492, seit 19:35, 959 CPU-s) — **fremder
   Job, nicht abgebrochen.** Lauf nachholen, wenn die VPS Luft hat; erst danach ist der
   v2-Flip überhaupt entscheidbar.
+  ✅(2026-08-02, T-2026-KYT-9050-007: **entschieden — NO-GO, und zwar ohne diesen Lauf.**
+  Statt des Counterfactuals wurde der Gate über 45 Parametrisierungen (z × k × break-even)
+  neu entschieden und gegen die realisierten ROM1-Beine gescort
+  (`tools/whitelist_v2_recalibration.py`, Verdikt
+  `docs/T-2026-KYT-9050-007-whitelist-v2-recalibration.md`). Drei Befunde: (a) **der im
+  Auftrag genannte Hebel ist der falsche** — Break-even bewegt die Öffnungsrate um 1,7 pp,
+  Shrinkage um 1,3 pp, der z-Multiplikator um 10–47 pp; (b) **selbst am permissivsten Ende
+  öffnet v2 nur ~53 % der Zellen gegen v1s 94 %** → der −55-%-Durchsatz aus PR #239 ist
+  strukturell, kein Tuning-Artefakt; (c) **out-of-sample entfernen 42 von 45
+  Konfigurationen GEWINNER** — geblockte Beine im Mittel +0,55 bis +0,60 %/Trade, das sind
+  ~80 % des realisierten ROM1-Gewinns des Fensters. Die in-sample beste Region
+  (`z 0,67 / be 0,1`, Ø geblockt −0,076) kehrt sich out-of-sample um (Ø geblockt +0,594):
+  reiner Selektionseffekt, weil die Zellen nach ihren eigenen jüngsten Ergebnissen
+  ausgewählt werden. **Die „null Out-of-Sample"-Lücke aus PR #239 ist damit geschlossen** —
+  das neue Werkzeug braucht kein `wl_reason` und kann die 4.359 Forwards von April bis
+  Anfang Juli auswerten. **Stop-B ist erfüllt: v1 bleibt, v2 wird weder geflippt noch
+  weiter nachjustiert.** Dauerhafte Grenze: `bot_regime_performance` ist ein Snapshot ohne
+  Historie (0 Zellen mit >1 Zeile, je Lauf gemessen) — der Leakage-Test oben ist die beste
+  erreichbare Näherung, nicht der richtige Test; Historisierung als
+  **T-2026-KYT-9050-072** erfasst. Box `#T66-2` bleibt offen: der Counterfactual-Lauf
+  selbst wurde nicht nachgeholt, er ist für den Entscheid nur nicht mehr nötig.)
 - [ ] **#T65-1 ROM1 gated auf TREFFERQUOTE statt Ertrag — misst bei 32 % der Beine falsch
   (T-2026-KYT-9050-065, 2026-08-01).** `27_bot_regime_analyzer.py:789` entscheidet
   `wr_bot >= wr_overall`; Trefferquote ignoriert die Gewinn/Verlust-Größenverhältnisse.
