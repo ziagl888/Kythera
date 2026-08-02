@@ -143,13 +143,20 @@ def is_trade_already_active(conn, coin: str, direction: str, strategy: str) -> b
         return cursor.fetchone()[0]
 
 
-# Hard limit of the LIVE trade_cooldowns.module column: character varying(10).
-# The in-repo bootstrap DDLs say VARCHAR(50)/TEXT, but the live table predates
+# Historical hard limit of the LIVE trade_cooldowns.module column, varchar(10).
+# The in-repo bootstrap DDLs say VARCHAR(50)/TEXT, but the live table predated
 # them and CREATE TABLE IF NOT EXISTS never widens columns (DDL drift, see
 # AUDIT_TODO P2.2). A longer tag makes update_cooldown throw
 # StringDataRightTruncation — which silenced the Volume Indicator for five
 # days (T-2026-CU-9050-024). Guarded here so the contract fails loudly and
 # identically in every environment, not just on the live VPS.
+#
+# STAND 2026-08-02 (T-2026-KYT-9050-009): die Begründung oben ist überholt — die
+# Live-Spalte ist per information_schema inzwischen `character varying(50)`, der
+# ALTER aus P2.2 ist gelaufen. Der Wert bleibt trotzdem 10: ihn anzuheben ändert
+# die Cooldown-Keys auf dem Geld-Pfad (25_smc_ml_sniper fällt heute bei langen
+# Tags bewusst auf einen statischen Tag zurück) und ist damit ein
+# Operator-Entscheid, kein Aufräumen.
 COOLDOWN_MODULE_MAX_LEN = 10
 
 
@@ -438,6 +445,42 @@ def find_support_resistance_zones(
         return sorted(zones.items(), key=lambda x: x[1], reverse=True)
 
     return find_zones("low", above=False), find_zones("high", above=True)
+
+
+def select_zone_targets(
+    zones: list[tuple[float, int]],
+    entry: float,
+    direction: str,
+    count: int = 4,
+) -> list[float]:
+    """Zone prices on the PROFIT side of `entry`, nearest first.
+
+    P0.7, second door (T-2026-KYT-9050-009). `find_support_resistance_zones`
+    filters its zones against the last CLOSED candle's close, but a strategy
+    builds its target ladder against `entry = live_price`. Those are two
+    different reference prices, and the market moves between them: a
+    "resistance" zone can sit BELOW a LONG entry by the time the signal is
+    built. Picking the nearest zone by |zone - entry| then puts TP1 on the
+    losing side, and the downstream interpolation (x = (t1 - entry) / 4) turns
+    negative and drags TP2/TP3 down with it — exactly the damage shape P0.7
+    described. The `if t1 == 0` guard added in 2026-07 only covers the case of
+    NO zones at all, so this door stayed open: measured on the live DB,
+    2026-07-01..2026-08-01, 342/3463 Support-Resistance and 12/188 Main-Channel
+    trades were emitted with TP1 on the wrong side of entry.
+
+    Filtering against the price the ladder is actually measured from keeps
+    every target profitable and makes the ladder monotone in trade direction
+    (nearest-first on one side is ordered by definition). Returns fewer than
+    `count` entries — including none — when the zone list does not offer more;
+    padding and the resulting no-signal decision stay with the caller.
+    """
+    if entry <= 0:
+        return []
+    is_long = str(direction).upper() == "LONG"
+    on_profit_side = [
+        float(price) for price, _count in zones if (float(price) > entry if is_long else 0 < float(price) < entry)
+    ]
+    return sorted(on_profit_side, key=lambda price: abs(price - entry))[:count]
 
 
 def send_telegram(message: str, channel_id: int) -> None:

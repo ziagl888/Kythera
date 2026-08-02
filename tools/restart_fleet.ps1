@@ -76,16 +76,59 @@ function Write-Log {
 }
 
 function Invoke-Git {
-    # Runs git against the repo root and returns stdout lines; throws on a
-    # non-zero exit code. stderr is deliberately NOT redirected - in PS 5.1
-    # that would wrap each line in an ErrorRecord and poison $? even on
-    # success.
+    # Runs git against the repo root and returns its STDOUT lines; throws only
+    # on a non-zero exit code.
+    #
+    # stderr handling is the load-bearing part (T-2026-KYT-9050-009). git
+    # reports ordinary progress on stderr - "From https://github.com/...",
+    # "* branch main -> FETCH_HEAD" - and PowerShell 5.1 converts native stderr
+    # into ErrorRecords as soon as the stream is merged into the pipeline. That
+    # merge is not under this script's control: it happens whenever the
+    # OPERATOR invokes the script with `2>&1`, a reflex when capturing output.
+    # With $ErrorActionPreference = 'Stop' the first progress line then
+    # terminates, and the pull's catch reported
+    #   "Pull failed: From https://github.com/ziagl888/Kythera"
+    # for a pull that had in fact fast-forwarded the checkout - twice, in
+    # logs/fleet_restart_20260726_232251.log and _20260801_192843.log, each
+    # time aborting a restart that had to be re-run by hand.
+    #
+    # So: merge stderr explicitly (deterministic across hosts), demote errors
+    # for the duration of the call, and let the EXIT CODE be the only verdict.
+    # Progress lines are logged instead of discarded.
     param([string[]]$GitArgs)
-    $out = & git -C $RepoRoot @GitArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw ("git {0} failed with exit code {1}" -f ($GitArgs -join ' '), $LASTEXITCODE)
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $merged = & git -C $RepoRoot @GitArgs 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
     }
-    return $out
+
+    $stdoutLines = @()
+    $stderrLines = @()
+    foreach ($record in @($merged)) {
+        if ($null -eq $record) { continue }
+        if ($record -is [System.Management.Automation.ErrorRecord]) {
+            # Read the message off the exception: [string] on an ErrorRecord
+            # that wraps an EMPTY stderr line renders the type name
+            # ("System.Management.Automation.RemoteException") instead of the
+            # blank line, which would end up in the operator-facing log.
+            $text = if ($record.Exception) { [string]$record.Exception.Message } else { [string]$record }
+            $stderrLines += $text
+        } else {
+            $stdoutLines += [string]$record
+        }
+    }
+    foreach ($line in $stderrLines) {
+        if ($line.Trim()) { Write-Log ("  git: {0}" -f $line.Trim()) }
+    }
+
+    if ($exitCode -ne 0) {
+        $detail = if ($stderrLines) { " - " + (($stderrLines | ForEach-Object { $_.Trim() }) -join ' | ') } else { '' }
+        throw ("git {0} failed with exit code {1}{2}" -f ($GitArgs -join ' '), $exitCode, $detail)
+    }
+    return $stdoutLines
 }
 
 function Get-FleetBotProcesses {

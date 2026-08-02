@@ -67,6 +67,103 @@ Verifikation: `backtest/test_whitelist_v2_realized_eval.py` 25/25 (DB-frei, stan
 in CI-Form sauber, pre-commit inkl. gitleaks und `guard.py verify` grün. Die drei Läufe liefen
 unter Job-Lock bei gemessenen 72,7/90,4/96,9 % System-CPU (`--force-on-busy`, BELOW_NORMAL,
 read-only); Berichte in `staging_models/replay/whitelist_v2_realized_eval_*.md`.
+## [2026-08-02] VPS-Audit-Rest nachgemessen: P0.7 hat eine zweite Tür, das Dashboard hängt offen im Netz, Z0 misst sich selbst (T-2026-KYT-9050-009)
+
+Auftrag war die Rest-Kette der VPS-Orchestrierung (Jobs 7/8/10/11 + Doku-PR). Regel der Session:
+jeder Punkt wird erst am heutigen Code und an der heutigen Live-Umgebung nachgemessen, dann
+bearbeitet. Fünf von acht Punkten haben sich gegen ihre Aktenlage gedreht — in beide Richtungen.
+Voller Bericht mit allen Zahlen: `docs/T-2026-KYT-9050-009-vps-audit-rest.md`. Read-only auf der
+Live-DB, kein Restart, kein Gate-Flip, kein Deploy.
+
+### Fixed
+- **`strategies/strat_support_resistance.py` + `strat_main_channel.py` — P0.7 hatte eine zweite Tür,
+  und sie stand offen.** Der DB-Rest des Findings ist erledigt (0 Zeilen mit der P0.7-Signatur in
+  `active_trades_master`, die letzte im Archiv 2026-05-27, also vor dem Fix vom 04.07.) — aber die
+  Fehlerklasse produziert weiter: **342 von 3.463 Support-Resistance- und 12 von 188
+  Main-Channel-Trades seit 01.07. gingen mit TP1 auf der falschen Seite des Entry raus**, der neueste
+  am 2026-08-01 23:33, einer stand aktiv im Buch. Ursache: `find_support_resistance_zones` filtert
+  seine Zonen gegen den Close der letzten geschlossenen Kerze, die Ziel-Leiter wird aber gegen
+  `entry = live_price` gebaut. Läuft der Live-Preis über eine Resistance-Zone, wählt
+  `sorted(zones, key=|zone−entry|)` genau diese als TP1, und die Interpolation `x = (t1−entry)/4`
+  wird negativ und zieht TP2/TP3 hinterher — dieselbe Schadensform wie P0.7, nur durch eine andere
+  Tür. Der 2026-07-04 gebaute Guard `if t1 == 0` deckt ausschließlich „gar keine Zonen" ab.
+  Dass ausgerechnet die drei nicht-zonenbasierten Strategien (5 Percent, Fast In And Out, Volume
+  Indicator; zusammen 17.792 Trades) **null** Fälle haben, ist der Fingerabdruck der Ursache.
+  Nicht nur Geometrie: 96,5 % dieser Trades schlossen mit `status ≥ 1` („TP getroffen") gegen 66,2 %
+  der sauberen — ein TP auf der Verlustseite wird beim ersten Gegenlauf „getroffen". Diese
+  Phantom-Treffer stehen in der Per-Bot-Statistik, auf der das Orchestrator-Gating entscheidet.
+  Fix: neuer geteilter Helfer `core.market_utils.select_zone_targets(zones, entry, direction)`
+  filtert gegen den Preis, gegen den die Leiter gerechnet wird (beide Strategien × beide Richtungen,
+  4 Stellen); die Leiter ist damit zusätzlich monoton in Handelsrichtung. Gemessene Rollout-Wirkung:
+  Support Resistance verliert 1,1 % seiner Signale ganz und korrigiert 10,1 % der Leitern, Main
+  Channel 2,1 % / 6,4 % — die entfallenden sind genau die, deren TP1 auf der Verlustseite lag.
+  Nebenwirkung, die dazugehört: die Trefferquote von „Support Resistance" wird nach dem Rollout
+  **sinken**. **Wirksam erst nach Fleet-Restart — Michi-Entscheid.**
+  Test: `backtest/test_zone_target_side.py` (8 Fälle, DB-frei, inkl. LABUSDT-Live-Regression).
+- **`tools/restart_fleet.ps1` — „Pull failed" bei erfolgreichem Pull.** Zweimal belegt
+  (`logs/fleet_restart_20260726_232251.log`, `_20260801_192843.log`): `ERROR - Pull failed: From
+  https://github.com/ziagl888/Kythera`, danach „Fleet untouched" und Exit 1 — obwohl der Pull
+  durchlief (HEAD 0e432d5 → e3181d5, im Folgelauf zwei Minuten später als „nothing to pull"
+  bestätigt). git schreibt Fortschritt auf stderr; PowerShell 5.1 macht daraus ErrorRecords, sobald
+  der Strom in die Pipeline gemergt wird — und das passiert, wenn der Operator das Skript mit `2>&1`
+  aufruft. Mit `$ErrorActionPreference = 'Stop'` terminiert schon die erste Fortschrittszeile, und
+  die Exception-Message ist genau der erste stderr-Text. `Invoke-Git` mergt stderr jetzt explizit,
+  demotet Fehler für die Dauer des Aufrufs und macht den **Exit-Code zum einzigen Urteil**;
+  Fortschrittszeilen landen als INFO im Log statt zu terminieren. Echte git-Fehler werfen weiterhin,
+  jetzt mit git's Text statt nur einem Exit-Code. Verifiziert im Scratch-Repo (alt: Abbruch mit
+  identischer Signatur, neu: sauberer Durchlauf) und end-to-end am echten Skript per `-DryRun` unter
+  `2>&1`.
+
+### Added
+- **`tools/ops/measure_cpu_baseline.ps1`** — read-only CPU-Sampler für das Z0/C3-Programm
+  (WMI-Perf-Counter statt kumulativer `Get-Process .CPU`-Sekunden). Erster Lauf, 10 min / 35 Samples
+  / 10 Kerne: **Box-Mittel 78 %**, nicht 100 %. Und der wichtigste Posten der Messung ist die Messung:
+  **~34 Prozentpunkte gehen auf die Agent-Session selbst** (claude 16,4 %, der Sampler via WmiPrvSE
+  4,4 %). Fleet-python 18,5 % + 10,6 % Pool-Worker, postgres 14,1 % (120 verschiedene PIDs in
+  10 min = Connection-Churn), Symantec 5,5 %. Ohne Beobachter läge die Grundlast bei ≈48–50 %, also
+  am Z0-Ziel — das ist aber eine Subtraktion, keine Abnahme. Der Beobachtereffekt steht deshalb im
+  Docstring des Werkzeugs: eine Z0-Abnahme braucht einen Lauf **ohne** Session. Per-Bot-Attribution
+  ist unelevated nicht möglich (`Win32_Process.CommandLine` ist für die elevated Fleet `$null`) und
+  wird bewusst nicht geraten.
+- **`DASHBOARD_BIND_HOST`** (`dashboard.py`, `.env.example`) — Bind-Adresse als Operator-Knopf,
+  **Default unverändert `0.0.0.0`**, plus Startup-Warnung solange nicht auf Loopback gebunden wird.
+  Anlass: Ist-Messung zu Z2/B4. `cloudflared` ist auf SRV02 gar nicht installiert, der Port hängt
+  offen im Internet (ESTABLISHED-Verbindung von einer fremden IP zum Messzeitpunkt), `dashboard.log`
+  belegt laufende Scans inkl. `GET / → 200` an Fremde, und `grep -i auth dashboard.py` findet nichts
+  — `POST /api/system/stop_all` ist unauthentifiziert exponiert. Der Flip auf `127.0.0.1` schließt
+  das sofort, kostet aber den Fernzugriff bis der Tunnel steht: Michi-Entscheid, kein PR-Entscheid.
+
+### Verifiziert (kein Code nötig)
+- **Query 9 (P2.25)** live gefahren: `bot_regime_whitelist` = 1590 Rows, **alle** aus dem letzten
+  Stundenlauf, 0 Rohnamen-Keys, 0 stale Rows. Beide DELETE-Kriterien greifen.
+- **P2.15 gegen ein echtes Listing**: GRVTUSDT wurde am 2026-08-01 06:01:38 auf **laufender** Fleet
+  erkannt (letzter Restart davor 30.07.), `candles` führt es ab 2026-07-31 15:00 bis aktuell. Die
+  leere `GRVTUSDT_1h` ist der C-Gate-Zustand, kein Defekt. Rest: die erste `ticker_10s`-Zeile kam
+  erst nach dem Restart — Schreiber ist `10_pump_dump_detector.py`, nie Teil des P2.15-Scopes.
+- **P2.2**: live ist `trade_cooldowns.module` heute `character varying(50)` — der ALTER ist gelaufen
+  und war nirgends dokumentiert. **Checkbox bleibt trotzdem offen**: `26_regime_detector.py:242` legt
+  weiter `module TEXT` + `TIMESTAMP WITHOUT TIME ZONE` an, die Bootstrap-Reihenfolge entscheidet auf
+  einer frischen DB also unverändert. Der `COOLDOWN_MODULE_MAX_LEN = 10`-Kommentar begründete sich
+  mit der inzwischen falschen Prämisse „live ist varchar(10)" — Kommentar korrigiert, Wert bewusst
+  nicht angehoben (ändert Cooldown-Keys auf dem Geld-Pfad).
+- **Job 10 / B7 obsolet in der beauftragten Form**: MIS2 postet live (offene Signale bis 01.08.),
+  ATB2/ATS2 sind gebaut; Adapter existieren für `ufi1, td, bb, abr1, mis1, rub, atb2, ats` (+`epd`).
+  Wirklich offen sind nur noch **QM und SRA1** — ein kleiner Folge-Task, keine VPS-Sitzung.
+- **Job 11 / Signal-Raten-Delta**: geschlossen als **nicht rekonstruierbar**. Das Zielfenster
+  (13./14.07.) liegt drei Wochen und >20 Restarts zurück; `ai_signals` ist das offene Buch (eine
+  Tageszählung misst dort Survivorship, nicht Rate — der scheinbare Anstieg 102 → 1.061 ist genau
+  das), und die deduplizierte Vereinigung mit `closed_ai_signals` ist für ältere Tage retentions-
+  verzerrt. Belastbar ist nur die klassische Seite: `closed_trades_master` liegt stabil bei
+  ~700–900 Signalen/Tag ohne erkennbaren Bruch. Eine Zahl für das Delta wird nicht erfunden.
+- **RSI-Execute** war bereits im CHANGELOG (Eintrag `[2026-07-12]`, 88.426.142 Zellen / 3.831
+  Tabellen / 9,6 h) — kein zweiter Eintrag.
+
+### Betrieb
+- **Der lokale Secret-Guard aus harter Regel 3 ist auf SRV02 nicht scharf**: weder `pre-commit` noch
+  `gitleaks` liegen auf dem PATH (auch `ruff`/`mypy` nur als Python-Module). Auf diesem Host läuft
+  beim Commit also **kein** Secret-Scan und **kein** `guard.py verify`; es bleibt der CI-Regex.
+  Für diese Session wurden die Äquivalente von Hand gefahren. Kein `--no-verify` — es gibt hier
+  schlicht nichts zu umgehen. Host-Setup-Punkt, kein Code-Punkt.
 
 ## [2026-08-01] C-Gate ist seit 16 Tagen live, nicht dormant — Ist-Stand vermessen, zwei Bots lesen eingefrorene Tabellen (T-2026-KYT-9050-002)
 
