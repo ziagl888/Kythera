@@ -43,6 +43,20 @@ LOG_DIR = BASE_DIR / "logs"
 PORT = 5000
 
 
+# Why this is not a cosmetic knob — measured on the live VPS 2026-08-02
+# (T-2026-KYT-9050-009): port 5000 answers from the public internet (ESTABLISHED
+# session from a foreign address at measurement time) and is scanned daily —
+# logs/dashboard.log shows "GET / HTTP/1.1" 200 to 66.132.172.102, plus probes
+# like "GET /v404/exec?jwt=..." from 34.79.154.21 — while /api/system/stop_all
+# and the per-process stop/start endpoints carried NO authentication at all.
+#
+# T-009 landed a bare `DASHBOARD_BIND_HOST` knob (default 0.0.0.0) as the
+# interim mitigation. It is SUPERSEDED here: same lever, but under the security
+# module, renamed to KYTHERA_DASHBOARD_HOST for one namespace with the token and
+# allowlist keys, and default-hardened. Exposure stays an operator decision —
+# but it can no longer land without an auth layer (see bind_policy_error).
+
+
 # Security configuration (P0.8 / P1.38-CSRF, T-2026-KYT-9050-056). Everything
 # here defaults to the hardened state: loopback bind, no exposure, host
 # allowlist on. Secrets live in .env (hard rule 3) — the fleet's bots load it
@@ -1231,4 +1245,14 @@ if __name__ == "__main__":
         print(f"[OK] Bot Dashboard laeuft auf  http://{BIND_HOST}:{PORT}  [{_auth_state}]")
         print(f"[DIR] Basis-Verzeichnis: {BASE_DIR}")
         print(f"[LOG] Log-Verzeichnis:   {LOG_DIR}")
+    # T-009 printed an exposure warning here. Superseded: a non-loopback bind
+    # without a token no longer reaches this line at all (bind_policy_error
+    # above exits 2), and the banner already names the auth state. What remains
+    # worth saying is the case fail-closed lets through — exposed WITH a token.
+    if BIND_HOST not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            f"[WARN] Dashboard bindet auf {BIND_HOST}:{PORT} — erreichbar über den "
+            f"Shared Secret allein. Der vorgesehene Schutz ist der Cloudflare-Tunnel "
+            f"+ Access (Audit Z2/P0.8), nicht dieser Token."
+        )
     app.run(host=BIND_HOST, port=PORT, debug=False, threaded=True)

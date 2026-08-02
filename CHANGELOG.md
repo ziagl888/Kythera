@@ -1,12 +1,20 @@
 ## [2026-08-02] Dashboard-Absicherung: Loopback-Bind, Host-Allowlist, CSRF-Guard, Fail-closed-Startpolitik (T-2026-KYT-9050-056)
 
 P0.8 war „Dashboard ohne Auth auf `0.0.0.0`". Die Messung auf der Box bestätigt den Bind
-(`0.0.0.0:5000`, PID 100120) und beantwortet zugleich die offene DB-Phasen-Frage aus
-`audit_reports/10`: **extern erreichbar war der Port nicht** — Windows-Firewall auf allen drei
-Profilen aktiv, effektive Inbound-Default-Aktion `Block`, keine Allow-Regel für TCP 5000 oder
-`python.exe`. Der Schutz hing damit an genau einer Einstellung, auf einer Box mit direkt
-geroutetem öffentlichem IPv4. Vollständige Messtabelle und Belegkommandos:
+(`0.0.0.0:5000`, PID 100120). Vollständige Messtabelle und Belegkommandos:
 `docs/DASHBOARD_SECURITY.md`.
+
+> **Korrektur (2026-08-02, beim Merge nachgetragen).** Dieser Eintrag behauptete ursprünglich,
+> **extern erreichbar sei der Port nicht** — Windows-Firewall auf allen drei Profilen aktiv,
+> Inbound-Default `Block`, keine Allow-Regel für TCP 5000. **Das ist widerlegt.**
+> `DefaultInboundAction` steht auf allen drei Profilen auf `NotConfigured`, und zwei
+> Symantec-Regeln (`SMC Service`, `SNAC Service` — Enabled/Inbound/Allow/Public) erlauben
+> eingehendes TCP auf **jedem** Port von **jeder** IP. `logs/dashboard.log` zählt seit dem
+> 04.07. **557 erfolgreiche `GET / → 200` an fremde IPs**. Die Sitzung hatte ihre eigene
+> Prüfmethode korrekt als untauglich markiert (eine Verbindung von der Box auf ihre eigene
+> öffentliche IP behandelt Windows als Loopback) und dann trotzdem der Konfiguration statt der
+> Empirie geglaubt — **eine gescheiterte Messung ist kein Negativbefund.** Der Code-Teil unten
+> stimmt unverändert und wird durch die Korrektur dringlicher, nicht hinfällig.
 
 **Der eigentliche Befund: zwei Angriffe liefen trotz Firewall.** Ein Form-POST bzw.
 `fetch(…, {mode:'no-cors'})` aus einer beliebigen Seite im Browser **auf** der VPS erreicht
@@ -50,6 +58,172 @@ DB-Lastverursacher" stammt aus T-2026-CU-9050-166 und wurde bereits von T-2026-C
 korrigiert (der teure `candles ⋈ indicators`-JOIN ist der AI-Bot-Feature-Ladepfad).
 `dashboard.py` importiert überhaupt keinen DB-Code und stellt null Queries — seine Last ist
 CPU (psutil-Sweeps, P1.38, weiterhin offen).
+## [2026-08-02] whitelist_v2-Flip an echten Forwards gemessen: kein PnL-Beleg, −55 % Durchsatz, null Out-of-Sample (T-2026-KYT-9050-007)
+
+Auftrag war, den v1→v2-Flip des Whitelist-Gates entscheidbar zu machen — gegen die
+**realisierten** Trades, nicht gegen einen Replay der Regel. Neues read-only VPS-Tool
+`tools/whitelist_v2_realized_eval.py` + Entscheidungsvorlage
+`docs/T-2026-KYT-9050-007-whitelist-v2-flip-decision.md`. **Kein Flip, kein Restart, keine
+Schreib-Query** — der Gate liest unverändert `whitelisted` (Michi-Entscheid, OPUS-HANDOFF §6).
+
+**Das Tool tauscht nur die Scoring-Schicht.** Gate-Semantik und Divergenz-Klassen kommen per
+Import aus `tools/whitelist_v2_flip_eval.py` (T-069), die Realized-Mathematik aus
+`core/realized_pnl.py` + `tools/fleet_realized_audit.py` (T-115/T-032) — eine Wahrheit, kein
+Nachbau. Neu ist die Messlatte: statt Counterfactual-Replay der **tatsächlich geschlossene,
+vom Monitor gescorte Trade**. Zwei Beine, bewusst getrennt: das **Trigger-Leg** (eigener Trade
+des Quell-Bots, existiert auf BEIDEN Gate-Seiten → symmetrisch) und das **ROM1-Leg** (das echte
+Geld, strukturell nur auf der geforwardeten Seite).
+
+**Mengengerüst (Fenster 2026-07-11 → 08-01, 22.660 Gate-Events, 14.234 zell-entschieden).**
+v2 würde **4.848 Signale zusätzlich blocken** und **264 zusätzlich durchlassen**; Gate-Rate
+36,28 % → 4,07 %, ROM1-Forwards/Tag **377 → 168 (−55 %)**. Auf Zellebene blockt v2 **1.395 von
+1.590 Zellen (87,7 %)** und öffnet **drei** (AIM2/TREND_UP/ALT_NEUTRAL/SHORT,
+QM_4H/HIGH_VOLA/ALT_WEAK/LONG, SRA2/CHOP/ALT_NEUTRAL/SHORT).
+
+**Die 89-%-Default-Open-Prämisse stimmt — beschreibt aber den Traffic nicht.** 1.410 von 1.590
+Zellen (88,7 %) tragen `insufficient_data`, wie in Step 6 berichtet. Auf dem Verkehr ist es
+umgekehrt: **81,8 % der zusätzlich geblockten Events (3.964 von 4.848) kamen über den
+Merit-Pfad `wr_above_overall`**, nur 18,2 % über die Krücke. Der Flip räumt nicht leere Zellen
+auf, er überstimmt Entscheidungen, die v1 auf Datenbasis getroffen hat.
+
+**Der Befund kippt am Geld-Bein.** Auf dem Trigger-Leg sieht v2 gut aus (saubere Teilmenge:
+3.160 entschiedene Trades, Σ −274,9 %, Ø −0,187 %/Trade netto) — **aber genau dieses Bein ist
+das, worauf v2 gefittet wurde**: `27_bot_regime_analyzer` baut `bot_regime_performance` aus den
+Trigger-Trades der letzten 30 Tage, und `_v2_whitelist_decision` entscheidet allein aus deren
+`avg_pnl_pct`/`pnl_stddev`. Auf dem ROM1-Leg — denselben Signalen, aber der Geometrie, die
+wirklich gehandelt wurde — bleibt **nichts** übrig: **Σ +2,0 % über 21 Tage** auf 1.342
+entschiedene Trades und **Σ −61,6 % über 7 Tage**. Vorzeichen instabil, Betrag Rauschen. Das ist
+P1.10 in Zahlen. Die „v2 schaltet frei"-Seite hängt an **einem Bein** (AIM2-SHORT; im
+7-Tage-Fenster noch 7 entschiedene Trades) und ist in ROM1-Geld **prinzipiell** nicht messbar —
+diese Signale wurden nie gehandelt.
+
+**Out-of-Sample gibt es keinen einzigen belastbaren Punkt.** Der Lauf, der vor dem Fit-Fenster
+endet (05-15 → 07-02), enthält **0** `v2_would_block`-Events: `orchestrator_open_trades.wl_reason`
+wird erst ab Anfang Juli befüllt (B8), die gesamte geforwardete Seite jener Ära trägt NULL. Die
+einzige dort vorhandene divergente Klasse (190 Events, ausnahmslos EPD1-SHORT) ist zu 100 %
+drift-kontaminiert. **Der T-031-Befund „historische Whitelist nicht rekonstruierbar" ist erneut
+geprüft und bestätigt** — beide Tabellen sind UPSERT-only ohne Historie, und Bot 28 loggt pro
+Signal nur den v1-Pfad. Daraus folgt konkret: ein Flip wäre umschaltbar, aber nicht sauber
+rückblickend auswertbar. Die billigste Abhilfe ist eine additive Log-Spalte in
+`get_whitelist_decision` (Option C in der Vorlage) — **nicht gebaut**, weil Geld-Pfad + Restart.
+
+**Drei Messfallen, jede hat im Test eine Zahl bewegt.** (1) **Zwei Zeit-Domänen in derselben
+Spalte:** Orchestrator-Tabellen und ROM1-Zeilen tragen UTC, die eigenen Zeilen der Bots in
+`closed_ai_signals`/`closed_trades_master` weiter `Europe/Bucharest`-Wanduhr (+3 h) — ein Join,
+der das ignoriert, matcht **0,0 %**; das Tool entscheidet die Lesart pro Tag aus den Daten und
+weist beide Trefferzahlen aus. (2) **Drift kontaminiert die Klasse, nicht nur die Genauigkeit:**
+wo die heutige v1-Zelle nicht mehr zur aufgezeichneten Entscheidung passt, vergleicht die
+„Divergenz" zwei v1-Stände — getrennt als `v1_agree`/`v1_drifted` ausgewiesen; die
+drift-kontaminierte Hälfte trug 79 % der naiven Headline-Zahl. (3) **`closed_trades_master` ist
+NICHT die Realized-Quelle für ROM1** (0 Zeilen dort, gemessen) — ROM1 und alle AI-Bots leben in
+`closed_ai_signals`, dedupliziert über den Report-14-Survivor-Key.
+
+Nebenbefund (eigener Hebel, nichts mit v1-vs-v2 zu tun): **60 % der ROM1-Legs sind zensiert** —
+6.500 `CLOSED_REGIME_CHANGE` gegen 4.421 lifecycle-geschlossene Trades in 60 Tagen. Nur 40 % der
+geforwardeten Trades erreichen überhaupt ein bewertbares Outcome.
+
+Verifikation: `backtest/test_whitelist_v2_realized_eval.py` 25/25 (DB-frei, standalone),
+`test_whitelist_v2_flip_eval.py` 22/22 unverändert grün, `ruff check .` + `ruff format --check .`
+in CI-Form sauber, pre-commit inkl. gitleaks und `guard.py verify` grün. Die drei Läufe liefen
+unter Job-Lock bei gemessenen 72,7/90,4/96,9 % System-CPU (`--force-on-busy`, BELOW_NORMAL,
+read-only); Berichte in `staging_models/replay/whitelist_v2_realized_eval_*.md`.
+## [2026-08-02] VPS-Audit-Rest nachgemessen: P0.7 hat eine zweite Tür, das Dashboard hängt offen im Netz, Z0 misst sich selbst (T-2026-KYT-9050-009)
+
+Auftrag war die Rest-Kette der VPS-Orchestrierung (Jobs 7/8/10/11 + Doku-PR). Regel der Session:
+jeder Punkt wird erst am heutigen Code und an der heutigen Live-Umgebung nachgemessen, dann
+bearbeitet. Fünf von acht Punkten haben sich gegen ihre Aktenlage gedreht — in beide Richtungen.
+Voller Bericht mit allen Zahlen: `docs/T-2026-KYT-9050-009-vps-audit-rest.md`. Read-only auf der
+Live-DB, kein Restart, kein Gate-Flip, kein Deploy.
+
+### Fixed
+- **`strategies/strat_support_resistance.py` + `strat_main_channel.py` — P0.7 hatte eine zweite Tür,
+  und sie stand offen.** Der DB-Rest des Findings ist erledigt (0 Zeilen mit der P0.7-Signatur in
+  `active_trades_master`, die letzte im Archiv 2026-05-27, also vor dem Fix vom 04.07.) — aber die
+  Fehlerklasse produziert weiter: **342 von 3.463 Support-Resistance- und 12 von 188
+  Main-Channel-Trades seit 01.07. gingen mit TP1 auf der falschen Seite des Entry raus**, der neueste
+  am 2026-08-01 23:33, einer stand aktiv im Buch. Ursache: `find_support_resistance_zones` filtert
+  seine Zonen gegen den Close der letzten geschlossenen Kerze, die Ziel-Leiter wird aber gegen
+  `entry = live_price` gebaut. Läuft der Live-Preis über eine Resistance-Zone, wählt
+  `sorted(zones, key=|zone−entry|)` genau diese als TP1, und die Interpolation `x = (t1−entry)/4`
+  wird negativ und zieht TP2/TP3 hinterher — dieselbe Schadensform wie P0.7, nur durch eine andere
+  Tür. Der 2026-07-04 gebaute Guard `if t1 == 0` deckt ausschließlich „gar keine Zonen" ab.
+  Dass ausgerechnet die drei nicht-zonenbasierten Strategien (5 Percent, Fast In And Out, Volume
+  Indicator; zusammen 17.792 Trades) **null** Fälle haben, ist der Fingerabdruck der Ursache.
+  Nicht nur Geometrie: 96,5 % dieser Trades schlossen mit `status ≥ 1` („TP getroffen") gegen 66,2 %
+  der sauberen — ein TP auf der Verlustseite wird beim ersten Gegenlauf „getroffen". Diese
+  Phantom-Treffer stehen in der Per-Bot-Statistik, auf der das Orchestrator-Gating entscheidet.
+  Fix: neuer geteilter Helfer `core.market_utils.select_zone_targets(zones, entry, direction)`
+  filtert gegen den Preis, gegen den die Leiter gerechnet wird (beide Strategien × beide Richtungen,
+  4 Stellen); die Leiter ist damit zusätzlich monoton in Handelsrichtung. Gemessene Rollout-Wirkung:
+  Support Resistance verliert 1,1 % seiner Signale ganz und korrigiert 10,1 % der Leitern, Main
+  Channel 2,1 % / 6,4 % — die entfallenden sind genau die, deren TP1 auf der Verlustseite lag.
+  Nebenwirkung, die dazugehört: die Trefferquote von „Support Resistance" wird nach dem Rollout
+  **sinken**. **Wirksam erst nach Fleet-Restart — Michi-Entscheid.**
+  Test: `backtest/test_zone_target_side.py` (8 Fälle, DB-frei, inkl. LABUSDT-Live-Regression).
+- **`tools/restart_fleet.ps1` — „Pull failed" bei erfolgreichem Pull.** Zweimal belegt
+  (`logs/fleet_restart_20260726_232251.log`, `_20260801_192843.log`): `ERROR - Pull failed: From
+  https://github.com/ziagl888/Kythera`, danach „Fleet untouched" und Exit 1 — obwohl der Pull
+  durchlief (HEAD 0e432d5 → e3181d5, im Folgelauf zwei Minuten später als „nothing to pull"
+  bestätigt). git schreibt Fortschritt auf stderr; PowerShell 5.1 macht daraus ErrorRecords, sobald
+  der Strom in die Pipeline gemergt wird — und das passiert, wenn der Operator das Skript mit `2>&1`
+  aufruft. Mit `$ErrorActionPreference = 'Stop'` terminiert schon die erste Fortschrittszeile, und
+  die Exception-Message ist genau der erste stderr-Text. `Invoke-Git` mergt stderr jetzt explizit,
+  demotet Fehler für die Dauer des Aufrufs und macht den **Exit-Code zum einzigen Urteil**;
+  Fortschrittszeilen landen als INFO im Log statt zu terminieren. Echte git-Fehler werfen weiterhin,
+  jetzt mit git's Text statt nur einem Exit-Code. Verifiziert im Scratch-Repo (alt: Abbruch mit
+  identischer Signatur, neu: sauberer Durchlauf) und end-to-end am echten Skript per `-DryRun` unter
+  `2>&1`.
+
+### Added
+- **`tools/ops/measure_cpu_baseline.ps1`** — read-only CPU-Sampler für das Z0/C3-Programm
+  (WMI-Perf-Counter statt kumulativer `Get-Process .CPU`-Sekunden). Erster Lauf, 10 min / 35 Samples
+  / 10 Kerne: **Box-Mittel 78 %**, nicht 100 %. Und der wichtigste Posten der Messung ist die Messung:
+  **~34 Prozentpunkte gehen auf die Agent-Session selbst** (claude 16,4 %, der Sampler via WmiPrvSE
+  4,4 %). Fleet-python 18,5 % + 10,6 % Pool-Worker, postgres 14,1 % (120 verschiedene PIDs in
+  10 min = Connection-Churn), Symantec 5,5 %. Ohne Beobachter läge die Grundlast bei ≈48–50 %, also
+  am Z0-Ziel — das ist aber eine Subtraktion, keine Abnahme. Der Beobachtereffekt steht deshalb im
+  Docstring des Werkzeugs: eine Z0-Abnahme braucht einen Lauf **ohne** Session. Per-Bot-Attribution
+  ist unelevated nicht möglich (`Win32_Process.CommandLine` ist für die elevated Fleet `$null`) und
+  wird bewusst nicht geraten.
+- **`DASHBOARD_BIND_HOST`** (`dashboard.py`, `.env.example`) — Bind-Adresse als Operator-Knopf,
+  **Default unverändert `0.0.0.0`**, plus Startup-Warnung solange nicht auf Loopback gebunden wird.
+  Anlass: Ist-Messung zu Z2/B4. `cloudflared` ist auf SRV02 gar nicht installiert, der Port hängt
+  offen im Internet (ESTABLISHED-Verbindung von einer fremden IP zum Messzeitpunkt), `dashboard.log`
+  belegt laufende Scans inkl. `GET / → 200` an Fremde, und `grep -i auth dashboard.py` findet nichts
+  — `POST /api/system/stop_all` ist unauthentifiziert exponiert. Der Flip auf `127.0.0.1` schließt
+  das sofort, kostet aber den Fernzugriff bis der Tunnel steht: Michi-Entscheid, kein PR-Entscheid.
+
+### Verifiziert (kein Code nötig)
+- **Query 9 (P2.25)** live gefahren: `bot_regime_whitelist` = 1590 Rows, **alle** aus dem letzten
+  Stundenlauf, 0 Rohnamen-Keys, 0 stale Rows. Beide DELETE-Kriterien greifen.
+- **P2.15 gegen ein echtes Listing**: GRVTUSDT wurde am 2026-08-01 06:01:38 auf **laufender** Fleet
+  erkannt (letzter Restart davor 30.07.), `candles` führt es ab 2026-07-31 15:00 bis aktuell. Die
+  leere `GRVTUSDT_1h` ist der C-Gate-Zustand, kein Defekt. Rest: die erste `ticker_10s`-Zeile kam
+  erst nach dem Restart — Schreiber ist `10_pump_dump_detector.py`, nie Teil des P2.15-Scopes.
+- **P2.2**: live ist `trade_cooldowns.module` heute `character varying(50)` — der ALTER ist gelaufen
+  und war nirgends dokumentiert. **Checkbox bleibt trotzdem offen**: `26_regime_detector.py:242` legt
+  weiter `module TEXT` + `TIMESTAMP WITHOUT TIME ZONE` an, die Bootstrap-Reihenfolge entscheidet auf
+  einer frischen DB also unverändert. Der `COOLDOWN_MODULE_MAX_LEN = 10`-Kommentar begründete sich
+  mit der inzwischen falschen Prämisse „live ist varchar(10)" — Kommentar korrigiert, Wert bewusst
+  nicht angehoben (ändert Cooldown-Keys auf dem Geld-Pfad).
+- **Job 10 / B7 obsolet in der beauftragten Form**: MIS2 postet live (offene Signale bis 01.08.),
+  ATB2/ATS2 sind gebaut; Adapter existieren für `ufi1, td, bb, abr1, mis1, rub, atb2, ats` (+`epd`).
+  Wirklich offen sind nur noch **QM und SRA1** — ein kleiner Folge-Task, keine VPS-Sitzung.
+- **Job 11 / Signal-Raten-Delta**: geschlossen als **nicht rekonstruierbar**. Das Zielfenster
+  (13./14.07.) liegt drei Wochen und >20 Restarts zurück; `ai_signals` ist das offene Buch (eine
+  Tageszählung misst dort Survivorship, nicht Rate — der scheinbare Anstieg 102 → 1.061 ist genau
+  das), und die deduplizierte Vereinigung mit `closed_ai_signals` ist für ältere Tage retentions-
+  verzerrt. Belastbar ist nur die klassische Seite: `closed_trades_master` liegt stabil bei
+  ~700–900 Signalen/Tag ohne erkennbaren Bruch. Eine Zahl für das Delta wird nicht erfunden.
+- **RSI-Execute** war bereits im CHANGELOG (Eintrag `[2026-07-12]`, 88.426.142 Zellen / 3.831
+  Tabellen / 9,6 h) — kein zweiter Eintrag.
+
+### Betrieb
+- **Der lokale Secret-Guard aus harter Regel 3 ist auf SRV02 nicht scharf**: weder `pre-commit` noch
+  `gitleaks` liegen auf dem PATH (auch `ruff`/`mypy` nur als Python-Module). Auf diesem Host läuft
+  beim Commit also **kein** Secret-Scan und **kein** `guard.py verify`; es bleibt der CI-Regex.
+  Für diese Session wurden die Äquivalente von Hand gefahren. Kein `--no-verify` — es gibt hier
+  schlicht nichts zu umgehen. Host-Setup-Punkt, kein Code-Punkt.
 
 ## [2026-08-01] C-Gate ist seit 16 Tagen live, nicht dormant — Ist-Stand vermessen, zwei Bots lesen eingefrorene Tabellen (T-2026-KYT-9050-002)
 

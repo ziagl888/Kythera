@@ -14,15 +14,39 @@ Exposure voraussetzt — Dashboard-Exposure steht auf Michis Eskalationsliste
 
 Alle Werte am 2026-08-01/02 auf srv02 selbst erhoben (read-only, kein Eingriff).
 
+> ### ⚠️ Korrektur 2026-08-02 — die Firewall-Zeilen dieser Tabelle waren falsch
+>
+> Nachgemessen beim Merge dieses PRs, read-only:
+>
+> | Was | Ursprünglich notiert | Tatsächlich |
+> |---|---|---|
+> | Effektive Inbound-Default-Aktion | **Block** (alle drei Profile) | **`NotConfigured`** (alle drei Profile) |
+> | Inbound-Allow-Regel, die TCP 5000 trifft | **keine** | **zwei** — `SMC Service` + `SNAC Service`, Enabled/Inbound/**Allow**/Public, `LocalPort: Any`, `RemoteIP: Any` (Symantec) |
+> | Port 5000 aus dem Internet erreichbar | **nein** | **ja** — `logs/dashboard.log` zählt seit 04.07. **557** erfolgreiche `GET / → 200` an fremde IPs |
+>
+> Die Regel-Abfrage der Ursprungssitzung lief in „Access is denied" (nicht elevated); daraus
+> wurde „keine Allow-Regel" geschlossen. **Eine gescheiterte Messung ist kein Negativbefund.**
+> Die Sitzung hatte ihre Prüfmethode für die Erreichbarkeit sogar korrekt als untauglich
+> markiert — eine Verbindung von der Box auf ihre eigene öffentliche IP behandelt Windows als
+> Loopback — und dann trotzdem der Konfiguration geglaubt statt der Empirie im eigenen Log.
+>
+> **Folge für dieses Dokument:** §"Was daraus folgt" unten argumentiert an mehreren Stellen mit
+> „die Firewall blockt" — diese Begründung entfällt, die daraus abgeleiteten Maßnahmen bleiben
+> richtig und werden dringlicher. Die Regeln abzuschalten
+> (`Disable-NetFirewallRule -DisplayName "SNAC Service","SMC Service"`, elevated) schließt
+> 5000/5432/445/5555/8098 und lässt **RDP unberührt** — RDP hat eigene Regeln. Postgres (5432)
+> ist zwar erreichbar, `pg_hba.conf` kennt aber nur `127.0.0.1/32`, `::1/128` und den lokalen
+> Socket → Fremde werden abgewiesen, kein Datenzugriff.
+
 | Was | Messung | Wie gemessen |
 |---|---|---|
 | Legacy-Dashboard-Listener | **`0.0.0.0:5000`**, PID 100120, gestartet 2026-08-01 19:34 | `Get-NetTCPConnection -State Listen` |
 | Z1-Dashboard-Shell | `127.0.0.1:8098`, PID 86852, läuft seit 2026-07-20 | dito |
 | Analytics-API | eigener Prozess nicht gebunden; Default im Code `127.0.0.1:8099` | `tools/analytics_api.py:1647` |
 | Firewall-Profile | Domain/Private/Public **alle enabled** | `Get-NetFirewallProfile` |
-| Effektive Inbound-Default-Aktion | **Block** (alle drei Profile, ActiveStore) | `Get-NetFirewallProfile -PolicyStore ActiveStore` |
-| Inbound-Allow-Regel für TCP 5000 | **keine** | Scan aller aktiven Inbound-Allow-Regeln + Port-Filter |
-| Inbound-Allow-Regel für `python.exe`/`py.exe` | **keine** | Scan aller aktiven Inbound-Allow-Regeln + Application-Filter |
+| ~~Effektive Inbound-Default-Aktion~~ | ~~**Block** (alle drei Profile, ActiveStore)~~ → **falsch, siehe Korrektur oben: `NotConfigured`** | `Get-NetFirewallProfile -PolicyStore ActiveStore` |
+| ~~Inbound-Allow-Regel für TCP 5000~~ | ~~**keine**~~ → **falsch: `SMC Service` + `SNAC Service` erlauben jeden Port von jeder IP** | Scan lief unelevated ins „Access is denied" |
+| Inbound-Allow-Regel für `python.exe`/`py.exe` | keine — aber gegenstandslos, die Symantec-Regeln filtern nicht auf Application | Scan aller aktiven Inbound-Allow-Regeln + Application-Filter |
 | Öffentliche Adresse der Box | **45.134.39.167**, direkt geroutet (kein NAT) | `Get-NetIPAddress` |
 
 **Route-Inventar des Legacy-Dashboards (11 Routen, Stand vor diesem PR):**
@@ -48,10 +72,11 @@ was am Ergebnis nichts ändert: er liest die Marker im nächsten Zyklus (≤10 s
 
 ### Was daraus folgt (und was nicht)
 
-* **Der Port war nicht offen im Sinne von „aus dem Internet erreichbar".** Die Firewall
-  blockte ihn per Default-Regel. Die Audit-Frage „Ist Port 5000 extern erreichbar?"
+* **Der Port WAR aus dem Internet erreichbar** (korrigiert 2026-08-02, siehe Kasten oben).
+  Die Audit-Frage „Ist Port 5000 extern erreichbar?"
   (`audit_reports/10_dashboard_tools.md`, Frage 1 der DB-Phase) ist damit beantwortet:
-  **nein, aber nur durch genau eine Einstellung.**
+  **ja** — belegt durch 557 beantwortete Fremd-Requests im eigenen Log, nicht durch eine
+  Firewall-Konfiguration. Der Schutz hing an keiner Einstellung; es gab ihn nicht.
 * **Nicht verifiziert:** eine Erreichbarkeitsprobe von einem **externen** Vantage-Point.
   Von der Box aus auf die eigene öffentliche IP zu verbinden beweist nichts — Windows
   behandelt das als Loopback und wendet die Inbound-Filter nicht wie bei echtem
