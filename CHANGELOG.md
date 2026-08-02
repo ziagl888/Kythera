@@ -18,13 +18,14 @@ K9-Lektion). Neu:
   10k Rows mit sichtbarem Datenverlust statt unbegrenztem Speicher, Kill-Switch
   `KYTHERA_LIQ_PERSIST=0` (idlet supervised). Live-Smoke: Verbindung + Parse verifiziert
   (ohne DB-Write).
-* **`core/fleet.py`** — Registrierung (group=logger, start_delay=247). Wie bei K9 gilt:
+* **`core/fleet.py`** — Registrierung (group=logger, start_delay=279, am Listen-Ende —
+  Monotonie-Regression; 247 kollidierte mit TSM1). Wie bei K9 gilt:
   der neue Eintrag wird erst nach einem **Watchdog-Restart** supervised — die Aktivierung
   ist eine Operator-Entscheidung (Michi) und NICHT Teil dieses PRs.
 
 **Dokumentierter Daten-Contract:** Binance drosselt den Stream auf max. EINE Order pro
 Sekunde PRO SYMBOL — `liq_events` ist ein SAMPLE (in Kaskaden am stärksten unterschätzt),
-brauchbar für Cluster-Lokalisierung, NICHT für Volumens-Summen. 11 DB-freie Tests pinnen
+brauchbar für Cluster-Lokalisierung, NICHT für Volumens-Summen. 13 DB-freie Tests pinnen
 DDL-/Insert-Contract, Event-Parsing und die Puffer-Invarianten des Collectors.
 
 ## [2026-08-02] „Gemergt heißt nicht live": Kanarienvogel + UAC-freier Marker-Restart (T-2026-KYT-9050-071)
