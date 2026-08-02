@@ -262,6 +262,39 @@ format grün, mypy auf der neuen Datei **0** Fehler (die 47 in importierten Modu
 vorbestehend, Baseline auf `main` identisch), Regression-Guard 24/24 ohne Refresh. Beide Läufe
 read-only gegen die Live-DB (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`),
 BELOW_NORMAL, `TELEGRAM_BOT_TOKEN` bewusst auf einen ungültigen Platzhalter gesetzt.
+## [2026-08-02] MPS1: Liquidations-Heatmap + Max-Pain-Event-Study — Spread-Strategie widerlegt, Short-Drift nach Upper-Band-Touch bleibt (T-2026-KYT-9050-073)
+
+Prüfung der MartyParty-These „trade the spread between 24hr Max Pains" (Futures-Max-Pain =
+Liquidations-Cluster) auf eigenen Daten. Neu: `tools/mps1_liq_heatmap.py` — DB-freier
+Coinglass-artiger Schätzer der Liquidations-Level aus 5m-OI-Deltas (`oi_5m`, K9) × Hebel-Stufen
+{10, 25, 50, 100}: Seed/Consume/Decay/Expire, 24h-Fenster, Band = dichtester Cluster über/unter
+Spot. 13 DB-freie Tests pinnen Seed-Mathematik, Konsum, Decay, Expiry, OI-Alignment und
+Truncation-Invarianz (kein Look-ahead). Performance-bewusst gebaut: inkrementelles Histogramm
+auf absolutem Log-Bin-Raster + vektorisierter Band-Post-Pass statt Per-Bar-Histogramm (~2,3 s
+statt ~16 s pro Symbol — der Treiber war Numpy-Call-Overhead, nicht Arithmetik).
+
+**Event-Study als Edge-Gate** (`tools/mps1_event_study.py`, read-only, BELOW_NORMAL, Verdikt
+vorregistriert): 527 Symbole, 12.06.–02.08., 9.754 Band-Touch-Events gegen 50.567 Kontrollen
+(frische 24h-Extreme ohne Cluster in der Nähe), Chrono-Split am 08.07. Ergebnis
+(`staging_models/mps1_event_study.md`):
+
+* **Gate formal EDGE (up):** Short-Reversion nach Touch des OBEREN Bands ist netto positiv auf
+  Val (+0,14 %) UND Test (+0,16 %, 4h) und schlägt die Kontrolle; auf 24h wächst der Test-Effekt
+  auf +1,04 % netto (t=2,7). Die t-Werte am 4h-Gate-Horizont sind aber schwach (~0,8).
+* **Down-Seite tot:** kein Long-Bounce am unteren Band, auf 24h klar negativ (−0,6…−0,8 %) —
+  konsistent mit dem Fleet-Befund „Edge ist richtungsbedingt" (Short-Seite).
+* **Die wörtliche Spread-Strategie ist widerlegt:** Entry am Band, TP am Gegenband, SL-Toleranz
+  0,5–2 % → Win-Rate 3–8 %, mittlerer Netto-PnL in JEDER Zelle negativ. Das Gegenband (~±10 %)
+  wird praktisch nie vor dem SL erreicht.
+* Die Dichte-These (dichterer Cluster = stärkerer Magnet) hält nicht (Vorzeichen-Flips Val/Test).
+
+Ehrliche Grenzen: ~7 Wochen OI-Historie = EIN Regime (T-007-Lektion), Hebel-Mix ist Annahme,
+Survivorship (coins.json). Konsequenz: KEIN Bot, kein Deploy — Kandidat für einen Follow-up-
+Backtest ist ausschließlich die Short-Seite (Touch oberes Band → Short, 4–24h-Horizont) mit
+unserer Geometrie. Nebenbefund mit Wiederholungsgefahr: `astype("int64")/1e9` auf
+`datetime64[us]`-Frames (pandas 3.x/Py 3.14) lieferte still Kilosekunden und legte im ersten
+Lauf ALLE Events in die Val-Hälfte — `core.time.epoch_seconds` existiert genau dafür und ist
+jetzt verdrahtet.
 
 ## [2026-08-02] C-Gate-Nachlauf: die letzten zwei Roh-SELECTs umgehängt, Legacy-Backend bekommt einen Staleness-Guard (T-2026-KYT-9050-068)
 
