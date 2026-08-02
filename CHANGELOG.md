@@ -1,3 +1,42 @@
+## [2026-08-03] bot_regime_performance keeps a daily snapshot history (T-2026-KYT-9050-072)
+
+`bot_regime_performance` is a snapshot: exactly one row per
+`(bot, regime, alt_context, direction, window_days)`, overwritten on every analyzer run —
+measured 2026-08-02, **zero** cells with more than one row. So the cell statistics the whitelist
+gate decided on at the time of any past event are gone, and **no gate variant — v1, v2 or a
+future one — can be checked against its own past.**
+
+That is not an abstract gap. T-2026-KYT-9050-007 had to score today's statistics against
+yesterday's traffic and could not separate the parameter effect from cell drift; its
+out-of-sample run is a leakage test, the best available approximation and not the right test.
+T-031 hit the same wall and closed the historical whitelist as not reconstructible.
+
+`compute_performance` now appends the same rows it upserts to a new
+`bot_regime_performance_history`, keyed by the calendar day (UTC). Several runs a day collapse
+into one row per cell per day. **Thirty days from now the v2 question is answerable for the first
+time with real historical gate inputs.**
+
+Three deliberate choices:
+
+* **The write runs in a SAVEPOINT.** This history is a measurement aid; the upsert beneath it
+  feeds the live gate. A failure here — permissions, disk — must not drag the main write into the
+  rollback, and without the savepoint it would, because both sit in the same transaction. A
+  failure logs and returns 0; it never raises into `compute_performance`.
+* **The rows are the identical tuples** the main upsert writes. One source, not a second
+  computation that can drift apart from the gate it is supposed to explain.
+* **No commit of its own** — the caller owns the transaction (hard rule 8).
+
+Retention defaults to 400 days (`KYTHERA_REGIME_HISTORY_RETENTION_DAYS`), a year of hindsight
+plus buffer; a shorter window would recreate the very gap this table exists to close, just later.
+Volume is ~6900 rows/day (~2272 cells x 3 windows), ~2.5M/year.
+
+The table is created idempotently on first write, so nothing has to be provisioned by hand. It is
+additive: no existing table is altered, and nothing live reads it yet.
+
+Verified: `backtest/test_regime_performance_history.py` 10/10 (DB-free), pinning the savepoint,
+the no-raise contract, the day key and the retention fallback; `test_bot_regime_analyzer` 46/46
+unchanged; ruff + format + mypy clean; regression guard 24/24 without refresh.
+
 ## [2026-08-02] „Gemergt heißt nicht live": Kanarienvogel + UAC-freier Marker-Restart (T-2026-KYT-9050-071)
 
 Am 2026-08-02 lag der Live-Checkout **45 Commits** hinter `origin/main`, während die Fleet
