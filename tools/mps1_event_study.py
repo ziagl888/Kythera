@@ -71,7 +71,7 @@ from core.candles import read_candles  # noqa: E402
 from core.database import db_connection  # noqa: E402
 from core.market_utils import load_coins  # noqa: E402
 from core.time import epoch_seconds  # noqa: E402
-from tools.mps1_liq_heatmap import HeatmapConfig, build_heatmap  # noqa: E402
+from tools.mps1_liq_heatmap import BAR_SECONDS, HeatmapConfig, build_heatmap  # noqa: E402
 from tools.walkforward_sim import (  # noqa: E402
     FEE_PER_SIDE,
     check_cpu_headroom,
@@ -191,7 +191,7 @@ def replay_symbol(acc: dict, counters: dict, candles, oi, split_epoch: float, cf
     # epoch_seconds, NOT astype("int64")/1e9 — the astype idiom silently yields
     # kiloseconds on datetime64[us] frames (pandas 3.x), which put EVERY event
     # into the val half on the first full run of this study.
-    close_epoch = epoch_seconds(candles["open_time"]) + 300.0
+    close_epoch = epoch_seconds(candles["open_time"]) + float(BAR_SECONDS)
 
     ub = hm["upper_band"].to_numpy()
     lb = hm["lower_band"].to_numpy()
@@ -300,6 +300,7 @@ def derive_verdict(acc: dict) -> dict:
                 and ev_net["mean"] is not None
                 and ev_net["mean"] > 0
                 and ct_gross["mean"] is not None
+                and ev_gross["mean"] is not None
                 and ev_gross["mean"] > ct_gross["mean"]
             )
             checks[half] = {

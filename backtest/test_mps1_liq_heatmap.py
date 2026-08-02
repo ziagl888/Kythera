@@ -206,6 +206,20 @@ def test_missing_oi_sweeps_do_not_crash_or_seed():
     assert len(hm) == 4
 
 
+def test_truncation_across_chunk_boundary():
+    # The vectorized band post-pass processes rows in chunks of 4096. A full
+    # run with n > 4096 (two chunks) must reproduce the prefix of a truncated
+    # run that fits in ONE chunk — pins the chunk-boundary slicing.
+    n, k = 5000, 4000
+    cfg = _single_tier_cfg(window_bars=20)
+    candles = flat_candles(n, 100.0)
+    oi = make_oi([1000.0 + 10.0 * i for i in range(n)])  # steady growth → steady seeds
+    full = build_heatmap(candles, oi, cfg)
+    truncated = build_heatmap(candles.iloc[:k], oi.iloc[:k], cfg)
+    pd.testing.assert_frame_equal(full.iloc[:k].reset_index(drop=True), truncated)
+    assert full["upper_band"].iloc[4095] == pytest.approx(full["upper_band"].iloc[4096])
+
+
 def test_truncation_invariance_no_lookahead():
     rng = np.random.RandomState(42)
     n = 400
