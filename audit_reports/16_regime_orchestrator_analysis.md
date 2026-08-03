@@ -1,8 +1,8 @@
-# 16 — Regime-Orchestrator: Gesamtanalyse & Verbesserungsvorschläge (Step 6)
+# 16 — Regime orchestrator: overall analysis & improvement proposals (Step 6)
 
-**Stand:** 2026-07-03 · Konsolidiert Code-Audit (Report 04), Live-DB-Beweise (Step 2), Performance (Report 14), Hypothesen (Report 15) + neue empirische Auswertung des Gesamtsystems (`step6_orchestrator.py`).
+**As of:** 2026-07-03 · Consolidates code audit (Report 04), live DB evidence (Step 2), performance (Report 14), hypotheses (Report 15) + a new empirical evaluation of the overall system (`step6_orchestrator.py`).
 
-## 1. Architektur (Ist)
+## 1. Architecture (as-is)
 
 ```
 26_regime_detector ──5min──▶ regime_history (raw) ──debounce──▶ regime_current
@@ -15,56 +15,56 @@
    ▶ bei Regime-Wechsel: Auto-Close ALLER offenen Trades auf Coin+Richtung
 ```
 
-## 2. Empirische Bestandsaufnahme — funktioniert das Kern-Feature?
+## 2. Empirical stocktake — does the core feature actually work?
 
-**Was nachweislich funktioniert:**
-- **ROM1 liefert Mehrwert:** 69,2% WR vs 61,1% Fleet (+8pp), +0,92%/Trade, +2.184 netto (n=2.677) — trotz aller Bugs.
-- Lifecycle ist dicht: 0 OPEN-Trades älter als 7 Tage; Pipeline läuft stabil durch (4.339 Closes seit 18.04.).
-- Das Gate greift real: Gate-Rate 44,7% (Apr) → 63,5% (Jun); Cooldown- und Opposite-Direction-Guards feuern.
+**What demonstrably works:**
+- **ROM1 delivers value:** 69.2% WR vs 61.1% fleet (+8pp), +0.92%/trade, +2,184 net (n=2,677) — despite all the bugs.
+- The lifecycle is tight: 0 OPEN trades older than 7 days; the pipeline runs stably (4,339 closes since 18.04.).
+- The gate actually bites: gate rate 44.7% (Apr) → 63.5% (Jun); cooldown and opposite-direction guards fire.
 
-**Was nachweislich kaputt oder hohl ist:**
+**What is demonstrably broken or hollow:**
 
-| # | Befund | Zahl |
+| # | Finding | Number |
 |---|---|---|
-| B1 | **Whitelist ist zu 89% Default-Open.** Frische Rows: 747× `insufficient_data` (=durchwinken), nur 41× `wr_above_overall` + 52× `wr_below_overall` datenbasiert | 11% echte Entscheidungen |
-| B2 | **Datengrundlage zu dünn für die 4D-Matrix:** 4.056 Zellen, Median **7 Trades/Zelle**, 68% unter 30 | Matrix zu fein |
-| B3 | **Detector kennt praktisch nur 3 Regimes:** in 5,5 Monaten 5× TREND_DOWN- und 2× TREND_UP-Episoden (alle <1h!); Verteilung TRANSITION 44,5% / HIGH_VOLA 29,7% / CHOP 25,8% | TREND-Klassen tot |
-| B4 | **52% aller Raw-Episoden sind <1h-Flaps** (654/1.257); Median-Dauer CHOP/TRANSITION 0,9h; Confidence median 0,54, p10 0,40 | Detector flattert |
-| B5 | **Gate entscheidet auf 2,5 Monate alten Daten** für MIS-Familie + Channel-Bots (P0.4-Raw-Namen, eingefroren 19.04.) — die Junigate-Rate von 63,5% basiert dort auf April-Statistik | bewiesen (Step 2) |
-| B6 | **Auto-Close schneidet blind:** 3.653 REGIME_CHANGE-Closes, median PnL **0,00%**, 49,3% in Gewinn geschnitten; 35% aller ROM1-Trades (1.411/4.339) enden per Regime-Close statt TP/SL → Churn + Fees + zensierte Statistik (P1.9: trifft ALLE Bots, nicht nur ROM1) | AIM1 wird im Schnitt bei **+9,5%** gekappt |
-| B7 | **Self-Echo existiert:** 109 Suppressions stammen aus dem eigenen Regime-Channel (86 davon als `bot_unidentified`) — nur Cooldown verhindert bisher Schlimmeres (P0.3) | bewiesen |
-| B8 | **Forwards werden nicht begründet geloggt** (kein `wl_reason` in `orchestrator_open_trades`) → man kann nicht messen, welcher Gate-Pfad Geld verdient | Messlücke |
-| B9 | **Zirkularität:** Der Analyzer lernt aus Outcomes, die der Orchestrator selbst zensiert (B6/P1.9) — Regime-Wechsel-Verluste werden als "neutral" aussortiert → Whitelist-WRs systematisch geschönt | strukturell |
-| B10 | `bot_unidentified` = 841 Suppressions gesamt (drittgrößter Grund) — identify_bot-Patterns decken den Signalstrom nicht ab | Pattern-Lücken |
+| B1 | **The whitelist is 89% default-open.** Fresh rows: 747× `insufficient_data` (=wave through), only 41× `wr_above_overall` + 52× `wr_below_overall` data-based | 11% real decisions |
+| B2 | **Data basis too thin for the 4D matrix:** 4,056 cells, median **7 trades/cell**, 68% under 30 | matrix too fine |
+| B3 | **Detector knows practically only 3 regimes:** over 5.5 months, 5× TREND_DOWN and 2× TREND_UP episodes (all <1h!); distribution TRANSITION 44.5% / HIGH_VOLA 29.7% / CHOP 25.8% | TREND classes dead |
+| B4 | **52% of all raw episodes are <1h flaps** (654/1,257); median duration CHOP/TRANSITION 0.9h; confidence median 0.54, p10 0.40 | detector flaps |
+| B5 | **The gate decides on data 2.5 months stale** for the MIS family + channel bots (P0.4 raw names, frozen 19.04.) — June's gate rate of 63.5% is based there on April statistics | proven (Step 2) |
+| B6 | **Auto-close cuts blindly:** 3,653 REGIME_CHANGE closes, median PnL **0.00%**, 49.3% cut while in profit; 35% of all ROM1 trades (1,411/4,339) end via regime close instead of TP/SL → churn + fees + censored statistics (P1.9: affects ALL bots, not just ROM1) | AIM1 gets cut at an average of **+9.5%** |
+| B7 | **Self-echo exists:** 109 suppressions originate from the regime channel itself (86 of them as `bot_unidentified`) — so far only cooldown prevents worse (P0.3) | proven |
+| B8 | **Forwards are not logged with a reason** (no `wl_reason` in `orchestrator_open_trades`) → one cannot measure which gate path actually earns money | measurement gap |
+| B9 | **Circularity:** the analyzer learns from outcomes that the orchestrator itself censors (B6/P1.9) — regime-change losses are sorted out as "neutral" → whitelist WRs are systematically flattered | structural |
+| B10 | `bot_unidentified` = 841 suppressions total (third-largest reason) — identify_bot patterns do not cover the signal stream | pattern gaps |
 
-**Einordnung:** Das System verdient Geld **trotz**, nicht **wegen** seiner Whitelist: Bei 89% Default-Open + stale Raw-Rows wirkt de facto vor allem (a) der 4h-Cooldown, (b) der Opposite-Direction-Guard und (c) die grobe Fallback-Heuristik. Der eigentliche 4D-Kern (Bot×Regime-Selektion) ist statistisch unterbesetzt und zum Teil eingefroren.
+**Assessment:** the system makes money **despite**, not **because of**, its whitelist: at 89% default-open + stale raw rows, what mainly works de facto is (a) the 4h cooldown, (b) the opposite-direction guard, and (c) the coarse fallback heuristic. The actual 4D core (bot×regime selection) is statistically understaffed and partly frozen.
 
-## 3. Verbesserungsvorschläge
+## 3. Improvement proposals
 
-### Stufe 1 — Reparieren (bekannte Bugs, Tage; Referenzen = AUDIT_TODO)
-1. **P0.4-Fix:** `pretty_name()` direkt nach `identify_bot()` + Purge der April-Raw-Rows + `computed_at`-Staleness-Gate (>48h alt ⇒ Zelle gilt als `insufficient_data`), Alarm auf Default-Open-Rate.
-2. **P0.3-Fix:** `channel_id != REGIME_TRADING_CHANNEL_ID` im Scan-SELECT + ROM1-Hard-Reject; Cooldown/Tracking VOR dem Send committen (P1.7: Txn zuerst, Outbox-Insert zuletzt, Cursor pro Row).
-3. **P1.9-Fix:** Auto-Close nur `model='ROM1'`; `sync_closed_trades` mit Model-Filter + ±60s-Match (P1.8); `sent=FALSE`-Race durch id-Cursor ersetzen (P1.6).
-4. **B10:** identify_bot-Patterns gegen die 841 `bot_unidentified` nachziehen (Kandidaten stehen im Suppressed-Log).
-5. **B8:** `wl_reason`-Spalte an `orchestrator_open_trades` — ab dann ist jeder Forward begründet und auswertbar.
+### Stage 1 — Repair (known bugs, days; references = AUDIT_TODO)
+1. **P0.4 fix:** `pretty_name()` right after `identify_bot()` + purge the April raw rows + a `computed_at` staleness gate (>48h old ⇒ cell counts as `insufficient_data`), alarm on the default-open rate.
+2. **P0.3 fix:** `channel_id != REGIME_TRADING_CHANNEL_ID` in the scan SELECT + ROM1 hard-reject; commit cooldown/tracking BEFORE the send (P1.7: transaction first, outbox insert last, cursor per row).
+3. **P1.9 fix:** auto-close only `model='ROM1'`; `sync_closed_trades` with a model filter + ±60s match (P1.8); replace the `sent=FALSE` race with an id cursor (P1.6).
+4. **B10:** extend the identify_bot patterns against the 841 `bot_unidentified` (candidates are in the suppressed log).
+5. **B8:** add a `wl_reason` column to `orchestrator_open_trades` — from then on every forward is justified and evaluable.
 
-### Stufe 2 — Statistik ehrlich machen (Wochen)
-6. **4D-Matrix durch hierarchisches Shrinkage ersetzen.** Median 7 Trades/Zelle trägt keine Entscheidung. Vorschlag: Empirical-Bayes — Zell-WR wird zum übergeordneten Mittel (Bot-gesamt → Regime×Richtung → Fleet) geschrumpft, Gewicht ∝ n. Effekt: keine `insufficient_data`-Binärkrücke mehr, jede Zelle liefert eine benutzbare, konservative Schätzung; Gate-Schwelle auf der Shrinkage-WR mit Konfidenzintervall (z.B. untere Wilson-Grenze > Break-even).
-7. **Zensur-Korrektur (B9):** Regime-geschlossene Trades nicht verwerfen, sondern mit PnL-zum-Close-Zeitpunkt in die Statistik nehmen (Median 0% → neutraler Effekt, aber kein Selektions-Bias mehr).
-8. **Suppressed-Counterfactual-Scorer (neu, hoher Hebel):** Ein Job, der für jede Suppression (Outbox-Row ist verlinkt!) das hypothetische Outcome per First-Touch-Simulator nachrechnet und an `orchestrator_suppressed_signals` schreibt. Damit wird der Gate-Wert **laufend messbar**: "Suppressions ersparten X% / kosteten Y%". Heute ist der Nutzen des Kern-Features schlicht unbekannt — das beendet jede Diskussion mit Daten.
+### Stage 2 — Make the statistics honest (weeks)
+6. **Replace the 4D matrix with hierarchical shrinkage.** A median of 7 trades/cell carries no decision. Proposal: empirical Bayes — the cell WR shrinks toward the parent mean (bot overall → regime×direction → fleet), weight ∝ n. Effect: no more `insufficient_data` binary crutch, every cell delivers a usable, conservative estimate; gate threshold on the shrinkage WR with a confidence interval (e.g. lower Wilson bound > break-even).
+7. **Censorship correction (B9):** don't discard regime-closed trades, but include them in the statistics with PnL at close time (median 0% → neutral effect, but no more selection bias).
+8. **Suppressed counterfactual scorer (new, high leverage):** a job that, for every suppression (the outbox row is linked!), recomputes the hypothetical outcome via the first-touch simulator and writes it to `orchestrator_suppressed_signals`. This makes the gate value **continuously measurable**: "suppressions saved X% / cost Y%". Today the benefit of the core feature is simply unknown — that ends every discussion with data.
 
-### Stufe 3 — Detector & Gating-Logik weiterentwickeln
-9. **Detector-Revision (B3/B4):** (a) TREND-Klassen brauchen eigene Features (EMA-Slope-Persistenz, ADX, Higher-Highs-Zählung) — aktuell erreichen sie die Debounce-Schwelle nie; (b) Flap-Rate 52% ⇒ Hysterese verlängern oder Bestätigungszähler adaptiv (kurz in HIGH_VOLA, lang in CHOP); (c) Confidence kalibrieren (p10=0,40 heißt: oft rät er) und unter Schwelle explizit `UNKNOWN` melden statt CHOP zu raten.
-10. **TRANSITION entdecken statt erleiden:** 44,5% der Zeit ist "Übergang" — entweder Detector feiner auflösen oder das **Transition-Resolution-Modell (S10, Report 15)** bauen, das die Auflösungsrichtung vorhersagt. Die Step-5-Daten zeigen: TRANSITION-Trades sind gut (63-64% WR) — das Regime ist handelbar, der Fallback behandelt es nur zu grob.
-11. **Regime-Richtungs-Matrix als zweite Gate-Ebene (S2):** grob (Regime×Richtung, 6-15 Zellen mit hunderten Trades) statt/vor der feinen Bot-Matrix: CHOP→nur SHORT (Longs −3,69%/Trade), HIGH_VOLA→LONGs droppen. Robust, sofort datentragfähig.
-12. **Auto-Close-Politik differenzieren (B6):** Statt Market-Close aller Positionen beim Wechsel: (a) Gewinner: SL auf Break-even/Trail statt Close (49% werden derzeit im Gewinn gekappt, AIM1 bei +9,5%!); (b) Verlierer: schließen wie bisher; (c) Counterfactual-Scorer (Nr. 8) misst, ob die Policy Geld spart.
-13. **ROM1-Geometrie:** Original-Signal-Geometrie durchreichen (oder mind. SL-Distanz-Cap + `cap_leverage_to_sl`, R4/P2.27) — aktuell misst die Gating-Statistik andere Trades als die Quell-Bots je gepostet haben (P1.10-Spec-Drift dokumentieren).
+### Stage 3 — Advance the detector & gating logic
+9. **Detector revision (B3/B4):** (a) the TREND classes need their own features (EMA slope persistence, ADX, higher-highs count) — currently they never reach the debounce threshold; (b) flap rate 52% ⇒ extend hysteresis or make the confirmation counter adaptive (short in HIGH_VOLA, long in CHOP); (c) calibrate confidence (p10=0.40 means: it's often guessing) and explicitly report `UNKNOWN` below threshold instead of guessing CHOP.
+10. **Discover TRANSITION instead of just enduring it:** 44.5% of the time is "transition" — either resolve the detector more finely, or build the **transition-resolution model (S10, Report 15)** that predicts the resolution direction. The Step-5 data shows: TRANSITION trades are good (63-64% WR) — the regime is tradeable, the fallback just handles it too coarsely.
+11. **Regime-direction matrix as a second gate layer (S2):** coarse (regime×direction, 6-15 cells with hundreds of trades) instead of/before the fine bot matrix: CHOP→SHORT only (longs −3.69%/trade), HIGH_VOLA→drop LONGs. Robust, immediately data-viable.
+12. **Differentiate the auto-close policy (B6):** instead of market-closing all positions on a change: (a) winners: SL to break-even/trail instead of close (49% are currently cut while in profit, AIM1 at +9.5%!); (b) losers: close as before; (c) counterfactual scorer (no. 8) measures whether the policy actually saves money.
+13. **ROM1 geometry:** pass through the original signal geometry (or at least an SL-distance cap + `cap_leverage_to_sl`, R4/P2.27) — currently the gating statistics measure different trades than the source bots ever posted (document P1.10 spec drift).
 
-### Stufe 4 — Betriebsfestigkeit
-14. Startup-Reconcile: nach Downtime alle OPEN-Trades gegen aktuelle Whitelist prüfen (P2.24); Detection-Fenster 5-10 min statt 60s + `stale_signal`-Log (P2.28); Regime-Status-Posts mit Fallback-Rate + Default-Open-Rate als Gesundheitsmetrik (P3.10).
+### Stage 4 — Operational robustness
+14. Startup reconcile: after downtime, check all OPEN trades against the current whitelist (P2.24); detection window 5-10 min instead of 60s + a `stale_signal` log (P2.28); regime status posts with fallback rate + default-open rate as a health metric (P3.10).
 
-## 4. Ziel-Bild (kompakt)
+## 4. Target picture (compact)
 
-> Ein Detector mit ehrlicher Unsicherheit (UNKNOWN statt Raten, funktionierende TREND-Klassen), ein zweistufiges Gate (grobe Regime×Richtung-Matrix → fein per Shrinkage-Bot-Score), Forwards und Suppressions beide mit Begründung UND Counterfactual-Outcome geloggt, Auto-Close, das Gewinner trailt statt kappt — und ROM1, das die Geometrie der Quell-Signale respektiert. Jede Komponente misst sich selbst; die Whitelist kann nie wieder still einfrieren, weil Staleness und Default-Open-Rate alarmiert werden.
+> A detector with honest uncertainty (UNKNOWN instead of guessing, working TREND classes), a two-stage gate (coarse regime×direction matrix → fine per shrinkage bot score), forwards and suppressions both logged with a reason AND counterfactual outcome, auto-close that trails winners instead of cutting them — and ROM1 that respects the source signals' geometry. Every component measures itself; the whitelist can never silently freeze again, because staleness and the default-open rate raise alarms.
 
-**Priorität:** Stufe 1 komplett (Bugfixes, ~Tage) → Nr. 8 Counterfactual-Scorer (macht alles Weitere messbar) → Nr. 6+11 (Statistik) → Stufe 3 nach Datenlage.
+**Priority:** stage 1 complete (bugfixes, ~days) → no. 8 counterfactual scorer (makes everything else measurable) → no. 6+11 (statistics) → stage 3 depending on the data situation.

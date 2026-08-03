@@ -1,62 +1,62 @@
-# Report 20 — AIM2-Training: Ergebnisse & Robustheitsprüfung
+# Report 20 — AIM2 Training: Results & Robustness Check
 
-**Datum:** 2026-07-05 · **Kontext:** Operator-Entscheidung, AIM1 ad acta zu legen und durch AIM2
-zu ersetzen (docs/AIM2_DESIGN.md, Report 15 S7). Pipeline: `tools/aim2_build_dataset.py` →
-`tools/aim2_train.py`, Artefakt in `staging_models/master_meta_model_aim2.pkl` (+ `_report.json`).
+**Date:** 2026-07-05 · **Context:** Operator decision to retire AIM1 and replace it with AIM2
+(docs/AIM2_DESIGN.md, Report 15 S7). Pipeline: `tools/aim2_build_dataset.py` →
+`tools/aim2_train.py`, artifact in `staging_models/master_meta_model_aim2.pkl` (+ `_report.json`).
 
-## 1. Datensatz
+## 1. Dataset
 
-115.018 Events (2026-02-25 → 07-05), davon 109.570 gelabelt (5.448 `open_at_end` ausgeschlossen).
-Quellen: 43k gepostete AI-Signale + 198k Conv (FIFO 25% / Volume 35% deterministisch untersampelt,
-Gewichte im Training). Label = First-Touch TP1-vor-SL der as-of rekonstruierten Smart-Targets-
-Geometrie (`simulate_exit`, Fees, SL-first konservativ, 14d-Kappe). Basis: **WR 54,1%,
-ø Replay-PnL −0,61%/Trade** — der ungefilterte Signalstrom verliert nach Fees (deckt Report 14).
+115,018 events (2026-02-25 → 07-05), of which 109,570 labelled (5,448 `open_at_end` excluded).
+Sources: 43k posted AI signals + 198k conv (FIFO 25% / Volume 35% deterministically undersampled,
+weights in training). Label = first-touch TP1-before-SL of the as-of reconstructed smart-targets
+geometry (`simulate_exit`, fees, SL-first conservative, 14d cap). Baseline: **WR 54.1%,
+ø replay PnL −0.61%/trade** — the unfiltered signal stream loses after fees (covers Report 14).
 
-TZ-Neuvermessung: ALLE Writer von `ml_predictions_master`/`*_trades_master` stempeln
-PG-Lokalzeit (Europe/Bucharest); `regime_history.ts` = naive UTC; Kerzen = timestamptz.
-Konvertierung im Builder; der alte AIM1-Bot verglich Lokal gegen UTC (≈3h-Versatz, R07-AIM1-a).
+TZ re-measurement: ALL writers of `ml_predictions_master`/`*_trades_master` stamp
+PG local time (Europe/Bucharest); `regime_history.ts` = naive UTC; candles = timestamptz.
+Conversion in the builder; the old AIM1 bot compared local against UTC (≈3h offset, R07-AIM1-a).
 
-## 2. Hauptlauf (chrono 70/15/15, 7d-Purge; Test = 01.06.–05.07.)
+## 2. Main run (chrono 70/15/15, 7d purge; test = 01.06.–05.07.)
 
-| Metrik | Wert |
+| Metric | Value |
 |---|---|
-| AUC val / test | 0,656 / 0,686 |
-| Brier test (kalibriert) | 0,224 |
-| Kalibrierung | **monoton**: Bucket 0,0–0,1 → 7,6% WR … 0,9–1,0 → 89,6% WR (AIM1-Inversion beseitigt) |
-| Operating Point (Val-Replay-PnL) | thr = 0,61 |
-| Gate-Uplift test | ohne Gate **−0,69%**/Trade → mit Gate **+1,92%**/Trade, WR 70,5%, Pass-Rate 34,2% (n=5.628/16.436) |
-| Monatlich (gated) | Jun +1,80% (n=5.105, WR 68,9%) · Jul +3,48% (n=523, WR 80,7%) |
+| AUC val / test | 0.656 / 0.686 |
+| Brier test (calibrated) | 0.224 |
+| Calibration | **monotonic**: bucket 0.0–0.1 → 7.6% WR … 0.9–1.0 → 89.6% WR (AIM1 inversion eliminated) |
+| Operating point (val replay PnL) | thr = 0.61 |
+| Gate uplift test | without gate **−0.69%**/trade → with gate **+1.92%**/trade, WR 70.5%, pass rate 34.2% (n=5,628/16,436) |
+| Monthly (gated) | Jun +1.80% (n=5,105, WR 68.9%) · Jul +3.48% (n=523, WR 80.7%) |
 
-Top-Features: ema_200_dist, direction_num, ALT-Kontext, Support/Resistance-Distanz,
-entry_drift, Regime-CHOP, Quell-Identität/Trailing-WR, Schwarm. **ATR nicht in den Top 25**
-— der AIM1-Fehlermodus (Volatilitäts-Detektor) ist nicht reproduziert.
+Top features: ema_200_dist, direction_num, ALT context, support/resistance distance,
+entry_drift, regime CHOP, source identity/trailing WR, swarm. **ATR not in the top 25**
+— the AIM1 failure mode (volatility detector) is not reproduced.
 
-## 3. Robustheitsprüfungen (alle bestanden)
+## 3. Robustness checks (all passed)
 
-1. **Dumme Baselines versagen out-of-time** — der Uplift ist NICHT verkappte Quellen-Auswahl:
-   Quellen-Filter (positive Train-Quellen) → **−0,94%**/Trade; Quelle+Richtung → **−0,71%**;
-   beide ≤ „kein Gate" (−0,69%). Bestätigt erneut die Batch-E-These, dass statische Gates nicht
-   generalisieren — AIM2s Mehrwert ist kontextabhängige Selektion INNERHALB der Quellen.
-2. **Zweiter OOT-Fold** (Test = 18.04.–01.06.): AUC 0,61, Uplift −0,55% → **+0,17%**/Trade
-   (thr 0,63, Pass 20,4%). Dünner, aber positiv; monatlich Apr +0,07 / Mai +1,54.
-   **Kein Testmonat Apr–Jul negativ.** Ehrliche Erwartung: Vorzeichen robust, Magnitude schwankt.
-3. **Label-Lookahead-Probe** (Signalstunden-Kerze übersprungen, 60-Symbole-Sample, 13.888
-   gemeinsame Events): 0,7% Label-Flips, symmetrisch (53 W→L vs 45 L→W), WR 0,532→0,531.
-   Die Replay-Konvention verzerrt nichts.
-4. **Cluster-Check:** 14.832 von 16.436 Test-Events sind distinkte (Coin, Stunde, Richtung)-
-   Entscheidungen — kaum Korrelations-Inflation.
+1. **Dumb baselines fail out-of-time** — the uplift is NOT concealed source selection:
+   source filter (positive train sources) → **−0.94%**/trade; source+direction → **−0.71%**;
+   both ≤ "no gate" (−0.69%). Confirms the Batch-E thesis once more that static gates don't
+   generalise — AIM2s added value is context-dependent selection WITHIN the sources.
+2. **Second OOT fold** (test = 18.04.–01.06.): AUC 0.61, uplift −0.55% → **+0.17%**/trade
+   (thr 0.63, pass 20.4%). Thinner, but positive; monthly Apr +0.07 / May +1.54.
+   **No test month Apr–Jul negative.** Honest expectation: sign robust, magnitude varies.
+3. **Label lookahead probe** (signal-hour candle skipped, 60-symbol sample, 13,888
+   shared events): 0.7% label flips, symmetric (53 W→L vs 45 L→W), WR 0.532→0.531.
+   The replay convention doesn't distort anything.
+4. **Cluster check:** 14,832 of 16,436 test events are distinct (coin, hour, direction)
+   decisions — barely any correlation inflation.
 
-## 4. Verbleibende Vorbehalte
+## 4. Remaining caveats
 
-- **Fill-Annahme:** Replay füllt instantan zu entry1 (Limit-Realität kann schlechter sein) —
-  gleiche Einschränkung wie alle Batch-E-Replays; genau dafür ist die Shadow-Phase da.
-- Testfenster insgesamt Feb–Jul 2026, ein Marktregime-Zyklus; `open_at_end`-Ausschluss
-  benachteiligt langsame Trades am Datenrand.
-- Conv-Trailing-WR fehlt (nur AI-Quellen haben `closed_ai_signals`-Historie).
+- **Fill assumption:** replay fills instantly at entry1 (limit reality can be worse) —
+  the same limitation as all Batch-E replays; that's exactly what the shadow phase is for.
+- Test window overall Feb–Jul 2026, one market regime cycle; the `open_at_end` exclusion
+  disadvantages slow trades at the data edge.
+- Conv trailing WR is missing (only AI sources have `closed_ai_signals` history).
 
-## 5. Empfehlung (Rollout-Gates aus dem Design-Doc)
+## 5. Recommendation (rollout gates from the design doc)
 
-Gate 1 (OOT-Uplift > 0 nach Fees) ist **bestanden**. Nächster Schritt: Artefakt aus staging in
-den Repo-Root kopieren und Bot 15 **im Shadow-Modus** entparken (postet nichts — schreibt nur
-`ml_predictions_master`-Zeilen mit model_name='AIM2'). Nach 4–8 Wochen: Shadow-WR-CI gegen
-Break-even → erst dann `AIM2_LIVE_POSTING=1`. Abbruchkriterium: Shadow-WR-CI unter Break-even.
+Gate 1 (OOT uplift > 0 after fees) is **passed**. Next step: copy the artifact from staging
+into the repo root and unpark bot 15 **in shadow mode** (posts nothing — only writes
+`ml_predictions_master` rows with model_name='AIM2'). After 4–8 weeks: shadow WR CI against
+break-even → only then `AIM2_LIVE_POSTING=1`. Abort criterion: shadow WR CI below break-even.

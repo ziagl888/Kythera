@@ -1,786 +1,818 @@
-# Modell-Intent-Register — die ursprüngliche Idee je Modell
+# Model Intent Register — the original idea per model
 
-**Zweck:** Bevor weiter trainiert, gefixt oder deployed wird, fixieren wir je Modell
-die URSPRÜNGLICHE Idee (Soll), vergleichen sie mit dem, was Pipeline/Bot heute tun
-(Ist), und markieren Drift. Regel ab jetzt: **Kein Retrain und kein Deploy, dessen
-Label nicht nachweislich die Soll-Frage beantwortet.**
+**Purpose:** Before any further training, fixing or deploying, we pin down the
+ORIGINAL idea (intended) for each model, compare it with what the pipeline/bot
+actually do today (actual), and flag drift. Rule from now on: **No retrain and no
+deploy whose label does not demonstrably answer the intended question.**
 
-Anlass: Beim MIS1-Retrain (Batch E / 2026-07-05) wurde das Label stillschweigend von
-„±X% Move innerhalb T" (Operator-Konzept) auf „TP1-vor-SL der Smart-Targets-Geometrie"
-umgestellt — methodisch sauber, aber es beantwortet eine ANDERE Frage. Korrigiert am
-2026-07-06 (`tools/mis1_move_labels.py`, `--label-mode move`).
+Trigger: during the MIS1 retrain (Batch E / 2026-07-05) the label was silently
+switched from "±X% move within T" (operator concept) to "TP1-before-SL of the
+Smart-Targets geometry" — methodologically clean, but it answers a DIFFERENT
+question. Corrected on 2026-07-06 (`tools/mis1_move_labels.py`, `--label-mode move`).
 
-**Status-Legende:** ✅ Intent bestätigt · ✏️ Intent-Formulierung braucht Michis
-Bestätigung/Korrektur · ⚠️ Drift zwischen Soll und Ist · ⛔ empirisch widerlegt/aus.
+**Status legend:** ✅ intent confirmed · ✏️ intent phrasing needs Michi's
+confirmation/correction · ⚠️ drift between intended and actual · ⛔ empirically
+refuted/off.
 
-Quellen: Operator-Aussagen (Chat 2026-07-05/06), `audit_reports/16_strategy_concept_evaluation.md`,
+Sources: operator statements (chat 2026-07-05/06), `audit_reports/16_strategy_concept_evaluation.md`,
 `audit_reports/dossiers/*`, Report 19 / `staging_models/REPORT.md`.
 
 ---
 
-## 1. MIS1 — Pump/Dump-Frühwarnung aus Indikator-Kombinationen ✅ (Intent vom Operator bestätigt 2026-07-06)
+## 1. MIS1 — pump/dump early warning from indicator combinations ✅ (intent confirmed by the operator 2026-07-06)
 
-**Soll (O-Ton sinngemäß):** Kombinationen von Indikatorständen (z. B. RSI hoch >60,
-Preis weit über EMA/WMA, Volumen fällt) sagen eine bevorstehende Bewegung voraus:
-**±5 % innerhalb 8h, ±10 %/24h, ±15 %/72h, ±25 %/168h** — je größer der Horizont,
-desto höher die Trefferchance. Threshold/Confidence so, dass wenige, dafür sichere
-Trades entstehen (max. PnL bei min. Risiko).
+**Intended (operator's words, paraphrased):** combinations of indicator readings
+(e.g. RSI high >60, price far above EMA/WMA, volume falling) predict an upcoming
+move: **±5% within 8h, ±10%/24h, ±15%/72h, ±25%/168h** — the larger the horizon,
+the higher the hit chance. Threshold/confidence tuned so that few but safe trades
+result (max PnL at min risk).
 
-**Ist:**
-- Features = 63 bereinigte Indikatorstände (`core/mis_features.py`) → deckt das Soll ab.
-- Batch-E-Retrain nutzte das Geometrie-Label (TP1-vor-SL) → beantwortet „verdient der
-  gepostete Trade?", NICHT die Soll-Frage. ⚠ behoben: Move-Label-Modus
+**Actual:**
+- Features = 63 cleaned indicator readings (`core/mis_features.py`) → covers the
+  intended scope.
+- Batch-E retrain used the geometry label (TP1-before-SL) → answers "does the
+  posted trade pay off?", NOT the intended question. ⚠ fixed: move-label mode
   (`tools/mis1_move_labels.py` + `retrain_from_replay.py --label-mode move`,
-  Schwellen `MOVE_THRESH_PCT`), Threshold-Wahl `pick_threshold_safe`
-  (Ø-PnL/Trade, min. 200 Val-Trades, „nicht deploybar" als ehrliches Ergebnis).
-- Beide Modell-Sätze bleiben im Staging vergleichbar: `mis1_move_model_*` (Soll-Frage)
-  vs. `mis1_model_*` (Trade-Geometrie-Frage).
+  thresholds `MOVE_THRESH_PCT`), threshold pick `pick_threshold_safe`
+  (avg PnL/trade, min. 200 val trades, "not deployable" as an honest result).
+- Both model sets remain comparable in staging: `mis1_move_model_*` (intended
+  question) vs. `mis1_model_*` (trade geometry question).
 
-**Entschieden (Michi, 2026-07-06):**
-- [x] Move-Basis: **BEIDE Varianten trainieren** (Close und Wick, `--move-basis`),
-      Testergebnis-Vergleich entscheidet. Artefakte `mis1_move_model_*` (Close)
+**Decided (Michi, 2026-07-06):**
+- [x] Move basis: **train BOTH variants** (close and wick, `--move-basis`),
+      the test-result comparison decides. Artifacts `mis1_move_model_*` (close)
       vs. `mis1_move_wick_model_*`.
-- [x] Produkt bleibt **Trade-Signal mit Smart-Targets**: Move-Modell wählt die
-      Kandidaten, Ökonomie wird an der Geometrie gemessen.
-- [x] Übergang (REVIDIERT 2026-07-06 nachmittags): **MIS1 wird mit dem
-      MIS2-Go-Live ABGESCHALTET** — kein Parallelbetrieb. Die Out-of-Time-Tests
-      der Move-Modelle (alle 4 Pump-Horizonte positiv) gelten als Beweis.
-- [x] **MIS2 deployed 2026-07-06**: nur Pump-Seite (LONG), Basis-Mix Close für
-      8h/24h/168h + Wick für 72h, Tags `MIS2-<H>H`, gleiche Horizont-Channels.
-      Bot 11 ohne Legacy-Fallback (MIS1-Modelle laden nicht mehr).
-- [x] **Dump-Seite überarbeitet und LIVE (2026-07-06 abends):** Geometrie-Studie
-      in zwei Runden (`tools/mis2_dump_geometry_study.py`, Ergebnisse V1/V2 in
+- [x] Product remains a **trade signal with Smart Targets**: the move model
+      picks the candidates, economics are measured against the geometry.
+- [x] Transition (REVISED on the afternoon of 2026-07-06): **MIS1 will be
+      SHUT DOWN with the MIS2 go-live** — no parallel operation. The
+      out-of-time tests of the move models (all 4 pump horizons positive)
+      count as proof.
+- [x] **MIS2 deployed 2026-07-06**: pump side only (LONG), basis mix close
+      for 8h/24h/168h + wick for 72h, tags `MIS2-<H>H`, same horizon channels.
+      Bot 11 with no legacy fallback (MIS1 models no longer load).
+- [x] **Dump side reworked and LIVE (2026-07-06 evening):** geometry study
+      in two rounds (`tools/mis2_dump_geometry_study.py`, results V1/V2 in
       `staging_models/mis2_dump_geometry_study*.json`):
-      V1 (Market-Entry, SL ≤8 %) — alles negativ, Diagnose: selektierte Coins
-      zucken vor dem Dump nach oben und reißen die Stops. V2 auf Operator-Input
-      („mehr SL-Abstand") + Struktur-Analogie zu EPD1/RUB1: **Limit-Entry 5 %
-      über Signalkurs (in den Bounce verkaufen) + horizontabhängige weite SLs**
-      dreht 24h/72h/168h ins Plus.
-      **Deployte Regeln (alle: Entry Limit +5 %, Close-Basis-Modelle,
-      Operating Point Top-2 %-Val-Quantil):**
-      8H TP−5/SL5 (Studie −0,24 %/Trade — Operator will Live-Beweis, Einwand
-      dokumentiert) · 24H TP−10/SL16 (+0,49) · 72H TP−15/SL12 (+0,72) ·
-      168H TP−16,7/SL12 (+0,27).
-      **Operator-Entscheide:** 20x wird gepostet (Cross, kleine Positionen auf
-      großes Depot — bewusst KEIN cap_leverage_to_sl trotz SL > Isolated-
-      Liq-Distanz); alle 4 Horizonte als Trades (kein Warn-Kanal).
-      **Bekannte Folgearbeit:** Der Trade-Monitor kennt keine Limit-Entries —
-      MIS2-SHORT-Scoring muss „Entry nie gefüllt" (Preis erreicht +5 % nicht,
-      12–22 % der Signale) erkennen, sonst werden Phantom-Trades gescored.
+      V1 (market entry, SL ≤8%) — all negative, diagnosis: selected coins twitch
+      upward before the dump and blow out the stops. V2 built on operator input
+      ("more SL headroom") + structural analogy to EPD1/RUB1: **limit entry 5%
+      above the signal price (selling into the bounce) + horizon-dependent wide
+      SLs** turns 24h/72h/168h positive.
+      **Deployed rules (all: entry limit +5%, close-basis models,
+      operating point top-2% val quantile):**
+      8H TP−5/SL5 (study −0.24%/trade — operator wants live proof, objection
+      documented) · 24H TP−10/SL16 (+0.49) · 72H TP−15/SL12 (+0.72) ·
+      168H TP−16.7/SL12 (+0.27).
+      **Operator decisions:** posts at 20x (cross, small positions on a large
+      account — deliberately NO cap_leverage_to_sl despite SL > isolated
+      liquidation distance); all 4 horizons as trades (no warning channel).
+      **Known follow-up work:** the trade monitor doesn't know about limit
+      entries — MIS2-SHORT scoring must detect "entry never filled" (price
+      doesn't reach +5%, 12–22% of signals), otherwise phantom trades get
+      scored.
 
 ---
 
-## 2. ABR1 — Break & Retest ✅ (Intent bestätigt 2026-07-06)
+## 2. ABR1 — break & retest ✅ (intent confirmed 2026-07-06)
 
-**Soll (bestätigt):** Nach dem Bruch eines
-S/R-Levels hält der ERSTE Retest des Levels → Continuation in Bruchrichtung; scheitert
-der Ausbruch (Preis fällt zurück über/unter das Level), ist das die Verlustklasse.
-ML filtert Continuation von Failed Breakout.
+**Intended (confirmed):** after a S/R level breaks, the FIRST retest of the
+level holds → continuation in the break direction; if the breakout fails (price
+falls back above/below the level), that's the losing class. ML filters
+continuation from failed breakout.
 
-**Ist:** Detektor-Rework 2026-07-05 hat die Live-Erkennung erstmals AUF diese Idee
-ausgerichtet (Richtungs-Kopplung des Retests, Hold-Check, nur Erst-Touch, keine
-repaintenden Rand-Pivots, nur jüngste geschlossene Kerze) + 5 Setup-Geometrie-Features.
-Walkforward auf dem neuen Detektor läuft. **Kein Konzept-Drift — im Gegenteil, die
-alte Implementierung wich von der Idee ab** (Failed Breakouts wurden als Entry
-signalisiert). Label = TP1-vor-SL der geposteten Geometrie: für einen Trade-Filter
-intent-konform.
+**Actual:** the detector rework on 2026-07-05 aligned live detection with this
+idea for the first time (direction-coupling of the retest, hold check, first-touch
+only, no repainting edge pivots, only the most recent closed candle) + 5 setup
+geometry features. Walkforward on the new detector is running. **No concept drift —
+on the contrary, the old implementation deviated from the idea** (failed breakouts
+were signalled as entries). Label = TP1-before-SL of the posted geometry: for a
+trade filter, this is intent-compliant.
 
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent-Satz bestätigt; Label bleibt Trade-Geometrie (TP1-vor-SL) — für einen
-      Detektor-Filter die richtige Frage.
-- [x] ~~**LONG-Seite bleibt IMMER offen**~~ **REVIDIERT am Abend des 2026-07-06
-      (Michi):** Der LONG-Immer-Bypass produzierte ~60 Signale in 3h über das
-      657-Coin-Universum; Report 21 (Exit-Resim + ML-Selektion + BTC-Regime auf
-      27,7k Events) zeigt: Setup ungefiltert −0,59 %/Trade, Break-even-WR ~63 %,
-      kein getesteter Hebel dreht LONG positiv. LONG läuft wieder über den
-      Legacy-Blocker (3-Klassen-Modell ohne meta.json, Gate 0,60 ≈ zu).
-      Reaktivierung nur mit neuen Datenquellen oder Regimewechsel (Report 21 §3).
-- [x] **LONG-Funding-Gate-EXPERIMENT (Michi, 2026-07-06 spätabends):** Nach dem
-      Feature-Recheck auf Operator-Hypothese („falsche Indikatoren") wurden 16
-      Setup-Mechanik-Features + 6 Funding-Features getestet (Report 21
-      Addendum 2). Einziger Out-of-Sample-Überlebender: **fund_24h > +3 bps**
-      (Longs zahlen Prämie über Binance-Default) → +1,12 %/Trade, 74 % WR
-      (n=119/Jahr auf 100 Coins; Test +0,69 %, n=17 — dünn). LONG öffnet jetzt
-      NUR über dieses Gate (live REST, fail-closed, 30-min-Cache), postet als
-      ABR2 mit Funding-Wert in der Info-Nachricht. Erwartung ~1–2 Signale/Tag.
-      **Review nach 4–6 Wochen** (≥30 Trades): Cornix-Tracking entscheidet.
-- [x] **SHORT-Funding-Veto (Michi, 2026-07-06):** Spiegeltest auf 33,5k
-      SHORT-Events — `fund_24h > +1,5 bps` ist für SHORTs in Train UND Test
-      konsistent verlustig (−1,2 %/Trade; exakt die Zone, in der das LONG-Gate
-      öffnet → unabhängige Kreuzvalidierung des Funding-Signals). SHORTs
-      brauchen jetzt Modell-Gate ≥0,75 UND fund_24h ≤ +1,5 bps; fail-open
-      (Veto ist Sicherheitsnetz, nicht Primär-Gate). Review zusammen mit dem
-      LONG-Experiment.
-- [ ] Batch-E-Threshold (SHORT 0,75 aus dünner Validation) nach Abschluss der
-      laufenden Sim mit `pick_threshold_safe` neu bestimmen.
-
----
-
-## 3. TD — Three-Drive / RSI-Divergenz ✅ (Intent bestätigt 2026-07-06)
-
-**Soll (bestätigt):** Drei aufeinanderfolgende höhere Hochs (bzw. tiefere Tiefs),
-deren RSI an den Pivots fällt (bzw. steigt) = Momentum-Erschöpfung → Reversal-Entry.
-Faktisch eine RSI-Divergenz-Strategie an Mehrfach-Extrema. ML filtert die Muster;
-Label = Trade-Geometrie (bestätigt).
-
-**Ist:** Detektor unangetastet (Bot-eigene Erkennung wird im Replay abgespielt);
-Label = TP1-vor-SL der geposteten Geometrie. Alter Trainer hatte Hindsight-Entry +
-fixe 2R-Geometrie — der Replay-Fix ist eine Korrektur HIN zur gehandelten Realität.
-Ergebnis Batch E: TD_4H kleiner echter Edge; TD_1H kein lernbarer Edge auf dem
-20-Feature-Set.
-
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent-Satz bestätigt.
-- [x] **TD_4H: Staging-Modell deployen** (vorher Threshold mit `pick_threshold_safe`
-      neu bestimmen; Rollout-Checkliste aus `staging_models/REPORT.md` beachten).
-- [x] **TD_1H: ML-Gate NEU DESIGNEN** statt parken — nicht das alte Gate behalten.
-      Ansatzpunkte für den Neuentwurf: Pattern-Geometrie-Features (Divergenz-Stärke,
-      Drive-Symmetrie, Pivot-Abstände — analog ABR1-Setup-Features), 1h+4h-Pooling
-      gegen die dünne Datenlage, ggf. andere Zielgröße. Eigener Task; bis dahin
-      läuft TD_1H im Ist-Zustand weiter.
+**Decided (Michi, 2026-07-06):**
+- [x] Intent statement confirmed; label stays trade geometry (TP1-before-SL) —
+      the right question for a detector filter.
+- [x] ~~**LONG side always stays open**~~ **REVISED on the evening of 2026-07-06
+      (Michi):** the always-on LONG bypass produced ~60 signals in 3h across the
+      657-coin universe; Report 21 (exit resim + ML selection + BTC regime on
+      27.7k events) shows: setup unfiltered −0.59%/trade, break-even WR ~63%, no
+      tested leverage turns LONG positive. LONG runs again through the legacy
+      blocker (3-class model with no meta.json, gate 0.60 ≈ closed).
+      Reactivation only with new data sources or a regime change (Report 21 §3).
+- [x] **LONG funding-gate EXPERIMENT (Michi, 2026-07-06 late evening):** after
+      the feature recheck on the operator's hypothesis ("wrong indicators"), 16
+      setup-mechanics features + 6 funding features were tested (Report 21
+      Addendum 2). The only out-of-sample survivor: **fund_24h > +3 bps** (longs
+      pay a premium above the Binance default) → +1.12%/trade, 74% WR
+      (n=119/year on 100 coins; test +0.69%, n=17 — thin). LONG now opens ONLY
+      through this gate (live REST, fail-closed, 30-min cache), posts as ABR2
+      with the funding value in the info message. Expectation ~1–2 signals/day.
+      **Review after 4–6 weeks** (≥30 trades): Cornix tracking decides.
+- [x] **SHORT funding veto (Michi, 2026-07-06):** mirror test on 33.5k SHORT
+      events — `fund_24h > +1,5 bps` is consistently loss-making for SHORTs in
+      both train AND test (−1.2%/trade; exactly the zone where the LONG gate
+      opens → independent cross-validation of the funding signal). SHORTs now
+      need model gate ≥0.75 AND fund_24h ≤ +1.5 bps; fail-open (the veto is a
+      safety net, not the primary gate). Review together with the LONG
+      experiment.
+- [ ] Re-determine the Batch-E threshold (SHORT 0.75 from a thin validation)
+      with `pick_threshold_safe` once the running sim finishes.
 
 ---
 
-## 4. BB — Breaker Block ✅ (Intent bestätigt 2026-07-06)
+## 3. TD — Three-Drive / RSI divergence ✅ (intent confirmed 2026-07-06)
 
-**Soll (bestätigt):** Gebrochener Support wird Resistance (und umgekehrt);
-Retest des gebrochenen Levels → Entry in Bruchrichtung. Am besten abgesicherte
-SMC-Idee; auf 4h groß genug für Fees, auf 1h nicht.
+**Intended (confirmed):** three consecutive higher highs (resp. lower lows)
+whose RSI falls (resp. rises) at the pivots = momentum exhaustion → reversal
+entry. Effectively an RSI-divergence strategy at multiple extrema. ML filters the
+patterns; label = trade geometry (confirmed).
 
-**Ist:** Wie TD — Detektor unangetastet, Label jetzt gehandelte Geometrie. Alter
-Trainer hatte Features an der falschen Kerze (Breakout statt Retest) — behoben durch
-den Replay. BB_4H: echtes Ranking (+5 pp), aber Test-PnL negativ → nur als Filter.
+**Actual:** detector untouched (the bot's own detection is replayed); label =
+TP1-before-SL of the posted geometry. The old trainer had a hindsight entry + fixed
+2R geometry — the replay fix is a correction TOWARDS the traded reality. Batch-E
+result: TD_4H a small real edge; TD_1H no learnable edge on the 20-feature set.
 
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent-Satz bestätigt.
-- [x] **BB_4H: Staging-Modell als Filter deployen** (Threshold vorher mit
-      `pick_threshold_safe` neu bestimmen; PnL-Hebel bleibt Exit-Geometrie).
-- [x] **BB_1H: NEU ÜBERARBEITEN** (eigener Task, analog TD_1H-Gate-Redesign) —
-      nicht bloß parken. Arbeitsannahme bis zur Überarbeitung: Parking
-      vervollständigen (SHORT-Lücke schließen), damit kein halb-geparkter
-      Zustand weiterfeuert — Veto möglich, falls SHORT bewusst offen bleiben soll.
-
----
-
-## 5. SRA1 — ML-Qualitätsfilter über Support/Resistance ✅ (Intent + Label-Semantik bestätigt 2026-07-06)
-
-**Soll (rekonstruiert):** Kein eigener Signalgeber: Die klassische S/R-Strategie
-erzeugt die Kandidaten, das ML sagt nur „diesen nehmen / diesen nicht"
-(Meta-Labeling). Label = echtes Trade-Ergebnis derselben Strategie.
-
-**Ist:** Konzeptionell gesündestes Setup der Flotte, kein Batch-E-Retrain.
-
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent-Satz bestätigt (reiner Meta-Filter).
-- [x] **Label-Semantik GEKLÄRT:** SL1/SL2/SL3 = SL nach TP1/TP2/TP3 getroffen =
-      Trailing-Gewinn-Exits → Label `WIN` ist KORREKT. Die offene Audit-Frage
-      (Report 13/16) ist damit vom Operator beantwortet; kein Label-Blocker mehr.
-- [x] ATR-Crash: war bereits gefixt (P1.20). Label-Semantik zusätzlich per
-      Code-Beweis bestätigt (13-updatesupportresistance zählt erreichte Targets).
-
-**SRA2-Retrain durchgeführt 2026-07-06 nachts — Ergebnis: NICHT deploybar.**
-`tools/retrain_sra2.py` (22 skalenfreie Features, Look-ahead-Fix inkl.
-TZ-Korrektur Europe/Bucharest→UTC, NaN nativ, Isotonic + Safe-Threshold;
-7.967 Events):
-- LONG: Test 448 Trades @0,64 → WR 42,0 % (Basis 38,5 %, nur +3,5 pp Uplift),
-  Ø **−1,61 %/Trade** — Val-Test-Bruch; Testfenster (Jan–Feb 26) war Bärenphase.
-- SHORT: Safe-Picker verweigert ehrlich (kein Operating Point mit positivem
-  Ø-PnL bei n≥100).
-- **Root-Blocker entdeckt:** Label-Quelle `closed_trades3` ist TOT seit
-  23.02.2026 (Writer 13-updatesupportresistance in _X läuft nicht mehr) —
-  Trainingsdaten enden vor 4,5 Monaten, S/R-Outcomes seither ungetrackt.
-  → Task #5: Label-Pipeline wiederbeleben (bevorzugt Replay-Labels statt
-  fragiler Tracker), DANN SRA2 wiederholen. **SRA1 bleibt unverändert live.**
+**Decided (Michi, 2026-07-06):**
+- [x] Intent statement confirmed.
+- [x] **TD_4H: deploy the staging model** (re-determine the threshold with
+      `pick_threshold_safe` first; follow the rollout checklist in
+      `staging_models/REPORT.md`).
+- [x] **TD_1H: REDESIGN the ML gate** instead of parking it — don't keep the
+      old gate. Starting points for the redesign: pattern-geometry features
+      (divergence strength, drive symmetry, pivot spacings — analogous to the
+      ABR1 setup features), 1h+4h pooling against the thin data situation,
+      possibly a different target variable. Own task; until then TD_1H keeps
+      running as-is.
 
 ---
 
-## 6. ATS1 — TSI-Crossover-Sniper ✅ (Intent bestätigt 2026-07-06)
+## 4. BB — breaker block ✅ (intent confirmed 2026-07-06)
 
-**Soll (bestätigt):** Nur beim TSI-Fast-Crossover auf der letzten geschlossenen
-Kerze (Event-Gate) wird ein Richtungsmodell befragt. Architektur-Blaupause: live wird
-exakt die trainierte Event-Population gescored.
+**Intended (confirmed):** broken support becomes resistance (and vice versa);
+retest of the broken level → entry in the break direction. The best-supported SMC
+idea; large enough for fees on 4h, not on 1h.
 
-**Ist:** Kein Retrain bisher; bekannte Defekte: OBV-Train/Serve-Skew (invertiert die
-Confidence-Ordnung), Label 2,5 %/1,5 %-Bracket ≠ Live-Geometrie, Daten stale.
+**Actual:** like TD — detector untouched, label now the traded geometry. The old
+trainer had features on the wrong candle (breakout instead of retest) — fixed by
+the replay. BB_4H: real ranking (+5 pp), but test PnL negative → filter use only.
 
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent-Satz bestätigt.
-- [x] Operating-Band [0,60, 0,80): von Michi bestätigt — war bereits umgesetzt
-      (12_ai_ats_bot.py:30-35, Audit-Batch 03./04.07.; ≥0,80 geht in Shadow).
-- [x] **Retrain eingeplant** (Warteschlange nach SRA1): skalenfreie OBV-Features,
-      Label = gepostete Geometrie via Replay, frische Daten, eigener
-      Walkforward-Adapter (Event-gated wie live).
+**Decided (Michi, 2026-07-06):**
+- [x] Intent statement confirmed.
+- [x] **BB_4H: deploy the staging model as a filter** (re-determine the
+      threshold with `pick_threshold_safe` first; the PnL lever remains the exit
+      geometry).
+- [x] **BB_1H: REWORK from scratch** (own task, analogous to the TD_1H gate
+      redesign) — not just parking it. Working assumption until the rework:
+      complete the parking (close the SHORT gap) so no half-parked state keeps
+      firing — veto possible if SHORT is meant to deliberately stay open.
 
-**ATS2-Retrain-Infrastruktur gebaut (T-2026-CU-9050-121):** DB-basiert über
-`core.candles` (R1-clean, `include_forming=False`; kein CSV — die alten
-`X8-TSI-EXPORT/-ML`-Skripte in `_X` sind abgelöst). Der geteilte Feature-Builder
-`core/ats_features.py` wird von Bot 12 UND dem Trainer aufgerufen
-(`build_ats_features` → Trainer==Serving, bewiesen vom Parity-Test
-`backtest/test_ats_features.py`) und behebt so den OBV-Train/Serve-Skew; Label =
-First-Touch der geposteten HVN/S-R-Geometrie via `simulate_exit`
-(`core.trade_utils.hvn_sr_trade_geometry`, byte-identisch zur Bot-Geometrie)
-statt des alten 2,5/1,5 %-Brackets. Event-gated Walkforward-Adapter
-`tools/walkforward_sim.py --strategy ats`, Training
-`tools/retrain_from_replay.py --strategy ats` (bzw. Ein-Kommando
+---
+
+## 5. SRA1 — ML quality filter over Support/Resistance ✅ (intent + label semantics confirmed 2026-07-06)
+
+**Intended (reconstructed):** not a signal generator of its own: the classic
+S/R strategy produces the candidates, the ML only says "take this one / don't"
+(meta-labeling). Label = the real trade outcome of the same strategy.
+
+**Actual:** the conceptually healthiest setup in the fleet, no Batch-E retrain.
+
+**Decided (Michi, 2026-07-06):**
+- [x] Intent statement confirmed (pure meta filter).
+- [x] **Label semantics CLARIFIED:** SL1/SL2/SL3 = SL hit after TP1/TP2/TP3 =
+      trailing profit exits → label `WIN` is CORRECT. The open audit question
+      (Report 13/16) is thus answered by the operator; no more label blocker.
+- [x] ATR crash: was already fixed (P1.20). Label semantics additionally
+      confirmed by code proof (13-updatesupportresistance counts targets
+      reached).
+
+**SRA2 retrain performed the night of 2026-07-06 — result: NOT deployable.**
+`tools/retrain_sra2.py` (22 scale-free features, look-ahead fix incl. TZ
+correction Europe/Bucharest→UTC, native NaN, isotonic + safe threshold;
+7,967 events):
+- LONG: test 448 trades @0.64 → WR 42.0% (baseline 38.5%, only +3.5 pp uplift),
+  avg **−1.61%/trade** — val-test break; the test window (Jan–Feb 26) was a bear
+  phase.
+- SHORT: the safe picker honestly declines (no operating point with positive
+  avg PnL at n≥100).
+- **Root blocker discovered:** the label source `closed_trades3` has been DEAD
+  since 23.02.2026 (writer 13-updatesupportresistance in _X no longer runs) —
+  training data ends 4.5 months ago, S/R outcomes have gone untracked since.
+  → Task #5: revive the label pipeline (replay labels preferred over the
+  fragile tracker), THEN repeat SRA2. **SRA1 remains live, unchanged.**
+
+---
+
+## 6. ATS1 — TSI crossover sniper ✅ (intent confirmed 2026-07-06)
+
+**Intended (confirmed):** a direction model is only queried on the TSI fast
+crossover on the last closed candle (event gate). Architectural blueprint: live
+scores exactly the trained event population.
+
+**Actual:** no retrain so far; known defects: OBV train/serve skew (inverts the
+confidence ordering), label 2.5%/1.5% bracket ≠ live geometry, data stale.
+
+**Decided (Michi, 2026-07-06):**
+- [x] Intent statement confirmed.
+- [x] Operating band [0.60, 0.80): confirmed by Michi — was already
+      implemented (12_ai_ats_bot.py:30-35, audit batch 03/04.07; ≥0.80 goes to
+      shadow).
+- [x] **Retrain scheduled** (queued after SRA1): scale-free OBV features,
+      label = posted geometry via replay, fresh data, own walkforward adapter
+      (event-gated like live).
+
+**ATS2 retrain infrastructure built (T-2026-CU-9050-121):** DB-based via
+`core.candles` (R1-clean, `include_forming=False`; no CSV — the old
+`X8-TSI-EXPORT/-ML` scripts in `_X` are superseded). The shared feature builder
+`core/ats_features.py` is called by both bot 12 AND the trainer
+(`build_ats_features` → trainer==serving, proven by the parity test
+`backtest/test_ats_features.py`) and thereby fixes the OBV train/serve skew;
+label = first touch of the posted HVN/S-R geometry via `simulate_exit`
+(`core.trade_utils.hvn_sr_trade_geometry`, byte-identical to the bot geometry)
+instead of the old 2.5/1.5% bracket. Event-gated walkforward adapter
+`tools/walkforward_sim.py --strategy ats`, training
+`tools/retrain_from_replay.py --strategy ats` (or one-command
 `tools/retrain_ats.py --days/--since`) → `staging_models/ats2_model_{LONG,SHORT}.pkl`
-(`model_id=ATS2`, chronologischer Split + 7d-Purge, `pick_threshold_safe`,
-Isotonic-Kalibrierung). **Noch KEIN VPS-Trainingslauf/Deploy** — Artefakt-Erzeugung
-+ Rollout-Empfehlung sind Michi-gegated (harte Regel 2).
+(`model_id=ATS2`, chronological split + 7d purge, `pick_threshold_safe`, isotonic
+calibration). **Still NO VPS training run/deploy** — artifact generation +
+rollout recommendation are Michi-gated (hard rule 2).
 
 ---
 
-## 7. EPD1 — Echtzeit-Pump-Ignition ✅ (Intent bestätigt 2026-07-06)
+## 7. EPD1 — real-time pump ignition ✅ (intent confirmed 2026-07-06)
 
-**Soll (bestätigt):** 10s-Ticks: plötzliche Volumen-Anomalie + Mikro-Momentum =
-Ignition eines Moves → **mitfahren** (Pump → LONG, Dump → SHORT; kein Fade).
-Eine der wenigen echten Kurzfrist-Edges in Alt-Perps.
+**Intended (confirmed):** 10s ticks: a sudden volume anomaly + micro-momentum =
+ignition of a move → **ride along** (pump → LONG, dump → SHORT; no fading). One of
+the few real short-term edges in alt perps.
 
-**Ist:** Trainer sampelte nur `vol_ratio ≥ 5`-Events, Live scored ohne Gate (OOD) —
-vol_ratio-Gate inzwischen umgesetzt, dazu aber ein „nur LONG"-Richtungs-Gate
-(Audit-Batch). Daily-Retrain ist auskommentiert, loggt aber Erfolg. Gewinn stark
-regimeabhängig (Alt-Pump-Phasen; Juli negativ → Drift-Watch Pflicht).
+**Actual:** the trainer only sampled `vol_ratio ≥ 5` events, live scored without
+a gate (OOD) — the vol_ratio gate has since been implemented, but along with it a
+"LONG only" direction gate (audit batch). The daily retrain is commented out but
+still logs success. Profit strongly regime-dependent (alt-pump phases; July
+negative → drift watch mandatory).
 
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent: Momentum-MITFAHREN in beide Richtungen bestätigt.
-- [x] **Richtungs-Gate öffnen: BEIDE Seiten laufen** (das „nur LONG" fällt weg;
-      vol_ratio ≥ 5-Gate bleibt). → Code-Änderung + Bot-Neustart nötig.
-- [x] Falsches Erfolgs-Logging des auskommentierten Daily-Retrains entfernen.
-- [x] **Retrain eingeplant** (Label = gepostete Geometrie, nur vol_ratio≥5-Events,
-      Drift-Monitoring wegen Regimeabhängigkeit).
-- [ ] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
-      `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2) —
-      bei ABR trennt fund_24h Richtungserfolg sauber (LONG-Gate >+3 bps,
-      SHORT-Veto >+1,5 bps, kreuzvalidiert auf 33,5k Events); für ein
-      Momentum-MITFAHR-Modell plausibel richtungsentscheidend. Historie liegt
-      voll in `funding_rates` (430d × 530 Coins).
-- [x] **Replay-Adapter GEBAUT (2026-07-06 nachts):** `tools/epd2_build_dataset.py`
-      — EPD ist 10s-Tick-basiert, bar-für-bar nicht nachspielbar; die
-      Detektor-Logs (`pump_dump_events`) SIND die Events. Spiegelt Bot-10-
-      Semantik: Alert-Gate vol_ratio≥5 beidseitig, Richtung = mitfahren,
-      900s-Dedup, Post-Spike-Entry, **HVN/SR-Geometrie as-of**
-      (`get_hvn_and_sr_levels(df=…)` + `hvn_sr_trade_geometry`), Label via
-      `simulate_exit` (Skip-Entry-Hour, 7d-Horizont), 10 Live-Features
-      (sample_fill=1.0 als dokumentierte Näherung) + 6 Funding-Features.
+**Decided (Michi, 2026-07-06):**
+- [x] Intent: riding momentum in both directions confirmed.
+- [x] **Open the direction gate: BOTH sides run** (the "LONG only" is
+      dropped; the vol_ratio ≥ 5 gate stays). → code change + bot restart
+      needed.
+- [x] Remove the false success logging of the commented-out daily retrain.
+- [x] **Retrain scheduled** (label = posted geometry, only vol_ratio≥5
+      events, drift monitoring because of regime dependency).
+- [ ] **Add funding features to the retrain** (operator, 2026-07-06):
+      `core/funding_features.py` (shared builder, Report 21 Addendum 2) — for
+      ABR, fund_24h cleanly separates directional success (LONG gate >+3 bps,
+      SHORT veto >+1.5 bps, cross-validated on 33.5k events); plausibly
+      direction-decisive for a momentum-riding model. History is fully
+      available in `funding_rates` (430d × 530 coins).
+- [x] **Replay adapter BUILT (the night of 2026-07-06):**
+      `tools/epd2_build_dataset.py` — EPD is 10s-tick-based, not replayable
+      bar-by-bar; the detector logs (`pump_dump_events`) ARE the events.
+      Mirrors bot-10 semantics: alert gate vol_ratio≥5 both sides, direction =
+      ride along, 900s dedup, post-spike entry, **HVN/SR geometry as-of**
+      (`get_hvn_and_sr_levels(df=…)` + `hvn_sr_trade_geometry`), label via
+      `simulate_exit` (skip entry hour, 7d horizon), 10 live features
+      (sample_fill=1.0 as a documented approximation) + 6 funding features.
 
-**EPD2-Retrain durchgeführt 2026-07-07 — BEIDE Richtungen NICHT deploybar.**
-Datensatz nach DST-Fix: 85.031 Events / 639 Symbole (2026-02-25→07-07,
-mehr Historie gibt es nicht — Log-Beginn), gelabelt 78.351;
-`retrain_from_replay.py --strategy epd` (16 Features = 10 Live + 6 Funding,
-Chrono-Split, 7d-Purge, Safe-Threshold):
-- LONG (45.760 Events, Basis 52,2 %): Safe-Picker verweigert; bester
-  Val-Punkt −0,97 %/Trade. Test-Kalibrierung monoton in der WR
-  (43,9→69 %), aber **jedes Bucket im Ø-PnL negativ** — das Modell rankt
-  TP1-Wahrscheinlichkeit, die gepostete Geometrie hat trotzdem negatives EV.
-- SHORT (32.591 Events, Basis 60,0 %): Val formal deploybar @0,674
-  (+0,09 %/Trade, hauchdünn), aber **Val-Test-Bruch**: Test 1.204 Trades,
-  WR 68,2 % == Basisrate (null Selektion), −0,90 %/Trade.
-- **Monats-Split: kein einziger positiver Monat in KEINER Richtung**
-  (LONG Ø −0,05…−3,66; SHORT Ø −0,00…−3,93). Anders als bei RUB-LONG
-  (§8) ist hier im verfügbaren Fenster auch kein Bull-Regime-Rettungsanker
-  sichtbar — wobei die 4,5 Monate keine starke Alt-Pump-Phase enthalten
-  (EPD1s profitable Phasen lagen laut Step-4-Vermessung davor).
-- Konsequenz: kein Deploy; Ist-Zustand (Bot 10 mit Alt-Modell, beide
-  Richtungen offen per Operator-Entscheid) läuft weiter, Drift-Watch
-  bleibt Pflicht. Artefakte liegen in staging (`epd2_model_{LONG,SHORT}.pkl`),
-  Stats `retrain_epd2_stats.json`. Wiedervorlage: Retrain erneut, sobald
-  eine echte Alt-Pump-Phase in den Logs ist (Regime-Fenster-These §8).
+**EPD2 retrain performed 2026-07-07 — BOTH directions NOT deployable.**
+Dataset after the DST fix: 85,031 events / 639 symbols (2026-02-25→07-07, no
+more history is available — start of the logs), 78,351 labeled;
+`retrain_from_replay.py --strategy epd` (16 features = 10 live + 6 funding,
+chrono split, 7d purge, safe threshold):
+- LONG (45,760 events, baseline 52.2%): the safe picker declines; best val
+  point −0.97%/trade. Test calibration monotone in WR (43.9→69%), but **every
+  bucket negative in avg PnL** — the model ranks TP1 probability, yet the
+  posted geometry still has negative EV.
+- SHORT (32,591 events, baseline 60.0%): val formally deployable @0.674
+  (+0.09%/trade, wafer-thin), but **val-test break**: test 1,204 trades, WR
+  68.2% == baseline rate (zero selection), −0.90%/trade.
+- **Month split: not a single positive month in EITHER direction** (LONG avg
+  −0.05…−3.66; SHORT avg −0.00…−3.93). Unlike RUB-LONG (§8), there is no
+  bull-regime rescue anchor visible in the available window here either —
+  though the 4.5 months contain no strong alt-pump phase (EPD1s profitable
+  phases, per the step-4 measurement, lay before this).
+- Consequence: no deploy; the as-is state (bot 10 with the old model, both
+  directions open per operator decision) keeps running, drift watch remains
+  mandatory. Artifacts sit in staging (`epd2_model_{LONG,SHORT}.pkl`), stats
+  `retrain_epd2_stats.json`. Follow-up: retry the retrain once a real alt-pump
+  phase is in the logs (regime-window thesis §8).
 
-**EPD2-DB-Pfad auditiert (T-2026-CU-9050-121):** bestätigt bereits DB-basiert,
-R1-clean und CSV-frei — `tools/epd2_build_dataset.py` liest die Events aus
-`pump_dump_events`, den Entry aus `ticker_10s` und Geometrie/Indikatoren über
-`core.candles` (`read_candles_with_indicators(include_forming=False)`), schreibt
-JSONL (kein CSV) nach staging. **Kein candle-basierter Pump-Trainer möglich** —
-die Live-Features sind 10s-Tick-basiert (nicht aus 1h-OHLCV rekonstruierbar,
-harte Regel 7); die Event-Log-Route IST der DB-Retrain. Kein Fix nötig; für
-symmetrische Ein-Kommando-Bedienung neu: `tools/retrain_pump.py --days/--since`
-(kettet Build + `retrain_from_replay --strategy epd`). Wiedervorlage unverändert.
+**EPD2 DB path audited (T-2026-CU-9050-121):** confirmed already DB-based,
+R1-clean and CSV-free — `tools/epd2_build_dataset.py` reads the events from
+`pump_dump_events`, the entry from `ticker_10s`, and geometry/indicators via
+`core.candles` (`read_candles_with_indicators(include_forming=False)`), writes
+JSONL (no CSV) to staging. **No candle-based pump trainer is possible** — the
+live features are 10s-tick-based (not reconstructable from 1h OHLCV, hard rule
+7); the event-log route IS the DB retrain. No fix needed; new for symmetric
+one-command operation: `tools/retrain_pump.py --days/--since` (chains build +
+`retrain_from_replay --strategy epd`). Follow-up unchanged.
 
-**EPD-Retrain auf den post-P1.39-Definitionen NICHT AUSFÜHRBAR — Kalender
-(T-2026-KYT-9050-004, 2026-08-01).** Bericht:
-`docs/T-2026-KYT-9050-004-epd-retrain-feasibility.md`, Zahlen:
-`staging_models/replay/epd4_feasibility.{json,md}`. Kein Artefakt erzeugt.
-- **Cut-Point belegt:** stündliche `pump_dump_events`-Zählung am 2026-07-10 bricht
-  auf der Stunde des Bot-10-Restarts (17:08:29Z) von 56–170/h auf 10–33/h. Der
-  Restart schaltete P1.39, die T-035-Ratennormierung und den wiederbelebten
-  Stunden-Warmup gemeinsam scharf; die Ereignisrate fiel ~5× (Gate-, kein
-  Feature-Effekt).
-- **Datensatz sauber, aber zu kurz:** 4698 von 4712 Events geschrieben (0,3 %
-  Verlust), 4327 gelabelt, Spanne 22,0 d. `chrono_split` gibt Val/Test je das
-  15 %-Band = 3,3 d, der 7-d-Purge-Gap (= Label-Horizont) frisst es ganz →
-  `split 1664/0/0` (LONG) bzw. `1364/0/0` (SHORT).
-- **Harte Obergrenze ist `ticker_10s`,** nicht der Cut-Point: der Builder nimmt den
-  Entry seit T-2026-CU-9050-035 von dort, und die Hypertable beginnt am
-  2026-07-07 11:19Z. Der Feb–Juli-Datensatz (85 031 Events) ist mit dem heutigen
-  Builder **nicht mehr reproduzierbar**. Retention 365 d ⇒ das Fenster wächst.
-- **Die Verschiebung ist kleiner als die Marktdrift:** Zwei-Stichproben-KS je
-  Feature (14 d vor/nach) liegt für ALLE vier Inputs im Nullband benachbarter
-  14-d-Fensterpaare (KS 0,036–0,174 gegen Nullband-Median 0,058–0,080,
-  Nullband-Max 0,204–0,434). Nur Randverteilungen gemessen.
-- **Das deployte Modell hält out-of-sample:** `epd3_model_LONG.pkl` auf den
-  Post-Cut-Events AUC(TP1) 0,586 bei monotoner Kalibrierung (38,3 → 66,7 % TP1),
-  SHORT 0,537. Kein Hinweis auf ein durch die Definitionsänderung kaputtes
-  Serving-Modell → Bot 10 läuft unverändert weiter.
-- **Tag reserviert: EPD4** (EPD1/2/3 belegt, geprüft gegen Variant-Registry,
-  `shadow_gate` und die DB-Historie). NOCH NICHT in `core/shadow_gate` registriert —
-  ohne Artefakt wäre das tote Konfiguration; die Belegung selbst ist in
-  `backtest/test_retrain_model_id.py` gepinnt. ⚠ Gate-Default ist LIVE.
-- **Wiedervorlage 2026-11-09 → T-2026-KYT-9050-067** (~1000 Val/Test-Zeilen je
-  Richtung, erster Operating-Point mit `min_n=200`-Rückhalt). Kommando:
+**EPD retrain on the post-P1.39 definitions NOT EXECUTABLE — calendar
+(T-2026-KYT-9050-004, 2026-08-01).** Report:
+`docs/T-2026-KYT-9050-004-epd-retrain-feasibility.md`, numbers:
+`staging_models/replay/epd4_feasibility.{json,md}`. No artifact produced.
+- **Cut point demonstrated:** the hourly `pump_dump_events` count on
+  2026-07-10 breaks at the hour of the bot-10 restart (17:08:29Z) from 56–170/h
+  to 10–33/h. The restart armed P1.39, the T-035 rate normalization and the
+  revived hourly warmup together at once; the event rate dropped ~5× (a gate
+  effect, not a feature effect).
+- **Dataset clean but too short:** 4,698 of 4,712 events written (0.3% loss),
+  4,327 labeled, span 22.0 d. `chrono_split` gives val/test each the 15% band =
+  3.3 d, the 7-day purge gap (= label horizon) eats it entirely →
+  `split 1664/0/0` (LONG) resp. `1364/0/0` (SHORT).
+- **The hard upper bound is `ticker_10s`,** not the cut point: the builder has
+  taken the entry from there since T-2026-CU-9050-035, and the hypertable starts
+  at 2026-07-07 11:19Z. The Feb–July dataset (85 031 events) is **no longer
+  reproducible** with today's builder. Retention 365 d ⇒ the window grows.
+- **The shift is smaller than market drift:** the two-sample KS per feature
+  (14 d before/after) falls, for ALL four inputs, within the null band of
+  adjacent 14-day window pairs (KS 0.036–0.174 against a null-band median of
+  0.058–0.080, null-band max 0.204–0.434). Only marginal distributions
+  measured.
+- **The deployed model holds up out-of-sample:** `epd3_model_LONG.pkl` on the
+  post-cut events, AUC(TP1) 0.586 with monotone calibration (38.3 → 66.7% TP1),
+  SHORT 0.537. No indication of a serving model broken by the definition change
+  → bot 10 keeps running unchanged.
+- **Tag reserved: EPD4** (EPD1/2/3 taken, checked against the variant
+  registry, `shadow_gate` and the DB history). NOT YET registered in
+  `core/shadow_gate` — without an artifact that would be dead configuration;
+  the reservation itself is pinned in `backtest/test_retrain_model_id.py`.
+  ⚠ the gate default is LIVE.
+- **Follow-up 2026-11-09 → T-2026-KYT-9050-067** (~1000 val/test rows per
+  direction, the first operating point with `min_n=200` backing). Command:
   `python tools/retrain_pump.py --since 2026-07-11 --model-id EPD4`.
-- **Offen vor einem EPD4-Go-Live:** die Serving-Population ist 2,7× (LONG) bzw.
-  5,4× (SHORT) dichter als die Trainings-Population — der 900s-Dedup des Builders
-  spiegelt einen Alert-Throttle, dessen Timer nur im Live-Trade-Zweig
-  zurückgesetzt wird und für ein nicht-live postendes Bein inert ist.
+- **Open before an EPD4 go-live:** the serving population is 2.7× (LONG) resp.
+  5.4× (SHORT) denser than the training population — the builder's 900s dedup
+  mirrors an alert throttle whose timer is only reset on the live-trade branch
+  and is inert for a leg that doesn't post live.
 
 ---
 
-## 8. RUB1 — Rubberband Mean Reversion ✅ (Intent bestätigt 2026-07-06)
+## 8. RUB1 — Rubberband mean reversion ✅ (intent confirmed 2026-07-06)
 
-**Soll (rekonstruiert):** Extreme Dehnung vom „fairen Wert" (≥8 % von der
-90d-Regression + RSI-/TSI-Extrem + Donchian-Touch) → Snap-Back handeln.
+**Intended (reconstructed):** extreme stretch from the "fair value" (≥8% from
+the 90d regression + RSI/TSI extreme + Donchian touch) → trade the snap-back.
 
-**Ist:** ML-Layer nachweislich Rauschen (MACD 9/21 trainiert, live 12/26 gefüttert;
-Random-Split-Memorization). Live-Gewinn stammt aus Vorfilter + S/R-Targets + SHORT-Tails.
+**Actual:** the ML layer is demonstrably noise (MACD 9/21 trained, 12/26 fed
+live; random-split memorization). Live profit comes from the pre-filter + S/R
+targets + SHORT tails.
 
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent-Satz bestätigt (Snap-Back nach Mehrfach-Extrem; ML trennt Snap-Back
-      von weiterlaufendem Messer).
-- [x] Retrain-Label: **Geometrie mit SL-Pfad** (First-Touch TP1-vor-SL — der
-      Drawdown-Pfad steckt via SL-Touch automatisch drin). Gleiche Infrastruktur;
-      braucht einen RUB1-Adapter im Walkforward (Vorfilter-Events nachspielen).
-- [x] **Adapter GEBAUT (2026-07-06 nachts):** `walkforward_sim.py --strategy rub`
-      — Vorfilter/Regression/9-Feature-Vertrag nach `core/rub_features.py`
-      gehoben (EINE Quelle, Bot 13 refaktoriert und nutzt sie live; X-R1).
-      Replay je geschlossener 1h-Kerze: 95d-Regression as-of, 4h-Cooldown je
-      Richtung wie live, Geometrie = `get_hvn_and_sr_levels(df=…)` +
-      `hvn_sr_trade_geometry` + `ensure_min_tp_distance`, Label via
-      `simulate_exit`; Feature-Dict enthält zusätzlich die 6 Funding-Features.
-- [x] **LONG-Gate WIEDER ÖFFNEN** (Operator-Entscheid, revidiert den Audit-Batch:
-      Idee ist symmetrisch, LONG-Schwäche womöglich Artefakt des kaputten ML).
-      → Code-Änderung + Bot-Neustart nötig.
-- [x] **Funding-Features in den Retrain aufnehmen** (Operator, 2026-07-06):
-      `core/funding_features.py` (geteilter Builder, Report 21 Addendum 2).
-      Für Mean-Reversion besonders interessant: extremes Funding = überfüllte
-      Seite → Snap-Back-Kandidat vs. weiterlaufendes Messer. Historie voll in
-      `funding_rates`. → Umgesetzt: 15-Feature-Vertrag (9 rub + 6 funding).
+**Decided (Michi, 2026-07-06):**
+- [x] Intent statement confirmed (snap-back after a multi-extreme; ML separates
+      snap-back from a continuing falling knife).
+- [x] Retrain label: **geometry with SL path** (first-touch TP1-before-SL —
+      the drawdown path is automatically included via the SL touch). Same
+      infrastructure; needs a RUB1 adapter in the walkforward (replaying
+      pre-filter events).
+- [x] **Adapter BUILT (the night of 2026-07-06):**
+      `walkforward_sim.py --strategy rub` — pre-filter/regression/9-feature
+      contract lifted into `core/rub_features.py` (ONE source, bot 13
+      refactored and uses it live; X-R1). Replay per closed 1h candle: 95d
+      regression as-of, 4h cooldown per direction like live, geometry =
+      `get_hvn_and_sr_levels(df=…)` + `hvn_sr_trade_geometry` +
+      `ensure_min_tp_distance`, label via `simulate_exit`; the feature dict
+      additionally contains the 6 funding features.
+- [x] **RE-OPEN the LONG gate** (operator decision, revises the audit batch:
+      the idea is symmetric, LONG weakness possibly an artifact of the broken
+      ML). → code change + bot restart needed.
+- [x] **Add funding features to the retrain** (operator, 2026-07-06):
+      `core/funding_features.py` (shared builder, Report 21 Addendum 2).
+      Especially interesting for mean reversion: extreme funding = an overcrowded
+      side → snap-back candidate vs. a continuing falling knife. History fully
+      available in `funding_rates`. → Implemented: 15-feature contract (9 rub +
+      6 funding).
 
-**RUB2-Retrain durchgeführt 2026-07-07 vormittags — LONG NICHT deploybar,
-SHORT deploybar @0,829.** Replay `rub_replay_365d.jsonl` (365d, 530 Coins,
-97.641 Events; Lauf war durch den VPS-Ausfall 04:42 unterbrochen und wurde
-per `--resume` ab Coin 433 fertiggerechnet), Trainer
-`retrain_from_replay.py --strategy rub --days 365` (Chrono-Split + Purge,
-Isotonic, Safe-Threshold):
-- LONG (52.081 Events, Basis TP1 60,6 %): Val-Kurve auf ALLEN Thresholds
-  negativ (Ø −0,9…−1,2 %/Trade), Safe-Picker verweigert (threshold null,
-  Test 0 Trades). Damit ist die Operator-Hypothese „LONG-Schwäche =
-  Artefakt des kaputten ML" durch den sauberen Retrain NICHT bestätigt —
-  auch das saubere Modell findet keinen profitablen LONG-Operating-Point.
-  Kalibrierung invertiert im PnL: niedrige Prob-Buckets tragen die besten
-  Ø-PnLs (Tail-Snapbacks), d. h. TP1-Wahrscheinlichkeit ≠ Erwartungswert.
-- SHORT (45.560 Events, Basis TP1 73,9 %): thr 0,829, Val +0,25 %/Trade
-  (WR 81,5 %), Test 680/4.725 Trades, WR 81,9 % vs. Basis 79,1 %,
-  Summe +432 %P (**+0,64 %/Trade netto**) — konsistent mit dem bekannten
-  SHORT-Tail-Befund. Top-Features: slope_trend, dist_to_trend, dist_ema200;
-  fund_7d_cum/fund_72h auf Platz 5/6 (Funding trägt real bei).
-- Artefakte: `staging_models/rub2_model_{LONG,SHORT}.pkl` + Stats
+**RUB2 retrain performed on the morning of 2026-07-07 — LONG NOT deployable,
+SHORT deployable @0.829.** Replay `rub_replay_365d.jsonl` (365d, 530 coins,
+97,641 events; the run was interrupted by the VPS outage at 04:42 and finished
+via `--resume` from coin 433), trainer
+`retrain_from_replay.py --strategy rub --days 365` (chrono split + purge,
+isotonic, safe threshold):
+- LONG (52,081 events, baseline TP1 60.6%): val curve negative on ALL
+  thresholds (avg −0.9…−1.2%/trade), the safe picker declines (threshold null,
+  test 0 trades). This means the operator's hypothesis "LONG weakness =
+  artifact of the broken ML" is NOT confirmed by the clean retrain — even the
+  clean model finds no profitable LONG operating point. Calibration inverted
+  in PnL: low prob buckets carry the best avg PnLs (tail snapbacks), i.e.
+  TP1 probability ≠ expected value.
+- SHORT (45,560 events, baseline TP1 73.9%): thr 0.829, val +0.25%/trade
+  (WR 81.5%), test 680/4,725 trades, WR 81.9% vs. baseline 79.1%,
+  sum +432 %P (**+0.64%/trade net**) — consistent with the known SHORT-tail
+  finding. Top features: slope_trend, dist_to_trend, dist_ema200;
+  fund_7d_cum/fund_72h in positions 5/6 (funding genuinely contributes).
+- Artifacts: `staging_models/rub2_model_{LONG,SHORT}.pkl` + stats
   `retrain_rub2_stats.json`.
 
-**Deploy (Operator-Entscheid 2026-07-07): SHORT LIVE in Bot 13.**
-`rub2_model_SHORT.pkl` ins Repo-Root kopiert (P1.35); Bot 13 lädt den
-Artefakt-Contract (Bot-25-Muster), baut die 6 Funding-Features as-of aus
-`funding_rates` (lazy je Event; fehlende Historie ⇒ 0 = `fillna(0)`-Parität)
-und gatet auf roher predict_proba @0,829. Fallback Legacy @0,85, falls das
-Artefakt fehlt. Freshness-Infra: Scheduled Task „Kythera Funding Backfill"
-(stündlich; Tabelle hatte keinen Live-Writer). LONG läuft unverändert auf
-dem Legacy-Modell @0,75 (Operator: Gate bleibt offen).
+**Deploy (operator decision 2026-07-07): SHORT LIVE in bot 13.**
+`rub2_model_SHORT.pkl` copied into the repo root (P1.35); bot 13 loads the
+artifact contract (bot-25 pattern), builds the 6 funding features as-of from
+`funding_rates` (lazy per event; missing history ⇒ 0 = `fillna(0)` parity)
+and gates on raw predict_proba @0.829. Fallback legacy @0.85 if the artifact
+is missing. Freshness infra: scheduled task "Kythera Funding Backfill"
+(hourly; the table had no live writer). LONG keeps running unchanged on the
+legacy model @0.75 (operator: gate stays open).
 
-**Regime-Befund zur LONG-Seite (Monats-Split des Replays, 2026-07-07):**
-Operator-These „LONG greift im Bull-Market" wird von den Daten gestützt —
-ungefilterte LONG-Events: Aug 25 +3,9 %/Trade (n=4.321), Sep 25 +2,4 %,
-Apr 26 +3,0 %, aber Okt 25 −3,6 %, Nov 25 −4,8 %, Jan 26 −3,4 %. Die
-Schwankung ist ein Regime-Effekt, kein Ranking-Problem des Modells
-(das Event-Ranking bleibt auch im Retrain wertlos). Konsequenz: LONG
-braucht ein **Regime-Gate** (Bull-Phasen-Schalter) statt eines
-Event-Gates — Kandidat für die HMM-Regime-Studie T-2026-CU-9050-020
-bzw. Whitelist/ROM1-Integration.
+**Regime finding for the LONG side (monthly split of the replay,
+2026-07-07):** the operator's thesis "LONG bites in a bull market" is
+supported by the data — unfiltered LONG events: Aug 25 +3.9%/trade
+(n=4,321), Sep 25 +2.4%, Apr 26 +3.0%, but Oct 25 −3.6%, Nov 25 −4.8%,
+Jan 26 −3.4%. The swing is a regime effect, not a ranking problem of the
+model (the event ranking stays worthless in the retrain too). Consequence:
+LONG needs a **regime gate** (bull-phase switch) instead of an event gate —
+a candidate for the HMM regime study T-2026-CU-9050-020 resp.
+whitelist/ROM1 integration.
 
-### 8a. MAX1 — High-Conviction-Drossel über RUB2-SHORT 🔨 (T-2026-CU-9050-067, default-off)
+### 8a. MAX1 — high-conviction throttle over RUB2-SHORT 🔨 (T-2026-CU-9050-067, default-off)
 
-**Soll (Operator-Entscheid Michi, 2026-07-11):** RUB2-SHORT ist die stärkste
-Short-Kante der Fleet (OOT +0,64 %/Trade netto; live seit 06.07.: 24 Closes,
-79 % TP1-WR, +4,2 % Ø — T-2026-CU-9050-044), feuert aber ~9×/Tag. Für den
-**Main-Channel** will Michi **1-3 Trades/Tag mit sehr hoher Trefferquote**.
-Nicht umgesetzt wird die Drossel *in* RUB2 (T-2026-CU-9050-050 → **wontfix**:
-RUB2 bleibt unverändert in seinem Channel). Stattdessen **MAX1**: ein eigener
-Bot, der dasselbe Modell fährt, aber nur die stärksten Kandidaten postet.
+**Intended (operator decision Michi, 2026-07-11):** RUB2-SHORT is the fleet's
+strongest short edge (OOT +0.64%/trade net; live since 06.07.: 24 closes, 79%
+TP1-WR, +4.2% avg — T-2026-CU-9050-044), but fires ~9×/day. For the **main
+channel**, Michi wants **1-3 trades/day with a very high hit rate**. The throttle
+is NOT implemented *inside* RUB2 (T-2026-CU-9050-050 → **wontfix**: RUB2 stays
+unchanged in its channel). Instead **MAX1**: a dedicated bot that runs the same
+model but only posts the strongest candidates.
 
-**Mechanik (`34_ai_max1_bot.py` → `core/max1_gate.py`, reine Selektion):**
-- **Klon, kein Refactor:** Detection/Features/Funding-As-of kommen aus den
-  geteilten Buildern (`core/rub_features.py`, `core/funding_features.py` —
-  importiert, nicht angefasst, X-R1), die Geometrie aus dem geteilten
-  `hvn_sr_trade_geometry`. Damit gilt die gemessene RUB2-SHORT-Winrate für genau
-  die Trades, die MAX1 stellt. Bot 13 bleibt Byte-für-Byte, wie er ist.
-- **Zwei-teilige Drossel:** hohe **Mindest-Probability** (`MAX1_MIN_PROB`, Default
-  **0,93**, nie unter dem Artefakt-Threshold 0,829) als eigentlicher Selektor, plus
-  eine **harte rollierende 24h-Kappe** (`MAX1_MAX_PER_DAY`, Default **3**) als
-  Backstop. Rollierend statt Kalendertag — kein Mitternachts-Burst.
-- **Selektion je Scan:** alle Kandidaten über dem Gate sammeln, per Symbol
-  deduplizieren (stärkster gewinnt), deterministisch sortieren (prob desc, Symbol),
-  auf die freien Slots der 24h-Kappe schneiden.
-- **24h-Zähler aus `ml_predictions_master`** — Shadow **und** Live, damit die Kappe
-  im Shadow exakt wie live greift (getreue Vorschau). Vertrag des MAX1-Tags in
-  dieser Tabelle: **eine Zeile je Selektion, nie je abgelehntem Kandidaten** —
-  darunterliegende Predictions persistiert der RUB2-Scan bereits unter seinem Tag.
-- **Scan Minute 15** (RUB2: Minute 10) — dieselbe geschlossene 1h-Kerze, nur
-  entzerrt gegen den zweiten Voll-Scan auf der DB.
-- **Posting** über `core.signal_post.post_ai_signal` (genau EINE Cornix-Message,
-  Regel 4). Tag aus `meta.model_id` des Artefakts (Regel 6 / Falle 16).
+**Mechanics (`34_ai_max1_bot.py` → `core/max1_gate.py`, pure selection):**
+- **Clone, not a refactor:** detection/features/funding-as-of come from the
+  shared builders (`core/rub_features.py`, `core/funding_features.py` —
+  imported, not touched, X-R1), the geometry from the shared
+  `hvn_sr_trade_geometry`. This means the measured RUB2-SHORT win rate holds
+  exactly for the trades MAX1 places. Bot 13 stays byte-for-byte as it is.
+- **Two-part throttle:** a high **minimum probability** (`MAX1_MIN_PROB`,
+  default **0.93**, never below the artifact threshold 0.829) as the actual
+  selector, plus a **hard rolling 24h cap** (`MAX1_MAX_PER_DAY`, default **3**)
+  as a backstop. Rolling instead of calendar day — no midnight burst.
+- **Selection per scan:** collect all candidates above the gate, dedupe per
+  symbol (strongest wins), sort deterministically (prob desc, symbol), cut to
+  the free slots of the 24h cap.
+- **24h counter from `ml_predictions_master`** — shadow **and** live, so the
+  cap bites in shadow exactly as it does live (a faithful preview). Contract of
+  the MAX1 tag in this table: **one row per selection, never per rejected
+  candidate** — the underlying predictions are already persisted by the RUB2
+  scan under its own tag.
+- **Scan at minute 15** (RUB2: minute 10) — the same closed 1h candle, just
+  offset against the second full scan on the DB.
+- **Posting** via `core.signal_post.post_ai_signal` (exactly ONE Cornix
+  message, rule 4). Tag from the artifact's `meta.model_id` (rule 6 / trap 16).
 
-**Artefakt:** `max1_model_SHORT.pkl` (Repo-Root, **promoted 2026-07-11** per
-Operator-Entscheid Michi; auf dem VPS erzeugt mit sklearn 1.7.1, Load-Verify
-`True MAX1 0.829 15 True` — T-2026-CU-9050-070) — Kopie des RUB2-SHORT-Modells
-mit `meta.model_id=MAX1`, erzeugt von `tools/make_max1_artifact.py` (Modell,
-Feature-Vertrag, Kalibrator, Val-Operating-Point verbatim; nur die Identität
-wechselt). Neuerzeugung nach jedem RUB2-SHORT-Retrain **auf dem VPS** (die
-Library-Versionen des Quell-Artefakts leben dort); die Promotion bleibt je
-Generation Michis Entscheid. Ohne Artefakt läuft Bot 34 im Idle-Modus.
+**Artifact:** `max1_model_SHORT.pkl` (repo root, **promoted 2026-07-11** per
+operator decision Michi; produced on the VPS with sklearn 1.7.1, load-verify
+`True MAX1 0.829 15 True` — T-2026-CU-9050-070) — a copy of the RUB2-SHORT
+model with `meta.model_id=MAX1`, produced by `tools/make_max1_artifact.py`
+(model, feature contract, calibrator, val operating point verbatim; only the
+identity changes). Re-generation after every RUB2-SHORT retrain **on the VPS**
+(the source artifact's library versions live there); the promotion remains
+Michi's decision per generation. Without an artifact, bot 34 runs in idle mode.
 
-**RUB2-Interaktion (by design):** Cooldown-, Dedupe- und Offene-Trade-Räume sind
-über den Tag getrennt (`MAX1` vs. `RUB2`) — die beiden Bots **blocken sich nicht
-gegenseitig**. Folge: **Doppel-Exposure auf demselben Coin ist möglich** (RUB2
-postet in seinen Channel, MAX1 zusätzlich in den Main-Channel; wenn Cornix beide
-Channels tradet, läuft die Position doppelt). Das ist die bewusste Konsequenz aus
-„RUB2 bleibt unverändert" — die Positionsgröße dieser Überlappung steuert Michi
-über die Cornix-Konfiguration der beiden Channels.
+**RUB2 interaction (by design):** cooldown, dedupe and open-trade spaces are
+separated by tag (`MAX1` vs. `RUB2`) — the two bots **do not block each other**.
+Consequence: **double exposure on the same coin is possible** (RUB2 posts to its
+channel, MAX1 additionally to the main channel; if Cornix trades both channels,
+the position runs twice). That is the deliberate consequence of "RUB2 stays
+unchanged" — Michi controls the position size of this overlap via the Cornix
+configuration of the two channels.
 
-**Gates (default-off, Flip = Michis Entscheid):**
-- `MAX1_LIVE_POSTING=0` (shadow-first; ohne Flip nur Shadow-Zeilen).
-- `CH_MAX1` ungesetzt ⇒ Fallback `CH_MAIN`; beide ungesetzt (0) ⇒ Shadow-only.
+**Gates (default-off, flip = Michi's decision):**
+- `MAX1_LIVE_POSTING=0` (shadow-first; without the flip, only shadow rows).
+- `CH_MAX1` unset ⇒ falls back to `CH_MAIN`; both unset (0) ⇒ shadow-only.
 
-**Zwei Lesehinweise für die Shadow-Zahlen** (sie sind die Datenbasis des
-Threshold-Entscheids — nicht überlesen):
-- Die persistierte `confidence` ist die **rohe** predict_proba — dieselbe Domäne wie
-  Gate, 044-Kurve und die RUB2-Zeilen. Der kalibrierte Wert steht nur in der
-  Info-Message.
-- Die **Shadow-Frequenz ist eine Obergrenze**: live schreibt ein Post eine
-  `ai_signals`-Zeile, die weitere Selektionen desselben Coins bis zum Close sperrt;
-  im Shadow existiert diese Zeile nicht, dort drosselt nur der 4h-Cooldown. Shadow
-  zeigt also eher etwas **mehr** Posts/Tag als live — nie weniger.
-- MAX1 scannt das **volle Coin-Universum** aus `coins.json`, nicht die kuratierte
-  `MAIN_CHANNEL_COINS`-Liste. Der Main-Channel sieht damit auch Alts, die er heute
-  nicht sieht. Eine Einschränkung wäre ein eigener Operator-Entscheid.
+**Two reading notes for the shadow numbers** (they are the data basis of the
+threshold decision — don't skip over them):
+- The persisted `confidence` is the **raw** predict_proba — the same domain as
+  the gate, the 044 curve and the RUB2 rows. The calibrated value only appears
+  in the info message.
+- The **shadow frequency is an upper bound**: live, a post writes an
+  `ai_signals` row that blocks further selections of the same coin until close;
+  in shadow this row doesn't exist, only the 4h cooldown throttles there. So
+  shadow tends to show a little **more** posts/day than live — never fewer.
+- MAX1 scans the **full coin universe** from `coins.json`, not the curated
+  `MAIN_CHANNEL_COINS` list. The main channel therefore also sees alts it
+  doesn't see today. A restriction would be a separate operator decision.
 
-**Offen / Bestätigung einholen:**
-- [x] **Shadow-Gate-Zahlen** (Operator-Entscheid Michi 2026-07-11, Ziel =
-      **maximale Trefferquote**, T-2026-CU-9050-070): `MAX1_MIN_PROB=0,85` +
-      `MAX1_MAX_PER_DAY=3` — bewusst NICHT der Default 0,93. Live-Kurve
-      (06.–11.07., 44 posted/28 closed): höchste WR im Band 0,829–0,85
-      (81–82 %, n=21–28); ab 0,88 **fällt** die WR (60–71 %) und nur der Ø-PnL
-      steigt. ≥0,88-Kandidaten clustern zudem in Funding-Episoden (24h-Kappe
-      liefert dann ~0,7/Tag). ~~Achtung: die **Replay-Kurve ist für dieses Gate
-      unbrauchbar** — Live↔Replay-Prob-Korrelation −0,37 auf gematchten
-      Signalen, Feature-Skew-Verdacht Funding (T-2026-CU-9050-071).~~ **Finale**
-      Zahlen nach 1–2 Wochen Shadow (dann misst `ml_predictions_master` die
-      kappen-gebundene Selektions-WR direkt); wenn die WR-Inversion hält, auch
-      Selektionsreihenfolge/Prob-Band statt Floor prüfen.
-      **Korrektur 2026-08-01 (T-2026-KYT-9050-008,
-      `docs/T-2026-KYT-9050-008-rub2-replay-skew.md`):** der Feature-Skew-Verdacht
-      ist widerlegt — die Funding-Features sind über 229 gematchte Signale
-      bit-exakt, die −0,37 waren das Messfenster (06./07.07. liegt auf dem
-      RUB2-Go-Live, davor trug das Tag ein anderes Modell). Ab 12.07. stimmen
-      Live und Replay auf 92–100 % der Zeilen exakt überein, **die Replay-Kurve
-      trägt wieder**. Mit-korrigiert: „live gibt es 0,93+" stammt aus denselben
-      Prä-Deploy-Zeilen — RUB2-SHORT hat live nie 0,93 erreicht (max 0,876 bzw.
-      0,920 nach dem 14.07.-Retrain), der Default 0,93 hätte MAX1 stumm gestellt.
-- [ ] **Scharf-Schalten** (`MAX1_LIVE_POSTING=1` + Cornix-Konfiguration des
-      Main-Channels) — nach Shadow-Auswertung, ausschliesslich Michis Entscheidung.
-      **Ist-Stand 2026-08-01 nachgesehen** (T-2026-KYT-9050-008, Beobachtung, kein
-      Entscheid): `.env` trägt `MAX1_LIVE_POSTING=1`, `MAX1_MIN_PROB=0.829`,
-      `MAX1_MAX_PER_DAY=100000`; `ml_predictions_master` hat 308 MAX1-SHORT-Zeilen
-      (11.07.–01.08.), alle posted, max Confidence 0,9199. Der Operator hat also
-      scharf geschaltet und dabei ein anderes Regime gewählt als die oben notierten
-      0,85 + Kappe 3 — der Throttle ist faktisch offen. Abgleich = Michis Entscheid.
-
----
-
-## 9. AIM1 → AIM2 — Meta-Gate über alle Signale ⚠ (Konzept bewusst geändert — Bestätigung einholen)
-
-**Soll AIM1 (historisch):** Stacking über alle Bot-Signale: Marktkontext ×
-Schwarm-Verhalten × Quell-Identität → Erfolgswahrscheinlichkeit je Kandidat.
-**Befund:** Idee gut, Architektur verletzte alle Voraussetzungen; Modell war
-verlässlich invertiert (F). Nicht rettbar per Retrain.
-
-**Ist AIM2 (Neubau 2026-07-05, Parallel-Session):** BEWUSSTE Konzeptänderung —
-kein eigenständiger Alpha-Generator mehr, sondern Ranker/Gate über gepostete
-Quellsignale; Label = First-Touch der rekonstruierten Geometrie; läuft shadow-only
-(Posting per `AIM2_LIVE_POSTING=1` freigegeben, Channel wird nicht getradet).
-
-**Entschieden (Michi, 2026-07-06):**
-- [x] **Neudefinition als neues Soll abgesegnet**: AIM2 = Ranker/Gate über
-      geposteten Quellsignalen. Die AIM1-Idee (eigenständiger Signalgeber) ist
-      offiziell Geschichte.
-- [x] **Rollout: SOFORT SCHARF** — keine weitere Shadow-Phase; Posting zählt ab
-      jetzt (Flag war bereits aktiv, das Traden des Channels konfiguriert Michi
-      in Cornix). Drift-/Kalibrierungs-Monitoring läuft trotzdem weiter.
-
-### 9a. AIM2-TOPN — "Top 1-3 des Tages" als High-Conviction-Kanal 🔨 (T-2026-CU-9050-051, default-off)
-
-**Soll (aus T-2026-CU-9050-031, Weg 2):** der strukturelle Weg zu „täglich 1-3
-Trades, sehr hohe Winrate". AIM2 rankt bereits die ganze Fleet (OOT-Gate-Uplift
-−0,69 → +1,92 %/Trade @34 % Pass). Statt „alles über der Linie" (≈110/Tag)
-selektiert AIM2-TOPN **höchstens N (1-3) der stärksten Kandidaten des Tages** und
-routet sie in einen **eigenen Kanal/Tag** (`AIM2-TOPN`, Regel 6) — per Konstruktion
-wenige, hoch-selektierte Trades, getrennt vom Basis-AIM2-Posting.
-
-**Mechanik (Bot 15 → `core/aim2_topn.py`, geteilte reine Logik):**
-- „Top-N des Tages" ist erst ex-post bekannt → approximiert über eine hohe
-  **Mindest-Probability** (`AIM2_TOPN_MIN_PROB`, Default 0,95, nie unter dem
-  Basis-Gate-Threshold) plus eine **harte rollierende 24h-Kappe** N
-  (`AIM2_TOPN_N`, Default 1). Rollierend statt Kalendertag — kein
-  Mitternachts-Burst (23:50 + 00:10 = 2·N in 20 min).
-- Selektion je Zyklus: nur `trusted` (Parity-Guard bestanden) & `prob ≥ min_prob`,
-  Dedupe je (Coin, Richtung, stärkste), deterministischer Tie-Break
-  (prob desc, coin, direction), Kappe = `N − posts_last_24h`.
-- 24h-Zähler aus `ml_predictions_master` (Shadow **und** Live), damit die Kappe
-  im Shadow exakt wie live greift → getreue Vorschau.
-- Posting über den auditierten `core.signal_post.post_ai_signal` (genau EINE
-  Cornix-Message, Regel 4). Der TOPN-Tag ist aus AIM2s eigenem Kandidaten-/
-  Schwarm-Stream ausgeschlossen (F6-Selbst-Feedback).
-
-**Gates (alle default-off, Flip = Michis Entscheid):**
-- `AIM2_TOPN_ENABLED=0` (Master-Schalter; aus ⇒ **null** Verhaltensänderung an
-  Basis-AIM2).
-- `AIM2_TOPN_LIVE_POSTING=0` (shadow-first, analog `AIM2_LIVE_POSTING`).
-- `CH_AIM2_TOPN` ungesetzt ⇒ erzwingt Shadow-only (kein Fallback auf den
-  AIM2-Kanal).
-
-**Offen / Bestätigung einholen:**
-- [ ] **Schwellen-Kalibrierung** aus der VPS-DB via `tools/aim2_topn_calibrate.py`
-      (read-only): welcher `min_prob` liefert historisch ~1-3/Tag? Bis dahin
-      läuft der konservative Default 0,95.
-- [ ] **Scharf-Schalten** (`AIM2_TOPN_ENABLED=1`, dann `AIM2_TOPN_LIVE_POSTING=1`
-      + `CH_AIM2_TOPN` setzen + Cornix-Konfiguration des Kanals) — ausschliesslich
-      Michis Entscheidung nach einer Shadow-Auswertung.
+**Open / needs confirmation:**
+- [x] **Shadow-gate numbers** (operator decision Michi 2026-07-11, goal =
+      **maximum hit rate**, T-2026-CU-9050-070): `MAX1_MIN_PROB=0,85` +
+      `MAX1_MAX_PER_DAY=3` — deliberately NOT the default 0.93. Live curve
+      (06.–11.07., 44 posted/28 closed): highest WR in the band 0.829–0.85
+      (81–82%, n=21–28); from 0.88 up, WR **drops** (60–71%) and only the avg
+      PnL rises. ≥0.88 candidates also cluster in funding episodes (the 24h cap
+      then delivers ~0.7/day). ~~Caution: the **replay curve is unusable for
+      this gate** — live↔replay prob correlation −0.37 on matched signals,
+      suspected funding feature skew (T-2026-CU-9050-071).~~ **Final** numbers
+      after 1–2 weeks of shadow (then `ml_predictions_master` measures the
+      cap-bound selection WR directly); if the WR inversion holds, also check
+      selection order/prob band instead of a floor.
+      **Correction 2026-08-01 (T-2026-KYT-9050-008,
+      `docs/T-2026-KYT-9050-008-rub2-replay-skew.md`):** the suspected feature
+      skew is refuted — the funding features are bit-exact across 229 matched
+      signals, the −0.37 was the measurement window (06./07.07 sits on the
+      RUB2 go-live, before that the tag carried a different model). From 12.07
+      on, live and replay match exactly on 92–100% of the rows, **the replay
+      curve carries weight again**. Also corrected along with this: "live sees
+      0.93+" comes from the same pre-deploy rows — RUB2-SHORT has never
+      reached 0.93 live (max 0.876 resp. 0.920 after the 14.07 retrain), the
+      default 0.93 would have silenced MAX1.
+- [ ] **Going live** (`MAX1_LIVE_POSTING=1` + Cornix configuration of the
+      main channel) — after the shadow evaluation, exclusively Michi's
+      decision. **As-is state checked 2026-08-01** (T-2026-KYT-9050-008,
+      observation, not a decision): `.env` carries `MAX1_LIVE_POSTING=1`,
+      `MAX1_MIN_PROB=0.829`, `MAX1_MAX_PER_DAY=100000`; `ml_predictions_master`
+      has 308 MAX1-SHORT rows (11.07.–01.08.), all posted, max confidence
+      0.9199. So the operator has gone live and in doing so chose a different
+      regime than the 0.85 + cap-3 noted above — the throttle is de facto open.
+      Reconciliation = Michi's decision.
 
 ---
 
-## 10. UFI1 — Dead-Cat-Bounce-Short ⚠ REAKTIVIERT auf Operator-Entscheid (2026-07-06)
+## 9. AIM1 → AIM2 — meta-gate over all signals ⚠ (concept deliberately changed — needs confirmation)
 
-**Soll:** Gedumpte Coins beim Retracement-Bounce shorten (Daily).
+**Intended AIM1 (historical):** stacking over all bot signals: market context
+× swarm behaviour × source identity → success probability per candidate.
+**Finding:** good idea, the architecture violated every prerequisite; the model
+was reliably inverted (F). Not rescuable by a retrain.
 
-**Entschieden (Michi, 2026-07-06):** **Wieder aktivieren im IST-Zustand (20x),
-bewusst als „Crash-Monat-Lotterieschein" mit kleinen Positionen.** Der Einwand
-wurde vorgetragen und überstimmt — dokumentiert: ehrlicher Walk-Forward zeigt
-11/12 Monate negativ (~14 % WR), +185R kamen allein aus Oktober 2025, und bei 20x
-liegt die Liquidation (~+5 %) VOR dem SL (25–40 %) — 72 % der historischen Trades
-wären liquidiert worden. Positionsgröße klein zu halten ist Operator-Sache
-(Cornix-Konfiguration). Kein Retrain; Entparken + Neustart als Action-Item.
+**Actual AIM2 (rebuilt 2026-07-05, parallel session):** DELIBERATE concept
+change — no longer a standalone alpha generator, but a ranker/gate over posted
+source signals; label = first touch of the reconstructed geometry; runs
+shadow-only (posting enabled via `AIM2_LIVE_POSTING=1`, the channel is not
+traded).
 
-## 11. ATB1 → ATB2 — Konvergenz-Kanal-Breakout 🔨 NEUAUFBAU, Design verschmolzen (2026-07-07)
+**Decided (Michi, 2026-07-06):**
+- [x] **Redefinition signed off as the new intended state**: AIM2 = ranker/gate
+      over posted source signals. The AIM1 idea (standalone signal generator)
+      is officially history.
+- [x] **Rollout: IMMEDIATELY LIVE** — no further shadow phase; posting counts
+      from now on (the flag was already active, Michi configures the trading of
+      the channel in Cornix). Drift/calibration monitoring keeps running
+      regardless.
 
-**Soll (Michi 2026-07-06, erweitert 2026-07-07):** „Die" Trendlinie = **Linie durch
-bestätigte Swing-Pivots mit ≥3 Berührungen** (1h/4h, objektiv reproduzierbar).
-Per Operator-Entscheid 2026-07-07 verschmolzen mit der Event-Definition aus dem
-TradingView-Script „Breakout Pattern Setup [WillyAlgoTrader]" (Open Source):
-**konvergierende Kanäle** (Wedge/Triangle/Pennant) statt Einzellinien —
-Boundary-Fit an bestätigte Pivots, Validierung über Konvergenz (≥2 % Verengung),
-Kanalbreite 0,5–120× ATR, Touch-Toleranz 0,15× ATR und **Volume-Contraction im
-Kanal** (In-Channel-Volumen < 85 % des Vorlaufs — bei uns bisher ungetestet).
-Event: Ausbruch mit bestätigtem Kerzenschluss.
+### 9a. AIM2-TOPN — "top 1-3 of the day" as a high-conviction channel 🔨 (T-2026-CU-9050-051, default-off)
 
-**Bewusste Abweichungen vom Script:** Min-Touches 3 statt 2 (Operator-Intent);
-der 5-Faktor-Score (Penetrationstiefe/ATR, Body-Ratio, Body-Commitment,
-Volumen-Spike, RSI-Momentum) wird NICHT als handgewichteter Score übernommen,
-sondern als **5 Setup-Features fürs XGB-Gate** (analog ABR-Geometrie-Features);
-Targets = Measured-Move (⅓/⅔/volle Kanalbreite) als Kandidat GEGEN unsere
-Smart-Targets im Replay-Vergleich; Break-even-Trailing des Scripts ist verdächtig
-(QM-Lektion: gibt Gewinne zurück) → Exit-Varianten simulieren statt glauben.
+**Intended (from T-2026-CU-9050-031, path 2):** the structural path to "daily
+1-3 trades, very high win rate". AIM2 already ranks the whole fleet (OOT gate
+uplift −0.69 → +1.92%/trade @34% pass). Instead of "everything above the line"
+(≈110/day), AIM2-TOPN selects **at most N (1-3) of the day's strongest
+candidates** and routes them into a **dedicated channel/tag** (`AIM2-TOPN`, rule
+6) — by construction, few, highly selected trades, separate from the base AIM2
+posting.
 
-**Plan (Task #7, nach der aktuellen Retrain-Queue):** Kanal-Detektor bauen
-(kein Repaint: nur bestätigte Pivots, Closed-Candle-Break), Walkforward-Adapter,
-Labels = First-Touch mit Fees via simulate_exit, Geometrie-Vergleich
-Measured-Move vs. Smart-Targets, Retrain nach Standard-Gerüst (Safe-Threshold,
-model_id=ATB2). Der alte Trainer (Close-Regressionsgeraden) ist verworfen;
-Bot bleibt geparkt, bis ATB2 out-of-time validiert ist. Kein Backtest-Vertrauen
-in das Script selbst — dessen „Winrate" ist TP1-Touch (Report-16-Falle).
+**Mechanics (bot 15 → `core/aim2_topn.py`, shared pure logic):**
+- "Top-N of the day" is only known ex-post → approximated via a high
+  **minimum probability** (`AIM2_TOPN_MIN_PROB`, default 0.95, never below the
+  base gate threshold) plus a **hard rolling 24h cap** N (`AIM2_TOPN_N`,
+  default 1). Rolling instead of calendar day — no midnight burst
+  (23:50 + 00:10 = 2·N in 20 min).
+- Selection per cycle: only `trusted` (passed the parity guard) &
+  `prob ≥ min_prob`, dedupe per (coin, direction, strongest), deterministic
+  tie-break (prob desc, coin, direction), cap = `N − posts_last_24h`.
+- 24h counter from `ml_predictions_master` (shadow **and** live), so the cap
+  bites in shadow exactly as it does live → a faithful preview.
+- Posting via the audited `core.signal_post.post_ai_signal` (exactly ONE
+  Cornix message, rule 4). The TOPN tag is excluded from AIM2s own candidate
+  and swarm stream (F6 self-feedback).
 
-**Status (T-2026-CU-9050-104, 2026-07-12):** Labeling-/Trainings-Pipeline
-DB-frei gebaut + getestet — `core/atb2_features.py` (Kanal-Detektor + 5
-Setup-Features + Kanalgeometrie, geteilt Bot/Simulator/Trainer),
-`tools/walkforward_sim.py --strategy atb2` (Measured-Move-Label via
-`simulate_exit`, Smart-Targets als Vergleich) und
-`tools/retrain_from_replay.py --strategy atb2` (je Richtung, 3d-Purge-Split,
-Isotonic, `pick_threshold_safe`, Artefakt `model_id=ATB2` → `staging_models/`).
-Run-Book + Verdikt-Kriterien: `docs/ATB2_REBUILD.md`. Offen: Label/Train-Lauf
-auf dem VPS (hinter T-061, Sequential-Jobs); Bot-Serving-Rewire + P1.45 +
-Entparken erst nach deploybarem out-of-time-Verdikt (C-Gate).
+**Gates (all default-off, flip = Michi's decision):**
+- `AIM2_TOPN_ENABLED=0` (master switch; off ⇒ **zero** behaviour change to base
+  AIM2).
+- `AIM2_TOPN_LIVE_POSTING=0` (shadow-first, analogous to `AIM2_LIVE_POSTING`).
+- `CH_AIM2_TOPN` unset ⇒ forces shadow-only (no fallback to the AIM2 channel).
+
+**Open / needs confirmation:**
+- [ ] **Threshold calibration** from the VPS DB via `tools/aim2_topn_calibrate.py`
+      (read-only): which `min_prob` historically delivers ~1-3/day? Until then
+      the conservative default 0.95 runs.
+- [ ] **Going live** (`AIM2_TOPN_ENABLED=1`, then `AIM2_TOPN_LIVE_POSTING=1` +
+      set `CH_AIM2_TOPN` + Cornix configuration of the channel) — exclusively
+      Michi's decision after a shadow evaluation.
 
 ---
 
-## 12. Support Resistance (Classic) ✅ (Intent bestätigt 2026-07-06)
+## 10. UFI1 — dead-cat-bounce short ⚠ REACTIVATED on operator decision (2026-07-06)
 
-**Soll (bestätigt):** Wiederholter Test eines S/R-Levels + RSI-Divergenz zwischen
-erstem und aktuellem Hit → Umkehr-Einstieg am Level, Targets aus Struktur-Zonen.
+**Intended:** short dumped coins on the retracement bounce (daily).
 
-**Entschieden (Michi, 2026-07-06):**
-- [x] Intent bestätigt.
-- [x] Freigegebene Fixes: **Closed-Candle (R1) + TP-Interpolations-Fix (P0.7) +
-      ATR-SL statt fix 2,5 % + OBV-Baustein streichen** (statistisch wirkungslos).
-- [x] Kein Direction-Gate: LONG bleibt offen (SHORT trägt zwar den Gewinn,
-      aber Michi will beide Seiten).
+**Decided (Michi, 2026-07-06):** **re-activate in the as-is state (20x),
+deliberately as a "crash-month lottery ticket" with small positions.** The
+objection was raised and overruled — documented: an honest walk-forward shows
+11/12 months negative (~14% WR), +185R came from October 2025 alone, and at 20x
+the liquidation (~+5%) sits BEFORE the SL (25–40%) — 72% of the historical trades
+would have been liquidated. Keeping the position size small is the operator's
+call (Cornix configuration). No retrain; un-parking + restart as the action item.
 
-## 13. Main Channel (Classic) ✅ (2026-07-06)
+## 11. ATB1 → ATB2 — convergence-channel breakout 🔨 REBUILT, design merged (2026-07-07)
 
-**Entschieden (Michi):** Bleibt **getrennt** von Support Resistance — die
-Doppel-Exposure (gleiche Logik, zwei Channels) ist bewusst und gewollt. Kein Merge.
-ATR-SL-Idee wird trotzdem in Support Resistance übernommen (s. o.).
+**Intended (Michi 2026-07-06, extended 2026-07-07):** "the" trendline = **line
+through confirmed swing pivots with ≥3 touches** (1h/4h, objectively
+reproducible). Per operator decision 2026-07-07, merged with the event
+definition from the TradingView script "Breakout Pattern Setup
+[WillyAlgoTrader]" (open source): **converging channels** (wedge/triangle/
+pennant) instead of single lines — boundary fit to confirmed pivots, validation
+via convergence (≥2% narrowing), channel width 0.5–120× ATR, touch tolerance
+0.15× ATR and **volume contraction in the channel** (in-channel volume < 85% of
+the run-up — untested by us so far). Event: breakout with a confirmed candle
+close.
 
-## 14. Volume Indicator (Classic) ✅ (2026-07-06)
+**Deliberate deviations from the script:** min touches 3 instead of 2
+(operator intent); the 5-factor score (penetration depth/ATR, body ratio, body
+commitment, volume spike, RSI momentum) is NOT adopted as a hand-weighted
+score, but as **5 setup features for the XGB gate** (analogous to the ABR
+geometry features); targets = measured move (⅓/⅔/full channel width) as a
+candidate AGAINST our smart targets in the replay comparison; the script's
+break-even trailing is suspect (QM lesson: gives back profits) → simulate exit
+variants instead of trusting it.
 
-**Soll (bestätigt):** Preis an 90d-High-Volume-Node + frischer Volumen-Spike gibt
-Richtung → Einstieg an der Volumenzone.
+**Plan (task #7, after the current retrain queue):** build the channel
+detector (no repaint: only confirmed pivots, closed-candle break), walkforward
+adapter, labels = first touch with fees via simulate_exit, geometry comparison
+measured move vs. smart targets, retrain per the standard scaffold (safe
+threshold, model_id=ATB2). The old trainer (close regression lines) is
+discarded; the bot stays parked until ATB2 is validated out-of-time. No
+backtest trust in the script itself — its "win rate" is TP1-touch (the
+Report-16 trap).
 
-**Entschieden (Michi):** **Umbau freigegeben** — den echten Kern retten: gebinnte
-Volumen-Nodes (statt Float-Preis-Summierung), Frische-Pflicht für den Spike
-(Stunden statt 5 Tage), Per-Coin-Cooldown, Struktur-Targets. Eigener Task.
+**Status (T-2026-CU-9050-104, 2026-07-12):** the labeling/training pipeline
+is built and tested DB-free — `core/atb2_features.py` (channel detector + 5
+setup features + channel geometry, shared bot/simulator/trainer),
+`tools/walkforward_sim.py --strategy atb2` (measured-move label via
+`simulate_exit`, smart targets for comparison) and
+`tools/retrain_from_replay.py --strategy atb2` (per direction, 3d purge split,
+isotonic, `pick_threshold_safe`, artifact `model_id=ATB2` → `staging_models/`).
+Run book + verdict criteria: `docs/ATB2_REBUILD.md`. Open: the label/train run
+on the VPS (behind T-061, sequential jobs); bot serving rewire + P1.45 +
+un-parking only after a deployable out-of-time verdict (C-gate).
 
-## 15. 5 Percent (Classic) 🔨 REDESIGN beauftragt (2026-07-06, nachgeholt)
+---
 
-**Entschieden (Michi):** **Redesign mit früherem Entry** — das Kernproblem angehen
-statt Symptome: die ~26 redundanten Bedingungen auf wenige unabhängige Filter
-reduzieren (Trend-Etablierung, aber FRÜH statt ausgereizt), Entry-Timing nach
-vorn, Zeit-Exit ergänzen; Fixes SHORT-Headroom-No-op (P1.14) + EMA-Typo (P2.43)
-nebenbei. Validierung per Walkforward vor Live-Umstellung. Eigener Task in der
-Redesign-Queue (nach QM/BB_1H/TD_1H). Bis dahin läuft der Ist-Zustand weiter.
+## 12. Support Resistance (classic) ✅ (intent confirmed 2026-07-06)
 
-## 16. Fast In And Out (Classic) ⚠ WEITERLAUFEN auf Operator-Entscheid (2026-07-06)
+**Intended (confirmed):** repeated test of a S/R level + RSI divergence
+between the first and current hit → reversal entry at the level, targets from
+structural zones.
 
-**Entschieden (Michi):** Läuft **unverändert weiter** — bereits im April bewusst
-reaktiviert, heute erneut bestätigt (Audit-Einwand −25.843 netto / „Pennies vor
-der Dampfwalze" wurde vorgetragen und überstimmt). Keine Zähmungs-Maßnahmen
-gewünscht.
+**Decided (Michi, 2026-07-06):**
+- [x] Intent confirmed.
+- [x] Approved fixes: **closed candle (R1) + TP interpolation fix (P0.7) +
+      ATR-SL instead of a fixed 2.5% + drop the OBV component** (statistically
+      no effect).
+- [x] No direction gate: LONG stays open (SHORT carries the profit, but Michi
+      wants both sides).
 
-## 17. Quasimodo QM_1H/QM_4H 🔨 BEIDE überarbeiten (2026-07-06)
+## 13. Main Channel (classic) ✅ (2026-07-06)
 
-**Soll (bestätigt):** Liquidity Sweep + Strukturbruch; Retest der Sweep-Zone (QML)
-als Reversal-Entry; ML nimmt die besten X %.
+**Decided (Michi):** stays **separate** from Support Resistance — the double
+exposure (same logic, two channels) is deliberate and intended. No merge. The
+ATR-SL idea is still adopted into Support Resistance (see above).
 
-**Entschieden (Michi):** **Beide TFs überarbeiten** (auch QM_4H — nicht stoppen):
-Neutraining nach Standard-Gerüst (Closed-Candle-Pivots, CMP-Entry im Label,
-Threshold aus Artefakt respektieren) + **Exit-Redesign** (aktuelle Geometrie gibt
-den 67-%-WR-Vorteil strukturell zurück). Eigener Task in der Queue.
+## 14. Volume Indicator (classic) ✅ (2026-07-06)
 
-## 18. BR-Familie BR1H/2H/4H 🔨 ML-Gate bauen (2026-07-06)
+**Intended (confirmed):** price at a 90d high-volume node + a fresh volume
+spike gives direction → entry at the volume zone.
 
-**Soll:** Break & Retest ohne ML (Pattern-Detector 7).
+**Decided (Michi):** **rework approved** — save the real core: binned volume
+nodes (instead of float-price summation), a freshness requirement for the spike
+(hours instead of 5 days), per-coin cooldown, structural targets. Own task.
 
-**Entschieden (Michi):** **Beide Richtungen wieder öffnen** (das „nur SHORT"-Gate
-aus dem Audit-Batch fällt) und **ein ML-Gate über die BR-Signale bauen** — der
-BB_4H-vs-BR-Vergleich (+565 mit ML vs. −4.106 ohne) motiviert genau das.
-Plan: BR-Events im Walkforward nachspielen, Geometrie-Labels, Binärmodell je
-TF/Richtung nach Standard-Gerüst. → Gate-Revert ist Action-Item; ML-Gate eigener
-Task in der Queue.
+## 15. 5 Percent (classic) 🔨 REDESIGN commissioned (2026-07-06, retroactive)
+
+**Decided (Michi):** **redesign with an earlier entry** — tackle the core
+problem instead of symptoms: reduce the ~26 redundant conditions to a few
+independent filters (trend establishment, but EARLY instead of exhausted),
+move entry timing forward, add a time exit; fix the SHORT-headroom no-op
+(P1.14) + the EMA typo (P2.43) along the way. Validation via walkforward
+before switching live. Own task in the redesign queue (after QM/BB_1H/TD_1H).
+Until then, the as-is state keeps running.
+
+## 16. Fast In And Out (classic) ⚠ KEEPS RUNNING on operator decision (2026-07-06)
+
+**Decided (Michi):** runs on **unchanged** — already deliberately reactivated
+in April, reconfirmed today (the audit objection −25,843 net / "picking up
+pennies in front of the steamroller" was raised and overruled). No taming
+measures wanted.
+
+## 17. Quasimodo QM_1H/QM_4H 🔨 REWORK BOTH (2026-07-06)
+
+**Intended (confirmed):** liquidity sweep + structure break; retest of the
+sweep zone (QML) as the reversal entry; ML takes the best X%.
+
+**Decided (Michi):** **rework both TFs** (QM_4H too — don't stop it):
+retrain per the standard scaffold (closed-candle pivots, CMP entry in the
+label, respect the artifact's threshold) + an **exit redesign** (the current
+geometry structurally gives back the 67% WR edge). Own task in the queue.
+
+## 18. BR family BR1H/2H/4H 🔨 build an ML gate (2026-07-06)
+
+**Intended:** break & retest without ML (pattern detector 7).
+
+**Decided (Michi):** **re-open both directions** (the "SHORT only" gate from
+the audit batch is dropped) and **build an ML gate over the BR signals** — the
+BB_4H-vs-BR comparison (+565 with ML vs. −4,106 without) motivates exactly
+that. Plan: replay BR events in the walkforward, geometry labels, a binary
+model per TF/direction following the standard scaffold. → the gate revert is
+an action item; the ML gate is its own task in the queue.
 
 ## 19. Mayank (FVG) ✅ (2026-07-06)
 
-**Entschieden (Michi):** Läuft weiter als **reiner Info-Kanal** — kein Tracking,
-kein Ertragsanspruch, keine Arbeit daran.
+**Decided (Michi):** keeps running as a **pure info channel** — no tracking,
+no profit expectation, no work on it.
 
 ## 20. BTC SMC 100x ⚠ (2026-07-06)
 
-**Entschieden (Michi):** **100x bleibt bewusst** (Lotterieschein-Charakter;
-Audit-Einwand Liquidation ~−0,9 % vor jedem SL wurde vorgetragen und überstimmt).
-**Nur instrumentieren** (ai_signals-Tracking), damit der Bot erstmals messbar wird.
-→ Instrumentierungs-Task.
+**Decided (Michi):** **100x stays, deliberately** (lottery-ticket character;
+the audit objection that liquidation ~−0.9% sits before every SL was raised and
+overruled). **Only instrument it** (ai_signals tracking) so the bot becomes
+measurable for the first time. → instrumentation task.
 
 ## 21. SMC Forex/Metals ⚠ (2026-07-06)
 
-**Entschieden (Michi):** Läuft **unverändert weiter** (Audit-Abschaltempfehlung
-überstimmt). Kein Tracking, kein Repaint-Fix beauftragt.
+**Decided (Michi):** runs **unchanged** (the audit's shutdown recommendation
+overruled). No tracking, no repaint fix commissioned.
 
-## 22. Regime-Detection ✅ UMGESETZT + LIVE (2026-07-07)
+## 22. Regime detection ✅ IMPLEMENTED + LIVE (2026-07-07)
 
-**Entschieden (Michi):** **TRANSITION-Restklasse aufspalten** — Mid-Vola-Band
-(P40–P75) bekommt eine eigene Trend-Regel, damit TREND_UP/DOWN überhaupt vorkommen
-und das 4D-Gating nicht die halbe Zeit deaktiviert ist.
+**Decided (Michi):** **split up the TRANSITION residual class** — the
+mid-vola band (P40–P75) gets its own trend rule so TREND_UP/DOWN occur at all
+and the 4D gating isn't disabled half the time.
 
-**Umsetzung (2026-07-07, Operator-Pick nach `tools/regime_rules_study.py`):**
-Vol-skalierte Mid-Band-Regel **V2 K=1,5 mit Hysterese** in
-`core/regime_logic.py`: |ret_4h| ≥ 1,5×ATR_4h% → TREND_UP/DOWN; bestehender
-TREND hält bis |ret_4h| < 1,0×ATR (Hysterese via `prev_regime` =
-effektives Regime aus `regime_current`); TREND-Ziele brauchen 3 statt 2
-Debounce-Checks. Low-Vola-/HIGH_VOLA-/CHOP-Regeln unverändert.
-- Studie (430d, 7 Varianten): Ist-Regel produzierte 3 TREND_UP-Episoden in
-  430 Tagen (100 % <1h) — strukturell tot, weil ATR<P40 und |ret|>1,5 %
-  einander fast ausschließen.
-- Validierung mit finaler Regel (stateful, echte classify-Funktion):
-  TREND_UP 9,6 % / TREND_DOWN 9,8 % der Zeit (je ~415 Ep, med 1,5h,
-  Flaps 21–25 %), TRANSITION 41 %→20,8 %. **RUB-LONG in TREND_UP
-  +1,65 %/Trade (n=1.378), 9/13 Monate positiv** — negativ nur in den
-  tiefen Bear-Monaten Okt/Nov 25 + Jan 26 (Bull-Flackern im Bär = Falle)
-  → bestätigt die Regime-Gate-These aus §8, ist aber kein Bear-Immunschutz.
-- Deploy-Sicherheit: fehlende Whitelist-Zellen der neuen TREND-Zustände
-  defaulten auf open (`no_whitelist_entry`) — kein Mass-Auto-Close-Risiko;
-  die Zellen sammeln ab jetzt Daten. Tests: backtest/test_regime_detector.py
-  (27, inkl. 7 neue für Mid-Band/Hysterese/Debounce-3).
-- **Follow-up:** §23-Umbau (Shrinkage statt Default-Open) gehört zeitnah
-  dahinter; RUB-LONG-Regime-Gate in Bot 13 erst nach Whitelist-Datenlage
-  oder als expliziter TREND_UP-Schalter (Operator-Entscheid).
+**Implementation (2026-07-07, operator's pick following
+`tools/regime_rules_study.py`):** vol-scaled mid-band rule **V2 K=1.5 with
+hysteresis** in `core/regime_logic.py`: |ret_4h| ≥ 1.5×ATR_4h% → TREND_UP/DOWN;
+an existing TREND holds until |ret_4h| < 1.0×ATR (hysteresis via
+`prev_regime` = the effective regime from `regime_current`); TREND targets
+need 3 instead of 2 debounce checks. Low-vola/HIGH_VOLA/CHOP rules unchanged.
+- Study (430d, 7 variants): the current rule produced 3 TREND_UP episodes in
+  430 days (100% <1h) — structurally dead, because ATR<P40 and |ret|>1.5%
+  almost mutually exclude each other.
+- Validation with the final rule (stateful, real classify function):
+  TREND_UP 9.6% / TREND_DOWN 9.8% of the time (each ~415 episodes, median
+  1.5h, flaps 21–25%), TRANSITION 41%→20.8%. **RUB-LONG in TREND_UP
+  +1.65%/trade (n=1,378), 9/13 months positive** — negative only in the deep
+  bear months Oct/Nov 25 + Jan 26 (bull flickers within a bear = a trap) →
+  confirms the regime-gate thesis from §8, but is no bear immunity.
+- Deploy safety: missing whitelist cells for the new TREND states default to
+  open (`no_whitelist_entry`) — no mass-auto-close risk; the cells collect
+  data from now on. Tests: backtest/test_regime_detector.py (27, incl. 7 new
+  for mid-band/hysteresis/debounce-3).
+- **Follow-up:** the §23 rework (shrinkage instead of default-open) belongs
+  shortly after this; the RUB-LONG regime gate in bot 13 only after the
+  whitelist data situation, or as an explicit TREND_UP switch (operator
+  decision).
 
-## 23. Bot-Regime-Analyzer / Whitelist ✅ Umbau beauftragt (2026-07-06)
+## 23. Bot regime analyzer / whitelist ✅ rework commissioned (2026-07-06)
 
-**Entschieden (Michi):** Gate-Metrik von WR auf **Netto-Expectancy/Median** umstellen,
-plus **Konfidenzintervall/Shrinkage + Mindest-n** (kein Default-Open, kein Flippen
-auf Rauschen mehr). Eigener Task.
+**Decided (Michi):** switch the gate metric from WR to **net
+expectancy/median**, plus **confidence interval/shrinkage + minimum n** (no more
+default-open, no more flipping on noise). Own task.
 
-## 24. ROM1 / Orchestrator ✅ Rollen-Klärung (2026-07-06)
+## 24. ROM1 / orchestrator ✅ role clarification (2026-07-06)
 
-**Entschieden (Michi):** ROM1 wird als **eigenständiger Trading-Bot anerkannt**
-(kein „reiner Router" mehr): eigene Trade-Historie fließt als Evidenz ins Gate,
-SL-Distanzen werden gedeckelt (15 %-Cap aus dem Audit-Batch verifizieren/schärfen).
-Eigener Task.
+**Decided (Michi):** ROM1 is recognized as a **standalone trading bot** (no
+longer a "pure router"): its own trade history flows into the gate as evidence,
+SL distances are capped (verify/tighten the 15% cap from the audit batch). Own
+task.
 
-**Offener Punkt (Michi, 2026-07-07 → Task T-2026-CU-9050-020):**
-**HMM-Regime-Studie** — Markov-Switching-Modell (3–4 Gauß-Zustände auf
-BTC-4h-Features inkl. Funding) als Regime-Schicht, im direkten A/B-Vergleich
-mit `26_regime_detector` (§22) und dem ROM1-Gating. Motivation: der gemeinsame
-Fehlermodus ALLER Report-21-Fehlschläge war Regime-Nichtstationarität; ein
-HMM-Posterior mit Zustandspersistenz ist die prinzipielle Version dessen, was
-die Heuristik versucht. Prüfkriterium: hängt die Monats-Performance von
-ABR-LONG/RUB out-of-sample an den Zuständen — und schlägt der Posterior die
-bestehende Klassifikation als Gate-Feature? Kontext-Schicht, kein
-Alpha-Generator; Details im Task.
+**Open point (Michi, 2026-07-07 → task T-2026-CU-9050-020):** **HMM regime
+study** — a Markov-switching model (3–4 Gaussian states on BTC-4h features
+incl. funding) as a regime layer, in a direct A/B comparison with
+`26_regime_detector` (§22) and ROM1 gating. Motivation: the common failure
+mode of ALL Report-21 failures was regime non-stationarity; an HMM posterior
+with state persistence is the principled version of what the heuristic
+attempts. Test criterion: does ABR-LONG/RUB's monthly out-of-sample
+performance depend on the states — and does the posterior beat the existing
+classification as a gate feature? A context layer, not an alpha generator;
+details in the task.
 
-## 25. Intelligence-Layer (Whale/Funding) ✅ Aufwertung beauftragt (2026-07-06)
+## 25. Intelligence layer (whale/funding) ✅ upgrade commissioned (2026-07-06)
 
-**Entschieden (Michi):** Whale-Flows + Funding-Extremes werden **als Features in
-Regime/Gate eingespeist** (statt totem Datensammeln). Eigener Task:
-Feature-Engineering + Validierung; Whale-Logger läuft seit dem WS-Fix wieder.
+**Decided (Michi):** whale flows + funding extremes get **fed into
+regime/gate as features** (instead of dead data collection). Own task: feature
+engineering + validation; the whale logger has been running again since the WS
+fix.
 
-## Arbeitsregeln (ab 2026-07-06)
+## Working rules (from 2026-07-06)
 
-1. Jedes künftige (Re-)Training referenziert diese Datei: Label muss die Soll-Frage
-   des Modells beantworten; Abweichung nur mit dokumentierter Operator-Entscheidung.
-2. Threshold-Wahl überall nach Operator-Kriterium: wenige, sichere Trades
-   (`pick_threshold_safe`; „nicht deploybar" ist ein zulässiges Ergebnis).
-3. Zwei Fragen, zwei Metriken: Treffer der Soll-Frage (z. B. Move-WR) UND Ökonomie
-   der gehandelten Geometrie (Netto-Expectancy) werden IMMER beide berichtet —
-   WR allein ist als KPI wertlos (Report 16, Befund 1).
-4. Klassische Regel-Strategien (Support Resistance, 5 Percent, …) und Meta-Ebene
-   (Regime/ROM1) sind in Report 16 konzeptbewertet; sie bekommen Einträge hier,
-   sobald an ihnen gearbeitet wird.
-5. **Immer nur EIN Trainings-/Simulationsjob gleichzeitig** (Operator-Regel
-   2026-07-06): Walkforwards, Retrains, Labeler strikt nacheinander — die Maschine
-   trägt die Live-Flotte, parallele Jobs treiben die CPU-Last hoch. Neue Jobs
-   werden hinter dem laufenden eingereiht.
-6. **Versionierte Modell-Tags** (Operator-Regel 2026-07-06, gilt für ALLE
-   überarbeiteten Modelle): Jede Retrain-/Rework-Generation postet unter neuem
-   Tag — MIS2-8H…, ABR2, TD2_4H, BB2_4H, SRA2, ATS2, EPD2, RUB2, QM2, … Das Tag
-   steht als `model_id` in der Artefakt-Meta und wird vom Bot ins `ai_signals.model`
-   geschrieben. Tracker (Sentiment-Kanal-Kreuztabellen, Dashboard, Whitelist)
-   matchen per Präfix und zeigen Alt vs. Neu getrennt — so wird der Unterschied
-   der Generationen direkt sichtbar. Cooldowns bleiben bewusst versionsübergreifend
-   (kein Doppel-Posting Alt+Neu auf demselben Symbol).
-7. **Eine Cornix-parsebare Nachricht pro Signal**: Info-/Chart-Nachrichten dürfen
-   den Cornix-Block nicht wiederholen (Doppel-Post-Bug 2026-07-06 in Bot 18 + 7,
-   gefixt — Cornix legte pro Signal zwei Positionen an).
+1. Every future (re-)training references this file: the label must answer
+   the model's intended question; deviation only with a documented operator
+   decision.
+2. Threshold selection everywhere follows the operator's criterion: few,
+   safe trades (`pick_threshold_safe`; "not deployable" is a valid result).
+3. Two questions, two metrics: hit rate of the intended question (e.g.
+   move-WR) AND economics of the traded geometry (net expectancy) are ALWAYS
+   both reported — WR alone is worthless as a KPI (Report 16, finding 1).
+4. Classic rule-based strategies (Support Resistance, 5 Percent, …) and the
+   meta layer (regime/ROM1) are concept-assessed in Report 16; they get
+   entries here as soon as work starts on them.
+5. **Always only ONE training/simulation job at a time** (operator rule
+   2026-07-06): walkforwards, retrains, labelers strictly sequential — the
+   machine carries the live fleet, parallel jobs drive CPU load up. New jobs
+   queue up behind the running one.
+6. **Versioned model tags** (operator rule 2026-07-06, applies to ALL
+   reworked models): every retrain/rework generation posts under a new tag —
+   MIS2-8H…, ABR2, TD2_4H, BB2_4H, SRA2, ATS2, EPD2, RUB2, QM2, … The tag sits
+   as `model_id` in the artifact meta and is written by the bot into
+   `ai_signals.model`. Trackers (sentiment-channel cross-tabs, dashboard,
+   whitelist) match by prefix and show old vs. new separately — this makes the
+   generational difference directly visible. Cooldowns deliberately stay
+   cross-generation (no double-posting old+new on the same symbol).
+7. **One Cornix-parsable message per signal**: info/chart messages must not
+   repeat the Cornix block (double-post bug 2026-07-06 in bot 18 + 7, fixed —
+   Cornix was opening two positions per signal).
+</content>

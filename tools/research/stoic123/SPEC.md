@@ -25,7 +25,7 @@ before any live consideration.
 > #2 LTF-first-then-HTF and #3 boundary-after-break explicitly). Documented as an
 > interpretation, not a transcription.
 
-## Akzeptanzkriterien (binär testbar)
+## Acceptance criteria (binary testable)
 
 - [ ] AK1: the signal generator is **deterministic** and **lookahead-free** —
   the signal at bar t uses only bars <= t. Proven by prefix-stability:
@@ -70,11 +70,11 @@ before any live consideration.
 - Any deploy / promotion / operator gate.
 
 ## Scope of consent
-**Erlaubt:** new files under `tools/research/stoic123/**` and
+**Allowed:** new files under `tools/research/stoic123/**` and
 `backtest/test_stoic123_*.py` on branch `feat/t-2026-kyt-9050-024`; CHANGELOG +
 KB status in the PR.
-**Verboten:** live bot/`core/` code, fleet `requirements.txt`, `.env`/secrets,
+**Forbidden:** live bot/`core/` code, fleet `requirements.txt`, `.env`/secrets,
 model artifacts, `staging_models/`, DB access, `--no-verify`, force-push,
 `gh pr merge` (merge-train only).
-**Frag zurück:** wiring into a live bot; promoting anything; adding deps to the
+**Ask first:** wiring into a live bot; promoting anything; adding deps to the
 fleet lockfile.

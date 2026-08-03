@@ -1,30 +1,30 @@
-# tools/audit — Analyse-Skripte der Audit-Steps 2–8
+# tools/audit — analysis scripts for audit steps 2–8
 
-Read-only-Skripte, mit denen die Befunde in `audit_reports/` erhoben wurden (2026-07-03, Live-VPS).
-Alle DB-Skripte lesen die Credentials aus Env-Vars (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, Host/Port
-localhost:5432 hardcoded) und öffnen die Connection **readonly**. Interpreter: die Live-venv
-(`crypto_trading_bot_v2\.venv`) hat alle Abhängigkeiten (psycopg2, pandas, xgboost, joblib).
+Read-only scripts used to gather the findings in `audit_reports/` (2026-07-03, live VPS).
+All DB scripts read credentials from env vars (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, host/port
+localhost:5432 hardcoded) and open the connection **readonly**. Interpreter: the live venv
+(`crypto_trading_bot_v2\.venv`) has all dependencies (psycopg2, pandas, xgboost, joblib).
 
-| Skript | Step | Zweck / Report |
+| Script | Step | Purpose / report |
 |---|---|---|
-| `ast_diff.py` | Diff | AST-Vergleich Kythera ↔ Live-Verzeichnis (formatierungs-invariant) |
-| `ast_diff_commit.py` | Diff | AST-Vergleich Live ↔ beliebiger Kythera-Commit (`python ast_diff_commit.py <sha>`) |
-| `step2_analysis.py` | 2 | Kalibrierung, Per-Modell-WR, Vokabular-Check, Regime-Flaps → `STEP2_DB_VERIFICATION.md` |
-| `step2_part2.py` | 2 | RSI-Formel-Check, POC-Broadcast, Coverage/Gap-Census, Whale-Files |
-| `step4_results.py` | 4 | Per-Bot/Strategie-Ergebnisse (erste Fassung, inkl. Duplikat-Entdeckung) → Report 14 |
-| `step4b_results.py` | 4 | Deduplizierte Ergebnisse + Classic-Auswertung (maßgebliche Zahlen) → Report 14 |
-| `step5_hypotheses.py` | 5 | Konfluenz-, Regime-, AIM1-Fade-, FIFO-Tail-Hypothesen → Report 15 |
-| `step6_orchestrator.py` | 6 | Gate-Raten, Whitelist-Qualität, Regime-Dauern, Auto-Close-Bewertung → Report 16 |
-| `step7_monitor_replay.py` | 7 | First-Touch-Replay des Monitor-Scorings gegen 5m-Kerzen → Report 17 |
-| `inspect_models.py` | 3 | MIS1-pkl-Introspektion (Features, Klassen, Thresholds) → Report 13 |
-| `live_parity.py` | 3 | MIS1 End-to-End-Parity-Test Bot-Feature-Bau ↔ Modelle (liest DB) |
-| `tree_splits.py` | 3 | Split-Count-/Schwellen-Analyse der MIS1-Booster (Ticker-Leakage-Beweis) |
-| `finding_ids.py` | — | Ledger-Werkzeug, **DB-frei**: `check` (Duplikat-Guard, läuft als pre-commit-Hook) und `next --severity P1` (nächste freie Finding-ID) |
+| `ast_diff.py` | Diff | AST comparison Kythera ↔ live directory (formatting-invariant) |
+| `ast_diff_commit.py` | Diff | AST comparison live ↔ any Kythera commit (`python ast_diff_commit.py <sha>`) |
+| `step2_analysis.py` | 2 | Calibration, per-model WR, vocabulary check, regime flaps → `STEP2_DB_VERIFICATION.md` |
+| `step2_part2.py` | 2 | RSI formula check, POC broadcast, coverage/gap census, whale files |
+| `step4_results.py` | 4 | Per-bot/strategy results (first version, incl. duplicate discovery) → report 14 |
+| `step4b_results.py` | 4 | Deduplicated results + classic evaluation (authoritative numbers) → report 14 |
+| `step5_hypotheses.py` | 5 | Confluence, regime, AIM1 fade, FIFO tail hypotheses → report 15 |
+| `step6_orchestrator.py` | 6 | Gate rates, whitelist quality, regime durations, auto-close evaluation → report 16 |
+| `step7_monitor_replay.py` | 7 | First-touch replay of monitor scoring against 5m candles → report 17 |
+| `inspect_models.py` | 3 | MIS1 pkl introspection (features, classes, thresholds) → report 13 |
+| `live_parity.py` | 3 | MIS1 end-to-end parity test bot feature build ↔ models (reads DB) |
+| `tree_splits.py` | 3 | Split-count/threshold analysis of the MIS1 boosters (ticker leakage proof) |
+| `finding_ids.py` | — | Ledger tool, **DB-free**: `check` (duplicate guard, runs as a pre-commit hook) and `next --severity P1` (next free finding ID) |
 
-Hinweise:
-- `finding_ids.py` ist kein Analyse-Skript der Audit-Steps, sondern das Werkzeug für `AUDIT_TODO.md` selbst.
-  Vor dem Anlegen eines neuen Findings: `python tools/audit/finding_ids.py next --severity P1`.
-  Nur die Checkbox-Zeile (`- [ ] **P1.45 …`) definiert ein Finding — Prosa-Referenzen zählen nicht.
-- Die Zahlen in den Reports sind Snapshots vom 2026-07-03; erneutes Ausführen liefert aktuelle Werte.
-- `step7_monitor_replay.py` funktioniert nur für Zeiträume, in denen 5m-Kerzen vorliegen (~30 Tage Retention).
-- `step4b_results.py` ist die Referenz für Performance-Zahlen (dedupliziert); `step4_results.py` nur historisch.
+Notes:
+- `finding_ids.py` is not an analysis script of the audit steps but the tool for `AUDIT_TODO.md` itself.
+  Before adding a new finding: `python tools/audit/finding_ids.py next --severity P1`.
+  Only the checkbox line (`- [ ] **P1.45 …`) defines a finding — prose references don't count.
+- The numbers in the reports are snapshots from 2026-07-03; re-running produces current values.
+- `step7_monitor_replay.py` only works for periods where 5m candles are available (~30 days retention).
+- `step4b_results.py` is the reference for performance numbers (deduplicated); `step4_results.py` is historical only.

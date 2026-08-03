@@ -4,50 +4,50 @@
 
 ## Completed
 
-### #71/#73 — Market Tracker Kategorie-Mapping (23_market_tracker.py)
-`get_category()` war inkonsistent:
-- `TD_*` (Three-Drive aus SMC Sniper) wurde als INDICATOR kategorisiert — gehört zu PATTERN
-- `BB_*` (Breaker Block) und `QM_*` (Quasimodo) waren als VOLUME — gehören zu PATTERN
-- `SRA1` fehlte komplett in der Zuordnung (gehört zu LEVEL)
-- `SMC_*` (Forex-Bot) war nicht vorgesehen — jetzt PATTERN
+### #71/#73 — Market Tracker category mapping (23_market_tracker.py)
+`get_category()` was inconsistent:
+- `TD_*` (Three-Drive from SMC Sniper) was categorized as INDICATOR — belongs to PATTERN
+- `BB_*` (Breaker Block) and `QM_*` (Quasimodo) were VOLUME — belong to PATTERN
+- `SRA1` was missing entirely from the mapping (belongs to LEVEL)
+- `SMC_*` (Forex bot) was not accounted for — now PATTERN
 
-Saubere Neuzuordnung nach Signal-Typ: INDICATOR (Oszillatoren/Crossover), VOLUME (reines Volumen), LEVEL (S/R & Reversion), PATTERN (SMC/Chart-Patterns/Trendline).
+Clean reassignment by signal type: INDICATOR (oscillators/crossover), VOLUME (pure volume), LEVEL (S/R & reversion), PATTERN (SMC/chart patterns/trendline).
 
-### #72 — Market Tracker Volume-Näherung improved (23_market_tracker.py)
-`SUM(volume * close)` auf `SUM(volume * (open + close) / 2)` (Mid-Price) migrated. Reduziert Fehler bei Kerzen mit großer Intra-Candle-Bewegung. Echter `quote_volume` aus Binance wäre besser, ist aber nicht in der DB gespeichert — wäre ein Ingestion-Schema-Change.
+### #72 — Market Tracker volume approximation improved (23_market_tracker.py)
+`SUM(volume * close)` migrated to `SUM(volume * (open + close) / 2)` (mid-price). Reduces error on candles with a large intra-candle move. The real `quote_volume` from Binance would be better but is not stored in the DB — would be an ingestion schema change.
 
-### #81 — Whale Logger format_usd negative Werte (19_whale_logger_bot.py)
-Bei `val < 0` (e.g. `-1_500_000`) fielen Werte durch alle Branches und wurden als `$-1500000` (roh) ausgegeben. Now: Sign abtrennen, absoluten Wert formatieren, Sign voranstellen → `-$1.5M`.
+### #81 — Whale Logger format_usd negative values (19_whale_logger_bot.py)
+For `val < 0` (e.g. `-1_500_000`), values fell through all branches and were output as `$-1500000` (raw). Now: sign split off, absolute value formatted, sign prepended → `-$1.5M`.
 
-### #82 — Funding Logger check_top20 None statt 50.0 (20_funding_logger_bot.py)
-Bei leerem `current_rates_dict` lieferte die Funktion 50.0 als "neutral"-Fallback. Das täuschte Sentiment vor wo keine Daten da waren. Now: `None` zurückgeben. Beide Call-Sites (Sentiment-Engine + Overview) wurden auf None-Handling migrated:
-- Sentiment-Engine: skippt den Alert-Check
-- Overview: zeigt "N/A" statt `0.0%` an
+### #82 — Funding Logger check_top20 None instead of 50.0 (20_funding_logger_bot.py)
+On an empty `current_rates_dict` the function returned 50.0 as a "neutral" fallback. That faked sentiment where there was no data. Now: returns `None`. Both call sites (sentiment engine + overview) were migrated to None handling:
+- Sentiment engine: skips the alert check
+- Overview: shows "N/A" instead of `0.0%`
 
-### #83 — calc_diff_bps None bei fehlender Historie (20_funding_logger_bot.py)
-Previously `return 0.0` bei `historical=None` — das wurde als "+0.0bps" angezeigt = "stabil", obwohl eigentlich "keine Daten" gemeint war. Now: `None` zurückgeben. Overview-Display nutzt Helper `_fmt_bps()` für "N/A" bei None.
+### #83 — calc_diff_bps None on missing history (20_funding_logger_bot.py)
+Previously `return 0.0` on `historical=None` — that was displayed as "+0.0bps" = "stable", even though "no data" was meant. Now: returns `None`. Overview display uses helper `_fmt_bps()` for "N/A" on None.
 
-### #85 — update_model Threshold-Files sauber überspringen (core/update_model.py)
-Threshold-Files (`threshold_*.pkl`) enthalten nur einen float, kein ML-Modell. Previously crashte der Aufruf silent in `except Exception` mit `AttributeError: 'float' object has no attribute 'save_model'`. Now:
-1. Dateiname-Check: wenn `threshold_*` → explizit skippen
-2. Defensive `hasattr(model, "save_model")`-Check für alle anderen Fälle (fängt auch nicht-Threshold-Files mit fremden Objekten ab)
+### #85 — update_model cleanly skips threshold files (core/update_model.py)
+Threshold files (`threshold_*.pkl`) contain only a float, no ML model. Previously the call crashed silently inside `except Exception` with `AttributeError: 'float' object has no attribute 'save_model'`. Now:
+1. Filename check: if `threshold_*` → explicitly skip
+2. Defensive `hasattr(model, "save_model")` check for all other cases (also catches non-threshold files with foreign objects)
 
-## Als zu klein oder unkritisch dokumentiert
+## Documented as too minor or not critical
 
-### #80 — Whale Logger Shutdown-Save Race
-Unter asyncio single-threaded Model und bei SIGINT-basiertem Shutdown (Event-Loop wird vorher gestoppt) ist das in der Praxis nicht reproduzierbar. `list(WHALE_TRADES)` ist wegen GIL atomar. Der theoretische Race wäre nur in echter Thread-Umgebung relevant, nicht in asyncio.
+### #80 — Whale Logger shutdown-save race
+Under the asyncio single-threaded model and with SIGINT-based shutdown (event loop is stopped beforehand), this is not reproducible in practice. `list(WHALE_TRADES)` is atomic thanks to the GIL. The theoretical race would only be relevant in a real threaded environment, not in asyncio.
 
 ### #84 — FUNDING_BY_SYMBOL asyncio race
-Gleicher Grund: asyncio ist single-threaded, Dict-Reassignment ist atomar. Zwischen `.get(symbol)` und `timestamps = [r[0] for r in series]` gibt es kein `await`, also kann keine andere Coroutine dazwischen laufen.
+Same reason: asyncio is single-threaded, dict reassignment is atomic. Between `.get(symbol)` and `timestamps = [r[0] for r in series]` there is no `await`, so no other coroutine can run in between.
 
-## Kein Code-Fix sinnvoll
+## No code fix worthwhile
 
-### #50 — Market Tracker 10.000+ Queries
-Die echte Fix wäre eine gemeinsame OHLCV-Tabelle (`ohlcv_30m` mit `symbol`-Spalte) statt separater Tabellen pro Coin. Das ist ein Ingestion-Schema-Change (`1_data_ingestion.py`) und würde alle Bots betreffen — deutlich außerhalb des Scopes dieser Bug-Fix-Runde. Alternativ: UNION ALL über 500 Sub-Queries — das spart keine Arbeit, nur Client-Roundtrips. Markiere als Performance-Backlog.
+### #50 — Market Tracker 10.000+ queries
+The real fix would be a shared OHLCV table (`ohlcv_30m` with a `symbol` column) instead of separate tables per coin. That's an ingestion schema change (`1_data_ingestion.py`) and would affect all bots — clearly outside the scope of this bug-fix round. Alternative: UNION ALL over 500 sub-queries — that saves no work, only client round-trips. Marked as performance backlog.
 
 ## Verification
-Alle 6 Dateien parse cleanly.
+All 6 files parse cleanly.
 
-## Wichtig für den Deploy
-- Der Funding-Logger wurde umfassend refactored (None-Handling an 4 Stellen). Beim ersten Run nach Deploy bitte prüfen dass die Telegram-Ausgaben korrekt formatiert sind — insbesondere beim ersten Lauf wenn noch keine 1h/24h-Historie existiert, sollten jetzt "N/A" statt "0.0bps" oder "50.0%" angezeigt werden.
-- Die Market-Tracker-Kategorisierung wirkt sich auf die stündliche Signal-Summary aus — einige Signale wechseln die Kategorie. Das ist gewollt und macht die Statistik aussagekräftiger.
+## Important for the deploy
+- The Funding Logger was extensively refactored (None handling in 4 places). On the first run after deploy, please check that the Telegram outputs are formatted correctly — in particular on the first run when there is no 1h/24h history yet, "N/A" should now be shown instead of "0.0bps" or "50.0%".
+- The Market Tracker categorization affects the hourly signal summary — some signals change category. That is intentional and makes the statistics more meaningful.

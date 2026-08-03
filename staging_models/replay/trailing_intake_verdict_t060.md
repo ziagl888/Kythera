@@ -1,164 +1,176 @@
-# Zulauf-Analyse Bot 40 — warum nicht mehr Trades aufgehen (T-2026-KYT-9050-060)
+# Intake analysis bot 40 — why more trades aren't landing (T-2026-KYT-9050-060)
 
-**Auftrag (Michi, 2026-08-01):** die Trade-Zahl soll steigen — aber nichts wird geändert,
-bevor eine vollständige Analyse vorliegt.
+**Task (Michi, 2026-08-01):** the trade count should go up — but nothing gets
+changed before a full analysis is in.
 
-**Antwort in einem Satz:** Der Engpass ist **nicht** das Aktualitätsfenster, sondern der
-**Exposure-Cap** — und weil der Cap auf die *Differenz* der Richtungen wirkt, ist der
-eigentliche Hebel die **SHORT-Seite**, nicht die LONG-Seite, an der die auffälligen
-Ablehnungen liegen.
+**Answer in one sentence:** the bottleneck is **not** the freshness window, but
+the **exposure cap** — and because the cap acts on the *difference* between the
+directions, the real lever is the **SHORT side**, not the LONG side where the
+conspicuous rejections sit.
 
-Messfenster: 2026-07-30 08:00 (erster voller Tag nach der 240-s-Nachkalibrierung, Restart
-07:28) bis 2026-08-01. Werkzeug: `tools/trailing_intake_audit.py` (read-only).
+Measurement window: 2026-07-30 08:00 (first full day after the 240s
+recalibration, restart 07:28) to 2026-08-01. Tool: `tools/trailing_intake_audit.py`
+(read-only).
 
 ---
 
-## 1. Warum eine Ein-Gate-Analyse hier falsch liegt
+## 1. Why a single-gate analysis is wrong here
 
-Ein Kandidat muss **fünf Stufen** passieren. Nur zwei hinterlassen eine Zeile in
-`trailing_positions` — der Rest existiert ausschließlich als Zähler im Fleet-Log. Wer nur
-gegen die DB misst, sieht deshalb systematisch das falsche Gate.
+A candidate must pass **five stages**. Only two leave a row in
+`trailing_positions` — the rest exist only as a counter in the fleet log. Anyone
+measuring only against the DB therefore systematically sees the wrong gate.
 
-| Stufe | Gate | Spur | gemessen |
+| Stage | Gate | Trace | measured |
 |---|---|---|---|
-| 1 | Roster · `shadow_gate.leg_status` · Entry · SL/Targets | keine | 31 Beine, **alle live** |
-| 2 | Aktualitätsfenster 240 s | **DB** `PREEXISTING` | 707 LONG / 24 SHORT |
-| 3 | `SYMBOL_HELD` | Log | Ø 1,6 → 2,8 Kandidaten/Zyklus |
-| 3 | `SYMBOL_COOLING` | Log | vernachlässigbar (≤ 5 Zyklen/Tag) |
-| 3 | **`EXPOSURE_CAP`** | Log | **Ø 3,2 → 6,0 → 6,6, max 28** |
-| 3 | `SLOT_CAP` (500) | Log | **nie ausgelöst** |
-| 4 | kein Marktpreis · `mirrorable_at` | Log | ~93 Ereignisse gesamt |
-| 5 | Entry nie berührt | **DB** `ENTRY_NOT_FILLED` | 46 gesamt |
+| 1 | roster · `shadow_gate.leg_status` · entry · SL/targets | none | 31 legs, **all live** |
+| 2 | freshness window 240 s | **DB** `PREEXISTING` | 707 LONG / 24 SHORT |
+| 3 | `SYMBOL_HELD` | log | avg 1.6 → 2.8 candidates/cycle |
+| 3 | `SYMBOL_COOLING` | log | negligible (≤ 5 cycles/day) |
+| 3 | **`EXPOSURE_CAP`** | log | **avg 3.2 → 6.0 → 6.6, max 28** |
+| 3 | `SLOT_CAP` (500) | log | **never triggered** |
+| 4 | no market price · `mirrorable_at` | log | ~93 events total |
+| 5 | entry never touched | **DB** `ENTRY_NOT_FILLED` | 46 total |
 
-`SLOT_CAP` ist in drei Tagen **kein einziges Mal** gefallen: der Cornix-Channel ist nicht
-annähernd voll. Platzknappheit ist nicht das Problem, Richtungs-Balance ist es.
+`SLOT_CAP` hasn't fired **a single time** in three days: the Cornix channel is
+nowhere near full. Slot scarcity isn't the problem, directional balance is.
 
 ---
 
-## 2. Das Fenster sieht aus wie der Engpass — ist es aber nicht
+## 2. The window looks like the bottleneck — but isn't
 
-Die abgelehnten Signale liegen in einem **schmalen Band direkt hinter der Grenze**:
+The rejected signals sit in a **narrow band right behind the boundary**:
 
-| Richtung | n | p10 | p50 | p90 | bei 300 s zulassbar |
+| Direction | n | p10 | p50 | p90 | admissible at 300 s |
 |---|---:|---:|---:|---:|---:|
 | LONG | 707 | 243 s | 249 s | 256 s | **706** |
 | SHORT | 24 | 243 s | 255 s | 593 s | 18 |
 
-Das ist keine Altersverteilung, das ist eine **Wand** — dasselbe Muster wie damals bei
-180 s, eine Stufe später. Die 240 s wurden auf gemessene ~190 s Pipeline-Latenz der
-Kerzen-Zyklus-Beine kalibriert; die liegt inzwischen bei ~250 s. Die Grenze schneidet mitten
-durch die Latenzverteilung **einer Bein-Familie**, und die ist fast reines LONG (707:24).
+That's not an age distribution, that's a **wall** — the same pattern as back at
+180 s, one step later. The 240 s were calibrated to a measured ~190 s pipeline
+latency of the candle-cycle leg family; that latency now sits at ~250 s. The
+boundary cuts right through the latency distribution of **one leg family**, and
+that one is almost pure LONG (707:24).
 
-**Adverse Selection ausgeschlossen:** die abgelehnten LONGs liefern im Quell-Trade
-**Ø +2,39 %** gegen **+1,28 %** der zugelassenen (n = 378 vs 80, sd 8,1 → t ≈ 1,3, also
-kein signifikanter Unterschied). Die Kante selektiert **nicht** die besseren Signale — wer
-das Fenster verbreitert, holt sich keine schlechtere Ware ein.
+**Adverse selection ruled out:** the rejected LONGs deliver, in the source
+trade, **avg +2.39%** against **+1.28%** for the admitted ones (n = 378 vs 80,
+sd 8.1 → t ≈ 1.3, so no significant difference). The boundary does **not**
+select the better signals — widening the window doesn't buy worse merchandise.
 
-**Trotzdem bringt Verbreitern allein fast nichts an Stückzahl** — siehe Abschnitt 3.
+**Even so, widening alone buys almost nothing in volume** — see section 3.
 
 ---
 
-## 3. Der bindende Engpass: der Exposure-Cap
+## 3. The binding bottleneck: the exposure cap
 
-`admit()` weist eine Richtung ab, sobald sie der Gegenrichtung um `EXPOSURE_CAP` (50) offene
-Spiegel vorausliegt. Das Buch klebt seit dem Fix an dieser Decke:
+`admit()` rejects a direction as soon as it leads the opposite direction by
+`EXPOSURE_CAP` (50) open mirrors. The book has been stuck against this ceiling
+since the fix:
 
-| Zeitpunkt | LONG | SHORT | Schieflage | LONG-Spielraum |
+| Time | LONG | SHORT | Imbalance | LONG headroom |
 |---|---:|---:|---:|---:|
 | 07-30 08:00 | 56 | 8 | +48 | 2 |
 | 07-31 02:00 | 74 | 32 | +42 | 8 |
 | 08-01 02:00 | 78 | 30 | +48 | 2 |
-| 08-01 14:00 | 73 | 21 | **+52** | **0 — LONG blockiert** |
+| 08-01 14:00 | 73 | 21 | **+52** | **0 — LONG blocked** |
 
-Über den gesamten Zeitraum liegt der LONG-Spielraum zwischen **0 und 8**. LONG-Kandidaten
-werden also bereits abgewiesen, **nachdem** sie den Aktualitätstest bestanden haben. Ein
-weiteres Fenster verschiebt Ablehnungen von `PREEXISTING` nach `EXPOSURE_CAP` — die
-Stückzahl bewegt sich kaum.
+Across the whole period, LONG headroom sits between **0 and 8**. LONG
+candidates are thus already rejected **after** passing the freshness test.
+Widening the window further just moves rejections from `PREEXISTING` to
+`EXPOSURE_CAP` — the volume barely moves.
 
-### Die Identität, auf der alles hängt
+### The identity everything hangs on
 
-Der Cap begrenzt die **Differenz**, nicht die Summe. Bei anliegender Decke gilt:
+The cap bounds the **difference**, not the sum. With the ceiling engaged:
 
 ```
 Gesamtkapazität  =  2 × min(LONG, SHORT)  +  Cap
 ```
 
-Aktuell: 2 × 21 + 50 = **92 Positionen**. **Jede zusätzliche SHORT-Position hebt die
-LONG-Decke um eins** — die SHORT-Seite drosselt damit das **Gesamtvolumen**, völlig
-unabhängig davon, wie viele LONG-Kandidaten Schlange stehen.
+Currently: 2 × 21 + 50 = **92 positions**. **Every additional SHORT position
+raises the LONG ceiling by one** — so the SHORT side throttles the **total
+volume**, completely independent of how many LONG candidates are queued up.
 
-### Die Grandfather-Kohorte zahlt direkt auf diesen Engpass ein
+### The grandfather cohort pays straight into this bottleneck
 
-**28 der 30 zeitstop-befreiten Spiegel sind LONG.** Sie schließen nie (nie scharf, also für
-den Trail unerreichbar) und belegen damit **dauerhaft 28 der 50 Einheiten LONG-Spielraum** —
-56 %. Zusätzlich blockieren sie 28 Symbole gegen `SYMBOL_HELD`. Der Entscheid vom 2026-08-01
-(#T54-3, „sie reiten weiter") ist damit teurer als bei seiner Fassung bekannt war: er kostet
-nicht nur −81 % offenes Buch, sondern **mehr als die Hälfte des LONG-Durchsatzes**.
+**28 of the 30 timestop-exempt mirrors are LONG.** They never close (never
+sharply, so unreachable for the trail) and thereby permanently occupy **28 of
+the 50 units** of LONG headroom — 56%. They also block 28 symbols against
+`SYMBOL_HELD`. The 2026-08-01 decision (#T54-3, "they keep riding") is thus
+more expensive than known at the time it was made: it costs not just −81% open
+book, but **more than half of LONG throughput**.
 
 ---
 
-## 4. Hebel, nach Wirkung geordnet
+## 4. Levers, ranked by effect
 
-| # | Hebel | erwartete Wirkung | Risiko | Aufwand |
+| # | Lever | expected effect | risk | effort |
 |---|---|---|---|---|
-| **A** | **TSM1 SHORT in den Roster** | +~30 Fills/Tag SHORT → +~22 stehende SHORT → Kapazität **92 → ~150** | gering | 1 Zeile Roster + Restart |
-| **B** | Grandfather-Kohorte auflösen | +28 LONG-Spielraum **sofort**, +28 freie Symbole | Realisierung von Σ −81 % | Operator-Entscheid, kein Code |
-| **C** | Fenster 240 → 300 s | Stückzahl ~0, aber **bessere Auswahl** (s. u.) | gering | 1 Default + Pins + Restart |
-| **D** | `EXPOSURE_CAP` anheben | direkt mehr LONG | **hoch** | Operator-Entscheid |
+| **A** | **put TSM1 SHORT into the roster** | +~30 fills/day SHORT → +~22 standing SHORT → capacity **92 → ~150** | low | 1 roster line + restart |
+| B | dissolve the grandfather cohort | +28 LONG headroom **immediately**, +28 free symbols | realising Σ −81% | operator decision, no code |
+| C | window 240 → 300 s | volume ~0, but **better selection** (see below) | low | 1 default + pins + restart |
+| D | raise `EXPOSURE_CAP` | direct more LONG | **high** | operator decision |
 
-**Zu A:** TSM1 SHORT produziert **66 Signale/Tag**, ist **live**, hat Dichte 525 — und wurde
-bei der ursprünglichen Auswahl allein wegen des **Slot-Caps** verworfen, der seither **nie**
-gebunden hat. Das ist die sauberste Maßnahme im Feld: sie greift genau an der Seite an, die
-das Gesamtvolumen drosselt.
+**On A:** TSM1 SHORT produces **66 signals/day**, is **live**, has density 525 —
+and was discarded in the original selection solely because of the **slot cap**,
+which has **never** bound since. That's the cleanest measure on the table: it
+attacks exactly the side that throttles total volume.
 
-**Zu C:** Auch ohne Stückzahl-Gewinn ist das Fenster nicht wertlos. `admit()` sortiert
-Kandidaten nach **Bein-Dichte**. Ein 300-s-Fenster stellt dem gleichen LONG-Budget rund
-**fünfmal so viele** Kandidaten zur Auswahl — die belegten Slots gehen dann an dichtere
-Beine. Der Gewinn ist Qualität pro Slot, nicht Menge. **Deshalb gehört C nach A/B**, nicht
-davor: erst Spielraum schaffen, dann besser füllen.
+**On C:** even without a gain in volume, the window isn't worthless. `admit()`
+ranks candidates by **leg density**. A 300 s window offers the same LONG budget
+roughly **five times as many** candidates to choose from — the occupied slots
+then go to denser legs. The gain is quality per slot, not quantity. **That's why
+C belongs after A/B**, not before: create headroom first, then fill it better.
 
-**Zu D — ausdrücklich nicht empfohlen:** T-052 hat gemessen, dass das **einseitige LONG-Buch
-der Konto-Schaden war** und die strukturelle Schranke jedes Marktlagen-Modell schlug. Den Cap
-anzuheben öffnet genau diese Tür wieder. Wenn überhaupt, dann nach einer eigenen Studie und
-nicht als Nebeneffekt einer Durchsatz-Maßnahme.
-
----
-
-## 5. Ehrliche Grenzen dieser Analyse
-
-- **Die `PREEXISTING`-Zahlen sind eine Untergrenze und schrumpfen mit der Zeit.** Das Alter
-  bei Zurückweisung ist nur berechenbar, solange der Quell-Trade noch in `ai_signals` steht;
-  schließt die Fleet ihn, wandert die Zeile nach `closed_ai_signals` und der Join verliert
-  sie. Zwei Läufe am selben Tag ergaben deshalb 767 und später 707 LONG. Für die Frage
-  „liegt die Ablehnung knapp hinter der Grenze" ist das unschädlich (die Verteilung bleibt
-  dieselbe), für „wie viele sind es absolut" nicht — dort ist die Zahl konservativ.
-- **Die Log-Gates sind Druck, keine Stückzahlen.** Abweisungen wiederholen sich in jedem
-  10-s-Zyklus, solange der Quell-Trade offen ist. „Ø 6,6 EXPOSURE_CAP" heißt „zu jedem
-  Zeitpunkt stehen ~6,6 Kandidaten an der Decke an", **nicht** „6,6 Signale/Tag verloren".
-  Eine Distinct-Zählung wäre nur über DEBUG-Logs möglich, die nicht geschrieben werden.
-- **Die Wirkungsschätzung zu A ist eine Hochrechnung**, keine Messung: sie unterstellt für
-  TSM1 dieselbe Signal→Fill-Konversion (~45 %) und dieselbe Haltedauer (~0,73 Tage) wie für
-  die bestehenden SHORT-Beine. Ein Bein mit anderem Zeitprofil verschiebt das Ergebnis.
-- **Die Haltedauer ist aus L/λ gerechnet** (96 offen / 131 Fills pro Tag), nicht aus dem
-  Mittel geschlossener Trades — letzteres ist survivorship-verzerrt (0,35 statt 0,73 Tage),
-  weil die langen Positionen noch offen sind und darin fehlen.
-- **Die Qualitätsprobe in Abschnitt 2 misst den Quell-Trade**, nicht den Arm-Exit. Als Proxy
-  für „ist die abgelehnte Ware schlechter" trägt sie; als Ertragsprognose nicht.
-- **Nicht gemessen:** ob die 4 wegen des Slot-Caps verworfenen Beine (EPD3 LONG, BR2H LONG,
-  TSM1 SHORT, BB_1H LONG) unter heutigen Bedingungen anders bewertet würden — die
-  Auswahlrechnung stammt vom 2026-07-26 und der Slot-Cap bindet nicht mehr.
+**On D — explicitly not recommended:** T-052 measured that the **one-sided LONG
+book was the account damage** and the structural constraint beat every regime
+model. Raising the cap reopens exactly that door. If at all, only after a
+dedicated study, not as a side effect of a throughput measure.
 
 ---
 
-## 6. Empfehlung
+## 5. Honest limits of this analysis
 
-1. **A umsetzen** (TSM1 SHORT in den Roster) — greift am tatsächlichen Engpass, geringes
-   Risiko, eine Roster-Zeile. Eigener Task, wirksam nach Fleet-Restart.
-2. **B entscheiden** (Michi): die Grandfather-Kohorte kostet über die Hälfte des
-   LONG-Spielraums. Der Entscheid vom 2026-08-01 fiel ohne diese Zahl — er ist damit nicht
-   falsch, aber neu zu bewerten.
-3. **C danach**, als Qualitäts- nicht als Mengenmaßnahme.
-4. **D nicht ohne eigene Studie.**
+- **The `PREEXISTING` figures are a lower bound and shrink over time.** The age
+  at rejection can only be computed while the source trade is still in
+  `ai_signals`; once the fleet closes it, the row moves to `closed_ai_signals`
+  and the join loses it. Two runs on the same day therefore produced 767 and
+  later 707 LONG. For the question "does the rejection sit just behind the
+  boundary" this is harmless (the distribution stays the same), for "how many
+  in absolute terms" it isn't — there the number is conservative.
+- **The log gates are pressure, not counts.** Rejections repeat every 10s
+  cycle as long as the source trade stays open. "avg 6.6 EXPOSURE_CAP" means
+  "at any given moment ~6.6 candidates are stuck at the ceiling", **not**
+  "6.6 signals/day lost". A distinct count would only be possible via DEBUG
+  logs, which aren't written.
+- **The effect estimate for A is an extrapolation**, not a measurement: it
+  assumes the same signal→fill conversion (~45%) and the same holding time
+  (~0.73 days) for TSM1 as for the existing SHORT legs. A leg with a different
+  time profile shifts the result.
+- **The holding time is computed from L/λ** (96 open / 131 fills per day), not
+  from the mean of closed trades — the latter is survivorship-biased (0.35
+  instead of 0.73 days), because the long positions are still open and thus
+  missing from it.
+- **The quality probe in section 2 measures the source trade**, not the arm
+  exit. As a proxy for "is the rejected merchandise worse" it holds; as a
+  return forecast it doesn't.
+- **Not measured:** whether the 4 legs discarded due to the slot cap (EPD3
+  LONG, BR2H LONG, TSM1 SHORT, BB_1H LONG) would be assessed differently under
+  today's conditions — the selection calculation is from 2026-07-26 and the
+  slot cap no longer binds.
 
-Vor jeder dieser Änderungen gilt weiterhin: **kein Live-Eingriff aus einer Dev-Session** —
-Roster-Änderung und Fenster-Default sind PRs, wirksam erst nach einem Restart durch Michi.
+---
+
+## 6. Recommendation
+
+1. **Implement A** (put TSM1 SHORT into the roster) — attacks the actual
+   bottleneck, low risk, one roster line. Own task, effective after a fleet
+   restart.
+2. **Decide B** (Michi): the grandfather cohort costs more than half of LONG
+   headroom. The 2026-08-01 decision was made without this number — it isn't
+   thereby wrong, but it needs re-evaluating.
+3. **C afterwards**, as a quality, not a volume, measure.
+4. **D not without its own study.**
+
+Before any of these changes, the rule still stands: **no live intervention from
+a dev session** — roster change and window default are PRs, effective only
+after a restart by Michi.

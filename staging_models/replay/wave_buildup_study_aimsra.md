@@ -1,12 +1,12 @@
-# Wave-Buildup — Realized-vs-Unrealized (Phase A, T-2026-KYT-9050-041)
+# Wave Buildup — Realized-vs-Unrealized (Phase A, T-2026-KYT-9050-041)
 
 _generated 2026-07-25 17:36:59.201921+00:00 · read-only · models AIM+SRA · 20x assumed · window 2026-02-27 02:32:26.790675 → 2026-07-25 20:20:50.181014_
 
-**Was das ist:** Follow-up zu T-035. Rekonstruiert die aggregierte offene **unrealized**-Welle und die realized-Ergebnisse der kuratierten S/R-AI-Bots (AIM, SRA) über die **volle Historie** aus den RECORDED Trades (`closed_ai_signals`, dedup Report-14-Survivor-Key) + Kerzen — **ohne** die immutable Cornix-Geometrie (die T-035 auf ~7d Outbox-Retention deckelte). Preis dafür: kein intra-trade DCA/TP-Laddering modelliert (First-Order-Welle). Hebel **pauschal 20x angenommen** (vor ~Juli nicht persistiert; Muster ist hebel-agnostisch). Realized = recorded entry→close-Move.
+**What this is:** Follow-up to T-035. Reconstructs the aggregated open **unrealized** wave and the realized outcomes of the curated S/R AI bots (AIM, SRA) over the **full history** from the RECORDED trades (`closed_ai_signals`, dedup report-14 survivor key) + candles — **without** the immutable Cornix geometry (which T-035 capped at ~7d outbox retention). Trade-off: no intra-trade DCA/TP laddering modelled (first-order wave). Leverage **flat-assumed at 20x** (not persisted before ~July; the pattern is leverage-agnostic). Realized = recorded entry→close move.
 
-Trades gescort: **6950** · ohne Kerzen: 467.
+Trades scored: **6950** · without candles: 467.
 
-## C1 — Realized-vs-Unrealized-Asymmetrie (die Prämisse)
+## C1 — Realized-vs-unrealized asymmetry (the premise)
 
 | Segment | n | mean realized% | mean **peak**% (wick) | **giveback** | WR% | giveback p50/p90/p95 |
 |---|--:|--:|--:|--:|--:|--:|
@@ -18,29 +18,29 @@ Trades gescort: **6950** · ohne Kerzen: 467.
 | SRA-LONG | 725 | +14.93 | +90.66 | +75.73 | 48.8 | 52.5/150.6/204.7 |
 | SRA-SHORT | 659 | +20.24 | +80.02 | +59.78 | 55.2 | 37.1/141.9/176.7 |
 
-**Kern der Beobachtung, belegt:** von den Verlust-Trades standen **85.4% mal ≥+10 %**, 77.6% ≥+25 %, **60.3% ≥+50 %**, 36.3% ≥+100 %, 16.2% ≥+200 %** (leveraged, wick) im Plus — und schlossen dann im Verlust. Gewinne verdampfen, Verluste werden voll realisiert. Ø-Trade: realized +38.2% vs Peak +184.44% → **+146.25% Giveback**.
+**Core observation, evidenced:** of the losing trades, **85.4% were up ≥+10%** at some point, 77.6% ≥+25%, **60.3% ≥+50%**, 36.3% ≥+100%, 16.2% ≥+200%** (leveraged, wick) — and then closed at a loss. Gains evaporate, losses are fully realized. Avg trade: realized +38.2% vs peak +184.44% → **+146.25% giveback**.
 
-Aggregat-Welle: max Σ offene unrealized **+39269** Margin-Einheiten (2026-06-06 07:00:00), bis **507** gleichzeitig offen (Ø 112.5).
+Aggregate wave: max Σ open unrealized **+39269** margin units (2026-06-06 07:00:00), up to **507** concurrently open (avg 112.5).
 
-## C2 — Cooldown-Probe: Expectancy N Tage NACH einem großen Wellen-Peak
+## C2 — Cooldown probe: expectancy N days AFTER a large wave peak
 
-Baseline (alle) real_unlev **+0.034%** · 27 Peak-Events (p85).
+Baseline (all) real_unlev **+0.034%** · 27 peak events (p85).
 
-| Kohorte | n | real_unlev% | Δ vs Baseline |
+| Cohort | n | real_unlev% | Δ vs baseline |
 |---|--:|--:|--:|
-| 1 Tag(e) nach Peak | 1467 | -0.306 | -0.340 |
-| 2 Tag(e) nach Peak | 2644 | +0.064 | +0.030 |
-| 3 Tag(e) nach Peak | 3115 | +0.083 | +0.049 |
-| 5 Tag(e) nach Peak | 3756 | +0.188 | +0.154 |
-| 7 Tag(e) nach Peak | 4211 | +0.226 | +0.191 |
+| 1 day(s) after peak | 1467 | -0.306 | -0.340 |
+| 2 day(s) after peak | 2644 | +0.064 | +0.030 |
+| 3 day(s) after peak | 3115 | +0.083 | +0.049 |
+| 5 day(s) after peak | 3756 | +0.188 | +0.154 |
+| 7 day(s) after peak | 4211 | +0.226 | +0.191 |
 
-**Verdikt C2:** nur die ersten ~24h nach einem Peak sind messbar schwächer; Tag 2–7 sind NICHT schlechter (eher besser). Die „nach großer Welle 3–5 Tage aussetzen“-Idee hätte historisch keine Expectancy gerettet, sondern gute Tage verschenkt. **Der Hebel liegt auf der Close-Seite, nicht beim Re-Entry-Timing.**
+**Verdict C2:** only the first ~24h after a peak are measurably weaker; days 2–7 are NOT worse (if anything better). The "pause 3–5 days after a large wave" idea would not historically have saved any expectancy — it would have given up good days instead. **The lever sits on the close side, not on re-entry timing.**
 
-## CEIL — Capture-Ceiling & risiko-adjustierte Auflösung
+## CEIL — Capture ceiling & risk-adjusted resolution
 
-HOLD (actual) Σ lev **+265461** · PERFECT-PEAK (Hindsight-Obergrenze) Σ lev +1281882 (~4.8× hold, unerreichbar).
+HOLD (actual) Σ lev **+265461** · PERFECT-PEAK (hindsight upper bound) Σ lev +1281882 (~4.8x hold, unreachable).
 
-| Trailing X% | Σ lev | mean lev% | vs hold | % der Ceiling | **Sharpe lev** | mean unlev% | trig% |
+| Trailing X% | Σ lev | mean lev% | vs hold | % of ceiling | **Sharpe lev** | mean unlev% | trig% |
 |--:|--:|--:|--:|--:|--:|--:|--:|
 | **hold** | +265461 | +38.2 | — | — | **+0.204** | +0.034 | 0 |
 | 10% | +313269 | +45.07 | +47808 | 4.7% | **+0.534** | +1.955 | 93.7 |
@@ -51,22 +51,22 @@ HOLD (actual) Σ lev **+265461** · PERFECT-PEAK (Hindsight-Obergrenze) Σ lev +
 | 40% | +199268 | +28.67 | -66192 | -6.5% | **+0.467** | +1.135 | 93.6 |
 | 50% | +166791 | +24.0 | -98670 | -9.7% | **+0.409** | +0.901 | 93.1 |
 
-**Die Umkehr:** auf der leveraged **Summe** schlägt Trailing hold kaum/nicht (die Summe wird von wenigen uncapped Fat-Tail-Treffern dominiert, Trailing kappt die — bestätigt T-035). **Risiko-adjustiert dreht es:** per-Trade **Sharpe lev +0.204 (hold) → +0.534 (Trailing 10 %)** — Trailing ~halbiert die Streuung und hebt den Mittelwert. Unlevered: mean +0.034%/Trade (hold, ~breakeven) → +1.955%/Trade (Trailing 10 %).
+**The reversal:** on the leveraged **sum**, trailing barely/does not beat hold (the sum is dominated by a few uncapped fat-tail hits, trailing caps those — confirms T-035). **Risk-adjusted it flips:** per-trade **Sharpe lev +0.204 (hold) → +0.534 (trailing 10%)** — trailing roughly halves the spread and lifts the mean. Unlevered: mean +0.034%/trade (hold, ~breakeven) → +1.955%/trade (trailing 10%).
 
-### Kompoundierende Equity (fixe Einsatz-Fraktion, chronologisch nach close) — das reale Konto
+### Compounding equity (fixed stake fraction, chronological by close) — the real account
 
-| Einsatz/Trade | HOLD final | HOLD MaxDD | Trailing 10% final | Trailing 10% MaxDD |
+| Stake/trade | HOLD final | HOLD MaxDD | Trailing 10% final | Trailing 10% MaxDD |
 |--:|--:|--:|--:|--:|
 | 1% | ×1.01e+11 | **73.8%** | ×2.95e+13 | **11.6%** |
 | 2% | ×1.09e+21 | **93.3%** | ×4.79e+26 | **22.0%** |
 | 5% | ×1.65e+46 | **99.9%** | ×7.8e+64 | **46.9%** |
 
-**Fazit Phase A:** (1) Die Asymmetrie ist real und groß — Prämisse bestätigt. (2) Die Cooldown/Re-Entry-Idee wird von den Daten NICHT gestützt. (3) Ein enger **Trailing-Close (10–15 %)** ist risiko-adjustiert und kompoundierend **klar überlegen** (höherer Sharpe, mehr Compounding, ~6× kleinerer Drawdown) — T-035s „hold gewinnt“ war ein Artefakt der Leveraged-**Summe**. Der nächste Schritt ist die Validierung auf dem T-035-High-Fidelity-Harness (5m-Wick + 10s-Resolver, Sharpe/MaxDD statt Summe), inkl. der entry2-als-SL-Frage.
+**Conclusion Phase A:** (1) The asymmetry is real and large — premise confirmed. (2) The cooldown/re-entry idea is NOT supported by the data. (3) A tight **trailing close (10–15%)** is risk-adjusted and compounding **clearly superior** (higher Sharpe, more compounding, ~6x smaller drawdown) — T-035's "hold wins" was an artefact of the leveraged **sum**. The next step is validation on the T-035 high-fidelity harness (5m wick + 10s resolver, Sharpe/MaxDD instead of sum), including the entry2-as-SL question.
 
-## Ehrliche Grenzen
+## Honest limits
 
-- First-Order-Welle: recorded entry/close als Ground-Truth, KEIN intra-trade DCA/TP-Laddering — die unrealized-Amplitude ist leicht überschätzt (Peak-Timing unberührt). Die T-035-Phase-2-Harness ist die laddering-treue Referenz (dort aber nur ~7d Outbox-Fenster).
-- Hebel pauschal 20x (vor ~Juli nicht persistiert). Das Muster (Giveback, Sharpe-Umkehr) ist hebel-agnostisch; die absoluten leveraged-Zahlen skalieren mit dieser Annahme + dem -100%-Clamp.
-- Trailing-Sim: 1h-Wick, Peak-vor-Trigger auf derselben Kerze (leicht optimistisch beim Trigger-Level). Ein 5m/10s-Resolver (T-035) verschärft das; die RICHTUNG (Sharpe/MaxDD-Vorteil) ist robust.
-- Compounding sequenziell nach close → ignoriert Gleichzeitigkeit (bis zu den oben genannten gleichzeitig offenen Trades, Cross-Margin). Die absoluten Multiples (×1e26) sind NICHT wörtlich — Ratio + MaxDD sind das Signal.
-- Live/Shadow-Gate-Zustand ist zeit-variabel; hier keine Gate-Filterung — es sind die AIM/SRA-Strategien über alle Generationen (AIM1→AIM2, SRA1→SRA2).
+- First-order wave: recorded entry/close as ground truth, NO intra-trade DCA/TP laddering — the unrealized amplitude is slightly overestimated (peak timing unaffected). The T-035 phase-2 harness is the laddering-faithful reference (but there only ~7d outbox window).
+- Leverage flat-assumed at 20x (not persisted before ~July). The pattern (giveback, Sharpe reversal) is leverage-agnostic; the absolute leveraged numbers scale with this assumption + the -100% clamp.
+- Trailing sim: 1h wick, peak-before-trigger on the same candle (slightly optimistic at the trigger level). A 5m/10s resolver (T-035) sharpens this; the DIRECTION (Sharpe/MaxDD advantage) is robust.
+- Compounding sequential by close → ignores concurrency (up to the concurrently open trades noted above, cross-margin). The absolute multiples (×1e26) are NOT to be taken literally — ratio + MaxDD are the signal.
+- Live/shadow gate state is time-variable; no gate filtering here — this covers the AIM/SRA strategies across all generations (AIM1→AIM2, SRA1→SRA2).

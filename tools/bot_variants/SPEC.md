@@ -1,52 +1,52 @@
 # SPEC — tools/bot_variants (T-2026-KYT-9050-038, Phase 1: Index)
 
-Vollspec: `docs/T-2026-KYT-9050-038-bot-variant-index-archive-spec.md`. Dieses
-SPEC.md pinnt die binär-testbaren Akzeptanzkriterien der **Index-Phase** (D1).
+Full spec: `docs/T-2026-KYT-9050-038-bot-variant-index-archive-spec.md`. This
+SPEC.md pins the binary-testable acceptance criteria of the **index phase** (D1).
 
 ## Intent
-Ein read-only Discovery-Tool, das den verstreuten Ist-Zustand (Root-/Staging-/
-Archiv-Artefakte + Lifecycle + Fleet-Script + git) je **Bot × Generation** in
-einen deterministisch regenerierbaren Index joint: `docs/bot_variants_index.md`
-(menschenlesbar) + `model_archive/index.json` (maschinenlesbar). Basis für den
-Live-Swap (T-037-Muster) und Sim-A/B jeder Generation.
+A read-only discovery tool that joins the scattered current state (root/staging/
+archive artifacts + lifecycle + fleet script + git) per **bot × generation** into
+a deterministically regenerable index: `docs/bot_variants_index.md`
+(human-readable) + `model_archive/index.json` (machine-readable). Basis for the
+live swap (T-037 pattern) and sim A/B of each generation.
 
-## Akzeptanzkriterien (binär testbar)
-- [ ] AK1: Für bekannte Tags liefert der Resolver die erwartete
-      family/script/lifecycle — z.B. `RUB1`→family `RUB`, script
+## Acceptance criteria (binary testable)
+- [ ] AK1: For known tags the resolver returns the expected
+      family/script/lifecycle — e.g. `RUB1`→family `RUB`, script
       `13_ai_rub_bot.py`, LONG/SHORT `live`; `ATB2`→`ATB`/`14_ai_atb_bot.py`/
       `shadow`. Test: `backtest/test_bot_variant_index.py`.
-- [ ] AK2: Ein unbekannter Tag / eine nicht klassifizierbare Artefakt-Datei wird
-      **gezählt und gelistet** (kein Silent-Drop), analog `bot_catalog`. Test:
-      unclassified-count > 0 und enthält den Fixture-Fremdling.
-- [ ] AK3: **Idempotent/deterministisch** — `build_index()` zweimal aufgerufen
-      liefert byte-identisches JSON+Markdown; kein `now()`/Zufall in den
-      Ausgabezeilen. Test: zwei Läufe vergleichen; `--check` findet keine Drift
-      direkt nach `--write`.
-- [ ] AK4: **Geteilte Dateinamen** (ein Artefakt-File unter >1 Tag, z.B.
-      `rub2_model_LONG.pkl` unter RUB2 **und** RUB3; `epd2_model_LONG.pkl` unter
-      EPD2/EPD3) werden als Kollisions-Warnung sichtbar gemacht. Test:
-      shared-filename-Report enthält den erwarteten Eintrag.
-- [ ] AK5: **md5 == Quelle** — der im Index gelistete md5 einer Artefakt-Datei
-      ist das echte md5 der Datei auf Platte. Test: gegen `hashlib.md5` der Datei.
-- [ ] AK6: Tool ist **read-only außerhalb** `docs/` + `model_archive/index.json`;
-      lädt ohne Live-DB, ohne Netzwerk. Test: Import + build ohne DB-Env.
+- [ ] AK2: An unknown tag / a non-classifiable artifact file is **counted and
+      listed** (no silent drop), analogous to `bot_catalog`. Test:
+      unclassified-count > 0 and contains the fixture outsider.
+- [ ] AK3: **Idempotent/deterministic** — `build_index()` called twice
+      returns byte-identical JSON+Markdown; no `now()`/randomness in the
+      output lines. Test: two runs compared; `--check` finds no drift
+      directly after `--write`.
+- [ ] AK4: **Shared filenames** (one artifact file under >1 tag, e.g.
+      `rub2_model_LONG.pkl` under RUB2 **and** RUB3; `epd2_model_LONG.pkl` under
+      EPD2/EPD3) are surfaced as a collision warning. Test:
+      shared-filename report contains the expected entry.
+- [ ] AK5: **md5 == source** — the md5 of an artifact file listed in the index
+      is the real md5 of the file on disk. Test: against `hashlib.md5` of the file.
+- [ ] AK6: Tool is **read-only outside** `docs/` + `model_archive/index.json`;
+      loads without a live DB, without network. Test: import + build without DB env.
 
-## Out of Scope (Phase 1)
-- D2 Archiv-Layout (`model_archive/<family>/<gen>/` + Manifeste) → Phase 2.
-- D3 stage/activate-Helfer + compare/sim-Harness → Phase 3.
-- D4 exakte git-SHA-Auflösung je Generation → Phase 2 (Phase 1 setzt `code_ref`
-  konservativ: `HEAD` wenn die Generation live/aktiv ist, sonst `null`).
+## Out of scope (phase 1)
+- D2 archive layout (`model_archive/<family>/<gen>/` + manifests) → phase 2.
+- D3 stage/activate helpers + compare/sim harness → phase 3.
+- D4 exact git SHA resolution per generation → phase 2 (phase 1 sets `code_ref`
+  conservatively: `HEAD` if the generation is live/active, otherwise `null`).
 
-## Why build (statt reuse)
-Kein bestehendes Tool joint diese Quellen. `bot_catalog`/`shadow_gate` liefern
-Teil-Sichten (Tag→Script, Lifecycle), aber keinen Generations-Index über das
-Dateisystem. Der Index ist genau die fehlende Join-Schicht.
+## Why build (instead of reuse)
+No existing tool joins these sources. `bot_catalog`/`shadow_gate` provide
+partial views (tag→script, lifecycle), but no generation index over the
+filesystem. The index is exactly the missing join layer.
 
 ## Scope of consent
-**Erlaubt:** `tools/bot_variants/**`, `backtest/test_bot_variant_index.py`,
-`docs/bot_variants_index.md`, `model_archive/index.json`, eine additive
-Public-Helper-Funktion in `core/bot_catalog.py` (`family_for_tag`).
-**Verboten:** Repo-Root-Artefakt-Promotion/Überschreibung (Hard Rule 2),
-DB-Writes, Fleet-Restart, `.env`/`.local`, Edits an `core/shadow_gate.py`
-(T-037 arbeitet dort parallel — nur lesen).
-**Frag zurück:** Committen großer Archiv-Binärartefakte (Phase 2-Entscheid).
+**Allowed:** `tools/bot_variants/**`, `backtest/test_bot_variant_index.py`,
+`docs/bot_variants_index.md`, `model_archive/index.json`, one additive
+public helper function in `core/bot_catalog.py` (`family_for_tag`).
+**Forbidden:** repo-root artifact promotion/overwrite (hard rule 2),
+DB writes, fleet restart, `.env`/`.local`, edits to `core/shadow_gate.py`
+(T-037 works there in parallel — read only).
+**Ask first:** committing large archive binary artifacts (phase 2 decision).

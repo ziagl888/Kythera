@@ -1,90 +1,89 @@
-# T-2026-KYT-9050-023 — Portfolio-Korrelations-Layer über Vol-Targeting: VERTAGT
+# T-2026-KYT-9050-023 — Portfolio correlation layer over vol targeting: DEFERRED
 
-**Datum:** 2026-08-01 · **Typ:** Prämissen-Prüfung (read-only, kein Live-Eingriff) ·
-**Ergebnis:** kein Design gebaut, Task vertagt · **Vorgänger:** T-2026-KYT-9050-021 (Modul),
-T-2026-KYT-9050-030 (Live-Verdikt)
-
----
-
-## 1. Verdikt
-
-Der Task fordert einen Korrelations-Layer **über** dem GARCH-Vol-Targeting: der
-unabhängige Per-Coin-Throttle ignoriere Cross-Coin-Korrelation, im hochkorrelierten
-538-Coin-Buch bleibe konzentriertes Beta übrig.
-
-**Die Schicht, über die dieser Layer gelegt werden soll, existiert im Live-Pfad nicht.**
-Und die Schicht *darunter* — ein von Kythera gesetzter Positions-Umfang, an dem ein
-Throttle überhaupt angreifen könnte — existiert ebenfalls nicht. Beide Befunde sind
-unabhängig voneinander und jeder für sich hinreichend.
-
-**Kein Design gebaut** — ein Korrelations-Throttle ohne Einhängepunkt wäre Papier, das
-beim späteren Bau ohnehin neu geschrieben werden müsste, weil dann feststeht, *wo* Größe
-entsteht. No-op als gültiges Done (OPUS-HANDOFF §2).
-
-Der Task war selbst als `priority: low`, `estimate_confidence: low`, ohne `touches` und
-mit dem Vermerk *„Geht über das Repo hinaus — eigenständiges Design nötig. Backlog."*
-angelegt. Diese Prüfung bestätigt die Selbsteinschätzung und liefert die fehlende
-Begründung dazu.
+**Date:** 2026-08-01 · **Type:** premise check (read-only, no live intervention) ·
+**Result:** no design built, task deferred · **Predecessors:** T-2026-KYT-9050-021 (module),
+T-2026-KYT-9050-030 (live verdict)
 
 ---
 
-## 2. Prüfkette (billigste Falsifikation zuerst)
+## 1. Verdict
 
-### 2.1 Existiert die Vol-Targeting-Schicht im Live-Code? — Nein, nur als Research-Paket
+The task calls for a correlation layer **on top of** the GARCH vol targeting: the
+independent per-coin throttle ignores cross-coin correlation, leaving concentrated
+beta in the highly correlated 538-coin book.
 
-`tools/research/garch/` enthält `garch_forecast.walkforward_garch`, `vol_target.size_from_vol`
-und `GarchSizer` (PR #176, T-021). Ein repo-weiter Grep auf
+**The layer this layer is supposed to sit on top of doesn't exist in the live path.**
+And the layer *underneath* it — a position size actually set by Kythera, on which a
+throttle could act at all — also doesn't exist. Both findings are independent of
+each other and each is sufficient on its own.
+
+**No design built** — a correlation throttle without an attachment point would be
+paper that would have to be rewritten anyway once it's built later, because by
+then it will be clear *where* size actually originates. No-op as valid done
+(OPUS-HANDOFF §2).
+
+The task itself was created as `priority: low`, `estimate_confidence: low`, without
+`touches` and with the note *"Goes beyond the repo — needs its own design. Backlog."*
+This check confirms that self-assessment and supplies the missing justification for it.
+
+---
+
+## 2. Check chain (cheapest falsification first)
+
+### 2.1 Does the vol-targeting layer exist in live code? — No, only as a research package
+
+`tools/research/garch/` contains `garch_forecast.walkforward_garch`, `vol_target.size_from_vol`
+and `GarchSizer` (PR #176, T-021). A repo-wide grep for
 `research.garch|research/garch|vol_target|size_from_vol|walkforward_garch|GarchSizer`
-findet **außerhalb** des Pakets selbst nur:
+finds, **outside** the package itself, only:
 
-| Fundstelle | Art |
+| Location | Kind |
 |---|---|
-| `backtest/test_garch_walkforward.py`, `test_garch_compare.py`, `test_garch_vol_target.py` | Tests |
-| `backtest/test_stoic123_signals.py` (Kommentar + `sharpe`-Keys) | Test einer fremden Studie, die dieselbe Vergleichs-Harness benutzt |
-| `CHANGELOG.md` Z. 1386–1499 | Historie |
+| `backtest/test_garch_walkforward.py`, `test_garch_compare.py`, `test_garch_vol_target.py` | tests |
+| `backtest/test_stoic123_signals.py` (comment + `sharpe` keys) | test of an unrelated study that uses the same comparison harness |
+| `CHANGELOG.md` L. 1386–1499 | history |
 
-**Kein einziger Bot (`NN_*.py`) und kein `core/*.py`-Modul importiert das Paket.** Die
-Bots importieren aus `core/`, nicht aus `tools/` — das Paket ist ein Studien-Werkzeug mit
-eigenem Treiber (`t030_live_verdict.py`) und eigener `requirements-garch.txt`.
+**Not a single bot (`NN_*.py`) and not a single `core/*.py` module imports the package.**
+The bots import from `core/`, not from `tools/` — the package is a research tool with
+its own driver (`t030_live_verdict.py`) and its own `requirements-garch.txt`.
 
-### 2.2 Ist ein Gate dafür an? — Es existiert kein Gate
+### 2.2 Is a gate for it on? — No such gate exists
 
-`.env` auf der Live-Maschine (`C:\Users\Michael\Documents\Kythera\.env`, nur Schlüsselnamen
-gelesen, keine Werte protokolliert) trägt 60 Schlüssel: DB/Binance/Telegram-Credentials,
-44 `CH_*`-Channel-IDs und die Feature-Gates
+The `.env` on the live machine (`C:\Users\Michael\Documents\Kythera\.env`, only key
+names read, no values logged) carries 60 keys: DB/Binance/Telegram credentials,
+44 `CH_*` channel IDs and the feature gates
 `AIM2_LIVE_POSTING`, `NEW_IDEAS_LIVE_POSTING`, `AIM2_TOPN_ENABLED`, `AIM2_TOPN_LIVE_POSTING`,
 `MAX1_LIVE_POSTING`, `MAX1_MIN_PROB`, `MAX1_MAX_PER_DAY`, `TRAILING_BOT_LIVE_POSTING`,
 `KYTHERA_CANDLES_*`, `MCP_*`/`KB_*`/`CF_*`.
 
-**Kein `GARCH_*`, kein `VOL_TARGET_*`, kein `SIZING_*`, kein `CORRELATION_*`.** Es gibt
-nichts zu flippen — die Schicht ist nicht default-off gegatet, sie ist schlicht nicht
-verdrahtet.
+**No `GARCH_*`, no `VOL_TARGET_*`, no `SIZING_*`, no `CORRELATION_*`.** There's
+nothing to flip — the layer isn't gated default-off, it's simply not wired in at all.
 
-### 2.3 Das Ergebnis-Dokument zu T-021/T-030 — explizites NO-PULL mit Nicht-Verdrahten-Empfehlung
+### 2.3 The T-021/T-030 result document — explicit NO-PULL with a do-not-wire recommendation
 
-`tools/research/garch/T030_live_verdict_report.md` (Studie 2026-07-23, read-only auf SRV02,
-16.613 realisierte Trades über die edge-positiven Bots):
+`tools/research/garch/T030_live_verdict_report.md` (study 2026-07-23, read-only on SRV02,
+16,613 realised trades across the edge-positive bots):
 
-- Pooled-Sharpe 0,1515 → 0,1601 = **Δ +0,009**, Median über 9 Bots **Δ +0,013** — bei einer
-  PULLS-Schwelle von +0,10. **Kein** edge-positiver Bot besteht.
-- σ fällt (−7,9 %), der Mittelwert fällt fast proportional mit (−2,7 %) → risikoadjustiert flach.
-- Der scheinbar starke DD-Gewinn beim naiven `target_vol=15 %` ist ein 6,6×-Größen-Schnitt,
-  kein besseres Allokieren (Sharpe-Δ +0,0006) — im Report als Falle dokumentiert.
-- Wörtliche Empfehlung: *„Do not wire GARCH vol-targeting into any bot's sizing… T-022 is
+- Pooled Sharpe 0.1515 → 0.1601 = **Δ +0.009**, median across 9 bots **Δ +0.013** —
+  against a PULL threshold of +0.10. **No** edge-positive bot passes.
+- σ drops (−7.9%), the mean drops almost proportionally with it (−2.7%) → risk-adjusted flat.
+- The apparently strong DD gain under the naive `target_vol=15 %` is a 6.6× size cut,
+  not better allocation (Sharpe Δ +0.0006) — documented as a trap in the report.
+- Verbatim recommendation: *"Do not wire GARCH vol-targeting into any bot's sizing… T-022 is
   answered: vol-targeting does not pull at Kythera. Idea retired."*
 
-Ursache laut Report §3: GARCH prognostiziert **Magnitude, nicht Richtung**. Auf Signalen,
-die ihre Edge schon tragen, reshuffelt Inverse-Vol-Sizing nur Notional.
+Cause per report §3: GARCH forecasts **magnitude, not direction**. On signals
+that already carry their own edge, inverse-vol sizing just reshuffles notional.
 
-Das ist der Punkt, an dem die Prämisse des Tasks kippt: sie unterstellt eine ausgerollte
-Sizing-Schicht mit einem bekannten Restfehler. Tatsächlich ist die Schicht gemessen,
-für wertlos befunden und bewusst nicht ausgerollt worden.
+This is the point where the task's premise breaks down: it assumes a rolled-out
+sizing layer with a known residual defect. In fact, the layer has been measured,
+found worthless, and deliberately not rolled out.
 
-### 2.4 Zweiter, unabhängiger Befund: Kythera sized überhaupt keine Positionen
+### 2.4 Second, independent finding: Kythera doesn't size positions at all
 
-Auch wenn Vol-Targeting live wäre, fehlte dem geforderten „Per-Position-Throttle" das Feld,
-in das er schreiben könnte. `core/signal_post.py:63-84` (`build_cornix_block`, der EINE
-Cornix-parsebare Message-Body für die gesamte Fleet, harte Regel 4) emittiert:
+Even if vol targeting were live, the requested "per-position throttle" would have no
+field to write into. `core/signal_post.py:63-84` (`build_cornix_block`, the ONE
+Cornix-parsable message body for the whole fleet, hard rule 4) emits:
 
 ```
 📈 Signal for {symbol} 📈
@@ -96,86 +95,88 @@ Cornix-parsebare Message-Body für die gesamte Fleet, harte Regel 4) emittiert:
 🧠 Trade idea generated by AI module {model_tag}
 ```
 
-Es gibt **keine Größen-, Notional- oder Quantity-Zeile.** `lev` ist
-`get_max_leverage(symbol, 20)` (`core/signal_post.py:104`) — also der **Börsen-Cap** des
-Symbols aus `max_leverage.json`, gedeckelt auf 20x (`core/market_utils.py:49-75`), keine
-Risiko-Entscheidung pro Trade. Einzige Ausnahme ist UFI1, das gegen die SL-Distanz cappt
-(P0.6/R4) — und UFI1 ist per Audit-Entscheid geparkt.
+There is **no size, notional or quantity line.** `lev` is
+`get_max_leverage(symbol, 20)` (`core/signal_post.py:104`) — i.e. the **exchange cap**
+of the symbol from `max_leverage.json`, capped at 20x (`core/market_utils.py:49-75`),
+not a per-trade risk decision. The only exception is UFI1, which caps against SL
+distance (P0.6/R4) — and UFI1 is parked per audit decision.
 
-**Der Positions-Umfang ist eine Cornix-seitige Operator-Einstellung pro Channel.** Ein
-Sizing-Layer im Repo — ob Vol-Targeting oder Korrelations-Throttle — hätte kein Ausgabefeld;
-er müsste zuerst geschaffen werden, und das ändert, was Cornix mit echtem Geld tut
-(Eskalation, OPUS-HANDOFF §6).
-
----
-
-## 3. Was es an Konzentrations-Kontrolle live tatsächlich gibt
-
-Nicht dass keine existierte — sie ist nur **platz-basiert, nicht beta-basiert**:
-
-- `core/signal_post.py:29` `has_open_ai_signal(conn, symbol, direction, model_tag)` — ein
-  offenes Signal pro (Symbol, Richtung, Modell-Tag); verhindert Stapeln auf demselben Coin.
-- `core/trailing_roster.py:49` `SLOT_CAP = 500` — Cornix deckelt einen Channel bei 500
-  gleichzeitigen Trades; `40_trailing_close_bot.py:34-35` begründet die eigene
-  Zulassungskontrolle genau damit (ohne sie entscheidet Cornix, welche ~1500 Trades es ablehnt).
-- Regime-Whitelist + Gating in den Bots 26/27/28, plus Per-Bot-Cooldowns.
-
-Die Fleet steuert also **wie viele Plätze** ein Bein belegen darf, nicht **wie viel Risiko**
-ein Platz trägt. Genau deshalb ist die Frage des Tasks nicht falsch — sie ist nur an der
-falschen Schicht aufgehängt: die relevante Portfolio-Größe bei Kythera ist heute
-*Slot-Belegung*, und die wird in T-042/T-052 (`tools/trailing_slot_budget.py`,
-`tools/trailing_book_health.py`) bereits gemessen und optimiert.
+**Position size is a Cornix-side operator setting per channel.** A sizing layer
+in the repo — whether vol targeting or a correlation throttle — would have no
+output field; it would first have to be created, and that changes what Cornix does
+with real money (escalation, OPUS-HANDOFF §6).
 
 ---
 
-## 4. Wieder-Eintritts-Bedingung
+## 3. What concentration control actually exists live today
 
-Dieser Task wird sinnvoll, sobald **beide** Punkte erfüllt sind:
+Not that none exists — it's just **slot-based, not beta-based**:
 
-1. **Kythera setzt selbst eine Positionsgröße.** Das heißt: eine Größen-/Notional-Größe
-   verlässt das Repo Richtung Ausführung (Cornix-Feld, API-Order oder Operator-lesbare
-   Vorgabe) — nicht nur Leverage-Cap und Geometrie. Das ist ein Operator-/Michi-Entscheid,
-   kein Session-Entscheid.
-2. **Es existiert ein ausgerollter, wirksamer Per-Position-Throttle**, über den ein
-   Korrelations-Layer gelegt werden kann. GARCH-Vol-Targeting ist dieser Throttle nach
-   T-030 *nicht* und wird es nicht mehr — falls ein anderer Sizing-Mechanismus (z. B. eine
-   Risk-of-Ruin-/Fixed-Fraction-Policy) ausgerollt wird, ist die Prämisse neu zu prüfen,
-   nicht diese Akte fortzuschreiben.
+- `core/signal_post.py:29` `has_open_ai_signal(conn, symbol, direction, model_tag)` — one
+  open signal per (symbol, direction, model tag); prevents stacking on the same coin.
+- `core/trailing_roster.py:49` `SLOT_CAP = 500` — Cornix caps a channel at 500
+  simultaneous trades; `40_trailing_close_bot.py:34-35` justifies its own admission
+  control exactly with this (without it, Cornix decides which of the ~1500 trades it rejects).
+- Regime whitelist + gating in bots 26/27/28, plus per-bot cooldowns.
 
-Fällt Punkt 1 ohne Punkt 2 (Kythera sized, aber uniform), ist die richtige nächste Frage
-nicht „Korrelations-Layer", sondern schlicht: **korreliert das Buch überhaupt so stark, dass
-Beta-Konzentration das bindende Risiko ist?** Das ist eine reine Messfrage auf
-`closed_ai_signals` + Kerzen, DB-gebunden, ohne eine Zeile Live-Code — und die gehört vor
-jeden Layer-Entwurf (Batch-E-Disziplin, OPUS-HANDOFF §8). Erst wenn diese Messung eine
-materielle Konzentration zeigt, lohnt ein Design.
-
-## 5. Kostenhinweis für den Fall, dass die Bedingung eintritt
-
-Wird die Sache je wieder aufgemacht, ist die im Ticket implizierte Bauform teuer: eine
-538×538-Korrelationsmatrix pro Rebalance sind ~145k Paare, und die Schätzung wäre auf einem
-kurzen Fenster ohne Shrinkage numerisch wertlos (T ≪ N — die Stichproben-Kovarianz ist bei
-538 Assets und typischen Fenstern singulär). **Auf SRV02 ist dafür kein Kopfraum:** gemessen
-am 2026-08-01 lag `\Processor(_Total)\% Processor Time` über drei 2-s-Samples konstant bei
-100 % (10 logische Kerne). Jede Portfolio-Schicht, die pro Signal-Zyklus eine dichte Matrix
-anfasst, konkurriert direkt mit der handelnden Fleet. Der billige Ersatz für die
-Beta-Frage — Sektor-/Cluster-Buckets mit Platz-Deckeln statt einer geschätzten Matrix —
-liegt näher an dem, was die Fleet ohnehin schon kann (§3), und wäre der erste zu
-falsifizierende Kandidat, nicht die Matrix.
-
-Das ist ausdrücklich **kein Design**, sondern die Notiz, warum der naheliegende Entwurf beim
-nächsten Anlauf nicht der erste Versuch sein sollte.
+So the fleet controls **how many slots** a leg may occupy, not **how much risk** a
+slot carries. That's exactly why the task's question isn't wrong — it's just hung
+on the wrong layer: the portfolio quantity that actually matters at Kythera today is
+*slot occupancy*, and that is already measured and optimised in T-042/T-052
+(`tools/trailing_slot_budget.py`, `tools/trailing_book_health.py`).
 
 ---
 
-## 6. Grenzen dieser Prüfung
+## 4. Re-entry condition
 
-- **Read-only.** Kein Deploy, kein Restart, kein Gate-Flip, keine Artefakt-Promotion, keine
-  DB-Query (weder lesend noch schreibend), kein Replay/Training/Backfill.
-- `.env` der Live-Maschine wurde **nur nach Schlüsselnamen** gelesen; keine Werte in dieser
-  Akte, keine Änderung (harte Regel 3).
-- Die Aussage „nicht live" stützt sich auf Repo-Stand `origin/main` @ `2572af1` (2026-08-01)
-  plus die Live-`.env`-Schlüsselliste. Sie deckt **nicht** ab, ob auf dem VPS ein manuell
-  gestarteter Prozess außerhalb der Watchdog-Fleet das Paket benutzt — dafür gibt es aber
-  weder Hinweis noch Grund (das Paket hat keinen Poster-Pfad).
-- `AUDIT_TODO.md` enthält keinen Eintrag zu GARCH/Vol-Targeting/Korrelation — es gibt hier
-  keine Checkbox zu flippen.
+This task becomes meaningful once **both** points are met:
+
+1. **Kythera itself sets a position size.** That means: a size/notional quantity
+   leaves the repo toward execution (Cornix field, API order, or an
+   operator-readable directive) — not just leverage cap and geometry. That is an
+   operator/Michi decision, not a session decision.
+2. **A rolled-out, effective per-position throttle exists**, over which a
+   correlation layer could be laid. GARCH vol targeting is *not* this throttle per
+   T-030 and won't become it — if a different sizing mechanism (e.g. a
+   risk-of-ruin/fixed-fraction policy) gets rolled out, the premise needs
+   re-checking, not this file continued.
+
+If point 1 holds without point 2 (Kythera sizes, but uniformly), the right next
+question isn't "correlation layer" but simply: **does the book even correlate
+strongly enough that beta concentration is the binding risk?** That's a pure
+measurement question on `closed_ai_signals` + candles, DB-bound, without a line of
+live code — and it belongs before any layer design (batch-E discipline,
+OPUS-HANDOFF §8). Only once that measurement shows material concentration is a
+design worthwhile.
+
+## 5. Cost note in case the condition is met
+
+Should this ever be reopened, the build form implied by the ticket is expensive: a
+538×538 correlation matrix per rebalance is ~145k pairs, and the estimate would be
+numerically worthless on a short window without shrinkage (T ≪ N — the sample
+covariance is singular at 538 assets and typical windows). **There's no headroom
+for that on SRV02:** measured on 2026-08-01, `\Processor(_Total)\% Processor Time`
+sat constantly at 100% (10 logical cores) across three 2s samples. Any portfolio
+layer that touches a dense matrix per signal cycle competes directly with the
+trading fleet. The cheap substitute for the beta question — sector/cluster
+buckets with slot caps instead of an estimated matrix — is closer to what the
+fleet can already do (§3), and would be the first candidate to falsify, not the
+matrix.
+
+This is explicitly **not a design**, just the note on why the obvious design
+shouldn't be the first attempt on the next pass.
+
+---
+
+## 6. Limits of this check
+
+- **Read-only.** No deploy, no restart, no gate flip, no artifact promotion, no
+  DB query (neither read nor write), no replay/training/backfill.
+- The live machine's `.env` was read **only for key names**; no values in this
+  file, no change (hard rule 3).
+- The claim "not live" rests on repo state `origin/main` @ `2572af1` (2026-08-01)
+  plus the live `.env` key list. It does **not** cover whether a manually started
+  process outside the watchdog fleet uses the package on the VPS — but there's
+  neither evidence nor reason for that (the package has no posting path).
+- `AUDIT_TODO.md` contains no entry on GARCH/vol targeting/correlation — there's
+  no checkbox to flip here.

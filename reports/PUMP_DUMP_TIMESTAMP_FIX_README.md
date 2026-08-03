@@ -1,8 +1,8 @@
-# Pump-Dump-Detector: Fix für falsche Spike-Zeitstempel nach Restart
+# Pump-Dump Detector: Fix for Incorrect Spike Timestamps After Restart
 
 ## Symptom
 
-Der Pump-Dump-Detector hat nach Restarts Messages gepostet wie:
+After restarts, the pump-dump detector posted messages like:
 
 ```
 💥 DUMP DETECTED
@@ -11,24 +11,24 @@ SPACE/USDT
 → Spike: 02:22:43 → 05:40:19 UTC
 ```
 
-Das ist unmöglich: Die Prozent-line sagt "in 2 Minuten", aber der Spike-Range
-im Label zeigt **3 Stunden 17 Minuten**.
+That's impossible: the percentage line says "in 2 minutes," but the spike range
+in the label shows **3 hours 17 minutes**.
 
 ## Root Cause
 
-In `process_coin_logics` wurde für die Pump/Dump-Erkennung **Index-basiert**
-auf die Bucket-Liste zugegriffen:
+In `process_coin_logics`, the pump/dump detection accessed the bucket list
+**index-based**:
 
 ```python
 chg_pct = (current_price / prices[-lookback] - 1) * 100
 spike_window = data[-lookback:]
 ```
 
-Der Code nahm an: "Bucket-Index -12 = vor 120 Sekunden".
+The code assumed: "bucket index -12 = 120 seconds ago."
 
-**Das gilt nur im steady-state**. Nach einem Neustart wird die Deque aus
-`1minute.json` mit bis zu **1440 alten Einträgen** geladen (max 4 Stunden alte
-Daten). Wenn dann frische Buckets reinkommen, mischen sich alt und neu:
+**This only holds in steady state.** After a restart, the deque is loaded from
+`1minute.json` with up to **1440 old entries** (up to 4 hours of old data).
+When fresh buckets then come in, old and new mix:
 
 ```
 [bucket@01:45, bucket@01:45:10, ..., bucket@03:00,          ← 450 alte Einträge
@@ -37,18 +37,18 @@ Daten). Wenn dann frische Buckets reinkommen, mischen sich alt und neu:
                                      ↑ data[-12]  ← zeigt bucket@03:00 !
 ```
 
-- `data[-1]` ist frisch (05:40:20)
-- `data[-12]` zeigt auf **03:00** — einen Bucket der **fast 3 Stunden alt ist**
-- Die `chg_pct`-Berechnung vergleicht frischen Preis mit 3h-alten Preis → falsche Prozente
-- `spike_window = data[-12:]` enthält die Lücke zwischen 03:00 und 05:40
-- `spike_prices.index(min(...))` findet den niedrigsten Wert aus dem alten Bereich
-- Zeitstempel 02:22 landet im Label obwohl "2m 0s" ausgegeben wird
+- `data[-1]` is fresh (05:40:20)
+- `data[-12]` points to **03:00** — a bucket that is **almost 3 hours old**
+- The `chg_pct` calculation compares a fresh price against a 3h-old price → wrong percentages
+- `spike_window = data[-12:]` contains the gap between 03:00 and 05:40
+- `spike_prices.index(min(...))` finds the lowest value from the old range
+- Timestamp 02:22 ends up in the label even though "2m 0s" is displayed
 
 ## Fix
 
-**Alle Lookbacks wurden von index-basiert auf zeitstempel-basiert refactored.**
+**All lookbacks were refactored from index-based to timestamp-based.**
 
-Neue Helper-Funktionen in `10_pump_dump_detector.py`:
+New helper functions in `10_pump_dump_detector.py`:
 
 ```python
 def _parse_bucket_ts(entry): ...
@@ -56,12 +56,12 @@ def _find_bucket_before(data, now, seconds_ago, tolerance=20): ...
 def _find_bucket_range(data, now, seconds_ago, tolerance=20): ...
 ```
 
-Statt `prices[-12]` nutzt der Code jetzt `_find_bucket_before(data, now, 120, tolerance=20)`.
-Wenn kein Bucket im Zeitfenster `[120-20, 120+20]` Sekunden existiert
-(= Daten-Lücke), wird der Lookback **übersprungen** und die nächste Stufe
-probiert. Das verhindert falsche Alerts nach Neustarts.
+Instead of `prices[-12]`, the code now uses `_find_bucket_before(data, now, 120, tolerance=20)`.
+If no bucket exists in the time window `[120-20, 120+20]` seconds
+(= data gap), the lookback is **skipped** and the next stage
+is tried. This prevents false alerts after restarts.
 
-Zusätzlich: **Stale-Data-Check am Anfang**:
+Additionally: a **stale-data check at the start**:
 
 ```python
 if latest_age_sec > 60:
@@ -69,11 +69,11 @@ if latest_age_sec > 60:
     return
 ```
 
-Wenn der neueste Bucket älter als 60 Sekunden ist (= Prozess gerade gestartet
-oder WS-Ausfall), wird der ganze Cycle übersprungen. Beim nächsten Tick
-(10 Sekunden später) ist der neueste Bucket dann wieder frisch.
+If the newest bucket is older than 60 seconds (= the process just started
+or a WS outage), the entire cycle is skipped. On the next tick
+(10 seconds later), the newest bucket is fresh again.
 
-Sanity-Check für den Spike-Start:
+Sanity check for the spike start:
 
 ```python
 if spike_start_dt is not None:
@@ -84,51 +84,51 @@ if spike_start_dt is not None:
         spike_time_label = None
 ```
 
-Falls doch irgendwie ein inkonsistenter Timestamp durchrutscht, wird das
-Spike-Label unterdrückt statt eine falsche Angabe zu posten.
+If an inconsistent timestamp still slips through somehow, the spike label
+is suppressed instead of posting a wrong value.
 
-## Was NICHT mehr passiert
+## What Does NOT Happen Anymore
 
-Die alten Symptome sind jetzt ausgeschlossen:
+The old symptoms are now excluded:
 
-- ❌ "−6.37% in 2m 0s" mit Spike-Range über 3h → der Spike-Start wird nur
-  noch aus dem tatsächlichen Zeitfenster genommen
-- ❌ Falsche Prozent-Berechnung gegen 4h alte Preise → Bucket wird nicht
-  found, Lookback übersprungen
-- ❌ Wilde Post-Flut nach Neustart → Stale-Data-Check verhindert Alerts
-  solange keine frischen Daten da sind
+- ❌ "−6.37% in 2m 0s" with a spike range over 3h → the spike start is now only
+  ever taken from the actual time window
+- ❌ Wrong percentage calculation against 4h-old prices → the bucket isn't
+  found, lookback is skipped
+- ❌ Wild post flood after a restart → the stale-data check prevents alerts
+  as long as there's no fresh data
 
-## Getestet
+## Tested
 
-Drei Szenarien durchgetestet:
+Three scenarios were tested end to end:
 
-1. **Normaler Betrieb**: Funktioniert unverändert — Bucket vor 120s wird
-   zuverlässig found
-2. **Nach Restart mit alten Cache-Daten**: `find_before(120s)` liefert
-   korrekt `None`, Alert wird übersprungen
-3. **Stale-Data-Check**: Bei 4h alten Daten returned `process_coin_logics`
-   sofort ohne Alert
+1. **Normal operation**: works unchanged — the bucket from 120s ago is
+   reliably found
+2. **After restart with old cache data**: `find_before(120s)` correctly
+   returns `None`, alert is skipped
+3. **Stale-data check**: with 4h-old data, `process_coin_logics` returns
+   immediately without an alert
 
 ## Deploy
 
-Nur eine Datei überschreiben:
+Only one file needs to be overwritten:
 ```
 C:\_BOTS\crypto_trading_bot_v2\10_pump_dump_detector.py
 ```
 
-Watchdog neu starten. Beim nächsten Neustart-Test:
+Restart the watchdog. On the next restart test:
 
-1. Detector anhalten
-2. System ~30 Minuten pausieren lassen (bis `1minute.json` alte Daten enthält)
-3. Detector starten
-4. Logs beobachten: sollten "stale data" debug-Einträge zeigen, keine
-   falschen "DUMP DETECTED" mit 4h-Spike-Range
+1. Stop the detector
+2. Pause the system for ~30 minutes (until `1minute.json` contains old data)
+3. Start the detector
+4. Watch the logs: should show "stale data" debug entries, no
+   false "DUMP DETECTED" with a 4h spike range
 
-## Was sich für Benutzer ändert
+## What Changes for Users
 
-Im Normalbetrieb: **nichts**. Die Alerts kommen genauso wie vorher, nur mit
-korrekten Spike-Zeitstempeln.
+In normal operation: **nothing**. Alerts come exactly as before, just with
+correct spike timestamps.
 
-Nach Restarts gibt es eine kurze Phase (~30-120 Sekunden) in der keine
-Pump/Dump-Alerts gepostet werden — bis genug frische Buckets gesammelt sind.
-Das ist eine feature, kein bug.
+After restarts there is a brief phase (~30-120 seconds) during which no
+pump/dump alerts are posted — until enough fresh buckets have been collected.
+That's a feature, not a bug.

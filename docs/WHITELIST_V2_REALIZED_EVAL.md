@@ -1,59 +1,59 @@
-# Whitelist-v2 Flip — realisierte Auswertung (T-2026-KYT-9050-007)
+# Whitelist-v2 flip — realised evaluation (T-2026-KYT-9050-007)
 
-**Tool:** `tools/whitelist_v2_realized_eval.py` · **Läuft nur auf dem VPS** (braucht Live-DB, strikt read-only) · **Zweck:** die Zahlen, an denen Michis Flip-Entscheid v1→v2 des Whitelist-Gates hängt — gemessen an **realisierten** Trades, nicht an einem Replay der Regel.
+**Tool:** `tools/whitelist_v2_realized_eval.py` · **Runs only on the VPS** (needs the live DB, strictly read-only) · **Purpose:** the numbers Michi's v1→v2 flip decision for the whitelist gate hinges on — measured against **realised** trades, not a replay of the rule.
 
-Das Verdikt selbst steht in `docs/T-2026-KYT-9050-007-whitelist-v2-flip-decision.md`. Der Flip ist und bleibt Michis Entscheidung (OPUS-HANDOFF §6, Gate-Flip).
+The verdict itself is in `docs/T-2026-KYT-9050-007-whitelist-v2-flip-decision.md`. The flip is and remains Michi's decision (OPUS-HANDOFF §6, gate flip).
 
-## Abgrenzung zu `tools/whitelist_v2_flip_eval.py` (T-2026-CU-9050-069)
+## Distinction from `tools/whitelist_v2_flip_eval.py` (T-2026-CU-9050-069)
 
-Das 069-Tool beantwortet dieselbe Flip-Frage über einen **Counterfactual-Replay** der ROM1-Geometrie (T-047-Mechanik: `compute_rom1_trade_params` + `simulate_exit` auf 1h-Kerzen). Das ist die richtige Messlatte, wenn kein echtes Outcome existiert.
+The 069 tool answers the same flip question via a **counterfactual replay** of the ROM1 geometry (T-047 mechanics: `compute_rom1_trade_params` + `simulate_exit` on 1h candles). That's the right yardstick when no real outcome exists.
 
-Dieses Tool tauscht **ausschließlich die Scoring-Schicht** aus: die Gate-Semantik (welche Pfade der Flip überhaupt berührt), die Divergenz-Klassen und der Snapshot-Join werden aus `whitelist_v2_flip_eval` **importiert**, nicht nachgebaut. Es gibt genau eine Wahrheit darüber, was der Flip ändert. Neu ist nur: statt einer Simulation wird der **tatsächlich geschlossene, vom Monitor gescorte Trade** gelesen.
+This tool swaps out **only the scoring layer**: the gate semantics (which paths the flip even touches), the divergence classes and the snapshot join are **imported** from `whitelist_v2_flip_eval`, not rebuilt. There is exactly one truth about what the flip changes. The only thing new: instead of a simulation, the **actually closed trade, scored by the monitor,** is read.
 
-## Zwei realisierte Messlatten — bewusst getrennt gehalten
+## Two realised yardsticks — deliberately kept separate
 
-| Leg | Quelle | Existiert für | Geometrie |
+| Leg | Source | Exists for | Geometry |
 |---|---|---|---|
-| **Trigger-Leg** | `closed_ai_signals` (model = Tag) bzw. `closed_trades_master` (strategy = Tag) | **beide** Gate-Seiten | die des Quell-Bots |
-| **ROM1-Leg** | `closed_ai_signals` (model = `ROM1`) | **nur** die geforwardete Seite | ROM1s eigene (P1.10) |
+| **Trigger leg** | `closed_ai_signals` (model = tag) resp. `closed_trades_master` (strategy = tag) | **both** gate sides | that of the source bot |
+| **ROM1 leg** | `closed_ai_signals` (model = `ROM1`) | **only** the forwarded side | ROM1s own (P1.10) |
 
-Das Trigger-Leg ist die einzige **symmetrische** Messung: ein vom Gate geblocktes Signal wurde trotzdem in den eigenen Channel des Bots gepostet und von den Monitoren gescort — es hat also ein echtes Outcome, auch ohne ROM1-Trade.
+The trigger leg is the only **symmetric** measurement: a signal blocked by the gate was still posted to the bot's own channel and scored by the monitors — so it has a real outcome, even without a ROM1 trade.
 
-Das ROM1-Leg ist das **echte Geld**, aber es existiert strukturell nur auf der forwarded-Seite. `v2_would_open` — die Signale, die v2 zusätzlich durchlassen würde — hat **prinzipiell kein ROM1-Leg** und kann keins bekommen. Das ist keine Datenlücke, die man schließen könnte; das ist die Grenze der Frage.
+The ROM1 leg is the **real money**, but it structurally exists only on the forwarded side. `v2_would_open` — the signals v2 would additionally let through — **fundamentally has no ROM1 leg** and cannot get one. That's not a data gap that could be closed; it's the limit of the question.
 
-> **Falle (gemessen, nicht übernommen):** `closed_trades_master.strategy` ist die kanonische Realized-Quelle für die **klassischen Detektoren** (`Fast In And Out`, `Volume Indicator`, `Support Resistance`, `5 Percent`, `Main Channel`) — dort und nur dort. **ROM1 steht nicht in `closed_trades_master`** (0 Zeilen, gemessen 2026-08-01); ROM1 und alle AI-Bots leben in `closed_ai_signals`. Das Tool liest deshalb beide Tabellen und dedupliziert `closed_ai_signals` über den Report-14-Survivor-Key gegen die 357k-Duplikat-Falle.
+> **Trap (measured, not inherited):** `closed_trades_master.strategy` is the canonical realised source for the **classic detectors** (`Fast In And Out`, `Volume Indicator`, `Support Resistance`, `5 Percent`, `Main Channel`) — there and only there. **ROM1 is not in `closed_trades_master`** (0 rows, measured 2026-08-01); ROM1 and all AI bots live in `closed_ai_signals`. The tool therefore reads both tables and deduplicates `closed_ai_signals` via the Report 14 survivor key against the 357k-duplicate trap.
 
-## Akzeptanzkriterien (binär testbar)
+## Acceptance criteria (binary testable)
 
-- [x] **AK1 Klassifikation geerbt:** die Flip-Klassen (`both_open`, `both_block`, `v2_would_block`, `v2_would_open`, `v2_missing`, `cell_missing`, `unaffected`) kommen per Import aus `tools/whitelist_v2_flip_eval.py`; dieses Tool definiert keine eigene Gate-Semantik. — Test: Import-Assertion + `test_flip_delta_*`
-- [x] **AK2 Zeit-Domäne gemessen:** pro Tag wird die naive Zeitspalte unter BEIDEN Lesarten (UTC / `LEGACY_WRITER_TZ`) gegen die Gate-Events gematcht; die Lesart mit mehr Treffern gewinnt, beide Trefferzahlen stehen im Report. — Test: `test_twin_index_detects_legacy_domain`, `test_twin_index_detects_utc_domain`, `test_pick_domain_*`
-- [x] **AK3 1:1-Zuordnung:** ein geschlossener Trade wird höchstens EINEM Gate-Event zugeordnet (greedy, kleinstes |Δt| zuerst); Kollisionen werden gezählt und berichtet, nie doppelt verbucht. — Test: `test_claim_nearest_never_reuses_a_trade`
-- [x] **AK4 Eine Realized-Definition:** PnL/WR/Outcome kommen aus `core.realized_pnl` + `tools/fleet_realized_audit` (T-115/T-032-Definition: target-gestaffelter unlevered Move, WR = TP1-Touch, LEGACY/zensiert ausgeschlossen). Keine eigene Mathematik. — Test: `test_realized_from_ai_*`, `test_realized_from_classic_*`
-- [x] **AK5 Nichts wird still verworfen:** Events ohne Twin (`no_twin`), ohne ROM1-Leg (`no_rom1_leg`, `not_forwarded`) und ohne Zelle (`cell_missing`) sind gezählte Klassen; `n_with_leg`, `censored_n` und `lev_n` stehen in jeder Zeile. — Test: `test_summarize_legs_counts_missing_legs_separately`, `test_attach_trigger_legs_marks_unmatched`
-- [x] **AK6 Asymmetrie explizit:** die suppressed-Seite bekommt nie ein ROM1-Leg, und der Report sagt warum. — Test: `test_suppressed_side_never_gets_a_rom1_leg`
-- [x] **AK7 Read-only:** `conn.set_session(readonly=True)`, kein INSERT/UPDATE/DELETE im Tool. — Review + Grep
-- [x] **AK8 Aufschlüsselung nach Bot × Richtung** für beide divergenten Klassen, sortiert nach |Σ Move%|. — Test: `test_by_bot_direction_splits_and_sorts`
-- [x] **AK9 Sauber vs. drift-kontaminiert:** jede divergente Klasse wird in `v1_agree` (heutige v1-Zelle passt zur aufgezeichneten Entscheidung — sauberer v1-vs-v2-Vergleich) und `v1_drifted` (Zelle hat sich seither bewegt — der „Unterschied" vergleicht zwei v1-Stände) gesplittet und getrennt ausgewiesen. — Test: `test_agreement_split_separates_drifted_events`
-- [x] **AK10 Divergenz nach v1-Pfad:** der divergente Traffic wird nach dem aufgezeichneten v1-Pfad aufgeschlüsselt (`insufficient_data` = Default-Open-Krücke vs. `wr_above_overall` = Entscheidung auf Merit). — Test: `test_path_breakdown_splits_crutch_from_merit`
+- [x] **AK1 Classification inherited:** the flip classes (`both_open`, `both_block`, `v2_would_block`, `v2_would_open`, `v2_missing`, `cell_missing`, `unaffected`) come via import from `tools/whitelist_v2_flip_eval.py`; this tool defines no gate semantics of its own. — Test: import assertion + `test_flip_delta_*`
+- [x] **AK2 Time domain measured:** for each day, the naive time column is matched against the gate events under BOTH readings (UTC / `LEGACY_WRITER_TZ`); the reading with more matches wins, both match counts are in the report. — Test: `test_twin_index_detects_legacy_domain`, `test_twin_index_detects_utc_domain`, `test_pick_domain_*`
+- [x] **AK3 1:1 assignment:** a closed trade is assigned to at most ONE gate event (greedy, smallest |Δt| first); collisions are counted and reported, never double-booked. — Test: `test_claim_nearest_never_reuses_a_trade`
+- [x] **AK4 One realised definition:** PnL/WR/outcome come from `core.realized_pnl` + `tools/fleet_realized_audit` (T-115/T-032 definition: target-staggered unlevered move, WR = TP1 touch, LEGACY/censored excluded). No math of its own. — Test: `test_realized_from_ai_*`, `test_realized_from_classic_*`
+- [x] **AK5 Nothing is silently discarded:** events without a twin (`no_twin`), without a ROM1 leg (`no_rom1_leg`, `not_forwarded`) and without a cell (`cell_missing`) are counted classes; `n_with_leg`, `censored_n` and `lev_n` are in every row. — Test: `test_summarize_legs_counts_missing_legs_separately`, `test_attach_trigger_legs_marks_unmatched`
+- [x] **AK6 Asymmetry explicit:** the suppressed side never gets a ROM1 leg, and the report says why. — Test: `test_suppressed_side_never_gets_a_rom1_leg`
+- [x] **AK7 Read-only:** `conn.set_session(readonly=True)`, no INSERT/UPDATE/DELETE in the tool. — Review + grep
+- [x] **AK8 Breakdown by bot × direction** for both divergent classes, sorted by |Σ move%|. — Test: `test_by_bot_direction_splits_and_sorts`
+- [x] **AK9 Clean vs. drift-contaminated:** every divergent class is split into `v1_agree` (today's v1 cell matches the recorded decision — clean v1-vs-v2 comparison) and `v1_drifted` (the cell has moved since — the "difference" compares two v1 states) and reported separately. — Test: `test_agreement_split_separates_drifted_events`
+- [x] **AK10 Divergence by v1 path:** the divergent traffic is broken down by the recorded v1 path (`insufficient_data` = default-open crutch vs. `wr_above_overall` = decision on merit). — Test: `test_path_breakdown_splits_crutch_from_merit`
 
 ## Out of Scope
 
-- Der Flip selbst (`SELECT whitelisted` → `whitelisted_v2` in `28_signal_orchestrator.get_whitelist_decision`) und der Orchestrator-Restart. Gate-Flip = Michi (harte Regel, OPUS-HANDOFF §6).
-- Nachjustierung der `V2_*`-Konstanten in `27_bot_regime_analyzer.py`.
-- Jede as-of-Rekonstruktion historischer Whitelist-Stände (siehe Caveat 1) und jede DB-Schreiboperation.
+- The flip itself (`SELECT whitelisted` → `whitelisted_v2` in `28_signal_orchestrator.get_whitelist_decision`) and the orchestrator restart. Gate flip = Michi (hard rule, OPUS-HANDOFF §6).
+- Retuning the `V2_*` constants in `27_bot_regime_analyzer.py`.
+- Any as-of reconstruction of historical whitelist states (see caveat 1) and any DB write operation.
 
-## Methodik & Caveats (der Report wiederholt sie)
+## Methodology & caveats (the report repeats them)
 
-1. **Snapshot-Näherung — und ihre gemessene Güte.** `bot_regime_whitelist` ist UPSERT-only ohne Historie, `bot_regime_performance` ebenfalls, und Bot 28 loggt pro Signal nur den v1-Pfad (`wl_reason` / `reason`), nie den v2-Verdikt. Der v2-Verdikt pro Event stammt deshalb aus dem **heutigen** Snapshot. Der T-031-Befund „die historische Whitelist ist nicht rekonstruierbar" gilt unverändert — das Tool umgeht ihn nicht, es **quantifiziert** ihn: die v1-Drift (aufgezeichneter Gate-Pfad vs. heutige v1-Zelle) misst den Fehler auf der einzigen Achse, auf der beide Stände bekannt sind. Die Drift wächst mit der Fensterlänge; **Fenster deshalb immer mit Drift lesen**, nicht ohne.
-2. **Drift kontaminiert die Klasse, nicht nur die Genauigkeit (AK9).** Eine Flip-Klasse vergleicht die *aufgezeichnete* v1-Entscheidung mit der *heutigen* v2-Zelle. Passt die heutige v1-Zelle nicht mehr zur aufgezeichneten Entscheidung, vergleicht die Klasse zwei verschiedene Zellstände — sie misst dann Zell-Bewegung, nicht v1-gegen-v2. Gemessen im Mai/Juni-Fenster: **jedes einzelne** `v2_would_open`-Event war drift-kontaminiert. Deshalb ist `v1_agree` die belastbare Teilmenge; `v1_drifted` steht daneben, nicht drin.
-3. **v2 ist auf dem Trigger-Leg IN-SAMPLE gefittet.** `27_bot_regime_analyzer` baut `bot_regime_performance` aus den geschlossenen Trigger-Trades der letzten `REFERENCE_WINDOW_DAYS = 30` Tage, und `_v2_whitelist_decision` entscheidet eine Zelle allein aus deren `avg_pnl_pct`/`pnl_stddev`. Ein Lauf innerhalb dieses Fensters misst v2 also gegen die Daten, auf die v2 angepasst wurde — dass v2 dort Zellen mit negativ realisierten Trigger-Trades blockt, ist weitgehend eine Umformulierung des Anpassungskriteriums, **kein unabhängiger Beleg**. Unabhängig sind (a) das ROM1-Leg und (b) ein Lauf mit `--until` vor dem Fensterbeginn. Der Report setzt das Caveat automatisch, wenn sich die Fenster überlappen (`in_sample_overlap`).
-4. **Zwei Zeit-Domänen in derselben Spalte.** Gemessen am 2026-08-01: `orchestrator_open_trades.opened_at`, `orchestrator_suppressed_signals.ts` und die **ROM1**-Zeilen in `closed_ai_signals` tragen UTC; die Zeilen der Bots in `closed_ai_signals`/`closed_trades_master` tragen `Europe/Bucharest`-Wanduhr (+3h im Sommer). `KYTHERA_R3_CUTOVER_UTC` ist auf dem VPS **nicht gesetzt** (uniform-utc-Modus) — die Domäne hängt also am Writer, nicht an einem Datum. Ein Join, der das ignoriert, matcht 0,0 % der Events (gemessen). Das Tool entscheidet die Lesart pro Tag aus den Daten und weist beide Trefferzahlen aus.
-5. **Zensur durch den Orchestrator selbst.** ROM1-Trades, die per `AUTO_CLOSE_ON_REGIME_CHANGE` geschlossen wurden, tragen `CLOSED_REGIME_CHANGE` und fallen unter die `_CENSOR_FRAGMENTS`-Regel von T-032 (weder Win noch Loss). Auf der ROM1-Seite ist damit ein großer Teil der Legs **zensiert** — die Spalte `zensiert` steht in jeder Tabelle, und die ROM1-Zahlen dürfen nicht als Vollerhebung gelesen werden.
-6. **Trigger-Leg ≠ ROM1-Leg (P1.10).** Der Gate entscheidet auf der Statistik des Trigger-Bots, gehandelt wird ROM1-Geometrie. Die beiden Messlatten können sich im **Vorzeichen** widersprechen; sie tun es in der Auswertung tatsächlich. Wer nur eine liest, liest die falsche Frage.
-7. **Fallback-Traffic ist flip-neutral.** `no_whitelist_entry`, `whitelist_stale:*`, `regime_is_transition:*`, `regime_unstable:*` und NULL-`wl_reason` laufen unter v2 identisch (der Flip tauscht nur den 4D-Zellen-Lookup). Sie werden gezählt (`unaffected`), aber nicht in den Raten-Vergleich gerechnet — nur in die Trades/Tag-Prognose, als konstanter Sockel.
-8. **`lev`-PnL ist exact-only UND geklammert.** Fehlende/unparsbare Hebel führen zum Ausschluss der Zeile, nicht zu einem Default (`core.realized_pnl.parse_leverage`); die Coverage steht als `(n)` hinter jeder Σ-lev-Zahl. Zusätzlich klammert `realized_pnl_pct` jeden Verlust bei **−100 %** (Liquidations-Boden) — Gewinne sind unbegrenzt, Verluste nicht. Eine Σ-lev-Summe ist damit **nach oben verzerrt** und darf nicht als „Geld" gelesen werden. Der ungehebelte, target-gestaffelte Move ist die coverage-robuste und klammerfreie Metrik; alle Aussagen im Entscheid-Dokument ruhen auf ihm.
+1. **Snapshot approximation — and its measured quality.** `bot_regime_whitelist` is UPSERT-only without history, `bot_regime_performance` likewise, and bot 28 logs only the v1 path per signal (`wl_reason` / `reason`), never the v2 verdict. The v2 verdict per event therefore comes from **today's** snapshot. The T-031 finding "the historical whitelist cannot be reconstructed" still holds unchanged — the tool doesn't work around it, it **quantifies** it: the v1 drift (recorded gate path vs. today's v1 cell) measures the error on the only axis where both states are known. The drift grows with the window length; **always read a window together with its drift**, never without.
+2. **Drift contaminates the class, not just the accuracy (AK9).** A flip class compares the *recorded* v1 decision with *today's* v2 cell. If today's v1 cell no longer matches the recorded decision, the class compares two different cell states — it then measures cell movement, not v1-vs-v2. Measured in the May/June window: **every single** `v2_would_open` event was drift-contaminated. That's why `v1_agree` is the robust subset; `v1_drifted` stands next to it, not inside it.
+3. **v2 is fitted IN-SAMPLE on the trigger leg.** `27_bot_regime_analyzer` builds `bot_regime_performance` from the closed trigger trades of the last `REFERENCE_WINDOW_DAYS = 30` days, and `_v2_whitelist_decision` decides a cell purely from their `avg_pnl_pct`/`pnl_stddev`. A run within this window therefore measures v2 against the data v2 was fitted on — that v2 blocks cells with negatively realised trigger trades there is largely a restatement of the fitting criterion, **not independent evidence**. Independent are (a) the ROM1 leg and (b) a run with `--until` before the window start. The report sets the caveat automatically when the windows overlap (`in_sample_overlap`).
+4. **Two time domains in the same column.** Measured on 2026-08-01: `orchestrator_open_trades.opened_at`, `orchestrator_suppressed_signals.ts` and the **ROM1** rows in `closed_ai_signals` carry UTC; the bot rows in `closed_ai_signals`/`closed_trades_master` carry `Europe/Bucharest` wall-clock time (+3h in summer). `KYTHERA_R3_CUTOVER_UTC` is **not set** on the VPS (uniform-utc mode) — so the domain depends on the writer, not on a date. A join that ignores this matches 0.0% of the events (measured). The tool decides the reading per day from the data and reports both match counts.
+5. **Censorship by the orchestrator itself.** ROM1 trades closed via `AUTO_CLOSE_ON_REGIME_CHANGE` carry `CLOSED_REGIME_CHANGE` and fall under T-032's `_CENSOR_FRAGMENTS` rule (neither win nor loss). On the ROM1 side, a large share of the legs is therefore **censored** — the `zensiert` column is in every table, and the ROM1 numbers must not be read as a full census.
+6. **Trigger leg ≠ ROM1 leg (P1.10).** The gate decides on the trigger bot's statistics, but ROM1 geometry is what's traded. The two yardsticks can contradict each other in **sign**; in the evaluation, they actually do. Reading only one means reading the wrong question.
+7. **Fallback traffic is flip-neutral.** `no_whitelist_entry`, `whitelist_stale:*`, `regime_is_transition:*`, `regime_unstable:*` and a NULL `wl_reason` behave identically under v2 (the flip only swaps the 4D cell lookup). They are counted (`unaffected`), but not included in the rate comparison — only in the trades/day forecast, as a constant baseline.
+8. **`lev` PnL is exact-only AND clamped.** Missing/unparsable leverage leads to the row being excluded, not to a default (`core.realized_pnl.parse_leverage`); coverage is shown as `(n)` behind every Σ-lev number. In addition, `realized_pnl_pct` clamps every loss at **−100%** (the liquidation floor) — gains are unbounded, losses are not. A Σ-lev sum is therefore **biased upward** and must not be read as "money". The unlevered, target-staggered move is the coverage-robust, clamp-free metric; every statement in the decision document rests on it.
 
-## Ausführung (VPS-Session)
+## Execution (VPS session)
 
 ```
 python tools/whitelist_v2_realized_eval.py --since 2026-07-11T00:00:00                          # volles Shadow-Fenster
@@ -61,6 +61,6 @@ python tools/whitelist_v2_realized_eval.py --since 2026-07-25T00:00:00          
 python tools/whitelist_v2_realized_eval.py --since 2026-05-15T00:00:00 --until 2026-07-02T00:00:00   # out-of-sample
 ```
 
-Der CPU-Guard aus `walkforward_sim` bricht bei >90 % Systemlast ab. Der VPS steht dauerhaft bei 100 % (gemessen); für diesen read-only-Lauf gibt es deshalb `--cpu-wait-min N` (warten) und `--force-on-busy` (trotzdem laufen, BELOW_NORMAL-Priorität). Die gemessene Last beim Start steht als `cpu_at_start_pct` im Summary — ein Lauf behauptet nie Headroom, den er nicht hatte.
+The CPU guard from `walkforward_sim` aborts above >90% system load. The VPS sits permanently at 100% (measured); for this read-only run there is therefore `--cpu-wait-min N` (wait) and `--force-on-busy` (run anyway, at BELOW_NORMAL priority). The measured load at start is recorded as `cpu_at_start_pct` in the summary — a run never claims headroom it didn't have.
 
-Output nach `KYTHERA_REPLAY_DIR`: `whitelist_v2_realized_eval_<since-datum>.jsonl` (alle Events inkl. Skip-Gründen), `..._summary.json` (alle Aggregate) und `....md` (Report mit der Bot × Richtung-Aufschlüsselung).
+Output goes to `KYTHERA_REPLAY_DIR`: `whitelist_v2_realized_eval_<since-datum>.jsonl` (all events incl. skip reasons), `..._summary.json` (all aggregates) and `....md` (report with the bot × direction breakdown).

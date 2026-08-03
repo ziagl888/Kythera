@@ -1,94 +1,100 @@
-# Shadow-Mode-Posting — fleet-weit (T-2026-CU-9050-125)
+# Shadow-mode posting — fleet-wide (T-2026-CU-9050-125)
 
-**Ziel:** Jedes `(model_tag, direction)`-Bein, das NICHT live postet, soll statt
-Stille einen **überwachten Shadow-Trade** erzeugen — ein Trade mit echtem
-realisiertem Ergebnis in `closed_ai_signals`, aber **ohne** Post in einen
-Live-Kanal (Cornix/Telegram). So bauen unterdrückte Beine und noch-nicht-
-promotete Retrains eine Ergebnis-Historie auf, an der man sie später ehrlich
-misst — inklusive der **regime-konditionierten** Freischaltung (Whitelist-v2-Flip
-T-2026-CU-9050-069): ein LONG-Bein, das global negativ, aber in `TRANSITION`
-positiv ist, lässt sich nur mit Shadow-Trades belegen.
+**Goal:** every `(model_tag, direction)` leg that does NOT post live
+should, instead of silence, produce a **monitored shadow trade** — a trade
+with a genuinely realized outcome in `closed_ai_signals`, but **without** a
+post to a live channel (Cornix/Telegram). That way, suppressed legs and
+not-yet-promoted retrains build up an outcome history that can later
+honestly measure them — including the **regime-conditioned** unlock
+(whitelist-v2 flip T-2026-CU-9050-069): a LONG leg that is globally
+negative but positive in `TRANSITION` can only be evidenced with shadow
+trades.
 
-Motiviert von Michi (2026-07-14): die Flotte ist nach dem Recompute effektiv
-short-only für die Richtungsmodelle; jedes unterdrückte Bein postet heute nichts
-und hat damit **keinen Trade-Record**, auf dem eine spätere Entscheidung fußen
-könnte.
-
----
-
-## 1. Warum es sicher ist — "monitored but unposted"
-
-Ein Shadow-Trade ist eine **`ai_signals`-Zeile OHNE `telegram_outbox`-Zeile**.
-
-Verifiziert (T-2026-CU-9050-125):
-1. Der AI-Monitor `8_ai_trade_monitor.py` liest `ai_signals` **ungefiltert**
-   (kein Kanal-/Post-Gate), verfolgt Entry-Fill/TP/SL gegen den Live-Preis und
-   schreibt beim Close eine `closed_ai_signals`-Zeile. Er enthält **keinerlei**
-   Posting-Code (kein `send_telegram`, kein `telegram_outbox`-Insert).
-2. Ein Kanal-Post passiert **ausschließlich** über eine `telegram_outbox`-Zeile
-   (gedrained von `4_telegram_bot.py`).
-
-⇒ `ai_signals` schreiben, `telegram_outbox` weglassen = getrackt-aber-nie-gepostet.
-Der Monitor liefert das realisierte Ergebnis; kein Zeichen erreicht je einen Kanal.
-
-**Sicherheitsvertrag (harte Regeln 1/2/4):**
-- **DEFAULT = LIVE.** `core/shadow_gate.py` listet nur explizit als SHADOW/RETIRED
-  markierte Beine; alles andere ist live. Der Gate darf **nie** einen bestehenden
-  Live-Post in einen Shadow-Post verwandeln — die Verdrahtung ist rein **additiv**
-  am Nicht-Post-Zweig jedes Bots.
-- Der Code landet, ohne dass etwas live geht: Shadow postet nie in einen Kanal,
-  Artefakte bleiben in `staging_models/` (harte Regel 2), Promotion + Fleet-
-  Restart bleiben Michis Entscheid.
-- Master-Kill-Switch `KYTHERA_SHADOW_POSTING=0` schaltet **alle** Shadow-Emission
-  ab (Bots fallen auf das heutige prediction-only-Verhalten zurück).
+Motivated by Michi (2026-07-14): after the recompute the fleet is
+effectively short-only for the direction models; every suppressed leg
+posts nothing today and thus has **no trade record** on which a later
+decision could be based.
 
 ---
 
-## 2. Zwei Shadow-Klassen
+## 1. Why it is safe — "monitored but unposted"
 
-| Klasse | Was | Modell-Quelle | Beispiel |
+A shadow trade is an **`ai_signals` row without a `telegram_outbox` row**.
+
+Verified (T-2026-CU-9050-125):
+1. The AI monitor `8_ai_trade_monitor.py` reads `ai_signals` **unfiltered**
+   (no channel/post gate), tracks entry-fill/TP/SL against the live price
+   and writes a `closed_ai_signals` row on close. It contains **no**
+   posting code whatsoever (no `send_telegram`, no `telegram_outbox`
+   insert).
+2. A channel post happens **exclusively** via a `telegram_outbox` row
+   (drained by `4_telegram_bot.py`).
+
+⇒ write `ai_signals`, leave out `telegram_outbox` = tracked-but-never-posted.
+The monitor delivers the realized outcome; no signal ever reaches a channel.
+
+**Safety contract (hard rules 1/2/4):**
+- **DEFAULT = LIVE.** `core/shadow_gate.py` only lists legs explicitly
+  marked SHADOW/RETIRED; everything else is live. The gate must **never**
+  turn an existing live post into a shadow post — the wiring is purely
+  **additive** on the not-posted branch of each bot.
+- The code lands without anything going live: shadow never posts to a
+  channel, artifacts stay in `staging_models/` (hard rule 2), promotion +
+  fleet restart remain Michi's decision.
+- The master kill switch `KYTHERA_SHADOW_POSTING=0` turns off **all**
+  shadow emission (bots fall back to today's prediction-only behaviour).
+
+---
+
+## 2. Two shadow classes
+
+| Class | What | Model source | Example |
 |---|---|---|---|
-| **(A) Neue Generation** | Ein Retrain läuft PARALLEL zum weiter-live alten Tag | `staging_models/<tag>_model_<DIR>.pkl` (Contract-Artefakt) | ATS2 neben live ATS1, ATB2 neben live ATB1 |
-| **(B) Unterdrücktes Richtungs-Bein** | Ein sonst-live Modell, dessen eine Richtung (noch) nicht live geht | bereits im Bot geladen | z. B. ein hart geparktes Bein |
+| **(A) New generation** | A retrain runs PARALLEL to the still-live old tag | `staging_models/<tag>_model_<DIR>.pkl` (contract artifact) | ATS2 next to live ATS1, ATB2 next to live ATB1 |
+| **(B) Suppressed direction leg** | An otherwise-live model whose one direction does not (yet) go live | already loaded in the bot | e.g. a hard-parked leg |
 
-Beide teilen dasselbe Emit-Primitiv (`post_shadow_ai_signal`) und dieselbe
-`(tag, direction)`-Lifecycle-Klassifikation. Der Unterschied ist nur, ob der Bot
-zusätzlich ein Staging-Artefakt laden muss (A) oder das Modell schon hat (B).
+Both share the same emit primitive (`post_shadow_ai_signal`) and the same
+`(tag, direction)` lifecycle classification. The only difference is
+whether the bot additionally needs to load a staging artifact (A) or
+already has the model (B).
 
-> **Wichtig zur Ist-Lage (docs/MODEL_INTENT.md):** Die Flotte ist NICHT pauschal
-> „nur SHORT live". Viele LONG-Beine sind bewusst live (RUB-LONG auf Legacy @0,75,
-> ABR2-LONG über das Funding-Gate, klassische SR/Main/VolIndic/FastInOut-LONG).
-> Die echten Shadow-Kandidaten sind primär Klasse (A) — die nicht-promoteten
-> Retrains (ATS2, ATB2, EPD2, SRA2, RUB2-LONG-Retrain, TD2/BB2, QM2 …) — plus die
-> wenigen hart geparkten Beine. Deshalb ist Default-LIVE + eine **pro Bein
-> begründete** Registry Pflicht, kein pauschaler „alle-LONG-in-Shadow"-Schalter.
+> **Important re. the current state (docs/MODEL_INTENT.md):** the fleet is
+> NOT blanket "SHORT-only live". Many LONG legs are deliberately
+> live (RUB-LONG on legacy @0.75, ABR2-LONG via the funding gate, classic
+> SR/Main/VolIndic/FastInOut-LONG). The genuine shadow candidates are
+> primarily class (A) — the not-yet-promoted retrains (ATS2, ATB2, EPD2,
+> SRA2, RUB2-LONG retrain, TD2/BB2, QM2 …) — plus the few hard-parked
+> legs. That's why default-live + a **per-leg justified** registry is
+> mandatory, not a blanket "all-LONG-to-shadow" switch.
 
 ---
 
-## 3. Mechanik
+## 3. Mechanics
 
 ### `core/shadow_gate.py`
-- `leg_status(tag, direction) -> live|shadow|retired` — Default **live**.
-  `_LIFECYCLE` listet nur Nicht-live-Beine (mit Begründung je Zeile),
-  `_RETIRED_TAGS` die abgelösten Generationen (AIM1, MIS1, …; reine
-  Report-Klassifikation, kein Posting-Effekt).
-- `SHADOW_ARTIFACTS` — Klasse-(A)-Tags → Artefakt-Dateinamen je Richtung.
-  `load_shadow_artifact(tag, dir)` lädt aus `staging_models/` (fail-soft: fehlt
-  das Artefakt, läuft der Bot ohne Shadow-Bein weiter — Artefakt-Präsenz ist
-  Michis Promotions-Entscheid).
-- `score_artifact(artifact, feature_row)` — **rohe** `predict_proba[:,1]` (der
-  Isotonic-Kalibrator ist Reporting; `pick_threshold_safe` wählt den Threshold
-  auf der rohen Proba — identisch zu Bot 13/25). `artifact_threshold(artifact)`
-  liest `optimal_threshold` (None ⇒ kein Operating-Point, s. u.).
+- `leg_status(tag, direction) -> live|shadow|retired` — default **live**.
+  `_LIFECYCLE` lists only non-live legs (with a rationale per line),
+  `_RETIRED_TAGS` the superseded generations (AIM1, MIS1, …; a pure
+  reporting classification, no posting effect).
+- `SHADOW_ARTIFACTS` — class-(A) tags → artifact filenames per direction.
+  `load_shadow_artifact(tag, dir)` loads from `staging_models/` (fail-soft:
+  if the artifact is missing, the bot keeps running without the shadow leg
+  — artifact presence is Michi's promotion decision).
+- `score_artifact(artifact, feature_row)` — **raw** `predict_proba[:,1]`
+  (the isotonic calibrator is reporting-only; `pick_threshold_safe` picks
+  the threshold on the raw proba — identical to bot 13/25).
+  `artifact_threshold(artifact)` reads `optimal_threshold` (None ⇒ no
+  operating point, see below).
 
 ### `core/signal_post.py :: post_shadow_ai_signal(...)`
-Schreibt **nur** die `ai_signals`-Zeile (kein `telegram_outbox`) plus die
-`ml_predictions_master`-Shadow-Zeile (`posted=False`, deduped via `log_prediction`).
-Dedupt gegen offene Trades (`has_open_ai_signal`), committet **nicht** (Regel 8:
-der Caller schließt die Transaktion). Trackt genau `targets[:n_show]`
-(P2.31-Parität — der Monitor scored die veröffentlichten TPs).
+Writes **only** the `ai_signals` row (no `telegram_outbox`) plus the
+`ml_predictions_master` shadow row (`posted=False`, deduped via
+`log_prediction`). Dedupes against open trades (`has_open_ai_signal`),
+does **not** commit (rule 8: the caller closes the transaction). Tracks
+exactly `targets[:n_show]` (P2.31 parity — the monitor scores the
+published TPs).
 
-### Emit-Regel je Bein
+### Emit rule per leg
 ```
 prob = score_artifact(shadow_model, features)
 thr  = artifact_threshold(shadow_model)
@@ -102,111 +108,120 @@ else:                           # unter Threshold: nur Prediction-Log wie heute
 
 ---
 
-## 4. Tag- & Lifecycle-Konvention → Report + Tracker
+## 4. Tag & lifecycle convention → report + tracker
 
-- Shadow-Trades tragen die **`model_id`-Meta** des Artefakts (Regel 6): neue
-  Generationen haben ohnehin einen neuen Tag (ATS2 vs. ATS1) → keine Kollision
-  mit `has_open_ai_signal` oder in `closed_ai_signals`.
-- Die Lifecycle-Klassifikation ist **pro `(tag, direction)`** — so trennt allein
-  die Richtung ein live SHORT-Bein von einem geshadowten LONG-Bein desselben
-  Modells, ohne Schema-Änderung an Live-Tabellen.
-- Der Sentiment-Report (Teil 2, `23_market_tracker.py`) liest `leg_status(...)`
-  und gliedert in **aktiv / shadow / retired**. `tools/track_shadow_model.py`
-  liest die realisierten Shadow-Rows weiterhin per Tag-Präfix aus
-  `closed_ai_signals`.
-
----
-
-## 5. Referenz-Verdrahtung (in diesem PR)
-
-### Bot 12 — ATS2 (Klasse A)
-Der Live-Pfad baut bereits den geteilten `build_ats_features`-Vektor (ATS2-
-Parität). ATS2 scored **denselben** `X_live` auf demselben TSI-Crossover-Event →
-getreue Vorschau. `_emit_ats2_shadow()` läuft VOR der ATS1-Band-Logik
-(unabhängig von der ATS1-Entscheidung), baut bei `prob >= 0,7825` die identische
-HVN/S-R-Geometrie und schreibt einen Shadow-Trade unter Tag `ATS2`.
-
-### Bot 14 — ATB2 (Klasse A)
-ATB2 hat einen **eigenen** Detektor (`core/atb2_features.py`, bestätigte Pivots +
-geschlossener Ausbruch, EINE Quelle mit `walkforward run_atb2`). `_emit_atb2_shadow()`
-macht einen R1-cleanen `read_candles(include_forming=False)`-Read (≥1500 Kerzen,
-EMA200-SMA-Seed-Parität), `find_channel_breakout()` auf der letzten geschlossenen
-Kerze, `measured_move_targets()` und schreibt bei jedem Setup (ATB2
-`optimal_threshold` ist **null** — zu dünne Daten, muss erst Shadow sammeln) einen
-Shadow-Trade unter Tag `ATB2`. Läuft unabhängig von der ATB1-Trendlinien-Logik.
-
-Beide kapseln jeden Fehler — der Live-Pfad (ATS1/ATB1) darf nie betroffen sein.
+- Shadow trades carry the artifact's **`model_id` meta** (rule 6): new
+  generations have a new tag anyway (ATS2 vs. ATS1) → no collision with
+  `has_open_ai_signal` or in `closed_ai_signals`.
+- The lifecycle classification is **per `(tag, direction)`** — so
+  direction alone separates a live SHORT leg from a shadowed LONG leg of
+  the same model, without a schema change on live tables.
+- The sentiment report (part 2, `23_market_tracker.py`) reads
+  `leg_status(...)` and groups into **active / shadow / retired**.
+  `tools/track_shadow_model.py` still reads the realized shadow rows by
+  tag prefix from `closed_ai_signals`.
 
 ---
 
-## 6. Fleet-weiter Rollout — Pro-Bot-Checkliste
+## 5. Reference wiring (in this PR)
 
-Für jedes weitere Bein gilt dasselbe rein-additive Muster:
+### Bot 12 — ATS2 (class A)
+The live path already builds the shared `build_ats_features` vector (ATS2
+parity). ATS2 scores the **same** `X_live` on the same TSI crossover
+event → a faithful preview. `_emit_ats2_shadow()` runs before the ATS1
+band logic (independent of the ATS1 decision), builds the identical
+HVN/S-R geometry at `prob >= 0,7825` and writes a shadow trade under tag
+`ATS2`.
 
-1. **Ist-Gating verifizieren:** Postet das Bein heute live? (Bot-Code lesen, NICHT
-   raten — Default-LIVE schützt nur, solange die Registry stimmt.) Nur wirklich
-   nicht-live Beine eintragen.
-2. **Registry pflegen:** `_LIFECYCLE[(TAG, DIR)] = SHADOW` mit Begründung; bei
-   Klasse (A) zusätzlich `SHADOW_ARTIFACTS[TAG]` + Artefakt nach `staging_models/`.
-3. **Emit verdrahten:** am Nicht-Post-Zweig des Bots `post_shadow_ai_signal(...)`
-   nach der Emit-Regel (§3), in eigenem try/except gekapselt.
-4. **Feature-Parität:** den GETEILTEN Builder des Modells verwenden (Regel 7) —
-   Trainer == Serving. Kein neuer Feature-Pfad.
-5. **Test:** DB-freier Unit-Test (Muster `backtest/test_shadow_gate.py`): kein
-   `telegram_outbox`, `ai_signals` geschrieben, `posted=False`.
+### Bot 14 — ATB2 (class A)
+ATB2 has its **own** detector (`core/atb2_features.py`, confirmed pivots
++ closed breakout, one source with `walkforward run_atb2`).
+`_emit_atb2_shadow()` does an R1-clean `read_candles(include_forming=False)`
+read (≥1500 candles, EMA200-SMA-seed parity), `find_channel_breakout()`
+on the last closed candle, `measured_move_targets()` and writes a shadow
+trade under tag `ATB2` on every setup (ATB2's `optimal_threshold` is
+**null** — data too thin, has to collect shadow first). Runs
+independently of the ATB1 trendline logic.
 
-**Kandidaten-Roster (Klasse A/B, nicht promotet — Quelle Roster-Validierung
-2026-07-14 + MODEL_INTENT + Staging-Inventar) — ALLE in diesem PR verdrahtet:**
+Both encapsulate every error — the live path (ATS1/ATB1) must never be
+affected.
 
-| Bot | Shadow-Tag | Artefakt (staging) | Klasse | Kollision? |
+---
+
+## 6. Fleet-wide rollout — per-bot checklist
+
+The same purely-additive pattern applies to every further leg:
+
+1. **Verify the current gating:** does the leg post live today? (read the
+   bot code, do NOT guess — default-live only protects as long as
+   the registry is correct.) Only enter legs that are genuinely not live.
+2. **Maintain the registry:** `_LIFECYCLE[(TAG, DIR)] = SHADOW` with a
+   rationale; for class (A) additionally `SHADOW_ARTIFACTS[TAG]` +
+   artifact to `staging_models/`.
+3. **Wire the emit:** on the bot's not-posted branch,
+   `post_shadow_ai_signal(...)` following the emit rule (§3), encapsulated
+   in its own try/except.
+4. **Feature parity:** use the model's shared (GETEILTEN) builder (rule
+   7) — trainer == serving. No new feature path.
+5. **Test:** a DB-free unit test (pattern `backtest/test_shadow_gate.py`):
+   no `telegram_outbox`, `ai_signals` written, `posted=False`.
+
+**Candidate roster (class A/B, not promoted — source: roster validation
+2026-07-14 + MODEL_INTENT + staging inventory) — ALL wired up in this
+PR:**
+
+| Bot | Shadow tag | Artifact (staging) | Class | Collision? |
 |---|---|---|---|---|
-| 12 | **ATS2** | `ats2_model_{L,S}.pkl` | A | nein (live = ATS1) |
-| 14 | **ATB2** | `atb2_model_{L,S}.pkl` | A | nein (live = ATB1) |
-| 9 | **SRA2** | `sra2_model_{L,S}.json` | A | nein (live = SRA1) |
-| 13 | **RUB3** | `rub2_model_LONG.pkl` | B | **ja → Challenger-Tag** (live-LONG postet "RUB2") |
-| 10 | **EPD3** | `epd2_model_{L,S}.pkl` | B | **ja → Challenger-Tag** (live postet "EPD2") |
+| 12 | **ATS2** | `ats2_model_{L,S}.pkl` | A | no (live = ATS1) |
+| 14 | **ATB2** | `atb2_model_{L,S}.pkl` | A | no (live = ATB1) |
+| 9 | **SRA2** | `sra2_model_{L,S}.json` | A | no (live = SRA1) |
+| 13 | **RUB3** | `rub2_model_LONG.pkl` | B | **yes → challenger tag** (live-LONG posts "RUB2") |
+| 10 | **EPD3** | `epd2_model_{L,S}.pkl` | B | **yes → challenger tag** (live posts "EPD2") |
 
-**Challenger-Tag-Konvention (RUB3/EPD3):** Wenn der Retrain ein LIVE-Bein
-herausfordert, das bereits unter DEMSELBEN Tag postet, bekommt der Shadow einen
-eigenen Generations-Tag (Operator-Entscheid Michi, Regel 6). Grund ist nicht nur
-die Attribution: der Active-Trade-Check dieser Bots (`model IN (tag, legacy_tag)`)
-würde sonst einen Shadow-Trade eine LIVE-Position blockieren lassen — Verletzung
-der rein-additiven Invariante. RUB2-SHORT bleibt live "RUB2"; das Live-EPD bleibt
-"EPD2". Der Artefakt-Dateiname trägt weiter die Retrain-Generation (`rub2_*`,
-`epd2_*`); nur der geschriebene Tag ist der kollisionsfreie Challenger.
+**Challenger-tag convention (RUB3/EPD3):** if the retrain challenges a
+LIVE leg that already posts under the same (DEMSELBEN) tag, the shadow
+gets its own generation tag (operator decision Michi, rule 6). The
+reason isn't just attribution: these bots' active-trade check
+(`model IN (tag, legacy_tag)`) would otherwise let a shadow trade block a
+LIVE position — a violation of the purely-additive invariant. RUB2-SHORT
+stays live "RUB2"; the live EPD stays "EPD2". The artifact filename
+still carries the retrain generation (`rub2_*`, `epd2_*`); only the
+written tag is the collision-free challenger.
 
-**Nicht-Kandidaten:** TD2_4H / BB2_4H — bereits promotet/live (2026-07-14 Deploy).
-QM2 — existiert noch nicht (QM-Rework ist ein künftiger Task).
+**Non-candidates:** TD2_4H / BB2_4H — already promoted/live (2026-07-14
+deploy). QM2 — doesn't exist yet (the QM rework is a future task).
 
-Kein stiller Cap: der Roster deckt jeden nicht-promoteten Retrain mit ladbarem
-Staging-Artefakt ab; Ausnahmen sind oben mit Grund benannt.
+No silent cap: the roster covers every not-yet-promoted retrain with a
+loadable staging artifact; exceptions are named above with a reason.
 
-**Monitor-Last:** Shadow-Trades erhöhen den Arbeitssatz von `8_ai_trade_monitor`
-(mehr offene `ai_signals`-Zeilen). Bei breitem Rollout die offene-Zeilen-Zahl
-beobachten; die `has_open_ai_signal`-Dedup je `(symbol, dir, tag)` begrenzt die
-Vervielfachung pro Bein.
+**Monitor load:** shadow trades increase the working set of
+`8_ai_trade_monitor` (more open `ai_signals` rows). Watch the open-row
+count on a broad rollout; the `has_open_ai_signal` dedup per
+`(symbol, dir, tag)` limits the multiplication per leg.
 
 ---
 
-## 7. Ops / Promotion
+## 7. Ops / promotion
 
-- **Aktivierung** ist an einen Fleet-Restart gebunden (Michi, harte Regel 1) —
-  Shadow-Emission startet erst nach Neustart der betroffenen Bots. Bis dahin
-  keine Verhaltensänderung.
-- **Promotion eines Shadow-Beins → live:** Artefakt aus `staging_models/` in den
-  Repo-Root kopieren (harte Regel 2, Michi), Registry-Eintrag entfernen (Bein wird
-  wieder Default-LIVE) bzw. den Live-Serving-Pfad des Bots umstellen, Tag ggf.
-  auf die neue Generation heben. Ausschließlich Operator-Entscheid.
-- **⚠ PROMOTIONS-FALLE (natürlicher-Tag-Shadow ATS2/ATB2/SRA2):** Diese Shadow-Tags
-  sind IDENTISCH mit dem künftigen Live-Generations-Tag. Beim Promoten in den
-  Live-Slot MUSS der `_LIFECYCLE`-Eintrag **zuerst** entfernt werden. Sonst greift
-  der Active-Trade-Check des Bots (z. B. Bot 9: `model IN (artifact_tag, legacy_tag)`
-  → `IN ('SRA2','SRA1')`) auf die noch offenen SRA2-**Shadow**-Zeilen und
-  unterdrückt den ersten Live-SRA2-Post (Verletzung der additiven Invariante,
-  gefunden im adversarialen Review T-125). Nicht durch den Code auslösbar — nur
-  durch Promotion OHNE Registry-Update. Die Challenger-Tags RUB3/EPD3 sind hiervon
-  frei (eigener Tag ≠ Live-Tag); Bots 12/14 ebenfalls (hartkodierte Live-Tags
-  ATS1/ATB1). Merke: **Promotion = Artefakt kopieren UND `_LIFECYCLE`-Zeile löschen,
-  in einem Schritt.**
-- **Abschalten:** `KYTHERA_SHADOW_POSTING=0` (fleet-weit) oder Registry-Eintrag
-  entfernen (einzelnes Bein zurück auf Default-LIVE-Verhalten des Bots).
+- **Activation** is tied to a fleet restart (Michi, hard rule 1) — shadow
+  emission only starts after the affected bots restart. No behaviour
+  change until then.
+- **Promoting a shadow leg → live:** copy the artifact from
+  `staging_models/` to the repo root (hard rule 2, Michi), remove the
+  registry entry (the leg goes back to default-live) or switch over the
+  bot's live serving path, bump the tag to the new generation if
+  applicable. Exclusively an operator decision.
+- **⚠ PROMOTIONS-FALLE (promotion trap; natural-tag shadow
+  ATS2/ATB2/SRA2):** these shadow tags are identical (IDENTISCH) to the
+  future live-generation tag. When promoting into the live slot, the
+  `_LIFECYCLE` entry MUST be removed **first**. Otherwise the bot's
+  active-trade check (e.g. bot 9: `model IN (artifact_tag, legacy_tag)` →
+  `IN ('SRA2','SRA1')`) hits the still-open SRA2 **shadow** rows and
+  suppresses the first live SRA2 post (violation of the additive
+  invariant, found in the adversarial review T-125). Not triggerable by
+  the code alone — only by a promotion without a registry update. The
+  challenger tags RUB3/EPD3 are free of this (own tag ≠ live tag); bots
+  12/14 likewise (hardcoded live tags ATS1/ATB1). Remember: **promotion =
+  copy the artifact AND delete the `_LIFECYCLE` line, in one step.**
+- **Deactivating:** `KYTHERA_SHADOW_POSTING=0` (fleet-wide) or remove the
+  registry entry (single leg back to the bot's default-live behaviour).

@@ -1,50 +1,50 @@
-# Batch 2 Report — AI-Bot Signal-Quality
+# Batch 2 Report — AI Bot Signal Quality
 
 **Target files:** `10_pump_dump_detector.py`, `11_ai_mis_bot.py`, `12_ai_ats_bot.py`, `13_ai_rub_bot.py`, `14_ai_atb_bot.py`, `18_ai_abr1_bot.py`
 
 ## Completed
 
-### #17 — RUB Bot Cooldown vor ML-Prediction (13_ai_rub_bot.py)
-`check_cooldown()` is now vor `predict_proba()` aufgerufen. Bei 500 Coins × mehreren Event-Typen spart das deutlich CPU, wenn die meisten Coins im Cooldown stehen. Der Shadow-Log für abgelehnte Trades (prob < threshold) läuft weiterhin nach der Prediction.
+### #17 — RUB bot cooldown before ML prediction (13_ai_rub_bot.py)
+`check_cooldown()` is now called before `predict_proba()`. With 500 coins × several event types, this saves significant CPU when most coins are in cooldown. The shadow log for rejected trades (prob < threshold) still runs after the prediction.
 
-### #20 — ATB NaN/Inf-Absicherung (14_ai_atb_bot.py)
-Zusätzliches `replace([inf, -inf], nan).fillna(0)` nach dem Feature-Bau. Das eigentliche Refactoring (Indikatoren aus DB statt pandas_ta) habe ich NICHT gemacht — dokumentiert mit Begründung: Da das ML-Modell bereits auf pandas_ta-Werten trainiert wurde, würde ein Wechsel zu DB-Werten die Feature-Semantik ändern und erfordert Re-Training.
+### #20 — ATB NaN/Inf safeguard (14_ai_atb_bot.py)
+Additional `replace([inf, -inf], nan).fillna(0)` after feature construction. I did NOT do the actual refactor (indicators from DB instead of pandas_ta) — documented with reasoning: since the ML model was already trained on pandas_ta values, switching to DB values would change the feature semantics and require retraining.
 
-### #24 — RUB get_f robuster (13_ai_rub_bot.py)
-`get_f()` prüfte vorher nur auf `None`. Now auch auf NaN/Inf geprüft, defensive `float()`-Konvertierung mit Fallback. Verhindert Crashes bei frischen Coins mit Warmup-Phase.
+### #24 — RUB get_f made more robust (13_ai_rub_bot.py)
+`get_f()` previously only checked for `None`. Now it also checks for NaN/Inf, with a defensive `float()` conversion and fallback. Prevents crashes for fresh coins in the warm-up phase.
 
-### #25 — ABR1 defensive Features (18_ai_abr1_bot.py)
-`X_event` wird vor `predict_proba()` via `replace([inf, -inf], nan).fillna(0)` bereinigt.
+### #25 — ABR1 defensive features (18_ai_abr1_bot.py)
+`X_event` is cleaned before `predict_proba()` via `replace([inf, -inf], nan).fillna(0)`.
 
-### #27 — MIS1 Threshold-Loading loggen (11_ai_mis_bot.py)
-Beim Laden der Modelle is now explizit geloggt welche Thresholds aus den separaten pkl-Files übernommen wurden. This means fällt Drift zwischen Modell-Version und Threshold-Datei sofort auf. Keine Code-Änderung an der Lade-Logik selbst — sie ist bereits korrekt, nur besser sichtbar.
+### #27 — MIS1 threshold loading logged (11_ai_mis_bot.py)
+When loading the models, it is now explicitly logged which thresholds were taken from the separate pkl files. This means drift between model version and threshold file is immediately noticeable. No code change to the loading logic itself — it was already correct, just made more visible.
 
-### #74 — ABR1 SUCCESS_CLASS_IDX dokumentieren (18_ai_abr1_bot.py)
-Der Wert `SUCCESS_CLASS_IDX=0` wurde mit einem ausführlichen Kommentar versehen: Standard-Konvention wäre `1`, hier ist aber `0` aus historischen Gründen. **Die tatsächliche Korrektheit muss gegen das Training-Notebook verifiziert werden** — wenn das Modell auf `y=1=success` trainiert wurde, MUSS hier `1` stehen. Ich kann das ohne Zugriff aufs Training nicht entscheiden.
+### #74 — ABR1 SUCCESS_CLASS_IDX documented (18_ai_abr1_bot.py)
+The value `SUCCESS_CLASS_IDX=0` was given a detailed comment: the standard convention would be `1`, but here it's `0` for historical reasons. **Actual correctness must be verified against the training notebook** — if the model was trained on `y=1=success`, this MUST be `1` here. I cannot decide this without access to the training.
 
-### #75 — ABR1 asymmetrische Thresholds dokumentieren (18_ai_abr1_bot.py)
-Kommentar zur Begründung der LONG=0.60/SHORT=0.80-Asymmetrie (historisch mehr False Positives bei SHORT-Setups in Bull-Phasen).
+### #75 — ABR1 asymmetric thresholds documented (18_ai_abr1_bot.py)
+Comment explaining the LONG=0.60/SHORT=0.80 asymmetry (historically more false positives on SHORT setups during bull phases).
 
-### #76 — ABR1 minute-Filter removed (18_ai_abr1_bot.py)
-Der Filter `retest_candle['open_time'].minute != 0` war wirkungslos weil 1h-Kerzen IMMER `minute == 0` haben. Die aktuelle (laufende) Kerze wird bereits in line 219 via `df = df[df['open_time'] < current_hour_utc]` abgeschnitten, der Filter war also redundant. Entfernt + Kommentar zur Klarstellung.
+### #76 — ABR1 minute filter removed (18_ai_abr1_bot.py)
+The filter `retest_candle['open_time'].minute != 0` was ineffective because 1h candles ALWAYS have `minute == 0`. The current (running) candle is already cut off at line 219 via `df = df[df['open_time'] < current_hour_utc]`, so the filter was redundant. Removed + comment for clarification.
 
-## Kein Bug / als false alarm eingeordnet
+## Not a bug / classified as false alarm
 
-### #39 — Pump/Dump Volumen-Bestätigung
-Nach genauerem Review: Der preisbasierte Alert in Block A) des Detectors ist bewusst ein **Market-Notification-Alert** (e.g. für News-Events und schnelle Bewegungen), nicht ein Trade-Signal. Eine zusätzliche Volumen-Bestätigung würde die Sensitivität reduzieren und den Use-Case verändern. Der ML-Teil in Block B) hat bereits Volumen-Features im Modell integriert.
+### #39 — Pump/dump volume confirmation
+After closer review: the price-based alert in block A) of the detector is deliberately a **market notification alert** (e.g. for news events and fast moves), not a trade signal. An additional volume confirmation would reduce sensitivity and change the use case. The ML part in block B) already has volume features integrated into the model.
 
-### #40 — MIS1 nutzt nur 1h
-false alarm meiner ursprünglichen Analyse: MIS1 verarbeitet 1h-OHLCV-Daten, aber testet **alle 8 Horizon-Modelle** (8h/24h/72h/168h × pump/dump) gegen diese Daten und wählt das beste (siehe `for horizon, cfg in PUMP_MODELS.items()` + `candidates.sort`). Genau das ist das designte Verhalten.
+### #40 — MIS1 only uses 1h
+False alarm from my original analysis: MIS1 processes 1h OHLCV data, but tests **all 8 horizon models** (8h/24h/72h/168h × pump/dump) against this data and picks the best one (see `for horizon, cfg in PUMP_MODELS.items()` + `candidates.sort`). That is exactly the designed behaviour.
 
 ## Deferred
 
-### #28 — Master Bot symbol_cleanup-Regex
-Gehört zu `15_ai_master_bot.py` → wird in Batch 3 behandelt.
+### #28 — Master bot symbol_cleanup regex
+Belongs to `15_ai_master_bot.py` → will be handled in Batch 3.
 
 ## Verification
-Alle 6 Dateien parse cleanly.
+All 6 files parse cleanly.
 
-## Recommendations für späteren Review
+## Recommendations for later review
 
-- **ABR1 SUCCESS_CLASS_IDX**: Bitte **manuell gegen das Training-Notebook verifizieren**. Wenn dort `y=1` für gewinnende Trades steht, muss hier auf `1` geändert werden. Der aktuelle Wert `0` ist nur sicher wenn explizit `y=0` als "success" trainiert wurde.
-- **ATB Indikatoren aus DB**: Mittelfristig sinnvoll, aber nur bei einem Retraining des Modells. Als eigenständiger Fix zu riskant.
+- **ABR1 SUCCESS_CLASS_IDX**: Please **verify manually against the training notebook**. If `y=1` denotes winning trades there, this must be changed to `1` here. The current value `0` is only safe if `y=0` was explicitly trained as "success".
+- **ATB indicators from DB**: sensible mid-term, but only alongside a retrain of the model. Too risky as a standalone fix.

@@ -1,36 +1,36 @@
-# Systemweiter HTML-Cleanup: Telegram-API-Konformität
+# System-wide HTML cleanup: Telegram API compliance
 
-## Was wurde gefixt
+## What was fixed
 
-Alle Bot-Dateien die HTML-Nachrichten an Telegram senden hatten `style="..."`-Attribute in ihren Tags. Diese sind laut Telegram Bot API **offiziell nicht erlaubt** und wurden nur durch Nachsichtigkeit der Parser toleriert. Bei komplexeren Messages mit vielen verschachtelten Tags triggerten sie stille Parse-Fehler — die Messages wurden dann als `failed` markiert und erschienen nie.
+All bot files that send HTML messages to Telegram had `style="..."` attributes on their tags. These are **officially not allowed** per the Telegram Bot API and were only tolerated by lenient parsers. On more complex messages with many nested tags they triggered silent parse failures — the messages were then marked as `failed` and never appeared.
 
-**Akut gefixtes Problem**: Der stündliche Per-Bot-Performance-Post mit Kelly-Sizing wurde nicht gerendert.
+**Acute problem fixed**: The hourly per-bot performance post with Kelly sizing was not rendering.
 
-**Präventiv gefixt**: Alle anderen Bot-Posts die das gleiche Pattern nutzten. Aktuell funktionieren sie zwar, aber jeder Telegram-Client-Update könnte sie brechen.
+**Preventively fixed**: All other bot posts that used the same pattern. They currently work, but any Telegram client update could break them.
 
-## Telegram-API-HTML-Regel (aus Bot API Doku)
+## Telegram API HTML rule (from Bot API docs)
 
-Erlaubte Tags:
+Allowed tags:
 ```
 <b>, <strong>, <i>, <em>, <u>, <ins>, <s>, <strike>, <del>,
 <code>, <pre>, <a>, <span>, <tg-spoiler>, <blockquote>
 ```
 
-Erlaubte Attribute:
-- `href="..."` bei `<a>` (Pflicht)
-- `class="tg-spoiler"` bei `<span>` (nur dieser eine Wert)
-- `class="language-xxx"` bei `<code>` innerhalb `<pre>`
+Allowed attributes:
+- `href="..."` on `<a>` (required)
+- `class="tg-spoiler"` on `<span>` (only this one value)
+- `class="language-xxx"` on `<code>` inside `<pre>`
 
-**Alles andere ist verboten** — besonders:
+**Everything else is forbidden** — in particular:
 - `style="..."` (e.g. `style="color:red; font-size:16px"`)
-- `class="..."` mit anderen Werten
-- `font-family`, `background`, `border-left`, `padding-left` etc. als Attribute
+- `class="..."` with other values
+- `font-family`, `background`, `border-left`, `padding-left` etc. as attributes
 
-## Was genau geändert wurde
+## What exactly was changed
 
-Alle `style="..."` und `style='...'`-Attribute wurden aus allen Tags removed. Die Tags selbst bleiben identisch, nur die Attribute verschwinden.
+All `style="..."` and `style='...'` attributes were removed from all tags. The tags themselves stay identical, only the attributes disappear.
 
-**Beispiel vor dem Fix** (aus `11_ai_mis_bot.py`):
+**Example before the fix** (from `11_ai_mis_bot.py`):
 ```html
 <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; 
 font-family:'Courier New'; font-size:15px; border-left:6px solid #00ff00;">
@@ -40,7 +40,7 @@ font-family:'Courier New'; font-size:15px; border-left:6px solid #00ff00;">
 </pre>
 ```
 
-**Nach dem Fix**:
+**After the fix**:
 ```html
 <pre>
 <b>💎 AI MIS TRADE</b>
@@ -49,11 +49,11 @@ font-family:'Courier New'; font-size:15px; border-left:6px solid #00ff00;">
 </pre>
 ```
 
-Die **Formatierung im Chat** (fett, preformatted) bleibt identisch — Telegram rendert `<b>` und `<pre>` nativ. **Weg sind nur die Farben** — die hätten sowieso nie angezeigt werden dürfen (Telegram-App ignoriert sie).
+The **formatting in chat** (bold, preformatted) stays identical — Telegram renders `<b>` and `<pre>` natively. **Only the colours are gone** — they should never have been displayed anyway (the Telegram app ignores them).
 
-## Welche Dateien wurden geändert
+## Which files were changed
 
-| Datei | Style-Tags removed |
+| File | Style tags removed |
 |---|---|
 | `23_market_tracker.py` | 28 |
 | `11_ai_mis_bot.py` | 21 |
@@ -69,24 +69,24 @@ Die **Formatierung im Chat** (fett, preformatted) bleibt identisch — Telegram 
 | `20_funding_logger_bot.py` | 2 |
 | `19_whale_logger_bot.py` | 1 |
 | `24_quasimodo_bot.py` | 1 |
-| **Gesamt** | **135** |
+| **Total** | **135** |
 
-Nicht in diesem ZIP, aber ebenfalls betroffen (und sollte später auch gesäubert werden):
-- `7_pattern_detector.py` (geringere Priorität, nur 1 Tag)
-- `22_ip_pattern_bot.py` (derzeit deaktiviert im Watchdog)
-- `dashboard.py` (nicht Telegram-relevant — Web-Dashboard)
-- `core/charting.py` (nicht Telegram-relevant — matplotlib-Farben)
+Not in this ZIP, but also affected (and should be cleaned up later too):
+- `7_pattern_detector.py` (lower priority, only 1 tag)
+- `22_ip_pattern_bot.py` (currently disabled in the watchdog)
+- `dashboard.py` (not Telegram-relevant — web dashboard)
+- `core/charting.py` (not Telegram-relevant — matplotlib colours)
 
-## Wie verifiziert wurde
+## How it was verified
 
-- Alle 14 Dateien wurden durch einen strengen Auditor gejagt der **jedes** Tag-Attribut gegen die API-Whitelist prüft
-- Result: **0 verbotene Attribute** übrig
-- Python-Syntax aller Dateien ist weiterhin valide
-- Funktions-Signaturen und -Logik sind unverändert — nur die HTML-Strings wurden gestutzt
+- All 14 files were run through a strict auditor that checks **every** tag attribute against the API whitelist
+- Result: **0 forbidden attributes** left
+- Python syntax of all files is still valid
+- Function signatures and logic are unchanged — only the HTML strings were trimmed
 
 ## Deploy
 
-Alle Dateien aus dem ZIP nach `C:\_BOTS\crypto_trading_bot_v2\` überschreiben:
+Overwrite all files from the ZIP into `C:\_BOTS\crypto_trading_bot_v2\`:
 
 ```
 C:\_BOTS\crypto_trading_bot_v2\10_pump_dump_detector.py
@@ -105,9 +105,9 @@ C:\_BOTS\crypto_trading_bot_v2\24_quasimodo_bot.py
 C:\_BOTS\crypto_trading_bot_v2\25_smc_ml_sniper.py
 ```
 
-Dann Watchdog neu starten. Alle Bot-Messages werden weiterhin identisch formatiert erscheinen (fett, preformatted), nur die Per-Bot-Performance-Post rendert jetzt zuverlässig.
+Then restart the watchdog. All bot messages will keep appearing formatted identically (bold, preformatted); only the per-bot performance post now renders reliably.
 
-## Git-Commit
+## Git commit
 
 ```bash
 cd <projekt>
@@ -127,9 +127,6 @@ change for users - Telegram never rendered these style values anyway."
 git push
 ```
 
-## Falls nach Deploy etwas nicht mehr aussieht wie erwartet
+## If something doesn't look as expected after deploy
 
-Unwahrscheinlich aber möglich: Ein HTML-String hätte durch den Regex-Replace einen
-doppelten Leerzeichen bekommen könnten. Falls du irgendwo komische Formatierung
-siehst (doppelte Leerzeichen in Tag-Attributen), sag Bescheid und ich korrigiere
-den konkreten Fall.
+Unlikely but possible: an HTML string could have picked up a double space through the regex replace. If you see odd formatting anywhere (double spaces in tag attributes), let me know and I'll fix the specific case.

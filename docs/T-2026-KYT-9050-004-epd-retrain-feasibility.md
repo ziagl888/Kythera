@@ -1,72 +1,73 @@
-# T-2026-KYT-9050-004 — EPD-Detektor-Retrain auf den neuen Feature-Definitionen
+# T-2026-KYT-9050-004 — EPD detector retrain on the new feature definitions
 
-**Stand:** 2026-08-01 · **Auftrag:** `pump_dump_model.pkl` (Bot 10) wurde auf der ALTEN
-Feature-Definition gefittet; P1.39 + die T-035-Ratennormierung stellten vier der zehn
-Modell-Inputs um (`vol_ratio`, `p_chg_60s`, `buy_pres`, `volat`). Retrain auf der neuen
-Definition, Schnitt nach dem Cut-Point, Artefakt nur nach `staging_models/`, neuer Tag.
-
----
-
-## Verdikt
-
-**Der Retrain ist heute nicht ausführbar. Kein Artefakt erzeugt — und keins, das man
-erzeugen sollte.** Der Blocker ist der Kalender, nicht die Datenqualität: die
-Post-Cut-Historie ist 22,0 Tage lang, ein leckagefreier chronologischer 70/15/15-Split
-mit dem 7-Tage-Purge-Gap braucht ~50 Tage, ein Operating-Point mit Rückhalt ~122 Tage.
-
-**Zweitbefund, der die Dringlichkeit senkt:** die Verschiebung, wegen der dieser Task
-existiert, ist auf der Population, die das Alert-Gate passiert, **nicht von gewöhnlicher
-Marktdrift zu unterscheiden** — und das deployte Modell diskriminiert auf Post-Cut-Daten
-out-of-sample weiter auf seinem eigenen Niveau. Es gibt kein Anzeichen für ein durch die
-Definitionsänderung kaputtes Serving-Modell.
-
-**Empfehlung:** Wiedervorlage **2026-11-09**, Bot 10 unverändert weiterlaufen lassen.
-Kein Deploy, kein Gate-Flip, kein Promote — nichts davon steht hier zur Debatte.
+**Status:** 2026-08-01 · **Task:** `pump_dump_model.pkl` (bot 10) was fitted on the OLD
+feature definition; P1.39 + the T-035 rate normalisation changed four of the ten
+model inputs (`vol_ratio`, `p_chg_60s`, `buy_pres`, `volat`). Retrain on the new
+definition, cut after the cut point, artifact only into `staging_models/`, new tag.
 
 ---
 
-## 1. Cut-Point: belegt, nicht übernommen
+## Verdict
 
-Der Brief nennt den Bot-10-Restart 2026-07-10 17:08:29Z. Gegenprobe an den Daten:
-stündliche `pump_dump_events`-Zählung am 2026-07-10 (UTC; der Detector ist der einzige
-Writer der Tabelle).
+**The retrain is not executable today. No artifact produced — and none that should be
+produced.** The blocker is the calendar, not the data quality: the
+post-cut history is 22.0 days long, a leak-free chronological 70/15/15 split
+with the 7-day purge gap needs ~50 days, an operating point with reserve ~122 days.
+
+**Secondary finding, which lowers the urgency:** the shift that this task
+exists for is, on the population that passes the alert gate,
+**not distinguishable from ordinary market drift** — and the deployed model keeps
+discriminating on post-cut data out-of-sample at its own level. There is no sign
+of a serving model broken by the definition change.
+
+**Recommendation:** revisit **2026-11-09**, leave bot 10 running unchanged.
+No deploy, no gate flip, no promote — none of that is up for debate here.
+
+---
+
+## 1. Cut point: evidenced, not just taken over
+
+The brief names the bot-10 restart 2026-07-10 17:08:29Z. Counter-check against the
+data: hourly `pump_dump_events` count on 2026-07-10 (UTC; the detector is the sole
+writer of the table).
 
 ```
 00–16 Uhr:  124 170  68  72  75  98 135 127 103  91  91  62  93  97 126  56 148
 17–23 Uhr:   24  33  20  10  20  21  29
 ```
 
-Der Bruch liegt exakt auf der Stunde des Restarts. Er ist **kein Feature-Effekt, sondern
-ein Gate-Effekt**: `f485d09` gab dem Stunden-Warmup einen Coverage- und Sample-Floor
-(vorher konnte ein einzelner überlebender Bucket die ganze Baseline stellen), und damit
-verschwand die Klasse von Müll-Events, die aus einem Ein-Sample-Nenner entstand. Die
-Ereignisrate fiel um ~5×.
+The break sits exactly on the hour of the restart. It is **not a feature effect but
+a gate effect**: `f485d09` gave the hourly warm-up a coverage and sample floor
+(previously a single surviving bucket could set the whole baseline), and that
+made the class of junk events that arose from a one-sample denominator vanish.
+The event rate dropped by ~5×.
 
-Der Restart schaltete drei Änderungen gemeinsam scharf — P1.39 (Index → Zeitstempel),
-die T-035-Ratennormierung von `p_chg_60s` und den wiederbelebten Volume-Gate. Der
-Cut-Point ist daher einer, nicht drei.
+The restart switched on three changes together — P1.39 (index → timestamp),
+the T-035 rate normalisation of `p_chg_60s` and the revived volume gate. The
+cut point is therefore one, not three.
 
-## 2. Der Datensatz ist gut — er ist nur zu kurz
+## 2. The dataset is good — it's just too short
 
-`tools/epd2_build_dataset.py --since '2026-07-10 17:00:00'` (2032 s, Job-Lock gehalten):
+`tools/epd2_build_dataset.py --since '2026-07-10 17:00:00'` (2032 s, job lock held):
 
 | | |
 |---|---|
-| Events nach Gates + 900s-Dedup | 4712 (2582 Pump/LONG, 2130 Dump/SHORT), 403 Symbole |
-| geschrieben | 4698 |
-| Verluste | `no_candles` 11, `no_ticker` 3, `no_window`/`stale_join`/`geometry_fail` 0 |
-| gelabelt | 4327 (7,9 % am 7-d-Horizont noch offen) |
-| Basisrate TP1 | LONG 58,9 %, SHORT 69,5 % |
-| Spanne | 22,0 Tage |
+| Events after gates + 900s dedup | 4712 (2582 pump/LONG, 2130 dump/SHORT), 403 symbols |
+| written | 4698 |
+| losses | `no_candles` 11, `no_ticker` 3, `no_window`/`stale_join`/`geometry_fail` 0 |
+| labelled | 4327 (7.9% still open at the 7-day horizon) |
+| base rate TP1 | LONG 58.9%, SHORT 69.5% |
+| span | 22.0 days |
 
-0,3 % Verlust. Die Pipeline funktioniert auf der neuen Definition einwandfrei.
+0.3% loss. The pipeline works cleanly on the new definition.
 
-### Warum der Split trotzdem leer ausgeht
+### Why the split still comes up empty
 
-`chrono_split` gibt Val und Test je das 15 %-Quantilsband der Signalzeiten; der Purge-Gap
-(7 d = Label-Horizont des Builders) schneidet davon vorne 7 Tage weg. Bei 22 Tagen Spanne
-ist das Band 3,3 Tage — **kürzer als der Gap**. Beide Slices sind leer, unabhängig von
-der Zeilenzahl. Echter Trainerlauf (`--strategy epd --model-id EPD4`):
+`chrono_split` gives val and test each the 15% quantile band of the signal times; the
+purge gap (7 d = the builder's label horizon) cuts 7 days off the front of that. At
+22 days of span, that band is 3.3 days — **shorter than the gap**. Both slices are
+empty, regardless of row count. Real trainer run
+(`--strategy epd --model-id EPD4`):
 
 ```
 epd2 LONG:  2378 Events | split 1664/0/0 | Basisrate TP1 58.9%
@@ -77,56 +78,58 @@ epd2 SHORT: 1949 Events | split 1364/0/0 | Basisrate TP1 69.5%
 epd2 SHORT: … ~50d Spanne (~28d mehr Datensammlung).
 ```
 
-Den Purge-Gap zu verkleinern wäre die naheliegende Abkürzung und ist die falsche: er ist
-per Konstruktion gleich dem Label-Horizont, und ein Label-Fenster aus dem Train-Slice,
-das in den Val-Slice hineinragt, ist genau die Zwillings-Leakage, gegen die der Gap steht.
-Ein 4-Tage-Horizont (deckt p95 der realen EPD3-Haltedauer: p50 8,1 h, p90 62,4 h,
-p95 97,4 h) verschöbe den Termin um drei Wochen und machte das Modell mit EPD2/EPD3
-unvergleichbar. Nicht gemacht.
+Shrinking the purge gap would be the obvious shortcut, and it's the wrong one: it
+is by construction equal to the label horizon, and a label window from the train
+slice reaching into the val slice is exactly the twin leakage the gap guards
+against. A 4-day horizon (covers p95 of the real EPD3 holding time: p50 8.1h,
+p90 62.4h, p95 97.4h) would shift the date by three weeks and make the model
+incomparable with EPD2/EPD3. Not done.
 
-### Kein Ausweg über mehr Historie
+### No way out via more history
 
-`tools/epd2_build_dataset.py` nimmt den Entry seit T-2026-CU-9050-035 aus `ticker_10s`
-und verweigert ein früheres `--since` — der alte Schätzer `close×(1+p_chg_60s/100)` ist
-seit der Ratennormierung schlicht falsch. **`ticker_10s` beginnt am 2026-07-07 11:19 UTC**,
-drei Tage VOR dem Cut-Point. Der Feb–Juli-Datensatz (85 031 Events), auf dem EPD2/EPD3
-gefittet wurden, ist mit dem heutigen Builder nicht mehr reproduzierbar.
+`tools/epd2_build_dataset.py` takes the entry since T-2026-CU-9050-035 from
+`ticker_10s` and refuses an earlier `--since` — the old estimator
+`close×(1+p_chg_60s/100)` is simply wrong since the rate normalisation.
+**`ticker_10s` starts on 2026-07-07 11:19 UTC**, three days BEFORE the cut point.
+The Feb–Jul dataset (85 031 events) on which EPD2/EPD3 were fitted is no longer
+reproducible with today's builder.
 
-Das ist die eigentliche Grenze: **die trainierbare Historie ist ticker-, nicht
-cut-point-gebunden.** Der vom Brief geforderte Schnitt am Cut-Point kostet drei Tage.
-Die Retention der Hypertable steht auf 365 Tagen (`core/ticker_10s.RETAIN_FOR`) — das
-Fenster wächst, es ist nicht gedeckelt.
+That's the real limit: **the trainable history is ticker-bound, not
+cut-point-bound.** The cut demanded by the brief at the cut point costs three
+days. The hypertable's retention stands at 365 days (`core/ticker_10s.RETAIN_FOR`) —
+the window is growing, it is not capped.
 
-## 3. Die Verschiebung ist kleiner als die Marktdrift
+## 3. The shift is smaller than market drift
 
-Zwei-Stichproben-KS je Feature, 14 d vor gegen 14 d nach dem Cut, gemessen gegen ein
-Nullband aus 15 benachbarten 14-d-Fensterpaaren der Vor-Cut-Historie (also gegen das,
-was gewöhnliche Regimewechsel ohnehin an Verschiebung erzeugen):
+Two-sample KS per feature, 14 d before vs. 14 d after the cut, measured against a
+null band from 15 neighbouring 14-day window pairs of the pre-cut history (i.e.
+against what ordinary regime changes produce anyway):
 
-| Feature | KS am Cut | Nullband-Median | Nullband-Max | über Nullband? |
+| Feature | KS at cut | Null-band median | Null-band max | above null band? |
 |---|---|---|---|---|
-| `volume_ratio`  | 0,0361 | 0,0624 | 0,4342 | nein |
-| `\|p_chg_60s\|` | 0,0796 | 0,0580 | 0,3355 | nein |
-| `buy_pressure`  | 0,1737 | 0,0798 | 0,2039 | nein |
-| `volatility`    | 0,0363 | 0,0627 | 0,3536 | nein |
+| `volume_ratio`  | 0,0361 | 0,0624 | 0,4342 | no |
+| `\|p_chg_60s\|` | 0,0796 | 0,0580 | 0,3355 | no |
+| `buy_pressure`  | 0,1737 | 0,0798 | 0,2039 | no |
+| `volatility`    | 0,0363 | 0,0627 | 0,3536 | no |
 
-n_pre = 20 084, n_post = 4682. Das kleinere Post-Fenster treibt die KS-Statistik nach
-oben, nicht nach unten — der Befund ist damit eher konservativ. Kein Feature verlässt das
-Band. Sichtbar ist ein Granularitätseffekt bei `buy_pressure` (p90 0,8333 → 1,0000): der
-Anteil steigender Diffs wird über kürzere Fenster grobkörniger, was der Code an
-`10_pump_dump_detector.py:1070-1074` bereits als bewusste Kadenz-Abhängigkeit führt.
+n_pre = 20 084, n_post = 4682. The smaller post window drives the KS statistic
+up, not down — the finding is thus conservative if anything. No feature leaves
+the band. Visible is a granularity effect on `buy_pressure` (p90 0.8333 →
+1.0000): the share of rising diffs gets coarser over shorter windows, which the
+code already carries at `10_pump_dump_detector.py:1070-1074` as a deliberate
+cadence dependency.
 
-**Einschränkung:** nur Randverteilungen. Eine gemeinsame Verschiebung bei unveränderten
-Rändern ist damit nicht ausgeschlossen.
+**Limitation:** marginal distributions only. A joint shift with unchanged
+margins is not ruled out by this.
 
-## 4. Das deployte Modell hält auf Post-Cut-Daten
+## 4. The deployed model holds up on post-cut data
 
-`epd3_model_{LONG,SHORT}.pkl` (Repo-Root, auf VOR-Cut-Daten gefittet) auf den
-Post-Cut-Events gescored — für dieses Modell strikt out-of-sample:
+`epd3_model_{LONG,SHORT}.pkl` (repo root, fitted on PRE-cut data) scored on the
+post-cut events — strictly out-of-sample for this model:
 
-**LONG** (n=2378, Live-Threshold 0,76) — AUC(TP1) 0,586, corr(prob, netPnL) +0,070
+**LONG** (n=2378, live threshold 0.76) — AUC(TP1) 0.586, corr(prob, netPnL) +0.070
 
-| Prob-Bucket | n | TP1 | Ø netto |
+| Prob bucket | n | TP1 | Avg net |
 |---|---|---|---|
 | 0,0–0,3 | 115 | 38,3 % | −5,33 % |
 | 0,3–0,4 | 165 | 45,5 % | −1,68 % |
@@ -136,131 +139,136 @@ Post-Cut-Events gescored — für dieses Modell strikt out-of-sample:
 | 0,7–0,8 | 384 | 65,4 % | −0,32 % |
 | 0,8–1,0 | 24 | 66,7 % | +0,36 % |
 
-**SHORT** (n=1949, Live-Threshold 0,6737) — AUC(TP1) 0,537, corr +0,041; am Threshold
-n=756 (38,8 %), WR 72,6 %, Ø +0,065 %/Trade.
+**SHORT** (n=1949, live threshold 0.6737) — AUC(TP1) 0.537, corr +0.041; at the
+threshold n=756 (38.8%), WR 72.6%, avg +0.065%/trade.
 
-Die LONG-Kalibrierung ist über den ganzen Bereich monoton in der TP1-Rate — das ist das
-Verhalten eines intakten Modells, nicht das eines out-of-distribution befragten. Damit ist
-die Prämisse des Tasks („Serving läuft gegen eine verschobene Verteilung") zwar formal
-richtig, in ihrer Wirkung aber nicht nachweisbar.
+The LONG calibration is monotonic in the TP1 rate across the whole range — that's
+the behaviour of an intact model, not one being queried out-of-distribution. So the
+task's premise ("serving is running against a shifted distribution") is formally
+correct but its effect is not demonstrable.
 
-**Nebenbefund, nicht Teil des Auftrags:** der operator-gesetzte LONG-Threshold 0,76
-(Volumenkappe, ausdrücklich kein Edge-Filter, T-2026-KYT-9050-037) nimmt auf dieser
-Population nur 81 Trades (3,4 %) zu Ø −0,760 %, während die Bänder 0,5–0,7 positiv sind.
-n=81 ist dünn und die Replay-Geometrie ist nicht die Live-Geometrie — das ist ein Hinweis
-für eine eigene Messung, kein Verdikt.
+**Side finding, not part of the task:** the operator-set LONG threshold 0.76
+(volume cap, explicitly not an edge filter, T-2026-KYT-9050-037) takes only 81
+trades (3.4%) on this population at avg −0.760%, while the 0.5–0.7 bands are
+positive. n=81 is thin and the replay geometry isn't the live geometry — that's a
+pointer for a dedicated measurement, not a verdict.
 
-## 5. Trainings- gegen Serving-Population (offen)
+## 5. Training vs. serving population (open)
 
-Der Builder dedupt Events auf 900 s je Symbol und spiegelt damit den Alert-Throttle von
-Bot 10. Der Throttle-Timer wird aber nur im **Live-Trade-Zweig** zurückgesetzt; für ein
-Bein, das nicht live postet, ist er inert, und gebremst wird nur über
-`has_open_ai_signal`. Gemessen (`closed_ai_signals`, Tag EPD3, ab 2026-07-11, Shadow und
-Live zusammen):
+The builder dedups events at 900s per symbol and thereby mirrors bot 10's alert
+throttle. But the throttle timer is reset only in the **live-trade branch**; for
+a leg that doesn't post live, it's inert, and throttling happens only via
+`has_open_ai_signal`. Measured (`closed_ai_signals`, tag EPD3, from 2026-07-11,
+shadow and live combined):
 
-| | Trainings-Zeilen/Tag | Live-Emissionen/Tag | Faktor |
+| | Training rows/day | Live emissions/day | Factor |
 |---|---|---|---|
 | LONG  | 108,9 | 295,9 | 2,7× |
 | SHORT | 88,6  | 478,6 | 5,4× |
 
-Die Serving-Population ist deutlich dichter als die, auf der trainiert und der Threshold
-gewählt wird. Das ist derselben Klasse wie der OOD-Fehler, den das `vol_ratio ≥ 5`-Gate
-in EPD2 behoben hat, nur eine Ebene tiefer. **Nicht in diesem Task verifiziert**, ob ein
-auf der deduplizierten Population gewählter Threshold die Live-Rate trifft — vor einem
-EPD4-Go-Live gehört das geklärt.
+The serving population is considerably denser than the one used for training and
+choosing the threshold. That's the same class of issue as the OOD error the
+`vol_ratio ≥ 5` gate fixed in EPD2, just one level deeper. **Not verified in this
+task** whether a threshold chosen on the deduplicated population hits the live
+rate — this should be clarified before an EPD4 go-live.
 
-## 6. Tag: EPD4 (reserviert, noch nicht registriert)
+## 6. Tag: EPD4 (reserved, not yet registered)
 
-Belegt sind **EPD1, EPD2, EPD3** — geprüft gegen `tools/bot_variants/index.legacy_artifact_slots()`,
-`core/shadow_gate.SHADOW_ARTIFACTS`, `_LIFECYCLE`, `_RETIRED_TAGS` sowie die
-DB-Historie (`ai_signals.model`, `closed_ai_signals.model`, `ml_predictions_master.model_name`).
-**EPD4 ist überall frei**, und `epd4_model_{LONG,SHORT}.pkl` beansprucht keinen fremden
-Loader-Slot (`tools/promotion_guard.check_staging_filename` → PASS).
+Taken are **EPD1, EPD2, EPD3** — checked against `tools/bot_variants/index.legacy_artifact_slots()`,
+`core/shadow_gate.SHADOW_ARTIFACTS`, `_LIFECYCLE`, `_RETIRED_TAGS` as well as the
+DB history (`ai_signals.model`, `closed_ai_signals.model`, `ml_predictions_master.model_name`).
+**EPD4 is free everywhere**, and `epd4_model_{LONG,SHORT}.pkl` doesn't claim a
+foreign loader slot (`tools/promotion_guard.check_staging_filename` → PASS).
 
-Registriert ist EPD4 **nicht** — ohne Artefakt wäre ein Eintrag in `core/shadow_gate` tote
-Konfiguration. Gepinnt ist stattdessen die Belegung selbst
-(`backtest/test_retrain_model_id.py::test_epd4_is_free_in_every_code_registry`), inklusive
-der Falle: der Gate-Default ist **LIVE**, ein unregistrierter Tag postet also live. Vor der
-ersten EPD4-Emission muss die `_LIFECYCLE`-Zeile stehen.
+EPD4 is **not** registered — without an artifact, an entry in `core/shadow_gate`
+would be dead configuration. What's pinned instead is the claim itself
+(`backtest/test_retrain_model_id.py::test_epd4_is_free_in_every_code_registry`), including
+the trap: the gate default is **LIVE**, so an unregistered tag posts live. Before the
+first EPD4 emission, the `_LIFECYCLE` row must be in place.
 
-### P1.45-Verdrahtung — warum hier bewusst kein Rewire
+### P1.45 wiring — why deliberately no rewire here
 
-Der Brief verlangt, `meta.model_id` in den Post-Pfad zu verdrahten oder präzise zu
-begründen, warum nicht. Der Befund:
+The brief demands that `meta.model_id` be wired into the posting path, or a
+precise reason given why not. The finding:
 
-1. Für den **Artefakt-Pfad** ist es längst verdrahtet: `module_tag = best_art["tag"]`
-   kommt aus `core.model_artifacts.load_artifact` und damit aus `meta.model_id`
-   (gepinnt in `backtest/test_epd_tag.py`).
-2. Für den **Challenger-/Shadow-Pfad** (`_emit_epd3_shadow`) ist der Tag eine Konstante —
-   und das muss so bleiben. Gemessen an den Artefakten selbst:
+1. For the **artifact path** it's long since wired: `module_tag = best_art["tag"]`
+   comes from `core.model_artifacts.load_artifact` and thus from `meta.model_id`
+   (pinned in `backtest/test_epd_tag.py`).
+2. For the **challenger/shadow path** (`_emit_epd3_shadow`) the tag is a constant —
+   and that must stay that way. Measured against the artifacts themselves:
 
-   | Datei | `meta.model_id` |
+   | File | `meta.model_id` |
    |---|---|
-   | `epd3_model_LONG.pkl` (Root, **LIVE**) | `EPD2` |
-   | `epd3_model_SHORT.pkl` (Root, live) | `EPD2` |
-   | `staging_models/epd3_model_SHORT.pkl` | `EPD3` (re-getaggt, T-2026-KYT-9050-057) |
-   | `staging_models/rub2_model_LONG.pkl` (= Artefakt von RUB3) | `RUB2` |
+   | `epd3_model_LONG.pkl` (root, **live**) | `EPD2` |
+   | `epd3_model_SHORT.pkl` (root, live) | `EPD2` |
+   | `staging_models/epd3_model_SHORT.pkl` | `EPD3` (re-tagged, T-2026-KYT-9050-057) |
+   | `staging_models/rub2_model_LONG.pkl` (= RUB3's artifact) | `RUB2` |
 
-   Würde `load_shadow_artifact` den Tag aus der Meta ziehen, postete das **live** laufende
-   EPD3-LONG-Bein ab sofort unter `EPD2` — es verschmölze mit dem geparkten Legacy-Bein,
-   und `has_open_ai_signal(symbol, dir, "EPD3")` fände seine eigenen offenen Trades nicht
-   mehr. Der hartkodierte Tag ist dort aktuell das Einzige, was die Generationen trennt.
+   If `load_shadow_artifact` pulled the tag from the meta, the **live-running**
+   EPD3-LONG leg would post under `EPD2` from that moment on — it would merge with
+   the parked legacy leg, and `has_open_ai_signal(symbol, dir, "EPD3")` would no
+   longer find its own open trades. The hardcoded tag is currently the only thing
+   keeping the generations apart there.
 
-   Der LONG-Tag-Defekt ist bekannt und bewusst offen: `tools/retag_artifact.py` verweigert
-   das Re-Dump, weil das Artefakt unter sklearn 1.9.0 gepickelt wurde und die Fleet 1.7.1
-   serviert (der Round-Trip würde den Isotonic-Kalibrator degradieren) — siehe
+   The LONG tag defect is known and deliberately left open:
+   `tools/retag_artifact.py` refuses the re-dump because the artifact was
+   pickled under sklearn 1.9.0 and the fleet serves 1.7.1 (the round trip would
+   degrade the isotonic calibrator) — see
    `backtest/test_epd3_artifact_model_id.py`.
 
-Die Verdrahtung an dieser Stelle ist also **kein fehlendes Feature, sondern durch einen
-offenen Artefakt-Defekt blockiert**. Der richtige Zeitpunkt ist der EPD4-Lauf: dessen
-Artefakt trägt `model_id = EPD4` von Geburt an (unten), und dann kann der Shadow-Pfad
-Register-Tag gegen Meta-Tag prüfen, ohne ein Live-Bein umzubenennen.
+The wiring at this point is therefore **not a missing feature but blocked by an
+open artifact defect**. The right moment is the EPD4 run: its artifact carries
+`model_id = EPD4` from birth (below), and then the shadow path can check the
+register tag against the meta tag without renaming a live leg.
 
-## 7. Was dieser Task am Code geändert hat
+## 7. What this task changed in the code
 
-- `tools/retrain_from_replay.py` — `run_epd(model_id=…)` + CLI-`--model-id`. Der Tag setzt
-  `meta.model_id` **und** den Dateinamen-Präfix gemeinsam (`artifact_slot`, identisch zu
-  `promotion_guard.tag_prefix`); sie auseinanderlaufen zu lassen ist genau der
-  Slot-Kaper-Fehler vom 2026-07-21. Default `EPD2` ⇒ unveränderter Lauf.
-- `tools/retrain_from_replay.py` — der degenerierte Split meldet jetzt die Rechnung statt
-  nur „übersprungen" (`split_shortfall`), und der Befund landet maschinenlesbar in
-  `retrain_<slot>_stats.json`. Das ist die Meldung, die der Lauf im November sehen wird.
-- `tools/retrain_pump.py` — `--model-id` durchgereicht.
-- `backtest/test_retrain_model_id.py` — neu, 14 Tests.
+- `tools/retrain_from_replay.py` — `run_epd(model_id=…)` + CLI `--model-id`. The tag
+  sets `meta.model_id` **and** the filename prefix together (`artifact_slot`,
+  identical to `promotion_guard.tag_prefix`); letting them drift apart is exactly
+  the slot-hijack bug from 2026-07-21. Default `EPD2` ⇒ unchanged run.
+- `tools/retrain_from_replay.py` — the degenerate split now reports the arithmetic
+  instead of just "skipped" (`split_shortfall`), and the finding lands
+  machine-readable in `retrain_<slot>_stats.json`. That's the message the run in
+  November will see.
+- `tools/retrain_pump.py` — `--model-id` passed through.
+- `backtest/test_retrain_model_id.py` — new, 14 tests.
 
-Kein Artefakt, keine Registrierung, kein Bot-Code. Das Retrain-Kommando für später steht
+No artifact, no registration, no bot code. The retrain command for later stands
 in `retrain_pump.py`:
 
 ```
 python tools/retrain_pump.py --since 2026-07-11 --model-id EPD4
 ```
 
-## 8. Wiedervorlage — **T-2026-KYT-9050-067**
+## 8. Revisit — **T-2026-KYT-9050-067**
 
-`(0,15 · Spanne − 7 d) · Dichte ≥ Zielzeilen`, Dichte konstant bei 108,9 (LONG) /
-88,6 (SHORT) gelabelten Zeilen/Tag angenommen:
+`(0,15 · Spanne − 7 d) · Dichte ≥ Zielzeilen`, density held constant at 108.9
+(LONG) / 88.6 (SHORT) labelled rows/day:
 
-| Datum | Val/Test je Richtung | Bewertung |
+| Date | Val/test per direction | Assessment |
 |---|---|---|
-| 2026-08-30 | ~50 | Split nicht mehr degeneriert, statistisch wertlos |
-| 2026-09-17 | ~300 | `pick_threshold_safe` (min_n=200) trägt nur ganz unten |
-| **2026-11-09** | **~1000** | erster Operating-Point mit Rückhalt bis ~p80 · **Empfehlung** |
+| 2026-08-30 | ~50 | split no longer degenerate, statistically worthless |
+| 2026-09-17 | ~300 | `pick_threshold_safe` (min_n=200) carries only at the very bottom |
+| **2026-11-09** | **~1000** | first operating point with reserve up to ~p80 · **recommendation** |
 
-Die Dichte ist eine Annahme — sie hängt an der Marktaktivität. Der Ist-Wert steht nach
-jedem Lauf in `staging_models/retrain_epd4_stats.json` (`missing_days`); ein Lauf kostet
-~35 min Build und ist damit die billigste Art, den Termin nachzuschärfen.
+The density is an assumption — it depends on market activity. The actual value
+sits after every run in `staging_models/retrain_epd4_stats.json`
+(`missing_days`); a run costs ~35 min build time and is thus the cheapest way to
+sharpen the date.
 
-**Offene Punkte für den späteren Lauf** (auch in `epd4_feasibility.json`):
+**Open points for the later run** (also in `epd4_feasibility.json`):
 
-1. `core/shadow_gate`: EPD4 in `_LIFECYCLE` (SHADOW) + `SHADOW_ARTIFACTS`, **bevor** Bot 10
-   emittiert — Default ist LIVE.
-2. `10_pump_dump_detector`: Emissions-Zweig für EPD4 (Muster `_emit_epd3_shadow`).
-3. `tools/verify_staging_artifacts.build_registry()`: die `epd`-Familie globt nur
-   `epd2_model_*.pkl`; ein EPD4-Artefakt würde still übersprungen.
-4. Trainings- gegen Serving-Population (§5) klären, bevor ein Threshold live geht.
+1. `core/shadow_gate`: EPD4 into `_LIFECYCLE` (SHADOW) + `SHADOW_ARTIFACTS`,
+   **before** bot 10 emits — default is LIVE.
+2. `10_pump_dump_detector`: emission branch for EPD4 (pattern `_emit_epd3_shadow`).
+3. `tools/verify_staging_artifacts.build_registry()`: the `epd` family only globs
+   `epd2_model_*.pkl`; an EPD4 artifact would be silently skipped.
+4. Training vs. serving population (§5) to be clarified before a threshold goes
+   live.
 
 ---
 
-**Rohdaten:** `staging_models/replay/epd4_feasibility.json` · `staging_models/retrain_epd4_stats.json`
-**Nicht committet:** der 3,4-MB-Ereignis-Datensatz (`epd4_events.jsonl`) — reproduzierbar
-über `tools/epd2_build_dataset.py --since '2026-07-10 17:00:00'`.
+**Raw data:** `staging_models/replay/epd4_feasibility.json` · `staging_models/retrain_epd4_stats.json`
+**Not committed:** the 3.4MB event dataset (`epd4_events.jsonl`) — reproducible
+via `tools/epd2_build_dataset.py --since '2026-07-10 17:00:00'`.

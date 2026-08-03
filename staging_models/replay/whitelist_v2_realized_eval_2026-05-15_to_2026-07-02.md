@@ -1,12 +1,12 @@
-# whitelist_v2 Flip — realisierte Entscheidungsgrundlage (T-2026-KYT-9050-007)
+# whitelist_v2 Flip — realized decision basis (T-2026-KYT-9050-007)
 
-**Fenster:** 2026-05-15 00:00:00 → 2026-08-01 22:31:57.404259+00:00 (UTC)
-**Snapshot:** 1590 Zellen, v2-Coverage 100.0%, Alter 0.38h
-(Analyzer lebt)
+**Window:** 2026-05-15 00:00:00 → 2026-08-01 22:31:57.404259+00:00 (UTC)
+**Snapshot:** 1590 cells, v2 coverage 100.0%, age 0.38h
+(analyzer alive)
 
-## 1. Zell-Divergenz (heutiger Snapshot)
+## 1. Cell divergence (today's snapshot)
 
-| Klasse | Zellen | Anteil |
+| Class | Cells | Share |
 |---|---:|---:|
 | both_open | 94 | 5.9% |
 | both_block | 98 | 6.2% |
@@ -14,67 +14,67 @@
 | v2_would_open | 3 | 0.2% |
 | v2_missing | 0 | 0.0% |
 
-## 2. Echter Gate-Traffic
+## 2. Actual gate traffic
 
-- Events gesamt: **4027**, davon zell-entschieden (flip-relevant): **2016**
-- Gate-Rate offen: v1 **0.0%** → v2 **9.42%**
-- ROM1-Forwards/Tag: v1 **40.52** → v2 (Prognose) **44.48**
-- v1-Drift der Snapshot-Näherung: 1570/2016 = **77.88%** Übereinstimmung
+- Events total: **4027**, of which cell-decided (flip-relevant): **2016**
+- Gate rate open: v1 **0.0%** → v2 **9.42%**
+- ROM1 forwards/day: v1 **40.52** → v2 (forecast) **44.48**
+- v1 drift of the snapshot approximation: 1570/2016 = **77.88%** agreement
 
-## 3. Was die divergenten Signale REALISIERT haben
+## 3. What the divergent signals REALIZED
 
-### 3a. Trigger-Leg (eigener Trade des Quell-Bots — symmetrisch, beide Seiten)
+### 3a. Trigger leg (source bot's own trade — symmetric, both sides)
 
-| Klasse | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |
+| Class | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | v2_would_open | 190 | 190 | 22 | 168 | 52.4 | -349.3 | -2.179 | -56.6 (8) |
 | both_block | 1826 | 1823 | 169 | 1654 | 62.9 | 1802.0 | 0.991 | 7596.9 (1149) |
 | unaffected | 2011 | 2007 | 794 | 1213 | 56.7 | 361.5 | 0.199 | -3378.3 (906) |
 
-**Flip-Bilanz auf dem Trigger-Leg:** v2 nimmt weg Σ 0.0% (0 entschiedene Trades), v2 schaltet frei Σ -349.3% (168) → **Δ -349.3%** (unlevered Move).
+**Flip balance on the trigger leg:** v2 removes Σ 0.0% (0 decided trades), v2 unblocks Σ -349.3% (168) → **Δ -349.3%** (unlevered move).
 
-### 3b. ROM1-Leg (das echte Geld — existiert nur auf der forwarded-Seite)
+### 3b. ROM1 leg (the real money — exists only on the forwarded side)
 
-| Klasse | Events | mit ROM1-Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |
+| Class | Events | with ROM1 leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | unaffected | 2011 | 1942 | 849 | 1093 | 65.6 | 1811.1 | 1.560 | 146.4 (1) |
 
-> `v2_would_open` hat strukturell KEIN ROM1-Leg: diese Signale wurden nie geforwardet, also nie als ROM1 gehandelt. Die zusätzlich freigeschaltete Seite ist in ROM1-Geld grundsätzlich nicht messbar — nur im Trigger-Leg (3a), und das trägt eine andere Geometrie (P1.10).
+> `v2_would_open` structurally has NO ROM1 leg: these signals were never forwarded, hence never traded as ROM1. The additionally unblocked side is fundamentally not measurable in ROM1 money — only in the trigger leg (3a), and that carries a different geometry (P1.10).
 
-## 3c. Sauber vs. drift-kontaminiert (die belastbare Teilmenge)
+## 3c. Clean vs. drift-contaminated (the reliable subset)
 
-Die Flip-Klasse vergleicht die AUFGEZEICHNETE v1-Entscheidung mit der HEUTIGEN v2-Zelle. Wo die heutige v1-Zelle nicht mehr zur aufgezeichneten Entscheidung passt, hat sich die Zelle seither bewegt — dann vergleicht die Klasse zwei verschiedene Zellstände, nicht v1 gegen v2. Nur `v1_agree` ist ein sauberer v1-vs-v2-Lesewert.
+The flip class compares the RECORDED v1 decision with TODAY'S v2 cell. Where today's v1 cell no longer matches the recorded decision, the cell has since moved — then the class compares two different cell states, not v1 against v2. Only `v1_agree` is a clean v1-vs-v2 reading.
 
-| Klasse | Teilmenge | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |
+| Class | Subset | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | v2_would_open | v1_drifted | 190 | 190 | 22 | 168 | 52.4 | -349.3 | -2.179 | -56.6 (8) |
 
-## 4. Über welchen v1-Pfad kam der divergente Traffic?
+## 4. Which v1 path did the divergent traffic come through?
 
-`insufficient_data` ist v1s Default-Open-Krücke (n < 30 in der Zelle), `wr_above_overall` / `counter_trend_specialist` sind v1-Entscheidungen AUF MERIT. Die Zell-Matrix und der Traffic beantworten das unterschiedlich.
+`insufficient_data` is v1's default-open crutch (n < 30 in the cell), `wr_above_overall` / `counter_trend_specialist` are v1 decisions ON MERIT. The cell matrix and the traffic answer this differently.
 
-### v2_would_open — Trigger-Leg nach v1-Pfad
+### v2_would_open — trigger leg by v1 path
 
-| v1-Pfad | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |
+| v1 path | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | wr_below_overall | 190 | 190 | 22 | 168 | 52.4 | -349.3 | -2.179 | -56.6 (8) |
 
-## 5. Aufschlüsselung nach Bot × Richtung
+## 5. Breakdown by bot × direction
 
-### v2_would_block — Trigger-Leg
+### v2_would_block — trigger leg
 
-_keine Events in dieser Klasse._
+_no events in this class._
 
-### v2_would_open — Trigger-Leg
+### v2_would_open — trigger leg
 
-| Bot | Dir | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |
+| Bot | Dir | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | EPD1 | SHORT | 190 | 190 | 22 | 168 | 52.4 | -349.3 | -2.179 | -56.6 (8) |
 
-## 6. Messgrenzen (gemessen, nicht angenommen)
+## 6. Measurement limits (measured, not assumed)
 
-- Snapshot-Näherung: `bot_regime_whitelist` ist UPSERT-only ohne Historie — der v2-Verdikt pro Event stammt aus dem heutigen Snapshot (2026-08-01 22:08:40.703564), nicht aus dem Stand zur Signal-Zeit. Die v1-Drift (77.88% Übereinstimmung über 2016 Events) misst diesen Fehler an der einzigen Achse, auf der beide Stände bekannt sind.
-- Die historische Whitelist ist damit weiterhin NICHT rekonstruierbar (T-031-Befund bestätigt): weder `bot_regime_whitelist` noch `bot_regime_performance` führen eine Historie, und Bot 28 loggt pro Signal nur den v1-Pfad, nie den v2-Verdikt.
-- `v2_would_open` hat kein ROM1-Leg — diese Signale wurden nie gehandelt. Die freigeschaltete Seite ist nur über den Trade des Quell-Bots messbar, der eine ANDERE Geometrie trägt als ROM1 (docs/REGIME_ORCHESTRATOR.md, P1.10).
-- Trigger-Leg-Coverage < 100%: unmatched Events sind als `no_twin` gezählt, nicht als 0 gewertet. Ursachen: Signal noch offen, Trade nie eröffnet, Monitor-Lücke.
-- WR ist TP1-Touch, PnL ist der target-gestaffelte unlevered Move (core.realized_pnl, T-115-Definition). `lev`-PnL ist exact-only — Coverage pro Zeile über `n_with_leg` ablesbar.
+- Snapshot approximation: `bot_regime_whitelist` is UPSERT-only with no history — the per-event v2 verdict comes from today's snapshot (2026-08-01 22:08:40.703564), not from the state at signal time. The v1 drift (77.88% agreement over 2016 events) measures this error on the only axis where both states are known.
+- The historical whitelist is therefore still NOT reconstructable (confirms the T-031 finding): neither `bot_regime_whitelist` nor `bot_regime_performance` keep a history, and bot 28 logs only the v1 path per signal, never the v2 verdict.
+- `v2_would_open` has no ROM1 leg — these signals were never traded. The unblocked side is only measurable via the source bot's trade, which carries a DIFFERENT geometry than ROM1 (docs/REGIME_ORCHESTRATOR.md, P1.10).
+- Trigger-leg coverage < 100%: unmatched events are counted as `no_twin`, not scored as 0. Causes: signal still open, trade never opened, monitor gap.
+- WR is TP1 touch, PnL is the target-staggered unlevered move (core.realized_pnl, T-115 definition). `lev` PnL is exact-only — coverage per row readable via `n_with_leg`.

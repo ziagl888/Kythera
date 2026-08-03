@@ -126,10 +126,11 @@ def test_new_gen_candidates_and_t033_promotions():
 def test_t033_parked_legs_are_shadow():
     # Fleet reconfig T-032 (T-2026-KYT-9050-033): the bleeding legacy-live
     # legs are parked → SHADOW (Cornix off, monitored on). RUB3 LONG challenger remains
-    # shadow. EPD3 SHORT remains parked; EPD3 LONG is LIVE promoted per T-037 (operator,
-    # see test_t037_epd3_long_atb2_long_deployed).
+    # shadow. EPD3 LONG is LIVE promoted per T-037 (operator, see
+    # test_t037_epd3_long_atb2_long_deployed); EPD3 SHORT's T-033 park was LIFTED on
+    # 2026-08-03 (T-2026-KYT-9050-085, operator) — pinned in
+    # test_t085_epd3_short_unparked_live.
     assert sg.is_shadow("RUB3", "LONG")
-    assert sg.leg_status("EPD3", "SHORT") == sg.SHADOW  # was live (T-185), parked T-033
     # Completely → SHADOW (both directions).
     for tag in ("EPD2", "RUB2", "SRA1", "ABR2", "BB2_4H", "BR1D", "MIS2-8H"):
         assert sg.is_shadow(tag, "LONG"), tag
@@ -212,9 +213,8 @@ def test_t037_epd3_long_atb2_long_deployed():
     # T-2026-KYT-9050-037 (operator decision Michi, bot_results.xlsx #3/#4): EPD3-LONG
     # + ATB2-LONG promoted SHADOW→LIVE (deploy "per requirement" despite shadow no-edge
     # for EPD3-LONG and n=17 for ATB2-LONG — threshold cap 0.76 / blind 0.60). The
-    # other direction each remains SHADOW.
+    # ATB2's other direction remains SHADOW; EPD3 SHORT went LIVE with T-085.
     assert sg.leg_status("EPD3", "LONG") == sg.LIVE
-    assert sg.leg_status("EPD3", "SHORT") == sg.SHADOW
     assert sg.leg_status("ATB2", "LONG") == sg.LIVE
     assert sg.leg_status("ATB2", "SHORT") == sg.SHADOW
     # LIVE legs load from repo root under challenger-distinct filenames —
@@ -365,27 +365,75 @@ def test_fmr2_maps_one_binary_model_to_both_directions():
 
 def test_promoted_live_leg_loads_from_root_shadow_from_staging():
     # A LIVE leg loads its artifact from repo root (rule 2 = live), a
-    # SHADOW leg continues from staging. State after T-2026-KYT-9050-037:
+    # SHADOW leg continues from staging. State after T-2026-KYT-9050-085:
     #   * SRA2 LONG+SHORT + ATS2 LONG+SHORT LIVE (T-033) → root.
-    #   * EPD3 LONG now LIVE (T-037, operator) → root (bare filename);
-    #     EPD3 SHORT remains SHADOW (T-033 park) → staging.
+    #   * EPD3 LONG (T-037) and EPD3 SHORT (T-085, park lifted) both LIVE → root.
+    #   * ATB2 SHORT + RUB3 LONG carry the SHADOW half of the split → staging.
     assert sg.shadow_artifact_path("SRA2", "LONG") == "sra2_model_LONG.json"
     assert sg.shadow_artifact_path("SRA2", "SHORT") == "sra2_model_SHORT.json"
     assert sg.shadow_artifact_path("ATS2", "LONG") == "ats2_model_LONG.pkl"
     assert sg.shadow_artifact_path("ATS2", "SHORT") == "ats2_model_SHORT.pkl"
     assert sg.shadow_artifact_path("EPD3", "LONG") == "epd3_model_LONG.pkl"  # LIVE → root
-    assert sg.shadow_artifact_path("EPD3", "SHORT").startswith(sg.STAGING_DIR)  # SHADOW → staging
+    assert sg.shadow_artifact_path("EPD3", "SHORT") == "epd3_model_SHORT.pkl"  # LIVE → root
+    # The SHADOW half of the contract must stay covered, otherwise this test
+    # degenerates into "everything is live".
+    assert sg.shadow_artifact_path("ATB2", "SHORT").startswith(sg.STAGING_DIR)
+    assert sg.shadow_artifact_path("RUB3", "LONG").startswith(sg.STAGING_DIR)
 
 
 def test_challenger_filename_never_aliases_legacy_loader():
     # Review T-2026-CU-9050-185 (CRITICAL): the EPD3-SHORT artifact must remain
     # distinct from the EPD2 legacy-SHORT slot (epd2_model_SHORT.pkl) — whether
-    # live (root) or, after the T-033 park, shadow (staging) — otherwise the
-    # legacy live loader loads the same file and posts SHORT double (rule 4).
+    # live (root) or shadow (staging) — otherwise the legacy live loader loads the
+    # same file and posts SHORT double (rule 4). The T-085 unpark moved the leg back
+    # to root, which is exactly the location where the aliasing would bite, so the
+    # distinctness assertion matters MORE now, not less.
     p = sg.shadow_artifact_path("EPD3", "SHORT")
     assert os.path.basename(p) == "epd3_model_SHORT.pkl"
     assert os.path.basename(p) != "epd2_model_SHORT.pkl"  # Bot 10 EPD2_ARTIFACT_PATHS["SHORT"]
-    assert p.startswith(sg.STAGING_DIR)  # SHADOW after T-033
+    # Deliberately lifecycle-AGNOSTIC: this guard owns filename distinctness, not the
+    # live/shadow state (that is pinned by test_t085_epd3_short_unparked_live and
+    # test_promoted_live_leg_loads_from_root_shadow_from_staging). A future re-park —
+    # plausible given the throughput risk noted in shadow_gate — must not break a
+    # CRITICAL guard for the wrong reason and tempt someone into weakening it.
+    for direction in ("LONG", "SHORT"):
+        assert os.path.basename(sg.shadow_artifact_path("EPD3", direction)) != f"epd2_model_{direction}.pkl"
+
+
+def test_t085_epd3_short_unparked_live():
+    # T-2026-KYT-9050-085 (operator decision Michi, 2026-08-03): the T-033 park of
+    # EPD3 SHORT is lifted — SHADOW→LIVE at the artifact threshold 0.6737, posting
+    # under tag EPD3 to CH_PUMP_AI. Wiring-only pins first (dependency-free):
+    assert sg.leg_status("EPD3", "SHORT") == sg.LIVE
+    assert sg.is_live("EPD3", "SHORT")
+    assert not sg.is_shadow("EPD3", "SHORT")
+    # LIVE ⇒ root, and NOT the legacy EPD2 slot (rule 4, review T-185).
+    assert sg.shadow_artifact_path("EPD3", "SHORT") == "epd3_model_SHORT.pkl"
+
+
+def test_t085_epd3_short_root_artifact_carries_epd3_provenance():
+    # The operator asked for the flip explicitly "with the EPD3 tag". The stale root
+    # copy still carried meta.model_id == "EPD2" (the T-004 wrong-model_id class);
+    # T-085 re-promoted the corrected staging dump (3ba4cbd/T-057) whose booster is
+    # bit-identical. Pin BOTH: the operating threshold the flip was decided on, and
+    # the provenance tag (hard rule 6 — a reworked model never reuses an old tag).
+    import pytest
+
+    try:
+        import joblib  # noqa: F401
+    except ImportError:  # pragma: no cover - lean CI
+        pytest.skip("joblib not available")
+    path = sg.shadow_artifact_path("EPD3", "SHORT")
+    if not os.path.exists(path):  # pragma: no cover - artifact placement is an operator step
+        pytest.skip(f"{path} not present")
+    art = joblib.load(path)
+    assert art["meta"]["model_id"] == "EPD3", "root artifact must not carry the stale EPD2 tag"
+    assert art["meta"]["direction"] == "SHORT"
+    assert art["optimal_threshold"] == 0.6737
+    # The loader contract the bot actually sees must agree with the artifact.
+    contract = sg.load_shadow_artifact("EPD3", "SHORT")
+    assert sg.artifact_threshold(contract) == 0.6737
+    assert len(contract["features"]) == 16
 
 
 def test_fmr2_staging_artifact_loads_scores_and_gates():
