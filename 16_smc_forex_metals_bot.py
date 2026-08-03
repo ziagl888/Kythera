@@ -13,12 +13,12 @@ import time
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
-import yfinance as yf
 
 from core import config as _kcfg  # channel ids
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import calculate_pivots, check_cooldown, update_cooldown
+from core.yfinance_fetch import download_with_retry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - SMC_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -140,7 +140,11 @@ def fetch_yfinance_data(ticker, tf):
         else:
             return pd.DataFrame()
 
-        df = yf.download(ticker, interval=yf_interval, period=period, progress=False)
+        # T-2026-KYT-9050-084: bounded retry. ~5% of the 77 pulls per scan cycle
+        # (11 tickers x 7 timeframes) failed transiently and were silently skipped
+        # for the whole cycle; the helper retries and, on final failure, logs a
+        # WARNING naming ticker AND timeframe (yfinance's own line carries neither).
+        df = download_with_retry(ticker, yf_interval, period, tf=tf, logger=logger)
         if df.empty:
             return df
 

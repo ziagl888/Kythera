@@ -13,11 +13,11 @@ matplotlib.use('Agg')  # P3.8: headless VPS has no display — set before pyplot
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
-import yfinance as yf
 
 from core import config as _kcfg  # channel ids
 from core.database import get_db_connection
 from core.market_utils import calculate_pivots, check_cooldown, update_cooldown
+from core.yfinance_fetch import download_with_retry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - TRADFI_SMC_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -115,7 +115,11 @@ def fetch_yfinance_data(ticker, tf):
             yf_interval = '1h'
             resample_tf = '4h'
 
-        df = yf.download(ticker, interval=yf_interval, period=period, progress=False)
+        # T-2026-KYT-9050-084: bounded retry — see 16_smc_forex_metals_bot.py. A
+        # transient Yahoo failure used to cost this ticker/timeframe the whole
+        # cycle silently; the helper retries and logs an explicit WARNING on
+        # final failure.
+        df = download_with_retry(ticker, yf_interval, period, tf=tf, logger=logger)
         if df.empty:
             return df
 

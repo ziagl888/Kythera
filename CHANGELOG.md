@@ -1,3 +1,36 @@
+## [2026-08-03] Bots 16/17: transient yfinance failures silently dropped ~5% of forex/metal timeframes (T-2026-KYT-9050-084)
+
+`16_smc_forex_metals_bot.py` and `17_mayank_bot.py` pull their forex/metal candles from Yahoo.
+yfinance catches its own errors, logs `1 Failed download: ['EURUSD=X']: TypeError("'NoneType'
+object is not subscriptable")` **onto the calling bot's logger** and returns an EMPTY frame —
+so the bot does not crash, it silently skips that (ticker, timeframe) for the whole cycle.
+Measured on the live VPS: bot 16 lost **17 of ~308 pulls across 4 scan cycles** (~77 per cycle
+= 11 tickers × 7 timeframes), bot 17 lost 3; an earlier log window shows 246. Falsified as a
+systematic breakage first — every interval/period pair the bots use (15m/30d, 30m/30d, 1h/60d,
+1d/200d, 1wk/400d across EURUSD=X, JPY=X, GC=F, SI=F) returns data when requested on its own,
+so the pattern is transient and rate-limit-shaped, consistent with two bots bursting at Yahoo.
+
+New shared helper `core/yfinance_fetch.download_with_retry`: three attempts with a 1.5s/3.0s
+backoff, treating an empty frame and a raised exception as the same signal (yfinance swallows
+its own, so both mean "no data"). On final failure it returns an empty frame — the callers'
+`if df.empty: return df` skip path is byte-identical to before — but logs a WARNING naming
+**ticker AND timeframe**, neither of which appears in yfinance's own line. That is the actual
+fix: a silent skip stops being indistinguishable from a healthy cycle.
+
+Deliberately its own module rather than `core/market_utils.py`: that one is imported by most of
+the fleet, and a module-level `import yfinance` there would let a broken yfinance install take
+down bots that never touch Yahoo. The import stays at module level (a missing install must break
+bots 16/17 at START, not mid-cycle), so the DB- and network-free test stubs yfinance when absent
+— the repo runs two python environments and a guard that only runs in one of them is exactly the
+failure mode of the companion task T-083.
+
+8 tests, green on both interpreters and standalone; each mutation-tested (no retry → 5 red,
+WARNING silenced → 1, `None` instead of an empty frame → 1, backoff after the final attempt → 1,
+ticker/timeframe dropped from the message → 1). Live smoke test through the real call chain:
+bot 16 EURUSD=X 1h/4h/1d → 1417/370/198 rows, bot 17 GC=F 4h → 300 rows. `mypy` clean,
+`regression_guard verify` OK. **Ops note: the running bot processes keep the old code until the
+fleet is restarted.**
+
 ## [2026-08-03] LQE1 fix: collector streamed against a dead legacy path — routed /market/ws + silent-subscription guard (T-2026-KYT-9050-082)
 
 The T-077 collector used `wss://fstream.binance.com/ws/!forceOrder@arr` — dead since the
