@@ -36,7 +36,7 @@
   </form>
 
   {% if not bots or not regimes %}
-    <p class="muted">Noch keine Regime-zugeordneten, entschiedenen Trades im DuckDB-Substrat.</p>
+    <p class="muted">No regime-assigned decided trades in the DuckDB substrate yet.</p>
   {% else %}
     <p class="panel__asof">Kennzahl: {{ metric_label }} · {{ bots | length }} Bot(s) x {{ regimes | length }} Regime(s)</p>
 

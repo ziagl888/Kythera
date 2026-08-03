@@ -18,7 +18,7 @@
                {% if freshness.file_based %}badge--live
                {% elif freshness.sync_age_min is not none and freshness.sync_age_min <= 15 %}badge--fresh
                {% else %}badge--stale{% endif %}"
-        title="{% if freshness.file_based %}Dateibasiert, kein DuckDB-Sync{% elif freshness.synced_at %}Letzter Sync (UTC): {{ freshness.synced_at }} · {{ freshness.sources }} Quelle(n){% else %}Noch kein Export für dieses Panel gelaufen{% endif %}">
+        title="{% if freshness.file_based %}File-based, no DuckDB sync{% elif freshness.synced_at %}Last sync (UTC): {{ freshness.synced_at }} · {{ freshness.sources }} source(s){% else %}No export has run for this panel yet{% endif %}">
     <span class="badge__dot" aria-hidden="true"></span>
     <span class="badge__label">
       {%- if freshness.file_based -%}

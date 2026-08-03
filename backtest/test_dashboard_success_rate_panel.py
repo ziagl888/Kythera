@@ -342,7 +342,7 @@ def test_panel_explicit_empty_selection_shows_message(client):
     resp = client.get("/panels/success-rate-timeseries?filtered=1&window=30")
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "Keine Bots ausgewählt" in html
+    assert "No bots selected" in html
     assert 'data-chart="winrate-timeseries"' not in html
 
 
@@ -365,7 +365,7 @@ def test_panel_empty_duckdb_degrades_gracefully(tmp_path):
     c = dashboard_app.create_app(duckdb_path).test_client()
     resp = c.get("/panels/success-rate-timeseries")
     assert resp.status_code == 200
-    assert "keine entschiedenen Trades" in resp.get_data(as_text=True)
+    assert "No decided trades" in resp.get_data(as_text=True)
 
 
 def test_panel_all_windows_offered_in_switcher(client):

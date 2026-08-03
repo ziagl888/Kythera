@@ -375,7 +375,7 @@ def test_panel_regime_heatmap_empty_duckdb(tmp_path):
     c = dashboard_app.create_app(duckdb_path).test_client()
     resp = c.get("/panels/regime-heatmap")
     assert resp.status_code == 200
-    assert "Noch keine Regime-zugeordneten" in resp.get_data(as_text=True)
+    assert "No regime-assigned" in resp.get_data(as_text=True)
 
 
 def test_panel_regime_heatmap_freshness_uses_regime_and_ai_signal_sources():

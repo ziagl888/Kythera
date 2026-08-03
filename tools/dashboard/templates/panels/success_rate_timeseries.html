@@ -48,11 +48,11 @@
   {% endif %}
 
   {% if not all_bots %}
-    <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+    <p class="muted">No decided trades in the DuckDB substrate yet.</p>
   {% elif not selected_bots %}
-    <p class="muted">Keine Bots ausgewählt.</p>
+    <p class="muted">No bots selected.</p>
   {% elif not chart_series %}
-    <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+    <p class="muted">No decided trades in the DuckDB substrate yet.</p>
   {% else %}
     <p class="panel__asof">
       Stand der Daten: {{ as_of or "unbekannt" }} · Rollierendes Fenster: {{ window }}d

@@ -5,7 +5,7 @@
 #}
 {% include "_panel_freshness_badge.html" %}
 {% if not bots %}
-  <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+  <p class="muted">No decided trades in the DuckDB substrate yet.</p>
 {% else %}
   <p class="panel__asof">
     Stand der Daten: {{ as_of or "unbekannt" }} · Fenster:
