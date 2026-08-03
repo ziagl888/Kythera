@@ -63,7 +63,12 @@ def _load_sniper():
 sniper = _load_sniper()
 SRC = open(os.path.join(REPO_ROOT, "25_smc_ml_sniper.py"), encoding="utf-8").read()
 
-N_CLOSED = 40  # closed candles 0..39; index 40 would be the forming candle
+# `n_closed` is the exclusive upper bound find_breaker_setup scans to. The
+# fixtures deliberately allocate one index BEYOND it (arrays of N_CLOSED + 1) so
+# a bound that stopped being honoured is observable — see
+# test_index_beyond_n_closed_excluded_from_breakout_window. In production the
+# frame is all-closed and scan_market passes n_closed = len(df).
+N_CLOSED = 40  # scanned range is 0..39; index 40 must never be reached
 
 
 def _blind_second_last_level(pivot_indices, level_arr, current_price, band=0.005):
@@ -133,9 +138,10 @@ def test_price_outside_retest_band_is_rejected():
     assert sniper.find_breaker_setup([5, 25], highs, highs, closes, N_CLOSED, 105.0, "LONG") is None
 
 
-def test_forming_candle_excluded_from_breakout_window():
-    """n_closed bounds the scan; a breakout that only exists on the forming candle
-    (index N_CLOSED) must not be seen."""
+def test_index_beyond_n_closed_excluded_from_breakout_window():
+    """n_closed bounds the scan; a breakout that only exists past that bound
+    (index N_CLOSED) must not be seen. Pre-T-111 that index WAS the forming
+    candle; today it is simply out of range — the bound must hold either way."""
     highs = np.full(N_CLOSED + 1, 90.0)
     closes = np.full(N_CLOSED + 1, 90.0)
     highs[25] = 110.0
@@ -162,17 +168,41 @@ def test_bb_section_uses_the_selector_not_blind_indexing():
 
 
 def test_bb_features_anchored_on_the_retest_bar():
-    """Feature-timing is deliberately the last closed candle (retest bar)."""
+    """Feature timing is deliberately the last closed candle (the retest bar).
+
+    Since T-2026-CU-9050-111 the frame is all-closed (include_forming=False), so
+    the retest bar is len(df)-1. The pre-rewire anchor len(df)-2 would describe
+    the candle BEFORE the retest and is checked against explicitly
+    (T-2026-KYT-9050-083).
+    """
     body = _scan_body()
-    assert body.count("extract_ml_features(df, len(df) - 2, 'LONG')") >= 1
-    assert body.count("extract_ml_features(df, len(df) - 2, 'SHORT')") >= 1
+    assert body.count("extract_ml_features(df, len(df) - 1, 'LONG')") >= 1, (
+        "BB LONG feature row is no longer anchored on the newest closed candle"
+    )
+    assert body.count("extract_ml_features(df, len(df) - 1, 'SHORT')") >= 1, (
+        "BB SHORT feature row is no longer anchored on the newest closed candle"
+    )
+    assert "extract_ml_features(df, len(df) - 2" not in body, (
+        "the pre-T-111 len(df)-2 anchor reappeared — it names the candle before the retest"
+    )
 
 
-def test_forming_candle_drop_still_present():
-    """Guard-of-a-guard: the P1.46 closed-candle slice must survive this edit."""
+def test_forming_candle_is_excluded_at_the_source():
+    """Guard-of-a-guard: the retest bar is only the retest bar on a closed frame.
+
+    P1.46 dropped the forming row inside scan_market (`highs[:-1]`);
+    T-2026-CU-9050-111 replaced that with `include_forming=False` on the
+    core.candles read. If the forming candle came back, len(df)-1 would anchor
+    the features on a bar that is still moving. The full behavioural assertion on
+    the real call lives in test_sniper_forming.py.
+    """
     body = _scan_body()
-    assert re.search(r"c_highs,\s*c_lows\s*=\s*highs\[:-1\],\s*lows\[:-1\]", body), (
-        "P1.46 forming-candle drop was lost — pivots would repaint"
+    assert re.search(r"include_forming\s*=\s*False", body), (
+        "the closed-only candle read was lost — the BB feature row would sit on the forming bar"
+    )
+    assert not re.search(r"(highs|lows)\[:-1\]", body), (
+        "a trailing slice on top of the already-closed frame would drop the newest "
+        "CLOSED candle (T-2026-KYT-9050-083)"
     )
 
 

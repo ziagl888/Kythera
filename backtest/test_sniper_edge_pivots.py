@@ -146,8 +146,12 @@ def test_filter_threshold_is_exactly_half_the_window():
 def test_edge_filter_present_in_scan_market():
     body = _scan_body()
     assert "PIVOT_CONFIRM = PIVOT_WINDOW // 2" in body, "edge-pivot confirm window changed or vanished"
-    assert re.search(r"last_closed\s*=\s*len\(df\)\s*-\s*2", body), (
-        "last_closed anchor lost — the forming candle is already dropped, newest closed is len(df)-2"
+    # T-2026-CU-9050-111 moved the forming-candle drop into core.candles
+    # (include_forming=False), so the frame is all-closed and the newest closed
+    # bar is len(df)-1. The pre-rewire anchor was len(df)-2 and would now leave
+    # the newest closed candle permanently unconfirmable (T-2026-KYT-9050-083).
+    assert re.search(r"last_closed\s*=\s*len\(df\)\s*-\s*1\b", body), (
+        "last_closed anchor lost — with an all-closed frame the newest closed bar is len(df)-1"
     )
     assert re.search(r"peak_idx\s*=\s*peak_idx\[peak_idx\s*<=\s*last_closed\s*-\s*PIVOT_CONFIRM\]", body), (
         "peak_idx edge filter lost — unconfirmed edge peaks would repaint"
@@ -165,11 +169,23 @@ def test_filter_runs_before_the_three_pivot_gate():
     assert i_filter < i_gate, "edge filter must run before the pivot-count gate"
 
 
-def test_forming_candle_drop_still_present():
-    """Guard-of-a-guard: the P1.46 closed-candle slice must survive this edit."""
+def test_forming_candle_is_excluded_at_the_source():
+    """Guard-of-a-guard: the edge filter is only sound on a closed-only frame.
+
+    P1.46 dropped the forming row inside scan_market (`highs[:-1]`);
+    T-2026-CU-9050-111 replaced that with `include_forming=False` on the
+    core.candles read. Either way the invariant this test protects is the same:
+    no forming candle reaches the pivot search, otherwise the newest "closed"
+    pivot the filter keeps would still be repainting. The full behavioural
+    assertion on the real call lives in test_sniper_forming.py.
+    """
     body = _scan_body()
-    assert re.search(r"c_highs,\s*c_lows\s*=\s*highs\[:-1\],\s*lows\[:-1\]", body), (
-        "P1.46 forming-candle drop was lost — pivots would repaint on the forming candle"
+    assert re.search(r"include_forming\s*=\s*False", body), (
+        "the closed-only candle read was lost — pivots would repaint on the forming candle"
+    )
+    assert not re.search(r"(highs|lows)\[:-1\]", body), (
+        "a trailing slice on top of the already-closed frame would drop the newest "
+        "CLOSED candle (T-2026-KYT-9050-083)"
     )
 
 

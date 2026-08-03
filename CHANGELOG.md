@@ -1,3 +1,30 @@
+## [2026-08-03] SMC-sniper forming-candle guards: blind for three weeks, rewired onto the core.candles contract (T-2026-KYT-9050-083)
+
+Five regression tests that guard hard rule 5 for `25_smc_ml_sniper.py` had been red since
+commit 80d0e09 (2026-07-13). They were text-pattern guards asserting the OLD mechanism — the
+in-bot slice `c_highs, c_lows = highs[:-1], lows[:-1]` and the `len(df) - 2` anchor — while
+T-2026-CU-9050-111 had moved the protection one layer down into
+`read_candles_with_indicators(..., include_forming=False)`. The frame no longer contains the
+forming bar at all, so the slice is gone and `len(df) - 1` is the newest closed candle. **The
+bot's candle behaviour was and is correct; what failed was the alarm.** Nobody noticed because
+`backtest/` is not gated by CI (green CI ≠ correct), so for three weeks a real forming-candle
+regression would have shipped silently.
+
+The guards now assert the contract that actually holds, and the load-bearing one is no longer
+a text pattern: `test_scan_market_reads_closed_candles_only` runs the real `scan_market`
+against a recording reader and asserts `include_forming=False` on every candle read (a
+sub-100-row frame makes the loop skip right after the read, so nothing is scored or posted).
+The remaining source guards were re-pointed at the current anchors — `len(df) - 1` for the
+pivot edge filter and the BB feature row, `n_closed = len(df)` for the breakout window — and
+now also assert the INVERSE: a re-introduced `[:-1]` slice or a `len(df) - 2` offset would
+today drop the newest CLOSED candle rather than the forming one, so both are explicitly
+forbidden. The behavioural repaint fixture is unchanged.
+
+Every guard was mutation-tested against the live source: `include_forming=False → True`
+(3 tests red), `last_closed len(df)-1 → -2` (2), slice reintroduced (3), BB anchor
+`len(df)-1 → -2` (2), `n_closed len(df) → len(df)-1` (1). 47 tests pass across the five SMC
+test files; `regression_guard verify` OK (24 fixtures). No production code changed.
+
 ## [2026-08-03] LQE1 fix: collector streamed against a dead legacy path — routed /market/ws + silent-subscription guard (T-2026-KYT-9050-082)
 
 The T-077 collector used `wss://fstream.binance.com/ws/!forceOrder@arr` — dead since the
