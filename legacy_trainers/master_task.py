@@ -8,13 +8,13 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 import warnings
 
-# Unterdrücke UserWarning von XGBoost
+# Suppress UserWarning from XGBoost
 warnings.filterwarnings("ignore", category=UserWarning, module="xgboost")
 
-# --- KONFIGURATION ---
-# Passe diese Werte an deine Umgebung an
-AI_CHANNEL_ID = 0  # <--- DEINE KANAL ID HIER EINTRAGEN
-MIN_CONFIDENCE = 0.90          # Nur Trades mit > 85% Wahrscheinlichkeit posten
+# --- CONFIGURATION ---
+# Adapt these values to your environment
+AI_CHANNEL_ID = 0  # <--- ENTER YOUR CHANNEL ID HERE
+MIN_CONFIDENCE = 0.90          # Only post trades with > 85% probability
 MODEL_PATH = "master_trade_model_xgboost_combined_signals.pkl"
 
 DB_CONFIG = {
@@ -25,7 +25,7 @@ DB_CONFIG = {
     "database": "cryptodata"
 }
 
-# Mapping für Conv-Signale (muss identisch zum Training sein)
+# Mapping for conv signals (must be identical to training)
 BOT_CONFIDENCE_MAPPING = {
     'Fast Bot': 0.25,
     '5% Bot': 0.45,
@@ -33,44 +33,44 @@ BOT_CONFIDENCE_MAPPING = {
     'SR Bot': 0.65
 }
 
-# Datenbank-Engine global initialisieren
+# Database engine initialised globally
 db_url = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
 engine = create_engine(db_url)
 
 
 # CREATE TABLE IF NOT EXISTS master_ai_processed_signals (
-    # signal_type TEXT NOT NULL,      -- 'ai_signal' oder 'conv_signal'
-    # signal_id BIGINT NOT NULL,      -- Die 'id' des Signals aus der Originaltabelle
-    # processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- Wann es verarbeitet wurde
-    # ml_confidence NUMERIC(5, 4),    -- Die tatsächliche ML-Konfidenz, als es gemeldet wurde
+    # signal_type TEXT NOT NULL,      -- 'ai_signal' or 'conv_signal'
+    # signal_id BIGINT NOT NULL,      -- The 'id' of the signal from the original table
+    # processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- When it was processed
+    # ml_confidence NUMERIC(5, 4),    -- The actual ML confidence when it was reported
     # PRIMARY KEY (signal_type, signal_id)
 # );
 
-# -- Optional: Index für schnellen Zugriff, falls die Tabelle sehr groß wird
+# -- Optional: index for fast access if the table becomes very large
 # CREATE INDEX IF NOT EXISTS idx_processed_at ON master_ai_processed_signals (processed_at);
 
 
 
 
-# --- MODELL LADEN ---
+# --- LOAD MODEL ---
 try:
     saved_data = joblib.load(MODEL_PATH)
     MASTER_MODEL = saved_data['model']
     REQUIRED_FEATURES = saved_data['features']
-    print(f"✅ ML-Modell geladen: {MODEL_PATH}")
-    print(f"   Erwartete Features: {len(REQUIRED_FEATURES)}")
+    print(f"✅ ML model loaded: {MODEL_PATH}")
+    print(f"   Expected features: {len(REQUIRED_FEATURES)}")
 except Exception as e:
-    print(f"❌ FEHLER beim Laden des Modells: {e}")
+    print(f"❌ ERROR loading model: {e}")
     MASTER_MODEL = None
     REQUIRED_FEATURES = []
 
-# --- HILFSFUNKTIONEN ---
+# --- HELPER FUNCTIONS ---
 
-# WICHTIG: DIE FUNKTION normalize_features_for_ml MUSS HIERHER KOPIERT WERDEN
-# (Der korrigierte Code aus unserer vorherigen Diskussion, der PerformanceWarnings behebt)
-# Ich lasse sie hier aus Platzgründen weg, du musst sie einfügen!
+# IMPORTANT: THE normalize_features_for_ml FUNCTION MUST BE COPIED HERE
+# (The corrected code from our previous discussion that fixes PerformanceWarnings)
+# I'm omitting it here for space reasons, you need to insert it!
 def normalize_features_for_ml(df_indicators: pd.DataFrame) -> pd.DataFrame:
-    # ... KOPIERE HIER DIE KORRIGIERTE normalize_features_for_ml FUNKTION HEREIN ...
+    # ... INSERT THE CORRECTED normalize_features_for_ml FUNCTION HERE ...
     df = df_indicators.copy()
     if 'close' not in df.columns:
         df['close'] = 1.0 
@@ -159,22 +159,22 @@ def normalize_features_for_ml(df_indicators: pd.DataFrame) -> pd.DataFrame:
     return normalized_df
 
 
-# --- HAUPTTASK FÜR DEN BOT ---
+# --- MAIN TASK FOR THE BOT ---
 
 async def check_master_trades(application):
     """
-    Diese Funktion muss als Task registriert werden (z.B. alle 30 min).
-    Sie aggregiert Signale, erstellt Features, sagt Vorhersagen und speichert den Zustand.
+    This function must be registered as a task (e.g. every 30 min).
+    It aggregates signals, creates features, makes predictions and saves the state.
     """
     if MASTER_MODEL is None:
-        print("⚠️ Master Task übersprungen: Modell nicht geladen.")
+        print("⚠️ Master task skipped: model not loaded.")
         return
 
-    print("🔄 Starte Master-AI-Analyse...")
+    print("🔄 Starting master AI analysis...")
     current_time = datetime.utcnow()
-    
-    # 1. Hole Historische Signale (5 Tage) für den Kontext
-    # Wir brauchen das für die Aggregations-Features
+
+    # 1. Fetch historical signals (5 days) for context
+    # We need this for the aggregation features
     five_days_ago = current_time - timedelta(days=5)
     
     # AI Signals History
@@ -204,7 +204,7 @@ async def check_master_trades(application):
     hist_combined = hist_combined.sort_values(by='timestamp').reset_index(drop=True)
 
 
-    # 2. Hole NEUE Signale (letzte 30 Min) - Das sind die Kandidaten für Alerts
+    # 2. Fetch NEW signals (last 30 min) - these are the alert candidates
     check_window = current_time - timedelta(minutes=30)
     
     # Neue AI Signale
@@ -227,49 +227,49 @@ async def check_master_trades(application):
     new_conv['symbol'] = new_conv['symbol'].str.replace('_.*', '', regex=True).str.replace('USDT', '', regex=False) + 'USDT'
     new_conv['confidence'] = new_conv['bot_name'].map(BOT_CONFIDENCE_MAPPING).fillna(0.0)
 
-    # Alle Kandidaten
+    # All candidates
     candidates = pd.concat([new_ai, new_conv], ignore_index=True)
-    candidates['join_time'] = candidates['timestamp'].dt.round('1h') # Für Indikator Join
+    candidates['join_time'] = candidates['timestamp'].dt.round('1h') # For indicator join
 
     if candidates.empty:
-        print("ℹ️ Keine neuen Signale zum Prüfen.")
+        print("ℹ️ No new signals to check.")
         return
 
-    # 3. Bereits verarbeitete Signale aus der DB abfragen
-    # Wir holen alle, die in den letzten 5 Tagen verarbeitet wurden,
-    # um sicherzustellen, dass wir keine alten Signale doppelt senden.
+    # 3. Query already-processed signals from DB
+    # We fetch all processed in the last 5 days to ensure we don't send old
+    # signals twice.
     processed_query = f"""
         SELECT signal_type, signal_id FROM master_ai_processed_signals
         WHERE processed_at > '{five_days_ago}'
     """
     processed_df = pd.read_sql(processed_query, engine)
-    # Erstelle ein Set von (signal_type, signal_id) Tupeln für schnelle Prüfungen
+    # Create a set of (signal_type, signal_id) tuples for fast checking
     processed_signals_set = set(tuple(row) for row in processed_df[['signal_type', 'signal_id']].to_numpy())
 
-    # Kandidaten filtern, die bereits verarbeitet wurden
+    # Filter candidates already processed
     initial_candidates_count = len(candidates)
     candidates['is_processed'] = candidates.apply(lambda row: (row['signal_type'], row['id']) in processed_signals_set, axis=1)
     candidates = candidates[~candidates['is_processed']].drop(columns=['is_processed'])
 
     if candidates.empty:
-        print(f"ℹ️ {initial_candidates_count} Signale in den letzten 30 Minuten, aber alle bereits verarbeitet.")
+        print(f"ℹ️ {initial_candidates_count} signals in the last 30 minutes, but all already processed.")
         return
     else:
-        print(f"🔎 Analysiere {len(candidates)} neue, noch nicht verarbeitete Signale...")
+        print(f"🔎 Analysing {len(candidates)} new, unprocessed signals...")
 
 
-    # Cache für DB Abfragen (Performance)
-    # Beinhaltet die neueste Indikator- und OHLCV-Close-Row für jeden Coin
+    # Cache for DB queries (performance)
+    # Contains the latest indicator and OHLCV close row for each coin
     cached_ohlcv_indicators = {}
 
     for _, signal in candidates.iterrows():
         coin = signal['symbol']
         join_time = signal['join_time']
-        
+
         try:
-            # Daten für Coin laden (nur wenn nicht im Cache)
+            # Load data for coin (only if not in cache)
             if coin not in cached_ohlcv_indicators:
-                # Hole die letzte vollständige Stunde an Indikatoren/OHLCV
+                # Fetch the last complete hour of indicators/OHLCV
                 sql_ind = f"SELECT * FROM \"{coin}_1h_indicators\" WHERE open_time <= '{join_time}' ORDER BY open_time DESC LIMIT 1"
                 try:
                     ind_df = pd.read_sql(sql_ind, engine)
@@ -284,48 +284,48 @@ async def check_master_trades(application):
                     
                     cached_ohlcv_indicators[coin] = (ind_df.iloc[0], ohlcv_df.iloc[0]['close'])
                 except Exception as e:
-                    # print(f"DEBUG: Could not fetch data for {coin}: {e}") # Zur Fehlersuche
-                    continue # Tabelle existiert wohl nicht, oder Daten fehlen
-            
-            if coin not in cached_ohlcv_indicators: continue # Falls Fehler im Cache-Befüllen aufgetreten ist
-            
-            # Daten vorbereiten
+                    # print(f"DEBUG: Could not fetch data for {coin}: {e}") # For debugging
+                    continue # Table probably doesn't exist, or data is missing
+
+            if coin not in cached_ohlcv_indicators: continue # If error occurred filling cache
+
+            # Prepare data
             row = cached_ohlcv_indicators[coin][0].copy()
             close_price = cached_ohlcv_indicators[coin][1]
-            row['close'] = close_price # Close Preis anfügen
+            row['close'] = close_price # Append close price
 
             # --- AGGREGATION ---
-            # Filtere Historie für diesen Coin bis zum Zeitpunkt des Signals
+            # Filter history for this coin up to signal timestamp
             context = hist_combined[
-                (hist_combined['symbol'] == coin) & 
+                (hist_combined['symbol'] == coin) &
                 (hist_combined['timestamp'] <= signal['timestamp'])
             ]
-            
-            # Features berechnen (Default-Werte, wenn kein Kontext vorhanden)
+
+            # Calculate features (default values if no context)
             row['total_signals_5d'] = len(context)
             row['long_signals_5d'] = len(context[context['direction'] == 'LONG'])
             row['short_signals_5d'] = len(context[context['direction'] == 'SHORT'])
-            
+
             total_dir = row['long_signals_5d'] + row['short_signals_5d']
             row['dominating_direction_5d_long_prob'] = row['long_signals_5d'] / total_dir if total_dir > 0 else 0
             row['dominating_direction_5d_short_prob'] = row['short_signals_5d'] / total_dir if total_dir > 0 else 0
 
             longs = context[context['direction'] == 'LONG']
             shorts = context[context['direction'] == 'SHORT']
-            
+
             row['mean_conf_long_5d'] = longs['confidence'].mean() if not longs.empty else 0
             row['mean_conf_short_5d'] = shorts['confidence'].mean() if not shorts.empty else 0
-            
+
             row['latest_signal_age_hours'] = 120 # Default
             if not context.empty:
                 diff = (signal['timestamp'] - context['timestamp'].max()).total_seconds() / 3600
-                row['latest_signal_age_hours'] = max(0, diff) # Alter kann nicht negativ sein
+                row['latest_signal_age_hours'] = max(0, diff) # Age cannot be negative
 
-            # Signal Spezifika
+            # Signal specifics
             row['signal_conf'] = signal['confidence']
             row['direction_num'] = 1 if signal['direction'] == 'LONG' else 0
-            
-            # Bot Name für OHE (sicherstellen, dass 'nan' als String behandelt wird)
+
+            # Bot name for OHE (ensure 'nan' is treated as string)
             if signal['signal_type'] == 'ai_signal':
                 row['ai_model'] = str(signal['bot_name'])
                 row['conv_source_bot'] = 'nan'
@@ -333,20 +333,20 @@ async def check_master_trades(application):
                 row['conv_source_bot'] = str(signal['bot_name'])
                 row['ai_model'] = 'nan'
 
-            # --- VORHERSAGE ---
+            # --- PREDICTION ---
             df_input = pd.DataFrame([row])
             df_input['ai_model'] = df_input['ai_model'].astype(str)
             df_input['conv_source_bot'] = df_input['conv_source_bot'].astype(str)
-            
+
             df_normalized = normalize_features_for_ml(df_input)
-            
-            # Spaltenordnung erzwingen
+
+            # Force column order
             X = df_normalized.reindex(columns=REQUIRED_FEATURES, fill_value=0)
-            
+
             # Prediction
-            prob = MASTER_MODEL.predict_proba(X)[0][1] # Wahrscheinlichkeit für Klasse 1 (Win)
-            
-             # 4. Signal als verarbeitet markieren (in DB eintragen)
+            prob = MASTER_MODEL.predict_proba(X)[0][1] # Probability for class 1 (win)
+
+             # 4. Mark signal as processed (record in DB)
             try:
                 with engine.connect() as conn:
                     conn.execute(
@@ -359,17 +359,17 @@ async def check_master_trades(application):
                         ),
                         {'signal_type': signal['signal_type'], 'signal_id': signal['id'], 'ml_confidence': float(prob)}
                     )
-                    conn.commit() # Transaktion committen
+                    conn.commit() # Commit transaction
             except Exception as db_e:
-                print(f"❌ FEHLER beim Speichern des verarbeiteten Signals in DB: {db_e}")
+                print(f"❌ ERROR saving processed signal to DB: {db_e}")
 
             # --- ALERT ---
             if prob >= MIN_CONFIDENCE:
                 is_pump = (signal['direction'] == "LONG")
                 emoji = "💎 MASTER AI TRADE"
                 color = "#00ff00" if is_pump else "#ff0066"
-                
-                # HTML Nachricht
+
+                # HTML message
                 msg = f"""
 <pre style="background:#151515; color:#e0e0e0; padding:15px; border-radius:10px; border-left: 5px solid {color};">
 <b style="font-size:18px; color:#ffcc00;">{emoji}</b>
@@ -386,34 +386,34 @@ async def check_master_trades(application):
 • Signals: {row['total_signals_5d']:.0f} (L:{row['long_signals_5d']:.0f} / S:{row['short_signals_5d']:.0f})
 • Long Dom: {row['dominating_direction_5d_long_prob']:.0%}
 </pre>
-"""             
-                # Senden an Telegram
+"""
+                # Send to Telegram
                 try:
-                    # await send_cornix_signal(coin, signal['direction'], 'master_combined_model') # Falls Cornix genutzt wird
+                    # await send_cornix_signal(coin, signal['direction'], 'master_combined_model') # If using Cornix
                     # await application.bot.send_message(
                         # chat_id=AI_CHANNEL_ID,
                         # text=msg,
                         # parse_mode="HTML"
                     # )
-                    print(f"✅ ALERT gesendet für {coin} (ID: {signal['id']}): {prob:.1%}")
-                    
-                   
+                    print(f"✅ Alert sent for {coin} (ID: {signal['id']}): {prob:.1%}")
+
+
 
                 except Exception as e:
-                    print(f"❌ TELEGRAM Sende-Fehler für {coin}: {e}")
+                    print(f"❌ Telegram send error for {coin}: {e}")
             else:
-                # print(f"   Skip {coin} (ID: {signal['id']}): {prob:.1%} < {MIN_CONFIDENCE:.0%}") # Debug Info
+                # print(f"   Skip {coin} (ID: {signal['id']}): {prob:.1%} < {MIN_CONFIDENCE:.0%}") # Debug info
                 pass
 
         except Exception as e:
-            print(f"❌ Fehler bei Analyse von {coin} (ID: {signal.get('id', 'N/A')}): {e}")
+            print(f"❌ Error analysing {coin} (ID: {signal.get('id', 'N/A')}): {e}")
             continue
 
-    print("🏁 Analyse abgeschlossen.")
+    print("🏁 Analysis complete.")
 
-# --- BEISPIEL FÜR REGISTRIERUNG ---
-# In deiner Haupt-Bot-Datei (main.py):
-# 
+# --- EXAMPLE FOR REGISTRATION ---
+# In your main bot file (main.py):
+#
 # from master_task import check_master_trades
 # ...
 # # In main():

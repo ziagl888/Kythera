@@ -100,17 +100,17 @@ def attach_series(conn, trades: list[dict], tf: str, grid0: np.datetime64, glen:
     t0 = time.time()
     no_candle = 0
     for ci, (sym, tl) in enumerate(sorted(by_coin.items()), 1):
-        # 26h Vorlauf statt 2h: die trailing 24h-Vorbewegung des Coins zum
-        # Entry-Zeitpunkt (Mover-Gate, Operator-Frage 2026-07-28) braucht Kerzen
-        # VOR dem Trade.
+        # 26h lead-in instead of 2h: the trailing 24h pre-move of the coin at
+        # entry time (mover gate, operator question 2026-07-28) needs candles
+        # BEFORE the trade.
         lo = min(t["ot"] for t in tl) - timedelta(hours=26)
         hi = max(t["ct"] for t in tl) + timedelta(hours=2)
         cd = read_coin_wick(conn, sym, lo, hi, tf)
         covered = len(cd["t"]) > 0
         for t in tl:
             ot64 = np.datetime64(_naive(t["ot"]))
-            # 24h-Vorbewegung strikt aus Kerzen VOR dem Entry (kausal); None,
-            # wenn der Coin nicht weit genug zurückreicht (junges Listing).
+            # 24h pre-move strictly from candles BEFORE the entry (causal); None,
+            # if the coin does not reach back far enough (young listing).
             t["mv24"] = None
             if covered:
                 p_now = int(np.searchsorted(cd["t"], ot64, side="left")) - 1
@@ -217,8 +217,8 @@ def exit_trail_hardstop(t: dict, grid0: np.datetime64, act: float, stop: float) 
 
 def exit_deployed_slcap(t: dict, grid0: np.datetime64, act: float, ts_hours: float, stop: float) -> tuple[int, float]:
     """The DEPLOYED rule (trail + causal time-stop) plus an SL cap at −`stop` %
-    unlevered (operator question 2026-07-29: 'SL auf 5 % movement = max −100 %
-    bei 20x?'). Earliest event wins; on the same candle the stop is filled first
+    unlevered (operator question 2026-07-29: 'SL at 5 % movement = max −100 %
+    at 20x?'). Earliest event wins; on the same candle the stop is filled first
     (monitor convention)."""
     if not t["series"]:
         return t["gie"], t["real_unlev"]
@@ -248,7 +248,7 @@ def exit_one_sided(t: dict, grid0: np.datetime64, act: float, trail_dir: str) ->
 
 
 def exit_breakeven(t: dict, grid0: np.datetime64, act: float, ts_hours: float | None = None) -> tuple[int, float]:
-    """SL-Nachzug instead of a full trail: once the prior peak clears `act`, the
+    """SL ratchet instead of a full trail: once the prior peak clears `act`, the
     stop ratchets to BREAKEVEN (entry). The trade then rides until it touches the
     entry again (exit at 0.0) or reaches its natural close — evaporation is
     bounded at zero instead of captured at peak*(1-x), keeping the upside open.
@@ -451,8 +451,8 @@ def run_feedback_gate(
     positions the gate is open (no signal to read). Exits stay the plain trail,
     so the measurement isolates the admission effect.
 
-    This is the operator's question (b): "nur posten, wenn es zur Marktlage
-    passt" — implemented as feedback from realised market state instead of a
+    This is the operator's question (b): "only post when it fits the market
+    situation" — implemented as feedback from realised market state instead of a
     regime classifier (ROM's whitelist measured ~zero discriminative power).
     """
     exits = {i: exit_trail(t, grid0, act) for i, t in enumerate(trades)}
@@ -541,7 +541,7 @@ def run_move_gate(
     chase_thresh: float | None = None,
 ) -> Book:
     """Admission gate on the coin's prior 24h move (operator question 2026-07-28:
-    'Coins mit ±50 % in ein paar Stunden überhaupt traden?').
+    'should coins with ±50 % in a few hours be traded at all?').
 
     `abs_thresh`: skip every entry on a coin whose |24h move| exceeds it (blanket).
     `chase_thresh`: skip only entries that chase the move (see chases_the_move).
@@ -659,62 +659,62 @@ def run_portfolio(trades: list[dict], glen: int, y: float) -> Book:
 
 RULE_ORDER = [
     ("hold", "Hold (Fleet-Exit, SL/TP/Timeout)"),
-    ("trail-a2", "Trail act=2 % (Bot 40 heute)"),
+    ("trail-a2", "Trail act=2 % (Bot 40 today)"),
     ("trail-a5", "Trail act=5 %"),
     ("trail-a10", "Trail act=10 %"),
-    ("trail-a2-x20", "Trail act=2 %, x=20 % (langsamer closen)"),
+    ("trail-a2-x20", "Trail act=2 %, x=20 % (closes slower)"),
     ("trail-a2-x30", "Trail act=2 %, x=30 %"),
     ("trail-a10-x20", "Trail act=10 %, x=20 %"),
-    ("trail-a2+ts24", "Trail 2 % + Zeit-Stop 24 h"),
-    ("trail-a2+ts48", "Trail 2 % + Zeit-Stop 48 h"),
-    ("trail-a2+ts72", "Trail 2 % + Zeit-Stop 72 h"),
+    ("trail-a2+ts24", "Trail 2 % + Time-Stop 24 h"),
+    ("trail-a2+ts48", "Trail 2 % + Time-Stop 48 h"),
+    ("trail-a2+ts72", "Trail 2 % + Time-Stop 72 h"),
     ("trail-a2+hs2", "Trail 2 % + Hard-Stop −2 %"),
-    ("trail-a2-short-only", "Trail 2 % nur SHORT (LONG hält)"),
-    ("trail-a2-long-only", "Trail 2 % nur LONG (SHORT hält)"),
-    ("trail-a2-partial50", "Trail 2 %, 50 % Teilschließung"),
+    ("trail-a2-short-only", "Trail 2 % only SHORT (LONG holds)"),
+    ("trail-a2-long-only", "Trail 2 % only LONG (SHORT holds)"),
+    ("trail-a2-partial50", "Trail 2 %, 50 % partial close"),
     ("trail-a2-cap50", "Trail 2 % + Exposure-Cap ±50"),
     ("trail-a2-cap100", "Trail 2 % + Exposure-Cap ±100"),
-    ("trail-a2+ts24+cap50", "Trail 2 % + Zeit-Stop 24 h + Cap ±50"),
-    ("be2", "SL-Nachzug: Breakeven ab +2 % (kein Trail)"),
-    ("be2+ts24", "Breakeven ab +2 % + Zeit-Stop 24 h"),
-    ("be2+ts24+cap50", "Breakeven 2 % + Zeit-Stop 24 h + Cap ±50"),
-    ("be2+ts24+cap100", "Breakeven 2 % + Zeit-Stop 24 h + Cap ±100"),
-    ("be5+ts24", "Breakeven ab +5 % + Zeit-Stop 24 h"),
-    ("hold@500", "Hold unter hartem 500-Slot-Cap"),
-    ("be2+ts24@500", "Breakeven 2 % + Zeit-Stop 24 h @ 500-Cap"),
-    ("be5+ts24@500", "Breakeven 5 % + Zeit-Stop 24 h @ 500-Cap"),
+    ("trail-a2+ts24+cap50", "Trail 2 % + Time-Stop 24 h + Cap ±50"),
+    ("be2", "SL ratchet: breakeven from +2 % (no trail)"),
+    ("be2+ts24", "Breakeven from +2 % + Time-Stop 24 h"),
+    ("be2+ts24+cap50", "Breakeven 2 % + Time-Stop 24 h + Cap ±50"),
+    ("be2+ts24+cap100", "Breakeven 2 % + Time-Stop 24 h + Cap ±100"),
+    ("be5+ts24", "Breakeven from +5 % + Time-Stop 24 h"),
+    ("hold@500", "Hold under a hard 500-slot cap"),
+    ("be2+ts24@500", "Breakeven 2 % + Time-Stop 24 h @ 500-Cap"),
+    ("be5+ts24@500", "Breakeven 5 % + Time-Stop 24 h @ 500-Cap"),
     ("hold@1000", "Hold @ 1000 (2 Channels, least-loaded)"),
-    ("be5+ts24@1000", "Breakeven 5 % + Zeit-Stop 24 h @ 1000 (2 Channels)"),
+    ("be5+ts24@1000", "Breakeven 5 % + Time-Stop 24 h @ 1000 (2 Channels)"),
     ("hold@1500", "Hold @ 1500 (3 Channels)"),
-    ("be5+ts24@1500", "Breakeven 5 % + Zeit-Stop 24 h @ 1500 (3 Channels)"),
-    ("feedback-gate", "Buch-Feedback-Gate (D nur wenn offenes D-Buch > −1 %)"),
-    ("btc-dir-gate", "BTC-Richtungs-Gate (LONG nur bei 24h-Ret > 0)"),
-    ("mover-abs30", "Mover-Gate: Coin |24h| > 30 % ignorieren (Trail a2)"),
-    ("mover-abs50", "Mover-Gate: Coin |24h| > 50 % ignorieren (Trail a2)"),
-    ("mover-chase20", "Chase-Gate: nur Hinterherlaufen > 20 % ignorieren"),
-    ("mover-chase50", "Chase-Gate: nur Hinterherlaufen > 50 % ignorieren"),
-    ("trail-a2+slcap5", "Trail a2 + SL-Deckel −5 % unlev (−100 % @20x)"),
-    ("deployed+slcap5", "DEPLOYED (Trail+ts24+Cap50) + SL-Deckel −5 %"),
-    ("deployed", "DEPLOYED heute: Trail+ts24+Cap50 (kausal, Referenz)"),
-    ("ptf-y10", "Portfolio-Trail 10 % (kein Einzel-Trail)"),
-    ("ptf-y15", "Portfolio-Trail 15 % (kein Einzel-Trail)"),
+    ("be5+ts24@1500", "Breakeven 5 % + Time-Stop 24 h @ 1500 (3 Channels)"),
+    ("feedback-gate", "Book feedback gate (D only if open D book > −1 %)"),
+    ("btc-dir-gate", "BTC direction gate (LONG only if 24h ret > 0)"),
+    ("mover-abs30", "Mover gate: ignore coin |24h| > 30 % (Trail a2)"),
+    ("mover-abs50", "Mover gate: ignore coin |24h| > 50 % (Trail a2)"),
+    ("mover-chase20", "Chase gate: ignore only chasing > 20 %"),
+    ("mover-chase50", "Chase gate: ignore only chasing > 50 %"),
+    ("trail-a2+slcap5", "Trail a2 + SL cap −5 % unlev (−100 % @20x)"),
+    ("deployed+slcap5", "DEPLOYED (Trail+ts24+Cap50) + SL cap −5 %"),
+    ("deployed", "DEPLOYED today: Trail+ts24+Cap50 (causal, reference)"),
+    ("ptf-y10", "Portfolio trail 10 % (no per-trade trail)"),
+    ("ptf-y15", "Portfolio trail 15 % (no per-trade trail)"),
 ]
 
 
 def render_md(meta: dict) -> str:
     L = [
-        f"# Trailing-Arm Buch-Gesundheit — Exit-Regeln am offenen Buch gemessen ({meta['task']})",
+        f"# Trailing arm book health — exit rules measured on the open book ({meta['task']})",
         "",
-        f"_generated {meta['generated_at']} · read-only · Roster-Beine ohne ROM1 · x={X_FRAC:.0%} · "
-        f"tf {meta['tf']} · ab {meta['start']} · Gebühr {FEE_RT:.2f} %/Trade · {meta['n_trades']} Trades_",
+        f"_generated {meta['generated_at']} · read-only · roster legs excluding ROM1 · x={X_FRAC:.0%} · "
+        f"tf {meta['tf']} · since {meta['start']} · fee {FEE_RT:.2f} %/trade · {meta['n_trades']} trades_",
         "",
-        "**Frage:** `tools/trailing_slot_budget.py` maß realisierte Summen und Slots. Eine Regel, die",
-        "Gewinner schließt und Verlierer hält, sieht dort gut aus und im offenen Buch schlecht —",
-        "Bot 40 hat das live bewiesen. Hier wird jede Regel an BEIDEN Seiten gemessen: realisiert",
-        "UND Zusammensetzung des offenen Buchs (Equity = realisierte Summe + offenes MTM,",
-        "gleichgewichtet, unlevered %-Punkte).",
+        "**Question:** `tools/trailing_slot_budget.py` measured realised sums and slots. A rule that",
+        "closes winners and holds losers looks good there and bad in the open book —",
+        "Bot 40 proved that live. Here every rule is measured on BOTH sides: realised",
+        "AND composition of the open book (equity = realised sum + open MTM,",
+        "equal-weighted, unlevered %-points).",
         "",
-        "| Regel | n | Σ netto | Ø/Trade | Ø Slots | p95 | netto/Slot-Tag | Equity final | **Equity MaxDD** | netto/Ø-Slot | DD/Ø-Slot | Ø Buch-Mark | Buch unter Wasser | Ø L offen | Ø S offen |",
+        "| Rule | n | Σ net | avg/trade | avg slots | p95 | net/slot-day | Equity final | **Equity MaxDD** | net/avg slot | DD/avg slot | avg book mark | book underwater | avg L open | avg S open |",
         "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
     ]
     for key, label in RULE_ORDER:
@@ -728,13 +728,13 @@ def render_md(meta: dict) -> str:
             f"{s['book_mark_mean']:+.2f} % | {s['book_underwater_mean']:.0f} % | "
             f"{s['cnt_long_mean']:.0f} | {s['cnt_short_mean']:.0f} |"
         )
-    L += ["", "## Lesehilfe", ""]
+    L += ["", "## Reading Guide", ""]
     L += [
-        "- **Equity MaxDD** ist die Kennzahl, die der Studie fehlte: max. Rückgang der Kurve",
-        "  (realisiert + offen), in unlevered %-Punkten über das gleichgewichtete Buch.",
-        "- **Ø Buch-Mark** = zeitgemittelter Durchschnitts-Mark der offenen Positionen. Ein stark",
-        "  negativer Wert heißt: das Buch besteht strukturell aus Verlierern.",
-        "- **Buch unter Wasser** = zeitgemittelter Anteil offener Positionen im Minus.",
+        "- **Equity MaxDD** is the metric the study lacked: max. drawdown of the curve",
+        "  (realised + open), in unlevered %-points across the equal-weighted book.",
+        "- **avg book mark** = time-averaged mean mark of the open positions. A strongly",
+        "  negative value means: the book structurally consists of losers.",
+        "- **book underwater** = time-averaged share of open positions in the red.",
     ]
     return "\n".join(L) + "\n"
 
@@ -846,19 +846,19 @@ def main() -> None:
     depcap_exits = {i: exit_deployed_slcap(t, grid0, ACT_LIVE, 24.0, 5.0) for i, t in enumerate(trades)}
     score("deployed+slcap5", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50, exits=depcap_exits))
 
-    # Erholungs-Statistik: was gibt ein −5 %-Deckel her, was frisst er?
+    # recovery statistics: what does a −5 % cap give up, what does it eat?
     dipped = [t for t in trades if t["series"] and len(t["adv"]) and float(np.min(t["adv"])) <= -5.0]
     if dipped:
         holds = np.array([t["real_unlev"] for t in dipped])
         rec_pos = float((holds >= 0).mean() * 100)
         rec_5 = float((holds > -5.0).mean() * 100)
         print(
-            f"\nErholungs-Statistik SL-Deckel −5 %: {len(dipped)}/{len(trades)} Trades tauchten unter −5 % unlev."
-            f"\n  davon endeten auf hold: >= 0 %: {rec_pos:.1f} %  ·  besser als −5 %: {rec_5:.1f} %"
-            f"  ·  Ø hold-Ergebnis der Getauchten: {holds.mean():+.3f} %"
+            f"\nRecovery statistics SL cap −5 %: {len(dipped)}/{len(trades)} trades dipped below −5 % unlev."
+            f"\n  of those ended on hold: >= 0 %: {rec_pos:.1f} %  ·  better than −5 %: {rec_5:.1f} %"
+            f"  ·  avg hold result of the dipped: {holds.mean():+.3f} %"
         )
     buckets = mover_buckets(trades, a2_exits)
-    print("\nMover-Buckets (24h-Vorbewegung beim Entry, Ø/Trade unlev %):")
+    print("\nMover buckets (24h pre-move at entry, avg/trade unlev %):")
     print(f"  {'Bucket':<10}{'Dir':<7}{'n':>7}{'hold':>8}{'trail-a2':>10}")
     for b in buckets:
         print(f"  {b['bucket']:<10}{b['dir']:<7}{b['n']:>7}{b['hold_per_trade']:>8.3f}{b['rule_per_trade']:>10.3f}")

@@ -74,15 +74,15 @@ def test_active_check_covers_the_legacy_tag():
     therefore cover the tag the pre-fix code would have posted (sniper precedent,
     T-2026-CU-9050-026). While constant and artifact generation agree, the IN is a no-op.
 
-    T-2026-KYT-9050-034: die per-Coin-Kandidatenlogik wohnt jetzt im geteilten
-    Prozessor `_process_mis_candidates` (MIS2 UND MIS1-Revive teilen einen Pfad);
-    der Active-Trade-Check ist dorthin relokiert (Invariante unverändert)."""
+    T-2026-KYT-9050-034: the per-coin candidate logic now lives in the shared
+    processor `_process_mis_candidates` (MIS2 AND MIS1 revive share one path);
+    the active-trade check has been relocated there (invariant unchanged)."""
     body = re.search(r"def _process_mis_candidates\(.*?\):\n(.*?)\ndef ", SRC, re.DOTALL)
     assert body, "_process_mis_candidates body not found"
     body = body.group(1)
     assert "model IN (%s, %s)" in body, "active-trade check no longer covers the legacy tag"
-    # legacy_tag ist jetzt generations-parametrisch: f"{legacy_generation}-{best_horizon}".
-    # Der MIS2-Aufruf übergibt MODEL_GENERATION → identisches Vor-Fix-Verhalten.
+    # legacy_tag is now generation-parametric: f"{legacy_generation}-{best_horizon}".
+    # The MIS2 call passes MODEL_GENERATION → identical pre-fix behaviour.
     assert re.search(r"legacy_tag\s*=\s*f\"\{legacy_generation\}-\{best_horizon\}\"", body), (
         "legacy_tag must be the pre-fix tag (legacy_generation + horizon)"
     )

@@ -1,26 +1,26 @@
-# core/sra_features.py — geteilter Feature-Builder der SRA2-Generation.
+# core/sra_features.py — shared feature builder of the SRA2 generation.
 #
-# X-R1-Regel: EIN Builder für Trainer und Serving. Bis T-2026-CU-9050-042 lebte
-# er nur in tools/retrain_sra2.py, und 9_ai_sr_bot baute seinen eigenen Vektor.
-# Die beiden waren NICHT äquivalent, obwohl sie Spaltennamen teilen:
+# X-R1 rule: ONE builder for trainer and serving. Until T-2026-CU-9050-042 it
+# only lived in tools/retrain_sra2.py, and 9_ai_sr_bot built its own vector.
+# The two were NOT equivalent, even though they share column names:
 #
-#   * ``pct_ema9`` & Co. sind im Bot (close-ema9)/CLOSE*100, im Trainer
-#     (close-ema9)/EMA9*100 — dieselbe Spalte, andere Grösse.
-#   * ``macd_dif_pct``/``macd_dea_pct``/``atr_pct`` baut der Bot gar nicht; er
-#     führt stattdessen die Roh-Spalten (macd_dif_fast_9_21_9, atr_14), die
-#     SRA2 bewusst rausgeworfen hat ("22 skalenfreie Features").
+#   * ``pct_ema9`` & co. are (close-ema9)/CLOSE*100 in the bot, but
+#     (close-ema9)/EMA9*100 in the trainer — same column, different scale.
+#   * ``macd_dif_pct``/``macd_dea_pct``/``atr_pct`` are not built by the bot at
+#     all; it instead carries the raw columns (macd_dif_fast_9_21_9, atr_14)
+#     that SRA2 deliberately dropped ("22 scale-free features").
 #
-# Ein SRA2-Rollout gegen den Bot-eigenen Vektor hätte das Modell also mit
-# fremden Zahlen unter vertrauten Namen befragt. Dieser Modul ist die einzige
-# Quelle der SRA2-Feature-Semantik; der alte Bot-Vektor bleibt daneben nur als
-# LEGACY-Vertrag des heute deployten SRA1-Modells bestehen.
+# An SRA2 rollout against the bot's own vector would therefore have fed the
+# model foreign numbers under familiar names. This module is the single
+# source of the SRA2 feature semantics; the old bot vector remains alongside
+# it only as the LEGACY contract of the SRA1 model deployed today.
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-# Der Feature-Vertrag der SRA2-Generation (Reihenfolge = Trainings-Reihenfolge).
+# The feature contract of the SRA2 generation (order = training order).
 SRA2_FEATURES = [
     "rsi_9",
     "rsi_14",
@@ -50,8 +50,8 @@ TREND_MAP = {"UP": 1, "DOWN": -1, "FLAT": 0, "SIDEWAYS": 0}
 
 
 def pct(a, b) -> float:
-    """(a - b) / b * 100. NaN bleibt NaN — XGBoost kann damit nativ umgehen,
-    ein 0-Fake wäre eine erfundene Beobachtung."""
+    """(a - b) / b * 100. NaN stays NaN — XGBoost can handle it natively,
+    a fake 0 would be a fabricated observation."""
     try:
         a, b = float(a), float(b)
         if b == 0 or pd.isna(a) or pd.isna(b):
@@ -62,10 +62,10 @@ def pct(a, b) -> float:
 
 
 def build_sra2_features(ind: dict) -> dict:
-    """Skalenfreie SRA2-Features aus einer 1h-Indikator-Zeile.
+    """Scale-free SRA2 features from a 1h indicator row.
 
-    Liefert exakt die Schlüssel aus ``SRA2_FEATURES``. NaN bleibt NaN
-    (XGBoost-nativ, live-konsistent).
+    Returns exactly the keys from ``SRA2_FEATURES``. NaN stays NaN
+    (XGBoost-native, live-consistent).
     """
     close = ind.get("close")
     atr = ind.get("atr_14")
@@ -90,7 +90,7 @@ def build_sra2_features(ind: dict) -> dict:
         "ema9_ema21_pct": pct(ind.get("ema_9"), ind.get("ema_21")),
         "kama9_kama21_pct": pct(ind.get("kama_9"), ind.get("kama_21")),
     }
-    # ATR-normalisierte Distanzen (wie Bot P1.20: fehlt ATR → NaN, kein 0-Fake)
+    # ATR-normalised distances (like bot P1.20: missing ATR → NaN, no fake 0)
     try:
         atr_f = float(atr) if atr is not None else np.nan
         close_f = float(close) if close is not None else np.nan

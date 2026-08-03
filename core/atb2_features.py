@@ -1,28 +1,28 @@
 # core/atb2_features.py
-"""ATB2 — Converging-Channel Breakout: geteilte Detektions- und Feature-Logik.
+"""ATB2 — Converging-Channel Breakout: shared detection and feature logic.
 
-EINE Quelle für Bot 14 (Serving), ``tools/walkforward_sim.py`` (Labeling) und
-``tools/retrain_from_replay.py`` (Training) — X-R1-Regel, kein Train/Serve-Skew.
+ONE source for bot 14 (serving), ``tools/walkforward_sim.py`` (labeling) and
+``tools/retrain_from_replay.py`` (training) — X-R1 rule, no train/serve skew.
 
-Ersetzt den alten Einzel-Trendlinien-Detektor (90d-Close-Regressionsgerade,
-ATB1, Audit-Note D: „Das Modell sah nie das Event, das es scored"). Neu-Design
-gemäß ``docs/MODEL_INTENT.md`` §11 (Michi, 2026-07-07): konvergierende Kanäle
-(Wedge/Triangle/Pennant) aus BESTÄTIGTEN Swing-Pivots, Ausbruch mit
-geschlossenem Kerzenschluss. Die fünf WillyAlgoTrader-Faktoren
-(Penetrationstiefe/ATR, Body-Ratio, Body-Commitment, Volumen-Spike,
-RSI-Momentum) gehen NICHT als handgewichteter Score ein, sondern als
-Setup-Features fürs XGB-Gate — analog ``18_ai_abr1_bot.GEOMETRY_FEATURES``.
+Replaces the old single-trendline detector (90d close regression line,
+ATB1, audit note D: "the model never saw the event it was scoring"). Redesign
+per ``docs/MODEL_INTENT.md`` §11 (Michi, 2026-07-07): converging channels
+(wedge/triangle/pennant) from CONFIRMED swing pivots, breakout on a
+closed candle. The five WillyAlgoTrader factors
+(penetration depth/ATR, body ratio, body commitment, volume spike,
+RSI momentum) do NOT go in as a hand-weighted score, but as
+setup features for the XGB gate — analogous to ``18_ai_abr1_bot.GEOMETRY_FEATURES``.
 
-Kontrakte
+Contracts
 ---------
-* **No-Repaint:** nur Pivots mit ``CONFIRM_BARS`` Kerzen auf BEIDEN Seiten; der
-  Ausbruch wird nur auf einer geschlossenen Kerze bewertet. Der Aufrufer muss
-  die Forming-Candle vorher abschneiden (R1).
-* **Scale-free:** jedes Feature ist ein Prozentwert, ein ATR-Vielfaches, ein
-  Oszillator oder ein Flag — nie ein absoluter Preis (Ticker-Leakage-Regel).
-* **Selbst-enthaltene Indikatoren:** ATR/RSI/EMA werden hier deterministisch aus
-  OHLCV berechnet (Wilder), keine ``pandas_ta``-Versionsabhängigkeit (P0.12),
-  keine DB-Indikatorspalten nötig — Bot, Simulator und Trainer rechnen identisch.
+* **No-repaint:** only pivots with ``CONFIRM_BARS`` candles on BOTH sides; the
+  breakout is only evaluated on a closed candle. The caller must
+  strip the forming candle beforehand (R1).
+* **Scale-free:** every feature is a percentage, an ATR multiple, an
+  oscillator or a flag — never an absolute price (ticker leakage rule).
+* **Self-contained indicators:** ATR/RSI/EMA are computed deterministically here
+  from OHLCV (Wilder), no ``pandas_ta`` version dependency (P0.12),
+  no DB indicator columns needed — bot, simulator and trainer compute identically.
 """
 
 from __future__ import annotations
@@ -31,72 +31,72 @@ import numpy as np
 import pandas as pd
 
 # --------------------------------------------------------------------------- #
-# Detektor-Parameter (§11, objektiv reproduzierbar)                            #
+# Detector parameters (§11, objectively reproducible)                          #
 # --------------------------------------------------------------------------- #
-CONFIRM_BARS = 5  # Pivot braucht CONFIRM_BARS Kerzen auf beiden Seiten
-MIN_TOUCHES = 3  # §11: Mindest-Berührungen je Kanalgrenze (3 statt 2)
-TOUCH_TOL_ATR = 0.15  # §11: Touch-Toleranz 0,15 × ATR
-CONVERGENCE_MIN = 0.02  # §11: Verengung ≥ 2 % über das Kanalfenster
-WIDTH_MIN_ATR = 0.5  # §11: Kanalbreite 0,5 … 120 × ATR
+CONFIRM_BARS = 5  # pivot needs CONFIRM_BARS candles on both sides
+MIN_TOUCHES = 3  # §11: minimum touches per channel boundary (3 instead of 2)
+TOUCH_TOL_ATR = 0.15  # §11: touch tolerance 0.15 × ATR
+CONVERGENCE_MIN = 0.02  # §11: narrowing ≥ 2 % over the channel window
+WIDTH_MIN_ATR = 0.5  # §11: channel width 0.5 … 120 × ATR
 WIDTH_MAX_ATR = 120.0
-VOL_CONTRACTION_MAX = 0.85  # §11: In-Kanal-Volumen < 85 % des Vorlaufs
-CHANNEL_MAX_SPAN = 120  # längstes betrachtetes Konsolidierungsfenster (Kerzen)
-CHANNEL_MIN_SPAN = 20  # kürzestes Fenster, in dem ein Kanal gültig sein kann
+VOL_CONTRACTION_MAX = 0.85  # §11: in-channel volume < 85 % of the lead-in
+CHANNEL_MAX_SPAN = 120  # longest considered consolidation window (candles)
+CHANNEL_MIN_SPAN = 20  # shortest window in which a channel can be valid
 
 ATR_PERIOD = 14
 RSI_PERIOD = 14
 EMA_PERIOD = 200
 VOL_AVG_WINDOW = 20
-RSI_MOMENTUM_LOOKBACK = 3  # Kerzen für RSI-Delta
+RSI_MOMENTUM_LOOKBACK = 3  # candles for RSI delta
 
-# Train/Serve-Paritäts-Kontrakt (X-R1): EMA200 ist long-memory. Bot, Simulator
-# und Trainer müssen für denselben Zeitstempel VOR der Entscheidungskerze
-# mindestens so viele Kerzen geladen haben, dass der SMA-Seed ausgedämpft ist
-# ((199/201)^1300 ≈ 2·10⁻⁶) — sonst driften dist_ema200/atr_pct/rsi je nach
-# geladener Fensterlänge auseinander. Simulator setzt start_t entsprechend;
-# der Bot-Serving-Pfad MUSS ≥ diese Historie laden.
+# Train/serve parity contract (X-R1): EMA200 is long-memory. Bot, simulator
+# and trainer must, for the same timestamp BEFORE the decision candle,
+# have loaded at least enough candles that the SMA seed is dampened out
+# ((199/201)^1300 ≈ 2·10⁻⁶) — otherwise dist_ema200/atr_pct/rsi would drift
+# apart depending on the loaded window length. The simulator sets start_t
+# accordingly; the bot serving path MUST load ≥ this much history.
 MIN_HISTORY_CANDLES = 1500
 
-#: Der ATB2-Feature-Vertrag (Spaltennamen == meta.features des Artefakts).
+#: The ATB2 feature contract (column names == the artifact's meta.features).
 ATB2_FEATURES = [
-    # --- 5 WillyAlgoTrader-Setup-Faktoren (als Features, nicht als Score) ---
-    "pen_depth_atr",  # Penetrationstiefe des Ausbruchs / ATR
-    "body_ratio",  # |close-open| / (high-low) der Ausbruchskerze
-    "body_commitment",  # Close-Position Richtung Ausbruch (0..1)
-    "vol_spike",  # Ausbruchsvolumen / rollierender 20er-Schnitt
+    # --- 5 WillyAlgoTrader setup factors (as features, not as a score) ---
+    "pen_depth_atr",  # penetration depth of the breakout / ATR
+    "body_ratio",  # |close-open| / (high-low) of the breakout candle
+    "body_commitment",  # close position towards the breakout direction (0..1)
+    "vol_spike",  # breakout volume / rolling 20-candle average
     "rsi_momentum",  # RSI[break] - RSI[break-3]
-    # --- Kanal-Geometrie ---
-    "chan_width_atr",  # Kanalbreite am Ausbruch / ATR
-    "chan_convergence",  # relative Verengung über das Fenster
-    "chan_touch_upper",  # bestätigte Berührungen der Oberkante
-    "chan_touch_lower",  # bestätigte Berührungen der Unterkante
-    "chan_slope_upper_atr",  # Steigung Oberkante (ATR/Kerze)
-    "chan_slope_lower_atr",  # Steigung Unterkante (ATR/Kerze)
-    "chan_span",  # Kanallänge in Kerzen
-    "chan_vol_contraction",  # In-Kanal-Volumen / Vorlauf-Volumen
-    # --- Kanaltyp (One-Hot, dürfen konstant sein) ---
+    # --- Channel geometry ---
+    "chan_width_atr",  # channel width at the breakout / ATR
+    "chan_convergence",  # relative narrowing over the window
+    "chan_touch_upper",  # confirmed touches of the upper edge
+    "chan_touch_lower",  # confirmed touches of the lower edge
+    "chan_slope_upper_atr",  # slope of the upper edge (ATR/candle)
+    "chan_slope_lower_atr",  # slope of the lower edge (ATR/candle)
+    "chan_span",  # channel length in candles
+    "chan_vol_contraction",  # in-channel volume / lead-in volume
+    # --- Channel type (one-hot, may be constant) ---
     "is_wedge",
     "is_triangle",
     "is_pennant",
-    # --- Kontext ---
+    # --- Context ---
     "atr_pct",  # ATR / close
     "dist_ema200",  # (close - EMA200) / EMA200
     "rsi",  # RSI[break]
-    "break_up",  # 1 = Ausbruch nach oben (LONG), 0 = nach unten
+    "break_up",  # 1 = breakout upward (LONG), 0 = downward
 ]
 
-#: Binär-Flags dürfen über ein einzelnes Coin-Fenster legitim konstant sein und
-#: werden von der Startup-Assertion nicht hart geprüft (ABR/MIS-Muster).
+#: Binary flags may legitimately be constant over a single coin window and
+#: are not hard-checked by the startup assertion (ABR/MIS pattern).
 BINARY_FLAG_FEATURES = {"is_wedge", "is_triangle", "is_pennant", "break_up"}
 
 REQUIRED_INPUT_COLS = ["open", "high", "low", "close", "volume"]
 
 
 # --------------------------------------------------------------------------- #
-# Deterministische Indikatoren (Wilder) — DB-frei, versionsstabil             #
+# Deterministic indicators (Wilder) — DB-free, version-stable                 #
 # --------------------------------------------------------------------------- #
 def _wilder_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
-    """Average True Range nach Wilder. Rückgabe gleiche Länge wie Input."""
+    """Average True Range per Wilder. Returns the same length as the input."""
     n = len(close)
     tr = np.empty(n, dtype=float)
     tr[0] = high[0] - low[0]
@@ -115,7 +115,7 @@ def _wilder_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: in
 
 
 def _wilder_rsi(close: np.ndarray, period: int) -> np.ndarray:
-    """Relative Strength Index nach Wilder (eindomänig, T-097-konform)."""
+    """Relative Strength Index per Wilder (single-domain, T-097-compliant)."""
     n = len(close)
     rsi = np.full(n, np.nan, dtype=float)
     if n <= period:
@@ -139,14 +139,14 @@ def _wilder_rsi(close: np.ndarray, period: int) -> np.ndarray:
 
 
 def _ema(close: np.ndarray, period: int) -> np.ndarray:
-    """Exponential Moving Average, **SMA-seeded** (wie ta-lib/pandas_ta).
+    """Exponential Moving Average, **SMA-seeded** (like ta-lib/pandas_ta).
 
-    Der erste Wert liegt bei Index ``period-1`` = SMA der ersten ``period``
-    Closes; davor NaN. Das entfernt die willkürliche ``close[0]``-Verankerung —
-    entscheidend für Train/Serve-Parität (X-R1): mit genügend Warmup
-    (`MIN_HISTORY_CANDLES`) konvergiert die Kurve, sodass Bot, Simulator und
-    Trainer für denselben Zeitstempel denselben EMA200 rechnen, egal wie lang
-    das jeweils geladene Fenster ist.
+    The first value sits at index ``period-1`` = SMA of the first ``period``
+    closes; NaN before that. This removes the arbitrary ``close[0]`` anchoring —
+    decisive for train/serve parity (X-R1): with enough warmup
+    (`MIN_HISTORY_CANDLES`) the curve converges, so bot, simulator and
+    trainer compute the same EMA200 for the same timestamp, no matter how long
+    the respective loaded window is.
     """
     n = len(close)
     ema = np.full(n, np.nan, dtype=float)
@@ -160,14 +160,14 @@ def _ema(close: np.ndarray, period: int) -> np.ndarray:
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Fügt ATR/RSI/EMA200/vol_avg_20 als Spalten hinzu (eine Quelle für alle).
+    """Adds ATR/RSI/EMA200/vol_avg_20 as columns (one source for everyone).
 
-    Erwartet chronologisch aufsteigende OHLCV-Kerzen. Hard-Error bei fehlenden
-    Eingangsspalten (kein stilles ``fillna(0)`` — P0.12-Lektion).
+    Expects chronologically ascending OHLCV candles. Hard error on missing
+    input columns (no silent ``fillna(0)`` — P0.12 lesson).
     """
     missing = [c for c in REQUIRED_INPUT_COLS if c not in df.columns]
     if missing:
-        raise ValueError(f"ATB2 compute_indicators: Eingangsspalten fehlen: {missing}")
+        raise ValueError(f"ATB2 compute_indicators: missing input columns: {missing}")
     out = df.copy()
     high = out["high"].to_numpy(dtype=float)
     low = out["low"].to_numpy(dtype=float)
@@ -180,15 +180,15 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-# Pivots (No-Repaint) und Kanal-Fit                                           #
+# Pivots (no-repaint) and channel fit                                        #
 # --------------------------------------------------------------------------- #
 def find_confirmed_pivots(high: np.ndarray, low: np.ndarray, confirm_bars: int = CONFIRM_BARS):
-    """Bestätigte Swing-Pivots: Extremum mit ``confirm_bars`` Kerzen auf BEIDEN
-    Seiten. Der Rand wird hart ausgeschlossen — die letzten ``confirm_bars``
-    Kerzen sind noch unbestätigt und dürfen den Kanal nicht mitformen (Repaint,
-    ABR-R07-b-Lektion).
+    """Confirmed swing pivots: extremum with ``confirm_bars`` candles on BOTH
+    sides. The edge is hard-excluded — the last ``confirm_bars``
+    candles are still unconfirmed and must not shape the channel (repaint,
+    ABR-R07-b lesson).
 
-    Rückgabe: ``(highs, lows)`` — je Liste aus ``(index, price)``.
+    Returns: ``(highs, lows)`` — each a list of ``(index, price)``.
     """
     n = len(high)
     highs: list[tuple[int, float]] = []
@@ -204,7 +204,7 @@ def find_confirmed_pivots(high: np.ndarray, low: np.ndarray, confirm_bars: int =
 
 
 def _fit_line(points: list[tuple[int, float]]):
-    """Least-Squares-Gerade durch (index, price). Rückgabe (slope, intercept)."""
+    """Least-squares line through (index, price). Returns (slope, intercept)."""
     xs = np.array([p[0] for p in points], dtype=float)
     ys = np.array([p[1] for p in points], dtype=float)
     A = np.vstack([xs, np.ones(len(xs))]).T
@@ -213,20 +213,20 @@ def _fit_line(points: list[tuple[int, float]]):
 
 
 def _count_touches(points, slope, intercept, tol) -> int:
-    """Wie viele Pivots liegen innerhalb ``tol`` (Preis) an der Gerade?"""
+    """How many pivots lie within ``tol`` (price) of the line?"""
     return sum(1 for idx, price in points if abs(price - (slope * idx + intercept)) <= tol)
 
 
 def fit_channel(df_ind: pd.DataFrame, break_idx: int):
-    """Fittet einen konvergierenden Kanal im Fenster VOR ``break_idx``.
+    """Fits a converging channel in the window BEFORE ``break_idx``.
 
-    ``df_ind`` muss ``compute_indicators`` durchlaufen haben (Spalte ``atr``).
-    Das Konsolidierungsfenster endet bei ``break_idx - 1`` (die Ausbruchskerze
-    selbst gehört nicht in den Fit) und umfasst höchstens ``CHANNEL_MAX_SPAN``
-    Kerzen. Validiert §11-Kriterien: ≥3 bestätigte Berührungen je Kante,
-    Konvergenz ≥2 %, Breite 0,5…120×ATR, Volumen-Kontraktion <85 %.
+    ``df_ind`` must have gone through ``compute_indicators`` (column ``atr``).
+    The consolidation window ends at ``break_idx - 1`` (the breakout candle
+    itself does not belong in the fit) and spans at most ``CHANNEL_MAX_SPAN``
+    candles. Validates §11 criteria: ≥3 confirmed touches per edge,
+    convergence ≥2 %, width 0.5…120×ATR, volume contraction <85 %.
 
-    Rückgabe: ein ``channel``-dict oder ``None``.
+    Returns: a ``channel`` dict or ``None``.
     """
     if break_idx < CHANNEL_MIN_SPAN + CONFIRM_BARS:
         return None
@@ -240,7 +240,7 @@ def fit_channel(df_ind: pd.DataFrame, break_idx: int):
     low = df_ind["low"].to_numpy(dtype=float)
     vol = df_ind["volume"].to_numpy(dtype=float)
 
-    # Pivots relativ zum Fensteranfang; Fit im Index-Raum des Gesamt-df.
+    # Pivots relative to the window start; fit in the index space of the full df.
     win_high = high[win_start:break_idx]
     win_low = low[win_start:break_idx]
     highs_rel, lows_rel = find_confirmed_pivots(win_high, win_low)
@@ -258,7 +258,7 @@ def fit_channel(df_ind: pd.DataFrame, break_idx: int):
     if n_up < MIN_TOUCHES or n_lo < MIN_TOUCHES:
         return None
 
-    # Kanalspanne = von der ersten genutzten Pivotkerze bis zur Kerze vor Break.
+    # Channel span = from the first used pivot candle to the candle before the break.
     span_start = min(highs[0][0], lows[0][0])
     span_end = break_idx - 1
     span = span_end - span_start
@@ -267,7 +267,7 @@ def fit_channel(df_ind: pd.DataFrame, break_idx: int):
 
     width_start = (up_slope * span_start + up_int) - (lo_slope * span_start + lo_int)
     width_end = (up_slope * span_end + up_int) - (lo_slope * span_end + lo_int)
-    # Oberkante muss über Unterkante liegen; sonst ist es kein Kanal.
+    # Upper edge must be above the lower edge; otherwise it's not a channel.
     if width_start <= 0 or width_end <= 0:
         return None
     convergence = (width_start - width_end) / width_start
@@ -277,7 +277,7 @@ def fit_channel(df_ind: pd.DataFrame, break_idx: int):
     if not (WIDTH_MIN_ATR <= width_atr <= WIDTH_MAX_ATR):
         return None
 
-    # Volumen-Kontraktion: In-Kanal-Volumen vs. gleich langer Vorlauf.
+    # Volume contraction: in-channel volume vs. an equally long lead-in.
     in_vol = vol[span_start : span_end + 1]
     pre_start = max(0, span_start - (span + 1))
     pre_vol = vol[pre_start:span_start]
@@ -308,27 +308,27 @@ def fit_channel(df_ind: pd.DataFrame, break_idx: int):
 
 
 def _classify_channel(up_slope: float, lo_slope: float, atr: float) -> str:
-    """Wedge (beide Kanten gleiche Richtung), Triangle (eine Kante flach) oder
-    Pennant/Symmetric (Kanten laufen gegeneinander). Flachheits-Schwelle relativ
-    zu ATR, damit die Klassifikation skalenunabhängig ist.
+    """Wedge (both edges same direction), triangle (one edge flat) or
+    pennant/symmetric (edges run against each other). Flatness threshold relative
+    to ATR, so the classification is scale-independent.
     """
-    flat = 0.02 * atr  # Steigung < 2 % ATR/Kerze gilt als „flach"
+    flat = 0.02 * atr  # slope < 2 % ATR/candle counts as "flat"
     up_flat = abs(up_slope) < flat
     lo_flat = abs(lo_slope) < flat
     if up_flat or lo_flat:
         return "triangle"
     if (up_slope < 0) and (lo_slope > 0):
-        return "pennant"  # symmetrisch konvergierend
+        return "pennant"  # symmetrically converging
     if np.sign(up_slope) == np.sign(lo_slope):
         return "wedge"
     return "pennant"
 
 
 def detect_breakout(df_ind: pd.DataFrame, channel: dict, break_idx: int):
-    """Prüft geschlossenen Ausbruch der Kerze ``break_idx`` aus dem Kanal.
+    """Checks a closed breakout of candle ``break_idx`` out of the channel.
 
-    Rückgabe: ``{'direction', 'boundary_price', 'penetration'}`` oder ``None``.
-    LONG = Close über der Oberkante, SHORT = Close unter der Unterkante.
+    Returns: ``{'direction', 'boundary_price', 'penetration'}`` or ``None``.
+    LONG = close above the upper edge, SHORT = close below the lower edge.
     """
     close = float(df_ind["close"].iloc[break_idx])
     upper = channel["up_slope"] * break_idx + channel["up_int"]
@@ -341,13 +341,13 @@ def detect_breakout(df_ind: pd.DataFrame, channel: dict, break_idx: int):
 
 
 # --------------------------------------------------------------------------- #
-# Feature-Builder (eine Quelle für Bot + Simulator + Trainer)                 #
+# Feature builder (one source for bot + simulator + trainer)                  #
 # --------------------------------------------------------------------------- #
 def build_atb2_features(df_ind: pd.DataFrame, channel: dict, breakout: dict, break_idx: int) -> dict:
-    """Baut den ATB2_FEATURES-Vertrag als flaches dict für eine Ausbruchskerze.
+    """Builds the ATB2_FEATURES contract as a flat dict for one breakout candle.
 
-    ``df_ind`` = ``compute_indicators``-Frame; ``break_idx`` zeigt auf die
-    geschlossene Ausbruchskerze. Alle Werte sind skalenfrei.
+    ``df_ind`` = the ``compute_indicators`` frame; ``break_idx`` points to the
+    closed breakout candle. All values are scale-free.
     """
     row = df_ind.iloc[break_idx]
     o, hi, lo, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
@@ -363,9 +363,9 @@ def build_atb2_features(df_ind: pd.DataFrame, channel: dict, breakout: dict, bre
     rsi_prev = rsi_arr[break_idx - RSI_MOMENTUM_LOOKBACK] if break_idx >= RSI_MOMENTUM_LOOKBACK else np.nan
     rsi_momentum = float(rsi_now - rsi_prev) if np.isfinite(rsi_now) and np.isfinite(rsi_prev) else 0.0
 
-    # rng>0-Guard VOR der Division — eine Flat-Candle (high==low, illiquide
-    # Stunde) darf keinen 0/0-ZeroDivisionError werfen (bricht sonst den
-    # Coin-Scan/Replay ab).
+    # rng>0 guard BEFORE the division — a flat candle (high==low, illiquid
+    # hour) must not throw a 0/0 ZeroDivisionError (would otherwise abort the
+    # coin scan/replay).
     if rng > 0:
         body_commitment = ((c - lo) / rng) if is_long else ((hi - c) / rng)
     else:
@@ -396,14 +396,14 @@ def build_atb2_features(df_ind: pd.DataFrame, channel: dict, breakout: dict, bre
         "rsi": float(rsi_now) if np.isfinite(rsi_now) else 50.0,
         "break_up": 1.0 if is_long else 0.0,
     }
-    # inf/NaN härten (identisch in Bot und Trainer).
+    # Harden inf/NaN (identical in bot and trainer).
     return {k: (float(v) if np.isfinite(v) else 0.0) for k, v in feats.items()}
 
 
 def measured_move_targets(channel: dict, breakout: dict, entry: float) -> dict:
-    """§11-Kandidatengeometrie: Measured-Move-Targets (⅓/⅔/1× Kanalbreite) mit
-    der gegenüberliegenden Kanalkante als SL (gecappt wie die Fleet-Smart-Targets:
-    SL max. 15 % vom Entry). Rückgabe ist formkompatibel zu
+    """§11 candidate geometry: measured-move targets (⅓/⅔/1× channel width) with
+    the opposite channel edge as SL (capped like the fleet smart targets:
+    SL max. 15 % from entry). Return value is shape-compatible with
     ``calculate_smart_targets`` (entry1/entry2/sl/targets).
     """
     width = channel["width_end"]
@@ -423,12 +423,12 @@ def measured_move_targets(channel: dict, breakout: dict, entry: float) -> dict:
 
 
 def find_channel_breakout(df_ind: pd.DataFrame, break_idx: int | None = None):
-    """High-Level-Einstieg für Bot + Simulator: fittet den Kanal vor
-    ``break_idx`` und prüft den geschlossenen Ausbruch DIESER Kerze.
+    """High-level entry point for bot + simulator: fits the channel before
+    ``break_idx`` and checks the closed breakout of THIS candle.
 
-    ``break_idx`` default = letzte (geschlossene) Kerze — der Aufrufer hat die
-    Forming-Candle bereits abgeschnitten. Rückgabe: ein Setup-dict
-    ``{direction, entry, features, channel, breakout}`` oder ``None``.
+    ``break_idx`` default = last (closed) candle — the caller has already
+    stripped the forming candle. Returns: a setup dict
+    ``{direction, entry, features, channel, breakout}`` or ``None``.
     """
     if break_idx is None:
         break_idx = len(df_ind) - 1
@@ -449,16 +449,16 @@ def find_channel_breakout(df_ind: pd.DataFrame, break_idx: int | None = None):
 
 
 def assert_features_alive(df_features: pd.DataFrame, context: str = "") -> None:
-    """Startup-/Trainings-Assertion „kein Feature konstant" (P0.12-Muster).
+    """Startup/training assertion "no feature constant" (P0.12 pattern).
 
-    Fehlende Spalten → Hard-Error. Kontinuierliche Features müssen über die
-    Stichprobe variieren; konstante Binär-Flags (Kanaltyp, break_up) sind über
-    ein einzelnes Fenster legitim und werden nicht hart geprüft.
+    Missing columns → hard error. Continuous features must vary across the
+    sample; constant binary flags (channel type, break_up) are legitimate over
+    a single window and are not hard-checked.
     """
     missing = [c for c in ATB2_FEATURES if c not in df_features.columns]
     if missing:
-        raise ValueError(f"ATB2-Feature-Assertion{context}: Spalten fehlen: {missing}")
+        raise ValueError(f"ATB2 feature assertion{context}: missing columns: {missing}")
     continuous = [c for c in ATB2_FEATURES if c not in BINARY_FLAG_FEATURES]
     constant = [c for c in continuous if df_features[c].nunique(dropna=False) <= 1]
     if constant:
-        raise ValueError(f"ATB2-Feature-Assertion{context}: konstante Features: {constant}")
+        raise ValueError(f"ATB2 feature assertion{context}: constant features: {constant}")

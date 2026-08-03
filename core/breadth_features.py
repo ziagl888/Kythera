@@ -1,59 +1,59 @@
 # core/breadth_features.py
-"""Geteilter Markt-Breadth/Dispersion-Feature-Builder (X-R1) — EINE Quelle für
-Studie, Trainer und (später) Bot/Orchestrator.
+"""Shared market breadth/dispersion feature builder (X-R1) — ONE source for
+study, trainer and (later) bot/orchestrator.
 
-Herkunft: docs/MODEL_CANDIDATES_SPEC_2026-07.md §K6 (BRD). Die Hypothese: Breadth-
-Größen über das ~530er USDT-Perp-Universum (Anteil Coins > EMA200/EMA50,
-Median-7d-Return, Advance/Decline, Return-Dispersion vs. BTC) ergänzen die
-BTC-only-Regime-Klassifikation und liefern potenziell das fehlende Regime-Gate
-für RUB-LONG. Wie core/funding_features.py und core/aim2_features.py ist dieser
-Builder kanonisch: Studie, Trainer und Bot rechnen exakt dieselben Größen (kein
-Train/Serve-Skew).
+Origin: docs/MODEL_CANDIDATES_SPEC_2026-07.md §K6 (BRD). The hypothesis: breadth
+metrics across the ~530-strong USDT perp universe (share of coins > EMA200/EMA50,
+median 7d return, advance/decline, return dispersion vs. BTC) complement the
+BTC-only regime classification and potentially deliver the missing regime gate
+for RUB-LONG. Like core/funding_features.py and core/aim2_features.py, this
+builder is canonical: study, trainer and bot compute exactly the same metrics (no
+train/serve skew).
 
-Datenquelle offline: die per-Coin ``{SYM}_1d``-Kerzen + ``{SYM}_1d_indicators``
-(EMA50/EMA200 liegen dort vor) über core.candles.read_candles_with_indicators.
+Data source offline: the per-coin ``{SYM}_1d`` candles + ``{SYM}_1d_indicators``
+(EMA50/EMA200 live there) via core.candles.read_candles_with_indicators.
 
-Effizienz (Pflicht, §K6): EINE Query je Coin (``load_universe_panels``), danach
-wird das gesamte Cross-Section-Gerüst EINMAL in-memory gebaut
-(``build_breadth_panel``); die As-of-Auswertung (``breadth_features_asof``) ist
-danach ein O(log n)-Lookup in dieses vorberechnete Tagespanel — es werden NICHT
-530 Tabellen je Zeitpunkt einzeln angefragt. Prozess-Priorität BELOW_NORMAL setzt
-der Aufrufer (tools/walkforward_sim.set_low_priority).
+Efficiency (mandatory, §K6): ONE query per coin (``load_universe_panels``), after
+which the entire cross-section scaffold is built ONCE in-memory
+(``build_breadth_panel``); the as-of evaluation (``breadth_features_asof``) is
+then an O(log n) lookup into this precomputed daily panel — it does NOT
+query 530 tables individually per point in time. The caller sets process priority
+BELOW_NORMAL (tools/walkforward_sim.set_low_priority).
 
-As-of-Vertrag (R1, nur geschlossene Kerzen): ein Tagesbalken mit open_time D
-schließt erst bei D + 1d. ``breadth_features_asof(panel, ts)`` liefert deshalb den
-jüngsten Tagesbalken D mit D + tf <= ts — kein Lookahead. Der Load nutzt
+As-of contract (R1, closed candles only): a daily bar with open_time D
+only closes at D + 1d. ``breadth_features_asof(panel, ts)`` therefore returns the
+most recent daily bar D with D + tf <= ts — no lookahead. The load uses
 ``include_forming=False``.
 
-Feature-Vertrag (X-R1): fehlende SPALTEN im geladenen Frame ⇒ ``BreadthFeatureError``
-(Load-Fehler), NIE ``fillna(0)`` als Vertragsersatz. Fehlende WERTE (Coin mit zu
-kurzer Historie, delisteter Coin ohne Tabelle) sind KEIN Vertragsbruch: der Coin
-fällt an diesem Zeitpunkt schlicht aus der Cross-Section (Ausschluss, nicht Null).
-Die beitragende Coin-Zahl steht als Diagnose-Größe ``brd_n_universe`` in jeder
-Zeile.
+Feature contract (X-R1): missing COLUMNS in the loaded frame ⇒ ``BreadthFeatureError``
+(load error), NEVER ``fillna(0)`` as a contract substitute. Missing VALUES (coin
+with too short a history, delisted coin without a table) are NOT a contract
+breach: the coin simply drops out of the cross-section at that point in time
+(exclusion, not zero). The contributing coin count is carried in every row as
+the diagnostic metric ``brd_n_universe``.
 
-TOTAL3-Proxy — EHRLICHKEITS-HINWEIS (§K6-Addendum): Wir haben KEINE echten
-Marktkapitalisierungs-Gewichte. Der hier gebaute Preis-Index über das Universum
-OHNE BTC/ETH ist ein PROXY für den realen TOTAL3-Index (Altcoin-Marktkap ohne
-BTC/ETH). Zwei Varianten:
-  * gleichgewichtet (EW): jeder Alt-Coin trägt seinen Tagesrendite-Beitrag gleich.
-  * volumengewichtet (VW): Gewicht = Tages-Turnover-Proxy (close·volume, USD-nah,
-    aber Basisvolumen·Preis, keine echte Quote-Volume-Spalte).
-Beide Indizes sind Rendite-verkettete Levels (Basis 100), NICHT ein realer
-Marktkap-Index. Der Praktiker-Gate-Gedanke „Alt-Trades nur wenn TOTAL3 über Level"
-(KB ingest-c1e5112dea7f) ist damit als Proxy testbar, aber als Proxy zu
-dokumentieren — nie als echter TOTAL3 auszugeben.
+TOTAL3 proxy — HONESTY NOTE (§K6 addendum): we have NO real market-cap
+weights. The price index built here over the universe WITHOUT BTC/ETH is a
+PROXY for the real TOTAL3 index (altcoin market cap excluding BTC/ETH). Two
+variants:
+  * equal-weighted (EW): every alt coin contributes its daily return equally.
+  * volume-weighted (VW): weight = daily turnover proxy (close·volume, USD-close
+    but base volume·price, not a real quote-volume column).
+Both indices are return-chained levels (base 100), NOT a real market-cap
+index. The practitioner gate idea "only trade alts while TOTAL3 is above a level"
+(KB ingest-c1e5112dea7f) is thereby testable as a proxy, but must be documented
+as a proxy — never presented as the real TOTAL3.
 
-Konsumenten-Hinweis: Das rohe ``total3_*_level`` ist ab Zeile 0 nicht-NaN (der
-Basis-100-Anker steht schon, bevor das Universum voll besetzt ist) und sein
-Absolut-Niveau ist ein willkürlicher Anker ohne Cross-Coin-Vergleichbarkeit. Für
-Gates/Features sind die skalenfreien Ableitungen ``total3_*_dist_reg90d`` (Abstand
-zur 90d-Regression) und ``total3_*_breakout`` (90d-Hoch) vorzuziehen; das Level
-dient primär deren Berechnung, nicht dem direkten Vergleich.
+Consumer note: the raw ``total3_*_level`` is non-NaN from row 0 (the
+base-100 anchor is already in place before the universe is fully populated) and
+its absolute level is an arbitrary anchor with no cross-coin comparability. For
+gates/features, the scale-free derivatives ``total3_*_dist_reg90d`` (distance
+to the 90d regression) and ``total3_*_breakout`` (90d high) are preferable; the
+level primarily serves their computation, not a direct comparison.
 
-Survivorship (Regel 9): coins.json führt die AKTIVEN USDT-Perps; delistete Coins
-fehlen teils. Jede Breadth-Zeile ist damit über ein survivorship-verzerrtes
-Universum gerechnet — bekannte, dokumentierte Bias-Quelle.
+Survivorship (rule 9): coins.json lists the ACTIVE USDT perps; delisted coins
+are partly missing. Every breadth row is therefore computed over a
+survivorship-biased universe — a known, documented source of bias.
 """
 
 from __future__ import annotations
@@ -67,38 +67,38 @@ from core.candles import TF_SECONDS, read_candles_with_indicators
 
 
 class BreadthFeatureError(RuntimeError):
-    """X-R1-Vertragsbruch: ein geladener Frame hat nicht die Pflicht-Spalten."""
+    """X-R1 contract breach: a loaded frame does not carry the required columns."""
 
 
-#: Spalten, die jeder geladene Panel-Frame tragen MUSS (sonst Load-Fehler).
+#: Columns that every loaded panel frame MUST carry (otherwise load error).
 REQUIRED_COLUMNS: tuple[str, ...] = ("open_time", "close", "volume", "ema_50", "ema_200")
 
-#: Indikator-Spalten, die aus ``{SYM}_{tf}_indicators`` gezogen werden.
+#: Indicator columns pulled from ``{SYM}_{tf}_indicators``.
 PANEL_INDICATOR_COLS: tuple[str, ...] = ("ema_50", "ema_200")
 
-#: Der Breadth/Dispersion-Feature-Vertrag (kanonische Namen, Reihenfolge fix).
+#: The breadth/dispersion feature contract (canonical names, order fixed).
 BREADTH_FEATURES: list[str] = [
-    "brd_pct_above_ema200",  # Anteil Coins mit close > EMA200 (as-of)
-    "brd_pct_above_ema50",  # Anteil Coins mit close > EMA50 (as-of)
-    "brd_median_ret_7d",  # Median 7d-Return über das Universum
-    "brd_adv_decline_ratio",  # Advancer/Decliner des jüngsten Tagesbalkens
-    "brd_dispersion_vs_btc",  # Cross-Section-StdAbw von (7d-Return − BTC-7d-Return)
-    "total3_ew_level",  # EW-Preis-Index (Proxy) Level, Basis 100
-    "total3_ew_dist_reg90d",  # Abstand zur 90d-Regressionslinie (EW), relativ
-    "total3_ew_breakout",  # EW-Level > 90d-Vorlauf-Hoch (1/0)
-    "total3_vw_level",  # VW-Preis-Index (Proxy) Level, Basis 100
-    "total3_vw_dist_reg90d",  # Abstand zur 90d-Regressionslinie (VW), relativ
-    "total3_vw_breakout",  # VW-Level > 90d-Vorlauf-Hoch (1/0)
+    "brd_pct_above_ema200",  # share of coins with close > EMA200 (as-of)
+    "brd_pct_above_ema50",  # share of coins with close > EMA50 (as-of)
+    "brd_median_ret_7d",  # median 7d return across the universe
+    "brd_adv_decline_ratio",  # advancer/decliner of the most recent daily bar
+    "brd_dispersion_vs_btc",  # cross-section stddev of (7d return − BTC 7d return)
+    "total3_ew_level",  # EW price index (proxy) level, base 100
+    "total3_ew_dist_reg90d",  # distance to the 90d regression line (EW), relative
+    "total3_ew_breakout",  # EW level > 90d prior high (1/0)
+    "total3_vw_level",  # VW price index (proxy) level, base 100
+    "total3_vw_dist_reg90d",  # distance to the 90d regression line (VW), relative
+    "total3_vw_breakout",  # VW level > 90d prior high (1/0)
 ]
 
-#: Diagnose-Größe (nicht Teil des Feature-Vertrags), pro Zeile mitgeführt.
+#: Diagnostic metric (not part of the feature contract), carried per row.
 DIAGNOSTIC_COLUMNS: list[str] = ["brd_n_universe"]
 
-RET_LOOKBACK_BARS = 7  # 7 Tagesbalken → 7d-Return
-REG_WINDOW_BARS = 90  # 90 Tagesbalken → 90d-Regression / Breakout-Fenster
+RET_LOOKBACK_BARS = 7  # 7 daily bars → 7d return
+REG_WINDOW_BARS = 90  # 90 daily bars → 90d regression / breakout window
 INDEX_BASE = 100.0
 BTC_SYMBOL = "BTCUSDT"
-#: Aus dem TOTAL3-Proxy AUSGESCHLOSSEN (Definition des realen TOTAL3).
+#: EXCLUDED from the TOTAL3 proxy (definition of the real TOTAL3).
 EXCLUDED_FROM_TOTAL3: frozenset[str] = frozenset({"BTCUSDT", "ETHUSDT"})
 
 
@@ -109,15 +109,15 @@ def load_universe_panels(
     tf: str = "1d",
     start: Any | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Lädt je Coin EINE geschlossene Kerzen+Indikator-Historie (aufsteigend).
+    """Loads ONE closed candle+indicator history per coin (ascending).
 
-    Eine Query je Coin (read_candles_with_indicators, include_forming=False). Coins
-    ohne Tabelle/Daten (delisted, Survivorship) werden übersprungen — das ist KEIN
-    Vertragsbruch. Fehlt einem GELADENEN Frame eine Pflicht-Spalte, ist das ein
-    X-R1-Load-Fehler (BreadthFeatureError), nie fillna(0).
+    One query per coin (read_candles_with_indicators, include_forming=False). Coins
+    without a table/data (delisted, survivorship) are skipped — that is NOT a
+    contract breach. If a LOADED frame is missing a required column, that is an
+    X-R1 load error (BreadthFeatureError), never fillna(0).
 
-    Rückgabe: {symbol -> DataFrame[open_time(UTC, tz-aware), close, volume, ema_50,
-    ema_200]}, aufsteigend nach open_time.
+    Returns: {symbol -> DataFrame[open_time(UTC, tz-aware), close, volume, ema_50,
+    ema_200]}, ascending by open_time.
     """
     panels: dict[str, pd.DataFrame] = {}
     for sym in symbols:
@@ -132,14 +132,14 @@ def load_universe_panels(
                 indicator_columns=list(PANEL_INDICATOR_COLS),
             )
         except Exception:
-            # Fehlende per-Coin-Tabelle o.ä. → Survivorship, überspringen.
+            # Missing per-coin table or similar → survivorship, skip.
             conn.rollback()
             continue
         if df.empty:
             continue
         missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
         if missing:
-            raise BreadthFeatureError(f"{sym}_{tf}: fehlende Pflicht-Spalten {missing} — X-R1-Vertrag, kein fillna(0)")
+            raise BreadthFeatureError(f"{sym}_{tf}: missing required columns {missing} — X-R1 contract, no fillna(0)")
         df = df.copy()
         df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
         for col in ("close", "volume", "ema_50", "ema_200"):
@@ -149,24 +149,24 @@ def load_universe_panels(
             continue
         panels[sym] = df[["open_time", "close", "volume", "ema_50", "ema_200"]]
     if not panels:
-        raise BreadthFeatureError("keine verwertbaren Panels geladen (Universum leer?)")
+        raise BreadthFeatureError("no usable panels loaded (universe empty?)")
     return panels
 
 
 def _wide_field(panels: dict[str, pd.DataFrame], field: str) -> pd.DataFrame:
-    """Baut eine (Datum × Symbol)-Matrix eines Feldes; Union-Index, NaN wo fehlend."""
+    """Builds a (date × symbol) matrix of one field; union index, NaN where missing."""
     series = {sym: df.set_index("open_time")[field] for sym, df in panels.items()}
     wide = pd.DataFrame(series).sort_index()
-    # Doppel-open_times je Coin (dürfte nicht vorkommen) → letzte gewinnt.
+    # Duplicate open_times per coin (should not happen) → last wins.
     return wide[~wide.index.duplicated(keep="last")]
 
 
 def _rolling_reg_distance(level: pd.Series, window: int) -> pd.Series:
-    """Relativer Abstand des Levels zu seiner eigenen rollierenden OLS-Linie.
+    """Relative distance of the level to its own rolling OLS line.
 
-    Für jede Position i (ab window-1) OLS von level[i-window+1 : i+1] gegen
-    x = 0..window-1, Vorhersage am rechten Rand, dist = (level - pred) / pred.
-    NaN, solange das Fenster nicht voll / ein NaN enthält.
+    For every position i (from window-1) OLS of level[i-window+1 : i+1] against
+    x = 0..window-1, prediction at the right edge, dist = (level - pred) / pred.
+    NaN as long as the window is not full / contains a NaN.
     """
     vals = level.to_numpy(dtype=float)
     n = len(vals)
@@ -192,7 +192,7 @@ def _rolling_reg_distance(level: pd.Series, window: int) -> pd.Series:
 
 
 def _rolling_breakout(level: pd.Series, window: int) -> pd.Series:
-    """1.0 wenn das Level das Hoch der VORHERIGEN ``window`` Balken überschreitet."""
+    """1.0 if the level exceeds the high of the PRIOR ``window`` bars."""
     prior_max = level.shift(1).rolling(window).max()
     flag = (level > prior_max).astype(float)
     return flag.where(prior_max.notna())
@@ -203,11 +203,11 @@ def _index_levels(
     turnover: pd.DataFrame,
     alt_cols: list[str],
 ) -> tuple[pd.Series, pd.Series]:
-    """EW- und VW-Preis-Index (Proxy, Basis 100) über die Alt-Coins.
+    """EW and VW price index (proxy, base 100) over the alt coins.
 
-    Rendite-verkettet: ein Tag ohne Daten trägt flach (Rendite 0) — das ist
-    Index-Konstruktion, kein Feature-fillna. Die VW-Gewichte kommen aus dem
-    Turnover-Proxy (close·volume) desselben Tages.
+    Return-chained: a day without data contributes flat (return 0) — that is
+    index construction, not feature fillna. The VW weights come from the
+    turnover proxy (close·volume) of the same day.
     """
     if not alt_cols:
         empty = pd.Series(np.nan, index=daily_ret.index)
@@ -224,10 +224,10 @@ def _index_levels(
 
 
 def build_breadth_panel(panels: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Baut das Tages-Cross-Section-Panel aller Breadth/Dispersion-Features EINMAL.
+    """Builds the daily cross-section panel of all breadth/dispersion features ONCE.
 
-    Index = Tages-open_time (UTC, tz-aware). Spalten = BREADTH_FEATURES +
-    DIAGNOSTIC_COLUMNS. Danach ist ``breadth_features_asof`` nur noch ein Lookup.
+    Index = daily open_time (UTC, tz-aware). Columns = BREADTH_FEATURES +
+    DIAGNOSTIC_COLUMNS. After this, ``breadth_features_asof`` is just a lookup.
     """
     close_wide = _wide_field(panels, "close")
     ema200_wide = _wide_field(panels, "ema_200")
@@ -235,7 +235,7 @@ def build_breadth_panel(panels: dict[str, pd.DataFrame]) -> pd.DataFrame:
     vol_wide = _wide_field(panels, "volume")
     turnover = close_wide * vol_wide
 
-    # % über EMA200 / EMA50 (nur Coins mit beiden Werten zählen).
+    # % above EMA200 / EMA50 (only coins with both values count).
     valid200 = close_wide.notna() & ema200_wide.notna() & (ema200_wide > 0)
     valid50 = close_wide.notna() & ema50_wide.notna() & (ema50_wide > 0)
     above200 = (close_wide > ema200_wide) & valid200
@@ -297,13 +297,13 @@ def build_breadth_panel(panels: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def breadth_features_asof(panel: pd.DataFrame, ts_utc: Any, *, tf: str = "1d") -> dict:
-    """Die Breadth-Features as-of ``ts_utc`` (tz-aware oder naiv=UTC).
+    """The breadth features as-of ``ts_utc`` (tz-aware or naive=UTC).
 
-    Liefert den jüngsten Tagesbalken D mit D + tf <= ts (nur geschlossene Kerzen,
-    kein Lookahead). Rückgabe {} bei leerem Panel oder wenn ts vor der ersten
-    verwertbaren Zeile liegt. Werte, die NaN sind, kommen als ``None`` zurück (der
-    Aufrufer entscheidet — Trainer verwirft die Zeile; ein Gate fail-closed/-open) —
-    NIE als 0.
+    Returns the most recent daily bar D with D + tf <= ts (closed candles only,
+    no lookahead). Returns {} for an empty panel or if ts lies before the first
+    usable row. Values that are NaN come back as ``None`` (the caller decides —
+    trainer discards the row; a gate fails closed/open) —
+    NEVER as 0.
     """
     if panel.empty:
         return {}

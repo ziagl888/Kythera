@@ -8,9 +8,9 @@ warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 logger = logging.getLogger(__name__)
 
-# FIX P2.43: ema_200/wma_21/wma_26 ergänzt — die Conditions unten nutzen sie,
-# aber der Spalten-Check deckte sie nicht ab → fehlten sie im df, flog ein
-# KeyError, der still als "kein Signal" verschluckt wurde.
+# FIX P2.43: ema_200/wma_21/wma_26 added — the conditions below use them,
+# but the column check didn't cover them → if they were missing from the df, a
+# KeyError was thrown that was silently swallowed as "no signal".
 REQUIRED_COLUMNS = ['rsi_9', 'rsi_14', 'tsi_fast_12_7_7', 'tsi_fast_12_7_7_signal', 'ema_9', 'ema_12', 'ema_21',
                     'ema_26', 'ema_55', 'ema_89', 'ema_200', 'wma_9', 'wma_12', 'wma_21', 'wma_26', 'close',
                     'kama_9', 'kama_12', 'kama_21',
@@ -21,10 +21,10 @@ REQUIRED_COLUMNS = ['rsi_9', 'rsi_14', 'tsi_fast_12_7_7', 'tsi_fast_12_7_7_signa
 
 def check_recent_trades(conn, direction, hours=3, count=500):
     """
-    Prüft den Richtungs-Cooldown.
+    Checks the direction cooldown.
 
-    Siehe Dokumentation in strat_fast_in_out.py:check_recent_trades für Details.
-    Zählt jetzt ALLE Wins (nicht nur TP1) und hat Schwelle 500 statt 250.
+    See documentation in strat_fast_in_out.py:check_recent_trades for details.
+    Now counts ALL wins (not just TP1) and has threshold 500 instead of 250.
     """
     time_threshold = datetime.datetime.now() - datetime.timedelta(hours=hours)
     with conn.cursor() as cursor:
@@ -40,7 +40,7 @@ def evaluate_conditions(data, direction):
     if data is None or data.empty: return False
     if not all(col in data.columns for col in REQUIRED_COLUMNS): return False
 
-    # df_indicators kommt DESC sortiert aus dem Detector (iloc[0] = NEUESTE Kerze!)
+    # df_indicators comes DESC sorted from the detector (iloc[0] = NEWEST candle!)
     last_row = data.iloc[0]
 
     # T-2026-CU-9050-084 (P1.12): support_price/resistance_price are window-global
@@ -82,8 +82,8 @@ def evaluate_conditions(data, direction):
             return True
 
         elif direction == 'SHORT':
-            # FIX: Vorher `>=75 or <=45` → öffnet bei Overbought UND bei schwachem
-            # Downtrend gleichzeitig. Korrekt: SHORT nur wenn RSI im bearish-Bereich.
+            # FIX: previously `>=75 or <=45` → opens on overbought AND on weak
+            # downtrend at the same time. Correct: SHORT only when RSI is in the bearish range.
             if not (last_row['rsi_9'] <= 45): return False
             if not (last_row['rsi_14'] <= 45): return False
             if not (-40 <= last_row['tsi_fast_12_7_7'] <= -5): return False
@@ -96,8 +96,8 @@ def evaluate_conditions(data, direction):
             if not (last_row['close'] < last_row['ema_200']): return False
             if not (last_row['wma_9'] < last_row['ema_21']): return False
             if not (last_row['wma_12'] < last_row['ema_26']): return False
-            # FIX P2.43: war `ema_12 < ema_55` — Typo, der LONG-Spiegel (Z. 56)
-            # prüft `ema_21 > ema_55`.
+            # FIX P2.43: was `ema_12 < ema_55` — typo, the LONG mirror (line 56)
+            # checks `ema_21 > ema_55`.
             if not (last_row['ema_21'] < last_row['ema_55']): return False
             if not (last_row['ema_21'] < last_row['ema_89']): return False
             if not (last_row['ema_21'] < last_row['ema_200']): return False
@@ -109,15 +109,15 @@ def evaluate_conditions(data, direction):
             if not (last_row['macd_dif_fast_9_21_9'] < last_row['macd_dea_fast_9_21_9']): return False
             if not (last_row['close'] < last_row['donchian_mid_4']): return False
             if not (last_row['close'] < last_row['boll_mid_20']): return False
-            # FIX P1.14: Headroom-Guard war vorzeichenverdreht — `close >
-            # support*0.95` ist quasi immer wahr (No-op). SHORT nur wenn noch
-            # ≥5% Luft bis zum Support (Spiegel des LONG-Checks Z. 67).
+            # FIX P1.14: headroom guard had the sign flipped — `close >
+            # support*0.95` is quasi always true (no-op). SHORT only when there is
+            # still ≥5% headroom down to support (mirror of the LONG check, line 67).
             if not (last_row['close'] > sr_row['support_price'] * 1.05): return False
             if not (last_row['close'] <= sr_row['resistance_price'] * 0.999): return False
             return True
 
     except Exception as e:
-        logger.error(f"Error for Bedingungsprüfung (5% Bot): {e}")
+        logger.error(f"Error in condition check (5% bot): {e}")
         return False
 
     return False
@@ -128,17 +128,17 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
     for direction in ['LONG', 'SHORT']:
         if not evaluate_conditions(df_indicators, direction): continue
 
-        # Cooldown-Parameter — leicht asymmetrisch weil die Strategy
-        # bullish-biased ist und LONG-Trades erfahrungsgemäß häufiger wegen
-        # Marktdrift triggern. SHORT-Seite wird etwas lockerer behandelt.
-        # Werte verdoppelt von 200/250 auf 400/500 — die alte Schwelle hat
-        # bei einseitigen Märkten legitime Trend-Fortsetzungen blockiert.
+        # Cooldown parameters — slightly asymmetric because the strategy
+        # is bullish-biased and LONG trades trigger more often from experience due to
+        # market drift. The SHORT side is treated somewhat more loosely.
+        # Values doubled from 200/250 to 400/500 — the old threshold
+        # blocked legitimate trend continuations in one-sided markets.
         hours = 4 if direction == 'LONG' else 3
         count = 400 if direction == 'LONG' else 500
-        # T-2026-CU-9050-172 (4a): check_recent_trades ist coin-unabhängig — mit
-        # DetectorCycle läuft derselbe Query-Codepfad einmal pro Zyklus und
-        # (direction, hours, count) und wird memoisiert; ohne Cycle unverändert
-        # pro Aufruf. Guard bleibt read-only + AND-verknüpft (P2.44-Argument).
+        # T-2026-CU-9050-172 (4a): check_recent_trades is coin-independent — with
+        # DetectorCycle the same query code path runs once per cycle and
+        # (direction, hours, count) is memoised; unchanged per call without a
+        # cycle. Guard stays read-only + AND-combined (P2.44 argument).
         if cycle is not None:
             recent_blocked = cycle.memo(
                 ('recent_trades', direction, hours, count),

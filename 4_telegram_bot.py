@@ -11,41 +11,39 @@ from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
 # Suppress Pandas warning (in case it appears here)
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-# --- UNSERE SAUBEREN IMPORTS ---
+# --- OUR CLEAN IMPORTS ---
 from core.config import CH_ATB_INFO, REGIME_STATUS_CHANNEL_ID, TELEGRAM_BOT_TOKEN
 from core.database import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - TELEGRAM_BOT - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- KONSTANTEN ---
+# --- CONSTANTS ---
 MAX_ATTEMPTS = 3  # After 3 failed attempts a message is marked as "failed"
-FETCH_BATCH_SIZE = 50  # Max Messages pro DB-Roundtrip
-IDLE_SLEEP_SEC = 5  # Loop-Delay wenn Outbox leer
+FETCH_BATCH_SIZE = 50  # Max messages per DB roundtrip
+IDLE_SLEEP_SEC = 5  # Loop delay when outbox is empty
 
-# P1.1: Trading-Signale altern schnell — nach Downtime dürfen keine stundenalten
-# Entries zu längst vergangenen Preisen mehr rausgehen. Info-Channels haben kein TTL.
+# P1.1: Trading signals age quickly — after downtime, no hour-old entries should
+# go out at long-past prices. Info channels have no TTL.
 SIGNAL_TTL_MINUTES = 15
 
-# P0.1: 'sending'-Rows, die länger als diese Grace-Zeit stehen, gelten als
-# verwaist (Crash oder TimedOut mit unbekanntem Outcome) und werden von
-# recover_stale_sending() aufgelöst. Grace > längster realistischer Send
-# (Photo-Upload + Telegram-Timeout), damit der eigene laufende Send nicht
-# einkassiert wird.
+# P0.1: 'sending' rows standing longer than this grace period are considered
+# orphaned (crash or TimedOut with unknown outcome) and are resolved by
+# recover_stale_sending(). Grace > longest realistic send (photo upload +
+# Telegram timeout) so that our own in-flight send is not caught.
 SENDING_RECOVERY_GRACE_SEC = 120
 
-# P0.1/P1.1: Reine Info-Channels — dort sind Resend nach Crash und stale
-# Messages harmlos. ALLES andere (REGIME_TRADING_CHANNEL_ID, alle
-# Bot-Signal-Channels, ...) wird konservativ als Trading-Channel behandelt:
-# falsch-positiv kostet nur eine verlorene Message, falsch-negativ einen
-# Doppel-Trade bei Cornix.
+# P0.1/P1.1: Pure info channels — resend after crash and stale messages are
+# harmless there. Everything else (REGIME_TRADING_CHANNEL_ID, all bot signal
+# channels, ...) is conservatively treated as a trading channel: false positive
+# costs only one lost message, false negative a double trade at Cornix.
 INFO_CHANNEL_IDS = frozenset(cid for cid in (REGIME_STATUS_CHANNEL_ID, CH_ATB_INFO) if cid)
 
 # Rate limiting (replaces old fixed ANTI_SPAM_SLEEP_SEC=1):
 #
 # Telegram limits (official):
-#   - 30 Messages/Sekunde global pro Bot
-#   - 20 Messages/Minute pro Channel/Group (= 1 alle 3s)
+#   - 30 messages/second globally per bot
+#   - 20 messages/minute per channel/group (= 1 every 3s)
 #
 # We stay below both limits with a safe buffer, combined with
 # intelligent message selection: instead of strict FIFO, pick the next sendable
@@ -56,10 +54,10 @@ PER_CHANNEL_MIN_INTERVAL_MS = 3100  # ~19/min per channel (Telegram allows 20/mi
 
 
 def is_trading_channel(channel_id) -> bool:
-    """True wenn auf dem Channel real gehandelt werden kann (Cornix liest mit).
+    """True if real trading can happen on the channel (Cornix reads along).
 
-    Konservativ: alles, was nicht explizit als Info-Channel bekannt ist,
-    ist ein Trading-Channel (P0.1).
+    Conservative: everything not explicitly known as an info channel is
+    a trading channel (P0.1).
     """
     return channel_id not in INFO_CHANNEL_IDS
 
@@ -68,16 +66,16 @@ def ensure_schema(conn) -> None:
     """Ensures telegram_outbox has the required columns.
 
     Additional columns:
-    - attempts:   Zähler für Fehlversuche, after MAX_ATTEMPTS wird die Message
+    - attempts:   counter for failed attempts, after MAX_ATTEMPTS the message
                   is marked 'failed' so it does not block the queue.
     - failed:     True when permanently abandoned.
     - last_error: Last error text for debugging.
-    - status:     P0.1 — Zustandsmaschine 'pending' → 'sending' → 'sent' bzw.
-                  'failed'/'expired'/'dead_letter'. sent/failed bleiben als
-                  Booleans für alle anderen Reader (Housekeeping, Health-Monitor)
-                  parallel gepflegt.
-    - sending_at: P0.1 — wann die Row auf 'sending' ging (für die
-                  Verwaist-Erkennung in recover_stale_sending).
+    - status:     P0.1 — state machine 'pending' → 'sending' → 'sent' or
+                  'failed'/'expired'/'dead_letter'. sent/failed remain as
+                  booleans for all other readers (housekeeping, health monitor)
+                  maintained in parallel.
+    - sending_at: P0.1 — when the row went to 'sending' (for orphaned
+                  detection in recover_stale_sending).
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -95,7 +93,7 @@ def ensure_schema(conn) -> None:
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        # Migration für bestehende Installation: fehlende Spalten afterziehen
+        # Migration for existing installation: add missing columns
         for col_sql in [
             "ALTER TABLE telegram_outbox ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0",
             "ALTER TABLE telegram_outbox ADD COLUMN IF NOT EXISTS failed BOOLEAN DEFAULT FALSE",
@@ -109,11 +107,11 @@ def ensure_schema(conn) -> None:
 
 
 def expire_stale_signals(conn) -> None:
-    """P1.1: Trading-Messages älter als SIGNAL_TTL_MINUTES nicht mehr senden.
+    """P1.1: Do not send trading messages older than SIGNAL_TTL_MINUTES.
 
-    Nach Downtime wären das Signale zu längst vergangenen Preisen — auf
-    Cornix-Channels gefährlich. Einmal pro Poll, mit Count-Log.
-    Info-Channels haben kein TTL.
+    After downtime, those would be signals at long-past prices — dangerous
+    on Cornix channels. Once per poll, with count log.
+    Info channels have no TTL.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -126,32 +124,29 @@ def expire_stale_signals(conn) -> None:
               AND NOT (channel_id = ANY(%s))
             """,
             (
-                f"expired: aelter als {SIGNAL_TTL_MINUTES} min (P1.1)",
+                f"expired: older than {SIGNAL_TTL_MINUTES} min (P1.1)",
                 SIGNAL_TTL_MINUTES,
-                # Leere Liste würde psycopg2 nicht typisieren können → Dummy 0
+                # Empty list would not be typed by psycopg2 → dummy 0
                 list(INFO_CHANNEL_IDS) or [0],
             ),
         )
         expired = cur.rowcount
     conn.commit()
     if expired:
-        logger.warning(
-            f"⏰ {expired} Trading-Messages älter als {SIGNAL_TTL_MINUTES} min als 'expired' markiert (P1.1)."
-        )
+        logger.warning(f"⏰ {expired} trading messages older than {SIGNAL_TTL_MINUTES} min marked as 'expired' (P1.1).")
 
 
 def recover_stale_sending(conn, min_age_sec: int) -> None:
-    """P0.1(c): stehen gebliebene 'sending'-Rows (unbekanntes Outcome) auflösen.
+    """P0.1(c): resolve stuck 'sending' rows (unknown outcome).
 
-    Trading-Channels: NIE automatisch neu senden — der Send kann durchgegangen
-    sein, ein Resend hieße Cornix eröffnet den Trade doppelt → dead_letter
-    + WARNING (der Operator entscheidet manuell).
-    Info-Channels: Resend ist harmlos → zurück auf 'pending' (bzw. endgültig
-    'failed' wenn attempts erschöpft).
+    Trading channels: NEVER auto-resend — the send may have gone through,
+    a resend would mean Cornix opens the trade twice → dead_letter + WARNING
+    (the operator decides manually).
+    Info channels: resend is harmless → back to 'pending' (or finally 'failed'
+    if attempts are exhausted).
 
-    min_age_sec=0 beim Prozessstart (kein Send kann mehr in-flight sein),
-    sonst SENDING_RECOVERY_GRACE_SEC damit der eigene laufende Send nicht
-    einkassiert wird.
+    min_age_sec=0 at process start (no send can still be in-flight), otherwise
+    SENDING_RECOVERY_GRACE_SEC so our own in-flight send is not caught.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -176,15 +171,15 @@ def recover_stale_sending(conn, min_age_sec: int) -> None:
                     (msg_id,),
                 )
                 logger.warning(
-                    f"☠️ Msg {msg_id} (Trading-Kanal {channel_id}) stand auf 'sending' mit unbekanntem "
-                    f"Outcome → dead_letter, KEIN Auto-Resend (P0.1)."
+                    f"☠️ Msg {msg_id} (trading channel {channel_id}) was on 'sending' with unknown "
+                    f"outcome → dead_letter, NO auto-resend (P0.1)."
                 )
             elif attempts >= MAX_ATTEMPTS:
                 cur.execute(
                     "UPDATE telegram_outbox SET failed = TRUE, status = 'failed' WHERE id = %s",
                     (msg_id,),
                 )
-                logger.error(f"❌ Msg {msg_id} an Kanal {channel_id} nach {MAX_ATTEMPTS} Versuchen endgültig failed.")
+                logger.error(f"❌ Msg {msg_id} to channel {channel_id} after {MAX_ATTEMPTS} attempts finally failed.")
             else:
                 cur.execute(
                     "UPDATE telegram_outbox SET status = 'pending', sending_at = NULL WHERE id = %s",
@@ -194,12 +189,12 @@ def recover_stale_sending(conn, min_age_sec: int) -> None:
 
 
 def claim_for_sending(cur, msg_id: int) -> bool:
-    """P0.1(a)/P2.10: Row atomar von pending auf 'sending' übernehmen.
+    """P0.1(a)/P2.10: atomically claim row from pending to 'sending'.
 
-    FOR UPDATE SKIP LOCKED nur für diesen Statusübergang — ein zweiter
-    Consumer überspringt die Row, statt sie doppelt zu senden. Der Caller
-    committet SOFORT danach (VOR dem Send), damit ein Crash nach dem Send
-    keinen Re-Send produzieren kann.
+    FOR UPDATE SKIP LOCKED only for this status transition — a second
+    consumer skips the row instead of sending it twice. The caller commits
+    IMMEDIATELY after (BEFORE the send) so a crash after the send cannot
+    produce a re-send.
     """
     cur.execute(
         """
@@ -220,10 +215,10 @@ def claim_for_sending(cur, msg_id: int) -> bool:
 
 
 def try_delete_chart(image_path: str) -> None:
-    """Löscht den Chart after erfolgreichem Versand, um Disk-Füllen zu verhindern.
+    """Deletes the chart after successful sending to prevent disk filling.
 
-    Chart-Löschung wird ignoriert wenn die Datei nicht existiert — das passiert
-    bei Race-Conditions normal und ist no error.
+    Chart deletion is ignored if the file does not exist — this happens
+    normally in race conditions and is no error.
     """
     if not image_path:
         return
@@ -231,51 +226,51 @@ def try_delete_chart(image_path: str) -> None:
         if os.path.isfile(image_path):
             os.remove(image_path)
     except Exception as e:
-        logger.debug(f"Konnte Chart {image_path} nicht löschen: {e}")
+        logger.debug(f"Could not delete chart {image_path}: {e}")
 
 
 def try_delete_chart_if_unreferenced(cur, image_path: str | None, current_msg_id: int) -> None:
-    """FIX (#68/#87): Chart nur löschen wenn KEIN weiterer ungesendeter Outbox-Eintrag
-    denselben Pfad referenziert.
+    """FIX (#68/#87): delete chart only if NO other unsent outbox entry
+    references the same path.
 
-    Vorher wurde der Chart sofort after dem ersten erfolgreichen Send gelöscht.
-    Wenn zwei Bots denselben Chart-Pfad in die Outbox schrieben (z.B. weil
-    derselbe Pattern von verschiedenen Perspektiven geloggt wird) scheiterte
-    der zweite Send mit FileNotFoundError — und fiel auf Text-Only zurück,
-    obwohl die Nachricht eigentlich einen Chart hätte haben sollen.
+    Previously, the chart was deleted immediately after the first successful
+    send. If two bots wrote the same chart path to the outbox (e.g. because
+    the same pattern was logged from different perspectives), the second send
+    failed with FileNotFoundError — and fell back to text-only even though
+    the message should have had a chart.
     """
     if not image_path:
         return
     try:
-        # Gibt es weitere ungesendete Outbox-entries mit genau diesem image_path?
+        # Are there other unsent outbox entries with exactly this image_path?
         cur.execute(
             "SELECT 1 FROM telegram_outbox WHERE image_path = %s AND sent = FALSE AND id != %s LIMIT 1",
             (image_path, current_msg_id),
         )
         if cur.fetchone() is not None:
-            # Andere ungesendete Msg braucht die Datei noch → nicht löschen
+            # Other unsent message still needs the file → do not delete
             return
-        # Keine anderen Referenzen mehr → sicher zu löschen
+        # No other references → safe to delete
         if os.path.isfile(image_path):
             os.remove(image_path)
     except Exception as e:
-        logger.debug(f"Konnte Chart {image_path} nicht löschen: {e}")
+        logger.debug(f"Could not delete chart {image_path}: {e}")
 
 
 def mark_sent(cur, msg_id: int, image_path: str | None) -> None:
-    """Markiert Nachricht als gesendet und löscht den Chart nur wenn keine anderen
-    ungesendeten entries die Datei noch brauchen."""
+    """Marks message as sent and deletes the chart only if no other unsent
+    entries still need the file."""
     cur.execute("UPDATE telegram_outbox SET sent = TRUE, status = 'sent' WHERE id = %s", (msg_id,))
     try_delete_chart_if_unreferenced(cur, image_path, msg_id)
 
 
 def mark_failure(cur, msg_id: int, error: str, image_path: str | None) -> bool:
-    """Erhöht attempt-counter. Gibt True zurück wenn Message als failed markiert wurde
-    (= max attempts erreicht), damit der Queue nicht blockiert.
+    """Increments attempt counter. Returns True if message was marked as failed
+    (= max attempts reached) to prevent queue blocking.
 
-    P0.1: bei einem NICHT-finalen, eindeutig fehlgeschlagenen Send (Exception mit
-    bekanntem Outcome) geht die Row zurück auf 'pending' — Resend ist hier sicher,
-    weil Telegram die Message definitiv nicht angenommen hat.
+    P0.1: for a non-final, clearly failed send (exception with known outcome)
+    the row goes back to 'pending' — resend is safe here because Telegram
+    definitely did not accept the message.
     """
     cur.execute(
         """
@@ -293,46 +288,46 @@ def mark_failure(cur, msg_id: int, error: str, image_path: str | None) -> bool:
     row = cur.fetchone()
     now_failed = bool(row and row[0])
     if now_failed:
-        # Message wird nie mehr versucht – Chart aufräumen (aber nur wenn
-        # nicht von anderen entriesn referenziert)
+        # Message will never be retried – clean up chart (but only if
+        # not referenced by other entries)
         try_delete_chart_if_unreferenced(cur, image_path, msg_id)
     return now_failed
 
 
 async def process_outbox():
-    """Endlosschleife: pollt DB, sendet Nachrichten mit Flood-Control und Retry-Limit.
+    """Endless loop: polls DB, sends messages with flood control and retry limit.
 
-    Message-Auswahl-Strategie (überarbeitet):
-    Statt den Batch stur FIFO durchzugehen (was einen Channel-Stau auf andere
-    Channels übertragen würde), wird per Iteration die "nächste sendbare"
-    Message gepickt — die erste in FIFO-Reihenfolge deren Channel aktuell
-    nicht durch die Per-Channel-Rate-Limit-Sperre blockiert ist.
+    Message selection strategy (revised):
+    Instead of going through the batch blindly FIFO (which would propagate
+    a channel backlog to other channels), each iteration picks the "next
+    sendable" message — the first in FIFO order whose channel is not
+    currently blocked by the per-channel rate-limit throttle.
 
-    Wenn alle Messages im Batch blockierten Channels gehören, wartet der
-    Worker bis der früheste Channel wieder frei wird (nicht länger).
+    If all messages in the batch belong to blocked channels, the worker waits
+    until the earliest channel is free again (not longer).
 
-    FIFO-Ordering bleibt pro Channel erhalten (wichtig für semantisch
-    aufeinanderfolgende Messages wie "Signal" → "Update"); nur zwischen
-    Channels kann Reihenfolge vertauscht werden, was harmlos ist.
+    FIFO ordering is preserved per channel (important for semantically
+    sequential messages like "signal" → "update"); only between channels
+    can order be swapped, which is harmless.
 
-    P0.1 (at-most-once für Trading-Channels): jede Row wird VOR dem Send per
-    claim_for_sending() auf 'sending' committet. Nur eindeutig fehlgeschlagene
-    Sends gehen zurück auf 'pending'; TimedOut (Outcome unbekannt) bleibt
-    'sending' und wird von recover_stale_sending() aufgelöst — Trading-Channels
-    landen im dead_letter statt in einem Auto-Resend.
+    P0.1 (at-most-once for trading channels): every row is committed to
+    'sending' before the send via claim_for_sending(). Only clearly failed
+    sends go back to 'pending'; TimedOut (outcome unknown) stays 'sending'
+    and is resolved by recover_stale_sending() — trading channels land in
+    dead_letter instead of an auto-resend.
     """
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    logger.info("🤖 Bot erfolgreich initialisiert. Überwache Outbox mit Retry-Limit...")
+    logger.info("🤖 Bot successfully initialised. Monitoring outbox with retry limit...")
 
-    # Schema einmal beim Start absichern; danach verwaiste 'sending'-Rows
-    # aus einem früheren Prozesslauf auflösen (P0.1(c), min_age=0: es kann
-    # kein Send mehr in-flight sein).
+    # Ensure schema once at start; then resolve orphaned 'sending' rows from
+    # a previous process run (P0.1(c), min_age=0: no send can still be
+    # in-flight).
     with get_db_connection() as init_conn:
         ensure_schema(init_conn)
         recover_stale_sending(init_conn, 0)
 
-    # Rate-Limit-State (prozesslokal, überlebt Loop-Iterationen):
-    #   channel_id -> letzter Send-Timestamp in ms
+    # Rate-limit state (process-local, survives loop iterations):
+    #   channel_id -> last send timestamp in ms
     last_send_per_channel: dict[int, float] = {}
     last_global_send_ms: float = 0.0
 
@@ -342,19 +337,19 @@ async def process_outbox():
         try:
             conn = get_db_connection()
 
-            # P1.1: abgelaufene Trading-Signale einmal pro Poll expiren.
+            # P1.1: expire stale trading signals once per poll.
             expire_stale_signals(conn)
-            # P0.1(c/d): verwaiste 'sending'-Rows (Crash oder TimedOut) nach
-            # Grace-Zeit auflösen — Trading → dead_letter, Info → pending.
+            # P0.1(c/d): resolve orphaned 'sending' rows (crash or TimedOut)
+            # after grace period — trading → dead_letter, info → pending.
             recover_stale_sending(conn, SENDING_RECOVERY_GRACE_SEC)
 
             with conn.cursor() as cur:
-                # Nur pending Messages holen, FIFO after ID (älteste zuerst).
-                # P1.1: Trading-Messages nur innerhalb des TTL-Fensters.
-                # P0.1(d): Channels mit offener 'sending'-Row (unbekanntes
-                # Outcome) sind komplett gesperrt, damit Message n+1 (z.B.
-                # SL-Update) nicht vor n (Entry) rausgeht — bis
-                # recover_stale_sending die Row aufgelöst hat.
+                # Fetch only pending messages, FIFO by ID (oldest first).
+                # P1.1: trading messages only within the TTL window.
+                # P0.1(d): channels with open 'sending' row (unknown outcome)
+                # are completely locked so message n+1 (e.g. SL update) does
+                # not go out before n (entry) — until recover_stale_sending
+                # resolves the row.
                 cur.execute(
                     """
                     SELECT id, channel_id, message, image_path, attempts
@@ -373,25 +368,25 @@ async def process_outbox():
                     """,
                     (list(INFO_CHANNEL_IDS) or [0], SIGNAL_TTL_MINUTES, FETCH_BATCH_SIZE),
                 )
-                # Als Liste umwandeln damit wir entries rausnehmen können
+                # Convert to list so we can remove entries
                 unsent_messages = [list(row) for row in cur.fetchall()]
 
                 if not unsent_messages:
-                    # Keine Arbeit — wir verlassen den with-Block sauber und
-                    # machen den Idle-Sleep daafter im finally-Nachgang.
-                    # WICHTIG: kein conn.close() hier — das übernimmt finally,
-                    # und mitten im with-cursor-Block schließen führt zu
-                    # "connection already closed"-Errors beim Exit.
+                    # No work — we leave the with block cleanly and do the
+                    # idle sleep afterwards in the finally section.
+                    # IMPORTANT: no conn.close() here — finally takes care of that,
+                    # and closing in the middle of the with cursor block leads to
+                    # "connection already closed" errors on exit.
                     batch_was_empty = True
                 else:
-                    # === Intelligenter Send-Loop ===
-                    # Wir arbeiten solange bis entweder der Batch leer ist oder
-                    # eine RetryAfter/Flood-Control den Batch abbricht
+                    # === Intelligent send loop ===
+                    # We work until either the batch is empty or a RetryAfter/
+                    # flood control aborts the batch
                     batch_aborted = False
-                    # P1.3: Channels mit Sendefehler in diesem Batch — deren
-                    # restliche Messages werden übersprungen, damit die
-                    # Per-Channel-FIFO-Reihenfolge nicht bricht (SL-Update
-                    # darf nicht vor seinem Entry ankommen).
+                    # P1.3: channels with send error in this batch — their
+                    # remaining messages are skipped so the per-channel FIFO
+                    # order does not break (SL update must not go before its
+                    # entry).
                     failed_channels: set[int] = set()
 
                     while unsent_messages and not batch_aborted:
@@ -403,8 +398,8 @@ async def process_outbox():
                         any_selectable = False
 
                         for idx, (_msg_id, channel_id, _text, _image_path, _attempts) in enumerate(unsent_messages):
-                            # P1.3: Channel hatte bereits einen Fehlschlag →
-                            # Rest des Batches für diesen Channel skippen.
+                            # P1.3: channel already had a failure → skip the
+                            # rest of the batch for this channel.
                             if channel_id in failed_channels:
                                 continue
                             any_selectable = True
@@ -422,31 +417,31 @@ async def process_outbox():
                                 earliest_unblock_ms = ready_at
 
                         if not any_selectable:
-                            # Nur noch Messages geblockter Channels übrig →
-                            # Batch beenden, Retry über den nächsten Poll.
+                            # Only messages from blocked channels left →
+                            # end batch, retry on next poll.
                             break
 
                         if sendable_idx is None:
-                            # Kein Channel frei — warten bis der früheste wieder sendbar ist
+                            # No channel free — wait until the earliest is sendable again
                             wait_s = max(0.05, (earliest_unblock_ms - now_ms) / 1000.0)
-                            # Cap auf 5s damit wir bei extremem Stau nicht endlos warten
-                            # und z.B. neue dringende Messages in den nächsten Batch kommen
+                            # Cap at 5s so we don't wait forever in extreme congestion
+                            # and e.g. new urgent messages can come in the next batch
                             await asyncio.sleep(min(wait_s, 5.0))
                             continue
 
-                        # Message aus Batch nehmen und senden
+                        # Remove message from batch and send
                         msg_id, channel_id, text, image_path, attempts = unsent_messages.pop(sendable_idx)
 
-                        # P0.1(a)/P2.10: Row VOR dem Send auf 'sending' setzen
-                        # und committen — ein Crash zwischen Send und sent=TRUE
-                        # führt dann in den dead_letter statt in einen Re-Send.
+                        # P0.1(a)/P2.10: set row to 'sending' before the send
+                        # and commit — a crash between send and sent=TRUE then
+                        # leads to dead_letter instead of a re-send.
                         if not claim_for_sending(cur, msg_id):
                             conn.commit()
-                            continue  # anderer Consumer hat die Row übernommen
+                            continue  # another consumer claimed the row
                         conn.commit()
 
-                        # P2.11: letzter Versuch ohne parse_mode — häufigste
-                        # Fehlerquelle sind HTML-Parse-Errors.
+                        # P2.11: last attempt without parse_mode — most common
+                        # error source is HTML parse errors.
                         parse_mode = None if attempts >= MAX_ATTEMPTS - 1 else "HTML"
 
                         try:
@@ -459,15 +454,15 @@ async def process_outbox():
                                             caption=text,
                                             parse_mode=parse_mode,
                                         )
-                                    logger.info(f"🖼️ Bild-Nachricht {msg_id} an Kanal {channel_id} gesendet.")
+                                    logger.info(f"🖼️ Image message {msg_id} sent to channel {channel_id}.")
                                 except FileNotFoundError:
-                                    logger.warning(f"⚠️ Bild not found: {image_path}. Sending nur Text.")
+                                    logger.warning(f"⚠️ Image not found: {image_path}. Sending text only.")
                                     await bot.send_message(chat_id=channel_id, text=text, parse_mode=parse_mode)
                             else:
                                 await bot.send_message(chat_id=channel_id, text=text, parse_mode=parse_mode)
-                                logger.info(f"✅ Text-Nachricht {msg_id} an Kanal {channel_id} gesendet.")
+                                logger.info(f"✅ Text message {msg_id} sent to channel {channel_id}.")
 
-                            # Erfolg: Timestamps updaten
+                            # Success: update timestamps
                             now_after = time.time() * 1000
                             last_send_per_channel[channel_id] = now_after
                             last_global_send_ms = now_after
@@ -476,74 +471,73 @@ async def process_outbox():
                             conn.commit()
 
                         except RetryAfter as e:
-                            # Telegram Flood-Control – komplette Verarbeitung pausieren,
-                            # diese Message NICHT als attempt werten (ist unser Fehler, nicht ihrer).
-                            # Outcome ist eindeutig "nicht gesendet" → zurück auf
-                            # pending, der nächste Poll nimmt sie wieder mit.
+                            # Telegram flood control – pause complete processing,
+                            # do NOT count this message as an attempt (is our error, not theirs).
+                            # Outcome is clearly "not sent" → back to pending,
+                            # the next poll takes it again.
                             wait_time = e.retry_after
-                            logger.warning(f"⏳ Flood Control. Waiting {wait_time}s...")
+                            logger.warning(f"⏳ Flood control. Waiting {wait_time}s...")
                             cur.execute(
                                 "UPDATE telegram_outbox SET status = 'pending', sending_at = NULL WHERE id = %s",
                                 (msg_id,),
                             )
                             conn.commit()
-                            # Diesen Channel explizit blocken bis RetryAfter abgelaufen ist
+                            # Explicitly block this channel until RetryAfter expires
                             last_send_per_channel[channel_id] = time.time() * 1000 + wait_time * 1000
                             await asyncio.sleep(wait_time + 1)
                             batch_aborted = True
 
                         except TimedOut as e:
-                            # P0.1(d): TimedOut = Outcome unbekannt — Telegram kann
-                            # die Message angenommen haben. Row bleibt 'sending',
-                            # KEIN Retry in diesem Pass; recover_stale_sending()
-                            # entscheidet nach der Grace-Zeit (Trading → dead_letter,
-                            # Info → pending).
+                            # P0.1(d): TimedOut = outcome unknown — Telegram may have
+                            # accepted the message. Row stays 'sending', NO retry
+                            # in this pass; recover_stale_sending() decides after
+                            # grace period (trading → dead_letter, info → pending).
                             cur.execute(
                                 "UPDATE telegram_outbox SET attempts = attempts + 1, last_error = %s WHERE id = %s",
                                 (f"TimedOut (unknown outcome): {e}"[:1000], msg_id),
                             )
                             conn.commit()
-                            failed_channels.add(channel_id)  # P1.3: FIFO schützen
-                            # Rate-Limit konservativ setzen — die Message kann
-                            # angekommen sein.
+                            failed_channels.add(channel_id)  # P1.3: protect FIFO
+                            # Set rate limit conservatively — the message may
+                            # have arrived.
                             now_after = time.time() * 1000
                             last_send_per_channel[channel_id] = now_after
                             last_global_send_ms = now_after
                             logger.warning(
-                                f"⚠️ Msg {msg_id} an Kanal {channel_id} TimedOut — Outcome unbekannt, "
-                                f"Row bleibt 'sending' (P0.1)."
+                                f"⚠️ Msg {msg_id} to channel {channel_id} TimedOut — outcome unknown, "
+                                f"row stays 'sending' (P0.1)."
                             )
 
                         except NetworkError as e:
-                            # Review-Härtung P0.1(d): auch Nicht-TimedOut-Transportfehler
-                            # (httpx ReadError/RemoteProtocolError = Connection-Reset NACH
-                            # möglichem Request-Empfang bei Telegram) sind ein UNBEKANNTES
-                            # Outcome — gleiche Behandlung wie TimedOut: Row bleibt
-                            # 'sending', recover_stale_sending() entscheidet.
+                            # Review hardening P0.1(d): non-TimedOut transport errors
+                            # (httpx ReadError/RemoteProtocolError = connection reset AFTER
+                            # possible request receipt at Telegram) are also UNKNOWN
+                            # outcome — same treatment as TimedOut: row stays 'sending',
+                            # recover_stale_sending() decides.
                             cur.execute(
                                 "UPDATE telegram_outbox SET attempts = attempts + 1, last_error = %s WHERE id = %s",
                                 (f"NetworkError (unknown outcome): {e}"[:1000], msg_id),
                             )
                             conn.commit()
-                            failed_channels.add(channel_id)  # P1.3: FIFO schützen
+                            failed_channels.add(channel_id)  # P1.3: protect FIFO
                             now_after = time.time() * 1000
                             last_send_per_channel[channel_id] = now_after
                             last_global_send_ms = now_after
                             logger.warning(
-                                f"⚠️ Msg {msg_id} an Kanal {channel_id} NetworkError — Outcome unbekannt, "
-                                f"Row bleibt 'sending' (P0.1)."
+                                f"⚠️ Msg {msg_id} to channel {channel_id} NetworkError — outcome unknown, "
+                                f"row stays 'sending' (P0.1)."
                             )
 
                         except TelegramError as e:
                             error_msg = str(e)
 
-                            # Manche Telegram-Versionen werfen RetryAfter nicht sauber; parsen als Fallback
+                            # Some Telegram versions don't throw RetryAfter cleanly; parse as fallback
                             if "Retry in" in error_msg:
                                 match = re.search(r'Retry in (\d+)', error_msg)
                                 if match:
                                     wait_time = int(match.group(1))
-                                    logger.warning(f"⏳ Flood Control (Regex). Waiting {wait_time}s...")
-                                    # Zurück auf pending und Channel blocken
+                                    logger.warning(f"⏳ Flood control (regex). Waiting {wait_time}s...")
+                                    # Back to pending and block channel
                                     cur.execute(
                                         "UPDATE telegram_outbox SET status = 'pending', sending_at = NULL "
                                         "WHERE id = %s",
@@ -555,7 +549,7 @@ async def process_outbox():
                                     batch_aborted = True
                                     continue
 
-                            # "Chat not found" ist dauerhaft – sofort failed markieren
+                            # "Chat not found" is permanent – mark failed immediately
                             if "Chat not found" in error_msg or "chat not found" in error_msg:
                                 logger.error(f"❌ Chat {channel_id} not found. Msg {msg_id} → failed.")
                                 cur.execute(
@@ -568,43 +562,43 @@ async def process_outbox():
                                 failed_channels.add(channel_id)  # P1.3
                                 continue
 
-                            # Alle anderen Fehler (message too long, bad HTML, image too large, ...)
-                            # → attempt zählen. Nach MAX_ATTEMPTS als failed markieren.
+                            # All other errors (message too long, bad HTML, image too large, ...)
+                            # → count attempt. After MAX_ATTEMPTS mark as failed.
                             now_failed = mark_failure(cur, msg_id, error_msg, image_path)
                             conn.commit()
-                            failed_channels.add(channel_id)  # P1.3: FIFO schützen
+                            failed_channels.add(channel_id)  # P1.3: protect FIFO
                             if now_failed:
-                                # P2.11: endgültiges Verwerfen laut loggen —
-                                # core/health_monitor.py alertet auf den failed-Zähler.
+                                # P2.11: log permanent rejection loudly —
+                                # core/health_monitor.py alerts on the failed counter.
                                 logger.error(
-                                    f"❌ Msg {msg_id} an Kanal {channel_id} nach {MAX_ATTEMPTS} Versuchen "
-                                    f"endgültig failed: {error_msg}"
+                                    f"❌ Msg {msg_id} to channel {channel_id} after {MAX_ATTEMPTS} attempts "
+                                    f"finally failed: {error_msg}"
                                 )
                             else:
-                                logger.warning(f"⚠️ Msg {msg_id} Sendefehler, wird erneut versucht: {error_msg}")
+                                logger.warning(f"⚠️ Msg {msg_id} send error, will retry: {error_msg}")
 
                         except Exception as e:
-                            # Unerwarteter Fehler (z.B. Datei-I/O beim Bild) – auch zählen
+                            # Unexpected error (e.g. file I/O with image) – count it too
                             error_msg = str(e)
                             now_failed = mark_failure(cur, msg_id, error_msg, image_path)
                             conn.commit()
-                            failed_channels.add(channel_id)  # P1.3: FIFO schützen
+                            failed_channels.add(channel_id)  # P1.3: protect FIFO
                             if now_failed:
                                 logger.error(
-                                    f"❌ Msg {msg_id} an Kanal {channel_id} final failed (unerwartet): {error_msg}"
+                                    f"❌ Msg {msg_id} to channel {channel_id} final failed (unexpected): {error_msg}"
                                 )
                             else:
-                                logger.warning(f"⚠️ Msg {msg_id} Fehler, Retry: {error_msg}")
+                                logger.warning(f"⚠️ Msg {msg_id} error, retry: {error_msg}")
 
         except Exception as e:
-            logger.error(f"⚠️ Loop-Error: {e}")
+            logger.error(f"⚠️ Loop error: {e}")
         finally:
             if conn:
                 conn.close()
 
-        # Idle-Sleep-Strategie:
-        # - Leerer Batch → 5s warten (sonst hämmern wir die DB)
-        # - Voller Batch → nur minimaler Yield (weitere Messages wahrscheinlich da)
+        # Idle sleep strategy:
+        # - empty batch → wait 5s (otherwise we hammer the DB)
+        # - full batch → minimal yield only (more messages likely)
         if batch_was_empty:
             await asyncio.sleep(IDLE_SLEEP_SEC)
         else:
@@ -612,11 +606,11 @@ async def process_outbox():
 
 
 def main():
-    logger.info("=== TELEGRAM BOT ENGINE GESTARTET ===")
+    logger.info("=== TELEGRAM BOT ENGINE STARTED ===")
     try:
         asyncio.run(process_outbox())
     except KeyboardInterrupt:
-        logger.info("🛑 Telegram Bot stopped (Strg+C).")
+        logger.info("🛑 Telegram bot stopped (Ctrl+C).")
 
 
 if __name__ == "__main__":

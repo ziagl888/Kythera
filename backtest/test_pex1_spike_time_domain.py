@@ -1,19 +1,19 @@
-"""T-2026-KYT-9050-061 — Bot 30 (PEX1) darf an spike_time nicht mehr sterben.
+"""T-2026-KYT-9050-061 — bot 30 (PEX1) must not die on spike_time anymore.
 
-Der Live-Defekt: `pump_dump_events.spike_time` ist auf der Live-DB
-`timestamp WITH time zone` (die Repo-DDL in `10_pump_dump_detector.py` sagt
-`TIMESTAMP` — die Tabelle wurde irgendwann gealtert), psycopg2 liefert also
-AWARE datetimes. `detect_spike_time_offset_h` subtrahierte davon ein naives
-`now` und warf in JEDEM Scan-Zyklus
+The live defect: `pump_dump_events.spike_time` is on the live DB
+`timestamp WITH time zone` (the repo DDL in `10_pump_dump_detector.py` says
+`TIMESTAMP` — the table was aged at some point), so psycopg2 returns
+AWARE datetimes. `detect_spike_time_offset_h` subtracted a naive
+`now` from it and threw on EVERY scan cycle
 
-    PEX1-Scan-Fehler: can't subtract offset-naive and offset-aware datetimes
+    PEX1 scan error: can't subtract offset-naive and offset-aware datetimes
 
-im try-Block VOR der Event-Schleife — 8166 Fehlschläge in den vier jüngsten
-`logs/watchdog_debug_*`, kein einziger erfolgreicher Scan seit mindestens
+in try block BEFORE the event loop — 8166 failures in the four most recent
+`logs/watchdog_debug_*`, not a single successful scan since at least
 2026-07-19.
 
-Dieser Test fährt den Scan-Pfad DB-frei mit einem Fake-Cursor durch, einmal mit
-aware und einmal mit naiven spike_time-Werten. Vor dem Fix wirft der aware-Lauf.
+This test drives the scan path DB-free with a fake cursor, once with
+aware and once with naive spike_time values. Before the fix the aware run threw.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ UTC = datetime.timezone.utc
 
 
 def _load_bot():
-    """Der Modulname beginnt mit einer Ziffer — regulärer Import geht nicht."""
+    """Module name begins with a digit — regular import doesn't work."""
     path = os.path.join(REPO_ROOT, "30_ai_pex1_bot.py")
     spec = importlib.util.spec_from_file_location("pex1_bot_under_test", path)
     assert spec and spec.loader
@@ -78,23 +78,23 @@ class FakeConn:
 
 
 def test_aware_max_does_not_raise_and_reports_zero_offset():
-    """Der Live-Fall. Ein timestamptz-Wert IST ein Instant — es gibt keine
-    Domänen-Frage, also 0, und vor allem: keine Exception."""
+    """The live case. A timestamptz value IS an instant — there is no
+    domain question, so 0, and above all: no exception."""
     aware = datetime.datetime.now(UTC) - datetime.timedelta(seconds=30)
     assert BOT.detect_spike_time_offset_h(FakeConn(aware)) == 0
 
 
 def test_aware_max_with_a_non_utc_offset_is_still_zero():
-    # PG liefert timestamptz im Session-Offset; ein +03:00-Wert ist derselbe
-    # Instant und darf keinen Scheinoffset erzeugen.
+    # PG returns timestamptz in the session offset; a +03:00 value is the same
+    # instant and must not produce a spurious offset.
     tz = datetime.timezone(datetime.timedelta(hours=3))
     aware_local = (datetime.datetime.now(UTC) - datetime.timedelta(seconds=30)).astimezone(tz)
     assert BOT.detect_spike_time_offset_h(FakeConn(aware_local)) == 0
 
 
 def test_naive_local_max_still_measures_the_legacy_offset():
-    """Legacy-Pfad (naive Spalte, Lokalzeit): die Messung muss erhalten
-    bleiben, sonst wäre spike_age nach einem Rollback auf alte Daten falsch."""
+    """Legacy path (naive column, local time): the measurement must be
+    preserved, otherwise spike_age would be wrong after a rollback to old data."""
     naive_local = datetime.datetime.now(UTC).replace(tzinfo=None) + datetime.timedelta(hours=3)
     assert BOT.detect_spike_time_offset_h(FakeConn(naive_local)) == 3
 
@@ -108,7 +108,7 @@ def test_empty_table_is_zero():
     assert BOT.detect_spike_time_offset_h(FakeConn(None)) == 0
 
 
-# ── spike_time_to_utc_naive: dieselbe Normalisierung in process_event ──────
+# ── spike_time_to_utc_naive: the same normalisation in process_event ──────
 
 
 @pytest.mark.parametrize("offset_h", [0, 2, 3])
@@ -134,8 +134,8 @@ def test_none_is_passed_through():
 
 
 def test_spike_age_arithmetic_survives_both_domains():
-    """Der eigentliche Absturzpfad: `now` (naiv) minus normalisiertes spike_time.
-    Muss für beide Domänen ohne TypeError durchlaufen und dasselbe Alter geben."""
+    """The actual crash path: `now` (naive) minus normalised spike_time.
+    Must run through for both domains without TypeError and yield the same age."""
     now = datetime.datetime(2026, 8, 1, 16, 40)
     aware = datetime.datetime(2026, 8, 1, 16, 10, tzinfo=UTC)
     naive_local = datetime.datetime(2026, 8, 1, 19, 10)
@@ -144,11 +144,11 @@ def test_spike_age_arithmetic_survives_both_domains():
         assert age_min == 30.0
 
 
-# ── Watermark: der zweite Ort, an dem sich die Domänen treffen ────────────
+# ── Watermark: the second place where the domains meet ────────────
 
 
 def test_boot_sentinel_is_aware_like_the_live_column():
     src = open(os.path.join(REPO_ROOT, "30_ai_pex1_bot.py"), encoding="utf-8").read()
     assert "datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)" in src
-    # kein max() mehr über Sentinel und Spaltenwert (ASC + strikt > watermark)
+    # no more max() over sentinel and column value (ASC + strictly > watermark)
     assert 'max(watermark, event["spike_time"])' not in src

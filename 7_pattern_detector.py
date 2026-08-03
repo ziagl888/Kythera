@@ -78,17 +78,16 @@ def load_active_patterns():
 
         logger.info(f"✅ {len(ACTIVE_PATTERNS)} active patterns loaded from JSON.")
     except Exception as e:
-        logger.error(f"❌ Error loading von active_patterns.json: {e}")
+        logger.error(f"❌ Error loading from active_patterns.json: {e}")
         ACTIVE_PATTERNS = {}
 
 
 def save_active_patterns():
-    """FIX: Atomares Schreiben via Temp-File + os.replace.
-    Vorher wurde direkt in die Zieldatei geschrieben — bei gleichzeitigem Read
-    eines anderen Prozesses konnte der Reader einen halb-geschriebenen JSON-File
-    sehen (Race Condition). Jetzt: Temp-File vollständig schreiben, dann atomar
-    umbenennen. Der Reader sieht IMMER entweder die alte oder die neue Version,
-    nie einen inkonsistenten Zwischenstand.
+    """FIX: Atomic write via temp-file + os.replace.
+    Previously, writing was done directly to the target file — with concurrent read
+    by another process, the reader could see a half-written JSON file (race condition).
+    Now: write temp-file completely, then atomically rename. Reader always sees
+    either the old or new version, never an inconsistent intermediate state.
     """
     try:
         serializable = {}
@@ -105,7 +104,7 @@ def save_active_patterns():
             os.fsync(f.fileno())
         os.replace(tmp, ACTIVE_PATTERNS_FILE)
     except Exception as e:
-        logger.error(f"❌ Error saving von active_patterns.json: {e}")
+        logger.error(f"❌ Error saving active_patterns.json: {e}")
 
 
 def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, start_idx, current_idx):
@@ -154,24 +153,24 @@ def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, 
         )
         return filename
     except Exception as e:
-        logger.error(f"Error for Chart-Generierung für {symbol}: {e}")
+        logger.error(f"Error generating chart for {symbol}: {e}")
         return None
     finally:
-        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        # Closes the figure left open by mpf.plot — prevents RAM leak.
         plt.close('all')
 
 
 def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=None):
-    # Cooldown time per module (Pattern-Breakouts haben längere Gültigkeit als
-    # schnelle Intraday-signals). Module-Tags: BR1H, BR2H, BR4H, BR1D, ABR1, RUB1.
+    # Cooldown time per module (pattern breakouts have longer validity than
+    # fast intraday signals). Module tags: BR1H, BR2H, BR4H, BR1D, ABR1, RUB1.
     cd_hours_map = {
         'BR1H': 6,
-        'BR1Hv2': 6,  # Versionierungs-Regel 2026-07-06: Gate-Revert, neue Generation
+        'BR1Hv2': 6,  # Versioning rule 2026-07-06: gate revert, new generation
         'BR2H': 12,
         'BR4H': 24,
         'BR1D': 72,
         'ABR1': 6,
-        'ABR2': 6,  # Versionierungs-Regel 2026-07-06: neue Generation, gleicher Cooldown
+        'ABR2': 6,  # Versioning rule 2026-07-06: new generation, same cooldown
         'RUB1': 4,
         'RUB2': 4,
     }
@@ -179,7 +178,7 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
 
     # check_cooldown returns True when the cooldown is still active (trade blocked).
     if check_cooldown(conn, module, symbol, direction, cd_hours):
-        logger.info(f"⏳ Cooldown active für {symbol} ({module} {direction}). Ignoriere Signal.")
+        logger.info(f"⏳ Cooldown active for {symbol} ({module} {direction}). Ignoring signal.")
         return
     trade_setup = calculate_smart_targets(conn, symbol, direction, live_price)
 
@@ -190,19 +189,19 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
 
     lev = get_max_leverage(symbol, 20)
 
-    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
-    # Verhaltensänderung, bis ein (module, direction)-Bein im shadow_gate-Register
-    # steht. BR SHORT-Beine (2h/4h) + BR1D/BR1Hv2 (beide) sind geparkt → SHADOW:
-    # überwachter Trade (ai_signals) statt Cornix. Rein additiv am Post-Zweig
-    # (Regel 4: kein Doppel-Post/Orphan). BR-Posts tragen confidence=1.0 (kein Modell);
-    # ai_signals speichert die volle Target-Liste → n_show=len(targets) spiegelt das.
+    # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate. Default LIVE ⇒ no
+    # behaviour change until a (module, direction) leg is in the shadow_gate
+    # register. BR SHORT legs (2h/4h) + BR1D/BR1Hv2 (both) are parked → SHADOW:
+    # monitored trade (ai_signals) instead of Cornix. Purely additive on the post
+    # branch (rule 4: no double post/orphan). BR posts carry confidence=1.0 (no model);
+    # ai_signals stores the full target list → n_show=len(targets) mirrors that.
     _route = route_legacy_leg(conn, module, direction, symbol, 1.0, entry1, entry2, sl, targets, n_show=len(targets))
     if _route != LEG_LIVE:
         if _route == LEG_SHADOW:
             conn.commit()
         return
 
-    # Cornix Nachricht bauen
+    # Build Cornix message
     lines = [
         f"📈 Signal for {symbol} 📈",
         f"🚨 Direction: {direction}",
@@ -217,7 +216,7 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
     lines += [f"💸 Stop Loss: $ {sl:.8f}", f"🧠 Trade idea generated by AI module {module} V3"]
     cornix_msg = "\n".join(lines)
 
-    # Dynamische Channel-Auswahl
+    # Dynamic channel selection
     if module.startswith('BR'):
         target_channel = _kcfg.CH_PATTERN_BR
     elif module.startswith('ABR'):
@@ -228,9 +227,9 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
         target_channel = _kcfg.CH_PUMP_AI
 
     # Telegram Outbox
-    # FIX Doppel-Post (Operator-Meldung 2026-07-06, gleiche Fehlerklasse wie
-    # 18_ai_abr1_bot): Chart-Caption ohne eingebetteten Cornix-Block — Cornix
-    # parste sonst BEIDE Nachrichten als eigenständige Signale.
+    # FIX double post (operator report 2026-07-06, same error class as
+    # 18_ai_abr1_bot): chart caption without an embedded Cornix block — Cornix
+    # otherwise parsed BOTH messages as standalone signals.
     html_caption = f"<b>🚀 AI {module} {direction} SIGNAL</b>\n<b>{symbol.replace('USDT', '')}</b>\n→ Direction: {direction}\n→ Confidence: <b>Retest done</b>"
 
     with conn.cursor() as cur:
@@ -245,7 +244,7 @@ def process_ai_trade(conn, symbol, direction, module, live_price, chart_path=Non
                 "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, html_caption)
             )
 
-        # DB für den Monitor
+        # DB for the monitor
         cur.execute(
             """
                 INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets)
@@ -283,13 +282,13 @@ def analyze_patterns(current_hour):
                     continue
 
                 try:
-                    # R1: Erkennung auf GESCHLOSSENEN Kerzen (include_forming=False).
-                    # core.candles liefert ASC → die bisherige DESC-Umkehr entfällt.
-                    # Die Breakout-Kerze war schon iloc[-2] (geschlossen); ohne die
-                    # forming Kerze ist sie jetzt die letzte Zeile (current_idx unten
-                    # = len(df) - 1). `iloc[:-4]` bleibt: der Pivot-Confirm-Puffer
-                    # (rolling(9,center) braucht 4 Kerzen nach rechts) verliert nur den
-                    # bisherigen Forming-Repaint am Rand.
+                    # R1: detection on CLOSED candles (include_forming=False).
+                    # core.candles delivers ASC → the previous DESC reversal is gone.
+                    # The breakout candle was already iloc[-2] (closed); without the
+                    # forming candle it is now the last row (current_idx below
+                    # = len(df) - 1). `iloc[:-4]` stays: the pivot confirm buffer
+                    # (rolling(9,center) needs 4 candles to the right) only loses the
+                    # previous forming repaint at the edge.
                     df = read_candles(
                         conn,
                         symbol,
@@ -301,7 +300,7 @@ def analyze_patterns(current_hour):
                     if len(df) < 50:
                         continue
 
-                    # 1. Pivots finden
+                    # 1. Find pivots
                     df['Pivot_High'] = df['high'] == df['high'].rolling(window=9, center=True).max()
                     df['Pivot_Low'] = df['low'] == df['low'].rolling(window=9, center=True).min()
                     confirmed_df = df.iloc[:-4]
@@ -332,8 +331,8 @@ def analyze_patterns(current_hour):
                             pattern_name = "Descending Channel"
 
                         if pattern_name:
-                            # R1: forming Kerze ist nicht mehr im Frame → die jüngste
-                            # geschlossene (Breakout-Kerze) ist len(df) - 1 (vorher -2).
+                            # R1: forming candle is no longer in the frame → the most
+                            # recent closed (breakout candle) is len(df) - 1 (previously -2).
                             current_idx = len(df) - 1
                             prev_idx = current_idx - 1
 
@@ -384,7 +383,7 @@ def analyze_patterns(current_hour):
                                     )
                                     msg = f"<b>📐 PATTERN BREAKOUT</b>\n<b>{symbol.replace('USDT', '')} | {tf} Chart</b>\n→ Pattern: {pattern_name}\n→ Action: {breakout_dir}\n→ Breakout Price: <code>${c_close:,.4f}</code>\n<i>Waiting for retest...</i>"
                                     send_to_outbox(conn, msg, chart_path)
-                                    logger.info(f"🚀 {breakout_dir} für {symbol} ({pattern_name}) erkannt!")
+                                    logger.info(f"🚀 {breakout_dir} detected for {symbol} ({pattern_name})!")
 
                             elif pattern_id in ACTIVE_PATTERNS:
                                 tracked = ACTIVE_PATTERNS[pattern_id]
@@ -448,7 +447,7 @@ def analyze_patterns(current_hour):
                                             start_plot_idx,
                                             current_idx,
                                         )
-                                        msg = f"<b>🔄 RETEST DETECTED 📍</b>\n<b>{symbol.replace('USDT', '')} | {tf}</b>\n→ Pattern: {pattern_name}\n→ Retest bei <code>${tracked['retest_price']:.4f}</code>\n<i>Waiting for strong confirmation...</i>"
+                                        msg = f"<b>🔄 RETEST DETECTED 📍</b>\n<b>{symbol.replace('USDT', '')} | {tf}</b>\n→ Pattern: {pattern_name}\n→ Retest at <code>${tracked['retest_price']:.4f}</code>\n<i>Waiting for strong confirmation...</i>"
                                         send_to_outbox(conn, msg, chart_path)
                                         logger.info(
                                             f"🔄 Retest DETECTED {symbol} {tf} @ ${tracked['retest_price']:.4f}"
@@ -472,14 +471,14 @@ def analyze_patterns(current_hour):
                                         )
                                         direction = "LONG" if is_bullish else "SHORT"
                                         module_name = f"BR{tf.upper()}"
-                                        # Direction-Gate ENTFERNT (Operator 2026-07-06): beide
-                                        # Richtungen laufen wieder; BR1H postet als BR1Hv2
-                                        # (Versionierungs-Regel), bis das geplante ML-Gate über
-                                        # den BR-Signalen steht.
+                                        # direction gate REMOVED (operator 2026-07-06): both
+                                        # directions run again; BR1H posts as BR1Hv2
+                                        # (versioning rule), until the planned ML gate sits
+                                        # above the BR signals.
                                         if module_name == 'BR1H':
                                             module_name = 'BR1Hv2'
                                         process_ai_trade(conn, symbol, direction, module_name, c_close, chart_path)
-                                        logger.info(f"✅ SUCCESSFUL RETEST + TRADE ausgelöst {symbol} {tf}")
+                                        logger.info(f"✅ SUCCESSFUL RETEST + TRADE triggered {symbol} {tf}")
                                         del ACTIVE_PATTERNS[pattern_id]
                                         continue
 
@@ -500,7 +499,7 @@ def main():
 
         if now.minute == 3:
             current_hour = now.hour
-            logger.info(f"⏰ Zeit-Trigger erreicht! Stunde: {current_hour} UTC")
+            logger.info(f"⏰ Time trigger reached! Hour: {current_hour} UTC")
 
             analyze_patterns(current_hour)
 
@@ -514,4 +513,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

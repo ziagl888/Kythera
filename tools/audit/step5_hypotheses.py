@@ -27,7 +27,7 @@ ai["pnl"] = (ai.close_price - ai.entry) / ai.entry * 100 * ai.dirsign
 wl = ai[ai.cls.isin(["win", "loss"]) & (ai.entry > 0) & (ai.close_price > 0)].copy()
 wl = wl[wl.open_time > "2026-02-25"]
 
-sec("H1: Konfluenz — n unabhängige Modelle auf (symbol, direction) binnen 4h")
+sec("H1: Confluence — n independent models on (symbol, direction) within 4h")
 wl = wl.sort_values(["symbol", "direction", "open_time"])
 res = []
 for (sym, d), grp in wl.groupby(["symbol", "direction"]):
@@ -50,17 +50,17 @@ h1b = wl2.groupby("conf_bucket", observed=True).agg(
 print("\nohne AIM1/ROM1:")
 print(h1b.to_string())
 
-sec("H1b: Konfluenz je Richtung")
+sec("H1b: Confluence by direction")
 h1c = wl2.groupby(["direction", "conf_bucket"], observed=True).agg(
     n=("cls", "size"), wr=("cls", lambda x: round(100 * (x == "win").mean(), 1)),
     avg_pnl=("pnl", lambda x: round(x.mean(), 2)))
 print(h1c.to_string())
 
-sec("H2: Regime-konditionale Performance (orchestrator_open_trades.regime_at_open)")
+sec("H2: Regime-conditional performance (orchestrator_open_trades.regime_at_open)")
 oo = q("""SELECT o.bot_name, o.coin, o.direction, o.regime_at_open, o.alt_context_at_open,
                  o.status, o.close_reason, o.opened_at
           FROM orchestrator_open_trades o WHERE o.status <> 'OPEN'""")
-print("close_reason-Verteilung:", oo.close_reason.value_counts().head(8).to_dict())
+print("close_reason distribution:", oo.close_reason.value_counts().head(8).to_dict())
 # outcome via join to closed_ai_signals/closed_trades? close_reason may encode result for ROM1 only.
 # instead: join wl outcomes by (coin, direction, opened_at ~ open_time +-2h)
 wl_j = wl2[["symbol", "direction", "open_time", "cls", "pnl", "model"]].copy()
@@ -69,7 +69,7 @@ merged = oo.merge(wl_j, left_on=["coin", "direction"], right_on=["symbol", "dire
 merged["dt"] = (merged.open_time - merged.opened_at).abs()
 merged = merged[merged.dt < pd.Timedelta("4h")].sort_values("dt").drop_duplicates(
     subset=["coin", "direction", "opened_at"], keep="first")
-print(f"orchestrator-Trades mit Outcome-Match: {len(merged)}")
+print(f"orchestrator trades with outcome match: {len(merged)}")
 h2 = merged.groupby(["regime_at_open", "direction"]).agg(
     n=("cls", "size"), wr=("cls", lambda x: round(100 * (x == "win").mean(), 1)),
     avg_pnl=("pnl", lambda x: round(x.mean(), 2)))
@@ -79,7 +79,7 @@ h2b = merged.groupby(["alt_context_at_open", "direction"]).agg(
     avg_pnl=("pnl", lambda x: round(x.mean(), 2)))
 print(h2b.to_string())
 
-sec("H3: AIM1-Inversions-Fade (Shadow-Hypothese) — conf>0.85-AIM1-Signale kontern")
+sec("H3: AIM1 inversion fade (shadow hypothesis) — conf>0.85 AIM1 signals counter")
 aim = q("""SELECT p.coin, p.direction, p.confidence, p.time, c.status, c.targets_hit,
                   c.entry, c.close_price
            FROM ml_predictions_master p
@@ -96,9 +96,9 @@ hb = aim.groupby(pd.cut(aim.confidence, [0.8, 0.85, 0.9, 0.95, 1.0]), observed=T
     n=("win", "size"), wr=("win", lambda x: round(100 * x.mean(), 1)),
     avg_pnl=("pnl", lambda x: round(x.mean(), 2)))
 print(hb.to_string())
-print("→ Fade-PnL wäre ~ -avg_pnl (vor Kosten), Stabilität unklar (OOD-Artefakt)")
+print("→ Fade PnL would be ~ -avg_pnl (before costs), stability unclear (OOD artifact)")
 
-sec("H4: Tail-Anatomie — was wäre FIFO mit Time-Stop/Loss-Cap gewesen?")
+sec("H4: Tail anatomy — what would FIFO with time-stop/loss-cap have looked like?")
 ct = q("""SELECT strategy, direction, status, entry, close_price, time
           FROM closed_trades_master WHERE strategy='Fast In And Out' AND close_price>0 AND entry>0""")
 ct["dirsign"] = np.where(ct.direction.str.upper().str.startswith("L"), 1, -1)
@@ -108,7 +108,7 @@ ct = ct[su.isin(["0", "1", "SL0", "SL1"])]
 print(f"FIFO n={len(ct)}, avg={ct.pnl.mean():.2f}%, med={ct.pnl.median():.2f}%")
 for cap in (-3, -5, -8):
     capped = ct.pnl.clip(lower=cap)
-    print(f"  Loss-Cap bei {cap}%: avg={capped.mean():.2f}%  (Anteil gecappt: {100*(ct.pnl<cap).mean():.1f}%)")
+    print(f"  Loss cap at {cap}%: avg={capped.mean():.2f}%  (share capped: {100*(ct.pnl<cap).mean():.1f}%)")
 
 conn.close()
 print("\nDONE")

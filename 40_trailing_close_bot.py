@@ -1,81 +1,78 @@
-# 40_trailing_close_bot.py — Trailing-Close-Arm in einem eigenen Telegram-Channel.
+# 40_trailing_close_bot.py — Trailing-close arm in its own Telegram channel.
 """
-T-2026-KYT-9050-042 Phase C. Spiegelt die Signale der 33 in PR #198 ausgewählten
-Beine (``core.trailing_roster``) in einen EIGENEN Channel und schließt sie dort per
-Trailing-Close, statt sie bis SL/TP laufen zu lassen. Michi hängt Cornix an diesen
-Channel — damit läuft der Trailing-Arm live gegen den Hold-Arm der bestehenden
-Fleet, ohne dass ein einziger bestehender Bot sein Verhalten ändert.
+T-2026-KYT-9050-042 Phase C. Mirrors the signals of the 33 legs selected in PR #198
+(``core.trailing_roster``) into its OWN channel and closes them there via
+trailing-close instead of letting them run to SL/TP. Michi connects Cornix to this
+channel — so the trailing arm runs live against the hold arm of the existing
+fleet without any single existing bot changing its behaviour.
 
-Der Bot entscheidet NICHTS über Einstiege. Er spiegelt, was die Fleet ohnehin
-postet, und trifft genau eine eigene Entscheidung: wann geschlossen wird.
+The bot decides NOTHING about entries. It mirrors what the fleet posts anyway,
+and makes exactly one independent decision: when to close.
 
-Warum das ein eigener Prozess ist
----------------------------------
-Der Trailing-Exit ist eine ANDERE Exit-Politik als die der Fleet. Ihn in die Bots
-zu bauen hieße, den Hold-Arm zu zerstören, gegen den er gemessen werden soll. Als
-eigener Prozess mit eigenem Channel ist er ein sauberer A/B-Arm: dieselben Entries,
-zwei Exit-Regeln, zwei Kurven.
+Why this is its own process
+---------------------------
+Trailing-exit is a DIFFERENT exit policy than the fleet's. Building it into the bots
+would destroy the hold arm that we measure it against. As its own process with its own
+channel it is a clean A/B arm: same entries, two exit rules, two curves.
 
-Datenfluss
+Data flow
+---------
+``ai_signals`` (foreign, read-only) → roster+register filter → admission → entry in
+``telegram_outbox`` (own channel) + own row in ``trailing_positions`` →
+poll against live prices → trailing trigger OR source trade disappeared → ``Close
+<SYMBOL>`` in the same channel.
+
+The three traps that shape this bot
+-----------------------------------
+1. **Cornix' ``Close <SYMBOL>`` acts symbol-wide** (``core/config.py:123``). Two
+   positions of the same symbol in the channel means: the trailing-exit of one flattens
+   the other too. ``28_signal_orchestrator.py:1562`` solves the same conflict
+   by deferring the close — here that would be wrong because timely exit
+   is the whole point. So: at most ONE position per symbol in the channel.
+2. **The chosen selection has an occupancy peak of 2001** = 4× the Cornix cap
+   (``trailing_slot_budget_live.md:82``). Without its own admission control,
+   Cornix at peak decides which ~1500 trades get rejected. The bot caps
+   itself instead, by leg density rather than by arrival time.
+3. **A scale-free trail is a micro-scalper.** "10% giveback from peak" fires
+   even on a 0.5% peak. The activation threshold (2%, operator) is not a
+   tuning parameter but the condition for the bot to trade rather than noise.
+
+Price contract (rule 5)
+-----------------------
+This bot is a monitor in the exception sense: it does pure price checks against
+the live ticker (``core.live_price``, one Binance call per poll for the whole fleet),
+no indicator analysis. It reads no forming candle and derives no signal from any candle.
+
+Safeguards
 ----------
-``ai_signals`` (fremd, NUR gelesen) → Roster+Register-Filter → Zulassung → Entry in
-``telegram_outbox`` (eigener Channel) + eigene Zeile in ``trailing_positions`` →
-Poll gegen Live-Preise → Trailing-Trigger ODER Quell-Trade verschwunden → ``Close
-<SYMBOL>`` in denselben Channel.
-
-Die drei Fallen, die diesen Bot formen
---------------------------------------
-1. **Cornix' ``Close <SYMBOL>`` wirkt symbol-weit** (``core/config.py:123``). Zwei
-   Positionen desselben Symbols im Channel heißt: der Trailing-Exit der einen macht
-   die andere mit flach. ``28_signal_orchestrator.py:1562`` löst denselben Konflikt
-   durch Zurückstellen des Close — hier wäre das falsch, weil der rechtzeitige Exit
-   der ganze Zweck ist. Also: höchstens EINE Position je Symbol im Channel.
-2. **Die gewählte Auswahl hat eine Belegungs-Spitze von 2001** = 4× den Cornix-Deckel
-   (``trailing_slot_budget_live.md:82``). Ohne eigene Zulassungskontrolle entscheidet
-   in der Spitze Cornix, welche ~1500 Trades abgelehnt werden. Der Bot deckelt
-   deshalb selbst, und zwar nach Bein-Dichte statt nach Ankunftszeit.
-3. **Ein skalenfreier Trail ist ein Micro-Scalper.** "10 % Rückgabe vom Peak" feuert
-   auch auf einem 0,5-%-Peak. Die Aktivierungsschwelle (2 %, Operator) ist kein
-   Tuning-Parameter, sondern die Bedingung dafür, dass der Bot Trades handelt und
-   nicht Rauschen.
-
-Preis-Kontrakt (Regel 5)
-------------------------
-Dieser Bot ist ein Monitor im Sinne der Ausnahme: er macht reine Preis-Checks gegen
-den Live-Ticker (``core.live_price``, ein Binance-Call pro Poll für die ganze Fleet),
-keine Indikator-Analyse. Er liest keine formende Kerze und leitet aus keiner Kerze
-ein Signal ab.
-
-Sicherheitsnetze
-----------------
-``TRAILING_BOT_LIVE_POSTING`` ist **default 0** und ``CH_TRAILING`` default ungesetzt:
-ohne zwei bewusste Operator-Einträge läuft der Bot vollständig, trackt und loggt,
-schreibt aber keine einzige Outbox-Zeile. Ein Deploy allein postet nichts.
+``TRAILING_BOT_LIVE_POSTING`` is **default 0** and ``CH_TRAILING`` default unset:
+without two deliberate operator entries the bot runs fully, tracks and logs,
+but writes no outbox row. A deploy alone posts nothing.
 
 Watchdog: start_delay=271.
 
-Verlustbegrenzung (T-2026-KYT-9050-052, Operator-Entscheid Michi 2026-07-28)
-----------------------------------------------------------------------------
-Der Trail kann per Konstruktion nur Gewinner schließen — ohne Gegenstück entmischt
-sich das Buch zu einem reinen Verlierer-Buch (live: 95 % unter Wasser in 9 h).
-Deshalb zwei zusätzliche, strikt kausale Schranken (Zahlen: Verdikt
+Loss limitation (T-2026-KYT-9050-052, operator decision Michi 2026-07-28)
+--------------------------------------------------------------------------
+The trail can by construction only close winners — without a counterpart the
+book unmixes to a pure loser book (live: 95% underwater in 9 h).
+So two additional, strictly causal bounds (numbers: verdict
 ``staging_models/replay/trailing_arm_verdict_t052.md``):
-  * **Zeit-Stop** (``TIME_STOP_H``, default 24 h): nie über die Aktivierungsschwelle
-    gekommen → Close zum Markt, Grund ``TIME_STOP``.
-  * **Exposure-Cap** (``EXPOSURE_CAP``, default ±50): eine Richtung darf der anderen
-    höchstens 50 offene Spiegel voraus sein — neue Entries der Überhang-Richtung
-    werden abgewiesen (kein Close, reine Zulassung).
+  * **Time-stop** (``TIME_STOP_H``, default 24 h): never crossed the activation threshold
+    → close to market, reason ``TIME_STOP``.
+  * **Exposure cap** (``EXPOSURE_CAP``, default ±50): one direction may lead the other
+    by at most 50 open mirrors — new entries in the overhang direction
+    are rejected (no close, pure admission).
 
 Invariants:
-  * Schreibt NIE in ``ai_signals`` und schließt NIE einen Fremd-Trade — sein einziges
-    Schreibrecht sind ``telegram_outbox`` (eigener Channel) und ``trailing_positions``.
-  * Höchstens eine offene Spiegel-Position je Symbol (Cornix-Close ist symbol-weit).
-  * Offene Spiegel-Positionen ≤ ``SLOT_CAP``; Richtungs-Überhang ≤ ``EXPOSURE_CAP``.
-  * Genau EINE Cornix-parsebare Nachricht je Entry (harte Regel 4).
-  * Ein Bein ohne LIVE-Status in ``shadow_gate`` wird nie gespiegelt, auch wenn es
-    im Roster steht.
-  * Der Zeit-Stop entscheidet nur auf dem Peak-Stand von JETZT (kausal) und trifft
-    nie einen scharfen Spiegel — der gehört dem Trail.
+  * NEVER writes to ``ai_signals`` and NEVER closes a foreign trade — its only
+    write rights are ``telegram_outbox`` (own channel) and ``trailing_positions``.
+  * At most one open mirror position per symbol (Cornix-close is symbol-wide).
+  * Open mirror positions ≤ ``SLOT_CAP``; direction overhang ≤ ``EXPOSURE_CAP``.
+  * Exactly ONE Cornix-parseable message per entry (hard rule 4).
+  * A leg without LIVE status in ``shadow_gate`` is never mirrored even if it
+    is in the roster.
+  * The time-stop decides only on the CURRENT peak state (causally) and never
+    hits a sharp mirror — that belongs to the trail.
 """
 
 import datetime
@@ -111,102 +108,98 @@ TARGET_CHANNEL_ID = _kcfg.CH_TRAILING
 LIVE_POSTING = os.getenv("TRAILING_BOT_LIVE_POSTING", "0") == "1"
 POLL_SECONDS = 10
 
-# Wie alt darf ein Quell-Trade höchstens sein, damit ihn zu spiegeln noch DERSELBE
-# Trade ist?
+# How old can a source trade be at most for mirroring it to still be the SAME
+# trade?
 #
-# Der Spiegel postet den Entry-Preis des Quell-Signals, und Cornix legt darauf eine
-# Order, die erst füllt, wenn der Markt diesen Preis erreicht. Läuft der Markt in der
-# Zwischenzeit weg, öffnet Cornix nie — während unser Buch die Position als offen
-# führte und beim Trail ein `Close` ins Leere schickte. Am 2026-07-27 gemessen: bei
-# einem 15-min-Fenster lagen 18 von 101 offenen Spiegeln mehr als 1 % vom Markt
-# entfernt (Median 0,40 %, max 2,13 %).
+# The mirror posts the entry price of the source signal, and Cornix places an
+# order that only fills when the market reaches that price. If the market moves away
+# in the meantime, Cornix never opens — while our book held the position as open
+# and on trail sent a `Close` into the void. Measured on 2026-07-27: over a
+# 15-min window 18 of 101 open mirrors were more than 1% away from market
+# (median 0.40%, max 2.13%).
 #
-# 30 s war die T-051-Annahme („ein frisches Signal wird binnen einer Poll-Runde
-# gesehen") — gemessen stimmt sie nicht, und zwar je Bein-Familie verschieden:
-#   * Tick-Beine (MIS2-Pumps u. a.): Insert-Latenz 30–120 s (Median 95 s) —
-#     das 30-s-Fenster verwarf ~85 % ihrer Signale (Messung 2026-07-29).
-#   * Kerzen-Zyklus-Beine (MIS1-72h, TD_1H, AIM2, SRA2 — die LONG-Seite):
-#     deterministisch ~185–195 s (p25–p90 der 139 Verworfenen: 184–193 s;
-#     Messung 2026-07-30) — eine WAND direkt hinter der 180-s-Grenze, keine
-#     Alters-Verteilung.
-# 240 s deckt beide Familien mit Puffer. Die T-051-Schutzidee bleibt: Market-
-# Entry + der Plausibilitäts-Riegel (Markt zwischen SL und TP1) verhindern das
-# Spiegeln weggelaufener Trades, und ROM1s stunden-alte Re-Forwards filtert der
-# Roster selbst (EXCLUDED_AS_DUPLICATE) statt zufällig dieses Fenster.
+# 30s was the T-051 assumption ("a fresh signal is seen within one poll round")
+# — measured it does not hold, varying by leg family:
+#   * Tick legs (MIS2 pumps etc.): insert latency 30–120s (median 95s) —
+#     the 30s window discarded ~85% of their signals (measurement 2026-07-29).
+#   * Candle-cycle legs (MIS1-72h, TD_1H, AIM2, SRA2 — the LONG side):
+#     deterministic ~185–195s (p25–p90 of 139 discarded: 184–193s;
+#     measurement 2026-07-30) — a WALL right behind the 180s boundary, no
+#     age distribution.
+# 240s covers both families with buffer. The T-051 safeguard idea holds: market-
+# entry + the plausibility riegel (market between SL and TP1) prevent
+# mirroring runaway trades, and ROM1's hour-old re-forwards are filtered by the
+# roster itself (EXCLUDED_AS_DUPLICATE) rather than randomly by this window.
 MAX_MIRROR_AGE_SEC = float(os.getenv("TRAILING_BOT_MAX_AGE_SEC", "240"))
 
-# Wie lange auf den Fill gewartet wird, bevor die Order als verfallen gilt. Danach
-# wird die Zeile geschlossen und ein `Close` gepostet, damit in Cornix keine
-# Alt-Order liegen bleibt, die Tage später doch noch füllt.
+# How long to wait for the fill before the order is considered expired. After that
+# the row is closed and a `Close` is posted so no stale order remains in Cornix
+# that might fill days later.
 FILL_TIMEOUT_MIN = float(os.getenv("TRAILING_BOT_FILL_TIMEOUT_MIN", "10"))
 
-# Zeit-Stop (T-2026-KYT-9050-052, Operator-Entscheid Michi 2026-07-28): ein Spiegel,
-# dessen Peak binnen dieser Frist nie über die Aktivierungsschwelle kam, wird zum
-# Markt geschlossen. Begründung aus dem Buch-Gesundheits-Verdikt: der Trail kann per
-# Konstruktion nur Gewinner schließen — die Nie-Scharfen liegen sonst bis zum
-# Katastrophen-SL (live gemessen: SOURCE_CLOSED Ø −4,8 %, 34 SL-Hits an einem Tag),
-# und das Buch entmischt sich zu einem reinen Verlierer-Buch (95 % unter Wasser in
-# 9 h). Der Stop verkauft Erholungen — das ist sein simulierter, akzeptierter Preis
-# (−11k auf 5 Monate gegen MaxDD −31 % und halbe Slot-Bindung).
+# Time-stop (T-2026-KYT-9050-052, operator decision Michi 2026-07-28): a mirror
+# whose peak never crossed the activation threshold within this period is closed to market.
+# Rationale from the book-health verdict: the trail can by construction only close winners
+# — the never-sharp ones otherwise lie until catastrophic SL (live measured: SOURCE_CLOSED avg −4.8%,
+# 34 SL hits in one day), and the book unmixes to a pure loser book (95% underwater in
+# 9 h). The stop sells recoveries — that is its simulated, accepted cost
+# (−11k over 5 months vs MaxDD −31% and half slot binding).
 TIME_STOP_H = float(os.getenv("TRAILING_BOT_TIME_STOP_H", "24"))
 
-# Flutschutz: höchstens so viele Zeit-Stop-Closes je 10s-Zyklus. Nach einem Restart
-# mit Altbestand wären sonst ~150 `Close`-Kommandos in EINEM Zyklus in der Outbox —
-# der Telegram-Sender arbeitet FIFO, der Stau würde alle anderen Fleet-Messages
-# verzögern. So verteilt sich die Bereinigung über einige Minuten.
+# Flood protection: at most this many time-stop closes per 10s cycle. After a restart
+# with stale inventory otherwise ~150 `Close` commands would be in the outbox in ONE cycle —
+# the Telegram sender works FIFO, the backlog would delay all other fleet messages.
+# This distributes cleanup over several minutes.
 TIME_STOP_MAX_PER_CYCLE = int(os.getenv("TRAILING_BOT_TIME_STOP_MAX_PER_CYCLE", "25"))
 
-# Grandfather-Stichtag (Operator-Entscheid Michi, 2026-07-28): der Zeit-Stop gilt nur
-# für Spiegel, die AB diesem Zeitpunkt geöffnet wurden. Der Altbestand davor reitet
-# auf explizites Operator-Risiko zu seinem natürlichen SL/TP weiter — die Datenlage
-# (SOURCE_CLOSED Ø −4,8 % vs. Zeit-Stop bei ~−2,4 %) wurde gesehen und bewusst
-# überstimmt. Als fester Stichtag statt "beim Start berechnet", damit ein späterer
-# Restart nicht still eine neue Kohorte exemptiert.
+# Grandfather date (operator decision Michi, 2026-07-28): the time-stop applies only
+# to mirrors opened FROM this time onward. The stale inventory before rides
+# on explicit operator risk to its natural SL/TP — the data (SOURCE_CLOSED avg −4.8%
+# vs. time-stop at ~−2.4%) was seen and deliberately overridden. As a fixed cutoff
+# rather than "computed at start" so a later restart doesn't silently exempt a new cohort.
 TIME_STOP_SINCE = datetime.datetime.fromisoformat(
     os.getenv("TRAILING_BOT_TIME_STOP_SINCE", "2026-07-28T14:00:00+00:00")
 )
 
-# Netto-Exposure-Deckel je Richtung (T-2026-KYT-9050-052): ein neuer Entry, dessen
-# Richtung bereits EXPOSURE_CAP Positionen vor der Gegenrichtung liegt, wird nicht
-# aufgenommen. Kein Marktlagen-Modell (die wurden gemessen und verworfen), sondern
-# eine strukturelle Schranke: das Buch darf nicht beliebig einseitig werden. 0 = aus.
+# Net exposure cap per direction (T-2026-KYT-9050-052): a new entry whose
+# direction already leads the opposite direction by EXPOSURE_CAP positions
+# is not admitted. Not a market-state model (those were measured and discarded), but
+# a structural bound: the book must not become arbitrarily one-sided. 0 = off.
 EXPOSURE_CAP = int(os.getenv("TRAILING_BOT_EXPOSURE_CAP", "50"))
 
-# Wie lange ein Symbol nach einem GEPOSTETEN Close gesperrt bleibt, bevor es neu
-# belegt werden darf.
+# How long a symbol remains locked after a POSTED close before it can be reused.
 #
-# Die Outbox liefert je Channel streng FIFO (4_telegram_bot.py, P0.1(d)), Cornix
-# bekommt `Close X` also garantiert vor dem neuen Entry auf X. Das reicht aber nur
-# bis zur Telegram-Grenze: Cornix setzt daraufhin ZWEI Markt-Orders in Gegenrichtung
-# fast gleichzeitig an Binance ab. Ist der Close dort noch nicht abgerechnet, wenn
-# die Gegenposition aufgeht, macht der nachlaufende Close die neue Position gleich
-# wieder flach. Gemessen am 2026-07-27: XTZUSDT Close + neuer Entry in DERSELBEN
-# Sekunde (SHORT → LONG), ENAUSDT 3 s auseinander (LONG → SHORT). Nichts davon ist
-# schiefgegangen — aber das war Glück, nicht Konstruktion.
+# The outbox delivers per channel strictly FIFO (4_telegram_bot.py, P0.1(d)), so Cornix
+# gets `Close X` guaranteed before the new entry on X. But that only extends to the
+# Telegram boundary: Cornix then places TWO market orders in opposite direction
+# almost simultaneously at Binance. If the close is not settled there when
+# the opposite position opens, the trailing close flattens the new position right away.
+# Measured on 2026-07-27: XTZUSDT close + new entry in the SAME second (SHORT → LONG),
+# ENAUSDT 3s apart (LONG → SHORT). Nothing went wrong — but that was luck, not design.
 #
-# Der Preis sind ein paar verspätete Einstiege; bei 33 Beinen auf ~530 Coins sind
-# Symbol-Kollisionen häufig, die Sperre verschiebt sie nur.
+# The cost is a few delayed entries; with 33 legs over ~530 coins symbol
+# collisions are frequent, the lock just shifts them.
 SYMBOL_COOLDOWN_SEC = float(os.getenv("TRAILING_BOT_SYMBOL_COOLDOWN_SEC", "60"))
 
-# Exit-Gründe (landen in trailing_positions.close_reason)
+# Exit reasons (land in trailing_positions.close_reason)
 REASON_TRAIL = "TRAIL"
-#: Zeit-Stop: nie über die Aktivierungsschwelle gekommen und älter als TIME_STOP_H.
+#: Time-stop: never crossed the activation threshold and older than TIME_STOP_H.
 REASON_TIME_STOP = "TIME_STOP"
 REASON_SOURCE_CLOSED = "SOURCE_CLOSED"
 REASON_LEG_RETIRED = "LEG_RETIRED"
-#: Kein Exit, sondern ein Vermerk: dieser Quell-Trade lief schon, als der Bot
-#: startete. Er wird nie gespiegelt — die Zeile existiert nur, damit er auch nie
-#: wieder als Neuzugang erscheint (dieselbe Sperre wie ein geschlossener Spiegel).
+#: Not an exit but a record: this source trade was already running when the bot
+#: started. It is never mirrored — the row exists only so it never
+#: appears again as a new signal (same lock as a closed mirror).
 REASON_PREEXISTING = "PREEXISTING"
-#: Beim Umschalten von Shadow auf Live geschlossen: die Zeile war offen, aber nie
-#: veröffentlicht, kann also keiner Position im Channel entsprechen.
+#: Closed when switching from shadow to live: the row was open but never
+#: posted, so it cannot correspond to any position in the channel.
 REASON_SHADOW_CARRYOVER = "SHADOW_CARRYOVER"
-#: Cornix hat den Entry nie erreicht — die Order verfiel, ohne je zu füllen.
+#: Cornix never reached the entry — the order expired without ever filling.
 REASON_NOT_FILLED = "ENTRY_NOT_FILLED"
-#: Der SL wurde erreicht — Cornix schließt die Position selbst über die Order auf der
-#: Börse. Wir buchen den Exit nur nach und posten BEWUSST NICHTS: ein zusätzliches
-#: `Close` wäre bestenfalls überflüssig und behauptete einen Exit, den nicht wir
-#: ausgelöst haben (Operator-Hinweis Michi, 2026-07-27).
+#: The SL was hit — Cornix closes the position itself via the order on the
+#: exchange. We book the exit only after and DELIBERATELY POST NOTHING: an extra
+#: `Close` would at best be redundant and would claim an exit we did not
+#: trigger (operator note Michi, 2026-07-27).
 REASON_SL_HIT = "SL_HIT"
 
 SCHEMA = """
@@ -230,9 +223,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS trailing_positions_open_symbol_uniq
     ON trailing_positions (symbol) WHERE closed_at IS NULL;
 """
 
-# Additiv nachgezogen (T-2026-KYT-9050-050): CREATE TABLE IF NOT EXISTS rührt eine
-# bestehende Tabelle nicht an, die Spalten müssen also einzeln kommen — dasselbe
-# Muster wie die Schema-Sicherung in 8_ai_trade_monitor.
+# Additively migrated (T-2026-KYT-9050-050): CREATE TABLE IF NOT EXISTS does not
+# touch an existing table, so columns must come individually — same
+# pattern as the schema safeguard in 8_ai_trade_monitor.
 SCHEMA_ADD = [
     "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS filled_at TIMESTAMPTZ",
     "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS mirror_price DOUBLE PRECISION",
@@ -241,13 +234,13 @@ SCHEMA_ADD = [
 
 
 def ensure_schema(conn) -> None:
-    """Eigene Tabelle anlegen. Rührt keine bestehende Fleet-Tabelle an.
+    """Create own table. Does not touch any existing fleet table.
 
-    Der partielle Unique-Index auf ``symbol WHERE closed_at IS NULL`` ist die
-    Symbol-Eindeutigkeit als DB-Zusicherung, nicht nur als Code-Prüfung: zwei
-    Positionen desselben Symbols wären eine stille Fehl-Schließung durch Cornix'
-    symbol-weites ``Close``, und dagegen ist ein Constraint das ehrlichere Mittel
-    als eine Bedingung, die ein späterer Refactor wegoptimiert.
+    The partial unique index on ``symbol WHERE closed_at IS NULL`` is
+    symbol uniqueness as a DB guarantee, not just a code check: two
+    positions of the same symbol would be a silent misfiring by Cornix'
+    symbol-wide ``Close``, and against that a constraint is the more honest tool
+    than a condition that a later refactor optimises away.
     """
     with conn.cursor() as cur:
         cur.execute(SCHEMA)
@@ -257,20 +250,20 @@ def ensure_schema(conn) -> None:
 
 
 def clear_unposted_carryover(conn) -> int:
-    """Offene Spiegel-Zeilen ohne Veröffentlichung schließen — nur im Live-Modus.
+    """Close open mirror rows without posting — live mode only.
 
-    Eine offene Zeile mit ``posted = FALSE`` kann keiner Position im Channel
-    entsprechen: sie wurde nie gepostet. Im Shadow-Betrieb ist das der Normalfall
-    und muss stehen bleiben (es IST das Shadow-Buch). Sobald aber live gepostet
-    wird, ist so eine Zeile Altlast aus der Shadow-Phase — und eine schädliche:
-    sie belegt ihr Symbol (höchstens eine Position je Symbol) und einen Slot,
-    beides für etwas, das es im Channel nicht gibt. Beim Umschalten am 2026-07-26
-    waren das 460 Zeilen, also 460 blockierte Symbole.
+    An open row with ``posted = FALSE`` cannot correspond to any position in the channel:
+    it was never posted. In shadow mode that is the normal case
+    and must remain (it IS the shadow book). But as soon as live posting
+    starts, such a row is stale carryover from the shadow phase — and harmful:
+    it holds its symbol (at most one position per symbol) and a slot,
+    both for something that does not exist in the channel. When switching on 2026-07-26
+    there were 460 rows, so 460 blocked symbols.
 
-    Läuft nur beim Start, nicht im Poll: im laufenden Live-Betrieb entstehen
-    unveröffentlichte offene Zeilen gar nicht (Insert und Outbox-Zeilen liegen in
-    derselben Transaktion), ein Aufräumen im Zyklus hätte also nichts zu tun und
-    könnte nur schaden.
+    Runs only at start, not in poll: in running live mode
+    unposted open rows do not arise at all (insert and outbox rows are in
+    the same transaction), so cleanup in the cycle would have nothing to do and
+    could only harm.
     """
     if not (LIVE_POSTING and TARGET_CHANNEL_ID):
         return 0
@@ -286,25 +279,25 @@ def clear_unposted_carryover(conn) -> int:
         n = cur.rowcount
     conn.commit()
     if n:
-        logger.info("🧹 %d unveröffentlichte Shadow-Zeile(n) geschlossen — Symbole/Slots freigegeben.", n)
+        logger.info("🧹 Closed %d unposted shadow row(s) — freed symbols/slots.", n)
     return n
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LESEN (fremde Tabelle — ausschliesslich SELECT)
+# READ (foreign table — select-only)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
-    """``(spiegelbare Quell-Trades, ids ALLER offenen Quell-Trades)``.
+    """``(mirrorable source trades, ids of ALL open source trades)``.
 
-    ``ai_signals`` ist die Tabelle des AI-Monitors (Bot 8). Sie wird hier nur
-    gelesen; der Monitor bleibt ihr einziger Schreiber.
+    ``ai_signals`` is the table of the AI monitor (bot 8). It is read here only;
+    the monitor remains its sole writer.
 
-    Die zweite Menge trennt zwei Fälle, die sonst gleich aussähen und es nicht
-    sind: ein Quell-Trade, den die Fleet geschlossen hat (Zeile weg), und einer,
-    der noch läuft, aber durch Roster/Register herausgefallen ist. Beide beenden
-    den Spiegel — mit unterschiedlichem Grund im Protokoll.
+    The second set separates two cases that would otherwise look identical but are not:
+    a source trade that the fleet closed (row gone), and one that is still
+    running but filtered out by roster/register. Both end the mirror
+    — with different reasons in the protocol.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -318,18 +311,18 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
 
     out: dict[int, dict] = {}
     all_open: set[int] = set()
-    # Das Alter rechnet die DB, nicht Python: `ai_signals.open_time` ist naiv und
-    # wird PG-lokal geschrieben (TZ-Kontrakt R3). Ein Vergleich gegen eine in
-    # Python gebildete "jetzt"-Zeit wäre genau der Offset-Fehler aus dem TZ-Cluster
-    # P2.1–P2.6; `NOW() - open_time` kann ihn gar nicht erst machen.
+    # Age is computed by the DB, not Python: `ai_signals.open_time` is naive and
+    # written PG-locally (TZ contract R3). Comparing against a "now" computed in
+    # Python would be exactly the offset error from the TZ cluster
+    # P2.1–P2.6; `NOW() - open_time` cannot make it in the first place.
     for sid, symbol, model, direction, entry1, price, sl, targets, lev, age_sec in rows:
         all_open.add(int(sid))
         if not is_rostered(model, direction):
             continue
         tag, side = leg_key(model, direction)
-        # Register schlägt Roster: der Roster ist ein Standbild vom 2026-07-26,
-        # shadow_gate ist der lebende Zustand. Ein zwischenzeitlich abgeschaltetes
-        # Bein darf nicht weiter in einen Live-Channel gespiegelt werden.
+        # Register beats roster: the roster is a snapshot from 2026-07-26,
+        # shadow_gate is the live state. A leg turned off in the meantime
+        # must not be mirrored further to a live channel.
         if not shadow_gate.is_live(tag, side):
             continue
         entry = float(entry1) if entry1 is not None else (float(price) if price is not None else None)
@@ -337,10 +330,10 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
             continue
         tgt = json.loads(targets) if isinstance(targets, str) else targets
         if sl is None or not tgt:
-            # Ohne SL oder Targets liesse sich kein vollständiger Cornix-Block
-            # bauen — eine halbe Order-Geometrie in einen Cornix-Channel zu posten
-            # wäre schlimmer als nicht zu spiegeln.
-            logger.warning(f"⚠️ {symbol} ({model} {direction}): kein SL/Target — nicht gespiegelt.")
+            # Without SL or targets no complete Cornix block can be
+            # built — posting half an order geometry to a Cornix channel
+            # is worse than not mirroring.
+            logger.warning(f"⚠️ {symbol} ({model} {direction}): no SL/target — not mirrored.")
             continue
         out[int(sid)] = {
             "symbol": symbol,
@@ -352,26 +345,25 @@ def read_source_signals(conn) -> tuple[dict[int, dict], set[int]]:
             "targets": [float(t) for t in (tgt or [])],
             "lev": lev,
             "density": density(model, direction),
-            # None (open_time NULL) gilt als beliebig alt — im Zweifel nicht spiegeln.
+            # None (open_time NULL) counts as arbitrarily old — if in doubt, don't mirror.
             "age_sec": float(age_sec) if age_sec is not None else float("inf"),
         }
     return out, all_open
 
 
 def read_mirrored_src_ids(conn, src_ids: set[int]) -> set[int]:
-    """Welche dieser Quell-Trades hat der Bot schon einmal gespiegelt — offen ODER
-    bereits geschlossen?
+    """Which of these source trades has the bot ever mirrored — open OR
+    already closed?
 
-    Das ist die Sperre gegen den Wiedereinstieg, und der Fall ist der Normalfall,
-    nicht der Ausnahmefall: der Trailing-Exit feuert typischerweise, WÄHREND der
-    Quell-Trade noch läuft (genau dafür existiert der Bot). Gegen nur die offenen
-    Spiegel geprüft, sähe dieselbe `ai_signals`-Zeile beim nächsten Poll wieder
-    wie ein neues Signal aus — und der Bot würde alle 10 s neu eröffnen, bis die
-    Fleet den Quell-Trade schließt.
+    This is the lock against re-entry, and the case is the normal case,
+    not the exceptional one: the trailing-exit fires typically WHILE the
+    source trade is still running (that is exactly why the bot exists). Checked against
+    only open mirrors, the same `ai_signals` row would look like a new signal at the next poll
+    — and the bot would reopen all 10s until the fleet closes the source trade.
 
-    Abgefragt wird gegen die aktuell offenen Quell-ids statt gegen die ganze
-    Tabelle, damit die Prüfung mit der Zahl offener Trades skaliert und nicht mit
-    der Historie.
+    Queried against the currently open source ids rather than the whole
+    table so the check scales with the number of open trades, not with
+    history.
     """
     if not src_ids:
         return set()
@@ -384,11 +376,11 @@ def read_mirrored_src_ids(conn, src_ids: set[int]) -> set[int]:
 
 
 def read_cooling_symbols(conn) -> set[str]:
-    """Symbole, für die gerade ein `Close` bei Cornix in Arbeit sein könnte.
+    """Symbols for which a `Close` might currently be in progress at Cornix.
 
-    Nur GEPOSTETE Closes kühlen ab: ein Shadow-Close hat nie ein Kommando gesendet
-    und kann deshalb mit nichts rennen. Das Fenster rechnet die DB gegen ihre eigene
-    ``NOW()`` — dieselbe Begründung wie beim Altersfilter (TZ-Kontrakt R3).
+    Only POSTED closes cool down: a shadow close never sent a command
+    and thus cannot collide with anything. The window is computed by the DB against its own
+    ``NOW()`` — same rationale as the age filter (TZ contract R3).
     """
     if SYMBOL_COOLDOWN_SEC <= 0:
         return set()
@@ -405,7 +397,7 @@ def read_cooling_symbols(conn) -> set[str]:
 
 
 def read_open_mirrors(conn) -> dict[int, dict]:
-    """Eigene offene Spiegel-Positionen, ``src_signal_id`` → Zeile."""
+    """Own open mirror positions, ``src_signal_id`` → row."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -425,10 +417,9 @@ def read_open_mirrors(conn) -> dict[int, dict]:
             "entry": float(entry),
             "peak_pct": float(peak) if peak is not None else None,
             "posted": bool(posted),
-            # Alt-Zeilen (vor T-050) tragen keine mirror_price. Sie liefen unter der
-            # alten Logik bereits als offen und werden weiter so behandelt — sie
-            # nachträglich als ungefüllt zu erklären hieße, ~100 Live-Positionen auf
-            # einen Verdacht hin stillzulegen.
+            # Old rows (before T-050) carry no mirror_price. They already ran as open
+            # under the old logic and will continue to be treated that way — retroactively
+            # declaring them unfilled would shut down ~100 live positions on a suspicion.
             "filled": filled is not None or mprice is None,
             "mirror_price": float(mprice) if mprice is not None else None,
             "opened_at": opened,
@@ -439,12 +430,12 @@ def read_open_mirrors(conn) -> dict[int, dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POSTEN (eigener Channel — genau EINE parsebare Nachricht pro Entry)
+# POST (own channel — exactly ONE parseable message per entry)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def _post(conn, message: str) -> None:
-    """Outbox-Zeile für den eigenen Channel. Committet nicht (Caller-Kontrakt)."""
+    """Outbox row for own channel. Does not commit (caller contract)."""
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
@@ -453,12 +444,12 @@ def _post(conn, message: str) -> None:
 
 
 def entry_messages(sig: dict) -> tuple[str, str]:
-    """(Cornix-Block, HTML-Info) für einen gespiegelten Entry.
+    """(Cornix block, HTML info) for a mirrored entry.
 
-    Der Cornix-Block kommt aus ``core.signal_post.build_cornix_block`` — derselben
-    Quelle, aus der die Fleet postet. Die Info-Nachricht wiederholt ihn bewusst
-    NICHT: zwei parsebare Nachrichten wären zwei Positionen (harte Regel 4, der
-    fleet-weite Doppel-Trade-Bug vom 2026-07-06).
+    The Cornix block comes from ``core.signal_post.build_cornix_block`` — the same
+    source the fleet posts from. The info message deliberately does NOT repeat it:
+    two parseable messages would be two positions (hard rule 4, the
+    fleet-wide double-trade bug from 2026-07-06).
     """
     lev = sig["lev"] or get_max_leverage(sig["symbol"], 20)
     cornix = build_cornix_block(
@@ -487,12 +478,12 @@ def entry_messages(sig: dict) -> tuple[str, str]:
 
 
 def close_messages(row: dict, reason: str, mark: float | None) -> tuple[str, str]:
-    """(Close-Kommando, HTML-Info) für einen Exit.
+    """(Close command, HTML info) for an exit.
 
-    ``Close <SYMBOL>`` ist Cornix' Schließ-Kommando (``core/config.py:123``) und
-    trifft ALLE Trades des Symbols im Channel — der Bot hält deshalb nie zwei
-    Positionen auf einem Symbol. Das Kommando enthält keine Entry-Felder und ist
-    damit nicht als neues Signal parsebar.
+    ``Close <SYMBOL>`` is Cornix' close command (``core/config.py:123``) and
+    hits ALL trades of that symbol in the channel — the bot thus never holds two
+    positions on one symbol. The command contains no entry fields and is
+    therefore not parseable as a new signal.
     """
     if reason == REASON_TRAIL:
         why = "trailing stop"
@@ -516,7 +507,7 @@ def close_messages(row: dict, reason: str, mark: float | None) -> tuple[str, str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ZULASSUNG
+# ADMISSION
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -527,25 +518,25 @@ def admit(
     cooling: set[str] | None = None,
     open_by_dir: dict[str, int] | None = None,
 ) -> tuple[list, list]:
-    """Wer darf in den Channel? Gibt ``(zugelassen, abgewiesen_mit_grund)`` zurück.
+    """Who gets into the channel? Returns ``(admitted, rejected_with_reason)``.
 
-    Vier Gründe, alle hart:
-      * ``SYMBOL_HELD`` — auf dem Symbol läuft schon eine Spiegel-Position, und
-        Cornix' Close ist symbol-weit.
-      * ``SYMBOL_COOLING`` — auf dem Symbol wurde gerade ein `Close` gepostet, das
-        bei Cornix noch in Arbeit sein kann.
-      * ``EXPOSURE_CAP`` — die Richtung des Kandidaten liegt schon ``EXPOSURE_CAP``
-        offene Positionen vor der Gegenrichtung. Das Buch darf nicht beliebig
-        einseitig werden (T-052: das einseitige LONG-Buch WAR der Konto-Schaden;
-        die strukturelle Schranke schlug in der Messung jedes Marktlagen-Modell).
-      * ``SLOT_CAP`` — der Channel ist voll. Sortiert wird nach Bein-Dichte, damit
-        bei Knappheit dasselbe Kriterium entscheidet, das die Auswahl überhaupt
-        getroffen hat: Ertrag je belegtem Slot-Tag.
+    Four reasons, all hard:
+      * ``SYMBOL_HELD`` — a mirror position is already running on this symbol, and
+        Cornix' close is symbol-wide.
+      * ``SYMBOL_COOLING`` — a `Close` was just posted on this symbol, which
+        may still be in progress at Cornix.
+      * ``EXPOSURE_CAP`` — the candidate's direction already leads the opposite direction
+        by ``EXPOSURE_CAP`` open positions. The book must not become arbitrarily
+        one-sided (T-052: the one-sided LONG book WAS the account damage;
+        the structural bound beat every market-state model in measurement).
+      * ``SLOT_CAP`` — the channel is full. Sorted by leg density so
+        in scarcity the same criterion decides that drove the selection:
+        return per occupied slot-day.
 
-    ``open_by_dir`` sind die BEREITS offenen Spiegel je Richtung; zugelassene
-    Kandidaten zählen sofort mit, damit ein einzelner Zyklus den Deckel nicht
-    überrennen kann. Abweisungen werden zurückgegeben, nicht verschluckt — eine
-    stille Deckelung liest sich später wie "alles gespiegelt".
+    ``open_by_dir`` are the ALREADY open mirrors per direction; admitted
+    candidates count immediately so a single cycle cannot overrun the cap.
+    Rejections are returned, not swallowed — silent capping would later read
+    as "everything mirrored".
     """
     admitted, rejected = [], []
     taken = set(held_symbols)
@@ -556,8 +547,8 @@ def admit(
             rejected.append((sid, sig, "SYMBOL_HELD"))
             continue
         if sig["symbol"] in cooling:
-            # Auf diesem Symbol ist ein Close unterwegs — ihn mit einer Gegenorder
-            # zu überholen ist genau das Rennen, das wir nicht eingehen.
+            # A close is in progress on this symbol — racing it with an opposite order
+            # is exactly the race we don't engage in.
             rejected.append((sid, sig, "SYMBOL_COOLING"))
             continue
         d = sig["direction"]
@@ -575,19 +566,19 @@ def admit(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EIN POLL-ZYKLUS
+# ONE POLL CYCLE
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def record_preexisting(conn, stale: list[tuple[int, dict]]) -> None:
-    """Quell-Trades als „gesehen, nie gespiegelt" vermerken.
+    """Record source trades as "seen, never mirrored".
 
-    Die Zeile wird sofort geschlossen eingetragen (``closed_at = NOW()``): sie ist
-    kein Spiegel, sondern eine Sperre. ``read_mirrored_src_ids`` fragt ohne
-    ``closed_at``-Filter, also taucht dieser Quell-Trade nie wieder als Neuzugang
-    auf — dieselbe Mechanik, die einen ausgetrailten Trade vor dem Wiedereinstieg
-    schützt. Ein geschlossener Eintrag kollidiert auch nicht mit dem partiellen
-    Symbol-Index (der greift nur auf offenen Zeilen), belegt also keinen Platz.
+    The row is immediately recorded as closed (``closed_at = NOW()``): it is
+    not a mirror but a lock. ``read_mirrored_src_ids`` queries without
+    ``closed_at`` filter, so this source trade never appears again as a new signal
+    — the same mechanism that protects a trailed trade from re-entry. A closed
+    entry also does not collide with the partial symbol index (which only applies to
+    open rows), so it occupies no slot.
     """
     with conn.cursor() as cur:
         cur.executemany(
@@ -606,7 +597,7 @@ def record_preexisting(conn, stale: list[tuple[int, dict]]) -> None:
     conn.commit()
     oldest = max(sig["age_sec"] for _sid, sig in stale)
     logger.info(
-        "📎 %d Quell-Trade(s) als Altbestand vermerkt, nicht gespiegelt (ältester %.0f s, Grenze %.0f s).",
+        "📎 Recorded %d source trade(s) as stale, not mirrored (oldest %.0f s, threshold %.0f s).",
         len(stale),
         oldest,
         MAX_MIRROR_AGE_SEC,
@@ -620,20 +611,20 @@ def open_mirrors(
     already: set[int],
     prices: dict[str, float] | None = None,
 ) -> int:
-    """Neue Quell-Signale spiegeln. Gibt die Zahl der eröffneten Positionen zurück.
+    """Mirror new source signals. Returns the number of opened positions.
 
-    ``already`` sind die Quell-ids, die der Bot schon einmal gespiegelt hat —
-    offen ODER geschlossen. Gegen die offenen Spiegel allein zu prüfen wäre der
-    Wiedereinstiegs-Bug: nach einem Trailing-Exit läuft der Quell-Trade meist
-    weiter, seine Zeile sähe wieder neu aus, und der Bot würde alle 10 s neu
-    eröffnen. Ein einmal getrailter Trade ist erledigt.
+    ``already`` are the source ids the bot has ever mirrored —
+    open OR closed. Checking only against open mirrors would be the
+    re-entry bug: after a trailing-exit the source trade usually
+    keeps running, its row would look new again, and the bot would reopen every 10s.
+    A once-trailed trade is done.
     """
     unseen = [(sid, sig) for sid, sig in sources.items() if sid not in mirrors and sid not in already]
     if not unseen:
         return 0
 
-    # Altbestand: lief schon, bevor der Bot ihn sehen konnte. Wird NICHT gespiegelt,
-    # aber als Zeile vermerkt, damit er nie wieder als Neuzugang auftaucht.
+    # Stale inventory: was running before the bot could see it. NOT mirrored,
+    # but recorded as a row so it never appears again as a new signal.
     stale = [(sid, sig) for sid, sig in unseen if sig["age_sec"] > MAX_MIRROR_AGE_SEC]
     if stale:
         record_preexisting(conn, stale)
@@ -647,11 +638,11 @@ def open_mirrors(
         open_by_dir[m["direction"]] = open_by_dir.get(m["direction"], 0) + 1
     admitted, rejected = admit(new, held, SLOT_CAP - len(mirrors), read_cooling_symbols(conn), open_by_dir)
 
-    # Gebündelt statt je Kandidat: die Abweisungen wiederholen sich in JEDEM
-    # 10s-Zyklus, solange der Quell-Trade offen ist. Im ersten Shadow-Lauf waren
-    # das ~870 Zeilen pro Zyklus = ~1,5 Mio/Tag in den gemeinsamen Watchdog-Log —
-    # die Logs aller anderen Bots wären darin ertrunken. Die Zahlen bleiben
-    # sichtbar (keine stille Deckelung), die Einzelfälle stehen auf DEBUG.
+    # Bundled rather than per candidate: the rejections repeat in EVERY
+    # 10s cycle as long as the source trade is open. In the first shadow run
+    # that was ~870 rows per cycle = ~1.5M/day in the shared watchdog log —
+    # all other bots' logs would have drowned in it. The numbers stay
+    # visible (no silent capping), individual cases go to DEBUG.
     if rejected:
         tally: dict[str, int] = {}
         for _sid, _sig, why in rejected:
@@ -666,38 +657,36 @@ def open_mirrors(
     live = bool(LIVE_POSTING and TARGET_CHANNEL_ID)
     prices = get_live_prices_batch() if prices is None else prices
     for sid, sig in admitted:
-        # Der Marktpreis im Moment des Spiegelns entscheidet, von welcher Seite der
-        # Entry erreicht werden muss. Ohne ihn liesse sich der Fill nicht feststellen,
-        # also lieber diesen Zyklus auslassen — das Signal ist im 90s-Fenster noch da.
+        # The market price at the moment of mirroring decides which side the
+        # entry must be reached from. Without it the fill cannot be determined,
+        # so better skip this cycle — the signal is still in the 90s window.
         market = prices.get(sig["symbol"])
         if market is None:
-            logger.info("⏸ %s: kein Marktpreis beim Spiegeln — nächster Zyklus.", sig["symbol"])
+            logger.info("⏸ %s: no market price when mirroring — next cycle.", sig["symbol"])
             continue
         if not mirrorable_at(sig["direction"], market, sig["sl"], sig["targets"]):
             logger.info(
-                "⛔ %s %s %s: Markt %s liegt ausserhalb SL/TP1 — nicht mehr spiegelbar.",
+                "⛔ %s %s %s: market %s is outside SL/TP1 — no longer mirrorable.",
                 sig["symbol"],
                 sig["tag"],
                 sig["direction"],
                 market,
             )
             continue
-        # ENTRY = MARKT (Operator-Entscheid Michi, 2026-07-27). Vorher wurde der Entry
-        # des Quell-Signals gepostet — bis der Bot spiegelt, hat die auslösende
-        # Bewegung aber stattgefunden, und der Markt kam zu diesem Preis meist nicht
-        # zurück: von 24 Spiegeln füllten 5 (21 %), bei 15 der 18 Stornos hatte der
-        # Markt den Entry laut 5m-Kerzen nie berührt. Der Arm handelte damit eine
-        # Auswahl, die er selbst erzeugt — bevorzugt Trades, deren Bewegung sich
-        # zurückbildet. Zum Markt einzusteigen füllt praktisch immer und lässt beide
-        # Arme dieselben Signale handeln.
+        # ENTRY = MARKET (operator decision Michi, 2026-07-27). Previously the source
+        # signal's entry was posted — but by the time the bot mirrors, the triggering
+        # move has happened, and the market rarely comes back to that price: of 24
+        # mirrors 5 filled (21%), for 15 of 18 cancellations the market never touched
+        # the entry per 5m candles. The arm thus traded a selection it created itself —
+        # favouring trades whose move reverts. Entering to market fills almost always
+        # and lets both arms trade the same signals.
         sig["entry"] = market
         sig["mirror_price"] = market
-        # SCHREIBEN ZUERST, posten nur bei echtem Insert — dasselbe Muster wie
-        # `DELETE ... RETURNING` im AI-Monitor (P2.8). Anders herum wäre die
-        # Outbox-Zeile schon geschrieben, wenn der Insert am Unique-Index
-        # scheitert (Symbol schon belegt, Quelle schon gespiegelt, zweiter
-        # Prozess) — und ein Post ohne zugehörige Zeile ist eine Position, die
-        # niemand mehr schliesst.
+        # WRITE FIRST, post only on actual insert — same pattern as
+        # `DELETE ... RETURNING` in the AI monitor (P2.8). Otherwise
+        # the outbox row would already be written if the insert fails on the unique index
+        # (symbol already held, source already mirrored, second process) — and a post
+        # without a corresponding row is a position no one will ever close.
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -722,7 +711,7 @@ def open_mirrors(
             created = cur.fetchone()
         if created is None:
             conn.rollback()
-            logger.warning(f"⚠️ {sig['symbol']} {sig['tag']} {sig['direction']}: Insert verloren — nicht gepostet.")
+            logger.warning(f"⚠️ {sig['symbol']} {sig['tag']} {sig['direction']}: insert lost — not posted.")
             continue
         if live:
             cornix, info = entry_messages(sig)
@@ -737,16 +726,16 @@ def open_mirrors(
 
 
 def close_mirror(conn, row: dict, reason: str, mark: float | None, post: bool = True) -> None:
-    """Spiegel-Position schließen: Close-Kommando + eigene Zeile stempeln.
+    """Close mirror position: close command + stamp own row.
 
-    ``post=False`` für Exits, die Cornix selbst ausgelöst hat (SL) — dort wäre ein
-    eigenes `Close` überflüssig, und es würde einen Exit behaupten, den wir nicht
-    verursacht haben.
+    ``post=False`` for exits that Cornix triggered itself (SL) — there an own
+    `Close` would be redundant, and it would claim an exit we did not
+    trigger.
     """
     cmd, info = close_messages(row, reason, mark)
     if post and LIVE_POSTING and TARGET_CHANNEL_ID and row["posted"]:
-        # Nur schließen, was auch eröffnet wurde. Ein `Close` auf eine nie gepostete
-        # Position wäre im Live-Channel ein Kommando gegen einen fremden Trade.
+        # Only close what was opened. A `Close` on a never-posted
+        # position would be a command against a foreign trade in the live channel.
         _post(conn, cmd)
         _post(conn, info)
     with conn.cursor() as cur:
@@ -770,14 +759,14 @@ def close_mirror(conn, row: dict, reason: str, mark: float | None, post: bool = 
 
 
 def mirrorable_at(direction: str, market: float, sl: float, targets: list[float]) -> bool:
-    """Ergibt ein Markt-Einstieg auf dieser Geometrie überhaupt noch Sinn?
+    """Does a market entry make sense at all on this geometry?
 
-    Der Spiegel steigt zum aktuellen Markt ein, behält aber SL und Targets des
-    Quell-Signals auf ihren ABSOLUTEN Preisen — es sind S/R-Level, sie mitzuschieben
-    löste sie von den Leveln, und der SL soll derselbe Katastrophen-Stop sein wie im
-    Hold-Arm. Genau deshalb braucht es diesen Riegel: ist der Markt schon über TP1
-    hinaus, wäre die Position im selben Moment im Ziel; ist er jenseits des SL, wäre
-    sie sofort ausgestoppt. Beides ist kein Trade, sondern eine Gebühr.
+    The mirror enters at the current market but keeps SL and targets of the
+    source signal at their ABSOLUTE prices — they are S/R levels, moving them
+    would disconnect them from the levels, and the SL should be the same catastrophic
+    stop as in the hold arm. That is exactly why this riegel is needed: if the market is
+    already beyond TP1, the position would be at target in the same moment; if it is beyond
+    SL it would be stopped out immediately. Neither is a trade, both are a fee.
     """
     if not targets or sl is None:
         return False
@@ -788,10 +777,10 @@ def mirrorable_at(direction: str, market: float, sl: float, targets: list[float]
 
 
 def sl_reached(direction: str, sl: float | None, price: float) -> bool:
-    """Hat der Markt den Stop-Loss erreicht?
+    """Has the market reached the stop-loss?
 
-    Cornix hält den SL als Order auf der Börse und schließt selbst. Wir erkennen es
-    nur, um unser Buch nachzuziehen — und um KEIN eigenes `Close` zu senden.
+    Cornix holds the SL as an order on the exchange and closes itself. We recognise it
+    only to update our book — and to NOT send our own `Close`.
     """
     if sl is None:
         return False
@@ -799,25 +788,25 @@ def sl_reached(direction: str, sl: float | None, price: float) -> bool:
 
 
 def sl_exit_mark(row: dict) -> float | None:
-    """Realisierter Mark eines SL-Treffers — berechnet, nicht gemessen.
+    """Realised mark of a SL hit — computed, not measured.
 
-    Der Fill liegt auf dem Stop-Level: dort lag die Order, die Cornix an der Börse
-    hält. Der Wert ist damit bekannt und wird gebucht.
+    The fill is at the stop level: that is where the order Cornix holds on the exchange
+    sits. The value is thus known and is booked.
 
-    Er wurde bis T-2026-KYT-9050-053 als NULL gebucht, mit der Begründung „das Buch
-    soll keinen Wert behaupten, den niemand gemessen hat". Die gilt für einen
-    fehlenden MARKTPREIS — für den SL nicht: das Level steht in der Zeile. Die Folge
-    war ein Reporting-Defekt, der genau die schlechtesten Exits unsichtbar machte:
-    über die saubere Reihe fehlten 66 Treffer zu Ø −5,78 % (Σ −381 %), womit eine
-    Summe über ``close_mark_pct`` netto −186 % statt −575 % zeigte.
+    It was booked as NULL until T-2026-KYT-9050-053, with the rationale "the book
+    should not claim a value no one measured". That applies to a
+    missing MARKET PRICE — not to the SL: the level is in the row. The consequence
+    was a reporting defect that made exactly the worst exits invisible:
+    over the clean series 66 hits were missing at avg −5.78% (Σ −381%), so a
+    sum over ``close_mark_pct`` showed net −186% instead of −575%.
 
-    Annahme, bewusst und wie in der Studie für Hard-Stops: **Fill am Stop-Level,
-    keine Slippage.** Ein Gap durch den Stop realisiert schlechter als hier gebucht —
-    der Wert ist also die optimistische Kante, nicht der Erwartungswert.
+    Assumption, deliberate and like in the study for hard stops: **fill at stop level,
+    no slippage.** A gap through the stop fills worse than booked here —
+    so the value is the optimistic edge, not the expected value.
 
-    Alt-Zeilen ohne ``sl`` (vor T-2026-KYT-9050-049) bleiben NULL: dort ist das Level
-    nicht bekannt, und es zu raten wäre genau der Fehler, den die alte Begründung
-    vermeiden wollte.
+    Old rows without ``sl`` (before T-2026-KYT-9050-049) remain NULL: the level is
+    not known there, and guessing it would be exactly the error the old rationale
+    wanted to avoid.
     """
     if row.get("sl") is None:
         return None
@@ -825,14 +814,14 @@ def sl_exit_mark(row: dict) -> float | None:
 
 
 def has_filled(entry: float, mirror_price: float, price: float) -> bool:
-    """Hat der Markt den Entry seit dem Spiegeln erreicht?
+    """Has the market reached the entry since mirroring?
 
-    Cornix legt auf den geposteten Entry eine Order und öffnet erst, wenn der Markt
-    dort handelt — richtungsunabhängig, wie Michi am 2026-07-27 beobachtet hat
-    (ENAUSDT SHORT, Entry 1,5 % unter Markt, blieb ungeöffnet). Die Prüfung bildet
-    genau das ab: der Preis muss den Entry von der Seite erreichen, auf der er beim
-    Spiegeln stand. Sie trifft KEINE Annahme darüber, wie Cornix LONG und SHORT
-    unterschiedlich behandelt — nur darüber, dass der Preis den Entry berühren muss.
+    Cornix places an order at the posted entry and only opens when the market
+    trades there — direction-independent, as Michi observed on 2026-07-27
+    (ENAUSDT SHORT, entry 1.5% below market, remained unopened). The check models
+    exactly that: the price must reach the entry from the side it was on when
+    mirrored. It makes NO assumption about how Cornix treats LONG and SHORT
+    differently — only that the price must touch the entry.
     """
     if mirror_price >= entry:
         return price <= entry
@@ -846,7 +835,7 @@ def poll_open_mirrors(
     all_open: set[int] | None = None,
     prices: dict[str, float] | None = None,
 ) -> None:
-    """Preis-Poll über alle offenen Spiegel-Positionen (Trailing + Quell-Close)."""
+    """Price poll over all open mirror positions (trailing + source close)."""
     if not mirrors:
         return
     if prices is None:
@@ -858,52 +847,52 @@ def poll_open_mirrors(
 
     for sid, row in mirrors.items():
         if sid not in sources:
-            # Zwei verschiedene Sachverhalte, beide beenden den Spiegel:
-            #   * Zeile weg  → der AI-Monitor hat den Quell-Trade geschlossen
-            #     (SL/TP/Timeout). Der Spiegel darf keine Position halten, die die
-            #     Quell-Strategie nicht mehr hält — sonst misst der A/B-Arm nicht
-            #     mehr dieselben Trades.
-            #   * Zeile da, aber gefiltert → das Bein ist aus Roster/Register
-            #     gefallen. Auch dann hört das Spiegeln auf, aber aus einem anderen
-            #     Grund, und das gehört unterscheidbar ins Protokoll.
+            # Two different states, both end the mirror:
+            #   * Row gone  → the AI monitor closed the source trade
+            #     (SL/TP/timeout). The mirror must not hold a position the
+            #     source strategy no longer holds — otherwise the A/B arm no longer
+            #     measures the same trades.
+            #   * Row exists but filtered → the leg fell out of roster/register.
+            #     Then mirroring also stops, but for a different reason,
+            #     and that must be distinguishable in the protocol.
             reason = REASON_LEG_RETIRED if sid in open_ids else REASON_SOURCE_CLOSED
             price = prices.get(row["symbol"])
             mark = None
             if price is not None:
                 st = TrailingState(row["entry"], row["direction"] == "LONG", RETRACE_FRAC, ACTIVATION_PCT)
                 mark = st.update(float(price))[1]
-            # Ohne Preis wird trotzdem geschlossen — die Quelle hält die Position
-            # nicht mehr, Halten wäre also falsch. Der Mark bleibt dann NULL statt
-            # einer erfundenen 0.0: das Buch soll keinen Wert behaupten, den
-            # niemand gemessen hat.
+            # Without a price it is still closed — the source no longer holds the position,
+            # so holding would be wrong. The mark then remains NULL instead of
+            # a made-up 0.0: the book must not claim a value
+            # no one measured.
             close_mirror(conn, row, reason, mark)
             continue
 
         price = prices.get(row["symbol"])
         if price is None:
-            # Kein Preis heißt keine Entscheidung. Eine Position auf einem Coin ohne
-            # Tick bleibt offen — sie zu schließen wäre eine Aussage über einen Markt,
-            # den wir gerade nicht sehen.
+            # No price means no decision. A position on a coin with no
+            # tick stays open — closing it would be a statement about a market
+            # we cannot see right now.
             #
-            # BEWUSST OHNE Einzelabfrage-Fallback (Operator-Auftrag Michi, 2026-07-26):
-            # `core.live_price.get_live_price` würde einen HTTP-Call PRO Position PRO
-            # Poll machen. Bei den für act=2 % erwarteten ~285 gleichzeitigen
-            # Positionen im 10s-Takt sind das ~28 Requests/s gegen fapi.binance.com —
-            # ein Ban kostet die ganze Fleet, ein um 10 s verzögerter Trailing-Exit
-            # kostet fast nichts. Der nächste Poll versucht den Batch erneut.
+            # DELIBERATELY WITHOUT single-query fallback (operator order Michi, 2026-07-26):
+            # `core.live_price.get_live_price` would make one HTTP call PER position PER
+            # poll. For the ~285 simultaneous positions expected at act=2% in 10s intervals
+            # that is ~28 requests/s against fapi.binance.com —
+            # a ban costs the whole fleet, a 10s-delayed trailing-exit
+            # costs almost nothing. The next poll tries the batch again.
             missing += 1
             continue
 
         if row["filled"] and sl_reached(row["direction"], row["sl"], float(price)):
-            # Cornix hat hier schon geschlossen. Nur nachbuchen, nichts posten —
-            # aber MIT dem realisierten Mark: der Fill liegt auf dem Stop-Level.
+            # Cornix has already closed here. Just book the exit, post nothing —
+            # but WITH the realised mark: the fill is at the stop level.
             close_mirror(conn, row, REASON_SL_HIT, sl_exit_mark(row), post=False)
             continue
 
         if not row["filled"]:
-            # Noch nicht gefüllt: Cornix hat die Position nicht offen, also gibt es
-            # nichts zu trailen. Ein Trail auf einer ungefüllten Order erzeugt genau
-            # den Phantom-Exit, den dieser Task behebt.
+            # Not yet filled: Cornix does not have the position open, so there is
+            # nothing to trail. A trail on an unfilled order creates exactly
+            # the phantom-exit this task fixes.
             if has_filled(row["entry"], row["mirror_price"], float(price)):
                 with conn.cursor() as cur:
                     cur.execute(
@@ -916,9 +905,9 @@ def poll_open_mirrors(
             else:
                 age = (datetime.datetime.now(datetime.timezone.utc) - row["opened_at"]).total_seconds() / 60
                 if age > FILL_TIMEOUT_MIN:
-                    # Verfallen. Der Close räumt eine etwaige Alt-Order in Cornix ab,
-                    # damit sie nicht Tage später doch noch füllt und eine Position
-                    # aufmacht, die niemand mehr überwacht.
+                    # Expired. The close cleans up any stale order in Cornix
+                    # so it does not fill days later and open a position
+                    # no one watches anymore.
                     close_mirror(conn, row, REASON_NOT_FILLED, None)
                 else:
                     unfilled += 1
@@ -937,20 +926,20 @@ def poll_open_mirrors(
             close_mirror(conn, row, REASON_TRAIL, mark)
             continue
 
-        # Zeit-Stop (T-052): NICHT scharf und älter als die Frist → zum Markt raus.
-        # Strikt kausal — entschieden wird auf dem Peak-Stand von JETZT, nie darauf,
-        # ob der Trade später noch scharf würde (genau dieser Look-ahead hat in der
-        # Studie die Breakeven-Regeln um den Faktor 8 geschönt, Verdikt-Nachtrag 4).
-        # Scharfe Spiegel gehören dem Trail: sein Stop liegt über +1,8 %, tiefe
-        # Verlierer kann es dort nicht geben. `opened_at` statt `filled_at`, weil
-        # Alt-Zeilen (vor T-050) kein filled_at tragen; seit dem Markt-Entry (T-051)
-        # fallen beide ohnehin zusammen.
+        # Time-stop (T-052): NOT armed and older than the period → close to market.
+        # Strictly causal — decided on the CURRENT peak state, never on
+        # whether the trade would later arm (exactly this look-ahead beautified the
+        # breakeven rules by 8× in the study, verdict addendum 4).
+        # Armed mirrors belong to the trail: its stop sits above +1.8%, deep
+        # losers cannot exist there. `opened_at` rather than `filled_at` because
+        # old rows (before T-050) carry no filled_at; since market-entry (T-051)
+        # both fall together anyway.
         if (
             TIME_STOP_H > 0
             and not state.armed
             and time_stopped < TIME_STOP_MAX_PER_CYCLE
             and row.get("opened_at") is not None
-            # Grandfather: Altbestand vor dem Stichtag reitet (Operator-Risiko).
+            # Grandfather: stale inventory before the cutoff rides (operator risk).
             and row["opened_at"] >= TIME_STOP_SINCE
         ):
             age_h = (datetime.datetime.now(datetime.timezone.utc) - row["opened_at"]).total_seconds() / 3600
@@ -960,10 +949,10 @@ def poll_open_mirrors(
                 continue
 
         if peak_advanced:
-            # Der Peak ist monoton — nur neue Hochs ändern dauerhaften Zustand. Das
-            # hält die Schreibrate bei einer Handvoll pro Position statt einer pro
-            # Poll pro Position, und es ist genau der Wert, ohne den ein Neustart
-            # den Trail unterhalb eines längst gegebenen Peaks neu schärfen würde.
+            # Peak is monotonic — only new highs change lasting state. This
+            # keeps the write rate at a handful per position instead of one per
+            # poll per position, and it is exactly the value without which a restart
+            # would re-arm the trail below a long-standing peak.
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE trailing_positions SET peak_pct = %s WHERE id = %s",
@@ -974,36 +963,36 @@ def poll_open_mirrors(
 
     if time_stopped:
         logger.info(
-            "⏱ %d Spiegel per Zeit-Stop geschlossen (nie über +%.0f %% in %.0f h).",
+            "⏱ Closed %d mirror(s) via time-stop (never above +%.0f%% in %.0f h).",
             time_stopped,
             ACTIVATION_PCT,
             TIME_STOP_H,
         )
     if unfilled:
-        logger.info("⏳ %d Spiegel warten noch auf ihren Fill (Cornix hat den Entry nicht erreicht).", unfilled)
+        logger.info("⏳ %d mirror(s) still waiting for their fill (Cornix did not reach the entry).", unfilled)
     if missing:
-        # Sichtbar machen, dass Positionen diesen Zyklus ohne Entscheidung blieben —
-        # eine stille Lücke im Trailing wäre schlimmer als eine laute.
-        logger.warning("⏸ %d Position(en) ohne Batch-Preis — Zyklus übersprungen, kein Einzelabruf.", missing)
+        # Make visible that positions remained without decision this cycle —
+        # a silent gap in the trailing would be worse than a loud one.
+        logger.warning("⏸ %d position(s) without batch price — cycle skipped, no single query.", missing)
 
 
 def main() -> None:
     mode = "LIVE" if (LIVE_POSTING and TARGET_CHANNEL_ID) else "SHADOW"
     logger.info(f"=== 🪝 TRAILING CLOSE BOT STARTED ({mode}) ===")
     logger.info(
-        f"Roster: {len(ROSTER)} Beine aus {SOURCE_REPORT} · act={ACTIVATION_PCT}% · x={RETRACE_FRAC:.0%} · "
-        f"cap={SLOT_CAP} (erwartet Ø {EXPECTED_OCC_MEAN:.0f} / p95 {EXPECTED_OCC_P95:.0f})"
+        f"Roster: {len(ROSTER)} legs from {SOURCE_REPORT} · act={ACTIVATION_PCT}% · x={RETRACE_FRAC:.0%} · "
+        f"cap={SLOT_CAP} (expected avg {EXPECTED_OCC_MEAN:.0f} / p95 {EXPECTED_OCC_P95:.0f})"
     )
     if mode == "SHADOW":
         logger.warning(
-            "SHADOW: TRAILING_BOT_LIVE_POSTING=1 UND CH_TRAILING sind nötig, um zu posten. "
-            "Der Bot trackt und loggt, schreibt aber keine Outbox-Zeile."
+            "SHADOW: TRAILING_BOT_LIVE_POSTING=1 and CH_TRAILING are needed to post. "
+            "The bot tracks and logs but writes no outbox row."
         )
 
-    # Optional, weil der Reconnect im except-Zweig unten fehlschlagen darf: dann
-    # läuft die Schleife mit conn=None weiter und versucht es beim nächsten Poll
-    # erneut, statt den Prozess zu verlieren. Der Rest der Schleife narrowt über
-    # den `if conn is None`-Guard.
+    # Optional because the reconnect in the except block below may fail: then
+    # the loop continues with conn=None and tries again at the next poll
+    # instead of losing the process. The rest of the loop narrows via
+    # the `if conn is None` guard.
     conn: PooledConnection | None = get_db_connection()
     ensure_schema(conn)
     clear_unposted_carryover(conn)
@@ -1013,17 +1002,17 @@ def main() -> None:
             time.sleep(POLL_SECONDS)
             if conn is None:
                 conn = get_db_connection()
-            conn.commit()  # frische Transaktions-Sicht, wie Monitor 8
+            conn.commit()  # fresh transaction view, like monitor 8
 
             sources, all_open = read_source_signals(conn)
             mirrors = read_open_mirrors(conn)
-            # Erst schliessen, dann eröffnen — in dieser Reihenfolge, damit ein im
-            # selben Zyklus freigewordenes Symbol sofort neu belegt werden kann UND
-            # das `Close <SYMBOL>` garantiert vor einem neuen Entry auf demselben
-            # Symbol rausgeht: die Outbox ist per Channel strikt FIFO nach id
-            # (4_telegram_bot.py, P0.1(d)/P1.3). Andersherum würde das Close den
-            # frisch eröffneten Trade gleich wieder flach machen.
-            # EIN Binance-Batch-Call pro Zyklus, geteilt von beiden Schritten.
+            # Close first, then open — in this order so a symbol freed in the
+            # same cycle can be reused immediately AND
+            # the `Close <SYMBOL>` goes out guaranteed before a new entry on the same
+            # symbol: the outbox is strictly FIFO per channel by id
+            # (4_telegram_bot.py, P0.1(d)/P1.3). Reversed it would close the
+            # freshly opened trade flat again.
+            # ONE Binance batch call per cycle, shared by both steps.
             prices = get_live_prices_batch()
             poll_open_mirrors(conn, sources, mirrors, all_open, prices)
             open_mirrors(conn, sources, read_open_mirrors(conn), read_mirrored_src_ids(conn, set(sources)), prices)
@@ -1031,7 +1020,7 @@ def main() -> None:
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            logger.error(f"Fehler im Trailing-Close-Bot: {e}", exc_info=True)
+            logger.error(f"Error in trailing-close bot: {e}", exc_info=True)
             try:
                 if conn:
                     conn.rollback()
@@ -1045,7 +1034,7 @@ def main() -> None:
             try:
                 conn = get_db_connection()
             except Exception as reconnect_err:
-                logger.error(f"Reconnect fehlgeschlagen: {reconnect_err}")
+                logger.error(f"Reconnect failed: {reconnect_err}")
                 conn = None
             time.sleep(5)
 
@@ -1054,4 +1043,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("🛑 Trailing Close Bot manuell gestoppt (Strg+C).")
+        logger.info("🛑 Trailing close bot stopped manually (Ctrl+C).")

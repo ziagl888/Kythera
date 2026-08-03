@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
-    """Kernlogik für den Main Channel Bot"""
-    if len(df_indicators) < 50: return None  # Braucht genug Historie für Divergenz
+    """Core logic for the Main Channel bot"""
+    if len(df_indicators) < 50: return None  # Needs enough history for divergence
 
     # Note: df_indicators is sorted DESC (index 0 is the most recent candle!)
     current_row = df_indicators.iloc[0]
@@ -61,7 +61,7 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
     RSI_9_HIT, RSI_14_HIT = current_row['rsi_9'], current_row['rsi_14']
 
     first_hit_row = None
-    # Searching rückwärts (ab der 5. neuesten Kerze) after dem ersten Hit
+    # Searching backwards (from the 5th newest candle) for the first hit
     for i in range(5, len(df_indicators)):
         row = df_indicators.iloc[i]
         c_price = row['close']
@@ -89,7 +89,7 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
     entry = live_price
     lev = get_max_leverage(symbol, 20)
 
-    # ========================== LONG LOGIK ==========================
+    # ========================== LONG LOGIC ==========================
     if support_price_hit > 0:
         trade_active = (cycle.is_trade_active(symbol, 'LONG', 'Main Channel') if cycle is not None
                         else is_trade_already_active(conn, symbol, 'LONG', 'Main Channel'))
@@ -101,14 +101,14 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
 
-                # FIX P0.7: keine Zone ÜBER dem Entry → t1==0 lief ungeguarded
-                # in die Interpolation und erzeugte LONG-TPs UNTER dem Entry
-                # (TP1 = 0.75·Entry). Ohne Zone auf der Gewinnseite gibt es kein
-                # valides Signal — Seitenfilter in select_zone_targets.
+                # FIX P0.7: no zone ABOVE the entry → t1==0 ran unguarded
+                # into the interpolation and produced LONG TPs BELOW the entry
+                # (TP1 = 0.75·entry). Without a zone on the profit side there is no
+                # valid signal — side filter in select_zone_targets.
                 if t1 == 0:
                     return None
 
-                # Ziel-Interpolation (Aus deinem Script 1)
+                # Target interpolation (from your script 1)
                 if t2 == 0:
                     x = (t1 - entry) / 4;
                     t4 = t1;
@@ -123,7 +123,7 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
                     y = (t4 - t2) / 2;
                     t3 = t2 + y
 
-                # Dynamischer SL: ATR-basiert (3× ATR unter Entry) mit Safety-Cap
+                # Dynamic SL: ATR-based (3× ATR below entry) with safety cap
                 # capped at 5% and min 1% from entry. Old fixed 2.5% SL ignored
                 # volatility differences between BTC and meme coins entirely.
                 atr_14 = current_row.get('atr_14', 0) or 0
@@ -131,8 +131,8 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
                 if atr_14 > 0:
                     atr_sl = entry - (3.0 * atr_14)
                     # Cap between 1% and 5% distance from entry
-                    atr_sl = min(atr_sl, entry * 0.99)   # mindestens 1% Abstand
-                    atr_sl = max(atr_sl, entry * 0.95)   # maximal 5% Abstand
+                    atr_sl = min(atr_sl, entry * 0.99)   # at least 1% distance
+                    atr_sl = max(atr_sl, entry * 0.95)   # at most 5% distance
                     sl = float(atr_sl)
                 else:
                     # Fallback when no ATR available
@@ -143,7 +143,7 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
                     "entry": entry, "lev": lev, "target1": t1, "target2": t2, "target3": t3, "target4": t4, "sl": sl
                 }
 
-    # ========================== SHORT LOGIK ==========================
+    # ========================== SHORT LOGIC ==========================
     elif resistance_price_hit > 0:
         trade_active = (cycle.is_trade_active(symbol, 'SHORT', 'Main Channel') if cycle is not None
                         else is_trade_already_active(conn, symbol, 'SHORT', 'Main Channel'))
@@ -155,13 +155,13 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
                 while len(targets) < 4: targets.append(0.0)
                 t1, t2, t3, t4 = targets
 
-                # FIX P0.7: siehe LONG-Pfad — ohne Zone UNTER dem Entry kein
-                # Signal (SHORT-Interpolation hätte TPs über dem Entry bzw. bei
-                # -25/-50/-75% erzeugt).
+                # FIX P0.7: see LONG path — without a zone BELOW the entry no
+                # signal (SHORT interpolation would have produced TPs above the entry or
+                # at -25/-50/-75%).
                 if t1 == 0:
                     return None
 
-                # Ziel-Interpolation (Aus deinem Script 1)
+                # Target interpolation (from your script 1)
                 if t2 == 0:
                     x = (entry - t1) / 4;
                     t4 = t1;
@@ -176,13 +176,13 @@ def analyze_coin(conn, symbol, df_indicators, live_price, cycle=None):
                     y = (t2 - t4) / 2;
                     t3 = t2 - y
 
-                # Dynamischer SL: ATR-basiert (3× ATR über Entry) mit Safety-Cap
+                # Dynamic SL: ATR-based (3× ATR above entry) with safety cap
                 atr_14 = current_row.get('atr_14', 0) or 0
                 atr_14 = float(atr_14)
                 if atr_14 > 0:
                     atr_sl = entry + (3.0 * atr_14)
-                    atr_sl = max(atr_sl, entry * 1.01)   # mindestens 1% Abstand
-                    atr_sl = min(atr_sl, entry * 1.05)   # maximal 5% Abstand
+                    atr_sl = max(atr_sl, entry * 1.01)   # at least 1% distance
+                    atr_sl = min(atr_sl, entry * 1.05)   # at most 5% distance
                     sl = float(atr_sl)
                 else:
                     sl = float(entry * 1.025)

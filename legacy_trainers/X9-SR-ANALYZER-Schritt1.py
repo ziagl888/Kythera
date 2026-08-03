@@ -8,7 +8,7 @@ import xgboost as xgb
 import joblib
 
 # ────────────────────────────────────────────────────────────────
-# Konfiguration
+# Configuration
 # ────────────────────────────────────────────────────────────────
 DB_CONFIG = {
     'dbname': 'cryptodata',
@@ -19,7 +19,7 @@ DB_CONFIG = {
 }
 
 MIN_TRADES_PER_CLASS = 150
-TEST_SPLIT_RATIO = 0.20          # Letzte 20% der Daten als Test
+TEST_SPLIT_RATIO = 0.20          # Last 20% of the data as test
 
 # ────────────────────────────────────────────────────────────────
 def get_db_connection():
@@ -47,7 +47,7 @@ def normalize_coin(coin: str) -> str:
         'XRPUSDC': 'XRPUSDT',
         '1000PEPEUSDC': '1000PEPEUSDT',
         '1000SHIBUSDC': '1000SHIBUSDT',
-        # Ergänze bei Bedarf
+        # Extend as needed
     }
     return replacements.get(coin, coin)
 
@@ -67,7 +67,7 @@ def get_indicators_at_time(coin: str, timestamp: pd.Timestamp):
             return None
         return df.iloc[0]
     except Exception as e:
-        print(f"⚠️ Tabelle/Fehler für {coin} ({coin_norm}): {str(e)}")
+        print(f"⚠️ Table/error for {coin} ({coin_norm}): {str(e)}")
         return None
 
 
@@ -85,7 +85,7 @@ def create_feature_row(trade_row):
 
     features = {}
 
-    # Basis-Indikatoren (numerisch)
+    # Base indicators (numeric)
     base_cols = [
         'rsi_9', 'rsi_14', 'rsi_24',
         'macd_dif_fast_9_21_9', 'macd_dea_fast_9_21_9',
@@ -102,12 +102,12 @@ def create_feature_row(trade_row):
         val = row.get(col)
         features[col] = float(val) if pd.notna(val) else np.nan
 
-    # Trend als Zahl
+    # Trend as a number
     trend_map = {'UP': 1.0, 'DOWN': -1.0, 'FLAT': 0.0, 'SIDEWAYS': 0.0}
     trend_val = str(row.get('trend_direction', '')).upper()
     features['trend_direction_num'] = trend_map.get(trend_val, 0.0)
 
-    # Relative Distanzen (%)
+    # Relative distances (%)
     def pct(a, b):
         return (a - b) / close * 100 if pd.notna(b) and close > 0 else np.nan
 
@@ -123,7 +123,7 @@ def create_feature_row(trade_row):
         'kama9_kama21_pct': pct(row.get('kama_9'), row.get('kama_21')),
     })
 
-    # Neue ATR-normalisierte Abstände (sehr hilfreich!)
+    # New ATR-normalised distances (very helpful!)
     if pd.notna(atr) and atr > 0:
         features.update({
             'support_atr':  (close - row.get('support_price', np.nan)) / atr,
@@ -137,13 +137,13 @@ def create_feature_row(trade_row):
 
 
 def prepare_dataset(direction_filter=None):
-    """Lädt Daten, erstellt Features – optional nur LONG oder SHORT"""
+    """Loads data, builds features – optionally only LONG or SHORT"""
     trades = load_closed_trades()
     if direction_filter:
         trades = trades[trades['direction'].str.upper() == direction_filter.upper()]
 
-    print(f"\n=== Datensatz für {direction_filter or 'ALLE'} ===")
-    print(f"Anzahl Trades: {len(trades)}")
+    print(f"\n=== Dataset for {direction_filter or 'ALL'} ===")
+    print(f"Number of trades: {len(trades)}")
 
     features_list = []
     labels = []
@@ -167,21 +167,21 @@ def prepare_dataset(direction_filter=None):
     X = pd.DataFrame(features_list)
     y = np.array(labels)
 
-    # Median-Imputation (robust gegen Ausreißer)
+    # Median imputation (robust against outliers)
     X = X.fillna(X.median(numeric_only=True))
 
-    print(f"Verwendbare Datensätze: {len(X)}")
-    print(f"Win-Rate: {y.mean():.1%}")
+    print(f"Usable rows: {len(X)}")
+    print(f"Win rate: {y.mean():.1%}")
 
     return X, y, pd.Series(times)
 
 
 def train_and_evaluate(X, y, name="Model"):
     if len(X) < 300:
-        print(f"{name}: Zu wenig Daten ({len(X)})")
+        print(f"{name}: Too little data ({len(X)})")
         return None
 
-    # Chronologischer Split
+    # Chronological split
     split_idx = int(len(X) * (1 - TEST_SPLIT_RATIO))
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
@@ -215,12 +215,12 @@ def train_and_evaluate(X, y, name="Model"):
     auc = roc_auc_score(y_test, y_pred_proba)
     acc = accuracy_score(y_test, y_pred)
 
-    print(f"\n{name} - Ergebnisse (letzte {TEST_SPLIT_RATIO*100:.0f}% der Daten)")
+    print(f"\n{name} - Results (last {TEST_SPLIT_RATIO*100:.0f}% of the data)")
     print(f"Test AUC:       {auc:.4f}")
     print(f"Test Accuracy:  {acc:.3f}")
     print(classification_report(y_test, y_pred, target_names=['Loss', 'Win >=T1']))
 
-    # Top Features
+    # Top features
     importance = pd.Series(model.feature_importances_, index=X.columns)
     print(f"\nTop 12 Features {name}:")
     print(importance.sort_values(ascending=False).head(12))
@@ -228,32 +228,32 @@ def train_and_evaluate(X, y, name="Model"):
     return model
 
 
-# ─── Hauptprogramm ───────────────────────────────────────────────
+# ─── Main program ─────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("=== Tag 1 – Training mit chronologischem Split & getrennten Modellen ===\n")
+    print("=== Day 1 – Training with chronological split & separate models ===\n")
 
-    # 1. Alle Trades (Benchmark)
-    print("Benchmark (LONG + SHORT zusammen):")
+    # 1. All trades (benchmark)
+    print("Benchmark (LONG + SHORT combined):")
     X_all, y_all, times_all = prepare_dataset()
     if X_all is not None:
-        model_all = train_and_evaluate(X_all, y_all, "Gesamt")
+        model_all = train_and_evaluate(X_all, y_all, "Overall")
 
-    # 2. Nur LONG
+    # 2. LONG only
     print("\n" + "="*60)
     X_long, y_long, _ = prepare_dataset("LONG")
     if X_long is not None:
         model_long = train_and_evaluate(X_long, y_long, "LONG")
 
-    # 3. Nur SHORT
+    # 3. SHORT only
     print("\n" + "="*60)
     X_short, y_short, _ = prepare_dataset("SHORT")
     if X_short is not None:
         model_short = train_and_evaluate(X_short, y_short, "SHORT")
 
-    # Speichern der besten Modelle
+    # Save the best models
     if 'model_long' in locals() and model_long is not None:
         joblib.dump(model_long, "trade_success_xgb_LONG_v1.model")
-        print("LONG Modell gespeichert")
+        print("LONG model saved")
     if 'model_short' in locals() and model_short is not None:
         joblib.dump(model_short, "trade_success_xgb_SHORT_v1.model")
-        print("SHORT Modell gespeichert")
+        print("SHORT model saved")

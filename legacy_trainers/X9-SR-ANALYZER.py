@@ -43,13 +43,13 @@ def get_db_connection():
 
 
 def load_closed_trades():
-    """Lädt alle closed trades + Richtung + entry time"""
+    """Loads all closed trades + direction + entry time"""
     query = """
-    SELECT 
+    SELECT
         lfd, time, coin, direction, entry, posted, status
     FROM closed_trades3
-    WHERE status IS NOT NULL 
-      AND status != '' 
+    WHERE status IS NOT NULL
+      AND status != ''
       AND time IS NOT NULL
     ORDER BY time
     """
@@ -59,7 +59,7 @@ def load_closed_trades():
 
 
 # def get_indicators_at_time(coin: str, timestamp: pd.Timestamp):
-    # """Holt die Indikator-Zeile, die am nächsten an timestamp dran ist (≤ timestamp)"""
+    # """Gets the indicator row closest to timestamp (≤ timestamp)"""
     # query = """
     # SELECT * FROM "{}_1h_indicators"
     # WHERE open_time <= %s
@@ -69,7 +69,7 @@ def load_closed_trades():
 
     # with get_db_connection() as conn:
         # df = pd.read_sql_query(query, conn, params=(timestamp,))
-    
+
     # if df.empty:
         # return None
     # return df.iloc[0]
@@ -90,32 +90,32 @@ def get_indicators_at_time(coin: str, timestamp: pd.Timestamp):
             return None
         return df.iloc[0]
     except Exception as e:
-        print(f"⚠️ Fehler bei Coin {coin}: {str(e)} → Trade wird übersprungen")
+        print(f"⚠️ Error for coin {coin}: {str(e)} → trade skipped")
         return None
 
 # def create_feature_row(trade_row):
-    # """Erzeugt Feature-Vektor für einen Trade"""
+    # """Creates feature vector for a trade"""
     # indicators = get_indicators_at_time(trade_row['coin'], trade_row['time'])
-    
+
     # if indicators is None:
         # return None
-    
+
     # row = indicators.to_dict()
     # close = row['close']
-    
+
     # features = {}
-    
-    # # Direkte Indikatoren
+
+    # # Direct indicators
     # for col in FEATURE_COLUMNS:
         # if col in row and pd.notna(row[col]):
             # features[col] = float(row[col])
         # else:
             # features[col] = np.nan
-    
-    # # ─── Relativ-Abstände in % ───────────────────────────────
+
+    # # ─── Relative distances in % ───────────────────────────────
     # def pct_diff(a, b):
         # return (a - b) / close * 100 if close != 0 else 0
-    
+
     # important_levels = {
         # 'pct_ema9':     pct_diff(close, row.get('ema_9', np.nan)),
         # 'pct_ema21':    pct_diff(close, row.get('ema_21', np.nan)),
@@ -126,18 +126,18 @@ def get_indicators_at_time(coin: str, timestamp: pd.Timestamp):
         # 'pct_boll_mid': pct_diff(close, row.get('boll_mid_20', np.nan)),
         # 'pct_boll_width': (row.get('boll_upper_20', 0) - row.get('boll_lower_20', 0)) / close * 100,
     # }
-    
+
     # features.update(important_levels)
-    
-    # # EMA / KAMA Abstand zueinander
+
+    # # EMA / KAMA distance to each other
     # if 'ema_9' in row and 'ema_21' in row:
         # features['ema9_ema21_diff_pct'] = pct_diff(row['ema_9'], row['ema_21'])
     # if 'kama_9' in row and 'kama_21' in row:
         # features['kama9_kama21_diff_pct'] = pct_diff(row['kama_9'], row['kama_21'])
-    
-    # # Richtung als numerisch (für LONG/SHORT Unterscheidung)
+
+    # # Direction as numeric (for LONG/SHORT distinction)
     # features['is_long'] = 1 if trade_row['direction'].upper() == 'LONG' else 0
-    
+
     # return features
 
 def create_feature_row(trade_row):
@@ -153,7 +153,7 @@ def create_feature_row(trade_row):
     
     features = {}
     
-    # Numerische Features direkt übernehmen / konvertieren
+    # Numeric features to take directly / convert
     numeric_cols = [
         'rsi_9', 'rsi_14', 'rsi_24',
         'macd_dif_fast_9_21_9', 'macd_dea_fast_9_21_9',
@@ -175,13 +175,13 @@ def create_feature_row(trade_row):
         else:
             features[col] = np.nan
     
-    # Trend Direction als numerisch kodieren
+    # Trend direction encoded as numeric
     if 'trend_direction' in row and pd.notna(row['trend_direction']):
         direction_map = {'UP': 1.0, 'DOWN': -1.0, 'FLAT': 0.0, 'SIDEWAYS': 0.0}
         trend_val = str(row['trend_direction']).upper()
         features['trend_direction_num'] = direction_map.get(trend_val, 0.0)
-    
-    # ─── Relative Distanzen (wie vorher) ───────────────────────────────
+
+    # ─── Relative distances (as before) ───────────────────────────────
     def pct_diff(a, b):
         return (a - b) / close * 100 if pd.notna(close) and close != 0 else np.nan
 
@@ -208,10 +208,10 @@ def create_feature_row(trade_row):
 
 def prepare_dataset():
     trades = load_closed_trades()
-    print(f"Gefundene abgeschlossene Trades: {len(trades)}")
-    
+    print(f"Found closed trades: {len(trades)}")
+
     if len(trades) < MIN_TRADES_FOR_TRAINING:
-        print("Zu wenig Daten für sinnvolles Training!")
+        print("Too little data for meaningful training!")
         return None, None, None
 
     features_list = []
@@ -222,31 +222,31 @@ def prepare_dataset():
         if feat_dict is None:
             continue
 
-        # Erfolgskriterium – HIER ANPASSEN NACH BEDARF!
+        # Success criterion – ADJUST HERE AS NEEDED!
         status = str(trade['status']).strip()
         success = 1 if status in ['SL1', 'SL2', 'SL3', '4'] else 0
-        
+
         features_list.append(feat_dict)
         labels.append(success)
 
     X = pd.DataFrame(features_list)
     y = np.array(labels)
-    
-    print(f"Verwendbare Datensätze nach Join mit Indikatoren: {len(X)}")
-    
+
+    print(f"Usable datasets after join with indicators: {len(X)}")
+
     return X, y, trades
 
 
 def train_xgboost_model(X, y):
     if len(X) < 100:
-        print("Zu wenig verwendbare Daten → Abbruch")
+        print("Too few usable data → abort")
         return None
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
 
-    # XGBoost Parameter – eher konservativ
+    # XGBoost parameters – rather conservative
     params = {
         'objective': 'binary:logistic',
         'eval_metric': 'auc',
@@ -258,20 +258,20 @@ def train_xgboost_model(X, y):
         'reg_alpha': 0.1,
         'random_state': RANDOM_STATE,
         'n_jobs': -1,
-        'tree_method': 'hist',     # schneller & meist besser
-        'device': 'cpu'            # 'cuda' wenn GPU vorhanden
+        'tree_method': 'hist',     # faster & usually better
+        'device': 'cpu'            # 'cuda' if GPU available
     }
 
     model = xgb.XGBClassifier(**params)
 
-    print("Training startet...")
+    print("Training starts...")
     model.fit(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
         verbose=100
     )
 
-    # Schnelle Evaluation
+    # Quick evaluation
     y_pred_proba = model.predict_proba(X_test)[:, 1]
     y_pred = (y_pred_proba > 0.5).astype(int)
 
@@ -294,12 +294,12 @@ def train_xgboost_model(X, y):
 
 def save_model(model, filename="trade_success_xgb_v1.model"):
     joblib.dump(model, filename)
-    print(f"Modell gespeichert: {filename}")
+    print(f"Model saved: {filename}")
 
 
-# ─── Hauptprogramm ───────────────────────────────────────────────
+# ─── Main program ───────────────────────────────────────────────
 if __name__ == "__main__":
-    print("Starte Datensammlung & Feature-Engineering...")
+    print("Starting data collection & feature engineering...")
     X, y, _ = prepare_dataset()
 
     if X is not None and len(X) >= MIN_TRADES_FOR_TRAINING:
@@ -308,7 +308,7 @@ if __name__ == "__main__":
 
         if model is not None:
             save_model(model)
-            # Optional: Modell mit joblib laden und später predict nutzen
+            # Optional: load model with joblib and use predict later
             # loaded = joblib.load("trade_success_xgb_v1.model")
     else:
-        print("Training abgebrochen - zu wenig Daten")
+        print("Training aborted - too little data")

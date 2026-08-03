@@ -1,19 +1,19 @@
-# 33_ai_fif1_bot.py — FIF1 "FIFO-Filter-Modell" (Report 15, S11).
+# 33_ai_fif1_bot.py — FIF1 "FIFO filter model" (Report 15, S11).
 """
-Meta-Klassifier über den Fast-In-And-Out-Signalstrom: der Bot liest NEUE
-FIFO-Signale aus active_trades_master (der Live-FIFO-Pfad in 3_detectors.py
-bleibt unangetastet — sauberer A/B-Vergleich), schätzt mit dem Modell die
-Gewinnwahrscheinlichkeit aus Entry-Zeitpunkt-Features (Regime, Richtung,
-Markt-Kontext, Signal-Burst-Dichte) und postet nur die Top-Signale unter dem
-Tag FIF1 in CH_NEW_IDEAS — mit der ORIGINAL-Geometrie des FIFO-Signals
-(Entry/TP1/SL unverändert), damit die Selektion der einzige Unterschied ist.
+Meta-classifier over the Fast-In-And-Out signal stream: the bot reads NEW
+FIFO signals from active_trades_master (the live FIFO path in 3_detectors.py
+stays untouched — clean A/B comparison), uses the model to estimate the
+win probability from entry-time features (regime, direction,
+market context, signal burst density) and posts only the top signals under the
+tag FIF1 to CH_NEW_IDEAS — with the ORIGINAL geometry of the FIFO signal
+(entry/TP1/SL unchanged), so the selection is the only difference.
 
-Evidenz (Report 15 E6): FIFO hat 111k gelabelte Trades, Median +1,25%,
-ø −0,13% — das Problem ist Selektion, nicht Tails. Trainer:
+Evidence (Report 15 E6): FIFO has 111k labelled trades, median +1.25%,
+avg −0.13% — the problem is selection, not tails. Trainer:
 tools/fif1_build_dataset.py + tools/new_models_train.py --strategy fif1.
 
-Nicht-geposteten Kandidaten werden als Shadow-Zeilen mitgeschrieben
-(ml_predictions_master, posted=false) — das ist die A/B-Basis.
+Non-posted candidates are also written as shadow rows
+(ml_predictions_master, posted=false) — that is the A/B basis.
 
 Watchdog: start_delay=215.
 """
@@ -49,9 +49,9 @@ logger = logging.getLogger(__name__)
 
 MODEL_ID = "FIF1"
 ARTIFACT_PATH = "fif1_model.pkl"
-TARGET_CHANNEL_ID = _kcfg.CH_FIF1  # per-Bot-Override, Fallback CH_NEW_IDEAS
+TARGET_CHANNEL_ID = _kcfg.CH_FIF1  # per-bot override, fallback CH_NEW_IDEAS
 LIVE_POSTING = os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"
-SIGNAL_MAX_AGE_MIN = 10  # Signale älter als das nie verarbeiten (Idle-Catch-up-Guard)
+SIGNAL_MAX_AGE_MIN = 10  # never process signals older than this (idle catch-up guard)
 SOURCE_STRATEGY = "Fast In And Out"
 ARTIFACT_RETRY_S = 1800
 
@@ -67,7 +67,7 @@ def ensure_artifact() -> None:
 
 
 def fetch_latest_regime(conn) -> tuple[dict | None, float]:
-    """Jüngste regime_history-Zeile + Alter in Minuten (ts = naive UTC)."""
+    """Latest regime_history row + age in minutes (ts = naive UTC)."""
     with conn.cursor() as cur:
         cur.execute("SELECT ts, regime, confidence FROM regime_history ORDER BY ts DESC LIMIT 1")
         row = cur.fetchone()
@@ -82,16 +82,16 @@ def fetch_latest_regime(conn) -> tuple[dict | None, float]:
 
 
 def fifo_burst_counts(conn, symbol: str, direction: str) -> tuple[int, int]:
-    """Signal-Burst-Dichte aus BEIDEN Master-Tabellen (Trades wandern von
-    active nach closed). Zeitvergleich DB-seitig — die time-Spalten tragen seit
-    dem R3-Flip naives UTC (3_detectors.write_signal_atomic), NOW() castet unter
-    der UTC-Session in dieselbe Domäne. Die Konsistenz hängt an genau diesem
-    Paar: Writer und Session-TZ mussten zusammen umgestellt werden
+    """Signal burst density from BOTH master tables (trades move from
+    active to closed). Time comparison DB-side — the time columns have carried
+    naive UTC since the R3 flip (3_detectors.write_signal_atomic), NOW() casts under
+    the UTC session into the same domain. The consistency hinges on exactly this
+    pair: writer and session TZ had to be switched together
     (T-2026-KYT-9050-005, docs/UTC_POLICY.md §4).
 
-    Restart-Effekt: die 1h-/24h-Fenster sehen die Zeilen von VOR dem Restart um
-    +2/3h in der Zukunft, die Burst-Dichte ist also für maximal 24 h zu hoch;
-    danach läuft das Fenster leer."""
+    Restart effect: the 1h/24h windows see the rows from BEFORE the restart as
+    +2/3h in the future, so the burst density is too high for up to 24 h;
+    after that the window runs empty."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -114,14 +114,14 @@ def fifo_burst_counts(conn, symbol: str, direction: str) -> tuple[int, int]:
 
 
 def startup_feature_selfcheck() -> None:
-    """P0.12-Muster: Feature-Pipeline auf echten Daten von 3 Coins rechnen."""
+    """P0.12 pattern: run the feature pipeline on real data from 3 coins."""
     import json
 
     try:
         with open("coins.json") as f:
             coins = json.load(f)
     except Exception as e:
-        logger.critical(f"Selbsttest: coins.json nicht ladbar: {e}")
+        logger.critical(f"Self-test: coins.json not loadable: {e}")
         exit(1)
 
     conn = get_db_connection()
@@ -157,7 +157,7 @@ def startup_feature_selfcheck() -> None:
             binary_ok={"side_short", *REGIME_FEATURES},
             context=" (FIF1-Startup)",
         )
-        logger.info(f"✅ Feature-Selbsttest bestanden ({len(rows)} Zeilen, {used} Coins).")
+        logger.info(f"✅ Feature self-test passed ({len(rows)} rows, {used} coins).")
     except ValueError as e:
         logger.critical(f"❌ {e}")
         exit(1)
@@ -166,9 +166,9 @@ def startup_feature_selfcheck() -> None:
 
 
 def signal_key(sig: dict) -> tuple:
-    """Tabellen-agnostischer Dedupe-Key: ein Signal wandert vom Monitor binnen
-    Sekunden von active_ nach closed_trades_master (mit NEUER Serial-id) — die
-    id taugt deshalb nicht als Union-Watermark."""
+    """Table-agnostic dedupe key: a signal moves from the monitor within
+    seconds from active_ to closed_trades_master (with a NEW serial id) — the
+    id therefore doesn't work as a union watermark."""
     return (
         str(sig["coin"]).upper(),
         str(sig["direction"]).upper(),
@@ -178,20 +178,20 @@ def signal_key(sig: dict) -> tuple:
 
 
 def fetch_recent_signals(conn) -> list[dict]:
-    """FIFO-Signale der letzten SIGNAL_MAX_AGE_MIN Minuten aus BEIDEN
-    Master-Tabellen (Review-Fixes 2026-07-06):
-      * UNION mit closed: Fast-Resolver (SL/TP < 60s nach Insert) verschwinden
-        sonst vor dem nächsten Poll aus active — genau die Verlierer, die der
-        Filter lernen soll, würden live systematisch fehlen.
-      * Zeitfenster statt id-Watermark: nach Idle-/Ausfall-Phasen wird kein
-        Backlog tage-alter Signale mit verfallener Original-Geometrie gepostet
-        (Analogon zum 30-min-Guard in Bot 30). Zeitvergleich DB-seitig — die
-        time-Spalten tragen seit dem R3-Flip naives UTC, NOW() castet unter der
-        UTC-Session in dieselbe Domäne (T-2026-KYT-9050-005). Zeilen von vor dem
-        Restart liegen scheinbar +2/3h in der Zukunft; das Fenster hat keine
-        Obergrenze, sie sind also beim ersten Poll nach dem Restart alle drin —
-        und werden genau dort vom Startup-Marking in main() als `seen`
-        abgehakt, bevor die Schleife postet. Nach ~3h fallen sie unten heraus."""
+    """FIFO signals from the last SIGNAL_MAX_AGE_MIN minutes from BOTH
+    master tables (review fixes 2026-07-06):
+      * UNION with closed: fast resolvers (SL/TP < 60s after insert) would
+        otherwise disappear from active before the next poll — exactly the
+        losers the filter is meant to learn would be systematically missing live.
+      * Time window instead of id watermark: after idle/outage phases no
+        backlog of day-old signals with expired original geometry is posted
+        (analogous to the 30-min guard in Bot 30). Time comparison DB-side — the
+        time columns have carried naive UTC since the R3 flip, NOW() casts under the
+        UTC session into the same domain (T-2026-KYT-9050-005). Rows from before the
+        restart appear to be +2/3h in the future; the window has no
+        upper bound, so they are all present at the first poll after the restart —
+        and are marked exactly there as `seen` by the startup marking in main(),
+        before the loop posts. After ~3h they fall out the bottom."""
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -227,8 +227,8 @@ def process_signal(conn, sig: dict) -> None:
     same_dir_24h, fleet_1h = fifo_burst_counts(conn, symbol, direction)
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
-    # same_dir enthält das aktuelle Signal selbst (bereits in active_trades) →
-    # −1, damit das Feature wie im Training "andere Signale davor" zählt.
+    # same_dir contains the current signal itself (already in active_trades) →
+    # −1, so the feature counts "other signals before it" as in training.
     feature_row = build_fif1_row(
         direction,
         df,
@@ -241,7 +241,7 @@ def process_signal(conn, sig: dict) -> None:
     )
     missing = [c for c in ARTIFACT["features"] if c not in feature_row]
     if missing:
-        raise ValueError(f"Feature-Vertrag verletzt — fehlend: {missing}")
+        raise ValueError(f"Feature contract violated — missing: {missing}")
     X = pd.DataFrame([{c: feature_row[c] for c in ARTIFACT["features"]}], dtype=float)
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -249,17 +249,17 @@ def process_signal(conn, sig: dict) -> None:
     conf = calibrated_confidence(ARTIFACT, prob)
 
     logger.info(
-        f"FIF1 Kandidat {symbol} {direction} (FIFO #{sig['id']}) | Prob {prob:.3f} (Gate {ARTIFACT['threshold']:.2f})"
+        f"FIF1 candidate {symbol} {direction} (FIFO #{sig['id']}) | prob {prob:.3f} (gate {ARTIFACT['threshold']:.2f})"
     )
 
-    # FIF1 von TSM1 abgelöst (T-2026-CU-9050-183) → SILENT parkte den Live-Post ohne
-    # CH_FIF1=0 zu setzen. T-2026-KYT-9050-033 (Audit T-032) revived FIF1 als SHADOW:
-    # der Bot hatte nur einen LIVE-oder-nichts-Zweig, jetzt routet er über
-    # post_ai_signal_gated (Muster wie Bot 9/10/12) — der shadow_gate-Lifecycle
-    # entscheidet LIVE (Cornix an CH_FIF1) vs. SHADOW (monitored, kein Cornix) vs.
-    # SILENT/RETIRED (No-op). LIVE braucht zusätzlich den NEW_IDEAS-Master-Switch;
-    # SHADOW nicht (ohnehin kein Cornix). ORIGINAL-FIFO-Geometrie bleibt (Selektion
-    # ist der einzige Unterschied zum Quell-Signal).
+    # FIF1 was superseded by TSM1 (T-2026-CU-9050-183) → SILENT parked the live post
+    # without setting CH_FIF1=0. T-2026-KYT-9050-033 (audit T-032) revived FIF1 as SHADOW:
+    # the bot used to have only a LIVE-or-nothing branch, now it routes through
+    # post_ai_signal_gated (pattern like Bot 9/10/12) — the shadow_gate lifecycle
+    # decides LIVE (Cornix to CH_FIF1) vs. SHADOW (monitored, no Cornix) vs.
+    # SILENT/RETIRED (no-op). LIVE additionally needs the NEW_IDEAS master switch;
+    # SHADOW doesn't (no Cornix anyway). ORIGINAL FIFO geometry stays (selection
+    # is the only difference from the source signal).
     tag = ARTIFACT["tag"]
     st = shadow_gate.leg_status(tag, direction)
     fire = prob >= ARTIFACT["threshold"] and not has_open_ai_signal(conn, symbol, direction, tag)
@@ -278,28 +278,28 @@ def process_signal(conn, sig: dict) -> None:
             "AI FIFO Filter Model",
             n_show=1,
             dedup_hours=0,
-            extra_info_lines=[f"Quelle: Fast In And Out #{sig['id']}"],
+            extra_info_lines=[f"Source: Fast In And Out #{sig['id']}"],
         )
         if outcome == "live":
             log_prediction(conn, tag, symbol, direction, entry, conf, posted=True, dedup_hours=0)
         elif outcome is None:
-            # SILENT/RETIRED oder Shadow-Dedup: A/B-Vollständigkeit weiter loggen.
+            # SILENT/RETIRED or shadow dedup: keep logging for A/B completeness.
             log_prediction(conn, tag, symbol, direction, entry, conf, posted=False, dedup_hours=0)
-        # outcome == "shadow": post_shadow_ai_signal hat die Prediction bereits geloggt.
+        # outcome == "shadow": post_shadow_ai_signal already logged the prediction.
     else:
         if prob >= ARTIFACT["threshold"] and st == shadow_gate.LIVE and not LIVE_POSTING:
-            logger.info(f"👻 SHADOW-Post {symbol} {direction} (p={prob:.2f}) — Live-Posting deaktiviert.")
-        # dedup_hours=0: JEDER FIFO-Kandidat wird geloggt (A/B-Vollständigkeit) —
-        # Dedupe übernimmt das Seen-Set des Zeitfenster-Pollings.
+            logger.info(f"👻 SHADOW post {symbol} {direction} (p={prob:.2f}) — live posting disabled.")
+        # dedup_hours=0: EVERY FIFO candidate is logged (A/B completeness) —
+        # dedup is handled by the seen set of the time-window polling.
         log_prediction(conn, tag, symbol, direction, entry, conf, posted=False, dedup_hours=0)
     conn.commit()
 
 
 def main() -> None:
     global LIVE_POSTING
-    logger.info("=== 🎛️ AI FIF1 BOT (FIFO-Filter, S11) GESTARTET ===")
+    logger.info("=== 🎛️ AI FIF1 BOT (FIFO filter, S11) STARTED ===")
     if TARGET_CHANNEL_ID == 0:
-        logger.warning("Weder CH_FIF1 noch CH_NEW_IDEAS gesetzt — erzwinge Shadow-only-Modus.")
+        logger.warning("Neither CH_FIF1 nor CH_NEW_IDEAS set — forcing shadow-only mode.")
         LIVE_POSTING = False
     logger.info(f"Posting: {'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}")
 
@@ -307,23 +307,23 @@ def main() -> None:
 
     conn = get_db_connection()
     with conn.cursor() as cur:
-        # Das Zeitfenster-Polling scannt beide Master-Tabellen jede Minute —
-        # ohne (strategy, time)-Index wären das Seq-Scans über die größte
-        # Trade-Tabelle der Fleet (closed: 111k+ FIFO-Zeilen). Gleicher Index
-        # trägt auch fifo_burst_counts.
+        # The time-window polling scans both master tables every minute —
+        # without a (strategy, time) index these would be seq scans over the
+        # fleet's largest trade table (closed: 111k+ FIFO rows). The same index
+        # also carries fifo_burst_counts.
         cur.execute("CREATE INDEX IF NOT EXISTS idx_atm_strategy_time ON active_trades_master (strategy, time)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ctm_strategy_time ON closed_trades_master (strategy, time)")
     conn.commit()
-    # Signale, die VOR dem Bot-Start liegen, nicht nachträglich verarbeiten:
-    # aktuelles Fenster als gesehen markieren (verhindert auch Doppel-Posts
-    # nach einem schnellen Bot-Restart innerhalb des Fensters).
+    # Don't retroactively process signals that occurred BEFORE the bot start:
+    # mark the current window as seen (also prevents double posts
+    # after a quick bot restart within the window).
     seen: dict[tuple, datetime.datetime] = {}
     now0 = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for sig in fetch_recent_signals(conn):
         seen[signal_key(sig)] = now0
     conn.rollback()
     conn.close()
-    logger.info(f"Start: {len(seen)} Signale im Fenster als gesehen markiert.")
+    logger.info(f"Start: {len(seen)} signals in the window marked as seen.")
 
     while True:
         ensure_artifact()
@@ -340,24 +340,24 @@ def main() -> None:
                 key = signal_key(sig)
                 if key in seen:
                     continue
-                seen[key] = now  # process-once, auch bei Fehler kein Retry-Loop
+                seen[key] = now  # process-once, no retry loop even on error
                 try:
                     process_signal(conn, sig)
                 except Exception as e:
-                    logger.error(f"Error für {sig.get('coin')} (FIFO #{sig.get('id')}): {e}")
+                    logger.error(f"Error for {sig.get('coin')} (FIFO #{sig.get('id')}): {e}")
                 finally:
                     try:
-                        conn.rollback()  # P2.32-Muster; nach Commit ein No-op
+                        conn.rollback()  # P2.32 pattern; a no-op after commit
                     except Exception:
-                        logger.error("Rollback fehlgeschlagen (tote Connection) — Zyklus-Abbruch.")
+                        logger.error("Rollback failed (dead connection) — aborting cycle.")
                         conn_dead = True
                 if conn_dead:
                     break
-            # Seen-Set beschneiden (Fenster + Marge — bleibt konstant klein)
+            # Trim the seen set (window + margin — stays constantly small)
             cutoff = now - datetime.timedelta(minutes=SIGNAL_MAX_AGE_MIN * 3)
             seen = {k: v for k, v in seen.items() if v >= cutoff}
         except Exception as e:
-            logger.error(f"FIF1-Poll-Fehler: {e}")
+            logger.error(f"FIF1 poll error: {e}")
         finally:
             conn.close()
         time.sleep(60)
@@ -367,4 +367,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

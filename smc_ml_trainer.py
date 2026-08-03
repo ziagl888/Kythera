@@ -32,17 +32,17 @@ TRADE_MARGIN = 1000.0
 LEVERAGE = 20
 TAKER_FEE = 0.0004
 
-# Neue Artefakte gehen ausschließlich nach staging_models — NIE in-place über
-# ein Produktions-pkl (P1.35-Regel). Rollout entscheidet der Operator.
+# New artefacts go exclusively to staging_models — NEVER in-place over
+# a production pkl (P1.35 rule). Rollout is decided by the operator.
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 
-# FIX (P1.31): unter dieser Coin-Abdeckung wird hart abgebrochen statt still
-# auf einem trunkierten Universum zu trainieren.
+# FIX (P1.31): below this coin coverage training aborts hard instead of silently
+# training on a truncated universe.
 MIN_COIN_COVERAGE = 0.80
 
-# FIX (P1.29): Purge-Gap zwischen den chronologischen Slices. TD-Muster spannen
-# bis zu 100 Bars, BB-Setups bis zu 100 (60 Breakout + 40 Retest) — Labels, die
-# über das Slice-Ende hinauslaufen, dürfen nicht in den nächsten Slice leaken.
+# FIX (P1.29): purge gap between chronological slices. TD patterns span
+# up to 100 bars, BB setups up to 100 (60 breakout + 40 retest) — labels that
+# run past the slice end must not leak into the next slice.
 PURGE_GAP_BARS = 100
 
 PRICE_BASED_INDICATORS = [
@@ -70,17 +70,17 @@ def load_coins():
 
 
 def fetch_merged_data(symbol, tf):
-    # FIX (P1.31): Connection via try/finally schließen (vorher leakte jeder
-    # Query-Fehler eine Pool-Connection) und Skips sichtbar loggen statt still
-    # ein leeres DataFrame zurückzugeben.
+    # FIX (P1.31): close connection via try/finally (previously every
+    # query error leaked a pool connection) and log skips visibly instead of silently
+    # returning an empty DataFrame.
     conn = None
     try:
         conn = get_db_connection()
         ind_cols = PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']
-        # Über core.candles: GESCHLOSSENE Kerzen + Indikator-Join, ASC
-        # (include_forming=False). Das 2-Jahres-Fenster hatte vorher keinen oberen
-        # Schnitt und trainierte die forming Kerze mit — dieselbe R1-Look-ahead-
-        # Klasse, die der Walk-Forward-Sim in T-037 verloren hat.
+        # Via core.candles: CLOSED candles + indicator join, ASC
+        # (include_forming=False). The 2-year window previously had no upper
+        # bound and trained the forming candle too — the same R1 lookahead
+        # class that the walk-forward sim lost in T-037.
         df = read_candles_with_indicators(
             conn,
             symbol,
@@ -104,7 +104,7 @@ def fetch_merged_data(symbol, tf):
                 df[c] = df[c].astype(float)
         return df.reset_index(drop=True)
     except Exception as e:
-        logger.warning(f"[{tf}] {symbol} übersprungen: {e}")
+        logger.warning(f"[{tf}] {symbol} skipped: {e}")
         return pd.DataFrame()
     finally:
         if conn:
@@ -167,10 +167,10 @@ def simulate_and_extract_features(df, symbol):
                 feats['entry'] = entry
                 feats['sl'] = sl
                 feats['tp'] = tp
-                feats['entry_time'] = df['open_time'].iloc[p3]  # P1.29: für den chronologischen Split
+                feats['entry_time'] = df['open_time'].iloc[p3]  # P1.29: for chronological split
                 td_trades.append(feats)
 
-    # --- 1b. THREE-DRIVE DIVERGENCE (BULLISH / LONG) --- NEU!
+    # --- 1b. THREE-DRIVE DIVERGENCE (BULLISH / LONG) --- NEW!
     for i in range(2, len(trough_idx)):
         p1, p2, p3 = trough_idx[i - 2], trough_idx[i - 1], trough_idx[i]
         if p3 - p1 > 100:
@@ -199,7 +199,7 @@ def simulate_and_extract_features(df, symbol):
                 feats['entry'] = entry
                 feats['sl'] = sl
                 feats['tp'] = tp
-                feats['entry_time'] = df['open_time'].iloc[p3]  # P1.29: für den chronologischen Split
+                feats['entry_time'] = df['open_time'].iloc[p3]  # P1.29: for chronological split
                 td_trades.append(feats)
 
     # --- 2. BREAKER BLOCK ---
@@ -226,12 +226,12 @@ def simulate_and_extract_features(df, symbol):
                             outcome = 1
                             break
 
-                    feats = get_features(breakout_idx, 'LONG')  # Feature extraction at breakout moment
+                    feats = get_features(breakout_idx, 'LONG')  # feature extraction at breakout moment
                     feats['outcome'] = outcome
                     feats['entry'] = entry
                     feats['sl'] = sl
                     feats['tp'] = tp
-                    feats['entry_time'] = df['open_time'].iloc[j]  # P1.29: Retest-Kerze = Entry-Zeit
+                    feats['entry_time'] = df['open_time'].iloc[j]  # P1.29: retest candle = entry time
                     bb_trades.append(feats)
                     break
 
@@ -258,12 +258,12 @@ def simulate_and_extract_features(df, symbol):
                             outcome = 1
                             break
 
-                    feats = get_features(breakdown_idx, 'SHORT')  # Feature extraction at breakdown moment
+                    feats = get_features(breakdown_idx, 'SHORT')  # feature extraction at breakdown moment
                     feats['outcome'] = outcome
                     feats['entry'] = entry
                     feats['sl'] = sl
                     feats['tp'] = tp
-                    feats['entry_time'] = df['open_time'].iloc[j]  # P1.29: Retest-Kerze = Entry-Zeit
+                    feats['entry_time'] = df['open_time'].iloc[j]  # P1.29: retest candle = entry time
                     bb_trades.append(feats)
                     break
 
@@ -274,10 +274,10 @@ def simulate_and_extract_features(df, symbol):
 # 🧠 ML TRAINING & EVALUATION
 # ==========================================
 def chronological_three_way_split(trades_df, tf):
-    """FIX (P1.29): chronologischer Train/Val/Test-Split (70/15/15) mit Purge-Gap.
+    """FIX (P1.29): chronological train/val/test split (70/15/15) with purge gap.
 
-    Vorher: random train_test_split über zeitlich überlappende Quasi-Duplikate
-    (Kontamination) + Threshold-Wahl auf dem Test-Set (Maximum-Statistik).
+    Before: random train_test_split over temporally overlapping quasi-duplicates
+    (contamination) + threshold selection on the test set (maximum statistic).
     """
     tf_hours = {'1h': 1, '4h': 4}.get(tf, 1)
     gap = pd.Timedelta(hours=PURGE_GAP_BARS * tf_hours)
@@ -304,26 +304,26 @@ def _threshold_scan(trades, thresh):
     win_rate = (wins / len(taken)) * 100
     # PnL = (Wins * 2R) - (Losses * 1R)
     net_r = (wins * 2.0) - losses
-    pnl = net_r * (TRADE_MARGIN * 0.1)  # Annahme: 1R = 10% Margin-Verlust
+    pnl = net_r * (TRADE_MARGIN * 0.1)  # assumption: 1R = 10% margin loss
     return {'trades': len(taken), 'wr': win_rate, 'pnl': pnl, 'net_r': net_r}
 
 
 def train_model(trades_df, pattern_name, tf):
     if trades_df.empty or len(trades_df) < 50:
-        logger.warning(f"Insufficient data für {pattern_name} auf {tf}.")
+        logger.warning(f"Insufficient data for {pattern_name} on {tf}.")
         return
 
-    logger.info(f"🚀 Starting ML Training für {pattern_name} ({tf}) mit {len(trades_df)} Trades...")
+    logger.info(f"🚀 Starting ML training for {pattern_name} ({tf}) with {len(trades_df)} trades...")
 
     feature_cols = [c for c in trades_df.columns if c not in ['outcome', 'entry', 'sl', 'tp', 'entry_time']]
 
     train_trades, val_trades, test_trades = chronological_three_way_split(trades_df, tf)
     logger.info(
-        f"[{tf}] {pattern_name}: chronologischer Split train={len(train_trades)} "
-        f"val={len(val_trades)} test={len(test_trades)} (Purge-Gap {PURGE_GAP_BARS} Bars)"
+        f"[{tf}] {pattern_name}: chronological split train={len(train_trades)} "
+        f"val={len(val_trades)} test={len(test_trades)} (purge gap {PURGE_GAP_BARS} bars)"
     )
     if len(train_trades) < 100 or len(val_trades) < 30 or len(test_trades) < 30:
-        logger.error(f"[{tf}] {pattern_name}: zu wenig Trades für einen validen 3-Wege-Split — Abbruch.")
+        logger.error(f"[{tf}] {pattern_name}: too few trades for a valid 3-way split — aborting.")
         return
 
     X_train = train_trades[feature_cols].fillna(0)
@@ -340,14 +340,14 @@ def train_model(trades_df, pattern_name, tf):
     )
     model.fit(X_train, y_train)
 
-    # FIX (P1.29): Threshold auf dem VALIDATION-Slice wählen; Test bleibt unberührt.
+    # FIX (P1.29): select threshold on VALIDATION slice; test remains untouched.
     val_trades = val_trades.copy()
     val_trades['prob'] = model.predict_proba(val_trades[feature_cols].fillna(0))[:, 1]
 
     best_pnl = -float('inf')
     best_thresh = 0.0
 
-    print(f"\n--- 💰 THRESHOLD OPTIMIERUNG (Validation): {pattern_name} ({tf}) ---")
+    print(f"\n--- 💰 THRESHOLD OPTIMISATION (validation): {pattern_name} ({tf}) ---")
     thresholds = np.arange(0.30, 0.85, 0.05)
     for thresh in thresholds:
         stats = _threshold_scan(val_trades, thresh)
@@ -361,22 +361,22 @@ def train_model(trades_df, pattern_name, tf):
             best_pnl = stats['pnl']
             best_thresh = thresh
 
-    # Ehrliche Out-of-Sample-Zahl: fixer Threshold aus Validation, angewandt auf Test.
+    # Honest out-of-sample number: fixed threshold from validation, applied to test.
     test_trades = test_trades.copy()
     test_trades['prob'] = model.predict_proba(test_trades[feature_cols].fillna(0))[:, 1]
     test_stats = _threshold_scan(test_trades, best_thresh) or {'trades': 0, 'wr': 0.0, 'pnl': 0.0, 'net_r': 0.0}
 
     print(
-        f"🎯 OPTIMAL: {best_thresh:.2f} (Validation) | TEST: {test_stats['trades']} Trades, "
+        f"🎯 OPTIMAL: {best_thresh:.2f} (validation) | TEST: {test_stats['trades']} trades, "
         f"{test_stats['wr']:.1f}% WR, {test_stats['net_r']:+.1f} R\n"
     )
 
-    # Modell speichern — nur nach STAGING_DIR, nie in-place über Produktions-pkls.
+    # Save model — only to STAGING_DIR, never in-place over production pkls.
     prefix = "bb" if "Breaker" in pattern_name else "td"
     os.makedirs(STAGING_DIR, exist_ok=True)
     save_path = os.path.join(STAGING_DIR, f"{prefix}_xgboost_model_{tf}.pkl")
-    # Gleicher Dateiname wie tools/retrain_from_replay.py — dieser Trainer hat am
-    # 2026-07-14 vier fertige Replay-Artefakte überschrieben (T-2026-KYT-9050-006).
+    # Same filename as tools/retrain_from_replay.py — this trainer on
+    # 2026-07-14 overwrote four finished replay artefacts (T-2026-KYT-9050-006).
     assert_no_foreign_overwrite(save_path, 'smc_ml_trainer.py')
     joblib.dump(
         {
@@ -412,7 +412,7 @@ def main():
 
         for idx, coin in enumerate(coins, 1):
             if idx % 50 == 0:
-                logger.info(f"[{tf}] Loading Features: {idx}/{len(coins)}")
+                logger.info(f"[{tf}] loading features: {idx}/{len(coins)}")
             df = fetch_merged_data(coin, tf)
             if df.empty:
                 skipped.append(coin)
@@ -423,17 +423,17 @@ def main():
             all_bb.extend(bb)
             all_td.extend(td)
 
-        # FIX (P1.31): harter Abbruch statt still auf 0-8 Coins trainieren.
+        # FIX (P1.31): hard abort instead of silently training on 0-8 coins.
         coverage = coins_with_data / len(coins) if coins else 0.0
         if skipped:
             logger.warning(
-                f"[{tf}] {len(skipped)} Coins ohne (ausreichende) Daten: "
+                f"[{tf}] {len(skipped)} coins with insufficient data: "
                 f"{skipped[:20]}{'...' if len(skipped) > 20 else ''}"
             )
         if coverage < MIN_COIN_COVERAGE:
             raise SystemExit(
-                f"[{tf}] ABBRUCH: nur {coins_with_data}/{len(coins)} Coins ({coverage:.0%}) lieferten Daten "
-                f"(Minimum {MIN_COIN_COVERAGE:.0%})."
+                f"[{tf}] ABORT: only {coins_with_data}/{len(coins)} coins ({coverage:.0%}) provided data "
+                f"(minimum {MIN_COIN_COVERAGE:.0%})."
             )
 
         train_model(pd.DataFrame(all_bb), "Breaker Block", tf)

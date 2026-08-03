@@ -20,7 +20,7 @@ import scipy.signal
 
 from core import config as _kcfg  # channel ids
 
-# --- Eigene DB Connection importieren ---
+# --- Import own DB connection ---
 from core.candles import history_start, read_candles_with_indicators
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
@@ -33,8 +33,8 @@ from core.trade_utils import calculate_smart_targets
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - SMC_SNIPER - %(message)s')
 logger = logging.getLogger(__name__)
 SMC_CHANNELS = {
-    'bb': _kcfg.CH_SNIPER_BB,  # 👈 Channel-ID für Breaker Block
-    'td': _kcfg.CH_SNIPER_TD,  # 👈 Channel-ID für Three-Drive (Bitte anpassen!)
+    'bb': _kcfg.CH_SNIPER_BB,  # 👈 channel ID for Breaker Block
+    'td': _kcfg.CH_SNIPER_TD,  # 👈 channel ID for Three-Drive (please adjust!)
 }
 
 COINS_FILE = "coins.json"
@@ -43,7 +43,7 @@ os.makedirs(CHART_DIR, exist_ok=True)
 
 TIMEFRAMES = ['1h', '4h']
 PIVOT_WINDOW = 10
-MAX_BB_AGE = 20  # P2.39: Breakout/Breakdown darf max 20 geschlossene Kerzen alt sein
+MAX_BB_AGE = 20  # P2.39: breakout/breakdown may be at most 20 closed candles old
 
 # 💥 Die optimalen Thresholds aus deinem Training (RR = 1:2)
 THRESHOLDS = {
@@ -51,13 +51,13 @@ THRESHOLDS = {
     'td': 0.30,  # Three-Drive
 }
 
-# Posting-Floor NUR für BB (T-2026-CU-9050-171): auf den realisierten Trades
-# (BB_1H n=2685, BB_4H n=2130, 03–07/2026) ist das Segment unter p=0.50
-# Null-EV (Ø ≤0,20 %, CI95 enthält 0) bei ~95 % des Volumens; darüber
-# Ø 1,2–1,9 %/Trade. TD bekommt bewusst KEINEN Floor — dort ist die
-# Confidence auf realisierten Trades nicht selektiv (Kept/Cut-CIs
-# überlappen voll) und der Kanal ist netto positiv. Der Floor verschärft
-# nur: max(Artefakt-Threshold, Floor), Shadow-Logging (0.25) unberührt.
+# Posting floor ONLY for BB (T-2026-CU-9050-171): on the realized trades
+# (BB_1H n=2685, BB_4H n=2130, 03–07/2026) the segment below p=0.50 is
+# zero-EV (avg ≤0.20%, CI95 contains 0) at ~95% of volume; above that
+# avg 1.2–1.9%/trade. TD deliberately gets NO floor — there the
+# confidence on realized trades is not selective (kept/cut CIs
+# overlap fully) and the channel is net positive. The floor only
+# tightens: max(artifact threshold, floor), shadow logging (0.25) unaffected.
 MIN_PROB_FLOORS = {
     'bb': load_prob_floor("BB_MIN_PROB", 0.50),
     'td': 0.0,
@@ -79,11 +79,11 @@ PRICE_BASED_INDICATORS = [
 ABSOLUTE_INDICATORS = ['rsi_14', 'tsi_25_13_13', 'macd_dif_normal_12_26_9', 'macd_dea_normal_12_26_9']
 
 # 🧠 LOAD MODELS
-# Vertrag (Report 13 Addendum 2 + Versionierungs-Regel 2026-07-06): neue
-# Artefakte aus tools/retrain_from_replay.py tragen optimal_threshold,
-# calibrator_isotonic und meta.model_id (z. B. 'TD2_4H') im pkl-Dict —
-# Threshold aus dem Artefakt schlägt den Hardcode, das model_id-Tag trennt
-# Alt/Neu in den Trackern. Alt-Artefakte ohne diese Keys laufen unverändert.
+# Contract (report 13 addendum 2 + versioning rule 2026-07-06): new
+# artifacts from tools/retrain_from_replay.py carry optimal_threshold,
+# calibrator_isotonic and meta.model_id (e.g. 'TD2_4H') in the pkl dict —
+# threshold from the artifact beats the hardcode, the model_id tag separates
+# old/new in the trackers. Old artifacts without these keys run unchanged.
 MODELS = {'bb': {}, 'td': {}}
 for tf in TIMEFRAMES:
     for strategy in ['bb', 'td']:
@@ -101,11 +101,11 @@ for tf in TIMEFRAMES:
                 'model_id': (data.get('meta') or {}).get('model_id'),
             }
             logger.info(
-                f"✅ ML-Modell ({strategy.upper()} | {tf}) geladen — Threshold "
-                f"{MODELS[strategy][tf]['threshold']:.2f} (Basis {base_threshold:.2f}"
-                f"{' Artefakt' if data.get('optimal_threshold') is not None else ' Hardcode'}, "
-                f"Floor {MIN_PROB_FLOORS[strategy]:.2f}), "
-                f"Tag {MODELS[strategy][tf]['model_id'] or f'{strategy.upper()}_{tf.upper()}'}"
+                f"✅ ML model ({strategy.upper()} | {tf}) loaded — threshold "
+                f"{MODELS[strategy][tf]['threshold']:.2f} (base {base_threshold:.2f}"
+                f"{' artifact' if data.get('optimal_threshold') is not None else ' hardcode'}, "
+                f"floor {MIN_PROB_FLOORS[strategy]:.2f}), "
+                f"tag {MODELS[strategy][tf]['model_id'] or f'{strategy.upper()}_{tf.upper()}'}"
             )
         except Exception as e:
             logger.critical(f"❌ Could not load model ({path}): {e}")
@@ -147,7 +147,7 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
         if cur.fetchone():
             return
 
-    # 2. ML Vorhersage
+    # 2. ML prediction
     ml_input = pd.DataFrame([features_dict])
     for col in model_data['features']:
         if col not in ml_input.columns:
@@ -156,7 +156,7 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
 
     prob = model_data['model'].predict_proba(ml_input)[0][1]
     confidence = prob * 100
-    min_thresh = model_data['threshold']  # max(Artefakt/Hardcode, Strategie-Floor) — s. Loader
+    min_thresh = model_data['threshold']  # max(artifact/hardcode, strategy floor) — see loader
 
     # 3. Shadow Log
     if prob >= 0.25:
@@ -178,21 +178,21 @@ def evaluate_and_trade(conn, df, symbol, tf, strategy_code, direction, current_p
                     (module_tag, now, symbol, direction, float(current_price), float(prob), is_posted),
                 )
 
-    # 4. ECHTER TRADE AUSFÜHREN
+    # 4. EXECUTE ACTUAL TRADE
     if prob >= min_thresh:
-        # check_cooldown returned True wenn Cooldown NOCH AKTIV ist → dann skippen.
+        # check_cooldown returned True if cooldown is STILL ACTIVE → then skip.
         cd_hours = 4 if tf == '1h' else 12
         if check_cooldown(conn, module_tag, symbol, direction, cd_hours):
             return
 
-        # Nutze die neuen dynamischen Targets & Stop Loss Logik
+        # Use the new dynamic targets & stop loss logic
         setup = calculate_smart_targets(conn, symbol, direction, current_price)
 
-        logger.info(f"🟢 TRADE PASSED! {symbol} ({module_tag}) wird getradet (Conf: {confidence:.1f}%)")
-        # module_tag durchreichen — send_cornix_signal darf den Tag NICHT neu
-        # aus strategy_code/tf ableiten, sonst posten Retrain-Generationen
-        # (BB2_4H/TD2_4H aus der Artefakt-model_id) unter dem Alt-Tag
-        # (Regel 6, T-2026-CU-9050-026).
+        logger.info(f"🟢 TRADE PASSED! {symbol} ({module_tag}) is being traded (Conf: {confidence:.1f}%)")
+        # Pass module_tag through — send_cornix_signal must NOT re-derive the
+        # tag from strategy_code/tf, otherwise retrain generations
+        # (BB2_4H/TD2_4H from the artifact model_id) would post under the old tag
+        # (rule 6, T-2026-CU-9050-026).
         send_cornix_signal(
             conn,
             df,
@@ -225,34 +225,33 @@ def find_breaker_setup(
     band=0.005,
     break_margin=0.003,
 ):
-    """P2.39: wählt das Breaker-Level, das der Preis JETZT tatsächlich retestet,
-    statt blind peak_idx[-2]/trough_idx[-2]. Der alte Code prüfte immer den
-    zweitletzten Pivot; gehörte der frische Retest zu einem anderen Swing (dem
-    neuesten oder einem älteren), wurde das falsche Level gescored.
+    """P2.39: picks the breaker level that price is ACTUALLY retesting right now,
+    instead of blindly using peak_idx[-2]/trough_idx[-2]. The old code always checked
+    the second-to-last pivot; if the fresh retest belonged to a different swing (the
+    newest or an older one), the wrong level was scored.
 
-    Läuft die Pivots von neu nach alt und nimmt den ersten, dessen Level
-      (a) im Retest-Band (±`band`) um den aktuellen Preis liegt,
-      (b) durch einen Close innerhalb der letzten `max_age` geschlossenen Kerzen
-          gebrochen wurde und
-      (c) danach mit `break_margin` Follow-through über/unter das Level lief.
-    Gibt (pivot_idx, breakout_idx) zurück oder None. Alte Pivots scheiden von
-    selbst aus: ihr erster Breakout liegt ausserhalb des max_age-Fensters.
+    Walks the pivots from newest to oldest and takes the first one whose level
+      (a) lies within the retest band (±`band`) around the current price,
+      (b) was broken by a close within the last `max_age` closed candles, and
+      (c) afterwards ran with `break_margin` follow-through above/below the level.
+    Returns (pivot_idx, breakout_idx) or None. Old pivots drop out on their
+    own: their first breakout lies outside the max_age window.
 
-    `current_price` bleibt der Live-CMP (kein analytischer Input, R1/P1.46);
-    `n_closed` ist die exklusive Obergrenze der Breakout-/Follow-through-Suche.
-    R1 Block 4: der Frame haelt jetzt nur geschlossene Kerzen (include_forming=
-    False), der Caller uebergibt `n_closed = len(df)`, also deckt `range(p+1,
-    n_closed)` alle geschlossenen Kerzen bis len(df)-1 ab.
+    `current_price` stays the live CMP (not an analytical input, R1/P1.46);
+    `n_closed` is the exclusive upper bound of the breakout/follow-through search.
+    R1 block 4: the frame now holds only closed candles (include_forming=
+    False), the caller passes `n_closed = len(df)`, so `range(p+1,
+    n_closed)` covers all closed candles up to len(df)-1.
     """
     is_long = direction == 'LONG'
     for p in reversed([int(x) for x in pivot_indices]):
         level = float(level_arr[p])
         if level <= 0:
             continue
-        # (a) Preis retestet genau dieses Level gerade
+        # (a) price is retesting exactly this level right now
         if not (level * (1 - band) <= current_price <= level * (1 + band)):
             continue
-        # (b) frischer Breakout/Breakdown nach dem Pivot
+        # (b) fresh breakout/breakdown after the pivot
         breakout_idx = -1
         for i in range(p + 1, n_closed):
             if (closes[i] > level) if is_long else (closes[i] < level):
@@ -260,7 +259,7 @@ def find_breaker_setup(
                 break
         if breakout_idx == -1 or (n_closed - 1 - breakout_idx) > max_age:
             continue
-        # (c) Follow-through nach dem Break (min. break_margin über/unter Level)
+        # (c) follow-through after the break (min. break_margin above/below level)
         window = extreme_arr[breakout_idx:n_closed]
         if len(window) == 0:
             continue
@@ -283,7 +282,7 @@ def scan_market():
     price_map = get_live_prices_batch()
 
     for tf in TIMEFRAMES:
-        logger.info(f"🔍 Starting SMC-Scan (BB & TD) für Timeframe: {tf}")
+        logger.info(f"🔍 Starting SMC scan (BB & TD) for timeframe: {tf}")
 
         for symbol in coins:
             try:
@@ -365,10 +364,10 @@ def scan_market():
                     continue
 
                 # 1. THREE-DRIVE DIVERGENCE (TD)
-                # FIX: Vorher keine zeitliche Begrenzung → peak_idx[-3] konnte 300
-                # Kerzen zurückliegen → kein echtes Three-Drive mehr, nur zufällige
-                # Tops über Monate verteilt. Jetzt: Pattern muss kompakt sein.
-                MAX_TD_SPAN = 50  # Drive 1 bis Drive 3 max 50 Kerzen
+                # FIX: previously no time limit → peak_idx[-3] could lie 300
+                # candles back → no real Three-Drive anymore, just random
+                # tops scattered over months. Now: pattern must be compact.
+                MAX_TD_SPAN = 50  # drive 1 to drive 3 max 50 candles
 
                 # 1a. Bearish Drive (Short)
                 # peak_idx[-1] is now the newest *confirmed* pivot (edge filter
@@ -395,7 +394,7 @@ def scan_market():
                                 (p3, 1, highs[p3]),
                             )
 
-                # 1b. Bullish Drive (Long) - NEU!
+                # 1b. Bullish Drive (Long) - NEW!
                 p_trough3 = trough_idx[-1]
                 if len(df) - p_trough3 <= PIVOT_WINDOW + 1:
                     p1, p2, p3 = trough_idx[-3], trough_idx[-2], trough_idx[-1]
@@ -416,27 +415,27 @@ def scan_market():
                                 (p3, -1, lows[p3]),
                             )
 
-                # 2. BREAKER BLOCK (BB) — Break-and-Retest.
-                # P2.39: das Retest-Level wird jetzt danach gewählt, WELCHES Level
-                # der Preis gerade retestet (find_breaker_setup), statt blind
-                # peak_idx[-2]/trough_idx[-2]. Der alte Check feuerte zudem, sobald
-                # `current_price ~= pivot_res`, egal wie alt der Breakout war;
-                # Retest-Band (±0.5%), Breakout-Frische (≤20 Kerzen) und der 0.3%-
-                # Follow-through stecken jetzt im Helper.
+                # 2. BREAKER BLOCK (BB) — break-and-retest.
+                # P2.39: the retest level is now chosen by WHICH level
+                # price is currently retesting (find_breaker_setup), instead of blindly
+                # using peak_idx[-2]/trough_idx[-2]. The old check also fired as soon as
+                # `current_price ~= pivot_res`, regardless of how old the breakout was;
+                # retest band (±0.5%), breakout freshness (≤20 candles) and the 0.3%
+                # follow-through now live in the helper.
                 #
-                # Feature-Timing bewusst am Retest-Bar (letzte geschlossene Kerze,
-                # R1 Block 4: jetzt len(df)-1): der Breakout liegt früher (breakout_idx),
-                # die ML-Features beschreiben den Entscheidungsmoment des Retests — der
-                # Pattern-Anker des BB-Modells (TD ankert analog auf p3). Ein
-                # Wechsel des Anker-Bars wäre Strategie-Redesign, nicht dieser Fix.
+                # Feature timing deliberately on the retest bar (last closed candle,
+                # R1 block 4: now len(df)-1): the breakout lies earlier (breakout_idx),
+                # the ML features describe the decision moment of the retest — the
+                # pattern anchor of the BB model (TD anchors analogously on p3). A
+                # change of the anchor bar would be a strategy redesign, not this fix.
                 # n_closed = len(df): the frame is now all-closed, so the breakout search
                 # and follow-through window include the last closed candle (len(df)-1).
                 n_closed = len(df)
 
-                # PARKED BB_1H (Audit Report 14/16): netto −1.089 bei 55,7% WR —
-                # die 1h-Edge überlebt Fees+Rauschen nicht; BB_4H (+565) läuft weiter.
-                # Parking-Lücke (Report-19-Nebenfund, Operator-Go 2026-07-06): gilt
-                # für BEIDE Seiten, bis die BB_1H-Überarbeitung steht.
+                # PARKED BB_1H (audit report 14/16): net −1,089 at 55.7% WR —
+                # the 1h edge does not survive fees+noise; BB_4H (+565) keeps running.
+                # Parking gap (report-19 side finding, operator go 2026-07-06): applies
+                # to BOTH sides until the BB_1H rework is in place.
                 if tf != '1h':
                     bb_long = find_breaker_setup(peak_idx, highs, highs, closes, n_closed, current_price, 'LONG')
                     if bb_long is not None:
@@ -543,11 +542,11 @@ def send_cornix_signal(
     # instead of silently reintroducing the old-tag bug.
     strategy_name = "Breaker Block" if strategy_code == 'bb' else "Three-Drive"
 
-    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
-    # Verhaltensänderung. BB_1H/BB_4H SHORT + BB2_4H (beide) sind geparkt → SHADOW
-    # (überwachter Trade statt Cornix); TD bleibt komplett live. Rein additiv am
-    # Post-Zweig (Regel 4). ai_signals-confidence ist wie im Live-Pfad prob
-    # (= confidence/100); der Bot speichert die volle Target-Liste → n_show=len(targets).
+    # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate. Default LIVE ⇒ no
+    # behaviour change. BB_1H/BB_4H SHORT + BB2_4H (both) are parked → SHADOW
+    # (monitored trade instead of Cornix); TD stays fully live. Purely additive on the
+    # post branch (rule 4). ai_signals confidence is prob as in the live path
+    # (= confidence/100); the bot stores the full target list → n_show=len(targets).
     _route = route_legacy_leg(
         conn, module_tag, direction, symbol, confidence / 100, entry1, entry2, sl, targets, n_show=len(targets)
     )
@@ -556,7 +555,7 @@ def send_cornix_signal(
             conn.commit()
         return
 
-    # 💥 NEU: Bestimme den richtigen Channel für dieses Pattern
+    # 💥 NEW: determine the correct channel for this pattern
     target_channel = SMC_CHANNELS.get(strategy_code, list(SMC_CHANNELS.values())[0])
 
     # --- CORNIX TEXT ---
@@ -599,8 +598,8 @@ def send_cornix_signal(
         )
 
     sl_loss = risk_pct * 100 * int(lev.replace('x', ''))
-    # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne eingebetteten
-    # Cornix-Block — Cornix parste beide Nachrichten als Signale.
+    # FIX double post (2026-07-06, fleet sweep): caption without an embedded
+    # Cornix block — Cornix parsed both messages as signals.
     html_caption += f"""<b>└─ Stop Loss:</b> <b>${sl:,.8f}</b> → <b>-{sl_loss:.1f}%</b></pre>"""
 
     chart_path = generate_smc_chart(df, symbol, tf, strategy_name, direction, entry1, p1, p2, p3)
@@ -643,19 +642,19 @@ def send_cornix_signal(
 # 🕵️ CHART GENERATION
 # ==========================================
 def generate_smc_chart(df, symbol, tf, strategy_name, direction, entry, p1, p2, p3=None):
-    """Zeichnet SMC-Pattern (Three-Drive oder Breaker Block).
+    """Draws the SMC pattern (Three-Drive or Breaker Block).
 
-    FIX: Stellt die volle alte Funktionalität wieder her:
-      - Explizite OHLCV + RSI-Spalten (sonst verwirrt mplfinance sich)
-      - Three-Drive: p1→p2→p3 als Zickzack + RSI-Subplot auf Panel 2
-      - Breaker Block: Zone (fill_between) + Star-Marker auf Pivots
-      - Volume-Subplot in beiden Fällen
+    FIX: restores the full old functionality:
+      - Explicit OHLCV + RSI columns (otherwise mplfinance gets confused)
+      - Three-Drive: p1→p2→p3 as a zigzag + RSI subplot on panel 2
+      - Breaker Block: zone (fill_between) + star markers on pivots
+      - Volume subplot in both cases
     """
     try:
         start_idx = max(0, p1[0] - 25)
 
-        # FIX: Explizit nur die benötigten Spalten — sonst drückt mplfinance
-        # alle Indikator-Spalten ins Rendering.
+        # FIX: explicitly only the needed columns — otherwise mplfinance
+        # pushes all indicator columns into the rendering.
         plot_df = df.iloc[start_idx:][['open_time', 'open', 'high', 'low', 'close', 'volume', 'rsi_14']].copy()
 
         plot_df['open_time'] = pd.to_datetime(plot_df['open_time']).dt.tz_localize(None)
@@ -671,7 +670,7 @@ def generate_smc_chart(df, symbol, tf, strategy_name, direction, entry, p1, p2, 
             return pd.to_datetime(df['open_time'].iloc[idx]).tz_localize(None)
 
         color_theme = '#00ff88' if direction == "LONG" else '#ff4466'
-        # FIX: volume='in' für den Subplot
+        # FIX: volume='in' for the subplot
         mc = mpf.make_marketcolors(up='#26a69a', down='#ef5350', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='nightclouds', gridstyle=':')
 
@@ -682,13 +681,13 @@ def generate_smc_chart(df, symbol, tf, strategy_name, direction, entry, p1, p2, 
         panel_ratios = (4, 1)  # default: candle + volume
 
         if strategy_name == "Three-Drive":
-            # Zick-Zack der 3 Pivots + RSI-Subplot
+            # Zigzag of the 3 pivots + RSI subplot
             alines.append([(get_dt(p1[0]), float(p1[2])), (get_dt(p2[0]), float(p2[2])), (get_dt(p3[0]), float(p3[2]))])
             apds.append(mpf.make_addplot(plot_df['rsi_14'], panel=2, color='cyan', ylabel='RSI (14)'))
             panel_ratios = (4, 1, 1.5)
 
         elif strategy_name == "Breaker Block":
-            # Horizontale Zone + Marker-Sternchen auf Pivots
+            # Horizontal zone + star markers on pivots
             y_center = float(p1[2])
             y_lower = [y_center * 0.997] * len(plot_df)
             y_upper = [y_center * 1.003] * len(plot_df)
@@ -734,12 +733,12 @@ def generate_smc_chart(df, symbol, tf, strategy_name, direction, entry, p1, p2, 
         logger.error(f"SMC Chart Error for {symbol}: {e}", exc_info=True)
         return None
     finally:
-        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        # Closes the figure left open by mpf.plot — prevents a RAM leak.
         plt.close('all')
 
 
 def main():
-    logger.info("=== 🎯 SMC ML SNIPER (BB & TD) GESTARTET ===")
+    logger.info("=== 🎯 SMC ML SNIPER (BB & TD) STARTED ===")
 
     conn = get_db_connection()
     with conn.cursor() as cur:
@@ -758,9 +757,9 @@ def main():
     while True:
         try:
             scan_market()
-            logger.info("Radar-Scan stopped. Schlafe 3 Minuten...")
+            logger.info("Radar scan stopped. Sleeping 3 minutes...")
         except Exception as e:
-            logger.error(f"Fehler in der Main-Loop: {e}")
+            logger.error(f"Error in the main loop: {e}")
 
         time.sleep(180)
 
@@ -769,4 +768,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped.")
+        logger.info("Bot manually stopped.")

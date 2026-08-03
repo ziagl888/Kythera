@@ -9,20 +9,20 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
 
-# --- Konfiguration ---
+# --- Configuration ---
 EVENTS_FILE = 'break_retest_analysis_with_features.json'
 LONG_MODEL_FILE = 'bt2_model_LONG.json'
 SHORT_MODEL_FILE = 'bt2_model_SHORT.json'
 
-# Manuell gewählte Thresholds
+# Manually chosen thresholds
 LONG_THRESHOLD = 0.6
 SHORT_THRESHOLD = 0.8
 
-SUCCESS_CLASS_IDX = 0 # BITTE ANPASSEN, WENN BEIM TRAINING ANDERS
+SUCCESS_CLASS_IDX = 0 # PLEASE ADJUST IF DIFFERENT DURING TRAINING
 
 def load_data(file_path):
-    """Lädt die Events aus der JSON-Datei und stellt die Datentypen sicher."""
-    print(f"Lade Events von: {file_path}")
+    """Loads the events from the JSON file and ensures the data types."""
+    print(f"Loading events from: {file_path}")
     with open(file_path, 'r') as f:
         data = json.load(f)
     
@@ -39,16 +39,16 @@ def load_data(file_path):
     return df_events
 
 def load_model(file_path):
-    """Lädt ein trainiertes XGBoost-Modell."""
-    print(f"Lade Modell von: {file_path}")
+    """Loads a trained XGBoost model."""
+    print(f"Loading model from: {file_path}")
     model = xgb.XGBClassifier() 
     model.load_model(file_path) 
     return model
 
 def backtest_strategy(df_events):
     """
-    Simuliert die Strategie basierend auf den Modellen und Thresholds
-    und berechnet die Performance.
+    Simulates the strategy based on the models and thresholds
+    and calculates the performance.
     """
     model_long = load_model(LONG_MODEL_FILE)
     model_short = load_model(SHORT_MODEL_FILE)
@@ -62,13 +62,13 @@ def backtest_strategy(df_events):
     trade_signals = []
 
     for index, event in df_events.iterrows():
-        # --- NEU: Robustere Erstellung von X_event mit garantiert numerischen Typen ---
-        # 1. Wähle die Feature-Werte als NumPy-Array aus der aktuellen Zeile
+        # --- NEW: More robust creation of X_event with guaranteed numeric types ---
+        # 1. Select the feature values as a NumPy array from the current row
         feature_values = event[feature_columns].values
-        # 2. Erstelle einen neuen DataFrame mit diesen Werten und den korrekten Spaltennamen
-        #    und stelle sicher, dass die DTypes float sind
+        # 2. Create a new DataFrame with these values and the correct column names
+        #    and ensure that the dtypes are float
         X_event = pd.DataFrame([feature_values], columns=feature_columns, dtype=float)
-        # --- ENDE NEU ---
+        # --- END NEW ---
 
         prediction_proba = None
         threshold = None
@@ -97,12 +97,12 @@ def backtest_strategy(df_events):
     return df_trades
 
 def analyze_performance(df_trades):
-    """Berechnet und gibt die Performance-Metriken aus."""
+    """Calculates and prints the performance metrics."""
     if df_trades.empty:
-        print("Keine Trades basierend auf den Thresholds ausgewählt.")
+        print("No trades selected based on the thresholds.")
         return
 
-    print("\n--- Performance Analyse ---")
+    print("\n--- Performance Analysis ---")
 
     total_profit_pct = df_trades['actual_outcome_price_change'].sum()
     num_trades = len(df_trades)
@@ -110,12 +110,12 @@ def analyze_performance(df_trades):
     win_rate = (num_winning_trades / num_trades) * 100 if num_trades > 0 else 0
     avg_profit_per_trade = df_trades['actual_outcome_price_change'].mean()
 
-    print(f"\nGesamtzahl der Trades: {num_trades}")
+    print(f"\nTotal number of trades: {num_trades}")
     print(f"Win Rate: {win_rate:.2f}%")
-    print(f"Durchschnittlicher Profit pro Trade: {avg_profit_per_trade:.2f}%")
-    print(f"Gesamtprofit (Summe der prozentualen Veränderungen): {total_profit_pct:.2f}%")
+    print(f"Average profit per trade: {avg_profit_per_trade:.2f}%")
+    print(f"Total profit (sum of percentage changes): {total_profit_pct:.2f}%")
 
-    print("\n--- Performance nach Trade-Typ ---")
+    print("\n--- Performance by trade type ---")
     for trade_type in ['LONG_BREAK_RETEST', 'SHORT_BREAK_RETEST']:
         df_type_trades = df_trades[df_trades['type'] == trade_type]
         if not df_type_trades.empty:
@@ -125,13 +125,13 @@ def analyze_performance(df_trades):
             type_avg_profit = df_type_trades['actual_outcome_price_change'].mean()
             type_total_profit = df_type_trades['actual_outcome_price_change'].sum()
 
-            print(f"\nTyp: {trade_type}")
-            print(f"  Anzahl Trades: {type_num_trades}")
+            print(f"\nType: {trade_type}")
+            print(f"  Number of trades: {type_num_trades}")
             print(f"  Win Rate: {type_win_rate:.2f}%")
-            print(f"  Durchschnittlicher Profit pro Trade: {type_avg_profit:.2f}%")
-            print(f"  Gesamtprofit: {type_total_profit:.2f}%")
+            print(f"  Average profit per trade: {type_avg_profit:.2f}%")
+            print(f"  Total profit: {type_total_profit:.2f}%")
         else:
-            print(f"\nTyp: {trade_type} - Keine Trades ausgeführt.")
+            print(f"\nType: {trade_type} - No trades executed.")
 
     df_trades['retest_time'] = pd.to_datetime(df_trades['retest_time'])
     df_trades = df_trades.sort_values(by='retest_time')
@@ -139,9 +139,9 @@ def analyze_performance(df_trades):
 
     plt.figure(figsize=(14, 7))
     plt.plot(df_trades['retest_time'], df_trades['cumulative_profit'])
-    plt.title('Kumulierter Profit der Strategie')
-    plt.xlabel('Datum')
-    plt.ylabel('Kumulierter Profit (%)')
+    plt.title('Cumulative profit of the strategy')
+    plt.xlabel('Date')
+    plt.ylabel('Cumulative profit (%)')
     plt.grid(True)
     plt.show()
 

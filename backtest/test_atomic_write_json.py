@@ -134,7 +134,7 @@ def test_replace_permanent_failure_logs_and_cleans_up(tmp_path, caplog):
     ):
         assert atomic_write_json(target, {"v": 1}) is False
 
-    assert any("NICHT geschrieben" in r.message for r in caplog.records), "silent update loss — no ERROR logged"
+    assert any("NOT written" in r.message for r in caplog.records), "silent update loss — no ERROR logged"
     # No tmp artefacts left behind after the failed write.
     assert os.listdir(tmp_path) == []
 

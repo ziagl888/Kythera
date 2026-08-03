@@ -82,11 +82,11 @@ AUTH_TOKEN = resolve_token(_ENV)
 EXTRA_HOSTS = resolve_extra_hosts(_ENV)
 ALLOWED_HOSTS = resolve_allowed_hosts(BIND_HOST, _ENV)
 
-# Prozessliste — zentral in core/fleet.py definiert (Single Source, geteilt mit
-# main_watchdog.py; T-2026-CU-9050-091, R2(a)). Das Dashboard nutzt name/script/
-# group/restart_interval; das zusätzliche start_delay-Feld (nur für den Watchdog-
-# Start) ist hier ein No-op. Seit der Zentralisierung zeigt das Dashboard die
-# volle Fleet inkl. der zuvor fehlenden Bots 26–34.
+# Process list — defined centrally in core/fleet.py (single source, shared with
+# main_watchdog.py; T-2026-CU-9050-091, R2(a)). The dashboard uses name/script/
+# group/restart_interval; the additional start_delay field (only for the watchdog
+# start) is a no-op here. Since the centralisation, the dashboard shows the
+# full fleet incl. the previously missing bots 26–34.
 PROCESSES: list[dict[str, Any]] = FLEET
 
 # script → process info lookup
@@ -221,20 +221,20 @@ def start_process(script: str) -> dict:
         return {"ok": False, "msg": f"Script not found: {script}"}
     unpark(script)
     _push_event("process_change", {"script": script, "action": "unparked"})
-    return {"ok": True, "msg": "Start angefordert — Watchdog startet den Bot (<=10s)."}
+    return {"ok": True, "msg": "Start requested — watchdog starts the bot (<=10s)."}
 
 
 def stop_process(script: str) -> dict:
     park(script)
     _push_event("process_change", {"script": script, "action": "parked"})
-    return {"ok": True, "msg": "Stop angefordert — Watchdog parkt den Bot (<=10s)."}
+    return {"ok": True, "msg": "Stop requested — watchdog parks the bot (<=10s)."}
 
 
 def restart_process(script: str) -> dict:
     unpark(script)
     request_restart(script)
     _push_event("process_change", {"script": script, "action": "restart_requested"})
-    return {"ok": True, "msg": "Restart angefordert — Watchdog recycelt den Bot (<=10s)."}
+    return {"ok": True, "msg": "Restart requested — watchdog recycles the bot (<=10s)."}
 
 
 def restart_all() -> dict:
@@ -468,7 +468,7 @@ def api_events():
 # ── HTML Page ───────────────────────────────────────────────────────────────
 
 HTML_PAGE = r"""<!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -838,9 +838,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </div>
   </div>
   <div class="header-actions">
-    <button class="btn btn-success" onclick="confirmAction('start_all','Start All','Alle gestoppten Module starten?')">▶ Start All</button>
-    <button class="btn" onclick="confirmAction('restart_all','Restart All','Alle Module neu starten? (gestaffelt)')">↺ Restart All</button>
-    <button class="btn btn-danger" onclick="confirmAction('stop_all','Stop All','Alle laufenden Module stoppen?')">■ Stop All</button>
+    <button class="btn btn-success" onclick="confirmAction('start_all','Start All','Start all stopped modules?')">▶ Start All</button>
+    <button class="btn" onclick="confirmAction('restart_all','Restart All','Restart all modules? (staggered)')">↺ Restart All</button>
+    <button class="btn btn-danger" onclick="confirmAction('stop_all','Stop All','Stop all running modules?')">■ Stop All</button>
   </div>
 </header>
 
@@ -849,7 +849,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <!-- Sidebar -->
   <div class="sidebar">
     <div class="sidebar-section">
-      <div class="sidebar-label">Module</div>
+      <div class="sidebar-label">Modules</div>
       <div id="sidebarList"></div>
     </div>
   </div>
@@ -879,7 +879,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div class="tab-content" id="tab-logs">
       <div class="log-header">
         <div>
-          <div class="log-title" id="logTitle">Wähle ein Modul aus der Sidebar</div>
+          <div class="log-title" id="logTitle">Select a module from the sidebar</div>
           <div class="log-path" id="logPath"></div>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px">
@@ -921,8 +921,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <h3 id="dlgTitle"></h3>
     <p id="dlgBody"></p>
     <div class="dialog-btns">
-      <button class="btn" onclick="closeOverlay()">Abbrechen</button>
-      <button class="btn btn-danger" id="dlgConfirm">Bestätigen</button>
+      <button class="btn" onclick="closeOverlay()">Cancel</button>
+      <button class="btn btn-danger" id="dlgConfirm">Confirm</button>
     </div>
   </div>
 </div>
@@ -1093,7 +1093,7 @@ function appendLog(line) {
 
 function classifyLine(line) {
   const l = line.toLowerCase();
-  if (l.includes('error') || l.includes('❌') || l.includes('crash') || l.includes('kritisch')) return 'error';
+  if (l.includes('error') || l.includes('❌') || l.includes('crash') || l.includes('critical')) return 'error';
   if (l.includes('warning') || l.includes('warn') || l.includes('⚠')) return 'warning';
   if (l.includes('✅') || l.includes('success') || l.includes('started')) return 'success';
   return 'info';
@@ -1172,7 +1172,7 @@ async function executeConfirmed() {
   closeOverlay();
   if (!_pendingAction) return;
   const res = await fetch(`/api/system/${_pendingAction}`, {method:'POST'});
-  toast('Befehl ausgeführt', 'ok');
+  toast('Command executed', 'ok');
   setTimeout(refresh, 1500);
 }
 
@@ -1215,9 +1215,9 @@ init();
 # ── Entry Point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # FIX: Windows-Consoles nutzen per Default cp1252 als stdout-Encoding.
+    # FIX: Windows consoles use cp1252 as stdout encoding by default.
     # Unicode characters like 🟢 or 📁 crash there with UnicodeEncodeError.
-    # sys.stdout/stderr auf UTF-8 umstellen bevor wir irgendwas printen.
+    # Switch sys.stdout/stderr to UTF-8 before we print anything.
     try:
         sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[union-attr]  # guarded by except below
         sys.stderr.reconfigure(encoding='utf-8')  # type: ignore[union-attr]
@@ -1237,22 +1237,22 @@ if __name__ == "__main__":
     LOG_DIR.mkdir(exist_ok=True)
     _auth_state = "token required" if AUTH_TOKEN else "no token (loopback only)"
     try:
-        print(f"🟢  Bot Dashboard läuft auf  http://{BIND_HOST}:{PORT}  [{_auth_state}]")
-        print(f"📁  Basis-Verzeichnis: {BASE_DIR}")
-        print(f"📋  Log-Verzeichnis:   {LOG_DIR}")
+        print(f"🟢  Bot Dashboard running at  http://{BIND_HOST}:{PORT}  [{_auth_state}]")
+        print(f"📁  Base directory: {BASE_DIR}")
+        print(f"📋  Log directory:   {LOG_DIR}")
     except UnicodeEncodeError:
         # Absolute fallback if reconfigure() did not work
-        print(f"[OK] Bot Dashboard laeuft auf  http://{BIND_HOST}:{PORT}  [{_auth_state}]")
-        print(f"[DIR] Basis-Verzeichnis: {BASE_DIR}")
-        print(f"[LOG] Log-Verzeichnis:   {LOG_DIR}")
+        print(f"[OK] Bot Dashboard running at  http://{BIND_HOST}:{PORT}  [{_auth_state}]")
+        print(f"[DIR] Base directory: {BASE_DIR}")
+        print(f"[LOG] Log directory:   {LOG_DIR}")
     # T-009 printed an exposure warning here. Superseded: a non-loopback bind
     # without a token no longer reaches this line at all (bind_policy_error
     # above exits 2), and the banner already names the auth state. What remains
     # worth saying is the case fail-closed lets through — exposed WITH a token.
     if BIND_HOST not in ("127.0.0.1", "localhost", "::1"):
         print(
-            f"[WARN] Dashboard bindet auf {BIND_HOST}:{PORT} — erreichbar über den "
-            f"Shared Secret allein. Der vorgesehene Schutz ist der Cloudflare-Tunnel "
-            f"+ Access (Audit Z2/P0.8), nicht dieser Token."
+            f"[WARN] Dashboard binds on {BIND_HOST}:{PORT} — reachable via the "
+            f"shared secret alone. The intended protection is the Cloudflare tunnel "
+            f"+ Access (audit Z2/P0.8), not this token."
         )
     app.run(host=BIND_HOST, port=PORT, debug=False, threaded=True)

@@ -1,37 +1,37 @@
 """
-chart_data_service.py — Live 1min-Kerzen-Buffer für alle Coins
+chart_data_service.py — live 1min candle buffer for all coins
 ================================================================
 
-Dieser Prozess verbindet sich mit Binance Futures-WebSockets und hält für jeden
-bekannten Coin einen In-Memory-Ringbuffer der letzten 300 1-Minuten-Kerzen
-(~5h Historie).
+This process connects to Binance Futures WebSockets and keeps an in-memory
+ring buffer of the last 300 1-minute candles for every known coin
+(~5h history).
 
-Die Chart-generierenden Bots (EPD, SR, MIS, ATS, RUB, ATB, Master, ABR1,
-Quasimodo, SMC Sniper, IP Pattern) holen die Daten hier statt direkt von
-fapi.binance.com — das macht sie unabhängig von Binance-Rate-Limits und
-DNS-Problemen.
+The chart-generating bots (EPD, SR, MIS, ATS, RUB, ATB, Master, ABR1,
+Quasimodo, SMC Sniper, IP Pattern) fetch the data here instead of directly
+from fapi.binance.com — this makes them independent of Binance rate limits
+and DNS problems.
 
-Architektur
------------
-- Mehrere WebSocket-Worker (je max. 200 Streams, Binance-Limit)
-- Ein TCP-Server auf localhost:5555 für Chart-Client-Requests
-- Periodische Snapshots als JSON auf Disk (chart_buffer_snapshot.json),
-  damit der Buffer after Restart sofort wieder Daten hat
+Architecture
+------------
+- Multiple WebSocket workers (max. 200 streams each, Binance limit)
+- One TCP server on localhost:5555 for chart client requests
+- Periodic snapshots as JSON on disk (chart_buffer_snapshot.json),
+  so the buffer has data again immediately after a restart
 
-Protokoll (Line-based JSON, newline-terminiert)
+Protocol (line-based JSON, newline-terminated)
 -----------------------------------------------
 Request:   {"cmd": "get", "symbol": "BTCUSDT", "minutes": 240}\n
 Response:  {"symbol": "BTCUSDT", "candles": [[open_time_ms, open, high, low, close, volume], ...]}\n
 Error:     {"symbol": "BTCUSDT", "error": "not_available"}\n
 Health:    {"cmd": "health"} → {"status": "ok", "symbols_tracked": 537, "uptime_sec": 12345}\n
 
-WebSocket-Message (Binance kline 1m):
+WebSocket message (Binance kline 1m):
   {"stream": "btcusdt@kline_1m", "data": {"E": ..., "k": {"t": ..., "T": ...,
    "s": "BTCUSDT", "i": "1m", "o": "42000.5", "c": "42100.0", "h": ..., "l": ...,
    "v": ..., "x": true/false}}}
 
-Nur FINALISIERTE Kerzen (x=true) werden in den Buffer übernommen. Die letzte,
-laufende Kerze ändert sich ständig und würde Rendering unnötig instabil machen.
+Only FINALISED candles (x=true) are taken into the buffer. The latest,
+still-forming candle changes constantly and would make rendering unnecessarily unstable.
 
 Start
 -----
@@ -53,52 +53,52 @@ from typing import Any
 # Dependencies
 import websockets
 
-# Eigene Config (für Coin-Liste)
-# Wichtig: Der Service läuft im Projekt-Root, also sollten alle Imports funktionieren
+# Own config (for coin list)
+# Important: the service runs in the project root, so all imports should work
 from core.logging_setup import setup_logging
 from core.market_utils import load_coins as _core_load_coins
 from core.ws_utils import apply_keepalive as _apply_keepalive
 
 logger = setup_logging("CHART_SERVICE")
 
-# ─── Konfiguration ──────────────────────────────────────────────────────────
-# Falls der Port via .env geändert wird, hier auslesen
+# ─── Configuration ────────────────────────────────────────────────────────────
+# If the port is changed via .env, read it here
 CHART_SERVICE_PORT = int(os.getenv("CHART_SERVICE_PORT", "5555"))
 CHART_SERVICE_HOST = os.getenv("CHART_SERVICE_HOST", "127.0.0.1")
 
 COINS_FILE = "coins.json"
 SNAPSHOT_FILE = "chart_buffer_snapshot.json"
-# P2.20: der ~12MB-Snapshot lief synchron auf dem Event-Loop; 60s war zu dicht.
-# Mit dem to_thread-Dump (siehe save_snapshot) und 300s-Intervall blockiert der
-# Snapshot die WS-Consumer nicht mehr — 5min Verlust-Fenster ist unkritisch, der
-# Buffer wird beim Start ohnehin nur als Warmstart-Historie genutzt.
-SNAPSHOT_INTERVAL_SEC = 300  # alle 5min Snapshot
+# P2.20: the ~12MB snapshot ran synchronously on the event loop; 60s was too tight.
+# With the to_thread dump (see save_snapshot) and a 300s interval, the
+# snapshot no longer blocks the WS consumers — a 5min loss window is uncritical, the
+# buffer is only used as warm-start history at startup anyway.
+SNAPSHOT_INTERVAL_SEC = 300  # snapshot every 5min
 
-# P2.20: Message-Watchdog. Binance kann eine Connection annehmen und stumm lassen
-# (kein Fehler, nur 0 Messages). Ohne Timeout haengt `async for msg in ws` ewig,
-# ohne je zu reconnecten. >120s ohne Message trotz offener Connection = tot.
+# P2.20: message watchdog. Binance can accept a connection and go silent
+# (no error, just 0 messages). Without a timeout, `async for msg in ws` hangs forever,
+# without ever reconnecting. >120s without a message despite an open connection = dead.
 CHART_WS_MESSAGE_WATCHDOG_SEC = 120
 
-# P2.15: coins.json wird zur Laufzeit von 6_housekeeping (taeglich 03:00 UTC)
-# aktualisiert. Ohne Re-Read bekaemen neu gelistete Coins bis zum Prozess-Restart
-# keine Chart-Daten. Alle 300s neu lesen und neue Symbole additiv nachziehen.
+# P2.15: coins.json is updated at runtime by 6_housekeeping (daily 03:00 UTC).
+# Without a re-read, newly listed coins would get no chart data until the
+# process restart. Re-read every 300s and add new symbols additively.
 COIN_REFRESH_INTERVAL_SEC = 300
 
-BUFFER_SIZE = 300  # 300 × 1min = 5h Historie pro Coin
+BUFFER_SIZE = 300  # 300 × 1min = 5h history per coin
 STREAMS_PER_WS = 600  # Binance Futures limit: 1024 streams per connection
 # (300 is the connect-attempt limit per 5 min per IP — different thing).
 # 600 fits all ~537 USDT coins comfortably in a single connection.
-# Binance-Migration 23.04.2026: kline = /market-Stream, geroutete URL Pflicht.
+# Binance migration 23.04.2026: kline = /market stream, routed URL mandatory.
 BINANCE_WS_URL = "wss://fstream.binance.com/market/stream?streams="
 
-# ─── In-Memory-Buffer ────────────────────────────────────────────────────────
-# Struktur: { "BTCUSDT": deque([[open_time_ms, open, high, low, close, volume], ...]) }
+# ─── In-memory buffer ─────────────────────────────────────────────────────────
+# Structure: { "BTCUSDT": deque([[open_time_ms, open, high, low, close, volume], ...]) }
 _BUFFERS: dict[str, deque] = {}
-_BUFFER_LOCK = asyncio.Lock()  # Schutz bei gleichzeitigem Read/Write
+_BUFFER_LOCK = asyncio.Lock()  # protection for concurrent read/write
 _START_TIME = time.time()
 
-# P2.15: additiver Coin-Refresh. Symbole, die bereits einem WS-Worker zugeteilt
-# sind; laufende Worker-ID-Sequenz ueber initialen Fleet + Refresh-Worker hinweg.
+# P2.15: additive coin refresh. Symbols already assigned to a WS worker;
+# running worker ID sequence across the initial fleet + refresh workers.
 _TRACKED_SYMBOLS: set[str] = set()
 _ws_worker_counter = 0
 
@@ -110,18 +110,18 @@ def _next_worker_id() -> int:
 
 
 def compute_new_symbols(current: set[str], tracked: set[str]) -> list[str]:
-    """Neue, noch nicht getrackte Symbole (additiv, sortiert).
+    """New, not-yet-tracked symbols (additive, sorted).
 
-    Konservativ: ein leeres ``current`` (torn/leerer coins.json-Read) ergibt keine
-    Aenderung — es werden nie Coins entfernt und nie auf einem kaputten Read
-    reagiert. load_coins() liefert bei kaputtem Read [] (all-or-nothing json.load).
+    Conservative: an empty ``current`` (torn/empty coins.json read) results in no
+    change — coins are never removed and we never react to a broken read.
+    load_coins() returns [] on a broken read (all-or-nothing json.load).
     """
     if not current:
         return []
     return sorted(current - tracked)
 
 
-# ─── Coin-Liste laden ────────────────────────────────────────────────────────
+# ─── Load coin list ────────────────────────────────────────────────────────────
 
 
 def load_coins() -> list[str]:
@@ -134,21 +134,21 @@ def load_coins() -> list[str]:
     return sorted(set(_core_load_coins(COINS_FILE, usdt_only=True, uppercase=True)))
 
 
-# ─── Snapshot-Persistenz ─────────────────────────────────────────────────────
+# ─── Snapshot persistence ──────────────────────────────────────────────────────
 
 
 async def save_snapshot() -> None:
-    """Serialisiert alle Buffers als JSON auf Disk.
+    """Serialises all buffers as JSON to disk.
 
-    Nutzt atomic write (tmp + rename), damit ein halb-geschriebener Snapshot
-    beim nächsten Start nicht zu einem kaputten Load führt.
+    Uses atomic write (tmp + rename) so a half-written snapshot does not
+    lead to a broken load on the next start.
 
-    P2.20: der ~12MB-JSON-Dump + os.replace liefen synchron auf dem Event-Loop und
-    blockierten alle 60s die WS-Consumer + den TCP-Server. Nur der konsistente
-    Buffer-Snapshot wird jetzt kurz unter dem Lock kopiert (schnell, flache
-    Referenz-Kopie); die Serialisierung + der Disk-Write laufen im Thread. Die
-    Candle-Listen werden nie in-place mutiert (nur appended), der Thread liest also
-    einen stabilen Snapshot, waehrend der Loop weiter Kerzen in die Deques schiebt.
+    P2.20: the ~12MB JSON dump + os.replace ran synchronously on the event loop and
+    blocked the WS consumers + the TCP server every 60s. Now only the consistent
+    buffer snapshot is briefly copied under the lock (fast, shallow
+    reference copy); the serialisation + the disk write run in the thread. The
+    candle lists are never mutated in-place (only appended), so the thread reads
+    a stable snapshot while the loop keeps pushing candles into the deques.
     """
     async with _BUFFER_LOCK:
         snapshot = {sym: list(buf) for sym, buf in _BUFFERS.items() if len(buf) > 0}
@@ -157,11 +157,11 @@ async def save_snapshot() -> None:
 
 
 def _write_snapshot_to_disk(snapshot: dict[str, list]) -> None:
-    """Blocking JSON-Dump + atomic rename — laeuft im Thread, nie auf dem Event-Loop."""
+    """Blocking JSON dump + atomic rename — runs in the thread, never on the event loop."""
     tmp = SNAPSHOT_FILE + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, separators=(",", ":"))  # kompakt, ~12MB
+            json.dump(snapshot, f, separators=(",", ":"))  # compact, ~12MB
         os.replace(tmp, SNAPSHOT_FILE)
         size_mb = os.path.getsize(SNAPSHOT_FILE) / 1024 / 1024
         logger.debug(f"Snapshot saved ({len(snapshot)} symbols, {size_mb:.1f}MB)")
@@ -170,7 +170,7 @@ def _write_snapshot_to_disk(snapshot: dict[str, list]) -> None:
 
 
 def load_snapshot() -> None:
-    """Lädt den letzten Snapshot in die Buffers. Robust gegen fehlende/kaputte Files."""
+    """Loads the last snapshot into the buffers. Robust against missing/broken files."""
     if not os.path.exists(SNAPSHOT_FILE):
         logger.info("No previous snapshot — buffers starting empty.")
         return
@@ -179,7 +179,7 @@ def load_snapshot() -> None:
         with open(SNAPSHOT_FILE, encoding="utf-8") as f:
             snapshot = json.load(f)
     except Exception as e:
-        logger.warning(f"Snapshot load failed ({e}), starting mit leeren Buffers.")
+        logger.warning(f"Snapshot load failed ({e}), starting with empty buffers.")
         return
 
     loaded = 0
@@ -188,23 +188,23 @@ def load_snapshot() -> None:
             continue
         buf = deque(maxlen=BUFFER_SIZE)
         for c in candles:
-            # Validiere jede Kerze (6 Zahlen)
+            # Validate every candle (6 numbers)
             if isinstance(c, list) and len(c) == 6:
                 buf.append(c)
         if len(buf) > 0:
             _BUFFERS[symbol] = buf
             loaded += 1
 
-    logger.info(f"Snapshot geladen: {loaded} Symbole mit Historie wiederhergestellt.")
+    logger.info(f"Snapshot loaded: {loaded} symbols with history restored.")
 
 
-# ─── WebSocket-Worker ────────────────────────────────────────────────────────
+# ─── WebSocket worker ─────────────────────────────────────────────────────────
 
 
 async def ws_worker(worker_id: int, symbols: list[str]) -> None:
-    """Ein WebSocket-Worker hört auf bis zu STREAMS_PER_WS Streams.
+    """A WebSocket worker listens on up to STREAMS_PER_WS streams.
 
-    Bei Disconnect wird mit exponentiellem Backoff neu verbunden.
+    On disconnect, reconnects with exponential backoff.
     """
     # Binance-WS-URL: combined streams via "&streams="
     stream_names = [f"{s.lower()}@kline_1m" for s in symbols]
@@ -216,7 +216,7 @@ async def ws_worker(worker_id: int, symbols: list[str]) -> None:
             logger.info(f"WS-Worker {worker_id}: connecting ({len(symbols)} streams)...")
             async with websockets.connect(url, ping_interval=None, ping_timeout=None, open_timeout=30) as ws:
                 _apply_keepalive(ws)
-                logger.info(f"✅ WS-Worker {worker_id} verbunden.")
+                logger.info(f"✅ WS worker {worker_id} connected.")
                 backoff = 5.0  # reset after successful connect
 
                 # Unsolicited pong every 120s — keepalive safety net
@@ -239,9 +239,9 @@ async def ws_worker(worker_id: int, symbols: list[str]) -> None:
                         pass
 
         except websockets.ConnectionClosed as e:
-            logger.warning(f"🔴 WS-Worker {worker_id} getrennt ({e}). Reconnect in {backoff:.0f}s...")
+            logger.warning(f"🔴 WS worker {worker_id} disconnected ({e}). Reconnect in {backoff:.0f}s...")
         except Exception as e:
-            logger.warning(f"🔴 WS-Worker {worker_id} Fehler ({type(e).__name__}: {e}). Reconnect in {backoff:.0f}s...")
+            logger.warning(f"🔴 WS worker {worker_id} error ({type(e).__name__}: {e}). Reconnect in {backoff:.0f}s...")
 
         spread = (worker_id - 1) * 2.0
         await asyncio.sleep(backoff + spread)
@@ -249,15 +249,15 @@ async def ws_worker(worker_id: int, symbols: list[str]) -> None:
 
 
 async def _consume_with_watchdog(ws, worker_id: int) -> None:
-    """Liest Messages bis Timeout oder Close und kehrt dann zurueck (Caller reconnectet).
+    """Reads messages until timeout or close and then returns (caller reconnects).
 
-    P2.20: statt ``async for msg in ws`` (blockiert ewig, wenn Binance die
-    Connection annimmt aber stumm laesst) wird jede Message mit
-    ``asyncio.wait_for(ws.recv(), CHART_WS_MESSAGE_WATCHDOG_SEC)`` geholt. Bleibt
-    laenger als das Watchdog-Fenster jede Message aus, gilt die Connection als tot
-    und die Funktion kehrt zurueck → der ws_worker verlaesst den ``async with`` und
-    reconnectet mit Backoff. Ein ConnectionClosed aus ``recv()`` propagiert wie
-    gehabt zum ws_worker-Handler.
+    P2.20: instead of ``async for msg in ws`` (blocks forever if Binance accepts
+    the connection but goes silent) every message is fetched with
+    ``asyncio.wait_for(ws.recv(), CHART_WS_MESSAGE_WATCHDOG_SEC)``. If every message
+    stays absent longer than the watchdog window, the connection is considered dead
+    and the function returns → the ws_worker leaves the ``async with`` and
+    reconnects with backoff. A ConnectionClosed from ``recv()`` propagates as
+    before to the ws_worker handler.
     """
     last_msg = time.time()
     while True:
@@ -265,7 +265,7 @@ async def _consume_with_watchdog(ws, worker_id: int) -> None:
             msg = await asyncio.wait_for(ws.recv(), timeout=CHART_WS_MESSAGE_WATCHDOG_SEC)
         except asyncio.TimeoutError:
             silence = time.time() - last_msg
-            logger.warning(f"⏰ WS-Worker {worker_id}: {silence:.0f}s keine Messages — erzwinge Reconnect.")
+            logger.warning(f"⏰ WS worker {worker_id}: {silence:.0f}s no messages — forcing reconnect.")
             return
         last_msg = time.time()
         try:
@@ -275,7 +275,7 @@ async def _consume_with_watchdog(ws, worker_id: int) -> None:
 
 
 async def _process_ws_message(raw_msg: str | bytes) -> None:
-    """Verarbeitet eine einzelne WebSocket-Nachricht."""
+    """Processes a single WebSocket message."""
     try:
         msg = json.loads(raw_msg)
     except json.JSONDecodeError:
@@ -286,7 +286,7 @@ async def _process_ws_message(raw_msg: str | bytes) -> None:
     if not k:
         return
 
-    # Nur finalisierte Kerzen übernehmen
+    # Only take finalised candles
     if not k.get("x"):
         return
 
@@ -310,8 +310,8 @@ async def _process_ws_message(raw_msg: str | bytes) -> None:
         if symbol not in _BUFFERS:
             _BUFFERS[symbol] = deque(maxlen=BUFFER_SIZE)
 
-        # Anti-Dup: falls diese open_time schon da ist (durch Snapshot-Reload
-        # könnten alte Kerzen drin sein), skippingn
+        # Anti-dup: if this open_time is already present (old candles could be
+        # in there due to a snapshot reload), skip
         buf = _BUFFERS[symbol]
         if buf and buf[-1][0] >= candle[0]:
             return
@@ -319,11 +319,11 @@ async def _process_ws_message(raw_msg: str | bytes) -> None:
         buf.append(candle)
 
 
-# ─── TCP-Server ──────────────────────────────────────────────────────────────
+# ─── TCP server ────────────────────────────────────────────────────────────────
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    """Handler pro TCP-Client-Verbindung. Liest eine Zeile Request, antwortet, schließt."""
+    """Handler per TCP client connection. Reads one line of request, responds, closes."""
     addr = writer.get_extra_info("peername")
     try:
         line = await asyncio.wait_for(reader.readline(), timeout=5.0)
@@ -360,7 +360,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 if not buf or len(buf) < 2:
                     response = {"symbol": symbol, "error": "not_available"}
                 else:
-                    # Letzte N Kerzen, aber maximal so viele wie vorhanden
+                    # Last N candles, but at most as many as available
                     candles = list(buf)[-minutes:]
                     response = {"symbol": symbol, "candles": candles}
 
@@ -382,11 +382,11 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             pass
 
 
-# ─── Orchestrierung ──────────────────────────────────────────────────────────
+# ─── Orchestration ─────────────────────────────────────────────────────────────
 
 
 async def snapshot_loop() -> None:
-    """Schreibt alle SNAPSHOT_INTERVAL_SEC den aktuellen Buffer-Stand after Disk."""
+    """Writes the current buffer state to disk every SNAPSHOT_INTERVAL_SEC."""
     while True:
         await asyncio.sleep(SNAPSHOT_INTERVAL_SEC)
         try:
@@ -396,11 +396,11 @@ async def snapshot_loop() -> None:
 
 
 async def coin_refresh_loop() -> None:
-    """P2.15: zieht neu in coins.json aufgetauchte Coins additiv nach (eigener WS-Worker).
+    """P2.15: additively pulls in coins newly appeared in coins.json (own WS worker).
 
-    Konservativ: nie Streams fuer entfernte Coins abbauen (das bleibt dem Restart)
-    — ein faelschlich (torn/leerer coins.json-Read) fehlender Coin darf nicht live
-    aus dem Chart-Buffer fallen. compute_new_symbols() haelt diese Invariante.
+    Conservative: never tear down streams for removed coins (that is left to the
+    restart) — a coin missing due to a false negative (torn/empty coins.json read)
+    must not drop out of the chart buffer live. compute_new_symbols() holds this invariant.
     """
     while True:
         await asyncio.sleep(COIN_REFRESH_INTERVAL_SEC)
@@ -408,30 +408,30 @@ async def coin_refresh_loop() -> None:
             new = compute_new_symbols(set(load_coins()), _TRACKED_SYMBOLS)
             if not new:
                 continue
-            logger.info(f"🆕 {len(new)} neue Coins in coins.json — Chart-Streams werden nachgezogen.")
+            logger.info(f"🆕 {len(new)} new coins in coins.json — chart streams are being added.")
             for i in range(0, len(new), STREAMS_PER_WS):
                 chunk = new[i : i + STREAMS_PER_WS]
                 wid = _next_worker_id()
                 asyncio.create_task(ws_worker(wid, chunk))
-                logger.info(f"🆕 Chart-WS-Worker {wid} fuer {len(chunk)} neue Coins gestartet.")
+                logger.info(f"🆕 Chart WS worker {wid} started for {len(chunk)} new coins.")
             _TRACKED_SYMBOLS.update(new)
         except Exception as e:
-            logger.error(f"Coin-Refresh-Fehler: {e}")
+            logger.error(f"Coin refresh error: {e}")
 
 
 async def main() -> None:
-    # 1. Snapshot laden (wenn vorhanden)
+    # 1. Load snapshot (if present)
     load_snapshot()
 
-    # 2. Coins aus coins.json
+    # 2. Coins from coins.json
     coins = load_coins()
     if not coins:
-        logger.error("Keine Coins geladen — Service kann nicht starten.")
+        logger.error("No coins loaded — service cannot start.")
         return
     logger.info(f"=== 📊 CHART DATA SERVICE START ({len(coins)} Coins) ===")
     _TRACKED_SYMBOLS.update(coins)
 
-    # 3. WebSocket-Worker starten (chunked)
+    # 3. Start WebSocket workers (chunked)
     ws_tasks = []
     for i in range(0, len(coins), STREAMS_PER_WS):
         chunk = coins[i : i + STREAMS_PER_WS]
@@ -441,32 +441,32 @@ async def main() -> None:
             await asyncio.sleep(3.0)  # stagger: avoid simultaneous connects
     logger.info(f"📡 {len(ws_tasks)} WebSocket-Worker started.")
 
-    # 4. TCP-Server starten
+    # 4. Start TCP server
     server = await asyncio.start_server(handle_client, CHART_SERVICE_HOST, CHART_SERVICE_PORT)
     addr = server.sockets[0].getsockname()
-    logger.info(f"🔌 TCP-Server hört auf {addr[0]}:{addr[1]}")
+    logger.info(f"🔌 TCP server listening on {addr[0]}:{addr[1]}")
 
-    # 5. Snapshot-Loop + Coin-Refresh-Loop
+    # 5. Snapshot loop + coin refresh loop
     snapshot_task = asyncio.create_task(snapshot_loop())
     refresh_task = asyncio.create_task(coin_refresh_loop())
 
     async with server:
-        # Server läuft bis KeyboardInterrupt
+        # Server runs until KeyboardInterrupt
         await asyncio.gather(server.serve_forever(), *ws_tasks, snapshot_task, refresh_task)
 
 
 if __name__ == "__main__":
-    # Windows: SelectorEventLoopPolicy für asyncio-Stabilität
+    # Windows: SelectorEventLoopPolicy for asyncio stability
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🛑 Chart Data Service manuell stopped. Letzter Snapshot...")
-        # Noch einen letzten Snapshot vor dem Exit
+        logger.info("🛑 Chart Data Service manually stopped. Final snapshot...")
+        # One more final snapshot before exit
         try:
             asyncio.run(save_snapshot())
         except Exception:
             pass
-        logger.info("✅ Shutdown sauber.")
+        logger.info("✅ Clean shutdown.")

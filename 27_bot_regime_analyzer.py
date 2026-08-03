@@ -1,18 +1,18 @@
 # 27_bot_regime_analyzer.py
 """
-Bot-Regime-Analyzer — Phase 2 des Regime-Orchestrators.
+Bot Regime Analyzer — Phase 2 of the Regime Orchestrator.
 
-Läuft stündlich zu XX:05:00 und:
-  1. Berechnet für jeden Bot × Regime × Alt-Context × Direction die historische Performance
-  2. Schreibt Ergebnisse in bot_regime_performance (UPSERT)
-  3. Berechnet bot_regime_whitelist:
-       v1 (LIVE) — zweistufige WR-Logik, autoritativ für den Gate
-       v2 (SHADOW, T-2026-CU-9050-048) — Netto-Expectancy-Untergrenze mit
-          hierarchischem EB-Shrinkage in den Spalten whitelisted_v2/reason_v2;
-          NICHT vom Live-Gate gelesen (Flip ist Michis Entscheidung)
-  4. Postet täglich um 07:00 UTC ein Cross-Table-Post
+Runs hourly at XX:05:00 and:
+  1. Computes historical performance for each Bot × Regime × Alt-Context × Direction
+  2. Writes results to bot_regime_performance (UPSERT)
+  3. Computes bot_regime_whitelist:
+       v1 (LIVE) — two-stage WR logic, authoritative for the gate
+       v2 (SHADOW, T-2026-CU-9050-048) — net expectancy lower bound with
+          hierarchical EB shrinkage in columns whitelisted_v2/reason_v2;
+          NOT read by the live gate (flip is Michi's decision)
+  4. Posts daily at 07:00 UTC a cross-table post
 
-Aufruf mit --initial-run für vollständigen Einmal-Durchlauf.
+Invocation with --initial-run for a complete one-time run.
 
 Watchdog: start_delay=167
 """
@@ -27,9 +27,9 @@ import sys
 import warnings
 from datetime import datetime, timedelta, timezone
 
-# Pandas beschwert sich bei psycopg2-Connections mit einer UserWarning
-# ("only supports SQLAlchemy connectable ..."). Der Code läuft trotzdem
-# korrekt; andere Module im Projekt machen dasselbe Suppression.
+# Pandas complains about psycopg2 connections with a UserWarning
+# ("only supports SQLAlchemy connectable ..."). The code runs correctly anyway;
+# other modules in the project use the same suppression.
 warnings.filterwarnings(
     "ignore",
     message=".*SQLAlchemy connectable.*",
@@ -66,78 +66,77 @@ ANALYSIS_WINDOWS: list[int] = [7, 30, 90]
 WHITELIST_RETENTION_DAYS: int = 14
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WHITELIST v2 — Netto-Expectancy-Gate mit hierarchischem Shrinkage
-# (T-2026-CU-9050-048, Report 16 Empfehlungen 6+7)
+# WHITELIST v2 — net expectancy gate with hierarchical shrinkage
+# (T-2026-CU-9050-048, Report 16 recommendations 6+7)
 # ─────────────────────────────────────────────────────────────────────────────
-# Der v1-Gate (wr_bot >= wr_overall) hat zwei strukturelle Fehler (Report 16):
-#   B1 — 89% der frischen Zellen sind `insufficient_data` → default-open
-#        (n < MIN_TRADES_FOR_DECISION winkt durch statt zu entscheiden).
-#   B2 — Median 7 Trades/Zelle: der WR-Punktschätzer ist zu verrauscht, um eine
-#        4D-Selektion zu tragen; ein 55%-WR-Bot mit winzigen Wins + großen
-#        Losses ist netto ein Verlierer, den der WR-Gate durchlässt.
+# The v1 gate (wr_bot >= wr_overall) has two structural bugs (Report 16):
+#   B1 — 89% of fresh cells are `insufficient_data` → default-open
+#        (n < MIN_TRADES_FOR_DECISION passes through instead of deciding).
+#   B2 — Median 7 trades/cell: the WR point estimator is too noisy to carry a
+#        4D selection; a 55%-WR bot with tiny wins + large losses is net a loser
+#        that the WR gate lets through.
 #
-# v2 ersetzt den WR-Punktschätzer durch die UNTERE Konfidenzgrenze der
-# Netto-Expectancy (avg_pnl_pct), geschätzt mit Empirical-Bayes-Shrinkage über
-# die Hierarchie Bot×Regime×Alt → Bot×Regime → Bot×ALL. Die Zelle wird nur
-# whitelisted, wenn diese konservative Untergrenze über dem Break-even liegt —
-# es gibt keine `insufficient_data`-Krücke mehr, jede Zelle liefert eine
-# benutzbare, nach unten gezogene Schätzung (kein default-open).
+# v2 replaces the WR point estimator with the LOWER confidence bound of
+# net expectancy (avg_pnl_pct), estimated with Empirical-Bayes shrinkage over
+# the hierarchy Bot×Regime×Alt → Bot×Regime → Bot×ALL. The cell is only
+# whitelisted if this conservative lower bound exceeds break-even — there is no
+# `insufficient_data` crutch anymore; every cell yields a usable, downward-biased
+# estimate (no default-open).
 #
-# WICHTIG: v2 ist eine SHADOW-Spalte (whitelisted_v2). Der Live-Gate liest
-# weiter v1. Scharf-Schalten ist ausschließlich Michis Entscheidung nach dem
-# Counterfactual-Vergleich (T-2026-CU-9050-047). Die Konstanten unten sind
-# bewusst konservative Startwerte — sie werden vor jedem Flip auf der VPS-DB
-# kalibriert, nicht hier festgezurrt.
+# IMPORTANT: v2 is a SHADOW column (whitelisted_v2). The live gate continues to
+# read v1. Sharp-switching is exclusively Michi's decision after the counterfactual
+# comparison (T-2026-CU-9050-047). The constants below are deliberately conservative
+# starting values — they are calibrated on the VPS DB before each flip, not hardcoded
+# here.
 #
-# Break-even in avg_pnl_pct-Einheiten: avg_pnl_pct ist der rohe (ungehebelte)
-# Preis-Move in %, NICHT fee-adjusted. Round-trip-Taker-Fees auf dem Notional
-# liegen grob bei einem Zehntelprozent; wir verlangen die Untergrenze > diesem
-# Floor statt nur > 0. Deckt sich zufällig mit OUTCOME_MIN_PNL_PCT (Neutral-Band).
+# Break-even in avg_pnl_pct units: avg_pnl_pct is the raw (unleveraged) price move
+# in %, NOT fee-adjusted. Round-trip taker fees on the notional are roughly one-tenth
+# of a percent; we demand the lower bound > this floor rather than just > 0. Happens
+# to match OUTCOME_MIN_PNL_PCT (neutral band).
 V2_BREAK_EVEN_PNL_PCT: float = 0.1
-# Prior-Stärke der Shrinkage in Pseudo-Beobachtungen (EB: τ² = σ²/k). Eine Zelle
-# mit n echten Trades trägt Gewicht n/(n+k) gegenüber dem übergeordneten Mittel;
-# die Posterior-Varianz ist σ²/(n+k). Größer = mehr Vertrauen in den Prior
-# (Eltern-Level), kleiner = die Zelle setzt sich schneller durch.
+# Prior strength of shrinkage in pseudo-observations (EB: τ² = σ²/k). A cell with
+# n real trades carries weight n/(n+k) against the parent mean; the posterior variance
+# is σ²/(n+k). Larger = more trust in the prior (parent level), smaller = the cell
+# breaks through faster.
 V2_SHRINKAGE_PSEUDO_COUNT: float = 25.0
-# z-Multiplikator der einseitigen Untergrenze (~95% ≈ 1.64). Höher = strenger.
+# z multiplier of the one-sided lower bound (~95% ≈ 1.64). Higher = stricter.
 V2_LOWER_BOUND_Z: float = 1.64
-# Neutraler Prior-Mittelwert, gegen den das gröbste Level geschrumpft wird. 0.0
-# = "über eine Zelle ohne Evidenz nehmen wir Break-even an" — eine Zelle ganz
-# ohne Daten bleibt bei 0, die Untergrenze wird negativ, sie wird NICHT
-# whitelisted (das ist der B1-Fix: kein default-open).
+# Neutral prior mean, towards which the coarsest level shrinks. 0.0 = "for a cell
+# without evidence we assume break-even" — a cell with no data stays at 0, the lower
+# bound goes negative, it is NOT whitelisted (that is the B1 fix: no default-open).
 V2_PRIOR_MEAN_PNL_PCT: float = 0.0
-# Fallback-Streuung, wenn auf keinem Level eine belastbare Stddev (n>=2) liegt.
-# Nur relevant für Zellen fast ohne Daten — die scheitern über die weite
-# Untergrenze ohnehin; der Wert verhindert nur Division-durch-0.
+# Fallback variance when no level has a reliable stddev (n>=2). Only relevant for
+# cells with almost no data — they fail anyway via the wide lower bound; this value
+# just prevents division-by-zero.
 V2_DEFAULT_PNL_STDDEV: float = 5.0
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TRADE-OUTCOME-KLASSIFIKATION
+# TRADE OUTCOME CLASSIFICATION
 # ─────────────────────────────────────────────────────────────────────────────
-# Wir klassifizieren jeden Trade als 'win', 'loss' oder 'neutral'. Neutrale
-# Trades (Housekeeping-Closes, Delistings, Ausreißer) werden vollständig aus
-# den Performance-Statistiken ausgeschlossen — sie sind weder Win noch Loss
-# und würden WR + avg_pnl verzerren.
+# We classify each trade as 'win', 'loss', or 'neutral'. Neutral trades
+# (housekeeping closes, delistings, outliers) are completely excluded from
+# performance statistics — they are neither win nor loss and would skew
+# WR + avg_pnl.
 #
-# Der Fix adressiert vier bekannte Bugs in 8_ai_trade_monitor.py:
-#   1. LEGACY TARGET HIT (+2.5%) schreibt targets_hit=0 statt 1 → alte Wins
-#      wurden als Losses gezählt (EPD1 zeigte dadurch ~0.28% WR statt ~58%).
-#   2. DELISTED/CLEANUP-Closes haben targets_hit=0 → wurden als Losses gezählt
-#      obwohl der Trade durch Symbol-Delisting erzwungen stopped wurde.
-#   3. close_reason "SL Hit (SL: 0.007)" ist pro Trade unique (enthält SL-Wert)
-#      → nicht gruppierbar, aber irrelevant wenn wir auf PnL schauen.
-#   4. Ausreißer mit |pnl| > 100% deuten auf Daten-Bugs hin (z.B. negative
-#      Close-Preise) und verzerren avg_loss/avg_win massiv.
+# The fix addresses four known bugs in 8_ai_trade_monitor.py:
+#   1. LEGACY TARGET HIT (+2.5%) writes targets_hit=0 instead of 1 → old wins
+#      were counted as losses (EPD1 showed ~0.28% WR instead of ~58%).
+#   2. DELISTED/CLEANUP closes have targets_hit=0 → were counted as losses
+#      even though the trade was force-closed by symbol delisting.
+#   3. close_reason "SL Hit (SL: 0.007)" is unique per trade (contains SL value)
+#      → not groupable, but irrelevant if we look at PnL.
+#   4. Outliers with |pnl| > 100% hint at data bugs (e.g. negative close prices)
+#      and severely skew avg_loss/avg_win.
 #
-# Die Logik ist PnL-basiert statt targets_hit-basiert:
-OUTCOME_MIN_PNL_PCT: float = 0.1  # |pnl| <= 0.1% → neutral (Housekeeping)
-OUTCOME_MAX_ABS_PNL_PCT: float = 100.0  # |pnl| > 100% → neutral (Daten-Bug)
+# The logic is PnL-based instead of targets_hit-based:
+OUTCOME_MIN_PNL_PCT: float = 0.1  # |pnl| <= 0.1% → neutral (housekeeping)
+OUTCOME_MAX_ABS_PNL_PCT: float = 100.0  # |pnl| > 100% → neutral (data bug)
 
 BTC_REGIMES = ["TREND_UP", "TREND_DOWN", "CHOP", "HIGH_VOLA", "TRANSITION"]
 ALT_CONTEXTS = ["ALT_STRONG", "ALT_NEUTRAL", "ALT_WEAK"]
 DIRECTIONS = ["LONG", "SHORT"]
 
-# Counter-trend Richtungen per BTC-Regime
+# Counter-trend directions per BTC regime
 COUNTER_TREND_DIRECTIONS: dict[str, str] = {
     "TREND_UP": "SHORT",
     "TREND_DOWN": "LONG",
@@ -184,32 +183,31 @@ def _compute_stats(pnl_pcts: list[float], is_wins: list[int]) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TRADE-DATEN LADEN
+# LOAD TRADE DATA
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def _classify_outcome(close_reason: str, pnl_pct: float) -> str:
-    """Klassifiziert einen einzelnen Trade.
+    """Classifies a single trade.
 
-    Returns 'win', 'loss', oder 'neutral'. 'neutral' schließt den Trade aus
-    der Performance-Statistik komplett aus.
+    Returns 'win', 'loss', or 'neutral'. 'neutral' excludes the trade from
+    performance statistics entirely.
 
-    Siehe Konstanten OUTCOME_MIN_PNL_PCT und OUTCOME_MAX_ABS_PNL_PCT sowie
-    die Bug-Beschreibung am Datei-Anfang.
+    See constants OUTCOME_MIN_PNL_PCT and OUTCOME_MAX_ABS_PNL_PCT as well as
+    the bug description at the start of the file.
     """
     reason = (close_reason or "").upper()
-    # Housekeeping-Closes: weder Win noch Loss (extern verursacht,
-    # nicht vom Bot-Signal). Umfasst Delisting und Orphan-Cleanup.
+    # Housekeeping closes: neither win nor loss (externally caused,
+    # not from bot signal). Includes delisting and orphan cleanup.
     #
-    # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE ist NICHT mehr
-    # dabei. Ein Regime-Wechsel-Forced-Close hat einen realen PnL zum
-    # Close-Zeitpunkt — den als "neutral" zu verwerfen zensiert genau die
-    # Verluste, die der Orchestrator selbst durch Auto-Close realisiert, und
-    # biast die gemessene ROM1-WR nach oben (Report 16, B9). Solche Closes
-    # laufen jetzt durch die normale PnL-Klassifikation; near-0%-Closes bleiben
-    # über den Micro-PnL-Filter (OUTCOME_MIN_PNL_PCT) trotzdem neutral. In der
-    # Praxis trägt nur model='ROM1' diesen Marker (P1.9), die Korrektur berührt
-    # also keine Fremd-Bot-Statistik.
+    # B9 censorship fix (T-2026-CU-9050-048): REGIME_CHANGE is NOT included
+    # anymore. A regime-change forced close has real PnL at the close time — treating
+    # it as "neutral" censors exactly the losses that the orchestrator itself
+    # realizes through auto-close, and biases the measured ROM1 WR upward (Report 16,
+    # B9). Such closes now go through normal PnL classification; near-0% closes remain
+    # neutral via the micro-PnL filter (OUTCOME_MIN_PNL_PCT) anyway. In practice only
+    # model='ROM1' carries this marker (P1.9), so the fix does not touch foreign-bot
+    # statistics.
     if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason:
         return "neutral"
     if pnl_pct is None or (isinstance(pnl_pct, float) and pd.isna(pnl_pct)):
@@ -218,43 +216,43 @@ def _classify_outcome(close_reason: str, pnl_pct: float) -> str:
         p = float(pnl_pct)
     except (TypeError, ValueError):
         return "neutral"
-    # Ausreißer-Filter (wahrscheinlich Daten-Bug)
+    # Outlier filter (probably data bug)
     if abs(p) > OUTCOME_MAX_ABS_PNL_PCT:
         return "neutral"
-    # Neutrale Micro-Bewegungen (Housekeeping mit close ≈ entry)
+    # Neutral micro-movements (housekeeping with close ≈ entry)
     if abs(p) <= OUTCOME_MIN_PNL_PCT:
         return "neutral"
     return "win" if p > 0 else "loss"
 
 
 def _apply_outcome_classification(df: pd.DataFrame) -> pd.DataFrame:
-    """Wendet _classify_outcome auf einen DataFrame an und überschreibt is_win.
+    """Applies _classify_outcome to a DataFrame and overwrites is_win.
 
-    Fügt die 'outcome'-Spalte hinzu und filtert neutrale Trades raus. Der
-    zurückgegebene DataFrame enthält nur noch 'win' und 'loss'-Trades.
+    Adds the 'outcome' column and filters out neutral trades. The returned
+    DataFrame contains only 'win' and 'loss' trades.
     """
     if df.empty:
         return df
     df = df.copy()
-    # close_reason-Spalte könnte fehlen (klassische Trades) → leer setzen
+    # close_reason column might be missing (classic trades) → set to empty
     if "close_reason" not in df.columns:
         df["close_reason"] = ""
     df["close_reason"] = df["close_reason"].fillna("").astype(str)
-    # Outcome berechnen
+    # Compute outcome
     df["outcome"] = df.apply(
         lambda r: _classify_outcome(r["close_reason"], r["pnl_pct"]),
         axis=1,
     )
-    # is_win neu setzen (überschreibt den Wert aus der SQL-Query)
+    # Recompute is_win (overrides value from SQL query)
     df["is_win"] = (df["outcome"] == "win").astype(int)
-    # Neutrale ausschließen
+    # Exclude neutral trades
     n_before = len(df)
     df = df[df["outcome"].isin(["win", "loss"])].copy()
     n_after = len(df)
     if n_before > n_after:
         logger.info(
-            f"Outcome-Klassifikation: {n_before - n_after}/{n_before} Trades als "
-            f"neutral ausgeschlossen (Delisting/Housekeeping/Outlier)"
+            f"Outcome classification: {n_before - n_after}/{n_before} trades "
+            f"excluded as neutral (delisting/housekeeping/outlier)"
         )
     return df
 
@@ -268,20 +266,19 @@ def load_trades_with_regime(conn, window_days: int) -> pd.DataFrame:
         bot_name, direction, entry, close_price, is_win, pnl_pct,
         regime, alt_context, opened_at, close_reason, outcome
 
-    Neutrale Trades (DELISTED, Outlier, Micro-PnL) sind BEREITS ausgefiltert
-    im zurückgegebenen DataFrame — der Caller muss sich darum nicht kümmern.
-    is_win wurde after PnL neu gesetzt, überschreibt damit den Wert aus SQL.
+    Neutral trades (DELISTED, outlier, micro-PnL) are ALREADY filtered out
+    in the returned DataFrame — the caller does not need to worry about them.
+    is_win was recomputed from PnL, overriding the SQL value.
     """
     since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=window_days)
 
-    # ── Klassische Trades ──
-    # Hinweis: is_win wird nicht aus SQL gelesen — _apply_outcome_classification
-    # überschreibt das ohnehin PnL-basiert. Das vermeidet auch den Crash wenn
-    # status Werte wie "SL1", "WORKING" oder andere Non-Integer-Strings enthält
-    # (von Legacy-Bots oder manuellen DB-Edits). close_reason gibt es bei
-    # klassischen Trades nicht — wir nehmen stattdessen den rohen status-String
-    # mit, damit ungewöhnliche entries in Logs sichtbar sind (z.B. für späteren
-    # DELISTED-Check falls jemand das dort einbaut).
+    # ── Classic Trades ──
+    # Note: is_win is not read from SQL — _apply_outcome_classification
+    # overrides it anyway based on PnL. This also avoids crashes if status
+    # contains values like "SL1", "WORKING" or other non-integer strings
+    # (from legacy bots or manual DB edits). close_reason does not exist for
+    # classic trades — we take the raw status string instead so unusual entries
+    # are visible in logs (e.g. for later DELISTED check if someone adds that).
     try:
         df_classic = pd.read_sql_query(
             """
@@ -321,13 +318,13 @@ def load_trades_with_regime(conn, window_days: int) -> pd.DataFrame:
         df_classic = pd.DataFrame()
 
     # ── AI Trades ──
-    # Die `status`-Spalte in closed_ai_signals enthält den close_reason
-    # (z.B. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP", "SL Hit (SL: ...)")
-    # — siehe 8_ai_trade_monitor.py Zeile 192-195.
+    # The `status` column in closed_ai_signals contains the close_reason
+    # (e.g. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP", "SL Hit (SL: ...)")
+    # — see 8_ai_trade_monitor.py lines 192-195.
     #
-    # is_win wird hier nicht gelesen — _apply_outcome_classification überschreibt
-    # es sowieso PnL-basiert. Das vermeidet auch Probleme falls targets_hit
-    # irgendwann NULL enthält oder andere Überraschungen liefert.
+    # is_win is not read here — _apply_outcome_classification overrides it anyway
+    # based on PnL. This also avoids issues if targets_hit ever contains NULL or
+    # delivers other surprises.
     try:
         df_ai = pd.read_sql_query(
             """
@@ -363,7 +360,7 @@ def load_trades_with_regime(conn, window_days: int) -> pd.DataFrame:
             params=(since,),
         )
     except Exception as e:
-        logger.warning(f"closed_ai_signals nicht ladbar: {e}")
+        logger.warning(f"closed_ai_signals not loadable: {e}")
         df_ai = pd.DataFrame()
 
     frames = [f for f in [df_classic, df_ai] if not f.empty]
@@ -387,25 +384,23 @@ def load_trades_with_regime(conn, window_days: int) -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
     df = df.dropna(subset=["regime", "alt_context", "pnl_pct"])
 
-    # Normalisiere Bot-Namen bevor aggregiert wird — sonst landen
-    # MIS1-8H, MIS1-8h, MIS1-8h_pump als getrennte Bots in
-    # bot_regime_performance und der Market-Tracker (der mit pretty_name
-    # anfragt) findet sie nicht. Gleiches gilt für "Fast In And Out" vs
-    # "FastInOut" etc. pretty_name ist idempotent, d.h. bereits
-    # normalisierte Namen bleiben unverändert.
+    # Normalise bot names before aggregating — otherwise MIS1-8H, MIS1-8h,
+    # MIS1-8h_pump end up as separate bots in bot_regime_performance and the
+    # market tracker (which queries with pretty_name) cannot find them. Same goes
+    # for "Fast In And Out" vs "FastInOut" etc. pretty_name is idempotent, i.e.
+    # already normalised names remain unchanged.
     df["bot_name"] = df["bot_name"].apply(pretty_name)
 
     # ──────────────────────────────────────────────────────────────────
-    # KERN-FIX: Klassifikation von Win/Loss basierend auf tatsächlichem
-    # PnL und close_reason, nicht auf dem fehlerhaften targets_hit-Feld.
-    # Filtert neutrale Trades gleich raus.
+    # CORE FIX: Classification of win/loss based on actual PnL and close_reason,
+    # not on the faulty targets_hit field. Filters out neutral trades immediately.
     # ──────────────────────────────────────────────────────────────────
     df = _apply_outcome_classification(df)
     return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PERFORMANCE BERECHNEN & UPSERTEN
+# COMPUTE & UPSERT PERFORMANCE
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -723,7 +718,7 @@ def append_performance_history(conn, rows: list[tuple]) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WHITELIST BERECHNEN
+# COMPUTE WHITELIST
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -778,7 +773,7 @@ def _v2_expectancy_lower_bound(
             est = w * float(lvl["avg_pnl"]) + (1.0 - w) * est
             prior_source = name
 
-    # Streuung: feinstes Level mit belastbarer Stddev (fine → coarse).
+    # Variance: finest level with reliable stddev (fine → coarse).
     std_used: float | None = None
     for _name, lvl in reversed(ordered):
         if lvl and lvl.get("n") and lvl["n"] >= 2 and lvl.get("std") is not None:
@@ -954,7 +949,7 @@ def compute_whitelist(conn) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TÄGLICHER CROSS-TABLE-POST
+# DAILY CROSS-TABLE POST
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1036,10 +1031,10 @@ async def post_daily_cross_table() -> None:
         # arrow, so no cross-table cell renders ↑/↓. Kept as-is (cosmetic); the
         # marker feature was specced (REGIME_ORCHESTRATOR.md) but never built.
         lines.append(
-            f"\nAktuelles Regime: {cur_regime}  |  Aktueller Alt-Context: {cur_alt}\n"
-            f"↑ WR ≥ Overall+10pp → STARK\n"
-            f"↓ WR ≤ Overall-10pp → SCHWACH\n"
-            f"--- < 20 Trades in dieser Zelle"
+            f"\nCurrent regime: {cur_regime}  |  Current alt-context: {cur_alt}\n"
+            f"↑ WR ≥ overall+10pp → STRONG\n"
+            f"↓ WR ≤ overall-10pp → WEAK\n"
+            f"--- < 20 trades in this cell"
         )
 
         msg = "<pre>" + "\n".join(lines) + "</pre>"
@@ -1047,40 +1042,40 @@ async def post_daily_cross_table() -> None:
         logger.info(f"✅ Daily cross-table post sent ({cur_regime})")
 
     except Exception as e:
-        logger.error(f"Fehler beim täglichen Cross-Table-Post: {e}", exc_info=True)
+        logger.error(f"Error in daily cross-table post: {e}", exc_info=True)
     finally:
         if conn:
             conn.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ANALYSE JOB
+# ANALYSIS JOB
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def cleanup_stale_performance_rows(conn) -> int:
-    """Löscht bot_regime_performance-Rows mit nicht-normalisierten Bot-Namen.
+    """Deletes bot_regime_performance rows with non-normalised bot names.
 
-    Hintergrund: Vor dem Naming-Fix hat der Analyzer Rows mit Rohnamen
-    wie 'Fast In And Out', 'MIS1-8H' oder 'MIS1-168H_pump' geschrieben.
-    Der Market-Tracker fragt aber mit pretty_name() an — also z.B.
-    'FastInOut', 'MIS1-8h'. Die alten Rows sind für immer stumm.
+    Background: before the naming fix, the analyzer wrote rows with raw names
+    like 'Fast In And Out', 'MIS1-8H' or 'MIS1-168H_pump'. The market tracker
+    queries with pretty_name() though — e.g. 'FastInOut', 'MIS1-8h'. The old rows
+    are silent forever.
 
-    Dieser Cleanup macht einen one-time Reset: alle Rows deren bot_name
-    sich von pretty_name(bot_name) unterscheidet werden gelöscht. Der
-    afterfolgende run_analysis() baut sie mit normalisierten Namen neu auf.
+    This cleanup does a one-time reset: all rows whose bot_name differs from
+    pretty_name(bot_name) are deleted. The subsequent run_analysis() rebuilds
+    them with normalised names.
 
-    Nach dem ersten Clean-Run ist diese Funktion idempotent (löscht nix),
-    weil alle neuen Rows bereits normalisiert geschrieben werden.
+    After the first clean run, this function is idempotent (deletes nothing)
+    because all new rows are already written normalised.
 
-    Returns: Anzahl der gelöschten Rows.
+    Returns: number of deleted rows.
     """
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT bot_name FROM bot_regime_performance")
             bot_names = [r[0] for r in cur.fetchall()]
     except Exception as e:
-        logger.warning(f"Cleanup-Scan fehlgeschlagen: {e}")
+        logger.warning(f"Cleanup scan failed: {e}")
         return 0
 
     stale = [b for b in bot_names if pretty_name(b) != b]
@@ -1097,12 +1092,12 @@ def cleanup_stale_performance_rows(conn) -> int:
         conn.commit()
         logger.info(
             f"🧹 Cleanup stale bot_names in bot_regime_performance: "
-            f"{deleted} Rows von {len(stale)} bot_names bereinigt "
-            f"(z.B. {stale[:3]})"
+            f"{deleted} rows cleaned from {len(stale)} bot_names "
+            f"(e.g. {stale[:3]})"
         )
         return deleted
     except Exception as e:
-        logger.warning(f"Cleanup-Delete fehlgeschlagen: {e}")
+        logger.warning(f"Cleanup delete failed: {e}")
         conn.rollback()
         return 0
 
@@ -1134,20 +1129,20 @@ def build_whitelist_cleanup_query(now_utc: datetime, retention_days: int) -> tup
 
 
 def cleanup_stale_whitelist_rows(conn) -> int:
-    """Löscht stale bot_regime_whitelist-Rows (P2.25, Schreibseite).
+    """Deletes stale bot_regime_whitelist rows (P2.25, write-side).
 
-    compute_whitelist() UPSERTet nur Rows für Bots im aktuellen Analysefenster
-    (all_bots) — Rows von Bots, die nicht mehr handeln, sowie die alten
-    Rohnamen-Keys (eingefroren seit 19.04.) bleiben für immer liegen. Der
-    Orchestrator liest sie via 48h-Staleness-Gate zwar nicht mehr autoritativ
-    (T-046), aber die Rows selbst wurden bisher nie abgeräumt.
+    compute_whitelist() only UPSERTs rows for bots in the current analysis window
+    (all_bots) — rows from bots that no longer trade, as well as old raw-name keys
+    (frozen since 19.04.) stay forever. The orchestrator reads them via 48h-staleness
+    gate but no longer authoritatively (T-046), but the rows themselves were never
+    cleaned up.
 
-    Kriterien siehe build_whitelist_cleanup_query: (A) Rohnamen-Keys
-    (pretty_name-Mismatch, altersunabhängig) ODER (B) computed_at älter als
-    WHITELIST_RETENTION_DAYS. Konservativ: der Read-Gate hat alles >48h ohnehin
-    schon entwertet, aktive Bots werden im selben Lauf neu geschrieben.
+    Criteria: see build_whitelist_cleanup_query: (A) raw-name keys (pretty_name
+    mismatch, age-independent) OR (B) computed_at older than WHITELIST_RETENTION_DAYS.
+    Conservative: the read gate already invalidates everything >48h, active bots are
+    rewritten fresh in the same run.
 
-    Returns: Anzahl der gelöschten Rows.
+    Returns: number of deleted rows.
     """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
@@ -1155,7 +1150,7 @@ def cleanup_stale_whitelist_rows(conn) -> int:
             cur.execute("SELECT DISTINCT bot_name FROM bot_regime_whitelist")
             bot_names = [r[0] for r in cur.fetchall()]
     except Exception as e:
-        logger.warning(f"Whitelist-Cleanup-Scan fehlgeschlagen: {e}")
+        logger.warning(f"Whitelist cleanup scan failed: {e}")
         return 0
 
     raw_name_keys = [b for b in bot_names if pretty_name(b) != b]
@@ -1168,13 +1163,13 @@ def cleanup_stale_whitelist_rows(conn) -> int:
         conn.commit()
         if deleted:
             logger.info(
-                f"🧹 Cleanup stale bot_regime_whitelist: {deleted} Rows entfernt "
-                f"(Rohnamen-Keys: {len(raw_name_keys)}, z.B. {raw_name_keys[:3]}; "
-                f"+ Rows älter als {WHITELIST_RETENTION_DAYS}d)"
+                f"🧹 Cleanup stale bot_regime_whitelist: {deleted} rows removed "
+                f"(raw-name keys: {len(raw_name_keys)}, e.g. {raw_name_keys[:3]}; "
+                f"+ rows older than {WHITELIST_RETENTION_DAYS}d)"
             )
         return deleted
     except Exception as e:
-        logger.warning(f"Whitelist-Cleanup-Delete fehlgeschlagen: {e}")
+        logger.warning(f"Whitelist cleanup delete failed: {e}")
         conn.rollback()
         return 0
 
@@ -1184,13 +1179,13 @@ async def run_analysis() -> None:
     conn = None
     try:
         conn = get_db_connection()
-        # One-time Cleanup: entfernt stale rows mit nicht-normalisierten
-        # Bot-Namen. Nach erstem Lauf idempotent (tut nichts mehr).
+        # One-time cleanup: removes stale rows with non-normalised bot names.
+        # After first run idempotent (does nothing anymore).
         cleanup_stale_performance_rows(conn)
-        # P2.25 (Schreibseite): dieselbe stale-Row-Klasse in der Whitelist-
-        # Tabelle abräumen (Rohnamen-Keys + Rows älter als Retention), die der
-        # Orchestrator liest. Vor compute_whitelist(), das aktive Bots direkt
-        # danach wieder frisch schreibt.
+        # P2.25 (write-side): clean up the same stale-row class in the whitelist
+        # table (raw-name keys + rows older than retention) that the orchestrator
+        # reads. Before compute_whitelist(), which rewrites active bots fresh
+        # immediately afterward.
         cleanup_stale_whitelist_rows(conn)
 
         total_rows = 0
@@ -1200,9 +1195,9 @@ async def run_analysis() -> None:
             total_rows += n
             logger.info(f"Window {window}d: {len(df)} Trades → {n} performance rows upserted")
         wl_count = compute_whitelist(conn)
-        logger.info(f"✅ Analyse completed: {total_rows} Performance-Rows, {wl_count} Whitelist-entries")
+        logger.info(f"✅ Analysis completed: {total_rows} performance rows, {wl_count} whitelist entries")
     except Exception as e:
-        logger.error(f"Analyse-Error: {e}", exc_info=True)
+        logger.error(f"Analysis error: {e}", exc_info=True)
     finally:
         if conn:
             conn.close()
@@ -1243,12 +1238,12 @@ async def main(initial_run: bool = False) -> None:
     logger.info("=== 📊 BOT REGIME ANALYZER STARTED ===")
 
     if initial_run:
-        logger.info("--initial-run: Vollständiger Durchlauf wird started...")
+        logger.info("--initial-run: complete run starting...")
         await run_analysis()
         logger.info("Initial-Run completed.")
         return
 
-    # Ersten Lauf sofort
+    # First run immediately
     await run_analysis()
 
     await asyncio.gather(
@@ -1262,4 +1257,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main(initial_run=initial))
     except KeyboardInterrupt:
-        logger.info("Bot Regime Analyzer manuell stopped (Strg+C).")
+        logger.info("Bot Regime Analyzer manually stopped (Ctrl+C).")

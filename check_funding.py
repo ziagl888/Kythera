@@ -18,7 +18,7 @@ def check_latest_funding_data():
         return
 
     latest_file = max(files, key=os.path.getmtime)
-    print(f"Reading Daten aus: {latest_file}...\n")
+    print(f"Reading data from: {latest_file}...\n")
 
     try:
         with open(latest_file, encoding="utf-8") as f:
@@ -29,14 +29,14 @@ def check_latest_funding_data():
             return
 
         print("=" * 40)
-        print("💰 FUNDING RATES STATISTIK")
+        print("💰 FUNDING RATES STATISTICS")
         print(f"Records in file: {len(data)}")
 
-        # Zeige die 5 aktuellsten entries als Beispiel
-        print("\nLetzte 5 erfasste Raten:")
+        # show the 5 most recent entries as an example
+        print("\nLast 5 recorded rates:")
         for d in data[-5:]:
-            # `ts` ist eine UTC-Epoche (20_funding_logger_bot) — vorher als
-            # Serverlokalzeit gerendert, jetzt als UTC wie überall sonst.
+            # `ts` is a UTC epoch (20_funding_logger_bot) — previously rendered as
+            # server local time, now as UTC like everywhere else.
             time_str = from_unix_ts(d['ts']).strftime('%H:%M:%S')
             print(f"[{time_str}] {d['sym']:<12} : {d['rate'] * 100:+.4f}%")
 

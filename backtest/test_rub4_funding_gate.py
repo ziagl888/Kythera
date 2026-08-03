@@ -1,15 +1,15 @@
 # backtest/test_rub4_funding_gate.py
-"""DB-freie Tests für das RUB4-Funding-Gate (Bot 13, T-2026-CU-9050-164).
+"""DB-free tests for the RUB4 funding gate (bot 13, T-2026-CU-9050-164).
 
-RUB4 = funding-gegatetes RUB-LONG-Shadow-Bein: DERSELBE RUB3-Kandidat, aber nur
-wenn ``fund_24h > +3 bps`` (ABR1-LONG-Schwelle). Reines Shadow-Experiment (nie
-live), eigener Tag → Report vergleicht gegatet (RUB4) vs. ungegatet (RUB3).
+RUB4 = funding-gated RUB LONG shadow leg: SAME RUB3 candidate, but only
+when ``fund_24h > +3 bps`` (ABR1 LONG threshold). Pure shadow experiment (never
+live), own tag → report compares gated (RUB4) vs. ungated (RUB3).
 
-  1. funding_gate_open: strikt > 3.0 bps; None ⇒ zu.
-  2. shadow_gate: RUB4-LONG ist SHADOW, ohne eigenes Artefakt (nutzt RUB3s Modell);
-     RUB4-SHORT bleibt Default-LIVE (es gibt kein RUB4-SHORT-Bein).
-  3. bot_catalog: Tag "RUB4" → 13_ai_rub_bot.py (RUB-Prefix).
-  4. Die Gate-Schwelle == ABR1-LONG (3.0 bps).
+  1. funding_gate_open: strictly > 3.0 bps; None ⇒ closed.
+  2. shadow_gate: RUB4-LONG is SHADOW, without own artifact (uses RUB3's model);
+     RUB4-SHORT stays default-LIVE (there is no RUB4-SHORT leg).
+  3. bot_catalog: tag "RUB4" → 13_ai_rub_bot.py (RUB prefix).
+  4. The gate threshold == ABR1 LONG (3.0 bps).
 
 Run: pytest backtest/test_rub4_funding_gate.py -v
 """
@@ -50,11 +50,11 @@ rub = _import_rub()
     [
         (3.01, True),
         (5.0, True),
-        (3.0, False),  # strikt >, nicht >=
+        (3.0, False),  # strictly >, not >=
         (2.99, False),
         (0.0, False),
         (-2.0, False),
-        (None, False),  # keine Funding-Daten ⇒ Gate zu
+        (None, False),  # no funding data ⇒ gate closed
     ],
 )
 def test_funding_gate_open(fund_24h, expected):
@@ -69,13 +69,13 @@ def test_gate_threshold_matches_abr1_long():
 def test_rub4_long_is_shadow_reusing_rub3_model():
     assert sg.leg_status("RUB4", "LONG") == sg.SHADOW
     assert sg.is_shadow("RUB4", "LONG")
-    # RUB4 nutzt das RUB3-Artefakt (Bot lädt SHADOW_RUB3_LONG) → KEIN eigener
-    # SHADOW_ARTIFACTS-Eintrag; der Loader würde None liefern.
+    # RUB4 uses the RUB3 artifact (bot loads SHADOW_RUB3_LONG) → NO own
+    # SHADOW_ARTIFACTS entry; the loader would return None.
     assert "RUB4" not in sg.SHADOW_ARTIFACTS
     assert sg.shadow_artifact_path("RUB4", "LONG") is None
-    # kein RUB4-SHORT-Bein → Default-LIVE (nichts postet es)
+    # no RUB4-SHORT leg → default-LIVE (nothing posts it)
     assert sg.leg_status("RUB4", "SHORT") == sg.LIVE
-    # das ungegatete RUB3-LONG bleibt getrennt SHADOW
+    # the ungated RUB3-LONG remains separately SHADOW
     assert sg.leg_status("RUB3", "LONG") == sg.SHADOW
 
 

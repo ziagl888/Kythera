@@ -43,7 +43,7 @@ PUMP_EVENT_MIN_VOL_RATIO = 3.0
 PUMP_EVENT_MIN_ABS_PCHG_60S = 1.5
 
 # Optional — only needed by 6_housekeeping.py (leverage update).
-# Falls not set, überspringt Housekeeping den Leverage-Refresh.
+# If not set, housekeeping skips the leverage refresh.
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
 
@@ -98,9 +98,9 @@ CH_PATTERN_BR = _ch("CH_PATTERN_BR")
 CH_AI_SR = _ch("CH_AI_SR")
 CH_PAPER = _ch("CH_PAPER")
 CH_DISABLED = _ch("CH_DISABLED")
-# Gemeinsamer Channel der Research-Bots 30-33 (PEX1/FMR1/TRM1/FIF1 — Report 15
-# S6/S8/S10/S11). Ein Channel für alle vier: die neuen Ideen werden als Kohorte
-# beobachtet, Attribution läuft über den Modell-Tag in ai_signals.
+# Shared channel for research bots 30-33 (PEX1/FMR1/TRM1/FIF1 — report 15
+# S6/S8/S10/S11). One channel for all four: new ideas are observed as a cohort,
+# attribution runs via the model tag in ai_signals.
 CH_NEW_IDEAS = _ch("CH_NEW_IDEAS")
 # AIM2-TOPN high-conviction channel (T-2026-CU-9050-051): the "Top 1-3 des
 # Tages" stream is deliberately SEPARATE from the base AIM2 channel (CH_MASTER)
@@ -108,36 +108,36 @@ CH_NEW_IDEAS = _ch("CH_NEW_IDEAS")
 # channel forces shadow-only in 15_ai_master_bot.py — never silently falls back
 # onto the base AIM2 channel.
 CH_AIM2_TOPN = _ch("CH_AIM2_TOPN")
-# Shadow-Sichtbarkeits-Channel (T-2026-CU-9050-150): OPTIONALE reine Vorschau der
-# Shadow-Trades. Ungesetzt/0 = AUS (Default, rückwärtskompatibel — Shadow bleibt
-# DB-only). Ist er gesetzt, echot core.signal_post.post_shadow_ai_signal je Shadow-
-# Trade EINE bewusst NICHT-Cornix-parsebare Preview hierher — reine Sichtbarkeit.
-# Cornix hört laut REGIME_TRADING_CHANNEL_ID EXKLUSIV auf den Handels-Channel; dieser
-# hier ist ein Nicht-Handels-Channel (kein Cornix) → null Trade-Risiko. Nie den
-# Handels-Channel hier eintragen (Regel 4).
+# Shadow visibility channel (T-2026-CU-9050-150): OPTIONAL preview-only for
+# shadow trades. Unset/0 = OFF (default, backward compatible — shadow remains
+# DB-only). If set, core.signal_post.post_shadow_ai_signal echoes each shadow
+# trade with ONE deliberately NOT-Cornix-parseable preview — visibility only.
+# Cornix listens EXCLUSIVELY per REGIME_TRADING_CHANNEL_ID to the trading channel;
+# this one is a non-trading channel (no Cornix) → zero trade risk. Never enter
+# the trading channel here (rule 4).
 CH_SHADOW_TEST = _ch("CH_SHADOW_TEST")
-# Trailing-Close-Bot (Bot 40, T-2026-KYT-9050-042 Phase C): EIGENER Channel, in den
-# der Bot die 33 ausgewählten Beine spiegelt und per Trailing schließt. Michi hängt
-# Cornix selbst dran — der Channel ist der Trailing-Arm gegen den Hold-Arm der
-# bestehenden Fleet. Ungesetzt/0 ⇒ der Bot läuft, trackt und loggt, postet aber
-# nichts (Shadow) — zusammen mit TRAILING_BOT_LIVE_POSTING das doppelte Sicherheits-
-# netz gegen einen Live-Post, den niemand entschieden hat. NIE einen bestehenden
-# Handels-Channel hier eintragen: der Bot postet `Close <SYMBOL>`, und das wirkt
-# symbol-weit auf ALLE Trades des Channels (s. Kommentar bei _ch_override unten).
+# Trailing-close bot (bot 40, T-2026-KYT-9050-042 phase C): OWN channel into which
+# the bot mirrors the 33 selected legs and closes via trailing. Michi hooks Cornix
+# directly — the channel is the trailing arm against the hold arm of the
+# existing fleet. Unset/0 ⇒ the bot runs, tracks, and logs, but posts
+# nothing (shadow) — together with TRAILING_BOT_LIVE_POSTING the double safety
+# net against a live post nobody decided on. NEVER enter an existing
+# trading channel here: the bot posts `Close <SYMBOL>`, and that affects
+# symbol-wide ALL trades in the channel (see comment at _ch_override below).
 CH_TRAILING = _ch("CH_TRAILING")
 
 
-# Per-Bot-Override (Operator 2026-07-07): ungesetzt → Fallback auf den
-# Kohorten-Channel. Damit kann ein einzelner Bot (z.B. FMR2 mit eigenem
-# Close-Pfad — Cornix' "Close <SYMBOL>" trifft ALLE Trades des Symbols im
-# Channel) per .env auf einen eigenen Channel wandern, ohne Code-Deploy.
+# Per-bot override (operator 2026-07-07): unset → fallback to the
+# cohort channel. This lets a single bot (e.g. FMR2 with its own
+# close path — Cornix' "Close <SYMBOL>" affects ALL trades of the symbol in
+# the channel) move to its own channel via .env without code deploy.
 def _ch_override(name: str, fallback: int) -> int:
-    """Wie _ch(), aber mit Fallback NUR bei ungesetzter/leerer Variable.
+    """Like _ch(), but with fallback ONLY when variable is unset/empty.
 
-    Ein explizites `CH_X=0` muss 0 bleiben (die Bots erzwingen bei
-    TARGET_CHANNEL_ID == 0 Shadow-only) — `_ch(name) or fallback` würde die
-    repo-weite 0=disabled-Semantik schlucken und den Bot still auf den
-    Live-Kohorten-Channel zurückfallen lassen.
+    An explicit `CH_X=0` must stay 0 (bots enforce shadow-only when
+    TARGET_CHANNEL_ID == 0) — `_ch(name) or fallback` would swallow the
+    repo-wide 0=disabled semantics and silently fall the bot back to the
+    live cohort channel.
     """
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -162,10 +162,10 @@ CH_MAX1 = _ch_override("CH_MAX1", CH_MAIN)
 TELEGRAM_CHANNELS = {
     "Fast In And Out": CH_FAST_IN_OUT,
     "5 Percent": CH_5_PERCENT,
-    # "Main Channel" retired (T-2026-KYT-9050-020) → durch MAX2 ersetzt (SRA2-LONG-
-    # Trade coin-gefiltert nach CH_MAIN, 9_ai_sr_bot.py). Kein Detektor emittiert
-    # mehr die Strategie "Main Channel"; der Map-Eintrag wäre toter Code. CH_MAIN
-    # selbst bleibt (CH_MAX1-Fallback + MAX2-Ziel).
+    # "Main Channel" retired (T-2026-KYT-9050-020) → replaced by MAX2 (SRA2-LONG
+    # trade coin-filtered to CH_MAIN, 9_ai_sr_bot.py). No detector emits
+    # the "Main Channel" strategy anymore; the map entry would be dead code. CH_MAIN
+    # itself remains (CH_MAX1 fallback + MAX2 destination).
     "Support Resistance": CH_SUPPORT_RESISTANCE,
     "Volume Indicator": CH_VOLUME_INDICATOR,
     "Pattern Detector": CH_PATTERN_DETECTOR,

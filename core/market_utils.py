@@ -151,12 +151,12 @@ def is_trade_already_active(conn, coin: str, direction: str, strategy: str) -> b
 # days (T-2026-CU-9050-024). Guarded here so the contract fails loudly and
 # identically in every environment, not just on the live VPS.
 #
-# STAND 2026-08-02 (T-2026-KYT-9050-009): die Begründung oben ist überholt — die
-# Live-Spalte ist per information_schema inzwischen `character varying(50)`, der
-# ALTER aus P2.2 ist gelaufen. Der Wert bleibt trotzdem 10: ihn anzuheben ändert
-# die Cooldown-Keys auf dem Geld-Pfad (25_smc_ml_sniper fällt heute bei langen
-# Tags bewusst auf einen statischen Tag zurück) und ist damit ein
-# Operator-Entscheid, kein Aufräumen.
+# STATUS 2026-08-02 (T-2026-KYT-9050-009): the reasoning above is outdated — the
+# live column is now `character varying(50)` per information_schema, the
+# ALTER from P2.2 has run. The value stays 10 regardless: raising it changes
+# the cooldown keys on the money path (25_smc_ml_sniper today deliberately
+# falls back to a static tag for long tags) and is therefore an
+# operator decision, not cleanup.
 COOLDOWN_MODULE_MAX_LEN = 10
 
 
@@ -172,7 +172,7 @@ def _check_module_tag(module: str) -> None:
 def check_cooldown(conn, module: str, coin: str, direction: str, cd_hours: float) -> bool:
     """Returns True if the cooldown period has not yet elapsed (trade blocked).
 
-    Nutzt timezone-aware UTC. Falls die DB einen naiven Timestamp zurückgibt,
+    Uses timezone-aware UTC. If the DB returns a naive timestamp,
     it is interpreted as UTC (stored that way historically).
     """
     _check_module_tag(module)
@@ -196,7 +196,7 @@ def check_cooldown(conn, module: str, coin: str, direction: str, cd_hours: float
 def update_cooldown(conn, module: str, coin: str, direction: str, commit: bool = True) -> None:
     """Upserts the cooldown timestamp for this module/coin/direction.
 
-    commit=False lässt den Upsert in der offenen Transaktion des Callers
+    commit=False leaves the upsert in the caller's open transaction
     (P1.7: der Orchestrator committed Cooldown + Tracking + Outbox atomar).
     """
     _check_module_tag(module)
@@ -397,13 +397,13 @@ def find_support_resistance_zones(
     Identifies support and resistance zones from OHLCV data.
     Returns (support_zones, resistance_zones) as sorted lists of (price, count).
 
-    Algorithmus:
-    1. Betrachte nur High-Volume-Kerzen (> volume_multiplier × Median).
-    2. Für jeden passenden Preis: Wenn er nahe genug bei einer existierenden Zone
-       liegt (innerhalb zone_threshold × price_std), Counter dieser Zone erhöhen.
-       Sonst: neue Zone anlegen — aber nur, wenn sie weit genug von allen anderen
-       entfernt ist (min_distance), um Überlappung zu vermeiden.
-    3. Ergebnis: Zonen sortiert after Counter (häufigste zuerst = relevantester Support/Resistance).
+    Algorithm:
+    1. Only consider high-volume candles (> volume_multiplier × median).
+    2. For each matching price: if it lies close enough to an existing zone
+       (within zone_threshold × price_std), increment that zone's counter.
+       Otherwise: create a new zone — but only if it is far enough from all
+       others (min_distance), to avoid overlap.
+    3. Result: zones sorted by counter (most frequent first = most relevant support/resistance).
     """
     df_recent = df.iloc[-lookback_period:].copy() if len(df) >= lookback_period else df.copy()
 
@@ -427,16 +427,16 @@ def find_support_resistance_zones(
             if not above and price >= current_close:
                 continue
 
-            # 1. Passt der Preis zu einer existierenden Zone? → Counter erhöhen
+            # 1. Does the price match an existing zone? → increment counter
             matched = next((z for z in zones if abs(z - price) <= match_tolerance), None)
             if matched is not None:
                 zones[matched] += 1
                 continue
 
-            # 2. Keine passending Zone vorhanden. Neue Zone nur anlegen wenn sie
-            #    nicht zu nah an einer existierenden ist (verhindert
-            #    Überlappungen im "Grauzonen"-Bereich zwischen match_tolerance
-            #    und min_distance).
+            # 2. No matching zone found. Only create a new zone if it is
+            #    not too close to an existing one (prevents
+            #    overlaps in the "grey zone" area between match_tolerance
+            #    and min_distance).
             if any(abs(price - z) < min_distance for z in zones):
                 continue
 

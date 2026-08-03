@@ -1,22 +1,22 @@
 # backtest/test_retrain_model_id.py
-"""DB-freie Tests für den EPD-Generations-Tag am Retrainer (T-2026-KYT-9050-004).
+"""DB-free tests for the EPD generation tag on the retrainer (T-2026-KYT-9050-004).
 
-`run_epd` schrieb Tag und Dateinamen als Literale: `meta.model_id="EPD2"` und
-`epd2_model_{LONG,SHORT}.pkl`. Ein Retrain auf der NEUEN (post-P1.39) Feature-
-Definition darf beides nicht erben — harte Regel 6 verlangt einen neuen Tag, und
-der Dateiname muss mit ihm mitwandern, sonst legt die spätere Promotion das neue
-Artefakt in den Loader-Slot der alten Generation (der EPD3-SHORT-Vorfall vom
+`run_epd` wrote tag and filename as literals: `meta.model_id="EPD2"` and
+`epd2_model_{LONG,SHORT}.pkl`. A retrain on the NEW (post-P1.39) feature
+definition must not inherit either — hard rule 6 requires a new tag, and
+the filename must move with it, otherwise the later promotion puts the new
+artifact into the loader slot of the old generation (the EPD3-SHORT incident of
 2026-07-21, tools/promotion_guard.py).
 
-Gepinnt wird:
+Pinned here:
 
-  AK1  `artifact_slot` leitet den Dateinamen-Präfix aus dem Tag ab und stimmt mit
-       `tools.promotion_guard.tag_prefix` überein (eine Konvention, zwei Module)
-  AK2  Default `EPD2` lässt Tag, Dateinamen und Stats-Namen unverändert (No-op)
-  AK3  ein neuer Tag setzt meta.model_id UND den Dateinamen GEMEINSAM
-  AK4  die CLI weist ein `--model-id` an einer nicht verdrahteten Strategie ab und
-       akzeptiert keinen Tag, der kein Modell-Tag ist
-  AK5  der gewählte Tag EPD4 ist in allen Code-Registern frei (Regel 6)
+  AK1  `artifact_slot` derives the filename prefix from the tag and matches
+       `tools.promotion_guard.tag_prefix` (one convention, two modules)
+  AK2  default `EPD2` leaves tag, filename and stats name unchanged (no-op)
+  AK3  a new tag sets meta.model_id AND the filename TOGETHER
+  AK4  the CLI rejects a `--model-id` on a strategy that is not wired up and
+       accepts no tag that is not a model tag
+  AK5  the chosen tag EPD4 is free in every code register (rule 6)
 
 Run: pytest backtest/test_retrain_model_id.py -v
      python backtest/test_retrain_model_id.py
@@ -40,7 +40,7 @@ import tools.retrain_from_replay as R  # noqa: E402
 NEW_TAG = "EPD4"
 
 
-# ── AK1: eine Konvention, zwei Module ────────────────────────────────────────
+# ── AK1: one convention, two modules ─────────────────────────────────────────
 
 
 @pytest.mark.parametrize("tag", ["EPD2", "EPD4", "RUB3", "ATS2", "MIS2-8H", "MIS2-168H"])
@@ -54,19 +54,19 @@ def test_artifact_slot_normalises_case_and_dashes():
 
 
 def test_the_slot_of_the_new_tag_is_not_a_foreign_loader_slot():
-    """Der eigentliche Zweck: `epd4_model_LONG.pkl` darf keinen Slot belegen, den
-    eine andere Generation liest — sonst postet EIN Artefakt unter zwei Tags."""
+    """The actual point: `epd4_model_LONG.pkl` must not occupy a slot that
+    another generation reads — otherwise ONE artifact posts under two tags."""
     fname = f"{R.artifact_slot(NEW_TAG)}_model_LONG.pkl"
     assert pg.check_staging_filename(fname)[0] == pg.OK
     assert fname not in pg.slot_claims()
 
 
-# ── AK2/AK3: Tag und Dateiname wandern gemeinsam ─────────────────────────────
+# ── AK2/AK3: tag and filename move together ──────────────────────────────────
 
 
 class _Recorder:
-    """Fängt ab, WOHIN run_epd schreibt und WELCHEN Tag es in die meta legt,
-    ohne zu trainieren — das Training selbst prüfen die Retrain-Läufe."""
+    """Captures WHERE run_epd writes and WHICH tag it puts in the meta,
+    without training — the retrain runs themselves check the training."""
 
     def __init__(self):
         self.artifacts: list[str] = []
@@ -78,16 +78,16 @@ class _Recorder:
 
 
 def _run_epd_recorded(tmp_path, model_id=None):
-    """run_epd mit einem Mini-Datensatz und ohne echtes Training/IO."""
+    """run_epd with a mini dataset and without real training/IO."""
     rec = _Recorder()
     events = tmp_path / "events.jsonl"
     events.write_text("", encoding="utf-8")
 
     import pandas as pd
 
-    # Gross genug für die Mindestmengen von run_epd (>=600 gesamt, >=300 je
-    # Richtung) und lang genug, dass der 7d-Purge-Gap nicht-leere Slices lässt —
-    # genau die Bedingung, an der der Post-Cut-Datensatz dieses Tasks scheitert.
+    # Large enough for run_epd's minimum sizes (>=600 total, >=300 per
+    # direction) and long enough that the 7d purge gap leaves non-empty slices —
+    # exactly the condition on which this task's post-cut dataset fails.
     n = 2400
     df = pd.DataFrame(
         {
@@ -138,12 +138,12 @@ def test_a_new_tag_moves_meta_and_filename_together(tmp_path):
     assert meta_files == ["epd4_model_LONG_meta.json", "epd4_model_SHORT_meta.json"]
     assert {m["model_id"] for m in rec.metas} == {NEW_TAG}
     assert result["model_id"] == NEW_TAG
-    # Der Feature-Vertrag bleibt derselbe — es ist eine neue GENERATION, kein
-    # neues Modell-Design (harte Regel 7).
+    # The feature contract stays the same — it is a new GENERATION, not
+    # a new model design (hard rule 7).
     assert result["features"] == list(R.EPD2_FEATURES)
 
 
-# ── AK4: die CLI schluckt kein falsches Flag ─────────────────────────────────
+# ── AK4: the CLI does not swallow a wrong flag ────────────────────────────────
 
 
 def _main_with(argv):
@@ -161,25 +161,25 @@ def test_a_non_tag_model_id_is_refused():
     for bad in ("epd 4", "4EPD", "epd_4", ""):
         with pytest.raises(SystemExit) as e:
             _main_with(["--strategy", "epd", "--model-id", bad])
-        assert "Modell-Tag" in str(e.value), bad
+        assert "model tag" in str(e.value), bad
 
 
 def test_lowercase_model_id_is_normalised_to_the_register_casing(tmp_path):
-    """core/shadow_gate hält seine Keys UPPER — ein kleingeschriebener Tag in der
-    meta liefe am Lifecycle-Lookup vorbei und postete als Default-LIVE."""
+    """core/shadow_gate keeps its keys UPPER — a lowercase tag in the
+    meta would slip past the lifecycle lookup and post as default-LIVE."""
     rec, _, result = _run_epd_recorded(tmp_path, model_id="epd4")
     assert result["model_id"] == NEW_TAG
     assert {m["model_id"] for m in rec.metas} == {NEW_TAG}
     assert rec.artifacts == ["epd4_model_LONG.pkl", "epd4_model_SHORT.pkl"]
 
 
-# ── AK5: EPD4 ist frei (harte Regel 6) ───────────────────────────────────────
+# ── AK5: EPD4 is free (hard rule 6) ──────────────────────────────────────────
 
 
 def test_epd4_is_free_in_every_code_registry():
-    """EPD1 (Pre-Rename), EPD2 (Legacy-Direktpost) und EPD3 (Retrain-Challenger,
-    LONG live) sind vergeben. Kippt eine dieser Registrierungen, muss der Tag der
-    nächsten EPD-Generation neu gewählt werden — deshalb hier gepinnt."""
+    """EPD1 (pre-rename), EPD2 (legacy direct post) and EPD3 (retrain challenger,
+    LONG live) are taken. If any of these registrations flips, the tag of the
+    next EPD generation must be re-chosen — hence pinned here."""
     occupied = (
         set(variant_index.legacy_artifact_slots())
         | set(sg.SHADOW_ARTIFACTS)
@@ -187,11 +187,11 @@ def test_epd4_is_free_in_every_code_registry():
         | set(sg._RETIRED_TAGS)
     )
     epd_tags = {t for t in occupied if t.upper().startswith("EPD")}
-    assert epd_tags == {"EPD1", "EPD2", "EPD3"}, f"EPD-Tag-Belegung hat sich geändert: {sorted(epd_tags)}"
+    assert epd_tags == {"EPD1", "EPD2", "EPD3"}, f"EPD tag assignment has changed: {sorted(epd_tags)}"
     assert NEW_TAG not in occupied
-    # Default LIVE ist der Sicherheitsvertrag des Gates: ein unregistrierter Tag
-    # ist live, nicht shadow. Eine EPD4-Emission braucht daher VOR dem ersten
-    # Post eine explizite Zeile in _LIFECYCLE.
+    # Default LIVE is the gate's safety contract: an unregistered tag
+    # is live, not shadow. An EPD4 emission therefore needs an explicit line
+    # in _LIFECYCLE BEFORE the first post.
     assert sg.leg_status(NEW_TAG, "LONG") == sg.LIVE
 
 

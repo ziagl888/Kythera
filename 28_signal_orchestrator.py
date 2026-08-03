@@ -1,14 +1,14 @@
 # 28_signal_orchestrator.py
 """
-Signal-Orchestrator — Phase 3 des Regime-Orchestrators.
+Signal Orchestrator — Phase 3 of Regime Orchestrator.
 
-Läuft alle 500ms und:
-  1. Prüft telegram_outbox auf neue Bot-signals
-  2. Identifiziert Bot, parst Coin + Direction
-  3. Prüft Whitelist (4D oder Overall-Fallback bei Detektor-Ausfall)
-  4. Reicht whitelisted signals in REGIME_TRADING_CHANNEL_ID durch
-  5. Tracked Trades als ROM1 in ai_signals + orchestrator_open_trades
-  6. Prüft bei Regime-Wechsel auf zu schließende Trades → Close-Commands
+Runs every 500ms and:
+  1. Checks telegram_outbox for new bot signals
+  2. Identifies bot, parses coin + direction
+  3. Checks whitelist (4D or overall fallback on detector failure)
+  4. Forwards whitelisted signals to REGIME_TRADING_CHANNEL_ID
+  5. Tracks trades as ROM1 in ai_signals + orchestrator_open_trades
+  6. Checks for trades to close on regime change → close commands
 
 Watchdog: start_delay=175
 """
@@ -44,21 +44,21 @@ AUTO_CLOSE_ON_REGIME_CHANGE = True
 # closed. This changes live money-path behavior and starts an A/B experiment
 # (orchestrator_open_trades.regime_close_action REGIME_CHANGE_CLOSED vs
 # REGIME_CHANGE_TRAILED). Flipping it True is an operator decision
-# (OPUS-HANDOFF §6; Kythera doctrine "Default-off für Unbewiesenes").
+# (OPUS-HANDOFF §6; Kythera doctrine "default-off for unproven ideas").
 TRAIL_WINNERS_ON_REGIME_CHANGE = os.getenv("KYTHERA_REGIME_TRAIL_WINNERS", "0") == "1"
 # Minimum profit (direction-aware price move %) for a trade to count as a
 # "winner" worth protecting rather than closing. Mirrors the round-trip taker
 # fee floor (OUTCOME_MIN_PNL_PCT / 27_bot_regime_analyzer.V2_BREAK_EVEN_PNL_PCT):
 # below it a break-even SL would not lock a real non-loss, so we close instead.
 TRAIL_MIN_PROFIT_PCT = 0.1
-# FIX P2.28: 60s → 300s. Neuheit garantiert der id-Cursor (inkl. MAX(id)-Init
-# beim Start) — das Fenster ist nur noch die Staleness-Grenze. Bei 60s fielen
-# Signale schon raus, wenn ein einzelner Gating-Pass (S/R-Berechnung über
-# mehrere Rows) länger als eine Minute hing.
+# FIX P2.28: 60s → 300s. Novelty is guaranteed by the id-cursor (incl. MAX(id)-init
+# at startup) — the window is now only the staleness boundary. At 60s signals
+# already fell out if a single gating pass (S/R calculation over
+# multiple rows) took longer than a minute.
 NEW_SIGNAL_DETECTION_WINDOW_SEC = 300
 ORCHESTRATOR_MODULE_NAME = "ROM1"
-# Footer-Marker der eigenen ROM1-Messages — Single Source für den Message-
-# Builder UND die Self-Echo-Barriere, damit die beiden nie auseinanderdriften.
+# Footer marker for own ROM1 messages — single source for the message
+# builder AND the self-echo barrier so the two never drift apart.
 ROM1_SIGNATURE = "AI module ROM1"
 ORCHESTRATOR_COOLDOWN_HOURS = 4
 FALLBACK_MAX_DISTINCT_REGIMES_2H = 3
@@ -107,37 +107,37 @@ def _anchor_window_predicate(col: str, anchor: str) -> str:
 
 FALLBACK_MIN_WR = 50.0
 
-# Outcome-Klassifikation im Lifecycle-Sync: siehe Erläuterung in
-# 27_bot_regime_analyzer.py — gleiche Logik damit Win/Loss-Bestimmung konsistent ist.
+# Outcome classification in lifecycle sync: see explanation in
+# 27_bot_regime_analyzer.py — same logic so win/loss determination is consistent.
 OUTCOME_MIN_PNL_PCT = 0.1  # |pnl| <= 0.1% → neutral
 OUTCOME_MAX_ABS_PNL_PCT = 100.0  # |pnl| > 100% → neutral (Daten-Bug)
 
 BOT_IDENTIFICATION_PATTERNS = [
-    # Versionierungs-Regel (Operator 2026-07-06): Retrain-Generationen posten
-    # unter neuem Tag (MIS2, RUB2, BB2_4H, ...) — deshalb generationsoffene
-    # Patterns (\d+ statt literal 1), analog get_category im Market-Tracker.
-    # Ein Tag, das hier nicht matcht, wird als bot_unidentified HART
-    # unterdrückt (T-2026-CU-9050-026: BB2_4H wäre nie beim Whitelist-Check
-    # angekommen; gleiche Wurzel wie das offene RUB2-Attributions-Finding
-    # aus PR #9).
+    # Versioning rule (Operator 2026-07-06): retrain generations post
+    # under new tag (MIS2, RUB2, BB2_4H, ...) — hence generation-agnostic
+    # patterns (\d+ instead of literal 1), analogous to get_category in market tracker.
+    # A tag that doesn't match here is HARD suppressed as bot_unidentified
+    # (T-2026-CU-9050-026: BB2_4H would never reach the whitelist check;
+    # same root as the open RUB2 attribution finding
+    # from PR #9).
     r"\b(MIS\d+-\d+[Hh]_(?:pump|dump))\b",  # MIS1-8h_pump, most specific first
     r"\b(MIS\d+-\d+[Hh])\b",  # MIS1-8H, MIS2-72H
     r"\b((?:MIS|ATS|RUB|ATB|AIM|ABR|EPD|SRA)\d+)\b",  # RUB2, ABR2, ...
     # Quasimodo (24_quasimodo_bot.py): f"QM_{tf.upper()}" → QM_1H, QM_4H
-    # SMC-ML-Sniper (25_smc_ml_sniper.py): Artefakt-model_id → BB_1H, BB2_4H, TD2_4H
+    # SMC-ML-Sniper (25_smc_ml_sniper.py): artifact model_id → BB_1H, BB2_4H, TD2_4H
     # Pattern Detector (7_pattern_detector.py): f"BR{tf.upper()}" → BR1H, BR2H, BR4H, BR1D
     r"\b(QM\d*_\d+[HhDd]|BB\d*_\d+[HhDd]|TD\d*_\d+[HhDd]|BR\d+[HhDd])\b",
-    # Legacy-Fallback (alte QM/BB/TD Varianten, falls historische Outbox-entries
-    # noch existieren) — die aktuellen Bots nutzen diese Tags nicht mehr.
+    # Legacy fallback (old QM/BB/TD variants if historical outbox entries
+    # still exist) — the current bots no longer use these tags.
     r"\b(QM_BULL|QM_BEAR|BB_BULL|BB_BEAR|TD_LONG|TD_SHORT)\b",
     r"🧠\s*([A-Za-z0-9 ]+?)\s+Strategy",
 ]
 
 
 def _build_channel_fallback(pairs: Iterable[tuple[int, str]]) -> dict[int, str]:
-    """Maps channel id → bot name, dropping unset channels.
+    """Maps channel ID → bot name, dropping unset channels.
 
-    core.config._ch() returns 0 for an unset channel id. Without the filter every
+    core.config._ch() returns 0 for an unset channel ID. Without the filter every
     unset channel collapses onto the key 0 and the last entry silently wins, so a
     lookup for a disabled bot would resolve to an unrelated bot name.
     """
@@ -235,7 +235,7 @@ def identify_bot(msg: str, channel_id: int | None) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DETEKTOR-ZUVERLÄSSIGKEIT
+# DETECTOR RELIABILITY
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -397,10 +397,10 @@ def is_opposite_direction_open(conn, coin: str, new_direction: str) -> bool:
 
 
 def is_same_direction_open(conn, coin: str, direction: str) -> bool:
-    """FIX P2.26: True wenn bereits ein OPEN ROM1-Trade auf coin+direction läuft.
+    """FIX P2.26: True if an OPEN ROM1 trade already runs on coin+direction.
 
-    Ohne diesen Check stapelte ROM1 nach Ablauf des 4h-Cooldowns weitere
-    Positionen auf denselben Coin in dieselbe Richtung (Doppel-Exposure).
+    Without this check, ROM1 would stack additional positions on the same
+    coin in the same direction after the 4h cooldown expired (double exposure).
 
     The former 72h age bound is gone (T-2026-CU-9050-052): it was meant to
     decay corpse rows, but it also un-blocked genuinely live positions older
@@ -422,66 +422,66 @@ def is_same_direction_open(conn, coin: str, direction: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ROM1-TRADE-PARAMS (eigene Entry/SL/Target-Berechnung)
+# ROM1 TRADE PARAMS (own entry/SL/target calculation)
 # ─────────────────────────────────────────────────────────────────────────────
-# Der Orchestrator übernimmt nicht mehr die Werte des originalen Bot-Signals,
-# sondern berechnet Entry/SL/Targets selbst — mit derselben Logik wie die
-# AI-Bots (ATS1, ATB1, RUB1 etc.). Das entkoppelt ROM1 von den Original-Bots
-# und macht die Trades zu echten eigenen ROM1-Trades.
+# The orchestrator no longer adopts values from the original bot signal,
+# but calculates entry/SL/targets itself — using the same logic as the
+# AI bots (ATS1, ATB1, RUB1 etc.). This decouples ROM1 from the original bots
+# and makes the trades genuine ROM1 trades.
 #
-# Die Logik ist direkt aus 12_ai_ats_bot.py (Zeile 242-257) übernommen und
-# nutzt get_hvn_and_sr_levels() + ensure_min_tp_distance() aus core/trade_utils.
-# Siehe auch 14_ai_atb_bot.py, 13_ai_rub_bot.py — alle nutzen dasselbe Muster.
+# The logic is taken directly from 12_ai_ats_bot.py (lines 242-257) and
+# uses get_hvn_and_sr_levels() + ensure_min_tp_distance() from core/trade_utils.
+# See also 14_ai_atb_bot.py, 13_ai_rub_bot.py — all use the same pattern.
 
-ROM1_DESIRED_LEVERAGE = 20  # Gleicher Standard wie die AI-Bots
-ROM1_ENTRY2_OFFSET_PCT = 0.05  # 2. Entry 5% entfernt (AI-Bot-Standard)
-ROM1_SL_FALLBACK_OFFSET_PCT = 0.025  # Fallback-SL wenn keine echte Zone verfügbar
-ROM1_TP_MIN_DISTANCE_PCT = 0.05  # Mindestabstand letztes TP zum Entry
-ROM1_PUBLISHED_TARGETS = 3  # build_rom1_cornix_message postet TP1..TP3 (Cornix-Standard)
+ROM1_DESIRED_LEVERAGE = 20  # Same standard as the AI bots
+ROM1_ENTRY2_OFFSET_PCT = 0.05  # 2nd entry 5% away (AI bot standard)
+ROM1_SL_FALLBACK_OFFSET_PCT = 0.025  # Fallback SL when no real zone available
+ROM1_TP_MIN_DISTANCE_PCT = 0.05  # Minimum distance last TP to entry
+ROM1_PUBLISHED_TARGETS = 3  # build_rom1_cornix_message posts TP1..TP3 (Cornix standard)
 
 
 def _get_latest_price(conn, coin: str) -> float | None:
-    """Holt den letzten Close-Preis aus der 5m-Tabelle des Coins.
+    """Fetches the latest close price from the 5m table for the coin.
 
-    Gibt None zurück falls no data verfügbar sind (z.B. neu gelistetes Symbol).
+    Returns None if no data available (e.g., newly listed symbol).
     """
     try:
-        # core.candles: neuester 5m-Close, forming candle bewusst inkludiert
-        # (Live-Preis — contract 2: include_forming=True).
+        # core.candles: latest 5m close, forming candle deliberately included
+        # (live price — contract 2: include_forming=True).
         df = read_candles(conn, coin, "5m", limit=1, include_forming=True, columns=("open_time", "close"))
         if df.empty or df["close"].iloc[-1] is None:
             return None
         return float(df["close"].iloc[-1])
     except Exception as e:
-        logger.warning(f"Konnte Preis für {coin} nicht laden: {e}")
+        logger.warning(f"Could not load price for {coin}: {e}")
         return None
 
 
 def compute_rom1_trade_params(conn, coin: str, direction: str, price=None, df=None) -> dict | None:
-    """Berechnet Entry/SL/Targets für einen ROM1-Trade — unabhängig vom
-    ursprünglichen Bot-Signal.
+    """Computes entry/SL/targets for a ROM1 trade — independent of the
+    original bot signal.
 
-    Nutzt dieselbe Logik wie die AI-Bots (siehe 12_ai_ats_bot.py):
-      - Entry1 = aktueller Marktpreis (letzter 5m-Close)
-      - Entry2 = 5% vom Entry1 entfernt (weg vom Trade für Pullback-Entry)
-      - SL = nächstliegende S/R-Zone außerhalb Entry2, sonst Entry2 × (1 ∓ 2.5%)
-      - Targets = echte S/R-Zonen jenseits Entry1, gecappt durch ensure_min_tp_distance
+    Uses the same logic as the AI bots (see 12_ai_ats_bot.py):
+      - Entry1 = current market price (latest 5m close)
+      - Entry2 = 5% away from Entry1 (away from trade for pullback entry)
+      - SL = nearest S/R zone outside Entry2, else Entry2 × (1 ∓ 2.5%)
+      - Targets = real S/R zones beyond Entry1, capped by ensure_min_tp_distance
 
-    `price`/`df` (optional, beide zusammen): As-of-Muster wie
-    `get_hvn_and_sr_levels(df=...)` und `calculate_smart_targets(df=...)` (P0.10).
-    Werden sie übergeben, findet KEIN DB-Zugriff statt: `price` ersetzt den
-    Live-CMP, `df` ist das chronologisch aufsteigende 1h-Fenster (~95 Tage,
-    high/low/close) BIS zur Entscheidungskerze. Der ROM1-Counterfactual-Scorer
-    (tools/rom1_counterfactual.py) spielt so exakt diese Geometrie auf
-    historischen Fenstern ab — eine Quelle, kein Copy-Paste-Skew (X-R1).
+    `price`/`df` (optional, both together): as-of pattern like
+    `get_hvn_and_sr_levels(df=...)` and `calculate_smart_targets(df=...)` (P0.10).
+    When passed, NO DB access occurs: `price` replaces the live CMP,
+    `df` is the chronologically ascending 1h window (~95 days,
+    high/low/close) UP TO the decision candle. The ROM1 counterfactual scorer
+    (tools/rom1_counterfactual.py) plays back exactly this geometry on
+    historical windows — one source, no copy-paste skew (X-R1).
 
-    Returns None falls Preis not available ist oder Zonen-Lookup versagt.
-    Sonst dict mit:
-      entry1, entry2, sl, targets (list), leverage (str, z.B. "20x")
+    Returns None if price not available or zone lookup fails.
+    Otherwise dict with:
+      entry1, entry2, sl, targets (list), leverage (str, e.g. "20x")
     """
     current_price = price if price is not None else _get_latest_price(conn, coin)
     if current_price is None or current_price <= 0:
-        logger.warning(f"ROM1: Kein Preis für {coin}, skipping Trade-Berechnung")
+        logger.warning(f"ROM1: No price for {coin}, skipping trade calculation")
         return None
 
     is_long = direction == "LONG"
@@ -495,10 +495,10 @@ def compute_rom1_trade_params(conn, coin: str, direction: str, price=None, df=No
     try:
         supps, resis = get_hvn_and_sr_levels(conn, coin, current_price, df=df)
     except Exception as e:
-        logger.warning(f"ROM1: S/R-Lookup für {coin} fehlgeschlagen: {e}")
+        logger.warning(f"ROM1: S/R lookup for {coin} failed: {e}")
         return None
 
-    # SL- und Target-Kandidaten exakt after ATS1-Muster
+    # SL and target candidates exactly per ATS1 pattern
     if is_long:
         below_entry2 = [x for x in supps if x < entry2 * 0.99]
         sl = max(below_entry2) if below_entry2 else entry2 * (1 - ROM1_SL_FALLBACK_OFFSET_PCT)
@@ -511,21 +511,21 @@ def compute_rom1_trade_params(conn, coin: str, direction: str, price=None, df=No
             reverse=True,
         )
 
-    # FIX P2.27 (Audit, Step 2 belegt: SL-Distanz p90=17,9%, max 65%): Die nächste
-    # S/R-Zone kann beliebig weit weg liegen. Gleicher 15%-Cap wie
-    # calculate_smart_targets — als Risiko-Geometrie-Bound bewusst beibehalten,
-    # unabhängig vom Margin-Modus (Cross-Margin-Entscheid s.u.).
+    # FIX P2.27 (Audit, Step 2 proves: SL distance p90=17.9%, max 65%): The nearest
+    # S/R zone can be arbitrarily far away. Same 15% cap as
+    # calculate_smart_targets — deliberately retained as risk geometry bound,
+    # independent of margin mode (cross-margin decision below).
     ROM1_MAX_SL_DIST_PCT = 0.15
     if is_long:
         sl = max(sl, entry2 * (1 - ROM1_MAX_SL_DIST_PCT))
     else:
         sl = min(sl, entry2 * (1 + ROM1_MAX_SL_DIST_PCT))
 
-    # Bis zu 20 Targets (wie die AI-Bots), gecappt durch ensure_min_tp_distance
+    # Up to 20 targets (like the AI bots), capped by ensure_min_tp_distance
     targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=ROM1_TP_MIN_DISTANCE_PCT)
 
     if not targets:
-        logger.warning(f"ROM1: Keine validen Targets für {coin} {direction}")
+        logger.warning(f"ROM1: No valid targets for {coin} {direction}")
         return None
 
     # ROM1 trades run in CROSS margin (see "Margin: Cross" in
@@ -550,16 +550,16 @@ def build_rom1_cornix_message(
     params: dict,
     trigger_bot: str | None = None,
 ) -> str:
-    """Baut die exakte Cornix-Plaintext-Message aus ROM1-Parametern.
+    """Builds the exact Cornix plaintext message from ROM1 parameters.
 
-    Format exakt wie bei den AI-Bots (siehe 12_ai_ats_bot.py Zeile 261-265),
-    damit Cornix die Message beim Parsen genauso versteht wie die Original-signals.
+    Format exactly as for the AI bots (see 12_ai_ats_bot.py lines 261-265),
+    so Cornix parses the message the same way as the original signals.
 
     Args:
-        trigger_bot: Optional, Name des Bots der den Trade ausgelöst hat
-            (z.B. "MIS1-8h"). Wird in einer separaten Zeile after dem Footer
-            ergänzt damit die Info bei Downstream-Tools und Lesern erhalten
-            bleibt. Cornix parsed das Feld nicht und ignoriert es.
+        trigger_bot: Optional, name of the bot that triggered the trade
+            (e.g. "MIS1-8h"). Added on a separate line after the footer
+            so the info stays visible for downstream tools and readers.
+            Cornix does not parse this field and ignores it.
     """
     lines = [
         f"📈 Signal for {coin} 📈",
@@ -569,32 +569,32 @@ def build_rom1_cornix_message(
         f"🏦 CMP Entry: $ {params['entry1']:.8f}",
         f"🏦 Entry 2: $ {params['entry2']:.8f}",
     ]
-    # Cornix nimmt nur die ersten 3 TPs wahr (Standard) — wir posten auch nur 3.
-    # Die restlichen Targets (bis zu 20) stehen in ai_signals für den Monitor.
+    # Cornix only perceives the first 3 TPs (standard) — we also only post 3.
+    # The remaining targets (up to 20) are in ai_signals for the monitor.
     for i, t in enumerate(params["targets"][:ROM1_PUBLISHED_TARGETS], start=1):
         lines.append(f"💰 TP{i}: $ {t:.8f}")
     lines.append(f"💸 Stop Loss: $ {params['sl']:.8f}")
     lines.append(f"🧠 Trade idea generated by {ROM1_SIGNATURE} V1")
     if trigger_bot:
-        # Trigger-Info als eigene Zeile — bleibt für Leser sichtbar und
-        # wird auch in orchestrator_open_trades unter bot_name saved.
+        # Trigger info as own line — stays visible for readers and
+        # is also saved in orchestrator_open_trades under bot_name.
         lines.append(f"📡 Triggered by: {trigger_bot}")
     return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ROM1-TRACKING
+# ROM1 TRACKING
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def insert_rom1_signal(conn, coin: str, direction: str, params: dict, commit: bool = True) -> None:
     """Inserts a ROM1 entry into ai_signals for lifecycle tracking.
 
-    Nimmt jetzt die ROM1-eigenen Trade-Params (aus compute_rom1_trade_params),
-    nicht mehr die Werte des Original-Signals.
+    Now takes ROM1's own trade params (from compute_rom1_trade_params),
+    no longer the values from the original signal.
 
-    commit=False lässt den Insert in der offenen Transaktion des Callers —
-    signal_gating_pass committed Tracking + Outbox-Post atomar zusammen.
+    commit=False leaves the insert in the caller's open transaction —
+    signal_gating_pass commits tracking + outbox post atomically together.
 
     P1.8 follow-up (T-2026-CU-9050-052): open_time is set explicitly as naive
     UTC. The DB default now() stamps session-local time (Europe/Bucharest)
@@ -641,7 +641,7 @@ def insert_orchestrator_open_trade(
 ) -> None:
     """Records a forwarded trade in orchestrator_open_trades.
 
-    commit=False: siehe insert_rom1_signal — atomarer Forward-Commit im Caller.
+    commit=False: see insert_rom1_signal — atomic forward commit in caller.
 
     wl_reason (B8) persists WHICH gate path let the signal through — a real 4D
     cell, `no_whitelist_entry`, or one of the fallback paths. Without it the
@@ -691,7 +691,7 @@ def log_suppressed(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SIGNAL-GATING
+# SIGNAL GATING
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -704,11 +704,11 @@ async def signal_gating_pass(conn) -> None:
 
     from core.config import REGIME_TRADING_CHANNEL_ID
 
-    # Cursor beim Prozessstart auf MAX(id) setzen — ohne das würde nach einem
-    # Restart (Cursor = 0) das ganze Detection-Fenster erneut durchlaufen und
-    # bereits gegatete Rows bekämen Duplikat-Einträge in orchestrator_suppressed_signals
-    # (verzerrt die Suppression-Statistik). Signale aus der Downtime sind damit
-    # bewusst übersprungen — wie vorher auch (sent=TRUE-Filter bzw. P2.28).
+    # Set cursor to MAX(id) at process start — without this, after a
+    # restart (cursor = 0) the entire detection window would be re-scanned and
+    # already gated rows would get duplicate entries in orchestrator_suppressed_signals
+    # (skewing suppression stats). Signals from downtime are thus
+    # deliberately skipped — as before too (sent=TRUE filter or P2.28).
     if not _outbox_cursor_initialized:
         with conn.cursor() as cur:
             cur.execute("SELECT COALESCE(MAX(id), 0) FROM telegram_outbox")
@@ -719,13 +719,13 @@ async def signal_gating_pass(conn) -> None:
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now_utc - timedelta(seconds=NEW_SIGNAL_DETECTION_WINDOW_SEC)
 
-    # FIX P0.3: channel_id-Filter — eigene ROM1-Posts landen im selben Outbox-
-    # Table und matchen die Bot-Patterns ("Triggered by: MIS1-8h") → Self-Echo
-    # durch die ganze Pipeline. Der Trading-Channel wird deshalb hart
-    # ausgeschlossen.
-    # FIX P1.6: kein sent/failed-Filter mehr — der Dispatcher racet gegen diesen
-    # Scan und markiert Signale zwischen zwei Pässen als sent → sie fielen aus
-    # dem SELECT und wurden nie gegated. Neuheit garantiert der id-Cursor.
+    # FIX P0.3: channel_id filter — own ROM1 posts land in the same outbox
+    # table and match the bot patterns ("Triggered by: MIS1-8h") → self-echo
+    # through the entire pipeline. The trading channel is therefore
+    # hard excluded.
+    # FIX P1.6: no sent/failed filter anymore — the dispatcher races against this
+    # scan and marks signals between two passes as sent → they fell out
+    # of the SELECT and were never gated. Novelty is guaranteed by the id-cursor.
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -745,17 +745,17 @@ async def signal_gating_pass(conn) -> None:
         return
 
     for outbox_id, channel_id, message in rows:
-        # Per-Row-Isolation: eine kaputte Row darf weder die restlichen Rows
-        # des Passes abreissen noch (weil der Cursor sonst nie advanced) alle
-        # 500ms erneut crashen und den Signalstrom blockieren.
+        # Per-row isolation: one broken row must neither tear down the rest
+        # of the pass, nor (since the cursor would otherwise never advance)
+        # crash again every 500ms and block the signal stream.
         try:
             _gate_and_forward_row(conn, outbox_id, channel_id, message, REGIME_TRADING_CHANNEL_ID)
         except Exception as row_err:
-            logger.error(f"Gating-Fehler bei Outbox #{outbox_id}: {row_err}", exc_info=True)
+            logger.error(f"Gating error at outbox #{outbox_id}: {row_err}", exc_info=True)
             try:
                 conn.rollback()
             except Exception:
-                break  # Connection unbrauchbar — Pass abbrechen, nächster Loop-Tick holt frische
+                break  # Connection unusable — abort the pass, the next loop tick gets a fresh one
         finally:
             _last_seen_outbox_id = max(_last_seen_outbox_id, outbox_id)
 
@@ -763,9 +763,9 @@ async def signal_gating_pass(conn) -> None:
 def _gate_and_forward_row(
     conn, outbox_id: int, channel_id: int | None, message: str, regime_trading_channel_id: int
 ) -> None:
-    """Gated eine einzelne Outbox-Row und forwarded sie ggf. als ROM1-Trade.
+    """Gates a single outbox row and forwards it as a ROM1 trade if applicable.
 
-    Wird pro Row in einem eigenen try/except aufgerufen (siehe signal_gating_pass).
+    Called per row in its own try/except (see signal_gating_pass).
     """
     # ── Parse signal ──────────────────────────────────────────────────────
     parsed = parse_cornix_signal(message or "")
@@ -775,23 +775,23 @@ def _gate_and_forward_row(
     coin = parsed["coin"]
     direction = parsed["direction"]
 
-    # FIX P0.3 (zweite Barriere zum Channel-Filter im SELECT): eigene
-    # ROM1-Messages hart verwerfen, egal aus welchem Channel sie kommen.
+    # FIX P0.3 (second barrier to channel filter in SELECT): own
+    # ROM1 messages hard rejected, regardless of which channel they come from.
     if ROM1_SIGNATURE in message:
         return
 
     # ── Identify bot ──────────────────────────────────────────────────────
     bot_name = identify_bot(message, channel_id)
     if bot_name is None:
-        logger.warning(f"Bot nicht identifizierbar für Outbox #{outbox_id}: {message[:80]!r}")
+        logger.warning(f"Bot not identifiable for outbox #{outbox_id}: {message[:80]!r}")
         log_suppressed(conn, None, coin, direction, "bot_unidentified", outbox_id)
         return
 
-    # FIX P0.4: Whitelist-/Performance-Keys sind pretty_name()-normalisiert
-    # (27_bot_regime_analyzer schreibt "MIS1-8h"/"FastInOut"), identify_bot
-    # liefert Roh-Namen ("MIS1-8H"/"Fast In And Out") → ohne Normalisierung
-    # fand der case-sensitive Lookup NIE etwas und jedes Signal lief als
-    # "no_whitelist_entry" ungefiltert durch. pretty_name ist idempotent.
+    # FIX P0.4: whitelist/performance keys are pretty_name()-normalised
+    # (27_bot_regime_analyzer writes "MIS1-8h"/"FastInOut"), identify_bot
+    # returns raw names ("MIS1-8H"/"Fast In And Out") → without normalisation
+    # the case-sensitive lookup never found anything and every signal ran as
+    # "no_whitelist_entry" unfiltered. pretty_name is idempotent.
     bot_name = pretty_name(bot_name)
 
     # ── Whitelist check ───────────────────────────────────────────────────
@@ -816,14 +816,14 @@ def _gate_and_forward_row(
         log_suppressed(conn, bot_name, coin, direction, "same_direction_open", outbox_id)
         return
 
-    # ── ALL CHECKS PASSED → ROM1 BERECHNET EIGENEN TRADE ────────────────
-    # Der Orchestrator übernimmt NICHT mehr die Werte des Original-Signals.
-    # Stattdessen nutzt er dieselbe Logik wie die AI-Bots und berechnet
-    # Entry/SL/Targets selbst — basierend auf aktuellem Preis und echten
-    # S/R-Zonen aus get_hvn_and_sr_levels().
+    # ── ALL CHECKS PASSED → ROM1 COMPUTES OWN TRADE ────────────────
+    # The orchestrator no longer adopts values from the original signal.
+    # Instead, it uses the same logic as the AI bots and computes
+    # entry/SL/targets itself — based on current price and real
+    # S/R zones from get_hvn_and_sr_levels().
     rom1_params = compute_rom1_trade_params(conn, coin, direction)
     if rom1_params is None:
-        # Preis not available oder S/R-Lookup fehlgeschlagen → nicht posten
+        # Price not available or S/R lookup failed → don't post
         log_suppressed(conn, bot_name, coin, direction, "rom1_params_unavailable", outbox_id)
         return
 
@@ -831,25 +831,25 @@ def _gate_and_forward_row(
     cur_regime = state[0] if state else None
     cur_alt = state[1] if state else None
 
-    # ROM1 baut seine eigene Cornix-Message aus den berechneten Params.
-    # trigger_bot zeigt im Signal-Text welcher Original-Bot den Trade
-    # ausgelöst hat — Info bleibt für Leser und Downstream-Analytics erhalten.
+    # ROM1 builds its own Cornix message from the computed params.
+    # trigger_bot shows in the signal text which original bot triggered the trade
+    # — info stays visible for readers and downstream analytics.
     rom1_message = build_rom1_cornix_message(coin, direction, rom1_params, trigger_bot=bot_name)
 
-    # FIX P0.3/P1.7: Cooldown, Tracking (ai_signals + orchestrator_open_trades)
-    # und der Outbox-Post in EINER Transaktion auf derselben Connection, mit
-    # dem Outbox-Insert als letztem Write — damit gibt es weder "Cornix-Trade
-    # ohne Tracking" (alter Zustand, Send zuerst) noch "Phantom-Tracking/
-    # Cooldown ohne Post". Ein Doppel-Post bei Rollback droht nicht: der
-    # Cursor advanced pro Row im finally (signal_gating_pass) und wird beim
-    # Prozess-Restart auf MAX(id) initialisiert.
+    # FIX P0.3/P1.7: cooldown, tracking (ai_signals + orchestrator_open_trades)
+    # and the outbox post in ONE transaction on the same connection, with
+    # the outbox insert as the last write — so there is neither "Cornix trade
+    # without tracking" (old state, send first) nor "phantom tracking/
+    # cooldown without post". No double-post on rollback: the
+    # cursor advances per row in finally (signal_gating_pass) and is reset to
+    # MAX(id) at process restart.
     update_cooldown(conn, ORCHESTRATOR_MODULE_NAME, coin, direction, commit=False)
 
-    # ROM1-Tracking in ai_signals (wird vom 8_ai_trade_monitor aufgegriffen)
+    # ROM1 tracking in ai_signals (picked up by 8_ai_trade_monitor)
     insert_rom1_signal(conn, coin, direction, rom1_params, commit=False)
 
-    # Orchestrator open trade — nutzt jetzt auch den ROM1-Entry, nicht mehr den
-    # originalen Entry aus dem parsed Signal
+    # Orchestrator open trade — now also uses the ROM1 entry, no longer the
+    # original entry from the parsed signal
     insert_orchestrator_open_trade(
         conn,
         coin,
@@ -863,9 +863,9 @@ def _gate_and_forward_row(
         commit=False,
     )
 
-    # Outbox-Insert bewusst auf `conn` statt via send_telegram() (das eine
-    # eigene Connection + eigenen Commit nutzt) — nur so ist der Post Teil
-    # derselben Transaktion wie das Tracking.
+    # Outbox insert deliberately on `conn` rather than via send_telegram() (which
+    # uses its own connection + commit) — only this way is the post part of
+    # the same transaction as the tracking.
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
@@ -874,7 +874,7 @@ def _gate_and_forward_row(
     conn.commit()
 
     logger.info(
-        f"✅ ROM1-Trade gepostet: {coin} {direction} @ {rom1_params['entry1']:.6f} "
+        f"✅ ROM1 trade posted: {coin} {direction} @ {rom1_params['entry1']:.6f} "
         f"(SL {rom1_params['sl']:.6f}, {len(rom1_params['targets'])} TPs) "
         f"[Trigger: {bot_name}, Regime: {cur_regime}/{cur_alt}]"
     )
@@ -896,7 +896,7 @@ def mark_orchestrator_trade_closed(
 
     regime_close_action (T-2026-CU-9050-049): optional A/B arm tag written
     atomically with the close ('REGIME_CHANGE_CLOSED' for a regime-change
-    market-close). When None the column is left untouched — so the lifecycle-
+    market-close). When None the column is left untouched — so the lifecycle
     sync's final close of a previously-TRAILED trade does NOT overwrite its
     'REGIME_CHANGE_TRAILED' tag (the cohort marker must survive to the real exit).
     """
@@ -961,9 +961,9 @@ def build_rom1_sl_update_message(coin: str, new_sl: float) -> str:
     block, which this single-line command never carries — test_signal_orchestrator
     asserts parse_cornix_signal() returns None for this message.
 
-    The exact keyword is operator-owned (Michi, T-2026-CU-9050-049: symbol-
+    The exact keyword is operator-owned (Michi, T-2026-CU-9050-049: symbol
     addressed, like Close). Kept as a single builder so the wire format has one
-    place to change if the Cornix config is retuned.
+    place to change if the Cornix configuration is retuned.
     """
     return f"SL {coin} {new_sl:.8f}"
 
@@ -1052,19 +1052,19 @@ def _compute_trailed_sl(
 
 
 def _get_last_close_price(conn, coin: str, fallback: float | None = None) -> float | None:
-    """Holt den letzten 5m-Close-Preis des Coins, mit Entry-Fallback.
+    """Fetches the latest 5m close price for the coin, with entry fallback.
 
-    Wird beim Regime-Wechsel-Close genutzt um einen sinnvollen Close-Preis
-    zu haben, auch wenn der Trade gerade nicht an einem SL/TP-Level steht.
+    Used on regime-change close to have a sensible close price,
+    even if the trade is not currently at an SL/TP level.
     """
     try:
         with conn.cursor() as cur:
             cur.execute("SAVEPOINT sp_get_close")
             try:
-                # core.candles: neuester 5m-Close, forming candle bewusst inkludiert
-                # (Preis-Read — contract 2: include_forming=True). read_candles öffnet
-                # einen eigenen Cursor auf derselben Connection; der SAVEPOINT schützt
-                # die Transaktion weiterhin bei fehlender Tabelle.
+                # core.candles: latest 5m close, forming candle deliberately included
+                # (price read — contract 2: include_forming=True). read_candles opens
+                # its own cursor on the same connection; the SAVEPOINT protects
+                # the transaction if the table is missing.
                 df = read_candles(conn, coin, "5m", limit=1, include_forming=True, columns=("open_time", "close"))
                 cur.execute("RELEASE SAVEPOINT sp_get_close")
                 if not df.empty and df["close"].iloc[-1] is not None:
@@ -1077,54 +1077,52 @@ def _get_last_close_price(conn, coin: str, fallback: float | None = None) -> flo
 
 
 def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dict:
-    """Schließt die offenen ROM1-Trades für coin+direction wegen Regime-Wechsel.
+    """Closes the open ROM1 trades for coin+direction due to regime change.
 
-    Findet offene ROM1-entries in ai_signals für das angegebene
-    coin+direction und verschiebt sie in closed_ai_signals mit
-    status-Marker "CLOSED_REGIME_CHANGE". Wird vom Regime-Wechsel-
-    Handler aufgerufen afterdem der Close-Command an Cornix gegangen ist.
+    Finds open ROM1 entries in ai_signals for the specified
+    coin+direction and moves them to closed_ai_signals with
+    status marker "CLOSED_REGIME_CHANGE". Called by the regime-change
+    handler after the close command has been sent to Cornix.
 
-    FIX P1.9: Vorher wurden ALLE offenen Trades aller Bots auf coin+direction
-    geschlossen (kein model-/strategy-Filter) — fremde Verluste wurden als
-    neutral zensiert und die Whitelist-Winrates nach oben gebiast. Der
-    Close-Command geht nur an den ROM1-Trading-Channel, also dürfen auch nur
-    die orchestrator-eigenen Rows (model='ROM1') geschlossen werden. Der
-    active_trades_master-Block ist raus — ROM1 schreibt nie dorthin, dort
-    konnten nur Fremd-Trades getroffen werden.
+    FIX P1.9: Previously, ALL open trades of all bots on coin+direction
+    were closed (no model/strategy filter) — foreign losses were censored as
+    neutral and whitelist win rates biased upward. The close command only
+    goes to the ROM1 trading channel, so only the orchestrator's own rows
+    (model='ROM1') may be closed. The active_trades_master block is gone —
+    ROM1 never writes there; only foreign trades could be hit there.
 
-    Warum nicht erst den Monitor warten lassen?
-    - Cornix schließt die Binance-Position JETZT
-    - Der Monitor würde den Trade erst schließen wenn sein eigener
-      SL/TP erreicht wird — das kann Stunden/Tage dauern
-    - In der Zwischenzeit würde der Trade als "still open" in der
-      Statistik erscheinen und die WR verzerren
+    Why not wait for the monitor?
+    - Cornix closes the Binance position NOW
+    - The monitor would only close the trade when its own
+      SL/TP is reached — that can take hours/days
+    - In the meantime the trade would appear as "still open" in the
+      statistics and skew the WR
 
-    Classification (B9-Zensur-Korrektur, T-2026-CU-9050-048): Der
-    "CLOSED_REGIME_CHANGE"-Marker wird von Market-Tracker, Analyzer und
-    Orchestrator-Outcome-Classifier mit seinem REALEN PnL zum Close-Zeitpunkt
-    als Win/Loss gewertet (vorher pauschal NEUTRAL — das zensierte genau die
-    per Auto-Close realisierten Verluste und biaste die ROM1-WR nach oben,
-    Report 16 B9). Der Auto-Close ist der Exit des Trades, nicht ein externes
-    Housekeeping-Event.
+    Classification (B9 censorship fix, T-2026-CU-9050-048): The
+    "CLOSED_REGIME_CHANGE" marker is valued as win/loss by market tracker, analyser and
+    orchestrator outcome classifier with its REAL PnL at close time
+    (previously flat NEUTRAL — this censored exactly the losses realised
+    by auto-close and biased ROM1 WR upward, Report 16 B9). Auto-close is
+    the trade's exit, not an external housekeeping event.
 
     Returns:
-        dict mit 'ai_closed' und 'classic_closed' (Anzahl der geschlossenen)
+        dict with 'ai_closed' and 'classic_closed' (number of closed)
     """
     result = {"ai_closed": 0, "classic_closed": 0}
     now = datetime.now(timezone.utc)
 
-    # ── AI-Trades (ai_signals) ─────────────────────────────────────────────
-    # FIX P1.9: nur die ROM1-Kopie des Orchestrators selbst — fremde
-    # AI-Trades bleiben offen und werden von ihren eigenen Monitoren bewertet.
+    # ── AI trades (ai_signals) ─────────────────────────────────────────────
+    # FIX P1.9: only the orchestrator's ROM1 copy — foreign
+    # AI trades stay open and are judged by their own monitors.
     #
-    # T-2026-CU-9050-116: targets + lev werden mitgeholt und beim Close nach
-    # closed_ai_signals durchgereicht — der Realized-PnL-Report (T-115) ist
-    # exact-only; ohne die beiden Spalten blieben ROM1-Regime-Auto-Closes
-    # dauerhaft unsichtbar (Operator: "rom trades sollten auch drinnen sein").
-    # Deterministische Spalten-Probe statt Exception-Fallback: die Spalten
-    # legt Bot 8 beim Boot an — ein Bot-28-Restart VOR der Bot-8-Migration
-    # darf den Regime-Close nicht lahmlegen, er läuft dann im Legacy-Format
-    # (Trade wird geschlossen, Row bleibt ohne targets/lev → Report-exclude).
+    # T-2026-CU-9050-116: targets + lev are fetched and passed through to
+    # closed_ai_signals at close — the realised PnL report (T-115) is
+    # exact-only; without the two columns, ROM1 regime auto-closes
+    # remain permanently invisible (operator: "rom trades should be in there too").
+    # Deterministic column probe instead of exception fallback: the columns
+    # are set by bot 8 at boot — a bot-28 restart BEFORE bot-8 migration
+    # must not disable regime close; it then runs in legacy format
+    # (trade is closed, row remains without targets/lev → report-exclude).
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -1144,7 +1142,7 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
         conn.rollback()
         have_pnl_cols = False
     if not have_pnl_cols:
-        logger.warning("Regime-Close: targets/lev-Spalten fehlen noch (Bot-8-Migration ausstehend) — Legacy-Close.")
+        logger.warning("Regime-close: targets/lev columns still missing (bot-8 migration pending) — legacy close.")
 
     lev_select = "lev" if have_pnl_cols else "NULL AS lev"
     try:
@@ -1160,7 +1158,7 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
             )
             ai_rows = cur.fetchall()
     except Exception as e:
-        logger.warning(f"Regime-Close: ai_signals-Query fehlgeschlagen ({coin}): {e}")
+        logger.warning(f"Regime-close: ai_signals query failed ({coin}): {e}")
         conn.rollback()
         ai_rows = []
 
@@ -1169,20 +1167,20 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
         entry = float(entry1) if entry1 is not None else (float(price) if price is not None else 0.0)
         close_price = _get_last_close_price(conn, coin, fallback=entry)
         if close_price is None:
-            close_price = entry  # letzter Fallback
+            close_price = entry  # last fallback
 
-        # Publizierte Targets normalisieren (json-Spalte kommt als Liste oder
-        # String); korrupter Inhalt → NULL, der Report lässt die Row dann
-        # exact-only aus, der Close selbst geht durch (wie Bot 8).
+        # Normalise published targets (json column comes as list or
+        # string); corrupt content → NULL, the report then excludes the row
+        # from exact-only, the close itself proceeds (like bot 8).
         try:
             if isinstance(targets_data, str):
                 targets_data = json.loads(targets_data)
             targets_json = json.dumps([float(t) for t in targets_data]) if targets_data else None
         except (TypeError, ValueError):
             targets_json = None
-        # lev: von Bot 8 beim First-Poll gestempelt (T-115). Fallback für
-        # Rows aus der Zeit vor dem Stempel: ROM1 postet immer den
-        # 20x-Standard-Cap (ROM1_DESIRED_LEVERAGE, Operator 2026-07-12).
+        # lev: stamped by bot 8 at first poll (T-115). Fallback for
+        # rows from before stamping: ROM1 always posts the
+        # 20x standard cap (ROM1_DESIRED_LEVERAGE, operator 2026-07-12).
         lev_text = lev or get_max_leverage(symbol, ROM1_DESIRED_LEVERAGE)
 
         try:
@@ -1210,8 +1208,8 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
                         ),
                     )
                 else:
-                    # Legacy-Format bis Bot 8 die Spalten angelegt hat — der
-                    # Close hat Vorrang vor der Report-Sichtbarkeit.
+                    # Legacy format until bot 8 created the columns — close
+                    # takes precedence over report visibility.
                     cur.execute(
                         """
                         INSERT INTO closed_ai_signals (
@@ -1235,37 +1233,37 @@ def force_close_trades_for_regime_change(conn, coin: str, direction: str) -> dic
             conn.commit()
             result["ai_closed"] += 1
         except Exception as e:
-            logger.warning(f"Regime-Close: AI-Trade {tid} ({symbol} {model}) konnte nicht geschlossen werden: {e}")
+            logger.warning(f"Regime-close: AI trade {tid} ({symbol} {model}) could not be closed: {e}")
             conn.rollback()
 
-    # FIX P1.9: kein active_trades_master-Close mehr — 'classic_closed' bleibt
-    # für die Caller-Summary im Result, ist aber immer 0.
+    # FIX P1.9: no more active_trades_master close — 'classic_closed' stays
+    # for the caller summary in result, but is always 0.
     return result
 
 
 def _classify_outcome_by_pnl(
     direction: str, entry: float | None, close_price: float | None, close_reason: str | None
 ) -> str:
-    """Klassifiziert einen geschlossenen Trade anhand des realen PnL.
+    """Classifies a closed trade by real PnL.
 
-    Spiegelt die Logik aus 27_bot_regime_analyzer.py wider — gleiche
-    Konstanten, gleiche Semantik. Nur die Return-Werte sind anders, weil
-    der Orchestrator andere Status-Strings schreibt.
+    Mirrors the logic from 27_bot_regime_analyzer.py — same
+    constants, same semantics. Only the return values differ because
+    the orchestrator writes different status strings.
 
-    Returns einen der Status-Strings:
-      'CLOSED_TP'      → Trade war profitabel (echter Win)
-      'CLOSED_SL'      → Trade war negativ (echter Loss)
-      'CLOSED_NEUTRAL' → Delisting, Housekeeping, Ausreißer oder Micro-PnL
-                         (≠ Win und ≠ Loss, soll nicht in Perf-Stats zählen)
+    Returns one of the status strings:
+      'CLOSED_TP'      → trade was profitable (real win)
+      'CLOSED_SL'      → trade was negative (real loss)
+      'CLOSED_NEUTRAL' → delisting, housekeeping, outlier or micro PnL
+                         (≠ win and ≠ loss, should not count in perf stats)
     """
     reason = (close_reason or "").upper()
-    # Neutral-Marker: extern verursachte Closes die nicht vom Bot-Signal kommen
-    # → nicht in Win/Loss-Statistik zählen.
+    # Neutral marker: externally-caused closes not from bot signal
+    # → do not count in win/loss statistics.
     #
-    # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE ist NICHT mehr
-    # neutral — ein Auto-Close bei Regime-Wechsel realisiert einen echten PnL,
-    # der als Win/Loss zählen muss (near-0%-Closes fängt der Micro-PnL-Filter
-    # weiter neutral ab). Spiegelt _classify_outcome in 27_bot_regime_analyzer.
+    # B9 censorship fix (T-2026-CU-9050-048): REGIME_CHANGE is NO LONGER
+    # neutral — an auto-close on regime change realises real PnL
+    # that must count as win/loss (near-0% closes are caught by the micro-PnL filter
+    # staying neutral). Mirrors _classify_outcome in 27_bot_regime_analyzer.
     if "DELISTED" in reason or "CLEANUP" in reason or "ORPHAN" in reason:
         return "CLOSED_NEUTRAL"
     if entry is None or close_price is None:
@@ -1289,14 +1287,14 @@ def _classify_outcome_by_pnl(
 async def sync_closed_trades(conn) -> None:
     """
     Checks if any open orchestrator trades have been closed in closed_ai_signals
-    (model='ROM1' — die eigene Tracking-Kopie, siehe FIX P1.8 unten).
+    (model='ROM1' — the own tracking copy, see FIX P1.8 below).
     Updates orchestrator_open_trades accordingly.
     Runs every LIFECYCLE_SYNC_INTERVAL_SEC seconds.
 
-    Klassifiziert das Outcome PnL-basiert (statt targets_hit/status-basiert),
-    um die bekannten Bugs im 8_ai_trade_monitor zu umgehen (LEGACY TARGET HIT
-    schreibt targets_hit=0 etc.). DELISTED/CLEANUP-Trades bekommen den Status
-    CLOSED_NEUTRAL — die Orchestrator-Performance wird dadurch nicht verzerrt.
+    Classifies the outcome by PnL (rather than targets_hit/status) to
+    avoid known bugs in 8_ai_trade_monitor (LEGACY TARGET HIT
+    writes targets_hit=0 etc.). DELISTED/CLEANUP trades get status
+    CLOSED_NEUTRAL — this does not skew orchestrator performance.
     """
     # Reaper FIRST: corpse decay must not depend on the health of the per-row
     # match loop below (a poison row there would silently disable decay while
@@ -1318,14 +1316,14 @@ async def sync_closed_trades(conn) -> None:
         opened_at_naive = (
             opened_at if not (hasattr(opened_at, "tzinfo") and opened_at.tzinfo) else opened_at.replace(tzinfo=None)
         )
-        # FIX P1.8: Vorher matchte der Sync per Zufall fremde Trades — kein
-        # model-Filter, kein ORDER BY, 720h-Fenster (Report 18 K1: Outcome
-        # nichtdeterministisch, Opposite-Schutz fiel vorzeitig weg). Jetzt:
-        # nur model='ROM1', open_time als Zeitanker ±60s gegen opened_at
-        # (Tracking + ai_signals entstehen in derselben Transaktion), bei
-        # mehreren Kandidaten gewinnt die kleinste Zeitdifferenz. Der
-        # closed_trades_master-Check ist raus — ROM1 schreibt nie nach
-        # active_trades_master, dort konnte nur ein Fremd-Trade matchen.
+        # FIX P1.8: Before, sync matched foreign trades by chance — no
+        # model filter, no ORDER BY, 720h window (Report 18 K1: outcome
+        # non-deterministic, opposite protection dropped early). Now:
+        # only model='ROM1', open_time as time anchor ±60s against opened_at
+        # (tracking + ai_signals created in the same transaction), with
+        # multiple candidates the smallest time difference wins. The
+        # closed_trades_master check is gone — ROM1 never writes to
+        # active_trades_master; only foreign trades could match there.
         #
         # T-2026-CU-9050-052: second window through LEGACY_SESSION_TZ — rows
         # written before this fix carry session-local open_time (+3h), and
@@ -1334,8 +1332,8 @@ async def sync_closed_trades(conn) -> None:
         # real WIN/LOSS to the corpse reaper. Safe against cross-matching a
         # different trade: the 4h per-coin+direction cooldown means no two
         # same-direction trades can sit 3h±window apart.
-        # `status` in closed_ai_signals enthält tatsächlich den close_reason
-        # (z.B. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP").
+        # `status` in closed_ai_signals actually contains the close_reason
+        # (e.g. "LEGACY TARGET HIT (+2.5%)", "DELISTED / CLEANUP").
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -1370,15 +1368,15 @@ async def reap_corpse_trades(conn) -> None:
     +3h by the session-TZ DB default, the ±60s sync window can never match:
     395 rows as of 2026-07-10) or a pathological case (manually deleted
     ai_signals row). Left OPEN, such rows block the direction checks forever,
-    feed spurious Close commands into every regime-change pass, and get
+    feed spurious close commands into every regime-change pass, and get
     re-scanned by the sync loop on every pass.
 
     Guards, in order:
     - 72h minimum age: never touches fresh rows.
-    - Twin check is ROW-anchored (±window around opened_at, both rows are
+    - Twin check is row-anchored (±window around opened_at, both rows are
       written in one transaction), NOT just coin+direction — a live trade's
       twin must not shield a corpse that shares coin+direction (stacking era),
-      because that corpse would keep feeding Close commands that flatten the
+      because that corpse would keep feeding close commands that flatten the
       LIVE position on the next regime flip. Legacy twins sit at
       LEGACY_SESSION_TZ local time, hence the second window.
     - Never censors a classifiable outcome: if a closed_ai_signals row exists
@@ -1420,11 +1418,11 @@ async def reap_corpse_trades(conn) -> None:
         reaped = cur.rowcount
     conn.commit()
     if reaped:
-        logger.info(f"🧹 Corpse-Reaper: {reaped} verwaiste OPEN-Rows ohne ai_signals-Twin neutral geschlossen.")
+        logger.info(f"🧹 Corpse reaper: {reaped} orphaned OPEN rows without ai_signals twin closed as neutral.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REGIME-CHANGE → CLOSE-COMMANDS
+# REGIME CHANGE → CLOSE COMMANDS
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1462,9 +1460,9 @@ async def check_regime_change_and_close(conn) -> None:
 
     changes = []
     if btc_changed:
-        changes.append(f"BTC-Regime {old_regime} → {new_regime}")
+        changes.append(f"BTC regime {old_regime} → {new_regime}")
     if alt_changed:
-        changes.append(f"Alt-Context {old_alt} → {new_alt_context}")
+        changes.append(f"Alt context {old_alt} → {new_alt_context}")
     logger.info(f"🔄 Orchestrator detected change: {', '.join(changes)}")
 
     if not AUTO_CLOSE_ON_REGIME_CHANGE:
@@ -1486,7 +1484,7 @@ def _close_non_whitelisted_open_trades(
     always_announce: bool = True,
 ) -> None:
     """Re-judges every OPEN orchestrator trade against the CURRENT 4D whitelist
-    and posts Close (loser) / SL-trail (winner, A/B gate) commands for the ones
+    and posts close (loser) / SL trail (winner, A/B gate) commands for the ones
     the current regime no longer whitelists, then posts a summary.
 
     Shared by two triggers:
@@ -1498,14 +1496,14 @@ def _close_non_whitelisted_open_trades(
     Money-path safety: only ROM1's own tracked rows live in
     orchestrator_open_trades, and the DB-side force-close is model='ROM1'
     filtered (P1.9) — foreign bots' trades are never touched. No new close
-    mechanism: reuses the existing Close-command + mark/force-close path.
+    mechanism: reuses the existing close command + mark/force-close path.
     """
     from core.config import REGIME_STATUS_CHANNEL_ID, REGIME_TRADING_CHANNEL_ID
 
     # Load all open trades that have not already been actioned by a prior
     # regime pass. T-2026-CU-9050-049: a TRAILED winner stays status='OPEN' but
     # carries regime_close_action — excluding it here prevents re-trailing / a
-    # second SL-update on every subsequent regime change. (Closed rows are
+    # second SL update on every subsequent regime change. (Closed rows are
     # already excluded by status <> 'OPEN'.)
     with conn.cursor() as cur:
         cur.execute(
@@ -1533,25 +1531,25 @@ def _close_non_whitelisted_open_trades(
             trail_sl = _compute_trailed_sl(direction, entry, current_price, targets_hit, targets)
         closes.append((trade_id, coin, direction, bot_name, reason, trail_sl))
 
-    # Pass 1: trail winners (SL-update, keep running). Done FIRST so Pass 2 can
+    # Pass 1: trail winners (SL update, keep running). Done FIRST so pass 2 can
     # avoid flattening a just-trailed winner with the symbol-wide `Close <coin>`.
     trailed_coins: set[str] = set()
     n_trailed = 0
     for trade_id, coin, direction, bot_name, reason, trail_sl in closes:
         if trail_sl is None:
             continue
-        # SL-update, NOT a second Cornix signal (hard rule 4). Symbol-addressed
-        # like Close (core.config:115) — one command per winning coin.
+        # SL update, NOT a second Cornix signal (hard rule 4). Symbol addressed
+        # like close (core.config:115) — one command per winning coin.
         send_telegram(build_rom1_sl_update_message(coin, trail_sl), REGIME_TRADING_CHANNEL_ID)
         mark_orchestrator_trade_trailed(conn, trade_id, trail_sl)
         trailed_coins.add(coin)
         n_trailed += 1
         logger.info(
-            f"🎯 Regime-Change TRAIL: {coin} {direction} SL→{trail_sl:.8f} "
+            f"🎯 Regime-change TRAIL: {coin} {direction} SL→{trail_sl:.8f} "
             f"(bot={bot_name}, reason={reason}) — trade kept open (A/B: TRAILED)"
         )
 
-    # Pass 2: close losers. Post Close-Commands and move trades to closed tables.
+    # Pass 2: close losers. Post close commands and move trades to closed tables.
     total_ai = 0
     total_classic = 0
     n_closed = 0
@@ -1563,8 +1561,8 @@ def _close_non_whitelisted_open_trades(
             # flatten the trailed winner on the same symbol. Skip and leave this
             # row OPEN for the next regime pass to re-judge once the winner exits.
             logger.warning(
-                f"Regime-Close: defer Close {coin} {direction} — same symbol has a "
-                f"trailed winner this pass; symbol-wide Close would flatten it."
+                f"Regime-close: defer close {coin} {direction} — same symbol has a "
+                f"trailed winner this pass; symbol-wide close would flatten it."
             )
             continue
         send_telegram(f"Close {coin}", REGIME_TRADING_CHANNEL_ID)
@@ -1578,14 +1576,14 @@ def _close_non_whitelisted_open_trades(
             regime_close_action="REGIME_CHANGE_CLOSED",
         )
 
-        # Verschiebe die ROM1-Tracking-Kopie aus ai_signals nach
-        # closed_ai_signals, damit sie nicht als "still open" in den
-        # Market-Tracker-Reports erscheint bis der Monitor irgendwann
-        # ihren eigenen SL/TP trifft (kann Tage dauern). Der Marker
-        # "CLOSED_REGIME_CHANGE" wird downstream mit seinem realen PnL als
-        # Win/Loss klassifiziert (B9-Zensur-Korrektur, T-2026-CU-9050-048).
-        # FIX P1.9: fremde Trades (andere Modelle, active_trades_master)
-        # bleiben unangetastet.
+        # Move the ROM1 tracking copy from ai_signals to
+        # closed_ai_signals so it doesn't appear as "still open" in
+        # market tracker reports until the monitor eventually
+        # hits its own SL/TP (can take days). The marker
+        # "CLOSED_REGIME_CHANGE" is classified downstream with its real PnL as
+        # win/loss (B9 censorship fix, T-2026-CU-9050-048).
+        # FIX P1.9: foreign trades (other models, active_trades_master)
+        # remain untouched.
         close_stats = force_close_trades_for_regime_change(conn, coin, direction)
         total_ai += close_stats["ai_closed"]
         total_classic += close_stats["classic_closed"]
@@ -1626,7 +1624,7 @@ def _close_non_whitelisted_open_trades(
     try:
         send_telegram(summary, REGIME_STATUS_CHANNEL_ID)
     except Exception as e:
-        logger.error(f"Error sending des Regime-Change-Summary: {e}")
+        logger.error(f"Error sending regime-change summary: {e}")
 
 
 async def run_startup_reconciliation(conn) -> None:
@@ -1637,8 +1635,8 @@ async def run_startup_reconciliation(conn) -> None:
     fresh start that baseline (_last_known_regime) is empty, so the first poll
     only SEEDS it and returns — a regime flip that happened while the orchestrator
     was down is therefore never acted on, and every open trade keeps running under
-    a regime that may no longer whitelist it (the P2.24 gap: In-Memory-State,
-    "Regime-Wechsel während Orchestrator-Downtime nie nachgeholt").
+    a regime that may no longer whitelist it (the P2.24 gap: in-memory state,
+    "Regime change during orchestrator downtime never caught up").
 
     This reconciles every OPEN trade against the CURRENT whitelist at startup — no
     remembered regime needed — and seeds the in-memory baseline so the periodic
@@ -1657,10 +1655,10 @@ async def run_startup_reconciliation(conn) -> None:
     if not AUTO_CLOSE_ON_REGIME_CHANGE:
         return
 
-    logger.info("🚀 Startup reconciliation: prüfe offene ROM1-Trades gegen die aktuelle Whitelist (P2.24).")
+    logger.info("🚀 Startup reconciliation: checking open ROM1 trades against current whitelist (P2.24).")
     _close_non_whitelisted_open_trades(
         conn,
-        changes=["Startup reconciliation — offene Trades gegen aktuelle Whitelist geprüft (P2.24)"],
+        changes=["Startup reconciliation — open trades checked against current whitelist (P2.24)"],
         title="🚀 ORCHESTRATOR STARTUP — WHITELIST RECONCILIATION",
         count_label="Open trades at startup",
         always_announce=False,
@@ -1668,7 +1666,7 @@ async def run_startup_reconciliation(conn) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HAUPT-LOOP
+# MAIN LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1686,7 +1684,7 @@ async def _run_stage(conn, stage_name: str, coro) -> bool:
     rolled back so the NEXT stage does not inherit an aborted transaction.
     Returns False on failure so the caller can keep money-path couplings.
 
-    T-2026-CU-9050-052: the stages were one try block before — a persistent
+    T-2026-CU-9050-052: the stages were in one try block before — a persistent
     poison row in the regime check or the gating pass would then silently
     starve the lifecycle sync (and with it the corpse reaper, the only decay
     path for stuck OPEN rows) forever.
@@ -1737,13 +1735,13 @@ async def main_loop() -> None:
                 # Fail-closed on the money path: while regime-flip auto-closes
                 # are broken, do NOT open new exposure via the gating pass.
                 # Only the lifecycle sync below stays independent.
-                logger.warning("Gating-Pass übersprungen: Regime-Stage fehlgeschlagen (fail-closed).")
+                logger.warning("Gating pass skipped: regime stage failed (fail-closed).")
             if should_run_lifecycle_sync():
                 await _run_stage(conn, "lifecycle_sync", sync_closed_trades(conn))
         except Exception as e:
             # Backstop: nothing here may ever kill the process (no gating, no
             # auto-closes, no reaping on the live fleet).
-            logger.error(f"Orchestrator-Loop-Error: {e}", exc_info=True)
+            logger.error(f"Orchestrator loop error: {e}", exc_info=True)
         finally:
             if conn:
                 conn.close()
@@ -1754,4 +1752,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        logger.info("Signal Orchestrator manuell stopped (Strg+C).")
+        logger.info("Signal orchestrator manually stopped (Ctrl+C).")

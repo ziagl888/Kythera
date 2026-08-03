@@ -1,19 +1,19 @@
-# 30_ai_pex1_bot.py — PEX1 "Pump-Exhaustion-Short" (Report 15, S6).
+# 30_ai_pex1_bot.py — PEX1 "pump-exhaustion short" (report 15, S6).
 """
-Short-only ML-Bot auf Pump-Erschöpfung: konsumiert die Events des
-10_pump_dump_detector (pump_dump_events, volume_ratio >= 5 — Gate live wie im
-Training gespiegelt, Report 13 EPD1-P0) und shortet in die Erschöpfung, wenn
-das Binär-Modell (tools/pex1_build_dataset.py + tools/new_models_train.py
---strategy pex1) TP1-vor-SL über der Val-Schwelle sieht.
+Short-only ML bot on pump exhaustion: consumes events from
+10_pump_dump_detector (pump_dump_events, volume_ratio >= 5 — gate live as mirrored
+in training, report 13 EPD1-P0) and shorts into exhaustion when the binary model
+(tools/pex1_build_dataset.py + tools/new_models_train.py --strategy pex1) sees
+TP1-before-SL above the val threshold.
 
-Eigenschaften:
-  * NUR SHORT — die EPD1-Richtungs-Asymmetrie (SHORT 76,5% vs LONG 50,2% WR)
-    ist die Evidenz-Basis; eine Long-Seite existiert bewusst nicht.
-  * Geometrie: calculate_smart_targets (SR-basiert) — exakt die Label-Geometrie.
-  * Posting in CH_NEW_IDEAS; NEW_IDEAS_LIVE_POSTING=0 schaltet auf Shadow-only
+Features:
+  * SHORT ONLY — the EPD1 direction asymmetry (SHORT 76.5% vs LONG 50.2% WR)
+    is the evidence basis; a long side deliberately does not exist.
+  * Geometry: calculate_smart_targets (SR-based) — exact label geometry.
+  * Posting to CH_NEW_IDEAS; NEW_IDEAS_LIVE_POSTING=0 switches to shadow-only
     (ml_predictions_master, posted=false).
-  * Ohne Artefakt (pex1_model.pkl) läuft der Bot im Idle-Modus — Code kann vor
-    dem VPS-Training deployt werden.
+  * Without artifact (pex1_model.pkl) the bot runs in idle mode — code can be
+    deployed before VPS training.
 
 Watchdog: start_delay=191.
 """
@@ -53,11 +53,11 @@ logger = logging.getLogger(__name__)
 
 MODEL_ID = "PEX1"
 ARTIFACT_PATH = "pex1_model.pkl"
-TARGET_CHANNEL_ID = _kcfg.CH_PEX1  # per-Bot-Override, Fallback CH_NEW_IDEAS
+TARGET_CHANNEL_ID = _kcfg.CH_PEX1  # per-bot override, fallback CH_NEW_IDEAS
 LIVE_POSTING = os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"
-SHADOW_FLOOR = 0.25  # darunter nicht mal Shadow loggen (MIS-Konvention)
-COOLDOWN_HOURS = 4  # je Coin — gespiegelt im Trainings-Dedup
-ARTIFACT_RETRY_S = 1800  # Idle-Modus: alle 30 min auf frisches Deploy prüfen
+SHADOW_FLOOR = 0.25  # below that do not even log shadow (MIS convention)
+COOLDOWN_HOURS = 4  # per coin — mirrored in training dedup
+ARTIFACT_RETRY_S = 1800  # idle mode: check for fresh deploy every 30 min
 
 ARTIFACT = load_artifact(ARTIFACT_PATH, PEX1_FEATURES, MODEL_ID)
 
@@ -71,19 +71,18 @@ def ensure_artifact() -> None:
 
 
 def spike_time_to_utc_naive(value, offset_h: int):
-    """Ein spike_time-Wert → naives UTC, aware wie naiv.
+    """A spike_time value → naive UTC, aware as well as naive.
 
-    T-2026-KYT-9050-061: die Live-Spalte ist `timestamp WITH time zone` (die
-    Repo-DDL in 10_pump_dump_detector.py sagt `TIMESTAMP`, die Tabelle wurde
-    irgendwann gealtert — read-only vermessen 2026-08-01). psycopg2 liefert für
-    sie also AWARE datetimes, und jede Subtraktion gegen ein naives `now` warf
+    T-2026-KYT-9050-061: the live column is `timestamp WITH time zone` (the
+    repo DDL in 10_pump_dump_detector.py says `TIMESTAMP`, the table was
+    aged at some point — read-only measured 2026-08-01). psycopg2 thus delivers
+    AWARE datetimes for it, and any subtraction against a naive `now` threw
     `can't subtract offset-naive and offset-aware datetimes`.
 
-    Aware ⇒ echter Instant, in UTC umrechnen und tzinfo abstreifen; der
-    gemessene Offset ist dann per Definition unbeteiligt. Naiv ⇒ Legacy-Dump
-    oder alte Spalte, Offset abziehen (Domäne kommt aus
-    detect_spike_time_offset_h). Beides ergibt dieselbe Domäne wie `now` und
-    wie `fetch_context_frame`."""
+    Aware ⇒ true instant, convert to UTC and strip tzinfo; the measured
+    offset is then per definition irrelevant. Naive ⇒ legacy dump or old
+    column, subtract offset (domain comes from detect_spike_time_offset_h).
+    Both yield the same domain as `now` and as `fetch_context_frame`."""
     if value is None:
         return None
     if getattr(value, "tzinfo", None) is not None:
@@ -92,19 +91,19 @@ def spike_time_to_utc_naive(value, offset_h: int):
 
 
 def detect_spike_time_offset_h(conn) -> int:
-    """Domänen-Offset der Spalte `pump_dump_events.spike_time` in Stunden.
+    """Domain offset of the `pump_dump_events.spike_time` column in hours.
 
-    Historisch war die Spalte TIMESTAMP ohne TZ, und je nach Session-TZ des
-    Detectors stand dort Lokalzeit statt UTC. Der Offset wird gegen die Wanduhr
-    gemessen (Events laufen bei 538 Coins quasi kontinuierlich auf), damit
-    spike_age korrekt ist. Watermark-Vergleiche bleiben in Roh-Domäne.
+    Historically the column was TIMESTAMP without TZ, and depending on the
+    detector's session TZ, it held local time instead of UTC. The offset is
+    measured against wall-clock time (events run on 538 coins quasi continuously)
+    so spike_age is correct. Watermark comparisons remain in raw domain.
 
-    Ist die Spalte `timestamptz` (Live-Zustand seit der Alterung), liefert der
-    Treiber einen echten Instant — dann gibt es keine Domänen-Frage und der
-    Offset ist 0. Vorher subtrahierte diese Funktion ein naives `now` von genau
-    diesem aware Wert und riss damit JEDEN Scan-Zyklus ab (T-2026-KYT-9050-061:
-    ~1x/min seit mindestens 2026-07-19, 8166 Fehlschläge in den vier jüngsten
-    logs/watchdog_debug_*, kein einziger erfolgreicher Scan)."""
+    If the column is `timestamptz` (live state since aging), the driver delivers
+    a true instant — then there is no domain question and the offset is 0.
+    Previously this function subtracted a naive `now` from exactly this aware
+    value and tore apart EVERY scan cycle (T-2026-KYT-9050-061: ~1x/min since
+    at least 2026-07-19, 8166 failures in the four most recent logs/watchdog_debug_*,
+    not a single successful scan)."""
     with conn.cursor() as cur:
         cur.execute("SELECT MAX(spike_time) FROM pump_dump_events")
         row = cur.fetchone()
@@ -118,13 +117,13 @@ def detect_spike_time_offset_h(conn) -> int:
 
 
 def startup_feature_selfcheck() -> None:
-    """P0.12-Muster: Kontext-Pipeline auf echten Daten von 3 Coins rechnen und
-    hart abbrechen, wenn ein kontinuierliches Feature konstant ist."""
+    """P0.12 pattern: run context pipeline on real data from 3 coins and
+    hard-stop if a continuous feature is constant."""
     try:
         with open("coins.json") as f:
             coins = json.load(f)
     except Exception as e:
-        logger.critical(f"Selbsttest: coins.json nicht ladbar: {e}")
+        logger.critical(f"Self-test: coins.json not loadable: {e}")
         exit(1)
 
     conn = get_db_connection()
@@ -148,14 +147,14 @@ def startup_feature_selfcheck() -> None:
             used += 1
             if used >= 3:
                 break
-        # Event-Features sind im Selbsttest konstruktionsbedingt konstant (Dummy).
+        # Event features are by construction constant in the self-test (dummy).
         assert_features_alive(
             rows,
             PEX1_FEATURES,
             binary_ok={"ev_volume_ratio", "ev_price_change_60s", "ev_buy_pressure", "ev_volatility"},
-            context=" (PEX1-Startup)",
+            context=" (PEX1 startup)",
         )
-        logger.info(f"✅ Feature-Selbsttest bestanden ({len(rows)} Zeilen, {used} Coins).")
+        logger.info(f"✅ Feature self-test passed ({len(rows)} rows, {used} coins).")
     except ValueError as e:
         logger.critical(f"❌ {e}")
         exit(1)
@@ -164,7 +163,7 @@ def startup_feature_selfcheck() -> None:
 
 
 def fetch_new_events(conn, watermark) -> list[dict]:
-    """Neue Pump-Events über den Live-Gates (Spiegel des Trainings-Samplings)."""
+    """New pump events via the live gates (mirror of training sampling)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -188,23 +187,23 @@ def process_event(conn, event: dict, offset_h: int) -> None:
     direction = "SHORT"
 
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    # Dieselbe Normalisierung wie im Offset-Detektor — der aware/naiv-Mix hätte
-    # hier genauso geworfen wie dort (T-2026-KYT-9050-061).
+    # Same normalisation as in the offset detector — the aware/naive mix would have
+    # thrown here too just as it did there (T-2026-KYT-9050-061).
     spike_utc = spike_time_to_utc_naive(event["spike_time"], offset_h)
     if spike_utc is None:
         return
     spike_age_min = max(0.0, (now - spike_utc).total_seconds() / 60.0)
     if spike_age_min > 30.0:
-        return  # stale Event (Bot-Downtime/Catch-up) — Exhaustion-These verfallen
+        return  # stale event (bot downtime/catch-up) — exhaustion thesis expires
 
     if check_cooldown(conn, MODEL_ID, symbol, direction, COOLDOWN_HOURS):
         return
     if has_open_ai_signal(conn, symbol, direction, ARTIFACT["tag"]):
         return
 
-    # Feature-Kerze relativ zur EVENT-Zeit (floor-1 wie im Training) — ein über
-    # eine Stundengrenze verarbeitetes Event sähe sonst eine spätere Kerze, bei
-    # PEX1 wäre das die Pump-Kerze selbst (Review-Fix 2026-07-06).
+    # Feature candle relative to event time (floor-1 as in training) — an event
+    # processed across an hour boundary would otherwise see a later candle, for
+    # PEX1 that would be the pump candle itself (review fix 2026-07-06).
     res = fetch_context_frame(conn, symbol, as_of=spike_utc)
     if res is None:
         return
@@ -213,7 +212,7 @@ def process_event(conn, event: dict, offset_h: int) -> None:
     feature_row = build_pex1_row(event, df, idx)
     missing = [c for c in ARTIFACT["features"] if c not in feature_row]
     if missing:
-        raise ValueError(f"Feature-Vertrag verletzt — fehlend: {missing}")
+        raise ValueError(f"Feature contract violated — missing: {missing}")
     X = pd.DataFrame([{c: feature_row[c] for c in ARTIFACT["features"]}], dtype=float)
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -225,20 +224,19 @@ def process_event(conn, event: dict, offset_h: int) -> None:
         f"Prob {prob:.3f} (Gate {ARTIFACT['threshold']:.2f})"
     )
 
-    # Entry-Anker = LIVE-Preis (core.live_price, core.candles contract 2:
-    # Erkennung auf geschlossenen Kerzen, Preis separat). `df` trägt seit
-    # Block 5 (T-2026-CU-9050-112) NUR geschlossene Kerzen — `df["close"].iloc[-1]`
-    # wäre die letzte GESCHLOSSENE 1h-Kerze und damit bis zu ~59 min alt
-    # (T-2026-KYT-9050-011). Die Feature-Kerze (idx, floor-1-Join) ist davon
-    # unberührt: der Live-Preis speist ausschließlich Entry/Geometrie.
+    # Entry anchor = LIVE price (core.live_price, core.candles contract 2:
+    # detection on closed candles, price separately). `df` carries since
+    # block 5 (T-2026-CU-9050-112) ONLY closed candles — `df["close"].iloc[-1]`
+    # would be the last CLOSED 1h candle and thus up to ~59 min old
+    # (T-2026-KYT-9050-011). The feature candle (idx, floor-1 join) is
+    # unaffected: live price feeds exclusively to entry/geometry.
     live_price = get_live_price(symbol, conn)
     if live_price is None:
-        # Weder Binance-REST noch DB-Fallback liefern einen Preis: kein Signal
-        # und kein Prediction-Log (eine Shadow-Zeile ohne Entry-Preis ist für
-        # die Auswertung wertlos). Der Cooldown läuft trotzdem — das Event WURDE
-        # gescort, und das unbedingte 4h-Dedup des Trainings hängt am Scoring,
-        # nicht am Posting.
-        logger.warning(f"{symbol}: kein Live-Preis (Binance + DB-Fallback) — Signal übersprungen.")
+        # Neither Binance REST nor DB fallback deliver a price: no signal
+        # and no prediction log (a shadow row without entry price is worthless
+        # for analysis). The cooldown runs anyway — the event WAS scored, and
+        # the unconditional 4h dedup of training hangs on scoring, not posting.
+        logger.warning(f"{symbol}: no live price (Binance + DB fallback) — signal skipped.")
         update_cooldown(conn, MODEL_ID, symbol, direction)
         return
 
@@ -263,20 +261,20 @@ def process_event(conn, event: dict, offset_h: int) -> None:
         log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=True)
     else:
         if prob >= ARTIFACT["threshold"]:
-            logger.info(f"👻 SHADOW-Post {symbol} (p={prob:.2f}) — Live-Posting deaktiviert.")
+            logger.info(f"👻 SHADOW post {symbol} (p={prob:.2f}) — live posting disabled.")
         if prob >= SHADOW_FLOOR:
             log_prediction(conn, ARTIFACT["tag"], symbol, direction, live_price, conf, posted=False)
-    # Cooldown auf JEDEM gescorten Event — Spiegel des unbedingten 4h-Dedups im
-    # Training; nur so sieht das Modell live dieselbe Event-Verteilung
-    # (Review-Fix 2026-07-06). update_cooldown committet die Transaktion atomar.
+    # Cooldown on EVERY scored event — mirror of the unconditional 4h dedup in
+    # training; only this way does the model see the same event distribution live
+    # (review fix 2026-07-06). update_cooldown commits the transaction atomically.
     update_cooldown(conn, MODEL_ID, symbol, direction)
 
 
 def main() -> None:
     global LIVE_POSTING
-    logger.info("=== 💥 AI PEX1 BOT (Pump-Exhaustion-Short, S6) GESTARTET ===")
+    logger.info("=== 💥 AI PEX1 BOT (pump exhaustion short, S6) STARTED ===")
     if TARGET_CHANNEL_ID == 0:
-        logger.warning("Weder CH_PEX1 noch CH_NEW_IDEAS gesetzt — erzwinge Shadow-only-Modus.")
+        logger.warning("Neither CH_PEX1 nor CH_NEW_IDEAS set — forcing shadow-only mode.")
         LIVE_POSTING = False
     logger.info(f"Posting: {'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}")
 
@@ -289,19 +287,19 @@ def main() -> None:
                 PRIMARY KEY (module, coin, direction)
             );
         """)
-        # Poll-Pfad läuft jede Minute auf spike_time — ohne Index wäre das ein
-        # Seq-Scan pro Zyklus (Tabelle bleibt dank P1.40-Retention klein, aber
-        # der Index macht den Watermark-Scan konstant billig).
+        # Poll path runs every minute on spike_time — without an index that would be a
+        # seq scan per cycle (table stays small thanks to P1.40 retention, but
+        # the index makes the watermark scan constantly cheap).
         cur.execute("CREATE INDEX IF NOT EXISTS idx_pde_spike_time ON pump_dump_events (spike_time)")
         cur.execute("SELECT MAX(spike_time) FROM pump_dump_events")
         row = cur.fetchone()
     conn.commit()
-    # Nur Events NACH dem Start verarbeiten (kein Replay alter Pumps beim Boot).
-    # Sentinel AWARE (T-2026-KYT-9050-061): `pump_dump_events.spike_time` ist live
-    # `timestamptz`, MAX() liefert also aware — ein naiver Sentinel wäre bei leerer
-    # Tabelle beim ersten `max(watermark, event[...])` gegen einen aware Wert
-    # gelaufen und hätte denselben offset-naive/aware-TypeError geworfen. Der
-    # SQL-Vergleich bleibt in der Roh-Domäne der Spalte (Cast macht Postgres).
+    # Only process events AFTER startup (no replay of old pumps on boot).
+    # Sentinel AWARE (T-2026-KYT-9050-061): `pump_dump_events.spike_time` is live
+    # `timestamptz`, so MAX() delivers aware — a naive sentinel would at empty
+    # table on first `max(watermark, event[...])` run against an aware value
+    # and throw the same offset-naive/aware TypeError. The SQL comparison
+    # remains in the raw domain of the column (cast done by Postgres).
     watermark = row[0] if row and row[0] else datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)
     conn.close()
 
@@ -319,28 +317,28 @@ def main() -> None:
             events = fetch_new_events(conn, watermark)
             conn_dead = False
             for event in events:
-                # fetch_new_events liefert ORDER BY spike_time ASC und filtert
-                # strikt `> watermark` — die Zuweisung ist damit monoton. Ein
-                # max() über beide Werte wäre der zweite Ort, an dem sich ein
-                # aware-Sentinel und eine naive Legacy-Spalte treffen könnten
-                # (T-2026-KYT-9050-061); den braucht es hier nicht.
+                # fetch_new_events delivers ORDER BY spike_time ASC and filters
+                # strictly `> watermark` — the assignment is thus monotonic. A
+                # max() over both values would be the second place where an
+                # aware sentinel and a naive legacy column could meet
+                # (T-2026-KYT-9050-061); not needed here.
                 watermark = event["spike_time"]
                 try:
                     process_event(conn, event, offset_h)
                 except Exception as e:
-                    logger.error(f"Error für {event.get('symbol')}: {e}")
+                    logger.error(f"Error for {event.get('symbol')}: {e}")
                 finally:
-                    # P2.32-Muster: Transaktion pro Event IMMER schließen —
-                    # nach einem Commit-Pfad ist der Rollback ein No-op.
+                    # P2.32 pattern: close transaction per event ALWAYS —
+                    # after a commit path the rollback is a no-op.
                     try:
                         conn.rollback()
                     except Exception:
-                        logger.error("Rollback fehlgeschlagen (tote Connection) — Zyklus-Abbruch.")
+                        logger.error("Rollback failed (dead connection) — cycle abort.")
                         conn_dead = True
                 if conn_dead:
                     break
         except Exception as e:
-            logger.error(f"PEX1-Scan-Fehler: {e}")
+            logger.error(f"PEX1 scan error: {e}")
         finally:
             conn.close()
         time.sleep(60)
@@ -350,4 +348,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

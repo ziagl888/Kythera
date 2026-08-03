@@ -15,7 +15,7 @@ import pytz
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# === DB Config (an deine anpassen) ===
+# === DB config (adjust to your setup) ===
 DB_CONFIG = {
     "host": "localhost",
     "port": 5432,
@@ -24,13 +24,13 @@ DB_CONFIG = {
     "database": "cryptodata"
 }
 
-# === Alle Coins laden (aus deiner coins.json) ===
+# === Load all coins (from your coins.json) ===
 def load_coins() -> list[str]:
     import json
     from pathlib import Path
     coins_file = Path("coins.json")
     if not coins_file.exists():
-        logger.error("coins.json nicht gefunden!")
+        logger.error("coins.json not found!")
         return []
     with open(coins_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -38,20 +38,20 @@ def load_coins() -> list[str]:
 
 def pct_distance(price_series: pd.Series, indicator_series: pd.Series) -> pd.Series:
     """
-    Berechnet prozentualen Abstand zwischen Preis und Indikator (vektorisiert)
+    Calculate percentage distance between price and indicator (vectorized)
     """
-    # Vermeide Division durch 0 oder NaN
-    denominator = indicator_series.replace(0, np.nan)  # 0 durch NaN ersetzen
+    # Avoid division by 0 or NaN
+    denominator = indicator_series.replace(0, np.nan)  # Replace 0 with NaN
     result = (price_series - indicator_series) / denominator * 100
     return result.fillna(0)  # NaN → 0
 
-# === Hauptfunktion ===
+# === Main function ===
 async def analyze_indicator_impact():
-    logger.info("Starte Indikator-Analyse für 3 Zeithorizonte")
+    logger.info("Starting indicator analysis for 3 time horizons")
 
     coins = load_coins()
     if not coins:
-        logger.error("Keine Coins geladen – Abbruch")
+        logger.error("No coins loaded — abort")
         return
 
     conn = await asyncpg.connect(**DB_CONFIG)
@@ -64,7 +64,7 @@ async def analyze_indicator_impact():
 
         try:
             query = f"""
-                SELECT 
+                SELECT
                     h.open_time, h.close,
                     i.rsi_6, i.rsi_9, i.rsi_12, i.rsi_14, i.rsi_24,
                     i.ema_7, i.ema_9, i.ema_12, i.ema_21, i.ema_26, i.ema_34, i.ema_50, i.ema_55, i.ema_89, i.ema_99, i.ema_200,
@@ -92,29 +92,29 @@ async def analyze_indicator_impact():
                 ])
                 df['symbol'] = symbol
                 all_data.append(df)
-                logger.info(f"{symbol}: {len(df)} 1h-Kerzen geladen")
+                logger.info(f"{symbol}: {len(df)} 1h candles loaded")
         except asyncpg.exceptions.UndefinedTableError:
-            logger.debug(f"Keine Tabellen für {symbol} – übersprungen")
+            logger.debug(f"No tables for {symbol} — skipped")
         except Exception as e:
-            logger.warning(f"Fehler bei {symbol}: {e}")
+            logger.warning(f"Error for {symbol}: {e}")
 
     await conn.close()
 
     if not all_data:
-        logger.error("Keine Daten geladen – Abbruch")
+        logger.error("No data loaded — abort")
         return
 
-    # Gesamtdatensatz
+    # Full dataset
     df_full = pd.concat(all_data, ignore_index=True)
     df_full = df_full.sort_values(['symbol', 'open_time'])
     df_full = df_full.reset_index(drop=True)
 
-    logger.info(f"Gesamt: {len(df_full)} 1h-Kerzen von {len(coins)} Coins")
+    logger.info(f"Total: {len(df_full)} 1h candles from {len(coins)} coins")
 
-    # Prozentuale Abstände berechnen (vektorisiert)
+    # Calculate percentage distances (vectorized)
     price = df_full['close']
 
-    # EMA-Abstände
+    # EMA distances
     ema_cols = [col for col in df_full.columns if col.startswith('ema_')]
     for col in ema_cols:
         df_full[f'{col}_dist_pct'] = pct_distance(df_full['close'], df_full[col])
@@ -145,32 +145,32 @@ async def analyze_indicator_impact():
     if 'donchian_mid_20' in df_full.columns:
         df_full['don_mid_dist_pct'] = pct_distance(df_full['close'], df_full['donchian_mid_20'])
 
-    # RSI, TSI, MACD bleiben direkt
-    # (kein Abstand, da sie bereits prozentual/normalisiert sind)
+    # RSI, TSI, MACD remain direct
+    # (no distance, as they are already percentage/normalized)
 
-    # === Features definieren ===
+    # === Define features ===
     feature_cols = [
         # RSI
         'rsi_6', 'rsi_9', 'rsi_12', 'rsi_14', 'rsi_24',
         # TSI + MACD
         'tsi_fast', 'macd_dif',
-        # Alle Abstände
+        # All distances
     ] + [col for col in df_full.columns if col.endswith('_dist_pct')]
 
-    X = df_full[feature_cols].fillna(0)  # NaN → 0 (sicher)
+    X = df_full[feature_cols].fillna(0)  # NaN → 0 (safe)
 
-    # === Drei Modelle trainieren ===
+    # === Train three models ===
     models = {}
     horizons = [
-        ("8h", 8, 5.0),     # +/−5 % in 8 Stunden
-        ("72h", 72, 15.0),  # +/−15 % in 72 Stunden
-        ("168h", 168, 25.0) # +/−25 % in 1 Woche
+        ("8h", 8, 5.0),     # +/−5% in 8 hours
+        ("72h", 72, 15.0),  # +/−15% in 72 hours
+        ("168h", 168, 25.0) # +/−25% in 1 week
     ]
 
     for name, hours, threshold in horizons:
-        logger.info(f"Training Modell für {name} (+/−{threshold}% in {hours}h)")
+        logger.info(f"Training model for {name} (+/−{threshold}% in {hours}h)")
 
-        # Label: Preisänderung in X Stunden
+        # Label: price change in X hours
         y = []
         valid_indices = []
 
@@ -182,9 +182,9 @@ async def analyze_indicator_impact():
             change_pct = (future_price - current_price) / current_price * 100
 
             if change_pct >= threshold:
-                label = 2   # Starkes Pump
+                label = 2   # Strong pump
             elif change_pct <= -threshold:
-                label = 0   # Starkes Dump
+                label = 0   # Strong dump
             else:
                 label = 1   # Neutral
 
@@ -192,7 +192,7 @@ async def analyze_indicator_impact():
             valid_indices.append(i)
 
         if len(y) < 100:
-            logger.warning(f"Zu wenige Events für {name} – Modell übersprungen")
+            logger.warning(f"Too few events for {name} — model skipped")
             continue
 
         X_train = X.iloc[valid_indices]
@@ -222,37 +222,37 @@ async def analyze_indicator_impact():
         logger.info(f"Pump Precision: {report.get('2', {}).get('precision', 0):.3f} | Recall: {report.get('2', {}).get('recall', 0):.3f}")
         logger.info(f"Dump Precision: {report.get('0', {}).get('precision', 0):.3f} | Recall: {report.get('0', {}).get('recall', 0):.3f}")
 
-        # Feature Importance
+        # Feature importance
         # importance = model.get_booster().get_score(importance_type='gain')
         # sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:15]
-        # logger.info(f"Top 15 Features für {name}:")
+        # logger.info(f"Top 15 features for {name}:")
         # for f, score in sorted_imp:
             # name = feature_cols[int(f[1:])]
             # logger.info(f"  {name}: {score:.2f}")
-        
-        # Feature Importance
-        # Feature Importance (sicher – mit Fallback)
+
+        # Feature importance
+        # Feature importance (safe — with fallback)
         booster = model.get_booster()
         importance = booster.get_score(importance_type='gain')
-        
-        # Mapping von f0, f1, ... zu echten Namen
+
+        # Map f0, f1, ... to actual names
         feature_map = {f'f{i}': name for i, name in enumerate(feature_cols)}
-        
+
         sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:50]
-        logger.info(f"Top 50 Features für {name}:")
+        logger.info(f"Top 50 features for {name}:")
         for f_idx, score in sorted_imp:
-            feature_name = feature_map.get(f_idx, f_idx)  # Fallback auf f_idx, falls nicht gefunden
+            feature_name = feature_map.get(f_idx, f_idx)  # Fallback to f_idx if not found
             logger.info(f"  {feature_name}: {score:.2f}")
-        
-        
-        # Modell speichern
+
+
+        # Save model
         joblib.dump(model, f"indicator_model_{name}.pkl")
-        logger.info(f"Modell gespeichert: indicator_model_{name}.pkl")
+        logger.info(f"Model saved: indicator_model_{name}.pkl")
 
         models[name] = model
 
-    logger.info("Indikator-Analyse abgeschlossen – 3 Modelle erstellt")
+    logger.info("Indicator analysis complete — 3 models created")
 
-# === Ausführen ===
+# === Run ===
 if __name__ == "__main__":
     asyncio.run(analyze_indicator_impact())

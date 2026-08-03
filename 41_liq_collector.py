@@ -1,45 +1,45 @@
-# 41_liq_collector.py — Liquidations-Collector (LQE1, T-2026-KYT-9050-077)
+# 41_liq_collector.py — Liquidations collector (LQE1, T-2026-KYT-9050-077)
 #
-# Eigener schlanker Prozess (getrennte Failure-Domain, 35_oi_collector-Muster):
-# hält den Binance-Futures-Websocket-Stream `!forceOrder@arr` (marktweite
-# Zwangsliquidationen) und schreibt jedes Event batched in die Hypertable
-# `liq_events` (core/liq_events.py). Zweck: Ground-Truth für die Kalibrierung
-# der geschätzten Liquidations-Heatmap (tools/mps1_liq_heatmap.py, MPS1).
+# Own lightweight process (separate failure domain, 35_oi_collector pattern):
+# holds the Binance futures websocket stream `!forceOrder@arr` (market-wide
+# forced liquidations) and writes every event batched into the hypertable
+# `liq_events` (core/liq_events.py). Purpose: ground truth for calibrating
+# the estimated liquidation heatmap (tools/mps1_liq_heatmap.py, MPS1).
 #
-# ZEITKRITISCH als Sammler: Binance bietet KEINEN REST-Endpoint für historische
-# Liquidationen (allForceOrders wurde 2021 entfernt) — was der Stream nicht
-# live einsammelt, ist unwiederbringlich verloren (dieselbe Lektion wie
-# ticker_10s und K9/oi_5m).
+# TIME-CRITICAL as a collector: Binance offers NO REST endpoint for historical
+# liquidations (allForceOrders was removed in 2021) — whatever the stream does
+# not capture live is irretrievably lost (the same lesson as
+# ticker_10s and K9/oi_5m).
 #
-# Daten-Contract (dokumentationspflichtig): Binance drosselt den Stream auf
-# maximal EINE Order pro Sekunde PRO SYMBOL — die Tabelle ist ein SAMPLE,
-# keine Vollerhebung (Details im Kopf von core/liq_events.py). Kein Rate-
-# Limit-Budget nötig: ein einzelner Stream, kein Polling.
+# Data contract (must be documented): Binance throttles the stream to
+# a maximum of ONE order per second PER SYMBOL — the table is a SAMPLE,
+# not a full census (details in the header of core/liq_events.py). No rate-
+# limit budget needed: a single stream, no polling.
 #
-# Verbindungs-Lifecycle: Binance beendet Websocket-Streams hart nach 24h —
-# der äußere Reconnect-Loop mit Backoff ist daher Normalbetrieb, kein
-# Fehlerfall. Die websockets-Library beantwortet Server-Pings automatisch;
-# ein recv-Timeout dient nur als Flush-Takt (Liquidationen sind sparse,
-# ruhige Minuten ohne Event sind normal).
+# Connection lifecycle: Binance hard-terminates websocket streams after 24h —
+# the outer reconnect loop with backoff is therefore normal operation, not
+# an error case. The websockets library answers server pings automatically;
+# a recv timeout only serves as the flush cadence (liquidations are sparse,
+# quiet minutes without an event are normal).
 #
-# Persistenz-Batching: Events werden gepuffert und alle FLUSH_INTERVAL_S
-# (oder ab FLUSH_MAX_ROWS) mit EINEM Insert geschrieben (WAL-Churn, P1.40).
-# Die DB-Connection wird PRO FLUSH aus dem Pool gezogen (Checkout-Liveness
-# P1.33 ersetzt tote Connections nach DB-Restart — oi_collector-Muster).
-# Schlägt ein Flush fehl, bleibt der Puffer erhalten und wird beim nächsten
-# Takt erneut versucht — gedeckelt auf BUFFER_CAP Rows (dann älteste mit
-# ERROR-Log verwerfen: begrenzter Datenverlust statt unbegrenztem Speicher).
+# Persistence batching: events are buffered and written with ONE insert every
+# FLUSH_INTERVAL_S (or once FLUSH_MAX_ROWS is reached) (WAL churn, P1.40).
+# The DB connection is pulled from the pool PER FLUSH (checkout liveness
+# P1.33 replaces dead connections after a DB restart — oi_collector pattern).
+# If a flush fails, the buffer is kept and retried on the next
+# cadence — capped at BUFFER_CAP rows (then the oldest are dropped with an
+# ERROR log: bounded data loss instead of unbounded memory).
 #
-# Kill-Switch: KYTHERA_LIQ_PERSIST=0 (Default an). Persistenz ist der EINZIGE
-# Job dieses Prozesses — bei 0 idlet er supervised weiter (Watchdog-ruhig),
-# statt sich zu beenden (Exit würde die Crash-Backoff-Schleife triggern).
+# Kill switch: KYTHERA_LIQ_PERSIST=0 (default on). Persistence is the ONLY
+# job of this process — at 0 it keeps idling supervised (watchdog-quiet),
+# instead of exiting (exiting would trigger the crash backoff loop).
 #
-# Registrierung: core/fleet.py (group=logger, start_delay=279). Der Watchdog
-# liest FLEET beim Import — der NEUE Fleet-Eintrag wird erst nach einem
-# Watchdog-Restart supervised (= Fleet-Eingriff ⇒ Operator/Michi, wie K9).
+# Registration: core/fleet.py (group=logger, start_delay=279). The watchdog
+# reads FLEET at import — the NEW fleet entry is only supervised after a
+# watchdog restart (= fleet intervention ⇒ operator/Michi, like K9).
 #
-# Nur-Preis-Check-Ausnahme (R1) greift nicht: forceOrder-Events sind
-# abgeschlossene Orders, keine forming Candles.
+# The price-check-only exception (R1) does not apply: forceOrder events are
+# completed orders, not forming candles.
 
 import json
 import os
@@ -48,7 +48,7 @@ import time
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
-from core import config as _kcfg  # noqa: F401 — lädt .env (DB-Zugang), Konvention der Fleet
+from core import config as _kcfg  # noqa: F401 — loads .env (DB access), fleet convention
 from core import liq_events
 from core.database import db_connection
 from core.logging_setup import setup_logging
@@ -68,35 +68,33 @@ RECONNECT_BACKOFF_CAP_S = 120.0
 
 
 def _lower_process_priority() -> None:
-    """VPS läuft an der Lastgrenze — Collector läuft mit BELOW_NORMAL (K9-Muster)."""
+    """VPS runs at the load limit — collector runs with BELOW_NORMAL (K9 pattern)."""
     try:
         import psutil
 
         psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-        logger.info("Prozess-Priorität: BELOW_NORMAL")
+        logger.info("Process priority: BELOW_NORMAL")
     except Exception as e:
         try:
             import ctypes
 
             handle = ctypes.windll.kernel32.GetCurrentProcess()
             ok = ctypes.windll.kernel32.SetPriorityClass(handle, 0x4000)  # BELOW_NORMAL_PRIORITY_CLASS
-            logger.info(
-                "Prozess-Priorität: BELOW_NORMAL (ctypes)" if ok else f"⚠️ SetPriorityClass fehlgeschlagen ({e})"
-            )
+            logger.info("Process priority: BELOW_NORMAL (ctypes)" if ok else f"⚠️ SetPriorityClass failed ({e})")
         except Exception:
-            logger.warning(f"⚠️ Prioritäts-Absenkung fehlgeschlagen ({e}) — laufe mit Normal-Priorität weiter.")
+            logger.warning(f"⚠️ Priority reduction failed ({e}) — continuing with normal priority.")
 
 
 class _Flusher:
-    """Puffer + zeit-/größengesteuerter batched Insert.
+    """Buffer + time-/size-driven batched insert.
 
     Invariants:
-      * flush() wirft nie — ein fehlgeschlagener Insert lässt den Puffer für
-        den nächsten Takt stehen (Collector-Loop darf nie sterben).
-      * Der Puffer überschreitet BUFFER_CAP nie: Überlauf verwirft die
-        ÄLTESTEN Rows mit ERROR-Log (begrenzter, sichtbarer Datenverlust).
-      * ensure_schema läuft lazy beim ersten erfolgreichen Flush und wird
-        nach Fehlern erneut versucht (DB bootet noch → nächster Takt).
+      * flush() never raises — a failed insert leaves the buffer standing for
+        the next cadence (the collector loop must never die).
+      * The buffer never exceeds BUFFER_CAP: overflow drops the
+        OLDEST rows with an ERROR log (bounded, visible data loss).
+      * ensure_schema runs lazily on the first successful flush and is
+        retried after failures (DB is still booting → next cadence).
     """
 
     def __init__(self) -> None:
@@ -110,7 +108,7 @@ class _Flusher:
         if len(self.rows) > BUFFER_CAP:
             dropped = len(self.rows) - BUFFER_CAP
             del self.rows[:dropped]
-            logger.error(f"Puffer-Überlauf: {dropped} älteste Liquidations-Rows verworfen (DB tot?)")
+            logger.error(f"Buffer overflow: {dropped} oldest liquidation rows dropped (DB dead?)")
 
     def due(self) -> bool:
         if not self.rows:
@@ -131,32 +129,32 @@ class _Flusher:
             self.rows = []
             self.total_inserted += len(batch)
         except Exception as e:
-            # Puffer behalten (add() deckelt), nächster Takt versucht erneut.
-            logger.error(f"Flush fehlgeschlagen ({len(batch)} Rows, Retry nächster Takt): {e}")
+            # Keep the buffer (add() caps it), next cadence retries.
+            logger.error(f"Flush failed ({len(batch)} rows, retry next cadence): {e}")
 
 
 def _stream_once(flusher: _Flusher) -> None:
-    """Eine Websocket-Verbindung bis zum Close halten (Binance: max. 24h).
+    """Hold one websocket connection until close (Binance: max. 24h).
 
-    Wirft ConnectionClosed/OSError an den Reconnect-Loop; alles andere pro
-    Message abfangen — ein malformtes Event darf die Verbindung nie kosten.
+    Raises ConnectionClosed/OSError to the reconnect loop; catch everything
+    else per message — one malformed event must never cost the connection.
     """
     with connect(WS_URL, open_timeout=15) as ws:
-        logger.info(f"Verbunden: {WS_URL}")
+        logger.info(f"Connected: {WS_URL}")
         while True:
             try:
                 raw = ws.recv(timeout=RECV_TIMEOUT_S)
             except TimeoutError:
-                # Ruhige Phase — nur den Flush-Takt bedienen.
+                # Quiet phase — only serve the flush cadence.
                 if flusher.due():
                     flusher.flush()
                 continue
             try:
                 row = liq_events.row_from_force_order(json.loads(raw))
             except Exception as e:
-                # Breiter Fang mit Absicht: ein einzelnes Frame — egal wie
-                # kaputt — darf die Verbindung nie kosten (Flush-Philosophie).
-                logger.error(f"Unparsebares Websocket-Frame verworfen: {e}")
+                # Broad catch by design: a single frame — no matter how
+                # broken — must never cost the connection (flush philosophy).
+                logger.error(f"Unparseable websocket frame dropped: {e}")
                 row = None
             if row is not None:
                 flusher.add(row)
@@ -169,8 +167,8 @@ def main() -> None:
     _lower_process_priority()
 
     if not LIQ_PERSIST:
-        # Kill-Switch: supervised idlen statt beenden (s. Kopfkommentar).
-        logger.warning("KYTHERA_LIQ_PERSIST=0 — Collector idlet ohne Persistenz.")
+        # Kill switch: idle supervised instead of exiting (see header comment).
+        logger.warning("KYTHERA_LIQ_PERSIST=0 — collector idling without persistence.")
         while True:
             time.sleep(300)
             logger.info("Idle (KYTHERA_LIQ_PERSIST=0).")
@@ -184,33 +182,33 @@ def main() -> None:
         except ConnectionClosed as e:
             lived_s = time.monotonic() - connected_at
             if lived_s >= 60.0:
-                # 24h-Rotation oder später Netz-Hickup — Normalbetrieb.
+                # 24h rotation or a later network hiccup — normal operation.
                 logger.info(
-                    f"Verbindung nach {lived_s:.0f}s geschlossen ({e.rcvd or e.sent or 'ohne Close-Frame'}) — Reconnect."
+                    f"Connection closed after {lived_s:.0f}s ({e.rcvd or e.sent or 'no close frame'}) — reconnecting."
                 )
                 backoff = RECONNECT_BACKOFF_START_S
             else:
-                # Sofort-Close (Reject/Ban/Netzproblem): wie Fehler behandeln,
-                # sonst hämmert der Loop im Sekundentakt gegen den Endpoint.
-                logger.warning(f"Verbindung nach nur {lived_s:.0f}s geschlossen — Backoff {backoff:.0f}s")
+                # Immediate close (reject/ban/network issue): treat like an error,
+                # otherwise the loop hammers the endpoint once per second.
+                logger.warning(f"Connection closed after only {lived_s:.0f}s — backoff {backoff:.0f}s")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, RECONNECT_BACKOFF_CAP_S)
         except Exception as e:
             if time.monotonic() - connected_at >= 60.0:
-                backoff = RECONNECT_BACKOFF_START_S  # lange gelebte Verbindung → frischer Backoff
-            logger.error(f"Stream-Fehler: {e} — Reconnect in {backoff:.0f}s")
+                backoff = RECONNECT_BACKOFF_START_S  # long-lived connection → fresh backoff
+            logger.error(f"Stream error: {e} — reconnecting in {backoff:.0f}s")
             time.sleep(backoff)
             backoff = min(backoff * 2, RECONNECT_BACKOFF_CAP_S)
             continue
         finally:
-            # Was im Puffer liegt, vor/nach jedem Verbindungsende sichern —
-            # flush() wirft nie (Invariant), auch hier nicht.
+            # Save whatever is in the buffer before/after every connection end —
+            # flush() never raises (invariant), not here either.
             flusher.flush()
-        time.sleep(1.0)  # sanfter Reconnect-Abstand im Normalfall
+        time.sleep(1.0)  # gentle reconnect spacing in the normal case
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("🛑 Liq Collector manuell gestoppt (Strg+C).")
+        logger.info("🛑 Liq Collector manually stopped (Ctrl+C).")

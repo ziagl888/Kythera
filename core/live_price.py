@@ -39,8 +39,8 @@ def get_live_prices_batch():
 
 def get_live_price(symbol, conn=None):
     """Fetches the current live price from Binance.
-    Bei Ausfall (Rate-Limit, Netzwerk-Error) Fallback auf den neuesten Close
-    aus der lokalen 5m-Tabelle — besser als den ganzen Coin zu skippingn.
+    On failure (rate limit, network error) falls back to the newest close
+    from the local 5m table — better than skipping the whole coin.
     """
     try:
         url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1m&limit=1"
@@ -49,8 +49,8 @@ def get_live_price(symbol, conn=None):
     except Exception:
         if conn is None:
             return None
-        # Fallback: neuester 5m-Close aus DB — forming candle bewusst inkludiert
-        # (Live-Preis-Fallback, core.candles contract 2: include_forming=True).
+        # Fallback: newest 5m close from DB — forming candle deliberately included
+        # (live-price fallback, core.candles contract 2: include_forming=True).
         try:
             df = read_candles(conn, symbol, "5m", limit=1, include_forming=True, columns=("open_time", "close"))
             if not df.empty:

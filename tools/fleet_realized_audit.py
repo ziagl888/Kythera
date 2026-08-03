@@ -1,59 +1,59 @@
-"""tools/fleet_realized_audit.py — Fleet-weiter Realized-Trade-Audit (Phase A, T-2026-KYT-9050-032).
+"""tools/fleet_realized_audit.py — fleet-wide realized-trade audit (phase A, T-2026-KYT-9050-032).
 
-Zweck
+Purpose
 -----
-Reviewbare Kontroll-Tabelle des realisierten Edge JEDES Bots DIREKT AUS DER DB
-(kein eigenes Backtesting hier), pro **Tag × Richtung (LONG/SHORT) × Lifecycle
-(active/shadow/retired/inactive)**. Ranking → Retire-Kandidaten (negativer
-realisierter Edge) vs Keep (positiv). Reine ANALYSE + EMPFEHLUNG — kein
-Live-Eingriff (harte Regel 1/2, Retire = Michi-Eskalation).
+Reviewable control table of the realized edge of EVERY bot DIRECTLY FROM THE DB
+(no backtesting of its own here), per **tag × direction (LONG/SHORT) × lifecycle
+(active/shadow/retired/inactive)**. Ranking → retire candidates (negative
+realized edge) vs keep (positive). Pure ANALYSIS + RECOMMENDATION — no
+live intervention (hard rule 1/2, retire = Michi escalation).
 
-Datenquellen (Live-DB, strikt read-only)
+Data sources (live DB, strictly read-only)
 -----------------------------------------
-  * `closed_ai_signals` (model = Tag): AI-Bots. KEINE brauchbaren Indizes,
-    357k-Duplikat-Falle (LEGACY-Re-Close-Event) → DISTINCT ON dem Report-14-
-    Survivor-Key (symbol, model, dir, open_time), earliest close. Keine `sl`-
-    Spalte → R-Multiple hier nicht rekonstruierbar.
-  * `closed_trades_master` (strategy = Tag): klassische Detektoren (3_detectors).
-    Trägt `sl` → R-Multiple hier verfügbar. close_price<=0-Ära vor 2026-03 (v1)
-    fällt über den entry/close>0-Filter raus.
+  * `closed_ai_signals` (model = tag): AI bots. NO usable indexes,
+    357k duplicate trap (LEGACY re-close event) → DISTINCT ON the report-14
+    survivor key (symbol, model, dir, open_time), earliest close. No `sl`
+    column → R-multiple cannot be reconstructed here.
+  * `closed_trades_master` (strategy = tag): classic detectors (3_detectors).
+    Carries `sl` → R-multiple available here. close_price<=0 era before 2026-03 (v1)
+    drops out via the entry/close>0 filter.
 
-Outcome-Klassifikation
+Outcome classification
 ----------------------
-  * LEGACY-Rows (status enthält "LEGACY") sind SYNTHETISCH (fixe ±2.5%/-5%
-    Close-Preise aus der Feb/März-Migration) → aus dem realisierten Edge
-    AUSGESCHLOSSEN und separat als `legacy_n` ausgewiesen; ihre PnL-Magnitude
-    ist bedeutungslos (WR nur aus dem Status-Text).
-  * Zensiert (DELISTED/CLEANUP/REGIME_CHANGE/FORCE_CLOSED): extern verursachte
-    Closes, weder Win noch Loss — aus WR + Edge raus, als `censored_n` gezählt.
-  * Win = TP1 berührt (AI: targets_hit>=1 oder "ALL TARGETS"; classic: status
-    1..4/SL1..3). Loss = SL0/kein Target. WR ist TP1-Touch → sekundär; **PnL
-    (Preis-Move) ist primär** (R:R zählt, WR allein irreführend).
+  * LEGACY rows (status contains "LEGACY") are SYNTHETIC (fixed ±2.5%/-5%
+    close prices from the Feb/March migration) → EXCLUDED from the realized
+    edge and reported separately as `legacy_n`; their PnL magnitude
+    is meaningless (WR only from the status text).
+  * Censored (DELISTED/CLEANUP/REGIME_CHANGE/FORCE_CLOSED): externally caused
+    closes, neither win nor loss — excluded from WR + edge, counted as `censored_n`.
+  * Win = TP1 touched (AI: targets_hit>=1 or "ALL TARGETS"; classic: status
+    1..4/SL1..3). Loss = SL0/no target. WR is TP1 touch → secondary; **PnL
+    (price move) is primary** (R:R counts, WR alone is misleading).
 
-Metriken pro Leg (nur NICHT-legacy, NICHT-censored „decided"-Trades)
+Metrics per leg (only NON-legacy, NON-censored "decided" trades)
 --------------------------------------------------------------------
-  n, WR%, unlevered Move% (sum/mean/median), Net-Mean (− Fee), Sharpe
-  (mean/std, NICHT annualisiert), t-Stat (mean/(std/√n)); leveraged Realized-PnL
-  (sum/mean) exact-only wo targets+lev persistiert; R-Multiple (mean/median,
-  nur classic mit sl>0); Zeitspanne first/last.
+  n, WR%, unlevered move% (sum/mean/median), net mean (− fee), Sharpe
+  (mean/std, NOT annualised), t-stat (mean/(std/√n)); leveraged realized PnL
+  (sum/mean) exact-only where targets+lev are persisted; R-multiple (mean/median,
+  classic only with sl>0); time span first/last.
 
-Join-Grenzen (ehrlich)
+Join limits (honestly)
 ----------------------
-  * closed_ai_signals hat KEIN sl → kein R-Multiple für AI-Bots.
-  * targets+lev sind für Alt-Tags dünn persistiert (Bot-8-Monitor-Migration) →
-    leveraged PnL ist exact-only, Coverage pro Leg ausgewiesen; unlevered Move
-    ist die Coverage-robuste Edge-Metrik.
-  * prob↔outcome in der Live-DB nur eingeschränkt joinbar → Outcome via realized
-    Trade-`status`, nicht via prob.
-  * active-vs-inactive hängt an control/parked-Markern des LIVE-Checkouts; im
-    Worktree ist der Park-Zustand ggf. nicht sichtbar → über --parked-dir
-    steuerbar, sonst als Limit vermerkt. shadow/retired/silent sind
-    code-definiert (shadow_gate) und im Worktree korrekt.
+  * closed_ai_signals has NO sl → no R-multiple for AI bots.
+  * targets+lev are thinly persisted for old tags (bot-8 monitor migration) →
+    leveraged PnL is exact-only, coverage reported per leg; unlevered move
+    is the coverage-robust edge metric.
+  * prob↔outcome is only partially joinable in the live DB → outcome via realized
+    trade `status`, not via prob.
+  * active-vs-inactive depends on control/parked markers of the LIVE checkout; in
+    the worktree the park state may not be visible → controllable via --parked-dir,
+    otherwise noted as a limit. shadow/retired/silent are
+    code-defined (shadow_gate) and correct in the worktree.
 
-Betriebsregeln (Live-VPS!)
+Operating rules (live VPS!)
 --------------------------
-  DB strikt read-only, BELOW_NORMAL-Priorität, CPU-Headroom-Check. Keine Tabelle
-  wird geschrieben. Ergebnisse nach KYTHERA_REPLAY_DIR (JSON + Markdown).
+  DB strictly read-only, BELOW_NORMAL priority, CPU headroom check. No table
+  is written. Results under KYTHERA_REPLAY_DIR (JSON + markdown).
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ if REPO_ROOT not in sys.path:
 from core.realized_pnl import weighted_move_pct  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PURE HELPERS (DB-frei, in backtest/test_fleet_realized_audit.py gepinnt)
+# PURE HELPERS (DB-free, pinned in backtest/test_fleet_realized_audit.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Unlevered taker round-trip fee on the price-move scale (%), same assumption as
@@ -98,8 +98,8 @@ _CENSOR_FRAGMENTS = ("DELISTED", "CLEANUP", "ORPHAN", "REGIME", "EXPIRED", "FORC
 
 
 def classify_ai_outcome(status: object, targets_hit: object) -> str:
-    """AI-Row → Outcome-Klasse. LEGACY zuerst (synthetisch), dann Zensur, dann
-    Win (TP1-Touch), dann Loss/Timeout/Unfilled."""
+    """AI row → outcome class. LEGACY first (synthetic), then censorship, then
+    win (TP1 touch), then loss/timeout/unfilled."""
     s = str(status or "").upper()
     if "LEGACY" in s:
         return LEGACY
@@ -127,7 +127,7 @@ _CLASSIC_LOSS = {"0", "SL0"}
 
 
 def classify_classic_outcome(status: object) -> str:
-    """closed_trades_master.status → Outcome-Klasse."""
+    """closed_trades_master.status → outcome class."""
     s = str(status or "").strip().upper()
     if any(frag in s for frag in _CENSOR_FRAGMENTS):
         return CENSORED
@@ -139,9 +139,9 @@ def classify_classic_outcome(status: object) -> str:
 
 
 def signed_move_pct(direction: object, entry: object, close: object) -> float | None:
-    """Direction-korrigierter unlevered Preis-Move in % (LONG +, SHORT −).
+    """Direction-corrected unlevered price move in % (LONG +, SHORT −).
 
-    None bei ungültigen Preisen/Richtung oder Move über MAX_ABS_MOVE_PCT (Bug)."""
+    None for invalid prices/direction or a move above MAX_ABS_MOVE_PCT (bug)."""
     side = str(direction or "").strip().upper()
     if side not in ("LONG", "SHORT"):
         return None
@@ -162,21 +162,21 @@ def signed_move_pct(direction: object, entry: object, close: object) -> float | 
 def unlev_move(
     direction: object, entry: object, close: object, targets: list, targets_hit: object, model: object = None
 ) -> tuple[float | None, bool]:
-    """Unlevered realisierter Move in % + staffed-Flag.
+    """Unlevered realized move in % + staffed flag.
 
-    Bevorzugt den TARGET-GESTAFFELTEN Move (`core.realized_pnl.weighted_move_pct`,
-    die kanonische Fleet-Realized-Definition, T-115): der Einsatz wird gleich auf
-    die N Targets verteilt, k getroffene Targets realisieren bei ihrem Preis, der
-    Rest schließt bei close_price. Das ist der KORREKTE realisierte Edge für
-    laddered-TP-Bots — der rohe entry→close-Move UNTERSCHÄTZT einen Gewinner, der
-    TP1/TP2 bucht und auf dem Rest zum SL zurückläuft (close=SL, aber 2/4 gebucht).
+    Prefers the TARGET-STAGGERED move (`core.realized_pnl.weighted_move_pct`,
+    the canonical fleet-realized definition, T-115): the stake is split evenly across
+    the N targets, k hit targets realize at their price, the
+    rest closes at close_price. That is the CORRECT realized edge for
+    laddered-TP bots — the raw entry→close move UNDERESTIMATES a winner that
+    books TP1/TP2 and runs back to the SL on the remainder (close=SL, but 2/4 booked).
 
-    Fallback auf den rohen signed_move_pct (entry→close), wenn keine Targets
-    persistiert sind (Alt-Tags vor der Bot-8-Monitor-Migration). Rückgabe
-    (move, staffed): staffed=True nur, wenn der gestaffelte Pfad genutzt wurde.
+    Falls back to the raw signed_move_pct (entry→close) if no targets
+    are persisted (old tags before the bot-8 monitor migration). Returns
+    (move, staffed): staffed=True only if the staggered path was used.
 
-    `model` durchgereicht: ROM1 und AIM2 persistieren mehr Targets als sie nach
-    Cornix posten, die Staffelung muss auf der gehandelten Bein-Zahl rechnen
+    `model` is passed through: ROM1 and AIM2 persist more targets than they post
+    to Cornix, the staggering must compute on the actually traded leg count
     (T-2026-KYT-9050-012, core.realized_pnl.PUBLISHED_TARGET_COUNT)."""
     if targets:
         m = weighted_move_pct(direction, entry, close, targets, targets_hit, model)
@@ -186,10 +186,10 @@ def unlev_move(
 
 
 def r_from_move(move: float | None, entry: object, sl: object) -> float | None:
-    """Realisierter R-Multiple = realisierter Move / geplantes Anfangsrisiko.
+    """Realized R-multiple = realized move / planned initial risk.
 
-    Risiko = |entry − sl| / entry. Nur bei sl>0 und gültigem Move. Ein SL-Loss
-    ergibt ≈ −1R. `move` ist der (ggf. gestaffelte) unlevered Move aus unlev_move."""
+    Risk = |entry − sl| / entry. Only for sl>0 and a valid move. An SL loss
+    yields ≈ −1R. `move` is the (possibly staggered) unlevered move from unlev_move."""
     if move is None:
         return None
     try:
@@ -229,11 +229,11 @@ def _std(xs: list[float]) -> float | None:
 
 
 def aggregate_leg(rows: list[dict]) -> dict:
-    """Falte die (schon nach (tag,dir,bucket) gruppierten) Rows zu Leg-Stats.
+    """Fold the (already grouped by (tag,dir,bucket)) rows into leg stats.
 
-    Jede Row: {outcome, move (float|None), staffed (bool), lev_pnl (float|None),
-    r (float|None), ts (datetime|None)}. Pure → DB-frei testbar. `move`/`lev_pnl`/
-    `r` gelten nur für decided (win/loss) Rows; legacy/censored werden nur gezählt."""
+    Each row: {outcome, move (float|None), staffed (bool), lev_pnl (float|None),
+    r (float|None), ts (datetime|None)}. Pure → DB-free testable. `move`/`lev_pnl`/
+    `r` apply only to decided (win/loss) rows; legacy/censored are only counted."""
     decided_moves: list[float] = []
     wins = 0
     losses = 0
@@ -319,7 +319,7 @@ THIN_N = 30
 
 
 def verdict_for(stats: dict) -> str:
-    """Edge-Verdikt aus den Leg-Stats. PnL (net_mean) primär, WR sekundär."""
+    """Edge verdict from the leg stats. PnL (net_mean) primary, WR secondary."""
     n = stats["n_decided"]
     if n == 0:
         # No real outcomes at all — only synthetic/censored history.
@@ -592,18 +592,18 @@ def build_report(meta: dict) -> str:
         f"AI rows {meta['n_ai_rows']} · classic rows {meta['n_classic_rows']}_\n"
     )
     ap(
-        "**Edge-Metrik (`mean%`/`net%`):** unlevered, TARGET-GESTAFFELTER realisierter Move % pro "
-        "decided (Win/Loss, NICHT-legacy/censored) Trade (`core.realized_pnl.weighted_move_pct` — der "
-        "Einsatz wird gleich auf die N Targets verteilt; das ist der korrekte realisierte Edge für "
-        "laddered-TP-Bots). Wo keine Targets persistiert sind (Alt-Tags), Fallback auf rohen "
-        f"entry→close-Move; `stf%` = Anteil gestaffelter Trades. `net%` = mean − {FEE_RT_PCT:.2f}% "
-        "Round-Trip-Fee. **PnL primär, WR sekundär** (WR = TP1-Touch, R:R zählt). LEGACY-Closes "
-        "(synthetische ±2.5%) ausgeschlossen (`leg`-Spalte). `levΣ%(n)` = leveraged realized PnL "
-        "(gestaffelt × Hebel, −100% geclampt), GROSS (Fee nicht abgezogen), exact-only wo targets+lev "
-        f"persistiert (n). `R̄` nur classic (closed_ai_signals hat kein sl). Verdikt auf `net%` (n≥{THIN_N}).\n"
+        "**Edge metric (`mean%`/`net%`):** unlevered, TARGET-STAGGERED realized move % per "
+        "decided (win/loss, NON-legacy/censored) trade (`core.realized_pnl.weighted_move_pct` — the "
+        "stake is split evenly across the N targets; that is the correct realized edge for "
+        "laddered-TP bots). Where no targets are persisted (old tags), fallback to the raw "
+        f"entry→close move; `stf%` = share of staggered trades. `net%` = mean − {FEE_RT_PCT:.2f}% "
+        "round-trip fee. **PnL primary, WR secondary** (WR = TP1 touch, R:R counts). LEGACY closes "
+        "(synthetic ±2.5%) excluded (`leg` column). `levΣ%(n)` = leveraged realized PnL "
+        "(staggered × leverage, clamped at −100%), GROSS (fee not deducted), exact-only where targets+lev "
+        f"are persisted (n). `R̄` classic only (closed_ai_signals has no sl). Verdict based on `net%` (n≥{THIN_N}).\n"
     )
 
-    ap(f"## Ranking — Retire-Kandidaten vs Keep (decided n ≥ {THIN_N})\n")
+    ap(f"## Ranking — retire candidates vs keep (decided n ≥ {THIN_N})\n")
     for direction in ("LONG", "SHORT"):
         keep = [lg for lg in meta["legs"] if lg["direction"] == direction and lg["verdict"] == "KEEP"]
         retire = [lg for lg in meta["legs"] if lg["direction"] == direction and lg["verdict"] == "RETIRE-CANDIDATE"]
@@ -611,7 +611,7 @@ def build_report(meta: dict) -> str:
         retire = rank_legs(retire)  # worst first
         ap(f"### {direction}\n")
         ap(
-            "**RETIRE-Kandidaten** (net<0): "
+            "**RETIRE candidates** (net<0): "
             + (
                 ", ".join(
                     f"{lg['tag']}[{lg['bucket'][:3]}] {lg['stats']['net_mean_pct']:+.2f}%×{lg['stats']['n_decided']}"
@@ -647,7 +647,7 @@ def build_report(meta: dict) -> str:
                 ap(_leg_row(lg))
             ap("")
 
-    ap("## Join-Grenzen (ehrlich)\n")
+    ap("## Join limits (honestly)\n")
     for lim in meta["join_limits"]:
         ap(f"- {lim}")
     ap("")
@@ -661,20 +661,20 @@ DEFAULT_OUT_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(REPO_ROOT, "stagi
 _LIVE_PARKED_DEFAULT = r"C:\Users\Michael\Documents\Kythera\control\parked"
 
 _JOIN_LIMITS = [
-    "closed_ai_signals hat KEIN sl → R-Multiple nur für classic (closed_trades_master).",
-    "targets+lev sind für Alt-Tags dünn persistiert (Bot-8-Monitor-Migration) → leveraged PnL "
-    "ist exact-only (levΣ n-Spalte); die unlevered Move-Metrik ist die Coverage-robuste Edge-Basis.",
-    "LEGACY-Closes (±2.5%/-5%) sind synthetische Migrations-Preise → aus dem Edge ausgeschlossen; "
-    "Tags, deren Historie fast nur LEGACY ist (MIS1-*_pump/dump-Burst 03-01/03-02), haben keinen "
-    "messbaren realisierten Edge (SYNTHETIC/CENSORED-ONLY).",
-    "WR ist TP1-Touch (kann bei R:R<1 trotzdem netto-negativ sein) — deshalb ist net-mean-Move die "
-    "Verdikt-Basis, nicht WR.",
-    "prob↔outcome in der Live-DB nur eingeschränkt joinbar → Outcome via realized Trade-status.",
-    "active-vs-inactive nutzt control/parked des LIVE-Checkouts (--parked-dir); shadow/retired/silent "
-    "sind code-definiert (shadow_gate) und unabhängig davon korrekt.",
-    "Monitor-generierte Outcomes (P1.2/P2.7/P1.9) stimmen historisch nur ~63% mit einem First-Touch-"
-    "Replay überein → die absolute Edge-Höhe ist rauschbehaftet; Vorzeichen + Kohorten-Vergleiche "
-    "sind das Signal.",
+    "closed_ai_signals has NO sl → R-multiple only for classic (closed_trades_master).",
+    "targets+lev are thinly persisted for old tags (bot-8 monitor migration) → leveraged PnL "
+    "is exact-only (levΣ n column); the unlevered move metric is the coverage-robust edge basis.",
+    "LEGACY closes (±2.5%/-5%) are synthetic migration prices → excluded from the edge; "
+    "tags whose history is almost entirely LEGACY (MIS1-*_pump/dump burst 03-01/03-02) have no "
+    "measurable realized edge (SYNTHETIC/CENSORED-ONLY).",
+    "WR is TP1 touch (can still be net-negative at R:R<1) — that is why net-mean move is the "
+    "verdict basis, not WR.",
+    "prob↔outcome is only partially joinable in the live DB → outcome via realized trade status.",
+    "active-vs-inactive uses control/parked of the LIVE checkout (--parked-dir); shadow/retired/silent "
+    "are code-defined (shadow_gate) and correct independent of that.",
+    "Monitor-generated outcomes (P1.2/P2.7/P1.9) historically agree only ~63% with a first-touch "
+    "replay → the absolute edge magnitude is noisy; sign + cohort comparisons "
+    "are the signal.",
 ]
 
 
@@ -699,13 +699,13 @@ def main() -> None:
     from tools.walkforward_sim import check_cpu_headroom, set_low_priority
 
     def soft_headroom() -> None:
-        """CPU-Höflichkeit, aber NICHT hart abbrechen: Phase A sind nur zwei
-        read-only Scans unter BELOW_NORMAL — sie müssen vollständig werden
-        (Task-Vorgabe: Phase A hat Vorrang, wenn der Headroom-Check abbricht)."""
+        """CPU courtesy, but do NOT hard-abort: phase A is just two
+        read-only scans under BELOW_NORMAL — they must complete
+        (task directive: phase A takes precedence if the headroom check aborts)."""
         try:
             check_cpu_headroom()
         except SystemExit as e:
-            print(f"WARN {e} — Phase A läuft dennoch (read-only, BELOW_NORMAL).", flush=True)
+            print(f"WARN {e} — phase A runs anyway (read-only, BELOW_NORMAL).", flush=True)
 
     set_low_priority()
     soft_headroom()

@@ -300,12 +300,12 @@ def post_candidate(conn, cand: Max1Candidate, live: bool) -> None:
             sl,
             targets,
             source_desc="High-Conviction Rubberband Short (MAX1)",
-            extra_info_lines=[f"Kalibriert: {cal:.1%} (Gate läuft auf der rohen Probability)"],
+            extra_info_lines=[f"Calibrated: {cal:.1%} (gate runs on the raw probability)"],
         )
-        logger.info(f"🔥 MAX1 LIVE {cand.symbol} {DIRECTION} (p={cand.prob:.1%}, kal. {cal:.1%})")
+        logger.info(f"🔥 MAX1 LIVE {cand.symbol} {DIRECTION} (p={cand.prob:.1%}, cal. {cal:.1%})")
     else:
         logger.info(
-            f"👻 MAX1 SHADOW {cand.symbol} {DIRECTION} (p={cand.prob:.1%}, kal. {cal:.1%}) — Live-Posting deaktiviert."
+            f"👻 MAX1 SHADOW {cand.symbol} {DIRECTION} (p={cand.prob:.1%}, cal. {cal:.1%}) — live posting disabled."
         )
 
     log_prediction(
@@ -336,7 +336,7 @@ def _rollback(conn) -> bool:
         conn.rollback()
         return True
     except Exception:
-        logger.error("Rollback fehlgeschlagen (tote Connection) — Zyklus-Abbruch.")
+        logger.error("Rollback failed (dead connection) — aborting cycle.")
         return False
 
 
@@ -358,12 +358,12 @@ def run_scan() -> None:
     try:
         posts_24h = count_posts_24h(conn)
         if posts_24h >= cfg.max_per_day:
-            logger.info(f"🚦 MAX1 Tages-Kappe erreicht ({posts_24h}/{cfg.max_per_day} in 24h) — Scan übersprungen.")
+            logger.info(f"🚦 MAX1 daily cap reached ({posts_24h}/{cfg.max_per_day} in 24h) — scan skipped.")
             return
 
         now = datetime.datetime.now(datetime.timezone.utc)
         logger.info(
-            f"🔍 MAX1-Scan über {len(coins)} Coins (Gate {gate:.3f}, {posts_24h}/{cfg.max_per_day} Posts in 24h)…"
+            f"🔍 MAX1 scan over {len(coins)} coins (gate {gate:.3f}, {posts_24h}/{cfg.max_per_day} posts in 24h)…"
         )
 
         pool: list[Max1Candidate] = []
@@ -381,7 +381,7 @@ def run_scan() -> None:
 
         selected = select_signals(pool, cfg.max_per_day, gate, posts_24h)
         if pool and not selected:
-            logger.info(f"🚦 {len(pool)} Kandidaten über Gate, aber kein freier Slot (Kappe {cfg.max_per_day}/24h).")
+            logger.info(f"🚦 {len(pool)} candidates over gate, but no free slot (cap {cfg.max_per_day}/24h).")
         for cand in selected:
             try:
                 post_candidate(conn, cand, live)
@@ -390,22 +390,22 @@ def run_scan() -> None:
                 if not _rollback(conn):
                     return
     except Exception as e:
-        logger.error(f"MAX1-Scan-Fehler: {e}")
+        logger.error(f"MAX1 scan error: {e}")
         _rollback(conn)
     finally:
         conn.close()
-    logger.info("🏁 MAX1-Scan beendet.")
+    logger.info("🏁 MAX1 scan finished.")
 
 
 def main() -> None:
     cfg = load_config()
-    logger.info("=== 💎 AI MAX1 BOT (High-Conviction Rubberband Short) GESTARTET ===")
+    logger.info("=== 💎 AI MAX1 BOT (High-Conviction Rubberband Short) STARTED ===")
     if cfg.live and TARGET_CHANNEL_ID == 0:
-        logger.warning("MAX1: Live-Gate an, aber weder CH_MAX1 noch CH_MAIN gesetzt → Shadow-only.")
+        logger.warning("MAX1: live gate on, but neither CH_MAX1 nor CH_MAIN set → shadow-only.")
     mode = "LIVE" if (cfg.live and TARGET_CHANNEL_ID != 0) else "SHADOW-ONLY"
     logger.info(
-        f"    Posting={mode} | min_prob={cfg.min_prob:.2f} | Kappe={cfg.max_per_day}/24h | "
-        f"Artefakt={'geladen (' + ARTIFACT['tag'] + ')' if ARTIFACT['loaded'] else 'fehlt → Idle-Modus'}"
+        f"    Posting={mode} | min_prob={cfg.min_prob:.2f} | cap={cfg.max_per_day}/24h | "
+        f"artifact={'loaded (' + ARTIFACT['tag'] + ')' if ARTIFACT['loaded'] else 'missing → idle mode'}"
     )
 
     while True:
@@ -417,7 +417,7 @@ def main() -> None:
             if ARTIFACT["loaded"]:
                 run_scan()
             else:
-                logger.info("MAX1 idle — kein Artefakt deployt (Promotion aus staging_models ist Operator-Entscheid).")
+                logger.info("MAX1 idle — no artifact deployed (promotion from staging_models is an operator decision).")
             time.sleep(60)  # don't trigger twice inside the same minute
         else:
             time.sleep(10)
@@ -427,4 +427,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell gestoppt (Strg+C). Fahre sauber herunter…")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly…")

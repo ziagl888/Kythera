@@ -59,17 +59,17 @@ s1 = summary(
 md1 = render_trailing_md(s1)
 check("hold row rendered", "| **hold** |" in md1)
 check("trailing 10% row", "| Trailing 10% |" in md1)
-check("best-X = 10", "Bester Trailing-X = 10%" in md1)
-check("beats hold -> bestätigt", "bestätigt" in md1 and "hebt den risiko-adjustierten" in md1)
-check("MaxDD ratio ~4.8x", "4.8× kleiner" in md1, md1)
+check("best-X = 10", "Best trailing-X = 10%" in md1)
+check("beats hold -> confirmed", "confirmed" in md1 and "raises the risk-adjusted" in md1)
+check("MaxDD ratio ~4.8x", "4.8× smaller" in md1, md1)
 
 # Case 2: trailing never beats hold (hold Sharpe highest) — not confirmed
 s2 = summary(
     0.60, 5.0, {10: (0.30, 6.0), 15: (0.28, 6.0), 20: (0.25, 6.0), 25: (0.22, 6.0), 30: (0.20, 6.0), 40: (0.18, 6.0)}
 )
 md2 = render_trailing_md(s2)
-check("no Sharpe gain", "kein Sharpe-Gewinn" in md2)
-check("not confirmed", "abgeschwächt/nicht bestätigt" in md2)
+check("no Sharpe gain", "no Sharpe gain" in md2)
+check("not confirmed", "weakened/not confirmed" in md2)
 
 print()
 if FAILS:

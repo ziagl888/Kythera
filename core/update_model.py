@@ -9,11 +9,11 @@ def update_model(filename):
         print(f"❌ File not found: {filename}")
         return
 
-    # FIX (#85): Threshold-Files enthalten nur einen float, kein ML-Modell.
-    # Vorher lief joblib.load erfolgreich, aber `model.save_model(...)` crashte mit
-    # "AttributeError: 'float' object has no attribute 'save_model'" — gefangen im
-    # except, aber der Fehler sah aus wie ein Modell-Problem. Jetzt: explizit
-    # skippen (Threshold-Files heißen "threshold_*.pkl").
+    # FIX (#85): threshold files contain only a float, no ML model.
+    # Previously joblib.load succeeded, but `model.save_model(...)` crashed with
+    # "AttributeError: 'float' object has no attribute 'save_model'" — caught by
+    # the except, but the error looked like a model problem. Now: explicitly
+    # skip (threshold files are named "threshold_*.pkl").
     basename = os.path.basename(filename)
     if basename.startswith("threshold_"):
         print(f"⏭️  Skipping {filename} (threshold file, not an ML model)")
@@ -22,7 +22,7 @@ def update_model(filename):
     print(f"🔄 Processing {filename}...")
 
     try:
-        # 1. Das alte Modell (via joblib/pickle) laden
+        # 1. Load the old model (via joblib/pickle)
         model = joblib.load(filename)
 
         # Defensively check whether it is actually a model with save_model method
@@ -30,11 +30,11 @@ def update_model(filename):
             print(f"⚠️  {filename} does not contain an XGBoost model ({type(model).__name__}), skipping.")
             return
 
-        # 2. Das Modell im neuen, nativen XGBoost-Format speichern
+        # 2. Save the model in the new, native XGBoost format
         # The native format (.json or .ubm) is more version-independent
-        # FIX (P1.35): replace(".model", ...) war ein No-op für *_model.pkl/.joblib —
-        # save_model() überschrieb dann das Original-Artefakt in-place. Jetzt splitext
-        # + harter Refuse, falls Ziel == Quelle oder das Ziel bereits existiert.
+        # FIX (P1.35): replace(".model", ...) was a no-op for *_model.pkl/.joblib —
+        # save_model() then overwrote the original artifact in-place. Now splitext
+        # + hard refuse if target == source or the target already exists.
         root, ext = os.path.splitext(filename)
         new_filename = f"{root}_v2.json"
         if os.path.abspath(new_filename) == os.path.abspath(filename):
@@ -45,14 +45,14 @@ def update_model(filename):
             return None
         model.save_model(new_filename)
 
-        # 3. Testweise wieder laden, um Erfolg zu prüfen
+        # 3. Load it back as a test to verify success
         test_model = xgb.XGBClassifier()
         test_model.load_model(new_filename)
 
-        print(f"✅ Erfolg! Neues Modell gespeichert als: {new_filename}")
+        print(f"✅ Success! New model saved as: {new_filename}")
         return new_filename
     except Exception as e:
-        print(f"🔥 Fehler beim Update von {filename}: {e}")
+        print(f"🔥 Error updating {filename}: {e}")
         return None
 
 

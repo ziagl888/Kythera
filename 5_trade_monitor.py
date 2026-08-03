@@ -31,22 +31,20 @@ def create_closed_trades_table(conn):
 
 def close_trade(conn, trade, close_price, end_status):
     """Removes from active and saves to closed (silent — no Telegram)."""
-    # FIX: Vorher naive `datetime.now()` (Server-Lokalzeit). Auf DE/AT-Servern
-    # schreibt das bis zu 2h after vorn verschobene Zeitstempel in `posted`,
-    # während andere Scripts `datetime.now() - timedelta` in UTC vergleichen
-    # (→ frisch geschlossene Trades werden fälschlich als "zu alt" behandelt).
-    # Jetzt konsequent UTC.
+    # FIX: previously naive `datetime.now()` (server local time). On DE/AT servers
+    # this writes timestamps shifted up to 2h forward into `posted`,
+    # while other scripts compare `datetime.now() - timedelta` in UTC
+    # (→ freshly closed trades falsely treated as "too old").
+    # now consistently UTC.
     now = datetime.datetime.now(datetime.timezone.utc)
     with conn.cursor() as cur:
-        # FIX P2.8: DELETE ... RETURNING zuerst — der Insert in die Closed-Tabelle
-        # läuft NUR wenn WIR die Row wirklich entfernt haben. Sonst schreiben zwei
-        # Iterationen/Prozesse denselben Trade doppelt in closed_trades_master.
+        # FIX P2.8: DELETE ... RETURNING first — insert to closed table
+        # runs ONLY if WE actually removed the row. otherwise two
+        # iterations/processes write same trade twice to closed_trades_master.
         cur.execute("DELETE FROM active_trades_master WHERE id = %s RETURNING id", (trade['id'],))
         if cur.fetchone() is None:
             conn.commit()
-            logger.warning(
-                f"⚠️ Trade {trade.get('id')} ({trade.get('coin')}) bereits geschlossen — Doppel-Close verhindert."
-            )
+            logger.warning(f"⚠️ trade {trade.get('id')} ({trade.get('coin')}) already closed — double-close prevented.")
             return
         cur.execute(
             """
@@ -73,35 +71,35 @@ def close_trade(conn, trade, close_price, end_status):
         )
     conn.commit()
 
-    # Nur noch lokales Logging für dich, kein Telegram-Spam für Cornix!
+    # only local logging for you, no Telegram spam for Cornix!
     pct_change = ((close_price - trade['entry']) / trade['entry']) * 100
     if trade['direction'] == 'SHORT':
         pct_change = -pct_change
     logger.info(
-        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} CLOSED ({end_status}) zu {close_price}. PnL: {pct_change:.2f}%"
+        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} CLOSED ({end_status}) at {close_price}. PnL: {pct_change:.2f}%"
     )
 
 
 def update_trade_level(conn, trade, new_level, new_sl):
-    """Aktualisiert das Target-Level in der DB (STUMM)."""
+    """updates target level in DB (silent)."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE active_trades_master SET status = %s, sl = %s WHERE id = %s", (str(new_level), new_sl, trade['id'])
         )
     conn.commit()
     logger.info(
-        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} TARGET {new_level} HIT. SL intern auf {new_sl:.8f} gezogen."
+        f"💾 DB-UPDATE: [{trade['strategy']}] {trade['coin']} TARGET {new_level} HIT. SL internally pulled to {new_sl:.8f}."
     )
 
 
-# HAUPT-MONITOR-SCHLEIFE (LOKALER DB-MODUS)
+# MAIN MONITOR LOOP (LOCAL DB MODE)
 def monitor_loop():
-    logger.info("=== TRADE MONITOR GESTARTET (Lokaler DB-Modus) ===")
+    logger.info("=== TRADE MONITOR STARTED (local DB mode) ===")
 
-    # FIX: Vorher wurde eine EINZIGE Connection für die gesamte Bot-Lifetime
-    # offengehalten. Bei DB-Hiccup (Netzwerk-Glitch, DB-Restart, etc.) blieb
-    # die Connection tot und der Monitor loopte mit nutzloser Connection weiter.
-    # Jetzt: Connection wird zu Beginn aufgebaut und bei Fehlern neu aufgebaut.
+    # FIX: previously a SINGLE connection held for entire bot lifetime.
+    # on DB hiccup (network glitch, DB restart, etc.) connection died
+    # and monitor looped with useless connection forward.
+    # now: connection built at start and rebuilt on errors.
     conn = None
 
     def ensure_conn():
@@ -120,12 +118,12 @@ def monitor_loop():
             pass
         conn = None
 
-    # FIX P2.7: In-Memory-Wasserzeichen pro Trade-ID (erste Stufe, kein DB-Schema-Change:
-    # active_trades_master hat keine passende Spalte). Merkt sich die open_time der
-    # zuletzt gescorten 5m-Kerze; ab dort wird VORWÄRTS über alle neuen Kerzen gescannt,
-    # statt nur die neueste zu prüfen → SL/TP-Hits zwischen Polls/nach Stale-Phasen
-    # gehen nicht mehr verloren. Nach Prozess-Neustart startet jeder Trade an der
-    # neuesten Kerze (kein Rückwirkend-Scoring von Alt-Trades).
+    # FIX P2.7: in-memory watermark per trade ID (first stage, no DB schema change:
+    # active_trades_master has no suitable column). remembers open_time of
+    # last scored 5m candle; from there scans FORWARD over all new candles,
+    # instead of checking only latest → SL/TP hits between polls/after stale phases
+    # don't get lost anymore. after process restart each trade starts at
+    # newest candle (no retroactive scoring of old trades).
     last_checked = {}
 
     while True:
@@ -138,7 +136,7 @@ def monitor_loop():
             c = ensure_conn()
 
             # IMPORTANT: commit resets the transaction view of the DB,
-            # damit wir die frischen Daten der Ingestion sehen!
+            # so that we see the fresh data from ingestion!
             c.commit()
 
             with c.cursor() as cur:
@@ -146,8 +144,8 @@ def monitor_loop():
                 columns = [desc[0] for desc in cur.description]
                 active_trades = [dict(zip(columns, row, strict=False)) for row in cur.fetchall()]
 
-            # FIX P2.7: Wasserzeichen von nicht mehr aktiven Trades aufräumen
-            # (sonst wächst das Dict über die Prozess-Lifetime unbegrenzt).
+            # FIX P2.7: clean up watermarks from no-longer-active trades
+            # (otherwise dict grows unbounded over process lifetime).
             active_ids = set(t['id'] for t in active_trades)
             for tid in [k for k in last_checked if k not in active_ids]:
                 del last_checked[tid]
@@ -155,24 +153,24 @@ def monitor_loop():
             if not active_trades:
                 continue
 
-            # 1. Eindeutige Coins aus den aktiven Trades filtern
+            # 1. filter unique coins from active trades
             active_coins = set(t['coin'] for t in active_trades)
             coin_candles = {}
             stale_coins = set()
 
-            # 2. Wick-aware: high/low/close der 5m-Kerzen holen.
-            #    Damit erkennen wir SL/TP-Hits auch wenn der Preis intra-Candle durchschießt
-            #    und am Close wieder zurückläuft.
+            # 2. wick-aware: get high/low/close of 5m candles.
+            #    thus we spot SL/TP hits even if price shoots through intra-candle
+            #    and returns at close.
             #
-            #    FIX P2.7: statt nur der neuesten Kerze werden ALLE Kerzen seit dem
-            #    ältesten Wasserzeichen der Trades dieses Coins geholt (aufsteigend),
-            #    damit Hits zwischen zwei Polls nicht verloren gehen.
+            #    FIX P2.7: instead of just newest candle, get ALL candles since
+            #    oldest watermark of trades for this coin (ascending),
+            #    so hits between two polls don't get lost.
             #
-            #    STALE-GUARD: Wenn die neueste 5m-Kerze älter als 30min ist,
-            #    markieren wir den Coin als stale. Trades auf diesem Coin
-            #    werden dann NICHT gegen veraltete Preise geprüft — sie bleiben
-            #    offen bis entweder frische Daten kommen oder das Housekeeping
-            #    den Coin als DELISTED schließt.
+            #    STALE GUARD: if newest 5m candle older than 30min,
+            #    mark coin as stale. trades on this coin
+            #    then NOT checked against stale prices — they stay
+            #    open until either fresh data comes or housekeeping
+            #    closes coin as DELISTED.
             now_utc = datetime.datetime.now(pytz.UTC)
             stale_cutoff_seconds = 1800  # 30 min
 
@@ -184,11 +182,11 @@ def monitor_loop():
                     if prev is None or wm < prev:
                         coin_min_wm[t['coin']] = wm
 
-            # core.candles: 5m-Scoring-Kerzen, forming candle bewusst inkludiert
-            # (Monitore scoren SL/TP intra-candle — contract 2: include_forming=True).
-            # Erster Lauf ohne Wasserzeichen: nur die neueste Kerze. Sonst das ganze
-            # Fenster ab dem Wasserzeichen (start= ist `>=`-inklusiv, damit die noch
-            # formende neueste Kerze wie bisher in jedem Zyklus erneut geprüft wird).
+            # core.candles: 5m scoring candles, forming candle intentionally included
+            # (monitors score SL/TP intra-candle — contract 2: include_forming=True).
+            # first run without watermark: only newest candle. otherwise whole
+            # window from watermark (start= is `>=` inclusive, so still-
+            # forming newest candle is checked again each cycle as before).
             for coin in active_coins:
                 try:
                     start_wm = coin_min_wm.get(coin)
@@ -219,7 +217,7 @@ def monitor_loop():
                     age_sec = (now_utc - newest_open).total_seconds()
                     if age_sec > stale_cutoff_seconds:
                         stale_coins.add(coin)
-                        logger.debug(f"⏸ {coin}: 5m-Candle {age_sec:.0f}s alt — skippe Trade-Checks")
+                        logger.debug(f"⏸ {coin}: 5m candle {age_sec:.0f}s old — skipping trade checks")
                         continue
                     coin_candles[coin] = [
                         {
@@ -231,33 +229,33 @@ def monitor_loop():
                         for r in rows
                     ]
                 except Exception:
-                    # Falls Tabelle nicht existiert, Fehler ignorieren und weiter
+                    # If the table doesn't exist, ignore the error and continue
                     c.rollback()
                     pass
 
-            # Stündliche Summary wenn Coins stale sind
+            # Hourly summary when coins are stale
             if stale_coins and now_utc.minute == 0 and now_utc.second < 10:
                 logger.warning(
-                    f"⏸ {len(stale_coins)} Coin(s) mit staleten 5m-Daten: "
+                    f"⏸ {len(stale_coins)} coin(s) with stale 5m data: "
                     f"{sorted(stale_coins)[:10]}{'...' if len(stale_coins) > 10 else ''}"
                 )
 
-            # Kein einziger Preis gefunden? Dann warten.
+            # Not a single price found? Then wait.
             if not coin_candles:
                 continue
 
             # Monitor each active trade
             for trade in active_trades:
                 coin = trade['coin']
-                # Wenn wir für diesen Coin keine Kerzen aus der DB bekommen haben, skippingn
+                # If we didn't get any candles from the DB for this coin, skip
                 if coin not in coin_candles:
                     continue
 
                 candles_all = coin_candles[coin]
                 dir_long = trade['direction'] == 'LONG'
 
-                # Status kann 'WORKING' oder '1'/'2'/'3' sein. Defensiv parsen,
-                # falls ein anderer Bot mal etwas Unerwartetes reinschreibt.
+                # Status can be 'WORKING' or '1'/'2'/'3'. Parse defensively,
+                # in case another bot ever writes something unexpected.
                 status_str = trade.get('status', 'WORKING')
                 if status_str == 'WORKING':
                     current_level = 0
@@ -266,15 +264,15 @@ def monitor_loop():
                         current_level = int(status_str)
                     except (ValueError, TypeError):
                         logger.warning(
-                            f"Unerwarteter Status '{status_str}' für Trade {trade.get('id')} ({coin}). Skipping."
+                            f"Unexpected status '{status_str}' for trade {trade.get('id')} ({coin}). Skipping."
                         )
                         continue
                 targets = [trade['target1'], trade['target2'], trade['target3'], trade['target4']]
 
-                # FIX P2.7: Kerzen-Zufuhr — ab Wasserzeichen vorwärts in Zeitreihenfolge.
-                # `>=` statt `>`, damit die noch formende neueste Kerze wie bisher in
-                # jedem Zyklus erneut geprüft wird (high/low wachsen intra-Candle).
-                # Neuer Trade (kein Wasserzeichen): nur die neueste Kerze.
+                # FIX P2.7: candle feed — forward from the watermark in chronological order.
+                # `>=` instead of `>`, so the still-forming newest candle is re-checked
+                # each cycle as before (high/low grow intra-candle).
+                # New trade (no watermark): only the newest candle.
                 wm = last_checked.get(trade['id'])
                 if wm is None:
                     trade_candles = candles_all[-1:]
@@ -285,10 +283,10 @@ def monitor_loop():
                 for candle in trade_candles:
                     last_checked[trade['id']] = candle['open_time']
 
-                    # SL CHECK — Wick-aware: LONG stopped out wenn low unter SL,
-                    # SHORT stopped out wenn high über SL
-                    # FIX P2.9: sl>0-Guard — ein SHORT mit sl=0 (kaputter Writer)
-                    # wäre sonst sofort "ausgestoppt" bei Preis 0 → +100% Fake-PnL.
+                    # SL CHECK — wick-aware: LONG stopped out when low below SL,
+                    # SHORT stopped out when high above SL
+                    # FIX P2.9: sl>0 guard — a SHORT with sl=0 (broken writer)
+                    # would otherwise be immediately "stopped out" at price 0 → +100% fake PnL.
                     sl_price = float(trade['sl'] or 0)
                     if sl_price <= 0:
                         sl_hit = False
@@ -299,27 +297,27 @@ def monitor_loop():
 
                     if sl_hit:
                         end_status = "0" if current_level == 0 else f"{current_level}"
-                        # Close-Preis = SL (realistischer als letzter Close, da
-                        # der SL in der realen Welt genau am SL-Level getriggert wird)
+                        # Close price = SL (more realistic than the last close, since
+                        # in the real world the SL is triggered exactly at the SL level)
                         close_trade(c, trade, float(trade['sl']), end_status)
                         closed = True
                         break
 
-                    # TP CHECK — Wick-aware: LONG TP getriggert wenn high über Target,
-                    # SHORT TP getriggert wenn low unter Target
+                    # TP CHECK — wick-aware: LONG TP triggered when high above target,
+                    # SHORT TP triggered when low below target
                     if current_level < 4:
                         next_target = targets[current_level]
                         if next_target == 0:
-                            # Korrupter Trade ohne SL UND ohne weiteres Target hätte
-                            # keinerlei Close-Pfad mehr (der sl>0-Guard oben hat den
-                            # alten Sofort-Fake-Stop entfernt) → neutral am Entry
-                            # schließen statt Zombie in active_trades_master.
-                            # entry>0-Guard: close_trade rechnet PnL = Δ/entry — bei
-                            # entry 0/None würde das die ganze Monitor-Iteration killen.
+                            # A corrupt trade with no SL AND no further target would have
+                            # no close path left at all (the sl>0 guard above removed the
+                            # old instant fake stop) → close neutrally at entry
+                            # instead of leaving a zombie in active_trades_master.
+                            # entry>0 guard: close_trade computes PnL = Δ/entry — with
+                            # entry 0/None that would kill the whole monitor iteration.
                             entry_price = float(trade['entry'] or 0)
                             if sl_price <= 0 and entry_price > 0:
                                 logger.warning(
-                                    f"Korrupter Trade {trade.get('id')} ({coin}): sl<=0 und kein Target — neutral geschlossen."
+                                    f"Corrupt trade {trade.get('id')} ({coin}): sl<=0 and no target — closed neutrally."
                                 )
                                 close_trade(c, trade, entry_price, "0" if current_level == 0 else f"{current_level}")
                                 closed = True
@@ -335,9 +333,9 @@ def monitor_loop():
                             new_level = current_level + 1
                             if new_level == 1:
                                 update_trade_level(c, trade, new_level, trade['entry'])
-                                # P2.7: lokalen Stand nachziehen, damit die nächste
-                                # Kerze im selben Scan gegen den neuen SL/Level prüft
-                                # (vorher machte das der DB-Re-Read im nächsten Zyklus).
+                                # P2.7: update the local state so that the next
+                                # candle in the same scan is checked against the new SL/level
+                                # (previously the DB re-read in the next cycle did this).
                                 trade['sl'] = trade['entry']
                                 current_level = new_level
                                 if trade['target2'] == 0:
@@ -345,11 +343,11 @@ def monitor_loop():
                                     closed = True
                                     break
                             elif new_level < 4 and targets[new_level] != 0:
-                                # FIX P1.2: Trailing-SL = zuletzt erreichtes Target
-                                # (targets[new_level-2]). Vorher wurde der ALTE SL
-                                # (trade['sl']) übergeben → der SL zog nie nach und
-                                # alle Multi-Target-PnL/Winrates waren systematisch
-                                # falsch. 8_ai_trade_monitor macht es bereits so.
+                                # FIX P1.2: trailing SL = last target reached
+                                # (targets[new_level-2]). Previously the OLD SL
+                                # (trade['sl']) was passed → the SL never trailed and
+                                # all multi-target PnL/win rates were systematically
+                                # wrong. 8_ai_trade_monitor already does it this way.
                                 update_trade_level(c, trade, new_level, targets[new_level - 2])
                                 trade['sl'] = targets[new_level - 2]
                                 current_level = new_level
@@ -359,16 +357,16 @@ def monitor_loop():
                                 break
 
                 if closed:
-                    # Wasserzeichen des geschlossenen Trades freigeben
+                    # Release the watermark of the closed trade
                     last_checked.pop(trade['id'], None)
 
         except KeyboardInterrupt:
-            raise  # Wird unten abgefangen
+            raise  # caught below
         except Exception as e:
-            logger.error(f"Fehler im Monitor-Loop: {e}")
-            # FIX: Bei Connection-Fehlern die Connection neu aufbauen.
-            # Vorher wurde die tote Connection weiter benutzt und jede Iteration
-            # schlug erneut fehl.
+            logger.error(f"Error in the monitor loop: {e}")
+            # FIX: rebuild the connection on connection errors.
+            # Previously the dead connection kept being used and every iteration
+            # failed again.
             reset_conn()
             time.sleep(5)
 

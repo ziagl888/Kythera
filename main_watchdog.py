@@ -28,110 +28,110 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Dashboard läuft auf diesem Port — wird beim Start automatisch started.
+# Dashboard runs on this port — started automatically at startup.
 DASHBOARD_SCRIPT = "dashboard.py"
 DASHBOARD_PORT = 5000
 
-# Die Fleet-Definition (Name/Script/Group/Delays) lebt zentral in core/fleet.py;
-# Watchdog UND Dashboard konsumieren dieselbe Liste (T-2026-CU-9050-091, R2(a)).
-# Der Watchdog nutzt name/script/start_delay/restart_interval — das zusätzliche
-# group-Feld (nur für die Dashboard-Anzeige) ist hier ein No-op. Reihenfolge und
-# Delays sind identisch zur früheren Inline-Liste; keine Verhaltensänderung.
+# The fleet definition (name/script/group/delays) lives centrally in core/fleet.py;
+# watchdog AND dashboard consume the same list (T-2026-CU-9050-091, R2(a)).
+# The watchdog uses name/script/start_delay/restart_interval — the additional
+# group field (only for the dashboard display) is a no-op here. Order and
+# delays are identical to the former inline list; no behaviour change.
 PROCESSES_TO_RUN: list[dict[str, Any]] = FLEET
 
 running_processes: dict = {}
 _dashboard_proc: subprocess.Popen | None = None
 
-# Basenames aller Fleet-Skripte (Bots + Dashboard) — für die Orphan-Detection
-# (P0.2): ein von uns gespawnter python-Prozess trägt eines dieser Skripte in
-# seiner Cmdline. Läuft so ein Prozess ohne uns als Parent, ist er verwaist.
+# Basenames of all fleet scripts (bots + dashboard) — for orphan detection
+# (P0.2): a python process spawned by us carries one of these scripts in
+# its cmdline. If such a process runs without us as parent, it is orphaned.
 FLEET_SCRIPTS: frozenset = frozenset([os.path.basename(p["script"]) for p in PROCESSES_TO_RUN] + [DASHBOARD_SCRIPT])
 
-# Der Watchdog selbst — NICHT in FLEET_SCRIPTS (kein PROCESSES_TO_RUN-Eintrag).
-# Für die Mutex-Deadlock-Recovery (T-2026-CU-9050-127): ein Vor-Watchdog, der einen
-# Tree-Stop als WMI-Waise überlebt, hält den Single-Instance-Mutex und blockiert
-# jeden Neustart. Der neue Watchdog muss diese Waise gezielt reapen können.
+# The watchdog itself — NOT in FLEET_SCRIPTS (no PROCESSES_TO_RUN entry).
+# For the mutex deadlock recovery (T-2026-CU-9050-127): a predecessor watchdog that
+# survives a tree stop as a WMI orphan holds the single-instance mutex and blocks
+# every restart. The new watchdog must be able to reap this orphan in a targeted way.
 _WATCHDOG_SCRIPT: str = os.path.basename(__file__)
 
-# Named Mutex Handle (Windows) — muss über die gesamte Prozess-Lebensdauer
-# referenziert bleiben, sonst gibt der GC das Handle frei und die zweite
-# Instanz käme durch. P0.2.
+# Named mutex handle (Windows) — must stay referenced for the entire process
+# lifetime, otherwise the GC frees the handle and a second
+# instance could get through. P0.2.
 _instance_mutex = None
 
-# Windows GetLastError-Code für "Mutex existiert bereits" → zweite Fleet-Instanz.
+# Windows GetLastError code for "mutex already exists" → second fleet instance.
 _ERROR_ALREADY_EXISTS = 183
 
 
-# ── Graceful-Shutdown-Konfiguration (P2.48) ──────────────────────────────────
-# terminate() ist auf Windows ein harter TerminateProcess: der Bot bekommt keine
-# Chance aufzuräumen und — kritisch — die ProcessPool-Worker der Indicator-Engine
-# (2_indicator_engine.py, ProcessPoolExecutor) überleben den Parent-Kill als
-# Waisen und rechnen weiter → Doppel-Compute-Fenster. Wir starten jeden Bot daher
-# in EINER eigenen Prozessgruppe (CREATE_NEW_PROCESS_GROUP) und schicken beim Stop
-# ein CTRL_BREAK_EVENT an die GANZE Gruppe — das erreicht den Bot UND seine
-# Worker-Kinder, anders als terminate(), das nur den Bot selbst trifft. Ohne die
-# eigene Gruppe ginge das Console-Signal an die ganze Konsole inkl. Watchdog.
+# ── Graceful shutdown configuration (P2.48) ──────────────────────────────────
+# terminate() is a hard TerminateProcess on Windows: the bot gets no
+# chance to clean up and — critically — the indicator engine's ProcessPool
+# workers (2_indicator_engine.py, ProcessPoolExecutor) survive the parent kill as
+# orphans and keep computing → double-compute window. We therefore start every bot
+# in ITS OWN process group (CREATE_NEW_PROCESS_GROUP) and, on stop, send
+# a CTRL_BREAK_EVENT to the WHOLE group — that reaches the bot AND its
+# worker children, unlike terminate(), which only hits the bot itself. Without its
+# own group the console signal would go to the entire console including the watchdog.
 _IS_WINDOWS = os.name == "nt"
-# CREATE_NEW_PROCESS_GROUP existiert nur auf Windows; 0 ist der neutrale
-# creationflags-Wert auf POSIX (der Parameter existiert dort, muss aber 0 sein).
+# CREATE_NEW_PROCESS_GROUP only exists on Windows; 0 is the neutral
+# creationflags value on POSIX (the parameter exists there but must be 0).
 _CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-# CREATE_NO_WINDOW (Windows) — der Heartbeat-Probe-Kindprozess soll kein
-# Konsolenfenster aufblitzen lassen; 0 ist der neutrale Wert auf POSIX.
+# CREATE_NO_WINDOW (Windows) — the heartbeat probe child process should not
+# flash a console window; 0 is the neutral value on POSIX.
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-# CTRL_BREAK_EVENT existiert nur auf Windows.
+# CTRL_BREAK_EVENT only exists on Windows.
 _CTRL_BREAK_EVENT = getattr(signal, "CTRL_BREAK_EVENT", None)
-# Sekunden, die ein Bot nach dem Graceful-Signal zum sauberen Beenden bekommt,
-# bevor hart nachgetreten wird.
+# Seconds a bot gets after the graceful signal to shut down cleanly,
+# before it gets a hard follow-up.
 GRACEFUL_STOP_TIMEOUT_S = int(os.getenv("KYTHERA_GRACEFUL_STOP_S", "10"))
 
 
-# ── Single-Instance-Guard (P0.2) ─────────────────────────────────────────────
+# ── Single-instance guard (P0.2) ─────────────────────────────────────────────
 
 
 def _acquire_single_instance_lock(_allow_orphan_reap: bool = True) -> None:
-    """Verhindert eine zweite Watchdog-Instanz (P0.2 — geld-kritisch).
+    """Prevents a second watchdog instance (P0.2 — money-critical).
 
-    Ein zweiter Watchdog spawnt eine zweite komplette Fleet → jedes Cornix-Signal
-    doppelt. Windows Named Mutex (Global\\-Namespace, session-übergreifend): existiert
-    er schon, läuft bereits ein Watchdog → hart abbrechen. Nur ctypes/kernel32,
-    kein pywin32.
+    A second watchdog spawns a second complete fleet → every Cornix signal
+    doubled. Windows named mutex (Global\\ namespace, cross-session): if it
+    already exists, a watchdog is already running → hard abort. Only ctypes/kernel32,
+    no pywin32.
 
-    Waisen-Recovery (T-2026-CU-9050-127): Ein Vor-Watchdog, der einen
-    ``Stop-ScheduledTask``-Tree-Stop als WMI-Waise überlebt, hält den Mutex
-    weiter und blockierte bisher JEDEN Neustart (Deadlock: der Waisen-Reaper lief
-    erst NACH diesem Guard, und er reapt ohnehin nur Bots, nicht den Watchdog).
-    Jetzt: bei Mutex-Konflikt gezielt verwaiste WATCHDOG-Prozesse reapen; starb
-    der Halter wirklich (Rückgabe > 0), gibt das OS den benannten Mutex frei →
-    genau EIN Retry. Nur wenn der Halter NICHT reapbar ist (andere Elevation/
-    User, AccessDenied) bleibt es beim harten Abbruch wie bisher — kein Regress.
-    Mutex-first bleibt für den Normalstart: gereapt wird ausschliesslich im
-    echten Konfliktfall.
+    Orphan recovery (T-2026-CU-9050-127): a predecessor watchdog that survives a
+    ``Stop-ScheduledTask`` tree stop as a WMI orphan keeps holding the mutex
+    and used to block EVERY restart (deadlock: the orphan reaper only ran
+    AFTER this guard, and it only reaps bots anyway, not the watchdog).
+    Now: on a mutex conflict, targetedly reap orphaned WATCHDOG processes; if
+    the holder really died (return > 0), the OS releases the named mutex →
+    exactly ONE retry. Only if the holder is NOT reapable (different elevation/
+    user, AccessDenied) does it fall back to the hard abort as before — no regression.
+    Mutex-first stays the norm for a regular start: reaping only happens in the
+    real conflict case.
     """
     global _instance_mutex
     if os.name != "nt":
-        # Non-Windows (Tests/Dev): Mutex-Guard nicht verfügbar — Orphan-Detection
-        # bleibt die zweite Verteidigungslinie.
+        # Non-Windows (tests/dev): mutex guard not available — orphan detection
+        # remains the second line of defence.
         return
     try:
         _instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\KytheraWatchdog")
         last_error = ctypes.windll.kernel32.GetLastError()
-    except Exception as e:  # noqa: BLE001 — Guard darf den Start nie mit einem Traceback killen.
-        logger.warning(f"⚠️  Single-Instance-Mutex nicht setzbar ({e}) — Start ohne Mutex-Guard.")
+    except Exception as e:  # noqa: BLE001 — the guard must never kill startup with a traceback.
+        logger.warning(f"⚠️  Could not set single-instance mutex ({e}) — starting without mutex guard.")
         return
 
-    # Review-Härtung P0.2: CreateMutexW==NULL mit ERROR_ACCESS_DENIED (5) ist der
-    # kanonische Fall "Mutex existiert, gehört aber einem anderen User/Elevation-
-    # Level" (z.B. Task-Scheduler vs. interaktive Session) — auch das ist eine
-    # laufende zweite Instanz.
+    # Review hardening P0.2: CreateMutexW==NULL with ERROR_ACCESS_DENIED (5) is the
+    # canonical case "mutex exists but belongs to a different user/elevation
+    # level" (e.g. Task Scheduler vs. interactive session) — that too is a
+    # running second instance.
     _ERROR_ACCESS_DENIED = 5
     if last_error == _ERROR_ALREADY_EXISTS or (not _instance_mutex and last_error == _ERROR_ACCESS_DENIED):
         if _allow_orphan_reap and _reap_orphans(frozenset([_WATCHDOG_SCRIPT])) > 0:
-            # WICHTIG: Bei ALREADY_EXISTS lieferte CreateMutexW einen gültigen Handle
-            # auf den BESTEHENDEN Mutex — DIESER eigene Handle hält das benannte
-            # Objekt selbst dann am Leben, wenn die Waise gerade starb. Ohne
-            # CloseHandle sähe der Retry wieder ALREADY_EXISTS. Erst nach Reap
-            # (Waisen-Handle zu) UND CloseHandle (unser Handle zu) ist der letzte
-            # Handle weg und das Objekt zerstört.
+            # IMPORTANT: on ALREADY_EXISTS, CreateMutexW returned a valid handle
+            # to the EXISTING mutex — this handle of ours keeps the named
+            # object alive even if the orphan just died. Without
+            # CloseHandle the retry would see ALREADY_EXISTS again. Only after reaping
+            # (orphan's handle closed) AND CloseHandle (our handle closed) is the
+            # last handle gone and the object destroyed.
             if _instance_mutex:
                 try:
                     ctypes.windll.kernel32.CloseHandle(_instance_mutex)
@@ -139,37 +139,37 @@ def _acquire_single_instance_lock(_allow_orphan_reap: bool = True) -> None:
                     pass
                 _instance_mutex = None
             logger.warning(
-                "🧟 Verwaister Vor-Watchdog hielt den Single-Instance-Mutex — gereapt, "
-                "einmaliger Retry der Mutex-Akquise (P0.2, T-2026-CU-9050-127)."
+                "🧟 An orphaned predecessor watchdog held the single-instance mutex — reaped, "
+                "one-time retry of the mutex acquisition (P0.2, T-2026-CU-9050-127)."
             )
-            time.sleep(1)  # dem OS Zeit geben, den benannten Mutex freizugeben
+            time.sleep(1)  # give the OS time to release the named mutex
             _acquire_single_instance_lock(_allow_orphan_reap=False)
             return
         logger.error(
-            "🚨 Ein zweiter Watchdog läuft bereits (Mutex 'Global\\KytheraWatchdog' existiert, "
-            f"GetLastError={last_error}) — Abbruch, um doppelte Fleet/doppelte Cornix-Signale "
-            "zu verhindern (P0.2)."
+            "🚨 A second watchdog is already running (mutex 'Global\\KytheraWatchdog' exists, "
+            f"GetLastError={last_error}) — aborting to prevent a duplicate fleet/duplicate Cornix "
+            "signals (P0.2)."
         )
         sys.exit(1)
     if not _instance_mutex:
-        # NULL-Handle aus anderem Grund: kein Beweis für eine zweite Instanz, aber
-        # auch kein Lock — weiterlaufen und warnen; Orphan-Detection bleibt die
-        # zweite Verteidigungslinie.
-        logger.warning(f"⚠️  CreateMutexW lieferte NULL (GetLastError={last_error}) — Start ohne Mutex-Guard.")
+        # NULL handle for another reason: no proof of a second instance, but
+        # also no lock — keep running and warn; orphan detection remains the
+        # second line of defence.
+        logger.warning(f"⚠️  CreateMutexW returned NULL (GetLastError={last_error}) — starting without mutex guard.")
 
 
 def _reap_orphans(script_names: frozenset) -> int:
-    """Beendet non-child python-Prozesse, deren Cmdline eines von ``script_names``
-    nennt, und gibt die Zahl der TATSÄCHLICH beendeten Prozesse zurück (P0.2).
+    """Terminates non-child python processes whose cmdline names one of
+    ``script_names``, and returns the number of processes ACTUALLY terminated (P0.2).
 
-    Ein hartes ``taskkill /F`` auf einen alten Prozess läuft nicht durch dessen
-    SIGTERM-Handler → er/seine Kinder überleben verwaist weiter. Wir suchen daher
-    python-Prozesse, deren Cmdline ein Zielskript enthält und die NICHT unsere
-    eigenen Kinder (und nicht wir selbst) sind, und beenden sie (5s Grace, dann
-    kill). Geteilt von der Fleet-Waisen-Reinigung UND der Mutex-Deadlock-Recovery
-    (T-2026-CU-9050-127): der Rückgabewert sagt Letzterer, ob der Mutex-Halter
-    wirklich starb (nur dann lohnt der Retry). Elevation-Grenze: was der Reaper
-    nicht killen darf (AccessDenied), zählt NICHT als beendet → kein falscher Retry.
+    A hard ``taskkill /F`` on an old process does not run through its
+    SIGTERM handler → it/its children keep surviving as orphans. We therefore look
+    for python processes whose cmdline contains a target script and that are NOT
+    our own children (and not ourselves), and terminate them (5s grace, then
+    kill). Shared between fleet orphan cleanup AND the mutex deadlock recovery
+    (T-2026-CU-9050-127): the return value tells the latter whether the mutex holder
+    really died (only then is the retry worthwhile). Elevation boundary: what the reaper
+    is not allowed to kill (AccessDenied) does NOT count as terminated → no false retry.
     """
     self_pid = os.getpid()
     try:
@@ -195,7 +195,7 @@ def _reap_orphans(script_names: frozenset) -> int:
         return 0
 
     logger.warning(
-        f"🧟 {len(orphans)} verwaiste Prozesse gefunden (PIDs: {[p.pid for p in orphans]}) — beende sie (P0.2)."
+        f"🧟 Found {len(orphans)} orphaned processes (PIDs: {[p.pid for p in orphans]}) — terminating them (P0.2)."
     )
     for proc in orphans:
         try:
@@ -206,17 +206,17 @@ def _reap_orphans(script_names: frozenset) -> int:
     _gone, alive = psutil.wait_procs(orphans, timeout=5)
     for proc in alive:
         try:
-            logger.warning(f"⚠️  Orphan PID {proc.pid} reagiert nicht — force kill.")
+            logger.warning(f"⚠️  Orphan PID {proc.pid} is not responding — force kill.")
             proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-    # Wirklich tot? (AccessDenied-Überlebende zählen nicht als beendet.)
+    # Really dead? (AccessDenied survivors do not count as terminated.)
     _gone2, still_alive = psutil.wait_procs(alive, timeout=3)
     return len(orphans) - len(still_alive)
 
 
 def _terminate_orphan_fleet() -> None:
-    """Reapt verwaiste Fleet-Prozesse eines abgestürzten Vor-Watchdogs (P0.2)."""
+    """Reaps orphaned fleet processes from a crashed predecessor watchdog (P0.2)."""
     _reap_orphans(FLEET_SCRIPTS)
 
 
@@ -224,21 +224,21 @@ def _terminate_orphan_fleet() -> None:
 
 
 def start_dashboard() -> None:
-    """Startet das Web-Dashboard als Hintergrundprozess."""
+    """Starts the web dashboard as a background process."""
     global _dashboard_proc
 
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), DASHBOARD_SCRIPT)
     if not os.path.exists(script):
-        logger.warning(f"⚠️  dashboard.py not found ({script}) — Dashboard wird nicht started.")
+        logger.warning(f"⚠️  dashboard.py not found ({script}) — dashboard will not be started.")
         return
 
-    # Bereits laufend?
+    # Already running?
     if _dashboard_proc and _dashboard_proc.poll() is None:
         return
 
     # FIX (#70): Previously stdout/stderr → DEVNULL so if the dashboard crashed,
-    # war der Grund komplett unsichtbar. Jetzt in logs/dashboard.log,
-    # damit der User after einem Crash afterschauen kann was passiert ist.
+    # the reason was completely invisible. Now in logs/dashboard.log,
+    # so the user can look after a crash to see what happened.
     os.makedirs("logs", exist_ok=True)
     dashboard_log = open("logs/dashboard.log", "a")
     dashboard_log.write(f"\n=== Dashboard started {datetime.datetime.now(datetime.timezone.utc).isoformat()} ===\n")
@@ -247,7 +247,7 @@ def start_dashboard() -> None:
     _dashboard_proc = subprocess.Popen(
         [sys.executable, script],
         stdout=dashboard_log,
-        stderr=subprocess.STDOUT,  # stderr auch in gleiche Log-Datei
+        stderr=subprocess.STDOUT,  # stderr also into the same log file
         creationflags=_CREATE_NEW_PROCESS_GROUP,  # eigene Gruppe, konsistent zu den Bots (P2.48)
     )
     logger.info(
@@ -272,19 +272,19 @@ def check_dashboard() -> None:
     """Restarts the dashboard if it has crashed."""
     global _dashboard_proc
     if _dashboard_proc and _dashboard_proc.poll() is not None:
-        logger.warning("💥 Dashboard abgestürzt — Restart...")
+        logger.warning("💥 Dashboard crashed — restarting...")
         start_dashboard()
 
 
-# ── Bot Prozesse ─────────────────────────────────────────────────────────────
+# ── Bot processes ─────────────────────────────────────────────────────────────
 
 
 def start_process(process_info: dict) -> None:
     name = process_info["name"]
     script_path = process_info["script"]
-    logger.info(f"🚀 Starting Prozess: {name} ({script_path})")
-    # Eigene Prozessgruppe (P2.48): so erreicht das Stop-CTRL_BREAK den Bot samt
-    # seiner ProcessPool-Worker, ohne die Watchdog-Konsole mitzutreffen.
+    logger.info(f"🚀 Starting process: {name} ({script_path})")
+    # Own process group (P2.48): so the stop CTRL_BREAK reaches the bot including
+    # its ProcessPool workers, without also hitting the watchdog console.
     p = subprocess.Popen([sys.executable, script_path], creationflags=_CREATE_NEW_PROCESS_GROUP)
     running_processes[name] = {
         "process": p,
@@ -448,14 +448,14 @@ def check_heartbeat(p_info: dict, current_time: float) -> None:
     if current_time - _hang_alerted.get(name, 0.0) >= _HANG_ALERT_COOLDOWN_S:
         _hang_alerted[name] = current_time
         logger.error(
-            f"🫀 {name} lebt, aber {os.path.basename(log_path)} ist {age / 60:.0f} min still "
-            f"(Limit {HANG_LIMIT_S // 60} min) — Prozess vermutlich wedged."
+            f"🫀 {name} is alive, but {os.path.basename(log_path)} has been silent for {age / 60:.0f} min "
+            f"(limit {HANG_LIMIT_S // 60} min) — process presumably wedged."
         )
 
     if not HANG_AUTORESTART:
         return  # WARNING-only default — operator decides on the money path.
 
-    logger.warning(f"♻️ {name} — Hang-Restart (Auto, KYTHERA_WATCHDOG_HANG_AUTORESTART=1).")
+    logger.warning(f"♻️ {name} — hang restart (auto, KYTHERA_WATCHDOG_HANG_AUTORESTART=1).")
     _hang_alerted.pop(name, None)
     kill_process(name)
     # Ride the existing crash backoff so a bot that keeps re-hanging backs off.
@@ -479,7 +479,7 @@ def _compute_restart_delay(name: str) -> float:
     """Returns backoff delay based on crash frequency in the last hour."""
     now_ts = time.time()
     history = _crash_history.setdefault(name, [])
-    # Alte entries (>1h) verwerfen
+    # Discard old entries (>1h)
     history[:] = [t for t in history if now_ts - t < 3600]
     history.append(now_ts)
 
@@ -522,7 +522,7 @@ def supervise_process(p_info: dict, current_time: float) -> None:
         _restart_not_before.pop(name, None)
         if name in running_processes:
             if running_processes[name]["process"].poll() is None:
-                logger.info(f"⏸️  {name} ist geparkt — stoppe.")
+                logger.info(f"⏸️  {name} is parked — stopping.")
                 kill_process(name)
             else:
                 del running_processes[name]
@@ -531,7 +531,7 @@ def supervise_process(p_info: dict, current_time: float) -> None:
     # One-shot restart requested from the dashboard. An explicit operator
     # action overrides the crash backoff (P1.37).
     if consume_restart(script):
-        logger.info(f"♻️ {name} — Restart über Dashboard angefordert.")
+        logger.info(f"♻️ {name} — restart requested via dashboard.")
         _restart_not_before.pop(name, None)
         if name in running_processes and running_processes[name]["process"].poll() is None:
             kill_process(name)
@@ -544,10 +544,10 @@ def supervise_process(p_info: dict, current_time: float) -> None:
         if current_time < not_before:
             return
         _restart_not_before.pop(name, None)
-        logger.info(f"⏱️  {name} — Backoff abgelaufen, starte neu.")
+        logger.info(f"⏱️  {name} — backoff expired, restarting.")
 
     if name not in running_processes:
-        logger.error(f"🚨 Prozess {name} fehlt! Starting neu...")
+        logger.error(f"🚨 Process {name} missing! Starting fresh...")
         start_process(p_info)
         return
 
@@ -558,16 +558,16 @@ def supervise_process(p_info: dict, current_time: float) -> None:
     if return_code is not None:
         logger.error(f"💥 CRASH: {name} (Code: {return_code}). Emergency restart!")
         del running_processes[name]
-        # FIX: Backoff vor Restart, um to limit crash loops.
-        # P1.37: kein time.sleep() — das fror die gesamte Schleife ein (bis 900s
-        # keine anderen Restarts, keine Park-Marker, kein Dashboard, keine
-        # Health-Checks). Deadline setzen und weiterlaufen; der Restart passiert
-        # in dem Zyklus, in dem die Deadline abgelaufen ist — und erst nachdem
-        # der Park-Check oben erneut gelaufen ist.
+        # FIX: Backoff before restart, to limit crash loops.
+        # P1.37: no time.sleep() — that froze the entire loop (up to 900s
+        # no other restarts, no park markers, no dashboard, no
+        # health checks). Set a deadline and keep running; the restart happens
+        # in the cycle in which the deadline has expired — and only after
+        # the park check above has run again.
         delay = _compute_restart_delay(name)
         if delay > 0:
             _restart_not_before[name] = current_time + delay
-            logger.info(f"⏳ Waiting {delay}s vor Restart von {name} (crash protection)...")
+            logger.info(f"⏳ Waiting {delay}s before restarting {name} (crash protection)...")
             return
         start_process(p_info)
         return
@@ -576,37 +576,37 @@ def supervise_process(p_info: dict, current_time: float) -> None:
     if restart_interval:
         uptime = current_time - tracker["start_time"]
         if uptime >= restart_interval:
-            logger.info(f"♻️ Geplanter Restart: {name} (Uptime: {uptime / 3600:.1f}h)")
+            logger.info(f"♻️ Scheduled restart: {name} (uptime: {uptime / 3600:.1f}h)")
             kill_process(name)
             start_process(p_info)
 
 
 def _request_graceful_stop(p: subprocess.Popen, name: str) -> bool:
-    """Bittet ``p`` — auf Windows dessen ganze Prozessgruppe inkl. der
-    ProcessPool-Worker — um ein geordnetes Herunterfahren (P2.48).
+    """Asks ``p`` — on Windows its whole process group including the
+    ProcessPool workers — for an orderly shutdown (P2.48).
 
-    POSIX: ``terminate()`` = SIGTERM ist bereits das geordnete Stop-Signal.
-    Windows: ``CTRL_BREAK_EVENT`` an die Gruppe. Scheitert das — keine Konsole
-    angehängt (Scheduled-Task-Start), Prozess nicht in eigener Gruppe, oder
-    bereits beendet — fallen wir auf ``terminate()`` zurück; damit nie
-    schlechter als der bisherige harte Kill.
+    POSIX: ``terminate()`` = SIGTERM is already the orderly stop signal.
+    Windows: ``CTRL_BREAK_EVENT`` to the group. If that fails — no console
+    attached (scheduled-task start), process not in its own group, or
+    already terminated — we fall back to ``terminate()``; so it's never
+    worse than the previous hard kill.
 
-    Returns True, wenn ein Graceful-Signal zugestellt wurde, sonst False.
+    Returns True if a graceful signal was delivered, otherwise False.
     """
     if not _IS_WINDOWS:
-        p.terminate()  # SIGTERM — auf POSIX bereits graceful
+        p.terminate()  # SIGTERM — already graceful on POSIX
         return True
     ctrl_break = _CTRL_BREAK_EVENT
     if ctrl_break is None:
-        # Kann auf echtem Windows nicht auftreten (CTRL_BREAK_EVENT existiert dort
-        # immer); hält nur die Typen ehrlich und fällt sicher zurück.
+        # Cannot occur on real Windows (CTRL_BREAK_EVENT always exists there);
+        # this just keeps the types honest and falls back safely.
         p.terminate()
         return False
     try:
-        p.send_signal(ctrl_break)  # erreicht die ganze Prozessgruppe
+        p.send_signal(ctrl_break)  # reaches the whole process group
         return True
     except (OSError, ValueError) as e:
-        logger.warning(f"⚠️ {name}: CTRL_BREAK nicht zustellbar ({e}) — harter terminate().")
+        logger.warning(f"⚠️ {name}: could not deliver CTRL_BREAK ({e}) — hard terminate().")
         try:
             p.terminate()
         except OSError:
@@ -627,31 +627,31 @@ def kill_process(name: str) -> None:
             sent = "CTRL_BREAK" if graceful else "terminate()"
         else:
             sent = "SIGTERM"
-        logger.error(f"⚠️ {name} reagiert {GRACEFUL_STOP_TIMEOUT_S}s nach {sent} nicht — harter Kill!")
+        logger.error(f"⚠️ {name} is not responding {GRACEFUL_STOP_TIMEOUT_S}s after {sent} — hard kill!")
         p.kill()
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            logger.error(f"⚠️ {name} überlebt selbst den harten Kill — ProcessPool-Waisen möglich.")
+            logger.error(f"⚠️ {name} survives even the hard kill — ProcessPool orphans possible.")
     del running_processes[name]
     logger.info(f"✅ {name} stopped successfully.")
 
 
-# ── Graceful Shutdown ────────────────────────────────────────────────────────
+# ── Graceful shutdown ────────────────────────────────────────────────────────
 
 
 def shutdown_all() -> None:
     """Terminate every supervised bot and the dashboard. Idempotent.
 
-    P0.2-Härtung: pro Kind gekapselt — schlägt das Beenden eines Prozesses fehl,
-    darf das die Terminierung der restlichen Kinder nicht abbrechen (sonst
-    überleben verwaiste Prozesse den Watchdog-Tod).
+    P0.2 hardening: encapsulated per child — if terminating one process fails,
+    that must not abort terminating the rest of the children (otherwise
+    orphaned processes would survive the watchdog's death).
     """
     for name in list(running_processes.keys()):
         try:
             kill_process(name)
-        except Exception:  # noqa: BLE001 — Teardown muss alle Kinder erreichen.
-            logger.exception(f"⚠️  Fehler beim Beenden von {name} — fahre mit den übrigen fort.")
+        except Exception:  # noqa: BLE001 — teardown must reach all children.
+            logger.exception(f"⚠️  Error terminating {name} — continuing with the rest.")
             running_processes.pop(name, None)
     stop_dashboard()
 
@@ -669,7 +669,7 @@ def _handle_shutdown_signal(signum, frame) -> None:
     if _shutting_down:
         return
     _shutting_down = True
-    logger.info(f"🛑 Signal {signum} empfangen — fahre alle Systeme herunter...")
+    logger.info(f"🛑 Signal {signum} received — shutting down all systems...")
     shutdown_all()
     logger.info("🏁 System fully offline.")
     sys.exit(0)
@@ -694,17 +694,17 @@ def _install_signal_handlers() -> None:
 def main() -> None:
     logger.info("🛡️ System Watchdog started.")
 
-    # P0.2: Zweite Watchdog-Instanz hart verhindern (Mutex), dann verwaiste Kinder
-    # eines abgestürzten Vor-Watchdogs aufräumen — beides VOR dem Spawn der Fleet.
+    # P0.2: hard-prevent a second watchdog instance (mutex), then clean up orphaned
+    # children of a crashed predecessor watchdog — both BEFORE spawning the fleet.
     _acquire_single_instance_lock()
     _terminate_orphan_fleet()
 
     _install_signal_handlers()
-    # Letzte Verteidigungslinie: bei jedem Exit-Pfad (auch unerwartet) die Kinder
-    # terminieren, bevor der Watchdog stirbt (P0.2). shutdown_all ist idempotent.
+    # Last line of defence: on every exit path (even unexpected) terminate the
+    # children before the watchdog dies (P0.2). shutdown_all is idempotent.
     atexit.register(shutdown_all)
 
-    # Dashboard zuerst starten — ist sofort erreichbar während die Bots hochfahren.
+    # Start the dashboard first — it's reachable immediately while the bots boot up.
     start_dashboard()
 
     # Starting bots in staggered sequence.
@@ -716,14 +716,14 @@ def main() -> None:
         if wait > 0:
             time.sleep(wait)
         if is_parked(p_info["script"]):
-            logger.info(f"⏸️  {p_info['name']} ist geparkt — Start übersprungen.")
+            logger.info(f"⏸️  {p_info['name']} is parked — start skipped.")
             last_start = delay
             continue
         start_process(p_info)
         last_start = delay
 
     total_delay = sorted_procs[-1].get("start_delay", 0) if sorted_procs else 0
-    logger.info(f"🟢 Alle Systeme started (gestaffelt über {total_delay}s). Starting monitoring...")
+    logger.info(f"🟢 All systems started (staggered over {total_delay}s). Starting monitoring...")
 
     last_health_check = 0.0
 
@@ -731,18 +731,18 @@ def main() -> None:
         while True:
             current_time = time.time()
 
-            # Health-Monitoring (1x/min): Daten-Staleness (P2.47, mit Auto-Restart
-            # der Ingestion), CPU-Dauerlast (WS-Disconnect-Ursache), Outbox-Failures
+            # Health monitoring (1x/min): data staleness (P2.47, with auto-restart
+            # of ingestion), sustained CPU load (WS disconnect cause), outbox failures
             # (P2.11). Alerts via TELEGRAM_ALERT_CHAT_ID + watchdog.log.
             if current_time - last_health_check >= 60:
                 last_health_check = current_time
                 run_health_checks()
 
-            # Dashboard-Crash-Check
+            # Dashboard crash check
             check_dashboard()
 
-            # Bot-Crash-Check (Prozess-Existenz) + Hang-Check (P2.47:
-            # lebt-aber-wedged via Log-Heartbeat).
+            # Bot crash check (process existence) + hang check (P2.47:
+            # alive-but-wedged via log heartbeat).
             for p_info in PROCESSES_TO_RUN:
                 supervise_process(p_info, current_time)
                 check_heartbeat(p_info, current_time)
@@ -751,7 +751,7 @@ def main() -> None:
 
     except KeyboardInterrupt:
         # Fallback if signal handlers could not be installed (e.g. non-main thread).
-        logger.info("🛑 Watchdog stopped (Strg+C). Shutting down all systems...")
+        logger.info("🛑 Watchdog stopped (Ctrl+C). Shutting down all systems...")
         shutdown_all()
         logger.info("🏁 System fully offline.")
 

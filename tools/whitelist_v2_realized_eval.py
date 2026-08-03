@@ -164,9 +164,9 @@ def realized_from_ai(row: dict) -> dict:
     lev_pnl = None
     if oc in (WIN, LOSS):
         tlist = _parse_targets(row.get("targets"))
-        # `model` mitgeben: ROM1/AIM2 persistieren mehr Targets als sie posten
-        # (T-2026-KYT-9050-012). Ohne das rechnet die Staffelung auf 20 Beinen
-        # statt auf den 3 gehandelten und unterschätzt beide Bots.
+        # pass `model` along: ROM1/AIM2 persist more targets than they post
+        # (T-2026-KYT-9050-012). Without it the staging computes on 20 legs
+        # instead of the 3 actually traded and underestimates both bots.
         model = row.get("model")
         move, staffed = unlev_move(
             row.get("direction"), row.get("entry"), row.get("close_price"), tlist, row.get("targets_hit"), model
@@ -340,9 +340,9 @@ def load_ai_closes(conn, since: datetime) -> list[dict]:
             out.append(
                 {
                     "tag": pretty_name(str(r[0])),
-                    # Rohes Modell zusätzlich zum pretty_name: der
-                    # PUBLISHED_TARGET_COUNT-Lookup (T-2026-KYT-9050-012) geht
-                    # gegen den DB-Tag, nicht gegen den Anzeigenamen.
+                    # Raw model in addition to the pretty_name: the
+                    # PUBLISHED_TARGET_COUNT lookup (T-2026-KYT-9050-012) goes
+                    # against the DB tag, not the display name.
                     "model": r[0],
                     "coin": r[1],
                     "direction": r[2],
@@ -575,7 +575,7 @@ def _fmt(v, spec: str = "") -> str:
 
 
 _LEG_HEAD = (
-    "| Bot | Dir | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |",
+    "| Bot | Dir | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |",
     "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
 )
 
@@ -583,7 +583,7 @@ _LEG_HEAD = (
 def _leg_cells(s: dict) -> str:
     """The measurement columns of one leg row.
 
-    `zensiert` and the `(n)` behind the leveraged sum are not decoration: the
+    `censored` and the `(n)` behind the leveraged sum are not decoration: the
     ROM1 book is dominated by REGIME_CHANGE closes (counted as censored, not as
     a loss) and `lev` is persisted only for part of the fleet — without both
     counts the sums read as if they covered the whole population.
@@ -608,15 +608,15 @@ def build_markdown(meta: dict) -> str:
     v = meta["volume"]
     d = meta["drift"]
     ap: list[str] = []
-    ap.append("# whitelist_v2 Flip — realisierte Entscheidungsgrundlage (T-2026-KYT-9050-007)\n")
-    ap.append(f"**Fenster:** {meta['since']} → {meta['generated_at']} (UTC)  ")
+    ap.append("# whitelist_v2 flip — realized decision basis (T-2026-KYT-9050-007)\n")
+    ap.append(f"**Window:** {meta['since']} → {meta['generated_at']} (UTC)  ")
     ap.append(
-        f"**Snapshot:** {p['n_rows']} Zellen, v2-Coverage {p['v2_coverage_pct']}%, Alter {p['snapshot_age_hours']}h "
+        f"**Snapshot:** {p['n_rows']} cells, v2 coverage {p['v2_coverage_pct']}%, age {p['snapshot_age_hours']}h "
     )
-    ap.append(f"({'Analyzer lebt' if p['analyzer_alive'] else '⚠️ ANALYZER STALE'})\n")
+    ap.append(f"({'analyzer alive' if p['analyzer_alive'] else '⚠️ ANALYZER STALE'})\n")
 
-    ap.append("## 1. Zell-Divergenz (heutiger Snapshot)\n")
-    ap.append("| Klasse | Zellen | Anteil |")
+    ap.append("## 1. Cell divergence (today's snapshot)\n")
+    ap.append("| Class | Cells | Share |")
     ap.append("|---|---:|---:|")
     n_cells = m["n_cells"] or 1
     for cls in (BOTH_OPEN, BOTH_BLOCK, V2_WOULD_BLOCK, V2_WOULD_OPEN, V2_MISSING):
@@ -624,23 +624,23 @@ def build_markdown(meta: dict) -> str:
         ap.append(f"| {cls} | {n} | {100.0 * n / n_cells:.1f}% |")
     ap.append("")
 
-    ap.append("## 2. Echter Gate-Traffic\n")
+    ap.append("## 2. Real gate traffic\n")
     ap.append(
-        f"- Events gesamt: **{v['n_events_total']}**, davon zell-entschieden (flip-relevant): **{v['n_cell_decided']}**"
+        f"- Events total: **{v['n_events_total']}**, of which cell-decided (flip-relevant): **{v['n_cell_decided']}**"
     )
-    ap.append(f"- Gate-Rate offen: v1 **{v['v1_open_rate_pct']}%** → v2 **{v['v2_open_rate_pct']}%**")
+    ap.append(f"- Gate rate open: v1 **{v['v1_open_rate_pct']}%** → v2 **{v['v2_open_rate_pct']}%**")
     ap.append(
-        f"- ROM1-Forwards/Tag: v1 **{v['forwarded_per_day_v1']}** → v2 (Prognose) "
+        f"- ROM1 forwards/day: v1 **{v['forwarded_per_day_v1']}** → v2 (projected) "
         f"**{v['forwarded_per_day_v2_projected']}**"
     )
     ap.append(
-        f"- v1-Drift der Snapshot-Näherung: {d['n_agree']}/{d['n_comparable']} = **{d['agree_pct']}%** Übereinstimmung"
+        f"- v1 drift of the snapshot approximation: {d['n_agree']}/{d['n_comparable']} = **{d['agree_pct']}%** agreement"
     )
     ap.append("")
 
-    ap.append("## 3. Was die divergenten Signale REALISIERT haben\n")
-    ap.append("### 3a. Trigger-Leg (eigener Trade des Quell-Bots — symmetrisch, beide Seiten)\n")
-    ap.append("| Klasse | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |")
+    ap.append("## 3. What the divergent signals REALIZED\n")
+    ap.append("### 3a. Trigger leg (source bot's own trade — symmetric, both sides)\n")
+    ap.append("| Class | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |")
     ap.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for cls in _CLASS_ORDER:
         s = meta["trigger_by_class"].get(cls)
@@ -650,13 +650,13 @@ def build_markdown(meta: dict) -> str:
     ap.append("")
     fd = meta["flip_delta_trigger"]
     ap.append(
-        f"**Flip-Bilanz auf dem Trigger-Leg:** v2 nimmt weg Σ {fd['v2_removes_sum_move_pct']}% "
-        f"({fd['v2_removes_n']} entschiedene Trades), v2 schaltet frei Σ {fd['v2_adds_sum_move_pct']}% "
-        f"({fd['v2_adds_n']}) → **Δ {fd['delta_sum_move_pct']}%** (unlevered Move).\n"
+        f"**Flip balance on the trigger leg:** v2 removes Σ {fd['v2_removes_sum_move_pct']}% "
+        f"({fd['v2_removes_n']} decided trades), v2 unlocks Σ {fd['v2_adds_sum_move_pct']}% "
+        f"({fd['v2_adds_n']}) → **Δ {fd['delta_sum_move_pct']}%** (unlevered move).\n"
     )
 
-    ap.append("### 3b. ROM1-Leg (das echte Geld — existiert nur auf der forwarded-Seite)\n")
-    ap.append("| Klasse | Events | mit ROM1-Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |")
+    ap.append("### 3b. ROM1 leg (the real money — exists only on the forwarded side)\n")
+    ap.append("| Class | Events | with ROM1 leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |")
     ap.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for cls in _CLASS_ORDER:
         s = meta["rom1_by_class"].get(cls)
@@ -664,20 +664,20 @@ def build_markdown(meta: dict) -> str:
             continue
         ap.append(f"| {cls} | {_leg_cells(s)} |")
     ap.append(
-        "\n> `v2_would_open` hat strukturell KEIN ROM1-Leg: diese Signale wurden nie geforwardet, "
-        "also nie als ROM1 gehandelt. Die zusätzlich freigeschaltete Seite ist in ROM1-Geld "
-        "grundsätzlich nicht messbar — nur im Trigger-Leg (3a), und das trägt eine andere "
-        "Geometrie (P1.10).\n"
+        "\n> `v2_would_open` structurally has NO ROM1 leg: these signals were never forwarded, "
+        "so never traded as ROM1. The additionally unlocked side is fundamentally not "
+        "measurable in ROM1 money — only in the trigger leg (3a), and that carries a different "
+        "geometry (P1.10).\n"
     )
 
-    ap.append("## 3c. Sauber vs. drift-kontaminiert (die belastbare Teilmenge)\n")
+    ap.append("## 3c. Clean vs. drift-contaminated (the reliable subset)\n")
     ap.append(
-        "Die Flip-Klasse vergleicht die AUFGEZEICHNETE v1-Entscheidung mit der HEUTIGEN v2-Zelle. "
-        "Wo die heutige v1-Zelle nicht mehr zur aufgezeichneten Entscheidung passt, hat sich die Zelle "
-        "seither bewegt — dann vergleicht die Klasse zwei verschiedene Zellstände, nicht v1 gegen v2. "
-        "Nur `v1_agree` ist ein sauberer v1-vs-v2-Lesewert.\n"
+        "The flip class compares the RECORDED v1 decision with TODAY's v2 cell. "
+        "Where today's v1 cell no longer matches the recorded decision, the cell has "
+        "moved since then — then the class compares two different cell states, not v1 against v2. "
+        "Only `v1_agree` is a clean v1-vs-v2 read value.\n"
     )
-    ap.append("| Klasse | Teilmenge | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |")
+    ap.append("| Class | Subset | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |")
     ap.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for cls in DIVERGENT:
         split = meta["agreement_trigger"].get(cls) or {}
@@ -688,34 +688,34 @@ def build_markdown(meta: dict) -> str:
             ap.append(f"| {cls} | {subset} | {_leg_cells(s)} |")
     ap.append("")
 
-    ap.append("## 4. Über welchen v1-Pfad kam der divergente Traffic?\n")
+    ap.append("## 4. Which v1 path did the divergent traffic come through?\n")
     ap.append(
-        "`insufficient_data` ist v1s Default-Open-Krücke (n < 30 in der Zelle), "
-        "`wr_above_overall` / `counter_trend_specialist` sind v1-Entscheidungen AUF MERIT. "
-        "Die Zell-Matrix und der Traffic beantworten das unterschiedlich.\n"
+        "`insufficient_data` is v1's default-open crutch (n < 30 in the cell), "
+        "`wr_above_overall` / `counter_trend_specialist` are v1 decisions ON MERIT. "
+        "The cell matrix and the traffic answer this differently.\n"
     )
     for cls in DIVERGENT:
         rows = meta["by_v1_path"].get(cls) or []
         if not rows:
             continue
-        ap.append(f"### {cls} — Trigger-Leg nach v1-Pfad\n")
-        ap.append("| v1-Pfad | Events | mit Leg | zensiert | decided | WR% | Σ Move% | Ø netto% | Σ lev% (n) |")
+        ap.append(f"### {cls} — trigger leg by v1 path\n")
+        ap.append("| v1 path | Events | with leg | censored | decided | WR% | Σ Move% | Ø net% | Σ lev% (n) |")
         ap.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
         for r in rows:
             ap.append(f"| {r['v1_path']} | {_leg_cells(r['stats'])} |")
         ap.append("")
 
-    ap.append("## 5. Aufschlüsselung nach Bot × Richtung\n")
+    ap.append("## 5. Breakdown by bot × direction\n")
     for cls in DIVERGENT:
         rows = meta["by_bot_direction"].get(cls) or []
-        ap.append(f"### {cls} — Trigger-Leg\n")
+        ap.append(f"### {cls} — trigger leg\n")
         if not rows:
-            ap.append("_keine Events in dieser Klasse._\n")
+            ap.append("_no events in this class._\n")
             continue
         ap.extend(_leg_table(rows))
         ap.append("")
 
-    ap.append("## 6. Messgrenzen (gemessen, nicht angenommen)\n")
+    ap.append("## 6. Measurement limits (measured, not assumed)\n")
     for lim in meta["limits"]:
         ap.append(f"- {lim}")
     ap.append("")
@@ -728,40 +728,40 @@ def print_console_report(meta: dict) -> None:
     v = meta["volume"]
     print("\n── Prereqs ──")
     print(
-        f"bot_regime_whitelist: {p['n_rows']} Zellen, v2-Coverage {p['v2_coverage_pct']}%, "
-        f"Alter {p['snapshot_age_hours']}h "
-        f"({'Analyzer lebt' if p['analyzer_alive'] else '⚠️ ANALYZER STALE — Ergebnis nicht belastbar'})"
+        f"bot_regime_whitelist: {p['n_rows']} cells, v2 coverage {p['v2_coverage_pct']}%, "
+        f"age {p['snapshot_age_hours']}h "
+        f"({'analyzer alive' if p['analyzer_alive'] else '⚠️ ANALYZER STALE — result not reliable'})"
     )
 
-    print("\n── Zell-Divergenz (Snapshot) ──")
+    print("\n── Cell divergence (snapshot) ──")
     for cls in (BOTH_OPEN, BOTH_BLOCK, V2_WOULD_BLOCK, V2_WOULD_OPEN, V2_MISSING):
         n = m["totals"].get(cls, 0)
         print(f"  {cls:16} {n:6d}  ({100.0 * n / (m['n_cells'] or 1):5.1f}%)")
 
-    print("\n── Traffic pro Tag ──")
+    print("\n── Traffic per day ──")
     for day, c in meta["daily_counts"].items():
         print(f"  {day}: forwarded {c['forwarded']:4d}  suppressed(gate) {c['suppressed']:4d}")
 
     d = meta["drift"]
-    print(f"\n── v1-Drift (Snapshot-Näherung) ── {d['n_agree']}/{d['n_comparable']} = {d['agree_pct']}%")
+    print(f"\n── v1 drift (snapshot approximation) ── {d['n_agree']}/{d['n_comparable']} = {d['agree_pct']}%")
     print(
-        f"\n── Volumen ──\n  zell-entschieden {v['n_cell_decided']}/{v['n_events_total']}\n"
-        f"  Gate-Rate offen: v1 {v['v1_open_rate_pct']}% → v2 {v['v2_open_rate_pct']}%\n"
-        f"  ROM1-Forwards/Tag: v1 {v['forwarded_per_day_v1']} → v2 {v['forwarded_per_day_v2_projected']}"
+        f"\n── Volume ──\n  cell-decided {v['n_cell_decided']}/{v['n_events_total']}\n"
+        f"  Gate rate open: v1 {v['v1_open_rate_pct']}% → v2 {v['v2_open_rate_pct']}%\n"
+        f"  ROM1 forwards/day: v1 {v['forwarded_per_day_v1']} → v2 {v['forwarded_per_day_v2_projected']}"
     )
 
-    print("\n── Zeit-Domäne pro Tag (gemessen) ──")
+    print("\n── Time domain per tag (measured) ──")
     for tag, st in sorted(meta["time_domains"].items(), key=lambda kv: -kv[1]["n_events"])[:20]:
         print(
             f"  {tag:18} n={st['n_events']:6d}  utc={st['matched_as_utc']:6d}  "
             f"legacy={st['matched_as_legacy']:6d}  → {st['domain_used']:6}  hit {st['hit_pct']}%"
         )
 
-    print(f"\n── Twin-Match ── Trigger {meta['trigger_match']} \n   ROM1 {meta['rom1_match']}")
+    print(f"\n── Twin match ── Trigger {meta['trigger_match']} \n   ROM1 {meta['rom1_match']}")
 
-    hdr = f"{'flip_class':16} {'events':>7} {'leg':>6} {'dec':>6} {'WR%':>6} {'ΣMove%':>9} {'Ønetto%':>9} {'Σlev%':>10}"
-    for title, key in (("Trigger-Leg", "trigger_by_class"), ("ROM1-Leg", "rom1_by_class")):
-        print(f"\n── Realisiert pro Flip-Klasse ({title}) ──")
+    hdr = f"{'flip_class':16} {'events':>7} {'leg':>6} {'dec':>6} {'WR%':>6} {'ΣMove%':>9} {'Ønet%':>9} {'Σlev%':>10}"
+    for title, key in (("trigger leg", "trigger_by_class"), ("ROM1 leg", "rom1_by_class")):
+        print(f"\n── Realized per flip class ({title}) ──")
         print(hdr)
         print("-" * len(hdr))
         for cls in _CLASS_ORDER:
@@ -774,7 +774,7 @@ def print_console_report(meta: dict) -> None:
                 f"{_fmt(s['net_mean_pct'], '9.3f'):>9} {_fmt(s['lev_sum_pct'], '10.1f'):>10}"
             )
 
-    print("\n── Divergenz sauber vs. drift-kontaminiert (Trigger-Leg) ──")
+    print("\n── Divergence clean vs. drift-contaminated (trigger leg) ──")
     for cls in DIVERGENT:
         split = meta["agreement_trigger"].get(cls) or {}
         for subset in ("v1_agree", "v1_drifted"):
@@ -784,14 +784,14 @@ def print_console_report(meta: dict) -> None:
             print(
                 f"  {cls:16} {subset:11} events {s['n_events']:6d}  decided {s['n_decided']:6d}  "
                 f"WR {_fmt(s['wr_pct'], '.1f')}%  ΣMove {_fmt(s['sum_move_pct'], '.1f')}%  "
-                f"Ønetto {_fmt(s['net_mean_pct'], '.3f')}%"
+                f"Ønet {_fmt(s['net_mean_pct'], '.3f')}%"
             )
 
     for cls in DIVERGENT:
         rows = meta["by_v1_path"].get(cls) or []
         if not rows:
             continue
-        print(f"\n── {cls} nach v1-Pfad (Trigger-Leg) ──")
+        print(f"\n── {cls} by v1 path (trigger leg) ──")
         for r in rows:
             s = r["stats"]
             print(
@@ -801,9 +801,9 @@ def print_console_report(meta: dict) -> None:
 
     fd = meta["flip_delta_trigger"]
     print(
-        f"\n── Flip-Bilanz (Trigger-Leg, unlevered) ──\n"
-        f"  v2 nimmt weg:    Σ {fd['v2_removes_sum_move_pct']}%  ({fd['v2_removes_n']} decided)\n"
-        f"  v2 schaltet frei:Σ {fd['v2_adds_sum_move_pct']}%  ({fd['v2_adds_n']} decided)\n"
+        f"\n── Flip balance (trigger leg, unlevered) ──\n"
+        f"  v2 removes:      Σ {fd['v2_removes_sum_move_pct']}%  ({fd['v2_removes_n']} decided)\n"
+        f"  v2 unlocks:      Σ {fd['v2_adds_sum_move_pct']}%  ({fd['v2_adds_n']} decided)\n"
         f"  Δ (v2 − v1):     {fd['delta_sum_move_pct']}%"
     )
     print("\n" + "\n".join(f"! {lim}" for lim in meta["limits"]))
@@ -819,32 +819,32 @@ def build_limits(meta: dict) -> list[str]:
     out = []
     if meta["in_sample_overlap"]:
         out.append(
-            "IN-SAMPLE auf dem Trigger-Leg: `27_bot_regime_analyzer` baut `bot_regime_performance` aus genau "
-            f"diesen geschlossenen Trigger-Trades der letzten {REFERENCE_WINDOW_DAYS} Tage (ab "
-            f"{meta['reference_window_start']}), und v2 entscheidet eine Zelle allein aus deren avg_pnl/stddev. "
-            "Dass v2 hier Zellen blockt, deren Trigger-Trades negativ realisiert haben, ist deshalb zum großen "
-            "Teil eine Umformulierung von v2s Anpassungskriterium — KEIN unabhängiger Beleg. Unabhängig sind "
-            "(a) das ROM1-Leg, auf das v2 nicht gefittet wurde, und (b) ein Lauf mit `--until` vor "
+            "IN-SAMPLE on the trigger leg: `27_bot_regime_analyzer` builds `bot_regime_performance` from exactly "
+            f"these closed trigger trades of the last {REFERENCE_WINDOW_DAYS} days (from "
+            f"{meta['reference_window_start']}), and v2 decides a cell purely from their avg_pnl/stddev. "
+            "That v2 blocks cells here whose trigger trades realized negatively is therefore for the most "
+            "part a restatement of v2's own fitting criterion — NOT independent evidence. Independent are "
+            "(a) the ROM1 leg, which v2 was not fitted on, and (b) a run with `--until` before "
             f"{meta['reference_window_start'][:10]}."
         )
     out += [
-        "Snapshot-Näherung: `bot_regime_whitelist` ist UPSERT-only ohne Historie — der v2-Verdikt pro Event "
-        f"stammt aus dem heutigen Snapshot ({p['max_computed_at']}), nicht aus dem Stand zur Signal-Zeit. "
-        f"Die v1-Drift ({d['agree_pct']}% Übereinstimmung über {d['n_comparable']} Events) misst diesen Fehler "
-        "an der einzigen Achse, auf der beide Stände bekannt sind.",
-        "Die historische Whitelist ist damit weiterhin NICHT rekonstruierbar (T-031-Befund bestätigt): weder "
-        "`bot_regime_whitelist` noch `bot_regime_performance` führen eine Historie, und Bot 28 loggt pro Signal "
-        "nur den v1-Pfad, nie den v2-Verdikt.",
-        "`v2_would_open` hat kein ROM1-Leg — diese Signale wurden nie gehandelt. Die freigeschaltete Seite ist "
-        "nur über den Trade des Quell-Bots messbar, der eine ANDERE Geometrie trägt als ROM1 "
+        "Snapshot approximation: `bot_regime_whitelist` is UPSERT-only without history — the v2 verdict per "
+        f"event comes from today's snapshot ({p['max_computed_at']}), not from the state at signal time. "
+        f"The v1 drift ({d['agree_pct']}% agreement over {d['n_comparable']} events) measures this error "
+        "on the one axis where both states are known.",
+        "The historical whitelist is therefore still NOT reconstructable (T-031 finding confirmed): neither "
+        "`bot_regime_whitelist` nor `bot_regime_performance` keep a history, and bot 28 logs per signal "
+        "only the v1 path, never the v2 verdict.",
+        "`v2_would_open` has no ROM1 leg — these signals were never traded. The unlocked side is "
+        "only measurable via the source bot's own trade, which carries a DIFFERENT geometry than ROM1 "
         "(docs/REGIME_ORCHESTRATOR.md, P1.10).",
-        "Trigger-Leg-Coverage < 100%: unmatched Events sind als `no_twin` gezählt, nicht als 0 gewertet. "
-        "Ursachen: Signal noch offen, Trade nie eröffnet, Monitor-Lücke.",
-        "WR ist TP1-Touch, PnL ist der target-gestaffelte unlevered Move (core.realized_pnl, T-115-Definition). "
-        "`lev`-PnL ist exact-only — Coverage pro Zeile über `n_with_leg` ablesbar.",
+        "Trigger-leg coverage < 100%: unmatched events are counted as `no_twin`, never scored as 0. "
+        "Causes: signal still open, trade never opened, monitor gap.",
+        "WR is TP1 touch, PnL is the target-staged unlevered move (core.realized_pnl, T-115 definition). "
+        "`lev` PnL is exact-only — coverage per row readable via `n_with_leg`.",
     ]
     if not p["analyzer_alive"]:
-        out.insert(0, "⚠️ Der Analyzer (Bot 27) ist stale — der Snapshot bildet den heutigen Stand NICHT ab.")
+        out.insert(0, "⚠️ The analyzer (bot 27) is stale — the snapshot does NOT reflect today's state.")
     return out
 
 
@@ -880,9 +880,9 @@ def wait_for_cpu_headroom(max_wait_min: int, force: bool, poll_sec: int = 60) ->
                 # raised UnicodeEncodeError and killed the run at the exact
                 # moment the operator had asked it to proceed anyway. The
                 # documented escape hatch must not depend on the code page.
-                print(f"[WARN] CPU {cpu}% - --force-on-busy gesetzt, Lauf startet trotzdem (read-only, BELOW_NORMAL).")
+                print(f"[WARN] CPU {cpu}% - --force-on-busy set, run starts anyway (read-only, BELOW_NORMAL).")
                 return cpu
-            print(f"CPU busy - warte {poll_sec}s auf Headroom (bis zu {max_wait_min} min) ...", flush=True)
+            print(f"CPU busy - waiting {poll_sec}s for headroom (up to {max_wait_min} min) ...", flush=True)
             time.sleep(poll_sec)
 
 
@@ -950,10 +950,10 @@ def main() -> None:
             e.update(classify_flip_effect(e, snapshot))
             e["tag"] = pretty_name(e["bot_name"] or "")
             e["direction"] = str(e["direction"] or "").strip().upper()
-        print(f"{len(events)} Gate-Events seit {since} geladen und klassifiziert", flush=True)
+        print(f"{len(events)} gate events since {since} loaded and classified", flush=True)
 
         closes = load_ai_closes(conn, since) + load_classic_closes(conn, since)
-        print(f"{len(closes)} deduplizierte Closes geladen", flush=True)
+        print(f"{len(closes)} deduplicated closes loaded", flush=True)
     finally:
         conn.close()
 

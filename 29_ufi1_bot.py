@@ -8,7 +8,7 @@ Strategy (backtest-validated, 535 coins, 1 year, short-only):
   4. Candle closes BELOW the Fib level (bearish rejection = confirmation)
   5. Entry SHORT, SL = swing-high + 3%, TP1 = Fib extension 1.0 (old low)
 
-Backtest: WR 54.2%, Avg +0.83R, Total +278R, SL-Rate 17.1% (334 Trades / 1 Jahr)
+Backtest: WR 54.2%, Avg +0.83R, Total +278R, SL-Rate 17.1% (334 trades / 1 year)
 
 Checks all 1D candles every 4 hours (daily granularity, candle checked against live price).
 Cooldown: 48h per coin (prevents multiple entries on the same setup).
@@ -69,8 +69,8 @@ def load_daily_ohlcv(conn, symbol: str) -> pd.DataFrame | None:
     """Loads daily OHLCV data for a coin."""
     since = datetime.now(timezone.utc) - timedelta(days=DAILY_BARS_LOOKBACK)
     try:
-        # R1: nur GESCHLOSSENE Tageskerzen — die forming 1d-Kerze fließt nicht in die
-        # Erkennung. Der Live-Preis kommt separat aus get_live_price (Generierung).
+        # R1: only closed daily candles — the forming 1d candle does not flow into the
+        # detection. The live price comes separately from get_live_price (generation).
         df = read_candles(
             conn,
             symbol,
@@ -96,8 +96,8 @@ def load_daily_ohlcv(conn, symbol: str) -> pd.DataFrame | None:
 def get_live_price(conn, symbol: str) -> float | None:
     """Fetches the current price from the 1h table."""
     try:
-        # core.candles: neuester 1h-Close, forming candle bewusst inkludiert
-        # (Live-Preis — contract 2: include_forming=True).
+        # core.candles: newest 1h close, forming candle deliberately included
+        # (live price — contract 2: include_forming=True).
         df = read_candles(conn, symbol, "1h", limit=1, include_forming=True, columns=("open_time", "close"))
         if not df.empty:
             return float(df["close"].iloc[-1])
@@ -246,9 +246,9 @@ def post_signal(conn, symbol: str, setup: dict, live_price: float) -> None:
     entry = live_price  # live price as entry (current market)
     sl = setup["sl_price"]
     tp1 = setup["tp1_price"]
-    # FIX P0.6 (R4): 20x mit ~34% SL-Distanz (sl = swing_high*1.03, Entry tief
-    # im Retracement) liquidiert isoliert bei ~+5% — lange vor dem SL. Hebel
-    # wird deshalb gegen die SL-Distanz gecappt (ergibt hier typisch 1-2x).
+    # FIX P0.6 (R4): 20x with ~34% SL distance (sl = swing_high*1.03, entry deep
+    # in the retracement) liquidates isolated at ~+5% — long before the SL. Leverage
+    # is therefore capped against the SL distance (typically yields 1-2x here).
     lev = cap_leverage_to_sl(get_max_leverage(symbol, 20), entry, sl)
 
     # Cornix plain-text (sent by 4_telegram_bot.py)
@@ -277,8 +277,8 @@ def post_signal(conn, symbol: str, setup: dict, live_price: float) -> None:
         f"→ Entry fib: 0.382 retracement (${fib_entry:.8f})\n"
         f"→ Confirmation: candle closes below Fib level\n"
         f"→ TP1: ${tp1:.8f} (swing low)\n"
-        # FIX Doppel-Post (2026-07-06, Flotten-Sweep): kein eingebetteter
-        # Cornix-Block — Cornix parste sonst beide Nachrichten als Signale.
+        # FIX double post (2026-07-06, fleet sweep): no embedded
+        # Cornix block — otherwise Cornix would parse both messages as signals.
         f"→ SL: ${sl:.8f} (above swing high)</pre>"
     )
 

@@ -17,7 +17,7 @@ from core.bot_catalog import active_scripts, script_for_tag
 from core.bot_naming import pretty_name
 from core.candles import read_candles
 
-# --- Eigene DB Connection importieren ---
+# --- Own DB connection import ---
 from core.database import get_db_connection
 from core.market_utils import send_telegram
 from core.realized_pnl import realized_pnl_pct
@@ -26,7 +26,7 @@ from core.realized_pnl import realized_pnl_pct
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - MARKET_TRACKER - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 🔴 HIER DEINEN CHANNEL EINTRAGEN
+# 🔴 ENTER YOUR CHANNEL HERE
 TELEGRAM_CHANNEL_ID = _kcfg.CH_MARKET_DATA
 
 EXCLUDED_COINS_FOR_TOTAL = ['BTCUSDT', 'XAUUSDT', 'XAGUSDT', 'PAXGUSDT', 'BTCDOMUSDT']
@@ -115,12 +115,12 @@ def _load_open_ai_signals(conn) -> pd.DataFrame:
     """Open AI signals with a best-effort created_at. Never raises on the JOIN."""
     try:
         df = pd.read_sql_query(OPEN_AI_SIGNALS_QUERY, conn)
-        # Der JOIN kann pro Signal mehrere ml-Zeilen treffen — neueste gewinnt.
+        # The JOIN can hit multiple ml rows per signal — the newest wins.
         if not df.empty and 'created_at' in df.columns:
             df = df.sort_values('created_at').drop_duplicates(subset=['strategy', 'direction', 'entry'], keep='last')
         return df
     except Exception as e:
-        logger.debug(f"ai_signals JOIN fehlgeschlagen: {e} — nutze Fallback")
+        logger.debug(f"ai_signals JOIN failed: {e} — using fallback")
         # Postgres aborts the whole transaction on a failed statement; without
         # this rollback the fallback dies with InFailedSqlTransaction — i.e. the
         # fallback never actually fell back.
@@ -140,7 +140,7 @@ def load_all_altcoins():
                 c.upper() for c in coin_list if c.upper().endswith("USDT") and c.upper() not in EXCLUDED_COINS_FOR_TOTAL
             ]
     except Exception as e:
-        logger.error(f"Error loading von {COINS_FILE}: {e}")
+        logger.error(f"Error loading from {COINS_FILE}: {e}")
         return []
 
 
@@ -169,13 +169,13 @@ async def get_volume_data(symbols, hours_ago):
     try:
         with get_db_connection() as conn:
             for sym in symbols:
-                # FIX (#72): `volume * close` war eine Näherung (volume ist Coin-Menge,
-                # close ist End-Preis). Binance liefert quote_volume direkt, aber das
-                # ist nicht in unserer DB saved. Als bessere Näherung nutzen wir
-                # jetzt den MID-Preis (open + close)/2 statt nur close — reduziert
-                # Error for Kerzen mit großer Intra-Candle-Bewegung.
+                # FIX (#72): `volume * close` was an approximation (volume is coin quantity,
+                # close is end price). Binance delivers quote_volume directly, but that
+                # is not saved in our DB. As a better approximation we now use
+                # the MID price (open + close)/2 instead of just close — reduces
+                # error for candles with large intra-candle movement.
                 # R1: `FROM "{sym}_30m"` → core.candles. include_forming=True (price/
-                # volume monitor read, harte Regel 5). The SUM/CASE aggregation moves to
+                # volume monitor read, hard rule 5). The SUM/CASE aggregation moves to
                 # pandas over the Decimal (NUMERIC) OHLCV, so float() of the sum stays
                 # byte-equal to the SQL SUM. Empty window ⇒ no rows added (== COALESCE 0).
                 try:
@@ -285,7 +285,7 @@ async def generate_main_report(target_name):
 
 
 async def job_main_reports():
-    logger.info("Generiere Main Reports...")
+    logger.info("Generating main reports...")
     await generate_main_report("BTCUSDT")
     await asyncio.sleep(1)
     await generate_main_report("ETHUSDT")
@@ -296,7 +296,7 @@ async def job_main_reports():
 
 # 🚀 2. TOP GAINERS & LOSERS
 async def job_gainers_losers():
-    logger.info("Generiere Gainers/Losers...")
+    logger.info("Generating gainers/losers...")
     coins = load_all_altcoins()
     now = datetime.now(timezone.utc)
     t1, t4, t24 = now - timedelta(hours=1), now - timedelta(hours=4), now - timedelta(hours=24)
@@ -306,7 +306,7 @@ async def job_gainers_losers():
         with get_db_connection() as conn:
             for sym in coins:
                 try:
-                    # Holt die gesamten letzten 24h für den Coin in einem Rutsch.
+                    # Fetches the entire last 24h for the coin in one go.
                     # R1: `FROM "{sym}_30m"` → core.candles (include_forming=True, monitor).
                     df = read_candles(
                         conn,
@@ -386,7 +386,7 @@ async def job_gainers_losers():
 
 # 🚀 3. VOLUME SPIKES (4h vs 7d Avg)
 async def job_volume_spikes():
-    logger.info("Generiere Volume Spikes...")
+    logger.info("Generating volume spikes...")
     now = datetime.now(timezone.utc)
     t4 = now - timedelta(hours=4)
     t7 = now - timedelta(days=7)
@@ -467,7 +467,7 @@ async def job_volume_spikes():
 
 # 🚀 4. VOLATILE COINS (Last 4h)
 async def job_volatile_coins():
-    logger.info("Generiere Volatile Coins...")
+    logger.info("Generating volatile coins...")
     now = datetime.now(timezone.utc)
     t4 = now - timedelta(hours=4)
     coins = load_all_altcoins()
@@ -500,7 +500,7 @@ async def job_volatile_coins():
                         continue
 
                     range_pct = ((h - low) / low) * 100
-                    if range_pct >= 5.0:  # Zeigt alles über 5% Range
+                    if range_pct >= 5.0:  # Shows everything over 5% range
                         volatile.append({'sym': sym.replace("USDT", ""), 'r': range_pct, 'h': h, 'l': low, 'c': c})
                 except Exception:
                     conn.rollback()
@@ -529,7 +529,7 @@ async def job_volatile_coins():
 
 # 🚀 5. HOURLY SIGNAL SUMMARY (Alle Bots)
 async def job_signal_summary():
-    logger.info("Generiere stündliche Bot-signals Zusammenfassung...")
+    logger.info("Generating hourly bot signals summary...")
     now = datetime.now(timezone.utc)
     t24 = now - timedelta(hours=24)
 
@@ -539,7 +539,7 @@ async def job_signal_summary():
         # longer burns a pool slot. Pool max is 8 per process — a leak per failed
         # run silently starves the tracker after a handful of DB hiccups.
         with get_db_connection() as conn:
-            # 1. OFFENE TRADES HOLEN (Hier gibt es naturgemäß nur den Eröffnungszeitpunkt)
+            # 1. FETCH OPEN TRADES (naturally only has the opening time)
             query_act_trades = (
                 "SELECT strategy, direction, time as created_at FROM active_trades_master WHERE time >= %s"
             )
@@ -552,9 +552,9 @@ async def job_signal_summary():
             # set, and get_o_stats windows on created_at client-side anyway.
             df_act_ai = _load_open_ai_signals(conn)
 
-            # 2. GESCHLOSSENE TRADES HOLEN
-            # Wir fragen alles ab, was entweder in den letzten 24h geschlossen ODER eröffnet wurde
-            # Queries erweitert um entry/close_price für PnL-basierte is_win-Klassifikation
+            # 2. FETCH CLOSED TRADES
+            # We query everything that either closed OR opened in the last 24h
+            # Queries extended with entry/close_price for PnL-based is_win classification
             # Dedupe on the report-14 key (see AI_DEDUP_KEY/CLS_DEDUP_KEY at module
             # top). Structure: dedup runs over the FULL table first, filters come
             # OUTSIDE — so the survivor pick (earliest close = original outcome)
@@ -593,7 +593,7 @@ async def job_signal_summary():
             """
             df_cls_ai = pd.read_sql_query(query_cls_ai, conn, params=(t24, t24))
     except Exception as e:
-        logger.error(f"Error loading der Signal-Daten: {e}")
+        logger.error(f"Error loading signal data: {e}")
         return
 
     # Belt-and-braces for the frames whose direction is not normalised in SQL
@@ -602,24 +602,24 @@ async def job_signal_summary():
         if not df.empty and 'direction' in df.columns:
             df['direction'] = df['direction'].astype(str).str.strip().str.upper()
 
-    # --- DATEN AUFBEREITEN & GEWINNE ERMITTELN ---
+    # --- PREPARE DATA & DETERMINE WINS ---
 
-    # PnL-basierte is_win-Klassifikation (statt direkt aus status/targets_hit).
-    # Das umgeht die bekannten Bugs:
-    #   - LEGACY TARGET HIT (+2.5%) schreibt targets_hit=0 → wurde als Loss gewertet
-    #   - DELISTED/CLEANUP zählt nicht als Loss, sondern als neutral
-    #   - Ausreißer mit |pnl| > 100% sind Daten-Bugs und werden neutral
-    #   - |pnl| <= 0.1% sind Housekeeping-Closes, neutral
+    # PnL-based is_win classification (instead of directly from status/targets_hit).
+    # This avoids known bugs:
+    #   - LEGACY TARGET HIT (+2.5%) writes targets_hit=0 → was marked as loss
+    #   - DELISTED/CLEANUP does not count as loss, but as neutral
+    #   - Outliers with |pnl| > 100% are data bugs and marked neutral
+    #   - |pnl| <= 0.1% are housekeeping closes, neutral
     OUTCOME_MIN_PNL_PCT = 0.1
     OUTCOME_MAX_ABS_PNL_PCT = 100.0
 
     def _compute_outcome_flags(df, has_close_reason: bool):
-        """Setzt df['is_win'] und df['is_decisive'] (= Win ODER Loss, keine Neutrale).
-        Nutzt pnl_pct wenn entry+close_price vorhanden, sonst Fallback auf
-        status/targets_hit wie vorher."""
+        """Sets df['is_win'] and df['is_decisive'] (= win OR loss, no neutrals).
+        Uses pnl_pct if entry+close_price present, otherwise fallback to
+        status/targets_hit as before."""
         if df.empty:
             return
-        # PnL berechnen falls möglich
+        # Calculate PnL if possible
         if 'entry' in df.columns and 'close_price' in df.columns:
             entry = pd.to_numeric(df['entry'], errors='coerce')
             close = pd.to_numeric(df['close_price'], errors='coerce')
@@ -648,9 +648,9 @@ async def job_signal_summary():
             reason_upper = pd.Series([''] * len(df), index=df.index)
 
         # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE raus — ein
-        # Auto-Close realisiert einen echten PnL und zählt als Win/Loss (nur
-        # near-0%-Closes bleiben über den Micro-PnL-Filter neutral). Ohne das
-        # divergierte die Report-WR von der (jetzt korrigierten) Whitelist-WR.
+        # Auto-close realises actual PnL and counts as win/loss (only
+        # near-0% closes stay neutral via micro-PnL filter). Without this
+        # report WR diverged from (now corrected) whitelist WR.
         is_housekeeping = reason_upper.str.contains('DELISTED|CLEANUP|ORPHAN', regex=True, na=False)
 
         # PnL-basierte Klassifikation (mit Fallback)
@@ -662,13 +662,13 @@ async def job_signal_summary():
         is_micro = has_pnl & (abs_pnl <= OUTCOME_MIN_PNL_PCT)
         is_neutral = is_housekeeping | is_outlier | is_micro
 
-        # Win/Loss nur für nicht-neutrale Trades
+        # Win/loss only for non-neutral trades
         is_win_by_pnl = has_pnl & (~is_neutral) & (pnl_num > 0)
         is_loss_by_pnl = has_pnl & (~is_neutral) & (pnl_num < 0)
 
-        # Fallback für Zeilen ohne PnL (entry/close_price fehlen):
-        # Nutze die alte status/targets_hit-Logik, aber immer noch DELISTED
-        # als neutral behandeln.
+        # Fallback for rows without PnL (entry/close_price missing):
+        # Use old status/targets_hit logic, but still treat DELISTED
+        # as neutral.
         if 'status' in df.columns:
             fallback_win = pd.to_numeric(df['status'], errors='coerce').fillna(0) > 0
         elif 'targets_hit' in df.columns:
@@ -676,8 +676,8 @@ async def job_signal_summary():
         else:
             fallback_win = pd.Series([False] * len(df), index=df.index)
 
-        # Kombiniere: PnL wenn vorhanden, sonst Fallback (außer housekeeping
-        # und bad_price — letztere sind neutral, siehe oben)
+        # Combine: PnL if present, otherwise fallback (except housekeeping
+        # and bad_price — these are neutral, see above)
         is_win = is_win_by_pnl.copy()
         no_pnl = ~has_pnl & ~is_housekeeping & ~bad_price
         is_win = is_win | (no_pnl & fallback_win)
@@ -698,37 +698,37 @@ async def job_signal_summary():
     for df in [df_cls_trades, df_cls_ai]:
         if not df.empty and 'closed_at' in df.columns:
             df['closed_at'] = pd.to_datetime(df['closed_at'], utc=True)
-    # Opens = still-open ∪ closed, per Signal-Typ. Beide Paare sind disjunkt,
-    # weil die Monitore beim Schliessen aus active_trades_master bzw. ai_signals
-    # DELETEn und in die closed_*-Tabelle INSERTen. Vor P1.44 stand hier auf der
-    # AI-Seite ml_predictions_master (append-only) statt ai_signals — jedes
-    # AI-Signal, das im Fenster öffnete UND schloss, zählte doppelt.
+    # Opens = still-open ∪ closed, per signal type. Both pairs are disjunct,
+    # because monitors on close DELETE from active_trades_master or ai_signals
+    # and INSERT into closed_* table. Before P1.44 on the
+    # AI side was ml_predictions_master (append-only) instead of ai_signals — every
+    # AI signal that opened AND closed in the window was counted twice.
     df_all_created = pd.concat([df_act_trades, df_act_ai, df_cls_trades, df_cls_ai], ignore_index=True)
     df_all_closed = pd.concat([df_cls_trades, df_cls_ai], ignore_index=True)
 
     # --- KATEGORIEN ZUWEISEN ---
     def get_category(strategy):
-        """FIX (#71/#73): Kategorisierung war inkonsistent.
-        - TD_* (Three-Drive aus SMC Sniper) wurde fälschlich als INDICATOR eingeordnet
-          obwohl es ein Pattern ist.
-        - BB_* (Breaker Block) und QM_* (Quasimodo) waren als VOLUME klassifiziert
-          obwohl sie struktur-/pattern-basiert sind.
-        Jetzt saubere Zuordnung after Signal-Typ.
+        """FIX (#71/#73): Categorisation was inconsistent.
+        - TD_* (Three-Drive from SMC Sniper) was incorrectly classified as INDICATOR
+          although it is a pattern.
+        - BB_* (Breaker Block) and QM_* (Quasimodo) were classified as VOLUME
+          although they are structure-/pattern-based.
+        Now clean assignment by signal type.
         """
         s = str(strategy).upper()
-        # Versionierungs-Regel (Operator 2026-07-06): Retrain-Generationen posten
-        # unter neuem Tag (MIS2, ABR2, ATS2, ...) — deshalb Präfix-Matching statt
-        # Exakt-Listen, damit neue Generationen automatisch kategorisiert werden.
-        # INDICATOR = klassische Oszillator-/Crossover-basierte signals
+        # Versioning rule (Operator 2026-07-06): retrain generations post
+        # under new tag (MIS2, ABR2, ATS2, ...) — therefore prefix matching instead of
+        # exact lists, so new generations are automatically categorised.
+        # INDICATOR = classical oscillator-/crossover-based signals
         if s in ["5 PERCENT", "FAST IN AND OUT"] or s.startswith(("MIS", "ATS")):
             return "INDICATOR"
-        # VOLUME = rein volumen-basierte signals
+        # VOLUME = purely volume-based signals
         if s == "VOLUME INDICATOR" or s.startswith("EPD"):
             return "VOLUME"
-        # LEVEL = Support/Resistance & Reversion an Zonen
+        # LEVEL = support/resistance & reversion at zones
         if s == "SUPPORT RESISTANCE" or s.startswith(("ABR", "RUB", "SRA")):
             return "LEVEL"
-        # PATTERN = SMC-Patterns, Chart-Patterns, Trendline
+        # PATTERN = SMC patterns, chart patterns, trendline
         if s.startswith(("AIM", "ATB", "BR", "TD", "BB", "QM", "SMC")):
             return "PATTERN"
         return "OTHER"
@@ -738,7 +738,7 @@ async def job_signal_summary():
     if not df_all_closed.empty:
         df_all_closed['category'] = df_all_closed['strategy'].apply(get_category)
 
-    # --- STATISTIKEN BERECHNEN ---
+    # --- CALCULATE STATISTICS ---
     def calc_stats(cat_name):
         cat_created = (
             df_all_created[df_all_created['category'] == cat_name] if not df_all_created.empty else pd.DataFrame()
@@ -764,9 +764,9 @@ async def job_signal_summary():
             l_sub = sub[sub['direction'] == 'LONG']
             s_sub = sub[sub['direction'] == 'SHORT']
 
-            # WR nur aus "entschiedenen" Trades (Wins+Losses), Neutrale (DELISTED,
-            # Housekeeping, Ausreißer) ausgeschlossen. Sonst bekommen Bots mit
-            # viel Cleanup-Traffic irreführend niedrige WR.
+            # WR only from "decided" trades (wins+losses), neutrals (DELISTED,
+            # housekeeping, outliers) excluded. Otherwise bots with
+            # lots of cleanup traffic get misleadingly low WR.
             l_dec = l_sub[l_sub['is_decisive']] if 'is_decisive' in l_sub.columns else l_sub
             s_dec = s_sub[s_sub['is_decisive']] if 'is_decisive' in s_sub.columns else s_sub
 
@@ -809,7 +809,7 @@ async def job_signal_summary():
 </pre>"""
 
     send_telegram(msg, TELEGRAM_CHANNEL_ID)
-    logger.info("✅ Stündliche Signal-Zusammenfassung sent successfully.")
+    logger.info("✅ Hourly signal summary sent successfully.")
     await asyncio.sleep(1)
 
 
@@ -817,18 +817,18 @@ async def job_signal_summary():
 # PER-BOT PERFORMANCE DETAIL POST
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# Ergänzt die bestehende kategorie-basierte Summary um eine Tabelle pro
-# einzelnem Bot (Strategy). Zeigt Win-Rate über 5 Zeitfenster
-# (1h/4h/24h/7d/All) sowie durchschnittliche PnL in %.
+# Complements the existing category-based summary with a table per
+# individual bot (strategy). Shows win-rate over 5 time windows
+# (1h/4h/24h/7d/All) as well as average PnL in %.
 #
-# Design-Entscheidungen:
-# - Min. 3 Trades pro Zeitfenster damit eine Zahl angezeigt wird (sonst "---").
-# - Trend-Pfeile: 1h-Wert vs. All-Zeit-Wert ≥ 10 Prozentpunkte Abweichung →
-#   ↑ (heiß) oder ↓ (kalt).
-# - Alle Bots in einer Tabelle, sortiert after Gesamt-Trade-Zahl (Bots mit mehr
-#   Historie zuerst — aussagekräftiger).
-# - Wird 5 Sekunden after der Kategorie-Summary gesendet damit der Telegram-
-#   Worker Luft bekommt und nicht 2 Posts im selben Takt in den gleichen Channel.
+# Design decisions:
+# - Min. 3 trades per time window for a number to be displayed (otherwise "---").
+# - Trend arrows: 1h value vs. all-time value ≥ 10 percentage points difference →
+#   ↑ (hot) or ↓ (cold).
+# - All bots in one table, sorted by total trade count (bots with more
+#   history first — more meaningful).
+# - Sent 5 seconds after category summary so Telegram
+#   worker gets breathing room and doesn't push 2 posts in same tick to same channel.
 
 
 def _get_regime_fit_label(conn, bot_name: str) -> str:
@@ -926,10 +926,10 @@ SAFETY_BUFFER = 200  # headroom for HTML tags + unforeseen characters
 
 
 def _group_bot_entries(src_lines: list[str]) -> list[str]:
-    """Gruppiert Kelly-Zeilen zu Bot-Blöcken (getrennt durch Leerzeilen).
+    """Groups Kelly rows into bot blocks (separated by blank lines).
 
-    Ein Bot-Eintrag darf NIEMALS über Chunks gesplittet werden — sonst
-    endet der Post mit einem halben Eintrag.
+    A bot entry must NEVER be split across chunks — otherwise
+    the post ends with a partial entry.
     """
     blocks = []
     current = []
@@ -946,12 +946,12 @@ def _group_bot_entries(src_lines: list[str]) -> list[str]:
 
 
 def _group_table_entries(src_lines: list[str]) -> list[str]:
-    """Gruppiert Tabellen-Zeilen zu Bot-Blöcken.
+    """Groups table rows into bot blocks.
 
-    Die Tabelle ist ähnlich aufgebaut wie der Kelly-Block: jede
-    Bot-Zeile (plus optional 1-3 Detail-Zeilen) endet mit einer
-    Leerzeile. Die ersten beiden Zeilen (Header + Separator) müssen
-    in JEDEM Chunk dabei sein — Tabellen ohne Header wären unlesbar.
+    The table is structured similarly to the Kelly block: each
+    bot row (plus optionally 1-3 detail rows) ends with a
+    blank line. The first two rows (header + separator) must
+    be in EVERY chunk — tables without header would be unreadable.
     """
     if len(src_lines) < 2:
         return []
@@ -1018,13 +1018,13 @@ def _build_chunks(
     footer: str,
     separator: str = "\n\n",
 ) -> list[str]:
-    """Packt Bot-Blöcke in mehrere Chunks unter dem 4096-Zeichen-Limit.
+    """Packs bot blocks into multiple chunks under the 4096-character limit.
 
-    - header_first: Header für den allerersten Chunk (volle Überschrift)
-    - header_continued: Header für Folge-Chunks ("continued" Markierung)
-    - footer: Footer für jeden Chunk (Legende etc.)
-    - separator: Trenner zwischen Blöcken ("\\n\\n" für Bot-Blöcke mit
-      Leerzeile, "\\n" für einzeilige Tabellen-Rows)
+    - header_first: Header for the very first chunk (full title)
+    - header_continued: Header for follow-up chunks ("continued" marker)
+    - footer: Footer for every chunk (legend etc.)
+    - separator: Separator between blocks ("\\n\\n" for bot blocks with
+      blank line, "\\n" for single-line table rows)
     """
     if not blocks:
         return []
@@ -1045,8 +1045,8 @@ def _build_chunks(
     blocks = normalized
 
     chunks = []
-    # Erster Chunk: header_first + blocks + footer
-    # Folge-Chunks: header_continued + blocks + footer
+    # First chunk: header_first + blocks + footer
+    # Follow-up chunks: header_continued + blocks + footer
     current_hdr = header_first
     current_body = []
     current_size = len(current_hdr) + len(footer)
@@ -1056,9 +1056,9 @@ def _build_chunks(
     for block in blocks:
         needed = len(block) + (separator_size if current_body else 0)
         if current_size + needed > TELEGRAM_TEXT_LIMIT - SAFETY_BUFFER and current_body:
-            # Chunk abschließen
+            # Finalise chunk
             chunks.append(current_hdr + separator.join(current_body) + footer)
-            # Neuer Chunk mit "continued" Header
+            # New chunk with "continued" header
             current_hdr = header_continued
             current_body = [block]
             current_size = len(current_hdr) + len(footer) + len(block)
@@ -1073,37 +1073,37 @@ def _build_chunks(
 
 
 async def job_per_bot_performance() -> None:
-    """Sendet eine detaillierte Performance-Tabelle pro einzelnem Bot/Strategy.
+    """Sends a detailed performance table per individual bot/strategy.
 
-    Zieht Daten aus vier Tabellen:
-      - closed_trades_master: klassische Trades, geschlossen
-      - active_trades_master: klassische Trades, offen
-      - closed_ai_signals:    AI-signals, geschlossen
-      - ai_signals:           AI-signals, offen
+    Draws data from four tables:
+      - closed_trades_master: classic trades, closed
+      - active_trades_master: classic trades, open
+      - closed_ai_signals:    AI signals, closed
+      - ai_signals:           AI signals, open
 
-    Neu (April 2026):
-      - MIS1-<N>h_pump + MIS1-<N>h_dump werden zu MIS1-<N>h konsolidiert
-      - Typo-Fix: MSI1-* → MIS1-*
-      - Zeitfenster-Filter after ERÖFFNUNGSZEIT (created_at) statt closed_at.
-        Zeigt Bot-Entscheidungen im Zeitraum X, nicht Close-Events.
-      - WR-Berechnung nur aus geschlossenen Trades innerhalb des Fensters
-        (offene Trades werden separat gezählt aber nicht in WR einbezogen)
-      - Detail-Zeile mit 4h Target-Staffelung (TP1+/TP2+/TP3+/TP4/SL)
-        plus LONG vs SHORT Split
+    New (April 2026):
+      - MIS1-<N>h_pump + MIS1-<N>h_dump consolidate to MIS1-<N>h
+      - Typo fix: MSI1-* → MIS1-*
+      - Time window filter by OPENING TIME (created_at) instead of closed_at.
+        Shows bot decisions in time period X, not close events.
+      - WR calculation only from closed trades within the window
+        (open trades counted separately but not included in WR)
+      - Detail line with 4h target tiers (TP1+/TP2+/TP3+/TP4/SL)
+        plus LONG vs SHORT split
 
-    Datenmodell after Vereinheitlichung (df_all):
-      strategy_short: str         — Anzeige-Name after Aliasing + Konsolidierung
+    Data model after consolidation (df_all):
+      strategy_short: str         — display name after aliasing + consolidation
       direction:      "LONG"|"SHORT"
       entry:          float
-      close_price:    float | NaN (bei offenen)
-      created_at:     datetime    — Eröffnungszeit
-      closed_at:      datetime|NaN — Schließzeit (NaN = offen)
+      close_price:    float | NaN (for open ones)
+      created_at:     datetime    — opening time
+      closed_at:      datetime|NaN — closing time (NaN = open)
       is_closed:      bool
-      status_num:     int         — 0=SL, 1=TP1, 2=TP2, 3=TP3, 4=TP4 (NaN=offen)
-      is_win:         bool        — True wenn status_num >= 1
-      pnl_pct:        float|NaN   — Richtungs-korrigierter PnL-% (NaN bei offen)
+      status_num:     int         — 0=SL, 1=TP1, 2=TP2, 3=TP3, 4=TP4 (NaN=open)
+      is_win:         bool        — True when status_num >= 1
+      pnl_pct:        float|NaN   — direction-corrected PnL % (NaN for open)
     """
-    logger.info("Generiere Per-Bot Performance-Detail-Post...")
+    logger.info("Generating per-bot performance detail post...")
     now = datetime.now(timezone.utc)
 
     try:
@@ -1127,9 +1127,9 @@ async def job_per_bot_performance() -> None:
         # behaviour-changing redesign, an Operator decision), NOT a silent window
         # here. Documented as a risk rather than optimised (Ledger-Geist).
         with get_db_connection() as conn:
-            # ═══ GESCHLOSSENE TRADES ═══
+            # ═══ CLOSED TRADES ═══
 
-            # Klassische Trades: time=created, posted=closed, status=0..4 (string)
+            # Classic trades: time=created, posted=closed, status=0..4 (string)
             #
             # Both closed queries dedupe on the report-14 key (AI_DEDUP_KEY /
             # CLS_DEDUP_KEY at module top, rationale there). Live measurement
@@ -1156,8 +1156,8 @@ async def job_per_bot_performance() -> None:
                 conn,
             )
 
-            # AI-signals: open_time=created, close_time=closed, targets_hit=0..19 (int)
-            # close_reason wird aus der status-Spalte geladen (vom 8_ai_trade_monitor gesetzt)
+            # AI signals: open_time=created, close_time=closed, targets_hit=0..19 (int)
+            # close_reason loaded from status column (set by 8_ai_trade_monitor)
             df_ai_closed = pd.read_sql_query(
                 f"""
                 SELECT * FROM (
@@ -1174,9 +1174,9 @@ async def job_per_bot_performance() -> None:
                 conn,
             )
 
-            # ═══ OFFENE TRADES ═══
+            # ═══ OPEN TRADES ═══
 
-            # active_trades_master: time=created; keine close_price/status
+            # active_trades_master: time=created; no close_price/status
             df_cls_open = pd.read_sql_query(
                 """
                 SELECT strategy, direction, entry, time as created_at
@@ -1186,37 +1186,36 @@ async def job_per_bot_performance() -> None:
                 conn,
             )
 
-            # ai_signals hat keine Spalte für die Eröffnungszeit —
-            # _load_open_ai_signals holt sie per JOIN aus ml_predictions_master
-            # (Rationale + Fallback: OPEN_AI_SIGNALS_QUERY am Modul-Kopf).
-            # Geteilt mit job_signal_summary, damit die beiden Posts nicht
-            # auseinanderdriften (P1.44).
+            # ai_signals has no column for opening time —
+            # _load_open_ai_signals fetches it via JOIN from ml_predictions_master
+            # (rationale + fallback: OPEN_AI_SIGNALS_QUERY at module head).
+            # Shared with job_signal_summary so the two posts don't
+            # drift apart (P1.44).
             df_ai_open = _load_open_ai_signals(conn)
     except Exception as e:
-        logger.error(f"Error loading der Per-Bot Performance-Daten: {e}", exc_info=True)
+        logger.error(f"Error loading per-bot performance data: {e}", exc_info=True)
         return
 
-    # ─── Datenmodell vereinheitlichen ───
+    # ─── Consolidate data model ───
 
-    # WICHTIG: is_win wird jetzt BASIEREND AUF DEM TATSÄCHLICHEN PnL ermittelt,
-    # nicht mehr aus targets_hit bzw. status. Das umgeht mehrere historische Bugs:
+    # IMPORTANT: is_win is now DETERMINED BASED ON ACTUAL PnL,
+    # no longer from targets_hit or status. This avoids several historical bugs:
     #
-    #   1. 8_ai_trade_monitor schreibt bei "LEGACY TARGET HIT (+2.5%)" als Win,
-    #      setzt aber new_targets_hit NICHT (bleibt bei 0). Das ist der Haupt-
-    #      grund für die fast 100%-WR-Verluste-Anzeige bei Bots wie EPD1/ATS1.
-    #   2. Trades mit close_reason='DELISTED / CLEANUP' sind weder Win noch
-    #      Loss — sie werden jetzt als neutral behandelt und aus Kelly
-    #      ausgeschlossen.
-    #   3. Extreme Ausreißer (|pnl| > 100%) sind meistens Daten-Bugs und
-    #      verzerren avg_win/avg_loss massiv — werden gefiltert.
-    #   4. Trades mit |pnl| ≈ 0% (Housekeeping-Closes) sind ebenfalls neutral.
+    #   1. 8_ai_trade_monitor writes "LEGACY TARGET HIT (+2.5%)" as win,
+    #      but does NOT set new_targets_hit (remains 0). This is the main
+    #      reason for near 100%-WR loss display in bots like EPD1/ATS1.
+    #   2. Trades with close_reason='DELISTED / CLEANUP' are neither win nor
+    #      loss — now treated as neutral and excluded from Kelly.
+    #   3. Extreme outliers (|pnl| > 100%) are mostly data bugs and
+    #      distort avg_win/avg_loss massively — are filtered.
+    #   4. Trades with |pnl| ≈ 0% (housekeeping closes) are also neutral.
     #
-    # Die klassifikation erfolgt after der PnL-Berechnung weiter unten.
+    # Classification happens after PnL calculation further below.
 
-    # Geschlossene klassische Trades
+    # Closed classic trades
     if not df_cls_closed.empty:
         df_cls_closed['status_num'] = pd.to_numeric(df_cls_closed['status'], errors='coerce').fillna(0).astype(int)
-        # NEU: close_reason-Spalte gibt es für klassische Trades nicht — leer setzen
+        # NEW: close_reason column does not exist for classic trades — set empty
         df_cls_closed['close_reason'] = ''
         df_cls_closed['is_closed'] = True
         df_cls_closed = df_cls_closed[
@@ -1233,10 +1232,10 @@ async def job_per_bot_performance() -> None:
             ]
         ]
 
-    # Geschlossene AI-Trades
+    # Closed AI trades
     if not df_ai_closed.empty:
         df_ai_closed['status_num'] = pd.to_numeric(df_ai_closed['targets_hit'], errors='coerce').fillna(0).astype(int)
-        # close_reason wurde in der Query geladen, ggf. NaN → ''
+        # close_reason loaded from query, if NaN → ''
         df_ai_closed['close_reason'] = df_ai_closed['close_reason'].fillna('').astype(str)
         df_ai_closed['is_closed'] = True
         df_ai_closed = df_ai_closed[
@@ -1253,7 +1252,7 @@ async def job_per_bot_performance() -> None:
             ]
         ]
 
-    # Offene Trades — haben kein close, keinen status
+    # Open trades — have no close, no status
     for df_open in (df_cls_open, df_ai_open):
         if not df_open.empty:
             df_open['close_price'] = pd.NA
@@ -1262,24 +1261,24 @@ async def job_per_bot_performance() -> None:
             df_open['status_num'] = pd.NA
             df_open['close_reason'] = ''
 
-    # Alle Teile zusammenführen
+    # Consolidate all parts
     parts = []
     for df_part in (df_cls_closed, df_ai_closed, df_cls_open, df_ai_open):
         if not df_part.empty:
             parts.append(df_part)
 
     if not parts:
-        logger.info("Keine Trade-Historie vorhanden — Per-Bot Post skipped.")
+        logger.info("No trade history available — per-bot post skipped.")
         return
 
     df_all = pd.concat(parts, ignore_index=True)
 
-    # Timestamps normalisieren
+    # Normalise timestamps
     df_all['created_at'] = pd.to_datetime(df_all['created_at'], utc=True, errors='coerce')
     df_all['closed_at'] = pd.to_datetime(df_all['closed_at'], utc=True, errors='coerce')
     df_all = df_all.dropna(subset=['created_at'])
 
-    # Entry/Close numerisch, nur sinnvolle entries
+    # Entry/close numeric, only meaningful entries
     df_all['entry'] = pd.to_numeric(df_all['entry'], errors='coerce')
     df_all['close_price'] = pd.to_numeric(df_all['close_price'], errors='coerce')
     df_all = df_all.dropna(subset=['entry'])
@@ -1291,43 +1290,43 @@ async def job_per_bot_performance() -> None:
     # sign in pnl_pct and drop out of the direction splits.
     df_all['direction'] = df_all['direction'].astype(str).str.strip().str.upper()
 
-    # PnL nur für geschlossene Trades berechnen
+    # Calculate PnL only for closed trades
     pct = (df_all['close_price'] - df_all['entry']) / df_all['entry'] * 100
     is_short = df_all['direction'] == 'SHORT'
     df_all['pnl_pct'] = pct.where(~is_short, -pct)
-    # Offene Trades haben kein pnl_pct
+    # Open trades have no pnl_pct
     df_all.loc[~df_all['is_closed'], 'pnl_pct'] = pd.NA
 
-    # ─── TRADE-OUTCOME-KLASSIFIKATION (NEU) ───
-    # Klassifiziert jeden geschlossenen Trade als 'win', 'loss' oder 'neutral'.
-    # 'neutral' wird aus Kelly ausgeschlossen (zählt weder als Win noch als Loss).
+    # ─── TRADE OUTCOME CLASSIFICATION (NEW) ───
+    # Classifies each closed trade as 'win', 'loss', or 'neutral'.
+    # 'neutral' is excluded from Kelly (counts neither as win nor loss).
     #
-    # Konstanten:
-    #   OUTCOME_MIN_PNL_PCT: Trades mit |pnl_pct| <= diesem Wert gelten als
-    #                       neutral (meist Housekeeping-Closes bei ~0%).
-    #   OUTCOME_MAX_ABS_PNL_PCT: Trades mit |pnl_pct| > diesem Wert gelten
-    #                           als Ausreißer und werden ignoriert (Daten-Bugs).
+    # Constants:
+    #   OUTCOME_MIN_PNL_PCT: trades with |pnl_pct| <= this value count as
+    #                       neutral (mostly housekeeping closes at ~0%).
+    #   OUTCOME_MAX_ABS_PNL_PCT: trades with |pnl_pct| > this value count
+    #                           as outliers and are ignored (data bugs).
     OUTCOME_MIN_PNL_PCT = 0.1
     OUTCOME_MAX_ABS_PNL_PCT = 100.0
 
     def _classify_outcome(row) -> str:
-        """Returns 'win', 'loss', 'neutral', oder '' (für offene Trades)."""
+        """Returns 'win', 'loss', 'neutral', or '' (for open trades)."""
         if not row['is_closed']:
             return ''
         reason = (row['close_reason'] or '').upper()
-        # Housekeeping-Closes: weder Win noch Loss (extern verursacht).
-        # B9-Zensur-Korrektur (T-2026-CU-9050-048): REGIME_CHANGE zählt jetzt
-        # mit realem PnL als Win/Loss (near-0% fängt der Micro-PnL-Filter).
+        # Housekeeping closes: neither win nor loss (externally caused).
+        # B9 censorship correction (T-2026-CU-9050-048): REGIME_CHANGE now
+        # counts with actual PnL as win/loss (near-0% caught by micro-PnL filter).
         if 'DELISTED' in reason or 'CLEANUP' in reason or 'ORPHAN' in reason:
             return 'neutral'
         pnl = row['pnl_pct']
         if pd.isna(pnl):
             return 'neutral'
         pnl_f = float(pnl)
-        # Ausreißer-Filter (wahrscheinlich Daten-Bug)
+        # Outlier filter (probably data bug)
         if abs(pnl_f) > OUTCOME_MAX_ABS_PNL_PCT:
             return 'neutral'
-        # Neutrale Micro-Bewegungen
+        # Neutral micro movements
         if abs(pnl_f) <= OUTCOME_MIN_PNL_PCT:
             return 'neutral'
         return 'win' if pnl_f > 0 else 'loss'
@@ -1337,21 +1336,21 @@ async def job_per_bot_performance() -> None:
     df_all['is_loss'] = df_all['outcome'] == 'loss'
     df_all['is_neutral'] = df_all['outcome'] == 'neutral'
 
-    # ─── Strategy-Namen normalisieren ───
-    # pretty_name kommt jetzt zentral aus core/bot_naming.py damit
-    # Market-Tracker und 27_bot_regime_analyzer identisch normalisieren.
-    # Das behebt den "Regime Fit: ---" Bug bei FastInOut, MIS1-*, SR etc.
-    # (Analyzer schrieb historisch mit Rohnamen "Fast In And Out",
-    # Market-Tracker fragte mit "FastInOut" an → kein Match.)
+    # ─── Normalise strategy names ───
+    # pretty_name now comes centrally from core/bot_naming.py so
+    # market tracker and 27_bot_regime_analyzer normalise identically.
+    # This fixes the "Regime Fit: ---" bug for FastInOut, MIS1-*, SR etc.
+    # (Analyser historically wrote with raw names "Fast In And Out",
+    # market tracker queried with "FastInOut" → no match.)
 
     df_all['strategy_short'] = df_all['strategy'].apply(pretty_name)
 
-    # ─── Retired/silenced Generationen ausblenden (T-2026-CU-9050-182) ───
-    # Abgelöste (AIM1, MIS1-*) und stummgeschaltete Alt-Beine (ATS1/ATB1) gehören
-    # — wie im RETIRED-Block des Realized-Reports — NICHT in die aktiven Blöcke
-    # PER-BOT PERFORMANCE / HALF-KELLY / MODELS A–Z. EIN Filter hier räumt alle
-    # drei auf, weil strategy_short ihre gemeinsame Quelle ist. SHADOW + LIVE
-    # bleiben sichtbar (Shadow-Perf ist die Entscheidungsgrundlage für Swaps).
+    # ─── Hide retired/silenced generations (T-2026-CU-9050-182) ───
+    # Superseded (AIM1, MIS1-*) and silenced old legs (ATS1/ATB1) belong
+    # — like in the RETIRED block of realised report — NOT in active blocks
+    # PER-BOT PERFORMANCE / HALF-KELLY / MODELS A–Z. ONE filter here tidies all
+    # three, because strategy_short is their common source. SHADOW + LIVE
+    # remain visible (shadow perf is the decision basis for swaps).
     _retired_tags = {t for t in df_all['strategy_short'].unique() if is_display_retired(t)}
     if _retired_tags:
         logger.info("Per-Bot-Report: retired/silenced Tags ausgeblendet: %s", sorted(_retired_tags))
@@ -1360,18 +1359,18 @@ async def job_per_bot_performance() -> None:
             logger.info("Nach Retired-Filter keine aktiven Trades — Per-Bot Post skipped.")
             return
 
-    # ─── Pro Strategie & Zeitfenster Stats berechnen ───
+    # ─── Calculate stats per strategy & time window ───
     #
-    # Zeitfenster-Semantik (neu April 2026):
-    #   "1h" = Trades die in der letzten Stunde ERÖFFNET wurden.
-    #   Die Win-Rate bezieht sich NUR auf bereits geschlossene davon —
-    #   noch offene Trades zählen nicht in die WR-Berechnung (weil Ergebnis
-    #   unklar), werden aber separat als "open" in der Detail-Zeile angezeigt.
+    # Time window semantics (new April 2026):
+    #   "1h" = trades that OPENED in the last hour.
+    #   Win-rate refers ONLY to those already closed —
+    #   still-open trades don't count in WR calculation (outcome unclear),
+    #   but are shown separately as "open" in detail line.
     #
-    # Warum created_at-basiert?
-    #   Die Frage "Wie performt Bot X gerade?" hängt von den Marktbedingungen
-    #   zur Eröffnung ab. Ein 168h-MIS1-Signal das heute schließt wurde vor
-    #   einer Woche eröffnet — das sollte nicht die "1h"-Spalte beeinflussen.
+    # Why created_at-based?
+    #   The question "How is bot X performing now?" depends on market conditions
+    #   at opening. A 168h MIS1 signal that closes today opened a
+    #   week ago — that shouldn't influence the "1h" column.
     WINDOWS = [
         ("1h", timedelta(hours=1)),
         ("4h", timedelta(hours=4)),
@@ -1388,11 +1387,11 @@ async def job_per_bot_performance() -> None:
     KELLY_MIN_LOSSES = 10
 
     def compute_kelly(sub_df) -> dict:
-        """Berechnet Kelly-Stats. Basiert nur auf geschlossenen, nicht-neutralen Trades.
+        """Calculates Kelly stats. Based only on closed, non-neutral trades.
 
-        WICHTIG: Neutrale Trades (Housekeeping-Closes, Ausreißer, DELISTED) werden
-        komplett ausgeschlossen — sie sind weder Win noch Loss und würden die
-        Statistik verzerren.
+        IMPORTANT: neutral trades (housekeeping closes, outliers, DELISTED) are
+        completely excluded — they are neither win nor loss and would distort the
+        statistics.
         """
         sub_closed = sub_df[sub_df['is_closed']]
         wins_pct = sub_closed[sub_closed['outcome'] == 'win']['pnl_pct']
@@ -1438,8 +1437,8 @@ async def job_per_bot_performance() -> None:
         sub_full = df_all[df_all['strategy_short'] == strategy]
 
         # ─── Stats pro Zeitfenster ───
-        # Neue Semantik: Filter auf created_at (Eröffnungszeit).
-        # WR nur aus geschlossenen Trades innerhalb des Fensters.
+        # New semantics: filter by created_at (opening time).
+        # WR only from closed trades within window.
         stats: dict[str, Any] = {'total': len(sub_full)}
 
         for win_name, delta in WINDOWS:
@@ -1448,12 +1447,12 @@ async def job_per_bot_performance() -> None:
             else:
                 sub_window = sub_full[sub_full['created_at'] >= now - delta]
 
-            # WR nur aus geschlossenen Trades in diesem Zeitfenster
-            # WICHTIG: neutrale Trades (DELISTED, Housekeeping) zählen NICHT als
-            # Loss in der WR — sonst bekommen Bots wie EPD1 irreführende ~0% WR
-            # obwohl sie eigentlich bei 57% liegen.
+            # WR only from closed trades in this time window
+            # IMPORTANT: neutral trades (DELISTED, housekeeping) do NOT count as
+            # loss in WR — otherwise bots like EPD1 get misleading ~0% WR
+            # when they're actually at 57%.
             sub_closed = sub_window[sub_window['is_closed']]
-            # Nur echte Wins/Losses (neutrale ausschließen)
+            # Only actual wins/losses (exclude neutrals)
             sub_decisive = sub_closed[sub_closed['outcome'].isin(['win', 'loss'])]
             n_closed = len(sub_closed)
             n_decisive = len(sub_decisive)
@@ -1464,9 +1463,9 @@ async def job_per_bot_performance() -> None:
                 wr = sub_decisive['is_win'].sum() / n_decisive * 100
                 stats[win_name] = (f"{wr:.0f}%", wr, n_closed)
 
-        # Avg-PnL über alle ENTSCHIEDENEN (Wins+Losses) geschlossenen Trades all-time.
-        # Neutrale (Housekeeping, Outlier) werden ausgeschlossen damit der Avg
-        # nicht durch 0%-Trades oder Datenbug-Ausreißer verwässert wird.
+        # Avg PnL over all DECIDED (wins+losses) closed trades all-time.
+        # Neutrals (housekeeping, outlier) excluded so the avg
+        # isn't diluted by 0% trades or data bug outliers.
         sub_closed_all = sub_full[sub_full['is_closed']]
         sub_decisive_all = sub_closed_all[sub_closed_all['outcome'].isin(['win', 'loss'])]
         if len(sub_decisive_all) > 0:
@@ -1474,14 +1473,14 @@ async def job_per_bot_performance() -> None:
         else:
             stats['avg_pnl_all'] = None
 
-        # Total-Counts für Header: neutrale separat ausweisen damit klar wird
-        # dass sie existieren aber nicht in die Statistik einfließen.
+        # Total counts for header: show neutrals separately so it's clear
+        # they exist but don't influence statistics.
         stats['n_closed_total'] = len(sub_closed_all)
         stats['n_decisive_total'] = len(sub_decisive_all)
         stats['n_neutral_total'] = len(sub_closed_all) - len(sub_decisive_all)
 
-        # ─── Detail-Zeile für 4h-Fenster ───
-        # Zeigt Target-Staffelung + LONG/SHORT-Split der letzten 4h.
+        # ─── Detail line for 4h window ───
+        # Shows target tiers + LONG/SHORT split of last 4h.
         sub_4h = sub_full[sub_full['created_at'] >= now - timedelta(hours=4)]
         sub_4h_closed = sub_4h[sub_4h['is_closed']]
         sub_4h_open = sub_4h[~sub_4h['is_closed']]
@@ -1490,8 +1489,8 @@ async def job_per_bot_performance() -> None:
         n_4h_closed = len(sub_4h_closed)
         n_4h_open = len(sub_4h_open)
 
-        # Target-Staffelung: TP1+, TP2+, TP3+, TP4, SL
-        # status_num ist 0..4 bei geschlossenen
+        # Target tiers: TP1+, TP2+, TP3+, TP4, SL
+        # status_num is 0..4 for closed
         if n_4h_closed > 0:
             status_vals = sub_4h_closed['status_num'].astype(int)
             n_tp1_plus = int((status_vals >= 1).sum())
@@ -1500,7 +1499,7 @@ async def job_per_bot_performance() -> None:
             n_tp4 = int((status_vals == 4).sum())
             n_sl = int((status_vals == 0).sum())
 
-            # LONG/SHORT-Split — nur entschiedene Trades (ohne Neutrale) für WR
+            # LONG/SHORT split — only decided trades (exclude neutrals) for WR
             long_closed = sub_4h_closed[sub_4h_closed['direction'] == 'LONG']
             short_closed = sub_4h_closed[sub_4h_closed['direction'] == 'SHORT']
             long_decisive = long_closed[long_closed['outcome'].isin(['win', 'loss'])]
@@ -1533,16 +1532,16 @@ async def job_per_bot_performance() -> None:
 
         rows_per_strategy[strategy] = stats
 
-    # --- Sortierung: after Anzahl geschlossener Trades (aussagekräftigste zuerst) ---
+    # --- Sorting: by number of closed trades (most meaningful first) ---
     sorted_strategies = sorted(
         rows_per_strategy.items(),
         key=lambda kv: kv[1]['n_closed_total'],
         reverse=True,
     )
 
-    # --- Trend-Marker: 1h vs. All ≥ 10 Prozentpunkte Abweichung ---
+    # --- Trend marker: 1h vs. all ≥ 10 percentage points difference ---
     def trend_marker(cell_1h, cell_all) -> str:
-        """Gibt ↑ oder ↓ oder '' zurück — nur wenn beide Werte numerisch sind."""
+        """Returns ↑ or ↓ or '' — only if both values are numeric."""
         wr_1h = cell_1h[1]
         wr_all = cell_all[1]
         if wr_1h is None or wr_all is None:
@@ -1574,7 +1573,7 @@ async def job_per_bot_performance() -> None:
 
         trend = trend_marker(stats["1h"], stats["All"])
 
-        # n=X in der Haupt-Zeile ist jetzt n_closed_total (nur geschlossene)
+        # n=X in main line is now n_closed_total (only closed)
         avg_pnl = stats.get('avg_pnl_all')
         n_closed = stats['n_closed_total']
         if avg_pnl is not None:
@@ -1589,11 +1588,11 @@ async def job_per_bot_performance() -> None:
         )
         lines.append(line)
 
-        # Detail-Zeile für 4h (nur wenn es überhaupt Aktivität gab)
+        # Detail line for 4h (only if there was activity)
         d = stats.get('detail_4h', {})
         if d.get('opened', 0) > 0:
             if d['closed'] > 0:
-                # Voller Detail-Block mit TP-Staffelung + Direction-Split
+                # Full detail block with TP tier + direction split
                 detail1 = f"  4h: {d['opened']} opened → {d['closed']} closed, {d['open']} still open"
                 lines.append(detail1)
 
@@ -1602,7 +1601,7 @@ async def job_per_bot_performance() -> None:
                 )
                 lines.append(detail2)
 
-                # LONG/SHORT-Split nur zeigen wenn beide Richtungen vorhanden
+                # LONG/SHORT split only show if both directions present
                 parts = []
                 if d['long_n'] > 0:
                     parts.append(f"LONG: {d['long_wins']}/{d['long_n']} win")
@@ -1611,10 +1610,10 @@ async def job_per_bot_performance() -> None:
                 if parts:
                     lines.append(f"    {' | '.join(parts)}")
 
-                lines.append("")  # Leerzeile zwischen Bots für Lesbarkeit
+                lines.append("")  # Blank line between bots for readability
             else:
-                # Nur Aktivität ohne Close → Kompakt-Variante (1 Zeile + Leerzeile)
-                # Vermeidet den leeren Detail-Block, Layout bleibt ruhig.
+                # Activity only without close → compact variant (1 line + blank)
+                # Avoids empty detail block, layout stays clean.
                 lines.append(f"  4h: {d['opened']} opened, {d['open']} still open")
                 lines.append("")
 
@@ -1622,28 +1621,28 @@ async def job_per_bot_performance() -> None:
         logger.info("Per-Bot Post: keine Strategie mit Daten — skipped.")
         return
 
-    # --- Kelly-Block bauen (pro Bot ein mobile-freundlicher Eintrag) ---
+    # --- Build Kelly block (per bot one mobile-friendly entry) ---
     # Layout:
     #   BOTNAME
     #     Half-Kelly:   13.2% of account
-    #     Safe Margin:   0.66%  (Half-Kelly / Leverage)
-    #     Pure Margin:  43.9%  (Half-Kelly / (avg_loss × Leverage))
+    #     Safe Margin:   0.66%  (half-Kelly / leverage)
+    #     Pure Margin:  43.9%  (half-Kelly / (avg_loss × leverage))
     #
-    # Oder bei negativem Edge:
+    # Or with negative edge:
     #   BOTNAME
     #     ⛔ NEGATIVE EDGE — do not trade
     #
-    # Gleiche Reihenfolge wie Haupttabelle (after Trade-Count sortiert).
+    # Same order as main table (sorted by trade count).
     #
-    # WICHTIG: Telegram-HTML ist restriktiv bei Tags AUSSERHALB von <pre>-Blöcken.
-    # Alle anderen funktionierenden Posts im Market-Tracker (Gainers, Losers,
-    # Volume Spikes, Volatile Coins, Signal Summary) packen ALLES in einen
-    # einzigen <pre>-Block. Wir folgen dem gleichen Muster — das ist die
-    # zuverlässige Variante.
+    # IMPORTANT: Telegram HTML is restrictive with tags OUTSIDE <pre> blocks.
+    # All other working posts in market tracker (gainers, losers,
+    # volume spikes, volatile coins, signal summary) pack EVERYTHING into one
+    # single <pre> block. We follow the same pattern — that's the
+    # reliable variant.
     kelly_lines = []
 
-    # Eine Connection für alle Regime-Fit-Lookups statt pro Bot eine neue
-    # aufzubauen. Bei 25+ Bots spart das 25+ TCP-Handshakes + DB-Auth.
+    # One connection for all regime-fit lookups instead of building a new one per bot.
+    # With 25+ bots this saves 25+ TCP handshakes + DB auth.
     _regime_conn = None
     try:
         _regime_conn = get_db_connection()
@@ -1668,13 +1667,13 @@ async def job_per_bot_performance() -> None:
                 ms = k['margin_safe_pct']
                 mp = k['margin_pure_pct']
                 kelly_lines.append(f"  Half-Kelly:   {hk:>5.1f}% of account")
-                kelly_lines.append(f"  Safe Margin:  {ms:>5.2f}%  (Half-Kelly / Lev)")
-                kelly_lines.append(f"  Pure Margin:  {mp:>5.1f}%  (Half-Kelly / (avg_loss × Lev))")
+                kelly_lines.append(f"  Safe Margin:  {ms:>5.2f}%  (half-Kelly / lev)")
+                kelly_lines.append(f"  Pure Margin:  {mp:>5.1f}%  (half-Kelly / (avg_loss × lev))")
             else:
                 kelly_lines.append("  ---")
 
-            # Regime Fit — Graceful Degradation: zeigt '---' wenn Orchestrator
-            # nicht deployt oder Connection tot ist.
+            # Regime fit — graceful degradation: shows '---' if orchestrator
+            # not deployed or connection dead.
             if _regime_conn is not None:
                 try:
                     fit_label = _get_regime_fit_label(_regime_conn, strategy)
@@ -1684,42 +1683,42 @@ async def job_per_bot_performance() -> None:
             else:
                 kelly_lines.append("  Regime Fit:   ---")
 
-            kelly_lines.append("")  # Leerzeile als Abtrennung zwischen Bots
+            kelly_lines.append("")  # Blank line as separation between bots
     finally:
-        # Regime-Connection sauber schließen, nachdem alle Bots durch sind
+        # Close regime connection cleanly after all bots done
         if _regime_conn is not None:
             try:
                 _regime_conn.close()
             except Exception:
                 pass
 
-    # --- Zusammenbau: ALLES in EINEN <pre>-Block, ohne style-Attribute ---
-    # WICHTIG — Telegram-HTML-Regeln (Bot API Dokumentation):
-    #   - Erlaubte Tags: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="...">,
+    # --- Assembly: EVERYTHING in ONE <pre> block, without style attributes ---
+    # IMPORTANT — Telegram HTML rules (bot API documentation):
+    #   - Allowed tags: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="...">,
     #     <span class="tg-spoiler">
-    #   - Alle Attribute außer `href` (bei <a>) und `class="tg-spoiler"` sind
-    #     offiziell NICHT erlaubt.
-    #   - ist NIE erlaubt — wird von manchen Clients toleriert,
-    #     von anderen (insbesondere Mobile) verworfen → Parse-Fehler → Message
-    #     wird still ge-failed.
-    # Andere Posts im Market-Tracker nutzen `<pre>` und funktionieren
-    # zufällig, weil Telegram das style-Attribut ignoriert. Aber bei komplexen
-    # Messages mit vielen verschachtelten Tags triggert das trotzdem Parser-
-    # Probleme. Wir bleiben hier auf der sicheren Seite: minimales API-konformes
-    # HTML, KEINE style-Attribute.
+    #   - All attributes except `href` (for <a>) and `class="tg-spoiler"` are
+    #     officially NOT allowed.
+    #   - <style> is NEVER allowed — tolerated by some clients,
+    #     dropped by others (especially mobile) → parse error → message
+    #     silently fails.
+    # Other posts in market tracker use `<pre>` and work
+    # by chance, because Telegram ignores the style attribute. But with complex
+    # messages with many nested tags this still triggers parser
+    # problems. We stay on the safe side here: minimal API-compliant
+    # HTML, NO style attributes.
 
-    # --- Telegram-Message-Splitting ---
-    # Bei vielen Strategien übersteigen die Posts das 4096-Zeichen-Limit.
-    # Der Post hat zwei Teile: eine Tabelle und einen Kelly-Block.
-    # Beide können einzeln zu lang werden, daher splitten wir beide
-    # mit derselben Helper-Funktion in zuverlässige Chunks — auf
-    # Zeilengrenzen, ohne Bot-entries oder Tabellen-Zeilen zu zerreißen.
+    # --- Telegram message splitting ---
+    # With many strategies posts exceed 4096-character limit.
+    # The post has two parts: a table and a Kelly block.
+    # Both can individually become too long, so we split both
+    # with the same helper function into reliable chunks — on
+    # line boundaries, without tearing bot entries or table rows.
 
-    # Telegram-Chunking-Helper leben jetzt auf Modulebene (Über-Block-Split +
-    # DB-freie Tests, P2.41) — _group_table_entries / _group_bot_entries /
+    # Telegram chunking helpers now live at module level (cross-block split +
+    # DB-free tests, P2.41) — _group_table_entries / _group_bot_entries /
     # _build_chunks.
 
-    # ── Tabelle splitten ─────────────────────────────────────────────────
+    # ── Split table ─────────────────────────────────────────────────
     table_header_line = lines[0] if len(lines) > 0 else ""
     table_separator = lines[1] if len(lines) > 1 else ""
     table_column_hdr = f"{table_header_line}\n{table_separator}\n"
@@ -1742,11 +1741,11 @@ async def job_per_bot_performance() -> None:
         table_footer,
     )
 
-    # Fallback falls unerwartet keine Bot-Blöcke generiert wurden
+    # Fallback if unexpectedly no bot blocks were generated
     if not table_chunks:
         table_chunks = [table_header_first + table_footer]
 
-    # ── Kelly-Block splitten ─────────────────────────────────────────────
+    # ── Split Kelly block ─────────────────────────────────────────────
     kelly_header_first = (
         '<pre>💰 <b>HALF-KELLY POSITION SIZING</b> 💰\n<i>20x Cross Leverage, Half-Kelly based on all-time data</i>\n\n'
     )
@@ -1774,9 +1773,9 @@ async def job_per_bot_performance() -> None:
         kelly_chunks = [kelly_header_first + kelly_footer]
 
     # ── Compact post: one line per model, alphanumerically sorted ────────
-    # Complements the main table (sorted by trade count) with an A–Z view:
+    # Complements main table (sorted by trade count) with A–Z view:
     # model generations (ABR1/ABR2, RUB1/RUB2, ...) sit directly under each
-    # other and compare at a glance. Deliberately only 24h/7d/All + avg PnL
+    # other and compare at a glance. Deliberately only 24h/7d/all + avg PnL
     # + n — no detail block, no Kelly.
     compact_rows = []
     for strategy, stats in sorted(rows_per_strategy.items(), key=lambda kv: kv[0].casefold()):
@@ -1808,7 +1807,7 @@ async def job_per_bot_performance() -> None:
     )
 
     # --- Send: table chunks, then compact A-Z post, then Kelly chunks ---
-    # Short delay between messages so Telegram keeps the ordering.
+    # Short delay between messages so Telegram keeps ordering.
     for tchunk in table_chunks:
         send_telegram(tchunk, TELEGRAM_CHANNEL_ID)
         await asyncio.sleep(1)
@@ -1819,9 +1818,7 @@ async def job_per_bot_performance() -> None:
         send_telegram(kchunk, TELEGRAM_CHANNEL_ID)
         await asyncio.sleep(1)
 
-    logger.info(
-        f"✅ Per-Bot Performance-Post gesendet ({len(sorted_strategies)} Strategien, {len(df_all)} Trades total)."
-    )
+    logger.info(f"✅ Per-bot performance post sent ({len(sorted_strategies)} strategies, {len(df_all)} trades total).")
     await asyncio.sleep(1)
 
 
@@ -1855,22 +1852,22 @@ REALIZED_NEUTRAL_FRAGMENTS = ("DELISTED", "CLEANUP", "ORPHAN")
 
 
 def _is_neutral_close(reason: object) -> bool:
-    """True für Housekeeping-Closes (DELISTED/CLEANUP/ORPHAN).
+    """True for housekeeping closes (DELISTED/CLEANUP/ORPHAN).
 
-    Gilt für BEIDE Quellen: closed_ai_signals.status trägt den close_reason,
-    und 6_housekeeping schreibt dieselben Marker auch in
-    closed_trades_master.status (statt der üblichen "0".."4") — ohne diesen
-    Filter würde ein Delisting-Close als voller Entry→Letztkurs-Move × Hebel
-    in die Bot-Summe laufen, obwohl die Legende Housekeeping ausschließt.
+    Applies to BOTH sources: closed_ai_signals.status carries close_reason,
+    and 6_housekeeping writes the same markers also into
+    closed_trades_master.status (instead of usual "0".."4") — without this
+    filter a delisting close would run as full entry→last-price move × leverage
+    into the bot sum, although the legend excludes housekeeping.
     """
     text = str(reason or "").upper()
     return any(frag in text for frag in REALIZED_NEUTRAL_FRAGMENTS)
 
 
 def _parse_targets(value: Any) -> list | None:
-    """closed_ai_signals.targets → Liste. Der json-Spaltenwert kommt je nach
-    Treiber-Pfad als geparste Liste ODER als String an; alles andere → None
-    (Row fällt exact-only aus dem Report)."""
+    """closed_ai_signals.targets → list. The json column value arrives either
+    as parsed list OR as string depending on driver path; anything else → None
+    (row falls out of exact-only report)."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -1880,9 +1877,9 @@ def _parse_targets(value: Any) -> list | None:
 
 
 def _classic_targets(t1: Any, t2: Any, t3: Any, t4: Any) -> list[float]:
-    """N aus den non-null target1-4-Spalten ableiten. 3_detectors schreibt 0
-    für nicht vergebene Targets; REAL-NULLs kommen aus pandas als NaN an —
-    beides fällt raus (NaN > 0 ist False)."""
+    """Derive N from non-null target1-4 columns. 3_detectors writes 0
+    for unassigned targets; REAL NULLs come from pandas as NaN —
+    both fall out (NaN > 0 is false)."""
     out = []
     for t in (t1, t2, t3, t4):
         if t is None:
@@ -1897,9 +1894,9 @@ def _classic_targets(t1: Any, t2: Any, t3: Any, t4: Any) -> list[float]:
 
 
 def _parse_hits(status: Any) -> int:
-    """Classic status ("0".."4", tolerant gegen Junk) → Anzahl getroffener
-    Targets. Nicht-numerisch = 0 (Housekeeping-Marker filtert der Caller
-    vorher über _is_neutral_close)."""
+    """Classic status ("0".."4", tolerant of junk) → number of hit
+    targets. Non-numeric = 0 (caller filters housekeeping markers
+    before via _is_neutral_close)."""
     try:
         return int(float(status))
     except (TypeError, ValueError):
@@ -1907,7 +1904,7 @@ def _parse_hits(status: Any) -> int:
 
 
 def _aggregate_realized_pnl(rows: list[tuple[str, float, float]]) -> dict[str, dict[str, dict[str, float]]]:
-    """(bot, age_hours, pnl_pct)-Zeilen in per-Bot/per-Fenster-Stats falten.
+    """Fold (bot, age_hours, pnl_pct) rows into per-bot/per-window stats.
 
     Returns {bot: {window: {'sum': x, 'n': k, 'avg': x/k}}} — windows without
     trades are absent. Pure + module-scope so backtest/test_market_tracker_
@@ -1930,7 +1927,7 @@ def _aggregate_realized_pnl(rows: list[tuple[str, float, float]]) -> dict[str, d
 
 
 def _format_realized_pnl_blocks(stats: dict[str, dict[str, dict[str, float]]]) -> list[str]:
-    """Ein Telegram-<pre>-Block pro Bot, sortiert nach 30d-Summe (absteigend)."""
+    """One Telegram <pre> block per bot, sorted by 30d sum (descending)."""
 
     def sort_key(item: tuple[str, dict]) -> tuple[float, str]:
         w30 = item[1].get("30d")
@@ -1950,11 +1947,11 @@ def _format_realized_pnl_blocks(stats: dict[str, dict[str, dict[str, float]]]) -
 
 
 def realized_lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[str]) -> str:
-    """Report-Bucket eines (tag, direction)-Beins (T-2026-CU-9050-125).
+    """Report bucket of a (tag, direction) leg (T-2026-CU-9050-125).
 
-    Returns 'active' | 'shadow' | 'retired' | 'inactive' | 'unmapped'. Quelle der
-    Lifecycle-Wahrheit ist core.shadow_gate; nur LIVE-Beine unterliegen zusätzlich
-    dem Läuft-das-Skript-Gate (active_scripts). Pure + module-scope → testbar ohne
+    Returns 'active' | 'shadow' | 'retired' | 'inactive' | 'unmapped'. Source of
+    lifecycle truth is core.shadow_gate; only LIVE legs additionally subject to
+    is-the-script-running gate (active_scripts). Pure + module-scope → testable without
     DB (backtest/test_market_tracker_lifecycle.py)."""
     status = shadow_gate.leg_status(tag, direction)
     if status == shadow_gate.RETIRED:
@@ -1962,9 +1959,9 @@ def realized_lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[
     if status == shadow_gate.SHADOW:
         return "shadow"
     if status == shadow_gate.SILENT:
-        # Stummgeschaltetes Alt-Bein (T-2026-CU-9050-127): das Skript LÄUFT (Bot
-        # entparkt für den Retrain-Shadow), aber das Bein postet nichts mehr — die
-        # historischen Trades gehören in den RETIRED-Block, nicht ACTIVE.
+        # Silenced old leg (T-2026-CU-9050-127): the script RUNS (bot
+        # unparked for retrain shadow), but the leg posts nothing more — the
+        # historical trades belong in the RETIRED block, not ACTIVE.
         return "retired"
     script = script_for_tag(tag)
     if script is None:
@@ -1975,31 +1972,31 @@ def realized_lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[
 
 
 def is_display_retired(tag: str) -> bool:
-    """True, wenn ein Tag NICHT mehr in die aktiven Perf-/Kelly-/A–Z-Blöcke des
-    Per-Bot-Reports gehört (T-2026-CU-9050-182).
+    """True if a tag no longer belongs in active perf/Kelly/A–Z blocks of
+    per-bot report (T-2026-CU-9050-182).
 
-    Retired-Bucket-konsistent, aber per-TAG statt per-LEG: der Realized-Report
-    bucketet jedes Bein einzeln (realized_lifecycle_bucket), dieser Report
-    aggregiert ohne Richtungssplit — deshalb ist ein Tag display-retired nur,
-    wenn BEIDE Richtungs-Legs shadow_gate.leg_status ∈ {RETIRED, SILENT} sind.
-    Das ist die konservative Hebung: ein Tag mit noch einem LIVE-/SHADOW-Bein
-    bleibt sichtbar. Trifft abgelöste Generationen (AIM1, MIS1-*, is_retired-
-    Prefix) UND stummgeschaltete Alt-Beine (ATS1/ATB1, T-2026-CU-9050-127);
-    SHADOW- und LIVE-Tags bleiben sichtbar (Shadow-Perf ist die Entscheidungs-
-    grundlage für Promotionen). Pure + module-scope → DB-frei testbar
+    Retired-bucket consistent but per-TAG instead of per-LEG: realised report
+    buckets each leg individually (realized_lifecycle_bucket), this report
+    aggregates without direction split — therefore a tag is display-retired only
+    if BOTH direction legs shadow_gate.leg_status ∈ {RETIRED, SILENT} are.
+    This is the conservative lift: a tag with still one LIVE/SHADOW leg
+    stays visible. Catches superseded generations (AIM1, MIS1-*, is_retired
+    prefix) AND silenced old legs (ATS1/ATB1, T-2026-CU-9050-127);
+    SHADOW and LIVE tags stay visible (shadow perf is the decision
+    basis for promotions). Pure + module-scope → DB-free testable
     (backtest/test_market_tracker_lifecycle.py)."""
     dead = {shadow_gate.RETIRED, shadow_gate.SILENT}
     return all(shadow_gate.leg_status(tag, d) in dead for d in ("LONG", "SHORT"))
 
 
 async def job_realized_pnl_report() -> None:
-    """Postet den Leveraged-Realized-PnL-Report für aktive Bots (alle 4h)."""
-    # Der Scheduler tickt stündlich (minutes-Liste) — die 4h-Cadence lebt hier.
+    """Posts the leveraged realised PnL report for active bots (every 4h)."""
+    # The scheduler ticks hourly (minutes list) — the 4h cadence lives here.
     now = datetime.now(timezone.utc)
     if now.hour % 4 != 0:
         return
 
-    logger.info("Generiere Realized-PnL-Report (aktive Bots)...")
+    logger.info("Generating realised PnL report (active bots)...")
 
     try:
         with get_db_connection() as conn:
@@ -2007,18 +2004,18 @@ async def job_realized_pnl_report() -> None:
             # Dedup over the FULL table first, filters outside (report-14
             # survivor rule, see AI_DEDUP_KEY comment at module top).
             #
-            # age_h statt Timestamps (docs/UTC_POLICY.md §2/§3, Falle 9):
-            # close_time wird von Bot 8 per NOW() geschrieben. Ob die Spalte
-            # naiv ist (schema.sql) oder timestamptz (Bot-8-Bootstrap-ALTER,
-            # r3-Migrationsdoc) — LOCALTIMESTAMP - close_time ist in BEIDEN
-            # Domänen writer-konsistent: naiv-lokal minus naiv-lokal, bzw.
-            # LOCALTIMESTAMP castet gegen timestamptz implizit auf now().
-            # Ein UTC-now aus Python läge im naiven Fall 3h daneben (P1.8).
-            # Deterministischer Spalten-Probe statt Exception-String-Match:
-            # eine pandas.DatabaseError-Message enthält den vollen SQL-Text
-            # (und damit immer "targets"/"lev") — ein Match darauf würde JEDEN
-            # Query-Fehler (Lock, Timeout, Connection) als "Migration
-            # ausstehend" maskieren. information_schema sagt es direkt.
+            # age_h instead of timestamps (docs/UTC_POLICY.md §2/§3, trap 9):
+            # close_time written by bot 8 via NOW(). Whether the column
+            # is naive (schema.sql) or timestamptz (bot-8-bootstrap-ALTER,
+            # r3-migration doc) — LOCALTIMESTAMP - close_time is in BOTH
+            # domains writer-consistent: naive-local minus naive-local, or
+            # LOCALTIMESTAMP casts against timestamptz implicitly on now().
+            # A UTC now from Python would be 3h off in the naive case (P1.8).
+            # Deterministic column probe instead of exception-string match:
+            # a pandas.DatabaseError message contains the full SQL text
+            # (and always "targets"/"lev") — a match on it would mask ANY
+            # query error (lock, timeout, connection) as "migration
+            # pending". information_schema says it directly.
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -2048,20 +2045,20 @@ async def job_realized_pnl_report() -> None:
                     conn,
                 )
             else:
-                # Erwartbar bis Bot 8 nach dem Deploy einmal lief und die
-                # Spalten targets/lev angelegt hat (Schema-Sicherung dort).
+                # Expected until bot 8 after deploy ran once and
+                # created targets/lev columns (schema safeguard there).
                 logger.warning(
-                    "Realized-PnL: closed_ai_signals hat targets/lev noch nicht (Bot-8-Migration ausstehend) — AI-Teil übersprungen."
+                    "Realised PnL: closed_ai_signals does not yet have targets/lev (bot-8 migration pending) — AI part skipped."
                 )
                 df_ai = pd.DataFrame()
 
             # ── Classic closes ───────────────────────────────────────────
-            # posted (= Close-Zeit): 5_trade_monitor übergibt zwar aware-UTC,
-            # aber der Cast in die NAIVE Spalte läuft über die Session-TZ und
-            # landet als LOKALZEIT (docs/UTC_POLICY.md §3, P2.6 offen bis zum
-            # R3-Pool-Flip). Dieselbe Uhr wie beim AI-Teil: LOCALTIMESTAMP.
-            # NOW() AT TIME ZONE 'UTC' läge 3h daneben und würde jeden in den
-            # letzten ~3h geschlossenen Trade als negative Age still droppen.
+            # posted (= close time): 5_trade_monitor passes aware-UTC,
+            # but the cast into the NAIVE column runs via session TZ and
+            # lands as LOCAL TIME (docs/UTC_POLICY.md §3, P2.6 open until
+            # R3-pool flip). Same clock as AI part: LOCALTIMESTAMP.
+            # NOW() AT TIME ZONE 'UTC' would be 3h off and would silently drop
+            # every trade closed in the last ~3h as negative age.
             df_cls = pd.read_sql_query(
                 f"""
                 SELECT * FROM (
@@ -2078,13 +2075,13 @@ async def job_realized_pnl_report() -> None:
                 conn,
             )
     except Exception as e:
-        logger.error(f"Error loading der Realized-PnL-Daten: {e}", exc_info=True)
+        logger.error(f"Error loading realised PnL data: {e}", exc_info=True)
         return
 
     active = active_scripts()
-    # T-2026-CU-9050-125: drei Lifecycle-Blöcke je (tag, direction) statt eines
-    # flachen ACTIVE-Blocks — aktiv (live postend) / shadow (getrackt, nie live) /
-    # retired (alte Generation). Quelle der Wahrheit: core.shadow_gate.leg_status.
+    # T-2026-CU-9050-125: three lifecycle blocks per (tag, direction) instead of flat
+    # ACTIVE block — active (live posting) / shadow (tracked, never live) /
+    # retired (old generation). Source of truth: core.shadow_gate.leg_status.
     active_rows: list[tuple[str, float, float]] = []
     shadow_rows: list[tuple[str, float, float]] = []
     retired_rows: list[tuple[str, float, float]] = []
@@ -2100,24 +2097,24 @@ async def job_realized_pnl_report() -> None:
             n_invalid += 1
             return
         if age_h < 0:
-            # Close "in der Zukunft" = Uhren-Mismatch zwischen Writer-Spalte
-            # und Report-Query (Falle 9). Zählen statt still droppen — ein
-            # wachsender Wert hier heißt: die Clock-Paarung oben ist kaputt.
+            # Close "in the future" = clock mismatch between writer column
+            # and report query (trap 9). Count instead of silently drop — a
+            # growing value here means: the clock pairing above is broken.
             n_future += 1
             return
         label = pretty_name(tag)
         bucket = realized_lifecycle_bucket(tag, direction, active)
         if bucket == "retired":
-            # Alte Generation: historisch zeigen, unabhängig vom Live-Zustand.
+            # Old generation: show historically, independent of live state.
             retired_rows.append((label, float(age_h), pnl))
         elif bucket == "shadow":
-            # Getrackt, aber nie live gepostet (staging/neuer Tag oder geparktes Bein).
+            # Tracked but never posted live (staging/new tag or parked leg).
             shadow_rows.append((label, float(age_h), pnl))
         elif bucket == "active":
             active_rows.append((label, float(age_h), pnl))
         elif bucket == "unmapped":
             unmapped.add(label)
-        else:  # "inactive": LIVE-Bein, aber Skript geparkt (wie bisher gedroppt)
+        else:  # "inactive": LIVE leg but script parked (dropped as before)
             n_inactive += 1
 
     for r in df_ai.itertuples(index=False):
@@ -2125,15 +2122,15 @@ async def job_realized_pnl_report() -> None:
             n_neutral += 1
             continue
         targets = _parse_targets(r.targets)
-        # r.strategy trägt den DB-Modell-Tag: ROM1/AIM2 persistieren mehr
-        # Targets als sie nach Cornix posten, die Staffelung muss auf der
-        # gehandelten Bein-Zahl rechnen (T-2026-KYT-9050-012).
+        # r.strategy carries DB model tag: ROM1/AIM2 persist more
+        # targets than they post to Cornix, tiers must
+        # calculate on the traded leg count (T-2026-KYT-9050-012).
         pnl = realized_pnl_pct(r.direction, r.entry, r.close_price, targets or [], r.targets_hit, r.lev, r.strategy)
         add_row(str(r.strategy), str(r.direction), r.age_h, pnl)
 
     for r in df_cls.itertuples(index=False):
-        # 6_housekeeping schreibt "DELISTED"-Marker auch in die classic
-        # status-Spalte (sonst "0".."4") — Housekeeping-Closes sind neutral.
+        # 6_housekeeping writes "DELISTED" marker also into classic
+        # status column (otherwise "0".."4") — housekeeping closes are neutral.
         if _is_neutral_close(r.status):
             n_neutral += 1
             continue
@@ -2144,13 +2141,13 @@ async def job_realized_pnl_report() -> None:
     if unmapped:
         # No silent drops: an unmapped tag means core/bot_catalog.py lacks the
         # family of a new/renamed model — surface it instead of hiding trades.
-        logger.warning(f"Realized-PnL: {len(unmapped)} Tag(s) ohne Bot-Zuordnung ausgelassen: {sorted(unmapped)}")
+        logger.warning(f"Realised PnL: {len(unmapped)} tag(s) without bot mapping skipped: {sorted(unmapped)}")
 
     active_stats = _aggregate_realized_pnl(active_rows)
     shadow_stats = _aggregate_realized_pnl(shadow_rows)
     retired_stats = _aggregate_realized_pnl(retired_rows)
     if not (active_stats or shadow_stats or retired_stats):
-        logger.info("Realized-PnL: keine berechenbaren Trades im 30d-Fenster — Post skipped.")
+        logger.info("Realised PnL: no computable trades in 30d window — post skipped.")
         return
 
     unmapped_note = f'\n  {len(unmapped)} unmapped tag(s) skipped (see bot log)' if unmapped else ''
@@ -2183,12 +2180,12 @@ async def job_realized_pnl_report() -> None:
 
     if n_future:
         logger.warning(
-            f"Realized-PnL: {n_future} Close(s) mit negativer Age gedroppt — Writer-/Query-Uhr prüfen (Falle 9)."
+            f"Realised PnL: {n_future} close(s) with negative age dropped — check writer/query clock (trap 9)."
         )
     n_total = len(active_rows) + len(shadow_rows) + len(retired_rows)
     logger.info(
-        f"✅ Realized-PnL-Post gesendet (active={len(active_stats)}, shadow={len(shadow_stats)}, "
-        f"retired={len(retired_stats)} Bots, {n_total} Trades im 30d-Fenster; "
+        f"✅ Realised PnL post sent (active={len(active_stats)}, shadow={len(shadow_stats)}, "
+        f"retired={len(retired_stats)} bots, {n_total} trades in 30d window; "
         f"skipped: {n_neutral} neutral, {n_invalid} invalid, {n_inactive} inactive, {n_future} future-age)."
     )
 
@@ -2210,20 +2207,20 @@ async def job_realized_pnl_report() -> None:
 # others too. Mitigation already in place is the time-staggering; a hard
 # per-job timeout would be the minimal future hardening if it ever bites.
 async def schedule_job(minutes, second, job_func, name):
-    """Führt einen Task exakt zu den definierten Minuten & Sekunden aus."""
-    logger.info(f"Task '{name}' registriert für Min: {minutes}, Sek: {second}.")
+    """Runs a task exactly at defined minutes & seconds."""
+    logger.info(f"Task '{name}' registered for min: {minutes}, sec: {second}.")
     while True:
         now = datetime.now(timezone.utc)
         next_run = None
 
-        # Searching die nächste Minute im Array
+        # Search for next minute in array
         for m in minutes:
             cand = now.replace(minute=m, second=second, microsecond=0)
             if cand > now:
                 if next_run is None or cand < next_run:
                     next_run = cand
 
-        # Falls in dieser Stunde keine Minute mehr passt -> nächste Stunde!
+        # If no minute left in this hour -> next hour!
         if next_run is None:
             next_run = (now + timedelta(hours=1)).replace(minute=minutes[0], second=second, microsecond=0)
 
@@ -2235,33 +2232,33 @@ async def schedule_job(minutes, second, job_func, name):
         except Exception as e:
             logger.error(f"Error for {name}: {e}", exc_info=True)
 
-        # 💥 FIX FÜR DOPPELTE NACHRICHTEN:
-        # Zwingt die Schleife, in die nächste Sekunde zu springen,
-        # damit "next_run" bei der nächsten Iteration definitiv in der Zukunft liegt.
+        # 💥 FIX FOR DUPLICATE MESSAGES:
+        # Forces the loop to jump to next second,
+        # so "next_run" is definitely in the future at next iteration.
         await asyncio.sleep(1)
 
 
 async def main():
-    logger.info("=== 🌐 MARKET TRACKER GESTARTET ===")
+    logger.info("=== 🌐 MARKET TRACKER STARTED ===")
 
     tasks = [
-        # 1. Main Vol Report: Volle Stunde + 15 Sek [XX:00:15]
+        # 1. Main vol report: full hour + 15 sec [XX:00:15]
         asyncio.create_task(schedule_job([0], 15, job_main_reports, "Main_Volume_Report")),
-        # 2. Gainers & Losers: Volle Stunde + 1 Min (60 Sek) [XX:01:00]
+        # 2. Gainers & losers: full hour + 1 min (60 sec) [XX:01:00]
         asyncio.create_task(schedule_job([1], 0, job_gainers_losers, "Gainers_Losers")),
-        # 3. Volume Spikes: Volle Stunde + 15 Sek UND Halbe Stunde + 15 Sek [XX:00:15 & XX:30:15]
+        # 3. Volume spikes: full hour + 15 sec AND half hour + 15 sec [XX:00:15 & XX:30:15]
         asyncio.create_task(schedule_job([0, 30], 30, job_volume_spikes, "Volume_Spikes")),
-        # 4. Volatile Coins: Volle Stunde + 25 Sek UND Halbe Stunde + 25 Sek [XX:00:25 & XX:30:25]
+        # 4. Volatile coins: full hour + 25 sec AND half hour + 25 sec [XX:00:25 & XX:30:25]
         asyncio.create_task(schedule_job([0, 30], 45, job_volatile_coins, "Volatile_Coins")),
-        # 5. NEU: Signal Summary: Volle Stunde + 1 Sek [XX:00:01]
+        # 5. NEW: signal summary: full hour + 1 sec [XX:00:01]
         asyncio.create_task(schedule_job([0], 1, job_signal_summary, "Signal_Summary")),
-        # 6. Per-Bot Performance-Detail: Volle Stunde + 30 Sek [XX:00:30]
-        # Läuft 30s after der Signal-Summary damit der Telegram-Worker nicht
-        # zwei große Posts im gleichen Takt in denselben Channel drückt.
+        # 6. Per-bot performance detail: full hour + 30 sec [XX:00:30]
+        # Runs 30s after signal summary so Telegram worker doesn't
+        # push two large posts in same tick to same channel.
         asyncio.create_task(schedule_job([0], 30, job_per_bot_performance, "Per_Bot_Performance")),
-        # 7. Realized PnL (T-2026-CU-9050-115): stündlich getriggert [XX:02:30],
-        # der Job selbst postet nur alle 4h (hour % 4 == 0). Minute 2 hält den
-        # XX:00/XX:01-Takt der bestehenden Posts frei.
+        # 7. Realised PnL (T-2026-CU-9050-115): triggered hourly [XX:02:30],
+        # the job itself only posts every 4h (hour % 4 == 0). Minute 2 keeps
+        # XX:00/XX:01 tick of existing posts free.
         asyncio.create_task(schedule_job([2], 30, job_realized_pnl_report, "Realized_PnL")),
     ]
 
@@ -2272,4 +2269,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C).")
+        logger.info("Bot manually stopped (Ctrl+C).")

@@ -16,10 +16,10 @@ from strategies.strat_5_percent import analyze_coin as analyze_5_pct
 from strategies.strat_fast_in_out import analyze_coin as analyze_fast
 
 # --- IMPORT ALL STRATEGIES ---
-# strat_main_channel retired (T-2026-KYT-9050-020): der klassische "Main Channel"-
-# Detektor (Grade C−/−77 PnL, Quasi-Duplikat von Support Resistance) ist durch MAX2
-# ersetzt — der SRA2-LONG-Trade coin-gefiltert nach CH_MAIN (9_ai_sr_bot.py:_emit_max2).
-# strategies/strat_main_channel.py bleibt ungenutzt liegen (Operator-Entscheid Michi).
+# strat_main_channel retired (T-2026-KYT-9050-020): the classic "Main Channel"
+# detector (Grade C−/−77 PnL, quasi-duplicate of Support Resistance) has been
+# replaced by MAX2 — the SRA2-LONG trade coin-filtered to CH_MAIN (9_ai_sr_bot.py:_emit_max2).
+# strategies/strat_main_channel.py remains unused (operator decision by Michi).
 from strategies.strat_support_resistance import analyze_coin as analyze_sr
 from strategies.strat_volume_indicator import analyze_coin as analyze_vol
 
@@ -79,25 +79,25 @@ def _strategies_for(timeframe, symbol):
     if timeframe == '30m':
         return ('Fast In And Out', 'Volume Indicator')
     if timeframe == '1h':
-        # 'Main Channel' retired (T-2026-KYT-9050-020) → durch MAX2 (Bot 9) ersetzt.
+        # 'Main Channel' retired (T-2026-KYT-9050-020) → replaced by MAX2 (Bot 9).
         return ('5 Percent', 'Support Resistance')
     return ()
 
 
 def write_signal_atomic(conn, signal):
-    """FIX: Schreibt active_trades_master + telegram_outbox in EINER Transaktion.
+    """FIX: writes active_trades_master + telegram_outbox in ONE transaction.
 
-    Vorher waren das zwei separate Commits → wenn der Process zwischen Commit 1
-    und Commit 2 crashte (OOM, SIGKILL, DB-Hiccup), hatte man einen "Geister-Trade":
-    in active_trades_master ist er drin, aber in der Outbox nicht → niemand weiß
-    dass er existiert, aber der Trade-Monitor verfolgt ihn trotzdem.
+    Previously these were two separate commits → if the process crashed between commit 1
+    and commit 2 (OOM, SIGKILL, DB hiccup), you ended up with a "ghost trade":
+    it is in active_trades_master, but not in the outbox → nobody knows
+    it exists, but the trade monitor tracks it anyway.
     """
-    # P2.3 (R3-Flip, T-2026-KYT-9050-005): war naive Server-Lokalzeit. Beide
-    # Spalten — `time` und `posted` — tragen jetzt naives UTC, dieselbe Domäne,
-    # in die NOW() unter der UTC-Session castet. Genau davon leben die
-    # DB-seitigen Fenster von 33_ai_fif1_bot (fifo_burst_counts, 1h/24h) und
-    # der Classic-Cooldown; ohne diesen Writer-Fix hätte der Pool-Flip sie
-    # gekippt statt repariert.
+    # P2.3 (R3 flip, T-2026-KYT-9050-005): was naive server-local time. Both
+    # columns — `time` and `posted` — now carry naive UTC, the same domain
+    # that NOW() casts into under the UTC session. Exactly this is what the
+    # DB-side windows of 33_ai_fif1_bot (fifo_burst_counts, 1h/24h) and the
+    # classic cooldown live on; without this writer fix, the pool flip would
+    # have broken them instead of fixing them.
     now = utc_now_naive()
     t2, t3, t4 = signal.get('target2', 0), signal.get('target3', 0), signal.get('target4', 0)
 
@@ -188,7 +188,7 @@ def write_signal_atomic(conn, signal):
 #           only on the unchanged gated path.
 #           30m ≈ N×2 reads + ~5 snapshot/memo queries per cycle.
 def run_detectors_for_timeframe(timeframe):
-    # --- NEU: DIESER BLOCK MUSS GENAU HIER REIN! ---
+    # --- NEW: THIS BLOCK MUST GO EXACTLY HERE! ---
     import warnings
 
     warnings.filterwarnings("ignore", message=".*SQLAlchemy connectable.*")
@@ -265,7 +265,7 @@ def run_detectors_for_timeframe(timeframe):
                     .iloc[::-1]
                     .reset_index(drop=True)
                 )
-                df_indexed = df.set_index('open_time')  # Vorbereiten für die komplexen Bots
+                df_indexed = df.set_index('open_time')  # Prepare for the complex bots
             except Exception:
                 # T-2026-CU-9050-172 (review fix): a failed SQL read (missing
                 # table, missing projected column on a drifted DDL) aborts the
@@ -293,18 +293,18 @@ def run_detectors_for_timeframe(timeframe):
             coins_scanned += 1
             signals = []
 
-            # P1.15: Per-Coin-Isolation. Vorher konnte ein einziger schlechter
-            # Coin (kaputte Indikator-Row, unerwarteter dtype) eine Strategie
-            # crashen → Exception lief bis main() durch (dort nur FileNotFoundError
-            # gefangen) → ganzer Detector-Prozess tot, halbe Coin-Liste ungescannt.
-            # Jetzt: rollback + ERROR-Log (Coin, Timeframe, Strategie via exc_info)
-            # und weiter mit dem nächsten Coin.
+            # P1.15: per-coin isolation. Previously, a single bad
+            # coin (broken indicator row, unexpected dtype) could crash a strategy
+            # → exception ran through to main() (which only catches FileNotFoundError
+            # there) → the whole detector process died, half the coin list unscanned.
+            # Now: rollback + ERROR log (coin, timeframe, strategy via exc_info)
+            # and continue with the next coin.
             try:
                 # --- 30m STRATEGIEN ---
                 if timeframe == '30m':
-                    # Fast In And Out auf expliziten Operator-Wunsch (04.07.) wieder
-                    # aktiv — Audit Report 14/16 (Σ −25.843, Note F) bleibt als
-                    # Kontext dokumentiert; Exit-/Tail-Redesign empfohlen.
+                    # Fast In And Out reactivated at the explicit request of the operator (04.07.)
+                    # — Audit Report 14/16 (Σ −25.843, grade F) remains documented
+                    # as context; exit/tail redesign recommended.
                     s1 = timed_scan('Fast In And Out', analyze_fast, df, symbol, live_price)
                     if s1:
                         signals.append(s1)
@@ -323,13 +323,13 @@ def run_detectors_for_timeframe(timeframe):
                     if s4:
                         signals.append(s4)
 
-                    # 'Main Channel' retired (T-2026-KYT-9050-020): der klassische
-                    # Detektor ist durch MAX2 ersetzt (SRA2-LONG-Trade coin-gefiltert
-                    # → CH_MAIN, 9_ai_sr_bot.py). Kein Dispatch mehr hier.
+                    # 'Main Channel' retired (T-2026-KYT-9050-020): the classic
+                    # detector has been replaced by MAX2 (SRA2-LONG trade coin-filtered
+                    # → CH_MAIN, 9_ai_sr_bot.py). No dispatch here anymore.
 
                 for signal in signals:
                     logger.info(f"🚀 SIGNAL FOUND: [{signal['strategy']}] {signal['coin']} {signal['direction']}!")
-                    # FIX: Atomarer Write statt zwei separate Commits (siehe write_signal_atomic)
+                    # FIX: atomic write instead of two separate commits (see write_signal_atomic)
                     t0 = time.perf_counter()
                     write_signal_atomic(conn, signal)
                     timings['writes'] += time.perf_counter() - t0
@@ -343,10 +343,10 @@ def run_detectors_for_timeframe(timeframe):
                     )
                     signals_found += 1
             except Exception as e:
-                # P1.15: aborted Txn säubern, damit der nächste Coin nicht mit einer
-                # vergifteten Transaktion weiterläuft; exc_info zeigt die Strategie.
+                # P1.15: clean up the aborted txn so the next coin doesn't continue
+                # with a poisoned transaction; exc_info shows the strategy.
                 conn.rollback()
-                logger.error(f"❌ Coin {symbol} ({timeframe}) Strategie-Scan fehlgeschlagen: {e}", exc_info=True)
+                logger.error(f"❌ Coin {symbol} ({timeframe}) strategy scan failed: {e}", exc_info=True)
                 continue
 
         # T-2026-CU-9050-172 (5): ONE aggregated timing line per cycle — no
@@ -378,21 +378,21 @@ def main():
                 if tf in state and state[tf]['status'] == 'updated':
                     update_time = state[tf]['timestamp']
                     if update_time != last_processed[tf]:
-                        logger.info(f"🟢 Neues {tf} Indikator-Update erkannt!")
+                        logger.info(f"🟢 New {tf} indicator update detected!")
                         run_detectors_for_timeframe(tf)
                         last_processed[tf] = update_time
-                        logger.info(f"🏁 Scans für {tf} stopped.")
+                        logger.info(f"🏁 Scans for {tf} stopped.")
         except FileNotFoundError:
             pass
         except Exception as e:
-            # P1.15: breiter Fang statt Prozess-Tod. Was auch immer im Scan-Pass
-            # durchschlägt (DB-Reconnect, State-Datei korrupt), wird geloggt und
-            # nach Backoff neu versucht — der Watchdog muss den Detector nicht neu starten.
-            logger.error(f"❌ Detector-Loop-Fehler, Backoff 30s: {e}", exc_info=True)
+            # P1.15: broad catch instead of process death. Whatever slips through
+            # in the scan pass (DB reconnect, state file corrupt) is logged and
+            # retried after backoff — the watchdog doesn't need to restart the detector.
+            logger.error(f"❌ Detector loop error, backoff 30s: {e}", exc_info=True)
             time.sleep(30)
 
-        # Polling-Intervall: 30s. Die Indicator-Engine schreibt Updates nur zu Candle-Close-Zeiten
-        # (alle 30/60 Min), aber wir wollen signals nicht bis zu 10 Min after dem Close verzögern.
+        # Polling interval: 30s. The indicator engine only writes updates at candle-close times
+        # (every 30/60 min), but we don't want to delay signals by up to 10 min after the close.
         time.sleep(30)
 
 
@@ -400,4 +400,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

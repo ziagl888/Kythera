@@ -1,15 +1,15 @@
 # backtest/test_delisted_cleanup.py
-"""Unit tests für die Binance-Perp-Shape-Guard der Delisted-Cleanup (P2.17).
+"""Unit tests for the Binance perp shape guard of the delisted cleanup (P2.17).
 
-Vorher schloss `6_housekeeping.cleanup_delisted_trades` JEDES Symbol, das
-nicht in coins.json steht — inkl. Metals (XAUUSD), Cross-Pairs (ETHBTC) und
-Forex → nächtliche Falsch-Closes bei PnL 0. Der Fix beschränkt den
-Delisted-Close auf die Shape, die die Flotte tatsächlich handelt
-(`<BASE>USDT`), damit nur echt delistete USDT-Perpetuals geschlossen werden.
+Previously `6_housekeeping.cleanup_delisted_trades` closed EVERY symbol that
+is not in coins.json — including metals (XAUUSD), cross pairs (ETHBTC) and
+forex → nightly false closes at PnL 0. The fix restricts the
+delisted close to the shape the fleet actually trades
+(`<BASE>USDT`), so that only truly delisted USDT perpetuals get closed.
 
-Getestet wird das reale Prädikat `core.coins.looks_like_usdt_perp` sowie die
-Selektions-Semantik (Mitgliedschaft UND Shape), die in cleanup_delisted_trades
-inline angewandt wird. DB-frei.
+Tests the real predicate `core.coins.looks_like_usdt_perp` as well as the
+selection semantics (membership AND shape) applied inline in
+cleanup_delisted_trades. DB-free.
 
 Run with: pytest backtest/test_delisted_cleanup.py -v
 """
@@ -30,7 +30,7 @@ def test_accepts_real_usdt_perp_shapes():
 
 
 def test_rejects_named_false_close_symbols():
-    # Genau die Symbole aus audit_reports/02_data_pipeline.md:65-66.
+    # Exactly the symbols from audit_reports/02_data_pipeline.md:65-66.
     for junk in ("XAUUSD", "ETHBTC", "EURUSD", "XAGUSD"):
         assert not looks_like_usdt_perp(junk), junk
 
@@ -41,13 +41,13 @@ def test_rejects_malformed_symbols():
 
 
 def test_delisted_selection_excludes_non_perp_shapes():
-    """Spiegelt die Inline-Selektion: nur (nicht in coins.json) UND perp-shape."""
+    """Mirrors the inline selection: only (not in coins.json) AND perp shape."""
     active_coins = {"BTCUSDT", "ETHUSDT"}
     rows = [
-        {"coin": "BTCUSDT"},  # aktiv → kein Close
-        {"coin": "SOLUSDT"},  # delisted USDT-perp → Close
-        {"coin": "XAUUSD"},   # Metals-Junk → NICHT closen (P2.17)
-        {"coin": "ETHBTC"},   # Cross-Pair → NICHT closen (P2.17)
+        {"coin": "BTCUSDT"},  # active → no close
+        {"coin": "SOLUSDT"},  # delisted USDT perp → close
+        {"coin": "XAUUSD"},   # metals junk → do NOT close (P2.17)
+        {"coin": "ETHBTC"},   # cross pair → do NOT close (P2.17)
     ]
 
     delisted = [r["coin"] for r in rows if r["coin"] not in active_coins and looks_like_usdt_perp(r["coin"])]

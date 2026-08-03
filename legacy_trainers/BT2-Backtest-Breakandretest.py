@@ -6,7 +6,7 @@ import numpy as np
 from scipy.signal import argrelextrema
 from datetime import datetime, timedelta
 
-# --- Konfiguration ---
+# --- Configuration ---
 DB_CONFIG = {
     'dbname': 'cryptodata',
     'user': 'dbfiller',
@@ -17,12 +17,12 @@ DB_CONFIG = {
 COINS_FILE = 'coins.json'
 OUTPUT_FILE = 'break_retest_analysis.json'
 
-# --- Parameter für die Analyse ---
+# --- Parameters for the analysis ---
 DAYS_TO_LOOK_BACK = 365
-PIVOT_WINDOW = 10  # Wie viele Kerzen links/rechts für ein Pivot High/Low
-LEVEL_TOLERANCE = 0.005  # 0.5% Toleranzzone um das Level herum
-RETEST_LOOKAHEAD = 24  # Wie viele Stunden nach dem Break darf der Retest passieren?
-RESULT_LOOKAHEAD = 12  # Wie viele Stunden nach dem Retest schauen wir das Ergebnis an?
+PIVOT_WINDOW = 10  # how many candles left/right for a pivot high/low
+LEVEL_TOLERANCE = 0.005  # 0.5% tolerance zone around the level
+RETEST_LOOKAHEAD = 24  # how many hours after the break may the retest happen?
+RESULT_LOOKAHEAD = 12  # how many hours after the retest do we look at the outcome?
 
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
@@ -30,20 +30,20 @@ def get_db_connection():
 def load_coins():
     with open(COINS_FILE, 'r') as f:
         data = json.load(f)
-        # Annahme: coins.json ist eine Liste ["BTCUSDT", "ETHUSDT", ...] 
-        # oder ein Dict {"coins": [...]}. Hier eine einfache Behandlung:
+        # Assumption: coins.json is a list ["BTCUSDT", "ETHUSDT", ...]
+        # or a dict {"coins": [...]}. Simple handling here:
         if isinstance(data, list):
             return data
         elif isinstance(data, dict) and 'coins' in data:
             return data['coins']
         else:
-            raise ValueError("Format der coins.json nicht erkannt.")
+            raise ValueError("coins.json format not recognised.")
 
 def get_ohlcv_data(conn, symbol):
     table_name = f"{symbol}_1h"
-    
-    # ÄNDERUNG: Wir casten open_time zu TEXT (::text), damit Pandas nicht abstürzt.
-    # Wir laden es als String und konvertieren es danach kontrolliert.
+
+    # CHANGE: we cast open_time to TEXT (::text) so pandas doesn't crash.
+    # We load it as a string and then convert it in a controlled way.
     query = f"""
         SELECT open_time::text as open_time, open, high, low, close, volume
         FROM "{table_name}"
@@ -51,91 +51,91 @@ def get_ohlcv_data(conn, symbol):
         ORDER BY open_time ASC;
     """
     try:
-        # UserWarning ignorieren oder wir fixen es pragmatisch durch den Text-Cast
+        # ignore UserWarning, or we fix it pragmatically via the text cast
         df = pd.read_sql(query, conn)
-        
-        # ÄNDERUNG: Explizite Konvertierung mit utc=True
+
+        # CHANGE: explicit conversion with utc=True
         df['open_time'] = pd.to_datetime(df['open_time'], utc=True)
-        
+
         return df
     except Exception as e:
-        print(f"Fehler beim Laden von {symbol}: {e}")
+        print(f"Error loading {symbol}: {e}")
         return None
 
 
 def find_pivot_levels(df, window=PIVOT_WINDOW):
-    """Findet lokale Highs und Lows als Levels."""
+    """Finds local highs and lows as levels."""
     # Find local highs
     df['high_pivot'] = df.iloc[argrelextrema(df['high'].values, np.greater_equal, order=window)[0]]['high']
     # Find local lows
     df['low_pivot'] = df.iloc[argrelextrema(df['low'].values, np.less_equal, order=window)[0]]['low']
-    
+
     levels = []
-    
-    # Wir nehmen nur signifikante Levels in eine Liste auf
-    # Für Highs
+
+    # We only take significant levels into a list
+    # For highs
     for idx, row in df.dropna(subset=['high_pivot']).iterrows():
         levels.append({'price': row['high_pivot'], 'type': 'resistance', 'index': idx, 'time': row['open_time']})
-    
-    # Für Lows
+
+    # For lows
     for idx, row in df.dropna(subset=['low_pivot']).iterrows():
         levels.append({'price': row['low_pivot'], 'type': 'support', 'index': idx, 'time': row['open_time']})
-        
+
     return levels
 
 def analyze_coin(symbol, df):
     levels = find_pivot_levels(df)
     events = []
-    
-    # Wir iterieren durch die Daten, aber erst ab einem gewissen Punkt, damit wir "alte" Levels haben
-    start_index = PIVOT_WINDOW * 2 
-    
+
+    # We iterate through the data, but only from a certain point on, so we have "old" levels
+    start_index = PIVOT_WINDOW * 2
+
     for i in range(start_index, len(df) - RESULT_LOOKAHEAD):
         current_candle = df.iloc[i]
         prev_candle = df.iloc[i-1]
-        
-        # Nur Levels betrachten, die "alt" genug sind (nicht gerade erst entstanden)
+
+        # Only consider levels that are "old" enough (not just formed)
         active_levels = [l for l in levels if l['index'] < (i - PIVOT_WINDOW)]
-        
+
         for level in active_levels:
             lvl_price = level['price']
             lvl_type = level['type']
-            
-            # --- LONG SETUP (Resistance Break & Retest) ---
+
+            # --- LONG SETUP (resistance break & retest) ---
             if lvl_type == 'resistance':
-                # 1. Break: Close war unter Level, jetzt über Level
-                # Oder starker Durchbruch
+                # 1. Break: close was below level, now above level
+                # or a strong breakout
                 break_condition = prev_candle['close'] < lvl_price and current_candle['close'] > lvl_price
-                
+
                 if break_condition:
-                    # Wir haben einen Break. Suchen wir einen Retest in den nächsten X Kerzen
-                    # Ein Retest bedeutet, der Preis kommt zurück in die Toleranzzone des Levels
+                    # We have a break. Let's look for a retest in the next X candles
+                    # A retest means the price comes back into the level's tolerance zone
                     retest_found = False
                     retest_index = -1
-                    
+
                     for j in range(1, RETEST_LOOKAHEAD + 1):
                         if (i + j) >= len(df) - RESULT_LOOKAHEAD: break
-                        
+
                         future_candle = df.iloc[i + j]
-                        
-                        # Retest Zone: Preis berührt das Level von oben (Low <= Level * (1+Tol))
-                        # Aber schließt idealerweise nicht weit darunter (optional)
+
+                        # Retest zone: price touches the level from above (low <= level * (1+tol))
+                        # but ideally doesn't close far below it (optional)
                         upper_bound = lvl_price * (1 + LEVEL_TOLERANCE)
                         lower_bound = lvl_price * (1 - LEVEL_TOLERANCE)
-                        
+
                         if future_candle['low'] <= upper_bound and future_candle['low'] >= lower_bound:
                             retest_found = True
                             retest_index = i + j
-                            
-                            # ANALYSE DES RESULTATS NACH DEM RETEST
-                            # Was passierte X Stunden nach dem Retest?
+
+                            # ANALYSIS OF THE OUTCOME AFTER THE RETEST
+                            # What happened X hours after the retest?
                             result_candle = df.iloc[retest_index + RESULT_LOOKAHEAD]
                             price_change_pct = (result_candle['close'] - lvl_price) / lvl_price
-                            
+
                             outcome = "neutral"
-                            if price_change_pct > 0.02: outcome = "continuation_success" # 2% Gewinn
-                            elif price_change_pct < -0.01: outcome = "failed_breakout" # Unter Level gefallen
-                            
+                            if price_change_pct > 0.02: outcome = "continuation_success" # 2% profit
+                            elif price_change_pct < -0.01: outcome = "failed_breakout" # fell below level
+
                             events.append({
                                 'symbol': symbol,
                                 'type': 'LONG_BREAK_RETEST',
@@ -145,34 +145,34 @@ def analyze_coin(symbol, df):
                                 'outcome_price_change': round(price_change_pct * 100, 2),
                                 'outcome_class': outcome
                             })
-                            break # Retest gefunden, Schleife abbrechen um Dopplungen zu vermeiden
+                            break # retest found, break loop to avoid duplicates
 
-            # --- SHORT SETUP (Support Break & Retest) ---
+            # --- SHORT SETUP (support break & retest) ---
             elif lvl_type == 'support':
-                # 1. Break: Close war über Level, jetzt unter Level
+                # 1. Break: close was above level, now below level
                 break_condition = prev_candle['close'] > lvl_price and current_candle['close'] < lvl_price
-                
+
                 if break_condition:
                     for j in range(1, RETEST_LOOKAHEAD + 1):
                         if (i + j) >= len(df) - RESULT_LOOKAHEAD: break
-                        
+
                         future_candle = df.iloc[i + j]
-                        
-                        # Retest Zone: Preis berührt das Level von unten (High >= Level * (1-Tol))
+
+                        # Retest zone: price touches the level from below (high >= level * (1-tol))
                         upper_bound = lvl_price * (1 + LEVEL_TOLERANCE)
                         lower_bound = lvl_price * (1 - LEVEL_TOLERANCE)
-                        
+
                         if future_candle['high'] >= lower_bound and future_candle['high'] <= upper_bound:
                             retest_index = i + j
-                            
-                            # RESULTAT
+
+                            # OUTCOME
                             result_candle = df.iloc[retest_index + RESULT_LOOKAHEAD]
-                            price_change_pct = (lvl_price - result_candle['close']) / lvl_price # Short Gewinn wenn Preis fällt
-                            
+                            price_change_pct = (lvl_price - result_candle['close']) / lvl_price # short profit when price falls
+
                             outcome = "neutral"
                             if price_change_pct > 0.02: outcome = "continuation_success"
                             elif price_change_pct < -0.01: outcome = "failed_breakout"
-                            
+
                             events.append({
                                 'symbol': symbol,
                                 'type': 'SHORT_BREAK_RETEST',
@@ -182,7 +182,7 @@ def analyze_coin(symbol, df):
                                 'outcome_price_change': round(price_change_pct * 100, 2),
                                 'outcome_class': outcome
                             })
-                            break 
+                            break
 
     return events
 
@@ -190,39 +190,39 @@ def main():
     conn = get_db_connection()
     coins = load_coins()
     all_events = []
-    
-    print(f"Starte Analyse für {len(coins)} Coins...")
-    
+
+    print(f"Starting analysis for {len(coins)} coins...")
+
     for coin in coins:
-        print(f"Verarbeite {coin}...")
+        print(f"Processing {coin}...")
         df = get_ohlcv_data(conn, coin)
-        
+
         if df is not None and not df.empty:
             events = analyze_coin(coin, df)
             all_events.extend(events)
-            print(f"  -> {len(events)} Events gefunden.")
+            print(f"  -> {len(events)} events found.")
         else:
-            print(f"  -> Keine Daten.")
+            print(f"  -> No data.")
 
     conn.close()
-    
-    # Ergebnisse speichern
+
+    # Save results
     summary = {
         'total_events': len(all_events),
         'events': all_events
     }
-    
+
     with open(OUTPUT_FILE, 'w') as f:
         json.dump(summary, f, indent=4)
-        
-    print(f"\nAnalyse abgeschlossen. Ergebnisse in {OUTPUT_FILE} gespeichert.")
 
-    # Kleine Statistik Ausgeben
+    print(f"\nAnalysis complete. Results saved to {OUTPUT_FILE}.")
+
+    # Print a small statistic
     df_res = pd.DataFrame(all_events)
     if not df_res.empty:
-        print("\n--- Statistik ---")
+        print("\n--- Statistics ---")
         print(df_res['outcome_class'].value_counts())
-        print("\nDurchschnittlicher Profit pro Outcome:")
+        print("\nAverage profit per outcome:")
         print(df_res.groupby('outcome_class')['outcome_price_change'].mean())
 
 if __name__ == "__main__":

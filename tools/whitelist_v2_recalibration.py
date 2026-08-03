@@ -191,63 +191,63 @@ def verdict_of(row: dict, baseline: dict) -> str:
     kept_mean = (row["kept"] or {}).get("mean_move_pct")
     base_mean = (baseline or {}).get("mean_move_pct")
     if row["n_blocked"] == 0:
-        return "no-op (blockt nichts)"
+        return "no-op (blocks nothing)"
     if blocked_mean is None or kept_mean is None or base_mean is None:
-        return "keine Legs — nicht bewertbar"
+        return "no legs — not assessable"
     if blocked_mean < 0 and kept_mean > base_mean:
-        return "entfernt Verlierer"
+        return "removes losers"
     if blocked_mean > 0:
-        return "entfernt GEWINNER"
-    return "kein klares Vorzeichen"
+        return "removes WINNERS"
+    return "no clear sign"
 
 
 def build_report(meta: dict) -> str:
     L: list[str] = []
-    L.append("# v2-Whitelist: Parameter-Sensitivität gegen realisierte ROM1-Beine")
+    L.append("# v2 whitelist: parameter sensitivity against realized ROM1 legs")
     L.append("")
-    L.append(f"- Fenster: `{meta['since']}` → `{meta['until'] or 'jetzt'}`  ({meta['window_days']:.1f} Tage)")
-    L.append(f"- Gate-Events: {meta['n_events']} (davon geforwardet: {meta['n_forwarded']})")
-    L.append(f"- ROM1-Legs angehängt: {meta['rom1_leg_coverage_pct']}%")
-    L.append(f"- Erzeugt: {meta['generated_at']}  |  CPU bei Start: {meta['cpu_at_start_pct']}")
+    L.append(f"- Window: `{meta['since']}` → `{meta['until'] or 'now'}`  ({meta['window_days']:.1f} days)")
+    L.append(f"- Gate events: {meta['n_events']} (of which forwarded: {meta['n_forwarded']})")
+    L.append(f"- ROM1 legs attached: {meta['rom1_leg_coverage_pct']}%")
+    L.append(f"- Generated: {meta['generated_at']}  |  CPU at start: {meta['cpu_at_start_pct']}")
     L.append("")
     hist = meta["snapshot_check"]
-    L.append("## Warum das KEIN Backtest ist (gemessen, nicht behauptet)")
+    L.append("## Why this is NOT a backtest (measured, not asserted)")
     L.append("")
     L.append(
-        f"`bot_regime_performance` trägt **{hist['duplicate_cells']}** Zellen mit mehr als einer Zeile "
-        f"→ {'reiner Snapshot, keine Historie' if hist['is_snapshot'] else 'ENTHÄLT HISTORIE — Caveat prüfen!'}. "
-        f"`last_computed` von `{hist['last_computed_min']}` bis `{hist['last_computed_max']}`."
+        f"`bot_regime_performance` carries **{hist['duplicate_cells']}** cells with more than one row "
+        f"→ {'pure snapshot, no history' if hist['is_snapshot'] else 'CONTAINS HISTORY — check the caveat!'}. "
+        f"`last_computed` from `{hist['last_computed_min']}` to `{hist['last_computed_max']}`."
     )
     L.append("")
     L.append(
-        "Die Zellstatistiken, auf denen das Gate zum Zeitpunkt eines vergangenen Events entschieden hat, "
-        "existieren nicht mehr. Jede Neu-Entscheidung unten benutzt **heutige** Statistiken auf **damaligem** "
-        "Verkehr und vermischt damit zwei Effekte: was die Parameter tun, und wie die Zellen seither gedriftet "
-        "sind. Belastbar bleiben die *Form* der Parameter-Antwort und das *Vorzeichen* der geblockten Beine. "
-        "Ein Flip lässt sich daraus nicht rechtfertigen — das kann nur ein Live-Shadow-A/B (wie T-031)."
+        "The cell statistics the gate decided on at the time of a past event "
+        "no longer exist. Every re-decision below uses **today's** statistics on **that-time's** "
+        "traffic and thereby mixes two effects: what the parameters do, and how the cells have drifted "
+        "since. What remains robust are the *shape* of the parameter response and the *sign* of the blocked legs. "
+        "A flip cannot be justified from this — only a live shadow A/B (like T-031) can."
     )
     L.append("")
     base = meta["baseline"]
-    L.append("## Referenz: was v1 tatsächlich durchgelassen hat")
+    L.append("## Reference: what v1 actually let through")
     L.append("")
     L.append(
-        f"- {base['n_with_leg']} von {base['n_events']} geforwardeten Events mit ROM1-Leg  "
-        f"| Σ move {base['sum_move_pct']} %  | Ø {base['mean_move_pct']} %/Trade"
+        f"- {base['n_with_leg']} of {base['n_events']} forwarded events with ROM1 leg  "
+        f"| Σ move {base['sum_move_pct']} %  | avg {base['mean_move_pct']} %/trade"
     )
     L.append("")
-    L.append("## Parameter-Gitter")
+    L.append("## Parameter grid")
     L.append("")
-    L.append("| z | k | break-even | behalten | Durchlass | Ø behalten % | Ø geblockt % | Σ geblockt % | Lesart |")
+    L.append("| z | k | break-even | kept | pass rate | avg kept % | avg blocked % | Σ blocked % | reading |")
     L.append("|---:|---:|---:|---:|---:|---:|---:|---:|---|")
     for r in meta["grid"]:
-        mark = " **(heute)**" if (r["z"], r["k"], r["break_even"]) == meta["live_config"] else ""
+        mark = " **(today)**" if (r["z"], r["k"], r["break_even"]) == meta["live_config"] else ""
         L.append(
             f"| {r['z']}{mark} | {r['k']} | {r['break_even']} | {r['n_kept']}/{r['n_forwarded']} | "
             f"{r['keep_rate_pct']} % | {r['kept'].get('mean_move_pct')} | "
             f"{r['blocked'].get('mean_move_pct')} | {r['blocked'].get('sum_move_pct')} | {r['verdict']} |"
         )
     L.append("")
-    L.append("## Grenzen")
+    L.append("## Limits")
     L.append("")
     for line in meta["limits"]:
         L.append(f"- {line}")
@@ -316,13 +316,13 @@ def main() -> None:
 
     window_end = until or utc_now().replace(tzinfo=None)
     limits = [
-        "Snapshot statt Historie: heutige Zellstatistiken auf damaligem Verkehr — Parametereffekt und Zell-Drift "
-        "sind nicht trennbar (oben gemessen).",
-        "Nur die geforwardete Seite ist gescort. Unterdrückte Signale haben per Konstruktion kein ROM1-Bein — "
-        "ihr Ausgang ist nicht beobachtet, nicht null.",
-        "Events ohne angehängtes Bein zählen als `n_no_leg` und werden nie als 0 verrechnet.",
-        "Kein Ergebnis dieses Laufs rechtfertigt einen Gate-Flip. Entscheidbar wird die Frage erst über ein "
-        "Live-Shadow-A/B oder nachdem bot_regime_performance historisiert ist.",
+        "Snapshot instead of history: today's cell statistics on that-time's traffic — parameter effect and cell "
+        "drift are not separable (measured above).",
+        "Only the forwarded side is scored. Suppressed signals have no ROM1 leg by construction — "
+        "their outcome is not observed, not zero.",
+        "Events without an attached leg count as `n_no_leg` and are never counted as 0.",
+        "No result of this run justifies a gate flip. The question only becomes decidable via a "
+        "live shadow A/B or once bot_regime_performance is historized.",
     ]
     meta = {
         "since": str(since),
@@ -351,7 +351,7 @@ def main() -> None:
             fh.write(report)
         with open(os.path.splitext(args.out)[0] + "_summary.json", "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2, default=str)
-        print(f"\ngeschrieben: {args.out}")
+        print(f"\nwritten: {args.out}")
 
 
 if __name__ == "__main__":

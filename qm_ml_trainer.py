@@ -12,7 +12,7 @@ import pandas as pd
 import scipy.signal
 import xgboost as xgb
 
-# --- Eigene DB Connection importieren ---
+# --- Import our own DB connection ---
 from core.candles import read_candles_with_indicators
 from core.database import get_db_connection
 from core.market_utils import load_coins as _core_load_coins
@@ -27,19 +27,19 @@ logger = logging.getLogger(__name__)
 # ==========================================
 COINS_FILE = "coins.json"
 
-# Neue Artefakte gehen ausschließlich nach staging_models — NIE in-place über
-# ein Produktions-pkl (P1.35-Regel). Rollout entscheidet der Operator.
+# New artifacts go exclusively to staging_models — NEVER in-place over
+# a production pkl (P1.35 rule). Rollout is decided by the operator.
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 
-# FIX (P1.31): unter dieser Coin-Abdeckung wird hart abgebrochen statt still
-# auf einem trunkierten Universum zu trainieren.
+# FIX (P1.31): below this coin coverage we hard-abort instead of silently
+# training on a truncated universe.
 MIN_COIN_COVERAGE = 0.80
 
-# 💥 Wir trainieren beide Timeframes direkt hintereinander!
+# 💥 We train both timeframes right after each other!
 TIMEFRAMES_TO_TRAIN = ['1h', '4h']
 
 TRADE_MARGIN = 5000.0
-LEVERAGE = 20  # Standard-Evaluierung mit 20x Hebel
+LEVERAGE = 20  # Standard evaluation with 20x leverage
 TAKER_FEE = 0.0004
 
 PIVOT_WINDOW = 5
@@ -71,17 +71,17 @@ def load_coins():
 
 
 def fetch_merged_data(symbol, tf):
-    # FIX (P1.31): Connection via try/finally schließen (vorher leakte jeder
-    # Query-Fehler eine Pool-Connection) und Skips sichtbar loggen statt still
-    # ein leeres DataFrame zurückzugeben.
+    # FIX (P1.31): close the connection via try/finally (previously every
+    # query error leaked a pool connection) and log skips visibly instead of
+    # silently returning an empty DataFrame.
     conn = None
     try:
         conn = get_db_connection()
         ind_cols = PRICE_BASED_INDICATORS + ABSOLUTE_INDICATORS + ['atr_14', 'trend_direction']
-        # Über core.candles: GESCHLOSSENE Kerzen + Indikator-Join, ASC
-        # (include_forming=False). Das 2-Jahres-Fenster hatte vorher keinen oberen
-        # Schnitt und trainierte die forming Kerze mit — dieselbe R1-Look-ahead-
-        # Klasse, die der Walk-Forward-Sim in T-037 verloren hat.
+        # Via core.candles: CLOSED candles + indicator join, ASC
+        # (include_forming=False). The 2-year window previously had no upper
+        # cutoff and trained on the forming candle too — the same R1 look-ahead
+        # class that the walk-forward sim in T-037 lost to.
         df = read_candles_with_indicators(
             conn,
             symbol,
@@ -105,7 +105,7 @@ def fetch_merged_data(symbol, tf):
                 df[c] = df[c].astype(float)
         return df.reset_index(drop=True)
     except Exception as e:
-        logger.warning(f"[{tf}] {symbol} übersprungen: {e}")
+        logger.warning(f"[{tf}] {symbol} skipped: {e}")
         return pd.DataFrame()
     finally:
         if conn:
@@ -138,11 +138,11 @@ def simulate_qm_trades(df, symbol):
 
             triggered, stopped_on_fill = False, False
 
-            # FIX (P1.30): SL-Durchstich einer Pending-Order ist KEINE Invalidierung.
-            # Da der SL jenseits des Entrys liegt, hat dieselbe Kerze zwingend auch
-            # den Entry berührt → konservativ als fill-then-stop werten (Trade mit
-            # outcome=0). Vorher wurden genau diese garantierten Verlierer aus dem
-            # Datensatz gelöscht → Label-Verteilung nach oben verschoben.
+            # FIX (P1.30): an SL breach of a pending order is NOT an invalidation.
+            # Since the SL sits beyond the entry, the same candle must also have
+            # touched the entry → score conservatively as fill-then-stop (trade with
+            # outcome=0). Previously exactly these guaranteed losers were deleted
+            # from the dataset → label distribution shifted upward.
             if order['direction'] == "LONG":
                 if c_low <= order['sl']:
                     triggered, stopped_on_fill = True, True
@@ -164,9 +164,9 @@ def simulate_qm_trades(df, symbol):
                     'entry': order['entry'],
                     'sl': order['sl'],
                     'tp': order['tp'],
-                    # P1.30: Verlust sofort, wenn die Entry-Kerze auch den SL riss.
+                    # P1.30: immediate loss if the entry candle also broke the SL.
                     'outcome': 0 if stopped_on_fill else None,
-                    # P1.29: Entry-Zeit für den chronologischen Split.
+                    # P1.29: entry time for the chronological split.
                     'entry_time': df['open_time'].iloc[curr_idx],
                     'atr_14_pct': (df['atr_14'].iloc[feature_idx] / close_prev) * 100,
                     'trend_direction': str(df['trend_direction'].iloc[feature_idx]),
@@ -191,10 +191,10 @@ def simulate_qm_trades(df, symbol):
         for t in completed_trades:
             if t['trade_data']['outcome'] is not None:
                 continue
-            # FIX (P1.30): kein TP-Win auf der Entry-Kerze — ob TP oder SL zuerst
-            # berührt wurde, ist intra-Kerze nicht feststellbar. SL-Hits auf der
-            # Entry-Kerze sind oben bereits konservativ als Verlust gewertet;
-            # TP-Bewertung beginnt erst mit der Folgekerze.
+            # FIX (P1.30): no TP win on the entry candle — whether TP or SL was
+            # touched first cannot be determined intra-candle. SL hits on the
+            # entry candle are already scored as a loss conservatively above;
+            # TP evaluation only begins with the following candle.
             if t.get('entry_idx') == curr_idx:
                 continue
             d, sl, tp = t['trade_data']['direction'], t['trade_data']['sl'], t['trade_data']['tp']
@@ -270,14 +270,14 @@ def calculate_pnl(row, is_win):
 
 
 def chronological_three_way_split(trades_df, tf):
-    """FIX (P1.29): chronologischer Train/Val/Test-Split mit Purge-Gap.
+    """FIX (P1.29): chronological train/val/test split with purge gap.
 
-    Vorher: random train_test_split über zeitlich überlappende Quasi-Duplikate
-    (Kontamination) + Threshold-Wahl auf dem Test-Set (Maximum-Statistik).
-    Jetzt: Split entlang der Entry-Zeit (70/15/15); zwischen den Slices wird
-    eine Purge-Gap von ORDER_EXPIRY Bars freigelassen, weil ein Trade bis zu
-    ORDER_EXPIRY Bars offen sein kann und sein Label sonst in den nächsten
-    Slice hineinreicht.
+    Before: random train_test_split over temporally overlapping quasi-duplicates
+    (contamination) + threshold choice on the test set (maximum statistic).
+    Now: split along the entry time (70/15/15); a purge gap of ORDER_EXPIRY bars
+    is left between the slices, because a trade can stay open for up to
+    ORDER_EXPIRY bars and its label would otherwise reach into the next
+    slice.
     """
     tf_hours = {'1h': 1, '4h': 4}.get(tf, 1)
     gap = pd.Timedelta(hours=ORDER_EXPIRY * tf_hours)
@@ -296,7 +296,7 @@ def chronological_three_way_split(trades_df, tf):
 
 
 def train_and_optimize(trades_df, tf):
-    logger.info(f"🚀 Starting ML Training für {tf} mit {len(trades_df)} completeden QM-Trades...")
+    logger.info(f"🚀 Starting ML Training for {tf} with {len(trades_df)} completed QM trades...")
 
     if 'trend_direction' in trades_df.columns:
         dummies = pd.get_dummies(trades_df['trend_direction'], prefix='trend')
@@ -314,11 +314,11 @@ def train_and_optimize(trades_df, tf):
 
     train_trades, val_trades, test_trades = chronological_three_way_split(trades_df, tf)
     logger.info(
-        f"[{tf}] Chronologischer Split: train={len(train_trades)} val={len(val_trades)} test={len(test_trades)} "
-        f"(Purge-Gap {ORDER_EXPIRY} Bars)"
+        f"[{tf}] Chronological split: train={len(train_trades)} val={len(val_trades)} test={len(test_trades)} "
+        f"(purge gap {ORDER_EXPIRY} bars)"
     )
     if len(train_trades) < 100 or len(val_trades) < 30 or len(test_trades) < 30:
-        logger.error(f"[{tf}] Zu wenig Trades für einen validen 3-Wege-Split — Abbruch.")
+        logger.error(f"[{tf}] Not enough trades for a valid 3-way split — aborting.")
         return
 
     X_train = train_trades[feature_cols].fillna(0)
@@ -341,15 +341,15 @@ def train_and_optimize(trades_df, tf):
         by='Importance', ascending=False
     )
     print("\n" + "=" * 60)
-    print(f"🏆 TOP INDIKATOREN FÜR QUASIMODO-ERFOLG ({tf} Chart)")
+    print(f"🏆 TOP INDICATORS FOR QUASIMODO SUCCESS ({tf} chart)")
     print("=" * 60)
     for _idx, row in feat_imp.head(10).iterrows():
         print(f"🔹 {row['Feature']:<30}: {row['Importance']:.2%}")
 
-    # FIX (P1.29): Threshold wird auf dem VALIDATION-Slice gewählt; das Test-Set
-    # bleibt unangetastet und liefert danach die einzige ehrliche Zahl.
+    # FIX (P1.29): the threshold is chosen on the VALIDATION slice; the test set
+    # stays untouched and afterwards delivers the only honest number.
     print("\n" + "=" * 60)
-    print(f"💰 THRESHOLD OPTIMIERUNG {tf} (Validation-Slice | Hebel {LEVERAGE}x)")
+    print(f"💰 THRESHOLD OPTIMISATION {tf} (validation slice | leverage {LEVERAGE}x)")
     print("=" * 60)
 
     val_trades = val_trades.copy()
@@ -376,7 +376,7 @@ def train_and_optimize(trades_df, tf):
             best_pnl = pnl
             best_thresh = thresh
 
-    # Ehrliche Out-of-Sample-Zahl: fixer Threshold aus Validation, angewandt auf Test.
+    # Honest out-of-sample number: fixed threshold from validation, applied to test.
     test_trades = test_trades.copy()
     test_trades['prob'] = model.predict_proba(test_trades[feature_cols].fillna(0))[:, 1]
     taken_test = test_trades[test_trades['prob'] >= best_thresh]
@@ -389,20 +389,20 @@ def train_and_optimize(trades_df, tf):
         test_stats = {'trades': 0, 'wr': 0.0, 'pnl': 0.0}
 
     print("=" * 60)
-    print(f"🎯 OPTIMALER THRESHOLD ({tf}): {best_thresh:.2f} (gewählt auf Validation)")
+    print(f"🎯 OPTIMAL THRESHOLD ({tf}): {best_thresh:.2f} (chosen on validation)")
     print(
-        f"TEST (untouched, Threshold fix): Trades: {test_stats['trades']} | "
+        f"TEST (untouched, threshold fixed): Trades: {test_stats['trades']} | "
         f"Win Rate: {test_stats['wr']:.1f}% | PnL: ${test_stats['pnl']:+,.2f}"
     )
     print("=" * 60)
 
-    # 💥 Saving das Modell dynamisch unter dem Namen des Timeframes!
-    # Artefakte gehen nach STAGING_DIR — Produktions-pkls werden nie in-place
-    # überschrieben, der Rollout ist eine bewusste Operator-Entscheidung.
+    # 💥 Saving the model dynamically under the name of the timeframe!
+    # Artifacts go to STAGING_DIR — production pkls are never overwritten
+    # in-place, the rollout is a deliberate operator decision.
     os.makedirs(STAGING_DIR, exist_ok=True)
     save_path = os.path.join(STAGING_DIR, f"qm_xgboost_model_{tf}.pkl")
-    # Symmetrisch zu smc_ml_trainer: kein stilles Überschreiben einer fremden
-    # Trainer-Generation im geteilten STAGING_DIR (T-2026-KYT-9050-006).
+    # Symmetric to smc_ml_trainer: no silent overwrite of a foreign
+    # trainer generation in the shared STAGING_DIR (T-2026-KYT-9050-006).
     assert_no_foreign_overwrite(save_path, 'qm_ml_trainer.py')
     save_data = {
         'model': model,
@@ -435,9 +435,9 @@ def main():
         logger.error("No coins found!")
         return
 
-    # Wir iterieren durch alle Timeframes, die wir in der Config definiert haben
+    # We iterate through all timeframes that we defined in the config
     for tf in TIMEFRAMES_TO_TRAIN:
-        logger.info(f"=== 🔄 STARTE VERARBEITUNG FÜR TIMEFRAME: {tf} ===")
+        logger.info(f"=== 🔄 STARTING PROCESSING FOR TIMEFRAME: {tf} ===")
         all_trades = []
         coins_with_data = 0
         skipped = []
@@ -455,22 +455,22 @@ def main():
             trades = simulate_qm_trades(df, coin)
             all_trades.extend(trades)
 
-        # FIX (P1.31): harter Abbruch statt still auf 0-8 Coins trainieren.
+        # FIX (P1.31): hard abort instead of silently training on 0-8 coins.
         coverage = coins_with_data / len(coins) if coins else 0.0
         if skipped:
             logger.warning(
-                f"[{tf}] {len(skipped)} Coins ohne (ausreichende) Daten: {skipped[:20]}{'...' if len(skipped) > 20 else ''}"
+                f"[{tf}] {len(skipped)} coins without (sufficient) data: {skipped[:20]}{'...' if len(skipped) > 20 else ''}"
             )
         if coverage < MIN_COIN_COVERAGE:
             raise SystemExit(
-                f"[{tf}] ABBRUCH: nur {coins_with_data}/{len(coins)} Coins ({coverage:.0%}) lieferten Daten "
-                f"(Minimum {MIN_COIN_COVERAGE:.0%})."
+                f"[{tf}] ABORTED: only {coins_with_data}/{len(coins)} coins ({coverage:.0%}) delivered data "
+                f"(minimum {MIN_COIN_COVERAGE:.0%})."
             )
 
         trades_df = pd.DataFrame(all_trades)
 
         if trades_df.empty:
-            logger.warning(f"No QM trades in history for {tf} gefunden!")
+            logger.warning(f"No QM trades in history for {tf} found!")
             continue
 
         trades_df.dropna(inplace=True)

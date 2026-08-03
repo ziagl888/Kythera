@@ -16,29 +16,29 @@ DB_CONFIG = {
 }
 
 # ========================= SETTINGS =========================
-LOOKBACK_DAYS = 365       # Wie weit in die Vergangenheit prüfen?
-TREND_WINDOW_HOURS = 90 * 24  # 90 Tage für die Trendlinie
-FUTURE_WINDOW_HOURS = 3 * 24  # 3 Tage Zukunft prüfen
-TARGET_MOVE_PCT = 0.10    # 10% Bewegung
+LOOKBACK_DAYS = 365       # How far into the past to check?
+TREND_WINDOW_HOURS = 90 * 24  # 90 days for the trendline
+FUTURE_WINDOW_HOURS = 3 * 24  # check 3 days into the future
+TARGET_MOVE_PCT = 0.10    # 10% move
 COINS_FILE = 'coins.json'
 OUTPUT_FILE = 'trend_backtest_results.json'
 
 def get_db_engine():
-    """Erstellt die DB-Verbindung"""
+    """Creates the DB connection"""
     url = f"postgresql+psycopg2://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
     return create_engine(url)
 
 def load_coins():
     if not os.path.exists(COINS_FILE):
-        print(f"Datei {COINS_FILE} nicht gefunden. Nutze Default-Liste.")
-        return ["ETHUSDT", "BTCUSDT"] 
+        print(f"File {COINS_FILE} not found. Using default list.")
+        return ["ETHUSDT", "BTCUSDT"]
     with open(COINS_FILE, 'r') as f:
         return json.load(f)
 
 def calculate_trend_vectorized(prices, timestamps):
     """
-    Berechnet Slope und Intercept mittels Numpy (schneller als scipy).
-    x sind die timestamps (seconds), y sind die prices.
+    Calculates slope and intercept using numpy (faster than scipy).
+    x are the timestamps (seconds), y are the prices.
     """
     x = timestamps
     y = prices
@@ -47,11 +47,11 @@ def calculate_trend_vectorized(prices, timestamps):
     return m, c
 
 def analyze_coin(engine, symbol):
-    print(f"--> Analysiere {symbol}...")
-    
-    # 1. Daten laden (365 Tage + 90 Tage Vorlauf für die erste Trendlinie)
-    # Wir brauchen mehr Daten als 365 Tage, damit wir am Tag 1 der Prüfung schon eine 90-Tage Historie haben.
-    total_days_load = LOOKBACK_DAYS + 90 + 5 
+    print(f"--> Analysing {symbol}...")
+
+    # 1. Load data (365 days + 90 days lead-in for the first trendline)
+    # We need more data than 365 days so that on day 1 of the check we already have a 90-day history.
+    total_days_load = LOOKBACK_DAYS + 90 + 5
     query = text(f"""
         SELECT open_time, open, high, low, close, volume 
         FROM "{symbol}_1h"
@@ -62,35 +62,35 @@ def analyze_coin(engine, symbol):
     try:
         df = pd.read_sql(query, engine)
     except Exception as e:
-        print(f"Fehler beim Laden von {symbol}: {e}")
+        print(f"Error loading {symbol}: {e}")
         return []
 
     if df.empty:
         return []
 
-    # Datentypen anpassen
+    # Adjust data types
     df['open_time'] = pd.to_datetime(df['open_time'], utc=True)
-    # Timestamp in Sekunden für die Regression
-    df['ts'] = df['open_time'].apply(lambda x: x.timestamp()) 
+    # Timestamp in seconds for the regression
+    df['ts'] = df['open_time'].apply(lambda x: x.timestamp())
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = pd.to_numeric(df[col])
 
-    # 2. Volumen Durchschnitt (SMA 20) vorberechnen
+    # 2. Precompute volume average (SMA 20)
     df['vol_avg_20'] = df['volume'].rolling(window=20).mean()
 
     results = []
-    
-    # Wir starten die Schleife erst, wenn wir genug Daten für Trend (90d) und Vol (20h) haben
+
+    # We only start the loop once we have enough data for trend (90d) and vol (20h)
     start_index = TREND_WINDOW_HOURS
-    # Wir hören auf, bevor wir keine "Zukunft" (3 Tage) mehr haben
+    # We stop before we run out of "future" (3 days)
     end_index = len(df) - FUTURE_WINDOW_HOURS
 
-    # Um nicht JEDE Stunde eine Regression zu rechnen (dauert ewig), 
-    # kann man hier optimieren. Aber für Genauigkeit machen wir es Schritt für Schritt.
-    # Performance-Hinweis: Das hier kann bei vielen Coins dauern.
-    
-    # Iteration durch die Candles (simulierter Live-Verlauf)
-    # Wir nutzen Indizes für schnellen Zugriff
+    # To avoid computing a regression EVERY hour (takes forever),
+    # this could be optimised. But for accuracy we do it step by step.
+    # Performance note: this can take a while with many coins.
+
+    # Iteration through the candles (simulated live progression)
+    # We use indices for fast access
     ts_values = df['ts'].values
     close_values = df['close'].values
     high_values = df['high'].values
@@ -100,76 +100,76 @@ def analyze_coin(engine, symbol):
     times = df['open_time'].values
 
     for i in range(start_index, end_index):
-        # Der aktuelle Zeitpunkt der Prüfung ist "i".
-        # Das Fenster für den Trend ist [i - 90 Tage : i]
-        
-        # Daten für Trendberechnung (die letzten 90 Tage VOR Kerze i)
-        # slicing [start:end] ist exklusive end, also nehmen wir i+1 um Kerze i einzuschließen oder i?
-        # Logik: "Daten der letzten 365 Tage". Trendberechnung auf den geschlossenen Kerzen.
+        # The current point in time of the check is "i".
+        # The window for the trend is [i - 90 days : i]
+
+        # Data for trend calculation (the last 90 days BEFORE candle i)
+        # slicing [start:end] is exclusive of end, so do we take i+1 to include candle i, or i?
+        # Logic: "data of the last 365 days". Trend calculation on the closed candles.
         slice_start = i - TREND_WINDOW_HOURS
-        slice_end = i 
-        
+        slice_end = i
+
         subset_ts = ts_values[slice_start:slice_end]
         subset_close = close_values[slice_start:slice_end]
-        
-        # Trendlinie berechnen
+
+        # Calculate trendline
         slope, intercept = calculate_trend_vectorized(subset_close, subset_ts)
-        
-        # Trendwert für die AKTUELLE Kerze (i) und die VORHERIGE (i-1)
+
+        # Trend value for the CURRENT candle (i) and the PREVIOUS one (i-1)
         current_ts = ts_values[i]
         prev_ts = ts_values[i-1]
-        
+
         trend_val_curr = slope * current_ts + intercept
         trend_val_prev = slope * prev_ts + intercept
-        
+
         curr_close = close_values[i]
         prev_close = close_values[i-1]
-        
+
         # Event Detection
         event_type = None
-        
-        # Logik: Letzte Candle (prev) unter Trend, aktuelle (curr) über Trend
+
+        # Logic: last candle (prev) below trend, current (curr) above trend
         if prev_close < trend_val_prev and curr_close > trend_val_curr:
             event_type = "BREAK_UP"
-            
-        # Logik: Letzte Candle (prev) über Trend, aktuelle (curr) unter Trend
+
+        # Logic: last candle (prev) above trend, current (curr) below trend
         elif prev_close > trend_val_prev and curr_close < trend_val_curr:
             event_type = "BREAK_DOWN"
-            
+
         if event_type:
-            # Volumen Ratio prüfen
+            # Check volume ratio
             curr_vol = vol_values[i]
             avg_vol = vol_avg_values[i]
-            
+
             if avg_vol == 0 or np.isnan(avg_vol):
                 vol_ratio = 0
             else:
                 vol_ratio = curr_vol / avg_vol
-            
-            # Zukunft prüfen (nächste 3 Tage = 72 Stunden)
-            # Slice: i+1 bis i+1+72
+
+            # Check the future (next 3 days = 72 hours)
+            # Slice: i+1 to i+1+72
             future_start = i + 1
             future_end = i + 1 + FUTURE_WINDOW_HOURS
-            
+
             success = False
             max_pct_change = 0.0
-            
+
             if event_type == "BREAK_UP":
-                # Suche nach Preisanstieg > 10%
-                # Wir schauen auf die HIGHS der Zukunft
+                # Look for a price rise > 10%
+                # We look at the HIGHS of the future
                 future_highs = high_values[future_start:future_end]
                 max_price = np.max(future_highs)
                 pct_change = (max_price - curr_close) / curr_close
                 max_pct_change = pct_change
                 if pct_change >= TARGET_MOVE_PCT:
                     success = True
-                    
+
             elif event_type == "BREAK_DOWN":
-                # Suche nach Preisabfall > 10%
-                # Wir schauen auf die LOWS der Zukunft
+                # Look for a price drop > 10%
+                # We look at the LOWS of the future
                 future_lows = low_values[future_start:future_end]
                 min_price = np.min(future_lows)
-                # Bei Short ist Abfall positiv für uns, daher Logik umdrehen
+                # For a short, a drop is positive for us, so invert the logic
                 pct_change = (curr_close - min_price) / curr_close
                 max_pct_change = pct_change
                 if pct_change >= TARGET_MOVE_PCT:
@@ -189,76 +189,76 @@ def analyze_coin(engine, symbol):
 
 def print_statistics(all_data):
     if not all_data:
-        print("Keine Events gefunden.")
+        print("No events found.")
         return
 
     df = pd.DataFrame(all_data)
-    
+
     print("\n" + "="*60)
-    print("ERGEBNIS ANALYSE")
+    print("RESULT ANALYSIS")
     print("="*60)
-    
+
     total_events = len(df)
     total_success = len(df[df['success'] == True])
     global_rate = (total_success / total_events) * 100 if total_events > 0 else 0
-    
-    print(f"Gesamtanzahl Signale: {total_events}")
-    print(f"Erfolgreiche Signale (>10% Move): {total_success}")
-    print(f"Globale Erfolgsquote: {global_rate:.2f}%")
+
+    print(f"Total signals: {total_events}")
+    print(f"Successful signals (>10% move): {total_success}")
+    print(f"Global success rate: {global_rate:.2f}%")
     print("-" * 60)
-    
-    # Volumen Analyse
-    # Wir runden das Ratio ab, um Buckets zu bilden (3.5 -> 3.0)
+
+    # Volume analysis
+    # We round the ratio down to form buckets (3.5 -> 3.0)
     df['vol_bucket'] = df['vol_ratio'].astype(int)
-    
-    # Filtern auf Ratios ab 1 bis 20
-    print(f"{'Volumen Ratio (x-fach)':<25} | {'Anzahl':<10} | {'Erfolgsquote':<10}")
+
+    # Filter for ratios from 1 to 20
+    print(f"{'Volume Ratio (x-fold)':<25} | {'Count':<10} | {'Success rate':<10}")
     print("-" * 60)
-    
+
     for v in range(1, 21):
-        # Wir schauen uns alles an, was mindestens Volumen X hatte (oder genau X? Deine Anforderung sagt: "bei 3x, bei 4x")
-        # Interpretation: "Bucket X" bedeutet Ratio >= X und < X+1
+        # We look at everything that had at least volume X (or exactly X? Your requirement says: "at 3x, at 4x")
+        # Interpretation: "Bucket X" means ratio >= X and < X+1
         bucket_df = df[df['vol_bucket'] == v]
-        
+
         count = len(bucket_df)
         if count > 0:
             wins = len(bucket_df[bucket_df['success'] == True])
             rate = (wins / count) * 100
-            print(f"{v}x bis {v+0.99}x Avg Vol     | {count:<10} | {rate:.2f}%")
+            print(f"{v}x to {v+0.99}x Avg Vol     | {count:<10} | {rate:.2f}%")
         else:
-            # Optional: Zeigen, dass keine Daten da waren
+            # Optional: show that there was no data
             pass
 
-    # High Volume Cluster (z.B. alles über 5x zusammengefasst)
+    # High volume cluster (e.g. everything above 5x combined)
     high_vol_df = df[df['vol_ratio'] >= 5]
     if not high_vol_df.empty:
         wins = len(high_vol_df[high_vol_df['success'] == True])
         rate = (wins / len(high_vol_df)) * 100
         print("-" * 60)
-        print(f"ZUSAMMENFASSUNG VOL > 5x  | {len(high_vol_df):<10} | {rate:.2f}%")
+        print(f"SUMMARY VOL > 5x  | {len(high_vol_df):<10} | {rate:.2f}%")
 
 def main():
     start_time = time.time()
     engine = get_db_engine()
     coins = load_coins()
-    
+
     all_results = []
-    
-    print(f"Starte Backtest für {len(coins)} Coins...")
-    print(f"Logik: Trendbruch (90d Trend) -> Check 3 Tage Zukunft auf 10% Move")
-    
+
+    print(f"Starting backtest for {len(coins)} coins...")
+    print(f"Logic: trend break (90d trend) -> check 3 days future for 10% move")
+
     for coin in coins:
         coin_results = analyze_coin(engine, coin)
         all_results.extend(coin_results)
-        
-    # Ergebnisse speichern
+
+    # Save results
     with open(OUTPUT_FILE, 'w') as f:
         json.dump(all_results, f, indent=4)
-        
+
     print_statistics(all_results)
-    
+
     duration = (time.time() - start_time) / 60
-    print(f"\nFertig in {duration:.1f} Minuten. Details in {OUTPUT_FILE}")
+    print(f"\nDone in {duration:.1f} minutes. Details in {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()

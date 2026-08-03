@@ -43,7 +43,7 @@ def update_coins_json():
     can no longer drift apart. On a refresh failure the live coins.json is left
     untouched (no truncation) and table creation is skipped for this run.
     """
-    logger.info("🔄 Updating coins.json von Binance...")
+    logger.info("🔄 Updating coins.json from Binance...")
     try:
         symbols = refresh_coins_json(BASE_URL, 'coins.json')
     except Exception as e:
@@ -58,14 +58,14 @@ def update_coins_json():
 
     # Create tables for new coins immediately
     if symbols:
-        logger.info("Checking Tabellenstruktur für alle Coins...")
+        logger.info("Checking table structure for all coins...")
         conn = get_db_connection()
         try:
             with conn.cursor() as cur:
                 for symbol in symbols:
                     for tf in TIMEFRAMES:
                         tablename = f'"{symbol}_{tf}"'
-                        # Wir feuern das Create einfach ab, Postgres ignoriert es wenn existiert (sehr schnell)
+                        # We simply fire off the Create — Postgres ignores it if it exists (very fast)
                         cur.execute(f"""
                                 CREATE TABLE IF NOT EXISTS {tablename} (
                                     symbol TEXT, open_time TIMESTAMP WITH TIME ZONE,
@@ -84,31 +84,29 @@ def update_coins_json():
 
 
 def cleanup_delisted_trades():
-    """Schließt offene Trades auf Coins die nicht mehr in coins.json sind.
+    """Closes open trades on coins that no longer exist in coins.json.
 
-    Hintergrund: Wenn Binance einen Coin delisted, kommen keine neuen
-    Candles mehr über die Ingestion. Der interne Monitor würde den Trade
-    dann auf ewig offen lassen (weil SL/TP nie erreicht wird). Das
-    verzerrt die Performance-Statistik massiv — Trades ohne Ende zählen
-    als "noch offen" statt als neutrale Closes.
+    Background: When Binance delists a coin, no new candles arrive via
+    ingestion. The internal monitor would then leave the trade open forever
+    (because SL/TP never hit). This massively distorts performance statistics —
+    trades with no end count as "still open" instead of neutral closes.
 
-    Lösung: Beim täglichen Housekeeping (oder manuell) prüfen welche
-    Coins aus coins.json verschwunden sind, und für diese alle offenen
-    Trades in closed_trades_master bzw. closed_ai_signals verschieben
-    mit close_reason = "DELISTED / CLEANUP".
+    Solution: During nightly housekeeping (or manually) check which coins
+    have disappeared from coins.json, and for those move all open trades in
+    closed_trades_master and closed_ai_signals with close_reason =
+    "DELISTED / CLEANUP".
 
-    Der Market-Tracker, Bot-Regime-Analyzer und Signal-Orchestrator
-    klassifizieren Trades mit diesem Marker als NEUTRAL — sie zählen
-    weder als Win noch als Loss, sondern werden aus Kelly und WR
-    ausgeschlossen.
+    Market-Tracker, Bot-Regime-Analyzer and Signal-Orchestrator classify
+    trades with this marker as NEUTRAL — they count neither as win nor loss,
+    but are excluded from Kelly and win rate.
 
-    Close-Preis-Logik:
-      1. Letzte 5m-Candle des Coins nehmen (falls noch da)
-      2. Fallback: Entry-Preis verwenden → PnL = 0% → neutral
+    Close-price logic:
+      1. Take the last 5m candle of the coin (if still available)
+      2. Fallback: use entry price → PnL = 0% → neutral
     """
-    logger.info("🧹 Checking offene Trades auf delisted Coins...")
+    logger.info("🧹 Checking open trades on delisted coins...")
 
-    # 1. Aktive Coin-Liste laden
+    # 1. Load active coin list
     try:
         with open('coins.json') as f:
             active_coins = set(json.load(f))
@@ -117,7 +115,7 @@ def cleanup_delisted_trades():
         return
 
     if not active_coins:
-        logger.warning("coins.json ist leer — Delisted-Cleanup skipped (Safety)")
+        logger.warning("coins.json is empty — Delisted-Cleanup skipped (Safety)")
         return
 
     conn = get_db_connection()
@@ -125,7 +123,7 @@ def cleanup_delisted_trades():
     closed_ai = 0
 
     try:
-        # ── Klassische Trades (active_trades_master) ──
+        # ── Classic trades (active_trades_master) ──
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, strategy, time, coin, direction, lev, entry, "
@@ -146,16 +144,16 @@ def cleanup_delisted_trades():
         ]
 
         if classic_delisted:
-            logger.info(f"  Klassische Trades: {len(classic_delisted)} auf delisted Coins gefunden")
+            logger.info(f"  Classic trades: {len(classic_delisted)} found on delisted coins")
             for trade in classic_delisted:
                 coin = trade['coin']
                 entry = float(trade['entry']) if trade['entry'] else 0.0
                 close_price = _fetch_last_close_or_entry(conn, coin, entry)
                 try:
                     with conn.cursor() as cur:
-                        # status = "DELISTED" damit Market-Tracker/Analyzer
-                        # das als neutral klassifizieren (close_reason aus
-                        # status gelesen in 23_market_tracker und 27-Analyzer)
+                        # status = "DELISTED" so Market-Tracker/Analyzer can
+                        # classify it as neutral (close_reason read from status
+                        # in 23_market_tracker and 27-Analyzer)
                         cur.execute(
                             """
                             INSERT INTO closed_trades_master (
@@ -188,12 +186,10 @@ def cleanup_delisted_trades():
                     conn.commit()
                     closed_classic += 1
                 except Exception as e:
-                    logger.warning(
-                        f"  ⚠ Klassischer Trade {trade['id']} ({coin}) konnte nicht delisted-closed werden: {e}"
-                    )
+                    logger.warning(f"  ⚠ Classic trade {trade['id']} ({coin}) could not be delisted-closed: {e}")
                     conn.rollback()
 
-        # ── AI-Trades (ai_signals) ──
+        # ── AI trades (ai_signals) ──
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, symbol, model, direction, entry1, price, current_target_hit, open_time FROM ai_signals"
@@ -205,7 +201,7 @@ def cleanup_delisted_trades():
         ai_delisted = [t for t in ai_rows if t['symbol'] not in active_coins and looks_like_usdt_perp(t['symbol'])]
 
         if ai_delisted:
-            logger.info(f"  AI-Trades: {len(ai_delisted)} auf delisted Coins gefunden")
+            logger.info(f"  AI trades: {len(ai_delisted)} found on delisted coins")
             for trade in ai_delisted:
                 coin = trade['symbol']
                 entry = (
@@ -240,44 +236,44 @@ def cleanup_delisted_trades():
                     conn.commit()
                     closed_ai += 1
                 except Exception as e:
-                    logger.warning(f"  ⚠ AI-Trade {trade['id']} ({coin}) konnte nicht delisted-closed werden: {e}")
+                    logger.warning(f"  ⚠ AI trade {trade['id']} ({coin}) could not be delisted-closed: {e}")
                     conn.rollback()
 
         if closed_classic == 0 and closed_ai == 0:
-            logger.info("  ✅ Keine delisted Trades gefunden.")
+            logger.info("  ✅ No delisted trades found.")
         else:
-            logger.info(f"  ✅ Delisted-Cleanup: {closed_classic} klassische + {closed_ai} AI-Trades geschlossen.")
+            logger.info(f"  ✅ Delisted-Cleanup: {closed_classic} classic + {closed_ai} AI trades closed.")
 
     except Exception as e:
-        logger.error(f"❌ Fehler beim Delisted-Cleanup: {e}", exc_info=True)
+        logger.error(f"❌ Error during Delisted-Cleanup: {e}", exc_info=True)
         conn.rollback()
     finally:
         conn.close()
 
 
 def _fetch_last_close_or_entry(conn, coin: str, entry: float) -> float:
-    """Holt den letzten verfügbaren 5m-Close des Coins.
+    """Fetches the last available 5m close of the coin.
 
-    Falls no data verfügbar sind (z.B. Coin war nie richtig getraded
-    oder Tabelle fehlt), wird der Entry-Preis zurückgegeben. Das führt
-    zu PnL=0%, was die Trade-Klassifikation als NEUTRAL auslöst — genau
-    was wir für delisted Trades wollen.
+    If no data are available (e.g. coin was never properly traded or table
+    is missing), the entry price is returned. This results in PnL=0%, which
+    triggers trade classification as NEUTRAL — exactly what we want for
+    delisted trades.
 
-    Eine eigene Connection-Sub-Transaktion wäre sauberer, aber Postgres
-    macht bei einer fehlgeschlagenen Query im Hauptcontext sowieso einen
-    Rollback nötig — daher bewusst hier per SAVEPOINT kapseln.
+    A separate connection sub-transaction would be cleaner, but Postgres
+    requires a rollback anyway if a query fails in the main context — so we
+    deliberately encapsulate here via SAVEPOINT.
     """
     if entry <= 0:
         return 0.0
     try:
         with conn.cursor() as cur:
-            # SAVEPOINT verhindert dass ein Lese-Error den Cleanup-Commit kippt
+            # SAVEPOINT prevents a read error from aborting the cleanup commit
             cur.execute("SAVEPOINT sp_fetch_price")
             try:
-                # core.candles: neuester 5m-Close, forming candle bewusst inkludiert
-                # (Preis-Read — contract 2: include_forming=True). read_candles öffnet
-                # einen eigenen Cursor auf derselben Connection; der SAVEPOINT schützt
-                # die Cleanup-Transaktion weiterhin bei fehlender Tabelle.
+                # core.candles: newest 5m close, forming candle deliberately included
+                # (price read — contract 2: include_forming=True). read_candles opens
+                # its own cursor on the same connection; the SAVEPOINT protects the
+                # cleanup transaction even if the table is missing.
                 df = read_candles(conn, coin, "5m", limit=1, include_forming=True, columns=("open_time", "close"))
                 cur.execute("RELEASE SAVEPOINT sp_fetch_price")
                 if not df.empty and df["close"].iloc[-1]:
@@ -290,8 +286,8 @@ def _fetch_last_close_or_entry(conn, coin: str, entry: float) -> float:
 
 
 def update_max_leverage_json():
-    """Holt die maximalen Hebel für alle Coins über die signierte Binance API und speichert sie."""
-    logger.info("🔄 Updating max_leverage.json von Binance...")
+    """Fetches the maximum leverage for all coins via the signed Binance API and saves them."""
+    logger.info("🔄 Updating max_leverage.json from Binance...")
 
     if not BINANCE_API_KEY or not BINANCE_SECRET:
         logger.warning("⚠️ Binance API Keys not set (.env). Leverage-Refresh skipped.")
@@ -300,7 +296,7 @@ def update_max_leverage_json():
     try:
         url = "https://fapi.binance.com/fapi/v1/leverageBracket"
 
-        # Signatur erstellen — recvWindow erlaubt 5s Clock-Drift zwischen uns und Binance
+        # Create signature — recvWindow allows 5s clock drift between us and Binance
         timestamp = int(time.time() * 1000)
         query_string = f"timestamp={timestamp}&recvWindow=5000"
 
@@ -316,7 +312,7 @@ def update_max_leverage_json():
         max_leverages = {}
         for item in data:
             symbol = item["symbol"]
-            # Bracket 1 (Index 0) enthält den absoluten Maximalhebel
+            # Bracket 1 (index 0) contains the maximum leverage
             if "brackets" in item and len(item["brackets"]) > 0:
                 max_lev = item["brackets"][0]["initialLeverage"]
                 max_leverages[symbol] = int(max_lev)
@@ -324,21 +320,21 @@ def update_max_leverage_json():
         if max_leverages:
             with open('max_leverage.json', 'w') as f:
                 json.dump(max_leverages, f, indent=4)
-            logger.info(f"✅ max_leverage.json updated successfully. {len(max_leverages)} Hebel saved.")
+            logger.info(f"✅ max_leverage.json updated successfully. {len(max_leverages)} leverages saved.")
         else:
-            logger.warning("⚠️ Keine Leverage-Daten von Binance zurückgegeben!")
+            logger.warning("⚠️ No leverage data returned from Binance!")
 
     except Exception as e:
-        logger.error(f"❌ Fehler beim Aktualisieren der max_leverage.json: {e}")
+        logger.error(f"❌ Error updating max_leverage.json: {e}")
 
 
 def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
-    """Löscht Bilder, die älter als X Stunden sind.
+    """Deletes images that are older than X hours.
 
-    FIX (#31): Zusätzlich prüfen wir ob der Chart noch in der telegram_outbox
-    referenziert ist. Vorher konnte ein Backlog (after Rate-Limit-Stau) dazu
-    führen, dass der Housekeeping einen noch-zu-sendenden Chart löscht und
-    der Telegram-Bot dann nur den Text ohne Bild schickt.
+    FIX (#31): Additionally we check if the chart is still referenced in the
+    telegram_outbox. Previously, a backlog (after rate-limit congestion) could
+    cause housekeeping to delete a chart still to be sent, and the Telegram
+    bot would then only send text without the image.
     """
     if not os.path.exists(folder_path):
         return
@@ -348,7 +344,7 @@ def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
     deleted_count = 0
     skipped_referenced = 0
 
-    # Referenzierte Charts aus der Outbox holen (alle ungesendeten entries)
+    # Get referenced charts from the outbox (all unsent entries)
     referenced: set[str] = set()
     try:
         conn = get_db_connection()
@@ -361,16 +357,16 @@ def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
         finally:
             conn.close()
     except Exception as e:
-        logger.warning(f"Konnte Outbox-Referenzen nicht laden: {e}")
+        logger.warning(f"Could not load outbox references: {e}")
 
     try:
         for filename in os.listdir(folder_path):
             file_path = os.path.join(folder_path, filename)
 
-            # Nur Dateien prüfen (keine Unterordner)
+            # Only check files (no subdirectories)
             if os.path.isfile(file_path):
-                # Wenn die Datei noch in der Outbox referenziert ist, skippen
-                # (vergleiche sowohl absolute als auch relative Pfade)
+                # If the file is still referenced in the outbox, skip it
+                # (compare both absolute and relative paths)
                 abs_path = os.path.abspath(file_path)
                 if abs_path in referenced or file_path in referenced:
                     skipped_referenced += 1
@@ -383,12 +379,12 @@ def cleanup_generated_charts(folder_path="generated_charts", max_age_hours=2):
 
         if deleted_count > 0 or skipped_referenced > 0:
             logging.info(
-                f"🧹 HOUSEKEEPING: {deleted_count} alte Charts gelöscht, "
-                f"{skipped_referenced} skipped (noch in Outbox referenziert) "
-                f"in '{folder_path}' (älter als {max_age_hours}h)."
+                f"🧹 HOUSEKEEPING: {deleted_count} old charts deleted, "
+                f"{skipped_referenced} skipped (still referenced in outbox) "
+                f"in '{folder_path}' (older than {max_age_hours}h)."
             )
     except Exception as e:
-        logging.error(f"🔥 Fehler beim Löschen der Charts in '{folder_path}': {e}")
+        logging.error(f"🔥 Error deleting charts in '{folder_path}': {e}")
 
 
 def truncate_oversized_logs(log_paths=("logs/dashboard.log",), max_bytes=20 * 1024 * 1024):
@@ -410,25 +406,26 @@ def truncate_oversized_logs(log_paths=("logs/dashboard.log",), max_bytes=20 * 10
                 tail = f.read()
             with open(path, "wb") as f:
                 f.write(tail)
-            logger.info(f"🧹 HOUSEKEEPING: log '{path}' auf die letzten {keep // (1024 * 1024)} MB gekürzt.")
+            logger.info(f"🧹 HOUSEKEEPING: log '{path}' truncated to last {keep // (1024 * 1024)} MB.")
         except Exception as e:
-            logger.warning(f"Konnte Log '{path}' nicht kürzen: {e}")
+            logger.warning(f"Could not truncate log '{path}': {e}")
 
 
 def cleanup_telegram_outbox(max_age_days=7):
-    """FIX: Löscht alte, bereits gesendete telegram_outbox-entries.
+    """FIX: Deletes old, already-sent telegram_outbox entries.
 
-    Vorher lief die Tabelle unbegrenzt voll — bei ~24 Bots × mehreren signalsn
-    pro Tag × monatelangem Betrieb waren das schnell 100.000+ Zeilen. Das hat
-    `SELECT * WHERE sent = FALSE` des Telegram-Bots ausgebremst (Full-Scan).
+    Previously the table would grow unbounded — with ~24 bots × multiple signals
+    per day × months of operation, that quickly became 100,000+ rows. This
+    slowed down the `SELECT * WHERE sent = FALSE` query of the Telegram bot
+    (full table scan).
     """
-    logger.info(f"🧹 Starting Outbox-Cleanup (entries älter als {max_age_days} Tage)...")
+    logger.info(f"🧹 Starting outbox cleanup (entries older than {max_age_days} days)...")
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            # Lösche nur bereits gesendete Nachrichten, damit ungesandte nicht verloren gehen.
-            # Falls die Spalte `created_at` nicht existiert, nutzen wir stattdessen
-            # die niedrigsten IDs als Alter-Heuristik.
+            # Delete only already-sent messages so unsent ones don't get lost.
+            # If the `created_at` column doesn't exist, use the lowest IDs instead
+            # as an age heuristic.
             cur.execute("""
                 SELECT column_name FROM information_schema.columns
                 WHERE table_name = 'telegram_outbox' AND column_name = 'created_at'
@@ -444,17 +441,17 @@ def cleanup_telegram_outbox(max_age_days=7):
                     (f'{max_age_days} days',),
                 )
             else:
-                # Fallback: Lösche gesendete entries mit IDs kleiner als die
-                # aktuell kleinste ID minus einen Puffer (d.h. die ältesten).
-                # Hier einfach alle sent=TRUE löschen, da sonst keine Zeit-Info da ist.
+                # Fallback: Delete sent entries with IDs smaller than the current
+                # smallest ID minus a buffer (i.e., the oldest ones). Here just
+                # delete all sent=TRUE since there is no time info otherwise.
                 cur.execute("DELETE FROM telegram_outbox WHERE sent = TRUE")
 
             deleted = cur.rowcount
         conn.commit()
         if deleted > 0:
-            logger.info(f"🧹 Outbox-Cleanup: {deleted} alte gesendete entries gelöscht.")
+            logger.info(f"🧹 Outbox cleanup: {deleted} old sent entries deleted.")
     except Exception as e:
-        logger.error(f"❌ Fehler beim Outbox-Cleanup: {e}")
+        logger.error(f"❌ Error during outbox cleanup: {e}")
         try:
             conn.rollback()
         except Exception:
@@ -464,10 +461,10 @@ def cleanup_telegram_outbox(max_age_days=7):
 
 
 def clean_old_database_entries():
-    """Löscht alte Kerzen und Indikatoren, um die DB schlank zu halten."""
-    logger.info("🧹 Starting Datenbank-Reinigung (Lösche alte Daten)...")
+    """Deletes old candles and indicators to keep the database lean."""
+    logger.info("🧹 Starting database cleanup (deleting old data)...")
 
-    # --- NEU: Individuelle Aufbewahrungszeiten pro Timeframe ---
+    # --- NEW: Individual retention times per timeframe ---
     retention_policies = {
         '5m': '1 month',
         '15m': '1 year',
@@ -508,11 +505,11 @@ def clean_old_database_entries():
                 # A matched table without open_time shouldn't occur; stay safe.
                 conn.rollback()
 
-        # 3. Schwache Pump/Dump Events löschen (EINMAL after der Tabellen-Schleife,
-        #    nicht bei jeder Tabelle. Vorher lief das ~12.600× durch falsche Einrückung).
+        # 3. Delete weak pump/dump events (ONCE after the table loop, not for
+        #    every table. Previously this ran ~12,600× due to wrong indentation).
         try:
-            # Schwellen zentral in core/config.py — dasselbe Paar gated den
-            # Insert im Detector (10_pump_dump_detector.py, P1.40).
+            # Thresholds centrally in core/config.py — the same pair gates the
+            # insert in the Detector (10_pump_dump_detector.py, P1.40).
             with conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM pump_dump_events WHERE volume_ratio < %s OR ABS(price_change_60s) < %s;",
@@ -520,16 +517,16 @@ def clean_old_database_entries():
                 )
                 deleted_events = cur.rowcount
             if deleted_events > 0:
-                logger.info(f"🧹 HOUSEKEEPING: {deleted_events} schwache Pump/Dump Events gelöscht.")
+                logger.info(f"🧹 HOUSEKEEPING: {deleted_events} weak pump/dump events deleted.")
             conn.commit()
         except Exception as e:
-            logger.error(f"Fehler beim Löschen schwacher Pump/Dump Events: {e}")
+            logger.error(f"Error deleting weak pump/dump events: {e}")
             conn.rollback()
 
-        logger.info(f"✅ Datenbank erfolgreich bereinigt! {cleaned_count} Tabellen wurden geprüft und verkleinert.")
+        logger.info(f"✅ Database cleaned successfully! {cleaned_count} tables checked and reduced.")
 
     except Exception as e:
-        logger.error(f"❌ Schwerer Error for der Reinigung: {e}")
+        logger.error(f"❌ Severe error during cleanup: {e}")
         if conn:
             conn.rollback()
     finally:
@@ -537,37 +534,37 @@ def clean_old_database_entries():
             conn.close()
 
 
-# P2.18: Gap-Filler-REST mit 429/418-Handling. Der Throttle desynchronisiert
-# den Burst über ~9k Tabellen; das Ban-Fenster stoppt bei 418 ALLE weiteren
-# Gap-Fill-Calls bis zum Ablauf (weiter iterieren würde den IP-Ban verlängern
-# und träfe auch die Trading-Endpoints — genau der P2.18-Fehlermodus).
+# P2.18: Gap-Filler REST with 429/418 handling. The throttle desynchronizes
+# the burst across ~9k tables; the ban window stops ALL further gap-fill calls
+# on 418 until expiration (continuing to iterate would extend the IP ban and
+# also hit trading endpoints — exactly the P2.18 failure mode).
 _GAP_FILL_THROTTLE = MinIntervalThrottle()
-_GAP_FILL_MIN_INTERVAL_S = 0.25  # ~4 req/s → weit unter dem Weight-Limit
+_GAP_FILL_MIN_INTERVAL_S = 0.25  # ~4 req/s → well below the weight limit
 _GAP_FILL_MAX_RETRIES = 5
 _GAP_FILL_RETRY_DEADLINE_S = 120.0
-_gap_fill_ban_until = 0.0  # monotonic-Zeitpunkt, bis zu dem die 418-Ban-Pause gilt
-# Zählt 418er über den GANZEN Lauf (Review PR #21): Binance eskaliert
-# Repeat-Offender-Bans — ein flaches 120s-Fenster würde den Ban bei fehlendem
-# Retry-After-Header alle ~2 min re-triggern statt exponentiell zurückzuweichen.
-# Reset erst bei einem erfolgreichen Call.
+_gap_fill_ban_until = 0.0  # monotonic timestamp until which the 418-ban pause holds
+# Counts 418s across the entire run (Review PR #21): Binance escalates
+# repeat-offender bans — a flat 120s window would re-trigger the ban every ~2
+# min if Retry-After header is missing, instead of backing off exponentially.
+# Reset only on a successful call.
 _gap_fill_consecutive_bans = 0
 
 
 def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms: int) -> list | None:
-    """Holt Klines im Range [start_ms, end_ms] von Binance Futures REST.
+    """Fetches klines in the range [start_ms, end_ms] from Binance Futures REST.
 
-    Returns None bei Fehler, sonst Liste von Klines im Binance-Format
+    Returns None on error, otherwise a list of klines in Binance format
     [open_time, open, high, low, close, volume, ...].
-    Max 1500 Kerzen pro Call (Binance-Limit). Bei größeren Ranges muss der
-    Caller paginieren — für unsere Gap-Size (meist <100 candles) kein Thema.
+    Max 1500 candles per call (Binance limit). For larger ranges the caller
+    must paginate — not an issue for our gap size (usually <100 candles).
 
-    P2.18: 429 → Retry-After-bewusster, gebudgeteter Backoff; 418 (IP-Ban)
-    → prozessweites Ban-Fenster (>=120s), alle weiteren Calls liefern bis zum
-    Ablauf sofort None — der nächste nächtliche Lauf holt die Gaps nach.
+    P2.18: 429 → Retry-After-aware, budgeted backoff; 418 (IP ban) →
+    process-wide ban window (>=120s), all subsequent calls return None
+    immediately until expiration — the next nightly run will fetch the gaps.
     """
     global _gap_fill_ban_until, _gap_fill_consecutive_bans
     if time.monotonic() < _gap_fill_ban_until:
-        return None  # 418-Ban-Fenster aktiv — nicht weiter hämmern
+        return None  # 418-ban window active — don't hammer further
 
     url = "https://fapi.binance.com/fapi/v1/klines"
     params = {
@@ -579,9 +576,9 @@ def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms
     }
     budget = RetryBudget(max_attempts=_GAP_FILL_MAX_RETRIES, deadline_s=_GAP_FILL_RETRY_DEADLINE_S)
     consecutive_fail = 0
-    # Anders als in fetch_ohlcv_batch zählt hier JEDER Versuch (inkl. dem
-    # ersten) gegen das Budget — es gibt keine Erfolgs-Pagination in diesem
-    # Ein-Range-Call (Review PR #21, RetryBudget kennt beide Muster).
+    # Unlike in fetch_ohlcv_batch, EVERY attempt (including the first) counts
+    # against the budget here — there is no success pagination in this
+    # single-range call (Review PR #21, RetryBudget knows both patterns).
     while budget.attempt():
         _GAP_FILL_THROTTLE.wait("binance-fapi", _GAP_FILL_MIN_INTERVAL_S)
         try:
@@ -591,24 +588,24 @@ def _fetch_klines_from_binance(symbol: str, interval: str, start_ms: int, end_ms
                 wait = backoff_seconds(418, _gap_fill_consecutive_bans, resp.headers.get("Retry-After"))
                 _gap_fill_ban_until = time.monotonic() + wait
                 logger.warning(
-                    f"Gap-Fill {symbol} {interval}: 418 (IP-Ban-Signal Nr. {_gap_fill_consecutive_bans}) "
-                    f"— Gap-Filler pausiert {wait:.0f}s"
+                    f"Gap-Fill {symbol} {interval}: 418 (IP-Ban signal #{_gap_fill_consecutive_bans}) "
+                    f"— Gap-Filler paused {wait:.0f}s"
                 )
                 return None
             if resp.status_code == 429:
                 consecutive_fail += 1
                 wait = backoff_seconds(429, consecutive_fail, resp.headers.get("Retry-After"))
-                logger.warning(f"Gap-Fill {symbol} {interval}: 429 — Backoff {wait:.0f}s")
+                logger.warning(f"Gap-Fill {symbol} {interval}: 429 — backoff {wait:.0f}s")
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
-            _gap_fill_consecutive_bans = 0  # erfolgreicher Call beendet die Ban-Eskalation
+            _gap_fill_consecutive_bans = 0  # successful call ends the ban escalation
             return resp.json()
         except requests.exceptions.RequestException as e:
             consecutive_fail += 1
-            logger.warning(f"Gap-Fill REST-Call für {symbol} {interval} fehlgeschlagen: {e}")
+            logger.warning(f"Gap-Fill REST call for {symbol} {interval} failed: {e}")
             time.sleep(backoff_seconds(None, consecutive_fail))
-    logger.warning(f"Gap-Fill {symbol} {interval}: Retry-Budget erschöpft ({budget.exhausted_reason()})")
+    logger.warning(f"Gap-Fill {symbol} {interval}: retry budget exhausted ({budget.exhausted_reason()})")
     return None
 
 
@@ -628,22 +625,21 @@ def _timeframe_to_seconds(tf: str) -> int:
 
 
 def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
-    """Nightly Gap-Filler.
+    """Nightly gap-filler.
 
-    Scannt für jeden Coin × Timeframe die letzten `scan_hours` Stunden der
-    `{symbol}_{tf}`-Tabelle auf fehlende Kerzen. Lücken werden via Binance REST
-    aftergeladen, anschließend die entsprechenden entries aus der
-    `{symbol}_{tf}_indicators`-Tabelle ab dem ersten Gap gelöscht, damit die
-    Indicator-Engine beim nächsten regulären Lauf automatisch neu durchrechnet
-    (inkl. voller 1000-Kerzen-Warmup).
+    Scans the last `scan_hours` hours of the `{symbol}_{tf}` table for each
+    coin × timeframe for missing candles. Gaps are refetched via Binance REST,
+    then the corresponding entries from the `{symbol}_{tf}_indicators` table
+    from the first gap onwards are deleted, so the Indicator-Engine automatically
+    recalculates on its next regular run (including full 1000-candle warmup).
 
-    Fehler-Isolation: Exceptions pro Coin+TF werden gefangen, der Rest läuft
-    weiter. Ein einzelner defekter Coin bremst den Job nicht.
+    Error isolation: exceptions per coin+TF are caught, the rest continues.
+    A single faulty coin does not slow down the job.
 
     Args:
-        scan_hours: Wie weit zurück gescannt wird. Default 24h.
+        scan_hours: How far back to scan. Default 24h.
     """
-    logger.info(f"🔍 Gap-Filler startet (Scan-Window: {scan_hours}h, {len(TIMEFRAMES)} Timeframes)...")
+    logger.info(f"🔍 Gap-Filler starting (scan window: {scan_hours}h, {len(TIMEFRAMES)} timeframes)...")
     start_time = time.time()
 
     try:
@@ -652,7 +648,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
         coins = data.get("coins", data) if isinstance(data, dict) else data
         coins = [c.upper() for c in coins if c.upper().endswith("USDT")]
     except Exception as e:
-        logger.error(f"Gap-Filler konnte coins.json nicht laden: {e}")
+        logger.error(f"Gap-Filler could not load coins.json: {e}")
         return
 
     now_ms = int(time.time() * 1000)
@@ -673,77 +669,77 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                     if tf_seconds == 0:
                         continue
 
-                    # 1) Existierende GESCHLOSSENE Kerzen im Scan-Fenster lesen.
-                    #    include_forming=False: die forming Kerze ist keine Lücke,
-                    #    also gehört sie nicht in die Gap-Diff.
+                    # 1) Read existing CLOSED candles in the scan window.
+                    #    include_forming=False: the forming candle is not a gap,
+                    #    so it doesn't belong in the gap diff.
                     scan_start_dt = datetime.datetime.fromtimestamp(scan_start_ms / 1000, tz=datetime.timezone.utc)
                     try:
                         df_scan = read_candles(
                             conn, symbol, tf, start=scan_start_dt, include_forming=False, columns=("open_time",)
                         )
                     except Exception:
-                        # Tabelle existiert vermutlich noch nicht (neuer Coin) → skip
+                        # Table probably doesn't exist yet (new coin) → skip
                         conn.rollback()
                         continue
 
                     if len(df_scan) < 2:
-                        # Keine oder kaum Daten im Scan-Fenster — zu wenig zum Gaps-Detektieren
+                        # No or little data in scan window — too little to detect gaps
                         continue
 
-                    # 2) Gaps finden: diff zwischen aufeinanderfolgenden open_times
-                    #    Erwartung: tf_seconds; Toleranz ×1.5 für minor latencies
+                    # 2) Find gaps: diff between consecutive open_times
+                    #    Expected: tf_seconds; tolerance ×1.5 for minor latencies
                     expected_delta_ms = tf_seconds * 1000
                     tolerance_ms = int(expected_delta_ms * 1.5)
 
                     times_ms = [int(ts.timestamp() * 1000) for ts in df_scan["open_time"]]
-                    gap_ranges = []  # Liste von (missing_start_ms, missing_end_ms)
+                    gap_ranges = []  # list of (missing_start_ms, missing_end_ms)
 
                     for i in range(1, len(times_ms)):
                         delta = times_ms[i] - times_ms[i - 1]
                         if delta > tolerance_ms:
-                            # Gap! Fehlende Kerzen liegen zwischen [i-1] + expected und [i] - expected
+                            # Gap! Missing candles lie between [i-1] + expected and [i] - expected
                             gap_start = times_ms[i - 1] + expected_delta_ms
                             gap_end = times_ms[i] - expected_delta_ms
                             if gap_end >= gap_start:
                                 gap_ranges.append((gap_start, gap_end))
 
                     if not gap_ranges:
-                        continue  # keine Gaps in diesem Coin+TF
+                        continue  # no gaps in this coin+TF
 
-                    # 3) Pro Gap-Range via REST afterladen und inserten
-                    first_gap_ms = gap_ranges[0][0]  # ältester Gap — merken für Indikator-DELETE
+                    # 3) Refetch via REST per gap-range and insert
+                    first_gap_ms = gap_ranges[0][0]  # oldest gap — remember for indicator DELETE
                     candles_inserted_for_cointf = 0
 
                     for gap_start_ms, gap_end_ms in gap_ranges:
-                        # Binance endTime ist inklusive — wir addieren expected_delta damit
-                        # die letzte Kerze sicher mit drin ist
+                        # Binance endTime is inclusive — we add expected_delta so the
+                        # last candle is definitely included
                         klines = _fetch_klines_from_binance(symbol, tf, gap_start_ms, gap_end_ms + expected_delta_ms)
                         if not klines:
                             continue
 
-                        # 4) upsert_candles pro Kerze (closed=True) — der Upsert
-                        # keyt auf (symbol, open_time). FIX P0.9 (historisch): der
-                        # alte INSERT ließ `symbol` weg und nutzte ON CONFLICT
-                        # (open_time) ohne passenden Unique-Index → JEDER Insert
-                        # warf, das except verschluckte es still, und der Gap-Filler
-                        # war ein No-op. Der zentrale Upsert hat den PK korrekt.
-                        # Savepoint pro Row, damit ein Einzel-Fehler nicht die
-                        # Transaktion für den Rest des Batches abortet.
+                        # 4) upsert_candles per candle (closed=True) — the upsert keys
+                        # on (symbol, open_time). FIX P0.9 (historical): the old INSERT
+                        # left off `symbol` and used ON CONFLICT (open_time) without a
+                        # matching unique index → EVERY insert failed, the except silently
+                        # swallowed it, and the gap-filler was a no-op. The central
+                        # upsert has the PK correct. Savepoint per row so a single error
+                        # doesn't abort the transaction for the rest of the batch.
                         with conn.cursor() as cur:
                             for k in klines:
                                 try:
-                                    # SAVEPOINT als ERSTE Anweisung im try — stünde er
-                                    # nach dem Parsing, würde ein Parse-Fehler in Row N
-                                    # auf den Savepoint VOR Row N-1s Insert zurückrollen
-                                    # und deren Kerze still wieder löschen.
+                                    # SAVEPOINT as FIRST statement in try — if it came
+                                    # after parsing, a parse error in row N would roll back
+                                    # to the savepoint before row N-1's insert and silently
+                                    # delete its candle again.
                                     cur.execute("SAVEPOINT gap_fill_row")
                                     ot_ms = int(k[0])
-                                    # Nur die FEHLENDEN Kerzen [gap_start, gap_end] einfügen. Die
-                                    # rechte Grenze gap_end + expected_delta ist times[i] — die
-                                    # bereits existierende Kerze NACH der Lücke, die der Scan sah;
-                                    # sie per >= ausschließen. Sonst zählte sie (No-op-Upsert) als
-                                    # "gefüllt" und triggerte die Indikator-Invalidierung unten
-                                    # fälschlich auf unfüllbaren Lücken (Review T-2026-CU-9050-114).
+                                    # Only insert MISSING candles [gap_start, gap_end]. The
+                                    # right boundary gap_end + expected_delta is times[i] —
+                                    # the already-existing candle AFTER the gap that the scan
+                                    # saw; exclude it via >=. Otherwise it (no-op upsert) would
+                                    # count as "filled" and falsely trigger indicator
+                                    # invalidation below on unfillable gaps (Review
+                                    # T-2026-CU-9050-114).
                                     if ot_ms < gap_start_ms or ot_ms >= gap_end_ms + expected_delta_ms:
                                         continue
                                     ot = datetime.datetime.fromtimestamp(ot_ms / 1000, tz=datetime.timezone.utc)
@@ -766,43 +762,43 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                                     # row is isolated to its row.
                                     candles_inserted_for_cointf += upsert_candles(conn, symbol, tf, [row], closed=True)
                                 except Exception as row_err:
-                                    # FIX P0.9: Fehler loggen statt still verschlucken
-                                    logger.warning(f"Gap-Filler: Insert-Fehler {symbol} {tf} @ {k[0]}: {row_err}")
+                                    # FIX P0.9: log errors instead of silently swallowing them
+                                    logger.warning(f"Gap-Filler: insert error {symbol} {tf} @ {k[0]}: {row_err}")
                                     try:
                                         cur.execute("ROLLBACK TO SAVEPOINT gap_fill_row")
                                     except Exception:
-                                        break  # Transaktion nicht mehr nutzbar — Batch abbrechen
+                                        break  # transaction no longer usable — abort batch
                                     continue
                         conn.commit()
 
                     if candles_inserted_for_cointf == 0:
-                        # Gaps erkannt aber REST lieferte nichts (oder alles Duplikate)
+                        # Gaps detected but REST delivered nothing (or all duplicates)
                         continue
 
-                    # 5) Indikator-Invalidierung: alle Rows ab first_gap löschen
+                    # 5) Indicator invalidation: delete all rows from first_gap onwards
                     first_gap_dt = datetime.datetime.fromtimestamp(first_gap_ms / 1000, tz=datetime.timezone.utc)
                     rows_invalidated = 0
                     try:
                         rows_invalidated = delete_indicators_from(conn, symbol, tf, first_gap_dt)
                         conn.commit()
                     except Exception:
-                        # Indicator-Tabelle existiert evtl. nicht — harmlos, Engine baut sie neu
+                        # Indicator table may not exist — harmless, engine will rebuild it
                         conn.rollback()
 
                     logger.info(
-                        f"🔧 {symbol}_{tf}: {candles_inserted_for_cointf} Kerzen gefüllt "
-                        f"(ab {first_gap_dt.strftime('%Y-%m-%d %H:%M UTC')}), "
-                        f"{rows_invalidated} Indikator-Rows invalidiert"
+                        f"🔧 {symbol}_{tf}: {candles_inserted_for_cointf} candles filled "
+                        f"(from {first_gap_dt.strftime('%Y-%m-%d %H:%M UTC')}), "
+                        f"{rows_invalidated} indicator rows invalidated"
                     )
                     total_coins_affected += 1
                     total_candles_filled += candles_inserted_for_cointf
                     total_indicator_rows_invalidated += rows_invalidated
 
-                    # Sanft zur Binance-API: kurze Pause zwischen Coins mit Gaps
+                    # Be nice to Binance API: short pause between coins with gaps
                     time.sleep(0.1)
 
                 except Exception as e:
-                    logger.warning(f"Gap-Filler-Error for {symbol}_{tf}: {e}")
+                    logger.warning(f"Gap-Filler error for {symbol}_{tf}: {e}")
                     try:
                         conn.rollback()
                     except Exception:
@@ -818,77 +814,77 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
 
     duration = time.time() - start_time
     if total_coins_affected == 0:
-        logger.info(f"✅ Gap-Filler fertig: keine Lücken gefunden ({duration:.1f}s).")
+        logger.info(f"✅ Gap-Filler done: no gaps found ({duration:.1f}s).")
     else:
         logger.info(
-            f"✅ Gap-Filler fertig: {total_coins_affected} Coin+TF-Kombis betroffen, "
-            f"{total_candles_filled} Kerzen aftergeladen, "
-            f"{total_indicator_rows_invalidated} Indikator-Rows invalidiert. "
-            f"Dauer: {duration:.1f}s. "
-            f"Indicator-Engine rechnet beim nächsten Run automatisch neu."
+            f"✅ Gap-Filler done: {total_coins_affected} coin+TF combinations affected, "
+            f"{total_candles_filled} candles refetched, "
+            f"{total_indicator_rows_invalidated} indicator rows invalidated. "
+            f"Duration: {duration:.1f}s. "
+            f"Indicator-Engine will automatically recalculate on next run."
         )
 
 
 def main():
-    logger.info("=== 🛡️ HOUSEKEEPING SERVICE GESTARTET ===")
-    logger.info("Führe Initialen Run aus...")
+    logger.info("=== 🛡️ HOUSEKEEPING SERVICE STARTED ===")
+    logger.info("Running initial pass...")
 
-    # 0. Initialer Run beim Starten des Skripts (falls man es manuell neustartet)
+    # 0. Initial run when starting the script (if manually restarted)
     update_coins_json()
-    # Direkt after update_coins_json laufen lassen damit neu delisted Coins
-    # sofort bereinigt werden — nicht erst am nächsten 03:00-Cycle warten.
+    # Run immediately after update_coins_json so newly delisted coins are
+    # cleaned up right away — don't wait until the next 03:00 cycle.
     cleanup_delisted_trades()
     update_max_leverage_json()
 
-    logger.info("Waiting im Hintergrund auf 03:00 Uhr UTC...")
+    logger.info("Waiting in the background for 03:00 UTC...")
 
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
 
-        # Pünktlich um 03:00 Uhr (Minute 0)
+        # Right at 03:00 (minute 0)
         if now.hour == 3 and now.minute == 00:
-            logger.info("⏰ 03:00 Uhr erreicht. Beginne nächtliche Wartung...")
+            logger.info("⏰ 03:00 reached. Starting nightly maintenance...")
 
-            # 1. Neue Coins abholen (falls Binance welche gelistet/delisted hat)
+            # 1. Fetch new coins (if Binance listed/delisted any)
             update_coins_json()
 
-            # 2. Delisted-Trades aufräumen (after update_coins_json damit die
-            # frisch aktualisierte coins.json verwendet wird)
+            # 2. Clean up delisted trades (after update_coins_json so the
+            # freshly updated coins.json is used)
             cleanup_delisted_trades()
 
-            # 3. Maximale Hebel aktualisieren
+            # 3. Update maximum leverage
             update_max_leverage_json()
 
-            # 4. Alte Daten in der DB wegwerfen (inkl. schwache Pump/Dumps)
+            # 4. Delete old data in the DB (including weak pump/dumps)
             clean_old_database_entries()
 
-            # 5. Die alten Bilder löschen
+            # 5. Delete old images
             cleanup_generated_charts("generated_charts")  # 7_pattern_detector
             cleanup_generated_charts("charts")  # core/charting.py
             # P3.11: 22_ip_pattern_bot writes here and nothing was cleaning it →
             # unbounded growth. Same outbox-referenced guard as the others.
             cleanup_generated_charts("institutional_charts")
 
-            # 6. FIX: Alte (gesendete) Outbox-entries löschen — sonst läuft die
-            # Tabelle unbegrenzt voll.
+            # 6. FIX: Delete old (sent) outbox entries — otherwise the table
+            # grows unbounded.
             cleanup_telegram_outbox(max_age_days=7)
 
-            # 6b. P3.2: den unrotierten dashboard.log-Pipe kappen.
+            # 6b. P3.2: cap the unrotated dashboard.log pipe.
             truncate_oversized_logs()
 
-            # 7. Nightly Gap-Filler: scannt die letzten 24h aller Coin×TF-Tabellen
-            # auf fehlende Kerzen, füllt sie via Binance REST, und invalidiert
-            # die entsprechenden Indikator-entries ab dem ersten Gap. Die
-            # Indicator-Engine rechnet beim nächsten 30-Minuten-Run automatisch
-            # neu (inkl. 1000-Kerzen-Warmup) — keine Sprünge in den Werten.
+            # 7. Nightly gap-filler: scans the last 24h of all coin×TF tables
+            # for missing candles, refetches them via Binance REST, and
+            # invalidates the corresponding indicator entries from the first gap
+            # onwards. Indicator-Engine recalculates automatically on its next
+            # 30-minute run (including 1000-candle warmup) — no jumps in values.
             fill_ohlcv_gaps_and_invalidate_indicators(scan_hours=24)
 
-            # Schlafe 65 Sekunden, damit er 03:01 Uhr erreicht
-            # und die Routine heute nicht nochmal auslöst
-            logger.info("💤 Wartung completed. Schlafe bis morgen 03:00 Uhr...")
+            # Sleep 65 seconds so it reaches 03:01
+            # and doesn't trigger the routine again today
+            logger.info("💤 Maintenance complete. Sleeping until tomorrow 03:00...")
             time.sleep(65)
 
-        # Kurze Prüfung alle 30 Sekunden reicht völlig (schont die CPU)
+        # Brief check every 30 seconds is enough (saves CPU)
         time.sleep(30)
 
 
@@ -896,4 +892,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

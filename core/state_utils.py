@@ -1,18 +1,18 @@
 """
-core/state_utils.py — Zentrale Helper für persistente State-Dateien
+core/state_utils.py — Central helpers for persistent state files
 
-FIX (#88): Vorher hatte jeder Bot seine eigene State-File-Logik mit leicht
-unterschiedlichen Patterns:
+FIX (#88): Previously every bot had its own state-file logic with slightly
+different patterns:
   - Some used direct `open('w').write(json.dumps(...))` → under concurrent
-    Read sichtbarer halb-geschriebener File
-  - Manche hatten tmp-File-Pattern, aber ohne fsync → OS-Cache konnte bei
-    Stromausfall leere oder halb-geschriebene Files hinterlassen
-  - Error-Handling war inkonsistent (manche loggten, manche schluckten)
+    read a visible half-written file
+  - Some had a tmp-file pattern, but without fsync → OS cache could leave
+    empty or half-written files behind on a power outage
+  - Error handling was inconsistent (some logged, some swallowed)
 
-Jetzt zentral:
-  - atomic_write_json: tmp + fsync + os.replace für garantierte Atomicity
-  - atomic_read_json: mit Default-Fallback bei Korruption
-  - Alles mit einheitlichem Logging
+Now centralised:
+  - atomic_write_json: tmp + fsync + os.replace for guaranteed atomicity
+  - atomic_read_json: with default fallback on corruption
+  - everything with unified logging
 """
 
 import json
@@ -24,15 +24,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Windows: os.replace scheitert mit PermissionError, wenn ein Reader die
-# Zieldatei genau im Replace-Moment offen hält. Ein kurzer Retry überbrückt
-# dieses schmale Fenster, statt das Update still zu verwerfen (P2.49).
+# Windows: os.replace fails with PermissionError if a reader holds the
+# target file open at exactly the moment of the replace. A short retry
+# bridges this narrow window instead of silently discarding the update (P2.49).
 _REPLACE_RETRIES = 5
 _REPLACE_RETRY_SLEEP_S = 0.05
 
 
 def _cleanup_tmp(tmp: str) -> None:
-    """Entfernt eine liegengebliebene Temp-Datei, ohne selbst zu werfen."""
+    """Removes a leftover temp file without raising itself."""
     try:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -41,41 +41,41 @@ def _cleanup_tmp(tmp: str) -> None:
 
 
 def atomic_write_json(filepath: str, data: Any, indent: int = 2) -> bool:
-    """Schreibt JSON atomar via Temp-File + os.replace.
+    """Writes JSON atomically via temp file + os.replace.
 
-    Returns True bei Erfolg, False bei Fehler (mit Log-Entry).
-    Ein konkurrenter Reader sieht IMMER entweder die alte oder die neue
-    Version, niemals einen halb-geschriebenen Zwischenstand.
+    Returns True on success, False on error (with a log entry).
+    A concurrent reader ALWAYS sees either the old or the new
+    version, never a half-written intermediate state.
 
-    P2.49-Härtung:
-      - Unique Temp-Name via ``tempfile.mkstemp`` im ZIELVERZEICHNIS statt eines
-        festen ``.tmp``. Zwei parallele Writer auf denselben Pfad kollidierten
-        sonst auf derselben Temp-Datei und korrumpierten sich gegenseitig; das
-        gleiche Verzeichnis hält ``os.replace`` auf einem Dateisystem, sodass
-        die Atomicity-Garantie erhalten bleibt (Muster core/coins.py, #68).
-      - Kurzer Retry auf ``os.replace``, das auf Windows mit ``PermissionError``
-        scheitert, solange ein Reader die Zieldatei offen hält. Bleibt es nach
-        allen Versuchen blockiert, wird das GELOGGT (kein stiller Update-Verlust
-        mehr) und die Temp-Datei aufgeräumt.
+    P2.49 hardening:
+      - Unique temp name via ``tempfile.mkstemp`` in the TARGET DIRECTORY instead
+        of a fixed ``.tmp``. Two parallel writers on the same path would otherwise
+        collide on the same temp file and corrupt each other; the same
+        directory keeps ``os.replace`` on one filesystem, so the atomicity
+        guarantee is preserved (pattern from core/coins.py, #68).
+      - Short retry on ``os.replace``, which on Windows fails with
+        ``PermissionError`` as long as a reader holds the target file open. If it
+        is still blocked after all attempts, this is LOGGED (no more silent
+        update loss) and the temp file is cleaned up.
     """
     if not filepath:
-        logger.error("atomic_write_json: Leerer Pfad übergeben")
+        logger.error("atomic_write_json: empty path passed")
         return False
 
-    # abspath() → dirname() ist immer nicht-leer, auch bei bloßem Dateinamen.
+    # abspath() → dirname() is always non-empty, even for a bare filename.
     parent = os.path.dirname(os.path.abspath(filepath))
     try:
         if not os.path.exists(parent):
             os.makedirs(parent, exist_ok=True)
     except OSError as e:
-        logger.error(f"atomic_write_json: Zielverzeichnis für {filepath} nicht anlegbar: {e}")
+        logger.error(f"atomic_write_json: could not create target directory for {filepath}: {e}")
         return False
 
     basename = os.path.basename(filepath)
     try:
         fd, tmp = tempfile.mkstemp(dir=parent, prefix=f".{basename}.", suffix=".tmp")
     except OSError as e:
-        logger.error(f"atomic_write_json: Temp-Datei für {filepath} nicht anlegbar: {e}")
+        logger.error(f"atomic_write_json: could not create temp file for {filepath}: {e}")
         return False
 
     try:
@@ -84,9 +84,9 @@ def atomic_write_json(filepath: str, data: Any, indent: int = 2) -> bool:
             f.flush()
             os.fsync(f.fileno())
 
-        # os.replace ist atomar auf POSIX und Windows. Auf Windows kann es aber
-        # mit PermissionError scheitern, solange ein Reader die Zieldatei offen
-        # hält → kurzer Retry statt stillem Update-Verlust.
+        # os.replace is atomic on POSIX and Windows. On Windows, however, it can
+        # fail with PermissionError as long as a reader holds the target file
+        # open → short retry instead of silent update loss.
         last_err: OSError | None = None
         for _ in range(_REPLACE_RETRIES):
             try:
@@ -96,28 +96,28 @@ def atomic_write_json(filepath: str, data: Any, indent: int = 2) -> bool:
                 last_err = e
                 time.sleep(_REPLACE_RETRY_SLEEP_S)
         logger.error(
-            f"atomic_write_json: os.replace auf {filepath} nach {_REPLACE_RETRIES} Versuchen "
-            f"blockiert (Reader hält die Datei offen?): {last_err} — Update NICHT geschrieben."
+            f"atomic_write_json: os.replace on {filepath} still blocked after "
+            f"{_REPLACE_RETRIES} attempts (reader holding the file open?): {last_err} — update NOT written."
         )
         _cleanup_tmp(tmp)
         return False
     except Exception as e:
-        logger.error(f"Error during atomic write von {filepath}: {e}")
+        logger.error(f"Error during atomic write of {filepath}: {e}")
         _cleanup_tmp(tmp)
         return False
 
 
 def atomic_read_json(filepath: str, default: Any = None) -> Any:
-    """Liest JSON defensiv.
+    """Reads JSON defensively.
 
-    Returns `default` wenn:
-      - File nicht existiert
-      - File leer ist
-      - JSON-Decode-Fehler (z.B. korrupt durch vorherigen Crash)
+    Returns `default` if:
+      - the file does not exist
+      - the file is empty
+      - a JSON decode error occurs (e.g. corrupted by a previous crash)
 
-    Der Default wird sowohl zurückgegeben als auch automatisch als neue
-    frische State-Datei geschrieben, damit Bots nicht bei jedem Start
-    immer wieder auf die korrupte Datei stoßen.
+    The default is both returned and automatically written as a fresh new
+    state file, so bots don't keep running into the corrupt file on every
+    start.
     """
     if not filepath or not os.path.exists(filepath):
         return default
@@ -137,5 +137,5 @@ def atomic_read_json(filepath: str, default: Any = None) -> Any:
             pass
         return default
     except Exception as e:
-        logger.error(f"Error reading von {filepath}: {e}")
+        logger.error(f"Error reading {filepath}: {e}")
         return default

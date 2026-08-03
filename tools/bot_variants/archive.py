@@ -1,31 +1,30 @@
 #!/usr/bin/env python3
-# tools/bot_variants/archive.py — reproduzierbares Modell-/Code-Archiv
-# (T-2026-KYT-9050-039, Phase 2 = D2 + D4). Baut auf dem read-only Index
-# (index.build_index) auf und materialisiert je Generation ein Manifest.
+# tools/bot_variants/archive.py — reproducible model/code archive
+# (T-2026-KYT-9050-039, phase 2 = D2 + D4). Builds on the read-only index
+# (index.build_index) and materialises a manifest per generation.
 #
-# ZWECK: Aus der Index-Join-Sicht ein REPRODUZIERBARES Archiv machen —
-# model_archive/<family>/<tag>/manifest.json —, das jede Generation jederzeit
-# (a) live-swapbar (T-037-Muster: altes Artefakt + Code-Revert auf code_ref +
-# Register-Flip) oder (b) in Sim gegeneinander lauffähig macht. Der Live-Swap
-# und das Sim-A/B sind Phase 3 (stage.py / compare.py).
+# PURPOSE: make a REPRODUCIBLE archive from the index-join perspective —
+# model_archive/<family>/<tag>/manifest.json — that makes each generation
+# (a) live-swappable (T-037 pattern: old artifact + code revert to code_ref +
+# register flip) or (b) runnable against each other in sim at any time.
+# Live swap and sim A/B are phase 3 (stage.py / compare.py).
 #
-# ENTSCHEIDUNG „Groß-Artefakte" (Spec §3 D2): REFERENCE-BASED statt Voll-Copy.
-# ALLE Fleet-Artefakte (root + staging_models, ~48 MB) sind bereits git-tracked;
-# das Manifest hält md5 + source_origin + `source_commit` ⇒ jede Generation ist
-# über `git show <source_commit>:<path>` byte-genau (md5-verifizierbar)
-# rekonstruierbar. Ein Binär-Copy würde 48 MB im Repo verdoppeln, ohne
-# Reproduzierbarkeit zu gewinnen. `--copy-binaries` (opt-in) erzeugt bei Bedarf
-# ein self-contained Export.
+# DECISION "large artifacts" (spec §3 D2): REFERENCE-BASED instead of full copy.
+# ALL fleet artifacts (root + staging_models, ~48 MB) are already git-tracked;
+# the manifest holds md5 + source_origin + `source_commit` ⇒ each generation is
+# reconstructible byte-exact (md5-verifiable) via `git show <source_commit>:<path>`.
+# A binary copy would double 48 MB in the repo without gaining reproducibility.
+# `--copy-binaries` (opt-in) creates a self-contained export as needed.
 #
 # Invariants:
-#   * READ-ONLY außerhalb model_archive/. Kein DB-Zugriff, kein Netzwerk, keine
-#     Root-Promotion, kein Restart (harte Regeln 1/2/7). git nur lesend.
-#   * DETERMINISTISCH/IDEMPOTENT: stabil sortiert; code_ref für aktive
-#     Generationen SYMBOLISCH „HEAD" (kein volatiler HEAD-SHA im Manifest);
-#     source_commit/lifecycle_history sind historische (stabile) SHAs ⇒ zwei
-#     Läufe bei gleichem HEAD = byte-identisch.
-#   * KEIN SILENT-DROP: nicht-git-getrackte Artefakte werden markiert
-#     (git_tracked=false + Hinweis, dass nur --copy-binaries sie bewahrt).
+#   * READ-ONLY outside model_archive/. No DB access, no network, no root
+#     promotion, no restart (hard rules 1/2/7). git read-only.
+#   * DETERMINISTIC/IDEMPOTENT: stably sorted; code_ref for active
+#     generations symbolically "HEAD" (no volatile HEAD-SHA in manifest);
+#     source_commit/lifecycle_history are historical (stable) SHAs ⇒ two runs
+#     at same HEAD = byte-identical.
+#   * NO SILENT DROP: non-git-tracked artifacts are marked
+#     (git_tracked=false + note that only --copy-binaries preserves them).
 
 from __future__ import annotations
 
@@ -49,15 +48,15 @@ MANIFEST_SCHEMA = "bot_variants_manifest/v1"
 ARCHIVE_MD = os.path.join(ix.ARCHIVE_DIR, "ARCHIVE.md")
 _SHADOW_GATE_REL = "core/shadow_gate.py"
 _DEFAULT_MAX_COPY_MB = 8.0
-# Zustände, deren Emissions-Logik im AKTUELLEN Baum lebt (checkout HEAD genügt).
+# States whose emission logic lives in the CURRENT tree (checkout HEAD suffices).
 _ACTIVE_STATES = (shadow_gate.LIVE, shadow_gate.SHADOW, shadow_gate.SILENT)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# git-Helfer (read-only; fail-soft, damit das Archiv nie an git stirbt)
+# git helper (read-only; fail-soft so archive never dies on git)
 # ─────────────────────────────────────────────────────────────────────────────
 def _git(*args: str) -> str:
-    """`git <args>` in REPO_ROOT; stdout gestript oder "" bei jedem Fehler."""
+    """`git <args>` in REPO_ROOT; stdout stripped or "" on any error."""
     try:
         out = subprocess.run(
             ["git", *args],
@@ -67,20 +66,20 @@ def _git(*args: str) -> str:
             check=False,
             timeout=30,
         )
-    except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - git fehlt/Timeout
-        logger.warning("git %s fehlgeschlagen: %s", " ".join(args), exc)
+    except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - git missing/timeout
+        logger.warning("git %s failed: %s", " ".join(args), exc)
         return ""
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
 def _source_commit(rel_path: str) -> str | None:
-    """Letzter Commit, der die Artefakt-Datei geändert hat (git-show-Anker)."""
+    """Last commit that changed the artifact file (git-show anchor)."""
     sha = _git("log", "-1", "--format=%H", "--", rel_path)
     return sha or None
 
 
 def _lifecycle_history(tag: str) -> list[dict[str, str]]:
-    """Commits, die den Tag im shadow_gate-Register berührt haben (Lifecycle-Historie)."""
+    """Commits that touched the tag in the shadow_gate register (lifecycle history)."""
     raw = _git(
         "log",
         "--format=%h\x1f%ad\x1f%s",
@@ -99,19 +98,19 @@ def _lifecycle_history(tag: str) -> list[dict[str, str]]:
 
 
 def _resolve_code_ref(gen: dict[str, Any]) -> dict[str, Any]:
-    """D4: git-Punkt, an dem die Generations-Logik lebt(e).
+    """D4: git point where the generation logic lives(d).
 
-    Aktive Generation (irgendein live/shadow/silent Bein) ⇒ Logik im aktuellen
-    Baum ⇒ symbolisch ``HEAD`` (kein volatiler SHA ins Manifest). Sonst
-    (vollständig retired) via ``git log -S`` über das emittierende Script +
-    shadow_gate — das ist der T-037-Anker (RUB1-SHORT lag bei ``07c8874^``, dem
-    Parent des Removal-Commits; der Live-Swap nutzt ggf. ``<sha>^``)."""
+    Active generation (any live/shadow/silent leg) ⇒ logic in current tree ⇒
+    symbolically ``HEAD`` (no volatile SHA in manifest). Otherwise (completely
+    retired) via ``git log -S`` over the emitting script + shadow_gate — that's
+    the T-037 anchor (RUB1-SHORT was at ``07c8874^``, parent of the removal
+    commit; live swap uses ``<sha>^`` if needed)."""
     if any(v in _ACTIVE_STATES for v in gen["lifecycle"].values()):
         return {
             "ref": "HEAD",
             "sha": None,
             "method": "active-in-tree",
-            "note": "Logik im aktuellen Baum — checkout HEAD",
+            "note": "Logic in current tree — checkout HEAD",
         }
     script = gen["script"]
     paths = [p for p in (script, _SHADOW_GATE_REL) if p]
@@ -126,33 +125,33 @@ def _resolve_code_ref(gen: dict[str, Any]) -> dict[str, Any]:
                 "method": "git-log-S",
                 "token": token,
                 "subject": subject,
-                "note": "letzte Kommit-Berührung; für den Live-Swap ggf. <ref>^ (T-037-Muster)",
+                "note": "last commit touch; for live-swap use <ref>^ if needed (T-037 pattern)",
             }
     return {
         "ref": None,
         "sha": None,
         "method": "unresolved",
-        "note": "manuell auflösen: git log --follow -S<datei> -- <script>",
+        "note": "resolve manually: git log --follow -S<file> -- <script>",
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Manifest-Bau
+# Manifest building
 # ─────────────────────────────────────────────────────────────────────────────
 def _family_dir(family: str | None) -> str:
     return (family or "_unknown").lower()
 
 
 def archive_dir_for(gen: dict[str, Any]) -> str:
-    """Absoluter Zielordner model_archive/<family>/<tag>/ einer Generation."""
+    """Absolute destination folder model_archive/<family>/<tag>/ of a generation."""
     return os.path.join(ix.ARCHIVE_DIR, _family_dir(gen["family"]), gen["tag"])
 
 
 def _artifact_manifest_entry(art: dict[str, Any]) -> dict[str, Any]:
-    """Index-Artefakt-Eintrag → Manifest-Eintrag (+ source_commit / git_tracked).
+    """Index artifact entry → manifest entry (+ source_commit / git_tracked).
 
-    Der volle Feature-Kontrakt (D2 „features") wird aus der meta an die
-    Manifest-Ebene gehoben; die summarische meta behält ``n_features``."""
+    The full feature contract (D2 "features") is lifted from meta to manifest
+    level; the summary meta keeps ``n_features``."""
     source_commit = _source_commit(art["path"]) if art["exists"] and art["path"] else None
     meta = art["meta"]
     features = None
@@ -168,19 +167,19 @@ def _artifact_manifest_entry(art: dict[str, Any]) -> dict[str, Any]:
         "bytes": art["bytes"],
         "source_commit": source_commit,
         "git_tracked": source_commit is not None,
-        "archived_copy": None,  # von copy_binaries gesetzt
+        "archived_copy": None,  # set by copy_binaries
         "features": features,
         "meta": meta,
     }
 
 
 def build_manifest(gen: dict[str, Any]) -> dict[str, Any]:
-    """Vollständiges Manifest-Dict einer Generation (JSON-serialisierbar)."""
+    """Complete manifest dict of a generation (JSON-serializable)."""
     artifacts = [_artifact_manifest_entry(a) for a in gen["artifacts"]]
     notes = list(gen["notes"])
     untracked = sorted({a["filename"] for a in artifacts if a["exists"] and not a["git_tracked"]})
     if untracked:
-        notes.append("nicht git-getrackt (nur via --copy-binaries bewahrt): " + ", ".join(untracked))
+        notes.append("not git-tracked (only preserved via --copy-binaries): " + ", ".join(untracked))
     return {
         "schema": MANIFEST_SCHEMA,
         "tag": gen["tag"],
@@ -199,21 +198,21 @@ def build_manifest(gen: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_manifests(load_embedded: bool = True) -> list[dict[str, Any]]:
-    """Manifeste für alle Generationen des Index (deterministisch sortiert)."""
+    """Manifests for all generations in the index (deterministically sorted)."""
     index = ix.build_index(load_embedded=load_embedded, include_features=True)
     return [build_manifest(gen) for gen in index["generations"]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Binär-Copy (opt-in) + md5-Verifikation
+# Binary copy (opt-in) + md5 verification
 # ─────────────────────────────────────────────────────────────────────────────
 def copy_binaries(manifest: dict[str, Any], max_copy_mb: float) -> list[str]:
-    """Kopiert die Quell-Artefakte einer Generation nach model_archive/<f>/<tag>/.
+    """Copies source artifacts of a generation to model_archive/<f>/<tag>/.
 
-    md5-verifiziert (Kopie == Quelle, Regel: byte-identisch). Übergroße Dateien
-    (> max_copy_mb) werden übersprungen und im Rückgabe-Log genannt (kein Silent-
-    Skip). Setzt ``archived_copy`` je Artefakt. Nur nach model_archive/ — NIE
-    Root/live (Hard Rule 2)."""
+    md5-verified (copy == source, rule: byte-identical). Oversized files
+    (> max_copy_mb) are skipped and listed in the return log (no silent skip).
+    Sets ``archived_copy`` per artifact. Only to model_archive/ — NEVER
+    root/live (hard rule 2)."""
     skipped: list[str] = []
     dest_dir = os.path.join(ix.ARCHIVE_DIR, _family_dir(manifest["family"]), manifest["tag"])
     for art in manifest["artifacts"]:
@@ -229,13 +228,13 @@ def copy_binaries(manifest: dict[str, Any], max_copy_mb: float) -> list[str]:
         shutil.copyfile(src, dest)
         if ix._md5(dest) != art["md5"]:
             os.remove(dest)
-            raise RuntimeError(f"md5-Mismatch nach Copy: {art['filename']} (Quelle != Kopie)")
+            raise RuntimeError(f"md5 mismatch after copy: {art['filename']} (source != copy)")
         art["archived_copy"] = ix._rel(dest)
     return skipped
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Schreiben / Rendern / Drift-Check
+# Write / render / drift check
 # ─────────────────────────────────────────────────────────────────────────────
 def _manifest_path(manifest: dict[str, Any]) -> str:
     return os.path.join(ix.ARCHIVE_DIR, _family_dir(manifest["family"]), manifest["tag"], "manifest.json")
@@ -246,21 +245,21 @@ def _dump_json(obj: Any) -> str:
 
 
 def render_archive_md(manifests: list[dict[str, Any]]) -> str:
-    """Menschenlesbarer Archiv-Überblick (generiert)."""
+    """Human-readable archive overview (generated)."""
     lines = [
-        "# Modell-/Code-Archiv (auto-generiert)",
+        "# Model/code archive (auto-generated)",
         "",
-        "> Generiert von `tools/bot_variants/archive.py` (T-2026-KYT-9050-039). "
-        "**Nicht von Hand editieren** — regenerieren mit "
+        "> Generated by `tools/bot_variants/archive.py` (T-2026-KYT-9050-039). "
+        "**Do not edit by hand** — regenerate with "
         "`python -m tools.bot_variants.archive --write`.",
         ">",
-        "> Reference-based: die Artefakt-Bytes liegen git-getrackt in root/staging; "
-        "je Generation hält `manifest.json` md5 + `source_commit` ⇒ Retrieval via "
-        "`git show <source_commit>:<path>`. `--copy-binaries` erzeugt ein self-contained Export.",
+        "> Reference-based: artifact bytes are git-tracked in root/staging; "
+        "each generation holds `manifest.json` md5 + `source_commit` ⇒ retrieval via "
+        "`git show <source_commit>:<path>`. `--copy-binaries` creates a self-contained export.",
         "",
-        f"**Generationen:** {len(manifests)}",
+        f"**Generations:** {len(manifests)}",
         "",
-        "| Family | Tag | Lifecycle | code_ref | Artefakte (Richtung:Datei@source_commit) | Manifest |",
+        "| Family | Tag | Lifecycle | code_ref | Artifacts (direction:file@source_commit) | Manifest |",
         "|---|---|---|---|---|---|",
     ]
     for m in manifests:
@@ -285,7 +284,7 @@ def render_archive_md(manifests: list[dict[str, Any]]) -> str:
 
 
 def write_archive(manifests: list[dict[str, Any]]) -> int:
-    """Schreibt alle Manifeste + ARCHIVE.md. Gibt Anzahl geschriebener Dateien."""
+    """Writes all manifests + ARCHIVE.md. Returns the number of files written."""
     count = 0
     for m in manifests:
         path = _manifest_path(m)
@@ -300,13 +299,13 @@ def write_archive(manifests: list[dict[str, Any]]) -> int:
 
 
 def check_archive(manifests: list[dict[str, Any]]) -> list[str]:
-    """Drift zwischen generierten Manifesten/ARCHIVE.md und den Dateien auf Platte."""
+    """Drift between generated manifests/ARCHIVE.md and the files on disk."""
     drift: list[str] = []
     expected = {_manifest_path(m): _dump_json(m) for m in manifests}
     expected[ARCHIVE_MD] = render_archive_md(manifests)
     for path, content in expected.items():
         if not os.path.isfile(path):
-            drift.append(f"fehlt: {ix._rel(path)}")
+            drift.append(f"missing: {ix._rel(path)}")
             continue
         with open(path, encoding="utf-8") as fh:
             if fh.read() != content:
@@ -315,18 +314,18 @@ def check_archive(manifests: list[dict[str, Any]]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Bot-Varianten-Archiv (Manifeste + code_ref, T-2026-KYT-9050-039).")
-    parser.add_argument("--write", action="store_true", help="Manifeste + ARCHIVE.md schreiben")
-    parser.add_argument("--check", action="store_true", help="Drift gegen Platte prüfen (exit 1 bei Drift)")
+    parser = argparse.ArgumentParser(description="Bot variant archive (manifests + code_ref, T-2026-KYT-9050-039).")
+    parser.add_argument("--write", action="store_true", help="write manifests + ARCHIVE.md")
+    parser.add_argument("--check", action="store_true", help="check drift against disk (exit 1 on drift)")
     parser.add_argument(
         "--copy-binaries",
         action="store_true",
-        help="Artefakt-Binaries nach model_archive/ kopieren (opt-in, self-contained Export)",
+        help="copy artifact binaries to model_archive/ (opt-in, self-contained export)",
     )
     parser.add_argument(
-        "--max-copy-mb", type=float, default=_DEFAULT_MAX_COPY_MB, help="Copy-Größenlimit je Datei (MB)"
+        "--max-copy-mb", type=float, default=_DEFAULT_MAX_COPY_MB, help="copy size limit per file (MB)"
     )
-    parser.add_argument("--no-model-meta", action="store_true", help="eingebettete joblib-meta überspringen")
+    parser.add_argument("--no-model-meta", action="store_true", help="skip embedded joblib meta")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
@@ -334,11 +333,11 @@ def main(argv: list[str] | None = None) -> int:
     if callable(reconfigure):
         reconfigure(encoding="utf-8")
 
-    # --copy-binaries mutiert die Manifeste (archived_copy) → nur mit --write
-    # sinnvoll (sonst verwaiste, unpersistierte Kopien bzw. Schein-Drift bei
-    # --check). Als harte Vorbedingung, nicht als stiller No-op.
+    # --copy-binaries mutates the manifests (archived_copy) → only makes sense
+    # with --write (otherwise orphaned, unpersisted copies or false drift on
+    # --check). As a hard precondition, not a silent no-op.
     if args.copy_binaries and not args.write:
-        print("FEHLER: --copy-binaries erfordert --write (sonst verwaiste, unpersistierte Kopien).")
+        print("ERROR: --copy-binaries requires --write (otherwise orphaned, unpersisted copies).")
         return 2
 
     manifests = build_manifests(load_embedded=not args.no_model_meta)
@@ -348,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         for m in manifests:
             all_skipped.extend(copy_binaries(m, args.max_copy_mb))
         if all_skipped:
-            print(f"copy übersprungen (>{args.max_copy_mb} MB): {len(all_skipped)}")
+            print(f"copy skipped (>{args.max_copy_mb} MB): {len(all_skipped)}")
             for s in all_skipped:
                 print("  " + s)
 
@@ -359,14 +358,14 @@ def main(argv: list[str] | None = None) -> int:
             for d in drift:
                 print("  " + d)
             return 1
-        print("archive up-to-date (kein Drift)")
+        print("archive up-to-date (no drift)")
         return 0
 
     if args.write:
         n = write_archive(manifests)
-        print(f"geschrieben: {n} Manifeste + {ix._rel(ARCHIVE_MD)}")
+        print(f"written: {n} manifests + {ix._rel(ARCHIVE_MD)}")
     else:
-        print(f"Manifeste (dry-run, nicht geschrieben): {len(manifests)} — --write zum Persistieren")
+        print(f"manifests (dry-run, not written): {len(manifests)} — --write to persist")
     return 0
 
 

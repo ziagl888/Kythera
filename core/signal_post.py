@@ -1,16 +1,16 @@
-# core/signal_post.py — gemeinsames Signal-Posting der Research-Bots 30–33.
+# core/signal_post.py — shared signal posting for research bots 30–33.
 #
-# Bewusster Bruch der "send_signal inline pro Bot"-Konvention: die vier neuen
-# Bots posten in DENSELBEN Channel (CH_NEW_IDEAS) mit identischer Semantik —
-# eine Quelle verhindert die Doppel-Post-/Atomicity-Fehlerklasse (Fix vom
-# 2026-07-06) statt sie vierfach zu kopieren.
+# Deliberate break from the "send_signal inline per bot" convention: the four new
+# bots post to the SAME channel (CH_NEW_IDEAS) with identical semantics —
+# one source prevents the double-post/atomicity error class (fixed on
+# 2026-07-06) instead of copying it fourfold.
 #
-# Vertrag (identisch 18_ai_abr1_bot.send_signal):
-#   * Outbox-Zeilen (Cornix-Klartext + HTML-Info) und ai_signals-Insert laufen
-#     in der OFFENEN Transaktion des Aufrufers — KEIN Commit hier. Der Aufrufer
-#     schließt atomar ab (update_cooldown(commit=True) oder conn.commit()).
-#   * Die HTML-Info-Nachricht wiederholt den Cornix-Block NICHT (Cornix parste
-#     beide Nachrichten sonst als eigenständige Signale — Doppel-Position).
+# Contract (identical to 18_ai_abr1_bot.send_signal):
+#   * Outbox rows (Cornix plain text + HTML info) and the ai_signals insert run
+#     in the caller's OPEN transaction — NO commit here. The caller
+#     closes atomically (update_cooldown(commit=True) or conn.commit()).
+#   * The HTML info message does NOT repeat the Cornix block (otherwise Cornix
+#     would parse both messages as separate signals — double position).
 
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 def has_open_ai_signal(conn, symbol: str, direction: str, model_tag: str) -> bool:
-    """True, wenn für Modul/Coin/Richtung bereits ein offener Trade im
-    AI-Monitor läuft (ai_signals-Zeile existiert bis zum Close)."""
+    """True if a trade for module/coin/direction is already open in the
+    AI monitor (ai_signals row exists until close)."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM ai_signals WHERE symbol = %s AND direction = %s AND model = %s",
@@ -154,7 +154,7 @@ def post_ai_signal(
                 json.dumps([float(t) for t in targets[:n_show]]),
             ),
         )
-    logger.info(f"✅ {model_tag} Signal für {symbol} {direction} in Outbox gelegt.")
+    logger.info(f"✅ {model_tag} signal for {symbol} {direction} placed in outbox.")
 
 
 def log_prediction(
@@ -168,16 +168,16 @@ def log_prediction(
     dedup_hours: int = 4,
     legacy_tag: str | None = None,
 ) -> None:
-    """ml_predictions_master-Eintrag (Shadow-Logging, Report 15 — Grundlage der
-    4–8-Wochen-Shadow-Auswertung). Dedup wie 11_ai_mis_bot: dieselbe
-    Modul/Coin/Richtung-Kombi höchstens einmal je ``dedup_hours``. Ohne Commit.
+    """ml_predictions_master row (shadow logging, report 15 — basis for the
+    4–8 week shadow evaluation). Dedup like 11_ai_mis_bot: the same
+    module/coin/direction combo at most once per ``dedup_hours``. No commit.
 
-    ``legacy_tag`` (T-2026-CU-9050-042): der Dedup-Key IST der Modell-Tag, und der
-    kippt beim Retrain-Rollout. Ohne den Alt-Tag im Fenster begänne die neue
-    Generation ihre Dedup-Historie bei null und schriebe die Shadow-Zeilen
-    desselben Coins doppelt. Gleicher oder fehlender Alt-Tag ⇒ No-op, der zweite
-    Bind fällt weg. GESCHRIEBEN wird immer unter ``model_tag`` — die laufende
-    Generation, nie der Alt-Tag.
+    ``legacy_tag`` (T-2026-CU-9050-042): the dedup key IS the model tag, and it
+    flips on a retrain rollout. Without the old tag in the window, the new
+    generation would start its dedup history at zero and write the shadow rows
+    for the same coin twice. Same or missing old tag ⇒ no-op, the second
+    bind is dropped. It is always WRITTEN under ``model_tag`` — the current
+    generation, never the old tag.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     window = f"{int(dedup_hours)} hours"
@@ -213,22 +213,22 @@ def log_prediction(
 
 
 def _shadow_test_channel() -> int:
-    """Der optionale Shadow-Sichtbarkeits-Channel (``config.CH_SHADOW_TEST``); 0 = aus.
+    """The optional shadow visibility channel (``config.CH_SHADOW_TEST``); 0 = off.
 
-    Lazy import, damit signal_post entkoppelt/testbar bleibt; DB-freie Tests
-    monkeypatchen diese Funktion statt die Import-Reihenfolge von config zu stellen.
+    Lazy import so signal_post stays decoupled/testable; DB-free tests
+    monkeypatch this function instead of forcing config's import order.
 
-    HARTE Schranke (Defense-in-Depth, Review-Fix): ist CH_SHADOW_TEST versehentlich
-    auf den HANDELS-Channel gesetzt (den einzigen, den Cornix liest), wird der Echo
-    UNTERDRÜCKT (return 0) — die "nie der Handels-Channel"-Invariante ist damit im
-    Code erzwungen, nicht bloß Operator-Disziplin (Regel 4).
+    HARD guard (defense-in-depth, review fix): if CH_SHADOW_TEST is accidentally
+    set to the TRADING channel (the only one Cornix reads), the echo is
+    SUPPRESSED (return 0) — the "never the trading channel" invariant is thus
+    enforced in code, not just operator discipline (rule 4).
     """
     from core import config
 
     ch = int(getattr(config, "CH_SHADOW_TEST", 0) or 0)
     trading = int(getattr(config, "REGIME_TRADING_CHANNEL_ID", 0) or 0)
     if ch and ch == trading:
-        logger.warning("CH_SHADOW_TEST == Handels-Channel — Shadow-Echo unterdrückt (Regel 4).")
+        logger.warning("CH_SHADOW_TEST == trading channel — shadow echo suppressed (rule 4).")
         return 0
     return ch
 
@@ -236,13 +236,13 @@ def _shadow_test_channel() -> int:
 def _shadow_preview_message(
     model_tag: str, symbol: str, direction: str, entry1: float, sl: float, tps: list[float]
 ) -> str:
-    """Bewusst NICHT-Cornix-parsebare Shadow-Vorschau — reine Sichtbarkeit.
+    """Deliberately NOT Cornix-parsable shadow preview — pure visibility.
 
-    Klar als Nicht-Handelssignal markiert; Zahlen als ``Ref-``-Text OHNE die
-    Cornix-Signal-Struktur (keine ``Entry:``/``Stop``/``Targets:``-Trigger, kein
-    Entry-Zonen/Ziel-Listen-Layout), damit selbst ein mitlesender Cornix-Parser
-    NICHTS aufgreift. Doppelt sicher: Cornix hört ohnehin nur auf den Handels-
-    Channel (REGIME_TRADING_CHANNEL_ID), dieser Channel ist ein Nicht-Handels-Kanal.
+    Clearly marked as a non-trading signal; numbers as ``Ref-`` text WITHOUT the
+    Cornix signal structure (no ``Entry:``/``Stop``/``Targets:`` triggers, no
+    entry-zone/target-list layout), so that even a listening Cornix parser
+    picks up NOTHING. Doubly safe: Cornix only listens to the trading
+    channel anyway (REGIME_TRADING_CHANNEL_ID), this channel is a non-trading channel.
     """
     tp_txt = " / ".join(format_price(t) for t in tps) if tps else "—"
     # English, and deliberately NOT Cornix signal structure (no "Entry:"/"Targets:"/
@@ -269,34 +269,34 @@ def post_shadow_ai_signal(
     dedup_hours: int = 4,
     legacy_tag: str | None = None,
 ) -> bool:
-    """Monitored-but-unposted Shadow-Trade (T-2026-CU-9050-125).
+    """Monitored-but-unposted shadow trade (T-2026-CU-9050-125).
 
-    Schreibt die ``ai_signals``-Zeile und — sofern ``config.CH_SHADOW_TEST``
-    gesetzt ist (Default 0 = aus) — EINE bewusst NICHT-Cornix-parsebare Vorschau
-    an genau diesen Sichtbarkeits-Channel. Es wird NIEMALS eine Cornix-parsebare
-    telegram_outbox-Zeile und NIEMALS eine Zeile an den Handels-Channel
-    geschrieben (T-2026-CU-9050-150). Ohne CH_SHADOW_TEST bleibt das Verhalten
-    exakt wie bisher (nur ai_signals, kein Kanal).
+    Writes the ``ai_signals`` row and — if ``config.CH_SHADOW_TEST``
+    is set (default 0 = off) — ONE deliberately non-Cornix-parsable preview
+    to exactly this visibility channel. NEVER writes a Cornix-parsable
+    telegram_outbox row and NEVER a row to the trading channel
+    (T-2026-CU-9050-150). Without CH_SHADOW_TEST the behaviour stays
+    exactly as before (only ai_signals, no channel).
 
-    Damit greift der AI-Monitor (8_ai_trade_monitor, ungefilterter Read) das
-    Bein auf, verfolgt Entry/TP/SL und schreibt beim Close eine
-    ``closed_ai_signals``-Zeile unter ``model_tag``. Ein ECHTER (Cornix-)Post
-    braucht eine Cornix-parsebare Zeile im HANDELS-Channel — die entsteht hier
-    NIE; der Monitor postet selbst nichts. So bleibt der Shadow-Trade risikofrei
-    und liefert eine realisierte Ergebnis-Historie für die spätere Auswertung.
+    This lets the AI monitor (8_ai_trade_monitor, unfiltered read) pick up the
+    leg, track entry/TP/SL and write a ``closed_ai_signals`` row under
+    ``model_tag`` on close. A REAL (Cornix) post needs a Cornix-parsable row in
+    the TRADING channel — that never happens here; the monitor posts nothing
+    itself. This keeps the shadow trade risk-free and delivers a realized
+    outcome history for later evaluation.
 
-    Zusätzlich wird die ``ml_predictions_master``-Shadow-Zeile (``posted=False``)
-    via :func:`log_prediction` geschrieben — dieselbe Prediction-Historie wie
-    heute, plus jetzt der überwachte Trade.
+    Additionally the ``ml_predictions_master`` shadow row (``posted=False``)
+    is written via :func:`log_prediction` — the same prediction history as
+    today, plus now the monitored trade.
 
-    Kein Commit (der Caller schließt die Transaktion). Rückgabe: True, wenn eine
-    Shadow-Zeile geschrieben wurde; False, wenn bereits ein offener Shadow-Trade
-    für (symbol, direction, model_tag) im Monitor läuft (Dedup gegen den
-    Monitor-Arbeitssatz — spiegelt die Live-Dedup von :func:`has_open_ai_signal`).
+    No commit (the caller closes the transaction). Returns: True if a
+    shadow row was written; False if an open shadow trade already exists
+    for (symbol, direction, model_tag) in the monitor (dedup against the
+    monitor working set — mirrors the live dedup of :func:`has_open_ai_signal`).
 
-    Der Aufrufer ruft das NUR am Nicht-Live-Zweig (leg ist SHADOW) — nie statt
-    eines Live-Posts. targets[:n_show] werden getrackt (P2.31-Parität mit dem
-    Live-Post: der Monitor scored genau die veröffentlichten TPs).
+    The caller only calls this on the non-live branch (leg is SHADOW) — never
+    instead of a live post. targets[:n_show] are tracked (P2.31 parity with the
+    live post: the monitor scores exactly the published TPs).
     """
     if has_open_ai_signal(conn, symbol, direction, model_tag):
         return False
@@ -329,10 +329,10 @@ def post_shadow_ai_signal(
         dedup_hours=dedup_hours,
         legacy_tag=legacy_tag,
     )
-    # Optionaler Sichtbarkeits-Echo (T-2026-CU-9050-150): NUR wenn CH_SHADOW_TEST
-    # gesetzt ist, und ausschließlich als NICHT-Cornix-Vorschau an DIESEN Channel —
-    # nie an den Handels-Channel, nie in Cornix-Format. In derselben offenen
-    # Transaktion (Regel 8, der Caller committet atomar mit dem ai_signals-Insert).
+    # Optional visibility echo (T-2026-CU-9050-150): ONLY if CH_SHADOW_TEST
+    # is set, and exclusively as a NON-Cornix preview to THIS channel —
+    # never to the trading channel, never in Cornix format. In the same open
+    # transaction (rule 8, the caller commits atomically with the ai_signals insert).
     test_ch = _shadow_test_channel()
     if test_ch:
         with conn.cursor() as cur:
@@ -340,7 +340,7 @@ def post_shadow_ai_signal(
                 "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
                 (test_ch, _shadow_preview_message(model_tag, symbol, direction, entry1, sl, tps)),
             )
-    logger.info("👻 %s SHADOW-Trade für %s %s in ai_signals (kein Cornix).", model_tag, symbol, direction)
+    logger.info("👻 %s SHADOW trade for %s %s in ai_signals (no Cornix).", model_tag, symbol, direction)
     return True
 
 
@@ -362,26 +362,26 @@ def post_ai_signal_gated(
     dedup_hours: int = 4,
     legacy_tag: str | None = None,
 ) -> str | None:
-    """Emittiert ein (tag, direction)-Bein durch das shadow_gate-Register geroutet
-    (T-2026-CU-9050-183) — das zentrale Shadow→Live-Promotions-Muster:
+    """Emits a (tag, direction) leg routed through the shadow_gate register
+    (T-2026-CU-9050-183) — the central shadow→live promotion pattern:
 
-      * ``LIVE``   → :func:`post_ai_signal` (Cornix + HTML + ``ai_signals`` an
-        ``channel_id``, genau EINE Cornix-Message, Regel 4).
-      * ``SHADOW`` → :func:`post_shadow_ai_signal` (überwacht, kein Cornix-Post).
-      * sonst (``SILENT``/``RETIRED``) → No-op.
+      * ``LIVE``   → :func:`post_ai_signal` (Cornix + HTML + ``ai_signals`` to
+        ``channel_id``, exactly ONE Cornix message, rule 4).
+      * ``SHADOW`` → :func:`post_shadow_ai_signal` (monitored, no Cornix post).
+      * else (``SILENT``/``RETIRED``) → no-op.
 
-    So flippt eine Promotion allein über den ``_LIFECYCLE``-Eintrag: SHADOW→LIVE
-    schaltet denselben Bot vom überwachten auf den echten Post, ohne den
-    Post-Zweig zu duplizieren. Der Aufrufer hat Cooldown/has_open bereits geprüft
-    und committet die Transaktion selbst (Regel 8). Rückgabe: ``'live'`` |
-    ``'shadow'`` | ``None`` (nichts emittiert)."""
+    This way a promotion flips purely via the ``_LIFECYCLE`` entry: SHADOW→LIVE
+    switches the same bot from monitored to the real post, without duplicating
+    the post branch. The caller has already checked cooldown/has_open
+    and commits the transaction itself (rule 8). Returns: ``'live'`` |
+    ``'shadow'`` | ``None`` (nothing emitted)."""
     st = shadow_gate.leg_status(tag, direction)
     if st == shadow_gate.LIVE and not channel_id:
-        # Fail-safe (T-2026-CU-9050-183 Review): ein LIVE-Bein OHNE konfigurierten
-        # Ziel-Channel (channel_id == 0, z. B. CH_ATS auf einem falsch aufgesetzten
-        # Host) darf NIE eine Cornix-Zeile an Channel 0 schreiben — es fällt auf den
-        # überwachten Shadow-Pfad zurück (analog Bot 33: CH_FIF1==0 ⇒ shadow-only).
-        logger.warning("%s/%s ist LIVE, aber channel_id=0 — Fallback auf Shadow-Post.", tag, direction)
+        # Fail-safe (T-2026-CU-9050-183 review): a LIVE leg WITHOUT a configured
+        # target channel (channel_id == 0, e.g. CH_ATS on an incorrectly set up
+        # host) must NEVER write a Cornix row to channel 0 — it falls back to
+        # the monitored shadow path (analogous to bot 33: CH_FIF1==0 ⇒ shadow-only).
+        logger.warning("%s/%s is LIVE, but channel_id=0 — falling back to shadow post.", tag, direction)
         st = shadow_gate.SHADOW
     if st == shadow_gate.LIVE:
         post_ai_signal(
@@ -421,13 +421,13 @@ def post_ai_signal_gated(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LEGACY-DIREKTPOST-ROUTER  —  fleet-lifecycle gate für Bots, die NICHT über
-# post_ai_signal_gated posten (T-2026-KYT-9050-033).
+# LEGACY DIRECT-POST ROUTER  —  fleet-lifecycle gate for bots that do NOT post
+# via post_ai_signal_gated (T-2026-KYT-9050-033).
 # ─────────────────────────────────────────────────────────────────────────────
-# Rückgabewerte (Aufrufer verzweigt darauf):
-LEG_LIVE = "live"  # Default (nicht-registriertes Bein): Aufrufer postet live wie bisher.
-LEG_SHADOW = "shadow"  # HIER wurde ein überwachter Shadow-Trade geschrieben (kein Cornix).
-LEG_SKIP = "skip"  # SILENT/RETIRED, Shadow global aus, oder Dedup-Block: nichts schreiben.
+# Return values (caller branches on this):
+LEG_LIVE = "live"  # Default (unregistered leg): caller posts live as before.
+LEG_SHADOW = "shadow"  # A monitored shadow trade was written HERE (no Cornix).
+LEG_SKIP = "skip"  # SILENT/RETIRED, shadow globally off, or dedup block: write nothing.
 
 
 def route_legacy_leg(
@@ -445,31 +445,31 @@ def route_legacy_leg(
     dedup_hours: int = 4,
     legacy_tag: str | None = None,
 ) -> str:
-    """Fleet-Lifecycle-Routing an der Emissions-Stelle eines LEGACY-Direktpost-Bots
-    (BR/BB/QM-Pattern, SRA1, RUB2, EPD2, ABR2, MIS2, … — Bots 7/9/10/11/13/18/24/25),
-    die ihre Cornix-Message inline bauen und NICHT über :func:`post_ai_signal_gated`
-    laufen (T-2026-KYT-9050-033, Audit T-032 Reconfig).
+    """Fleet-lifecycle routing at the emission point of a LEGACY direct-post bot
+    (BR/BB/QM pattern, SRA1, RUB2, EPD2, ABR2, MIS2, … — bots 7/9/10/11/13/18/24/25),
+    which build their Cornix message inline and do NOT run through
+    :func:`post_ai_signal_gated` (T-2026-KYT-9050-033, audit T-032 reconfig).
 
-    Anders als der Gated-Router baut dieser Helper KEINE Message — der Bot behält
-    sein eigenes Format/Chart. Er entscheidet nur, OB der Bot live posten darf:
+    Unlike the gated router, this helper builds NO message — the bot keeps
+    its own format/chart. It only decides WHETHER the bot may post live:
 
-      * :data:`LEG_LIVE`   — Bein ist LIVE (Default für JEDES nicht im shadow_gate-
-        Register gelistete Bein): der Aufrufer führt seinen bestehenden
-        Cornix + ``ai_signals``-Write unverändert aus.
-      * :data:`LEG_SHADOW` — Bein ist SHADOW: HIER wurde bereits ein überwachter
-        Shadow-Trade (``ai_signals``, KEIN Cornix, Regel 4) geschrieben; der
-        Aufrufer überspringt seinen Live-Write und committet die Transaktion
-        (Regel 8 — der Helper committet nicht selbst).
-      * :data:`LEG_SKIP`   — Bein ist SILENT/RETIRED, ``KYTHERA_SHADOW_POSTING=0``,
-        ODER ein offener Shadow-Trade dedupt das Bein (has_open): nichts schreiben.
+      * :data:`LEG_LIVE`   — leg is LIVE (default for ANY leg not listed in the
+        shadow_gate register): the caller runs its existing
+        Cornix + ``ai_signals`` write unchanged.
+      * :data:`LEG_SHADOW` — leg is SHADOW: a monitored shadow trade
+        (``ai_signals``, NO Cornix, rule 4) has already been written HERE; the
+        caller skips its live write and commits the transaction
+        (rule 8 — the helper does not commit itself).
+      * :data:`LEG_SKIP`   — leg is SILENT/RETIRED, ``KYTHERA_SHADOW_POSTING=0``,
+        OR an open shadow trade dedups the leg (has_open): write nothing.
 
-    Sicherheitsvertrag (harte Regeln 1/2/4, identisch zu :mod:`core.shadow_gate`):
-    Default = LIVE ⇒ ein Bot, dessen (tag, direction)-Beine NICHT registriert sind,
-    verhält sich BYTE-IDENTISCH wie zuvor. Die Verdrahtung ist rein ADDITIV am
-    Post-Zweig und kann NIE aus einem Live-Post einen Shadow machen, solange das
-    Bein nicht explizit SHADOW eingetragen ist. Der Aufrufer hat Cooldown/has_open
-    seines Live-Tags bereits geprüft; der Shadow-Zweig dedupt zusätzlich über
-    :func:`post_shadow_ai_signal`s eigenen has_open gegen den Monitor-Arbeitssatz.
+    Safety contract (hard rules 1/2/4, identical to :mod:`core.shadow_gate`):
+    default = LIVE ⇒ a bot whose (tag, direction) legs are NOT registered
+    behaves BYTE-IDENTICALLY to before. The wiring is purely ADDITIVE at the
+    post branch and can NEVER turn a live post into a shadow, unless the
+    leg is explicitly entered as SHADOW. The caller has already checked
+    cooldown/has_open of its live tag; the shadow branch additionally dedups via
+    :func:`post_shadow_ai_signal`'s own has_open against the monitor working set.
     """
     st = shadow_gate.leg_status(tag, direction)
     if st == shadow_gate.LIVE:

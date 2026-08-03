@@ -12,10 +12,10 @@ import numpy as np
 import pandas as pd
 import scipy.signal
 
-# Zwingt die Windows-Konsole, UTF-8 (Emojis) zu akzeptieren
+# Forces the Windows console to accept UTF-8 (emojis)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-# --- Eigene DB Connection importieren ---
+# --- Import our own DB connection ---
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import load_coins as _core_load_coins
@@ -31,16 +31,16 @@ logger = logging.getLogger(__name__)
 # delisted losers are absent (survivorship bias).
 
 # ==========================================
-# 🛠️ BACKTEST KONFIGURATION
+# 🛠️ BACKTEST CONFIGURATION
 # ==========================================
 COINS_FILE = "coins.json"
 OUTPUT_FILE = "qm_mass_results.txt"
 TIMEFRAMES = ['1h', '4h']
 
 START_CAPITAL = 100000.0
-TRADE_MARGIN = 5000.0  # 5.000$ Einsatz pro Trade
-LEVERAGE = 20  # 10x Hebel -> 50.000$ Positionsgröße
-TAKER_FEE = 0.0004  # 0.04% Handelsgebühr pro Order (0.08% Total)
+TRADE_MARGIN = 5000.0  # $5,000 stake per trade
+LEVERAGE = 20  # 10x leverage -> $50,000 position size
+TAKER_FEE = 0.0004  # 0.04% trading fee per order (0.08% total)
 
 PIVOT_WINDOW = 5
 ORDER_EXPIRY = 100
@@ -57,7 +57,7 @@ def load_coins():
 def fetch_db_data(symbol, tf):
     try:
         conn = get_db_connection()
-        # Über core.candles: GESCHLOSSENE Kerzen, ASC (include_forming=False).
+        # via core.candles: CLOSED candles, ASC (include_forming=False).
         df = read_candles(
             conn,
             symbol,
@@ -73,12 +73,12 @@ def fetch_db_data(symbol, tf):
         df.dropna(inplace=True)
         return df.reset_index(drop=True)
     except Exception:
-        # Tabelle existiert evtl. nicht, still skippingn
+        # table may not exist, still skipping
         return pd.DataFrame()
 
 
 # ==========================================
-# 🚀 BACKTEST ENGINE (CHRONOLOGISCH)
+# 🚀 BACKTEST ENGINE (CHRONOLOGICAL)
 # ==========================================
 def run_simulation(df, symbol, tf):
     capital = START_CAPITAL
@@ -110,7 +110,7 @@ def run_simulation(df, symbol, tf):
         curr_low = lows[curr_idx]
         curr_price = closes[curr_idx]
 
-        # A) AKTIVE TRADES PRÜFEN
+        # A) CHECK ACTIVE TRADES
         trades_to_remove = []
         for trade in active_trades:
             direction = trade['direction']
@@ -162,7 +162,7 @@ def run_simulation(df, symbol, tf):
         for t in trades_to_remove:
             active_trades.remove(t)
 
-        # B) PENDING ORDERS PRÜFEN
+        # B) CHECK PENDING ORDERS
         orders_to_remove = []
         for order in pending_orders:
             if curr_idx - order['created_at'] > ORDER_EXPIRY:
@@ -177,10 +177,10 @@ def run_simulation(df, symbol, tf):
             triggered = False
             stopped_on_fill = False
 
-            # FIX (P1.30): SL-Durchstich ist KEINE Invalidierung — der SL liegt
-            # jenseits des Entrys, dieselbe Kerze hat also zwingend auch den Entry
-            # berührt. Konservativ als fill-then-stop werten (sofortiger Verlust)
-            # statt den garantierten Verlierer aus der Statistik zu löschen.
+            # FIX (P1.30): an SL pierce is NOT an invalidation — the SL sits
+            # beyond the entry, so the same candle must necessarily also have touched
+            # the entry. Conservatively count it as fill-then-stop (immediate loss)
+            # instead of deleting the guaranteed loser from the statistics.
             if dir == "LONG":
                 if curr_low <= sl:
                     triggered, stopped_on_fill = True, True
@@ -212,7 +212,7 @@ def run_simulation(df, symbol, tf):
         for o in orders_to_remove:
             pending_orders.remove(o)
 
-        # C) NEUE PIVOTS BESTÄTIGEN
+        # C) CONFIRM NEW PIVOTS
         while raw_pivot_pointer < len(raw_pivots):
             p = raw_pivots[raw_pivot_pointer]
             if p[0] <= curr_idx - PIVOT_WINDOW:
@@ -229,7 +229,7 @@ def run_simulation(df, symbol, tf):
             else:
                 break
 
-        # D) QM ERKENNUNG
+        # D) QM DETECTION
         if len(live_alt_pivots) >= 4:
             p1, p2, p3, p4 = live_alt_pivots[-4], live_alt_pivots[-3], live_alt_pivots[-2], live_alt_pivots[-1]
             qm_id = p1[0]
@@ -280,16 +280,16 @@ def main():
         return
 
     print("=" * 85)
-    print(f"🏛️ QM MASS-BACKTEST: {len(coins)} Coins | 1h, 4h, 1d | Letzte 2 Jahre")
-    print(f"Margin: ${TRADE_MARGIN:,.0f} | Hebel: {LEVERAGE}x | P-Size: ${TRADE_MARGIN * LEVERAGE:,.0f}")
+    print(f"🏛️ QM MASS-BACKTEST: {len(coins)} Coins | 1h, 4h, 1d | Last 2 Years")
+    print(f"Margin: ${TRADE_MARGIN:,.0f} | Leverage: {LEVERAGE}x | P-Size: ${TRADE_MARGIN * LEVERAGE:,.0f}")
     print("=" * 85)
 
-    # Datei initialisieren
+    # initialize the file
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("=" * 85 + "\n")
-        f.write(f"🏛️ QM MASS-BACKTEST ERGEBNISSE | Margin: ${TRADE_MARGIN:,.0f}\n")
+        f.write(f"🏛️ QM MASS-BACKTEST RESULTS | Margin: ${TRADE_MARGIN:,.0f}\n")
         f.write("=" * 85 + "\n")
-        f.write(f"{'Coin':<12} | {'TF':<5} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Netto PnL':<12}\n")
+        f.write(f"{'Coin':<12} | {'TF':<5} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Net PnL':<12}\n")
         f.write("-" * 85 + "\n")
 
     results = []
@@ -308,25 +308,25 @@ def main():
 
             res = run_simulation(df, coin, tf)
 
-            # Wir speichern nur, wenn der Coin überhaupt QM-Trades hatte
+            # we only save if the coin had any QM trades at all
             if res['trades'] > 0:
                 results.append(res)
                 total_pnl += res['pnl']
 
-                # In die TXT schreiben
+                # write to the TXT
                 line = f"{res['symbol']:<12} | {res['tf']:<5} | {res['trades']:<8} | {res['win_rate']:>5.2f} %   | {res['max_dd']:>5.2f} % | ${res['pnl']:+,.2f}"
                 with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
 
-                # Auch im Terminal ausgeben
+                # also print to the terminal
                 print(line)
 
-        time.sleep(0.05)  # Kurze Pause für die Datenbank
+        time.sleep(0.05)  # short pause for the database
 
     end_time = time.time()
 
     summary = "\n" + "=" * 85 + f"\n🏁 BACKTEST COMPLETE in {end_time - start_time:.2f} s\n"
-    summary += f"💰 GESAMT PNL ÜBER ALLE TRADES: ${total_pnl:+,.2f}\n" + "=" * 85
+    summary += f"💰 TOTAL PNL ACROSS ALL TRADES: ${total_pnl:+,.2f}\n" + "=" * 85
 
     print(summary)
     with open(OUTPUT_FILE, "a", encoding="utf-8") as f:

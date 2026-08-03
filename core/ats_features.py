@@ -1,18 +1,18 @@
 # core/ats_features.py
-"""Geteilte ATS/TSI-Detektions- und Feature-Logik — EINE Quelle für Bot 12 und
-den Walkforward-Adapter (X-R1-Regel: kein Train/Serve-Skew, harte Regel 7).
+"""Shared ATS/TSI detection and feature logic — ONE source for bot 12 and
+the walkforward adapter (X-R1 rule: no train/serve skew, hard rule 7).
 
-Herkunft: die inline-Logik aus 12_ai_ats_bot.check_tsi_crossovers
-(TSI-Crossover-Vorfilter + 29-Feature-Vertrag + Live-OBV/VWAP), beim Bau des
-ATS2-Retrain-Adapters (T-2026-CU-9050-121) hierher gehoben. Der Bot ruft
-dieselben Funktionen wie der Replay — der Parity-Test backtest/test_ats_features
-beweist build_ats_features == die frühere Serving-Konstruktion.
+Provenance: the inline logic from 12_ai_ats_bot.check_tsi_crossovers
+(TSI crossover pre-filter + 29-feature contract + live OBV/VWAP), lifted here
+while building the ATS2 retrain adapter (T-2026-CU-9050-121). The bot calls
+the same functions as the replay — the parity test backtest/test_ats_features
+proves build_ats_features == the former serving construction.
 
-Kein DB-Zugriff: build_ats_features arbeitet auf einem fertigen, chronologisch
-aufsteigenden 1h-Fenster (die neueste GESCHLOSSENE Kerze ist die letzte Zeile).
-Der Bot lädt live 500 Kerzen (read_candles_with_indicators, include_forming=
-False) und normalisiert OBV auf den Fensterstart — der Replay reicht exakt
-dasselbe 500-Kerzen-Fenster durch, damit die OBV-Baseline identisch ist.
+No DB access: build_ats_features operates on a finished, chronologically
+ascending 1h window (the newest CLOSED candle is the last row). The bot loads
+500 candles live (read_candles_with_indicators, include_forming=
+False) and normalises OBV to the window start — the replay passes through
+exactly the same 500-candle window, so the OBV baseline is identical.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-#: Candle-Projektion, die Bot 12 liest (KEIN 'open' — die ATS-Features brauchen
-#: es nicht). Single Source für Bot- und Replay-Read.
+#: Candle projection that bot 12 reads (NO 'open' — the ATS features don't
+#: need it). Single source for the bot and replay read.
 ATS_CANDLE_COLUMNS: tuple[str, ...] = ("open_time", "high", "low", "close", "volume")
 
-#: Indikator-Spalten, die Bot 12 aus der *_1h_indicators-Tabelle joint. Die
-#: beiden TSI-Spalten dienen der Crossover-Detektion, der Rest den Features.
+#: Indicator columns that bot 12 joins from the *_1h_indicators table. The
+#: two TSI columns serve crossover detection, the rest serve the features.
 ATS_INDICATOR_COLUMNS: tuple[str, ...] = (
     "rsi_14",
     "rsi_6",
@@ -53,8 +53,8 @@ ATS_INDICATOR_COLUMNS: tuple[str, ...] = (
 TSI_LINE_COL = "tsi_fast_12_7_7"
 TSI_SIGNAL_COL = "tsi_fast_12_7_7_signal"
 
-#: Feature-Vertrag des ATS-ML in exakt der Reihenfolge, die Bot 12 erzwingt
-#: (X_live[TSI_FEATURES]). Reihenfolge ist hier Vertrag — nicht sortieren.
+#: Feature contract of the ATS ML in exactly the order that bot 12 enforces
+#: (X_live[TSI_FEATURES]). Order is a contract here — do not sort.
 ATS_FEATURES: list[str] = [
     "rsi_14",
     "rsi_6",
@@ -89,11 +89,11 @@ ATS_FEATURES: list[str] = [
 
 
 def ats_cross(tsi_prev: float, sig_prev: float, tsi_curr: float, sig_curr: float) -> str | None:
-    """TSI-Crossover-Vorfilter von Bot 12. Returns 'LONG' | 'SHORT' | None.
+    """TSI crossover pre-filter of bot 12. Returns 'LONG' | 'SHORT' | None.
 
-    LONG  = TSI kreuzt die Signallinie von unten nach oben,
-    SHORT = von oben nach unten. Geprüft auf der jüngsten GESCHLOSSENEN Kerze
-    (curr) gegen die vorletzte (prev).
+    LONG  = TSI crosses the signal line from below to above,
+    SHORT = from above to below. Checked on the most recent CLOSED candle
+    (curr) against the second-to-last (prev).
     """
     long_cross = (tsi_prev <= sig_prev) and (tsi_curr > sig_curr)
     short_cross = (tsi_prev >= sig_prev) and (tsi_curr < sig_curr)
@@ -105,21 +105,21 @@ def ats_cross(tsi_prev: float, sig_prev: float, tsi_curr: float, sig_curr: float
 
 
 def build_ats_features(df: pd.DataFrame) -> dict[str, float]:
-    """Der 29-Feature-Vertrag (ATS_FEATURES) als dict — Bot-12-Parität.
+    """The 29-feature contract (ATS_FEATURES) as a dict — bot 12 parity.
 
-    `df`: chronologisch aufsteigendes 1h-Fenster (idealerweise 500 Kerzen wie
-    live) mit ATS_CANDLE_COLUMNS + ATS_INDICATOR_COLUMNS, bereits numerisch
-    (der Aufrufer coerct + fillna(0) wie Bot 12). Die neueste geschlossene
-    Kerze ist df.iloc[-1], die vorletzte df.iloc[-2].
+    `df`: chronologically ascending 1h window (ideally 500 candles like
+    live) with ATS_CANDLE_COLUMNS + ATS_INDICATOR_COLUMNS, already numeric
+    (the caller coerces + fillna(0) like bot 12). The newest closed
+    candle is df.iloc[-1], the second-to-last df.iloc[-2].
 
-    OBV/VWAP werden auf einer internen Kopie gerechnet (kein Seiteneffekt auf
-    das übergebene Fenster); die OBV-Baseline ist der Fensterstart (df.iloc[0]),
-    exakt wie im Bot — deshalb muss der Replay dasselbe 500-Kerzen-Fenster
-    durchreichen, das der Live-Bot sähe.
+    OBV/VWAP are computed on an internal copy (no side effect on
+    the passed-in window); the OBV baseline is the window start (df.iloc[0]),
+    exactly as in the bot — that's why the replay must pass through the same
+    500-candle window that the live bot would see.
     """
     df = df.copy()
 
-    # --- Live Feature Engineering (OBV, VWAP) wie Bot 12 ---
+    # --- Live feature engineering (OBV, VWAP) like bot 12 ---
     obv_raw = (np.sign(df["close"].diff()) * df["volume"]).fillna(0).cumsum()
     df["obv"] = obv_raw - obv_raw.iloc[0]
     df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
@@ -173,14 +173,14 @@ def build_ats_features(df: pd.DataFrame) -> dict[str, float]:
         "volume_spike": int(row["volume"] > vol_sma20 * 2),
         "volume_trend_up": int(df["volume"].rolling(5).mean().iloc[current_idx] > vol_sma20),
     }
-    # Native Python-Typen erzwingen (wie core.rub_features.build_rub_features):
-    # der Bot sieht in pd.DataFrame([features]) denselben float64-Frame, der
-    # Replay serialisiert die Werte aber als JSONL — np.float64 bräuchte dort
-    # sonst einen default=str-Fallback, der die Features zu Strings verstümmelte.
+    # Force native Python types (like core.rub_features.build_rub_features):
+    # the bot sees the same float64 frame in pd.DataFrame([features]), but the
+    # replay serialises the values as JSONL — np.float64 would otherwise need
+    # a default=str fallback there, which would mangle the features into strings.
     return {k: (int(v) if k in _BINARY_FLAGS else float(v)) for k, v in features.items()}
 
 
-#: Die 7 binären 0/1-Flags (dürfen in kleinen Stichproben konstant sein).
+#: The 7 binary 0/1 flags (allowed to be constant in small samples).
 _BINARY_FLAGS: frozenset[str] = frozenset(
     {
         "macd_cross_bearish",
@@ -195,17 +195,17 @@ _BINARY_FLAGS: frozenset[str] = frozenset(
 
 
 def assert_features_alive(feat_df: pd.DataFrame) -> None:
-    """Startup-/Test-Guard (Muster core.mis_features/core.atb2_features):
+    """Startup/test guard (pattern core.mis_features/core.atb2_features):
 
-    * jede ATS_FEATURES-Spalte muss existieren (P0.12-Vertrag),
-    * keine KONTINUIERLICHE Feature-Spalte darf über den Datensatz konstant sein
-      (ein totes/immer-0-Feature ist ein Leakage-/Verkabelungsbug wie ABR1).
-      Die 6 binären Flags (0/1) sind bewusst ausgenommen — sie dürfen in einer
-      kleinen Stichprobe konstant sein.
+    * every ATS_FEATURES column must exist (P0.12 contract),
+    * no CONTINUOUS feature column may be constant across the dataset
+      (a dead/always-0 feature is a leakage/wiring bug like ABR1).
+      The 6 binary flags (0/1) are deliberately excluded — they are allowed
+      to be constant in a small sample.
     """
     missing = [c for c in ATS_FEATURES if c not in feat_df.columns]
     if missing:
-        raise ValueError(f"ATS-Feature-Vertrag verletzt: fehlende Spalten {missing}")
+        raise ValueError(f"ATS feature contract violated: missing columns {missing}")
     dead = []
     for c in ATS_FEATURES:
         if c in _BINARY_FLAGS:
@@ -214,4 +214,4 @@ def assert_features_alive(feat_df: pd.DataFrame) -> None:
         if col.nunique(dropna=True) <= 1:
             dead.append(c)
     if dead:
-        raise ValueError(f"ATS-Features konstant (Leakage/Verkabelung prüfen): {dead}")
+        raise ValueError(f"ATS features constant (check leakage/wiring): {dead}")

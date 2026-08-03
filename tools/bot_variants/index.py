@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-# tools/bot_variants/index.py — read-only Bot-Varianten-Index (T-2026-KYT-9050-038, D1).
+# tools/bot_variants/index.py — read-only bot variant index (T-2026-KYT-9050-038, D1).
 #
-# ZWECK: Aus dem verstreuten Ist-Zustand (Root-/Staging-/Archiv-Artefakte +
-# Lifecycle-Register + Fleet-Script-Mapping + git) je *Bot × Generation* eine
-# deterministisch regenerierbare Join-Sicht bauen. Das ist die Grundlage, um
-# eine alte Generation (a) mit bestehender Infra live zu schalten (T-037-Muster:
-# altes Artefakt + Code-Revert auf einen git-SHA + Tag + Register-Flip) oder
-# (b) in Sim gegeneinander antreten zu lassen.
+# PURPOSE: build a deterministically regenerable join view per *bot × generation*
+# from the scattered current state (root/staging/archive artifacts +
+# lifecycle register + fleet script mapping + git). This is the basis for
+# (a) putting an old generation live with existing infra (T-037 pattern:
+# old artifact + code revert to a git SHA + tag + register flip), or
+# (b) racing them against each other in sim.
 #
 # Invariants:
-#   * READ-ONLY außerhalb docs/ + model_archive/index.json. Kein DB-Zugriff,
-#     kein Netzwerk, keine Modell-Promotion (harte Regeln 1/2).
-#   * DETERMINISTISCH/IDEMPOTENT: kein now()/Zufall in den Ausgabezeilen; alle
-#     Sammlungen stabil sortiert ⇒ zweimal laufen = byte-identischer Output.
-#   * KEIN SILENT-DROP (wie bot_catalog): nicht klassifizierbare Artefakt-Files
-#     und unbekannte Tags werden gezählt UND gelistet.
-#   * GETEILTE DATEINAMEN sichtbar: ein Artefakt-File unter >1 Tag (Root-
-#     Kollisions-Hazard, z.B. rub2_model_LONG.pkl unter RUB2+RUB3) wird geflaggt.
+#   * READ-ONLY outside docs/ + model_archive/index.json. No DB access,
+#     no network, no model promotion (hard rules 1/2).
+#   * DETERMINISTIC/IDEMPOTENT: no now()/randomness in the output rows; all
+#     collections stably sorted ⇒ running twice = byte-identical output.
+#   * NO SILENT DROP (like bot_catalog): unclassifiable artifact files
+#     and unknown tags are counted AND listed.
+#   * SHARED FILENAMES visible: an artifact file under >1 tag (root
+#     collision hazard, e.g. rub2_model_LONG.pkl under RUB2+RUB3) is flagged.
 #
-# QUELLEN (Join): core.bot_catalog (Tag→Script/Family), core.shadow_gate
-# (Lifecycle je (tag,dir) + SHADOW_ARTIFACTS), Artefakt-meta (Sidecar
-# *_meta.json oder eingebettet), Dateisystem (root/staging/archive), git (HEAD).
+# SOURCES (join): core.bot_catalog (tag→script/family), core.shadow_gate
+# (lifecycle per (tag,dir) + SHADOW_ARTIFACTS), artifact meta (sidecar
+# *_meta.json or embedded), filesystem (root/staging/archive), git (HEAD).
 
 from __future__ import annotations
 
@@ -51,16 +51,16 @@ ARCHIVE_DIR = os.path.join(REPO_ROOT, "model_archive")
 MARKDOWN_OUT = os.path.join(REPO_ROOT, "docs", "bot_variants_index.md")
 JSON_OUT = os.path.join(ARCHIVE_DIR, "index.json")
 
-# (Label, Verzeichnis) — Scan-Reihenfolge = Auflösungs-Priorität für die
-# Fundort-Angabe eines Artefakts (root vor staging vor archive).
+# (label, directory) — scan order = resolution priority for the
+# location shown for an artifact (root before staging before archive).
 _SEARCH_LOCATIONS: tuple[tuple[str, str], ...] = (
     ("root", REPO_ROOT),
     ("staging", STAGING_DIR),
     ("archive", ARCHIVE_DIR),
 )
 
-# Dateien, die KEINE eigenständigen Modell-Artefakte sind (Sidecars, Reports,
-# Configs). Sie dürfen NICHT als "unclassified" gezählt werden.
+# Files that are NOT standalone model artifacts (sidecars, reports,
+# configs). They must NOT be counted as "unclassified".
 _NON_MODEL_SUFFIXES: tuple[str, ...] = (
     "_meta.json",
     "_report.json",
@@ -76,22 +76,22 @@ _MODEL_EXTENSIONS: tuple[str, ...] = (".pkl", ".joblib", ".json")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# KURATIERTE GENERATIONS-REGISTRY  (tag → {direction: [filename, …]})
+# CURATED GENERATION REGISTRY  (tag → {direction: [filename, …]})
 # ─────────────────────────────────────────────────────────────────────────────
-# Der EINE kuratierte Baustein: die Brücke von Generations-Tag zu Artefakt-
-# Dateiname(n). Nötig, weil die ältesten Legacy-Artefakte (reversion, pump_model,
-# model_tsi) die model_id-Konvention noch nicht tragen — ihr Tag lebt nur im
-# Loader des jeweiligen Bot-Scripts (zitiert je Eintrag). Alles ANDERE (Script,
-# Lifecycle, Threshold, deployable, trained_at, md5, code_ref) wird gejoint/
-# abgeleitet, nicht gepflegt. Die Klasse-(A)/Challenger-Shadow-Tags kommen
-# additiv aus shadow_gate.SHADOW_ARTIFACTS dazu (siehe _artifact_registry()).
+# The ONE curated building block: the bridge from generation tag to artifact
+# filename(s). Needed because the oldest legacy artifacts (reversion, pump_model,
+# model_tsi) do not yet carry the model_id convention — their tag lives only in
+# the loader of the respective bot script (cited per entry). Everything ELSE
+# (script, lifecycle, threshold, deployable, trained_at, md5, code_ref) is
+# joined/derived, not maintained here. The class-(A)/challenger shadow tags are
+# added additively from shadow_gate.SHADOW_ARTIFACTS (see _artifact_registry()).
 #
-# pump=LONG / dump=SHORT (MIS-Konvention, core.mis_features / bot 11).
+# pump=LONG / dump=SHORT (MIS convention, core.mis_features / bot 11).
 _MIS_HORIZONS = ("8", "24", "72", "168")
 
 
 def _mis_registry(tag_prefix: str, file_prefix: str, file_suffix: str) -> dict[str, dict[str, list[str]]]:
-    """MIS-Generation je Horizont: MIS?-{h}H → pump(LONG)/dump(SHORT)-Datei."""
+    """MIS generation per horizon: MIS?-{h}H → pump(LONG)/dump(SHORT) file."""
     out: dict[str, dict[str, list[str]]] = {}
     for h in _MIS_HORIZONS:
         out[f"{tag_prefix}-{h}H"] = {
@@ -101,20 +101,20 @@ def _mis_registry(tag_prefix: str, file_prefix: str, file_suffix: str) -> dict[s
     return out
 
 
-# Live-/Legacy-Generationen, die NICHT in shadow_gate.SHADOW_ARTIFACTS stehen
-# (dort liegen nur die noch-nicht-promoteten Klasse-(A)/Challenger-Tags).
+# Live/legacy generations that are NOT in shadow_gate.SHADOW_ARTIFACTS
+# (that only holds the not-yet-promoted class-(A)/challenger tags).
 _LEGACY_ARTIFACTS: dict[str, dict[str, list[str]]] = {
-    # Rubberband (bot 13). RUB1 = Original-Legacy, seit T-037 wieder live.
+    # Rubberband (bot 13). RUB1 = original legacy, live again since T-037.
     "RUB1": {"LONG": ["long_reversion_model.joblib"], "SHORT": ["short_reversion_model.joblib"]},
-    # RUB2-Retrain: SHORT im Root (gebencht), LONG im Staging. rub2_model_LONG.pkl
-    # ist zugleich die RUB3-Challenger-Quelle (SHADOW_ARTIFACTS) → geteilter File.
+    # RUB2 retrain: SHORT in root (benched), LONG in staging. rub2_model_LONG.pkl
+    # is also the RUB3 challenger source (SHADOW_ARTIFACTS) → shared file.
     "RUB2": {"SHORT": ["rub2_model_SHORT.pkl"], "LONG": ["rub2_model_LONG.pkl"]},
-    # Pump/Dump (bot 10). EPD2 = EPD_LEGACY_TAG; der Legacy-Loader lädt das rohe
-    # 3-Klassen-Modell pump_dump_model.pkl für BEIDE Richtungen. Zusätzlich trägt
-    # die EPD2-Generation ihre Retrain-Artefakte epd2_model_{LONG,SHORT}.pkl
-    # (EPD2_ARTIFACT_PATHS in 10_pump_dump_detector.py) — epd2_model_LONG.pkl ist
-    # zugleich die EPD3-LONG-Shadow-Quelle (SHADOW_ARTIFACTS) ⇒ geteilter File-
-    # Hazard, den der Index sichtbar macht.
+    # Pump/Dump (bot 10). EPD2 = EPD_LEGACY_TAG; the legacy loader loads the raw
+    # 3-class model pump_dump_model.pkl for BOTH directions. In addition,
+    # the EPD2 generation carries its retrain artifacts epd2_model_{LONG,SHORT}.pkl
+    # (EPD2_ARTIFACT_PATHS in 10_pump_dump_detector.py) — epd2_model_LONG.pkl is
+    # also the EPD3-LONG shadow source (SHADOW_ARTIFACTS) ⇒ shared-file
+    # hazard that the index makes visible.
     "EPD2": {
         "LONG": ["pump_dump_model.pkl", "epd2_model_LONG.pkl"],
         "SHORT": ["pump_dump_model.pkl", "epd2_model_SHORT.pkl"],
@@ -124,34 +124,34 @@ _LEGACY_ARTIFACTS: dict[str, dict[str, list[str]]] = {
     **_mis_registry("MIS2", "mis2_model_", ".pkl"),
     # Trend-Sniper/ATS (bot 12): ATS1_Robust = model_tsi_*_robust.pkl.
     "ATS1_ROBUST": {"LONG": ["model_tsi_long_robust.pkl"], "SHORT": ["model_tsi_short_robust.pkl"]},
-    # Master-Ranker AIM2 (bot 15): richtungs-agnostischer Meta-Ranker (eine Datei).
+    # Master-Ranker AIM2 (bot 15): direction-agnostic meta ranker (one file).
     "AIM2": {"LONG": ["master_meta_model_aim2.pkl"], "SHORT": ["master_meta_model_aim2.pkl"]},
-    # SMC-Sniper (bot 25): BB/TD je Timeframe, ein Modell je File (bidirektional genutzt).
+    # SMC sniper (bot 25): BB/TD per timeframe, one model per file (used bidirectionally).
     "BB_1H": {"LONG": ["bb_xgboost_model_1h.pkl"], "SHORT": ["bb_xgboost_model_1h.pkl"]},
     "BB_4H": {"LONG": ["bb_xgboost_model_4h.pkl"], "SHORT": ["bb_xgboost_model_4h.pkl"]},
     "TD_1H": {"LONG": ["td_xgboost_model_1h.pkl"], "SHORT": ["td_xgboost_model_1h.pkl"]},
     "TD_4H": {"LONG": ["td_xgboost_model_4h.pkl"], "SHORT": ["td_xgboost_model_4h.pkl"]},
-    # Quasimodo (bot 24): QM je Timeframe.
+    # Quasimodo (bot 24): QM per timeframe.
     "QM_1H": {"LONG": ["qm_xgboost_model_1h.pkl"], "SHORT": ["qm_xgboost_model_1h.pkl"]},
     "QM_4H": {"LONG": ["qm_xgboost_model_4h.pkl"], "SHORT": ["qm_xgboost_model_4h.pkl"]},
-    # Break&Retest Gen-2 (bot 18): auf Platte als bt2_model_*.json, meta.model_id=ABR2
-    # (Dateiname ≠ Tag — der Index macht genau das sichtbar).
+    # Break&Retest gen-2 (bot 18): on disk as bt2_model_*.json, meta.model_id=ABR2
+    # (filename ≠ tag — the index makes exactly that visible).
     "ABR2": {"LONG": ["bt2_model_LONG.json"], "SHORT": ["bt2_model_SHORT.json"]},
-    # Weitere Einzelmodell-Legacies.
+    # Further single-model legacies.
     "MAX1": {"SHORT": ["max1_model_SHORT.pkl"]},
     "FIF1": {"LONG": ["fif1_model.pkl"], "SHORT": ["fif1_model.pkl"]},
     "PEX1": {"LONG": ["pex1_model.pkl"], "SHORT": ["pex1_model.pkl"]},
 }
 
-# Kurze Provenienz je Familie (MODEL_INTENT/Task-Referenz). Generation-spezifische
-# Overrides in _PROVENANCE_TAG.
+# Short provenance per family (MODEL_INTENT/task reference). Generation-specific
+# overrides in _PROVENANCE_TAG.
 _PROVENANCE_FAMILY: dict[str, str] = {
     "RUB": "Rubberband HVN/S-R-Reversion (bot 13); RUB1 revived T-037",
     "EPD": "Pump/Dump-Detector (bot 10); EPD2=EPD_LEGACY_TAG",
     "MIS": "Momentum-Impuls-Spike pump/dump (bot 11); MIS1 revived T-034",
     "ATS": "Trend-Strength-Sniper TSI (bot 12)",
-    "ATB": "Converging-Channel Break (bot 14); ATB2-Neuaufbau",
-    "AIM": "Master-Ranker/Gate über Kandidaten (bot 15)",
+    "ATB": "Converging-Channel Break (bot 14); ATB2 rebuild",
+    "AIM": "Master-Ranker/Gate over candidates (bot 15)",
     "BB": "SMC-ML-Sniper Break (bot 25)",
     "TD": "SMC-ML-Sniper Trend-Detect (bot 25)",
     "QM": "Quasimodo-Pattern (bot 24)",
@@ -171,43 +171,43 @@ _PROVENANCE_FAMILY: dict[str, str] = {
     "UFI": "UFI1 (bot 29)",
     "TRM": "TRM1 (bot 32)",
 }
-# Bekannte regelbasierte Live-Generationen OHNE Modell-Artefakt und ohne
-# Lifecycle-Register-Eintrag (Default-LIVE). Ohne diese Liste fielen aktive
-# Fleet-Tags aus dem Index (kein Artefakt ⇒ nicht entdeckt). Richtungen explizit,
-# damit der Index nicht fälschlich eine tote Richtung als live zeigt.
+# Known rule-based live generations WITHOUT a model artifact and without
+# a lifecycle register entry (default LIVE). Without this list, active
+# fleet tags would fall out of the index (no artifact ⇒ not discovered).
+# Directions explicit so the index does not falsely show a dead direction as live.
 _RULE_ONLY_GENERATIONS: dict[str, list[str]] = {
-    "MAX2": ["LONG"],  # SRA2-LONG-Fork nach CH_MAIN (bot 9), LONG-only
-    "ROM1": ["LONG", "SHORT"],  # Regime-Re-Forwarder (bot 28)
-    "UFI1": ["LONG", "SHORT"],  # bot 29 (nicht-Standard-Leverage)
+    "MAX2": ["LONG"],  # SRA2-LONG fork to CH_MAIN (bot 9), LONG-only
+    "ROM1": ["LONG", "SHORT"],  # regime re-forwarder (bot 28)
+    "UFI1": ["LONG", "SHORT"],  # bot 29 (non-standard leverage)
     "TRM1": ["LONG", "SHORT"],  # bot 32
 }
 
 _PROVENANCE_TAG: dict[str, str] = {
-    "ATS1_ROBUST": "ATS1_Robust Legacy (model_tsi_*_robust.pkl); ATS2 ist der Nachfolger",
-    "EPD3": "EPD2-Retrain-Challenger; LONG+SHORT nach Root promotet (epd3_model_*.pkl, PR #189)",
-    "RUB3": "rub2_model_LONG-Challenger vs. live RUB1-LONG",
-    "RUB4": "funding-gegatetes RUB3 (fund_24h>+3bps); nutzt RUB3-Artefakt",
-    "MAX2": "kein Modell — SRA2-LONG-Fork nach CH_MAIN (bot 9)",
-    "AIM2-TOPN": "High-Conviction-Top-N-Kanal über AIM2; retired T-037",
+    "ATS1_ROBUST": "ATS1_Robust legacy (model_tsi_*_robust.pkl); ATS2 is the successor",
+    "EPD3": "EPD2 retrain challenger; LONG+SHORT promoted to root (epd3_model_*.pkl, PR #189)",
+    "RUB3": "rub2_model_LONG challenger vs. live RUB1-LONG",
+    "RUB4": "funding-gated RUB3 (fund_24h>+3bps); uses RUB3 artifact",
+    "MAX2": "no model — SRA2-LONG fork to CH_MAIN (bot 9)",
+    "AIM2-TOPN": "high-conviction top-N channel over AIM2; retired T-037",
 }
 
 
 def legacy_artifact_slots() -> dict[str, dict[str, list[str]]]:
-    """Öffentliche Sicht auf die kuratierte Legacy-/Live-Registry (Tag → Richtung
-    → Root-Dateiname(n)).
+    """Public view of the curated legacy/live registry (tag → direction
+    → root filename(s)).
 
-    Zweite Konsumentin neben dem Index selbst: ``tools/promotion_guard.py``
-    braucht genau diese Tag↔Dateiname-Brücke, um zu erkennen, ob ein Challenger-
-    Artefakt bei der Promotion in den Repo-Root den Loader-Slot eines FREMDEN
-    Tags kapern würde (T-2026-KYT-9050-057). Bewusst ein Accessor statt eines
-    zweiten kuratierten Dicts — eine Quelle, die schon im Index getestet ist.
-    Kopie, damit ein Aufrufer die Registry nicht mutieren kann.
+    Second consumer besides the index itself: ``tools/promotion_guard.py``
+    needs exactly this tag↔filename bridge to detect whether a challenger
+    artifact would hijack the loader slot of a FOREIGN tag when promoted
+    to the repo root (T-2026-KYT-9050-057). Deliberately an accessor instead of a
+    second curated dict — one source, already tested in the index.
+    Copy so a caller cannot mutate the registry.
     """
     return {tag: {d: list(files) for d, files in dirs.items()} for tag, dirs in _LEGACY_ARTIFACTS.items()}
 
 
 def _md5(path: str) -> str:
-    h = hashlib.md5()  # noqa: S324 — Integritäts-/Identitäts-Hash, nicht kryptografisch
+    h = hashlib.md5()  # noqa: S324 — integrity/identity hash, not cryptographic
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
@@ -215,12 +215,12 @@ def _md5(path: str) -> str:
 
 
 def _rel(path: str) -> str:
-    """Repo-relativer POSIX-Pfad (deterministisch über Plattformen)."""
+    """Repo-relative POSIX path (deterministic across platforms)."""
     return os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
 
 
 def _locate(filename: str) -> tuple[str, str] | None:
-    """Erste Fundstelle (Label, absoluter Pfad) eines Dateinamens, oder None."""
+    """First match location (label, absolute path) of a filename, or None."""
     for label, directory in _SEARCH_LOCATIONS:
         candidate = os.path.join(directory, filename)
         if os.path.isfile(candidate):
@@ -229,7 +229,7 @@ def _locate(filename: str) -> tuple[str, str] | None:
 
 
 def _artifact_registry() -> dict[str, dict[str, list[str]]]:
-    """Kuratierte Legacy-Registry + Klasse-(A)/Challenger-Tags aus shadow_gate."""
+    """Curated legacy registry + class-(A)/challenger tags from shadow_gate."""
     registry: dict[str, dict[str, list[str]]] = {}
     for tag, dirs in _LEGACY_ARTIFACTS.items():
         registry[tag] = {d: list(files) for d, files in dirs.items()}
@@ -243,7 +243,7 @@ def _artifact_registry() -> dict[str, dict[str, list[str]]]:
 
 
 def _lifecycle_tags() -> set[str]:
-    """Alle Tags, die im shadow_gate-Register (Lifecycle + Retired) vorkommen."""
+    """All tags that appear in the shadow_gate register (lifecycle + retired)."""
     tags: set[str] = set()
     lifecycle = getattr(shadow_gate, "_LIFECYCLE", {})
     for tag, _direction in lifecycle:
@@ -254,18 +254,18 @@ def _lifecycle_tags() -> set[str]:
 
 
 def _lifecycle_directions(tag: str) -> list[str]:
-    """Richtungen, die für einen Tag im Lifecycle-Register genannt sind."""
+    """Directions listed for a tag in the lifecycle register."""
     lifecycle = getattr(shadow_gate, "_LIFECYCLE", {})
     dirs = {d for (t, d) in lifecycle if t.upper() == tag}
     return [d for d in _DIRECTIONS if d in dirs]
 
 
 def _extract_meta_fields(meta: dict[str, Any], include_features: bool = False) -> dict[str, Any]:
-    """Vereinheitlicht die für den Index relevanten Felder aus einem meta-Dict.
+    """Normalizes the index-relevant fields from a meta dict.
 
-    ``include_features`` hängt die VOLLE Feature-Liste an (für das Archiv-Manifest,
-    D2 — der Feature-Kontrakt). Default aus, damit der D1-Index (docs/…md +
-    index.json) schlank/unverändert bleibt (nur ``n_features``)."""
+    ``include_features`` appends the FULL feature list (for the archive manifest,
+    D2 — the feature contract). Default off, so the D1 index (docs/…md +
+    index.json) stays lean/unchanged (only ``n_features``)."""
     threshold = meta.get("optimal_threshold", meta.get("threshold"))
     deployable = meta.get("deployable")
     val_stats = meta.get("val_stats")
@@ -288,20 +288,20 @@ def _extract_meta_fields(meta: dict[str, Any], include_features: bool = False) -
 
 
 def _read_meta(path: str, load_embedded: bool, include_features: bool = False) -> dict[str, Any] | None:
-    """Meta eines Artefakts: Sidecar *_meta.json bevorzugt, sonst eingebettet.
+    """Meta of an artifact: sidecar *_meta.json preferred, otherwise embedded.
 
-    Sidecar ist billig und deckt die Retrain-Generation (retrain_from_replay).
-    Eingebettete meta (im joblib-dict) deckt die Sniper-/Einzelmodelle; das
-    Laden ist teuer (xgboost/sklearn) und daher über ``load_embedded`` gated.
-    Alle Werte sind statische Datei-Inhalte ⇒ deterministisch (kein now()).
+    Sidecar is cheap and covers the retrain generation (retrain_from_replay).
+    Embedded meta (in the joblib dict) covers the sniper/single models; loading
+    it is expensive (xgboost/sklearn) and therefore gated via ``load_embedded``.
+    All values are static file contents ⇒ deterministic (no now()).
     """
     sidecar = os.path.splitext(path)[0] + "_meta.json"
     if os.path.isfile(sidecar):
         try:
             with open(sidecar, encoding="utf-8") as fh:
                 return _extract_meta_fields(json.load(fh), include_features)
-        except (OSError, ValueError) as exc:  # pragma: no cover - defensiv
-            logger.warning("meta-Sidecar %s nicht lesbar: %s", sidecar, exc)
+        except (OSError, ValueError) as exc:  # pragma: no cover - defensive
+            logger.warning("meta sidecar %s not readable: %s", sidecar, exc)
             return None
     if not load_embedded or not path.endswith((".pkl", ".joblib")):
         return None
@@ -313,8 +313,8 @@ def _read_meta(path: str, load_embedded: bool, include_features: bool = False) -
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             art = joblib.load(path)
-    except Exception as exc:  # pragma: no cover - defensiv, Discovery darf nicht sterben
-        logger.warning("Artefakt %s nicht ladbar: %s", path, exc)
+    except Exception as exc:  # pragma: no cover - defensive, discovery must not die
+        logger.warning("artifact %s not loadable: %s", path, exc)
         return None
     if not isinstance(art, dict):
         return None
@@ -331,13 +331,13 @@ def _read_meta(path: str, load_embedded: bool, include_features: bool = False) -
 def _build_artifact_entry(
     direction: str, filename: str, load_embedded: bool, include_features: bool = False
 ) -> dict[str, Any]:
-    """Ein Artefakt-Eintrag: Fundort + md5 + meta (oder MISSING, wenn nicht da).
+    """One artifact entry: location + md5 + meta (or MISSING, if not there).
 
-    Resilienz (Modul-Invariante „Discovery darf nicht sterben"): der Fundort ist
-    per isfile() geprüft, aber zwischen Prüfung und Read kann die Datei auf dem
-    Live-VPS von einem Trainings-Lauf gesperrt/überschrieben werden (TOCTOU). Ein
-    OSError beim md5/stat degradiert deshalb DIESEN Eintrag (exists=False), statt
-    den ganzen Index-Lauf zu reißen — analog zum fail-soft joblib-Pfad."""
+    Resilience (module invariant "discovery must not die"): the location is
+    checked via isfile(), but between the check and the read the file can be
+    locked/overwritten on the live VPS by a training run (TOCTOU). An
+    OSError on md5/stat therefore degrades THIS entry (exists=False), instead
+    of tearing down the whole index run — analogous to the fail-soft joblib path."""
     found = _locate(filename)
     if found is not None:
         label, abspath = found
@@ -353,7 +353,7 @@ def _build_artifact_entry(
                 "meta": _read_meta(abspath, load_embedded, include_features),
             }
         except OSError as exc:  # pragma: no cover - TOCTOU/Lock/Permission-Race
-            logger.warning("Artefakt %s nicht lesbar (%s): %s", filename, abspath, exc)
+            logger.warning("artifact %s not readable (%s): %s", filename, abspath, exc)
     return {
         "direction": direction,
         "filename": filename,
@@ -375,19 +375,19 @@ def _provenance(family: str | None, tag: str) -> str:
 
 
 def build_index(load_embedded: bool = True, include_features: bool = False) -> dict[str, Any]:
-    """Baut den vollständigen Varianten-Index als (JSON-serialisierbares) Dict.
+    """Builds the full variant index as a (JSON-serializable) dict.
 
-    Deterministisch: alle Generationen/Artefakte/Listen stabil sortiert; kein
-    now()/Zufall. ``load_embedded=False`` überspringt das teure joblib-Laden
-    (nur Sidecar-meta) — für schnelle/Dependency-arme Läufe und Tests.
-    ``include_features`` hängt die volle Feature-Liste an die Artefakt-meta an
-    (Archiv-Manifest, D2); Default aus ⇒ der D1-Index bleibt unverändert.
+    Deterministic: all generations/artifacts/lists stably sorted; no
+    now()/randomness. ``load_embedded=False`` skips the expensive joblib load
+    (sidecar meta only) — for fast/dependency-light runs and tests.
+    ``include_features`` appends the full feature list to the artifact meta
+    (archive manifest, D2); default off ⇒ the D1 index stays unchanged.
     """
     registry = _artifact_registry()
     all_tags = set(registry) | _lifecycle_tags() | set(_RULE_ONLY_GENERATIONS)
 
     generations: list[dict[str, Any]] = []
-    # filename → set(tags), um geteilte Dateinamen (Kollisions-Hazard) zu finden.
+    # filename → set(tags), to find shared filenames (collision hazard).
     filename_to_tags: dict[str, set[str]] = {}
     unknown_tags: list[str] = []
 
@@ -398,8 +398,8 @@ def build_index(load_embedded: bool = True, include_features: bool = False) -> d
             unknown_tags.append(tag)
 
         art_map = registry.get(tag, {})
-        # Richtungen: Artefakt-Registry → Lifecycle-Register → Rule-only-Liste →
-        # (Fallback) beide.
+        # Directions: artifact registry → lifecycle register → rule-only list →
+        # (fallback) both.
         directions = (
             [d for d in _DIRECTIONS if d in art_map]
             or _lifecycle_directions(tag)
@@ -420,16 +420,16 @@ def build_index(load_embedded: bool = True, include_features: bool = False) -> d
 
         notes: list[str] = []
         if not art_map:
-            notes.append("regelbasiert / kein Modell-Artefakt")
+            notes.append("rule-based / no model artifact")
         missing = sorted({a["filename"] for a in artifacts if not a["exists"]})
         if missing:
-            notes.append("Artefakt fehlt auf Platte: " + ", ".join(missing))
+            notes.append("artifact missing on disk: " + ", ".join(missing))
         if script is None:
-            notes.append("unbekannter Tag — kein Fleet-Script (bot_catalog)")
+            notes.append("unknown tag — no fleet script (bot_catalog)")
 
-        # code_ref (Phase 1, konservativ): HEAD wenn die Generation aktiv (live)
-        # ist ⇒ Logik im aktuellen Baum. Sonst null — die exakte git-SHA-Auflösung
-        # je Alt-Generation ist D4/Phase 2.
+        # code_ref (phase 1, conservative): HEAD if the generation is active (live)
+        # ⇒ logic in the current tree. Otherwise null — the exact git SHA resolution
+        # per old generation is D4/phase 2.
         code_ref = "HEAD" if any(v == shadow_gate.LIVE for v in lifecycle.values()) else None
 
         generations.append(
@@ -464,7 +464,7 @@ def build_index(load_embedded: bool = True, include_features: bool = False) -> d
 
 
 def _shared_filenames(filename_to_tags: dict[str, set[str]]) -> list[dict[str, Any]]:
-    """Dateinamen, die von >1 DISTINKTEM Tag beansprucht werden (Hazard)."""
+    """Filenames claimed by >1 DISTINCT tag (hazard)."""
     out: list[dict[str, Any]] = []
     for filename, tags in filename_to_tags.items():
         if len(tags) > 1:
@@ -487,17 +487,17 @@ def _is_model_file(filename: str) -> bool:
         return False
     if any(filename.endswith(suffix) for suffix in _NON_MODEL_SUFFIXES):
         return False
-    # threshold_*_final.pkl sind MIS1-Threshold-Sidecars, keine Modelle.
+    # threshold_*_final.pkl are MIS1 threshold sidecars, not models.
     if filename.startswith("threshold_") and filename.endswith("_final.pkl"):
         return False
     return True
 
 
 def _unclassified_artifacts(filename_to_tags: dict[str, set[str]]) -> list[dict[str, Any]]:
-    """Modell-artige Files in root/staging, die KEINER Generation zugeordnet sind.
+    """Model-like files in root/staging that are NOT assigned to any generation.
 
-    Kein Silent-Drop: was der Index nicht klassifizieren kann, wird gezählt und
-    mit Fundort+md5 gelistet (Operator sieht die Lücke)."""
+    No silent drop: whatever the index cannot classify is counted and
+    listed with location+md5 (operator sees the gap)."""
     classified = set(filename_to_tags)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -507,7 +507,7 @@ def _unclassified_artifacts(filename_to_tags: dict[str, set[str]]) -> list[dict[
         try:
             entries = sorted(os.listdir(directory))
         except OSError as exc:  # pragma: no cover - Permission/Race
-            logger.warning("Verzeichnis %s nicht lesbar: %s", directory, exc)
+            logger.warning("directory %s not readable: %s", directory, exc)
             continue
         for filename in entries:
             if filename in seen or filename in classified:
@@ -520,7 +520,7 @@ def _unclassified_artifacts(filename_to_tags: dict[str, set[str]]) -> list[dict[
             try:
                 md5 = _md5(abspath)
             except OSError as exc:  # pragma: no cover - TOCTOU/Lock/Permission-Race
-                logger.warning("Artefakt %s nicht lesbar: %s", abspath, exc)
+                logger.warning("artifact %s not readable: %s", abspath, exc)
                 continue
             seen.add(filename)
             out.append(
@@ -536,7 +536,7 @@ def _unclassified_artifacts(filename_to_tags: dict[str, set[str]]) -> list[dict[
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Markdown-Rendering (menschenlesbar, generiert)
+# Markdown rendering (human-readable, generated)
 # ─────────────────────────────────────────────────────────────────────────────
 def _fmt_lifecycle(lifecycle: dict[str, str]) -> str:
     return ", ".join(f"{d}:{lifecycle[d]}" for d in _DIRECTIONS if d in lifecycle)
@@ -555,37 +555,37 @@ def _fmt_artifacts(artifacts: list[dict[str, Any]]) -> str:
 
 def render_markdown(index: dict[str, Any]) -> str:
     lines: list[str] = []
-    lines.append("# Bot-Varianten-Index (auto-generiert)")
+    lines.append("# Bot Variant Index (auto-generated)")
     lines.append("")
     lines.append(
-        "> Generiert von `tools/bot_variants/index.py` (T-2026-KYT-9050-038). "
-        "**Nicht von Hand editieren** — regenerieren mit `python -m tools.bot_variants.index --write`."
+        "> Generated by `tools/bot_variants/index.py` (T-2026-KYT-9050-038). "
+        "**Do not edit by hand** — regenerate with `python -m tools.bot_variants.index --write`."
     )
     lines.append(">")
     lines.append(
-        "> Join über `core.bot_catalog` (Tag→Family/Script) · `core.shadow_gate` "
-        "(Lifecycle je (Tag,Richtung) + SHADOW_ARTIFACTS) · Artefakt-meta · Dateisystem "
-        "(root/staging/archive) · git. Deterministisch/idempotent."
+        "> Join over `core.bot_catalog` (tag→family/script) · `core.shadow_gate` "
+        "(lifecycle per (tag,direction) + SHADOW_ARTIFACTS) · artifact meta · filesystem "
+        "(root/staging/archive) · git. Deterministic/idempotent."
     )
     lines.append("")
     lines.append(
-        f"**Generationen:** {index['generation_count']} · "
-        f"**geteilte Dateinamen:** {index['shared_filename_count']} · "
-        f"**unklassifizierte Artefakte:** {index['unclassified_count']} · "
-        f"**unbekannte Tags:** {index['unknown_tag_count']}"
+        f"**Generations:** {index['generation_count']} · "
+        f"**shared filenames:** {index['shared_filename_count']} · "
+        f"**unclassified artifacts:** {index['unclassified_count']} · "
+        f"**unknown tags:** {index['unknown_tag_count']}"
     )
     lines.append("")
     lines.append(
-        "`code_ref` in Phase 1 konservativ: `HEAD` wenn die Generation live/aktiv "
-        "ist, sonst leer (exakte git-SHA je Alt-Generation folgt in Phase 2 / D4)."
+        "`code_ref` conservative in phase 1: `HEAD` if the generation is live/active, "
+        "otherwise empty (exact git SHA per old generation follows in phase 2 / D4)."
     )
     lines.append("")
 
-    # Generationen — gruppiert nach Familie.
-    lines.append("## Generationen")
+    # Generations — grouped by family.
+    lines.append("## Generations")
     lines.append("")
     lines.append(
-        "| Family | Tag | Script | Lifecycle | Artefakte (Richtung:Datei@Ort#md5) | model_id | code_ref | Provenienz |"
+        "| Family | Tag | Script | Lifecycle | Artifacts (direction:file@location#md5) | model_id | code_ref | Provenance |"
     )
     lines.append("|---|---|---|---|---|---|---|---|")
     for gen in index["generations"]:
@@ -603,47 +603,47 @@ def render_markdown(index: dict[str, Any]) -> str:
         )
     lines.append("")
 
-    # Geteilte Dateinamen (Kollisions-Hazard).
-    lines.append("## Geteilte Dateinamen (Kollisions-Hazard)")
+    # Shared filenames (collision hazard).
+    lines.append("## Shared Filenames (Collision Hazard)")
     lines.append("")
     if index["shared_filenames"]:
-        lines.append("| Datei | Tags | Ort |")
+        lines.append("| File | Tags | Location |")
         lines.append("|---|---|---|")
         for s in index["shared_filenames"]:
             lines.append(f"| `{s['filename']}` | {', '.join(s['tags'])} | {s['location']} |")
     else:
-        lines.append("_keine_")
+        lines.append("_none_")
     lines.append("")
 
-    # Unklassifizierte Artefakte (kein Silent-Drop).
-    lines.append("## Unklassifizierte Artefakte")
+    # Unclassified artifacts (no silent drop).
+    lines.append("## Unclassified Artifacts")
     lines.append("")
-    lines.append("_Modell-artige Dateien ohne Generations-Zuordnung — Operator prüfen:_")
+    lines.append("_Model-like files without a generation assignment — operator check:_")
     lines.append("")
     if index["unclassified_artifacts"]:
-        lines.append("| Datei | Ort | md5 |")
+        lines.append("| File | Location | md5 |")
         lines.append("|---|---|---|")
         for u in index["unclassified_artifacts"]:
             lines.append(f"| `{u['filename']}` | {u['location']} | {(u['md5'] or '')[:8]} |")
     else:
-        lines.append("_keine_")
+        lines.append("_none_")
     lines.append("")
 
-    # Unbekannte Tags (kein Fleet-Script).
-    lines.append("## Unbekannte Tags (kein Fleet-Script)")
+    # Unknown tags (no fleet script).
+    lines.append("## Unknown Tags (No Fleet Script)")
     lines.append("")
     if index["unknown_tags"]:
         for t in index["unknown_tags"]:
             lines.append(f"- `{t}`")
     else:
-        lines.append("_keine_")
+        lines.append("_none_")
     lines.append("")
 
     return "\n".join(lines)
 
 
 def _dump_json(index: dict[str, Any]) -> str:
-    """Deterministisches JSON (sort_keys, feste Einrückung, trailing newline)."""
+    """Deterministic JSON (sort_keys, fixed indentation, trailing newline)."""
     return json.dumps(index, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
@@ -660,12 +660,12 @@ def write_outputs(index: dict[str, Any]) -> tuple[str, str]:
 
 
 def check_outputs(index: dict[str, Any]) -> list[str]:
-    """Vergleicht generierten Output mit den Dateien auf Platte. Drift-Liste."""
+    """Compares generated output with the files on disk. Drift list."""
     drift: list[str] = []
     expected = {MARKDOWN_OUT: render_markdown(index), JSON_OUT: _dump_json(index)}
     for path, content in expected.items():
         if not os.path.isfile(path):
-            drift.append(f"fehlt: {_rel(path)}")
+            drift.append(f"missing: {_rel(path)}")
             continue
         with open(path, encoding="utf-8") as fh:
             if fh.read() != content:
@@ -674,22 +674,22 @@ def check_outputs(index: dict[str, Any]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Bot-Varianten-Index (read-only Discovery, T-2026-KYT-9050-038).")
+    parser = argparse.ArgumentParser(description="Bot variant index (read-only discovery, T-2026-KYT-9050-038).")
     parser.add_argument(
-        "--write", action="store_true", help="docs/bot_variants_index.md + model_archive/index.json schreiben"
+        "--write", action="store_true", help="write docs/bot_variants_index.md + model_archive/index.json"
     )
     parser.add_argument(
-        "--check", action="store_true", help="Drift gegen die Dateien auf Platte prüfen (exit 1 bei Drift)"
+        "--check", action="store_true", help="check drift against the files on disk (exit 1 on drift)"
     )
-    parser.add_argument("--stdout", action="store_true", help="Markdown nach stdout")
+    parser.add_argument("--stdout", action="store_true", help="markdown to stdout")
     parser.add_argument(
-        "--no-model-meta", action="store_true", help="eingebettete joblib-meta überspringen (nur Sidecar)"
+        "--no-model-meta", action="store_true", help="skip embedded joblib meta (sidecar only)"
     )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
-    # Windows-Konsole ist per Default cp1252 → Unicode (→, —) im Markdown crasht
-    # den print. Datei-Writes sind ohnehin utf-8; hier stdout defensiv angleichen.
+    # Windows console is cp1252 by default → unicode (→, —) in the markdown crashes
+    # print. File writes are utf-8 anyway; defensively align stdout here.
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if callable(reconfigure):
         reconfigure(encoding="utf-8")
@@ -702,7 +702,7 @@ def main(argv: list[str] | None = None) -> int:
             for d in drift:
                 print("  " + d)
             return 1
-        print("index up-to-date (kein Drift)")
+        print("index up-to-date (no drift)")
         return 0
     if args.stdout:
         print(render_markdown(index))
@@ -710,12 +710,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.write:
         md_path, js_path = write_outputs(index)
-        print(f"geschrieben: {_rel(md_path)}  +  {_rel(js_path)}")
+        print(f"written: {_rel(md_path)}  +  {_rel(js_path)}")
     print(
-        f"Generationen={index['generation_count']} "
-        f"geteilte-Dateinamen={index['shared_filename_count']} "
-        f"unklassifiziert={index['unclassified_count']} "
-        f"unbekannte-Tags={index['unknown_tag_count']}"
+        f"generations={index['generation_count']} "
+        f"shared-filenames={index['shared_filename_count']} "
+        f"unclassified={index['unclassified_count']} "
+        f"unknown-tags={index['unknown_tag_count']}"
     )
     return 0
 

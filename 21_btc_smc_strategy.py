@@ -11,7 +11,7 @@ import pandas as pd
 from core import config as _kcfg  # channel ids
 from core.candles import read_candles
 
-# --- Eigene DB Connection importieren ---
+# --- Import our own DB connection ---
 from core.database import get_db_connection
 from core.market_utils import calculate_pivots, check_cooldown, get_max_leverage, update_cooldown
 from core.trade_utils import cap_leverage_to_sl
@@ -19,41 +19,41 @@ from core.trade_utils import cap_leverage_to_sl
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - BTC_SNIPER - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 🛠️ CONFIGURATION FÜR CORNIX & STRATEGIE
-CHANNEL_ID = _kcfg.CH_BTC_SMC  # 🔴 HIER DEINEN NEUEN KANAL EINTRAGEN!
+# 🛠️ CONFIGURATION FOR CORNIX & STRATEGY
+CHANNEL_ID = _kcfg.CH_BTC_SMC  # 🔴 ENTER YOUR NEW CHANNEL HERE!
 SYMBOL = 'BTCUSDT'
 TIMEFRAME = '1h'
 
-# Die Gewinner-Parameter aus dem Grid-Search Backtest
+# The winning parameters from the grid-search backtest
 EMA_PERIOD = 21
 
-# SL wird dynamisch berechnet: 1.0 × ATR(14) mit Floor von 0.4% und Cap von 1.2%.
-# Damit bleibt die Strategie bei ruhigem Market eng (hohe R:R), passt sich aber
-# bei Volatilität automatisch an (z.B. after CPI-Releases, Halving-Events).
+# SL is computed dynamically: 1.0 × ATR(14) with a floor of 0.4% and a cap of 1.2%.
+# This keeps the strategy tight in a calm market (high R:R), but it also
+# adapts automatically to volatility (e.g. after CPI releases, halving events).
 SL_ATR_MULT = 1.0
-SL_PCT_FLOOR = 0.004  # 0.4% — minimaler SL (historisch optimiertes Floor)
-SL_PCT_CAP = 0.012  # 1.2% — Cap verhindert zu weite SLs in High-Vola-Phasen
+SL_PCT_FLOOR = 0.004  # 0.4% — minimum SL (historically optimised floor)
+SL_PCT_CAP = 0.012  # 1.2% — cap prevents SLs from getting too wide in high-vol phases
 
-# FIX P0.5 (Audit): 100x mit 0,4-1,2%-SL liquidierte bei ~-0,9% VOR dem SL —
-# jeder Stop war -100% Margin. Jetzt 25x + zusätzlich cap_leverage_to_sl (R4).
-DESIRED_LEVERAGE = 25  # wird gegen max_leverage.json gecapped
+# FIX P0.5 (audit): 100x with a 0.4-1.2% SL liquidated at ~-0.9% BEFORE the SL —
+# every stop was -100% margin. Now 25x plus additionally cap_leverage_to_sl (R4).
+DESIRED_LEVERAGE = 25  # gets capped against max_leverage.json
 
-MIN_RR_RATIO = 1.25  # Minimum Risk-Reward
-MAX_PIVOT_AGE = 120  # Keine Asbach-Uralt-Ziele
-MAX_FVG_AGE = 48  # FVG muss innerhalb von 2 Tagen gefüllt werden
+MIN_RR_RATIO = 1.25  # minimum risk-reward
+MAX_PIVOT_AGE = 120  # no ancient stale targets
+MAX_FVG_AGE = 48  # FVG must be filled within 2 days
 
-# Cooldown/Dedupe (P2.46): ohne diese Sperre feuert der Bot bei Gap-Filler-Lag
-# dasselbe Setup eine 1h-Kerze später erneut. 12h ist der Fleet-Default für
-# sub-daily Timeframes (P1.27-Muster, vgl. 16_smc_forex_metals COOLDOWN_HOURS.get(tf, 12))
-# und liegt über der Kerzendauer (1h), damit das 1h-versetzte Doppelsignal sicher
-# geblockt ist. Der Tag trägt kein Symbol — das liegt in der coin-Key-Spalte;
-# "BTCSMC_1H" (9 Zeichen) passt in trade_cooldowns.module varchar(10) (T-024-Falle).
+# Cooldown/dedupe (P2.46): without this lock, the bot re-fires the same
+# setup one 1h candle later on gap-filler lag. 12h is the fleet default for
+# sub-daily timeframes (P1.27 pattern, cf. 16_smc_forex_metals COOLDOWN_HOURS.get(tf, 12))
+# and exceeds the candle duration (1h), so the 1h-offset duplicate signal is
+# reliably blocked. The tag carries no symbol — that lives in the coin key column;
+# "BTCSMC_1H" (9 characters) fits in trade_cooldowns.module varchar(10) (T-024 trap).
 COOLDOWN_TAG = "BTCSMC_1H"
 COOLDOWN_HOURS = 12
 
 
 def calculate_atr(df, period=14):
-    """Average True Range für dynamische SL-Berechnung."""
+    """Average True Range for dynamic SL calculation."""
     high = df['high']
     low = df['low']
     close = df['close']
@@ -69,8 +69,8 @@ def calculate_atr(df, period=14):
 
 
 def calculate_dynamic_sl_pct(df, curr_close):
-    """Liefert den SL-Abstand als Fraktion des Preises (z.B. 0.006 = 0.6%).
-    Basis: ATR × SL_ATR_MULT, gecappt zwischen SL_PCT_FLOOR und SL_PCT_CAP.
+    """Returns the SL distance as a fraction of the price (e.g. 0.006 = 0.6%).
+    Basis: ATR × SL_ATR_MULT, capped between SL_PCT_FLOOR and SL_PCT_CAP.
     """
     atr_series = calculate_atr(df, 14)
     atr_val = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else 0.0
@@ -83,13 +83,13 @@ def calculate_dynamic_sl_pct(df, curr_close):
 
 # 📡 CORNIX SIGNAL GENERATOR
 def send_cornix_signal(direction, entry, sl, tp, rr, lev):
-    """Generiert ein sauberes Text-Signal, das Cornix zu 100% versteht.
+    """Generates a clean text signal that Cornix understands 100%.
 
-    Returns True, wenn das Signal gepostet wurde, False, wenn der Cooldown es
-    unterdrückt (P2.46) oder ein DB-Fehler auftrat. Der Cooldown-Upsert teilt sich
-    die Transaktion des Outbox-Inserts (commit=False + ein einziges conn.commit),
-    damit Signal und Dedupe-Marker atomar persistiert werden — ein Teil-Commit
-    würde dasselbe Setup im nächsten Scan erneut posten lassen.
+    Returns True if the signal was posted, False if the cooldown
+    suppressed it (P2.46) or a DB error occurred. The cooldown upsert shares
+    the outbox insert's transaction (commit=False + a single conn.commit),
+    so signal and dedupe marker are persisted atomically — a partial commit
+    would let the next scan post the same setup again.
     """
 
     emoji = "🟢" if direction == "LONG" else "🔴"
@@ -108,43 +108,43 @@ Stop-Loss: {sl:.2f}
 
     try:
         with get_db_connection() as conn:
-            # P2.46: bei Gap-Filler-Lag re-triggert dasselbe FVG-Setup den Bot eine
-            # Kerze später. check_cooldown gibt True zurück, solange die Sperre aktiv
-            # ist → dann nicht erneut posten.
+            # P2.46: on gap-filler lag, the same FVG setup re-triggers the bot one
+            # candle later. check_cooldown returns True as long as the lock is
+            # active → then don't post again.
             if check_cooldown(conn, COOLDOWN_TAG, SYMBOL, direction, COOLDOWN_HOURS):
-                logger.info(f"⏳ Cooldown active für {SYMBOL} {direction}. Skip.")
+                logger.info(f"⏳ Cooldown active for {SYMBOL} {direction}. Skip.")
                 return False
             with conn.cursor() as cur:
-                # Wir schicken es als reinen Text in die Outbox, HTML formatiert
+                # We send it as plain text into the outbox, HTML formatted
                 cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (CHANNEL_ID, msg))
-            # Cooldown im selben Commit wie der Outbox-Insert setzen (Caller-Commit-Kontrakt).
+            # Set the cooldown in the same commit as the outbox insert (caller-commit contract).
             update_cooldown(conn, COOLDOWN_TAG, SYMBOL, direction, commit=False)
             conn.commit()
         logger.info(f"Cornix signal sent! {direction} @ {entry:.2f} (R:R {rr:.2f}, Lev {lev})")
         return True
     except Exception as e:
-        logger.error(f"Error sending des Signals: {e}")
+        logger.error(f"Error sending the signal: {e}")
         return False
 
 
-# 📊 DATA FETCHING (LOKALE DATENBANK)
+# 📊 DATA FETCHING (LOCAL DATABASE)
 def fetch_db_data():
-    # C-Gate-Nachlauf (T-2026-KYT-9050-068): das rohe
-    # `SELECT ... FROM "{SYMBOL}_{TIMEFRAME}"` las die per-Coin-Tabelle direkt und
-    # umging damit core.candles. Seit dem Write-Primary-Cutover am 2026-07-16
-    # (KYTHERA_CANDLES_WRITE_PRIMARY=hyper) schreibt niemand mehr in diese Tabelle
-    # — `BTCUSDT_1h` endet exakt bei open_time 2026-07-16 16:00 UTC. Der Bot bekam
-    # seither einen eingefrorenen Frame und schwieg (leerer Input → kein Output,
-    # nicht falscher Output). Über core.candles folgt er dem Backend-Schalter.
+    # C-gate follow-up (T-2026-KYT-9050-068): the raw
+    # `SELECT ... FROM "{SYMBOL}_{TIMEFRAME}"` read the per-coin table directly,
+    # bypassing core.candles. Since the write-primary cutover on 2026-07-16
+    # (KYTHERA_CANDLES_WRITE_PRIMARY=hyper), nobody writes to this table anymore
+    # — `BTCUSDT_1h` ends exactly at open_time 2026-07-16 16:00 UTC. Since then
+    # the bot got a frozen frame and stayed silent (empty input → no output,
+    # not wrong output). Via core.candles it follows the backend switch.
     try:
         conn = get_db_connection()
         try:
-            # `limit` liefert die NEUESTEN n Kerzen, aufsteigend sortiert — genau
-            # das, was das alte DESC-LIMIT-500 + Reverse erzeugt hat. Der frühere
-            # `.iloc[:-1]`-Drop entfällt BEWUSST: er entfernte die laufende Kerze,
-            # die das rohe SELECT mitbrachte. `include_forming=False` schließt sie
-            # bereits aus (harte Regel 5), ein zusätzlicher Drop würde die neueste
-            # GESCHLOSSENE Kerze wegwerfen und jedes Signal um eine Kerze verzögern.
+            # `limit` returns the NEWEST n candles, sorted ascending — exactly
+            # what the old DESC-LIMIT-500 + reverse produced. The former
+            # `.iloc[:-1]` drop is DELIBERATELY gone: it removed the running candle
+            # that the raw SELECT brought along. `include_forming=False` already
+            # excludes it (hard rule 5); an additional drop would discard the newest
+            # CLOSED candle and delay every signal by one candle.
             df = read_candles(
                 conn,
                 SYMBOL,
@@ -165,11 +165,11 @@ def fetch_db_data():
 
         return df
     except Exception as e:
-        logger.error(f"Error loading der DB-Daten: {e}")
+        logger.error(f"Error loading DB data: {e}")
         return pd.DataFrame()
 
 
-# 🧠 SMC MATHEMATIK
+# 🧠 SMC MATH
 
 
 def is_touching_pivot(price, pivots, max_idx, threshold=0.001):
@@ -185,7 +185,7 @@ def is_touching_pivot(price, pivots, max_idx, threshold=0.001):
 
 # 🚀 CORE ENGINE
 def analyze_market():
-    logger.info("🔍 Analysing BTCUSDT 1h Chart auf Sniper-Setups...")
+    logger.info("🔍 Analysing BTCUSDT 1h chart for sniper setups...")
     df = fetch_db_data()
 
     if df.empty or len(df) < 200:
@@ -196,38 +196,38 @@ def analyze_market():
     opens = df['open'].values
     closes = df['close'].values
 
-    # EMA 21 für den Trend
+    # EMA 21 for the trend
     ema_values = df['close'].ewm(span=EMA_PERIOD, adjust=False).mean().values
 
     supports, resistances = calculate_pivots(df, window=5)
 
-    # Wir analysieren genau jetzt die ALLERLETZTE geschlossene Kerze
+    # We analyse right now the VERY LAST closed candle
     curr_idx = len(df) - 1
     curr_low = lows[curr_idx]
     curr_high = highs[curr_idx]
     curr_price = closes[curr_idx]
     curr_ema = ema_values[curr_idx]
 
-    # Wir suchen FVGs, die in den letzten 48 Kerzen entstanden sind
+    # We look for FVGs that formed in the last 48 candles
     search_start = max(2, curr_idx - MAX_FVG_AGE)
 
-    # 🟢 1. LONG SETUPS PRÜFEN
-    if curr_price > curr_ema:  # Trend Filter
+    # 🟢 1. CHECK LONG SETUPS
+    if curr_price > curr_ema:  # trend filter
         for i in range(search_start, curr_idx):
-            # Ist es ein bullisches FVG?
+            # Is it a bullish FVG?
             if highs[i - 2] < lows[i] and closes[i - 1] > opens[i - 1]:
                 gap_bottom = highs[i - 2]
                 candle_1_low = lows[i - 2]
 
-                # Wurde es am Pivot started?
+                # Was it started at a pivot?
                 if is_touching_pivot(candle_1_low, supports, i - 2):
-                    # Wurde es VOR der aktuellen Kerze schon geschlossen?
+                    # Was it already closed BEFORE the current candle?
                     was_closed_before = any(lows[j] <= gap_bottom for j in range(i + 1, curr_idx))
 
                     if not was_closed_before:
-                        # Hat die AKTUELLE Kerze das FVG genau jetzt fully closed?
+                        # Did the CURRENT candle fully close the FVG just now?
                         if curr_low <= gap_bottom:
-                            # SETUP GEFUNDEN! Targets suchen...
+                            # SETUP FOUND! Searching for targets...
                             valid_res = [
                                 val
                                 for p_idx, val in resistances
@@ -246,27 +246,27 @@ def analyze_market():
                                     lev = cap_leverage_to_sl(get_max_leverage(SYMBOL, DESIRED_LEVERAGE), curr_price, sl)
                                     if send_cornix_signal("LONG", curr_price, sl, target, rr, lev):
                                         logger.info(
-                                            f"🎯 BINGO LONG! FVG fully closed bei {gap_bottom:.2f} | SL-Pct {sl_pct * 100:.2f}%"
+                                            f"🎯 BINGO LONG! FVG fully closed at {gap_bottom:.2f} | SL pct {sl_pct * 100:.2f}%"
                                         )
-                                    return  # Verhindert, dass wir mehrere Setups im selben Durchlauf posten
+                                    return  # prevents us from posting multiple setups in the same pass
 
-    # 🔴 2. SHORT SETUPS PRÜFEN
-    if curr_price < curr_ema:  # Trend Filter
+    # 🔴 2. CHECK SHORT SETUPS
+    if curr_price < curr_ema:  # trend filter
         for i in range(search_start, curr_idx):
-            # Ist es ein bärisches FVG?
+            # Is it a bearish FVG?
             if lows[i - 2] > highs[i] and closes[i - 1] < opens[i - 1]:
                 gap_top = lows[i - 2]
                 candle_1_high = highs[i - 2]
 
-                # Wurde es am Pivot started?
+                # Was it started at a pivot?
                 if is_touching_pivot(candle_1_high, resistances, i - 2):
-                    # Wurde es VOR der aktuellen Kerze schon geschlossen?
+                    # Was it already closed BEFORE the current candle?
                     was_closed_before = any(highs[j] >= gap_top for j in range(i + 1, curr_idx))
 
                     if not was_closed_before:
-                        # Hat die AKTUELLE Kerze das FVG genau jetzt fully closed?
+                        # Did the CURRENT candle fully close the FVG just now?
                         if curr_high >= gap_top:
-                            # SETUP GEFUNDEN! Targets suchen...
+                            # SETUP FOUND! Searching for targets...
                             valid_sup = [
                                 val
                                 for p_idx, val in supports
@@ -285,35 +285,35 @@ def analyze_market():
                                     lev = cap_leverage_to_sl(get_max_leverage(SYMBOL, DESIRED_LEVERAGE), curr_price, sl)
                                     if send_cornix_signal("SHORT", curr_price, sl, target, rr, lev):
                                         logger.info(
-                                            f"🎯 BINGO SHORT! FVG fully closed bei {gap_top:.2f} | SL-Pct {sl_pct * 100:.2f}%"
+                                            f"🎯 BINGO SHORT! FVG fully closed at {gap_top:.2f} | SL pct {sl_pct * 100:.2f}%"
                                         )
                                     return
 
 
-# ⏰ HAUPTSCHLEIFE
+# ⏰ MAIN LOOP
 def main():
-    logger.info("=== 🎯 BTC SNIPER BOT (CORNIX EDITION) GESTARTET ===")
+    logger.info("=== 🎯 BTC SNIPER BOT (CORNIX EDITION) STARTED ===")
     logger.info(
-        f"Parameter: EMA {EMA_PERIOD} | SL dynamisch (ATR×{SL_ATR_MULT}, {SL_PCT_FLOOR * 100:.1f}%–{SL_PCT_CAP * 100:.1f}%) | Min R:R {MIN_RR_RATIO}"
+        f"Parameter: EMA {EMA_PERIOD} | SL dynamic (ATR×{SL_ATR_MULT}, {SL_PCT_FLOOR * 100:.1f}%–{SL_PCT_CAP * 100:.1f}%) | Min R:R {MIN_RR_RATIO}"
     )
 
     while True:
         try:
             now = datetime.datetime.now(datetime.timezone.utc)
 
-            # Checking immer um Minute :01 (Wenn die 1h Kerze garantiert geschlossen und in der DB ist)
+            # Checking always at minute :01 (when the 1h candle is guaranteed closed and in the DB)
             if now.minute == 1:
                 analyze_market()
-                logger.info("🏁 Durchlauf stopped. Schlafe für 55 Minuten...")
-                time.sleep(3300)  # Schlafe für 55 Minuten, um CPU zu sparen
+                logger.info("🏁 Pass stopped. Sleeping for 55 minutes...")
+                time.sleep(3300)  # sleep for 55 minutes to save CPU
             else:
-                time.sleep(10)  # Kurzer Check jede 10 Sekunden
+                time.sleep(10)  # short check every 10 seconds
 
         except KeyboardInterrupt:
-            logger.info("🛑 Bot wird stopped (STRG+C).")
+            logger.info("🛑 Bot is stopping (CTRL+C).")
             break
         except Exception as e:
-            logger.error(f"Critical error im Main-Loop: {e}")
+            logger.error(f"Critical error in the main loop: {e}")
             time.sleep(30)
 
 

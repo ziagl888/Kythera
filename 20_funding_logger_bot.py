@@ -9,7 +9,7 @@ import aiohttp
 
 from core import config as _kcfg  # channel ids
 
-# DB Connection importieren (für den Telegram Versand)
+# Import DB connection (for Telegram delivery)
 from core.market_utils import load_coins, send_telegram
 
 # 🛠️ CONFIGURATION
@@ -19,18 +19,18 @@ logger = logging.getLogger(__name__)
 COINS_FILE = "coins.json"
 DATA_DIR = "funding_data"
 
-SAVE_INTERVAL_SEC = 300  # Alle 5 Minuten abfragen
-MAX_AGE_SEC = 3 * 24 * 3600  # 3 Tage in Sekunden im RAM halten
+SAVE_INTERVAL_SEC = 300  # poll every 5 minutes
+MAX_AGE_SEC = 3 * 24 * 3600  # keep 3 days in seconds in RAM
 
 TELEGRAM_CHANNEL_ID = _kcfg.CH_MARKET_DATA
 
 # Overview Timer
 LAST_OVERVIEW_TIME = 0
-OVERVIEW_INTERVAL = 1800  # 30 Minuten in Sekunden
+OVERVIEW_INTERVAL = 1800  # 30 minutes in seconds
 
 # Top 20 Alert Timer
 LAST_TOP20_ALERT = 0
-TOP20_COOLDOWN = 900  # 15 Minuten in Sekunden
+TOP20_COOLDOWN = 900  # 15 minutes in seconds
 
 TOP20_FUNDING_COINS = [
     "BTCUSDT",
@@ -55,16 +55,16 @@ TOP20_FUNDING_COINS = [
     "DOTUSDT",
 ]
 
-# Globaler Arbeitsspeicher
+# Global working memory
 FUNDING_HISTORY = []
-# Pro-Coin-Index für O(log n) Lookup in get_historical_rate:
-# {symbol: [(ts, rate), ...]} sortiert after ts aufsteigend
+# Per-coin index for O(log n) lookup in get_historical_rate:
+# {symbol: [(ts, rate), ...]} sorted by ts ascending
 FUNDING_BY_SYMBOL: dict[str, list[tuple[float, float]]] = {}
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def rebuild_symbol_index():
-    """Baut FUNDING_BY_SYMBOL aus FUNDING_HISTORY neu auf (sortiert per Symbol after ts)."""
+    """Rebuilds FUNDING_BY_SYMBOL from FUNDING_HISTORY (sorted per symbol by ts)."""
     global FUNDING_BY_SYMBOL
     idx: dict[str, list[tuple[float, float]]] = {}
     for rec in FUNDING_HISTORY:
@@ -76,18 +76,18 @@ def rebuild_symbol_index():
 
 def get_historical_rate(symbol, target_ts, tolerance=900):
     """
-    Sucht die Funding-Rate für einen Coin zum gegebenen Timestamp (±tolerance).
-    O(log n) via bisect statt O(n) Linear-Scan.
+    Looks up the funding rate for a coin at the given timestamp (±tolerance).
+    O(log n) via bisect instead of O(n) linear scan.
     """
     import bisect
 
     series = FUNDING_BY_SYMBOL.get(symbol)
     if not series:
         return None
-    # Finde Einfüge-Position für target_ts
+    # Find insert position for target_ts
     timestamps = [r[0] for r in series]
     pos = bisect.bisect_left(timestamps, target_ts)
-    # Checking die beiden Kandidaten (pos-1 und pos) auf Toleranz
+    # Check both candidates (pos-1 and pos) for tolerance
     best = None
     best_diff = tolerance + 1
     for cand_pos in (pos - 1, pos):
@@ -103,14 +103,14 @@ def get_historical_rate(symbol, target_ts, tolerance=900):
 
 
 def calc_diff_bps(current, historical):
-    """Differenz zweier Funding-Rates in Basispunkten (1 bps = 0.0001 = 0.01%).
+    """Difference between two funding rates in basis points (1 bps = 0.0001 = 0.01%).
 
-    Funding-Rates sind in Dezimalform gespeichert (z.B. 0.00010 = 0.01%).
-    Die Differenz in Basispunkten ist die branchenübliche Metrik für Rate-Deltas.
+    Funding rates are stored in decimal form (e.g. 0.00010 = 0.01%).
+    The difference in basis points is the industry-standard metric for rate deltas.
 
-    FIX (#83): Vorher 0.0 als Fallback bei None → die Anzeige zeigte dann
-    fälschlich "+0.0bps" (= "stabil"), obwohl die Info "no data" ist.
-    Jetzt: None zurückgeben. Das Display entscheidet selbst wie es dargestellt wird.
+    FIX (#83): Previously 0.0 as a fallback for None → the display then falsely
+    showed "+0.0bps" (= "stable"), even though the info is "no data".
+    Now: return None. The display decides for itself how to render it.
     """
     if historical is None:
         return None
@@ -120,10 +120,10 @@ def calc_diff_bps(current, historical):
 def check_top20_positive_pct(current_rates_dict):
     """Calculates what percentage of top-20 coins are positive.
 
-    FIX (#82): Vorher 50.0 als Fallback bei leerem Dict → das täuschte "neutrales
-    Sentiment" vor, während in Wahrheit no data vorlagen. Jetzt: None als
-    explizites "no data" — der Caller muss entscheiden ob das ein Alert-relevantes
-    Problem ist oder nur bei historischen Zeitpunkten.
+    FIX (#82): Previously 50.0 as a fallback for an empty dict → that faked a
+    "neutral sentiment" when in reality there was no data. Now: None as an
+    explicit "no data" — the caller must decide whether that is an alert-relevant
+    problem or just applies at historical timestamps.
     """
     pos_count = 0
     total = 0
@@ -138,19 +138,19 @@ def check_top20_positive_pct(current_rates_dict):
     return (pos_count / total) * 100
 
 
-# P2.40: die 75%-Schwelle feuerte im Normalzustand — der Funding-Baseline ist
-# leicht positiv (~+0.01%), also sind routinemäßig ~75%+ der Top-20-Coins positiv.
-# Der 75er-Trigger meldete damit fast permanent "EXTREME". 95/85 behält den Alert
-# nur für echt einseitiges Funding (Operator-Entscheid Michi 2026-07-11).
+# P2.40: the 75% threshold fired in the normal state — the funding baseline is
+# slightly positive (~+0.01%), so routinely ~75%+ of the top-20 coins are positive.
+# The 75 trigger thus reported "EXTREME" almost permanently. 95/85 keeps the alert
+# only for genuinely one-sided funding (operator decision Michi 2026-07-11).
 FUNDING_EXTREME_THRESHOLDS = [95, 85]
 
 
 def classify_funding_extreme(pos_pct):
-    """Klassifiziert das Top-20-Funding-Sentiment als (triggered, direction, pct_value).
+    """Classifies the top-20 funding sentiment as (triggered, direction, pct_value).
 
-    pos_pct = Prozentsatz der Top-20-Coins mit positivem Funding (0..100).
-    Gibt (False, "", 0) zurück, wenn weder die positive noch die negative Seite
-    eine Extreme-Schwelle (FUNDING_EXTREME_THRESHOLDS) erreicht.
+    pos_pct = percentage of the top-20 coins with positive funding (0..100).
+    Returns (False, "", 0) if neither the positive nor the negative side
+    reaches an extreme threshold (FUNDING_EXTREME_THRESHOLDS).
     """
     neg_pct = 100.0 - pos_pct
     for threshold in FUNDING_EXTREME_THRESHOLDS:
@@ -161,7 +161,7 @@ def classify_funding_extreme(pos_pct):
     return False, "", 0
 
 
-# 🚨 SENTIMENT ENGINE (Nur Extreme Alerts)
+# 🚨 SENTIMENT ENGINE (extreme alerts only)
 async def evaluate_funding_sentiment(api_data, now_ts):
     global LAST_TOP20_ALERT
 
@@ -169,13 +169,13 @@ async def evaluate_funding_sentiment(api_data, now_ts):
     for item in api_data:
         current_rates[item["symbol"]] = float(item["lastFundingRate"])
 
-    # FEATURE: TOP 20 EXTREME ALERT (Permanent im 5-Minuten-Takt überwacht)
+    # FEATURE: TOP 20 EXTREME ALERT (permanently monitored on a 5-minute cadence)
     if now_ts - LAST_TOP20_ALERT >= TOP20_COOLDOWN:
         pos_pct = check_top20_positive_pct(current_rates)
-        # FIX (#82): check_top20_positive_pct liefert None wenn no data da sind
-        # (API-Ausfall, leeres Dict). Dann einfach keinen Alert triggern — vorher
-        # hätte 50.0 immer "neutral" getäuscht und hätte die Alert-Logik unten
-        # mit falschen Zahlen durchlaufen.
+        # FIX (#82): check_top20_positive_pct returns None when there is no data
+        # (API outage, empty dict). Then simply don't trigger an alert — previously
+        # 50.0 would always have faked "neutral" and run the alert logic below
+        # with false numbers.
         if pos_pct is None:
             return
 
@@ -195,17 +195,17 @@ async def evaluate_funding_sentiment(api_data, now_ts):
             alert_msg += "</pre>"
             send_telegram(alert_msg, TELEGRAM_CHANNEL_ID)
             LAST_TOP20_ALERT = now_ts
-            logger.info(f"Top 20 Alert gefeuert ({pct_value:.0f}% {direction})")
+            logger.info(f"Top 20 alert fired ({pct_value:.0f}% {direction})")
 
 
 # 📊 FUNDING OVERVIEW LOOP (Exakt :00:10 und :30:10)
 async def funding_overview_loop():
     """Background task: posts exactly at the half and full hour + 10 seconds."""
-    logger.info("Funding-Overview started (Sync auf :00:10 und :30:10).")
+    logger.info("Funding overview started (sync at :00:10 and :30:10).")
 
     async with aiohttp.ClientSession() as session:
         while True:
-            # 1. Zeitzonen-Berechnung
+            # 1. Timezone calculation
             now = datetime.now(timezone.utc)
 
             if now.minute < 30 or (now.minute == 30 and now.second < 10):
@@ -217,7 +217,7 @@ async def funding_overview_loop():
             await asyncio.sleep(sleep_sec)
 
             try:
-                # 2. Exakt jetzt frische Daten für die Übersicht holen
+                # 2. Fetch fresh data for the overview right now
                 async with session.get("https://fapi.binance.com/fapi/v1/premiumIndex", timeout=15) as resp:
                     if resp.status != 200:
                         continue
@@ -239,8 +239,8 @@ async def funding_overview_loop():
                 eth_1h_diff = calc_diff_bps(eth_rate, eth_1h)
                 eth_24h_diff = calc_diff_bps(eth_rate, eth_24h)
 
-                # FIX (#83): calc_diff_bps kann None liefern bei fehlender Historie.
-                # Hier zu formatierten Strings konvertieren, None → "N/A".
+                # FIX (#83): calc_diff_bps can return None when history is missing.
+                # Convert to formatted strings here, None → "N/A".
                 def _fmt_bps(v):
                     return f"{v:+.1f}bps" if v is not None else "N/A"
 
@@ -250,7 +250,7 @@ async def funding_overview_loop():
                 eth_24h_str = _fmt_bps(eth_24h_diff)
 
                 # B) Top 20 Stats
-                # FIX (#82): None-Fallback für leere Daten (API-Ausfall etc.)
+                # FIX (#82): None fallback for empty data (API outage, etc.)
                 top20_pos_now = check_top20_positive_pct(current_rates)
                 hist_1h_rates = {}
                 for coin in TOP20_FUNDING_COINS:
@@ -259,11 +259,11 @@ async def funding_overview_loop():
                         hist_1h_rates[coin] = val
                 top20_pos_1h = check_top20_positive_pct(hist_1h_rates) if hist_1h_rates else top20_pos_now
 
-                # Für die Anzeige formatieren — None als "N/A"
+                # Format for display — None as "N/A"
                 top20_pos_now_str = f"{top20_pos_now:.1f}%" if top20_pos_now is not None else "N/A"
                 top20_pos_1h_str = f"{top20_pos_1h:.1f}%" if top20_pos_1h is not None else "N/A"
 
-                # C) Top 5 Positiv & Negativ
+                # C) Top 5 positive & negative
                 valid_rates = {
                     k: v for k, v in current_rates.items() if get_historical_rate(k, now_ts - 300) is not None or v != 0
                 }
@@ -292,10 +292,10 @@ async def funding_overview_loop():
                 msg += "</pre>"
 
                 send_telegram(msg, TELEGRAM_CHANNEL_ID)
-                logger.info("✅ Pünktliche 30-Minuten Funding Overview gesendet.")
+                logger.info("✅ On-time 30-minute funding overview sent.")
 
             except Exception as e:
-                logger.error(f"Fehler im Funding Overview Loop: {e}", exc_info=True)
+                logger.error(f"Error in funding overview loop: {e}", exc_info=True)
 
 
 # ⚙️ CORE SYSTEM
@@ -317,22 +317,22 @@ def load_existing_funding_data():
                     day_data = json.load(f)
                     FUNDING_HISTORY.extend(day_data)
             except Exception as e:
-                logger.error(f"Error loading von {filepath}: {e}")
+                logger.error(f"Error loading from {filepath}: {e}")
 
     cutoff = time.time() - MAX_AGE_SEC
     FUNDING_HISTORY = [t for t in FUNDING_HISTORY if t["ts"] >= cutoff]
     FUNDING_HISTORY.sort(key=lambda x: x["ts"])
     rebuild_symbol_index()
-    logger.info(f"Historie geladen: {len(FUNDING_HISTORY)} Datensätze aktiv im RAM.")
+    logger.info(f"History loaded: {len(FUNDING_HISTORY)} records active in RAM.")
 
 
 def sync_group_and_save(data_copy, only_today: bool = False):
-    """Speichert die Funding-Historie als JSON-Dateien (eine pro Tag).
+    """Saves the funding history as JSON files (one per day).
 
-    only_today=True schreibt nur die heutige Datei (Standard-Fall beim Monitor-Loop,
-    alle 5 Min). Das reduziert den Disk-I/O drastisch — vorher wurde jedes Mal die
-    komplette 3-Tage-Historie neu serialisiert.
-    only_today=False schreibt alle Tagesdateien (für Shutdown/Init).
+    only_today=True writes only today's file (the default case in the monitor loop,
+    every 5 min). This reduces disk I/O drastically — previously the
+    entire 3-day history was re-serialised every time.
+    only_today=False writes all daily files (for shutdown/init).
     """
     daily_groups = {}
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d') if only_today else None
@@ -354,18 +354,18 @@ def sync_group_and_save(data_copy, only_today: bool = False):
                 json.dump(data, f, separators=(',', ':'))
             os.replace(tmppath, filepath)
         except Exception as e:
-            logger.error(f"Schreibfehler bei Datei {filepath}: {e}")
+            logger.error(f"Write error for file {filepath}: {e}")
 
 
 async def funding_monitor_loop():
     global FUNDING_HISTORY
     coins = load_coins()
     if not coins:
-        logger.error("Keine Coins gefunden. Beende Monitor.")
+        logger.error("No coins found. Stopping monitor.")
         return
 
     valid_coins = set(coins)
-    logger.info(f"Funding-Monitor started. Trackt {len(coins)} Coins.")
+    logger.info(f"Funding monitor started. Tracking {len(coins)} coins.")
 
     async with aiohttp.ClientSession() as session:
         while True:
@@ -391,20 +391,20 @@ async def funding_monitor_loop():
                 cutoff = now_ts - MAX_AGE_SEC
                 FUNDING_HISTORY = [t for t in FUNDING_HISTORY if t["ts"] >= cutoff]
 
-                # Index für O(log n) Lookup neu aufbauen
+                # Rebuild index for O(log n) lookup
                 rebuild_symbol_index()
 
-                # Nur heutige Datei speichern (statt alle 3 Tage neu zu serialisieren)
+                # Save only today's file (instead of re-serialising all 3 days)
                 history_copy = list(FUNDING_HISTORY)
                 await asyncio.to_thread(sync_group_and_save, history_copy, True)
 
-                # 💥 HIER WIRD DIE SENTIMENT ANALYSE GESTARTET 💥
+                # 💥 SENTIMENT ANALYSIS STARTS HERE 💥
                 await evaluate_funding_sentiment(api_data, now_ts)
 
             except asyncio.TimeoutError:
-                logger.warning("Timeout bei Binance API Anfrage.")
+                logger.warning("Timeout on Binance API request.")
             except Exception as e:
-                logger.error(f"Fehler im Funding-Monitor: {e}", exc_info=True)
+                logger.error(f"Error in funding monitor: {e}", exc_info=True)
 
             await asyncio.sleep(SAVE_INTERVAL_SEC)
 
@@ -414,7 +414,7 @@ async def main():
     load_existing_funding_data()
     asyncio.create_task(funding_overview_loop())
 
-    # Startet den regulären 5-Minuten Datensammler & Extreme-Alert-Checker
+    # Starts the regular 5-minute data collector & extreme-alert checker
     await funding_monitor_loop()
 
 
@@ -422,9 +422,9 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🛑 Funding Logger Bot manuell stopped (Strg+C). Rette Daten...")
+        logger.info("🛑 Funding Logger Bot manually stopped (Ctrl+C). Saving data...")
         history_copy = list(FUNDING_HISTORY)
         sync_group_and_save(history_copy)
-        logger.info("✅ Daten erfolgreich gerettet. Shutdown stopped.")
+        logger.info("✅ Data successfully saved. Shutdown stopped.")
     except Exception as e:
-        logger.error(f"Critical error im Funding-Monitor: {e}", exc_info=True)
+        logger.error(f"Critical error in funding monitor: {e}", exc_info=True)

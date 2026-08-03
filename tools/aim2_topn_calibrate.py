@@ -1,20 +1,20 @@
-"""tools/aim2_topn_calibrate.py — read-only Schwellen-Kalibrierung für AIM2-TOPN.
+"""tools/aim2_topn_calibrate.py — read-only threshold calibration for AIM2-TOPN.
 
-Der AIM2-TOPN-Kanal (T-2026-CU-9050-051) approximiert "Top 1-3 des Tages" über
-eine hohe Mindest-Probability plus harte 24h-Kappe. Dieses Tool schätzt aus den
-historischen AIM2-Scores, welche Schwelle live zu ~1-3 Posts/Tag führt — damit
-Michi AIM2_TOPN_MIN_PROB nicht raten muss.
+The AIM2-TOPN channel (T-2026-CU-9050-051) approximates "top 1-3 of the day" via
+high minimum probability plus hard 24h cap. This tool estimates from
+historical AIM2 scores which threshold live leads to ~1-3 posts/day — so
+Michi doesn't have to guess AIM2_TOPN_MIN_PROB.
 
-Quelle: master_ai_processed_signals (ml_confidence = kalibrierte AIM2-Prob je
-gescortem Kandidat, processed_at = Zeit). Rein LESEND — kein Insert/Update, kein
-Artefakt-Schreiben, kein Live-Eingriff. Läuft nur auf dem VPS (Build-Maschine
-hat keine DB).
+Source: master_ai_processed_signals (ml_confidence = calibrated AIM2 prob per
+scored candidate, processed_at = time). READ-ONLY — no insert/update, no
+artefact writing, no live intervention. Runs only on VPS (build machine
+has no DB).
 
-Aufruf (VPS):  python tools/aim2_topn_calibrate.py [--days 30]
+Call (VPS):  python tools/aim2_topn_calibrate.py [--days 30]
 
-Ausgabe: je Kandidat-Schwelle die resultierende Rate Posts/Tag und der
-kleinste Threshold, der die Ziel-Bandbreite (Default 1-3/Tag) trifft. Die Kappe
-N ist NUR ein Backstop — die Schwelle soll die Rate tragen, nicht die Kappe.
+Output: per candidate threshold the resulting rate posts/day and the
+smallest threshold that hits the target band (default 1-3/day). The cap
+N is ONLY a backstop — the threshold should carry the rate, not the cap.
 """
 
 from __future__ import annotations
@@ -55,13 +55,13 @@ def main() -> None:
         conn.close()
 
     if not probs:
-        print(f"Keine gescorten Kandidaten in den letzten {args.days} Tagen — nichts zu kalibrieren.")
+        print(f"No scored candidates in the last {args.days} days — nothing to calibrate.")
         return
 
     n = len(probs)
     days = max(1.0, float(args.days))
-    print(f"AIM2-TOPN-Kalibrierung — {n} gescorte Kandidaten über {args.days} Tage ({n / days:.0f}/Tag gesamt)\n")
-    print(f"  {'Threshold':>9} | {'Posts/Tag':>9} | {'Anteil':>7}")
+    print(f"AIM2-TOPN calibration — {n} scored candidates over {args.days} days ({n / days:.0f}/day total)\n")
+    print(f"  {'Threshold':>9} | {'Posts/Day':>9} | {'Share':>7}")
     print(f"  {'-' * 9}-+-{'-' * 9}-+-{'-' * 7}")
 
     recommendation = None
@@ -71,7 +71,7 @@ def main() -> None:
         share = passed / n
         flag = ""
         if args.target_lo <= rate <= args.target_hi:
-            flag = "  ← Ziel-Band"
+            flag = "  ← target band"
             if recommendation is None:
                 recommendation = thr
         print(f"  {thr:>9.2f} | {rate:>9.2f} | {share:>6.1%}{flag}")
@@ -79,16 +79,16 @@ def main() -> None:
     print()
     if recommendation is not None:
         print(
-            f"Empfehlung: AIM2_TOPN_MIN_PROB={recommendation:.2f} "
-            f"(~{args.target_lo:.0f}-{args.target_hi:.0f}/Tag). "
-            f"AIM2_TOPN_N als Backstop unabhängig setzen (z.B. 3)."
+            f"Recommendation: AIM2_TOPN_MIN_PROB={recommendation:.2f} "
+            f"(~{args.target_lo:.0f}-{args.target_hi:.0f}/day). "
+            f"Set AIM2_TOPN_N as backstop independently (e.g. 3)."
         )
     else:
         print(
-            "Keine Schwelle trifft das Ziel-Band exakt — Grenzen anpassen (--target-lo/--target-hi) "
-            "oder das Fenster (--days) verlängern."
+            "No threshold exactly hits the target band — adjust bounds (--target-lo/--target-hi) "
+            "or extend window (--days)."
         )
-    print("Hinweis: rein lesend — dieses Tool schaltet nichts scharf (Gate-Flip = Michis Entscheid).")
+    print("Note: read-only — this tool doesn't enable anything (gate flip = Michi's decision).")
 
 
 if __name__ == "__main__":

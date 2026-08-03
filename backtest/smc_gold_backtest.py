@@ -13,23 +13,23 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 🛠️ BACKTEST KONFIGURATION & FILTER
+# 🛠️ BACKTEST CONFIGURATION & FILTER
 # ==========================================
 TICKER = 'GC=F'  # Gold Futures
 TIMEFRAME = '1h'
-PERIOD = '730d'  # 2 Jahre Historie
+PERIOD = '730d'  # 2 years of history
 
 START_CAPITAL = 100000.0
-TRADE_MARGIN = 100.0  # Einsatz pro Trade
-LEVERAGE = 100  # Hebel
-TAKER_FEE = 0.0004  # 0.04% Handelsgebühr pro Richtung (0.08% total)
+TRADE_MARGIN = 100.0  # Stake per trade
+LEVERAGE = 100  # Leverage
+TAKER_FEE = 0.0004  # 0.04% trading fee per direction (0.08% total)
 
-# --- DIE SMC FILTER ---
+# --- THE SMC FILTERS ---
 MAX_PIVOT_AGE = 120
 MAX_FVG_AGE = 48
 MIN_RR_RATIO = 1.5
 
-# Wir testen diese Varianten aftereinander durch (None = Ohne Filter)
+# We test these variants one after another (None = without filter)
 EMA_VARIANTS = [None, 21, 55, 200]
 
 
@@ -37,7 +37,7 @@ EMA_VARIANTS = [None, 21, 55, 200]
 # 📊 DATA FETCHING
 # ==========================================
 def fetch_data():
-    logger.info(f"Loading historical {TIMEFRAME} Daten for {TICKER}...")
+    logger.info(f"Loading historical {TIMEFRAME} data for {TICKER}...")
     df = yf.download(TICKER, interval=TIMEFRAME, period=PERIOD, progress=False)
 
     if isinstance(df.columns, pd.MultiIndex):
@@ -61,19 +61,19 @@ def fetch_data():
 def run_simulation(df, ema_period):
     capital = START_CAPITAL
 
-    # Rohe Numpy-Arrays für maximale Geschwindigkeit
+    # Raw numpy arrays for maximum speed
     highs = df['high'].values
     lows = df['low'].values
     opens = df['open'].values
     closes = df['close'].values
 
-    # EMA berechnen, falls gewünscht
+    # Calculate EMA if desired
     if ema_period:
         ema_values = df['close'].ewm(span=ema_period, adjust=False).mean().values
     else:
         ema_values = None
 
-    # Pivot Punkte EINMAL im Voraus berechnen
+    # Calculate pivot points ONCE in advance
     peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=5)[0]
     trough_idx = scipy.signal.argrelextrema(lows, np.less, order=5)[0]
     resistances = [(int(idx), float(highs[idx])) for idx in peak_idx]
@@ -103,7 +103,7 @@ def run_simulation(df, ema_period):
         curr_price = closes[curr_idx]
 
         # -------------------------------------------------
-        # 1. AKTIVE TRADES PRÜFEN (SL & TP)
+        # 1. CHECK ACTIVE TRADES (SL & TP)
         # -------------------------------------------------
         trades_to_remove = []
         for trade in active_trades:
@@ -154,7 +154,7 @@ def run_simulation(df, ema_period):
             active_trades.remove(t)
 
         # -------------------------------------------------
-        # 2. NEUE FVGs ERKENNEN
+        # 2. DETECT NEW FVGs
         # -------------------------------------------------
         c = curr_idx - 1
 
@@ -171,7 +171,7 @@ def run_simulation(df, ema_period):
                 active_bear_fvgs.append({'top': lows[c - 2], 'bottom': highs[c], 'created_at': c})
 
         # -------------------------------------------------
-        # 3. FVGs SCHLIESSEN & TRADES AUSLÖSEN (Mit Trend-Filter)
+        # 3. CLOSE FVGs & TRIGGER TRADES (with trend filter)
         # -------------------------------------------------
         surviving_bull_fvgs = []
         for fvg in active_bull_fvgs:
@@ -179,7 +179,7 @@ def run_simulation(df, ema_period):
                 continue
 
             if curr_low <= fvg['bottom']:
-                # FVG Fully Closed -> Prüfen auf Targets
+                # FVG Fully Closed -> Check for targets
                 valid_res = [val for p_idx, val in resistances if
                              curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val > curr_price]
 
@@ -203,7 +203,7 @@ def run_simulation(df, ema_period):
                 continue
 
             if curr_high >= fvg['top']:
-                # FVG Fully Closed -> Prüfen auf Targets
+                # FVG Fully Closed -> Check for targets
                 valid_sup = [val for p_idx, val in supports if
                              curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val < curr_price]
 
@@ -241,7 +241,7 @@ def main():
         return
 
     print("=" * 65)
-    print(f"📊 SMC MULTI-TREND BACKTEST: {TICKER} ({TIMEFRAME}) | 2 Jahre")
+    print(f"📊 SMC MULTI-TREND BACKTEST: {TICKER} ({TIMEFRAME}) | 2 years")
     print("=" * 65)
 
     results = []
@@ -253,14 +253,14 @@ def main():
 
     end_time = time.time()
 
-    # Tabelle ausgeben
-    print(f"{'Strategie':<20} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Netto PnL':<12}")
+    # Print table
+    print(f"{'Strategy':<20} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Net PnL':<12}")
     print("-" * 65)
     for r in results:
         pnl_str = f"${r['pnl']:+,.2f}"
         print(f"{r['name']:<20} | {r['trades']:<8} | {r['win_rate']:>5.2f} %   | {r['max_dd']:>5.2f} % | {pnl_str}")
     print("=" * 65)
-    print(f"⏱️ Total computation time: {end_time - start_time:.2f} Sekunden")
+    print(f"⏱️ Total computation time: {end_time - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":

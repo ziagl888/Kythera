@@ -1,50 +1,50 @@
 r"""
-tools/verify_staging_artifacts.py — Post-Retrain Staging-Artefakt-Verifikation
+tools/verify_staging_artifacts.py — post-retrain staging artifact verification
 (T-2026-CU-9050-120).
 
-READ-ONLY. Kein DB-Zugriff, kein Live-Touch, KEINE Promotion — die Promotion
-eines Artefakts in den Repo-Root (= live) bleibt eine explizite Operator-
-Entscheidung von Michi (harte Regel 2 / Eskalation). Dieses Tool liefert nur
-den Befund, auf dessen Basis Michi entscheidet.
+READ-ONLY. No DB access, no live touch, NO promotion — promoting an artifact
+into the repo root (= live) remains an explicit operator decision by Michi
+(hard rule 2 / escalation). This tool only delivers the finding on which
+Michi decides.
 
-Prüft jedes Retrain-Artefakt in STAGING_DIR gegen die Fleet-Verträge:
+Checks every retrain artifact in STAGING_DIR against the fleet contracts:
 
-  1. HR-2  Residenz         — Artefakt liegt in STAGING_DIR (nicht Repo-Root);
-                              meldet, ob eine Promotion eine vorhandene Live-Datei
-                              gleichen Namens im Repo-Root überschriebe (nur Existenz,
-                              kein mtime-Vergleich).
-  2. HR-7/P0.12 Feature-Vertrag — Artefakt lädt über core.model_artifacts (den
-                              Bot-eigenen Loader) UND seine feature-Liste stimmt
-                              mit der Trainer/Serving-Referenz (core.*_features
-                              bzw. die Konstanten in retrain_from_replay) überein.
-  3. HR-6  Modell-Tag       — meta.model_id == erwarteter Generations-Tag der
-                              Familie (TD2/BB2/ABR2/MIS2/RUB2/EPD2/ATB2); zum
-                              Abgleich wird der aktuell deployte Live-Tag gezeigt.
-  4. Threshold              — optimal_threshold ∈ (0,1), nicht der 1.0-Idle-Default.
-  5. P3.4  xgboost-Version  — meta.xgboost_version == laufendes xgboost.__version__
-                              (stiller predict_proba-Skew bei Major-Drift).
-  6. Format B               — model_type startswith "binary" + Kalibrator-Sidecar.
-  7. Modell-Objekt          — predict_proba vorhanden (lädt als Klassifikator).
-  8. C2-Report              — val/test-WR vs Base-Rate, Netto-PnL und n aus
-                              retrain_<name>_stats.json → Go/No-Go-Hinweis (ADVISORY,
-                              kein Hard-Fail — Michi-Urteil). Die Kalibrierungs-
-                              Monotonie der Buckets bleibt manuelle Sichtung (Doku).
-  9. Regel 4/6 Promotions-Slot — würde die Promotion dieses Dateinamens einen
-                              LOADER-SLOT belegen, den ein ZWEITER Generations-Tag
-                              liest? (tools/promotion_guard.py — der EPD3-SHORT-Fall
-                              vom 2026-07-21, T-2026-KYT-9050-057.) Pro Datei WARN,
-                              weil die Absicht am Dateinamen nicht ablesbar ist;
-                              zusätzlich läuft am Ende der Register-Scan des Guards,
-                              dessen FAIL (LIVE-Bein auf fremdem Slot) den Exit-Code
-                              auf 1 setzt.
+  1. HR-2  Residency        — artifact sits in STAGING_DIR (not repo root);
+                              reports whether a promotion would overwrite an
+                              existing live file of the same name in the repo
+                              root (existence only, no mtime comparison).
+  2. HR-7/P0.12 Feature contract — artifact loads via core.model_artifacts (the
+                              bot's own loader) AND its feature list matches
+                              the trainer/serving reference (core.*_features
+                              or the constants in retrain_from_replay).
+  3. HR-6  Model tag        — meta.model_id == expected generation tag of the
+                              family (TD2/BB2/ABR2/MIS2/RUB2/EPD2/ATB2); for
+                              comparison the currently deployed live tag is shown.
+  4. Threshold              — optimal_threshold ∈ (0,1), not the 1.0 idle default.
+  5. P3.4  xgboost version  — meta.xgboost_version == running xgboost.__version__
+                              (silent predict_proba skew on major drift).
+  6. Format B               — model_type startswith "binary" + calibrator sidecar.
+  7. Model object           — predict_proba present (loads as a classifier).
+  8. C2 report              — val/test WR vs base rate, net PnL and n from
+                              retrain_<name>_stats.json → go/no-go hint (ADVISORY,
+                              not a hard fail — Michi's judgment). The calibration
+                              monotonicity of the buckets stays manual review (docs).
+  9. Rule 4/6 promotion slot — would promoting this filename occupy a
+                              LOADER SLOT that a SECOND generation tag
+                              reads? (tools/promotion_guard.py — the EPD3-SHORT case
+                              from 2026-07-21, T-2026-KYT-9050-057.) Per-file WARN,
+                              because the intent is not readable from the filename;
+                              additionally the guard's registry scan runs at the end,
+                              whose FAIL (LIVE leg on a foreign slot) sets the exit
+                              code to 1.
 
-Exit-Code: 1, wenn irgendein MECHANISCHER Contract-Check FAIL ist (lädt nicht /
-Feature-Drift / xgb-Version-Skew / Tag falsch / Threshold ungültig / LIVE-Bein auf
-fremdem Root-Slot); sonst 0. Metrik-Bedenken (Check 8) und der Slot-Hinweis pro
-Datei (Check 9) sind WARN und ändern den Exit-Code NICHT — ob ein
-unterdurchschnittliches Modell trotzdem promotet wird, entscheidet der Operator.
+Exit code: 1 if any MECHANICAL contract check is FAIL (does not load /
+feature drift / xgb version skew / wrong tag / invalid threshold / LIVE leg on
+a foreign root slot); otherwise 0. Metric concerns (check 8) and the per-file
+slot hint (check 9) are WARN and do NOT change the exit code — whether an
+underperforming model is promoted anyway is the operator's decision.
 
-Beispiele:
+Examples:
   python tools/verify_staging_artifacts.py
   python tools/verify_staging_artifacts.py --only td,bb
   python tools/verify_staging_artifacts.py --staging-dir D:\some\staging_models
@@ -65,39 +65,39 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-# core.model_artifacts ist der Loader, den die Live-Bots benutzen — genau der
-# soll das Artefakt akzeptieren. Import ist DB-frei.
+# core.model_artifacts is the loader the live bots use — exactly that one
+# should accept the artifact. Import is DB-free.
 from core import model_artifacts  # noqa: E402
 from tools import promotion_guard  # noqa: E402
 
-# Statusmarken
+# Status markers
 OK = "PASS"
 WARN = "WARN"
 FAIL = "FAIL"
 
 
 def _load_retrain_module():
-    """Lädt tools/retrain_from_replay.py per Pfad, um seine Feature-Konstanten
-    und STAGING_DIR zu bekommen. Wird als Datei geladen (kein Package-Import),
-    weil tools/ kein installiertes Package ist. Der Modulkopf ist DB-frei."""
+    """Loads tools/retrain_from_replay.py by path to get its feature constants
+    and STAGING_DIR. Loaded as a file (not a package import),
+    because tools/ is not an installed package. The module head is DB-free."""
     path = os.path.join(REPO_ROOT, "tools", "retrain_from_replay.py")
     spec = importlib.util.spec_from_file_location("retrain_from_replay", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"retrain_from_replay.py nicht ladbar: {path}")
+        raise RuntimeError(f"retrain_from_replay.py not loadable: {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
 # --------------------------------------------------------------------------- #
-# Familien-Registry: Artefakt-Muster -> (Feature-Referenz, erwarteter Tag,
-# Format, Stats-Datei, Live-Datei im Repo-Root für den Promotion-Vergleich).
-# Die Feature-Referenzen kommen aus dem Retrainer selbst (dieselbe Quelle, aus
-# der die Artefakte erzeugt werden — und über core.*_features dieselbe, die die
-# Bots servieren, harte Regel 7).
+# Family registry: artifact pattern -> (feature reference, expected tag,
+# format, stats file, live file in the repo root for the promotion comparison).
+# The feature references come from the retrainer itself (the same source that
+# generates the artifacts — and via core.*_features the same one the
+# bots serve, hard rule 7).
 # --------------------------------------------------------------------------- #
 def build_registry(R) -> list[dict]:
-    """R = das geladene retrain_from_replay-Modul."""
+    """R = the loaded retrain_from_replay module."""
     return [
         {
             "family": "td",
@@ -123,11 +123,11 @@ def build_registry(R) -> list[dict]:
             "tag": lambda fn: "ABR2",
             "stats": lambda fn: "retrain_abr1_stats.json",
         },
-        # MIS: der Retrainer SCHREIBT nach STAGING unter dem Trainer-Prefix
-        # (mis1_model_*), NICHT unter dem Bot-Promotion-Slot mis2_model_* — die
-        # Meta trägt "MIS2" (Bot hängt den Horizont an: MIS2-8H …). Drei Label-
-        # Modi (geometry + move/close + move/wick) landen unter je eigenem Prefix;
-        # jeder braucht eine Registry-Zeile, sonst wird die Familie still übersprungen.
+        # MIS: the retrainer WRITES to STAGING under the trainer prefix
+        # (mis1_model_*), NOT under the bot promotion slot mis2_model_* — the
+        # meta carries "MIS2" (the bot appends the horizon: MIS2-8H …). Three label
+        # modes (geometry + move/close + move/wick) land under their own prefix
+        # each; each needs a registry row, otherwise the family is silently skipped.
         {
             "family": "mis1",
             "glob": "mis1_model_*.pkl",
@@ -180,8 +180,8 @@ def build_registry(R) -> list[dict]:
 
 
 def _tf_from(filename: str) -> str:
-    """'td_xgboost_model_4h.pkl' -> '4h'. Fällt auf '' zurück, wenn kein
-    bekanntes TF im Namen steht (Tag-Check schlägt dann sichtbar fehl)."""
+    """'td_xgboost_model_4h.pkl' -> '4h'. Falls back to '' if no
+    known tf is in the name (the tag check then fails visibly)."""
     base = os.path.basename(filename)
     for tf in ("1h", "4h"):
         if f"_{tf}." in base or base.endswith(f"_{tf}.pkl"):
@@ -190,19 +190,19 @@ def _tf_from(filename: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Einzel-Checks. Jede Funktion gibt (status, message) zurück.
+# Individual checks. Each function returns (status, message).
 # --------------------------------------------------------------------------- #
 def check_residency(path: str, staging_dir: str) -> tuple[str, str]:
     in_staging = os.path.abspath(os.path.dirname(path)) == os.path.abspath(staging_dir)
     if not in_staging:
-        return FAIL, f"liegt NICHT in STAGING_DIR ({os.path.dirname(path)}) — HR-2-Verstoß"
-    # Promotion-Vorschau: existiert eine gleichnamige Live-Datei im Repo-Root?
-    # Bewusst KEIN mtime-Vergleich — mtimes sind über Checkouts/Worktrees hinweg
-    # kein verlässliches "Staging neuer als Live"-Signal. Nur Existenz-Info.
+        return FAIL, f"is NOT in STAGING_DIR ({os.path.dirname(path)}) — HR-2 violation"
+    # Promotion preview: does a live file of the same name exist in the repo root?
+    # Deliberately NO mtime comparison — mtimes are not a reliable "staging newer
+    # than live" signal across checkouts/worktrees. Existence info only.
     live = os.path.join(REPO_ROOT, os.path.basename(path))
     if os.path.exists(live):
-        return OK, "in STAGING_DIR; Promotion überschriebe die vorhandene Live-Datei gleichen Namens"
-    return OK, "in STAGING_DIR; kein gleichnamiges Live-Artefakt (neuer Slot)"
+        return OK, "in STAGING_DIR; promotion would overwrite the existing live file of the same name"
+    return OK, "in STAGING_DIR; no live artifact of the same name (new slot)"
 
 
 def check_xgb_version(meta: dict) -> tuple[str, str]:
@@ -211,74 +211,74 @@ def check_xgb_version(meta: dict) -> tuple[str, str]:
     art_ver = str(meta.get("xgboost_version", "")).strip()
     run_ver = str(xgb.__version__)
     if not art_ver:
-        return WARN, f"meta.xgboost_version fehlt (Serving läuft {run_ver}) — Skew nicht prüfbar"
+        return WARN, f"meta.xgboost_version missing (serving runs {run_ver}) — skew not checkable"
     if art_ver == run_ver:
-        return OK, f"xgboost {art_ver} == Serving {run_ver}"
+        return OK, f"xgboost {art_ver} == serving {run_ver}"
     if art_ver.split(".")[0] != run_ver.split(".")[0]:
-        return FAIL, f"xgboost-MAJOR-Drift: Artefakt {art_ver} vs Serving {run_ver} (stiller predict-Skew, P3.4)"
-    return WARN, f"xgboost-Minor-Drift: Artefakt {art_ver} vs Serving {run_ver}"
+        return FAIL, f"xgboost MAJOR drift: artifact {art_ver} vs serving {run_ver} (silent predict skew, P3.4)"
+    return WARN, f"xgboost minor drift: artifact {art_ver} vs serving {run_ver}"
 
 
 def check_tag(meta: dict, expected_tag: str) -> tuple[str, str]:
     model_id = str(meta.get("model_id", "")).strip()
     if not model_id:
-        return FAIL, "meta.model_id fehlt — Bot postet unter Fallback-Konstante (HR-6-Risiko)"
+        return FAIL, "meta.model_id missing — bot posts under fallback constant (HR-6 risk)"
     if model_id != expected_tag:
-        return FAIL, f"model_id '{model_id}' != erwarteter Gen-Tag '{expected_tag}' (HR-6)"
-    return OK, f"model_id '{model_id}' == erwarteter Gen-Tag"
+        return FAIL, f"model_id '{model_id}' != expected gen tag '{expected_tag}' (HR-6)"
+    return OK, f"model_id '{model_id}' == expected gen tag"
 
 
 def check_threshold(threshold) -> tuple[str, str]:
     try:
         t = float(threshold)
     except (TypeError, ValueError):
-        return FAIL, f"optimal_threshold nicht numerisch: {threshold!r}"
+        return FAIL, f"optimal_threshold not numeric: {threshold!r}"
     if not (0.0 < t < 1.0):
-        return FAIL, f"optimal_threshold {t} ausserhalb (0,1) — 1.0 ist der Idle-Default (kein Gate)"
+        return FAIL, f"optimal_threshold {t} outside (0,1) — 1.0 is the idle default (no gate)"
     return OK, f"optimal_threshold {t:.3f} ∈ (0,1)"
 
 
 def check_features(art_features, ref_features: list[str]) -> tuple[str, str]:
     if not art_features:
-        return FAIL, "Artefakt trägt keine Feature-Liste"
+        return FAIL, "artifact carries no feature list"
     art = list(art_features)
     if art == ref_features:
-        return OK, f"{len(art)} Features == Trainer/Serving-Referenz"
+        return OK, f"{len(art)} features == trainer/serving reference"
     art_set, ref_set = set(art), set(ref_features)
     extra = [c for c in art if c not in ref_set]
     if extra:
-        # Der Loader würde das ohnehin ablehnen (check_feature_contract) — der
-        # Bot-Builder liefert diese Spalten nicht.
-        return FAIL, f"Artefakt verlangt {len(extra)} unbekannte Feature(s): {extra[:5]} (Feature-Drift)"
+        # The loader would reject this anyway (check_feature_contract) — the
+        # bot builder does not deliver these columns.
+        return FAIL, f"artifact requires {len(extra)} unknown feature(s): {extra[:5]} (feature drift)"
     missing = [c for c in ref_features if c not in art_set]
     if missing:
         return (
             WARN,
-            f"{len(art)} Features, aber {len(missing)} Referenz-Feature(s) fehlen: {missing[:5]} (Builder-Drift?)",
+            f"{len(art)} features, but {len(missing)} reference feature(s) missing: {missing[:5]} (builder drift?)",
         )
-    # Gleiche Menge, andere Reihenfolge: benign — der Bot selektiert per Namen
-    # (df[features]), die Reihenfolge im Artefakt ist folgenlos.
-    return OK, f"{len(art)} Features == Referenz (gleiche Menge, abweichende Reihenfolge — benign)"
+    # Same set, different order: benign — the bot selects by name
+    # (df[features]), the order in the artifact has no consequence.
+    return OK, f"{len(art)} features == reference (same set, different order — benign)"
 
 
 def check_model_object(model) -> tuple[str, str]:
     if model is None:
-        return FAIL, "kein Modell-Objekt im Artefakt"
+        return FAIL, "no model object in artifact"
     if not hasattr(model, "predict_proba"):
-        return FAIL, f"Modell hat kein predict_proba ({type(model).__name__})"
-    return OK, f"{type(model).__name__} mit predict_proba"
+        return FAIL, f"model has no predict_proba ({type(model).__name__})"
+    return OK, f"{type(model).__name__} with predict_proba"
 
 
 # --------------------------------------------------------------------------- #
-# Format-spezifisches Laden — sowohl roh (granulare Meta-Checks) als auch über
-# den Bot-Loader (der ultimative "akzeptiert der Bot es?"-Check).
+# Format-specific loading — both raw (granular meta checks) and via
+# the bot loader (the ultimate "does the bot accept it?" check).
 # --------------------------------------------------------------------------- #
 def load_raw_A(path: str) -> dict:
-    """Format A (dict-pkl): {model, features, optimal_threshold,
+    """Format A (dict pkl): {model, features, optimal_threshold,
     calibrator_isotonic, meta}."""
     d = joblib.load(path)
     if not isinstance(d, dict) or "model" not in d:
-        raise ValueError("kein dict-Artefakt (Format A) — evtl. rohes Modell")
+        raise ValueError("not a dict artifact (Format A) — possibly a raw model")
     return {
         "model": d.get("model"),
         "features": d.get("features"),
@@ -290,7 +290,7 @@ def load_raw_A(path: str) -> dict:
 
 
 def load_raw_B(path: str) -> dict:
-    """Format B (natives XGB-JSON + _meta.json + _calib.pkl)."""
+    """Format B (native XGB JSON + _meta.json + _calib.pkl)."""
     import xgboost as xgb
 
     model = xgb.XGBClassifier()
@@ -298,16 +298,16 @@ def load_raw_B(path: str) -> dict:
     meta_path = path.replace(".json", "_meta.json")
     calib_path = path.replace(".json", "_calib.pkl")
     if not os.path.exists(meta_path):
-        raise ValueError(f"{os.path.basename(meta_path)} fehlt — Legacy-Vertrag, kein Retrain-Artefakt")
+        raise ValueError(f"{os.path.basename(meta_path)} missing — legacy contract, not a retrain artifact")
     with open(meta_path, encoding="utf-8") as fh:
         meta = json.load(fh)
     mtype = str(meta.get("model_type", ""))
     if not mtype.startswith("binary"):
-        mt_status = (FAIL, f"model_type '{mtype}' startet nicht mit 'binary' (Loader läse falsche Spalte)")
+        mt_status = (FAIL, f"model_type '{mtype}' does not start with 'binary' (loader would read the wrong column)")
     elif not os.path.exists(calib_path):
-        mt_status = (WARN, "model_type binary, aber _calib.pkl-Sidecar fehlt")
+        mt_status = (WARN, "model_type binary, but _calib.pkl sidecar missing")
     else:
-        mt_status = (OK, f"model_type '{mtype}' + Kalibrator-Sidecar präsent")
+        mt_status = (OK, f"model_type '{mtype}' + calibrator sidecar present")
     return {
         "model": model,
         "features": meta.get("features"),
@@ -319,24 +319,24 @@ def load_raw_B(path: str) -> dict:
 
 
 def loader_accepts(path: str, fmt: str, ref_features: list[str], default_tag: str) -> tuple[str, str]:
-    """Fährt den EXAKTEN Bot-Loader (core.model_artifacts). loaded=True heisst:
-    der Live-Bot würde dieses Artefakt beim Start akzeptieren."""
+    """Runs the EXACT bot loader (core.model_artifacts). loaded=True means:
+    the live bot would accept this artifact at startup."""
     if fmt == "A":
         c = model_artifacts.load_artifact(path, ref_features, default_tag)
     else:
         c = model_artifacts.load_artifact_json(path, ref_features, default_tag)
     if c.get("loaded"):
-        return OK, f"core.model_artifacts akzeptiert das Artefakt (tag={c.get('tag')})"
-    return FAIL, "core.model_artifacts lehnt das Artefakt ab (loaded=False) — Bot liefe im Idle-Modus"
+        return OK, f"core.model_artifacts accepts the artifact (tag={c.get('tag')})"
+    return FAIL, "core.model_artifacts rejects the artifact (loaded=False) — bot would run in idle mode"
 
 
 # --------------------------------------------------------------------------- #
-# C2-Metrik-Report (advisory)
+# C2 metric report (advisory)
 # --------------------------------------------------------------------------- #
 def _iter_stat_blocks(obj, path=""):
-    """Findet rekursiv alle Dicts, die 'test_stats' oder 'val_stats' tragen,
-    und gibt (label, block) zurück — deckt flache (td/bb) wie verschachtelte
-    (rub/epd/mis pro Richtung/Horizont) Stats-JSONs ab."""
+    """Recursively finds all dicts that carry 'test_stats' or 'val_stats'
+    and returns (label, block) — covers flat (td/bb) as well as nested
+    (rub/epd/mis per direction/horizon) stats JSONs."""
     if isinstance(obj, dict):
         if "test_stats" in obj or "val_stats" in obj:
             yield path or "root", obj
@@ -345,8 +345,8 @@ def _iter_stat_blocks(obj, path=""):
 
 
 def metric_verdict(block: dict) -> tuple[str, str]:
-    """Advisory Go/No-Go aus einem Stats-Block: schlägt das Modell auf dem
-    Test-Slice seine Base-Rate und ist der Netto-PnL positiv?"""
+    """Advisory go/no-go from a stats block: does the model beat its
+    base rate on the test slice, and is the net PnL positive?"""
     ts = block.get("test_stats") or {}
     wr = ts.get("wr")
     base = ts.get("base_rate_test")
@@ -354,12 +354,12 @@ def metric_verdict(block: dict) -> tuple[str, str]:
     bits = []
     verdict = OK
     if wr is not None and base is not None:
-        bits.append(f"Test-WR {wr:.1f}% vs Base {base:.1f}%")
+        bits.append(f"test WR {wr:.1f}% vs base {base:.1f}%")
         if wr < base:
             verdict = WARN
-            bits.append("↓ unter Base-Rate")
+            bits.append("↓ below base rate")
     if pnl is not None:
-        bits.append(f"ΣNet-PnL {pnl:+.1f}%")
+        bits.append(f"ΣNet PnL {pnl:+.1f}%")
         if pnl <= 0:
             verdict = WARN
             bits.append("≤0")
@@ -368,33 +368,33 @@ def metric_verdict(block: dict) -> tuple[str, str]:
         bits.append(f"n={n}")
         if isinstance(n, (int, float)) and n < 30:
             verdict = WARN
-            bits.append("dünn (n<30)")
+            bits.append("thin (n<30)")
     if not bits:
-        return WARN, "keine test_stats im Block"
+        return WARN, "no test_stats in block"
     return verdict, "; ".join(bits)
 
 
 def report_metrics(staging_dir: str, stats_name: str) -> list[tuple[str, str, str]]:
-    """Liste (label, status, message) je Stats-Block der Datei."""
+    """List (label, status, message) per stats block of the file."""
     fp = os.path.join(staging_dir, stats_name)
     if not os.path.exists(fp):
-        return [("(stats)", WARN, f"{stats_name} noch nicht vorhanden (Retrain gelaufen?)")]
+        return [("(stats)", WARN, f"{stats_name} not yet present (retrain run?)")]
     try:
         with open(fp, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as e:
-        return [("(stats)", WARN, f"{stats_name} nicht lesbar: {e}")]
+        return [("(stats)", WARN, f"{stats_name} not readable: {e}")]
     out = []
     for label, block in _iter_stat_blocks(data):
         status, msg = metric_verdict(block)
         out.append((label, status, msg))
     if not out:
-        out.append(("(stats)", WARN, f"{stats_name} enthält keine test_stats/val_stats"))
+        out.append(("(stats)", WARN, f"{stats_name} contains no test_stats/val_stats"))
     return out
 
 
 # --------------------------------------------------------------------------- #
-# Orchestrierung
+# Orchestration
 # --------------------------------------------------------------------------- #
 def verify_artifact(path: str, spec: dict, staging_dir: str) -> dict:
     fn = os.path.basename(path)
@@ -406,11 +406,11 @@ def verify_artifact(path: str, spec: dict, staging_dir: str) -> dict:
     checks.append(("residency", st, msg))
     checks.append(("promotion_slot", *promotion_guard.check_staging_filename(fn)))
 
-    # Rohes Laden (granulare Meta-Checks)
+    # Raw load (granular meta checks)
     try:
         raw = load_raw_A(path) if spec["fmt"] == "A" else load_raw_B(path)
-    except Exception as e:  # noqa: BLE001 — jede Ladefehlerklasse ist ein FAIL
-        checks.append(("load", FAIL, f"lädt nicht: {e}"))
+    except Exception as e:  # noqa: BLE001 — every load-error class is a FAIL
+        checks.append(("load", FAIL, f"does not load: {e}"))
         return {"file": fn, "family": spec["family"], "tag": expected_tag, "checks": checks}
 
     meta = raw["meta"]
@@ -422,11 +422,11 @@ def verify_artifact(path: str, spec: dict, staging_dir: str) -> dict:
     if spec["fmt"] == "B":
         checks.append(("format_b", *raw["model_type_ok"]))
 
-    # Der ultimative Check: akzeptiert der Bot-eigene Loader es?
+    # The ultimate check: does the bot's own loader accept it?
     try:
         checks.append(("loader", *loader_accepts(path, spec["fmt"], ref_features, expected_tag)))
     except Exception as e:  # noqa: BLE001
-        checks.append(("loader", FAIL, f"core.model_artifacts wirft: {e}"))
+        checks.append(("loader", FAIL, f"core.model_artifacts raises: {e}"))
 
     return {"file": fn, "family": spec["family"], "tag": expected_tag, "checks": checks}
 
@@ -445,20 +445,20 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         pass
 
-    # Der Bot-Loader loggt bei Ablehnung selbst einen error — hier redundant zu
-    # unserem eigenen FAIL-Report und würde die Ausgabe out-of-order verrauschen.
+    # The bot loader logs its own error on rejection — redundant here to
+    # our own FAIL report and would clutter the output out-of-order.
     import logging
 
     logging.getLogger("core.model_artifacts").setLevel(logging.CRITICAL)
 
-    ap = argparse.ArgumentParser(description="Post-Retrain Staging-Artefakt-Verifikation (read-only).")
+    ap = argparse.ArgumentParser(description="Post-retrain staging artifact verification (read-only).")
     ap.add_argument(
-        "--staging-dir", default=None, help="Default: KYTHERA_STAGING_DIR bzw. retrain_from_replay.STAGING_DIR"
+        "--staging-dir", default=None, help="Default: KYTHERA_STAGING_DIR or retrain_from_replay.STAGING_DIR"
     )
     ap.add_argument(
         "--only",
         default="",
-        help="Kommaliste von Familien (td,bb,abr1,mis1,mis1_move,mis1_move_wick,rub,epd,atb2)",
+        help="Comma list of families (td,bb,abr1,mis1,mis1_move,mis1_move_wick,rub,epd,atb2)",
     )
     args = ap.parse_args()
 
@@ -471,7 +471,7 @@ def main() -> int:
 
     print(f"STAGING_DIR: {staging_dir}")
     if not os.path.isdir(staging_dir):
-        print(f"❌ STAGING_DIR existiert nicht: {staging_dir}")
+        print(f"❌ STAGING_DIR does not exist: {staging_dir}")
         return 1
     import xgboost as xgb
 
@@ -481,8 +481,8 @@ def main() -> int:
     seen_stats: set[str] = set()
 
     for spec in registry:
-        # _meta.json/_calib.pkl-Sidecars sind KEINE Modell-Artefakte — sonst
-        # versucht der Format-B-Loader die Meta-JSON als XGB-Modell zu laden.
+        # _meta.json/_calib.pkl sidecars are NOT model artifacts — otherwise
+        # the format B loader tries to load the meta JSON as an XGB model.
         paths = [
             p
             for p in sorted(glob.glob(os.path.join(staging_dir, spec["glob"])))
@@ -490,7 +490,7 @@ def main() -> int:
         ]
         if not paths:
             continue
-        print(f"── {spec['family'].upper()} ({len(paths)} Artefakt(e)) " + "─" * 30)
+        print(f"── {spec['family'].upper()} ({len(paths)} artifact(s)) " + "─" * 30)
         for path in paths:
             res = verify_artifact(path, spec, staging_dir)
             status = worst(res["checks"])
@@ -499,7 +499,7 @@ def main() -> int:
             for name, st, msg in res["checks"]:
                 if st != OK:
                     print(f"       {ICON[st]}{name}: {msg}")
-        # C2-Metrik-Report je Familie (einmal pro Stats-Datei)
+        # C2 metric report per family (once per stats file)
         stats_name = spec["stats"](os.path.basename(paths[0]))
         if stats_name not in seen_stats:
             seen_stats.add(stats_name)
@@ -507,13 +507,13 @@ def main() -> int:
                 print(f"     📊 [{label}] {ICON.get(st, '')}{msg}")
         print()
 
-    # Register-Scan (Check 9, zweite Hälfte): unabhängig davon, welche Dateien in
-    # STAGING_DIR liegen — er liest NUR core.shadow_gate. Ein FAIL heisst: ein
-    # bereits auf LIVE geflipptes Challenger-Bein lädt aus dem Root-Slot einer
-    # fremden Generation (Regel-4-Doppel-Post). Das ist ein harter Promotions-Stopp.
+    # Registry scan (check 9, second half): independent of which files are in
+    # STAGING_DIR — it reads ONLY core.shadow_gate. A FAIL means: a
+    # challenger leg already flipped to LIVE loads from the root slot of a
+    # foreign generation (rule-4 double-post). That is a hard promotion stop.
     findings = promotion_guard.scan()
     if findings:
-        print("── PROMOTIONS-NAMENSGUARD " + "─" * 35)
+        print("── PROMOTION NAME GUARD " + "─" * 35)
         for f in findings:
             print(f"  {ICON[f.severity]}{f.as_line()}")
         any_fail = any_fail or any(f.severity == FAIL for f in findings)
@@ -521,10 +521,10 @@ def main() -> int:
 
     print("─" * 60)
     if any_fail:
-        print("❌ Mindestens ein MECHANISCHER Contract-Check ist FAIL — NICHT promoten, bis behoben.")
-        print("   (Metrik-WARNs sind ADVISORY und ändern den Exit-Code nicht — Promotion bleibt Michis Entscheid.)")
+        print("❌ At least one MECHANICAL contract check is FAIL — DO NOT promote until fixed.")
+        print("   (Metric WARNs are ADVISORY and do not change the exit code — promotion remains Michi's decision.)")
         return 1
-    print("✅ Keine mechanischen Contract-Fehler. Promotion bleibt Operator-Entscheid (Metrik-WARNs prüfen).")
+    print("✅ No mechanical contract errors. Promotion remains an operator decision (check metric WARNs).")
     return 0
 
 

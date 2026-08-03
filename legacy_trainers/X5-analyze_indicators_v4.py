@@ -25,7 +25,7 @@ DB_CONFIG = {
 def load_coins() -> list[str]:
     coins_file = Path("coins.json")
     if not coins_file.exists():
-        logger.error("coins.json nicht gefunden!")
+        logger.error("coins.json not found!")
         return []
     with open(coins_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -50,22 +50,22 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[f'{col}_delta_1'] = df.groupby('symbol')[col].diff(1)
     
-    # MACD Histogram und Delta
+    # MACD histogram and delta
     df['macd_hist'] = df['macd_dif'] - df['macd_dea']
     df['macd_hist_delta_1'] = df.groupby('symbol')['macd_hist'].diff(1)
     
-    # Binäre und Cross Features
+    # Binary and cross features
     df['above_ema_200'] = (df['close'] > df['ema_200']).astype(int)
     df['rsi_14_above_50'] = (df['rsi_14'] > 50).astype(int)
     df['rsi_14_cross_above_30'] = ((df['rsi_14'].shift(1) < 30) & (df['rsi_14'] >= 30)).astype(int)
     df['ema_9_cross_above_21'] = ((df['ema_9'].shift(1) < df['ema_21'].shift(1)) & (df['ema_9'] > df['ema_21'])).astype(int)
     
-    # ATR-normalisierte Abstände
+    # ATR-normalised spacings
     df['boll_upper_dist_atr'] = (df['close'] - df['boll_upper_20']) / (df['atr_14'] + 1e-8)
     df['boll_lower_dist_atr'] = (df['close'] - df['boll_lower_20']) / (df['atr_14'] + 1e-8)
     df['ema_200_dist_atr'] = (df['close'] - df['ema_200']) / (df['atr_14'] + 1e-8)
     
-    # Prozentuale Abstände zu allen Linien
+    # Percentage spacings to all lines
     price = df['close']
     line_cols = [c for c in df.columns if c.startswith(('ema_', 'wma_', 'kama_', 'boll_', 'donchian_')) and not c.endswith('_dist_pct')]
     for col in line_cols:
@@ -74,7 +74,7 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     return df.fillna(0)
 
 async def train_70percent_precision_v7():
-    logger.info("Starte v7 – Ziel: ~70% Precision bei akzeptablem Recall")
+    logger.info("Starting v7 – target: ~70% precision at acceptable recall")
     coins = load_coins()
     if not coins:
         return
@@ -118,19 +118,19 @@ async def train_70percent_precision_v7():
                 ])
                 df['symbol'] = symbol
                 all_data.append(df)
-                logger.info(f"{symbol}: {len(df)} Kerzen geladen")
+                logger.info(f"{symbol}: {len(df)} candles loaded")
         except Exception as e:
-            logger.warning(f"Fehler bei {symbol}: {e}")
+            logger.warning(f"Error for {symbol}: {e}")
     
     await conn.close()
     
     if not all_data:
-        logger.error("Keine Daten")
+        logger.error("No data")
         return
     
     df_full = pd.concat(all_data, ignore_index=True)
     df_full = df_full.sort_values(['symbol', 'open_time']).reset_index(drop=True)
-    logger.info(f"Gesamt: {len(df_full)} Kerzen")
+    logger.info(f"Total: {len(df_full)} candles")
     
     df_full = add_advanced_features(df_full)
     
@@ -153,7 +153,7 @@ async def train_70percent_precision_v7():
     horizons = [("8h_pump", 8, 5.0)]
     
     for name, hours, threshold_pct in horizons:
-        logger.info(f"\n=== Training {name} v7 – Ziel ~70% Precision ===")
+        logger.info(f"\n=== Training {name} v7 – target ~70% precision ===")
         
         y = []
         valid_indices = []
@@ -196,7 +196,7 @@ async def train_70percent_precision_v7():
                 eval_metric='logloss',
                 tree_method='hist',
                 n_jobs=-1,
-                scale_pos_weight=1.5  # Konservativ für höhere Precision
+                scale_pos_weight=1.5  # Conservative for higher precision
             )
             model.fit(X_train, y_train)
             
@@ -205,7 +205,7 @@ async def train_70percent_precision_v7():
             precision = precision[:-1]
             recall = recall[:-1]
             
-            # Höchste Precision bei Recall >= 0.03
+            # Highest precision at recall >= 0.03
             valid = recall >= 0.03
             if np.any(valid):
                 idx = np.argmax(precision[valid])
@@ -225,9 +225,9 @@ async def train_70percent_precision_v7():
                 best_recall = cand_rec
                 best_threshold = cand_thr
         
-        logger.info(f"BESTE Precision: {best_precision:.3f} bei Recall {best_recall:.3f} @ Threshold {best_threshold:.3f}")
-        
-        # Finales Modell
+        logger.info(f"BEST precision: {best_precision:.3f} at recall {best_recall:.3f} @ threshold {best_threshold:.3f}")
+
+        # Final model
         final_model = XGBClassifier(
             n_estimators=1000, max_depth=4, learning_rate=0.02,
             subsample=0.7, colsample_bytree=0.7, min_child_weight=20, gamma=2.0, reg_lambda=10.0,
@@ -244,9 +244,9 @@ async def train_70percent_precision_v7():
         
         joblib.dump(final_model, f"pump_model_{name}_v7_70percent.pkl")
         joblib.dump(best_threshold, f"threshold_{name}_v7_70percent.pkl")
-        logger.info(f"v7 Modell für ~70% Precision gespeichert!")
+        logger.info(f"v7 model saved for ~70% precision!")
 
-    logger.info("v7 Training abgeschlossen – Ziel 70% Precision erreicht!")
+    logger.info("v7 training complete – target 70% precision reached!")
 
 if __name__ == "__main__":
     asyncio.run(train_70percent_precision_v7())

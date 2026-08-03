@@ -27,67 +27,67 @@ DB_CONFIG = {
     "database": "cryptodata"
 }
 
-# === Coins laden ===
+# === Load coins ===
 def load_coins() -> list[str]:
     coins_file = Path("coins.json")
     if not coins_file.exists():
-        logger.error("coins.json nicht gefunden!")
+        logger.error("coins.json not found!")
         return []
     with open(coins_file, "r", encoding="utf-8") as f:
         data = json.load(f)
     return [str(s).upper() + "USDT" if not str(s).upper().endswith("USDT") else str(s).upper() for s in data]
 
-# === Prozentualer Abstand ===
+# === Percentage distance ===
 def pct_distance(price_series: pd.Series, indicator_series: pd.Series) -> pd.Series:
     denominator = indicator_series.replace(0, np.nan)
     result = (price_series - indicator_series) / denominator * 100
     return result.fillna(0)
 
-# === Erweiterte Features hinzufügen ===
+# === Add advanced features ===
 def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(['symbol', 'open_time']).reset_index(drop=True)
-    
-    # Volume Features
+
+    # volume features
     df['volume_ratio_prev'] = df.groupby('symbol')['volume'].transform(lambda x: x / x.shift(1))
     df['volume_sma20'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(20, min_periods=1).mean())
     df['volume_ratio_sma20'] = df['volume'] / df['volume_sma20']
-    
-    # Deltas
+
+    # deltas
     for col in ['rsi_14', 'macd_dif', 'tsi_fast']:
         df[f'{col}_delta_1'] = df.groupby('symbol')[col].diff(1)
         df[f'{col}_delta_3'] = df.groupby('symbol')[col].diff(3)
-    
-    # MACD Histogram
+
+    # MACD histogram
     df['macd_hist'] = df['macd_dif'] - df['macd_dea']
     df['macd_hist_delta_1'] = df.groupby('symbol')['macd_hist'].diff(1)
-    
-    # EMA Features
+
+    # EMA features
     df['ema_9_minus_ema_21'] = df['ema_9'] - df['ema_21']
     df['ema_9_cross_above_21'] = ((df['ema_9'].shift(1) < df['ema_21'].shift(1)) & (df['ema_9'] > df['ema_21'])).astype(int)
-    
-    # Binäre Features
+
+    # binary features
     df['above_ema_200'] = (df['close'] > df['ema_200']).astype(int)
     df['rsi_14_above_50'] = (df['rsi_14'] > 50).astype(int)
     df['rsi_14_cross_above_30'] = ((df['rsi_14'].shift(1) < 30) & (df['rsi_14'] >= 30)).astype(int)
-    
-    # ATR-normalisierte Abstände
+
+    # ATR-normalised distances
     df['boll_upper_dist_atr'] = (df['close'] - df['boll_upper_20']) / (df['atr_14'] + 1e-8)
     df['boll_lower_dist_atr'] = (df['close'] - df['boll_lower_20']) / (df['atr_14'] + 1e-8)
     df['ema_200_dist_atr'] = (df['close'] - df['ema_200']) / (df['atr_14'] + 1e-8)
-    
-    # Prozentuale Abstände
+
+    # percentage distances
     price = df['close']
     for col in [c for c in df.columns if c.startswith(('ema_', 'wma_', 'kama_'))]:
         df[f'{col}_dist_pct'] = pct_distance(price, df[col])
     for band in ['boll_upper_20', 'boll_lower_20', 'boll_mid_20', 'donchian_upper_20', 'donchian_lower_20', 'donchian_mid_20']:
         if band in df.columns:
             df[f'{band}_dist_pct'] = pct_distance(price, df[band])
-    
+
     return df
 
-# === Hauptfunktion ===
+# === Main function ===
 async def train_pump_models():
-    logger.info("Starte optimierte Pump-Modelle (binär, mit SMOTE, StratifiedKFold)")
+    logger.info("Starting optimised pump models (binary, with SMOTE, StratifiedKFold)")
     coins = load_coins()
     if not coins:
         return
@@ -132,25 +132,25 @@ async def train_pump_models():
                 ])
                 df['symbol'] = symbol
                 all_data.append(df)
-                logger.info(f"{symbol}: {len(df)} Kerzen geladen")
+                logger.info(f"{symbol}: {len(df)} candles loaded")
         except Exception as e:
-            logger.warning(f"Fehler bei {symbol}: {e}")
-    
+            logger.warning(f"Error for {symbol}: {e}")
+
     await conn.close()
-    
+
     if not all_data:
-        logger.error("Keine Daten geladen")
+        logger.error("No data loaded")
         return
-    
+
     df_full = pd.concat(all_data, ignore_index=True)
     df_full = df_full.sort_values(['symbol', 'open_time']).reset_index(drop=True)
-    logger.info(f"Gesamt: {len(df_full)} Kerzen von {len(coins)} Coins")
-    
-    # Features hinzufügen
+    logger.info(f"Total: {len(df_full)} candles from {len(coins)} coins")
+
+    # add features
     df_full = add_advanced_features(df_full)
     df_full = df_full.fillna(0)
-    
-    # Feature Liste
+
+    # feature list
     feature_cols = [
         'rsi_6', 'rsi_9', 'rsi_12', 'rsi_14', 'rsi_24',
         'tsi_fast', 'macd_dif', 'macd_hist',
@@ -162,17 +162,17 @@ async def train_pump_models():
     ] + [col for col in df_full.columns if col.endswith('_dist_pct') or '_delta_' in col]
     
     X_base = df_full[feature_cols]
-    
-    # Drei Horizonte
+
+    # three horizons
     horizons = [
         ("8h_pump", 8, 5.0),
         ("72h_pump", 72, 15.0),
         ("168h_pump", 168, 25.0)
     ]
-    
+
     for name, hours, threshold in horizons:
-        logger.info(f"\n=== Training {name} (>= +{threshold}% in {hours}h) ===")
-        
+        logger.info(f"\n=== training {name} (>= +{threshold}% in {hours}h) ===")
+
         y = []
         valid_indices = []
         for i in range(len(df_full) - hours):
@@ -184,31 +184,31 @@ async def train_pump_models():
             label = 1 if change_pct >= threshold else 0
             y.append(label)
             valid_indices.append(i)
-        
+
         if sum(y) < 30:
-            logger.warning(f"Zu wenige Pump-Events ({sum(y)}) – übersprungen")
+            logger.warning(f"Too few pump events ({sum(y)}) — skipped")
             continue
-        
-        logger.info(f"Pump-Events: {sum(y)} / Total: {len(y)} ({sum(y)/len(y)*100:.2f}%)")
+
+        logger.info(f"Pump events: {sum(y)} / total: {len(y)} ({sum(y)/len(y)*100:.2f}%)")
         
         X = X_base.iloc[valid_indices]
         y = np.array(y)
-        
-        # Stratified K-Fold + SMOTE
+
+        # stratified K-fold + SMOTE
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         fold_recalls = []
         best_model = None
         best_threshold = 0.5
         best_f1 = 0
-        
+
         for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
             X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
             y_train, y_val = y[train_idx], y[val_idx]
-            
-            # SMOTE nur auf Train anwenden
+
+            # apply SMOTE only to training
             smote = SMOTE(random_state=42)
             X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
-            
+
             model = XGBClassifier(
                 n_estimators=1000,
                 max_depth=7,
@@ -217,7 +217,7 @@ async def train_pump_models():
                 colsample_bytree=0.8,
                 random_state=42,
                 eval_metric='logloss',
-                tree_method='hist',  # schneller auf CPU
+                tree_method='hist',  # faster on CPU
                 n_jobs=-1
             )
             
@@ -236,30 +236,30 @@ async def train_pump_models():
                 best_f1 = np.max(f1)
                 best_model = model
                 best_threshold = fold_threshold
-        
-        logger.info(f"Durchschnittlicher Recall über 5 Folds: {np.mean(fold_recalls):.3f} (±{np.std(fold_recalls):.3f})")
-        logger.info(f"Bester Threshold (F1-max): {best_threshold:.3f}")
-        
-        # Finale Evaluation auf letztem Val-Set (oder retrain auf allen Daten)
-        # Hier retrain auf allen Daten mit SMOTE für maximale Performance
+
+        logger.info(f"Average recall over 5 folds: {np.mean(fold_recalls):.3f} (±{np.std(fold_recalls):.3f})")
+        logger.info(f"Best threshold (F1-max): {best_threshold:.3f}")
+
+        # final evaluation on last val set (or retrain on all data)
+        # here retrain on all data with SMOTE for maximum performance
         smote_full = SMOTE(random_state=42)
         X_res, y_res = smote_full.fit_resample(X, y)
         best_model.fit(X_res, y_res)
-        
-        # Feature Importance
+
+        # feature importance
         importance = best_model.get_booster().get_score(importance_type='gain')
         feature_map = {f'f{i}': name for i, name in enumerate(feature_cols)}
         sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:30]
-        logger.info("Top 30 Features:")
+        logger.info("Top 30 features:")
         for f_idx, score in sorted_imp:
             logger.info(f"  {feature_map.get(f_idx, f_idx)}: {score:.1f}")
-        
-        # Speichern
+
+        # save
         joblib.dump(best_model, f"pump_model_{name}.pkl")
         joblib.dump(best_threshold, f"threshold_{name}.pkl")
-        logger.info(f"Modell + Threshold gespeichert: pump_model_{name}.pkl / threshold_{name}.pkl")
+        logger.info(f"Model + threshold saved: pump_model_{name}.pkl / threshold_{name}.pkl")
 
-    logger.info("Alle Pump-Modelle fertig trainiert!")
+    logger.info("All pump models trained!")
 
 # === Start ===
 if __name__ == "__main__":

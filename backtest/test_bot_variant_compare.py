@@ -1,12 +1,12 @@
 # backtest/test_bot_variant_compare.py
-"""DB-freie Tests für tools/bot_variants/compare.py (T-2026-KYT-9050-039, D3).
+"""DB-free tests for tools/bot_variants/compare.py (T-2026-KYT-9050-039, D3).
 
-Die Generation-A/B-Sim über die bestehende Replay-Infra:
-  * evaluate(): n / avg / sum / win_rate / max_drawdown am Operating-Threshold
-  * threshold=None ⇒ jedes Event zählt (Detektor-Gate)
-  * _max_drawdown_pct auf einer bekannten PnL-Kurve
-  * load_contract-Fehlerpfade (kein Feature-Vertrag)
-  * compare()-Sieger-Logik auf einem synthetischen Replay (kein DB/Netz/xgboost)
+The generation A/B sim over the existing replay infra:
+  * evaluate(): n / avg / sum / win_rate / max_drawdown at the operating threshold
+  * threshold=None ⇒ every event counts (detector gate)
+  * _max_drawdown_pct on a known PnL curve
+  * load_contract error paths (no feature contract)
+  * compare() winner logic on a synthetic replay (no DB/network/xgboost)
 
 Run: pytest backtest/test_bot_variant_compare.py -v
 """
@@ -27,7 +27,7 @@ from tools.retrain_from_replay import load_replay  # noqa: E402
 
 
 class _StubModel:
-    """predict_proba[:,1] = geklemmtes f1 (deterministisch, ohne xgboost)."""
+    """predict_proba[:,1] = clamped f1 (deterministic, no xgboost)."""
 
     def __init__(self, feature="f1"):
         self.feature = feature
@@ -44,7 +44,7 @@ def _write_replay(path, rows):
 
 
 def _replay_rows():
-    # 4 Events, aufsteigende Zeit; f1 steuert prob, net_pnl_pct/outcome sind gesetzt.
+    # 4 events, ascending time; f1 drives prob, net_pnl_pct/outcome are set.
     times = ["2026-07-01T00:00:00Z", "2026-07-01T01:00:00Z", "2026-07-01T02:00:00Z", "2026-07-01T03:00:00Z"]
     f1s = [0.9, 0.2, 0.8, 0.1]
     pnls = [1.0, -2.0, 3.0, -5.0]
@@ -73,24 +73,24 @@ def test_max_drawdown_known_curve():
     # net_pnl [+1,-2,+3,-5] → cum [1,-1,2,-3] → runmax [1,1,2,2] → dd [0,-2,0,-5]
     assert cmp._max_drawdown_pct(np.array([1.0, -2.0, 3.0, -5.0])) == -5.0
     assert cmp._max_drawdown_pct(np.array([])) == 0.0
-    assert cmp._max_drawdown_pct(np.array([1.0, 2.0])) == 0.0  # monoton steigend
+    assert cmp._max_drawdown_pct(np.array([1.0, 2.0])) == 0.0  # monotonically rising
 
 
 def test_evaluate_at_threshold(replay):
     contract = {"model": _StubModel(), "features": ["f1", "f2"], "threshold": 0.5}
     res = cmp.evaluate(contract, replay)
-    # prob = f1: [0.9,0.2,0.8,0.1] ≥ 0.5 → Events 0 und 2 (pnl +1, +3, beide outcome=1)
+    # prob = f1: [0.9,0.2,0.8,0.1] ≥ 0.5 → events 0 and 2 (pnl +1, +3, both outcome=1)
     assert res["n"] == 2
     assert res["sum_net_pnl_pct"] == 4.0
     assert res["avg_net_pnl_pct"] == 2.0
     assert res["win_rate"] == 100.0
-    assert res["max_drawdown_pct"] == 0.0  # +1 dann +3 → keine Drawdown
+    assert res["max_drawdown_pct"] == 0.0  # +1 then +3 → no drawdown
 
 
 def test_evaluate_threshold_none_takes_all(replay):
     contract = {"model": _StubModel(), "features": ["f1", "f2"], "threshold": None}
     res = cmp.evaluate(contract, replay)
-    assert res["n"] == 4  # jedes Event
+    assert res["n"] == 4  # every event
     assert res["sum_net_pnl_pct"] == -3.0  # 1-2+3-5
     assert res["max_drawdown_pct"] == -5.0
 
@@ -99,16 +99,16 @@ def test_evaluate_override_beats_contract(replay):
     contract = {"model": _StubModel(), "features": ["f1", "f2"], "threshold": 0.5}
     res = cmp.evaluate(contract, replay, threshold=0.85)
     assert res["threshold"] == 0.85
-    assert res["n"] == 1  # nur f1=0.9
+    assert res["n"] == 1  # only f1=0.9
 
 
 def test_load_contract_rejects_missing_features(tmp_path):
     import joblib
 
-    # dict-Artefakt ohne Feature-Liste → ValueError
+    # dict artifact without a feature list → ValueError
     p = tmp_path / "nofeat.pkl"
     joblib.dump({"model": _StubModel(), "features": []}, p)
-    with pytest.raises(ValueError, match="Feature"):
+    with pytest.raises(ValueError, match="feature"):
         cmp.load_contract(str(p))
 
 
@@ -116,13 +116,13 @@ def test_load_contract_bare_model_without_names(tmp_path):
     import joblib
 
     p = tmp_path / "bare.pkl"
-    joblib.dump(_StubModel(), p)  # kein get_booster / feature_names_in_
-    with pytest.raises(ValueError, match="Feature-Vertrag"):
+    joblib.dump(_StubModel(), p)  # no get_booster / feature_names_in_
+    with pytest.raises(ValueError, match="feature contract"):
         cmp.load_contract(str(p))
 
 
 def test_compare_winner_by_avg(monkeypatch, replay, tmp_path):
-    # A: threshold 0.5 (Ø +2.0), B: threshold None (Ø -0.75) → A gewinnt.
+    # A: threshold 0.5 (avg +2.0), B: threshold None (avg -0.75) → A wins.
     contracts = {
         "AAA": {"model": _StubModel(), "features": ["f1", "f2"], "threshold": 0.5},
         "BBB": {"model": _StubModel(), "features": ["f1", "f2"], "threshold": None},
@@ -136,5 +136,5 @@ def test_compare_winner_by_avg(monkeypatch, replay, tmp_path):
     assert res["b"]["avg_net_pnl_pct"] == -0.75
     assert res["winner_by_avg_net_pnl"] == "AAA"
     assert res["direction"] == "LONG"
-    # render darf nicht crashen
+    # render must not crash
     assert "AAA vs BBB" in cmp.render_compare(res)

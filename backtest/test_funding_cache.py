@@ -50,17 +50,17 @@ from core.funding_features import (  # noqa: E402
 
 SYMBOL = "BTCUSDT"
 T0 = datetime.datetime(2026, 7, 1, 0, 0, tzinfo=datetime.timezone.utc)
-# funding_features_asof liefert {} unterhalb von MIN_HISTORY (21 Saetze). Alle
-# Zeitpunkte unten liegen bewusst DAHINTER — sonst vergliche man leere Dicts und
-# jeder Test waere gruen, ohne je einen Wert angefasst zu haben.
+# funding_features_asof returns {} below MIN_HISTORY (21 settlements). All
+# timestamps below sit deliberately PAST that — otherwise you'd be comparing empty
+# dicts and every test would be green without ever touching a real value.
 N = 40
 STEP_H = 8
-LAST = T0 + datetime.timedelta(hours=STEP_H * (N - 1))  # letzte Abrechnung im Fixture
-DUE = LAST + datetime.timedelta(hours=STEP_H)  # naechste faellige
+LAST = T0 + datetime.timedelta(hours=STEP_H * (N - 1))  # last settlement in the fixture
+DUE = LAST + datetime.timedelta(hours=STEP_H)  # next due settlement
 
 
 def _frame(times=None, n=N, step_hours=STEP_H):
-    """Funding-Sätze mit steigenden Rates; ``times`` überschreibt das Raster."""
+    """Funding settlements with rising rates; ``times`` overrides the grid."""
     if times is None:
         times = [T0 + datetime.timedelta(hours=step_hours * i) for i in range(n)]
     rates = [(1.0 + 0.1 * i) / 1e4 for i in range(len(times))]
@@ -108,7 +108,7 @@ def test_next_feature_change_is_the_next_settlement_in_the_data():
     still in the future of ts, and even if it does not fall on a whole hour."""
     g = _frame()[SYMBOL]
     assert next_feature_change(g, LAST - datetime.timedelta(minutes=1)) == pd.Timestamp(LAST)
-    # Hinter dem letzten Satz: Grenze aus dem geschaetzten Intervall.
+    # Past the last settlement: boundary from the estimated interval.
     assert next_feature_change(g, LAST + datetime.timedelta(minutes=1)) == pd.Timestamp(DUE)
 
 
@@ -130,7 +130,7 @@ def test_interval_estimate_never_overshoots_a_shortening_cadence():
 
     The rasters are deliberately non-uniform: with a uniform one, minimum, median and
     last-diff all coincide and the assertion would be vacuous."""
-    # (a) Kadenz kippt 8h → 1h: ein Median der letzten Abstaende saehe +8h.
+    # (a) Cadence flips 8h → 1h: a median of the last spacings would see +8h.
     times = [T0 + datetime.timedelta(hours=8 * i) for i in range(N)]
     times += [times[-1] + datetime.timedelta(hours=i) for i in (1, 2)]
     last = times[-1]
@@ -139,8 +139,8 @@ def test_interval_estimate_never_overshoots_a_shortening_cadence():
         f"estimate {due} overshoots the true 1h cadence — a median of the last diffs would say +8h"
     )
 
-    # (b) Der LETZTE Abstand ist eine Ingestion-Luecke (16h). Wer nur den letzten Diff
-    #     nimmt, ueberschaetzt genauso wie der Median — das Minimum nicht.
+    # (b) The LAST spacing is an ingestion gap (16h). Taking just the last diff
+    #     overestimates just as the median would — the minimum does not.
     gapped = [*times, last + datetime.timedelta(hours=16)]
     gap_last = gapped[-1]
     due = next_feature_change(_frame(times=gapped)[SYMBOL], gap_last + datetime.timedelta(minutes=1))
@@ -157,9 +157,9 @@ def test_a_shortening_cadence_never_serves_a_stale_value():
     loader = _CountingLoader(_frame(times=times))
     last = times[-1]
 
-    _cached(last + datetime.timedelta(minutes=1), loader)  # gecacht bis last+1h
+    _cached(last + datetime.timedelta(minutes=1), loader)  # cached until last+1h
 
-    # Die nächste (1h-)Abrechnung landet. Der Cache MUSS sie sehen.
+    # The next (1h) settlement lands. The cache MUST see it.
     loader.by_sym = _frame(times=[*times, last + datetime.timedelta(hours=1)])
     ts = last + datetime.timedelta(hours=1, minutes=5)
     served = _cached(ts, loader)
@@ -174,11 +174,11 @@ def test_the_boundary_matches_the_asof_cut_at_an_exact_settlement_timestamp():
     later."""
     by_sym = _frame()
     g = by_sym[SYMBOL]
-    exact = LAST  # ts liegt exakt auf einer Abrechnung
+    exact = LAST  # ts sits exactly on a settlement
     assert next_feature_change(g, exact) == pd.Timestamp(exact), (
         "the boundary must be the settlement itself when ts sits exactly on it"
     )
-    # No-lookahead: der Satz AUF ts geht nicht ein (funding_time < ts, strikt).
+    # No-lookahead: the settlement AT ts does not enter (funding_time < ts, strict).
     assert funding_features_asof(by_sym, SYMBOL, exact) == funding_features_asof(
         by_sym, SYMBOL, exact - datetime.timedelta(seconds=1)
     ), "a settlement exactly at ts leaked into the features — that is lookahead"
@@ -220,7 +220,7 @@ def test_an_off_hour_settlement_is_not_hidden_by_the_cache():
     """CX1 from the adversarial review: nothing enforces hour alignment. A clock-keyed
     cache served the pre-12:30 value until 13:00; the data-keyed one must not."""
     times = [T0 + datetime.timedelta(hours=8 * i) for i in range(N - 1)]
-    times.append(times[-1] + datetime.timedelta(hours=7, minutes=30))  # Abrechnung um :30
+    times.append(times[-1] + datetime.timedelta(hours=7, minutes=30))  # settlement at :30
     by_sym = _frame(times=times)
     loader = _CountingLoader(by_sym)
     off_hour = times[-1]
@@ -238,18 +238,18 @@ def test_a_late_landing_row_is_not_frozen_for_a_whole_period():
     """CX2 from the adversarial review: the due row lands late. The entry is already
     expired, so the cache reloads until it appears — and only then caches again."""
     clear_funding_cache()
-    stale = _frame()  # letzte Zeile = LAST, DUE fehlt noch
+    stale = _frame()  # last row = LAST, DUE is still missing
     loader = _CountingLoader(stale)
 
-    _cached(LAST + datetime.timedelta(minutes=1), loader)  # 1. Load, gueltig bis DUE
+    _cached(LAST + datetime.timedelta(minutes=1), loader)  # 1st load, valid until DUE
     assert loader.calls == 1
 
-    # Abrechnung ist faellig, die Zeile fehlt noch: JEDER Aufruf laedt neu.
+    # Settlement is due, the row is still missing: EVERY call reloads.
     _cached(DUE + datetime.timedelta(seconds=30), loader)
     _cached(DUE + datetime.timedelta(minutes=5), loader)
     assert loader.calls == 3, "an overdue settlement was served from a frozen cache entry"
 
-    # Zeile landet (spät). Ab jetzt darf wieder gecacht werden.
+    # Row lands (late). From here on, caching is allowed again.
     loader.by_sym = _frame(times=[T0 + datetime.timedelta(hours=STEP_H * i) for i in range(N + 1)])
     fresh = _cached(DUE + datetime.timedelta(minutes=10), loader)
     assert loader.calls == 4
@@ -269,9 +269,9 @@ def test_an_empty_result_below_min_history_is_not_cached():
     last = below[-1]
 
     assert funding_features_asof(loader.by_sym, SYMBOL, last + datetime.timedelta(minutes=1)) == {}
-    _cached(last + datetime.timedelta(minutes=1), loader)  # darf NICHT cachen
+    _cached(last + datetime.timedelta(minutes=1), loader)  # must NOT be cached
 
-    # Der 21. Satz landet nach 1h (früher als das 8h-Intervall). Query bei last+2h.
+    # The 21st settlement lands after 1h (earlier than the 8h interval). Query at last+2h.
     loader.by_sym = _frame(times=[*below, last + datetime.timedelta(hours=1)])
     ts = last + datetime.timedelta(hours=2)
     served = _cached(ts, loader)
@@ -295,15 +295,15 @@ def test_cached_values_equal_the_asof_values_field_by_field():
     for k in FUNDING_FEATURES:
         assert served[k] == truth[k], f"{k}: cache {served[k]} != as-of {truth[k]}"
 
-    # Hand-gerechnete Erwartungswerte, damit auch die FEATURE-DEFINITION selbst gepinnt
-    # ist — served==truth allein fängt eine Fenster-Regression nicht, weil beide Seiten
-    # dieselbe (kaputte) Definition benutzten. Fixture: 40 Sätze, bps = 1.0..4.9 (+0.1/Satz).
+    # Hand-computed expected values, so the FEATURE DEFINITION itself is also pinned —
+    # served==truth alone would not catch a window regression, since both sides use
+    # the same (broken) definition. Fixture: 40 settlements, bps = 1.0..4.9 (+0.1/settlement).
     expected = {
         "fund_last": 4.9,  # rates[-1]
-        "fund_24h": 4.8,  # mean(4.7, 4.8, 4.9) — das 3-Satz-Fenster
-        "fund_72h": 4.5,  # mean(4.1 … 4.9) — 9 Sätze
-        "fund_7d_cum": 81.9,  # sum(2.9 … 4.9) — 21 Sätze
-        "fund_pctl_90d": 100.0,  # 4.9 ist das Maximum
+        "fund_24h": 4.8,  # mean(4.7, 4.8, 4.9) — the 3-settlement window
+        "fund_72h": 4.5,  # mean(4.1 … 4.9) — 9 settlements
+        "fund_7d_cum": 81.9,  # sum(2.9 … 4.9) — 21 settlements
+        "fund_pctl_90d": 100.0,  # 4.9 is the maximum
         "fund_trend": 0.3,  # fund_24h − fund_72h
     }
     for k, want in expected.items():

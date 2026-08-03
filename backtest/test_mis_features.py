@@ -1,7 +1,7 @@
-# backtest/test_mis_features.py — Tests für den geteilten MIS1-Feature-Builder
-# (core/mis_features.py, Leakage-Fix aus Report 13 / Dossier MIS1).
+# backtest/test_mis_features.py — Tests for the shared MIS1 feature builder
+# (core/mis_features.py, leakage fix from Report 13 / Dossier MIS1).
 #
-# Läuft ohne DB:  python backtest/test_mis_features.py
+# Runs without DB:  python backtest/test_mis_features.py
 
 import os
 import sys
@@ -45,44 +45,44 @@ def make_df(n=300, seed=7, symbol=None) -> pd.DataFrame:
 
 
 def test_feature_catalog():
-    assert len(FEATURE_COLS) == 63, f"Erwartet 63 Features, sind {len(FEATURE_COLS)}"
-    assert len(set(FEATURE_COLS)) == 63, "Duplikate im Feature-Katalog"
-    # Die vier Unfall-Features (13-P1) dürfen NIE im Katalog stehen:
+    assert len(FEATURE_COLS) == 63, f"Expected 63 features, got {len(FEATURE_COLS)}"
+    assert len(set(FEATURE_COLS)) == 63, "Duplicates in feature catalog"
+    # The four accident features (13-P1) must NEVER be in the catalog:
     accidents = {
         "boll_upper_dist_atr_dist_pct", "boll_lower_dist_atr_dist_pct",
         "ema_200_dist_atr_dist_pct", "ema_9_cross_above_21_dist_pct",
     }
-    assert not accidents & set(FEATURE_COLS), "Leakage-Unfall-Features im Katalog!"
-    # Ebenso keine unnormalisierten Preisskala-Features:
+    assert not accidents & set(FEATURE_COLS), "Leakage accident features in catalog!"
+    # Also no unnormalised price-scale features:
     for banned in ("atr_14", "macd_hist", "macd_dif_delta_1", "macd_hist_delta_1"):
-        assert banned not in FEATURE_COLS, f"Preisskala-Feature {banned} im Katalog!"
-    print("OK  Feature-Katalog: 63 Features, keine Leakage-/Preisskala-Spalten")
+        assert banned not in FEATURE_COLS, f"Price-scale feature {banned} in catalog!"
+    print("OK  Feature catalog: 63 features, no leakage / price-scale columns")
 
 
 def test_builder_output():
     df = add_advanced_features(make_df())
     missing = [c for c in FEATURE_COLS if c not in df.columns]
-    assert not missing, f"Builder liefert Features nicht: {missing}"
-    # Ohne include_legacy KEINE Unfall-Spalten erzeugen:
+    assert not missing, f"Builder does not deliver features: {missing}"
+    # Without include_legacy, do NOT generate accident columns:
     for c in LEGACY_ONLY_COLS:
-        assert c not in df.columns or c == "atr_14", f"Legacy-Spalte {c} ohne include_legacy erzeugt"
+        assert c not in df.columns or c == "atr_14", f"Legacy column {c} generated without include_legacy"
     X = df[FEATURE_COLS]
-    assert np.isfinite(X.to_numpy(dtype=float)).all(), "inf/NaN im Feature-Output (P2.34)"
+    assert np.isfinite(X.to_numpy(dtype=float)).all(), "inf/NaN in feature output (P2.34)"
     assert_features_alive(df, context=" (Test)")
-    print("OK  Builder: alle 63 Features vorhanden, finite, nicht konstant")
+    print("OK  Builder: all 63 features present, finite, not constant")
 
 
 def test_legacy_mode():
     df = add_advanced_features(make_df(), include_legacy=True)
     missing = [c for c in LEGACY_ONLY_COLS if c not in df.columns]
-    assert not missing, f"include_legacy liefert nicht alle Legacy-Spalten: {missing}"
-    # Die Unfall-Features müssen Preisskala tragen (genau der Leakage-Beweis):
+    assert not missing, f"include_legacy does not deliver all legacy columns: {missing}"
+    # The accident features must carry price-scale (precisely the leakage proof):
     acc = df["boll_upper_dist_atr_dist_pct"].abs().median()
     legit = df["ema_200_dist_pct"].abs().median()
     assert acc > 50 * max(legit, 1e-9), (
-        f"Unfall-Feature nicht in Preisskala (median {acc:.1f} vs {legit:.3f}) — "
-        "Legacy-Reproduktion falsch?")
-    print(f"OK  Legacy-Modus: 8 Zusatzspalten, Unfall-Feature-Median {acc:.0f} vs. legit {legit:.2f}")
+        f"Accident feature not in price-scale (median {acc:.1f} vs {legit:.3f}) — "
+        "legacy reproduction wrong?")
+    print(f"OK  Legacy mode: 8 additional columns, accident feature median {acc:.0f} vs. legit {legit:.2f}")
 
 
 def test_missing_column_raises():
@@ -91,13 +91,13 @@ def test_missing_column_raises():
         add_advanced_features(df)
     except ValueError as e:
         assert "kama_21" in str(e)
-        print("OK  Fehlende Pflichtspalte → harter ValueError (kein stilles fillna)")
+        print("OK  Missing required column → hard ValueError (no silent fillna)")
         return
-    raise AssertionError("Fehlende Pflichtspalte wurde nicht erkannt")
+    raise AssertionError("Missing required column was not recognised")
 
 
 def test_multi_symbol_boundary():
-    """Deltas/Crosses dürfen nicht über Symbolgrenzen rechnen (Legacy-Trainer-Bug)."""
+    """Deltas/crosses must not compute across symbol boundaries (legacy trainer bug)."""
     a = make_df(seed=1, symbol="AAAUSDT")
     b = make_df(seed=2, symbol="BBBUSDT")
     multi = add_advanced_features_multi(pd.concat([a, b], ignore_index=True))
@@ -105,24 +105,24 @@ def test_multi_symbol_boundary():
     got = multi[multi["symbol"] == "BBBUSDT"].reset_index(drop=True)[FEATURE_COLS]
     exp = solo_b[FEATURE_COLS]
     pd.testing.assert_frame_equal(got, exp, check_dtype=False)
-    print("OK  Multi-Symbol == Solo je Symbol (keine Grenz-Leaks)")
+    print("OK  Multi-symbol == solo per symbol (no boundary leaks)")
 
 
 def test_binary_flags_are_binary():
     df = add_advanced_features(make_df())
     for c in BINARY_FLAG_FEATURES:
-        assert set(df[c].unique()) <= {0, 1}, f"{c} nicht binär"
-    print("OK  Binär-Flags binär")
+        assert set(df[c].unique()) <= {0, 1}, f"{c} not binary"
+    print("OK  Binary flags binary")
 
 
 def test_required_inputs_documented():
     df = make_df()
     assert all(c in df.columns for c in REQUIRED_INPUT_COLS)
-    print("OK  REQUIRED_INPUT_COLS vollständig abgedeckt vom Test-Frame")
+    print("OK  REQUIRED_INPUT_COLS fully covered by test frame")
 
 
 if __name__ == "__main__":
-    # cp1252-Konsole (Windows): Sonderzeichen nicht crashen lassen
+    # cp1252 console (Windows): special characters must not crash
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
@@ -134,4 +134,4 @@ if __name__ == "__main__":
     test_multi_symbol_boundary()
     test_binary_flags_are_binary()
     test_required_inputs_documented()
-    print("\nAlle MIS1-Feature-Builder-Tests bestanden.")
+    print("\nAll MIS1 feature builder tests passed.")

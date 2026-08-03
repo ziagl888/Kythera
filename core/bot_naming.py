@@ -1,21 +1,21 @@
 """
-Zentrale Bot-Naming-Normalisierung.
+Central bot naming normalisation.
 
-Unterschiedliche Module (Bots, Monitore, Market-Tracker, Regime-Analyzer)
-schreiben historisch mit unterschiedlichen Strings in die DB:
+Different modules (bots, monitors, market tracker, regime analyzer)
+have historically written different strings to the DB:
 
-  - Klassische Bots:  "Fast In And Out", "Support Resistance",
+  - Classic bots:     "Fast In And Out", "Support Resistance",
                       "Volume Indicator", "5 Percent"
-  - MIS-Bot Modelle:  "MIS1-8H", "MIS1-8h_pump", "MIS1-8h_dump",
+  - MIS bot models:   "MIS1-8H", "MIS1-8h_pump", "MIS1-8h_dump",
                       "MIS1-24H", "MIS1-168H" etc.
-  - Legacy-Typo:      "MSI1-*" (historisch, bot fixed)
+  - Legacy typo:      "MSI1-*" (historical, bot fixed)
 
-Damit Dashboards/Reports konsistent aggregieren, normalisieren alle
-Konsumenten die Namen durch pretty_name() — und Schreiber können beim
-Upsert auch gleich normalisierte Namen verwenden.
+So dashboards/reports aggregate consistently, all consumers normalise
+names via pretty_name() — and writers can also use normalised names
+directly on upsert.
 
-WICHTIG: Die Normalisierung ist idempotent — pretty_name(pretty_name(x))
-== pretty_name(x). Ein bereits normalisierter Name bleibt unverändert.
+IMPORTANT: The normalisation is idempotent — pretty_name(pretty_name(x))
+== pretty_name(x). An already-normalised name stays unchanged.
 """
 
 import re as _re
@@ -29,30 +29,30 @@ _CLASSIC_ALIASES = {
     "5 Percent": "5Percent",
 }
 
-# Pre-compiled regex for MIS consolidation — generationsübergreifend (MIS1,
-# MIS2, ... — Versionierungs-Regel Operator 2026-07-06: Retrains posten unter
-# neuem Tag). Vollständig case-insensitive: der Orchestrator matcht Bot-Namen
-# mit re.IGNORECASE aus Message-Text ("MIS1-8H_Pump" ist möglich) — jede
-# Case-Variante muss auf denselben Whitelist-Key normalisieren.
+# Pre-compiled regex for MIS consolidation — cross-generation (MIS1,
+# MIS2, ... — operator versioning rule 2026-07-06: retrains post under a
+# new tag). Fully case-insensitive: the orchestrator matches bot names
+# with re.IGNORECASE from message text ("MIS1-8H_Pump" is possible) — every
+# case variant must normalise to the same whitelist key.
 _MIS1_PATTERN = _re.compile(r'^(MIS\d+-\d+)h(?:_(?:pump|dump))?$', _re.IGNORECASE)
 
 
 def pretty_name(s: str) -> str:
     """Normalises a bot/strategy name to its canonical form.
 
-    Idempotent — der normalisierte Name ist stabil über mehrfache Anwendung.
+    Idempotent — the normalised name is stable across repeated application.
 
-    Transformationen:
-      1. MSI1-* → MIS1-*  (historischer Typo-Fix)
-      2. MIS1-<N>H → MIS1-<N>h  (Case-Konsolidierung, lowercase h)
-      3. MIS1-<N>h_pump / MIS1-<N>h_dump → MIS1-<N>h  (Pump/Dump konsolidiert)
-      4. Klassische Bot-Namen → kurze Form für Tabellen
+    Transformations:
+      1. MSI1-* → MIS1-*  (historical typo fix)
+      2. MIS1-<N>H → MIS1-<N>h  (case consolidation, lowercase h)
+      3. MIS1-<N>h_pump / MIS1-<N>h_dump → MIS1-<N>h  (pump/dump consolidated)
+      4. Classic bot names → short form for tables
 
     Examples:
         pretty_name("Fast In And Out")       == "FastInOut"
         pretty_name("MIS1-8H")               == "MIS1-8h"
         pretty_name("MIS1-168H_pump")        == "MIS1-168h"
-        pretty_name("MIS2-72H")              == "MIS2-72h"   # neue Generation
+        pretty_name("MIS2-72H")              == "MIS2-72h"   # new generation
         pretty_name("MSI1-24h")              == "MIS1-24h"
         pretty_name("ATS1")                  == "ATS1"          # unchanged
         pretty_name("ATS1_Robust")           == "ATS1_Robust"   # unchanged
@@ -64,17 +64,17 @@ def pretty_name(s: str) -> str:
     if not s:
         return ""
 
-    # 1. Typo-Fix MSI1 → MIS1
+    # 1. Typo fix MSI1 → MIS1
     if s.startswith("MSI1-"):
         s = "MIS1-" + s[len("MSI1-") :]
     elif s == "MSI1":
         s = "MIS1"
 
-    # 2+3. MIS1-<N>H + Pump/Dump konsolidieren (case-insensitive; group(1)
-    # trägt die Original-Casing des Inputs, daher upper() für den Kanon)
+    # 2+3. Consolidate MIS1-<N>H + pump/dump (case-insensitive; group(1)
+    # carries the original casing of the input, hence upper() for the canon)
     m = _MIS1_PATTERN.match(s)
     if m:
         s = m.group(1).upper() + "h"
 
-    # 4. Klassische Aliase
+    # 4. Classic aliases
     return _CLASSIC_ALIASES.get(s, s)

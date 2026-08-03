@@ -1,15 +1,15 @@
 # tools/backfill_funding_rates.py
-"""Backfill der Binance-Funding-Rates in die Tabelle funding_rates.
+"""Backfill Binance funding rates into funding_rates table.
 
-Grundlage fuer den ABR1-LONG-Forschungs-Track (Report 21 §3: neue
-Informationsquellen). Funding ist — anders als Whale-Daten (WS erst seit
-2026-07-04 wieder live) — vollstaendig historisch abrufbar:
-GET /fapi/v1/fundingRate, 1000 Eintraege/Request, alle 8h ein Wert.
+Basis for the ABR1-LONG research track (Report 21 §3: new information sources).
+Funding — unlike whale data (WS live again since 2026-07-04) — is fully
+historically retrievable: GET /fapi/v1/fundingRate, 1000 entries/request,
+one value per 8h.
 
-Resumierbar: pro Symbol wird ab MAX(funding_time) weitergeladen; Re-Runs
-sind idempotent (ON CONFLICT DO NOTHING).
+Resumable: per symbol loads from MAX(funding_time) onwards; re-runs
+are idempotent (ON CONFLICT DO NOTHING).
 
-Aufruf:  python tools/backfill_funding_rates.py [--days 430] [--limit N]
+Invocation: python tools/backfill_funding_rates.py [--days 430] [--limit N]
 """
 import argparse
 import os
@@ -47,7 +47,7 @@ def fetch(symbol: str, start_ms: int, end_ms: int) -> list[dict]:
                                               "endTime": end_ms, "limit": 1000}, timeout=15)
                 if r.status_code == 429:
                     wait = 30 * (attempt + 1)
-                    print(f"  429 — warte {wait}s", flush=True)
+                    print(f"  429 — waiting {wait}s", flush=True)
                     time.sleep(wait)
                     continue
                 r.raise_for_status()
@@ -69,8 +69,8 @@ def fetch(symbol: str, start_ms: int, end_ms: int) -> list[dict]:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=430, help="Rueckblick, wenn Symbol noch leer")
-    ap.add_argument("--limit", type=int, default=None, help="nur erste N Coins (Test)")
+    ap.add_argument("--days", type=int, default=430, help="lookback if symbol still empty")
+    ap.add_argument("--limit", type=int, default=None, help="only first N coins (test)")
     args = ap.parse_args()
 
     with open("coins.json", encoding="utf-8") as f:
@@ -95,11 +95,11 @@ def main():
                             "FROM funding_rates WHERE symbol = %s", (symbol,))
                 row = cur.fetchone()
             if row and row[0]:
-                # Head-Check (Fix 2026-07-06): Resume nur ab MAX ist blind für
-                # fehlende ÄLTERE Historie (z.B. wenn ein früherer Lauf mit
-                # kleinerem --days lief — so geschehen bei BTC/ETH/BCH nach dem
-                # 30d-Smoke-Test). Fehlt der Kopf, ab default_start neu laden —
-                # ON CONFLICT dedupliziert den Überlapp.
+                # Head-check (fix 2026-07-06): resume from MAX is blind to
+                # missing OLDER history (e.g. if a previous run with smaller
+                # --days ran — happened for BTC/ETH/BCH after the 30d smoke test).
+                # If head is missing, reload from default_start — ON CONFLICT
+                # deduplicates the overlap.
                 with conn.cursor() as cur:
                     cur.execute("SELECT EXTRACT(EPOCH FROM MIN(funding_time)) * 1000 "
                                 "FROM funding_rates WHERE symbol = %s", (symbol,))
@@ -123,10 +123,10 @@ def main():
             conn.rollback()
             print(f"  !! {symbol}: {e}", flush=True)
         if i % 25 == 0:
-            print(f"[{i}/{len(coins)}] {total} Zeilen, {time.time()-t0:.0f}s", flush=True)
+            print(f"[{i}/{len(coins)}] {total} rows, {time.time()-t0:.0f}s", flush=True)
         time.sleep(0.15)
 
-    print(f"FERTIG: {total} neue Funding-Zeilen ueber {len(coins)} Coins in {time.time()-t0:.0f}s")
+    print(f"DONE: {total} new funding rows across {len(coins)} coins in {time.time()-t0:.0f}s")
     conn.close()
 
 

@@ -9,7 +9,7 @@ import numpy as np
 import scipy.signal
 import logging
 
-# --- Eigene DB Connection importieren ---
+# --- Import our own DB connection ---
 from core.candles import read_candles
 from core.database import get_db_connection
 
@@ -17,34 +17,34 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 🛠️ BACKTEST KONFIGURATION & GRID PARAMETER
+# 🛠️ BACKTEST CONFIGURATION & GRID PARAMETERS
 # ==========================================
 SYMBOL = 'BTCUSDT'
 TIMEFRAME = '1h'
 OUTPUT_FILE = "btc_optimization_results.txt"
 
 START_CAPITAL = 100000.0
-TRADE_MARGIN = 1000.0  # Fester Einsatz pro Trade
-LEVERAGE = 100  # Hebel (100x)
-TAKER_FEE = 0.0004  # 0.04% Handelsgebühr pro Richtung (0.08% total)
+TRADE_MARGIN = 1000.0  # Fixed stake per trade
+LEVERAGE = 100  # Leverage (100x)
+TAKER_FEE = 0.0004  # 0.04% trading fee per direction (0.08% total)
 
 MAX_PIVOT_AGE = 120
 MAX_FVG_AGE = 48
 
-# --- 🎛️ DIE PARAMETER FÜR DEN GRID SEARCH ---
-SL_PCTS = [0.002, 0.004, 0.005, 0.0075, 0.01, 0.0125, 0.015]  # Stop-Loss Abstand (0.2% bis 1.5%)
-EMA_PERIODS = [9, 12, 15, 21, 25, 29, 33]  # Trend-Filter
-MIN_RR_RATIOS = [0.9, 1.0, 1.15, 1.25, 1.5]  # Risk-Reward-Ratios
+# --- 🎛️ THE PARAMETERS FOR THE GRID SEARCH ---
+SL_PCTS = [0.002, 0.004, 0.005, 0.0075, 0.01, 0.0125, 0.015]  # Stop-loss spacing (0.2% to 1.5%)
+EMA_PERIODS = [9, 12, 15, 21, 25, 29, 33]  # Trend filter
+MIN_RR_RATIOS = [0.9, 1.0, 1.15, 1.25, 1.5]  # Risk-reward ratios
 
 
 # ==========================================
-# 📊 DATA FETCHING (LOKALE DATENBANK)
+# 📊 DATA FETCHING (LOCAL DATABASE)
 # ==========================================
 def fetch_db_data():
-    logger.info(f"Loading historical {TIMEFRAME} Daten for {SYMBOL} from the database...")
+    logger.info(f"Loading historical {TIMEFRAME} data for {SYMBOL} from the database...")
     try:
         conn = get_db_connection()
-        # Über core.candles: GESCHLOSSENE Kerzen, ASC (include_forming=False).
+        # Via core.candles: CLOSED candles, ASC (include_forming=False).
         df = read_candles(
             conn, SYMBOL, TIMEFRAME, include_forming=False, columns=('open_time', 'open', 'high', 'low', 'close')
         )
@@ -54,7 +54,7 @@ def fetch_db_data():
         df.dropna(inplace=True)
         return df.reset_index(drop=True)
     except Exception as e:
-        logger.error(f"Error loading der DB-Daten: {e}")
+        logger.error(f"Error loading the DB data: {e}")
         return pd.DataFrame()
 
 
@@ -69,10 +69,10 @@ def run_simulation(df, sl_pct, ema_period, min_rr_ratio):
     opens = df['open'].values
     closes = df['close'].values
 
-    # EMA berechnen
+    # Calculate EMA
     ema_values = df['close'].ewm(span=ema_period, adjust=False).mean().values
 
-    # Pivot Punkte im Voraus berechnen
+    # Calculate pivot points in advance
     peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=5)[0]
     trough_idx = scipy.signal.argrelextrema(lows, np.less, order=5)[0]
     resistances = [(int(idx), float(highs[idx])) for idx in peak_idx]
@@ -93,7 +93,7 @@ def run_simulation(df, sl_pct, ema_period, min_rr_ratio):
         curr_price = closes[curr_idx]
 
         # -------------------------------------------------
-        # 1. AKTIVE TRADES PRÜFEN (SL & TP)
+        # 1. CHECK ACTIVE TRADES (SL & TP)
         # -------------------------------------------------
         trades_to_remove = []
         for trade in active_trades:
@@ -144,7 +144,7 @@ def run_simulation(df, sl_pct, ema_period, min_rr_ratio):
             active_trades.remove(t)
 
         # -------------------------------------------------
-        # 2. NEUE FVGs ERKENNEN
+        # 2. DETECT NEW FVGs
         # -------------------------------------------------
         c = curr_idx - 1
 
@@ -167,7 +167,7 @@ def run_simulation(df, sl_pct, ema_period, min_rr_ratio):
                 active_bear_fvgs.append({'top': lows[c - 2], 'bottom': highs[c], 'created_at': c})
 
         # -------------------------------------------------
-        # 3. FVGs SCHLIESSEN & TRADES AUSLÖSEN
+        # 3. CLOSE FVGs & TRIGGER TRADES
         # -------------------------------------------------
         surviving_bull_fvgs = []
         for fvg in active_bull_fvgs:
@@ -179,12 +179,12 @@ def run_simulation(df, sl_pct, ema_period, min_rr_ratio):
 
                 if valid_res:
                     target = min(valid_res)
-                    sl = curr_low * (1.0 - sl_pct)  # Dynamischer SL
+                    sl = curr_low * (1.0 - sl_pct)  # Dynamic SL
                     risk = curr_price - sl
                     reward = target - curr_price
 
-                    if risk > 0 and (reward / risk) >= min_rr_ratio:  # Dynamisches R:R
-                        if curr_price > ema_values[curr_idx]:  # Dynamischer EMA
+                    if risk > 0 and (reward / risk) >= min_rr_ratio:  # Dynamic R:R
+                        if curr_price > ema_values[curr_idx]:  # Dynamic EMA
                             active_trades.append({'direction': 'LONG', 'entry': curr_price, 'sl': sl, 'tp': target})
             else:
                 surviving_bull_fvgs.append(fvg)
@@ -200,12 +200,12 @@ def run_simulation(df, sl_pct, ema_period, min_rr_ratio):
 
                 if valid_sup:
                     target = max(valid_sup)
-                    sl = curr_high * (1.0 + sl_pct)  # Dynamischer SL
+                    sl = curr_high * (1.0 + sl_pct)  # Dynamic SL
                     risk = sl - curr_price
                     reward = curr_price - target
 
-                    if risk > 0 and (reward / risk) >= min_rr_ratio:  # Dynamisches R:R
-                        if curr_price < ema_values[curr_idx]:  # Dynamischer EMA
+                    if risk > 0 and (reward / risk) >= min_rr_ratio:  # Dynamic R:R
+                        if curr_price < ema_values[curr_idx]:  # Dynamic EMA
                             active_trades.append({'direction': 'SHORT', 'entry': curr_price, 'sl': sl, 'tp': target})
             else:
                 surviving_bear_fvgs.append(fvg)
@@ -236,8 +236,8 @@ def main():
     total_runs = len(combinations)
 
     print("=" * 85)
-    print(f"🧠 SMC BTC HYPERPARAMETER OPTIMIERUNG | {total_runs} Kombinationen")
-    print(f"Margin: ${TRADE_MARGIN:,.0f} | Historie: {len(df)} 1h-Kerzen")
+    print(f"🧠 SMC BTC HYPERPARAMETER OPTIMIZATION | {total_runs} combinations")
+    print(f"Margin: ${TRADE_MARGIN:,.0f} | History: {len(df)} 1h candles")
     print("=" * 85)
 
     results = []
@@ -245,22 +245,22 @@ def main():
 
     for idx, (sl, ema, rr) in enumerate(combinations, 1):
         if idx % 20 == 0 or idx == total_runs:
-            print(f"⏳ Calculating Kombination {idx}/{total_runs}...")
+            print(f"⏳ Calculating combination {idx}/{total_runs}...")
 
         res = run_simulation(df, sl, ema, rr)
         results.append(res)
 
     end_time = time.time()
 
-    # Sortiere Ergebnisse after höchstem Profit
+    # Sort results by highest profit
     results.sort(key=lambda x: x['pnl'], reverse=True)
 
-    # In Datei schreiben
+    # Write to file
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("=" * 85 + "\n")
-        f.write(f"🧠 SMC BTC HYPERPARAMETER ERGEBNISSE | Sortiert after Profit\n")
+        f.write(f"🧠 SMC BTC HYPERPARAMETER RESULTS | Sorted by profit\n")
         f.write("=" * 85 + "\n")
-        header = f"{'SL %':<8} | {'EMA':<5} | {'R:R':<6} | {'Trades':<6} | {'Win Rate':<9} | {'Max DD':<7} | {'Netto PnL':<12}"
+        header = f"{'SL %':<8} | {'EMA':<5} | {'R:R':<6} | {'Trades':<6} | {'Win Rate':<9} | {'Max DD':<7} | {'Net PnL':<12}"
         f.write(header + "\n")
         f.write("-" * 85 + "\n")
 
@@ -268,9 +268,9 @@ def main():
             line = f"{r['sl'] * 100:>5.2f}%  | {r['ema']:<5} | {r['rr']:<6.2f} | {r['trades']:<6} | {r['win_rate']:>6.2f} % | {r['max_dd']:>5.2f}% | ${r['pnl']:+,.2f}"
             f.write(line + "\n")
 
-    # Top 10 in der Konsole ausgeben
+    # Print top 10 to console
     print("\n" + "=" * 85)
-    print("🏆 DIE TOP 10 PROFITABELSTEN KOMBINATIONEN FÜR BTCUSDT")
+    print("🏆 THE TOP 10 MOST PROFITABLE COMBINATIONS FOR BTCUSDT")
     print("=" * 85)
     print(header)
     print("-" * 85)

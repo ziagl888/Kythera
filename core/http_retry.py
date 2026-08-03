@@ -1,22 +1,22 @@
-# core/http_retry.py — gebudgetete Retry-/Backoff-Politik für Binance-REST.
+# core/http_retry.py — budgeted retry/backoff policy for Binance REST.
 #
-# Adressiert P2.14 (fetch_ohlcv_batch kann ewig loopen; 418-Handling hämmert in
-# den Ban) und P2.18 (Housekeeping-REST ohne 429/418-Handling). Muster nach
+# Addresses P2.14 (fetch_ohlcv_batch can loop forever; 418 handling hammers the
+# ban) and P2.18 (housekeeping REST without 429/418 handling). Pattern after
 # HKUDS/Vibe-Trading loaders/_http.py (HostThrottle) + loaders/base.py
-# (retry_with_budget) — Vorlage, kein Drop-in (T-2026-CU-9050-027 D2).
+# (retry_with_budget) — template, not drop-in (T-2026-CU-9050-027 D2).
 #
-# Semantik:
-#   * 429 Too Many Requests: Retry-After respektieren (Fallback exponentiell).
-#   * 418 IP-Ban (Binance eskaliert ignorierte 429 zu 418): Backoff NIE unter
-#     BAN_MIN_BACKOFF_S (120s), exponentiell je weiterem 418; ein Retry-After-
-#     Header darf die Wartezeit nur ERHÖHEN, nie senken. Weiter hämmern
-#     verlängert den Ban — genau der P2.14-Fehlermodus.
-#   * Netzwerk-/Sonstige Fehler: kurzer exponentieller Backoff mit Cap.
-#   * Budget = max_attempts UND deadline_s (was zuerst erschöpft ist) — ein
-#     stuck Symbol darf den 12h-Catch-up nicht mehr blockieren.
+# Semantics:
+#   * 429 Too Many Requests: respect Retry-After (fallback exponential).
+#   * 418 IP-ban (Binance escalates ignored 429 to 418): backoff NEVER below
+#     BAN_MIN_BACKOFF_S (120s), exponential per additional 418; a Retry-After
+#     header may only INCREASE wait time, never decrease. Further hammering
+#     extends the ban — precisely the P2.14 failure mode.
+#   * Network/other errors: short exponential backoff with cap.
+#   * Budget = max_attempts AND deadline_s (whichever exhausted first) — a
+#     stuck symbol must not block the 12h catch-up anymore.
 #
-# Reine Politik ohne I/O: die Caller (1_data_ingestion, 6_housekeeping) schlafen
-# selbst — dadurch DB-/netzfrei standalone testbar (backtest/test_http_retry.py).
+# Pure policy without I/O: callers (1_data_ingestion, 6_housekeeping) sleep
+# themselves — thus testable standalone without DB/network (backtest/test_http_retry.py).
 
 from __future__ import annotations
 
@@ -32,16 +32,16 @@ JITTER_MAX_S = 0.5
 
 
 class RetryBudget:
-    """Zählt Versuche + Wanduhr-Deadline für EINE logische REST-Operation.
+    """Counts attempts + wall-clock deadline for ONE logical REST operation.
 
-    ``attempt()`` liefert False = Budget erschöpft, aufhören und mit dem
-    weiterarbeiten, was da ist. Der CALLER entscheidet, was ein "Versuch" ist —
-    beide Muster sind gewollt (nicht "angleichen"):
-      (a) nur FEHL-Versuche zählen (1_data_ingestion.fetch_ohlcv_batch:
-          Erfolgs-Seiten paginieren frei, sonst würde das Budget lange,
-          fehlerfreie Backfills kappen);
-      (b) jeder Versuch zählt inkl. dem ersten (6_housekeeping-Gap-Filler:
-          ``while budget.attempt():`` — ein Ein-Range-Call ohne Pagination).
+    ``attempt()`` returns False = budget exhausted, stop and continue with
+    what is there. The CALLER decides what an "attempt" is —
+    both patterns are intentional (not "aligned"):
+      (a) count only FAILED attempts (1_data_ingestion.fetch_ohlcv_batch:
+          success pages paginate free, else budget would cap long,
+          error-free backfills);
+      (b) count every attempt incl. the first (6_housekeeping gap-filler:
+          ``while budget.attempt():`` — a single-range call without pagination).
     """
 
     def __init__(
@@ -66,8 +66,8 @@ class RetryBudget:
 
     def exhausted_reason(self) -> str:
         if self.attempts >= self.max_attempts:
-            return f"max_attempts={self.max_attempts} erreicht"
-        return f"deadline={self.deadline_s:.0f}s überschritten"
+            return f"max_attempts={self.max_attempts} reached"
+        return f"deadline={self.deadline_s:.0f}s exceeded"
 
 
 def backoff_seconds(
@@ -76,11 +76,11 @@ def backoff_seconds(
     retry_after: str | None = None,
     rng: Callable[[], float] = random.random,
 ) -> float:
-    """Wartezeit vor dem nächsten Versuch.
+    """Wait time before next attempt.
 
-    ``status_code``: HTTP-Status (None = Netzwerk-/Parse-Fehler).
-    ``consecutive``: wie viele Fehlversuche dieser Art direkt hintereinander (>=1).
-    ``retry_after``: Wert des Retry-After-Headers, falls vorhanden (Sekunden).
+    ``status_code``: HTTP status (None = network/parse error).
+    ``consecutive``: how many consecutive failures of this kind (>=1).
+    ``retry_after``: value of Retry-After header if present (seconds).
     """
     consecutive = max(int(consecutive), 1)
     jitter = rng() * JITTER_MAX_S
@@ -93,8 +93,8 @@ def backoff_seconds(
             header_s = None
 
     if status_code == 418:
-        # Ban: Header respektieren, aber nie unter BAN_MIN_BACKOFF_S; je
-        # weiterem 418 verdoppeln (der Ban wird bei Hämmern länger).
+        # Ban: respect header, but never below BAN_MIN_BACKOFF_S; double
+        # per additional 418 (ban lengthens with hammering).
         base = BAN_MIN_BACKOFF_S * (2.0 ** (consecutive - 1))
         if header_s is not None:
             base = max(base, header_s)
@@ -105,18 +105,18 @@ def backoff_seconds(
             return min(header_s, BACKOFF_CAP_S) + jitter
         return min(RATE_LIMIT_FALLBACK_S * (2.0 ** (consecutive - 1)), BACKOFF_CAP_S) + jitter
 
-    # Netzwerk-/Sonstige Fehler
+    # Network/other errors
     return min(ERROR_BACKOFF_BASE_S * (2.0 ** (consecutive - 1)), BACKOFF_CAP_S) + jitter
 
 
 class MinIntervalThrottle:
-    """Prozessweiter Mindestabstand je Bucket (HostThrottle-Muster, vereinfacht).
+    """Process-wide minimum interval per bucket (HostThrottle pattern, simplified).
 
-    ``wait()`` blockt, bis seit dem letzten Call desselben Buckets mindestens
-    ``min_interval`` Sekunden (+ Jitter) vergangen sind. Für den Gap-Filler
-    (P2.18): viele Symbole hintereinander desynchronisieren statt bursten.
-    Single-Thread-Nutzung (Housekeeping-Jobs laufen sequenziell); für
-    Multi-Thread-Caller müsste ein Lock um die Buchhaltung.
+    ``wait()`` blocks until at least ``min_interval`` seconds (+ jitter) have
+    passed since the last call to the same bucket. For the gap-filler
+    (P2.18): many symbols in sequence desynchronise rather than burst.
+    Single-thread use (housekeeping jobs run sequentially); for
+    multi-thread callers would need a lock around bookkeeping.
     """
 
     def __init__(

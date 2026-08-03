@@ -1,30 +1,30 @@
 """
-tools/fmr1_build_dataset.py — Trainings-Events + Replay-Labels für FMR1
-"Funding-Extreme Mean-Reversion" (Report 15, S8). Läuft auf dem VPS (Step 2).
+tools/fmr1_build_dataset.py — training events + replay labels for FMR1
+"Funding Extreme Mean-Reversion" (Report 15, p8). Runs on VPS (step 2).
 
-Voraussetzung: funding_rates ist befüllt (python tools/backfill_funding_rates.py).
+Prerequisite: funding_rates is populated (python tools/backfill_funding_rates.py).
 
-Pipeline je Settlement (8h-Raster, funding_time = timestamptz/UTC):
-  1. Cross-Section über alle Coins des Settlements → Perzentil-Rang.
-  2. Events: Perzentil >= 0.95 → SHORT-Kandidat, <= 0.05 → LONG-Kandidat
-     (Gates aus core.research_features, live gespiegelt in Bot 31).
-  3. Dedup je Symbol+Seite: 24h-Mindestabstand (Spiegel des Live-Cooldowns).
-  4. Statistik-Features aus der eigenen Settlement-Historie (funding_stats —
-     geteilter Builder), Markt-Kontext floor-1 (kein Lookahead).
-  5. Geometrie: calculate_smart_targets; Label: simulate_exit, Horizont 7 Tage.
+Pipeline per settlement (8h grid, funding_time = timestamptz/UTC):
+  1. Cross-section over all coins of settlement → percentile rank.
+  2. Events: percentile >= 0.95 → SHORT candidate, <= 0.05 → LONG candidate
+     (gates from core.research_features, live mirrored in bot 31).
+  3. Dedup per symbol+side: 24h minimum spacing (mirror of live cooldown).
+  4. Statistics features from own settlement history (funding_stats —
+     shared builder), market context floor-1 (no lookahead).
+  5. Geometry: calculate_smart_targets; label: simulate_exit, horizon 7 days.
 
-Bekannter, bewusster Rest-Skew: live gated Bot 31 die LAUFENDE Rate
-(premiumIndex), hier die GESETTELTE — gleiche Quelle, ein Settlement Versatz.
+Known, intentional residual skew: live gated bot 31 uses the CURRENT rate
+(premiumIndex), here the SETTLED rate — same source, one settlement offset.
 
-V2 / FMR2 (K4, docs/NEW_IDEAS_BOTS.md §"FMR2 — eigener Exit-Pfad"):
-  --label-version v2 tauscht Schritt 5 aus: statt First-Touch-TP/SL
-  (simulate_exit) läuft simulate_normalization_exit — Halten bis das Funding-
-  Extrem NORMALISIERT (fmr2_funding_normalized) oder Time-Stop (9 Settlements),
-  Label = Vorzeichen des Netto-PnL am Exit-Preis der Settlement-Kerze. Der harte
-  Katastrophen-SL bleibt als First-Touch-Sicherheitsnetz. Output → fmr2_events.jsonl.
+V2 / FMR2 (K4, docs/NEW_IDEAS_BOTS.md § "FMR2 — own exit path"):
+  --label-version v2 swaps step 5: instead of first-touch TP/SL
+  (simulate_exit) runs simulate_normalization_exit — hold until funding
+  extreme NORMALISES (fmr2_funding_normalized) or time-stop (9 settlements),
+  label = sign of net PnL at exit price of settlement candle. Hard catastrophe
+  SL remains as first-touch safety net. Output → fmr2_events.jsonl.
 
-Beispiel:
-  python tools/fmr1_build_dataset.py                          # V1 (FMR1-Bestand)
+Example:
+  python tools/fmr1_build_dataset.py                          # V1 (FMR1 stock)
   python tools/fmr1_build_dataset.py --limit-symbols 15
   python tools/fmr1_build_dataset.py --label-version v2       # V2 (FMR2, K4)
 """
@@ -40,8 +40,8 @@ import time
 import numpy as np
 import pandas as pd
 
-# REPO_ROOT MUSS vor dem ersten tools-/core-Import auf sys.path liegen
-# (Henne-Ei; Spec-Review-Fix 2026-07-06, Muster tools/aim2_build_dataset.py).
+# REPO_ROOT MUST be on sys.path before the first tools-/core import
+# (chicken-egg; spec-review fix 2026-07-06, pattern tools/aim2_build_dataset.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.research_dataset_common import (  # noqa: E402
@@ -72,14 +72,14 @@ from tools.walkforward_sim import FEE_PER_SIDE, simulate_exit  # noqa: E402
 
 SINCE_DEFAULT = "2026-02-25"
 HORIZON_CANDLES = 7 * 24
-DEDUP_HOURS = 24              # Spiegel des Live-Cooldowns (Bot 31)
+DEDUP_HOURS = 24              # Mirror of live cooldown (bot 31)
 N_PUBLISHED = 3
-MIN_CROSS_SECTION = 50        # Settlements mit weniger Coins verwerfen
-MIN_HISTORY = 10              # funding_stats-Mindesthistorie
+MIN_CROSS_SECTION = 50        # Discard settlements with fewer coins
+MIN_HISTORY = 10              # funding_stats minimum history
 
 
 def load_funding(conn, since: str) -> pd.DataFrame:
-    """Volle Settlement-Historie (inkl. Vorlauf für die Statistik-Features)."""
+    """Full settlement history (incl. lead time for statistics features)."""
     df = df_query(
         conn,
         """
@@ -91,7 +91,7 @@ def load_funding(conn, since: str) -> pd.DataFrame:
         (since,),
     )
     if df.empty:
-        raise SystemExit("funding_rates ist leer — erst tools/backfill_funding_rates.py laufen lassen.")
+        raise SystemExit("funding_rates is empty — first run tools/backfill_funding_rates.py")
     df["funding_time"] = pd.to_datetime(df["funding_time"], utc=True).dt.tz_localize(None)
     df["symbol"] = df["symbol"].astype(str).str.upper()
     df = df[df["symbol"].str.endswith("USDT")]
@@ -100,7 +100,7 @@ def load_funding(conn, since: str) -> pd.DataFrame:
 
 
 def build_events(fund: pd.DataFrame, since: str) -> pd.DataFrame:
-    """Cross-Section je Settlement → Extrem-Events mit Perzentil."""
+    """Cross-section per settlement → extreme events with percentile."""
     since_ts = pd.Timestamp(since)
     events = []
     for ft, g in fund.groupby("funding_time", sort=True):
@@ -140,39 +140,38 @@ def simulate_normalization_exit(
     ev_pos: int,
     fee_per_side: float = FEE_PER_SIDE,
 ) -> dict:
-    """V2-Label (FMR2, K4): halte den Mean-Reversion-Trade, bis das Funding-
-    Extrem NORMALISIERT (core.research_features.fmr2_funding_normalized) ODER bis
-    zum Time-Stop (FMR2_TIME_STOP_SETTLEMENTS = 9 Settlements / 3 Tage) — Exit-
-    Preis = Close der Settlement-Kerze. Das ist der Kern-Unterschied zur V1: KEIN
-    First-Touch-TP/SL (das war der FMR1-Fehler, Report 15 V2-Diagnose). Der harte
-    Katastrophen-SL (fmr2_catastrophe_sl) bleibt als First-Touch-Sicherheitsnetz.
+    """V2 label (FMR2, K4): hold the mean-reversion trade until funding
+    extreme NORMALISES (core.research_features.fmr2_funding_normalized) OR until
+    time-stop (FMR2_TIME_STOP_SETTLEMENTS = 9 settlements / 3 days) — exit price =
+    close of settlement candle. This is the core difference from V1: NO first-touch
+    TP/SL (that was the FMR1 bug, Report 15 V2 diagnosis). Hard catastrophe SL
+    (fmr2_catastrophe_sl) remains as first-touch safety net.
 
-    times/highs/lows/closes: 1h-Kerzen des Symbols (naive UTC datetime64, ASC).
-    entry_idx: Index der Entry-Kerze (letzte geschlossene Kerze vor dem Event-
-      Settlement); der Walk startet bei entry_idx+1 (kein Lookahead, R1).
-    f_ts/f_rates/cs_pctl: volle Settlement-Historie des Symbols (ASC); ev_pos =
-      Position des Event-Settlements in dieser Historie. funding_z_30d wird pro
-      Settlement as-of neu gerechnet — identische Formel wie funding_stats
-      (cur vs. letzte FMR1_HISTORY_SETTLEMENTS Sätze).
+    times/highs/lows/closes: 1h candles of symbol (naive UTC datetime64, ASC).
+    entry_idx: index of entry candle (last closed candle before event settlement);
+      walk starts at entry_idx+1 (no lookahead, R1).
+    f_ts/f_rates/cs_pctl: full settlement history of symbol (ASC); ev_pos = position
+      of event settlement in this history. funding_z_30d is recomputed as-of per
+      settlement — identical formula to funding_stats (cur vs. last FMR1_HISTORY_SETTLEMENTS rows).
     """
     is_long = direction.upper() == "LONG"
     sl = fmr2_catastrophe_sl(direction, entry_price)
     n = len(times)
     n_settle = len(f_ts)
     settlements = 0
-    next_j = ev_pos + 1  # nächste Settlement-Position NACH dem Entry-Settlement
+    next_j = ev_pos + 1  # next settlement position AFTER entry settlement
     exit_price: float | None = None
     exit_reason: str | None = None
     exit_time = None
 
     i = entry_idx + 1
     while i < n:
-        # 1) Katastrophen-SL zuerst (touch-basiert, konservativ — Liquidation ist touch).
+        # 1) Catastrophe SL first (touch-based, conservative — liquidation is touch).
         if (lows[i] <= sl) if is_long else (highs[i] >= sl):
             exit_price, exit_reason, exit_time = float(sl), "catastrophe_sl", times[i]
             break
-        # 2) Settlement(s) erreicht? 1h-Kerzen & 8h-Settlements liegen auf dem Raster;
-        #    ein Datengap kann mehrere Settlements überspringen → while, nicht if.
+        # 2) Settlement(s) reached? 1h candles & 8h settlements lie on the grid;
+        #    a data gap can skip multiple settlements → while, not if.
         while next_j < n_settle and times[i] >= f_ts[next_j]:
             settlements += 1
             cur = float(f_rates[next_j]) * 1e4
@@ -207,8 +206,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", default=SINCE_DEFAULT)
     ap.add_argument("--label-version", choices=("v1", "v2"), default="v1",
-                    help="v1 = FMR1 First-Touch-TP/SL (Bestand); v2 = FMR2 "
-                         "Normalisierungs-/Timeout-Exit (K4).")
+                    help="v1 = FMR1 first-touch TP/SL (stock); v2 = FMR2 "
+                         "normalisation/timeout exit (K4).")
     ap.add_argument("--out", default=None)
     ap.add_argument("--limit-symbols", type=int, default=0)
     args = ap.parse_args()
@@ -222,18 +221,18 @@ def main() -> None:
 
     conn = get_db_connection()
     fund = load_funding(conn, args.since)
-    log(f"Funding-Zeilen: {len(fund)} über {fund['symbol'].nunique()} Symbole")
+    log(f"Funding rows: {len(fund)} over {fund['symbol'].nunique()} symbols")
     ev = build_events(fund, args.since)
-    log(f"Extrem-Events nach Dedup: {len(ev)} "
+    log(f"Extreme events after dedup: {len(ev)} "
         f"(SHORT {int((ev['direction'] == 'SHORT').sum())} / LONG {int((ev['direction'] == 'LONG').sum())})")
 
-    # Cross-Sectional-Perzentil je Settlement über ALLE Coins — dieselbe Größe
-    # wie build_events (row.pctl), hier für die V2-Halte-Phase pro Symbol
-    # verfügbar gemacht (as-of an jedem Settlement neu ausgewertet).
+    # Cross-sectional percentile per settlement over ALL coins — same size as
+    # build_events (row.pctl), here made available for V2 hold phase per symbol
+    # (as-of recomputed at each settlement).
     fund["cs_pctl"] = fund.groupby("funding_time")["funding_rate"].rank(pct=True)
 
-    # Settlement-Historie je Symbol als Arrays (für funding_stats bis Event-Zeit
-    # und — V2 — für den Normalisierungs-Walk).
+    # Settlement history per symbol as arrays (for funding_stats until event time
+    # and — V2 — for normalization walk).
     hist: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     for sym, g in fund.groupby("symbol", sort=False):
         hist[sym] = (
@@ -270,7 +269,7 @@ def main() -> None:
                 if join_is_stale(times, idx, row.ts):
                     stats["stale_join"] += 1
                     continue
-                # Historie bis EINSCHLIESSLICH des Event-Settlements (kein Lookahead).
+                # History up to AND INCLUDING the event settlement (no lookahead).
                 hi = int(np.searchsorted(f_ts, ts64, side="right"))
                 if hi < MIN_HISTORY:
                     stats["short_history"] += 1
@@ -280,8 +279,8 @@ def main() -> None:
                     entry_close = float(closes[idx])
                     feats = build_fmr1_row(f_stats, row.pctl, row.direction, df, idx)
                     if args.label_version == "v2":
-                        # FMR2: Entry = Close der Entry-Kerze (kein Smart-Target-
-                        # Limit — V2 hält bis Normalisierung, keine TP-Leiter).
+                        # FMR2: entry = close of the entry candle (no smart-target
+                        # limit — V2 holds until normalisation, no TP ladder).
                         if entry_close <= 0:
                             raise ValueError("degenerate entry")
                         ev_pos = int(np.searchsorted(f_ts, ts64, side="left"))
@@ -292,7 +291,7 @@ def main() -> None:
                         )
                         entry_out, sl_out, targets_out = entry_close, None, None
                     else:
-                        # V1 (FMR1-Bestand): Smart-Target-Geometrie + First-Touch.
+                        # V1 (FMR1 stock): smart-target geometry + first-touch.
                         win = df.iloc[max(0, idx - WINDOW_CANDLES + 1): idx + 1]
                         setup = calculate_smart_targets(None, sym, row.direction, entry_close, df=win)
                         entry1 = float(setup["entry1"])
@@ -315,8 +314,8 @@ def main() -> None:
                     continue
 
                 if args.label_version == "v2":
-                    # Label = Vorzeichen des realisierten Netto-PnL am Normalisierungs-/
-                    # Timeout-Exit (NICHT First-Touch-TP/SL — der FMR1-Fehler).
+                    # label = sign of the realised net PnL at the normalisation/
+                    # timeout exit (NOT first-touch TP/SL — the FMR1 bug).
                     net = res.get("net_pnl_pct")
                     label = None if net is None else int(net > 0)
                 else:
@@ -340,10 +339,10 @@ def main() -> None:
             if i % 25 == 0 or i == len(symbols):
                 closed = stats["written"] - stats["open_end"]
                 wr = stats["wins"] / closed * 100 if closed else 0.0
-                log(f"{i}/{len(symbols)} Symbole | geschrieben {stats['written']} "
-                    f"(WR geschlossen: {wr:.1f}%) | {time.time() - t0:.0f}s")
+                log(f"{i}/{len(symbols)} symbols | written {stats['written']} "
+                    f"(WR closed: {wr:.1f}%) | {time.time() - t0:.0f}s")
     conn.close()
-    log(f"FERTIG -> {args.out}")
+    log(f"DONE -> {args.out}")
     log(json.dumps(stats))
 
 

@@ -9,17 +9,17 @@ DATA_FILE = 'ml_training_data.csv'
 MODEL_FILE = 'trend_prediction_model.joblib'
 
 def optimize_threshold():
-    print("--- Starte Threshold Optimierung ---")
+    print("--- Start threshold optimization ---")
     
-    # 1. Daten und Modell laden
+    # 1. Load data and model
     try:
         df = pd.read_csv(DATA_FILE)
         model = joblib.load(MODEL_FILE)
     except FileNotFoundError:
-        print("Datei nicht gefunden. Bitte erst Training ausführen.")
+        print("File not found. Please run training first.")
         return
 
-    # 2. Daten vorbereiten (identisch zum Training)
+    # 2. Prepare data (identical to training)
     df['event_type'] = df['event_type'].map({'UP': 1, 'DOWN': 0})
     features = [
         'event_type', 'vol_ratio', 'rsi', 'atr_pct', 'dist_ema200', 'slope_trend', 'hour_of_day',
@@ -34,38 +34,38 @@ def optimize_threshold():
     X = combined_df[features]
     y = combined_df['label_success']
     
-    # WICHTIG: Gleicher Random State wie beim Training, damit wir die Testdaten nutzen!
+    # IMPORTANT: same random state as in training, so we use the test data!
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    
-    # 3. Wahrscheinlichkeiten vorhersagen
-    # Wir holen uns nicht die Klasse (0/1), sondern die Wahrscheinlichkeit (0.0 bis 1.0)
+
+    # 3. Predict probabilities
+    # We don't get the class (0/1), but the probability (0.0 to 1.0)
     probs = model.predict_proba(X_test)[:, 1]
 
-    print(f"\n{'Threshold':<10} | {'Precision (Win Rate)':<20} | {'Trades (Anzahl)':<15} | {'Recall':<10}")
+    print(f"\n{'Threshold':<10} | {'Precision (Win Rate)':<20} | {'Trades (Count)':<15} | {'Recall':<10}")
     print("-" * 65)
 
     best_threshold = 0.5
     best_precision = 0.0
 
-    # Wir testen Thresholds von 0.50 bis 0.95
+    # We test thresholds from 0.50 to 0.95
     for thresh in np.arange(0.5, 0.96, 0.05):
-        # Wenn Wahrscheinlichkeit > Threshold, dann Vorhersage = 1, sonst 0
+        # If probability > threshold, then prediction = 1, else 0
         y_pred_custom = (probs >= thresh).astype(int)
-        
+
         prec = precision_score(y_test, y_pred_custom, zero_division=0)
         rec = recall_score(y_test, y_pred_custom, zero_division=0)
         num_trades = np.sum(y_pred_custom)
-        
+
         print(f"{thresh:.2f}       | {prec*100:.2f}%               | {num_trades:<15} | {rec*100:.2f}%")
-        
-        # Wir suchen den Punkt, wo wir noch min. 50 Trades im Testset haben, aber max Precision
+
+        # We look for the point where we still have at least 50 trades in the test set, but max precision
         if num_trades > 50 and prec > best_precision:
             best_precision = prec
             best_threshold = thresh
 
     print("-" * 65)
-    print(f"Empfehlung: Setze den Threshold in deinem Live-Bot auf {best_threshold:.2f}")
-    print(f"Damit erwartete Win-Rate: {best_precision*100:.2f}%")
+    print(f"Recommendation: set the threshold in your live bot to {best_threshold:.2f}")
+    print(f"Expected win rate with that: {best_precision*100:.2f}%")
 
 if __name__ == "__main__":
     optimize_threshold()

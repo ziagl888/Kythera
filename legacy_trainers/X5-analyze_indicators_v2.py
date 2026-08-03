@@ -26,7 +26,7 @@ DB_CONFIG = {
 def load_coins() -> list[str]:
     coins_file = Path("coins.json")
     if not coins_file.exists():
-        logger.error("coins.json nicht gefunden!")
+        logger.error("coins.json not found!")
         return []
     with open(coins_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -68,7 +68,7 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 async def train_precision_models():
-    logger.info("Starte Precision-fokussierte Pump-Modelle (v3 – hohe Zuverlässigkeit)")
+    logger.info("Starting precision-focused pump models (v3 – high reliability)")
     coins = load_coins()
     if not coins:
         return
@@ -107,24 +107,24 @@ async def train_precision_models():
                 ])
                 df['symbol'] = symbol
                 all_data.append(df)
-                logger.info(f"{symbol}: {len(df)} Kerzen geladen")
+                logger.info(f"{symbol}: {len(df)} candles loaded")
         except Exception as e:
-            logger.warning(f"Fehler bei {symbol}: {e}")
+            logger.warning(f"Error for {symbol}: {e}")
     
     await conn.close()
     
     if not all_data:
-        logger.error("Keine Daten")
+        logger.error("No data")
         return
     
     df_full = pd.concat(all_data, ignore_index=True)
     df_full = df_full.sort_values(['symbol', 'open_time']).reset_index(drop=True)
-    logger.info(f"Gesamt: {len(df_full)} Kerzen")
+    logger.info(f"Total: {len(df_full)} candles")
     
     df_full = add_advanced_features(df_full)
     df_full = df_full.fillna(0)
     
-    # Stark reduziertes, zuverlässiges Feature-Set (basierend auf v2 Top-Features)
+    # Strongly reduced, reliable feature set (based on v2 top features)
     feature_cols = [
         'donchian_upper_20_dist_pct', 'donchian_lower_20_dist_pct',
         'ema_200_dist_pct', 'ema_200_dist_atr',
@@ -160,7 +160,7 @@ async def train_precision_models():
             valid_indices.append(i)
         
         pump_rate = sum(y) / len(y)
-        logger.info(f"Pump-Events: {sum(y)} / {len(y)} ({pump_rate:.2%})")
+        logger.info(f"Pump events: {sum(y)} / {len(y)} ({pump_rate:.2%})")
         
         X = X_base.iloc[valid_indices]
         y = np.array(y)
@@ -188,7 +188,7 @@ async def train_precision_models():
                 eval_metric='logloss',
                 tree_method='hist',
                 n_jobs=-1,
-                scale_pos_weight=2.0  # sehr konservativ
+                scale_pos_weight=2.0  # very conservative
             )
             model.fit(X_train, y_train)
             
@@ -197,7 +197,7 @@ async def train_precision_models():
             precision = precision[:-1]
             recall = recall[:-1]
             
-            # Precision maximieren bei Recall >= 0.10
+            # Maximize precision at recall >= 0.10
             valid = recall >= 0.10
             if np.any(valid):
                 idx = np.argmax(precision[valid])
@@ -218,9 +218,9 @@ async def train_precision_models():
                 best_threshold = cand_thr
                 best_model = model
         
-        logger.info(f"Beste Precision über Folds: {best_precision:.3f} (Recall {best_recall:.3f}) @ Threshold {best_threshold:.3f}")
-        
-        # Finales Modell auf allen Daten
+        logger.info(f"Best precision across folds: {best_precision:.3f} (Recall {best_recall:.3f}) @ Threshold {best_threshold:.3f}")
+
+        # Final model on all data
         final_model = XGBClassifier(
             n_estimators=1000, max_depth=5, learning_rate=0.02,
             subsample=0.7, colsample_bytree=0.7, min_child_weight=15, gamma=1.0,
@@ -238,9 +238,9 @@ async def train_precision_models():
         
         joblib.dump(final_model, f"pump_model_{name}_v3_precision.pkl")
         joblib.dump(best_threshold, f"threshold_{name}_v3_precision.pkl")
-        logger.info(f"v3 Modell gespeichert (hohe Precision)")
+        logger.info(f"v3 model saved (high precision)")
 
-    logger.info("Alle Precision-Modelle (v3) fertig!")
+    logger.info("All precision models (v3) done!")
 
 if __name__ == "__main__":
     asyncio.run(train_precision_models())

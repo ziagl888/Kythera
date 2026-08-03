@@ -10,55 +10,55 @@ import seaborn as sns
 import multiprocessing as mp
 import time
 
-# --- Konfiguration ---
+# --- Configuration ---
 INPUT_FILE = 'break_retest_analysis_with_features.json'
 
-# Hyperparameter Grid
-# Da wir sequentiell trainieren (aber mit Multi-Threading im Tree-Building),
-# halten wir das Grid fokussiert.
+# Hyperparameter grid
+# Since we train sequentially (but with multi-threading in tree building),
+# we keep the grid focused.
 param_grid = {
-    'n_estimators': [100, 200],      # Anzahl Bäume
-    'learning_rate': [0.05, 0.1],    # Wie schnell lernt es
-    'max_depth': [4, 6],             # Tiefe der Bäume (Komplexität)
-    'subsample': [0.8],              # Gegen Overfitting
-    'colsample_bytree': [0.8],       # Gegen Overfitting
-    # 'scale_pos_weight': [1, 5]     # Optional: Falls das Modell Success ignoriert, hier hochdrehen (nur Binary)
+    'n_estimators': [100, 200],      # number of trees
+    'learning_rate': [0.05, 0.1],    # how fast it learns
+    'max_depth': [4, 6],             # depth of the trees (complexity)
+    'subsample': [0.8],              # against overfitting
+    'colsample_bytree': [0.8],       # against overfitting
+    # 'scale_pos_weight': [1, 5]     # optional: if the model ignores success, turn this up here (binary only)
 }
 
-# Mindestanzahl Trades für Threshold-Optimierung
-MIN_TRADES_FOR_CONSIDERATION = 100 
+# Minimum number of trades for threshold optimisation
+MIN_TRADES_FOR_CONSIDERATION = 100
 
 def load_and_prepare_data(input_file):
-    print("Lade JSON Datei... (das kann bei 2.7 Mio Events kurz dauern)")
+    print("Loading JSON file... (can take a moment with 2.7M events)")
     with open(input_file, 'r') as f:
         data = json.load(f)
-    
+
     df_events = pd.DataFrame(data['events'])
-    
-    # Konvertiere Zeitstempel
+
+    # Convert timestamps
     df_events['retest_time'] = pd.to_datetime(df_events['retest_time'])
-    
-    # Unnötige Spalten für das Training entfernen
+
+    # Drop columns not needed for training
     features_to_drop = [
         'symbol', 'type', 'break_time', 'retest_time', 'level_price',
         'outcome_price_change', 'outcome_class'
     ]
-    
+
     X = df_events.drop(columns=features_to_drop)
     y = df_events['outcome_class']
-    
-    # Encoding der Klassen (Neutral, Success, Fail -> 0, 1, 2)
+
+    # Encode the classes (Neutral, Success, Fail -> 0, 1, 2)
     le = LabelEncoder()
     y_encoded = le.fit_transform(y)
-    
+
     class_mapping = dict(zip(le.classes_, le.transform(le.classes_)))
-    print(f"Klassen-Mapping: {class_mapping}")
-    
+    print(f"Class mapping: {class_mapping}")
+
     if 'continuation_success' not in class_mapping:
-        raise ValueError("Klasse 'continuation_success' fehlt!")
-    
+        raise ValueError("Class 'continuation_success' is missing!")
+
     success_class_idx = class_mapping['continuation_success']
-    
+
     return X, y_encoded, df_events, le, success_class_idx
 
 def train_and_evaluate_model_with_gridsearch(X, y_encoded, df_events_filtered, le, success_class_idx, trade_type_name, param_grid):
@@ -66,80 +66,80 @@ def train_and_evaluate_model_with_gridsearch(X, y_encoded, df_events_filtered, l
     print(f"START TRAINING: {trade_type_name}")
     print(f"{'='*60}")
     
-    # TimeSeriesSplit stellt sicher, dass wir nicht in die Zukunft schauen
-    tscv = TimeSeriesSplit(n_splits=3) # 3 Splits reichen bei der Datenmenge oft und sparen Zeit
-    
-    # XGBoost Estimator
-    # n_jobs=-1 nutzt ALLE CPU-Kerne für das Training des Modells (Internes C++ Threading)
-    # Das ist stabil auf Windows!
+    # TimeSeriesSplit ensures we don't look into the future
+    tscv = TimeSeriesSplit(n_splits=3) # 3 splits is often enough for this amount of data and saves time
+
+    # XGBoost estimator
+    # n_jobs=-1 uses ALL CPU cores for training the model (internal C++ threading)
+    # This is stable on Windows!
     estimator = xgb.XGBClassifier(
         objective='multi:softprob',
         num_class=len(le.classes_),
         eval_metric='mlogloss',
         use_label_encoder=False,
         random_state=42,
-        tree_method='hist', # Sehr schnell für große Datenmengen
-        n_jobs=-1           # WICHTIG: Interne Parallelisierung an
+        tree_method='hist', # very fast for large amounts of data
+        n_jobs=-1           # IMPORTANT: internal parallelisation on
     )
 
     # GridSearchCV
-    # n_jobs=1 verhindert den joblib/multiprocessing Absturz.
-    # Wir verlassen uns auf die interne Power von XGBoost.
+    # n_jobs=1 prevents the joblib/multiprocessing crash.
+    # We rely on the internal power of XGBoost.
     grid_search = GridSearchCV(
         estimator=estimator,
         param_grid=param_grid,
-        scoring='f1_macro', # Macro gewichtet kleine Klassen (Success) stärker als 'weighted'
+        scoring='f1_macro', # macro weights small classes (success) more strongly than 'weighted'
         cv=tscv,
-        n_jobs=1,           # WICHTIG: Externe Parallelisierung aus (verhindert Crash)
+        n_jobs=1,           # IMPORTANT: external parallelisation off (prevents crash)
         verbose=1
     )
 
     start_time = time.time()
-    print(f"Starte GridSearch für {trade_type_name}...")
-    print(f"Anzahl Samples: {len(X)}")
-    
+    print(f"Starting GridSearch for {trade_type_name}...")
+    print(f"Number of samples: {len(X)}")
+
     grid_search.fit(X, y_encoded)
-    
+
     duration = time.time() - start_time
-    print(f"GridSearch fertig in {duration/60:.2f} Minuten.")
-    print(f"Beste Parameter: {grid_search.best_params_}")
-    print(f"Bester Score (f1_macro): {grid_search.best_score_:.4f}")
+    print(f"GridSearch done in {duration/60:.2f} minutes.")
+    print(f"Best parameters: {grid_search.best_params_}")
+    print(f"Best score (f1_macro): {grid_search.best_score_:.4f}")
 
     best_model = grid_search.best_estimator_
 
-    # Vorhersage auf den ganzen Daten (um Threshold zu finden)
-    # (Ideal wäre ein separates Hold-Out Set, aber TS-Split hat das validiert)
-    print("Erstelle Vorhersagen für Threshold-Optimierung...")
+    # Predict on the whole data (to find the threshold)
+    # (ideally this would be a separate hold-out set, but TS split validated it)
+    print("Creating predictions for threshold optimisation...")
     y_pred_proba = best_model.predict_proba(X)
-    
-    # Wir interessieren uns nur für die Wahrscheinlichkeit von "Success"
+
+    # We're only interested in the probability of "Success"
     all_y_pred_proba_success = y_pred_proba[:, success_class_idx]
-    
-    # Echte Profite für die Berechnung der Profitabilität
+
+    # Real profits for the profitability calculation
     all_outcome_price_changes = df_events_filtered['outcome_price_change'].values
     all_y_true = y_encoded
 
-    # --- Threshold Optimierung ---
-    print("\nOptimiere Threshold (Wahrscheinlichkeitsschwelle)...")
-    thresholds = np.linspace(0.3, 0.98, 100) # Wir suchen ab 30% Wahrscheinlichkeit
+    # --- Threshold optimisation ---
+    print("\nOptimising threshold (probability threshold)...")
+    thresholds = np.linspace(0.3, 0.98, 100) # we search from 30% probability
     results = []
 
     for threshold in thresholds:
-        # Welche Trades würden wir bei diesem Threshold nehmen?
+        # Which trades would we take at this threshold?
         trade_indices = np.where(all_y_pred_proba_success >= threshold)[0]
-        
+
         if len(trade_indices) < MIN_TRADES_FOR_CONSIDERATION:
             continue
 
-        # Echte Ergebnisse dieser Trades
+        # Real results of these trades
         selected_profits = all_outcome_price_changes[trade_indices]
         selected_labels = all_y_true[trade_indices]
 
-        # Gewinnrate
+        # Win rate
         wins = np.sum(selected_labels == success_class_idx)
         win_rate = (wins / len(trade_indices)) * 100
-        
-        # Profitabilität
+
+        # Profitability
         avg_profit = np.mean(selected_profits)
         total_profit_sum = np.sum(selected_profits)
 
@@ -148,57 +148,57 @@ def train_and_evaluate_model_with_gridsearch(X, y_encoded, df_events_filtered, l
             'num_trades': len(trade_indices),
             'win_rate': win_rate,
             'avg_profit_per_trade': avg_profit,
-            'total_profit_score': total_profit_sum # Einfache Metrik: Gesamtprofit
+            'total_profit_score': total_profit_sum # simple metric: total profit
         })
 
     if not results:
-        print("Kein Threshold gefunden, der genügend Trades liefert.")
+        print("No threshold found that yields enough trades.")
         return best_model, None, None
 
     results_df = pd.DataFrame(results)
-    
-    # Wir suchen den Threshold mit der besten Win-Rate, 
-    # solange der Avg Profit positiv ist.
+
+    # We look for the threshold with the best win rate,
+    # as long as the avg profit is positive.
     best_row = results_df.loc[results_df['win_rate'].idxmax()]
-    
-    print(f"\n--- ERGEBNIS {trade_type_name} ---")
-    print(f"Bester Threshold: {best_row['threshold']:.4f}")
-    print(f"Erwartete Win-Rate: {best_row['win_rate']:.2f}%")
-    print(f"Anzahl Trades (im Dataset): {int(best_row['num_trades'])}")
-    print(f"Durchschnittsprofit pro Trade: {best_row['avg_profit_per_trade']:.2f}%")
+
+    print(f"\n--- RESULT {trade_type_name} ---")
+    print(f"Best threshold: {best_row['threshold']:.4f}")
+    print(f"Expected win rate: {best_row['win_rate']:.2f}%")
+    print(f"Number of trades (in dataset): {int(best_row['num_trades'])}")
+    print(f"Average profit per trade: {best_row['avg_profit_per_trade']:.2f}%")
 
     # Plot
     plt.figure(figsize=(10, 5))
     plt.plot(results_df['threshold'], results_df['win_rate'], label='Win Rate %')
     plt.plot(results_df['threshold'], results_df['avg_profit_per_trade'], label='Avg Profit %')
     plt.axvline(best_row['threshold'], color='red', linestyle='--', label='Best Threshold')
-    plt.title(f"{trade_type_name} Optimierung")
+    plt.title(f"{trade_type_name} optimisation")
     plt.xlabel("Threshold")
     plt.legend()
     plt.grid(True)
     plt.show()
-    
-    # Modell speichern (Dateiname z.B. "model_LONG.json")
+
+    # Save model (filename e.g. "model_LONG.json")
     model_filename = f"bt2_model_{trade_type_name}.json"
     best_model.save_model(model_filename)
-    print(f"Modell gespeichert als: {model_filename}")
-    
-    # Optional: Threshold auch speichern (z.B. in einer kleinen Textdatei)
+    print(f"Model saved as: {model_filename}")
+
+    # Optional: also save the threshold (e.g. in a small text file)
     with open(f"bt2_threshold_{trade_type_name}.txt", "w") as f:
         f.write(str(best_row['threshold']))
     
     return best_model, best_row['threshold'], best_row
 
 def main():
-    print("Starte ML Trainer (Stable Version)...")
+    print("Starting ML Trainer (Stable Version)...")
     X, y_encoded, df_events, le, success_class_idx = load_and_prepare_data(INPUT_FILE)
-    
-    # Feature Importance Helper
+
+    # Feature importance helper
     def show_feature_importance(model, feature_names):
         importance = model.feature_importances_
         feat_imp = pd.DataFrame({'feature': feature_names, 'importance': importance})
         feat_imp = feat_imp.sort_values('importance', ascending=False).head(15)
-        print("\nTop 15 Wichtigste Features:")
+        print("\nTop 15 most important features:")
         print(feat_imp)
 
     # --- LONG MODEL ---
@@ -207,14 +207,14 @@ def main():
         X_long = X[mask_long]
         y_long = y_encoded[mask_long]
         df_long = df_events[mask_long]
-        
+
         model_long, th_long, _ = train_and_evaluate_model_with_gridsearch(
             X_long, y_long, df_long, le, success_class_idx, "LONG", param_grid
         )
         if model_long:
             show_feature_importance(model_long, X.columns)
     else:
-        print("Zu wenige LONG Events.")
+        print("Too few LONG events.")
 
     # --- SHORT MODEL ---
     mask_short = df_events['type'] == 'SHORT_BREAK_RETEST'
@@ -222,14 +222,14 @@ def main():
         X_short = X[mask_short]
         y_short = y_encoded[mask_short]
         df_short = df_events[mask_short]
-        
+
         model_short, th_short, _ = train_and_evaluate_model_with_gridsearch(
             X_short, y_short, df_short, le, success_class_idx, "SHORT", param_grid
         )
         if model_short:
             show_feature_importance(model_short, X.columns)
     else:
-        print("Zu wenige SHORT Events.")
+        print("Too few SHORT events.")
 
 if __name__ == "__main__":
     mp.freeze_support()

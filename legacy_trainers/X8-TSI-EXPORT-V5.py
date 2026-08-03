@@ -17,8 +17,8 @@ DB_CONFIG = {
 END_DATE = datetime(2025, 12, 15)
 START_DATE = END_DATE - timedelta(days=300) 
 
-# --- KONFIGURATION SHORT ONLY ZIELE ---
-# Wir nutzen dieselben konservativen Ziele wie bei Long für maximale Trefferquote
+# --- SHORT ONLY TARGET CONFIGURATION ---
+# We use the same conservative targets as for Long for maximum hit rate
 TP_SHORT_PCT = 0.025   # 2.5% Take Profit
 SL_SHORT_PCT = 0.015   # 1.5% Stop Loss
 
@@ -35,7 +35,7 @@ async def export_signals(pool, coin):
     
     async with pool.acquire() as conn:
         try:
-            # SQL Query (Identisch zum Long Script)
+            # SQL Query (identical to the Long script)
             rows = await conn.fetch(f"""
                 SELECT 
                     p.open_time, p.high, p.low, p.close, p.volume, -- 0-4
@@ -85,7 +85,7 @@ async def export_signals(pool, coin):
             # Check TSI validity
             if df_coin['tsi_fast_12_7_7'].isna().all(): return
 
-            # --- Indikatorberechnung (OBV und VWAP) ---
+            # --- Indicator calculation (OBV and VWAP) ---
             df_coin['obv'] = (np.sign(df_coin['close'].diff()) * df_coin['volume']).fillna(0).cumsum()
             df_coin['typical_price'] = (df_coin['high'] + df_coin['low'] + df_coin['close']) / 3
             df_coin['vwap_20'] = (df_coin['volume'] * df_coin['typical_price']).rolling(20).sum() / df_coin['volume'].rolling(20).sum()
@@ -203,7 +203,7 @@ async def export_signals(pool, coin):
                     # Future Loop
                     future_slice = df_coin.iloc[i+1 : i+1+MAX_HOLD_HOURS]
                     
-                    # Vektorisierte Prüfung für TP/SL wäre schneller, aber Loop ist hier okay
+                    # Vectorised check for TP/SL would be faster, but a loop is fine here
                     for _, fut_row in future_slice.iterrows():
                         low = fut_row['low']
                         high = fut_row['high']
@@ -250,12 +250,12 @@ async def export_signals(pool, coin):
                         **feat_dict
                     })
 
-        except Exception as e: 
-            print(f"Fehler bei Coin {coin}: {e}")
+        except Exception as e:
+            print(f"Error for coin {coin}: {e}")
 
 async def main():
     pool = await asyncpg.create_pool(**DB_CONFIG)
-    print("Starte SHORT-ONLY Export (2.5/1.5)...")
+    print("Starting SHORT-ONLY export (2.5/1.5)...")
     for i, coin in enumerate(coins):
         if i % 50 == 0: print(f"{i} Coins processed...")
         await export_signals(pool, coin)
@@ -264,6 +264,6 @@ async def main():
     if all_signals:
         df = pd.DataFrame(all_signals)
         df.to_csv("tsi_signals_short_only.csv", index=False)
-        print(f"\nFertig! {len(all_signals)} Short-Trades exportiert in 'tsi_signals_short_only.csv'")
+        print(f"\nDone! {len(all_signals)} short trades exported to 'tsi_signals_short_only.csv'")
 
 asyncio.run(main())

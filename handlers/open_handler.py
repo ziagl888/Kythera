@@ -22,7 +22,7 @@ def get_live_price(symbol):
         res.raise_for_status()
         return float(res.json()["price"])
     except Exception as e:
-        logger.error(f"Error fetching des Preises für {symbol}: {e}")
+        logger.error(f"Error fetching price for {symbol}: {e}")
         return None
 
 
@@ -65,7 +65,7 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if target_channel_key:
         target_chat_id = get_target_channel(target_channel_key)
         if not target_chat_id:
-            await msg.reply_text(f"❌ Channel-Mapping '{target_channel_key}' nicht in bot_config.json gefunden!")
+            await msg.reply_text(f"❌ Channel mapping '{target_channel_key}' not found in bot_config.json!")
             return
     else:
         target_chat_id = msg.chat_id
@@ -102,7 +102,7 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
     username = (user.username or user.full_name) if user else "Trader"
     is_long = direction == "LONG"
 
-    # 💥 CORNIX RAW TEXT (Purer Plain Text)
+    # 💥 CORNIX RAW TEXT (pure plain text)
     cornix_msg = f"📈 Signal for {symbol} 📈\n"
     cornix_msg += f"🚨 Direction: {direction}\n"
     cornix_msg += f"🚨 Leverage: {lev}x\n"
@@ -118,21 +118,21 @@ async def open_command_callback(update: Update, context: ContextTypes.DEFAULT_TY
     cornix_msg += f"💸 Stop Loss: $ {format_price(sl)}\n"
     cornix_msg += f"🧠 Triggered manually by @{username}"
 
-    # --- SENDEN (OHNE parse_mode='HTML') ---
+    # --- SEND (WITHOUT parse_mode='HTML') ---
     try:
         if post_video:
             video_name = "botlong.mp4" if is_long else "botshort.mp4"
             video_path = Path(video_name)
             if video_path.exists():
                 with open(video_path, 'rb') as f:
-                    # Sending das Video mit dem puren Text als Caption
+                    # Send video with pure text as caption
                     await context.bot.send_video(chat_id=target_chat_id, video=f, caption=cornix_msg)
             else:
-                logger.warning(f"Video {video_name} not found, sending nur Text.")
-                # Purer Text ohne Parse-Mode
+                logger.warning(f"Video {video_name} not found, sending text only.")
+                # Pure text without parse mode
                 await context.bot.send_message(chat_id=target_chat_id, text=cornix_msg)
         else:
-            # Purer Text ohne Parse-Mode
+            # Pure text without parse mode
             await context.bot.send_message(chat_id=target_chat_id, text=cornix_msg)
 
         if str(target_chat_id) != str(msg.chat_id):

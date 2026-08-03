@@ -148,7 +148,7 @@ def test_gate_never_looser_than_the_model_operating_point():
 
 
 def test_tag_comes_from_artifact_meta_not_a_constant():
-    """Harte Regel 6 / Falle 16: a MAX2 retrain must post as MAX2, not silently as MAX1."""
+    """Hard rule 6 / trap 16: a MAX2 retrain must post as MAX2, not silently as MAX1."""
     assert 'tag = ARTIFACT["tag"]' in SRC
     post_path = SRC.split("def post_candidate")[1].split("def run_scan")[0]
     # Everything that carries the model identity — Telegram signal, ai_signals row,
@@ -164,7 +164,7 @@ def test_tag_comes_from_artifact_meta_not_a_constant():
 
 
 def test_posts_via_single_message_helper():
-    """Harte Regel 4: exactly ONE Cornix-parseable message per signal."""
+    """Hard rule 4: exactly ONE Cornix-parseable message per signal."""
     assert "from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal" in SRC
     # no hand-rolled Cornix block in the bot — it would be the second parseable message
     assert "CMP Entry" not in SRC
@@ -203,7 +203,7 @@ def test_cooldown_space_is_separate_from_rub2():
 
 
 def test_closed_candle_discipline_preserved():
-    """R1 / Falle 1: both queries must exclude the forming candle."""
+    """R1 / trap 1: both queries must exclude the forming candle."""
     assert SRC.count("open_time < date_trunc('hour', NOW())") == 2
 
 
@@ -221,8 +221,8 @@ def test_artifact_path_is_not_promoted_into_the_live_root_by_code():
 
 
 def test_registered_in_watchdog():
-    # Die Fleet-Prozessliste ist seit T-2026-CU-9050-091 in core/fleet.py
-    # zentralisiert; der Watchdog konsumiert sie. Registrierung dort prüfen.
+    # The fleet process list has been centralised in core/fleet.py
+    # since T-2026-CU-9050-091; the watchdog consumes it. Check registration there.
     fleet = (ROOT / "core/fleet.py").read_text(encoding="utf-8")
     assert '"script": "34_ai_max1_bot.py"' in fleet
     assert '"start_delay": 223' in fleet

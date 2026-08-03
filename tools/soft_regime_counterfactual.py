@@ -1,74 +1,73 @@
 """tools/soft_regime_counterfactual.py — SOFT-regime gate counterfactual (T-2026-KYT-9050-031).
 
-Zweck
------
-Follow-up zu T-2026-KYT-9050-029 (`tools/research/regime_switch/`). Die DB-freie
-Study zeigte: die SOFT-Timeline (EMA-geglättete Classifier-Confidence,
-`build_soft_timeline`) dominiert die Live-RULE monoton auf Whipsaw. ABER die
-Study misst nur Timeline-Qualität, NICHT PnL auf echten Bot-Forwards. Das ist
-DB-gebunden — genau das rechnet dieses Tool auf dem Live-VPS (read-only).
-
-Kernfrage
----------
-Hätte eine SOFT-geglättete Regime-Gate den PnL der ROM1-geforwardeten Trades
-verbessert (bzw. die Whitelist-Flapping reduziert), ODER ist der Churn-Sieg
-PnL-neutral?
-
-Datenbasis (Live-DB, strikt read-only)
---------------------------------------
-  * `regime_history` (5-min-Kadenz): trägt pro Check die
-    Hysterese-klassifizierte `regime` (= exakt der `raw_regime`, der live an
-    `apply_debounce` ging) PLUS `raw_features` JSON mit allen Classifier-Inputs
-    (`vola_p75/p40`, `btc_return_1h/4h`, `btc_atr_1h/4h_pct`, `btcdom_return_24h`).
-    → SOFT und RULE lassen sich daraus rekonstruieren, ohne Kerzen neu zu lesen.
-  * `orchestrator_open_trades` (forwarded): trägt `regime_at_open` (das
-    LIVE-effektive RULE-Regime, Ground Truth) und `status`
-    (`CLOSED_TP`/`CLOSED_SL`/… = echtes Trade-Outcome).
-  * `orchestrator_suppressed_signals` (geblockt): nur `regime_at_signal`, kein
-    Outcome → nur via First-Touch-Replay bewertbar.
-
-Rekonstruktion
---------------
-  * **RULE_recon**: `_step_debounce` (Port von `apply_debounce`, aus
-    `regime_switch.timelines`) über die gespeicherte `(regime, alt_context)`-
-    Sequenz gefaltet. Weil `regime_history.regime` der exakte Debounce-Input war,
-    ist das die treueste Rekonstruktion — validiert gegen die aufgezeichneten
-    `regime_at_open` (Agreement-Report).
-  * **SOFT**: `build_soft_timeline` (rein, geteilt, aus T-029) über die
-    `raw_features`-Reihe. Half-life ist hier in 5-min-Checks (Study war 15m-Kerzen):
-    hl=192 ≈ Study-hl64 (16h Wall-Clock). Sweep über mehrere hl.
-
-Messung
+Purpose
 -------
-  1. **Churn**: Switches/30d RULE_recon vs SOFT (pro hl). Bestätigt/widerlegt den
-     Whipsaw-Sieg auf Live-Daten.
-  2. **Fidelity**: RULE_recon vs aufgezeichnetes `regime_at_open`.
-  3. **PnL-Signal (join-sauber, Ground Truth)**: forwarded Trades nach
-     „SOFT-Regime == aufgezeichnetes RULE-Regime" bucketen; TP/SL-Win-Rate je
-     Bucket + 2-Proportionen-z-Test. SOFT smoothed nur die BTC-Achse → alt_context
-     bleibt fix; verglichen wird die BTC-Regime-Dimension.
-  4. **PnL-Magnitude (Replay)**: First-Touch-Replay-PnL (`rom1_counterfactual`
-     wiederverwendet) je Bucket — WR ist nicht PnL (R:R zählt).
+Follow-up to T-2026-KYT-9050-029 (`tools/research/regime_switch/`). The DB-free
+study showed: the SOFT timeline (EMA-smoothed classifier confidence,
+`build_soft_timeline`) monotonically dominates the live RULE on whipsaw. BUT the
+study only measures timeline quality, NOT PnL on real bot forwards. That is
+DB-bound — exactly what this tool computes on the live VPS (read-only).
 
-Join-Grenzen (ehrlich)
-----------------------
-  * `bot_regime_whitelist` wird pro Analyzer-Zyklus KOMPLETT überschrieben (PK
-    auf dem 4-Tupel, keine Historie). Der Whitelist-Zustand als-of eines
-    Signals in der Vergangenheit ist NICHT rekonstruierbar → ein echter
-    „SOFT hätte forward↔suppress geflippt"-Counterfactual ist nur mit dem
-    HEUTIGEN Snapshot als Proxy machbar. Zusätzlich ist dieser Snapshot AUS
-    denselben Trades gerechnet (Lookback) → zirkulär. Deshalb ist der
-    Whitelist-Reflip nur ein FLAGGED-Appendix, nicht die Verdikt-Basis.
-  * `prob↔outcome` in der Live-DB nur eingeschränkt joinbar (siehe
-    [[kythera-ws2-golive-promotions]]) → wir nutzen `status` (TP/SL) als
-    Outcome-Proxy, nicht realisierten PnL.
-  * `orchestrator_suppressed_signals` trägt keinen `alt_context` → Whitelist-
-    Reflip nur auf der forwarded-Seite.
+Core question
+-------------
+Would a SOFT-smoothed regime gate have improved the PnL of ROM1-forwarded
+trades (or reduced whitelist flapping), OR is the churn win PnL-neutral?
 
-Betriebsregeln (Live-VPS!)
---------------------------
-  DB strikt read-only, BELOW_NORMAL-Priorität, CPU-Headroom-Check — wie
-  `rom1_counterfactual`. Keine Tabelle wird geschrieben. Ergebnisse nach
+Data basis (live DB, strictly read-only)
+-----------------------------------------
+  * `regime_history` (5-min cadence): carries per check the
+    hysteresis-classified `regime` (= exactly the `raw_regime` that live went
+    into `apply_debounce`) PLUS `raw_features` JSON with all classifier inputs
+    (`vola_p75/p40`, `btc_return_1h/4h`, `btc_atr_1h/4h_pct`, `btcdom_return_24h`).
+    → SOFT and RULE can be reconstructed from it, without re-reading candles.
+  * `orchestrator_open_trades` (forwarded): carries `regime_at_open` (the
+    LIVE-effective RULE regime, ground truth) and `status`
+    (`CLOSED_TP`/`CLOSED_SL`/… = real trade outcome).
+  * `orchestrator_suppressed_signals` (blocked): only `regime_at_signal`, no
+    outcome → scorable only via first-touch replay.
+
+Reconstruction
+--------------
+  * **RULE_recon**: `_step_debounce` (port of `apply_debounce`, from
+    `regime_switch.timelines`) folded over the stored `(regime, alt_context)`
+    sequence. Because `regime_history.regime` was the exact debounce input,
+    this is the most faithful reconstruction — validated against the recorded
+    `regime_at_open` (agreement report).
+  * **SOFT**: `build_soft_timeline` (pure, shared, from T-029) over the
+    `raw_features` series. Half-life here is in 5-min checks (the study used
+    15m candles): hl=192 ≈ study hl64 (16h wall-clock). Swept over multiple hl.
+
+Measurement
+-----------
+  1. **Churn**: switches/30d RULE_recon vs SOFT (per hl). Confirms/refutes the
+     whipsaw win on live data.
+  2. **Fidelity**: RULE_recon vs recorded `regime_at_open`.
+  3. **PnL signal (join-clean, ground truth)**: bucket forwarded trades by
+     "SOFT regime == recorded RULE regime"; TP/SL win-rate per
+     bucket + 2-proportion z-test. SOFT only smooths the BTC axis → alt_context
+     stays fixed; the BTC regime dimension is what's compared.
+  4. **PnL magnitude (replay)**: first-touch replay PnL (`rom1_counterfactual`
+     reused) per bucket — WR is not PnL (R:R counts).
+
+Join limits (honest)
+---------------------
+  * `bot_regime_whitelist` is COMPLETELY overwritten per analyzer cycle (PK
+    on the 4-tuple, no history). The whitelist state as-of a signal in
+    the past is NOT reconstructable → a genuine
+    "SOFT would have flipped forward↔suppress" counterfactual is only feasible
+    with TODAY's snapshot as a proxy. Additionally this snapshot is computed
+    FROM the same trades (lookback) → circular. That's why the
+    whitelist reflip is only a FLAGGED appendix, not the verdict basis.
+  * `prob↔outcome` only joinable to a limited extent in the live DB (see
+    [[kythera-ws2-golive-promotions]]) → we use `status` (TP/SL) as an
+    outcome proxy, not realized PnL.
+  * `orchestrator_suppressed_signals` carries no `alt_context` → whitelist
+    reflip only on the forwarded side.
+
+Operating rules (live VPS!)
+----------------------------
+  DB strictly read-only, BELOW_NORMAL priority, CPU headroom check — like
+  `rom1_counterfactual`. No table is written. Results go to
   `KYTHERA_REPLAY_DIR` (JSON + Markdown).
 """
 

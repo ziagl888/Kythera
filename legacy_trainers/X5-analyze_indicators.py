@@ -25,23 +25,23 @@ DB_CONFIG = {
     "database": "cryptodata"
 }
 
-# === Coins laden ===
+# === Load coins ===
 def load_coins() -> list[str]:
     coins_file = Path("coins.json")
     if not coins_file.exists():
-        logger.error("coins.json nicht gefunden!")
+        logger.error("coins.json not found!")
         return []
     with open(coins_file, "r", encoding="utf-8") as f:
         data = json.load(f)
     return [str(s).upper() + "USDT" if not str(s).upper().endswith("USDT") else str(s).upper() for s in data]
 
-# === Prozentualer Abstand ===
+# === Percentage distance ===
 def pct_distance(price_series: pd.Series, indicator_series: pd.Series) -> pd.Series:
     denominator = indicator_series.replace(0, np.nan)
     result = (price_series - indicator_series) / denominator * 100
     return result.fillna(0)
 
-# === Erweiterte Features (unverändert) ===
+# === advanced features (unchanged) ===
 def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(['symbol', 'open_time']).reset_index(drop=True)
     
@@ -76,9 +76,9 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-# === Hauptfunktion ===
+# === Main function ===
 async def train_pump_models_optimized():
-    logger.info("Starte optimierte Pump-Modelle (scale_pos_weight, Recall-fokussiert, reduziertes Feature-Set)")
+    logger.info("Starting optimised pump models (scale_pos_weight, recall-focused, reduced feature set)")
     coins = load_coins()
     if not coins:
         return
@@ -118,24 +118,24 @@ async def train_pump_models_optimized():
                 ])
                 df['symbol'] = symbol
                 all_data.append(df)
-                logger.info(f"{symbol}: {len(df)} Kerzen geladen")
+                logger.info(f"{symbol}: {len(df)} candles loaded")
         except Exception as e:
-            logger.warning(f"Fehler bei {symbol}: {e}")
-    
+            logger.warning(f"Error for {symbol}: {e}")
+
     await conn.close()
-    
+
     if not all_data:
-        logger.error("Keine Daten geladen")
+        logger.error("No data loaded")
         return
-    
+
     df_full = pd.concat(all_data, ignore_index=True)
     df_full = df_full.sort_values(['symbol', 'open_time']).reset_index(drop=True)
-    logger.info(f"Gesamt: {len(df_full)} Kerzen von {len(coins)} Coins")
-    
+    logger.info(f"Total: {len(df_full)} candles from {len(coins)} coins")
+
     df_full = add_advanced_features(df_full)
     df_full = df_full.fillna(0)
-    
-    # === Reduziertes, starkes Feature-Set (basierend auf deinem Top-30) ===
+
+    # === Reduced, strong feature set (based on your top 30) ===
     feature_cols = [
         'rsi_14', 'rsi_14_above_50', 'rsi_14_cross_above_30',
         'volume_ratio_prev', 'volume_ratio_sma20',
@@ -149,9 +149,9 @@ async def train_pump_models_optimized():
         'boll_upper_20_dist_pct', 'boll_lower_20_dist_pct'
     ]
     
-    # Sicherstellen, dass alle existieren
+    # Make sure all exist
     feature_cols = [col for col in feature_cols if col in df_full.columns]
-    logger.info(f"Verwende {len(feature_cols)} Features")
+    logger.info(f"Using {len(feature_cols)} features")
     
     X_base = df_full[feature_cols]
     
@@ -177,11 +177,11 @@ async def train_pump_models_optimized():
             # valid_indices.append(i)
         
         # if sum(y) < 30:
-            # logger.warning(f"Zu wenige Pump-Events – übersprungen")
+            # logger.warning(f"too few pump events – skipped")
             # continue
         
-        # logger.info(f"Pump-Events: {sum(y)} / Total: {len(y)} ({sum(y)/len(y)*100:.2f}%)")
-        
+        # logger.info(f"Pump events: {sum(y)} / Total: {len(y)} ({sum(y)/len(y)*100:.2f}%)")
+
         # X = X_base.iloc[valid_indices]
         # y = np.array(y)
         
@@ -216,7 +216,7 @@ async def train_pump_models_optimized():
             # y_prob = model.predict_proba(X_val)[:, 1]
             # precision, recall, thresholds = precision_recall_curve(y_val, y_prob)
             
-            # # Recall priorisieren: höchster Recall bei Precision >= 0.15, sonst maximaler Recall
+            # # prioritise recall: highest recall at precision >= 0.15, else maximum recall
             # if len(thresholds) > 0:
                 # valid_mask = precision >= 0.15
                 # if np.any(valid_mask):
@@ -233,10 +233,10 @@ async def train_pump_models_optimized():
                     # best_threshold = cand_threshold
                     # best_model = model
         
-        # logger.info(f"Durchschnittlicher max. Recall über Folds: ~{best_recall:.3f} (geschätzt)")
-        # logger.info(f"Gewählter Threshold für hohen Recall: {best_threshold:.3f}")
+        # logger.info(f"average max. recall across folds: ~{best_recall:.3f} (estimated)")
+        # logger.info(f"selected threshold for high recall: {best_threshold:.3f}")
         
-        # # Finale Training auf allen Daten
+        # # Final training on all data
         # final_model = XGBClassifier(
             # n_estimators=1200,
             # max_depth=6,
@@ -261,7 +261,7 @@ async def train_pump_models_optimized():
         
         # joblib.dump(final_model, f"pump_model_{name}_v2.pkl")
         # joblib.dump(best_threshold, f"threshold_{name}_v2.pkl")
-        # logger.info(f"Modell + Threshold gespeichert (v2)")
+        # logger.info(f"Model + threshold saved (v2)")
     
     for name, hours, threshold in horizons:
         logger.info(f"\n=== Training {name} (>= +{threshold}% in {hours}h) ===")
@@ -279,10 +279,10 @@ async def train_pump_models_optimized():
             valid_indices.append(i)
         
         if sum(y) < 30:
-            logger.warning(f"Zu wenige Pump-Events – übersprungen")
+            logger.warning(f"too few pump events – skipped")
             continue
         
-        logger.info(f"Pump-Events: {sum(y)} / Total: {len(y)} ({sum(y)/len(y)*100:.2f}%)")
+        logger.info(f"Pump events: {sum(y)} / Total: {len(y)} ({sum(y)/len(y)*100:.2f}%)")
         
         X = X_base.iloc[valid_indices]
         y = np.array(y)
@@ -293,7 +293,7 @@ async def train_pump_models_optimized():
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         fold_recalls = []
         best_model = None
-        best_threshold = 0.3  # sinnvoller Startwert
+        best_threshold = 0.3  # sensible starting value
         best_recall = 0
         
         for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
@@ -319,12 +319,12 @@ async def train_pump_models_optimized():
             y_prob = model.predict_proba(X_val)[:, 1]
             precision, recall, thresholds = precision_recall_curve(y_val, y_prob)
             
-            # FIX: thresholds hat Länge len(precision)-1
-            # Wir schneiden precision/recall auf die Länge von thresholds
+            # FIX: thresholds has length len(precision)-1
+            # we trim precision/recall to length of thresholds
             precision = precision[:-1]
             recall = recall[:-1]
-            
-            # Recall priorisieren: höchster Recall bei Precision >= 0.15
+
+            # prioritise recall: highest recall at precision >= 0.15
             valid_mask = precision >= 0.15
             if np.any(valid_mask):
                 idx = np.argmax(recall[valid_mask])
@@ -332,7 +332,7 @@ async def train_pump_models_optimized():
                 cand_recall = recall[valid_mask][idx]
                 cand_precision = precision[valid_mask][idx]
             else:
-                # Fallback: maximaler Recall (auch wenn Precision niedrig)
+                # fallback: maximum recall (even if precision low)
                 idx = np.argmax(recall)
                 cand_threshold = thresholds[idx]
                 cand_recall = recall[idx]
@@ -343,11 +343,11 @@ async def train_pump_models_optimized():
             if cand_recall > best_recall:
                 best_recall = cand_recall
                 best_threshold = cand_threshold
-                best_model = model  # wir speichern das beste Modell aus den Folds
+                best_model = model  # we save best model from folds
         
-        logger.info(f"Bester Recall über alle Folds: {best_recall:.3f} @ Threshold {best_threshold:.3f}")
+        logger.info(f"best recall across all folds: {best_recall:.3f} @ threshold {best_threshold:.3f}")
         
-        # Finale Training auf allen Daten mit dem besten Modell-Hyperparams
+        # Final training on all data with the best model hyperparams
         final_model = XGBClassifier(
             n_estimators=1200,
             max_depth=6,
@@ -366,16 +366,16 @@ async def train_pump_models_optimized():
         importance = final_model.get_booster().get_score(importance_type='gain')
         feature_map = {f'f{i}': name for i, name in enumerate(feature_cols)}
         sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:30]
-        logger.info("Top 30 Features (finales Modell):")
+        logger.info("Top 30 Features (final model):")
         for f_idx, score in sorted_imp:
             logger.info(f"  {feature_map.get(f_idx, f_idx)}: {score:.1f}")
         
         joblib.dump(final_model, f"pump_model_{name}_v2.pkl")
         joblib.dump(best_threshold, f"threshold_{name}_v2.pkl")
-        logger.info(f"Modell + optimaler Threshold gespeichert: pump_model_{name}_v2.pkl / threshold_{name}_v2.pkl")
-    
-    
-    logger.info("Alle optimierten Pump-Modelle fertig!")
+        logger.info(f"Model + optimal threshold saved: pump_model_{name}_v2.pkl / threshold_{name}_v2.pkl")
+
+
+    logger.info("All optimised pump models done!")
 
 if __name__ == "__main__":
     asyncio.run(train_pump_models_optimized())

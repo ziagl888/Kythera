@@ -31,34 +31,34 @@ from core.trade_utils import calculate_smart_targets
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_MIS_BOT - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- CONFIG & CHANNELS (Dynamisches Routing) ---
-# Hier trägst du die 4 unterschiedlichen Channel-IDs ein!
+# --- CONFIG & CHANNELS (dynamic routing) ---
+# Enter the 4 different channel IDs here!
 MIS_CHANNELS = {
-    "8H": _kcfg.CH_MIS_8H,  # 👈 Channel für 8h
-    "24H": _kcfg.CH_MIS_24H,  # 👈 Channel für 24h
-    "72H": _kcfg.CH_MIS_72H,  # 👈 Channel für 72h
-    "168H": _kcfg.CH_MIS_168H,  # 👈 Channel für 168h
+    "8H": _kcfg.CH_MIS_8H,  # 👈 channel for 8h
+    "24H": _kcfg.CH_MIS_24H,  # 👈 channel for 24h
+    "72H": _kcfg.CH_MIS_72H,  # 👈 channel for 72h
+    "168H": _kcfg.CH_MIS_168H,  # 👈 channel for 168h
 }
 
 # --- LOAD ML MODELS ---
-# MIS2 (Operator-Entscheide 2026-07-06, docs/MODEL_INTENT.md §1):
-#   * Move-Label-Modelle (±5%/8h, ±10%/24h, ±15%/72h, ±25%/168h) ersetzen die
-#     alten MIS1-Modelle KOMPLETT — MIS1 ist abgeschaltet, kein Legacy-Fallback.
-#   * NUR die Pump-Seite ist deploybar (alle 4 Horizonte mit Out-of-Time-Ertrag);
-#     die Dump-Seite erkennt Dumps zwar gut, verdient aber mit der Short-Geometrie
-#     nichts — sie wird separat überarbeitet (eigener Task).
-#   * Basis-Mix nach Testlage: Close-Labels für 8h/24h/168h, Wick für 72h.
-#   Artefakt = dict(model, features, optimal_threshold, calibrator_isotonic, meta)
-#   aus tools/retrain_from_replay.py --label-mode move.
-# MODEL_GENERATION ist NUR noch der laute Fallback-Tag, falls ein Artefakt keine
-# meta.model_id trägt — der Posting-Tag kommt aus dem Artefakt (Versionierungs-
-# Regel, T-2026-CU-9050-030). Die Dateinamen sind bewusst generationsfreie SLOTS
-# (Operator-Entscheid 2026-07-09): ein MIS3-Rollout überschreibt mis2_model_*.pkl,
-# und der Bot postet allein anhand der neuen meta.model_id als MIS3-72H.
+# MIS2 (operator decisions 2026-07-06, docs/MODEL_INTENT.md §1):
+#   * Move-label models (±5%/8h, ±10%/24h, ±15%/72h, ±25%/168h) replace the
+#     old MIS1 models COMPLETELY — MIS1 is switched off, no legacy fallback.
+#   * ONLY the pump side is deployable (all 4 horizons with out-of-time return);
+#     the dump side detects dumps well, but earns nothing with the short
+#     geometry — it is being reworked separately (own task).
+#   * Base mix per test findings: close labels for 8h/24h/168h, wick for 72h.
+#   Artifact = dict(model, features, optimal_threshold, calibrator_isotonic, meta)
+#   from tools/retrain_from_replay.py --label-mode move.
+# MODEL_GENERATION is now ONLY the loud fallback tag if an artifact carries no
+# meta.model_id — the posting tag comes from the artifact (versioning
+# rule, T-2026-CU-9050-030). The file names are deliberately generation-free SLOTS
+# (operator decision 2026-07-09): a MIS3 rollout overwrites mis2_model_*.pkl,
+# and the bot posts purely based on the new meta.model_id as MIS3-72H.
 MODEL_GENERATION = "MIS2"
 PUMP_MODELS = {
     key: {
-        "artifact_path": f"mis2_model_{key}.pkl",  # Slot-Name, KEINE Generations-Angabe
+        "artifact_path": f"mis2_model_{key}.pkl",  # slot name, NO generation info
         "model": None,
         "threshold": 0.5,
         "features": None,
@@ -69,28 +69,28 @@ PUMP_MODELS = {
     for key in ("8h_pump", "24h_pump", "72h_pump", "168h_pump", "8h_dump", "24h_dump", "72h_dump", "168h_dump")
 }
 
-# MIS2-SHORT-Regeln je Horizont (Operator-Entscheide 2026-07-06 abends +
-# Geometrie-Studie V2, staging_models/mis2_dump_geometry_study_v2.json):
-#   * Entry = LIMIT-Sell "bounce_pct" ÜBER dem Signalkurs — in den Aufwärts-
-#     Zuck hinein verkaufen (der riss vorher die Stops; Fill-Quote 78-88 %).
-#   * TP rechnet ab SIGNALKURS (die Move-Prognose zählt ab Signalzeitpunkt),
-#     SL ab Entry. Ein einzelnes TP — exakt die simulierte Geometrie.
-#   * Hebel: hartes 20x-Posting per Operator-Entscheid (Cross-Margin, kleine
-#     Positionen auf großes Depot) — bewusst KEIN cap_leverage_to_sl, obwohl
-#     SL 12-16 % über der Isolated-Liquidationsdistanz liegt.
-#   * 8H ist laut Studie negativ (−0,24 %/Trade) — Operator will den
-#     Live-Beweis ("evtl stimmen die modelle nicht 100%"), dokumentiert in
+# MIS2 SHORT rules per horizon (operator decisions 2026-07-06 evening +
+# geometry study V2, staging_models/mis2_dump_geometry_study_v2.json):
+#   * Entry = LIMIT sell "bounce_pct" ABOVE the signal price — sell into the
+#     upward jerk (it previously tore out the stops; fill rate 78-88 %).
+#   * TP is calculated from SIGNAL PRICE (the move forecast counts from signal
+#     time), SL from entry. A single TP — exactly the simulated geometry.
+#   * Leverage: hard 20x posting per operator decision (cross margin, small
+#     positions on a large account) — deliberately NO cap_leverage_to_sl, even
+#     though SL sits 12-16 % above the isolated liquidation distance.
+#   * 8H is negative per the study (−0,24 %/Trade) — operator wants the
+#     live proof ("maybe the models aren't 100% right"), documented in
 #     docs/MODEL_INTENT.md §1.
 DUMP_RULES = {
-    "8H": {"bounce_pct": 5.0, "tp_pct": 5.0, "sl_pct": 5.0},  # Studie: −0,24 %/Trade
-    "24H": {"bounce_pct": 5.0, "tp_pct": 10.0, "sl_pct": 16.0},  # Studie: +0,49 %/Trade
-    "72H": {"bounce_pct": 5.0, "tp_pct": 15.0, "sl_pct": 12.0},  # Studie: +0,72 %/Trade
-    "168H": {"bounce_pct": 5.0, "tp_pct": 16.7, "sl_pct": 12.0},  # Studie: +0,27 %/Trade
+    "8H": {"bounce_pct": 5.0, "tp_pct": 5.0, "sl_pct": 5.0},  # study: −0,24 %/trade
+    "24H": {"bounce_pct": 5.0, "tp_pct": 10.0, "sl_pct": 16.0},  # study: +0,49 %/trade
+    "72H": {"bounce_pct": 5.0, "tp_pct": 15.0, "sl_pct": 12.0},  # study: +0,72 %/trade
+    "168H": {"bounce_pct": 5.0, "tp_pct": 16.7, "sl_pct": 12.0},  # study: +0,27 %/trade
 }
 
 
 def load_pump_models():
-    """Lädt die MIS2-Move-Artefakte (kein Legacy-Fallback — MIS1 ist aus)."""
+    """Loads the MIS2 move artifacts (no legacy fallback — MIS1 is off)."""
     loaded_count = 0
     for key, cfg in PUMP_MODELS.items():
         try:
@@ -100,54 +100,54 @@ def load_pump_models():
                 cfg["threshold"] = float(art["optimal_threshold"])
                 cfg["features"] = list(art["features"])
                 cfg["calibrator"] = art.get("calibrator_isotonic")
-                # Posting-Tag aus der Artefakt-Meta (Versionierungs-Regel): ein
-                # MIS3-Retrain im selben Slot muss als MIS3-* posten, sonst
-                # verschmilzt seine Per-Bot-Statistik mit MIS2 und das
-                # Orchestrator-Gating entscheidet über die neue Generation
-                # anhand der Performance der alten (T-2026-CU-9050-030).
+                # Posting tag from the artifact meta (versioning rule): a
+                # MIS3 retrain in the same slot must post as MIS3-*, otherwise
+                # its per-bot statistics merge with MIS2 and the
+                # orchestrator gating decides on the new generation
+                # based on the performance of the old one (T-2026-CU-9050-030).
                 model_id = str((art.get("meta") or {}).get("model_id") or "").strip()
                 if model_id:
                     cfg["generation"] = model_id
                 else:
                     logger.error(
-                        f"⚠️ {cfg['artifact_path']}: meta.model_id fehlt — poste unter Fallback-Tag "
-                        f"{MODEL_GENERATION}. Ein Retrain-Artefakt OHNE model_id taggt seine Trades falsch."
+                        f"⚠️ {cfg['artifact_path']}: meta.model_id missing — posting under fallback tag "
+                        f"{MODEL_GENERATION}. A retrain artifact WITHOUT model_id tags its trades incorrectly."
                     )
                     cfg["generation"] = MODEL_GENERATION
                 cfg["loaded"] = True
                 loaded_count += 1
             else:
-                logger.warning(f"Modell fehlt: {cfg['artifact_path']}")
+                logger.warning(f"Model missing: {cfg['artifact_path']}")
         except Exception as e:
-            logger.error(f"Error loading von {key}: {e}")
+            logger.error(f"Error loading {key}: {e}")
 
     generations = sorted({cfg["generation"] for cfg in PUMP_MODELS.values() if cfg["loaded"]})
     logger.info(
-        f"✅ {loaded_count}/{len(PUMP_MODELS)} Multi-Horizon Modelle ({'/'.join(generations)}) loaded successfully."
+        f"✅ {loaded_count}/{len(PUMP_MODELS)} multi-horizon models ({'/'.join(generations)}) loaded successfully."
     )
     if len(generations) > 1:
-        # Gemischter Rollout (z. B. 72H schon MIS3, Rest noch MIS2). Kein Fehler —
-        # jedes Signal postet unter der Generation SEINES Modells —, aber sichtbar machen.
-        logger.warning(f"Gemischte Modell-Generationen geladen: {generations}")
+        # Mixed rollout (e.g. 72H already MIS3, rest still MIS2). Not an error —
+        # every signal posts under the generation OF ITS OWN model —, but make it visible.
+        logger.warning(f"Mixed model generations loaded: {generations}")
 
-    # FIX: Thresholds explizit loggen, damit Drift zwischen Modell-File und
-    # Threshold-File sofort auffällt.
+    # FIX: log thresholds explicitly so drift between the model file and the
+    # threshold file is immediately noticeable.
     thresh_summary = ", ".join(f"{h}={cfg['threshold']:.2f}" for h, cfg in PUMP_MODELS.items() if cfg["loaded"])
     logger.info(f"{'/'.join(generations) or MODEL_GENERATION} Thresholds: {thresh_summary}")
 
 
-# --- LOAD MIS1 MODELS (Revive, T-2026-KYT-9050-034) ---
-# Operator-Entscheid (Michi): die MIS1-Generation (Audit T-032: MIS1-24H/72H/168H
-# LONG + MIS1-8H SHORT realisierten BESSER als die neue MIS2-Move-Generation)
-# EXAKT wiederherstellen — kein Retrain. Die Artefakte liegen unverändert im Repo-
-# Root: pump_model_{key}_final.pkl (nackte 67-Feature-XGBClassifier) + threshold_
-# {key}_final.pkl. Sie werden mit dem GETEILTEN Builder gefüttert, aber im
-# include_legacy=True-Modus — der reproduziert die 8 LEGACY_ONLY_COLS, die diese
-# Modelle zusätzlich zu den 63 sauberen Features erwarten (verifiziert: 0 missing
-# über alle 8 Modelle). MIS1 läuft PARALLEL zu MIS2 unter eigenen Tags MIS1-* →
-# kollisionsfrei (eigener Active-Trade-Check + Cooldown je Tag). Welche MIS1-Beine
-# live posten, steuert AUSSCHLIESSLICH das shadow_gate-Register (core/shadow_gate.py):
-# die guten Beine sind Default-LIVE, die schwachen dort auf SHADOW geparkt.
+# --- LOAD MIS1 MODELS (revive, T-2026-KYT-9050-034) ---
+# Operator decision (Michi): restore the MIS1 generation (audit T-032: MIS1-24H/72H/168H
+# LONG + MIS1-8H SHORT realised BETTER than the new MIS2 move generation)
+# EXACTLY — no retrain. The artifacts sit unchanged in the repo
+# root: pump_model_{key}_final.pkl (bare 67-feature XGBClassifier) + threshold_
+# {key}_final.pkl. They are fed with the SHARED builder, but in
+# include_legacy=True mode — which reproduces the 8 LEGACY_ONLY_COLS that these
+# models additionally expect on top of the 63 clean features (verified: 0 missing
+# across all 8 models). MIS1 runs PARALLEL to MIS2 under its own tags MIS1-* →
+# collision-free (own active-trade check + cooldown per tag). Which MIS1 legs
+# post live is controlled EXCLUSIVELY by the shadow_gate register (core/shadow_gate.py):
+# the good legs are default LIVE, the weak ones are parked there on SHADOW.
 MIS1_GENERATION = "MIS1"
 MIS1_MODELS = {
     key: {
@@ -164,44 +164,44 @@ MIS1_MODELS = {
 
 
 def load_mis1_models():
-    """Lädt die MIS1-Legacy-Artefakte (nackter XGBClassifier + separates Threshold-
-    pkl) — exakte Restauration des Pfads, der die vom Audit gemessene Live-
-    Erfolgsrate produziert hat (99e9de3^). Der Feature-Vertrag kommt aus
-    feature_names_in_ (67 Features); der Selfcheck prüft die Kompatibilität gegen
-    den include_legacy-Builder hart, bevor der Scan startet."""
+    """Loads the MIS1 legacy artifacts (bare XGBClassifier + separate threshold
+    pkl) — exact restoration of the path that produced the live success rate
+    measured by the audit (99e9de3^). The feature contract comes from
+    feature_names_in_ (67 features); the selfcheck strictly checks compatibility
+    against the include_legacy builder before the scan starts."""
     loaded_count = 0
     for key, cfg in MIS1_MODELS.items():
         try:
             if not os.path.exists(cfg["model_path"]):
-                logger.warning(f"MIS1-Modell fehlt: {cfg['model_path']}")
+                logger.warning(f"MIS1 model missing: {cfg['model_path']}")
                 continue
             cfg["model"] = joblib.load(cfg["model_path"])
             if os.path.exists(cfg["threshold_path"]):
                 cfg["threshold"] = float(joblib.load(cfg["threshold_path"]))
             else:
-                # Kein separates Threshold-File → konservativer Default (wie 99e9de3^).
+                # No separate threshold file → conservative default (as in 99e9de3^).
                 cfg["threshold"] = 0.60
-                logger.warning(f"MIS1-Threshold fehlt ({cfg['threshold_path']}) → Default 0.60")
+                logger.warning(f"MIS1 threshold missing ({cfg['threshold_path']}) → default 0.60")
             cfg["features"] = list(getattr(cfg["model"], "feature_names_in_", []))
             cfg["loaded"] = True
             loaded_count += 1
         except Exception as e:
             logger.error(f"Error loading MIS1 {key}: {e}")
     thresh_summary = ", ".join(f"{h}={cfg['threshold']:.2f}" for h, cfg in MIS1_MODELS.items() if cfg["loaded"])
-    logger.info(f"✅ {loaded_count}/{len(MIS1_MODELS)} MIS1-Modelle (Revive) loaded. Thresholds: {thresh_summary}")
+    logger.info(f"✅ {loaded_count}/{len(MIS1_MODELS)} MIS1 models (revive) loaded. Thresholds: {thresh_summary}")
 
 
 def startup_feature_selfcheck():
-    """P0.12-Muster (wie 18_ai_abr1_bot): Feature-Pipeline auf echten Daten von
-    bis zu 3 Coins rechnen und hart abbrechen, wenn ein kontinuierliches Feature
-    konstant ist oder ein geladenes Modell Features verlangt, die der (bereinigte)
-    Builder nicht mehr liefert — Legacy-67-Feature-Modelle mit den Leakage-
-    Spalten werden dabei entladen statt still mit fillna(0)-Nullen zu scoren."""
+    """P0.12 pattern (like 18_ai_abr1_bot): run the feature pipeline on real data
+    from up to 3 coins and abort hard if a continuous feature is constant, or a
+    loaded model requires features the (cleaned) builder no longer provides —
+    legacy 67-feature models with the leakage columns are unloaded in that case
+    instead of silently scoring with fillna(0) zeros."""
     try:
         with open('coins.json') as f:
             coins = json.load(f)
     except Exception as e:
-        logger.critical(f"Selbsttest: coins.json nicht ladbar: {e}")
+        logger.critical(f"Self-test: coins.json not loadable: {e}")
         exit(1)
 
     conn = get_db_connection()
@@ -211,16 +211,16 @@ def startup_feature_selfcheck():
             df = _fetch_mis_frame(conn, symbol)
             if df is None or len(df) < 30:
                 continue
-            # include_legacy=True: SUPERSET (71 Spalten) — enthält die 63 sauberen
-            # MIS2-Features UND die 8 LEGACY_ONLY_COLS, die die MIS1-Revive-Modelle
-            # zusätzlich brauchen (T-2026-KYT-9050-034). Für MIS2 additiv-neutral
-            # (die 8 Extra-Spalten werden nie selektiert); die Feature-Alive-
-            # Assertion prüft weiterhin die 63 sauberen FEATURE_COLS.
+            # include_legacy=True: SUPERSET (71 columns) — contains the 63 clean
+            # MIS2 features AND the 8 LEGACY_ONLY_COLS that the MIS1 revive models
+            # additionally need (T-2026-KYT-9050-034). Additively neutral for MIS2
+            # (the 8 extra columns are never selected); the feature-alive
+            # assertion still checks the 63 clean FEATURE_COLS.
             frames.append(add_advanced_features(df, include_legacy=True))
             if len(frames) >= 3:
                 break
         if not frames:
-            logger.critical("❌ Feature-Selbsttest: keine verwertbaren Daten gefunden — Abbruch.")
+            logger.critical("❌ Feature self-test: no usable data found — aborting.")
             exit(1)
         sample = pd.concat(frames, ignore_index=True)
         try:
@@ -230,9 +230,7 @@ def startup_feature_selfcheck():
             exit(1)
         constant_flags = [c for c in BINARY_FLAG_FEATURES if sample[c].nunique(dropna=False) <= 1]
         if constant_flags:
-            logger.warning(
-                f"Selbsttest: Binär-Flags konstant über die Stichprobe (kann legitim sein): {constant_flags}"
-            )
+            logger.warning(f"Self-test: binary flags constant across the sample (can be legitimate): {constant_flags}")
 
         for key, cfg in PUMP_MODELS.items():
             if not cfg["loaded"]:
@@ -240,26 +238,26 @@ def startup_feature_selfcheck():
             missing = [c for c in (cfg["features"] or []) if c not in sample.columns]
             if missing:
                 logger.critical(
-                    f"❌ {key}: Modell verlangt Features, die der Builder nicht liefert "
-                    f"(vermutlich Legacy-Leakage-Spalten, Report 13): {missing[:6]}… — Modell entladen."
+                    f"❌ {key}: model requires features the builder does not provide "
+                    f"(likely legacy leakage columns, report 13): {missing[:6]}… — unloading model."
                 )
                 cfg["loaded"] = False
                 cfg["model"] = None
         if not any(cfg["loaded"] for cfg in PUMP_MODELS.values()):
-            logger.critical("❌ Kein kompatibles MIS2-Modell übrig — Abbruch.")
+            logger.critical("❌ No compatible MIS2 model left — aborting.")
             exit(1)
 
-        # MIS1-Revive-Modelle (T-2026-KYT-9050-034) gegen den include_legacy-Superset
-        # prüfen. Additiv: schlägt ein MIS1-Modell fehl, wird NUR es entladen — der
-        # Bot läuft mit MIS2 (und den übrigen MIS1-Beinen) weiter, KEIN harter Abbruch.
+        # Check MIS1 revive models (T-2026-KYT-9050-034) against the include_legacy
+        # superset. Additive: if a MIS1 model fails, ONLY it is unloaded — the
+        # bot keeps running with MIS2 (and the remaining MIS1 legs), NO hard abort.
         for key, cfg in MIS1_MODELS.items():
             if not cfg["loaded"]:
                 continue
             missing = [c for c in (cfg["features"] or []) if c not in sample.columns]
             if missing:
                 logger.error(
-                    f"❌ MIS1 {key}: Modell verlangt Features, die auch der include_legacy-"
-                    f"Builder nicht liefert: {missing[:6]}… — MIS1-Modell entladen (MIS2 unberührt)."
+                    f"❌ MIS1 {key}: model requires features that even the include_legacy "
+                    f"builder does not provide: {missing[:6]}… — unloading MIS1 model (MIS2 unaffected)."
                 )
                 cfg["loaded"] = False
                 cfg["model"] = None
@@ -267,8 +265,8 @@ def startup_feature_selfcheck():
         n_ok = sum(1 for cfg in PUMP_MODELS.values() if cfg["loaded"])
         n_ok_mis1 = sum(1 for cfg in MIS1_MODELS.values() if cfg["loaded"])
         logger.info(
-            f"✅ Feature-Selbsttest bestanden ({len(sample)} Zeilen, {len(frames)} Coins, "
-            f"{n_ok} MIS2 + {n_ok_mis1} MIS1 Modelle kompatibel)."
+            f"✅ Feature self-test passed ({len(sample)} rows, {len(frames)} coins, "
+            f"{n_ok} MIS2 + {n_ok_mis1} MIS1 models compatible)."
         )
     finally:
         conn.close()
@@ -278,15 +276,15 @@ def startup_feature_selfcheck():
 
 
 def _fetch_mis_frame(conn, symbol):
-    """Letzte 100 GESCHLOSSENE 1h-Kerzen + Indikator-Join — Spaltenkatalog kommt
-    aus core.mis_features (eine Quelle für Bot, Trainer und Simulator).
+    """Last 100 CLOSED 1h candles + indicator join — the column catalogue comes
+    from core.mis_features (one source for bot, trainer and simulator).
 
-    R1 (Block 4): liest geschlossene Kerzen via core.candles (ASC, forming bar
-    dropped — kein manuelles reverse mehr). Die API liefert die ROHEN
-    Indikatornamen; MIS_RENAME_MAP reproduziert danach die drei tsi/macd-Aliase,
-    damit der Frame byte-gleich zur geteilten MIS_INDICATOR_COLUMNS-Liste (und
-    damit zu tools/walkforward_sim.py) bleibt und add_advanced_features seine
-    REQUIRED_INPUT_COLS findet (harte Regel 7, EINE Quelle in core.mis_features)."""
+    R1 (block 4): reads closed candles via core.candles (ASC, forming bar
+    dropped — no manual reverse anymore). The API delivers the RAW
+    indicator names; MIS_RENAME_MAP then reproduces the three tsi/macd aliases
+    so the frame stays byte-identical to the shared MIS_INDICATOR_COLUMNS list (and
+    thus to tools/walkforward_sim.py) and add_advanced_features finds its
+    REQUIRED_INPUT_COLS (hard rule 7, ONE source in core.mis_features)."""
     df = read_candles_with_indicators(
         conn,
         symbol,
@@ -339,37 +337,37 @@ def _score_models_batched(collected_frames, models):
             X_all = pd.concat([f[feats] for f in collected_frames], axis=0)
             probs_by_model[key] = np.asarray(cfg["model"].predict_proba(X_all)[:, 1], dtype=float)
         except Exception as e:
-            logger.error(f"MIS batch predict {key} fehlgeschlagen — per-Coin-Fallback: {e}")
+            logger.error(f"MIS batch predict {key} failed — per-coin fallback: {e}")
             arr = np.full(n, np.nan, dtype=float)
             for i, f in enumerate(collected_frames):
                 try:
                     arr[i] = float(cfg["model"].predict_proba(f[feats])[0, 1])
                 except Exception as e2:
-                    logger.error(f"{key} row {i}: predict fehlgeschlagen: {e2}")
+                    logger.error(f"{key} row {i}: predict failed: {e2}")
             probs_by_model[key] = arr
     return probs_by_model
 
 
 def _mis_geometry(conn, generation, symbol, direction, horizon, current_price):
-    """Trade-Geometrie je Generation → (entry1, entry2, sl, targets, entry_filled, expiry_hours).
+    """Trade geometry per generation → (entry1, entry2, sl, targets, entry_filled, expiry_hours).
 
-    * MIS1-Revive (T-2026-KYT-9050-034): EXAKT der alte Pfad (99e9de3^) —
-      ``calculate_smart_targets`` für BEIDE Richtungen, immediate CMP-Entry
-      (entry_filled=True, kein expiry). Das ist die Geometrie, die die vom Audit
-      T-032 gemessene MIS1-Erfolgsrate produziert hat.
-    * MIS2/MIS3: LONG = Smart-Targets, SHORT = studien-validierte DUMP_RULES-
-      Bracket-Geometrie (Limit-Entry, entry_filled=False, expiry=Horizont) —
-      unverändert.
+    * MIS1 revive (T-2026-KYT-9050-034): EXACTLY the old path (99e9de3^) —
+      ``calculate_smart_targets`` for BOTH directions, immediate CMP entry
+      (entry_filled=True, no expiry). This is the geometry that produced the
+      MIS1 success rate measured by audit T-032.
+    * MIS2/MIS3: LONG = smart targets, SHORT = study-validated DUMP_RULES
+      bracket geometry (limit entry, entry_filled=False, expiry=horizon) —
+      unchanged.
     """
     is_long = direction == "LONG"
     if generation == MIS1_GENERATION or is_long:
         s = calculate_smart_targets(conn, symbol, direction, current_price)
         return s["entry1"], s["entry2"], s["sl"], s["targets"], True, None
     rules = DUMP_RULES[horizon]
-    entry1 = current_price * (1 + rules["bounce_pct"] / 100.0)  # Limit-Sell in den Bounce
-    entry2 = entry1  # Einzel-Entry — exakt die simulierte Geometrie
+    entry1 = current_price * (1 + rules["bounce_pct"] / 100.0)  # limit sell into the bounce
+    entry2 = entry1  # single entry — exactly the simulated geometry
     sl = entry1 * (1 + rules["sl_pct"] / 100.0)
-    targets = [current_price * (1 - rules["tp_pct"] / 100.0)]  # TP ab Signalkurs
+    targets = [current_price * (1 - rules["tp_pct"] / 100.0)]  # TP from signal price
     return entry1, entry2, sl, targets, False, int(horizon.replace("H", ""))
 
 
@@ -392,19 +390,19 @@ def _post_mis_live_leg(
     entry_filled,
     expiry_hours,
 ):
-    """Geteilter LIVE-Post-Body für MIS-Signale (MIS2 + MIS1-Revive, T-034).
+    """Shared LIVE post body for MIS signals (MIS2 + MIS1 revive, T-034).
 
-    Baut Cornix + HTML-Visualisierung (OHNE eingebetteten Cornix-Block — Regel 4,
-    Doppel-Trade-Fix 2026-07-06), schreibt telegram_outbox + ai_signals +
-    ml_predictions_master und setzt den Cooldown (update_cooldown committet die EINE
-    Transaktion). ``entry_filled``/``expiry_hours`` tragen die Entry-Semantik der
-    jeweiligen Geometrie (MIS2-SHORT = Limit; MIS1 + MIS2-LONG = CMP sofort)."""
+    Builds Cornix + HTML visualisation (WITHOUT an embedded Cornix block — rule 4,
+    double-trade fix 2026-07-06), writes telegram_outbox + ai_signals +
+    ml_predictions_master and sets the cooldown (update_cooldown commits the ONE
+    transaction). ``entry_filled``/``expiry_hours`` carry the entry semantics of the
+    respective geometry (MIS2 SHORT = limit; MIS1 + MIS2 LONG = CMP immediately)."""
     is_long = best_direction == "LONG"
     lev = get_max_leverage(symbol, 20)
     emoji = "🚀 PUMP SIGNAL (MIS)" if is_long else "💥 DUMP SIGNAL (MIS)"
     strength = "STRONG" if best_prob >= best_threshold + 0.1 else "MODERATE"
 
-    # RRR (Risk Reward Ratio) Berechnung
+    # RRR (risk reward ratio) calculation
     avg_entry = (entry1 + entry2) / 2
     risk_pct = abs((sl - avg_entry) / avg_entry)
     reward_pct = abs((targets[0] - avg_entry) / avg_entry) if targets else 0.01
@@ -416,7 +414,7 @@ def _post_mis_live_leg(
     # phantom TPs the subscriber never saw.
     n_show = 5
 
-    # Cornix Text
+    # Cornix text
     # T-2026-KYT-9050-042: entry2 is still computed and stored, but no longer
     # published — the fleet trades single-entry (arm B). See core/signal_post.py.
     cornix_msg = f"""📈 Signal for {symbol} 📈
@@ -451,11 +449,11 @@ def _post_mis_live_leg(
         )
 
     sl_loss = risk_pct * 100 * int(lev.replace('x', ''))
-    # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne eingebetteten
-    # Cornix-Block — Cornix parste sonst beide Nachrichten (Regel 4).
+    # FIX double post (2026-07-06, fleet sweep): caption without an embedded
+    # Cornix block — Cornix would otherwise parse both messages (rule 4).
     html_caption += f"""<b>└─ Stop Loss:</b> <b>${sl:,.8f}</b> → <b>-{sl_loss:.1f}%</b></pre>"""
 
-    # Target Channel Routing
+    # Target channel routing
     target_channel = MIS_CHANNELS.get(best_horizon, _kcfg.CH_MIS_8H)  # Fallback
     chart_buf = generate_minichart_image(symbol, minutes=240)
 
@@ -475,9 +473,9 @@ def _post_mis_live_leg(
                 (target_channel, html_caption),
             )
 
-        # entry_filled/expiry_hours kommen aus der Geometrie: MIS2-SHORT = Limit-Entry
-        # (+5 % über Markt, entry_filled=FALSE bis der Monitor den Fill sieht,
-        # expiry_hours=Horizont); MIS1 + LONG = CMP-Entry (sofort gefüllt, kein Verfall).
+        # entry_filled/expiry_hours come from the geometry: MIS2 SHORT = limit entry
+        # (+5 % above market, entry_filled=FALSE until the monitor sees the fill,
+        # expiry_hours=horizon); MIS1 + LONG = CMP entry (filled immediately, no expiry).
         cur.execute(
             """
             INSERT INTO ai_signals (symbol, price, model, direction, confidence, entry1, entry2, sl, targets, entry_filled, expiry_hours)
@@ -506,21 +504,21 @@ def _post_mis_live_leg(
             (module_tag, now, symbol, best_direction, float(current_price), float(best_conf)),
         )
 
-    # Cooldown setzen damit der gleiche Coin/Direction nicht sofort wieder feuert.
-    # P2.32: update_cooldown committed (default commit=True) und schließt damit die
-    # EINE Transaktion aus Outbox-Posts + ai_signals + master-Log atomar ab.
+    # Set cooldown so the same coin/direction does not fire again immediately.
+    # P2.32: update_cooldown commits (default commit=True) and thereby closes the
+    # ONE transaction of outbox posts + ai_signals + master log atomically.
     update_cooldown(conn, module_tag, symbol, best_direction)
 
 
 def _process_mis_candidates(conn, idx, symbol, current_price, now, models, probs, legacy_generation):
-    """Per-Coin-Kandidatenwahl + Emission für EINE Generation (MIS2 oder MIS1-Revive).
+    """Per-coin candidate selection + emission for ONE generation (MIS2 or MIS1 revive).
 
-    Baut aus den gebatchten Probabilities (``probs``) die Kandidaten je geladenem
-    Modell, rankt nach Abstand zur modell-eigenen Schwelle (P2.33), prüft den
-    Active-Trade-Check + Cooldown, holt die Geometrie generations-abhängig
-    (:func:`_mis_geometry`) und routet über das shadow_gate-Register
-    (:func:`route_legacy_leg`). ``legacy_generation`` ist die Konstanten-Generation
-    für den Active-Trade-Alt-Tag (MIS2→MIS3-Rename-Schutz; für MIS1 ein No-op)."""
+    Builds the candidates per loaded model from the batched probabilities
+    (``probs``), ranks by distance to the model's OWN threshold (P2.33), checks
+    the active-trade check + cooldown, fetches the geometry generation-dependent
+    (:func:`_mis_geometry`) and routes via the shadow_gate register
+    (:func:`route_legacy_leg`). ``legacy_generation`` is the constant generation
+    for the active-trade legacy tag (MIS2→MIS3 rename protection; a no-op for MIS1)."""
     candidates = []
     for horizon, cfg in models.items():
         if not cfg["loaded"]:
@@ -529,18 +527,18 @@ def _process_mis_candidates(conn, idx, symbol, current_price, now, models, probs
         if arr is None:
             continue
         prob = arr[idx]
-        # NaN = Inferenz dieses (Coin, Modell) fehlgeschlagen (Batch-Fallback);
-        # exakt wie das alte per-Coin-try/except diese eine Prediction fallen ließ.
+        # NaN = inference for this (coin, model) failed (batch fallback);
+        # exactly as the old per-coin try/except dropped this one prediction.
         if not np.isfinite(prob):
             continue
         prob = float(prob)
         if prob >= 0.25:
             direction = "LONG" if "pump" in horizon.lower() else "SHORT"
             clean_horizon = horizon.upper().replace("_PUMP", "").replace("_DUMP", "")
-            # Kalibrierte Confidence (Isotonic aus dem Retrain-Artefakt) für Anzeige/
-            # Logging; das GATING läuft weiter über die rohe Probability, denn der
-            # Threshold wurde auf rohen Val-Probs gewählt. MIS1-Modelle tragen keinen
-            # Kalibrator (nackter XGBClassifier) → conf = rohe Probability.
+            # Calibrated confidence (isotonic from the retrain artifact) for display/
+            # logging; GATING still runs on the raw probability, because the
+            # threshold was chosen on raw val probs. MIS1 models carry no
+            # calibrator (bare XGBClassifier) → conf = raw probability.
             if cfg.get("calibrator") is not None:
                 conf = float(np.clip(cfg["calibrator"].predict([prob])[0], 0.0, 1.0))
             else:
@@ -550,17 +548,17 @@ def _process_mis_candidates(conn, idx, symbol, current_price, now, models, probs
     if not candidates:
         return
 
-    # FIX P2.33: nach Abstand zur MODELL-EIGENEN Schwelle ranken, nicht nach roher
-    # Probability — die 8 Modelle sind unterschiedlich kalibriert.
+    # FIX P2.33: rank by distance to the MODEL'S OWN threshold, not by raw
+    # probability — the 8 models are calibrated differently.
     candidates.sort(reverse=True, key=lambda x: x[0] - x[3])
     best_prob, best_horizon, best_direction, best_threshold, best_conf, best_generation = candidates[0]
-    # Generation kommt aus der Artefakt-Meta des GEWINNER-Modells (T-2026-CU-9050-030);
-    # für MIS1-Revive ist sie die Konstante "MIS1".
+    # Generation comes from the artifact meta of the WINNING model (T-2026-CU-9050-030);
+    # for MIS1 revive it is the constant "MIS1".
     module_tag = f"{best_generation}-{best_horizon}"
 
-    # 1. Aktiver Trade Check — läuft über den Tag. legacy_tag fängt den MIS2→MIS3-
-    #    Rename (offene Alt-Position blockt weiter); für MIS1 ist legacy_tag ==
-    #    module_tag → das IN ist ein No-op.
+    # 1. Active trade check — runs via the tag. legacy_tag catches the MIS2→MIS3
+    #    rename (an open old position keeps blocking); for MIS1 legacy_tag ==
+    #    module_tag → the IN is a no-op.
     legacy_tag = f"{legacy_generation}-{best_horizon}"
     with conn.cursor() as cur:
         cur.execute(
@@ -568,13 +566,13 @@ def _process_mis_candidates(conn, idx, symbol, current_price, now, models, probs
             (symbol, best_direction, module_tag, legacy_tag),
         )
         if cur.fetchone():
-            return  # Trade läuft live im AI Monitor
+            return  # trade is running live in the AI monitor
 
-    # --- LOGIK ANWENDEN ---
+    # --- APPLY LOGIC ---
     if best_prob < 0.25:
         return
     if best_prob < best_threshold:
-        # Shadow Mode (Sub-Threshold-Prediction protokollieren, kein Trade).
+        # Shadow mode (log sub-threshold prediction, no trade).
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -591,28 +589,28 @@ def _process_mis_candidates(conn, idx, symbol, current_price, now, models, probs
                 """,
                     (module_tag, now, symbol, best_direction, float(current_price), float(best_conf)),
                 )
-        conn.commit()  # P2.32: Shadow-Insert explizit committen (autocommit ist aus)
+        conn.commit()  # P2.32: explicitly commit the shadow insert (autocommit is off)
         return
 
-    # best_prob >= best_threshold → Trade-Kandidat.
-    # 💥 Hard Cooldown Check (Horizont-Sperre je Modell). True = Cooldown aktiv → skip.
+    # best_prob >= best_threshold → trade candidate.
+    # 💥 Hard cooldown check (horizon lock per model). True = cooldown active → skip.
     cd_hours = int(best_horizon.replace("H", ""))
     if check_cooldown(conn, module_tag, symbol, best_direction, cd_hours):
         return
 
     logger.info(
-        f"🚀 {best_generation} Trade gefunden: {symbol} {best_direction} | {module_tag} "
-        f"(raw {best_prob:.3f} / kalibriert {best_conf:.1%})"
+        f"🚀 {best_generation} trade found: {symbol} {best_direction} | {module_tag} "
+        f"(raw {best_prob:.3f} / calibrated {best_conf:.1%})"
     )
 
     entry1, entry2, sl, targets, entry_filled, expiry_hours = _mis_geometry(
         conn, best_generation, symbol, best_direction, best_horizon, current_price
     )
 
-    # Fleet-Lifecycle-Gate (T-2026-KYT-9050-033/034). Default LIVE ⇒ keine
-    # Verhaltensänderung. Das shadow_gate-Register steuert, welche (tag, direction)-
-    # Beine live posten (Cornix) bzw. als überwachter Shadow-Trade laufen — für MIS2
-    # UND die MIS1-Revive-Beine. Rein additiv am Post-Zweig (Regel 4).
+    # Fleet lifecycle gate (T-2026-KYT-9050-033/034). Default LIVE ⇒ no
+    # behaviour change. The shadow_gate register controls which (tag, direction)
+    # legs post live (Cornix) vs. run as a monitored shadow trade — for MIS2
+    # AND the MIS1 revive legs. Purely additive on the post branch (rule 4).
     _route = route_legacy_leg(
         conn, module_tag, best_direction, symbol, float(best_conf), entry1, entry2, sl, targets, n_show=5
     )
@@ -642,11 +640,10 @@ def _process_mis_candidates(conn, idx, symbol, current_price, now, models, probs
 
 
 def check_mis_models():
-    # FIX P2.32: kein autocommit mehr — Outbox-Post, ai_signals-Insert und
-    # master-Log gehören pro Signal in EINE Transaktion (Commit übernimmt
-    # update_cooldown bzw. der explizite Commit im Shadow-Pfad). Vorher
-    # konnte ein Crash mittendrin einen gePOSTeten Trade ohne Tracking
-    # hinterlassen.
+    # FIX P2.32: no more autocommit — the outbox post, ai_signals insert and
+    # master log belong in ONE transaction per signal (the commit is handled by
+    # update_cooldown or the explicit commit in the shadow path). Before this,
+    # a crash mid-way could leave a POSTED trade without tracking.
     conn = get_db_connection()
 
     try:
@@ -654,23 +651,23 @@ def check_mis_models():
             coins = json.load(f)
     except Exception as e:
         logger.error(f"Could not load coins.json: {e}")
-        conn.close()  # Pool-Slot freigeben (Review Batch 4)
+        conn.close()  # release pool slot (review batch 4)
         return
 
     now = datetime.datetime.now(datetime.timezone.utc)
-    logger.info(f"🔍 Starting MIS1 Model Check für {len(coins)} Coins...")
+    logger.info(f"🔍 Starting MIS1 Model Check for {len(coins)} coins...")
 
-    # FIX: Einmalig VOR der Coin-Schleife prüfen ob überhaupt ein Modell geladen ist.
-    # Vorher stand der Check in der Schleife mit `return` → der ganze Scan brach
-    # ab sobald ein einziger Coin kein Modell fand.
-    # T-2026-KYT-9050-034: Scan nur abbrechen, wenn WEDER MIS2 NOCH MIS1 ein Modell
-    # geladen hat — MIS1 ist jetzt eine First-Class-Generation (Revive), die auch
-    # dann laufen soll, wenn (hypothetisch) die MIS2-Slots leer wären.
+    # FIX: check ONCE before the coin loop whether any model is loaded at all.
+    # Before, the check was inside the loop with `return` → the whole scan
+    # aborted as soon as a single coin found no model.
+    # T-2026-KYT-9050-034: only abort the scan if NEITHER MIS2 NOR MIS1 has a model
+    # loaded — MIS1 is now a first-class generation (revive) that should also
+    # run if (hypothetically) the MIS2 slots were empty.
     if not any(cfg["loaded"] for cfg in PUMP_MODELS.values()) and not any(
         cfg["loaded"] for cfg in MIS1_MODELS.values()
     ):
-        logger.error("Kein MIS-Modell geladen (weder MIS2 noch MIS1). Scan aborted.")
-        conn.close()  # Pool-Slot freigeben (Review Batch 4)
+        logger.error("No MIS model loaded (neither MIS2 nor MIS1). Scan aborted.")
+        conn.close()  # release pool slot (review batch 4)
         return
 
     # R1: live entry price via batch ticker (1 call/cycle), per-coin HTTP→DB fallback.
@@ -689,11 +686,11 @@ def check_mis_models():
             if df is None:
                 continue
 
-            # include_legacy=True (T-2026-KYT-9050-034): SUPERSET-Frame (71 Spalten),
-            # der BEIDE Generationen bedient — MIS2 selektiert seine 63 sauberen
-            # Features namensbasiert (additiv-neutral, die 8 Extra-Spalten werden nie
-            # gewählt), die MIS1-Revive-Modelle ihre 67 (63 sauber + 8 LEGACY_ONLY_COLS).
-            # EIN Feature-Build pro Coin für beide Generationen — kein doppelter DB-Read.
+            # include_legacy=True (T-2026-KYT-9050-034): SUPERSET frame (71 columns)
+            # that serves BOTH generations — MIS2 selects its 63 clean
+            # features by name (additively neutral, the 8 extra columns are never
+            # chosen), the MIS1 revive models select their 67 (63 clean + 8 LEGACY_ONLY_COLS).
+            # ONE feature build per coin for both generations — no duplicate DB read.
             df_features = add_advanced_features(df, include_legacy=True)
             # FIX P1.17 + R1: model features from the last CLOSED candle. The frame now
             # holds only closed candles (include_forming=False), so that is iloc[-1]
@@ -715,7 +712,7 @@ def check_mis_models():
             try:
                 conn.rollback()
             except Exception:
-                logger.error("MIS1: rollback fehlgeschlagen (tote Connection) — Scan-Abbruch.")
+                logger.error("MIS1: rollback failed (dead connection) — aborting scan.")
                 conn_dead = True
         if conn_dead:
             break
@@ -734,26 +731,26 @@ def check_mis_models():
     loaded_models = {h: cfg for h, cfg in PUMP_MODELS.items() if cfg["loaded"]}
     probs_by_model = _score_models_batched(frames_for_score, loaded_models)
 
-    # MIS1-Revive (T-2026-KYT-9050-034): dieselbe gebatchte Inferenz über die MIS1-
-    # Modelle. Die Feature-Auswahl in _score_models_batched ist namensbasiert
-    # (cfg["features"] = 67 MIS1-Features), der Superset-Frame liefert sie alle.
+    # MIS1 revive (T-2026-KYT-9050-034): the same batched inference over the MIS1
+    # models. The feature selection in _score_models_batched is name-based
+    # (cfg["features"] = 67 MIS1 features), the superset frame delivers all of them.
     loaded_mis1 = {h: cfg for h, cfg in MIS1_MODELS.items() if cfg["loaded"]}
     probs_by_mis1 = _score_models_batched(frames_for_score, loaded_mis1) if loaded_mis1 else {}
 
     # === PHASE C: per-coin candidate build + posting (identical logic, per-coin txn) ===
     for idx, (symbol, _df_current, current_price) in enumerate(collected):
         try:
-            # MIS2/MIS3 (bestehende Generation): unveränderte Kandidatenwahl + Emit,
-            # jetzt über den geteilten Prozessor. legacy_generation=MODEL_GENERATION
-            # fängt den MIS2→MIS3-Rename im Active-Trade-Check.
+            # MIS2/MIS3 (existing generation): unchanged candidate selection + emit,
+            # now via the shared processor. legacy_generation=MODEL_GENERATION
+            # catches the MIS2→MIS3 rename in the active-trade check.
             _process_mis_candidates(
                 conn, idx, symbol, current_price, now, PUMP_MODELS, probs_by_model, MODEL_GENERATION
             )
-            # MIS1-Revive (T-2026-KYT-9050-034): parallele Generation unter eigenen
-            # Tags MIS1-*, EXAKT dieselbe Verarbeitung — nur MIS1-Modelle + MIS1-
-            # Geometrie (calculate_smart_targets beide Richtungen, s. _mis_geometry).
-            # Kollisionsfrei: eigener Active-Trade-Check + Cooldown je Tag; das
-            # shadow_gate-Register steuert, welche MIS1-Beine live posten.
+            # MIS1 revive (T-2026-KYT-9050-034): parallel generation under its own
+            # tags MIS1-*, EXACTLY the same processing — only MIS1 models + MIS1
+            # geometry (calculate_smart_targets both directions, see _mis_geometry).
+            # Collision-free: own active-trade check + cooldown per tag; the
+            # shadow_gate register controls which MIS1 legs post live.
             if loaded_mis1:
                 _process_mis_candidates(
                     conn, idx, symbol, current_price, now, MIS1_MODELS, probs_by_mis1, MIS1_GENERATION
@@ -762,19 +759,19 @@ def check_mis_models():
         except Exception as e:
             logger.error(f"Error for {symbol} in MIS check: {e}")
         finally:
-            # P2.32 + Review Batch 4: Transaktion pro Coin IMMER schließen.
-            # (a) Eine aborted Transaktion würde sonst alle folgenden Coins
-            #     vergiften ("current transaction is aborted", vgl. P1.23).
-            # (b) Eine offene Read-Transaktion über den ganzen 538-Coin-Scan
-            #     friert NOW() (= transaction_timestamp) auf den Scan-Start ein
-            #     → telegram_outbox.created_at rückdatiert (Orchestrator-
-            #     Staleness-Filter verwirft die Signale still) und Cooldowns
-            #     werden um die Scan-Dauer verkürzt.
-            # Nach einem Commit-Pfad ist der rollback ein No-op.
+            # P2.32 + review batch 4: ALWAYS close the transaction per coin.
+            # (a) An aborted transaction would otherwise poison all following coins
+            #     ("current transaction is aborted", cf. P1.23).
+            # (b) An open read transaction across the whole 538-coin scan
+            #     freezes NOW() (= transaction_timestamp) at the scan start
+            #     → telegram_outbox.created_at is backdated (the orchestrator
+            #     staleness filter silently discards the signals) and cooldowns
+            #     get shortened by the scan duration.
+            # After a commit path, the rollback is a no-op.
             try:
                 conn.rollback()
             except Exception:
-                logger.error("MIS1: rollback fehlgeschlagen (tote Connection) — Scan-Abbruch.")
+                logger.error("MIS1: rollback failed (dead connection) — aborting scan.")
                 conn_dead = True
         if conn_dead:
             break
@@ -785,9 +782,9 @@ def check_mis_models():
 
 
 def main():
-    logger.info("=== 🧠 AI MIS BOT (Multi-Horizon) GESTARTET ===")
+    logger.info("=== 🧠 AI MIS BOT (Multi-Horizon) STARTED ===")
 
-    # Tabellen Setup für Cooldown
+    # Table setup for cooldown
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -803,10 +800,10 @@ def main():
     conn.close()
 
     load_pump_models()
-    load_mis1_models()  # MIS1-Revive (T-2026-KYT-9050-034): Legacy-Artefakte parallel laden
-    # P0.12-Muster: Feature-Pipeline + Modell-Kompatibilität hart prüfen,
-    # BEVOR der Scan-Loop startet (inkompatible Legacy-Modelle werden entladen).
-    # Prüft beide Generationen gegen den include_legacy-Superset.
+    load_mis1_models()  # MIS1 revive (T-2026-KYT-9050-034): load legacy artifacts in parallel
+    # P0.12 pattern: strictly check feature pipeline + model compatibility,
+    # BEFORE the scan loop starts (incompatible legacy models are unloaded).
+    # Checks both generations against the include_legacy superset.
     startup_feature_selfcheck()
 
     while True:
@@ -823,4 +820,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

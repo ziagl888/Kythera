@@ -1,24 +1,24 @@
 # backtest/test_fleet_definition.py
 """
-Single-Source-Regression für die Fleet-Prozessliste (T-2026-CU-9050-091, R2(a)).
+Single-source regression for the fleet process list (T-2026-CU-9050-091, R2(a)).
 
-Vor der Zentralisierung existierte die Prozessliste doppelt und driftete:
-``main_watchdog.PROCESSES_TO_RUN`` (autoritativ, mit ``start_delay``, volle Fleet)
-vs. ``dashboard.PROCESSES`` (mit ``group``, aber ohne die Bots 26–34). Beide
-konsumieren jetzt ``core.fleet.FLEET``.
+Before the centralization the process list existed twice and drifted:
+``main_watchdog.PROCESSES_TO_RUN`` (authoritative, with ``start_delay``, full fleet)
+vs. ``dashboard.PROCESSES`` (with ``group``, but without bots 26-34). Both now
+consume ``core.fleet.FLEET``.
 
-Diese Tests pinnen:
-  * Watchdog-Liste == Dashboard-Liste == fleet.FLEET (auf dem Pre-Fix-Stand
-    fielen sie auseinander → dieser Test wäre dort rot).
-  * die watchdog-relevante Projektion (name/script/start_delay/restart_interval)
-    ist Byte-für-Byte die alte autoritative Liste → keine Verhaltensänderung an
-    Start-Reihenfolge oder Delays.
-  * jede ``group`` liegt in der vom Dashboard-CSS/-Filter gerenderten Menge, damit
-    die neu gelisteten Bots kein ungestyltes Badge / keine neue Filterkategorie
-    erzeugen.
+These tests pin down:
+  * watchdog list == dashboard list == fleet.FLEET (on the pre-fix state
+    they diverged → this test would be red there).
+  * the watchdog-relevant projection (name/script/start_delay/restart_interval)
+    is byte-for-byte the old authoritative list → no behaviour change to
+    start order or delays.
+  * every ``group`` is in the set rendered by the dashboard CSS/filter, so
+    the newly listed bots don't produce an unstyled badge / a new filter
+    category.
 
-DB-frei: Watchdog und Dashboard werden über importlib mit gemockten Schwer-
-Abhängigkeiten geladen (kein DB-, Flask- oder psutil-Kontakt).
+DB-free: watchdog and dashboard are loaded via importlib with mocked heavy
+dependencies (no DB, Flask or psutil contact).
 
 Run with: pytest backtest/test_fleet_definition.py -v
 """
@@ -35,14 +35,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("DB_PASSWORD", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
 
-# C-Extension-Pakete VOR jedem mock.patch.dict(sys.modules) importieren: sonst
-# kann ein Import innerhalb des Patch-Blocks numpy/pandas erstmalig in sys.modules
-# eintragen, und der patch.dict-Teardown reißt die halb-initialisierte C-Extension
-# wieder heraus (numpy-Teardown-Bug, MEMORY: patch-dict-sys-modules-numpy-teardown).
-# Hier importiert zwar keiner der Loader pandas direkt, aber der Pre-Seed hält den
-# kombinierten Suite-Lauf robust.
+# Import C-extension packages BEFORE every mock.patch.dict(sys.modules): otherwise
+# an import inside the patch block could register numpy/pandas in sys.modules for
+# the first time, and the patch.dict teardown then rips the half-initialized C
+# extension back out (numpy teardown bug, MEMORY: patch-dict-sys-modules-numpy-teardown).
+# None of the loaders here import pandas directly, but the pre-seed keeps the
+# combined suite run robust.
 for _c_ext in ("numpy", "pandas", "scipy"):
-    try:  # pragma: no cover - reine Import-Vorsorge
+    try:  # pragma: no cover - pure import precaution
         __import__(_c_ext)
     except ImportError:
         pass
@@ -51,10 +51,10 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _load_module(name: str, mocked: dict):
-    """Load ``<root>/<name>.py`` mit gemockten Schwer-Abhängigkeiten.
+    """Load ``<root>/<name>.py`` with mocked heavy dependencies.
 
-    ``core.fleet`` wird bewusst NICHT gemockt — der Test prüft ja, dass die
-    Konsumenten die echte zentrale Liste ziehen.
+    ``core.fleet`` is deliberately NOT mocked — the test is precisely checking
+    that the consumers pull the real central list.
     """
     spec = importlib.util.spec_from_file_location(name, os.path.join(_ROOT, f"{name}.py"))
     module = importlib.util.module_from_spec(spec)
@@ -75,8 +75,8 @@ def _load_watchdog():
 
 
 def _load_dashboard():
-    # threading mit-mocken: dashboard.py startet beim Import einen Daemon-Thread
-    # (_stats_poller) und legt Modul-Level-Locks an — im Test unerwünscht.
+    # Mock threading too: dashboard.py starts a daemon thread on import
+    # (_stats_poller) and creates module-level locks — undesired in the test.
     return _load_module(
         "dashboard",
         {
@@ -94,9 +94,9 @@ wd = _load_watchdog()
 dash = _load_dashboard()
 
 
-# Die autoritative Projektion, wie der Watchdog sie vor der Zentralisierung inline
-# trug (Name/Script/Start-Delay/Restart-Interval). Das ist der Verhaltens-Anker:
-# Start-Reihenfolge und Staffel-Delays der Fleet dürfen sich nicht ändern.
+# The authoritative projection, as the watchdog carried it inline before the
+# centralization (name/script/start_delay/restart_interval). This is the
+# behaviour anchor: the fleet's start order and staggered delays must not change.
 EXPECTED_WATCHDOG_VIEW = [
     ("Data Ingestion", "1_data_ingestion.py", 0, None),
     ("Chart Data Service", "chart_data_service.py", 3, None),
@@ -132,14 +132,14 @@ EXPECTED_WATCHDOG_VIEW = [
     ("AI TRM1 Detector", "32_ai_trm1_bot.py", 207, None),
     ("AI FIF1 Detector", "33_ai_fif1_bot.py", 215, None),
     ("AI MAX1 Detector", "34_ai_max1_bot.py", 223, None),
-    # T-2026-CU-9050-103 (K9/OIC): bewusste Fleet-Erweiterung — der Anker wächst
-    # mit, die Delays/Reihenfolge der Bestandseinträge bleiben unverändert.
+    # T-2026-CU-9050-103 (K9/OIC): deliberate fleet extension — the anchor grows
+    # along with it, the delays/order of the existing entries remain unchanged.
     ("OI Collector", "35_oi_collector.py", 231, None),
 ]
 
-# Vom Dashboard-CSS (.group-core/.group-ai/.group-strategy/.group-logger) und dem
-# Filter gerenderte Gruppen. Eine group außerhalb dieser Menge erzeugt ein
-# ungestyltes Badge — das wäre eine unbeabsichtigte UI-Änderung.
+# Groups rendered by the dashboard CSS (.group-core/.group-ai/.group-strategy/
+# .group-logger) and the filter. A group outside this set produces an
+# unstyled badge — that would be an unintended UI change.
 KNOWN_GROUPS = {"core", "ai", "strategy", "logger"}
 
 
@@ -155,11 +155,11 @@ def test_dashboard_consumes_the_central_fleet():
 
 
 def test_watchdog_and_dashboard_agree():
-    # Der Kern der Drift-Regression: vor dem Fix fehlten dem Dashboard 26–34.
+    # The core of the drift regression: before the fix, the dashboard was missing 26-34.
     assert wd.PROCESSES_TO_RUN == dash.PROCESSES
 
 
-# ── Keine Verhaltensänderung am Watchdog ─────────────────────────────────────
+# ── No behaviour change to the watchdog ──────────────────────────────────────
 
 
 def test_watchdog_view_is_unchanged():
@@ -168,14 +168,13 @@ def test_watchdog_view_is_unchanged():
 
 
 def test_start_delays_are_monotonic():
-    # Der Watchdog startet nach aufsteigendem start_delay; Listen- == Start-
-    # Reihenfolge. Nicht-monotone Delays würden die Staffelung stillschweigend
-    # umsortieren.
+    # The watchdog starts in ascending start_delay order; list order == start
+    # order. Non-monotonic delays would silently reorder the staggering.
     delays = [p["start_delay"] for p in fleet.FLEET]
     assert delays == sorted(delays)
 
 
-# ── Feld-Vertrag ─────────────────────────────────────────────────────────────
+# ── Field contract ───────────────────────────────────────────────────────────
 
 
 def test_every_entry_has_the_full_field_contract():

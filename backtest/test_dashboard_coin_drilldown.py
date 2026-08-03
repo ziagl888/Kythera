@@ -1,6 +1,6 @@
 # backtest/test_dashboard_coin_drilldown.py
 """DB-free tests for the Z1 dashboard Coin-Drilldown panel (Feature 7,
-T-2026-CU-9050-159, Q11 Ebenen-Kette).
+T-2026-CU-9050-159, Q11 levels chain).
 
 Mirrors backtest/test_dashboard_regime_heatmap.py / test_dashboard_freshness.py's
 fixture style: the Postgres boundary is replaced by a synthetic ``ListFetcher``

@@ -1,36 +1,36 @@
-# core/mis_features.py — geteilter MIS1-Feature-Builder (Bot + Trainer + Simulator).
+# core/mis_features.py — shared MIS1 feature builder (bot + trainer + simulator).
 #
-# Hintergrund (Report 13 / Dossier MIS1): Der Legacy-Trainer
-# (legacy_trainers/X5-analyze_indicators_v8.py) und 11_ai_mis_bot.py hielten je
-# eine KOPIE des Feature-Builders. Dessen `line_cols`-Schleife matchte per
-# PRÄFIX über die bereits mutierten DataFrame-Spalten und erwischte dabei vier
-# abgeleitete Spalten (boll_*_dist_atr, ema_200_dist_atr, ema_9_cross_above_21)
-# → deren "dist_pct" ist (close − kleineZahl)/kleineZahl ≈ Coin-Preisskala →
-# Ticker-/Preisklassen-Leakage, auf das die Bäume real splitteten (13-P1).
+# Background (Report 13 / Dossier MIS1): the legacy trainer
+# (legacy_trainers/X5-analyze_indicators_v8.py) and 11_ai_mis_bot.py each kept
+# their own COPY of the feature builder. Its `line_cols` loop matched by
+# PREFIX over the already-mutated DataFrame columns and in doing so caught
+# four derived columns (boll_*_dist_atr, ema_200_dist_atr, ema_9_cross_above_21)
+# → their "dist_pct" is (close − small number)/small number ≈ coin price scale →
+# ticker/price-class leakage, which the trees actually split on (13-P1).
 #
-# Dieses Modul ist die EINE Quelle für beide Seiten (X-R-Fix "Trainer importiert
-# den Feature-Builder des Bots") und behebt:
-#   * line_cols jetzt EXPLIZITER Katalog der 38 rohen Indikator-Linien —
-#     Präfix-Unfälle sind konstruktiv unmöglich.
-#   * alle verbliebenen Preisskala-Features normalisiert: atr_14 → atr_14_pct,
-#     macd_hist → macd_hist_pct, macd_dif-Delta → macd_dif_pct_delta_1.
-#     Ergebnis: JEDES Feature ist skalenfrei (%, Ratio, Oszillator, Flag).
-#   * Imputation identisch Bot == Trainer (P2.34-Restrisiko): erst
-#     replace(±inf → NaN), dann fillna(0).
-#   * Cross-Flags per-Symbol (der Legacy-Trainer shiftete rsi_14_cross_above_30 /
-#     ema_9_cross_above_21 UNGRUPPIERT über Symbolgrenzen) — dieses Modul
-#     arbeitet grundsätzlich auf EINEM Symbol; Multi-Coin-Frames laufen über
-#     add_advanced_features_multi (groupby-apply) und sind damit exakt
-#     deckungsgleich mit dem Bot-Pfad.
+# This module is the ONE source for both sides (X-R fix "trainer imports
+# the bot's feature builder") and fixes:
+#   * line_cols is now an EXPLICIT catalogue of the 38 raw indicator lines —
+#     prefix accidents are structurally impossible.
+#   * all remaining price-scale features normalised: atr_14 → atr_14_pct,
+#     macd_hist → macd_hist_pct, macd_dif delta → macd_dif_pct_delta_1.
+#     Result: EVERY feature is scale-free (%, ratio, oscillator, flag).
+#   * imputation identical bot == trainer (P2.34 residual risk): first
+#     replace(±inf → NaN), then fillna(0).
+#   * cross flags per-symbol (the legacy trainer shifted rsi_14_cross_above_30 /
+#     ema_9_cross_above_21 UNGROUPED across symbol boundaries) — this module
+#     fundamentally operates on ONE symbol; multi-coin frames run through
+#     add_advanced_features_multi (groupby-apply) and are therefore exactly
+#     congruent with the bot path.
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-# ── Roh-Spalten aus der DB (1h-Kerzen + Indikator-Join) ──────────────────────
-# Der Katalog ist EXPLIZIT — neue Indikator-Spalten in der DB können nie wieder
-# unbemerkt in die dist_pct-Schleife rutschen.
+# ── Raw columns from the DB (1h candles + indicator join) ────────────────────
+# The catalogue is EXPLICIT — new indicator columns in the DB can never again
+# slip unnoticed into the dist_pct loop.
 EMA_PERIODS = [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]
 WMA_PERIODS = [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]
 KAMA_PERIODS = [7, 9, 12, 21, 26, 34, 50, 55, 89, 99]
@@ -41,20 +41,20 @@ RAW_LINE_COLS = (
     + [f"kama_{p}" for p in KAMA_PERIODS]
     + ["boll_upper_20", "boll_mid_20", "boll_lower_20"]
     + ["donchian_upper_20", "donchian_mid_20", "donchian_lower_20"]
-)  # 38 Linien in Preisskala → je ein *_dist_pct-Feature
+)  # 38 lines in price scale → one *_dist_pct feature each
 
 RSI_COLS = ["rsi_6", "rsi_9", "rsi_12", "rsi_14", "rsi_24"]
 
-# Eingabespalten, die der Builder zwingend braucht (nach dem SQL-Aliasing
+# Input columns the builder strictly requires (after the SQL aliasing
 # tsi_fast_12_7_7→tsi_fast, macd_*_normal_12_26_9→macd_dif/macd_dea).
 REQUIRED_INPUT_COLS = ["close", "volume"] + RSI_COLS + RAW_LINE_COLS + ["tsi_fast", "macd_dif", "macd_dea", "atr_14"]
 
-# Gemeinsame Indikator-Spalten für Bot und Simulator — EINE Quelle (harte Regel 7:
-# Trainer == Serving). Rohe DB-Namen (kein SQL-Aliasing mehr): read_candles_with_
-# indicators liefert sie, danach reproduziert MIS_RENAME_MAP die drei Aliase, die
-# add_advanced_features in REQUIRED_INPUT_COLS erwartet. R1: ersetzt die alte
-# MIS_SQL_INDICATOR_SELECT (i.-präfigierte JOIN-SELECT-Liste), damit weder 11_ai_mis
-# noch tools/walkforward_sim die Per-Coin-Tabellen direkt lesen (C-Gate Phase 5).
+# Shared indicator columns for bot and simulator — ONE source (hard rule 7:
+# trainer == serving). Raw DB names (no more SQL aliasing): read_candles_with_
+# indicators supplies them, then MIS_RENAME_MAP reproduces the three aliases that
+# add_advanced_features expects in REQUIRED_INPUT_COLS. R1: replaces the old
+# MIS_SQL_INDICATOR_SELECT (i.-prefixed JOIN select list), so that neither
+# 11_ai_mis nor tools/walkforward_sim reads the per-coin tables directly (C-gate phase 5).
 MIS_INDICATOR_COLUMNS = (
     RSI_COLS + RAW_LINE_COLS + ["tsi_fast_12_7_7", "macd_dif_normal_12_26_9", "macd_dea_normal_12_26_9", "atr_14"]
 )
@@ -64,7 +64,7 @@ MIS_RENAME_MAP = {
     "macd_dea_normal_12_26_9": "macd_dea",
 }
 
-# ── Feature-Katalog (explizit, geordnet — Artefakt-meta speichert ihn mit) ───
+# ── Feature catalogue (explicit, ordered — artifact meta stores it too) ──────
 DELTA_FEATURES = [f"{c}_delta_1" for c in RSI_COLS] + [
     "tsi_fast_delta_1",
     "macd_dif_pct_delta_1",
@@ -79,17 +79,17 @@ BINARY_FLAG_FEATURES = [
 ]
 
 FEATURE_COLS = (
-    [f"{c}_dist_pct" for c in RAW_LINE_COLS]  # 38 — % Abstand Preis↔Linie
+    [f"{c}_dist_pct" for c in RAW_LINE_COLS]  # 38 — % distance price↔line
     + DELTA_FEATURES  # 8
     + ["volume_ratio_prev", "volume_ratio_sma20"]  # 2
     + RSI_COLS
     + ["tsi_fast", "macd_hist_pct"]  # 7
     + BINARY_FLAG_FEATURES  # 4
     + ["boll_upper_dist_atr", "boll_lower_dist_atr", "ema_200_dist_atr", "atr_14_pct"]  # 4
-)  # = 63, alle skalenfrei
+)  # = 63, all scale-free
 
-# Die 8 Legacy-Spalten, die NUR für Vergleiche mit den alten 67-Feature-pkls
-# gebraucht werden (4 Unfall-Features + 4 unnormalisierte Vorgänger).
+# The 8 legacy columns needed ONLY for comparisons with the old 67-feature pkls
+# (4 accident features + 4 unnormalised predecessors).
 LEGACY_ONLY_COLS = [
     "boll_upper_dist_atr_dist_pct",
     "boll_lower_dist_atr_dist_pct",
@@ -105,23 +105,23 @@ LEGACY_ONLY_COLS = [
 def pct_distance(price_series: pd.Series, indicator_series: pd.Series) -> pd.Series:
     denominator = indicator_series.replace(0, np.nan)
     result = (price_series - indicator_series) / denominator * 100
-    # P2.34: inf zuerst zu NaN — fillna(0) fängt inf nicht.
+    # P2.34: inf to NaN first — fillna(0) does not catch inf.
     return result.replace([np.inf, -np.inf], np.nan).fillna(0)
 
 
 def add_advanced_features(df: pd.DataFrame, include_legacy: bool = False) -> pd.DataFrame:
-    """Feature-Pipeline für EIN Symbol (chronologisch aufsteigend sortiert).
+    """Feature pipeline for ONE symbol (sorted chronologically ascending).
 
-    `include_legacy=True` erzeugt zusätzlich die 8 LEGACY_ONLY_COLS, damit
-    Retrain-Vergleiche die alten 67-Feature-Modelle exakt füttern können —
-    im Live-Bot bleibt das aus.
+    `include_legacy=True` additionally generates the 8 LEGACY_ONLY_COLS, so
+    retrain comparisons can feed the old 67-feature models exactly —
+    the live bot leaves this off.
 
-    Fehlende Pflichtspalten sind ein harter Fehler (kein stilles fillna auf
-    ganze Spalten — der P0.12-Fehlermodus).
+    Missing required columns are a hard error (no silent fillna across
+    whole columns — the P0.12 failure mode).
     """
     missing = [c for c in REQUIRED_INPUT_COLS if c not in df.columns]
     if missing:
-        raise ValueError(f"MIS1-Feature-Builder: Pflichtspalten fehlen: {missing}")
+        raise ValueError(f"MIS1 feature builder: required columns missing: {missing}")
 
     df = df.copy()
     if "open_time" in df.columns:
@@ -132,12 +132,12 @@ def add_advanced_features(df: pd.DataFrame, include_legacy: bool = False) -> pd.
 
     close = df["close"]
 
-    # Volume-Ratios
+    # Volume ratios
     df["volume_ratio_prev"] = df["volume"] / df["volume"].shift(1)
     df["volume_sma20"] = df["volume"].rolling(20, min_periods=1).mean()
     df["volume_ratio_sma20"] = df["volume"] / df["volume_sma20"]
 
-    # Skalenfreie MACD-Basis (Preisskala ÷ close)
+    # Scale-free MACD base (price scale ÷ close)
     df["macd_dif_pct"] = df["macd_dif"] / close.replace(0, np.nan) * 100
     df["macd_hist_pct"] = (df["macd_dif"] - df["macd_dea"]) / close.replace(0, np.nan) * 100
 
@@ -147,7 +147,7 @@ def add_advanced_features(df: pd.DataFrame, include_legacy: bool = False) -> pd.
     df["macd_dif_pct_delta_1"] = df["macd_dif_pct"].diff(1)
     df["macd_hist_pct_delta_1"] = df["macd_hist_pct"].diff(1)
 
-    # Binär-/Cross-Flags
+    # Binary / cross flags
     df["above_ema_200"] = (close > df["ema_200"]).astype(int)
     df["rsi_14_above_50"] = (df["rsi_14"] > 50).astype(int)
     df["rsi_14_cross_above_30"] = ((df["rsi_14"].shift(1) < 30) & (df["rsi_14"] >= 30)).astype(int)
@@ -155,20 +155,20 @@ def add_advanced_features(df: pd.DataFrame, include_legacy: bool = False) -> pd.
         int
     )
 
-    # ATR-normalisierte Abstände + skalenfreie ATR
+    # ATR-normalised distances + scale-free ATR
     eps = 1e-8
     df["boll_upper_dist_atr"] = (close - df["boll_upper_20"]) / (df["atr_14"] + eps)
     df["boll_lower_dist_atr"] = (close - df["boll_lower_20"]) / (df["atr_14"] + eps)
     df["ema_200_dist_atr"] = (close - df["ema_200"]) / (df["atr_14"] + eps)
     df["atr_14_pct"] = df["atr_14"] / close.replace(0, np.nan) * 100
 
-    # %-Abstände NUR über den expliziten Linien-Katalog (der Leakage-Fix).
-    # concat statt 38 Einzel-Inserts (pandas-Fragmentierung).
+    # % distances ONLY over the explicit line catalogue (the leakage fix).
+    # concat instead of 38 individual inserts (pandas fragmentation).
     dist = {f"{col}_dist_pct": pct_distance(close, df[col]) for col in RAW_LINE_COLS}
 
     if include_legacy:
-        # Exakte Reproduktion der Unfall-Features des Legacy-Builders — die
-        # Schleife lief dort NACH der Erzeugung der abgeleiteten Spalten.
+        # Exact reproduction of the legacy builder's accident features — the
+        # loop there ran AFTER the derived columns were generated.
         for col in ["boll_upper_dist_atr", "boll_lower_dist_atr", "ema_200_dist_atr", "ema_9_cross_above_21"]:
             dist[f"{col}_dist_pct"] = pct_distance(close, df[col])
         dist["macd_hist"] = df["macd_dif"] - df["macd_dea"]
@@ -177,30 +177,30 @@ def add_advanced_features(df: pd.DataFrame, include_legacy: bool = False) -> pd.
 
     df = pd.concat([df, pd.DataFrame(dist, index=df.index)], axis=1)
 
-    # Imputation — MUSS in Bot, Trainer und Simulator identisch sein (P2.34).
+    # Imputation — MUST be identical in bot, trainer and simulator (P2.34).
     return df.replace([np.inf, -np.inf], np.nan).fillna(0)
 
 
 def add_advanced_features_multi(df: pd.DataFrame, include_legacy: bool = False) -> pd.DataFrame:
-    """Multi-Coin-Frame (Spalte `symbol`) — wendet den Builder je Symbol an,
-    damit Deltas/Crosses/Rolling nie über Symbolgrenzen rechnen."""
+    """Multi-coin frame (column `symbol`) — applies the builder per symbol,
+    so deltas/crosses/rolling never compute across symbol boundaries."""
     if "symbol" not in df.columns:
-        raise ValueError("add_advanced_features_multi erwartet eine 'symbol'-Spalte")
+        raise ValueError("add_advanced_features_multi expects a 'symbol' column")
     parts = [add_advanced_features(g, include_legacy=include_legacy) for _, g in df.groupby("symbol", sort=False)]
     return pd.concat(parts, ignore_index=True)
 
 
 def assert_features_alive(df_features: pd.DataFrame, context: str = "") -> None:
-    """Startup-/Trainings-Assertion "kein Feature konstant" (P0.12-Muster).
+    """Startup/training assertion "no feature constant" (P0.12 pattern).
 
-    Kontinuierliche Features müssen über die Stichprobe variieren; konstante
-    Binär-Flags sind nur eine Warnung wert (legitim über kurze Fenster) und
-    werden hier bewusst nicht geprüft — der Aufrufer loggt sie bei Bedarf.
+    Continuous features must vary across the sample; constant binary flags
+    are only worth a warning (legitimate over short windows) and are
+    deliberately not checked here — the caller logs them if needed.
     """
     missing = [c for c in FEATURE_COLS if c not in df_features.columns]
     if missing:
-        raise ValueError(f"MIS1-Feature-Assertion{context}: Spalten fehlen: {missing}")
+        raise ValueError(f"MIS1 feature assertion{context}: columns missing: {missing}")
     continuous = [c for c in FEATURE_COLS if c not in BINARY_FLAG_FEATURES]
     constant = [c for c in continuous if df_features[c].nunique(dropna=False) <= 1]
     if constant:
-        raise ValueError(f"MIS1-Feature-Assertion{context}: konstante Features: {constant}")
+        raise ValueError(f"MIS1 feature assertion{context}: constant features: {constant}")

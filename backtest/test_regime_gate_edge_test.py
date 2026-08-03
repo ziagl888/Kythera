@@ -1,7 +1,7 @@
 # backtest/test_regime_gate_edge_test.py
-"""DB-freie Tests für die reine Gate-Mathematik von tools/regime_gate_edge_test.py
-(Phase B, T-2026-KYT-9050-032): per-Regime-Zellen, günstige Regimes, der
-out-of-sample Gate-Test (temporaler Split) und das Verdikt.
+"""DB-free tests for the pure gate mathematics of tools/regime_gate_edge_test.py
+(Phase B, T-2026-KYT-9050-032): per-regime cells, favourable regimes, the
+out-of-sample gate test (temporal split) and the verdict.
 
 Run: pytest backtest/test_regime_gate_edge_test.py -v
      python backtest/test_regime_gate_edge_test.py
@@ -33,12 +33,12 @@ def test_regime_cell_stats():
     s = regime_cell_stats(trades)
     assert s["CHOP"] == {"n": 2, "mean_net": 2.0}
     assert s["HIGH_VOLA"] == {"n": 1, "mean_net": -2.0}
-    assert None not in s  # trades ohne Regime fallen raus
+    assert None not in s  # trades without a regime drop out
 
 
 def test_favorable_regimes_respects_min_cell():
     # CHOP: 20 positive -> favorable. HIGH: 20 negative -> not. TREND_UP: 5 positive
-    # aber < min_cell -> nicht als favorable (zu dünn).
+    # but < min_cell -> not counted as favorable (too thin).
     trades = (
         [_t(i, "CHOP", 1.0) for i in range(20)]
         + [_t(100 + i, "HIGH_VOLA", -1.0) for i in range(20)]
@@ -63,7 +63,7 @@ def test_oos_gate_rescues_negative_leg():
 
 
 def test_oos_gate_no_favorable_regime_blocks_all():
-    # Alle Regimes negativ -> favorable leer -> Gate blockt alle Test-Trades.
+    # All regimes negative -> favorable empty -> gate blocks all test trades.
     trades = [_t(i, "CHOP", -1.0) for i in range(20)] + [_t(100 + i, "HIGH_VOLA", -2.0) for i in range(20)]
     g = oos_gate_test(trades, min_cell=20)
     assert g["favorable_regimes"] == []

@@ -23,30 +23,29 @@ def main():
 
     conn = get_db_connection()
 
-    # Schema-Sicherung: close_time-Spalte in closed_ai_signals (falls von alter Version fehlt)
+    # Schema safeguard: close_time column in closed_ai_signals (if missing from old version)
     try:
         with conn.cursor() as cur:
             cur.execute("""
                 ALTER TABLE closed_ai_signals
                 ADD COLUMN IF NOT EXISTS close_time TIMESTAMPTZ DEFAULT NOW()
             """)
-            # Limit-Entry-Support (MIS2-SHORT, 2026-07-06): entry_filled=FALSE
-            # heißt "Limit-Order noch nicht gefüllt" — kein Scoring vor dem Fill;
-            # expiry_hours = Horizont für Verfall (Entry nie erreicht) und
-            # Timeout-Exit (gehört zur studien-validierten Bracket-Geometrie).
+            # Limit entry support (MIS2-SHORT, 2026-07-06): entry_filled=FALSE
+            # means "limit order not yet filled" — no scoring before fill;
+            # expiry_hours = horizon for expiration (entry never reached) and
+            # timeout exit (part of study-validated bracket geometry).
             cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS entry_filled BOOLEAN DEFAULT TRUE")
             cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS expiry_hours INTEGER")
-            # Realized-PnL-Report (T-2026-CU-9050-115): Target-Preise + Hebel
-            # gehen beim Close sonst verloren (die ai_signals-Row wird gelöscht,
-            # nur targets_hit blieb übrig) — ohne sie ist der tatsächlich
-            # realisierte %-Ertrag (Teilschließungen je Target × Hebel) nicht
-            # rekonstruierbar. Additive Spalten, Alt-Rows bleiben NULL und
-            # werden vom Report ausgeschlossen (exact-only, Operator-Entscheid).
-            # ai_signals.lev: der Hebel wird beim ERSTEN Poll dieses Monitors
-            # (~10s nach dem Post) gestempelt, nicht erst beim Close — eine
-            # max_leverage.json-Änderung während der Trade-Laufzeit kann den
-            # historischen Wert dann nicht mehr verfälschen (Spec-Rationale),
-            # ohne dass die ~14 Signal-Emissions-Sites angefasst werden müssen.
+            # Realized PnL report (T-2026-CU-9050-115): target prices + leverage
+            # get lost on close otherwise (ai_signals row deleted, only
+            # targets_hit remained) — without them the actually realised % return
+            # (partial closes per target × leverage) is not reconstructable.
+            # Additive columns, old rows remain NULL and are excluded from report
+            # (exact-only, operator decision). ai_signals.lev: leverage is stamped
+            # on the FIRST poll of this monitor (~10s after post), not just on
+            # close — a max_leverage.json change during trade runtime can then not
+            # corrupt the historical value (spec rationale), without touching the
+            # ~14 signal emission sites.
             cur.execute("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS lev TEXT")
             cur.execute("ALTER TABLE closed_ai_signals ADD COLUMN IF NOT EXISTS targets JSON")
             cur.execute("ALTER TABLE closed_ai_signals ADD COLUMN IF NOT EXISTS lev TEXT")
@@ -55,12 +54,11 @@ def main():
         logger.warning(f"Could not migrate schema columns: {e}")
         conn.rollback()
 
-    # Fail-fast statt Crash-Loop (Review 2026-07-13): der Close-INSERT unten
-    # referenziert targets/lev hart. Schlug die Schema-Sicherung fehl (Lock,
-    # transienter DB-Fehler beim Boot), würde JEDER Close ab jetzt im 10s-Takt
-    # scheitern und dabei die Batch-Updates anderer Trades mit zurückrollen —
-    # bei nur einem Warning-Log. Lieber sichtbar sterben: der Watchdog
-    # restartet mit Backoff, der nächste Boot versucht die Migration erneut.
+    # Fail-fast instead of crash loop (review 2026-07-13): the close INSERT below
+    # references targets/lev hard. If schema safeguard failed (lock, transient DB
+    # error at boot), EVERY close from now on would fail at 10s intervals and
+    # roll back batch updates of other trades — with just one warning log. Better
+    # to die visibly: watchdog restarts with backoff, next boot retries migration.
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -73,17 +71,17 @@ def main():
     _need = {("closed_ai_signals", "targets"), ("closed_ai_signals", "lev"), ("ai_signals", "lev")}
     if _need - _have:
         logger.error(
-            f"Schema-Sicherung unvollständig, es fehlen {sorted(_need - _have)} — "
-            "Poll-/Close-Pfad wäre gebrochen, beende für Watchdog-Restart."
+            f"Schema safeguard incomplete, missing {sorted(_need - _have)} — "
+            "poll/close path would be broken, shutting down for watchdog restart."
         )
         raise SystemExit(1)
 
-    # FIX P2.7: In-Memory-Wasserzeichen pro Trade-ID (erste Stufe, kein DB-Schema-Change:
-    # ai_signals hat keine passende Spalte). Merkt sich die open_time der zuletzt
-    # gescorten 5m-Kerze; ab dort wird VORWÄRTS über alle neuen Kerzen gescannt,
-    # statt nur die neueste zu prüfen → SL/TP-Hits zwischen Polls/nach Stale-Phasen
-    # gehen nicht mehr verloren. Nach Prozess-Neustart startet jeder Trade an der
-    # neuesten Kerze (kein Rückwirkend-Scoring von Alt-Trades).
+    # FIX P2.7: in-memory watermark per trade ID (first stage, no DB schema change:
+    # ai_signals has no suitable column). Remembers the open_time of the last
+    # scored 5m candle; from there scans FORWARD over all new candles instead of
+    # just checking the newest → SL/TP hits between polls/after stale phases don't
+    # get lost. After process restart each trade starts at the newest candle (no
+    # retroactive scoring of old trades).
     last_checked = {}
 
     while True:
@@ -94,15 +92,15 @@ def main():
             sleep_time = (10 - seconds % 10) if seconds % 10 != 0 else 10
             time.sleep(sleep_time)
 
-            # FIX: Wenn der vorherige Reconnect fehlschlug, erneut versuchen.
+            # FIX: if previous reconnect failed, try again.
             if conn is None:
                 conn = get_db_connection()
 
-            # Transaktions-Sicht der DB zurücksetzen
+            # Reset transaction view of the DB
             conn.commit()
 
             with conn.cursor() as cur:
-                # Loading ALLE aktiven AI-Trades
+                # Load ALL active AI trades
                 cur.execute("""
                     SELECT id, symbol, model, direction, entry1, price, sl, targets, current_target_hit, open_time,
                            entry_filled, expiry_hours, lev
@@ -110,10 +108,10 @@ def main():
                 """)
                 active_trades = cur.fetchall()
 
-                # T-2026-CU-9050-115: Hebel beim ERSTEN Poll stempeln (~10s nach
-                # Post) — damit friert der Wert ein, bevor max_leverage.json
-                # driften kann. UFI-Modelle (SL-gecappter Post-Hebel) bleiben
-                # bewusst NULL; der Realized-PnL-Report schließt sie aus.
+                # T-2026-CU-9050-115: stamp leverage on the FIRST poll (~10s after
+                # post) — this freezes the value before max_leverage.json can drift.
+                # UFI models (SL-capped post leverage) stay deliberately NULL; the
+                # realized PnL report excludes them.
                 stamped_lev = {}
                 for t in active_trades:
                     if t[12] is None and has_standard_leverage(t[2]):
@@ -123,8 +121,8 @@ def main():
                 if stamped_lev:
                     conn.commit()
 
-            # FIX P2.7: Wasserzeichen von nicht mehr aktiven Trades aufräumen
-            # (sonst wächst das Dict über die Prozess-Lifetime unbegrenzt).
+            # FIX P2.7: clean up watermarks of no-longer-active trades (else dict
+            # grows unbounded over process lifetime).
             active_ids = set(t[0] for t in active_trades)
             for tid in [k for k in last_checked if k not in active_ids]:
                 del last_checked[tid]
@@ -132,28 +130,27 @@ def main():
             if not active_trades:
                 continue
 
-            # 1. Eindeutige Coins filtern
+            # 1. Filter unique coins
             active_coins = set(t[1] for t in active_trades)
             coin_candles = {}
             stale_coins = set()
 
-            # 2. Wick-aware: high/low/close der 5m-Kerzen holen.
-            #    SL/TP werden intra-Candle getriggert, nicht erst am Candle-Close.
+            # 2. Wick-aware: fetch high/low/close of 5m candles.
+            #    SL/TP triggered intracandle, not just at candle close.
             #
-            #    FIX P2.7: statt nur der neuesten Kerze werden ALLE Kerzen seit dem
-            #    ältesten Wasserzeichen der Trades dieses Coins geholt (aufsteigend),
-            #    damit Hits zwischen zwei Polls nicht verloren gehen.
+            #    FIX P2.7: instead of just the newest candle, fetch ALL candles
+            #    from the oldest watermark of trades on this coin (ascending), so
+            #    hits between two polls don't get lost.
             #
-            #    STALE-GUARD: Wenn die neueste 5m-Kerze älter als 30min ist,
-            #    markieren wir den Coin als stale. Trades auf diesem Coin
-            #    werden dann NICHT gegen veraltete Preise geprüft — sie bleiben
-            #    offen bis entweder frische Daten kommen oder das Housekeeping
-            #    den Coin als DELISTED schließt.
+            #    STALE GUARD: if the newest 5m candle is older than 30min, we
+            #    mark the coin as stale. Trades on this coin are then NOT checked
+            #    against stale prices — they stay open until either fresh data
+            #    arrives or housekeeping closes the coin as DELISTED.
             #
-            #    Warum 30 Minuten? Die Ingestion liefert 5m-Kerzen alle 5 Minuten.
-            #    Wenn eine Kerze >30 Minuten fehlt, ist die Datenlage zu unsicher
-            #    um SL/TP-Events verlässlich zu erkennen — ein Preis-Move könnte
-            #    Liquidationen ausgelöst haben die wir nie sehen.
+            #    Why 30 minutes? Ingestion delivers 5m candles every 5 minutes.
+            #    If a candle is missing >30 minutes, data is too uncertain to
+            #    reliably detect SL/TP events — a price move could have triggered
+            #    liquidations we never see.
             now_utc = datetime.datetime.now(pytz.UTC)
             stale_cutoff_seconds = 1800  # 30 min
 
@@ -165,10 +162,10 @@ def main():
                     if prev is None or wm < prev:
                         coin_min_wm[t[1]] = wm
 
-            # core.candles: 5m-Scoring-Kerzen, forming candle bewusst inkludiert
-            # (Monitore scoren SL/TP intra-candle — contract 2: include_forming=True).
-            # Erster Lauf ohne Wasserzeichen: nur die neueste Kerze. Sonst das ganze
-            # Fenster ab dem Wasserzeichen (start= ist `>=`-inklusiv).
+            # core.candles: 5m scoring candles, forming candle deliberately included
+            # (monitors score SL/TP intracandle — contract 2: include_forming=True).
+            # First run without watermark: just newest candle. Else the whole window
+            # from watermark (start= is `>=` inclusive).
             for coin in active_coins:
                 try:
                     start_wm = coin_min_wm.get(coin)
@@ -194,13 +191,13 @@ def main():
                     if not rows:
                         continue
                     newest_open = rows[-1][0]
-                    # Age berechnen (open_time ist TIMESTAMPTZ, now_utc ist auch TZ-aware)
+                    # Calculate age (open_time is TIMESTAMPTZ, now_utc is also TZ-aware)
                     if newest_open.tzinfo is None:
                         newest_open = newest_open.replace(tzinfo=pytz.UTC)
                     age_sec = (now_utc - newest_open).total_seconds()
                     if age_sec > stale_cutoff_seconds:
                         stale_coins.add(coin)
-                        # Nur debug-log damit das Monitor-Log nicht explodiert
+                        # Only debug log so monitor log doesn't explode
                         logger.debug(
                             f"⏸ {coin}: 5m-Candle {age_sec:.0f}s alt — skippe Trade-Checks (waiting for fresh data)"
                         )
@@ -221,17 +218,17 @@ def main():
             if not coin_candles:
                 continue
 
-            # Stale-Coin-Summary: einmal pro Stunde bei Minute 0 loggen
-            # damit wir sehen wenn viele Coins keine frischen Daten haben
-            # (= Indiz für Delisting oder Ingestion-Probleme).
+            # Stale coin summary: log once per hour at minute 0 so we see when
+            # many coins have no fresh data (= sign of delisting or ingestion
+            # problems).
             if stale_coins and now_utc.minute == 0 and now_utc.second < 10:
                 logger.warning(
-                    f"⏸ {len(stale_coins)} Coin(s) mit staleten 5m-Daten — "
-                    f"Trades darauf bleiben offen bis Housekeeping sie räumt: "
+                    f"⏸ {len(stale_coins)} coin(s) with stale 5m data — trades "
+                    f"on them stay open until housekeeping cleans: "
                     f"{sorted(stale_coins)[:10]}{'...' if len(stale_coins) > 10 else ''}"
                 )
 
-            # === NEU: BATCH PROCESSING VARIABLEN ===
+            # === NEW: BATCH PROCESSING VARIABLES ===
             BATCH_SIZE = 50
             updates_pending = 0
 
@@ -261,33 +258,33 @@ def main():
                     if entry is None or entry <= 0:
                         continue
 
-                    # FIX P2.7: Kerzen-Zufuhr — ab Wasserzeichen vorwärts in Zeitreihenfolge.
-                    # `>=` statt `>`, damit die noch formende neueste Kerze wie bisher in
-                    # jedem Zyklus erneut geprüft wird (high/low wachsen intra-Candle).
-                    # Neuer Trade (kein Wasserzeichen): nur die neueste Kerze.
+                    # FIX P2.7: candle supply — forward from watermark in chronological order.
+                    # `>=` not `>`, so the still-forming newest candle is re-checked each
+                    # cycle as before (high/low grow intracandle). New trade (no watermark):
+                    # just newest candle.
                     wm = last_checked.get(trade_id)
                     if wm is None:
                         trade_candles = candles_all[-1:]
                     else:
                         trade_candles = [k for k in candles_all if k['open_time'] >= wm]
 
-                    # FIX: targets_hit defensiv zu Int konvertieren.
-                    # Je after DB-Schema (TEXT vs INTEGER) kann hier ein String oder Int
-                    # ankommen — ohne Cast führt `range(new_targets_hit, ...)` zu TypeError
-                    # wenn das Schema als TEXT angelegt wurde.
+                    # FIX: defensively convert targets_hit to int.
+                    # Depending on DB schema (TEXT vs INTEGER) a string or int can arrive
+                    # here — without cast `range(new_targets_hit, ...)` raises TypeError if
+                    # schema was created as TEXT.
                     try:
                         hit_state = int(targets_hit) if targets_hit is not None else 0
                     except (ValueError, TypeError):
                         hit_state = 0
-                    # P2.7: lokaler Stand über die Kerzen hinweg (statt DB-Re-Read pro Zyklus)
+                    # P2.7: local state across candles (not DB re-read per cycle)
                     sl_state = current_sl
 
                     targets = None
                     if targets_data is not None:
                         targets = json.loads(targets_data) if isinstance(targets_data, str) else targets_data
 
-                    # Limit-Entry-Status (MIS2-SHORT: Entry = Limit-Sell +5 % über
-                    # Signalkurs — Scoring erst NACH dem Fill, sonst Phantom-Trades).
+                    # Limit entry status (MIS2-SHORT: entry = limit-sell +5% above
+                    # signal price — scoring only AFTER fill, else phantom trades).
                     filled = True if entry_filled is None else bool(entry_filled)
                     expiry = int(expiry_hours) if expiry_hours is not None else None
                     ot_aware = open_time
@@ -297,21 +294,21 @@ def main():
                     for candle in trade_candles:
                         last_checked[trade_id] = candle['open_time']
 
-                        # close = Marktpreis der Kerze, für Logging und Legacy-PnL.
-                        # high/low für Wick-aware SL/TP-Detection.
+                        # close = market price of candle, for logging and legacy PnL.
+                        # high/low for wick-aware SL/TP detection.
                         current_price = candle['close']
                         candle_high = candle['high']
                         candle_low = candle['low']
 
                         is_closed = False
                         close_reason = ""
-                        close_price = current_price  # wird überschrieben wenn SL/TP genau am Level getriggert wird
+                        close_price = current_price  # overridden if SL/TP triggers exactly at level
                         new_sl = sl_state
                         new_targets_hit = hit_state
-                        db_was_changed = False  # Hilfsvariable für den Batch-Counter
+                        db_was_changed = False  # helper variable for batch counter
                         tp_allowed = True
 
-                        # Horizont-Alter dieser Kerze relativ zum Signal
+                        # Horizon age of this candle relative to signal
                         c_ot = candle['open_time']
                         if c_ot.tzinfo is None:
                             c_ot = c_ot.replace(tzinfo=pytz.UTC)
@@ -323,8 +320,8 @@ def main():
 
                         if not filled:
                             if past_expiry:
-                                # Entry innerhalb des Horizonts nie erreicht → Verfall,
-                                # PnL 0 (war nie im Markt). Consumers filtern den Status.
+                                # Entry never reached within horizon → expiry,
+                                # PnL 0 (never in market). Consumers filter status.
                                 is_closed = True
                                 close_reason = "ENTRY_NOT_FILLED"
                                 close_price = entry
@@ -332,22 +329,22 @@ def main():
                                 direction == "LONG" and candle_low <= entry
                             ):
                                 filled = True
-                                tp_allowed = False  # Fill-Kerze: konservativ nur SL (wie Studie)
+                                tp_allowed = False  # fill candle: conservatively SL only (like study)
                                 cur.execute("UPDATE ai_signals SET entry_filled = TRUE WHERE id = %s", (trade_id,))
                                 db_was_changed = True
-                                logger.info(f"📥 {symbol} ({model}): Limit-Entry {entry} gefüllt.")
+                                logger.info(f"📥 {symbol} ({model}): limit entry {entry} filled.")
                             else:
-                                continue  # vor dem Fill kein SL/TP-Scoring
+                                continue  # no SL/TP scoring before fill
 
                         if is_closed:
-                            pass  # ENTRY_NOT_FILLED → direkt zum Close-Block C)
+                            pass  # ENTRY_NOT_FILLED → direct to close block C)
                         elif past_expiry:
-                            # Studien-Geometrie: hartes Timeout am Horizontende → Exit zum Close
+                            # Study geometry: hard timeout at horizon end → exit on close
                             is_closed = True
                             close_reason = "HORIZON_TIMEOUT"
                             close_price = current_price
                         elif targets is None:
-                            # LEGACY: einfache %-Schwellen gegen Close (keine Level-Info vorhanden)
+                            # LEGACY: simple % thresholds against close (no level info available)
                             if direction == "LONG":
                                 pnl_pct = (current_price - entry) / entry * 100
                             else:
@@ -360,16 +357,16 @@ def main():
                                 is_closed = True
                                 close_reason = "LEGACY FALLBACK SL (-5.0%)"
 
-                        # B) MODERNE TRADES (MIT TARGETS UND SL) — Wick-aware
+                        # B) MODERN TRADES (WITH TARGETS AND SL) — wick-aware
                         else:
                             if direction == "LONG":
-                                # SL: LONG gestoppt wenn low unter SL
+                                # SL: LONG stopped if low below SL
                                 if sl_state is not None and candle_low <= float(sl_state):
                                     is_closed = True
-                                    close_reason = f"SL Hit (SL: {sl_state})"
+                                    close_reason = f"SL hit (SL: {sl_state})"
                                     close_price = float(sl_state)
                                 elif tp_allowed:
-                                    # TPs: LONG TP getriggert wenn high über Target
+                                    # TPs: LONG TP triggered if high above target
                                     for i in range(new_targets_hit, len(targets)):
                                         if candle_high >= float(targets[i]):
                                             new_targets_hit = i + 1
@@ -385,13 +382,13 @@ def main():
                                         close_price = float(targets[-1])
 
                             elif direction == "SHORT":
-                                # SL: SHORT gestoppt wenn high über SL
+                                # SL: SHORT stopped if high above SL
                                 if sl_state is not None and candle_high >= float(sl_state):
                                     is_closed = True
-                                    close_reason = f"SL Hit (SL: {sl_state})"
+                                    close_reason = f"SL hit (SL: {sl_state})"
                                     close_price = float(sl_state)
                                 elif tp_allowed:
-                                    # TPs: SHORT TP getriggert wenn low unter Target
+                                    # TPs: SHORT TP triggered if low below target
                                     for i in range(new_targets_hit, len(targets)):
                                         if candle_low <= float(targets[i]):
                                             new_targets_hit = i + 1
@@ -406,7 +403,7 @@ def main():
                                         close_reason = "ALL TARGETS HIT"
                                         close_price = float(targets[-1])
 
-                        # C) DATENBANK UPDATES AUSFÜHREN
+                        # C) EXECUTE DATABASE UPDATES
                         if is_closed:
                             pnl = (
                                 (close_price - entry) / entry * 100
@@ -414,37 +411,34 @@ def main():
                                 else (entry - close_price) / entry * 100
                             )
 
-                            # FIX P2.8: DELETE ... RETURNING zuerst — der Insert in die
-                            # Closed-Tabelle läuft NUR wenn WIR die Row wirklich entfernt
-                            # haben. Sonst schreiben zwei Iterationen/Prozesse denselben
-                            # Trade doppelt in closed_ai_signals. Beides in derselben
-                            # Transaktion (Batch-Commit unten).
+                            # FIX P2.8: DELETE ... RETURNING first — the insert into
+                            # closed table only runs if WE actually removed the row.
+                            # Otherwise two iterations/processes write the same trade
+                            # twice to closed_ai_signals. Both in the same transaction
+                            # (batch commit below).
                             cur.execute("DELETE FROM ai_signals WHERE id = %s RETURNING id", (trade_id,))
                             if cur.fetchone() is not None:
                                 logger.info(
-                                    f"🔒 AI Trade {symbol} ({model}) geschlossen! Grund: {close_reason} | PnL: {pnl:.2f}%"
+                                    f"🔒 AI trade {symbol} ({model}) closed! Reason: {close_reason} | PnL: {pnl:.2f}%"
                                 )
-                                # T-2026-CU-9050-115: targets + lev beim Close persistieren
-                                # (Grundlage des Realized-PnL-Reports in Bot 23).
-                                # lev = derselbe Cap wie an den Post-Sites
-                                # (get_max_leverage(symbol, 20)); Bots mit
-                                # abweichendem Post-Hebel (UFI1: SL-gecappt,
-                                # P0.6/R4) bekommen NULL statt eines falschen
-                                # 20x — der Report schließt NULL-Rows aus.
-                                # Quelle: der beim ersten Poll in ai_signals.lev
-                                # eingefrorene Wert (Drift-Schutz, s. Migration
-                                # oben). Fallback auf Close-Zeit-Cap nur für
-                                # Trades, die beim Deploy schon offen waren und
-                                # in derselben Iteration schließen (bounded,
-                                # transitional).
+                                # T-2026-CU-9050-115: persist targets + lev on close
+                                # (basis of realized PnL report in bot 23).
+                                # lev = same cap as at post sites (get_max_leverage(symbol, 20));
+                                # bots with different post leverage (UFI1: SL-capped,
+                                # P0.6/R4) get NULL instead of wrong 20x — report
+                                # excludes NULL rows. Source: value frozen in
+                                # ai_signals.lev on first poll (drift protection, see
+                                # migration above). Fallback to close-time cap only for
+                                # trades already open at deploy and closing in same
+                                # iteration (bounded, transitional).
                                 lev_text = trade_lev or stamped_lev.get(trade_id)
                                 if lev_text is None and has_standard_leverage(model):
                                     lev_text = get_max_leverage(symbol, 20)
                                 try:
-                                    # Defensive: ein korruptes Target-Element darf
-                                    # den Close-Pfad nicht in einen 10s-Crash-Loop
-                                    # ziehen — NULL heißt "Row fällt aus dem Report"
-                                    # (wie Legacy), der Close selbst geht durch.
+                                    # Defensive: a corrupted target element must not
+                                    # pull the close path into a 10s crash loop — NULL
+                                    # means "row falls out of report" (like legacy), close
+                                    # itself goes through.
                                     targets_json = json.dumps([float(t) for t in targets]) if targets else None
                                 except (TypeError, ValueError):
                                     targets_json = None
@@ -469,14 +463,14 @@ def main():
                                 db_was_changed = True
                             else:
                                 logger.warning(
-                                    f"⚠️ AI Trade {trade_id} ({symbol}) bereits geschlossen — Doppel-Close verhindert."
+                                    f"⚠️ AI trade {trade_id} ({symbol}) already closed — double-close prevented."
                                 )
-                            # Wasserzeichen des geschlossenen Trades freigeben
+                            # Release watermark of closed trade
                             last_checked.pop(trade_id, None)
 
                         elif targets is not None and new_targets_hit > hit_state:
                             logger.info(
-                                f"🎯 AI Trade {symbol} ({model}) hat Target {new_targets_hit} erreicht! SL auf {new_sl:.6f} gezogen."
+                                f"🎯 AI trade {symbol} ({model}) hit target {new_targets_hit}! SL moved to {new_sl:.6f}."
                             )
                             cur.execute(
                                 """
@@ -490,28 +484,26 @@ def main():
                             hit_state = new_targets_hit
                             sl_state = new_sl
 
-                        # === NEU: BATCH COMMIT AUSFÜHREN ===
+                        # === NEW: EXECUTE BATCH COMMIT ===
                         if db_was_changed:
                             updates_pending += 1
                             if updates_pending >= BATCH_SIZE:
                                 conn.commit()
-                                logger.info(
-                                    f"💾 Batch Commit: {BATCH_SIZE} Trades in der Datenbank gespeichert (Speicher geleert)."
-                                )
+                                logger.info(f"💾 batch commit: {BATCH_SIZE} trades saved to database (memory cleared).")
                                 updates_pending = 0
 
                         if is_closed:
                             break
 
-            # Finaler Commit für den Rest der Trades (die z.B. nur 12 waren, also den 50er Threshold nicht erreicht haben)
+            # Final commit for remaining trades (e.g. just 12, didn't reach 50 threshold)
             if updates_pending > 0:
                 conn.commit()
 
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            logger.error(f"Fehler im AI Trade Monitor: {e}")
-            # FIX: Bei DB-Fehler Connection neu aufbauen statt mit toter weiterzumachen.
+            logger.error(f"Error in AI trade monitor: {e}")
+            # FIX: on DB error rebuild connection instead of continuing with dead one.
             try:
                 if conn:
                     conn.rollback()
@@ -525,7 +517,7 @@ def main():
             try:
                 conn = get_db_connection()
             except Exception as reconnect_err:
-                logger.error(f"Reconnect fehlgeschlagen: {reconnect_err}")
+                logger.error(f"Reconnect failed: {reconnect_err}")
                 conn = None
             time.sleep(5)
 
@@ -534,4 +526,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("🛑 AI Trade Monitor Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("🛑 AI trade monitor bot stopped manually (Ctrl+C). Shutting down cleanly...")

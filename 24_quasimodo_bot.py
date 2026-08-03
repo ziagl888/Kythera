@@ -20,7 +20,7 @@ import scipy.signal
 
 from core import config as _kcfg  # channel ids
 
-# --- Eigene DB Connection importieren ---
+# --- Import own DB connection ---
 from core.candles import history_start, read_candles_with_indicators
 from core.database import get_db_connection
 from core.live_price import get_live_price, get_live_prices_batch
@@ -37,13 +37,13 @@ COINS_FILE = "coins.json"
 CHART_DIR = "generated_charts"
 os.makedirs(CHART_DIR, exist_ok=True)
 
-# PARKED 4h (Audit Report 14/16): QM_4H ist netto negativ (−277, 54,9% WR)
-# und steht auf der Stopp-Liste; QM_1H läuft weiter (Redesign-Kandidat).
+# PARKED 4h (audit report 14/16): QM_4H is net negative (−277, 54.9% WR)
+# and is on the stop list; QM_1H keeps running (redesign candidate).
 TIMEFRAMES = ['1h']
 MODEL_PATHS = {'1h': "qm_xgboost_model_1h.pkl"}
 
-MIN_CONFIDENCE = 0.65  # FIX: Vorher 0.40 → viel zu niedrig, schlechter Erwartungswert.
-ZONE_TOLERANCE = 0.005  # FIX: Vorher 0.01 (1%) → zu weit. 0.5% ist sauberer Retest-Bereich.
+MIN_CONFIDENCE = 0.65  # FIX: previously 0.40 → far too low, poor expected value.
+ZONE_TOLERANCE = 0.005  # FIX: previously 0.01 (1%) → too wide. 0.5% is a clean retest range.
 PIVOT_WINDOW = 5
 
 PRICE_BASED_INDICATORS = [
@@ -66,13 +66,13 @@ ML_MODELS = {}
 for tf, path in MODEL_PATHS.items():
     try:
         ml_data = joblib.load(path)
-        # Posting-Tag aus der Artefakt-Meta, sonst abgeleitet (T-2026-CU-9050-030).
-        # Seit T-2026-CU-9050-061 schreibt qm_ml_trainer.py die model_id
-        # f"QM2_{tf.upper()}" in die Meta — ein QM2-Retrain postet damit als QM2_1H
-        # statt still unter dem Alt-Tag QM_1H mit der QM1-Statistik zu verschmelzen,
-        # auf der das Orchestrator-Gating entscheidet (Regel 6). Der abgeleitete
-        # QM_1H bleibt der Fallback für Alt-Artefakte ohne model_id.
-        # Der Orchestrator erkennt QM2_1H bereits (QM\d*_ in BOT_IDENTIFICATION_PATTERNS).
+        # Posting tag from the artifact meta, otherwise derived (T-2026-CU-9050-030).
+        # Since T-2026-CU-9050-061 qm_ml_trainer.py writes the model_id
+        # f"QM2_{tf.upper()}" into the meta — a QM2 retrain thereby posts as QM2_1H
+        # instead of silently merging into the old tag QM_1H with the QM1 statistics
+        # that the orchestrator gating decides on (rule 6). The derived
+        # QM_1H remains the fallback for old artifacts without model_id.
+        # The orchestrator already recognises QM2_1H (QM\d*_ in BOT_IDENTIFICATION_PATTERNS).
         meta = ml_data.get('meta') or {}
         model_id = str(meta.get('model_id') or ml_data.get('model_id') or "").strip()
         ML_MODELS[tf] = {
@@ -81,18 +81,18 @@ for tf, path in MODEL_PATHS.items():
             'tag': model_id or f"QM_{tf.upper()}",
         }
         logger.info(
-            f"✅ ML-Modell für {tf} loaded successfully. Features: {len(ml_data['features'])}, "
-            f"Tag: {ML_MODELS[tf]['tag']}{'' if model_id else ' (abgeleitet — Artefakt ohne model_id)'}"
+            f"✅ ML model for {tf} loaded successfully. Features: {len(ml_data['features'])}, "
+            f"Tag: {ML_MODELS[tf]['tag']}{'' if model_id else ' (derived — artifact without model_id)'}"
         )
     except Exception as e:
-        logger.critical(f"❌ Could not load model for {tf} nicht laden ({path}): {e}")
+        logger.critical(f"❌ Could not load model for {tf} ({path}): {e}")
         exit(1)
 
 
 def scan_market():
     coins = load_coins()
     conn = get_db_connection()
-    conn.autocommit = True  # Verhindert Datenbank-Locks
+    conn.autocommit = True  # Prevents database locks
     now = datetime.now(timezone.utc)
 
     # R1: live price for the QM-proximity/entry gates — batch ticker (1 call/cycle),
@@ -100,15 +100,15 @@ def scan_market():
     price_map = get_live_prices_batch()
 
     for tf in TIMEFRAMES:
-        module_tag = ML_MODELS[tf]['tag']  # Artefakt-Tag, nicht aus tf abgeleitet
-        # Transitionaler Dedup (T-2026-CU-9050-030): der Active-Trade-Check läuft über
-        # den Tag, und der wechselt beim QM2-Rollout (QM_1H → QM2_1H). Ohne den Alt-Tag
-        # blockte eine offene QM_1H-Position denselben Coin/Direction nicht mehr — der
-        # QM2-Lauf öffnete eine ZWEITE Live-Position daneben. legacy_tag ist exakt das
-        # Tag, das dieser Bot vor dem Fix gepostet hätte; solange kein QM2-Artefakt
-        # deployt ist, sind beide identisch und das IN ist ein No-op.
+        module_tag = ML_MODELS[tf]['tag']  # artifact tag, not derived from tf
+        # Transitional dedup (T-2026-CU-9050-030): the active-trade check runs on
+        # the tag, and that changes on the QM2 rollout (QM_1H → QM2_1H). Without the old tag,
+        # an open QM_1H position would no longer block the same coin/direction — the
+        # QM2 run would open a SECOND live position next to it. legacy_tag is exactly the
+        # tag this bot would have posted before the fix; as long as no QM2 artifact
+        # is deployed, both are identical and the IN is a no-op.
         legacy_tag = f"QM_{tf.upper()}"
-        logger.info(f"🔍 Starting QM-Scan für Timeframe: {tf}")
+        logger.info(f"🔍 Starting QM scan for timeframe: {tf}")
 
         current_model = ML_MODELS[tf]['model']
         expected_features = ML_MODELS[tf]['features']
@@ -159,9 +159,9 @@ def scan_market():
                 peak_idx = scipy.signal.argrelextrema(c_highs, np.greater, order=PIVOT_WINDOW)[0]
                 trough_idx = scipy.signal.argrelextrema(c_lows, np.less, order=PIVOT_WINDOW)[0]
 
-                # P1.24: Kanten-Pivots verwerfen — argrelextrema (mode='clip') lässt am
-                # rechten Rand unbestätigte Pivots durch; ein Pivot braucht PIVOT_WINDOW
-                # nachfolgende Kerzen zur Bestätigung.
+                # P1.24: discard edge pivots — argrelextrema (mode='clip') lets
+                # unconfirmed pivots through at the right edge; a pivot needs PIVOT_WINDOW
+                # following candles to confirm.
                 max_confirmed_idx = len(c_highs) - 1 - PIVOT_WINDOW
                 peak_idx = peak_idx[peak_idx <= max_confirmed_idx]
                 trough_idx = trough_idx[trough_idx <= max_confirmed_idx]
@@ -216,16 +216,16 @@ def scan_market():
                     if direction == 'LONG' and current_price <= sl_level:
                         continue
 
-                    # FIX: Echte Retest-Bestätigung statt bloßer Nähe-Check.
-                    # Vorher feuerte der Bot schon wenn der aktuelle Preis innerhalb
-                    # 1% vom QML war — auch wenn das Level nie berührt wurde.
-                    # Jetzt: Die letzten 3 geschlossenen Kerzen müssen das QML
-                    # berührt haben (high/low innerhalb der Zone) UND der aktuelle
-                    # Preis muss sich auf der "richtigen" Seite des Levels befinden.
+                    # FIX: real retest confirmation instead of a mere proximity check.
+                    # Previously the bot fired as soon as the current price was within
+                    # 1% of the QML — even if the level was never touched.
+                    # Now: the last 3 closed candles must have
+                    # touched the QML (high/low within the zone) AND the current
+                    # price must be on the "correct" side of the level.
                     touched_recently = False
                     zone_upper = qm_level * (1 + ZONE_TOLERANCE)
                     zone_lower = qm_level * (1 - ZONE_TOLERANCE)
-                    for k in range(0, min(3, len(df))):  # R1: letzte 3 geschlossene Kerzen (forming weg → ab k=0)
+                    for k in range(0, min(3, len(df))):  # R1: last 3 closed candles (forming dropped → from k=0)
                         c_high_k = highs[-1 - k]
                         c_low_k = lows[-1 - k]
                         if c_low_k <= zone_upper and c_high_k >= zone_lower:
@@ -235,16 +235,16 @@ def scan_market():
                     if not touched_recently:
                         continue
 
-                    # Zusätzlich: Preis muss sich jetzt auf der Trade-Seite des QML bewegen.
-                    # SHORT-Setup: QM_level ist Resistance → aktueller Preis sollte
-                    # drunter oder leicht darüber sein, aber nicht weit weg after oben gebrochen.
-                    # LONG-Setup:  QM_level ist Support → aktueller Preis darüber.
+                    # Additionally: price must now be moving on the trade side of the QML.
+                    # SHORT setup: QM_level is resistance → current price should
+                    # be below it or slightly above, but not far away after breaking above.
+                    # LONG setup:  QM_level is support → current price above it.
                     if direction == 'SHORT' and current_price > zone_upper:
                         continue
                     if direction == 'LONG' and current_price < zone_lower:
                         continue
 
-                    if dist_to_qml <= ZONE_TOLERANCE * 2:  # echte Zone bleibt großzügiger
+                    if dist_to_qml <= ZONE_TOLERANCE * 2:  # real zone stays more generous
                         feature_idx = len(df) - 1  # R1: last row is now the last CLOSED candle (forming dropped)
                         close_prev = closes[feature_idx]
 
@@ -288,11 +288,11 @@ def scan_market():
                         prob = current_model.predict_proba(ml_input)[0][1]
                         confidence = prob * 100
 
-                        logger.info(f"🔎 {symbol} {direction} am QML ({tf}). AI Confidence: {confidence:.1f}%")
+                        logger.info(f"🔎 {symbol} {direction} at the QML ({tf}). AI Confidence: {confidence:.1f}%")
 
                         if prob >= 0.25:
                             is_posted = bool(prob >= MIN_CONFIDENCE)
-                            # Shadow-Log Cooldown (Nur alle 4h einmal ins Log schreiben pro Setup)
+                            # Shadow-log cooldown (only write to the log once every 4h per setup)
                             with conn.cursor() as cur:
                                 cur.execute(
                                     """
@@ -319,13 +319,13 @@ def scan_market():
                                     )
 
                         if prob >= MIN_CONFIDENCE:
-                            # 💥 HARD COOLDOWN: 4h Sperre für 1h Setups, 12h Sperre für 4h Setups
-                            # check_cooldown returned True wenn Cooldown NOCH AKTIV ist → dann skippen.
+                            # 💥 HARD COOLDOWN: 4h lock for 1h setups, 12h lock for 4h setups
+                            # check_cooldown returned True if cooldown is STILL ACTIVE → then skip.
                             cd_hours = 4 if tf == '1h' else 12
                             if check_cooldown(conn, module_tag, symbol, direction, cd_hours):
                                 continue
 
-                            logger.info(f"🟢 TRADE PASSED! {symbol} ({tf}) wird getradet (Conf: {confidence:.1f}%)")
+                            logger.info(f"🟢 TRADE PASSED! {symbol} ({tf}) is being traded (Conf: {confidence:.1f}%)")
                             send_cornix_signal(
                                 conn,
                                 df,
@@ -345,7 +345,7 @@ def scan_market():
                         else:
                             if prob >= 0.25:
                                 logger.warning(
-                                    f"🔴 TRADE GEBLOCKT! {symbol} ({tf}) (Conf: {confidence:.1f}% < {MIN_CONFIDENCE * 100}%)"
+                                    f"🔴 TRADE BLOCKED! {symbol} ({tf}) (Conf: {confidence:.1f}% < {MIN_CONFIDENCE * 100}%)"
                                 )
 
             except Exception as e:
@@ -363,24 +363,24 @@ def scan_market():
 
 def generate_qm_chart(df, symbol, direction, p1, p2, p3, p4, qm_level):
     """
-    Zeichnet den Chart, verbindet die 4 Quasimodo-Pivots als Zick-Zack
-    und zieht eine horizontale Linie für das Einstiegs-Level (qm_level).
+    Draws the chart, connects the 4 Quasimodo pivots as a zigzag
+    and draws a horizontal line for the entry level (qm_level).
 
-    FIX: Stellt die alte Funktionalität wieder her — Volume-Subplot und
-    expliziter Spalten-Filter. Ohne Filter nimmt mplfinance sämtliche
-    Indikator-Spalten mit, was zu Crashes oder falschem Rendering führt.
+    FIX: restores the old functionality — volume subplot and
+    explicit column filter. Without a filter, mplfinance picks up all
+    indicator columns, causing crashes or incorrect rendering.
     """
     try:
         start_idx = max(0, p1[0] - 20)
 
-        # FIX: Explizit nur OHLCV-Spalten nehmen — sonst verwirrt sich mplfinance
-        # an zusätzlichen Indikator-Spalten (rsi_14, ema_*, etc.) die in df stecken.
+        # FIX: explicitly take only OHLCV columns — otherwise mplfinance gets
+        # confused by extra indicator columns (rsi_14, ema_*, etc.) present in df.
         plot_df = df.iloc[start_idx:][['open_time', 'open', 'high', 'low', 'close', 'volume']].copy()
 
         plot_df['open_time'] = pd.to_datetime(plot_df['open_time']).dt.tz_localize(None)
         plot_df.set_index('open_time', inplace=True)
 
-        # Padding rechts für Retest-Zone
+        # Padding on the right for the retest zone
         if len(plot_df) >= 2:
             time_step = plot_df.index[-1] - plot_df.index[-2]
             future_dates = [plot_df.index[-1] + time_step * i for i in range(1, 15)]
@@ -397,17 +397,17 @@ def generate_qm_chart(df, symbol, direction, p1, p2, p3, p4, qm_level):
             (get_dt(p4[0]), float(p4[2])),
         ]
 
-        # Color-Theme: Direction-Parameter oder Legacy-String ("BEARISH"/"SHORT") akzeptieren
+        # Color theme: accept direction parameter or legacy string ("BEARISH"/"SHORT")
         is_short = direction == 'SHORT' or "SHORT" in str(direction).upper() or "BEARISH" in str(direction).upper()
         color_theme = '#ff4466' if is_short else '#00ff88'
 
-        # FIX: volume='in' sorgt dafür, dass die Balken in den Subplot wandern
+        # FIX: volume='in' makes sure the bars move into the subplot
         mc = mpf.make_marketcolors(up='#26a69a', down='#ef5350', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='nightclouds', gridstyle=':')
 
         abs_filename = os.path.abspath(f"{CHART_DIR}/{symbol}_QM_{int(time.time())}.png")
 
-        # FIX: volume=True aktiviert den Subplot, panel_ratios regelt die Größe
+        # FIX: volume=True enables the subplot, panel_ratios controls the size
         mpf.plot(
             plot_df,
             type='candle',
@@ -428,18 +428,18 @@ def generate_qm_chart(df, symbol, direction, p1, p2, p3, p4, qm_level):
         logger.error(f"QM Chart Error for {symbol}: {e}", exc_info=True)
         return None
     finally:
-        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        # Closes the figure left open by mpf.plot — prevents a RAM leak.
         plt.close('all')
 
 
 def send_cornix_signal(conn, df, symbol, direction, entry, sl, tp, confidence, p1, p2, p3, p4, *, module_tag):
     lev = get_max_leverage(symbol, 20)
-    # FIX T-2026-CU-9050-030: das Tag kommt vom Caller (Artefakt-model_id) — es hier
-    # wieder als f"QM_{tf}" abzuleiten, würde jeden Trade einer neuen Generation
-    # unter dem Alt-Tag schreiben und ihn in ai_signals mit der Vorgänger-Generation
-    # verschmelzen (Regel 6). Bewusst PFLICHT-Keyword: eine künftige Aufrufstelle, die
-    # ihn vergisst, scheitert laut mit TypeError, statt still den Alt-Tag zu nehmen —
-    # dasselbe Muster wie 25_smc_ml_sniper.py (T-2026-CU-9050-026).
+    # FIX T-2026-CU-9050-030: the tag comes from the caller (artifact model_id) — deriving
+    # it here again as f"QM_{tf}" would write every trade of a new generation
+    # under the old tag and merge it in ai_signals with the previous generation
+    # (rule 6). Deliberately a REQUIRED keyword: a future call site that
+    # forgets it fails loudly with TypeError instead of silently taking the old tag —
+    # the same pattern as 25_smc_ml_sniper.py (T-2026-CU-9050-026).
 
     target_dist = tp - entry
     tp1 = entry + (target_dist * 0.5)
@@ -447,11 +447,11 @@ def send_cornix_signal(conn, df, symbol, direction, entry, sl, tp, confidence, p
 
     targets = [float(tp1), float(tp2)]
 
-    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
-    # Verhaltensänderung. QM_1H SHORT ist geparkt → SHADOW (überwachter Trade statt
-    # Cornix); LONG bleibt live. QM_4H fährt der Bot ohnehin nicht mehr. Rein additiv
-    # am Post-Zweig (Regel 4). Entry ist ein Einzel-Entry (entry1==entry2); die
-    # ai_signals-confidence ist wie im Live-Pfad prob (= confidence/100).
+    # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate. Default LIVE ⇒ no
+    # behaviour change. QM_1H SHORT is parked → SHADOW (monitored trade instead of
+    # Cornix); LONG stays live. QM_4H is no longer run by the bot anyway. Purely additive
+    # on the post branch (rule 4). Entry is a single entry (entry1==entry2); the
+    # ai_signals confidence is prob as in the live path (= confidence/100).
     _route = route_legacy_leg(
         conn, module_tag, direction, symbol, confidence / 100, entry, entry, sl, targets, n_show=len(targets)
     )
@@ -472,8 +472,8 @@ def send_cornix_signal(conn, df, symbol, direction, entry, sl, tp, confidence, p
 
     chart_path = generate_qm_chart(df, symbol, direction, p1, p2, p3, p4, entry)
 
-    # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne eingebetteten
-    # Cornix-Block — Cornix parste sonst beide Nachrichten als Signale.
+    # FIX double post (2026-07-06, fleet sweep): caption without an embedded
+    # Cornix block — otherwise Cornix parsed both messages as signals.
     html_caption = f"<b>🚀 AI {module_tag} SNIPER SIGNAL</b>\n<b>{symbol.replace('USDT', '')}</b>\n→ Pattern: {direction} Quasimodo\n→ Win Probability: <b>{confidence:.1f}%</b>"
 
     try:
@@ -507,16 +507,16 @@ def send_cornix_signal(conn, df, symbol, direction, entry, sl, tp, confidence, p
             )
 
         conn.commit()
-        logger.info(f"✅ Trade für {symbol} ({module_tag}) in ai_signals & Outbox geschrieben.")
+        logger.info(f"✅ Trade for {symbol} ({module_tag}) written to ai_signals & outbox.")
     except Exception as e:
         logger.error(f"Telegram/DB Error: {e}")
         conn.rollback()
 
 
 def main():
-    logger.info(f"=== 🎯 DUAL QM ML SNIPER GESTARTET (Threshold: {MIN_CONFIDENCE * 100}%) ===")
+    logger.info(f"=== 🎯 DUAL QM ML SNIPER STARTED (Threshold: {MIN_CONFIDENCE * 100}%) ===")
 
-    # Sicherstellen, dass die Cooldown-Tabelle existiert
+    # Ensure the cooldown table exists
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -534,9 +534,9 @@ def main():
     while True:
         try:
             scan_market()
-            logger.info("Radar-Scan stopped. Schlafe 3 Minuten...")
+            logger.info("Radar scan stopped. Sleeping 3 minutes...")
         except Exception as e:
-            logger.error(f"Fehler in der Main-Loop: {e}")
+            logger.error(f"Error in the main loop: {e}")
 
         time.sleep(180)
 
@@ -545,4 +545,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped.")
+        logger.info("Bot manually stopped.")

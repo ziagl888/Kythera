@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-db_schema_analysis.py — Analysiert den aktuellen DB-Status und quantifiziert
-den Overhead des Tabellen-pro-Coin Schemas.
+db_schema_analysis.py — Analyses the current DB status and quantifies
+the overhead of the table-per-coin schema.
 
-Das Skript ist READ-ONLY — es schreibt nichts, ändert nichts, blockiert nichts.
-Du kannst es bedenkenlos gegen die Produktions-DB laufen lassen.
+The script is READ-ONLY — it writes nothing, changes nothing, blocks nothing.
+You can run it against the production DB without concern.
 
 Usage:
     python db_schema_analysis.py
 
 Output:
-    1. Gesamt-Statistik (Anzahl Tabellen, Größe, pg_attribute-Einträge)
-    2. OHLCV-Tabellen aggregiert nach Timeframe
-    3. Indikator-Tabellen aggregiert nach Timeframe
-    4. Größte Einzeltabellen (Top 20)
-    5. Bloat-Schätzung
-    6. System-Catalog-Größe
-    7. Autovacuum-Status
-    8. Empfohlene Konsolidierungs-Potenziale
+    1. Overall statistics (table count, size, pg_attribute entries)
+    2. OHLCV tables aggregated by timeframe
+    3. Indicator tables aggregated by timeframe
+    4. Largest individual tables (Top 20)
+    5. Bloat estimation
+    6. System catalog size
+    7. Autovacuum status
+    8. Recommended consolidation potentials
 
-Alle Zahlen in MB/GB (pg_size_pretty-Format), keine Raw-Bytes.
+All numbers in MB/GB (pg_size_pretty format), no raw bytes.
 """
 
 from __future__ import annotations
@@ -27,14 +27,14 @@ from __future__ import annotations
 import os
 import sys
 
-# sys.path für Import von core.database erweitern
+# Extend sys.path to import core.database
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from core.database import get_db_connection
 except ImportError:
-    print("Fehler: core.database nicht gefunden.")
-    print("Lege das Skript im Projekt-Root ab und starte es von dort.")
+    print("Error: core.database not found.")
+    print("Place the script in the project root and run it from there.")
     sys.exit(1)
 
 
@@ -62,7 +62,7 @@ def print_kv(key: str, value, width: int = 38) -> None:
 def print_table(rows: list[tuple], headers: list[str], widths: list[int] | None = None) -> None:
     """Simple table printer with aligned columns."""
     if not rows:
-        print("  (keine Daten)")
+        print("  (no data)")
         return
     if widths is None:
         widths = [max(len(str(h)), *(len(str(r[i])) for r in rows)) + 2 for i, h in enumerate(headers)]
@@ -80,9 +80,9 @@ def print_table(rows: list[tuple], headers: list[str], widths: list[int] | None 
 
 
 def analyze_overall(cur) -> None:
-    section("1. GESAMT-STATISTIK")
+    section("1. OVERALL STATISTICS")
 
-    # Anzahl User-Tables
+    # Count of user tables
     cur.execute("""
         SELECT COUNT(*) FROM pg_class
         WHERE relkind = 'r'
@@ -90,7 +90,7 @@ def analyze_overall(cur) -> None:
     """)
     n_tables = cur.fetchone()[0]
 
-    # Anzahl Indexes
+    # Count of indexes
     cur.execute("""
         SELECT COUNT(*) FROM pg_class
         WHERE relkind = 'i'
@@ -98,7 +98,7 @@ def analyze_overall(cur) -> None:
     """)
     n_indexes = cur.fetchone()[0]
 
-    # Gesamt-Größe User-Data
+    # Total size of user data
     cur.execute("""
         SELECT pg_size_pretty(SUM(pg_total_relation_size(c.oid))::bigint)
         FROM pg_class c
@@ -107,7 +107,7 @@ def analyze_overall(cur) -> None:
     """)
     total_size = cur.fetchone()[0]
 
-    # pg_attribute, pg_class Gesamt-Einträge
+    # pg_attribute, pg_class total entries
     cur.execute("SELECT COUNT(*) FROM pg_attribute")
     n_attrs = cur.fetchone()[0]
     cur.execute("SELECT COUNT(*) FROM pg_class")
@@ -115,37 +115,37 @@ def analyze_overall(cur) -> None:
     cur.execute("SELECT COUNT(*) FROM pg_index")
     n_index_rows = cur.fetchone()[0]
 
-    # DB-Gesamt-Größe
+    # Database total size
     cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
     db_size = cur.fetchone()[0]
 
-    print_kv("Datenbank-Gesamtgröße:", db_size)
-    print_kv("User-Tabellen (public):", f"{n_tables:,}")
-    print_kv("User-Indexe (public):", f"{n_indexes:,}")
-    print_kv("User-Daten-Größe:", total_size)
+    print_kv("Database total size:", db_size)
+    print_kv("User tables (public):", f"{n_tables:,}")
+    print_kv("User indexes (public):", f"{n_indexes:,}")
+    print_kv("User data size:", total_size)
     print()
-    print_kv("System-Catalog pg_class-Einträge:", f"{n_relations:,}")
-    print_kv("System-Catalog pg_attribute-Einträge:", f"{n_attrs:,}")
-    print_kv("System-Catalog pg_index-Einträge:", f"{n_index_rows:,}")
+    print_kv("System catalog pg_class entries:", f"{n_relations:,}")
+    print_kv("System catalog pg_attribute entries:", f"{n_attrs:,}")
+    print_kv("System catalog pg_index entries:", f"{n_index_rows:,}")
 
     if n_tables > 1000:
         print()
-        print("  ⚠  Anzahl User-Tabellen ist sehr hoch (>1000). PostgreSQL ist für")
-        print("     hunderte bis wenige tausend Tabellen optimiert — bei mehr wird")
-        print("     Query-Planning langsamer, Autovacuum läuft häufiger ins Timeout,")
-        print("     pg_attribute wird disproportional groß.")
+        print("  ⚠  User table count is very high (>1000). PostgreSQL is optimised for")
+        print("     hundreds to a few thousand tables — beyond that, query planning slows,")
+        print("     autovacuum hits timeouts more often, and pg_attribute grows")
+        print("     disproportionately.")
 
 
 def analyze_ohlcv_tables(cur) -> None:
-    section("2. OHLCV-TABELLEN NACH TIMEFRAME")
+    section("2. OHLCV TABLES BY TIMEFRAME")
 
-    # Aggregation über alle Coin_TF Tabellen
-    # Pattern: {COIN}USDT_{TF}  wobei TF eines der bekannten ist
+    # Aggregation over all Coin_TF tables
+    # Pattern: {COIN}USDT_{TF}  where TF is one of the known ones
     cur.execute("""
         WITH ohlcv_tables AS (
             SELECT
                 c.relname,
-                -- Timeframe am Ende extrahieren
+                -- Extract timeframe at the end
                 SUBSTRING(c.relname FROM '_([0-9]+[mhdw])$') AS timeframe,
                 pg_total_relation_size(c.oid) AS total_size,
                 pg_relation_size(c.oid) AS data_size,
@@ -174,27 +174,27 @@ def analyze_ohlcv_tables(cur) -> None:
     rows = cur.fetchall()
 
     if not rows:
-        print("  (keine OHLCV-Tabellen gefunden — Regex erwartet NAMEUSDT_Xm/h/d/w)")
+        print("  (no OHLCV tables found — regex expects NAMEUSDT_Xm/h/d/w)")
         return
 
-    headers = ["Timeframe", "# Tables", "Gesamtgröße", "Rows (≈)", "Ø pro Tabelle"]
+    headers = ["Timeframe", "# Tables", "Total size", "Rows (≈)", "Ø per table"]
     widths = [12, 10, 15, 15, 18]
     display = [(r[0], f"{r[1]:,}", r[2], f"{r[4]:,}", r[5]) for r in rows]
     print_table(display, headers, widths)
 
-    # Summen
+    # Totals
     total_tables = sum(r[1] for r in rows)
     total_bytes = sum(r[3] for r in rows)
     total_rows = sum(r[4] for r in rows)
 
     print()
-    print_kv("OHLCV-Tabellen gesamt:", f"{total_tables:,}")
-    print_kv("OHLCV-Storage gesamt:", _bytes_to_pretty(total_bytes))
-    print_kv("OHLCV-Rows gesamt:", f"{total_rows:,}")
+    print_kv("OHLCV tables total:", f"{total_tables:,}")
+    print_kv("OHLCV storage total:", _bytes_to_pretty(total_bytes))
+    print_kv("OHLCV rows total:", f"{total_rows:,}")
 
 
 def analyze_indicator_tables(cur) -> None:
-    section("3. INDIKATOR-TABELLEN NACH TIMEFRAME")
+    section("3. INDICATOR TABLES BY TIMEFRAME")
 
     cur.execute("""
         WITH ind_tables AS (
@@ -230,10 +230,10 @@ def analyze_indicator_tables(cur) -> None:
     rows = cur.fetchall()
 
     if not rows:
-        print("  (keine Indikator-Tabellen gefunden)")
+        print("  (no indicator tables found)")
         return
 
-    headers = ["Timeframe", "# Tables", "Gesamtgröße", "Rows (≈)", "Ø pro Tabelle", "Ø Spalten"]
+    headers = ["Timeframe", "# Tables", "Total size", "Rows (≈)", "Ø per table", "Ø columns"]
     widths = [12, 10, 15, 15, 18, 12]
     display = [(r[0], f"{r[1]:,}", r[2], f"{r[4]:,}", r[5], r[6]) for r in rows]
     print_table(display, headers, widths)
@@ -244,14 +244,14 @@ def analyze_indicator_tables(cur) -> None:
     total_cols = sum(r[1] * r[6] for r in rows)  # n_tables * avg_cols
 
     print()
-    print_kv("Indikator-Tabellen gesamt:", f"{total_tables:,}")
-    print_kv("Indikator-Storage gesamt:", _bytes_to_pretty(total_bytes))
-    print_kv("Indikator-Rows gesamt:", f"{total_rows:,}")
-    print_kv("Indikator pg_attribute-Einträge:", f"{total_cols:,}")
+    print_kv("Indicator tables total:", f"{total_tables:,}")
+    print_kv("Indicator storage total:", _bytes_to_pretty(total_bytes))
+    print_kv("Indicator rows total:", f"{total_rows:,}")
+    print_kv("Indicator pg_attribute entries:", f"{total_cols:,}")
 
 
 def analyze_top_tables(cur) -> None:
-    section("4. TOP 20 GRÖSSTE TABELLEN")
+    section("4. TOP 20 LARGEST TABLES")
 
     cur.execute("""
         SELECT
@@ -267,14 +267,14 @@ def analyze_top_tables(cur) -> None:
     """)
     rows = cur.fetchall()
 
-    headers = ["Tabelle", "Gesamtgröße", "Daten", "Rows (≈)"]
+    headers = ["Table", "Total size", "Data", "Rows (≈)"]
     widths = [42, 15, 15, 15]
     display = [(r[0][:40], r[1], r[2], f"{r[3]:,}") for r in rows]
     print_table(display, headers, widths)
 
 
 def analyze_system_catalog(cur) -> None:
-    section("5. SYSTEM-CATALOG-GRÖSSE")
+    section("5. SYSTEM CATALOG SIZE")
 
     cur.execute("""
         SELECT
@@ -290,22 +290,22 @@ def analyze_system_catalog(cur) -> None:
     """)
     rows = cur.fetchall()
 
-    headers = ["Catalog-Tabelle", "Größe", "Rows"]
+    headers = ["Catalog table", "Size", "Rows"]
     widths = [22, 12, 15]
     display = [(r[0], r[1], f"{r[2]:,}") for r in rows]
     print_table(display, headers, widths)
 
     print()
-    print("  Richtwerte für einen 'normalen' Einsatz mit 50-200 User-Tabellen:")
-    print("    pg_attribute:  < 50.000 rows, < 20 MB")
-    print("    pg_class:      < 5.000 rows,  < 5 MB")
-    print("    pg_index:      < 3.000 rows,  < 2 MB")
+    print("  Benchmark values for 'normal' usage with 50-200 user tables:")
+    print("    pg_attribute:  < 50,000 rows, < 20 MB")
+    print("    pg_class:      < 5,000 rows,  < 5 MB")
+    print("    pg_index:      < 3,000 rows,  < 2 MB")
 
 
 def analyze_autovacuum(cur) -> None:
-    section("6. AUTOVACUUM-STATUS")
+    section("6. AUTOVACUUM STATUS")
 
-    # Tabellen die am längsten nicht vacuum'd wurden
+    # Tables that have not been vacuumed the longest
     cur.execute("""
         SELECT
             schemaname || '.' || relname AS full_name,
@@ -324,16 +324,16 @@ def analyze_autovacuum(cur) -> None:
     """)
     rows = cur.fetchall()
 
-    subsection("Top 15 Tabellen mit meisten Dead Tuples")
+    subsection("Top 15 tables with most dead tuples")
     if not rows:
-        print("  (keine Daten)")
+        print("  (no data)")
     else:
-        headers = ["Tabelle", "Dead%", "Dead", "Live", "Last Autovac"]
+        headers = ["Table", "Dead%", "Dead", "Live", "Last autovac"]
         widths = [40, 8, 12, 12, 25]
         display = [(r[0][:38], f"{r[5]}%", f"{r[3]:,}", f"{r[4]:,}", str(r[2])[:19] if r[2] else "NIE") for r in rows]
         print_table(display, headers, widths)
 
-    # Tabellen die nie analysiert wurden
+    # Tables that have never been analysed
     cur.execute("""
         SELECT COUNT(*)
         FROM pg_stat_user_tables
@@ -352,19 +352,19 @@ def analyze_autovacuum(cur) -> None:
     """)
     n_never_vacuumed = cur.fetchone()[0]
 
-    subsection("Autovacuum-Durchlauf-Status")
-    print_kv("Tabellen nie analysiert:", f"{n_never_analyzed:,}")
-    print_kv("Tabellen nie vacuum'd:", f"{n_never_vacuumed:,}")
+    subsection("Autovacuum run status")
+    print_kv("Tables never analysed:", f"{n_never_analyzed:,}")
+    print_kv("Tables never vacuumed:", f"{n_never_vacuumed:,}")
 
     if n_never_analyzed > 100 or n_never_vacuumed > 100:
         print()
-        print("  ⚠  Autovacuum kommt nicht hinterher. Bei dieser Tabellenanzahl")
-        print("     braucht er oft Stunden pro Durchlauf, und triggert beim nächsten")
-        print("     Scheduled-Run wieder neu. Konsequenz: Bloat wächst langsam an.")
+        print("  ⚠  Autovacuum cannot keep up. With this many tables, a single run")
+        print("     often takes hours, then triggers again at the next scheduled run.")
+        print("     Consequence: bloat grows slowly over time.")
 
 
 def analyze_unused_indexes(cur) -> None:
-    section("7. UNGENUTZTE INDIZES")
+    section("7. UNUSED INDEXES")
 
     cur.execute("""
         SELECT
@@ -382,16 +382,16 @@ def analyze_unused_indexes(cur) -> None:
     rows = cur.fetchall()
 
     if not rows:
-        print("  Keine ungenutzten Indizes > 10 MB gefunden.")
+        print("  No unused indexes > 10 MB found.")
     else:
-        headers = ["Tabelle", "Index", "Größe", "Scans"]
+        headers = ["Table", "Index", "Size", "Scans"]
         widths = [35, 40, 10, 8]
         display = [(r[0][:33], r[1][:38], r[2], r[3]) for r in rows]
         print_table(display, headers, widths)
 
 
 def analyze_consolidation_potential(cur) -> None:
-    section("8. KONSOLIDIERUNGS-POTENZIAL")
+    section("8. CONSOLIDATION POTENTIAL")
 
     # OHLCV-Tabellen
     cur.execute("""
@@ -440,43 +440,43 @@ def analyze_consolidation_potential(cur) -> None:
     """)
     ind_tfs = [r[0] for r in cur.fetchall() if r[0]]
 
-    subsection("Aktuell vs. nach Konsolidierung")
-    print_kv("OHLCV-Tabellen aktuell:", f"{n_ohlcv:,}")
-    print_kv("OHLCV-Tabellen nach Konsolidierung:", f"{len(ohlcv_tfs)} (eine pro Timeframe)")
+    subsection("Current vs. after consolidation")
+    print_kv("OHLCV tables current:", f"{n_ohlcv:,}")
+    print_kv("OHLCV tables after consolidation:", f"{len(ohlcv_tfs)} (one per timeframe)")
     print_kv(
-        " → Reduktion:",
-        f"{n_ohlcv - len(ohlcv_tfs):,} Tabellen weniger ({100 * (n_ohlcv - len(ohlcv_tfs)) / max(n_ohlcv, 1):.1f}%)",
+        " → Reduction:",
+        f"{n_ohlcv - len(ohlcv_tfs):,} fewer tables ({100 * (n_ohlcv - len(ohlcv_tfs)) / max(n_ohlcv, 1):.1f}%)",
     )
     print()
-    print_kv("Indikator-Tabellen aktuell:", f"{n_ind:,}")
-    print_kv("Indikator-Tabellen nach Konsolidierung:", f"{len(ind_tfs)} (eine pro Timeframe)")
+    print_kv("Indicator tables current:", f"{n_ind:,}")
+    print_kv("Indicator tables after consolidation:", f"{len(ind_tfs)} (one per timeframe)")
     print_kv(
-        " → Reduktion:",
-        f"{n_ind - len(ind_tfs):,} Tabellen weniger ({100 * (n_ind - len(ind_tfs)) / max(n_ind, 1):.1f}%)",
+        " → Reduction:",
+        f"{n_ind - len(ind_tfs):,} fewer tables ({100 * (n_ind - len(ind_tfs)) / max(n_ind, 1):.1f}%)",
     )
 
     total_old = n_ohlcv + n_ind
     total_new = len(ohlcv_tfs) + len(ind_tfs)
 
     print()
-    print_kv("Tabellenanzahl gesamt aktuell:", f"{total_old:,}")
-    print_kv("Tabellenanzahl gesamt nach Fix:", f"{total_new}")
+    print_kv("Total table count current:", f"{total_old:,}")
+    print_kv("Total table count after fix:", f"{total_new}")
     print_kv(
-        " → Reduktion:",
-        f"{total_old - total_new:,} Tabellen weniger ({100 * (total_old - total_new) / max(total_old, 1):.1f}%)",
+        " → Reduction:",
+        f"{total_old - total_new:,} fewer tables ({100 * (total_old - total_new) / max(total_old, 1):.1f}%)",
     )
 
-    subsection("Storage-Schätzung mit TimescaleDB-Compression")
+    subsection("Storage estimation with TimescaleDB compression")
     combined = size_ohlcv + size_ind
-    print_kv("Aktuelles OHLCV + Indicator Storage:", _bytes_to_pretty(combined))
-    print_kv("Nach Konsolidierung (unkomprimiert):", _bytes_to_pretty(combined))
-    print_kv(" → TimescaleDB 90% Compression (typisch):", _bytes_to_pretty(int(combined * 0.10)))
-    print_kv(" → TimescaleDB 75% Compression (konservativ):", _bytes_to_pretty(int(combined * 0.25)))
+    print_kv("Current OHLCV + indicator storage:", _bytes_to_pretty(combined))
+    print_kv("After consolidation (uncompressed):", _bytes_to_pretty(combined))
+    print_kv(" → TimescaleDB 90% compression (typical):", _bytes_to_pretty(int(combined * 0.10)))
+    print_kv(" → TimescaleDB 75% compression (conservative):", _bytes_to_pretty(int(combined * 0.25)))
     print()
-    print("  OHLCV-Daten komprimieren typischerweise sehr gut (90%+) weil")
-    print("  open/high/low/close/volume sequenzielle, korrelierte Werte sind.")
-    print("  Indikator-Daten komprimieren etwas schlechter (70-85%) weil")
-    print("  mehr Variation, aber immer noch signifikante Ersparnis.")
+    print("  OHLCV data typically compresses very well (90%+) because")
+    print("  open/high/low/close/volume are sequential, correlated values.")
+    print("  Indicator data compresses somewhat worse (70-85%) due to")
+    print("  more variation, but still yields significant savings.")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -485,7 +485,7 @@ def analyze_consolidation_potential(cur) -> None:
 
 
 def _bytes_to_pretty(n: int) -> str:
-    """Formatiert Bytes als MB/GB/TB-String."""
+    """Formats bytes as MB/GB/TB string."""
     if n is None:
         return "0 B"
     for unit in ("B", "kB", "MB", "GB", "TB"):
@@ -502,7 +502,7 @@ def _bytes_to_pretty(n: int) -> str:
 
 def main() -> None:
     print("╔" + "═" * 78 + "╗")
-    print("║  CRYPTO TRADING BOT — DB SCHEMA ANALYSE" + " " * 38 + "║")
+    print("║  CRYPTO TRADING BOT — DB SCHEMA ANALYSIS" + " " * 37 + "║")
     print("║  Read-only analysis, no data modified." + " " * 39 + "║")
     print("╚" + "═" * 78 + "╝")
 
@@ -527,7 +527,7 @@ def main() -> None:
 
     print()
     print("═" * 80)
-    print("  Analyse abgeschlossen. Keine Änderungen vorgenommen.")
+    print("  Analysis complete. No changes made.")
     print("═" * 80)
     print()
 

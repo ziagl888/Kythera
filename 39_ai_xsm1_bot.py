@@ -1,33 +1,34 @@
 # 39_ai_xsm1_bot.py — XSM1/XSR1 "Cross-Sectional Momentum/Reversal" (K2; LIVE seit T-2026-CU-9050-183).
 """
-Wöchentliche Querschnitts-Rotation nach F-Tage-Rendite (F=84d, Bestzelle): ranke
-das liquiditätsgefilterte Universum nach roher Formations-Rendite
-`close[t]/close[t−F] − 1` und handle das OBERSTE Dezil (stärkste Momentum-Coins).
-Zwei KONKURRIERENDE Hypothesen auf derselben Dezil-Menge:
-  * **XSM1 (Momentum)** = LONG das oberste Dezil (Fortsetzung).
-  * **XSR1 (Reversal)** = SHORT das oberste Dezil (Mean-Reversion).
+Weekly cross-sectional rotation by F-day return (F=84d, best cell): rank
+the liquidity-filtered universe by raw formation return
+`close[t]/close[t−F] − 1` and trade the TOP decile (strongest momentum coins).
+Two COMPETING hypotheses on the same decile set:
+  * **XSM1 (Momentum)** = LONG the top decile (continuation).
+  * **XSR1 (Reversal)** = SHORT the top decile (mean reversion).
 
-**BEIDE Beine seit T-2026-CU-9050-183 LIVE (→ CH_ATS).** Die Studie K2 ist
-`weak/inconsistent-spread, NICHT deploybar` (0 robuste Zellen; die beste Val-Zelle
-F84|XSR1_SHORT kippt OOS auf −1,6 % = Overfit). Es gibt KEINEN turnkey Edge — der
-Bot lässt beide Hypothesen live gegeneinander laufen (jeweils eigener Tag,
-unabhängig getrackt), um zu sehen, ob eine Seite trägt. Der Post läuft über
-`signal_post.post_ai_signal_gated` (LIVE → Cornix-Post in CH_ATS; ein Rückzug in
-den Shadow = `(tag, dir)` in `_LIFECYCLE` wieder auf SHADOW).
+**BOTH legs LIVE since T-2026-CU-9050-183 (→ CH_ATS).** Study K2 is
+`weak/inconsistent-spread, NOT deployable` (0 robust cells; the best val cell
+F84|XSR1_SHORT tips OOS to −1.6 % = overfit). There is NO turnkey edge — the
+bot runs both hypotheses live against each other (each with its own tag,
+tracked independently) to see whether either side holds up. The post runs via
+`signal_post.post_ai_signal_gated` (LIVE → Cornix post in CH_ATS; a pullback
+into shadow = `(tag, dir)` in `_LIFECYCLE` back to SHADOW).
 
-Signal-Vertrag == Studie `tools/xs_momentum_study.py` (Zelle F84|raw|absolute):
-roher F-Tage-Return auf geschlossenen 1d-Closes, Dezil-Rang, BTC aus der
-handelbaren Menge ausgeschlossen, Liquiditäts-Filter (unteres Dollar-Vol-Terzil
-raus), MIN_COINS_PER_WEEK.
+Signal contract == study `tools/xs_momentum_study.py` (cell F84|raw|absolute):
+raw F-day return on closed 1d closes, decile rank, BTC excluded from the
+tradable set, liquidity filter (bottom dollar-vol tercile removed),
+MIN_COINS_PER_WEEK.
 
-**WICHTIGE Divergenz (dokumentiert):** die Studie misst einen H=28-Tage-Halte-Exit
-(Timeout, kein TP/SL); der Shadow-Monitor verfolgt First-Touch-TP/SL (geteilte
-`hvn_sr_trade_geometry`). Der Shadow-PnL ist damit NICHT die Studien-PnL, sondern
-eine richtungs-getreue First-Touch-Validierung — bewusst (Monitor kennt keinen
-Timeout-Exit). Market-Fill (entry1==entry2). Der bekannte Studien-Look-Ahead
-(Entry am 1d-OPEN statt CLOSE) entfällt hier: der Bot feuert NACH dem Wochen-Close.
+**IMPORTANT divergence (documented):** the study measures an H=28-day hold exit
+(timeout, no TP/SL); the shadow monitor tracks first-touch TP/SL (shared
+`hvn_sr_trade_geometry`). The shadow PnL is therefore NOT the study PnL, but
+a direction-faithful first-touch validation — deliberate (the monitor has no
+timeout exit). Market fill (entry1==entry2). The study's known look-ahead
+(entry on the 1d OPEN instead of CLOSE) does not apply here: the bot fires
+AFTER the weekly close.
 
-Läuft wöchentlich (Montag 00:37 UTC). Watchdog: start_delay=263.
+Runs weekly (Monday 00:37 UTC). Watchdog: start_delay=263.
 """
 
 import datetime
@@ -47,35 +48,35 @@ from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - XSM1_BOT - %(message)s")
 logger = logging.getLogger(__name__)
 
-XSM_TAG = "XSM1"  # Momentum → LONG das oberste Dezil
-XSR_TAG = "XSR1"  # Reversal  → SHORT das oberste Dezil
+XSM_TAG = "XSM1"  # Momentum → LONG the top decile
+XSR_TAG = "XSR1"  # Reversal  → SHORT the top decile
 TF = "1d"
-F_DAYS = 84  # Formations-Fenster (Bestzelle)
-DECILE_FRAC = 0.10  # oberstes Dezil
+F_DAYS = 84  # formation window (best cell)
+DECILE_FRAC = 0.10  # top decile
 LIQ_EXCLUDE_TERCILE = 1.0 / 3.0
 MIN_COINS_PER_WEEK = 20
-MIN_1D_ROWS = F_DAYS + 3  # F-Lookback + Puffer
-COOLDOWN_HOURS = 24 * 6  # eine Woche Sperre (fire-once je Rebalance/Tag)
+MIN_1D_ROWS = F_DAYS + 3  # F lookback + buffer
+COOLDOWN_HOURS = 24 * 6  # one week lock (fire-once per rebalance/tag)
 SHADOW_CONF = 0.5
 SCAN_MINUTE = 37
-MAX_TOP = 40  # Kappe für die Dezil-Größe (Shadow-Last-Schutz)
-EXCLUDE = {"BTCUSDT"}  # BTC nicht in der handelbaren Querschnitts-Menge (== Studie)
+MAX_TOP = 40  # cap for the decile size (shadow-load protection)
+EXCLUDE = {"BTCUSDT"}  # BTC not in the tradable cross-sectional set (== study)
 
 
 def select_top_decile(rows: list[tuple[str, float, float]]) -> list[str]:
-    """Pure Querschnitts-Selektion (DB-frei testbar). ``rows`` = (symbol,
-    f_return, dollar_vol). Liquiditäts-Filter (unteres Terzil raus) → oberstes
-    Dezil nach F-Rendite. Beide Hypothesen (XSM1/XSR1) handeln DIESE Menge."""
+    """Pure cross-sectional selection (DB-free testable). ``rows`` = (symbol,
+    f_return, dollar_vol). Liquidity filter (bottom tercile removed) → top
+    decile by F-return. Both hypotheses (XSM1/XSR1) trade THIS set."""
     if len(rows) < MIN_COINS_PER_WEEK:
         return []
     dvs = np.array([r[2] for r in rows], dtype=float)
-    thr = float(np.nanquantile(dvs, LIQ_EXCLUDE_TERCILE))  # NaN-robust (Review-Fix)
+    thr = float(np.nanquantile(dvs, LIQ_EXCLUDE_TERCILE))  # NaN-robust (review fix)
     liquid = [r for r in rows if r[2] >= thr]
     if len(liquid) < MIN_COINS_PER_WEEK:
         return []
-    liquid.sort(key=lambda r: r[1])  # aufsteigend nach F-Rendite
+    liquid.sort(key=lambda r: r[1])  # ascending by F-return
     ndec = max(1, round(len(liquid) * DECILE_FRAC))
-    top = [r[0] for r in liquid[-ndec:]]  # höchste F-Rendite = oberstes Dezil
+    top = [r[0] for r in liquid[-ndec:]]  # highest F-return = top decile
     return top[:MAX_TOP]
 
 
@@ -100,8 +101,8 @@ def gather(conn, coins: list[str], now: datetime.datetime) -> tuple[list[tuple[s
             vol = df["volume"].to_numpy(dtype=float)
             dollar_vol = float(np.mean((close * vol)[-F_DAYS:]))
             entry = float(close[-1])
-            # dollar_vol endlich (Review-Fix, Symmetrie zum f_return-Guard) —
-            # eine NaN-Kerze darf den Coin nicht in den Querschnitt bringen.
+            # dollar_vol finite (review fix, symmetry with the f_return guard) —
+            # a NaN candle must not bring the coin into the cross-section.
             if entry <= 0 or not np.isfinite(f_return) or not np.isfinite(dollar_vol):
                 continue
             rows.append((symbol, f_return, dollar_vol))
@@ -112,7 +113,7 @@ def gather(conn, coins: list[str], now: datetime.datetime) -> tuple[list[tuple[s
 
 
 def emit(conn, symbol: str, tag: str, direction: str, entry: float) -> None:
-    """Ein Shadow-Bein unter ``tag``/``direction`` mit geteilter Geometrie."""
+    """A shadow leg under ``tag``/``direction`` with shared geometry."""
     if not shadow_posting_enabled() or leg_status(tag, direction) not in (LIVE, SHADOW):
         return
     if check_cooldown(conn, tag, symbol, direction, COOLDOWN_HOURS):
@@ -129,7 +130,7 @@ def emit(conn, symbol: str, tag: str, direction: str, entry: float) -> None:
         conn,
         tag,
         direction,
-        _kcfg.CH_ATS,  # ehem. ATS-Channel (T-2026-CU-9050-183)
+        _kcfg.CH_ATS,  # formerly ATS channel (T-2026-CU-9050-183)
         symbol,
         SHADOW_CONF,
         entry,
@@ -141,11 +142,11 @@ def emit(conn, symbol: str, tag: str, direction: str, entry: float) -> None:
     )
     if outcome == "live":
         logger.info(
-            f"📈 {tag} LIVE {direction} {symbol} | Top-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP) → CH_ATS."
+            f"📈 {tag} LIVE {direction} {symbol} | top decile @ {entry:g} (SL {sl:g}, {len(targets)} TP) → CH_ATS."
         )
     elif outcome == "shadow":
-        logger.info(f"👻 {tag}-Shadow {direction} {symbol} | Top-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP).")
-    update_cooldown(conn, tag, symbol, direction)  # committet atomar
+        logger.info(f"👻 {tag}-Shadow {direction} {symbol} | top decile @ {entry:g} (SL {sl:g}, {len(targets)} TP).")
+    update_cooldown(conn, tag, symbol, direction)  # commits atomically
 
 
 def run_scan() -> None:
@@ -155,8 +156,8 @@ def run_scan() -> None:
     try:
         rows, entries = gather(conn, coins, now)
         top = select_top_decile(rows)
-        logger.info(f"🔍 XSM1/XSR1-Rebalance: {len(rows)} bewertbar → Top-Dezil {len(top)} (LONG XSM1 + SHORT XSR1).")
-        # Beide konkurrierenden Hypothesen auf derselben Dezil-Menge.
+        logger.info(f"🔍 XSM1/XSR1 rebalance: {len(rows)} scored → top decile {len(top)} (LONG XSM1 + SHORT XSR1).")
+        # Both competing hypotheses on the same decile set.
         for symbol in top:
             for tag, direction in ((XSM_TAG, "LONG"), (XSR_TAG, "SHORT")):
                 try:
@@ -165,17 +166,17 @@ def run_scan() -> None:
                     logger.error(f"emit {symbol} {tag}: {e}")
                 finally:
                     try:
-                        conn.rollback()  # P2.32; nach dem Cooldown-Commit ein No-op
+                        conn.rollback()  # P2.32; a no-op after the cooldown commit
                     except Exception:
-                        logger.error("Rollback fehlgeschlagen (tote Connection) — Abbruch.")
+                        logger.error("Rollback failed (dead connection) — aborting.")
                         return
     finally:
         conn.close()
-    logger.info("🏁 XSM1/XSR1-Rebalance stopped.")
+    logger.info("🏁 XSM1/XSR1 rebalance stopped.")
 
 
 def main() -> None:
-    logger.info("=== 🔄 AI XSM1/XSR1 BOT (Cross-Sectional Momentum/Reversal, K2) GESTARTET — LIVE → CH_ATS ===")
+    logger.info("=== 🔄 AI XSM1/XSR1 BOT (Cross-Sectional Momentum/Reversal, K2) STARTED — LIVE → CH_ATS ===")
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -190,7 +191,7 @@ def main() -> None:
 
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
-        if now.weekday() == 0 and now.hour == 0 and now.minute == SCAN_MINUTE:  # Montag 00:37 UTC
+        if now.weekday() == 0 and now.hour == 0 and now.minute == SCAN_MINUTE:  # Monday 00:37 UTC
             run_scan()
             time.sleep(60)
         else:
@@ -201,4 +202,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

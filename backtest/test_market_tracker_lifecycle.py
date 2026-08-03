@@ -1,9 +1,9 @@
 # backtest/test_market_tracker_lifecycle.py
-"""DB-freie Tests für die 3-Wege-Lifecycle-Klassifikation des Realized-PnL-
-Reports (T-2026-CU-9050-125): active / shadow / retired / inactive / unmapped.
+"""DB-free tests for the 3-way lifecycle classification of the realised PnL
+report (T-2026-CU-9050-125): active / shadow / retired / inactive / unmapped.
 
-Nutzt das ECHTE core.shadow_gate + core.bot_catalog (beide DB-frei); nur die
-DB-/Telegram-gebundenen Imports werden gemockt. Muster wie
+Uses REAL core.shadow_gate + core.bot_catalog (both DB-free); only the
+DB-/Telegram-bound imports are mocked. Pattern like
 test_market_tracker_realized.py.
 
 Run: pytest backtest/test_market_tracker_lifecycle.py -v
@@ -30,8 +30,8 @@ def _load_tracker():
     mod = importlib.util.module_from_spec(spec)
     import pandas  # noqa: F401  (numpy C-extensions must survive the patch.dict)
 
-    # shadow_gate / bot_catalog / bot_naming bleiben ECHT — sie sind DB-frei und
-    # genau die Lookups, die wir testen. Nur DB-/Telegram-Bindungen mocken.
+    # shadow_gate / bot_catalog / bot_naming stay REAL — they are DB-free and
+    # exactly the lookups we are testing. Only mock DB-/Telegram bindings.
     with mock.patch.dict(
         "sys.modules",
         {
@@ -46,7 +46,7 @@ def _load_tracker():
 
 
 mt = _load_tracker()
-from core.bot_catalog import script_for_tag  # noqa: E402  (echt, für die Erwartungswerte)
+from core.bot_catalog import script_for_tag  # noqa: E402  (real, for expected values)
 
 
 def test_new_gen_tags_bucket_as_shadow():
@@ -57,7 +57,7 @@ def test_new_gen_tags_bucket_as_shadow():
 
 def test_old_generation_tags_bucket_as_retired():
     active = {script_for_tag("MIS1-8h"), script_for_tag("AIM1")}
-    # Retired schlägt Live-Skript-Gate: auch wenn der Bot läuft, ist der TAG alt.
+    # Retired beats live-script gate: even if the bot runs, the TAG is old.
     assert mt.realized_lifecycle_bucket("MIS1-8h", "LONG", active) == "retired"
     assert mt.realized_lifecycle_bucket("AIM1", "SHORT", active) == "retired"
     # MIS2 darf NICHT als retired matchen (Prefix-Grenze).
@@ -72,9 +72,9 @@ def test_live_leg_active_when_script_runs():
 
 
 def test_silent_old_leg_buckets_retired_even_when_script_runs():
-    # T-2026-CU-9050-127: ATS1/ATB1 sind SILENT (Bots 12/14 laufen für ATS2/ATB2-
-    # Shadow, aber die Alt-Beine posten nichts). Trotz laufendem Skript -> retired,
-    # nicht active — sonst behauptete der Report, ATS1 poste noch live.
+    # T-2026-CU-9050-127: ATS1/ATB1 are SILENT (bots 12/14 run for ATS2/ATB2
+    # shadow, but the old legs post nothing). Despite running script -> retired,
+    # not active — otherwise the report would claim ATS1 is still posting live.
     active = {script_for_tag("ATS1"), script_for_tag("ATB1")}
     assert None not in active
     assert mt.realized_lifecycle_bucket("ATS1", "LONG", active) == "retired"
@@ -91,41 +91,41 @@ def test_unknown_tag_is_unmapped():
     assert mt.realized_lifecycle_bucket("ZZZ_NOT_A_MODEL", "LONG", set()) == "unmapped"
 
 
-# ─── is_display_retired: Perf-/Kelly-/A–Z-Filter (T-2026-CU-9050-182) ───
-# Deckungsgleich mit dem RETIRED-Bucket: retired UND silent raus, shadow+live rein.
+# ─── is_display_retired: Perf-/Kelly-/A–Z filter (T-2026-CU-9050-182) ───
+# Congruent with the RETIRED bucket: retired AND silent out, shadow+live in.
 
 
 def test_display_retired_hides_old_generations():
-    # Abgelöste Tags (is_retired-Prefix) — beide Richtungen RETIRED.
+    # Superseded tags (is_retired prefix) — both directions RETIRED.
     assert mt.is_display_retired("AIM1") is True
     assert mt.is_display_retired("MIS1-8h") is True
     assert mt.is_display_retired("MIS1-168h") is True
 
 
 def test_display_retired_hides_silenced_legs():
-    # ATS1/ATB1 sind SILENT (Bots laufen für ATS2/ATB2-Shadow) → raus.
+    # ATS1/ATB1 are SILENT (bots run for ATS2/ATB2 shadow) → out.
     assert mt.is_display_retired("ATS1") is True
     assert mt.is_display_retired("ATB1") is True
 
 
 def test_display_retired_keeps_shadow_tags():
-    # Shadow-Perf ist die Entscheidungsgrundlage für Swaps → sichtbar bleiben.
+    # Shadow performance is the basis for swap decisions → must stay visible.
     for tag in ("ATS2", "ATB2", "SRA2", "EPD3", "TSM1"):
         assert mt.is_display_retired(tag) is False, tag
 
 
 def test_display_retired_keeps_live_tags():
-    # Default-LIVE + der Prefix-Nachbar MIS2 dürfen NICHT gefiltert werden.
+    # Default-LIVE + the prefix neighbour MIS2 must NOT be filtered.
     for tag in ("RUB2", "FastInOut", "MIS2-8h"):
         assert mt.is_display_retired(tag) is False, tag
 
 
 def test_display_retired_on_raw_pre_normalization_tags():
-    # Der Call-Site füttert strategy_short = pretty_name(strategy); is_retired hebt
-    # aber über die Prefix-Grenze, sodass auch die ROHEN Vor-Normalisierungs-Formen
-    # (MIS-pump/dump, MSI1-Typo-Family) korrekt als retired erkannt werden. Pinnt
-    # die pretty↔raw-Äquivalenz, damit eine pretty_name-Regression nicht still
-    # durchrutscht.
+    # The call site feeds strategy_short = pretty_name(strategy); is_retired lifts
+    # over the prefix boundary, so RAW pre-normalisation forms
+    # (MIS-pump/dump, MSI1-typo-family) are also correctly identified as retired. Pins
+    # the pretty↔raw equivalence so a pretty_name regression doesn't slip through
+    # silently.
     assert mt.is_display_retired("MIS1-8H_pump") is True
     assert mt.is_display_retired("MIS1-72h_dump") is True
     assert mt.is_display_retired("MSI1-24h") is True
