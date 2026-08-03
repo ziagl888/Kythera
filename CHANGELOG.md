@@ -1,3 +1,25 @@
+## [2026-08-03] LQE1 fix: collector streamed against a dead legacy path — routed /market/ws + silent-subscription guard (T-2026-KYT-9050-082)
+
+The T-077 collector used `wss://fstream.binance.com/ws/!forceOrder@arr` — dead since the
+Binance USDT-M WebSocket migration (System Upgrade Notice 2026-03-06; legacy `/ws` and
+`/stream` stopped pushing `/market`-category channels on 2026-04-23). The failure mode is a
+perfect trap: the legacy path CONNECTS, ACKs subscriptions (`LIST_SUBSCRIPTIONS` confirms
+them) and then pushes nothing, forever — the collector idled 5.5 h believing the market was
+calm. Diagnosed by elimination: fresh connections got zero frames even for `btcusdt@aggTrade`
+and `markPrice@1s` on legacy paths while spot (`stream.binance.com`) and COIN-M (`dstream`)
+flowed normally; `/market/ws/!forceOrder@arr` delivered a real liquidation within a minute.
+Every other fleet WS consumer (1_data_ingestion, 19_whale_logger, chart_data_service,
+99_smc_paper_bot) had already been migrated to `/market/stream` — only the new collector
+regressed to the pre-migration URL.
+
+Two changes: (1) `WS_URL` → `wss://fstream.binance.com/market/ws/!forceOrder@arr`, with the
+migration pinned by a regression test; (2) **silent-subscription guard** — the incident
+proved that eternal silence is indistinguishable from a dead subscription, so a stream with
+no frame for `MAX_SILENCE_S` (1 h; market-wide liquidations normally arrive within minutes)
+now forces a reconnect with a WARNING instead of idling forever. 14 DB-free tests total.
+Ops note: the running collector process keeps the dead URL until it is restarted
+(restart marker after the live checkout has pulled this merge).
+
 ## [2026-08-03] MPS3: near-band gate re-run — 10x-shell artifact confirmed, literal spread trade now refuted artifact-free (T-2026-KYT-9050-081)
 
 Michi's objection to MPS1/MPS2 held: the tier weights {10x: 0.4, …} let the 10x shell win the

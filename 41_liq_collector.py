@@ -57,9 +57,19 @@ logger = setup_logging("LIQ_COLLECTOR")
 
 LIQ_PERSIST = os.getenv("KYTHERA_LIQ_PERSIST", "1") == "1"
 
-WS_URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
+# Routed /market path — the ONLY path that still pushes forceOrder since the
+# Binance USDT-M WebSocket migration (System Upgrade Notice 2026-03-06, legacy
+# /ws dead since 2026-04-23). The legacy path is a silent trap: it connects and
+# ACKs subscriptions but never pushes /market-category data — the collector ran
+# 5.5h against it without a single frame (T-2026-KYT-9050-082).
+WS_URL = "wss://fstream.binance.com/market/ws/!forceOrder@arr"
 
-RECV_TIMEOUT_S = 30.0  # Flush-Takt in ruhigen Phasen; Keepalive macht die Library
+RECV_TIMEOUT_S = 30.0  # flush cadence in quiet phases; keepalive is the library's job
+# Silent-subscription guard (T-082): market-wide liquidations normally arrive
+# within minutes. A stream that stays COMPLETELY silent this long is
+# indistinguishable from a dead subscription (the exact failure mode above) —
+# force a reconnect instead of idling forever.
+MAX_SILENCE_S = 3600.0
 FLUSH_INTERVAL_S = 10.0
 FLUSH_MAX_ROWS = 500
 BUFFER_CAP = 10_000  # harter Speicher-Deckel bei anhaltend toter DB
@@ -136,11 +146,14 @@ class _Flusher:
 def _stream_once(flusher: _Flusher) -> None:
     """Hold one websocket connection until close (Binance: max. 24h).
 
-    Raises ConnectionClosed/OSError to the reconnect loop; catch everything
-    else per message — one malformed event must never cost the connection.
+    Raises ConnectionClosed/OSError to the reconnect loop; RETURNS normally
+    when the silent-subscription guard trips (no frame for MAX_SILENCE_S) —
+    the outer loop reconnects either way. Catch everything else per message —
+    one malformed event must never cost the connection.
     """
     with connect(WS_URL, open_timeout=15) as ws:
         logger.info(f"Connected: {WS_URL}")
+        last_frame = time.monotonic()
         while True:
             try:
                 raw = ws.recv(timeout=RECV_TIMEOUT_S)
@@ -148,7 +161,14 @@ def _stream_once(flusher: _Flusher) -> None:
                 # Quiet phase — only serve the flush cadence.
                 if flusher.due():
                     flusher.flush()
+                if time.monotonic() - last_frame > MAX_SILENCE_S:
+                    logger.warning(
+                        f"No frame for {MAX_SILENCE_S:.0f}s — forcing reconnect "
+                        f"(silent-subscription guard, T-2026-KYT-9050-082)"
+                    )
+                    return  # outer loop reconnects; the buffer flushes in its finally
                 continue
+            last_frame = time.monotonic()
             try:
                 row = liq_events.row_from_force_order(json.loads(raw))
             except Exception as e:
