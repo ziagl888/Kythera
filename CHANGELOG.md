@@ -7,8 +7,11 @@ T-2026-CU-9050-111 had moved the protection one layer down into
 `read_candles_with_indicators(..., include_forming=False)`. The frame no longer contains the
 forming bar at all, so the slice is gone and `len(df) - 1` is the newest closed candle. **The
 bot's candle behaviour was and is correct; what failed was the alarm.** Nobody noticed because
-`backtest/` is not gated by CI (green CI ≠ correct), so for three weeks a real forming-candle
-regression would have shipped silently.
+`backtest/` is touched by no CI job at all — it sits in both the ruff and the mypy excludes, and
+no workflow runs pytest (green CI ≠ correct). For three weeks a real forming-candle regression
+would have shipped silently. That gap is structural, outlives this fix and is now tracked
+separately as **T-2026-KYT-9050-089** (a CI job for the DB-free `backtest/test_*.py`, which has
+to deal with a pre-existing red tail of ~55 failures first).
 
 The guards now assert the contract that actually holds, and the load-bearing one is no longer
 a text pattern: `test_scan_market_reads_closed_candles_only` runs the real `scan_market`
@@ -20,10 +23,34 @@ now also assert the INVERSE: a re-introduced `[:-1]` slice or a `len(df) - 2` of
 today drop the newest CLOSED candle rather than the forming one, so both are explicitly
 forbidden. The behavioural repaint fixture is unchanged.
 
-Every guard was mutation-tested against the live source: `include_forming=False → True`
-(3 tests red), `last_closed len(df)-1 → -2` (2), slice reintroduced (3), BB anchor
-`len(df)-1 → -2` (2), `n_closed len(df) → len(df)-1` (1). 47 tests pass across the five SMC
-test files; `regression_guard verify` OK (24 fixtures). No production code changed.
+**Review correction (T-2026-KYT-9050-088).** Both core reviews caught the same defect in the
+first version of this change, and it was the very failure mode the task exists to fix: two of
+the rewritten guards searched the unanchored pattern `include_forming\s*=\s*False`, and the
+`scan_market` body contains that string THREE times — once as the real kwarg and twice inside
+explanatory comments. Mutating only the call site therefore left both guards green. The
+author's own mutation evidence hid it, because that run used
+`sed 's/include_forming=False/include_forming=True/'` and rewrote the comments along with the
+call. Both patterns are now anchored to the start of a line (a comment line begins with `#`
+and can never match) and carry the inverse assertion against `include_forming=True`. Two more
+guards were sharpened in the same pass: the raw-SELECT check gained `re.DOTALL` — without it
+the multi-line triple-quoted form, which is how every query in this repo is written, slipped
+straight through — plus a direct `cur.execute(`/`pd.read_sql` check, and the `n_closed`
+pattern now tolerates a trailing comment while still rejecting `len(df) - 1`.
+
+Mutation matrix, re-measured against the live source with the call site isolated from the
+comments: `include_forming=False → True` **3** tests red · `last_closed len(df)-1 → -2` **2** ·
+slice reintroduced **3** · BB anchor `len(df)-1 → -2` **2** · `n_closed → len(df)-1` **1** ·
+multi-line raw `SELECT` injected **1**. **51 tests pass across the six SMC test files**
+(previously stated as 47 across five — 47 was the count of `def test_`, and
+`test_sniper_tag.py` was missed). `regression_guard verify` OK (24 fixtures). No production
+code changed; every mutation was reverted with an md5-verified restore.
+
+One claim is deliberately NOT presented as mutation-proven: the new money-path sentinel
+(`evaluate_and_trade` patched to record instead of trade) does not fire when the 100-row floor
+is lowered, because two further accidents of the fixture — the synthetic frame lacks the
+columns the scorer reads, and `PIVOT_WINDOW=10` finds no pivots in 10 rows — keep the path
+unreachable anyway. The sentinel is a last line of defence against a future refactor, not a
+demonstrated guard, and the test says so.
 
 ## [2026-08-03] LQE1 fix: collector streamed against a dead legacy path — routed /market/ws + silent-subscription guard (T-2026-KYT-9050-082)
 

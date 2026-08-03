@@ -178,10 +178,22 @@ def test_forming_candle_is_excluded_at_the_source():
     no forming candle reaches the pivot search, otherwise the newest "closed"
     pivot the filter keeps would still be repainting. The full behavioural
     assertion on the real call lives in test_sniper_forming.py.
+
+    The pattern is anchored to the START OF A LINE (T-2026-KYT-9050-088): the
+    scan_market body mentions ``include_forming=False`` three times — once as the
+    real kwarg and twice inside explanatory comments. An unanchored search
+    matches the comments, so mutating only the call site (the realistic
+    regression) left this guard green. A comment line begins with ``#``, so it
+    can never satisfy the anchored pattern. The inverse assertion closes the
+    remaining hole: a call site flipped to ``True`` must fail loudly rather than
+    merely stop matching.
     """
     body = _scan_body()
-    assert re.search(r"include_forming\s*=\s*False", body), (
+    assert re.search(r"^\s*include_forming\s*=\s*False\s*,", body, re.MULTILINE), (
         "the closed-only candle read was lost — pivots would repaint on the forming candle"
+    )
+    assert not re.search(r"^\s*include_forming\s*=\s*True", body, re.MULTILINE), (
+        "the candle read asks for the forming bar — pivots would repaint (hard rule 5)"
     )
     assert not re.search(r"(highs|lows)\[:-1\]", body), (
         "a trailing slice on top of the already-closed frame would drop the newest "

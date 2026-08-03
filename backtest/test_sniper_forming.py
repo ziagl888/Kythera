@@ -110,11 +110,28 @@ def test_scan_market_reads_closed_candles_only():
         calls.append({"symbol": symbol, "tf": tf, **kwargs})
         return pd.DataFrame({"close": np.arange(10.0)})  # < 100 rows → `continue`
 
+    # Money-path sentinel (T-2026-KYT-9050-088). Honest about what it is: a last
+    # line of defence, NOT a mutation-proven guard. Three independent things keep
+    # scan_market away from scoring here — the 100-row floor, the synthetic frame
+    # lacking the columns the scorer reads, and PIVOT_WINDOW=10 finding no pivots
+    # in 10 rows — so lowering the floor alone does not reach the trade path and
+    # cannot demonstrate the sentinel firing. It exists because those three are
+    # accidents of the fixture rather than a guarantee: if a refactor ever made
+    # the path reachable, this turns a silent success into a loud failure.
+    # scan_market swallows per-symbol exceptions, so the sentinel RECORDS instead
+    # of raising — an AssertionError would be caught by that `except` and lost.
+    reached = []
     with mock.patch.object(sniper, "read_candles_with_indicators", recording_reader), \
          mock.patch.object(sniper, "load_coins", lambda: ["BTCUSDT"]), \
          mock.patch.object(sniper, "get_db_connection", mock.MagicMock()), \
-         mock.patch.object(sniper, "get_live_prices_batch", lambda: {"BTCUSDT": 100.0}):
+         mock.patch.object(sniper, "get_live_prices_batch", lambda: {"BTCUSDT": 100.0}), \
+         mock.patch.object(sniper, "evaluate_and_trade", lambda *a, **kw: reached.append(a)):
         sniper.scan_market()
+
+    assert not reached, (
+        f"scan_market reached the scoring/posting path {len(reached)}x — this guard must never "
+        "run the money path (hard rule 1: no live intervention from a dev session)"
+    )
 
     assert calls, "scan_market performed no candle read at all — the guard would pass vacuously"
     assert len(calls) == len(sniper.TIMEFRAMES), (
@@ -129,15 +146,28 @@ def test_scan_market_reads_closed_candles_only():
 
 
 def test_no_raw_candle_query_bypasses_core_candles():
-    """A hand-rolled SELECT would sidestep the include_forming contract above."""
+    """A hand-rolled SELECT would sidestep the include_forming contract above.
+
+    `re.DOTALL` is load-bearing (T-2026-KYT-9050-088): every raw query in this
+    repo — including the one T-2026-CU-9050-111 removed from here — is written as
+    a multi-line triple-quoted string, and without DOTALL the `.` never crosses a
+    newline, so the guard saw only the single-line form that does not occur in
+    practice. A bypassing query would be an ADDITIONAL read alongside the
+    core.candles call, so the behavioural test above stays green on its own — this
+    is the only guard that would notice.
+    """
     body = _scan_body()
     assert "read_candles_with_indicators(" in body, (
         "scan_market no longer reads through core.candles — the closed-only contract "
         "is enforced there and nowhere else"
     )
-    assert not re.search(r"SELECT\s.*\sFROM\s", body, re.IGNORECASE), (
+    assert not re.search(r"SELECT\s.*\sFROM\s", body, re.IGNORECASE | re.DOTALL), (
         "a raw candle SELECT reappeared in scan_market — it would bypass "
         "include_forming=False (docs/CANDLE_CALL_SITES.md)"
+    )
+    assert not re.search(r"\b(cur|cursor)\.execute\(|pd\.read_sql", body), (
+        "scan_market executes SQL directly — every candle read must go through "
+        "core.candles so the closed-only contract holds in one place"
     )
 
 
@@ -199,14 +229,20 @@ def test_newest_closed_bar_is_the_last_row():
     """`len(df) - 1` is the newest closed candle in an all-closed frame.
 
     Three consumers share that anchor — the pivot edge filter, the breakout
-    window bound `n_closed`, and the BB feature row. A `len(df) - 2` anywhere
-    would be the pre-T-111 offset and would silently address the wrong candle.
+    window bound `n_closed`, and the BB feature row.
+
+    The `len(df) - 2` ban is deliberately BLANKET, not anchor-specific: on an
+    all-closed frame that offset is the pre-T-111 anchor wherever it appears, and
+    a legitimate previous-closed-candle reference should say so explicitly (e.g.
+    via a named local) rather than re-use the offset this contract retired. The
+    `n_closed` pattern tolerates a trailing comment but still rejects
+    `len(df) - 1`, which the bare prefix would otherwise match.
     """
     body = _scan_body()
     assert re.search(r"last_closed\s*=\s*len\(df\)\s*-\s*1\b", body), (
         "last_closed anchor lost — with an all-closed frame the newest closed bar is len(df)-1"
     )
-    assert re.search(r"n_closed\s*=\s*len\(df\)\s*$", body, re.MULTILINE), (
+    assert re.search(r"n_closed\s*=\s*len\(df\)\s*(#.*)?$", body, re.MULTILINE), (
         "n_closed must be len(df): the frame is all-closed, so the breakout search "
         "covers every closed candle"
     )
