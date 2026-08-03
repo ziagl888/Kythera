@@ -200,6 +200,18 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
     shadow. Follow-up: filter candidates against their OWN threshold first, then take
     the strongest.
 
+    ⚠ KILL SWITCH: despite both legs being LIVE, the whole emission still sits behind
+    shadow_posting_enabled() — setting KYTHERA_SHADOW_POSTING=0 silences real Cornix
+    posting for EPD3, not just shadow traffic. The env var predates the promotions and
+    keeps its shadow-era name.
+
+    ⚠ REPORT NOTE (T-085): realized_lifecycle_bucket (23_market_tracker.py) buckets a
+    closed trade by the leg's CURRENT lifecycle, not by how it was posted at the time.
+    The SHORT unpark therefore moves the ~5.7k pre-2026-08-03 EPD3 SHORT trades — all
+    of them shadow, never sent to Cornix — into the ACTIVE block of the 4h realised-PnL
+    report. Their numbers carry the T-009 phantom-win inflation, so early post-flip
+    EPD3 SHORT figures in that block are NOT live performance.
+
     Geometry = same HVN/S-R construction as the live path (deliberately duplicated).
     Errors remain encapsulated.
     """

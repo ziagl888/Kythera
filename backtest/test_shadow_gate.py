@@ -213,7 +213,7 @@ def test_t037_epd3_long_atb2_long_deployed():
     # T-2026-KYT-9050-037 (operator decision Michi, bot_results.xlsx #3/#4): EPD3-LONG
     # + ATB2-LONG promoted SHADOW→LIVE (deploy "per requirement" despite shadow no-edge
     # for EPD3-LONG and n=17 for ATB2-LONG — threshold cap 0.76 / blind 0.60). The
-    # other direction each remains SHADOW.
+    # ATB2's other direction remains SHADOW; EPD3 SHORT went LIVE with T-085.
     assert sg.leg_status("EPD3", "LONG") == sg.LIVE
     assert sg.leg_status("ATB2", "LONG") == sg.LIVE
     assert sg.leg_status("ATB2", "SHORT") == sg.SHADOW
@@ -391,11 +391,13 @@ def test_challenger_filename_never_aliases_legacy_loader():
     p = sg.shadow_artifact_path("EPD3", "SHORT")
     assert os.path.basename(p) == "epd3_model_SHORT.pkl"
     assert os.path.basename(p) != "epd2_model_SHORT.pkl"  # Bot 10 EPD2_ARTIFACT_PATHS["SHORT"]
-    assert p == "epd3_model_SHORT.pkl"  # LIVE after T-085 → repo root, bare filename
-    # Both EPD3 legs are live from root now — neither may alias a legacy EPD2 slot.
+    # Deliberately lifecycle-AGNOSTIC: this guard owns filename distinctness, not the
+    # live/shadow state (that is pinned by test_t085_epd3_short_unparked_live and
+    # test_promoted_live_leg_loads_from_root_shadow_from_staging). A future re-park —
+    # plausible given the throughput risk noted in shadow_gate — must not break a
+    # CRITICAL guard for the wrong reason and tempt someone into weakening it.
     for direction in ("LONG", "SHORT"):
-        assert sg.is_live("EPD3", direction)
-        assert sg.shadow_artifact_path("EPD3", direction) != f"epd2_model_{direction}.pkl"
+        assert os.path.basename(sg.shadow_artifact_path("EPD3", direction)) != f"epd2_model_{direction}.pkl"
 
 
 def test_t085_epd3_short_unparked_live():

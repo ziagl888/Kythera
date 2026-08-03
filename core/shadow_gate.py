@@ -162,6 +162,13 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     #     * The shadow record (WR 81.6 %, avg +16.3 %/stake, n=5691) is NOT evidence for
     #       this flip — it reproduces the T-009 phantom-win defect (ladder scored against
     #       live_price, TP1 on the losing side counted as a hit).
+    #     * REPORT SIDE EFFECT: realized_lifecycle_bucket (23_market_tracker.py) buckets
+    #       a closed trade by the leg's CURRENT lifecycle, not by how it was posted at
+    #       the time — there is no per-signal live/shadow flag. Flipping this line
+    #       therefore moves ALL ~5.7k pre-flip EPD3 SHORT trades (shadow, never sent to
+    #       Cornix, phantom-win inflated) from the shadow block into the ACTIVE block of
+    #       the 4h realised-PnL report. Early post-flip EPD3 SHORT figures there are not
+    #       live performance. Follow-up: bucket historically instead of by current state.
     #   ⚠ DEPLOY NOTE SHORT: as a LIVE leg, shadow_artifact_path now reads the artifact
     #   from the repo ROOT. epd3_model_SHORT.pkl was therefore re-promoted from
     #   staging_models/ in this task: the booster is BIT-IDENTICAL (same sha256, same
