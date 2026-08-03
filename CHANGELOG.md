@@ -3,11 +3,11 @@
 Michi's objection to MPS1/MPS2 held: the tier weights {10x: 0.4, …} let the 10x shell win the
 densest-cluster vote structurally — the BTC bands sat at exactly ±9.5 % (10x minus mmr), a
 weighting ARTIFACT. `tools/mps1_event_study.py` now takes `--leverage-tiers`, `--tier-weights`,
-`--out-prefix`, `--study-label` (defaults byte-identical to MPS1; 5 new DB-free tests), and the
+`--out-prefix`, `--study-label` (defaults byte-identical to MPS1; 3 new DB-free tests), and the
 gate study was re-run with the near high-leverage config {25, 50, 100} / {0.4, 0.3, 0.3} —
 BTC bands land at ±3.3–3.6 %, the population MartyParty actually trades (his 25x–100x color
 bands). Results (`staging_models/mps3_event_study.md`, 527 symbols, 34,763 events vs 42,327
-controls — 6.7× the MPS1 population):
+controls — 3.6× the MPS1 event population):
 
 * **Formal gate: EDGE on BOTH sides — but economically thin.** Up net 4h: val +0.198 %
   (t = 3.0) vs test **+0.022 % (t = 0.3)**; down: val +0.071 % / test +0.092 %, with 24h down
