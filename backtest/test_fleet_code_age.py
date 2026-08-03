@@ -18,6 +18,12 @@ Two things this file holds down, both learned the hard way on that day:
   * the watchdog is found STRUCTURALLY (most python children), never by
     CommandLine — that field is unreadable for the elevated fleet from an
     unelevated session, so a name match silently finds nothing.
+  * the process table must arrive in ONE call. psutil's per-process attribute
+    machinery hung a fleet restart for ten minutes (T-2026-KYT-9050-079), and
+    the expensive attribute was `name`, not `create_time` — measured on SRV02,
+    process_iter(["pid"]) walked 293 processes in 9.6 s while
+    process_iter(["pid","name"]) managed 46 in 45 s. A failed query must read
+    as no_fleet, never as stale.
 
 And one judgement call: "1 of 41 stale" and "41 of 41 stale" are different
 situations. The one-of case is the normal one here, because main_watchdog starts
@@ -29,7 +35,9 @@ Run with: pytest backtest/test_fleet_code_age.py -v
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 import unittest.mock as mock
 from datetime import datetime, timezone
@@ -121,15 +129,95 @@ def test_lag_is_measured_from_the_oldest_process():
 # ── the process set ──────────────────────────────────────────────────────────
 
 
-class _P:
-    def __init__(self, pid, ppid, name="python.exe", create_time=0.0):
-        self.info = {"pid": pid, "ppid": ppid, "name": name, "create_time": create_time}
+def _rows(*specs):
+    """Process-table rows as _query_python_processes returns them."""
+    return [{"pid": pid, "ppid": ppid, "create_time": ct} for pid, ppid, ct in specs]
 
 
-def _with_psutil(procs):
-    fake = mock.MagicMock()
-    fake.process_iter.return_value = procs
-    return mock.patch.dict(sys.modules, {"psutil": fake})
+def _with_table(rows):
+    return mock.patch.object(fca, "_query_python_processes", return_value=rows)
+
+
+def test_the_process_table_is_fetched_in_exactly_one_call():
+    """The regression that blocked a fleet restart for ten minutes.
+
+    psutil's per-process attribute machinery is the trap, and the expensive
+    attribute is `name`, not `create_time`: measured on SRV02 2026-08-03,
+    process_iter(["pid"]) walked 293 processes in 9.6 s while
+    process_iter(["pid","name"]) managed 46 in 45 s. Any design that pays a
+    per-process cost is on restart_fleet.ps1's critical path and will hang it
+    again — the whole table has to arrive in one call.
+    """
+    calls = []
+
+    def _counted(*a, **kw):
+        calls.append(1)
+        return _rows((10, 1, HEAD_EPOCH), (11, 10, HEAD_EPOCH), (12, 10, HEAD_EPOCH))
+
+    with mock.patch.object(fca, "_query_python_processes", side_effect=_counted):
+        fca.fleet_processes()
+    assert len(calls) == 1, f"the process table must be fetched once, not {len(calls)}x"
+
+
+def test_an_unreadable_process_table_reads_as_no_fleet_never_as_stale():
+    """A timed-out or failed query is a failed MEASUREMENT, not a finding.
+
+    The canary runs in restart_fleet.ps1's preflight; a query that gives up
+    under load must not manufacture a staleness alarm on the way out.
+    """
+    with (
+        mock.patch.object(fca, "head_commit_time", return_value=HEAD),
+        _with_table([]),
+    ):
+        out = fca.assess()
+    assert out["verdict"] == "no_fleet"
+    assert out["exit_code"] == 0
+
+
+def test_the_query_carries_its_own_timeout_and_survives_hitting_it():
+    """Without a timeout the canary inherits the hang it was fixed for — and
+    when the timeout does fire it must return empty, not propagate."""
+    timed_out = subprocess.TimeoutExpired(cmd="powershell", timeout=7)
+    with mock.patch.object(fca.os, "name", "nt"):
+        with mock.patch.object(fca.subprocess, "run", side_effect=timed_out) as run:
+            assert fca._query_python_processes(timeout_sec=7) == []
+    assert run.call_args.kwargs["timeout"] == 7
+
+
+def test_the_name_filter_covers_python_and_the_py_launcher():
+    """Name matching happens in WQL now, so the filter text IS the behaviour.
+
+    'py.exe' is matched exactly rather than by LIKE 'py%', which would also
+    swallow pythonw, pycharm and py7zr.
+    """
+    assert "python%" in fca._WQL_PYTHON
+    assert "py.exe" in fca._WQL_PYTHON
+    assert fca._WQL_PYTHON in fca._CIM_QUERY
+
+
+def test_a_row_that_cannot_be_parsed_is_dropped_not_guessed_at():
+    payload = json.dumps(
+        [
+            {"ProcessId": 11, "ParentProcessId": 10, "Created": 1785626975.0},
+            {"ProcessId": 12, "ParentProcessId": 10},  # no Created
+            {"ProcessId": "nonsense", "ParentProcessId": 10, "Created": 1.0},
+        ]
+    )
+    completed = mock.Mock(returncode=0, stdout=payload)
+    with mock.patch.object(fca.os, "name", "nt"):
+        with mock.patch.object(fca.subprocess, "run", return_value=completed):
+            out = fca._query_python_processes()
+    assert [p["pid"] for p in out] == [11]
+
+
+def test_a_single_row_is_unwrapped_from_convertto_json():
+    """ConvertTo-Json emits an object, not a list, for exactly one result."""
+    payload = json.dumps({"ProcessId": 11, "ParentProcessId": 10, "Created": 1785626975.0})
+    completed = mock.Mock(returncode=0, stdout=payload)
+    with mock.patch.object(fca.os, "name", "nt"):
+        with mock.patch.object(fca.subprocess, "run", return_value=completed):
+            out = fca._query_python_processes()
+    assert [p["pid"] for p in out] == [11]
 
 
 def test_only_the_watchdogs_children_count_not_a_foreign_python_job():
@@ -139,42 +227,19 @@ def test_only_the_watchdogs_children_count_not_a_foreign_python_job():
     with one much older worker. The looser 'python child of python' set would
     include PID 51 and report the fleet as 12 h stale although every bot is fresh.
     """
-    procs = [
-        _P(10, 1, create_time=HEAD_EPOCH + HOUR),  # watchdog
-        _P(11, 10, create_time=HEAD_EPOCH + HOUR),
-        _P(12, 10, create_time=HEAD_EPOCH + HOUR),
-        _P(13, 10, create_time=HEAD_EPOCH + HOUR),
-        _P(50, 1, create_time=HEAD_EPOCH - 12 * HOUR),  # foreign job parent
-        _P(51, 50, create_time=HEAD_EPOCH - 12 * HOUR),  # its worker
-    ]
-    with _with_psutil(procs):
+    rows = _rows(
+        (10, 1, HEAD_EPOCH + HOUR),  # watchdog
+        (11, 10, HEAD_EPOCH + HOUR),
+        (12, 10, HEAD_EPOCH + HOUR),
+        (13, 10, HEAD_EPOCH + HOUR),
+        (50, 1, HEAD_EPOCH - 12 * HOUR),  # foreign job parent
+        (51, 50, HEAD_EPOCH - 12 * HOUR),  # its worker
+    )
+    with _with_table(rows):
         out = fca.fleet_processes()
-    pids = sorted(p["pid"] for p in out)
-    assert pids == [11, 12, 13], "the backfill worker must not be counted as fleet"
-
-
-def test_py_exe_launchers_are_recognised_as_python():
-    procs = [
-        _P(10, 1, name="py.exe", create_time=HEAD_EPOCH),
-        _P(11, 10, name="python.exe", create_time=HEAD_EPOCH),
-        _P(12, 10, name="python.exe", create_time=HEAD_EPOCH),
-    ]
-    with _with_psutil(procs):
-        out = fca.fleet_processes()
-    assert sorted(p["pid"] for p in out) == [11, 12]
+    assert sorted(p["pid"] for p in out) == [11, 12, 13], "the backfill worker must not be counted as fleet"
 
 
 def test_no_python_pairs_yields_an_empty_set_not_a_crash():
-    with _with_psutil([_P(10, 1), _P(20, 1)]):
+    with _with_table(_rows((10, 1, HEAD_EPOCH), (20, 1, HEAD_EPOCH))):
         assert fca.fleet_processes() == []
-
-
-def test_processes_without_a_create_time_are_dropped():
-    procs = [
-        _P(10, 1, create_time=HEAD_EPOCH),
-        _P(11, 10, create_time=HEAD_EPOCH),
-        _P(12, 10, create_time=None),
-    ]
-    with _with_psutil(procs):
-        out = fca.fleet_processes()
-    assert [p["pid"] for p in out] == [11]

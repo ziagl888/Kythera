@@ -65,6 +65,11 @@ param(
     [int]$StopTimeoutSec = 90,
     [int]$StartTimeoutSec = 240,
     [int]$MarkerTimeoutSec = 180,
+    # Cap for the advisory code-age canary (T-2026-KYT-9050-079). It comments on
+    # the restart; it must never delay it.
+    # 16 s measured on SRV02 under load (T-2026-KYT-9050-079); the rest is head-
+    # room. An advisory canary never gets to hold the restart open longer.
+    [int]$AgeCanaryTimeoutSec = 60,
     [int]$DashboardPort = 5000
 )
 
@@ -204,11 +209,26 @@ if ($behind -gt 0) {
 # checkout can sit on HEAD while the fleet still runs last week's processes,
 # which is what a reboot leaves behind (it starts the fleet without pulling).
 # Advisory only: it never changes the exit code, it just makes the state loud.
+# HARD TIMEOUT, and the reason it exists (T-2026-KYT-9050-079): on 2026-08-03
+# this call hung for ten minutes and blocked a fleet restart. The canary is
+# advisory - it must never be able to delay the thing it comments on. Run it in
+# a job, take what it produced, and move on if it overruns. A skipped canary is
+# logged, never silent: "no age line" must not read like "fleet is current".
 try {
     # --repo explicitly: run from a worktree the canary would otherwise compare
     # the LIVE processes against the WORKTREE's HEAD and read as stale.
-    $ageOut = & python (Join-Path $RepoRoot 'tools\ops\fleet_code_age.py') '--repo' $RepoRoot 2>&1
-    foreach ($line in @($ageOut)) { if ("$line".Trim()) { Write-Log ("  age: {0}" -f "$line".Trim()) } }
+    $ageScript = Join-Path $RepoRoot 'tools\ops\fleet_code_age.py'
+    $ageJob = Start-Job -ScriptBlock {
+        param($script, $repo)
+        & python $script '--repo' $repo 2>&1
+    } -ArgumentList $ageScript, $RepoRoot
+    if (Wait-Job $ageJob -Timeout $AgeCanaryTimeoutSec) {
+        foreach ($line in @(Receive-Job $ageJob)) { if ("$line".Trim()) { Write-Log ("  age: {0}" -f "$line".Trim()) } }
+    } else {
+        Stop-Job $ageJob
+        Write-Log ("  age: canary exceeded {0}s - SKIPPED, no verdict either way. The restart continues." -f $AgeCanaryTimeoutSec) 'WARN'
+    }
+    Remove-Job $ageJob -Force -ErrorAction SilentlyContinue
 } catch {
     Write-Log ("  age: canary could not run ({0}) - not treated as a verdict." -f $_.Exception.Message) 'WARN'
 }
