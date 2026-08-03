@@ -147,9 +147,27 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # model already under tag "EPD2" = EPD_LEGACY_TAG). Own tag "EPD3" — analogous to RUB3.
     # Bot 10 routes EPD3 via post_ai_signal_gated ⇒ LIVE creates Cornix to CH_PUMP_AI.
     # EPD3 SHORT: 2026-07-21 LIVE (@0.6737), 2026-07-23 parked LIVE→SHADOW (T-033,
-    # audit T-032: [act] net −0.06%×3568 — edge gone). REMAINS SHADOW.
-    #   ⚠ DEPLOY NOTE SHORT: as a SHADOW leg, shadow_artifact_path reads
-    #   staging_models/epd3_model_SHORT.pkl — if the file is missing there, parking is silence (ok).
+    # audit T-032: [act] net −0.06%×3568 — edge gone), 2026-08-03 UNPARKED SHADOW→LIVE
+    # (@0.6737, T-2026-KYT-9050-085, explicit operator decision by Michi).
+    #   The park is lifted DESPITE the T-032 audit and against the following measured
+    #   objections, which were put to the operator before implementation and reaffirmed:
+    #     * Throughput: SHORT wins the _emit_epd3_shadow max() in 87 % of events
+    #       (3754 vs. 559 emissions since the park) ⇒ ~360 Cornix signals/day at 0.6737,
+    #       plus the 422 open shadow SHORTs that go live at once. CH_PUMP_AI already
+    #       carries 384 open EPD3 LONG and Cornix caps at 500 slots PER CHANNEL — the
+    #       cap will be exceeded. Watch the channel after the go-live.
+    #     * The threshold cannot throttle this: the artifact val curve runs 0.6266 →
+    #       +0.079 %, 0.6737 → +0.088 % (optimum), 0.7001 → −0.027 %. Above the optimum
+    #       expectancy turns negative, so a higher cut buys volume relief with edge.
+    #     * The shadow record (WR 81.6 %, avg +16.3 %/stake, n=5691) is NOT evidence for
+    #       this flip — it reproduces the T-009 phantom-win defect (ladder scored against
+    #       live_price, TP1 on the losing side counted as a hit).
+    #   ⚠ DEPLOY NOTE SHORT: as a LIVE leg, shadow_artifact_path now reads the artifact
+    #   from the repo ROOT. epd3_model_SHORT.pkl was therefore re-promoted from
+    #   staging_models/ in this task: the booster is BIT-IDENTICAL (same sha256, same
+    #   features, same threshold 0.6737) — the only delta is meta.model_id, which the
+    #   stale root copy still carried as "EPD2" (corrected to "EPD3" by 3ba4cbd/T-057).
+    #   Pure provenance fix, no model change (hard rule 6).
     # EPD3 LONG: per operator decision (T-2026-KYT-9050-037, Michi bot_results.xlsx)
     # promoted SHADOW→LIVE, threshold 0.76 (VOLUME cap: 2578 shadow trades showed ~0
     # edge + non-discriminating confidence [corr −0.04] → 0.76 = median, caps the
@@ -161,7 +179,7 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     #   staging_models/ (threshold 0.76) to repo root — otherwise EPD3 LONG loads
     #   nothing and stays silent.
     ("EPD3", "LONG"): LIVE,
-    ("EPD3", "SHORT"): SHADOW,
+    ("EPD3", "SHORT"): LIVE,
     # ── (C) Silenced old legs (operator Michi, T-2026-CU-9050-127) ──
     # Bots 12/14 are unparked so ATS2/ATB2 run in shadow — but the
     # OLD models ATS1/ATB1 should NOT post live and also not shadow:
