@@ -151,13 +151,15 @@ _ml_model = None
 _ml_model_time = None
 _epd2: dict[str, dict] = {}
 
-# EPD3 shadow (T-2026-CU-9050-125): the epd2 retrain (both directions "not
-# deployable" in the 4.5-month window without an old-pump phase) runs PARALLEL as shadow
-# from staging_models/. IMPORTANT: bot 10 already posts the LIVE EPD leg under tag
-# "EPD2" (EPD_LEGACY_TAG); the shadow therefore gets the collision-free tag
+# EPD3 (T-2026-CU-9050-125): the epd2 retrain, originally run PARALLEL as a shadow
+# from staging_models/. IMPORTANT: bot 10 already posts the legacy EPD leg under tag
+# "EPD2" (EPD_LEGACY_TAG); this generation therefore gets the collision-free tag
 # "EPD3" (analogous to RUB3) — otherwise a shadow trade would suppress a LIVE post
-# via the active-trade check `model IN ('EPD2','EPD2')`. Never live; the AI monitor
-# collects fresh outcomes (closed_ai_signals) for the resubmission.
+# via the active-trade check `model IN ('EPD2','EPD2')`.
+# The "never live" of the original design no longer holds: LONG went live 2026-07-25
+# (T-2026-KYT-9050-037) and SHORT 2026-08-03 (T-2026-KYT-9050-085), both operator
+# decisions — so both legs now load from the repo ROOT, not from staging. The routing
+# is owned by shadow_gate; this module must not hardcode either location.
 _shadow_epd3: dict[str, object | None] = {"LONG": None, "SHORT": None}
 
 
@@ -165,12 +167,13 @@ def load_epd2_artifacts():
     """Loads the retrain artifacts (dict format) — empty, while none are deployed."""
     for direction, path in EPD2_ARTIFACT_PATHS.items():
         _epd2[direction] = load_artifact(path, EPD_EXPECTED_FEATURES, EPD_LEGACY_TAG)
-    # EPD3 shadow models from staging_models/ (fail-soft; tag EPD3, file epd2_*).
+    # EPD3 artifacts (fail-soft; tag EPD3, files epd3_*). shadow_gate decides per leg
+    # whether that is the repo root (LIVE) or staging_models/ (SHADOW).
     for direction in ("LONG", "SHORT"):
         _shadow_epd3[direction] = shadow_gate.load_shadow_artifact("EPD3", direction)
     if any(_shadow_epd3.values()):
-        loaded = [d for d, m in _shadow_epd3.items() if m is not None]
-        logger.info(f"👻 EPD3 shadow models loaded: {', '.join(loaded)}")
+        loaded = [f"{d} ({shadow_gate.leg_status('EPD3', d)})" for d, m in _shadow_epd3.items() if m is not None]
+        logger.info(f"👻 EPD3 models loaded: {', '.join(loaded)}")
     return {d: a for d, a in _epd2.items() if a["loaded"]}
 
 
@@ -181,12 +184,36 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
     + funding as-of, cached — rule 7), scores the artifacts per direction, takes the
     strongest candidate and emits at prob>=threshold via post_ai_signal_gated.
     Lifecycle per direction (shadow_gate): EPD3 LONG is LIVE (@0.76, T-2026-KYT-9050-037
-    operator decision — volume cap, no edge filter) → posts Cornix to CH_PUMP_AI;
-    EPD3 SHORT is SHADOW (T-033 park) → monitored shadow trade (no Cornix). It
-    fires only the STRONGEST direction, and only if it is above its threshold. The
-    LIVE leg loads its artifact from the repo ROOT (challenger-distinct
-    epd3_model_{LONG,SHORT}.pkl), the SHADOW leg from staging. Geometry = same
-    HVN/S-R construction as the live path (deliberately duplicated). Errors remain encapsulated.
+    operator decision — volume cap, no edge filter); EPD3 SHORT is LIVE too since
+    2026-08-03 (@0.6737, T-2026-KYT-9050-085 operator decision — the T-033 park is
+    lifted). BOTH legs therefore post Cornix to CH_PUMP_AI and load their artifact
+    from the repo ROOT (challenger-distinct epd3_model_{LONG,SHORT}.pkl).
+
+    ⚠ SELECTION CAVEAT (measured in T-085, NOT fixed here): this function scores both
+    directions, takes the STRONGEST by RAW probability and then checks only THAT
+    direction's threshold. The two thresholds differ (LONG 0.76, SHORT 0.6737) and the
+    raw scores of two different models are not comparable, so a valid signal of one leg
+    can be swallowed by a sub-threshold score of the other. Live evidence: after the
+    LONG artifact was promoted on 2026-07-25 09:25 (threshold 0.76 replacing a
+    null-threshold staging dump), LONG emitted ZERO signals for the following nine days
+    because it kept losing the max() to SHORT — whose emissions were then discarded as
+    shadow. Follow-up: filter candidates against their OWN threshold first, then take
+    the strongest.
+
+    ⚠ KILL SWITCH: despite both legs being LIVE, the whole emission still sits behind
+    shadow_posting_enabled() — setting KYTHERA_SHADOW_POSTING=0 silences real Cornix
+    posting for EPD3, not just shadow traffic. The env var predates the promotions and
+    keeps its shadow-era name.
+
+    ⚠ REPORT NOTE (T-085): realized_lifecycle_bucket (23_market_tracker.py) buckets a
+    closed trade by the leg's CURRENT lifecycle, not by how it was posted at the time.
+    The SHORT unpark therefore moves the ~5.7k pre-2026-08-03 EPD3 SHORT trades — all
+    of them shadow, never sent to Cornix — into the ACTIVE block of the 4h realised-PnL
+    report. Their numbers carry the T-009 phantom-win inflation, so early post-flip
+    EPD3 SHORT figures in that block are NOT live performance.
+
+    Geometry = same HVN/S-R construction as the live path (deliberately duplicated).
+    Errors remain encapsulated.
     """
     if not shadow_gate.shadow_posting_enabled():
         return
@@ -203,9 +230,11 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
         # Hot-path guard (P1.41 lesson): bot 10 runs on a 10s tick, and the 900s
         # timer is reset only in the live-trade branch — without this early-out
         # the expensive HVN/S-R geometry (DB query) ran on EVERY tick, as long as an
-        # EPD3 shadow trade for this coin is open (LONG threshold is null → always
-        # fires). The has_open check in post_shadow_ai_signal would come only AFTER the
-        # geometry — so move it up here.
+        # EPD3 trade for this coin is open. (The original wording "LONG threshold is
+        # null → always fires" described the pre-2026-07-25 staging artifact; since the
+        # T-037 promotion LONG carries 0.76 and SHORT 0.6737 — the early-out is still
+        # required, the reason is now simply the emission rate.) The has_open check in
+        # post_shadow_ai_signal would come only AFTER the geometry — so move it up here.
         if has_open_ai_signal(conn, symbol, best_dir, "EPD3"):
             return
         is_long = best_dir == "LONG"
@@ -233,7 +262,7 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
             conn,
             "EPD3",
             best_dir,
-            _kcfg.CH_PUMP_AI,  # EPD3 → pump-AI channel: LONG live (T-037), SHORT shadow (T-033 park)
+            _kcfg.CH_PUMP_AI,  # EPD3 → pump-AI channel: LONG live (T-037), SHORT live (T-085)
             symbol,
             best_prob,
             entry1,
@@ -1309,7 +1338,7 @@ def process_coin_logics(conn, symbol):
         # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate for the legacy EPD2
         # direct-post leg. Default LIVE ⇒ no behaviour change. EPD2 is parked in BOTH
         # directions → SHADOW (monitored trade instead of Cornix); the EPD3 retrain
-        # (SHORT now also parked, LONG still shadow) runs separately via
+        # (both directions LIVE since T-037/T-085) runs separately via
         # _emit_epd3_shadow/post_ai_signal_gated. Purely additive on the post branch (rule 4).
         # n_show=len(targets): the legacy EPD2 LIVE path stores the FULL target list
         # in ai_signals (json.dumps(targets), Cornix shows only [:3]) — the parked
