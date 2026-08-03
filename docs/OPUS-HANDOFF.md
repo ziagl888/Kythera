@@ -1,98 +1,98 @@
 # OPUS-HANDOFF — Operating Manual Kythera
 
-**Stand:** 2026-07-09 (Ledger-Verifikation T-2026-CU-9050-028) · **Basis:** 2026-07-07, T-2026-CU-9050-021 (letzter Fable-5-Tag) · **Schwester-Handoffs:** T-2026-CU-9000-296 (claude_skills), T-2026-CU-9000-297 (knowledge_scraper)
+**As of:** 2026-07-09 (ledger verification T-2026-CU-9050-028) · **Basis:** 2026-07-07, T-2026-CU-9050-021 (last Fable-5 day) · **Sister handoffs:** T-2026-CU-9000-296 (claude_skills), T-2026-CU-9000-297 (knowledge_scraper)
 
-Ab 2026-07-08 übernimmt Opus die Task-Abarbeitung in diesem Repo. Dieses Dokument ist das Operating Manual: Arbeitszyklus, System-Synthese, kuratierte Fallen, Qualitätsbar, Eskalationsregeln. Es ergänzt `CLAUDE.md` (harte Regeln, auto-geladen) und `docs/T-2026-CU-9050-021-opus-task-audit.md` (geranktes Backlog). **Am Session-Start lesen, vor dem ersten Edit.**
+From 2026-07-08, Opus takes over task work in this repo. This document is the operating manual: work cycle, system synthesis, curated traps, quality bar, escalation rules. It supplements `CLAUDE.md` (hard rules, auto-loaded) and `docs/T-2026-CU-9050-021-opus-task-audit.md` (ranked backlog). **Read at session start, before the first edit.**
 
 ---
 
-## §1 Kontext in drei Sätzen
+## §1 Context in three sentences
 
-Kythera ist Michis produktiver Crypto-Trading-Bot (~29 Bots, ~530 Coins, Binance Futures, Windows-VPS, PostgreSQL). 2026-06/07 lief ein vollständiger Audit (20 Reports, 126 Findings in `AUDIT_TODO.md`); die Money-kritischen Code-Bugs sind größtenteils gefixt, offen sind strukturelle Root-Causes (R1–R4), das Retrain-Programm und der DB/Perf-Block (Z0, TimescaleDB). Es gibt **zwei Maschinen**: die Build-Maschine (dieses Checkout, keine DB-Credentials) und den Live-VPS (Bots + DB + echtes Geld + Trainer in `Documents\_X`).
+Kythera is Michi's live crypto trading bot (~29 bots, ~530 coins, Binance Futures, Windows VPS, PostgreSQL). 2026-06/07 saw a full audit (20 reports, 126 findings in `AUDIT_TODO.md`); the money-critical code bugs are largely fixed, what remains open are structural root causes (R1–R4), the retrain programme and the DB/perf block (Z0, TimescaleDB). There are **two machines**: the build machine (this checkout, no DB credentials) and the live VPS (bots + DB + real money + trainers in `Documents\_X`).
 
-## §2 Kanonischer Arbeitszyklus
+## §2 Canonical work cycle
 
-0. **`git fetch origin` + Stand prüfen** — vor jeder Priorisierung, vor dem ersten Edit (Falle 15).
-1. **Task wählen** — Backlog-Reihenfolge aus dem Task-Audit-Doc; pro Task zuerst `read_doc` des KB-Task-Docs (die Briefs dort sind eine Interpretation vom Stand-Datum, die KB kann weitergedreht sein).
-2. **KB-Task starten** (`/task-start T-2026-KYT-9050-NNN` — Nummernkreis seit 2026-07-21, siehe CLAUDE.md §Workflow; der alte `T-2026-CU-9050-NNN`-Kreis ist geschlossen, neue Tasks via `add_task` mit `customer/project_id="kythera"`), Worktree, Branch `feat/<t-id>`.
-3. **Vor Lösungsideen: Problem in 4 Fragen zerlegen** (Skill `z-fable-judgment`): Outcome / Population / Messung / Stop-Kriterium. Wenn eine nicht beantwortbar ist → Rückfrage, nicht Annahme.
-4. **KB-first:** `search_kb` nach Präzedenzfall (Decisions, Kythera-Tasks im KYT- **und** dem geschlossenen CU-9050-Korpus, Audit-Reports). Fast alles hier hat einen dokumentierten Vorentscheid.
-5. **Implementieren** — Konventionen aus §4/§5. Bei Bot-Edits vorher die DO-NOT/WARNING/forming/lookahead-Kommentare in der Datei greppen (~69 Stück über 40 Dateien — sie markieren die Minenfelder).
-6. **Verifizieren** (§7) — CI reicht nicht.
-7. **PR** (Englisch, conventional commits — ziagl888-Repo, kein Org-Titel-Format), Kern-Reviews (z-code-reviewer + z-spec-compliance-review). **Merge via merge-train (Default seit 2026-07-10):** nach PASS `cu/reviews` auf den Head-SHA stempeln, `gh pr edit <PR#> --add-label merge-train`, Session schließen — der Daemon (`services/merge_train/` in knowledge_base_internal, Hetzner) merged seriell und rebased jeden PR höchstens einmal. **NICHT selbst `gh pr merge`** — parallele Fleet-Sessions erzeugen sonst die O(n²)-Rebase-Kaskade über die CHANGELOG-Top-Insertion (die Konflikt-Mühle vom 2026-07-10). Bounce = Label `merge-train:failed` + Daemon-Kommentar; Re-Queue braucht neuen Commit + Re-Stamp + Re-Label (Label-Re-Add allein ist bewusster No-op, und ein Rebase/Force-Push verwirft den `cu/reviews`-Status mit). Nach dem Enqueue nicht auf den Merge idle-pollen — CHANGELOG-/AUDIT_TODO-Nachlauf gehört in den PR selbst.
-8. **Nachlauf:** `CHANGELOG.md`-Eintrag (Deutsch, Stil wie bestehende Einträge), `AUDIT_TODO.md`-Checkboxen der erledigten Findings flippen (inkl. ✅-Datum), KB-Task-Status, ggf. Folge-Task anlegen.
+0. **`git fetch origin` + check state** — before every prioritisation, before the first edit (trap 15).
+1. **Choose a task** — backlog order from the task audit doc; for each task, first `read_doc` the KB task doc (the briefs there are an interpretation as of the stated date, the KB may have moved on).
+2. **Start the KB task** (`/task-start T-2026-KYT-9050-NNN` — number range since 2026-07-21, see CLAUDE.md §Workflow; the old `T-2026-CU-9050-NNN` range is closed, new tasks via `add_task` with `customer/project_id="kythera"`), worktree, branch `feat/<t-id>`.
+3. **Before solution ideas: decompose the problem into 4 questions** (skill `z-fable-judgment`): outcome / population / measurement / stop criterion. If one cannot be answered → ask, don't assume.
+4. **KB-first:** `search_kb` for precedent (decisions, Kythera tasks in the KYT- **and** the closed CU-9050 corpus, audit reports). Almost everything here has a documented prior decision.
+5. **Implement** — conventions from §4/§5. For bot edits, grep the DO-NOT/WARNING/forming/lookahead comments in the file first (~69 of them across 40 files — they mark the minefields).
+6. **Verify** (§7) — CI is not enough.
+7. **PR** (English, conventional commits — ziagl888 repo, no org title format), core reviews (z-code-reviewer + z-spec-compliance-review). **Merge via merge train (default since 2026-07-10):** after PASS, stamp `cu/reviews` on the head SHA, `gh pr edit <PR#> --add-label merge-train`, close the session — the daemon (`services/merge_train/` in knowledge_base_internal, Hetzner) merges serially and rebases each PR at most once. **DO NOT `gh pr merge` yourself** — parallel fleet sessions otherwise create the O(n²) rebase cascade over the CHANGELOG top insertion (the conflict mill of 2026-07-10). Bounce = label `merge-train:failed` + daemon comment; re-queueing needs a new commit + re-stamp + re-label (re-adding the label alone is a deliberate no-op, and a rebase/force-push discards the `cu/reviews` status too). After enqueueing, don't idle-poll for the merge — CHANGELOG/AUDIT_TODO follow-up belongs in the PR itself.
+8. **Follow-up:** `CHANGELOG.md` entry (German, style like existing entries), flip the `AUDIT_TODO.md` checkboxes of the resolved findings (incl. ✅ date), KB task status, create a follow-up task if needed.
 
-**No-op ist ein gültiges Done.** "Finding widerlegt", "kann der Bestand schon", "Effekt bleibt aus (Stop-B)" sind erfolgreiche Ergebnisse — dokumentieren statt Pseudo-Output bauen.
+**A no-op is a valid done.** "Finding refuted", "the codebase already handles it", "effect stays absent (Stop-B)" are successful outcomes — document them instead of building pseudo-output.
 
-## §3 System-Synthese (Was wo lebt)
+## §3 System synthesis (what lives where)
 
-- **Datenfluss:** Binance WS (`wss://fstream.binance.com/market/…` — Legacy-Endpoints sind seit 2026-04-23 tot) → `1_data_ingestion` → per-Coin-Tabellen (~9.297, `{sym}_{tf}`) → `2_indicator_engine` (~120 Indikatoren) → Strategy-/AI-Bots → `28_signal_orchestrator` (Regime-Whitelist, Dedupe, EIN Cornix-Channel) → `telegram_outbox` → `4_telegram_bot` → Cornix → Binance. Monitore 5/8 scoren SL/TP.
-- **Prozess-Lifecycle:** `main_watchdog.py` ist der einzige Owner (seit 8d3145f). Parken: Marker `control/parked/<script>.py`; One-Shot-Restart: `control/restart/<script>.py`. Health-Checks alle 60s (`core/health_monitor.py`).
-- **Regime-Schicht:** Bots 26 (Detector, 5 BTC-Klassen × 3 Alt-Kontexte) / 27 (per-Bot-Performance → Whitelist) / 28 (Gating). Doku: `docs/REGIME_ORCHESTRATOR.md` (live, aber Spec-Drift P1.10 beachten).
-- **ML-Programm:** Seit dem Audit gilt: **Labels nur aus Walk-Forward-Replay der echten Order-Geometrie** (`tools/walkforward_sim.py`, first-touch TP1-vs-SL, Fees) — nie Close-basierte Proxys. Retrain-Pipeline: `tools/retrain_from_replay.py`, AIM2: `tools/aim2_build_dataset.py` + `aim2_train.py`. Modell-Intents: `docs/MODEL_INTENT.md`. AIM2-Design: `docs/AIM2_DESIGN.md` (Bot 15, shadow-first via `AIM2_LIVE_POSTING`). Research-Bots 30–33 (PEX1/FMR1/TRM1/FIF1): `docs/NEW_IDEAS_BOTS.md`, gated via `NEW_IDEAS_LIVE_POSTING`, ohne Artefakt laufen sie im Idle-Mode.
-- **Geparkt per Audit-Entscheid:** `14_ai_atb_bot.py`, `29_ufi1_bot.py`. **AIM1 ist tot** (invertierte Kalibration, P0.13 — Entscheid: KEIN Retrain, bleibt aus; AIM2 ist der Ersatz).
-- **Staged-C-Refactor** (T-2026-CU-9050-007, Premortem in `.local/refactor/` — gitignored): Strangler-Fig innerhalb Kytheras, TimescaleDB-Fundament neben dem Bestand, Strategien einzeln hinter Paritäts-Gates. Phase 0 done, Phase 1 (Regression-Guard) gebaut **und scharf** — 24 Goldens + 24 Fixtures + Manifest sind seit `4765e25` git-tracked, `guard.py verify` läuft als pre-commit-Hook (Korrektur 2026-07-09: dieser Absatz und das Task-Audit sagten fälschlich „nicht scharf"; offen ist nur die Disarm-Härtung P2.51). Der alte v4-Repo ist tot — nicht wiederbeleben. Leitsatz aus dem Premortem: **"Green means like-v2, never correct."**
+- **Data flow:** Binance WS (`wss://fstream.binance.com/market/…` — legacy endpoints have been dead since 2026-04-23) → `1_data_ingestion` → per-coin tables (~9,297, `{sym}_{tf}`) → `2_indicator_engine` (~120 indicators) → strategy/AI bots → `28_signal_orchestrator` (regime whitelist, dedupe, ONE Cornix channel) → `telegram_outbox` → `4_telegram_bot` → Cornix → Binance. Monitors 5/8 score SL/TP.
+- **Process lifecycle:** `main_watchdog.py` is the sole owner (since 8d3145f). Parking: marker `control/parked/<script>.py`; one-shot restart: `control/restart/<script>.py`. Health checks every 60s (`core/health_monitor.py`).
+- **Regime layer:** bots 26 (detector, 5 BTC classes × 3 alt contexts) / 27 (per-bot performance → whitelist) / 28 (gating). Docs: `docs/REGIME_ORCHESTRATOR.md` (live, but mind spec drift P1.10).
+- **ML programme:** since the audit the rule is: **labels only from walk-forward replay of the actual order geometry** (`tools/walkforward_sim.py`, first-touch TP1-vs-SL, fees) — never close-based proxies. Retrain pipeline: `tools/retrain_from_replay.py`, AIM2: `tools/aim2_build_dataset.py` + `aim2_train.py`. Model intents: `docs/MODEL_INTENT.md`. AIM2 design: `docs/AIM2_DESIGN.md` (bot 15, shadow-first via `AIM2_LIVE_POSTING`). Research bots 30–33 (PEX1/FMR1/TRM1/FIF1): `docs/NEW_IDEAS_BOTS.md`, gated via `NEW_IDEAS_LIVE_POSTING`, without an artifact they run in idle mode.
+- **Parked by audit decision:** `14_ai_atb_bot.py`, `29_ufi1_bot.py`. **AIM1 is dead** (inverted calibration, P0.13 — decision: NO retrain, stays off; AIM2 is the replacement).
+- **Staged-C refactor** (T-2026-CU-9050-007, premortem in `.local/refactor/` — gitignored): strangler fig within Kythera, TimescaleDB foundation alongside the existing stack, strategies individually behind parity gates. Phase 0 done, Phase 1 (regression guard) built **and armed** — 24 goldens + 24 fixtures + manifest have been git-tracked since `4765e25`, `guard.py verify` runs as a pre-commit hook (correction 2026-07-09: this paragraph and the task audit had incorrectly said "not armed"; the only thing still open is the disarm hardening P2.51). The old v4 repo is dead — do not revive it. Guiding principle from the premortem: **"Green means like-v2, never correct."**
 
-## §4 Die kuratierten Fallen (was schwächere Modelle hier falsch machen)
+## §4 The curated traps (what weaker models get wrong here)
 
-1. **Forming Candle (R1).** `is_closed` ist noch NICHT in der DB durchgesetzt (Design: `docs/TIMESCALE_R1_MIGRATION.md`). Bots schützen sich individuell — teils `iloc[-1]` auf DESC-sortierten Frames (neueste Zeile = Index 0!), teils Drop der letzten Zeile. Wer Indexierung "aufräumt", ohne die Sortierung zu prüfen, baut Look-ahead ein.
-2. **Geteilte Feature-Builder (X-R1-Regel).** `core/{mis,aim2,rub,funding,research}_features.py` werden von Bot UND Trainer/Replay importiert. Ein "harmloser" Refactor dort verschiebt die Feature-Verteilung eines Live-Modells. Feature-Contract ist hart: fehlende Spalten führen zum Load-Fehler/Idle, nicht zu `fillna(0)` (die P0.12-Lektion).
-3. **Idle-Mode ≠ kaputt.** Bot ohne deploytes Artefakt startet und tut nichts (`loaded=False`). Nicht "fixen".
-4. **Staging-Regel.** Trainings-Tools schreiben nur nach `staging_models/`. Ein Trainer, der auf den Live-Artefakt-Pfad zeigt, ist ein Bug — auch wenn es "praktischer" wirkt.
-5. **Cornix-Doppel-Parse.** Eine zweite Message mit identischem Signal-Block = doppelte Position mit echtem Geld. Info-Message ohne Cornix-Block, immer.
-6. **Per-Coin-Tabellen.** Es gibt (noch) keine `candles`-Tabelle. Tabellennamen sind f-Strings aus `coins.json` — Identifier-Hygiene beachten (P3.3), Symbol-Whitelist nicht aufweichen.
-7. **coins.json hat zwei Writer** (`1_data_ingestion.update_trading_pairs` + `6_housekeeping.update_coins_json`) — Filter müssen identisch bleiben (quoteAsset=USDT + PERPETUAL), sonst lecken Junk-Symbole fleet-weit (der "ETHU"-Vorfall).
-8. **Caller-Commit-Kontrakt.** `core/signal_post.py`/Cooldown-Helper committen nicht. Wer den Caller-Commit vergisst, persistiert nichts — oder partiell.
-9. **TZ-Minenfeld (R3 offen).** Writer schreiben UTC, diverse Reader lesen naiv-lokal. Vor jedem Fix an Zeitfenstern/Cooldowns/Stats das AUDIT_TODO-TZ-Cluster (P2.1–P2.6) lesen — Einzel-Fixes ohne die R3-Linie (core/time.py, timestamptz) erzeugen neue Drift.
-10. **Windows-Realität.** Live-VPS ist Windows: `platform=win32` (mypy), win32-Prozess-Prioritäten, SIGBREAK, PG-Datadir `C:\PGDATA`, Backups `D:\_BACKUP\db`, PowerShell 5.1 (keine `&&`-Chains). `terminate()` ist ein Hard-Kill (P2.48).
-11. **CI-Lücke.** CI = ruff/format + mypy + AST/Import-Smoke + Secret-Regex. Kein pytest, kein Guard, keine Backtests. Verhaltens-Verifikation ist Bringschuld der Session (§7).
-12. **Ruff/mypy-Excludes.** `backtest/`, `tools/`, `strategies/`, `handlers/`, `trainers_x/`, `legacy_trainers/` sind excluded — dort ist der Lint-Bar bewusst niedriger. Nicht "aufräumen" als Selbstzweck (Boy-Scout nur mit Touch-Kontext).
-13. **AUDIT_TODO-Annotation ≠ Wahrheit.** Bis 2026-07-09 stand hier „erst Annotation lesen, dann handeln". Das reicht nicht: bei der Verifikation (T-028) stellte sich **eine der Annotationen selbst als falsch heraus** — P1.26 war als widerlegt markiert, ist aber ein realer Dead-Code-Bug; der „Beweis" waren Cooldown-Rows einer älteren Codeversion, deren Key der aktuelle Code gar nicht mehr schreibt. Regel also: **erst Annotation lesen, dann am Code nachprüfen, dann handeln.** Ein Live-Zähl-Beweis („N Rows, also feuert der Pfad") ist nur gültig, wenn der aktuelle Code diesen Key auch tatsächlich schreibt.
-14. **MIS2-SHORT Limit-Entries** werden vom Trade-Monitor noch falsch gescored (unfilled +5%-Entries dürfen nicht zählen) — bekannter Follow-up, nicht als neuen Bug melden.
-15. **Der Checkout kann hinter `origin` liegen.** Mehrere Sessions arbeiten parallel am selben Repo; am 2026-07-09 war der Build-Checkout 8 Commits zurück. Wer aus einem stale Checkout priorisiert, sieht die Fixes nicht, die schon liegen, und arbeitet sie erneut ab. **Vor jeder Priorisierung `git fetch origin` + Stand prüfen** — vor dem ersten Edit, nicht danach.
-16. **Modell-Tag kommt aus dem Artefakt, nie aus einer Konstante.** Harte Regel 6 wird nicht dadurch erfüllt, dass die Quellcode-Konstante zufällig zur aktuellen Generation passt. Drei Bots (`11_ai_mis`, `13_ai_rub`, `24_quasimodo`) werfen die geladene `meta.model_id` weg (P1.45) — beim nächsten Retrain verschmelzen die Generationen still in der Per-Bot-Statistik, auf der das Orchestrator-Gating entscheidet. Korrektmuster: `18_ai_abr1_bot.py:520`. **Vor jedem Retrain-Rollout prüfen, ob der Post-Pfad die `model_id` wirklich liest.**
+1. **Forming candle (R1).** `is_closed` is NOT yet enforced in the DB (design: `docs/TIMESCALE_R1_MIGRATION.md`). Bots protect themselves individually — some via `iloc[-1]` on DESC-sorted frames (newest row = index 0!), some by dropping the last row. Whoever "cleans up" indexing without checking the sort order builds in look-ahead.
+2. **Shared feature builders (X-R1 rule).** `core/{mis,aim2,rub,funding,research}_features.py` are imported by BOTH the bot AND the trainer/replay. A "harmless" refactor there shifts the feature distribution of a live model. The feature contract is hard: missing columns lead to a load error/idle, not `fillna(0)` (the P0.12 lesson).
+3. **Idle mode ≠ broken.** A bot without a deployed artifact starts and does nothing (`loaded=False`). Do not "fix" that.
+4. **Staging rule.** Training tools write only to `staging_models/`. A trainer that points at the live artifact path is a bug — even if it seems "more convenient".
+5. **Cornix double parse.** A second message with an identical signal block = a duplicate position with real money. Info message without a Cornix block, always.
+6. **Per-coin tables.** There is (still) no `candles` table. Table names are f-strings from `coins.json` — mind identifier hygiene (P3.3), don't loosen the symbol whitelist.
+7. **coins.json has two writers** (`1_data_ingestion.update_trading_pairs` + `6_housekeeping.update_coins_json`) — filters must stay identical (quoteAsset=USDT + PERPETUAL), otherwise junk symbols leak fleet-wide (the "ETHU" incident).
+8. **Caller-commit contract.** `core/signal_post.py`/cooldown helpers don't commit. Whoever forgets the caller commit persists nothing — or only partially.
+9. **TZ minefield (R3 open).** Writers write UTC, various readers read naive-local. Before every fix touching time windows/cooldowns/stats, read the AUDIT_TODO TZ cluster (P2.1–P2.6) — single fixes without the R3 line (core/time.py, timestamptz) create new drift.
+10. **Windows reality.** The live VPS is Windows: `platform=win32` (mypy), win32 process priorities, SIGBREAK, PG data dir `C:\PGDATA`, backups `D:\_BACKUP\db`, PowerShell 5.1 (no `&&` chains). `terminate()` is a hard kill (P2.48).
+11. **CI gap.** CI = ruff/format + mypy + AST/import smoke + secret regex. No pytest, no guard, no backtests. Behavioural verification is the session's own obligation (§7).
+12. **Ruff/mypy excludes.** `backtest/`, `tools/`, `strategies/`, `handlers/`, `trainers_x/`, `legacy_trainers/` are excluded — the lint bar is deliberately lower there. Don't "clean up" as an end in itself (boy-scouting only with touch context).
+13. **AUDIT_TODO annotation ≠ truth.** Until 2026-07-09 this said "read the annotation first, then act". That's not enough: during verification (T-028) **one of the annotations itself turned out to be wrong** — P1.26 was marked as refuted, but is a real dead-code bug; the "proof" was cooldown rows from an older code version whose key the current code no longer even writes. Rule therefore: **read the annotation first, then verify against the code, then act.** A live-count proof ("N rows, so the path fires") is only valid if the current code actually writes that key.
+14. **MIS2-SHORT limit entries** are still scored incorrectly by the trade monitor (unfilled +5%-entries must not count) — known follow-up, don't report as a new bug.
+15. **The checkout can lag behind `origin`.** Several sessions work on the same repo in parallel; on 2026-07-09 the build checkout was 8 commits behind. Whoever prioritises from a stale checkout doesn't see fixes already in place and reworks them. **Before every prioritisation, `git fetch origin` + check state** — before the first edit, not after.
+16. **The model tag comes from the artifact, never from a constant.** Hard rule 6 is not satisfied just because the source-code constant happens to match the current generation. Three bots (`11_ai_mis`, `13_ai_rub`, `24_quasimodo`) discard the loaded `meta.model_id` (P1.45) — on the next retrain, the generations silently merge in the per-bot statistics that the orchestrator gating decides on. Correct pattern: `18_ai_abr1_bot.py:520`. **Before every retrain rollout, check whether the post path actually reads `model_id`.**
 
-## §5 Qualitätsbar pro Deliverable
+## §5 Quality bar per deliverable
 
-- **Code-Fix (Bot/Core):** Root-Cause benannt (kein Symptom-Patch); betroffene DO-NOT-Kommentare respektiert; `backtest/test_*.py` der berührten Fläche grün; ruff+mypy lokal grün; CHANGELOG-Eintrag; AUDIT_TODO-Checkbox geflippt. Bei Geld-Pfad (Signal-Emission, Monitor-Scoring, Orchestrator-Gating): zusätzlich der Beweis im PR-Text, dass sich die Live-Semantik nur wie beabsichtigt ändert.
-- **Neuer Bot/Strategie:** teilt Feature-/Detection-Source mit Trainer+Replay (ein Modul in `core/`); postet nach `CH_NEW_IDEAS` hinter default-off-Gate; Artefakt-Loading via `core/model_artifacts.py` (Idle-Mode-fähig); eigene `docs/MODEL_INTENT.md`-Sektion; Cooldown + Dedupe von Tag 1.
-- **Trainer/ML:** Labels aus Walk-Forward-Replay; chronologischer Split + Purge-Gap; Kalibrierung + Threshold auf Validation-Slice; Artefakt nach `staging_models/` mit Meta (`model_id`, Feature-Namen, Versionen); Kalibrierungs-Report; **kein Rollout** — Rollout-Empfehlung an Michi.
-- **Doku:** Deutsch für Betriebs-/Audit-Doku (Stil AUDIT_TODO/CHANGELOG), Englisch für Code-nahe Doku; Intent rekonstruierbar für den Folge-Agenten; kürzer als der Code, den sie beschreibt.
+- **Code fix (bot/core):** root cause named (no symptom patch); affected DO-NOT comments respected; `backtest/test_*.py` of the touched surface green; ruff+mypy locally green; CHANGELOG entry; AUDIT_TODO checkbox flipped. For the money path (signal emission, monitor scoring, orchestrator gating): additionally proof in the PR text that live semantics change only as intended.
+- **New bot/strategy:** shares feature/detection source with trainer+replay (one module in `core/`); posts to `CH_NEW_IDEAS` behind a default-off gate; artifact loading via `core/model_artifacts.py` (idle-mode-capable); its own `docs/MODEL_INTENT.md` section; cooldown + dedupe from day 1.
+- **Trainer/ML:** labels from walk-forward replay; chronological split + purge gap; calibration + threshold on the validation slice; artifact to `staging_models/` with meta (`model_id`, feature names, versions); calibration report; **no rollout** — rollout recommendation to Michi.
+- **Docs:** German for operational/audit docs (style AUDIT_TODO/CHANGELOG), English for code-adjacent docs; intent reconstructible for the following agent; shorter than the code it describes.
 
-## §6 Eskalationsregeln
+## §6 Escalation rules
 
-**Sofort stoppen und Michi fragen** (irreversibel · Geld · Außenwirkung · Gate-Flip):
+**Stop immediately and ask Michi** (irreversible · money · external effect · gate flip):
 
-- Artifact-Promotion aus `staging_models/` in den Live-Pfad; jeder Retrain-**Rollout** (Training selbst + Staging-Kandidat + Empfehlung sind ok).
-- Gate-Flips: `AIM2_LIVE_POSTING`, `NEW_IDEAS_LIVE_POSTING`, Orchestrator-Gating-Parameter, Parken/Entparken.
-- Fleet-Restarts, `.env`-Änderungen, alles was laufende Prozesse auf dem VPS berührt.
-- Schema-Änderungen/Migrationen an Live-Tabellen (insb. T-2026-KYT-9050-002, ex-CU-9050-018 — dort sind Operator-Entscheidungen explizit offen).
-- Löschen von Daten/Tabellen (auch "tote" — D5 nur nach Freigabe).
-- Zwei gleichwertige Wege mit strategischer Konsequenz (z.B. Scope-Erweiterung Staged-C).
+- Artifact promotion from `staging_models/` into the live path; every retrain **rollout** (training itself + staging candidate + recommendation are fine).
+- Gate flips: `AIM2_LIVE_POSTING`, `NEW_IDEAS_LIVE_POSTING`, orchestrator gating parameters, parking/unparking.
+- Fleet restarts, `.env` changes, anything touching running processes on the VPS.
+- Schema changes/migrations on live tables (esp. T-2026-KYT-9050-002, ex-CU-9050-018 — operator decisions are explicitly open there).
+- Deleting data/tables (including "dead" ones — D5 only after approval).
+- Two equally valid paths with strategic consequence (e.g. scope expansion of Staged-C).
 
-**Nicht eskalieren, einfach machen:** reversible Code-Fixes im Worktree, Tests, Doku, Ledger-Hygiene, Analysen/Studien ohne Live-Eingriff, Staging-Trainings auf dem VPS innerhalb der Batch-E-Constraints (CPU-gedrosselt, Live-Tabellen read-only, keine Produktions-pkls).
+**Don't escalate, just do it:** reversible code fixes in the worktree, tests, docs, ledger hygiene, analyses/studies without live intervention, staging training runs on the VPS within the Batch-E constraints (CPU-throttled, live tables read-only, no production pkls).
 
-**3-Versuche-Regel:** Drei Fix-Versuche ohne neue Diagnose-Information → stoppen, Hypothesenraum neu aufspannen, ggf. eskalieren. Raten skaliert nicht.
+**3-attempts rule:** three fix attempts without new diagnostic information → stop, re-open the hypothesis space, escalate if needed. Guessing doesn't scale.
 
-## §7 Verifikations-Matrix
+## §7 Verification matrix
 
-| Änderung an … | Pflicht-Verifikation |
+| Change to … | Mandatory verification |
 |---|---|
-| `2_indicator_engine.py` / Indikator-Pfad | `python tools/regression_guard/guard.py verify` (wenn armed; sonst `smoke`) |
-| `core/*_features.py` | zugehörige `backtest/test_*_features.py` + betroffener Trainer lädt Artefakt noch (Feature-Contract) |
-| Bot-Signal-Logik | Standalone-Test der Datei (AST/Import), betroffene `backtest/test_*.py`, Grep auf Cornix-Block-Dopplung |
-| Orchestrator/Regime (26/27/28) | `backtest/test_signal_orchestrator.py`, `test_regime_detector.py`, `test_bot_regime_analyzer.py` |
-| Monitore 5/8 | Scoring-Semantik gegen `audit_reports/17_monitor_replay_and_gaps.md` prüfen (63.4%-Agreement-Vorgeschichte) |
-| Trainer/Replay | Mini-Lauf auf kleinem Coin-Set gegen `staging_models/`, Kalibrierungs-Report |
-| Alles | ruff + `ruff format --check` + mypy lokal (= CI), pre-commit durchlaufen lassen (nie `--no-verify`) |
+| `2_indicator_engine.py` / indicator path | `python tools/regression_guard/guard.py verify` (if armed; otherwise `smoke`) |
+| `core/*_features.py` | corresponding `backtest/test_*_features.py` + affected trainer still loads the artifact (feature contract) |
+| Bot signal logic | standalone test of the file (AST/import), affected `backtest/test_*.py`, grep for Cornix block duplication |
+| Orchestrator/regime (26/27/28) | `backtest/test_signal_orchestrator.py`, `test_regime_detector.py`, `test_bot_regime_analyzer.py` |
+| Monitors 5/8 | check scoring semantics against `audit_reports/17_monitor_replay_and_gaps.md` (63.4% agreement precedent) |
+| Trainer/replay | mini run on a small coin set against `staging_models/`, calibration report |
+| Everything | ruff + `ruff format --check` + mypy locally (= CI), let pre-commit run through (never `--no-verify`) |
 
-Auf der Build-Maschine ist die DB nicht erreichbar — DB-abhängige Verifikation (Guard `extract`/`verify` armed, Live-Queries, Trainings) gehört in eine VPS-Session.
+On the build machine the DB is not reachable — DB-dependent verification (guard `extract`/`verify` armed, live queries, training runs) belongs in a VPS session.
 
-## §8 How Fable Thinks
+## §8 How Fable thinks
 
-Die Denkmuster liegen im Skill **`z-fable-judgment`** (Problem-Zerlegung in 4 Fragen, billigste Falsifikation zuerst, Empfehlung statt Survey, Default-off für Unbewiesenes, No-op/Stop-B-Disziplin, 3-Versuche-Regel). Kythera-eigene Kalibrier-Beispiele:
+The thinking patterns live in skill **`z-fable-judgment`** (problem decomposition into 4 questions, cheapest falsification first, recommendation over survey, default-off for unproven things, no-op/Stop-B discipline, 3-attempts rule). Kythera-specific calibration examples:
 
-- **AIM1 (P0.13):** Naheliegend wäre "Vokabular retrainen". Entscheid: NEIN — der Retrain hätte das invertierte Volatilitäts-Modell reproduziert. Muster: Root-Cause vor Mechanik-Fix; ein totes Modell aus lassen ist ein gültiges Done. AIM2 wurde stattdessen sauber neu gebaut (Replay-Labels, shadow-first).
-- **Walk-Forward-Regel (P0.10):** 7/8 Trainer-Familien labelten idealisierte Fills, die die Bots nie handeln. Entscheid: EIN gemeinsamer Simulator statt acht Einzel-Fixes. Muster: Root-Cause-Werkzeug vor Punkt-Fixes.
-- **Staged-C statt v4-Rewrite:** Der Big-Bang-Rewrite war schon einmal gestorben (40 Commits in 3 Tagen → 3 Monate Stille). Entscheid: Strangler-Fig im Bestand, Guard zuerst, WIP=1. Muster: Momentum-Risiko schlägt Architektur-Eleganz.
-- **Batch-E-Disziplin:** Jede Strategie-Idee wird billig falsifizierbar gemacht (Replay entscheidet, ~1 Tag), bevor Live-Code entsteht — siehe T-2026-KYT-9050-003 (ex-CU-9050-020, HMM-Studie) als Vorlage.
+- **AIM1 (P0.13):** the obvious move would be "retrain the vocabulary". Decision: NO — the retrain would have reproduced the inverted volatility model. Pattern: root cause before mechanical fix; leaving a dead model off is a valid done. AIM2 was instead built cleanly from scratch (replay labels, shadow-first).
+- **Walk-forward rule (P0.10):** 7/8 trainer families labelled idealised fills that the bots never actually trade. Decision: ONE shared simulator instead of eight individual fixes. Pattern: root-cause tooling before point fixes.
+- **Staged-C instead of a v4 rewrite:** the big-bang rewrite had already died once (40 commits in 3 days → 3 months of silence). Decision: strangler fig within the existing codebase, guard first, WIP=1. Pattern: momentum risk beats architectural elegance.
+- **Batch-E discipline:** every strategy idea is made cheaply falsifiable (replay decides, ~1 day) before live code exists — see T-2026-KYT-9050-003 (ex-CU-9050-020, HMM study) as a template.

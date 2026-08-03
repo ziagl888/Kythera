@@ -1,45 +1,45 @@
 # Dossier: Fast In And Out (FIFO)
 
-> Momentum-Scalper ohne Edge-Hypothese — **Note F** (Report 16) · größter Verlustbringer der gesamten Flotte (Σ **−25.843** Preis-% netto). Kernverdikt: „Nicht rettbar — es gibt keine Selektion, die man durch Bugfixes freilegen könnte. Abschalten" — einzige Alternative: S11-Filter-Modell davor.
+> Momentum scalper without an edge hypothesis — **grade F** (Report 16) · biggest loss contributor of the entire fleet (Σ **−25,843** price-% net). Core verdict: "not rescuable — there's no selection that bugfixes could uncover. Shut it down" — the only alternative: an S11 filter model in front of it.
 
-## 1. Steckbrief
-- **Modul:** `strategies/strat_fast_in_out.py`, Runner `3_detectors.py`, Monitoring `5_trade_monitor.py`.
-- **Signal-Logik:** Drei Bedingungen auf 30m — RSI_9 zwischen 55–75, EMA9>EMA21, 5% „Luft" bis zur Resistance — ein TP bei +1,25%. Faktisch die Definition von „gerade steigt es"; trifft in jedem Aufwärtsdrift auf hunderte Coins zu (111.387 Trades).
-- **Channel:** eigener Cornix-Trading-Channel via `telegram_outbox` (Whitelist-Rohname „Fast In And Out").
-- **Cooldowns:** kein Per-Coin-Cooldown; nur globaler Win-Count-Circuit-Breaker (400/500 Wins in 3–4h über ALLE Coins — praktisch toter Guard, drosselt perverserweise nach Gewinnen, nie nach Verlusten), zusätzlich TZ-fehlerhaft (P2.1: 3h-Fenster deckt in CEST nur 1–2h).
+## 1. Profile
+- **Module:** `strategies/strat_fast_in_out.py`, runner `3_detectors.py`, monitoring `5_trade_monitor.py`.
+- **Signal logic:** three conditions on 30m — RSI_9 between 55–75, EMA9>EMA21, 5% "headroom" to resistance — one TP at +1.25%. Effectively the definition of "it's currently going up"; matches hundreds of coins on every upward drift (111,387 trades).
+- **Channel:** own Cornix trading channel via `telegram_outbox` (whitelist raw name "Fast In And Out").
+- **Cooldowns:** no per-coin cooldown; only a global win-count circuit breaker (400/500 wins in 3–4h across ALL coins — practically a dead guard, perversely throttling after wins, never after losses), also TZ-broken (P2.1: 3h window only covers 1–2h in CEST).
 
-## 2. Live-Bilanz (Report 14, dedupliziert, `closed_trades_master`)
-- **n = 111.387** · WR **60,6%** · ø **−0,13%**/Trade · Median **+1,25%** · Σ netto **−25.843** Preis-%.
-- Muster: Median positiv, ø negativ → seltene, aber riesige Verlust-Tails; die abs>50%-Ausreißer der Classic-Familie konzentrieren sich hier („Pennies vor der Dampfwalze"). Richtungssplit nicht separat berichtet. Monatstrend nicht separat ausgewiesen.
-- **Wichtig:** E6 (Report 15) — ein Loss-Cap bei −3% verbessert den ø nur um 0,02pp → das Problem ist **Selektion, nicht Ausreißer-Tails**.
-- **Scoring-Vorbehalt (Report 17):** Monitor-Scoring stimmt bei FIFO nur zu **73%** mit dem First-Touch-Replay überein (Flotte gesamt 63,4%; 17,8% verpasste TP1, 18,8% TP1 trotz SL-zuerst) — per-Trade-Wahrheit eingeschränkt zuverlässig; zusätzlich **212 verworfene Outbox-Messages im FIFO-Trading-Channel** (verlorene Signale/SL-Updates ohne Alarm).
+## 2. Live balance (Report 14, deduplicated, `closed_trades_master`)
+- **n = 111,387** · WR **60.6%** · ø **−0.13%**/trade · median **+1.25%** · Σ net **−25,843** price-%.
+- Pattern: median positive, ø negative → rare but huge loss tails; the classic family's abs>50% outliers concentrate here ("pennies in front of the steamroller"). Direction split not reported separately. Monthly trend not reported separately.
+- **Important:** E6 (Report 15) — a loss cap at −3% improves ø by only 0.02pp → the problem is **selection, not outlier tails**.
+- **Scoring caveat (Report 17):** monitor scoring agrees with the first-touch replay only **73%** of the time for FIFO (fleet overall 63.4%; 17.8% missed TP1, 18.8% TP1 despite SL-first) — per-trade truth is of limited reliability; additionally **212 dropped outbox messages in the FIFO trading channel** (lost signals/SL updates without an alert).
 
-## 3. Befunde
-| ID | Schweregrad | Einzeiler | Status |
+## 3. Findings
+| ID | Severity | One-liner | Status |
 |---|---|---|---|
-| P1.14 | Hoch | SHORT-„Headroom"-Check ist vorzeichenverdrehter No-op (`close > support*0.95` statt `*1.05`) → SHORT ohne Guard | ~ (Code, [DB] offen) |
-| P1.15 | Hoch | Ein schlechter Coin killt den ganzen Detector-Prozess (Strategie-Calls unprotected) | ~ |
-| P2.1 | Mittel | Cooldown-Circuit-Breaker vergleicht naive Lokalzeit gegen UTC-`posted` → Fenster schrumpft | ~ ([DB]) |
-| P2.44 | Mittel | 538 serielle Binance-HTTP-Calls pro Detector-Zyklus (vor jeder Prüfung) | ~ |
-| R1/05 | Hoch | Bewertet die noch laufende 30m-Kerze (Forming Candle); Engine stempelt bei :02 UND :32 | ✔ (Step 2) |
-| 05 | Kontext | Globaler Win-Cooldown 400/500 quasi tot; kein Per-Coin-Cooldown | ~ |
-| 16b | Konzept | Keine Edge-Hypothese; Payoff strukturell negativ | ✔ (Live-Zahlen) |
+| P1.14 | High | SHORT "headroom" check is a sign-flipped no-op (`close > support*0.95` instead of `*1.05`) → SHORT without a guard | ~ (code, [DB] open) |
+| P1.15 | High | One bad coin kills the whole detector process (strategy calls unprotected) | ~ |
+| P2.1 | Medium | Cooldown circuit breaker compares naive local time against UTC `posted` → window shrinks | ~ ([DB]) |
+| P2.44 | Medium | 538 serial Binance HTTP calls per detector cycle (before every check) | ~ |
+| R1/05 | High | Scores the still-forming 30m candle (forming candle); the engine stamps at :02 AND :32 | ✔ (Step 2) |
+| 05 | Context | Global win cooldown 400/500 practically dead; no per-coin cooldown | ~ |
+| 16b | Concept | No edge hypothesis; payoff structurally negative | ✔ (live figures) |
 
-## 4. Abhängigkeiten & Querschnitts-Risiken
-- **R1 Forming Candle** (Step 2 bewiesen): Signale auf ~2-min-alten Partial-Kerzen, bei :32 auf einer 32 min offenen 1h-Kerze.
-- **R3 TZ-Mix** (Session-TZ Europe/Bucharest, naive Spalten gemischt UTC/lokal) → P2.1 live-relevant.
-- **Monitor-Bugs P1.2/P2.7:** Trailing-SL zieht nie nach; nur jüngste 5m-Kerze geprüft → alle FIFO-KPIs monitor-verzerrt (Replay-Agree nur 73%).
-- **Outbox-Verluste (N2):** 212 der 800 still verworfenen Messages betrafen den FIFO-Channel; zudem md5-identische Messages 2–3× binnen 60 min (Detector-Refire, Step 2 P0.1).
-- **Stale Whitelist (P0.4/P2.25):** Orchestrator gated „Fast In And Out" auf seit 19.04. eingefrorenen Raw-Namen-Statistiken.
+## 4. Dependencies & cross-cutting risks
+- **R1 forming candle** (Step 2 proven): signals on ~2-minute-old partial candles, at :32 on a 1h candle open for 32 minutes.
+- **R3 TZ mix** (session TZ Europe/Bucharest, naive columns mixing UTC/local) → P2.1 live-relevant.
+- **Monitor bugs P1.2/P2.7:** trailing SL never tightens; only the most recent 5m candle is checked → all FIFO KPIs monitor-distorted (replay agreement only 73%).
+- **Outbox losses (N2):** 212 of the 800 silently dropped messages affected the FIFO channel; also md5-identical messages fired 2–3× within 60 min (detector refire, Step 2 P0.1).
+- **Stale whitelist (P0.4/P2.25):** orchestrator gates "Fast In And Out" on raw-name statistics frozen since 19.04.
 
-## 5. Sanierungsplan
-- **Sofort:** Abschalten (Portfolio-Empfehlung Report 16, Abschnitt 8: „Stoppen: … Fast In And Out"). −25,8k Σ netto bei fehlender Edge-Hypothese rechtfertigt keinen Weiterbetrieb.
-- **Strukturell (falls Weiterbetrieb gewünscht):** **S11 „FIFO-Filter-Modell"** (Report 15) — Meta-Klassifier vor dem Posten auf Basis der 111k gelabelten Trades (größter Datensatz im Haus); schon +0,3pp ø-Verbesserung dreht die Strategie von −25,8k auf positiv. Voraussetzung: Monitor-Rewrite (Report 17) für saubere Labels + V1–V3 (R1-Fix, Dedup, First-Touch-Simulator). Dazu Exit-Redesign S13 (TP/SL-Geometrie fee-positiv setzen, sonst abschalten) und P1.14/P2.1-Fixes.
+## 5. Remediation plan
+- **Immediately:** shut down (portfolio recommendation Report 16, section 8: "Stop: … Fast In And Out"). −25.8k Σ net with no edge hypothesis doesn't justify continued operation.
+- **Structurally (if continued operation is desired):** **S11 "FIFO filter model"** (Report 15) — a meta-classifier before posting based on the 111k labelled trades (largest dataset in-house); even +0.3pp ø improvement flips the strategy from −25.8k to positive. Prerequisite: monitor rewrite (Report 17) for clean labels + V1–V3 (R1 fix, dedup, first-touch simulator). Plus exit redesign S13 (make TP/SL geometry fee-positive, otherwise switch off) and P1.14/P2.1 fixes.
 
-## 6. Belege
+## 6. Evidence
 - `AUDIT_TODO.md`: P1.14, P1.15, P2.1, P2.44, R1, R3
-- `audit_reports/05_classic_strats.md`: Forming Candle, Headroom-No-op, Cooldown-Anatomie (Cross-cutting #2)
-- `audit_reports/14_bot_performance_db.md` §C: Zahlenzeile FIFO
-- `audit_reports/16_strategy_concept_evaluation.md` §3: Note F, Verdikt
+- `audit_reports/05_classic_strats.md`: forming candle, headroom no-op, cooldown anatomy (cross-cutting #2)
+- `audit_reports/14_bot_performance_db.md` §C: FIFO figure line
+- `audit_reports/16_strategy_concept_evaluation.md` §3: grade F, verdict
 - `audit_reports/15_strategy_proposals.md`: E6, S11, S13
-- `audit_reports/17_monitor_replay_and_gaps.md` §1–2: agree 73%, 212 Outbox-Verluste
+- `audit_reports/17_monitor_replay_and_gaps.md` §1–2: agreement 73%, 212 outbox losses

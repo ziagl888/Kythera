@@ -1,284 +1,283 @@
-# Dashboard-Absicherung (P0.8 / Z2-B4) — Ist-Zustand, Code-Fix, offener Entscheid
+# Dashboard hardening (P0.8 / Z2-B4) — current state, code fix, open decision
 
-**Stand:** 2026-08-02 · **Task:** T-2026-KYT-9050-056 · **Ledger:** `AUDIT_TODO.md` P0.8 + P1.38
-(CSRF-Teil), Task-Audit B4/Z2 · **Code:** `core/dashboard_security.py`, `dashboard.py`
+**Status:** 2026-08-02 · **Task:** T-2026-KYT-9050-056 · **Ledger:** `AUDIT_TODO.md` P0.8 + P1.38
+(CSRF part), task audit B4/Z2 · **Code:** `core/dashboard_security.py`, `dashboard.py`
 
-Dieses Dokument hält fest, was am Dashboard **gemessen** exponiert war, was der zugehörige PR
-im Code ändert, und welcher Teil der Absicherung **nicht** gebaut werden konnte, weil er
-Exposure voraussetzt — Dashboard-Exposure steht auf Michis Eskalationsliste
-(`CLAUDE.md` §Eskalation, OPUS-HANDOFF §6).
+This document records what was **measured** as exposed on the dashboard, what the corresponding PR
+changes in the code, and which part of the hardening **could not** be built because it
+requires exposure — dashboard exposure is on Michi's escalation list
+(`CLAUDE.md` §Escalation, OPUS-HANDOFF §6).
 
 ---
 
-## 1. Ist-Zustand — gemessen, nicht aus den Akten übernommen
+## 1. Current state — measured, not copied from the record
 
-Alle Werte am 2026-08-01/02 auf srv02 selbst erhoben (read-only, kein Eingriff).
+All values collected on 2026-08-01/02 on srv02 itself (read-only, no intervention).
 
-> ### ⚠️ Korrektur 2026-08-02 — die Firewall-Zeilen dieser Tabelle waren falsch
+> ### ⚠️ Correction 2026-08-02 — the firewall rows in this table were wrong
 >
-> Nachgemessen beim Merge dieses PRs, read-only:
+> Re-measured at the merge of this PR, read-only:
 >
-> | Was | Ursprünglich notiert | Tatsächlich |
+> | What | Originally noted | Actually |
 > |---|---|---|
-> | Effektive Inbound-Default-Aktion | **Block** (alle drei Profile) | **`NotConfigured`** (alle drei Profile) |
-> | Inbound-Allow-Regel, die TCP 5000 trifft | **keine** | **zwei** — `SMC Service` + `SNAC Service`, Enabled/Inbound/**Allow**/Public, `LocalPort: Any`, `RemoteIP: Any` (Symantec) |
-> | Port 5000 aus dem Internet erreichbar | **nein** | **ja** — `logs/dashboard.log` zählt seit 04.07. **557** erfolgreiche `GET / → 200` an fremde IPs |
+> | Effective inbound default action | **Block** (all three profiles) | **`NotConfigured`** (all three profiles) |
+> | Inbound allow rule matching TCP 5000 | **none** | **two** — `SMC Service` + `SNAC Service`, Enabled/Inbound/**Allow**/Public, `LocalPort: Any`, `RemoteIP: Any` (Symantec) |
+> | Port 5000 reachable from the internet | **no** | **yes** — `logs/dashboard.log` counts **557** successful `GET / → 200` from foreign IPs since 04.07 |
 >
-> Die Regel-Abfrage der Ursprungssitzung lief in „Access is denied" (nicht elevated); daraus
-> wurde „keine Allow-Regel" geschlossen. **Eine gescheiterte Messung ist kein Negativbefund.**
-> Die Sitzung hatte ihre Prüfmethode für die Erreichbarkeit sogar korrekt als untauglich
-> markiert — eine Verbindung von der Box auf ihre eigene öffentliche IP behandelt Windows als
-> Loopback — und dann trotzdem der Konfiguration geglaubt statt der Empirie im eigenen Log.
+> The original session's rule query ran into "Access is denied" (not elevated); from that it
+> concluded "no allow rule". **A failed measurement is not a negative finding.**
+> The session had even correctly flagged its own reachability test method as unsound —
+> a connection from the box to its own public IP is treated by Windows as
+> loopback — and then trusted the configuration anyway instead of the empirical evidence in its own log.
 >
-> **Folge für dieses Dokument:** §"Was daraus folgt" unten argumentiert an mehreren Stellen mit
-> „die Firewall blockt" — diese Begründung entfällt. Die daraus abgeleiteten Maßnahmen bleiben
-> richtig; die Härtung dieses PRs steht nicht mehr hinter einer Firewall, sondern trägt allein.
+> **Consequence for this document:** §"What follows from this" below argues in several places with
+> "the firewall blocks it" — that reasoning no longer holds. The measures derived from it remain
+> correct; the hardening in this PR no longer stands behind a firewall — it carries the load alone.
 >
-> **Entscheid dazu (2026-08-02, Operator): die beiden Symantec-Regeln bleiben aktiv —
-> WONTFIX, Risiko akzeptiert (`T-2026-KYT-9050-070`).** Das ist kein offener Punkt mehr und
-> soll nicht erneut als Finding aufgemacht werden. Begrenzend wirken zwei Dinge, die
-> unabhängig von der Firewall greifen: Postgres (5432) ist zwar erreichbar, `pg_hba.conf`
-> kennt aber nur `127.0.0.1/32`, `::1/128` und den lokalen Socket → Fremde werden abgewiesen,
-> kein Datenzugriff; und das Dashboard bindet ab dem nächsten Start per Default auf Loopback,
-> womit der unauthentifizierte `POST /api/system/stop_all` aus dem Netz verschwindet.
-> Exponiert bleiben 135 (RPC), 445 (SMB), 3389 (RDP) und 5985 (WinRM).
+> **Decision on this (2026-08-02, operator): the two Symantec rules stay active —
+> WONTFIX, risk accepted (`T-2026-KYT-9050-070`).** This is no longer an open item and
+> should not be reopened as a finding. Two things limit the impact independently of the
+> firewall: Postgres (5432) is reachable, but `pg_hba.conf`
+> only knows `127.0.0.1/32`, `::1/128`, and the local socket → outsiders are rejected,
+> no data access; and starting with its next launch the dashboard binds to loopback by default,
+> which removes the unauthenticated `POST /api/system/stop_all` from the network.
+> Still exposed: 135 (RPC), 445 (SMB), 3389 (RDP), and 5985 (WinRM).
 >
-> Wiedervorlage nur bei: (a) einem Fremd-Treffer auf einem Control-Endpoint im
-> Dashboard-Log, (b) einer `pg_hba`-Zeile für eine externe IP, (c) Symantec-Deinstallation.
-> Die Umkehrung bliebe jederzeit ein Kommando, elevated, sofort reversibel, **RDP unberührt**
-> (RDP hat eigene Regeln): `Disable-NetFirewallRule -DisplayName "SNAC Service","SMC Service"`.
+> Revisit only on: (a) a foreign hit on a control endpoint in the
+> dashboard log, (b) a `pg_hba` line for an external IP, (c) Symantec uninstall.
+> Reverting would still be a single command at any time, elevated, immediately reversible, **RDP unaffected**
+> (RDP has its own rules): `Disable-NetFirewallRule -DisplayName "SNAC Service","SMC Service"`.
 
-| Was | Messung | Wie gemessen |
+| What | Measurement | How measured |
 |---|---|---|
-| Legacy-Dashboard-Listener | **`0.0.0.0:5000`**, PID 100120, gestartet 2026-08-01 19:34 | `Get-NetTCPConnection -State Listen` |
-| Z1-Dashboard-Shell | `127.0.0.1:8098`, PID 86852, läuft seit 2026-07-20 | dito |
-| Analytics-API | eigener Prozess nicht gebunden; Default im Code `127.0.0.1:8099` | `tools/analytics_api.py:1647` |
-| Firewall-Profile | Domain/Private/Public **alle enabled** | `Get-NetFirewallProfile` |
-| ~~Effektive Inbound-Default-Aktion~~ | ~~**Block** (alle drei Profile, ActiveStore)~~ → **falsch, siehe Korrektur oben: `NotConfigured`** | `Get-NetFirewallProfile -PolicyStore ActiveStore` |
-| ~~Inbound-Allow-Regel für TCP 5000~~ | ~~**keine**~~ → **falsch: `SMC Service` + `SNAC Service` erlauben jeden Port von jeder IP** | Scan lief unelevated ins „Access is denied" |
-| Inbound-Allow-Regel für `python.exe`/`py.exe` | keine — aber gegenstandslos, die Symantec-Regeln filtern nicht auf Application | Scan aller aktiven Inbound-Allow-Regeln + Application-Filter |
-| Öffentliche Adresse der Box | **45.134.39.167**, direkt geroutet (kein NAT) | `Get-NetIPAddress` |
+| Legacy dashboard listener | **`0.0.0.0:5000`**, PID 100120, started 2026-08-01 19:34 | `Get-NetTCPConnection -State Listen` |
+| Z1 dashboard shell | `127.0.0.1:8098`, PID 86852, running since 2026-07-20 | ditto |
+| Analytics API | own process not bound; default in code `127.0.0.1:8099` | `tools/analytics_api.py:1647` |
+| Firewall profiles | Domain/Private/Public **all enabled** | `Get-NetFirewallProfile` |
+| ~~Effective inbound default action~~ | ~~**Block** (all three profiles, ActiveStore)~~ → **wrong, see correction above: `NotConfigured`** | `Get-NetFirewallProfile -PolicyStore ActiveStore` |
+| ~~Inbound allow rule for TCP 5000~~ | ~~**none**~~ → **wrong: `SMC Service` + `SNAC Service` allow every port from every IP** | scan ran unelevated into "Access is denied" |
+| Inbound allow rule for `python.exe`/`py.exe` | none — but moot, the Symantec rules do not filter on application | scan of all active inbound allow rules + application filter |
+| Public address of the box | **45.134.39.167**, directly routed (no NAT) | `Get-NetIPAddress` |
 
-**Route-Inventar des Legacy-Dashboards (11 Routen, Stand vor diesem PR):**
+**Route inventory of the legacy dashboard (11 routes, state before this PR):**
 
-| Route | Methode | Wirkung | Auth vorher |
+| Route | Method | Effect | Auth before |
 |---|---|---|---|
-| `/` | GET | HTML-UI | keine |
-| `/api/status` | GET | liest Fleet-/System-Status (psutil) | keine |
-| `/api/logs/<script>` | GET | liest Bot-Logs (Strategie-Verhalten) | keine |
-| `/api/logs/<script>/stream` | GET | Log-Live-Stream (SSE) | keine |
-| `/api/events` | GET | Event-Stream (SSE) | keine |
-| `/api/process/<script>/start` | POST | **schreibt** (unpark-Marker) | keine |
-| `/api/process/<script>/stop` | POST | **schreibt** (park-Marker) | keine |
-| `/api/process/<script>/restart` | POST | **schreibt** (restart-Marker) | keine |
-| `/api/system/start_all` | POST | **schreibt** (alle Bots) | keine |
-| `/api/system/restart_all` | POST | **schreibt** (alle Bots) | keine |
-| `/api/system/stop_all` | POST | **schreibt** — parkt die ganze Fleet persistent | keine |
+| `/` | GET | HTML UI | none |
+| `/api/status` | GET | reads fleet/system status (psutil) | none |
+| `/api/logs/<script>` | GET | reads bot logs (strategy behaviour) | none |
+| `/api/logs/<script>/stream` | GET | live log stream (SSE) | none |
+| `/api/events` | GET | event stream (SSE) | none |
+| `/api/process/<script>/start` | POST | **writes** (unpark marker) | none |
+| `/api/process/<script>/stop` | POST | **writes** (park marker) | none |
+| `/api/process/<script>/restart` | POST | **writes** (restart marker) | none |
+| `/api/system/start_all` | POST | **writes** (all bots) | none |
+| `/api/system/restart_all` | POST | **writes** (all bots) | none |
+| `/api/system/stop_all` | POST | **writes** — parks the whole fleet persistently | none |
 
-Die Park-Marker sind Dateien unter `control/parked/` und **überleben einen Reboot**: ein
-einzelnes `POST /api/system/stop_all` legt die Fleet still, bis jemand die Marker entfernt.
-Das Dashboard selbst führt nichts aus — der Watchdog ist der einzige Aktuator (`core/process_control.py`) —,
-was am Ergebnis nichts ändert: er liest die Marker im nächsten Zyklus (≤10 s).
+The park markers are files under `control/parked/` and **survive a reboot**: a
+single `POST /api/system/stop_all` shuts the fleet down until someone removes the markers.
+The dashboard itself executes nothing — the watchdog is the only actuator (`core/process_control.py`) —
+which changes nothing about the outcome: it reads the markers on the next cycle (≤10 s).
 
-### Was daraus folgt (und was nicht)
+### What follows from this (and what doesn't)
 
-* **Der Port WAR aus dem Internet erreichbar** (korrigiert 2026-08-02, siehe Kasten oben).
-  Die Audit-Frage „Ist Port 5000 extern erreichbar?"
-  (`audit_reports/10_dashboard_tools.md`, Frage 1 der DB-Phase) ist damit beantwortet:
-  **ja** — belegt durch 557 beantwortete Fremd-Requests im eigenen Log, nicht durch eine
-  Firewall-Konfiguration. Der Schutz hing an keiner Einstellung; es gab ihn nicht.
-* **Nicht verifiziert:** eine Erreichbarkeitsprobe von einem **externen** Vantage-Point.
-  Von der Box aus auf die eigene öffentliche IP zu verbinden beweist nichts — Windows
-  behandelt das als Loopback und wendet die Inbound-Filter nicht wie bei echtem
-  Fremdverkehr an. Die Aussage oben stützt sich auf das Regelwerk, nicht auf einen
-  Verbindungstest von außen.
-* **Der Schutz war ein Single Point of Failure.** Eine einzige Allow-Regel hebt ihn auf —
-  auch die, die Windows beim ersten interaktiven Binden eines Listeners selbst zum Anlegen
-  anbietet.
-* **Zwei Angriffe funktionierten trotz Firewall** (das ist der eigentliche Befund):
-  1. **CSRF per Simple-Request.** Eine beliebige Webseite im Browser auf der VPS kann
-     `POST http://127.0.0.1:5000/api/system/stop_all` absetzen. Ein Form-POST bzw. ein
-     `fetch(..., {mode:'no-cors'})` braucht keinen Preflight; die Antwort ist für den
-     Angreifer opak, **die Nebenwirkung tritt trotzdem ein**. Firefox lief laut
-     T-2026-CU-9050-166 zeitweise direkt auf der Box.
-  2. **DNS-Rebinding.** Eine Angreifer-Domain, die auf `127.0.0.1` zeigt, erreicht dieselben
-     Endpoints. Ein reiner Same-Origin-Vergleich hilft dagegen **nicht**, weil Angreifer-
-     `Host` und Angreifer-`Origin` übereinstimmen — nur eine Host-Allowlist greift.
-
----
-
-## 2. Was der Code-Fix ändert
-
-`core/dashboard_security.py` (neu) + Verdrahtung in `dashboard.py`. Drei O(1)-Prüfungen pro
-Request, in dieser Reihenfolge — keine DB, kein Prozess-Scan, kein Dateizugriff:
-
-1. **Host-Allowlist** (alle Methoden). `Host` muss auf der Allowlist stehen
-   (Default: `localhost`, `127.0.0.1`, `::1`, Bind-Adresse, Maschinenname; erweiterbar per
-   `KYTHERA_DASHBOARD_ALLOWED_HOSTS`). → schließt DNS-Rebinding.
-2. **Token** (alle Methoden, nur wenn konfiguriert). Konstantzeit-Vergleich gegen
-   `KYTHERA_DASHBOARD_TOKEN`; Header `X-Dashboard-Token`, Cookie oder einmalig `?token=…`
-   (setzt dann ein `HttpOnly`/`SameSite=Strict`-Cookie, damit die UI ohne Header weiterläuft).
-3. **Origin** (nur zustandsändernde Methoden). Ein **vorhandener** `Origin` muss zum Host
-   passen. Fehlender `Origin` bleibt erlaubt, damit curl/PowerShell-Aufrufe des Operators
-   funktionieren; Browser senden ihn bei Cross-Origin-POSTs immer. → schließt CSRF.
-
-Dazu:
-
-* **Bind-Default `0.0.0.0` → `127.0.0.1`** (`KYTHERA_DASHBOARD_HOST` überschreibt).
-* **Fail-closed-Startpolitik.** Der Prozess startet **nicht**, wenn (a) nicht-Loopback
-  gebunden wird ohne Token, oder (b) ein Off-Box-Hostname in der Allowlist steht ohne Token.
-  Fall (b) ist der Tunnel-Fall und der Grund, warum die Prüfung nicht nur an der Bind-Adresse
-  hängt: `cloudflared` verbindet sich nach `127.0.0.1:5000`, die Bind-Adresse bleibt also
-  harmlos, während das Dashboard weltweit erreichbar ist.
-* **Control-Endpoints validieren den Skriptnamen** gegen `SCRIPT_MAP` (404 statt Marker-Datei
-  für einen unbekannten Namen) — `audit_reports/10`, [LOW].
-
-**Kosten pro Request:** einige String-Vergleiche und Dict-Lookups. Der teure Posten am
-Dashboard bleibt unverändert `/api/status` (ein `psutil.process_iter`-Sweep pro Fleet-Eintrag,
-alle 6 s pro Tab — P1.38, offen). Der Guard erzeugt **keine** zusätzliche Query und keinen
-zusätzlichen Prozess-Scan.
-
-**~~Verhaltens-Neutralität des Bind-Wechsels~~ — KORRIGIERT 2026-08-02, der Bind-Wechsel ist
-NICHT neutral.** Die ursprüngliche Begründung („Off-Box-Zugriff ist heute nicht möglich, also
-kann der Loopback-Bind keinen bestehenden Zugriffsweg kappen") steht auf der widerlegten
-Firewall-Annahme (siehe Kasten oben). Off-Box-Zugriff **ist** möglich und wird genutzt — 537
-beantwortete Fremd-Requests seit dem 04.07. **Der Loopback-Bind kappt also einen real
-bestehenden Weg:** ab dem nächsten Dashboard-Start ist das Dashboard nur noch aus einer
-RDP-Sitzung auf der Box erreichbar (und für Fremde gar nicht mehr — das ist der Zweck).
-Fernzugriff braucht dann `KYTHERA_DASHBOARD_HOST` **plus** `KYTHERA_DASHBOARD_TOKEN` in `.env`
-(ohne Token verweigert die Fail-closed-Politik den Start), oder den Tunnel aus Z2. Die Erfolgsprobe von
-`tools/restart_fleet.ps1` (`Test-NetConnection -ComputerName localhost -Port 5000`) bleibt gültig:
-Sie liefert schon heute gegen einen reinen IPv4-Listener `True`, obwohl `localhost` zuerst nach
-`::1` auflöst — die Namensauflösung fällt auf IPv4 zurück (nachgemessen).
+* **The port WAS reachable from the internet** (corrected 2026-08-02, see box above).
+  The audit question "Is port 5000 reachable externally?"
+  (`audit_reports/10_dashboard_tools.md`, question 1 of the DB phase) is thereby answered:
+  **yes** — evidenced by 557 answered foreign requests in its own log, not by a
+  firewall configuration. The protection did not depend on any setting; it did not exist.
+* **Not verified:** a reachability probe from an **external** vantage point.
+  Connecting from the box to its own public IP proves nothing — Windows
+  treats that as loopback and does not apply the inbound filters the way it would for genuine
+  foreign traffic. The statement above rests on the ruleset, not on a
+  connection test from outside.
+* **The protection was a single point of failure.** A single allow rule cancels it out —
+  including the one Windows itself offers to create the first time a listener binds interactively.
+* **Two attacks worked despite the firewall** (that is the actual finding):
+  1. **CSRF via simple request.** Any webpage in a browser on the VPS can
+     issue `POST http://127.0.0.1:5000/api/system/stop_all` unprompted. A form POST or a
+     `fetch(..., {mode:'no-cors'})` needs no preflight; the response is opaque to the
+     attacker, **but the side effect happens anyway**. According to
+     T-2026-CU-9050-166, Firefox ran directly on the box at times.
+  2. **DNS rebinding.** An attacker domain pointing to `127.0.0.1` reaches the same
+     endpoints. A plain same-origin comparison does **not** help against this, because the attacker's
+     `Host` and attacker's `Origin` match — only a host allowlist stops it.
 
 ---
 
-## 3. Was der PR NICHT tut
+## 2. What the code fix changes
 
-Kein Deploy, kein Dashboard- oder Fleet-Neustart, keine Firewall-Regel, kein Port, kein
-Reverse-Proxy, kein `cloudflared`, keine `.env`-Änderung, keine Änderung an der laufenden
-Bind-Adresse. Der laufende Dashboard-Prozess (PID 100120) ist unangetastet.
+`core/dashboard_security.py` (new) + wiring in `dashboard.py`. Three O(1) checks per
+request, in this order — no DB, no process scan, no file access:
 
-> **Wirksam wird der Fix erst beim nächsten Start des Dashboard-Prozesses.** Nach dem Merge
-> passiert das **ohne Operator-Aktion**: der Watchdog startet das Dashboard bei einem Crash neu
-> (`main_watchdog.check_dashboard`), und ein Reboot ohnehin. Wer den Zeitpunkt kontrollieren
-> will, muss den Dashboard-Prozess bewusst neu starten (nicht die Fleet — der Watchdog zieht
-> das Dashboard allein hoch).
+1. **Host allowlist** (all methods). `Host` must be on the allowlist
+   (default: `localhost`, `127.0.0.1`, `::1`, bind address, machine name; extendable via
+   `KYTHERA_DASHBOARD_ALLOWED_HOSTS`). → closes DNS rebinding.
+2. **Token** (all methods, only when configured). Constant-time comparison against
+   `KYTHERA_DASHBOARD_TOKEN`; header `X-Dashboard-Token`, cookie, or a one-time `?token=…`
+   (which then sets an `HttpOnly`/`SameSite=Strict` cookie so the UI keeps working without the header).
+3. **Origin** (state-changing methods only). A **present** `Origin` must match the host.
+   A missing `Origin` remains allowed, so operator curl/PowerShell calls
+   keep working; browsers always send it on cross-origin POSTs. → closes CSRF.
+
+In addition:
+
+* **Bind default `0.0.0.0` → `127.0.0.1`** (overridden by `KYTHERA_DASHBOARD_HOST`).
+* **Fail-closed start policy.** The process does **not** start if (a) it binds to a
+  non-loopback address without a token, or (b) an off-box hostname is on the allowlist without a token.
+  Case (b) is the tunnel case and the reason the check does not hang only on the bind address:
+  `cloudflared` connects to `127.0.0.1:5000`, so the bind address stays
+  harmless while the dashboard is reachable worldwide.
+* **Control endpoints validate the script name** against `SCRIPT_MAP` (404 instead of a marker file
+  for an unknown name) — `audit_reports/10`, [LOW].
+
+**Cost per request:** a few string comparisons and dict lookups. The expensive item on the
+dashboard remains unchanged, `/api/status` (a `psutil.process_iter` sweep per fleet entry,
+every 6 s per tab — P1.38, open). The guard produces **no** additional query and no
+additional process scan.
+
+**~~Behavioural neutrality of the bind change~~ — CORRECTED 2026-08-02, the bind change is
+NOT neutral.** The original reasoning ("off-box access is not possible today, so
+the loopback bind cannot cut off any existing access path") rests on the refuted
+firewall assumption (see box above). Off-box access **is** possible and is being used — 537
+answered foreign requests since 04.07. **The loopback bind therefore does cut off a
+real, existing path:** starting with the next dashboard start, the dashboard will only be
+reachable from an RDP session on the box (and no longer at all for outsiders — that is the point).
+Remote access then requires `KYTHERA_DASHBOARD_HOST` **plus** `KYTHERA_DASHBOARD_TOKEN` in `.env`
+(without a token the fail-closed policy refuses to start), or the tunnel from Z2. The success probe of
+`tools/restart_fleet.ps1` (`Test-NetConnection -ComputerName localhost -Port 5000`) remains valid:
+even today it returns `True` against a pure IPv4 listener, even though `localhost` resolves to
+`::1` first — name resolution falls back to IPv4 (re-measured).
 
 ---
 
-## 4. ~~Offener Entscheid für Michi~~ — ENTSCHIEDEN 2026-08-02: **D1**
+## 3. What the PR does NOT do
 
-> **Operator-Entscheid (T-2026-KYT-9050-074): „Dashboard sehe ich ohnehin nur via RDP."**
+No deploy, no dashboard or fleet restart, no firewall rule, no port, no
+reverse proxy, no `cloudflared`, no `.env` change, no change to the running
+bind address. The running dashboard process (PID 100120) is untouched.
+
+> **The fix takes effect only at the next start of the dashboard process.** After the merge
+> this happens **without operator action**: the watchdog restarts the dashboard on a crash
+> (`main_watchdog.check_dashboard`), and a reboot does so regardless. Anyone who wants to control
+> the timing must deliberately restart the dashboard process (not the fleet — the watchdog brings
+> up the dashboard on its own).
+
+---
+
+## 4. ~~Open decision for Michi~~ — DECIDED 2026-08-02: **D1**
+
+> **Operator decision (T-2026-KYT-9050-074): "Dashboard sehe ich ohnehin nur via RDP."**
 >
-> Damit gilt **D1** — Loopback-only, kein Token. **Es ist nichts zu tun und nichts zu
-> konfigurieren:** weder `KYTHERA_DASHBOARD_HOST` noch `KYTHERA_DASHBOARD_TOKEN` gehören in die
-> `.env`. Der Default aus diesem PR ist bereits der gewünschte Zustand; ab dem nächsten Start
-> von `dashboard.py` ist die UI nur noch aus einer RDP-Sitzung auf der Box erreichbar.
+> This makes **D1** apply — loopback-only, no token. **There is nothing to do and nothing to
+> configure:** neither `KYTHERA_DASHBOARD_HOST` nor `KYTHERA_DASHBOARD_TOKEN` belong in the
+> `.env`. The default from this PR is already the desired state; starting with the next launch
+> of `dashboard.py`, the UI will only be reachable from an RDP session on the box.
 >
-> **D3 (cloudflared + Access) ist damit gestrichen**, nicht vertagt. Fernzugriff wird nicht
-> gebraucht, und gegenüber „gar nicht erreichbar" vergrößert ein Tunnel die Angriffsfläche.
-> Das Runbook in §5 bleibt als Referenz stehen und wird **nicht** ausgeführt.
+> **D3 (cloudflared + Access) is therefore cancelled**, not deferred. Remote access is not
+> needed, and against "not reachable at all", a tunnel enlarges the attack surface.
+> The runbook in §5 remains as a reference and is **not** executed.
 >
-> **Einziger Wiedervorlage-Auslöser:** die Z1-Quick-Actions (Audit-Punkt F4). Ein Live-Hebel in
-> der Web-UI braucht einen Auth-Layer — kommt F4, kommt die Frage zurück. Sonst nicht.
+> **Sole trigger to revisit:** the Z1 quick actions (audit item F4). A live lever in
+> the web UI needs an auth layer — if F4 comes, the question comes back. Otherwise not.
 >
-> Vollzugs-Hinweis: `dashboard.py` steht **nicht** in `core/fleet.py` (eigene Scheduled Task).
-> Der Marker-basierte Fleet-Restart erfasst es nicht; die Härtung greift erst beim nächsten
-> Start dieses Prozesses.
+> Implementation note: `dashboard.py` is **not** in `core/fleet.py` (its own scheduled task).
+> The marker-based fleet restart does not cover it; the hardening only takes effect at the next
+> start of this process.
 
-Der Code-Teil ist fertig und für sich wirksam. Die ursprüngliche Optionsmatrix bleibt zur
-Nachvollziehbarkeit stehen — entschieden ist **D1**:
+The code part is complete and effective on its own. The original options matrix remains
+in place for traceability — the decision is **D1**:
 
-### D1 — Loopback-only, kein Token (was nach dem Merge automatisch gilt)
+### D1 — loopback-only, no token (what applies automatically after the merge)
 
-* **Kosten:** 0. Keine Konfiguration, kein Restart über den ohnehin kommenden hinaus.
-* **Gewonnen:** Der Listener ist nicht mehr an der öffentlichen Schnittstelle. Eine
-  versehentliche Firewall-Allow-Regel exponiert nichts mehr. CSRF und Rebinding sind zu.
-* **Restrisiko:** Jeder Prozess, der **auf der Box** als beliebiger Nutzer läuft, kann die
-  Control-API weiterhin ohne Authentifizierung aufrufen (curl schickt keinen `Origin`, Host
-  `localhost` steht auf der Allowlist). Das ist gegenüber heute unverändert. Kein
-  Fernzugriff — das Dashboard ist nur per RDP-Sitzung erreichbar.
+* **Cost:** 0. No configuration, no restart beyond the one that's coming anyway.
+* **Gained:** The listener is no longer on the public interface. An
+  accidental firewall allow rule no longer exposes anything. CSRF and rebinding are closed.
+* **Residual risk:** Any process running **on the box** as any user can still
+  call the control API without authentication (curl sends no `Origin`, host
+  `localhost` is on the allowlist). That is unchanged from today. No
+  remote access — the dashboard is only reachable via an RDP session.
 
-### D2 — D1 + Token (`KYTHERA_DASHBOARD_TOKEN` in der `.env`)
+### D2 — D1 + token (`KYTHERA_DASHBOARD_TOKEN` in `.env`)
 
-* **Kosten:** eine `.env`-Zeile (**Michi-Gate**, harte Regel 3) + ein Dashboard-Neustart.
-  Bedienung danach: einmal `http://localhost:5000/?token=…` aufrufen, das Cookie trägt den Rest.
-* **Gewonnen:** schließt das Restrisiko aus D1 — lokale Prozesse/Sitzungen ohne Token kommen
-  nicht mehr an `stop_all`.
-* **Restrisiko:** Der Token liegt im Klartext in der `.env` (wie alle anderen Secrets auch)
-  und wird über Klartext-HTTP auf Loopback übertragen. Wer die `.env` lesen kann, hat ihn.
+* **Cost:** one `.env` line (**Michi gate**, hard rule 3) + a dashboard restart.
+  Operation afterwards: call `http://localhost:5000/?token=…` once, the cookie carries the rest.
+* **Gained:** closes the residual risk from D1 — local processes/sessions without a token can
+  no longer reach `stop_all`.
+* **Residual risk:** The token sits in plaintext in `.env` (like all other secrets)
+  and is transmitted over plaintext HTTP on loopback. Whoever can read `.env` has it.
 
-### D3 — Exposure: `cloudflared` + Cloudflare Access (der eigentliche Z2/B4-Scope, **nicht gebaut**)
+### D3 — exposure: `cloudflared` + Cloudflare Access (the actual Z2/B4 scope, **not built**)
 
-* **Voraussetzung:** eigene Domain in Cloudflare (laut Task-Doc noch offen) **und** D2 —
-  der Code verweigert den Start, wenn ein Off-Box-Hostname allowlisted ist und kein Token
-  konfiguriert wurde.
-* **Warum nicht in diesem PR:** Der Tunnel ist per Definition Exposure. Ein
-  `cloudflared service install` auf der Live-Box, ein Access-Policy-Setup und ein
-  Dashboard-Neustart sind allesamt Live-Eingriffe von genau der Klasse, die der Auftrag und
-  `CLAUDE.md` ausschließen.
-* **Was er bringt:** Fernzugriff (Handy/unterwegs) ohne offenen Port — die Verbindung ist
-  outbound-only. Zugleich die harte Vorbedingung für die Z1-Quick-Actions (F4): ohne
-  Auth-Layer kein Live-Hebel in der Web-UI.
-* **Restrisiko, ehrlich beziffert:** Nach D3 hängt die Fleet-Stop-Fähigkeit an
-  **zwei** Faktoren — der Access-Policy (falsch
-  gescoped = weltweit offen, ein bekannter Fehlerfall bei Zero-Trust-Setups) und dem Token.
-  Der Token ist der Grund, warum eine fehlkonfigurierte Access-Policy allein nicht reicht;
-  erzwungen wird er durch die Startpolitik. Zusätzlich verlagert D3 Vertrauen zu Cloudflare
-  (TLS-Terminierung beim Anbieter — für ein Ops-Dashboard vertretbar, für die `.env`-Secrets
-  irrelevant, weil die nie über den Tunnel gehen).
-* **Nicht abschätzbar ohne Live-Test:** ob `cloudflared` als Windows-Dienst mit der
-  Watchdog-/Scheduled-Task-Landschaft der Box kollisionsfrei koexistiert. Die Erfahrung aus
-  T-2026-CU-9050-170 (Z1-Dashboard-Task) sagt, dass lang laufende Dienste auf dieser Box unter
-  S4U **nicht** binden und Passwort-Logon brauchen — das gilt für den Tunnel-Dienst mutmaßlich
-  ebenso, ist aber ungeprüft.
+* **Prerequisite:** own domain in Cloudflare (still open per the task doc) **and** D2 —
+  the code refuses to start if an off-box hostname is allowlisted and no token
+  has been configured.
+* **Why not in this PR:** The tunnel is exposure by definition. A
+  `cloudflared service install` on the live box, an access policy setup, and a
+  dashboard restart are all live interventions of exactly the class that the assignment and
+  `CLAUDE.md` rule out.
+* **What it brings:** remote access (phone/on the go) without an open port — the connection is
+  outbound-only. At the same time the hard precondition for the Z1 quick actions (F4): without
+  an auth layer, no live lever in the web UI.
+* **Residual risk, honestly quantified:** After D3, the ability to stop the fleet hangs on
+  **two** factors — the access policy (wrongly
+  scoped = open worldwide, a known failure mode in zero-trust setups) and the token.
+  The token is the reason a misconfigured access policy alone is not enough;
+  it is enforced by the start policy. In addition, D3 shifts trust to Cloudflare
+  (TLS termination at the provider — acceptable for an ops dashboard, irrelevant for the `.env`
+  secrets, because those never go over the tunnel).
+* **Cannot be assessed without a live test:** whether `cloudflared` as a Windows service coexists
+  without collision with the box's watchdog/scheduled-task landscape. Experience from
+  T-2026-CU-9050-170 (Z1 dashboard task) says that long-running services on this box do
+  **not** bind under S4U and need password logon — this presumably applies to the tunnel
+  service as well, but it is unverified.
 
-**Empfehlung:** D2 beim nächsten ohnehin anstehenden Dashboard-Neustart mitnehmen (billig,
-schließt das letzte lokale Loch). D3 erst entscheiden, wenn die Domain steht und der
-Zeitpunkt für einen Live-Eingriff passt — der Sicherheitsgewinn von D3 gegenüber D2 ist
-**negativ** (mehr Angriffsfläche), der Gewinn ist reiner Komfort plus die F4-Vorbedingung.
-Das ist der Punkt, an dem die Reihenfolge „Z2 vor Z1" aus dem Task-Audit eine Begründung
-braucht, die über „Absicherung zuerst" hinausgeht: **abgesichert ist das Dashboard nach D1/D2
-auch ohne Tunnel.** Z2 ist Voraussetzung für die Z1-Quick-Actions, nicht für die Absicherung.
+**Recommendation:** roll D2 in with the next dashboard restart that's coming anyway (cheap,
+closes the last local hole). Decide D3 only once the domain is in place and the
+timing for a live intervention fits — the security gain of D3 over D2 is
+**negative** (more attack surface); the gain is pure convenience plus the F4 precondition.
+This is the point where the "Z2 before Z1" ordering from the task audit needs a justification
+that goes beyond "hardening first": **the dashboard is secured after D1/D2
+even without a tunnel.** Z2 is a prerequisite for the Z1 quick actions, not for the hardening.
 
 ---
 
-## 5. Runbook D3 (falls entschieden) — nicht ausgeführt
+## 5. Runbook D3 (if decided) — not executed
 
-Nur zur Vorbereitung notiert; jeder Schritt ist ein Live-Eingriff.
+Noted only for preparation; every step is a live intervention.
 
-1. `KYTHERA_DASHBOARD_TOKEN=<zufälliger 32-Byte-Wert>` in die `.env` (Michi).
-2. `KYTHERA_DASHBOARD_ALLOWED_HOSTS=<tunnel-hostname>` in die `.env` — sonst antwortet der
-   Guard dem Tunnel mit `403 host_not_allowed`.
-3. Dashboard-Prozess neu starten; im Log muss `[token required]` stehen.
-4. `cloudflared` installieren, Tunnel auf `http://127.0.0.1:5000` mappen, als Windows-Dienst
-   registrieren (Logon-Typ analog T-2026-CU-9050-170 prüfen, siehe oben).
-5. Cloudflare-Access-Policy **vor** dem ersten öffentlichen Aufruf setzen (ein Tunnel ohne
-   Policy ist offen), Login-Policy für Michi; Service-Tokens später für Maschinen (Idee I9).
-6. Verifizieren: (a) Tunnel-Hostname ohne Access-Login → abgewiesen; (b) mit Login, ohne
-   Dashboard-Token → `401 token_invalid`; (c) mit beidem → UI; (d) `http://45.134.39.167:5000`
-   von außen → unerreichbar (vorher erreichbar — das ist der Beleg, dass der Bind gegriffen
-   hat, nicht eine Bestätigung des Ausgangszustands).
+1. `KYTHERA_DASHBOARD_TOKEN=<zufälliger 32-Byte-Wert>` into `.env` (Michi).
+2. `KYTHERA_DASHBOARD_ALLOWED_HOSTS=<tunnel-hostname>` into `.env` — otherwise the
+   guard answers the tunnel with `403 host_not_allowed`.
+3. Restart the dashboard process; the log must show `[token required]`.
+4. Install `cloudflared`, map the tunnel to `http://127.0.0.1:5000` and register it as a Windows
+   service (check the logon type analogous to T-2026-CU-9050-170, see above).
+5. Set the Cloudflare access policy **before** the first public call (a tunnel without a
+   policy is open), login policy for Michi; service tokens later for machines (idea I9).
+6. Verify: (a) tunnel hostname without access login → rejected; (b) with login, without
+   dashboard token → `401 token_invalid`; (c) with both → UI; (d) `http://45.134.39.167:5000`
+   from outside → unreachable (previously reachable — that is the proof that the bind took
+   effect, not a confirmation of the original state).
 
 ---
 
-## 6. Korrektur der Aktenlage
+## 6. Correction to the record
 
-Der Auftrag zu diesem Task nannte das Dashboard „den größten einzelnen DB-Lastverursacher der
-Box". Das ist die Zuschreibung aus T-2026-CU-9050-166 (2026-07-19) und sie wurde bereits am
-Folgetag von T-2026-CU-9050-179 korrigiert: der teuerste DB-Posten (`candles ⋈ indicators`,
-~245 ms/Call) ist der **AI-Bot-Feature-Ladepfad** `core/candles.read_candles_with_indicators`,
-belegt über `pg_stat_activity` (`user=dbfiller`).
+The assignment for this task called the dashboard "the single largest DB load contributor on
+the box". That attribution comes from T-2026-CU-9050-166 (2026-07-19) and it was already
+corrected the following day by T-2026-CU-9050-179: the most expensive DB item (`candles ⋈ indicators`,
+~245 ms/call) is the **AI bot feature loading path** `core/candles.read_candles_with_indicators`,
+evidenced via `pg_stat_activity` (`user=dbfiller`).
 
-Für **dieses** Dashboard ist die Frage ohnehin gegenstandslos: `dashboard.py` importiert
-keinerlei DB-Code und stellt **null** Queries — schon der Audit-Report
-(`audit_reports/10_dashboard_tools.md`, „Explicit non-findings") hielt das fest, und die
-Import-Liste der Datei bestätigt es (`psutil`, `flask`, `core.fleet`, `core.process_control`).
-Seine Last ist CPU (psutil-Sweeps), nicht DB. Das Z1-Shell-Dashboard
-(`tools/dashboard/app.py`) wiederum liest ausschließlich DuckDB und nie Postgres — per
-Modul-Invariante.
+For **this** dashboard the question is moot anyway: `dashboard.py` imports
+no DB code at all and issues **zero** queries — the audit report already
+noted this (`audit_reports/10_dashboard_tools.md`, "Explicit non-findings"), and the file's
+import list confirms it (`psutil`, `flask`, `core.fleet`, `core.process_control`).
+Its load is CPU (psutil sweeps), not DB. The Z1 shell dashboard
+(`tools/dashboard/app.py`), in turn, reads exclusively from DuckDB and never from Postgres — by
+module invariant.
 
-Die Sorge „eine Absicherung, die pro Request Queries erzeugt, verschlimmert ein bestehendes
-Problem" ist trotzdem beantwortet, nur anders: der Guard erzeugt weder Queries noch
-Prozess-Scans.
+The concern "a safeguard that generates queries per request makes an existing
+problem worse" is answered anyway, just differently: the guard generates neither queries nor
+process scans.

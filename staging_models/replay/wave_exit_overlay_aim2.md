@@ -1,50 +1,50 @@
-# Wave-Exit Phase 1 — High-Fidelity-Sim Validierung (AIM2)
+# Wave-Exit Phase 1 — High-Fidelity Sim Validation (AIM2)
 
 _generated 2026-07-23 16:38:14.087937+00:00 · read-only · window 2026-07-07 14:20:00 → 2026-07-23 00:00:00_
 
-**Backbone:** vollständige wick-aware **5m**-OHLC-Kerzen (`candles`, 12× feiner als der 1h-Live-Monitor) für die Touch-Erkennung; **10s**-Ticks (`ticker_10s`) nur als Order-Resolver für SL-vs-TP-Reihenfolge innerhalb einer 5m-Kerze. **Geometrie:** immutable Cornix-Text (`telegram_outbox`), Original-SL/entry2/TP1-3. **Outcome-Ground-Truth:** `closed_ai_signals`.
+**Backbone:** full wick-aware **5m** OHLC candles (`candles`, 12× finer than the 1h live monitor) for touch detection; **10s** ticks (`ticker_10s`) only as an order resolver for SL-vs-TP ordering within a 5m candle. **Geometry:** immutable Cornix text (`telegram_outbox`), original SL/entry2/TP1-3. **Outcome ground truth:** `closed_ai_signals`.
 
-> Warum nicht rein 10s: `ticker_10s` ist ein ~40s-Snapshot mit Lücken (Coverage-Median 0.25) und verpasst ~81% der SL-Touch-Events → eine reine Tick-Sim entkommt den Stops und verzerrt Realized ~2.7×. Die 5m-Kerze ist gap-frei und wick-aware.
+> Why not pure 10s: `ticker_10s` is a ~40s snapshot with gaps (coverage median 0.25) and misses ~81% of SL touch events → a pure tick sim escapes the stops and distorts realized ~2.7×. The 5m candle is gap-free and wick-aware.
 
-Closed im Fenster: 1299 · Geometrie gematcht & gescored: **683** · ungematcht (Outbox-Retention): 608.
-Gescorte-Trades-Span: 2026-07-10 18:48:31.207150 → 2026-07-22 22:15:37.406260 (Outbox-Retention verzerrt das Set zu **jüngeren** Trades — beim Lesen der Aggregate beachten).
+Closed in the window: 1299 · geometry matched & scored: **683** · unmatched (outbox retention): 608.
+Scored trades span: 2026-07-10 18:48:31.207150 → 2026-07-22 22:15:37.406260 (outbox retention skews the set towards **younger** trades — keep this in mind when reading the aggregates).
 
-## Validierung — `monitor`-Config (entry1-only, interne Targets) vs recorded closed_ai_signals
+## Validation — `monitor` config (entry1-only, internal targets) vs recorded closed_ai_signals
 
-- targets_hit **exakt**: 97.95%  ·  **±1**: 99.27%
-- Win/Loss (TP1-Touch) **Übereinstimmung**: 99.27%
+- targets_hit **exact**: 97.95%  ·  **±1**: 99.27%
+- Win/loss (TP1 touch) **agreement**: 99.27%
 
-> Restdivergenz kommt aus der feineren Auflösung (5m-Wick + echte Intra-Candle-Ordnung) gegenüber dem 1h-Monitor — die Sim ist hier bewusst *treuer* als die recorded-Outcome-Quelle.
+> Residual divergence comes from the finer resolution (5m wick + real intra-candle ordering) versus the 1h monitor — the sim is deliberately *more faithful* here than the recorded-outcome source.
 
-## Realized-Aggregat je Config
+## Realized aggregate per config
 
-| config | n | unlev mean% | unlev sum% | net sum% | leveraged sum% (n) | WR(TP1)% | Ø-Dauer med/mean h |
+| config | n | unlev mean% | unlev sum% | net sum% | leveraged sum% (n) | WR(TP1)% | Ø duration med/mean h |
 |---|--:|--:|--:|--:|--:|--:|--:|
 | monitor | 683 | 0.4223 | 288.42 | 220.22 | 14078.4 (683) | 64.57 | 22.33/32.18 |
 | dca10 | 683 | 0.0816 | 55.73 | 5.33 | 5873.4 (683) | 64.57 | 22.33/32.22 |
 | cornix3 | 683 | 0.2533 | 173.01 | 122.51 | 8209.6 (683) | 64.71 | 20.83/31.03 |
 
-**Lesehilfe:** `monitor` = 1:1-Reproduktion des Bot-Monitors (Validierungsanker). `cornix3` = was Cornix real handelt (DCA entry1/entry2, 3 publizierte TPs in Dritteln) — die Headline-Realized-Zahl und die Basis fürs Phase-2-Overlay.
+**Reading aid:** `monitor` = 1:1 reproduction of the bot monitor (validation anchor). `cornix3` = what Cornix actually trades (DCA entry1/entry2, 3 published TPs in thirds) — the headline realized number and the basis for the phase-2 overlay.
 
 
 ---
 
-## Phase 2 — Auto-Close-Overlays (auf `cornix3`, real-money DCA/3-TP)
+## Phase 2 — Auto-close overlays (on `cornix3`, real-money DCA/3-TP)
 
-n_arts = 683 (leveraged, gescort). Metrik = REALIZED (locked-in) — unlev Summe% / leveraged Summe%; MaxDD = Peak-to-Trough der aggregierten Open-Positions-Welle (leveraged Kontoeinheiten). **Baseline = hold-to-TP/SL.**
+n_arts = 683 (leveraged, scored). Metric = REALIZED (locked-in) — unlev sum% / leveraged sum%; MaxDD = peak-to-trough of the aggregated open-positions wave (leveraged account units). **Baseline = hold-to-TP/SL.**
 
-### KERNBEFUND
+### CORE FINDING
 
-- **Leveraged Realized: keine Overlay-Variante schlägt hold.** Baseline +8209.6% vs (a) 4565.1…5163.1% / (c) 4164.2…4720.7% — robust über den GANZEN Sweep schlechter. Der leveraged-Summe wird von wenigen Fat-Tail-Wellen-Treffern dominiert (−100%-Clamp-Asymmetrie), die jedes Overlay kappt.
-- **Unlevered Realized:** Baseline 173.01% vs (a) 244.45…284.15% / (c) 245.24…275.68% — Overlays überwiegend BESSER (schneiden Underwater-Tails).
-- **Drawdown: (c) ist ein Risk-Tool.** MaxDD-Welle 43.2 (hold) → 5.0…6.4 (~9× kleiner).
-- **Fazit:** Wellen-Intuition fängt out-of-sample **kein** leveraged-Edge; (c) konvertiert Upside-Varianz in Drawdown-Schutz. **NO-EDGE auf der Headline-Metrik.**
+- **Leveraged realized: no overlay variant beats hold.** Baseline +8209.6% vs (a) 4565.1…5163.1% / (c) 4164.2…4720.7% — robust across the ENTIRE sweep, worse. The leveraged sum is dominated by a few fat-tail wave hits (−100% clamp asymmetry) that every overlay caps.
+- **Unlevered realized:** baseline 173.01% vs (a) 244.45…284.15% / (c) 245.24…275.68% — overlays mostly BETTER (cut underwater tails).
+- **Drawdown: (c) is a risk tool.** MaxDD wave 43.2 (hold) → 5.0…6.4 (~9× smaller).
+- **Verdict:** wave intuition captures **no** leveraged edge out-of-sample; (c) converts upside variance into drawdown protection. **NO-EDGE on the headline metric.**
 
-> ⚠ **WR(TP1)% ist unter Overlays irreführend** (die Regel schließt auf MTM-Retrace, nicht auf TP-Touch → tp1=False obwohl profitabel geschlossen). Realized ist die Metrik, nicht WR. Overlay (a) triggert bei ~95% (Peak-Retrace feuert auch auf kleinen Wellen — eine Aktivierungs-Schwelle würde nur große Wellen trailen, ist hier aber nicht nötig: das Vorzeichen ist schon klar).
+> ⚠ **WR(TP1)% is misleading under overlays** (the rule closes on MTM retrace, not on TP touch → tp1=False even though closed profitably). Realized is the metric, not WR. Overlay (a) triggers at ~95% (peak retrace fires even on small waves — an activation threshold would only trail large waves, but isn't needed here: the sign is already clear).
 
-### Overlay (a) — Per-Trade-Trailing-TP (close bei X% Retrace vom Trade-MTM-Peak)
+### Overlay (a) — Per-trade trailing TP (close at X% retrace from trade MTM peak)
 
-| X% | n | unlev sum% | lev sum% | WR(TP1)% | MaxDD-Welle | getriggert% |
+| X% | n | unlev sum% | lev sum% | WR(TP1)% | MaxDD wave | triggered% |
 |--:|--:|--:|--:|--:|--:|--:|
 | Baseline | 683 | 173.01 | 8209.6 | 64.7 | 43.2 | 0.0 |
 | 10 | 683 | 249.12 | 4632.5 | 7.0 | — | 95.0 |
@@ -54,9 +54,9 @@ n_arts = 683 (leveraged, gescort). Metrik = REALIZED (locked-in) — unlev Summe
 | 30 | 683 | 284.15 | 5163.1 | 10.0 | — | 91.4 |
 | 40 | 683 | 273.83 | 4923.1 | 12.2 | — | 89.9 |
 
-### Overlay (c) — Portfolio-Circuit-Breaker (close-ALL bei Y% Retrace der Aggregat-Welle)
+### Overlay (c) — Portfolio circuit breaker (close ALL at Y% retrace of the aggregate wave)
 
-| Y% | n | unlev sum% | lev sum% | WR(TP1)% | MaxDD-Welle | geflattet |
+| Y% | n | unlev sum% | lev sum% | WR(TP1)% | MaxDD wave | flattened |
 |--:|--:|--:|--:|--:|--:|--:|
 | Baseline | 683 | 173.01 | 8209.6 | 64.7 | 43.2 | 0 |
 | 10 | 683 | 252.99 | 4542.4 | 6.7 | 5.6 | 667 |
@@ -66,9 +66,9 @@ n_arts = 683 (leveraged, gescort). Metrik = REALIZED (locked-in) — unlev Summe
 | 30 | 683 | 274.52 | 4660.6 | 8.6 | 6.4 | 663 |
 | 40 | 683 | 245.24 | 4164.2 | 10.2 | 6.0 | 660 |
 
-### Long/Short getrennt (unlev sum% / lev sum%)
+### Long/short separated (unlev sum% / lev sum%)
 
-| Regel | LONG | SHORT |
+| Rule | LONG | SHORT |
 |---|--:|--:|
 | Baseline | 132.99/4325.6 | 40.02/3884.0 |
 | (a) X=10% | 89.29/1704.1 | 159.84/2928.5 |
@@ -84,4 +84,4 @@ n_arts = 683 (leveraged, gescort). Metrik = REALIZED (locked-in) — unlev Summe
 | (c) Y=30% | 97.94/1545.3 | 176.58/3115.3 |
 | (c) Y=40% | 82.43/1310.6 | 162.81/2853.6 |
 
-**Ehrliche Grenze:** 7d/674-Legs, jüngeres Fenster (Outbox-Bias). Wellen-Capture ist Markt-Timing; getestet wird, ob eine MECHANISCHE Regel die Welle out-of-sample fängt oder nur im Hindsight sichtbar ist. Bewertet werden robuste **Bänder + Vorzeichen** über den Sweep, nicht ein Best-Punkt. NO-EDGE ist ein valides Ergebnis.
+**Honest limitation:** 7d/674 legs, younger window (outbox bias). Wave capture is market timing; what's being tested is whether a MECHANICAL rule catches the wave out-of-sample or is only visible in hindsight. What's assessed is robust **bands + sign** across the sweep, not a best point. NO-EDGE is a valid result.

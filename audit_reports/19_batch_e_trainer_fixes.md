@@ -1,120 +1,120 @@
-# 19 — Batch E: Trainer-Validitäts-Fixes, Walk-Forward-Simulator, Retrain-Kandidaten
+# 19 — Batch E: trainer validity fixes, walk-forward simulator, retrain candidates
 
-**Stand:** 2026-07-04 · **Task:** T-2026-CU-9050-016 · **Branch:** `feat/t-2026-cu-9050-016` (nichts deployed, Fleet unangetastet)
+**As of:** 2026-07-04 · **Task:** T-2026-CU-9050-016 · **Branch:** `feat/t-2026-cu-9050-016` (nothing deployed, fleet untouched)
 
-Abdeckung: AUDIT_TODO P0.10, P0.11, P0.12, P0.13(-Vorbereitung), P1.29, P1.30, P1.31, P1.35.
-Artefakte: ausschließlich `Documents\_X\staging_models\` (Replays unter `staging_models\replay\`).
+Coverage: AUDIT_TODO P0.10, P0.11, P0.12, P0.13 (prep), P1.29, P1.30, P1.31, P1.35.
+Artifacts: exclusively `Documents\_X\staging_models\` (replays under `staging_models\replay\`).
 
 ---
 
-## E1 — Trainer-Code-Fixes (reine Korrektheit, kein Training)
+## E1 — Trainer code fixes (pure correctness, no training)
 
-### P1.35 — `core/update_model.py` (zuerst gefixt, Voraussetzung für alles Weitere)
-`replace(".model", "_v2.json")` war für `*_model.pkl`/`.joblib` ein No-op → `save_model()` überschrieb das **Original-Artefakt in-place**. Jetzt: `splitext`-Zielname + hartes Refuse, wenn Ziel == Quelle **oder** das Ziel bereits existiert.
+### P1.35 — `core/update_model.py` (fixed first, prerequisite for everything else)
+`replace(".model", "_v2.json")` was a no-op for `*_model.pkl`/`.joblib` → `save_model()` overwrote the **original artifact in place**. Now: `splitext`-based target name + a hard refuse if target == source **or** the target already exists.
 
-### P0.12 — ABR1 pandas_ta-Spalten (Bot + Trainer)
-- `18_ai_abr1_bot.py` und `Documents\_X\BT2-Datagrepper-for-ML.py` (versionierte Kopie: `trainers_x/BT2-Datagrepper-for-ML.py`): **Prefix-Matching** statt Exakt-Namen (`KAMA_9*`, `TSI_*`/`TSIs_*`, `BBL_*`, `DCL_*`, …) + **hartes ValueError** bei fehlender Quellspalte statt stillem `fillna(0)`.
-- Bot: **Startup-Selbsttest** — Feature-Pipeline auf echten Daten von bis zu 3 Coins; konstantes kontinuierliches Feature → `exit(1)`. Genau der Fehlermodus, der das Modell monatelang unbemerkt auf 7/18 Features fahren ließ.
-- Datagrepper: Konstanz-Assertion über den fertigen Trainingsdatensatz; max. 2 Worker mit BELOW_NORMAL statt `cpu_count()`.
-- **⚠ Nebenfund (deploy-kritisch):** Der Ruff-Cleanup `052ba4c` hatte den **funktionslokalen `import pandas_ta`** aus b6735d9 als "unused" entfernt (der Import registriert den `df.ta`-Accessor — klassischer F401-Fehlgriff). Folge: Der Repo-Stand von ABR1 wäre nach einem Deploy auf **jedem Coin** mit `AttributeError` gestorben, vom per-Coin-`except` verschluckt — still toter Bot. Live (== b6735d9) war nicht betroffen. Import auf Modulebene wiederhergestellt. **Empfehlung:** Ruff F401 für Accessor-Bibliotheken (pandas_ta) via `# noqa` absichern; alle weiteren Bots auf dasselbe Muster prüfen.
+### P0.12 — ABR1 pandas_ta columns (bot + trainer)
+- `18_ai_abr1_bot.py` and `Documents\_X\BT2-Datagrepper-for-ML.py` (versioned copy: `trainers_x/BT2-Datagrepper-for-ML.py`): **prefix matching** instead of exact names (`KAMA_9*`, `TSI_*`/`TSIs_*`, `BBL_*`, `DCL_*`, …) + a **hard ValueError** on a missing source column instead of silent `fillna(0)`.
+- Bot: **startup self-test** — feature pipeline on real data from up to 3 coins; a constant continuous feature → `exit(1)`. Exactly the failure mode that let the model run for months unnoticed on 7/18 features.
+- Datagrepper: constancy assertion over the finished training dataset; max. 2 workers with BELOW_NORMAL instead of `cpu_count()`.
+- **⚠ Side finding (deploy-critical):** the ruff cleanup `052ba4c` had removed the **function-local `import pandas_ta`** from b6735d9 as "unused" (the import registers the `df.ta` accessor — a classic F401 misfire). Consequence: the repo state of ABR1 would have died on a deploy on **every coin** with an `AttributeError`, swallowed by the per-coin `except` — a silently dead bot. Live (== b6735d9) was not affected. Module-level import restored. **Recommendation:** secure ruff F401 for accessor libraries (pandas_ta) via `# noqa`; check all other bots for the same pattern.
 
-### P1.29 — chronologischer Split + Threshold auf Validation (`qm_ml_trainer.py`, `smc_ml_trainer.py`)
-- 70/15/15 entlang der Entry-Zeit (neu: `entry_time` wird in der Simulation erfasst) mit **Purge-Gap** (QM: `ORDER_EXPIRY`=50 Bars; SMC: 100 Bars — TD-Muster spannen ≤100, BB ≤60+40).
-- Threshold-Scan nur noch auf dem **Validation**-Slice; das Test-Set bleibt unberührt und liefert die einzige ehrliche Zahl (wird separat ausgegeben und im pkl-`meta` gespeichert).
-- Beide Trainer speichern nur noch nach `staging_models\` (nie mehr in-place über Produktions-pkls) und schreiben einen `meta`-Block (Split, Test-Stats, xgb-Version, n je Slice).
+### P1.29 — chronological split + threshold on validation (`qm_ml_trainer.py`, `smc_ml_trainer.py`)
+- 70/15/15 along entry time (new: `entry_time` is now captured in the simulation) with a **purge gap** (QM: `ORDER_EXPIRY`=50 bars; SMC: 100 bars — TD patterns span ≤100, BB ≤60+40).
+- Threshold scan now only on the **validation** slice; the test set stays untouched and yields the one honest number (output separately and stored in the pkl `meta`).
+- Both trainers now save only to `staging_models\` (never again in place over production pkls) and write a `meta` block (split, test stats, xgb version, n per slice).
 
-### P1.30 — QM-Fill-Logik (`qm_ml_trainer.py`, `qm_backtest.py`)
-- SL-Durchstich einer Pending-Order ist keine "Invalidierung" mehr: Da der SL jenseits des Entrys liegt, hat dieselbe Kerze zwingend auch den Entry berührt → konservativ **fill-then-stop = sofortiger Verlust**. Vorher wurden genau diese garantierten Verlierer aus dem Datensatz **gelöscht**.
-- **Kein TP-Win auf der Entry-Kerze** mehr (Reihenfolge intra-Kerze nicht feststellbar); TP-Bewertung beginnt mit der Folgekerze. `qm_backtest.py` bucht den fill-then-stop-Fall jetzt als regulären Verlust inkl. Fees/Drawdown.
+### P1.30 — QM fill logic (`qm_ml_trainer.py`, `qm_backtest.py`)
+- An SL puncture of a pending order is no longer an "invalidation": since the SL sits beyond the entry, the same candle necessarily also touched the entry → conservative **fill-then-stop = immediate loss**. Previously exactly these guaranteed losers were **deleted** from the dataset.
+- **No TP win on the entry candle** anymore (intra-candle order is not determinable); TP evaluation starts with the following candle. `qm_backtest.py` now books the fill-then-stop case as a regular loss including fees/drawdown.
 
-### P1.31 — Trainer-Data-Loader
-- `fetch_merged_data` (qm + smc): `try/finally conn.close()` (vorher leakte jeder Query-Fehler eine Pool-Connection), Skips als WARN geloggt.
-- Harter `SystemExit` bei **<80% Coin-Abdeckung** in qm-, smc- und BT2-Trainer — vorher trainierte die Pipeline still auf 0–8 Coins und speicherte über das Produktions-pkl.
+### P1.31 — trainer data loader
+- `fetch_merged_data` (qm + smc): `try/finally conn.close()` (previously every query error leaked a pool connection), skips logged as WARN.
+- Hard `SystemExit` on **<80% coin coverage** in the qm, smc and BT2 trainers — previously the pipeline trained silently on 0–8 coins and saved over the production pkl.
 
-### P0.13-Vorbereitung — AIM1-Vokabular-Abgleich (nur Doku, kein Retrain)
-Quelle live: `ml_predictions_master.model_name` (daraus baut `15_ai_master_bot.py` sowohl `ai_model` als auch `conv_source_bot`).
+### P0.13 prep — AIM1 vocabulary reconciliation (documentation only, no retrain)
+Live source: `ml_predictions_master.model_name` (from which `15_ai_master_bot.py` builds both `ai_model` and `conv_source_bot`).
 
-| | pkl-Dummies | Live-DB (distinct, gesamt) | Overlap |
+| | pkl dummies | live DB (distinct, total) | overlap |
 |---|---|---|---|
-| `ai_model_*` | 11: ATS1, EPD1, **MSI1**-{8,24,72,168}h_{pump,dump} (Typo!), nan | 16: EPD1, AIM1, ATS1, RUB1, BB_1H/4H, MIS1-8H/24H/72H/168H, ATB1, QM_1H/4H, TD_1H/4H, SRA1 | **2/16** (ATS1, EPD1) |
-| `conv_bot_*` | 5: `5% Bot`, `Fast Bot`, `SR Bot`, `Volume Bot`, nan | 0 Conv-Namen in `ml_predictions_master` (Classic-Bots schreiben dort nicht mehr) | **0** |
+| `ai_model_*` | 11: ATS1, EPD1, **MSI1**-{8,24,72,168}h_{pump,dump} (typo!), nan | 16: EPD1, AIM1, ATS1, RUB1, BB_1H/4H, MIS1-8H/24H/72H/168H, ATB1, QM_1H/4H, TD_1H/4H, SRA1 | **2/16** (ATS1, EPD1) |
+| `conv_bot_*` | 5: `5% Bot`, `Fast Bot`, `SR Bot`, `Volume Bot`, nan | 0 conv names in `ml_predictions_master` (classic bots no longer write there) | **0** |
 
-- Alle 8 MIS-Dummies tragen die historische **MSI1**-Schreibweise → live schreibt `MIS1-72H` etc. → One-Hot immer 0.
-- Booster-Gains: `conv_bot_nan` ist mit **48,3** die stärkste Identity-Spalte (das Modell hat "kein Conv-Bot" als Feature gelernt — live ist das IMMER an); `ai_model_MSI1-72h_pump` 38,8, `ai_model_ATS1` 33,1 — alle live tot.
-- Zusätzlich in `closed_ai_signals`: die Namenslandschaft wechselte am 2026-03-02 (MIS1-*_pump/dump und MSI1-* enden dort; MIS1-xxH beginnen) — jedes Identity-Vokabular ohne Versionierung veraltet binnen Wochen.
-- **Konsequenz (mit Report 13/16 deckungsgleich):** Retrain nur aufs Vokabular reicht nicht (Volatilitäts-Label + round-Join bleiben) → AIM1 bleibt **Abschalt-/Neuprojekt-Empfehlung**, kein Batch-E-Retrain. Detaildaten: `p013_result.json` (Job-tmp) bzw. Tabellen oben.
+- All 8 MIS dummies carry the historical **MSI1** spelling → live writes `MIS1-72H` etc. → one-hot always 0.
+- Booster gains: `conv_bot_nan` is with **48.3** the strongest identity column (the model has learned "no conv bot" as a feature — live that is ALWAYS on); `ai_model_MSI1-72h_pump` 38.8, `ai_model_ATS1` 33.1 — all dead live.
+- Additionally in `closed_ai_signals`: the naming landscape changed on 2026-03-02 (MIS1-*_pump/dump and MSI1-* end there; MIS1-xxH begin) — every identity vocabulary without versioning goes stale within weeks.
+- **Consequence (consistent with reports 13/16):** a retrain on the vocabulary alone is not enough (volatility label + round join remain) → AIM1 stays an **off/new-project recommendation**, not a batch-E retrain. Detail data: `p013_result.json` (job tmp) resp. the tables above.
 
 ---
 
-## E2 — Walk-Forward-Simulator (`tools/walkforward_sim.py`)
+## E2 — Walk-forward simulator (`tools/walkforward_sim.py`)
 
-Ein gemeinsamer Simulator statt 8 Ad-hoc-Backtests (X-R1-Fix, == P0.10):
+One shared simulator instead of 8 ad-hoc backtests (X-R1 fix, == P0.10):
 
-- **Setup-Funktionen der Bots selbst**: UFI1 via Import von `find_ufi1_setup` (29), ABR1 via Import von Feature-Builder + `find_pivot_levels` (18), TD/BB als 1:1-Nachbau der Erkennung aus `25_smc_ml_sniper.scan_market` (inkl. aller FIX-Gates: MAX_TD_SPAN, MAX_BB_AGE, Frische-Bedingungen).
-- **Geometrie = gepostete Geometrie**: `calculate_smart_targets` hat jetzt einen optionalen `df`-Parameter — dieselbe Live-Funktion läuft im Replay auf dem historischen 1000-Kerzen-Fenster bis zur Entscheidungskerze (kein Copy-Paste-Skew, inkl. des Live-Fallback-Verhaltens).
-- **Nur geschlossene Kerzen**; Entscheidung je geschlossener Kerze; Cooldowns/Active-Trade-Dedup wie die Bots.
-- **Exits**: wick-aware First-Touch-Forward-Scan über 1h-Kerzen, **SL-first bei Ambiguität**, Trailing wie `8_ai_trade_monitor` (ab TP2 → SL auf `targets[k-2]`), Positions-Fraktionierung über die publizierten TPs (UFI1: 1, ABR1: 3, TD/BB: 5), **Fees 0,05%/Seite** (P3.6).
-- Betriebsschutz: BELOW_NORMAL-Priorität (wintypes-korrektes ctypes-Fallback), CPU-Check >90% → Abbruch, DB-Session read-only, Output JSONL nach `staging_models\replay\`.
+- **Bots' own setup functions**: UFI1 via import of `find_ufi1_setup` (29), ABR1 via import of the feature builder + `find_pivot_levels` (18), TD/BB as a 1:1 rebuild of the detection from `25_smc_ml_sniper.scan_market` (including all FIX gates: MAX_TD_SPAN, MAX_BB_AGE, freshness conditions).
+- **Geometry = posted geometry**: `calculate_smart_targets` now has an optional `df` parameter — the same live function runs in the replay on the historical 1000-candle window up to the decision candle (no copy-paste skew, including live fallback behaviour).
+- **Closed candles only**; a decision per closed candle; cooldowns/active-trade dedup like the bots.
+- **Exits**: wick-aware first-touch forward scan over 1h candles, **SL-first on ambiguity**, trailing like `8_ai_trade_monitor` (from TP2 → SL to `targets[k-2]`), position fractioning over the published TPs (UFI1: 1, ABR1: 3, TD/BB: 5), **fees 0.05%/side** (P3.6).
+- Operating safeguards: BELOW_NORMAL priority (wintypes-correct ctypes fallback), CPU check >90% → abort, DB session read-only, output JSONL to `staging_models\replay\`.
 
-**Bewusste Näherungen (dokumentiert):** UFI1-Scan je Daily-Close statt alle 4h; TD/BB-Scan je geschlossener Kerze statt alle 3 min; ABR1-Indikatoren einmal über die Gesamtserie statt je 240h-Fenster (== Trainer-Verhalten; rekursive Indikatoren konvergieren); Funding-Kosten nicht modelliert; DB-Indikatoren historisch mit R1-Restrisiko (Forming-Candle-Überschreibungen).
+**Deliberate approximations (documented):** UFI1 scan per daily close instead of every 4h; TD/BB scan per closed candle instead of every 3 min; ABR1 indicators computed once over the full series instead of per 240h window (== trainer behaviour; recursive indicators converge); funding costs not modelled; DB indicators historically carry R1 residual risk (forming-candle overwrites).
 
-### P0.11-Validierung: UFI1 "+278R" fällt
+### P0.11 validation: UFI1 "+278R" falls apart
 
-Full-Universe-Replay (648 Coins, 365 Tage, Juli 2025 – Juli 2026), exakt die Live-Geometrie (CMP-Entry, Single-TP1, SL = Swing-High +3%):
+Full-universe replay (648 coins, 365 days, July 2025 – July 2026), exactly the live geometry (CMP entry, single TP1, SL = swing high +3%):
 
-| Metrik | Backtest-Claim (`fib_backtest.py`) | Ehrlicher Walk-Forward |
+| Metric | Backtest claim (`fib_backtest.py`) | Honest walk-forward |
 |---|---|---|
-| Trades | 334 | 435 (384 geschlossen, 51 offen) |
-| WR (TP1 first-touch) | 54,2% | 50,8% |
-| Ø R | **+0,83R** | **+0,37R** |
+| Trades | 334 | 435 (384 closed, 51 open) |
+| WR (TP1 first touch) | 54.2% | 50.8% |
+| Ø R | **+0.83R** | **+0.37R** |
 | Σ R | **+278R** | **+141R** |
 
-Und die +141R zerfallen bei Kohorten-Betrachtung:
+And the +141R fall apart under cohort analysis:
 
-| Kohorte | n geschlossen | WR | Σ R |
+| Cohort | n closed | WR | Σ R |
 |---|---|---|---|
-| **2025-10 (Crash-Monat)** | 216 | **78,2%** | **+184,7R** |
-| alle übrigen 11 Monate | 168 | **~14%** | **−44R** |
-| davon 2026-06 (Live-Ära) | 16 | 37,5% | +1,8R |
+| **2025-10 (crash month)** | 216 | **78.2%** | **+184.7R** |
+| all other 11 months | 168 | **~14%** | **−44R** |
+| of which 2026-06 (live era) | 16 | 37.5% | +1.8R |
 
-1. **Der gesamte Ertrag ist ein Ein-Monats-Artefakt** (Oktober-2025-Crash: 60%-Dumps überall, Shorts in den Bärenmarkt hinein mit 4-Monats-Haltezeiten). Ohne diesen Monat ist die Strategie klar negativ.
-2. **Simulator-Realitätsabgleich bestanden:** Juni-2026-Kohorte 37,5% WR (n=16) vs. live 25,7% (n=35) — konsistent; live zusätzlich belastet durch Forming-Daily-Candle-Repaint (R1: der Bot liest die laufende Tageskerze) und Monitor-Fehlscoring (Report 17).
-3. **Hebel-Realität (der eigentliche Todesstoß):** Max-Adverse-Excursion über die geschlossenen Trades — **72% aller Trades (und 72% der Gewinner) laufen ≥+5% ins Minus** (Median MAE 9,6%, p90 41,9%). Bei den ursprünglich geposteten 20x (Liquidation ~+5%) wäre die Mehrheit der Replay-"Gewinner" **vor dem TP liquidiert** worden. Selbst der Papier-R-Wert ist also nur mit ≤1-2x Hebel (nach P0.6-Fix) überhaupt realisierbar — und dann bleibt ex-Oktober ein Verlustgeschäft.
+1. **The entire return is a one-month artefact** (October 2025 crash: 60% dumps everywhere, shorts riding into the bear market with 4-month holding times). Without this month the strategy is clearly negative.
+2. **Simulator reality check passed:** June-2026 cohort 37.5% WR (n=16) vs. live 25.7% (n=35) — consistent; live additionally burdened by forming-daily-candle repaint (R1: the bot reads the running daily candle) and monitor mis-scoring (report 17).
+3. **Leverage reality (the actual death blow):** max adverse excursion over the closed trades — **72% of all trades (and 72% of the winners) run ≥+5% into the red** (median MAE 9.6%, p90 41.9%). At the originally posted 20x (liquidation ~+5%) the majority of the replay "winners" would have been **liquidated before the TP**. Even the paper-R value is thus only realisable at all with ≤1-2x leverage (after the P0.6 fix) — and then, ex-October, a loss-making business remains.
 
-**Deploy-Empfehlung UFI1: AUS lassen** (bestätigt Report-16-Note F). Kein Retrain — es gibt keine Selektionsschicht, die den strukturellen Befund heilen würde.
+**Deploy recommendation UFI1: leave OFF** (confirms report-16 note F). No retrain — there is no selection layer that would heal the structural finding.
 
 ---
 
-## E3 — Retrains auf Replay-Labels (Staging)
+## E3 — Retrains on replay labels (staging)
 
-Kandidatenwahl nach Report 16 + E2: **TD_1H/4H** (beste Kalibrierung, netto positiv), **BB_4H** (+BB_1H-Daten zur Prüfung), **ABR1** (nach P0.12 erstmals mit 18/18 Features). NICHT retrainiert: **AIM1** (Abschalt-Empfehlung, s.o.), **UFI1** (Abschalt-Empfehlung), **QM** (Report 16: QM_4H stoppen, QM_1H parken — Exit-Geometrie gibt alles zurück, das löst kein Retrain), **MIS1** (Retrain-Priorität #1 laut Report 16, braucht aber den 67-Feature-Builder + Horizont-Labels — eigener Task, siehe "Nicht gemacht").
+Candidate selection per report 16 + E2: **TD_1H/4H** (best calibration, net positive), **BB_4H** (+BB_1H data for review), **ABR1** (for the first time with 18/18 features after P0.12). NOT retrained: **AIM1** (off recommendation, see above), **UFI1** (off recommendation), **QM** (report 16: stop QM_4H, park QM_1H — exit geometry gives everything back, a retrain won't fix that), **MIS1** (retrain priority #1 per report 16, but needs the 67-feature builder + horizon labels — its own task, see "Not done").
 
-Methodik je Modell (`tools/retrain_from_replay.py`): Label = First-Touch-TP1-vor-SL der **geposteten** smart-targets-Geometrie (Fees inkl.); chronologischer 70/15/15-Split mit Purge-Gap; Threshold per **realem Replay-PnL** auf Validation; Isotonic-Kalibrierung (als Zusatz-Key im Artefakt); Kalibrierungs-Report alt vs. neu auf identischen Test-Events.
+Methodology per model (`tools/retrain_from_replay.py`): label = first-touch TP1-before-SL of the **posted** smart-targets geometry (fees incl.); chronological 70/15/15 split with purge gap; threshold via **real replay PnL** on validation; isotonic calibration (as an extra key in the artifact); calibration report old vs. new on identical test events.
 
-### Ergebnisse (Details + Kalibrierungstabellen: `staging_models\REPORT.md` und `retrain_*_stats.json`)
+### Results (details + calibration tables: `staging_models\REPORT.md` and `retrain_*_stats.json`)
 
-| Modell | Replay-Events | Neues Modell (Out-of-Time-Test) | Alt-Modell auf denselben Events | Deploy-Empfehlung |
+| Model | Replay events | New model (out-of-time test) | Old model on the same events | Deploy recommendation |
 |---|---|---|---|---|
-| **TD_4H** | 1.245 / 540d | 63,5% WR @0,50 bei 63,3% Basisrate; Kalibrierung 0,4→0,8 monoton | 0,8+-Bucket = Basisniveau (62,5%, n=56) | ✔ vertretbar, Erwartung klein; Datenlage strukturell dünn |
-| **TD_1H** | 3.916 / 540d | **anti-kalibriert** (0,0–0,3→75%, 0,7–0,8→44,8%); Val-PnL überall negativ | genauso flach (0,8+: 52,1%, n=169) | ✘ NICHT deployen; TD_1H parken oder ohne Confidence |
-| **BB_4H** | 13.334 / 540d | +5pp WR über Basisrate @0,60, monoton 0,3→0,7 — aber Test-PnL −90% kum. | Probs kollabieren <0,5, kein Ranking | (✔) als Filter, Ertragserwartung neutral |
-| **ABR1 LONG** | 77.398 / 365d (100 Coins) | Test-WR = Basisrate, 0,8+ anti-kalibriert (35,8%) | 99,5% der Probs <0,3 → Gate live blind | ✘ LONG-Gate zu |
-| **ABR1 SHORT** | 91.627 / 365d (100 Coins) | 0,5→0,8 monoton (+2–4pp), Operating Point besser 0,60–0,70 statt Val-0,75 | dito blind | (✔) mit Bot-Umbau auf Binär-Vertrag |
+| **TD_4H** | 1,245 / 540d | 63.5% WR @0.50 vs. 63.3% base rate; calibration 0.4→0.8 monotone | 0.8+ bucket = base level (62.5%, n=56) | ✔ defensible, small expectation; data thin structurally |
+| **TD_1H** | 3,916 / 540d | **anti-calibrated** (0.0–0.3→75%, 0.7–0.8→44.8%); val PnL negative everywhere | just as flat (0.8+: 52.1%, n=169) | ✘ DO NOT deploy; park TD_1H or run without confidence |
+| **BB_4H** | 13,334 / 540d | +5pp WR over base rate @0.60, monotone 0.3→0.7 — but test PnL −90% cumulative | probs collapse <0.5, no ranking | (✔) as a filter, return expectation neutral |
+| **ABR1 LONG** | 77,398 / 365d (100 coins) | test WR = base rate, 0.8+ anti-calibrated (35.8%) | 99.5% of probs <0.3 → gate blind live | ✘ close LONG gate |
+| **ABR1 SHORT** | 91,627 / 365d (100 coins) | 0.5→0.8 monotone (+2–4pp), operating point better 0.60–0.70 instead of val-0.75 | likewise blind | (✔) with bot rework to binary contract |
 
-**Gesamtfazit:** Kein Retrain liefert robusten Out-of-Time-Ertrag — WR-Rankings übersetzen sich nicht zuverlässig in PnL. Bestätigt Report 16: Der Ertrag kommt aus Trade-Konstruktion + Regime, nicht aus ML-Skill. Nächste echte Hebel: Exit-Geometrie und MIS1-Neutraining nach diesem Gerüst.
+**Overall verdict:** no retrain delivers robust out-of-time return — WR rankings don't translate reliably into PnL. Confirms report 16: return comes from trade construction + regime, not from ML skill. Next real lever: exit geometry and MIS1 retraining on this scaffolding.
 
-**Betriebsnotizen aus den Läufen:** (a) Beide Langläufe starben nach Stunden binnen 3 Minuten an einer extern gekillten DB-Connection (P1.33-Klasse live beobachtet) → Simulator hat jetzt Reconnect-Retry + `--resume`. (b) `coins.json` wechselte zwischen den Läufen von 648 auf 530 Einträge — **P2.16 live bestätigt** (zwei Writer mit verschiedenen Filtern). (c) ABR1-Detektor ohne ML-Gate emittiert ~1.700 Events/Coin/Jahr — Full-Universe-Replay wäre ~900k Events; auf die 100 liquidesten Coins gekappt (dokumentierter Bias).
+**Operational notes from the runs:** (a) Both long runs died after hours, within 3 minutes, from an externally killed DB connection (P1.33-class observed live) → simulator now has reconnect retry + `--resume`. (b) `coins.json` switched between the runs from 648 to 530 entries — **P2.16 confirmed live** (two writers with different filters). (c) The ABR1 detector without ML gate emits ~1,700 events/coin/year — a full-universe replay would be ~900k events; capped to the 100 most liquid coins (documented bias).
 
 ---
 
-## Nebenfund zusätzlich: BB_1H-Parking deckt nur die LONG-Seite
+## Additional side finding: BB_1H parking only covers the LONG side
 
-`25_smc_ml_sniper.py:254` gated `tf != '1h'` nur im Breaker-Block-**LONG**-Zweig; der SHORT-Zweig (`:283`) hat kein TF-Gate → **BB_1H SHORT feuert live weiter**, obwohl Report 14/16 BB_1H als geparkt führen (−1.089 netto). Fix ist eine Zeile — Empfehlung: SHORT-Zweig gleichziehen oder Parking bewusst dokumentieren.
+`25_smc_ml_sniper.py:254` gates `tf != '1h'` only in the breaker-block **LONG** branch; the SHORT branch (`:283`) has no TF gate → **BB_1H SHORT keeps firing live**, even though report 14/16 lists BB_1H as parked (−1,089 net). Fix is one line — recommendation: bring the SHORT branch in line or document the parking deliberately.
 
-## Nicht gemacht (und warum)
+## Not done (and why)
 
-- **MIS1-Retrain** (Report-16-Priorität #1): braucht den 67-Feature-Builder aus `X5-analyze_indicators_v8.py` inkl. Entfernung der Leakage-`line_cols`, Horizont-Label über den First-Touch-Simulator und die R1-geschlossene-Kerzen-Disziplin — ein eigener, größerer Task; Batch E liefert dafür jetzt Simulator + Gerüst.
-- **AIM1/UFI1-Retrain**: bewusst nicht — beide Abschalt-Empfehlungen (Begründung oben bzw. Report 16).
-- **QM-Retrain**: Trainer ist jetzt korrekt (P1.29/P1.30), aber Report 16 zeigt, dass QMs Problem die Exit-Geometrie ist, nicht die Selektion; erst Exit-Redesign, dann Retrain.
-- **R1 (Forming Candle) / Monitor-Rewrite-Rest**: nicht Teil von Batch E; die Replay-Labels umgehen beide Probleme (eigene Exits aus Kerzen, keine Monitor-Labels).
-- **Funding-Kosten im Simulator**: nicht modelliert (mehrmonatige UFI1-Holds wären in Bärenphasen sogar leicht begünstigt — Shorts erhalten meist Funding); für TD/BB/ABR1 (Stunden bis Tage Haltezeit) untergeordnet.
+- **MIS1 retrain** (report-16 priority #1): needs the 67-feature builder from `X5-analyze_indicators_v8.py` including removal of the leakage `line_cols`, horizon labels via the first-touch simulator and the R1 closed-candle discipline — its own, larger task; batch E now delivers the simulator + scaffolding for it.
+- **AIM1/UFI1 retrain**: deliberately not done — both off recommendations (rationale above resp. report 16).
+- **QM retrain**: trainer is now correct (P1.29/P1.30), but report 16 shows that QM's problem is the exit geometry, not the selection; exit redesign first, then retrain.
+- **R1 (forming candle) / rest of monitor rewrite**: not part of batch E; the replay labels bypass both problems (own exits from candles, no monitor labels).
+- **Funding costs in the simulator**: not modelled (multi-month UFI1 holds would even be mildly favoured in bear phases — shorts mostly receive funding); for TD/BB/ABR1 (hours-to-days holding time) subordinate.

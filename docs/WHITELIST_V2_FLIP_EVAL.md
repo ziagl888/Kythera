@@ -1,48 +1,48 @@
-# Whitelist-v2 Flip-Evaluation (T-2026-CU-9050-069)
+# Whitelist-v2 flip evaluation (T-2026-CU-9050-069)
 
-**Tool:** `tools/whitelist_v2_flip_eval.py` · **Läuft nur auf dem VPS** (braucht Live-DB, strikt read-only) · **Zweck:** Datengrundlage für Michis Flip-Entscheid v1→v2 des Whitelist-Gates (T-2026-CU-9050-048, MODEL_INTENT §23).
+**Tool:** `tools/whitelist_v2_flip_eval.py` · **Runs only on the VPS** (needs the live DB, strictly read-only) · **Purpose:** data basis for Michi's flip decision v1→v2 of the whitelist gate (T-2026-CU-9050-048, MODEL_INTENT §23).
 
-> **Schwester-Tool (T-2026-KYT-9050-007):** `tools/whitelist_v2_realized_eval.py` beantwortet dieselbe Flip-Frage gegen **realisierte** Trades statt gegen den Counterfactual-Replay. Es importiert die Gate-Semantik und die Divergenz-Klassen aus diesem Modul (eine Wahrheit) und tauscht nur die Scoring-Schicht. Doku: `docs/WHITELIST_V2_REALIZED_EVAL.md`, Verdikt: `docs/T-2026-KYT-9050-007-whitelist-v2-flip-decision.md`.
+> **Sister tool (T-2026-KYT-9050-007):** `tools/whitelist_v2_realized_eval.py` answers the same flip question against **realized** trades instead of the counterfactual replay. It imports the gate semantics and the divergence classes from this module (one source of truth) and only swaps out the scoring layer. Docs: `docs/WHITELIST_V2_REALIZED_EVAL.md`, verdict: `docs/T-2026-KYT-9050-007-whitelist-v2-flip-decision.md`.
 
 ## Intent
 
-Seit dem T-068-Deploy (2026-07-11) schreibt `27_bot_regime_analyzer` die Shadow-Spalten `whitelisted_v2`/`reason_v2` (Netto-Expectancy-Untergrenze mit EB-Shrinkage) parallel zum live gelesenen v1-Gate (`wr_bot >= wr_overall`). Dieses Tool beantwortet die vier Fragen aus T-069:
+Since the T-068 deploy (2026-07-11), `27_bot_regime_analyzer` writes the shadow columns `whitelisted_v2`/`reason_v2` (net-expectancy lower bound with EB shrinkage) in parallel with the live-read v1 gate (`wr_bot >= wr_overall`). This tool answers the four questions from T-069:
 
-1. **Divergenz-Matrix** — auf welchen Zellen entscheiden v1 und v2 unterschiedlich, in welche Richtung?
-2. **Counterfactual-PnL** — was hätten die Divergenz-Fälle im First-Touch-Replay (047-Scorer-Mechanik) gebracht/gekostet?
-3. **Volumen-Effekt** — Gate-Rate v2 vs. v1 auf dem echten Signal-Traffic, ROM1-Trades/Tag-Prognose.
-4. **Entscheidungsgrundlage** — Zahlen für Flip ja/nein/Parameter-Nachjustierung. Die Empfehlung selbst schreibt die VPS-Session, der Flip ist Michis Entscheid (Stop-B gültig: kein Mehrwert → v1 bleibt).
+1. **Divergence matrix** — on which cells do v1 and v2 decide differently, and in which direction?
+2. **Counterfactual PnL** — what would the divergence cases have earned/cost in the first-touch replay (047 scorer mechanics)?
+3. **Volume effect** — gate rate v2 vs. v1 on real signal traffic, ROM1 trades/day forecast.
+4. **Decision basis** — figures for flip yes/no/parameter re-tuning. The recommendation itself is written by the VPS session; the flip is Michi's decision (stop-B applies: no added value → v1 stays).
 
-## Akzeptanzkriterien (binär testbar)
+## Acceptance criteria (binary testable)
 
-- [ ] **AK1 Divergenz-Matrix:** Jede Zelle des Whitelist-Snapshots wird in genau eine Klasse eingeordnet — `both_open`, `both_block`, `v2_would_block` (v1 open / v2 block), `v2_would_open` (v1 block / v2 open), `v2_missing` (Spalte NULL). Summe der Klassen = Zellenzahl. — Test: `test_divergence_matrix_*`
-- [ ] **AK2 Traffic-Klassifikation:** Jedes Gate-Event (forwarded via `wl_reason`, suppressed via `reason`-Suffix nach `bot_not_whitelisted:`) wird deterministisch als flip-affected (zell-entschieden: `wr_above_overall`, `counter_trend_specialist`, `insufficient_data`, `wr_below_overall`, `counter_trend_insufficient`) oder flip-unaffected (`no_whitelist_entry`, `whitelist_stale:*`, `*fallback*`, NULL) eingeordnet — Fallback-Pfade ändern sich durch den Flip nicht. — Test: `test_classify_*`
-- [ ] **AK3 v2-Join:** Flip-affected Events werden über `(pretty_name(bot), regime, alt_context, direction)` gegen den Snapshot gejoint; fehlende Zelle (`cell_missing`) und NULL-v2 (`v2_missing`) werden gezählt, nie still verworfen. — Test: `test_classify_missing_*`
-- [ ] **AK4 Eine Geometrie-Quelle:** Counterfactual-Scoring läuft ausschließlich über die T-047-Mechanik (`tools.rom1_counterfactual.score_row`/`load_1h` → `compute_rom1_trade_params` + `simulate_exit`), keine nachgebaute Geometrie (X-R1). — Test: Import-Assertion `test_reuses_047_scorer`
-- [ ] **AK5 Drift-Metrik:** Für zell-entschiedene Events wird die Übereinstimmung „aufgezeichnete v1-Entscheidung (Event) vs. v1 im heutigen Snapshot" berechnet und berichtet — sie quantifiziert den Fehler der Snapshot-Näherung (siehe Caveats). — Test: `test_drift_*`
-- [ ] **AK6 Volumen-Rechnung:** Gate-Raten v1/v2 und Trades/Tag-Prognose sind reine Funktionen der Klassifikations-Zähler. — Test: `test_volume_*`
-- [ ] **AK7 Read-only:** `conn.set_session(readonly=True)`; das Tool enthält kein INSERT/UPDATE/DELETE. — Review + Grep
-- [ ] **AK8 Artefakte + Sichtbarkeit:** JSONL (alle Events inkl. Skips) + Summary-JSON nach `KYTHERA_REPLAY_DIR`; Konsolen-Report enthält Prereq-Checks (Bot-27-Freshness via `MAX(computed_at)`, v2-Spalten-Coverage) und per-Tag-Event-Zähler (macht die Outage-Lücke vom 2026-07-13 sichtbar). — Test: `test_daily_counts` + Lauf-Beobachtung
+- [ ] **AC1 divergence matrix:** every cell of the whitelist snapshot is sorted into exactly one class — `both_open`, `both_block`, `v2_would_block` (v1 open / v2 block), `v2_would_open` (v1 block / v2 open), `v2_missing` (column NULL). Sum of classes = cell count. — Test: `test_divergence_matrix_*`
+- [ ] **AC2 traffic classification:** every gate event (forwarded via `wl_reason`, suppressed via the `reason` suffix after `bot_not_whitelisted:`) is deterministically classified as flip-affected (cell-decided: `wr_above_overall`, `counter_trend_specialist`, `insufficient_data`, `wr_below_overall`, `counter_trend_insufficient`) or flip-unaffected (`no_whitelist_entry`, `whitelist_stale:*`, `*fallback*`, NULL) — fallback paths do not change through the flip. — Test: `test_classify_*`
+- [ ] **AC3 v2 join:** flip-affected events are joined against the snapshot via `(pretty_name(bot), regime, alt_context, direction)`; a missing cell (`cell_missing`) and NULL v2 (`v2_missing`) are counted, never silently dropped. — Test: `test_classify_missing_*`
+- [ ] **AC4 one geometry source:** counterfactual scoring runs exclusively via the T-047 mechanics (`tools.rom1_counterfactual.score_row`/`load_1h` → `compute_rom1_trade_params` + `simulate_exit`), no rebuilt geometry (X-R1). — Test: import assertion `test_reuses_047_scorer`
+- [ ] **AC5 drift metric:** for cell-decided events, the agreement between "recorded v1 decision (event) vs. v1 in today's snapshot" is computed and reported — it quantifies the error of the snapshot approximation (see caveats). — Test: `test_drift_*`
+- [ ] **AC6 volume calculation:** gate rates v1/v2 and the trades/day forecast are pure functions of the classification counters. — Test: `test_volume_*`
+- [ ] **AC7 read-only:** `conn.set_session(readonly=True)`; the tool contains no INSERT/UPDATE/DELETE. — Review + grep
+- [ ] **AC8 artifacts + visibility:** JSONL (all events incl. skips) + summary JSON to `KYTHERA_REPLAY_DIR`; the console report contains prerequisite checks (bot-27 freshness via `MAX(computed_at)`, v2 column coverage) and per-day event counters (makes the 2026-07-13 outage gap visible). — Test: `test_daily_counts` + run observation
 
-## Out of Scope
+## Out of scope
 
-- Der Flip selbst (Gate-Umschaltung in Bot 28 + Restart) — eigener kleiner VPS-Eingriff nach Michi-Go.
-- Parameter-Nachjustierung der V2_*-Konstanten — Ergebnis der Auswertung, nicht dieses Tools.
-- Jede DB-Schreiboperation, jede as-of-Rekonstruktion historischer Whitelist-Stände (siehe Caveat 1).
+- The flip itself (gate switch in bot 28 + restart) — its own small VPS intervention after Michi's go-ahead.
+- Re-tuning of the V2_* constants — a result of the evaluation, not of this tool.
+- Any DB write operation, any as-of reconstruction of historical whitelist states (see caveat 1).
 
-## Why Build (Phase 0b)
+## Why build (phase 0b)
 
-`tools/rom1_counterfactual.py` (047) bucketet nach v1-Gate-Pfaden und kennt v2 nicht; die Divergenz-Achse v1×v2 und der Snapshot-Join existieren nirgends. Das Tool baut NUR diese Achse neu und delegiert Geometrie+Replay vollständig an 047/walkforward (Extend, kein Neubau).
+`tools/rom1_counterfactual.py` (047) buckets by v1 gate paths and does not know v2; the divergence axis v1×v2 and the snapshot join exist nowhere. This tool only builds that axis new and delegates geometry+replay entirely to 047/walkforward (extend, no rebuild).
 
-## Methodik & Caveats (im Report wiederholt)
+## Methodology & caveats (repeated in the report)
 
-1. **Snapshot-Näherung:** Der v2-Verdict pro Event kommt aus dem *heutigen* Whitelist-Snapshot, nicht dem Stand zur Signal-Zeit (Bot 28 loggt v2 nicht pro Signal; `bot_regime_whitelist` ist UPSERT-only ohne Historie). Bei ≤7 Tagen Abstand und 30d-Statistikfenstern driftet das langsam; die **AK5-Drift-Metrik misst die Näherung** an v1 (dort sind beide Stände bekannt). Hohe v1-Drift (>15%) ⇒ Snapshot-Zahlen nur als Tendenz lesen, Auswertung ggf. um as-of-Rekonstruktion erweitern.
-2. **Regime + Alt-Context der Suppressed-Seite** kommen aus dem kombinierten `regime_at_signal`-String (`"REGIME/ALT"`, geschrieben aus `regime_current` — also exakt der debounced Stand, den der Gate beim Entscheid gelesen hat; kein P2.22-Skew). Nur Legacy-Rows ohne `/` fallen auf den `regime_history`-Lookup zur Signal-Zeit zurück (RAW, P2.22-Skew dort dokumentiert). Die Forwarded-Seite hat `alt_context_at_open` nativ.
-3. **Counterfactual statt realisiertem PnL auf BEIDEN Seiten** (auch für tatsächlich geforwardete Trades): gleiche Messlatte, keine Monitor-Label-Abhängigkeit (Report-17-Vorbehalt: Monitor-Scoring nur 63,4% replay-konform).
-4. **Kurzes Fenster:** Signale der letzten Tage erreichen den Horizont noch nicht — `open_at_horizon`-Trades zählen mark-to-market in die PnL-Summe, nicht in die WR (047-Semantik). Default-Horizont hier 72h (nicht 168h), passend zum kurzen Shadow-Fenster.
-5. **Outage 2026-07-13** (~14h Ingestion tot): per-Tag-Zähler zeigen die Lücke; Bot-27-Freshness-Check zeigt, ob der Analyzer durchlief. Bei dünnem Fenster: Auswertung verschieben statt überinterpretieren.
+1. **Snapshot approximation:** the v2 verdict per event comes from the *current* whitelist snapshot, not the state at signal time (bot 28 does not log v2 per signal; `bot_regime_whitelist` is UPSERT-only without history). At ≤7 days of distance and 30d statistics windows this drifts slowly; the **AC5 drift metric measures the approximation** against v1 (where both states are known). High v1 drift (>15%) ⇒ read the snapshot numbers only as a trend, extend the evaluation with an as-of reconstruction if needed.
+2. **Regime + alt-context on the suppressed side** come from the combined `regime_at_signal` string (`"REGIME/ALT"`, written from `regime_current` — i.e. exactly the debounced state the gate read at decision time; no P2.22 skew). Only legacy rows without a `/` fall back to the `regime_history` lookup at signal time (RAW, P2.22 skew documented there). The forwarded side has `alt_context_at_open` natively.
+3. **Counterfactual instead of realized PnL on BOTH sides** (including for trades actually forwarded): same yardstick, no monitor-label dependency (Report-17 caveat: monitor scoring is only 63.4% replay-consistent).
+4. **Short window:** signals from the last few days have not yet reached the horizon — `open_at_horizon` trades count mark-to-market into the PnL sum, not into the WR (047 semantics). Default horizon here is 72h (not 168h), matching the short shadow window.
+5. **Outage 2026-07-13** (~14h ingestion dead): per-day counters show the gap; the bot-27 freshness check shows whether the analyzer ran through. With a thin window: postpone the evaluation instead of over-interpreting.
 
-## Ausführung (VPS-Session, ~17./18.07.)
+## Execution (VPS session, ~17./18.07.)
 
 ```
 # Schnell (nur Matrix + Volumen, kein Replay):
@@ -52,4 +52,4 @@ python tools/whitelist_v2_flip_eval.py --skip-replay
 python tools/whitelist_v2_flip_eval.py --since 2026-07-11T00:00:00 --horizon-hours 72
 ```
 
-Output: `KYTHERA_REPLAY_DIR/whitelist_v2_flip_eval_<since-datum>_<horizont>h.jsonl` + `..._summary.json` (parametrisierte Namen — Vergleichsläufe überschreiben einander nicht) + Konsolen-Report. Interpretation: `v2_would_block` mit positiver Counterfactual-Summe = v2 würde Geld wegnehmen; `v2_would_open` mit positiver Summe = v2 würde Geld freischalten; Portfolio-Vergleich v1-Auswahl vs. v2-Auswahl auf identischem Traffic steht am Reportende.
+Output: `KYTHERA_REPLAY_DIR/whitelist_v2_flip_eval_<since-datum>_<horizont>h.jsonl` + `..._summary.json` (parameterized names — comparison runs don't overwrite each other) + console report. Interpretation: `v2_would_block` with a positive counterfactual sum = v2 would take money away; `v2_would_open` with a positive sum = v2 would unlock money; a portfolio comparison v1 selection vs. v2 selection on identical traffic is at the end of the report.

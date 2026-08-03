@@ -1,92 +1,92 @@
-# AIM2 — Neubau des Master-Meta-Modells (ersetzt AIM1)
+# AIM2 — Rebuild of the master meta-model (replaces AIM1)
 
-**Stand:** 2026-07-05 · **Beschluss:** AIM1 wird ad acta gelegt (Audit: verlässlich invertiert,
-Note F, Dossier `audit_reports/dossiers/AIM1.md`). AIM2 übernimmt Bot-Slot 15, Channel
-(`CH_MASTER`) und Posting-Flow unverändert. Bauplan = Report 15 S7 auf dem Batch-E-Gerüst.
+**As of:** 2026-07-05 · **Decision:** AIM1 is retired (audit: reliably inverted,
+grade F, dossier `audit_reports/dossiers/AIM1.md`). AIM2 takes over bot slot 15, channel
+(`CH_MASTER`) and posting flow unchanged. Blueprint = Report 15 S7 on the Batch-E scaffolding.
 
-## 1. Warum kein Retrain von AIM1
+## 1. Why not retrain AIM1
 
-Die Inversion (conf>0,9 → 9,3% WR) hat vier bewiesene Ursachen im Trainer, nicht im Bot:
-Volatilitäts-Label (X-R1), `round('1h')`-Lookahead-Join, totes Identity-Vokabular
-(Overlap 2/22 bzw. 0/5), keine Kalibrierung. Batch E hat bestätigt: Retrain auf derselben
-Pipeline reproduziert das invertierte Volatilitätsmodell. → Neubau.
+The inversion (conf>0.9 → 9.3% WR) has four proven root causes in the trainer, not the bot:
+volatility label (X-R1), `round('1h')` lookahead join, dead identity vocabulary
+(overlap 2/22 resp. 0/5), no calibration. Batch E confirmed: retraining on the same
+pipeline reproduces the inverted volatility model. → rebuild.
 
-## 2. Rolle
+## 2. Role
 
-**Ranker/Gate über Quellsignale**, kein eigenständiger Alpha-Generator. AIM2 beantwortet je
-Quellsignal genau die Entscheidung des Bots: *„Hätte ein AIM1-artiger Trade (Smart-Targets-
-Geometrie zum Signalzeitpunkt) TP1 vor SL getroffen?"* Erwartung realistisch halten
-(Batch-E-Kernthese: kein Gate zeigte bisher robuste Out-of-Time-Expectancy): Nutzen =
-Selektion/Priorisierung, Misserfolg = sauberer Beleg, dass der Slot dauerhaft zu bleibt.
+**Ranker/gate over source signals**, not an independent alpha generator. AIM2 answers, per
+source signal, exactly the bot's decision: *"Would an AIM1-style trade (smart-targets
+geometry at signal time) have hit TP1 before SL?"* Keep expectations realistic
+(Batch-E core thesis: no gate has so far shown robust out-of-time expectancy): benefit =
+selection/prioritization, failure = a clean proof that the slot should stay closed for good.
 
-## 3. Trainings-Events
+## 3. Training events
 
-| Quelle | Zeitraum | Volumen | Sampling |
+| Source | Period | Volume | Sampling |
 |---|---|---|---|
-| `ml_predictions_master` posted=true, model≠AIM1 | 25.02.–heute | ~39,6k | 100% |
-| `active/closed_trades_master` (conv) | 25.02.–heute | ~206k | FIFO 25%, Volume Indicator 35%, Rest 100% (deterministisch via md5-Hash) |
+| `ml_predictions_master` posted=true, model≠AIM1 | 25.02.–today | ~39.6k | 100% |
+| `active/closed_trades_master` (conv) | 25.02.–today | ~206k | FIFO 25%, Volume Indicator 35%, rest 100% (deterministic via md5 hash) |
 
-Zeitzonen-Vertrag (Step-2 R3, hier neu vermessen): **alle** Writer von
-`ml_predictions_master`/`*_trades_master` stempeln `time` in PG-Lokalzeit
-(Europe/Bucharest, inkl. DST-Wechsel 29.03.) — Konvertierung nach UTC via `tz_localize`.
-`regime_history.ts` ist naive UTC. Kerzen sind `timestamptz`.
+Timezone contract (Step-2 R3, re-measured here): **all** writers of
+`ml_predictions_master`/`*_trades_master` stamp `time` in PG local time
+(Europe/Bucharest, incl. DST switch 29.03.) — converted to UTC via `tz_localize`.
+`regime_history.ts` is naive UTC. Candles are `timestamptz`.
 
-## 4. Label (X-R1-Fix)
+## 4. Label (X-R1 fix)
 
-Je Event: `entry` = Close der letzten **geschlossenen** 1h-Kerze vor dem Event;
-Geometrie = `calculate_smart_targets(df=win1h)` mit Fenster bis zu dieser Kerze (as-of, kein
-Lookahead); Replay = `simulate_exit` aus `tools/walkforward_sim.py` (wick-aware First-Touch,
-SL-first bei Ambiguität, Fees, Monitor-Trailing) über `targets[:3]`, Horizont-Kappe 14 Tage.
-`outcome_tp1` = Klassifikationslabel; `net_pnl_pct` (Cornix-Ladder-Approximation) = Grundlage
-der Threshold-Wahl. `open_at_end` → vom Training ausgeschlossen.
+Per event: `entry` = close of the last **closed** 1h candle before the event;
+geometry = `calculate_smart_targets(df=win1h)` with a window up to this candle (as-of, no
+lookahead); replay = `simulate_exit` from `tools/walkforward_sim.py` (wick-aware first touch,
+SL-first on ambiguity, fees, monitor trailing) over `targets[:3]`, horizon cap 14 days.
+`outcome_tp1` = classification label; `net_pnl_pct` (Cornix ladder approximation) = basis
+for the threshold choice. `open_at_end` → excluded from training.
 
-## 5. Features (geteilter Builder `core/aim2_features.py`)
+## 5. Features (shared builder `core/aim2_features.py`)
 
-Trainer und Bot importieren **denselben** Builder (MIS1-Muster aus e84bc7d):
+Trainer and bot import the **same** builder (MIS1 pattern from e84bc7d):
 
-- **Markt** (Zeile der letzten geschlossenen 1h-Kerze, floor−1-Join): dist-% zu ema_9/21/50/200,
+- **Market** (row of the last closed 1h candle, floor−1 join): dist-% to ema_9/21/50/200,
   kama_21, wma_21, boll_20 (3), donchian_20 (3), support/resistance/trendline_price;
-  rsi_6/14, tsi, macd dif/dea (12/26/9), trendline_slope, r_squared; atr_14/atr_21 als %-close;
-  trend_direction-One-Hots.
-- **Regime** (`regime_history` asof, der 2025 fehlende Prädiktor): regime- + alt_context-One-Hots,
-  confidence/_btc/_alt, btc_return_1h/4h, btc_atr_1h/4h_pct, btcdom_return_24h, Staleness (min).
-- **Schwarm** (5d-Fenster je Coin, **ohne AIM1/AIM2 und ohne das Event selbst** — F6-Fix):
-  total/long/short, Richtungs-Prob, Alter des letzten Signals, Konfluenz same-dir 4h,
-  distinct Quellen same-dir 4h.
-- **Quelle:** One-Hot aus **DB-Vokabular zur Trainingszeit** (nicht hardcoded; Liste wandert ins
-  Artefakt), source_conf (AI: Modell-Confidence; conv: Mapping wie Bot 15), Trailing-WR 30d aus
-  `closed_ai_signals` (win := status~TARGET oder targets_hit≥1; identische Semantik in Trainer
-  und Serving), n-Basis, entry_drift_pct (Close vs. Quell-Entry), direction_num.
-- **Bewusst draußen:** absolute Preise/Skalen (Ticker-Leakage), AIM1-Historie, Rohvolumen.
+  rsi_6/14, tsi, macd dif/dea (12/26/9), trendline_slope, r_squared; atr_14/atr_21 as %-close;
+  trend_direction one-hots.
+- **Regime** (`regime_history` as-of, the predictor missing in 2025): regime + alt_context one-hots,
+  confidence/_btc/_alt, btc_return_1h/4h, btc_atr_1h/4h_pct, btcdom_return_24h, staleness (min).
+- **Swarm** (5d window per coin, **without AIM1/AIM2 and without the event itself** — F6 fix):
+  total/long/short, direction prob, age of the last signal, confluence same-dir 4h,
+  distinct sources same-dir 4h.
+- **Source:** one-hot from **DB vocabulary at training time** (not hardcoded; the list travels into
+  the artifact), source_conf (AI: model confidence; conv: mapping like bot 15), trailing WR 30d from
+  `closed_ai_signals` (win := status~TARGET or targets_hit≥1; identical semantics in trainer
+  and serving), n-basis, entry_drift_pct (close vs. source entry), direction_num.
+- **Deliberately left out:** absolute prices/scales (ticker leakage), AIM1 history, raw volume.
 
-## 6. Training (X-R2/R4-Fix)
+## 6. Training (X-R2/R4 fix)
 
-Chronologischer 70/15/15-Split mit 7-Tage-Purge-Gap (P1.29). XGBoost binär (hist).
-Early Stopping auf Val. **Isotonic-Kalibrierung auf Val. Threshold-Wahl per Replay-Netto-PnL
-auf Val** (nicht Formel, nicht Test). Test bleibt unberührt bis zum Abschlussreport.
-Report: AUC/Brier, Reliability-Buckets (kalibriert vs. Replay-Outcome), Gate-Uplift
-(PnL/Trade mit vs. ohne Gate auf Test), Per-Quelle-Breakdown. Artefakt **nur nach
+Chronological 70/15/15 split with a 7-day purge gap (P1.29). XGBoost binary (hist).
+Early stopping on val. **Isotonic calibration on val. Threshold choice via replay net PnL
+on val** (not a formula, not test). Test stays untouched until the final report.
+Report: AUC/Brier, reliability buckets (calibrated vs. replay outcome), gate uplift
+(PnL/trade with vs. without gate on test), per-source breakdown. Artifact **only to
 `staging_models`** (P1.35): model, features, threshold, calibrator, vocab, meta.
 
-## 7. Serving (Bot 15 → AIM2)
+## 7. Serving (bot 15 → AIM2)
 
-- Artefakt `master_meta_model_aim2.pkl`; Deploy = bewusstes Kopieren aus staging (Operator).
-- Feature-Aufbau ausschließlich über `core/aim2_features.py`; `reindex` auf Artefakt-Featureliste
-  mit **Parity-Guard** (Warnung, wenn Nicht-Null-Anteil unter Schwelle → OOD-Verdacht = P0.13-Wache).
-- Schwarm-/Historien-Query schließt `model_name IN ('AIM1','AIM2')` aus (F6-Fix).
-- Posting-Flow, Channel, Cornix-Format unverändert; `ai_signals.model='AIM2'` (saubere Attribution,
-  AIM1-Statistik bleibt abgeschlossen). MIN_CONFIDENCE kommt aus dem Artefakt (Val-Operating-Point).
-- Modell-Reload: 1×/Tag statt nie (R07-AIM1-b).
+- Artifact `master_meta_model_aim2.pkl`; deploy = deliberate copy from staging (operator).
+- Feature build exclusively via `core/aim2_features.py`; `reindex` on the artifact feature list
+  with a **parity guard** (warning if the non-null share falls below threshold → OOD suspicion = P0.13 watch).
+- Swarm/history query excludes `model_name IN ('AIM1','AIM2')` (F6 fix).
+- Posting flow, channel, Cornix format unchanged; `ai_signals.model='AIM2'` (clean attribution,
+  AIM1 statistics stay closed off). MIN_CONFIDENCE comes from the artifact (val operating point).
+- Model reload: 1×/day instead of never (R07-AIM1-b).
 
-## 8. Rollout-Gates
+## 8. Rollout gates
 
-1. Out-of-Time-Test zeigt Gate-Uplift > 0 nach Fees, Reliability monoton → sonst Stopp, Slot bleibt zu.
-2. **4–8 Wochen Shadow** (`ml_predictions_master`, posted=false) — Shadow-WR-CI vs. Break-even.
-3. Erst danach Entparken von Bot 15 mit Posting. Abbruchkriterium vorab: Shadow-WR-CI unter
-   Break-even → zurück in den Park.
+1. Out-of-time test shows gate uplift > 0 after fees, reliability monotonic → otherwise stop, slot stays closed.
+2. **4–8 weeks shadow** (`ml_predictions_master`, posted=false) — shadow-WR-CI vs. break-even.
+3. Only then unpark bot 15 with posting. Abort criterion defined up front: shadow-WR-CI below
+   break-even → back into the park.
 
-## 9. Artefakte & Zuständigkeiten
+## 9. Artifacts & ownership
 
-Neu: `core/aim2_features.py`, `tools/aim2_build_dataset.py`, `tools/aim2_train.py`, dieser Plan.
-Umbau: `15_ai_master_bot.py`. Keine Berührung mit dem parallelen ABR1-Rework
-(`18_ai_abr1_bot.py`, `tools/walkforward_sim.py`, `tools/retrain_from_replay.py` — nur Import).
+New: `core/aim2_features.py`, `tools/aim2_build_dataset.py`, `tools/aim2_train.py`, this plan.
+Rework: `15_ai_master_bot.py`. No overlap with the parallel ABR1 rework
+(`18_ai_abr1_bot.py`, `tools/walkforward_sim.py`, `tools/retrain_from_replay.py` — import only).

@@ -1,51 +1,51 @@
 # Dossier: SMC Forex/Metals
 
-> Regelbasierter SMC-Bot (Structure-Break + FVG) auf Forex-/Metall-Symbolen. **Note (16): D−.** Kernverdikt: „Retail-SMC-Folklore + Repaint-Entries + SL ohne Sanity-Check" — komplett unvermessen (kein `ai_signals`, kein valider Backtest) → Abschalt-Kandidat; wenn behalten, dann erst instrumentieren.
+> Rule-based SMC bot (structure break + FVG) on forex/metals symbols. **Note (16): D−.** Core verdict: "retail SMC folklore + repaint entries + SL without sanity check" — completely unmeasured (no `ai_signals`, no valid backtest) → shutdown candidate; if kept, instrument first.
 
-## 1. Steckbrief
+## 1. Fact sheet
 
 | | |
 |---|---|
-| Bot | `16_smc_forex_metals_bot.py` — regelbasiert, kein ML, kein Trainer |
-| Signale/TF | STRUCTURE (BOS) + FVG-Mitigation; Cooldown-Module SMC_1H/2H/4H/1D_FVG belegt; 2h/4h per Resample, dazu 1d/1w |
-| Datenquellen | DB **und** yfinance (beide mit Forming-Candle-Problem) |
-| Channel | CH_SMC_FOREX; einziger Bot der Familie, der den Cornix-Block in **eine** Message einbettet (kein P3.9-Doppel-Parse-Risiko) |
-| Leverage | „20x-10x" wird gepostet, ohne SL-Distanz-Abgleich (SL = letztes Swing-Low, kann 20–30% entfernt oder sogar über Entry liegen) |
-| Tracking | **keins** — schreibt kein `ai_signals`, taucht in keiner Performance-Statistik auf |
+| Bot | `16_smc_forex_metals_bot.py` — rule-based, no ML, no trainer |
+| Signals/TF | STRUCTURE (BOS) + FVG mitigation; cooldown modules SMC_1H/2H/4H/1D_FVG occupied; 2h/4h via resample, plus 1d/1w |
+| Data sources | DB **and** yfinance (both with the forming-candle problem) |
+| Channel | CH_SMC_FOREX; the only bot in the family that embeds the Cornix block in **one** message (no P3.9 double-parse risk) |
+| Leverage | "20x-10x" is posted without an SL-distance check (SL = last swing low, can be 20–30% away or even beyond entry) |
+| Tracking | **none** — writes no `ai_signals`, doesn't appear in any performance statistic |
 
-## 2. Live-Bilanz
+## 2. Live track record
 
-**Keine.** Bot 16 gehört zu den drei komplett unvermessenen Bots (16/17/21, Report 16 Querschnittsbefund 6): n, WR, PnL unbekannt; kein valider Backtest existiert. Report 16: „Was unmessbar ist, hat in einer Bot-Flotte keinen Ertragsanspruch: instrumentieren oder abschalten." Einziger Live-Fußabdruck in den Quellen: 83 `SMC_*_FVG`-Cooldown-Rows (Step 2) — der Bot feuert also tatsächlich.
+**None.** Bot 16 is one of the three completely unmeasured bots (16/17/21, report 16 cross-cutting finding 6): n, WR, PnL unknown; no valid backtest exists. Report 16: "What can't be measured has no claim to returns in a bot fleet: instrument it or shut it down." The only live footprint in the sources: 83 `SMC_*_FVG` cooldown rows (step 2) — so the bot does actually fire.
 
-## 3. Befunde
+## 3. Findings
 
-| ID | Ebene | Schweregrad | Einzeiler | Status |
+| ID | Level | Severity | One-liner | Status |
 |---|---|---|---|---|
-| P1.26 | Bot | — | „FVG-Entry ist unerreichbarer Dead-Code" | **✘ WIDERLEGT** (Step 2: 83 SMC_1H/2H/4H/1D_FVG-Cooldown-Rows — der FVG-Pfad feuert; These falsch oder galt für ältere Codeversion) |
-| P1.27 | Bot | HIGH | Entscheidungen auf der Forming Candle in **beiden** Datenquellen (DB droppt laufende Kerze nicht; yfinance-„FIX" behält die In-Progress-Row bewusst); forming 1d/1w hält die Bedingung tagelang → 12h-Cooldown → Refire die ganze Woche | ✔ (Code) |
-| P2.45a | Bot | MEDIUM | Weekend-/Static-Data-Refire: Forex schließt Fr 22:00, Bot scannt das ganze Wochenende, dasselbe Freitag-Signal re-postet mit Freitagspreis in den geschlossenen Markt | ✔ (Code) |
-| P2.45b | Bot | MEDIUM | Kein SL-Seiten-/RR-Sanity-Check auf BOS: SL kann 20–30% weg oder über dem Entry liegen; „20x-10x" wird trotzdem gepostet (21 validiert, 16 nicht) | ✔ (Code) |
-| 08-LOW | Bot | LOW | 2h/4h-Resample in Exchange-Lokalzeit vor UTC-Konvertierung → Buckets gegen Binance verschoben, DST-Shift (auch in 17) | ✔ (Code) |
-| P2.45c | Infra | — | Existieren die METALS-Tabellen überhaupt? | ✔ entwarnt (Step 2: XAU/XAG/XAUT/PAXG-Tabellen existieren vollständig) |
-| P3.8 | Bot | — | matplotlib-Backend | ✔ ok — 16 ist der **einzige** Bot der Familie, der `Agg` setzt |
+| P1.26 | Bot | — | "FVG entry is unreachable dead code" | **✘ REFUTED** (step 2: 83 SMC_1H/2H/4H/1D_FVG cooldown rows — the FVG path fires; claim wrong or applied to an older code version) |
+| P1.27 | Bot | HIGH | Decisions on the forming candle in **both** data sources (DB doesn't drop the running candle; yfinance "fix" deliberately keeps the in-progress row); forming 1d/1w holds the condition for days → 12h cooldown → refires all week | ✔ (code) |
+| P2.45a | Bot | MEDIUM | Weekend/stale-data refire: forex closes Fri 22:00, bot scans all weekend, the same Friday signal reposts with the Friday price into the closed market | ✔ (code) |
+| P2.45b | Bot | MEDIUM | No SL side/RR sanity check on BOS: SL can be 20–30% away or beyond entry; "20x-10x" is posted anyway (21 validated, 16 not) | ✔ (code) |
+| 08-LOW | Bot | LOW | 2h/4h resample in exchange local time before UTC conversion → buckets shifted against Binance, DST shift (also in 17) | ✔ (code) |
+| P2.45c | Infra | — | Do the METALS tables even exist? | ✔ cleared (step 2: XAU/XAG/XAUT/PAXG tables exist in full) |
+| P3.8 | Bot | — | matplotlib backend | ✔ ok — 16 is the **only** bot in the family that sets `Agg` |
 
-## 4. Abhängigkeiten & Querschnitts-Risiken
+## 4. Dependencies & cross-cutting risks
 
-- **R1 (Forming Candle):** 16 interpretiert den DB-Kerzen-Vertrag falsch (letzte Row = live behandelt) — Teil der Bug-Klasse, die ein gemeinsames `fetch_closed_candles()` schließen würde (08, Cross-Cutting 1).
-- **R4 (Leverage vs. SL):** kein Abgleich; gepostete 10–20x gegen 20–30%-SLs sind dieselbe Defekt-Klasse wie P0.5/P0.6 — zentrales `cap_leverage_to_sl()` deckt auch 16 ab.
-- Kein Monitor-/DB-Tracking → auch der Monitor-Vorbehalt (Report 17) greift hier nicht: es gibt schlicht **gar keine** Zahlen, weder verzerrte noch ehrliche.
+- **R1 (forming candle):** 16 misinterprets the DB candle contract (treats the last row as live) — part of the bug class a shared `fetch_closed_candles()` would close (08, cross-cutting 1).
+- **R4 (leverage vs. SL):** no reconciliation; the posted 10–20x against 20–30% SLs is the same defect class as P0.5/P0.6 — a central `cap_leverage_to_sl()` would cover 16 too.
+- No monitor/DB tracking → the monitor caveat (report 17) doesn't even apply here: there simply are **no** numbers at all, neither skewed nor honest.
 
-## 5. Sanierungsplan
+## 5. Remediation plan
 
-**Sofort:** Entscheidung treffen — **abschalten** (Empfehlung Report 16: „Abschalt-Kandidat") oder instrumentieren (`ai_signals`-Writes wie die AI-Flotte). Bis dahin keine Kapital-Zuteilung rechtfertigbar.
+**Immediately:** make a decision — **shut down** (report 16 recommendation: "shutdown candidate") or instrument (`ai_signals` writes like the AI fleet). Until then no capital allocation is justifiable.
 
-**Falls behalten (Regel-Fixes, kein Retrain nötig):** `iloc[:-1]` für DB, Partial-Rows/Buckets bei yfinance droppen, Cooldown ≥ Kerzendauer (P1.27); Sa/So-Skip + Freshness-Gate (P2.45a); ATR-/%-Cap + Reject `sl ≥ entry` und Leverage aus SL-Distanz (P2.45b/R4); Resample nach UTC-Konvertierung (LOW).
+**If kept (rule fixes, no retrain needed):** `iloc[:-1]` for DB, drop partial rows/buckets for yfinance, cooldown ≥ candle duration (P1.27); Sat/Sun skip + freshness gate (P2.45a); ATR/% cap + reject `sl ≥ entry` and leverage derived from SL distance (P2.45b/R4); resample after UTC conversion (LOW).
 
-**Offene Fragen:** Wochenend-Timestamps im CH_SMC_FOREX (08, DB-Frage 8) nie ausgewertet; reale Signalfrequenz/Ergebnis mangels Tracking unbekannt.
+**Open questions:** weekend timestamps in CH_SMC_FOREX (08, DB question 8) never evaluated; real signal frequency/outcome unknown for lack of tracking.
 
-## 6. Belege
+## 6. Evidence
 
 - `AUDIT_TODO.md` P1.26 (✘), P1.27, P2.45, P3.8
-- `audit_reports/08_smc_bots.md` (Abschnitt 16_smc_forex_metals_bot.py + Cross-Cutting)
-- `audit_reports/STEP2_DB_VERIFICATION.md` (P1.26 widerlegt; XAU-Tabellen existieren)
-- `audit_reports/16_strategy_concept_evaluation.md` (Abschnitt 6, Ranking #22; Querschnittsbefund 6)
+- `audit_reports/08_smc_bots.md` (section 16_smc_forex_metals_bot.py + cross-cutting)
+- `audit_reports/STEP2_DB_VERIFICATION.md` (P1.26 refuted; XAU tables exist)
+- `audit_reports/16_strategy_concept_evaluation.md` (section 6, ranking #22; cross-cutting finding 6)

@@ -1,28 +1,28 @@
 # Code Review & Performance Analysis — Overall Result
 
 Review date: 2026-04-17
-Review scope: 70 tracked Files aus dem Repo (57 Python, 13 Docs/Config)
-Methods: AST-Parse, Import-Test, `ruff`-Lint, manuelle Code-Inspektion, Semantic-Grep
+Review scope: 70 tracked files from the repo (57 Python, 13 docs/config)
+Methods: AST parse, import test, `ruff` lint, manual code inspection, semantic grep
 
-## 1. Fix verification — ✅ Alle 57 Fixes sind drin
+## 1. Fix verification — ✅ All 57 fixes are in
 
-Ich habe alle Fixes aus `CHANGELOG.md` systematisch gegen den Code geprüft:
+I checked all fixes from `CHANGELOG.md` systematically against the code:
 
-- **47 Fixes** verified by pattern match in code
-- **2 scheinbare "Issues"** meines Scans waren false positives (nur Kommentar-Texte die auf alten Zustand referenzieren) — manually confirmed dass die Fixes korrekt sind
-- **8 weitere Fixes** (Semantik-Änderungen ohne eindeutiges Grep-Pattern) confirmed by code inspection
+- **47 fixes** verified by pattern match in code
+- **2 apparent "issues"** from my scan were false positives (only comment text referencing the old state) — manually confirmed that the fixes are correct
+- **8 further fixes** (semantic changes without a clear grep pattern) confirmed by code inspection
 
-**Result: 57/57 Fixes vorhanden und korrekt implemented.**
+**Result: 57/57 fixes present and correctly implemented.**
 
 ## 2. Runnability — ✅ All modules import cleanly
 
-- Alle 57 Python-Dateien parse cleanly
-- 9/9 core modules import cleanly mit Dummy-Environment
+- All 57 Python files parse cleanly
+- 9/9 core modules import cleanly with a dummy environment
 - 5/5 strategies import cleanly
 - 25/25 bot scripts AST-clean
-- `dashboard.py` imports without crash (trotz Typo, siehe §3)
+- `dashboard.py` imports without crashing (despite the typo, see §3)
 
-## 3. Real bugs — 1 echter Fund
+## 3. Real bugs — 1 genuine finding
 
 ### 🐛 dashboard.py line 69 — typo in type annotation
 ```python
@@ -35,72 +35,72 @@ _sse_listeners: "list[queue_module.Queue]" = []  # Forward-String-Reference
 _sse_listeners = []  # ohne Annotation, da queue_module erst line 72 importiert wird
 ```
 
-**Impact**: No runtime crash bei normalem Flask-Betrieb, weil Python 3.x Typhints zur Lazy-Evaluation behandelt. **Aber** sobald jemand `typing.get_type_hints(dashboard)` aufruft (e.g. FastAPI-ähnliche Frameworks, Pydantic-Integration, Dev-Tools), crasht's. **Fix cosmetically**, no urgency.
+**Impact**: no runtime crash under normal Flask operation, because Python 3.x treats type hints as lazily evaluated. **But** as soon as someone calls `typing.get_type_hints(dashboard)` (e.g. FastAPI-like frameworks, pydantic integration, dev tools), it crashes. **Fix is cosmetic**, no urgency.
 
 ### ⚠️ 2_indicator_engine.py — duplicate `import sys`
-linen 15 und 31. Harmlos. `ruff --fix` removed das automatisch.
+lines 15 and 31. Harmless. `ruff --fix` removes it automatically.
 
-## 4. PEP8 / Code-Quality — 300+ Stil-Issues
+## 4. PEP8 / code quality — 300+ style issues
 
-Nach `ruff` mit relaxten Regeln (nicht 79 Zeichen, nicht lambda-Warnung, etc):
+After `ruff` with relaxed rules (not 79 chars, not lambda warning, etc.):
 
-| Fehler-Typ | Anzahl | Schwere | Beschreibung |
+| Error type | Count | Severity | Description |
 |---|---|---|---|
-| E701 | 300 | Stil | `if x: return None` auf einer line |
-| W292 | 35 | Stil | Missing newline at end of file |
-| E702 | 23 | Stil | Multiple statements with semicolon |
-| E703 | 20 | Stil | Useless semicolon |
-| F541 | 12 | Stil | f-string ohne {} Placeholder |
-| F841 | 12 | Stil | Unused local variable |
-| E712 | 2 | Stil | `== True/False` statt `is` |
-| F811 | 1 | **Fix** | `import sys` doppelt |
-| F821 | 1 | **Fix** | `queue_module_Queue` undefiniert (siehe §3) |
+| E701 | 300 | Style | `if x: return None` on one line |
+| W292 | 35 | Style | Missing newline at end of file |
+| E702 | 23 | Style | Multiple statements with semicolon |
+| E703 | 20 | Style | Useless semicolon |
+| F541 | 12 | Style | f-string without {} placeholder |
+| F841 | 12 | Style | Unused local variable |
+| E712 | 2 | Style | `== True/False` instead of `is` |
+| F811 | 1 | **Fix** | `import sys` duplicated |
+| F821 | 1 | **Fix** | `queue_module_Queue` undefined (see §3) |
 
-**Empfehlung**: `ruff check --fix --select=E,F,W .` in einem separaten Commit laufen lassen — fixed ~75 automatisch. Der Rest ist Geschmackssache.
+**Recommendation**: run `ruff check --fix --select=E,F,W .` in a separate commit — fixes ~75 automatically. The rest is a matter of taste.
 
-## 5. Bare `except` — 3 Vorkommen
+## 5. Bare `except` — 3 occurrences
 
-Maskiert ALLE Exceptions inklusive `KeyboardInterrupt`:
+Masks ALL exceptions including `KeyboardInterrupt`:
 - `backtest/smc_btc_backtest.py:306`
 - `smc_ml_trainer.py:49`
 - `smc_pattern_backtester.py:29`
 
-**Nicht in Produktion-Bots**, nur Trainer/Backtester. Trotzdem schlechte Praxis. `except Exception:` nutzen.
+**Not in production bots**, only trainer/backtester. Still bad practice. Use `except Exception:`.
 
-## 6. Trade-Realismus — ✅ Keine Bugs found
+## 6. Trade realism — ✅ no bugs found
 
-Systematische Prüfung aller Bots:
+Systematic check of all bots:
 
-| Check | Ergebnis |
+| Check | Result |
 |---|---|
-| SHORT-Trades haben fallende Targets | ✅ überall korrekt |
-| SHORT-Trades haben SL über Entry | ✅ überall korrekt |
-| LONG-Trades haben steigende Targets | ✅ überall korrekt |
-| LONG-Trades haben SL unter Entry | ✅ überall korrekt |
-| `ensure_min_tp_distance` verwendet statt `while len < 20` | ✅ 5/5 Bots |
-| SL-Cap vorhanden (max % vom Entry) | ✅ alle Strategies |
-| Hebel vernünftig (get_max_leverage mit desired) | ✅ bis auf BTC-SMC 100× (bewusst) |
+| SHORT trades have falling targets | ✅ correct everywhere |
+| SHORT trades have SL above entry | ✅ correct everywhere |
+| LONG trades have rising targets | ✅ correct everywhere |
+| LONG trades have SL below entry | ✅ correct everywhere |
+| `ensure_min_tp_distance` used instead of `while len < 20` | ✅ 5/5 bots |
+| SL cap present (max % of entry) | ✅ all strategies |
+| Leverage sensible (get_max_leverage with desired) | ✅ except BTC-SMC 100× (deliberate) |
 
-**Besonders geprüft**: Die drei Warnungen meines Regex-Scans (strat_5_percent SHORT, strat_fast_in_out SHORT, RUB `while len < 20`) sind alle False Positives — detailliert manuell verifiziert.
+**Specifically checked**: the three warnings from my regex scan (strat_5_percent SHORT, strat_fast_in_out SHORT, RUB `while len < 20`) are all false positives — verified manually in detail.
 
-## 7. Performance-Analyse
+## 7. Performance analysis
 
-### 7.1 Kritisch: N+1-Queries in Hauptschleifen
+### 7.1 Critical: N+1 queries in main loops
 
-17 Hotspots identifiziert, wo pro Coin-Iteration ein DB-Query abgesetzt wird. Bei ~500 Coins × 15 Bots = **7500+ Queries pro Zyklus**.
+17 hotspots identified where a DB query is issued per coin iteration. At ~500 coins × 15 bots = **7500+ queries per cycle**.
 
-**Am heißesten**:
+**Hottest**:
 
-| Datei | line | Kontext | Impact |
+| File | line | Context | Impact |
 |---|---|---|---|
-| `23_market_tracker.py` | L77/100/186/272/330 | 5× for-Coin + individuelle Queries | Hoch — alle ~30m |
-| `7_pattern_detector.py` | L238 | Coin × TF Matrix | Mittel — alle 5m |
-| `5_trade_monitor.py` | L125 | Pro aktivem Trade ein Query | Niedrig — meist <10 Trades |
-| `11_ai_mis_bot.py` / `13_ai_rub_bot.py` / `12_ai_ats_bot.py` / `14_ai_atb_bot.py` / `18_ai_abr1_bot.py` / `9_ai_sr_bot.py` | verschieden | pro Coin lese-query | Hoch — alle paar Min |
+| `23_market_tracker.py` | L77/100/186/272/330 | 5× for-coin + individual queries | High — every ~30m |
+| `7_pattern_detector.py` | L238 | Coin × TF matrix | Medium — every 5m |
+| `5_trade_monitor.py` | L125 | One query per active trade | Low — usually <10 trades |
+| `11_ai_mis_bot.py` / `13_ai_rub_bot.py` / `12_ai_ats_bot.py` / `14_ai_atb_bot.py` / `18_ai_abr1_bot.py` / `9_ai_sr_bot.py` | various | per-coin read query | High — every few min |
 
-**Root-Cause**: Jeder Coin hat eine eigene Tabelle (`BTCUSDT_5m`, `ETHUSDT_5m`, ...). Keine echte UNION-Möglichkeit ohne Schema-Change. Das ist `#50` aus dem CHANGELOG, dort als "Schema-Change, out of scope" markiert.
+**Root cause**: every coin has its own table (`BTCUSDT_5m`, `ETHUSDT_5m`, ...). No real UNION option without a schema change. This is `#50` from the CHANGELOG, marked there as "schema change, out of scope".
 
-**Optimierungs-Vorschlag #1: Unified Table** (großer Eingriff)
+**Optimization proposal #1: unified table** (big intervention)
 ```sql
 -- Neu: eine Tabelle mit symbol-Spalte
 CREATE TABLE ohlcv_5m (
@@ -112,79 +112,79 @@ CREATE TABLE ohlcv_5m (
 CREATE INDEX idx_ohlcv_5m_time ON ohlcv_5m (open_time);
 CREATE INDEX idx_ohlcv_5m_symbol_time ON ohlcv_5m (symbol, open_time DESC);
 ```
-Dann ein einziger Query: `SELECT symbol, ... FROM ohlcv_5m WHERE open_time >= NOW() - INTERVAL '24 hours'`, in pandas per `groupby('symbol')` verarbeiten. **Erfordert Datenmigration und Anpassung aller Bots.**
+Then a single query: `SELECT symbol, ... FROM ohlcv_5m WHERE open_time >= NOW() - INTERVAL '24 hours'`, processed in pandas via `groupby('symbol')`. **Requires data migration and adjustment of all bots.**
 
-**Optimierungs-Vorschlag #2: Prepared Statements + Batch-Fetch** (kleinerer Eingriff)
-Statt 500× `cur.execute(query)` + `cur.fetchone()`:
-- Prepared Statement einmal im Cursor-Lifecycle vorbereiten (`PREPARE stmt AS ...`)
-- Dann `EXECUTE stmt (param)` in der Loop — PostgreSQL cached den Query-Plan
-- Schneller ~15-30%, aber keine Architektur-Änderung
+**Optimization proposal #2: prepared statements + batch fetch** (smaller intervention)
+Instead of 500× `cur.execute(query)` + `cur.fetchone()`:
+- Prepare a prepared statement once in the cursor lifecycle (`PREPARE stmt AS ...`)
+- Then `EXECUTE stmt (param)` in the loop — PostgreSQL caches the query plan
+- ~15-30% faster, but no architecture change
 
-**Optimierungs-Vorschlag #3: Bot-spezifisches Caching mit TTL** (minimalster Eingriff)
-Einige Bots (e.g. Market Tracker) holen dieselben 30m-Kerzen mehrfach hintereinander. Ein In-Memory-LRU-Cache mit 60s-TTL würde die Query-Last dramatisch reduzieren.
+**Optimization proposal #3: bot-specific caching with TTL** (minimal intervention)
+Some bots (e.g. market tracker) fetch the same 30m candles multiple times in a row. An in-memory LRU cache with a 60s TTL would dramatically reduce the query load.
 
-### 7.2 Connection-Pool-Engpass
+### 7.2 Connection pool bottleneck
 
-Jeder Bot-Prozess hat Pool `min=2, max=8`. Bei 15 parallelen Bots = **max 120 Connections**. PostgreSQL-Default `max_connections=100`.
+Every bot process has a pool of `min=2, max=8`. At 15 parallel bots = **max 120 connections**. PostgreSQL default `max_connections=100`.
 
-**Fix**: `max_connections=200` in postgresql.conf setzen, ODER `_POOL_MAX=5` in `core/database.py` (5×15=75, passt).
+**Fix**: set `max_connections=200` in postgresql.conf, OR `_POOL_MAX=5` in `core/database.py` (5×15=75, fits).
 
-### 7.3 Indicator Engine — pandas-ta Re-Berechnung
+### 7.3 Indicator engine — pandas-ta recomputation
 
-`2_indicator_engine.py` berechnet alle Indikatoren für alle 500 Coins × 6 Timeframes alle ~30m. Die Berechnung läuft aktuell sequenziell in einem Prozess mit `NUM_WORKERS=3`.
+`2_indicator_engine.py` computes all indicators for all 500 coins × 6 timeframes every ~30m. The computation currently runs sequentially in one process with `NUM_WORKERS=3`.
 
-**Bottleneck**: pandas-ta hat Python-Loop-Overhead. Bei 500 Coins × 6 TFs × 30 Indikatoren = 90.000 Indikator-Series pro Zyklus. Das dauert in der Praxis vermutlich 60-90s.
+**Bottleneck**: pandas-ta has Python-loop overhead. At 500 coins × 6 TFs × 30 indicators = 90,000 indicator series per cycle. In practice this presumably takes 60-90s.
 
-**Vorschläge**:
-- **NUM_WORKERS=8** (wenn die CPU das erlaubt) — linearer Speedup
-- **numpy-basierte Replacement** für die heißen Indikatoren (EMA, RSI, MACD): sind alle rolling-Operationen, in numpy 3-5× schneller als pandas-ta
-- **Caching für statische Indikatoren** (MA_200, WMA_200): ändern sich bei inkrementellem Update kaum, könnten nur bei großer Drift neu berechnet werden
+**Suggestions**:
+- **NUM_WORKERS=8** (if the CPU allows it) — linear speedup
+- **numpy-based replacement** for the hot indicators (EMA, RSI, MACD): all rolling operations, 3-5× faster in numpy than pandas-ta
+- **Caching for static indicators** (MA_200, WMA_200): barely change on an incremental update, could only be recomputed on large drift
 
-### 7.4 ATB-Bot Indikator-Neuberechnung (bekanntes Issue aus Review)
+### 7.4 ATB bot indicator recomputation (known issue from review)
 
-`14_ai_atb_bot.py` berechnet pandas-ta Indikatoren für ML-Features in jeder Coin-Iteration neu, obwohl die Indicator Engine sie bereits in die DB geschrieben hat. Das wurde im Review als "zu riskant ohne Re-Training" markiert (Train/Live-Drift), aber der Performance-Impact ist real: zusätzliche 20-30% CPU-Zeit im ATB-Loop.
+`14_ai_atb_bot.py` recomputes pandas-ta indicators for ML features on every coin iteration, even though the indicator engine has already written them to the DB. This was flagged in the review as "too risky without retraining" (train/live drift), but the performance impact is real: an extra 20-30% CPU time in the ATB loop.
 
-**Mittelfristiger Vorschlag**: Bei nächstem ATB-Re-Training konsistent DB-Indikatoren verwenden, dann den Live-Path anpassen. Als separates Projekt dokumentieren.
+**Medium-term suggestion**: use DB indicators consistently at the next ATB retrain, then adapt the live path. Document as a separate project.
 
-### 7.5 Dashboard — SSE-Queue ohne Backpressure
+### 7.5 Dashboard — SSE queue without backpressure
 
-`dashboard.py` nutzt `deque(maxlen=200)` für SSE-Events und `Queue(maxsize=50)` pro Listener. Wenn ein Browser langsam konsumiert (Tab im Hintergrund), werden Events verworfen (`queue_module.Full` → `pass`). Das ist designmäßig OK für ein Live-Dashboard.
+`dashboard.py` uses `deque(maxlen=200)` for SSE events and `Queue(maxsize=50)` per listener. If a browser consumes slowly (tab in the background), events get dropped (`queue_module.Full` → `pass`). That's fine by design for a live dashboard.
 
-**Kein Performance-Bug**, aber sei dir bewusst dass Clients Events verlieren können.
+**Not a performance bug**, but be aware that clients can lose events.
 
-### 7.6 Kleineres
+### 7.6 Minor items
 
-- **Master Bot** (`15_ai_master_bot.py`): konkateniert 500 Coins × N Signale in einem DataFrame. Bei sehr hohen Signal-Zahlen könnte `pd.concat` in einer Schleife O(n²) werden. Nicht gesehen, aber checken bei hoher Last.
-- **Pattern Detector** (`7_pattern_detector.py`): generiert Charts pro Pattern. Bei vielen gleichzeitigen Patterns könnte matplotlib zum Bottleneck werden. Aktuell scheint der Bot nicht matplotlib-blockierend zu sein.
+- **Master bot** (`15_ai_master_bot.py`): concatenates 500 coins × N signals in one DataFrame. At very high signal counts `pd.concat` in a loop could become O(n²). Not observed, but worth checking under high load.
+- **Pattern detector** (`7_pattern_detector.py`): generates charts per pattern. With many simultaneous patterns matplotlib could become the bottleneck. Currently the bot doesn't seem to be matplotlib-blocking.
 
-## 8. Empfohlene Priorisierung
+## 8. Recommended prioritization
 
-### Jetzt / kleiner Aufwand
-1. **dashboard.py Typo fixen** — 2 linen (line 69 → ohne Annotation, oder mit String-Forward-Ref)
-2. **`import sys` Duplikat entfernen** in `2_indicator_engine.py`
-3. **`ruff check --fix`** durchlaufen lassen für die 75 auto-fixbaren Kleinigkeiten (separate Commit)
-4. **Connection-Pool-Limit prüfen** — `SELECT count(*) FROM pg_stat_activity` bei aktivem System, falls nahe 100: `max_connections` hochziehen oder `_POOL_MAX` runter
+### Now / small effort
+1. **Fix dashboard.py typo** — 2 lines (line 69 → without annotation, or with string forward-ref)
+2. **Remove duplicate `import sys`** in `2_indicator_engine.py`
+3. **Run `ruff check --fix`** for the 75 auto-fixable minor items (separate commit)
+4. **Check connection pool limit** — `SELECT count(*) FROM pg_stat_activity` on the live system, if close to 100: raise `max_connections` or lower `_POOL_MAX`
 
-### Mittelfristig / mittlerer Aufwand
-5. **Bare excepts** in den 3 Backtest-Scripts auf `except Exception:` umstellen
-6. **Prepared Statements** in Market-Tracker und AI-Bots (einmaliger Refactor, messbarer Speedup)
-7. **TTL-Cache in Market-Tracker** für wiederholte Coin-Queries
+### Medium term / medium effort
+5. **Bare excepts** in the 3 backtest scripts switch to `except Exception:`
+6. **Prepared statements** in market tracker and AI bots (one-off refactor, measurable speedup)
+7. **TTL cache in market tracker** for repeated coin queries
 
-### Langfristig / größerer Aufwand (Backlog)
-8. **Unified `ohlcv_*`-Tabelle** — löst N+1-Problem fundamental, aber Migration nötig
-9. **ATB-Retraining mit DB-Indikatoren** — removed pandas-ta Re-Berechnung
-10. **numpy-Replacement für Indicator Engine** — mehr CPU-Budget für mehr Coins
+### Long term / larger effort (backlog)
+8. **Unified `ohlcv_*` table** — fundamentally solves the N+1 problem, but needs migration
+9. **ATB retraining with DB indicators** — removes pandas-ta recomputation
+10. **numpy replacement for indicator engine** — more CPU budget for more coins
 
-## 9. Was NICHT mehr angefasst werden sollte
+## 9. What should no longer be touched
 
-- Keine Strategie-Parameter ändern (MIN_CONFIDENCE, ZONE_TOLERANCE etc.) — sind fein-getuned
-- SHORT/LONG-Richtungslogik — hat den Review-Durchgang bestanden, keine weiteren Änderungen
-- `ensure_min_tp_distance` — funktioniert sauber
-- Cooldown-Logik — zentralisiert und getestet
-- ML-Thresholds — sollten via Training-Pipeline kommen, nicht hardcoded
+- Don't change strategy parameters (MIN_CONFIDENCE, ZONE_TOLERANCE etc.) — finely tuned
+- SHORT/LONG direction logic — passed the review pass, no further changes
+- `ensure_min_tp_distance` — works cleanly
+- Cooldown logic — centralized and tested
+- ML thresholds — should come via the training pipeline, not hardcoded
 
-## 10. Zusammenfassung
+## 10. Summary
 
-**Der Code ist in gutem Zustand.** Die Deep-Review hat 57 Fixes implemented, die alle stabil sind. Es gibt einen einzelnen Kosmetik-Bug im Dashboard (nicht Runnabilitys-kritisch), zwei harmlose Lint-Warnings, und die bekannten N+1-Performance-Themen die architektonischer Natur sind.
+**The code is in good shape.** The deep review found 57 fixes implemented, all of them stable. There is a single cosmetic bug in the dashboard (not runnability-critical), two harmless lint warnings, and the known N+1 performance topics which are architectural in nature.
 
-**Als Produktion** ist das System deploy-fähig. Die Performance-Themen sind nicht blockierend — nur Backlog für wenn das System auf 1000+ Coins wachsen soll.
+**As production** this system is deploy-ready. The performance topics are not blocking — just backlog for when the system needs to scale to 1000+ coins.

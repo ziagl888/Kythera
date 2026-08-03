@@ -1,102 +1,102 @@
-# Step 2 — Live-DB-Verifikation (VPS)
+# Step 2 — Live DB Verification (VPS)
 
-**Stand:** 2026-07-03 · **Umgebung:** Live-VPS, PostgreSQL 17 (+TimescaleDB) `cryptodata@localhost` · Fleet war zum Prüfzeitpunkt **gestoppt** (sauberer Watchdog-Shutdown 11:23 lokal).
+**As of:** 2026-07-03 · **Environment:** Live VPS, PostgreSQL 17 (+TimescaleDB) `cryptodata@localhost` · Fleet was **stopped** at the time of the check (clean watchdog shutdown 11:23 local).
 
-**Vorab — Code-Stand-Abgleich (Diff Kythera ↔ Live):**
-AST-Vergleich aller 75 gemeinsamen `.py`-Dateien: Die Live-Version `PycharmProjects\crypto_trading_bot_v2` ist **identisch mit dem Kythera-Import-Commit `b6735d9`** („live state 2026-07-01"), einziger Unterschied: Live hat die Telegram-Channel-IDs hardcoded, Kythera liest sie aus Env-Vars (Redaction). **Alle Kythera-Commits seit dem Import sind NICHT deployt** (ruff-Fixes, `_apply_keepalive`-Fix, mplfinance-RAM-Leak-Fix, Watchdog-Lifecycle-Fix, Dashboard-Tri-State, `core/process_control.py`, Regression-Guard). Nur live existiert: `99_smc_paper_bot.py` (nicht auditiert).
+**Upfront — code-state comparison (diff Kythera ↔ live):**
+AST comparison of all 75 shared `.py` files: the live version `PycharmProjects\crypto_trading_bot_v2` is **identical to the Kythera import commit `b6735d9`** ("live state 2026-07-01"), the only difference: live has the Telegram channel IDs hardcoded, Kythera reads them from env vars (redaction). **All Kythera commits since the import are NOT deployed** (ruff fixes, `_apply_keepalive` fix, mplfinance RAM-leak fix, watchdog lifecycle fix, dashboard tri-state, `core/process_control.py`, regression guard). Only on live: `99_smc_paper_bot.py` (not audited).
 
 ---
 
-## A. Fundament
+## A. Foundation
 
-| # | Check | Ergebnis |
+| # | Check | Result |
 |---|---|---|
-| 1 | `SHOW timezone` | **`Europe/Bucharest` (UTC+3)** → alle TZ-Findings sind live-relevant |
-| 2 | Schemas | `trade_cooldowns.last_posted_at` = **timestamptz** (P2.2: die WITH-TZ-Variante hat den Bootstrap gewonnen); `active_trades_master.time/posted` naiv + Preise `REAL` (P3.12); `telegram_outbox` **hat** `image_path` (breite DDL gewann); `ai_signals.current_target_hit` = **INTEGER → P1.5 entschärft** |
-| 3 | `max_connections` | **200** (nicht 100) — P1.34 abgemildert, bei 27 Prozessen × maxconn 8 = 216 potenziell trotzdem eng |
-| 4 | Forming Candle | **R1 BEWIESEN**, siehe unten |
+| 1 | `SHOW timezone` | **`Europe/Bucharest` (UTC+3)** → all TZ findings are live-relevant |
+| 2 | Schemas | `trade_cooldowns.last_posted_at` = **timestamptz** (P2.2: the WITH-TZ variant won the bootstrap); `active_trades_master.time/posted` naive + prices `REAL` (P3.12); `telegram_outbox` **has** `image_path` (the wide DDL won); `ai_signals.current_target_hit` = **INTEGER → P1.5 defused** |
+| 3 | `max_connections` | **200** (not 100) — P1.34 mitigated, at 27 processes × maxconn 8 = 216 potentially still tight |
+| 4 | Forming Candle | **R1 PROVEN**, see below |
 
-**R1/P1.11 — Forming-Candle-Beweis (empirisch):**
-Letzte gespeicherte `BTCUSDT_1h`-Kerze (02:00 UTC): `V=1618.9, low=61485.3, close=61537.9`. Binance real: `V=3999.4, low=61271, close=61411.8` → eine **~40%-Partial-Kerze liegt als „fertig" in der DB** und wird nie korrigiert (P1.11). Die Tageskerze vom 3.7. steht mit `V=9668` in der DB (real >37.976, Vortage ~236k–264k). `BTCUSDT_1h_indicators` hat eine Zeile **genau auf dieser Partial-Kerze** → Indikatoren auf Forming-Candles bestätigt.
+**R1/P1.11 — forming-candle proof (empirical):**
+Last stored `BTCUSDT_1h` candle (02:00 UTC): `V=1618.9, low=61485.3, close=61537.9`. Binance real: `V=3999.4, low=61271, close=61411.8` → a **~40% partial candle sits "finished" in the DB** and is never corrected (P1.11). The daily candle from 3.7. is in the DB with `V=9668` (real >37,976, previous days ~236k–264k). `BTCUSDT_1h_indicators` has a row **exactly on this partial candle** → indicators on forming candles confirmed.
 
-**TZ-Mix direkt bewiesen (R3):** Fleet-Shutdown 11:23 lokal = 08:23 UTC. `ml_predictions_master.created_at` (naiv): max **11:23** → Lokalzeit. `regime_history.ts` (naiv): max **08:20** → UTC. **Zwei naive Spalten, zwei verschiedene Semantiken.** `closed_ai_signals.close_time` max 06:00 → gemischte Writer (P2.4 bestätigt).
-
----
-
-## B. Neue operative Funde (nicht im Step-1-Katalog)
-
-1. **🔴 Data-Ingestion-Wedge, 6 Stunden unbemerkt (P2.47 live belegt).** Ingestion lief seit 2.7. 16:46 ohne Restart, aber **alle** Symbole enden 05:00–05:25 lokal (02:00–02:25 UTC). Der WS-Stream war ~6h tot, der Watchdog hielt den Prozess für gesund, und die restliche Fleet hat bis 11:23 **auf 6h alten Indikatoren weiter Signale gepostet** (Outbox-Einträge bis 11:23). Genau das im Audit beschriebene „wedged bot bleibt grün"-Szenario. → Hang-Detection/Heartbeat ist Pflicht, nicht Kür. Die entstandene 6h-Lücke muss der 12h-REST-Catch-up beim nächsten Start füllen (prüfen!).
-2. **🔴 Whale-Logger seit 18. April tot.** Letzte `whale_data/whale_trades_*.json` = 2026-04-18. Zusätzlich P1.42 bestätigt: die letzten 3 Files enthalten nur **49 von 529** Symbolen.
-3. **Whitelist-Doppel-Vokabular** (Detail zu P0.4, siehe C).
-4. Müll-Tabellen von kaputtem Symbol-Parsing: `BTCUSD1_*`, `BTCU_*`, `ETHU_*` (Second-Order-Folge von P3.3).
+**TZ mix directly proven (R3):** fleet shutdown 11:23 local = 08:23 UTC. `ml_predictions_master.created_at` (naive): max **11:23** → local time. `regime_history.ts` (naive): max **08:20** → UTC. **Two naive columns, two different semantics.** `closed_ai_signals.close_time` max 06:00 → mixed writers (P2.4 confirmed).
 
 ---
 
-## C. Beweise je Finding
+## B. New operational findings (not in the Step-1 catalogue)
 
-### P0 — bestätigt
-- **P0.3 Self-Echo ✔:** **109** Rows in `orchestrator_suppressed_signals`, deren `original_outbox_id` auf den **eigenen Regime-Trading-Channel** (-1003963430969) zeigt. 0 davon wurden re-geopent (Cooldown fing sie bisher) — der Loop existiert, das Crash-Fenster bleibt.
-- **P0.4 Whitelist-Mismatch ✔ (präzisiert):** `bot_regime_whitelist` enthält **beide** Namensvarianten. Pretty-Namen (`MIS1-8h`, `FastInOut`, `5Percent`, `SR`, `VolIndic`, …): `computed_at` = **heute 08:06** (Analyzer schreibt sie aktuell). Raw-Namen, die der Orchestrator abfragt (`MIS1-8H`, `Fast In And Out`, `5 Percent`, `Support Resistance`, `Volume Indicator`): `computed_at` = **eingefroren 2026-04-19**. → Das Gate „funktioniert" (3.043× `wr_below_overall`-Suppressions), aber **für die MIS-Familie + alle 5 Channel-Fallback-Bots auf 2,5 Monate alten Regime-Statistiken** (P2.25 in geld-relevanter Form). Fix bleibt wie in Step 1: `pretty_name()` im Orchestrator + Stale-Row-Cleanup + `computed_at`-Staleness-Gate.
-- **P0.7 ✔:** 5 aktive + 79 geschlossene Trades mit LONG-`target1 <= entry`.
-- **P0.9 ✔ (strukturell):** PK der Candle-Tabellen ist `(symbol, open_time)`, Live-Code `6_housekeeping.py:660` nutzt `ON CONFLICT (open_time)` → jeder Gap-Insert wirft, Exception wird verschluckt. Aktuell **0 interne 1h-Lücken über alle 529 Coins/30d** — der 12h-REST-Catch-up der Ingestion trägt das System; das nächtliche Safety-Net existiert trotzdem nicht.
-- **P0.11 ✔:** UFI1 realisiert **25,7% WR (n=35)** vs. beworbene 54,2%/+278R.
-- **P0.13 ✔✔ (drastisch):** Master-pkl-Dummies: `ai_model_*` matcht von 22 Live-Modellnamen **nur `ATS1`+`EPD1`** (Rest `MSI1-*`-Typos), `conv_bot_*`-Overlap = **0**. Kalibrierung: **corr(confidence, win) = −0.304**; Bucket 0.8–0.9 → 31,1% WR, Bucket **0.9–1.0 → 9,3% WR** (n=19.561). Das Meta-Modell ist bei seiner höchsten Confidence **invers prädiktiv** — es postet fast nur conf>0.85 → AIM1-Channel ist aktiv schädlich. Sofort pausieren/neu trainieren.
-- **P0.1 (teilweise):** `sent_after_retry = 0` → der Crash/Retry-Doppel-Send ist bisher **nicht** eingetreten. Aber: identische Messages (md5-gleich) mehrfach binnen 60 min in Trading-Channels (FastInOut, VolumeIndicator, PatternDetector, je 2-3×) → Upstream-Doppel-Generierung (Detector-Refire). Architektur-Risiko bleibt.
-
-### P1/P2 — bestätigt
-- **P1.42 ✔:** 49/529 Symbole in Whale-Files (Cap ~200 Streams/Conn) + Logger seit 18.4. tot.
-- **P2.12 ✔:** gespeicherter `rsi_14` == `ewm(span=14)`-Variante exakt (Δ=0.000), Abstand zu echtem Wilder-RSI ø **4,84 Punkte**.
-- **P2.23/#11 ✔:** Regime-Verteilung 30d: **TRANSITION 44,5%**, HIGH_VOLA 29,7%, CHOP 25,8%; 2,9 Raw-Wechsel/Tag; 17,2% der 2h-Fenster mit ≥2 Regimes → Fallback-Pfad dominiert häufig; 256 Suppressions via `regime_is_transition`-Fallback.
-- **P2.27 ✔:** ROM1-SL-Distanz: median 7,9%, **p90=17,9%, max 65,3%**; 20/133 Signale >15% → bei 20x jenseits Liquidation.
-- **P2.31 ✔:** `targets_hit` bis **21** (EPD1: 215 Rows mit 20 Targets; ROM1/RUB1 zweistellig) — Monitor scored weit jenseits der publizierten TP1-5.
-- **P1.12 ✔ (für Level-Werte):** alte Rows (>30d, n=5000): `poc` nur 149 distinct, `support_price` 236 distinct (broadcastet), `trendline_price` 4997 (per-row ok).
-- **P1.40/41 (Größenordnung):** `ml_predictions_master` Shadow-Flut: EPD1 31k + AIM1 25k Rows/7d (~72k/Woche ungeposted). `pump_dump_events` existiert (schmales Schema, `spike_time`).
-- **P2.9 (historisch):** aktive Trades sauber (`sl>0` überall); `closed_trades_master` enthält 162.194 Alt-Rows mit `sl<=0/NULL`.
-
-### Widerlegt / entschärft
-- **P1.5 ✘:** `current_target_hit` ist INTEGER → kein `int>str`-TypeError möglich.
-- **P1.26 ✘:** SMC-FVG-Cooldowns existieren (SMC_1H/2H/4H/1D_FVG = 83 Rows) → FVG-Pfad feuert. Dead-Code-These falsch (oder galt für ältere Codeversion).
-- **P1.31/P1.13 ✘ (aktuell):** 0/529 Coins ohne `_1h`/`_1h_indicators`/`_4h_indicators`-Tabellen; 0 `ma_200=0`-Rows (BTC); keine internen 1h-Lücken 30d.
-- **P2.45 (Teilaspekt):** XAU/XAG/XAUT/PAXG-Tabellen existieren vollständig.
-- **P2.26 (aktuell):** keine gestapelten OPEN-Duplikate auf coin+direction.
-- **P2.38 ✔ entwarnt:** ABR1 LONG 67,2% / SHORT 59,2% WR (n=110) — keine Klassen-Inversion, `SUCCESS_CLASS_IDX=0` konsistent (deckt sich mit Commit d19a68d).
+1. **🔴 Data-ingestion wedge, 6 hours unnoticed (P2.47 live-proven).** Ingestion ran since 2.7. 16:46 without a restart, but **all** symbols end 05:00–05:25 local (02:00–02:25 UTC). The WS stream was dead for ~6h, the watchdog considered the process healthy, and the rest of the fleet kept **posting signals on 6h-stale indicators until 11:23** (outbox entries up to 11:23). Exactly the "wedged bot stays green" scenario described in the audit. → hang detection/heartbeat is mandatory, not optional. The resulting 6h gap must be filled by the 12h REST catch-up on the next start (verify!).
+2. **🔴 Whale logger dead since April 18.** Last `whale_data/whale_trades_*.json` = 2026-04-18. Additionally P1.42 confirmed: the last 3 files contain only **49 of 529** symbols.
+3. **Whitelist double vocabulary** (detail on P0.4, see C).
+4. Junk tables from broken symbol parsing: `BTCUSD1_*`, `BTCU_*`, `ETHU_*` (second-order consequence of P3.3).
 
 ---
 
-## D. Strategie-Herz-und-Nieren (Katalog #12–14)
+## C. Evidence per finding
 
-**Realized WR aus `closed_ai_signals`** (win = ≥TP1; ohne 352k LEGACY-Rows, die separat ~49,6% WR zeigen):
+### P0 — confirmed
+- **P0.3 Self-Echo ✔:** **109** rows in `orchestrator_suppressed_signals` whose `original_outbox_id` points to the **fleet's own regime trading channel** (-1003963430969). 0 of these were re-opened (cooldown caught them so far) — the loop exists, the crash window remains.
+- **P0.4 Whitelist mismatch ✔ (refined):** `bot_regime_whitelist` contains **both** name variants. Pretty names (`MIS1-8h`, `FastInOut`, `5Percent`, `SR`, `VolIndic`, …): `computed_at` = **today 08:06** (the analyzer writes them live). Raw names, which the orchestrator queries (`MIS1-8H`, `Fast In And Out`, `5 Percent`, `Support Resistance`, `Volume Indicator`): `computed_at` = **frozen 2026-04-19**. → The gate "works" (3,043× `wr_below_overall` suppressions), but **for the MIS family + all 5 channel-fallback bots on regime statistics that are 2.5 months stale** (P2.25 in money-relevant form). Fix remains as in Step 1: `pretty_name()` in the orchestrator + stale-row cleanup + `computed_at` staleness gate.
+- **P0.7 ✔:** 5 active + 79 closed trades with LONG `target1 <= entry`.
+- **P0.9 ✔ (structural):** the PK of the candle tables is `(symbol, open_time)`, live code `6_housekeeping.py:660` uses `ON CONFLICT (open_time)` → every gap insert throws, exception is swallowed. Currently **0 internal 1h gaps across all 529 coins/30d** — the ingestion's 12h REST catch-up carries the system; the nightly safety net still doesn't exist.
+- **P0.11 ✔:** UFI1 realizes **25.7% WR (n=35)** vs. the advertised 54.2%/+278R.
+- **P0.13 ✔✔ (drastic):** master pkl dummies: `ai_model_*` matches only `ATS1`+`EPD1` out of 22 live model names (rest are `MSI1-*` typos), `conv_bot_*` overlap = **0**. Calibration: **corr(confidence, win) = −0.304**; bucket 0.8–0.9 → 31.1% WR, bucket **0.9–1.0 → 9.3% WR** (n=19,561). The meta-model is **inversely predictive** at its highest confidence — it posts almost only conf>0.85 → the AIM1 channel is actively harmful. Pause/retrain immediately.
+- **P0.1 (partially):** `sent_after_retry = 0` → the crash/retry double-send has so far **not** occurred. But: identical messages (md5-equal) multiple times within 60 min in trading channels (FastInOut, VolumeIndicator, PatternDetector, 2-3× each) → upstream double generation (detector refire). Architecture risk remains.
 
-| Modell | n | WR | Kalibrierung (conf→win) |
+### P1/P2 — confirmed
+- **P1.42 ✔:** 49/529 symbols in whale files (cap ~200 streams/conn) + logger dead since 18.4.
+- **P2.12 ✔:** stored `rsi_14` == `ewm(span=14)` variant exactly (Δ=0.000), distance to true Wilder RSI avg **4.84 points**.
+- **P2.23/#11 ✔:** regime distribution 30d: **TRANSITION 44.5%**, HIGH_VOLA 29.7%, CHOP 25.8%; 2.9 raw switches/day; 17.2% of 2h windows with ≥2 regimes → the fallback path dominates frequently; 256 suppressions via the `regime_is_transition` fallback.
+- **P2.27 ✔:** ROM1 SL distance: median 7.9%, **p90=17.9%, max 65.3%**; 20/133 signals >15% → at 20x beyond liquidation.
+- **P2.31 ✔:** `targets_hit` up to **21** (EPD1: 215 rows with 20 targets; ROM1/RUB1 double-digit) — the monitor scores far beyond the published TP1-5.
+- **P1.12 ✔ (for level values):** old rows (>30d, n=5000): `poc` only 149 distinct, `support_price` 236 distinct (broadcast), `trendline_price` 4997 (per-row ok).
+- **P1.40/41 (order of magnitude):** `ml_predictions_master` shadow flood: EPD1 31k + AIM1 25k rows/7d (~72k/week unposted). `pump_dump_events` exists (narrow schema, `spike_time`).
+- **P2.9 (historical):** active trades clean (`sl>0` everywhere); `closed_trades_master` contains 162,194 legacy rows with `sl<=0/NULL`.
+
+### Refuted / defused
+- **P1.5 ✘:** `current_target_hit` is INTEGER → no `int>str` TypeError possible.
+- **P1.26 ✘:** SMC FVG cooldowns exist (SMC_1H/2H/4H/1D_FVG = 83 rows) → the FVG path fires. Dead-code thesis wrong (or applied to an older code version).
+- **P1.31/P1.13 ✘ (current):** 0/529 coins without `_1h`/`_1h_indicators`/`_4h_indicators` tables; 0 `ma_200=0` rows (BTC); no internal 1h gaps in 30d.
+- **P2.45 (partial aspect):** XAU/XAG/XAUT/PAXG tables exist in full.
+- **P2.26 (current):** no stacked OPEN duplicates on coin+direction.
+- **P2.38 ✔ cleared:** ABR1 LONG 67.2% / SHORT 59.2% WR (n=110) — no class inversion, `SUCCESS_CLASS_IDX=0` consistent (matches commit d19a68d).
+
+---
+
+## D. Strategy heart-and-kidney check (catalogue #12–14)
+
+**Realized WR from `closed_ai_signals`** (win = ≥TP1; excluding 352k LEGACY rows, which separately show ~49.6% WR):
+
+| Model | n | WR | Calibration (conf→win) |
 |---|---|---|---|
-| MIS1-72H | 11.822 | 63,9% | **negativ** (72%@conf<0.4 → 65%@0.5-0.6) — Schwellen bedeutungslos (stützt P1.17) |
-| MIS1-168H | 7.167 | 58,5% | flach |
-| BR1H/2H/4H/1D | 12.034 | 57–60% | — |
-| EPD1 | 4.392 | 72,8% | flach (aber hohes Grundniveau) |
-| **ROM1** | 2.677 | **69,2%** | — |
-| QM_1H | 3.139 | 67,5% | leicht positiv |
-| AIM1 | 3.125 | 50,3% | **invertiert −0.30** (s. P0.13) |
-| TD_1H | 2.202 | 57,2% | **positiv** (78,5%@conf>0.9) ✓ |
-| ATS1 | 1.768 | 65,8% | leicht negativ |
-| SRA1 | 396 | 69,9% | positiv ✓ |
-| MIS1-8H | 569 | 52,9% | positiv (91%@0.7-0.8, kleine n) |
-| ABR1 | 110 | 63,6% | — |
-| **UFI1** | 35 | **25,7%** | → P0.11 |
+| MIS1-72H | 11,822 | 63.9% | **negative** (72%@conf<0.4 → 65%@0.5-0.6) — thresholds meaningless (supports P1.17) |
+| MIS1-168H | 7,167 | 58.5% | flat |
+| BR1H/2H/4H/1D | 12,034 | 57–60% | — |
+| EPD1 | 4,392 | 72.8% | flat (but high baseline level) |
+| **ROM1** | 2,677 | **69.2%** | — |
+| QM_1H | 3,139 | 67.5% | slightly positive |
+| AIM1 | 3,125 | 50.3% | **inverted −0.30** (see P0.13) |
+| TD_1H | 2,202 | 57.2% | **positive** (78.5%@conf>0.9) ✓ |
+| ATS1 | 1,768 | 65.8% | slightly negative |
+| SRA1 | 396 | 69.9% | positive ✓ |
+| MIS1-8H | 569 | 52.9% | positive (91%@0.7-0.8, small n) |
+| ABR1 | 110 | 63.6% | — |
+| **UFI1** | 35 | **25.7%** | → P0.11 |
 
-**Overall 61,1% — ROM1 69,2%**: Der Orchestrator-KPI (#13) ist **positiv** (+8pp über Fleet-Schnitt), trotz Stale-Whitelist. Achtung Interpretations-Vorbehalte: WR ohne Fees/R-Gewichtung, Regime-Close zensiert fremde Trades als neutral (P1.9), Monitor-Targets ≠ Cornix-Targets (P2.31) — die absoluten Zahlen sind optimistisch verzerrt.
+**Overall 61.1% — ROM1 69.2%**: the orchestrator KPI (#13) is **positive** (+8pp over the fleet average), despite the stale whitelist. Caveat on interpretation: WR without fees/R-weighting, regime close censors foreign trades as neutral (P1.9), monitor targets ≠ Cornix targets (P2.31) — the absolute numbers are optimistically skewed.
 
-**Kalibrierungs-Fazit (#12):** TD_1H, SRA1, MIS1-8H, QM sind echt kalibriert. MIS1-72H/168H, EPD1, BB flach bis negativ → Forming-Candle/Feature-Skew-Findings (P1.17-25) empirisch gestützt. AIM1 invers → P0.13.
+**Calibration conclusion (#12):** TD_1H, SRA1, MIS1-8H, QM are genuinely calibrated. MIS1-72H/168H, EPD1, BB flat to negative → forming-candle/feature-skew findings (P1.17-25) empirically supported. AIM1 inverted → P0.13.
 
 ---
 
-## E. Regression-Guard (P2.50) — scharf geschaltet ✔
+## E. Regression guard (P2.50) — armed ✔
 
-`extract` gegen die Live-DB (24 Fixtures: BTC/ETH/SOL/DOGE × 30m/1h/2h/4h/1d/1w) + `refresh` (24 Goldens, 111 Spalten) + `verify` grün. Fixtures/Golden/Manifest committen (dieser Commit).
-Hinweis: `python-dotenv` wurde in die Live-venv installiert (fehlte; von Kythera-`core/config.py` benötigt).
+`extract` against the live DB (24 fixtures: BTC/ETH/SOL/DOGE × 30m/1h/2h/4h/1d/1w) + `refresh` (24 goldens, 111 columns) + `verify` green. Fixtures/golden/manifest committed (this commit).
+Note: `python-dotenv` was installed into the live venv (was missing; required by Kythera's `core/config.py`).
 
-## F. Offene Step-2-Restpunkte
+## F. Open Step-2 remainder items
 
-- 6h-Datenlücke von heute (02:25–08:23 UTC): nach Fleet-Neustart prüfen, ob der REST-Catch-up sie füllt (falls nicht: P0.9-Fix zuerst).
-- Watchdog-Doppel-Fleet-Beweis (#8): Log zeigt sauberen Stop heute; historische Doppel-Starts nicht systematisch ausgewertet.
-- Fee-adjustierte PnL (#14) und Gap-Census für 5m/30m-TFs: nicht gerechnet.
-- `bot_unidentified` = 841 Suppressions (größter Einzel-Reason nach wr_below_overall) — Pattern-Lücken in `identify_bot()` ansehen.
+- 6h data gap from today (02:25–08:23 UTC): after the fleet restart, check whether the REST catch-up fills it (if not: fix P0.9 first).
+- Watchdog double-fleet proof (#8): log shows a clean stop today; historical double starts not systematically evaluated.
+- Fee-adjusted PnL (#14) and gap census for 5m/30m timeframes: not computed.
+- `bot_unidentified` = 841 suppressions (largest single reason after wr_below_overall) — look at pattern gaps in `identify_bot()`.

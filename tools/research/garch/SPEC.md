@@ -14,7 +14,7 @@ GARCH vol forecasting or vol-targeting; the OSS source is 424 LOC of CLI scripts
 not an importable library. We port the two core functions + the harness, keep
 MIT attribution (`LICENSE.upstream`), and add the Kythera adaptations.
 
-## Akzeptanzkriterien (binär testbar)
+## Acceptance criteria (binary testable)
 
 ### T-021 — GARCH module
 - [x] AK1: `size_series` / `size_from_vol` return `target/forecast` clipped to
@@ -65,12 +65,12 @@ MIT attribution (`LICENSE.upstream`), and add the Kythera adaptations.
   `requirements-garch.txt` instead).
 
 ## Scope of consent
-**Erlaubt:** new files under `tools/research/garch/**` and `backtest/test_garch_*.py`
+**Allowed:** new files under `tools/research/garch/**` and `backtest/test_garch_*.py`
 on branch `feat/t-2026-kyt-9050-021`; a `CHANGELOG.md` entry + `AUDIT_TODO.md`
 note in the PR.
-**Verboten:** any edit to live bot/`core/` code, the fleet `requirements.txt`,
+**Forbidden:** any edit to live bot/`core/` code, the fleet `requirements.txt`,
 `.env`/secrets, model artifacts, `staging_models/`, any DB access, `--no-verify`,
 force-push, `gh pr merge` (merge-train only).
-**Frag zurück:** wiring the sizer into a live bot; promoting anything; adding
+**Ask first:** wiring the sizer into a live bot; promoting anything; adding
 `arch`/`ccxt` to the fleet lockfile; any change touching a running process.
 (Pattern: z-coding-standards/references/overeager-mitigation.md.)

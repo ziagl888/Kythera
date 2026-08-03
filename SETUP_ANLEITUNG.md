@@ -1,20 +1,20 @@
-# Git-Initialisierung & Commit-Strategie
+# Git Initialization & Commit Strategy
 
-Ziel: Repo erstellen, den aktuellen Stand mit **sinnvollen, thematischen Commits** importieren
-statt einem einzigen opaken "initial commit". Das macht späteres `git blame` lesbar und
-erlaubt selektive Reverts.
+Goal: create the repo, import the current state with **meaningful, thematic commits**
+instead of a single opaque "initial commit". That keeps later `git blame` readable and
+allows selective reverts.
 
-## Phase A: Repo auf GitHub anlegen
+## Phase A: Create the repo on GitHub
 
-1. Auf GitHub.com einloggen → "New repository"
-2. Name: z.B. `trading-bots` (oder was du willst)
-3. **Visibility: PRIVATE** — unbedingt!
-4. **KEINE** README, .gitignore oder License hinzufügen (machen wir lokal)
-5. Repo erstellen, URL merken (z.B. `git@github.com:deinuser/trading-bots.git`)
+1. Log in to GitHub.com → "New repository"
+2. Name: e.g. `trading-bots` (or whatever you want)
+3. **Visibility: PRIVATE** — non-negotiable!
+4. **NO** README, .gitignore, or License added (we do that locally)
+5. Create the repo, note the URL (e.g. `git@github.com:deinuser/trading-bots.git`)
 
-## Phase B: Lokales Repo vorbereiten
+## Phase B: Prepare the local repo
 
-Angenommen du hast das ZIP nach `~/trading-bots/` ausgepackt. Dann:
+Assuming you've unpacked the ZIP to `~/trading-bots/`. Then:
 
 ```bash
 cd ~/trading-bots
@@ -28,10 +28,10 @@ git init
 git branch -m main
 ```
 
-## Phase C: Die .gitignore und Setup-Files ZUERST
+## Phase C: The .gitignore and setup files FIRST
 
-**Kritisch: Bevor du `git add .` machst, muss die .gitignore stehen!**
-Sonst committest du versehentlich `.env`, Modelle, State-Files usw.
+**Critical: before you run `git add .`, the .gitignore must be in place!**
+Otherwise you'll accidentally commit `.env`, models, state files, etc.
 
 ```bash
 # Die Setup-Dateien aus dem github_setup-Ordner kopieren (falls du sie nicht schon im ZIP hast):
@@ -48,11 +48,11 @@ git status --ignored
 # BEVOR du committest!
 ```
 
-## Phase D: Commits in sinnvoller Reihenfolge
+## Phase D: Commits in a sensible order
 
-### Option 1: "Realistische Historie" (empfohlen)
+### Option 1: "Realistic history" (recommended)
 
-Du committest die 6 Batches als einzelne Commits — so als wärst du sie nacheinander durchgegangen. Das macht die Reports aussagekräftig und zukünftige Reviews einfacher.
+You commit the 6 batches as individual commits — as if you'd gone through them one after another. That makes the reports meaningful and future reviews easier.
 
 ```bash
 # 1. Initial mit Setup-Dateien + grundlegender Projektstruktur OHNE Code
@@ -166,9 +166,9 @@ Offene Punkte für späteren Review in CHANGELOG.md"
 # Für den Start: alles als "Batch 0" zusammenfassen oder ignorieren.
 ```
 
-### Option 2: "Alles auf einmal" (einfacher, weniger aussagekräftig)
+### Option 2: "All at once" (simpler, less meaningful)
 
-Wenn du es schnell haben willst:
+If you want it quick:
 
 ```bash
 git add .
@@ -177,9 +177,9 @@ git commit -m "initial: Import nach Deep-Review (57 Fixes)
 Siehe reports/CHANGELOG.md für Details."
 ```
 
-Nachteil: `git blame` zeigt bei jedem Problem nur diesen einen Commit. Du verlierst die thematische Historie.
+Downside: `git blame` shows only this one commit for every problem. You lose the thematic history.
 
-## Phase E: Remote pushen
+## Phase E: Push to the remote
 
 ```bash
 # Verbindung zum GitHub-Repo herstellen
@@ -189,25 +189,25 @@ git remote add origin git@github.com:deinuser/trading-bots.git
 git push -u origin main
 ```
 
-Falls SSH nicht konfiguriert ist: https-URL verwenden (`https://github.com/deinuser/trading-bots.git`) und mit Personal Access Token authentifizieren.
+If SSH isn't configured: use the https URL (`https://github.com/deinuser/trading-bots.git`) and authenticate with a Personal Access Token.
 
-## Phase F: Verifizieren
+## Phase F: Verify
 
-Nach dem ersten Push:
+After the first push:
 
-1. Auf GitHub.com das Repo öffnen
-2. **Commit-History prüfen** — sollte die 9 thematischen Commits zeigen
-3. **Actions-Tab öffnen** — Syntax-Check sollte grün laufen
-4. **Security → Secret Scanning aktivieren** (GitHub findet versehentlich committete API-Keys)
-5. **Files prüfen** — KEIN `.env`, KEIN `.pkl`, KEIN `*_state.json` darf zu sehen sein
+1. Open the repo on GitHub.com
+2. **Check the commit history** — should show the 9 thematic commits
+3. **Open the Actions tab** — the syntax check should run green
+4. **Enable Security → Secret Scanning** (GitHub finds accidentally committed API keys)
+5. **Check the files** — no `.env`, no `.pkl`, no `*_state.json` should be visible
 
-## Phase G: Für die nächste Iteration mit mir
+## Phase G: For the next iteration with me
 
-Beim nächsten Mal kannst du mir einfach die Repo-URL geben (falls du mir Zugriff gibst — gibt's Wege über Deploy-Keys oder ein Read-Only-Collaborator-Account). Oder du clonst lokal, packst selektiv ein ZIP und schickst es mir. Ersteres ist deutlich effizienter.
+Next time you can just give me the repo URL (if you grant me access — there are ways via deploy keys or a read-only collaborator account). Or you clone locally, selectively pack a ZIP and send it to me. The former is much more efficient.
 
 ## Troubleshooting
 
-### "Ich habe versehentlich .env committed"
+### "I accidentally committed .env"
 ```bash
 # Sofort lokal entfernen
 git rm --cached .env
@@ -220,18 +220,18 @@ git push
 # Für echtes Entfernen: git filter-repo oder BFG — aber Keys rotieren ist einfacher.
 ```
 
-### "Modelle sind zu groß"
-- Git lehnt Commits >100MB ab
-- Entweder Git LFS einrichten (`git lfs install && git lfs track "*.pkl"`)
-- Oder Modelle aus dem Arbeitsverzeichnis in einen separaten Ordner (`~/trading-models/`) verschieben
+### "Models are too large"
+- Git rejects commits >100MB
+- Either set up Git LFS (`git lfs install && git lfs track "*.pkl"`)
+- Or move models out of the working directory into a separate folder (`~/trading-models/`)
 
-### "Syntax-Check schlägt fehl"
-Lokal vor Push testen:
+### "Syntax check fails"
+Test locally before pushing:
 ```bash
 find . -name "*.py" -not -path "./venv/*" -exec python -c "import ast; ast.parse(open('{}').read())" \;
 ```
 
-### "Ich will einen Fix einzeln rückgängig machen"
+### "I want to revert a single fix"
 ```bash
 git log --oneline               # Commit-Hash finden
 git revert <commit-hash>        # Revert-Commit anlegen

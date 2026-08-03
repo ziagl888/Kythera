@@ -1,44 +1,44 @@
 # Dossier: 5 Percent
 
-> Schein-Konfluenz aus ~26 redundanten Filtern — **Note D** (Report 16) · Paradebeispiel „Win ≠ Profit": **71,1% WR und trotzdem Σ −5.766** netto. Kernverdikt: ohne Redesign von Entry-Timing und Exits keine positive Erwartung begründbar; allenfalls LONG-Seite als Experiment.
+> Fake confluence from ~26 redundant filters — **grade D** (Report 16) · textbook "win ≠ profit": **71.1% WR and still Σ −5,766** net. Core verdict: without a redesign of entry timing and exits, no positive expectancy can be justified; at most the LONG side as an experiment.
 
-## 1. Steckbrief
-- **Modul:** `strategies/strat_5_percent.py`, Runner `3_detectors.py`, Monitoring `5_trade_monitor.py`.
-- **Signal-Logik:** ~26 AND-Bedingungen (RSI-Band, TSI, komplettes EMA/WMA/KAMA-Alignment, MACD, Donchian/Boll-Mid). Die Konfluenz ist Schein: fast alle Bedingungen sind Glättungen desselben Close-Preises und kollabieren auf „etablierter, steiler Trend" → systematisch später Einstieg in ausgereizte Bewegungen; fixe %-Targets, kein Zeit-Exit.
-- **Channel:** eigener Cornix-Trading-Channel via `telegram_outbox` (Whitelist-Rohname „5 Percent").
-- **Cooldowns:** kein Per-Coin-Cooldown; nur globaler Win-Count-Circuit-Breaker (500 Wins über alle Coins — quasi tot, drosselt nach Gewinnen statt Verlusten), TZ-fehlerhaft (P2.1).
+## 1. Profile
+- **Module:** `strategies/strat_5_percent.py`, runner `3_detectors.py`, monitoring `5_trade_monitor.py`.
+- **Signal logic:** ~26 AND conditions (RSI band, TSI, complete EMA/WMA/KAMA alignment, MACD, Donchian/Boll mid). The confluence is fake: almost all conditions are smoothings of the same close price and collapse to "an established, steep trend" → systematically late entry into overextended moves; fixed % targets, no time exit.
+- **Channel:** own Cornix trading channel via `telegram_outbox` (whitelist raw name "5 Percent").
+- **Cooldowns:** no per-coin cooldown; only a global win-count circuit breaker (500 wins across all coins — practically dead, throttles after wins instead of losses), TZ-broken (P2.1).
 
-## 2. Live-Bilanz (Report 14, dedupliziert, `closed_trades_master`)
-- **n = 19.385** · WR **71,1%** · ø **−0,20%**/Trade · Median **−0,05%** · Σ netto **−5.766** Preis-%.
-- Höchste „Win-Rate" der Classic-Familie und klar negativ — TP1-Touch zählt als Win, danach gibt Trailing/SL alles zurück, Fees fressen den Rest.
-- **Richtungssplit:** LONG-Seite 76% WR bei n=1.087 — prüfenswert, aber n zu klein für Vertrauen (Report 14 D.5). Monatstrend nicht separat ausgewiesen.
-- **Scoring-Vorbehalt (Report 17):** Monitor-Scoring stimmt bei 5 Percent nur zu **45%** mit dem First-Touch-Replay überein — das per-Trade-Scoring ist hier **de facto Rauschen**; alle obigen Zahlen (inkl. der 71% WR und des LONG-Splits) sind entsprechend unzuverlässig, bis der Monitor-Rewrite + Re-Score gelaufen ist.
+## 2. Live balance (Report 14, deduplicated, `closed_trades_master`)
+- **n = 19,385** · WR **71.1%** · ø **−0.20%**/trade · median **−0.05%** · Σ net **−5,766** price-%.
+- Highest "win rate" of the classic family and clearly negative — TP1 touch counts as a win, then trailing/SL gives it all back, fees eat the rest.
+- **Direction split:** LONG side 76% WR at n=1,087 — worth investigating, but n too small for confidence (Report 14 D.5). Monthly trend not reported separately.
+- **Scoring caveat (Report 17):** monitor scoring agrees with the first-touch replay only **45%** of the time for 5 Percent — the per-trade scoring is **de facto noise** here; all figures above (including the 71% WR and the LONG split) are correspondingly unreliable until the monitor rewrite + re-score has run.
 
-## 3. Befunde
-| ID | Schweregrad | Einzeiler | Status |
+## 3. Findings
+| ID | Severity | One-liner | Status |
 |---|---|---|---|
-| P1.14 | Hoch | SHORT-„Headroom"-Check ist vorzeichenverdrehter No-op (`close > support*0.95`) → SHORT ohne Guard | ~ (Code, [DB] offen) |
-| P2.43 | Mittel | SHORT nutzt `ema_12 < ema_55` wo LONG `ema_21 > ema_55` (wahrscheinlich Typo); `REQUIRED_COLUMNS` deckt `ema_200/wma_21/wma_26` nicht ab (latenter Silent-Never-Fire) | ~ |
-| P2.1 | Mittel | Cooldown-Circuit-Breaker vergleicht naive Lokalzeit gegen UTC-`posted` | ~ ([DB]) |
-| P1.15 | Hoch | Ein schlechter Coin killt den ganzen Detector-Prozess | ~ |
-| P2.44 | Mittel | 538 serielle Binance-HTTP-Calls pro Detector-Zyklus | ~ |
-| R1/05 | Hoch | Bewertet die noch laufende Kerze; Engine stempelt :02 UND :32 | ✔ (Step 2) |
-| 16b | Konzept | Schein-Konfluenz, später Einstieg, fixe Targets, kein Regime-Bewusstsein | ✔ (Live-Zahlen) |
+| P1.14 | High | SHORT "headroom" check is a sign-flipped no-op (`close > support*0.95`) → SHORT without a guard | ~ (code, [DB] open) |
+| P2.43 | Medium | SHORT uses `ema_12 < ema_55` where LONG uses `ema_21 > ema_55` (likely a typo); `REQUIRED_COLUMNS` doesn't cover `ema_200/wma_21/wma_26` (latent silent-never-fire) | ~ |
+| P2.1 | Medium | Cooldown circuit breaker compares naive local time against UTC `posted` | ~ ([DB]) |
+| P1.15 | High | One bad coin kills the whole detector process | ~ |
+| P2.44 | Medium | 538 serial Binance HTTP calls per detector cycle | ~ |
+| R1/05 | High | Scores the still-forming candle; the engine stamps at :02 AND :32 | ✔ (Step 2) |
+| 16b | Concept | Fake confluence, late entry, fixed targets, no regime awareness | ✔ (live figures) |
 
-## 4. Abhängigkeiten & Querschnitts-Risiken
-- **R1 Forming Candle** (Step 2 bewiesen): 26 Bedingungen werden auf Partial-Kerzen ausgewertet.
-- **R3 TZ-Mix:** Session-TZ Europe/Bucharest → P2.1 live-relevant (3h-Fenster real 1–2h).
-- **Monitor-Bugs P1.2/P2.7:** Trailing-SL zieht nie nach, nur jüngste 5m-Kerze geprüft — bei 5 Percent mit nur 45% Replay-Übereinstimmung die gravierendste Konsequenz: die Strategie ist aktuell nicht seriös bewertbar.
-- **Outbox-Verluste (N2):** 800 Messages still verworfen (kein 5-Percent-spezifischer Wert berichtet); Whitelist-Rohname „5 Percent" seit 19.04. eingefroren (P0.4/P2.25) → Orchestrator-Gating auf 2,5 Monate alten Statistiken.
+## 4. Dependencies & cross-cutting risks
+- **R1 forming candle** (Step 2 proven): 26 conditions are evaluated on partial candles.
+- **R3 TZ mix:** session TZ Europe/Bucharest → P2.1 live-relevant (3h window really 1–2h).
+- **Monitor bugs P1.2/P2.7:** trailing SL never tightens, only the most recent 5m candle is checked — for 5 Percent, with only 45% replay agreement, this is the most severe consequence: the strategy currently cannot be seriously evaluated.
+- **Outbox losses (N2):** 800 messages silently dropped (no 5-Percent-specific figure reported); whitelist raw name "5 Percent" frozen since 19.04 (P0.4/P2.25) → orchestrator gating on statistics 2.5 months stale.
 
-## 5. Sanierungsplan
-- **Sofort:** P1.14-Fix (`close > support*1.05`) + P2.43-Typo/`REQUIRED_COLUMNS`-Fix + P2.1-TZ-Fix; P1.15-per-Coin-try/except im Detector. SHORT-Seite bis zur Neubewertung schließen bzw. Strategie parken.
-- **Strukturell:** Erst Monitor-Rewrite (Report 17) + Re-Score, dann Neubewertung — vorher ist jede Entscheidung auf 45%-Rausch-Labels gebaut. Danach: **S1 Direction-Gate** (nur LONG-Seite als Experiment weiterlaufen lassen, Report 16 §8: „5 Percent nur als Experiment auf der LONG-Seite weiter"), Exit-Redesign nach S13 (TP/SL-Geometrie fee-positiv), sonst abschalten. Das S11-Filter-Muster ist prinzipiell übertragbar, FIFO und Volume Indicator haben aber Vorrang (mehr Daten).
+## 5. Remediation plan
+- **Immediately:** P1.14 fix (`close > support*1.05`) + P2.43 typo/`REQUIRED_COLUMNS` fix + P2.1 TZ fix; P1.15 per-coin try/except in the detector. Close the SHORT side until re-evaluation or park the strategy.
+- **Structurally:** monitor rewrite first (Report 17) + re-score, then re-evaluate — before that, every decision is built on 45%-noise labels. After that: **S1 direction gate** (keep only the LONG side running as an experiment, Report 16 §8: "5 Percent only as an experiment on the LONG side"), exit redesign per S13 (fee-positive TP/SL geometry), otherwise switch off. The S11 filter pattern is in principle transferable, but FIFO and Volume Indicator take priority (more data).
 
-## 6. Belege
+## 6. Evidence
 - `AUDIT_TODO.md`: P1.14, P1.15, P2.1, P2.43, P2.44, R1, R3
-- `audit_reports/05_classic_strats.md`: Headroom-No-op, EMA-Typo, REQUIRED_COLUMNS, Cooldown-Anatomie
-- `audit_reports/14_bot_performance_db.md` §C + D.5: Zahlenzeile, LONG-Split n=1.087
-- `audit_reports/16_strategy_concept_evaluation.md` §3: Note D, Verdikt
-- `audit_reports/15_strategy_proposals.md`: S1 Direction-Gates, S13
-- `audit_reports/17_monitor_replay_and_gaps.md` §1: agree 45%
+- `audit_reports/05_classic_strats.md`: headroom no-op, EMA typo, REQUIRED_COLUMNS, cooldown anatomy
+- `audit_reports/14_bot_performance_db.md` §C + D.5: figure line, LONG split n=1,087
+- `audit_reports/16_strategy_concept_evaluation.md` §3: grade D, verdict
+- `audit_reports/15_strategy_proposals.md`: S1 direction gates, S13
+- `audit_reports/17_monitor_replay_and_gaps.md` §1: agreement 45%
