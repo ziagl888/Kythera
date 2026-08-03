@@ -1,3 +1,105 @@
+## [2026-08-03] Bots 16/17: transient yfinance failures silently dropped ~5% of forex/metal timeframes (T-2026-KYT-9050-084)
+
+`16_smc_forex_metals_bot.py` and `17_mayank_bot.py` pull their forex/metal candles from Yahoo.
+yfinance catches its own errors, logs `1 Failed download: ['EURUSD=X']: TypeError("'NoneType'
+object is not subscriptable")` **onto the calling bot's logger** and returns an EMPTY frame —
+so the bot does not crash, it silently skips that (ticker, timeframe) for the whole cycle.
+Measured on the live VPS: bot 16 lost **17 of ~308 pulls across 4 scan cycles** (~77 per cycle
+= 11 tickers × 7 timeframes), bot 17 lost 3; an earlier log window shows 246. Falsified as a
+systematic breakage first — every interval/period pair the bots use (15m/30d, 30m/30d, 1h/60d,
+1d/200d, 1wk/400d across EURUSD=X, JPY=X, GC=F, SI=F) returns data when requested on its own,
+so the pattern is transient and rate-limit-shaped, consistent with two bots bursting at Yahoo.
+
+New shared helper `core/yfinance_fetch.download_with_retry`: three attempts with a 1.5s/3.0s
+backoff, treating an empty frame and a raised exception as the same signal (yfinance swallows
+its own, so both mean "no data"). On final failure it returns an empty frame — the callers'
+`if df.empty: return df` skip path is byte-identical to before — but logs a WARNING naming
+**ticker AND timeframe**, neither of which appears in yfinance's own line. That is the actual
+fix: a silent skip stops being indistinguishable from a healthy cycle.
+
+Deliberately its own module rather than `core/market_utils.py`: that one is imported by most of
+the fleet, and a module-level `import yfinance` there would let a broken yfinance install take
+down bots that never touch Yahoo. The import stays at module level (a missing install must break
+bots 16/17 at START, not mid-cycle), so the DB- and network-free test stubs yfinance when absent
+— the repo runs two python environments and a guard that only runs in one of them is exactly the
+failure mode of the companion task T-083.
+
+**Circuit breaker + jitter (T-2026-KYT-9050-088, from both core reviews).** A plain retry has an
+unpleasant feedback property: it multiplies load exactly when the cause is overload. Under a
+BROAD outage — as opposed to the observed ~5% transient regime — bot 16's 77 pulls would add
+~346s of pure sleep and 154 extra requests per 15-minute cycle against an endpoint that is
+already refusing. So consecutive total failures are now counted, and after `CIRCUIT_TRIP_AFTER`
+(5) the retry switches itself off for the rest of the cycle: one attempt per pull, no backoff,
+no amplification. A single success closes it again — the endpoint is demonstrably answering —
+and both bots call `reset_retry_budget()` at the top of their scan so a fresh cycle always gets
+a fair chance and a recovery is never hidden. Five is above the transient rate (five failures in
+a row essentially never happen by chance at 5%) and far below a full cycle, so it separates
+"unlucky" from "Yahoo is down". The backoff is now jittered (×0.5–1.5, same expected wait): not
+against a thundering herd — each bot is a single sequential process on an offset schedule — but
+so retries do not march lockstep into the same recovery window.
+
+Two more review findings fixed: the `max(1, attempts)` clamp covered only the loop bound, so an
+exhausted pull could report *"no data after -3 attempts"* — one `budget` is now bound once and
+used by the loop, the backoff guard and both log lines. And both bots' `logging.basicConfig`
+lacked `%(levelname)s`, which made the new WARNING indistinguishable from an INFO line in the
+log file; verified in a forced-failure run that it now reads
+`SMC_BOT - WARNING - YFinance EURUSD=X (1h): no data after 3 attempt(s) …`.
+
+**Per-cycle retry budget (second review round).** The breaker only sees a CONTIGUOUS run of
+failures, so a partial outage walks straight past it: a measured 4-fail/1-ok pattern over bot
+16's 77 pulls never trips it and still costs 124 extra requests and 279s of sleep — 80 % of the
+unmitigated worst case. `CYCLE_RETRY_BUDGET` (40) now caps retry attempts per cycle regardless
+of how the failures are distributed, and `reset_retry_budget()` refills it. 40 leaves the
+observed regime untouched (~5 % of 77 pulls ≈ 8 retries) and does not bite until roughly a 25 %
+failure rate. The two brakes are deliberately independent: the breaker reacts fast to an outage,
+the budget bounds the shape the breaker cannot see.
+
+25 tests, green on the fleet interpreter, the dev interpreter and standalone. Every branch
+mutation-tested with an md5-verified restore: breaker never trips → 4 red · open breaker keeps
+the full retry → 1 · jitter removed → 1 · clamp only on the loop bound → 2 · **cycle reset a
+no-op → 10** · success does not clear the failure run → 1 · budget never exhausts → 2 · budget
+counts first attempts → 7 · reset does not refill the budget → 8 · budget warning repeats → 1 ·
+reset summary line silenced → 1.
+
+Two of those numbers are corrections, both found by mutating the guards rather than trusting
+them. The scattered-failure test first caught **nothing** when the success-path reset was
+mutated away — it checked the breaker only at the end, where the closing success had already
+masked the flapping; the assertion now runs after every failure. And the budget-warning latch
+first caught nothing either, because the fixture landed on an EVEN remainder, where the warning
+fires once even without the latch; the fixture now lands on an odd remainder so a single call
+crosses the limit. The earlier "cycle reset a no-op → 2" was simply stale — measured before the
+first of those test fixes.
+
+Also fixed from the review: the `_rand` default (`random.uniform`) was never executed by any
+test, so a typo in the jitter band would only have surfaced in production — now covered by a
+20-sample band check; the reset summary line is covered; and one assertion message claimed a
+monotonicity that only holds under the stubbed jitter (with real jitter consecutive sleeps
+overlap and the second CAN be shorter) — reworded. Live smoke through the real call chain: bot
+16 EURUSD=X 1h/4h → 1419/371 rows. `mypy` clean, `ruff` clean, `regression_guard verify` OK.
+**Ops note: the running bot processes keep the old code until the fleet is restarted.**
+
+## [2026-08-03] LQE1 fix: collector streamed against a dead legacy path — routed /market/ws + silent-subscription guard (T-2026-KYT-9050-082)
+
+The T-077 collector used `wss://fstream.binance.com/ws/!forceOrder@arr` — dead since the
+Binance USDT-M WebSocket migration (System Upgrade Notice 2026-03-06; legacy `/ws` and
+`/stream` stopped pushing `/market`-category channels on 2026-04-23). The failure mode is a
+perfect trap: the legacy path CONNECTS, ACKs subscriptions (`LIST_SUBSCRIPTIONS` confirms
+them) and then pushes nothing, forever — the collector idled 5.5 h believing the market was
+calm. Diagnosed by elimination: fresh connections got zero frames even for `btcusdt@aggTrade`
+and `markPrice@1s` on legacy paths while spot (`stream.binance.com`) and COIN-M (`dstream`)
+flowed normally; `/market/ws/!forceOrder@arr` delivered a real liquidation within a minute.
+Every other fleet WS consumer (1_data_ingestion, 19_whale_logger, chart_data_service,
+99_smc_paper_bot) had already been migrated to `/market/stream` — only the new collector
+regressed to the pre-migration URL.
+
+Two changes: (1) `WS_URL` → `wss://fstream.binance.com/market/ws/!forceOrder@arr`, with the
+migration pinned by a regression test; (2) **silent-subscription guard** — the incident
+proved that eternal silence is indistinguishable from a dead subscription, so a stream with
+no frame for `MAX_SILENCE_S` (1 h; market-wide liquidations normally arrive within minutes)
+now forces a reconnect with a WARNING instead of idling forever. 14 DB-free tests total.
+Ops note: the running collector process keeps the dead URL until it is restarted
+(restart marker after the live checkout has pulled this merge).
+
 ## [2026-08-03] MPS3: near-band gate re-run — 10x-shell artifact confirmed, literal spread trade now refuted artifact-free (T-2026-KYT-9050-081)
 
 Michi's objection to MPS1/MPS2 held: the tier weights {10x: 0.4, …} let the 10x shell win the
