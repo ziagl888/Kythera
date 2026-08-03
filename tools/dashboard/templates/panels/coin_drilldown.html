@@ -41,9 +41,9 @@
   {% endif %}
 
   {% if not coins %}
-    <p class="muted">Noch keine entschiedenen Trades im DuckDB-Substrat.</p>
+    <p class="muted">No decided trades in the DuckDB substrate yet.</p>
   {% elif not selected_coin %}
-    <p class="muted">Unbekannter Coin{% if requested_coin %} ("{{ requested_coin }}"){% endif %} — bitte einen Coin aus der Liste waehlen.</p>
+    <p class="muted">Unknown coin{% if requested_coin %} ("{{ requested_coin }}"){% endif %} — please pick a coin from the list.</p>
   {% elif not trades %}
     <p class="muted">Keine entschiedenen Trades fuer {{ selected_coin }}.</p>
   {% else %}

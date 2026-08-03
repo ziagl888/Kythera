@@ -369,4 +369,4 @@ def test_panel_leaderboard_empty_duckdb(tmp_path):
     c = dashboard_app.create_app(duckdb_path).test_client()
     resp = c.get("/panels/leaderboard")
     assert resp.status_code == 200
-    assert "keine entschiedenen Trades" in resp.get_data(as_text=True)
+    assert "No decided trades" in resp.get_data(as_text=True)
