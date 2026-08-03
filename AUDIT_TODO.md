@@ -20,8 +20,13 @@ follow-ups from the z-code-reviewer verdict on T-185 (PR #170).
   still points at `rub2_model_LONG.pkl` (guard: WARN). Harmless as long as RUB3 stays parked on
   SHADOW per T-037; before a RUB3 go-live the artefact must be renamed to `rub3_model_LONG.pkl`
   (artefact + registry in one move). The guard blocks the flip without the rename.
-- [x] **#T57-3 EPD3-SHORT artefact `model_id='EPD2'` (hard rule 6) — the staging copy is correctly
-  tagged and ready; only the root promote (Michi) is still open.** `staging_models/epd3_model_SHORT.pkl`
+- [x] **#T57-3 EPD3-SHORT artefact `model_id='EPD2'` (hard rule 6) — CLOSED 2026-08-03: the root
+  promote happened with T-2026-KYT-9050-085.** The EPD3 SHORT go-live copied the correctly tagged
+  staging dump to the repo root, so `epd3_model_SHORT.pkl` there now carries `meta.model_id='EPD3'`.
+  Equivalence re-verified before the copy: identical booster sha256, feature list and threshold —
+  the tag was the only delta. Pinned by `test_t085_epd3_short_root_artifact_carries_epd3_provenance`
+  in `backtest/test_shadow_gate.py`. Nothing open here anymore; `#T57-5` (LONG) is untouched by this.
+  Prior history: `staging_models/epd3_model_SHORT.pkl`
   now carries `meta.model_id='EPD3'`, produced with `tools/retag_artifact.py` under the fleet Python
   3.13. Pinned in `backtest/test_epd3_artifact_model_id.py`: the artefact loads via
   `core.model_artifacts` under tag `EPD3`, and every other field is identical to the promoted root
