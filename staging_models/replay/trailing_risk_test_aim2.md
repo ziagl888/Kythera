@@ -1,10 +1,10 @@
-# Trailing-Close FINALISE (risk-adjusted, High-Fidelity) — AIM2 — T-2026-KYT-9050-046
+# Trailing-close FINALISE (risk-adjusted, high-fidelity) — AIM2 — T-2026-KYT-9050-046
 
 _generated 2026-07-26 07:33:32.012196+00:00 · read-only · window 2026-07-11 00:00:00 → 2026-07-27 00:00:00_
 
-**High-Fidelity-Harness (T-035):** per-Trade-Trailing-TP (Overlay a) auf dem **DCA-treuen** cornix3-MTM, 5m-Wick + 10s-Resolver. T-035 wertete das nur auf der leveraged **Summe** aus (Fat-Tail/−100%-Clamp-Artefakt → schien NO-EDGE). Hier **risiko-adjustiert** (T-041): per-Trade leveraged **Sharpe** + kompoundierende **MaxDD (fixe 2%)**, hold vs Trailing-X.
+**High-fidelity harness (T-035):** per-trade trailing TP (overlay a) on the **DCA-faithful** cornix3-MTM, 5m wick + 10s resolver. T-035 evaluated this only on the leveraged **sum** (fat-tail/−100% clamp artefact → looked like NO-EDGE). Here **risk-adjusted** (T-041): per-trade leveraged **Sharpe** + compounding **MaxDD (fixed 2%)**, hold vs trailing-X.
 
-Gescort (leveraged Arts): **491**
+Scored (leveraged arts): **491**
 
 | Variante | n | mean lev% | **Sharpe lev** | **MaxDD (2%)** |
 |---|--:|--:|--:|--:|
@@ -16,10 +16,10 @@ Gescort (leveraged Arts): **491**
 | Trailing 30% | 491 | 9.98 | **0.322** | **2.5%** |
 | Trailing 40% | 491 | 10.31 | **0.318** | **2.7%** |
 
-### Befund
+### Findings
 
-- **Bester Trailing-X = 10%: Sharpe +0.349 vs hold +0.193** → Trailing hebt den risiko-adjustierten Ertrag.
-- **MaxDD (2%): hold 9.5% → Trailing 10% 2.8%** (~3.4× kleiner).
-- **Fidelity-Vergleich:** T-041 (First-Order 1h) fand dieselbe Richtung (Sharpe rauf, MaxDD runter). Hier auf 5m+10s+DCA **bestätigt**.
+- **Best trailing-X = 10%: Sharpe +0.349 vs hold +0.193** → trailing lifts the risk-adjusted return.
+- **MaxDD (2%): hold 9.5% → trailing 10% 2.8%** (~3.4× smaller).
+- **Fidelity comparison:** T-041 (first-order 1h) found the same direction (Sharpe up, MaxDD down). Here on 5m+10s+DCA **confirmed**.
 
-**Ehrliche Grenzen:** ~Outbox-Fenster (Geometrie-Retention), leveraged Arts, Compounding sequenziell-nach-close (ignoriert Gleichzeitigkeit) → MaxDD-Ratio ist das Signal, nicht der absolute Multiple. Trailing-Deploy = eigener Operator-Entscheid (Michi).
+**Honest limits:** ~outbox window (geometry retention), leveraged arts, compounding sequential-after-close (ignores concurrency) → the MaxDD ratio is the signal, not the absolute multiple. Trailing deploy = separate operator decision (Michi).

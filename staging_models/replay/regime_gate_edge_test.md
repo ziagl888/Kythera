@@ -2,17 +2,17 @@
 
 _generated 2026-07-23 06:42:50.388954+00:00 · read-only · regime_history 73436 rows (2026-01-18→2026-07-23) · 276221 regime-joined trades · legs with n≥150: 61_
 
-**Gate-Test:** günstige BTC-Regimes (mean-net>0, cell-n≥20) auf der ERSTEN Trade-Hälfte gelernt, auf der ZWEITEN angewandt (OUT-OF-SAMPLE). `ungated`/`gated net%` = mean gestaffelter unlevered Move − Fee auf dem Test-Split; `Δ`=gated−ungated; `kept`=Anteil des Test-Flows, den das Gate durchlässt. RULE-Regime = debounced RULE_recon (T-031, 91.85% fidelity). RESCUED = ungated<0→gated>0. **Empfehlung, kein Rollout.**
+**Gate test:** favourable BTC regimes (mean-net>0, cell-n≥20) learned on the FIRST half of trades, applied on the SECOND (OUT-OF-SAMPLE). `ungated`/`gated net%` = mean staggered unlevered move − fee on the test split; `Δ`=gated−ungated; `kept`=share of the test flow the gate lets through. RULE regime = debounced RULE_recon (T-031, 91.85% fidelity). RESCUED = ungated<0→gated>0. **Recommendation, no rollout.**
 
 ## Executive Summary
 
-- **RESCUED (Negativ→Positiv durch Gate): 0** — KEIN Leg. Kein Regime-Gate flippt einen Negativ-Edge-Leg out-of-sample ins Plus.
-- **Retire bestätigt (kein günstiges Regime existiert, Gate blockt alles): 15** — AIM1/S, BB_4H/S, BR1H/S, BR2H/S, BR4H/S, QM_1H/S, ATB1/S, MIS1-8h/L, 5Percent/L, 5Percent/S, FastInOut/L, FastInOut/S, VolIndic/L, VolIndic/S, Main Channel/L. Diese bluten in JEDEM Regime → Gating hilft nicht, Retire/Richtungs-Abschaltung steht.
-- **Negativ-Edge nur verbessert, bleibt aber negativ: 4** — BB_1H/S (-2.49→-2.33), BR1Hv2/S (-0.97→-0.83), QM_4H/S (-1.40→-1.19), SR/S (-0.22→-0.16). Gate mildert, rettet aber nicht.
-- **Positiv-Edge durch Gate verbessert (OOS): 14** — BB_1H/L (Δ+0.27), BB_4H/L (Δ+0.25), BR1Hv2/L (Δ+0.52), MIS1-168h/L (Δ+0.20), MIS1-72h/L (Δ+0.28), QM_1H/L (Δ+0.18), ROM1/S (Δ+0.07), RUB1/L (Δ+0.02), TD_1H/L (Δ+0.02), EPD1/L (Δ+1.03), TD_4H/L (Δ+0.29), TD_4H/S (Δ+1.86), MIS1-24h/S (Δ+0.53), MIS1-8h/S (Δ+0.08). Meist bescheiden (<+0.3%/Trade) und/oder bei niedriger kept-fraction; das existierende Whitelist-v2-Vehikel (T-069) ist der Live-Weg, kein neues Gate.
-- **Kernbefund:** Der Edge der Verlust-Legs ist RICHTUNGS-, nicht regime-bedingt (Pattern/Sniper/Rubberband-Familien: LONG-Edge, SHORT-Blutung über ALLE Regimes) → der Hebel ist die Richtungs-/Retire-Entscheidung, nicht ein BTC-Regime-Gate. Deckt sich mit T-029/T-031 (η²≈0, Regime trennt Churn, nicht Richtung).
+- **RESCUED (negative→positive via gate): 0** — NO leg. No regime gate flips a negative-edge leg into positive territory out-of-sample.
+- **Retire confirmed (no favourable regime exists, gate blocks everything): 15** — AIM1/S, BB_4H/S, BR1H/S, BR2H/S, BR4H/S, QM_1H/S, ATB1/S, MIS1-8h/L, 5Percent/L, 5Percent/S, FastInOut/L, FastInOut/S, VolIndic/L, VolIndic/S, Main Channel/L. These bleed in EVERY regime → gating doesn't help, retire/direction shutdown stands.
+- **Negative edge only improved, but stays negative: 4** — BB_1H/S (-2.49→-2.33), BR1Hv2/S (-0.97→-0.83), QM_4H/S (-1.40→-1.19), SR/S (-0.22→-0.16). Gate mitigates but doesn't rescue.
+- **Positive edge improved by gate (OOS): 14** — BB_1H/L (Δ+0.27), BB_4H/L (Δ+0.25), BR1Hv2/L (Δ+0.52), MIS1-168h/L (Δ+0.20), MIS1-72h/L (Δ+0.28), QM_1H/L (Δ+0.18), ROM1/S (Δ+0.07), RUB1/L (Δ+0.02), TD_1H/L (Δ+0.02), EPD1/L (Δ+1.03), TD_4H/L (Δ+0.29), TD_4H/S (Δ+1.86), MIS1-24h/S (Δ+0.53), MIS1-8h/S (Δ+0.08). Mostly modest (<+0.3%/trade) and/or at a low kept fraction; the existing whitelist-v2 vehicle (T-069) is the live path, not a new gate.
+- **Core finding:** The edge of the losing legs is DIRECTION-, not regime-conditioned (Pattern/Sniper/Rubberband families: LONG edge, SHORT bleeding across ALL regimes) → the lever is the direction/retire decision, not a BTC regime gate. Consistent with T-029/T-031 (η²≈0, regime separates churn, not direction).
 
-## RULE-Gate — Negativ-Edge-Legs (rettet ein Gate sie?)
+## RULE gate — negative-edge legs (does a gate rescue them?)
 
 | tag | dir | lc | n | ungated net% | gated net% | Δ | kept | favorable regimes | verdict |
 |---|---|---|--:|--:|--:|--:|--:|---|---|
@@ -42,7 +42,7 @@ _generated 2026-07-23 06:42:50.388954+00:00 · read-only · regime_history 73436
 | ATS1 | LONG | ret | 1738 | -0.367 | -0.535 | -0.169 | 0.70 | CHOP,TRAN | WORSE |
 | TSM1 | SHORT | act | 376 | -0.433 | -0.677 | -0.244 | 0.09 | HIGH | WORSE |
 
-## RULE-Gate — Positiv-Edge-Legs (verbessert ein Gate sie?)
+## RULE gate — positive-edge legs (does a gate improve them?)
 
 | tag | dir | lc | n | ungated net% | gated net% | Δ | kept | favorable regimes | verdict |
 |---|---|---|--:|--:|--:|--:|--:|---|---|
@@ -83,7 +83,7 @@ _generated 2026-07-23 06:42:50.388954+00:00 · read-only · regime_history 73436
 | MIS2-8h | LONG | act | 245 | +1.126 | -0.471 | -1.597 | 0.22 | TRAN | WORSE |
 | MIS1-24h | LONG | ret | 214 | +2.763 | +0.609 | -2.154 | 0.35 | TRAN | WORSE |
 
-## SOFT-Gate (hl=192, T-031-Anschluss) — alle Legs
+## SOFT gate (hl=192, T-031 follow-on) — all legs
 
 | tag | dir | lc | n | ungated net% | gated net% | Δ | kept | favorable regimes | verdict |
 |---|---|---|--:|--:|--:|--:|--:|---|---|
@@ -149,7 +149,7 @@ _generated 2026-07-23 06:42:50.388954+00:00 · read-only · regime_history 73436
 | AIM1 | LONG | ret | 909 | +0.396 | -2.200 | -2.597 | 0.09 | TREN | WORSE |
 | MIS1-72h | SHORT | ret | 302 | +3.541 | -1.316 | -4.857 | 0.20 | HIGH | WORSE |
 
-## Per-Regime Mean-Net-Edge je Leg (Vollstichprobe, mean-net×n)
+## Per-regime mean-net edge per leg (full sample, mean-net×n)
 
 | tag | dir | lc | overall | TREN | TREN | CHOP | HIGH | TRAN |
 |---|---|---|--:|--:|--:|--:|--:|--:|
@@ -215,12 +215,12 @@ _generated 2026-07-23 06:42:50.388954+00:00 · read-only · regime_history 73436
 | EPD3 | LONG | sha | +0.150 | +0.27×281 | -0.05×137 | +0.26×1382 | -0.48×326 | +0.24×507 |
 | SRA2 | SHORT | sha | +0.997 | +1.31×15 | +0.63×36 | +1.15×102 | +0.75×23 | +0.98×46 |
 
-## Join-Grenzen (ehrlich)
+## Join limitations (honest)
 
-- Regime = RULE_recon (debounced) aus dem gespeicherten regime-Stream; T-031 validierte das zu 91.85% gegen aufgezeichnetes regime_at_open. Residual = Warm-up + Ingestion-Outage-Desync.
-- As-of-Join setzt voraus, dass trade.open_time (AI) / time (classic) und regime_history.ts DIESELBE naive Uhr tragen (R3-TZ-Baustelle, P1.8/UTC_POLICY). Ein systematischer Offset (z.B. +3h) würde die Regime-Zuordnung zeitlich verschieben; da Gated+Ungated denselben Offset teilen, bleibt der DIFF (und damit RESCUED/IMPROVED) robust, nur die absolute Zell-Attribution kann verschmieren.
-- Der OOS-Gate-Uplift misst die REGIME-Achse allein — NICHT die Live-Whitelist-Mechanik (nicht historisch rekonstruierbar, T-031), Cornix-Routing oder Regime-Auto-Close. Er ist eine Obergrenze dessen, was Regime-Konditionierung theoretisch bringt; Live-Gating kann darunter liegen.
-- Outcome = realized status (TP1-Touch-Win) → gestaffelter Move, Monitor-Rauschen (P1.2/P2.7) trifft gated+ungated gleich → der DIFF ist robuster als das Absolutniveau.
-- Günstige Regimes werden datengetrieben gewählt (mean-net>0 auf Train) — bei 5 Regimes ist die Multiple-Comparison-Gefahr gering, aber der OOS-Split ist die eigentliche Absicherung; ein In-Sample-Gate wäre wertlos.
-- TREND_UP/DOWN sind selten (je ~3-4% der Zeit) → in vielen Legs unter MIN_CELL und damit weder als günstig noch ungünstig klassifizierbar (Gate lässt sie NICHT durch — konservativ, kept-frac zeigt es).
-- alt_context bleibt außen vor (SOFT smoothed nur die BTC-Achse; die per-Bot-Whitelist über bot×regime×alt×dir ist der eigentliche Live-Gate, aber nicht rekonstruierbar).
+- Regime = RULE_recon (debounced) from the stored regime stream; T-031 validated this to 91.85% against recorded regime_at_open. Residual = warm-up + ingestion-outage desync.
+- The as-of join assumes that trade.open_time (AI) / time (classic) and regime_history.ts carry the SAME naive clock (R3 TZ construction site, P1.8/UTC_POLICY). A systematic offset (e.g. +3h) would shift the regime assignment in time; since gated+ungated share the same offset, the DIFF (and therefore RESCUED/IMPROVED) stays robust — only the absolute cell attribution can smear.
+- The OOS gate uplift measures the REGIME axis alone — NOT the live whitelist mechanism (not historically reconstructible, T-031), Cornix routing or regime auto-close. It's an upper bound on what regime conditioning could theoretically deliver; live gating can fall short of it.
+- Outcome = realized status (TP1-touch win) → staggered move; monitor noise (P1.2/P2.7) hits gated+ungated equally → the DIFF is more robust than the absolute level.
+- Favourable regimes are chosen data-driven (mean-net>0 on train) — with 5 regimes the multiple-comparison risk is low, but the OOS split is the real safeguard; an in-sample gate would be worthless.
+- TREND_UP/DOWN are rare (each ~3-4% of the time) → in many legs below MIN_CELL and therefore classifiable as neither favourable nor unfavourable (the gate does NOT let them through — conservative, kept-frac shows it).
+- alt_context stays out of scope (SOFT only smooths the BTC axis; the per-bot whitelist over bot×regime×alt×dir is the actual live gate, but not reconstructible).

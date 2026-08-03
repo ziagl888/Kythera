@@ -1,165 +1,165 @@
-# UTC-Policy (R3)
+# UTC policy (R3)
 
-**Stand:** 2026-08-01 · **Tasks:** T-2026-CU-9050-032 (Policy), T-2026-KYT-9050-005 (Flip) · **Root-Cause:** R3 (Audit) · **Cluster:** AUDIT_TODO P2.1–P2.6, P2.21
+**As of:** 2026-08-01 · **Tasks:** T-2026-CU-9050-032 (policy), T-2026-KYT-9050-005 (flip) · **Root cause:** R3 (audit) · **Cluster:** AUDIT_TODO P2.1–P2.6, P2.21
 
-Kythera soll exakt eine Zeitdomäne haben: **UTC**. Diese Datei sagt, was davon jetzt gilt, was noch nicht gilt und in welcher Reihenfolge der Rest kommen muss.
+Kythera is meant to have exactly one time domain: **UTC**. This file says what of that already applies, what doesn't yet apply, and in what order the rest has to come.
 
 ---
 
-## 1. Was jetzt gilt
+## 1. What applies now
 
-| Ebene | Mechanismus | Datei | Status |
+| Level | Mechanism | File | Status |
 |---|---|---|---|
-| Python | `utc_now()` / `utc_now_naive()` / `to_utc()` / `as_naive_utc()` / `from_unix_ts()` | `core/time.py` | **aktiv** |
-| Lint | `ruff`-Regelgruppe `DTZ` verbietet naive `datetime.now()` / `utcnow()` / `fromtimestamp(ts)` | `pyproject.toml` | **aktiv** |
-| Postgres | jede Pool-Session mit `-c timezone=UTC` | `core/database.py` | **im Repo (T-2026-KYT-9050-005)**, live ab dem nächsten Fleet-Restart |
-| Historie | genau eine Konstante entscheidet die Lesart alter Zeilen: `core.time.R3_CUTOVER_UTC` | `core/time.py` | **Entscheidung offen, §6** |
+| Python | `utc_now()` / `utc_now_naive()` / `to_utc()` / `as_naive_utc()` / `from_unix_ts()` | `core/time.py` | **active** |
+| Lint | `ruff` rule group `DTZ` forbids naive `datetime.now()` / `utcnow()` / `fromtimestamp(ts)` | `pyproject.toml` | **active** |
+| Postgres | every pool session with `-c timezone=UTC` | `core/database.py` | **in the repo (T-2026-KYT-9050-005)**, live from the next fleet restart |
+| History | exactly one constant decides how old rows are read: `core.time.R3_CUTOVER_UTC` | `core/time.py` | **decision open, §6** |
 
-Neuer Code kann keine naive Lokalzeit mehr einführen, ohne dass CI rot wird. Bestehende bewusste Ausnahmen tragen ein `# noqa: DTZ…` mit Begründung — das ist die sichtbare Rest-Schuld, kein Freibrief:
+New code can no longer introduce naive local time without CI turning red. Existing deliberate exceptions carry a `# noqa: DTZ…` with a rationale — that is the visible residual debt, not a free pass:
 
-- `3_detectors.py` — **erledigt mit dem Flip** (P2.3): schreibt `utc_now_naive()` in `active_trades_master.time/posted`, das `noqa` ist raus.
-- `30_ai_pex1_bot.py` — Watermark-Sentinel gegen `pump_dump_events.spike_time`. Achtung, die Begründung war falsch: die Spalte ist live `timestamp WITH time zone` (read-only vermessen 2026-08-01), nicht naiv. Siehe §3 und T-2026-KYT-9050-061.
+- `3_detectors.py` — **done with the flip** (P2.3): writes `utc_now_naive()` into `active_trades_master.time/posted`, the `noqa` is gone.
+- `30_ai_pex1_bot.py` — watermark sentinel against `pump_dump_events.spike_time`. Careful, the rationale was wrong: the column is live `timestamp WITH time zone` (measured read-only 2026-08-01), not naive. See §3 and T-2026-KYT-9050-061.
 
-Die ruff-Excludes (`backtest/`, `tools/`, `strategies/`, `handlers/`, `trainers_x/`, `legacy_trainers/`) sind von DTZ nicht erfasst.
+The ruff excludes (`backtest/`, `tools/`, `strategies/`, `handlers/`, `trainers_x/`, `legacy_trainers/`) are not covered by DTZ.
 
-## 2. Warum die Session-TZ der Kern des Problems ist
+## 2. Why the session TZ is the core of the problem
 
-Ein Teil der Live-Tabellen ist `TIMESTAMP WITHOUT TIME ZONE`. Postgres castet zwischen `timestamptz` und diesen naiven Spalten mit der **Session-TZ**. Damit hängt an der OS-TZ des VPS, was `NOW()` in eine naive Spalte schreibt und wie eine naive Spalte gegen `NOW()` verglichen wird.
+Part of the live tables are `TIMESTAMP WITHOUT TIME ZONE`. Postgres casts between `timestamptz` and these naive columns using the **session TZ**. That means what `NOW()` writes into a naive column, and how a naive column is compared against `NOW()`, both hang off the VPS's OS TZ.
 
-**Der Offset ist +2/+3 h.** Die VPS-TZ ist `Europe/Bucharest` (EET/EEST), vermessen am 2026-07-05 (`tools/research_dataset_common.py:34`). Die AUDIT_TODO-Einträge P2.1–P2.6 sprechen von „CEST" und „1–2 h" — das ist die Grössenordnung, nicht die Zahl.
+**The offset is +2/+3h.** The VPS TZ is `Europe/Bucharest` (EET/EEST), measured on 2026-07-05 (`tools/research_dataset_common.py:34`). The AUDIT_TODO entries P2.1–P2.6 talk about "CEST" and "1–2h" — that's the order of magnitude, not the exact figure.
 
-**Nicht jede naive Spalte trägt Lokalzeit.** Der Domänen-Unterschied hängt am Writer, nicht am Spaltentyp:
+**Not every naive column carries local time.** The domain difference hangs on the writer, not the column type:
 
-- Ein **naiver** Python-Parameter geht ungecastet durch — `26_regime_detector.py:216` schreibt `datetime.now(timezone.utc).replace(tzinfo=None)`, also naiv-**UTC**. Der ganze `regime_*`-Cluster ist heute schon korrekt und braucht **keine** Kompensation. Der Flip fasst ihn nicht an.
-- Ein **aware** Parameter oder `NOW()` wird beim Schreiben in eine naive Spalte mit der Session-TZ gecastet und landet damit als **Lokalzeit** (`5_trade_monitor.posted`, `ml_predictions_master.time`, `pump_dump_events.spike_time`).
-- `3_detectors.py` schreibt naive **Lokalzeit** direkt (P2.3).
+- A **naive** Python parameter passes through uncast — `26_regime_detector.py:216` writes `datetime.now(timezone.utc).replace(tzinfo=None)`, i.e. naive-**UTC**. The entire `regime_*` cluster is already correct today and needs **no** compensation. The flip does not touch it.
+- An **aware** parameter or `NOW()` gets cast with the session TZ when written into a naive column and thereby lands as **local time** (`5_trade_monitor.posted`, `ml_predictions_master.time`, `pump_dump_events.spike_time`).
+- `3_detectors.py` writes naive **local time** directly (P2.3).
 
-Genau die zweite und dritte Gruppe kompensiert der Bestand bereits explizit (§5). Ein isolierter Fix macht diese Kompensationen falsch. Daran sind die Einzel-Fixes des Audits gescheitert.
+Exactly the second and third group are already compensated for explicitly by the existing code (§5). An isolated fix would make these compensations wrong. That is what the audit's individual fixes failed on.
 
-## 3. Spalten-Inventar
+## 3. Column inventory
 
-Zielzustand ist überall `timestamptz`. **Ist-Spalte read-only gegen die Live-DB vermessen am 2026-08-01** (`information_schema.columns`) — die Domäne der naiven Spalten zusätzlich empirisch falsifiziert: Europe/Bucharest springt am 2026-03-29 um 03:00 vor, die lokale Wanduhr 03:00–03:59 **existiert an diesem Tag nicht**. Eine naive Spalte mit Zeilen in diesem Fenster kann keine Lokalzeit tragen.
+The target state is `timestamptz` everywhere. **The as-is column was measured read-only against the live DB on 2026-08-01** (`information_schema.columns`) — the domain of the naive columns was additionally falsified empirically: Europe/Bucharest springs forward at 03:00 on 2026-03-29, the local wall clock 03:00–03:59 **does not exist on that day**. A naive column with rows in that window cannot carry local time.
 
-| Tabelle | Spalten | Ist (live 2026-08-01) | Zeilen in der nicht-existenten Lokalstunde | Bootstrap-DDL |
+| Table | Columns | As-is (live 2026-08-01) | Rows in the non-existent local hour | Bootstrap DDL |
 |---|---|---|---|---|
-| `active_trades_master` | `time`, `posted` | naiv | 0 (Referenzstunde ebenfalls 0 — Tabelle ist ein Rolling-Fenster) | `3_detectors.py` |
-| `closed_trades_master` | `time`, `posted` | naiv | **0** bei 97/39 in der Referenzstunde → Lokalzeit bestätigt | `5_trade_monitor.py` |
-| `closed_trades3` (SRA2-Retrain-Quelle) | `time`, `posted` | naiv, tot seit 2026-02-23 | — (Daten enden vor dem DST-Wechsel) | legacy |
-| `trade_cooldowns` | `last_posted_at` | **live `timestamptz`**, Repo-DDLs uneinheitlich (P2.2) | — | `26`, `11`, `24`, `25` |
-| `regime_history` | `ts` | naiv | **12** bei 12 in der Referenzstunde → **naiv-UTC bestätigt, keine Kompensation** | `26_regime_detector.py` |
-| `regime_current` | `since`, `alt_context_since`, `last_raw_ts` | naiv (UTC-Writer) | — | `26_regime_detector.py` |
-| `bot_regime_performance` | `last_computed` | naiv (UTC-Writer) | — | `26_regime_detector.py` |
-| `bot_regime_whitelist` | `computed_at` | naiv (UTC-Writer) | — | `26_regime_detector.py` |
-| `orchestrator_open_trades` | `opened_at`, `closed_at` | naiv (UTC-Writer) | 0 (Tabelle beginnt 2026-04-18) | `26_regime_detector.py` |
-| `orchestrator_suppressed_signals` | `ts` | naiv (UTC-Writer) | 0 (dito) | `26_regime_detector.py` |
-| `pump_dump_events` | `spike_time` | **live `timestamptz`** — die Repo-DDL (`10_pump_dump_detector.py:1409`) sagt `TIMESTAMP`, die Live-Tabelle wurde irgendwann gealtert. Genau daran stirbt Bot 30 (T-2026-KYT-9050-061) | — | `10_pump_dump_detector.py` |
-| `ml_predictions_master` | `time`, `created_at` | naiv, **keine Repo-DDL** | 0 bei 170 in der Referenzstunde → Lokalzeit bestätigt | — (Lücke, R2/B3) |
+| `active_trades_master` | `time`, `posted` | naive | 0 (reference hour also 0 — the table is a rolling window) | `3_detectors.py` |
+| `closed_trades_master` | `time`, `posted` | naive | **0** vs. 97/39 in the reference hour → local time confirmed | `5_trade_monitor.py` |
+| `closed_trades3` (SRA2 retrain source) | `time`, `posted` | naive, dead since 2026-02-23 | — (data ends before the DST change) | legacy |
+| `trade_cooldowns` | `last_posted_at` | **live `timestamptz`**, repo DDLs inconsistent (P2.2) | — | `26`, `11`, `24`, `25` |
+| `regime_history` | `ts` | naive | **12** vs. 12 in the reference hour → **naive-UTC confirmed, no compensation** | `26_regime_detector.py` |
+| `regime_current` | `since`, `alt_context_since`, `last_raw_ts` | naive (UTC writer) | — | `26_regime_detector.py` |
+| `bot_regime_performance` | `last_computed` | naive (UTC writer) | — | `26_regime_detector.py` |
+| `bot_regime_whitelist` | `computed_at` | naive (UTC writer) | — | `26_regime_detector.py` |
+| `orchestrator_open_trades` | `opened_at`, `closed_at` | naive (UTC writer) | 0 (table starts 2026-04-18) | `26_regime_detector.py` |
+| `orchestrator_suppressed_signals` | `ts` | naive (UTC writer) | 0 (ditto) | `26_regime_detector.py` |
+| `pump_dump_events` | `spike_time` | **live `timestamptz`** — the repo DDL (`10_pump_dump_detector.py:1409`) says `TIMESTAMP`, the live table was altered at some point. That's exactly what kills bot 30 (T-2026-KYT-9050-061) | — | `10_pump_dump_detector.py` |
+| `ml_predictions_master` | `time`, `created_at` | naive, **no repo DDL** | 0 vs. 170 in the reference hour → local time confirmed | — (gap, R2/B3) |
 | `master_ai_processed_signals` | `processed_at` | **live `timestamptz`** | — | `15_ai_master_bot.py` |
-| `ai_signals` | `open_time` | **gemischte Domäne** — live verifiziert 2026-07-10 (T-044): Spalte ist `timestamp without time zone DEFAULT now()`, d. h. alle Writer, die `open_time` dem Default überlassen, stempeln Session-lokal (Bucharest). Ausnahme seit T-052: ROM1-Rows (`28_signal_orchestrator.insert_rom1_signal`) schreiben explizit naiv-UTC, damit der Lifecycle-Sync gegen das naiv-UTC `opened_at` matchen kann. Vereinheitlichung = R3-Flip (§4). Nach dem Flip stempelt der `DEFAULT now()`-Cast UTC — die Spalte wird eindomänig, ohne dass ein Writer angefasst werden muss. 2026-08-01: 3.196 Zeilen, davon 247 ROM1 | 0 (ROM1 beginnt erst 2026-05-27, der DST-Test greift hier nicht) | `28` (UTC), alle anderen AI-Bots (Default = lokal) |
-| `closed_ai_signals` | `open_time`, `close_time` | **beide naiv** (live vermessen 2026-08-01) — die frühere Zeile „`close_time` bereits `timestamptz`" war **falsch**; `8_ai_trade_monitor.py:27` ist eine `CREATE TABLE IF NOT EXISTS`-DDL und hat die bestehende Spalte nie verbreitert (dieselbe Falle wie P2.2). Gemischte Writer = P2.4 | | `8_ai_trade_monitor.py:27` |
-| `{sym}_{tf}`, `ticker_10s` | `open_time`, `ts` | bereits `timestamptz` | | — |
+| `ai_signals` | `open_time` | **mixed domain** — verified live 2026-07-10 (T-044): the column is `timestamp without time zone DEFAULT now()`, i.e. every writer that leaves `open_time` to the default stamps session-local (Bucharest). Exception since T-052: ROM1 rows (`28_signal_orchestrator.insert_rom1_signal`) explicitly write naive-UTC, so the lifecycle sync can match against the naive-UTC `opened_at`. Unification = the R3 flip (§4). After the flip, the `DEFAULT now()` cast stamps UTC — the column becomes single-domain without any writer needing to be touched. 2026-08-01: 3.196 rows, of which 247 ROM1 | 0 (ROM1 only starts 2026-05-27, the DST test doesn't apply here) | `28` (UTC), all other AI bots (default = local) |
+| `closed_ai_signals` | `open_time`, `close_time` | **both naive** (measured live 2026-08-01) — the earlier line "`close_time` already `timestamptz`" was **wrong**; `8_ai_trade_monitor.py:27` is a `CREATE TABLE IF NOT EXISTS` DDL and never widened the existing column (the same trap as P2.2). Mixed writers = P2.4 | | `8_ai_trade_monitor.py:27` |
+| `{sym}_{tf}`, `ticker_10s` | `open_time`, `ts` | already `timestamptz` | | — |
 
-## 4. Der Flip — was er anfasst (T-2026-KYT-9050-005, im Repo)
+## 4. The flip — what it touches (T-2026-KYT-9050-005, in the repo)
 
-`-c timezone=UTC` im Pool ist **kein Einzeiler**. Er verschiebt in einem Schlag die Domäne jeder naiven Spalte, die einen aware-UTC-Wert oder `NOW()` entgegennimmt, und musste deshalb zusammen mit allen abhängigen Stellen in EINEM Changeset landen. Bestandteile:
+`-c timezone=UTC` in the pool is **not a one-liner**. It shifts the domain of every naive column that accepts an aware-UTC value or `NOW()` in one stroke, and therefore had to land together with every dependent spot in ONE changeset. Components:
 
-1. ✅ `core/database.py` — `_connect_options()` trägt `-c timezone=UTC` (`_DEFAULT_SESSION_TZ`).
-2. ✅ `3_detectors.py` — `write_signal_atomic` stempelt `utc_now_naive()` in **beide** Spalten (`time` und `posted`; es war immer EIN `datetime.now()`-Aufruf für beide Werte, P2.3). **Pflicht**: ohne diesen Fix kippt der Flip `33_ai_fif1_bot.fifo_burst_counts` von korrekt auf Drift, während er `5_trade_monitor` (P2.6) und `core/market_utils.update_cooldown` (P2.5) repariert.
-3. ✅ Die Kompensationen aus §5 entfernt — ersetzt durch EINE Konstante (§6).
-4. ✅ Docstrings mitgezogen: Modul-Docstring und `to_utc_naive()` in `15_ai_master_bot.py`, `fetch_recent_signals()` und `fifo_burst_counts()` in `33_ai_fif1_bot.py`, die Header der vier Dataset-Builder und `tools/retrain_sra2.py`.
-5. ⏳ Was mit der **Historie** passiert — Operator-Entscheidung, §6.
+1. ✅ `core/database.py` — `_connect_options()` carries `-c timezone=UTC` (`_DEFAULT_SESSION_TZ`).
+2. ✅ `3_detectors.py` — `write_signal_atomic` stamps `utc_now_naive()` into **both** columns (`time` and `posted`; it was always one `datetime.now()` call for both values, P2.3). **Mandatory**: without this fix the flip tips `33_ai_fif1_bot.fifo_burst_counts` from correct into drift, while it repairs `5_trade_monitor` (P2.6) and `core/market_utils.update_cooldown` (P2.5).
+3. ✅ Removed the compensations from §5 — replaced by one constant (§6).
+4. ✅ Docstrings pulled along: the module docstring and `to_utc_naive()` in `15_ai_master_bot.py`, `fetch_recent_signals()` and `fifo_burst_counts()` in `33_ai_fif1_bot.py`, the headers of the four dataset builders and `tools/retrain_sra2.py`.
+5. ⏳ What happens to the **history** — an operator decision, §6.
 
-**Wirksam wird der Flip erst beim Fleet-Restart**, prozessweise: ein Bot zieht die neue Pool-Option beim Start. Bis dahin läuft die Fleet unverändert weiter.
+**The flip only takes effect on a fleet restart**, process by process: a bot picks up the new pool option on start. Until then the fleet keeps running unchanged.
 
-Restart-Effekt: Zeilen von vor dem Restart tragen Lokalzeit und werden ab dann als UTC gelesen — sie erscheinen +2/+3 h in der Zukunft. Betroffen sind die kurzen Fenster (60 min Trade-Monitor, 1 h / 24 h FIF1-Burst-Dichte, 5 Tage AIM2-Signal-Stream); der Effekt läuft mit dem längsten Fenster aus. FIF1 postet daraus nichts: das Startup-Marking in `33_ai_fif1_bot.main()` hakt alles ab, was beim ersten Poll im Fenster liegt — und die scheinbar zukünftigen Zeilen liegen alle beim ersten Poll drin (das Fenster hat keine Obergrenze).
+Restart effect: rows from before the restart carry local time and are read as UTC from then on — they appear +2/+3h in the future. The affected windows are the short ones (60-min trade monitor, 1h/24h FIF1 burst density, 5-day AIM2 signal stream); the effect runs out with the longest window. FIF1 posts nothing from this: the startup marking in `33_ai_fif1_bot.main()` checks off everything that falls in the window on the first poll — and the apparently-future rows are all inside the window on the first poll (the window has no upper bound).
 
-**Widerlegt (2026-08-01):** der frühere Satz „`30_ai_pex1_bot.detect_spike_time_offset_h` heilt sich nach dem Flip von selbst, kein Eingriff nötig" war falsch. Die Funktion subtrahiert ein naives `now` von `MAX(spike_time)`, und die Spalte ist live `timestamptz` — sie wirft seit mindestens 2026-07-19 in **jedem** Scan `can't subtract offset-naive and offset-aware datetimes`. Bot 30 hat in den vier jüngsten `logs/watchdog_debug_*` 8.166 Fehlschläge und keinen einzigen erfolgreichen Scan. Gefixt in T-2026-KYT-9050-061 (eigener Commit im selben PR).
+**Refuted (2026-08-01):** the earlier sentence "`30_ai_pex1_bot.detect_spike_time_offset_h` self-heals after the flip, no intervention needed" was wrong. The function subtracts a naive `now` from `MAX(spike_time)`, and the column is live `timestamptz` — it has thrown `can't subtract offset-naive and offset-aware datetimes` on **every** scan since at least 2026-07-19. Bot 30 has 8.166 failures and not a single successful scan across the four most recent `logs/watchdog_debug_*`. Fixed in T-2026-KYT-9050-061 (a separate commit in the same PR).
 
-## 5. Die Kompensationen — der eigentliche Grund für den Zuschnitt
+## 5. The compensations — the actual reason for the scope
 
-Sechs Stellen rechneten die Drift explizit heraus. Sie waren **korrekt** und wären durch die Umstellung **falsch** geworden.
+Six spots explicitly computed the drift back out. They were **correct** and would have become **wrong** through the change.
 
-Präzise: die Pool-Option **allein** fasst sie nicht an — sie vergleichen naive Parameter gegen naive Spalten, und das ist session-unabhängig. Falsch werden sie in dem Moment, in dem die **Writer** UTC schreiben (P2.3 und der aware-Cast unter UTC-Session). Da Flip und Writer-Fix zwingend zusammen landen (§4.2), ist das dieselbe Umstellung.
+To be precise: the pool option **alone** doesn't touch them — they compare naive parameters against naive columns, and that's session-independent. They become wrong the moment the **writers** write UTC (P2.3 and the aware cast under a UTC session). Since the flip and the writer fix necessarily land together (§4.2), that's the same change.
 
-| Stelle | Was sie tat | Jetzt |
+| Spot | What it did | Now |
 |---|---|---|
-| `15_ai_master_bot.to_utc_naive()` + `load_signal_stream.since_local` | AIM2-Signal-Stream: `ml_predictions_master.time` und `*_trades_master.time` von Bukarest nach UTC | delegiert an `core.time.legacy_naive_to_utc`; die SQL-Grenze an `utc_to_legacy_naive` (`since_bound`) |
-| `tools/research_dataset_common.py` — `LOCAL_TZ` + `to_utc_naive()` | die geteilte Basis aller Research-Datasets | delegiert; `LOCAL_TZ` ist nur noch ein Re-Export von `core.time.LEGACY_WRITER_TZ` |
-| `tools/aim2_build_dataset.to_utc_naive()` | AIM2-Trainings-Datensatz | delegiert an den geteilten Helfer |
-| `tools/fif1_build_dataset.py` (importiert `to_utc_naive`) | FIF1-Trainings-Datensatz | erbt die Delegation |
-| `tools/pex1_build_dataset.py` (importiert `LOCAL_TZ`) | PEX1-Trainings-Datensatz | **bleibt bewusst lokalisierend** — siehe unten |
-| `tools/retrain_sra2.py` (lokalisiert `closed_trades3`-Zeiten) | SRA2-Retrain | delegiert; `closed_trades3` ist reine Vor-Flip-Historie |
+| `15_ai_master_bot.to_utc_naive()` + `load_signal_stream.since_local` | AIM2 signal stream: `ml_predictions_master.time` and `*_trades_master.time` from Bucharest to UTC | delegates to `core.time.legacy_naive_to_utc`; the SQL bound to `utc_to_legacy_naive` (`since_bound`) |
+| `tools/research_dataset_common.py` — `LOCAL_TZ` + `to_utc_naive()` | the shared basis of all research datasets | delegates; `LOCAL_TZ` is now only a re-export of `core.time.LEGACY_WRITER_TZ` |
+| `tools/aim2_build_dataset.to_utc_naive()` | AIM2 training dataset | delegates to the shared helper |
+| `tools/fif1_build_dataset.py` (imports `to_utc_naive`) | FIF1 training dataset | inherits the delegation |
+| `tools/pex1_build_dataset.py` (imports `LOCAL_TZ`) | PEX1 training dataset | **deliberately stays localizing** — see below |
+| `tools/retrain_sra2.py` (localizes `closed_trades3` times) | SRA2 retrain | delegates; `closed_trades3` is pure pre-flip history |
 
-**Die Ausnahme, und warum sie keine ist.** `pex1_build_dataset.spike_time_to_utc` lokalisiert weiterhin — aber nur, wenn `detect_offset_h` den Offset **an den Daten gemessen** hat (2/3 h). Das ist keine Annahme, die der Flip falsch macht, sondern eine Messung, die nach dem Flip 0 ergibt und den Zweig damit gar nicht mehr betritt; für die Live-Tabelle ist er ohnehin tot, weil `spike_time` `timestamptz` ist und der aware-Zweig davor greift. Ihn zu löschen hätte nur das Lesen alter Dumps kaputtgemacht. Die DST-Rezeptur liegt trotzdem zentral: der Aufruf ist `legacy_naive_to_utc(s, assume_legacy=True)` — der einzige sanktionierte `assume_legacy`-Aufruf im Repo.
+**The exception, and why it isn't one.** `pex1_build_dataset.spike_time_to_utc` still localizes — but only if `detect_offset_h` has **measured the offset from the data** (2/3h). That's not an assumption the flip breaks; it's a measurement that comes out at 0 after the flip and therefore no longer even enters that branch; for the live table it's dead anyway, because `spike_time` is `timestamptz` and the aware branch catches it first. Deleting it would only have broken reading old dumps. The DST recipe still sits centrally though: the call is `legacy_naive_to_utc(s, assume_legacy=True)` — the only sanctioned `assume_legacy` call in the repo.
 
-Die Trainer sind der harte Teil: sie lesen **Historie**. Nach dem Flip enthält jede naive Spalte beide Domänen — Lokalzeit vor dem Restart, UTC danach. Weder „immer kompensieren" noch „nie kompensieren" ist dann richtig. Ein Trainer, der das ignoriert, produziert Train/Serve-Skew — genau den Fehlermodus, gegen den AIM2 gebaut wurde (P0.13). Deshalb hängt die Lesart jetzt an **einer** Konstante statt an sechs Kopien derselben Annahme.
+The trainers are the hard part: they read **history**. After the flip, every naive column contains both domains — local time before the restart, UTC after. Neither "always compensate" nor "never compensate" is then correct. A trainer that ignores this produces train/serve skew — exactly the failure mode AIM2 was built against (P0.13). That's why the reading now hangs on **one** constant instead of six copies of the same assumption.
 
-## 6. Historie: Backfill oder Cutover — offene Operator-Entscheidung
+## 6. History: backfill or cutover — open operator decision
 
-Der Code ist so gebaut, dass **beide Wege offenstehen** und keiner davon noch einen Code-Change braucht. Es gibt genau einen Schalter:
+The code is built so that **both paths stay open** and neither of them needs any further code change. There is exactly one switch:
 
 ```python
 core.time.R3_CUTOVER_UTC   # None (Repo-Default) | Instant des Restarts
 KYTHERA_R3_CUTOVER_UTC     # gleiche Semantik, pro Prozess, ISO-8601 UTC
 ```
 
-- `None` ⇒ **uniform-utc**: jede naive Spalte trägt über ihre ganze Historie UTC. Das ist die Welt NACH einem Backfill.
-- gesetzt ⇒ **cutover**: Zeilen, deren gespeicherte Wanduhr vor dem Instant liegt, werden als `Europe/Bucharest` gelesen, der Rest als UTC.
+- `None` ⇒ **uniform-utc**: every naive column carries UTC across its whole history. That's the world after a backfill.
+- set ⇒ **cutover**: rows whose stored wall clock lies before the instant are read as `Europe/Bucharest`, the rest as UTC.
 
-Jeder Leser der Fleet geht durch `legacy_naive_to_utc` / `utc_to_legacy_naive`; die Lesart wird beim Start geloggt (`R3-Zeitdomäne: …`), damit eine falsche Annahme nicht still bleibt.
+Every reader in the fleet goes through `legacy_naive_to_utc` / `utc_to_legacy_naive`; the reading is logged on start (`R3-Zeitdomäne: …`), so a wrong assumption doesn't stay silent.
 
-### Was ein Backfill anfassen müsste (read-only vermessen, 2026-08-01)
+### What a backfill would have to touch (measured read-only, 2026-08-01)
 
-| Tabelle | Spalten | Zeilen | Größe | Spanne |
+| Table | Columns | Rows | Size | Span |
 |---|---|---|---|---|
-| `ml_predictions_master` | `time`, `created_at` | 1.131.684 | 167,3 MiB | 2026-02-24 → jetzt |
-| `closed_ai_signals` | `open_time`, `close_time` | 476.535 | 84,5 MiB | 2026-02-24 → jetzt |
-| `closed_trades_master` | `time`, `posted` | 382.918 | 96,2 MiB | 2025-08-23 → jetzt |
-| `closed_trades3` (SRA2-Retrain) | `time`, `posted` | 8.245 | 1,2 MiB | 2025-09-06 → 2026-02-23 |
-| `ai_signals` | `open_time` | 3.196 | 70,2 MiB | 2026-02-25 → jetzt |
-| `active_trades_master` | `time`, `posted` | 539 | 1,2 MiB | 2026-02-24 → jetzt |
-| **Summe** | | **≈ 2,00 Mio Zeilen** | **≈ 420 MiB** | |
+| `ml_predictions_master` | `time`, `created_at` | 1.131.684 | 167,3 MiB | 2026-02-24 → now |
+| `closed_ai_signals` | `open_time`, `close_time` | 476.535 | 84,5 MiB | 2026-02-24 → now |
+| `closed_trades_master` | `time`, `posted` | 382.918 | 96,2 MiB | 2025-08-23 → now |
+| `closed_trades3` (SRA2 retrain) | `time`, `posted` | 8.245 | 1,2 MiB | 2025-09-06 → 2026-02-23 |
+| `ai_signals` | `open_time` | 3.196 | 70,2 MiB | 2026-02-25 → now |
+| `active_trades_master` | `time`, `posted` | 539 | 1,2 MiB | 2026-02-24 → now |
+| **Total** | | **≈ 2,00 Mio rows** | **≈ 420 MiB** | |
 
-**Nicht anfassen** (empirisch bestätigt, §3): der ganze `regime_*`/`orchestrator_*`-Cluster trägt bereits naiv-UTC — `regime_history` hat 12 Zeilen in der lokal nicht existierenden Stunde. Ebenso raus: alles, was schon `timestamptz` ist (`pump_dump_events`, `trade_cooldowns`, `master_ai_processed_signals`, Kerzen, `ticker_10s`).
+**Don't touch** (empirically confirmed, §3): the entire `regime_*`/`orchestrator_*` cluster already carries naive-UTC — `regime_history` has 12 rows in the locally non-existent hour. Also out: everything that's already `timestamptz` (`pump_dump_events`, `trade_cooldowns`, `master_ai_processed_signals`, candles, `ticker_10s`).
 
-### Kosten und Risiken, Seite an Seite
+### Costs and risks, side by side
 
-| | **Backfill** | **Cutover-Konstante** |
+| | **Backfill** | **Cutover constant** |
 |---|---|---|
-| Live-Write auf Money-Tabellen | ja, ~2,00 Mio Zeilen | nein |
-| Aufwand | ein Wartungsfenster, Fleet gestoppt, Backup zwingend | eine Zeile setzen |
-| Laufzeit | **Schätzung, nicht gemessen**: die vier großen Tabellen lesen sich warm in ~4 s Gesamt-Seq-Scan; ein Voll-UPDATE schreibt neue Tupel + WAL + Index-Einträge in die 17 Btrees dieser Tabellen (8 davon stehen auf genau diesen Zeitspalten, HOT-Update entfällt damit). Größenordnung **Minuten** (grob 5–20), danach Autovacuum. Ein echter Schreib-Benchmark war aus dieser Session nicht zulässig (harte Regel 1). | 0 |
-| Platzbedarf | bis zum Vacuum ~+420 MiB Bloat | 0 |
-| Dauerhafte Komplexität | **null** — der Cutover bleibt `None`, `LEGACY_WRITER_TZ` wird toter Code | eine Konstante + eine Verzweigung in `core.time`. Der frühere Einwand „jeder Trainer trägt dauerhaft eine Verzweigung" gilt **nicht mehr**: die Verzweigung liegt einmal zentral, die Trainer sehen sie nicht. |
-| Rest-Unschärfe | die ambige Herbststunde: **113 Werte** (54 `closed_trades_master.time`, 59 `.posted`, 1 `closed_trades3.time`) lassen sich nicht eindeutig zurückrechnen — ±1 h | dieselben 113 Werte (Series → NaT, d. h. der Trainer verwirft sie) **plus** ein ≤3-h-Band um den Cutover: Zeilen, die lokal in den letzten 2–3 h vor dem Restart geschrieben wurden, tragen eine Wanduhr jenseits des Cutovers und werden als UTC gelesen |
-| Statistik über die Grenze | keine Grenze, keine Unstetigkeit | jeder Leser, der **nicht** durch `core.time` geht (Ad-hoc-SQL, Dashboards, die Studien aus §8), sieht am Restart-Tag einen 2–3-h-Sprung; Tages-Aggregate genau dieses Tages sind entsprechend verschoben |
+| Live write on money tables | yes, ~2,00 Mio rows | no |
+| Effort | one maintenance window, fleet stopped, backup mandatory | set one line |
+| Runtime | **Estimate, not measured**: the four big tables read warm in ~4s total seq-scan; a full UPDATE writes new tuples + WAL + index entries into the 17 B-trees of these tables (8 of them sit on exactly these time columns, so HOT update doesn't apply). Order of magnitude **minutes** (roughly 5–20), then autovacuum. A real write benchmark wasn't permitted from this session (hard rule 1). | 0 |
+| Space required | ~+420 MiB bloat until vacuum | 0 |
+| Permanent complexity | **zero** — the cutover stays `None`, `LEGACY_WRITER_TZ` becomes dead code | one constant + one branch in `core.time`. The earlier objection "every trainer permanently carries a branch" **no longer applies**: the branch sits centrally once, the trainers never see it. |
+| Residual fuzziness | the ambiguous autumn hour: **113 values** (54 `closed_trades_master.time`, 59 `.posted`, 1 `closed_trades3.time`) can't be unambiguously converted back — ±1h | the same 113 values (Series → NaT, i.e. the trainer discards them) **plus** a ≤3h band around the cutover: rows written locally in the last 2–3h before the restart carry a wall clock beyond the cutover and are read as UTC |
+| Statistics across the boundary | no boundary, no discontinuity | every reader that does **not** go through `core.time` (ad-hoc SQL, dashboards, the studies from §8) sees a 2–3h jump on the restart day; daily aggregates for exactly that day are shifted accordingly |
 
-### Was zusätzlich zu wissen ist
+### What else to know
 
-**Die Reihenfolge entscheidet über den Aufwand des Backfills.** Läuft er im selben Fenster wie der Restart und VOR dem Start der neuen Fleet, ist er unbedingt (`UPDATE … SET c = c AT TIME ZONE 'Europe/Bucharest' AT TIME ZONE 'UTC'`, alle Zeilen sind Legacy). Läuft er später, braucht er zwingend eine Untergrenze `WHERE c < '<Restart-Instant>'` — sonst konvertiert er die neuen UTC-Zeilen ein zweites Mal. **Empfehlung unabhängig von der Entscheidung: den Restart-Instant protokollieren.** Er ist die Voraussetzung für den späteren Backfill UND der Wert der Cutover-Konstante; ohne ihn ist nur noch die teure Variante übrig (Domäne pro Zeile raten).
+**The order determines the effort of the backfill.** If it runs in the same window as the restart and before the new fleet starts, it is unconditional (`UPDATE … SET c = c AT TIME ZONE 'Europe/Bucharest' AT TIME ZONE 'UTC'`, every row is legacy). If it runs later, it needs a mandatory lower bound `WHERE c < '<Restart-Instant>'` — otherwise it converts the new UTC rows a second time. **Recommendation independent of the decision: log the restart instant.** It's the prerequisite for both a later backfill and the value of the cutover constant; without it, only the expensive option remains (guessing the domain per row).
 
-**Bis die Entscheidung fällt, gilt `uniform-utc`.** Für die laufende Fleet ist das binnen Stunden bis Tagen richtig (die Fenster sind 1 h bis 5 d). Für einen **Retrain auf Vor-Flip-Historie** ist es falsch — dort steht ohne Cutover-Konstante die ganze Historie um 2–3 h verschoben. Konsequenz: **kein Retrain auf Legacy-Spalten, bis §6 entschieden ist**; die Builder loggen ihre Lesart in die erste Zeile ihrer Ausgabe, damit ein Lauf unter der falschen Annahme im Log sichtbar ist.
+**Until the decision is made, `uniform-utc` applies.** For the running fleet that's correct within hours to days (the windows are 1h to 5d). For a **retrain on pre-flip history** it is wrong — without a cutover constant, the whole history there is shifted by 2–3h. Consequence: **no retrain on legacy columns until §6 is decided**; the builders log their reading into the first line of their output, so a run under the wrong assumption is visible in the log.
 
-`ALTER TABLE`/DDL und der Backfill selbst sind **nicht** Teil dieses Changesets (Freigaberahmen T-2026-KYT-9050-005: ausdrücklich ausgenommen).
+`ALTER TABLE`/DDL and the backfill itself are **not** part of this changeset (release scope T-2026-KYT-9050-005: explicitly excluded).
 
-## 7. DDL-Wechsel auf `timestamptz`
+## 7. DDL change to `timestamptz`
 
-Referenz-DDL: [`migrations/2026-07-r3-timestamptz.sql`](migrations/2026-07-r3-timestamptz.sql). **Nicht ausgeführt**, kein Runner.
+Reference DDL: [`migrations/2026-07-r3-timestamptz.sql`](migrations/2026-07-r3-timestamptz.sql). **Not executed**, no runner.
 
-Drei Bedingungen vor der Ausführung:
+Three conditions before execution:
 
-1. **Operator-Freigabe (C-Gate).** `ALTER TABLE` auf Live-Tabellen ist Eskalation.
-2. **Der Flip aus §4 muss vorher liegen.** Sonst altert man Lokalzeit zu falschem UTC.
-3. **Bootstrap-DDLs im selben PR mitziehen.** `CREATE TABLE IF NOT EXISTS` verbreitert nie eine bestehende Spalte — wer nur die Live-Tabelle altert, produziert genau die Repo-vs-Live-Drift, die uns P2.2 eingebracht hat (fünf Tage stumme Signale).
+1. **Operator sign-off (C-gate).** `ALTER TABLE` on live tables is an escalation.
+2. **The flip from §4 must be in place first.** Otherwise you'd alter local time into wrong UTC.
+3. **Pull the bootstrap DDLs along in the same PR.** `CREATE TABLE IF NOT EXISTS` never widens an existing column — anyone who only alters the live table produces exactly the repo-vs-live drift that got us P2.2 (five days of silent signals).
 
-## 8. Rest-Backlog
+## 8. Remaining backlog
 
-- **P2.1** (`strategies/strat_fast_in_out.py`, `strat_5_percent.py`): Python-seitiger Vergleich naive Lokalzeit gegen UTC-`posted`. Von der Session-TZ **nicht** geheilt; `strategies/` ist ruff-excluded, DTZ greift dort nicht.
-- **P2.3** (`3_detectors.py`), **P2.5** (`core/market_utils.update_cooldown`), **P2.6** (`5_trade_monitor.posted`): erledigt der Flip aus §4 — wirksam ab dem Restart.
-- **P2.4** (`closed_ai_signals.open_time`/`close_time`, drei Writer), **P2.21** (Cooldown/Outbox-Fenster in `28_signal_orchestrator.py`): mechanischer Nachzug auf `core/time.py`. Der Flip macht `NOW()` in diesen Pfaden UTC, die gemischte **Historie** der Spalte bleibt aber (§6).
-- **Leser ausserhalb der Fleet, bewusst nicht mitgezogen** (Analyse-Tools, kein Live- und kein Trainings-Pfad; sie lokalisieren Legacy-Spalten selbst und lesen damit Zeilen NACH dem Restart 2–3 h daneben). Nachzug = dieselbe Ein-Zeilen-Delegation an `core.time`:
+- **P2.1** (`strategies/strat_fast_in_out.py`, `strat_5_percent.py`): a Python-side comparison of naive local time against UTC `posted`. **Not** healed by the session TZ; `strategies/` is ruff-excluded, DTZ doesn't apply there.
+- **P2.3** (`3_detectors.py`), **P2.5** (`core/market_utils.update_cooldown`), **P2.6** (`5_trade_monitor.posted`): handled by the flip from §4 — effective from the restart.
+- **P2.4** (`closed_ai_signals.open_time`/`close_time`, three writers), **P2.21** (cooldown/outbox window in `28_signal_orchestrator.py`): a mechanical follow-up onto `core/time.py`. The flip makes `NOW()` UTC in these paths, but the column's mixed **history** remains (§6).
+- **Readers outside the fleet, deliberately not pulled along** (analysis tools, neither a live nor a training path; they localize legacy columns themselves and thereby read rows off by 2–3h after the restart). Follow-up = the same one-line delegation to `core.time`:
   - `tools/funding_risk_study.py:130` `to_utc_aware()` (`closed_ai_signals.open_time`)
-  - `tools/breadth_study.py:428` — **eigenständiger Bug, unabhängig vom Flip**: lokalisiert `regime_history.ts` als Bucharest, obwohl die Spalte naiv-**UTC** ist (Writer `26_regime_detector.py:216`; empirisch §3: 12 Zeilen in der lokal nicht existierenden Stunde). Der As-of-Join der BTC-Regime-Features steht damit **heute schon** 2–3 h daneben. Hier nicht mitgefixt — eine Korrektur ändert das Studien-Ergebnis und braucht einen Re-Run, also einen eigenen Task.
+  - `tools/breadth_study.py:428` — **a standalone bug, independent of the flip**: localizes `regime_history.ts` as Bucharest, even though the column is naive-**UTC** (writer `26_regime_detector.py:216`; empirically §3: 12 rows in the locally non-existent hour). The BTC-regime-features as-of join is therefore already off by 2–3h **today**. Not fixed here — a correction changes the study result and needs a re-run, i.e. its own task.
   - `tools/settlement_timing_study.py` (`closed_ai_signals.open_time`)
-  - `tools/analytics_export.py` + `tools/dashboard/app.py` — tragen naive Werte **verbatim** durch und differenzieren nie über die Domänengrenze; ihre Header-Notiz „wall clock Europe/Bucharest" gilt ab dem Restart nur noch für die Alt-Zeilen.
-- **Der aware-Bypass.** `DTZ` flaggt nur *naive* Aufrufe. `datetime.now(timezone.utc)` bleibt erlaubt, und der Bestand hat davon ~79 Call-Sites in 34 Dateien (z.B. `26_regime_detector.py:216`, `core/signal_post.py`, `5_trade_monitor.py`). Die sind alle **korrekt** — nur eben nicht über `core/time.py` gezogen. `utc_now()` ist damit die *sanktionierte*, nicht die *einzige tatsächliche* Zeitquelle. Der Nachzug ist Fleissarbeit ohne Verhaltensänderung und gehört in denselben Folge-Task wie der Flip; ein Lint-Gate dafür gibt es nicht (ruff kennt keine Regel „nutze meinen Helper").
+  - `tools/analytics_export.py` + `tools/dashboard/app.py` — carry naive values through **verbatim** and never differentiate across the domain boundary; their header note "wall clock Europe/Bucharest" only applies to the legacy rows from the restart on.
+- **The aware bypass.** `DTZ` only flags *naive* calls. `datetime.now(timezone.utc)` remains allowed, and the existing code has ~79 call sites of it across 34 files (e.g. `26_regime_detector.py:216`, `core/signal_post.py`, `5_trade_monitor.py`). These are all **correct** — just not routed through `core/time.py`. `utc_now()` is thereby the *sanctioned*, not the *only actual*, time source. The follow-up is grunt work with no behaviour change and belongs in the same follow-on task as the flip; there's no lint gate for it (ruff has no rule "use my helper").

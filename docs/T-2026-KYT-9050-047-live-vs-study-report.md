@@ -1,291 +1,293 @@
-# Bot 40: liegt der Live-Umschlag über dem simulierten? (T-2026-KYT-9050-047)
+# Bot 40: is live turnover above the simulated turnover? (T-2026-KYT-9050-047)
 
-_Messung 2026-08-01 · read-only · Werkzeug `tools/trailing_live_vs_study.py` ·
-Datenstand `trailing_positions` ab Bot-Start 2026-07-26 abends, 5,6 Tage ·
-Vergleichsbasis `staging_models/replay/trailing_slot_budget_live.json` (PR #198, act 2 %, x 10 %, tf 15m)_
+_Measurement 2026-08-01 · read-only · tool `tools/trailing_live_vs_study.py` ·
+Data snapshot `trailing_positions` since bot start 2026-07-26 evening, 5.6 days ·
+Comparison baseline `staging_models/replay/trailing_slot_budget_live.json` (PR #198, act 2 %, x 10 %, tf 15m)_
 
-## Verdikt
+## Verdict
 
-**Nein.** Der Live-Umschlag liegt **nicht** systematisch über dem simulierten — er liegt bei der
-Haltedauer eher darunter (also länger gehalten) und beim Umsatz pro belegtem Slot-Tag 9–23 %
-darüber. Die Slot-Rechnung war nicht zu optimistisch, sondern **zu pessimistisch**: der Channel
-läuft im eingeschwungenen Zustand bei **Ø 106 gleichzeitig offenen Positionen gegen erwartete
-252** — halb leer. Die Gebührenlast pro Slot-Tag liegt 9 % über der Rechnung, mit der die
-49 204 % gerechnet wurden.
+**No.** Live turnover is **not** systematically above the simulated turnover — for holding
+duration it is actually below (i.e. held longer), and for turnover per occupied slot-day it is
+9–23% above. The slot budget was not too optimistic but **too pessimistic**: in steady state the
+channel runs at **avg. 106 simultaneously open positions against an expected
+252** — half empty. The fee load per slot-day is 9% above the budget used to compute the
+49 204%.
 
-Die vermutete Ursache — 15m-Kerzen gegen 10s-Live-Preise — ist real und **quantifiziert: sie ist
-rund 20 Minuten pro Arm-Exit wert** (Median Δ +0,33 h, p95 +0,63 h) und höchstens 4,7 % Slot-Tage.
-Sie verschiebt den Betriebspunkt nicht, weil es keinen nennenswert verschobenen Betriebspunkt
-gibt, den sie erklären müsste.
+The suspected cause — 15m candles versus 10s live prices — is real and **quantified: it is
+worth around 20 minutes per arm exit** (median Δ +0.33h, p95 +0.63h) and at most 4.7% slot-days.
+It does not shift the operating point, because there is no meaningfully shifted operating point
+for it to explain.
 
-**Der Auslöser der Frage war ein Bootstrap-Artefakt.** Die „~80 Trail-Feuer pro Stunde bei ~460
-offenen Positionen" sind exakt 80 Feuer in **1,2 Stunden am 26.07. zwischen 19:00 und 20:00 UTC** —
-dem ersten Shadow-Zyklus, in dem der Bot ein bereits laufendes Buch auf einmal spiegelte. Diese
-Spiegel erbten einen Peak, der beim ersten Poll schon über der Aktivierungsschwelle lag, und
-feuerten sofort. Im Live-Betrieb: **4,0 Trail-Feuer pro Stunde**, geschäftigste Einzelstunde 21.
+**The trigger for the question was a bootstrap artifact.** The "~80 trail fires per hour at
+~460 open positions" are exactly 80 fires in **1.2 hours on 26.07 between 19:00 and 20:00 UTC** —
+the first shadow cycle in which the bot mirrored an already-running book all at once. These
+mirrors inherited a peak that was already above the activation threshold on the first poll, and
+fired immediately. In live operation: **4.0 trail fires per hour**, busiest single hour 21.
 
-## Empfehlung an den Operator (#T52-3)
+## Recommendation to the operator (#T52-3)
 
-**`act = 2 %` beibehalten. Keine Änderung an Bot 40 aus diesem Befund.**
+**Keep `act = 2 %`. No change to Bot 40 based on this finding.**
 
-Die Hypothese, die eine Änderung motiviert hätte — Live-Umschlag über Simulation, also Slot- und
-Gebührenrechnung zu optimistisch — ist widerlegt. Der einzige gemessene Abweichungspfad kostet
-≤ 5 % Slot-Tage.
+The hypothesis that would have motivated a change — live turnover above simulation, i.e. the
+slot and fee budget too optimistic — is refuted. The only measured deviation path costs
+≤ 5% slot-days.
 
-Wichtig für die Richtung einer möglichen Änderung: **`act` senken würde die freie Kapazität nicht
-nutzen, sondern vergrößern.** Ein niedrigeres `act` verkürzt die Haltedauer (Studie: act 1 → Median
-2,0 h, act 0 → 0,4 h) und senkt die Belegung damit weiter. Wer die leere Hälfte des Channels füllen
-will, muss `act` **erhöhen** oder mehr Beine zulassen — beides ist eine eigene Entscheidung, und
-beides sollte warten, bis die Ertragslage dreht: das Live-Buch steht bei **−906 %-Punkten netto**,
-und der Engpass ist nicht Kapazität, sondern Ertrag (Ursache siehe T-054: Tape, kein Leg-Defekt).
+Important for the direction of any possible change: **lowering `act` would not use the free
+capacity, it would enlarge it.** A lower `act` shortens the holding duration (study: act 1 →
+median 2.0h, act 0 → 0.4h) and thereby reduces occupancy further. Anyone who wants to fill the
+empty half of the channel has to **raise** `act` or allow more legs — both are separate
+decisions, and both should wait until the profit picture turns: the live book stands at
+**−906 percentage-points net**, and the bottleneck is not capacity but profit (cause: see T-054,
+tape, not a leg defect).
 
-## 1 Population — live und Shadow strikt getrennt
+## 1 Population — live and shadow strictly separated
 
-`posted` ist die Live/Shadow-Linie. Wer über die ganze Tabelle aggregiert, mischt das
-Shadow-Buch und die Zulassungs-Vermerke in die Live-Zahlen (die T-052-Lektion).
+`posted` is the live/shadow line. Aggregating over the whole table mixes the shadow book and the
+admission markers into the live numbers (the T-052 lesson).
 
-| | Zeilen |
+| | Rows |
 |---|--:|
-| `trailing_positions` gesamt | 6 055 |
-| davon `posted` = live | 1 141 |
-| davon Shadow + Vermerke | 4 914 (`PREEXISTING` 4 372, `SHADOW_CARRYOVER` 459, `TRAIL` 80, `SOURCE_CLOSED` 3) |
-| **Live-Positionen** (ohne `ENTRY_NOT_FILLED`) | **1 095** |
-| davon geschlossen mit echtem Exit | 999 |
-| davon noch offen | 96 |
-| `ENTRY_NOT_FILLED` — kein Slot, keine Gebühr | 46 |
+| `trailing_positions` total | 6 055 |
+| of which `posted` = live | 1 141 |
+| of which shadow + markers | 4 914 (`PREEXISTING` 4 372, `SHADOW_CARRYOVER` 459, `TRAIL` 80, `SOURCE_CLOSED` 3) |
+| **Live positions** (excl. `ENTRY_NOT_FILLED`) | **1 095** |
+| of which closed with a real exit | 999 |
+| of which still open | 96 |
+| `ENTRY_NOT_FILLED` — no slot, no fee | 46 |
 
-`ENTRY_NOT_FILLED` ist eine gepostete Zeile ohne Position dahinter. Sie mitzuzählen bläht Slot-Draw
-und Gebührenlast gleichzeitig auf.
+`ENTRY_NOT_FILLED` is a posted row with no position behind it. Counting it inflates both slot
+draw and fee load at the same time.
 
-## 2 Haltedauer — live gegen die Studie
+## 2 Holding duration — live versus the study
 
-| Maß | Wert |
+| Measure | Value |
 |---|--:|
-| Live, nur geschlossene Positionen (n=999) | Median **6,00 h** · p25 1,87 · p75 19,72 · p95 48,60 |
-| Live, mit den 96 offenen als rechts-zensiert | Median liegt in **[6,71 h; 7,40 h]** |
-| Studie, mix-gematcht auf die Live-Bein-Anzahlen | **6,59 h** (gewichteter Median) |
-| Studie, Kopfzeile über Beine | 4,6 h |
+| Live, closed positions only (n=999) | Median **6.00 h** · p25 1.87 · p75 19.72 · p95 48.60 |
+| Live, with the 96 open positions as right-censored | Median lies in **[6.71 h; 7.40 h]** |
+| Study, mix-matched to the live leg counts | **6.59 h** (weighted median) |
+| Study, headline across legs | 4.6 h |
 
-Die 4,6 h aus dem Report sind ein Median **über Beine**, kein Median über Trades — jedes Bein zählt
-dort gleich, MIS2-168h SHORT (3 Live-Spiegel) so viel wie MIS1-72h LONG (370). Mix-gematcht auf das
-Live-Buch erwartet dieselbe Studie **6,59 h**. Live gemessen: 6,00 h ohne, 6,71–7,40 h mit den
-offenen Positionen.
+The 4.6h from the report is a median **across legs**, not a median across trades — every leg
+counts equally there, MIS2-168h SHORT (3 live mirrors) as much as MIS1-72h LONG (370).
+Mix-matched to the live book, the same study expects **6.59 h**. Measured live: 6.00h without,
+6.71–7.40h with the open positions.
 
-**Zwei Verzerrungen laufen beide in Richtung „live ist schneller", und die Messung fällt trotzdem
-andersherum aus:**
+**Two biases both point in the direction of "live is faster," and the measurement still comes
+out the other way:**
 
-- **Zensierung.** 5,6 Live-Tage gegen 148 simulierte Tage: was lange hält, ist noch offen. Der
-  Median nur über geschlossene Zeilen ist die optimistische Grenze — deshalb das Intervall.
-- **Der Zeit-Stop bei 24 h existiert in der Studie nicht.** Er kappt live 50 Positionen bei genau
-  24,0 h, die simuliert weitergelaufen wären.
+- **Censoring.** 5.6 live days against 148 simulated days: whatever holds for a long time is
+  still open. The median over closed rows only is the optimistic bound — hence the interval.
+- **The 24h time stop does not exist in the study.** It caps 50 live positions at exactly
+  24.0h that would have kept running in simulation.
 
-### Pro Bein (Live-Median gegen den Trailing-Median der Studie)
+### Per leg (live median versus the study's trailing median)
 
-| Bein | n | live | Studie (trail) | Studie (hold) | Verhältnis |
+| Leg | n | live | Study (trail) | Study (hold) | Ratio |
 |---|--:|--:|--:|--:|--:|
-| MIS1-72h LONG | 370 | 8,76 | 6,59 | 40,7 | **1,33×** |
-| AIM2 SHORT | 128 | 4,17 | 2,54 | 29,0 | **1,64×** |
-| ATS2 LONG | 107 | 16,44 | 13,21 | 22,8 | **1,24×** |
-| SRA2 SHORT | 56 | 3,73 | 5,54 | 10,4 | 0,67× |
-| AIM2 LONG | 49 | 9,17 | 5,58 | 22,1 | **1,64×** |
-| SRA2 LONG | 43 | 10,73 | 4,71 | 8,5 | **2,28×** |
-| SKW1 SHORT | 32 | 6,52 | 3,73 | 5,0 | **1,75×** |
-| SKW1 LONG | 27 | 5,70 | 5,13 | 13,5 | 1,11× |
-| MAX1 SHORT | 26 | 3,11 | 4,25 | 7,0 | 0,73× |
-| RUB1 SHORT | 25 | 1,18 | 1,03 | 18,2 | 1,15× |
-| XSM1 LONG | 22 | 1,16 | 2,57 | 11,0 | 0,45× |
-| MIS2-72h SHORT | 22 | 0,72 | 0,41 | 44,2 | 1,76× |
-| MIS1-168h LONG | 20 | 6,31 | 9,90 | 49,7 | 0,64× |
-| MIS1-8h SHORT | 15 | 0,46 | 0,48 | 8,2 | 0,97× |
-| RUB1 LONG | 12 | 4,94 | 2,56 | 44,5 | 1,93× |
+| MIS1-72h LONG | 370 | 8.76 | 6.59 | 40.7 | **1.33×** |
+| AIM2 SHORT | 128 | 4.17 | 2.54 | 29.0 | **1.64×** |
+| ATS2 LONG | 107 | 16.44 | 13.21 | 22.8 | **1.24×** |
+| SRA2 SHORT | 56 | 3.73 | 5.54 | 10.4 | 0.67× |
+| AIM2 LONG | 49 | 9.17 | 5.58 | 22.1 | **1.64×** |
+| SRA2 LONG | 43 | 10.73 | 4.71 | 8.5 | **2.28×** |
+| SKW1 SHORT | 32 | 6.52 | 3.73 | 5.0 | **1.75×** |
+| SKW1 LONG | 27 | 5.70 | 5.13 | 13.5 | 1.11× |
+| MAX1 SHORT | 26 | 3.11 | 4.25 | 7.0 | 0.73× |
+| RUB1 SHORT | 25 | 1.18 | 1.03 | 18.2 | 1.15× |
+| XSM1 LONG | 22 | 1.16 | 2.57 | 11.0 | 0.45× |
+| MIS2-72h SHORT | 22 | 0.72 | 0.41 | 44.2 | 1.76× |
+| MIS1-168h LONG | 20 | 6.31 | 9.90 | 49.7 | 0.64× |
+| MIS1-8h SHORT | 15 | 0.46 | 0.48 | 8.2 | 0.97× |
+| RUB1 LONG | 12 | 4.94 | 2.56 | 44.5 | 1.93× |
 
-_(Beine mit n < 10 in der Werkzeug-Ausgabe; ihre Einzelverhältnisse tragen nichts.)_
+_(Legs with n < 10 are in the tool output; their individual ratios carry no signal.)_
 
-Bei den fünf größten Beinen, die zusammen 65 % des Live-Buchs stellen, hält der Live-Arm
-**länger** als die Simulation. Die vollständige Tabelle steht in der Werkzeug-Ausgabe.
+For the five largest legs, which together account for 65% of the live book, the live arm holds
+**longer** than the simulation. The full table is in the tool output.
 
-### Pro Tag × Richtung (Tag des Exits)
+### Per day × direction (day of exit)
 
-| Tag | LONG n / Median h | SHORT n / Median h |
+| Day | LONG n / median h | SHORT n / median h |
 |---|--:|--:|
-| 2026-07-26 | 16 / 1,60 | 7 / 0,29 |
-| 2026-07-27 | 233 / 4,55 | 84 / 4,05 |
-| 2026-07-28 | 155 / 11,41 | 20 / 2,01 |
-| 2026-07-29 | 83 / 35,31 | 39 / 3,47 |
-| 2026-07-30 | 55 / 5,52 | 53 / 2,03 |
-| 2026-07-31 | 91 / 11,54 | 85 / 3,72 |
-| 2026-08-01 | 40 / 16,41 | 38 / 3,43 |
+| 2026-07-26 | 16 / 1.60 | 7 / 0.29 |
+| 2026-07-27 | 233 / 4.55 | 84 / 4.05 |
+| 2026-07-28 | 155 / 11.41 | 20 / 2.01 |
+| 2026-07-29 | 83 / 35.31 | 39 / 3.47 |
+| 2026-07-30 | 55 / 5.52 | 53 / 2.03 |
+| 2026-07-31 | 91 / 11.54 | 85 / 3.72 |
+| 2026-08-01 | 40 / 16.41 | 38 / 3.43 |
 
-Der 26.07. ist der Anlauftag (erster geposteter Spiegel ~20:30 UTC), die kurzen Median-Werte dort sind
-Anfangsbestand, keine Betriebszahl. Die LONG-Seite hält durchweg 3–10× länger als die SHORT-Seite;
-das ist die Signatur der Markt-Attribution aus T-054 (fallendes Tape → LONG kommt seltener über die
-Aktivierungsschwelle und wird deshalb seltener getrailt).
+26.07 is the ramp-up day (first posted mirror ~20:30 UTC); the short median values there are
+starting inventory, not an operating figure. The LONG side consistently holds 3–10× longer than
+the SHORT side; that is the signature of the market attribution from T-054 (falling tape → LONG
+crosses the activation threshold less often and is therefore trailed less often).
 
-## 3 Exit-Mix
+## 3 Exit mix
 
-Anteile über alle 999 echten Exits:
+Shares across all 999 real exits:
 
-| Grund | Anteil |
+| Reason | Share |
 |---|--:|
-| `TRAIL` (eigene Entscheidung des Arms) | **54 %** |
-| `SOURCE_CLOSED` (folgt der Fleet) | 32 % |
-| `SL_HIT` | 9 % |
-| `TIME_STOP` | 5 % |
+| `TRAIL` (the arm's own decision) | **54%** |
+| `SOURCE_CLOSED` (follows the fleet) | 32% |
+| `SL_HIT` | 9% |
+| `TIME_STOP` | 5% |
 
-Die Tages-/Richtungs-Auflösung steht in der Werkzeug-Ausgabe. Auffällig: `TIME_STOP` erscheint erst
-ab dem 29.07. (Stichtag `TRAILING_BOT_TIME_STOP_SINCE` = 28.07. 14:00 UTC plus 24 h Frist) und trägt
-seit dem 31.07. 24–30 % der LONG- und 5–12 % der SHORT-Exits — kein Randfall mehr.
+The day/direction breakdown is in the tool output. Notable: `TIME_STOP` first appears from 29.07
+onward (cutoff date `TRAILING_BOT_TIME_STOP_SINCE` = 28.07 14:00 UTC plus a 24h grace period) and
+since 31.07 accounts for 24–30% of LONG and 5–12% of SHORT exits — no longer an edge case.
 
-`TRAIL` 54 % bedeutet: gut die Hälfte der Exits sind eigene Entscheidungen des Arms, der Rest ist
-Folgen der Fleet bzw. der Börse. Ob die Studie dieselben Trades ebenso oft getrailt hätte, ist ein
-eigener Vergleich und steht in Abschnitt 6 — die dortigen Anteile sind über ein Fenster gerechnet,
-das über den Live-Exit hinausreicht, und daher **nicht** direkt gegen diese Tabelle zu halten.
+`TRAIL` at 54% means: a good half of the exits are the arm's own decisions, the rest follow the
+fleet or the exchange. Whether the study would have trailed the same trades just as often is a
+separate comparison and appears in section 6 — the shares there are computed over a window that
+extends beyond the live exit, and are therefore **not** to be held directly against this table.
 
-## 4 Realisierter Mark gegen die Gebühr (0,10 % Taker-Round-Trip)
+## 4 Realized mark versus the fee (0.10% taker round-trip)
 
-Alle 999 Exits tragen einen verwertbaren Mark (SL-Rekonstruktion nach T-054 / Backfill T-058).
+All 999 exits carry a usable mark (SL reconstruction per T-054 / backfill T-058).
 
-| Schnitt | n | Σ brutto | Gebühr | Σ netto | < Gebühr | Ø Mark |
+| Cut | n | Σ gross | Fee | Σ net | < fee | Avg. mark |
 |---|--:|--:|--:|--:|--:|--:|
-| **ALLE** | 999 | −806,2 | 99,9 | **−906,1** | 38 % | −0,81 |
-| LONG | 673 | −898,6 | 67,3 | −965,9 | 46 % | −1,34 |
-| SHORT | 326 | +92,4 | 32,6 | +59,8 | 21 % | +0,28 |
-| `TRAIL` | 536 | +1153,0 | 53,6 | **+1099,4** | **0 %** | +2,15 |
-| `TIME_STOP` | 50 | −79,5 | 5,0 | −84,5 | 80 % | −1,59 |
-| `SL_HIT` | 90 | −559,3 | 9,0 | −568,3 | 100 % | −6,21 |
-| `SOURCE_CLOSED` | 323 | −1320,4 | 32,3 | −1352,7 | 77 % | −4,09 |
+| **ALL** | 999 | −806.2 | 99.9 | **−906.1** | 38% | −0.81 |
+| LONG | 673 | −898.6 | 67.3 | −965.9 | 46% | −1.34 |
+| SHORT | 326 | +92.4 | 32.6 | +59.8 | 21% | +0.28 |
+| `TRAIL` | 536 | +1153.0 | 53.6 | **+1099.4** | **0%** | +2.15 |
+| `TIME_STOP` | 50 | −79.5 | 5.0 | −84.5 | 80% | −1.59 |
+| `SL_HIT` | 90 | −559.3 | 9.0 | −568.3 | 100% | −6.21 |
+| `SOURCE_CLOSED` | 323 | −1320.4 | 32.3 | −1352.7 | 77% | −4.09 |
 
-**Die Gebühr ist nicht das Problem.** 999 Trades × 0,10 % = 99,9 %-Punkte gegen ein Brutto von
-−806,2. Ein „Anteil der Gebühr am Brutto" ist auf einem Verlustbuch bedeutungslos und wird vom
-Werkzeug bewusst verweigert statt als kleine positive Zahl gedruckt.
+**The fee is not the problem.** 999 trades × 0.10% = 99.9 percentage-points against a gross of
+−806.2. A "fee share of gross" is meaningless on a loss-making book and is deliberately withheld
+by the tool rather than printed as a small positive number.
 
-Der Vergleich, der trägt, ist **Gebühr pro belegtem Slot-Tag** (Abschnitt 5): live 0,141 % gegen
-0,129 % in der Studie — **+9 %**.
+The comparison that actually carries weight is **fee per occupied slot-day** (section 5): live
+0.141% against 0.129% in the study — **+9%**.
 
-Zum Studien-Vergleichswert „25 % der Trades unter Gebühr" bei act = 2: dieser Anteil ist dort über
-**alle** Trades gerechnet, inklusive derer, bei denen der Trail nie auslöste. Die Live-Entsprechung
-ist die ALLE-Zeile (38 %), nicht die `TRAIL`-Zeile. Dass die `TRAIL`-Zeile bei **0 %** liegt, ist
-Konstruktion, kein Befund: ein bewaffneter Trail schließt frühestens bei 0,9 × 2,0 % = 1,8 %. Die
-38 % gegen 25 % kommen vollständig aus `SOURCE_CLOSED` (77 %) und `SL_HIT` (100 %) — also aus dem
-Tape, nicht aus der Umschlaghäufigkeit.
+Regarding the study's comparison value of "25% of trades below fee" at act = 2: that share there
+is computed over **all** trades, including those where the trail never fired. The live
+equivalent is the ALL row (38%), not the `TRAIL` row. That the `TRAIL` row sits at **0%** is a
+matter of construction, not a finding: an armed trail closes at the earliest at 0.9 × 2.0% =
+1.8%. The 38% against 25% comes entirely from `SOURCE_CLOSED` (77%) and `SL_HIT` (100%) — i.e.
+from the tape, not from turnover frequency.
 
-Das ist zugleich das T-052-Muster im Live-Buch: der Trail kann per Konstruktion nur Gewinner
-schließen (`TRAIL` +1099 netto), die Verlierer bleiben liegen, bis Fleet oder SL sie beenden
-(−1353 und −568).
+This is also the T-052 pattern in the live book: by construction the trail can only close
+winners (`TRAIL` +1099 net), while losers sit until the fleet or the SL ends them (−1353 and
+−568).
 
-## 5 Gleichzeitige Belegung
+## 5 Simultaneous occupancy
 
-| Maß | live | Studie |
+| Measure | live | study |
 |---|--:|--:|
-| Ø Belegung | **126,4** | 284,6 roh / **251,6** roster-gematcht |
+| Avg. occupancy | **126.4** | 284.6 raw / **251.6** roster-matched |
 | Median | 107 | — |
-| p95 | **221** | 498,0 |
+| p95 | **221** | 498.0 |
 | Maximum | 291 | 2 001 |
-| **letzte 48 h (eingeschwungen)** | **Ø 105,7 · p95 114 · max 116** | — |
+| **last 48h (steady state)** | **avg. 105.7 · p95 114 · max 116** | — |
 
-Die 284,6 der Studie enthalten ROM1 LONG (11) + ROM1 SHORT (22), die `core/trailing_roster.py`
-inzwischen als Re-Forwarder-Duplikat ausschließt. Mittlere Belegung ist eine Summe von
-Indikatorfunktionen und damit **exakt additiv**, die roster-gematchte Erwartung also 251,6. p95 ist
-nicht additiv und bleibt unkorrigiert.
+The study's 284.6 includes ROM1 LONG (11) + ROM1 SHORT (22), which `core/trailing_roster.py` now
+excludes as a re-forwarder duplicate. Average occupancy is a sum of indicator functions and
+therefore **exactly additive**, so the roster-matched expectation is 251.6. p95 is not additive
+and remains uncorrected.
 
-**Live zieht 50 % der roster-gematchten Erwartung, eingeschwungen 42 %.** Der Cornix-Deckel von 500
-ist nie in Reichweite gekommen: das beobachtete Maximum liegt bei 291, in den letzten 48 h bei 116.
+**Live draws 50% of the roster-matched expectation, 42% in steady state.** The Cornix cap of 500
+was never within reach: the observed maximum is 291, and 116 in the last 48h.
 
-### Woher die Lücke kommt: Intake, nicht Umschlag
+### Where the gap comes from: intake, not turnover
 
-Belegung = Zulauf × Haltedauer. Die Haltedauer ist nicht kurz (Abschnitt 2), also bleibt der Zulauf:
+Occupancy = inflow × holding duration. Holding duration is not short (section 2), so what's left
+is inflow:
 
-| | Zulauf |
+| | Inflow |
 |---|--:|
-| live | **195,1 Positionen/Tag** (1 095 über 5,6 Tage) |
-| Studie (gewählte p95-Auswahl) | 365,5 Trades/Tag (53 944 über 148 Tage) |
-| | **live = 53 %** |
+| live | **195.1 positions/day** (1 095 over 5.6 days) |
+| study (selected p95 sample) | 365.5 trades/day (53 944 over 148 days) |
+| | **live = 53%** |
 
-Der Live-Bot hat vier Zulassungsfilter, die die Simulation nicht hatte: höchstens ein Spiegel je
-Symbol (Unique-Index auf `symbol WHERE closed_at IS NULL`, bei 33 Beinen auf ~530 Coins häufig
-bindend), das 240-s-Frische-Fenster, der Symbol-Cooldown und der Exposure-Cap. Dazu der
-ROM1-Ausschluss und `shadow_gate`-Beine, die zwischenzeitlich nicht LIVE sind — EPD1 SHORT, in der
-Studie das zweitgrößte Bein mit 4 650 Trades, hat **kein einziges Mal** gespiegelt.
+The live bot has four admission filters that the simulation did not have: at most one mirror per
+symbol (unique index on `symbol WHERE closed_at IS NULL`, frequently binding at 33 legs across
+~530 coins), the 240s freshness window, the symbol cooldown, and the exposure cap. On top of
+that, the ROM1 exclusion and `shadow_gate` legs that are temporarily not LIVE — EPD1 SHORT, the
+second-largest leg in the study with 4 650 trades, has **not mirrored a single time**.
 
-### Umschlag pro belegtem Slot-Tag
+### Turnover per occupied slot-day
 
-Das mix-robuste Maß — und die Einheit, in der die Gebühr anfällt:
+The mix-robust measure — and the unit in which the fee accrues:
 
-| | Trades/Slot-Tag |
+| | Trades/slot-day |
 |---|--:|
-| live | **1,405** (999 Exits / 711,0 Slot-Tage) |
-| Studie, Aggregat | 1,291 |
-| Studie, mix-gematcht auf die Live-Bein-Anzahlen | 1,146 |
-| | **live = 1,09× / 1,23×** |
+| live | **1.405** (999 exits / 711.0 slot-days) |
+| study, aggregate | 1.291 |
+| study, mix-matched to the live leg counts | 1.146 |
+| | **live = 1.09× / 1.23×** |
 
-Das ist die ehrlichste Antwort auf die Titelfrage: der Umschlag pro Slot liegt **9–23 % über** der
-Simulation. Gebühr pro Slot-Tag entsprechend 0,141 % gegen 0,129 %.
+This is the most honest answer to the title question: turnover per slot is **9–23% above** the
+simulation. Fee per slot-day correspondingly 0.141% against 0.129%.
 
-## 6 Auflösung — die 15m-Regel der Studie auf denselben Spiegeln nachgespielt
+## 6 Resolution — the study's 15m rule replayed on the same mirrors
 
-Jeder Live-Spiegel wird auf seinem **eigenen** 15m-Band nachgerechnet, vom Fill bis 24 h nach dem
-Live-Exit, mit der **importierten** Regel aus `tools/trailing_slot_budget.py` (act 2 %, x 10 %,
-strikt vorheriger Peak — Regel 7, keine Zweitimplementierung). 999 von 999 Exits nachgespielt.
+Every live mirror is recalculated on its **own** 15m band, from fill through 24h after the live
+exit, using the rule **imported** from `tools/trailing_slot_budget.py` (act 2%, x 10%,
+strictly-prior peak — rule 7, no second implementation). 999 of 999 exits replayed.
 
-**Eigene Exits des Arms (`TRAIL`/`TIME_STOP`), n = 586:**
+**The arm's own exits (`TRAIL`/`TIME_STOP`), n = 586:**
 
-| Bucket | n | Anteil | Lesart |
+| Bucket | n | Share | Reading |
 |---|--:|--:|---|
-| `study-earlier` | 57 | 10 % | der 15m-Docht feuerte zuerst — live war das **langsamere** Raster |
-| `same-bar` | 100 | 17 % | dieselbe 15m-Kerze: Raster-Granularität, kein anderer Betriebspunkt |
-| `study-later` | 395 | 67 % | die Studie hätte tatsächlich weitergehalten |
-| `study-never-fires` | 34 | 6 % | kein 15m-Trigger im Horizont (rechts-zensiert) |
+| `study-earlier` | 57 | 10% | the 15m wick fired first — live was the **slower** grid |
+| `same-bar` | 100 | 17% | same 15m candle: grid granularity, not a different operating point |
+| `study-later` | 395 | 67% | the study would actually have held longer |
+| `study-never-fires` | 34 | 6% | no 15m trigger within the horizon (right-censored) |
 
-**Δ = Studien-Exit − Live-Exit: Median +0,33 h · p25 +0,24 · p75 +0,42 · p95 +0,63.**
+**Δ = study exit − live exit: median +0.33 h · p25 +0.24 · p75 +0.42 · p95 +0.63.**
 
-Das ist der ganze Auflösungseffekt: **rund 20 Minuten, in 95 % der Fälle unter 38 Minuten** — also
-ein bis zwei 15m-Kerzen. Der Grund ist mechanisch: die Kerzen-Extreme *sind* die Extreme, das 15m-
-Raster sieht denselben Peak und denselben Rückgang wie der 10s-Poll und trigger daher meist in
-derselben oder der nächsten Kerze. Die einzige echte Verschärfung ist der strikt vorherige Peak,
-und der verschiebt den Trigger um höchstens eine Kerze.
+That is the entire resolution effect: **around 20 minutes, under 38 minutes in 95% of cases** —
+i.e. one to two 15m candles. The reason is mechanical: the candle extremes *are* the extremes,
+the 15m grid sees the same peak and the same pullback as the 10s poll and therefore triggers
+mostly in the same or the next candle. The only real tightening is the strictly-prior peak, and
+that shifts the trigger by at most one candle.
 
-In 10 % der Fälle feuert das 15m-Raster sogar **früher**: dort erwischt der Kerzen-Docht einen
-Rückgang, den der 10s-Poll-Preis nie gedruckt hat.
+In 10% of cases the 15m grid even fires **earlier**: there, the candle wick catches a pullback
+that the 10s poll price never printed.
 
-**Vom Arm nicht selbst beendete Exits (Fleet/SL), n = 413:** 70 % lösen im 15m-Raster innerhalb
-des Fensters plus 24 h **gar keinen Trail** aus — beide Regeln halten, die Fleet oder der SL beendet
-die Position. In 26 % hätte die Studie später getrailt (Median +0,88 h, p75 +6,24, p95 +18,50).
+**Exits not ended by the arm itself (fleet/SL), n = 413:** 70% trigger **no trail at all** in the
+15m grid within the window plus 24h — both rules hold, the fleet or the SL ends the position. In
+26% the study would have trailed later (median +0.88 h, p75 +6.24, p95 +18.50).
 
-### Was der Unterschied in Slots kostet
+### What the difference costs in slots
 
-504 Exits liegen mehr als eine Kerzenbreite auseinander, Σ **33,1 Slot-Tage = +4,7 %** auf die
-live gemessenen 711,0. 325 weitere feuern im Horizont nie und sind **nicht** mitgezählt — die Zahl
-ist damit eine **Untergrenze** auf den Unterschied, keine Schätzung.
+504 exits are more than one candle-width apart, Σ **33.1 slot-days = +4.7%** on the
+live-measured 711.0. A further 325 never fire within the horizon and are **not** counted — the
+figure is therefore a **lower bound** on the difference, not an estimate.
 
-### Und im Preis
+### And in price
 
-Wo beide Regeln innerhalb einer Kerze voneinander liegen (n = 116), trennt sie nur die Ausführung:
-live Ø **+2,08 %** gegen 15m-Stop-Level Ø **+2,07 %** → **Δ +0,02 %-Punkte je Trade**. Das feinere
-Raster verkauft also nicht schlechter.
+Where both rules fall within one candle of each other (n = 116), only execution separates them:
+live avg. **+2.08%** against 15m stop-level avg. **+2.07%** → **Δ +0.02 percentage-points per
+trade**. So the finer grid does not sell worse.
 
-## Ehrliche Grenzen
+## Honest limits
 
-- **5,6 Live-Tage gegen 148 simulierte.** Das ist ein Tape-Ausschnitt, kein Regime-Querschnitt. Die
-  Haltedauer-Aussage ist durch das Zensierungs-Intervall abgesichert, die Ertragsaussage nicht — für
-  die gilt weiterhin T-054 (Markt, kein Leg-Defekt).
-- **Der Bein-Mix ist nicht der der Studie.** MIS1-72h LONG stellt 35 % des Live-Buchs, EPD1 SHORT
-  (Studie: 4 650 Trades) null. Jeder Aggregat-Vergleich trägt hier deshalb seinen mix-gematchten
-  Zwilling; wo nur das Aggregat steht, ist es als solches beschriftet.
-- **Das 15m-Nachspiel startet bei der ersten vollständig im Fenster liegenden Kerze** und schließt
-  bündig ab. Die Studie selbst selektiert nur über `open_time` und lässt ihre letzte Kerze bis zu
-  einem Intervall über den Close hinausragen (ihre dokumentierte Grenze). Die bündige Variante
-  entzieht der Studien-Seite Trigger-Gelegenheiten statt ihr zusätzliche zu geben — der
-  konservative Fehler für ein Werkzeug, dessen These lautet, die Studie feuere seltener.
-- **Der Exit-Zeitpunkt im Nachspiel ist der Kerzen-SCHLUSS**, nicht die Kerzen-Eröffnung wie in der
-  Studie. Ein 15m-Trigger ist vor Kerzenschluss nicht wissbar; die Studie ist an dieser Stelle um
-  bis zu eine Kerze optimistisch (dieselbe Klasse Look-ahead, die in T-052 aus 59k → 7k machte).
-- **Das Counterfactual ist rechts-zensiert** bei `--horizon-h` (Default 24 h). In der Studie hätte
-  zusätzlich der Close des Quell-Trades die Position beendet, und zwar früher. „Hätte ≥ X h länger
-  gehalten" ist ein Boden, keine Schätzung.
-- **Beta = 1 wird hier nicht unterstellt** — dieser Report macht keine Markt-Attribution; die steht
-  in `tools/trailing_arm_report.py` (T-054).
+- **5.6 live days against 148 simulated.** That is a tape excerpt, not a regime cross-section.
+  The holding-duration claim is backed by the censoring interval, the profit claim is not — for
+  that, T-054 still applies (market, not a leg defect).
+- **The leg mix is not the study's leg mix.** MIS1-72h LONG accounts for 35% of the live book,
+  EPD1 SHORT (study: 4 650 trades) zero. Every aggregate comparison here therefore carries its
+  mix-matched twin; where only the aggregate is shown, it is labelled as such.
+- **The 15m replay starts at the first candle lying fully within the window** and closes flush.
+  The study itself selects only on `open_time` and lets its last candle extend up to one interval
+  beyond the close (its documented limit). The flush variant withholds trigger opportunities from
+  the study side rather than granting it extra ones — the conservative error for a tool whose
+  thesis is that the study fires less often.
+- **The exit time in the replay is the candle CLOSE**, not the candle open as in the study. A 15m
+  trigger cannot be known before candle close; the study is optimistic by up to one candle at
+  this point (the same class of look-ahead that turned 59k into 7k in T-052).
+- **The counterfactual is right-censored** at `--horizon-h` (default 24h). In the study, the
+  close of the source trade would additionally have ended the position, and earlier at that.
+  "Would have held ≥ X h longer" is a floor, not an estimate.
+- **Beta = 1 is not assumed here** — this report does not perform market attribution; that is in
+  `tools/trailing_arm_report.py` (T-054).
 
-## Reproduktion
+## Reproduction
 
 ```
 python tools/trailing_live_vs_study.py                    # voller Report

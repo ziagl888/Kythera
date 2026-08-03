@@ -1,19 +1,19 @@
-# HOTFIX: Telegram-Bot Connection-Leak
+# HOTFIX: Telegram Bot Connection Leak
 
 ## Problem
 
-Im letzten combined_fixes.zip hat der neue `4_telegram_bot.py` einen Bug eingeschleppt:
+In the last combined_fixes.zip, the new `4_telegram_bot.py` introduced a bug:
 
 ```
 TELEGRAM_BOT - Error returning connection to pool: trying to put unkeyed connection
 TELEGRAM_BOT - ⚠️ Loop-Fehler: connection already closed
 ```
 
-Im Log: **14 Fehler in 53 Sekunden**. Der Bot versucht pro Loop-Iteration eine DB-Connection zu holen, schließt sie zweimal, und der ConnectionPool wird langsam unbrauchbar.
+In the log: **14 errors in 53 seconds**. The bot tries to fetch a DB connection per loop iteration, closes it twice, and the ConnectionPool slowly becomes unusable.
 
 ## Root Cause
 
-In meinem Reorder-Fix hatte ich die Idle-Behandlung so implemented:
+In my reorder fix, I had implemented idle handling like this:
 
 ```python
 with conn.cursor() as cur:
@@ -26,11 +26,11 @@ with conn.cursor() as cur:
                             #    zu schließen → Exception
 ```
 
-Der Cursor-`with`-Block versucht beim Exit den Cursor zu schließen, aber die Connection ist schon zurück im Pool. Das wirft einen Fehler, der outer `except Exception` fängt ihn, aber das `finally` macht dann nochmal `conn.close()` — diesmal auf einer bereits-geschlossenen Connection.
+The cursor's `with` block tries to close the cursor on exit, but the connection is already back in the pool. That raises an error, which the outer `except Exception` catches, but the `finally` then calls `conn.close()` again — this time on an already-closed connection.
 
-## Der Fix
+## The Fix
 
-Kein `conn.close()` mehr mitten im `with cursor()`-Block. Stattdessen wird bei leerem Batch nur ein Flag gesetzt (`batch_was_empty = True`), der `with`-Block verlassen, das `finally` macht den `conn.close()` sauber, und **danach** erfolgt der Idle-Sleep.
+No more `conn.close()` in the middle of the `with cursor()` block. Instead, on an empty batch only a flag is set (`batch_was_empty = True`), the `with` block is exited, the `finally` does the `conn.close()` cleanly, and the idle sleep happens **afterwards**.
 
 ```python
 batch_was_empty = False
@@ -56,27 +56,27 @@ else:
     await asyncio.sleep(0.1)
 ```
 
-## Anwenden
+## Apply
 
-Eine einzige Datei überschreiben:
+Overwrite a single file:
 
 ```
 C:\_BOTS\crypto_trading_bot_v2\4_telegram_bot.py
 ```
 
-Watchdog neu starten:
+Restart the watchdog:
 ```
 Ctrl+C
 py main_watchdog.py
 ```
 
-## Verification nach Deploy
+## Verification after deploy
 
-Im Log erscheinen die beiden Fehler nicht mehr:
+The following two errors no longer appear in the log:
 - `Error returning connection to pool: trying to put unkeyed connection`
 - `⚠️ Loop-Fehler: connection already closed`
 
-## Git-Commit
+## Git commit
 
 ```
 git add 4_telegram_bot.py
@@ -92,11 +92,11 @@ outside the try-block."
 git push
 ```
 
-## Alle anderen Fixes aus combined_fixes.zip sind OK
+## All other fixes from combined_fixes.zip are OK
 
-- `6_housekeeping.py` (Gap-Filler) ✓
+- `6_housekeeping.py` (gap filler) ✓
 - `10_pump_dump_detector.py` (Dead-Cat-Bounce) ✓
-- `core/charting.py` (Spike-Marker) ✓
+- `core/charting.py` (spike marker) ✓
 - `23_market_tracker.py` (Per-Bot Performance + Kelly) ✓
 
-Nur der Telegram-Bot hatte den Bug.
+Only the Telegram bot had the bug.

@@ -1,21 +1,21 @@
-# Design: R1 + TimescaleDB-Migration (Candles/Indicators → 2 Hypertables)
+# Design: R1 + TimescaleDB migration (candles/indicators → 2 hypertables)
 
-**Status:** Entwurf (2026-07-04) · **Autor:** Audit-Session · **Voraussetzung:** Fleet läuft stabil auf dem Stand nach Batch 4 + WS-Fixes.
+**Status:** Draft (2026-07-04) · **Author:** Audit session · **Prerequisite:** Fleet running stably at the state after batch 4 + WS fixes.
 
-> **⚠ Dieses Dokument ist der ENTWURF von 2026-07-04. Die Phasen 3–5 sind seit 2026-07-16
-> live — die Phasentabelle in §3 beschreibt Zukunft, die längst Vergangenheit ist.**
-> Gemessener Ist-Stand, Mengengerüst und die noch offenen Operator-Entscheidungen:
-> **`docs/T-2026-KYT-9050-002-c-gate-status.md`** (2026-08-01). Insbesondere überholt sind
-> hier: die 25-GB-Ausgangsgröße (real 64 GB), „C: hat ~160 GB frei" (real 78 GB) und die
-> Zusage „Rollback ist in jeder Phase trivial" (gilt seit dem Write-Primary-Flip nicht mehr).
+> **⚠ This document is the DRAFT from 2026-07-04. Phases 3–5 have been
+> live since 2026-07-16 — the phase table in §3 describes a future that is long since past.**
+> Measured actual state, the quantitative picture and the still-open operator decisions:
+> **`docs/T-2026-KYT-9050-002-c-gate-status.md`** (2026-08-01). In particular, superseded
+> here: the 25 GB starting size (real 64 GB), "C: has ~160 GB free" (real 78 GB) and
+> the promise "rollback is trivial in every phase" (no longer holds since the write-primary flip).
 
-**Ziel:** Ein Projekt, zwei Root-Causes:
-1. **R1 (Audit #1):** Forming-Candle-Vertrag festnageln — Look-ahead/Repaint in ~allen Strategien und ML-Bots beenden. Voraussetzung für das gesamte Retrain-Programm (Report 16, Abschnitt 8).
-2. **Tabellen-Sprawl (Report 18):** 9.297 per-Symbol-Tabellen → 2 Hypertables. Erwartete Effekte: Storage 25 GB → ~4–6 GB (Compression), WAL-Kollaps, autovacuum-Entlastung, globale Queries, Schema-Änderungen in einer Spalte statt 9.297 Rollouts.
+**Goal:** One project, two root causes:
+1. **R1 (Audit #1):** Nail down the forming-candle contract — end look-ahead/repaint in ~all strategies and ML bots. Prerequisite for the entire retrain programme (report 16, section 8).
+2. **Table sprawl (report 18):** 9,297 per-symbol tables → 2 hypertables. Expected effects: storage 25 GB → ~4–6 GB (compression), WAL collapse, autovacuum relief, global queries, schema changes in one column instead of 9,297 rollouts.
 
 ---
 
-## 1. Ziel-Schema
+## 1. Target schema
 
 ```sql
 CREATE TABLE candles (
@@ -41,16 +41,16 @@ ALTER TABLE candles SET (
 SELECT add_compression_policy('candles', INTERVAL '14 days');
 ```
 
-`indicators` analog: gleiche Keys + `is_closed` + die ~120 Indikator-Spalten. **Entscheidung dabei fällig (P3.12):** Spalten von `REAL` (float4) auf `double precision` heben — Sub-Cent-Coins verlieren aktuell Präzision; Compression macht den Größenunterschied nahezu irrelevant.
+`indicators` analogous: same keys + `is_closed` + the ~120 indicator columns. **Decision pending here (P3.12):** raise columns from `REAL` (float4) to `double precision` — sub-cent coins currently lose precision; compression makes the size difference nearly irrelevant.
 
-**Der R1-Vertrag konkret:**
-- Ingestion schreibt jede WS-Kline mit `is_closed = k['x']` (das Closed-Flag liefert Binance mit — es wird heute schlicht ignoriert).
-- REST-Catch-up/Gap-Filler schreiben `is_closed = true` (historische Kerzen sind per Definition geschlossen), außer der jüngsten Periode.
-- **Alle Indikator-/Strategie-/ML-Reader konsumieren ausschließlich `is_closed = true`.** Nur Preis-Checks (Monitore 5/8, get_live_price-Fallback) dürfen explizit die forming Candle sehen.
+**The R1 contract, concretely:**
+- Ingestion writes every WS kline with `is_closed = k['x']` (Binance delivers the closed flag — today it is simply ignored).
+- REST catch-up/gap-filler write `is_closed = true` (historical candles are closed by definition), except for the most recent period.
+- **All indicator/strategy/ML readers consume exclusively `is_closed = true`.** Only price checks (monitors 5/8, get_live_price fallback) may explicitly see the forming candle.
 
-## 2. Eine API statt 40 f-String-Stellen: `core/candles.py`
+## 2. One API instead of 40 f-string sites: `core/candles.py`
 
-Die Migration wird für die Bots unsichtbar, indem ALLE Zugriffe vorher durch eine zentrale API laufen:
+The migration is made invisible to the bots by routing ALL access through a central API beforehand:
 
 ```python
 read_candles(conn, symbol, tf, limit, include_forming=False)   # → DataFrame, ASC
@@ -60,67 +60,67 @@ upsert_candles(conn, rows, closed: bool)                        # Ingestion/Fill
 upsert_indicators(conn, df, symbol, tf)                         # Engine
 ```
 
-- Phase A: Die API liest/schreibt die **alten** Tabellen (reine Umverdrahtung, kein Verhaltenswechsel — außer dem bewussten `include_forming`-Default `False`, der R1 bot-für-bot scharf schaltet).
-- Phase C: Die API wird intern auf die Hypertable umgestellt — **ohne dass ein Bot angefasst wird.**
+- Phase A: The API reads/writes the **old** tables (pure rewiring, no behaviour change — except for the deliberate `include_forming` default of `False`, which switches on R1 bot by bot).
+- Phase C: The API is switched internally to the hypertable — **without touching a single bot.**
 
-**Bekannte Call-Sites (Umverdrahtungs-Backlog, ~40):** `1_data_ingestion` (Flush, Catch-up, Snapshot) · `2_indicator_engine` (Read Candles/Write Indicators) · `6_housekeeping` (Gap-Filler, Delisted-Scan) · `3_detectors` + `strategies/*` (480×Indicators, get_live_price-Fallback) · Monitore `5`/`8` (5m-Polls — *include_forming=True*) · `chart_data_service` · AI-Bots `9,10,11,12,13,14,15,16,18,21,24,25,29` · `28` (ROM1 5m-Close) · `core/trade_utils` (2×), `core/market_utils` · Trainer `qm/smc_ml_trainer`, `fib_backtest` · `tools/regression_guard`.
+**Known call sites (rewiring backlog, ~40):** `1_data_ingestion` (flush, catch-up, snapshot) · `2_indicator_engine` (read candles/write indicators) · `6_housekeeping` (gap filler, delisted scan) · `3_detectors` + `strategies/*` (480×indicators, get_live_price fallback) · monitors `5`/`8` (5m polls — *include_forming=True*) · `chart_data_service` · AI bots `9,10,11,12,13,14,15,16,18,21,24,25,29` · `28` (ROM1 5m close) · `core/trade_utils` (2×), `core/market_utils` · trainers `qm/smc_ml_trainer`, `fib_backtest` · `tools/regression_guard`.
 
-## 3. Migrations-Phasen (jede mit Gate)
+## 3. Migration phases (each with a gate)
 
-| Phase | Inhalt | Gate (muss grün sein, sonst Stopp) |
+| Phase | Content | Gate (must be green, otherwise stop) |
 |---|---|---|
-| **0. Prep** (~0,5 T) | Hypertables anlegen (leer); `core/candles.py` gegen ALTE Tabellen; Symbol-Whitelist-Validierung in `load_coins` (P3.3 — verhindert neue Müll-Tabellen-Klasse in der Hypertable) | Unit-Smoke: API-Reads byte-gleich zu Direkt-SQL |
-| **1. Reader-Umverdrahtung** (~2–3 T) | Call-Sites auf die API umstellen, Reihenfolge nach Risiko: chart_data_service → strategies/3 → AI-Bots → Monitore (mit `include_forming=True`!) → Engine-Reads. R1 wird hier pro Bot wirksam (`include_forming=False`) | Regression-Guard nach jedem Block; Signal-Raten im 24h-Vergleich (R1 WIRD Raten senken — dokumentieren, nicht erschrecken) |
-| **2. Dual-Write** (~1 T) | Ingestion + Engine + Gap-Filler schreiben ZUSÄTZLICH in die Hypertables (forward-only ab Aktivierung); einmaliger Backfill-Copy der Historie per `INSERT INTO candles SELECT ..., true FROM "{SYM}_{tf}"` (Batch-Skript, nachts) | Paritäts-Query: Row-Counts + max(open_time) + Stichproben-Checksummen alt vs. neu, pro TF |
-| **3. Parität beobachten** (≥5–7 Tage) | Fleet liest weiter ALT, schreibt doppelt. Täglicher automatischer Paritäts-Report (Cron) | 0 Drift-Findings an 3 aufeinanderfolgenden Tagen |
-| **4. Read-Cutover** (~0,5 T) | `core/candles.py` intern auf Hypertable umschalten (Feature-Flag `KYTHERA_CANDLES_SOURCE=hyper`), Fleet-Restart | 24h Betrieb: Health-Monitor grün, Signal-Raten ±erwartbar, Query-Zeiten via pg_stat_statements ≤ alt |
-| **5. Cleanup** | Dual-Write aus; alte Tabellen erst **nach 7 weiteren Tagen** droppen (vorher pg_dump-Sicherung); Compression-/Retention-Policies aktiv; `open_time`-Einzelindexe entfallen mit den Tabellen | Restore-Test des Dumps; DB-Größe & WAL-Rate dokumentieren (Erwartung: −70–80%) |
+| **0. Prep** (~0.5 d) | Create hypertables (empty); `core/candles.py` against OLD tables; symbol whitelist validation in `load_coins` (P3.3 — prevents a new junk-table class in the hypertable) | Unit smoke: API reads byte-identical to direct SQL |
+| **1. Reader rewiring** (~2–3 d) | Switch call sites to the API, order by risk: chart_data_service → strategies/3 → AI bots → monitors (with `include_forming=True`!) → engine reads. R1 takes effect here per bot (`include_forming=False`) | Regression guard after every block; signal rates in a 24h comparison (R1 WILL lower rates — document, don't panic) |
+| **2. Dual write** (~1 d) | Ingestion + engine + gap filler write additionally into the hypertables (forward-only from activation); one-off backfill copy of history via `INSERT INTO candles SELECT ..., true FROM "{SYM}_{tf}"` (batch script, at night) | Parity query: row counts + max(open_time) + sample checksums old vs. new, per TF |
+| **3. Observe parity** (≥5–7 days) | Fleet keeps reading OLD, writes twice. Daily automatic parity report (cron) | 0 drift findings on 3 consecutive days |
+| **4. Read cutover** (~0.5 d) | Switch `core/candles.py` internally to the hypertable (feature flag `KYTHERA_CANDLES_SOURCE=hyper`), fleet restart | 24h operation: health monitor green, signal rates ±expected, query times via pg_stat_statements ≤ old |
+| **5. Cleanup** | Dual write off; drop old tables only **after 7 more days** (pg_dump backup beforehand); compression/retention policies active; `open_time` single indexes disappear with the tables | Restore test of the dump; DB size & WAL rate documented (expectation: −70–80%) |
 
-**Rollback ist in jeder Phase trivial:** Bis Phase 4 liest die Fleet die alten Tabellen; der Cutover selbst ist ein Env-Flag + Restart zurück.
+**Rollback is trivial in every phase:** Up to phase 4 the fleet reads the old tables; the cutover itself is an env flag + restart back.
 
-> **⚠ Diese Zusage gilt seit 2026-07-16 nicht mehr.** Mit `KYTHERA_CANDLES_WRITE_PRIMARY=hyper`
-> werden die per-Coin-Tabellen nicht mehr geschrieben; sie enden am 2026-07-16 16:00 UTC.
-> Ein Zurückflippen von `KYTHERA_CANDLES_SOURCE` auf `legacy` setzt die Fleet still auf
-> 16 Tage alte Kerzen. Die Asymmetrie ist in `core/candles.py` (§ Phase-5-Write-Primary)
-> beschrieben und in `docs/T-2026-KYT-9050-002-c-gate-status.md` §6 vermessen.
+> **⚠ This promise no longer holds since 2026-07-16.** With `KYTHERA_CANDLES_WRITE_PRIMARY=hyper`
+> the per-coin tables are no longer written; they end on 2026-07-16 16:00 UTC.
+> Flipping `KYTHERA_CANDLES_SOURCE` back to `legacy` silently sets the fleet to
+> 16-day-old candles. The asymmetry is described in `core/candles.py` (§ Phase-5-Write-Primary)
+> and measured in `docs/T-2026-KYT-9050-002-c-gate-status.md` §6.
 
-**Ist-Stand der Phasen (gemessen 2026-08-01, Details im Status-Doc):**
+**Actual state of the phases (measured 2026-08-01, details in the status doc):**
 
-| Phase | Design-Stand | Realität |
+| Phase | Design state | Reality |
 |---|---|---|
-| 0 Prep | Gate | ✅ 2026-07-13, Hypertables angelegt |
-| 1 Reader-Umverdrahtung | Gate | ✅ bis auf **2 bewusst zurückgestellte** Leser (`16_smc_forex_metals_bot:87`, `21_btc_smc_strategy:136`) — die lesen seit dem Write-Primary-Flip eingefrorene Tabellen, Status-Doc §5 |
-| 2 Dual-Write + Backfill | Gate | ✅ Backfill 2026-07-14 (9.669 Tabellen) |
-| 3 Parität ≥5–7 Tage | „0 Drift an 3 Tagen" | ❌ **übersprungen** — Read-Cutover und Write-Primary liefen zusammen; das Gate ist nachträglich nicht erfüllbar (Status-Doc §3) |
-| 4 Read-Cutover | Gate | ✅ live (`KYTHERA_CANDLES_SOURCE=hyper`) |
-| 5 Cleanup | Gate | ⏸ **offen** — Compression nicht aktiv (0 von 128 Chunks je Hypertable), Legacy-Tabellen (64 GB) nicht gedroppt |
+| 0 Prep | Gate | ✅ 2026-07-13, hypertables created |
+| 1 Reader rewiring | Gate | ✅ except for **2 deliberately deferred** readers (`16_smc_forex_metals_bot:87`, `21_btc_smc_strategy:136`) — since the write-primary flip these read frozen tables, status doc §5 |
+| 2 Dual write + backfill | Gate | ✅ backfill 2026-07-14 (9,669 tables) |
+| 3 Parity ≥5–7 days | "0 drift on 3 days" | ❌ **skipped** — read cutover and write primary happened together; the gate can no longer be satisfied retroactively (status doc §3) |
+| 4 Read cutover | Gate | ✅ live (`KYTHERA_CANDLES_SOURCE=hyper`) |
+| 5 Cleanup | Gate | ⏸ **open** — compression not active (0 of 128 chunks per hypertable), legacy tables (64 GB) not dropped |
 
-## 4. Risiken & Gegenmaßnahmen
+## 4. Risks & countermeasures
 
-| Risiko | Einschätzung | Gegenmaßnahme |
+| Risk | Assessment | Countermeasure |
 |---|---|---|
-| **R1 senkt Signal-Raten** (Bots sehen die forming Candle nicht mehr — gewollt!) | Sicher eintretend; Classic-Strats feuern seltener, MIS/RUB/ATB-Verteilungen verschieben sich | Vorher kommunizieren; Shadow-Vergleich 1 Woche; Schwellen erst NACH Retrain neu tunen (Report 16) |
-| Disk während Dual-Write (~+22 GB unkomprimiert) | C: hat ~160 GB frei | Compression-Policy ab Tag 1 auf Chunks >14 d; Backfill nachts in Batches |
-| Upserts in komprimierte Chunks (neuer Coin lädt 730 d Historie) | selten, langsamer aber unterstützt | Backfill-Pfad dekomprimiert gezielt bzw. schreibt vor Policy-Greifen |
-| psycopg2-`execute_values` mit neuem Conflict-Target | klein | in `core/candles.py` gekapselt + Unit-Test |
-| Trainer/Backtests lesen Alt-Tabellen hart | mittel | Trainer-Reads in Phase 1 mit umverdrahten (Batch E hat die Loader gerade angefasst — koordinieren!) |
-| Monitore brauchen die forming Candle (Preis-Checks) | Design-Fallstrick #1 | explizites `include_forming=True` NUR dort; Code-Review-Checkliste |
-| Zwei Sessions arbeiten parallel am Repo | real (heute mehrfach) | Migration als EIN Branch mit klarem Owner; Phase 1 in kleinen Commits pro Bot-Block |
+| **R1 lowers signal rates** (bots no longer see the forming candle — intended!) | Certain to occur; classic strats fire less often, MIS/RUB/ATB distributions shift | Communicate beforehand; shadow comparison for 1 week; retune thresholds only after retrain (report 16) |
+| Disk during dual write (~+22 GB uncompressed) | C: has ~160 GB free | Compression policy from day 1 on chunks >14 d; backfill at night in batches |
+| Upserts into compressed chunks (new coin loads 730 d of history) | rare, slower but supported | Backfill path decompresses selectively or writes before the policy kicks in |
+| psycopg2 `execute_values` with new conflict target | small | encapsulated in `core/candles.py` + unit test |
+| Trainer/backtests read old tables hard-coded | medium | rewire trainer reads in phase 1 too (batch E has just touched the loaders — coordinate!) |
+| Monitors need the forming candle (price checks) | design pitfall #1 | explicit `include_forming=True` ONLY there; code review checklist |
+| Two sessions working on the repo in parallel | real (has happened multiple times today) | migration as ONE branch with a clear owner; phase 1 in small commits per bot block |
 
-## 5. Operator-Entscheidungen — ENTSCHIEDEN (Michi, 2026-07-13)
+## 5. Operator decisions — DECIDED (Michi, 2026-07-13)
 
-Durabler Record: **D-2026-CLD-109** (KB). Diese vier gaten die C-Gate-Phasen 2–5.
+Durable record: **D-2026-CLD-109** (KB). These four gate C-gate phases 2–5.
 
-1. **Retention:** **UNBEGRENZT.** Keine `add_retention_policy` — nur die Compression-Policy. Komprimiert ist die Vollhistorie unkritisch (~4–6 GB).
-2. **REAL → double precision** (P3.12): **JA**, für ALLE ~120 Indikator-Spalten im Zuge des Schema-Neubaus. Sub-Cent-Coins verlieren unter `REAL` Präzision; Compression macht den Größenunterschied irrelevant.
-3. **1d/1w:** **NUR REST/Catch-up, kein WS mehr.** Spart ~1.300 Streams (IP-Drossel-Risiko). WS bleibt für 5m–4h. Der Umbau sitzt in `1_data_ingestion` (Block 6 / Phase 2).
-4. **Retrain:** **Alle möglichen Bots der Reihe nach rerunnen** (Sequential-Jobs-Regel, ein Job gleichzeitig). R1 (`include_forming=False`) verschiebt Feature-Verteilungen fleet-weit → jedes ML-Modell braucht Retrain auf R1-sauberen Walk-Forward-Labels; Artefakte nach `staging_models/`, Rollout je Bot Operator-Entscheidung. Prerequisit für indikator-abhängige Retrains: der historische Indikator-Recompute (T-061/P1.13) — der Backfill ist reiner Copy/Cast, kein Recompute, d.h. Alt-Indikatoren tragen den Forming-Kontaminationswert.
+1. **Retention:** **UNLIMITED.** No `add_retention_policy` — only the compression policy. Once compressed, the full history is unproblematic (~4–6 GB).
+2. **REAL → double precision** (P3.12): **YES**, for ALL ~120 indicator columns as part of the schema rebuild. Sub-cent coins lose precision under `REAL`; compression makes the size difference irrelevant.
+3. **1d/1w:** **REST/catch-up only, no more WS.** Saves ~1,300 streams (IP-throttle risk). WS stays for 5m–4h. The rework sits in `1_data_ingestion` (block 6 / phase 2).
+4. **Retrain:** **Rerun all possible bots one after another** (sequential-jobs rule, one job at a time). R1 (`include_forming=False`) shifts feature distributions fleet-wide → every ML model needs a retrain on R1-clean walk-forward labels; artifacts to `staging_models/`, rollout per bot is an operator decision. Prerequisite for indicator-dependent retrains: the historical indicator recompute (T-061/P1.13) — the backfill is a plain copy/cast, not a recompute, i.e. old indicators carry the forming-contamination value.
 
-> **Startzeitpunkt der C-Gate:** frühestens nach fertiger Reader-Umverdrahtung (Blocks 3–6) und nach der T-061-Rerun-Queue; jeder irreversible Schritt (Hypertable-DDL, Backfill, Read-Cutover, Table-Drop) bleibt eskalations-gegatet (Michi).
+> **C-gate start time:** at the earliest after reader rewiring is finished (blocks 3–6) and after the T-061 rerun queue; every irreversible step (hypertable DDL, backfill, read cutover, table drop) stays escalation-gated (Michi).
 
-## 6. Verifikations-Werkzeuge
+## 6. Verification tools
 
-- **Paritäts-Skript** `tools/candles_parity.py`: vergleicht pro (symbol, tf) Row-Count, max(open_time), Checksumme über OHLCV der letzten N Tage alt vs. neu; Exit ≠ 0 bei Drift → als Phase-3-Cron.
-- **Regression-Guard** (tools/regression_guard): bestehende Goldens laufen unverändert gegen die API — Phase-1-Gate.
-- **pg_stat_statements** (seit heute aktiv): Query-Zeiten vorher/nachher als harte Cutover-Metrik.
-- **Health-Monitor:** DATA_STALE-Check bleibt der Live-Kanarienvogel; beim Cutover zusätzlich temporär auf 2 Symbole erweitern.
+- **Parity script** `tools/candles_parity.py`: compares row count, max(open_time), checksum over OHLCV of the last N days old vs. new per (symbol, tf); exit ≠ 0 on drift → as a phase-3 cron.
+- **Regression guard** (tools/regression_guard): existing goldens run unchanged against the API — phase-1 gate.
+- **pg_stat_statements** (active since today): query times before/after as a hard cutover metric.
+- **Health monitor:** the DATA_STALE check remains the live canary; also temporarily extend to 2 symbols during cutover.

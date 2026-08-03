@@ -1,50 +1,50 @@
 # Dossier: BTC SMC (100x)
 
-> Regelbasierte BTC-SMC-Strategie mit dem handwerklich besten Setup-Design der SMC-Familie — und einem mathematisch defekten 100x-Hebel-Design. **Note (16): D (F as-is).** Kernverdikt: **P0.5** — bei 100x isoliert liegt die Liquidation bei ~−0,9%, *vor* jedem 0,4–1,2%-SL; jeder Stop = −100% Margin. Der Bot ist im Ist-Zustand ein Liquidations-Generator; mit Hebel-Fix + ehrlichem Walk-Forward der prüfenswerteste regelbasierte SMC-Bot.
+> Rule-based BTC SMC strategy with the best-crafted setup design in the SMC family — and a mathematically broken 100x leverage design. **Grade (16): D (F as-is).** Core verdict: **P0.5** — at 100x isolated, liquidation sits at ~−0.9%, *before* every 0.4–1.2% SL; every stop = −100% margin. As-is, the bot is a liquidation generator; with a leverage fix + an honest walk-forward it's the most worth-checking rule-based SMC bot.
 
-## 1. Steckbrief
+## 1. Profile
 
 | | |
 |---|---|
-| Bot | `21_btc_smc_strategy.py` — regelbasiert, kein ML, kein Trainer |
-| Markt/TF | BTC; 1h-Signale (Doppelsignal-Fenster „1h auseinander", P2.46) |
-| Leverage | **`DESIRED_LEVERAGE = 100x`** (21:31-35) bei 0,4–1,2%-SL (21:199, 238) — **P0** |
-| Setup-Qualität | positiv hervorgehoben (Report 16): FVG-Age-Caps (MAX_FVG_AGE=48), Trendfilter, R:R-Check, SL-Validierung; einziger Bot der Familie, der die letzte (Forming-)Kerze korrekt droppt (`iloc[:-1]`) |
-| Parameter-Herkunft | In-Sample-Grid-Search (nie out-of-sample validiert) |
-| Tracking | **keins** — schreibt kein `ai_signals`, taucht in keiner Performance-Statistik auf |
+| Bot | `21_btc_smc_strategy.py` — rule-based, no ML, no trainer |
+| Market/TF | BTC; 1h signals (double-signal window "1h apart", P2.46) |
+| Leverage | **`DESIRED_LEVERAGE = 100x`** (21:31-35) at 0.4–1.2% SL (21:199, 238) — **P0** |
+| Setup quality | positively highlighted (Report 16): FVG age caps (MAX_FVG_AGE=48), trend filter, R:R check, SL validation; the only bot in the family that correctly drops the last (forming) candle (`iloc[:-1]`) |
+| Parameter origin | in-sample grid search (never validated out-of-sample) |
+| Tracking | **none** — writes no `ai_signals`, doesn't appear in any performance statistic |
 
-## 2. Live-Bilanz
+## 2. Live balance
 
-**Keine.** Report 16 (Ranking #21): untracked — einer der drei unvermessenen Bots (16/17/21), kein valider Backtest. Die einzige „Bilanz" ist rechnerisch: bei 100x isoliert wird jede Position bei ~−0,9% liquidiert, bevor der SL (0,4–1,2%) greift; selbst der 0,4%-Floor bedeutet −40% Margin pro Stop. Der R:R-Check des Bots ignoriert den Hebel.
+**None.** Report 16 (ranking #21): untracked — one of the three unmeasured bots (16/17/21), no valid backtest. The only "balance" is arithmetic: at 100x isolated, every position gets liquidated at ~−0.9%, before the SL (0.4–1.2%) triggers; even the 0.4% floor means −40% margin per stop. The bot's R:R check ignores leverage.
 
-## 3. Befunde
+## 3. Findings
 
-| ID | Ebene | Schweregrad | Einzeiler | Status |
+| ID | Level | Severity | One-liner | Status |
 |---|---|---|---|---|
-| **P0.5** | Bot | **P0** | 100x Leverage mit 0,4–1,2% SL → Liquidation ~−0,9% *vor* dem SL; jeder Stop = −100% Margin; R:R-Check ignoriert Leverage | ✔ (Code, `21:31-35,199,238`) |
-| P2.46 | Bot | MEDIUM | Kein Cooldown/Dedupe im ganzen File: unconditional `iloc[:-1]` + DB-Write-Lag → dieselbe Trigger-Kerze signalisiert zweimal, 1h auseinander | ✔ (Code, `21:121-123,264`) |
-| 16-Konzept | Konzept | MEDIUM | Parameter aus In-Sample-Grid-Search; nie ehrlicher Walk-Forward | ✔ (Konzept-Review) |
-| 16-Meta | Prozess | MEDIUM | Komplett unvermessen (kein `ai_signals`, keine Performance-Statistik) | ✔ |
-| 08-Positiv | Bot | — | Validiert SL-Seite (im Gegensatz zu 16), droppt letzte Kerze korrekt, Age-Caps/Trendfilter/R:R-Check vorhanden — „bestes Setup-Design der SMC-Familie" | ✔ |
+| **P0.5** | Bot | **P0** | 100x leverage with 0.4–1.2% SL → liquidation ~−0.9% *before* the SL; every stop = −100% margin; R:R check ignores leverage | ✔ (code, `21:31-35,199,238`) |
+| P2.46 | Bot | MEDIUM | No cooldown/dedupe anywhere in the file: unconditional `iloc[:-1]` + DB write lag → the same trigger candle signals twice, 1h apart | ✔ (code, `21:121-123,264`) |
+| 16-concept | Concept | MEDIUM | Parameters from in-sample grid search; never an honest walk-forward | ✔ (concept review) |
+| 16-meta | Process | MEDIUM | Completely unmeasured (no `ai_signals`, no performance statistic) | ✔ |
+| 08-positive | Bot | — | Validates the SL side (unlike 16), correctly drops the last candle, age caps/trend filter/R:R check present — "best setup design in the SMC family" | ✔ |
 
-## 4. Abhängigkeiten & Querschnitts-Risiken
+## 4. Dependencies & cross-cutting risks
 
-- **R4 (Leverage vs. SL, Kern-Root-Cause):** 21 ist neben UFI1 (P0.6) der Namensgeber des R4-Befunds „Leverage-vs-SL nirgends abgeglichen". Fix-Klasse: zentrales `core/trade_utils.py: cap_leverage_to_sl(sl_pct)` (z.B. `lev ≤ 0.5/sl_pct`), von allen signal-emittierenden Bots genutzt — schließt P0.5, P0.6 und die ROM1-SL-Distanzen (P2.27) in einem Zug (Report 16, Empfehlung 8.4).
-- **R1:** nicht betroffen — 21 ist die Referenz-Implementierung für den Closed-Candle-Umgang in der Familie.
-- Kein Tracking → Monitor-Vorbehalt (Report 17) gegenstandslos; aber auch keine Evidenz für irgendeine Edge.
+- **R4 (leverage vs. SL, core root cause):** 21 is, alongside UFI1 (P0.6), the namesake of the R4 finding "leverage-vs-SL never cross-checked anywhere". Fix class: central `core/trade_utils.py: cap_leverage_to_sl(sl_pct)` (e.g. `lev ≤ 0.5/sl_pct`), used by all signal-emitting bots — closes P0.5, P0.6 and the ROM1 SL distances (P2.27) in one go (Report 16, recommendation 8.4).
+- **R1:** not affected — 21 is the reference implementation for correct closed-candle handling in the family.
+- No tracking → the monitor caveat (Report 17) is moot; but also no evidence of any edge.
 
-## 5. Sanierungsplan
+## 5. Remediation plan
 
-**Sofort (P0, vor allem anderen):** Leverage cappen — `lev ≤ 0.5/sl_pct` bzw. `DESIRED_LEVERAGE ≤ 25` (Fix aus P0.5/R4). Solange das nicht deployt ist, darf der Bot kein Kapital anfassen.
+**Immediately (P0, above all else):** cap leverage — `lev ≤ 0.5/sl_pct` or `DESIRED_LEVERAGE ≤ 25` (fix from P0.5/R4). Until that's deployed, the bot must not touch capital.
 
-**Regel-Fixes:** Standard-`check_cooldown/update_cooldown` oder Dedupe auf Trigger-`open_time` (P2.46); Instrumentierung (`ai_signals`) nachrüsten.
+**Rule fixes:** standard `check_cooldown/update_cooldown` or dedupe on trigger `open_time` (P2.46); retrofit instrumentation (`ai_signals`).
 
-**Validierung statt Retrain:** ehrlicher Walk-Forward (V3-Simulator aus Report 15) statt In-Sample-Grid-Search — laut Report 16 ist 21 *nach* Hebel-Fix „der prüfenswerteste regelbasierte SMC-Bot".
+**Validation instead of retrain:** honest walk-forward (V3 simulator from Report 15) instead of in-sample grid search — per Report 16, 21 is, *after* the leverage fix, "the most worth-checking rule-based SMC bot".
 
-**Offene Fragen:** historische Doppelsignale ~1h auseinander im Channel (08, DB-Frage 8) nie ausgewertet; reale Signalfrequenz unbekannt.
+**Open questions:** historical double signals ~1h apart in the channel (08, DB question 8) never evaluated; real signal frequency unknown.
 
-## 6. Belege
+## 6. Evidence
 
 - `AUDIT_TODO.md` P0.5, P2.46, R4
-- `audit_reports/08_smc_bots.md` (Abschnitt 21_btc_smc_strategy.py + Cross-Cutting 1/5)
-- `audit_reports/16_strategy_concept_evaluation.md` (Abschnitt 6, Ranking #21; Querschnittsbefunde 5+6; Empfehlung 8.4/8.5)
+- `audit_reports/08_smc_bots.md` (section 21_btc_smc_strategy.py + cross-cutting 1/5)
+- `audit_reports/16_strategy_concept_evaluation.md` (section 6, ranking #21; cross-cutting findings 5+6; recommendation 8.4/8.5)

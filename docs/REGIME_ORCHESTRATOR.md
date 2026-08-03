@@ -1,25 +1,25 @@
-# Regime-Orchestrator — Technische Dokumentation
+# Regime orchestrator — technical documentation
 
-**Version**: 5.0 (zweidimensionale Klassifikation BTC-Regime × Alt-Context)  
-**Stand**: April 2026  
-**Autor**: Automatisch generiert
+**Version**: 5.0 (two-dimensional classification BTC regime × alt context)  
+**As of**: April 2026  
+**Author**: Automatically generated
 
 ---
 
 ## Overview
 
-Der Regime-Orchestrator ist ein Metasystem das über den bestehenden 25 Trading-Bots liegt. Er:
+The regime orchestrator is a meta-system that sits above the existing 25 trading bots. It:
 
-1. **Erkennt das Markt-Regime** alle 5 Minuten zweidimensional
-2. **Filtert Bot-Signale** nach historischer Regime-Performance
-3. **Postet einen eigenen Trade** (Modul `ROM1`) in einen dedizierten Cornix-Channel, sobald ein Signal das Gate passiert
-4. **Schließt automatisch Trades** bei Regime-Wechseln
+1. **Detects the market regime** two-dimensionally every 5 minutes
+2. **Filters bot signals** by historical regime performance
+3. **Posts its own trade** (module `ROM1`) into a dedicated Cornix channel as soon as a signal passes the gate
+4. **Automatically closes trades** on regime changes
 
-Das System **tradet selbst** — es ist kein reiner Signal-Router. Ein durchgelassenes Bot-Signal ist nur der *Trigger*: `compute_rom1_trade_params()` (`28_signal_orchestrator.py`) verwirft Entry/SL/Targets des Original-Signals und berechnet aus aktuellem Preis und echten S/R-Zonen eine **eigene ROM1-Geometrie**, die als eigene Cornix-Message gepostet und als `model='ROM1'` in `ai_signals` getrackt wird.
+The system **trades on its own** — it's not a pure signal router. A bot signal that gets through is only the *trigger*: `compute_rom1_trade_params()` (`28_signal_orchestrator.py`) discards the original signal's entry/SL/targets and computes its own **ROM1 geometry** from the current price and real S/R zones, which is posted as its own Cornix message and tracked as `model='ROM1'` in `ai_signals`.
 
-**Konsequenz (P1.10):** Gating-Statistik ≠ Ausführungs-Statistik. Die Whitelist entscheidet auf Basis der Performance des *Trigger-Bots*, gehandelt wird aber ROM1-Geometrie. Ein Bot kann in seinem Regime profitabel sein und der daraus abgeleitete ROM1-Trade trotzdem verlieren (und umgekehrt) — beim Lesen der Regime-Performance-Tabellen mitdenken.
+**Consequence (P1.10):** gating statistics ≠ execution statistics. The whitelist decides based on the *trigger bot's* performance, but ROM1 geometry is what's traded. A bot can be profitable in its regime and the ROM1 trade derived from it can still lose (and vice versa) — keep this in mind when reading the regime-performance tables.
 
-### Warum zweidimensional?
+### Why two-dimensional?
 
 ```
 Achse 1: BTC-Regime      Achse 2: Alt-Context
@@ -31,16 +31,16 @@ HIGH_VOLA
 TRANSITION
 ```
 
-Ohne Alt-Context-Achse wären zwei grundlegend verschiedene Szenarien identisch klassifiziert:
+Without the alt-context axis, two fundamentally different scenarios would be classified identically:
 
-| BTC-Regime | Alt-Context | Szenario | Empfehlung |
+| BTC regime | Alt context | Scenario | Recommendation |
 |---|---|---|---|
-| TREND_UP | ALT_STRONG | **Altseason** — Alts pumpen stärker als BTC | Alt-LONGs ideal |
-| TREND_UP | ALT_WEAK | **BTC-Only-Pump** — Alts hinken hinterher | Alt-LONGs trügerisch |
+| TREND_UP | ALT_STRONG | **Altseason** — alts pump harder than BTC | alt LONGs ideal |
+| TREND_UP | ALT_WEAK | **BTC-only pump** — alts lag behind | alt LONGs deceptive |
 
 ---
 
-## Architektur
+## Architecture
 
 ```
 26_regime_detector.py          (alle 5 Min)
@@ -62,17 +62,17 @@ Ohne Alt-Context-Achse wären zwei grundlegend verschiedene Szenarien identisch 
 
 ---
 
-## Prozesse
+## Processes
 
 ### `26_regime_detector.py`
 
-**Was**: Klassifiziert alle 5 Minuten das BTC-Regime und den Alt-Context.  
-**Wie**: Lädt BTCUSDT_15m + BTCDOMUSDT_15m, berechnet ATR/Returns, klassifiziert regelbasiert.  
+**What**: classifies the BTC regime and the alt context every 5 minutes.  
+**How**: loads BTCUSDT_15m + BTCDOMUSDT_15m, computes ATR/returns, classifies rule-based.  
 **Output**:
-- `regime_history` — jeder Check als line
-- `regime_current` — debounced aktuelles Regime (Singleton)
+- `regime_history` — every check as a line
+- `regime_current` — debounced current regime (singleton)
 
-**Wichtigste Konstanten** (am Datei-Anfang):
+**Most important constants** (at the top of the file):
 ```python
 CHECK_INTERVAL_SECONDS = 300          # alle 5 Minuten
 TREND_RETURN_THRESHOLD_4H_PCT = 1.5   # > ±1.5% in 4h = Trend
@@ -83,7 +83,7 @@ ALT_CONTEXT_THRESHOLD_PCT = 1.5       # |BTCDOM 24h| > 1.5% = Rotation
 REGIME_DEBOUNCE_COUNT = 2             # 2 Checks = 10 Min Bestätigung
 ```
 
-**Stündlicher Status-Post** (XX:00:50) in `REGIME_STATUS_CHANNEL_ID`:
+**Hourly status post** (XX:00:50) in `REGIME_STATUS_CHANNEL_ID`:
 ```
 🌡️ REGIME STATUS — 2026-04-18 14:00 UTC
 
@@ -95,13 +95,13 @@ Alt-Context: ALT_NEUTRAL
 
 ### `27_bot_regime_analyzer.py`
 
-**Was**: Berechnet für jeden Bot die historische Win-Rate in jedem (Regime × Alt-Context × Direction)-Kombination.  
-**Wann**: Stündlich zu XX:05:00.  
+**What**: computes the historical win rate for every bot in every (regime × alt context × direction) combination.  
+**When**: hourly at XX:05:00.  
 **Output**:
-- `bot_regime_performance` — Win-Rate, PnL-Stats pro (Bot, Regime, Alt, Direction, Window)
-- `bot_regime_whitelist` — Boolean ob Bot in dieser 4D-Kombination durchgelassen wird
+- `bot_regime_performance` — win rate, PnL stats per (bot, regime, alt, direction, window)
+- `bot_regime_whitelist` — boolean whether the bot is let through in this 4D combination
 
-**Whitelist-Logik (zweistufig)**:
+**Whitelist logic (two-stage)**:
 
 ```
 n < 30 Trades:
@@ -118,7 +118,7 @@ Alle anderen (Standard):
     sonst: GEBLOCKT (wr_below_overall)
 ```
 
-**Täglicher Cross-Table-Post** (07:00 UTC) in `REGIME_STATUS_CHANNEL_ID`:
+**Daily cross-table post** (07:00 UTC) in `REGIME_STATUS_CHANNEL_ID`:
 ```
 📊 BOT × ALT-CONTEXT PERFORMANCE — TREND_UP (30d)
 
@@ -127,153 +127,156 @@ Bot          LONG                          SHORT
 MIS1-8h      45%↓     62%      71%↑        42%      47%      38%↓
 ...
 ```
-> **Spec-Drift (P3.10):** die per-Zelle-`↑`/`↓`-Marker in diesem Beispiel sind
-> **nicht implementiert**. `_cell()` in `27_bot_regime_analyzer.py` gibt nur
-> `"{wr}%"` bzw. `"---"` aus; die `↑`/`↓`-Legende darunter im Status-Post ist
-> verwaist (dokumentiert am Legenden-Code). Zellen tragen also nie einen Pfeil.
+> **Spec drift (P3.10):** the per-cell `↑`/`↓` markers in this example are
+> **not implemented**. `_cell()` in `27_bot_regime_analyzer.py` only outputs
+> `"{wr}%"` or `"---"`; the `↑`/`↓` legend below it in the status post is
+> orphaned (documented at the legend code). Cells therefore never carry an
+> arrow.
 
 ### `28_signal_orchestrator.py`
 
-**Was**: Liest `telegram_outbox`, filtert Bot-Signale, reicht passende durch.  
-**Wann**: Alle 500ms.  
+**What**: reads `telegram_outbox`, filters bot signals, passes matching ones through.  
+**When**: every 500ms.  
 **Output**:
-- Weitergeleitete Signale in `REGIME_TRADING_CHANNEL_ID`
-- ROM1-Einträge in `ai_signals`
+- Forwarded signals in `REGIME_TRADING_CHANNEL_ID`
+- ROM1 entries in `ai_signals`
 - Tracking in `orchestrator_open_trades`
-- Unterdrückte Signale in `orchestrator_suppressed_signals`
+- Suppressed signals in `orchestrator_suppressed_signals`
 
-**Overall-Fallback** (wenn Detektor unzuverlässig):
-- `no_regime`: regime_current leer → Fallback auf ≥50% Overall-WR
-- `regime_is_transition`: explizites TRANSITION → Fallback
-- `regime_unstable`: ≥3 verschiedene Regimes in 2h → Fallback
+**Overall fallback** (when the detector is unreliable):
+- `no_regime`: regime_current empty → fallback to ≥50% overall WR
+- `regime_is_transition`: explicit TRANSITION → fallback
+- `regime_unstable`: ≥3 different regimes in 2h → fallback
 
 ---
 
-## Datenbank-Tabellen
+## Database tables
 
-| Tabelle | Beschreibung | Schreiber |
+| Table | Description | Writer |
 |---|---|---|
-| `regime_history` | Jeder 5-Min-Check | `26_regime_detector` |
-| `regime_current` | Debounced aktuelles Regime (1 line) | `26_regime_detector` |
-| `bot_regime_performance` | Win-Rate pro Bot/Regime/Alt/Direction/Window | `27_bot_regime_analyzer` |
-| `bot_regime_whitelist` | Whitelist-Status pro Bot/Regime/Alt/Direction | `27_bot_regime_analyzer` |
-| `orchestrator_open_trades` | Durchgereichte offene Trades | `28_signal_orchestrator` |
-| `orchestrator_suppressed_signals` | Unterdrückte Signale (Log) | `28_signal_orchestrator` |
+| `regime_history` | Every 5-min check | `26_regime_detector` |
+| `regime_current` | Debounced current regime (1 line) | `26_regime_detector` |
+| `bot_regime_performance` | Win rate per bot/regime/alt/direction/window | `27_bot_regime_analyzer` |
+| `bot_regime_whitelist` | Whitelist status per bot/regime/alt/direction | `27_bot_regime_analyzer` |
+| `orchestrator_open_trades` | Passed-through open trades | `28_signal_orchestrator` |
+| `orchestrator_suppressed_signals` | Suppressed signals (log) | `28_signal_orchestrator` |
 
 ---
 
-## Parameter-Tuning
+## Parameter tuning
 
-### Wann ist ein Regime-Wechsel zu häufig?
+### When is a regime change too frequent?
 
-Wenn die Fallback-Rate im Status-Post dauerhaft über 30% steigt, sind die ATR-Schwellwerte zu sensitiv. Optionen:
+If the fallback rate in the status post rises persistently above 30%, the ATR thresholds are too sensitive. Options:
 
-> **Präzisierung (P3.10):** die `fallback %` im stündlichen Status-Post
-> (`26_regime_detector.py`) ist eine **Gate-Pfad-Aggregatzahl** über *alle*
-> Fallback-Gründe (`no_regime`, `regime_is_transition`, `regime_unstable`,
-> `whitelist_stale`) aus `orchestrator_open_trades.wl_reason` — **nicht** eine
-> isolierte `regime_unstable`-Rate und nicht aus `regime_history`/ATR gerechnet.
-> Ein hoher Wert kann also auch von TRANSITION/Whitelist-Staleness kommen; vor
-> dem ATR-Tuning die Fallback-Gründe einzeln prüfen.
+> **Clarification (P3.10):** the `fallback %` in the hourly status post
+> (`26_regime_detector.py`) is a **gate-path aggregate number** over *all*
+> fallback reasons (`no_regime`, `regime_is_transition`, `regime_unstable`,
+> `whitelist_stale`) from `orchestrator_open_trades.wl_reason` — **not** an
+> isolated `regime_unstable` rate, and not computed from
+> `regime_history`/ATR. A high value can therefore also come from
+> TRANSITION/whitelist staleness; check the fallback reasons individually
+> before tuning the ATR.
 
-1. `VOLA_HIGH_PERCENTILE` erhöhen (e.g. 80 statt 75) → HIGH_VOLA seltener
-2. `REGIME_DEBOUNCE_COUNT` erhöhen (e.g. 3 statt 2) → 15 Min Bestätigung
-3. `TREND_RETURN_THRESHOLD_4H_PCT` erhöhen (e.g. 2.0 statt 1.5) → strengere Trend-Erkennung
+1. increase `VOLA_HIGH_PERCENTILE` (e.g. 80 instead of 75) → HIGH_VOLA rarer
+2. increase `REGIME_DEBOUNCE_COUNT` (e.g. 3 instead of 2) → 15-min confirmation
+3. increase `TREND_RETURN_THRESHOLD_4H_PCT` (e.g. 2.0 instead of 1.5) → stricter trend detection
 
-### Wann ist die Whitelist zu restriktiv?
+### When is the whitelist too restrictive?
 
-Wenn viele Signale gefiltert werden und die ROM1-Performance nicht besser ist als die durchschnittliche Bot-Performance:
+If many signals are filtered out and ROM1 performance isn't better than the average bot performance:
 
-1. `COUNTER_TREND_MIN_WR_PCT` reduzieren (e.g. 55 statt 60)
-2. `COUNTER_TREND_MIN_ADVANTAGE_PP` reduzieren (e.g. 7 statt 10)
-3. `MIN_TRADES_FOR_DECISION` erhöhen (e.g. 50 statt 30) → mehr Bots bleiben in insufficient_data
+1. reduce `COUNTER_TREND_MIN_WR_PCT` (e.g. 55 instead of 60)
+2. reduce `COUNTER_TREND_MIN_ADVANTAGE_PP` (e.g. 7 instead of 10)
+3. increase `MIN_TRADES_FOR_DECISION` (e.g. 50 instead of 30) → more bots stay in insufficient_data
 
-### Alt-Context zu sensitiv?
+### Alt context too sensitive?
 
-Wenn ALT_STRONG/ALT_WEAK zu häufig ausgelöst wird:
+If ALT_STRONG/ALT_WEAK triggers too often:
 
-1. `ALT_CONTEXT_THRESHOLD_PCT` erhöhen (e.g. 2.0 statt 1.5) → nur stärkere Rotationen triggern
+1. increase `ALT_CONTEXT_THRESHOLD_PCT` (e.g. 2.0 instead of 1.5) → only stronger rotations trigger
 
 ---
 
 ## Troubleshooting
 
-### `regime_history` füllt sich nicht
+### `regime_history` isn't filling up
 
-1. Prüfen ob `26_regime_detector.py` läuft: `ps aux | grep regime`
-2. Log checken: `tail -f logs/REGIME_DETECTOR.log`
-3. Prüfen ob `BTCUSDT_15m` Daten hat: `SELECT COUNT(*) FROM "BTCUSDT_15m"`
-4. Prüfen ob `MIN_DATA_POINTS_15M` (480 Kerzen = 5 Tage) erfüllt ist
+1. Check whether `26_regime_detector.py` is running: `ps aux | grep regime`
+2. Check the log: `tail -f logs/REGIME_DETECTOR.log`
+3. Check whether `BTCUSDT_15m` has data: `SELECT COUNT(*) FROM "BTCUSDT_15m"`
+4. Check whether `MIN_DATA_POINTS_15M` (480 candles = 5 days) is satisfied
 
-### `regime_current` wird nicht initialisiert
+### `regime_current` isn't being initialized
 
-Korrektur (P3.10, Spec-Drift gegen den Code): `regime_current` wird beim **ersten**
-erfolgreichen Check (Cold Start) sofort geschrieben — nicht erst nach dem zweiten.
-`DEBOUNCE_COUNT=2` verzögert nur nachfolgende Regime-**Wechsel**, nicht die
-Erst-Befüllung (`core/regime_logic.py`, Cold-Start-INSERT vor der Debounce-Logik).
-Bleibt die Zeile leer, hat der Detektor also noch keinen einzigen Check bestanden
-(fehlende Daten / Prozess läuft nicht), nicht „wartet auf Check 2".
+Correction (P3.10, spec drift against the code): `regime_current` is
+written immediately on the **first** successful check (cold start) — not
+only after the second. `DEBOUNCE_COUNT=2` only delays subsequent regime
+**changes**, not the initial population (`core/regime_logic.py`, the
+cold-start INSERT runs before the debounce logic). If the row stays
+empty, the detector hasn't passed a single check yet (missing data /
+process not running), not "waiting for check 2".
 
-### Keine Signale im Trading-Channel
+### No signals in the trading channel
 
-1. Ist `REGIME_TRADING_CHANNEL_ID` korrekt? Bot muss Admin im Channel sein.
-2. Hat `bot_regime_whitelist` Einträge? → `27_bot_regime_analyzer --initial-run` ausführen
-3. Ist das aktuelle Regime ein Fallback-Regime (TRANSITION)?
-4. Log prüfen: `tail -f logs/SIGNAL_ORCHESTRATOR.log`
-5. Unterdrückte Signale prüfen: `SELECT * FROM orchestrator_suppressed_signals ORDER BY ts DESC LIMIT 10`
+1. Is `REGIME_TRADING_CHANNEL_ID` correct? The bot must be admin in the channel.
+2. Does `bot_regime_whitelist` have entries? → run `27_bot_regime_analyzer --initial-run`
+3. Is the current regime a fallback regime (TRANSITION)?
+4. Check the log: `tail -f logs/SIGNAL_ORCHESTRATOR.log`
+5. Check suppressed signals: `SELECT * FROM orchestrator_suppressed_signals ORDER BY ts DESC LIMIT 10`
 
-### ROM1 erscheint nicht in Per-Bot-Performance
+### ROM1 doesn't appear in per-bot performance
 
-`8_ai_trade_monitor.py` übernimmt das Lifecycle-Tracking für ROM1. Erst nach dem ersten geschlossenen ROM1-Trade erscheint er in `closed_ai_signals` und damit in der Performance-Tabelle.
+`8_ai_trade_monitor.py` takes over lifecycle tracking for ROM1. Only after the first closed ROM1 trade does it appear in `closed_ai_signals` and thus in the performance table.
 
-### Cornix reagiert nicht auf Signale
+### Cornix doesn't react to signals
 
-Cornix muss so konfiguriert sein, dass es **ausschließlich** `<CH_REGIME_TRADING>` als Signal-Quelle überwacht. Alle alten Bot-Channels müssen aus der Cornix-Config removed werden.
+Cornix must be configured to watch **exclusively** `<CH_REGIME_TRADING>` as the signal source. All old bot channels must be removed from the Cornix config.
 
 ---
 
-## Betrieb
+## Operation
 
-### Neue Bots hinzufügen
+### Adding new bots
 
-Der Orchestrator erkennt Bots automatisch über:
-1. Regex-Patterns im Signaltext (e.g. `MIS1`, `QM_BULL`)
-2. Channel-ID-Mapping (`CHANNEL_TO_BOT_FALLBACK` in `28_signal_orchestrator.py`)
+The orchestrator detects bots automatically via:
+1. Regex patterns in the signal text (e.g. `MIS1`, `QM_BULL`)
+2. Channel-ID mapping (`CHANNEL_TO_BOT_FALLBACK` in `28_signal_orchestrator.py`)
 
-Nach dem Deployment eines neuen Bots: Nächster stündlicher Analyzer-Lauf berechnet automatisch seine Whitelist-Einträge.
+After deploying a new bot: the next hourly analyzer run automatically computes its whitelist entries.
 
-### Manueller Regime-Override (Testing)
+### Manual regime override (testing)
 
 ```sql
 UPDATE regime_current SET regime = 'TREND_UP', alt_context = 'ALT_STRONG'
 WHERE id = 1;
 ```
 
-Der Orchestrator erkennt den Wechsel beim nächsten Loop (500ms) und führt Close-Commands aus.
+The orchestrator detects the change on the next loop (500ms) and executes close commands.
 
-### AUTO_CLOSE deaktivieren
+### Disabling AUTO_CLOSE
 
 ```python
 # In 28_signal_orchestrator.py:
 AUTO_CLOSE_ON_REGIME_CHANGE = False
 ```
 
-Nach Neustart des Prozesses: Regime-Wechsel werden noch erkannt und geloggt, aber keine Close-Commands gepostet.
+After restarting the process: regime changes are still detected and logged, but no close commands are posted.
 
-### Differenzierter Auto-Close: Gewinner trailen statt closen (A/B, T-2026-CU-9050-049)
+### Differentiated auto-close: trail winners instead of closing them (A/B, T-2026-CU-9050-049)
 
-Der blinde Auto-Close kappte ~49 % der Regime-Closes im Gewinn (Report aus T-2026-CU-9050-031). Optional lässt sich der Close differenzieren: ein Trade **im Gewinn** bei Regime-Wechsel wird **nicht** market-geschlossen, sondern sein Stop-Loss wird via Cornix-**SL-Update-Message** (`SL <SYMBOL> <preis>`, symbol-adressiert wie `Close`) auf **Break-even** bzw. das **letzte erreichte TP-Level** gezogen — der Trade läuft weiter. Verlierer werden weiter geschlossen.
+The blind auto-close cut short ~49% of regime closes while in profit (report from T-2026-CU-9050-031). The close can optionally be differentiated: a trade that is **in profit** at a regime change is **not** market-closed, but instead its stop-loss is moved via a Cornix **SL update message** (`SL <SYMBOL> <preis>`, symbol-addressed like `Close`) to **break-even** or the **last TP level reached** — the trade keeps running. Losers keep getting closed.
 
 ```python
 # In 28_signal_orchestrator.py bzw. per .env (Operator-Entscheid):
 TRAIL_WINNERS_ON_REGIME_CHANGE  # env KYTHERA_REGIME_TRAIL_WINNERS=1, Default 0 (OFF)
 ```
 
-**Default OFF** — das ändert Live-Money-Verhalten und startet ein A/B-Experiment; Scharfschalten ist eine Operator-Entscheidung (OPUS-HANDOFF §6). Die SL-Update-Message ist **keine** zweite Cornix-parsebare Signal-Message (harte Regel 4).
+**Default OFF** — this changes live-money behaviour and starts an A/B experiment; arming it is an operator decision (OPUS-HANDOFF §6). The SL update message is **not** a second Cornix-parsable signal message (hard rule 4).
 
-**A/B-Auswertung** über `orchestrator_open_trades.regime_close_action`:
+**A/B evaluation** via `orchestrator_open_trades.regime_close_action`:
 
-- `REGIME_CHANGE_CLOSED` — Verlierer sofort geschlossen; Outcome = realer PnL zum Close-Zeitpunkt (Row landet in `closed_ai_signals` mit `status='CLOSED_REGIME_CHANGE'`).
-- `REGIME_CHANGE_TRAILED` — Gewinner getrailt, läuft weiter; das echte Outcome kommt später aus dem Monitor/Lifecycle-Sync (`closed_ai_signals.status` = `CLOSED_TP`/`CLOSED_SL`). Der Tag überlebt den finalen Close, `regime_action_at` hält den Zeitpunkt.
+- `REGIME_CHANGE_CLOSED` — losers closed immediately; outcome = real PnL at close time (row lands in `closed_ai_signals` with `status='CLOSED_REGIME_CHANGE'`).
+- `REGIME_CHANGE_TRAILED` — winners trailed, keep running; the real outcome comes later from the monitor/lifecycle sync (`closed_ai_signals.status` = `CLOSED_TP`/`CLOSED_SL`). The tag survives the final close, `regime_action_at` holds the timestamp.
 
-Vergleich der beiden Kohorten (Netto-PnL/WR über 4–6 Wochen) via Join `orchestrator_open_trades` → `closed_ai_signals` (coin+direction+`open_time`≈`opened_at`, wie `sync_closed_trades`).
+Comparison of the two cohorts (net PnL/WR over 4–6 weeks) via a join `orchestrator_open_trades` → `closed_ai_signals` (coin+direction+`open_time`≈`opened_at`, like `sync_closed_trades`).

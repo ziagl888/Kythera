@@ -1,36 +1,36 @@
-# Batch 3 Report — Cooldown-Konsolidierung & ATB/Master/Forex
+# Batch 3 Report — cooldown consolidation & ATB/master/forex
 
 **Target files:** `14_ai_atb_bot.py`, `15_ai_master_bot.py`, `16_smc_forex_metals_bot.py`, `core/market_utils.py`
 
 ## Completed
 
-### #33 — SMC Forex Cooldown-Check hatte Seiteneffekt (16_smc_forex_metals_bot.py)
-Die alte `is_cooled_down`-Funktion hat den `INSERT ON CONFLICT`-Update-Befehl direkt beim Check ausgeführt — i.e. selbst wenn der nachfolgende `send_signal` gecrashed wäre, hätte die Tabelle bereits den Cooldown-Eintrag enthalten (Trade "gesendet" obwohl nie posted). Jetzt getrennt: `check_cooldown` (nur Lese-Query) vor dem Send, `update_cooldown` erst nach erfolgreichem Send.
+### #33 — SMC forex cooldown check had a side effect (16_smc_forex_metals_bot.py)
+The old `is_cooled_down` function executed the `INSERT ON CONFLICT` update command directly during the check — i.e. even if the subsequent `send_signal` had crashed, the table would already contain the cooldown entry (trade "sent" even though never posted). Now separated: `check_cooldown` (read-only query) before the send, `update_cooldown` only after a successful send.
 
-### #34 — SMC Forex Cooldown-Keys ohne TF-Suffix (16_smc_forex_metals_bot.py)
-Previously `module = f"SMC_{tf.upper()}_BOS"` → Dasselbe Coin/Direction konnte gleichzeitig auf `1h` und `4h` feuern (Dual-Signal). Jetzt nur `SMC_BOS` und `SMC_FVG` → TF-übergreifender Cooldown von 12h.
+### #34 — SMC forex cooldown keys without TF suffix (16_smc_forex_metals_bot.py)
+Previously `module = f"SMC_{tf.upper()}_BOS"` → the same coin/direction could fire on `1h` and `4h` at the same time (dual signal). Now only `SMC_BOS` and `SMC_FVG` → cross-TF cooldown of 12h.
 
-### #51 — Cooldown-Konsolidierung
-Zwei eigene Cooldown-Implementierungen removed und durch `core.market_utils.check_cooldown` + `update_cooldown` ersetzt:
+### #51 — cooldown consolidation
+Two homegrown cooldown implementations removed and replaced by `core.market_utils.check_cooldown` + `update_cooldown`:
 - `14_ai_atb_bot.py`: `is_cooled_down()` + `set_cooldown()` → `check_cooldown()` + `update_cooldown()`
-- `16_smc_forex_metals_bot.py`: `is_cooled_down()` (vermischter Check+Update) → getrennte `check_cooldown`/`update_cooldown`-Calls
+- `16_smc_forex_metals_bot.py`: `is_cooled_down()` (mixed check+update) → separated `check_cooldown`/`update_cooldown` calls
 
-This means existieren jetzt zentral nur noch die market_utils-Helper. Alle Bots nutzen die gleiche Timezone-bewusste Logik, die gleichen DB-Tabellen, und die gleiche Fehlerbehandlung.
+This means only the market_utils helpers now exist centrally. All bots use the same timezone-aware logic, the same DB tables, and the same error handling.
 
-### #28 — Master Bot symbol-cleanup robuster (15_ai_master_bot.py)
-An zwei Stellen: `str.replace('_.*', '', regex=True).str.replace('USDT', '', regex=False) + 'USDT'` durch `str.replace(r'_\d+[mhdwM]$', '', regex=True)` ersetzt. Die alte Logik war "selbstheilend" für Standard-Coins (removed USDT und hängt es wieder an), aber fragil bei hypothetischen Edge-Cases wie Coins mit `USDT` im Namensinnern. Die neue Regex matcht **nur** den Timeframe-Suffix am Ende (e.g. `_1h`, `_4h`, `_30m`, `_1d`, `_1w`, `_1M`) und lässt den eigentlichen Coin-Namen unberührt. Verifiziert gegen 12 Testfälle.
+### #28 — master bot symbol cleanup made more robust (15_ai_master_bot.py)
+In two places: `str.replace('_.*', '', regex=True).str.replace('USDT', '', regex=False) + 'USDT'` replaced by `str.replace(r'_\d+[mhdwM]$', '', regex=True)`. The old logic was "self-healing" for standard coins (removed USDT and reattached it), but fragile for hypothetical edge cases such as coins with `USDT` inside the name. The new regex matches **only** the timeframe suffix at the end (e.g. `_1h`, `_4h`, `_30m`, `_1d`, `_1w`, `_1M`) and leaves the actual coin name untouched. Verified against 12 test cases.
 
-## Bereits erledigt
+## Already done
 
 ### #42 — Mayank asset cooldown
-Der Mayank Bot wurde in **Batch 1** (Fix #35) bereits auf `module_tag = f"MAYANK_{symbol_name}_{tf.upper()}"` migrated. Das ist bereits Cooldown per Asset + TF + Direction. Keine zusätzliche Änderung erforderlich.
+The Mayank bot was already migrated in **Batch 1** (fix #35) to `module_tag = f"MAYANK_{symbol_name}_{tf.upper()}"`. That is already cooldown per asset + TF + direction. No additional change required.
 
 ## Verification
-- Alle 4 geänderten Dateien parse cleanly
-- Projektweit keine verbleibenden Calls auf die alten `is_cooled_down`/`set_cooldown`-Funktionen (verifiziert via grep)
-- Master-Bot-Regex gegen 12 Testfälle verifiziert (Standard-Coins + Edge-Cases)
+- All 4 changed files parse cleanly
+- No remaining project-wide calls to the old `is_cooled_down`/`set_cooldown` functions (verified via grep)
+- Master bot regex verified against 12 test cases (standard coins + edge cases)
 
-## Recommendations für späteren Review
+## Recommendations for a later review
 
-- Die ATB-Bot-Datei hat noch eine tote Kommentar-Stelle bei `set_cooldown`-Entfernung. Nicht kritisch, aber bei einem späteren Cleanup-Durchgang aufräumen.
-- Die SMC-Forex-Cooldown-Dauer (12h) ist jetzt TF-übergreifend. Falls das zu restriktiv sein sollte (weniger Signale als zuvor), kann die Dauer reduziert werden (`check_cooldown(conn, cd_key, display_name, 'LONG', 12)` → `8` oder `6`).
+- The ATB bot file still has a dead comment spot from the `set_cooldown` removal. Not critical, but worth tidying up in a later cleanup pass.
+- The SMC forex cooldown duration (12h) is now cross-TF. If that turns out to be too restrictive (fewer signals than before), the duration can be reduced (`check_cooldown(conn, cd_key, display_name, 'LONG', 12)` → `8` or `6`).

@@ -1,111 +1,112 @@
-# T-2026-KYT-9050-042 Phase C — Trailing-Close-Bot (eigener Telegram-Channel)
+# T-2026-KYT-9050-042 Phase C — Trailing-Close Bot (own Telegram channel)
 
-**Stand:** 2026-07-26 · **Status:** gebaut, reviewt, **NICHT deployt** (Fleet-Start ist Michi-Entscheid)
-**Vorlauf:** T-041 Phase A (Verdampfung belegt), PR #198 (Slot-Budget, Bein-Auswahl)
+**As of:** 2026-07-26 · **Status:** built, reviewed, **NOT deployed** (fleet start is Michi's decision)
+**Precursor:** T-041 Phase A (evaporation proven), PR #198 (slot budget, leg selection)
 
 ## Intent
 
-Ein neuer Fleet-Prozess (`40_trailing_close_bot.py`) spiegelt die Signale der in PR #198
-ausgewählten Beine in einen **eigenen Telegram-Channel** und schließt sie dort per
-Trailing-Close, statt sie bis SL/TP laufen zu lassen. Michi hängt Cornix selbst an diesen
-Channel — damit läuft der Trailing-Arm live gegen den Hold-Arm der bestehenden Fleet,
-ohne dass ein einziger bestehender Bot sein Verhalten ändert.
+A new fleet process (`40_trailing_close_bot.py`) mirrors the signals of the legs
+selected in PR #198 into its **own Telegram channel** and closes them there via
+trailing close, instead of letting them run to SL/TP. Michi hooks up Cornix
+himself on this channel — so the trailing arm runs live against the hold arm of
+the existing fleet, without a single existing bot changing its behaviour.
 
-Der Bot ist ein **reiner Beobachter der Fleet**: er liest `ai_signals`, schreibt dort nie
-hinein, und schließt keinen bestehenden Trade. Sein einziges Schreibrecht sind
-`telegram_outbox` (sein eigener Channel) und seine eigene Tabelle `trailing_positions`.
+The bot is a **pure observer of the fleet**: it reads `ai_signals`, never writes
+to it, and never closes an existing trade. Its only write permissions are
+`telegram_outbox` (its own channel) and its own table `trailing_positions`.
 
-## Betriebspunkt (Operator-Entscheid Michi, 2026-07-26)
+## Operating point (operator decision Michi, 2026-07-26)
 
-| Parameter | Wert | Herkunft |
+| Parameter | Value | Origin |
 |---|---|---|
-| Aktivierungsschwelle `act` | **2,0 %** unlevered Peak | `trailing_slot_budget_live.json`, p95-sichere Füllung |
-| Rückgabe `x` | **10 %** vom Peak | T-041/T-046 Sweep |
-| Beine | **33** (p95-Auswahl bei act=2) | `fills_by_act["2.0"]["p95"]["accepted"]` |
-| Erwartung | 49 204 % netto, Ø 285 / p95 498 Slots | ebd. |
-| Slot-Cap | 500 (Cornix, pro Channel) | Operator |
+| Activation threshold `act` | **2.0%** unlevered peak | `trailing_slot_budget_live.json`, p95-safe fill |
+| Giveback `x` | **10%** of peak | T-041/T-046 sweep |
+| Legs | **33** (p95 selection at act=2) | `fills_by_act["2.0"]["p95"]["accepted"]` |
+| Expectation | 49 204% net, avg 285 / p95 498 slots | ibid. |
+| Slot cap | 500 (Cornix, per channel) | operator |
 
-## Akzeptanzkriterien (binär testbar)
+## Acceptance criteria (binary testable)
 
-- [x] **AK1** — Nur Beine aus dem Roster werden gespiegelt; ein Signal eines nicht
-  ausgewählten Beins erzeugt keinen Eintrag. *Test:* `test_roster_admits_only_selected_legs`
-- [x] **AK2** — Ein Bein, dessen `shadow_gate.leg_status` nicht LIVE ist, wird auch dann
-  nicht gespiegelt, wenn es im Roster steht (Register schlägt Roster).
+- [x] **AK1** — only legs from the roster are mirrored; a signal from a leg not
+  selected produces no entry. *Test:* `test_roster_admits_only_selected_legs`
+- [x] **AK2** — a leg whose `shadow_gate.leg_status` is not LIVE is not mirrored
+  even if it's in the roster (registry beats roster).
   *Test:* `test_non_live_leg_is_never_mirrored`
-- [x] **AK3** — Pro Symbol hält der Channel **höchstens eine** Position. Ein zweites Signal
-  auf demselben Symbol wird mit Grund abgewiesen, nicht still verworfen.
+- [x] **AK3** — the channel holds **at most one** position per symbol. A second
+  signal on the same symbol is rejected with a reason, not silently dropped.
   *Test:* `test_second_signal_on_same_symbol_is_rejected`
-  *Warum:* Cornix' `Close <SYMBOL>` wirkt **symbol-weit** (`core/config.py:123`) — bei zwei
-  Positionen auf einem Symbol würde der Trailing-Exit der einen die andere mit flachmachen.
-  Das ist derselbe Konflikt, den `28_signal_orchestrator.py:1562` durch Zurückstellen löst;
-  hier ist Zurückstellen falsch, weil der rechtzeitige Exit der ganze Zweck des Bots ist.
-- [x] **AK4** — Der Channel überschreitet den Slot-Cap nie; die Ablehnung entscheidet der
-  Bot nach Bein-Dichte, nicht Cornix nach Zufall. *Test:* `test_slot_cap_rejects_by_density`
-  *Warum:* die gewählte p95-Auswahl hat eine Belegungs-Spitze von **2001** = 4× Deckel
-  (`trailing_slot_budget_live.md:82`). Ohne eigene Zulassungskontrolle entscheidet in der
-  Spitze Cornix, welche ~1500 Trades abgelehnt werden.
-- [x] **AK5** — Der Trail feuert erst, wenn der Peak `act` überschritten hat; ein Trade, der
-  nie 2 % im Plus war, wird nie getrailt. *Test:* `test_activation_floor_gates_the_trail`
-- [x] **AK6** — Die Live-Trailing-Entscheidung ist identisch zur Studien-Logik: dieselbe
-  Mark-Folge durch `TrailingState` und durch `core.wave_exit_sim.trailing_tp_trigger`
-  ergibt denselben Auslöse-Index. *Test:* `test_live_state_matches_wave_exit_sim` (Regel 7)
-- [x] **AK7** — Der laufende Peak überlebt einen Prozess-Neustart (sonst re-armt der Trail
-  auf dem gefallenen Mark und ein längst verdampfter Gewinn wird nie geschlossen).
+  *Why:* Cornix' `Close <SYMBOL>` acts **symbol-wide** (`core/config.py:123`) — with
+  two positions on one symbol, one's trailing exit would flatten the other too.
+  That's the same conflict `28_signal_orchestrator.py:1562` resolves by deferring;
+  here deferring is wrong, because a timely exit is the bot's entire purpose.
+- [x] **AK4** — the channel never exceeds the slot cap; the bot decides the
+  rejection by leg density, not Cornix by chance. *Test:* `test_slot_cap_rejects_by_density`
+  *Why:* the chosen p95 selection has an occupancy peak of **2001** = 4× the cap
+  (`trailing_slot_budget_live.md:82`). Without its own admission control, at the
+  peak Cornix would decide which ~1500 trades get rejected.
+- [x] **AK5** — the trail only fires once the peak has exceeded `act`; a trade that
+  was never 2% in profit is never trailed. *Test:* `test_activation_floor_gates_the_trail`
+- [x] **AK6** — the live trailing decision is identical to the study logic: the same
+  mark sequence through `TrailingState` and through `core.wave_exit_sim.trailing_tp_trigger`
+  yields the same trigger index. *Test:* `test_live_state_matches_wave_exit_sim` (rule 7)
+- [x] **AK7** — the running peak survives a process restart (otherwise the trail
+  re-arms on the fallen mark and a long-evaporated profit is never closed).
   *Test:* `test_peak_survives_restart`
-- [x] **AK8** — Schließt die Fleet den Quell-Trade (SL/TP/Timeout), schließt der Bot seine
-  Spiegel-Position ebenfalls. *Test:* `test_source_close_mirrors_into_a_close`
-- [x] **AK9** — Genau **eine** Cornix-parsebare Nachricht pro Entry (Harte Regel 4); die
-  Info-Nachricht und die Exit-Nachricht sind nicht als Entry parsebar.
+- [x] **AK8** — if the fleet closes the source trade (SL/TP/timeout), the bot closes
+  its mirror position as well. *Test:* `test_source_close_mirrors_into_a_close`
+- [x] **AK9** — exactly **one** Cornix-parseable message per entry (hard rule 4); the
+  info message and the exit message are not parseable as an entry.
   *Test:* `test_exactly_one_parsable_message_per_entry`
-- [x] **AK10** — Der Cornix-Block ist **byte-identisch** zu dem, den `core.signal_post`
-  für dieselbe Geometrie erzeugt (eine Quelle, Regel 7 — die entry2-Änderung aus PR #197
-  darf sich nie nur auf einer Seite fortpflanzen). *Test:* `test_cornix_block_is_shared`
-- [x] **AK11** — `TRAILING_BOT_LIVE_POSTING` ist **default 0**: ohne expliziten Operator-Flip
-  läuft der Bot vollständig, trackt und loggt, schreibt aber **keine** Outbox-Zeile.
-  Ein ungesetzter Channel (`0`) erzwingt Shadow ebenfalls.
+- [x] **AK10** — the Cornix block is **byte-identical** to the one `core.signal_post`
+  produces for the same geometry (one source, rule 7 — the entry2 change from PR #197
+  must never propagate on only one side). *Test:* `test_cornix_block_is_shared`
+- [x] **AK11** — `TRAILING_BOT_LIVE_POSTING` is **default 0**: without an explicit
+  operator flip the bot runs fully, tracks and logs, but writes **no** outbox row.
+  An unset channel (`0`) also forces shadow.
   *Test:* `test_default_is_shadow_only`
-- [x] **AK12** — Der Bot schreibt nie in `ai_signals` und schließt nie einen Fremd-Trade.
-  *Test:* `test_bot_never_writes_ai_signals` (Quelltext-Negativbeweis)
+- [x] **AK12** — the bot never writes to `ai_signals` and never closes a foreign trade.
+  *Test:* `test_bot_never_writes_ai_signals` (source-code negative proof)
 
-- [x] **AK13** — Ein Quell-Trade, der beim Start des Bots **schon lief**, wird nicht gespiegelt,
-  sondern als Altbestand vermerkt — und danach nie wieder als Neuzugang betrachtet.
+- [x] **AK13** — a source trade that was **already running** when the bot started is
+  not mirrored, but recorded as pre-existing — and afterwards is never again treated
+  as a new arrival.
   *Test:* `test_already_running_trades_are_recorded_not_mirrored`, `test_missing_open_time_counts_as_old`
-  *Warum:* der Spiegel übernimmt die Geometrie des Quell-Signals, aber Cornix füllt zum
-  **aktuellen** Markt. Bei einem drei Tage alten Trade misst der Trailing-Arm dann nicht mehr
-  denselben Trade wie der Hold-Arm — der Vergleich ist aber der Zweck des Bots. Im ersten
-  Shadow-Lauf (2026-07-26) traf das **465 Positionen auf einen Schlag**. Die Grenze
-  (`TRAILING_BOT_MAX_AGE_MIN`, default 15 min) deckt bewusst ein Restart-Fenster ab, damit
-  Trades, die während eines Neustarts aufgehen, nicht verloren gehen.
+  *Why:* the mirror takes over the geometry of the source signal, but Cornix fills at
+  the **current** market. For a trade three days old, the trailing arm would then no
+  longer measure the same trade as the hold arm — but that comparison is the bot's
+  whole purpose. In the first shadow run (2026-07-26) this hit **465 positions in one
+  shot**. The cutoff (`TRAILING_BOT_MAX_AGE_MIN`, default 15 min) deliberately covers
+  a restart window, so trades that open during a restart aren't lost.
   *Test:* `test_the_age_cutoff_covers_a_restart_window`
-- [x] **AK14** — Abweisungen werden je Zyklus **gebündelt** protokolliert, nicht je Kandidat;
-  die Zähler pro Grund bleiben sichtbar. *Test:* `test_rejections_are_summarised_not_logged_per_item`
-  *Warum:* die Abweisung wiederholt sich in jedem 10s-Zyklus, solange der Quell-Trade offen ist —
-  gemessen 34 691 Zeilen in 33 min (~1,5 Mio/Tag) in den **gemeinsamen** Watchdog-Log.
+- [x] **AK14** — rejections are logged **bundled per cycle**, not per candidate; the
+  counters per reason stay visible. *Test:* `test_rejections_are_summarised_not_logged_per_item`
+  *Why:* the rejection repeats every 10s cycle for as long as the source trade stays
+  open — measured 34 691 lines in 33 min (~1.5M/day) in the **shared** watchdog log.
 
-## Out of Scope
+## Out of scope
 
-- **Kein Deploy, kein Fleet-Restart.** Der Watchdog liest `core/fleet.py` beim Import;
-  der neue Eintrag wird erst nach einem Michi-gegateten Restart supervised.
-- **Keine Cornix-Konfiguration.** Ob und wie Cornix an den Channel gehängt wird, macht Michi.
-- **Kein DCA/Multi-Entry.** Der Spiegel postet single-entry (Arm B, PR #197).
-- **Kein eigenes Modell.** Der Bot trifft keine Einstiegsentscheidung — er spiegelt.
-- **Keine 5m/10s-Verschärfung der Studie.** Der Bot sieht echte Preise; die
-  Auflösungs-Grenze aus PR #198 betrifft nur die Simulation.
+- **No deploy, no fleet restart.** The watchdog reads `core/fleet.py` on import;
+  the new entry is only supervised after a Michi-gated restart.
+- **No Cornix configuration.** Whether and how Cornix gets hooked up to the channel is Michi's call.
+- **No DCA/multi-entry.** The mirror posts single-entry (arm B, PR #197).
+- **No own model.** The bot makes no entry decision — it mirrors.
+- **No 5m/10s tightening of the study.** The bot sees real prices; the
+  resolution limit from PR #198 only concerns the simulation.
 
-## Warum bauen statt wiederverwenden (Phase 0b)
+## Why build instead of reuse (phase 0b)
 
-Kein bestehender Bot spiegelt Fremd-Signale in einen zweiten Channel. Wiederverwendet
-werden dagegen: `core.wave_exit_sim.trailing_tp_trigger` (Trailing-Semantik, per Pin
-gebunden), `core.signal_post` (Cornix-Block, per Extraktion geteilt),
-`core.live_price.get_live_prices_batch` (ein Binance-Call pro Poll),
-`core.bot_naming.pretty_name` + `core.shadow_gate` (Bein-Identität), die Poll-Schleifen-
-und Reconnect-Form aus `8_ai_trade_monitor.py`.
+No existing bot mirrors third-party signals into a second channel. Reused, however, are:
+`core.wave_exit_sim.trailing_tp_trigger` (trailing semantics, pin-bound),
+`core.signal_post` (Cornix block, shared via extraction),
+`core.live_price.get_live_prices_batch` (one Binance call per poll),
+`core.bot_naming.pretty_name` + `core.shadow_gate` (leg identity), the poll-loop
+and reconnect shape from `8_ai_trade_monitor.py`.
 
-## Bekannte Grenzen
+## Known limits
 
-- **Symbol-Eindeutigkeit kostet Signale.** AK3 wirft das zweite Signal je Symbol weg. Die
-  Alternative wäre ein Channel pro Bein (33 Channels) — Operator-Entscheid, nicht Code.
-- **Slippage ist auch live nicht modelliert**, aber jetzt real: die Exits sind klein und
-  zahlreich (bei act=2 % Median-Haltedauer 4,6 h).
-- **Der Roster ist ein Standbild** des Registers vom 2026-07-26. Ändert `shadow_gate` ein
-  Bein, greift AK2 (Register schlägt Roster) — der Roster selbst wird nicht automatisch nachgezogen.
+- **Symbol uniqueness costs signals.** AK3 drops the second signal per symbol. The
+  alternative would be one channel per leg (33 channels) — an operator decision, not code.
+- **Slippage is not modelled live either**, but now real: the exits are small and
+  frequent (at act=2%, median hold time 4.6 h).
+- **The roster is a snapshot** of the register as of 2026-07-26. If `shadow_gate` changes
+  a leg, AK2 kicks in (registry beats roster) — the roster itself is not automatically re-pulled.

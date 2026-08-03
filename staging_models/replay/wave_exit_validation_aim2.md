@@ -1,27 +1,27 @@
-# Wave-Exit Phase 1 — High-Fidelity-Sim Validierung (AIM2)
+# Wave-Exit Phase 1 — High-Fidelity Sim Validation (AIM2)
 
 _generated 2026-07-23 12:58:29.904421+00:00 · read-only · window 2026-07-07 14:20:00 → 2026-07-23 00:00:00_
 
-**Backbone:** vollständige wick-aware **5m**-OHLC-Kerzen (`candles`, 12× feiner als der 1h-Live-Monitor) für die Touch-Erkennung; **10s**-Ticks (`ticker_10s`) nur als Order-Resolver für SL-vs-TP-Reihenfolge innerhalb einer 5m-Kerze. **Geometrie:** immutable Cornix-Text (`telegram_outbox`), Original-SL/entry2/TP1-3. **Outcome-Ground-Truth:** `closed_ai_signals`.
+**Backbone:** complete wick-aware **5m** OHLC candles (`candles`, 12× finer than the 1h live monitor) for touch detection; **10s** ticks (`ticker_10s`) only as an order resolver for SL-vs-TP sequence within a 5m candle. **Geometry:** immutable Cornix text (`telegram_outbox`), original SL/entry2/TP1-3. **Outcome ground truth:** `closed_ai_signals`.
 
-> Warum nicht rein 10s: `ticker_10s` ist ein ~40s-Snapshot mit Lücken (Coverage-Median 0.25) und verpasst ~81% der SL-Touch-Events → eine reine Tick-Sim entkommt den Stops und verzerrt Realized ~2.7×. Die 5m-Kerze ist gap-frei und wick-aware.
+> Why not pure 10s: `ticker_10s` is a ~40s snapshot with gaps (coverage median 0.25) and misses ~81% of SL touch events → a pure tick sim escapes the stops and skews realized ~2.7×. The 5m candle is gap-free and wick-aware.
 
-Closed im Fenster: 1285 · Geometrie gematcht & gescored: **673** · ungematcht (Outbox-Retention): 604.
-Gescorte-Trades-Span: 2026-07-10 18:48:31.207150 → 2026-07-22 22:15:37.406260 (Outbox-Retention verzerrt das Set zu **jüngeren** Trades — beim Lesen der Aggregate beachten).
+Closed in the window: 1285 · geometry matched & scored: **673** · unmatched (outbox retention): 604.
+Scored-trades span: 2026-07-10 18:48:31.207150 → 2026-07-22 22:15:37.406260 (outbox retention skews the set toward **more recent** trades — keep this in mind when reading the aggregates).
 
-## Validierung — `monitor`-Config (entry1-only, interne Targets) vs recorded closed_ai_signals
+## Validation — `monitor` config (entry1-only, internal targets) vs recorded closed_ai_signals
 
-- targets_hit **exakt**: 97.92%  ·  **±1**: 99.26%
-- Win/Loss (TP1-Touch) **Übereinstimmung**: 99.26%
+- targets_hit **exact**: 97.92%  ·  **±1**: 99.26%
+- Win/Loss (TP1 touch) **agreement**: 99.26%
 
-> Restdivergenz kommt aus der feineren Auflösung (5m-Wick + echte Intra-Candle-Ordnung) gegenüber dem 1h-Monitor — die Sim ist hier bewusst *treuer* als die recorded-Outcome-Quelle.
+> Residual divergence comes from the finer resolution (5m wick + true intra-candle ordering) compared to the 1h monitor — the sim is deliberately *more faithful* here than the recorded-outcome source.
 
-## Realized-Aggregat je Config
+## Realized aggregate per config
 
-| config | n | unlev mean% | unlev sum% | net sum% | leveraged sum% (n) | WR(TP1)% | Ø-Dauer med/mean h |
+| config | n | unlev mean% | unlev sum% | net sum% | leveraged sum% (n) | WR(TP1)% | avg duration med/mean h |
 |---|--:|--:|--:|--:|--:|--:|--:|
 | monitor | 673 | 0.4111 | 276.64 | 209.44 | 13796.0 (673) | 64.49 | 21.83/31.68 |
 | dca10 | 673 | 0.0808 | 54.36 | 4.61 | 5822.5 (673) | 64.49 | 21.83/31.72 |
 | cornix3 | 673 | 0.2512 | 169.03 | 119.18 | 8106.4 (673) | 64.64 | 20.67/30.51 |
 
-**Lesehilfe:** `monitor` = 1:1-Reproduktion des Bot-Monitors (Validierungsanker). `cornix3` = was Cornix real handelt (DCA entry1/entry2, 3 publizierte TPs in Dritteln) — die Headline-Realized-Zahl und die Basis fürs Phase-2-Overlay.
+**Reading aid:** `monitor` = 1:1 reproduction of the bot monitor (validation anchor). `cornix3` = what Cornix actually trades (DCA entry1/entry2, 3 published TPs in thirds) — the headline realized figure and the basis for the Phase-2 overlay.

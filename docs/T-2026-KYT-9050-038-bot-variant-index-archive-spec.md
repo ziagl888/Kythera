@@ -1,66 +1,66 @@
-# T-2026-KYT-9050-038 — Bot-Varianten-Index + reproduzierbares Modell-/Code-Archiv
+# T-2026-KYT-9050-038 — Bot variant index + reproducible model/code archive
 
-**Status:** in_progress · **Prio:** mid · **Verwandt:** T-037 (RUB1-Revive = das Live-Swap-Muster im Kleinen)
-**Live-Kontext:** VPS. **Echtes Geld.** Diese Arbeit ist Infra/Read-only + staging — **kein** Live-Eingriff.
-
----
-
-## 0. Ziel (Michi)
-
-Jede **Bot-Generation** so indexieren und archivieren, dass man sie **jederzeit**
-1. mit der **bestehenden Infra live schalten** (wie beim RUB1-Revive, T-037), **oder**
-2. in **Simulationen gegeneinander antreten** lassen kann (Generation-A/B).
-
-Kurz: Aus dem verstreuten Ist-Zustand einen **durchsuchbaren Index + ein reproduzierbares Archiv** machen, plus die Werkzeuge, um eine archivierte Variante zu *stagen* oder zwei Varianten zu *simulieren*.
+**Status:** in_progress · **Priority:** mid · **Related:** T-037 (RUB1 revive = the live-swap pattern in miniature)
+**Live context:** VPS. **Real money.** This work is infra/read-only + staging — **no** live intervention.
 
 ---
 
-## 1. Problem (Ist-Zustand)
+## 0. Goal (Michi)
 
-Modelle **und** Code-Logik liegen ohne Index verstreut:
-- **Repo-ROOT:** ~60 Artefakte, live + legacy gemischt — z.B. `long/short_reversion_model.joblib` (=RUB1), `pump_model_*_final.pkl` (=MIS1), `model_tsi_*_robust.pkl` (=ATS1_Robust), `mis2_model_*` (=MIS2), `ats2_*`, `sra2_*`, `bb_xgboost_*`, `qm_xgboost_*` …
-- **`staging_models/`:** Shadow-/Staging-Generation + Studies (`atb2_*`, `epd2_model_LONG`, `rub2_model_LONG`, `fmr2_*`, …).
-- **`.claude/worktrees/`:** dutzende Kopien derselben Artefakte.
-- **`crypto_trading_bot_v2/`:** die Februar-Originale (hash-verifiziert identisch zu manchen Root-Legacy-Modellen).
-- **Code-Logik nur in git-History.** T-037 zeigte das Muster: eine alte Variante live schalten = **altes Artefakt** + **Code-Revert auf einen git-SHA** (RUB1-SHORT-Logik lag bei `07c8874^`) + **Tag** + **Register-Flip** + **Restart**.
+Index and archive every **bot generation** so that at **any time** it can be
+1. **flipped live with the existing infra** (as with the RUB1 revive, T-037), **or**
+2. run head-to-head in **simulations** (generation A/B).
 
-Es gibt **keinen Index** und **kein Archiv** — nur Teil-Bausteine (unten).
+In short: turn the currently scattered state into a **searchable index + a reproducible archive**, plus the tooling to *stage* an archived variant or *simulate* two variants.
 
 ---
 
-## 2. Bestehende Teil-Infra — NUTZEN, nicht neu bauen
+## 1. Problem (current state)
 
-| Baustein | Was er liefert |
+Models **and** code logic are scattered without an index:
+- **Repo ROOT:** ~60 artifacts, live + legacy mixed — e.g. `long/short_reversion_model.joblib` (=RUB1), `pump_model_*_final.pkl` (=MIS1), `model_tsi_*_robust.pkl` (=ATS1_Robust), `mis2_model_*` (=MIS2), `ats2_*`, `sra2_*`, `bb_xgboost_*`, `qm_xgboost_*` …
+- **`staging_models/`:** shadow/staging generations + studies (`atb2_*`, `epd2_model_LONG`, `rub2_model_LONG`, `fmr2_*`, …).
+- **`.claude/worktrees/`:** dozens of copies of the same artifacts.
+- **`crypto_trading_bot_v2/`:** the February originals (hash-verified identical to some root legacy models).
+- **Code logic only in git history.** T-037 showed the pattern: switching an old variant live = **old artifact** + **code revert to a git SHA** (RUB1-SHORT logic sat at `07c8874^`) + **tag** + **register flip** + **restart**.
+
+There is **no index** and **no archive** — only partial building blocks (below).
+
+---
+
+## 2. Existing partial infra — USE, don't rebuild
+
+| Building block | What it provides |
 |---|---|
-| `core/bot_catalog.py` | Tag-Familie → Fleet-Script (family-prefix, longest-wins). `families_for_script()` = Reverse. |
-| `core/shadow_gate.py` | `SHADOW_ARTIFACTS` (Tag → Dateiname je Richtung) · `_LIFECYCLE` (live/shadow/silent) · `_RETIRED_TAGS` · `leg_status()`. |
-| Artefakt-`*_meta.json` / meta im pkl | `model_id`, `optimal_threshold`, `deployable`, `trainer`, `strategy`, `features`, `trained_at`, val/test-stats. |
-| `docs/MODEL_INTENT.md`, `docs/MODEL_CANDIDATES_SPEC_2026-07.md` | Intent/Provenienz je Modellfamilie. |
-| `walkforward_sim` + `tools/retrain_from_replay.py` | DB-freie Replay-/Sim-Infra (Labels aus `*_replay_*.jsonl`). |
-| `staging_models/` | der einzige erlaubte Ablageort für nicht-live Artefakte. |
+| `core/bot_catalog.py` | Tag family → fleet script (family-prefix, longest-wins). `families_for_script()` = reverse. |
+| `core/shadow_gate.py` | `SHADOW_ARTIFACTS` (tag → filename per direction) · `_LIFECYCLE` (live/shadow/silent) · `_RETIRED_TAGS` · `leg_status()`. |
+| Artifact `*_meta.json` / meta in the pkl | `model_id`, `optimal_threshold`, `deployable`, `trainer`, `strategy`, `features`, `trained_at`, val/test stats. |
+| `docs/MODEL_INTENT.md`, `docs/MODEL_CANDIDATES_SPEC_2026-07.md` | Intent/provenance per model family. |
+| `walkforward_sim` + `tools/retrain_from_replay.py` | DB-free replay/sim infra (labels from `*_replay_*.jsonl`). |
+| `staging_models/` | the only allowed storage location for non-live artifacts. |
 
-Der Index ist im Kern eine **Join-Sicht** über diese Quellen + das Dateisystem + git.
+The index is, at its core, a **join view** over these sources + the filesystem + git.
 
 ---
 
 ## 3. Deliverables
 
-### D1 — Variant-Index (Single Source of Truth, auto-generiert)
-Ein **read-only Discovery-Tool** `tools/bot_variants/index.py`, das je **Bot × Generation** eine Zeile erzeugt:
+### D1 — Variant index (single source of truth, auto-generated)
+A **read-only discovery tool** `tools/bot_variants/index.py` that produces one row per **bot × generation**:
 
-| Feld | Quelle |
+| Field | Source |
 |---|---|
-| `family` / `tag` / `generation` | bot_catalog family-prefix + Tag (z.B. RUB, RUB1/RUB2/RUB3/RUB4) |
+| `family` / `tag` / `generation` | bot_catalog family-prefix + tag (e.g. RUB, RUB1/RUB2/RUB3/RUB4) |
 | `script` | `bot_catalog.script_for_tag()` |
-| `artifacts[]` + `md5` + `location` | Dateisystem-Scan (root / staging / archive) |
-| `lifecycle` | `shadow_gate.leg_status(tag, dir)` je Richtung |
-| `threshold` / `deployable` / `trainer` / `trained_at` | Artefakt-meta |
-| `code_ref` | git-SHA/Tag, unter dem die Generations-Logik im Bot-Script lebt(e) (s. D4) |
-| `provenance` | MODEL_INTENT/Task-Referenz |
+| `artifacts[]` + `md5` + `location` | filesystem scan (root / staging / archive) |
+| `lifecycle` | `shadow_gate.leg_status(tag, dir)` per direction |
+| `threshold` / `deployable` / `trainer` / `trained_at` | artifact meta |
+| `code_ref` | git SHA/tag under which the generation's logic lived/lives in the bot script (see D4) |
+| `provenance` | MODEL_INTENT/task reference |
 
-**Output:** `docs/bot_variants_index.md` (menschenlesbar, generiert) **+** `model_archive/index.json` (maschinenlesbar). Idempotent regenerierbar; unbekannte Tags werden **gezählt und sichtbar gemacht** (kein Silent-Drop, wie bot_catalog).
+**Output:** `docs/bot_variants_index.md` (human-readable, generated) **+** `model_archive/index.json` (machine-readable). Idempotently regeneratable; unknown tags are **counted and made visible** (no silent drop, unlike bot_catalog).
 
-### D2 — Archiv-Layout `model_archive/`
+### D2 — Archive layout `model_archive/`
 ```
 model_archive/
   <family>/<generation>/           # z.B. rub/RUB1/, epd/EPD2/, mis/MIS1/
@@ -70,59 +70,59 @@ model_archive/
                                    # provenance, md5, source_origin
   index.json                       # D1-Aggregat
 ```
-- Sammelt die verstreuten Alt-Modelle an einen Ort. **Code wird NICHT voll kopiert** — `code_ref` (git-SHA/Tag) im Manifest genügt (der Bot-Code lebt in git; der Live-Swap macht daraus einen Checkout/Revert).
-- **Groß-Artefakte:** `.gitignore`-Strategie prüfen (das Repo committet Modelle heute im Root; entscheide bewusst, ob Archiv-Binaries committed oder via Manifest+Herkunft referenziert werden — Default: kleine/kanonische Legacy-Artefakte committen, große studies referenzieren).
+- Collects the scattered old models into one place. **Code is NOT fully copied** — `code_ref` (git SHA/tag) in the manifest is enough (the bot code lives in git; the live swap turns it into a checkout/revert).
+- **Large artifacts:** check the `.gitignore` strategy (the repo currently commits models in root; decide deliberately whether archive binaries are committed or referenced via manifest+provenance — default: commit small/canonical legacy artifacts, reference large studies).
 
 ### D3 — Tooling
-- `tools/bot_variants/index.py` — Discovery (D1), read-only.
-- **stage/activate-Helfer** — legt eine archivierte Variante zum Live-Swap bereit: kopiert das Artefakt nach `staging_models/` und **druckt den `code_ref`-Schritt** (welcher git-Revert/Checkout nötig ist) + den Register-Flip. **NIE automatisch nach Repo-Root/live** (Hard Rule 2) und **kein** Restart — das bleibt Michi.
-- **compare/sim-Harness** — zwei Generationen head-to-head über die **bestehende** `walkforward`/replay-Infra (DB-frei), vergleichende Metriken (avg/sum PnL, WR, MaxDD, n). Baut die Sim-Infra NICHT neu, ruft sie auf.
+- `tools/bot_variants/index.py` — discovery (D1), read-only.
+- **stage/activate helper** — prepares an archived variant for the live swap: copies the artifact to `staging_models/` and **prints the `code_ref` step** (which git revert/checkout is needed) + the register flip. **NEVER automatically to repo root/live** (hard rule 2) and **no** restart — that stays with Michi.
+- **compare/sim harness** — pits two generations head-to-head via the **existing** `walkforward`/replay infra (DB-free), comparative metrics (avg/sum PnL, WR, MaxDD, n). Does NOT rebuild the sim infra, just calls it.
 
-### D4 — `code_ref`-Auflösung
-Für jede Generation den git-Punkt bestimmen, an dem ihre Bot-Logik implementiert war (Muster T-037: RUB1-SHORT = `07c8874^`). Heuristik: `git log --follow -S<model_id-oder-Dateiname> -- <script>` + die Task-/PR-Referenz aus dem Commit. Ergebnis ins Manifest. Wo die Logik heute noch aktiv ist → `code_ref = HEAD`.
-
----
-
-## 4. Phasen (empfohlen, je eigener Commit)
-1. **Index (D1)** — Discovery-Tool + generierter `bot_variants_index.md`/`index.json`. Sofort nützlich, rein read-only.
-2. **Archiv (D2 + D4)** — Layout anlegen, Alt-Modelle einsammeln, Manifeste + code_refs.
-3. **Tooling (D3)** — stage-Helfer + compare/sim-Harness.
-
-Jede Phase ist eigenständig mergebar. Wenn die Session Zeit-/Scope-Druck hat: **Phase 1 zuerst liefern**, Rest als Follow-up-Tasks.
+### D4 — `code_ref` resolution
+For each generation, determine the git point at which its bot logic was implemented (pattern T-037: RUB1-SHORT = `07c8874^`). Heuristic: `git log --follow -S<model_id-oder-Dateiname> -- <script>` + the task/PR reference from the commit. Result goes into the manifest. Where the logic is still active today → `code_ref = HEAD`.
 
 ---
 
-## 5. Harte Grenzen (nicht überschreiten — CLAUDE.md)
-- **Artefakte nur nach `staging_models/`** (bzw. `model_archive/`). Promotion in den Repo-Root (= live) ist Michis Entscheid, **nie** vom Tooling automatisch (Hard Rule 2).
-- **Kein Live-Eingriff:** kein Fleet-Restart, keine Schreib-Queries gegen die Live-DB, keine Modell-Überschreibung im Root.
-- **Feature-Builder / bestehende Modelle unverändert** (Regel 7) — dieser Task liest/kopiert nur, trainiert nichts neu.
-- **Secrets:** nie `.env`/`.local` ins Archiv ziehen (gitleaks blockt; `--no-verify` verboten).
-- Discovery ist **read-only**; kein Schreiben außerhalb `model_archive/`, `tools/bot_variants/`, `docs/`.
+## 4. Phases (recommended, one commit each)
+1. **Index (D1)** — discovery tool + generated `bot_variants_index.md`/`index.json`. Immediately useful, purely read-only.
+2. **Archive (D2 + D4)** — set up layout, collect old models, manifests + code_refs.
+3. **Tooling (D3)** — stage helper + compare/sim harness.
 
-## 6. Verifikation (DB-frei)
-- `python -m pytest backtest/test_*.py` (+ neue Tests für das Index-Tool: bekannte Tags → erwartete family/script/lifecycle; unbekannter Tag wird gezählt).
-- `python tools/regression_guard/guard.py verify` und `smoke`.
-- Index-Roundtrip: `index.py` zweimal laufen lassen → identischer Output (idempotent, deterministisch sortiert; **kein** `Date.now()`/Zufall in den Output-Zeilen).
-- md5-Assert: eingesammelte Archiv-Artefakte sind byte-identisch zur Quelle.
-
-## 7. Definition of Done
-- [ ] Phase 1 (Index) gemergt: `tools/bot_variants/index.py` + generierter `docs/bot_variants_index.md` + `model_archive/index.json`, deterministisch/idempotent, Tests grün.
-- [ ] (Phase 2/3 je nach Scope) Archiv-Layout + Manifeste + stage/compare-Tooling — oder als Follow-up-Tasks dokumentiert.
-- [ ] `CHANGELOG.md` (Deutsch), `AUDIT_TODO.md` gepflegt, KB-Task-Status.
-- [ ] Kern-Reviews PASS (z-code-reviewer + z-spec-compliance-review), merge-train.
-- [ ] Keine Grenzverletzung: nichts nach Root promotet, keine DB-Writes, keine Live-Effekte.
+Every phase is mergeable on its own. If the session is under time/scope pressure: **deliver phase 1 first**, the rest as follow-up tasks.
 
 ---
 
-## Anhang — Ist-Landschaft (read-only, 2026-07-24)
+## 5. Hard limits (do not exceed — CLAUDE.md)
+- **Artifacts only to `staging_models/`** (or `model_archive/`). Promotion to the repo root (= live) is Michi's decision, **never** automatic from the tooling (hard rule 2).
+- **No live intervention:** no fleet restart, no write queries against the live DB, no model overwrite in root.
+- **Feature builders / existing models unchanged** (rule 7) — this task only reads/copies, trains nothing new.
+- **Secrets:** never pull `.env`/`.local` into the archive (gitleaks blocks it; `--no-verify` forbidden).
+- Discovery is **read-only**; no writing outside `model_archive/`, `tools/bot_variants/`, `docs/`.
 
-**Root-Legacy-Beispiele (Generation → Datei):**
-- RUB1 → `long_reversion_model.joblib` + `short_reversion_model.joblib` (jetzt via T-037 wieder live unter Tag RUB1)
-- RUB2 → `rub2_model_SHORT.pkl` (Retrain, gebencht/SHADOW) · RUB2-LONG → `staging_models/rub2_model_LONG.pkl` (nicht deploybar)
+## 6. Verification (DB-free)
+- `python -m pytest backtest/test_*.py` (+ new tests for the index tool: known tags → expected family/script/lifecycle; unknown tag gets counted).
+- `python tools/regression_guard/guard.py verify` and `smoke`.
+- Index round-trip: run `index.py` twice → identical output (idempotent, deterministically sorted; **no** `Date.now()`/randomness in the output rows).
+- md5 assert: collected archive artifacts are byte-identical to the source.
+
+## 7. Definition of done
+- [ ] Phase 1 (index) merged: `tools/bot_variants/index.py` + generated `docs/bot_variants_index.md` + `model_archive/index.json`, deterministic/idempotent, tests green.
+- [ ] (Phase 2/3 depending on scope) archive layout + manifests + stage/compare tooling — or documented as follow-up tasks.
+- [ ] `CHANGELOG.md` (German), `AUDIT_TODO.md` maintained, KB task status.
+- [ ] Core reviews PASS (z-code-reviewer + z-spec-compliance-review), merge-train.
+- [ ] No boundary violation: nothing promoted to root, no DB writes, no live effects.
+
+---
+
+## Appendix — current landscape (read-only, 2026-07-24)
+
+**Root legacy examples (generation → file):**
+- RUB1 → `long_reversion_model.joblib` + `short_reversion_model.joblib` (now live again via T-037 under tag RUB1)
+- RUB2 → `rub2_model_SHORT.pkl` (retrain, benched/SHADOW) · RUB2-LONG → `staging_models/rub2_model_LONG.pkl` (not deployable)
 - MIS1 → `pump_model_{8,24,72,168}h_{pump,dump}_final.pkl` · MIS2 → `mis2_model_*`
 - ATS1_Robust → `model_tsi_{long,short}_robust.pkl` · ATS2 → `ats2_model_{LONG,SHORT}.pkl`
 - SRA2 → `sra2_model_{LONG,SHORT}.json`(+calib/meta) · AIM2 → `master_meta_model_aim2.pkl`
 
-**Staging:** `atb2_*`, `epd2_model_LONG` (=EPD3-LONG-Quelle, thr=None/deployable=False), `rub2_model_LONG`, `fmr2_*`, diverse `*_study.json`.
+**Staging:** `atb2_*`, `epd2_model_LONG` (=EPD3-LONG source, thr=None/deployable=False), `rub2_model_LONG`, `fmr2_*`, various `*_study.json`.
 
-**Bekannte Fallen:** `SHADOW_ARTIFACTS` mappt EPD3-LONG auf den Legacy-Dateinamen `epd2_model_LONG.pkl` (Root-Kollisions-Hazard — der Index muss solche geteilten Dateinamen sichtbar machen). Artefakt-`model_id` rotiert je Retrain (bot_catalog nutzt deshalb family-prefix). Viele Root-Modelle haben `deployable=False`/`thr=None` (Legacy-Stubs) — das Feld gehört in den Index.
+**Known pitfalls:** `SHADOW_ARTIFACTS` maps EPD3-LONG to the legacy filename `epd2_model_LONG.pkl` (root collision hazard — the index must make such shared filenames visible). Artifact `model_id` rotates with each retrain (bot_catalog therefore uses family-prefix). Many root models have `deployable=False`/`thr=None` (legacy stubs) — this field belongs in the index.
