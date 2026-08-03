@@ -59,11 +59,18 @@ def head_commit_time(repo: str = _REPO) -> datetime | None:
 # would also swallow pythonw, pycharm and py7zr, so both patterns are spelled out.
 _WQL_PYTHON = "Name LIKE 'python%' OR Name = 'py.exe'"
 
+# TotalSeconds is handed to ConvertTo-Json as a double and never round-tripped
+# through a string. An earlier version did `[double]::Parse(x.ToString(Invariant))`
+# to "force" invariant formatting; Parse without an explicit culture reads the
+# CURRENT one, so on a de-DE box "1785626975.5" parses as 17856269755 — the
+# decimal point becomes a group separator (reproduced 2026-08-03). Every process
+# would then look newer than HEAD and the canary would silently never fire again.
+# ConvertTo-Json already emits invariant numbers; the round-trip only added the
+# hazard.
 _CIM_QUERY = (
     f'Get-CimInstance Win32_Process -Filter "{_WQL_PYTHON}" | '
     "Select-Object ProcessId,ParentProcessId,"
-    "@{n='Created';e={[double]::Parse((($_.CreationDate.ToUniversalTime()-[datetime]'1970-01-01')"
-    ".TotalSeconds).ToString([System.Globalization.CultureInfo]::InvariantCulture))}} | "
+    "@{n='Created';e={($_.CreationDate.ToUniversalTime()-[datetime]'1970-01-01').TotalSeconds}} | "
     "ConvertTo-Json -Compress"
 )
 

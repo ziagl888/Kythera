@@ -53,6 +53,11 @@ Hardening around it:
 * A failed or timed-out query returns an empty table, which `assess()` reports as `no_fleet`
   (exit 0), never as `stale`. A failed measurement must not manufacture an alarm.
 * Rows that cannot be parsed are dropped rather than guessed at.
+* The creation time is handed to `ConvertTo-Json` as a double and never round-tripped through a
+  string. An earlier revision of this change used `[double]::Parse(x.ToString(Invariant))` to
+  "force" invariant formatting — `Parse` without an explicit culture reads the *current* one, so
+  on a de-DE box `1785626975.5` parses as `17856269755` (reproduced). Every process would then
+  look newer than HEAD and the canary would silently never fire again. Caught in review.
 
 `backtest/test_fleet_code_age.py` grows to 14 tests, pinning the one-call contract, the timeout,
 the empty-table-is-not-stale direction, the WQL name filter and `ConvertTo-Json`'s single-row
