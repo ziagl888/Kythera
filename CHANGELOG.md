@@ -138,6 +138,50 @@ monotonicity that only holds under the stubbed jitter (with real jitter consecut
 overlap and the second CAN be shorter) — reworded. Live smoke through the real call chain: bot
 16 EURUSD=X 1h/4h → 1419/371 rows. `mypy` clean, `ruff` clean, `regression_guard verify` OK.
 **Ops note: the running bot processes keep the old code until the fleet is restarted.**
+## [2026-08-03] EPD3 SHORT go-live @0.6737 — and the discovery that bot 10 had posted nothing live for nine days (T-2026-KYT-9050-085)
+
+Explicit operator decision: the T-033 park of the EPD3 SHORT leg is lifted, the leg posts
+Cornix to `CH_PUMP_AI` under tag EPD3 at its artifact threshold 0.6737. Two changes —
+`_LIFECYCLE[("EPD3","SHORT")]` SHADOW → LIVE, and a re-promotion of
+`epd3_model_SHORT.pkl` from `staging_models/` to the repo root. The re-promotion is pure
+provenance: the booster is bit-identical to the previous root copy (same sha256 over
+`save_raw("json")`, same 16 features, same threshold), the only delta is `meta.model_id`,
+which the stale root file still carried as `EPD2` while staging had the corrected `EPD3`
+dump from T-057. A LIVE leg loads from root, so the wrong-tag file could not stay there
+(hard rule 6).
+
+**The measurement that mattered more than the flip.** Verifying the change against the live
+DB surfaced that EPD3 LONG's last emission *ever* was 2026-07-25 09:23:51 — two minutes
+before the timestamp of the `epd3_model_LONG.pkl` promoted by T-037 (09:25). That promotion
+replaced a null-threshold staging dump (which fired on every candidate, hence emitted
+confidences down to 0.265) with a 0.76-threshold root artifact. From 07-26 to 08-03 LONG
+emitted **zero** while SHORT emitted 253–533/day into the shadow. Since EPD3 is bot 10's only
+gated emitter, **the bot posted nothing live at all for nine days and nobody noticed.** Cause:
+`_emit_epd3_shadow` takes `max()` across both directions on *raw* probabilities and then
+checks only the winner's threshold — the two thresholds differ (0.76 vs 0.6737) and raw
+scores of two different models are not comparable, so a valid leg is silently dropped
+whenever the other scores higher while being below its own cut. Documented as a caveat here,
+fixed separately in T-2026-KYT-9050-086 (it changes live posting volume and needs its own
+operator decision).
+
+Risks put to the operator before implementation and reaffirmed: ~360 Cornix signals/day at
+0.6737 plus 422 open shadow SHORTs going live at once, against a Cornix cap of 500 slots per
+channel; the threshold cannot throttle this without leaving the deployable band (val curve
+0.6266 → +0.079 %, 0.6737 → +0.088 %, 0.7001 → −0.027 %); and the shadow record (WR 81.6 %,
+avg +16.3 %/stake, n=5691) is *not* evidence — it reproduces the T-009 phantom-win defect.
+
+Two review findings are documented in-code rather than fixed: `realized_lifecycle_bucket`
+buckets closed trades by the leg's *current* lifecycle, so the flip moves ~5.7k historical
+shadow trades into the ACTIVE block of the 4h realised-PnL report (T-2026-KYT-9050-087); and
+`KYTHERA_SHADOW_POSTING=0` silences real Cornix posting for both EPD3 legs despite their LIVE
+status, keeping its shadow-era name. Refuted during review: bot 40 does **not** mirror the
+422 open shadow SHORTs to a live channel — `is_rostered("EPD3","SHORT")` is False and gates
+before the `is_live` check.
+
+Verified live: bot 10 restarted 15:44:39 logging `EPD3 models loaded: LONG (live), SHORT
+(live)`, first real post `EPD3 signal for HEMIUSDT SHORT placed in outbox` at 15:49:14.
+Note for monitoring: `ml_predictions_master` is the *shadow* logging path, so a live leg no
+longer appears there — track EPD3 SHORT throughput via `ai_signals`.
 
 ## [2026-08-03] LQE1 fix: collector streamed against a dead legacy path — routed /market/ws + silent-subscription guard (T-2026-KYT-9050-082)
 
