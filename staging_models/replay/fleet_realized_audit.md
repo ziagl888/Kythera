@@ -2,19 +2,19 @@
 
 _generated 2026-07-23 06:16:44.194945+00:00 · read-only · dedup=Report-14 survivor key · AI rows 101122 · classic rows 363420_
 
-**Edge-Metrik (`mean%`/`net%`):** unlevered, TARGET-GESTAFFELTER realisierter Move % pro decided (Win/Loss, NICHT-legacy/censored) Trade (`core.realized_pnl.weighted_move_pct` — der Einsatz wird gleich auf die N Targets verteilt; das ist der korrekte realisierte Edge für laddered-TP-Bots). Wo keine Targets persistiert sind (Alt-Tags), Fallback auf rohen entry→close-Move; `stf%` = Anteil gestaffelter Trades. `net%` = mean − 0.10% Round-Trip-Fee. **PnL primär, WR sekundär** (WR = TP1-Touch, R:R zählt). LEGACY-Closes (synthetische ±2.5%) ausgeschlossen (`leg`-Spalte). `levΣ%(n)` = leveraged realized PnL (gestaffelt × Hebel, −100% geclampt), GROSS (Fee nicht abgezogen), exact-only wo targets+lev persistiert (n). `R̄` nur classic (closed_ai_signals hat kein sl). Verdikt auf `net%` (n≥30).
+**Edge metric (`mean%`/`net%`):** unlevered, TARGET-LADDERED realized move % per decided (win/loss, NOT legacy/censored) trade (`core.realized_pnl.weighted_move_pct` — the stake is split evenly across the N targets; this is the correct realized edge for laddered-TP bots). Where no targets are persisted (legacy tags), fallback to the raw entry→close move; `stf%` = share of laddered trades. `net%` = mean − 0.10% round-trip fee. **PnL primary, WR secondary** (WR = TP1 touch, R:R counts). LEGACY closes (synthetic ±2.5%) excluded (`leg` column). `levΣ%(n)` = leveraged realized PnL (laddered × leverage, clamped at −100%), GROSS (fee not deducted), exact-only where targets+lev are persisted (n). `R̄` classic only (closed_ai_signals has no sl). Verdict based on `net%` (n≥30).
 
-## Ranking — Retire-Kandidaten vs Keep (decided n ≥ 30)
+## Ranking — retire candidates vs keep (decided n ≥ 30)
 
 ### LONG
 
-**RETIRE-Kandidaten** (net<0): EPD2[act] -3.24%×39, BB2_4H[act] -2.68%×31, MIS1-8h[ret] -2.32%×222, RUB2[act] -2.09%×101, ATB1[ret] -1.51%×41, MIS2-24h[act] -1.40%×66, MIS2-72h[act] -0.77%×109, MIS2-168h[act] -0.71%×51, RUB3[sha] -0.63%×91, Main Channel[act] -0.53%×574, 5Percent[act] -0.34%×4288, FastInOut[act] -0.33%×13857, VolIndic[act] -0.25%×56298, AIM1[ret] -0.21%×917, SR[act] -0.20%×7455, BR1Hv2[act] -0.16%×725, EPD1[act] -0.09%×628, MIS2-8h[act] -0.03%×243, ROM1[act] -0.02%×1453, BR1D[act] -0.01%×135
+**RETIRE candidates** (net<0): EPD2[act] -3.24%×39, BB2_4H[act] -2.68%×31, MIS1-8h[ret] -2.32%×222, RUB2[act] -2.09%×101, ATB1[ret] -1.51%×41, MIS2-24h[act] -1.40%×66, MIS2-72h[act] -0.77%×109, MIS2-168h[act] -0.71%×51, RUB3[sha] -0.63%×91, Main Channel[act] -0.53%×574, 5Percent[act] -0.34%×4288, FastInOut[act] -0.33%×13857, VolIndic[act] -0.25%×56298, AIM1[ret] -0.21%×917, SR[act] -0.20%×7455, BR1Hv2[act] -0.16%×725, EPD1[act] -0.09%×628, MIS2-8h[act] -0.03%×243, ROM1[act] -0.02%×1453, BR1D[act] -0.01%×135
 
 **KEEP** (net>0): ABR1[act] +5.19%×62, RUB1[act] +2.48%×1083, MIS1-24h[ret] +2.17%×216, XSM1[act] +1.75%×33, TD_1H[act] +1.48%×1367, TD_4H[act] +1.28%×414, MIS1-72h[ret] +1.25%×11886, BB_1H[act] +1.25%×1729, BR1H[act] +1.19%×3629, BB_4H[act] +1.17%×1265, BR4H[act] +1.10%×949, QM_4H[act] +1.05%×155, MIS1-168h[ret] +0.97%×7307, SRA2[act] +0.85%×318, BR2H[act] +0.68%×2193, SRA1[act] +0.62%×361, QM_1H[act] +0.32%×1599, ATS2[sha] +0.31%×612, ATS1[ret] +0.30%×1742, EPD3[sha] +0.15%×2627, FIF1[ret] +0.12%×37, ABR2[act] +0.10%×135, AIM2[act] +0.09%×1231
 
 ### SHORT
 
-**RETIRE-Kandidaten** (net<0): BR1H[act] -2.23%×3329, AIM1[ret] -1.78%×2190, BR4H[act] -1.62%×908, BB_1H[act] -1.54%×2362, BR2H[act] -1.49%×2242, ABR2[act] -1.22%×60, QM_4H[act] -1.10%×401, BB_4H[act] -0.79%×1681, BB2_4H[act] -0.69%×63, BR1Hv2[act] -0.59%×811, XSR1[act] -0.51%×33, 5Percent[act] -0.49%×41517, BR1D[act] -0.47%×186, QM_1H[act] -0.41%×1561, ATB1[ret] -0.39%×268, MIS2-8h[act] -0.35%×52, FastInOut[act] -0.30%×160112, Main Channel[act] -0.28%×172, TSM1[act] -0.22%×375, VolIndic[act] -0.19%×50703, FIF1[ret] -0.18%×91, EPD3[act] -0.06%×3568, SR[act] -0.03%×5036, TD_1H[act] -0.00%×1049
+**RETIRE candidates** (net<0): BR1H[act] -2.23%×3329, AIM1[ret] -1.78%×2190, BR4H[act] -1.62%×908, BB_1H[act] -1.54%×2362, BR2H[act] -1.49%×2242, ABR2[act] -1.22%×60, QM_4H[act] -1.10%×401, BB_4H[act] -0.79%×1681, BB2_4H[act] -0.69%×63, BR1Hv2[act] -0.59%×811, XSR1[act] -0.51%×33, 5Percent[act] -0.49%×41517, BR1D[act] -0.47%×186, QM_1H[act] -0.41%×1561, ATB1[ret] -0.39%×268, MIS2-8h[act] -0.35%×52, FastInOut[act] -0.30%×160112, Main Channel[act] -0.28%×172, TSM1[act] -0.22%×375, VolIndic[act] -0.19%×50703, FIF1[ret] -0.18%×91, EPD3[act] -0.06%×3568, SR[act] -0.03%×5036, TD_1H[act] -0.00%×1049
 
 **KEEP** (net>0): EPD1[act] +3.36%×4141, MIS2-24h[act] +3.17%×44, MIS2-72h[act] +2.39%×45, MIS1-8h[ret] +2.37%×385, EPD2[act] +2.24%×39, MIS1-72h[ret] +1.55%×302, UFI1[act] +1.36%×41, MIS1-168h[ret] +1.25%×102, AIM2[act] +1.18%×1098, SRA2[sha] +1.00%×222, MAX1[act] +0.81%×130, RUB1[act] +0.78%×1492, TD_4H[act] +0.72%×256, RUB2[act] +0.66%×240, MIS1-24h[ret] +0.66%×239, ABR1[act] +0.64%×51, ROM1[act] +0.47%×3140, ATS1[ret] +0.20%×825, SRA1[act] +0.05%×388
 
@@ -161,12 +161,12 @@ _generated 2026-07-23 06:16:44.194945+00:00 · read-only · dedup=Report-14 surv
 | SMC_15M | ai | 5 | 100.0 | +2.904 | +2.804 | +2.422 | 0 | +2.47 | +5.5 | — | — | 0 | 0 | 2026-02-26→2026-02-28 | THIN |
 | SMC_30M | ai | 4 | 100.0 | +19.861 | +19.761 | +19.874 | 0 | +239.92 | +479.9 | — | — | 0 | 0 | 2026-02-26→2026-02-26 | THIN |
 
-## Join-Grenzen (ehrlich)
+## Join limitations (honest)
 
-- closed_ai_signals hat KEIN sl → R-Multiple nur für classic (closed_trades_master).
-- targets+lev sind für Alt-Tags dünn persistiert (Bot-8-Monitor-Migration) → leveraged PnL ist exact-only (levΣ n-Spalte); die unlevered Move-Metrik ist die Coverage-robuste Edge-Basis.
-- LEGACY-Closes (±2.5%/-5%) sind synthetische Migrations-Preise → aus dem Edge ausgeschlossen; Tags, deren Historie fast nur LEGACY ist (MIS1-*_pump/dump-Burst 03-01/03-02), haben keinen messbaren realisierten Edge (SYNTHETIC/CENSORED-ONLY).
-- WR ist TP1-Touch (kann bei R:R<1 trotzdem netto-negativ sein) — deshalb ist net-mean-Move die Verdikt-Basis, nicht WR.
-- prob↔outcome in der Live-DB nur eingeschränkt joinbar → Outcome via realized Trade-status.
-- active-vs-inactive nutzt control/parked des LIVE-Checkouts (--parked-dir); shadow/retired/silent sind code-definiert (shadow_gate) und unabhängig davon korrekt.
-- Monitor-generierte Outcomes (P1.2/P2.7/P1.9) stimmen historisch nur ~63% mit einem First-Touch-Replay überein → die absolute Edge-Höhe ist rauschbehaftet; Vorzeichen + Kohorten-Vergleiche sind das Signal.
+- closed_ai_signals has NO sl → R-multiple only for classic (closed_trades_master).
+- targets+lev are thinly persisted for legacy tags (bot-8 monitor migration) → leveraged PnL is exact-only (levΣ n column); the unlevered move metric is the coverage-robust edge basis.
+- LEGACY closes (±2.5%/-5%) are synthetic migration prices → excluded from the edge; tags whose history is almost entirely LEGACY (MIS1-*_pump/dump burst 03-01/03-02) have no measurable realized edge (SYNTHETIC/CENSORED-ONLY).
+- WR is TP1 touch (can still be net-negative at R:R<1) — that's why net-mean-move is the verdict basis, not WR.
+- prob↔outcome only partially joinable in the live DB → outcome via realized trade status.
+- active-vs-inactive uses control/parked of the LIVE checkout (--parked-dir); shadow/retired/silent are code-defined (shadow_gate) and correct independently of that.
+- Monitor-generated outcomes (P1.2/P2.7/P1.9) historically agree with a first-touch replay only ~63% of the time → the absolute edge magnitude is noisy; sign + cohort comparisons are the signal.

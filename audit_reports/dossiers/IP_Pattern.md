@@ -1,60 +1,60 @@
-# Dossier: IP / Pattern-Detector (Bots 7 + 22)
+# Dossier: IP / Pattern Detector (Bots 7 + 22)
 
-> Chartbasierte Pattern-Signalgeber: `7_pattern_detector.py` erzeugt u.a. die Break-&-Retest-Familie **BR1H/BR2H/BR4H (+BR1D)** — ohne ML-Gate; `22_ip_pattern_bot.py` ist in den Audit-Quellen fast unsichtbar. **Note (16): BR-Familie D.** Kernverdikt: Break-and-Retest roh, mit 4-fachem Signalvolumen der ML-Schwester BB und **Σ −4.106 netto** — der direkte Vergleich BB_4H (+ML, +565) vs. BR (ohne ML, −4.106) ist das beste In-vivo-Argument im Repo für ein ML-Gate; Sofortmaßnahme: BR1H-SHORT-Seite schließen.
+> Chart-based pattern signal generators: `7_pattern_detector.py` produces, among others, the break-and-retest family **BR1H/BR2H/BR4H (+BR1D)** — without an ML gate; `22_ip_pattern_bot.py` is nearly invisible in the audit sources. **Note (16): BR family D.** Core verdict: break-and-retest raw, at 4× the signal volume of its ML sibling BB, and **Σ −4,106 net** — the direct comparison BB_4H (+ML, +565) vs. BR (without ML, −4,106) is the best in-vivo argument in the repo for an ML gate; immediate action: close the BR1H SHORT side.
 
-## 1. Steckbrief
+## 1. Fact sheet
 
 | | |
 |---|---|
-| Bots | `7_pattern_detector.py` + `22_ip_pattern_bot.py` — chartbasiert, kein ML |
-| Signale/TF | **BR1H / BR2H / BR4H** (Report 14) + **BR1D** (Step-2-Zeile „BR1H/2H/4H/1D"). **Quellen-Klärung:** Report 16, Abschnitt 6 („im Code verifiziert"): `BR1H/2H/4H` = Break-and-Retest **ohne** ML **aus dem Pattern-Detector (7, nicht aus 25!)** — die BR-Familie gehört also zu Bot 7, nicht zum SMC-ML-Sniper |
-| Rolle | Report 16, Abschnitt 7: „Pattern-Detector 7 ist kein Intelligence-, sondern ein (netto negativer) Signal-Layer" |
-| Bot 22 | in den gelesenen Quellen nur über P3.11 (Chart-Verzeichnis-Growth) erwähnt; keine Signale/Tags, keine Performance-Daten, keine eigene Note — Abdeckungslücke |
-| Leverage | in den Quellen nicht beziffert |
+| Bots | `7_pattern_detector.py` + `22_ip_pattern_bot.py` — chart-based, no ML |
+| Signals/TF | **BR1H / BR2H / BR4H** (Report 14) + **BR1D** (Step 2 row "BR1H/2H/4H/1D"). **Source clarification:** Report 16, section 6 ("verified in code"): `BR1H/2H/4H` = break-and-retest **without** ML **from the pattern detector (7, not from 25!)** — the BR family therefore belongs to Bot 7, not to the SMC-ML sniper |
+| Role | Report 16, section 7: "pattern detector 7 is not an intelligence layer, but a (net negative) signal layer" |
+| Bot 22 | mentioned in the sources read only via P3.11 (chart directory growth); no signals/tags, no performance data, no note of its own — coverage gap |
+| Leverage | not quantified in the sources |
 
-## 2. Live-Bilanz (aktive Ära 24.02.–03.07., dedupliziert)
+## 2. Live balance (active era 24.02.–03.07., deduplicated)
 
-| Familie | n | WR | ø PnL | Median | Σ netto |
+| Family | n | WR | avg PnL | Median | Σ net |
 |---|---|---|---|---|---|
-| BR4H / BR2H / BR1H (Report 14) | 11.756 | 58–60% | −0,1…−0,3% | ≈0 | **−4.106** |
-| BR1H/2H/4H/1D (Step-2-Zählung) | 12.034 | 57–60% | — | — | — |
+| BR4H / BR2H / BR1H (Report 14) | 11,756 | 58–60% | −0.1…−0.3% | ≈0 | **−4,106** |
+| BR1H/2H/4H/1D (Step 2 count) | 12,034 | 57–60% | — | — | — |
 
-- **Richtungs-Asymmetrie (E1):** BR1H **LONG 65,5% vs. SHORT 49,5% WR** — die SHORT-Seite zieht die Familie herunter; Report 15/S1: „BR1H nur LONG".
-- Regime-Drift: BR-/BB-Familie Mär–Apr stark negativ, ab Mai positiv (Mini-n, das Regime-Gating filtert sie inzwischen fast weg).
-- Keine Kalibrierungsdaten (kein ML → keine Confidence).
-- Step 2 (P0.1-Kontext): identische Messages „PatternDetector" 2–3× binnen 60 min in Trading-Channels → Upstream-Doppel-Generierung (Detector-Refire).
-- Vorbehalt (Report 17): monitor-generiert, nur 63,4% Replay-Übereinstimmung (P1.2/P2.7); für die AI-Flotte ist ein Replay wegen N4 (gelöschte `ai_signals`-Targets) rückwirkend unmöglich.
+- **Direction asymmetry (E1):** BR1H **LONG 65.5% vs. SHORT 49.5% WR** — the SHORT side drags the family down; Report 15/S1: "BR1H LONG only".
+- Regime drift: the BR/BB family was strongly negative Mar–Apr, positive from May onward (mini-n, regime gating now filters it out almost entirely).
+- No calibration data (no ML → no confidence).
+- Step 2 (P0.1 context): identical "PatternDetector" messages 2–3× within 60 min in trading channels → upstream double generation (detector refire).
+- Caveat (Report 17): monitor-generated, only 63.4% replay agreement (P1.2/P2.7); for the AI fleet a replay is retroactively impossible because of N4 (deleted `ai_signals` targets).
 
-## 3. Befunde
+## 3. Findings
 
-| ID | Ebene | Schweregrad | Einzeiler | Status |
+| ID | Level | Severity | One-liner | Status |
 |---|---|---|---|---|
-| 16-Verdikt | Konzept | HOCH | BR = Break-and-Retest ohne ML-Gate bei 4-fachem Signalvolumen von BB → Σ −4.106; dieselbe Idee mit ML-Gate (BB_4H) ist positiv | ✔ (Report 14/16) |
-| E1/S1 | Live | HOCH | BR1H SHORT 49,5% WR vs. LONG 65,5% — SHORT-Seite verlässlich schädlich | ✔ (DB, dedupliziert) |
-| Step2-Dup | Bot | MITTEL | Upstream-Doppel-Generierung: md5-identische PatternDetector-Messages 2–3× binnen 60 min in Trading-Channels (Detector-Refire; kein Outbox-Retry-Doppel) | ✔ (Step 2) |
-| P3.11 | Infra | LOW | Chart-Verzeichnisse wachsen unbegrenzt (`7:27-28`, `22:29-30`) — prüfen, ob Housekeeping genau diese Dirs räumt | ~ (ungeprüft) |
-| Lücke | Audit | — | Bot 22 (`22_ip_pattern_bot.py`) hat in keiner der Quellen Findings, Tags oder Zahlen — weder bewertet noch entlastet | ~ (offen) |
+| 16-Verdict | Concept | HIGH | BR = break-and-retest without an ML gate at 4× the signal volume of BB → Σ −4,106; the same idea with an ML gate (BB_4H) is positive | ✔ (Report 14/16) |
+| E1/S1 | Live | HIGH | BR1H SHORT 49.5% WR vs. LONG 65.5% — the SHORT side is reliably harmful | ✔ (DB, deduplicated) |
+| Step2-Dup | Bot | MEDIUM | Upstream double generation: md5-identical PatternDetector messages 2–3× within 60 min in trading channels (detector refire; not an outbox retry duplicate) | ✔ (Step 2) |
+| P3.11 | Infra | LOW | Chart directories grow unbounded (`7:27-28`, `22:29-30`) — check whether housekeeping actually clears these dirs | ~ (unverified) |
+| Gap | Audit | — | Bot 22 (`22_ip_pattern_bot.py`) has no findings, tags or figures in any of the sources — neither assessed nor cleared | ~ (open) |
 
-## 4. Abhängigkeiten & Querschnitts-Risiken
+## 4. Dependencies & cross-cutting risks
 
-- **R1 (Forming Candle):** flottenweiter Look-ahead-/Repaint-Root-Cause; die BR-Signalerzeugung hängt an denselben `{sym}_{tf}`-Tabellen mit Partial-Kerzen.
-- **Monitor-Vorbehalt (Report 17):** BR-WR/PnL sind monitor-generiert (P1.2 Trailing-SL zieht nie nach, P2.7 verpasste Hits) — die per-Trade-Wahrheit ist unzuverlässig, und die Whitelist des Orchestrators gated auf genau diesen Zahlen.
-- **Regime-Gating:** BB/BR werden vom Gating inzwischen fast weggefiltert (Report 14) — jede Re-Aktivierung sollte erst nach P0.4-Whitelist-Fix bewertet werden.
-- **S1 (Report 15):** BR1H ist expliziter Baustein des „Direction-Gated Portfolio" (BR1H nur LONG).
+- **R1 (forming candle):** fleet-wide look-ahead/repaint root cause; BR signal generation hangs off the same `{sym}_{tf}` tables with partial candles.
+- **Monitor caveat (Report 17):** BR WR/PnL are monitor-generated (P1.2 trailing SL never trails, P2.7 missed hits) — per-trade truth is unreliable, and the orchestrator's whitelist gates on exactly these numbers.
+- **Regime gating:** BB/BR are now nearly filtered out by gating (Report 14) — any re-activation should only be assessed after the P0.4 whitelist fix.
+- **S1 (Report 15):** BR1H is an explicit building block of the "direction-gated portfolio" (BR1H LONG only).
 
-## 5. Sanierungsplan
+## 5. Remediation plan
 
-**Sofort (kein Retrain, reine Konfig):** BR1H-SHORT-Seite schließen (S1; Report 16 Empfehlung 8.2). BR-Familie insgesamt prüfen/parken (Report 14 D.3: „netto negativ; ggf. nur LONG-Seite bei BR1H behalten"). Detector-Refire-Dedupe (Ursache der Doppel-Messages) angehen.
+**Immediate (no retrain, pure config):** close the BR1H SHORT side (S1; Report 16 recommendation 8.2). Review/park the BR family overall (Report 14 D.3: "net negative; possibly keep only the LONG side of BR1H"). Address detector-refire deduplication (cause of the duplicate messages).
 
-**Struktur:** Der belegte BB-vs-BR-Kontrast legt nahe, BR-Rohsignale nicht abzuschalten, sondern als **Event-Quelle unter ein ML-Gate** zu stellen (Muster S11 aus Report 15: Meta-Klassifier über großem gelabeltem Signalstrom) — nach V1–V3 (R1-Fix, Dedup-Index, First-Touch-Simulator) und Monitor-Rewrite.
+**Structure:** the proven BB-vs-BR contrast suggests not switching off the BR raw signals, but placing them as an **event source under an ML gate** (pattern S11 from Report 15: meta-classifier over a large labelled signal stream) — after V1–V3 (R1 fix, dedup index, first-touch simulator) and a monitor rewrite.
 
-**Offene Fragen:** Was genau macht `22_ip_pattern_bot.py` und erzeugt es eigene Signale/Tags? (In keiner Quelle beantwortet.) Erzeugt Bot 7 neben BR weitere Pattern-Tags? Räumt das Housekeeping die Chart-Verzeichnisse (P3.11)? BR1D-Zahlen separat ausweisen (Step 2 zählt es mit, Report 14 nicht).
+**Open questions:** what exactly does `22_ip_pattern_bot.py` do and does it generate its own signals/tags? (unanswered in any source). Does Bot 7 generate other pattern tags besides BR? Does housekeeping actually clear the chart directories (P3.11)? Report the BR1D numbers separately (Step 2 counts it in, Report 14 doesn't).
 
-## 6. Belege
+## 6. Evidence
 
-- `AUDIT_TODO.md` P3.11 (+P0.1-Annotation zur Upstream-Doppel-Generierung)
-- `audit_reports/14_bot_performance_db.md` (BR-Zeile: n=11.756, Σ −4.106, BR1H LONG 65,5%/SHORT 49,5%)
-- `audit_reports/STEP2_DB_VERIFICATION.md` (BR1H/2H/4H/1D n=12.034; PatternDetector-Doppel-Messages)
-- `audit_reports/15_strategy_proposals.md` (E1, S1: BR1H nur LONG)
-- `audit_reports/16_strategy_concept_evaluation.md` (Tag-Klärung BR→Bot 7; Ranking #17; Abschnitt 7 Intelligence-Layer)
-- `audit_reports/17_monitor_replay_and_gaps.md` (Monitor-Vorbehalt, N4)
+- `AUDIT_TODO.md` P3.11 (+P0.1 annotation on the upstream double generation)
+- `audit_reports/14_bot_performance_db.md` (BR row: n=11,756, Σ −4,106, BR1H LONG 65.5%/SHORT 49.5%)
+- `audit_reports/STEP2_DB_VERIFICATION.md` (BR1H/2H/4H/1D n=12,034; PatternDetector duplicate messages)
+- `audit_reports/15_strategy_proposals.md` (E1, S1: BR1H LONG only)
+- `audit_reports/16_strategy_concept_evaluation.md` (BR→Bot 7 tag clarification; ranking #17; section 7 intelligence layer)
+- `audit_reports/17_monitor_replay_and_gaps.md` (monitor caveat, N4)

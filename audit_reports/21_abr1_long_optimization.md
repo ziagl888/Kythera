@@ -1,166 +1,168 @@
-# Report 21 — ABR1 LONG: Optimierungs-Studie (negatives Resultat)
+# Report 21 — ABR1 LONG: optimisation study (negative result)
 
-**Datum:** 2026-07-06 · **Datenbasis:** Replay `detector_fix/abr1_replay_365d.jsonl`
-(neuer Detektor nach Rework, 100 Coins / 365 d, 27.705 LONG-Events) + 1h-OHLCV read-only aus der Live-DB.
-**Anlass:** Nach dem Detektor-Rework (CHANGELOG 2026-07-05) wurde nur das SHORT-Binärmodell
-deployt; LONG blieb auf dem Legacy-Blocker. Frage des Operators: lässt sich LONG retten —
-„Break & Retest funktioniert doch auch long"?
+**Date:** 2026-07-06 · **Data basis:** replay `detector_fix/abr1_replay_365d.jsonl`
+(new detector after rework, 100 coins / 365 d, 27,705 LONG events) + 1h OHLCV read-only from the live DB.
+**Occasion:** After the detector rework (CHANGELOG 2026-07-05), only the SHORT binary model was
+deployed; LONG stayed on the legacy blocker. Operator question: can LONG be saved —
+"break & retest works for longs too, doesn't it?"
 
-**Kurzantwort: Nein — nicht in diesem Marktjahr, nicht mit diesen Hebeln.** Alle drei
-Optimierungsklassen (Trade-Management, ML-Entry-Selektion, Regime-Filter) wurden auf echten
-Kursdaten durchsimuliert; keine dreht LONG ins Plus. LONG bleibt zu.
+**Short answer: no — not in this market year, not with these levers.** All three
+optimisation classes (trade management, ML entry selection, regime filter) were fully
+simulated on real price data; none turns LONG positive. LONG stays off.
 
 ---
 
-## 1. Diagnose: warum LONG verliert
+## 1. Diagnosis: why LONG loses
 
-| | LONG | SHORT (Referenz) |
+| | LONG | SHORT (reference) |
 |---|---|---|
-| TP1-First-Touch-WR | 55,5 % | 58,0 % |
-| avg Win / avg Loss | +3,01 % / −5,09 % | +4,18 % / −5,14 % |
-| Break-even-WR (aus Payoff) | **≈ 62,8 %** | ≈ 55,2 % |
-| avg PnL/Trade | **−0,59 %** | +0,28 % |
+| TP1 first-touch WR | 55.5% | 58.0% |
+| avg win / avg loss | +3.01% / −5.09% | +4.18% / −5.14% |
+| break-even WR (from payoff) | **≈ 62.8%** | ≈ 55.2% |
+| avg PnL/trade | **−0.59%** | +0.28% |
 
-Das Problem ist die **Payoff-Asymmetrie, nicht die Trefferquote**: LONG-Wins zahlen ~28 %
-weniger als SHORT-Wins bei gleicher Loss-Größe. Selbst die besten Monate (2025-09: 64 % WR,
-2026-04: 63 %) erreichen den Break-even nur haarscharf. Monats-WR schwankt 43–64 % → stark
-regimegetrieben. Kein einzelnes der 23 Features trennt nennenswert (bestes Quartil −0,16 %/Trade).
+The problem is the **payoff asymmetry, not the hit rate**: LONG wins pay ~28%
+less than SHORT wins at the same loss size. Even the best months (2025-09: 64% WR,
+2026-04: 63%) barely scrape break-even. Monthly WR swings 43–64% → strongly
+regime-driven. None of the 23 features separates meaningfully (best quartile −0.16%/trade).
 
-Strukturursachen im Code: `calculate_smart_targets` setzt den SL ≥ 3×ATR unter Entry
-(∅ Risk 4,96 %) — generische Swing-Geometrie statt Setup-Invalidierung am Level; das
-Ladder-Management (1/n, Trailing erst ab TP2) gibt bei `sl_after_tp1` 2/3 der Position am
-vollen SL ab (3.746 Trades).
+Structural root causes in the code: `calculate_smart_targets` sets the SL ≥ 3×ATR
+below entry (avg risk 4.96%) — generic swing geometry instead of setup invalidation at
+the level; the ladder management (1/n, trailing only from TP2) gives up 2/3 of the
+position at the full SL under `sl_after_tp1` (3,746 trades).
 
-## 2. Getestete Hebel
+## 2. Levers tested
 
-### 2a. Trade-Management (Exit-Resimulation, 27.559 Trades, Baseline-Replikation 99,7 %)
+### 2a. Trade management (exit resimulation, 27,559 trades, baseline replication 99.7%)
 
-| Variante | WR | avg PnL/Trade | avg R | Summe |
+| Variant | WR | avg PnL/trade | avg R | Sum |
 |---|---|---|---|---|
-| V0 Original (SL 3×ATR, Trailing ab TP2) | 55,4 % | −0,60 % | −0,10 | −16.566 % |
-| V1 + Breakeven-SL nach TP1 | 55,4 % | −0,50 % | −0,09 | −13.742 % |
-| V2 Setup-SL 1,0 % unter Level | 32,6 % | −0,25 % | −0,13 | −6.845 % |
-| V3 Setup-SL 1,5 % unter Level | 38,2 % | −0,30 % | −0,12 | −8.201 % |
-| V4 = V2 + BE nach TP1 | 32,6 % | **−0,24 %** | −0,13 | −6.696 % |
+| V0 original (SL 3×ATR, trailing from TP2) | 55.4% | −0.60% | −0.10 | −16,566% |
+| V1 + breakeven SL after TP1 | 55.4% | −0.50% | −0.09 | −13,742% |
+| V2 setup SL 1.0% below level | 32.6% | −0.25% | −0.13 | −6,845% |
+| V3 setup SL 1.5% below level | 38.2% | −0.30% | −0.12 | −8,201% |
+| V4 = V2 + BE after TP1 | 32.6% | **−0.24%** | −0.13 | −6,696% |
 
-Der enge Setup-SL halbiert den nominalen Verlust, ist aber **risikoadjustiert schlechter**
-(−0,13 R vs. −0,10 R): die 1h-Wicks reißen den engen Stop zu oft. BE-nach-TP1 hilft
-(+0,10 pp), reicht allein nicht. Kein Monat außer dem Randmonat 2026-07 wird stabil positiv.
+The tight setup SL roughly halves the nominal loss, but is **risk-adjusted worse**
+(−0.13 R vs. −0.10 R): the 1h wicks tag the tight stop too often. BE-after-TP1 helps
+(+0.10 pp), but isn't enough on its own. No month except the fringe month 2026-07 turns stably positive.
 
-### 2b. ML-Entry-Selektion (XGB, Label `net_pnl > 0`, chrono 70/15/15 + 7d-Purge, 23+3 Features)
+### 2b. ML entry selection (XGB, label `net_pnl > 0`, chrono 70/15/15 + 7d purge, 23+3 features)
 
-| | Val (q0.95-Slice) | Test (gleicher Threshold) |
+| | Val (q0.95 slice) | Test (same threshold) |
 |---|---|---|
-| unter V0-Management | **+3,25 %**/Trade | **−2,17 %**/Trade |
-| unter V4-Management | +0,74 %/Trade | −1,07 %/Trade |
+| under V0 management | **+3.25%**/trade | **−2.17%**/trade |
+| under V4 management | +0.74%/trade | −1.07%/trade |
 
-Jede Test-Scheibe negativ, und **je höher der Threshold, desto schlechter** — das Modell
-lernt Val-Regime-Muster, die out-of-sample invertieren. Identische Signatur wie das
-Batch-Retrain (Report 19 / Deploy 2026-07-06: Test-WR 51,8 % == Basisrate, Top-Bucket
-invertiert). Das ist kein Trainings-Bug, sondern fehlendes Signal in den Features.
+Every test slice negative, and **the higher the threshold, the worse** — the model
+learns val-regime patterns that invert out-of-sample. Identical signature to the
+batch retrain (report 19 / deploy 2026-07-06: test WR 51.8% == base rate, top
+bucket inverted). This is not a training bug, it's missing signal in the features.
 
-### 2c. BTC-Regime-Filter (EMA200(1d) / 30d-Momentum, Vortages-Shift)
+### 2c. BTC regime filter (EMA200(1d) / 30d momentum, previous-day shift)
 
 | Regime | n | V0 avg | V4 avg |
 |---|---|---|---|
-| BTC > EMA200 | 6.508 | **−1,08 %** | −0,22 % |
-| BTC < EMA200 | 21.197 | −0,46 % | −0,25 % |
+| BTC > EMA200 | 6,508 | **−1.08%** | −0.22% |
+| BTC < EMA200 | 21,197 | −0.46% | −0.25% |
 
-Sogar invertiert: Alt-Resistance-Breaks nach oben werden im BTC-Aufwärtsregime *stärker*
-verkauft. Als Gate unbrauchbar.
+Even inverted: upward resistance breaks in alts get sold *harder* during a BTC
+uptrend regime. Unusable as a gate.
 
-## 3. Einordnung & Empfehlung
+## 3. Assessment & recommendation
 
-Die Asymmetrie ist marktlogisch konsistent: Aufwärtsbreaks in Alts werden gefadet —
-die Edge der Strategie liegt auf der SHORT-Seite (gescheiterte/überdehnte Moves), was das
-deployte SHORT-Gate (Test-WR 68 % vs. 63,7 %, +1,5 %/Trade) bestätigt.
+The asymmetry is market-logically consistent: upward breaks in alts get faded —
+the strategy's edge sits on the SHORT side (failed/overextended moves), which the
+deployed SHORT gate confirms (test WR 68% vs. 63.7%, +1.5%/trade).
 
-1. **LONG bleibt aus** (Status quo: Legacy-3-Klassen-Modell ohne meta.json wirkt als
-   De-facto-Sperre @ Threshold 0,60). Kein Code-Change nötig.
-2. **Nicht weiter an Exit-Geometrie/Threshold drehen** — der Suchraum ist hier abgegrast,
-   weitere Iterationen wären Overfitting auf dieselben 365 Tage.
-3. Reaktivierung nur über **neue Informationsquellen** (Orderflow/Funding/Whale-Daten aus
-   Bot 19/20, BTC-Dominanz, Level-Konfluenz über Timeframes) — eigenes Forschungsprojekt,
-   kein Tuning — **oder** über einen Regimewechsel: Replay quartalsweise neu laufen lassen;
-   dreht die ungefilterte LONG-Basisrate nachhaltig über ~63 % (Break-even), neu bewerten.
-4. V1 (BE-nach-TP1) wäre als *generelle* Management-Verbesserung auch für SHORT prüfenswert
-   (+0,10 pp bei LONG ohne WR-Verlust) — separates Ticket, betrifft `8_ai_trade_monitor`.
+1. **LONG stays off** (status quo: legacy 3-class model without meta.json acts as a
+   de-facto block @ threshold 0.60). No code change needed.
+2. **Stop turning further knobs on exit geometry/threshold** — the search space is
+   grazed out here; further iterations would be overfitting on the same 365 days.
+3. Reactivation only via **new information sources** (order flow/funding/whale data
+   from bot 19/20, BTC dominance, level confluence across timeframes) — its own
+   research project, not tuning — **or** via a regime shift: re-run the replay
+   quarterly; re-evaluate once the unfiltered LONG base rate durably crosses ~63%
+   (break-even).
+4. V1 (BE-after-TP1) would be worth checking as a *general* management improvement
+   for SHORT too (+0.10 pp on LONG with no WR loss) — separate ticket, concerns
+   `8_ai_trade_monitor`.
 
-**Artefakte:** Diagnose-/Resim-/Modell-Skripte im Session-Scratchpad; Resim-Rohdaten
-`resim_results.pkl`. Replay + Stats: `_X\staging_models\replay\detector_fix\`,
+**Artifacts:** diagnosis/resim/model scripts in the session scratchpad; resim raw
+data `resim_results.pkl`. Replay + stats: `_X\staging_models\replay\detector_fix\`,
 `_X\staging_models\retrain_abr1_stats.json`.
 
 ---
 
-## Addendum (2026-07-06 abends): Target-Seite ebenfalls getestet — negativ
+## Addendum (2026-07-06 evening): target side also tested — negative
 
-Auf Operator-Wunsch wurde der letzte ungetestete strukturelle Hebel geprüft:
-**R-basierte Targets** (TP1/2/3 = Entry + 1R/2R/3R) statt Level-Cluster-Targets —
-die Hypothese, dass die nahen Cluster-Targets über dem Entry die Payoff-Asymmetrie
-verursachen.
+At the operator's request, the last untested structural lever was checked:
+**R-based targets** (TP1/2/3 = entry + 1R/2R/3R) instead of level-cluster targets —
+the hypothesis that the near cluster targets above entry cause the payoff asymmetry.
 
-| Variante | WR (TP1) | avg PnL/Trade | avg R | BE-WR (Payoff) | pnl>0-Quote |
+| Variant | WR (TP1) | avg PnL/trade | avg R | BE-WR (payoff) | pnl>0 rate |
 |---|---|---|---|---|---|
-| G0 Original | 55,3 % | −0,61 % | −0,10 | 48,4 % | 41,7 % |
-| G1 Smart-SL + R-Targets | 46,7 % | −0,84 % | −0,14 | 36,2 % | 29,2 % |
-| G2 Setup-SL + R-Targets | 47,6 % | **−0,21 %** | −0,11 | 36,7 % | 31,8 % |
-| G3 = G2 + BE nach TP1 | 47,6 % | −0,21 % | −0,11 | 53,5 % | 47,6 % |
-| G4 = G1 + BE nach TP1 | 46,7 % | −0,69 % | −0,12 | 53,9 % | 46,7 % |
+| G0 original | 55.3% | −0.61% | −0.10 | 48.4% | 41.7% |
+| G1 smart SL + R targets | 46.7% | −0.84% | −0.14 | 36.2% | 29.2% |
+| G2 setup SL + R targets | 47.6% | **−0.21%** | −0.11 | 36.7% | 31.8% |
+| G3 = G2 + BE after TP1 | 47.6% | −0.21% | −0.11 | 53.5% | 47.6% |
+| G4 = G1 + BE after TP1 | 46.7% | −0.69% | −0.12 | 53.9% | 46.7% |
 
-Zentrale Beobachtung: Die Geometrie verschiebt nur, WIE verloren wird — der
-risikoadjustierte Erwartungswert bleibt über den GESAMTEN Geometrie-Raum bei
-**−0,10 bis −0,14 R** (Fees erklären davon nur ~0,05 R). Symmetrischer Payoff
-(G1: BE-WR 36 %) wird exakt durch die einbrechende Gewinnquote (29 %) bezahlt.
-Kein Monat außer dem Randmonat 2026-07 stabil positiv. **Damit sind Entry-Gate,
-SL-Seite, Target-Seite, Management, ML-Selektion und BTC-Regime alle
-falsifiziert — die LONG-Seite hat in diesem Marktjahr keine Edge, Punkt.**
+Central observation: the geometry only shifts HOW it loses — the risk-adjusted
+expectancy stays across the ENTIRE geometry space at **−0.10 to −0.14 R**
+(fees explain only ~0.05 R of that). Symmetric payoff
+(G1: BE-WR 36%) is paid for exactly by the collapsing win rate (29%).
+No month except the fringe month 2026-07 stably positive. **This falsifies entry
+gate, SL side, target side, management, ML selection, and BTC regime alike — the
+LONG side has no edge in this market year, period.**
 
-Nächster (letzter) Kandidat gem. §3: neue Informationsquellen. Funding-Rate-
-Historie wird backfillt (`tools/backfill_funding_rates.py`, Tabelle
-`funding_rates`) — Funding ist im Gegensatz zu Whale-Daten (WS erst seit
-04.07. wieder live) vollständig historisch verfügbar.
+Next (last) candidate per §3: new information sources. Funding-rate
+history is being backfilled (`tools/backfill_funding_rates.py`, table
+`funding_rates`) — unlike whale data (WS only live again since 04.07.),
+funding is fully available historically.
 
 ---
 
-## Addendum 2 (2026-07-06 spätabends): Feature-Recheck — Mechanik + Funding
+## Addendum 2 (2026-07-06 late evening): feature recheck — mechanics + funding
 
-Operator-Hypothese: „wir schauen nicht auf die richtigen Indikatoren." Getestet
-wurden 16 **Setup-Mechanik-Features** (Break-Volumen/-Body/-Close-Position,
-Pullback-Volumen, Level-Touches, Coin-Trend 7d/30d, Abstand 30d-Hoch/-Tief,
-SMA50d/20d, relative Stärke vs. BTC, ATR) und 6 **Funding-Features**
-(letzte Rate, 24h/72h-Mittel, 7d-Summe, 90d-Perzentil, Trend).
+Operator hypothesis: "we're not looking at the right indicators." 16 **setup
+mechanics features** (break volume/body/close position, pullback volume, level
+touches, coin trend 7d/30d, distance to 30d high/low, SMA50d/20d, relative
+strength vs. BTC, ATR) and 6 **funding features** (latest rate, 24h/72h mean,
+7d sum, 90d percentile, trend) were tested.
 
-**Mechanik-Features:** Univariat erstmals positive Zellen — `level_touches` Q4
-(+0,10 %, 61 % WR), `dist_lo_30d` Q1 (+0,49 %, 65 %: frühe Reversal-Breaks nahe
-dem 30d-Tief), `atr14_rel` Q1 (+0,24 %, 64 %). Bemerkenswert: **Break-Volumen —
-das Lehrbuch-Kriterium — ist komplett flach.** Regel-Kombinationen (Schwellen
-nur aus Train) erreichen im Train +0,5…+0,76 %/Trade, sind aber im Test-Fenster
-(Mai–Jul 26) ALLE negativ → regimeabhängig, nicht deploybar.
+**Mechanics features:** univariately, positive cells for the first time —
+`level_touches` Q4 (+0.10%, 61% WR), `dist_lo_30d` Q1 (+0.49%, 65%: early
+reversal breaks near the 30d low), `atr14_rel` Q1 (+0.24%, 64%). Notable:
+**break volume — the textbook criterion — is completely flat.** Rule
+combinations (thresholds from train only) reach +0.5…+0.76%/trade in train,
+but are ALL negative in the test window (May–Jul 26) → regime-dependent, not
+deployable.
 
-**Funding:** 75 % aller Werte kleben am Binance-Default (+1,0 bps). Signal
-steckt strikt darüber (Longs zahlen echte Prämie = zahlungsbereite
-Perp-Nachfrage hinter dem Break):
+**Funding:** 75% of all values cling to the Binance default (+1.0 bps). Signal
+sits strictly above that (longs paying real premium = willing-to-pay perp
+demand behind the break):
 
-| fund_24h-Regel | n/Jahr (100 Coins) | gesamt | Train | Test (Mai–Jul) |
+| fund_24h rule | n/year (100 coins) | overall | train | test (May–Jul) |
 |---|---|---|---|---|
-| ≥ +1,0 bps (Default) | 6.954 | −0,58 % | −0,67 % | −1,29 % |
-| > +1,5 bps | 311 | +1,32 % / 74 % | +1,66 % | −1,02 % (n=49) |
-| **> +3,0 bps** | 119 | **+1,12 % / 74 %** | +1,44 % | **+0,69 % / 88 % (n=17)** |
+| ≥ +1.0 bps (default) | 6,954 | −0.58% | −0.67% | −1.29% |
+| > +1.5 bps | 311 | +1.32% / 74% | +1.66% | −1.02% (n=49) |
+| **> +3.0 bps** | 119 | **+1.12% / 74%** | +1.44% | **+0.69% / 88% (n=17)** |
 
-`fund_24h > +3 bps` ist die **einzige Regel der gesamten Studienreihe, die den
-Out-of-Sample-Test übersteht** — bei ehrlich dünner Testbasis (n=17).
+`fund_24h > +3 bps` is the **only rule in the entire study series that survives
+the out-of-sample test** — on an honestly thin test base (n=17).
 
-**Operator-Entscheid:** Live-Experiment statt weiterer Validierung. LONG öffnet
-nur noch über das Funding-Gate (`FUNDING_GATE_LONG_BPS = 3.0`, Mittel der
-letzten 3 Sätze via REST, fail-closed, 30-min-Cache), Tag ABR2, Funding-Wert in
-der Info-Nachricht. Erwartung ~1–2 Signale/Tag auf 530 Coins. Review nach 4–6
-Wochen bzw. ≥30 getrackten Trades.
+**Operator decision:** live experiment instead of further validation. LONG now
+opens only via the funding gate (`FUNDING_GATE_LONG_BPS = 3.0`, mean of the
+last 3 settlements via REST, fail-closed, 30-min cache), tag ABR2, funding
+value in the info message. Expectation ~1–2 signals/day across 530 coins.
+Review after 4–6 weeks or ≥30 tracked trades.
 
-**Spiegeltest SHORT (33,5k Events):** dieselbe Funding-Zone ist für SHORTs
-konsistent giftig — `fund_24h > +1,5 bps` → −1,21 %/Trade (Train −1,13, Test
-−1,00; > +3 bps: −1,21/−1,11/−1,72). Das kreuzvalidiert das LONG-Gate mit
-unabhängigen Daten. Die symmetrische Seite (fund_24h < −3 bps → +0,56 %) ist
-real, aber schwächer als das bestehende Modell-Gate (+1,5 %/Trade) — kein
-Ersatz, keine Änderung. **Umgesetzt als SHORT-Funding-Veto**
-(`FUNDING_VETO_SHORT_BPS = 1.5`, fail-open): SHORT braucht Modell-Gate UND
-fund_24h ≤ +1,5 bps.
+**Mirror test SHORT (33.5k events):** the same funding zone is consistently
+toxic for SHORTs — `fund_24h > +1,5 bps` → −1.21%/trade (train −1.13, test
+−1.00; > +3 bps: −1.21/−1.11/−1.72). This cross-validates the LONG gate with
+independent data. The symmetric side (fund_24h < −3 bps → +0.56%) is real,
+but weaker than the existing model gate (+1.5%/trade) — no replacement, no
+change. **Implemented as a SHORT funding veto**
+(`FUNDING_VETO_SHORT_BPS = 1.5`, fail-open): SHORT needs the model gate AND
+fund_24h ≤ +1.5 bps.

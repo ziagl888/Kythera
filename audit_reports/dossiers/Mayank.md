@@ -1,50 +1,50 @@
 # Dossier: Mayank
 
-> Regelbasierter FVG-Bot („FVG fully closed" als Entry). **Note (16): D.** Kernverdikt: konsistenter implementiert als Bot 16 (Closed-Candle-Disziplin), aber das Entry-Konzept ist in der SMC-Lehre selbst ein *entwertetes* Level — Knife-Catch am alten Gap-Boden; komplett unvermessen, als Info-Kanal harmlos, als Strategie unbewertbar.
+> Rule-based FVG bot ("FVG fully closed" as entry). **Note (16): D.** Core verdict: implemented more consistently than Bot 16 (closed-candle discipline), but the entry concept is itself a *devalued* level in SMC doctrine — a knife-catch at the old gap floor; completely unmeasured, harmless as an info channel, unratable as a strategy.
 
-## 1. Steckbrief
+## 1. Profile
 
 | | |
 |---|---|
-| Bot | `17_mayank_bot.py` — regelbasiert, kein ML, kein Trainer |
-| Signal-Logik | FVG-Retest: „FVG fully closed" triggert Entry; keine Altersgrenze für Gaps |
+| Bot | `17_mayank_bot.py` — rule-based, no ML, no trainer |
+| Signal logic | FVG retest: "FVG fully closed" triggers entry; no age limit for gaps |
 | Channel | CH_MAYANK |
-| Leverage | in den Quellen nicht beziffert; kein R4-Befund gegen 17 |
-| Tracking | **keins** — schreibt kein `ai_signals`, taucht in keiner Performance-Statistik auf |
+| Leverage | not quantified in the sources; no R4 finding against 17 |
+| Tracking | **none** — writes no `ai_signals`, doesn't appear in any performance statistics |
 
-## 2. Live-Bilanz
+## 2. Live track record
 
-**Keine.** Report 16 (Ranking #20): n = untracked, WR = ?, Σ = ? — „unmessbar". Einer der drei unvermessenen Bots (16/17/21): kein Tracking, kein valider Backtest. Konsequenz aus Report 16, Querschnittsbefund 6 / Empfehlung 8.5: instrumentieren oder abschalten.
+**None.** Report 16 (ranking #20): n = untracked, WR = ?, Σ = ? — "unmeasurable". One of the three unmeasured bots (16/17/21): no tracking, no valid backtest. Consequence from Report 16, cross-cutting finding 6 / recommendation 8.5: instrument or shut down.
 
-## 3. Befunde
+## 3. Findings
 
-| ID | Ebene | Schweregrad | Einzeiler | Status |
+| ID | Level | Severity | One-liner | Status |
 |---|---|---|---|---|
-| P2.45a | Bot | MEDIUM | Static-Data-Refire nach Cooldown-Ablauf (Wochenenden) — wie Bot 16: dasselbe alte Signal re-postet, sobald der Cooldown abläuft | ✔ (Code) |
-| P2.45b | Bot | MEDIUM | Kein FVG-Altersllimit — monatealte Gaps erzeugen „Retest"-Signale; Oldest-First-Break (Bot 21 cappt MAX_FVG_AGE=48) | ✔ (Code) |
-| 08-LOW | Bot | LOW | Drei separate Pool-Connections pro Signal | ✔ (Code) |
-| 08-LOW | Bot | LOW | 2h/4h-Resample in Exchange-Lokalzeit vor UTC-Konvertierung (geteilt mit 16) | ✔ (Code) |
-| 16-Konzept | Konzept | — | „FVG fully closed" als Entry konzeptionell wackelig: ein vollständig gefülltes Gap gilt in der SMC-Lehre als entwertet | ✔ (Konzept-Review) |
-| P3.8 | Bot | LOW | matplotlib ohne `Agg`-Backend → headless-Crash-Risiko (17/24/25 betroffen) | ✔ (Code) |
+| P2.45a | Bot | MEDIUM | Static-data refire after cooldown expiry (weekends) — like Bot 16: the same old signal is reposted as soon as the cooldown expires | ✔ (Code) |
+| P2.45b | Bot | MEDIUM | No FVG age limit — month-old gaps generate "retest" signals; oldest-first break (Bot 21 caps MAX_FVG_AGE=48) | ✔ (Code) |
+| 08-LOW | Bot | LOW | Three separate pool connections per signal | ✔ (Code) |
+| 08-LOW | Bot | LOW | 2h/4h resample in exchange local time before UTC conversion (shared with 16) | ✔ (Code) |
+| 16-Concept | Concept | — | "FVG fully closed" as entry conceptually shaky: a fully filled gap is considered devalued in SMC doctrine | ✔ (Concept review) |
+| P3.8 | Bot | LOW | matplotlib without an `Agg` backend → headless crash risk (17/24/25 affected) | ✔ (Code) |
 
-Positiv (08, Cross-Cutting): 17 wird als „konsistenter implementiert (Closed-Candle)" eingestuft — der R1-Repaint-Befund der Nachbarn 16/24/25 trifft ihn so nicht.
+Positive (08, cross-cutting): 17 is classified as "implemented more consistently (closed candle)" — the R1 repaint finding affecting its neighbours 16/24/25 doesn't apply to it in the same way.
 
-## 4. Abhängigkeiten & Querschnitts-Risiken
+## 4. Dependencies & cross-cutting risks
 
-- **R1:** DB-Kerzen-Vertrag wird flottenweit inkonsistent interpretiert; 17 gehört zu den saubereren Konsumenten, profitiert aber ebenfalls von einem gemeinsamen `fetch_closed_candles()`.
-- **R4:** kein spezifischer Befund, aber die Familie hat nirgends einen Leverage-vs-SL-Abgleich — zentrales `cap_leverage_to_sl()` sollte auch 17 einbinden.
-- Kein Tracking → keine Monitor-Verzerrung (Report 17), aber auch keinerlei Evidenz; Whitelist/Analyzer kennen den Bot nicht.
+- **R1:** the DB candle contract is interpreted inconsistently fleet-wide; 17 is one of the cleaner consumers, but would also benefit from a shared `fetch_closed_candles()`.
+- **R4:** no specific finding, but the family has no leverage-vs-SL reconciliation anywhere — a central `cap_leverage_to_sl()` should include 17 too.
+- No tracking → no monitor distortion (Report 17), but also zero evidence; the whitelist/analyzer don't know the bot.
 
-## 5. Sanierungsplan
+## 5. Remediation plan
 
-**Sofort:** Entscheidung instrumentieren vs. abschalten (Report 16: unvermessene Strategien haben keinen Ertragsanspruch). Als reiner Info-Kanal ohne Cornix-Ausführung wäre er laut Report 16 „harmlos".
+**Immediate:** decide instrument vs. shut down (Report 16: unmeasured strategies have no claim to returns). As a pure info channel without Cornix execution, it would be "harmless" per Report 16.
 
-**Regel-Fixes (falls behalten):** MAX_FVG_AGE=48-Fenster von Bot 21 übernehmen, Newest-First statt Oldest-First (P2.45b); Freshness-Gate bzw. Trigger-Candle-Timestamp in den Cooldown-Key (P2.45a); eine Pool-Connection pro Signal; `Agg`-Backend (P3.8); Resample nach UTC.
+**Rule fixes (if kept):** adopt Bot 21's MAX_FVG_AGE=48 window, newest-first instead of oldest-first (P2.45b); freshness gate or trigger-candle timestamp in the cooldown key (P2.45a); one pool connection per signal; `Agg` backend (P3.8); resample after UTC.
 
-**Offene Fragen:** Wochenend-Timestamps im CH_MAYANK (08, DB-Frage 8) nie ausgewertet; reale Signalqualität mangels Tracking unbekannt.
+**Open questions:** weekend timestamps in CH_MAYANK (08, DB question 8) never evaluated; real signal quality unknown for lack of tracking.
 
-## 6. Belege
+## 6. Evidence
 
 - `AUDIT_TODO.md` P2.45, P3.8
-- `audit_reports/08_smc_bots.md` (Abschnitt 17_mayank_bot.py + Cross-Cutting)
-- `audit_reports/16_strategy_concept_evaluation.md` (Abschnitt 6, Ranking #20; Querschnittsbefund 6, Empfehlung 8.5)
+- `audit_reports/08_smc_bots.md` (section 17_mayank_bot.py + cross-cutting)
+- `audit_reports/16_strategy_concept_evaluation.md` (section 6, ranking #20; cross-cutting finding 6, recommendation 8.5)

@@ -1,36 +1,36 @@
-# Per-Bot-Performance: Komplett-Umbau
+# Per-bot performance: full rebuild
 
-## Was wurde geändert
+## What was changed
 
-Vier zusammenhängende Probleme aus deinem letzten Screenshot sind gefixt:
+Four related problems from your last screenshot are fixed:
 
-### 1. MIS1-Konsolidierung
+### 1. MIS1 consolidation
 `MIS1-8h_pump` + `MIS1-8h_dump` → **`MIS1-8h`**
 `MIS1-24h_pump` + `MIS1-24h_dump` → **`MIS1-24h`**
 `MIS1-72h_pump` + `MIS1-72h_dump` → **`MIS1-72h`**
 `MIS1-168h_pump` + `MIS1-168h_dump` → **`MIS1-168h`**
 
-Die `_pump`/`_dump`-Suffixe sind eigentlich nur Synonyme für LONG/SHORT.
-Die Information `direction` ist sowieso separat gespeichert — also bringt
-das Suffix nichts außer künstlich aufgeblasene Bot-Listen.
+The `_pump`/`_dump` suffixes are really just synonyms for LONG/SHORT.
+The `direction` information is stored separately anyway — so the suffix
+only adds artificially inflated bot lists and nothing else.
 
-### 2. MSI1-Typo-Fix
-`MSI1-*` → `MIS1-*` (historische falsche Einträge werden bei der Anzeige
-umgemapped; die DB bleibt unverändert).
+### 2. MSI1 typo fix
+`MSI1-*` → `MIS1-*` (historical incorrect entries are remapped for
+display; the DB stays unchanged).
 
-### 3. "ALL"-Spalte repariert
-Der 0%-Bug bei EPD1 & Co ist weg. Root cause: Die Anzeige zählte auch
-**offene Trades** (Shadow-Inserts ohne Close) als Verlust. Now
-**nur geschlossene Trades** in WR-Berechnungen einbezogen.
+### 3. "ALL" column fixed
+The 0% bug at EPD1 & co is gone. Root cause: the display also counted
+**open trades** (shadow inserts without a close) as losses. Now
+**only closed trades** are included in WR calculations.
 
-### 4. Zeitfenster-Logik migrated
-Filter jetzt nach **`created_at`** (Eröffnungszeit), nicht mehr `closed_at`.
-Semantik: "1h" = "Trades die in der letzten Stunde eröffnet wurden".
-Statistisch sauberer — ein 168h-MIS1-Signal beeinflusst nicht mehr die
-1h-Spalte weil es heute zufällig schließt.
+### 4. Time-window logic migrated
+Filter is now by **`created_at`** (open time), no longer `closed_at`.
+Semantics: "1h" = "trades that were opened in the last hour".
+Statistically cleaner — a 168h MIS1 signal no longer affects the
+1h column just because it happens to close today.
 
-### 5. Neue Detail-line für 4h
-Unter jedem Bot erscheint eine 3-linen-Detail-Ansicht für die letzten 4h:
+### 5. New detail line for 4h
+Under each bot, a 3-line detail view appears for the last 4h:
 
 ```
 MIS1-8h      │  33%↓ │  67% │  69% │  63% │  65%   (n=3000, +1.04%)
@@ -39,87 +39,87 @@ MIS1-8h      │  33%↓ │  67% │  69% │  63% │  65%   (n=3000, +1.04%)
     LONG: 3/4 win | SHORT: 1/2 win
 ```
 
-- `4h: X opened → Y closed, Z still open` — Summe X = Y + Z
-- `TP1+:X` = hat mindestens TP1 erreicht (status ≥ 1)
-- `TP2+:X` = hat mindestens TP2 erreicht (status ≥ 2)
-- `TP3+:X` = hat mindestens TP3 erreicht
-- `TP4:X` = Vollhit (status = 4)
-- `SL:X` = Verlust (status = 0)
-- Summe der TP1+ und SL = closed (weil status ∈ {0,1,2,3,4} deckt alles ab)
-- LONG/SHORT-Split zeigt asymmetrische Bot-Performance
+- `4h: X opened → Y closed, Z still open` — sum X = Y + Z
+- `TP1+:X` = reached at least TP1 (status ≥ 1)
+- `TP2+:X` = reached at least TP2 (status ≥ 2)
+- `TP3+:X` = reached at least TP3
+- `TP4:X` = full hit (status = 4)
+- `SL:X` = loss (status = 0)
+- Sum of TP1+ and SL = closed (because status ∈ {0,1,2,3,4} covers everything)
+- LONG/SHORT split shows asymmetric bot performance
 
-## Wichtige technische Details
+## Important technical details
 
-### Neue Datenquellen
-Die Funktion zieht jetzt aus **vier** Tabellen:
-- `closed_trades_master` — klassisch, geschlossen
-- `active_trades_master` — klassisch, offen
-- `closed_ai_signals` — AI, geschlossen
-- `ai_signals` (JOIN mit `ml_predictions_master`) — AI, offen
+### New data sources
+The function now pulls from **four** tables:
+- `closed_trades_master` — classic, closed
+- `active_trades_master` — classic, open
+- `closed_ai_signals` — AI, closed
+- `ai_signals` (JOIN with `ml_predictions_master`) — AI, open
 
-Für `ai_signals` gibt es keine direkte `created_at`-Spalte; wir joinen
-mit `ml_predictions_master.time`. Falls der JOIN fehlschlägt, gibt's
-einen Fallback der einfach `NOW()` als created_at nimmt (= Trade wird
-der aktuellen Stunde zugeordnet — akzeptabler Graceful Degradation).
+For `ai_signals` there's no direct `created_at` column; we join
+with `ml_predictions_master.time`. If the JOIN fails, there's a
+fallback that simply takes `NOW()` as created_at (= trade gets
+assigned to the current hour — acceptable graceful degradation).
 
-### Sortierung
-Bots are now nach **geschlossenen Trades** sortiert (`n_closed_total`),
-nicht nach Total. So kommen Bots mit tatsächlicher Historie nach oben.
+### Sorting
+Bots are now sorted by **closed trades** (`n_closed_total`),
+not by total. This way bots with actual history rise to the top.
 
-### n=X in der Haupt-line
-Zeigt jetzt nur noch die Zahl der **geschlossenen** Trades (nicht opened).
-Das ist konsistent mit der WR-Berechnung.
+### n=X in the main line
+Now shows only the number of **closed** trades (not opened).
+This is consistent with the WR calculation.
 
-### Kelly-Berechnung
-Basiert unverändert auf allen geschlossenen Trades. Hat jetzt konsistent
-dieselbe Datenbasis wie die All-Spalte.
+### Kelly calculation
+Unchanged, based on all closed trades. Now consistently uses
+the same data basis as the All column.
 
-### linen-Anzahl im Post
-Pro Bot jetzt 4 linen (statt 1):
-- Haupt-line (Win-Rates)
+### Number of lines in the post
+Now 4 lines per bot (instead of 1):
+- Main line (win rates)
 - `4h: X opened → Y closed`
 - `TP1+:...`
 - `LONG: ... | SHORT: ...`
-- Leerzeile
+- Blank line
 
-Bei 46 Bots wird das länger — der Split-Mechanismus von der letzten Version
-greift trotzdem: Tabelle + Kelly-Block werden weiterhin auf mehrere
-Messages verteilt falls nötig.
+With 46 bots this gets longer — the split mechanism from the last
+version still applies: table + Kelly block continue to be spread
+across multiple messages if needed.
 
-## Getestet
+## Tested
 
-Mit 180.000 Mock-Trades über 7 Strategien, inklusive:
-- EPD1 mit 70k Trades und 60% WR → Anzeige zeigt 60% (vorher 0%)
-- ATS1 mit 100k Trades und 58% WR → Anzeige zeigt 58% (vorher 1%)
-- MIS1-8h_pump + MIS1-8h_dump → wird als eine line "MIS1-8h" angezeigt
-- MSI1-24h_pump → landet bei MIS1-24h
-- Offene Trades erscheinen als "still open" in der Detail-line
-- Target-Staffelung: TP1+ ≥ TP2+ ≥ TP3+ ≥ TP4, Summe = closed
+With 180,000 mock trades across 7 strategies, including:
+- EPD1 with 70k trades and 60% WR → display shows 60% (previously 0%)
+- ATS1 with 100k trades and 58% WR → display shows 58% (previously 1%)
+- MIS1-8h_pump + MIS1-8h_dump → shown as one line "MIS1-8h"
+- MSI1-24h_pump → ends up under MIS1-24h
+- Open trades appear as "still open" in the detail line
+- Target staggering: TP1+ ≥ TP2+ ≥ TP3+ ≥ TP4, sum = closed
 
 ## Deploy
 
-Eine Datei ersetzen:
+Replace one file:
 ```
 C:\_BOTS\crypto_trading_bot_v2\23_market_tracker.py
 ```
 
-Watchdog neu starten. Ab nächstem XX:00:30 sollte der Post:
-- Korrekte WR-Zahlen zeigen (keine 0%-Geister-Werte mehr)
-- MIS1 in den konsolidierten Horizont-Versionen zeigen
-- Detail-line mit Target-Staffelung unter jedem Bot haben
+Restart the watchdog. From the next XX:00:30, the post should:
+- Show correct WR figures (no more 0% ghost values)
+- Show MIS1 in the consolidated horizon versions
+- Have a detail line with target staggering under each bot
 
-## Was bleibt gleich
+## What stays the same
 
-- Kelly-Block (Half-Kelly, Safe Margin, Pure Margin)
-- Message-Split bei 46+ Strategien (von letzter Runde)
-- HTML-Format (nur `<pre>`, `<b>`, `<i>` ohne style-Attribute)
-- Tabellen-Layout (Spalten-Alignment)
+- Kelly block (half-Kelly, safe margin, pure margin)
+- Message split at 46+ strategies (from the last round)
+- HTML format (only `<pre>`, `<b>`, `<i>` without style attributes)
+- Table layout (column alignment)
 
-## Falls irgendwas doch kaputt ist
+## If something breaks anyway
 
-Die Änderungen sind primär additiv:
-- Bei leerer `active_trades_master`/`ai_signals` Tabelle: kein Crash, einfach `0 still open`
-- Bei fehlendem ml_predictions_master-JOIN: Fallback auf NOW()
-- Bei Bot ohne 4h-Aktivität: Detail-line wird weggelassen
+The changes are primarily additive:
+- If `active_trades_master`/`ai_signals` table is empty: no crash, just `0 still open`
+- If the ml_predictions_master JOIN is missing: fallback to NOW()
+- If a bot has no 4h activity: the detail line is omitted
 
-Falls du im Log Fehler siehst: schick mir den Output, dann flicke ich sie.
+If you see errors in the log: send me the output, then I'll fix them.

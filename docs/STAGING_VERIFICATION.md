@@ -1,11 +1,9 @@
-# Post-Retrain Staging-Verifikation
+# Post-Retrain Staging Verification
 
-**Task:** T-2026-CU-9050-120 · **Tool:** `tools/verify_staging_artifacts.py` · **Stand:** 2026-07-14
+**Task:** T-2026-CU-9050-120 · **Tool:** `tools/verify_staging_artifacts.py` · **As of:** 2026-07-14
 
-Diese Checkliste begleitet die Verifikation eines Retrain-Artefakts, **bevor** es
-promotet wird. Die Promotion eines Artefakts in den Repo-Root (= live) ist eine
-**explizite Operator-Entscheidung von Michi** (harte Regel 2, Eskalation) — das
-Tool liefert nur den Befund, es promotet nichts.
+This checklist accompanies the verification of a retrain artifact **before** it is promoted. Promoting an artifact into the repo root (= live) is an
+**explicit operator decision by Michi** (hard rule 2, escalation) — the tool only delivers the finding, it promotes nothing.
 
 ## Pipeline
 
@@ -17,99 +15,99 @@ verify_staging_artifacts.py         →  Befund (mechanisch + C2-Metriken)
 ```
 
 - **STAGING_DIR:** `C:\Users\Michael\Documents\_X\staging_models` (env `KYTHERA_STAGING_DIR`).
-- **Serving-Env:** Fleet-Python `Python313_12` (3.13.12 / xgboost 3.1.2). Retrains
-  MÜSSEN in genau diesem Interpreter laufen — sonst greift Check 5 (xgb-Skew).
+- **Serving env:** fleet Python `Python313_12` (3.13.12 / xgboost 3.1.2). Retrains
+  MUST run in exactly this interpreter — otherwise Check 5 kicks in (xgb skew).
 
-## Ausführen
+## Running it
 
 ```bash
 python tools/verify_staging_artifacts.py             # alle Familien
 python tools/verify_staging_artifacts.py --only td,bb
 ```
 
-Read-only. Kein DB-Zugriff, kein Live-Touch. Exit-Code **1**, sobald ein
-**mechanischer** Contract-Check FAIL ist; Metrik-WARNs sind advisory (Exit 0).
+Read-only. No DB access, no live touch. Exit code **1** as soon as a
+**mechanical** contract check is FAIL; metric WARNs are advisory (exit 0).
 
-## Mechanische Checks (das Tool entscheidet)
+## Mechanical checks (the tool decides)
 
-| # | Check | Regel | FAIL bedeutet |
+| # | Check | Rule | FAIL means |
 |---|---|---|---|
-| 1 | Artefakt in STAGING_DIR, nicht Repo-Root | HR-2 | falscher Ablageort |
-| 2 | lädt über `core.model_artifacts` + Feature-Liste == Trainer/Serving-Referenz | HR-7 / P0.12 | Feature-Drift → Bot läuft idle oder auf Müll-Input |
-| 3 | `meta.model_id` == erwarteter Gen-Tag (TD2/BB2/ABR2/MIS2/RUB2/EPD2/ATB2) | HR-6 | Bot postet unter Fallback-Tag / Alt-Tag |
-| 4 | `optimal_threshold` ∈ (0,1) | Contract | `None`/`1.0` = kein Gate (not-deployable-Seite) |
-| 5 | `meta.xgboost_version` == Serving-xgboost | P3.4 | Major-Drift → stiller `predict_proba`-Skew |
-| 6 | Format B: `model_type` startswith `binary` + `_calib.pkl` | Contract | Loader läse die falsche Wahrscheinlichkeitsspalte |
-| 7 | Modell hat `predict_proba` | Contract | kein Klassifikator geladen |
-| 8 | Promotions-Slot ist nicht doppelt belegt (`tools/promotion_guard.py`) | HR-4 / HR-6 | ein LIVE-Challenger liest den Root-Slot einer fremden Generation → Doppel-Post |
+| 1 | Artifact in STAGING_DIR, not repo root | HR-2 | wrong storage location |
+| 2 | loads via `core.model_artifacts` + feature list == trainer/serving reference | HR-7 / P0.12 | feature drift → bot runs idle or on garbage input |
+| 3 | `meta.model_id` == expected generation tag (TD2/BB2/ABR2/MIS2/RUB2/EPD2/ATB2) | HR-6 | bot posts under a fallback tag / old tag |
+| 4 | `optimal_threshold` ∈ (0,1) | Contract | `None`/`1.0` = no gate (not-deployable side) |
+| 5 | `meta.xgboost_version` == serving xgboost | P3.4 | major drift → silent `predict_proba` skew |
+| 6 | Format B: `model_type` startswith `binary` + `_calib.pkl` | Contract | loader would read the wrong probability column |
+| 7 | Model has `predict_proba` | Contract | no classifier loaded |
+| 8 | Promotion slot is not double-booked (`tools/promotion_guard.py`) | HR-4 / HR-6 | a LIVE challenger reads the root slot of a foreign generation → double post |
 
-### Check 8 — Challenger-Promotions-Namensguard (T-2026-KYT-9050-057)
+### Check 8 — Challenger promotion name guard (T-2026-KYT-9050-057)
 
-`shadow_gate.shadow_artifact_path` liefert für ein **LIVE**-Bein den nackten
-Root-Dateinamen. Trägt ein Challenger-Tag (RUB3, EPD3, …) in `SHADOW_ARTIFACTS`
-den Dateinamen der Retrain-**Generation** statt seinen eigenen, belegt die
-Promotion einen Slot, den zugleich der **Legacy-Loader** liest — beide Tags
-posten dasselbe Modell (Regel-4-Doppel-Trade). Bei **EPD3-SHORT** war das am
-2026-07-21 real (`epd2_model_SHORT.pkl` = Bot-10-`EPD2_ARTIFACT_PATHS["SHORT"]`)
-und wurde von Hand durch den challenger-distinkten Namen `epd3_model_SHORT.pkl`
-abgewendet; bei **EPD3-LONG** (T-037) dieselbe Handarbeit ein zweites Mal.
+`shadow_gate.shadow_artifact_path` returns the bare root filename for a **LIVE**
+leg. If a challenger tag (RUB3, EPD3, …) in `SHADOW_ARTIFACTS` carries the
+filename of the retrain **generation** instead of its own, the promotion
+occupies a slot that the **legacy loader** also reads — both tags post the
+same model (rule-4 double trade). For **EPD3-SHORT** this was real on
+2026-07-21 (`epd2_model_SHORT.pkl` = bot-10 `EPD2_ARTIFACT_PATHS["SHORT"]`)
+and was averted by hand with the challenger-distinct name `epd3_model_SHORT.pkl`;
+for **EPD3-LONG** (T-037) the same manual fix a second time.
 
-Der Guard prüft das jetzt automatisch — registry-basiert, ohne Dateisystem:
+The guard now checks this automatically — registry-based, without touching the filesystem:
 
-| Fall | Schwere |
+| Case | Severity |
 |---|---|
-| Bein ist **LIVE** und der Dateiname gehört einem fremden Tag | **FAIL** (Exit 1, Promotions-Stopp) |
-| Bein ist SHADOW/SILENT/RETIRED, Dateiname nicht challenger-distinkt | WARN (latenter Blocker vor dem nächsten Flip) |
-| eine Staging-**Datei** wird von >1 Tag beansprucht | WARN je Datei (die Absicht steht nicht im Dateinamen) |
+| Leg is **LIVE** and the filename belongs to a foreign tag | **FAIL** (exit 1, promotion stop) |
+| Leg is SHADOW/SILENT/RETIRED, filename not challenger-distinct | WARN (latent blocker before the next flip) |
+| a staging **file** is claimed by >1 tag | WARN per file (the intent isn't in the filename) |
 
 ```bash
 python tools/promotion_guard.py            # Exit 1 nur bei FAIL
 python tools/promotion_guard.py --strict   # WARNs ebenfalls als Fehler
 ```
 
-Er läuft zusätzlich als pre-commit-Hook (`kythera-promotion-name-guard`) und
-blockt damit den Commit, der ein Bein auf LIVE flippt, ohne umzubenennen.
-**Offen (heute WARN):** `RUB3-LONG` zeigt weiter auf `rub2_model_LONG.pkl` —
-harmlos, solange RUB3 geparkt ist (T-037); vor einer RUB3-Promotion muss das
-Artefakt `rub3_model_LONG.pkl` heissen.
+It additionally runs as a pre-commit hook (`kythera-promotion-name-guard`)
+and thereby blocks the commit that flips a leg to LIVE without renaming it.
+**Open (WARN today):** `RUB3-LONG` still points to
+`rub2_model_LONG.pkl` — harmless as long as RUB3 is parked (T-037); before
+a RUB3 promotion, the artifact must be named `rub3_model_LONG.pkl`.
 
-## C2-Metrik-Report (advisory — Michi entscheidet)
+## C2 metric report (advisory — Michi decides)
 
-Aus `retrain_<name>_stats.json` je Modell/Richtung: **Test-WR vs Base-Rate**,
-**ΣNet-PnL**, **n**. Eine WARN-Zeile (unter Base-Rate, PnL ≤ 0, n < 30) blockt
-NICHT — sie ist der Input für den Promotion-Entscheid. Für die volle
-Kalibrierungs-Beurteilung zusätzlich die `calibration_new_test`-Buckets im
-Stats-JSON ansehen (steigt `tp1_rate`/`avg_net_pnl_pct` monoton mit der
-Confidence?).
+From `retrain_<name>_stats.json` per model/direction: **test WR vs base
+rate**, **ΣNet PnL**, **n**. A WARN row (below base rate, PnL ≤ 0, n < 30)
+does NOT block — it's the input for the promotion decision. For the
+full calibration assessment, also look at the
+`calibration_new_test` buckets in the stats JSON (does
+`tp1_rate`/`avg_net_pnl_pct` rise monotonically with confidence?).
 
-## Operator-Gates (das Tool entscheidet NICHT)
+## Operator gates (the tool does NOT decide)
 
-- [ ] **Promotion = bewusster Michi-Entscheid.** Kopie STAGING_DIR → Repo-Root ist
-      der einzige Live-Touch. Nie Teil eines Trainings-/Verifikations-Laufs.
-- [ ] **Kein Tag-Reuse (HR-6).** Der neue Tag (z.B. `MIS3`, `TD2_4H`) darf nicht
-      der eines noch aktiven Alt-Modells sein — sonst mischen sich Alt/Neu in den
-      Trackern. Der transitionale Dedup der Bots deckt den Generationswechsel.
-- [ ] **Kalibrierung schlägt den Status quo.** C2-Report + Buckets: das neue
-      Modell muss seine Base-Rate schlagen UND die alte Generation im Alt/Neu-
-      Vergleich (`calibration_old_same_events`) — sonst kein Rollout.
-- [ ] **Rollout-Reihenfolge.** Nach Live-Relevanz, ein Bot pro Schritt; geparkte
-      Bots (ATB1/BB_1H) bleiben geparkt bis zum expliziten Entparken.
-- [ ] **Nach der Promotion:** Fleet-Restart, damit der Bot das neue Artefakt lädt
-      (24h-Reload greift sonst erst verzögert); der Threshold kommt aus der Meta,
-      nicht aus einer Hardcode-Konstante.
-- [ ] **Sequential-Jobs-Regel** beim Training beachten (nur so viele parallele
-      Sims, wie die CPU trägt — sonst Thread-Oversubscription).
+- [ ] **Promotion = a deliberate Michi decision.** Copying STAGING_DIR → repo root is
+      the only live touch. Never part of a training/verification run.
+- [ ] **No tag reuse (HR-6).** The new tag (e.g. `MIS3`, `TD2_4H`) must not be
+      that of a still-active old model — otherwise old/new mix together in the
+      trackers. The bots' transitional dedup covers the generation switch.
+- [ ] **Calibration beats the status quo.** C2 report + buckets: the new
+      model must beat its base rate AND the old generation in the old/new
+      comparison (`calibration_old_same_events`) — otherwise no rollout.
+- [ ] **Rollout order.** By live relevance, one bot per step; parked
+      bots (ATB1/BB_1H) stay parked until explicitly unparked.
+- [ ] **After the promotion:** fleet restart, so the bot loads the new artifact
+      (the 24h reload would otherwise only kick in with delay); the threshold comes
+      from the meta, not from a hardcoded constant.
+- [ ] **Follow the sequential-jobs rule** during training (only as many parallel
+      sims as the CPU can carry — otherwise thread oversubscription).
 
-## Worked example (Staging-Stand 2026-07-14)
+## Worked example (staging state 2026-07-14)
 
-Der erste Lauf über den damaligen Stand fand genau die Blocker, die das Tool
-sichtbar machen soll:
+The first run over that state's data found exactly the blockers the tool is
+meant to surface:
 
-- `td_xgboost_model_4h.pkl` — lädt sauber, aber **Test-WR 59,2 % < Base 60,7 %**
-  → Metrik-WARN, No-Go bis besser.
-- `bt2_model_{LONG,SHORT}.json` (ABR2-Staging) — **`model_id` fehlt** (HR-6-FAIL)
-  **und** auf **xgboost 3.2.0** trainiert (Serving 3.1.2) → nicht promotebar, mit
-  aktuellem Trainer neu erzeugen.
-- `rub2_model_LONG.pkl` / `epd2_model_LONG.pkl` — `threshold=None` → nicht ladbar
-  (bekannte not-deployable LONG-Seiten, korrekt als FAIL markiert).
-- `bb_1h/4h`, `rub2_SHORT` — mechanisch sauber, Metriken positiv.
+- `td_xgboost_model_4h.pkl` — loads cleanly, but **test WR 59.2% < base 60.7%**
+  → metric WARN, no-go until better.
+- `bt2_model_{LONG,SHORT}.json` (ABR2 staging) — **`model_id` is missing** (HR-6 FAIL)
+  **and** trained on **xgboost 3.2.0** (serving 3.1.2) → not promotable, regenerate
+  with the current trainer.
+- `rub2_model_LONG.pkl` / `epd2_model_LONG.pkl` — `threshold=None` → not loadable
+  (known not-deployable LONG sides, correctly marked as FAIL).
+- `bb_1h/4h`, `rub2_SHORT` — mechanically clean, metrics positive.

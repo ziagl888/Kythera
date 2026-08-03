@@ -1,125 +1,127 @@
 # Research-Bots 30–33 — PEX1 / FMR1 / TRM1 / FIF1
 
-**Stand:** 2026-07-06 · **Quelle:** `audit_reports/15_strategy_proposals.md` (S6, S8, S10, S11)
+**Status:** 2026-07-06 · **Source:** `audit_reports/15_strategy_proposals.md` (S6, S8, S10, S11)
 · **Task:** T-2026-CU-9050-019
 
-Vier neue ML-Bots als Kohorte im gemeinsamen Telegram-Channel **`CH_NEW_IDEAS`**
-(Operator-Entscheid 2026-07-06: der Channel ist die Testumgebung, Signale gehen
-direkt live; `NEW_IDEAS_LIVE_POSTING=0` schaltet alle vier auf Shadow-only).
-Attribution je Bot läuft über den Modell-Tag in `ai_signals` /
-`ml_predictions_master` — der Channel ist nur der Transportweg.
+Four new ML bots as a cohort in the shared Telegram channel **`CH_NEW_IDEAS`**
+(operator decision 2026-07-06: the channel is the test environment, signals go
+live directly; `NEW_IDEAS_LIVE_POSTING=0` switches all four to shadow-only).
+Attribution per bot runs via the model tag in `ai_signals` /
+`ml_predictions_master` — the channel is only the transport path.
 
-## Überblick
+## Overview
 
-| Bot | Tag | Idee (Report 15) | Events | Richtung | Takt |
+| Bot | Tag | Idea (Report 15) | Events | Direction | Cadence |
 |---|---|---|---|---|---|
-| `30_ai_pex1_bot.py` | PEX1 | S6 Pump-Exhaustion-Short | `pump_dump_events` (vol_ratio ≥ 5, +1,5%/60s) | nur SHORT | 60s-Poll |
-| `31_ai_fmr1_bot.py` | FMR1 | S8 Funding-Extreme Mean-Reversion | Funding-Cross-Section (≥95. Pctl SHORT / ≤5. Pctl LONG) | beide | stündlich (Min. 19) |
-| `32_ai_trm1_bot.py` | TRM1 | S10 Transition-Resolution | `regime_current` = TRANSITION | BTCUSDT LONG/SHORT | alle 5 min (Min. %5==4) |
-| `33_ai_fif1_bot.py` | FIF1 | S11 FIFO-Filter | neue `active_trades_master`-Zeilen (Fast In And Out) | wie Quelle | 60s-Poll |
+| `30_ai_pex1_bot.py` | PEX1 | S6 pump-exhaustion-short | `pump_dump_events` (vol_ratio ≥ 5, +1,5%/60s) | SHORT only | 60s poll |
+| `31_ai_fmr1_bot.py` | FMR1 | S8 funding-extreme mean reversion | funding cross-section (≥95th pctl SHORT / ≤5th pctl LONG) | both | hourly (min. 19) |
+| `32_ai_trm1_bot.py` | TRM1 | S10 transition resolution | `regime_current` = TRANSITION | BTCUSDT LONG/SHORT | every 5 min (min %5==4) |
+| `33_ai_fif1_bot.py` | FIF1 | S11 FIFO filter | new `active_trades_master` rows (Fast In And Out) | same as source | 60s poll |
 
-Gemeinsame Bausteine (eine Quelle für Bot, Builder und Trainer — X-R1-Regel):
+Shared building blocks (one source for bot, builder and trainer — X-R1 rule):
 
-- `core/research_features.py` — Feature-Verträge + Builder (alles skalenfrei)
-- `core/model_artifacts.py` — Artefakt-Loader (`<strat>_model.pkl` im Repo-Root;
-  fehlt das Artefakt, läuft der Bot im Idle-Modus)
-- `core/signal_post.py` — Outbox + `ai_signals` + Shadow-Log (atomar, kein
-  Cornix-Block in der Info-Nachricht)
+- `core/research_features.py` — feature contracts + builder (everything scale-free)
+- `core/model_artifacts.py` — artifact loader (`<strat>_model.pkl` in the repo root;
+  if the artifact is missing, the bot runs in idle mode)
+- `core/signal_post.py` — outbox + `ai_signals` + shadow log (atomic, no
+  Cornix block in the info message)
 
-**Entry-Anker (T-2026-KYT-9050-011, 2026-08-01):** 30/31/32 holen den Preis für
-`calculate_smart_targets` + `log_prediction` über
+**Entry anchor (T-2026-KYT-9050-011, 2026-08-01):** 30/31/32 fetch the price for
+`calculate_smart_targets` + `log_prediction` via
 `core.live_price.get_live_price(symbol, conn)` — `core.candles` contract 2:
-Erkennung auf geschlossenen Kerzen, Preis separat. Der Kontext-Frame liefert ihn
-NICHT (seit Block 5 closed-only → bis ~59 min stale); bei 32 bleibt er nur als
-Daten-Freshness-Guard. Liefert `get_live_price` None (Binance + DB-Fallback tot),
-wird das Signal übersprungen. FIF1 nimmt weiterhin `sig["entry"]` der Quell-Zeile.
+detection on closed candles, price separate. The context frame does NOT
+provide it (since block 5 closed-only → stale for up to ~59 min); for 32 it
+only remains a data-freshness guard. If `get_live_price` returns None
+(Binance + DB fallback dead), the signal is skipped. FIF1 still takes
+`sig["entry"]` from the source row.
 
-Alle vier folgen den Flotten-Konventionen: Closed-Candle-Features (R1),
-Startup-Feature-Selbsttest (P0.12), Gate auf roher Probability (Threshold aus
-dem Val-Operating-Point), kalibrierte Confidence nur für Anzeige, Cooldowns via
-`trade_cooldowns`, Tracking durch `8_ai_trade_monitor`.
+All four follow the fleet conventions: closed-candle features (R1),
+startup feature self-test (P0.12), gate on raw probability (threshold from
+the val operating point), calibrated confidence for display only, cooldowns via
+`trade_cooldowns`, tracking by `8_ai_trade_monitor`.
 
-## Trainings-Ergebnisse (2026-07-07, alle staging — kein Deploy ohne Operator)
+## Training results (2026-07-07, all staging — no deploy without operator)
 
-Alle vier Datensätze gebaut (nach DST-Fix f95f092) und trainiert
-(`tools/new_models_train.py`, Chrono-Split + Purge, Gate auf roher Prob):
+All four datasets built (after DST fix f95f092) and trained
+(`tools/new_models_train.py`, chrono split + purge, gate on raw prob):
 
-| Modell | Events | AUC val/test | Val-OP | Test-Gate-Uplift | Verdict |
+| Model | Events | AUC val/test | Val OP | Test gate uplift | Verdict |
 |---|---|---|---|---|---|
-| PEX1 | 28.855 (26.271 gelabelt) | 0,545 / 0,565 | thr 0,65 degeneriert (99 % Pass) | −0,560 → −0,555 %/Trade (nichts) | ❌ kein Selektionswert; best_iteration=2 |
-| FMR1 | 11.503 (10.481) | **0,498** / 0,544 | −2,24 %/Trade (n=65) | −1,05 → −0,06 %/Trade (n=144) | ❌ Val = Zufall, OP negativ — kein Fundament |
-| TRM1 | 1.594 (Klassen 0/5/1.589!) | — nicht trainiert — | — | — | ⛔ upstream blockiert: Detector hält TREND nie (Step-6-Befund) → Klassen existieren nicht. Wiedervorlage nach Detector-Rework/TRANSITION-Split |
-| FIF1 | 120.102 (120.072) | 0,533 / 0,561 | **+0,044 %/Trade** (thr 0,67, n=541) | **−0,082 → +0,331 %/Trade, WR 75,3 %, n=893/18.011 (5 % Pass)** | ⚠ einziger Kandidat: Val UND Test positiv, aber Val-Edge hauchdünn |
-| (EPD2) | 78.351 | siehe MODEL_INTENT §7 | Safe-Picker verweigert / Val-Test-Bruch | LONG alle Buckets negativ; SHORT Test-WR == Basisrate | ❌ beide Richtungen |
+| PEX1 | 28.855 (26.271 labeled) | 0,545 / 0,565 | thr 0,65 degenerate (99 % pass) | −0,560 → −0,555 %/trade (nothing) | ❌ no selection value; best_iteration=2 |
+| FMR1 | 11.503 (10.481) | **0,498** / 0,544 | −2,24 %/trade (n=65) | −1,05 → −0,06 %/trade (n=144) | ❌ val = random, OP negative — no foundation |
+| TRM1 | 1.594 (classes 0/5/1.589!) | — not trained — | — | — | ⛔ upstream blocked: detector never holds TREND (step-6 finding) → classes don't exist. Revisit after detector rework/TRANSITION split |
+| FIF1 | 120.102 (120.072) | 0,533 / 0,561 | **+0,044 %/trade** (thr 0,67, n=541) | **−0,082 → +0,331 %/trade, WR 75,3 %, n=893/18.011 (5 % pass)** | ⚠ only candidate: val AND test positive, but val edge razor-thin |
+| (EPD2) | 78.351 | see MODEL_INTENT §7 | safe picker refuses / val-test break | LONG all buckets negative; SHORT test WR == base rate | ❌ both directions |
 
-Einordnung: konsistent mit der Batch-E-Kernthese — Event-Ranking-Gates liefern
-fast nie robuste Out-of-Time-Expectancy. FIF1 ist die Ausnahme mit dünnem, aber
-in Val und Test gleichgerichtetem Signal (vergleichbar MIS1-8h_pump).
+Assessment: consistent with the Batch-E core thesis — event-ranking gates
+almost never deliver robust out-of-time expectancy. FIF1 is the exception with
+a thin but consistently-directed signal in val and test (comparable to
+MIS1-8h_pump).
 
-**FIF1 DEPLOYED (Operator-Entscheid 2026-07-07 ~11:49):** `fif1_model.pkl`
-(thr 0,67, 21 Features) ins Repo-Root kopiert, Bot 33 per Restart-Marker
-recycelt, Artefakt-Load verifiziert. Läuft mit `NEW_IDEAS_LIVE_POSTING=1`
-LIVE (kein Shadow — Operator-Muster wie AIM2: Cornix-Tracking der geposteten
-Signale ist die Validierung). Review nach 4–6 Wochen gegen `ai_signals`.
-PEX1/FMR1/TRM1: kein Deploy, Bots 30–32 bleiben idle.
+**FIF1 DEPLOYED (operator decision 2026-07-07 ~11:49):** `fif1_model.pkl`
+(thr 0,67, 21 features) copied into the repo root, bot 33 recycled via restart
+marker, artifact load verified. Runs with `NEW_IDEAS_LIVE_POSTING=1`
+LIVE (no shadow — operator pattern like AIM2: Cornix tracking of the posted
+signals is the validation). Review after 4–6 weeks against `ai_signals`.
+PEX1/FMR1/TRM1: no deploy, bots 30–32 remain idle.
 
-## Design-Notizen je Bot
+## Design notes per bot
 
-### PEX1 — Pump-Exhaustion-Short (S6)
-Konsumiert die Events des `10_pump_dump_detector` (nur Pumps: `price_change_60s
-≥ +1,5`), Gate `volume_ratio ≥ 5` exakt wie im Training (Report 13 EPD1-P0:
-sonst out-of-distribution). Events älter als 30 min werden verworfen (Catch-up
-nach Downtime darf keine verfallenen Exhaustion-Thesen posten); die
-Feature-Kerze wird relativ zur EVENT-Zeit gewählt (floor-1 wie im Training).
-Geometrie: `calculate_smart_targets` SHORT. **Label-Geometrie (Review-Fix
-2026-07-06):** Trainings-Entry ist die Spike-Preis-Schätzung
-`close[idx] × (1 + 60s-Move)` — nicht der Pre-Pump-Close (der hätte
-pump-korreliert deflationierte Labels erzeugt); das Replay startet konservativ
-NACH der Event-Kerze (deren High enthält den Run-up vor dem Entry). Cooldown
-4h je Coin auf JEDEM gescorten Event — exakter Spiegel des
-Trainings-Dedups.
+### PEX1 — Pump-exhaustion-short (S6)
+Consumes the events of `10_pump_dump_detector` (pumps only: `price_change_60s
+≥ +1,5`), Gate `volume_ratio ≥ 5` exactly as in training (report 13 EPD1-P0:
+otherwise out-of-distribution). Events older than 30 min are discarded
+(catch-up after downtime must not post expired exhaustion theses); the
+feature candle is chosen relative to the EVENT time (floor-1 as in training).
+Geometry: `calculate_smart_targets` SHORT. **Label geometry (review fix
+2026-07-06):** the training entry is the spike-price estimate
+`close[idx] × (1 + 60s-Move)` — not the pre-pump close (which would have
+produced pump-correlated deflated labels); the replay starts conservatively
+after the event candle (whose high contains the run-up before the entry).
+Cooldown 4h per coin on JEDEM scored event — an exact mirror of the training
+dedup.
 
-### FMR1 — Funding-Extreme Mean-Reversion (S8)
-Cross-Section über ALLE Coins aus einem `premiumIndex`-Request; Kandidaten sind
-die Perzentil-Extreme, das Modell gated auf TP1-vor-SL. Settlement-Historie je
-Kandidat kommt live per REST (`/fapi/v1/fundingRate`) — der Bot hängt damit
-NICHT am Backfill-Zustand der `funding_rates`-Tabelle. **Bekannter Rest-Skew:**
-live wird die *laufende* Rate bewertet, im Training die *gesettelte* (gleiche
-Quelle, ein Settlement Versatz). Cooldown 24h je Coin/Richtung.
-**Bewusste Abweichung von der S8-Exit-Idee:** Report 15 skizziert „Halten bis
-Funding-Normalisierung oder Time-Stop" — implementiert ist die
-Flotten-Standard-Geometrie (Smart-Target-TP/SL, Trainings-Horizont 7 Tage),
-weil First-Touch-Simulator und AI-Trade-Monitor genau diese Geometrie labeln
-bzw. tracken; ein Funding-Normalisierungs-Exit bräuchte einen eigenen
-Monitor-Pfad. V2-Kandidat, falls die Shadow-Zahlen die Idee tragen.
+### FMR1 — Funding-extreme mean reversion (S8)
+Cross-section over ALL coins from a `premiumIndex` request; candidates are
+the percentile extremes, the model gates on TP1-before-SL. Settlement
+history per candidate comes live via REST (`/fapi/v1/fundingRate`) — the bot
+therefore does NOT depend on the backfill state of the `funding_rates`
+table. **Known residual skew:** live the *running* rate is evaluated, in
+training the *settled* one (same source, one settlement offset). Cooldown
+24h per coin/direction. **Deliberate deviation from the S8 exit idea:**
+report 15 sketches "hold until funding normalization or time stop" — what's
+implemented is the fleet-standard geometry (smart-target TP/SL, training
+horizon 7 days), because the first-touch simulator and AI trade monitor
+label/track exactly this geometry; a funding-normalization exit would need
+its own monitor path. V2 candidate, if the shadow numbers support the idea.
 
-### TRM1 — Transition-Resolution (S10)
-Läuft nur, wenn das DEBOUNCED Regime (`regime_current`) TRANSITION ist.
-3-Klassen-Modell (0=OTHER, 1=TREND_UP, 2=TREND_DOWN — Vertrag in
-`core/research_features.py`); Gate = max(P(up), P(down)). Bei Gate-Pass postet
-der Bot einen BTCUSDT-Trade in der prognostizierten Richtung (Smart-Targets).
-**Bekannter Skew:** Trainings-Events sind Roh-Checks aus `regime_history`,
-live gated das debounced Regime. Cooldown 12h je Richtung.
+### TRM1 — Transition resolution (S10)
+Only runs when the DEBOUNCED regime (`regime_current`) is TRANSITION.
+3-class model (0=OTHER, 1=TREND_UP, 2=TREND_DOWN — contract in
+`core/research_features.py`); gate = max(P(up), P(down)). On gate pass the
+bot posts a BTCUSDT trade in the predicted direction (smart targets).
+**Known skew:** training events are raw checks from `regime_history`, live
+gates on the debounced regime. Cooldown 12h per direction.
 
-### FIF1 — FIFO-Filter (S11)
-Standalone-A/B: Der Live-FIFO-Pfad (`3_detectors.py`) bleibt unangetastet.
-FIF1 pollt `Fast In And Out`-Zeilen der letzten 10 Minuten aus BEIDEN
-Master-Tabellen (Review-Fixes 2026-07-06: die closed-UNION fängt
-Fast-Resolver, die der Monitor binnen 60s aus active löscht; das Zeitfenster
-verhindert, dass nach Idle-/Ausfall-Phasen ein Backlog tage-alter Signale mit
-verfallener Geometrie gepostet wird). Dedupe über einen Content-Key
-(Coin/Richtung/Zeit/Entry); benötigte `(strategy, time)`-Indizes legt der Bot
-beim Start an. Gate-Passer posten unter Tag FIF1 mit der ORIGINAL-Geometrie
-(Entry/TP1/SL unverändert), damit die Selektion der einzige Unterschied ist.
-JEDER Kandidat landet in `ml_predictions_master` (posted true/false) — das ist
-die A/B-Auswertungsbasis.
+### FIF1 — FIFO filter (S11)
+Standalone A/B: the live FIFO path (`3_detectors.py`) remains untouched.
+FIF1 polls `Fast In And Out` rows from the last 10 minutes across BOTH
+master tables (review fixes 2026-07-06: the closed-UNION catches fast
+resolvers that the monitor deletes from active within 60s; the time window
+prevents a backlog of days-old signals with expired geometry from being
+posted after idle/outage phases). Dedup via a content key
+(coin/direction/time/entry); required `(strategy, time)` indexes are created
+by the bot at startup. Gate-passers post under tag FIF1 with the ORIGINAL
+geometry (entry/TP1/SL unchanged), so that selection is the only
+difference. JEDER candidate lands in `ml_predictions_master` (posted
+true/false) — that's the A/B evaluation basis.
 
-## Step 2 — Training auf dem VPS
+## Step 2 — Training on the VPS
 
-Reihenfolge je Strategie: Dataset-Builder → Trainer → Report prüfen → Deploy.
-Alle Builder laufen mit BELOW_NORMAL-Priorität und read-only gegen die DB.
-Artefakte landen NUR in `%KYTHERA_STAGING_DIR%` (P1.35) — Deploy ins Repo-Root
-ist eine bewusste Operator-Entscheidung.
+Order per strategy: dataset builder → trainer → check report → deploy.
+All builders run at BELOW_NORMAL priority and read-only against the DB.
+Artifacts land ONLY in `%KYTHERA_STAGING_DIR%` (P1.35) — deploying into the
+repo root is a deliberate operator decision.
 
 ```bash
 # 0. Voraussetzung nur für FMR1: Funding-Historie backfillen (resumierbar)
@@ -144,117 +146,116 @@ copy %KYTHERA_STAGING_DIR%\pex1_model.pkl C:\_BOT\Kythera\pex1_model.pkl
 #    Reload; im Idle-Modus alle 30 min).
 ```
 
-**Deploy-Gate (Empfehlung, analog AIM2 Rollout-Gates):** nur deployen, wenn der
-Test-Report `gate_avg_pnl > 0` UND `n_pass` groß genug für eine ehrliche
-Aussage ist (≥ 50 für PEX1/FIF1, ≥ 20 für FMR1/TRM1). Ein negatives Resultat
-ist ein gültiges Ergebnis (Action-Bias-Korrektur) — dann bleibt der Bot im
-Idle-Modus und die Idee wird mit Befund geparkt.
+**Deploy gate (recommendation, analogous to AIM2 rollout gates):** only
+deploy if the test report shows `gate_avg_pnl > 0` AND `n_pass` is large
+enough for an honest statement (≥ 50 for PEX1/FIF1, ≥ 20 for FMR1/TRM1). A
+negative result is a valid outcome (action-bias correction) — the bot then
+stays in idle mode and the idea is parked with its finding.
 
-## VPS-Setup-Checkliste
+## VPS setup checklist
 
-1. `.env` ergänzen: `CH_NEW_IDEAS=<Channel-ID>` und `NEW_IDEAS_LIVE_POSTING=1`.
-   Optional je Bot: `CH_PEX1` / `CH_FMR1` / `CH_TRM1` / `CH_FIF1` überschreiben
-   den Kohorten-Channel einzeln (ungesetzt → Fallback `CH_NEW_IDEAS`; Operator
-   2026-07-07: Start gemeinsam im Test-Channel, eigener Channel erst, wenn ein
-   Bot sich bewährt — Umzug ist dann ein reiner .env-Eintrag + Restart).
-2. Cornix auf den neuen Channel lauschen lassen (falls die Signale ausgeführt
-   werden sollen — sonst bleibt es ein Beobachtungs-Channel).
-3. Fleet-Restart oder `touch control/restart/main_watchdog.py`-Äquivalent —
-   die vier Bots sind in `PROCESSES_TO_RUN` registriert (start_delay 191–215).
-4. Ohne deployte Artefakte laufen die Bots im Idle-Modus (Log:
-   "Artefakt fehlt … Idle-Modus") — das ist der erwartete Zustand bis Step 2.
+1. Add to `.env`: `CH_NEW_IDEAS=<Channel-ID>` and `NEW_IDEAS_LIVE_POSTING=1`.
+   Optional per bot: `CH_PEX1` / `CH_FMR1` / `CH_TRM1` / `CH_FIF1` override
+   the cohort channel individually (unset → fallback `CH_NEW_IDEAS`; operator
+   2026-07-07: start together in the test channel, a dedicated channel only
+   once a bot proves itself — the move is then just a .env entry + restart).
+2. Have Cornix listen to the new channel (if the signals should be executed
+   — otherwise it remains an observation channel).
+3. Fleet restart or the `touch control/restart/main_watchdog.py` equivalent —
+   the four bots are registered in `PROCESSES_TO_RUN` (start_delay 191–215).
+4. Without deployed artifacts the bots run in idle mode (log:
+   "Artefakt fehlt … Idle-Modus") — that is the expected state until step 2.
 
-## Offene Punkte / bewusste Vereinfachungen
+## Open points / deliberate simplifications
 
-- PEX1 nutzt die 4 Event-Messwerte + 1h-Kontext; Microstructure-Features aus
-  einem 10s-Ticker (Report 15) existieren als Live-Tabelle nicht — bewusst
-  verschoben, bis eine 10s-Persistenz existiert. **→ erledigt 2026-07-07:**
-  Hypertable `ticker_10s` (siehe „V2-Pfade" unten), Daten akkumulieren ab dem
-  nächsten Detector-Restart.
-- `pump_dump_events.spike_time` trägt keine TZ-Garantie — der Bot misst den
-  Offset gegen die Wanduhr (±12h-Clip); der Builder konvertiert bei Offset
-  2/3h DST-aware über Europe/Bucharest (Review-Fix: ein konstanter Offset über
-  Monate wäre über die DST-Grenze 1h falsch gewesen).
-- TRM1-`minutes_in_transition` ist live die debounced Episodendauer, im
-  Training die Roh-Episodendauer — akzeptierte Näherung, im Doc vermerkt.
-- TRM1 nutzt von den „confidence-Verläufen" (S10) nur die aktuellen
-  `confidence_btc/alt`-Werte; Fenster-Verläufe existieren für Returns/ATR/
-  Regime-Fraktionen. Confidence-Deltas sind ein V2-Feature-Kandidat.
-- FIF1 lässt zwei S11-genannte Feature-Familien bewusst weg: den
-  Modell-übergreifenden Konfluenz-Zähler (E3 — bräuchte den vollen
-  Multi-Quellen-Event-Strom im Live-Pfad; implementiert sind FIFO-interne
-  Burst-Zähler) und die Coin-Liquiditätsklasse (kein sauberer Live-Proxy
-  ohne neue Datenpflege; `vol_ratio_sma20` deckt einen Teil ab). Beides
-  V2-Kandidaten nach der ersten Shadow-Auswertung.
-- TRM1 postet nie gegen eine offene Gegenposition (kein Self-Hedge auf
-  BTCUSDT) — kippt die Prognose, wird nur Shadow geloggt.
-- Betriebsnotiz: +4 Prozesse ≈ +8 dauerhafte PG-Connections
-  (KYTHERA_DB_POOL_MIN=2 je Prozess) — beim Rollout gegen `max_connections`
-  prüfen (P1.34).
+- PEX1 uses the 4 event measurements + 1h context; microstructure features
+  from a 10s ticker (report 15) don't exist as a live table — deliberately
+  deferred until a 10s persistence layer exists. **→ done 2026-07-07:**
+  hypertable `ticker_10s` (see "V2 paths" below), data accumulates from the
+  next detector restart.
+- `pump_dump_events.spike_time` carries no TZ guarantee — the bot measures
+  the offset against the wall clock (±12h clip); the builder converts a
+  2/3h offset DST-aware via Europe/Bucharest (review fix: a constant offset
+  over months would have been 1h wrong across the DST boundary).
+- TRM1's `minutes_in_transition` is live the debounced episode duration, in
+  training the raw episode duration — accepted approximation, noted in the doc.
+- TRM1 uses only the current `confidence_btc/alt` values from the
+  "confidence trajectories" (S10); windowed trajectories exist for
+  returns/ATR/regime fractions. Confidence deltas are a V2 feature candidate.
+- FIF1 deliberately omits two feature families named in S11: the
+  cross-model confluence counter (E3 — would need the full multi-source
+  event stream in the live path; implemented instead are FIFO-internal
+  burst counters) and the coin liquidity class (no clean live proxy without
+  new data upkeep; `vol_ratio_sma20` covers part of it). Both are V2
+  candidates after the first shadow evaluation.
+- TRM1 never posts against an open opposite position (no self-hedge on
+  BTCUSDT) — if the prediction flips, it's only logged as shadow.
+- Operational note: +4 processes ≈ +8 persistent PG connections
+  (KYTHERA_DB_POOL_MIN=2 per process) — check against `max_connections` at
+  rollout (P1.34).
 
-## V2-Pfade nach dem negativen Erstbefund (Operator-Richtung 2026-07-07)
+## V2 paths after the negative initial finding (operator direction 2026-07-07)
 
-Diagnose-Konsens: PEX1 scheitert an fehlender Information (best_iteration=2 —
-in den 1h-Features ist nichts zu lernen), FMR1 an der Label-Geometrie (die
-S8-These „halten bis Funding-Normalisierung" wurde mit First-Touch-TP/SL
-gelabelt). Mehr Standard-Indikatoren würden bei beiden nichts ändern.
+Diagnostic consensus: PEX1 fails due to missing information (best_iteration=2
+— there's nothing to learn in the 1h features), FMR1 due to the label
+geometry (the S8 thesis "hold until funding normalization" was labeled with
+first-touch TP/SL). More standard indicators would change nothing for either.
 
-### PEX2 — 10s-Microstructure-Persistenz (GEBAUT 2026-07-07)
+### PEX2 — 10s microstructure persistence (BUILT 2026-07-07)
 
 Hypertable **`ticker_10s`** (TimescaleDB 2.26, `core/ticker_10s.py`):
-`(ts TIMESTAMPTZ, symbol, price, vol_10s, vol_valid)` — Schreiber ist der
-`10_pump_dump_detector` (er baut die 10s-Buckets ohnehin in-memory aus dem
-`/ticker/24hr`-Poll; neu ist EIN batched Insert pro Tick über alle Coins).
+`(ts TIMESTAMPTZ, symbol, price, vol_10s, vol_valid)` — the writer is
+`10_pump_dump_detector` (it already builds the 10s buckets in-memory from
+the `/ticker/24hr` poll; new is ONE batched insert per tick across all coins).
 
-- Budget: ~108 Coins × 8.640 Ticks/Tag ≈ 0,9M Rows/Tag (~45 MB roh); Chunks
-  1 Tag, Compression nach 3 Tagen (segmentby=symbol), Retention 365 Tage —
-  alles native Timescale-Jobs, Housekeeping bleibt außen vor. Kein
-  P1.40-Rückfall: 1 Insert/10s statt 108 Einzel-Inserts.
-- Kill-Switch: `KYTHERA_TICKER_10S_PERSIST=0` (Default an).
-- TZ-Vertrag: `ts` ist TIMESTAMPTZ (UTC-aware) — bewusste Abweichung von den
-  naiven Legacy-Spalten, DST-Fehlerklasse (f95f092) ausgeschlossen.
-- **Aktivierung:** Detector-/Fleet-Restart nötig (läuft live vom Repo).
-- **PEX2-Feature-Kandidaten** (wenn genug Events mit 10s-Kontext existieren,
-  realistisch nach ~2–3 Monaten): Volumen-Abklingrate nach dem Spike,
-  Buy-Pressure-Fade (Event vs. +1/+3/+5 min), Time-to-Peak, Retrace-Anteil
-  seit Spike-Hoch — d.h. Scoring bewusst auf Event+X min verschieben, damit
-  das Abklingen beobachtbar ist.
-- Backfill-Option geprüft und verworfen: historische 10s-Buckets aus
-  `data.binance.vision`-aggTrades wären rekonstruierbar, aber die Deltas aus
-  `/ticker/24hr` (rollierendes Fenster!) sind NICHT dieselbe Messgröße —
-  Training auf aggTrades + Live auf Ticker-Deltas wäre genau der
-  Bot≠Builder-Skew, den die X-R1-Regel verbietet. Also: Daten ehrlich
-  akkumulieren.
+- Budget: ~108 coins × 8.640 ticks/day ≈ 0,9M rows/day (~45 MB raw); chunks
+  1 day, compression after 3 days (segmentby=symbol), retention 365 days —
+  all native Timescale jobs, housekeeping stays out of scope. No
+  P1.40 regression: 1 insert/10s instead of 108 individual inserts.
+- Kill switch: `KYTHERA_TICKER_10S_PERSIST=0` (default on).
+- TZ contract: `ts` is TIMESTAMPTZ (UTC-aware) — a deliberate deviation from
+  the naive legacy columns, ruling out the DST error class (f95f092).
+- **Activation:** detector/fleet restart required (runs live from the repo).
+- **PEX2 feature candidates** (once enough events with 10s context exist,
+  realistically after ~2–3 months): volume decay rate after the spike,
+  buy-pressure fade (event vs. +1/+3/+5 min), time-to-peak, retrace share
+  since the spike high — i.e. deliberately shift scoring to event+X min so
+  the decay is observable.
+- Backfill option checked and discarded: historical 10s buckets from
+  `data.binance.vision` aggTrades would be reconstructable, but the deltas
+  from `/ticker/24hr` (rolling window!) are NOT the same measurement —
+  training on aggTrades + live on ticker deltas would be exactly the
+  bot≠builder skew the X-R1 rule forbids. So: accumulate data honestly.
 
-### FMR2 — eigener Exit-Pfad (Design, noch nicht gebaut)
+### FMR2 — own exit path (design, not yet built)
 
-Kern: Die S8-These sauber testen heißt, Exit = Funding-Normalisierung ODER
-Time-Stop — im Label UND live. Mechanik-Vorbild ist ROM1
-(`28_signal_orchestrator.py`): `Close <SYMBOL>`-Command via
-`send_telegram(...)` → `telegram_outbox` (Cornix schließt), eigene Rows per
-`DELETE FROM ai_signals … RETURNING` + Insert in `closed_ai_signals`
-(`status='CLOSED_FUNDING_NORMALIZED'`), Filter strikt auf den eigenen
-Modell-Tag. `8_ai_trade_monitor` hat KEINEN Custom-Exit-Hook — der Bot muss
-den Close-Zeitpunkt selbst besitzen (stündlicher Scan reicht, Settlements
-kommen alle 8h); das RETURNING-Guard entschärft das Race mit dem Monitor
-(SL/Timeout trackt der weiterhin).
+Core idea: testing the S8 thesis cleanly means exit = funding
+normalization OR time stop — in the label AND live. The mechanics model is
+ROM1 (`28_signal_orchestrator.py`): `Close <SYMBOL>` command via
+`send_telegram(...)` → `telegram_outbox` (Cornix closes), own rows via
+`DELETE FROM ai_signals … RETURNING` + insert into `closed_ai_signals`
+(`status='CLOSED_FUNDING_NORMALIZED'`), filter strictly on its own model
+tag. `8_ai_trade_monitor` has NO custom exit hook — the bot must own the
+close timing itself (an hourly scan suffices, settlements come every 8h);
+the RETURNING guard defuses the race with the monitor (SL/timeout it
+continues to track).
 
-**Reihenfolge (bewusst offline-first, kein Bot-Umbau vor Beweis):**
-1. Exit-Predicate + Konstanten nach `core/research_features.py` (eine Quelle
-   für Builder UND Bot, X-R1). Vorschlag: SHORT-Exit sobald
-   `funding_cs_pctl < 0.80` ODER `funding_z_30d < 1.0`; LONG symmetrisch
-   (`> 0.20` / `> −1.0`); Time-Stop 9 Settlements (3 Tage); harter SL bleibt.
-2. `fmr1_build_dataset` V2: Label = PnL am Normalisierungs-/Timeout-Exit
-   (Exit-Preis der Settlement-Kerze), NICHT First-Touch-TP/SL.
-3. Retrain (Queue-Slot, Ein-Job-Regel). Nur bei Val+Test positiv weiter —
-   sonst ist die S8-These ehrlich falsifiziert und wird geparkt.
-4. Erst dann Bot-Exit-Loop + Deploy unter neuem Tag **FMR2**
-   (Versionierungs-Regel: geänderte Generation = neuer Tag).
+**Order (deliberately offline-first, no bot rebuild before proof):**
+1. Exit predicate + constants into `core/research_features.py` (one source
+   for builder AND bot, X-R1). Proposal: SHORT exit once
+   `funding_cs_pctl < 0.80` OR `funding_z_30d < 1.0`; LONG symmetrically
+   (`> 0.20` / `> −1.0`); time stop 9 settlements (3 days); hard SL remains.
+2. `fmr1_build_dataset` V2: label = PnL at the normalization/timeout exit
+   (exit price of the settlement candle), NOT first-touch TP/SL.
+3. Retrain (queue slot, one-job rule). Continue only if val+test positive —
+   otherwise the S8 thesis is honestly falsified and gets parked.
+4. Only then bot exit loop + deploy under the new tag **FMR2**
+   (versioning rule: changed generation = new tag).
 
-**Channel-Kollision — entschieden (Operator 2026-07-07):** Cornix' `Close
-<SYMBOL>` schließt ALLE Trades des Symbols im Channel. Da `CH_NEW_IDEAS` ein
-Test-Channel ist, ist die Kollision anfangs akzeptiert. Vorsorglich hat jeder
-Bot jetzt einen eigenen `.env`-Override (`CH_PEX1/CH_FMR1/CH_TRM1/CH_FIF1`,
-Fallback `CH_NEW_IDEAS`, `core/config.py`) — spätestens wenn FMR2 mit
-Close-Pfad live geht, bekommt er per `CH_FMR1` einen eigenen Channel; das ist
-dann nur ein .env-Eintrag + Restart, kein Code-Deploy.
+**Channel collision — decided (operator 2026-07-07):** Cornix' `Close
+<SYMBOL>` closes ALL trades for that symbol in the channel. Since `CH_NEW_IDEAS` is a test channel, the collision is accepted for now. As a
+precaution every bot now has its own `.env` override
+(`CH_PEX1/CH_FMR1/CH_TRM1/CH_FIF1`, fallback `CH_NEW_IDEAS`,
+`core/config.py`) — at the latest when FMR2 goes live with the close path,
+it gets its own channel via `CH_FMR1`; that's then just a .env entry +
+restart, no code deploy.

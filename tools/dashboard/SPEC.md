@@ -1,796 +1,807 @@
-# SPEC — Z1 Dashboard Shell (Task 0, Fundament)
+# SPEC — Z1 Dashboard Shell (Task 0, Foundation)
 
 Task: T-2026-CU-9050-151 · Decision gate: D-2026-CLD-111 (z-council)
-Stack (bindend): Flask + HTMX + Interval-Polling. Kein FastAPI, kein SPA, kein
-Node-Build on-box. Charting via vendored JS (TradingView Lightweight Charts +
-Apache ECharts) als statische Assets.
+Stack (binding): Flask + HTMX + interval polling. No FastAPI, no SPA, no
+Node build on-box. Charting via vendored JS (TradingView Lightweight Charts +
+Apache ECharts) as static assets.
 
 ## Intent
-Baue die tragende Shell des Z1-Dashboards: eine Flask-App-Factory die den
-bestehenden `analytics_api`-Blueprint (T-131 DuckDB-Substrat) mountet, ein
-responsives HTMX-Base-Layout, einen geteilten Chart-Lifecycle-JS-Helper (der
-Kern-Deliverable — verhindert Canvas/WebGL/Listener-Leaks ueber die spaeteren 9
-Panels), ein Polling-Pattern + EIN Demo-Panel (Erfolgsraten-Endpoint) als
-End-to-End-Beweis, eine Datenstand-Badge-Basis und einen waitress-Entrypoint an
-127.0.0.1. Alles DB-frei testbar. Das alte `dashboard.py` bleibt unangetastet.
+Build the load-bearing shell of the Z1 dashboard: a Flask app factory that
+mounts the existing `analytics_api` blueprint (T-131 DuckDB substrate), a
+responsive HTMX base layout, a shared chart-lifecycle JS helper (the
+core deliverable — prevents canvas/WebGL/listener leaks across the later 9
+panels), a polling pattern + ONE demo panel (success-rate endpoint) as an
+end-to-end proof, a data-freshness badge foundation and a waitress entrypoint
+on 127.0.0.1. Everything DB-free testable. The old `dashboard.py` remains
+untouched.
 
-## Akzeptanzkriterien (binaer testbar)
-- [x] AK1: `tools/dashboard/app.create_app(duckdb_path)` liefert eine Flask-App,
-  die den `analytics_api`-Blueprint mountet — `GET /api/analytics/success-rate`
-  antwortet 200 gegen eine synthetische DuckDB. — Test: `test_json_api_mounted` ✅.
-- [x] AK2: `GET /` liefert 200, das responsive Base-Layout (viewport-Meta),
-  bindet HTMX + `chart_lifecycle.js` ein und enthaelt den Demo-Panel-Container
-  mit `hx-get="/panels/success-rate"` und `hx-trigger` Polling (`every … s`). —
+## Acceptance criteria (binary testable)
+- [x] AK1: `tools/dashboard/app.create_app(duckdb_path)` returns a Flask app
+  that mounts the `analytics_api` blueprint — `GET /api/analytics/success-rate`
+  answers 200 against a synthetic DuckDB. — Test: `test_json_api_mounted` ✅.
+- [x] AK2: `GET /` returns 200, the responsive base layout (viewport meta),
+  wires in HTMX + `chart_lifecycle.js` and contains the demo panel container
+  with `hx-get="/panels/success-rate"` and `hx-trigger` polling (`every … s`). —
   Test: `test_index_renders_shell` ✅.
-- [x] AK3: `GET /panels/success-rate` liefert 200 und rendert die
-  Erfolgsraten-Felder (Bot-Tag + Winrate) aus `success_rate_timeseries` gegen die
-  synthetische DuckDB als HTMX-Partial. — Test: `test_demo_panel_renders_winrate` ✅.
-- [x] AK4: `GET /static/js/chart_lifecycle.js` liefert 200 und der Helper
-  registriert Chart-Instanzen + ruft `dispose`/`remove` bei `htmx:beforeSwap`
-  und Re-Init bei `htmx:afterSwap`. — Test: `test_chart_lifecycle_js_served` ✅.
-- [x] AK5: Die Datenstand-Badge rendert "Stand HH:MM, Sync vor N min" aus den
-  T-131-Freshness-Zeilen; die reine `freshness_summary`-Funktion berechnet das
-  Alter STRIKT aus `synced_at` (UTC) — nie durch Mischung mit dem naive-local
-  `last_row_ts`. — Test: `test_freshness_summary_*` + `test_index_shows_badge` ✅.
-- [x] AK6: Der Serving-Entrypoint bindet an 127.0.0.1 (nie 0.0.0.0) und faehrt
-  waitress im Prod-Pfad (P0.8-Lektion). — Test: `test_serve_defaults_to_localhost`
-  + `test_serve_delegates_to_waitress_path` ✅ (zusaetzlich realer waitress-Smoke).
-- [x] AK7: Kein Import und keine Panel-/API-Route triggert einen Postgres-
-  Connect — der gesamte Lesepfad laeuft nur gegen DuckDB. — Test:
-  `test_routes_never_touch_postgres` + `test_import_is_db_free` (Subprozess) ✅.
+- [x] AK3: `GET /panels/success-rate` returns 200 and renders the
+  success-rate fields (bot tag + win rate) from `success_rate_timeseries`
+  against the synthetic DuckDB as an HTMX partial. — Test:
+  `test_demo_panel_renders_winrate` ✅.
+- [x] AK4: `GET /static/js/chart_lifecycle.js` returns 200 and the helper
+  registers chart instances + calls `dispose`/`remove` on `htmx:beforeSwap`
+  and re-inits on `htmx:afterSwap`. — Test: `test_chart_lifecycle_js_served` ✅.
+- [x] AK5: The data-freshness badge renders "Stand HH:MM, Sync vor N min" from
+  the T-131 freshness rows; the pure `freshness_summary` function computes the
+  age STRICTLY from `synced_at` (UTC) — never by mixing with the naive-local
+  `last_row_ts`. — Test: `test_freshness_summary_*` +
+  `test_index_shows_badge` ✅.
+- [x] AK6: The serving entrypoint binds to 127.0.0.1 (never 0.0.0.0) and runs
+  waitress in the prod path (P0.8 lesson). — Test:
+  `test_serve_defaults_to_localhost` +
+  `test_serve_delegates_to_waitress_path` ✅ (plus a real waitress smoke test).
+- [x] AK7: No import and no panel/API route triggers a Postgres connect — the
+  entire read path runs only against DuckDB. — Test:
+  `test_routes_never_touch_postgres` + `test_import_is_db_free`
+  (subprocess) ✅.
 
 ## Out of Scope
-- Entfernen/Migrieren des alten `dashboard.py`.
-- Auth / Mutations-Endpoints / Cloudflare-Access-Verdrahtung.
-- Die 9 Feature-Panels selbst (nur EIN Demo-Panel als Shell-Beweis).
-- SSE (Interval-Polling ist Default per D-2026-CLD-111).
-- Voller Datenstand-Badge-Ausbau pro Panel (nur Basis-Version).
+- Removing/migrating the old `dashboard.py`.
+- Auth / mutation endpoints / Cloudflare Access wiring.
+- The 9 feature panels themselves (only ONE demo panel as shell proof).
+- SSE (interval polling is the default per D-2026-CLD-111).
+- Full data-freshness-badge rollout per panel (base version only).
 
-## Why Build (statt Reuse)
-Die Shell ist projekt-spezifische Verdrahtung (analytics_api-Blueprint + HTMX +
-vendored Charts + VPS-Serving-Contract). Keine OSS-Library liefert genau diese
-Komposition. Substrat (analytics_export/analytics_api aus T-131) wird
-WIEDERVERWENDET, nicht neu gebaut.
+## Why Build (instead of Reuse)
+The shell is project-specific wiring (analytics_api blueprint + HTMX +
+vendored charts + VPS serving contract). No OSS library delivers exactly this
+composition. The substrate (analytics_export/analytics_api from T-131) is
+REUSED, not rebuilt.
 
 ## Scope of consent
-**Erlaubt:** `tools/dashboard/**` neu, `backtest/test_dashboard_shell.py` neu,
-additive Blueprint-Extraktion in `tools/analytics_api.py` (verhaltenserhaltend,
-durch bestehende Tests abgesichert), `CHANGELOG.md`-Eintrag, auf branch
+**Allowed:** `tools/dashboard/**` new, `backtest/test_dashboard_shell.py` new,
+additive blueprint extraction in `tools/analytics_api.py` (behaviour-preserving,
+covered by existing tests), `CHANGELOG.md` entry, on branch
 `feat/t-2026-cu-9050-150`.
-**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
-Fleet-Restart, Modell-Artefakte, Bind an 0.0.0.0, `--no-verify`, main/prod
-direkt.
-**Frag zurueck:** neue Runtime-Dependencies (ausser flask/htmx/duckdb/waitress
-die schon da sind), echte Vendor-JS-Beschaffung mit Netzwerkzugriff.
+**Forbidden:** `dashboard.py` (old dashboard), `.env*`/secrets, live DB,
+fleet restart, model artifacts, binding to 0.0.0.0, `--no-verify`, main/prod
+directly.
+**Ask first:** new runtime dependencies (other than flask/htmx/duckdb/waitress
+which already exist), real vendor JS acquisition requiring network access.
 
 ---
 
-## Feature 3 — Erfolgsraten-Zeitvergleich-Panel (T-2026-CU-9050-155)
+## Feature 3 — Success-rate time-comparison panel (T-2026-CU-9050-155)
 
-Task: T-2026-CU-9050-155 · baut auf T-131 (`success_rate_timeseries`) und
-T-151 (Shell/Chart-Lifecycle) auf.
+Task: T-2026-CU-9050-155 · builds on T-131 (`success_rate_timeseries`) and
+T-151 (shell/chart lifecycle).
 
 ### Intent
-Volle Zeitvergleich-Version des T-151-Demo-Panels: eine ECharts-Linien-
-Zeitreihe der ROLLIERENDEN 7/30/90d-Winrate pro ausgewaehltem Bot ueber die
-Zeit (nicht nur ein aktueller Balken), mit Bot-Multiselect und
-Fenster-Umschalter. Neue Route `/panels/success-rate-timeseries` — kollidiert
-NICHT mit der bestehenden `/panels/success-rate`-Demo (die bleibt unangetastet
-fuer T-151s eigene Tests).
+Full time-comparison version of the T-151 demo panel: an ECharts line time
+series of the ROLLING 7/30/90d win rate per selected bot over time (not just
+a current bar), with bot multiselect and window switcher. New route
+`/panels/success-rate-timeseries` — does NOT collide with the existing
+`/panels/success-rate` demo (which stays untouched for T-151's own tests).
 
-### Akzeptanzkriterien (binaer testbar)
-- [x] AK1: `analytics_api.rolling_success_rate_series()` liefert pro Bot eine
-  Zeitreihe der rollierenden `window`-Tage-Winrate, additiv zu
-  `success_rate_timeseries` (nicht veraendert), gleiche DECISIVE-Trade-
-  Definition via `bot_trade_rows`. — Test:
+### Acceptance criteria (binary testable)
+- [x] AK1: `analytics_api.rolling_success_rate_series()` returns, per bot, a
+  time series of the rolling `window`-day win rate, additive to
+  `success_rate_timeseries` (unchanged), the same DECISIVE trade
+  definition via `bot_trade_rows`. — Test:
   `test_rolling_success_rate_series_multi_bot_diverges_per_window` ✅.
-- [x] AK2: Rollierende 7/30/90d-Fenster liefern am selben Tag GENUINE
-  unterschiedliche Werte (keine zufaellig identischen Fenster) — Test:
+- [x] AK2: Rolling 7/30/90d windows deliver GENUINELY different values on the
+  same day (no coincidentally identical windows) — Test:
   `test_rolling_series_for_bot_windows_diverge_at_last_day` ✅.
-- [x] AK3: Bot-Multiselect filtert die Zeitreihe korrekt (mehrere Bots ->
-  mehrere Serien, ein Bot -> eine Serie). — Test:
+- [x] AK3: Bot multiselect filters the time series correctly (multiple bots ->
+  multiple series, one bot -> one series). — Test:
   `test_panel_multiselect_two_bots_renders_two_series` +
   `test_panel_single_bot_selection_renders_one_series` ✅.
-- [x] AK4: Explizite Leerauswahl (alle Checkboxen abgewaehlt) zeigt "Keine
-  Bots ausgewaehlt" statt stillschweigend auf "alle Bots" zurueckzufallen —
+- [x] AK4: Explicit empty selection (all checkboxes deselected) shows "Keine
+  Bots ausgewaehlt" instead of silently falling back to "all bots" —
   Test: `test_selected_bots_respects_explicit_empty_selection` +
   `test_panel_explicit_empty_selection_shows_message` ✅.
-- [x] AK5: `GET /panels/success-rate-timeseries` rendert eine ECharts-
-  Linien-Zeitreihe (`data-chart="winrate-timeseries"`), gemountet via
-  `chart_lifecycle.js` (dispose/re-init bei htmx-Swap), Fenster-Umschalter
-  (7/30/90d) als Formular. — Test:
+- [x] AK5: `GET /panels/success-rate-timeseries` renders an ECharts line
+  time series (`data-chart="winrate-timeseries"`), mounted via
+  `chart_lifecycle.js` (dispose/re-init on HTMX swap), window switcher
+  (7/30/90d) as a form. — Test:
   `test_panel_default_load_selects_all_bots_and_default_window` +
   `test_winrate_timeseries_factory_registered_in_panels_js` ✅.
-- [x] AK6: Fenster-Umschaltung aendert die gerenderten Werte end-to-end (nicht
-  nur auf Funktionsebene). — Test:
+- [x] AK6: Window switching changes the rendered values end-to-end (not
+  only at the function level). — Test:
   `test_panel_window_switch_changes_rendered_values` ✅.
-- [x] AK7: Kein Postgres-Zugriff, DB-frei testbar, kein Bruch der
-  bestehenden `/panels/success-rate`-Demo. — Test:
+- [x] AK7: No Postgres access, DB-free testable, no breaking the existing
+  `/panels/success-rate` demo. — Test:
   `test_panel_never_touches_postgres` +
   `test_existing_success_rate_demo_route_untouched` ✅.
 
 ### Out of Scope
-- Live-Steuerung (Feature 4).
-- Die anderen Panels (Fleet-Registry, Leaderboard).
-- Aenderung/Umbau von `success_rate_timeseries` selbst (nur additive
-  Erweiterung `rolling_success_rate_series`).
-- Ein neuer `/api/analytics/success-rate-timeseries` JSON-Endpoint (die
-  Panel-Route ruft die Analytics-Funktion direkt auf, wie die anderen
-  Panel-Routen es tun — kein zusaetzlicher JSON-API-Endpunkt gefordert).
+- Live control (Feature 4).
+- The other panels (fleet registry, leaderboard).
+- Changing/rebuilding `success_rate_timeseries` itself (only additive
+  extension `rolling_success_rate_series`).
+- A new `/api/analytics/success-rate-timeseries` JSON endpoint (the panel
+  route calls the analytics function directly, as the other panel routes
+  do — no extra JSON API endpoint required).
 
-### Why Build (statt Reuse)
-Rollierende Fenster-Zeitreihe + Bot-Multiselect + HTMX-Self-Update-Widget ist
-projektspezifische Verdrahtung auf dem bestehenden T-131-Substrat; keine
-Library liefert das. `success_rate_timeseries`/`bot_trade_rows` werden
-wiederverwendet, nicht neu gebaut.
+### Why Build (instead of Reuse)
+Rolling time-series windows + bot multiselect + HTMX self-update widget is
+project-specific wiring on the existing T-131 substrate; no library delivers
+that. `success_rate_timeseries`/`bot_trade_rows` are reused, not rebuilt.
 
 ### Scope of consent
-**Erlaubt:** `tools/dashboard/**` additiv, `tools/analytics_api.py` additiv
-(neue Funktionen, bestehende unveraendert), `backtest/test_dashboard_success_rate_panel.py`
-neu, `CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-155`.
-**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
-Fleet-Restart, Modell-Artefakte, `success_rate_timeseries` inhaltlich
-umschreiben, `--no-verify`, main/prod direkt, Push/PR (Orchestrator-Schritt).
-**Frag zurueck:** neue Runtime-Dependencies, Aenderung der bestehenden
-`/panels/success-rate`-Demo-Route/-Tests.
+**Allowed:** `tools/dashboard/**` additive, `tools/analytics_api.py` additive
+(new functions, existing ones unchanged),
+`backtest/test_dashboard_success_rate_panel.py` new, `CHANGELOG.md` entry, on
+branch `worktree-feat+t-2026-cu-9050-155`.
+**Forbidden:** `dashboard.py` (old dashboard), `.env*`/secrets, live DB,
+fleet restart, model artifacts, rewriting `success_rate_timeseries` in
+substance, `--no-verify`, main/prod directly, push/PR (orchestrator step).
+**Ask first:** new runtime dependencies, changes to the existing
+`/panels/success-rate` demo route/tests.
 
 ---
 
-## Feature 4 — Datenstand-Indikator pro Panel (T-2026-CU-9050-156)
+## Feature 4 — Data-freshness indicator per panel (T-2026-CU-9050-156)
 
-Task: T-2026-CU-9050-156 · baut additiv auf `freshness_summary()` (T-151) und
-`analytics_export.data_freshness()` (T-131) auf.
+Task: T-2026-CU-9050-156 · builds additively on `freshness_summary()` (T-151)
+and `analytics_export.data_freshness()` (T-131).
 
 ### Intent
-Heute zeigt EIN shell-globaler Badge (`_freshness_badge.html`, Base-Layout) den
-Datenstand des JUENGSTEN Sync ueber ALLE Quellen. Dieses Feature macht den
-Datenstand PANEL-SPEZIFISCH: jedes der vier Panels (`success-rate`,
-`success-rate-timeseries`, `leaderboard`, `fleet-registry`) zeigt "Stand HH:MM,
-Sync vor N min" NUR fuer die Quelle(n), die dieses Panel tatsaechlich liest —
-und bei mehreren Quellen die AELTESTE (worst-case), nie eine fabrizierte
-Mischung. Der globale Badge bleibt unveraendert bestehen (additive
-Verfeinerung, kein Ersatz).
+Today ONE shell-global badge (`_freshness_badge.html`, base layout) shows the
+data freshness of the MOST RECENT sync across ALL sources. This feature makes
+the freshness PANEL-SPECIFIC: each of the four panels (`success-rate`,
+`success-rate-timeseries`, `leaderboard`, `fleet-registry`) shows "Stand
+HH:MM, Sync vor N min" ONLY for the source(s) that panel actually reads —
+and with multiple sources the OLDEST (worst-case), never a fabricated
+mixture. The global badge remains unchanged (additive refinement, not a
+replacement).
 
-### Akzeptanzkriterien (binaer testbar)
-- [x] AK1: `freshness_summary()` bekommt zwei additive optionale Parameter:
-  `sources: Sequence[str] | None` (filtert die Zeilen VOR der Aggregation auf
-  die genannten Quellennamen) und `worst_case: bool = False` (aggregiert bei
-  `True` die AELTESTE statt der (bisherigen Default-)FRISCHESTEN Quelle —
-  der shell-globale Badge fragt "lebt die Pipeline ueberhaupt", ein
-  Panel-Badge muss dagegen worst-case zeigen). Beide Defaults reproduzieren
-  exakt das bisherige Verhalten (alle bestehenden Tests bleiben gruen, keine
-  Signatur-Bruchstelle). — Test:
+### Acceptance criteria (binary testable)
+- [x] AK1: `freshness_summary()` gets two additive optional parameters:
+  `sources: Sequence[str] | None` (filters the rows BEFORE aggregation to
+  the named sources) and `worst_case: bool = False` (when `True` aggregates
+  the OLDEST instead of the (previous default) FRESHEST source —
+  the shell-global badge asks "is the pipeline alive at all", a panel badge
+  must instead show worst-case). Both defaults reproduce exactly the
+  previous behaviour (all existing tests stay green, no signature breaking
+  change). — Test:
   `test_freshness_summary_sources_filter_narrows_rows`,
   `test_freshness_summary_worst_case_picks_oldest` +
-  alle bestehenden `test_freshness_summary_*` unveraendert gruen.
-- [x] AK2: Neue reine Funktion `panel_freshness(rows, panel, *, now_utc=None)`
-  loest ueber `PANEL_SOURCES[panel]` die Quellen des Panels auf und delegiert
-  an `freshness_summary(rows, sources=..., now_utc=..., worst_case=True)`.
-  Panels mit `PANEL_SOURCES[panel] == ()` (aktuell nur `fleet-registry`,
-  dateibasiert — kein DuckDB-Sync) liefern `FILE_BASED_FRESHNESS` statt einer
-  fabrizierten Zeit. Ein unbekannter Panel-Name wirft `ValueError` (keine
-  stille Fallback-Vertuschung einer falschen Zuordnung). — Test:
+  all existing `test_freshness_summary_*` unchanged and green.
+- [x] AK2: New pure function `panel_freshness(rows, panel, *, now_utc=None)`
+  resolves the panel's sources via `PANEL_SOURCES[panel]` and delegates to
+  `freshness_summary(rows, sources=..., now_utc=..., worst_case=True)`.
+  Panels with `PANEL_SOURCES[panel] == ()` (currently only
+  `fleet-registry`, file-based — no DuckDB sync) return
+  `FILE_BASED_FRESHNESS` instead of a fabricated time. An unknown panel
+  name raises `ValueError` (no silent fallback masking a wrong mapping). —
+  Test:
   `test_panel_freshness_leaderboard_and_success_rate_share_sources`,
   `test_panel_freshness_fleet_registry_is_file_based`,
   `test_panel_freshness_unknown_panel_raises`.
-- [x] AK3: Zwei Quellen mit UNTERSCHIEDLICHEM `synced_at` fuer dasselbe Panel
-  ergeben die AELTERE (kleinere) Freshness — nie der Durchschnitt, nie die
-  juengere, unabhaengig davon WELCHE der beiden Quellen die staler ist. —
+- [x] AK3: Two sources with DIFFERENT `synced_at` for the same panel yield
+  the OLDER (smaller) freshness — never the average, never the newer,
+  regardless of WHICH of the two is the stale one. —
   Test: `test_panel_freshness_oldest_source_wins_regardless_of_which_is_stale`.
-- [x] AK4: Fehlt fuer die Panel-Quelle(n) jede Freshness-Zeile (leeres
-  Ergebnis nach dem Quellenfilter), rendert das Panel-Badge-Partial `—`
-  statt eines fabrizierten Zeitstempels. — Test:
+- [x] AK4: If any freshness row is missing for the panel's source(s) (empty
+  result after the source filter), the panel badge partial renders `—`
+  instead of a fabricated timestamp. — Test:
   `test_panel_freshness_badge_partial_missing_shows_dash`.
-- [x] AK5: Die Panel-Templates `success_rate.html`,
+- [x] AK5: The panel templates `success_rate.html`,
   `success_rate_timeseries.html`, `leaderboard.html`, `fleet_registry.html`
-  binden das neue parametrisierte Badge-Partial
-  `_panel_freshness_badge.html` (nimmt die panel-lokale `freshness`-Variable)
-  ein, END-TO-END ueber die realen Routen `GET /panels/{success-rate,
-  success-rate-timeseries, leaderboard, fleet-registry}` gegen eine echte
-  `AnalyticsExporter`/DuckDB-Fixture. — Test:
+  embed the new parametrised badge partial
+  `_panel_freshness_badge.html` (takes the panel-local `freshness`
+  variable), END-TO-END over the real routes `GET /panels/{success-rate,
+  success-rate-timeseries, leaderboard, fleet-registry}` against a real
+  `AnalyticsExporter`/DuckDB fixture. — Test:
   `test_leaderboard_panel_route_renders_own_freshness`
-  (Integrationstest, echte Exporter→DuckDB→Route→HTML-Kette).
-- [x] AK6: Age bleibt STRIKT aus `synced_at` (UTC) berechnet, nie aus
-  `last_row_ts` (naive-local) — geerbt von `freshness_summary`, per
-  Mutation-Check erneut belegt (ein Swap auf `last_row_ts` macht den Test
-  rot). — Test: `test_panel_freshness_age_from_synced_at_not_last_row_ts`.
+  (integration test, real exporter→DuckDB→route→HTML chain).
+- [x] AK6: Age stays STRICTLY computed from `synced_at` (UTC), never from
+  `last_row_ts` (naive-local) — inherited from `freshness_summary`, backed
+  again by a mutation check (a swap to `last_row_ts` turns the test red). —
+  Test: `test_panel_freshness_age_from_synced_at_not_last_row_ts`.
 
 ### Out of Scope
-- Live-Steuerung (kein Auto-Refresh-Button, kein manueller Re-Sync-Trigger).
-- Funktionaler Neubau der vier Panels selbst (nur additive Badge-Einbettung).
-- Entfernen des shell-globalen Badges (`_freshness_badge.html`/`base.html`
-  bleiben unangetastet).
-- Ein neuer `/panels/freshness/<panel>`-JSON-Endpoint — der Badge wird
-  serverseitig als Teil des jeweiligen Panel-Fragments mitgerendert und
-  aktualisiert sich mit dessen bestehendem Poll-Intervall (kein zusaetzlicher
-  HTMX-Round-Trip).
+- Live control (no auto-refresh button, no manual re-sync trigger).
+- Functional rebuild of the four panels themselves (only additive badge
+  embedding).
+- Removing the shell-global badge (`_freshness_badge.html`/`base.html`
+  stay untouched).
+- A new `/panels/freshness/<panel>` JSON endpoint — the badge is rendered
+  server-side as part of the respective panel fragment and updates with its
+  existing poll interval (no extra HTMX round trip).
 
-### Why Build (statt Reuse)
-Panel→Quelle-Zuordnung + Oldest-wins-Aggregation ist projektspezifische
-Verdrahtung auf dem bestehenden T-131/T-151-Substrat; keine Library liefert
-das. `freshness_summary()` wird additiv erweitert (neuer optionaler Parameter,
-Default-Pfad unveraendert), nicht umgeschrieben.
+### Why Build (instead of Reuse)
+Panel→source mapping + oldest-wins aggregation is project-specific wiring on
+the existing T-131/T-151 substrate; no library delivers that.
+`freshness_summary()` is extended additively (new optional parameter,
+default path unchanged), not rewritten.
 
 ### Scope of consent
-**Erlaubt:** `tools/dashboard/app.py` additiv (neuer Parameter an
-`freshness_summary`, neue Funktionen/Konstanten), `tools/dashboard/templates/**`
-additiv (neues Partial + Einbettung in die vier Panel-Templates),
-`backtest/test_dashboard_freshness.py` neu, `CHANGELOG.md`-Eintrag, auf branch
+**Allowed:** `tools/dashboard/app.py` additive (new parameter on
+`freshness_summary`, new functions/constants), `tools/dashboard/templates/**`
+additive (new partial + embedding in the four panel templates),
+`backtest/test_dashboard_freshness.py` new, `CHANGELOG.md` entry, on branch
 `worktree-feat+t-2026-cu-9050-156`.
-**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
-Fleet-Restart, Modell-Artefakte, `core/**`, Entfernen/Umschreiben des
-bestehenden globalen Badges oder von `freshness_summary`s bisherigem
-Rueckgabewert bei `sources=None`, `--no-verify`, main/prod direkt, Push/PR
-(Orchestrator-Schritt).
-**Frag zurueck:** neue Runtime-Dependencies, Aenderung der bestehenden
-Panel-Routen-Signaturen/-Tests aus Feature 1-3.
+**Forbidden:** `dashboard.py` (old dashboard), `.env*`/secrets, live DB,
+fleet restart, model artifacts, `core/**`, removing/rewriting the existing
+global badge or `freshness_summary`'s previous return value at
+`sources=None`, `--no-verify`, main/prod directly, push/PR (orchestrator
+step).
+**Ask first:** new runtime dependencies, changes to existing panel route
+signatures/tests from Features 1-3.
 
 ---
 
-## Feature 5 — Globaler Erfolgs-Metrik-Toggle (T-2026-CU-9050-157)
+## Feature 5 — Global success-metric toggle (T-2026-CU-9050-157)
 
-Task: T-2026-CU-9050-157 · baut additiv auf T-154 (`bot_leaderboard`/
-`_LEADERBOARD_SORT_KEYS`) und T-151 (Shell) auf.
+Task: T-2026-CU-9050-157 · builds additively on T-154 (`bot_leaderboard`/
+`_LEADERBOARD_SORT_KEYS`) and T-151 (shell).
 
 ### Intent
-Ein shell-globaler Erfolgs-Metrik-Toggle (Winrate / Expectancy / Netto-PnL)
-im Base-Layout bestimmt, welche Kennzahl die Panels hervorheben. Cross-cutting
-via `?metric=`-Query-Param, den das Leaderboard-Panel liest: die gewaehlte
-Metrik wird als hervorgehobene Spalte gezeigt UND als Default-Sort verwendet
+A shell-global success-metric toggle (win rate / expectancy / net PnL) in
+the base layout determines which figure the panels highlight. Cross-cutting
+via the `?metric=` query param, which the leaderboard panel reads: the
+chosen metric is shown as a highlighted column AND used as the default sort
 (`metric`→`sort_by`: winrate→winrate, expectancy→expectancy_pct,
-netto-pnl→pnl_sum_pct). Sinnvoller Default netto-pnl (= die bestehende
-`DEFAULT_LEADERBOARD_SORT`). Unbekannter `metric`-Wert faellt still auf den
-Default zurueck (kein 500). Panels, die die Metrik nicht kennen, ignorieren
-den Toggle unschaedlich.
+netto-pnl→pnl_sum_pct). Sensible default netto-pnl (= the existing
+`DEFAULT_LEADERBOARD_SORT`). An unknown `metric` value silently falls back
+to the default (no 500). Panels that don't know the metric ignore the
+toggle harmlessly.
 
-### Akzeptanzkriterien (binaer testbar)
-- [x] AK1: Reine Mapping-Logik `resolve_metric(raw)` (unbekannt/None →
-  `DEFAULT_METRIC`) und `metric_sort_by(metric)` (→ ein Key aus
-  `analytics_api._LEADERBOARD_SORT_KEYS`), Flask-/DuckDB-frei testbar. —
+### Acceptance criteria (binary testable)
+- [x] AK1: Pure mapping logic `resolve_metric(raw)` (unknown/None →
+  `DEFAULT_METRIC`) and `metric_sort_by(metric)` (→ a key from
+  `analytics_api._LEADERBOARD_SORT_KEYS`), Flask/DuckDB-free testable. —
   Test: `test_resolve_metric_*`, `test_metric_sort_by_maps_onto_leaderboard_sort_keys`,
   `test_metric_sort_by_unresolved_value_falls_back_to_default_sort_by`.
-- [x] AK2: Alle drei Metriken + Default: `GET /panels/leaderboard?metric=…`
-  sortiert nach der gemappten Metrik. Fixture rankt dieselben drei Bots in
-  DREI verschiedenen Reihenfolgen → ein falsches/ignoriertes Mapping rendert
-  eine der ANDEREN Reihenfolgen (Mutation-Check). — Test:
+- [x] AK2: All three metrics + default: `GET /panels/leaderboard?metric=…`
+  sorts by the mapped metric. Fixture ranks the same three bots in
+  THREE different orders → a wrong/ignored mapping renders one of the
+  OTHER orders (mutation check). — Test:
   `test_leaderboard_panel_metric_{winrate,expectancy,netto_pnl}_*`.
-- [x] AK3: Unbekannter `metric`-Wert → Default (kein 500), Route 200. — Test:
+- [x] AK3: Unknown `metric` value → default (no 500), route 200. — Test:
   `test_leaderboard_panel_unknown_metric_falls_back_to_default_no_500`,
   `test_index_unknown_metric_query_param_falls_back_no_500`.
-- [x] AK4: Der Shell-Toggle (`base.html`) rendert die drei Optionen, markiert
-  die aktive, und der resolvte Wert wird in die eigene hx-get-URL des
-  Leaderboard-Panels gebacken, sodass Load + Poll dieselbe Metrik behalten. —
+- [x] AK4: The shell toggle (`base.html`) renders the three options, marks
+  the active one, and the resolved value is baked into the leaderboard
+  panel's own hx-get URL, so load + poll keep the same metric. —
   Test: `test_index_renders_metric_toggle_with_default_active`,
   `test_index_metric_query_param_selects_active_toggle_option`.
-- [x] AK5: Die gewaehlte Metrik-Spalte wird im Leaderboard hervorgehoben
-  (`metric-highlight`), konsistent mit dem Sort. — Test:
+- [x] AK5: The chosen metric column is highlighted in the leaderboard
+  (`metric-highlight`), consistent with the sort. — Test:
   `test_leaderboard_panel_metric_winrate_reorders_and_highlights`.
-- [x] AK6: Kein Postgres-Zugriff, DB-frei testbar. — Test:
+- [x] AK6: No Postgres access, DB-free testable. — Test:
   `test_toggle_never_touches_postgres`.
 
 ### Out of Scope
-- Live-Steuerung (Feature 4).
-- Die anderen Panels neu bauen — sie erben den Toggle nur unschaedlich
-  (Fleet-Registry/Erfolgsrate/Zeitvergleich ignorieren `metric`).
-- Ein neuer JSON-API-Endpoint fuer den Toggle (der `/api/analytics/leaderboard`
-  akzeptiert `sort_by` bereits direkt).
+- Live control (Feature 4).
+- Rebuilding the other panels — they inherit the toggle only harmlessly
+  (fleet registry/success-rate/time-comparison ignore `metric`).
+- A new JSON API endpoint for the toggle (`/api/analytics/leaderboard`
+  already accepts `sort_by` directly).
 
-### Eingefaltete Review-Nit-Cleanups (dieser Task fasst app.py/CSS/Leaderboard-Test ohnehin an)
-- CSS-Token-Hygiene: eigenes `--loss`-Token fuer `.pnl-negative` (statt des
-  `--stale`-Freshness-Tokens); `--live` (byte-identisch zu `--accent`)
-  entfernt, `var(--accent)` direkt genutzt. Rein kosmetisch, kein visueller
-  Bruch.
-- Namens-Kollision: Modul-Funktion `panel_freshness()` → `panel_freshness_summary()`
-  (kollidierte mit dem nested Route-Handler `def panel_freshness()` in
-  `create_app()`); alle vier Panel-Context-Caller + Freshness-Tests angepasst,
-  verhaltenserhaltend.
-- Test-Luecke (T-154-MEDIUM): `sort_by="winrate"` und `sort_by="n"` mit
-  divergenter Fixture (Reihenfolge ≠ pnl-Default) — ein ignorierter `sort_by`
-  wird jetzt rot.
+### Folded-in review nit cleanups (this task touches app.py/CSS/leaderboard test anyway)
+- CSS token hygiene: own `--loss` token for `.pnl-negative` (instead of the
+  `--stale` freshness token); `--live` (byte-identical to `--accent`)
+  removed, `var(--accent)` used directly. Purely cosmetic, no visual
+  break.
+- Name collision: module function `panel_freshness()` → `panel_freshness_summary()`
+  (collided with the nested route handler `def panel_freshness()` in
+  `create_app()`); all four panel-context callers + freshness tests adjusted,
+  behaviour-preserving.
+- Test gap (T-154-MEDIUM): `sort_by="winrate"` and `sort_by="n"` with a
+  divergent fixture (order ≠ pnl default) — an ignored `sort_by` now
+  turns red.
 
-### Why Build (statt Reuse)
-Shell-globaler Metrik-Toggle + Panel-Highlight/Sort-Kopplung ist
-projektspezifische Verdrahtung auf dem bestehenden T-131/T-154-Substrat;
-keine Library liefert das. `bot_leaderboard` wird wiederverwendet (via seinem
-bereits vorhandenen `sort_by`-Parameter), nicht neu gebaut.
+### Why Build (instead of Reuse)
+Shell-global metric toggle + panel highlight/sort coupling is
+project-specific wiring on the existing T-131/T-154 substrate; no library
+delivers that. `bot_leaderboard` is reused (via its already existing
+`sort_by` parameter), not rebuilt.
 
 ### Scope of consent
-**Erlaubt:** `tools/dashboard/app.py` additiv (neue Konstanten/Funktionen +
-`metric`-Param an `_leaderboard_context`/den Routen), `tools/dashboard/templates/**`
-additiv (Toggle in `base.html`, `metric` in `index.html`+`leaderboard.html`),
-`tools/dashboard/static/css/app.css` (Toggle-/Highlight-Styles + `--loss`/`--live`-
-Cleanup), `backtest/test_dashboard_metric_toggle.py` neu, Ergaenzungen in
-`backtest/test_dashboard_leaderboard.py`/`test_dashboard_freshness.py` (Rename),
-`CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-157`.
-**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
-Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, `--no-verify`,
-main/prod direkt, Push/PR (Orchestrator-Schritt).
-**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
-Panel-Routen-Signaturen aus Feature 1-4 ueber den additiven `metric`-Param
-hinaus.
+**Allowed:** `tools/dashboard/app.py` additive (new constants/functions +
+`metric` param on `_leaderboard_context`/the routes), `tools/dashboard/templates/**`
+additive (toggle in `base.html`, `metric` in `index.html`+`leaderboard.html`),
+`tools/dashboard/static/css/app.css` (toggle/highlight styles +
+`--loss`/`--live` cleanup), `backtest/test_dashboard_metric_toggle.py` new,
+additions in `backtest/test_dashboard_leaderboard.py`/`test_dashboard_freshness.py`
+(rename), `CHANGELOG.md` entry, on branch `worktree-feat+t-2026-cu-9050-157`.
+**Forbidden:** `dashboard.py` (old dashboard), `.env*`/secrets, live DB,
+fleet restart, model artifacts, `core/**`, SPEC.md in the repo root,
+`--no-verify`, main/prod directly, push/PR (orchestrator step).
+**Ask first:** new runtime dependencies, changes to existing
+panel route signatures from Features 1-4 beyond the additive `metric`
+param.
 
 ---
 
-## Feature 6 — Bot x Regime Performance-Heatmap (T-2026-CU-9050-158)
+## Feature 6 — Bot x regime performance heatmap (T-2026-CU-9050-158)
 
-Task: T-2026-CU-9050-158 · baut additiv auf T-131 (`regime_history`-Export,
-`_outcomes_cte`/`_bot_filter`) und T-151 (Shell/Chart-Lifecycle) auf.
+Task: T-2026-CU-9050-158 · builds additively on T-131 (`regime_history`
+export, `_outcomes_cte`/`_bot_filter`) and T-151 (shell/chart lifecycle).
 
 ### Intent
-Eine ECharts-Heatmap: Zeilen = Bots, Spalten = Regime-Zustaende
-(`regime_history.regime`), Zell-Wert = Performance des Bots IN diesem Regime
-(Winrate oder Ø-PnL/Trade, umschaltbar, klar gelabelt). Fuer jede
-(Bot, Regime)-Zelle zaehlen die DECISIVEN Trades des Bots, deren `closed_at`
-in das Zeitfenster faellt, in dem dieser Regime-Zustand aktiv war — ein ASOF-
-Join gegen den `regime_history`-Log (append-only, ein Regime gilt ab seinem
-`ts` bis zum naechsten Log-Eintrag). Zellen ohne Trades bleiben leer ("—"),
-nie fabriziert. Trades, deren `closed_at` VOR dem ersten je klassifizierten
-Regime liegt, koennen keinem Fenster zugeordnet werden und werden aus der
-Matrix ausgeschlossen (nicht in eine "UNKNOWN"-Spalte gebucht).
+An ECharts heatmap: rows = bots, columns = regime states
+(`regime_history.regime`), cell value = the bot's performance IN this
+regime (win rate or avg PnL/trade, switchable, clearly labelled). For each
+(bot, regime) cell, count the bot's DECISIVE trades whose `closed_at` falls
+into the time window in which this regime state was active — an ASOF
+join against the `regime_history` log (append-only, a regime applies from
+its `ts` until the next log entry). Cells with no trades stay empty ("—"),
+never fabricated. Trades whose `closed_at` is BEFORE the first ever
+classified regime cannot be assigned to any window and are excluded from
+the matrix (not booked into an "UNKNOWN" column).
 
-### Akzeptanzkriterien (binaer testbar)
-- [x] AK1: `analytics_api.bot_regime_matrix()` liefert additiv
+### Acceptance criteria (binary testable)
+- [x] AK1: `analytics_api.bot_regime_matrix()` returns additively
   `{bots, regimes, cells: {bot: {regime: {n, wins, winrate, pnl_sum_pct,
   expectancy_pct}}}}` — wiederverwendet `_outcomes_cte`/`_bot_filter` (dieselbe
   DECISIVE-Trade-Definition wie `bot_trade_rows`/`success_rate_timeseries`,
   unveraendert). — Test: `test_bot_regime_matrix_assigns_trades_to_active_regime_window`.
-- [x] AK2: Die Bot-Regime-Zuordnung ist ein ASOF-Join (`closed_at >= ts`, letzter
-  `regime_history`-Eintrag VOR/AN dem Trade-Zeitpunkt) — ein Trade auf der
-  Regime-Grenze faellt in das NEUE Fenster, nicht ins alte; ein falsch
-  gerichteter Join (Mutation-Check) macht die Zell-Werte nachweisbar falsch. —
+- [x] AK2: The bot-regime assignment is an ASOF join (`closed_at >= ts`, the
+  last `regime_history` entry BEFORE/AT the trade time) — a trade right on
+  the regime boundary falls into the NEW window, not the old one; a
+  wrongly-directed join (mutation check) makes the cell values demonstrably
+  wrong. —
   Test: `test_bot_regime_matrix_boundary_trade_joins_new_regime_window`
-  (Mutation-Check).
-- [x] AK3: Zellen ohne Trades erscheinen nicht in `cells` (kein fabrizierter
-  Nullwert); ein Bot mit Trades in nur EINEM von mehreren Regimes hat nur
-  diesen einen Eintrag. — Test: `test_bot_regime_matrix_missing_cell_absent_not_fabricated`.
-- [x] AK4: Trades vor dem ersten `regime_history`-Eintrag werden aus der Matrix
-  ausgeschlossen (kein "UNKNOWN"-Bucket). — Test:
+  (mutation check).
+- [x] AK3: Cells with no trades don't appear in `cells` (no fabricated
+  zero value); a bot with trades in only ONE of several regimes has only
+  that one entry. — Test: `test_bot_regime_matrix_missing_cell_absent_not_fabricated`.
+- [x] AK4: Trades before the first `regime_history` entry are excluded from
+  the matrix (no "UNKNOWN" bucket). — Test:
   `test_bot_regime_matrix_trade_before_first_regime_row_excluded`.
-- [x] AK5: `GET /panels/regime-heatmap` rendert 200, eine ECharts-Heatmap
-  (`data-chart="bot-regime-heatmap"`, gemountet via `chart_lifecycle.js`) +
-  eine Tabellen-Fallback-Ansicht, mit Metrik-Umschalter (Winrate/Ø-PnL) und
-  Datenstand-Badge (Quellen `regime_history` + `closed_ai_signals`), END-TO-END
-  gegen eine echte `AnalyticsExporter`/DuckDB-Fixture mit mehreren Bots x
-  mehreren Regimes. — Test:
-  `test_panel_regime_heatmap_renders_correct_cell_values` (Integrationstest).
-- [x] AK6: Kein Postgres-Zugriff, DB-frei testbar, leere Regime_history/leere
-  Outcome-Tabellen degradieren sauber (leere Matrix, kein 500). — Test:
+- [x] AK5: `GET /panels/regime-heatmap` renders 200, an ECharts heatmap
+  (`data-chart="bot-regime-heatmap"`, mounted via `chart_lifecycle.js`) +
+  a table fallback view, with a metric switcher (win rate/avg PnL) and
+  data-freshness badge (sources `regime_history` + `closed_ai_signals`),
+  END-TO-END against a real `AnalyticsExporter`/DuckDB fixture with
+  multiple bots x multiple regimes. — Test:
+  `test_panel_regime_heatmap_renders_correct_cell_values` (integration test).
+- [x] AK6: No Postgres access, DB-free testable, empty regime_history/empty
+  outcome tables degrade cleanly (empty matrix, no 500). — Test:
   `test_panel_regime_heatmap_never_touches_postgres`,
   `test_bot_regime_matrix_empty_substrate_degrades_gracefully`.
 
 ### Out of Scope
-- Live-Steuerung (Feature 4-Familie).
-- Die anderen Panels neu bauen.
-- Schreiben von `regime_history` (nur Lesepfad).
-- markArea-Regime-Baender-Overlays auf ANDEREN Panels (nur die Heatmap selbst).
-- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
-  `bot_regime_matrix()` direkt auf, wie die anderen additiven Panel-Routen
-  seit Feature 3 es tun).
+- Live control (Feature 4 family).
+- Rebuilding the other panels.
+- Writing `regime_history` (read path only).
+- markArea regime-band overlays on OTHER panels (only the heatmap itself).
+- A new `/api/analytics/*` JSON endpoint (the panel route calls
+  `bot_regime_matrix()` directly, as the other additive panel routes have
+  done since Feature 3).
 
-### Why Build (statt Reuse)
-Bot x Regime-ASOF-Join + Heatmap-Verdrahtung auf dem bestehenden T-131/T-151-
-Substrat ist projektspezifisch; keine Library liefert das. `_outcomes_cte`/
-`_bot_filter`/`_existing_outcome_tables` werden wiederverwendet, nicht neu
-gebaut; DuckDB liefert `ASOF JOIN` nativ (>= 1.5, hier verifiziert 1.5.4).
+### Why Build (instead of Reuse)
+Bot x regime ASOF join + heatmap wiring on the existing T-131/T-151
+substrate is project-specific; no library delivers that. `_outcomes_cte`/
+`_bot_filter`/`_existing_outcome_tables` are reused, not rebuilt; DuckDB
+delivers `ASOF JOIN` natively (>= 1.5, verified here at 1.5.4).
 
 ### Scope of consent
-**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktion(en), bestehende
-unveraendert), `tools/dashboard/app.py` additiv (neue Konstanten/Funktionen +
-Route + `PANEL_SOURCES`-Eintrag), `tools/dashboard/templates/**` additiv (neues
-Partial `panels/regime_heatmap.html` + Einbindung in `index.html`),
-`tools/dashboard/static/js/panels.js` additiv (neue ECharts-Factory),
-`tools/dashboard/static/css/app.css` additiv (Heatmap-Styles),
-`backtest/test_dashboard_regime_heatmap.py` neu, `CHANGELOG.md`-Eintrag, auf
+**Allowed:** `tools/analytics_api.py` additive (new function(s), existing
+ones unchanged), `tools/dashboard/app.py` additive (new
+constants/functions + route + `PANEL_SOURCES` entry),
+`tools/dashboard/templates/**` additive (new partial
+`panels/regime_heatmap.html` + embedding in `index.html`),
+`tools/dashboard/static/js/panels.js` additive (new ECharts factory),
+`tools/dashboard/static/css/app.css` additive (heatmap styles),
+`backtest/test_dashboard_regime_heatmap.py` new, `CHANGELOG.md` entry, on
 branch `worktree-feat+t-2026-cu-9050-158`.
-**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
-Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
-`analytics_api`-Aggregatfunktionen inhaltlich umschreiben, `--no-verify`,
-main/prod direkt, Push/PR (Orchestrator-Schritt).
-**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
-Panel-Routen-Signaturen aus Feature 1-5.
+**Forbidden:** `dashboard.py` (old dashboard), `.env*`/secrets, live DB,
+fleet restart, model artifacts, `core/**`, SPEC.md in the repo root, rewriting
+existing `analytics_api` aggregate functions in substance, `--no-verify`,
+main/prod directly, push/PR (orchestrator step).
+**Ask first:** new runtime dependencies, changes to existing panel route
+signatures from Features 1-5.
 
 ---
 
-## Feature 7 — Coin-Drilldown mit Ebenen-Kette (T-2026-CU-9050-159, Q11)
+## Feature 7 — Coin drilldown with level chain (T-2026-CU-9050-159, Q11)
 
-Task: T-2026-CU-9050-159 · baut additiv auf T-131 (`_outcomes_cte`/`_bot_filter`/
-`_existing_outcome_tables`) und T-151 (Shell/Chart-Lifecycle, vendored
-Lightweight Charts 4.2.3) auf.
+Task: T-2026-CU-9050-159 · builds additively on T-131 (`_outcomes_cte`/
+`_bot_filter`/`_existing_outcome_tables`) and T-151 (shell/chart lifecycle,
+vendored Lightweight Charts 4.2.3).
 
 ### Intent
-Eine Ebenen-Kette: Coin-Selektor (listet nur Coins mit mindestens einem
-DECISIVEN Trade) -> das Panel zeigt fuer den gewaehlten Coin (1) eine
-Lightweight-Charts Preislinie (Entry->Exit-Punkte je Trade, verbunden in
-Close-Zeit-Reihenfolge) mit Win/Loss-farbigen Trade-Markern und (2) eine
-kompakte Trade-Tabelle (Close-Zeit, Bot/Modell, Richtung, Entry, Exit, PnL,
-Target-Hit).
+A level chain: coin selector (lists only coins with at least one DECISIVE
+trade) -> the panel shows for the chosen coin (1) a Lightweight Charts price
+line (entry->exit points per trade, connected in close-time order) with
+win/loss-coloured trade markers and (2) a compact trade table (close time,
+bot/model, direction, entry, exit, PnL, target hit).
 
-**SCOPING (bindend):** Volle OHLCV-Kerzen sind NICHT Teil dieses Features —
-der 25GB-Kerzen-Export wurde in T-131 vertagt und liegt nicht im
-DuckDB-Substrat. Das Panel rendert stattdessen die Preis-PFAD-Linie durch die
-Entry/Exit-Punkte der DECISIVEN Trades selbst (aus `closed_ai_signals`/
-`closed_trades`) — keine echten Marktkerzen. Dokumentiert als Follow-up (siehe
-"Out of Scope" unten + CHANGELOG.md).
+**SCOPING (binding):** full OHLCV candles are NOT part of this feature —
+the 25GB candle export was deferred in T-131 and is not in the DuckDB
+substrate. The panel instead renders the price PATH line through the
+entry/exit points of the DECISIVE trades themselves (from
+`closed_ai_signals`/`closed_trades`) — no real market candles. Documented
+as a follow-up (see "Out of Scope" below + CHANGELOG.md).
 
-### Akzeptanzkriterien (binaer testbar)
-- [x] AK1: `analytics_api.coins_with_trades()` liefert die sortierte Liste der
-  Coins/Symbole mit mindestens einem DECISIVEN Trade (Trades ohne PnL /
-  Housekeeping-Status zaehlen nicht) — additive Coin-aware CTE
-  (`_outcomes_cte_with_coin`), dieselben `MICRO_PNL_PCT`/`MAX_ABS_PNL_PCT`-
-  Schwellen wie `_outcomes_cte`. — Test: `test_coins_with_trades_lists_only_decisive_coins`.
-- [x] AK2: `analytics_api.coin_trade_series(con, symbol)` liefert die nach
-  `closed_at` aufsteigend sortierten DECISIVEN Trades EINES Coins
+### Acceptance criteria (binary testable)
+- [x] AK1: `analytics_api.coins_with_trades()` returns the sorted list of
+  coins/symbols with at least one DECISIVE trade (trades without PnL /
+  housekeeping status don't count) — additive coin-aware CTE
+  (`_outcomes_cte_with_coin`), the same `MICRO_PNL_PCT`/`MAX_ABS_PNL_PCT`
+  thresholds as `_outcomes_cte`. — Test: `test_coins_with_trades_lists_only_decisive_coins`.
+- [x] AK2: `analytics_api.coin_trade_series(con, symbol)` returns the
+  DECISIVE trades of ONE coin sorted ascending by `closed_at`
   (`{bot, direction, closed_at, entry, close_price, targets_hit, pnl_pct,
-  is_win}`); `targets_hit` ist `None` fuer eine `closed_trades`-Zeile (die
+  is_win}`); `targets_hit` is `None` for a `closed_trades`-Zeile (die
   Tabelle hat keine solche Spalte) statt einer fabrizierten 0. — Test:
   `test_coin_trade_series_returns_ordered_decisive_trades_for_one_coin`.
-- [x] AK3: Ein falscher Coin-Filter (Mutation-Check: Query auf einen ANDEREN
-  Coin als den gewaehlten) liefert eine ANDERE Trade-Menge — belegt, dass der
-  Filter tatsaechlich verdrahtet ist. — Test:
-  `test_coin_trade_series_wrong_coin_filter_yields_different_trades` (Mutation-Check).
-- [x] AK4: Unbekannter oder leerer Coin (nicht in `coins_with_trades()`)
-  liefert `{"coin": symbol, "trades": []}` statt eines Fehlers oder aller
-  Trades. — Test: `test_coin_trade_series_unknown_coin_returns_empty`.
-- [x] AK5: `GET /panels/coin-drilldown` rendert 200, den Coin-Selektor (nur
-  Coins mit Trades), eine Lightweight-Charts Preislinie
-  (`data-chart="coin-price-line"`) mit Win/Loss-Markern und die Trade-Tabelle,
-  END-TO-END gegen eine echte `AnalyticsExporter`/DuckDB-Fixture mit mehreren
-  Coins x mehreren Trades. — Test: `test_panel_coin_drilldown_renders_correct_series_and_table`
-  (Integrationstest).
-- [x] AK6: Kein Coin ausgewaehlt/unbekannter Coin degradiert sauber (kein 500,
-  Hinweistext statt Chart/Tabelle); leeres Substrat (keine Trades ueberhaupt)
-  ebenso. — Test: `test_panel_coin_drilldown_unknown_coin_shows_clean_message`,
+- [x] AK3: A wrong coin filter (mutation check: query on a DIFFERENT
+  coin than the chosen one) returns a DIFFERENT set of trades — proving
+  the filter is actually wired up. — Test:
+  `test_coin_trade_series_wrong_coin_filter_yields_different_trades` (mutation check).
+- [x] AK4: An unknown or empty coin (not in `coins_with_trades()`)
+  returns `{"coin": symbol, "trades": []}` instead of an error or all
+  trades. — Test: `test_coin_trade_series_unknown_coin_returns_empty`.
+- [x] AK5: `GET /panels/coin-drilldown` renders 200, the coin selector (only
+  coins with trades), a Lightweight Charts price line
+  (`data-chart="coin-price-line"`) with win/loss markers and the trade
+  table, END-TO-END against a real `AnalyticsExporter`/DuckDB fixture with
+  multiple coins x multiple trades. — Test: `test_panel_coin_drilldown_renders_correct_series_and_table`
+  (integration test).
+- [x] AK6: No coin selected/unknown coin degrades cleanly (no 500,
+  hint text instead of chart/table); an empty substrate (no trades at
+  all) likewise. — Test: `test_panel_coin_drilldown_unknown_coin_shows_clean_message`,
   `test_panel_coin_drilldown_empty_substrate`.
-- [x] AK7: Lightweight-Charts-Factory `coin-price-line` disposed via
-  `chart.remove()` (NICHT ECharts `.dispose()`), via `chart_lifecycle.js`
-  registriert. — Test: `test_coin_price_line_factory_registered_in_panels_js`.
-- [x] AK8: Kein Postgres-Zugriff, DB-frei testbar. — Test:
+- [x] AK7: The Lightweight Charts factory `coin-price-line` disposes via
+  `chart.remove()` (NOT ECharts `.dispose()`), registered via
+  `chart_lifecycle.js`. — Test: `test_coin_price_line_factory_registered_in_panels_js`.
+- [x] AK8: No Postgres access, DB-free testable. — Test:
   `test_panel_coin_drilldown_never_touches_postgres`.
 
 ### Out of Scope
-- Volle OHLCV-Kerzen (Candlesticks) — FOLLOW-UP, gated auf den Kerzen-Export
-  aus T-131 (25GB, vertagt). Sobald der Export existiert, kann die
-  Preislinie durch eine echte Lightweight-Charts Candlestick-Series ersetzt
-  werden.
-- Die anderen Panels neu bauen.
-- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
-  `coin_trade_series()`/`coins_with_trades()` direkt auf, wie die anderen
-  additiven Panel-Routen seit Feature 3 es tun).
-- Mehrere Coins gleichzeitig im Chart (nur EIN Coin pro Panel-Zustand, wie vom
-  Q11-Kuratierungstext gefordert).
+- Full OHLCV candles (candlesticks) — FOLLOW-UP, gated on the candle export
+  from T-131 (25GB, deferred). Once the export exists, the price line can
+  be replaced by a real Lightweight Charts candlestick series.
+- Rebuilding the other panels.
+- A new `/api/analytics/*` JSON endpoint (the panel route calls
+  `coin_trade_series()`/`coins_with_trades()` directly, as the other
+  additive panel routes have done since Feature 3).
+- Multiple coins at once in the chart (only ONE coin per panel state, as
+  required by the Q11 curation text).
 
-### Why Build (statt Reuse)
-Coin-Level-Drilldown auf dem bestehenden T-131-Substrat + eine
-Lightweight-Charts-Preislinie mit Trade-Markern ist projektspezifische
-Verdrahtung; keine Library liefert das. `_outcomes_cte`/`_bot_filter`/
-`_existing_outcome_tables` bleiben unveraendert (Feature 2/3/6 haengen davon
-ab) — die Coin-Variante ist eine eigene, additive CTE mit derselben
-Decisive-Definition (identische Schwellen-Konstanten).
+### Why Build (instead of Reuse)
+Coin-level drilldown on the existing T-131 substrate + a Lightweight Charts
+price line with trade markers is project-specific wiring; no library
+delivers that. `_outcomes_cte`/`_bot_filter`/
+`_existing_outcome_tables` remain unchanged (Feature 2/3/6 depend on
+them) — the coin variant is its own additive CTE with the same
+decisive definition (identical threshold constants).
 
 ### Scope of consent
-**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktion(en)
-`coins_with_trades`/`coin_trade_series`/`_outcomes_cte_with_coin`, bestehende
-Funktionen unveraendert), `tools/dashboard/app.py` additiv (neue Route
-`/panels/coin-drilldown`, neue Kontext-Funktion(en), `PANEL_SOURCES`-Eintrag),
-`tools/dashboard/templates/panels/coin_drilldown.html` (neu) +
-`index.html`-Einbindung, `tools/dashboard/static/js/panels.js` additiv (neue
-Lightweight-Charts-Factory `coin-price-line`), `backtest/test_dashboard_coin_drilldown.py`
-neu, `CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-159`.
-**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
-Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
-`analytics_api`-Aggregatfunktionen (`_outcomes_cte`/`bot_trade_rows`/
-`bot_leaderboard`/`success_rate_timeseries`/`bot_regime_matrix`) inhaltlich
-umschreiben, volle OHLCV-Kerzen bauen, `--no-verify`, main/prod direkt,
-Push/PR (Orchestrator-Schritt).
-**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
-Panel-Routen-Signaturen aus Feature 1-6.
+**Allowed:** `tools/analytics_api.py` additive (new function(s)
+`coins_with_trades`/`coin_trade_series`/`_outcomes_cte_with_coin`, existing
+functions unchanged), `tools/dashboard/app.py` additive (new route
+`/panels/coin-drilldown`, new context function(s), `PANEL_SOURCES` entry),
+`tools/dashboard/templates/panels/coin_drilldown.html` (new) +
+`index.html` embedding, `tools/dashboard/static/js/panels.js` additive (new
+Lightweight Charts factory `coin-price-line`), `backtest/test_dashboard_coin_drilldown.py`
+new, `CHANGELOG.md` entry, on branch `worktree-feat+t-2026-cu-9050-159`.
+**Forbidden:** `dashboard.py` (old dashboard), `.env*`/secrets, live DB,
+fleet restart, model artifacts, `core/**`, SPEC.md in the repo root, existing
+`analytics_api` aggregate functions (`_outcomes_cte`/`bot_trade_rows`/
+`bot_leaderboard`/`success_rate_timeseries`/`bot_regime_matrix`) rewritten
+in substance, building full OHLCV candles, `--no-verify`, main/prod directly,
+push/PR (orchestrator step).
+**Ask first:** new runtime dependencies, changes to existing panel route
+signatures from Features 1-6.
 
 ---
 
-## Feature 8 — Overnight-Digest-Startseite (T-2026-CU-9050-160, F1)
+## Feature 8 — Overnight digest home page (T-2026-CU-9050-160, F1)
 
-Task: T-2026-CU-9050-160 · baut additiv auf T-131 (`_outcomes_cte_with_coin`/
-`_bot_filter`/`_existing_outcome_tables_with_coin`, Feature 7) und
-`_regime_history_present` (Feature 6) auf.
+Task: T-2026-CU-9050-160 · builds additively on T-131 (`_outcomes_cte_with_coin`/
+`_bot_filter`/`_existing_outcome_tables_with_coin`, Feature 7) and
+`_regime_history_present` (Feature 6).
 
 ### Intent
-Eine Digest-/Zusammenfassungs-Sektion GANZ OBEN auf der Startseite: fuer ein
-konfigurierbares Fenster (Default "Overnight" = 8h, umschaltbar 8h/24h/7 Tage
-via `?window=`) auf einen Blick — aggregierte Netto-PnL (Σ%), Trade-Count,
-Gesamt-Win-Rate, Top-/Flop-Bot (nach PnL-Summe), groesster Win/Loss
-(Coin+Bot+PnL) und (falls das Substrat `regime_history` traegt) die Anzahl
-echter Regime-WECHSEL im Fenster (nicht blosse Log-Zeilen). Das Fenster
-verankert sich wie `success_rate_timeseries`/`rolling_success_rate_series` NIE
-an einer UTC-"jetzt"-Wanduhr, sondern an `max(closed_at)` im Substrat selbst
-(`as_of`) — das haelt die Fensterberechnung strikt in derselben naive-local
-Zeitrechnung wie die `closed_at`-Spalten selbst (TZ-Kontrakt: keine
-Vermischung mit einer echten UTC-Uhr, siehe analytics_export TIMEZONE-Note).
-Ein leeres Fenster (keine Trades) zeigt "Keine Trades im Fenster", nie einen
-500er oder fabrizierte Nullwerte.
+A digest/summary section RIGHT AT THE TOP of the home page: for a
+configurable window (default "overnight" = 8h, switchable 8h/24h/7 days
+via `?window=`) at a glance — aggregated net PnL (Σ%), trade count,
+overall win rate, top/flop bot (by PnL sum), largest win/loss
+(coin+bot+PnL) and (if the substrate carries `regime_history`) the number
+of real regime CHANGES in the window (not mere log rows). The window is,
+like `success_rate_timeseries`/`rolling_success_rate_series`, NEVER
+anchored to a UTC "now" wall clock, but to `max(closed_at)` in the
+substrate itself (`as_of`) — this keeps the window computation strictly in
+the same naive-local time system as the `closed_at` columns themselves (TZ
+contract: no mixing with a real UTC clock, see the analytics_export
+TIMEZONE note). An empty window (no trades) shows "Keine Trades im
+Fenster", never a 500 or fabricated zero values.
 
-### Akzeptanzkriterien (binaer testbar)
+### Acceptance criteria (binary testable)
 - [x] AK1: `analytics_api.overnight_digest(con, window_hours, *, as_of=None,
   bots=None)` liefert additiv `{as_of, window_hours, n, wins, pnl_sum_pct,
   winrate, top_bot, flop_bot, best_trade, worst_trade, regime_changes}` —
-  wiederverwendet die coin-aware CTE aus Feature 7
-  (`_outcomes_cte_with_coin`/`_existing_outcome_tables_with_coin`), dieselbe
-  DECISIVE-Trade-Definition wie ueberall sonst. `as_of=None` loest sich auf
-  `max(closed_at)` im Substrat auf (data-anchored, nie wall-clock-anchored). —
+  reuses the coin-aware CTE from Feature 7
+  (`_outcomes_cte_with_coin`/`_existing_outcome_tables_with_coin`), the same
+  DECISIVE trade definition as everywhere else. `as_of=None` resolves to
+  `max(closed_at)` in the substrate (data-anchored, never wall-clock-anchored). —
   Test: `test_overnight_digest_basic_aggregates`.
-- [x] AK2: Fenstergrenze ist `closed_at > as_of - INTERVAL window_hours HOUR
-  AND closed_at <= as_of` (halboffen, identisches Muster wie
-  `success_rate_timeseries`) — ein Trade GENAU auf der unteren Grenze ist
-  ausgeschlossen, ein Trade knapp innerhalb ist eingeschlossen. Ein Trade
-  ausserhalb des Fensters (aelter) darf weder PnL-Summe/Count noch Top-/
-  Flop-Bot beeinflussen — ein Mutation-Check (Fenster-Filter entfernt/verkehrt)
-  macht `pnl_sum_pct`/`n` nachweisbar falsch. — Test:
-  `test_overnight_digest_window_boundary_excludes_outside_trade` (Mutation-Check).
-- [x] AK3: Top-Bot (hoechste Summen-PnL im Fenster) und Flop-Bot (niedrigste)
-  werden korrekt sortiert ermittelt — Fixture mit 3 Bots in eindeutiger
-  Reihenfolge, eine falsche/vertauschte Sortierung macht den Test rot
-  (Mutation-Check). — Test: `test_overnight_digest_top_and_flop_bot_correct`
-  (Mutation-Check).
-- [x] AK4: `best_trade`/`worst_trade` (groesster Win/Loss) tragen `{bot, coin,
-  pnl_pct, closed_at}` des tatsaechlichen Extremwerts im Fenster. — Test:
+- [x] AK2: The window boundary is `closed_at > as_of - INTERVAL window_hours HOUR
+  AND closed_at <= as_of` (half-open, the identical pattern as
+  `success_rate_timeseries`) — a trade EXACTLY on the lower boundary is
+  excluded, a trade just inside is included. A trade outside the window
+  (older) must not affect PnL sum/count nor top-/flop-bot — a mutation
+  check (window filter removed/inverted) makes `pnl_sum_pct`/`n`
+  demonstrably wrong. — Test:
+  `test_overnight_digest_window_boundary_excludes_outside_trade` (mutation check).
+- [x] AK3: Top bot (highest summed PnL in the window) and flop bot (lowest)
+  are correctly determined by sorting — fixture with 3 bots in an
+  unambiguous order, a wrong/swapped sort turns the test red
+  (mutation check). — Test: `test_overnight_digest_top_and_flop_bot_correct`
+  (mutation check).
+- [x] AK4: `best_trade`/`worst_trade` (largest win/loss) carry `{bot, coin,
+  pnl_pct, closed_at}` of the actual extreme value in the window. — Test:
   `test_overnight_digest_notable_trades_correct`.
-- [x] AK5: Leeres Fenster (kein Trade in der `window_hours`-Spanne, aber
-  Substrat hat Daten ausserhalb) liefert `n=0`, `pnl_sum_pct=None`,
+- [x] AK5: An empty window (no trade in the `window_hours` span, but the
+  substrate has data outside it) returns `n=0`, `pnl_sum_pct=None`,
   `winrate=None`, `top_bot=None`, `flop_bot=None`, `best_trade=None`,
-  `worst_trade=None` — nie ein Fehler, nie eine fabrizierte 0. Komplett leeres
-  Substrat (keine Outcome-Tabelle) degradiert identisch. — Test:
-  `test_overnight_digest_empty_window_degrades_cleanly`,
+  `worst_trade=None` — never an error, never a fabricated 0. A
+  completely empty substrate (no outcome table) degrades identically. —
+  Test: `test_overnight_digest_empty_window_degrades_cleanly`,
   `test_overnight_digest_empty_substrate_degrades_cleanly`.
-- [x] AK6: `regime_changes` zaehlt ECHTE Regime-UEBERGAENGE (Wert != Vorgaenger-
-  Wert in `regime_history`, per `LAG`-Fenster) deren `ts` im Fenster liegt —
-  nicht blosse Log-Zeilen (ein Append ohne Wertaenderung zaehlt nicht). Fehlt
-  `regime_history` im Substrat, ist `regime_changes=None` (nie fabriziert). —
+- [x] AK6: `regime_changes` counts REAL regime TRANSITIONS (value !=
+  predecessor value in `regime_history`, via a `LAG` window) whose `ts`
+  falls in the window — not mere log rows (an append without a value
+  change doesn't count). If `regime_history` is missing from the
+  substrate, `regime_changes=None` (never fabricated). —
   Test: `test_overnight_digest_regime_changes_counts_real_transitions_only`,
   `test_overnight_digest_regime_changes_none_without_regime_history`.
-- [x] AK7: `GET /panels/overnight-digest` (und `?window=8h|24h|168h`) rendert
-  200: Kennzahl-Kacheln (PnL/Count/Win-Rate), Top-/Flop-Bot, Notable-Trades und
-  einen Fenster-Umschalter, END-TO-END gegen eine echte
-  `AnalyticsExporter`/DuckDB-Fixture, ganz OBEN in `index.html` eingehaengt
-  (vor Fleet-Registry). Datenstand-Badge (`closed_ai_signals`/`closed_trades`/
-  `regime_history`). — Test:
-  `test_panel_overnight_digest_renders_correct_values` (Integrationstest),
+- [x] AK7: `GET /panels/overnight-digest` (and `?window=8h|24h|168h`) renders
+  200: metric tiles (PnL/count/win rate), top/flop bot, notable trades and
+  a window switcher, END-TO-END against a real
+  `AnalyticsExporter`/DuckDB fixture, mounted right at the TOP of
+  `index.html` (before fleet registry). Data-freshness badge
+  (`closed_ai_signals`/`closed_trades`/`regime_history`). — Test:
+  `test_panel_overnight_digest_renders_correct_values` (integration test),
   `test_index_includes_digest_panel_above_fleet_registry`.
-- [x] AK8: Kein Postgres-Zugriff, DB-frei testbar; unbekannter/fehlender
-  `?window=`-Wert faellt still auf den Default (8h) zurueck (kein 500). —
+- [x] AK8: No Postgres access, DB-free testable; unknown/missing
+  `?window=` value silently falls back to the default (8h) (no 500). —
   Test: `test_panel_overnight_digest_never_touches_postgres`,
   `test_resolve_digest_window_unknown_value_falls_back_to_default`.
 
 ### Out of Scope
-- Live-Steuerung (Feature 4-Familie/F4).
-- Entscheidungsfertige Notifications (M5 = Phase 2).
-- Die anderen Panels neu bauen.
-- Ein Sparkline-Chart (bewusst weggelassen — Kacheln/Listen reichen fuer den
-  Digest; kein neuer ECharts-Factory-Eintrag noetig).
-- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
-  `overnight_digest()` direkt auf, wie die anderen additiven Panel-Routen seit
-  Feature 3 es tun).
+- Live control (Feature 4 family/F4).
+- Decision-ready notifications (M5 = phase 2).
+- Rebuilding the other panels.
+- A sparkline chart (deliberately left out — tiles/lists suffice for the
+  digest; no new ECharts factory entry needed).
+- A new `/api/analytics/*` JSON endpoint (the panel route calls
+  `overnight_digest()` directly, as the other additive panel routes have
+  done since Feature 3).
 
-### Why Build (statt Reuse)
-Fenster-Digest-Aggregation (Top/Flop-Bot, Notable Trades, Regime-Transitions)
-auf dem bestehenden T-131-Substrat ist projektspezifische Verdrahtung; keine
-Library liefert das. `_outcomes_cte_with_coin`/`_bot_filter`/
-`_existing_outcome_tables_with_coin`/`_regime_history_present` werden
-wiederverwendet, nicht neu gebaut.
+### Why Build (instead of Reuse)
+Window digest aggregation (top/flop bot, notable trades, regime
+transitions) on the existing T-131 substrate is project-specific wiring; no
+library delivers that. `_outcomes_cte_with_coin`/`_bot_filter`/
+`_existing_outcome_tables_with_coin`/`_regime_history_present` are reused,
+not rebuilt.
 
 ### Scope of consent
-**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktion(en)
-`overnight_digest`/`_regime_changes_in_window`, bestehende Funktionen
-unveraendert), `tools/dashboard/app.py` additiv (neue Konstanten/Funktionen +
-Route `/panels/overnight-digest`, neuer `PANEL_SOURCES`-Eintrag),
-`tools/dashboard/templates/panels/overnight_digest.html` (neu) +
-`index.html`-Einbindung GANZ OBEN, `tools/dashboard/static/css/app.css`
-additiv (Kachel-/Spalten-Styles), `backtest/test_dashboard_digest.py` neu,
-`CHANGELOG.md`-Eintrag, auf branch `worktree-feat+t-2026-cu-9050-160`.
-**Verboten:** `dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB,
-Fleet-Restart, Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
-`analytics_api`-Aggregatfunktionen (`_outcomes_cte`, `_outcomes_cte_with_coin`,
+**Allowed:** `tools/analytics_api.py` additive (new function(s)
+`overnight_digest`/`_regime_changes_in_window`, existing functions
+unchanged), `tools/dashboard/app.py` additive (new constants/functions +
+route `/panels/overnight-digest`, new `PANEL_SOURCES` entry),
+`tools/dashboard/templates/panels/overnight_digest.html` (new) +
+`index.html` embedding RIGHT AT THE TOP, `tools/dashboard/static/css/app.css`
+additive (tile/column styles), `backtest/test_dashboard_digest.py` new,
+`CHANGELOG.md` entry, on branch `worktree-feat+t-2026-cu-9050-160`.
+**Forbidden:** `dashboard.py` (old dashboard), `.env*`/secrets, live DB,
+fleet restart, model artifacts, `core/**`, SPEC.md in the repo root, existing
+`analytics_api` aggregate functions (`_outcomes_cte`, `_outcomes_cte_with_coin`,
 `bot_trade_rows`, `bot_leaderboard`, `success_rate_timeseries`,
-`bot_regime_matrix`, `coins_with_trades`, `coin_trade_series`) inhaltlich
-umschreiben, Live-Steuerung/Notifications bauen, `--no-verify`, main/prod
-direkt, Push/PR (Orchestrator-Schritt).
-**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
-Panel-Routen-Signaturen aus Feature 1-7.
+`bot_regime_matrix`, `coins_with_trades`, `coin_trade_series`) rewritten in
+substance, building live control/notifications, `--no-verify`, main/prod
+directly, push/PR (orchestrator step).
+**Ask first:** new runtime dependencies, changes to existing panel route
+signatures from Features 1-7.
 
 ---
 
-## Feature 9 — Event-Annotations als READ-ONLY Event-Feed (T-2026-CU-9050-161, S10)
+## Feature 9 — Event annotations as a READ-ONLY event feed (T-2026-CU-9050-161, S10)
 
-Task: T-2026-CU-9050-161 · baut additiv auf `_regime_changes_in_window`
-(Feature 8, lag-Logik) und `_outcomes_cte_with_coin`/
-`_existing_outcome_tables_with_coin`/`_bot_filter` (Feature 7/8) auf. Letztes
-Panel des Z1-Dashboard-Rewrites.
+Task: T-2026-CU-9050-161 · builds additively on `_regime_changes_in_window`
+(Feature 8, lag logic) and `_outcomes_cte_with_coin`/
+`_existing_outcome_tables_with_coin`/`_bot_filter` (Feature 7/8). Last
+panel of the Z1 dashboard rewrite.
 
 ### Intent
-S10 ist ein "einfaches Eingriffs-Log", kein Annotations-EDITOR: ein
-chronologischer (neueste zuerst) Event-Feed, der notable Events aus den
-VERFUEGBAREN DuckDB-Quellen konsolidiert + typisiert anzeigt — Regime-
-Uebergaenge aus `regime_history` (Zeitpunkt + von->nach, via dieselbe
-lag-Logik wie `_regime_changes_in_window`) und Notable Trades aus
-`closed_ai_signals`/`closed_trades` (groesste Wins/Losses des Fensters —
-Coin, Bot, PnL, Close-Zeit). Konfigurierbares Fenster (`?window=`, Default
-24h, Alternative 168h/7 Tage). Ein SCHREIBENDES Annotations-Feature waere ein
-Mutations-Endpoint = F4-/Z2-gegated (CLAUDE.md harte Regel: keine Mutationen/
-Live-Hebel in der Web-UI vor Cloudflare Access) — deshalb bewusst READ-ONLY,
-kein POST/Write-Endpoint gebaut.
+S10 is a "simple intervention log", not an annotation EDITOR: a
+chronological (newest first) event feed that consolidates + typifies
+notable events from the AVAILABLE DuckDB sources — regime transitions from
+`regime_history` (time + from->to, via the same lag logic as
+`_regime_changes_in_window`) and notable trades from
+`closed_ai_signals`/`closed_trades` (largest wins/losses of the window —
+coin, bot, PnL, close time). Configurable window (`?window=`, default
+24h, alternative 168h/7 days). A WRITING annotations feature would be a
+mutation endpoint = F4-/Z2-gated (CLAUDE.md hard rule: no
+mutations/live levers in the web UI before Cloudflare Access) —
+therefore deliberately READ-ONLY, no POST/write endpoint built.
 
-### Akzeptanzkriterien (binaer testbar)
+### Acceptance criteria (binary testable)
 - [x] AK1: `analytics_api.event_feed(con, window_hours, *, as_of=None,
   bots=None)` liefert additiv `{as_of, window_hours, events}` mit
-  `events: [{type, ts, title, detail}, ...]`, chronologisch ABSTEIGEND
-  sortiert (neueste zuerst). `as_of=None` loest sich data-anchored auf
-  (`max(closed_at)` ueber die Outcome-Tabellen, sonst `max(ts)` aus
-  `regime_history`, sonst `None`) — nie eine wall-clock "jetzt"-Uhr. — Test:
-  `test_event_feed_basic_shape_and_sort_order` (Mutation-Check: asc statt
-  desc sortiert macht den Test rot).
-- [x] AK2: Regime-Uebergaenge (`type="regime_change"`) sind ECHTE Wechsel
-  (Wert != Vorgaenger-Wert in `regime_history`, per `LAG`-Fenster — identische
-  Logik wie `_regime_changes_in_window`, Feature 8) im Fenster, mit
-  von->nach-Detail. Eine reine Wiederholung desselben Regimes zaehlt nicht,
-  die allererste `regime_history`-Zeile (kein Vorgaenger) ist eine
-  Initialisierung, keine Transition. — Test:
+  `events: [{type, ts, title, detail}, ...]`, sorted chronologically
+  DESCENDING (newest first). `as_of=None` resolves data-anchored
+  (`max(closed_at)` across the outcome tables, else `max(ts)` from
+  `regime_history`, else `None`) — never a wall-clock "now" clock. — Test:
+  `test_event_feed_basic_shape_and_sort_order` (mutation check: sorted
+  ascending instead of descending turns the test red).
+- [x] AK2: Regime transitions (`type="regime_change"`) are REAL changes
+  (value != predecessor value in `regime_history`, via a `LAG` window —
+  identical logic to `_regime_changes_in_window`, Feature 8) within the
+  window, with a from->to detail. A plain repeat of the same regime
+  doesn't count, the very first `regime_history` row (no predecessor) is
+  an initialisation, not a transition. — Test:
   `test_event_feed_regime_transitions_correct_and_repeats_excluded`
-  (Mutation-Check).
-- [x] AK3: Notable Trades (`type="notable_trade"`) sind die groessten Wins/
-  Losses (je Seite getrennt ueber `is_win`, nicht ueber sortierte `pnl_pct`
-  mit Ueberlappungsrisiko bei wenigen Trades) im Fenster, mit Coin+Bot+PnL im
-  Detail-Feld. — Test: `test_event_feed_notable_trades_winners_and_losers`.
-- [x] AK4: Fensterlogik ist halboffen (`> as_of - INTERVAL window_hours HOUR
+  (mutation check).
+- [x] AK3: Notable trades (`type="notable_trade"`) are the largest wins/
+  losses (separated per side via `is_win`, not via sorted `pnl_pct`
+  with overlap risk at few trades) in the window, with coin+bot+PnL in
+  the detail field. — Test: `test_event_feed_notable_trades_winners_and_losers`.
+- [x] AK4: Window logic is half-open (`> as_of - INTERVAL window_hours HOUR
   AND <= as_of`), identisch zu `overnight_digest`/`success_rate_timeseries`
-  — ein Event ausserhalb des Fensters darf nicht erscheinen (Mutation-Check:
-  Fenstergrenze verkehrt/entfernt macht den Test rot). — Test:
-  `test_event_feed_window_boundary_excludes_outside_events` (Mutation-Check).
-- [x] AK5: Leerer Feed (kein Event im Fenster, aber Substrat hat Daten
-  ausserhalb) liefert `events: []`, nie einen Fehler, nie ein fabriziertes
-  Event. Komplett leeres Substrat degradiert identisch
+  — an event outside the window must not appear (mutation check:
+  window boundary inverted/removed turns the test red). — Test:
+  `test_event_feed_window_boundary_excludes_outside_events` (mutation check).
+- [x] AK5: An empty feed (no event in the window, but the substrate has
+  data outside it) returns `events: []`, never an error, never a
+  fabricated event. A completely empty substrate degrades identically
   (`as_of: None, events: []`). — Test:
   `test_event_feed_empty_window_degrades_cleanly`,
   `test_event_feed_empty_substrate_degrades_cleanly`.
-- [x] AK6: `GET /panels/event-feed` (und `?window=24h|168h`) rendert 200: die
-  typisierte, zeit-absteigend sortierte Event-Liste (Icon/Label je Typ +
-  Zeitstempel + Beschreibung), END-TO-END gegen eine echte
-  `AnalyticsExporter`/DuckDB-Fixture, als letztes Panel in `index.html`
-  eingehaengt (nach Coin-Drilldown). Datenstand-Badge
-  (`closed_ai_signals`/`closed_trades`/`regime_history`). KEIN
-  POST/Write-Endpoint existiert fuer dieses Panel. — Test:
+- [x] AK6: `GET /panels/event-feed` (and `?window=24h|168h`) renders 200: the
+  typed, time-descending sorted event list (icon/label per type +
+  timestamp + description), END-TO-END against a real
+  `AnalyticsExporter`/DuckDB fixture, mounted as the last panel in
+  `index.html` (after coin drilldown). Data-freshness badge
+  (`closed_ai_signals`/`closed_trades`/`regime_history`). NO
+  POST/write endpoint exists for this panel. — Test:
   `test_panel_event_feed_renders_events_in_descending_order`
-  (Integrationstest), `test_index_includes_event_feed_panel_last`.
-- [x] AK7: Kein Postgres-Zugriff, DB-frei testbar; unbekannter/fehlender
-  `?window=`-Wert faellt still auf den Default (24h) zurueck (kein 500). —
+  (integration test), `test_index_includes_event_feed_panel_last`.
+- [x] AK7: No Postgres access, DB-free testable; unknown/missing
+  `?window=` value silently falls back to the default (24h) (no 500). —
   Test: `test_panel_event_feed_never_touches_postgres`,
   `test_resolve_event_feed_window_unknown_value_falls_back_to_default`.
 
 ### Out of Scope
-- **Schreibende Operator-Annotationen** (frei getippte Notizen/Tags durch
-  Michi) — das waere ein Mutations-Endpoint (POST/PUT + CSRF + Persistenz-
-  Store fuer die Annotation selbst) und ist explizit Z2-gegated (Cloudflare
-  Access + Auth muss zuerst stehen, F4-Familie). Follow-up-Task, nicht Teil
-  dieses Panels.
-- Live-Steuerung (F4-Familie).
-- Ein Hash-Journal / Audit-Trail-Signierung (R9 — gestrichen, siehe MEMORY).
-- Die anderen Panels neu bauen.
-- Weitere Event-Typen ueber Regime-Uebergaenge/Notable-Trades hinaus (z. B.
-  Fleet-Restarts, Modell-Promotions) — nur gebaut wenn trivial aus dem
-  bestehenden Substrat ableitbar, hier bewusst nicht ergaenzt (kein
-  zusaetzliches Substrat vorhanden, das sie DB-frei liefern koennte).
-- Ein neuer `/api/analytics/*`-JSON-Endpoint (die Panel-Route ruft
-  `event_feed()` direkt auf, wie die anderen additiven Panel-Routen seit
-  Feature 3 es tun).
+- **Writing operator annotations** (freely typed notes/tags by
+  Michi) — that would be a mutation endpoint (POST/PUT + CSRF +
+  persistence store for the annotation itself) and is explicitly Z2-gated
+  (Cloudflare Access + auth must exist first, F4 family). Follow-up task,
+  not part of this panel.
+- Live control (F4 family).
+- A hash journal / audit-trail signing (R9 — struck, see MEMORY).
+- Rebuilding the other panels.
+- Further event types beyond regime transitions/notable trades (e.g.
+  fleet restarts, model promotions) — only built if trivially derivable
+  from the existing substrate, deliberately not added here (no
+  additional substrate exists that could deliver them DB-free).
+- A new `/api/analytics/*` JSON endpoint (the panel route calls
+  `event_feed()` directly, as the other additive panel routes have done
+  since Feature 3).
 
-### Why Build (statt Reuse)
-Konsolidierung typisierter Events aus zwei bestehenden T-131-Aggregat-
-Bausteinen (Regime-lag-Logik, coin-aware decisive-Trade-CTE) ist
-projektspezifische Verdrahtung; keine Library liefert das. Die lag-Logik
-selbst (`_regime_changes_in_window`) und die coin-aware CTE
+### Why Build (instead of Reuse)
+Consolidating typed events from two existing T-131 aggregate building
+blocks (regime lag logic, coin-aware decisive-trade CTE) is
+project-specific wiring; no library delivers that. The lag logic itself
+(`_regime_changes_in_window`) and the coin-aware CTE
 (`_outcomes_cte_with_coin`/`_existing_outcome_tables_with_coin`/
-`_bot_filter`) werden wiederverwendet, nicht neu gebaut.
+`_bot_filter`) are reused, not rebuilt.
 
 ### Scope of consent
-**Erlaubt:** `tools/analytics_api.py` additiv (neue Funktionen `event_feed`,
+**Allowed:** `tools/analytics_api.py` additive (new functions `event_feed`,
 `_regime_transition_events`, `_notable_trade_events`, `_latest_event_anchor`,
-bestehende Funktionen unveraendert), `tools/dashboard/app.py` additiv (neue
-Konstanten/Funktionen + Route `/panels/event-feed`, neuer
-`PANEL_SOURCES`-Eintrag), `tools/dashboard/templates/panels/event_feed.html`
-(neu) + `index.html`-Einbindung als letztes Panel,
-`tools/dashboard/static/css/app.css` additiv (Event-Feed-Listen-Styles),
-`backtest/test_dashboard_event_feed.py` neu, `CHANGELOG.md`-Eintrag, auf
+existing functions unchanged), `tools/dashboard/app.py` additive (new
+constants/functions + route `/panels/event-feed`, new
+`PANEL_SOURCES` entry), `tools/dashboard/templates/panels/event_feed.html`
+(new) + `index.html` embedding as the last panel,
+`tools/dashboard/static/css/app.css` additive (event-feed list styles),
+`backtest/test_dashboard_event_feed.py` new, `CHANGELOG.md` entry, on
 branch `worktree-feat+t-2026-cu-9050-161`.
-**Verboten:** jeder POST/PUT/Mutations-Endpoint fuer Annotationen,
-`dashboard.py` (altes Dashboard), `.env*`/secrets, Live-DB, Fleet-Restart,
-Modell-Artefakte, `core/**`, SPEC.md im Repo-Root, bestehende
-`analytics_api`-Aggregatfunktionen (`_outcomes_cte`, `_outcomes_cte_with_coin`,
+**Forbidden:** any POST/PUT/mutation endpoint for annotations,
+`dashboard.py` (old dashboard), `.env*`/secrets, live DB, fleet restart,
+model artifacts, `core/**`, SPEC.md in the repo root, existing
+`analytics_api` aggregate functions (`_outcomes_cte`, `_outcomes_cte_with_coin`,
 `_regime_changes_in_window`, `bot_trade_rows`, `bot_leaderboard`,
 `success_rate_timeseries`, `bot_regime_matrix`, `coins_with_trades`,
-`coin_trade_series`, `overnight_digest`) inhaltlich umschreiben,
-Live-Steuerung bauen, `--no-verify`, main/prod direkt, Push/PR
-(Orchestrator-Schritt).
-**Frag zurueck:** neue Runtime-Dependencies, Aenderung bestehender
-Panel-Routen-Signaturen aus Feature 1-8.
+`coin_trade_series`, `overnight_digest`) rewritten in substance,
+building live control, `--no-verify`, main/prod directly, push/PR
+(orchestrator step).
+**Ask first:** new runtime dependencies, changes to existing panel route
+signatures from Features 1-8.
 
 ---
 
-## Betrieb — Atomarer Export-Publish + Scheduled Tasks (T-2026-CU-9050-163)
+## Operations — Atomic export publish + scheduled tasks (T-2026-CU-9050-163)
 
-Der Analytics-Export (`tools/analytics_export.py`) schreibt NIE direkt in die
-served DuckDB (`staging_models/analytics/analytics.duckdb`), die das Dashboard
-per Request read-only oeffnet. Stattdessen laeuft er RW auf einer persistenten
-**Build-DB** (`analytics.duckdb.build`, traegt das Watermark → Inkrementalitaet
-ab dem ersten Lauf/Seed exakt erhalten) und **publisht atomar**: `shutil.copy2(build, <served>.tmp)` →
-`os.replace(<served>.tmp, served)` (atomar auf demselben Volume). Damit wird der
-served-Pfad vom Export nie exklusiv gelockt → Dashboard-Reads erroren waehrend
-eines Laufs nicht mehr. Windows-Sharing-Violation beim Replace → Retries mit
-einem **~30 s Gesamt-Budget** (`DEFAULT_PUBLISH_RETRIES=120` × `retry_delay_s=0.25`,
-CLI `--publish-retries`/`--publish-retry-delay`, T-2026-CU-9050-167). Das Budget
-MUSS grosszuegig sein: das Dashboard HTMX-pollt mehrere Panels und oeffnet die
-served-DB per Request read-only, das alte 1 s-Budget (T-163) fand unter Live-
-Polling nie eine Luecke und der Publish schlug dauerhaft fehl. Da jeder Request
-sein Handle schliesst, ist die served-Datei >90 % der Zeit frei → ein weites
-Fenster trifft zuverlaessig eine Luecke. Scheitern ALLE Versuche, bleiben
-Build-DB + `.tmp` intakt, served unangetastet, Exit-Code ≠ 0 (kein Korruptions-
-Risiko) — **Selbstheilung:** der naechste Lauf republisht dieselben frischen
-Daten aus der Build-DB, ein verpasster Publish ist nie Datenverlust, nur
-verzoegert. Reine Publish-Logik: `publish_duckdb()` (DB-frei testbar,
+The analytics export (`tools/analytics_export.py`) NEVER writes directly into
+the served DuckDB (`staging_models/analytics/analytics.duckdb`), which the
+dashboard opens read-only per request. Instead it runs RW on a persistent
+**build DB** (`analytics.duckdb.build`, carries the watermark → keeps
+incrementality exactly from the first run/seed) and **publishes atomically**:
+`shutil.copy2(build, <served>.tmp)` →
+`os.replace(<served>.tmp, served)` (atomic on the same volume). This means
+the served path is never exclusively locked by the export → dashboard reads
+no longer error out during a run. A Windows sharing violation on replace →
+retries with a **~30s total budget** (`DEFAULT_PUBLISH_RETRIES=120` ×
+`retry_delay_s=0.25`, CLI `--publish-retries`/`--publish-retry-delay`,
+T-2026-CU-9050-167). The budget MUST be generous: the dashboard HTMX-polls
+several panels and opens the served DB read-only per request, the old 1s
+budget (T-163) never found a gap under live polling and the publish
+consistently failed. Since every request closes its handle, the served
+file is free >90% of the time → a wide window reliably hits a gap. If ALL
+attempts fail, the build DB + `.tmp` stay intact, served untouched, exit
+code ≠ 0 (no corruption risk) — **self-healing:** the next run republishes
+the same fresh data from the build DB, a missed publish is never data loss,
+only delayed. Pure publish logic: `publish_duckdb()` (DB-free testable,
 `backtest/test_analytics_export_publish.py`).
 
-Rollout-Seed: Der Wechsel auf die Build-DB ist der erste Split vom alten
-Single-File-Layout. Beim ERSTEN Lauf unter dem neuen Code seedet `main()`
-einmalig `analytics.duckdb.build` aus der bestehenden served-DB
-(`seed_build_db`), falls die Build-DB fehlt aber die served existiert → das
-`_export_watermark` bleibt erhalten, kein mehrstuendiger Voll-Re-Export aus dem
-Live-Postgres. Der Summary-Print laeuft NACH dem Publish, damit ein
-Publish-Fehler nie wie Erfolg aussieht (klare `publish PENDING`-Kennzeichnung).
+Rollout seed: the switch to the build DB is the first split from the old
+single-file layout. On the FIRST run under the new code, `main()` seeds
+`analytics.duckdb.build` once from the existing served DB (`seed_build_db`),
+if the build DB is missing but the served one exists → the
+`_export_watermark` is preserved, no hours-long full re-export from the
+live Postgres. The summary print runs AFTER the publish, so a publish
+failure never looks like success (clear `publish PENDING` marking).
 
-Die zwei Scheduled Tasks (Dashboard-Autostart @127.0.0.1:8098, Export alle
-30 min) werden reproduzierbar via `tools/ops/register_kythera_dashboard_tasks.ps1`
-registriert (elevated, S4U, `IgnoreNew` = kein ueberlappender Export). Das Skript
-ist REGISTRIERUNGS-ONLY — es stoppt keinen Prozess und startet keine Task (kein
-Live-Cutover aus einem committeten Artefakt, CLAUDE.md Harte Regel 1); Cutover +
-Registrierung sind separate, bewusste Operator-Schritte, kein Teil einer
-Dev-Session.
+The two scheduled tasks (dashboard autostart @127.0.0.1:8098, export every
+30 min) are registered reproducibly via
+`tools/ops/register_kythera_dashboard_tasks.ps1`
+(elevated, S4U, `IgnoreNew` = no overlapping export). The script is
+REGISTRATION-ONLY — it stops no process and starts no task (no live
+cutover from a committed artifact, CLAUDE.md hard rule 1); cutover +
+registration are separate, deliberate operator steps, not part of a
+dev session.
 
 ## Performance (T-2026-CU-9050-175)
 
-Die Panel-Kontexte cachen ihre DuckDB-derivierten Daten (Query-Payload +
-`data_freshness`-Rows) hinter dem File-Freshness-Token (`analytics_api._PollCache`,
-dasselbe Muster wie der `/api/analytics/*`-Blueprint-Cache): bei unveraenderter
-Export-Datei wird jeder Poll aus Memory bedient. Das "Sync vor N min"-Alter wird
-weiterhin pro Request gerechnet; Fleet-Registry (dateibasiert) bleibt uncached.
-Query-seitig: Rolling-Serie via SQL-Daily-Aggregation, Leaderboard via
-Streamed-Column-Pfad (optionaler numpy-Fast-Path mit Pure-Python-Fallback),
-success-rate-Fenster in einem Scan, Regime-Matrix als ASOF-Inner-Join.
-Ergebnis-Paritaet ist HARTE Anforderung — Netz:
-`backtest/test_analytics_query_parity.py`. Die drei reinen count/sum-Aggregate
-(rolling / success-rate / regime-matrix) sind bit-identisch old-vs-new; beim
-Leaderboard sind SEIT T-2026-CU-9050-177 ALLE Felder deterministisch (s.u.).
+The panel contexts cache their DuckDB-derived data (query payload +
+`data_freshness` rows) behind the file-freshness token (`analytics_api._PollCache`,
+the same pattern as the `/api/analytics/*` blueprint cache): with an
+unchanged export file, every poll is served from memory. The "Sync vor N
+min" age is still computed per request; the fleet registry (file-based)
+stays uncached. Query-side: rolling series via SQL daily aggregation,
+leaderboard via a streamed-column path (optional numpy fast path with a
+pure-Python fallback), success-rate window in a single scan, regime
+matrix as an ASOF inner join. Result parity is a HARD requirement — net:
+`backtest/test_analytics_query_parity.py`. The three pure count/sum
+aggregates (rolling / success-rate / regime matrix) are bit-identical
+old-vs-new; for the leaderboard, SINCE T-2026-CU-9050-177 ALL fields are
+deterministic (see below).
 
-## Deterministische Leaderboard-Risk-Metriken (T-2026-CU-9050-177)
+## Deterministic leaderboard risk metrics (T-2026-CU-9050-177)
 
-Die unter T-175 offen dokumentierte Nichtdeterminismus-Klasse ist behoben: die
-Leaderboard-Query ordnet mit `ORDER BY bot, closed_at, src, id` — `id` ist der
-monoton steigende serielle Postgres-PK jeder Outcome-Tabelle (Insertion-Order,
-dieselbe Spalte, die der Export-Keyset-Cursor als Eindeutigkeits-Tiebreaker
-nutzt; die beste DETERMINISTISCHE Ordnung, die das exportierte Schema
-hergibt), `src` der Union-Zweig-Rang (noetig, weil die id-Raeume beider
-Tabellen ueberlappen — 371k Kollisionen im Live-Export). Die Order ist damit
-TOTAL: `max_drawdown_pp`/`max_loss_streak` sind run-to-run reproduzierbar,
-auch unter DuckDB-Parallelitaet (`connect_ro` PRAGMA threads=2; Beweis:
-10/10 identische Laeufe auf der realen DB, vorher divergierten 23 von 68
-Bots), und numpy-Fast-Path ≡ Pure-Fallback gilt unbedingt (identischer
-deterministischer Row-Stream), nicht mehr nur auf tie-freien Fixtures.
+The non-determinism class documented as open under T-175 is fixed: the
+leaderboard query orders by `ORDER BY bot, closed_at, src, id` — `id` is
+the monotonically increasing serial Postgres PK of each outcome table
+(insertion order, the same column the export keyset cursor uses as a
+uniqueness tiebreaker; the best DETERMINISTIC order the exported schema
+gives), `src` the union-branch rank (needed because the id spaces of both
+tables overlap — 371k collisions in the live export). The order is thus
+TOTAL: `max_drawdown_pp`/`max_loss_streak` are reproducible run to run,
+even under DuckDB parallelism (`connect_ro` PRAGMA threads=2; proof:
+10/10 identical runs on the real DB, before that 23 of 68 bots
+diverged), and numpy fast path ≡ pure fallback holds unconditionally
+(identical deterministic row stream), no longer only on tie-free
+fixtures.
 
-**Grenze (T-177-Review):** `id`-Order ist KEINE Garantie echter Close-Chronologie,
-wo ein Upstream-Writer `closed_at` batch-stempelt. Ein bekannter ~340k-Zeilen-
-Legacy-Reclassify-Block in `closed_ai_signals` teilt sich EINEN exakten Zeitstempel
-— dort ist die `id`-Reihenfolge im Wesentlichen willkuerliche Insertion-Order, die
-resultierenden Risk-Metriken sind also deterministische Order-Artefakte (jetzt
-stabil + reproduzierbar), nicht chronologisch belastbar (betrifft ATS1/EPD1/
-MIS1-pump-Familie, ~85-93% ihrer Historie). `open_time` als Tiebreaker fuer den
-Legacy-Status-Zweig ist ein moeglicher Follow-up.
-BEWUSSTE VERHALTENSAENDERUNG: die vorher zufallsbehafteten Anzeigenwerte sind
-jetzt stabil (Fixierung auf die id-Order-Sequenz). Netz:
-`test_leaderboard_risk_metrics_deterministic_across_runs_with_ties` (rot vor
-dem Fix: wert-verschiedene Duplikat-`closed_at`-Rows, physisch ausserhalb der
-id-Order gespeichert) + Referenz-Pipeline-Paritaet auf derselben Fixture.
+**Limit (T-177 review):** `id` order is NO guarantee of true close
+chronology where an upstream writer batch-stamps `closed_at`. A known
+~340k-row legacy reclassify block in `closed_ai_signals` shares ONE exact
+timestamp — there the `id` order is essentially arbitrary insertion order,
+so the resulting risk metrics are deterministic order artefacts (now
+stable + reproducible), not chronologically reliable (affects
+ATS1/EPD1/MIS1-pump family, ~85-93% of their history). `open_time` as a
+tiebreaker for the legacy status branch is a possible follow-up.
+DELIBERATE BEHAVIOUR CHANGE: the previously randomness-afflicted display
+values are now stable (pinned to the id-order sequence). Net:
+`test_leaderboard_risk_metrics_deterministic_across_runs_with_ties` (red
+before the fix: value-different duplicate `closed_at` rows, physically
+stored outside the id order) + reference-pipeline parity on the same
+fixture.

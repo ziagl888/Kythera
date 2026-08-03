@@ -1,75 +1,75 @@
 # Agent 12: Cross-Cutting Sweep (Secrets, SQL, Datetime, Schema-Map, Deps, Duplication, Outbox-Contract)
 
-### [HIGH] [datetime] Cooldown-Circuit-Breaker der klassischen Strategien vergleicht naive Lokalzeit gegen UTC-geschriebene posted-Spalte
-- strategies/strat_fast_in_out.py:42-48, strategies/strat_5_percent.py:25-29. Writer (5_trade_monitor:38 UTC-FIX, 6_housekeeping:164, 28) schreiben UTC; Strategien vergleichen datetime.now() lokal. CET/CEST: 3h-Fenster deckt nur 1-2h → Massen-Win-Block feuert zu spät/nie.
-- Fix: aware-UTC in beiden strat-Dateien (wie 5_trade_monitor-FIX).
-- DB-phase: SELECT max(posted), now() — Offset sichtbar?
+### [HIGH] [datetime] Cooldown circuit breaker of the classic strategies compares naive local time against the UTC-written posted column
+- strategies/strat_fast_in_out.py:42-48, strategies/strat_5_percent.py:25-29. Writers (5_trade_monitor:38 UTC-FIX, 6_housekeeping:164, 28) write UTC; strategies compare datetime.now() local. CET/CEST: 3h window only covers 1-2h → mass win-block fires too late/never.
+- Fix: aware UTC in both strat files (like the 5_trade_monitor fix).
+- DB phase: SELECT max(posted), now() — offset visible?
 
-### [HIGH] [schema|datetime] trade_cooldowns DDL-Drift ×4: WITH vs WITHOUT TIME ZONE — Bootstrap-Reihenfolge bestimmt Cooldown-Semantik
-- 11:445-451, 24:425-431, 25:524-530 (WITH TZ) vs 26_regime_detector.py:194-200 (WITHOUT). Writer NOW() (timestamptz), Reader interpretiert naive als UTC → WITHOUT + Server-TZ Vienna → Cooldowns 1-2h länger.
-- Fix: kanonische DDL (timestamptz) in core; ALTER-Migration.
+### [HIGH] [schema|datetime] trade_cooldowns DDL drift ×4: WITH vs WITHOUT TIME ZONE — bootstrap order determines cooldown semantics
+- 11:445-451, 24:425-431, 25:524-530 (WITH TZ) vs 26_regime_detector.py:194-200 (WITHOUT). Writer NOW() (timestamptz), reader interprets naive as UTC → WITHOUT + server TZ Vienna → cooldowns 1-2h longer.
+- Fix: canonical DDL (timestamptz) in core; ALTER migration.
 - DB-phase: \d trade_cooldowns, SHOW timezone.
 
-### [HIGH] [datetime] active_trades_master.time/posted naiv-lokal geschrieben (3_detectors:54,117), aber mit NOW()/aware-UTC verglichen (9_ai_sr:248, 23:399)
-- PG-TZ=UTC + VPS=CEST → 60-min-Fenster wird 2h+ → doppelte AI-Nachbewertung; 24h-Statistik verschoben.
-- Fix: 3_detectors auf UTC heben; langfristig timestamptz.
+### [HIGH] [datetime] active_trades_master.time/posted written naive-local (3_detectors:54,117), but compared against NOW()/aware UTC (9_ai_sr:248, 23:399)
+- PG TZ=UTC + VPS=CEST → 60-min window becomes 2h+ → duplicate AI re-evaluation; 24h stats shifted.
+- Fix: lift 3_detectors to UTC; timestamptz long-term.
 
-### [MEDIUM] [schema|telegram] telegram_outbox DDL-Drift: 3_detectors legt Tabelle ohne image_path an; ensure_schema migriert image_path NICHT nach
-- 3_detectors.py:103,141 vs 4_telegram_bot.py:51-70 (ALTERs nur attempts/failed/last_error/created_at).
-- Frische DB + 3_detectors zuerst → alle ~15 Chart-Bots crashen mit UndefinedColumn.
-- Fix: ALTER ADD COLUMN IF NOT EXISTS image_path in ensure_schema; schmale CREATEs angleichen/entfernen.
+### [MEDIUM] [schema|telegram] telegram_outbox DDL drift: 3_detectors creates the table without image_path; ensure_schema does NOT migrate image_path in afterwards
+- 3_detectors.py:103,141 vs 4_telegram_bot.py:51-70 (ALTERs only attempts/failed/last_error/created_at).
+- Fresh DB + 3_detectors first → all ~15 chart bots crash with UndefinedColumn.
+- Fix: ALTER ADD COLUMN IF NOT EXISTS image_path in ensure_schema; align/remove the narrow CREATEs.
 
-### [MEDIUM] [deps] requirements.txt vollständig ungepinnt (alle 20 Pakete)
-- pandas_ta fragil mit numpy>=2; PTB Major-Brüche; xgboost-pkl versionssensitiv. 9_ai_sr:158-Kommentar zeigt: Klasse hat schon zugeschlagen. Kein Lockfile.
-- Fix: pip freeze als requirements.lock.txt; mindestens Major-Pins.
+### [MEDIUM] [deps] requirements.txt completely unpinned (all 20 packages)
+- pandas_ta fragile with numpy>=2; PTB major breaks; xgboost pkl version-sensitive. 9_ai_sr:158 comment shows: this class of bug has already struck. No lockfile.
+- Fix: pip freeze as requirements.lock.txt; at least major pins.
 
-### [MEDIUM] [schema] ai_signals (13 Writer) und ml_predictions_master (9 Writer) haben KEINE DDL im Repo — Schema lebt nur in Live-DB
-- Kein Unique-Backstop erkennbar; Dedup app-seitig SELECT-then-INSERT ohne ON CONFLICT.
-- Fix: pg_dump --schema-only als docs/schema.sql; Unique-Index + ON CONFLICT DO NOTHING.
-- DB-phase: Constraints dumpen, Duplikat-Quote messen.
+### [MEDIUM] [schema] ai_signals (13 writers) and ml_predictions_master (9 writers) have NO DDL in the repo — schema lives only in the live DB
+- No unique backstop detectable; dedup is app-side SELECT-then-INSERT without ON CONFLICT.
+- Fix: pg_dump --schema-only as docs/schema.sql; unique index + ON CONFLICT DO NOTHING.
+- DB phase: dump constraints, measure duplicate rate.
 
-### [MEDIUM] [datetime|schema] closed_ai_signals.close_time: NOW() (8:247, 6:201) und Python-UTC-Param (28:729) gemischt über drei Writer
-- Server-TZ ≠ UTC → close_times um Offset auseinander → Regime-Analyzer/Tracker-Dauern verzerrt.
-- Fix: einheitlich UTC-Param oder NOW() + timestamptz.
+### [MEDIUM] [datetime|schema] closed_ai_signals.close_time: NOW() (8:247, 6:201) and Python UTC param (28:729) mixed across three writers
+- Server TZ ≠ UTC → close_times off by an offset → regime analyzer/tracker durations skewed.
+- Fix: uniformly UTC param or NOW() + timestamptz.
 
-### [LOW] [sql] f-String-SQL nur mit internen Tabellennamen (~15 Sites) — kein Injection-Pfad, Quoting inkonsistent. Kein %-Format/.format()/Konkat-SQL gefunden; alle Werte parametrisiert. Optional sql.Identifier.
+### [LOW] [sql] f-string SQL only with internal table names (~15 sites) — no injection path, quoting inconsistent. No %-format/.format()/concat SQL found; all values parametrised. Optional sql.Identifier.
 
-### [LOW] [security] Secrets/Git-Hygiene SAUBER: .env nie committed, Historie clean (12 Commits, Pickaxe leer), gitleaks ohne Löcher, kein Hardcode. Rest: 27 .pkl-Modelle committed (pickle=code exec; trusted source, PR sieht Binär-Diffs nicht). Optional SHA256-Manifest.
+### [LOW] [security] Secrets/git hygiene CLEAN: .env never committed, history clean (12 commits, pickaxe empty), gitleaks with no holes, no hardcoding. Remainder: 27 .pkl models committed (pickle=code exec; trusted source, PR doesn't see binary diffs). Optional SHA256 manifest.
 
-### [LOW] [exceptions] 1 bares except: (backtest/smc_btc_backtest.py:307); ~43 pass/continue-Swallows meist Cleanup-Pattern. Inhaltlicher Kandidat: core/trade_utils.py:103 HVN-Berechnung schluckt still → Signal ohne HVN-Level ohne Sichtbarkeit.
+### [LOW] [exceptions] 1 bare except: (backtest/smc_btc_backtest.py:307); ~43 pass/continue swallows, mostly a cleanup pattern. Substantive candidate: core/trade_utils.py:103 HVN calculation swallows silently → signal without an HVN level, with no visibility.
 
-### [LOW] [duplication] db_schema_analysis root vs tools (tools von ruff excluded → driftet weiter). load_coins ×6 mit Semantik-Drift (core: roh; chart: dedup; fib: fallback BTC/ETH; qm: USDT-Filter). fetch_db_data ×6, send_cornix_signal ×3, get_live_price ×3. Positiv: get_db_connection/send_telegram/cooldowns zentralisiert.
+### [LOW] [duplication] db_schema_analysis root vs tools (tools excluded from ruff → keeps drifting). load_coins ×6 with semantic drift (core: raw; chart: dedup; fib: fallback BTC/ETH; qm: USDT filter). fetch_db_data ×6, send_cornix_signal ×3, get_live_price ×3. Positive: get_db_connection/send_telegram/cooldowns centralised.
 
-### [LOW] [logging] Drei unrotierte Senken: 2_indicator_engine (indicator_calculation.log root), main_watchdog (watchdog.log), dashboard.log Popen-Pipe. Fix: setup_logging überall; Truncate im Housekeeping.
+### [LOW] [logging] Three unrotated sinks: 2_indicator_engine (indicator_calculation.log root), main_watchdog (watchdog.log), dashboard.log Popen pipe. Fix: setup_logging everywhere; truncate in housekeeping.
 
-### [LOW] [schema] ml_predictions_master: 9_ai_sr:297 abweichende Spaltenliste (5 statt 8 Spalten — time/direction/entry NULL).
+### [LOW] [schema] ml_predictions_master: 9_ai_sr:297 deviating column list (5 instead of 8 columns — time/direction/entry NULL).
 
-## Tabelle → Writer/Reader-Map (Dimension 5)
-- telegram_outbox: ~19 Writer (by design Queue), Consumer 4, Cleanup 6 (7 Tage). Kontraktbruch nur schmale DDL in 3.
-- ai_signals: 13 Writer (7,9,10,11,12,13,14,15,18,24,25,28,29), KEIN ON CONFLICT, keine DDL.
-- ml_predictions_master: 9 Writer, keine DDL, 1 abweichende Spaltenliste.
-- active_trades_master: Writer nur 3_detectors; DELETE durch 5,6,28.
-- closed_trades_master: 3 Writer (5,6,28) — Spalten identisch, posted UTC ok.
-- closed_ai_signals: 3 Writer (6,8,28) — close_time gemischt (Finding).
-- trade_cooldowns: zentral (market_utils), aber DDL-Drift ×4.
-- regime_*: sauber, ON CONFLICT ok.
-- {sym}_{tf} OHLCV: Writer 1 + 6 (Gap-Fill), ON CONFLICT ok bei 1.
+## Table → writer/reader map (dimension 5)
+- telegram_outbox: ~19 writers (by design a queue), consumer 4, cleanup 6 (7 days). Contract breach: narrow DDL only in 3.
+- ai_signals: 13 writers (7,9,10,11,12,13,14,15,18,24,25,28,29), NO ON CONFLICT, no DDL.
+- ml_predictions_master: 9 writers, no DDL, 1 deviating column list.
+- active_trades_master: writer only 3_detectors; DELETE by 5,6,28.
+- closed_trades_master: 3 writers (5,6,28) — columns identical, posted UTC ok.
+- closed_ai_signals: 3 writers (6,8,28) — close_time mixed (finding).
+- trade_cooldowns: centralised (market_utils), but DDL drift ×4.
+- regime_*: clean, ON CONFLICT ok.
+- {sym}_{tf} OHLCV: writer 1 + 6 (gap-fill), ON CONFLICT ok at 1.
 
-## Outbox-Contract (Dimension 9)
-- ALLE Signal-Bots gehen über die Outbox; Direkt-API nur Consumer-Seite (4, handlers, main_telegram_bot). ✔
+## Outbox contract (dimension 9)
+- ALL signal bots go through the outbox; direct API only on the consumer side (4, handlers, main_telegram_bot). ✔
 
 ## Cross-cutting observations
-1. Repo mitten in Sanierungswelle; verbleibende Findings meist "Fix auf einer Kontraktseite, Gegenseite vergessen". strategies/, handlers/, tools/ sind von ruff EXCLUDED — genau dort sitzt der ungefixte Rest → Exclude-Set = Sanierungs-Backlog.
-2. Schema-Ownership strukturelles Kernproblem: CREATE TABLE über ~10 Dateien verstreut mit Drift; wichtigste Tabellen ohne DDL. Ein core/schema.py bzw. schema.sql + Migrations-Runner erledigt drei Findings strukturell.
-3. Timezone-Politik nur Konvention pro Datei. Empfehlung: core utc_now() + ruff DTZ-Rules (flake8-datetimez) in pyproject.
-4. CI minimal (AST-Parse + Import-Smoke + Secret-Grep); ruff check als CI-Job wäre gratis.
-5. Secrets-Hygiene vorbildlich.
+1. Repo mid-remediation wave; remaining findings mostly "fix on one side of the contract, other side forgotten". strategies/, handlers/, tools/ are EXCLUDED from ruff — that's exactly where the unfixed remainder sits → exclude set = remediation backlog.
+2. Schema ownership is the structural core problem: CREATE TABLE scattered across ~10 files with drift; the most important tables have no DDL. A core/schema.py or schema.sql + migration runner would fix three findings structurally.
+3. Timezone policy is only a per-file convention. Recommendation: core utc_now() + ruff DTZ rules (flake8-datetimez) in pyproject.
+4. CI is minimal (AST parse + import smoke + secret grep); ruff check as a CI job would be free.
+5. Secrets hygiene exemplary.
 
 ## Questions for live-DB phase
-1. SHOW timezone — entscheidet welche der drei TZ-Findings live brennen und in welche Richtung.
-2. \d trade_cooldowns — welche Variante gewann? Offset sichtbar?
-3. \d telegram_outbox — image_path vorhanden? failed-Rows + last_error?
-4. \d ai_signals/ml_predictions_master — Constraints/Indexe? Duplikat-Quote?
+1. SHOW timezone — decides which of the three TZ findings actually bite live, and in which direction.
+2. \d trade_cooldowns — which variant won? Offset visible?
+3. \d telegram_outbox — image_path present? failed rows + last_error?
+4. \d ai_signals/ml_predictions_master — constraints/indexes? Duplicate rate?
 5. SELECT max(posted), now() AT TIME ZONE 'UTC' FROM closed_trades_master.
-6. Row-Counts + Indexe der Hot-Tables (outbox sent-Index; closed_trades posted-Index für strat-COUNT bei 538 Coins).
-7. Verwaiste Tabellen früherer Bot-Generationen (pump_dump_events liest je jemand?).
+6. Row counts + indexes of the hot tables (outbox sent index; closed_trades posted index for strat COUNT at 538 coins).
+7. Orphaned tables from earlier bot generations (does anyone read pump_dump_events?).

@@ -1,13 +1,14 @@
-# WF-Signifikanz-Layer (`tools/wf_significance.py`)
+# WF significance layer (`tools/wf_significance.py`)
 
-**Zweck:** Ein Replay-Summary sagt „+38 R über 365d" — dieser Layer beantwortet
-die Folgefrage, ob dieser Edge von Rauschen unterscheidbar ist, bevor ein
-Kandidat Richtung Live-Gate diskutiert wird. Rein additiv über dem Output von
-`tools/walkforward_sim.py`, kein Eingriff in den Simulator.
-(T-2026-CU-9050-027 D3; Vorbild HKUDS/Vibe-Trading `backtest/validation.py` +
-`bench_runner_strict.py`, MIT — adaptiert, kein Drop-in.)
+**Purpose:** a replay summary says "+38 R over 365d" — this layer answers
+the follow-up question of whether this edge is distinguishable from noise,
+before a candidate is discussed toward the live gate. Purely additive on
+top of the output of `tools/walkforward_sim.py`, no changes to the
+simulator.
+(T-2026-CU-9050-027 D3; modeled on HKUDS/Vibe-Trading `backtest/validation.py`
++ `bench_runner_strict.py`, MIT — adapted, not a drop-in.)
 
-## Aufruf
+## Invocation
 
 ```
 python tools/wf_significance.py <pfad>/{tag}_replay_{days}d.jsonl \
@@ -15,68 +16,72 @@ python tools/wf_significance.py <pfad>/{tag}_replay_{days}d.jsonl \
     [--fee-per-side 0.05] [--min-trades 20] [--out report.json]
 ```
 
-Input ist das Trade-JSONL des Walk-Forward-Simulators (Felder `strategy`,
-`direction`, `signal_time`, `outcome_tp1`, `net_pnl_pct`, `r_multiple`).
-Output: Konsolen-Report + `<input>_significance.json`. Deterministisch bei
-fixem Seed (Default 42). Replay-Artefakte liegen auf dem VPS
-(`Documents\_X\staging_models\replay`) — der Lauf über echte Batch-E-Outputs
-ist eine VPS-Session; auf der Build-Maschine verifizieren die synthetischen
-Tests (`backtest/test_wf_significance.py`).
+Input is the trade JSONL from the walk-forward simulator (fields
+`strategy`, `direction`, `signal_time`, `outcome_tp1`, `net_pnl_pct`,
+`r_multiple`). Output: a console report + `<input>_significance.json`.
+Deterministic for a fixed seed (default 42). Replay artifacts live on the
+VPS (`Documents\_X\staging_models\replay`) — the run over real Batch-E
+outputs is a VPS session; on the build machine, the synthetic tests
+(`backtest/test_wf_significance.py`) verify it.
 
-## Die drei Statistiken
+## The three statistics
 
-1. **Random-Control (Sign-Flip, der Kern).** H0: die Richtungswahl hat keinen
-   Edge — jeder Trade ist austauschbar mit dem Gegen-Trade auf derselben
-   Geometrie, der dieselben Fees zahlt (`flip(net) = -net - 2*fee_rt`).
-   1000 zufällige Flip-Masken liefern die Null-Verteilung des Mittelwerts →
-   `p_value` + `random_control_delta_pct`. Bewusst kein Test gegen 0: die
-   Kontrolle trägt den Fee-Drag eines richtungslosen Zufalls-Traders.
-2. **Reihenfolge-Permutation für den Max-Drawdown.** Prüft, ob die
-   Verlust-Clusterung des beobachteten Pfads zufallstypisch ist
-   (`p_value_dd_worse` = Anteil Permutationen mit tieferem DD). Der
-   vt-Permutationstest auf Sharpe wurde bewusst NICHT übernommen: bei
-   per-Trade-%-PnL ist Sharpe unter Reihenfolge-Permutation invariant — der
-   Test wäre degeneriert. Der DD wird **absolut in %-Punkten** unter dem Peak
-   gemessen (`equity − peak`), nicht auf die Peak-Höhe normiert — sonst
-   konfundiert die zufällige Peak-Höhe der fleet-weiten Multi-Coin-Replays den
-   Test (T-2026-CU-9050-053, siehe „Befund" unten). Es ist eine
-   Pfad-Clusterungs-Statistik, kein echter Portfolio-Drawdown (gleichzeitige
-   Signale bleiben sequenziell verkettet).
-3. **Bootstrap-CIs** (Resampling mit Zurücklegen) für per-Trade-Sharpe
-   (bewusst nicht annualisiert — Trades sind nicht zeit-regulär), `avg_r` und
-   TP1-Win-Rate, je mit `prob_positive`.
+1. **Random control (sign-flip, the core).** H0: the direction choice has
+   no edge — every trade is interchangeable with the counter-trade on the
+   same geometry, paying the same fees (`flip(net) = -net - 2*fee_rt`).
+   1000 random flip masks yield the null distribution of the mean →
+   `p_value` + `random_control_delta_pct`. Deliberately not a test against
+   0: the control carries the fee drag of a directionless random trader.
+2. **Order permutation for the max drawdown.** Checks whether the loss
+   clustering of the observed path is typical of randomness
+   (`p_value_dd_worse` = share of permutations with a deeper DD). The vt
+   permutation test on Sharpe was deliberately NOT carried over:
+   for per-trade % PnL, Sharpe is invariant under order permutation — the
+   test would be degenerate. The DD is measured **as an absolute %-point
+   figure** below the peak (`equity − peak`), not normalized to the peak
+   height — otherwise the random peak height of the fleet-wide multi-coin
+   replays confounds the test (T-2026-CU-9050-053, see "finding" below).
+   It's a path-clustering statistic, not a real portfolio drawdown
+   (concurrent signals stay sequentially chained).
+3. **Bootstrap CIs** (resampling with replacement) for per-trade Sharpe
+   (deliberately not annualized — trades are not time-regular), `avg_r`
+   and TP1 win rate, each with `prob_positive`.
 
-## Lese-Hilfe
+## Reading guide
 
-- `random_control.p_value < 0.05` UND `sharpe_per_trade_ci[0] > 0`: Edge ist
-  von Zufall unterscheidbar — Kandidat für die nächste Batch-E-Stufe.
-- `p_value_dd_worse` (absoluter DD in %-Punkten, seit T-2026-CU-9050-053):
-  **klein** (≲ 0,05) = die Verluste clustern in der echten Chronologie
-  untypisch **maligne** — kaum eine Zufallsreihenfolge ist so schlecht; die
-  Regime-Abhängigkeit prüfen und das DD-Risiko am beobachteten Wert messen.
-  **Nahe 1** = fast jede Reihenfolge wäre gleich schlimm oder schlimmer, der
-  Pfad war untypisch gnädig → das DD-Budget aus `simulated_max_dd_median_pp`
-  nehmen. Der Wert ist eine **Pfad-Clusterungs-Statistik in %-Punkten**, kein
-  echter Portfolio-Drawdown (gleichzeitige Signale bleiben sequenziell
-  verkettet — Grenze, siehe „Befund" unten). Bis zum Fix war diese Regel auf
-  den Multi-Coin-Replays durch die Peak-Normierung genau verkehrt herum.
-- **Grenzen:** testet EINEN Kandidaten. Wer viele Varianten screent, braucht
-  zusätzlich FDR/Deflated-Sharpe (bewusst Non-Scope, eigener Task). Kein
-  Ersatz für Purge/Embargo im Simulator selbst. Und: die Sign-Flip-Kontrolle
-  nimmt `gross' = -gross` an — ein real reversierter Trade wäre bei
-  SL-/TP-gekappten Ladder-Profilen früher gestoppt worden. Die Kontrolle ist
-  dadurch bei Trend-Following-artigen R:R-Profilen zu negativ, **p-Werte eher
-  zu klein**: knappe Signifikanz nicht überlesen als Beweis. Fairere Kontrolle
-  (simulate_exit-Re-Run mit gespiegelter Richtung) = eigener Task.
+- `random_control.p_value < 0.05` and `sharpe_per_trade_ci[0] > 0`: the
+  edge is distinguishable from randomness — a candidate for the next
+  Batch-E stage.
+- `p_value_dd_worse` (absolute DD in %-points, since T-2026-CU-9050-053):
+  **small** (≲ 0.05) = the losses cluster in the real chronology
+  atypically **malignantly** — barely any random order is this bad;
+  check the regime dependency and measure the DD risk at the observed
+  value. **Close to 1** = almost every order would be equally bad or
+  worse, the path was atypically merciful → take the DD budget from
+  `simulated_max_dd_median_pp`. The value is a **path-clustering
+  statistic in %-points**, not a real portfolio drawdown (concurrent
+  signals stay sequentially chained — a limitation, see "finding" below).
+  Until the fix, this rule was exactly inverted on the multi-coin
+  replays due to the peak normalization.
+- **Limitations:** tests ONE candidate. Whoever screens many
+  variants additionally needs FDR/deflated Sharpe (deliberately
+  non-scope, its own task). No substitute for purge/embargo in the
+  simulator itself. And: the sign-flip control assumes `gross' = -gross`
+  — a genuinely reversed trade would have been stopped earlier under
+  SL-/TP-capped ladder profiles. The control is therefore too negative
+  for trend-following-like R:R profiles, **p-values skew too small**:
+  don't read past marginal significance as proof. A fairer control (a
+  simulate_exit re-run with a mirrored direction) = a separate task.
 
-## Erster Lauf über echte Batch-E-Outputs (2026-07-10, VPS)
+## First run over real Batch-E outputs (2026-07-10, VPS)
 
-T-2026-CU-9050-040. `--group-by strategy+direction`, `--n 1000`, `--seed 42`,
-`--fee-per-side 0.05`; Inputs aus `Documents\_X\staging_models\replay`.
-Lauf ist read-only und deterministisch reproduzierbar (identischer Report bei
-Wiederholung). Interpreter: `py -3.13` — das PATH-`python` (3.14) hat kein numpy.
+T-2026-CU-9050-040. `--group-by strategy+direction`, `--n 1000`,
+`--seed 42`, `--fee-per-side 0.05`; inputs from
+`Documents\_X\staging_models\replay`. The run is read-only and
+deterministically reproducible (identical report on repetition).
+Interpreter: `py -3.13` — the PATH `python` (3.14) has no numpy.
 
-| Kandidat | n_closed | mean PnL % | Kontrolle % | p | Sharpe/Trade (95% CI) | avg_r | TP1-WR |
+| Candidate | n_closed | mean PnL % | control % | p | Sharpe/trade (95% CI) | avg_r | TP1-WR |
 |---|---|---|---|---|---|---|---|
 | mis1/LONG | 175.089 | −0,2601 | −0,1000 | 1,000 | [−0,0409, −0,0312] | −0,0463 | 55,9 % |
 | mis1/SHORT | 175.027 | +0,0362 | −0,1001 | 0,001 | [+0,0006, +0,0097] | +0,0095 | 56,3 % |
@@ -86,73 +91,79 @@ Wiederholung). Interpreter: `py -3.13` — das PATH-`python` (3.14) hat kein num
 | abr1/SHORT | 91.627 | +0,2720 | −0,1002 | 0,001 | [+0,0391, +0,0519] | +0,0445 | 59,2 % |
 | ufi1/SHORT | 384 | +17,6594 | −0,0961 | 0,001 | [+0,2726, +0,4867] | +0,3663 | 50,8 % |
 
-**Der Layer verhält sich wie spezifiziert.** Zwei unabhängige Gegenproben:
-das Kontroll-Mittel trifft in allen sieben Gruppen den Round-Trip-Fee-Drag
-(−0,0961 … −0,1006 gegen erwartete −0,10), und die trade-gewichteten
-Aggregate aus dem Report reproduzieren die `*_summary.json` des Simulators
-exakt (mis1: WR 56,09 % / avg_r −0,0184 / avg_pnl −0,1120 gegen 56,1 /
-−0,0184 / −0,112; rub analog). Der p-Wert stimmt in allen Gruppen mit dem
-Vorzeichen des Sharpe-CI überein.
+**The layer behaves as specified.** Two independent counter-checks: the
+control mean hits the round-trip fee drag in all seven groups (−0.0961 …
+−0.1006 against an expected −0.10), and the trade-weighted aggregates
+from the report reproduce the simulator's `*_summary.json` exactly
+(mis1: WR 56.09% / avg_r −0.0184 / avg_pnl −0.1120 against 56.1 /
+−0.0184 / −0.112; rub analogous). The p-value agrees with the sign of
+the Sharpe CI in every group.
 
-**Die Replays tragen die ROHEN Detector-Signale, vor dem Modell-Filter.** Die
-Tabelle bewertet also den Detektor, nicht das deployte Modell — kein Deploy-
-Argument in beide Richtungen:
+**The replays carry the raw (ROHEN) detector signals, before the model
+filter.** The table therefore evaluates the detector, not the deployed
+model — no deploy argument in either direction:
 
-- **abr1** deckt sich mit dem Live-Bild: SHORT hat einen Roh-Edge, LONG ist
-  signifikant schlechter als ein richtungsloser Zufalls-Trader (SHORT läuft
-  binary @0,75; LONG nur als funding-gated Experiment).
-- **rub** ist roh in BEIDEN Richtungen negativ, obwohl RUB2-SHORT live
-  deployed ist. Der Edge kommt dort aus der Modell-Selektion, nicht aus dem
-  Detektor. Ein Signifikanz-Lauf über Roh-Signale kann ein gutes Modell also
-  nicht widerlegen.
-- **mis1/SHORT** ist trotz p = 0,001 praktisch ein Null-Edge (untere CI-Grenze
-  0,0006, avg_r +0,0095). Dazu biast die Sign-Flip-Kontrolle p nach unten —
-  genau der Fall, vor dem die Grenzen-Notiz warnt.
-- **ufi1/SHORT** ist der einzige große Roh-Edge, steht aber auf n = 384,
-  SHORT-only und einem Zeitfenster. Kein Anlass, den Park-Entscheid
-  anzufassen.
+- **abr1** matches the live picture: SHORT has a raw edge, LONG is
+  significantly worse than a directionless random trader (SHORT runs
+  binary @0.75; LONG only as a funding-gated experiment).
+- **rub** is raw-negative in BOTH directions, even though
+  RUB2-SHORT is deployed live. There, the edge comes from the model
+  selection, not from the detector. A significance run over raw signals
+  therefore cannot refute a good model.
+- **mis1/SHORT** is, despite p = 0.001, practically a null edge (lower
+  CI bound 0.0006, avg_r +0.0095). On top of that, the sign-flip control
+  biases p downward — exactly the case the limitations note warns
+  about.
+- **ufi1/SHORT** is the only large raw edge, but it stands on n = 384,
+  SHORT-only and a single time window. No reason to touch the park
+  decision.
 
-## Befund (behoben, T-2026-CU-9050-053): Peak-Normierung konfundierte Statistik 2
+## Finding (fixed, T-2026-CU-9050-053): peak normalization confounded statistic 2
 
-**Diagnose (Stand des Erst-Laufs).** `max_drawdown_pct` normierte den Drawdown
-auf den laufenden Peak (`(equity − peak) / peak`). Auf diesen Replays trägt die
-additive Equity (`100 + Σ %-PnL`) das nicht: pro Zeitstempel liegen 8,8 (rub)
-bis 20,2 (mis1) gleichzeitige Signale über 530–648 Coins an, die der Pfad als
-sequenzielle Einzelwetten verkettet. Die Equity fällt dadurch tief unter null
-(rub/LONG: 72 % des Pfades negativ, Tief −35.072) und der Quotient misst am Ende
-vor allem, **wie hoch der Peak zufällig stand**: mis1/SHORT und abr1/SHORT haben
-ihren Peak bei Trade 0 (≈ 95), rub/LONG bei 2.477 — daher dort ein optisch
-mildes −421 % gegen einen Permutations-Median von −7.203 %. Nebenbefund: der
-Guard `np.where(peak > 0, peak, 1.0)` wechselte bei Peak ≤ 0 stillschweigend
-Einheit UND Skalierung (relativ → %-Punkte × 100).
+**Diagnosis (state of the first run).** `max_drawdown_pct` normalized
+the drawdown to the running peak (`(equity − peak) / peak`). On these
+replays the additive equity (`100 + Σ %-PnL`) doesn't support that: per
+timestamp there are 8.8 (rub) to 20.2 (mis1) concurrent signals across
+530–648 coins, which the path chains as sequential individual bets.
+Equity therefore falls far below zero (rub/LONG: 72% of the path
+negative, low −35.072) and the ratio ends up mainly measuring **how
+high the peak happened to stand**: mis1/SHORT and abr1/SHORT have their
+peak at trade 0 (≈95), rub/LONG at 2.477 — hence a visually mild −421%
+there against a permutation median of −7.203%. Side finding: the guard
+`np.where(peak > 0, peak, 1.0)` silently switched both unit AND scale
+when peak ≤ 0 (relative → %-points × 100).
 
-**Fix.** `max_drawdown_pct` rechnet den DD jetzt **absolut in %-Punkten** unter
-dem Peak (`equity − peak`, ohne Normierung; die +100-Basis kürzt sich heraus).
-Beobachteter und permutierter Pfad werden damit exakt gleich gemessen, frei vom
-Peak-Höhen-Artefakt; der Guard entfällt ersatzlos, weil keine Division mehr
-stattfindet. Damit ist `p_value_dd_worse` wieder operativ lesbar (Lese-Hilfe
-oben). Gewählte Option: absoluter DD statt eines overlap-respektierenden
-Equity-Pfads — letzterer bräuchte Kapitalallokations-/Sizing-Annahmen, die das
-Replay-JSONL nicht trägt, und würde von der `sum_net_pnl_pct`-Reporting-Konvention
-abweichen. **Grenze:** die Zahl bleibt eine Pfad-Clusterungs-Statistik, kein
-echter Portfolio-Drawdown (Overlap sequenziell verkettet).
+**Fix.** `max_drawdown_pct` now computes the DD **as an absolute
+%-point figure** below the peak (`equity − peak`, without
+normalization; the +100 base cancels out). The observed and permuted
+path are thereby measured exactly the same way, free of the
+peak-height artifact; the guard is removed without replacement,
+because there's no more division taking place. That makes
+`p_value_dd_worse` operationally readable again (reading guide above).
+Option chosen: absolute DD instead of an overlap-respecting equity
+path — the latter would need capital-allocation/sizing assumptions
+that the replay JSONL doesn't carry, and would deviate from the
+`sum_net_pnl_pct` reporting convention. **Limitation:** the number
+remains a path-clustering statistic, not a real portfolio drawdown
+(overlap sequentially chained).
 
-Die operative Aussage kippt (200 Permutationen, Seed 42, `--fee-per-side 0,05`;
-mit dem gefixten Tool reproduziert):
+The operative conclusion flips (200 permutations, seed 42,
+`--fee-per-side 0,05`; reproduced with the fixed tool):
 
-| Kandidat | p_dd_worse vor Fix (relativ) | p_dd_worse nach Fix (absolut, Tool) |
+| Candidate | p_dd_worse before fix (relative) | p_dd_worse after fix (absolute, tool) |
 |---|---|---|
-| rub/LONG | 1,000 („untypisch gnädig") | 0,005 (maligne Clusterung; beob. −55.208 vs Median −17.182) |
+| rub/LONG | 1,000 ("atypically merciful") | 0,005 (malignant clustering; obs. −55.208 vs median −17.182) |
 | abr1/SHORT | 0,005 | 0,005 |
-| ufi1/SHORT | 0,035 | 0,005 (beob. −1.436,72 vs Median −278,19) |
+| ufi1/SHORT | 0,035 | 0,005 (obs. −1.436,72 vs median −278,19) |
 
-Für rub/LONG hätte die alte Lese-Regel das DD-Budget aus
-`simulated_max_dd_median_pp` genommen, obwohl der beobachtete Pfad schlechter
-war als 199 von 200 Zufallsreihenfolgen — jetzt zeigt der Test das korrekt an.
+For rub/LONG, the old reading rule would have taken the DD budget from
+`simulated_max_dd_median_pp`, even though the observed path was worse
+than 199 of 200 random orders — now the test displays that correctly.
 
-**Keine Deploy-Aussage der obigen Batch-E-Tabelle ändert sich.** Sie steht auf
-Statistik 1 (Random-Control `p`) und 3 (Sharpe-CI), beide reihenfolge-invariant
-und vom DD-Fix unberührt; die Werte oben wurden mit dem gefixten Tool identisch
-reproduziert (rub/LONG mean −0,3246, `p`=1,000, Sharpe negativ). Die
-Drawdown-Statistik war ohnehin als „nicht operativ lesen" markiert und ging in
-keinen Deploy-Call ein — sie ist jetzt nur wieder benutzbar.
+**No deploy claim from the table above changes.** It rests on
+statistic 1 (random-control `p`) and 3 (Sharpe CI), both order-invariant
+and untouched by the DD fix; the values above were reproduced
+identically with the fixed tool (rub/LONG mean −0,3246, `p`=1,000,
+Sharpe negative). The drawdown statistic was already marked "do not
+read operationally" and went into no deploy call — it is now merely
+usable again.

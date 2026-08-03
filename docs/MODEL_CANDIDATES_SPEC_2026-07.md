@@ -1,545 +1,561 @@
-# Modellkandidaten-Spezifikation 2026-07 — Implementierungs-Handoff
+# Model Candidates Specification 2026-07 — Implementation Handoff
 
-**Zweck:** Jeden Kandidaten aus dem Research-Lauf 2026-07-12
-(`reports/model_ideas_research_2026-07.md`, Task T-2026-CU-9050-102) so
-spezifizieren, dass ein Folge-Agent (Opus) das Coding **ohne Rückfragen**
-übernehmen kann. Jeder Kandidat ist als eigener KB-Task zu schneiden
-(Projekt 9050, Workflow nach `docs/OPUS-HANDOFF.md` §2).
+**Purpose:** specify every candidate from the 2026-07-12 research run
+(`reports/model_ideas_research_2026-07.md`, task T-2026-CU-9050-102) such that
+a follow-up agent (Opus) can take on the coding **without follow-up
+questions**. Every candidate is to be cut as its own KB task (project 9050,
+workflow per `docs/OPUS-HANDOFF.md` §2).
 
-**Pflichtlektüre vor dem ersten Edit:** `docs/OPUS-HANDOFF.md` (Arbeitszyklus,
-Fallen, Eskalation) und die Arbeitsregeln in `docs/MODEL_INTENT.md` (Label muss
-die Soll-Frage beantworten; `pick_threshold_safe`; beide Metriken berichten;
-Ein-Job-Regel; versionierte Tags).
+**Mandatory reading before the first edit:** `docs/OPUS-HANDOFF.md` (work
+cycle, pitfalls, escalation) and the work rules in `docs/MODEL_INTENT.md` (the
+label must answer the target question; `pick_threshold_safe`; report both
+metrics; one-job rule; versioned tags).
 
-## 0. Regeln, die für ALLE Kandidaten gelten
+## 0. Rules that apply to ALL candidates
 
-1. **Batch-E-Disziplin:** Jede Idee wird zuerst billig falsifizierbar gemacht
-   (Studie/Replay, ~1 Tag), bevor Live-Code entsteht. „Kein Edge" ist ein
-   gültiges, zu dokumentierendes Ergebnis (No-op-Done). Vorlage:
-   T-2026-CU-9050-020.
-2. **DB-Arbeit nur in einer VPS-Session** (Build-Maschine hat keine
-   Credentials), Live-Tabellen strikt **read-only**, Prozess-Priorität
-   BELOW_NORMAL, **Ein-Job-Regel**: nur EIN Trainings-/Sim-Job gleichzeitig,
-   neue Jobs hinter dem laufenden einreihen.
-3. **Studien-Skripte** nach `tools/` (ruff-excluded, Lint-Bar niedriger, aber
-   kein Freibrief). Ergebnisse als JSON/MD nach `staging_models/` bzw.
-   `reports/`.
-4. **Replay/Labels:** Immer `tools/walkforward_sim.py`-Infrastruktur bzw.
-   deren Bausteine verwenden: `simulate_exit` (First-Touch TP1-vs-SL, Fees),
+1. **Batch-E discipline:** every idea is first made cheaply falsifiable
+   (study/replay, ~1 day) before live code is written. "No edge" is a valid,
+   documentable result (no-op-done). Template: T-2026-CU-9050-020.
+2. **DB work only in a VPS session** (the build machine has no credentials),
+   live tables strictly **read-only**, process priority BELOW_NORMAL,
+   **one-job rule**: only ONE training/sim job at a time, queue new jobs
+   behind the running one.
+3. **Study scripts** go to `tools/` (ruff-excluded, lower lint bar, but not a
+   free pass). Results as JSON/MD go to `staging_models/` or `reports/`.
+4. **Replay/labels:** always use the `tools/walkforward_sim.py` infrastructure
+   or its building blocks: `simulate_exit` (first-touch TP1-vs-SL, fees),
    `get_hvn_and_sr_levels(df=…)` + `hvn_sr_trade_geometry` +
-   `ensure_min_tp_distance` für as-of-Geometrie. Chrono-Split + Purge-Gap,
-   Kalibrierung + Threshold via `pick_threshold_safe` auf der Validation.
-5. **Feature-Builder geteilt** (X-R1): neue Feature-Familien als
-   `core/<name>_features.py`, von Studie, Trainer UND (später) Bot importiert.
-   Fehlende Spalten ⇒ Load-Fehler/Idle, nie `fillna(0)` als Vertragsersatz.
-6. **Nur geschlossene Kerzen** (R1); DESC-sortierte Frames beachten
-   (neueste Zeile = Index 0 in manchen Pfaden). TZ: neue Tabellen
-   TIMESTAMPTZ/UTC; beim Lesen von Legacy-Spalten das TZ-Cluster
-   (AUDIT_TODO P2.1–P2.6) prüfen. `closed_ai_signals` enthält ~357k
-   Duplikat-Zeilen — **vor jeder Auswertung deduplizieren** (per
-   Signal-Identität; Spaltennamen am Live-Schema verifizieren
-   (`docs/schema.sql`), z. B. (coin, model, open_time, direction) — Vorgehen
-   im Skript dokumentieren).
-7. **Artefakte nur nach `staging_models/`** mit `meta.model_id` = neuem Tag.
-   Promotion in den Repo-Root, Gate-Flips, Bot-Entparken, Fleet-/Bot-Restarts,
-   `.env`-Änderungen: **ausschließlich Michi** (OPUS-HANDOFF §6).
-8. **Berichtspflicht je Studie:** n, WR, Ø-PnL netto (Fees!), Monats-Split
-   (Regime-Stabilität!), Val-vs-Test-Konsistenz. WR allein ist wertlos
-   (Report 16, Befund 1).
-9. **Survivorship-Hinweis dokumentieren:** unsere Coin-Tabellen folgen
-   `coins.json` (aktive USDT-Perps); delistete Coins fehlen teilweise.
-   Jede Cross-Section-Studie vermerkt das als bekannte Bias-Quelle.
-10. **Fees-Annahme einheitlich:** wie `walkforward_sim` (Taker-Fee +
-    Slippage-Modell dort nachlesen und referenzieren, nicht neu erfinden).
+   `ensure_min_tp_distance` for as-of geometry. Chrono split + purge gap,
+   calibration + threshold via `pick_threshold_safe` on the validation set.
+5. **Feature builders are shared** (X-R1): new feature families go into
+   `core/<name>_features.py`, imported by study, trainer AND (later) bot.
+   Missing columns ⇒ load error/idle, never `fillna(0)` as a contract
+   substitute.
+6. **Only closed candles** (R1); watch for DESC-sorted frames (newest row =
+   index 0 on some paths). TZ: new tables TIMESTAMPTZ/UTC; when reading
+   legacy columns check the TZ cluster (AUDIT_TODO P2.1–P2.6).
+   `closed_ai_signals` contains ~357k duplicate rows — **deduplicate before
+   every evaluation** (by signal identity; verify column names against the
+   live schema (`docs/schema.sql`), e.g. (coin, model, open_time, direction) —
+   document the approach in the script).
+7. **Artifacts only go to `staging_models/`** with `meta.model_id` = the new
+   tag. Promotion into the repo root, gate flips, unparking bots,
+   fleet/bot restarts, `.env` changes: **exclusively Michi** (OPUS-HANDOFF
+   §6).
+8. **Reporting duty per study:** n, WR, avg. net PnL (fees!), monthly split
+   (regime stability!), val-vs-test consistency. WR alone is worthless
+   (Report 16, finding 1).
+9. **Document a survivorship note:** our coin tables follow `coins.json`
+   (active USDT perps); delisted coins are partly missing. Every cross-section
+   study records this as a known bias source.
+10. **Fee assumption uniform:** same as `walkforward_sim` (look up the taker
+    fee + slippage model there and reference it, do not reinvent it).
 
-**Datenbestand (Stand 2026-07-12):**
+**Data inventory (as of 2026-07-12):**
 
-| Quelle | Umfang | Anmerkung |
+| Source | Scope | Note |
 |---|---|---|
-| `{SYM}_{tf}`-Kandles | ~530 Coins × 5m/15m/30m/1h/2h/4h/1d/1w | Retention: **5m nur 1 Monat**, 15m–4h 1 Jahr (6_housekeeping) — Intraday-Studien auf **15m** aufsetzen |
-| `{SYM}_{tf}_indicators` | ~120 Indikatoren | RSI/EMA/MA/WMA/SMMA u. a. |
-| `funding_rates` | 430d × 530 Coins | stündlicher Backfill-Task; Builder `core/funding_features.py` (6 Features) existiert |
-| `pump_dump_events` | seit 2026-02-25 | Detector-Log (Spalten: `volume_ratio`, `price_change_60s`) |
-| `ticker_10s` | seit 2026-07-07 | Hypertable, ~108 Coins, 10s |
-| `whale_data/*.json` | seit 2026-07-05 | Top-20, Prints ≥ $25k, mit Taker-Richtung (`m`-Flag) |
-| `ai_signals` / `closed_ai_signals` | volle Fleet-Historie | Duplikat-Falle s. Regel 6 |
-| `ml_predictions_master` | Shadow+Live-Predictions | A/B-Basis (FIF1-Muster) |
-| `regime_current` / `regime_history` | BTC-Regime 5 Klassen | TREND-Klassen erst seit §22-Umbau 2026-07-07 besetzt |
-| **fehlt** | Open Interest, Liquidations, Orderbook, On-Chain | OI: nur 30d rollierend via REST → K9 |
+| `{SYM}_{tf}` candles | ~530 coins × 5m/15m/30m/1h/2h/4h/1d/1w | Retention: **5m only 1 month**, 15m–4h 1 year (6_housekeeping) — build intraday studies on **15m** |
+| `{SYM}_{tf}_indicators` | ~120 indicators | RSI/EMA/MA/WMA/SMMA etc. |
+| `funding_rates` | 430d × 530 coins | hourly backfill task; builder `core/funding_features.py` (6 features) exists |
+| `pump_dump_events` | since 2026-02-25 | detector log (columns: `volume_ratio`, `price_change_60s`) |
+| `ticker_10s` | since 2026-07-07 | hypertable, ~108 coins, 10s |
+| `whale_data/*.json` | since 2026-07-05 | top 20, prints ≥ $25k, with taker direction (`m` flag) |
+| `ai_signals` / `closed_ai_signals` | full fleet history | duplicate trap, see rule 6 |
+| `ml_predictions_master` | shadow+live predictions | A/B basis (FIF1 pattern) |
+| `regime_current` / `regime_history` | BTC regime, 5 classes | TREND classes only populated since the §22 rework on 2026-07-07 |
+| **missing** | open interest, liquidations, order book, on-chain | OI: only 30d rolling via REST → K9 |
 
-**Empfohlene Reihenfolge** (Ein-Job-Regel; Begründung in den Specs):
-K9 (zeitkritisch, Implementierung ohne Sim-Job) → K3 + K8 (billigste Studien,
-reine DB-Analysen) → K15 (Exit-Varianten-Studie auf vorhandenen Events) →
-K1 → K2 → K5 → K4 (größter Bau) → K6 → K7 → K11; K13 (Daten säen wie K9,
-ohne Sim-Job — parallel zur Studien-Queue baubar) · K10/K12 warten auf
-Datenreife.
+**Recommended order** (one-job rule; rationale in the specs):
+K9 (time-critical, implementation without a sim job) → K3 + K8 (cheapest
+studies, pure DB analyses) → K15 (exit-variant study on existing events) →
+K1 → K2 → K5 → K4 (largest build) → K6 → K7 → K11; K13 (seeding data like K9,
+without a sim job — can be built in parallel with the study queue) · K10/K12
+wait for data maturity.
 
-**Addendum 2026-07-12 (T-2026-CU-9050-105):** K13, K15 und die
-K6-TOTAL3-Ergänzung stammen aus der zweiten Research-Runde
-(Leaderboard-Recherche + zwei Operator-YouTube-Videos, Regel-Extrakte in KB
-`ingest-c1e5112dea7f` / `ingest-9f6511a5f951`); Befunde in
-`reports/model_ideas_research_2026-07.md` §6.
+**Addendum 2026-07-12 (T-2026-CU-9050-105):** K13, K15 and the K6 TOTAL3
+addition stem from the second research round (leaderboard research + two
+operator YouTube videos, rule extracts in KB `ingest-c1e5112dea7f` /
+`ingest-9f6511a5f951`); findings in `reports/model_ideas_research_2026-07.md`
+§6.
 
 ---
 
-## Tier 1 — sofort testbar
+## Tier 1 — immediately testable
 
-### K1 · TSM1 — Time-Series-Momentum auf 6h-Aggregaten (Studie → ggf. Bot)
+### K1 · TSM1 — Time-series momentum on 6h aggregates (study → possibly bot)
 
-**Typ:** Replay-Studie, danach Operator-Entscheid über Bot. **Aufwand:** ~1–2 Tage Studie.
-**Hypothese:** Ein ROC-Lookback-Signal auf 6h-Kerzen (Momentum-Mitfahren
-long/short) hat über das USDT-Perp-Universum positiven Netto-Edge — auch mit
-UNSERER Geometrie (Smart-Targets + fixer SL) statt des ATR-Trailings aus dem
-Paper. **Evidenz:** F8 (arXiv 2602.11708v1, claimed 2,41 Sharpe netto; medium —
-Overfitting-Verdacht durch monatliche Re-Optimierung).
+**Type:** replay study, then operator decision on the bot. **Effort:** ~1–2
+days study.
+**Hypothesis:** a ROC lookback signal on 6h candles (riding momentum
+long/short) has a positive net edge across the USDT-perp universe — even with
+OUR geometry (smart targets + fixed SL) instead of the paper's ATR trailing.
+**Evidence:** F8 (arXiv 2602.11708v1, claimed 2.41 Sharpe net; medium —
+overfitting suspicion due to monthly re-optimization).
 
-**Vorgehen:**
-1. `tools/tsmom_study.py` (neu, read-only): 1h-Kandles je Coin laden, auf 6h
-   resamplen (UTC-Anker 00/06/12/18 — **nicht** lokale Zeit; nur volle,
-   geschlossene 6h-Fenster). Zusätzlich denselben Lauf auf nativen
-   4h-Kandles (Robustheits-Check, kein Resample-Artefakt).
-2. Signal: `ROC_L = close/close[-L] − 1`. Event, wenn `|ROC_L|` einen
-   Schwellwert kreuzt (Vorzeichen = Richtung). **Festes Grid, KEIN
-   Re-Fitting im Zeitverlauf:** L ∈ {8, 12, 16, 24, 32} Bars ×
-   Threshold ∈ {0, 0.5σ, 1.0σ} (σ = rollierende StdAbw von ROC_L, 90d,
-   as-of). Dedupe: je Coin/Richtung max. 1 offenes Event (Re-Entry erst nach
-   Exit), analog 4h-Cooldown-Konvention.
-3. Labels doppelt: (a) unsere Geometrie via `get_hvn_and_sr_levels(df=…)` +
-   `simulate_exit` (das ist die deploybare Wahrheit); (b) Paper-Approximation
-   als Vergleich: Zeit-Exit nach H Bars (H ∈ {8, 16, 28}) mit weitem
-   Katastrophen-SL 15 %. Divergiert (a) stark von (b), ist das die
-   quantifizierte Kosten der Cornix-Substitution (Open Question 3 des
-   Reports).
-4. Auswertung je Grid-Zelle: n, WR, Ø-PnL netto, Monats-Split,
-   Val/Test-Chrono-Split (Threshold-Wahl NUR auf Val; Test einmal anfassen).
-5. Ergebnis-JSON nach `staging_models/tsmom_study.json` + MD-Kurzreport.
+**Approach:**
+1. `tools/tsmom_study.py` (new, read-only): load 1h candles per coin,
+   resample to 6h (UTC anchors 00/06/12/18 — **not** local time; only full,
+   closed 6h windows). Additionally run the same pass on native 4h candles
+   (robustness check, not a resampling artifact).
+2. Signal: `ROC_L = close/close[-L] − 1`. Event when `|ROC_L|` crosses a
+   threshold (sign = direction). **Fixed grid, NO re-fitting over time:**
+   L ∈ {8, 12, 16, 24, 32} bars × threshold ∈ {0, 0.5σ, 1.0σ} (σ = rolling
+   standard deviation of ROC_L, 90d, as-of). Dedupe: max. 1 open event per
+   coin/direction (re-entry only after exit), analogous to the 4h cooldown
+   convention.
+3. Dual labeling: (a) our geometry via `get_hvn_and_sr_levels(df=…)` +
+   `simulate_exit` (this is the deployable truth); (b) paper approximation
+   for comparison: time exit after H bars (H ∈ {8, 16, 28}) with a wide
+   catastrophe SL of 15%. If (a) diverges strongly from (b), that is the
+   quantified cost of the Cornix substitution (open question 3 of the
+   report).
+4. Evaluation per grid cell: n, WR, avg. net PnL, monthly split, val/test
+   chrono split (threshold choice ONLY on val; touch test once).
+5. Result JSON to `staging_models/tsmom_study.json` + short MD report.
 
-**Stop-Kriterium:** Keine Zelle mit Val- UND Test-positivem Netto-PnL bei
-n ≥ 200 Test-Trades ⇒ Paper für unseren Stack falsifiziert, dokumentieren,
-parken. **Fallen:** Resample-TZ; Survivorship (Regel 9); NICHT dem
-Paper-Refitting nacheifern — genau das ist sein Overfitting-Vektor.
-**Wenn positiv:** eigener Folge-Task „Bot TSM1" (nächste freie Bot-Nummer —
-Nr. 35 ist für K9 reserviert; Tag `TSM1`, 6h-Scan-Takt,
-`core/model_artifacts.py`-Loader falls ML-Gate, sonst regelbasiert;
-Standard-Konventionen: EINE Cornix-Message, Cooldowns, Monitor-8-Tracking).
+**Stop criterion:** no cell with val- AND test-positive net PnL at n ≥ 200
+test trades ⇒ paper falsified for our stack, document, park. **Pitfalls:**
+resample TZ; survivorship (rule 9); do NOT emulate the paper's refitting —
+that is exactly its overfitting vector.
+**If positive:** its own follow-up task "Bot TSM1" (next free bot number —
+no. 35 is reserved for K9; tag `TSM1`, 6h scan cadence,
+`core/model_artifacts.py` loader if ML-gated, otherwise rule-based; standard
+conventions: ONE Cornix message, cooldowns, monitor-8 tracking).
 
-### K2 · XSM1/XSR1 — Cross-Section Momentum-Rotation & Alt-Pump-Reversal (Studie → ggf. Bot)
+### K2 · XSM1/XSR1 — Cross-section momentum rotation & alt-pump reversal (study → possibly bot)
 
-**Typ:** zweistufige Studie (Portfolio-Ebene, dann Event-Replay). **Aufwand:** ~2 Tage.
-**Hypothese:** (a) XSM1: Top-Dezil der 1–2-Wochen-Returns outperformt bei
-1–2 Wochen Haltedauer (LONG). (b) XSR1: Coins mit starkem 4–12-Wochen-Run
-reverten (SHORT). **Evidenz:** F4 (Struktur high, exakte Spec 0-3 widerlegt —
-darum Matrix statt Einzel-Spec) + F5 (Anchored-Variante, medium).
+**Type:** two-stage study (portfolio level, then event replay). **Effort:**
+~2 days.
+**Hypothesis:** (a) XSM1: top decile of 1–2-week returns outperforms at a
+1–2-week holding period (LONG). (b) XSR1: coins with a strong 4–12-week run
+revert (SHORT). **Evidence:** F4 (structure high, exact spec 0-3 refuted —
+hence a matrix instead of a single spec) + F5 (anchored variant, medium).
 
-**Vorgehen:**
-1. `tools/xs_momentum_study.py` (neu, read-only), 1d-Kandles:
-   Formations-Fenster F ∈ {7, 14, 28, 56, 84}d × Halte-Fenster
-   H ∈ {7, 14, 28}d, wöchentliches Rebalance-Raster über die 430d.
-2. Ranking je Rebalance: F-Tage-Return. **Zwei Signal-Varianten:** roher
-   Return UND Anchored-Variante (Distanz zum Formation-**Low**, F5).
-   **Zwei Bezugsgrößen:** absolut UND marktneutral (Coin-Return minus
-   BTC-Return) — sonst misst die Studie nur Beta.
-3. Liquiditätsfilter: unteres Volumen-Terzil (Median-24h-Quote-Volumen über F)
-   ausschließen — die Literatur-Edges leben oft in unhandelbaren Micro-Caps.
-4. Stufe 1 (Portfolio): Dezil-Spreads Close-to-Close über H, netto mit
-   Fees-Annahme (Regel 10) + Funding-Kosten der Short-Seite aus
-   `funding_rates` (Shorts zahlen bei negativem Funding!). Heatmap F×H je
-   Variante/Richtung.
-5. Stufe 2 (nur für Val-positive Zellen): Event-Replay mit unserer Geometrie
-   (Entry = erster 1h-Close nach Rebalance, Smart-Targets, `simulate_exit`)
-   — erst das ist die deploybare Aussage.
-6. Ergebnis nach `staging_models/xs_momentum_study.json` + MD-Report.
+**Approach:**
+1. `tools/xs_momentum_study.py` (new, read-only), 1d candles: formation
+   window F ∈ {7, 14, 28, 56, 84}d × holding window H ∈ {7, 14, 28}d, weekly
+   rebalance grid over the 430d.
+2. Ranking per rebalance: F-day return. **Two signal variants:** raw return
+   AND anchored variant (distance to the formation **low**, F5). **Two
+   reference bases:** absolute AND market-neutral (coin return minus BTC
+   return) — otherwise the study only measures beta.
+3. Liquidity filter: exclude the lowest volume tercile (median 24h quote
+   volume over F) — literature edges often live in untradeable micro-caps.
+4. Stage 1 (portfolio): decile spreads close-to-close over H, net of fee
+   assumption (rule 10) + short-side funding cost from `funding_rates`
+   (shorts pay on negative funding!). Heatmap F×H per variant/direction.
+5. Stage 2 (only for val-positive cells): event replay with our geometry
+   (entry = first 1h close after rebalance, smart targets, `simulate_exit`)
+   — only this is the deployable statement.
+6. Result to `staging_models/xs_momentum_study.json` + MD report.
 
-**Stop-Kriterium:** keine F×H-Zelle in Stufe 1 mit Val+Test-konsistentem
-Netto-Spread ⇒ Struktur repliziert nicht auf 2024–26er Perps, dokumentieren.
-**Fallen:** Survivorship (hier am stärksten!); Halte-Exits im Live-Betrieb
-brauchen den Close-Command-Pfad (FMR2-Mechanik, s. K4) oder Monitor-Timeout —
-Design-Entscheid gehört in den Bot-Folge-Task, NICHT in die Studie.
-**Wenn positiv:** Folge-Task je Richtung (Tags `XSM1`/`XSR1`), Posting-Kadenz
-wöchentlich, Kandidaten-Kappe (z. B. Top-5) als Operator-Parameter.
+**Stop criterion:** no F×H cell in stage 1 with a val+test-consistent net
+spread ⇒ structure does not replicate on 2024–26 perps, document.
+**Pitfalls:** survivorship (strongest here!); holding exits in live
+operation need the close-command path (FMR2 mechanic, see K4) or monitor
+timeout — the design decision belongs in the bot follow-up task, NOT in the
+study.
+**If positive:** follow-up task per direction (tags `XSM1`/`XSR1`), weekly
+posting cadence, candidate cap (e.g. top 5) as an operator parameter.
 
-### K3 · FRL — Funding-Risk-Layer über die eigene Fleet (Studie → Orchestrator-Feature)
+### K3 · FRL — Funding risk layer across our own fleet (study → orchestrator feature)
 
-**Typ:** reine Datenanalyse, kein Modell. **Aufwand:** ~1 Tag.
-**Hypothese:** Fleet-SHORTs, die bei extrem-positivem Funding eröffnet wurden,
-haben systematisch schlechtere Expectancy (Squeeze-Mechanik, F2); symmetrisch
-LONGs bei extrem-negativem. Das ABR2-Gate (fund_24h > +3 bps LONG /
-SHORT-Veto > +1,5 bps, Report 21 Addendum 2) generalisiert fleet-weit.
-**Evidenz:** F2 (high, BIS) + interner Präzedenzfall ABR2.
+**Type:** pure data analysis, no model. **Effort:** ~1 day.
+**Hypothesis:** fleet SHORTs opened at extremely positive funding have
+systematically worse expectancy (squeeze mechanic, F2); symmetrically LONGs
+at extremely negative funding. The ABR2 gate (fund_24h > +3 bps LONG / SHORT
+veto > +1.5 bps, Report 21 addendum 2) generalizes fleet-wide.
+**Evidence:** F2 (high, BIS) + internal precedent ABR2.
 
-**Vorgehen:**
-1. `tools/funding_risk_study.py` (neu, read-only): `closed_ai_signals`
-   dedupen (Regel 6), je Trade `core/funding_features.py` as-of Entry
-   auswerten (fund_24h, fund_72h, fund_7d_cum + Cross-Section-Perzentil des
-   Entry-Zeitpunkts über alle Coins).
-2. Buckets (z. B. Quintile + Extremzonen >+3 bps / <−3 bps) × Richtung ×
-   Modell-Tag: n, WR, Ø-PnL, Monats-Split.
-3. Report: Für welche Bots/Richtungen trennt Funding Erfolg von Misserfolg
-   out-of-sample über die Monate? (Chrono-Halbierung als Pseudo-Val/Test.)
+**Approach:**
+1. `tools/funding_risk_study.py` (new, read-only): dedupe `closed_ai_signals`
+   (rule 6), evaluate `core/funding_features.py` as-of entry per trade
+   (fund_24h, fund_72h, fund_7d_cum + cross-section percentile of the entry
+   time across all coins).
+2. Buckets (e.g. quintiles + extreme zones >+3 bps / <−3 bps) × direction ×
+   model tag: n, WR, avg. PnL, monthly split.
+3. Report: for which bots/directions does funding separate success from
+   failure out-of-sample across the months? (chrono-halving as pseudo
+   val/test.)
 
-**Stop-Kriterium:** kein Bucket-Effekt, der über beide Zeit-Hälften stabil ist
-⇒ ABR-Befund generalisiert nicht, dokumentieren. **Wenn positiv:** Folge-Task
-„Funding-Dimension im Orchestrator-Gating (Bot 28)" — Achtung: das ist ein
-Gating-Parameter-Change ⇒ **Operator-Gate, Michi entscheidet** (OPUS-HANDOFF
-§6). **Fallen:** BIS-Konvention „sell liquidations" = Short-Seite (invertiert
-zu Vendor-Dashboards); TZ der Entry-Timestamps.
+**Stop criterion:** no bucket effect stable across both time halves ⇒ ABR
+finding does not generalize, document. **If positive:** follow-up task
+"funding dimension in the orchestrator gating (bot 28)" — caution: this is a
+gating parameter change ⇒ **operator gate, Michi decides** (OPUS-HANDOFF §6).
+**Pitfalls:** BIS convention "sell liquidations" = short side (inverted vs.
+vendor dashboards); TZ of the entry timestamps.
 
-### K4 · FMR2 — Funding-Extreme-MR mit Normalisierungs-Exit (Bau nach fertigem Design)
+### K4 · FMR2 — Funding-extreme MR with normalization exit (build from a finished design)
 
-**Typ:** Builder + Retrain + (bei Erfolg) Bot-Exit-Loop. **Aufwand:** ~2–3 Tage
-über mehrere Queue-Slots. **Design liegt vollständig in
-`docs/NEW_IDEAS_BOTS.md` § „FMR2 — eigener Exit-Pfad"** — dieses Kapitel ist
-bindend; hier nur die Reihenfolge und Ergänzungen:
+**Type:** builder + retrain + (on success) bot exit loop. **Effort:** ~2–3
+days across several queue slots. **The design lives entirely in
+`docs/NEW_IDEAS_BOTS.md` § "FMR2 — own exit path"** — that chapter is
+binding; only the order and additions follow here:
 
-1. Exit-Predicate + Konstanten nach `core/research_features.py` (eine Quelle
-   für Builder UND Bot): SHORT-Exit sobald `funding_cs_pctl < 0.80` ODER
-   `funding_z_30d < 1.0`; LONG symmetrisch; Time-Stop 9 Settlements (3 Tage);
-   harter Katastrophen-SL bleibt.
-2. `tools/fmr1_build_dataset.py` V2: Label = PnL am Normalisierungs-/
-   Timeout-Exit (Exit-Preis der Settlement-Kerze) — NICHT First-Touch-TP/SL
-   (das war der FMR1-Fehler).
-3. Retrain via `tools/new_models_train.py`-Gerüst (Chrono-Split, Purge,
-   `pick_threshold_safe`), Artefakt `staging_models/fmr2_model_*.pkl`,
+1. Exit predicate + constants go to `core/research_features.py` (one source
+   for builder AND bot): SHORT exit as soon as `funding_cs_pctl < 0.80` OR
+   `funding_z_30d < 1.0`; LONG symmetric; time stop 9 settlements (3 days);
+   the hard catastrophe SL stays.
+2. `tools/fmr1_build_dataset.py` V2: label = PnL at the normalization/timeout
+   exit (exit price of the settlement candle) — NOT first-touch TP/SL (that
+   was the FMR1 bug).
+3. Retrain via the `tools/new_models_train.py` scaffold (chrono split,
+   purge, `pick_threshold_safe`), artifact `staging_models/fmr2_model_*.pkl`,
    `meta.model_id=FMR2`.
-4. NUR bei Val+Test positiv: Bot-31-Exit-Loop (Close-Command via
-   `send_telegram` → `telegram_outbox`, eigene Rows per
-   `DELETE … RETURNING` → `closed_ai_signals`
-   `status='CLOSED_FUNDING_NORMALIZED'`, Filter strikt auf eigenen Tag;
-   stündlicher Scan reicht). Eigener Channel via `CH_FMR1` (.env = Michi).
+4. ONLY if val+test positive: bot-31 exit loop (close command via
+   `send_telegram` → `telegram_outbox`, own rows via `DELETE … RETURNING` →
+   `closed_ai_signals` `status='CLOSED_FUNDING_NORMALIZED'`, filter strictly
+   on its own tag; an hourly scan suffices). Own channel via `CH_FMR1`
+   (.env = Michi).
 
-**Stop-Kriterium:** Val+Test nicht positiv ⇒ S8-These endgültig falsifiziert
-(dann ist auch der Bot-Umbau obsolet — offline-first war der Sinn der
-Reihenfolge). **Evidenz-Kontext:** F3 — Perp-only-Funding-Capture ist nach der
-Post-ETF-Kompression genuin offen; genau deshalb ist der saubere Test wertvoll.
-
----
-
-## Tier 2 — sofort testbar, mittlere Evidenz
-
-### K5 · LIS1 — Post-Listing-Drift (Studie → Risk-Filter und/oder Fade-Bot)
-
-**Typ:** Kohorten-Studie + Replay. **Aufwand:** ~1 Tag.
-**Hypothese:** Frisch gelistete Perps underperformen in den ersten Wochen bis
-Monaten (F10). Minimal-Nutzen: **LONG-Blacklist für junge Listings** (reiner
-Risikofilter); Maximal-Nutzen: Fade-SHORT ab Tag T nach Listing.
-
-**Vorgehen:**
-1. Listing-Datum je Coin: einmalig `GET /fapi/v1/exchangeInfo`
-   (`onboardDate`, UTC) ziehen und als JSON nach `staging_models/` cachen;
-   Fallback-Proxy: erste Kerze der 1h-Tabelle.
-2. `tools/listing_drift_study.py` (neu): Kohorte = onboardDate im
-   Datenfenster; Forward-Returns Tag 1→7/30/90/180 absolut UND minus BTC
-   (Beta-Confound der Quellen beheben!); Verteilung, Median, % positiv.
-3. Fade-Replay: Entry-Varianten Tag {3, 7, 14} nach Listing (Limit +0 %/+5 %),
-   Smart-Targets SHORT, `simulate_exit`; **Funding-Kosten zwingend
-   einrechnen** — frische Perps haben oft extremes Funding, das die
-   Short-Seite bezahlen kann.
-4. Report inkl. Kohorten-Größe (bei ~40–60 Listings/Jahr ist n klein — ehrlich
-   ausweisen, keine Signifikanz vortäuschen).
-
-**Stop-Kriterium:** Drift verschwindet nach Beta-Adjust oder n zu klein für
-eine Aussage ⇒ nur den deskriptiven Befund dokumentieren. **Minimal-Deliverable
-auch ohne Short-Edge:** quantifizierte Empfehlung „Coin-Alter < X Tage ⇒ kein
-LONG" als Orchestrator-/Bot-Filter (Umsetzung = Gating-Change ⇒ Michi).
-
-### K6 · BRD — Markt-Breadth/Dispersion als Regime-Features (Feature-Block + Studie)
-
-**Typ:** geteilter Feature-Builder + Validierungs-Studie. **Aufwand:** ~1–2 Tage.
-**Hypothese:** Breadth-Größen über das 530er-Universum (Anteil Coins > EMA200/
-EMA50, Median-7d-Return, Advance/Decline, Return-Dispersion vs. BTC) schlagen
-bzw. ergänzen die BTC-only-Regime-Klassifikation — und liefern das fehlende
-**Regime-Gate für RUB-LONG** (MODEL_INTENT §22-Validierung: TREND_UP
-+1,65 %/Trade, n=1.378, 9/13 Monate positiv; Gate-These in §8). **Evidenz:** extern unbeforscht (Report §3
-Frage 4); intern stark motiviert (§8/§22/§23, HMM-Task T-2026-CU-9050-020).
-
-**Vorgehen:**
-1. `core/breadth_features.py` (neu, X-R1): as-of-Builder auf 1d/1h-Kandles +
-   `_indicators` (EMA200 liegt vor). Effizienz: je Coin EINE Query, in-memory
-   aggregieren — nicht 530 Tabellen je Zeitpunkt einzeln hämmern;
-   BELOW_NORMAL. **TOTAL3-Proxy als Pflicht-Feature (Addendum 2026-07-12):**
-   gleichgewichteter (und als Variante volumengewichteter) Preis-Index über
-   das eigene Universum OHNE BTC/ETH — Level, Abstand zur 90d-Regression,
-   Breakout-Flag. Praktiker-Gate „Alt-Trades nur bei TOTAL3 über Level"
-   (Quelle: KB `ingest-c1e5112dea7f`). Ehrlichkeits-Hinweis im Builder-Doc:
-   echte Marktkap-Gewichte haben wir nicht — der Preis-Index über ~530 Perps
-   ist ein Proxy und als solcher zu dokumentieren.
-2. `tools/breadth_study.py`: (a) Features vs. Forward-Returns der
-   RUB-LONG-Events aus `rub_replay_365d.jsonl` (liegt vor — kein neuer
-   Sim-Lauf nötig!); (b) Features vs. `regime_history`-Klassen
-   (Zusatzinformation ja/nein, einfache Logit/Tree-Diagnostik reicht);
-   (c) Monats-Split.
-3. Bei Befund Folge-Tasks: Feature-Einspeisung in den Whitelist-Umbau (§23),
-   die HMM-Studie (T-020) und/oder ein expliziter TREND/Breadth-Schalter für
-   RUB-LONG in Bot 13 (**Gate-Änderung ⇒ Michi**).
-
-**Stop-Kriterium:** kein Feature trennt RUB-LONG-Monate out-of-sample besser
-als das bestehende Regime ⇒ dokumentieren; die Builder-Arbeit bleibt als
-Infrastruktur trotzdem nützlich (HMM-Task) — das ist dann bewusst zu
-entscheiden, nicht stillschweigend.
-
-### K7 · MOM — Realized-Moments-Feature-Block + Skewness-Studie (SKW1)
-
-**Typ:** Feature-Builder + Cross-Section-Studie. **Aufwand:** ~1–2 Tage.
-**Hypothese:** (a) Realized Skewness (rolling, Intraday-Basis) prädiziert
-negativ ⇒ Short-Kandidatenfilter (SKW1); (b) RV/Kurtosis als zusätzlicher
-Feature-Block für kommende Retrains (ATS2, QM2, BR-Gate). **Evidenz:** F7
-(medium, zwei unabhängige Papers; Mechanik-Story widerlegt — nur die
-Vorzeichen verwenden, keine Story).
-
-**Vorgehen:**
-1. `core/moment_features.py` (neu, X-R1): realized vol/skew/kurt aus
-   **15m**-Kandles (5m hat nur 1 Monat Retention — 15m = 1 Jahr!), rollierende
-   Fenster {24h, 7d}, as-of, nur geschlossene Kerzen; NaN-Politik nativ
-   (XGB-Muster P1.20).
-2. `tools/skewness_study.py`: wöchentliche Dezil-Sorts (Methodik-Gerüst von
-   K2 wiederverwenden: marktneutral, Liquiditätsfilter, Funding-Kosten),
-   Richtung: Short-High-Positive-Skew vs. Long-Low-Skew; plus
-   RV/Kurtosis-Sorts als Nebenprodukt.
-3. Feature-Block-Integration: optionaler `--features moments`-Anschluss in
-   `tools/retrain_from_replay.py` analog zum Funding-Block (6 Funding-Features
-   als Vorbild) — **nur den Anschluss bauen, kein Retrain triggern** (Queue).
-
-**Stop-Kriterium:** Skew-Dezile ohne stabilen Netto-Spread ⇒ SKW1 tot; der
-Feature-Block bleibt als Retrain-Option bestehen (Verwendung entscheidet der
-jeweilige Retrain-Task). **Falle:** MAX-basierte Shorts sind durch F6
-kontraindiziert — nicht „aus Versehen" MAX statt Skewness bauen.
-
-### K8 · SET — Settlement-/Tageszeit-Studie über die eigene Fleet
-
-**Typ:** reine Datenanalyse. **Aufwand:** ~0,5 Tage (billigste Studie im Katalog).
-**Hypothese:** Entry-Nähe zu den Funding-Settlements (00/08/16 UTC) bzw.
-Tageszeit-Fenster beeinflusst die Expectancy unserer Trades (F9: Spread-/
-Vol-Muster um Settlements). **Evidenz:** F9 (medium, nur 2 Monate Daten,
-Dispersion ≠ Returns — darum testen wir auf UNSEREN Trades).
-
-**Vorgehen:** `tools/settlement_timing_study.py` (neu, read-only):
-`closed_ai_signals` dedupen; je Trade Entry-Offset zum nächsten Settlement
-(−240…+240 min in 30-min-Buckets) + Entry-Stunde UTC; Expectancy je Bucket ×
-Richtung × Modell-Tag; Bootstrap-CI (einfaches Resampling, keine
-Signifikanz-Theater). **TZ-Falle:** Entry-Timestamps teils naiv-lokal —
-TZ-Cluster P2.1–P2.6 lesen, Offsets DST-aware konvertieren (f95f092-Muster).
-
-**Output:** Empfehlungs-Tabelle „Bot × Fenster meiden/bevorzugen" — Umsetzung
-(Scan-Minuten-Verschiebung o. Posting-Fenster) je Bot als Mini-Follow-ups.
-**Stop:** keine stabilen Buckets ⇒ dokumentieren, fertig.
-
-*(Nummerierungs-Hinweis: K14 ist bewusst nicht vergeben — der ursprüngliche
-K14-Platzhalter „Ichimoku-Regelfamilie" wurde verworfen, nachdem die
-Video-Auswertung keine Ichimoku-Regeln ergab; kein fehlender Abschnitt.)*
-
-### K15 · SRX — Scratch-Reload-Exit-Studie auf ABR/BR-Events (Addendum 2026-07-12)
-
-**Typ:** Exit-Varianten-Replay auf existierenden Event-Populationen. **Aufwand:** ~1 Tag.
-**Hypothese:** Bei Break-&-Retest-Setups schlägt ein „Scratch-Reload"-Schema
-den fixen SL: Exit sofort, wenn eine Kerze ZURÜCK unter dem Entry-Level
-schließt (kleiner Scratch-Verlust + Fees), Re-Entry beim nächsten
-Cross+Retest desselben Levels, max. N Zyklen — statt einen vollen
-4–12 %-SL-Hit zu nehmen. Praktiker-Rechnung: 10 Scratch-Zyklen ≈ 1 % Fees
-vs. ein SL-Hit 4–12 %. **Evidenz:** Praktiker-Regel ohne Backtest (Quelle:
-KB `ingest-9f6511a5f951`, YouTube d5KlwDnJAAc) — reine
-Batch-E-Falsifikation; der Entry selbst ist unser ABR-Konzept, NUR die
-Exit-Mechanik ist neu.
-
-**Vorgehen:**
-1. `tools/scratch_exit_study.py` (neu): Event-Population aus den vorhandenen
-   ABR-/BR-Replays wiederverwenden (ABR-Walkforward-Events aus Report 21 /
-   `walkforward_sim --strategy abr1`-Outputs — die Event-Records tragen
-   `level_price`, `entry`, `sl`, `targets`, `signal_time`; kein neuer
-   Detektor). Je Event drei Exit-Varianten simulieren:
-   (a) Standard-Geometrie (Ist-Zustand, fixer SL, First-Touch) — Baseline;
-   (b) Scratch-Reload: **Trigger-Feld = `level_price`** (das gebrochene
-   Level — das ist die „Linie" der Praktiker-Regel, nicht der Füllpreis
-   `entry`): LONG-Exit bei 4h-Kerzenschluss ZURÜCK UNTER `level_price`,
-   Re-Entry bei erneutem Cross + Retest desselben `level_price` (Retest =
-   Folgekerze schließt nicht unter dem Level); SHORT exakt gespiegelt
-   (Schluss ZURÜCK ÜBER `level_price`). N ∈ {2, 4, 8} Zyklen, Fees je
-   Zyklus nach Regel 10, Zeitfenster je Event 14 Tage;
-   (c) wie (b), aber SL-Auslösung Close-basiert statt Touch-basiert —
-   **eigene Grid-Zelle, getrennt ausweisen**, denn Close-basierte Stops
-   unterschätzen bei Hebel das Liquidationsrisiko (Liquidation ist
-   Touch-basiert; Cross-Margin mildert, eliminiert das nicht).
-2. Vergleichsmetriken je Variante: Ø-PnL netto, Verteilungs-Tails
-   (der Scratch-Ansatz tauscht seltene große Verluste gegen häufige kleine —
-   Median UND p5/p95 berichten), Zyklen-Statistik, Monats-Split.
-3. Report nach `staging_models/scratch_exit_study.json` + MD.
-
-**Stop-Kriterium:** Variante (b) schlägt (a) nicht konsistent in Val+Test
-(Chrono-Split der Events) ⇒ Praktiker-These falsifiziert, dokumentieren.
-**Cornix-Fit (nur bei positivem Befund relevant):** SL-auf-Entry kann Cornix
-nativ; der Scratch-Exit + Re-Entry braucht Bot-seitige Close-Commands +
-Re-Posting (ROM1-/FMR2-Mechanik) und ein Monitor-Konzept für Re-Entry-Trades
-— eigener Folge-Task, erst nach Replay-Beweis. **Falle:** Der Trade-Monitor
-kennt heute weder Scratch-Exits noch Re-Entries — die Studie ist bewusst
-offline; nichts davon in Bot 8 „nebenbei" einbauen.
+**Stop criterion:** val+test not positive ⇒ the S8 thesis is finally
+falsified (in which case the bot rework is also moot — offline-first was the
+point of the ordering). **Evidence context:** F3 — perp-only funding capture
+is genuinely open after the post-ETF compression; that is exactly why the
+clean test is valuable.
 
 ---
 
-## Tier 3 — Daten säen jetzt, ernten später
+## Tier 2 — immediately testable, medium evidence
 
-### K9 · OIC — Open-Interest-Collector ⚠ ZEITKRITISCH (Infrastruktur)
+### K5 · LIS1 — Post-listing drift (study → risk filter and/or fade bot)
 
-**Typ:** Collector-Prozess + Hypertable. **Aufwand:** ~1 Tag. **Warum zuerst:**
-Binance REST hält OI-Historie nur ~30 Tage — jeder Tag ohne Collector ist
-unwiederbringlich verlorene Historie (Backfill unmöglich; dieselbe Lektion wie
-ticker_10s: ehrlich akkumulieren statt Quellen-Skew).
+**Type:** cohort study + replay. **Effort:** ~1 day.
+**Hypothesis:** freshly listed perps underperform in the first weeks to
+months (F10). Minimal benefit: **LONG blacklist for young listings** (pure
+risk filter); maximal benefit: fade-SHORT from day T after listing.
 
-**Vorgehen (Blaupause = `core/ticker_10s.py`):**
-1. `core/oi_5m.py` (neu): Hypertable `oi_5m` (`ts TIMESTAMPTZ NOT NULL,
+**Approach:**
+1. Listing date per coin: pull `GET /fapi/v1/exchangeInfo` (`onboardDate`,
+   UTC) once and cache it as JSON to `staging_models/`; fallback proxy: first
+   candle of the 1h table.
+2. `tools/listing_drift_study.py` (new): cohort = onboardDate within the
+   data window; forward returns day 1→7/30/90/180 absolute AND minus BTC
+   (fix the beta confound from the sources!); distribution, median, %
+   positive.
+3. Fade replay: entry variants day {3, 7, 14} after listing (limit
+   +0%/+5%), smart targets SHORT, `simulate_exit`; **funding cost must be
+   factored in** — fresh perps often have extreme funding, which the short
+   side can end up paying.
+4. Report including cohort size (at ~40–60 listings/year, n is small —
+   report it honestly, do not fake significance).
+
+**Stop criterion:** drift disappears after the beta adjustment or n is too
+small for a statement ⇒ document only the descriptive finding. **Minimal
+deliverable even without a short edge:** quantified recommendation "coin age
+< X days ⇒ no LONG" as an orchestrator/bot filter (implementation = gating
+change ⇒ Michi).
+
+### K6 · BRD — Market breadth/dispersion as regime features (feature block + study)
+
+**Type:** shared feature builder + validation study. **Effort:** ~1–2 days.
+**Hypothesis:** breadth measures across the 530-coin universe (share of
+coins > EMA200/EMA50, median 7d return, advance/decline, return dispersion
+vs. BTC) beat or complement the BTC-only regime classification — and supply
+the missing **regime gate for RUB-LONG** (MODEL_INTENT §22 validation:
+TREND_UP +1.65%/trade, n=1.378, 9/13 months positive; gate thesis in §8).
+**Evidence:** externally unresearched (Report §3 question 4); internally
+strongly motivated (§8/§22/§23, HMM task T-2026-CU-9050-020).
+
+**Approach:**
+1. `core/breadth_features.py` (new, X-R1): as-of builder on 1d/1h candles +
+   `_indicators` (EMA200 is available). Efficiency: ONE query per coin,
+   aggregate in-memory — do not hammer 530 tables individually per
+   timestamp; BELOW_NORMAL. **TOTAL3 proxy as a mandatory feature (addendum
+   2026-07-12):** equal-weighted (and, as a variant, volume-weighted) price
+   index across our own universe without BTC/ETH — level, distance to the
+   90d regression, breakout flag. Practitioner gate "alt trades only when
+   TOTAL3 is above the level" (source: KB `ingest-c1e5112dea7f`). Honesty
+   note in the builder doc: we do not have real market-cap weights — the
+   price index over ~530 perps is a proxy and must be documented as such.
+2. `tools/breadth_study.py`: (a) features vs. forward returns of the
+   RUB-LONG events from `rub_replay_365d.jsonl` (already available — no new
+   sim run needed!); (b) features vs. `regime_history` classes (additional
+   information yes/no, simple logit/tree diagnostics suffice); (c) monthly
+   split.
+3. On a positive finding, follow-up tasks: feeding the feature into the
+   whitelist rework (§23), the HMM study (T-020) and/or an explicit
+   TREND/breadth switch for RUB-LONG in bot 13 (**gate change ⇒ Michi**).
+
+**Stop criterion:** no feature separates RUB-LONG months out-of-sample
+better than the existing regime ⇒ document; the builder work still remains
+useful as infrastructure (HMM task) — that then needs a deliberate decision,
+not a silent one.
+
+### K7 · MOM — Realized-moments feature block + skewness study (SKW1)
+
+**Type:** feature builder + cross-section study. **Effort:** ~1–2 days.
+**Hypothesis:** (a) realized skewness (rolling, intraday basis) negatively
+predicts ⇒ short candidate filter (SKW1); (b) RV/kurtosis as an additional
+feature block for upcoming retrains (ATS2, QM2, BR gate). **Evidence:** F7
+(medium, two independent papers; mechanism story refuted — use only the
+signs, no story).
+
+**Approach:**
+1. `core/moment_features.py` (new, X-R1): realized vol/skew/kurt from
+   **15m** candles (5m has only 1 month retention — 15m = 1 year!), rolling
+   windows {24h, 7d}, as-of, only closed candles; native NaN policy (XGB
+   pattern P1.20).
+2. `tools/skewness_study.py`: weekly decile sorts (reuse K2's methodology
+   scaffold: market-neutral, liquidity filter, funding cost), direction:
+   short-high-positive-skew vs. long-low-skew; plus RV/kurtosis sorts as a
+   byproduct.
+3. Feature-block integration: optional `--features moments` hookup in
+   `tools/retrain_from_replay.py` analogous to the funding block (6 funding
+   features as the model) — **only build the hookup, do not trigger a
+   retrain** (queue).
+
+**Stop criterion:** skew deciles without a stable net spread ⇒ SKW1 dead;
+the feature block remains as a retrain option (usage is decided by the
+respective retrain task). **Pitfall:** MAX-based shorts are contraindicated
+by F6 — do not "accidentally" build MAX instead of skewness.
+
+### K8 · SET — Settlement/time-of-day study across our own fleet
+
+**Type:** pure data analysis. **Effort:** ~0.5 days (cheapest study in the
+catalog).
+**Hypothesis:** entry proximity to the funding settlements (00/08/16 UTC) or
+time-of-day windows affects the expectancy of our trades (F9: spread/vol
+patterns around settlements). **Evidence:** F9 (medium, only 2 months of
+data, dispersion ≠ returns — hence we test on OUR trades).
+
+**Approach:** `tools/settlement_timing_study.py` (new, read-only): dedupe
+`closed_ai_signals`; per trade, entry offset to the nearest settlement
+(−240…+240 min in 30-min buckets) + entry hour UTC; expectancy per bucket ×
+direction × model tag; bootstrap CI (simple resampling, no significance
+theatrics). **TZ pitfall:** entry timestamps are partly naive-local — read
+the TZ cluster P2.1–P2.6, convert offsets DST-aware (f95f092 pattern).
+
+**Output:** recommendation table "bot × window avoid/prefer" —
+implementation (scan-minute shift or posting window) per bot as mini
+follow-ups.
+**Stop:** no stable buckets ⇒ document, done.
+
+*(Numbering note: K14 is deliberately not assigned — the original K14
+placeholder "Ichimoku rule family" was discarded after the video review
+yielded no Ichimoku rules; not a missing section.)*
+
+### K15 · SRX — Scratch-reload-exit study on ABR/BR events (addendum 2026-07-12)
+
+**Type:** exit-variant replay on existing event populations. **Effort:** ~1
+day.
+**Hypothesis:** for break-&-retest setups, a "scratch-reload" scheme beats
+the fixed SL: exit immediately when a candle closes BACK below the entry
+level (small scratch loss + fees), re-entry on the next cross+retest of the
+same level, max. N cycles — instead of taking a full 4–12% SL hit.
+Practitioner math: 10 scratch cycles ≈ 1% fees vs. one 4–12% SL hit.
+**Evidence:** practitioner rule without a backtest (source: KB
+`ingest-9f6511a5f951`, YouTube d5KlwDnJAAc) — pure Batch-E falsification;
+the entry itself is our ABR concept, ONLY the exit mechanic is new.
+
+**Approach:**
+1. `tools/scratch_exit_study.py` (new): reuse the event population from the
+   existing ABR/BR replays (ABR walkforward events from Report 21 /
+   `walkforward_sim --strategy abr1` outputs — the event records carry
+   `level_price`, `entry`, `sl`, `targets`, `signal_time`; no new detector).
+   Simulate three exit variants per event:
+   (a) standard geometry (as-is, fixed SL, first-touch) — baseline;
+   (b) scratch-reload: **trigger field = `level_price`** (the broken level —
+   that is the "line" of the practitioner rule, not the fill price `entry`):
+   LONG exit on a 4h candle close back below `level_price`, re-entry on a
+   renewed cross + retest of the same `level_price` (retest = the following
+   candle does not close below the level); SHORT exactly mirrored (close
+   back above `level_price`). N ∈ {2, 4, 8} cycles, fees per cycle per
+   rule 10, time window per event 14 days;
+   (c) like (b), but SL trigger close-based instead of touch-based — **its
+   own grid cell, reported separately**, because close-based stops
+   underestimate liquidation risk under leverage (liquidation is
+   touch-based; cross-margin softens but does not eliminate this).
+2. Comparison metrics per variant: avg. net PnL, distribution tails (the
+   scratch approach trades rare large losses for frequent small ones —
+   report median AND p5/p95), cycle statistics, monthly split.
+3. Report to `staging_models/scratch_exit_study.json` + MD.
+
+**Stop criterion:** variant (b) does not consistently beat (a) in val+test
+(chrono split of the events) ⇒ practitioner thesis falsified, document.
+**Cornix fit (relevant only on a positive finding):** SL-on-entry is native
+to Cornix; the scratch exit + re-entry needs bot-side close commands +
+re-posting (ROM1/FMR2 mechanic) and a monitor concept for re-entry trades —
+its own follow-up task, only after the replay proof. **Pitfall:** the trade
+monitor today knows neither scratch exits nor re-entries — the study is
+deliberately offline; do not build any of this into bot 8 "on the side."
+
+---
+
+## Tier 3 — seed data now, harvest later
+
+### K9 · OIC — Open-interest collector ⚠ time-critical (infrastructure)
+
+**Type:** collector process + hypertable. **Effort:** ~1 day. **Why first:**
+Binance REST holds OI history for only ~30 days — every day without the
+collector is irretrievably lost history (backfill impossible; the same
+lesson as ticker_10s: accumulate honestly instead of source skew).
+
+**Approach (blueprint = `core/ticker_10s.py`):**
+1. `core/oi_5m.py` (new): hypertable `oi_5m` (`ts TIMESTAMPTZ NOT NULL,
    symbol TEXT NOT NULL, open_interest DOUBLE PRECISION, oi_value_usdt DOUBLE
-   PRECISION, PRIMARY KEY (ts, symbol)`); Timescale-Jobs: Chunks 1 Tag,
-   Compression nach 3 Tagen (segmentby=symbol), Retention 730 Tage;
-   Kill-Switch `KYTHERA_OI_PERSIST=0` (Default an); batched Insert.
-2. Writer: **eigener schlanker Prozess** `35_oi_collector.py` (kein Anbau an
-   Detector — getrennte Failure-Domain): alle 5 min ein Sweep über
-   `coins.json`-Symbole via `GET /futures/data/openInterestHist`
-   (period=5m, limit=1, weight klein) ODER `GET /fapi/v1/openInterest`;
-   Rate-Budget dokumentieren (530 Requests/5 min ≪ 2400 weight/min, mit
-   Backoff-Retry nach `core`-Konventionen). Registrierung in `core/fleet.py`
-   (+2 PG-Connections je Prozess — P1.34 gegen `max_connections` prüfen).
-3. **Initial-Backfill einmalig:** die verfügbaren ~30d `openInterestHist`
-   (period=5m, paginiert) je Symbol einlesen — mehr gibt die API nicht her.
-4. Start des Prozesses = Fleet-Eingriff ⇒ **Michi** (Restart-Marker-Mechanik
-   `control/restart/` bzw. Watchdog nimmt neue `core/fleet.py`-Einträge beim
-   nächsten Zyklus? — verifizieren; im Zweifel Operator-Restart).
+   PRECISION, PRIMARY KEY (ts, symbol)`); Timescale jobs: 1-day
+   chunks, compression after 3 days (segmentby=symbol), retention 730 days;
+   kill switch `KYTHERA_OI_PERSIST=0` (default on); batched insert.
+2. Writer: **its own lean process** `35_oi_collector.py` (no attachment to
+   the detector — separate failure domain): every 5 min a sweep over the
+   `coins.json` symbols via `GET /futures/data/openInterestHist` (period=5m,
+   limit=1, small weight) OR `GET /fapi/v1/openInterest`; document the rate
+   budget (530 requests/5 min ≪ 2400 weight/min, with backoff retry per
+   `core` conventions). Registration in `core/fleet.py` (+2 PG connections
+   per process — check P1.34 against `max_connections`).
+3. **One-time initial backfill:** read in the available ~30d
+   `openInterestHist` (period=5m, paginated) per symbol — the API does not
+   give more than that.
+4. Starting the process = fleet intervention ⇒ **Michi** (restart-marker
+   mechanic `control/restart/` or does the watchdog pick up new
+   `core/fleet.py` entries on the next cycle? — verify; when in doubt,
+   operator restart).
 
-**Modell-Ideen darauf (eigene Tasks ab ~Okt 2026, ≥60d Historie):**
-OI-Preis-Divergenz (Preis↑ + OI↓ = schwacher Move ⇒ Fade), OI-Spike-Fade,
-OI×Funding-Interaktion (F2-Mechanik verfeinert: Squeeze-Anfälligkeit =
-hohes OI + extremes Funding).
+**Model ideas built on this (own tasks from ~Oct 2026, ≥60d history):**
+OI-price divergence (price↑ + OI↓ = weak move ⇒ fade), OI-spike fade,
+OI×funding interaction (refined F2 mechanic: squeeze susceptibility = high
+OI + extreme funding).
 
-### K10 · WHI — Whale-Print-Imbalance (Studie, wartet auf Datenreife)
+### K10 · WHI — Whale-print imbalance (study, waiting for data maturity)
 
-**Typ:** Persistenz-Review jetzt, Studie ab ~4–6 Wochen Historie.
-**Hypothese:** Taker-Richtungs-Imbalance großer Prints (≥$25k, `m`-Flag im
-aggTrade-Stream von Bot 19) über 5/15/60-min-Fenster prädiziert kurzfristige
-Forward-Returns auf den Top-20. **Evidenz:** extern unbeforscht (Report §3
-Frage 4); Daten seit 2026-07-05.
+**Type:** persistence review now, study from ~4–6 weeks of history.
+**Hypothesis:** taker-direction imbalance of large prints (≥$25k, `m` flag
+in the aggTrade stream from bot 19) over 5/15/60-min windows predicts
+short-term forward returns on the top 20. **Evidence:** externally
+unresearched (Report §3 question 4); data since 2026-07-05.
 
-**Jetzt machbar (kleiner Task):** `whale_data/*.json`-Format sichten; optional
-Persistenz nach Hypertable `whale_trades` (Query-Komfort, gleiche
-Timescale-Konventionen wie K9) — der Logger schreibt weiter JSON, ein
-Migrations-Skript liest nach. Universums-Erweiterung über Top-20 hinaus =
-mehr WS-Streams ⇒ **Operator-Entscheid**.
-**Studie (später):** Imbalance-Features as-of vs. Forward-Returns 15m/1h/4h;
-bei Signal → Feature für BTC-Regime/ROM1 oder eigener Kandidat.
+**Feasible now (small task):** review the `whale_data/*.json` format;
+optionally persist to a `whale_trades` hypertable (query convenience, same
+Timescale conventions as K9) — the logger keeps writing JSON, a migration
+script reads it in. Expanding the universe beyond top 20 = more WS streams
+⇒ **operator decision**.
+**Study (later):** imbalance features as-of vs. forward returns 15m/1h/4h;
+on a signal → feature for BTC regime/ROM1 or its own candidate.
 
-### K11 · WSH1 — Wick-basierte Stop-Hunt-Reversals (Studie)
+### K11 · WSH1 — Wick-based stop-hunt reversals (study)
 
-**Typ:** Event-Studie + Replay. **Aufwand:** ~1 Tag.
-**Hypothese:** Kerzen mit extremer Docht-Geometrie + Volumen-Klimax
-(Liquidation-Cascade-Proxy ohne Liquidation-Feed) markieren kurzfristige
-Reversal-Punkte: langer unterer Docht → LONG-Bounce (Spiegel: oberer Docht →
-SHORT). **Evidenz:** extern nur Mechanik (TradingView „Liquidation Cascade
-Detector" — Performance-Claims ignorieren, F11/F12); intern: PEX1-Lektion.
+**Type:** event study + replay. **Effort:** ~1 day.
+**Hypothesis:** candles with extreme wick geometry + volume climax
+(liquidation-cascade proxy without a liquidation feed) mark short-term
+reversal points: long lower wick → LONG bounce (mirror: upper wick →
+SHORT). **Evidence:** externally only mechanism (TradingView "Liquidation
+Cascade Detector" — ignore performance claims, F11/F12); internally: the
+PEX1 lesson.
 
-**Vorgehen:**
-1. `tools/wick_reversal_study.py` (neu) auf **15m**-Kandles (5m-Retention!):
-   Event-Definition parametrisiert: `lower_wick ≥ k×ATR14` (k ∈ {1.5, 2, 3}) ×
-   `volume ≥ m×vol_sma20` (m ∈ {3, 5}) × Close-Recovery ≥ 50 % des Dochts.
-   Entry = Close der Event-Kerze (geschlossen!), Richtung mit dem Bounce.
-2. Zwei Populationen: alle Events vs. Events ≤ 60 min nach einem
-   `pump_dump_events`-Eintrag (Cascade-Kontext) — trennt „irgendein Docht"
-   von „Docht nach Kaskade".
-3. Labels: `simulate_exit` mit Smart-Targets; Report nach Standard (Regel 8).
+**Approach:**
+1. `tools/wick_reversal_study.py` (new) on **15m** candles (5m retention!):
+   parametrized event definition: `lower_wick ≥ k×ATR14` (k ∈ {1.5, 2, 3}) ×
+   `volume ≥ m×vol_sma20` (m ∈ {3, 5}) × close recovery ≥ 50% of the wick.
+   Entry = close of the event candle (closed!), direction with the bounce.
+2. Two populations: all events vs. events ≤ 60 min after a
+   `pump_dump_events` entry (cascade context) — separates "some wick" from
+   "wick after a cascade".
+3. Labels: `simulate_exit` with smart targets; report per standard (rule 8).
 
-**Stop-Kriterium:** keine Parameter-Zelle Val+Test-positiv ⇒ falsifiziert.
-**PEX1-Lektion beachten:** Informationsgehalt steckt im Intraday-Fenster um
-das Event — NICHT auf 1h-Kontext-Features ausweichen; wenn 15m zu grob wirkt,
-ist das Warten auf ticker_10s-Reife (PEX2-Pfad) die Antwort, nicht 1h.
+**Stop criterion:** no parameter cell val+test-positive ⇒ falsified. **Heed
+the PEX1 lesson:** the information content sits in the intraday window
+around the event — do NOT fall back to 1h context features; if 15m looks too
+coarse, waiting for ticker_10s maturity (the PEX2 path) is the answer, not
+1h.
 
-### K13 · HLW — Hyperliquid-Whale-Position-Collector + Studie (Addendum 2026-07-12)
+### K13 · HLW — Hyperliquid whale-position collector + study (addendum 2026-07-12)
 
-**Typ:** Collector (Daten säen) + spätere Studie. **Aufwand:** ~1–2 Tage Collector.
-**Hypothese (Studie, später):** (a) Aggregiertes Positioning kuratierter
-Hyperliquid-Top-Wallets prädiziert Forward-Returns auf unseren
-Binance-Perp-Coins (Feature für Regime/ROM-Gating); (b) naives Folgen einzelner
-Whale-Positionswechsel überlebt den Minuten-Lag unseres Stacks. **Evidenz**
-(Leaderboard-Deep-Research 2026-07-12, Report §6): Hyperliquid ist die EINZIGE
-Venue mit dauerhaft öffentlicher Per-Adresse-Transparenz; Skill-Persistenz im
-Top-Perzentil ist akademisch belegt (Barber/Odean, Taiwan — Mimicking war dort
-OOS-profitabel), aber NIE für Krypto-Perps repliziert; Style-Labels aus
-Aggregat-Stats sind instabil (36–40 % über 4 Wochen); die viralen
-Whale-Copy-Stories sind unverifiziert. Darum: Daten säen + bescheidene
-Feature-Fragen, KEIN Copy-Bot-Versprechen.
+**Type:** collector (seed data) + later study. **Effort:** ~1–2 days
+collector.
+**Hypothesis (study, later):** (a) aggregated positioning of curated
+Hyperliquid top wallets predicts forward returns on our Binance perp coins
+(feature for regime/ROM gating); (b) naively following individual whale
+position changes survives our stack's minute-scale lag. **Evidence**
+(leaderboard deep research 2026-07-12, Report §6): Hyperliquid is the ONLY
+venue with permanently public per-address transparency; skill persistence in
+the top percentile is academically documented (Barber/Odean, Taiwan —
+mimicking was OOS-profitable there), but NEVER replicated for crypto perps;
+style labels from aggregate stats are unstable (36–40% over 4 weeks); the
+viral whale-copy stories are unverified. Hence: seed data + modest feature
+questions, NO copy-bot promise.
 
-**Datenzugang (verifiziert 2026-07-12, kann sich ändern):** Unauthentifizierte
-public `/info`-API: `clearinghouseState` (Positions-Snapshot je Adresse:
-entryPx=Durchschnitt, signierte Size, Leverage, liquidationPx, ROE,
-cumFunding; weight 2 ⇒ ~600 Polls/min/IP), `userFills`/`userFillsByTime`
-(Historie, 2.000/10.000-Item-Caps), `userFunding` +
-`userNonFundingLedgerUpdates` (500er-Pages, ms-Cursor); WebSocket `userFills`
-push (Cap ~10 unique User je IP auf User-Subscriptions — vor Architektur
-gegen Live-Doku verifizieren, der Cap stand nur in Verifier-Evidenz).
+**Data access (verified 2026-07-12, may change):** unauthenticated public
+`/info` API: `clearinghouseState` (position snapshot per address:
+entryPx=average, signed size, leverage, liquidationPx, ROE, cumFunding;
+weight 2 ⇒ ~600 polls/min/IP), `userFills`/`userFillsByTime` (history,
+2.000/10.000-item caps), `userFunding` + `userNonFundingLedgerUpdates`
+(500-item pages, ms cursor); WebSocket `userFills` push (cap ~10 unique
+users per IP on user subscriptions — verify against the live docs before the
+architecture is fixed, the cap only appeared in verifier evidence).
 
-**Vorgehen:**
-1. Wallet-Kuration (Operator-Input): 10–30 Adressen aus
-   Hyperdash/HypurrScan/CoinGlass-Leaderboards, Auswahlkriterien
-   dokumentieren (PnL-Historie, Account-Alter, kein Points-Farming-Verdacht).
-2. `core/hl_whales.py` + `36_hl_whale_collector.py` (Timescale-Konventionen
-   wie K9): Tabelle `hl_whale_positions` (ts TIMESTAMPTZ, address, coin,
+**Approach:**
+1. Wallet curation (operator input): 10–30 addresses from
+   Hyperdash/HypurrScan/CoinGlass leaderboards, document the selection
+   criteria (PnL history, account age, no points-farming suspicion).
+2. `core/hl_whales.py` + `36_hl_whale_collector.py` (Timescale conventions
+   like K9): table `hl_whale_positions` (ts TIMESTAMPTZ, address, coin,
    szi, entry_px, leverage, liq_px, roe, position_value; PK (ts, address,
    coin)) + `hl_whale_fills` (address, coin, side, px, sz, fill_time
-   TIMESTAMPTZ, tid BIGINT; **PK (address, tid)** — die Hyperliquid-Fill-ID
-   `tid` ist der Dedup-Schlüssel, weil gepollte `userFills`-Fenster
-   überlappen; Insert per ON CONFLICT DO NOTHING). Kuratierte Wallet-Liste
-   als repo-getrackte `hl_wallets.json` (analog `coins.json`: Adresse,
-   Label, Aufnahme-Datum, Kurations-Notiz — keine Secrets, Operator pflegt
-   per PR). Poll-Kadenz 60 s je Adresse (bleibt weit unter dem Rate-Budget),
-   Kill-Switch `KYTHERA_HL_PERSIST=0`; Registrierung `core/fleet.py`;
-   Prozess-Start = **Michi** (wie K9).
-3. **Bekannte Pitfalls (aus der Recherche, im Collector-Doc festhalten):**
-   Agent-Wallets liefern leere States (Master-Adresse tracken); Sub-Accounts/
-   Vaults sind von einer Adresse aus NICHT enumerierbar; entryPx ist
-   Durchschnitt ohne Entry-Timing (Timing kommt aus Fills, nicht Snapshots);
-   Adress-Churn (Whales wechseln Wallets) ⇒ Kurationsliste ist Pflege-Aufwand.
-4. **Studie (nach ~6–8 Wochen Historie, eigener Task):** (a) Aggregat-Features
-   (Netto-Long-Anteil, Positionsänderungs-Flow je Coin) vs. Forward-Returns
-   unserer Coins; (b) Lag-Kurve: PnL eines nachgebauten Positionswechsels bei
-   Entry +1/+5/+15/+60 min — beantwortet die Copy-Frage ehrlich.
+   TIMESTAMPTZ, tid BIGINT; **PK (address, tid)** — the Hyperliquid fill ID
+   `tid` is the dedup key, because polled `userFills` windows overlap;
+   insert via ON CONFLICT DO NOTHING). Curated wallet list as a
+   repo-tracked `hl_wallets.json` (analogous to `coins.json`: address,
+   label, intake date, curation note — no secrets, operator maintains it
+   via PR). Poll cadence 60 s per address (stays well under the rate
+   budget), kill switch `KYTHERA_HL_PERSIST=0`; registration
+   `core/fleet.py`; process start = **Michi** (like K9).
+3. **Known pitfalls (from the research, record in the collector doc):**
+   agent wallets return empty states (track the master address);
+   sub-accounts/vaults are NOT enumerable from one address; entryPx is an
+   average without entry timing (timing comes from fills, not snapshots);
+   address churn (whales change wallets) ⇒ the curation list is maintenance
+   overhead.
+4. **Study (after ~6–8 weeks of history, own task):** (a) aggregate
+   features (net-long share, position-change flow per coin) vs. forward
+   returns of our coins; (b) lag curve: PnL of a reconstructed position
+   change at entry +1/+5/+15/+60 min — answers the copy question honestly.
 
-**Stop-Kriterium (Studie):** kein Aggregat-Feature mit stabilem
-Forward-Signal UND Lag-Kurve flach/negativ ⇒ Idee falsifiziert; der Collector
-wird dann bewusst abgeschaltet (Operator) statt Zombie-Daten zu sammeln.
-**Abgrenzung:** Binance-Leaderboard (Graumarkt-Scraper, kollabierend),
-Bybit/OKX/Bitget (keine Lese-API), BitMEX (anonymisiert) sind KEINE
-Grundlage — dokumentierte Anti-Pfade, nicht erneut evaluieren.
+**Stop criterion (study):** no aggregate feature with a stable forward
+signal AND the lag curve flat/negative ⇒ idea falsified; the collector is
+then deliberately shut down (operator) instead of collecting zombie data.
+**Boundary:** Binance leaderboard (grey-market scraper, collapsing),
+Bybit/OKX/Bitget (no read API), BitMEX (anonymized) are NOT a basis —
+documented anti-paths, do not re-evaluate.
 
-### K12 · TRM2 — Transition-Resolution-Wiedervorlage (entblockt)
+### K12 · TRM2 — Transition-resolution re-submission (unblocked)
 
-**Typ:** Wiedervorlage eines geparkten Kandidaten. **Aufwand:** ~0,5 Tage wenn reif.
-TRM1 war upstream blockiert (Detector hielt TREND nie — Klassen existierten
-nicht, `docs/NEW_IDEAS_BOTS.md`). Seit dem §22-Umbau (2026-07-07,
-Mid-Band-Regel V2 K=1,5 + Hysterese) treten TREND_UP/DOWN je ~10 % der Zeit
-auf. **Trigger-Bedingung:** `regime_history` zählen — ≥300 abgeschlossene
-TRANSITION→TREND-Übergänge je Zielklasse seit 2026-07-07 (realistisch einige
-Wochen). Dann: `tools/trm1_build_dataset.py` erneut (prüfen, ob der Builder
-die neuen Klassen sauber sieht), `new_models_train.py --strategy trm1
---min-val-trades 20`. **Tag-Bump nötig:** `model_id` ist in der
-`STRATEGIES`-Map von `tools/new_models_train.py` hart auf `TRM1` kodiert —
-für die neue Generation dort auf **TRM2** stellen (Versionierungs-Regel 6,
-MODEL_INTENT-Arbeitsregeln). Stop-Kriterien wie gehabt (Deploy-Gate in
+**Type:** re-submission of a parked candidate. **Effort:** ~0.5 days once
+mature.
+TRM1 was blocked upstream (the detector never held TREND — the classes did
+not exist, `docs/NEW_IDEAS_BOTS.md`). Since the §22 rework (2026-07-07,
+mid-band rule V2 K=1.5 + hysteresis), TREND_UP/DOWN each occur ~10% of the
+time. **Trigger condition:** `regime_history` count — ≥300 completed
+TRANSITION→TREND transitions per target class since 2026-07-07
+(realistically a few weeks). Then: `tools/trm1_build_dataset.py` again
+(check whether the builder sees the new classes cleanly), `new_models_train.py --strategy trm1
+--min-val-trades 20`. **Tag bump required:** `model_id` is in the
+`STRATEGIES` map of `tools/new_models_train.py` hard-coded to `TRM1` —
+set it to **TRM2** there for the new generation (versioning rule 6,
+MODEL_INTENT work rules). Stop criteria as before (deploy gate in
 NEW_IDEAS_BOTS.md).
 
 ---
 
-## Nicht verfolgen (dokumentierte Anti-Kandidaten)
+## Not pursued (documented anti-candidates)
 
-| Idee | Warum nicht | Beleg |
+| Idea | Why not | Evidence |
 |---|---|---|
-| Delta-neutrale Funding-Arb (long spot / short perp) | braucht Spot-Leg — nicht im Cornix-Stack; post-ETF komprimiert, 2024/25-Profitabilität beidseitig umstritten | F3, Refuted-Liste |
-| Naiver Lottery-Short auf High-MAX-Coins | MAX-Effekt in Krypto invertiert; wenn Lottery-Short, dann Skewness (K7) | F6/F7 |
-| Equity-Style 3–12-Monats-Momentum | flippt in Krypto ab ~1 Monat in Reversal | F4 |
-| BB/KC-Squeeze als eigenständiges Modell | Community-populär, Performance-Evidenz null; höchstens als billige Nebenzelle in K1s Grid | F11 |
-| TradingView-„Winrates" als Evidenz übernehmen | >95 % Repaint; nur Mechaniken als Hypothesen verwenden | F12, Report 16 |
-| PEX1-Rehabilitation auf 1h-Features / EPD2-Retrain ohne Alt-Pump-Fenster / RUB2-LONG als Event-Gate / SRA2 vor Label-Pipeline-Fix | intern bereits sauber falsifiziert — Recherche liefert KEINE neue Rehabilitierungs-Evidenz | MODEL_INTENT §5/§7/§8, NEW_IDEAS_BOTS |
+| Delta-neutral funding arb (long spot / short perp) | needs a spot leg — not in the Cornix stack; post-ETF compressed, 2024/25 profitability disputed on both sides | F3, refuted list |
+| Naive lottery-short on high-MAX coins | MAX effect inverted in crypto; if lottery-short, then skewness (K7) | F6/F7 |
+| Equity-style 3–12-month momentum | flips into reversal in crypto after ~1 month | F4 |
+| BB/KC squeeze as a standalone model | popular in the community, zero performance evidence; at most as a cheap side cell in K1's grid | F11 |
+| Adopting TradingView "win rates" as evidence | >95% repaint; use only mechanisms as hypotheses | F12, Report 16 |
+| PEX1 rehabilitation on 1h features / EPD2 retrain without an alt-pump window / RUB2-LONG as an event gate / SRA2 before the label-pipeline fix | already cleanly falsified internally — the research yields NO new rehabilitation evidence | MODEL_INTENT §5/§7/§8, NEW_IDEAS_BOTS |
 
-## Task-Zuschnitt (Vorschlag für die KB)
+## Task cut (proposal for the KB)
 
-Je Kandidat EIN Task (Titel-Schema „K<N> <Tag>: <Kurzziel> (Studie|Bau)"),
-`touches` deklarieren, Reihenfolge aus §0. K4 (FMR2), K9 (OIC) und K13 (HLW)
-sind Implementierungs-Tasks mit Eskalationspunkten (Channel-.env,
-Fleet-Prozess, externe Venue-Abhängigkeit); alle anderen starten als
-Studien-Tasks, deren Folge-Tasks erst nach positivem Befund geschnitten
-werden. Kein Kandidat deployt irgendetwas ohne Michis expliziten Entscheid.
-Bot-Nummern-Vergabe: 35 = K9, 36 = K13 (reserviert per Addendum); weitere
-Bots nehmen die nächste freie Nummer.
+One task per candidate (title schema "K<N> <Tag>: <short goal>
+(study|build)"), declare `touches`, order from §0. K4 (FMR2), K9 (OIC) and
+K13 (HLW) are implementation tasks with escalation points (channel .env,
+fleet process, external venue dependency); all others start as study tasks
+whose follow-up tasks are only cut after a positive finding. No candidate
+deploys anything without Michi's explicit decision. Bot number allocation:
+35 = K9, 36 = K13 (reserved per addendum); further bots take the next free
+number.

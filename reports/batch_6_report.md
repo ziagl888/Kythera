@@ -1,47 +1,47 @@
-# Batch 6 Report — Architektur, Charting & Dashboard
+# Batch 6 Report — Architecture, Charting & Dashboard
 
-**Target files:** `4_telegram_bot.py`, `6_housekeeping.py`, `main_watchdog.py`, `core/trade_utils.py`, `core/state_utils.py` (neu), 5 AI-Bot-Dateien für Zentralisierung
+**Target files:** `4_telegram_bot.py`, `6_housekeeping.py`, `main_watchdog.py`, `core/trade_utils.py`, `core/state_utils.py` (new), 5 AI bot files for centralisation
 
 ## Completed
 
-### #31 — Housekeeping respektiert Outbox-Referenzen (6_housekeeping.py)
-`cleanup_generated_charts` lud vor dem Löschen die `DISTINCT image_path`-Liste aller ungesendeten Outbox-Einträge und überspringt dann Dateien die noch referenziert sind. Verhindert dass bei einem Telegram-Rate-Limit-Backlog die Charts der noch-ausstehenden Nachrichten gelöscht werden.
+### #31 — Housekeeping respects outbox references (6_housekeeping.py)
+`cleanup_generated_charts` now loads the `DISTINCT image_path` list of all unsent outbox entries before deleting, and then skips files that are still referenced. Prevents charts of still-pending messages from being deleted during a Telegram rate-limit backlog.
 
-### #52 — get_hvn_and_sr_levels zentralisiert (core/trade_utils.py)
-Die Funktion war **bit-identisch** in 5 Bots dupliziert (9_ai_sr_bot, 10_pump_dump_detector, 12_ai_ats_bot, 13_ai_rub_bot, 14_ai_atb_bot — via md5 verifiziert). Jetzt einmal in `core/trade_utils.py`, alle 5 Bots importieren von dort. Zukünftige Änderungen an HVN/SR-Logik müssen nur noch an einer Stelle gemacht werden, kein Drift-Risiko mehr zwischen Bots.
+### #52 — get_hvn_and_sr_levels centralised (core/trade_utils.py)
+The function was duplicated **bit-identically** across 5 bots (9_ai_sr_bot, 10_pump_dump_detector, 12_ai_ats_bot, 13_ai_rub_bot, 14_ai_atb_bot — verified via md5). Now it lives once in `core/trade_utils.py`, all 5 bots import from there. Future changes to HVN/SR logic only need to be made in one place — no more drift risk between bots.
 
-### #68/#87 — Telegram Chart-Löschung unter Mehrfachreferenzen (4_telegram_bot.py)
-Neue Funktion `try_delete_chart_if_unreferenced(cur, image_path, current_msg_id)` prüft via SELECT ob ein anderer ungesendeter Outbox-Eintrag dieselbe image_path referenziert. Nur wenn nicht, wird gelöscht. Previously konnte das gleiche Chart-File doppelt in der Outbox stehen (e.g. bei paralleler Logging aus zwei Perspektiven), der erste Send löschte die Datei, der zweite fiel auf "nur Text" zurück. Beide Call-Sites (`mark_sent` und `mark_failure`) nutzen jetzt den sicheren Helper.
+### #68/#87 — Telegram chart deletion under multiple references (4_telegram_bot.py)
+New function `try_delete_chart_if_unreferenced(cur, image_path, current_msg_id)` checks via SELECT whether another unsent outbox entry references the same image_path. Only deletes if not. Previously the same chart file could end up twice in the outbox (e.g. with parallel logging from two perspectives) — the first send deleted the file, the second fell back to "text only". Both call sites (`mark_sent` and `mark_failure`) now use the safe helper.
 
-### #70 — Dashboard-Output in Log-Datei statt DEVNULL (main_watchdog.py)
-Previously `stdout=DEVNULL, stderr=DEVNULL` — wenn das Dashboard crashte, war der Grund unsichtbar und der User konnte nicht debuggen. Jetzt `logs/dashboard.log` mit Append-Mode und einem Timestamp-Header bei jedem Neustart. `stderr` wird auf den gleichen Stream gelenkt (STDOUT) damit Traceback und normales Log zusammen sind.
+### #70 — Dashboard output to a log file instead of DEVNULL (main_watchdog.py)
+Previously `stdout=DEVNULL, stderr=DEVNULL` — when the dashboard crashed, the reason was invisible and the user couldn't debug it. Now `logs/dashboard.log` with append mode and a timestamp header on every restart. `stderr` is redirected to the same stream (STDOUT) so traceback and normal log are together.
 
-### #88 — Zentrale State-Persistence-Helper (core/state_utils.py, neu)
-Neues Modul mit `atomic_write_json(filepath, data)` und `atomic_read_json(filepath, default)`:
-- Write: Temp-File + fsync + os.replace (garantiert atomar, crash-safe)
-- Read: mit Default-Fallback; bei JSON-Decode-Error wird die korrupte Datei als `.corrupt` wegsichert und der Default zurückgegeben (Bot läuft weiter statt zu crashen)
-- Automatisches Anlegen des Zielverzeichnisses
+### #88 — Central state-persistence helper (core/state_utils.py, new)
+New module with `atomic_write_json(filepath, data)` and `atomic_read_json(filepath, default)`:
+- Write: temp file + fsync + os.replace (guarantees atomic, crash-safe)
+- Read: with default fallback; on a JSON decode error the corrupt file is preserved as `.corrupt` and the default is returned (bot keeps running instead of crashing)
+- Automatic creation of the target directory
 
-Die Bots, die bisher eigene atomare-Write-Patterns haben (aus Batch 1/4), können nachträglich auf diesen Helper konsolidiert werden. Für diese Iteration: neues Modul ist da und steht neuen Integrations zur Verfügung — Bestandsbots bleiben mit ihrer getesteten Logik unberührt (kein Refactor-Risiko).
+The bots that already have their own atomic-write patterns (from Batch 1/4) can be consolidated onto this helper later. For this iteration: the new module is in place and available for new integrations — existing bots remain untouched with their tested logic (no refactor risk).
 
-## Als false alarme / unkritisch dokumentiert
+## Documented as false alarms / non-critical
 
 ### #43 — SMC Forex hardcoded "20x-10x"
-Der SMC-Forex-Bot hardcoded `20x-10x` Leverage. Das ist bewusst — er nutzt yfinance-Tickers (`GC=F`, `JPY=X` etc.), die nicht in `max_leverage.json` stehen. Für TradFi-Assets ist konservativer Hebel gewollt, not a bug.
+The SMC Forex bot hardcodes `20x-10x` leverage. That's intentional — it uses yfinance tickers (`GC=F`, `JPY=X`, etc.) that aren't in `max_leverage.json`. For TradFi assets, conservative leverage is intended, not a bug.
 
-### #54 — SMC-ML-Sniper Pine-Script-Emulation
-Beim Code-Review keine Pine-Script-Idiome (ta.barssince, ta.valuewhen, etc.) found, die problematisch emuliert wären. Der ursprüngliche Punkt war spekulativ.
+### #54 — SMC ML sniper Pine Script emulation
+Code review found no Pine Script idioms (ta.barssince, ta.valuewhen, etc.) that were problematically emulated. The original point was speculative.
 
 ### #57 — Quasimodo unused config
-Alle Top-Level-Konstanten (`MIN_CONFIDENCE`, `ZONE_TOLERANCE`, `PIVOT_WINDOW`, `PRICE_BASED_INDICATORS`, `ABSOLUTE_INDICATORS`) werden im Bot genutzt. Kein Dead-Code.
+All top-level constants (`MIN_CONFIDENCE`, `ZONE_TOLERANCE`, `PIVOT_WINDOW`, `PRICE_BASED_INDICATORS`, `ABSOLUTE_INDICATORS`) are used in the bot. No dead code.
 
 ### #90 — active_trades_master vs ai_signals FK
-Die beiden Tabellen sind bewusst parallel (conv-Trades vs AI-Trades), kein FK-Verhältnis gedacht. Zusammengeführt werden sie nur im Market Tracker via UNION. Keine Inkonsistenz.
+The two tables are intentionally parallel (conventional trades vs AI trades), no FK relationship intended. They're only merged in the Market Tracker via UNION. No inconsistency.
 
 ## Verification
-**Alle 47 Python-Dateien im Projekt parse cleanly** (inklusive der 5 Bots nach Entfernung der duplizierten get_hvn_and_sr_levels).
+**All 47 Python files in the project parse cleanly** (including the 5 bots after removal of the duplicated get_hvn_and_sr_levels).
 
-## Abschließende Recommendations
+## Closing recommendations
 
-- Die 7 verbleibenden State-Files (active_patterns, alerted_qms, trendline_state, pump_dump_state, indicator_state, funding_history, und ein paar andere) könnten in einem späteren Refactor auf `core.state_utils` migrated werden. Das ist aber niedrige Priorität — die atomare Write-Logik ist in den geänderten Bots bereits korrekt implementiert.
-- Das neue `logs/dashboard.log` sollte periodisch geprüft/rotiert werden (aktuell Append-only). Falls das Dashboard stabil läuft, braucht es das nicht — aber der Bot sollte die Datei nicht unbegrenzt wachsen lassen. Empfehlung: logrotate-Config einrichten.
+- The 7 remaining state files (active_patterns, alerted_qms, trendline_state, pump_dump_state, indicator_state, funding_history, and a few others) could be migrated onto `core.state_utils` in a later refactor. That's low priority though — the atomic write logic is already correctly implemented in the changed bots.
+- The new `logs/dashboard.log` should be periodically checked/rotated (currently append-only). If the dashboard runs stably it doesn't need this — but the bot shouldn't let the file grow unbounded. Recommendation: set up a logrotate config.

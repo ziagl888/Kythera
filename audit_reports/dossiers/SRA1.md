@@ -1,63 +1,63 @@
-# Dossier: SRA1 (Support/Resistance-AI-Bot)
+# Dossier: SRA1 (support/resistance AI bot)
 
-> ML-Qualitätsfilter (Meta-Labeling) über der klassischen Support-Resistance-Strategie — **Note B−** (Report 16, Rang 3): konzeptionell sauberstes ML-Setup der Flotte, klein aber gesund und positiv kalibriert; Kernverdikt (Report 13): „funktional, mit offener Label-Frage".
+> ML quality filter (meta-labeling) on top of the classic support-resistance strategy — **grade B−** (Report 16, rank 3): conceptually the cleanest ML setup in the fleet, small but healthy and positively calibrated; core verdict (Report 13): "functional, with an open label question".
 
-## 1. Steckbrief
+## 1. Fact sheet
 
-| Feld | Inhalt |
+| Field | Content |
 |---|---|
 | Bot | `9_ai_sr_bot.py` |
-| Artefakte | `trade_success_xgb_LONG_v2.json` / `trade_success_xgb_SHORT_v2.json` — **bewiesen: v2 = reine Formatkonvertierung von v1** via `core/update_model.py` (Booster-Vergleich: alle 100 Bäume bit-identisch, 38 Features, LONG+SHORT; Report 13) |
-| Trainer | `legacy_trainers/X9-SR-ANALYZER-Schritt1.py` (v1) + `core/update_model.py` (Konvertierung). Status: Provenienz **geklärt/bewiesen**, aber Konvertierung/Training nicht versioniert (P1); Alt-Trainer `X9-SR-ANALYZER.py` (random Split) als deprecated markieren. Achtung: `core/update_model.py:35` überschreibt `.pkl`/`.joblib` in-place (P1.35) |
-| Label | `success = status in ['SL1','SL2','SL3','4']` (Schritt1:157) — vermutlich „Trailing-SL nach TPn = Win"; **falls `SL1` in `closed_trades3` „SL vor TP1" bedeutet, ist das Label teilinvertiert → klären!** (Report 13, P2) |
-| Features | 38, Parität Bot↔Modell exakt (JSON-verifiziert). Mängel: rohe Preisspalten als Features (Skalen-Leakage-Geruch), 1h-Look-ahead im Trainings-Join (Schritt1:56-61), Median-Imputation über Gesamtdatensatz vs. live rohe NaN |
-| Thresholds | Shadow-Log-Inkonsistenz: Kommentar 0.45 vs. Code 0.35 (`9:285-299`); Minimal-Insert schreibt NULL time/direction/entry |
-| Channel/Exits | Publiziert TP1–3 (Cornix), Monitor scored aber bis 10–20 Targets → Live-Statistik ≠ Cornix-Realität (P2.31 ✔, targets_hit bis 21) |
-| Konzept | Kein Signalgeber, sondern Meta-Labeling nach Lopez de Prado: wohldefinierte Event-Population, Features zum Event-Zeitpunkt, Label = echtes Trade-Ergebnis derselben Strategie → strukturell kleinste Train/Live-Lücke der Flotte; Schritt1-Split chronologisch korrekt |
+| Artifacts | `trade_success_xgb_LONG_v2.json` / `trade_success_xgb_SHORT_v2.json` — **proven: v2 = pure format conversion of v1** via `core/update_model.py` (booster comparison: all 100 trees bit-identical, 38 features, LONG+SHORT; Report 13) |
+| Trainer | `legacy_trainers/X9-SR-ANALYZER-Schritt1.py` (v1) + `core/update_model.py` (conversion). Status: provenance **clarified/proven**, but conversion/training not versioned (P1); mark the old trainer `X9-SR-ANALYZER.py` (random split) as deprecated. Caution: `core/update_model.py:35` overwrites `.pkl`/`.joblib` in place (P1.35) |
+| Label | `success = status in ['SL1','SL2','SL3','4']` (Schritt1:157) — presumably "trailing SL after TPn = win"; **if `SL1` means "SL before TP1" in `closed_trades3`, the label is partially inverted → needs clarifying!** (Report 13, P2) |
+| Features | 38, parity bot↔model exact (JSON-verified). Deficiencies: raw price columns as features (scale-leakage smell), 1h lookahead in the training join (Schritt1:56-61), median imputation over the whole dataset vs. raw NaN live |
+| Thresholds | Shadow-log inconsistency: comment 0.45 vs. code 0.35 (`9:285-299`); minimal insert writes NULL time/direction/entry |
+| Channel/exits | Publishes TP1–3 (Cornix), monitor scores up to 10–20 targets → live statistics ≠ Cornix reality (P2.31 ✔, targets_hit up to 21) |
+| Concept | Not a signal generator but meta-labeling per Lopez de Prado: well-defined event population, features at event time, label = real trade outcome of the same strategy → structurally the smallest train/live gap in the fleet; Schritt1 split is chronologically correct |
 
-## 2. Live-Bilanz (aktive Ära 24.02.–03.07., dedupliziert; Report 14/Step 2)¹
+## 2. Live balance (active era 24.02.–03.07., deduplicated; Report 14/Step 2)¹
 
-- **n = 396 · WR 69,9% · ø +0,44%/Trade · Median +1,12% · Σ netto +134 Preis-%** — „gesund, klein"; einziger der vier AI-Bots (SRA1/ABR1/ATB1/AIM1) mit positivem Median.
-- **Kalibrierung: positiv ✓** (Step 2, conf→win) — SRA1 gehört mit TD_1H, MIS1-8H und QM zu den wenigen echt kalibrierten Modellen der Flotte.
-- Richtungssplit/Monatstrend: in den Reports nicht separat ausgewiesen (n klein).
+- **n = 396 · WR 69.9% · avg +0.44%/trade · median +1.12% · Σ net +134 price-%** — "healthy, small"; the only one of the four AI bots (SRA1/ABR1/ATB1/AIM1) with a positive median.
+- **Calibration: positive ✓** (Step 2, conf→win) — SRA1 belongs, along with TD_1H, MIS1-8H and QM, to the few genuinely calibrated models in the fleet.
+- Direction split/monthly trend: not reported separately in the reports (n small).
 
-¹ *Monitor-Vorbehalt (Report 17): Alle Zahlen sind monitor-generiert; das Monitor-Scoring stimmt nur zu 63,4% mit einem First-Touch-Replay überein (17,8% verpasste TP1, 18,8% TP1 trotz SL-zuerst). AI-Trades sind zudem rückwirkend nicht replaybar, weil `ai_signals`-Rows beim Close gelöscht werden (N4).*
+¹ *Monitor caveat (Report 17): all figures are monitor-generated; monitor scoring agrees with a first-touch replay only 63.4% of the time (17.8% missed TP1, 18.8% TP1 despite SL-first). AI trades are also not retroactively replayable, because `ai_signals` rows are deleted on close (N4).*
 
-## 3. Befunde (konsolidiert)
+## 3. Findings (consolidated)
 
-| ID | Ebene | Schweregrad | Einzeiler | Status |
+| ID | Level | Severity | One-liner | Status |
 |---|---|---|---|---|
-| P1.20 | Bot | P1 | Bedingt fehlende ATR-Features → 35 statt 38 Spalten → predict wirft → ganze Iteration bricht, Rollback verwirft Shadow-Inserts; Crash-Loop alle 300s für 60 min (`9:135-143,268-305`) | ✔ (code-belegt, Report 13) |
-| P2.30 | Bot/Daten | P2 | Loggt `posted=True` auch wenn Cooldown den Post unterdrückt hat → Phantom-Posts in der Performance-Auswertung (`9:163-164,278-283`) | ~ (offen, [DB]) |
-| P2.29 | Core | P2 | `get_hvn_and_sr_levels` liest 95d **ohne ORDER BY** (von SRA1 für SL/TP genutzt!) → Phantom-Extrema als SL/TP-Preise; Fix = 1 Zeile | ~ (offen, [DB]) |
-| 06-M | Bot | Mittel | Forming-Candle-Indikator-Zeile + bis 60 min stale Entry als „CMP Entry" gepostet (`9:54-74,154-188,244-253`) | ✔ (R1 live bewiesen) |
-| 13-P2a | Trainer | P2 | Label-Semantik `SL1/SL2/SL3/4` unverifiziert — Inversionsrisiko | ~ (klären!) |
-| 13-P2b | Trainer | P2 | 1h-Look-ahead im Trainings-Join (open_time-keyed Kerze enthält Zukunft bis +1h) | ✔ (code-belegt) |
-| 13-P1 | Trainer | P1 | Training/Konvertierung nicht versioniert (3-Zeilen-Skript + meta.json fehlen) | ✔ |
-| P2.31 | Monitor | P2 | Subscriber sehen TP1–3, Monitor scored bis 10–20 Targets | ✔ (Step 2: targets_hit bis 21) |
-| 06-L | Bot | Niedrig | Shadow-Threshold Kommentar 0.45 vs. Code 0.35; Minimal-Insert mit NULL-Feldern | ✔ |
+| P1.20 | Bot | P1 | Conditionally missing ATR features → 35 instead of 38 columns → predict throws → whole iteration crashes, rollback discards shadow inserts; crash loop every 300s for 60 min (`9:135-143,268-305`) | ✔ (code-proven, Report 13) |
+| P2.30 | Bot/Data | P2 | Logs `posted=True` even when cooldown suppressed the post → phantom posts in the performance evaluation (`9:163-164,278-283`) | ~ (open, [DB]) |
+| P2.29 | Core | P2 | `get_hvn_and_sr_levels` reads 95d **without ORDER BY** (used by SRA1 for SL/TP!) → phantom extrema as SL/TP prices; fix = 1 line | ~ (open, [DB]) |
+| 06-M | Bot | Medium | Forming-candle indicator row + entry posted as "CMP entry" while up to 60 min stale (`9:54-74,154-188,244-253`) | ✔ (R1 proven live) |
+| 13-P2a | Trainer | P2 | Label semantics `SL1/SL2/SL3/4` unverified — inversion risk | ~ (needs clarifying) |
+| 13-P2b | Trainer | P2 | 1h lookahead in the training join (open_time-keyed candle contains future up to +1h) | ✔ (code-proven) |
+| 13-P1 | Trainer | P1 | Training/conversion not versioned (3-line script + meta.json missing) | ✔ |
+| P2.31 | Monitor | P2 | Subscribers see TP1–3, monitor scores up to 10–20 targets | ✔ (Step 2: targets_hit up to 21) |
+| 06-L | Bot | Low | Shadow threshold comment 0.45 vs. code 0.35; minimal insert with NULL fields | ✔ |
 
-## 4. Abhängigkeiten & Querschnitts-Risiken
+## 4. Dependencies & cross-cutting risks
 
-- **R1 (Forming Candle, live bewiesen):** SRA1 ist explizit als betroffen gelistet — Features/Entry auf der laufenden Kerze; jedes Retrain vor dem R1-Fix trainiert erneut auf Daten, die es live nicht gibt.
-- **R3 (TZ-Mix):** Session-TZ Europe/Bucharest, naive Spalten gemischt UTC/lokal — betrifft Cooldown-/Statistik-Fenster.
-- **X-R1 (Label ≠ Live-Geometrie):** bei SRA1 am schwächsten ausgeprägt (Label = echtes Strategie-Outcome), aber Label-Semantik offen; **X-R4:** Confidence unkalibriert kommuniziert (SRA1 immerhin empirisch positiv kalibriert); **X-R6:** Serving auf Forming Candle.
-- Abhängig von der Classic-Strategie „Support Resistance" (B−, +596, SHORT trägt alles) als Event-Quelle und von `core/trade_utils` (P2.29) für die SL/TP-Konstruktion — Report 16: die S/R-Trade-Konstruktion ist der „heimliche Star" und plausibel die eigentliche Ertragsquelle.
+- **R1 (forming candle, proven live):** SRA1 is explicitly listed as affected — features/entry on the running candle; every retrain before the R1 fix trains again on data it does not have live.
+- **R3 (TZ mix):** session TZ Europe/Bucharest, naive columns mixed UTC/local — affects cooldown/statistics windows.
+- **X-R1 (label ≠ live geometry):** weakest at SRA1 (label = real strategy outcome), but the label semantics are open; **X-R4:** confidence communicated uncalibrated (SRA1 at least empirically positively calibrated); **X-R6:** serving on forming candle.
+- Depends on the classic strategy "Support Resistance" (B−, +596, SHORT carries everything) as the event source, and on `core/trade_utils` (P2.29) for the SL/TP construction — Report 16: the S/R trade construction is the "secret star" and plausibly the actual source of profit.
 
-## 5. Sanierungsplan
+## 5. Remediation plan
 
-**a) Sofort (ohne Retrain):**
-1. **ATR-Emit-Fix:** ATR-Features immer emittieren (als NaN — XGB kann NaN) + reindex-Guard + per-Trade try/except → killt den 300s-Crash-Loop (P1.20; Report 13 Sofortmaßnahme 3).
-2. `ORDER BY open_time ASC` in `get_hvn_and_sr_levels` (P2.29, eine Zeile).
-3. `posted`-Rückgabe als bool fixen (P2.30); exakt die publizierten Targets speichern (P2.31).
+**a) Immediately (no retrain):**
+1. **ATR-emit fix:** always emit ATR features (as NaN — XGB can handle NaN) + reindex guard + per-trade try/except → kills the 300s crash loop (P1.20; Report 13 immediate measure 3).
+2. `ORDER BY open_time ASC` in `get_hvn_and_sr_levels` (P2.29, one line).
+3. Fix the `posted` return value as a bool (P2.30); store exactly the published targets (P2.31).
 
-**b) Retrain/Umbau (Report 13/16: bester Retrain-Kandidat der vier, weil Fundament stimmt — aber in der Reihenfolge zuletzt, da funktional am gesündesten):**
-- Erst Label verifizieren, dann Retrain nach dem gemeinsamen Gerüst: versionierter Trainer + meta.json, First-Touch-Label der echten Geometrie, nur geschlossene Kerzen (R1-Fix zuerst), rohe Preisfeatures raus, Isotonic-Kalibrierung, Startup-Assertion „kein Feature konstant".
+**b) Retrain/rebuild (Report 13/16: best retrain candidate of the four, because the foundation is sound — but last in the order, since it is functionally the healthiest):**
+- Verify the label first, then retrain following the shared blueprint: versioned trainer + meta.json, first-touch label of the real geometry, closed candles only (R1 fix first), remove raw price features, isotonic calibration, startup assertion "no feature constant".
 
-**c) Offene Fragen:**
-- **SL1/SL2/SL3-Label-Semantik!** Gegen `closed_trades3`-Statuscodes verifizieren — falls `SL1` = „SL vor TP1", ist das Trainingslabel teilinvertiert (wichtigste offene Frage der Familie).
-- Phantom-Post-Quote (P2.30) und SL/TP-Anomalien aus P2.29 per DB-Join quantifizieren.
+**c) Open questions:**
+- **SL1/SL2/SL3 label semantics!** Verify against `closed_trades3` status codes — if `SL1` means "SL before TP1", the training label is partially inverted (the most important open question for the family).
+- Quantify the phantom-post rate (P2.30) and the SL/TP anomalies from P2.29 via DB join.
 
-## 6. Belege
+## 6. Evidence
 
-- `AUDIT_TODO.md` P1.20, P2.29–P2.31 · `audit_reports/06_ai_bots_a.md` (SRA1-Bot-Findings) · `audit_reports/13_x_ml_trainers.md` (SRA1-Abschnitt: v2=v1-Beweis, Label-Frage, Maßnahmen) · `audit_reports/14_bot_performance_db.md` (n=396, +134) · `audit_reports/STEP2_DB_VERIFICATION.md` (Kalibrierung positiv, targets_hit bis 21, R1-Beweis) · `audit_reports/16_strategy_concept_evaluation.md` (Note B−, Abschnitt 5) · `audit_reports/17_monitor_replay_and_gaps.md` (Monitor-Vorbehalt, N4).
+- `AUDIT_TODO.md` P1.20, P2.29–P2.31 · `audit_reports/06_ai_bots_a.md` (SRA1 bot findings) · `audit_reports/13_x_ml_trainers.md` (SRA1 section: v2=v1 proof, label question, measures) · `audit_reports/14_bot_performance_db.md` (n=396, +134) · `audit_reports/STEP2_DB_VERIFICATION.md` (calibration positive, targets_hit up to 21, R1 proof) · `audit_reports/16_strategy_concept_evaluation.md` (grade B−, section 5) · `audit_reports/17_monitor_replay_and_gaps.md` (monitor caveat, N4).

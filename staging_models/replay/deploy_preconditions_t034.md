@@ -1,76 +1,76 @@
-# Deploy-Voraussetzungen für T-033 — Umsetzungs-/Befundreport (T-2026-KYT-9050-034)
+# Deploy preconditions for T-033 — implementation/findings report (T-2026-KYT-9050-034)
 
-_generated 2026-07-23 · INTERAKTIVE Session (Operator Michi live) · CODE + Staging-Artefakte · KEIN Deploy/Restart/env-Flip · DB strikt read-only (`set_session(readonly=True)`, nur SELECTs) · KEIN Artefakt-Root-Move (Hard Rule 2) · Basis: `staging_models/replay/fleet_reconfig_t033.md` §3/§5_
+_generated 2026-07-23 · INTERACTIVE session (operator Michi live) · code + staging artifacts · NO deploy/restart/env flip · DB strictly read-only (`set_session(readonly=True)`, only SELECTs) · NO artifact root move (hard rule 2) · basis: `staging_models/replay/fleet_reconfig_t033.md` §3/§5_
 
-## 0. Kernbefund (für Michi)
+## 0. Core finding (for Michi)
 
-Die drei aus T-033 geflaggten Deploy-Vorbedingungen wurden read-only durchleuchtet (alle DB-Zugriffe `set_session(readonly=True)`, nur SELECTs). Ergebnis:
-- **Paket 3 (EPD3-Staging): erledigt** (nach staging kopiert, Loader verifiziert).
-- **Paket 2 (SRA2-SHORT): Diagnose korrigiert — der Leg ist ungegatet PROFITABEL (+1.06 %/Trade, 232 Trades).** Die T-033-„Flood-Hazard"-Sorge verwechselte Volumen mit Unprofitabilität; ein Threshold ist weder nötig noch aus den Daten bestimmbar. → deploybar, offene Frage ist Volumen-Toleranz.
-- **Paket 1 (MIS1): REVIVED (Code fertig, Operator-Entscheid Michi).** Kein Retrain — die MIS1-Generation wird EXAKT wiederhergestellt: Bot 11 lädt die unveränderten `pump_model_*_final.pkl` (+ `threshold_*_final.pkl`) wieder, gefüttert über den include_legacy-Superset. Die guten Beine (MIS1-24H/72H/168H LONG + MIS1-8H SHORT) sind Default-LIVE, die schwachen SHADOW-geparkt. Greift bei Michis nächstem Fleet-Restart.
+The three deploy preconditions flagged by T-033 were examined read-only (all DB access `set_session(readonly=True)`, only SELECTs). Result:
+- **Package 3 (EPD3 staging): done** (copied to staging, loader verified).
+- **Package 2 (SRA2-SHORT): diagnosis corrected — the leg is UNGATED PROFITABLE (+1.06%/trade, 232 trades).** The T-033 "flood hazard" concern confused volume with unprofitability; a threshold is neither needed nor determinable from the data. → deployable, the open question is volume tolerance.
+- **Package 1 (MIS1): REVIVED (code done, operator decision Michi).** No retrain — the MIS1 generation is restored EXACTLY: bot 11 reloads the unchanged `pump_model_*_final.pkl` (+ `threshold_*_final.pkl`), fed through the include_legacy superset. The good legs (MIS1-24H/72H/168H LONG + MIS1-8H SHORT) are default LIVE, the weak ones parked SHADOW. Takes effect at Michi's next fleet restart.
 
-## 1. Paket 3 — EPD3-SHORT-Staging ✅ ERLEDIGT
+## 1. Package 3 — EPD3-SHORT staging ✅ DONE
 
-- **Fix:** `epd3_model_SHORT.pkl` (Root) → `staging_models/epd3_model_SHORT.pkl` kopiert (staging erlaubt, Hard Rule 2 gated nur Root).
-- **Verifiziert:** `shadow_gate.load_shadow_artifact("EPD3","SHORT")` lädt jetzt (dict, 16 Features, threshold 0.6737). Vorher: EPD3-SHORT-Park war stille Silence, weil der SHADOW-Loader `staging_models/epd3_model_SHORT.pkl` las (fehlte). Jetzt echte Shadow-Historie in `closed_ai_signals`.
-- Kein Root-Move, kein Restart nötig (der Bot lädt beim nächsten regulären Restart/Reload).
+- **Fix:** `epd3_model_SHORT.pkl` (root) → copied to `staging_models/epd3_model_SHORT.pkl` (staging is allowed, hard rule 2 only gates root).
+- **Verified:** `shadow_gate.load_shadow_artifact("EPD3","SHORT")` now loads (dict, 16 features, threshold 0.6737). Before: the EPD3-SHORT park was silently dead because the SHADOW loader read `staging_models/epd3_model_SHORT.pkl` (missing). Now there is real shadow history in `closed_ai_signals`.
+- No root move, no restart needed (the bot loads at the next regular restart/reload).
 
-## 2b. Paket 1 — MIS1-Revive: UMGESETZT (exakte Restauration, kein Retrain)
+## 2b. Package 1 — MIS1 revive: IMPLEMENTED (exact restoration, no retrain)
 
-**Operator-Entscheid Michi (2. Runde):** MIS1 mit seiner Erfolgsrate GENAU wiederherstellen. Die Artefakte waren nie weg (`pump_model_*_final.pkl` + `threshold_*_final.pkl` im Repo-Root), und der alte Bot-11-Ladepfad steckt in der Git-Historie (`99e9de3^`). Kein Retrain nötig.
+**Operator decision Michi (round 2):** restore MIS1 EXACTLY at its win rate. The artifacts were never gone (`pump_model_*_final.pkl` + `threshold_*_final.pkl` in the repo root), and the old bot-11 load path lives in git history (`99e9de3^`). No retrain needed.
 
-**Umgesetzt (Bot 11 + shadow_gate):**
-- Bot 11 lädt die 8 MIS1-Modelle wieder (`load_mis1_models`), PARALLEL zu MIS2 unter eigenen Tags `MIS1-*`. Feature-Feed über `add_advanced_features(include_legacy=True)` — der Superset (71 Spalten) deckt die 67 MIS1-Features exakt (verifiziert 0 missing über alle 8) UND die 63 sauberen MIS2-Features (additiv-neutral, EIN Feature-Build pro Coin, kein doppelter DB-Read).
-- Geometrie generations-treu: `_mis_geometry` gibt MIS1 `calculate_smart_targets` für BEIDE Richtungen (immediate CMP-Entry) — exakt der Pfad, der die Audit-Erfolgsrate produziert hat; MIS2-SHORT behält seine DUMP_RULES-Bracket. MIS2-Emit byte-neutral (geteilter `_post_mis_live_leg`-Helper, MIS2-Tests grün).
-- Lifecycle im shadow_gate-Register: MIS1 aus `_RETIRED_TAGS` entfernt; gute Beine Default-LIVE (MIS1-24H/72H/168H LONG + MIS1-8H SHORT), schwache SHADOW (MIS1-8H LONG + MIS1-24H/72H/168H SHORT). Pro (Horizont, Richtung) genau EINE live Generation → kein Cornix-Doppel-Post; MIS1 belebt genau die von T-033 geparkten MIS2-Beine.
+**Implemented (bot 11 + shadow_gate):**
+- Bot 11 loads the 8 MIS1 models again (`load_mis1_models`), IN PARALLEL with MIS2 under their own tags `MIS1-*`. Feature feed via `add_advanced_features(include_legacy=True)` — the superset (71 columns) covers the 67 MIS1 features exactly (verified 0 missing across all 8) AND the 63 clean MIS2 features (additively neutral, ONE feature build per coin, no duplicate DB read).
+- Geometry stays generation-faithful: `_mis_geometry` gives MIS1 `calculate_smart_targets` for BOTH directions (immediate CMP entry) — exactly the path that produced the audited win rate; MIS2-SHORT keeps its DUMP_RULES bracket. MIS2 emission stays byte-neutral (shared `_post_mis_live_leg` helper, MIS2 tests green).
+- Lifecycle in the shadow_gate register: MIS1 removed from `_RETIRED_TAGS`; good legs default LIVE (MIS1-24H/72H/168H LONG + MIS1-8H SHORT), weak ones SHADOW (MIS1-8H LONG + MIS1-24H/72H/168H SHORT). Exactly ONE live generation per (horizon, direction) → no Cornix double post; MIS1 revives exactly the MIS2 legs parked by T-033.
 
-**Zwei Pflicht-Abweichungen von der alten Fidelity (harte Regeln, bewusst NICHT reproduziert):** (1) die alte HTML-Message bettete den Cornix-Block ein = Doppel-Post-Bug (Regel 4, gefixt 2026-07-06) → gefixte HTML; (2) alte MIS1 speicherte volle Targets statt `[:5]` (P2.31-Monitor-Phantom-TP-Bug) → `[:5]`. **Caveat:** `calculate_smart_targets` wurde seit der MIS1-Ära auf `core.candles` umverdrahtet (5856bc6) — funktional gleich, nicht garantiert byte-identisch; es ist dieselbe Funktion, die die Fleet heute nutzt.
+**Two mandatory deviations from the old fidelity (hard rules, deliberately NOT reproduced):** (1) the old HTML message embedded the Cornix block = double-post bug (rule 4, fixed 2026-07-06) → fixed HTML; (2) old MIS1 stored full targets instead of `[:5]` (P2.31 monitor phantom-TP bug) → `[:5]`. **Caveat:** `calculate_smart_targets` was rewired to `core.candles` since the MIS1 era (5856bc6) — functionally equivalent, not guaranteed byte-identical; it is the same function the fleet uses today.
 
-**Tests (DB-frei):** `backtest/test_mis1_revive.py` (Load + Threshold + 67-Feature-Coverage + Geometrie-Verzweigung), `test_shadow_gate.py::test_mis1_revive_lifecycle`, `test_mis_tag.py` an den geteilten Prozessor angepasst. ruff + mypy clean. Deploy = Michis Fleet-Restart.
+**Tests (DB-free):** `backtest/test_mis1_revive.py` (load + threshold + 67-feature coverage + geometry branching), `test_shadow_gate.py::test_mis1_revive_lifecycle`, `test_mis_tag.py` adapted to the shared processor. ruff + mypy clean. Deploy = Michi's fleet restart.
 
-## 2. (Vorbefund) Warum MIS1 als reiner Retrain NICHT ging
+## 2. (Prior finding) Why MIS1 as a pure retrain did NOT work
 
-**Feature-Kompatibilitäts-Prüfung (DB-frei, alle 8 Artefakte):** Die MIS1-`pump_model_*_final.pkl` sind nackte `XGBClassifier` mit **67 Features** und konsumieren je **alle 8 Leakage-Spalten** (`atr_14` roh, `macd_hist` roh, `macd_dif_delta_1`, `macd_hist_delta_1` + die 4 „Unfall"-Features `boll_upper/lower/ema_200_dist_atr_dist_pct`, `ema_9_cross_above_21_dist_pct`) = exakt die Preisklassen-Leakage aus Report 13-P1 (`core.mis_features.LEGACY_ONLY_COLS`).
+**Feature compatibility check (DB-free, all 8 artifacts):** The MIS1 `pump_model_*_final.pkl` are bare `XGBClassifier`s with **67 features** and each consume all **8 leakage columns** (`atr_14` raw, `macd_hist` raw, `macd_dif_delta_1`, `macd_hist_delta_1` plus the 4 "accident" features `boll_upper/lower/ema_200_dist_atr_dist_pct`, `ema_9_cross_above_21_dist_pct`) = exactly the price-class leakage from Report 13-P1 (`core.mis_features.LEGACY_ONLY_COLS`).
 
-| Artefakt (alle 8) | n_features | Typ | fehlt vs. sauberem Builder | nutzt Leakage-Spalten |
+| Artifact (all 8) | n_features | Type | Missing vs. clean builder | Uses leakage columns |
 |---|---|---|---|---|
 | pump_model_{8,24,72,168}h_{pump,dump}_final.pkl | 67 | XGBClassifier | 8 | 8 |
 
-Der aktuelle Builder (`core/mis_features.py`, `include_legacy=False`) liefert nur die 63 sauberen Features → der P0.12-Selfcheck in Bot 11 würde jedes MIS1-Modell **entladen**. Ein Wiring mit `include_legacy=True` hieße, Leakage-Modelle live posten zu lassen — genau was der Selfcheck verhindert (= „Fake", Task-Brief).
+The current builder (`core/mis_features.py`, `include_legacy=False`) only delivers the 63 clean features → the P0.12 self-check in bot 11 would **unload** every MIS1 model. Wiring with `include_legacy=True` would mean letting leakage models post live — exactly what the self-check prevents (= "fake", per the task brief).
 
-**Warum ein sauberer Retrain ≠ MIS1-Revive:** Die saubere MIS-Pipeline (`tools/mis1_move_labels.py` → `tools/retrain_from_replay.py --strategy mis1 --label-mode move`) ist **exakt die Pipeline, die MIS2 erzeugt hat** — dasselbe ±X%-Move-Label-Konzept (8h±5% / 24h±10% / 72h±15% / 168h±25%). Der einzige Unterschied MIS1→MIS2 war der Leakage-Feature-Cleanup. Ein sauberer „MIS1"-Retrain **reproduziert MIS2** (existiert bereits, realisiert laut Audit T-032 schlechter). Der „MIS1 besser"-Edge lebte in den Leakage-Features → **sauber nicht rekonstruierbar.**
+**Why a clean retrain ≠ MIS1 revive:** The clean MIS pipeline (`tools/mis1_move_labels.py` → `tools/retrain_from_replay.py --strategy mis1 --label-mode move`) is **exactly the pipeline that produced MIS2** — the same ±X% move-label concept (8h±5% / 24h±10% / 72h±15% / 168h±25%). The only difference MIS1→MIS2 was the leakage-feature cleanup. A clean "MIS1" retrain **reproduces MIS2** (already exists, per the audit T-032 performs worse). The "MIS1 better" edge lived in the leakage features → **not reconstructable cleanly.**
 
-**Operator-Entscheid:** „frischen MIS2-Move-Retrain laufen, jetzt starten (BELOW_NORMAL)". **Blocker (bestätigt):** kein aktuelles MIS-Replay-Artefakt in `staging_models/replay/`; die vorhandenen (`_X/…/mis1_replay_{400,540}d.jsonl`, `mis1_move_labels.jsonl`) sind **vom 5. Juli** → ein Retrain darauf reproduziert deterministisch die aktuellen MIS2-Root-Artefakte (kein Mehrwert). Ein echt frischer MIS2 braucht eine **Replay-Neugenerierung (`walkforward_sim --strategy mis1`)**. Der Job wurde detached/low-prio gestartet und **brach sich SELBST ab**: `ABBRUCH: System-CPU bei 100% (> 90%) — Fleet nicht zusätzlich belasten` (`MAX_CPU_AT_START=90.0`). Die VPS ist aktuell voll saturiert → der Replay ist **jetzt nicht lauffähig**; er braucht ein ruhiges CPU-Fenster (nachts / nach CPU-Entlastung). Follow-up-Task, siehe §4.
+**Operator decision:** "run a fresh MIS2 move retrain, start now (BELOW_NORMAL)". **Blocker (confirmed):** no current MIS replay artifact in `staging_models/replay/`; the existing ones (`_X/…/mis1_replay_{400,540}d.jsonl`, `mis1_move_labels.jsonl`) are **from July 5th** → a retrain on those deterministically reproduces the current MIS2 root artifacts (no added value). A genuinely fresh MIS2 needs a **replay regeneration (`walkforward_sim --strategy mis1`)**. The job was started detached/low-prio and **aborted itself**: `ABBRUCH: System-CPU bei 100% (> 90%) — Fleet nicht zusätzlich belasten` (`MAX_CPU_AT_START=90.0`). The VPS is currently fully saturated → the replay is **not runnable right now**; it needs a quiet CPU window (at night / after CPU relief). Follow-up task, see §4.
 
-## 3. Paket 2 — SRA2-SHORT: die „Flood-Hazard"-Diagnose war falsch — der Leg ist ungegatet PROFITABEL
+## 3. Package 2 — SRA2-SHORT: the "flood hazard" diagnosis was wrong — the leg is ungated PROFITABLE
 
-**Warum ein Retrain/Threshold der falsche Hebel ist (Datenlage, read-only DB):**
-- Alte Labelquelle `closed_trades3`: **tot seit 2026-02-23** (0 Trades in 60d) → `retrain_sra2.py` straight reproduziert das null-Threshold-Modell (val −0.079% ist ein **Feb-Regime-Proxy**, nicht die Realität).
-- Retrain auf frischer Quelle `closed_ai_signals` (Operator-Entscheid „Guard senken"): SRA2-only 232 Trades / 8-Tage-Fenster → Val zu dünn; pooled SRA1+SRA2 641 → `pick_threshold_safe`=**None**. **Grund:** die Basisrate ist bereits **90 % WR / +1.06 %/Trade** — ein Prob-Threshold kann das nicht schlagen und die 8-Tage-Historie trägt keinen robusten Split. Ein Threshold ist hier **nicht nötig und nicht bestimmbar.**
+**Why a retrain/threshold is the wrong lever (data situation, read-only DB):**
+- Old label source `closed_trades3`: **dead since 2026-02-23** (0 trades in 60d) → `retrain_sra2.py` straight-up reproduces the null-threshold model (val −0.079% is a **Feb-regime proxy**, not reality).
+- Retrain on the fresh source `closed_ai_signals` (operator decision "lower the guard"): SRA2-only 232 trades / 8-day window → val too thin; pooled SRA1+SRA2 641 → `pick_threshold_safe`=**None**. **Reason:** the base rate is already **90% WR / +1.06%/trade** — a prob threshold cannot beat that and the 8-day history does not carry a robust split. A threshold here is **neither needed nor determinable.**
 
-**Der entscheidende Befund (realized Shadow-Historie, `closed_ai_signals`, net = (entry−close)/entry − 0.10 % Fees, deckt sich mit Audit „+1.00 %×222"):**
+**The decisive finding (realized shadow history, `closed_ai_signals`, net = (entry−close)/entry − 0.10% fees, matches the audit "+1.00%×222"):**
 
-| SRA2-SHORT-Filter | n | WR | Ø-net/Trade | Σ-net |
+| SRA2-SHORT filter | n | WR | avg net/trade | Σ net |
 |---|---|---|---|---|
-| **KEIN Gate (post jeden Kandidaten)** | 232 | 90.5 % | **+1.057 %** | +245 % |
-| fund_24h ≤ 0 | 44 | 95.5 % | +1.423 % | +63 % |
-| fund_24h ≤ +1.5 | 204 | 91.2 % | +1.048 % | +214 % |
-| fund_24h ∈ [+1.5,+3) (ABR-„Veto-Zone") | 15 | 86.7 % | +1.498 % | +23 % |
+| **NO gate (post every candidate)** | 232 | 90.5% | **+1.057%** | +245% |
+| fund_24h ≤ 0 | 44 | 95.5% | +1.423% | +63% |
+| fund_24h ≤ +1.5 | 204 | 91.2% | +1.048% | +214% |
+| fund_24h ∈ [+1.5,+3) (ABR "veto zone") | 15 | 86.7% | +1.498% | +23% |
 
-Der `threshold=null`-„Flood" realisiert **+1.057 %/Trade** über 232 Trades. Die T-033-Sorge „LIVE postet auf jedem Kandidaten → Cornix-Flood" verwechselte **Volumen** mit **Unprofitabilität** — der „Flood" IST der Edge. Das negative Val-Signal (−0.079 %) stammte allein aus der toten Feb-Labelquelle.
+The `threshold=null` "flood" realizes **+1.057%/trade** over 232 trades. The T-033 concern "LIVE posts on every candidate → Cornix flood" confused **volume** with **unprofitability** — the "flood" IS the edge. The negative val signal (−0.079%) came solely from the dead Feb label source.
 
-**Funding-Gate (Operator-Frage):** rettet keinen Edge (der ist da), trimmt nur **Volumen**. `fund_24h≤0` hebt auf +1.42 %, schneidet aber auf 44/232. Die ABR-„SHORT-Veto"-Zone (fund>+1.5 bps) ist bei SRA2-SHORT **positiv** (+1.5 %) → das ABR-Veto gilt hier NICHT. Der Edge ist über alle Funding-Zonen breit positiv.
+**Funding gate (operator question):** does not save any edge (it's already there), only trims **volume**. `fund_24h≤0` lifts it to +1.42%, but cuts to 44/232. The ABR "SHORT veto" zone (fund>+1.5 bps) is **positive** for SRA2-SHORT (+1.5%) → the ABR veto does NOT apply here. The edge is broadly positive across all funding zones.
 
-**Konsequenz / Empfehlung:** SRA2-SHORT ist **deploybar** — es braucht KEINEN Threshold, weil das rohe Signal +1.06 %/Trade realisiert. Das einzige echte Thema ist **Volumen** (~29 Posts/Tag ungegatet) für den Cornix-Channel — eine Operator-Toleranz-Entscheidung, kein Code-/Modell-Defekt. Optionen: (a) ungegatet nach Root promoten (Michi, Hard Rule 2) und Volumen akzeptieren; (b) optionales, additives Funding-/Volumen-Gate im Bot-9-SRA2-SHORT-Emit als reine Volumen-Bremse (eigener kleiner Code-Task — NICHT edge-notwendig).
+**Conclusion/recommendation:** SRA2-SHORT is **deployable** — it needs NO threshold, because the raw signal realizes +1.06%/trade. The only real remaining topic is **volume** (~29 posts/day ungated) for the Cornix channel — an operator tolerance decision, not a code/model defect. Options: (a) promote ungated to root (Michi, hard rule 2) and accept the volume; (b) an optional additive funding/volume gate in the bot-9 SRA2-SHORT emit as a pure volume brake (its own small code task — NOT edge-necessary).
 
-## 4. Offene Operator-Entscheidungen (Michi-gegatet)
+## 4. Open operator decisions (Michi-gated)
 
-1. **MIS1-Revive (Code fertig, §2b):** greift erst nach `tools/restart_fleet.ps1` / Watchdog-Restart (Michi). Nach dem Restart im Log prüfen: `✅ 8/8 MIS1-Modelle (Revive) loaded` + `n MIS2 + 8 MIS1 Modelle kompatibel` (Selfcheck). Die MIS1-Live-Beine posten dann nach den MIS_CHANNELS.
-2. **SRA2-SHORT-Promotion (deploybar!):** kein Threshold nötig (+1.06 %/Trade ungegatet). Entscheidung ist **Volumen-Toleranz** (~29 Posts/Tag): (a) `sra2_model_SHORT.json` nach Root promoten und ungegatet live nehmen; ODER (b) optionales additives Funding-/Volumen-Gate im Bot-9-Emit (eigener kleiner Code-Task). Root-Move = Michi (Hard Rule 2).
-3. **MIS2 daneben:** MIS2 läuft unverändert weiter (die MIS1-Live-Beine belegen genau die von T-033 geparkten MIS2-Beine; MIS2-SHORT 24/72/168 bleibt live). Ein optionaler frischer MIS2-Move-Retrain (Replay-Regen, braucht ruhiges CPU-Fenster — der Job brach bei CPU 100 % selbst ab) ist NICHT mehr nötig für den MIS1-Revive; nur falls du MIS2 separat auffrischen willst.
+1. **MIS1 revive (code done, §2b):** takes effect only after `tools/restart_fleet.ps1` / watchdog restart (Michi). After the restart, check the log for: `✅ 8/8 MIS1-Modelle (Revive) loaded` + `n MIS2 + 8 MIS1 Modelle kompatibel` (self-check). The MIS1 live legs then post to the MIS_CHANNELS.
+2. **SRA2-SHORT promotion (deployable!):** no threshold needed (+1.06%/trade ungated). The decision is **volume tolerance** (~29 posts/day): (a) promote `sra2_model_SHORT.json` to root and go live ungated; OR (b) an optional additive funding/volume gate in the bot-9 emit (its own small code task). Root move = Michi (hard rule 2).
+3. **MIS2 alongside:** MIS2 keeps running unchanged (the MIS1 live legs occupy exactly the MIS2 legs parked by T-033; MIS2-SHORT 24/72/168 stays live). An optional fresh MIS2 move retrain (replay regen, needs a quiet CPU window — the job aborted itself at CPU 100%) is NO LONGER needed for the MIS1 revive; only if you want to refresh MIS2 separately.
 
-## 5. Sicherheitsvertrag (Regel 1/2/4)
+## 5. Safety contract (rule 1/2/4)
 
-- DB ausschließlich read-only (`set_session(readonly=True)`, nur SELECTs; DB-User `dbfiller`, aber Session read-only erzwungen).
-- Einziger Datei-Write in Repo: `staging_models/epd3_model_SHORT.pkl` (staging, erlaubt). Kein Root-Move, kein Restart, kein env-Flip.
-- Retrain-Prototypen liefen lokal (Scratchpad), schrieben KEIN Staging-Artefakt (Ergebnis nicht deploybar → nichts zu stagen).
+- DB strictly read-only (`set_session(readonly=True)`, only SELECTs; DB user `dbfiller`, but session read-only enforced).
+- Only file write in the repo: `staging_models/epd3_model_SHORT.pkl` (staging, allowed). No root move, no restart, no env flip.
+- Retrain prototypes ran locally (scratchpad), wrote NO staging artifact (result not deployable → nothing to stage).

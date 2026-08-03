@@ -1,139 +1,140 @@
-# Welches SHORT-Bein verdient einen Platz im Trailing-Channel? (T-2026-KYT-9050-062)
+# Which SHORT leg deserves a place in the trailing channel? (T-2026-KYT-9050-062)
 
-**Auftrag (Michi, 2026-08-01):** mehr Shorts für Bot 40 — erst EPD prüfen, dann MIS,
-dann TSM1; und den Maßstab reparieren, als er sich als unfair herausstellte.
+**Brief (Michi, 2026-08-01):** more shorts for bot 40 — check EPD first, then MIS,
+then TSM1; and fix the yardstick once it turned out to be unfair.
 
-**Antwort in einem Satz:** Die Kante sitzt in den **dünnen** Beinen (MIS2-Familie,
-+5,5 bis +8,1 Punkte Residuum), das Volumen in den **schlechten** (TSM1 −0,72 bei
-107 Signalen/Tag) — mehr Shorts und bessere Shorts sind hier verschiedene Ziele.
+**Answer in one sentence:** the edge sits in the **thin** legs (MIS2 family,
++5.5 to +8.1 points residual), the volume in the **bad** ones (TSM1 −0.72 at
+107 signals/day) — more shorts and better shorts are different goals here.
 
-Messfenster 2026-06-01 → 08-01. Werkzeuge: `tools/short_leg_trail_value.py` (der
-tragende Maßstab) und `tools/epd_short_generation_study.py` (Vorstufe, s. §2).
+Measurement window 2026-06-01 → 08-01. Tools: `tools/short_leg_trail_value.py` (the
+load-bearing yardstick) and `tools/epd_short_generation_study.py` (precursor, see §2).
 
 ---
 
-## 1. Zwei Maßstäbe, und warum der erste unfair war
+## 1. Two yardsticks, and why the first one was unfair
 
-Der erste Ansatz bewertete ein Bein als **realisiert − volle Index-Bewegung über das
-Haltefenster**. Das klingt nach „wie viel der Bewegung wurde eingefangen" und ist in
-einem trendenden Markt konstruktionsbedingt ungerecht: ein Take-Profit-Bein steigt bei
-TP1 aus, während der Tape weiterläuft. Über einen Zeitraum mit **−50 % Index** fiel
-damit fast jedes SHORT-Bein negativ aus — ein Ergebnis, das „schlechte Auswahl" und
-„TP kappt den Trend" nicht trennen kann.
+The first approach scored a leg as **realised − the full index move over the
+holding window**. That sounds like "how much of the move was captured" and is,
+by construction, unfair in a trending market: a take-profit leg exits at TP1
+while the tape keeps running. Over a period with a **−50% index**, that made
+almost every SHORT leg come out negative — a result that can't tell apart
+"bad selection" from "TP caps the trend".
 
-Der zweite Ansatz stellt **beide Seiten unter dieselbe Trail-Regel** (act = 2 %,
-x = 10 %):
+The second approach puts **both sides under the same trail rule**
+(act = 2%, x = 10%):
 
 | | |
 |---|---|
-| Bein | Trail auf dem eigenen Coin-Pfad = was Bot 40 beim Spiegeln verdient hätte |
-| Benchmark | derselbe Trail auf dem **Index**-Pfad über dasselbe Fenster |
-| Residuum | Bein − Benchmark |
+| Leg | trail on the coin's own price path = what bot 40 would have earned by mirroring |
+| Benchmark | the same trail on the **index** path over the same window |
+| Residual | leg − benchmark |
 
-Damit fällt die eigene TP-Politik auf beiden Seiten heraus, und Beine mit
-unterschiedlichem Exit-Stil werden vergleichbar. Der Index trägt dafür ein
-**synthetisches Hoch/Tief** (Median-Stunden-High- und -Low-Ratio) — ein Trail feuert
-auf Dochten, und ein Close-only-Benchmark hätte jedes Bein geschmeichelt.
+That takes each leg's own TP policy out on both sides, and legs with
+different exit styles become comparable. In exchange, the index carries a
+**synthetic high/low** (median hourly high and low ratio) — a trail fires
+on wicks, and a close-only benchmark would have flattered every leg.
 
 ---
 
-## 2. Ergebnis unter dem fairen Maßstab
+## 2. Result under the fair yardstick
 
-| Bein | n | Bein/Trade | Markt | **Residuum** | t_clust | Gate | Sig./Tag |
+| Leg | n | Leg/trade | Market | **Residual** | t_clust | Gate | Sig./day |
 |---|---:|---:|---:|---:|---:|---|---:|
-| MIS2-168h | 47 | 9,074 | 0,994 | **+8,081** | 8,74 | live, Roster | 0,9 |
-| MIS2-72h | 132 | 7,968 | 1,033 | **+6,934** | 9,52 | live, Roster | 6,3 |
-| MIS2-24h | 117 | 7,569 | 0,766 | **+6,802** | 4,73 | live, Roster | 2,0 |
-| MIS2-8h | 122 | 5,836 | 0,302 | **+5,534** | 3,48 | **shadow** | — |
-| MIS1-24h | 61 | 5,901 | 0,964 | **+4,937** | 3,81 | **shadow** | 3,4 |
-| MIS1-8h | 104 | 3,434 | 0,889 | +2,546 | 3,79 | live, Roster | 5,0 |
-| RUB1 | 257 | 3,595 | 1,252 | +2,343 | 3,17 | live, Roster | 8,6 |
-| MIS1-72h | 119 | 3,127 | 1,007 | +2,119 | 2,27 | **shadow** | 6,3 |
-| AIM1 | 523 | 2,874 | 1,515 | +1,359 | 5,59 | — | — |
-| ROM1 | 4 514 | 1,352 | 0,492 | +0,859 | 2,43 | **Duplikat** | 148 |
-| AIM2 | 1 643 | 1,842 | 1,156 | +0,685 | 4,95 | live, Roster | 37,7 |
+| MIS2-168h | 47 | 9.074 | 0.994 | **+8.081** | 8.74 | live, roster | 0.9 |
+| MIS2-72h | 132 | 7.968 | 1.033 | **+6.934** | 9.52 | live, roster | 6.3 |
+| MIS2-24h | 117 | 7.569 | 0.766 | **+6.802** | 4.73 | live, roster | 2.0 |
+| MIS2-8h | 122 | 5.836 | 0.302 | **+5.534** | 3.48 | **shadow** | — |
+| MIS1-24h | 61 | 5.901 | 0.964 | **+4.937** | 3.81 | **shadow** | 3.4 |
+| MIS1-8h | 104 | 3.434 | 0.889 | +2.546 | 3.79 | live, roster | 5.0 |
+| RUB1 | 257 | 3.595 | 1.252 | +2.343 | 3.17 | live, roster | 8.6 |
+| MIS1-72h | 119 | 3.127 | 1.007 | +2.119 | 2.27 | **shadow** | 6.3 |
+| AIM1 | 523 | 2.874 | 1.515 | +1.359 | 5.59 | — | — |
+| ROM1 | 4 514 | 1.352 | 0.492 | +0.859 | 2.43 | **duplicate** | 148 |
+| AIM2 | 1 643 | 1.842 | 1.156 | +0.685 | 4.95 | live, roster | 37.7 |
 | … | | | | | | | |
-| EPD3 | 7 271 | 0,295 | 0,674 | **−0,379** | −5,90 | shadow | 337 |
-| BR2H | 907 | 0,608 | 1,227 | −0,619 | −4,03 | shadow (SHORT) | 27 |
-| TSM1 | 1 308 | 0,220 | 0,937 | **−0,717** | −4,58 | **live** | 107 |
-| BB_4H | 684 | 0,569 | 1,308 | −0,739 | −3,47 | shadow (SHORT) | 10 |
-| BR1Hv2 | 1 331 | 0,419 | 1,238 | −0,819 | −5,18 | shadow | 50 |
+| EPD3 | 7 271 | 0.295 | 0.674 | **−0.379** | −5.90 | shadow | 337 |
+| BR2H | 907 | 0.608 | 1.227 | −0.619 | −4.03 | shadow (SHORT) | 27 |
+| TSM1 | 1 308 | 0.220 | 0.937 | **−0.717** | −4.58 | **live** | 107 |
+| BB_4H | 684 | 0.569 | 1.308 | −0.739 | −3.47 | shadow (SHORT) | 10 |
+| BR1Hv2 | 1 331 | 0.419 | 1.238 | −0.819 | −5.18 | shadow | 50 |
 
-**Unter beiden Maßstäben negativ** — und deshalb belastbar: **TSM1 SHORT** (−0,72,
-t −4,58) und **EPD3 SHORT** (−0,38, t −5,90). Der T-032-Park von EPD3 steht.
-
----
-
-## 3. Zwei eigene Fehlurteile, die der faire Maßstab korrigiert hat
-
-**(a) „Die Dichte-Rangliste ist ein Artefakt."** In T-060 hatte ich argumentiert, die
-MIS2-Beine stünden nur an der Roster-Spitze, weil ihr Slot-Tage-Nenner fast null ist
-(0,8–2,4 Slot-Tage über fünf Monate), und seien damit reine Mikro-Scalper. **Falsch.**
-Unter der Exit-Regel des Arms verdienen sie ihren Platz: +6,8 bis +8,1 Residuum bei
-t = 4,7 bis 9,5. Die Auswahl vom 26.07. hat die richtigen Beine gezogen.
-
-**(b) „TSM1 SHORT ist der saubere Hebel."** Über zwei Runden empfohlen — auf Basis von
-Menge (107 Signale/Tag, live, seinerzeit nur wegen des nie bindenden Slot-Caps
-draußen) und **ohne die Qualität zu messen**. TSM1 ist unter beiden Maßstäben
-signifikant negativ. Genau der Fehler, den die EPD- und MIS-Durchgänge vermieden
-hatten.
-
-**(c) Teilkorrektur:** die MIS1-Shadow-Beine hatte ich als „Rauschen mit Vorzeichen"
-abgetan (acht Beine getestet, eines über t = 2). Unter dem fairen Maßstab halten sie:
-MIS1-24h +4,94 (t 3,81), MIS1-72h +2,12 (t 2,27).
+**Negative under both yardsticks** — and therefore reliable: **TSM1 SHORT** (−0.72,
+t −4.58) and **EPD3 SHORT** (−0.38, t −5.90). The T-032 parking of EPD3 stands.
 
 ---
 
-## 4. Die Spannung, die das offenlegt
+## 3. Two of my own past misjudgements the fair yardstick corrects
 
-**Kante und Volumen sind auf der SHORT-Seite entkoppelt.** Die MIS2-Familie liefert
-0,9 bis 6,3 Signale/Tag bei Residuum +7; TSM1 liefert 107/Tag bei −0,72; EPD3 liefert
-337/Tag bei −0,38. Ein hochvolumiges SHORT-Bein mit positiver Kante existiert nicht,
-mit zwei Ausnahmen: **AIM2** (37,7/Tag, +0,69, bereits im Roster) und **ROM1**
-(148/Tag, +0,86) — letzteres aber ein Re-Forwarder, dessen Spiegelung die
-Original-Beine doppelt zählt (T-052, `EXCLUDED_AS_DUPLICATE`).
+**(a) "The density ranking is an artefact."** In T-060 I had argued the
+MIS2 legs only sit at the top of the roster because their slot-days denominator
+is near zero (0.8–2.4 slot-days over five months), and are therefore pure
+micro-scalpers. **Wrong.** Under the arm's exit rule they earn their place:
++6.8 to +8.1 residual at t = 4.7 to 9.5. The selection from 26.07. picked the
+right legs.
 
-Das ist die eigentliche Antwort auf „wir brauchen mehr Shorts": mit den vorhandenen
-Beinen ist **mehr Volumen nur zulasten der Qualität** zu haben.
+**(b) "TSM1 SHORT is the clean lever."** Recommended over two rounds — based on
+volume (107 signals/day, live, previously only left out because of the never-binding
+slot cap) and **without measuring quality**. TSM1 is significantly negative
+under both yardsticks. Exactly the mistake the EPD and MIS passes had avoided.
+
+**(c) Partial correction:** I had dismissed the MIS1 shadow legs as "noise with a
+sign" (eight legs tested, one over t = 2). Under the fair yardstick they hold up:
+MIS1-24h +4.94 (t 3.81), MIS1-72h +2.12 (t 2.27).
 
 ---
 
-## 5. Ehrliche Grenzen
+## 4. The tension this exposes
 
-- **Die MIS2-Mittelwerte stehen auf n = 47–132 und sind vermutlich fettschwänzig.**
-  Ein Bein, das nach Pumps shortet, lebt von wenigen Coins, die 30 % einbrechen.
-  Für **Vorzeichen und Rangfolge** trägt die Messung; wer auf die **Größenordnung**
-  setzen will, braucht vorher Median und Quantile. Nicht gerechnet.
-- **Shadow-Beine kennen keine Slippage.** Alle Zahlen sind Obergrenzen; MIS2-8h,
-  MIS1-24h und MIS1-72h stehen im Shadow und sind davon betroffen.
-- **Der Index ist nicht handelbar.** Er ist ein Maßstab für Auswahlgüte, keine
-  Alternative, die der Operator hätte wählen können.
-- **Inferenz auf Tagesebene geclustert.** Die Trades überlappen stark (dieselben
-  Coins, dieselben Stunden); nominales n behandelt eine Marktbewegung als viele
-  Beobachtungen. Die t-Werte oben sind die konservativen.
-- **1 725 Trades fielen aus der Wertung**, weil ihr Fenster außerhalb der
-  Index-Abdeckung lag.
-- **`closed_ai_signals` ist nur dedupliziert lesbar** (357k-Dup-Blob + synthetische
-  LEGACY-Preise). Roh gelesen meldet EPD1 SHORT einen Median von +21,2 %/Trade über
-  46 729 Zeilen; dedupliziert sind es 2 793 Trades. Kontrakt aus
+**Edge and volume are decoupled on the SHORT side.** The MIS2 family delivers
+0.9 to 6.3 signals/day at residual +7; TSM1 delivers 107/day at −0.72; EPD3
+delivers 337/day at −0.38. A high-volume SHORT leg with a positive edge does not
+exist, with two exceptions: **AIM2** (37.7/day, +0.69, already in the roster) and
+**ROM1** (148/day, +0.86) — the latter, however, is a re-forwarder whose mirroring
+double-counts the original legs (T-052, `EXCLUDED_AS_DUPLICATE`).
+
+That is the real answer to "we need more shorts": with the legs currently
+available, **more volume comes only at the expense of quality**.
+
+---
+
+## 5. Honest limits
+
+- **The MIS2 means stand on n = 47–132 and are probably fat-tailed.**
+  A leg that shorts after pumps lives off a few coins that crash 30%.
+  For **sign and ranking** the measurement carries; whoever wants to rely on
+  **magnitude** needs median and quantiles first. Not computed.
+- **Shadow legs know no slippage.** All numbers are upper bounds; MIS2-8h,
+  MIS1-24h and MIS1-72h sit in shadow and are affected by this.
+- **The index is not tradeable.** It is a yardstick for selection quality, not
+  an alternative the operator could actually have chosen.
+- **Inference clustered at the day level.** The trades overlap heavily (same
+  coins, same hours); nominal n treats one market move as many observations.
+  The t-values above are the conservative ones.
+- **1 725 trades fell out of scoring**, because their window lay outside the
+  index coverage.
+- **`closed_ai_signals` is only readable deduplicated** (357k-dup blob +
+  synthetic LEGACY prices). Read raw, EPD1 SHORT reports a median of
+  +21.2%/trade over 46 729 rows; deduplicated it's 2 793 trades. Contract from
   `wave_buildup_study.load_trades`.
 
 ---
 
-## 6. Empfehlung
+## 6. Recommendation
 
-1. **Nichts an TSM1 SHORT.** Der Roster-Platz wäre negativ belegt. Der Punkt aus
-   T-060 („TSM1 rein") ist damit erledigt — er beruhte auf Menge ohne Qualität.
-2. **EPD-Shorts bleiben geparkt.** Alle drei Generationen ohne Kante; EPD3 unter
-   beiden Maßstäben signifikant negativ.
-3. **Kandidaten für einen Gate-Flip, falls mehr SHORT-Volumen gewünscht ist:**
-   MIS1-24h (+4,94, t 3,81), MIS1-72h (+2,12, t 2,27), MIS2-8h (+5,53, t 3,48) —
-   zusammen ~13 Signale/Tag. Kleine Menge, aber gemessene Kante. Vorher §5 Punkt 1
-   klären (Verteilung statt Mittelwert).
-4. **Der Exposure-Cap bleibt damit gebunden.** Das Volumenproblem aus T-060 ist mit
-   den vorhandenen Beinen nicht lösbar, ohne Qualität einzukaufen. Wer den Durchsatz
-   wirklich heben will, muss an der Grandfather-Kohorte ansetzen (28 LONG belegen
-   56 % des Cap-Spielraums, #T54-3) — nicht an der SHORT-Zufuhr.
+1. **Nothing to TSM1 SHORT.** The roster slot would be negatively occupied. The
+   point from T-060 ("bring in TSM1") is thereby settled — it was based on
+   quantity without quality.
+2. **EPD shorts stay parked.** All three generations without an edge; EPD3
+   significantly negative under both yardsticks.
+3. **Candidates for a gate flip, if more SHORT volume is wanted:**
+   MIS1-24h (+4.94, t 3.81), MIS1-72h (+2.12, t 2.27), MIS2-8h (+5.53, t 3.48) —
+   ~13 signals/day together. Small volume, but a measured edge. Clarify §5 point 1
+   first (distribution instead of mean).
+4. **The exposure cap therefore stays bound.** The T-060 volume problem is not
+   solvable with the legs on hand without buying quality. Whoever really wants to
+   raise throughput has to address the grandfather cohort (28 LONG occupy
+   56% of the cap headroom, #T54-3) — not the SHORT supply.
 
-Gate-Flip und Roster-Änderung sind Operator-Entscheide und brauchen einen
-Fleet-Restart. Nicht Teil dieses Tasks.
+Gate flip and roster change are operator decisions and need a
+fleet restart. Not part of this task.
