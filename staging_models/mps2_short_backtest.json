@@ -1,0 +1,74 @@
+{
+  "meta": {
+    "study": "MPS2 upper-band SHORT backtest (house geometry)",
+    "task": "T-2026-KYT-9050-078",
+    "generated_at": "2026-08-03T05:01:19.132420+00:00",
+    "status": "complete",
+    "n_coins": 527,
+    "n_coins_done": 527,
+    "n_trades": 5652,
+    "data_start": "2026-06-12 20:40:00+00:00",
+    "data_end": "2026-08-03 00:30:00+00:00",
+    "split_iso": "2026-07-08 10:35:00+00:00",
+    "fee_per_side": 0.0005,
+    "config": {
+      "tf_event": "5m",
+      "tf_sr": "15m",
+      "sr_window_bars": 2880,
+      "n_published": 3,
+      "min_tp_pct": 0.05,
+      "exit_scan_cap_bars": 1152,
+      "min_event_band_dist": 0.003,
+      "warmup_bars": 288,
+      "min_half_n": 100
+    }
+  },
+  "verdict": {
+    "verdict": "NO-DEPLOY",
+    "min_half_n": 100,
+    "halves": {
+      "val": {
+        "n": 3385,
+        "avg_net_pct": 0.1763,
+        "tstat": 1.3,
+        "tp1_wr": 0.7717,
+        "open_end": 30,
+        "no_targets_skipped": 0,
+        "avg_r": 0.017
+      },
+      "test": {
+        "n": 2267,
+        "avg_net_pct": -0.0513,
+        "tstat": -0.26,
+        "tp1_wr": 0.774,
+        "open_end": 59,
+        "no_targets_skipped": 0,
+        "avg_r": 0.007
+      }
+    }
+  },
+  "acc": {
+    "val": {
+      "n": 3385,
+      "sum_net": 5.967842000000003,
+      "sum_net2": 21.22174839775601,
+      "tp1_wins": 2589,
+      "sl_first": 766,
+      "open_end": 30,
+      "no_targets": 0,
+      "sum_r": 57.83340000000013,
+      "n_r": 3385
+    },
+    "test": {
+      "n": 2267,
+      "sum_net": -1.162891000000008,
+      "sum_net2": 19.670745582810937,
+      "tp1_wins": 1709,
+      "sl_first": 499,
+      "open_end": 59,
+      "no_targets": 0,
+      "sum_r": 15.05520000000006,
+      "n_r": 2267
+    }
+  }
+}
