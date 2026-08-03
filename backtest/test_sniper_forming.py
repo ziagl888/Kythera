@@ -1,26 +1,89 @@
 """Standalone (DB-free) guard for the SMC-sniper forming-candle contract.
 
-Background (T-2026-CU-9050-036, R1 / hard rule 5): scan_market reads
-`ORDER BY open_time DESC LIMIT 150`, flips to ASC and used to run
-`argrelextrema` over the FULL frame — including the forming candle. Its
-high/low still move, so the pivot set changed within the running candle:
-the drives of a Three-Drive and the level of a Breaker Block repainted
-after the signal had gone out. 16/21/24 all drop the forming row; 25 did
-not (docs/CANDLE_CALL_SITES.md §3).
+Background (T-2026-CU-9050-036, R1 / hard rule 5): scan_market read
+`ORDER BY open_time DESC LIMIT 150`, flipped to ASC and ran `argrelextrema`
+over the FULL frame — including the forming candle. Its high/low still move,
+so the pivot set changed within the running candle: the drives of a
+Three-Drive and the level of a Breaker Block repainted after the signal had
+gone out. The first fix sliced the forming row off inside scan_market
+(`c_highs, c_lows = highs[:-1], lows[:-1]`).
 
-Run: py -3.13 backtest/test_sniper_forming.py
+T-2026-CU-9050-111 (commit 80d0e09, 2026-07-13) then moved the bot onto
+`core.candles.read_candles_with_indicators(..., include_forming=False)`. The
+protection moved one layer down with it: the frame no longer CONTAINS the
+forming bar, so the in-bot slice was removed and the newest closed candle is
+`len(df) - 1` again. The guards below were not carried along and kept asserting
+the removed slice for three weeks (T-2026-KYT-9050-083) — they are now written
+against the contract that actually holds:
+
+  * the frame is closed-only AT THE SOURCE (asserted on the real call, not on
+    the source text — this is the load-bearing one),
+  * pivot indices therefore address the full frame arrays,
+  * `len(df) - 1` is the newest closed bar everywhere (pivot edge filter,
+    breakout window, BB feature anchor),
+  * and re-introducing a `[:-1]` slice would now silently drop the newest
+    CLOSED candle instead of the forming one.
+
+Run: py -3.13 backtest/test_sniper_forming.py   (or: pytest -q)
 """
 
+from __future__ import annotations
+
+import importlib.util
+import os
 import re
-from pathlib import Path
+import sys
+import unittest.mock as mock
 
 import numpy as np
-import scipy.signal
+import pandas as pd
+import scipy.signal  # noqa: F401  (pre-seed C-ext before any sys.modules patch)
+import scipy.stats  # noqa: F401  (pre-seed C-ext before any sys.modules patch)
 
-ROOT = Path(__file__).resolve().parent.parent
-SRC = (ROOT / "25_smc_ml_sniper.py").read_text(encoding="utf-8")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = open(os.path.join(REPO_ROOT, "25_smc_ml_sniper.py"), encoding="utf-8").read()
 
 PIVOT_WINDOW = 10
+
+
+def _load_sniper():
+    """Import 25_smc_ml_sniper.py without DB or artifacts.
+
+    The bot loads its XGB artifacts at import and calls exit(1) on failure, so
+    joblib.load is mocked to a valid artifact dict. pandas / numpy / scipy are
+    imported above before the sys.modules patch (memory
+    patch-dict-sys-modules-numpy-teardown). Same loader as
+    test_sniper_edge_pivots.py / test_sniper_retest_level.py.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "smc_ml_sniper", os.path.join(REPO_ROOT, "25_smc_ml_sniper.py")
+    )
+    mod = importlib.util.module_from_spec(spec)
+    fake_artifact = {
+        "model": mock.MagicMock(),
+        "features": ["dir_num"],
+        "optimal_threshold": None,
+        "calibrator_isotonic": None,
+        "meta": {},
+    }
+    fake_joblib = mock.MagicMock()
+    fake_joblib.load.return_value = fake_artifact
+    with mock.patch.dict(
+        "sys.modules",
+        {
+            "joblib": fake_joblib,
+            "core.database": mock.MagicMock(),
+            "core.config": mock.MagicMock(CH_SNIPER_BB=-1, CH_SNIPER_TD=-2),
+            "core.market_utils": mock.MagicMock(COOLDOWN_MODULE_MAX_LEN=10),
+            "core.trade_utils": mock.MagicMock(),
+        },
+    ):
+        spec.loader.exec_module(mod)
+    return mod
+
+
+sniper = _load_sniper()
 
 
 def _scan_body():
@@ -29,26 +92,112 @@ def _scan_body():
     return body.group(1)
 
 
-def test_pivots_built_on_closed_candles():
+def _scan_code():
+    """`_scan_body()` with comment lines removed.
+
+    For guards that search across newlines (`re.DOTALL`), the ~90 comment lines
+    in scan_market are a false-positive surface: "select" and "from" are ordinary
+    English words, and a DOTALL `.*` happily spans from one prose comment to
+    another. Structural guards run against this; guards that are ABOUT the
+    comments keep using `_scan_body()` (T-2026-KYT-9050-088).
+    """
+    return "\n".join(ln for ln in _scan_body().splitlines() if not ln.strip().startswith("#"))
+
+
+# ---------------------------------------------------------------------------
+# The load-bearing guard: the frame is closed-only at the SOURCE
+# ---------------------------------------------------------------------------
+def test_scan_market_reads_closed_candles_only():
+    """Runs the real scan_market against a recording reader.
+
+    This replaces the old text guard on the `[:-1]` slice. The slice was the old
+    mechanism; the frame being closed-only is the actual contract, and it is only
+    observable at the call. A frame shorter than the 100-candle floor makes
+    scan_market skip each symbol right after the read, so the loop stays cheap
+    and never reaches scoring or posting.
+    """
+    calls = []
+
+    def recording_reader(conn, symbol, tf, **kwargs):
+        calls.append({"symbol": symbol, "tf": tf, **kwargs})
+        return pd.DataFrame({"close": np.arange(10.0)})  # < 100 rows → `continue`
+
+    # Money-path sentinel (T-2026-KYT-9050-088). Honest about what it is: a last
+    # line of defence, NOT a mutation-proven guard. Three independent things keep
+    # scan_market away from scoring here — the 100-row floor, the synthetic frame
+    # lacking the columns the scorer reads, and PIVOT_WINDOW=10 finding no pivots
+    # in 10 rows — so lowering the floor alone does not reach the trade path and
+    # cannot demonstrate the sentinel firing. It exists because those three are
+    # accidents of the fixture rather than a guarantee: if a refactor ever made
+    # the path reachable, this turns a silent success into a loud failure.
+    # scan_market swallows per-symbol exceptions, so the sentinel RECORDS instead
+    # of raising — an AssertionError would be caught by that `except` and lost.
+    reached = []
+    with mock.patch.object(sniper, "read_candles_with_indicators", recording_reader), \
+         mock.patch.object(sniper, "load_coins", lambda: ["BTCUSDT"]), \
+         mock.patch.object(sniper, "get_db_connection", mock.MagicMock()), \
+         mock.patch.object(sniper, "get_live_prices_batch", lambda: {"BTCUSDT": 100.0}), \
+         mock.patch.object(sniper, "evaluate_and_trade", lambda *a, **kw: reached.append(a)):
+        sniper.scan_market()
+
+    assert not reached, (
+        f"scan_market reached the scoring/posting path {len(reached)}x — this guard must never "
+        "run the money path (hard rule 1: no live intervention from a dev session)"
+    )
+
+    assert calls, "scan_market performed no candle read at all — the guard would pass vacuously"
+    assert len(calls) == len(sniper.TIMEFRAMES), (
+        f"expected one read per timeframe, got {len(calls)} for {sniper.TIMEFRAMES}"
+    )
+    for call in calls:
+        assert call.get("include_forming") is False, (
+            f"candle read for {call['symbol']}/{call['tf']} passed "
+            f"include_forming={call.get('include_forming')!r} — the forming candle would "
+            "re-enter the frame and pivots would repaint (hard rule 5)"
+        )
+
+
+def test_no_raw_candle_query_bypasses_core_candles():
+    """A hand-rolled SELECT would sidestep the include_forming contract above.
+
+    `re.DOTALL` is load-bearing (T-2026-KYT-9050-088): every raw query in this
+    repo — including the one T-2026-CU-9050-111 removed from here — is written as
+    a multi-line triple-quoted string, and without DOTALL the `.` never crosses a
+    newline, so the guard saw only the single-line form that does not occur in
+    practice. A bypassing query would be an ADDITIONAL read alongside the
+    core.candles call, so the behavioural test above stays green on its own — this
+    is the only guard that would notice.
+
+    DOTALL alone would then span the ~90 prose comment lines in scan_market
+    ("we select the …" on one line, "… from the frame" twenty lines later), so
+    the match runs against the COMMENT-STRIPPED body. Keeps the multi-line
+    coverage, drops the prose false-positive class.
+    """
     body = _scan_body()
-    assert re.search(r"c_highs,\s*c_lows\s*=\s*highs\[:-1\],\s*lows\[:-1\]", body), (
-        "scan_market no longer derives closed-candle arrays — pivots would repaint on the forming candle"
+    code = _scan_code()
+    assert "read_candles_with_indicators(" in body, (
+        "scan_market no longer reads through core.candles — the closed-only contract "
+        "is enforced there and nowhere else"
+    )
+    assert not re.search(r"SELECT\s.*\sFROM\s", code, re.IGNORECASE | re.DOTALL), (
+        "a raw candle SELECT reappeared in scan_market — it would bypass "
+        "include_forming=False (docs/CANDLE_CALL_SITES.md)"
+    )
+    assert not re.search(r"\b(cur|cursor)\.execute\(|pd\.read_sql", code), (
+        "scan_market executes SQL directly — every candle read must go through "
+        "core.candles so the closed-only contract holds in one place"
     )
 
 
-def test_argrelextrema_never_sees_the_forming_candle():
-    body = _scan_body()
-    calls = re.findall(r"scipy\.signal\.argrelextrema\(\s*(\w+)", body)
-    assert calls, "no argrelextrema call found in scan_market"
-    assert set(calls) == {"c_highs", "c_lows"}, (
-        f"argrelextrema runs on {sorted(set(calls))} — it must only see the closed-candle arrays"
-    )
-
-
+# ---------------------------------------------------------------------------
+# Why the contract matters: the mechanism it defends against
+# ---------------------------------------------------------------------------
 def test_forming_candle_repaints_the_raw_pivot_set():
-    """The mechanism itself: a moving last row flips the raw pivot set, but
-    leaves the closed-candle pivot set untouched. Without this asymmetry the
-    fix above would be cosmetic."""
+    """A moving last row flips the pivot set, a closed-only frame does not.
+
+    Unchanged since T-2026-CU-9050-036: this is why `include_forming=False` is
+    load-bearing rather than cosmetic.
+    """
     base = np.concatenate(
         [
             np.linspace(100.0, 110.0, 12),  # confirmed swing high at index 11
@@ -67,17 +216,73 @@ def test_forming_candle_repaints_the_raw_pivot_set():
     assert closed_sets.pop(), "fixture degenerated to an empty pivot set — it would pass vacuously"
 
 
-def test_slice_is_front_anchored_so_pivot_indices_address_the_full_arrays():
-    """`highs[p]` / `rsis[p]` are read off the FULL arrays while `p` comes from the
-    shortened one. Only a FRONT-anchored slice keeps that sound: `highs[:-1]` does,
-    `highs[1:]` would silently read the wrong candle."""
+# ---------------------------------------------------------------------------
+# The consequences of an all-closed frame: no slice, and len(df) - 1 anchors
+# ---------------------------------------------------------------------------
+def test_pivots_are_built_on_the_full_closed_frame():
+    """No slice between the frame and argrelextrema.
+
+    With `include_forming=False` the frame is already closed-only, so a
+    re-introduced trailing slice would drop the newest CLOSED candle — the exact
+    inversion of the P1.46 bug it once fixed. The arrays handed to argrelextrema
+    must be the frame arrays themselves.
+    """
+    body = _scan_body()
+    assert re.search(r"c_highs,\s*c_lows\s*=\s*highs,\s*lows\b", body), (
+        "the closed-candle arrays are no longer the full frame arrays — with an "
+        "all-closed frame a slice would discard the newest closed candle"
+    )
+    assert not re.search(r"(highs|lows)\[:-1\]", body), (
+        "a trailing slice reappeared — the frame is closed-only since "
+        "T-2026-CU-9050-111, so this now drops the newest CLOSED candle"
+    )
+    calls = re.findall(r"scipy\.signal\.argrelextrema\(\s*(\w+)", body)
+    assert calls, "no argrelextrema call found in scan_market"
+    assert set(calls) == {"c_highs", "c_lows"}, (
+        f"argrelextrema runs on {sorted(set(calls))} — it must only see the closed-candle arrays"
+    )
+
+
+def test_newest_closed_bar_is_the_last_row():
+    """`len(df) - 1` is the newest closed candle in an all-closed frame.
+
+    Three consumers share that anchor — the pivot edge filter, the breakout
+    window bound `n_closed`, and the BB feature row.
+
+    The `len(df) - 2` ban is deliberately BLANKET, not anchor-specific: on an
+    all-closed frame that offset is the pre-T-111 anchor wherever it appears, and
+    a legitimate previous-closed-candle reference should say so explicitly (e.g.
+    via a named local) rather than re-use the offset this contract retired. The
+    `n_closed` pattern tolerates a trailing comment but still rejects
+    `len(df) - 1`, which the bare prefix would otherwise match.
+    """
+    body = _scan_body()
+    assert re.search(r"last_closed\s*=\s*len\(df\)\s*-\s*1\b", body), (
+        "last_closed anchor lost — with an all-closed frame the newest closed bar is len(df)-1"
+    )
+    assert re.search(r"n_closed\s*=\s*len\(df\)\s*(#.*)?$", body, re.MULTILINE), (
+        "n_closed must be len(df): the frame is all-closed, so the breakout search "
+        "covers every closed candle"
+    )
+    assert not re.search(r"len\(df\)\s*-\s*2", body), (
+        "a len(df)-2 offset reappeared — that was the anchor while the frame still "
+        "carried the forming bar; it now points one candle too far back"
+    )
+
+
+def test_pivot_indices_address_the_full_frame_arrays():
+    """`highs[p1]` / `rsis[p1]` read off the same arrays the pivots came from.
+
+    Sound only while no slice sits in between (see the test above). A frame-level
+    `df = df.iloc[:-1]` would shift every len(df)-1 offset by one candle and is
+    equally forbidden.
+    """
     rng = np.random.default_rng(20500036)
     highs = rng.normal(size=300).cumsum() + 100.0
-    pivots = scipy.signal.argrelextrema(highs[:-1], np.greater, order=PIVOT_WINDOW)[0]
+    pivots = scipy.signal.argrelextrema(highs, np.greater, order=PIVOT_WINDOW)[0]
     assert len(pivots) >= 3, "fixture produced too few pivots to be meaningful"
-    # The back-anchored variant that must never be used: same length, same call,
-    # but every pivot index would then name a candle one step to the left.
-    assert all(highs[p] != highs[1:][p] for p in pivots), (
+    # A back-anchored slice would make every pivot index name the wrong candle.
+    assert all(highs[p] != highs[1:][p] for p in pivots if p < len(highs) - 1), (
         "fixture degenerated — a back-anchored slice must misread every pivot here"
     )
 
@@ -86,9 +291,9 @@ def test_slice_is_front_anchored_so_pivot_indices_address_the_full_arrays():
         "a back-anchored slice would make highs[p]/rsis[p] read the wrong candle"
     )
     for expr in ("highs[p1]", "lows[p1]", "rsis[p1]"):
-        assert expr in body, f"{expr} vanished — check that pivot indices still address the full arrays"
+        assert expr in body, f"{expr} vanished — check that pivot indices still address the frame arrays"
     assert not re.search(r"df\s*=\s*df\.iloc\[:-1\]", body), (
-        "dropping the row from df would shift the len(df)-1 / len(df)-2 offsets "
+        "dropping the row from df would shift the len(df)-1 offsets "
         "(BB feature row, breakout window) by one candle"
     )
 

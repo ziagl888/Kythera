@@ -1,3 +1,64 @@
+## [2026-08-03] SMC-sniper forming-candle guards: blind for three weeks, rewired onto the core.candles contract (T-2026-KYT-9050-083)
+
+Five regression tests that guard hard rule 5 for `25_smc_ml_sniper.py` had been red since
+commit 80d0e09 (2026-07-13). They were text-pattern guards asserting the OLD mechanism — the
+in-bot slice `c_highs, c_lows = highs[:-1], lows[:-1]` and the `len(df) - 2` anchor — while
+T-2026-CU-9050-111 had moved the protection one layer down into
+`read_candles_with_indicators(..., include_forming=False)`. The frame no longer contains the
+forming bar at all, so the slice is gone and `len(df) - 1` is the newest closed candle. **The
+bot's candle behaviour was and is correct; what failed was the alarm.** Nobody noticed because
+`backtest/` is touched by no CI job at all — it sits in both the ruff and the mypy excludes, and
+no workflow runs pytest (green CI ≠ correct). For three weeks a real forming-candle regression
+would have shipped silently. That gap is structural, outlives this fix and is now tracked
+separately as **T-2026-KYT-9050-089** (a CI job for the DB-free `backtest/test_*.py`, which has
+to deal with a pre-existing red tail of ~55 failures first).
+
+The guards now assert the contract that actually holds, and the load-bearing one is no longer
+a text pattern: `test_scan_market_reads_closed_candles_only` runs the real `scan_market`
+against a recording reader and asserts `include_forming=False` on every candle read (a
+sub-100-row frame makes the loop skip right after the read, so nothing is scored or posted).
+The remaining source guards were re-pointed at the current anchors — `len(df) - 1` for the
+pivot edge filter and the BB feature row, `n_closed = len(df)` for the breakout window — and
+now also assert the INVERSE: a re-introduced `[:-1]` slice or a `len(df) - 2` offset would
+today drop the newest CLOSED candle rather than the forming one, so both are explicitly
+forbidden. The behavioural repaint fixture is unchanged.
+
+**Review correction (T-2026-KYT-9050-088).** Both core reviews caught the same defect in the
+first version of this change, and it was the very failure mode the task exists to fix: two of
+the rewritten guards searched the unanchored pattern `include_forming\s*=\s*False`, and the
+`scan_market` body contains that string THREE times — once as the real kwarg and twice inside
+explanatory comments. Mutating only the call site therefore left both guards green. The
+author's own mutation evidence hid it, because that run used
+`sed 's/include_forming=False/include_forming=True/'` and rewrote the comments along with the
+call. Both patterns are now anchored to the start of a line (a comment line begins with `#`
+and can never match) and carry the inverse assertion against `include_forming=True`. Two more
+guards were sharpened in the same pass: the raw-SELECT check gained `re.DOTALL` — without it
+the multi-line triple-quoted form, which is how every query in this repo is written, slipped
+straight through — plus a direct `cur.execute(`/`pd.read_sql` check, and the `n_closed`
+pattern now tolerates a trailing comment while still rejecting `len(df) - 1`.
+
+Mutation matrix, re-measured against the live source with the call site isolated from the
+comments: `include_forming=False → True` **3** tests red · `last_closed len(df)-1 → -2` **2** ·
+slice reintroduced **3** · BB anchor `len(df)-1 → -2` **2** · `n_closed → len(df)-1` **1** ·
+multi-line raw `SELECT` injected **1**. **51 tests pass across the six SMC test files**
+(previously stated as 47 across five: that count was correct for the five files listed —
+`test_sniper_tag.py` was simply missing from the list). `regression_guard verify` OK (24
+fixtures). No production code changed; every mutation was reverted with an md5-verified restore.
+
+Two guards were sharpened once more after the re-review, both against false-RED classes the
+first fix introduced: the raw-`SELECT` check now matches against the **comment-stripped** body,
+because `re.DOTALL` alone spans the ~90 prose comment lines in `scan_market` ("we select the …"
+on one line, "… from the frame" twenty lines later), and the `include_forming` anchor accepts
+`,?\s*$` so the kwarg is also matched as the LAST argument of the call, without a trailing
+comma. Neither could ship today — ruff-format's magic trailing comma restores the current form —
+but a guard that false-reds on correct code trains people to ignore it.
+
+One claim is deliberately NOT presented as mutation-proven: the new money-path sentinel
+(`evaluate_and_trade` patched to record instead of trade) does not fire when the 100-row floor
+is lowered, because two further accidents of the fixture — the synthetic frame lacks the
+columns the scorer reads, and `PIVOT_WINDOW=10` finds no pivots in 10 rows — keep the path
+unreachable anyway. The sentinel is a last line of defence against a future refactor, not a
+demonstrated guard, and the test says so.
 ## [2026-08-03] Bots 16/17: transient yfinance failures silently dropped ~5% of forex/metal timeframes (T-2026-KYT-9050-084)
 
 `16_smc_forex_metals_bot.py` and `17_mayank_bot.py` pull their forex/metal candles from Yahoo.
