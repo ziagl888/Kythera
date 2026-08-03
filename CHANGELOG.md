@@ -1,3 +1,28 @@
+## [2026-08-03] MPS3: near-band gate re-run — 10x-shell artifact confirmed, literal spread trade now refuted artifact-free (T-2026-KYT-9050-081)
+
+Michi's objection to MPS1/MPS2 held: the tier weights {10x: 0.4, …} let the 10x shell win the
+densest-cluster vote structurally — the BTC bands sat at exactly ±9.5 % (10x minus mmr), a
+weighting ARTIFACT. `tools/mps1_event_study.py` now takes `--leverage-tiers`, `--tier-weights`,
+`--out-prefix`, `--study-label` (defaults byte-identical to MPS1; 3 new DB-free tests), and the
+gate study was re-run with the near high-leverage config {25, 50, 100} / {0.4, 0.3, 0.3} —
+BTC bands land at ±3.3–3.6 %, the population MartyParty actually trades (his 25x–100x color
+bands). Results (`staging_models/mps3_event_study.md`, 527 symbols, 34,763 events vs 42,327
+controls — 3.6× the MPS1 event population):
+
+* **Formal gate: EDGE on BOTH sides — but economically thin.** Up net 4h: val +0.198 %
+  (t = 3.0) vs test **+0.022 % (t = 0.3)**; down: val +0.071 % / test +0.092 %, with 24h down
+  NEGATIVE. The only signal with substance stays the UP side at longer horizons (24h test
+  +0.400 %, t = 2.5) — consistent with MPS1's far-band finding.
+* **The literal band-to-band spread trade is now refuted artifact-free:** even with reachable
+  opposite bands (~2–7 % away), every (side × half × SL-tolerance) cell is net NEGATIVE
+  (win rates 7–20 %, means −0.002 % … −0.27 %). The MPS1 refutation was partly
+  band-width-conditional; this one is not.
+* Verdict for the family stays PARKED: the near-band gate formally passes but the test-half
+  4h means sit at noise level, the down side is fragile (24h negative), and everything remains
+  in-sample on the same ~7-week window (T-007). The one candidate worth revisiting WITH real
+  out-of-sample data is unchanged: upper-band touch → SHORT on 8–24h horizons — now measurable
+  against `liq_events` ground truth as the collector history grows.
+
 ## [2026-08-03] MPS2: upper-band SHORT under house geometry — NO-DEPLOY, parked (T-2026-KYT-9050-078)
 
 Follow-up 1 from the MPS1 gate study (T-073): the only surviving candidate — SHORT after a

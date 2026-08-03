@@ -224,3 +224,59 @@ def test_fold_spread_down_side_mirror():
     st = cell[f"{SL_TOLERANCES[0]:.3f}"]
     assert (st["win"], st["loss"], st["timeout"]) == (1, 0, 0)
     assert st["sum_pnl"] == pytest.approx(abs(110.0 / 100.0 - 1.0) - ROUND_TRIP_FEE)
+
+
+# ── CLI band-definition overrides (T-2026-KYT-9050-081 / MPS3) ───────────────
+
+
+def test_parse_float_tuple():
+    from tools.mps1_event_study import parse_float_tuple
+
+    assert parse_float_tuple("25,50,100") == (25.0, 50.0, 100.0)
+    assert parse_float_tuple("0.4, 0.3, 0.3") == (0.4, 0.3, 0.3)
+    with pytest.raises(ValueError):
+        parse_float_tuple("")
+    with pytest.raises(ValueError):
+        parse_float_tuple("25,abc")
+
+
+def test_near_band_config_is_engine_valid():
+    # The MPS3 near-band override must construct a config the engine accepts;
+    # HeatmapConfig itself rejects weight sums != 1 (validation stays there).
+    from tools.mps1_event_study import parse_float_tuple
+    from tools.mps1_liq_heatmap import HeatmapConfig
+
+    cfg = HeatmapConfig(
+        leverage_tiers=parse_float_tuple("25,50,100"),
+        tier_weights=parse_float_tuple("0.4,0.3,0.3"),
+    )
+    assert cfg.leverage_tiers == (25.0, 50.0, 100.0)
+    with pytest.raises(ValueError):
+        HeatmapConfig(
+            leverage_tiers=parse_float_tuple("25,50,100"),
+            tier_weights=parse_float_tuple("0.4,0.3,0.2"),  # sums to 0.9
+        )
+
+
+def test_write_outputs_honors_custom_paths(tmp_path):
+    from tools.mps1_event_study import derive_verdict, new_acc, write_outputs
+
+    acc = new_acc()
+    verdict = derive_verdict(acc)
+    meta = {
+        "study": "MPS3 test label",
+        "generated_at": "t",
+        "status": "s",
+        "n_coins_done": 0,
+        "n_coins": 0,
+        "n_events": 0,
+        "n_controls": 0,
+        "data_start": "a",
+        "data_end": "b",
+        "split_iso": "c",
+    }
+    jp, mp = str(tmp_path / "x.json"), str(tmp_path / "x.md")
+    write_outputs(meta, acc, verdict, json_path=jp, md_path=mp)
+    assert os.path.exists(jp) and os.path.exists(mp)
+    with open(mp, encoding="utf-8") as f:
+        assert f.readline().startswith("# MPS3 test label")
