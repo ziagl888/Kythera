@@ -146,8 +146,10 @@ class _Flusher:
 def _stream_once(flusher: _Flusher) -> None:
     """Hold one websocket connection until close (Binance: max. 24h).
 
-    Raises ConnectionClosed/OSError to the reconnect loop; catch everything
-    else per message — one malformed event must never cost the connection.
+    Raises ConnectionClosed/OSError to the reconnect loop; RETURNS normally
+    when the silent-subscription guard trips (no frame for MAX_SILENCE_S) —
+    the outer loop reconnects either way. Catch everything else per message —
+    one malformed event must never cost the connection.
     """
     with connect(WS_URL, open_timeout=15) as ws:
         logger.info(f"Connected: {WS_URL}")
