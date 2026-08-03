@@ -108,6 +108,19 @@ JSON_PATH = os.path.join("staging_models", "mps1_event_study.json")
 MD_PATH = os.path.join("staging_models", "mps1_event_study.md")
 
 
+def parse_float_tuple(text: str) -> tuple[float, ...]:
+    """Parse a comma-separated float list ('25,50,100' -> (25.0, 50.0, 100.0)).
+
+    Pure helper for the tier/weight CLI overrides (T-2026-KYT-9050-081/MPS3);
+    validation of lengths/sums stays in HeatmapConfig.__post_init__ so the CLI
+    cannot construct a config the engine would not accept itself.
+    """
+    values = tuple(float(part) for part in text.split(",") if part.strip())
+    if not values:
+        raise ValueError(f"empty float list: {text!r}")
+    return values
+
+
 # ── Accumulators (fold events, never keep them — memory O(cells)) ────────────
 
 
@@ -341,13 +354,13 @@ def _render_returns_table(acc: dict, pop: str, kind: str) -> list[str]:
     return lines
 
 
-def write_outputs(meta: dict, acc: dict, verdict: dict) -> None:
+def write_outputs(meta: dict, acc: dict, verdict: dict, json_path: str = JSON_PATH, md_path: str = MD_PATH) -> None:
     os.makedirs("staging_models", exist_ok=True)
-    with open(JSON_PATH, "w", encoding="utf-8") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "verdict": verdict, "acc": acc}, f, indent=2, default=str)
 
     md: list[str] = [
-        "# MPS1 — Max-Pain-Band-Touch Event Study (T-2026-KYT-9050-073)",
+        f"# {meta['study']}",
         "",
         f"Generated: {meta['generated_at']} · status: {meta['status']}",
         f"Universe: {meta['n_coins_done']}/{meta['n_coins']} symbols · "
@@ -416,7 +429,7 @@ def write_outputs(meta: dict, acc: dict, verdict: dict) -> None:
         "* Overlap: 4h cooldown; horizons beyond 4h still overlap across events.",
         "",
     ]
-    with open(MD_PATH, "w", encoding="utf-8") as f:
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md))
 
 
@@ -430,13 +443,31 @@ def main() -> int:
     ap.add_argument("--progress-every", type=int, default=20)
     ap.add_argument("--checkpoint-every", type=int, default=50)
     ap.add_argument("--dump-symbol", default="", help="print current bands for one symbol and exit")
+    # Band-definition overrides (T-2026-KYT-9050-081/MPS3): defaults reproduce
+    # the MPS1 run byte-for-byte; the near-band re-run passes high-leverage
+    # tiers so the densest-cluster vote is not structurally won by the 10x
+    # shell (the +/-9.5% artifact Michi flagged on the T-073/T-078 verdicts).
+    ap.add_argument("--leverage-tiers", default="10,25,50,100", help="comma floats, e.g. '25,50,100'")
+    ap.add_argument("--tier-weights", default="0.4,0.3,0.2,0.1", help="comma floats, must sum to 1")
+    ap.add_argument("--out-prefix", default="mps1_event_study", help="staging_models/<prefix>.{json,md}")
+    ap.add_argument("--study-label", default="", help="report title override (default derives from prefix)")
     args = ap.parse_args()
 
     set_low_priority()
     if not args.skip_cpu_check:
         check_cpu_headroom()
 
-    cfg = HeatmapConfig()
+    cfg = HeatmapConfig(
+        leverage_tiers=parse_float_tuple(args.leverage_tiers),
+        tier_weights=parse_float_tuple(args.tier_weights),
+    )
+    json_path = os.path.join("staging_models", f"{args.out_prefix}.json")
+    md_path = os.path.join("staging_models", f"{args.out_prefix}.md")
+    study_label = args.study_label or (
+        "MPS1 — Max-Pain-Band-Touch Event Study (T-2026-KYT-9050-073)"
+        if args.out_prefix == "mps1_event_study"
+        else f"{args.out_prefix} — Max-Pain-Band-Touch Event Study"
+    )
 
     with db_connection() as conn:
         with conn.cursor() as cur:
@@ -471,7 +502,7 @@ def main() -> int:
         def snapshot(final: bool) -> dict:
             verdict = derive_verdict(acc)
             meta = {
-                "study": "MPS1 max-pain band-touch event study (5m)",
+                "study": study_label,
                 "task": "T-2026-KYT-9050-073",
                 "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "status": "complete"
@@ -503,7 +534,7 @@ def main() -> int:
                     "spread_scan_cap": SPREAD_SCAN_CAP,
                 },
             }
-            write_outputs(meta, acc, verdict)
+            write_outputs(meta, acc, verdict, json_path=json_path, md_path=md_path)
             return verdict
 
         for sym in coins:
@@ -529,8 +560,8 @@ def main() -> int:
 
     print(f"\nVERDICT: {verdict['verdict']} (passing sides: {verdict['passing_sides'] or 'none'})")
     print(f"events={counters['n_events']:,} controls={counters['n_controls']:,} skipped_short={len(skipped)}")
-    print(f"wrote {JSON_PATH}")
-    print(f"wrote {MD_PATH}")
+    print(f"wrote {json_path}")
+    print(f"wrote {md_path}")
     return 0
 
 
