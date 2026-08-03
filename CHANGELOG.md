@@ -24,10 +24,34 @@ bots 16/17 at START, not mid-cycle), so the DB- and network-free test stubs yfin
 — the repo runs two python environments and a guard that only runs in one of them is exactly the
 failure mode of the companion task T-083.
 
-8 tests, green on both interpreters and standalone; each mutation-tested (no retry → 5 red,
-WARNING silenced → 1, `None` instead of an empty frame → 1, backoff after the final attempt → 1,
-ticker/timeframe dropped from the message → 1). Live smoke test through the real call chain:
-bot 16 EURUSD=X 1h/4h/1d → 1417/370/198 rows, bot 17 GC=F 4h → 300 rows. `mypy` clean,
+**Circuit breaker + jitter (T-2026-KYT-9050-088, from both core reviews).** A plain retry has an
+unpleasant feedback property: it multiplies load exactly when the cause is overload. Under a
+BROAD outage — as opposed to the observed ~5% transient regime — bot 16's 77 pulls would add
+~346s of pure sleep and 154 extra requests per 15-minute cycle against an endpoint that is
+already refusing. So consecutive total failures are now counted, and after `CIRCUIT_TRIP_AFTER`
+(5) the retry switches itself off for the rest of the cycle: one attempt per pull, no backoff,
+no amplification. A single success closes it again — the endpoint is demonstrably answering —
+and both bots call `reset_retry_budget()` at the top of their scan so a fresh cycle always gets
+a fair chance and a recovery is never hidden. Five is above the transient rate (five failures in
+a row essentially never happen by chance at 5%) and far below a full cycle, so it separates
+"unlucky" from "Yahoo is down". The backoff is now jittered (×0.5–1.5, same expected wait): not
+against a thundering herd — each bot is a single sequential process on an offset schedule — but
+so retries do not march lockstep into the same recovery window.
+
+Two more review findings fixed: the `max(1, attempts)` clamp covered only the loop bound, so an
+exhausted pull could report *"no data after -3 attempts"* — one `budget` is now bound once and
+used by the loop, the backoff guard and both log lines. And both bots' `logging.basicConfig`
+lacked `%(levelname)s`, which made the new WARNING indistinguishable from an INFO line in the
+log file; verified in a forced-failure run that it now reads
+`SMC_BOT - WARNING - YFinance EURUSD=X (1h): no data after 3 attempt(s) …`.
+
+17 tests, green on the fleet interpreter, the dev interpreter and standalone. Every branch
+mutation-tested with an md5-verified restore: breaker never trips → 4 red · open breaker keeps
+the full retry → 1 · jitter removed → 1 · clamp only on the loop bound → 2 · cycle reset a no-op
+→ 2 · success does not clear the failure run → 1. That last one initially caught **nothing**:
+the scattered-failure test only checked the breaker at the end, where the closing success had
+already masked the flapping — the assertion now runs after every failure. Live smoke through the
+real call chain: bot 16 EURUSD=X 1h/4h → 1419/371 rows. `mypy` clean, `ruff` clean,
 `regression_guard verify` OK. **Ops note: the running bot processes keep the old code until the
 fleet is restarted.**
 

@@ -18,9 +18,12 @@ from core import config as _kcfg  # channel ids
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import calculate_pivots, check_cooldown, update_cooldown
-from core.yfinance_fetch import download_with_retry
+from core.yfinance_fetch import download_with_retry, reset_retry_budget
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - SMC_BOT - %(message)s')
+# T-2026-KYT-9050-088: %(levelname)s added — without it a WARNING is
+# indistinguishable from an INFO line in the log file, which made the new
+# "no data after N attempts" warning invisible as a warning.
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - SMC_BOT - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 CHART_DIR = "generated_charts"
@@ -389,6 +392,10 @@ def send_signal(conn, channel, symbol, direction, price, targets, sl, setup_type
 
 def run_smc_analysis():
     logger.info("🔍 Starting SMC scan (FVG & structure shifts)...")
+    # T-2026-KYT-9050-088: close the yfinance retry breaker at the top of every
+    # cycle. Without this a breaker opened by one bad cycle would stay open into
+    # the next as long as pulls keep failing, hiding a recovery.
+    reset_retry_budget(logger)
     conn = get_db_connection()
     conn.autocommit = True
 
