@@ -45,15 +45,38 @@ lacked `%(levelname)s`, which made the new WARNING indistinguishable from an INF
 log file; verified in a forced-failure run that it now reads
 `SMC_BOT - WARNING - YFinance EURUSD=X (1h): no data after 3 attempt(s) …`.
 
-17 tests, green on the fleet interpreter, the dev interpreter and standalone. Every branch
+**Per-cycle retry budget (second review round).** The breaker only sees a CONTIGUOUS run of
+failures, so a partial outage walks straight past it: a measured 4-fail/1-ok pattern over bot
+16's 77 pulls never trips it and still costs 124 extra requests and 279s of sleep — 80 % of the
+unmitigated worst case. `CYCLE_RETRY_BUDGET` (40) now caps retry attempts per cycle regardless
+of how the failures are distributed, and `reset_retry_budget()` refills it. 40 leaves the
+observed regime untouched (~5 % of 77 pulls ≈ 8 retries) and does not bite until roughly a 25 %
+failure rate. The two brakes are deliberately independent: the breaker reacts fast to an outage,
+the budget bounds the shape the breaker cannot see.
+
+25 tests, green on the fleet interpreter, the dev interpreter and standalone. Every branch
 mutation-tested with an md5-verified restore: breaker never trips → 4 red · open breaker keeps
-the full retry → 1 · jitter removed → 1 · clamp only on the loop bound → 2 · cycle reset a no-op
-→ 2 · success does not clear the failure run → 1. That last one initially caught **nothing**:
-the scattered-failure test only checked the breaker at the end, where the closing success had
-already masked the flapping — the assertion now runs after every failure. Live smoke through the
-real call chain: bot 16 EURUSD=X 1h/4h → 1419/371 rows. `mypy` clean, `ruff` clean,
-`regression_guard verify` OK. **Ops note: the running bot processes keep the old code until the
-fleet is restarted.**
+the full retry → 1 · jitter removed → 1 · clamp only on the loop bound → 2 · **cycle reset a
+no-op → 10** · success does not clear the failure run → 1 · budget never exhausts → 2 · budget
+counts first attempts → 7 · reset does not refill the budget → 8 · budget warning repeats → 1 ·
+reset summary line silenced → 1.
+
+Two of those numbers are corrections, both found by mutating the guards rather than trusting
+them. The scattered-failure test first caught **nothing** when the success-path reset was
+mutated away — it checked the breaker only at the end, where the closing success had already
+masked the flapping; the assertion now runs after every failure. And the budget-warning latch
+first caught nothing either, because the fixture landed on an EVEN remainder, where the warning
+fires once even without the latch; the fixture now lands on an odd remainder so a single call
+crosses the limit. The earlier "cycle reset a no-op → 2" was simply stale — measured before the
+first of those test fixes.
+
+Also fixed from the review: the `_rand` default (`random.uniform`) was never executed by any
+test, so a typo in the jitter band would only have surfaced in production — now covered by a
+20-sample band check; the reset summary line is covered; and one assertion message claimed a
+monotonicity that only holds under the stubbed jitter (with real jitter consecutive sleeps
+overlap and the second CAN be shorter) — reworded. Live smoke through the real call chain: bot
+16 EURUSD=X 1h/4h → 1419/371 rows. `mypy` clean, `ruff` clean, `regression_guard verify` OK.
+**Ops note: the running bot processes keep the old code until the fleet is restarted.**
 
 ## [2026-08-03] LQE1 fix: collector streamed against a dead legacy path — routed /market/ws + silent-subscription guard (T-2026-KYT-9050-082)
 

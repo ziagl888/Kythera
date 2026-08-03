@@ -60,11 +60,14 @@ if "yfinance" not in sys.modules:
 
 from core.yfinance_fetch import (  # noqa: E402
     CIRCUIT_TRIP_AFTER,
+    CYCLE_RETRY_BUDGET,
     YF_JITTER_RANGE,
     YF_MAX_ATTEMPTS,
+    YF_RETRY_BACKOFF_S,
     circuit_is_open,
     download_with_retry,
     reset_retry_budget,
+    retries_remaining,
 )
 
 # Deterministic stand-in for random.uniform: the midpoint of the jitter band, so
@@ -180,8 +183,12 @@ def test_attempts_are_bounded():
     _call("GBPJPY=X", attempts=5, _download=rec, _sleep=clock)
     assert len(rec.calls) == 5, "the attempts argument must cap the loop"
     assert len(clock.slept) == 4, "no backoff after the final attempt"
-    assert clock.slept == sorted(clock.slept), "backoff must not shrink between attempts"
-    assert clock.slept[0] < clock.slept[-1], "backoff must actually grow"
+    # NOTE: this asserts the JITTER-FREE base curve — `_call` injects the
+    # constant stub. With the production `random.uniform(0.5, 1.5)` consecutive
+    # sleeps overlap in [1.5, 2.25] and the second CAN be shorter than the first;
+    # the band itself is covered by test_production_jitter_default_stays_in_band.
+    assert clock.slept == sorted(clock.slept), "base backoff must not shrink (jitter stubbed out here)"
+    assert clock.slept[0] < clock.slept[-1], "base backoff must actually grow"
 
 
 @pytest.mark.parametrize("bad", [0, -3])
@@ -215,6 +222,31 @@ def test_backoff_is_jittered_within_the_configured_band():
     assert clock.slept == [2.0 * 1 * YF_JITTER_RANGE[1]], (
         f"jitter factor not multiplied into the backoff: {clock.slept}"
     )
+
+
+def test_production_jitter_default_stays_in_band():
+    """Exercise the REAL `random.uniform` default, which every other test stubs.
+
+    Without this, a typo in `YF_JITTER_RANGE` or in the default binding would
+    only ever surface in production — the one failure mode this whole module
+    exists to eliminate (T-2026-KYT-9050-088 review finding).
+    """
+    lo, hi = YF_JITTER_RANGE
+    seen = []
+    for _ in range(20):  # jitter is random; sample enough to catch a bad band
+        clock = _Clock()
+        download_with_retry(  # deliberately NOT via _call — no _rand injected
+            "EURUSD=X", "1h", "60d", attempts=3, _download=_Recorder([pd.DataFrame()]), _sleep=clock
+        )
+        reset_retry_budget()
+        assert len(clock.slept) == 2
+        for attempt, slept in enumerate(clock.slept, start=1):
+            base = YF_RETRY_BACKOFF_S * attempt
+            assert base * lo <= slept <= base * hi, (
+                f"attempt {attempt}: {slept} outside [{base * lo}, {base * hi}]"
+            )
+        seen.extend(clock.slept)
+    assert len(set(seen)) > 1, "the default jitter produced identical values — is it really random?"
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +321,115 @@ def test_an_intervening_success_prevents_the_breaker_from_opening():
 
 
 # ---------------------------------------------------------------------------
+# Per-cycle retry budget — the brake the breaker cannot be (partial outage)
+# ---------------------------------------------------------------------------
+def test_budget_counts_only_retries_not_first_attempts():
+    """A cycle of pure successes must not consume any budget."""
+    for _ in range(20):
+        _call(tf="1h", _download=_Recorder([_frame()]), _sleep=_Clock())
+    assert retries_remaining() == CYCLE_RETRY_BUDGET, "successful pulls must cost no budget"
+
+
+def test_partial_outage_slips_past_the_breaker_but_not_past_the_budget():
+    """The exact gap the review found: 4-fail/1-ok never trips the breaker.
+
+    Without the budget this pattern costs ~80% of the unmitigated worst case,
+    because the breaker only ever sees a CONTIGUOUS failure run.
+    """
+    total_calls = 0
+    for _ in range(60):
+        for _ in range(4):
+            rec = _Recorder([pd.DataFrame()])
+            _call(tf="1h", _download=rec, _sleep=_Clock())
+            total_calls += len(rec.calls)
+        rec = _Recorder([_frame()])
+        _call(tf="1h", _download=rec, _sleep=_Clock())
+        total_calls += len(rec.calls)
+    assert not circuit_is_open(), "fixture invalid — this pattern must NOT trip the breaker"
+    assert retries_remaining() == 0, "the budget must absorb what the breaker cannot see"
+    # 300 pulls: unbounded would be 4*60*3 + 60 = 780 calls. The budget caps the
+    # retry surplus at CYCLE_RETRY_BUDGET on top of one attempt per pull.
+    assert total_calls <= 300 + CYCLE_RETRY_BUDGET, (
+        f"{total_calls} calls exceeds one-per-pull + {CYCLE_RETRY_BUDGET} budgeted retries"
+    )
+
+
+def test_exhausted_budget_collapses_the_retry_without_opening_the_breaker():
+    rec = _Recorder([pd.DataFrame()])
+    while retries_remaining() > 0:
+        _call(tf="1h", _download=_Recorder([pd.DataFrame()]), _sleep=_Clock())
+        _call(tf="1h", _download=_Recorder([_frame()]), _sleep=_Clock())  # keep the breaker shut
+    assert not circuit_is_open(), "this test is about the BUDGET, not the breaker"
+    clock = _Clock()
+    _call(tf="1h", _download=rec, _sleep=clock)
+    assert len(rec.calls) == 1, "with the budget spent a pull must cost exactly one request"
+    assert clock.slept == [], "no backoff may be slept once the budget is spent"
+
+
+def test_cycle_reset_refills_the_budget():
+    while retries_remaining() > 0:
+        _call(tf="1h", _download=_Recorder([pd.DataFrame()]), _sleep=_Clock())
+        _call(tf="1h", _download=_Recorder([_frame()]), _sleep=_Clock())
+    assert retries_remaining() == 0
+    reset_retry_budget()
+    assert retries_remaining() == CYCLE_RETRY_BUDGET, "a fresh cycle must get a fresh budget"
+    rec = _Recorder([pd.DataFrame()])
+    _call(tf="1h", _download=rec, _sleep=_Clock())
+    assert len(rec.calls) == YF_MAX_ATTEMPTS, "full retry budget is back after the reset"
+
+
+def test_budget_exhaustion_is_announced_once(caplog):
+    """Exactly one line per cycle — including when a single call CROSSES the limit.
+
+    The crossing case is the one that matters: with `attempts=3` a failing pull
+    spends two retries, so if the budget has an ODD remainder the first retry
+    reaches the limit and the second exceeds it, inside the same call. Without
+    the `_budget_warned` latch that logs twice. An even-remainder fixture cannot
+    tell the difference and would pass on the unlatched version too — that gap
+    was found by mutating the latch away (T-2026-KYT-9050-088).
+    """
+    log = logging.getLogger("test_yf_budget")
+    # attempts=2 spends exactly one retry per failing pull → land on remainder 1.
+    while retries_remaining() > 1:
+        _call(tf="1h", attempts=2, logger=log, _download=_Recorder([pd.DataFrame()]), _sleep=_Clock())
+        _call(tf="1h", logger=log, _download=_Recorder([_frame()]), _sleep=_Clock())  # keep breaker shut
+    assert retries_remaining() == 1, "fixture must land on an ODD remainder to be meaningful"
+
+    with caplog.at_level(logging.WARNING, logger="test_yf_budget"):
+        # Two retries wanted, one left: reaches the limit, then exceeds it.
+        _call(tf="1h", logger=log, _download=_Recorder([pd.DataFrame()]), _sleep=_Clock())
+        for _ in range(5):  # keep pulling with the budget spent
+            _call(tf="1h", logger=log, _download=_Recorder([pd.DataFrame()]), _sleep=_Clock())
+    budget_lines = [r for r in caplog.records if "retry budget of" in r.getMessage()]
+    assert len(budget_lines) == 1, (
+        f"budget exhaustion must be announced exactly once per cycle, got {len(budget_lines)}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Observability
 # ---------------------------------------------------------------------------
+def test_cycle_reset_reports_the_retries_it_cleared(caplog):
+    """The reset line is the only per-cycle summary of retry spend."""
+    log = logging.getLogger("test_yf_reset")
+    _call(tf="1h", _download=_Recorder([pd.DataFrame()]), _sleep=_Clock())  # burns 2 retries
+    with caplog.at_level(logging.INFO, logger="test_yf_reset"):
+        reset_retry_budget(log)
+    lines = [r.getMessage() for r in caplog.records if "retry budget reset" in r.getMessage()]
+    assert lines, "a cycle that spent retries must say so on reset"
+    assert "2 retries" in lines[-1], f"the reset line must report the spend: {lines[-1]}"
+
+
+def test_quiet_cycle_reset_stays_silent(caplog):
+    """No spend, no breaker — the reset must not add a line to every scan."""
+    log = logging.getLogger("test_yf_reset_quiet")
+    with caplog.at_level(logging.INFO, logger="test_yf_reset_quiet"):
+        reset_retry_budget(log)
+    assert not [r for r in caplog.records if "retry budget reset" in r.getMessage()], (
+        "an untouched budget must not log anything — that would be one line per cycle forever"
+    )
+
+
 def test_final_failure_is_logged_with_ticker_and_timeframe(caplog):
     """The whole point: a silent skip must stop looking like a healthy cycle."""
     rec, clock = _Recorder([pd.DataFrame()]), _Clock()

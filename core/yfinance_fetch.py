@@ -20,16 +20,25 @@
 #      the only trace is yfinance's own line, which names no timeframe and no
 #      caller.
 #
-# THE CIRCUIT BREAKER (T-2026-KYT-9050-088, from both core reviews of PR #259):
+# TWO INDEPENDENT BRAKES (T-2026-KYT-9050-088, from the core reviews of PR #259):
 # a plain retry has an unpleasant feedback property — it multiplies load exactly
 # when the cause is overload. Bot 16 walks 77 combinations per cycle on a
 # 15-minute trigger; under a BROAD Yahoo outage a 3-attempt retry would add
 # ~346s of pure sleep and 154 extra requests per cycle against an endpoint that
-# is already refusing. So consecutive total failures are counted, and after
-# CIRCUIT_TRIP_AFTER of them the retry switches itself off for the rest of the
-# cycle: one attempt per pull, no backoff, no amplification. A single success
-# closes it again, and each bot calls reset_retry_budget() at the start of a
-# cycle so a fresh cycle always gets a fair chance.
+# is already refusing.
+#
+#   1. CIRCUIT BREAKER — counts CONSECUTIVE total failures. After
+#      CIRCUIT_TRIP_AFTER the retry switches off for the rest of the cycle: one
+#      attempt per pull, no backoff. A single success closes it again (the
+#      endpoint is demonstrably answering). Catches an outage fast.
+#   2. PER-CYCLE RETRY BUDGET — counts retry attempts regardless of how the
+#      failures are DISTRIBUTED. The breaker only sees a contiguous run, so a
+#      partial outage slips past it: a measured 4-fail/1-ok pattern never trips
+#      it and still costs 124 extra requests + 279s of sleep, 80% of the
+#      unmitigated worst case. CYCLE_RETRY_BUDGET bounds that shape too.
+#
+# Both are cycle-scoped: each bot calls reset_retry_budget() at the start of its
+# scan, so a fresh cycle always gets a fair chance and a recovery is never hidden.
 #
 # DELIBERATELY NOT IN core/market_utils.py: that module is imported by most of
 # the fleet, and a module-level `import yfinance` there would make a missing or
@@ -39,8 +48,9 @@
 # Invariants:
 #   * returns a DataFrame, never None and never a raise — the callers' skip path
 #     (`if df.empty: return df`) must stay exactly as it was;
-#   * the attempt count is bounded, and a tripped breaker only ever lowers it;
-#   * the breaker state is process-local and single-threaded (each bot is its own
+#   * the attempt count is bounded, and neither brake ever RAISES it — a tripped
+#     breaker or an exhausted budget only ever lowers the budget to 1;
+#   * the module state is process-local and single-threaded (each bot is its own
 #     process and pulls sequentially) — it is NOT safe to share across threads.
 
 from __future__ import annotations
@@ -71,28 +81,61 @@ YF_JITTER_RANGE = (0.5, 1.5)
 # far below a full cycle, so it distinguishes "unlucky" from "Yahoo is down".
 CIRCUIT_TRIP_AFTER = 5
 
+# Hard ceiling on RETRY attempts (i.e. attempts beyond the first) per scan cycle.
+# The consecutive-failure breaker above only catches a CONTIGUOUS run, so a
+# partial outage slips past it: a measured 4-fail/1-ok pattern over bot 16's 77
+# pulls never trips it and still costs 124 extra requests and 279s of sleep —
+# 80% of the unmitigated worst case (review finding on T-2026-KYT-9050-088 AC6).
+# This counter closes that gap independently of the failure SHAPE. 40 leaves the
+# observed regime completely untouched (~5% of 77 pulls ≈ 8 retries) and does not
+# bite until roughly a 25% failure rate, at which point the extra requests are
+# buying almost nothing anyway.
+CYCLE_RETRY_BUDGET = 40
+
 # Process-local breaker state. See the threading note in the Invariants above.
 _consecutive_exhaustions = 0
 _circuit_open = False
+_retries_this_cycle = 0
+_budget_warned = False
 
 
 def reset_retry_budget(logger: logging.Logger | None = None) -> None:
-    """Close the breaker and clear the failure count — call once per scan cycle.
+    """Close the breaker and clear both counters — call once per scan cycle.
 
     Without this a breaker opened by one bad cycle would stay open into the next
-    one for as long as every pull keeps failing, which would hide a recovery. The
-    bots call it at the top of their scan.
+    one for as long as every pull keeps failing, which would hide a recovery, and
+    the per-cycle retry budget would never refill. The bots call it at the top of
+    their scan.
     """
-    global _consecutive_exhaustions, _circuit_open
-    if _circuit_open:
-        (logger or _logger).info("YFinance retry budget reset — retries re-enabled for this cycle.")
+    global _consecutive_exhaustions, _circuit_open, _retries_this_cycle, _budget_warned
+    if _circuit_open or _retries_this_cycle:
+        (logger or _logger).info(
+            f"YFinance retry budget reset ({_retries_this_cycle} retries used last cycle) — retries re-enabled."
+        )
     _consecutive_exhaustions = 0
     _circuit_open = False
+    _retries_this_cycle = 0
+    _budget_warned = False
 
 
 def circuit_is_open() -> bool:
     """Whether the breaker currently suppresses retries (for tests and callers)."""
     return _circuit_open
+
+
+def retries_remaining() -> int:
+    """Retry attempts left in this cycle's budget (for tests and callers)."""
+    return max(0, CYCLE_RETRY_BUDGET - _retries_this_cycle)
+
+
+def _retries_suppressed() -> bool:
+    """True when either guard says: do not spend more attempts on this cycle.
+
+    The two are deliberately independent — the breaker reacts to a contiguous run
+    of total failures (an outage), the budget to the total volume regardless of
+    how the failures are distributed (a partial outage the breaker cannot see).
+    """
+    return _circuit_open or _retries_this_cycle >= CYCLE_RETRY_BUDGET
 
 
 def download_with_retry(
@@ -126,7 +169,7 @@ def download_with_retry(
     ``_download`` / ``_sleep`` / ``_rand`` are injection points for the DB-free
     tests.
     """
-    global _consecutive_exhaustions, _circuit_open
+    global _consecutive_exhaustions, _circuit_open, _retries_this_cycle, _budget_warned
 
     log = logger or _logger
     download = _download or yf.download
@@ -134,7 +177,7 @@ def download_with_retry(
     # One clamp, used by the loop, the backoff guard AND both log lines — a
     # clamp that covers only the loop bound reports "no data after -3 attempts"
     # (T-2026-KYT-9050-088).
-    budget = 1 if _circuit_open else max(1, attempts)
+    budget = 1 if _retries_suppressed() else max(1, attempts)
     last_error: Exception | None = None
 
     for attempt in range(1, budget + 1):
@@ -156,6 +199,16 @@ def download_with_retry(
             return df
 
         if attempt < budget:
+            # Counted BEFORE the sleep: the retry is committed at this point, and
+            # counting it here means an interrupted cycle cannot under-report.
+            _retries_this_cycle += 1
+            if not _budget_warned and _retries_this_cycle >= CYCLE_RETRY_BUDGET:
+                _budget_warned = True
+                log.warning(
+                    f"YFinance: per-cycle retry budget of {CYCLE_RETRY_BUDGET} exhausted — "
+                    f"remaining pulls get one attempt each. A partial outage does not trip the "
+                    f"consecutive-failure breaker, so this is the guard that bounds it."
+                )
             # Linear-ish backoff (1.5s, 3.0s) with jitter — enough to clear a
             # rate-limit burst without stretching a 77-request scan cycle.
             _sleep(backoff_s * attempt * _rand(*YF_JITTER_RANGE))
