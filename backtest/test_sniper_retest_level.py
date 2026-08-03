@@ -206,7 +206,10 @@ def test_forming_candle_is_excluded_at_the_source():
     merely stop matching.
     """
     body = _scan_body()
-    assert re.search(r"^\s*include_forming\s*=\s*False\s*,", body, re.MULTILINE), (
+    # `,?\s*$` — see test_sniper_edge_pivots.py: the kwarg is equally valid as
+    # the last argument without a trailing comma, and a guard that false-reds on
+    # correct code trains people to ignore it.
+    assert re.search(r"^\s*include_forming\s*=\s*False\s*,?\s*$", body, re.MULTILINE), (
         "the closed-only candle read was lost — the BB feature row would sit on the forming bar"
     )
     assert not re.search(r"^\s*include_forming\s*=\s*True", body, re.MULTILINE), (

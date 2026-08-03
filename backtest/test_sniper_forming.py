@@ -92,6 +92,18 @@ def _scan_body():
     return body.group(1)
 
 
+def _scan_code():
+    """`_scan_body()` with comment lines removed.
+
+    For guards that search across newlines (`re.DOTALL`), the ~90 comment lines
+    in scan_market are a false-positive surface: "select" and "from" are ordinary
+    English words, and a DOTALL `.*` happily spans from one prose comment to
+    another. Structural guards run against this; guards that are ABOUT the
+    comments keep using `_scan_body()` (T-2026-KYT-9050-088).
+    """
+    return "\n".join(ln for ln in _scan_body().splitlines() if not ln.strip().startswith("#"))
+
+
 # ---------------------------------------------------------------------------
 # The load-bearing guard: the frame is closed-only at the SOURCE
 # ---------------------------------------------------------------------------
@@ -155,17 +167,23 @@ def test_no_raw_candle_query_bypasses_core_candles():
     practice. A bypassing query would be an ADDITIONAL read alongside the
     core.candles call, so the behavioural test above stays green on its own — this
     is the only guard that would notice.
+
+    DOTALL alone would then span the ~90 prose comment lines in scan_market
+    ("we select the …" on one line, "… from the frame" twenty lines later), so
+    the match runs against the COMMENT-STRIPPED body. Keeps the multi-line
+    coverage, drops the prose false-positive class.
     """
     body = _scan_body()
+    code = _scan_code()
     assert "read_candles_with_indicators(" in body, (
         "scan_market no longer reads through core.candles — the closed-only contract "
         "is enforced there and nowhere else"
     )
-    assert not re.search(r"SELECT\s.*\sFROM\s", body, re.IGNORECASE | re.DOTALL), (
+    assert not re.search(r"SELECT\s.*\sFROM\s", code, re.IGNORECASE | re.DOTALL), (
         "a raw candle SELECT reappeared in scan_market — it would bypass "
         "include_forming=False (docs/CANDLE_CALL_SITES.md)"
     )
-    assert not re.search(r"\b(cur|cursor)\.execute\(|pd\.read_sql", body), (
+    assert not re.search(r"\b(cur|cursor)\.execute\(|pd\.read_sql", code), (
         "scan_market executes SQL directly — every candle read must go through "
         "core.candles so the closed-only contract holds in one place"
     )

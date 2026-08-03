@@ -189,7 +189,11 @@ def test_forming_candle_is_excluded_at_the_source():
     merely stop matching.
     """
     body = _scan_body()
-    assert re.search(r"^\s*include_forming\s*=\s*False\s*,", body, re.MULTILINE), (
+    # `,?\s*$` instead of `\s*,`: the kwarg is equally valid as the LAST argument
+    # of the call, without a trailing comma. ruff-format's magic trailing comma
+    # restores it on an exploded call, so today only one form occurs — but a
+    # guard that false-reds on correct code trains people to ignore it.
+    assert re.search(r"^\s*include_forming\s*=\s*False\s*,?\s*$", body, re.MULTILINE), (
         "the closed-only candle read was lost — pivots would repaint on the forming candle"
     )
     assert not re.search(r"^\s*include_forming\s*=\s*True", body, re.MULTILINE), (

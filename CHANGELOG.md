@@ -41,9 +41,17 @@ Mutation matrix, re-measured against the live source with the call site isolated
 comments: `include_forming=False → True` **3** tests red · `last_closed len(df)-1 → -2` **2** ·
 slice reintroduced **3** · BB anchor `len(df)-1 → -2` **2** · `n_closed → len(df)-1` **1** ·
 multi-line raw `SELECT` injected **1**. **51 tests pass across the six SMC test files**
-(previously stated as 47 across five — 47 was the count of `def test_`, and
-`test_sniper_tag.py` was missed). `regression_guard verify` OK (24 fixtures). No production
-code changed; every mutation was reverted with an md5-verified restore.
+(previously stated as 47 across five: that count was correct for the five files listed —
+`test_sniper_tag.py` was simply missing from the list). `regression_guard verify` OK (24
+fixtures). No production code changed; every mutation was reverted with an md5-verified restore.
+
+Two guards were sharpened once more after the re-review, both against false-RED classes the
+first fix introduced: the raw-`SELECT` check now matches against the **comment-stripped** body,
+because `re.DOTALL` alone spans the ~90 prose comment lines in `scan_market` ("we select the …"
+on one line, "… from the frame" twenty lines later), and the `include_forming` anchor accepts
+`,?\s*$` so the kwarg is also matched as the LAST argument of the call, without a trailing
+comma. Neither could ship today — ruff-format's magic trailing comma restores the current form —
+but a guard that false-reds on correct code trains people to ignore it.
 
 One claim is deliberately NOT presented as mutation-proven: the new money-path sentinel
 (`evaluate_and_trade` patched to record instead of trade) does not fire when the 100-row floor
