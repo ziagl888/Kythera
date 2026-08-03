@@ -54,6 +54,72 @@ def head_commit_time(repo: str = _REPO) -> datetime | None:
     return datetime.fromtimestamp(int(raw), tz=timezone.utc)
 
 
+# The name match lives in the WQL filter, so the whole process table arrives
+# pre-narrowed. 'py.exe' is the launcher the watchdog task uses; a LIKE 'py%'
+# would also swallow pythonw, pycharm and py7zr, so both patterns are spelled out.
+_WQL_PYTHON = "Name LIKE 'python%' OR Name = 'py.exe'"
+
+_CIM_QUERY = (
+    f'Get-CimInstance Win32_Process -Filter "{_WQL_PYTHON}" | '
+    "Select-Object ProcessId,ParentProcessId,"
+    "@{n='Created';e={[double]::Parse((($_.CreationDate.ToUniversalTime()-[datetime]'1970-01-01')"
+    ".TotalSeconds).ToString([System.Globalization.CultureInfo]::InvariantCulture))}} | "
+    "ConvertTo-Json -Compress"
+)
+
+
+def _query_python_processes(timeout_sec: float = 45.0) -> list[dict]:
+    """Every python process on the box as {pid, ppid, create_time}, in ONE call.
+
+    Deliberately NOT psutil (T-2026-KYT-9050-079). psutil's per-process
+    attribute machinery is what hung a fleet restart for ten minutes, and the
+    expensive attribute is `name`, not `create_time`: measured on SRV02
+    2026-08-03, `process_iter(["pid"])` walks 293 processes in 9.6 s, while
+    `process_iter(["pid", "name"])` manages 46 in 45 s — roughly a second per
+    process, because resolving a name falls back to opening a handle for the
+    elevated and protected ones. Narrowing the attribute list does not save it;
+    the name IS the filter.
+
+    One CIM query returns the same three fields for all python processes in
+    16 s under load (measured), and it is the mechanism restart_fleet.ps1
+    already uses next door. Failure of any kind yields an empty list, never a
+    partial one — see fleet_processes for why that is the safe direction.
+    """
+    if os.name != "nt":  # pragma: no cover - the fleet is Windows-only
+        return []
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _CIM_QUERY],
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0 or not (out.stdout or "").strip():
+        return []
+    try:
+        rows = json.loads(out.stdout)
+    except ValueError:
+        return []
+    if isinstance(rows, dict):  # ConvertTo-Json unwraps a single row
+        rows = [rows]
+
+    parsed = []
+    for row in rows:
+        try:
+            parsed.append(
+                {
+                    "pid": int(row["ProcessId"]),
+                    "ppid": int(row["ParentProcessId"]),
+                    "create_time": float(row["Created"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue  # a row we cannot read is dropped, not guessed at
+    return parsed
+
+
 def fleet_processes() -> list[dict]:
     """The watchdog's python children — the fleet, and nothing else.
 
@@ -69,32 +135,22 @@ def fleet_processes() -> list[dict]:
     python children. Its CommandLine is unreadable from an unelevated session
     (the fleet runs elevated), so matching on 'main_watchdog' would silently
     find nothing — that exact miss cost an hour on 2026-08-02.
-    """
-    try:
-        import psutil
-    except ImportError:  # pragma: no cover - psutil is a fleet dependency
-        return []
 
-    # Keep the plain info dicts, not the psutil objects: everything below needs
-    # only pid/ppid/create_time, and a dict keeps this testable with a stub.
-    pythons: dict[int, dict] = {}
-    for proc in psutil.process_iter(["pid", "name", "ppid", "create_time"]):
-        info = dict(proc.info)
-        name = (info.get("name") or "").lower()
-        if name.startswith("python") or name.startswith("py."):
-            pythons[info["pid"]] = info
+    An unreadable process table yields an empty set, which assess() reports as
+    'no_fleet' rather than 'stale'. That direction is deliberate: a failed
+    measurement must never manufacture a staleness alarm.
+    """
+    pythons = {p["pid"]: p for p in _query_python_processes()}
 
     children: dict[int, list[int]] = {}
     for pid, info in pythons.items():
-        ppid = info.get("ppid")
-        if ppid in pythons:
-            children.setdefault(ppid, []).append(pid)
+        if info["ppid"] in pythons:
+            children.setdefault(info["ppid"], []).append(pid)
     if not children:
         return []
 
     watchdog_pid = max(children, key=lambda p: len(children[p]))
-    out = [{"pid": pid, "create_time": pythons[pid].get("create_time")} for pid in children[watchdog_pid]]
-    return [p for p in out if p["create_time"]]
+    return [{"pid": pid, "create_time": pythons[pid]["create_time"]} for pid in children[watchdog_pid]]
 
 
 def assess(repo: str = _REPO) -> dict:

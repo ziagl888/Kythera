@@ -19,6 +19,47 @@ needs genuine out-of-sample weeks from the running `oi_5m`/`liq_events` collecto
 verdict may be revisited once the window has grown materially. 8 DB-free tests pin event
 detection (as-of prior-bar band, warm-up/last-bar exclusion), fold/stats shapes and every
 verdict failure mode.
+## [2026-08-03] The code-age canary hung the fleet restart: psutil's `name`, not `create_time` (T-2026-KYT-9050-079)
+
+The canary shipped in T-2026-KYT-9050-071 sat in `restart_fleet.ps1`'s preflight and blocked a
+marker restart for **ten minutes**. It is advisory — it must never be able to do that.
+
+**The measured cause, after a first wrong diagnosis.** The initial suspect was `create_time`
+(a handle per process on Windows). Timing the primitives on SRV02 under load says otherwise:
+
+| Call | Result |
+|---|---|
+| `psutil.pids()` | 2.6 s → 361 PIDs |
+| `process_iter(["pid"])` | 9.6 s → 293 processes |
+| `process_iter(["pid","name"])` | **46 processes in 45 s** (aborted) |
+| `process_iter(["pid","name","ppid"])` | **42 processes in 45 s** (aborted) |
+
+The expensive attribute is **`name`** — roughly a second per process, because resolving it falls
+back to opening a handle for the elevated and protected ones. Narrowing the attribute list does
+not help: the name *is* the filter. Unit tests could not have caught this; they fake psutil and
+measure no wall clock.
+
+**The fix.** `tools/ops/fleet_code_age.py` drops psutil and fetches the whole process table in a
+single CIM query (`Get-CimInstance Win32_Process -Filter "Name LIKE 'python%' OR Name = 'py.exe'"`),
+returning PID, ParentProcessId and creation time at once — the same mechanism `restart_fleet.ps1`
+already uses next door. Measured against the live box: **6.8 s** for the full verdict where the
+previous version had not returned after 68 s.
+
+Hardening around it:
+
+* `restart_fleet.ps1` runs the canary in a `Start-Job` with `-AgeCanaryTimeoutSec` (default 60 s,
+  against 16 s measured). On overrun the job is stopped, a WARN is logged and **the restart
+  continues** — an advisory check never holds the critical path open again.
+* A failed or timed-out query returns an empty table, which `assess()` reports as `no_fleet`
+  (exit 0), never as `stale`. A failed measurement must not manufacture an alarm.
+* Rows that cannot be parsed are dropped rather than guessed at.
+
+`backtest/test_fleet_code_age.py` grows to 14 tests, pinning the one-call contract, the timeout,
+the empty-table-is-not-stale direction, the WQL name filter and `ConvertTo-Json`'s single-row
+unwrapping.
+
+**The fleet was untouched by ordering, not by design:** the restart markers are written before the
+canary runs, so the hung preflight cost time, not a restart.
 
 ## [2026-08-03] Root cause of the detached watchdog task: the boot clock jump, not a failure (T-2026-KYT-9050-076)
 
