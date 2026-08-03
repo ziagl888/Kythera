@@ -256,6 +256,32 @@ Verifiziert: `backtest/test_fleet_code_age.py` 10/10 (DB-frei), PowerShell parst
 (`[Parser]::ParseFile`), `-DryRun` end-to-end gelaufen, ruff + format + mypy sauber, Guard 24/24.
 Der Kanarienvogel gegen den Live-Checkout meldet aktuell korrekt **„1 von 41"** — das Dashboard,
 das seit dem Marker-Restart bewusst auf altem Code läuft.
+## [2026-08-03] Dashboard templates translated, together with their tests (T-2026-KYT-9050-075)
+
+The 12 Jinja templates under `tools/dashboard/templates/` had been left German by the Python
+sweep, so the dashboard UI was German while everything behind it was English. 14 lines
+translated — empty-state messages, the freshness badge tooltip, the page title, two digest
+headings.
+
+**The point of this commit is that templates and tests move together.** The tests substring-match
+the rendered HTML, so translating one side alone breaks them silently — and no AST guard applies
+here, because Jinja is not Python. The only proof is running them.
+
+The Python sweep had listed **four** coupled assertions. The full test run found **eight**:
+
+| Test | Asserted on |
+|---|---|
+| `test_dashboard_coin_drilldown.py` (×3) | `"Unbekannter Coin"`, `"Noch keine entschiedenen Trades"` |
+| `test_dashboard_success_rate_panel.py` (×2) | `"Keine Bots ausgewählt"`, `"keine entschiedenen Trades"` |
+| `test_dashboard_regime_heatmap.py` | `"Noch keine Regime-zugeordneten"` |
+| `test_dashboard_leaderboard.py` | `"keine entschiedenen Trades"` |
+| `test_dashboard_shell.py` | `"keine entschiedenen Trades"` |
+
+Four of them only surfaced in the full run, because they live in test files that a targeted run
+of the "obviously affected" modules did not include. One escaped a repo-wide grep because it
+writes the sentence in lower case and without the leading "Noch". A repo-wide check afterwards
+confirms no assertion is left matching a translated template string.
+
 ## [2026-08-03] Python sources translated to English (T-2026-KYT-9050-075)
 
 225 `.py` files, comments, docstrings and string literals German → English. **No behaviour

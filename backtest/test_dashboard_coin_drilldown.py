@@ -358,14 +358,14 @@ def test_panel_coin_drilldown_unknown_coin_shows_clean_message(client):
     resp = client.get("/panels/coin-drilldown?coin=NOPE999")
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "Unbekannter Coin" in html
+    assert "Unknown coin" in html
     assert "NOPE999" in html
 
 
 def test_panel_coin_drilldown_empty_coin_query_param_shows_clean_message(client):
     resp = client.get("/panels/coin-drilldown?coin=")
     assert resp.status_code == 200
-    assert "Unbekannter Coin" in resp.get_data(as_text=True)
+    assert "Unknown coin" in resp.get_data(as_text=True)
 
 
 def test_panel_coin_drilldown_empty_substrate(tmp_path):
@@ -379,7 +379,7 @@ def test_panel_coin_drilldown_empty_substrate(tmp_path):
     c = dashboard_app.create_app(duckdb_path).test_client()
     resp = c.get("/panels/coin-drilldown")
     assert resp.status_code == 200
-    assert "Noch keine entschiedenen Trades" in resp.get_data(as_text=True)
+    assert "No decided trades" in resp.get_data(as_text=True)
 
 
 def test_index_includes_coin_drilldown_panel(client):
