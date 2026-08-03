@@ -201,8 +201,9 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
     A retracted claim used to live here (T-2026-KYT-9050-092): that this defect had starved
     EPD3 LONG to zero emissions for nine days after its 2026-07-25 promotion. It had not —
     that reading came from ml_predictions_master, which only records SHADOW legs, so LONG
-    going LIVE looked exactly like LONG dying. Both legs post daily. When measuring a live
-    leg's throughput use ai_signals / closed_ai_signals or the bot log, never the shadow table.
+    going LIVE looked exactly like LONG dying. Both legs posted daily as of 2026-08-03. When
+    measuring a live leg's throughput use ai_signals / closed_ai_signals or the bot log,
+    never the shadow table.
 
     ⚠ KILL SWITCH: despite both legs being LIVE, the whole emission still sits behind
     shadow_posting_enabled() — setting KYTHERA_SHADOW_POSTING=0 silences real Cornix

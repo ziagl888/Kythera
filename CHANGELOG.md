@@ -162,8 +162,9 @@ observed twice: once as the last shadow row, once as the file mtime.
 
 Ground truth from the live tables and the bot log: EPD3 LONG posted every single day.
 `ai_signals` inserts per day — 07-27: 10, 07-28: 60, 07-29: 43, 07-30: 65, 07-31: 33,
-08-01: 35, 08-02: 61, 08-03: 66; the bot log on 08-03 alone shows 52 LONG against 103 SHORT
-`placed in outbox`. No starvation, no silent bot.
+08-01: 35, 08-02: 61, and 70 on 08-03 by 19:55 (a running day, still climbing); the bot log
+for 08-03 up to that point shows 57 LONG against 108 SHORT `placed in outbox`. No
+starvation, no silent bot.
 
 What survives is the structural observation, verified by reading the code rather than the
 database: `_emit_epd3_shadow` takes `max()` across both directions on *raw* probabilities and
