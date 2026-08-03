@@ -1,3 +1,25 @@
+## [2026-08-03] MPS2: upper-band SHORT under house geometry — NO-DEPLOY, parked (T-2026-KYT-9050-078)
+
+Follow-up 1 from the MPS1 gate study (T-073): the only surviving candidate — SHORT after a
+touch of the upper liquidation-cluster band — backtested under OUR deployable geometry
+(`tools/mps2_short_backtest.py`, K11/wick-study wiring: smart targets from the as-of trailing
+30d 15m S/R frame → `ensure_min_tp_distance`(5 %) → `simulate_exit` first-touch ladder, 3 TPs,
+taker fees, SL-first on ambiguity, 4d scan cap; no re-entry while the prior geometry exit is
+open; event semantics imported from the gate study so the two cannot drift).
+
+**Result (527 symbols, 5,652 trades, chrono split 07-08): NO-DEPLOY.** Val +0.18 % net
+(t = 1.3), test **−0.05 %** (t = −0.26) — the pre-registered gate (both halves > 0 at
+n ≥ 100) fails on the test half. TP1 win rate is a seductive 77 % on BOTH halves while
+avg R sits at ~0.01–0.02: the frequent small TP1 wins are paid for by rare full-SL losses
+against clusters ~10 % away — exactly the WR-over-expectancy trap Rule 8 exists for.
+What is falsified is the COMBINATION drift × house geometry (5 % min-TP far above the
+~0.16 % 4h drift), not the drift itself; and the run shares the gate study's window, so it
+was an in-sample deployability check to begin with (T-007 lesson). Parked. Anything further
+needs genuine out-of-sample weeks from the running `oi_5m`/`liq_events` collectors — the
+verdict may be revisited once the window has grown materially. 8 DB-free tests pin event
+detection (as-of prior-bar band, warm-up/last-bar exclusion), fold/stats shapes and every
+verdict failure mode.
+
 ## [2026-08-03] Root cause of the detached watchdog task: the boot clock jump, not a failure (T-2026-KYT-9050-076)
 
 The state that cost 13 hours of undeployed code on 2026-08-02 — task `State=Ready` with
