@@ -29,17 +29,17 @@ os.makedirs(CHART_DIR, exist_ok=True)
 # 🛠️ CONFIGURATION
 SMC_TIMEFRAMES = ['15m', '30m', '1h', '2h', '4h', '1d', '1w']
 
-# P1.27: Cooldown muss mindestens eine Kerzendauer betragen — sonst refired
-# dieselbe 1d/1w-Kerze innerhalb ihrer eigenen Laufzeit mehrfach (12h-Default
-# deckt nur 15m..4h ab). 1d → 24h, 1w → 7d.
+# P1.27: Cooldown must be at least one candle duration — otherwise re-fires
+# the same 1d/1w candle multiple times within its own duration (12h default
+# covers only 15m..4h). 1d → 24h, 1w → 7d.
 COOLDOWN_HOURS = {'1d': 24, '1w': 168}
 
-# P2.45(a): Kerzendauer je TF für das Weekend-/Stale-Candle-Gate. Forex/Metals
-# stehen am Wochenende still — die letzte geschlossene Kerze friert ein und
-# hält die Struktur-/FVG-Bedingung tagelang. Der Cooldown (12h intraday) läuft
-# darunter ab und der Bot refired dieselbe eingefrorene Kerze. Ein Signal darf
-# nur feuern, wenn frische Daten vorliegen (siehe is_stale_candle). Auf dem
-# 24/7-Krypto-Pfad (METALS: BTC/ETH/…) ist die Kerze immer frisch → kein Effekt.
+# P2.45(a): Candle duration per TF for the weekend/stale-candle gate. Forex/Metals
+# are still over the weekend — the last closed candle freezes and holds the
+# structure/FVG condition for days. The cooldown (12h intraday) runs underneath
+# and the bot re-fires the same frozen candle. A signal may only fire when fresh
+# data is available (see is_stale_candle). On the 24/7 crypto path (METALS: BTC/ETH/…),
+# the candle is always fresh → no effect.
 CANDLE_DURATION = {
     '15m': datetime.timedelta(minutes=15),
     '30m': datetime.timedelta(minutes=30),
@@ -50,9 +50,9 @@ CANDLE_DURATION = {
     '1w': datetime.timedelta(weeks=1),
 }
 
-# P2.45(b): FVG-Age-Limit — ein nie mitigiertes FVG bleibt sonst über die
-# gesamte 300-Kerzen-Historie triggerbar. Konservativ auf die jüngsten 50 Bars
-# begrenzt (1h ≈ 2d, 4h ≈ 8d, 1d = 50d); ältere Gaps gelten als abgestanden.
+# P2.45(b): FVG-age limit — an unmitigated FVG would otherwise remain triggerable
+# over the entire 300-candle history. Conservatively limited to the most recent
+# 50 bars (1h ≈ 2d, 4h ≈ 8d, 1d = 50d); older gaps are considered stale.
 FVG_MAX_AGE = 50
 
 MARKETS = {
@@ -83,19 +83,19 @@ MARKETS = {
 
 # 📊 DATA FETCHING
 def fetch_db_data(conn, symbol, tf):
-    """Neueste 300 GESCHLOSSENE Kerzen, aufsteigend — nur für MARKETS-Gruppen mit
-    ``source == "database"`` (METALS: XAUUSDT/BTCUSDT/…, alles Binance-Symbole).
+    """Latest 300 CLOSED candles, ascending — only for MARKETS groups with
+    ``source == "database"`` (METALS: XAUUSDT/BTCUSDT/…, all Binance symbols).
 
-    C-Gate-Nachlauf (T-2026-KYT-9050-068): das rohe
-    ``SELECT ... FROM "{symbol}_{tf}"`` umging core.candles. Seit dem
-    Write-Primary-Cutover am 2026-07-16 schreibt niemand mehr in die per-Coin-
-    Tabellen; der METALS-Pfad bekam einen eingefrorenen Frame und der Bot
-    schwieg. Der FOREX-Pfad war nie betroffen — der holt live über yfinance
-    (``fetch_yfinance_data``) und fasst die DB nicht an.
+    C-Gate follow-up (T-2026-KYT-9050-068): the raw
+    ``SELECT ... FROM "{symbol}_{tf}"`` bypassed core.candles. Since the
+    write-primary cutover on 2026-07-16, nobody writes to the per-coin tables
+    anymore; the METALS path got a frozen frame and the bot went silent. The
+    FOREX path was never affected — it fetches live via yfinance
+    (``fetch_yfinance_data``) and does not touch the DB.
 
-    Gibt closed-only zurück (``include_forming=False``, harte Regel 5): der
-    gemeinsame ``.iloc[:-1]`` in ``run_analysis`` gilt deshalb nur noch für die
-    yfinance-Quelle, die ihre laufende Kerze weiterhin mitliefert.
+    Returns closed-only (``include_forming=False``, hard rule 5): the shared
+    ``.iloc[:-1]`` in ``run_analysis`` thus applies only to the yfinance source,
+    which continues to deliver its forming candle.
     """
     try:
         # `limit` liefert die NEUESTEN n Kerzen aufsteigend — identisch zum
@@ -112,7 +112,7 @@ def fetch_db_data(conn, symbol, tf):
             return df
         return df.reset_index(drop=True)
     except Exception as e:
-        logger.error(f"Error loading aus DB für {symbol} ({tf}): {e}")
+        logger.error(f"Error loading from DB for {symbol} ({tf}): {e}")
         return pd.DataFrame()
 
 
@@ -174,8 +174,8 @@ def fetch_yfinance_data(ticker, tf):
             df[c] = df[c].astype(float)
 
         # Drop only NaN (invalid) values that arise on weekends.
-        # P1.27: Die forming (letzte) Kerze wird NICHT mehr hier behalten — sie
-        # wird zentral in run_smc_analysis für beide Datenquellen abgeschnitten.
+        # P1.27: The forming (last) candle is NO LONGER retained here — it
+        # is centrally cut off in run_smc_analysis for both data sources.
         df.dropna(subset=['close'], inplace=True)
         df = df.reset_index(drop=True)
 
@@ -189,16 +189,16 @@ def fetch_yfinance_data(ticker, tf):
 
 
 def is_stale_candle(candle_open_time, tf, now=None):
-    """P2.45(a): True, wenn die letzte *geschlossene* Kerze abgestanden ist —
-    seit ihrem Close mindestens zwei volle Kerzendauern vergangen sind, ohne
-    dass eine neue Kerze entstand. Am Wochenende friert der Forex/Metals-Feed
-    ein, die Kerze erfüllt die Signal-Bedingung tagelang weiter und der Bot
-    würde bei jedem Cooldown-Ablauf refeuern. Frische Daten zu verlangen blockt
-    das, ohne den 24/7-Krypto-Pfad zu berühren (dort ist die Kerze stets aktuell).
+    """P2.45(a): True if the last *closed* candle is stale — at least two full
+    candle durations have passed since its close, without a new candle forming.
+    Over the weekend the forex/metals feed freezes, the candle continues to meet
+    the signal condition for days, and the bot would re-fire on each cooldown
+    expiry. Demanding fresh data blocks this without touching the 24/7 crypto path
+    (where the candle is always current).
 
-    Zwei-Kerzen-Toleranz (statt einer), damit ein einzelner yfinance-Lag im
-    Live-Markt kein Fehl-Blocken auslöst; ein Wochenende überschreitet sie bei
-    intraday-TFs um ein Vielfaches.
+    Two-candle tolerance (rather than one) so a single yfinance lag in the live
+    market doesn't trigger false blocking; a weekend exceeds it many times over
+    on intraday TFs.
     """
     dur = CANDLE_DURATION.get(tf)
     if dur is None:
@@ -217,9 +217,9 @@ def is_stale_candle(candle_open_time, tf, now=None):
 def find_unmitigated_fvgs(df, direction="BULLISH", max_age=FVG_MAX_AGE):
     fvgs = []
     curr_idx = len(df) - 1
-    # P2.45(b): nur FVGs aus den jüngsten `max_age` Bars betrachten — ältere,
-    # nie mitigierte Gaps sonst ewig triggerbar. Untergrenze bleibt >= 2
-    # (die FVG-Definition braucht i-2).
+    # P2.45(b): only consider FVGs from the most recent `max_age` bars — older,
+    # never-mitigated gaps would otherwise remain triggerable forever. Lower bound
+    # remains >= 2 (the FVG definition requires i-2).
     start_i = max(2, curr_idx - max_age)
     for i in range(start_i, len(df) - 1):
         if direction == "BULLISH":
@@ -335,20 +335,20 @@ def generate_smc_chart(df, symbol, tf, setup_type, level_data, is_bullish, suppo
         logger.error(f"Chart Error: {e}")
         return None
     finally:
-        # Schließt die von mpf.plot offen gelassene Figure — verhindert RAM-Leak.
+        # Closes the figure left open by mpf.plot — prevents RAM leak.
         plt.close('all')
 
 
 # 🚀 CORE ENGINE
-# FIX (#33/#34/#51): Die eigene is_cooled_down-Funktion entfernt.
-# Vorher hatte sie drei Probleme:
-#   1. Sie vermischte Check + Update (Seiteneffekt beim Check) → wenn der Send
-#      daafter fehlschlug, blieb trotzdem ein Cooldown-Eintrag stehen.
-#   2. `except: return True` → bei DB-Fehlern durfte alles traden.
-#   3. module=f"SMC_{tf}" erlaubte dasselbe Coin/Direction gleichzeitig auf
-#      1h UND 4h zu feuern (doppeltes Signal).
-# Jetzt: check_cooldown/update_cooldown aus market_utils, Cooldown-Key ohne
-# TF-Suffix (TF-übergreifend), update erst NACH erfolgreichem Send.
+# FIX (#33/#34/#51): Removed the custom is_cooled_down function.
+# Previously it had three problems:
+#   1. It mixed check + update (side effect on check) → if the send failed
+#      afterwards, a cooldown entry still remained.
+#   2. `except: return True` → DB errors allowed everything to trade.
+#   3. module=f"SMC_{tf}" allowed the same coin/direction to fire simultaneously
+#      on 1h AND 4h (double signal).
+# Now: check_cooldown/update_cooldown from market_utils, cooldown key without
+# TF suffix (cross-TF), update only AFTER successful send.
 
 
 def send_signal(conn, channel, symbol, direction, price, targets, sl, setup_type, chart_path, tf, details):
@@ -384,7 +384,7 @@ def send_signal(conn, channel, symbol, direction, price, targets, sl, setup_type
 
 
 def run_smc_analysis():
-    logger.info("🔍 Starting SMC Scan (FVG & Structure Shifts)...")
+    logger.info("🔍 Starting SMC scan (FVG & structure shifts)...")
     conn = get_db_connection()
     conn.autocommit = True
 
@@ -405,31 +405,31 @@ def run_smc_analysis():
             for tf in SMC_TIMEFRAMES:
                 try:
                     if source == "database":
-                        # Seit T-2026-KYT-9050-068 liefert fetch_db_data über
-                        # core.candles closed-only (include_forming=False) — die
-                        # laufende Kerze ist hier bereits raus.
+                        # Since T-2026-KYT-9050-068, fetch_db_data delivers
+                        # closed-only via core.candles (include_forming=False) — the
+                        # forming candle is already out here.
                         df = fetch_db_data(conn, symbol, tf)
                     else:
                         df = fetch_yfinance_data(symbol, tf)
-                        # P1.27: letzte (noch offene) Kerze droppen — sonst hält eine
-                        # forming 1d/1w-Kerze die Signal-Bedingung tagelang und refired
-                        # über den Cooldown die ganze Woche. Gilt nur noch für yfinance:
-                        # der DB-Pfad filtert die forming Kerze jetzt in der Query, ein
-                        # zweiter Drop würde die neueste GESCHLOSSENE Kerze wegwerfen.
+                        # P1.27: drop last (still open) candle — otherwise a forming
+                        # 1d/1w candle holds the signal condition for days and re-fires
+                        # over the whole week via cooldown. Applies only to yfinance:
+                        # the DB path now filters the forming candle in the query, a
+                        # second drop would discard the newest CLOSED candle.
                         df = df.iloc[:-1].reset_index(drop=True)
                     if df.empty or len(df) < 50:
                         continue
 
-                    # P1.27: TF-abhängiger Cooldown (≥ eine Kerzendauer).
+                    # P1.27: TF-dependent cooldown (≥ one candle duration).
                     cd_hours = COOLDOWN_HOURS.get(tf, 12)
 
                     curr_idx = len(df) - 1
                     curr_candle = df.iloc[curr_idx]
                     price = float(curr_candle['close'])
 
-                    # P2.45(a): kein Re-Signal auf einer eingefrorenen Kerze
-                    # (Wochenende / stehender Feed) — verhindert den Refire über
-                    # den Cooldown-Ablauf. 24/7-Krypto ist nie stale.
+                    # P2.45(a): no re-signal on a frozen candle (weekend / stalled
+                    # feed) — prevents re-fire over cooldown expiry. 24/7 crypto never
+                    # stale.
                     if is_stale_candle(curr_candle['open_time'], tf):
                         continue
 
@@ -445,8 +445,8 @@ def run_smc_analysis():
 
                         # BULLISH SHIFT
                         if price > last_res_val and df['open'].iloc[curr_idx] <= last_res_val:
-                            # Cooldown-Key ohne TF → gleicher Coin/Direction kann
-                            # nicht gleichzeitig auf 1h und 4h feuern.
+                            # Cooldown key without TF → same coin/direction cannot
+                            # fire simultaneously on 1h and 4h.
                             cd_key = "SMC_BOS"
                             if not check_cooldown(conn, cd_key, display_name, 'LONG', cd_hours):
                                 logger.info(f"🏛️ BULLISH SHIFT: {display_name} ({tf}) breaks {last_res_val:.4f}")
@@ -573,13 +573,13 @@ def run_smc_analysis():
                                 update_cooldown(conn, cd_key, display_name, 'SHORT')
 
                 except Exception as e:
-                    logger.error(f"Error for Analyse von {symbol} ({tf}): {e}")
+                    logger.error(f"Error analysing {symbol} ({tf}): {e}")
 
     conn.close()
 
 
 def main():
-    logger.info("=== 🏦 SMC TRADFI & METALS BOT GESTARTET ===")
+    logger.info("=== 🏦 SMC TRADFI & METALS BOT STARTED ===")
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
         # 💥 FIX 3: Auf Minute 05, 20, 35, 50 verschoben, um YFinance Puffer zu geben!
@@ -594,4 +594,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

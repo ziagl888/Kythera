@@ -25,26 +25,26 @@ from core.candles import last_closed_open_time, read_candles
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ──────────────────────────────────────────────────────────────
-TREND_RETURN_THRESHOLD_4H_PCT = 1.5  # > ±1.5% in 4h = Trend-Indikation
-CHOP_RETURN_THRESHOLD_4H_PCT = 0.5  # < ±0.5% in 4h = Chop-Indikation
-VOLA_HIGH_PERCENTILE = 75  # ATR über P75 der letzten 30d = HIGH_VOLA
-VOLA_LOW_PERCENTILE = 40  # ATR unter P40 = niedrige Vola
+TREND_RETURN_THRESHOLD_4H_PCT = 1.5  # > ±1.5% in 4h = trend indication
+CHOP_RETURN_THRESHOLD_4H_PCT = 0.5  # < ±0.5% in 4h = chop indication
+VOLA_HIGH_PERCENTILE = 75  # ATR above P75 of the last 30d = HIGH_VOLA
+VOLA_LOW_PERCENTILE = 40  # ATR below P40 = low vola
 VOLA_LOOKBACK_DAYS = 30
 ALT_CONTEXT_THRESHOLD_PCT = 1.5  # |BTCDOM 24h| > 1.5% → ALT_STRONG/ALT_WEAK
-REGIME_DEBOUNCE_COUNT = 2  # 2 Checks = 10 Minuten Bestätigung
-MIN_DATA_POINTS_15M = 480  # 480 × 15min = 5 Tage minimum
+REGIME_DEBOUNCE_COUNT = 2  # 2 checks = 10 minutes confirmation
+MIN_DATA_POINTS_15M = 480  # 480 × 15min = 5 days minimum
 
-# Mid-Vola-Trend-Regel (MODEL_INTENT §22, Operator-Pick 2026-07-07 nach
-# tools/regime_rules_study.py — Variante V2_atr_1.5): Das Band P40..P75 war
-# vorher TRANSITION-Restklasse (41 % der Zeit), TREND kam praktisch nie vor
-# (3 Episoden in 430 Tagen, alle <1h). Vol-skalierte Regel: ein 4h-Return,
-# der das Mehrfache der eigenen 4h-ATR schafft, IST ein Trend — unabhängig
-# vom absoluten Vola-Niveau. Studie: RUB-LONG in TREND_UP +1,42 %/Trade
-# (n=1.077) vs. −0,31 % gesamt.
-MID_TREND_ATR_ENTER = 1.5  # Einstieg: |ret_4h| ≥ 1,5 × ATR_4h%
-MID_TREND_ATR_EXIT = 1.0  # Hysterese: bestehender TREND hält bis |ret_4h| < 1,0 × ATR
-TREND_DEBOUNCE_COUNT = 3  # TREND braucht 3 Checks (15 min) statt 2 — Flap-Dämpfung
-# (Studie: 34 % der TREND-Episoden <1h ohne Zusatzdämpfung)
+# Mid-vola trend rule (MODEL_INTENT §22, operator pick 2026-07-07 after
+# tools/regime_rules_study.py — variant V2_atr_1.5): the band P40..P75 was
+# previously a TRANSITION residual class (41 % of the time), TREND practically
+# never occurred (3 episodes in 430 days, all <1h). Vol-scaled rule: a 4h return
+# that achieves a multiple of its own 4h ATR IS a trend — independent
+# of the absolute vola level. Study: RUB-LONG in TREND_UP +1.42 %/trade
+# (n=1,077) vs. −0.31 % overall.
+MID_TREND_ATR_ENTER = 1.5  # entry: |ret_4h| ≥ 1.5 × ATR_4h%
+MID_TREND_ATR_EXIT = 1.0  # hysteresis: existing TREND holds until |ret_4h| < 1.0 × ATR
+TREND_DEBOUNCE_COUNT = 3  # TREND needs 3 checks (15 min) instead of 2 — flap dampening
+# (study: 34 % of TREND episodes <1h without extra dampening)
 
 
 # ── Feature computation ────────────────────────────────────────────────────────
@@ -106,11 +106,11 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
             columns=("open_time", "high", "low", "close"),
         )
     except Exception as e:
-        logger.error(f"Error loading von BTCUSDT_15m: {e}")
+        logger.error(f"Error loading from BTCUSDT_15m: {e}")
         return None
 
     if len(df_btc) < MIN_DATA_POINTS_15M:
-        logger.warning(f"Insufficient BTC data: {len(df_btc)} < {MIN_DATA_POINTS_15M} Kerzen")
+        logger.warning(f"Insufficient BTC data: {len(df_btc)} < {MIN_DATA_POINTS_15M} candles")
         return None
 
     # core.candles hands back raw psycopg2 NUMERIC (Decimal); the old
@@ -191,7 +191,7 @@ def compute_features(conn, as_of: datetime | None = None) -> dict | None:
     }
 
 
-# ── BTC-Regime-Classifier ─────────────────────────────────────────────────────
+# ── BTC regime classifier ──────────────────────────────────────────────────
 
 
 def classify_btc_regime(
@@ -208,16 +208,16 @@ def classify_btc_regime(
       2. HIGH_VOLA              → ATR-4h > P75 (overrides everything)
       3. Clear trend            → low vola (ATR-4h < P40) AND significant return
       4. CHOP                   → low vola AND almost no return
-      5. Mid-Vola-Trend (§22)   → P40..P75 AND |ret_4h| ≥ 1,5×ATR (Hysterese:
-                                  bestehender TREND hält bis |ret_4h| < 1,0×ATR)
-      6. Fallback               → TRANSITION (unklare Richtung)
+      5. Mid-vola trend (§22)   → P40..P75 AND |ret_4h| ≥ 1.5×ATR (hysteresis:
+                                  existing TREND holds until |ret_4h| < 1.0×ATR)
+      6. Fallback               → TRANSITION (unclear direction)
 
     Args:
-        prev_regime: Regime-Referenz für die Mid-Band-Hysterese — effektives
-                     Regime ODER pendender TREND (hysteresis_prev_regime aus
-                     dem regime_current-State, damit die Hold-Schwelle schon
-                     während der Debounce-Bestätigung gilt); None ⇒ nur
-                     Enter-Schwelle (Kaltstart/Backfill).
+        prev_regime: regime reference for the mid-band hysteresis — effective
+                     regime OR pending TREND (hysteresis_prev_regime from
+                     the regime_current state, so the hold threshold already
+                     applies during the debounce confirmation); None ⇒ only
+                     the enter threshold (cold start/backfill).
 
     Returns (regime_name, confidence 0.0-1.0).
     """
@@ -244,13 +244,13 @@ def classify_btc_regime(
         if abs(btc_ret_4h) < CHOP_RETURN_THRESHOLD_4H_PCT:
             return ("CHOP", 0.8)
 
-    # Rule 5 (NEU 2026-07-07, MODEL_INTENT §22): Mid-Vola-Band P40..P75 —
-    # vol-skalierte Trend-Regel mit Hysterese statt TRANSITION-Restklasse.
+    # Rule 5 (NEW 2026-07-07, MODEL_INTENT §22): mid-vola band P40..P75 —
+    # vol-scaled trend rule with hysteresis instead of TRANSITION residual class.
     else:
         enter = MID_TREND_ATR_ENTER * btc_atr_4h
         hold = MID_TREND_ATR_EXIT * btc_atr_4h
-        # Confidence-Skala analog Low-Vola-Zweig: 0,5 an der Enter-Schwelle,
-        # 1,0 ab 2× Enter; im Hysterese-Halt entsprechend <0,5.
+        # Confidence scale analogous to the low-vola branch: 0.5 at the enter
+        # threshold, 1.0 from 2× enter; correspondingly <0.5 during the hysteresis hold.
         conf = min(1.0, abs(btc_ret_4h) / (enter * 2))
         if btc_ret_4h >= enter or (prev_regime == "TREND_UP" and btc_ret_4h >= hold):
             return ("TREND_UP", conf)
@@ -261,7 +261,7 @@ def classify_btc_regime(
     return ("TRANSITION", 0.4)
 
 
-# ── Alt-Context-Classifier ────────────────────────────────────────────────────
+# ── Alt-context classifier ───────────────────────────────────────────────────
 
 
 def classify_alt_context(features: dict) -> tuple[str, float]:
@@ -307,8 +307,8 @@ def classify_regime(
     """
     Main entry point: classifies both axes and returns combined result.
 
-    prev_regime: aktuelles effektives BTC-Regime für die Mid-Band-Hysterese
-    (siehe classify_btc_regime); None ⇒ nur Enter-Schwelle.
+    prev_regime: current effective BTC regime for the mid-band hysteresis
+    (see classify_btc_regime); None ⇒ only the enter threshold.
 
     Returns:
         {
@@ -333,21 +333,21 @@ def classify_regime(
 
 # ── Debounce ──────────────────────────────────────────────────────────────────
 
-#: Spaltenreihenfolge von read_regime_state — apply_debounce entpackt dagegen.
+#: Column order from read_regime_state — apply_debounce unpacks against it.
 _STATE_COLUMNS = (
     "regime, alt_context, since, alt_context_since, "
     "pending_regime, pending_count, pending_alt_context, pending_alt_count"
 )
 
-#: Sentinel: state_row nicht übergeben → apply_debounce liest selbst.
+#: Sentinel: state_row not passed in → apply_debounce reads it itself.
 _STATE_UNREAD = object()
 
 
 def read_regime_state(conn) -> tuple | None:
-    """Liest die regime_current-Zeile EINMAL je Check (None = Kaltstart).
+    """Reads the regime_current row ONCE per check (None = cold start).
 
-    Caller reichen die Zeile an hysteresis_prev_regime UND apply_debounce
-    weiter — eine Quelle je Zyklus statt zwei getrennter Reads derselben Row.
+    Callers pass the row on to hysteresis_prev_regime AND apply_debounce —
+    one source per cycle instead of two separate reads of the same row.
     """
     with conn.cursor() as cur:
         cur.execute(f"SELECT {_STATE_COLUMNS} FROM regime_current WHERE id = 1")
@@ -355,21 +355,21 @@ def read_regime_state(conn) -> tuple | None:
 
 
 def hysteresis_prev_regime(state_row: tuple | None) -> str | None:
-    """prev_regime für die §22-Mid-Band-Hysterese aus dem Debounce-State.
+    """prev_regime for the §22 mid-band hysteresis from the debounce state.
 
-    Die Hold-Schwelle muss auch während der PENDING-Phase gelten: TREND-Entry
-    braucht TREND_DEBOUNCE_COUNT konsekutive Raw-Checks, und solange das
-    effektive Regime noch nicht TREND ist, würde ein einzelner Dip unter die
-    Enter-Schwelle den Zähler resetten — TREND bestätigt bei Oszillation um
-    die Schwelle dann NIE (Review-Finding PR #9). Darum zählt ein pendender
-    TREND wie ein bestehender: Enter einmal bei 1,5×ATR, danach reicht die
-    Hold-Schwelle (1,0×ATR) für die Bestätigungs-Checks — das entspricht der
-    §22-Studien-Semantik (Enter-einmal, dann halten).
+    The hold threshold must also apply during the PENDING phase: TREND entry
+    needs TREND_DEBOUNCE_COUNT consecutive raw checks, and as long as the
+    effective regime is not yet TREND, a single dip below the enter
+    threshold would reset the counter — TREND would then NEVER confirm on
+    oscillation around the threshold (review finding PR #9). That is why a
+    pending TREND counts like an existing one: enter once at 1.5×ATR, after
+    that the hold threshold (1.0×ATR) is enough for the confirmation checks —
+    this matches the §22 study semantics (enter once, then hold).
 
-    Vorrang: das EFFEKTIVE TREND-Regime schlägt einen pendenden TREND —
-    sonst würde ein einzelner Gegen-Spike (Raw-TREND_DOWN pendend während
-    effektiv TREND_UP) dem LIVE-Trend die Hold-Schwelle entziehen und ihn
-    über die TRANSITION-Bestätigung dauerhaft kippen (Verifier PR #10).
+    Precedence: the EFFECTIVE TREND regime beats a pending TREND —
+    otherwise a single counter-spike (raw TREND_DOWN pending while
+    effectively TREND_UP) would strip the hold threshold from the LIVE
+    trend and permanently flip it via the TRANSITION confirmation (verifier PR #10).
     """
     if state_row is None:
         return None
@@ -453,9 +453,9 @@ def apply_debounce(
     new_pend_alt = pend_alt
     new_pend_alt_count = pend_alt_count
 
-    # ── BTC-Regime debounce ───────────────────────────────────────────────────
-    # TREND-Ziele brauchen TREND_DEBOUNCE_COUNT Checks (Flap-Dämpfung, §22);
-    # alle anderen Ziel-Regime wie bisher REGIME_DEBOUNCE_COUNT.
+    # ── BTC regime debounce ───────────────────────────────────────────────────
+    # TREND targets need TREND_DEBOUNCE_COUNT checks (flap dampening, §22);
+    # all other target regimes as before REGIME_DEBOUNCE_COUNT.
     needed = TREND_DEBOUNCE_COUNT if str(raw_regime).startswith("TREND") else REGIME_DEBOUNCE_COUNT
     if raw_regime == cur_regime:
         # Stable — reset pending

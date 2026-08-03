@@ -1,24 +1,24 @@
 """
-tools/retrain_ats.py — ATS2-Retrain (Bot 12 TSI-Sniper) in EINEM Aufruf.
+tools/retrain_ats.py — ATS2 retrain (bot 12 TSI sniper) in ONE call.
 
-DB → Features → Replay-Label → Train → Staging, jederzeit wiederholbar. Kein
-CSV-Zwischenschritt (die alten X8-TSI-EXPORT/-ML-Skripte in Documents\\_X sind
-damit abgelöst), R1-clean über core.candles (include_forming=False), Feature-
-Vektor bit-gleich zum Serving (core.ats_features, harte Regel 7). Artefakte NUR
-nach staging_models mit model_id=ATS2 (harte Regel 2/6) — KEIN Rollout.
+DB → features → replay label → train → staging, repeatable at any time. No
+CSV intermediate step (the old X8-TSI-EXPORT/-ML scripts in Documents\\_X are
+superseded by this), R1-clean via core.candles (include_forming=False), feature
+vector bit-identical to serving (core.ats_features, hard rule 7). Artifacts ONLY
+into staging_models with model_id=ATS2 (hard rule 2/6) — NO rollout.
 
-Ist ein dünner Orchestrator über die getesteten Fleet-Tools (Low-Priority,
-CPU-Headroom-Check, Reconnect-Logik, chronologischer Split, pick_threshold_safe,
-Isotonic-Kalibrierung, Staging-Guard leben dort):
+Is a thin orchestrator over the tested fleet tools (low priority,
+CPU headroom check, reconnect logic, chronological split, pick_threshold_safe,
+isotonic calibration, staging guard live there):
 
-  Stufe 1: tools/walkforward_sim.py   --strategy ats --days N   → ats_replay_Nd.jsonl
-  Stufe 2: tools/retrain_from_replay.py --strategy ats --replay …   → ats2_model_{LONG,SHORT}.pkl
+  Stage 1: tools/walkforward_sim.py   --strategy ats --days N   → ats_replay_Nd.jsonl
+  Stage 2: tools/retrain_from_replay.py --strategy ats --replay …   → ats2_model_{LONG,SHORT}.pkl
 
-Beispiele:
-  python tools/retrain_ats.py                      # letzte 540 Tage
+Examples:
+  python tools/retrain_ats.py                      # last 540 days
   python tools/retrain_ats.py --days 365
-  python tools/retrain_ats.py --since 2025-01-01   # ab Datum bis heute
-  python tools/retrain_ats.py --skip-replay        # Replay-JSONL existiert schon, nur Stufe 2
+  python tools/retrain_ats.py --since 2025-01-01   # from date to today
+  python tools/retrain_ats.py --skip-replay        # replay JSONL already exists, stage 2 only
 """
 
 from __future__ import annotations
@@ -38,10 +38,10 @@ def _resolve_days(args: argparse.Namespace) -> int:
         try:
             since = datetime.datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
         except ValueError as e:
-            raise SystemExit(f"--since erwartet YYYY-MM-DD, bekam {args.since!r}") from e
+            raise SystemExit(f"--since expects YYYY-MM-DD, got {args.since!r}") from e
         days = (datetime.datetime.now(datetime.timezone.utc) - since).days
         if days < 1:
-            raise SystemExit(f"--since {args.since} liegt in der Zukunft / heute — nichts zu tun.")
+            raise SystemExit(f"--since {args.since} is in the future / today — nothing to do.")
         return days
     return args.days
 
@@ -50,18 +50,18 @@ def _run(cmd: list[str]) -> None:
     print(f"\n$ {' '.join(cmd)}\n", flush=True)
     res = subprocess.run(cmd, cwd=REPO_ROOT)
     if res.returncode != 0:
-        raise SystemExit(f"Abbruch: '{' '.join(cmd[:3])} …' endete mit Code {res.returncode}")
+        raise SystemExit(f"Aborted: '{' '.join(cmd[:3])} …' ended with code {res.returncode}")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="ATS2-Retrain (Bot 12) in einem Aufruf")
+    ap = argparse.ArgumentParser(description="ATS2 retrain (bot 12) in one call")
     grp = ap.add_mutually_exclusive_group()
-    grp.add_argument("--days", type=int, default=540, help="Trainingsfenster in Tagen (Default 540)")
-    grp.add_argument("--since", default=None, help="Startdatum YYYY-MM-DD (bis heute); alternativ zu --days")
-    ap.add_argument("--coins", default=None, help="nur diese Coins (Komma-Liste) für den Replay")
-    ap.add_argument("--limit", type=int, default=None, help="nur die ersten N Coins (Smoke-Test)")
-    ap.add_argument("--skip-replay", action="store_true", help="Stufe 1 überspringen (JSONL existiert bereits)")
-    ap.add_argument("--resume", action="store_true", help="Stufe-1-Replay an bestehendes JSONL anhängen")
+    grp.add_argument("--days", type=int, default=540, help="training window in days (default 540)")
+    grp.add_argument("--since", default=None, help="start date YYYY-MM-DD (until today); alternative to --days")
+    ap.add_argument("--coins", default=None, help="only these coins (comma list) for the replay")
+    ap.add_argument("--limit", type=int, default=None, help="only the first N coins (smoke test)")
+    ap.add_argument("--skip-replay", action="store_true", help="skip stage 1 (JSONL already exists)")
+    ap.add_argument("--resume", action="store_true", help="append stage-1 replay to existing JSONL")
     args = ap.parse_args()
 
     days = _resolve_days(args)
@@ -78,10 +78,10 @@ def main() -> None:
             cmd += ["--resume"]
         _run(cmd)
     elif not os.path.exists(replay_path):
-        raise SystemExit(f"--skip-replay, aber {replay_path} fehlt — erst Stufe 1 laufen lassen.")
+        raise SystemExit(f"--skip-replay, but {replay_path} is missing — run stage 1 first.")
 
     _run([py, os.path.join("tools", "retrain_from_replay.py"), "--strategy", "ats", "--replay", replay_path])
-    print("\n✅ ATS2-Retrain fertig — Artefakte in staging_models (ats2_model_{LONG,SHORT}.pkl). KEIN Rollout.")
+    print("\n✅ ATS2 retrain done — artifacts in staging_models (ats2_model_{LONG,SHORT}.pkl). NO rollout.")
 
 
 if __name__ == "__main__":

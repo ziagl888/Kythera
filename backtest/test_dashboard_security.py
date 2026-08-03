@@ -1,26 +1,24 @@
 # backtest/test_dashboard_security.py
-"""Dashboard-Absicherung: Bind-Policy, Host-Allowlist, Token, CSRF (T-2026-KYT-9050-056).
+"""Dashboard hardening: bind policy, host allowlist, token, CSRF (T-2026-KYT-9050-056).
 
-Nagelt die drei Regeln aus ``core/dashboard_security.py`` fest — und zwar so,
-dass jeder Test auf dem Pre-Fix-Stand ROT gewesen wäre:
+Pins the three rules from ``core/dashboard_security.py`` — such that each test
+would have been RED at the pre-fix state:
 
-  * ``0.0.0.0`` ohne Token startet nicht mehr (P0.8: genau dieser Zustand lief
-    live, geschützt nur durch die Windows-Firewall-Default-Regel).
-  * eine fremde Seite im Browser des Operators kann ``stop_all`` nicht mehr
-    auslösen (Origin-Check) — das ging bisher trotz Firewall, weil ein
-    Simple-Request keinen Preflight braucht.
-  * DNS-Rebinding scheitert an der Host-Allowlist, NICHT am Origin-Check: der
-    Rebinding-Angreifer schickt seinen eigenen Namen in beiden Headern, ein
-    reiner Same-Origin-Vergleich winkt ihn durch. Der Test unten fixiert genau
-    diese Reihenfolge.
-  * Control-Endpoints akzeptieren keine unbekannten Skriptnamen mehr
+  * ``0.0.0.0`` without token no longer starts (P0.8: exactly this state ran
+    live, protected only by Windows firewall default rule).
+  * a foreign page in the operator's browser can no longer trigger ``stop_all``
+    (origin check) — this worked before despite the firewall because a simple
+    request needs no preflight.
+  * DNS rebinding fails on the host allowlist, NOT on the origin check: the
+    rebinding attacker sends their own name in both headers, a pure same-origin
+    comparison lets them through. The test below pins exactly this order.
+  * control endpoints no longer accept unknown script names
     (audit_reports/10, [LOW]).
 
-DB-frei und Fleet-frei: ``dashboard.py`` wird über importlib mit gemocktem
-psutil/threading/process_control geladen (echtes Flask, damit der Guard über
-den echten Request-Pfad läuft). Es wird kein Park-Marker geschrieben — dafür
-ist ``core.process_control`` gemockt und wird zusätzlich auf Nicht-Aufruf
-geprüft.
+DB-free and fleet-free: ``dashboard.py`` is loaded via importlib with mocked
+psutil/threading/process_control (real Flask so the guard runs over the real
+request path). No park marker is written — for that ``core.process_control`` is
+mocked and additionally checked for non-invocation.
 
 Run with: pytest backtest/test_dashboard_security.py -v
 """

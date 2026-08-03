@@ -1,24 +1,24 @@
 """
-tools/fif1_build_dataset.py — Trainings-Events + Replay-Labels für FIF1
-"FIFO-Filter" (Report 15, S11). Läuft auf dem VPS (Step 2).
+tools/fif1_build_dataset.py — Training events + replay labels for FIF1
+"FIFO filter" (Report 15, S11). Runs on the VPS (step 2).
 
-Events = ALLE Fast-In-And-Out-Signale aus active_trades_master +
-closed_trades_master (der 111k-Trades-Datensatz, E6). Zeiten sind seit dem
-R3-Flip (T-2026-KYT-9050-005) naives UTC; die Lesart der älteren Zeilen liegt
-zentral in core.time (docs/UTC_POLICY.md §6), aufgerufen über to_utc_naive
-aus research_dataset_common — wie in aim2_build_dataset.
+Events = ALL fast-in-and-out signals from active_trades_master +
+closed_trades_master (the 111k-trade dataset, E6). Times are naive UTC since the
+R3 flip (T-2026-KYT-9050-005); reading of older rows sits centrally in core.time
+(docs/UTC_POLICY.md §6), called via to_utc_naive from research_dataset_common —
+like in aim2_build_dataset.
 
-Label: simulate_exit über die AUFGEZEICHNETE FIFO-Geometrie (entry/target1/sl,
-n_published=1) ab der Kerze nach dem floor-1-Join — die Selektion ist die
-einzige Frage, deshalb wird exakt die Original-Geometrie replayed (nicht der
-status aus closed_trades_master, der ist unzuverlässig — Report 14).
+Label: simulate_exit over the RECORDED FIFO geometry (entry/target1/sl,
+n_published=1) from the candle after the floor-1 join — selection is the
+only question, so the exact original geometry is replayed (not the
+status from closed_trades_master, which is unreliable — Report 14).
 
-Features: core.research_features.build_fif1_row (geteilter Builder) —
-Markt-Kontext floor-1, Regime, FIFO-Burst-Dichte, Tageszeit.
+Features: core.research_features.build_fif1_row (shared builder) —
+market context floor-1, regime, FIFO burst density, time of day.
 
-Beispiel:
+Example:
   python tools/fif1_build_dataset.py
-  python tools/fif1_build_dataset.py --sample-pct 25 --limit-symbols 20   # Smoke
+  python tools/fif1_build_dataset.py --sample-pct 25 --limit-symbols 20   # smoke
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ import time
 import numpy as np
 import pandas as pd
 
-# REPO_ROOT MUSS vor dem ersten tools-/core-Import auf sys.path liegen
-# (Henne-Ei; Spec-Review-Fix 2026-07-06, Muster tools/aim2_build_dataset.py).
+# REPO_ROOT MUST be on sys.path before the first tools-/core import
+# (chicken-egg; spec-review fix 2026-07-06, pattern tools/aim2_build_dataset.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.research_dataset_common import (  # noqa: E402
@@ -92,8 +92,8 @@ def keep_sampled(event_id, pct: int) -> bool:
 
 
 def build_burst_index(ev: pd.DataFrame):
-    """Burst-Dichte auf dem VOLLEN Event-Strom (Sampling verändert die Welt
-    nicht, nur die Trainingsauswahl — aim2-Regel)."""
+    """Burst density over the FULL event stream (sampling changes the world
+    only in training selection, not in the index — aim2 rule)."""
     fleet_ts = ev["ts"].values.astype("datetime64[ns]")
     per_key: dict[tuple[str, str], np.ndarray] = {
         (sym, d): g["ts"].values.astype("datetime64[ns]")
@@ -104,7 +104,7 @@ def build_burst_index(ev: pd.DataFrame):
         arr = per_key.get((symbol, direction))
         same = 0
         if arr is not None:
-            hi = int(np.searchsorted(arr, ts64, side="left"))  # strikt < ts → Event selbst raus
+            hi = int(np.searchsorted(arr, ts64, side="left"))  # strictly < ts → event itself excluded
             lo = int(np.searchsorted(arr, ts64 - np.timedelta64(24, "h"), side="left"))
             same = hi - lo
         hi_f = int(np.searchsorted(fleet_ts, ts64, side="left"))
@@ -119,10 +119,10 @@ def main() -> None:
     ap.add_argument("--since", default=SINCE_DEFAULT)
     ap.add_argument("--out", default=os.path.join(REPLAY_DIR, "fif1_events.jsonl"))
     ap.add_argument("--sample-pct", type=int, default=100,
-                    help="deterministisches Event-Sampling (md5) — Burst-Index bleibt voll")
+                    help="deterministic event sampling (md5) — burst index stays full")
     ap.add_argument("--limit-symbols", type=int, default=0)
     ap.add_argument("--skip-entry-hour", action="store_true",
-                    help="Konservative Labels: Signalstunden-Kerze nicht replayen (Lookahead-Probe)")
+                    help="conservative labels: do not replay signal-hour candle (lookahead probe)")
     args = ap.parse_args()
 
     set_low_priority()
@@ -131,15 +131,15 @@ def main() -> None:
 
     conn = get_db_connection()
     ev = load_events(conn, args.since)
-    log(f"FIFO-Events gesamt: {len(ev)} über {ev['symbol'].nunique()} Symbole")
+    log(f"FIFO events total: {len(ev)} over {ev['symbol'].nunique()} symbols")
     burst_counts = build_burst_index(ev)
     r_ts, r_rows = load_regime(conn)
-    log(f"Regime-Zeilen: {len(r_rows)}")
+    log(f"Regime rows: {len(r_rows)}")
 
     ev["sampled"] = [keep_sampled(i, args.sample_pct) for i in ev["id"]]
     weight = 100.0 / max(args.sample_pct, 1)
     train_ev = ev[ev["sampled"]]
-    log(f"Gesampelt fürs Training: {len(train_ev)} ({args.sample_pct}%)")
+    log(f"Sampled for training: {len(train_ev)} ({args.sample_pct}%)")
 
     symbols = list(train_ev["symbol"].drop_duplicates())
     if args.limit_symbols:
@@ -207,10 +207,10 @@ def main() -> None:
             if i % 25 == 0 or i == len(symbols):
                 closed = stats["written"] - stats["open_end"]
                 wr = stats["wins"] / closed * 100 if closed else 0.0
-                log(f"{i}/{len(symbols)} Symbole | geschrieben {stats['written']} "
-                    f"(WR geschlossen: {wr:.1f}%) | {time.time() - t0:.0f}s")
+                log(f"{i}/{len(symbols)} symbols | written {stats['written']} "
+                    f"(WR closed: {wr:.1f}%) | {time.time() - t0:.0f}s")
     conn.close()
-    log(f"FERTIG -> {args.out}")
+    log(f"DONE -> {args.out}")
     log(json.dumps(stats))
 
 

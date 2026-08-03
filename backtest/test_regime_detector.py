@@ -26,11 +26,11 @@ from core.regime_logic import (
 
 
 def _state_row(regime, pending_regime=None):
-    # Spaltenreihenfolge von read_regime_state (_STATE_COLUMNS).
+    # column order from read_regime_state (_STATE_COLUMNS).
     return (regime, "ALT_NEUTRAL", None, None, pending_regime, 1, None, 0)
 
 
-# ── BTC-Regime-Classifier ─────────────────────────────────────────────────────
+# ── BTC regime classifier ─────────────────────────────────────────────────────
 
 
 def test_classify_btc_high_vola():
@@ -68,7 +68,7 @@ def test_classify_btc_transition_mid_zone():
     assert regime == "TRANSITION"
 
 
-# ── Mid-Vola-Trend-Regel (§22, 2026-07-07) ───────────────────────────────────
+# ── mid-vola trend rule (§22, 2026-07-07) ───────────────────────────────────
 
 
 def test_classify_btc_mid_band_trend_up_on_vol_scaled_return():
@@ -86,7 +86,7 @@ def test_classify_btc_mid_band_trend_down_on_vol_scaled_return():
 
 
 def test_classify_btc_mid_band_hysteresis_holds_existing_trend():
-    # ret=1.3 liegt unter Enter (1.8) aber über Exit (1.2) → hält NUR mit prev.
+    # ret=1.3 sits below Enter (1.8) but above Exit (1.2) → holds ONLY with prev.
     features = {"btc_return_4h": 1.3, "btc_atr_4h_pct": 1.2}
     regime_without, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8)
     regime_with, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8, prev_regime="TREND_UP")
@@ -95,14 +95,14 @@ def test_classify_btc_mid_band_hysteresis_holds_existing_trend():
 
 
 def test_classify_btc_mid_band_hysteresis_exits_below_exit_threshold():
-    # ret=1.0 < Exit (1.0×ATR=1.2) → TREND_UP fällt trotz prev.
+    # ret=1.0 < Exit (1.0×ATR=1.2) → TREND_UP falls despite prev.
     features = {"btc_return_4h": 1.0, "btc_atr_4h_pct": 1.2}
     regime, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8, prev_regime="TREND_UP")
     assert regime == "TRANSITION"
 
 
 def test_classify_btc_mid_band_hysteresis_direction_specific():
-    # prev=TREND_DOWN hält keinen positiven ret im Halte-Band.
+    # prev=TREND_DOWN does not hold any positive ret in the hold band.
     features = {"btc_return_4h": 1.3, "btc_atr_4h_pct": 1.2}
     regime, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8, prev_regime="TREND_DOWN")
     assert regime == "TRANSITION"
@@ -118,17 +118,17 @@ def test_hysteresis_prev_regime_uses_effective_regime():
 
 
 def test_hysteresis_prev_regime_pending_trend_counts_like_existing():
-    # §22 (Review PR #9): während der Debounce-Pending-Phase muss die
-    # Hold-Schwelle greifen, sonst resettet ein einzelner Dip unter Enter
-    # den Bestätigungszähler und TREND bestätigt bei Oszillation nie.
+    # §22 (Review PR #9): during the debounce pending phase the
+    # hold threshold must apply, otherwise a single dip below Enter resets
+    # the confirmation counter and TREND never confirms under oscillation.
     row = _state_row("TRANSITION", pending_regime="TREND_UP")
     assert hysteresis_prev_regime(row) == "TREND_UP"
 
 
 def test_hysteresis_prev_regime_effective_trend_beats_pending_trend():
-    # Verifier PR #10: ein einzelner Gegen-Spike (pendend TREND_DOWN) darf dem
-    # LIVE TREND_UP nicht die Hold-Schwelle entziehen — sonst kippt der aktive
-    # Trend über die TRANSITION-Bestätigung, obwohl ret im Halte-Band bleibt.
+    # Verifier PR #10: a single counter-spike (pending TREND_DOWN) must not
+    # strip the hold threshold from the LIVE TREND_UP — otherwise the active
+    # trend tips over the TRANSITION confirmation, even though ret stays in the hold band.
     row = _state_row("TREND_UP", pending_regime="TREND_DOWN")
     assert hysteresis_prev_regime(row) == "TREND_UP"
 
@@ -139,9 +139,9 @@ def test_hysteresis_prev_regime_pending_non_trend_ignored():
 
 
 def test_pending_trend_oscillation_survives_dip_below_enter():
-    # Entry-Oszillation 1.6→1.4→1.7×ATR (ATR=1.2 ⇒ Enter=1.8, Hold=1.2):
-    # mit pendendem TREND_UP als prev bleibt der Raw-Wert bei ret=1.7
-    # (< Enter, ≥ Hold) TREND_UP — der Zähler läuft weiter statt zu resetten.
+    # Entry oscillation 1.6→1.4→1.7×ATR (ATR=1.2 ⇒ Enter=1.8, Hold=1.2):
+    # with pending TREND_UP as prev, the raw value at ret=1.7
+    # (< Enter, ≥ Hold) stays TREND_UP — the counter keeps running instead of resetting.
     features = {"btc_return_4h": 1.7, "btc_atr_4h_pct": 1.2}
     prev = hysteresis_prev_regime(_state_row("TRANSITION", pending_regime="TREND_UP"))
     regime, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8, prev_regime=prev)
@@ -149,7 +149,7 @@ def test_pending_trend_oscillation_survives_dip_below_enter():
 
 
 def test_classify_btc_high_vola_still_overrides_mid_band_trend():
-    # ATR über P75 → HIGH_VOLA, auch wenn ret die Trend-Schwelle schlägt.
+    # ATR above P75 → HIGH_VOLA, even if ret beats the trend threshold.
     features = {"btc_return_4h": 5.0, "btc_atr_4h_pct": 2.5}
     regime, _ = classify_btc_regime(features, vola_p75=2.0, vola_p40=0.8)
     assert regime == "HIGH_VOLA"
@@ -162,7 +162,7 @@ def test_classify_btc_insufficient_data_returns_transition():
     assert conf == 0.0
 
 
-# ── Alt-Context-Classifier ────────────────────────────────────────────────────
+# ── alt context classifier ────────────────────────────────────────────────────
 
 
 def test_classify_alt_strong_on_btcdom_fall():
@@ -304,14 +304,14 @@ def test_debounce_both_axes_change_simultaneously():
 
 
 def test_debounce_trend_needs_three_checks():
-    """TREND-Ziele brauchen 3 Checks (§22-Flap-Dämpfung), andere weiterhin 2."""
-    # pend_count=1 → dieser Check wäre der zweite: für TREND noch KEIN Wechsel …
+    """TREND targets need 3 checks (§22 flap damping), others still 2."""
+    # pend_count=1 → this check would be the second: for TREND still NO change …
     row = ("TRANSITION", "ALT_NEUTRAL", datetime(2026, 1, 1), datetime(2026, 1, 1), "TREND_UP", 1, None, 0)
     conn, _ = _make_mock_conn(row)
     result = apply_debounce(conn, "TREND_UP", "ALT_NEUTRAL", 0.8, datetime.now(timezone.utc))
     assert result["btc_regime_changed"] is False
 
-    # … erst der dritte Check (pend_count=2) bestätigt.
+    # … only the third check (pend_count=2) confirms.
     row3 = ("TRANSITION", "ALT_NEUTRAL", datetime(2026, 1, 1), datetime(2026, 1, 1), "TREND_UP", 2, None, 0)
     conn3, _ = _make_mock_conn(row3)
     result3 = apply_debounce(conn3, "TREND_UP", "ALT_NEUTRAL", 0.8, datetime.now(timezone.utc))

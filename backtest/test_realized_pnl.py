@@ -51,8 +51,8 @@ def test_parse_leverage_invalid(raw):
 
 
 # ── weighted_move_pct: the operator example ──────────────────────────────────
-# "ein Trade hat 4 Targets, beim Erreichen von Target 1 werden 25% realisiert;
-#  20x Hebel: 5% Preisänderung wären 100% Gewinn."
+# "a trade has 4 targets; hitting target 1 realises 25%; 20x leverage: 5% price
+#  move would be 100% profit."
 
 
 def test_single_target_full_move_is_5_pct():

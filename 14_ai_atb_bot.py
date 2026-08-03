@@ -33,10 +33,10 @@ from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.signal_post import has_open_ai_signal, post_ai_signal_gated
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
-# OHLCV-Spalten für den R1-cleanen ATB2-Read (geschlossene Kerzen).
+# OHLCV columns for the R1-clean ATB2 read (closed candles).
 _ATB2_OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
-# Fenster für den Converging-Channel-Detektor: MIN_HISTORY_CANDLES (EMA200-SMA-
-# Seed-Parität) + Kanal-Lookback. Etwas Reserve über atb.MIN_HISTORY_CANDLES.
+# Window for the converging-channel detector: MIN_HISTORY_CANDLES (EMA200 SMA
+# seed parity) + channel lookback. Some reserve above atb.MIN_HISTORY_CANDLES.
 _ATB2_LIMIT = max(atb.MIN_HISTORY_CANDLES + atb.CHANNEL_MAX_SPAN + atb.CONFIRM_BARS + atb.ATR_PERIOD + 5, 1700)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATB_BOT - %(message)s')
@@ -44,12 +44,12 @@ logger = logging.getLogger(__name__)
 
 # 🛠️ CONFIGURATION & FILTER-TUNING
 MODEL_ID = 'ATB1'
-TARGET_CHANNEL_ID = _kcfg.CH_ATB_TARGET  # Dein AI / Cornix Channel
-TRENDBREAKER_CHANNEL_ID = _kcfg.CH_ATB_INFO  # Info-Channel
+TARGET_CHANNEL_ID = _kcfg.CH_ATB_TARGET  # your AI / Cornix channel
+TRENDBREAKER_CHANNEL_ID = _kcfg.CH_ATB_INFO  # info channel
 
 # --- FILTER ---
-TREND_MIN_R_VALUE = 0.2  # 0.0 = Akzeptiert alle Trends (altes Verhalten)
-MAX_DISTANCE_PCT = 0.05  # 12% Toleranz-Radar
+TREND_MIN_R_VALUE = 0.2  # 0.0 = accepts all trends (old behaviour)
+MAX_DISTANCE_PCT = 0.05  # 12% tolerance radar
 
 TL_MODEL_LONG_PATH = 'long_trend_prediction_model.joblib'
 TL_MODEL_SHORT_PATH = 'short_trend_prediction_model.joblib'
@@ -59,21 +59,21 @@ TL_THRESH_SHORT = 0.75
 MODELS = {'LONG': None, 'SHORT': None}
 TRENDLINE_STATE = {}
 
-# ATB2-Shadow (T-2026-CU-9050-125): der Converging-Channel-Neuaufbau läuft
-# PARALLEL zum weiter-live ATB1 und postet nie live — nur überwachte Shadow-
-# Trades. ATB2 hat einen EIGENEN Detektor (core.atb2_features, bestätigte
-# Pivots + geschlossener Ausbruch) statt der ATB1-Regressionsgeraden; der
-# optimal_threshold ist null (zu dünne Daten) → Emission auf JEDEM Setup, damit
-# überhaupt Shadow-Daten für eine spätere Threshold-Wahl entstehen.
+# ATB2 shadow (T-2026-CU-9050-125): the converging-channel rebuild runs
+# PARALLEL to the still-live ATB1 and never posts live — only monitored shadow
+# trades. ATB2 has its OWN detector (core.atb2_features, confirmed
+# pivots + closed breakout) instead of the ATB1 regression line; the
+# optimal_threshold is null (data too thin) → emission on EVERY setup, so
+# shadow data for a later threshold choice can accumulate at all.
 SHADOW_ATB2: dict[str, object | None] = {"LONG": None, "SHORT": None}
 
-# FIX: Persistenz für TRENDLINE_STATE. Vorher war der State nur in-memory →
-# after jedem Restart war prev_relation="unknown" für ALLE Coins → der
-# Break-Check `prev in ["below","near","unknown"] and curr == "above"` feuerte
-# sofort für jeden Coin, der aktuell über seiner Trendlinie liegt (= massenhaft).
-# P2.36: Persistenz allein reicht nicht — die Datei kann fehlen/korrupt sein.
-# Der eigentliche Schutz ist der observe-only-Guard in classify_trendline_event
-# (unknown emittiert nichts, State wird nur neu aufgebaut).
+# FIX: persistence for TRENDLINE_STATE. Previously the state was in-memory only →
+# after every restart prev_relation="unknown" for ALL coins → the
+# break check `prev in ["below","near","unknown"] and curr == "above"` fired
+# immediately for every coin currently above its trendline (= mass flood).
+# P2.36: persistence alone is not enough — the file can be missing/corrupt.
+# The actual protection is the observe-only guard in classify_trendline_event
+# (unknown emits nothing, the state is just rebuilt).
 TRENDLINE_STATE_FILE = "trendline_state.json"
 
 
@@ -86,7 +86,7 @@ def load_trendline_state():
     try:
         with open(TRENDLINE_STATE_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        # last_alert wieder in datetime umwandeln
+        # convert last_alert back into datetime
         TRENDLINE_STATE = {}
         for sym, info in data.items():
             info_copy = dict(info)
@@ -95,7 +95,7 @@ def load_trendline_state():
             TRENDLINE_STATE[sym] = info_copy
         logger.info(f"✅ {len(TRENDLINE_STATE)} trendline states loaded.")
     except Exception as e:
-        logger.error(f"Error loading von {TRENDLINE_STATE_FILE}: {e}")
+        logger.error(f"Error loading from {TRENDLINE_STATE_FILE}: {e}")
         TRENDLINE_STATE = {}
 
 
@@ -114,7 +114,7 @@ def save_trendline_state():
             os.fsync(f.fileno())
         os.replace(tmp, TRENDLINE_STATE_FILE)
     except Exception as e:
-        logger.error(f"Error saving von {TRENDLINE_STATE_FILE}: {e}")
+        logger.error(f"Error saving to {TRENDLINE_STATE_FILE}: {e}")
 
 
 CHART_DIR = "generated_charts"
@@ -127,16 +127,16 @@ def load_models_and_coins():
             MODELS['LONG'] = joblib.load(TL_MODEL_LONG_PATH)
         if os.path.exists(TL_MODEL_SHORT_PATH):
             MODELS['SHORT'] = joblib.load(TL_MODEL_SHORT_PATH)
-        logger.info("✅ ML Modelle für Trendline Break (ATB1) loaded successfully.")
+        logger.info("✅ ML models for trendline break (ATB1) loaded successfully.")
     except Exception as e:
-        logger.error(f"❌ Error loading der ATB1 Modelle: {e}")
+        logger.error(f"❌ Error loading the ATB1 models: {e}")
 
-    # ATB2-Shadow-Modelle fail-soft nachladen — fehlen sie, läuft Bot 14 unverändert.
+    # Load ATB2 shadow models fail-soft — if missing, bot 14 keeps running unchanged.
     for d in ("LONG", "SHORT"):
         SHADOW_ATB2[d] = shadow_gate.load_shadow_artifact("ATB2", d)
     if any(SHADOW_ATB2.values()):
         loaded = [d for d, m in SHADOW_ATB2.items() if m is not None]
-        logger.info(f"👻 ATB2 Shadow-Modelle geladen: {', '.join(loaded)}")
+        logger.info(f"👻 ATB2 shadow models loaded: {', '.join(loaded)}")
 
     try:
         with open('coins.json') as f:
@@ -147,25 +147,25 @@ def load_models_and_coins():
 
 
 def _emit_atb2(conn, symbol, now):
-    """ATB2-Emission über das shadow_gate-Routing (T-2026-CU-9050-125 → T-037).
+    """ATB2 emission via the shadow_gate routing (T-2026-CU-9050-125 → T-037).
 
-    Eigener Detektor-Pfad (core.atb2_features, EINE Quelle mit Trainer/Replay
-    ``run_atb2``): R1-cleaner OHLCV-Read (geschlossene Kerzen), Converging-
-    Channel-Fit auf der letzten geschlossenen Kerze, geschlossener Ausbruch →
-    Measured-Move-Geometrie.
+    Own detector path (core.atb2_features, ONE source shared with the trainer/replay
+    ``run_atb2``): R1-clean OHLCV read (closed candles), converging-
+    channel fit on the last closed candle, closed breakout → measured-move
+    geometry.
 
-    T-2026-KYT-9050-037 (Operator-Entscheid Michi, bot_results.xlsx): ATB2 LONG ist
-    SHADOW→LIVE promotet (Threshold 0.60 BLIND — n=17 Shadow-Trades, kein daten-
-    basierter Operating-Point). Diese Funktion routet jetzt BEIDE Zustände über
-    ``post_ai_signal_gated`` (Muster Bot 12 _emit_ats2 / Bot 10 _emit_epd3): LIVE →
-    Cornix an CH_ATB_TARGET + ai_signals, SHADOW (ATB2 SHORT) → überwacht ohne Cornix;
-    SILENT/RETIRED fällt raus. Jeder Fehler bleibt gekapselt — der Live-ATB1-Pfad darf
-    davon nie betroffen sein.
+    T-2026-KYT-9050-037 (operator decision Michi, bot_results.xlsx): ATB2 LONG is
+    SHADOW→LIVE promoted (threshold 0.60 BLIND — n=17 shadow trades, no data-
+    based operating point). This function now routes BOTH states via
+    ``post_ai_signal_gated`` (pattern from bot 12 _emit_ats2 / bot 10 _emit_epd3): LIVE →
+    Cornix to CH_ATB_TARGET + ai_signals, SHADOW (ATB2 SHORT) → monitored without Cornix;
+    SILENT/RETIRED drop out. Every error stays encapsulated — the live ATB1 path must
+    never be affected by it.
 
-    DEPLOY-VORBEDINGUNG (Michi, harte Regel 2): das LIVE-Bein lädt sein Artefakt aus
-    dem Repo-ROOT (shadow_artifact_path). Solange atb2_model_LONG.pkl in staging_models/
-    statt Root liegt, liefert der Loader None (``art is None`` → return) und ATB2 LONG
-    schweigt — die Promotion wird erst mit dem Artefakt-Move + Restart aktiv.
+    DEPLOY PRECONDITION (Michi, hard rule 2): the LIVE leg loads its artifact from
+    the repo ROOT (shadow_artifact_path). As long as atb2_model_LONG.pkl sits in staging_models/
+    instead of root, the loader returns None (``art is None`` → return) and ATB2 LONG
+    stays silent — the promotion only takes effect once the artifact is moved + a restart happens.
     """
     if not shadow_gate.shadow_posting_enabled():
         return
@@ -176,7 +176,7 @@ def _emit_atb2(conn, symbol, now):
         if df is None or len(df) < atb.MIN_HISTORY_CANDLES + 2:
             return
         df_ind = atb.compute_indicators(df)
-        setup = atb.find_channel_breakout(df_ind)  # default break_idx = letzte geschlossene Kerze
+        setup = atb.find_channel_breakout(df_ind)  # default break_idx = last closed candle
         if setup is None:
             return
         direction = setup["direction"]
@@ -189,11 +189,11 @@ def _emit_atb2(conn, symbol, now):
         thr = shadow_gate.artifact_threshold(art)
         if thr is not None and prob < thr:
             return
-        # has_open-Guard (CRITICAL, Muster Bot 12 _emit_ats2): der LIVE-Zweig von
-        # post_ai_signal_gated (= post_ai_signal) macht KEINEN has_open/Cooldown-Check.
-        # Die ATB2-Breakout-Kerze bleibt ~1 h die jüngste geschlossene → ohne Guard
-        # feuerte JEDER Scan einen doppelten LIVE-Post (Regel-4-Doppel-Trade). Deckt
-        # auch den SHADOW-Zweig ab (spart die Geometrie vor post_shadow's eigenem has_open).
+        # has_open guard (CRITICAL, pattern from bot 12 _emit_ats2): the LIVE branch of
+        # post_ai_signal_gated (= post_ai_signal) does NO has_open/cooldown check.
+        # The ATB2 breakout candle stays the most-recently-closed one for ~1h → without
+        # a guard EVERY scan would fire a duplicate LIVE post (rule-4 double trade). Also
+        # covers the SHADOW branch (saves the geometry ahead of post_shadow's own has_open).
         if has_open_ai_signal(conn, symbol, direction, "ATB2"):
             return
         mm = atb.measured_move_targets(setup["channel"], setup["breakout"], setup["entry"])
@@ -216,14 +216,14 @@ def _emit_atb2(conn, symbol, now):
         if outcome is not None:
             conn.commit()
     except Exception as e:
-        logger.warning(f"ATB2 für {symbol} fehlgeschlagen: {e}")
+        logger.warning(f"ATB2 for {symbol} failed: {e}")
         try:
             conn.rollback()
         except Exception:
             pass
 
 
-# 🧠 BERECHNUNGS-LOGIKEN (NEU: Index-Basiert!)
+# 🧠 CALCULATION LOGIC (NEW: index-based!)
 def detect_trend(df):
     if len(df) < 50:
         return 'UNDECIDED', None
@@ -236,7 +236,7 @@ def detect_trend(df):
         if len(pivots) < 2:
             return None, None
 
-        # 💥 DER FIX: Wir nutzen den einfachen Kerzen-Index statt riesiger Timestamps!
+        # 💥 THE FIX: we use the plain candle index instead of huge timestamps!
         x = pivots
         y = highs[pivots] if is_high else lows[pivots]
 
@@ -305,15 +305,15 @@ def classify_trendline_event(
 
 
 def _atb1_posted_flag(ml_prob: float, threshold: float) -> bool:
-    """Ob eine ATB1-Prediction als GEHANDELT (posted=True) ins ml_predictions_master
-    geht. Genau dann, wenn sie den Live-Trade auslöst — dasselbe Prädikat wie
-    send_signal weiter unten (`ml_prob >= threshold`).
+    """Whether an ATB1 prediction goes into ml_predictions_master as TRADED
+    (posted=True). Exactly when it triggers the live trade — same predicate as
+    send_signal further down (`ml_prob >= threshold`).
 
-    P1.47: der Shadow-Insert lief für alles ab 0.25, hart mit posted=False —
-    auch für tatsächlich gehandelte Trades. Der created_at-JOIN des
-    Market-Trackers (m.posted = TRUE, P1.44) matcht darum keine ATB1-Zeile, und
-    offene ATB1-Positionen wirken in den Opened-Buckets ewig frisch. Die Grenze
-    ist threshold, NICHT das 0.25-Shadow-Gate: nur ab threshold wird gehandelt.
+    P1.47: the shadow insert used to run for everything from 0.25 up, hard-coded
+    with posted=False — even for trades actually taken. The market tracker's
+    created_at JOIN (m.posted = TRUE, P1.44) therefore matched no ATB1 row, and
+    open ATB1 positions looked forever fresh in the opened buckets. The boundary
+    is threshold, NOT the 0.25 shadow gate: only from threshold on is it traded.
     """
     return bool(ml_prob >= threshold)
 
@@ -327,11 +327,11 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
         return 0.0, current_ml_threshold
 
     try:
-        # FIX (P1.22): Die letzte Kerze in df_90d ist die noch offene Forming-Candle
-        # (~3 min alt). Ihr Volumen ist erst ~1/20 des Kerzen-Endwerts → vol_ratio
-        # landete bei ~1/20 der Trainingsskala (Modell trainiert auf geschlossenen
-        # Kerzen). Features daher auf der letzten GESCHLOSSENEN Kerze berechnen;
-        # der Live-Entry-Preis kommt separat via current_close_price rein.
+        # FIX (P1.22): the last candle in df_90d is still the open forming candle
+        # (~3 min old). Its volume is only ~1/20 of the candle's final value → vol_ratio
+        # ended up at ~1/20 of the training scale (the model is trained on closed
+        # candles). Compute features on the last CLOSED candle instead;
+        # the live entry price comes in separately via current_close_price.
         df = df_raw.iloc[:-1].copy()
         df.columns = df.columns.str.lower()
         for col in ['open', 'high', 'low', 'close', 'volume']:
@@ -419,23 +419,23 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
             'dist_close_dc_upper_pct': [row['dist_close_dc_upper_pct']],
             'dc_position_relative': [row['dc_position_relative']],
         }
-        # FIX: Zusätzlicher Schutz gegen NaN/Inf in den Features.
-        # Hinweis: Die Indikatoren werden hier live via pandas_ta neu berechnet,
-        # statt sie aus der DB zu lesen. Damit besteht prinzipiell Train/Live-Drift
-        # falls das Modell auf Engine-Indikatoren trainiert wurde. Da aber das
-        # ML-Modell bereits deployed ist, kann die Feature-Semantik nicht ohne
-        # Re-Training geändert werden — daher bleibt pandas_ta-Berechnung als
-        # Status quo, mit robusterem Clean-up der Werte.
+        # FIX: extra protection against NaN/Inf in the features.
+        # Note: the indicators are recomputed here live via pandas_ta,
+        # instead of reading them from the DB. In principle this creates a train/live drift
+        # if the model was trained on engine indicators. But since the
+        # ML model is already deployed, the feature semantics cannot be changed
+        # without retraining — so the pandas_ta computation stays as the
+        # status quo, with more robust value clean-up.
         X_live = pd.DataFrame(features_dict).astype(float)
         X_live = X_live.replace([np.inf, -np.inf], np.nan).fillna(0.0)
         proba = model_to_use.predict_proba(X_live)[0][1]
         return float(proba), current_ml_threshold
     except Exception as e:
-        logger.error(f"ML-Fehler während der ATB Vorhersage: {e}", exc_info=True)
+        logger.error(f"ML error during ATB prediction: {e}", exc_info=True)
         return 0.0, current_ml_threshold
 
 
-# 🎨 MEGAGEILER INFO-CHART FUNKTION
+# 🎨 AWESOME INFO CHART FUNCTION
 def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
     try:
         # R1: the three `SELECT *` chart reads → core.candles. Default columns give
@@ -577,7 +577,7 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
         ax_vbp.tick_params(colors='white')
 
         if slope is not None and intercept is not None:
-            # FIX: Index-basiertes Mapping für die Trendlinie
+            # FIX: index-based mapping for the trendline
             offset = len(df_90d) - len(df_plot)
             trend_y = slope * (x_vals + offset) + intercept
             ax1.plot(x_vals, trend_y, color='orange', linewidth=5.0, alpha=0.98, label=f'90d Trend: {trend_direction}')
@@ -641,47 +641,47 @@ def generate_megageil_chart(conn, symbol, trend_direction, slope, intercept):
         plt.close(fig)
         return filename
     except Exception as e:
-        logger.error(f"Error for Mega-Chart Generierung für {symbol}: {e}", exc_info=True)
+        logger.error(f"Error generating mega chart for {symbol}: {e}", exc_info=True)
         return None
 
 
-# 🚀 HAUPT ENGINE
+# 🚀 MAIN ENGINE
 
-# FIX (#51): Eigene is_cooled_down-Funktion entfernt und durch check_cooldown
-# aus core.market_utils ersetzt. Die alte Version hatte:
-#   - Eigenständige (aber korrekte) Timezone-Logik
-#   - `except: return True` Bug (Batch 1 bereits behoben)
-#   - aber immer noch Code-Duplikation mit market_utils
-# Jetzt: zentraler Helper + update_cooldown explizit after erfolgreichem Send.
+# FIX (#51): removed the own is_cooled_down function and replaced it with check_cooldown
+# from core.market_utils. The old version had:
+#   - its own (but correct) timezone logic
+#   - `except: return True` bug (already fixed in batch 1)
+#   - but still code duplication with market_utils
+# Now: central helper + update_cooldown explicitly after a successful send.
 
 
-# FIX (#51): Eigene set_cooldown-Funktion entfernt und durch update_cooldown
-# aus core.market_utils ersetzt (beide haben identische Semantik).
+# FIX (#51): removed the own set_cooldown function and replaced it with update_cooldown
+# from core.market_utils (both have identical semantics).
 
 
 def save_minichart_to_disk(symbol: str) -> str | None:
-    """Holt den fertigen Minichart-Pfad aus der Core-Engine (None bei Fehler/fehlend)."""
+    """Fetches the finished minichart path from the core engine (None on error/missing)."""
     try:
-        # Die Core-Funktion generiert den Chart, speichert ihn in 'charts/'
-        # und gibt uns den direkten Dateipfad als String zurück.
+        # The core function generates the chart, saves it in 'charts/'
+        # and returns us the direct file path as a string.
         chart_path = generate_minichart_image(symbol, minutes=240)
 
-        # Sicherheitsprüfung: Wurde ein Pfad zurückgegeben und existiert die Datei wirklich?
+        # Safety check: was a path returned and does the file really exist?
         if chart_path and isinstance(chart_path, str) and os.path.exists(chart_path):
             return chart_path
         else:
-            logger.warning(f"⚠️ Minichart für {symbol} konnte not found/generiert werden.")
+            logger.warning(f"⚠️ Minichart for {symbol} could not be found/generated.")
             return None
 
     except Exception as e:
-        logger.error(f"❌ Fehler beim Abrufen des Minicharts für {symbol}: {e}")
+        logger.error(f"❌ Error fetching the minichart for {symbol}: {e}")
         return None
 
 
 def send_signal(conn, symbol, direction, prob, close_price, event_name, trend_direction, pic_path):
-    # FIX: check_cooldown returned True wenn Cooldown AKTIV ist → skip.
+    # FIX: check_cooldown returns True if the cooldown is ACTIVE → skip.
     if check_cooldown(conn, MODEL_ID, symbol, direction, 4):
-        logger.info(f"⏳ Cooldown active für {symbol} ({direction}).")
+        logger.info(f"⏳ Cooldown active for {symbol} ({direction}).")
         return
 
     entry1 = float(close_price)
@@ -695,7 +695,7 @@ def send_signal(conn, symbol, direction, prob, close_price, event_name, trend_di
         sl = min([x for x in resis if x > entry2 * 1.01]) if any(x > entry2 * 1.01 for x in resis) else entry2 * 1.05
         t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
-    # FIX: echte Zonen + ggf. 5%-Target wenn letzte Zone zu nah
+    # FIX: real zones + 5% target if applicable when the last zone is too close
     targets = ensure_min_tp_distance(t_cands[:20], entry1, direction == "LONG", min_pct=0.05)
 
     lev = get_max_leverage(symbol, 20)
@@ -748,7 +748,7 @@ def send_signal(conn, symbol, direction, prob, close_price, event_name, trend_di
             ),
         )
     conn.commit()
-    logger.info(f"✅ {MODEL_ID} Trade Signal für {symbol} in Outbox gelegt!")
+    logger.info(f"✅ {MODEL_ID} trade signal for {symbol} placed in outbox!")
     update_cooldown(conn, MODEL_ID, symbol, direction)
 
 
@@ -772,8 +772,8 @@ def run_trendline_detector():
                 continue
             stats_dict["total"] += 1
 
-            # ATB2 (T-2026-CU-9050-125 → T-037): eigener Converging-Channel-Detektor,
-            # unabhängig von der ATB1-Trendlinien-Logik und deren last_alert-Gate. Routet
+            # ATB2 (T-2026-CU-9050-125 → T-037): own converging-channel detector,
+            # independent of the ATB1 trendline logic and its last_alert gate. Routes
             # LONG live (Cornix) + SHORT shadow via shadow_gate (post_ai_signal_gated).
             _emit_atb2(conn, symbol, now)
 
@@ -816,11 +816,11 @@ def run_trendline_detector():
 
                 slope, intercept = trend_data
 
-                # FIX: Wir berechnen die Linie nun über den Kerzen-Index!
+                # FIX: we now compute the line via the candle index!
                 last_idx = len(df_90d) - 1
                 trend_value_last = slope * last_idx + intercept
 
-                # FIX: Standard-Prozent-Rechnung (verhindert das -100% Problem!)
+                # FIX: standard percentage calculation (prevents the -100% problem!)
                 rel_distance = abs(last_close - trend_value_last) / last_close
                 distance_logs.append((symbol, rel_distance * 100))
 
@@ -857,12 +857,12 @@ def run_trendline_detector():
 
                 if event:
                     stats_dict["events"] += 1
-                    # ATB1 stummgeschaltet (T-2026-CU-9050-127, Operator Michi): ist das
-                    # ATB1-Bein per shadow_gate auf SILENT gesetzt, gibt das alte Modell
-                    # NICHTS aus (kein Info-Post, kein Trade, kein Log) — der Bot läuft
-                    # nur für die ATB2-Emission (oben, _emit_atb2). State
-                    # trotzdem fortschreiben (Relation + last_alert), damit derselbe
-                    # Event nicht jeden Scan neu erkannt wird. Default-LIVE ⇒ No-op.
+                    # ATB1 muted (T-2026-CU-9050-127, operator Michi): if the
+                    # ATB1 leg is set to SILENT via shadow_gate, the old model emits
+                    # NOTHING (no info post, no trade, no log) — the bot only runs
+                    # for the ATB2 emission (above, _emit_atb2). Still advance the
+                    # state (relation + last_alert), so the same
+                    # event is not re-detected on every scan. Default LIVE ⇒ no-op.
                     _atb1_dir = "LONG" if "UP" in event else "SHORT"
                     if not shadow_gate.is_live("ATB1", _atb1_dir):
                         state["last_alert"] = now
@@ -908,12 +908,12 @@ def run_trendline_detector():
                                     ),
                                 )
 
-                                # P1.47: posted spiegelt, ob diese Prediction TATSÄCHLICH
-                                # gehandelt wird (siehe _atb1_posted_flag). Vorher stand
-                                # hier hart False, auch für ausgeführte Trades — dadurch
-                                # matchte der created_at-JOIN im Market-Tracker
-                                # (m.posted = TRUE, P1.44) keine einzige ATB1-Zeile, und
-                                # offene ATB1-Positionen fielen dauerhaft auf NOW() zurück.
+                                # P1.47: posted reflects whether this prediction is ACTUALLY
+                                # traded (see _atb1_posted_flag). Previously this was
+                                # hard-coded False here, even for trades that were executed — as a result
+                                # the created_at JOIN in the market tracker
+                                # (m.posted = TRUE, P1.44) matched not a single ATB1 row, and
+                                # open ATB1 positions permanently fell back to NOW().
                                 cur.execute(
                                     """INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted) VALUES (0, %s, %s, %s, %s, %s, %s, %s)""",
                                     (
@@ -928,13 +928,13 @@ def run_trendline_detector():
                                 )
                         conn.commit()
                     except Exception as e:
-                        logger.error(f"DB Error bei Trendline: {e}")
+                        logger.error(f"DB error in trendline: {e}")
                         conn.rollback()
 
                     emoji = "🚀" if "UP" in event else "💥"
                     trade_status = "(Trade Triggered ✅)" if ml_prob >= threshold else "(No Trade ❌)"
 
-                    # Formatierte Prozentzahl für die Telegram Ausgabe
+                    # Formatted percentage for the Telegram output
                     dist_str = (distance / trend_value_last) * 100
 
                     info_html = f"""<pre><b>{emoji} {event}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ 90d Trend: <b>{trend_direction}</b></b>\n<b>→ Close: <code>${last_close:,.8f}</code> | Trend: <code>${trend_value_last:,.8f}</code></b>\n<b>→ Distance: {dist_str:+.2f}%</b>\n<b>→ ML Confidence: {ml_prob:.1%} {trade_status}</b>\n<b>→ Time: {now.strftime('%H:%M')} UTC</b></pre>"""
@@ -955,7 +955,7 @@ def run_trendline_detector():
                                 )
                         conn.commit()
                     except Exception as e:
-                        logger.error(f"Error sending in Trendbreaker Channel: {e}")
+                        logger.error(f"Error sending in trendbreaker channel: {e}")
                         conn.rollback()
 
                     if ml_prob >= threshold:
@@ -971,12 +971,12 @@ def run_trendline_detector():
                 TRENDLINE_STATE[symbol] = state
 
             except Exception as e:
-                logger.error(f"Error for {symbol} in ATB1 Detector: {e}", exc_info=True)
-                # FIX (P1.23): Transaktion nach einem per-Coin-Fehler zurückrollen —
-                # sonst bleibt die (nicht-autocommit) Connection im "aborted"-Zustand
-                # und vergiftet den Rest des 538-Coin-Scans ("current transaction is
-                # aborted"). rollback() selbst absichern, damit eine tote Connection
-                # nicht den ganzen Scan crasht.
+                logger.error(f"Error for {symbol} in ATB1 detector: {e}", exc_info=True)
+                # FIX (P1.23): roll back the transaction after a per-coin error —
+                # otherwise the (non-autocommit) connection stays in "aborted"
+                # state and poisons the rest of the 538-coin scan ("current transaction is
+                # aborted"). Guard rollback() itself, so a dead connection
+                # doesn't crash the whole scan.
                 try:
                     conn.rollback()
                 except Exception:
@@ -986,8 +986,8 @@ def run_trendline_detector():
         # a mid-scan abort (see the guard note above). Mirrors 3_detectors' P1.15
         # finally: conn.close().
         conn.close()
-        # FIX: State after jedem Scan persistieren, damit der Bot bei Restart weiß,
-        # welche Coins schon über/unter ihrer Trendlinie waren (verhindert Massen-Alerts).
+        # FIX: persist the state after every scan, so the bot knows on restart
+        # which coins were already above/below their trendline (prevents mass alerts).
         save_trendline_state()
 
     distance_logs.sort(key=lambda x: x[1])
@@ -995,18 +995,18 @@ def run_trendline_detector():
 
     logger.info(
         f"🏁 ATB1 Trendline Scan stopped. "
-        f"Geprüft: {stats_dict['total']} | "
-        f"Kein klarer Trend (R<{TREND_MIN_R_VALUE}): {stats_dict['no_trend']} | "
-        f"Zu weit von Trendline entfernt (>{MAX_DISTANCE_PCT * 100}%): {stats_dict['too_far']} | "
-        f"Breakouts gefunden: {stats_dict['events']}"
+        f"Checked: {stats_dict['total']} | "
+        f"No clear trend (R<{TREND_MIN_R_VALUE}): {stats_dict['no_trend']} | "
+        f"Too far from trendline (>{MAX_DISTANCE_PCT * 100}%): {stats_dict['too_far']} | "
+        f"Breakouts found: {stats_dict['events']}"
     )
-    logger.info(f"🔍 Top 5 nächste Coins zur Trendlinie aktuell: {top_3}")
+    logger.info(f"🔍 Top 5 coins currently closest to their trendline: {top_3}")
 
 
 def main():
-    logger.info("=== 📐 AI ATB1 (Trendline Break/Bounce Sniper) GESTARTET ===")
+    logger.info("=== 📐 AI ATB1 (Trendline Break/Bounce Sniper) STARTED ===")
     load_models_and_coins()
-    # FIX: Bekannten Trendline-State beim Start laden.
+    # FIX: load known trendline state at startup.
     load_trendline_state()
 
     while True:
@@ -1018,7 +1018,7 @@ def main():
             else:
                 time.sleep(10)
         except KeyboardInterrupt:
-            logger.info("ATB1 Bot manuell stopped (Strg+C).")
+            logger.info("ATB1 Bot manually stopped (Ctrl+C).")
             break
         except Exception as e:
             # P2.37: broad catch instead of process death. Previously only

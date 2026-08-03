@@ -1,22 +1,22 @@
 """
-15_ai_master_bot.py — AIM2 Master-Meta-Gate (ersetzt AIM1, docs/AIM2_DESIGN.md).
+15_ai_master_bot.py — AIM2 master meta gate (replaces AIM1, docs/AIM2_DESIGN.md).
 
-AIM1 wurde 2026-07-05 ad acta gelegt (Audit: verlässlich invertierte Kalibrierung,
-Note F — audit_reports/dossiers/AIM1.md). AIM2 behält Slot, Channel und
-Posting-Flow, aber Modell + Feature-Aufbau sind neu:
+AIM1 was retired on 2026-07-05 (audit: reliably inverted calibration,
+grade F — audit_reports/dossiers/AIM1.md). AIM2 keeps the slot, channel and
+posting flow, but the model + feature build are new:
 
-  * Features ausschliesslich über core.aim2_features.build_feature_row —
-    derselbe Builder wie im Trainer (tools/aim2_build_dataset.py). Kein
-    Train/Serve-Skew mehr (P0.13-Fehlermodus).
-  * Kandidaten/Schwarm NUR posted=true und OHNE AIM1/AIM2 (F6-Selbst-Feedback-Fix).
-  * ml_predictions_master/*_trades_master-Zeiten sind naives UTC (R3-Flip,
-    T-2026-KYT-9050-005 — vorher PG-Lokalzeit, daher der R07-AIM1-a-Fix);
-    Domänen-Umrechnung liegt zentral in core.time. Kerzen-Join strikt auf die
-    letzte GESCHLOSSENE 1h-Kerze.
-  * Kalibrierte Wahrscheinlichkeit (Isotonic aus dem Artefakt), Threshold aus dem
-    Artefakt (Val-Operating-Point), Parity-Guard gegen totes Vokabular.
-  * SHADOW-FIRST: Ohne AIM2_LIVE_POSTING=1 in der Umgebung schreibt der Bot nur
-    Shadow-Zeilen (posted=false) — Rollout-Gate 2 aus dem Design-Doc.
+  * Features exclusively via core.aim2_features.build_feature_row —
+    the same builder as in the trainer (tools/aim2_build_dataset.py). No
+    more train/serve skew (P0.13 error mode).
+  * Candidates/swarm ONLY posted=true and WITHOUT AIM1/AIM2 (F6 self-feedback fix).
+  * ml_predictions_master/*_trades_master times are naive UTC (R3 flip,
+    T-2026-KYT-9050-005 — previously PG local time, hence the R07-AIM1-a fix);
+    domain conversion is centralized in core.time. Candle join strictly on the
+    last CLOSED 1h candle.
+  * Calibrated probability (isotonic from the artifact), threshold from the
+    artifact (val operating point), parity guard against dead vocabulary.
+  * SHADOW-FIRST: without AIM2_LIVE_POSTING=1 in the environment the bot only
+    writes shadow rows (posted=false) — rollout gate 2 from the design doc.
 """
 
 import datetime
@@ -63,22 +63,22 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 AI_CHANNEL_ID = _kcfg.CH_MASTER
-TOPN_CHANNEL_ID = _kcfg.CH_AIM2_TOPN  # eigener Kanal; 0 = ungesetzt → Shadow-only
+TOPN_CHANNEL_ID = _kcfg.CH_AIM2_TOPN  # own channel; 0 = unset → shadow-only
 MODEL_PATH = "master_meta_model_aim2.pkl"
 MODEL_NAME = "AIM2"
-LIVE_POSTING = os.getenv("AIM2_LIVE_POSTING", "0") == "1"  # Default: Shadow-only
-SHADOW_FLOOR = 0.25  # darunter nicht mal Shadow loggen
-# Posting-Floor über dem Artefakt-Threshold (T-2026-CU-9050-171): auf den
-# realisierten Trades beider Artefakt-Ären (Splits vor/nach 14.07.) ist das
-# Segment unter p=0.70 Null-EV (Ø +0,18 %, CI95 [−0,27, 0,67]) bei ~72 % des
-# Volumens; ab 0.70 Ø 1,0–2,2 %/Trade. Effektives Gate ist IMMER
-# max(ARTIFACT["threshold"], MIN_PROB) — der Floor kann nur verschärfen.
-# Shadow-Logging (SHADOW_FLOOR) bleibt unberührt, die Datensammlung läuft voll.
+LIVE_POSTING = os.getenv("AIM2_LIVE_POSTING", "0") == "1"  # Default: shadow-only
+SHADOW_FLOOR = 0.25  # below this, don't even log shadow
+# Posting floor above the artifact threshold (T-2026-CU-9050-171): on the
+# realized trades of both artifact eras (splits before/after 14.07.), the
+# segment below p=0.70 is null-EV (avg +0.18%, CI95 [−0.27, 0.67]) at ~72% of
+# volume; from 0.70 avg 1.0–2.2%/trade. The effective gate is ALWAYS
+# max(ARTIFACT["threshold"], MIN_PROB) — the floor can only tighten it.
+# Shadow logging (SHADOW_FLOOR) stays untouched, data collection runs at full rate.
 MIN_PROB = load_prob_floor("AIM2_MIN_PROB", 0.70)
-MODEL_RELOAD_S = 24 * 3600  # R07-AIM1-b: Modell täglich neu laden
-CANDIDATE_WINDOW_MIN = 60  # P2.35: Catch-up nach Downtime; Doppel-Processing hält dedup_key ab
+MODEL_RELOAD_S = 24 * 3600  # R07-AIM1-b: reload model daily
+CANDIDATE_WINDOW_MIN = 60  # P2.35: catch-up after downtime; dedup_key prevents double processing
 MAX_JOIN_STALENESS_H = 3
-PARITY_MIN_NONZERO = 0.40  # OOD-Wache (P0.13): zu viele Null-Features → nicht handeln
+PARITY_MIN_NONZERO = 0.40  # OOD guard (P0.13): too many zero features → do not act
 
 IND_COLS = MARKET_PRICE_COLS + MARKET_ABS_COLS + ATR_COLS + ["trend_direction"]
 
@@ -95,8 +95,8 @@ ARTIFACT: dict[str, Any] = {
 def load_model() -> None:
     if not os.path.exists(MODEL_PATH):
         logger.warning(
-            f"⚠️ AIM2-Artefakt '{MODEL_PATH}' nicht gefunden — Bot wartet "
-            f"(Deploy aus staging_models ist eine Operator-Entscheidung)."
+            f"⚠️ AIM2 artifact '{MODEL_PATH}' not found — bot waits "
+            f"(deploy from staging_models is an operator decision)."
         )
         ARTIFACT["model"] = None
         return
@@ -109,24 +109,24 @@ def load_model() -> None:
         ARTIFACT["vocab"] = set(saved.get("vocab_sources", []))
         ARTIFACT["loaded_at"] = time.time()
         logger.info(
-            f"✅ AIM2-Artefakt geladen: {len(ARTIFACT['features'])} Features, "
-            f"Threshold {ARTIFACT['threshold']} (effektives Gate "
-            f"{max(ARTIFACT['threshold'], MIN_PROB):.2f}, Floor {MIN_PROB:.2f}), "
-            f"Vokabular {len(ARTIFACT['vocab'])} Quellen, "
-            f"Posting={'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}"
+            f"✅ AIM2 artifact loaded: {len(ARTIFACT['features'])} features, "
+            f"threshold {ARTIFACT['threshold']} (effective gate "
+            f"{max(ARTIFACT['threshold'], MIN_PROB):.2f}, floor {MIN_PROB:.2f}), "
+            f"vocabulary {len(ARTIFACT['vocab'])} sources, "
+            f"posting={'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}"
         )
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden des AIM2-Artefakts: {e}")
+        logger.error(f"❌ Error loading the AIM2 artifact: {e}")
         ARTIFACT["model"] = None
 
 
 def to_utc_naive(series: pd.Series) -> pd.Series:
-    """Signal-Zeiten als naives UTC.
+    """Signal times as naive UTC.
 
-    Bis zum R3-Flip (T-2026-KYT-9050-005) rechnete diese Funktion die
-    PG-Lokalzeit (Europe/Bucharest) heraus — nach dem Flip schreiben die Writer
-    UTC, eine feste Kompensation wäre also eine zweite Verschiebung. Die
-    Entscheidung, wie ALTE Zeilen zu lesen sind, liegt an genau einer Stelle:
+    Until the R3 flip (T-2026-KYT-9050-005) this function subtracted out
+    PG local time (Europe/Bucharest) — after the flip the writers write
+    UTC, so a fixed compensation would be a second shift. The
+    decision on how to read OLD rows lives in exactly one place:
     core.time.R3_CUTOVER_UTC (docs/UTC_POLICY.md §6)."""
     return legacy_naive_to_utc(series)
 
@@ -141,23 +141,23 @@ def df_from_query(conn, query, params=None):
         return pd.DataFrame(rows, columns=columns)
 
 
-_CONV_ID_MOD = (1 << 63) - 1  # BIGINT-sicherer (signed 64-bit) Namensraum für den conv-Hash
+_CONV_ID_MOD = (1 << 63) - 1  # BIGINT-safe (signed 64-bit) namespace for the conv hash
 
 
 def conv_signal_identity(source, symbol, direction, ts, entry) -> int:
-    """Stabile, tabellen-agnostische Identität eines conv-Signals als BIGINT.
+    """Stable, table-agnostic identity of a conv signal as BIGINT.
 
-    Ein conv-Signal wandert binnen Sekunden von active_ nach
-    closed_trades_master — mit NEUER Serial-id, aber unveränderter Identität
-    (5_trade_monitor.close_trade kopiert time/coin/direction/entry/strategy 1:1;
-    closed_trades_master.id ist eine eigene SEQUENCE). Der per-Tabelle `id`
-    taugt deshalb NICHT als Dedup-Schlüssel — dieselbe Diagnose wie
-    33_ai_fif1_bot.signal_key. Bei id-basierten Keys entstünden zwei Fehler:
-      * die closed-Form (neue id, gleiche Open-`time` → noch im Kandidaten-
-        Fenster) würde als frischer Kandidat re-gescored → Doppel-Post, und
-      * unbeteiligte active/closed-Rows mit zufällig gleicher id verdrängen sich
-        gegenseitig aus dem processed-Set (die P2.35-Kollision).
-    Dedup daher über die migrations-stabilen Felder statt über die id."""
+    A conv signal migrates within seconds from active_ to
+    closed_trades_master — with a NEW serial id, but unchanged identity
+    (5_trade_monitor.close_trade copies time/coin/direction/entry/strategy 1:1;
+    closed_trades_master.id is its own SEQUENCE). The per-table `id` is
+    therefore NOT suitable as a dedup key — same diagnosis as
+    33_ai_fif1_bot.signal_key. id-based keys would cause two errors:
+      * the closed form (new id, same open `time` → still in the candidate
+        window) would be re-scored as a fresh candidate → double post, and
+      * unrelated active/closed rows with a coincidentally equal id would evict
+        each other from the processed set (the P2.35 collision).
+    Dedup therefore uses the migration-stable fields instead of the id."""
     raw = "|".join(
         (
             str(source),
@@ -171,28 +171,28 @@ def conv_signal_identity(source, symbol, direction, ts, entry) -> int:
 
 
 def dedup_key(source_type, sid, source, symbol, direction, ts, entry) -> tuple[str, int]:
-    """(signal_type, signal_id) für master_ai_processed_signals.
+    """(signal_type, signal_id) for master_ai_processed_signals.
 
-    ai: ml_predictions_master.id ist stabil (posted-Rows migrieren nie) → direkte
-    id. conv: tabellen-agnostischer Identitäts-Hash (siehe conv_signal_identity),
-    weil die per-Tabelle Serial-id über die active→closed-Migration nicht hält."""
+    ai: ml_predictions_master.id is stable (posted rows never migrate) → direct
+    id. conv: table-agnostic identity hash (see conv_signal_identity),
+    because the per-table serial id does not survive the active→closed migration."""
     if source_type == "ai":
         return ("ai_signal", int(sid))
     return ("conv", conv_signal_identity(source, symbol, direction, ts, entry))
 
 
 def load_signal_stream(conn, since_utc_naive) -> pd.DataFrame:
-    """Posted-AI- + Conv-Signale (Schwarm-Basis UND Kandidaten-Obermenge).
-    Identische Definition wie im Trainer: posted=true, ohne AIM1/AIM2.
+    """Posted AI + conv signals (swarm base AND candidate superset).
+    Identical definition as in the trainer: posted=true, without AIM1/AIM2.
 
-    Der AIM2-TOPN-Tag wird ebenfalls ausgeschlossen: die Top-N-Zeilen sind
-    Meta-Gate-Ausgaben derselben Pipeline, kein Basissignal — sie als Kandidat
-    oder in den Schwarm zurückzulassen wäre dieselbe F6-Selbst-Feedback-Schleife
-    wie bei AIM1/AIM2 (T-2026-CU-9050-051).
+    The AIM2-TOPN tag is also excluded: the top-N rows are meta-gate outputs
+    of the same pipeline, not a base signal — leaving them as a candidate
+    or back in the swarm would be the same F6 self-feedback loop
+    as with AIM1/AIM2 (T-2026-CU-9050-051).
 
-    Die untere Fenstergrenze geht in der Domäne der Spalte in die SQL (nach dem
-    R3-Flip = UTC, also unverändert). Umgerechnet wird sie nur, wenn eine
-    Cutover-Konstante gesetzt ist — core.time.utc_to_legacy_naive."""
+    The lower window bound goes into the SQL in the column's domain (after the
+    R3 flip = UTC, so unchanged). It is only converted when a
+    cutover constant is set — core.time.utc_to_legacy_naive."""
     since_bound = utc_to_legacy_naive(pd.Timestamp(since_utc_naive).to_pydatetime())
 
     ai = df_from_query(
@@ -265,7 +265,7 @@ def swarm_stats(stream: pd.DataFrame, symbol: str, ts, direction: str) -> dict:
 
 
 def load_trail_map(conn) -> dict:
-    """Trailing-WR je AI-Quelle (30d, dedupliziert) — Semantik == Trainer (TRAIL_WIN_SQL)."""
+    """Trailing WR per AI source (30d, deduplicated) — semantics == trainer (TRAIL_WIN_SQL)."""
     df = df_from_query(
         conn,
         f"""
@@ -284,11 +284,11 @@ def load_trail_map(conn) -> dict:
 
 
 def load_market_row(conn, symbol: str, ts) -> tuple[dict, float] | None:
-    """Letzte GESCHLOSSENE 1h-Kerze vor floor(ts) — Indikatoren + Close."""
+    """Last CLOSED 1h candle before floor(ts) — indicators + close."""
     floor_utc = pd.Timestamp(ts).floor("h").tz_localize("UTC").to_pydatetime()
-    # R1: Erkennung auf der letzten GESCHLOSSENEN Kerze vor floor(ts). Der API-`end`
-    # ist inklusiv, die open_times sind stunden-aligned → `end = floor_utc - 1h`
-    # reproduziert exakt den bisherigen strikten `open_time < floor_utc`-Bound.
+    # R1: detection on the last CLOSED candle before floor(ts). The API `end`
+    # is inclusive, the open_times are hour-aligned → `end = floor_utc - 1h`
+    # exactly reproduces the previous strict `open_time < floor_utc` bound.
     try:
         as_of_end = floor_utc - timeframe_delta("1h")
         df = read_candles_with_indicators(
@@ -316,7 +316,7 @@ def load_market_row(conn, symbol: str, ts) -> tuple[dict, float] | None:
     if open_time.tzinfo is not None:
         open_time = open_time.tz_convert("UTC").tz_localize(None)
     if (pd.Timestamp(ts).floor("h") - open_time) > pd.Timedelta(hours=MAX_JOIN_STALENESS_H):
-        return None  # Datenlücke — lieber kein Urteil als eines auf alten Kerzen
+        return None  # data gap — better no judgment than one on old candles
     close = float(row["close"]) if pd.notna(row["close"]) else 0.0
     if close <= 0:
         return None
@@ -335,18 +335,18 @@ def load_latest_regime(conn) -> tuple[dict | None, float]:
     if df.empty:
         return None, 360.0
     row = df.iloc[0].to_dict()
-    now_utc = utc_now_naive()  # regime_history.ts ist naiv-UTC; utcnow() ist deprecated
+    now_utc = utc_now_naive()  # regime_history.ts is naive UTC; utcnow() is deprecated
     age_min = max(0.0, (now_utc - pd.Timestamp(row["ts"]).to_pydatetime()).total_seconds() / 60.0)
     return row, age_min
 
 
 def count_topn_posts_24h(conn, now_utc_naive) -> int:
-    """Rolling-24h-Zähler der AIM2-TOPN-Zeilen in ml_predictions_master.
+    """Rolling 24h counter of AIM2-TOPN rows in ml_predictions_master.
 
-    Zählt Shadow UND Live (jede Selektion schreibt eine Zeile), damit die
-    harte Tages-Kappe im Shadow exakt so greift wie live — der Shadow ist so
-    eine getreue Vorschau. `time` trägt seit dem R3-Flip naives UTC; der Cutoff
-    geht identisch zu load_signal_stream durch utc_to_legacy_naive."""
+    Counts shadow AND live (every selection writes a row), so the
+    hard daily cap kicks in the same way in shadow as it does live — the shadow is
+    thereby a faithful preview. `time` carries naive UTC since the R3 flip; the cutoff
+    goes through utc_to_legacy_naive identically to load_signal_stream."""
     since_bound = utc_to_legacy_naive(pd.Timestamp(now_utc_naive - pd.Timedelta(hours=24)).to_pydatetime())
     df = df_from_query(
         conn,
@@ -360,10 +360,10 @@ def count_topn_posts_24h(conn, now_utc_naive) -> int:
 
 def process_master_trades():
     if ARTIFACT["model"] is None:
-        logger.warning("AIM2 skipped: Artefakt nicht geladen.")
+        logger.warning("AIM2 skipped: artifact not loaded.")
         return
 
-    logger.info("🔄 Starte Master-Meta-Analyse (AIM2)…")
+    logger.info("🔄 Starting master meta analysis (AIM2)…")
     conn = get_db_connection()
     current_time = datetime.datetime.now(datetime.timezone.utc)
     now_utc_naive = pd.Timestamp(current_time).tz_convert("UTC").tz_localize(None)
@@ -371,12 +371,12 @@ def process_master_trades():
     try:
         stream = load_signal_stream(conn, now_utc_naive - pd.Timedelta(days=5))
         if stream.empty:
-            logger.info("ℹ️ Keine Signale im 5-Tage-Fenster.")
+            logger.info("ℹ️ No signals in the 5-day window.")
             return
 
         candidates = stream[stream["ts"] > now_utc_naive - pd.Timedelta(minutes=CANDIDATE_WINDOW_MIN)]
         if candidates.empty:
-            logger.info("ℹ️ Keine neuen Signale im Kandidaten-Fenster.")
+            logger.info("ℹ️ No new signals in the candidate window.")
             return
 
         processed_df = df_from_query(
@@ -389,9 +389,9 @@ def process_master_trades():
             if not processed_df.empty
             else set()
         )
-        # Tabellen-agnostischer Dedup-Key: conv-id ist über die active→closed-
-        # Migration nicht stabil (dedup_key). Key einmal je Kandidat berechnen,
-        # als Spalte mitführen und beim processed-Insert wiederverwenden.
+        # Table-agnostic dedup key: conv id is not stable across the active→closed
+        # migration (dedup_key). Compute the key once per candidate,
+        # carry it as a column and reuse it for the processed insert.
         candidates = candidates.assign(
             dkey=[
                 dedup_key(st, sid, src, sym, dr, ts, en)
@@ -409,10 +409,10 @@ def process_master_trades():
         )
         candidates = candidates[[k not in processed for k in candidates["dkey"]]]
         if candidates.empty:
-            logger.info("ℹ️ Alle Kandidaten bereits verarbeitet.")
+            logger.info("ℹ️ All candidates already processed.")
             return
 
-        logger.info(f"🔎 Analysiere {len(candidates)} neue Quellsignale…")
+        logger.info(f"🔎 Analyzing {len(candidates)} new source signals…")
         trail_map = load_trail_map(conn)
         regime_row, regime_age = load_latest_regime(conn)
         market_cache: dict[str, tuple[dict, float] | None] = {}
@@ -420,10 +420,10 @@ def process_master_trades():
         processed_inserts, shadow_inserts = [], []
         vocab_misses = 0
 
-        # AIM2-TOPN (T-2026-CU-9050-051): eigener High-Conviction-Kanal hinter
-        # default-off-Gate. Wir sammeln die starken, vertrauenswürdigen
-        # Kandidaten dieses Zyklus und selektieren NACH der Schleife die Top-N
-        # unter der rollierenden 24h-Kappe. topn_min: nie unter dem Basis-Gate.
+        # AIM2-TOPN (T-2026-CU-9050-051): own high-conviction channel behind a
+        # default-off gate. We collect the strong, trusted
+        # candidates of this cycle and select the top-N AFTER the loop
+        # under the rolling 24h cap. topn_min: never below the base gate.
         topn_cfg = load_topn_config()
         topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"], MIN_PROB)
         topn_pool: list[TopNCandidate] = []
@@ -467,7 +467,7 @@ def process_master_trades():
             )
 
             if ARTIFACT["vocab"] and str(signal.source) not in ARTIFACT["vocab"]:
-                vocab_misses += 1  # P0.13-Wache: neue Quelle, die das Modell nie sah
+                vocab_misses += 1  # P0.13 guard: new source the model never saw
 
             X = (
                 pd.DataFrame([feats])
@@ -485,8 +485,8 @@ def process_master_trades():
             trusted = parity >= PARITY_MIN_NONZERO
             if not trusted:
                 logger.warning(
-                    f"⚠️ Parity-Guard {coin}/{signal.source}: nur {parity:.0%} "
-                    f"Nicht-Null-Features → OOD-Verdacht, kein Posting."
+                    f"⚠️ Parity guard {coin}/{signal.source}: only {parity:.0%} "
+                    f"non-zero features → OOD suspicion, no posting."
                 )
 
             processed_inserts.append((*signal.dkey, prob))
@@ -511,19 +511,19 @@ def process_master_trades():
                 shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, False))
                 if wants_post:
                     logger.info(
-                        f"👻 SHADOW-Post {coin} {direction} (p={prob:.2f}, "
-                        f"Quelle {signal.source}) — Live-Posting deaktiviert."
+                        f"👻 SHADOW post {coin} {direction} (p={prob:.2f}, "
+                        f"source {signal.source}) — live posting disabled."
                     )
                 continue
 
-            # --- LIVE-POSTING (nur mit AIM2_LIVE_POSTING=1 nach der Shadow-Phase) ---
+            # --- LIVE POSTING (only with AIM2_LIVE_POSTING=1 after the shadow phase) ---
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT 1 FROM ai_signals WHERE symbol = %s AND direction = %s AND model = %s",
                     (coin, direction, MODEL_NAME),
                 )
                 if cur.fetchone():
-                    logger.info(f"⏳ Skip {coin} {direction}: aktiver {MODEL_NAME}-Trade läuft.")
+                    logger.info(f"⏳ Skip {coin} {direction}: active {MODEL_NAME} trade running.")
                     shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, False))
                     continue
 
@@ -551,7 +551,7 @@ def process_master_trades():
                 f"<b>{coin.replace('USDT', '')}/USDT</b>\n"
                 f"<b>→ Direction: <b>{direction}</b></b>\n"
                 f"<b>→ Source: {signal.source} (Conf {conf:.2f})</b>\n"
-                f"<b>→ Master Confidence (kalibriert): <b>{prob:.1%}</b></b>\n"
+                f"<b>→ Master Confidence (calibrated): <b>{prob:.1%}</b></b>\n"
                 f"<b>→ Time: {current_time.strftime('%H:%M')} UTC | Module: AIM2</b>\n\n"
                 f"{cornix_msg}</pre>"
             )
@@ -590,29 +590,29 @@ def process_master_trades():
                     ),
                 )
             shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, True))
-            logger.info(f"✅ AIM2 MASTER ALERT {coin} {direction} (p={prob:.1%}, Quelle {signal.source})")
+            logger.info(f"✅ AIM2 MASTER ALERT {coin} {direction} (p={prob:.1%}, source {signal.source})")
 
         if vocab_misses:
             logger.warning(
-                f"⚠️ {vocab_misses} Kandidaten von Quellen ausserhalb des "
-                f"Trainings-Vokabulars — bei Häufung: Retrain (P0.13-Wache)."
+                f"⚠️ {vocab_misses} candidates from sources outside the "
+                f"training vocabulary — if this recurs: retrain (P0.13 guard)."
             )
 
-        # --- AIM2-TOPN: Top-N des Tages unter rollierender 24h-Kappe ---
+        # --- AIM2-TOPN: top-N of the day under a rolling 24h cap ---
         if topn_cfg.enabled and topn_pool:
             posts_24h = count_topn_posts_24h(conn, now_utc_naive)
             selected = select_topn(topn_pool, topn_cfg.n, topn_min, posts_24h)
             topn_live = topn_cfg.live and TOPN_CHANNEL_ID != 0
             if topn_cfg.live and TOPN_CHANNEL_ID == 0:
-                logger.warning("AIM2-TOPN: Live-Gate an, aber CH_AIM2_TOPN ungesetzt → Shadow-only.")
+                logger.warning("AIM2-TOPN: live gate on, but CH_AIM2_TOPN unset → shadow-only.")
             for cand in selected:
-                # Läuft für Coin/Richtung bereits ein TOPN-Trade: Slot als Shadow
-                # verbuchen (Kappe bleibt ehrlich), aber nicht doppelt posten.
+                # If a TOPN trade for coin/direction is already running: book the slot
+                # as shadow (keeps the cap honest), but do not post twice.
                 if topn_live and has_open_ai_signal(conn, cand.coin, cand.direction, TOPN_TAG):
                     shadow_inserts.append(
                         (TOPN_TAG, current_time, cand.coin, cand.direction, cand.close_price, cand.prob, False)
                     )
-                    logger.info(f"⏳ AIM2-TOPN Skip {cand.coin} {cand.direction}: aktiver Trade läuft.")
+                    logger.info(f"⏳ AIM2-TOPN Skip {cand.coin} {cand.direction}: active trade running.")
                     continue
                 if topn_live:
                     setup = calculate_smart_targets(conn, cand.coin, cand.direction, cand.close_price)
@@ -627,14 +627,14 @@ def process_master_trades():
                         setup["entry2"],
                         setup["sl"],
                         setup["targets"],
-                        source_desc=f"AIM2 Top-{topn_cfg.n} des Tages · Quelle {cand.source}",
-                        extra_info_lines=[f"Master-Confidence (kalibriert): {cand.prob:.1%}"],
+                        source_desc=f"AIM2 Top-{topn_cfg.n} of the day · source {cand.source}",
+                        extra_info_lines=[f"Master confidence (calibrated): {cand.prob:.1%}"],
                     )
                     shadow_inserts.append(
                         (TOPN_TAG, current_time, cand.coin, cand.direction, cand.close_price, cand.prob, True)
                     )
                     logger.info(
-                        f"💎 AIM2-TOPN LIVE {cand.coin} {cand.direction} (p={cand.prob:.1%}, Quelle {cand.source})"
+                        f"💎 AIM2-TOPN LIVE {cand.coin} {cand.direction} (p={cand.prob:.1%}, source {cand.source})"
                     )
                 else:
                     shadow_inserts.append(
@@ -642,7 +642,7 @@ def process_master_trades():
                     )
                     logger.info(
                         f"👻 AIM2-TOPN SHADOW {cand.coin} {cand.direction} "
-                        f"(p={cand.prob:.1%}, Quelle {cand.source}) — Live-Posting deaktiviert."
+                        f"(p={cand.prob:.1%}, source {cand.source}) — live posting disabled."
                     )
 
         with conn.cursor() as cur:
@@ -667,27 +667,27 @@ def process_master_trades():
         conn.commit()
 
     except Exception as e:
-        logger.error(f"Critical error im Master Task: {e}", exc_info=True)
+        logger.error(f"Critical error in the master task: {e}", exc_info=True)
         if conn:
             conn.rollback()
     finally:
         if conn:
             conn.close()
 
-    logger.info("🏁 AIM2 Master-Analyse fertig.")
+    logger.info("🏁 AIM2 master analysis finished.")
 
 
 def main():
-    logger.info(f"=== 🧠 AI MASTER BOT (AIM2) GESTARTET — {'LIVE-POSTING' if LIVE_POSTING else 'SHADOW-ONLY'} ===")
-    # R3: unter welcher Lesart der Signal-Stream interpretiert wird, steht im Log —
-    # eine stille Fehlannahme über die Historie wäre genau der P0.13-Fehlermodus.
-    logger.info(f"    R3-Zeitdomäne: {r3_history_mode()} (docs/UTC_POLICY.md §6)")
+    logger.info(f"=== 🧠 AI MASTER BOT (AIM2) STARTED — {'LIVE-POSTING' if LIVE_POSTING else 'SHADOW-ONLY'} ===")
+    # R3: which reading interprets the signal stream is logged —
+    # a silent wrong assumption about the history would be exactly the P0.13 error mode.
+    logger.info(f"    R3 time domain: {r3_history_mode()} (docs/UTC_POLICY.md §6)")
     _topn = load_topn_config()
     if _topn.enabled:
         _topn_mode = "LIVE" if (_topn.live and TOPN_CHANNEL_ID != 0) else "SHADOW-ONLY"
-        logger.info(f"    AIM2-TOPN aktiv — N={_topn.n}, min_prob={_topn.min_prob:.2f}, Posting={_topn_mode}")
+        logger.info(f"    AIM2-TOPN active — N={_topn.n}, min_prob={_topn.min_prob:.2f}, posting={_topn_mode}")
     else:
-        logger.info("    AIM2-TOPN deaktiviert (AIM2_TOPN_ENABLED≠1) — Basis-AIM2 unverändert.")
+        logger.info("    AIM2-TOPN disabled (AIM2_TOPN_ENABLED≠1) — base AIM2 unchanged.")
 
     conn = get_db_connection()
     with conn.cursor() as cur:
@@ -716,4 +716,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell gestoppt (Strg+C). Fahre sauber herunter…")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly…")

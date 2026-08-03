@@ -28,11 +28,11 @@ def _perf_row(n, wr):
 # ── Stats computation ─────────────────────────────────────────────────────────
 
 def test_compute_stats_from_pnl_and_wins():
-    """_compute_stats aggregiert PnL-Liste + Win-Flags zur Performance-Zeile.
+    """_compute_stats aggregates PnL list + win flags into a performance row.
 
-    Ersetzt den früheren `test_regime_lookup_for_trade`: der importierte ein
-    nie existierendes Modul `src_27` und rechnete seine Assertions inline nach,
-    ohne den Produktionscode je aufzurufen.
+    Replaces the earlier `test_regime_lookup_for_trade`: that imported a
+    module `src_27` that never existed and recomputed its assertions inline,
+    without ever calling the production code.
     """
     mod = _load_analyzer_module()
     stats = mod._compute_stats([1.0, 2.0, -1.0, 3.0], [1, 1, 0, 1])
@@ -47,13 +47,13 @@ def test_compute_stats_from_pnl_and_wins():
 
 
 def test_compute_stats_empty_input():
-    """Leere Eingabe → leeres Dict (kein statistics.StatisticsError)."""
+    """Empty input → empty dict (no statistics.StatisticsError)."""
     mod = _load_analyzer_module()
     assert mod._compute_stats([], []) == {}
 
 
 def test_compute_stats_single_trade_has_no_sharpe():
-    """n=1: stdev ist 0 → sharpe_like bleibt None statt ZeroDivisionError."""
+    """n=1: stdev is 0 → sharpe_like stays None instead of ZeroDivisionError."""
     mod = _load_analyzer_module()
     stats = mod._compute_stats([2.0], [1])
     assert stats["n_trades"] == 1
@@ -276,13 +276,13 @@ def test_whitelist_30_entries_per_bot():
     assert count == 30
 
 
-# ── Outcome-Klassifikation (Kelly-/WR-Fix) ────────────────────────────────────
-# Tests für _classify_outcome() und _apply_outcome_classification() — stellen
-# sicher dass die PnL-basierte Win/Loss/Neutral-Klassifikation die bekannten
-# Bugs aus 8_ai_trade_monitor.py korrekt umgeht.
+# ── Outcome classification (Kelly/WR fix) ──────────────────────────────────────
+# Tests for _classify_outcome() and _apply_outcome_classification() — ensure
+# that the PnL-based win/loss/neutral classification correctly works around
+# the known bugs from 8_ai_trade_monitor.py.
 
 def _load_analyzer_module():
-    """Lädt 27_bot_regime_analyzer als Modul (wegen Ziffer-im-Dateinamen)."""
+    """Loads 27_bot_regime_analyzer as a module (because of the digit in the filename)."""
     import importlib.util, os
     spec = importlib.util.spec_from_file_location(
         "bot_regime_analyzer",
@@ -295,41 +295,41 @@ def _load_analyzer_module():
 
 
 def test_classify_outcome_legacy_target_hit_is_win():
-    """LEGACY TARGET HIT (+2.5%) muss als Win erkannt werden, auch wenn
-    der Bot vorher targets_hit=0 geschrieben hat (Bug in 8_ai_trade_monitor)."""
+    """LEGACY TARGET HIT (+2.5%) must be recognised as a win, even if
+    the bot previously wrote targets_hit=0 (bug in 8_ai_trade_monitor)."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("LEGACY TARGET HIT (+2.5%)", 2.6) == "win"
 
 
 def test_classify_outcome_legacy_sl_is_loss():
-    """LEGACY SL HIT (-2.5%) muss als Loss erkannt werden."""
+    """LEGACY SL HIT (-2.5%) must be recognised as a loss."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("LEGACY SL HIT (-2.5%)", -2.5) == "loss"
 
 
 def test_classify_outcome_delisted_is_neutral():
-    """DELISTED / CLEANUP darf weder als Win noch Loss zählen."""
+    """DELISTED / CLEANUP must count as neither win nor loss."""
     mod = _load_analyzer_module()
-    # Sogar mit signifikantem PnL ist DELISTED neutral
+    # Even with significant PnL, DELISTED is neutral
     assert mod._classify_outcome("DELISTED / CLEANUP", -15.0) == "neutral"
     assert mod._classify_outcome("DELISTED / CLEANUP", +5.0) == "neutral"
 
 
 def test_classify_outcome_cleanup_is_neutral():
-    """Alias-Schreibweise CLEANUP wird auch als neutral erkannt."""
+    """The alias spelling CLEANUP is also recognised as neutral."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("MANUAL CLEANUP", -3.0) == "neutral"
 
 
 def test_classify_outcome_outlier_is_neutral():
-    """Ausreißer mit |pnl| > 100% gelten als Daten-Bug → neutral."""
+    """Outliers with |pnl| > 100% count as a data bug → neutral."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("SL Hit", -1155.0) == "neutral"
     assert mod._classify_outcome("LEGACY TARGET HIT (+2.5%)", +1234.0) == "neutral"
 
 
 def test_classify_outcome_micro_pnl_is_neutral():
-    """Housekeeping-Closes mit |pnl| <= 0.1% sind neutral."""
+    """Housekeeping closes with |pnl| <= 0.1% are neutral."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("SL Hit", 0.05) == "neutral"
     assert mod._classify_outcome("SL Hit", -0.09) == "neutral"
@@ -337,23 +337,23 @@ def test_classify_outcome_micro_pnl_is_neutral():
 
 
 def test_classify_outcome_none_and_invalid():
-    """None und ungültige Werte → neutral."""
+    """None and invalid values → neutral."""
     mod = _load_analyzer_module()
-    assert mod._classify_outcome(None, 1.5) == "win"        # Reason kann leer sein
+    assert mod._classify_outcome(None, 1.5) == "win"        # reason can be empty
     assert mod._classify_outcome("SL Hit", None) == "neutral"
     assert mod._classify_outcome("SL Hit", float("nan")) == "neutral"
 
 
 def test_classify_outcome_modern_wins_and_losses():
-    """Moderne SL-Hit-Trades (mit spezifischem SL im Reason-String)."""
+    """Modern SL-hit trades (with a specific SL in the reason string)."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("SL Hit (SL: 0.00855)", -3.5) == "loss"
     assert mod._classify_outcome("TP hit", +12.3) == "win"
-    assert mod._classify_outcome("", +2.1) == "win"  # leerer Reason, positiver PnL
+    assert mod._classify_outcome("", +2.1) == "win"  # empty reason, positive PnL
 
 
 def test_apply_outcome_classification_filters_neutrals():
-    """_apply_outcome_classification entfernt neutrale Trades komplett."""
+    """_apply_outcome_classification removes neutral trades entirely."""
     mod = _load_analyzer_module()
     df = pd.DataFrame([
         {"pnl_pct": +2.5, "close_reason": "LEGACY TARGET HIT (+2.5%)", "is_win": 0},
@@ -363,36 +363,36 @@ def test_apply_outcome_classification_filters_neutrals():
         {"pnl_pct": 0.02, "close_reason": "",                           "is_win": 0},
     ])
     result = mod._apply_outcome_classification(df)
-    # Nur 2 "entschiedene" Trades übrig
+    # Only 2 "decided" trades remain
     assert len(result) == 2
-    # Der LEGACY TARGET HIT wurde als Win umgewidmet (is_win wurde neu gesetzt)
+    # The LEGACY TARGET HIT was reclassified as a win (is_win was set anew)
     wins = result[result["outcome"] == "win"]
     losses = result[result["outcome"] == "loss"]
     assert len(wins) == 1
     assert len(losses) == 1
-    assert wins.iloc[0]["is_win"] == 1  # überschrieben, egal was vorher drin war
+    assert wins.iloc[0]["is_win"] == 1  # overwritten, regardless of what was there before
 
 
 def test_apply_outcome_classification_recomputes_is_win():
-    """Selbst wenn SQL is_win=1 schreibt für ein DELISTED-Trade, wird das
-    vom Fix korrigiert: es ist weder Win noch Loss, sondern neutral."""
+    """Even if SQL writes is_win=1 for a DELISTED trade, the fix
+    corrects that: it is neither a win nor a loss, but neutral."""
     mod = _load_analyzer_module()
     df = pd.DataFrame([
-        # Worst-case: SQL meint is_win=1, aber in Wahrheit DELISTED
+        # Worst case: SQL thinks is_win=1, but it's really DELISTED
         {"pnl_pct": +2.5, "close_reason": "DELISTED / CLEANUP", "is_win": 1},
-        # Normaler Win
+        # Normal win
         {"pnl_pct": +2.5, "close_reason": "LEGACY TARGET HIT", "is_win": 0},
     ])
     result = mod._apply_outcome_classification(df)
-    assert len(result) == 1  # DELISTED-Trade gefiltert
+    assert len(result) == 1  # DELISTED trade filtered
     assert result.iloc[0]["outcome"] == "win"
     assert result.iloc[0]["is_win"] == 1
 
 
 def test_epd1_realistic_distribution():
-    """End-to-End: Simuliere EPD1's echte Datenverteilung (37911 LEGACY TP,
-    27636 LEGACY SL, 4635 DELISTED, 121 LEGACY FB_SL) und checking dass die
-    WR after Filterung bei ~57-58% landet (statt bei 0.28% wie im Bug-Fall)."""
+    """End-to-end: simulate EPD1's real data distribution (37911 LEGACY TP,
+    27636 LEGACY SL, 4635 DELISTED, 121 LEGACY FB_SL) and check that the
+    WR after filtering lands at ~57-58% (instead of 0.28% as in the bug case)."""
     mod = _load_analyzer_module()
     import random
     random.seed(42)
@@ -412,50 +412,50 @@ def test_epd1_realistic_distribution():
 
     df = pd.DataFrame(rows)
     filtered = mod._apply_outcome_classification(df)
-    # Neutrale (DELISTED) raus → 37911 + 27636 + 121 = 65668
+    # Neutrals (DELISTED) removed → 37911 + 27636 + 121 = 65668
     assert 65500 < len(filtered) < 65800
     wr = filtered["is_win"].sum() / len(filtered) * 100
-    assert 57.0 < wr < 58.5, f"WR außerhalb erwartetem Bereich: {wr:.2f}%"
+    assert 57.0 < wr < 58.5, f"WR outside expected range: {wr:.2f}%"
 
 
-# ── B9-Zensur-Korrektur (T-2026-CU-9050-048) ──────────────────────────────────
-# REGIME_CHANGE-Closes zählen mit realem PnL als Win/Loss statt pauschal neutral.
-# DELISTED/CLEANUP/ORPHAN bleiben neutral; near-0%-Closes fängt der Micro-Filter.
+# ── B9 censorship correction (T-2026-CU-9050-048) ──────────────────────────────
+# REGIME_CHANGE closes count with real PnL as win/loss instead of blanket neutral.
+# DELISTED/CLEANUP/ORPHAN stay neutral; near-0%-closes are caught by the micro filter.
 
 def test_b9_classify_outcome_regime_change_counts_win():
-    """CLOSED_REGIME_CHANGE mit signifikantem +PnL ist jetzt ein Win."""
+    """CLOSED_REGIME_CHANGE with significant +PnL is now a win."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("CLOSED_REGIME_CHANGE", 4.2) == "win"
     assert mod._classify_outcome("REGIME_CHANGE:not_whitelisted", 2.5) == "win"
 
 
 def test_b9_classify_outcome_regime_change_counts_loss():
-    """Der zuvor zensierte Fall: ein realisierter Regime-Wechsel-Verlust
-    ist jetzt ein Loss (das war die WR-Verzerrung aus Report 16 B9)."""
+    """The previously censored case: a realised regime-change loss
+    is now a loss (that was the WR distortion from report 16 B9)."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("CLOSED_REGIME_CHANGE", -3.7) == "loss"
 
 
 def test_b9_classify_outcome_regime_change_micro_still_neutral():
-    """Ein Regime-Close nahe Break-even bleibt neutral (Micro-PnL-Filter)."""
+    """A regime close near break-even stays neutral (micro-PnL filter)."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("CLOSED_REGIME_CHANGE", 0.05) == "neutral"
 
 
 def test_b9_delisted_and_cleanup_still_neutral():
-    """B9 berührt NUR REGIME_CHANGE — echte Housekeeping-Closes bleiben neutral."""
+    """B9 touches ONLY REGIME_CHANGE — real housekeeping closes stay neutral."""
     mod = _load_analyzer_module()
     assert mod._classify_outcome("DELISTED / CLEANUP", -12.0) == "neutral"
     assert mod._classify_outcome("MANUAL CLEANUP", +6.0) == "neutral"
     assert mod._classify_outcome("ORPHAN CLOSE", -4.0) == "neutral"
 
 
-# ── v2 Whitelist: Netto-Expectancy-Untergrenze + EB-Shrinkage ─────────────────
-# _v2_expectancy_lower_bound / _v2_whitelist_decision sind pure/DB-frei.
+# ── v2 whitelist: net expectancy lower bound + EB shrinkage ────────────────────
+# _v2_expectancy_lower_bound / _v2_whitelist_decision are pure/DB-free.
 
 def test_v2_lower_bound_matches_eb_formula():
-    """Pin die Shrinkage-Formel gegen die Modul-Konstanten (bleibt gültig,
-    wenn die Konstanten später kalibriert werden)."""
+    """Pin the shrinkage formula against the module constants (stays valid
+    when the constants are calibrated later)."""
     mod = _load_analyzer_module()
     import math
     cell = {"n": 100, "avg_pnl": 1.0, "std": 2.0}
@@ -473,8 +473,8 @@ def test_v2_lower_bound_matches_eb_formula():
 
 
 def test_v2_no_data_anywhere_is_not_whitelisted():
-    """B1-Fix: eine Zelle ganz ohne Evidenz wird NICHT default-open
-    durchgewunken (v1 tat genau das über `insufficient_data`)."""
+    """B1 fix: a cell with no evidence at all is NOT waved through
+    default-open (v1 did exactly that via `insufficient_data`)."""
     mod = _load_analyzer_module()
     whitelisted, reason = mod._v2_whitelist_decision(None, None, None)
     assert whitelisted is False
@@ -482,8 +482,8 @@ def test_v2_no_data_anywhere_is_not_whitelisted():
 
 
 def test_v2_strong_positive_cell_is_whitelisted():
-    """Viele Trades, klar positive Expectancy, niedrige Streuung → Untergrenze
-    über Break-even → whitelisted."""
+    """Many trades, clearly positive expectancy, low spread → lower bound
+    above break-even → whitelisted."""
     mod = _load_analyzer_module()
     cell = {"n": 200, "avg_pnl": 1.5, "std": 2.0}
     whitelisted, reason = mod._v2_whitelist_decision(cell, None, None)
@@ -492,8 +492,8 @@ def test_v2_strong_positive_cell_is_whitelisted():
 
 
 def test_v2_negative_expectancy_blocked_despite_data():
-    """Der Kern des Umbaus: eine Zelle mit negativer Netto-Expectancy wird
-    geblockt — egal wie die WR aussieht (v1 hätte sie evtl. durchgelassen)."""
+    """The core of the rework: a cell with negative net expectancy is
+    blocked — no matter how the WR looks (v1 might have let it through)."""
     mod = _load_analyzer_module()
     cell = {"n": 200, "avg_pnl": -0.4, "std": 2.0}
     whitelisted, _ = mod._v2_whitelist_decision(cell, None, None)
@@ -501,20 +501,20 @@ def test_v2_negative_expectancy_blocked_despite_data():
 
 
 def test_v2_sparse_cell_inherits_strong_parent():
-    """Eine leere 4D-Zelle leiht Stärke vom robusten Bot×ALL-Level: die
-    Schätzung wird Richtung Eltern-Mittel gezogen, prior_source=bot_all."""
+    """An empty 4D cell borrows strength from the robust Bot×ALL level: the
+    estimate is pulled toward the parent mean, prior_source=bot_all."""
     mod = _load_analyzer_module()
     parent_overall = {"n": 500, "avg_pnl": 0.8, "std": 1.5}
     est, lb, n_eff, src = mod._v2_expectancy_lower_bound(None, None, parent_overall)
     assert src == "bot_all"
-    assert 0.0 < est < 0.8           # zwischen Prior (0) und Eltern-Mittel
+    assert 0.0 < est < 0.8           # between prior (0) and parent mean
     whitelisted, _ = mod._v2_whitelist_decision(None, None, parent_overall)
     assert whitelisted is True
 
 
 def test_v2_smaller_n_gives_lower_bound():
-    """Gleiches Mittel + gleiche Streuung, weniger Trades → engere Evidenz,
-    tiefere Untergrenze (Shrinkage + breiteres Intervall)."""
+    """Same mean + same spread, fewer trades → thinner evidence,
+    lower bound (shrinkage + wider interval)."""
     mod = _load_analyzer_module()
     big = mod._v2_expectancy_lower_bound({"n": 200, "avg_pnl": 1.0, "std": 2.0}, None, None)
     small = mod._v2_expectancy_lower_bound({"n": 10, "avg_pnl": 1.0, "std": 2.0}, None, None)
@@ -522,7 +522,7 @@ def test_v2_smaller_n_gives_lower_bound():
 
 
 def test_v2_higher_variance_gives_lower_bound():
-    """Gleiches Mittel + gleiches n, höhere Streuung → tiefere Untergrenze."""
+    """Same mean + same n, higher spread → lower bound."""
     mod = _load_analyzer_module()
     calm = mod._v2_expectancy_lower_bound({"n": 100, "avg_pnl": 1.0, "std": 1.0}, None, None)
     wild = mod._v2_expectancy_lower_bound({"n": 100, "avg_pnl": 1.0, "std": 6.0}, None, None)
@@ -530,20 +530,20 @@ def test_v2_higher_variance_gives_lower_bound():
 
 
 def test_v2_finest_populated_level_dominates_source():
-    """Der prior_source verfolgt das feinste Level mit Daten."""
+    """The prior_source tracks the finest level with data."""
     mod = _load_analyzer_module()
     cell = {"n": 60, "avg_pnl": 1.2, "std": 2.0}
     pr = {"n": 120, "avg_pnl": 0.9, "std": 2.0}
     po = {"n": 400, "avg_pnl": 0.5, "std": 2.0}
     _, _, _, src = mod._v2_expectancy_lower_bound(cell, pr, po)
     assert src == "cell"
-    # Ohne Zell-Daten fällt die Quelle auf Bot×Regime zurück
+    # Without cell data, the source falls back to Bot×Regime
     _, _, _, src2 = mod._v2_expectancy_lower_bound(None, pr, po)
     assert src2 == "bot_regime"
 
 
 def test_v2_reason_string_is_parseable():
-    """reason_v2 trägt lb/est/src/neff für den Counterfactual-Vergleich."""
+    """reason_v2 carries lb/est/src/neff for the counterfactual comparison."""
     mod = _load_analyzer_module()
     _, reason = mod._v2_whitelist_decision({"n": 100, "avg_pnl": 1.0, "std": 2.0}, None, None)
     for token in ("v2_", "lb=", "est=", "src=", "neff="):
@@ -551,12 +551,12 @@ def test_v2_reason_string_is_parseable():
 
 
 def test_v2_shrinkage_pulls_extreme_small_cell_toward_parent():
-    """Eine kleine Zelle mit extremem Mittel wird zum Eltern-Mittel geschrumpft
-    (statt dem Rauschen zu vertrauen)."""
+    """A small cell with an extreme mean is shrunk toward the parent mean
+    (instead of trusting the noise)."""
     mod = _load_analyzer_module()
     parent_overall = {"n": 500, "avg_pnl": 0.5, "std": 2.0}
     est, _, _, _ = mod._v2_expectancy_lower_bound(
         {"n": 4, "avg_pnl": 9.0, "std": 2.0}, None, parent_overall
     )
-    # 4 Trades ziehen die 9%-Spitze kaum durch — est bleibt nahe am Eltern-Mittel
+    # 4 trades barely pull the 9% spike through — est stays close to the parent mean
     assert est < 2.0

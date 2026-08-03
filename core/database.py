@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 
 _POOL: pg_pool.ThreadedConnectionPool | None = None
 _POOL_LOCK = threading.Lock()
-# FIX P1.34: Fleet-Budget — 27 Prozesse × maxconn kollidieren mit
-# max_connections; MIN/MAX darum env-overridable (Ops-Hebel ohne Code-Deploy).
-# Defaults bleiben verhaltensgleich (2/8). ACHTUNG psycopg2-Semantik: minconn
-# ist der IDLE-CACHE des Pools — putconn SCHLIESST jede Connection, die über
-# minconn idle zurückkommt. Ein zu kleines MIN erzeugt also Reconnect-Churn
-# bei Prozessen mit >1 gleichzeitiger Connection (Monitor, Market-Tracker).
+# FIX P1.34: fleet budget — 27 processes × maxconn collide with
+# max_connections; MIN/MAX therefore env-overridable (ops lever without a code deploy).
+# Defaults stay behaviour-identical (2/8). CAUTION psycopg2 semantics: minconn
+# is the pool's IDLE CACHE — putconn CLOSES every connection that comes back
+# idle above minconn. Too small a MIN therefore creates reconnect churn
+# for processes with >1 concurrent connection (monitor, market tracker).
 _POOL_MIN = int(os.getenv("KYTHERA_DB_POOL_MIN", "2"))
 _POOL_MAX = int(os.getenv("KYTHERA_DB_POOL_MAX", "8"))
 
@@ -89,9 +89,9 @@ def _keepalive_kwargs() -> dict[str, int]:
     }
 
 
-# Liveness-Probe-Cache (P1.33): id(conn) → monotonic-Zeitpunkt der letzten
-# erfolgreichen SELECT-1-Probe. Innerhalb der TTL wird beim Checkout nicht
-# erneut geprobt (Hot-Loop-Schonung, siehe get_db_connection-Docstring).
+# Liveness probe cache (P1.33): id(conn) → monotonic timestamp of the last
+# successful SELECT-1 probe. Within the TTL, checkout does not
+# probe again (hot-loop relief, see get_db_connection docstring).
 _LIVENESS_TTL_SEC = 30.0
 _LAST_VERIFIED: dict[int, float] = {}
 
@@ -135,10 +135,10 @@ class PooledConnection:
     def __init__(self, conn: psycopg2.extensions.connection) -> None:
         # Store under a mangled name so __getattr__ never intercepts it.
         object.__setattr__(self, '_conn', conn)
-        # FIX P1.32: markiert, ob die Connection schon an den Pool zurückgegeben
-        # wurde — macht close() idempotent (Double-Close hat vorher die
-        # Transaktion eines anderen Threads rollbacked / den Pool vergiftet,
-        # siehe HOTFIX_README).
+        # FIX P1.32: marks whether the connection has already been returned to the
+        # pool — makes close() idempotent (a double close used to roll back
+        # another thread's transaction / poison the pool,
+        # see HOTFIX_README).
         object.__setattr__(self, '_returned', False)
 
     # ── Attribute forwarding ──────────────────────────────────────────────
@@ -165,9 +165,9 @@ class PooledConnection:
 
     def close(self) -> None:
         """Return connection to pool instead of destroying it. Idempotent."""
-        # FIX P1.32: Double-Close ist jetzt ein No-op statt eines zweiten
-        # putconn derselben Connection (die inzwischen ein anderer Thread aus
-        # dem Pool gezogen haben kann → fremde Transaktion rollbacked).
+        # FIX P1.32: a double close is now a no-op instead of a second
+        # putconn of the same connection (which another thread may meanwhile
+        # have pulled from the pool → foreign transaction rolled back).
         if object.__getattribute__(self, '_returned'):
             return
         object.__setattr__(self, '_returned', True)
@@ -178,11 +178,11 @@ class PooledConnection:
             _get_pool().putconn(conn)
         except Exception as e:
             logger.warning(f"Error returning connection to pool: {e}")
-            # FIX P1.33: Slot IMMER freigeben. Vorher wurde bei einem rollback()-
-            # Fehler (tote Connection nach DB-Restart) nur conn.close() gerufen —
-            # der Pool-Slot blieb belegt und der Pool erschöpfte dauerhaft
-            # (Bot "healthy", produziert nichts). putconn(close=True) verwirft
-            # die Connection UND gibt den Slot frei.
+            # FIX P1.33: ALWAYS free the slot. Previously, on a rollback()
+            # error (dead connection after a DB restart) only conn.close() was called —
+            # the pool slot stayed occupied and the pool exhausted permanently
+            # (bot "healthy", producing nothing). putconn(close=True) discards
+            # the connection AND frees the slot.
             try:
                 _get_pool().putconn(conn, close=True)
             except Exception:
@@ -208,18 +208,18 @@ def get_db_connection() -> PooledConnection:
     Returns a pooled connection.  Drop-in replacement for the old
     psycopg2.connect() call — conn.close() puts it back in the pool.
 
-    FIX P1.33: Liveness-Check beim Checkout — nach einem DB-Restart liegen
-    tote Connections im Pool; ohne Check bekommt der Bot eine kaputte
-    Connection und jede Query schlägt fehl, bis der Prozess neu startet.
-    Tote Connections werden verworfen (Slot bleibt frei) und einmal
-    nachgezogen (max 3 Versuche).
+    FIX P1.33: liveness check at checkout — after a DB restart, dead
+    connections sit in the pool; without a check the bot gets a broken
+    connection and every query fails until the process restarts.
+    Dead connections are discarded (slot stays free) and one retry
+    is attempted (max 3 tries).
 
-    Probe-TTL: der SELECT-1-Roundtrip läuft NICHT bei jedem Checkout —
-    Hot-Loop-Caller (Orchestrator: alle 500ms) bekämen sonst fleet-weit
-    hunderte Extra-Queries/min. Eine Connection gilt nach erfolgreicher
-    Probe für _LIVENESS_TTL_SEC als lebend; nach DB-Restart dauert die
-    Erkennung damit schlimmstenfalls TTL Sekunden (der Fehler schlägt dann
-    ohnehin im Bot auf und die Connection fliegt beim close()).
+    Probe TTL: the SELECT-1 roundtrip does NOT run on every checkout —
+    hot-loop callers (orchestrator: every 500ms) would otherwise generate
+    hundreds of extra queries/min fleet-wide. A connection counts as alive
+    for _LIVENESS_TTL_SEC after a successful probe; after a DB restart,
+    detection therefore takes at most TTL seconds (the error then surfaces
+    in the bot anyway and the connection is dropped on close()).
     """
     last_err: Exception | None = None
     for _attempt in range(3):
@@ -229,7 +229,7 @@ def get_db_connection() -> PooledConnection:
             logger.error(f"❌ Pool exhausted or error: {e}")
             raise
         except Exception as e:
-            logger.error(f"❌ Kritischer Database connection error: {e}")
+            logger.error(f"❌ Critical Database connection error: {e}")
             raise
         try:
             if raw.closed:
@@ -238,10 +238,10 @@ def get_db_connection() -> PooledConnection:
             if now_mono - _LAST_VERIFIED.get(id(raw), 0.0) >= _LIVENESS_TTL_SEC:
                 with raw.cursor() as cur:
                     cur.execute("SELECT 1")
-                raw.rollback()  # keine offene Txn aus dem Liveness-Check zurücklassen
+                raw.rollback()  # do not leave an open txn from the liveness check
                 _LAST_VERIFIED[id(raw)] = now_mono
                 if len(_LAST_VERIFIED) > 4 * _POOL_MAX:
-                    # id()-Reuse-Hygiene: alte Einträge verwerfen
+                    # id() reuse hygiene: discard old entries
                     cutoff = now_mono - _LIVENESS_TTL_SEC
                     for k in [k for k, v in _LAST_VERIFIED.items() if v < cutoff]:
                         _LAST_VERIFIED.pop(k, None)
@@ -249,7 +249,7 @@ def get_db_connection() -> PooledConnection:
         except Exception as e:
             last_err = e
             _LAST_VERIFIED.pop(id(raw), None)
-            logger.warning(f"Tote Pool-Connection verworfen (Versuch {_attempt + 1}/3): {e}")
+            logger.warning(f"Dead pool connection discarded (attempt {_attempt + 1}/3): {e}")
             try:
                 _get_pool().putconn(raw, close=True)
             except Exception:
@@ -257,7 +257,7 @@ def get_db_connection() -> PooledConnection:
                     raw.close()
                 except Exception:
                     pass
-    logger.error(f"❌ Keine lebende DB-Connection nach 3 Versuchen: {last_err}")
+    logger.error(f"❌ No live DB connection after 3 attempts: {last_err}")
     raise last_err if last_err else RuntimeError("no live DB connection")
 
 

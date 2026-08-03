@@ -1,18 +1,18 @@
 # core/rub_features.py
-"""Geteilte RUB-Detektions- und Feature-Logik — EINE Quelle für Bot 13 und den
-Walkforward-Adapter (X-R1-Regel: kein Train/Serve-Skew).
+"""Shared RUB detection and feature logic — ONE source for Bot 13 and the
+walkforward adapter (X-R1 rule: no train/serve skew).
 
-Herkunft: inline-Logik aus 13_ai_rub_bot.check_rubberband_conditions
-(Regression, Vorfilter, 9-Feature-Vertrag), beim Bau des RUB2-Adapters
-(2026-07-06, MODEL_INTENT §8) hierher gehoben. Der Bot ruft dieselben
-Funktionen wie der Replay.
+Origin: inline logic from 13_ai_rub_bot.check_rubberband_conditions
+(regression, pre-filter, 9-feature contract), lifted here when building the
+RUB2 adapter (2026-07-06, MODEL_INTENT §8). The bot calls the same
+functions as the replay.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-#: Feature-Vertrag des RUB-ML (Spaltennamen wie vom Alt-Trainer erwartet).
+#: Feature contract of the RUB ML (column names as expected by the old trainer).
 RUB_FEATURES = [
     'dist_to_trend',
     'rsi',
@@ -25,19 +25,19 @@ RUB_FEATURES = [
     'TSI_Signal',
 ]
 
-#: Vorfilter-Schwellen (Rubberband-Bedingungen, Bot 13).
-DIST_TREND_MIN = 0.08  # ±8 % von der 90d-Regression
+#: Pre-filter thresholds (rubberband conditions, Bot 13).
+DIST_TREND_MIN = 0.08  # ±8% from the 90d regression
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 TSI_EXTREME = 15
-DC_TOUCH_TOL = 0.01  # close <= dc_lower*1.01 bzw. >= dc_upper*0.99
+DC_TOUCH_TOL = 0.01  # close <= dc_lower*1.01 or >= dc_upper*0.99
 
 
 def rub_trend(ts_seconds: np.ndarray, closes: np.ndarray, curr_close: float):
-    """Lineare Regression über das (bis zu 95d-)Fenster wie im Bot.
+    """Linear regression over the (up to 95d) window as in the bot.
 
-    Returns (dist_to_trend_pct, slope_pct_per_day). ts_seconds = Unix-Sekunden
-    der Kerzen (aufsteigend), closes = zugehörige Schlusskurse.
+    Returns (dist_to_trend_pct, slope_pct_per_day). ts_seconds = Unix seconds
+    of the candles (ascending), closes = corresponding close prices.
     """
     A = np.vstack([ts_seconds, np.ones(len(ts_seconds))]).T
     slope, intercept = np.linalg.lstsq(A, closes.astype(float), rcond=None)[0]
@@ -48,7 +48,7 @@ def rub_trend(ts_seconds: np.ndarray, closes: np.ndarray, curr_close: float):
 
 
 def rub_event_type(dist_to_trend_pct, rsi, tsi_line, curr_close, dc_lower, dc_upper):
-    """Rubberband-Vorfilter. Returns 'REVERSION_UP' | 'REVERSION_DOWN' | None."""
+    """Rubberband pre-filter. Returns 'REVERSION_UP' | 'REVERSION_DOWN' | None."""
     if (
         dist_to_trend_pct <= -DIST_TREND_MIN
         and rsi < RSI_OVERSOLD
@@ -69,7 +69,7 @@ def rub_event_type(dist_to_trend_pct, rsi, tsi_line, curr_close, dc_lower, dc_up
 def build_rub_features(
     dist_to_trend_pct, slope_pct_per_day, curr_close, rsi, tsi_line, tsi_signal, macd_line, macd_signal, atr_14, ema_200
 ) -> dict:
-    """Der 9-Feature-Vertrag (RUB_FEATURES) als dict."""
+    """The 9-feature contract (RUB_FEATURES) as a dict."""
     atr_pct = (atr_14 / curr_close) if curr_close > 0 else 0.0
     dist_ema200 = (curr_close - ema_200) / ema_200 if ema_200 > 0 else 0.0
     return {

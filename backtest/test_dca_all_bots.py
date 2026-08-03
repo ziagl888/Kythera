@@ -4,7 +4,7 @@
 #
 # tools.dca_all_bots imports get_db_connection INSIDE main(), so render_md/_arm are
 # importable without a DB. Pins: DCA-drag = B_sharpe - A_sharpe, the per-bot
-# verdict thresholds (DCA-SCHADET / neutral / THIN), and the fleet-count line.
+# verdict thresholds (DCA-HURTS / neutral / THIN), and the fleet-count line.
 
 from __future__ import annotations
 
@@ -80,12 +80,12 @@ meta = {
 md = render_md(meta)
 
 check("AIM2 row: DCA-Drag +0.1", "**+0.1**" in md or "+0.1 " in md, "drag not rendered")
-check("AIM2 verdict DCA-SCHADET", "AIM2" in md and "DCA-SCHADET" in md)
+check("AIM2 verdict DCA-HURTS", "AIM2" in md and "DCA-HURTS" in md)
 check("MAX1 neutral", "| MAX1 |" in md and "neutral" in md.split("| MAX1 |")[1].split("\n")[0])
 check("BR1D THIN (n<30)", "| BR1D |" in md and "THIN" in md.split("| BR1D |")[1].split("\n")[0])
 check("MIS1 C beats B (C-B +0.06)", "+0.06" in md)
 # fleet verdict: 3 solid bots (AIM2, MAX1, MIS1); DCA hurts on AIM2+MIS1 = 2/3
-check("fleet: DCA schadet bei 2/3", "2/3" in md, md.split("Fleet-Verdikt")[-1][:200])
+check("fleet: DCA hurts on 2/3", "2/3" in md, md.split("Fleet verdict")[-1][:200])
 # C beats B on 1/3 solid (MIS1 only)
 check("fleet: C schlaegt B 1/3", "1/3" in md)
 

@@ -20,13 +20,13 @@ TIMEFRAME = '1h'
 PERIOD = '730d'  # 2 Jahre Historie
 
 START_CAPITAL = 100000.0
-LEVERAGE = 100  # Hebel (100x)
-TAKER_FEE = 0.0004  # 0.04% Handelsgebühr pro Order
+LEVERAGE = 100  # Leverage (100x)
+TAKER_FEE = 0.0004  # 0.04% trading fee per order
 
-EMA_PERIOD = 21  # Unser bewährter Gewinner-Filter
+EMA_PERIOD = 21  # Our proven winner filter
 MAX_PIVOT_AGE = 120
 MAX_FVG_AGE = 48
-MIN_RR_RATIO = 1.5  # Gilt für den Abstand zum ERSTEN Target (TP1)
+MIN_RR_RATIO = 1.5  # Applies to the distance to the FIRST target (TP1)
 
 TRADE_MARGINS = [100.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0]
 
@@ -35,7 +35,7 @@ TRADE_MARGINS = [100.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0]
 # 📊 DATA FETCHING
 # ==========================================
 def fetch_data():
-    logger.info(f"Loading historical {TIMEFRAME} Daten for {TICKER}...")
+    logger.info(f"Loading historical {TIMEFRAME} data for {TICKER}...")
     df = yf.download(TICKER, interval=TIMEFRAME, period=PERIOD, progress=False)
 
     if isinstance(df.columns, pd.MultiIndex):
@@ -84,13 +84,13 @@ def run_simulation(df, trade_margin):
         curr_price = closes[curr_idx]
 
         # -------------------------------------------------
-        # 1. AKTIVE TRADES PRÜFEN (Moving SL & Scale Out)
+        # 1. CHECK ACTIVE TRADES (Moving SL & Scale Out)
         # -------------------------------------------------
         trades_to_remove = []
         for trade in active_trades:
             direction = trade['direction']
 
-            # --- A) STOP LOSS PRÜFEN (Konservativ zuerst) ---
+            # --- A) CHECK STOP LOSS (conservatively first) ---
             sl_hit = False
             if direction == 'LONG' and curr_low <= trade['current_sl']:
                 sl_hit = True
@@ -124,7 +124,7 @@ def run_simulation(df, trade_margin):
                 trades_to_remove.append(trade)
                 continue
 
-            # --- B) TARGETS PRÜFEN (Scale Out 25%) ---
+            # --- B) CHECK TARGETS (scale out 25%) ---
             while trade['chunks_remaining'] > 0:
                 tp_idx = trade['tps_hit']
                 next_tp = trade['targets'][tp_idx]
@@ -174,7 +174,7 @@ def run_simulation(df, trade_margin):
             active_trades.remove(t)
 
         # -------------------------------------------------
-        # 2. NEUE FVGs ERKENNEN
+        # 2. RECOGNIZE NEW FVGs
         # -------------------------------------------------
         c = curr_idx - 1
 
@@ -197,7 +197,7 @@ def run_simulation(df, trade_margin):
                 active_bear_fvgs.append({'top': lows[c - 2], 'bottom': highs[c], 'created_at': c})
 
         # -------------------------------------------------
-        # 3. FVGs SCHLIESSEN & TRADES AUSLÖSEN
+        # 3. CLOSE FVGs & TRIGGER TRADES
         # -------------------------------------------------
         surviving_bull_fvgs = []
         for fvg in active_bull_fvgs:
@@ -223,13 +223,13 @@ def run_simulation(df, trade_margin):
 
                             nominal_size = trade_margin * LEVERAGE
                             open_fee = nominal_size * TAKER_FEE
-                            capital -= open_fee  # Open Fee sofort abziehen
+                            capital -= open_fee  # Deduct open fee immediately
 
                             active_trades.append({
                                 'direction': 'LONG', 'entry': curr_price, 'initial_sl': sl, 'current_sl': sl,
                                 'targets': targets, 'tps_hit': 0, 'chunks_remaining': 4,
                                 'qty': nominal_size / curr_price, 'nominal_size': nominal_size,
-                                'realized_pnl': -open_fee  # Startet im Minus wegen Gebühr
+                                'realized_pnl': -open_fee  # Starts negative because of the fee
                             })
             else:
                 surviving_bull_fvgs.append(fvg)
@@ -304,14 +304,14 @@ def main():
 
     end_time = time.time()
 
-    print(f"{'Einsatz (Margin)':<16} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Netto PnL':<12}")
+    print(f"{'Stake (Margin)':<16} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Net PnL':<12}")
     print("-" * 80)
     for r in results:
         pnl_str = f"${r['pnl']:+,.2f}"
         margin_str = f"${r['margin']:,.0f}"
         print(f"{margin_str:<16} | {r['trades']:<8} | {r['win_rate']:>5.2f} %   | {r['max_dd']:>5.2f} % | {pnl_str}")
     print("=" * 80)
-    print(f"⏱️ Total computation time: {end_time - start_time:.2f} Sekunden")
+    print(f"⏱️ Total computation time: {end_time - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":

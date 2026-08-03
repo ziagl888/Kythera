@@ -26,7 +26,7 @@ from core.time import utc_now
 
 STATE_FILE = 'indicator_state.json'
 
-# --- Konfiguration ---
+# --- Configuration ---
 COINS_FILE = 'coins.json'
 INDICATOR_SUFFIX = '_indicators'
 
@@ -44,7 +44,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# HILFSFUNKTIONEN
+# HELPER FUNCTIONS
 def get_timeframe_delta(timeframe):
     if timeframe == '1h':
         return pd.Timedelta(hours=1)
@@ -65,42 +65,41 @@ def get_timeframe_delta(timeframe):
     return pd.Timedelta(hours=1)
 
 
-# P2.13: der laengste rollende Lookback (MA/EMA/WMA/SMMA_200). Eine Kerzen-Luecke
-# innerhalb dieser Bar-Distanz vor einer Zeile, die wir persistieren, laesst ein
-# rollendes Fenster ueber die Diskontinuitaet laufen — ein "200-Perioden-MA" wuerde
-# ueber das Loch gerechnet. Aeltere Luecken sind aus jedem persistierten Fenster
-# herausgerollt und harmlos.
+# P2.13: the longest rolling lookback (MA/EMA/WMA/SMMA_200). A candle gap
+# within this bar distance before a row we persist lets a rolling window run
+# across the discontinuity — a "200-period MA" would be calculated over the
+# gap. Older gaps have rolled out of every persisted window and are harmless.
 MAX_INDICATOR_LOOKBACK = 200
 
-# Ein Kerzen-Abstand groesser als dieses Vielfache des Timeframe-Deltas zaehlt als
-# fehlende Kerze. 1.5x faengt jede Ganz-Kerzen-Luecke (eine einzelne fehlende Kerze
-# verdoppelt den Abstand) und toleriert Sub-Kerzen-Timestamp-Jitter.
+# A candle spacing greater than this multiple of the timeframe delta counts as
+# a missing candle. 1.5x catches any complete-candle gap (a single missing candle
+# doubles the spacing) and tolerates sub-candle timestamp jitter.
 GAP_TOLERANCE_FACTOR = 1.5
 
 
 def find_contaminating_gap(open_times, tf_delta, save_start_filter):
-    """P2.13: Findet die erste Kerzen-Luecke, die eine zu schreibende Indikator-Zeile
-    kontaminieren wuerde, oder None wenn der relevante Lookback lueckenlos ist.
+    """P2.13: finds the first candle gap that would contaminate an indicator row
+    to be written, or None if the relevant lookback is gapless.
 
-    Die Engine laedt bis zu ``lookback_candles`` Historie, um die rollenden Fenster
-    aufzuwaermen, persistiert aber nur Zeilen ab ``save_start_filter``. Eine Luecke
-    in der tiefen Warmup-Historie (aelter als MAX_INDICATOR_LOOKBACK Bars vor der
-    ersten persistierten Zeile) ist aus jedem geschriebenen Fenster herausgerollt und
-    harmlos; eine Luecke innerhalb dieses Fensters laesst einen rollenden Indikator
-    ueber das Loch laufen. Nur letztere wird gemeldet — damit eine alte, permanente
-    Historien-Luecke einen Coin nicht dauerhaft einfriert (dessen MAX(open_time)
-    wuerde sonst nie vorruecken, weil der Skip-Pfad das Schreiben verhindert).
+    The engine loads up to ``lookback_candles`` history to warm up the rolling
+    windows, but only persists rows from ``save_start_filter`` onwards. A gap in
+    deep warmup history (older than MAX_INDICATOR_LOOKBACK bars before the first
+    persisted row) has rolled out of every written window and is harmless; a gap
+    within this window lets a rolling indicator run across the gap. Only the latter
+    is reported — so an old, permanent history gap does not freeze a coin forever
+    (its MAX(open_time) would otherwise never advance, because the skip path
+    prevents writing).
 
-    Erwartet ``open_times`` aufsteigend sortiert (wie der ``ORDER BY open_time ASC``
-    des Loaders). Returns (prev_ts, next_ts) der ersten kontaminierenden Luecke,
-    sonst None.
+    Expects ``open_times`` sorted in ascending order (like ``ORDER BY open_time ASC``
+    from the loader). Returns (prev_ts, next_ts) of the first contaminating gap,
+    or None.
     """
     ot = pd.to_datetime(pd.Series(open_times), utc=True).reset_index(drop=True)
     if len(ot) < 2:
         return None
     save_mask = (ot >= save_start_filter).to_numpy()
     if not save_mask.any():
-        return None  # nichts zu persistieren -> keine Kontamination moeglich
+        return None  # nothing to persist → no contamination possible
     first_save_idx = int(save_mask.argmax())
     check_start = max(0, first_save_idx - MAX_INDICATOR_LOOKBACK)
     seg = ot.iloc[check_start:].reset_index(drop=True)
@@ -108,7 +107,7 @@ def find_contaminating_gap(open_times, tf_delta, save_start_filter):
     breach = (diffs > tf_delta * GAP_TOLERANCE_FACTOR).to_numpy()
     if not breach.any():
         return None
-    j = int(breach.argmax())  # erster True-Index in seg (diff[0] ist NaT -> False)
+    j = int(breach.argmax())  # first True index in seg (diff[0] is NaT → False)
     return (seg.iloc[j - 1], seg.iloc[j])
 
 
@@ -248,17 +247,16 @@ def update_timeframe_state(timeframe, status):
         else:
             state = {}
 
-        # Der Timestamp ist für 3_detectors nur ein Change-Token (String-Vergleich),
-        # trägt jetzt aber UTC statt Serverlokalzeit. Nebeneffekt: im DST-Rücksprung
-        # kam dieselbe Lokalzeit-Stunde zweimal vor, das Token war dort nicht
-        # eindeutig — in UTC gibt es diese Ambiguität nicht.
+        # The timestamp is just a change token for 3_detectors (string comparison),
+        # but now carries UTC instead of server local time. Side effect: in DST
+        # fallback the same local hour appeared twice, the token was not unique
+        # there — UTC has no such ambiguity.
         state[timeframe] = {'status': status, 'timestamp': utc_now().isoformat()}
 
-        # FIX (#45): Atomares Write via Temp + os.replace. Vorher wurde direkt
-        # in die Zieldatei geschrieben — bei gleichzeitigem Read aus dem
-        # Detector-Prozess konnte der Reader einen halbgeschriebenen JSON-File
-        # sehen und abstürzen. Jetzt: kompletter Schreibvorgang in Temp-File,
-        # dann atomarer Swap.
+        # FIX (#45): atomic write via temp + os.replace. Previously wrote directly
+        # to the target file — with concurrent read from the detector process the
+        # reader could see a half-written JSON file and crash. Now: complete write
+        # to temp file, then atomic swap.
         tmp = STATE_FILE + ".tmp"
         with open(tmp, 'w') as f:
             json.dump(state, f, indent=4)
@@ -269,18 +267,18 @@ def update_timeframe_state(timeframe, status):
         logger.error(f"Error in status update for {timeframe}: {e}")
 
 
-# MATHEMATIK & INDIKATOREN
+# MATHS & INDICATORS
 def calculate_trendline_and_channel_robust_optimized(df):
     lookback = min(len(df), 100)
     subset = df.iloc[-lookback:].copy()
     y = subset['close'].values
     x = np.arange(len(y))
 
-    # FIX (#6): Defensive gegen NaN-Output bei konstanten Preisen und gegen
-    # Division-durch-0 bei y[0]==0 (theoretisch unmöglich bei echten Preisen,
-    # aber möglich wenn die ersten Kerzen durch fehlerhafte Ingestion 0 enthalten).
+    # FIX (#6): defensive against NaN output on constant prices and against
+    # division-by-zero when y[0]==0 (theoretically impossible on real prices, but
+    # possible if first candles contain 0 from bad ingestion).
     if len(y) < 2 or np.all(y == y[0]):
-        # Konstante Serie → keine Trendaussage, return neutral
+        # Constant series → no trend statement, return neutral
         slope, intercept, r_value = 0.0, float(y[0]) if len(y) > 0 else 0.0, 0.0
         trendline_values = np.full(len(df), intercept)
         std_dev = 0.0
@@ -302,8 +300,8 @@ def calculate_trendline_and_channel_robust_optimized(df):
     upper_channel = trendline_values + (2 * std_dev)
     lower_channel = trendline_values - (2 * std_dev)
 
-    # FIX (#6): Division-durch-0-safe — y[0]==0 würde den Threshold auf 0 setzen
-    # und JEDE minimale Slope als "UP" klassifizieren.
+    # FIX (#6): division-by-zero safe — y[0]==0 would set the threshold to 0
+    # and classify ANY minimal slope as "UP".
     direction = "SIDEWAYS"
     base = float(y[0]) if len(y) > 0 and y[0] != 0 else float(y[-1]) if len(y) > 0 else 1.0
     threshold = 0.0001 * abs(base) if base != 0 else 1e-8
@@ -380,11 +378,11 @@ def calc_fibonacci_levels_dynamic(df, timeframe='1h'):
 
 
 def calculate_wma(series, period):
-    """Vektorisierte WMA (P2.19): sliding_window_view + ein BLAS-matvec statt
-    rolling.apply mit Python-Lambda pro Fenster (~10x schneller).
+    """Vectorised WMA (P2.19): sliding_window_view + a single BLAS matvec instead
+    of rolling.apply with a Python lambda per window (~10x faster).
 
-    Guard-verifiziert: max. Abweichung zur alten rolling.apply-Variante ueber
-    alle Golden-Fixtures 5,8e-11 — weit innerhalb des Toleranzbands (atol 1e-9).
+    Guard-verified: max. deviation from the old rolling.apply variant across
+    all golden fixtures 5.8e-11 — well within the tolerance band (atol 1e-9).
     """
     weights = np.arange(1, period + 1)
     sum_weights = weights.sum()
@@ -453,26 +451,26 @@ def calculate_kama(series, period=10, fast=2, slow=30):
     """
     Kaufman's Adaptive Moving Average.
 
-    Bootstrap: die ersten `period-1` Werte sind undefined (NaN), der Wert bei
-    Index `period-1` wird als SMA der ersten `period` Closes initialisiert.
-    Das vermeidet verzerrte KAMA-Werte am Anfang (vorher: kama[:period] = close[:period]
-    was zu künstlich volatiler KAMA in den ersten Bars führte).
+    Bootstrap: the first `period-1` values are undefined (NaN), the value at
+    index `period-1` is initialised as SMA of the first `period` closes. This
+    avoids skewed KAMA values at the start (previously: kama[:period] = close[:period]
+    led to artificially volatile KAMA in the first bars).
     """
     closes = series.values
     kama = np.full_like(closes, np.nan, dtype=float)
     if len(closes) <= period:
         return pd.Series(kama, index=series.index)
 
-    # SMA-Bootstrap am Index period-1
+    # SMA bootstrap at index period-1
     kama[period - 1] = float(np.mean(closes[:period]))
     fast_sc = 2 / (fast + 1)
     slow_sc = 2 / (slow + 1)
 
-    # P2.19: change/volatility/er/sc vektorisiert statt np.diff+np.sum pro Bar
-    # (vorher O(n*period), ~20x langsamer). Nur die inhaerent sequenzielle
-    # KAMA-Rekursion bleibt als billige O(n)-Schleife. sliding_window_view
-    # + sum(axis=1) nutzt dieselbe pairwise-Summation wie np.sum ueber den
-    # Slice — Guard-verifiziert bit-identisch zur alten Schleife.
+    # P2.19: change/volatility/er/sc vectorised instead of np.diff+np.sum per bar
+    # (previously O(n*period), ~20x slower). Only the inherently sequential KAMA
+    # recursion stays as a cheap O(n) loop. sliding_window_view + sum(axis=1) uses
+    # the same pairwise summation as np.sum over the slice — verified by guard to be
+    # bit-identical to the old loop.
     closes = np.asarray(closes, dtype=float)
     abs_diff = np.abs(np.diff(closes))
     change = np.abs(closes[period:] - closes[:-period])
@@ -657,15 +655,15 @@ def calculate_indicators_optimized(df, timeframe):
 
     try:
         sup, res = find_support_resistance(df)
-        # FIX: Vorher sup[0][0]/res[0][0] = einfach der ZEITLICH neueste Pivot,
-        # egal wo preislich → führte oft dazu, dass SUPPORT_PRICE > RESISTANCE_PRICE
-        # (wenn z.B. der jüngste High-Pivot unter dem jüngsten Low-Pivot lag).
-        # Jetzt: Support = nächster Pivot-Tief UNTER dem aktuellen Preis,
-        # Resistance = nächster Pivot-Hoch ÜBER dem aktuellen Preis.
+        # FIX: previously sup[0][0]/res[0][0] = simply the TEMPORALLY latest pivot,
+        # regardless of price → often led to SUPPORT_PRICE > RESISTANCE_PRICE
+        # (if e.g. the latest high pivot was below the latest low pivot).
+        # Now: support = next pivot low BELOW current price, resistance =
+        # next pivot high ABOVE current price.
         last_close = float(df['close'].iloc[-1]) if not df['close'].empty else 0
         valid_sup = [p for p, _ in sup if p < last_close]
         valid_res = [p for p, _ in res if p > last_close]
-        # Den nächstgelegenen nehmen (größter Support < Preis, kleinste Resistance > Preis)
+        # Take the closest (largest support < price, smallest resistance > price)
         results['SUPPORT_PRICE'] = max(valid_sup) if valid_sup else (sup[0][0] if sup else 0)
         results['RESISTANCE_PRICE'] = min(valid_res) if valid_res else (res[0][0] if res else 0)
     except Exception:
@@ -747,7 +745,7 @@ def _discard_worker_conn():
 
 
 def process_coin_task(args):
-    """Wrapper Funktion für den ProcessPoolExecutor"""
+    """Wrapper function for the ProcessPoolExecutor"""
     symbol, timeframe = args
 
     try:
@@ -769,7 +767,7 @@ def process_coin_task(args):
         tables = _WORKER["tables"]
         if ohlcv_table not in tables:
             if not table_exists(conn, ohlcv_table):
-                return  # Keine Rohdaten da, skippingn
+                return  # No raw data there, skippingn
             tables.add(ohlcv_table)
 
         if ind_table not in tables:
@@ -806,7 +804,7 @@ def process_coin_task(args):
 
         if last_ind_time is None:
             start_fetch_time = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
-            lookback_candles = 3000  # Voller Load nur beim allerersten Mal!
+            lookback_candles = 3000  # Full load only the very first time!
         else:
             if not isinstance(last_ind_time, pd.Timestamp):
                 last_ind_time = pd.Timestamp(last_ind_time)
@@ -818,11 +816,11 @@ def process_coin_task(args):
         tf_delta = get_timeframe_delta(timeframe)
         load_start = start_fetch_time - (tf_delta * lookback_candles)
         save_start_filter = start_fetch_time - (tf_delta * 5)
-        # FIX: Hier war vorher ein Copy-Paste-Dubletten-Block, der load_start IMMER
-        # auf 3000 Kerzen setzte (statt der 1000 beim inkrementellen Lauf).
-        # Dadurch wurde bei JEDEM 30-Min-Zyklus 3× so viel geladen wie nötig.
+        # FIX: there was previously a copy-paste duplicate block that ALWAYS set
+        # load_start to 3000 candles (instead of 1000 in the incremental run).
+        # This caused 3× more to be loaded than necessary on EVERY 30-min cycle.
 
-        # Kern-Fix (highest R1 impact of the whole migration): indicators are
+        # Core fix (highest R1 impact of the whole migration): indicators are
         # computed on CLOSED candles only. include_forming=False drops the
         # still-forming candle the old `SELECT *` silently pulled in, so no
         # indicator row is ever written over a forming candle (hard rule 5).
@@ -837,19 +835,19 @@ def process_coin_task(args):
         if 'symbol' not in df_raw.columns:
             df_raw['symbol'] = symbol
 
-        # P2.13: keine Indikatoren ueber Kerzen-Luecken rollen. Findet die Engine
-        # eine Luecke im Lookback, der eine zu schreibende Zeile speist, wird das
-        # Symbol/TF diesen Zyklus uebersprungen (statt ein rollendes Fenster ueber
-        # das Loch zu rechnen — ein "200-Perioden-MA" waere sonst ueber die
-        # Diskontinuitaet gerechnet und laege daneben). Der naechtliche Gap-Filler
-        # (6_housekeeping.fill_ohlcv_gaps_and_invalidate_indicators) fuellt die
-        # Luecke, der naechste Zyklus rechnet dann lueckenlos weiter.
+        # P2.13: do not roll indicators across candle gaps. If the engine finds
+        # a gap in the lookback that feeds a row to be written, the
+        # symbol/TF is skipped this cycle (instead of computing a rolling window over
+        # the hole — a "200-period MA" would otherwise be calculated across the
+        # discontinuity and be off). The nightly gap filler
+        # (6_housekeeping.fill_ohlcv_gaps_and_invalidate_indicators) fills the
+        # gap, the next cycle then continues gaplessly.
         gap = find_contaminating_gap(df_raw['open_time'], tf_delta, save_start_filter)
         if gap is not None:
             logger.warning(
-                f"⏭️ {symbol} ({timeframe}): Kerzen-Luecke {gap[0]} → {gap[1]} im "
-                f"Indikator-Lookback — uebersprungen (Backfill schliesst sie, dann "
-                f"rechnet der naechste Zyklus weiter)."
+                f"⏭️ {symbol} ({timeframe}): candle gap {gap[0]} → {gap[1]} in the "
+                f"indicator lookback — skipped (backfill closes it, then "
+                f"the next cycle continues)."
             )
             return
 
@@ -880,75 +878,75 @@ def process_coin_task(args):
             _discard_worker_conn()
 
 
-# HAUPTSCHLEIFE (WATCHDOG READY)
+# MAIN LOOP (WATCHDOG READY)
 def main():
-    logger.info("=== INDICATOR ENGINE GESTARTET ===")
+    logger.info("=== INDICATOR ENGINE STARTED ===")
 
-    # Unsere exakten Trigger-Minuten (+2 Minuten Puffer)
+    # Our exact trigger minutes (+2 minutes buffer)
     target_minutes = [2, 32]
 
-    # Beim Start setzen wir einmal alles auf 'unknown' oder 'working'
+    # At startup we set everything once to 'unknown' or 'working'
     for tf in INDICATOR_TIMEFRAMES:
         update_timeframe_state(tf, 'waiting_for_trigger')
 
     while True:
-        # Der Trigger hängt nur an der Minute (Kerzenschluss ist UTC-aligned),
-        # die ist gegenüber einer Vollstunden-Offset-TZ invariant. UTC macht
-        # zusätzlich die Log-Zeile deckungsgleich mit den DB-Timestamps.
+        # The trigger hangs only on the minute (candle close is UTC-aligned),
+        # which is invariant across full-hour-offset timezones. UTC additionally
+        # makes the log line coincident with the DB timestamps.
         now = utc_now()
 
-        # Prüfen, ob wir in einer der magischen Minuten sind
+        # Check if we are in one of the magic minutes
         if now.minute in target_minutes:
             symbols = load_coins()
             if not symbols:
-                logger.warning("Keine Coins in coins.json gefunden. Waiting...")
+                logger.warning("No coins found in coins.json. Waiting...")
                 time.sleep(60)
                 continue
 
-            logger.info(f"⏰ Zeit-Trigger {now.strftime('%H:%M')} erreicht! Starting Berechnungen...")
+            logger.info(f"⏰ time trigger {now.strftime('%H:%M')} reached! Starting calculations...")
             start_time = time.time()
 
-            # --- WICHTIG: Wir verarbeiten die Timeframes jetzt aftereinander! ---
-            # So springt '30m' auf 'updated', sobald es fertig ist, und Skript 3 kann schon starten.
-            # P2.19: EIN ProcessPool fuer den ganzen Zyklus statt Spawn/Teardown
-            # pro Timeframe (Windows-Prozess-Start ist teuer: 6 TFs x NUM_WORKERS
-            # Prozesse mit vollem numpy/pandas/scipy-Import). Die TF-Reihenfolge
-            # und die 'updated'-Freigabe pro TF bleiben unveraendert, weil
-            # exe.map pro Timeframe weiterhin blockierend abgearbeitet wird.
+            # --- IMPORTANT: we process timeframes sequentially now! ---
+            # This way '30m' switches to 'updated' as soon as it's done, and script 3 can start.
+            # P2.19: ONE ProcessPool for the entire cycle instead of spawn/teardown
+            # per timeframe (Windows process start is expensive: 6 TFs x NUM_WORKERS
+            # processes with full numpy/pandas/scipy import). The TF order and the
+            # 'updated' release per TF stay unchanged because exe.map per timeframe
+            # still executes blocking.
             with ProcessPoolExecutor(max_workers=NUM_WORKERS, initializer=_init_worker) as exe:
                 for current_tf in INDICATOR_TIMEFRAMES:
-                    logger.info(f"⚙️ Starting Berechnungen für Timeframe: {current_tf}...")
+                    logger.info(f"⚙️ Starting calculations for timeframe: {current_tf}...")
                     update_timeframe_state(current_tf, 'working')
 
-                    # Wir bauen die Tasks NUR für den aktuellen Timeframe
+                    # We build the tasks ONLY for the current timeframe
                     # T-2026-CU-9050-174: chunksize=8 amortises the per-item IPC
                     # round-trip of exe.map (default 1) over ~527 tasks per TF.
                     tasks = [(s, current_tf) for s in symbols]
                     list(exe.map(process_coin_task, tasks, chunksize=8))
 
-                    # Timeframe ist fertig -> Gib ihn für Ebene 3 (Detectors) frei!
+                    # Timeframe is done → release it for layer 3 (detectors)!
                     update_timeframe_state(current_tf, 'updated')
-                    logger.info(f"✅ Timeframe {current_tf} erfolgreich completed und freigegeben!")
+                    logger.info(f"✅ Timeframe {current_tf} successfully completed and released!")
 
             duration = time.time() - start_time
-            logger.info(f"🏁 Kompletter Indikator-Zyklus completed in {duration:.1f} Sekunden!")
-            # P2.19: Der Trigger feuert alle 30 min — laeuft ein Zyklus laenger,
-            # wird der naechste Trigger stillschweigend uebersprungen. Ab 25 min
-            # laut warnen, damit das VOR dem ersten Skip sichtbar wird.
+            logger.info(f"🏁 Complete indicator cycle completed in {duration:.1f} seconds!")
+            # P2.19: the trigger fires every 30 min — if a cycle runs longer,
+            # the next trigger is silently skipped. Warn loudly from 25 min so
+            # this is visible before the first skip.
             if duration > 25 * 60:
                 logger.warning(
-                    f"⚠️ Indikator-Zyklus brauchte {duration / 60:.1f} min — "
-                    f"naehert sich dem 30-min-Budget, naechster Trigger wuerde uebersprungen!"
+                    f"⚠️ indicator cycle took {duration / 60:.1f} min — "
+                    f"approaching the 30-min budget, next trigger would be skipped!"
                 )
 
-            # Schlafe für 65 seconds. Dadurch stellen wir sicher, dass wir in Minute '3'
-            # oder '18' aufwachen und den Trigger nicht doppelt auslösen!
-            logger.info("Schlafe bis zum nächsten Trigger...")
+            # Sleep for 65 seconds. This ensures we wake at minute '3' or '18'
+            # and don't trigger twice!
+            logger.info("Sleeping until next trigger...")
             time.sleep(65)
 
         else:
-            # Wir sind nicht in einer Trigger-Minute. Einfach kurz warten und wieder prüfen.
-            # (10 Sekunden sind optimal: Es kostet 0% CPU und trifft die Minute genau genug)
+            # We are not in a trigger minute. Just wait briefly and check again.
+            # (10 seconds is optimal: costs 0% CPU and hits the minute accurately enough)
             time.sleep(10)
 
 

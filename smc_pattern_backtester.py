@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 #      no shared equity, no margin cap and no limit on simultaneous positions, so
 #      aggregate PnL overstates a real, capital-bounded run.
 TIMEFRAMES = ['1h', '4h']
-PIVOT_WINDOW = 10  # Größeres Window für echte Swing-Points
-RR_RATIO = 2.0  # Risk-Reward 1:2
-FEE_RATE = 0.0008  # 0.04% Maker + 0.04% Taker (inkl. Slippage) — DECLARED BUT UNUSED, see limitation 1 above
+PIVOT_WINDOW = 10  # Larger window for real swing points
+RR_RATIO = 2.0  # Risk-reward 1:2
+FEE_RATE = 0.0008  # 0.04% maker + 0.04% taker (incl. slippage) — DECLARED BUT UNUSED, see limitation 1 above
 
 
 def get_coins():
@@ -52,14 +52,14 @@ def run_backtest():
     results = []
 
     for tf in TIMEFRAMES:
-        logger.info(f"🚀 Starting Backtest für Timeframe {tf}...")
+        logger.info(f"🚀 Starting backtest for timeframe {tf}...")
 
         for idx, symbol in enumerate(coins, 1):
             if idx % 50 == 0:
                 logger.info(f"Processing Coin {idx}/{len(coins)}: {symbol} ({tf})")
 
             try:
-                # Preis + RSI über core.candles: GESCHLOSSENE Kerzen, ASC
+                # Price + RSI via core.candles: CLOSED candles, ASC
                 # (include_forming=False).
                 df = read_candles_with_indicators(
                     conn,
@@ -84,7 +84,7 @@ def run_backtest():
                 trough_idx = scipy.signal.argrelextrema(lows, np.less, order=PIVOT_WINDOW)[0]
 
                 # =======================================================
-                # STRATEGIE 1: LIQUIDITY SWEEP (Turtle Soup)
+                # STRATEGY 1: LIQUIDITY SWEEP (Turtle Soup)
                 # =======================================================
                 sweep_wins = 0
                 sweep_losses = 0
@@ -92,7 +92,7 @@ def run_backtest():
                 for p_idx in peak_idx:
                     pivot_high = highs[p_idx]
                     for i in range(p_idx + PIVOT_WINDOW, min(p_idx + 40, len(df))):
-                        # Wick bricht Hoch, aber Body schließt darunter
+                        # Wick breaks high, but body closes below
                         if highs[i] > pivot_high and closes[i] < pivot_high and opens[i] < pivot_high:
                             entry = closes[i]
                             sl = highs[i] * 1.002
@@ -141,7 +141,7 @@ def run_backtest():
                 )
 
                 # =======================================================
-                # STRATEGIE 2: THREE-DRIVE DIVERGENCE
+                # STRATEGY 2: THREE-DRIVE DIVERGENCE
                 # =======================================================
                 td_wins = 0
                 td_losses = 0
@@ -173,29 +173,29 @@ def run_backtest():
                 )
 
                 # =======================================================
-                # STRATEGIE 3: BREAKER BLOCK (Support/Resistance Flip)
+                # STRATEGY 3: BREAKER BLOCK (Support/Resistance Flip)
                 # =======================================================
                 bb_wins = 0
                 bb_losses = 0
 
-                # Bullish Breaker (Resistance wird Support)
+                # Bullish breaker (resistance becomes support)
                 for p_idx in peak_idx:
                     pivot_res = highs[p_idx]
                     breakout_idx = -1
 
-                    # Searching after Breakout über Resistance
+                    # Searching for breakout above resistance
                     for i in range(p_idx + PIVOT_WINDOW, min(p_idx + 60, len(df))):
                         if closes[i] > pivot_res:
                             breakout_idx = i
                             break
 
-                    # Wenn Breakout stattfand, waiting for den ersten Retest
+                    # If breakout occurred, waiting for first retest
                     if breakout_idx != -1:
                         for j in range(breakout_idx + 1, min(breakout_idx + 40, len(df))):
-                            if lows[j] <= pivot_res:  # Preis fällt auf altes Hoch zurück
+                            if lows[j] <= pivot_res:  # Price falls back to old high
                                 entry = pivot_res
-                                sl = entry * 0.99  # 1% Stop Loss unter Support
-                                tp = entry * 1.02  # 2% Take Profit (1:2 RR)
+                                sl = entry * 0.99  # 1% stop loss below support
+                                tp = entry * 1.02  # 2% take profit (1:2 RR)
 
                                 for k in range(j + 1, len(df)):
                                     if lows[k] <= sl:
@@ -204,26 +204,26 @@ def run_backtest():
                                     elif highs[k] >= tp:
                                         bb_wins += 1
                                         break
-                                break  # Nur den ersten Retest handeln
+                                break  # Only trade the first retest
 
-                # Bearish Breaker (Support wird Resistance)
+                # Bearish breaker (support becomes resistance)
                 for p_idx in trough_idx:
                     pivot_sup = lows[p_idx]
                     breakdown_idx = -1
 
-                    # Searching after Breakdown unter Support
+                    # Searching for breakdown below support
                     for i in range(p_idx + PIVOT_WINDOW, min(p_idx + 60, len(df))):
                         if closes[i] < pivot_sup:
                             breakdown_idx = i
                             break
 
-                    # Wenn Breakdown stattfand, waiting for ersten Retest von unten
+                    # If breakdown occurred, waiting for first retest from below
                     if breakdown_idx != -1:
                         for j in range(breakdown_idx + 1, min(breakdown_idx + 40, len(df))):
-                            if highs[j] >= pivot_sup:  # Preis steigt an altes Tief
+                            if highs[j] >= pivot_sup:  # Price rises to old low
                                 entry = pivot_sup
-                                sl = entry * 1.01  # 1% Stop Loss über Resistance
-                                tp = entry * 0.98  # 2% Take Profit (1:2 RR)
+                                sl = entry * 1.01  # 1% stop loss above resistance
+                                tp = entry * 0.98  # 2% take profit (1:2 RR)
 
                                 for k in range(j + 1, len(df)):
                                     if highs[k] >= sl:
@@ -243,26 +243,26 @@ def run_backtest():
 
     conn.close()
 
-    # --- AUSWERTUNG ---
+    # --- ANALYSIS ---
     res_df = pd.DataFrame(results)
     if res_df.empty:
         logger.warning("No results found!")
         return
 
-    # Aggregation über alle Coins
+    # Aggregation over all coins
     summary = res_df.groupby(['Pattern', 'TF']).agg({'Wins': 'sum', 'Losses': 'sum'}).reset_index()
     summary['Total_Trades'] = summary['Wins'] + summary['Losses']
 
-    # Verhindern von Division by Zero
+    # Prevent division by zero
     summary = summary[summary['Total_Trades'] > 0].copy()
 
     summary['Win_Rate_%'] = (summary['Wins'] / summary['Total_Trades'] * 100).round(2)
 
-    # PnL Berechnung
-    # Da RR 1:2 ist: 1 Win = +2R, 1 Loss = -1R.
+    # PnL calculation
+    # Since RR is 1:2: 1 win = +2R, 1 loss = -1R.
     summary['Net_R_Profit'] = (summary['Wins'] * 2.0) - summary['Losses']
 
-    # Sortieren after den besten Ergebnissen
+    # Sort by best results
     summary = summary.sort_values(by=['Net_R_Profit'], ascending=False)
 
     print("\n" + "=" * 80)
@@ -270,8 +270,8 @@ def run_backtest():
     print("=" * 80)
     print(summary.to_string(index=False))
     print("=" * 80)
-    print("Hinweis: 'Net_R_Profit' zeigt die reinen Risk-Reward Einheiten.")
-    print("Beispiel: Net_R_Profit von 500 bedeutet, du hättest 500 mal dein riskiertes Geld gewonnen.\n")
+    print("Note: 'Net_R_Profit' shows the pure risk-reward units.")
+    print("Example: Net_R_Profit of 500 means you would have won 500 times your risked money.\n")
 
 
 if __name__ == "__main__":

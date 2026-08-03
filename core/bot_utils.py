@@ -11,15 +11,15 @@ LOG_FILE = "command_logs.json"
 
 def load_config():
     try:
-        # FIX P1.36: encoding explizit — ohne utf-8 crasht cp1252 auf Emojis
-        # in der Config und riss vorher das Permission-System mit.
+        # FIX P1.36: encoding explicit — without utf-8, cp1252 crashes on emoji
+        # in the config and used to take the permission system down with it.
         with open(CONFIG_FILE, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        # FIX P1.36: fail-CLOSED. Vorher war der Fallback {"*": ["*"]} —
-        # ein kaputtes/fehlendes bot_config.json gab damit JEDEM User JEDEN
-        # Command frei. Jetzt deny-all; der Fehler steht laut im Log.
-        logger.error(f"🛑 Config nicht ladbar — Permission-System fällt auf DENY-ALL zurück: {e}")
+        # FIX P1.36: fail-CLOSED. The fallback used to be {"*": ["*"]} —
+        # a broken/missing bot_config.json therefore gave EVERY user EVERY
+        # command for free. Now deny-all; the error is logged loudly.
+        logger.error(f"🛑 Config not loadable — permission system falls back to DENY-ALL: {e}")
         return {"channels": {}, "permissions": {}}
 
 

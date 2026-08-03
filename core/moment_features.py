@@ -1,40 +1,40 @@
 # core/moment_features.py
-"""Geteilter Realized-Moments-Feature-Builder (X-R1) — EINE Quelle für Studie,
-Trainer und (später) Bot.
+"""Shared Realized-Moments feature builder (X-R1) — ONE source for study,
+trainer and (later) bot.
 
-Herkunft: docs/MODEL_CANDIDATES_SPEC_2026-07.md §K7 (MOM/SKW1). Die Hypothese:
-die realisierten Verteilungs-Momente der jüngeren Renditegeschichte eines Coins
-(Volatilität, Schiefe, Wölbung) tragen Information — insbesondere prädiziert
-realisierte **Schiefe** negativ (Short-Kandidatenfilter SKW1), und RV/Kurtosis
-ergänzen kommende Retrains (ATS2, QM2, BR-Gate). Wie core/funding_features.py und
-core/breadth_features.py ist dieser Builder kanonisch: Studie, Trainer und Bot
-rechnen exakt dieselben Größen (kein Train/Serve-Skew).
+Origin: docs/MODEL_CANDIDATES_SPEC_2026-07.md §K7 (MOM/SKW1). The hypothesis:
+the realized distribution moments of a coin's recent return history
+(volatility, skew, kurtosis) carry information — in particular realized
+**skew** predicts negatively (short candidate filter SKW1), and RV/kurtosis
+feed upcoming retrains (ATS2, QM2, BR gate). Like core/funding_features.py and
+core/breadth_features.py this builder is canonical: study, trainer and bot
+compute exactly the same quantities (no train/serve skew).
 
-⚠ FALLE (§K7, F6): Das hier ist REALISIERTE SCHIEFE (drittes Moment der
-Renditeverteilung), NICHT ein MAX-/Lotterie-Feature. MAX-basierte Shorts sind in
-Krypto kontraindiziert (F6 — der MAX-Effekt invertiert). Es wird bewusst KEIN
-"maximale Einzelrendite im Fenster" gebaut, sondern die Standard-Momentschätzer
-(pandas rolling std/skew/kurt) über die Renditereihe.
+⚠ TRAP (§K7, F6): This is REALIZED SKEW (third moment of the
+return distribution), NOT a MAX/lottery feature. MAX-based shorts are
+contraindicated in crypto (F6 — the MAX effect inverts). Deliberately NO
+"maximum single return in the window" is built, but rather the standard moment
+estimators (pandas rolling std/skew/kurt) over the return series.
 
-Datenquelle offline: die per-Coin ``{SYM}_15m``-Kerzen über core.candles.read_candles.
-BEWUSST 15m, NICHT 5m: 5m hat nur ~1 Monat Retention, 15m reicht ~1 Jahr zurück
-(§K7). Rollierende Fenster {24h, 7d} — bei 15m sind das 96 bzw. 672 geschlossene
-Balken.
+Data source offline: the per-coin ``{SYM}_15m`` candles via core.candles.read_candles.
+DELIBERATELY 15m, NOT 5m: 5m only has ~1 month retention, 15m reaches back ~1 year
+(§K7). Rolling windows {24h, 7d} — at 15m that is 96 and 672 closed
+bars respectively.
 
-As-of-Vertrag (R1, nur geschlossene Kerzen): ein 15m-Balken mit open_time D
-schließt erst bei D + 15m. ``moment_features_asof(panel, ts)`` liefert deshalb den
-jüngsten Balken D mit D + tf <= ts — kein Lookahead. Der Load nutzt
+As-of contract (R1, closed candles only): a 15m bar with open_time D
+only closes at D + 15m. ``moment_features_asof(panel, ts)`` therefore returns the
+most recent bar D with D + tf <= ts — no lookahead. The load uses
 ``include_forming=False``.
 
-Native-NaN-Politik (XGB-Muster P1.20): fehlende WERTE bleiben NaN und werden NIE
-mit 0 ersetzt. Ein Coin mit zu kurzer Historie liefert an einem Zeitpunkt NaN
-(bzw. ``None`` aus der As-of-Funktion) — der Aufrufer entscheidet (Trainer:
-Zeile verwerfen; ein Gate: fail-closed/-open je Politik). ``fillna(0)`` würde eine
-flache Verteilung (Vol 0, Skew 0) vortäuschen und das Modell vergiften.
+Native-NaN policy (XGB pattern P1.20): missing VALUES stay NaN and are NEVER
+replaced with 0. A coin with too-short history returns NaN at a given point in time
+(or ``None`` from the as-of function) — the caller decides (trainer:
+discard the row; a gate: fail-closed/-open per policy). ``fillna(0)`` would fake a
+flat distribution (vol 0, skew 0) and poison the model.
 
-Feature-Vertrag (X-R1): fehlende SPALTEN im geladenen Frame ⇒ ``MomentFeatureError``
-(Load-Fehler), NIE ``fillna(0)`` als Vertragsersatz. Fehlende WERTE sind KEIN
-Vertragsbruch — sie bleiben NaN (siehe oben).
+Feature contract (X-R1): missing COLUMNS in the loaded frame ⇒ ``MomentFeatureError``
+(load error), NEVER ``fillna(0)`` as a contract substitute. Missing VALUES are NOT a
+contract breach — they stay NaN (see above).
 """
 
 from __future__ import annotations
@@ -48,43 +48,43 @@ from core.candles import TF_SECONDS, read_candles
 
 
 class MomentFeatureError(RuntimeError):
-    """X-R1-Vertragsbruch: ein geladener Frame hat nicht die Pflicht-Spalten."""
+    """X-R1 contract breach: a loaded frame is missing the required columns."""
 
 
-#: Spalten, die jeder geladene Kerzen-Frame tragen MUSS (sonst Load-Fehler).
+#: Columns that every loaded candle frame MUST carry (otherwise load error).
 REQUIRED_COLUMNS: tuple[str, ...] = ("open_time", "close")
 
-#: Rollierende Fenster (§K7). Werte in Sekunden → bar-Anzahl hängt am tf (15m→96/672).
+#: Rolling windows (§K7). Values in seconds → bar count depends on tf (15m→96/672).
 WINDOW_SECONDS: dict[str, int] = {"24h": 86400, "7d": 604800}
 
-#: Der Realized-Moments-Feature-Vertrag (kanonische Namen, Reihenfolge fix).
-#: 3 Momente × 2 Fenster = 6 Features (parallel zu den 6 Funding-Features).
+#: The Realized-Moments feature contract (canonical names, order fixed).
+#: 3 moments × 2 windows = 6 features (parallel to the 6 funding features).
 MOMENT_FEATURES: list[str] = [
-    "mom_rv_24h",  # realisierte Vol: StdAbw der 15m-Log-Returns über trailing 24h
-    "mom_rv_7d",  # ... über trailing 7d
-    "mom_skew_24h",  # realisierte (Sample-)Schiefe der 15m-Log-Returns über 24h
-    "mom_skew_7d",  # ... über 7d
-    "mom_kurt_24h",  # realisierte Exzess-Wölbung (Fisher) über 24h
-    "mom_kurt_7d",  # ... über 7d
+    "mom_rv_24h",  # realized vol: std dev of the 15m log returns over trailing 24h
+    "mom_rv_7d",  # ... over trailing 7d
+    "mom_skew_24h",  # realized (sample) skew of the 15m log returns over 24h
+    "mom_skew_7d",  # ... over 7d
+    "mom_kurt_24h",  # realized excess kurtosis (Fisher) over 24h
+    "mom_kurt_7d",  # ... over 7d
 ]
 
-#: Standard-tf des Builders (§K7: 15m wegen Retention).
+#: Default tf of the builder (§K7: 15m due to retention).
 DEFAULT_TF = "15m"
 
 
 def window_bars(tf: str = DEFAULT_TF) -> dict[str, int]:
-    """Balken-Anzahl je Fenster für ein gegebenes tf (24h/7d in bars).
+    """Bar count per window for a given tf (24h/7d in bars).
 
-    ``MomentFeatureError`` bei unbekanntem tf oder wenn ein Fenster kein ganzes
-    Vielfaches der Balkendauer ist (dann wäre die Fensterlänge undefiniert).
+    ``MomentFeatureError`` for an unknown tf or if a window is not a whole
+    multiple of the bar duration (in that case the window length would be undefined).
     """
     if tf not in TF_SECONDS:
-        raise MomentFeatureError(f"unbekanntes tf {tf!r} — kein TF_SECONDS-Eintrag")
+        raise MomentFeatureError(f"unknown tf {tf!r} — no TF_SECONDS entry")
     step = TF_SECONDS[tf]
     bars: dict[str, int] = {}
     for name, secs in WINDOW_SECONDS.items():
         if secs % step != 0:
-            raise MomentFeatureError(f"Fenster {name} ({secs}s) ist kein Vielfaches der {tf}-Balkendauer ({step}s)")
+            raise MomentFeatureError(f"window {name} ({secs}s) is not a multiple of the {tf} bar duration ({step}s)")
         bars[name] = secs // step
     return bars
 
@@ -96,14 +96,14 @@ def load_moment_candles(
     tf: str = DEFAULT_TF,
     start: Any | None = None,
 ) -> pd.DataFrame:
-    """Lädt EINE geschlossene 15m-Kerzenhistorie eines Coins (aufsteigend).
+    """Loads ONE closed 15m candle history for a coin (ascending).
 
-    Eine Query je Coin (read_candles, include_forming=False). Fehlt dem GELADENEN
-    Frame eine Pflicht-Spalte, ist das ein X-R1-Load-Fehler (MomentFeatureError),
-    nie fillna(0). Ein leerer Frame (kein Coin/keine Daten) wird unverändert
-    zurückgegeben — der Aufrufer überspringt den Coin (Survivorship).
+    One query per coin (read_candles, include_forming=False). If the LOADED
+    frame is missing a required column, that is an X-R1 load error (MomentFeatureError),
+    never fillna(0). An empty frame (no coin/no data) is returned
+    unchanged — the caller skips the coin (survivorship).
 
-    Rückgabe: DataFrame[open_time(UTC, tz-aware), close], aufsteigend.
+    Returns: DataFrame[open_time(UTC, tz-aware), close], ascending.
     """
     df = read_candles(
         conn,
@@ -117,7 +117,7 @@ def load_moment_candles(
         return df
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
-        raise MomentFeatureError(f"{symbol}_{tf}: fehlende Pflicht-Spalten {missing} — X-R1-Vertrag, kein fillna(0)")
+        raise MomentFeatureError(f"{symbol}_{tf}: missing required columns {missing} — X-R1 contract, no fillna(0)")
     df = df.copy()
     df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
@@ -126,19 +126,19 @@ def load_moment_candles(
 
 
 def build_moment_panel(df: pd.DataFrame, *, tf: str = DEFAULT_TF) -> pd.DataFrame:
-    """Baut das per-Coin Moment-Panel EINMAL (rollierend über die 15m-Returns).
+    """Builds the per-coin moment panel ONCE (rolling over the 15m returns).
 
-    Index = 15m-open_time (UTC, tz-aware). Spalten = MOMENT_FEATURES. Danach ist
-    ``moment_features_asof`` nur noch ein O(log n)-Lookup.
+    Index = 15m open_time (UTC, tz-aware). Columns = MOMENT_FEATURES. After that
+    ``moment_features_asof`` is just an O(log n) lookup.
 
-    Returns = Log-Returns ``ln(close_t / close_{t-1})``. Für jedes Fenster wird die
-    Standardabweichung (mom_rv, ddof=1), die Sample-Schiefe (pandas .skew(),
-    Fisher-Pearson bias-korrigiert) und die Exzess-Wölbung (pandas .kurt(), Fisher)
-    über die trailing Renditen gerechnet. ``min_periods`` = volle Fensterbreite:
-    solange das Fenster nicht voll ist, bleibt der Wert NaN (native-NaN-Politik —
-    KEIN fillna).
+    Returns = log returns ``ln(close_t / close_{t-1})``. For each window the
+    standard deviation (mom_rv, ddof=1), the sample skew (pandas .skew(),
+    Fisher-Pearson bias-corrected) and the excess kurtosis (pandas .kurt(), Fisher)
+    are computed over the trailing returns. ``min_periods`` = full window width:
+    as long as the window is not full, the value stays NaN (native-NaN policy —
+    NO fillna).
 
-    Ein leerer/zu kurzer Frame liefert ein leeres Panel mit den richtigen Spalten.
+    An empty/too-short frame returns an empty panel with the correct columns.
     """
     bars = window_bars(tf)
     cols = {feat: np.nan for feat in MOMENT_FEATURES}
@@ -147,7 +147,7 @@ def build_moment_panel(df: pd.DataFrame, *, tf: str = DEFAULT_TF) -> pd.DataFram
 
     d = df.sort_values("open_time").reset_index(drop=True)
     idx = pd.DatetimeIndex(pd.to_datetime(d["open_time"], utc=True), name="open_time")
-    # Log-Returns; die erste Zeile hat keinen Vorgänger → NaN (bleibt NaN).
+    # Log returns; the first row has no predecessor → NaN (stays NaN).
     ret = np.log(d["close"].to_numpy(dtype=float))
     ret = pd.Series(np.diff(ret, prepend=np.nan), index=idx)
 
@@ -163,18 +163,18 @@ def build_moment_panel(df: pd.DataFrame, *, tf: str = DEFAULT_TF) -> pd.DataFram
 
 
 def moment_features_asof(panel: pd.DataFrame, ts_utc: Any, *, tf: str = DEFAULT_TF) -> dict:
-    """Die Realized-Moment-Features as-of ``ts_utc`` (tz-aware oder naiv=UTC).
+    """The Realized-Moment features as-of ``ts_utc`` (tz-aware or naive=UTC).
 
-    Liefert den jüngsten 15m-Balken D mit D + tf <= ts (nur geschlossene Kerzen,
-    kein Lookahead). Rückgabe {} bei leerem Panel oder wenn ts vor der ersten
-    verwertbaren Zeile liegt. Werte, die NaN sind, kommen als ``None`` zurück (der
-    Aufrufer entscheidet — Trainer verwirft die Zeile; ein Gate fail-closed/-open)
-    — NIE als 0.
+    Returns the most recent 15m bar D with D + tf <= ts (closed candles only,
+    no lookahead). Returns {} for an empty panel or if ts is before the first
+    usable row. Values that are NaN come back as ``None`` (the
+    caller decides — trainer discards the row; a gate fail-closed/-open)
+    — NEVER as 0.
     """
     if panel.empty:
         return {}
     if tf not in TF_SECONDS:
-        raise MomentFeatureError(f"unbekanntes tf {tf!r} — kein TF_SECONDS-Eintrag")
+        raise MomentFeatureError(f"unknown tf {tf!r} — no TF_SECONDS entry")
     ts = pd.Timestamp(ts_utc)
     if ts.tzinfo is None:
         ts = ts.tz_localize("UTC")
@@ -193,13 +193,13 @@ def build_symbol_moment_panels(
     tf: str = DEFAULT_TF,
     start: Any | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Convenience für Studie/Trainer: je Coin EINE Query → fertiges Moment-Panel.
+    """Convenience for study/trainer: one query per coin → finished moment panel.
 
-    Coins ohne Tabelle/Daten (delisted, Survivorship) werden übersprungen — das ist
-    KEIN Vertragsbruch. Fehlt einem GELADENEN Frame eine Pflicht-Spalte, propagiert
-    der MomentFeatureError (X-R1-Load-Fehler).
+    Coins without a table/data (delisted, survivorship) are skipped — that is
+    NOT a contract breach. If a LOADED frame is missing a required column, the
+    MomentFeatureError propagates (X-R1 load error).
 
-    Rückgabe: {symbol -> Moment-Panel}. Coins ohne verwertbares Panel fehlen.
+    Returns: {symbol -> moment panel}. Coins without a usable panel are absent.
     """
     panels: dict[str, pd.DataFrame] = {}
     for sym in symbols:
@@ -208,7 +208,7 @@ def build_symbol_moment_panels(
         except MomentFeatureError:
             raise
         except Exception:
-            # Fehlende per-Coin-Tabelle o.ä. → Survivorship, überspringen.
+            # Missing per-coin table or similar → survivorship, skip.
             try:
                 conn.rollback()
             except Exception:

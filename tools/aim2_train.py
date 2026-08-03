@@ -1,21 +1,21 @@
 """
-tools/aim2_train.py — Training des AIM2-Master-Meta-Modells (docs/AIM2_DESIGN.md).
+tools/aim2_train.py — Training of the AIM2 master meta model (docs/AIM2_DESIGN.md).
 
-Konsumiert <staging>/replay/aim2_events.jsonl (tools/aim2_build_dataset.py) und
-trainiert das binäre Gate „TP1 vor SL?" über alle Quellsignale.
+Consumes <staging>/replay/aim2_events.jsonl (tools/aim2_build_dataset.py) and
+trains the binary gate "TP1 before SL?" over all source signals.
 
-Methodik (Batch-E-Gerüst, X-R2/R4-Fixes):
-  * chronologischer 70/15/15-Split mit 7-Tage-Purge-Gap (P1.29)
-  * XGBoost binär, Early Stopping auf Validation
-  * Isotonic-Kalibrierung auf Validation
-  * Threshold-Wahl per gewichtetem Replay-Netto-PnL auf Validation
-  * Test bleibt bis zum Abschlussreport unberührt
-  * Artefakt NUR nach staging_models (P1.35): model, features, threshold,
-    calibrator, meta — Bot 15 liest model/features/threshold/calibrator.
+Methodology (Batch-E scaffold, X-R2/R4 fixes):
+  * chronological 70/15/15 split with 7-day purge gap (P1.29)
+  * XGBoost binary, early stopping on validation
+  * Isotonic calibration on validation
+  * Threshold selection via weighted replay net PnL on validation
+  * Test stays untouched until the final report
+  * Artifact ONLY to staging_models (P1.35): model, features, threshold,
+    calibrator, meta — Bot 15 reads model/features/threshold/calibrator.
 
-Beispiel:
+Example:
   python tools/aim2_train.py
-  python tools/aim2_train.py --events <pfad> --min-val-trades 50
+  python tools/aim2_train.py --events <path> --min-val-trades 50
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def load_events(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
             metas.append(rec)
             feats.append(f)
     meta = pd.DataFrame(metas)
-    X = pd.DataFrame(feats).fillna(0.0)  # src_*-One-Hots sind sparse → 0
+    X = pd.DataFrame(feats).fillna(0.0)  # src_* one-hots are sparse → 0
     meta["ts"] = pd.to_datetime(meta["ts"])
     return meta, X
 
@@ -97,19 +97,19 @@ def main() -> None:
     args = ap.parse_args()
 
     meta, X = load_events(args.events)
-    log(f"Events geladen: {len(meta)} | Features: {X.shape[1]}")
+    log(f"Events loaded: {len(meta)} | Features: {X.shape[1]}")
 
     labeled = meta["label"].isin([0, 1]).to_numpy()
     meta, X = meta[labeled].reset_index(drop=True), X[labeled].reset_index(drop=True)
     y = meta["label"].astype(int).to_numpy()
     pnl = pd.to_numeric(meta["net_pnl_pct"], errors="coerce").fillna(0.0).to_numpy()
     w = pd.to_numeric(meta["weight"], errors="coerce").fillna(1.0).to_numpy()
-    log(f"Gelabelt: {len(meta)} | Basis-WR (gewichtet): {np.average(y, weights=w):.3f} "
-        f"| ø Replay-PnL: {np.average(pnl, weights=w):+.3f}%")
+    log(f"Labeled: {len(meta)} | base WR (weighted): {np.average(y, weights=w):.3f} "
+        f"| avg replay PnL: {np.average(pnl, weights=w):+.3f}%")
 
     tr, va, te, t1, t2 = chrono_split(meta)
-    log(f"Split: train={tr.sum()} (bis {t1.date()} − {PURGE_DAYS}d) | "
-        f"val={va.sum()} (bis {t2.date()} − {PURGE_DAYS}d) | test={te.sum()} (ab {t2.date()})")
+    log(f"Split: train={tr.sum()} (until {t1.date()} − {PURGE_DAYS}d) | "
+        f"val={va.sum()} (until {t2.date()} − {PURGE_DAYS}d) | test={te.sum()} (from {t2.date()})")
 
     feature_names = list(X.columns)
     model = xgb.XGBClassifier(
@@ -122,7 +122,7 @@ def main() -> None:
         X[tr], y[tr], sample_weight=w[tr],
         eval_set=[(X[va], y[va])], sample_weight_eval_set=[w[va]], verbose=False,
     )
-    log(f"Trainiert: best_iteration={model.best_iteration}")
+    log(f"Trained: best_iteration={model.best_iteration}")
 
     raw_va = model.predict_proba(X[va])[:, 1]
     raw_te = model.predict_proba(X[te])[:, 1]
@@ -134,9 +134,9 @@ def main() -> None:
     auc_va = roc_auc_score(y[va], raw_va, sample_weight=w[va])
     auc_te = roc_auc_score(y[te], raw_te, sample_weight=w[te])
     brier_te = brier_score_loss(y[te], cal_te, sample_weight=w[te])
-    log(f"AUC val={auc_va:.4f} | AUC test={auc_te:.4f} | Brier test (kalibriert)={brier_te:.4f}")
+    log(f"AUC val={auc_va:.4f} | AUC test={auc_te:.4f} | Brier test (calibrated)={brier_te:.4f}")
 
-    # Threshold per Replay-PnL auf VAL (nie Test)
+    # Threshold via replay PnL on VAL (never test)
     pnl_va, w_va = pnl[va], w[va]
     best = None
     for thr in np.arange(0.30, 0.81, 0.01):
@@ -149,21 +149,21 @@ def main() -> None:
             best = {"threshold": round(float(thr), 2), "total_pnl": round(total, 1),
                     "avg_pnl": round(avg, 3), "n": int(sel.sum())}
     if best is None:
-        log("⚠️ Kein Threshold mit genug Val-Trades — Abbruch ohne Artefakt.")
+        log("⚠️ No threshold with enough val trades — aborting without artifact.")
         sys.exit(2)
     log(f"Val-Operating-Point: thr={best['threshold']} | n={best['n']} | "
         f"øPnL={best['avg_pnl']:+.3f}% | ΣPnL={best['total_pnl']:+.1f}%")
 
-    # ── Abschlussreport auf TEST (einmalig) ──
+    # ── Final report on TEST (once) ──
     y_te, pnl_te, w_te = y[te], pnl[te], w[te]
     buckets = bucket_report(cal_te, y_te, pnl_te, w_te, "test, kalibriert")
     sel = cal_te >= best["threshold"]
     base_avg = float(np.average(pnl_te, weights=w_te))
     gate_avg = float(np.average(pnl_te[sel], weights=w_te[sel])) if sel.sum() else float("nan")
     gate_wr = float(np.average(y_te[sel], weights=w_te[sel])) if sel.sum() else float("nan")
-    log(f"GATE-UPLIFT test: ohne Gate ø {base_avg:+.3f}%/Trade | "
-        f"mit Gate (thr={best['threshold']}) ø {gate_avg:+.3f}%/Trade, WR {gate_wr:.3f}, "
-        f"n={int(sel.sum())}/{len(y_te)} ({sel.sum() / max(len(y_te), 1):.1%} Pass-Rate)")
+    log(f"GATE-UPLIFT test: without gate ø {base_avg:+.3f}%/trade | "
+        f"with gate (thr={best['threshold']}) ø {gate_avg:+.3f}%/trade, WR {gate_wr:.3f}, "
+        f"n={int(sel.sum())}/{len(y_te)} ({sel.sum() / max(len(y_te), 1):.1%} pass rate)")
 
     te_meta = meta[te].copy()
     te_meta["cal"] = cal_te
@@ -179,9 +179,9 @@ def main() -> None:
                 pd.to_numeric(g["net_pnl_pct"]).fillna(0.0), weights=gw)), 3),
         })
     per_src.sort(key=lambda r: -r["n"])
-    log("Per-Quelle (test): " + json.dumps(per_src[:12], ensure_ascii=False))
+    log("Per source (test): " + json.dumps(per_src[:12], ensure_ascii=False))
 
-    # Monats-Robustheit der Gate-Auswahl auf Test
+    # Monthly robustness of the gate selection on test
     monthly = []
     if sel.sum():
         g = te_meta[te_meta["pass"]]
@@ -189,7 +189,7 @@ def main() -> None:
             monthly.append({"month": str(m), "n": len(mg),
                             "wr": round(float(mg["label"].astype(int).mean()), 3),
                             "avg_pnl": round(float(pd.to_numeric(mg["net_pnl_pct"]).mean()), 3)})
-        log("Monatlich (test, gated): " + json.dumps(monthly))
+        log("Monthly (test, gated): " + json.dumps(monthly))
 
     vocab = sorted(c[4:] for c in feature_names if c.startswith("src_") and c != "src_is_ai")
     artifact = {
@@ -213,7 +213,7 @@ def main() -> None:
     joblib.dump(artifact, args.out)
     with open(args.out.replace(".pkl", "_report.json"), "w", encoding="utf-8") as fh:
         json.dump(artifact["meta"], fh, ensure_ascii=False, indent=2)
-    log(f"Artefakt → {args.out} (NUR staging — Deploy ist eine Operator-Entscheidung, P1.35)")
+    log(f"Artifact → {args.out} (staging ONLY — deploy is an operator decision, P1.35)")
 
 
 if __name__ == "__main__":

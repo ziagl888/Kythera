@@ -1,14 +1,14 @@
 # backtest/test_shadow_gate.py
-"""DB-freie Tests für den fleet-weiten Shadow-Posting-Gate (T-2026-CU-9050-125).
+"""DB-free tests for the fleet-wide shadow-posting gate (T-2026-CU-9050-125).
 
-Pinnt die zwei Sicherheits-Invarianten des Features:
-  1. core.shadow_gate: DEFAULT-LIVE (nicht-gelistete Beine bleiben live), die
-     SHADOW/RETIRED-Klassifikation, und das ROH-Scoring des Contract-Artefakts.
-  2. core.signal_post.post_shadow_ai_signal: schreibt ai_signals ABER NIE
-     telegram_outbox (monitored-but-unposted), loggt die Shadow-Prediction als
-     posted=False, dedupt gegen offene Trades und committet NICHT (Regel 8).
+Pins the two security invariants of the feature:
+  1. core.shadow_gate: DEFAULT-LIVE (unlisted legs remain live), the
+     SHADOW/RETIRED classification, and raw scoring of the contract artifact.
+  2. core.signal_post.post_shadow_ai_signal: writes ai_signals BUT NEVER
+     telegram_outbox (monitored-but-unposted), logs the shadow prediction as
+     posted=False, dedups against open trades and does NOT commit (rule 8).
 
-Run: pytest backtest/test_shadow_gate.py -v   (oder standalone: python …)
+Run: pytest backtest/test_shadow_gate.py -v   (or standalone: python …)
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# core.config verlangt Secrets; die Build-Maschine liefert ein leeres .env.
+# core.config requires secrets; the build machine provides an empty .env.
 os.environ.setdefault("DB_PASSWORD", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
 
@@ -37,14 +37,14 @@ from core.signal_post import (  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _shadow_echo_off(monkeypatch):
-    """T-150 gab post_shadow_ai_signal einen optionalen CH_SHADOW_TEST-Echo. Diese
-    Tests pinnen die REINE „nur ai_signals, nie telegram_outbox"-Invariante — der
-    Echo wird hier hart abgeschaltet, damit sie hermetisch bleiben, egal ob in der
-    Umgebung/.env ein CH_SHADOW_TEST gesetzt ist (T-2026-CU-9050-164)."""
+    """T-150 gave post_shadow_ai_signal an optional CH_SHADOW_TEST echo. These
+    tests pin the pure "ai_signals only, never telegram_outbox" invariant — the
+    echo is hard disabled here to keep them hermetic, regardless of whether
+    CH_SHADOW_TEST is set in the environment/.env (T-2026-CU-9050-164)."""
     monkeypatch.setattr(_sp, "_shadow_test_channel", lambda: 0)
 
 
-# ── Fake-DB (identisches Muster wie test_shadow_prediction_cooldown) ──────────
+# ── Fake-DB (same pattern as test_shadow_prediction_cooldown) ──────────
 class _Cur:
     def __init__(self, sink: list[str], fetch: object = None) -> None:
         self._sink = sink
@@ -83,7 +83,7 @@ class _FakeModel:
     def predict_proba(self, X):
         import numpy as np
 
-        return np.array([[0.15, 0.85]])  # raw success prob = 0.85 (ndarray wie XGBClassifier)
+        return np.array([[0.15, 0.85]])  # raw success prob = 0.85 (ndarray like XGBClassifier)
 
 
 def _artifact(threshold):
@@ -95,11 +95,11 @@ def _artifact(threshold):
     }
 
 
-# ── 1. shadow_gate: Default-LIVE + Klassifikation (Stand nach T-2026-KYT-9050-033) ──
+# ── 1. shadow_gate: Default-LIVE + classification (state after T-2026-KYT-9050-033) ──
 def test_default_is_live_for_unlisted_legs():
-    # Kein nicht-registriertes Bein darf versehentlich geshadowt werden. Referenz-Tags,
-    # die die T-032-Reconfig (T-2026-KYT-9050-033) bewusst NICHT anfasst (Audit KEEP):
-    # MAX1, TD_4H, ROM1 — alle bleiben default-LIVE.
+    # No unregistered leg must be accidentally shadowed. Reference tags that
+    # the T-032 reconfig (T-2026-KYT-9050-033) deliberately does NOT touch (audit KEEP):
+    # MAX1, TD_4H, ROM1 — all remain default-LIVE.
     assert sg.leg_status("MAX1", "SHORT") == sg.LIVE
     assert sg.leg_status("TD_4H", "LONG") == sg.LIVE
     assert sg.leg_status("ROM1", "SHORT") == sg.LIVE
@@ -109,14 +109,14 @@ def test_default_is_live_for_unlisted_legs():
 
 
 def test_new_gen_candidates_and_t033_promotions():
-    # ATB2 SHORT bleibt Klasse-(A)-Shadow (threshold=null → braucht weiter Daten);
-    # ATB2 LONG ist per T-2026-KYT-9050-037 (Operator) LIVE promotet (siehe
+    # ATB2 SHORT remains class-(A) shadow (threshold=null → still needs data);
+    # ATB2 LONG is LIVE promoted per T-2026-KYT-9050-037 (operator, see
     # test_t037_epd3_long_atb2_long_deployed).
     assert sg.leg_status("ATB2", "SHORT") == sg.SHADOW
     assert sg.is_shadow("ATB2", "SHORT")
     assert not sg.is_live("ATB2", "SHORT")
-    # T-2026-KYT-9050-033 (Audit T-032): ATS2 SHADOW→LIVE promotet (beide Beine);
-    # SRA2 LONG war schon live (T-185), SHORT jetzt ebenfalls LIVE promotet.
+    # T-2026-KYT-9050-033 (audit T-032): ATS2 promoted SHADOW→LIVE (both directions);
+    # SRA2 LONG was already live (T-185), SHORT now also LIVE promoted.
     assert sg.leg_status("ATS2", "LONG") == sg.LIVE
     assert sg.leg_status("ATS2", "SHORT") == sg.LIVE
     assert sg.leg_status("SRA2", "LONG") == sg.LIVE
@@ -124,66 +124,66 @@ def test_new_gen_candidates_and_t033_promotions():
 
 
 def test_t033_parked_legs_are_shadow():
-    # Fleet-Reconfig T-032 (T-2026-KYT-9050-033): die realisiert blutenden Legacy-Live-
-    # Beine sind geparkt → SHADOW (Cornix aus, monitored an). RUB3-LONG-Challenger bleibt
-    # Shadow. EPD3 SHORT bleibt geparkt; EPD3 LONG ist per T-037 (Operator) LIVE promotet
-    # (siehe test_t037_epd3_long_atb2_long_deployed).
+    # Fleet reconfig T-032 (T-2026-KYT-9050-033): the bleeding legacy-live
+    # legs are parked → SHADOW (Cornix off, monitored on). RUB3 LONG challenger remains
+    # shadow. EPD3 SHORT remains parked; EPD3 LONG is LIVE promoted per T-037 (operator,
+    # see test_t037_epd3_long_atb2_long_deployed).
     assert sg.is_shadow("RUB3", "LONG")
-    assert sg.leg_status("EPD3", "SHORT") == sg.SHADOW  # war live (T-185), T-033 geparkt
-    # Ganz →SHADOW (beide Beine).
+    assert sg.leg_status("EPD3", "SHORT") == sg.SHADOW  # was live (T-185), parked T-033
+    # Completely → SHADOW (both directions).
     for tag in ("EPD2", "RUB2", "SRA1", "ABR2", "BB2_4H", "BR1D", "MIS2-8H"):
         assert sg.is_shadow(tag, "LONG"), tag
         assert sg.is_shadow(tag, "SHORT"), tag
-    # BR1Hv2 = der aktuelle 1h-BR-Tag (Bot 7, gemischt-case) — case-insensitiv geparkt.
+    # BR1Hv2 = the current 1h BR tag (bot 7, mixed-case) — parked case-insensitively.
     assert sg.leg_status("BR1Hv2", "LONG") == sg.SHADOW
     assert sg.leg_status("BR1Hv2", "SHORT") == sg.SHADOW
 
 
 def test_t033_per_direction_parks_keep_the_other_leg_live():
-    # Park SHORT →SHADOW, LONG bleibt LIVE (BR/BB/QM Pattern-Bots).
+    # Park SHORT → SHADOW, LONG stays LIVE (BR/BB/QM pattern bots).
     for tag in ("BR2H", "BR4H", "BB_1H", "BB_4H", "QM_1H"):
         assert sg.leg_status(tag, "SHORT") == sg.SHADOW, tag
         assert sg.leg_status(tag, "LONG") == sg.LIVE, tag
-    # Park LONG →SHADOW, SHORT bleibt LIVE (MIS2-Pump-Seite; SHORT/Dump realisiert besser).
+    # Park LONG → SHADOW, SHORT stays LIVE (MIS2 pump side; SHORT/dump performs better).
     for tag in ("MIS2-24H", "MIS2-72H", "MIS2-168H"):
         assert sg.leg_status(tag, "LONG") == sg.SHADOW, tag
         assert sg.leg_status(tag, "SHORT") == sg.LIVE, tag
 
 
 def test_t033_fif1_revived_as_shadow():
-    # FIF1 war SILENT (T-183, von TSM1 abgelöst); T-033 revived als SHADOW (monitored).
+    # FIF1 was SILENT (T-183, superseded by TSM1); T-033 revived as SHADOW (monitored).
     for d in ("LONG", "SHORT"):
         assert sg.leg_status("FIF1", d) == sg.SHADOW
         assert sg.is_shadow("FIF1", d)
         assert not sg.is_live("FIF1", d)
-    # TSM1 (Live-Nachfolger auf CH_FIF1) bleibt unangetastet live.
+    # TSM1 (live successor on CH_FIF1) remains untouched live.
     assert sg.leg_status("TSM1", "SHORT") == sg.LIVE
 
 
 def test_retired_tags_classified_retired():
-    # T-2026-KYT-9050-034: MIS1 ist NICHT mehr retired (Revive, Bot 11 lädt die
-    # pump_model_*_final.pkl wieder — Operator-Entscheid Michi, Audit T-032). Die
-    # bare "MIS1"-Klassifikation ist damit LIVE-Default; das echte Lifecycle je
-    # (tag, direction) prüft test_mis1_revive_lifecycle. AIM1 bleibt retired.
+    # T-2026-KYT-9050-034: MIS1 is NOT retired anymore (revive, bot 11 loads the
+    # pump_model_*_final.pkl again — operator decision Michi, audit T-032). The
+    # bare "MIS1" classification is thus LIVE-default; the actual lifecycle per
+    # (tag, direction) is tested in test_mis1_revive_lifecycle. AIM1 remains retired.
     assert not sg.is_retired("MIS1")
     assert sg.leg_status("AIM1", "SHORT") == sg.RETIRED
-    assert sg.is_retired("MSI1")  # typo-family alias bleibt retired
+    assert sg.is_retired("MSI1")  # typo-family alias remains retired
     assert not sg.is_retired("MIS2")
 
 
 def test_t037_rub1_revive_and_rub3_short_park():
-    # T-2026-KYT-9050-037 (Michi bot_results.xlsx): Bot 13 auf die Original-RUB1-Legacy-
-    # Modelle zurückgebaut, beide Richtungen LIVE unter Tag RUB1 (explizit registriert,
-    # Defense-in-Depth). Die gebenchte RUB2-Generation bleibt SHADOW. RUB3-SHORT geparkt.
+    # T-2026-KYT-9050-037 (Michi bot_results.xlsx): bot 13 reverted to the original
+    # RUB1 legacy models, both directions LIVE under tag RUB1 (explicitly registered,
+    # defense-in-depth). The benched RUB2 generation remains SHADOW. RUB3-SHORT parked.
     assert sg.leg_status("RUB1", "LONG") == sg.LIVE
     assert sg.leg_status("RUB1", "SHORT") == sg.LIVE
     assert sg.is_live("RUB1", "LONG") and sg.is_live("RUB1", "SHORT")
     assert sg.leg_status("RUB2", "LONG") == sg.SHADOW
     assert sg.leg_status("RUB2", "SHORT") == sg.SHADOW
-    # RUB3 jetzt beide Richtungen SHADOW (LONG-Challenger + SHORT-Park).
+    # RUB3 now both directions SHADOW (LONG challenger + SHORT park).
     assert sg.leg_status("RUB3", "LONG") == sg.SHADOW
     assert sg.leg_status("RUB3", "SHORT") == sg.SHADOW
-    # Spec §5 Register-Assert (exakter erwarteter Vektor).
+    # Spec §5 register-assert (exact expected vector).
     assert (
         sg.leg_status("RUB1", "LONG"),
         sg.leg_status("RUB1", "SHORT"),
@@ -193,45 +193,45 @@ def test_t037_rub1_revive_and_rub3_short_park():
 
 
 def test_t037_retires_aim2_topn_and_ats1_robust():
-    # T-2026-KYT-9050-037: AIM2-TOPN („zu dünn") + ATS1_Robust („nur synthetisch")
-    # RETIRE beide Richtungen (Register-/Report-Klassifikation; DB-Delete ist ein
-    # separater Operator-Schritt). Case-insensitiv (is_retired _norm()t).
+    # T-2026-KYT-9050-037: AIM2-TOPN ("too thin") + ATS1_Robust ("synthetic only")
+    # RETIRE both directions (register/report classification; DB delete is a
+    # separate operator step). Case-insensitive (is_retired normalizes).
     for tag in ("AIM2-TOPN", "aim2-topn", "ATS1_Robust", "ats1_robust"):
         assert sg.is_retired(tag), tag
         for d in ("LONG", "SHORT"):
             assert sg.leg_status(tag, d) == sg.RETIRED, (tag, d)
-    # Die lebende Basis-AIM2-Generation darf NICHT mit-retired werden (Prefix-Grenze).
+    # The live base AIM2 generation must NOT be retired together (prefix boundary).
     assert not sg.is_retired("AIM2")
     assert sg.leg_status("AIM2", "LONG") == sg.LIVE
-    # ATS1 bleibt SILENT (T-127), nicht RETIRED — anderer Tag als ATS1_Robust.
+    # ATS1 remains SILENT (T-127), not RETIRED — different tag than ATS1_Robust.
     assert sg.leg_status("ATS1", "LONG") == sg.SILENT
     assert not sg.is_retired("ATS1")
 
 
 def test_t037_epd3_long_atb2_long_deployed():
-    # T-2026-KYT-9050-037 (Operator-Entscheid Michi, bot_results.xlsx #3/#4): EPD3-LONG
-    # + ATB2-LONG SHADOW→LIVE promotet (Deploy „gemäß Anforderung" trotz Shadow-No-Edge
-    # bei EPD3-LONG bzw. n=17 bei ATB2-LONG — Threshold-Cap 0.76 / blind 0.60). Die
-    # jeweils andere Richtung bleibt SHADOW.
+    # T-2026-KYT-9050-037 (operator decision Michi, bot_results.xlsx #3/#4): EPD3-LONG
+    # + ATB2-LONG promoted SHADOW→LIVE (deploy "per requirement" despite shadow no-edge
+    # for EPD3-LONG and n=17 for ATB2-LONG — threshold cap 0.76 / blind 0.60). The
+    # other direction each remains SHADOW.
     assert sg.leg_status("EPD3", "LONG") == sg.LIVE
     assert sg.leg_status("EPD3", "SHORT") == sg.SHADOW
     assert sg.leg_status("ATB2", "LONG") == sg.LIVE
     assert sg.leg_status("ATB2", "SHORT") == sg.SHADOW
-    # LIVE-Beine laden aus dem Repo-Root unter CHALLENGER-DISTINKTEN Dateinamen —
-    # epd3_model_LONG.pkl darf NIE der Legacy-EPD2-LONG-Slot (epd2_model_LONG.pkl) sein,
-    # sonst kapert die Promotion den EPD2-Live-Loader → Doppel-Post (Regel 4).
+    # LIVE legs load from repo root under challenger-distinct filenames —
+    # epd3_model_LONG.pkl must never be the legacy EPD2-LONG slot (epd2_model_LONG.pkl),
+    # otherwise the promotion hijacks the EPD2 live loader → double-post (rule 4).
     assert sg.shadow_artifact_path("EPD3", "LONG") == "epd3_model_LONG.pkl"
     assert sg.shadow_artifact_path("EPD3", "LONG") != "epd2_model_LONG.pkl"
     assert sg.shadow_artifact_path("ATB2", "LONG") == "atb2_model_LONG.pkl"
-    # ATB2-SHORT bleibt Shadow aus staging (nicht aliasing der LONG-Root-Datei).
+    # ATB2-SHORT remains shadow from staging (not aliasing the LONG root file).
     assert sg.shadow_artifact_path("ATB2", "SHORT").startswith(sg.STAGING_DIR)
 
 
 def test_t037_deploy_staging_artifacts_carry_operator_thresholds():
-    # Validiert die operator-gesetzten Thresholds im gestagten Artefakt, WENN es
-    # vorliegt (VPS-Operator-Schritt, harte Regel 2; fehlt joblib/das pkl auf schlanker
-    # CI, wird der Realteil übersprungen — die Registry-Tests oben sichern die
-    # Verdrahtung dependency-frei ab).
+    # Validates operator-set thresholds in the staged artifact, IF it
+    # exists (VPS operator step, hard rule 2; if joblib/pkl missing on lean
+    # CI, the real part is skipped — the registry tests above secure the
+    # wiring dependency-free).
     import pytest
 
     pytest.importorskip("joblib")
@@ -239,64 +239,64 @@ def test_t037_deploy_staging_artifacts_carry_operator_thresholds():
     orig = sg.STAGING_DIR
     sg.STAGING_DIR = os.path.join(repo_root, "staging_models")
     try:
-        # EPD3-LONG lädt live aus Root; für den Threshold-Check das gestagte pkl direkt.
+        # EPD3-LONG loads live from root; for the threshold check load the staged pkl directly.
         import joblib
 
         for fname, want in (("epd3_model_LONG.pkl", 0.76), ("atb2_model_LONG.pkl", 0.60)):
             path = os.path.join(sg.STAGING_DIR, fname)
             if not os.path.exists(path):
-                pytest.skip(f"{fname} nicht vorhanden (VPS-Operator-Schritt)")
+                pytest.skip(f"{fname} not present (VPS operator step)")
             art = joblib.load(path)
             assert art.get("optimal_threshold") == want, (fname, art.get("optimal_threshold"))
-            assert "threshold_provenance" in (art.get("meta") or {}), f"{fname} ohne Provenienz-Note"
+            assert "threshold_provenance" in (art.get("meta") or {}), f"{fname} without provenance note"
     finally:
         sg.STAGING_DIR = orig
 
 
 def test_mis1_revive_lifecycle():
-    # T-2026-KYT-9050-034: MIS1-Revive — die GUTEN Beine (Audit T-032) sind
-    # Default-LIVE und beleben die von T-033 geparkten MIS2-Beine; die schwachen
-    # MIS1-Beine sind SHADOW. Pro (Horizont, Richtung) genau EINE live Generation.
-    assert sg.is_live("MIS1-8H", "SHORT")  # gut (Dump-Seite 8h)
+    # T-2026-KYT-9050-034: MIS1 revive — the GOOD legs (audit T-032) are
+    # default-LIVE and revive the MIS2 legs parked by T-033; the weak
+    # MIS1 legs are SHADOW. Per (horizon, direction) exactly ONE live generation.
+    assert sg.is_live("MIS1-8H", "SHORT")  # good (dump side 8h)
     assert sg.is_live("MIS1-24H", "LONG")
     assert sg.is_live("MIS1-72H", "LONG")
     assert sg.is_live("MIS1-168H", "LONG")
-    # schwache Beine geparkt
+    # weak legs parked
     assert sg.is_shadow("MIS1-8H", "LONG")
     assert sg.is_shadow("MIS1-24H", "SHORT")
     assert sg.is_shadow("MIS1-72H", "SHORT")
     assert sg.is_shadow("MIS1-168H", "SHORT")
-    # Kein Cornix-Doppel-Post: wo MIS1 live ist, ist die MIS2-Gegenseite geparkt.
+    # No Cornix double-post: where MIS1 is live, the MIS2 counterpart is parked.
     assert sg.is_live("MIS1-24H", "LONG") and sg.is_shadow("MIS2-24H", "LONG")
     assert sg.is_live("MIS1-8H", "SHORT") and sg.is_shadow("MIS2-8H", "SHORT")
-    # Umgekehrt bleibt MIS2-SHORT (24/72/168) live, MIS1-SHORT dort geparkt.
+    # Conversely MIS2-SHORT (24/72/168) remains live, MIS1-SHORT parked there.
     assert sg.is_live("MIS2-24H", "SHORT") and sg.is_shadow("MIS1-24H", "SHORT")
-    # case-insensitiv (leg_status _norm()t).
+    # case-insensitive (leg_status normalizes).
     assert sg.leg_status("mis1-8h", "short") == sg.LIVE
 
 
 def test_silent_legs_are_neither_live_nor_shadow():
-    # T-2026-CU-9050-127: ATS1/ATB1 stummgeschaltet (Bots 12/14 entparkt für
-    # ATS2/ATB2-Shadow, aber die Alt-Modelle geben NICHTS aus). Der Bot fragt
-    # is_live() am Ausgabe-Zweig -> False -> übersprungen; is_shadow() False ->
-    # das Alt-Bein wird auch nicht shadow-emittiert.
+    # T-2026-CU-9050-127: ATS1/ATB1 silenced (bots 12/14 unparked for
+    # ATS2/ATB2 shadow, but the old models produce NOTHING). The bot checks
+    # is_live() at the output branch -> False -> skipped; is_shadow() False ->
+    # the old leg is not shadow-emitted either.
     for tag in ("ATS1", "ATB1"):
         for d in ("LONG", "SHORT"):
             assert sg.leg_status(tag, d) == sg.SILENT
             assert sg.is_silent(tag, d)
             assert not sg.is_live(tag, d)
             assert not sg.is_shadow(tag, d)
-    # Der ATB2-SHORT-Retrain daneben bleibt Shadow (ATB2 LONG ist per T-037 live);
-    # noch-live Referenz-Beine bleiben live (MAX1/TD_4H als stabile KEEP-Live-Referenzen).
+    # The ATB2-SHORT retrain alongside remains shadow (ATB2 LONG is live per T-037);
+    # still-live reference legs remain live (MAX1/TD_4H as stable KEEP live references).
     assert sg.is_shadow("ATB2", "SHORT")
     assert sg.is_live("MAX1", "SHORT") and sg.is_live("TD_4H", "LONG")
 
 
 def test_leg_status_is_case_insensitive():
-    # ATB2 SHORT bleibt Shadow (LONG ist per T-037 live) — case-/whitespace-insensitiv.
+    # ATB2 SHORT remains shadow (LONG is live per T-037) — case-/whitespace-insensitive.
     assert sg.leg_status("atb2", "short") == sg.SHADOW
     assert sg.leg_status("  Atb2 ", " Short ") == sg.SHADOW
-    # gemischt-case Legacy-Tag BR1Hv2 (Bot 7) normalisiert auf den geparkten Key.
+    # mixed-case legacy tag BR1Hv2 (bot 7) normalizes to the parked key.
     assert sg.leg_status("br1hv2", "long") == sg.SHADOW
 
 
@@ -314,7 +314,7 @@ def test_score_artifact_is_raw_proba_reindexed():
 
 # ── 2. post_shadow_ai_signal: monitored-but-unposted ─────────────────────────
 def test_shadow_signal_writes_ai_signals_but_never_outbox():
-    conn = FakeConn(fetch=None)  # kein offener Trade, dedup leer
+    conn = FakeConn(fetch=None)  # no open trade, dedup empty
     wrote = post_shadow_ai_signal(
         conn, "ATS2", "TESTUSDT", "LONG", 0.83, 100.0, 95.0, 90.0, [110.0, 120.0, 130.0], n_show=3
     )
@@ -337,15 +337,15 @@ def test_shadow_signal_dedups_against_open_trade():
 def test_shadow_signal_tracks_only_n_show_targets():
     conn = FakeConn(fetch=None)
     post_shadow_ai_signal(conn, "ATB2", "TESTUSDT", "SHORT", 0.5, 100.0, 100.0, 115.0, [90, 80, 70, 60, 50], n_show=3)
-    # P2.31-Parität: der Monitor scored genau die veröffentlichten TPs.
+    # P2.31 parity: the monitor scores exactly the published TPs.
     ins = [s for s in conn.statements if "INSERT INTO ai_signals" in s]
     assert len(ins) == 1
 
 
-# ── 3. FMR2 (K4) Klasse-(A)-Shadow — Registry + committetes Artefakt ──────────
+# ── 3. FMR2 (K4) class-(A) shadow — registry + committed artifact ──────────
 def test_fmr2_leg_is_shadow_both_directions():
-    # Der FMR2-Retrain läuft SHADOW neben dem live FMR1-Bein; FMR1 selbst bleibt
-    # unter eigenem Tag unangetastet (Default-LIVE, keine Registry-Zeile).
+    # The FMR2 retrain runs SHADOW alongside the live FMR1 leg; FMR1 itself remains
+    # untouched under its own tag (default-LIVE, no registry row).
     for d in ("LONG", "SHORT"):
         assert sg.leg_status("FMR2", d) == sg.SHADOW
         assert sg.is_shadow("FMR2", d)
@@ -355,8 +355,8 @@ def test_fmr2_leg_is_shadow_both_directions():
 
 
 def test_fmr2_maps_one_binary_model_to_both_directions():
-    # side_short ist ein Feature → EIN Modell bedient beide Richtungen; beide
-    # Richtungen müssen auf dieselbe Staging-Datei zeigen.
+    # side_short is a feature → ONE model serves both directions; both
+    # directions must point to the same staging file.
     p_long = sg.shadow_artifact_path("FMR2", "LONG")
     p_short = sg.shadow_artifact_path("FMR2", "SHORT")
     assert p_long == p_short
@@ -364,38 +364,38 @@ def test_fmr2_maps_one_binary_model_to_both_directions():
 
 
 def test_promoted_live_leg_loads_from_root_shadow_from_staging():
-    # Ein LIVE-Bein lädt sein Artefakt aus dem Repo-Root (Regel 2 = live), ein
-    # SHADOW-Bein weiter aus staging. Stand nach T-2026-KYT-9050-037:
-    #   * SRA2 LONG+SHORT + ATS2 LONG+SHORT LIVE (T-033) → Root.
-    #   * EPD3 LONG jetzt LIVE (T-037, Operator) → Root (bare filename);
-    #     EPD3 SHORT bleibt SHADOW (T-033-Park) → staging.
+    # A LIVE leg loads its artifact from repo root (rule 2 = live), a
+    # SHADOW leg continues from staging. State after T-2026-KYT-9050-037:
+    #   * SRA2 LONG+SHORT + ATS2 LONG+SHORT LIVE (T-033) → root.
+    #   * EPD3 LONG now LIVE (T-037, operator) → root (bare filename);
+    #     EPD3 SHORT remains SHADOW (T-033 park) → staging.
     assert sg.shadow_artifact_path("SRA2", "LONG") == "sra2_model_LONG.json"
     assert sg.shadow_artifact_path("SRA2", "SHORT") == "sra2_model_SHORT.json"
     assert sg.shadow_artifact_path("ATS2", "LONG") == "ats2_model_LONG.pkl"
     assert sg.shadow_artifact_path("ATS2", "SHORT") == "ats2_model_SHORT.pkl"
-    assert sg.shadow_artifact_path("EPD3", "LONG") == "epd3_model_LONG.pkl"  # LIVE → Root
+    assert sg.shadow_artifact_path("EPD3", "LONG") == "epd3_model_LONG.pkl"  # LIVE → root
     assert sg.shadow_artifact_path("EPD3", "SHORT").startswith(sg.STAGING_DIR)  # SHADOW → staging
 
 
 def test_challenger_filename_never_aliases_legacy_loader():
-    # Review T-2026-CU-9050-185 (CRITICAL): das EPD3-SHORT-Artefakt muss vom
-    # EPD2-Legacy-SHORT-Slot (epd2_model_SHORT.pkl) verschieden bleiben — egal ob
-    # live (Root) oder, nach dem T-033-Park, shadow (staging) —, sonst lädt der
-    # Legacy-Live-Loader dieselbe Datei und postet SHORT doppelt (Regel 4).
+    # Review T-2026-CU-9050-185 (CRITICAL): the EPD3-SHORT artifact must remain
+    # distinct from the EPD2 legacy-SHORT slot (epd2_model_SHORT.pkl) — whether
+    # live (root) or, after the T-033 park, shadow (staging) — otherwise the
+    # legacy live loader loads the same file and posts SHORT double (rule 4).
     p = sg.shadow_artifact_path("EPD3", "SHORT")
     assert os.path.basename(p) == "epd3_model_SHORT.pkl"
     assert os.path.basename(p) != "epd2_model_SHORT.pkl"  # Bot 10 EPD2_ARTIFACT_PATHS["SHORT"]
-    assert p.startswith(sg.STAGING_DIR)  # SHADOW nach T-033
+    assert p.startswith(sg.STAGING_DIR)  # SHADOW after T-033
 
 
 def test_fmr2_staging_artifact_loads_scores_and_gates():
-    # Validiert das Artefakt end-to-end, WENN es vorliegt (der eigentliche Zweck
-    # des Shadow-Bots): ladbar, 15-Feature-Vertrag == FMR1_FEATURES, gültiger
-    # Operating-Threshold, rohe predict_proba in [0, 1]. Das reale pkl liegt —
-    # wie bei ATS2/ATB2/RUB3/EPD3 — NICHT im Git, sondern in staging_models/ auf
-    # dem VPS (Platzierung = Operator-Schritt, harte Regel 2); fehlt es (oder
-    # joblib/xgboost auf schlanker CI), wird der Realteil übersprungen. Die
-    # Registry-Tests oben sichern die Verdrahtung dependency- und artefaktfrei ab.
+    # Validates the artifact end-to-end, IF it exists (the actual purpose
+    # of the shadow bot): loadable, 15-feature contract == FMR1_FEATURES, valid
+    # operating threshold, raw predict_proba in [0, 1]. The real pkl lives —
+    # like ATS2/ATB2/RUB3/EPD3 — NOT in git, but in staging_models/ on
+    # the VPS (placement = operator step, hard rule 2); if missing (or
+    # joblib/xgboost on lean CI), the real part is skipped. The
+    # registry tests above secure the wiring dependency- and artifact-free.
     import pytest
 
     pytest.importorskip("joblib")
@@ -411,44 +411,44 @@ def test_fmr2_staging_artifact_loads_scores_and_gates():
     finally:
         sg.STAGING_DIR = orig
     if art is None:
-        pytest.skip("staging_models/fmr2_model.pkl nicht vorhanden (VPS-Operator-Schritt)")
-    assert list(art["features"]) == list(FMR1_FEATURES)  # exakter Feature-Vertrag
+        pytest.skip("staging_models/fmr2_model.pkl not present (VPS operator step)")
+    assert list(art["features"]) == list(FMR1_FEATURES)  # exact feature contract
     thr = sg.artifact_threshold(art)
-    assert thr is not None and 0.0 < thr < 1.0  # FMR2 hat einen validen Operating-Point
+    assert thr is not None and 0.0 < thr < 1.0  # FMR2 has a valid operating point
 
     row = dict.fromkeys(FMR1_FEATURES, 0.0)
     prob = sg.score_artifact(art, row)
     assert 0.0 <= prob <= 1.0
 
 
-# ── 4. route_legacy_leg (T-2026-KYT-9050-033): Legacy-Direktpost-Router ───────
-# Der Helper entscheidet an der Emissions-Stelle eines Legacy-Bots (BR/BB/QM/SRA1/
-# RUB2/EPD2/ABR2/MIS2), OB der Bot live posten darf — anders als post_ai_signal_gated
-# baut er KEINE Message. Default LIVE ⇒ der Aufrufer postet selbst; SHADOW ⇒ hier ein
-# monitored ai_signals-Trade (nie telegram_outbox); SILENT/RETIRED/Kill-Switch ⇒ skip.
+# ── 4. route_legacy_leg (T-2026-KYT-9050-033): Legacy direct-post router ───────
+# The helper decides at the emission point of a legacy bot (BR/BB/QM/SRA1/
+# RUB2/EPD2/ABR2/MIS2) WHETHER the bot may post live — unlike post_ai_signal_gated
+# it builds NO message. Default LIVE ⇒ the caller posts itself; SHADOW ⇒ here a
+# monitored ai_signals trade (never telegram_outbox); SILENT/RETIRED/kill-switch ⇒ skip.
 def test_route_legacy_leg_live_leaves_write_to_caller():
     conn = FakeConn(fetch=None)
-    # RUB1 = revivte Original-Legacy-Generation, seit T-037 EXPLIZIT LIVE registriert
-    # (Defense-in-Depth) → LIVE, der Helper schreibt NICHTS (der Bot postet selbst).
+    # RUB1 = revived original legacy generation, since T-037 explicitly LIVE registered
+    # (defense-in-depth) → LIVE, helper writes NOTHING (bot posts itself).
     r = route_legacy_leg(conn, "RUB1", "SHORT", "X", 0.8, 100.0, 95.0, 90.0, [110.0, 120.0], n_show=2)
     assert r == LEG_LIVE
-    assert conn.statements == []  # keine Zeile — der Aufrufer postet selbst
+    assert conn.statements == []  # no row — the caller posts itself
     assert conn.commits == 0
 
 
 def test_route_legacy_leg_shadow_writes_monitored_never_outbox():
-    conn = FakeConn(fetch=None)  # kein offener Trade
-    # RUB2 SHORT ist seit T-033 geparkt → SHADOW.
+    conn = FakeConn(fetch=None)  # no open trade
+    # RUB2 SHORT has been parked since T-033 → SHADOW.
     r = route_legacy_leg(conn, "RUB2", "SHORT", "X", 0.8, 100.0, 95.0, 90.0, [110.0, 120.0, 130.0], n_show=3)
     assert r == LEG_SHADOW
     joined = " || ".join(conn.statements)
     assert "INSERT INTO ai_signals" in joined
-    assert "telegram_outbox" not in joined  # niemals Cornix (Regel 4)
-    assert conn.commits == 0  # Regel 8: der Aufrufer committet, nicht der Helper
+    assert "telegram_outbox" not in joined  # never Cornix (rule 4)
+    assert conn.commits == 0  # rule 8: caller commits, not helper
 
 
 def test_route_legacy_leg_shadow_dedups_to_skip():
-    conn = FakeConn(fetch=(1,))  # has_open_ai_signal -> True (offener Shadow-Trade)
+    conn = FakeConn(fetch=(1,))  # has_open_ai_signal -> True (open shadow trade)
     r = route_legacy_leg(conn, "RUB2", "SHORT", "X", 0.8, 100.0, 95.0, 90.0, [110.0], n_show=1)
     assert r == LEG_SKIP
     assert not any("INSERT INTO ai_signals" in s for s in conn.statements)
@@ -456,7 +456,7 @@ def test_route_legacy_leg_shadow_dedups_to_skip():
 
 def test_route_legacy_leg_silent_and_retired_skip():
     conn = FakeConn(fetch=None)
-    # SILENT (ATS1) und RETIRED (AIM1) → SKIP, gar nichts geschrieben.
+    # SILENT (ATS1) and RETIRED (AIM1) → SKIP, nothing written.
     assert route_legacy_leg(conn, "ATS1", "LONG", "X", 0.8, 100.0, 95.0, 90.0, [110.0]) == LEG_SKIP
     assert route_legacy_leg(conn, "AIM1", "SHORT", "X", 0.8, 100.0, 95.0, 90.0, [110.0]) == LEG_SKIP
     assert conn.statements == []
@@ -465,9 +465,9 @@ def test_route_legacy_leg_silent_and_retired_skip():
 def test_route_legacy_leg_respects_master_kill_switch():
     conn = FakeConn(fetch=None)
     prev = os.environ.get("KYTHERA_SHADOW_POSTING")
-    os.environ["KYTHERA_SHADOW_POSTING"] = "0"  # Master-Switch aus
+    os.environ["KYTHERA_SHADOW_POSTING"] = "0"  # Master switch off
     try:
-        # SHADOW-Bein, aber Shadow-Posting global aus → SKIP, nichts geschrieben.
+        # SHADOW leg, but shadow-posting globally off → SKIP, nothing written.
         r = route_legacy_leg(conn, "RUB2", "SHORT", "X", 0.8, 100.0, 95.0, 90.0, [110.0])
     finally:
         if prev is None:

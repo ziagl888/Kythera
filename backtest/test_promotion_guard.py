@@ -1,20 +1,20 @@
 # backtest/test_promotion_guard.py
-"""DB-freie Tests für tools/promotion_guard.py (T-2026-KYT-9050-057).
+"""DB-free tests for tools/promotion_guard.py (T-2026-KYT-9050-057).
 
-Der Guard automatisiert die Handarbeit aus T-2026-CU-9050-185 / T-2026-KYT-9050-037:
-ein Challenger-Artefakt, das bei der Promotion in den Repo-Root den Loader-Slot
-einer FREMDEN Generation belegt (EPD3-SHORT → `epd2_model_SHORT.pkl`), muss einen
-challenger-distinkten Namen bekommen. Gepinnt wird:
+The guard automates the manual work from T-2026-CU-9050-185 / T-2026-KYT-9050-037:
+a challenger artifact that, on promotion into the repo root, occupies the loader
+slot of a FOREIGN generation (EPD3-SHORT → `epd2_model_SHORT.pkl`) must get a
+challenger-distinct name. Pinned here:
 
-  AK1  der heutige Register-Stand hat KEIN FAIL (kein LIVE-Bein auf fremdem Slot)
-  AK2  der latente Fall RUB3-LONG → rub2_* wird als WARN gemeldet, mit dem
-       fremden Eigentümer (RUB2) und dem Rename-Vorschlag (rub3_model_LONG.pkl)
-  AK3  DER FANG: wird RUB3-LONG auf LIVE geflippt, ohne das Artefakt umzubenennen,
-       kippt der Befund auf FAIL und die CLI beendet mit exit 1
-  AK4  challenger-distinkte Beine (EPD3, ATS2, ATB2, SRA2, FMR2) sind sauber
-  AK5  Regression: fällt EPD3-LONG auf den Legacy-Namen zurück, ist es sofort FAIL
-       (das Bein ist live) — der 2026-07-21er Vorfall darf nicht zurückkommen
-  AK6  der Guard verändert `core.shadow_gate` nicht (harte Regel 7)
+  AK1  today's register state has NO FAIL (no LIVE leg on a foreign slot)
+  AK2  the latent case RUB3-LONG → rub2_* is reported as WARN, with the
+       foreign owner (RUB2) and the rename suggestion (rub3_model_LONG.pkl)
+  AK3  THE ACTUAL CATCH: if RUB3-LONG is flipped to LIVE without renaming the
+       artifact, the finding tips to FAIL and the CLI exits with exit 1
+  AK4  challenger-distinct legs (EPD3, ATS2, ATB2, SRA2, FMR2) are clean
+  AK5  regression: if EPD3-LONG falls back to the legacy name, it is
+       immediately FAIL (the leg is live) — the 2026-07-21 incident must not recur
+  AK6  the guard does not mutate `core.shadow_gate` (hard rule 7)
 
 Run: pytest backtest/test_promotion_guard.py -v
 """
@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import core.shadow_gate as sg  # noqa: E402
 import tools.promotion_guard as pg  # noqa: E402
 
-# ── AK1/AK2: heutiger Register-Stand ─────────────────────────────────────────
+# ── AK1/AK2: today's register state ──────────────────────────────────────────
 
 
 def test_no_live_leg_reads_a_foreign_root_slot():
@@ -40,9 +40,9 @@ def test_no_live_leg_reads_a_foreign_root_slot():
 
 def test_rub3_long_is_the_known_latent_warning():
     findings = {(f.tag, f.direction): f for f in pg.scan()}
-    assert ("RUB3", "LONG") in findings, "RUB3-LONG trägt weiter den rub2_*-Namen — muss WARN sein"
+    assert ("RUB3", "LONG") in findings, "RUB3-LONG still carries the rub2_* name — must be WARN"
     f = findings[("RUB3", "LONG")]
-    assert f.severity == pg.WARN  # SHADOW (T-037-Park) ⇒ latent, kein Live-Effekt
+    assert f.severity == pg.WARN  # SHADOW (T-037 park) ⇒ latent, no live effect
     assert f.filename == "rub2_model_LONG.pkl"
     assert f.suggestion == "rub3_model_LONG.pkl"
     assert any("RUB2" in r for r in f.reasons)
@@ -54,19 +54,19 @@ def test_cli_is_green_today_but_strict_surfaces_the_latent_case(capsys):
     assert pg.main(["--strict"]) == 1
 
 
-# ── AK3: der eigentliche Fang ────────────────────────────────────────────────
+# ── AK3: the actual catch ─────────────────────────────────────────────────────
 
 
 def test_promoting_rub3_without_rename_is_caught(monkeypatch):
-    """RUB3-LONG live schalten, ohne rub2_model_LONG.pkl umzubenennen: der Bot
-    läse dann exakt den Root-Slot, aus dem die RUB2-Generation lädt."""
+    """Flip RUB3-LONG live without renaming rub2_model_LONG.pkl: the bot would
+    then read exactly the root slot that the RUB2 generation loads from."""
     monkeypatch.setitem(sg._LIFECYCLE, ("RUB3", "LONG"), sg.LIVE)
-    assert sg.shadow_artifact_path("RUB3", "LONG") == "rub2_model_LONG.pkl"  # nackter Root-Name
+    assert sg.shadow_artifact_path("RUB3", "LONG") == "rub2_model_LONG.pkl"  # bare root name
 
     f = pg.check_leg("RUB3", "LONG")
     assert f is not None and f.severity == pg.FAIL
     assert f.suggestion == "rub3_model_LONG.pkl"
-    assert [x.severity for x in pg.scan()][0] == pg.FAIL  # FAILs sortieren nach vorn
+    assert [x.severity for x in pg.scan()][0] == pg.FAIL  # FAILs sort to the front
 
 
 def test_cli_exits_nonzero_when_a_live_leg_collides(monkeypatch, capsys):
@@ -76,15 +76,15 @@ def test_cli_exits_nonzero_when_a_live_leg_collides(monkeypatch, capsys):
 
 
 def test_renaming_the_artifact_clears_the_finding(monkeypatch):
-    """Der vom Guard vorgeschlagene Rename ist der vollständige Fix — genau das,
-    was bei EPD3 zweimal von Hand gemacht wurde."""
+    """The rename suggested by the guard is the complete fix — exactly what
+    was done by hand twice for EPD3."""
     monkeypatch.setitem(sg._LIFECYCLE, ("RUB3", "LONG"), sg.LIVE)
     monkeypatch.setitem(sg.SHADOW_ARTIFACTS["RUB3"], "LONG", "rub3_model_LONG.pkl")
     assert pg.check_leg("RUB3", "LONG") is None
     assert pg.scan() == []
 
 
-# ── AK4/AK5: challenger-distinkte Beine + Regression ─────────────────────────
+# ── AK4/AK5: challenger-distinct legs + regression ───────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -96,15 +96,15 @@ def test_tag_distinct_legs_are_clean(tag, direction):
 
 
 def test_fmr2_sharing_one_file_across_its_own_directions_is_not_a_collision():
-    # Ein Modell für beide Richtungen (side_short ist Feature) — derselbe TAG,
-    # also kein fremder Loader-Slot.
+    # One model for both directions (side_short is a feature) — same TAG,
+    # so no foreign loader slot.
     assert sg.SHADOW_ARTIFACTS["FMR2"]["LONG"] == sg.SHADOW_ARTIFACTS["FMR2"]["SHORT"]
     assert pg.check_leg("FMR2", "LONG") is None
 
 
 def test_epd3_regression_pin(monkeypatch):
-    """Fiele EPD3-LONG auf den Legacy-Dateinamen zurück, wäre es sofort FAIL —
-    das Bein ist seit T-037 live, der Slot gehört Bot 10 (EPD2_ARTIFACT_PATHS)."""
+    """If EPD3-LONG fell back to the legacy filename, it would be FAIL immediately —
+    the leg has been live since T-037, the slot belongs to bot 10 (EPD2_ARTIFACT_PATHS)."""
     monkeypatch.setitem(sg.SHADOW_ARTIFACTS["EPD3"], "LONG", "epd2_model_LONG.pkl")
     f = pg.check_leg("EPD3", "LONG")
     assert f is not None and f.severity == pg.FAIL
@@ -114,10 +114,10 @@ def test_epd3_regression_pin(monkeypatch):
 
 def test_unknown_tag_is_not_a_finding():
     assert pg.check_leg("TOTALLY_NEW_9000", "LONG") is None
-    assert pg.check_leg("RUB4", "LONG") is None  # nutzt das RUB3-Artefakt, kein eigener Eintrag
+    assert pg.check_leg("RUB4", "LONG") is None  # uses the RUB3 artifact, no entry of its own
 
 
-# ── Bausteine ────────────────────────────────────────────────────────────────
+# ── Building blocks ───────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -125,9 +125,9 @@ def test_unknown_tag_is_not_a_finding():
     [
         ("RUB3", "rub2_model_LONG.pkl", "rub3_model_LONG.pkl"),
         ("EPD3", "epd2_model_SHORT.pkl", "epd3_model_SHORT.pkl"),
-        ("EPD3", "epd3_model_SHORT.pkl", "epd3_model_SHORT.pkl"),  # schon distinkt
+        ("EPD3", "epd3_model_SHORT.pkl", "epd3_model_SHORT.pkl"),  # already distinct
         ("SRA2", "sra2_model_LONG.json", "sra2_model_LONG.json"),
-        ("MIS2-8H", "mis2_model_8h_pump.pkl", "mis28h_model_8h_pump.pkl"),  # Bindestrich fällt weg
+        ("MIS2-8H", "mis2_model_8h_pump.pkl", "mis28h_model_8h_pump.pkl"),  # hyphen drops
     ],
 )
 def test_suggested_name(tag, filename, expected):
@@ -137,9 +137,9 @@ def test_suggested_name(tag, filename, expected):
 def test_slot_claims_join_legacy_and_challenger_registries():
     claims = pg.slot_claims()
     assert claims["rub2_model_LONG.pkl"] == {"RUB2", "RUB3"}
-    assert claims["epd2_model_SHORT.pkl"] == {"EPD2"}  # seit dem T-185-Rename allein
+    assert claims["epd2_model_SHORT.pkl"] == {"EPD2"}  # alone since the T-185 rename
     assert claims["epd3_model_SHORT.pkl"] == {"EPD3"}
-    assert "pump_dump_model.pkl" in claims  # Legacy-Slot ohne Retrain-Namensschema
+    assert "pump_dump_model.pkl" in claims  # legacy slot without a retrain naming scheme
 
 
 def test_check_staging_filename_is_advisory_per_file():
@@ -147,10 +147,10 @@ def test_check_staging_filename_is_advisory_per_file():
     assert status == pg.WARN
     assert "RUB2, RUB3" in msg and "rub3_model_LONG.pkl" in msg
     assert pg.check_staging_filename("epd3_model_SHORT.pkl")[0] == pg.OK
-    assert pg.check_staging_filename("etwas_fremdes.pkl")[0] == pg.OK  # unbekannt ⇒ kein Hazard
+    assert pg.check_staging_filename("etwas_fremdes.pkl")[0] == pg.OK  # unknown ⇒ no hazard
 
 
-# ── AK6: harte Regel 7 — der Guard liest nur ─────────────────────────────────
+# ── AK6: hard rule 7 — the guard only reads ──────────────────────────────────
 
 
 def test_guard_does_not_mutate_the_shared_gate():

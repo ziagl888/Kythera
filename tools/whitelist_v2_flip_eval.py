@@ -559,28 +559,28 @@ def print_console_report(meta: dict) -> None:
     print(
         f"bot_regime_whitelist: {p['n_rows']} rows, v2 coverage {p['v2_coverage_pct']}%, "
         f"snapshot age {p['snapshot_age_hours']}h "
-        f"({'analyzer alive' if p['analyzer_alive'] else '⚠️ ANALYZER STALE — Ergebnis nicht belastbar'})"
+        f"({'analyzer alive' if p['analyzer_alive'] else '⚠️ ANALYZER STALE — result not reliable'})"
     )
 
     m = meta["divergence_matrix"]
-    print("\n── Divergenz-Matrix (Zellen, aktueller Snapshot) ──")
+    print("\n── Divergence matrix (cells, current snapshot) ──")
     for cls in (BOTH_OPEN, BOTH_BLOCK, V2_WOULD_BLOCK, V2_WOULD_OPEN, V2_MISSING):
         n = m["totals"].get(cls, 0)
         lb = m["lb_stats"].get(cls)
         lb_s = f"  lb median {lb['median']}" if lb else ""
         print(f"  {cls:16} {n:6d}{lb_s}")
 
-    print("\n── Traffic seit --since (per Tag) ──")
+    print("\n── Traffic since --since (per day) ──")
     for day, c in meta["daily_counts"].items():
         print(f"  {day}: forwarded {c['forwarded']:4d}  suppressed(gate) {c['suppressed']:4d}")
 
     d = meta["drift"]
     print(
-        f"\n── v1-Drift (Snapshot-Näherung, AK5) ──\n"
-        f"  {d['n_agree']}/{d['n_comparable']} Events stimmen mit dem heutigen v1-Snapshot überein "
+        f"\n── v1 drift (snapshot approximation, AK5) ──\n"
+        f"  {d['n_agree']}/{d['n_comparable']} events agree with today's v1 snapshot "
         f"({d['agree_pct']}%)"
         + (
-            "  ⚠️ >15% Drift — v2-Zahlen nur als Tendenz lesen"
+            "  ⚠️ >15% drift — read v2 numbers as trend only"
             if d["agree_pct"] is not None and d["agree_pct"] < 85
             else ""
         )
@@ -588,22 +588,22 @@ def print_console_report(meta: dict) -> None:
 
     v = meta["volume"]
     print(
-        f"\n── Volumen-Effekt ──\n"
-        f"  zell-entschieden: {v['n_cell_decided']}/{v['n_events_total']} Events\n"
-        f"  Gate-Rate offen: v1 {v['v1_open_rate_pct']}%  →  v2 {v['v2_open_rate_pct']}%\n"
-        f"  ROM1-Forwards/Tag: v1 {v['forwarded_per_day_v1']}  →  v2 (Prognose) {v['forwarded_per_day_v2_projected']}"
+        f"\n── Volume effect ──\n"
+        f"  cell-decided: {v['n_cell_decided']}/{v['n_events_total']} events\n"
+        f"  gate rate open: v1 {v['v1_open_rate_pct']}%  →  v2 {v['v2_open_rate_pct']}%\n"
+        f"  ROM1 forwards/day: v1 {v['forwarded_per_day_v1']}  →  v2 (projected) {v['forwarded_per_day_v2_projected']}"
     )
     n_cm = v["counts"].get("cell_missing", 0)
     n_vm = v["counts"].get(V2_MISSING, 0)
     if n_cm or n_vm:
         print(
-            f"  ⚠️ nicht zuordenbar: cell_missing {n_cm}, v2_missing {n_vm} "
-            f"(zählen als konstanter Forward-Sockel, fehlen im Raten-Vergleich)"
+            f"  ⚠️ unattributable: cell_missing {n_cm}, v2_missing {n_vm} "
+            f"(count as constant forward baseline, missing from the rate comparison)"
         )
 
     if meta.get("buckets"):
         hdr = f"{'bucket':40} {'n':>6} {'scored':>7} {'wr%':>7} {'avgPnL%':>9} {'sumPnL%':>10}"
-        print("\n── Counterfactual pro Flip-Bucket (047-Replay) ──")
+        print("\n── Counterfactual per flip bucket (047 replay) ──")
         print(hdr)
         print("-" * len(hdr))
         for s in meta["buckets"]:
@@ -614,17 +614,17 @@ def print_console_report(meta: dict) -> None:
 
         pc = meta["portfolio"]
         print(
-            f"\n── Portfolio-Vergleich (identischer Traffic) ──\n"
-            f"  v1-Auswahl: {pc['v1_selection']['n_scored']} Trades, Σ {pc['v1_selection']['sum_net_pnl_pct']}%\n"
-            f"  v2-Auswahl: {pc['v2_selection']['n_scored']} Trades, Σ {pc['v2_selection']['sum_net_pnl_pct']}%\n"
-            f"  v2 nimmt weg: Σ {pc['v2_removes']['sum_net_pnl_pct']}% ({pc['v2_removes']['n_scored']} Trades)\n"
-            f"  v2 schaltet frei: Σ {pc['v2_adds']['sum_net_pnl_pct']}% ({pc['v2_adds']['n_scored']} Trades)\n"
+            f"\n── Portfolio comparison (identical traffic) ──\n"
+            f"  v1 selection: {pc['v1_selection']['n_scored']} trades, Σ {pc['v1_selection']['sum_net_pnl_pct']}%\n"
+            f"  v2 selection: {pc['v2_selection']['n_scored']} trades, Σ {pc['v2_selection']['sum_net_pnl_pct']}%\n"
+            f"  v2 removes: Σ {pc['v2_removes']['sum_net_pnl_pct']}% ({pc['v2_removes']['n_scored']} trades)\n"
+            f"  v2 unlocks: Σ {pc['v2_adds']['sum_net_pnl_pct']}% ({pc['v2_adds']['n_scored']} trades)\n"
             f"  Δ (v2 − v1): {pc['delta_sum_net_pnl_pct']}%"
         )
 
     print(
-        "\nLesehinweis: v2-Verdicts stammen aus dem HEUTIGEN Snapshot (Näherung, siehe Drift oben); "
-        "open_at_horizon zählt mark-to-market in Σ, nicht in die WR. Empfehlung + Flip = Operator."
+        "\nReading note: v2 verdicts come from TODAY's snapshot (approximation, see drift above); "
+        "open_at_horizon counts mark-to-market in Σ, not in the WR. Recommendation + flip = operator."
     )
 
 
@@ -665,7 +665,7 @@ def main() -> None:
         events = load_gate_events(conn, since, args.limit)
         for e in events:
             e.update(classify_flip_effect(e, snapshot))
-        print(f"{len(events)} Gate-Events seit {since} geladen und klassifiziert")
+        print(f"{len(events)} gate events since {since} loaded and classified")
 
         window_days = max((utc_now().replace(tzinfo=None) - since).total_seconds() / 86400.0, 0.0)
         meta: dict = {

@@ -26,10 +26,10 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "unit-test")
 
 
 def _load_analyzer_module():
-    """Lädt 27_bot_regime_analyzer als Modul (wegen Ziffer-im-Dateinamen).
+    """Loads 27_bot_regime_analyzer as a module (because of digit in filename).
 
-    pretty_name (core.bot_naming) bleibt REAL — die Raw-Namen-Erkennung ist genau
-    die Logik, die hier verifiziert wird.
+    pretty_name (core.bot_naming) remains REAL — the raw-name detection is exactly
+    the logic being verified here.
     """
     import importlib.util
     spec = importlib.util.spec_from_file_location(

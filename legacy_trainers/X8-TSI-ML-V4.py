@@ -3,19 +3,19 @@ import numpy as np
 from xgboost import XGBClassifier
 import joblib
 
-# --- KONFIGURATION ----------------
+# --- CONFIGURATION ----------------
 FILE_NAME = "tsi_signals_long_only.csv" 
 MODEL_FILENAME = "model_tsi_long_robust.pkl"
 # ----------------------------------
 
 def main():
-    print("Lade Daten...")
+    print("Loading data...")
     df = pd.read_csv(FILE_NAME)
     df['entry_time'] = pd.to_datetime(df['entry_time'])
     df = df.sort_values('entry_time').reset_index(drop=True)
 
-    # ZURÜCK ZUM URSPRÜNGLICHEN TARGET!
-    # Das hat in der Vergangenheit viel bessere Ergebnisse geliefert.
+    # BACK TO ORIGINAL TARGET!
+    # This delivered much better results in the past.
     df["target"] = (df["outcome"] == "tp").astype(int)
 
     features = [
@@ -42,7 +42,7 @@ def main():
     X_all = df[features].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_all = df["target"]
 
-    # ---------------- SPLIT DATEN ----------------
+    # ----------------  SPLIT DATA ----------------
     split_idx = int(len(df) * 0.8)
     test_start_time = df.iloc[split_idx]["entry_time"]
     print(f"Split Date: {test_start_time}")
@@ -53,22 +53,22 @@ def main():
 
     print(f"Train Samples: {len(X_train)}, Test Samples: {len(X_test)}")
 
-    # ---------------- BERECHNUNG scale_pos_weight ----------------
+    # ----------------  CALCULATION scale_pos_weight ----------------
     total_pos_train = y_train.sum()
     total_neg_train = len(y_train) - total_pos_train
     scale_pos_weight_value = total_neg_train / total_pos_train if total_pos_train > 0 else 1.0 
     print(f"Calculated scale_pos_weight: {scale_pos_weight_value:.2f}")
 
-    # ---------------- ROBUSTES TRAINING (Manuelle Parameter) ----------------
-    print("\nTrainiere robustes XGBoost Modell...")
+    # ----------------  ROBUST TRAINING (Manual Parameters) ----------------
+    print("\nTraining robust XGBoost model...")
 
-    # Bewährte Parameter, die wir zuvor genutzt haben (leicht angepasst)
+    # Proven parameters we used before (slightly adjusted)
     model = XGBClassifier(
-        n_estimators=500,        # Genug Bäume lernen lassen
-        learning_rate=0.03,      # Langsameres Lernen für bessere Generalisierung
-        max_depth=6,             # Nicht zu tief (verhindert Overfitting)
-        subsample=0.8,           # Robustheit
-        colsample_bytree=0.8,    # Robustheit
+        n_estimators=500,        # enough trees to learn
+        learning_rate=0.03,      # slower learning for better generalisation
+        max_depth=6,             # not too deep (prevents overfitting)
+        subsample=0.8,           # robustness
+        colsample_bytree=0.8,    # robustness
         scale_pos_weight=scale_pos_weight_value,
         random_state=42,
         n_jobs=-1
@@ -77,8 +77,8 @@ def main():
     model.fit(X_train, y_train)
     joblib.dump(model, MODEL_FILENAME)
 
-    # ---------------- PREDICTION UND BACKTEST ----------------
-    print("\nErstelle Vorhersagen...")
+    # ----------------  PREDICTION AND BACKTEST ----------------
+    print("\nCreating predictions...")
     df_test["ml_score"] = model.predict_proba(X_test)[:, 1]
 
     print(f"\n=== LONG ONLY ROBUST PERFORMANCE (2.5% TP / 1.5% SL) ===") 
@@ -107,7 +107,7 @@ def main():
             best_pf = pf
             best_thresh = thresh
 
-    print(f"\nEmpfohlener Threshold: {best_thresh:.2f} (PF: {best_pf:.2f})")
+    print(f"\nRecommended threshold: {best_thresh:.2f} (PF: {best_pf:.2f})")
     
     # Export Best Trades
     best_trades = df_test[df_test["ml_score"] >= best_thresh]

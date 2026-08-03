@@ -27,98 +27,98 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_RUB_BOT - %(mes
 logger = logging.getLogger(__name__)
 
 # --- CONFIG & CHANNELS ---
-# Hier kannst du den speziellen Rubberband-Kanal setzen
+# You can set the special Rubberband channel here
 RUBBERBAND_CHANNEL_ID = _kcfg.CH_RUBBERBAND
 
 # --- LOAD ML MODELS ---
-# RUB1-Revive (T-2026-KYT-9050-037, Operator-Entscheid Michi aus bot_results.xlsx):
-# Bot 13 fährt BEIDE Richtungen wieder auf den ORIGINALEN Legacy-Reversion-Modellen
-# und postet sie live unter dem Original-Tag RUB1 (LONG 2.48 % / SHORT 0.78 %,
-# historisch beide positiv). Das revertiert (a) den T-030-LONG-Tag-Rename (→ RUB2)
-# und (b) den PR-#9-Removal des Legacy-SHORT-Zweigs (rub2_model_SHORT-Retrain).
-# Der RUB2-Retrain wird gebencht: RUB2 bleibt im shadow_gate-Register SHADOW (beide
-# Richtungen, block E); der RUB3/RUB4-LONG-Challenger läuft unverändert als Shadow.
+# RUB1-Revive (T-2026-KYT-9050-037, operator decision Michi from bot_results.xlsx):
+# Bot 13 runs both directions again on the original legacy reversion models
+# and posts them live under the original tag RUB1 (LONG 2.48% / SHORT 0.78%,
+# historically both positive). This reverts (a) the T-030 LONG tag rename (→ RUB2)
+# and (b) the PR-#9 removal of the legacy SHORT branch (rub2_model_SHORT retrain).
+# The RUB2 retrain is benched: RUB2 remains in the shadow_gate register as SHADOW (both
+# directions, block E); the RUB3/RUB4 LONG challenger runs unchanged as shadow.
 MODEL_LONG_PATH = 'long_reversion_model.joblib'
 MODEL_SHORT_PATH = 'short_reversion_model.joblib'
-# Original-RUB1-Thresholds auf der ROHEN predict_proba der Legacy-Modelle (9 rub-
-# Features, KEIN Funding — Parität zur Vor-PR-#9-Logik, git 07c8874^). Bewusst nicht
-# neu erfunden.
+# Original RUB1 thresholds on the raw predict_proba of the legacy models (9 rub
+# features, NO funding — parity with pre-PR-#9 logic, git 07c8874^). Deliberately
+# not reinvented.
 REVERSION_THRESH_LONG = 0.75
 REVERSION_THRESH_SHORT = 0.85
-# Posting-Tag BEIDER Richtungen: das Original-RUB1. Die Legacy-Modelle tragen keine
-# Artefakt-Meta, also eine benannte Konstante (kein meta.model_id-Lookup mehr).
+# Posting tag for both directions: the original RUB1. The legacy models carry no
+# artifact metadata, so a named constant (no more meta.model_id lookup).
 RUB_TAG = "RUB1"
-# Der Tag, unter dem dieser Bot ZULETZT (RUB2-Generation, T-030…T-033) postete und
-# unter dem noch offene Trades/Cooldowns liegen können. Nur für den transitionalen
-# Dedup über den Tag-Wechsel RUB2 → RUB1 (Active-Trade-Check + Cooldown, Regel 4) —
-# damit kein Doppel-Post entsteht, solange alte RUB2-Positionen noch offen sind.
+# The tag under which this bot last posted (RUB2 generation, T-030…T-033) and
+# under which open trades/cooldowns may still exist. Only for the transitional
+# dedup across the tag switch RUB2 → RUB1 (active trade check + cooldown, rule 4) —
+# to prevent double-posting while old RUB2 positions are still open.
 RUB_LEGACY_TAG = "RUB2"
 
 MODEL_LONG = None
 MODEL_SHORT = None
 
-# RUB3-Shadow (T-2026-CU-9050-125): der rub2_model_LONG-Retrain war "nicht
-# deploybar" (kein positiver LONG-Operating-Point). Das LIVE-LONG-Bein fährt
-# weiter das Legacy-Modell und postet unter Tag "RUB2"; der Retrain-Shadow läuft
-# deshalb PARALLEL unter dem eigenen Generations-Tag "RUB3" (Operator-Entscheid
-# Michi, Regel 6) — nie live, nur überwachte Shadow-Trades, damit sich zeigt, ob
-# der saubere Retrain das Legacy-LONG schlägt (Regime-Frage §8/Teil 3). Der Tag
-# unterscheidet sich per RICHTUNG von einem etwaigen künftigen RUB3-SHORT.
+# RUB3-Shadow (T-2026-CU-9050-125): the rub2_model_LONG retrain was "not deployable"
+# (no positive LONG operating point). The LIVE LONG leg continues to run the legacy
+# model and posts under tag "RUB2"; the retrain shadow therefore runs in PARALLEL
+# under its own generation tag "RUB3" (operator decision Michi, rule 6) — never live,
+# only monitored shadow trades to show whether the clean retrain beats the legacy LONG
+# (regime question §8/part 3). The tag differs per direction from any potential future
+# RUB3-SHORT.
 SHADOW_RUB3_LONG = None
 
-# RUB4 (T-2026-CU-9050-164): funding-gegatetes RUB-LONG als SHADOW-Experiment.
-# Retrospektiv (123 geschlossene RUB-LONG-Trades) dreht das ABR1-Funding-Gate das
-# Aggregat von −2,9 %/Trade ins Plus (+1,6 %), aber nur 6/123 Trades passieren es
-# → dünn, muss forward-validiert werden. RUB4 emittiert DENSELBEN RUB3-Kandidaten,
-# aber NUR wenn fund_24h > +3 bps (ABR1-LONG-Schwelle) — eigener Tag, damit der
-# Report gegatet (RUB4) vs. ungegatet (RUB3) vergleicht. Rein additiv, nie live.
+# RUB4 (T-2026-CU-9050-164): funding-gated RUB LONG as a shadow experiment.
+# Retrospectively (123 closed RUB LONG trades), the ABR1 funding gate turns the
+# aggregate from −2.9%/trade to positive (+1.6%), but only 6/123 trades pass it
+# → thin, must be forward-validated. RUB4 emits the same RUB3 candidate,
+# but ONLY if fund_24h > +3 bps (ABR1 LONG threshold) — own tag so the
+# report can compare gated (RUB4) vs. ungated (RUB3). Purely additive, never live.
 FUNDING_GATE_LONG_BPS = 3.0
 RUB4_GATED_LONG_TAG = "RUB4"
 
 
 def funding_gate_open(fund_24h_bps) -> bool:
-    """True, wenn das ABR1-Funding-Gate offen ist (fund_24h > +3 bps). Pure →
-    DB-frei testbar. None (keine Funding-Daten) ⇒ Gate ZU (kein RUB4-Post)."""
+    """True if the ABR1 funding gate is open (fund_24h > +3 bps). Pure →
+    DB-free testable. None (no funding data) ⇒ gate closed (no RUB4 post)."""
     return fund_24h_bps is not None and fund_24h_bps > FUNDING_GATE_LONG_BPS
 
 
 def load_models():
-    """Loads the Mean Reversion models (RUB1 Legacy, beide Richtungen)."""
+    """Load the Mean Reversion models (RUB1 Legacy, both directions)."""
     global MODEL_LONG, MODEL_SHORT
     try:
         if os.path.exists(MODEL_LONG_PATH):
             MODEL_LONG = joblib.load(MODEL_LONG_PATH)
-            logger.info("✅ Rubberband LONG-Modell (Legacy RUB1) loaded successfully.")
+            logger.info("✅ Rubberband LONG model (Legacy RUB1) loaded successfully.")
         else:
-            logger.warning(f"Modell fehlt: {MODEL_LONG_PATH} — LONG-Seite aus.")
+            logger.warning(f"Model missing: {MODEL_LONG_PATH} — LONG side disabled.")
     except Exception as e:
-        logger.error(f"❌ Error loading LONG-Modell: {e} — LONG-Seite aus.")
+        logger.error(f"❌ Error loading LONG model: {e} — LONG side disabled.")
 
     try:
         if os.path.exists(MODEL_SHORT_PATH):
             MODEL_SHORT = joblib.load(MODEL_SHORT_PATH)
-            logger.info("✅ Rubberband SHORT-Modell (Legacy RUB1) loaded successfully.")
+            logger.info("✅ Rubberband SHORT model (Legacy RUB1) loaded successfully.")
         else:
-            logger.warning(f"Modell fehlt: {MODEL_SHORT_PATH} — SHORT-Seite aus.")
+            logger.warning(f"Model missing: {MODEL_SHORT_PATH} — SHORT side disabled.")
     except Exception as e:
-        logger.error(f"❌ Error loading SHORT-Modell: {e} — SHORT-Seite aus.")
+        logger.error(f"❌ Error loading SHORT model: {e} — SHORT side disabled.")
 
     global SHADOW_RUB3_LONG
     SHADOW_RUB3_LONG = shadow_gate.load_shadow_artifact("RUB3", "LONG")
     if SHADOW_RUB3_LONG is not None:
-        logger.info("👻 RUB3 (rub2_model_LONG) Shadow-Modell geladen.")
+        logger.info("👻 RUB3 (rub2_model_LONG) shadow model loaded.")
 
 
 def _emit_rub3_shadow(conn, symbol, curr_close, base_features, now):
-    """RUB3-Shadow-Emission (T-2026-CU-9050-125) — rein additiv, nie live.
+    """RUB3 shadow emission (T-2026-CU-9050-125) — purely additive, never live.
 
-    Scored denselben LONG-Vorfilter-Kandidaten wie der Live-Legacy-LONG-Pfad, aber
-    mit dem sauberen rub2_model_LONG-Retrain (15 Features = 9 rub + 6 Funding,
-    Funding as-of zum Candle-Close wie die SHORT-Seite/der Replay). Threshold ist
-    null (kein deploybarer Operating-Point) → jeder Kandidat wird als überwachter
-    Shadow-Trade unter Tag ``RUB3`` getrackt (kein Cornix). Geometrie = dieselbe
-    LONG-HVN/S-R-Konstruktion wie der Live-Pfad (bewusst dupliziert). Fehler
-    bleiben gekapselt — der Live-RUB-Pfad darf nie betroffen sein.
+    Scores the same LONG prefilter candidate as the live legacy LONG path, but
+    with the clean rub2_model_LONG retrain (15 features = 9 rub + 6 funding,
+    funding as-of the candle close like the SHORT side/replay). Threshold is
+    null (no deployable operating point) → each candidate is tracked as a monitored
+    shadow trade under tag ``RUB3`` (no Cornix). Geometry = same LONG HVN/S-R
+    construction as the live path (deliberately duplicated). Errors remain
+    encapsulated — the live RUB path must never be affected.
     """
     if not shadow_gate.shadow_posting_enabled() or not shadow_gate.is_shadow("RUB3", "LONG"):
         return
@@ -142,9 +142,9 @@ def _emit_rub3_shadow(conn, symbol, curr_close, base_features, now):
         if not targets:
             return
         wrote = post_shadow_ai_signal(conn, "RUB3", symbol, "LONG", prob, entry1, entry2, sl, targets, n_show=3)
-        # RUB4-Funding-Gate-Variante: dasselbe Setup, aber NUR wenn fund_24h > +3 bps
-        # (feats["fund_24h"] ist bereits berechnet). Testet, ob das Gate die
-        # RUB-LONG-Seite rettet. Eigener Tag, fail-safe zu Stille wenn nicht SHADOW.
+        # RUB4 funding gate variant: same setup, but ONLY if fund_24h > +3 bps
+        # (feats["fund_24h"] is already computed). Tests whether the gate
+        # saves the RUB LONG side. Own tag, fail-safe to silence if not SHADOW.
         if funding_gate_open(feats.get("fund_24h")) and shadow_gate.is_shadow(RUB4_GATED_LONG_TAG, "LONG"):
             if post_shadow_ai_signal(
                 conn, RUB4_GATED_LONG_TAG, symbol, "LONG", prob, entry1, entry2, sl, targets, n_show=3
@@ -153,20 +153,20 @@ def _emit_rub3_shadow(conn, symbol, curr_close, base_features, now):
         if wrote:
             conn.commit()
     except Exception as e:
-        logger.warning(f"RUB3 Shadow für {symbol} fehlgeschlagen: {e}")
+        logger.warning(f"RUB3 shadow for {symbol} failed: {e}")
         try:
             conn.rollback()
         except Exception:
             pass
 
 
-# --- HAUPT CHECKER FUNKTION ---
+# --- MAIN CHECKER FUNCTION ---
 def check_rubberband_conditions():
-    # Entkoppelter Guard (PR-#9-Muster, bewahrt): ein fehlendes Legacy-Modell einer
-    # Richtung darf die andere nicht mit abschalten. Die Richtungs-Guards im Loop
-    # überspringen die nicht ladbare Seite einzeln (MODEL_LONG / MODEL_SHORT is None).
+    # Decoupled guard (PR-#9 pattern, preserved): a missing legacy model for one
+    # direction must not shut down the other. Direction guards in the loop
+    # skip the non-loadable side individually (MODEL_LONG / MODEL_SHORT is None).
     if not (MODEL_LONG or MODEL_SHORT):
-        logger.error("Modelle not loaded. Skipping Scan.")
+        logger.error("Models not loaded. Skipping scan.")
         return
 
     conn = get_db_connection()
@@ -178,18 +178,18 @@ def check_rubberband_conditions():
         return
 
     now = datetime.datetime.now(datetime.timezone.utc)
-    logger.info(f"🔍 Starting Rubberband (RUB1) Scan für {len(coins)} Coins...")
+    logger.info(f"🔍 Starting Rubberband (RUB1) scan for {len(coins)} coins...")
 
     for symbol in coins:
         try:
-            # USDT Filter (Verhindert Error for USDC Paaren)
+            # USDT filter (prevents error for USDC pairs)
             if 'USDT_' in symbol:
                 continue
 
-            # 1. 90 Tage Daten für die Trendberechnung holen — Erkennung läuft auf
-            # GESCHLOSSENEN Kerzen (R1). core.candles mit include_forming=False ersetzt
-            # den bisherigen `open_time < date_trunc('hour', NOW())`-Filter (P1.19):
-            # der zentrale Closed-Cutoff ist für 1h identisch (period_start = Stunden-Floor).
+            # 1. Fetch 90 days of data for trend calculation — detection runs on
+            # closed candles (R1). core.candles with include_forming=False replaces
+            # the previous `open_time < date_trunc('hour', NOW())` filter (P1.19):
+            # the central closed-cutoff is identical for 1h (period_start = hour floor).
             df_90d = read_candles(
                 conn,
                 symbol,
@@ -201,9 +201,9 @@ def check_rubberband_conditions():
             if len(df_90d) < 50:
                 continue
 
-            # 2. Letzte GESCHLOSSENE Indikator-Kerze — close mitziehen, damit curr_close
-            # aus DERSELBEN Kerze stammt wie die Indikatoren (P1.19). include_forming=False
-            # ersetzt den closed-candle-Filter; open_time nur fürs Ordering, danach raus.
+            # 2. Last closed indicator candle — include close so curr_close
+            # comes from the SAME candle as the indicators (P1.19). include_forming=False
+            # replaces the closed-candle filter; open_time only for ordering, removed after.
             df_ind = read_indicators(
                 conn,
                 symbol,
@@ -228,18 +228,18 @@ def check_rubberband_conditions():
                 continue
             ind = df_ind.iloc[-1].drop("open_time").to_dict()
 
-            # --- TRENDBERECHNUNG ---
-            # Regression + Vorfilter + Feature-Bau leben seit dem RUB2-Adapter
-            # (2026-07-06) in core/rub_features — EINE Quelle für Bot UND
-            # Walkforward-Replay (X-R1-Regel), wie find_break_retest_setups bei ABR.
+            # --- TREND CALCULATION ---
+            # Regression + prefilter + feature building have lived in core/rub_features
+            # since the RUB2 adapter (2026-07-06) — ONE source for both bot and
+            # walkforward replay (X-R1 rule), like find_break_retest_setups in ABR.
             df_90d['ts'] = pd.to_datetime(df_90d['open_time'], utc=True).apply(lambda x: x.timestamp())
             ts_values = df_90d['ts'].values
             close_values = df_90d['close'].values.astype(float)
 
-            # P1.19: curr_close aus der geschlossenen Indikator-Kerze (ind['close']),
-            # nicht aus dem 90d-Preis-Array — so mischen dist_to_trend + alle ML-Features
-            # nicht mehr Live-Preis mit Partial-Indikatoren. Fallback auf die (nun
-            # ebenfalls geschlossene) letzte 90d-Kerze, falls close NaN/fehlt.
+            # P1.19: curr_close from the closed indicator candle (ind['close']),
+            # not from the 90d price array — so dist_to_trend + all ML features
+            # no longer mix live price with partial indicators. Fallback to the (now
+            # also closed) last 90d candle if close is NaN/missing.
             try:
                 curr_close = float(ind['close'])
                 if not np.isfinite(curr_close):
@@ -249,13 +249,13 @@ def check_rubberband_conditions():
 
             dist_to_trend_pct, slope_pct_per_day = rub_trend(ts_values, close_values, curr_close)
 
-            # --- INDIKATOREN AUSLESEN ---
+            # --- READ INDICATORS ---
             def get_f(key, default=0.0, ind=ind):
                 val = ind.get(key)
-                # FIX: Vorher wurde nur auf `None` geprüft. pandas/postgres können aber
-                # NaN/Inf liefern (insbesondere bei frischen Coins mit wenig Historie).
-                # Wenn diese in die ML-Features fließen, crasht predict_proba oder
-                # liefert unbrauchbare Werte. Jetzt: auch NaN/Inf → default.
+                # FIX: Previously only checked for `None`. But pandas/postgres can
+                # deliver NaN/Inf (especially for fresh coins with little history).
+                # If these flow into ML features, predict_proba crashes or
+                # delivers unusable values. Now: also NaN/Inf → default.
                 try:
                     if val is None:
                         return default
@@ -276,12 +276,12 @@ def check_rubberband_conditions():
             dc_lower = get_f('donchian_lower_20', curr_close)
             dc_upper = get_f('donchian_upper_20', curr_close)
 
-            # --- VORFILTERUNG (RUBBERBAND BEDINGUNGEN) — geteilte Quelle ---
+            # --- PREFILTERING (RUBBERBAND CONDITIONS) — shared source ---
             event_type = rub_event_type(dist_to_trend_pct, rsi, tsi_line, curr_close, dc_lower, dc_upper)
             if not event_type:
                 continue
 
-            # --- ML FEATURES BERECHNEN — geteilte Quelle ---
+            # --- CALCULATE ML FEATURES — shared source ---
             base_features = build_rub_features(
                 dist_to_trend_pct,
                 slope_pct_per_day,
@@ -297,25 +297,25 @@ def check_rubberband_conditions():
 
             is_long = event_type == "REVERSION_UP"
             direction = "LONG" if is_long else "SHORT"
-            # Posting-Tag BEIDER Richtungen: das Original-RUB1 (T-2026-KYT-9050-037
-            # Revive). Beide Seiten fahren wieder das Legacy-Reversion-Modell ohne
-            # Artefakt-Meta, also eine einzige benannte Konstante — kein richtungs-
-            # abhängiger meta.model_id-Lookup mehr (der galt der RUB2-SHORT-Generation,
-            # jetzt gebencht). Der RUB3/RUB4-LONG-Challenger postet weiter unter eigenem
-            # Tag (siehe _emit_rub3_shadow) und kollidiert damit nicht mit RUB1.
+            # Posting tag for both directions: the original RUB1 (T-2026-KYT-9050-037
+            # revive). Both sides run the legacy reversion model again without
+            # artifact metadata, so a single named constant — no direction-dependent
+            # meta.model_id lookup anymore (that applied to the RUB2-SHORT generation,
+            # now benched). The RUB3/RUB4 LONG challenger posts under its own
+            # tag (see _emit_rub3_shadow) and doesn't collide with RUB1.
             module_tag = RUB_TAG
 
-            # 1. Aktiver Trade Check (T-2026-CU-9050-043) — prüft, ob für genau dieses
-            #    Modul/Coin/Richtung bereits ein nicht-geschlossener Trade läuft.
-            #    Der Cooldown darunter ist eine FREQUENZ-Sperre (4h), kein Positions-
-            #    Guard: ein RUB-Trade läuft bei Mean-Reversion regelmäßig länger als
-            #    sein Cooldown, und ohne diesen Check öffnete das Folgesignal eine
-            #    ZWEITE Live-Position neben der ersten. Muster: 11_ai_mis_bot.py.
+            # 1. Active trade check (T-2026-CU-9050-043) — checks whether for this exact
+            #    module/coin/direction a non-closed trade is already running.
+            #    The cooldown underneath is a frequency lock (4h), not a position
+            #    guard: a RUB trade in mean reversion regularly runs longer than
+            #    its cooldown, and without this check the next signal would open a
+            #    SECOND live position beside the first. Pattern: 11_ai_mis_bot.py.
             #
-            #    Der Check läuft über den Tag, und der Tag wechselt mit dem RUB1-Revive
-            #    (RUB2 → RUB1, T-037). Ohne den Alt-Tag im IN würde eine noch offene
-            #    RUB2-Position denselben Coin/Direction nicht mehr blocken → möglicher
-            #    Doppel-Post über den Tag-Wechsel (Regel 4).
+            #    The check runs on the tag, and the tag switches with the RUB1 revive
+            #    (RUB2 → RUB1, T-037). Without the old tag in the IN, an still-open
+            #    RUB2 position would no longer block the same coin/direction → possible
+            #    double-post across the tag switch (rule 4).
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -327,28 +327,28 @@ def check_rubberband_conditions():
                 trade_exists = cur.fetchone()
 
             if trade_exists:
-                continue  # Trade läuft live im AI Monitor
+                continue  # Trade is running live in AI Monitor
 
-            # 2. FIX: Cooldown-Check VOR der teuren ML-Prediction.
-            # Vorher lief predict_proba auch dann, wenn der Coin noch im Cooldown war
-            # (bei 500 Coins × mehreren Event-Typen = viel verschwendete CPU).
-            # Der Shadow-Log unterhalb bleibt erhalten — er dokumentiert alle
-            # potenziellen Trades, auch die abgelehnten. Beim Skip durch Cooldown
-            # loggen wir weiterhin fürs Monitoring.
-            # Transitionaler Dedup (T-037 Revive): der Cooldown-Key ist der Tag, und der
-            # wechselt mit dem RUB1-Revive (RUB2 → RUB1). Eine frische RUB2-Cooldown-Row
-            # würde ein RUB1-Signal auf demselben Coin sonst nicht mehr sperren. Also
-            # zusätzlich gegen den Alt-Tag prüfen. Dieselbe Transitional-Logik trägt
-            # der Active-Trade-Check oben — beide Sperren müssen den Generationswechsel
-            # überstehen, sonst reißt der Schutz an der jeweils anderen Stelle auf.
+            # 2. FIX: Cooldown check BEFORE the expensive ML prediction.
+            # Previously predict_proba ran even when the coin was still on cooldown
+            # (with 500 coins × multiple event types = a lot of wasted CPU).
+            # The shadow log below is preserved — it documents all potential
+            # trades, including rejected ones. When skipping due to cooldown
+            # we still log for monitoring.
+            # Transitional dedup (T-037 revive): the cooldown key is the tag, and it
+            # switches with the RUB1 revive (RUB2 → RUB1). A fresh RUB2 cooldown row
+            # would no longer block a RUB1 signal on the same coin. So
+            # check additionally against the old tag. The same transitional logic
+            # supports the active trade check above — both locks must survive the
+            # generation switch, otherwise the protection breaks at the other place.
             cooldown_tags = [module_tag] if module_tag == RUB_LEGACY_TAG else [module_tag, RUB_LEGACY_TAG]
             if any(check_cooldown(conn, t, symbol, direction, 4) for t in cooldown_tags):
-                logger.debug(f"RUB1 Prediction für {symbol} {direction} im Cooldown — skip.")
+                logger.debug(f"RUB1 prediction for {symbol} {direction} on cooldown — skip.")
                 continue
 
-            # Prediction (teuer, erst after Cooldown-Check). Beide Richtungen fahren das
-            # ORIGINALE Legacy-Reversion-Modell auf den 9 rub-Features (KEIN Funding) mit
-            # ihrem Original-Threshold — Parität zur Vor-PR-#9-RUB1-Logik (git 07c8874^).
+            # Prediction (expensive, only after cooldown check). Both directions run the
+            # original legacy reversion model on the 9 rub features (NO funding) with
+            # their original threshold — parity with pre-PR-#9 RUB1 logic (git 07c8874^).
             if is_long:
                 if MODEL_LONG is None:
                     continue
@@ -362,16 +362,16 @@ def check_rubberband_conditions():
 
             logger.info(f"RUB1 Trigger: {symbol} {direction} | ML-Conf: {prob:.1%} (Thresh: {threshold:.2f})")
 
-            # RUB3-Shadow (T-2026-CU-9050-125): denselben LONG-Kandidaten mit dem
-            # sauberen Retrain scoren + überwacht tracken, unabhängig vom Live-Pfad.
+            # RUB3 shadow (T-2026-CU-9050-125): score the same LONG candidate with the
+            # clean retrain + track it monitored, independent of the live path.
             if is_long:
                 _emit_rub3_shadow(conn, symbol, curr_close, base_features, now)
 
             # --- SHADOW MODE LOGGING ---
-            # Direction-Gate ENTFERNT (Operator 2026-07-06): LONG handelt wieder
-            # (Audit-Batch hatte LONG nach Report 14 D.5 in den Shadow gelegt).
+            # Direction gate removed (operator 2026-07-06): LONG trades again
+            # (audit batch had placed LONG in shadow per report 14 D.5).
             if prob < threshold:
-                # Ablegen in Master Tabelle (als abgelehnter Trade)
+                # Store in master table (as rejected trade)
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -383,7 +383,7 @@ def check_rubberband_conditions():
                 conn.commit()
                 continue
 
-            # 🔥 TRADE AUSFÜHREN
+            # 🔥 EXECUTE TRADE
             logger.info(f"🔥 RUB1 TRADE EXECUTE: {symbol} {direction} (ML {prob:.1%})")
 
             entry1 = curr_close
@@ -405,10 +405,10 @@ def check_rubberband_conditions():
                 )
                 t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
-            # FIX: Vorher `while len(targets) < 20: append last*1.02` → extrapolierte
-            # bis +48% über Entry, bei Mean-Reversion-Bots absurd. Jetzt nur noch:
-            # echte Zonen nehmen, und ggf. EIN 5%-Target anhängen wenn das letzte
-            # zu nah am Entry liegt.
+            # FIX: Previously `while len(targets) < 20: append last*1.02` → extrapolated
+            # up to +48% above entry, absurd for mean-reversion bots. Now only:
+            # take real zones, and if needed add ONE 5% target if the last one
+            # is too close to entry.
             targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
             # P2.31: publish AND track exactly the same targets. The Cornix block
             # shows the first n_show TPs; the AI monitor (8_ai_trade_monitor) scores
@@ -416,12 +416,12 @@ def check_rubberband_conditions():
             # made the monitor score phantom TPs the subscriber never saw.
             n_show = 3
 
-            # Fleet-Lifecycle-Gate (T-2026-KYT-9050-033) an der Emissions-Stelle.
-            # module_tag == RUB1 ist im Register explizit LIVE (T-037, Defense-in-Depth)
-            # ⇒ route_legacy_leg gibt LEG_LIVE zurück und der Bot postet wie unten (Cornix
-            # + ai_signals). Die gebenchte RUB2-Generation bleibt daneben SHADOW; der
-            # RUB3/RUB4-LONG-Challenger unverändert Shadow (oben, _emit_rub3_shadow).
-            # Rein additiv (Regel 4).
+            # Fleet lifecycle gate (T-2026-KYT-9050-033) at the emission point.
+            # module_tag == RUB1 is explicitly LIVE in the register (T-037, defense-in-depth)
+            # ⇒ route_legacy_leg returns LEG_LIVE and the bot posts as below (Cornix
+            # + ai_signals). The benched RUB2 generation remains SHADOW; the
+            # RUB3/RUB4 LONG challenger unchanged shadow (above, _emit_rub3_shadow).
+            # Purely additive (rule 4).
             _route = route_legacy_leg(
                 conn, module_tag, direction, symbol, prob, entry1, entry2, sl, targets, n_show=n_show
             )
@@ -447,17 +447,17 @@ def check_rubberband_conditions():
             lines += [f"💸 Stop Loss: $ {sl:.8f}", f"🧠 Trade idea generated by AI module {module_tag}"]
             cornix_msg = "\n".join(lines)
 
-            # HTML für Chart
+            # HTML for chart
             emoji = "🚀 RUBBERBAND MEAN REVERSION LONG" if is_long else "💥 RUBBERBAND MEAN REVERSION SHORT"
             dist_str = f"{dist_to_trend_pct * 100:+.2f}%"
 
-            # FIX Doppel-Post (2026-07-06, gleiche Fehlerklasse wie Bot 18/7):
-            # Chart-Caption ohne eingebetteten Cornix-Block.
+            # FIX double-post (2026-07-06, same error class as bots 18/7):
+            # Chart caption without embedded Cornix block.
             html_caption = f"""<pre><b>{emoji}</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n<b>→ Direction: {direction}</b>\n<b>→ Confidence: <b>{prob:.1%}</b> (Thresh {threshold})</b>\n<b>→ Price: {curr_close:.4f}</b>\n<b>→ Trend Distance: <b>{dist_str}</b></b>\n<b>→ Time: {now.strftime('%H:%M')} UTC | Modul: {module_tag}</b></pre>"""
 
             chart_buf = generate_minichart_image(symbol, minutes=240)
             with conn.cursor() as cur:
-                # Cornix Channel (Hier nutzt er den speziellen Rubberband Channel!)
+                # Cornix Channel (Here it uses the special Rubberband channel!)
                 cur.execute(
                     "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
                     (RUBBERBAND_CHANNEL_ID, cornix_msg),
@@ -513,9 +513,9 @@ def check_rubberband_conditions():
 
 
 def main():
-    logger.info("=== 🎯 AI RUBBERBAND BOT (RUB1) GESTARTET ===")
+    logger.info("=== 🎯 AI RUBBERBAND BOT (RUB1) STARTED ===")
 
-    # Modelle laden
+    # Load models
     load_models()
 
     while True:
@@ -524,10 +524,10 @@ def main():
         # P3.10: comments corrected to match code — fires at minute 10 (not 12).
         if now.minute == 10:
             check_rubberband_conditions()
-            # Schlafen, damit er nicht mehrfach in Minute 10 triggert
+            # Sleep so it doesn't trigger multiple times in minute 10
             time.sleep(60)
         else:
-            # Checkt alle 10 Sekunden, ob Minute 10 erreicht ist
+            # Check every 10 seconds if minute 10 is reached
             time.sleep(10)
 
 
@@ -535,4 +535,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

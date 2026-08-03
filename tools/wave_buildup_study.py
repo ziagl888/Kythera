@@ -1,10 +1,10 @@
-"""tools/wave_buildup_study.py — Wave-Buildup / Realized-vs-Unrealized study
-(T-2026-KYT-9050-041, Phase A — follow-up to the T-035 wave-exit overlay).
+"""tools/wave_buildup_study.py -- Wave-Buildup / Realized-vs-Unrealized study
+(T-2026-KYT-9050-041, Phase A -- follow-up to the T-035 wave-exit overlay).
 
 Question (operator, Michi)
 --------------------------
 The curated bots hold many trades open for days; losses get realised in full
-while gains are left on the table — Cornix routinely shows large UNREALISED
+while gains are left on the table -- Cornix routinely shows large UNREALISED
 profit against a small REALISED result. Does the historical record confirm that
 asymmetry, and would a rule that (a) sits out after a big aggregate wave
 (cooldown) or (b) closes the evaporating peak (trailing) actually help?
@@ -16,7 +16,7 @@ retention), this study needs NO immutable Cornix geometry: it takes the RECORDED
 entry / open_time / close_time / close_price from `closed_ai_signals` as ground
 truth and marks each open position to market against candle prices. That lets it
 run the FULL history (Feb->now) at the cost of not modelling intra-trade DCA/TP
-laddering — a first-order reconstruction of the wave the operator watches.
+laddering -- a first-order reconstruction of the wave the operator watches.
 
   * Trades: deduped on the Report-14 survivor key (symbol, model, dir, open_time)
     to dodge the 357k-duplicate LEGACY re-close rows. Model set = family prefixes
@@ -29,25 +29,25 @@ laddering — a first-order reconstruction of the wave the operator watches.
     FULL SIZE (no intra-trade TP-locking -> slightly overstates amplitude; peak
     TIMING is unaffected, which is what the wave hypothesis is about).
   * Wick-aware peak: favourable extreme (high for LONG, low for SHORT) over the
-    trade's life — the true unrealised top that evaporates under hold.
+    trade's life -- the true unrealised top that evaporates under hold.
 
 Findings it emits (all read-only, honest caveats in the report)
 ---------------------------------------------------------------
   C1  Asymmetry: mean realised vs mean (wick) peak vs giveback distribution,
       per bot/direction; share of LOSERS that were once deep in profit.
   C2  Cooldown probe: expectancy of trades OPENED N days after a big aggregate
-      wave peak, vs baseline — tests the "sit out 3-5 days" idea.
+      wave peak, vs baseline -- tests the "sit out 3-5 days" idea.
   CEIL Capture ceiling: hold (actual) vs perfect-peak (hindsight upper bound) vs
       a mechanical per-trade trailing-close sweep, on the leveraged SUM AND the
       risk-adjusted view (per-trade Sharpe + fixed-fraction compounding equity +
       MaxDD). The risk-adjusted view is the one that matches a real account.
 
-Betriebsregeln (Live-VPS!): DB strictly read-only, BELOW_NORMAL priority,
+Operating rules (Live VPS!): DB strictly read-only, BELOW_NORMAL priority,
 coin-windowed reads, --allow-high-cpu to skip the headroom abort. Output ONLY to
 staging_models/replay/.
 
-Beispiel
---------
+Example
+-------
   python tools/wave_buildup_study.py --models AIM,SRA --allow-high-cpu
 """
 
@@ -72,7 +72,7 @@ CLAMP = -100.0  # leveraged loss floor (margin wiped)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PURE HELPERS (DB-free — pinned in backtest/test_wave_buildup_study.py)
+# PURE HELPERS (DB-free -- pinned in backtest/test_wave_buildup_study.py)
 # ─────────────────────────────────────────────────────────────────────────────
 def signed_move_pct(direction: str, entry: float, close: float) -> float | None:
     """Direction-corrected unlevered price move in % (LONG +, SHORT −)."""
@@ -101,7 +101,7 @@ def trail_capture(fav: np.ndarray, adv: np.ndarray, x: float, lev: float, hold_r
     trailing-stop level; if it never triggers, the trade is HELD to its recorded
     close → (hold_ru, hold_rl). Causal: only past candles inform each step.
     Optimism note: peak and trigger are evaluated on the same candle (peak-first),
-    so a single wide candle can both set the peak and trigger — a finer tape (5m /
+    so a single wide candle can both set the peak and trigger -- a finer tape (5m /
     10s resolver, the T-035 Phase-2 harness) tightens this.
     """
     peak = -1e9
@@ -436,23 +436,23 @@ def render_md(meta: dict) -> str:
     c1 = a["c1_asymmetry"]["ALL"]
     L = []
     ap = L.append
-    ap("# Wave-Buildup — Realized-vs-Unrealized (Phase A, T-2026-KYT-9050-041)\n")
+    ap("# Wave-Buildup -- Realised-vs-Unrealised (Phase A, T-2026-KYT-9050-041)\n")
     ap(
         f"_generated {meta['generated_at']} · read-only · models {'+'.join(s['models'])} · "
         f"{s['lev']:.0f}x assumed · window {s['span'][0]} → {s['span'][1]}_\n"
     )
     ap(
-        "**Was das ist:** Follow-up zu T-035. Rekonstruiert die aggregierte offene **unrealized**-Welle "
-        "und die realized-Ergebnisse der kuratierten S/R-AI-Bots (AIM, SRA) über die **volle Historie** "
-        "aus den RECORDED Trades (`closed_ai_signals`, dedup Report-14-Survivor-Key) + Kerzen — **ohne** "
-        "die immutable Cornix-Geometrie (die T-035 auf ~7d Outbox-Retention deckelte). Preis dafür: kein "
-        "intra-trade DCA/TP-Laddering modelliert (First-Order-Welle). Hebel **pauschal 20x angenommen** "
-        "(vor ~Juli nicht persistiert; Muster ist hebel-agnostisch). Realized = recorded entry→close-Move.\n"
+        "**What this is:** Follow-up to T-035. Reconstructs the aggregated open **unrealised** wave "
+        "and realised outcomes of curated S/R AI bots (AIM, SRA) over the **full history** from "
+        "RECORDED trades (`closed_ai_signals`, dedup report-14-survivor-key) + candles -- **without** "
+        "the immutable Cornix geometry (which capped T-035 to ~7d outbox retention). Price: no intra-trade "
+        "DCA/TP laddering modelled (first-order wave). Leverage **assumed uniform 20x** (not persisted before "
+        "~July; pattern is leverage-agnostic). Realised = recorded entry→close move.\n"
     )
-    ap(f"Trades gescort: **{a['n_scored']}** · ohne Kerzen: {s['no_candle']}.\n")
+    ap(f"Trades scored: **{a['n_scored']}** · without candles: {s['no_candle']}.\n")
 
-    ap("## C1 — Realized-vs-Unrealized-Asymmetrie (die Prämisse)\n")
-    ap("| Segment | n | mean realized% | mean **peak**% (wick) | **giveback** | WR% | giveback p50/p90/p95 |")
+    ap("## C1 -- Realised-vs-Unrealised Asymmetry (the premise)\n")
+    ap("| Segment | n | mean realised% | mean **peak**% (wick) | **giveback** | WR% | giveback p50/p90/p95 |")
     ap("|---|--:|--:|--:|--:|--:|--:|")
     for key, st in a["c1_asymmetry"].items():
         if not st:
@@ -464,43 +464,42 @@ def render_md(meta: dict) -> str:
         )
     lp = a["losers_in_profit_pct"]
     ap(
-        f"\n**Kern der Beobachtung, belegt:** von den Verlust-Trades standen **{lp[10]}% mal ≥+10 %**, "
-        f"{lp[25]}% ≥+25 %, **{lp[50]}% ≥+50 %**, {lp[100]}% ≥+100 %, {lp[200]}% ≥+200 %** (leveraged, wick) "
-        "im Plus — und schlossen dann im Verlust. Gewinne verdampfen, Verluste werden voll realisiert. "
-        f"Ø-Trade: realized {c1['mean_real_lev']:+}% vs Peak {c1['mean_peak_lev']:+}% → **{c1['mean_giveback']:+}% "
-        "Giveback**.\n"
+        f"\n**Core observation, proven:** of the losing trades, **{lp[10]}% were once at ≥+10%**, "
+        f"{lp[25]}% at ≥+25%, **{lp[50]}% at ≥+50%**, {lp[100]}% at ≥+100%, {lp[200]}% at ≥+200%** "
+        "(leveraged, wick) in profit -- then closed at a loss. Gains evaporate, losses are fully realised. "
+        f"Avg trade: realised {c1['mean_real_lev']:+}% vs peak {c1['mean_peak_lev']:+}% → **{c1['mean_giveback']:+}% "
+        "giveback**.\n"
     )
     w = a["wave"]
     ap(
-        f"Aggregat-Welle: max Σ offene unrealized **{w['max_open_unrealised']:+.0f}** Margin-Einheiten "
-        f"({w['max_at']}), bis **{w['max_concurrent_open']}** gleichzeitig offen (Ø {w['mean_concurrent_open']}).\n"
+        f"Aggregate wave: max Σ open unrealised **{w['max_open_unrealised']:+.0f}** margin units "
+        f"({w['max_at']}), up to **{w['max_concurrent_open']}** open simultaneously (avg {w['mean_concurrent_open']}).\n"
     )
 
     cd = a["c2_cooldown"]
-    ap("## C2 — Cooldown-Probe: Expectancy N Tage NACH einem großen Wellen-Peak\n")
-    ap(f"Baseline (alle) real_unlev **{cd['baseline_real_unlev']:+.3f}%** · {cd['n_peak_events']} Peak-Events (p85).\n")
-    ap("| Kohorte | n | real_unlev% | Δ vs Baseline |")
+    ap("## C2 - Cooldown probe: expectancy N days AFTER a large wave peak\n")
+    ap(f"Baseline (all) real_unlev **{cd['baseline_real_unlev']:+.3f}%** · {cd['n_peak_events']} peak events (p85).\n")
+    ap("| Cohort | n | real_unlev% | Delta vs baseline |")
     ap("|---|--:|--:|--:|")
     for n, co in cd["cohorts"].items():
-        ap(f"| {n} Tag(e) nach Peak | {co['n']} | {co['real_unlev']:+.3f} | {co['delta_vs_base']:+.3f} |")
+        ap(f"| {n} day(s) after peak | {co['n']} | {co['real_unlev']:+.3f} | {co['delta_vs_base']:+.3f} |")
     ap(
-        "\n**Verdikt C2:** nur die ersten ~24h nach einem Peak sind messbar schwächer; Tag 2–7 sind NICHT "
-        "schlechter (eher besser). Die „nach großer Welle 3–5 Tage aussetzen“-Idee hätte historisch keine "
-        "Expectancy gerettet, sondern gute Tage verschenkt. **Der Hebel liegt auf der Close-Seite, nicht "
-        "beim Re-Entry-Timing.**\n"
+        "\n**C2 verdict:** only the first ~24h after a peak are measurably weaker; days 2-7 are NOT worse "
+        "(rather better). The 'sit out 3-5 days after a big wave' idea would not have saved expectancy "
+        "historically, only squandered good days. **The lever is on the close side, not re-entry timing.**\n"
     )
 
     ce = a["ceiling"]
-    ap("## CEIL — Capture-Ceiling & risiko-adjustierte Auflösung\n")
+    ap("## CEIL -- capture ceiling & risk-adjusted resolution\n")
     ap(
-        f"HOLD (actual) Σ lev **{ce['hold_sum_lev']:+.0f}** · PERFECT-PEAK (Hindsight-Obergrenze) "
+        f"HOLD (actual) Σ lev **{ce['hold_sum_lev']:+.0f}** · PERFECT-PEAK (hindsight upper bound) "
         f"Σ lev {ce['perfect_peak_sum_lev']:+.0f} (~{ce['perfect_peak_sum_lev'] / max(ce['hold_sum_lev'], 1):.1f}× "
-        "hold, unerreichbar).\n"
+        "hold, unreachable).\n"
     )
-    ap("| Trailing X% | Σ lev | mean lev% | vs hold | % der Ceiling | **Sharpe lev** | mean unlev% | trig% |")
+    ap("| Trailing X% | Σ lev | mean lev% | vs hold | % of ceiling | **Sharpe lev** | mean unlev% | trig% |")
     ap("|--:|--:|--:|--:|--:|--:|--:|--:|")
     ap(
-        f"| **hold** | {ce['hold_sum_lev']:+.0f} | {c1['mean_real_lev']:+} | — | — | "
+        f"| **hold** | {ce['hold_sum_lev']:+.0f} | {c1['mean_real_lev']:+} | -- | -- | "
         f"**{ce['hold_sharpe_lev']:+}** | {ce['hold_mean_unlev']:+.3f} | 0 |"
     )
     for x in X_SWEEP:
@@ -510,16 +509,16 @@ def render_md(meta: dict) -> str:
             f"{sw['pct_of_ceiling']}% | **{sw['sharpe_lev']:+}** | {sw['mean_unlev']:+.3f} | {sw['trig_pct']} |"
         )
     ap(
-        "\n**Die Umkehr:** auf der leveraged **Summe** schlägt Trailing hold kaum/nicht (die Summe wird von "
-        "wenigen uncapped Fat-Tail-Treffern dominiert, Trailing kappt die — bestätigt T-035). **Risiko-"
-        f"adjustiert dreht es:** per-Trade **Sharpe lev {ce['hold_sharpe_lev']:+} (hold) → "
-        f"{ce['sweep'][0.10]['sharpe_lev']:+} (Trailing 10 %)** — Trailing ~halbiert die Streuung und hebt "
-        f"den Mittelwert. Unlevered: mean {ce['hold_mean_unlev']:+.3f}%/Trade (hold, ~breakeven) → "
-        f"{ce['sweep'][0.10]['mean_unlev']:+.3f}%/Trade (Trailing 10 %).\n"
+        "\n**The reversal:** on the leveraged **sum** trailing barely/never beats hold (the sum is dominated by "
+        "a few uncapped fat-tail hits, trailing clips those -- confirmed T-035). **Risk-adjusted it flips:** "
+        f"per-trade **Sharpe lev {ce['hold_sharpe_lev']:+} (hold) → "
+        f"{ce['sweep'][0.10]['sharpe_lev']:+} (trailing 10%)** -- trailing ~halves the dispersion and lifts "
+        f"the mean. Unlevered: mean {ce['hold_mean_unlev']:+.3f}%/trade (hold, ~breakeven) → "
+        f"{ce['sweep'][0.10]['mean_unlev']:+.3f}%/trade (trailing 10%).\n"
     )
 
-    ap("### Kompoundierende Equity (fixe Einsatz-Fraktion, chronologisch nach close) — das reale Konto\n")
-    ap("| Einsatz/Trade | HOLD final | HOLD MaxDD | Trailing 10% final | Trailing 10% MaxDD |")
+    ap("### Compounding equity (fixed bet fraction, sequential by close) -- the real account\n")
+    ap("| Bet per trade | HOLD final | HOLD MaxDD | Trailing 10% final | Trailing 10% MaxDD |")
     ap("|--:|--:|--:|--:|--:|")
     for f in ce["compounding"]["f"]:
         h = ce["compounding"]["hold"][f]
@@ -529,12 +528,12 @@ def render_md(meta: dict) -> str:
             f"×{tr['final_mult']:.3g} | **{tr['maxdd_pct']}%** |"
         )
     ap(
-        "\n**Fazit Phase A:** (1) Die Asymmetrie ist real und groß — Prämisse bestätigt. (2) Die Cooldown/"
-        "Re-Entry-Idee wird von den Daten NICHT gestützt. (3) Ein enger **Trailing-Close (10–15 %)** ist "
-        "risiko-adjustiert und kompoundierend **klar überlegen** (höherer Sharpe, mehr Compounding, ~6× "
-        "kleinerer Drawdown) — T-035s „hold gewinnt“ war ein Artefakt der Leveraged-**Summe**. Der nächste "
-        "Schritt ist die Validierung auf dem T-035-High-Fidelity-Harness (5m-Wick + 10s-Resolver, Sharpe/"
-        "MaxDD statt Summe), inkl. der entry2-als-SL-Frage.\n"
+        "\n**Phase A conclusion:** (1) The asymmetry is real and large -- premise confirmed. (2) The "
+        "cooldown/re-entry idea is NOT supported by the data. (3) A tight **trailing close (10-15%)** is "
+        "risk-adjusted and compounding **clearly superior** (higher Sharpe, more compounding, ~6× smaller "
+        "drawdown) -- T-035s 'hold wins' was an artefact of leveraged **sum**. Next step is validation on the "
+        "T-035 high-fidelity harness (5m wick + 10s resolver, Sharpe/MaxDD vs sum), including the "
+        "entry2-as-SL question.\n"
     )
 
     ap("## Ehrliche Grenzen\n")
@@ -545,23 +544,22 @@ def render_md(meta: dict) -> str:
 
 
 LIMITS = [
-    "First-Order-Welle: recorded entry/close als Ground-Truth, KEIN intra-trade DCA/TP-Laddering — die "
-    "unrealized-Amplitude ist leicht überschätzt (Peak-Timing unberührt). Die T-035-Phase-2-Harness ist "
-    "die laddering-treue Referenz (dort aber nur ~7d Outbox-Fenster).",
-    "Hebel pauschal 20x (vor ~Juli nicht persistiert). Das Muster (Giveback, Sharpe-Umkehr) ist hebel-"
-    "agnostisch; die absoluten leveraged-Zahlen skalieren mit dieser Annahme + dem -100%-Clamp.",
-    "Trailing-Sim: 1h-Wick, Peak-vor-Trigger auf derselben Kerze (leicht optimistisch beim Trigger-Level). "
-    "Ein 5m/10s-Resolver (T-035) verschärft das; die RICHTUNG (Sharpe/MaxDD-Vorteil) ist robust.",
-    "Compounding sequenziell nach close → ignoriert Gleichzeitigkeit (bis zu den oben genannten "
-    "gleichzeitig offenen Trades, Cross-Margin). Die absoluten Multiples (×1e26) sind NICHT wörtlich — "
-    "Ratio + MaxDD sind das Signal.",
-    "Live/Shadow-Gate-Zustand ist zeit-variabel; hier keine Gate-Filterung — es sind die AIM/SRA-Strategien "
-    "über alle Generationen (AIM1→AIM2, SRA1→SRA2).",
+    "First-order wave: recorded entry/close as ground truth, NO intra-trade DCA/TP laddering -- the "
+    "unrealised amplitude is slightly overstated (peak timing unaffected). The T-035 phase-2 harness is "
+    "the laddering-faithful reference (but only ~7d outbox window there).",
+    "Leverage uniform 20x (not persisted before ~July). The pattern (giveback, Sharpe reversal) is "
+    "leverage-agnostic; the absolute leveraged figures scale with this assumption + the -100% clamp.",
+    "Trailing sim: 1h wick, peak-before-trigger on the same candle (slightly optimistic on trigger level). "
+    "A 5m/10s resolver (T-035) tightens this; the DIRECTION (Sharpe/MaxDD advantage) is robust.",
+    "Compounding sequential by close → ignores concurrency (up to the above-mentioned simultaneous open trades, "
+    "cross-margin). The absolute multiples (×1e26) are NOT literal -- ratio + MaxDD are the signal.",
+    "Live/shadow gate state is time-variable; no gate filtering here -- these are the AIM/SRA strategies over "
+    "all generations (AIM1→AIM2, SRA1→SRA2).",
 ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE B — PER-BOT RANKING (where does trailing-close help?)
+# PHASE B -- PER-BOT RANKING (where does trailing-close help?)
 # ─────────────────────────────────────────────────────────────────────────────
 RANK_F = 0.02  # fixed fraction for the per-bot compounding-MaxDD comparison
 THIN_N = 30  # below this a bot's Sharpe sign is not trusted
@@ -571,7 +569,7 @@ def analyse_rank(trades: list[dict], lev: float) -> list[dict]:
     """Group the scored trades per emitting bot (bot_catalog family) and score
     hold vs trailing-close: per-trade leveraged Sharpe (hold, X=10%, best-X),
     fixed-fraction compounding MaxDD (hold vs best-X), mean giveback. Sorted by
-    the Sharpe uplift (best-X − hold) descending — i.e. where trailing helps most."""
+    the Sharpe uplift (best-X − hold) descending -- i.e. where trailing helps most."""
     from core.bot_catalog import script_for_tag
 
     groups: dict[str, list[dict]] = {}
@@ -620,40 +618,40 @@ def render_rank_md(meta: dict) -> str:
     s = meta["summary"]
     L = []
     ap = L.append
-    ap("# Wave-Buildup — Per-Bot Trailing-Close Ranking (Phase B, T-2026-KYT-9050-041)\n")
+    ap("# Wave-Buildup -- per-bot trailing-close ranking (Phase B, T-2026-KYT-9050-041)\n")
     ap(
         f"_generated {meta['generated_at']} · read-only · ALL bots · {s['lev']:.0f}x assumed · "
         f"tf {s['tf']} · from {s['start']} · n_trades {s['n_trades']}_\n"
     )
     ap(
-        "**Frage:** bei welchen Bots hebt ein enger **Trailing-Close** den risiko-adjustierten Ertrag? "
-        "Pro Bot (bot_catalog-Familie): per-Trade leveraged **Sharpe** hold vs Trailing 10 % vs best-X, "
-        f"und die kompoundierende **MaxDD** (fixe {RANK_F * 100:.0f}%-Fraktion) hold vs best-X. Sortiert nach "
-        "**Sharpe-Uplift (best − hold)**. Methodik + Caveats wie Phase A (First-Order, entry1-only, "
-        f"{s['lev']:.0f}x, Trigger-Optimismus). LEGACY-Status + Feb-Backfill ausgeschlossen (from {s['start']}).\n"
+        "**Question:** for which bots does a tight **trailing close** lift risk-adjusted return? Per bot "
+        "(bot_catalog family): per-trade leveraged **Sharpe** hold vs trailing 10% vs best-X, and the "
+        f"compounding **MaxDD** (fixed {RANK_F * 100:.0f}% fraction) hold vs best-X. Sorted by **Sharpe uplift "
+        "(best − hold)**. Methodology + caveats like phase A (first-order, entry1-only, "
+        f"{s['lev']:.0f}x, trigger optimism). LEGACY status + Feb backfill excluded (from {s['start']}).\n"
     )
     ap(
-        "| Bot | tags | n | WR% | Ø giveback | **Sharpe hold** | Sharpe t10% | best-X | **Sharpe best** | **uplift** | MaxDD hold→best | verdict |"
+        "| Bot | tags | n | WR% | avg giveback | **Sharpe hold** | Sharpe t10% | best-X | **Sharpe best** | **uplift** | MaxDD hold→best | verdict |"
     )
     ap("|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|")
 
     def sf(v, spec="+"):  # None-safe signed formatter
-        return format(v, spec) if v is not None else "—"
+        return format(v, spec) if v is not None else "--"
 
     for r in meta["ranking"]:
-        verdict = "THIN" if r["thin"] else ("TRAILING-HILFT" if (r["uplift"] or 0) > 0.05 else "neutral/nein")
+        verdict = "THIN" if r["thin"] else ("TRAILING-HELPS" if (r["uplift"] or 0) > 0.05 else "neutral/no")
         ap(
             f"| {r['bot']} | {r['tags']} | {r['n']} | {r['wr_pct']} | {sf(r['mean_giveback'])} | "
             f"**{sf(r['sharpe_hold'])}** | {sf(r['sharpe_t10'])} | {r['best_x']}% | **{sf(r['sharpe_best'])}** | "
             f"**{sf(r['uplift'])}** | {r['maxdd_hold']}%→{r['maxdd_best']}% | {verdict} |"
         )
     ap(
-        "\n**Lesehilfe:** positiver **uplift** = Trailing hebt den per-Trade-Sharpe (die Phase-A-Umkehr gilt "
-        "für diesen Bot). MaxDD hold→best zeigt die Drawdown-Reduktion. `THIN` (n<30) = Vorzeichen nicht "
-        "belastbar. Finalisten (hoher uplift, n solide) gehören auf die T-035-High-Fidelity-Harness "
-        "(5m + 10s + DCA-treu) zur Bestätigung.\n"
+        "\n**Read key:** positive **uplift** = trailing lifts per-trade Sharpe (the phase-A reversal holds for "
+        "this bot). MaxDD hold→best shows drawdown reduction. `THIN` (n<30) = sign not reliable. Finalists "
+        "(high uplift, solid n) belong on the T-035 high-fidelity harness (5m + 10s + DCA-faithful) for "
+        "confirmation.\n"
     )
-    ap("## Ehrliche Grenzen\n")
+    ap("## Honest limitations\n")
     for lim in meta["limits"]:
         ap(f"- {lim}")
     ap("")
@@ -688,12 +686,12 @@ def main() -> None:
 
     set_low_priority()
     if args.allow_high_cpu:
-        print("CPU-Headroom-Check übersprungen (--allow-high-cpu; BELOW_NORMAL + read-only).")
+        print("CPU headroom check skipped (--allow-high-cpu; BELOW_NORMAL + read-only).")
     else:
         try:
             check_cpu_headroom()
         except SystemExit as e:
-            print(f"WARN {e} — läuft dennoch (read-only, BELOW_NORMAL).", flush=True)
+            print(f"WARN {e} -- runs anyway (read-only, BELOW_NORMAL).", flush=True)
 
     is_rank = args.mode == "rank"
     prefixes = (

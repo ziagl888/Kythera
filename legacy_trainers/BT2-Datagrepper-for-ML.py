@@ -5,10 +5,10 @@ import numpy as np
 from scipy.signal import argrelextrema
 from datetime import datetime, timedelta
 import pandas_ta as pta
-import multiprocessing as mp # Importieren des Multiprocessing Moduls
-import os # Für os.cpu_count()
+import multiprocessing as mp # Import the multiprocessing module
+import os # For os.cpu_count()
 
-# --- Konfiguration ---
+# --- Configuration ---
 DB_CONFIG = {
     'dbname': 'cryptodata',
     'user': 'dbfiller',
@@ -19,17 +19,17 @@ DB_CONFIG = {
 COINS_FILE = 'coins.json'
 OUTPUT_FILE = 'break_retest_analysis_with_features.json'
 
-# --- Parameter für die Analyse ---
+# --- Parameters for the analysis ---
 DAYS_TO_LOOK_BACK = 365
 PIVOT_WINDOW = 10
 LEVEL_TOLERANCE = 0.005
 RETEST_LOOKAHEAD = 24
 RESULT_LOOKAHEAD = 12
 
-# --- Funktionen (unverändert oder nur minimale Anpassungen) ---
-# get_db_connection wird jetzt innerhalb des Worker-Prozesses aufgerufen
-# load_coins bleibt gleich
-# get_ohlcv_data bleibt gleich (mit dem Tz-aware Fix)
+# --- Functions (unchanged or only minimal adjustments) ---
+# get_db_connection is now called inside the worker process
+# load_coins stays the same
+# get_ohlcv_data stays the same (with the tz-aware fix)
 
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
@@ -42,7 +42,7 @@ def load_coins():
         elif isinstance(data, dict) and 'coins' in data:
             return data['coins']
         else:
-            raise ValueError("Format der coins.json nicht erkannt.")
+            raise ValueError("Format of coins.json not recognised.")
 
 def get_ohlcv_data(conn, symbol):
     table_name = f"{symbol}_1h"
@@ -57,15 +57,15 @@ def get_ohlcv_data(conn, symbol):
         df['open_time'] = pd.to_datetime(df['open_time'], utc=True)
         return df
     except Exception as e:
-        # Fehlerbehandlung für fehlende Tabellen etc.
+        # Error handling for missing tables etc.
         if "relation" in str(e) and "does not exist" in str(e):
-             print(f"  -> Tabelle für {symbol} existiert nicht. Überspringe.")
+             print(f"  -> Table for {symbol} does not exist. Skipping.")
         else:
-             print(f"Fehler beim Laden von {symbol}: {e}")
+             print(f"Error loading {symbol}: {e}")
         return None
 
 def calculate_technical_indicators(df):
-    """Berechnet alle gewünschten technischen Indikatoren und Features mit pandas_ta."""
+    """Calculates all desired technical indicators and features using pandas_ta."""
     df['open'] = pd.to_numeric(df['open'])
     df['high'] = pd.to_numeric(df['high'])
     df['low'] = pd.to_numeric(df['low'])
@@ -110,7 +110,7 @@ def calculate_technical_indicators(df):
     df['dist_ema9_ema21_pct'] = ((df['ema9'] - df['ema21']) / df['ema21'] * 100).fillna(0)
     df['dist_close_kama9_pct'] = ((df['close'] - df['kama9']) / df['kama9'] * 100).fillna(0)
 
-    # FIX: Explizite Konvertierung zu Python int für JSON-Serialisierung
+    # FIX: explicit conversion to Python int for JSON serialisation
     df['rsi_below_30'] = (df['rsi14'] < 30).astype(int)
     df['rsi_above_70'] = (df['rsi14'] > 70).astype(int)
 
@@ -133,7 +133,7 @@ def calculate_technical_indicators(df):
     return df
 
 def find_pivot_levels(df, window=PIVOT_WINDOW):
-    """Findet lokale Highs und Lows als Levels."""
+    """Finds local highs and lows as levels."""
     df['high_pivot'] = df.iloc[argrelextrema(df['high'].values, np.greater_equal, order=window)[0]]['high']
     df['low_pivot'] = df.iloc[argrelextrema(df['low'].values, np.less_equal, order=window)[0]]['low']
     
@@ -147,32 +147,32 @@ def find_pivot_levels(df, window=PIVOT_WINDOW):
         
     return levels
 
-# --- Die angepasste analyze_coin Funktion für Multiprocessing ---
+# --- The adapted analyze_coin function for multiprocessing ---
 def analyze_coin_worker(symbol):
     """
-    Diese Funktion wird von jedem Worker-Prozess aufgerufen.
-    Sie öffnet ihre eigene DB-Verbindung, verarbeitet einen Coin und gibt Events zurück.
+    This function is called by each worker process.
+    It opens its own DB connection, processes one coin and returns events.
     """
     conn = None # Initialize conn to None
     try:
         conn = get_db_connection()
-        print(f"Verarbeite {symbol}...")
+        print(f"Processing {symbol}...")
         df = get_ohlcv_data(conn, symbol)
-        
-        if df is None or df.empty:
-            return [] # Keine Daten, leere Liste von Events zurückgeben
 
-        # Entferne Reihen mit fundamentalen NaN-Werten, die die Indikatorberechnung stören würden
+        if df is None or df.empty:
+            return [] # No data, return empty list of events
+
+        # Remove rows with fundamental NaN values that would disturb the indicator calculation
         df.dropna(subset=['close', 'high', 'low', 'volume'], inplace=True)
         if df.empty:
-            print(f"  -> {symbol} hat keine vollständigen OHLCV-Daten nach NaN-Entfernung. Überspringe.")
+            print(f"  -> {symbol} has no complete OHLCV data after NaN removal. Skipping.")
             return []
 
         df_with_indicators = calculate_technical_indicators(df.copy())
         
         min_data_points_required = max(PIVOT_WINDOW * 2, 30, RETEST_LOOKAHEAD + RESULT_LOOKAHEAD + 1)
         if len(df_with_indicators) < min_data_points_required:
-            print(f"  -> Nicht genug Daten für {symbol} nach Indikatorberechnung. Benötigt: {min_data_points_required}, Vorhanden: {len(df_with_indicators)}. Überspringe.")
+            print(f"  -> Not enough data for {symbol} after indicator calculation. Needed: {min_data_points_required}, available: {len(df_with_indicators)}. Skipping.")
             return []
 
         levels = find_pivot_levels(df_with_indicators)
@@ -212,18 +212,18 @@ def analyze_coin_worker(symbol):
                                 if price_change_pct > 0.05: outcome = "continuation_success"
                                 elif price_change_pct < -0.03: outcome = "failed_breakout"
                                 
-                                # FIX: Explizite Konvertierung zu Python int
+                                # FIX: explicit conversion to Python int
                                 features = {
                                     'dist_close_ema9_pct': float(future_candle['dist_close_ema9_pct']),
                                     'dist_ema9_ema21_pct': float(future_candle['dist_ema9_ema21_pct']),
                                     'dist_close_kama9_pct': float(future_candle['dist_close_kama9_pct']),
                                     'rsi14': float(future_candle['rsi14']),
-                                    'rsi_below_30': int(future_candle['rsi_below_30']), # Konvertierung
-                                    'rsi_above_70': int(future_candle['rsi_above_70']), # Konvertierung
+                                    'rsi_below_30': int(future_candle['rsi_below_30']), # conversion
+                                    'rsi_above_70': int(future_candle['rsi_above_70']), # conversion
                                     'tsi': float(future_candle['tsi']),
                                     'tsi_signal': float(future_candle['tsi_signal']),
-                                    'tsi_above_0': int(future_candle['tsi_above_0']), # Konvertierung
-                                    'tsi_below_0': int(future_candle['tsi_below_0']), # Konvertierung
+                                    'tsi_above_0': int(future_candle['tsi_above_0']), # conversion
+                                    'tsi_below_0': int(future_candle['tsi_below_0']), # conversion
                                     'dist_close_boll_upper_pct': float(future_candle['dist_close_boll_upper_pct']),
                                     'dist_close_boll_mid_pct': float(future_candle['dist_close_boll_mid_pct']),
                                     'dist_close_boll_lower_pct': float(future_candle['dist_close_boll_lower_pct']),
@@ -269,18 +269,18 @@ def analyze_coin_worker(symbol):
                                 if price_change_pct > 0.05: outcome = "continuation_success"
                                 elif price_change_pct < -0.03: outcome = "failed_breakout"
                                 
-                                # FIX: Explizite Konvertierung zu Python int
+                                # FIX: explicit conversion to Python int
                                 features = {
                                     'dist_close_ema9_pct': float(future_candle['dist_close_ema9_pct']),
                                     'dist_ema9_ema21_pct': float(future_candle['dist_ema9_ema21_pct']),
                                     'dist_close_kama9_pct': float(future_candle['dist_close_kama9_pct']),
                                     'rsi14': float(future_candle['rsi14']),
-                                    'rsi_below_30': int(future_candle['rsi_below_30']), # Konvertierung
-                                    'rsi_above_70': int(future_candle['rsi_above_70']), # Konvertierung
+                                    'rsi_below_30': int(future_candle['rsi_below_30']), # conversion
+                                    'rsi_above_70': int(future_candle['rsi_above_70']), # conversion
                                     'tsi': float(future_candle['tsi']),
                                     'tsi_signal': float(future_candle['tsi_signal']),
-                                    'tsi_above_0': int(future_candle['tsi_above_0']), # Konvertierung
-                                    'tsi_below_0': int(future_candle['tsi_below_0']), # Konvertierung
+                                    'tsi_above_0': int(future_candle['tsi_above_0']), # conversion
+                                    'tsi_below_0': int(future_candle['tsi_below_0']), # conversion
                                     'dist_close_boll_upper_pct': float(future_candle['dist_close_boll_upper_pct']),
                                     'dist_close_boll_mid_pct': float(future_candle['dist_close_boll_mid_pct']),
                                     'dist_close_boll_lower_pct': float(future_candle['dist_close_boll_lower_pct']),
@@ -306,56 +306,56 @@ def analyze_coin_worker(symbol):
 
         return events
     except Exception as e:
-        print(f"Unerwarteter Fehler im Worker für {symbol}: {e}")
+        print(f"Unexpected error in worker for {symbol}: {e}")
         return []
     finally:
         if conn:
-            conn.close() # Stellen Sie sicher, dass die Verbindung geschlossen wird
+            conn.close() # Make sure the connection is closed
 
-# --- Die angepasste main Funktion für Multiprocessing ---
+# --- The adapted main function for multiprocessing ---
 def main():
     coins = load_coins()
     all_events = []
-    
-    print(f"Starte Analyse für {len(coins)} Coins mit {os.cpu_count()} Prozessen...")
-    
-    # Erstellen eines Process Pools
-    # Die Anzahl der Prozesse ist standardmäßig die Anzahl der CPU-Kerne
-    # Manchmal ist es ratsam, N-1 Kerne zu verwenden, um das System responsiv zu halten
+
+    print(f"Starting analysis for {len(coins)} coins with {os.cpu_count()} processes...")
+
+    # Creating a process pool
+    # The number of processes defaults to the number of CPU cores
+    # Sometimes it is advisable to use N-1 cores to keep the system responsive
     with mp.Pool(processes=os.cpu_count()) as pool:
-        # map() wendet analyze_coin_worker auf jedes Element in coins an
-        # Die Ergebnisse werden gesammelt, sobald jeder Prozess fertig ist
+        # map() applies analyze_coin_worker to every element in coins
+        # The results are collected as soon as each process is done
         results = pool.map(analyze_coin_worker, coins)
-    
-    # Ergebnisse sammeln
+
+    # Collect results
     for coin_events in results:
         all_events.extend(coin_events)
-            
-    print(f"\nGesamtanalyse abgeschlossen. {len(all_events)} Events insgesamt gefunden.")
 
-    # Ergebnisse speichern
+    print(f"\nOverall analysis complete. {len(all_events)} events found in total.")
+
+    # Save results
     summary = {
         'total_events': len(all_events),
         'events': all_events
     }
-    
+
     with open(OUTPUT_FILE, 'w') as f:
         json.dump(summary, f, indent=4)
-        
-    print(f"\nErgebnisse in {OUTPUT_FILE} gespeichert.")
 
-    # Kleine Statistik Ausgeben
+    print(f"\nResults saved to {OUTPUT_FILE}.")
+
+    # Print a small statistic
     df_res = pd.DataFrame(all_events)
     if not df_res.empty:
-        print("\n--- Statistik ---")
+        print("\n--- Statistics ---")
         print(df_res['outcome_class'].value_counts())
-        print("\nDurchschnittlicher Profit pro Outcome:")
+        print("\nAverage profit per outcome:")
         print(df_res.groupby('outcome_class')['outcome_price_change'].mean())
-        print("\nBeispiel für ein Event mit Features:")
+        print("\nExample of an event with features:")
         print(df_res.iloc[0].to_dict())
 
 if __name__ == "__main__":
-    # Wichtig: multiprocessing sollte so aufgerufen werden, damit es plattformübergreifend funktioniert
-    # und keine rekursiven Spawns verursacht.
-    mp.freeze_support() # Optional, aber gute Praxis für Windows-Executables
+    # Important: multiprocessing should be invoked like this so it works cross-platform
+    # and does not cause recursive spawns.
+    mp.freeze_support() # Optional, but good practice for Windows executables
     main()

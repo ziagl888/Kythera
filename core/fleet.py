@@ -1,54 +1,54 @@
-"""core/fleet.py — Single-Source-Definition der Kythera-Prozess-Fleet.
+"""core/fleet.py — Single-source definition of Kythera process fleet.
 
-Vor T-2026-CU-9050-091 existierte die Prozessliste doppelt und driftete
-(Audit-Ledger R2(a) / P1.38-Teilaspekt):
+Before T-2026-CU-9050-091 the process list existed twice and drifted
+(audit ledger R2(a) / P1.38 aspect):
 
-* ``main_watchdog.py`` (``PROCESSES_TO_RUN``) — autoritativ, mit ``start_delay``,
-  komplette Fleet inkl. der Regime-/Research-/MAX1-Bots 26–34.
-* ``dashboard.py`` (``PROCESSES``) — mit ``group`` (Anzeige), aber ohne die Bots
-  26–34; das Dashboard zeigte damit nur einen Teil der laufenden Fleet.
+* ``main_watchdog.py`` (``PROCESSES_TO_RUN``) — authoritative, with ``start_delay``,
+  complete fleet incl. regime/research/MAX1 bots 26–34.
+* ``dashboard.py`` (``PROCESSES``) — with ``group`` (display), but without bots
+  26–34; the dashboard thus showed only part of the running fleet.
 
-Beide Konsumenten importieren jetzt diese eine Liste. Die Watchdog-Liste war die
-autoritative Quelle; ``group`` wurde aus dem Dashboard übernommen (Bots 26–34
-bekommen eine bestehende Anzeigegruppe zugewiesen, siehe unten).
+Both consumers now import this single list. The watchdog list was the
+authoritative source; ``group`` was taken from the dashboard (bots 26–34
+are assigned an existing display group, see below).
 
-Feld-Vertrag pro Eintrag
+Field contract per entry
 ------------------------
-``name``             Anzeigename (Watchdog-Log, Dashboard-Badge).
-``script``           Dateiname des Bot-Skripts (Start + Basename für den
-                     Orphan-Sweep in P0.2).
-``group``            Dashboard-Anzeigegruppe: ``core`` | ``ai`` | ``strategy`` |
-                     ``logger`` (das Dashboard-CSS/-Filter kennt genau diese vier).
-``start_delay``      Sekunden Staffel-Verzögerung beim Fleet-Start, damit nicht
-                     alle Bots gleichzeitig die DB treffen (Watchdog).
-``restart_interval`` Sekunden bis zum geplanten RAM-Recycling-Restart
-                     (``None`` = nie).
+``name``             Display name (watchdog log, dashboard badge).
+``script``           Bot script filename (startup + basename for
+                     orphan sweep in P0.2).
+``group``            Dashboard display group: ``core`` | ``ai`` | ``strategy`` |
+                     ``logger`` (dashboard CSS/filter knows exactly these four).
+``start_delay``      Seconds of staggered delay on fleet startup so not
+                     all bots hit the DB at once (watchdog).
+``restart_interval`` Seconds until planned RAM-recycling restart
+                     (``None`` = never).
 
-Der Watchdog liest ``name``/``script``/``start_delay``/``restart_interval`` und
-ignoriert ``group``; das Dashboard liest ``name``/``script``/``group``/
-``restart_interval`` und ignoriert ``start_delay``. Ein für den einen Konsumenten
-irrelevantes Feld ist für den anderen damit ein No-op.
+The watchdog reads ``name``/``script``/``start_delay``/``restart_interval`` and
+ignores ``group``; the dashboard reads ``name``/``script``/``group``/
+``restart_interval`` and ignores ``start_delay``. A field irrelevant to one
+consumer is thus a no-op for the other.
 
-Reihenfolge = Start-Reihenfolge (aufsteigender ``start_delay``). Das Dashboard
-rendert die Fleet in genau dieser Reihenfolge.
+Order = startup order (ascending ``start_delay``). The dashboard
+renders the fleet in exactly this order.
 
-WICHTIG: reine Datendefinition, keine Verhaltens-Logik. Der Prozess-Lifecycle
-(Single-Instance-Mutex, Orphan-Sweep, CREATE_NEW_PROCESS_GROUP/CTRL_BREAK aus
-P0.2/P2.48; Supervision/Backoff/Heartbeat aus P1.37/P2.47) bleibt vollständig im
-Watchdog. Eine Änderung hier ändert NUR, welche Prozesse laufen und wie sie im
-Dashboard erscheinen — nichts an der Start-/Stop-/Restart-Mechanik.
+IMPORTANT: pure data definition, no behaviour logic. Process lifecycle
+(single-instance mutex, orphan sweep, CREATE_NEW_PROCESS_GROUP/CTRL_BREAK from
+P0.2/P2.48; supervision/backoff/heartbeat from P1.37/P2.47) stays entirely in the
+watchdog. A change here changes ONLY which processes run and how they appear
+in the dashboard — nothing in the startup/stop/restart mechanics.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# Nicht Teil der Fleet (bewusst ausgelassen):
-#   22_ip_pattern_bot.py — im Watchdog seit jeher auskommentiert; das Dashboard
-#   kannte den Bot nie. Bleibt deaktiviert, bis er wieder aufgenommen wird.
+# Not part of the fleet (deliberately omitted):
+#   22_ip_pattern_bot.py — commented out in watchdog since day one; the dashboard
+#   never knew the bot. Stays disabled until it is taken up again.
 
 FLEET: list[dict[str, Any]] = [
-    # ── Kern-Pipeline ─────────────────────────────────────────────────────────
+    # ── Core Pipeline ─────────────────────────────────────────────────────────
     {
         "name": "Data Ingestion",
         "script": "1_data_ingestion.py",
@@ -92,7 +92,7 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 10,
         "restart_interval": None,
     },
-    # ── Klassische Strategien / Monitore ──────────────────────────────────────
+    # ── Classic Strategies / Monitors ──────────────────────────────────────
     {
         "name": "Pattern detector",
         "script": "7_pattern_detector.py",
@@ -115,7 +115,7 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 39,
         "restart_interval": None,
     },
-    # ── AI-Bots ───────────────────────────────────────────────────────────────
+    # ── AI Bots ───────────────────────────────────────────────────────────────
     {
         "name": "AI MIS1 Detector",
         "script": "11_ai_mis_bot.py",
@@ -187,7 +187,7 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 119,
         "restart_interval": None,
     },
-    # ── Weitere Strategien ────────────────────────────────────────────────────
+    # ── Further Strategies ────────────────────────────────────────────────────
     {
         "name": "BTC SMC Bot",
         "script": "21_btc_smc_strategy.py",
@@ -216,10 +216,10 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 151,
         "restart_interval": None,
     },
-    # ── Regime-Orchestrator (v5) — im Dashboard bisher NICHT gelistet ─────────
-    # group="strategy": neu für das Dashboard; das Regime-Layer speist die
-    # Strategie-Gates. Bestehende Anzeigegruppe, damit keine neue Filter-/CSS-
-    # Kategorie im Dashboard entsteht (nur die LISTE wird zentralisiert).
+    # ── Regime Orchestrator (v5) — not listed in dashboard so far ─────────
+    # group="strategy": new for the dashboard; the regime layer feeds the
+    # strategy gates. Existing display group so no new filter/CSS
+    # category appears in the dashboard (only the LIST gets centralised).
     {
         "name": "Regime Detector",
         "script": "26_regime_detector.py",
@@ -248,7 +248,7 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 183,
         "restart_interval": None,
     },
-    # ── Research-Bots (Report 15: S6/S8/S10/S11 — Channel CH_NEW_IDEAS) ───────
+    # ── Research Bots (Report 15: S6/S8/S10/S11 — channel CH_NEW_IDEAS) ───────
     {
         "name": "AI PEX1 Detector",
         "script": "30_ai_pex1_bot.py",
@@ -277,7 +277,7 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 215,
         "restart_interval": None,
     },
-    # ── High-Conviction-Drossel über RUB2-SHORT (T-2026-CU-9050-067) ──────────
+    # ── High-conviction throttle via RUB2-SHORT (T-2026-CU-9050-067) ──────────
     {
         "name": "AI MAX1 Detector",
         "script": "34_ai_max1_bot.py",
@@ -285,11 +285,10 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 223,
         "restart_interval": None,
     },
-    # ── Open-Interest-Collector (K9/OIC, T-2026-CU-9050-103) ──────────────────
-    # Eigene Failure-Domain (kein Detector-Anbau); Hypertable oi_5m. PG-Budget:
-    # +2 Idle-Connections über den Standard-Pool (P1.34 — max_connections auf
-    # dem VPS gegenprüfen). Neuer Eintrag wird erst nach Watchdog-Restart
-    # supervised (FLEET wird beim Watchdog-Import gelesen) ⇒ Operator-Gate.
+    # ── Open-interest collector (K9/OIC, T-2026-CU-9050-103) ──────────────────
+    # Own failure domain (no detector attachment); hypertable oi_5m. PG budget:
+    # +2 idle connections over standard pool (P1.34 — cross-check max_connections on
+    # VPS). New entry only supervised after watchdog restart (FLEET read at watchdog import) ⇒ operator gate.
     {
         "name": "OI Collector",
         "script": "35_oi_collector.py",
@@ -297,11 +296,11 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 231,
         "restart_interval": None,
     },
-    # ── Regelbasierte Shadow-Forwarder (Studien K1/K2/K5/K7, T-2026-CU-9050-149) ─
-    # Reine Shadow-Bots (kein Live-Post): validieren negative/schwache Studien-
-    # Signale live über überwachte, nie gepostete Trades. Neuer Eintrag wird erst
-    # nach Watchdog-Restart supervised (FLEET beim Watchdog-Import gelesen) ⇒
-    # Operator-Gate; unter 100 % CPU zuerst Kapazität prüfen (Restart-Incident 07-15).
+    # ── Rule-based shadow forwarder (studies K1/K2/K5/K7, T-2026-CU-9050-149) ─
+    # Pure shadow bots (no live post): validate negative/weak study
+    # signals live via monitored, never-posted trades. New entry only
+    # supervised after watchdog restart (FLEET read at watchdog import) ⇒
+    # operator gate; below 100% CPU first check capacity (restart incident 07-15).
     {
         "name": "AI LIS1 Detector",
         "script": "36_ai_lis1_bot.py",
@@ -330,13 +329,13 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 263,
         "restart_interval": None,
     },
-    # ── Trailing-Close-Arm in eigenem Channel (T-2026-KYT-9050-042 Phase C) ───
-    # Kein Detector: spiegelt die 33 gerosterten Beine (core/trailing_roster.py)
-    # in CH_TRAILING und schliesst sie dort per Trailing-Close — der A/B-Arm gegen
-    # den Hold-Arm der bestehenden Fleet. Schreibt NIE in ai_signals. Postet nur
-    # bei TRAILING_BOT_LIVE_POSTING=1 UND gesetztem CH_TRAILING (beides default
-    # aus). Neuer Eintrag wird erst nach Watchdog-Restart supervised (FLEET wird
-    # beim Watchdog-Import gelesen) ⇒ Operator-Gate.
+    # ── Trailing-close arm in own channel (T-2026-KYT-9050-042 phase C) ───
+    # No detector: mirrors the 33 roster legs (core/trailing_roster.py)
+    # in CH_TRAILING and closes them via trailing close — the A/B arm against
+    # the hold arm of the existing fleet. Never writes to ai_signals. Only posts
+    # when TRAILING_BOT_LIVE_POSTING=1 AND CH_TRAILING is set (both default
+    # off). New entry only supervised after watchdog restart (FLEET read
+    # at watchdog import) ⇒ operator gate.
     {
         "name": "Trailing Close Bot",
         "script": "40_trailing_close_bot.py",
@@ -344,13 +343,13 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 271,
         "restart_interval": None,
     },
-    # ── Liquidations-Collector (LQE1, T-2026-KYT-9050-077) ────────────────────
-    # Websocket !forceOrder@arr → Hypertable liq_events (Ground-Truth für die
-    # MPS1-Heatmap-Kalibrierung). Eigene Failure-Domain wie K9; DB-Connection
-    # pro Flush aus dem Pool. Am Listen-Ende mit höchstem Delay (Monotonie-
-    # Regression backtest/test_fleet_definition.py; 247 kollidierte mit TSM1).
-    # Neuer Eintrag wird erst nach Watchdog-Restart supervised (FLEET wird
-    # beim Watchdog-Import gelesen) ⇒ Operator-Gate.
+    # ── Liquidations collector (LQE1, T-2026-KYT-9050-077) ────────────────────
+    # Websocket !forceOrder@arr → hypertable liq_events (ground truth for the
+    # MPS1 heatmap calibration). Own failure domain like K9; DB connection
+    # pulled from the pool per flush. At the end of the list with the highest
+    # delay (monotonicity regression backtest/test_fleet_definition.py; 247
+    # collided with TSM1). New entry only supervised after watchdog restart
+    # (FLEET read at watchdog import) ⇒ operator gate.
     {
         "name": "Liq Collector",
         "script": "41_liq_collector.py",

@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-# tools/bot_variants/compare.py — Generation-A/B-Sim-Harness (T-2026-KYT-9050-039, D3).
+# tools/bot_variants/compare.py — Generation A/B sim harness (T-2026-KYT-9050-039, D3).
 #
-# ZWECK: Zwei Bot-Generationen head-to-head über die BESTEHENDE, DB-freie
-# Replay-Infra vergleichen (Generation-A vs Generation-B auf DENSELBEN Events).
-# Baut die Sim NICHT neu: die Labels/PnL kommen aus einem bereits erzeugten
-# `*_replay_*.jsonl` (tools/retrain_from_replay.load_replay — derselbe Loader,
-# der auch die Retrains speist), die Generation liefert nur das Scoring-Modell.
+# PURPOSE: Compare two bot generations head-to-head over the EXISTING, DB-free
+# replay infra (Generation A vs Generation B on the SAME events).
+# Does NOT rebuild the sim: the labels/PnL come from an already-generated
+# `*_replay_*.jsonl` (tools/retrain_from_replay.load_replay — the same loader
+# that also feeds the retrains), the generation only supplies the scoring model.
 #
-# Abgrenzung: tools/walkforward_sim.py ERZEUGT die Replays aus der Live-DB
-# (DB-gebunden, VPS-only). compare.py KONSUMIERT sie (DB-frei) — es lädt nur ein
-# Replay-JSONL + die Artefakt-pkls und rechnet vergleichende Metriken.
+# Scope boundary: tools/walkforward_sim.py GENERATES the replays from the live DB
+# (DB-bound, VPS-only). compare.py CONSUMES them (DB-free) — it only loads a
+# replay JSONL + the artifact pkls and computes comparative metrics.
 #
-# Metriken je Generation (auf dem Replay, am jeweiligen Operating-Threshold):
+# Metrics per generation (on the replay, at the respective operating threshold):
 #   n · avg_net_pnl_pct · sum_net_pnl_pct · win_rate · max_drawdown_pct.
 #
 # Invariants:
-#   * READ-ONLY, DB-frei, kein Netzwerk. Kein Schreiben (nur --out JSON optional).
-#   * Scoring-Vertrag identisch zum Live-/Shadow-Pfad: rohe predict_proba[:,1] auf
-#     der Feature-Reihenfolge des Artefakts (core.shadow_gate.score_artifact-Semantik).
-#   * Threshold-Semantik wie Live: prob >= optimal_threshold; threshold=None ⇒
-#     Emission auf JEDEM Event (Detektor ist das Gate) — getreue Vorschau.
+#   * READ-ONLY, DB-free, no network. No writes (only --out JSON optional).
+#   * Scoring contract identical to the live/shadow path: raw predict_proba[:,1] on
+#     the artifact's feature order (core.shadow_gate.score_artifact semantics).
+#   * Threshold semantics like live: prob >= optimal_threshold; threshold=None ⇒
+#     emission on EVERY event (detector is the gate) — a faithful preview.
 
 from __future__ import annotations
 
@@ -42,17 +42,17 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Artefakt-Contract laden (generisch: dict-Artefakt, xgb-json, bare classifier)
+# Load artifact contract (generic: dict artifact, xgb-json, bare classifier)
 # ─────────────────────────────────────────────────────────────────────────────
 def _features_from_bare_model(model: Any) -> list[str] | None:
-    """Feature-Namen aus einem nackten Estimator (booster / sklearn)."""
+    """Feature names from a bare estimator (booster / sklearn)."""
     booster = getattr(model, "get_booster", None)
     if callable(booster):
         try:
             names = booster().feature_names
             if names:
                 return list(names)
-        except Exception:  # pragma: no cover - defensiv
+        except Exception:  # pragma: no cover - defensive
             pass
     names_in = getattr(model, "feature_names_in_", None)
     if names_in is not None:
@@ -61,15 +61,15 @@ def _features_from_bare_model(model: Any) -> list[str] | None:
 
 
 def load_contract(path: str) -> dict[str, Any]:
-    """Lädt ein Artefakt zu einem schlanken Scoring-Contract {model, features, threshold}.
+    """Loads an artifact into a lean scoring contract {model, features, threshold}.
 
-    Deckt die drei Fleet-Formate: .json (nativer XGB + *_meta.json-Sidecar),
-    .pkl/.joblib als dict (retrain_from_replay: model/features/optimal_threshold)
-    und .pkl als nackter Estimator (Legacy — Features aus dem Booster). Wirft
-    ValueError, wenn kein Feature-Vertrag ableitbar ist (ohne Features kein
-    faires Scoring)."""
+    Covers the three fleet formats: .json (native XGB + *_meta.json sidecar),
+    .pkl/.joblib as dict (retrain_from_replay: model/features/optimal_threshold)
+    and .pkl as a bare estimator (legacy — features from the booster). Raises
+    ValueError if no feature contract can be derived (no fair scoring without
+    features)."""
     if not os.path.isfile(path):
-        raise ValueError(f"Artefakt nicht gefunden: {path}")
+        raise ValueError(f"Artifact not found: {path}")
     if path.endswith(".json"):
         import xgboost as xgb
 
@@ -87,20 +87,20 @@ def load_contract(path: str) -> dict[str, Any]:
     if isinstance(art, dict) and "model" in art:
         features = list(art.get("features") or [])
         if not features:
-            raise ValueError(f"Artefakt {path} ohne Feature-Liste — kein Scoring-Vertrag.")
+            raise ValueError(f"Artifact {path} without feature list — no scoring contract.")
         return {"model": art["model"], "features": features, "threshold": art.get("optimal_threshold")}
 
     features = _features_from_bare_model(art)
     if not features:
-        raise ValueError(f"Bare-Estimator {path} ohne Feature-Namen — Feature-Vertrag nicht ableitbar.")
+        raise ValueError(f"Bare estimator {path} without feature names — feature contract not derivable.")
     return {"model": art, "features": features, "threshold": None}
 
 
 def resolve_artifact_path(tag: str, direction: str, index: dict[str, Any] | None = None) -> str:
-    """Fundort-Pfad des Artefakts einer (tag, direction) aus dem Index.
+    """Location path of the artifact for a (tag, direction) from the index.
 
-    ``index`` erlaubt es dem Caller, den (teuren) FS-Scan EINMAL zu bauen und
-    für beide Generationen wiederzuverwenden."""
+    ``index`` lets the caller build the (expensive) FS scan ONCE and
+    reuse it for both generations."""
     if index is None:
         index = ix.build_index(load_embedded=False)
     norm = tag.strip().upper()
@@ -110,22 +110,22 @@ def resolve_artifact_path(tag: str, direction: str, index: dict[str, Any] | None
         for art in gen["artifacts"]:
             if art["direction"] == direction.upper() and art["exists"] and art["path"]:
                 return os.path.join(ix.REPO_ROOT, art["path"])
-        raise ValueError(f"{tag}/{direction}: kein vorhandenes Artefakt im Index.")
-    raise ValueError(f"Unbekannte Generation '{tag}'.")
+        raise ValueError(f"{tag}/{direction}: no artifact present in the index.")
+    raise ValueError(f"Unknown generation '{tag}'.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Scoring + Metriken (DB-frei, auf einem geladenen Replay-DataFrame)
+# Scoring + metrics (DB-free, on a loaded replay DataFrame)
 # ─────────────────────────────────────────────────────────────────────────────
 def score(contract: dict[str, Any], replay: pd.DataFrame) -> np.ndarray:
-    """Rohe predict_proba[:,1] auf der Feature-Reihenfolge des Artefakts."""
+    """Raw predict_proba[:,1] on the artifact's feature order."""
     features = contract["features"]
     X = replay.reindex(columns=features).fillna(0)
     return contract["model"].predict_proba(X)[:, 1].astype(float)
 
 
 def _max_drawdown_pct(pnl_series: np.ndarray) -> float:
-    """Max Drawdown der kumulierten Netto-PnL-Kurve (in PnL-%-Punkten, <= 0)."""
+    """Max drawdown of the cumulative net PnL curve (in PnL-%-points, <= 0)."""
     if pnl_series.size == 0:
         return 0.0
     cum = np.cumsum(pnl_series)
@@ -135,11 +135,11 @@ def _max_drawdown_pct(pnl_series: np.ndarray) -> float:
 
 
 def evaluate(contract: dict[str, Any], replay: pd.DataFrame, threshold: float | None = None) -> dict[str, Any]:
-    """Metriken einer Generation auf dem Replay am Operating-Threshold.
+    """Metrics for one generation on the replay at the operating threshold.
 
-    threshold-Override > contract['threshold'] > None. None ⇒ jedes Event zählt
-    (Detektor-Gate, wie eine nicht-deploybare Generation live emittieren würde).
-    replay muss chronologisch sortiert sein (load_replay liefert das)."""
+    threshold override > contract['threshold'] > None. None ⇒ every event counts
+    (detector gate, as a non-deployable generation would emit live).
+    replay must be sorted chronologically (load_replay provides that)."""
     probs = score(contract, replay)
     thr = threshold if threshold is not None else contract.get("threshold")
     mask = probs >= thr if thr is not None else np.ones(len(replay), dtype=bool)
@@ -175,12 +175,12 @@ def compare(
     ts_key: str = "signal_time",
     label_key: str = "outcome_tp1",
 ) -> dict[str, Any]:
-    """Head-to-head zweier Generationen auf demselben Replay (DB-frei)."""
+    """Head-to-head of two generations on the same replay (DB-free)."""
     replay = load_replay(replay_path, ts_key=ts_key, label_key=label_key)
     if replay.empty:
-        raise ValueError(f"Replay {replay_path} enthält keine gelabelten Events.")
+        raise ValueError(f"Replay {replay_path} contains no labelled events.")
 
-    index = ix.build_index(load_embedded=False)  # einmal bauen, für beide nutzen
+    index = ix.build_index(load_embedded=False)  # build once, use for both
     contract_a = load_contract(resolve_artifact_path(tag_a, direction, index))
     contract_b = load_contract(resolve_artifact_path(tag_b, direction, index))
     eval_a = evaluate(contract_a, replay, threshold_a)
@@ -205,36 +205,36 @@ def compare(
 def render_compare(result: dict[str, Any]) -> str:
     a, b = result["a"], result["b"]
     lines = [
-        f"# Generation-A/B — {a['tag']} vs {b['tag']} ({result['direction']})",
+        f"# Generation A/B — {a['tag']} vs {b['tag']} ({result['direction']})",
         "",
-        f"Replay: {result['replay']} ({result['replay_events']} Events)",
+        f"Replay: {result['replay']} ({result['replay_events']} events)",
         "",
-        "| Metrik | " + a["tag"] + " | " + b["tag"] + " |",
+        "| Metric | " + a["tag"] + " | " + b["tag"] + " |",
         "|---|---|---|",
         f"| threshold | {a['threshold']} | {b['threshold']} |",
-        f"| n (emittiert) | {a['n']} | {b['n']} |",
+        f"| n (emitted) | {a['n']} | {b['n']} |",
         f"| Ø net_pnl_pct | {a['avg_net_pnl_pct']} | {b['avg_net_pnl_pct']} |",
         f"| Σ net_pnl_pct | {a['sum_net_pnl_pct']} | {b['sum_net_pnl_pct']} |",
         f"| win_rate % | {a['win_rate']} | {b['win_rate']} |",
         f"| max_drawdown_pct | {a['max_drawdown_pct']} | {b['max_drawdown_pct']} |",
         "",
-        f"**Sieger (Ø net_pnl):** {result['winner_by_avg_net_pnl'] or 'unentschieden / n=0'}",
+        f"**Winner (Ø net_pnl):** {result['winner_by_avg_net_pnl'] or 'tie / n=0'}",
         "",
     ]
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Generation-A/B-Sim (DB-frei, T-2026-KYT-9050-039).")
-    parser.add_argument("tag_a", help="Generation A, z.B. RUB2")
-    parser.add_argument("tag_b", help="Generation B, z.B. RUB3")
+    parser = argparse.ArgumentParser(description="Generation A/B sim (DB-free, T-2026-KYT-9050-039).")
+    parser.add_argument("tag_a", help="Generation A, e.g. RUB2")
+    parser.add_argument("tag_b", help="Generation B, e.g. RUB3")
     parser.add_argument("--direction", required=True, choices=["LONG", "SHORT"])
-    parser.add_argument("--replay", required=True, help="Pfad zu einem *_replay_*.jsonl")
-    parser.add_argument("--threshold-a", type=float, default=None, help="Threshold-Override A")
-    parser.add_argument("--threshold-b", type=float, default=None, help="Threshold-Override B")
+    parser.add_argument("--replay", required=True, help="Path to a *_replay_*.jsonl")
+    parser.add_argument("--threshold-a", type=float, default=None, help="Threshold override A")
+    parser.add_argument("--threshold-b", type=float, default=None, help="Threshold override B")
     parser.add_argument("--ts-key", default="signal_time")
     parser.add_argument("--label-key", default="outcome_tp1")
-    parser.add_argument("--out", default=None, help="Ergebnis-JSON schreiben")
+    parser.add_argument("--out", default=None, help="Write result JSON")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
@@ -254,14 +254,14 @@ def main(argv: list[str] | None = None) -> int:
             args.label_key,
         )
     except (ValueError, FileNotFoundError) as exc:
-        print(f"FEHLER: {exc}")
+        print(f"ERROR: {exc}")
         return 2
 
     print(render_compare(result))
     if args.out:
         with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
-        print(f"geschrieben: {args.out}")
+        print(f"written: {args.out}")
     return 0
 
 

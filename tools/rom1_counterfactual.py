@@ -1,60 +1,60 @@
 """
-tools/rom1_counterfactual.py — ROM1 Counterfactual-Scorer (T-2026-CU-9050-047).
+tools/rom1_counterfactual.py — ROM1 counterfactual scorer (T-2026-CU-9050-047).
 
-Zweck
------
-Der Orchestrator-Gate (Bot 28) unterdrückt Signale, ohne dass jemals gemessen
-wurde, was diese Unterdrückung wert ist (Report 16, §8). Dieses Tool rechnet
-für jede Row in `orchestrator_suppressed_signals` das hypothetische Outcome
-nach: Welche ROM1-Geometrie hätte der Orchestrator zum Signal-Zeitpunkt
-gepostet, und wie wäre dieser Trade im First-Touch-Replay ausgegangen?
+Purpose
+-------
+The orchestrator gate (bot 28) suppresses signals without anyone ever having
+measured what that suppression is worth (Report 16, §8). This tool computes
+the hypothetical outcome for every row in `orchestrator_suppressed_signals`:
+which ROM1 geometry would the orchestrator have posted at the signal moment,
+and how would that trade have played out in the first-touch replay?
 
-Ergebnis pro Suppression-Reason (`bot_not_whitelisted:wr_below_overall`,
-`orchestrator_cooldown`, `bot_unidentified`, …): Win-Rate, Netto-PnL, R —
-also **was das Gate gekostet oder erspart hat**. Positiver Netto-PnL auf der
-suppressed-Seite = das Gate hat Geld liegen gelassen.
+Result per suppression reason (`bot_not_whitelisted:wr_below_overall`,
+`orchestrator_cooldown`, `bot_unidentified`, …): win rate, net PnL, R —
+in other words **what the gate cost or saved**. Positive net PnL on the
+suppressed side = the gate left money on the table.
 
-Beide Seiten desselben Gates
+Both sides of the same gate
 ----------------------------
-`--side suppressed` (Default) scored die geblockte Seite.
-`--side forwarded` scored die durchgelassene Seite aus
-`orchestrator_open_trades`, gebucketed nach `wl_reason` (B8,
-T-2026-CU-9050-046) — also pro Gate-PFAD: echte 4D-Zelle vs.
-`no_whitelist_entry` (default-open) vs. Fallback-Pfade.
-`--side both` läuft beides und stellt die Buckets nebeneinander.
+`--side suppressed` (default) scores the blocked side.
+`--side forwarded` scores the forwarded side from
+`orchestrator_open_trades`, bucketed by `wl_reason` (B8,
+T-2026-CU-9050-046) — i.e. per gate PATH: real 4D cell vs.
+`no_whitelist_entry` (default-open) vs. fallback paths.
+`--side both` runs both and lines the buckets up side by side.
 
-Erst der Vergleich beider Seiten beantwortet die eigentliche Frage: Trennt der
-Gate-Pfad Gewinner von Verlierern, oder ist der +8pp-ROM1-WR ein Artefakt der
-89% default-open-Rate?
+Only the comparison of both sides answers the real question: does the
+gate path separate winners from losers, or is the +8pp ROM1 WR an artefact of
+the 89% default-open rate?
 
-Methodik (und ihre Grenzen)
+Methodology (and its limits)
 ---------------------------
-  * **Kein Look-ahead.** Entscheidungskerze = die letzte 1h-Kerze, die zum
-    Zeitpunkt der Suppression bereits GESCHLOSSEN war. Der Exit-Scan startet
-    auf der Kerze danach (R1-Disziplin).
-  * **Geometrie aus EINER Quelle**: `28_signal_orchestrator.compute_rom1_trade_params`
-    mit den As-of-Parametern `price=`/`df=`. Kein Nachbau, kein Skew (X-R1).
+  * **No look-ahead.** Decision candle = the last 1h candle that was already
+    CLOSED at the time of the suppression. The exit scan starts
+    on the candle after that (R1 discipline).
+  * **Geometry from ONE source**: `28_signal_orchestrator.compute_rom1_trade_params`
+    with the as-of parameters `price=`/`df=`. No reimplementation, no skew (X-R1).
   * **Exits** via `tools.walkforward_sim.simulate_exit` — wick-aware
-    First-Touch, SL-first bei Ambiguität, Monitor-Trailing, Fees; Ladder über
-    die 3 tatsächlich publizierten TPs (`ROM1_PUBLISHED_TARGETS`).
-  * **Bewusste Näherungen** (im Report als Bias-Richtung zu lesen):
-      - Live nimmt ROM1 den letzten 5m-Close als CMP, der Replay den Close der
-        Entscheidungs-1h-Kerze (bis zu 59 Minuten früher).
-      - Der Horizont ist gekappt (`--horizon-hours`, Default 168h). Live würde
-        ein Regime-Wechsel den Trade früher schließen (Auto-Close) — die
-        Counterfactuals sind daher eher optimistisch für lange Läufer.
+    first-touch, SL-first on ambiguity, monitor trailing, fees; ladder over
+    the 3 actually published TPs (`ROM1_PUBLISHED_TARGETS`).
+  * **Deliberate approximations** (read in the report as the bias direction):
+      - Live, ROM1 takes the last 5m close as CMP, the replay takes the close
+        of the decision 1h candle (up to 59 minutes earlier).
+      - The horizon is capped (`--horizon-hours`, default 168h). Live, a
+        regime change would close the trade earlier (auto-close) — the
+        counterfactuals are therefore rather optimistic for long runners.
       - `same_direction_open`/`opposite_direction_open`/`orchestrator_cooldown`
-        sind **Dedupe**, kein Regime-Urteil: ihr Counterfactual misst den Wert
-        der Positions-Hygiene, nicht die Qualität des 4D-Gates. Die Ausgabe
-        trennt die Klassen deshalb (`bucket_class`).
+        are **dedupe**, not a regime verdict: their counterfactual measures the
+        value of position hygiene, not the quality of the 4D gate. The output
+        therefore separates the classes (`bucket_class`).
 
-Betriebsregeln (Live-VPS!)
+Operating rules (live VPS!)
 --------------------------
-  * DB strikt read-only (nur SELECTs), Prozess auf BELOW_NORMAL, CPU-Check —
-    identisch zu walkforward_sim. Keine Tabelle wird geschrieben.
-  * Ergebnisse als JSONL + Summary-JSON nach `KYTHERA_REPLAY_DIR`.
+  * DB strictly read-only (SELECTs only), process at BELOW_NORMAL, CPU check —
+    identical to walkforward_sim. No table is written.
+  * Results as JSONL + summary JSON under `KYTHERA_REPLAY_DIR`.
 
-Beispiele
+Examples
 ---------
   python tools/rom1_counterfactual.py --days 90
   python tools/rom1_counterfactual.py --days 90 --side both --horizon-hours 72
@@ -91,14 +91,14 @@ DEFAULT_OUT_DIR = os.getenv(
     "KYTHERA_REPLAY_DIR", r"C:\Users\Michael\Documents\_X\staging_models\replay"
 )
 
-# get_hvn_and_sr_levels liest live 95 Tage 1h-Kerzen und braucht >= 50 Rows.
+# get_hvn_and_sr_levels reads 95 days of 1h candles live and needs >= 50 rows.
 SR_WINDOW_HOURS = 95 * 24
 MIN_SR_ROWS = 50
 DEFAULT_HORIZON_HOURS = 168
 
 OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
 
-# Wofür der jeweilige Reason steht — nur `gate` misst das 4D-Whitelist-Urteil.
+# What each reason stands for — only `gate` measures the 4D whitelist verdict.
 REASON_CLASS = {
     "bot_not_whitelisted": "gate",
     "orchestrator_cooldown": "dedupe",
@@ -110,14 +110,14 @@ REASON_CLASS = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REASON-BUCKETS
+# REASON BUCKETS
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_reason(reason: str | None) -> tuple[str, str]:
     """`reason` → (bucket, bucket_class).
 
-    Der Whitelist-Block trägt den eigentlichen Gate-Pfad im Suffix
-    (`bot_not_whitelisted:wr_below_overall`). Genau dieses Suffix ist die
-    interessante Achse — der Prefix allein wäre ein einziger 90%-Bucket.
+    The whitelist block carries the actual gate path in the suffix
+    (`bot_not_whitelisted:wr_below_overall`). This suffix is exactly the
+    interesting axis — the prefix alone would be a single 90% bucket.
     """
     if not reason:
         return "unknown", "unknown"
@@ -127,10 +127,10 @@ def parse_reason(reason: str | None) -> tuple[str, str]:
 
 
 def forwarded_bucket(wl_reason: str | None) -> tuple[str, str]:
-    """Forward-Seite: der Gate-Pfad steht in `orchestrator_open_trades.wl_reason`.
+    """Forwarded side: the gate path lives in `orchestrator_open_trades.wl_reason`.
 
-    Rows aus der Zeit vor B8 (T-2026-CU-9050-046) haben NULL — die werden als
-    eigener Bucket gezählt statt einem Pfad zugeraten.
+    Rows from before B8 (T-2026-CU-9050-046) have NULL — those are counted as
+    their own bucket instead of being attributed to a path.
     """
     if not wl_reason:
         return "forwarded:wl_reason_missing", "forward"
@@ -141,11 +141,11 @@ def forwarded_bucket(wl_reason: str | None) -> tuple[str, str]:
 # DB (read-only)
 # ─────────────────────────────────────────────────────────────────────────────
 def load_suppressed(conn, days: int, limit: int | None) -> list[dict]:
-    """Suppressed-Rows der letzten `days` Tage.
+    """Suppressed rows from the last `days` days.
 
-    `ts` ist naiv-UTC (Default `NOW() AT TIME ZONE 'UTC'`, 26_regime_detector) —
-    der Vergleich gegen NOW() wäre session-lokal (UTC_POLICY §R3). Wir schneiden
-    deshalb gegen einen explizit gerechneten naiven UTC-Cutoff.
+    `ts` is naive UTC (default `NOW() AT TIME ZONE 'UTC'`, 26_regime_detector) —
+    comparing against NOW() would be session-local (UTC_POLICY §R3). We
+    therefore cut against an explicitly computed naive UTC cutoff.
     """
     cutoff = utc_now().replace(tzinfo=None) - timedelta(days=int(days))
     sql = """
@@ -174,7 +174,7 @@ def load_suppressed(conn, days: int, limit: int | None) -> list[dict]:
 
 
 def load_forwarded(conn, days: int, limit: int | None) -> list[dict]:
-    """Forwarded-Rows (die durchgelassene Seite), gebucketed nach wl_reason."""
+    """Forwarded rows (the passed-through side), bucketed by wl_reason."""
     cutoff = utc_now().replace(tzinfo=None) - timedelta(days=int(days))
     sql = """
         SELECT id, opened_at, bot_name, coin, direction, regime_at_open,
@@ -204,11 +204,11 @@ def load_forwarded(conn, days: int, limit: int | None) -> list[dict]:
 
 
 def load_1h(conn, coin: str, oldest_ts, horizon_hours: int) -> pd.DataFrame | None:
-    """1h-Kerzen ab (ältester Signalzeitpunkt − S/R-Fenster), nur GESCHLOSSENE.
+    """1h candles from (oldest signal time − S/R window), CLOSED only.
 
-    Das Fenster reicht bewusst weit vor das erste Signal zurück: die
-    S/R-Level-Berechnung braucht dieselben 95 Tage Historie, die der Live-Bot
-    beim Posten gesehen hätte.
+    The window deliberately reaches far back before the first signal: the
+    S/R level computation needs the same 95 days of history that the live bot
+    would have seen at posting time.
     """
     start = pd.Timestamp(oldest_ts)
     if start.tzinfo is None:
@@ -229,18 +229,18 @@ def load_1h(conn, coin: str, oldest_ts, horizon_hours: int) -> pd.DataFrame | No
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AS-OF-INDEX (R1: nur geschlossene Kerzen)
+# AS-OF INDEX (R1: closed candles only)
 # ─────────────────────────────────────────────────────────────────────────────
 def as_of_index(open_times: np.ndarray, ts) -> int:
-    """Index der letzten 1h-Kerze, die zum Zeitpunkt `ts` bereits GESCHLOSSEN war.
+    """Index of the last 1h candle that was already CLOSED at time `ts`.
 
-    Eine Kerze mit open_time `o` schließt bei `o + 1h`. Gesucht ist also das
-    letzte `o` mit `o + 1h <= ts`, d.h. `o <= ts - 1h`. Die Kerze, die `ts`
-    enthält, ist zur Entscheidungszeit noch forming und darf nicht gesehen
-    werden — genau hier baut man sonst Look-ahead ein (Falle R1).
+    A candle with open_time `o` closes at `o + 1h`. So we are looking for the
+    last `o` with `o + 1h <= ts`, i.e. `o <= ts - 1h`. The candle that contains
+    `ts` is still forming at decision time and must not be seen —
+    this is exactly where look-ahead otherwise sneaks in (R1 trap).
 
-    `open_times` ist das naive-UTC datetime64-Array aus `df["open_time"].values`.
-    Rückgabe -1, wenn keine Kerze früh genug liegt.
+    `open_times` is the naive-UTC datetime64 array from `df["open_time"].values`.
+    Returns -1 if no candle lies early enough.
     """
     t = pd.Timestamp(ts)
     if t.tzinfo is not None:
@@ -253,12 +253,12 @@ def as_of_index(open_times: np.ndarray, ts) -> int:
 # SCORING
 # ─────────────────────────────────────────────────────────────────────────────
 def score_row(orch, row: dict, df: pd.DataFrame, horizon_hours: int) -> dict:
-    """Ein Signal counterfactual bewerten. Gibt den angereicherten Record zurück.
+    """Score one signal counterfactually. Returns the enriched record.
 
-    `scored=False` + `skip_reason` bei Rows, die nicht bewertbar sind (zu kurze
-    Historie, keine Geometrie) — die werden gezählt, nicht stillschweigend
-    verworfen: eine Auswertung, die 30% der Suppressions unter den Tisch fallen
-    lässt, misst nicht mehr den Gate-Wert.
+    `scored=False` + `skip_reason` for rows that cannot be scored (too short
+    a history, no geometry) — these are counted, not silently
+    dropped: an evaluation that lets 30% of suppressions fall through the
+    cracks no longer measures the gate value.
     """
     rec = dict(row)
     rec["ts"] = str(row["ts"])
@@ -282,8 +282,8 @@ def score_row(orch, row: dict, df: pd.DataFrame, horizon_hours: int) -> dict:
     if params is None:
         return {**rec, "scored": False, "skip_reason": "rom1_params_unavailable"}
 
-    # Horizont-Kappung: die Arrays enden am Horizont, `open_at_end` heißt dann
-    # "nach N Stunden weder TP1 noch SL" (Rest mark-to-market am Horizont-Close).
+    # Horizon capping: the arrays end at the horizon, `open_at_end` then means
+    # "after N hours neither TP1 nor SL" (remainder mark-to-market at horizon close).
     end = min(len(df), t + 1 + int(horizon_hours))
     res = simulate_exit(
         open_times[:end],
@@ -309,8 +309,8 @@ def score_row(orch, row: dict, df: pd.DataFrame, horizon_hours: int) -> dict:
         **res,
     })
     if row.get("recorded_entry"):
-        # Drift zwischen Live-CMP (5m-Close) und Replay-Entry (1h-Close) —
-        # die Messlatte für die "bis zu 59 Minuten früher"-Näherung.
+        # Drift between live CMP (5m close) and replay entry (1h close) —
+        # the yardstick for the "up to 59 minutes earlier" approximation.
         rec["entry_drift_pct"] = round(
             (params["entry1"] - row["recorded_entry"]) / row["recorded_entry"] * 100, 4
         )
@@ -321,12 +321,12 @@ def score_row(orch, row: dict, df: pd.DataFrame, horizon_hours: int) -> dict:
 # AGGREGATION
 # ─────────────────────────────────────────────────────────────────────────────
 def aggregate(records: list[dict]) -> list[dict]:
-    """Pro Bucket: n, Win-Rate, PnL, R. Sortiert nach Signal-Anzahl.
+    """Per bucket: n, win rate, PnL, R. Sorted by signal count.
 
-    `n_open_at_horizon` sind Trades, die am Horizont weder TP1 noch SL berührt
-    hatten — sie zählen NICHT in die Win-Rate (kein Label), ihr
-    mark-to-market-PnL fließt aber in die PnL-Summe ein, weil die Position real
-    offen gewesen wäre.
+    `n_open_at_horizon` are trades that had touched neither TP1 nor SL at the
+    horizon — they do NOT count towards the win rate (no label), but their
+    mark-to-market PnL does flow into the PnL sum, because the position would
+    really have been open.
     """
     by_bucket: dict[str, list[dict]] = defaultdict(list)
     for r in records:
@@ -364,7 +364,7 @@ def aggregate(records: list[dict]) -> list[dict]:
 
 def print_report(summary: list[dict]) -> None:
     if not summary:
-        print("Keine Rows im Fenster — nichts zu bewerten.")
+        print("No rows in the window — nothing to score.")
         return
     hdr = f"{'bucket':46} {'class':9} {'n':>6} {'scored':>7} {'wr%':>7} {'avgPnL%':>9} {'sumPnL%':>10} {'avgR':>7}"
     print("\n" + hdr)
@@ -382,21 +382,21 @@ def print_report(summary: list[dict]) -> None:
     if gate:
         n = sum(s["n_scored"] for s in gate)
         tot = sum(s["sum_net_pnl_pct"] for s in gate)
-        print(f"\nGate-Seite (bot_not_whitelisted, {n} bewertete Suppressions): "
-              f"Summe {tot:.2f}% Nominal — positiv = das Gate hat Geld liegen gelassen.")
+        print(f"\nGate side (bot_not_whitelisted, {n} scored suppressions): "
+              f"total {tot:.2f}% notional — positive = the gate left money on the table.")
     if fwd:
         n = sum(s["n_scored"] for s in fwd)
         tot = sum(s["sum_net_pnl_pct"] for s in fwd)
-        print(f"Forward-Seite ({n} bewertete Forwards): Summe {tot:.2f}% Nominal.")
-    print("\nLesehinweis: `dedupe`-Buckets messen Positions-Hygiene, nicht das 4D-Gate. "
-          "Vergleichbar sind nur `gate` vs `forward` bei gleichem Horizont.")
+        print(f"Forward side ({n} scored forwards): total {tot:.2f}% notional.")
+    print("\nReading note: `dedupe` buckets measure position hygiene, not the 4D gate. "
+          "Only `gate` vs `forward` at the same horizon are comparable.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DRIVER
 # ─────────────────────────────────────────────────────────────────────────────
 def score_all(conn, orch, rows: list[dict], horizon_hours: int) -> list[dict]:
-    """Rows coin-weise abarbeiten — ein Kerzen-Load je Coin, nicht je Signal."""
+    """Work through rows coin by coin — one candle load per coin, not per signal."""
     by_coin: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_coin[r["coin"]].append(r)
@@ -411,20 +411,20 @@ def score_all(conn, orch, rows: list[dict], horizon_hours: int) -> list[dict]:
         for r in coin_rows:
             try:
                 records.append(score_row(orch, r, df, horizon_hours))
-            except Exception as e:  # eine kaputte Row reißt den Lauf nicht ab
+            except Exception as e:  # one broken row does not abort the run
                 print(f"  !! {coin} row#{r['row_id']}: {e}")
                 records.append({**r, "ts": str(r["ts"]), "scored": False, "skip_reason": "error"})
         if i % 25 == 0 or i == len(by_coin):
-            print(f"[{i}/{len(by_coin)}] {coin}: {len(records)} Rows ({time.time() - t0:.0f}s)", flush=True)
+            print(f"[{i}/{len(by_coin)}] {coin}: {len(records)} rows ({time.time() - t0:.0f}s)", flush=True)
     return records
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="ROM1 Counterfactual-Scorer (T-2026-CU-9050-047)")
-    ap.add_argument("--days", type=int, default=90, help="Rückblick über ts/opened_at")
+    ap = argparse.ArgumentParser(description="ROM1 Counterfactual Scorer (T-2026-CU-9050-047)")
+    ap.add_argument("--days", type=int, default=90, help="lookback over ts/opened_at")
     ap.add_argument("--side", default="suppressed", choices=["suppressed", "forwarded", "both"])
     ap.add_argument("--horizon-hours", type=int, default=DEFAULT_HORIZON_HOURS)
-    ap.add_argument("--limit", type=int, default=None, help="nur die ersten N Rows je Seite")
+    ap.add_argument("--limit", type=int, default=None, help="only the first N rows per side")
     ap.add_argument("--out", default=DEFAULT_OUT_DIR)
     args = ap.parse_args()
 
@@ -441,7 +441,7 @@ def main() -> None:
 
     conn = get_db_connection()
     try:
-        conn.set_session(readonly=True)  # der Scorer schreibt NIE in die Live-DB
+        conn.set_session(readonly=True)  # the scorer NEVER writes to the live DB
     except Exception:
         pass
 
@@ -451,7 +451,7 @@ def main() -> None:
             rows += load_suppressed(conn, args.days, args.limit)
         if args.side in ("forwarded", "both"):
             rows += load_forwarded(conn, args.days, args.limit)
-        print(f"{len(rows)} Rows im Fenster ({args.days}d, side={args.side})")
+        print(f"{len(rows)} rows in the window ({args.days}d, side={args.side})")
         records = score_all(conn, orch, rows, args.horizon_hours)
     finally:
         conn.close()

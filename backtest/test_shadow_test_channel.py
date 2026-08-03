@@ -1,13 +1,13 @@
 # backtest/test_shadow_test_channel.py
-"""DB-freie Tests für den optionalen Shadow-Sichtbarkeits-Echo (T-2026-CU-9050-150).
+"""DB-free tests for the optional shadow visibility echo (T-2026-CU-9050-150).
 
-Sicherheits-Invarianten:
-  1. Default (CH_SHADOW_TEST=0): post_shadow_ai_signal schreibt NUR ai_signals,
-     KEINE telegram_outbox — exakt das bisherige Shadow-Verhalten (rückwärtskompat).
-  2. Gesetzt (CH_SHADOW_TEST=<id>): zusätzlich GENAU EINE telegram_outbox-Zeile,
-     an DIESEN Channel (nie an einen anderen), mit einer NICHT-Cornix-parsebaren
-     Vorschau (klar als SHADOW markiert, keine Cornix-Trigger-Keywords).
-  3. Der Echo läuft in derselben offenen Transaktion — kein Commit hier (Regel 8).
+Security invariants:
+  1. Default (CH_SHADOW_TEST=0): post_shadow_ai_signal writes ONLY ai_signals,
+     NO telegram_outbox — exactly the previous shadow behaviour (backward-compat).
+  2. Set (CH_SHADOW_TEST=<id>): additionally EXACTLY ONE telegram_outbox row,
+     to THIS channel (never another), with a NOT-Cornix-parseable
+     preview (clearly marked SHADOW, no Cornix trigger keywords).
+  3. The echo runs in the same open transaction — no commit here (rule 8).
 
 Run: pytest backtest/test_shadow_test_channel.py -v
 """
@@ -71,47 +71,47 @@ def _outbox_rows(conn: FakeConn) -> list[tuple]:
     return [(sql, params) for (sql, params) in conn.ops if "INSERT INTO telegram_outbox" in sql]
 
 
-# ── 1. Default AUS: kein Kanal-Post ───────────────────────────────────────────
+# ── 1. Default OFF: no channel post ──────────────────────────────────────────
 def test_default_off_writes_no_outbox(monkeypatch):
     conn = _emit(monkeypatch, 0)
-    assert any("INSERT INTO ai_signals" in sql for sql, _ in conn.ops)  # Shadow geschrieben
-    assert _outbox_rows(conn) == []  # aber NIE ein Kanal-Post
-    assert conn.commits == 0  # Regel 8: Caller committet
+    assert any("INSERT INTO ai_signals" in sql for sql, _ in conn.ops)  # shadow written
+    assert _outbox_rows(conn) == []  # but NEVER a channel post
+    assert conn.commits == 0  # rule 8: caller commits
 
 
-# ── 2. Gesetzt: genau EINE Zeile an genau DIESEN Channel ──────────────────────
+# ── 2. Set: exactly ONE row to exactly THIS channel ──────────────────────────────
 def test_set_writes_one_preview_to_test_channel(monkeypatch):
     conn = _emit(monkeypatch, TEST_CH)
     rows = _outbox_rows(conn)
     assert len(rows) == 1
     _, params = rows[0]
     channel_id, message = params
-    assert channel_id == TEST_CH  # nie ein anderer (Handels-)Channel
+    assert channel_id == TEST_CH  # never another (trading) channel
     assert "SHADOW PREVIEW" in message and "NOT a trade signal" in message
     assert "LIS1" in message and "TESTUSDT" in message and "SHORT" in message
-    assert conn.commits == 0  # weiterhin kein Commit hier
+    assert conn.commits == 0  # still no commit here
 
 
-# ── 2b. Harte Schranke: nie der Handels-Channel (Defense-in-Depth) ────────────
+# ── 2b. Hard boundary: never the trading channel (defense-in-depth) ──────────────
 def test_shadow_test_channel_never_the_trading_channel(monkeypatch):
     from core import config
 
-    # Fehlkonfiguration: CH_SHADOW_TEST versehentlich == Handels-Channel.
+    # Misconfiguration: CH_SHADOW_TEST accidentally == trading channel.
     monkeypatch.setattr(config, "CH_SHADOW_TEST", -1002000000000, raising=False)
     monkeypatch.setattr(config, "REGIME_TRADING_CHANNEL_ID", -1002000000000, raising=False)
-    assert sp._shadow_test_channel() == 0  # unterdrückt → kein Echo an den Handels-Channel
-    # Ein anderer (Nicht-Handels-)Channel bleibt erlaubt.
+    assert sp._shadow_test_channel() == 0  # suppressed → no echo to trading channel
+    # Another (non-trading) channel remains allowed.
     monkeypatch.setattr(config, "CH_SHADOW_TEST", TEST_CH, raising=False)
     assert sp._shadow_test_channel() == TEST_CH
 
 
-# ── 3. Die Vorschau ist NICHT Cornix-parsebar ─────────────────────────────────
+# ── 3. The preview is NOT Cornix-parseable ──────────────────────────────────────
 def test_preview_message_is_not_cornix_parseable():
     msg = sp._shadow_preview_message("LIS1", "TESTUSDT", "SHORT", 100.0, 105.0, [95.0, 90.0, 85.0])
-    # Keine der Standard-Cornix-Trigger-Strukturen (die einen Trade auslösen würden).
+    # None of the standard Cornix trigger structures (that would fire a trade).
     lower = msg.lower()
     for trigger in ("entry:", "targets:", "target:", "stop loss", "stoploss", "leverage:", "take profit"):
-        assert trigger not in lower, f"Cornix-Trigger '{trigger}' in der Vorschau!"
-    # Aber die Referenzwerte sind sichtbar (reine Info) — als Ref-Text.
+        assert trigger not in lower, f"Cornix trigger '{trigger}' in preview!"
+    # But the reference values are visible (pure info) — as ref text.
     assert "Ref-Entry" in msg and "Ref-SL" in msg and "Ref-TPs" in msg
     assert msg.startswith("👻 SHADOW PREVIEW")

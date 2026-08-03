@@ -1,8 +1,8 @@
-# 23_market_tracker.py — PATCH für Regime-Fit-Zeile
+# 23_market_tracker.py — PATCH for regime-fit line
 #
-# Exakt diese Stelle ersetzen (Zeilen ~1015–1030 in job_per_bot_performance):
+# Replace exactly this spot (lines ~1015–1030 in job_per_bot_performance):
 #
-# VORHER:
+# BEFORE:
 #         kelly_lines.append(f"<b>{strategy}</b>")
 #
 #         if status == 'insufficient_data':
@@ -18,9 +18,9 @@
 #             kelly_lines.append(f"  Pure Margin:  {mp:>5.1f}%  (Half-Kelly / (avg_loss × Lev))")
 #         else:
 #             kelly_lines.append("  ---")
-#         kelly_lines.append("")  # Leerzeile als Abtrennung zwischen Bots
+#         kelly_lines.append("")  # blank line as separator between bots
 #
-# NACHHER (Regime-Fit-Zeile hinzugefügt):
+# AFTER (regime-fit line added):
 #
 #         kelly_lines.append(f"<b>{strategy}</b>")
 #
@@ -38,9 +38,9 @@
 #         else:
 #             kelly_lines.append("  ---")
 #         kelly_lines.append(f"  Regime Fit:   {_get_regime_fit_label(conn_for_kelly, strategy)}")
-#         kelly_lines.append("")  # Leerzeile als Abtrennung zwischen Bots
+#         kelly_lines.append("")  # blank line as separator between bots
 #
-# AUSSERDEM: Diese Hilfsfunktion VOR job_per_bot_performance einfügen:
+# ALSO: insert this helper function BEFORE job_per_bot_performance:
 
 def _get_regime_fit_label(conn, bot_name: str) -> str:
     """
@@ -50,9 +50,9 @@ def _get_regime_fit_label(conn, bot_name: str) -> str:
 
     Examples:
         'CHOP 58% (n=145), Overall 59% → NEUTRAL'
-        'TREND_UP 72% (n=80), Overall 61% → STARK'
-        '--- (zu wenig Daten)'
-        '---'  ← wenn Orchestrator nicht deployt
+        'TREND_UP 72% (n=80), Overall 61% → STRONG'
+        '--- (too little data)'
+        '---'  ← when orchestrator is not deployed
     """
     try:
         # Read current regime
@@ -100,13 +100,13 @@ def _get_regime_fit_label(conn, bot_name: str) -> str:
             return "---"
 
         if n_regime < 30:
-            return f"{cur_regime} n={n_regime} → --- (zu wenig Daten)"
+            return f"{cur_regime} n={n_regime} → --- (too little data)"
 
         diff = wr_regime - wr_overall
         if diff >= 10.0:
-            label = "STARK ↑"
+            label = "STRONG ↑"
         elif diff <= -10.0:
-            label = "SCHWACH ↓"
+            label = "WEAK ↓"
         else:
             label = "NEUTRAL"
 

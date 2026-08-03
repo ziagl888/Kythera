@@ -1,14 +1,14 @@
 # backtest/test_watchdog_orphan_reap.py
-"""DB-freie Tests für die Watchdog-Waisen-/Mutex-Deadlock-Recovery
+"""DB-free tests for the watchdog orphan/mutex deadlock recovery
 (T-2026-CU-9050-127).
 
-Pinnt zwei Invarianten des geld-kritischen P0.2-Pfads:
-  1. _reap_orphans zählt NUR tatsächlich beendete Prozesse (AccessDenied-
-     Überlebende NICHT), schliesst sich selbst + eigene Kinder aus.
-  2. _acquire_single_instance_lock löst den Waisen-Mutex-Deadlock: bei Konflikt
-     wird der verwaiste Vor-Watchdog gereapt, der eigene Handle geschlossen und
-     die Akquise EINMAL wiederholt; ist der Halter nicht reapbar -> harter Exit
-     wie bisher (kein Regress).
+Pins two invariants of the money-critical P0.2 path:
+  1. _reap_orphans counts ONLY actually terminated processes (AccessDenied
+     survivors NOT), excludes itself + its own children.
+  2. _acquire_single_instance_lock resolves the orphan mutex deadlock: on
+     conflict the orphaned previous watchdog is reaped, its own handle
+     closed, and the acquisition retried ONCE; if the holder is not reapable
+     -> hard exit as before (no regression).
 
 Run: pytest backtest/test_watchdog_orphan_reap.py -v
 """

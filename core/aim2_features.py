@@ -1,21 +1,21 @@
 """
-core/aim2_features.py — geteilter Feature-Builder für AIM2 (Trainer UND Serving).
+core/aim2_features.py — shared feature builder for AIM2 (trainer AND serving).
 
-Der AIM1-Vorgänger hatte drei tödliche Skews zwischen Training und Live
-(round-vs-floor-Join, totes One-Hot-Vokabular, Selbst-Feedback). Deshalb gilt
-hier das MIS1-Muster (Commit e84bc7d): tools/aim2_build_dataset.py und
-15_ai_master_bot.py bauen jede Feature-Zeile über exakt diese eine Funktion.
+The AIM1 predecessor had three fatal skews between training and live
+(round-vs-floor join, dead one-hot vocabulary, self-feedback). That's why the
+MIS1 pattern applies here (commit e84bc7d): tools/aim2_build_dataset.py and
+15_ai_master_bot.py build each feature row using exactly this one function.
 
-Vertrag:
-  * market_row  = Indikator-Zeile der letzten GESCHLOSSENEN 1h-Kerze vor dem
-    Event (floor-1-Join; der Aufrufer ist für `open_time < floor(event)`
-    verantwortlich), close = Close derselben Kerze.
-  * regime_row  = jüngste regime_history-Zeile mit ts <= Event (UTC!), None ok.
-  * swarm       = 5d-Schwarm-Kontext OHNE AIM1/AIM2 und OHNE das Event selbst.
-  * source      = Quellsignal-Identität; das One-Hot-Vokabular entsteht beim
-    Training aus den Daten (Artefakt-Featureliste), NICHT aus dieser Datei.
+Contract:
+  * market_row  = indicator row of the last CLOSED 1h candle before the event
+    (floor-1 join; the caller is responsible for `open_time < floor(event)`),
+    close = close of that candle.
+  * regime_row  = most recent regime_history row with ts <= event (UTC!), None ok.
+  * swarm       = 5d-swarm context WITHOUT AIM1/AIM2 and WITHOUT the event itself.
+  * source      = source signal identity; the one-hot vocabulary is created during
+    training from the data (artifact feature list), NOT from this file.
 
-Absolute Preis-/Skalen-Features sind bewusst verboten (Ticker-Leakage,
+Absolute price / scale features are deliberately forbidden (ticker leakage,
 Report 13).
 """
 
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import math
 
-# Preis-basierte Indikatoren → Distanz zum Close in % (skalenfrei)
+# Price-based indicators → distance to close in % (scale-free)
 MARKET_PRICE_COLS = [
     "ema_9",
     "ema_21",
@@ -42,7 +42,7 @@ MARKET_PRICE_COLS = [
     "trendline_price",
 ]
 
-# Bereits skalenfreie Indikatoren → unverändert
+# Already scale-free indicators → unchanged
 MARKET_ABS_COLS = [
     "rsi_6",
     "rsi_14",
@@ -53,14 +53,14 @@ MARKET_ABS_COLS = [
     "r_squared",
 ]
 
-ATR_COLS = ["atr_14", "atr_21"]  # → % vom Close
+ATR_COLS = ["atr_14", "atr_21"]  # → % of close
 
 TREND_VALUES = ["UP", "DOWN", "SIDEWAYS"]
 REGIME_VALUES = ["TREND_UP", "TREND_DOWN", "CHOP", "HIGH_VOLA", "TRANSITION"]
 ALT_VALUES = ["ALT_STRONG", "ALT_NEUTRAL", "ALT_WEAK"]
 
-# Conv-Signale haben keine Modell-Confidence — Mapping wie Bot 15 (AIM1-Ära),
-# damit source_conf über den Bruch AIM1→AIM2 vergleichbar bleibt.
+# Conv signals have no model confidence — mapping as per Bot 15 (AIM1 era),
+# so source_conf remains comparable across the AIM1→AIM2 break.
 CONV_CONFIDENCE_MAPPING = {
     "Fast In And Out": 0.65,
     "Fast Bot": 0.65,
@@ -73,14 +73,14 @@ CONV_CONFIDENCE_MAPPING = {
     "Main Channel": 0.55,
 }
 
-# Trailing-WR-Semantik (closed_ai_signals) — MUSS in Trainer und Serving
-# identisch sein: Win = irgendein Target getroffen.
+# Trailing WR semantics (closed_ai_signals) — MUST be identical in trainer and
+# serving: win = any target hit.
 TRAIL_WIN_SQL = "(status ILIKE '%%TARGET%%' OR COALESCE(targets_hit, 0) >= 1)"
 TRAIL_WINDOW_DAYS = 30
 
 
 def _f(value, default: float = 0.0) -> float:
-    """Robuste float-Konvertierung; NaN/inf/None/Fehler → default."""
+    """Robust float conversion; NaN/inf/None/error → default."""
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -98,11 +98,11 @@ def build_feature_row(
     swarm: dict,
     source: dict,
 ) -> dict:
-    """Eine Event-Zeile → flaches Feature-Dict (nur endliche floats).
+    """An event row → flat feature dict (finite floats only).
 
-    source-Keys: name, type ('ai'|'conv'), conf, trail_wr_30d, trail_n_30d,
+    source keys: name, type ('ai'|'conv'), conf, trail_wr_30d, trail_n_30d,
     entry_drift_pct, direction ('LONG'|'SHORT').
-    swarm-Keys: total_5d, long_5d, short_5d, latest_age_h,
+    swarm keys: total_5d, long_5d, short_5d, latest_age_h,
     confl_same_dir_4h, distinct_src_same_dir_4h.
     """
     row: dict[str, float] = {}
@@ -110,7 +110,7 @@ def build_feature_row(
     if close_safe <= 0:
         close_safe = 1.0
 
-    # --- Markt (floor-1-Kerze) ---
+    # --- Market (floor-1 candle) ---
     for col in MARKET_PRICE_COLS:
         val = _f(market_row.get(col), default=float("nan"))
         row[f"{col}_dist_pct"] = (val - close_safe) / close_safe * 100.0 if math.isfinite(val) and val > 0 else 0.0
@@ -123,7 +123,7 @@ def build_feature_row(
     for t in TREND_VALUES:
         row[f"trend_{t}"] = 1.0 if trend == t else 0.0
 
-    # --- Regime (der 2025 fehlende Prädiktor) ---
+    # --- Regime (the missing 2025 predictor) ---
     regime = str((regime_row or {}).get("regime") or "nan")
     alt = str((regime_row or {}).get("alt_context") or "nan")
     for r in REGIME_VALUES:
@@ -139,10 +139,10 @@ def build_feature_row(
     row["btc_atr_1h_pct"] = _f(rr.get("btc_atr_1h_pct"))
     row["btc_atr_4h_pct"] = _f(rr.get("btc_atr_4h_pct"))
     row["btcdom_return_24h"] = _f(rr.get("btcdom_return_24h"))
-    # Staleness gekappt: >6h heißt „Regime-Info praktisch fehlend"
+    # Staleness capped: >6h means "regime info practically missing"
     row["regime_age_min"] = min(_f(regime_age_min, default=360.0), 360.0)
 
-    # --- Schwarm (ohne AIM1/AIM2, ohne das Event selbst — F6-Fix) ---
+    # --- Swarm (without AIM1/AIM2, without the event itself — F6 fix) ---
     total = _f(swarm.get("total_5d"))
     longs = _f(swarm.get("long_5d"))
     shorts = _f(swarm.get("short_5d"))
@@ -155,9 +155,9 @@ def build_feature_row(
     row["swarm_confl_same_dir_4h"] = _f(swarm.get("confl_same_dir_4h"))
     row["swarm_distinct_src_same_dir_4h"] = _f(swarm.get("distinct_src_same_dir_4h"))
 
-    # --- Quelle ---
+    # --- Source ---
     name = str(source.get("name") or "nan").strip()
-    row[f"src_{name}"] = 1.0  # Vokabular entsteht im Training (Artefakt-Liste)
+    row[f"src_{name}"] = 1.0  # Vocabulary is created during training (artifact list)
     row["src_is_ai"] = 1.0 if source.get("type") == "ai" else 0.0
     row["src_conf"] = _f(source.get("conf"))
     row["src_trail_wr_30d"] = _f(source.get("trail_wr_30d"), default=0.5)
@@ -169,7 +169,7 @@ def build_feature_row(
 
 
 def parity_nonzero_share(vector, feature_names) -> float:
-    """Anteil der Nicht-Null-Features — OOD-Wache gegen den P0.13-Fehlermodus
-    (Serving-reindex nullt still das halbe Vokabular)."""
+    """Share of non-zero features — OOD guard against the P0.13 failure mode
+    (serving reindex silently nulls half the vocabulary)."""
     nonzero = sum(1 for v in vector if _f(v) != 0.0)
     return nonzero / max(len(feature_names), 1)

@@ -20,29 +20,29 @@ logger = logging.getLogger(__name__)
 
 from core import config as _kcfg  # channel ids
 
-# 🛠️ PAPER TRADING KONFIGURATION
+# 🛠️ PAPER TRADING CONFIGURATION
 CHANNEL_ID = _kcfg.CH_PAPER
 SYMBOL = 'BTCUSDT'
 
-# Kapital-Simulation
+# Capital simulation
 CAPITAL = 100000.0
-TRADE_MARGIN = 100.0  # Wir riskieren 100 USDT pro Trade
-LEVERAGE = 100  # 100x Hebel -> 10.000 USDT Nominal-Positionsgröße
-TAKER_FEE = 0.0004  # 0.04% pro Trade (Ein- und Ausstieg)
+TRADE_MARGIN = 100.0  # We risk 100 USDT per trade
+LEVERAGE = 100  # 100x leverage -> 10.000 USDT notional position size
+TAKER_FEE = 0.0004  # 0.04% per trade (entry and exit)
 
 ACTIVE_TRADES = {}
 TRADE_COUNTER = 1
 COOLDOWNS = {}
 
-# --- DIE GEWINNER-PARAMETER AUS DEM BACKTEST ---
+# --- THE WINNING PARAMETERS FROM THE BACKTEST ---
 EMA_PERIOD = 21
-SL_PCT = 0.002  # 0.4% Stop-Loss
-MIN_RR_RATIO = 0.9  # Minimum Risk-Reward
-MAX_PIVOT_AGE = 120  # Keine Asbach-Uralt-Ziele
-MAX_FVG_AGE = 48  # FVG muss innerhalb von 48 Kerzen gefüllt werden
+SL_PCT = 0.002  # 0.4% stop-loss
+MIN_RR_RATIO = 0.9  # Minimum risk-reward
+MAX_PIVOT_AGE = 120  # No ancient/stale targets
+MAX_FVG_AGE = 48  # FVG must be filled within 48 candles
 
 
-# 📊 DATENBESCHAFFUNG (LIVE VON BINANCE)
+# 📊 DATA ACQUISITION (LIVE FROM BINANCE)
 def fetch_klines(symbol, interval, limit=300):
     try:
         url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
@@ -59,7 +59,7 @@ def fetch_klines(symbol, interval, limit=300):
 
         return df.iloc[:-1].reset_index(drop=True)
     except Exception as e:
-        logger.error(f"Fehler beim Laden der Klines für {interval}: {e}")
+        logger.error(f"Error loading klines for {interval}: {e}")
         return pd.DataFrame()
 
 
@@ -96,7 +96,7 @@ def execute_trade(direction, price, sl, target, strategy, rr):
 <b>ENTRY:</b> {price:.2f}
 <b>SL:</b> {sl:.2f} | <b>TP:</b> {target:.2f}
 <b>R:R RATIO:</b> 1 : {rr:.2f}
-<b>KAPITAL:</b> {CAPITAL:,.2f} USDT
+<b>CAPITAL:</b> {CAPITAL:,.2f} USDT
 </pre>"""
 
     logger.info(f"OPEN {trade_id} | {direction} | Entry: {price} | R:R: {rr:.2f} | Strategy: {strategy}")
@@ -149,10 +149,10 @@ def monitor_live_trades(live_price):
 <b>STRATEGY:</b> {trade['strategy']}
 <b>REASON:</b> {reason} @ {live_price:.2f}
 <b>NET PNL:</b> {net_pnl:+.2f} USDT {emoji}
-<b>KAPITAL:</b> {CAPITAL:,.2f} USDT
+<b>CAPITAL:</b> {CAPITAL:,.2f} USDT
 </pre>"""
 
-            logger.info(f"CLOSE {tid} | {reason} | PnL: {net_pnl:+.2f} | Kapital: {CAPITAL:,.2f}")
+            logger.info(f"CLOSE {tid} | {reason} | PnL: {net_pnl:+.2f} | Capital: {CAPITAL:,.2f}")
             send_telegram(msg)
             trades_to_close.append(tid)
 
@@ -160,12 +160,12 @@ def monitor_live_trades(live_price):
         del ACTIVE_TRADES[tid]
 
 
-# 🎯 PIVOT RETEST STRATEGIE (MIT BACKTEST-REGELN)
+# 🎯 PIVOT RETEST STRATEGY (WITH BACKTEST RULES)
 def run_smc_analysis(tf):
     df = fetch_klines(SYMBOL, tf, 300)
     if df.empty or len(df) < 50: return
 
-    # 1. EMA 21 berechnen
+    # 1. Calculate EMA 21
     df['ema21'] = df['close'].ewm(span=EMA_PERIOD, adjust=False).mean()
     curr_ema = df['ema21'].iloc[-1]
 
@@ -187,7 +187,7 @@ def run_smc_analysis(tf):
                 return True
         return False
 
-    # 🟢 LONG SETUP PRÜFEN
+    # 🟢 CHECK LONG SETUP
     if curr_price > curr_ema:
         for i in range(search_start, curr_idx):
             if df['high'].iloc[i - 2] < df['low'].iloc[i] and df['close'].iloc[i - 1] > df['open'].iloc[i - 1]:
@@ -203,7 +203,7 @@ def run_smc_analysis(tf):
 
                         if valid_res:
                             target = min(valid_res)
-                            sl = curr_low * (1.0 - SL_PCT)  # 0.4% Puffer
+                            sl = curr_low * (1.0 - SL_PCT)  # 0.4% buffer
                             risk = curr_price - sl
                             reward = target - curr_price
 
@@ -211,9 +211,9 @@ def run_smc_analysis(tf):
                                 strategy_name = f"PIVOT_{tf}_FVG_CLOSED_LONG"
                                 if check_cooldown(strategy_name):
                                     execute_trade("LONG", curr_price, sl, target, strategy_name, (reward / risk))
-                                    return  # Nur 1 Trade pro Durchlauf
+                                    return  # Only 1 trade per run
 
-    # 🔴 SHORT SETUP PRÜFEN
+    # 🔴 CHECK SHORT SETUP
     if curr_price < curr_ema:
         for i in range(search_start, curr_idx):
             if df['low'].iloc[i - 2] > df['high'].iloc[i] and df['close'].iloc[i - 1] < df['open'].iloc[i - 1]:
@@ -229,7 +229,7 @@ def run_smc_analysis(tf):
 
                         if valid_sup:
                             target = max(valid_sup)
-                            sl = curr_high * (1.0 + SL_PCT)  # 0.4% Puffer
+                            sl = curr_high * (1.0 + SL_PCT)  # 0.4% buffer
                             risk = sl - curr_price
                             reward = curr_price - target
 
@@ -240,7 +240,7 @@ def run_smc_analysis(tf):
                                     return
 
 
-# 🌐 WEBSOCKET VERBINDUNG
+# 🌐 WEBSOCKET CONNECTION
 def on_message(ws, message):
     try:
         data = json.loads(message)
@@ -261,23 +261,23 @@ def on_message(ws, message):
                 threading.Thread(target=run_smc_analysis, args=('5m',)).start()
 
     except Exception as e:
-        logger.error(f"Websocket Message Fehler: {e}")
+        logger.error(f"Websocket message error: {e}")
 
 
 def on_error(ws, error):
-    logger.error(f"WebSocket Fehler: {error}")
+    logger.error(f"WebSocket error: {error}")
 
 
 def on_close(ws, close_status_code, close_msg):
-    logger.warning("WebSocket geschlossen. Verbinde neu...")
+    logger.warning("WebSocket closed. Reconnecting...")
     time.sleep(5)
     start_websocket()
 
 
 def on_open(ws):
-    logger.info("✅ Binance WebSocket verbunden!")
+    logger.info("✅ Binance WebSocket connected!")
     send_telegram(
-        "🚀 <b>PIVOT FVG SIMULATOR (SNIPER EDITION) GESTARTET</b>\nEMA21 | 0.4% SL | R:R 1.25\nPairs: BTCUSDT | TF: 1m, 5m")
+        "🚀 <b>PIVOT FVG SIMULATOR (SNIPER EDITION) STARTED</b>\nEMA21 | 0.4% SL | R:R 1.25\nPairs: BTCUSDT | TF: 1m, 5m")
 
 
 def start_websocket():
@@ -290,4 +290,4 @@ if __name__ == "__main__":
     try:
         start_websocket()
     except KeyboardInterrupt:
-        logger.info("Simulation beendet.")
+        logger.info("Simulation ended.")

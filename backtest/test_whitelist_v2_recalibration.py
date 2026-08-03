@@ -62,26 +62,26 @@ def test_removing_profitable_traffic_is_called_out_even_with_a_great_kept_side()
         "kept": {"mean_move_pct": 4.37},  # spectacular
         "blocked": {"mean_move_pct": 0.554},  # but what it dropped was winning
     }
-    assert recal.verdict_of(row, {"mean_move_pct": 0.689}) == "entfernt GEWINNER"
+    assert recal.verdict_of(row, {"mean_move_pct": 0.689}) == "removes WINNERS"
 
 
 def test_removing_losers_requires_the_kept_side_to_actually_improve():
     good = {"n_blocked": 100, "kept": {"mean_move_pct": 0.56}, "blocked": {"mean_move_pct": -0.08}}
-    assert recal.verdict_of(good, {"mean_move_pct": 0.033}) == "entfernt Verlierer"
+    assert recal.verdict_of(good, {"mean_move_pct": 0.033}) == "removes losers"
     # Same negative blocked side, but the kept side is WORSE than the baseline:
     # dropping losers while the remainder degrades is not an improvement.
     ambiguous = {"n_blocked": 100, "kept": {"mean_move_pct": 0.01}, "blocked": {"mean_move_pct": -0.08}}
-    assert recal.verdict_of(ambiguous, {"mean_move_pct": 0.033}) != "entfernt Verlierer"
+    assert recal.verdict_of(ambiguous, {"mean_move_pct": 0.033}) != "removes losers"
 
 
 def test_a_gate_that_blocks_nothing_is_a_no_op_not_a_success():
     row = {"n_blocked": 0, "kept": {"mean_move_pct": 0.7}, "blocked": {"mean_move_pct": None}}
-    assert recal.verdict_of(row, {"mean_move_pct": 0.689}) == "no-op (blockt nichts)"
+    assert recal.verdict_of(row, {"mean_move_pct": 0.689}) == "no-op (blocks nothing)"
 
 
 def test_missing_leg_stats_are_not_bewertbar():
     row = {"n_blocked": 10, "kept": {"mean_move_pct": None}, "blocked": {"mean_move_pct": None}}
-    assert "nicht bewertbar" in recal.verdict_of(row, {"mean_move_pct": 0.1})
+    assert "not assessable" in recal.verdict_of(row, {"mean_move_pct": 0.1})
 
 
 # ── score_config ─────────────────────────────────────────────────────────────

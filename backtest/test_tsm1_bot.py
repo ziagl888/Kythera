@@ -1,14 +1,14 @@
 # backtest/test_tsm1_bot.py
-"""DB-freie Tests für den TSM1-Shadow-Forwarder (Bot 37, K1, T-2026-CU-9050-149).
+"""DB-free tests for the TSM1-shadow forwarder (bot 37, K1, T-2026-CU-9050-149).
 
-  1. shadow_gate: TSM1-SHORT ist LIVE (T-2026-CU-9050-183, → CH_FIF1), ohne
-     Artefakt (Forwarder-Klasse D); die nicht-emittierte LONG-Richtung ebenfalls LIVE.
-  2. bot_catalog: Tag "TSM1" → 37_ai_tsm1_bot.py.
-  3. short_crossing: das 4h-ROC-Crossing-Prädikat (außen→innen) feuert genau am
-     Bar mit dem Durchbruch, nicht davor.
-  4. process_coin: emittiert über post_ai_signal_gated nur bei Crossing +
-     LIVE/SHADOW-Bein + kein Cooldown/offener Trade + genug Kerzen + Targets;
-     SILENT/retired → nichts. Live-Post geht an den geerbten CH_FIF1.
+  1. shadow_gate: TSM1-SHORT is LIVE (T-2026-CU-9050-183, → CH_FIF1), no artifact
+     (forwarder class D); the non-emitted LONG direction also LIVE.
+  2. bot_catalog: tag "TSM1" → 37_ai_tsm1_bot.py.
+  3. short_crossing: the 4h-ROC crossing predicate (outside→inside) fires exactly
+     on the bar with the break, not before.
+  4. process_coin: emits via post_ai_signal_gated only on crossing + LIVE/SHADOW
+     leg + no cooldown/open trade + enough candles + targets; SILENT/retired →
+     nothing. Live post goes to inherited CH_FIF1.
 
 Run: pytest backtest/test_tsm1_bot.py -v
 """
@@ -44,22 +44,22 @@ tsm1 = _import_tsm1()
 
 
 def _base_walk(n):
-    """Deterministischer Kurs mit ECHTER Varianz (~1 % Returns) → σ>0, reales Band."""
+    """Deterministic price with REAL variance (~1 % returns) → σ>0, real band."""
     t = np.arange(n)
     rets = 0.01 * np.sin(t * 1.7) + 0.005 * np.cos(t * 0.3)
     return 100.0 * np.exp(np.cumsum(rets))
 
 
 def _crossing_closes():
-    """ROC[-1] = −20 % (weit unter −Band), ROC[-2] = +1 % (innerhalb) → SHORT-Crossing."""
+    """ROC[-1] = −20 % (far below −band), ROC[-2] = +1 % (inside) → SHORT-crossing."""
     close = _base_walk(tsm1.MIN_4H_ROWS + 5).copy()
     close[-1] = close[-1 - tsm1.ROC_L] * 0.80  # ROC[-1] = -0.20
-    close[-2] = close[-2 - tsm1.ROC_L] * 1.01  # ROC[-2] = +0.01 (außen? nein: innen)
+    close[-2] = close[-2 - tsm1.ROC_L] * 1.01  # ROC[-2] = +0.01 (outside? no: inside)
     return close
 
 
 def _quiet_closes():
-    """Beide letzten ROCs positiv → kein SHORT-Crossing."""
+    """Both last ROCs positive → no SHORT-crossing."""
     close = _base_walk(tsm1.MIN_4H_ROWS + 5).copy()
     close[-1] = close[-1 - tsm1.ROC_L] * 1.01
     close[-2] = close[-2 - tsm1.ROC_L] * 1.01
@@ -68,13 +68,13 @@ def _quiet_closes():
 
 # ── 1. shadow_gate ────────────────────────────────────────────────────────────
 def test_tsm1_short_is_live_no_artifact():
-    # T-2026-CU-9050-183: TSM1 SHORT live promotet (→ CH_FIF1); Forwarder ohne
-    # Artefakt (Klasse D), also weiterhin kein Staging-Modell.
+    # T-2026-CU-9050-183: TSM1 SHORT promoted to live (→ CH_FIF1); forwarder
+    # without artifact (class D), so still no staging model.
     assert sg.leg_status("TSM1", "SHORT") == sg.LIVE
     assert not sg.is_shadow("TSM1", "SHORT")
     assert sg.shadow_artifact_path("TSM1", "SHORT") is None
     assert sg.load_shadow_artifact("TSM1", "SHORT") is None
-    # LONG wird nicht emittiert → ebenfalls Default-LIVE (kein Bot postet es).
+    # LONG is not emitted → also default-LIVE (no bot posts it).
     assert sg.leg_status("TSM1", "LONG") == sg.LIVE
 
 
@@ -152,9 +152,9 @@ def test_process_coin_emits_on_crossing(monkeypatch):
     assert len(posts) == 1
     tag, direction, channel_id, sym, e1, e2, sl, _ = posts[0]
     assert (tag, direction, sym) == ("TSM1", "SHORT", "NEWUSDT")
-    assert channel_id == tsm1._kcfg.CH_FIF1  # von FIF1 geerbter Ziel-Channel
-    assert e1 == e2  # Market-Fill
-    assert sl > e1  # SHORT-SL über Entry
+    assert channel_id == tsm1._kcfg.CH_FIF1  # target channel inherited from FIF1
+    assert e1 == e2  # market fill
+    assert sl > e1  # SHORT SL above entry
 
 
 def test_process_coin_no_emit_without_crossing(monkeypatch):
@@ -164,7 +164,7 @@ def test_process_coin_no_emit_without_crossing(monkeypatch):
 
 
 def test_process_coin_emits_when_leg_shadow(monkeypatch):
-    # Rückzug in den Shadow (SHADOW-Bein) → emittiert weiter, aber als Shadow.
+    # Withdrawal to shadow (SHADOW leg) → continues to emit, but as shadow.
     posts = _wire(monkeypatch, leg=sg.SHADOW)
     assert tsm1.process_coin(_FakeConn(), "NEWUSDT") is True
     assert len(posts) == 1

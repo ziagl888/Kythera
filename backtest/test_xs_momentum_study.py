@@ -1,19 +1,19 @@
 # backtest/test_xs_momentum_study.py
-"""DB-freie Tests für die K2-Studien-Maschinerie `tools/xs_momentum_study.py`
-(T-2026-KYT-9050-013, Follow-up aus dem K2-Review T-2026-CU-9050-143 / PR #133).
+"""DB-free tests for the K2 study machinery `tools/xs_momentum_study.py`
+(T-2026-KYT-9050-013, follow-up from the K2 review T-2026-CU-9050-143 / PR #133).
 
-Zwei Maschinen-Defekte werden hier gepinnt — beide ändern das NEGATIVE Verdikt der
-Studie nicht (`weak/inconsistent-spread`), sie reparieren die Messung:
+Two machinery defects are pinned here — both do NOT change the NEGATIVE verdict of
+the study (`weak/inconsistent-spread`), they fix the measurement:
 
-  1. **market-neutral-Frame war ein No-op.** `sig = sig_abs - btc_sig` ist ein
-     Per-Rebalance-SKALAR-Shift ⇒ argsort-invariant, und die PnL benutzte absolute
-     Coin-Returns ⇒ alle 60 `market_neutral`-Zellen waren byte-identisch zu ihrem
-     `absolute`-Zwilling. Der Beta-Adjust gehört auf die RETURNS (wie K5:
-     `r_abs - (btc_H/btc_0 - 1)`), nicht auf das rang-erhaltende Signal.
-  2. **Stage-2-Entry ~1 Tages-Balken zu früh (Look-ahead).** `dates[t]` ist der
-     Tages-OPEN (`load_1d` floored auf 'D'), das Ranking-Signal ist aber `close[t]`.
-     Der Entry am ersten 1h-Close ab `dates[t]` liegt damit ~23 h BEVOR das Signal
-     überhaupt beobachtbar ist. Korrekt: `dates[t] + 86400`.
+  1. **market-neutral frame was a no-op.** `sig = sig_abs - btc_sig` is a
+     per-rebalance SCALAR shift ⇒ argsort-invariant, and the PnL used absolute
+     coin returns ⇒ all 60 `market_neutral` cells were byte-identical to their
+     `absolute` twin. The beta adjust belongs on the RETURNS (like K5:
+     `r_abs - (btc_H/btc_0 - 1)`), not on the rank-preserving signal.
+  2. **Stage-2 entry ~1 daily bar too early (look-ahead).** `dates[t]` is the
+     daily OPEN (`load_1d` floored to 'D'), but the ranking signal is `close[t]`.
+     The entry at the first 1h close from `dates[t]` therefore sits ~23h BEFORE
+     the signal is even observable. Correct: `dates[t] + 86400`.
 
 Run: pytest backtest/test_xs_momentum_study.py -v
 """
@@ -37,10 +37,10 @@ import tools.xs_momentum_study as m  # noqa: E402
 
 DAY = 86400
 T0 = int(pd.Timestamp("2025-01-01T00:00:00Z").timestamp())
-N_DAYS = 140  # > max(F)+max(H)+2 = 114, gibt 4 Rebalance-Zeilen im Wochenraster
+N_DAYS = 140  # > max(F)+max(H)+2 = 114, gives 4 rebalance rows in the weekly grid
 
-# Geometrische Pfade: konstante Tages-Rendite je Coin ⇒ fwd über H ist über alle
-# Rebalances identisch ⇒ die Zell-Mittelwerte sind geschlossen nachrechenbar.
+# Geometric paths: constant daily return per coin ⇒ fwd over H is identical across
+# all rebalances ⇒ the cell means can be recomputed in closed form.
 BTC_GROWTH = 1.0020
 COIN_GROWTH = {
     "AAAUSDT": 1.0009,
@@ -57,8 +57,8 @@ def _coin_arrays(growth: float, base: float = 100.0) -> dict:
     return {
         "d": [T0 + i * DAY for i in range(N_DAYS)],
         "c": closes,
-        "l": [c * 0.99 for c in closes],   # steigende Serie ⇒ min(low) = low[i_form]
-        "qv": [1.0e7 for _ in closes],     # identisches Volumen ⇒ Terzil-Filter schneidet nichts
+        "l": [c * 0.99 for c in closes],   # rising series ⇒ min(low) = low[i_form]
+        "qv": [1.0e7 for _ in closes],     # identical volume ⇒ tercile filter cuts nothing
         "ft": [],
         "fr": [],
     }
@@ -77,7 +77,7 @@ def _cells() -> dict:
 
 
 def _btc_fwd(H: int) -> float:
-    """Der BTC-Return über ein H-Tage-Halte-Fenster (konstant im synthetischen Panel)."""
+    """The BTC return over an H-day holding window (constant in the synthetic panel)."""
     return BTC_GROWTH**H - 1.0
 
 
@@ -85,27 +85,27 @@ def _twin(ck: str) -> str:
     return ck.replace("|market_neutral|", "|absolute|")
 
 
-# ── 1. market-neutral-Frame ist kein No-op mehr ───────────────────────────────
+# ── 1. market-neutral frame is no longer a no-op ──────────────────────────────
 def test_market_neutral_cells_differ_from_absolute() -> None:
-    """Reproduktion des Defekts: VOR dem Fix war jede market_neutral-Zelle
-    byte-identisch zum absolute-Zwilling (60/60). Mit Beta-Adjust auf den Returns
-    muss sich der Netto-Level unterscheiden, solange BTC nicht flach lief."""
+    """Reproduction of the defect: BEFORE the fix, every market_neutral cell was
+    byte-identical to its absolute twin (60/60). With the beta adjust on the returns,
+    the net level must differ as long as BTC did not run flat."""
     cells = _cells()
     mn = [ck for ck, c in cells.items() if c["frame"] == "market_neutral"]
-    assert mn, "keine market_neutral-Zellen erzeugt"
+    assert mn, "no market_neutral cells generated"
     identical = [
         ck for ck in mn
         if cells[ck]["all"]["avg_net_pct"] == cells[_twin(ck)]["all"]["avg_net_pct"]
     ]
     assert not identical, (
-        f"{len(identical)}/{len(mn)} market_neutral-Zellen sind identisch zu absolute — "
-        "der Frame entfernt kein Beta (Skalar-Shift auf dem Signal ist argsort-invariant)"
+        f"{len(identical)}/{len(mn)} market_neutral cells are identical to absolute — "
+        "the frame does not remove any beta (scalar shift on the signal is argsort-invariant)"
     )
 
 
 def test_market_neutral_net_is_absolute_minus_btc_return() -> None:
-    """Der Beta-Adjust liegt auf den RETURNS: LONG verliert den BTC-Return, SHORT
-    gewinnt ihn (die Short-Seite profitiert, wenn der Markt fällt)."""
+    """The beta adjust sits on the RETURNS: LONG loses the BTC return, SHORT
+    gains it (the short side profits when the market falls)."""
     cells = _cells()
     checked = 0
     for ck, c in cells.items():
@@ -126,9 +126,9 @@ def test_market_neutral_net_is_absolute_minus_btc_return() -> None:
 
 
 def test_absolute_frame_scoring_is_untouched() -> None:
-    """Kollateral-Schutz: der `absolute`-Frame ist der Signal-Vertrag von Bot 39
-    (`39_ai_xsm1_bot.py` referenziert die Zelle F84|raw|absolute). Der Beta-Adjust
-    darf ihn NICHT anfassen — geschlossene Form: net_LONG = (g_top^H − 1) − Fee."""
+    """Collateral protection: the `absolute` frame is the signal contract of bot 39
+    (`39_ai_xsm1_bot.py` references cell F84|raw|absolute). The beta adjust
+    MUST NOT touch it — closed form: net_LONG = (g_top^H − 1) − fee."""
     cells = _cells()
     g_top = max(COIN_GROWTH.values())
     for F in m.F_GRID:
@@ -142,33 +142,33 @@ def test_absolute_frame_scoring_is_untouched() -> None:
 
 
 def test_market_neutral_selection_is_unchanged() -> None:
-    """Der Frame darf nur die BEWERTUNG ändern, nicht die Auswahl: die
-    BTC-Signal-Subtraktion ist ein Skalar-Shift, also ranken beide Frames gleich —
-    gleiche n, gleicher Top-minus-Bottom-Spread (Beta kürzt sich im Spread weg).
-    (Gleiches n gilt, solange BTC über das Fenster lückenlos vorliegt — fehlt der
-    Benchmark-Close, überspringt die market_neutral-Zelle das Rebalance bewusst.)"""
+    """The frame may only change the SCORING, not the selection: the
+    BTC signal subtraction is a scalar shift, so both frames rank the same —
+    same n, same top-minus-bottom spread (beta cancels out in the spread).
+    (Equal n holds as long as BTC is gap-free across the window — if the
+    benchmark close is missing, the market_neutral cell deliberately skips the rebalance.)"""
     cells = _cells()
     for ck, c in cells.items():
         if c["frame"] != "market_neutral":
             continue
         twin = cells[_twin(ck)]
-        assert c["all"]["n"] == twin["all"]["n"], f"{ck}: abweichende Ereigniszahl"
+        assert c["all"]["n"] == twin["all"]["n"], f"{ck}: mismatched event count"
         assert (c["spread_top_minus_bottom"]["avg_net_pct"]
                 == twin["spread_top_minus_bottom"]["avg_net_pct"]), (
-            f"{ck}: der Top-minus-Bottom-Spread ist beta-invariant und muss "
-            "zwischen den Frames identisch bleiben"
+            f"{ck}: the top-minus-bottom spread is beta-invariant and must "
+            "stay identical between the frames"
         )
 
 
 def test_shipped_full_run_artifact_is_flagged_pre_fix() -> None:
-    """Das eingecheckte Voll-Lauf-Artefakt stammt aus dem Code VOR diesem Fix; seine
-    60 market_neutral-Zellen sind Duplikate der absolute-Zwillinge. Solange die
-    `semantics_version` im Artefakt hinter dem Code liegt, muss genau das gelten (und
-    der Report muss es als STALE ausweisen). Nach einem Re-Run mit aktueller
-    Semantik-Version dreht die Erwartung um."""
+    """The checked-in full-run artifact comes from the code BEFORE this fix; its
+    60 market_neutral cells are duplicates of the absolute twins. As long as the
+    `semantics_version` in the artifact lags behind the code, exactly that must hold
+    (and the report must flag it as STALE). After a re-run with the current
+    semantics version, the expectation flips."""
     path = os.path.join(REPO_ROOT, "staging_models", "xs_momentum_study.json")
     if not os.path.exists(path):
-        return  # Artefakt ist optional (Voll-Lauf läuft auf dem VPS)
+        return  # artifact is optional (full run runs on the VPS)
     with open(path, encoding="utf-8") as fh:
         blob = json.load(fh)
     cells = blob["cells"]
@@ -180,17 +180,17 @@ def test_shipped_full_run_artifact_is_flagged_pre_fix() -> None:
     ]
     version = int(blob["meta"].get("semantics_version", 1))
     if version < m.STUDY_SEMANTICS_VERSION:
-        assert dupes, "Pre-Fix-Artefakt ohne die erwartete market_neutral-Duplizität?"
+        assert dupes, "pre-fix artifact without the expected market_neutral duplication?"
         assert "STALE" in m.build_markdown(
             blob["meta"], cells, blob["verdict"], blob.get("stage2", {})
-        ), "Ein Pre-Fix-Artefakt muss im Report als STALE gekennzeichnet werden"
+        ), "A pre-fix artifact must be flagged as STALE in the report"
     else:
-        assert not dupes, "Re-Run mit aktueller Semantik darf keine Frame-Duplikate mehr haben"
+        assert not dupes, "a re-run with current semantics must no longer have frame duplicates"
 
 
 def test_report_marks_current_run_as_fixed() -> None:
-    """Ein Lauf mit aktueller Semantik-Version trägt KEINEN STALE-Banner und
-    beschreibt beide Fixes als erledigt."""
+    """A run with the current semantics version carries NO STALE banner and
+    describes both fixes as done."""
     meta = {
         "generated_at": "2026-08-01T00:00:00+00:00", "n_coins": 7, "n_universe": 7,
         "status": "complete", "semantics_version": m.STUDY_SEMANTICS_VERSION,
@@ -206,10 +206,10 @@ def test_report_marks_current_run_as_fixed() -> None:
     assert "beta-adjusted" in md.lower()
 
 
-# ── 2. Stage-2-Entry: kein Look-ahead mehr ────────────────────────────────────
+# ── 2. stage-2 entry: no more look-ahead ───────────────────────────────────────
 def _hourly(symbol: str) -> pd.DataFrame:
-    """1h-Kerzen über das ganze Panel-Fenster, Preis = Stunden-Index (eindeutig
-    rückrechenbar auf den Entry-Zeitpunkt)."""
+    """1h candles over the whole panel window, price = hour index (uniquely
+    back-computable to the entry timestamp)."""
     n = N_DAYS * 24
     idx = pd.to_datetime([(T0 + h * 3600) * 10**9 for h in range(n)], utc=True)
     price = np.arange(1.0, n + 1.0)
@@ -217,8 +217,8 @@ def _hourly(symbol: str) -> pd.DataFrame:
 
 
 def _run_stage2_capture(monkeypatch_target: dict) -> list[float]:
-    """Fährt run_stage2 mit gestubbten 1h-Loads + gestubbter Geometrie und gibt die
-    Entry-Zeitstempel (Epoch-Sekunden des Entry-Kerzen-OPEN) zurück."""
+    """Runs run_stage2 with stubbed 1h loads + stubbed geometry and returns the
+    entry timestamps (epoch seconds of the entry candle OPEN)."""
     seen: list[float] = []
 
     def fake_load_1h(_conn, symbol):
@@ -243,41 +243,41 @@ def _run_stage2_capture(monkeypatch_target: dict) -> list[float]:
 
 
 def test_stage2_entry_does_not_precede_signal_observability() -> None:
-    """Look-ahead-Nachweis: `dates[t]` ist der Tages-OPEN, das Ranking-Signal ist
-    `close[t]` — also erst zum Tages-ENDE (`dates[t]+86400`) bekannt. Ein Entry vor
-    diesem Zeitpunkt handelt Information, die es noch nicht gab."""
+    """Look-ahead proof: `dates[t]` is the daily OPEN, but the ranking signal is
+    `close[t]` — so it is only known at the daily END (`dates[t]+86400`). An entry
+    before that point trades on information that did not exist yet."""
     panel = _panel()
     rebal = [float(panel["dates"][i]) for i in m.rebalance_rows(panel["dates"], None)]
     entries = _run_stage2_capture({"processed_cells": [], "acc": {}})
-    assert entries, "stage 2 hat keine Ereignisse repliziert"
+    assert entries, "stage 2 replicated no events"
     for ts in entries:
         signal_known_at = min(r for r in rebal if r + DAY <= ts + 1e-6) + DAY \
             if any(r + DAY <= ts + 1e-6 for r in rebal) else None
         assert signal_known_at is not None, (
-            f"Entry {ts} liegt vor JEDEM beobachtbaren Signal-Close "
-            f"(frühester Rebalance-Close {min(rebal) + DAY}) — Look-ahead von "
+            f"entry {ts} precedes EVERY observable signal close "
+            f"(earliest rebalance close {min(rebal) + DAY}) — look-ahead of "
             f"{(min(rebal) + DAY - ts) / 3600:.1f} h"
         )
 
 
 def test_stage2_entry_is_first_hourly_bar_after_the_daily_close() -> None:
-    """Exakte Semantik: Entry-Kerze = erste 1h-Kerze ab `dates[t] + 86400`
-    (dem Tages-Close, an dem das Signal beobachtbar wird)."""
+    """Exact semantics: entry candle = first 1h candle from `dates[t] + 86400`
+    (the daily close at which the signal becomes observable)."""
     panel = _panel()
     rebal = [float(panel["dates"][i]) for i in m.rebalance_rows(panel["dates"], None)]
     entries = sorted(set(_run_stage2_capture({"processed_cells": [], "acc": {}})))
     expected = sorted(r + DAY for r in rebal if r + DAY <= float(panel["dates"][-1]))
     assert entries == expected[: len(entries)], (
-        f"Entry-Zeitpunkte {entries[:4]} != erwartete {expected[:4]} "
-        "(Entry muss am Tages-Close ansetzen, nicht am Tages-Open)"
+        f"entry timestamps {entries[:4]} != expected {expected[:4]} "
+        "(entry must anchor on the daily close, not the daily open)"
     )
 
 
 def test_stage2_is_resume_safe_across_cells() -> None:
-    """Der Fix darf die Resume-Semantik nicht anfassen: eine bereits verarbeitete
-    Zelle wird nicht erneut repliziert."""
+    """The fix must not touch the resume semantics: a cell that has already been
+    processed is not replicated again."""
     state = {"processed_cells": [], "acc": {}}
     first = _run_stage2_capture(state)
-    assert first and state["processed_cells"], "Zelle wurde nicht als verarbeitet vermerkt"
+    assert first and state["processed_cells"], "cell was not marked as processed"
     again = _run_stage2_capture(state)
-    assert not again, "bereits verarbeitete Zelle wurde erneut repliziert"
+    assert not again, "already processed cell was replicated again"

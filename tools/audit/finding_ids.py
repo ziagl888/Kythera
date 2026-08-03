@@ -20,13 +20,13 @@ calling it at the same instant still get the same number. What stops the collisi
 from reaching main is `check`, wired into pre-commit.
 
 DEFINITION vs REFERENCE — the whole subtlety of this file. Findings are
-cross-referenced in prose all over the ledger ("orthogonal to P1.44", "siehe
+cross-referenced in prose all over the ledger ("orthogonal to P1.44", "see
 P2.2"), so a naive grep for P\\d+\\.\\d+ reports dozens of "duplicates" and the
 check is red forever. A finding is DEFINED on exactly one kind of line: a markdown
 checkbox whose first bold token is the id.
 
-    - [ ] **P1.45 Post-Pfade verwerfen die Artefakt-model_id** ...
-    - [x] **P0.1 ~(Step2: ...) Outbox ist at-least-once** ...
+    - [ ] **P1.45 Post paths discard the artefact model_id** ...
+    - [x] **P0.1 ~(Step2: ...) Outbox is at-least-once** ...
 
 Everything else is a reference and is ignored.
 
@@ -117,34 +117,34 @@ def detect_format_drift(text: str, defs: list[tuple[int, int, int]]) -> bool:
 def cmd_check(args: argparse.Namespace) -> int:
     text = _read_ledger(args.ledger)
     if text is None:
-        print(f"[finding-ids] {args.ledger} nicht lesbar — skip (fail-open).")
+        print(f"[finding-ids] {args.ledger} not readable — skip (fail-open).")
         return 0
 
     defs = parse_definitions(text)
 
     if detect_format_drift(text, defs):
         print(
-            f"[finding-ids] FEHLER — {args.ledger} nennt Finding-IDs, aber KEINE einzige "
-            "Definitionszeile wurde erkannt.\n"
-            "  Das Ledger-Format hat sich geaendert und der Guard ist blind — er wuerde\n"
-            "  ab jetzt jede Kollision durchwinken. DEFINITION_RE in tools/audit/finding_ids.py\n"
-            "  ans neue Format anpassen (erwartet: `- [ ] **P1.45 …`).",
+            f"[finding-ids] ERROR — {args.ledger} mentions finding ids, but NOT A SINGLE "
+            "definition line was recognised.\n"
+            "  The ledger format has changed and the guard is blind — it would\n"
+            "  wave through every collision from now on. Adapt DEFINITION_RE in\n"
+            "  tools/audit/finding_ids.py to the new format (expected: `- [ ] **P1.45 …`).",
             file=sys.stderr,
         )
         return 1
 
     dupes = find_duplicates(defs)
     if not dupes:
-        print(f"[finding-ids] OK — {len(defs)} Findings, keine doppelte ID.")
+        print(f"[finding-ids] OK — {len(defs)} findings, no duplicate id.")
         return 0
 
-    print(f"[finding-ids] FEHLER — {len(dupes)} doppelt vergebene Finding-ID(s):", file=sys.stderr)
-    # numerisch sortieren, nicht lexikalisch — sonst steht P1.10 vor P1.9
+    print(f"[finding-ids] ERROR — {len(dupes)} duplicately assigned finding id(s):", file=sys.stderr)
+    # sort numerically, not lexically — otherwise P1.10 would sort before P1.9
     for fid, lines in sorted(dupes.items(), key=lambda kv: _id_sort_key(kv[0])):
-        where = ", ".join(f"Zeile {n}" for n in lines)
+        where = ", ".join(f"line {n}" for n in lines)
         print(f"  {fid}: {where}", file=sys.stderr)
     print(
-        "\n  Zwei Sessions haben dieselbe Nummer gegriffen. Die naechste freie ID liefert:\n"
+        "\n  Two sessions grabbed the same number. The next free id is given by:\n"
         "    python tools/audit/finding_ids.py next --severity P<n>",
         file=sys.stderr,
     )
@@ -154,12 +154,12 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_next(args: argparse.Namespace) -> int:
     m = SEVERITY_RE.match(args.severity)
     if not m:
-        print(f"[finding-ids] --severity erwartet P0..P3, bekam {args.severity!r}", file=sys.stderr)
+        print(f"[finding-ids] --severity expects P0..P3, got {args.severity!r}", file=sys.stderr)
         return 2
 
     text = _read_ledger(args.ledger)
     if text is None:
-        print(f"[finding-ids] {args.ledger} nicht lesbar.", file=sys.stderr)
+        print(f"[finding-ids] {args.ledger} not readable.", file=sys.stderr)
         return 2
 
     print(next_free(parse_definitions(text), int(m.group(1))))
@@ -172,14 +172,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--ledger",
         type=pathlib.Path,
         default=DEFAULT_LEDGER,
-        help="Pfad zum Ledger (default: AUDIT_TODO.md im Repo-Root)",
+        help="Path to the ledger (default: AUDIT_TODO.md in the repo root)",
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    c = sub.add_parser("check", help="Exit 1, wenn eine Finding-ID doppelt definiert ist")
+    c = sub.add_parser("check", help="Exit 1 if a finding id is defined twice")
     c.set_defaults(func=cmd_check)
 
-    n = sub.add_parser("next", help="Naechste freie Finding-ID einer Severity drucken")
+    n = sub.add_parser("next", help="Print the next free finding id for a severity")
     n.add_argument("--severity", required=True, help="P0 | P1 | P2 | P3")
     n.set_defaults(func=cmd_next)
     return p

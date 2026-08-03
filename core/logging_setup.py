@@ -11,21 +11,21 @@ def setup_logging(
     log_dir: str = "logs",
 ) -> logging.Logger:
     """
-    Richtet Logging für einen Bot/Prozess ein.
+    Sets up logging for a bot/process.
 
-    Schreibt gleichzeitig in:
-      - stdout  (für den Watchdog/systemd lesbar)
-      - logs/<name>.log  (persistente Datei, max ~10 MB, dann rotiert)
+    Writes simultaneously to:
+      - stdout  (readable by the watchdog/systemd)
+      - logs/<name>.log  (persistent file, max ~10 MB, then rotated)
 
-    Verwendung in jedem Bot — ersetzt die lokalen basicConfig()-Aufrufe:
+    Usage in every bot — replaces the local basicConfig() calls:
 
         from core.logging_setup import setup_logging
         logger = setup_logging("AI_MIS_BOT")
 
     Args:
-        name:    Prozessname — erscheint im Log-Format und als Dateiname.
-        level:   Log-Level (Standard: INFO).
-        log_dir: Verzeichnis für Log-Dateien (wird automatisch angelegt).
+        name:    Process name — appears in the log format and as the filename.
+        level:   Log level (default: INFO).
+        log_dir: Directory for log files (created automatically).
     """
     Path(log_dir).mkdir(exist_ok=True)
 

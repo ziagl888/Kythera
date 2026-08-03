@@ -27,7 +27,7 @@ ai.loc[s.str.startswith("LEGACY"), "cls"] = "legacy"
 ai.loc[(ai.cls == "other") & (s.str.contains("ALL TARGETS") | (ai.targets_hit.fillna(0) >= 1)), "cls"] = "win"
 ai.loc[(ai.cls == "other") & s.str.startswith("SL"), "cls"] = "loss"
 
-sec("AI-Anomalien / Integrität (closed_ai_signals)")
+sec("AI anomalies / integrity (closed_ai_signals)")
 anom = {
     "rows_total": len(ai),
     "entry<=0_or_null": int(((ai.entry <= 0) | ai.entry.isna()).sum()),
@@ -44,7 +44,7 @@ dup2 = q("""SELECT symbol, model, direction, open_time, count(*) c FROM closed_a
 print(dup2.to_string(index=False))
 
 valid = ai[(ai.entry > 0) & (ai.close_price > 0)]
-sec("AI-Bots: realisierte Ergebnisse pro Modell (aktive Ära, ohne LEGACY; win = >=TP1)")
+sec("AI bots: realized results per model (active era, excluding LEGACY; win = >=TP1)")
 cur = valid[valid.cls.isin(["win", "loss"])]
 g = cur.groupby("model").agg(
     n=("pnl_pct", "size"),
@@ -60,23 +60,23 @@ g["sum_net"] = (g.sum_pnl - FEE_RT * g.n).round(0)
 g = g.sort_values("sum_net", ascending=False)
 print(g.to_string())
 tot = cur.pnl_pct
-print(f"\nTOTAL aktive Ära: n={len(cur)}, WR={100*(cur.cls=='win').mean():.1f}%, "
-      f"avg {tot.mean():.2f}%/Trade (netto {tot.mean()-FEE_RT:.2f}%), Summe {tot.sum():.0f}% (netto {tot.sum()-FEE_RT*len(cur):.0f}%)")
+print(f"\nTOTAL active era: n={len(cur)}, WR={100*(cur.cls=='win').mean():.1f}%, "
+      f"avg {tot.mean():.2f}%/trade (net {tot.mean()-FEE_RT:.2f}%), sum {tot.sum():.0f}% (net {tot.sum()-FEE_RT*len(cur):.0f}%)")
 
-sec("AI: Zensur-Anteile pro Modell (REGIME/DELISTED etc. — P1.9-Bias)")
+sec("AI: censoring shares per model (REGIME/DELISTED etc. — P1.9 bias)")
 cz = valid[valid.cls.isin(["win", "loss", "censored"])]
 z = cz.groupby("model").agg(n=("cls", "size"),
                             censored_pct=("cls", lambda x: round(100 * (x == "censored").mean(), 1)),
                             cens_avg_pnl=("pnl_pct", lambda x: round(x[cz.loc[x.index, "cls"] == "censored"].mean(), 2)))
 print(z.sort_values("censored_pct", ascending=False).head(12).to_string())
 
-sec("AI: Richtungssplit (LONG vs SHORT WR) — Top-Modelle")
+sec("AI: direction split (LONG vs SHORT WR) — top models")
 d = cur.groupby(["model", "direction"]).agg(n=("cls", "size"), wr=("cls", lambda x: round(100 * (x == "win").mean(), 1)))
 d = d.unstack("direction")
 d.columns = [f"{a}_{b}" for a, b in d.columns]
 print(d.loc[cur.model.value_counts().head(10).index].to_string())
 
-sec("AI: Monatstrend (WR% | sum_pnl%) — Top-8-Modelle")
+sec("AI: monthly trend (WR% | sum_pnl%) — top 8 models")
 cur2 = cur.copy()
 cur2["month"] = pd.to_datetime(cur2.close_time).dt.to_period("M").astype(str)
 top8 = cur.model.value_counts().head(8).index
@@ -85,14 +85,14 @@ mt = cur2[cur2.model.isin(top8)].groupby(["model", "month"]).agg(
     pnl=("pnl_pct", lambda x: round(x.sum(), 0)))
 print(mt.to_string())
 
-sec("AI: LEGACY-Ära separat (Scoring aus Status-Text)")
+sec("AI: LEGACY era separately (scoring from status text)")
 leg = valid[valid.cls == "legacy"]
 legwin = leg.status.str.upper().str.contains("TARGET")
 print(f"LEGACY rows: {len(leg)}, 'TARGET HIT': {legwin.sum()} ({100*legwin.mean():.1f}%), "
-      f"avg pnl {leg.pnl_pct.mean():.2f}%, Summe {leg.pnl_pct.sum():.0f}%")
-print("Zeitraum:", leg.close_time.min(), "→", leg.close_time.max())
+      f"avg pnl {leg.pnl_pct.mean():.2f}%, sum {leg.pnl_pct.sum():.0f}%")
+print("Time range:", leg.close_time.min(), "→", leg.close_time.max())
 
-sec("ROM1 vs. gespiegelte Bots (Orchestrator-Mehrwert)")
+sec("ROM1 vs. mirrored bots (orchestrator added value)")
 rom = cur[cur.model == "ROM1"]
 print(f"ROM1: n={len(rom)}, WR={100*(rom.cls=='win').mean():.1f}%, avg {rom.pnl_pct.mean():.2f}%, sum {rom.pnl_pct.sum():.0f}%")
 
@@ -102,7 +102,7 @@ ct = q("""SELECT strategy, direction, status, entry, close_price, sl, time, post
 ct["dirsign"] = np.where(ct.direction.str.upper().str.startswith("L"), 1, -1)
 ct["pnl_pct"] = (ct.close_price - ct.entry) / ct.entry * 100 * ct.dirsign
 
-sec("Classic-Anomalien / Integrität (closed_trades_master)")
+sec("Classic anomalies / integrity (closed_trades_master)")
 anom2 = {
     "rows_total": len(ct),
     "entry<=0_or_null": int(((ct.entry <= 0) | ct.entry.isna()).sum()),
@@ -123,7 +123,7 @@ validc = validc.assign(cls=np.select(
      su.isin(["0", "SL0"])],
     ["censored", "win", "loss"], default="other"))
 
-sec("Classic: Ergebnisse pro Strategie (win = >=TP1 [status 1-4/SL1-3], loss = 0/SL0)")
+sec("Classic: results per strategy (win = >=TP1 [status 1-4/SL1-3], loss = 0/SL0)")
 cc = validc[validc.cls.isin(["win", "loss"])]
 gc = cc.groupby("strategy").agg(
     n=("pnl_pct", "size"),
@@ -137,14 +137,14 @@ gc["avg_net"] = (gc.avg_pnl - FEE_RT).round(2)
 gc["sum_net"] = (gc.sum_pnl - FEE_RT * gc.n).round(0)
 print(gc.sort_values("sum_net", ascending=False).to_string())
 
-sec("Classic: Konsistenz Status vs. realisierte PnL (Misklassifikations-Check)")
-for lab, sub in (("status=win aber pnl<0", cc[(cc.cls == "win") & (cc.pnl_pct < -0.5)]),
-                 ("status=loss aber pnl>0", cc[(cc.cls == "loss") & (cc.pnl_pct > 0.5)])):
+sec("Classic: consistency status vs. realized PnL (misclassification check)")
+for lab, sub in (("status=win but pnl<0", cc[(cc.cls == "win") & (cc.pnl_pct < -0.5)]),
+                 ("status=loss but pnl>0", cc[(cc.cls == "loss") & (cc.pnl_pct > 0.5)])):
     print(f"{lab}: {len(sub)} rows ({100*len(sub)/max(len(cc),1):.1f}%)  avg_pnl={sub.pnl_pct.mean():.2f}%")
     if len(sub):
         print(sub.groupby("strategy").size().sort_values(ascending=False).head(5).to_dict())
 
-sec("Classic: Monatstrend (n | WR% | sum_pnl%)")
+sec("Classic: monthly trend (n | WR% | sum_pnl%)")
 cc2 = cc.copy()
 cc2["month"] = pd.to_datetime(cc2.time).dt.to_period("M").astype(str)
 mtc = cc2.groupby(["strategy", "month"]).agg(n=("cls", "size"),
@@ -152,11 +152,11 @@ mtc = cc2.groupby(["strategy", "month"]).agg(n=("cls", "size"),
                                              pnl=("pnl_pct", lambda x: round(x.sum(), 0)))
 print(mtc.to_string())
 
-sec("Classic: Zensur/FORCE_CLOSED-Anteile")
+sec("Classic: censoring/FORCE_CLOSED shares")
 zc = validc.groupby("strategy").cls.value_counts(normalize=True).mul(100).round(1).unstack(fill_value=0)
 print(zc.to_string())
 
-sec("Classic: sl<=0-Ära vs. danach (P2.9-Kontext)")
+sec("Classic: sl<=0 era vs. afterwards (P2.9 context)")
 ct["has_sl"] = ct.sl > 0
 per = ct.groupby("has_sl").agg(n=("pnl_pct", "size"), tmin=("time", "min"), tmax=("time", "max"))
 print(per.to_string())

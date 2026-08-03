@@ -10,7 +10,7 @@ import numpy as np
 import scipy.signal
 import logging
 
-# --- Eigene DB Connection importieren ---
+# --- Import custom DB connection ---
 from core.candles import read_candles
 from core.database import get_db_connection
 from core import config as _kcfg  # channel ids
@@ -19,23 +19,23 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 🛠️ BACKTEST KONFIGURATION & FILTER
+# 🛠️ BACKTEST CONFIGURATION & FILTER
 # ==========================================
 TIMEFRAME = '1h'
-CHANNEL_ID = _kcfg.CH_MAYANK  # Deine SMC Telegram Outbox (bitte anpassen falls nötig)
+CHANNEL_ID = _kcfg.CH_MAYANK  # Your SMC Telegram outbox (please adjust if needed)
 OUTPUT_FILE = "mass_backtest_results.txt"
 
 START_CAPITAL = 100000.0
-TRADE_MARGIN = 1000.0  # Fester Einsatz für diesen Massentest
-LEVERAGE = 100  # Hebel (100x)
-TAKER_FEE = 0.0004  # 0.04% Handelsgebühr pro Richtung (0.08% total)
+TRADE_MARGIN = 1000.0  # Fixed stake for this mass test
+LEVERAGE = 100  # Leverage (100x)
+TAKER_FEE = 0.0004  # 0.04% trading fee per direction (0.08% total)
 
-# --- DIE ANGEPASSTEN SMC FILTER ---
+# --- THE ADJUSTED SMC FILTERS ---
 EMA_PERIOD = 21
 MAX_PIVOT_AGE = 120
 MAX_FVG_AGE = 48
 MIN_RR_RATIO = 1.5
-SL_PCT = 0.004  # <--- NEU: 0.4% Stop-Loss (mehr Luft für Krypto-Wicks)
+SL_PCT = 0.004  # <--- NEW: 0.4% stop-loss (more room for crypto wicks)
 
 
 # ==========================================
@@ -60,7 +60,7 @@ def send_to_outbox(symbol, trades, win_rate, pnl, max_dd):
                 cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (CHANNEL_ID, msg))
             conn.commit()
     except Exception as e:
-        logger.error(f"Outbox error bei {symbol}: {e}")
+        logger.error(f"Outbox error for {symbol}: {e}")
 
 
 def write_to_file(line):
@@ -69,12 +69,12 @@ def write_to_file(line):
 
 
 # ==========================================
-# 📊 DATA FETCHING (LOKALE DATENBANK)
+# 📊 DATA FETCHING (LOCAL DATABASE)
 # ==========================================
 def fetch_db_data(symbol):
     try:
         conn = get_db_connection()
-        # Über core.candles: GESCHLOSSENE Kerzen, ASC (include_forming=False).
+        # Via core.candles: CLOSED candles, ASC (include_forming=False).
         df = read_candles(
             conn, symbol, TIMEFRAME, include_forming=False, columns=('open_time', 'open', 'high', 'low', 'close')
         )
@@ -84,7 +84,7 @@ def fetch_db_data(symbol):
         df.dropna(inplace=True)
         return df.reset_index(drop=True)
     except Exception:
-        # Tabelle existiert nicht oder ist leer
+        # Table does not exist or is empty
         return pd.DataFrame()
 
 
@@ -99,10 +99,10 @@ def run_simulation(symbol, df):
     opens = df['open'].values
     closes = df['close'].values
 
-    # EMA berechnen
+    # Calculate EMA
     ema_values = df['close'].ewm(span=EMA_PERIOD, adjust=False).mean().values
 
-    # Pivot Punkte im Voraus berechnen
+    # Calculate pivot points in advance
     peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=5)[0]
     trough_idx = scipy.signal.argrelextrema(lows, np.less, order=5)[0]
     resistances = [(int(idx), float(highs[idx])) for idx in peak_idx]
@@ -123,7 +123,7 @@ def run_simulation(symbol, df):
         curr_price = closes[curr_idx]
 
         # -------------------------------------------------
-        # 1. AKTIVE TRADES PRÜFEN (SL & TP)
+        # 1. CHECK ACTIVE TRADES (SL & TP)
         # -------------------------------------------------
         trades_to_remove = []
         for trade in active_trades:
@@ -174,7 +174,7 @@ def run_simulation(symbol, df):
             active_trades.remove(t)
 
         # -------------------------------------------------
-        # 2. NEUE FVGs ERKENNEN
+        # 2. DETECT NEW FVGs
         # -------------------------------------------------
         c = curr_idx - 1
 
@@ -197,7 +197,7 @@ def run_simulation(symbol, df):
                 active_bear_fvgs.append({'top': lows[c - 2], 'bottom': highs[c], 'created_at': c})
 
         # -------------------------------------------------
-        # 3. FVGs SCHLIESSEN & TRADES AUSLÖSEN
+        # 3. CLOSE FVGs & TRIGGER TRADES
         # -------------------------------------------------
         surviving_bull_fvgs = []
         for fvg in active_bull_fvgs:
@@ -209,7 +209,7 @@ def run_simulation(symbol, df):
 
                 if valid_res:
                     target = min(valid_res)
-                    sl = curr_low * (1.0 - SL_PCT)  # NEU: Variabler, breiterer SL
+                    sl = curr_low * (1.0 - SL_PCT)  # NEW: variable, wider SL
                     risk = curr_price - sl
                     reward = target - curr_price
 
@@ -230,7 +230,7 @@ def run_simulation(symbol, df):
 
                 if valid_sup:
                     target = max(valid_sup)
-                    sl = curr_high * (1.0 + SL_PCT)  # NEU: Variabler, breiterer SL
+                    sl = curr_high * (1.0 + SL_PCT)  # NEW: variable, wider SL
                     risk = sl - curr_price
                     reward = curr_price - target
 
@@ -256,15 +256,15 @@ def main():
         logger.error(f"Could not load coins.json: {e}")
         return
 
-    # Datei initialisieren (Überschreibt alte Ergebnisse)
+    # Initialise file (overwrites old results)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("=" * 75 + "\n")
         f.write(f"📊 SMC MASS BACKTEST | Margin: ${TRADE_MARGIN:,.0f} | SL: {SL_PCT * 100}%\n")
         f.write("=" * 75 + "\n")
-        f.write(f"{'Coin':<15} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Netto PnL':<12}\n")
+        f.write(f"{'Coin':<15} | {'Trades':<8} | {'Win Rate':<10} | {'Max DD':<8} | {'Net PnL':<12}\n")
         f.write("-" * 75 + "\n")
 
-    logger.info(f"🚀 Starting Massen-Backtest für {len(coins)} Coins. Margin: ${TRADE_MARGIN:,.0f} | SL: {SL_PCT * 100}%")
+    logger.info(f"🚀 Starting mass backtest for {len(coins)} coins. Margin: ${TRADE_MARGIN:,.0f} | SL: {SL_PCT * 100}%")
 
     total_pnl = 0.0
     processed = 0
@@ -277,35 +277,35 @@ def main():
 
         trades, win_rate, pnl, max_dd = run_simulation(symbol, df)
 
-        # Nur loggen/senden, wenn der Coin überhaupt Trades generiert hat
+        # Only log/send if the coin generated any trades at all
         if trades > 0:
             pnl_str = f"${pnl:+,.2f}"
             log_line = f"{symbol:<15} | {trades:<8} | {win_rate:>5.2f} %   | {max_dd:>5.2f} % | {pnl_str}"
             print(log_line)
 
-            # 1. In die TXT schreiben
+            # 1. Write to the TXT
             write_to_file(log_line)
 
-            # 2. Live in die Telegram Outbox schicken
+            # 2. Send live to the Telegram outbox
             #send_to_outbox(symbol, trades, win_rate, pnl, max_dd)
 
             total_pnl += pnl
 
         processed += 1
-        time.sleep(0.1)  # Kurze Pause, um die DB/CPU nicht zu überlasten
+        time.sleep(0.1)  # Short pause, to avoid overloading DB/CPU
 
-    # Abschluss-Statistik
-    summary = "-" * 75 + f"\nGESAMT PNL ({processed} Coins getestet): ${total_pnl:+,.2f}\n" + "=" * 75
+    # Final statistics
+    summary = "-" * 75 + f"\nTOTAL PNL ({processed} coins tested): ${total_pnl:+,.2f}\n" + "=" * 75
     write_to_file(summary)
     print(summary)
 
-    # Letzte Nachricht an Telegram
+    # Final message to Telegram
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
                             (CHANNEL_ID,
-                             f"🏁 <b>Massen-Backtest completed!</b>\nGesamt-Profit: <b>${total_pnl:+,.2f}</b>"))
+                             f"🏁 <b>Mass backtest completed!</b>\nTotal profit: <b>${total_pnl:+,.2f}</b>"))
             conn.commit()
     except:
         pass

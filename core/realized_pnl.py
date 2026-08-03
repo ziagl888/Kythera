@@ -21,7 +21,7 @@ MAX_ABS_MOVE_PCT = 100.0
 
 
 def parse_leverage(lev: object) -> float | None:
-    """Leverage aus dem persistierten Text ("20x", "25X", "20", 20) parsen.
+    """Parse leverage from persisted text ("20x", "25X", "20", 20).
 
     Returns None for missing / unparseable / non-positive values — callers
     must EXCLUDE such rows instead of guessing a default (exact-only rule).
@@ -42,34 +42,32 @@ def parse_leverage(lev: object) -> float | None:
 
 
 def _signed_move_pct(sign: float, entry: float, price: float) -> float:
-    """Direction-korrigierter Preis-Move in % (LONG sign=+1, SHORT sign=-1)."""
+    """Direction-corrected price move in % (LONG sign=+1, SHORT sign=-1)."""
     return sign * (price - entry) / entry * 100.0
 
 
-# ── Persistiert ≠ gehandelt (T-2026-KYT-9050-012) ────────────────────────────
+# ── Persisted ≠ traded (T-2026-KYT-9050-012) ────────────────────────────
 #
-# Das Positionsmodell unten teilt den Einsatz in `n` gleiche Beine, mit
-# n = len(targets) aus der DB. Das stimmt nur, solange ein Emitter genau die
-# Targets persistiert, die er auch nach Cornix postet. Zwei tun das nicht:
+# The position model below splits the stake into `n` equal legs, with
+# n = len(targets) from the DB. This only holds as long as an emitter persists
+# exactly the targets it posts via Cornix. Two do not:
 #
-#   ROM1 (28_signal_orchestrator:525/574)  persistiert t_cands[:20], postet 3
-#   AIM2 (15_ai_master_bot:544/589)        persistiert die volle Liste, postet 3
+#   ROM1 (28_signal_orchestrator:525/574)  persists t_cands[:20], posts 3
+#   AIM2 (15_ai_master_bot:544/589)        persists full list, posts 3
 #
-# Cornix hat die übrigen TPs nie gesehen — der Einsatz ritt real auf 3 Beinen,
-# nicht auf 20. Das Modell verdünnt den TP-Gewinn dadurch um (n-k)/n und
-# UNTERSCHÄTZT beide Bots systematisch: für ROM1 über 7.769 geschlossene Trades
-# (30 Tage) um Faktor 1,43 auf der Summe, Median 1,51 % statt 5,18 %; für AIM2
-# über 2.345 Trades um Faktor 1,05.
+# Cornix never saw the remaining TPs — the stake really rode on 3 legs, not 20.
+# The model dilutes TP profits by (n-k)/n and UNDERESTIMATES both bots
+# systematically: for ROM1 over 7,769 closed trades (30 days) by factor 1.43
+# on sum, median 1.51% instead of 5.18%; for AIM2 over 2,345 trades by 1.05.
 #
-# Die Zahl gehört hierher und nicht in jeden Report: `weighted_move_pct` und
-# `realized_pnl_pct` nehmen jetzt optional das Modell entgegen und schneiden
-# selbst zu. Ohne `model` verhalten sie sich byte-gleich wie bisher — kein
-# Aufrufer ändert sich still.
+# The number belongs here, not in every report: `weighted_move_pct` and
+# `realized_pnl_pct` now optionally take the model and trim themselves. Without
+# `model` they behave byte-equal as before — no caller changes silently.
 #
-# Die Bots selbst bleiben unangetastet (Operator-Entscheid 2026-08-02: nur die
-# Messung korrigieren). Ein Kürzen der persistierten Liste würde die
-# Scoring-Semantik von Monitor 8 für LAUFENDE Trades ändern — SL-Trailing und
-# die ALL-TARGETS-Close-Bedingung sähen 3 statt 20 Stufen.
+# The bots themselves stay untouched (operator decision 2026-08-02: fix measurement
+# only). Trimming the persisted list would change monitor 8's scoring semantics
+# for RUNNING trades — SL trailing and the ALL-TARGETS-close condition would see
+# 3 instead of 20 legs.
 PUBLISHED_TARGET_COUNT: dict[str, int] = {
     "ROM1": 3,
     "AIM2": 3,
@@ -77,9 +75,9 @@ PUBLISHED_TARGET_COUNT: dict[str, int] = {
 
 
 def traded_targets(model: object, targets: list[float]) -> list[float]:
-    """Die Targets, gegen die der Trade wirklich lief (Cornix-Sicht).
+    """The targets against which the trade actually ran (Cornix perspective).
 
-    Für Emitter ohne Persist/Publish-Lücke die unveränderte Liste.
+    For emitters without persist/publish gaps, the unchanged list.
     """
     n = PUBLISHED_TARGET_COUNT.get(str(model or "").strip().upper())
     return list(targets)[:n] if n else list(targets)
@@ -93,16 +91,16 @@ def weighted_move_pct(
     targets_hit: int,
     model: object = None,
 ) -> float | None:
-    """Target-gewichteter Preis-Move in % (ohne Hebel), direction-korrigiert.
+    """Target-weighted price move in % (without leverage), direction-corrected.
 
     Returns None on invalid input (no targets, non-positive prices, unknown
     direction) — the report skips those rows rather than approximating.
 
-    `model` ist optional und ändert für Emitter ohne Persist/Publish-Lücke
-    nichts. Für ROM1/AIM2 schneidet es die Target-Liste auf die tatsächlich
-    gepostete Länge und deckelt `targets_hit` entsprechend — sonst bekäme ein
-    Trade Gutschrift für TPs, die Cornix nie hatte (gemessen: 139 von 7.769
-    ROM1-Trades mit targets_hit > 3). Siehe PUBLISHED_TARGET_COUNT.
+    `model` is optional and changes nothing for emitters without persist/publish
+    gaps. For ROM1/AIM2 it trims the target list to the actually posted length
+    and caps `targets_hit` accordingly — otherwise a trade would get credit for
+    TPs Cornix never saw (measured: 139 of 7,769 ROM1 trades with targets_hit > 3).
+    See PUBLISHED_TARGET_COUNT.
     """
     try:
         entry_f = float(entry)
@@ -124,7 +122,7 @@ def weighted_move_pct(
     if any(t <= 0 for t in target_prices):
         return None
 
-    # Vor der Bein-Zählung zuschneiden: n IST das Positionsmodell.
+    # Trim before leg counting: n IS the position model.
     target_prices = traded_targets(model, target_prices)
     if not target_prices:
         return None
@@ -136,10 +134,10 @@ def weighted_move_pct(
         k = 0
     k = max(0, min(k, n))
 
-    # Outlier-Gate auf dem ROHEN Close-Leg, nicht erst auf dem gewichteten
-    # Ergebnis: bei k von N getroffenen Targets verdünnt die Staffelung ein
-    # Daten-Bug-Leg um den Faktor N/(N-k) — ein +150%-Leg passiert sonst als
-    # (5+10+15+150)/4 ≈ 45% den Gesamt-Filter (Review-Finding 2026-07-13).
+    # Outlier gate on the RAW close leg, not just on the weighted result:
+    # at k of N targets hit, the ladder dilutes a data-bug leg by factor N/(N-k) —
+    # a +150% leg would otherwise pass as (5+10+15+150)/4 ≈ 45% through the
+    # overall filter (review finding 2026-07-13).
     if abs(_signed_move_pct(sign, entry_f, close_f)) > MAX_ABS_MOVE_PCT:
         return None
 
@@ -157,11 +155,11 @@ def realized_pnl_pct(
     leverage: object,
     model: object = None,
 ) -> float | None:
-    """Realisierter PnL in % des Einsatzes: gewichteter Move × Hebel.
+    """Realised PnL in % of stake: weighted move × leverage.
 
-    `model` durchgereicht an :func:`weighted_move_pct` — ohne es bleibt das
-    Verhalten unverändert, mit ihm rechnet der Aufrufer auf der real
-    gehandelten Bein-Zahl statt auf der persistierten (T-2026-KYT-9050-012).
+    `model` passed to :func:`weighted_move_pct` — without it behaviour stays
+    unchanged, with it the caller calculates on the actually traded leg count
+    instead of the persisted one (T-2026-KYT-9050-012).
 
     Clamped at -100% (liquidation floor). Returns None when the move is not
     computable, the leverage is missing/invalid, or the pre-leverage move

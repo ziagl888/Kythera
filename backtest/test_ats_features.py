@@ -1,15 +1,15 @@
-"""DB-freie Tests für core.ats_features — der geteilte ATS/TSI-Feature-Builder
-von Bot 12 und dem ATS2-Walkforward-Adapter/Trainer.
+"""DB-free tests for core.ats_features — the shared ATS/TSI feature builder
+used by bot 12 and the ATS2 walkforward adapter/trainer.
 
-KERN (harte Regel 7): der Parity-Test beweist, dass
-core.ats_features.build_ats_features BIT-GLEICH das reproduziert, was Bot 12
-VOR T-2026-CU-9050-121 inline gebaut hat (`_serving_reference` unten ist eine
-wortwörtliche Kopie dieser Serving-Konstruktion). Damit gilt Trainer == Serving:
-der Bot ruft build_ats_features, der Trainer ruft build_ats_features, und beide
-== die historische Live-Semantik.
+CORE (hard rule 7): the parity test proves that
+core.ats_features.build_ats_features reproduces BIT-IDENTICAL what bot 12
+built inline BEFORE T-2026-CU-9050-121 (`_serving_reference` below is a
+verbatim copy of this serving construction). Therefore trainer == serving:
+the bot calls build_ats_features, the trainer calls build_ats_features, and both
+== the historical live semantics.
 
-Kein DB-Zugriff — läuft standalone (kein pytest-Plugin nötig für die Kern-
-Asserts; die Monkeypatch-Tests brauchen pytest).
+No DB access — runs standalone (no pytest plugin needed for the core
+asserts; the monkeypatch tests require pytest).
 """
 
 from __future__ import annotations
@@ -39,12 +39,12 @@ ALL_COLUMNS = list(ATS_CANDLE_COLUMNS) + list(ATS_INDICATOR_COLUMNS)
 # Fixture-Generator                                                            #
 # --------------------------------------------------------------------------- #
 def make_ats_frame(n: int = 120, seed: int = 0, cross_at: int | None = None, cross_dir: str = "LONG") -> pd.DataFrame:
-    """Deterministisches 1h-Fenster mit ALLEN von Bot 12 gelesenen Spalten.
+    """Deterministic 1h window with ALL columns read by bot 12.
 
-    Werte müssen nicht TA-konsistent sein — der Feature-Builder rechnet reine
-    Arithmetik auf den Spalten. Sie sind nur finit und variierend, damit
-    Features nicht degenerieren. `cross_at`/`cross_dir` erzwingen einen
-    TSI-Signallinien-Crossover an einem Index (für den Adapter-Smoke-Test).
+    Values don't need to be TA-consistent — the feature builder performs pure
+    arithmetic on the columns. They're just finite and varying so features
+    don't degenerate. `cross_at`/`cross_dir` force a TSI signal line crossover
+    at an index (for the adapter smoke test).
     """
     rng = np.random.default_rng(seed)
     t0 = pd.Timestamp("2026-01-01", tz="UTC")
@@ -65,7 +65,7 @@ def make_ats_frame(n: int = 120, seed: int = 0, cross_at: int | None = None, cro
         }
     )
 
-    # Indikatorspalten: plausible, variierende, finite Werte.
+    # Indicator columns: plausible, varying, finite values.
     df["rsi_14"] = rng.uniform(20, 80, n)
     df["rsi_6"] = rng.uniform(20, 80, n)
     df["tsi_fast_12_7_7"] = rng.normal(0, 20, n)
@@ -89,7 +89,7 @@ def make_ats_frame(n: int = 120, seed: int = 0, cross_at: int | None = None, cro
     df["resistance_price"] = high + rng.uniform(1, 3, n)
 
     if cross_at is not None:
-        # Signallinie flach bei 0; TSI wechselt am Index das Vorzeichen → Cross.
+        # Signal line flat at 0; TSI changes sign at index → cross.
         df["tsi_fast_12_7_7_signal"] = 0.0
         df.loc[: cross_at - 1, "tsi_fast_12_7_7"] = -5.0
         df.loc[cross_at:, "tsi_fast_12_7_7"] = 5.0
@@ -100,8 +100,8 @@ def make_ats_frame(n: int = 120, seed: int = 0, cross_at: int | None = None, cro
 
 
 # --------------------------------------------------------------------------- #
-# GROUND TRUTH: wortwörtliche Kopie der Bot-12-Serving-Konstruktion            #
-# (12_ai_ats_bot.check_tsi_crossovers, Stand VOR T-2026-CU-9050-121).          #
+# GROUND TRUTH: verbatim copy of bot-12 serving construction            #
+# (12_ai_ats_bot.check_tsi_crossovers, status BEFORE T-2026-CU-9050-121).          #
 # --------------------------------------------------------------------------- #
 def _serving_reference(df: pd.DataFrame) -> dict:
     df = df.copy()
@@ -164,10 +164,9 @@ def _serving_reference(df: pd.DataFrame) -> dict:
 # Tests                                                                        #
 # --------------------------------------------------------------------------- #
 def test_parity_trainer_equals_serving():
-    """DER Kern-Test (harte Regel 7): build_ats_features == frühere Bot-12-Inline-
-    Konstruktion, über mehrere Seeds UND mehrere Fensterlängen (die OBV-Baseline
-    hängt vom Fensterstart ab — genau der Punkt, den der ATS2-Trainer treffen
-    muss)."""
+    """THE core test (hard rule 7): build_ats_features == previous bot-12 inline
+    construction, over multiple seeds AND multiple window lengths (OBV baseline
+    depends on window start — exactly what the ATS2 trainer must hit)."""
     for seed in range(6):
         base = make_ats_frame(n=140, seed=seed)
         for win_len in (50, 90, 140):
@@ -177,20 +176,20 @@ def test_parity_trainer_equals_serving():
             assert set(got.keys()) == set(ref.keys()) == set(ATS_FEATURES)
             for k in ATS_FEATURES:
                 assert math.isclose(float(got[k]), float(ref[k]), rel_tol=1e-12, abs_tol=1e-12), (
-                    f"Parität verletzt bei {k} (seed={seed}, win={win_len}): {got[k]} != {ref[k]}"
+                    f"Parity violated for {k} (seed={seed}, win={win_len}): {got[k]} != {ref[k]}"
                 )
 
 
 def test_feature_keys_and_native_types():
-    """Der Vertrag ist die Feature-MENGE: sowohl der Bot (X_live[TSI_FEATURES])
-    als auch der Trainer (train[ATS2_FEATURES]) selektieren die Spalten NACH
-    NAMEN und erzwingen so die Reihenfolge — die dict-Insertion-Order ist egal.
-    Geprüft: exakte Schlüsselmenge, verlustfreie Reindizierung, native Typen."""
+    """The contract is the feature SET: both the bot (X_live[TSI_FEATURES])
+    and the trainer (train[ATS2_FEATURES]) select columns BY NAME and thus
+    enforce order — dict insertion order doesn't matter. Checks: exact key set,
+    lossless reindexing, native types."""
     feats = build_ats_features(make_ats_frame(n=80, seed=1))
-    assert set(feats.keys()) == set(ATS_FEATURES), "Feature-Schlüsselmenge weicht vom Vertrag ab"
-    # Reindex nach dem Vertrag darf keine Spalte als NaN erfinden (= fehlender Key).
+    assert set(feats.keys()) == set(ATS_FEATURES), "Feature key set differs from contract"
+    # Reindex by contract must not invent a column as NaN (= missing key).
     reindexed = pd.DataFrame([feats]).reindex(columns=ATS_FEATURES)
-    assert not reindexed.isna().any().any(), "Reindex nach ATS_FEATURES erzeugt NaN → fehlender Feature-Key"
+    assert not reindexed.isna().any().any(), "Reindex by ATS_FEATURES creates NaN → missing feature key"
     binary = {
         "macd_cross_bearish",
         "ema9_21_cross_bearish",
@@ -208,11 +207,11 @@ def test_feature_keys_and_native_types():
 
 
 def test_ats_cross_directions():
-    assert ats_cross(-1.0, 0.0, 1.0, 0.0) == "LONG"  # von unten nach oben
-    assert ats_cross(1.0, 0.0, -1.0, 0.0) == "SHORT"  # von oben nach unten
-    assert ats_cross(1.0, 0.0, 2.0, 0.0) is None  # beide über Signal, kein Cross
-    assert ats_cross(-2.0, 0.0, -1.0, 0.0) is None  # beide unter Signal
-    # Berührung von unten zählt als LONG (<=), Berührung von oben als SHORT (>=)
+    assert ats_cross(-1.0, 0.0, 1.0, 0.0) == "LONG"  # from below to above
+    assert ats_cross(1.0, 0.0, -1.0, 0.0) == "SHORT"  # from above to below
+    assert ats_cross(1.0, 0.0, 2.0, 0.0) is None  # both above signal, no cross
+    assert ats_cross(-2.0, 0.0, -1.0, 0.0) is None  # both below signal
+    # Touch from below counts as LONG (<=), touch from above as SHORT (>=)
     assert ats_cross(0.0, 0.0, 1.0, 0.0) == "LONG"
 
 
@@ -230,23 +229,23 @@ def test_assert_features_alive_guard():
 
 
 def test_run_ats_adapter_emits_record(monkeypatch):
-    """DB-freier End-to-End-Test des Walkforward-Adapters: load_ats_frame wird
-    gestubbt, get_hvn_and_sr_levels (df=-Variante) und simulate_exit laufen echt."""
+    """DB-free end-to-end test of walkforward adapter: load_ats_frame is
+    stubbed, get_hvn_and_sr_levels (df variant) and simulate_exit run for real."""
     import tools.walkforward_sim as w
 
     df = make_ats_frame(n=600, seed=3, cross_at=300, cross_dir="LONG")
     monkeypatch.setattr(w, "load_ats_frame", lambda conn, sym, days: df.copy())
     trades = w.run_ats(conn=None, symbol="TESTUSDT", days=365)
 
-    assert len(trades) >= 1, "Adapter emittierte keinen Crossover"
+    assert len(trades) >= 1, "Adapter emitted no crossover"
     tr = trades[0]
     assert tr["strategy"] == "ats" and tr["direction"] == "LONG"
     assert set(tr["features"].keys()) == set(ATS_FEATURES)
     assert "outcome_tp1" in tr and "net_pnl_pct" in tr
     assert tr["targets"] and tr["sl"] > 0
 
-    # Replay-Feature == Serving-Feature am selben Entscheidungspunkt (t=300):
-    # der Adapter reicht df.iloc[t+1-500 : t+1] durch (hier ab 0, weil <500 Kerzen).
+    # Replay feature == serving feature at same decision point (t=300):
+    # the adapter passes df.iloc[t+1-500 : t+1] through (here from 0, because <500 candles).
     window = df.iloc[: 300 + 1].reset_index(drop=True)
     ref = _serving_reference(window)
     for k in ATS_FEATURES:
@@ -257,4 +256,4 @@ if __name__ == "__main__":
     test_parity_trainer_equals_serving()
     test_feature_keys_and_native_types()
     test_ats_cross_directions()
-    print("✅ ats_features Kern-Paritäts-Tests grün (Monkeypatch-Tests via pytest).")
+    print("✅ ats_features core parity tests green (monkeypatch tests via pytest).")

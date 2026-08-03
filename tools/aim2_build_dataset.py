@@ -1,32 +1,32 @@
 """
-tools/aim2_build_dataset.py — Trainings-Events + Replay-Labels + Features für AIM2.
+tools/aim2_build_dataset.py — training events + replay labels + features for AIM2.
 
-Baut das komplette Trainingsmaterial für das neue Master-Meta-Modell
-(docs/AIM2_DESIGN.md) und schreibt eine JSONL-Zeile je Event nach
+Builds the complete training material for the new master meta-model
+(docs/AIM2_DESIGN.md) and writes one JSONL line per event to
 <staging>/replay/aim2_events.jsonl.
 
-Pipeline je Event (Quellsignal):
-  1. Zeitstempel: ml_predictions_master/*_trades_master schreiben seit dem
-     R3-Flip (T-2026-KYT-9050-005) naives UTC. Wie die Zeilen DAVOR gelesen
-     werden (Backfill vs. Cutover-Konstante), entscheidet core.time —
-     docs/UTC_POLICY.md §6. Der Builder rechnet selbst nichts mehr um.
-  2. floor-1-Join: letzte GESCHLOSSENE 1h-Kerze vor dem Event (kein Lookahead —
-     der round('1h')-Fehler des AIM1-Trainers ist hiermit strukturell tot).
-  3. Geometrie as-of: calculate_smart_targets auf dem Kerzenfenster bis zu
-     dieser Kerze — exakt das, was Bot 15 beim Posten berechnen würde.
-  4. Label: simulate_exit aus tools/walkforward_sim.py (wick-aware First-Touch,
-     SL-first, Fees, Monitor-Trailing), Horizont-Kappe 14 Tage.
-  5. Features: ausschliesslich core.aim2_features.build_feature_row
-     (geteilter Builder = Serving-Parität).
+Pipeline per event (source signal):
+  1. Timestamp: ml_predictions_master/*_trades_master write naive UTC since
+     the R3 flip (T-2026-KYT-9050-005). How the rows BEFORE that are read
+     (backfill vs. cutover constant) is decided by core.time —
+     docs/UTC_POLICY.md §6. The builder no longer converts anything itself.
+  2. floor-1 join: last CLOSED 1h candle before the event (no lookahead —
+     the round('1h') bug of the AIM1 trainer is thereby structurally dead).
+  3. Geometry as-of: calculate_smart_targets on the candle window up to
+     that candle — exactly what bot 15 would compute when posting.
+  4. Label: simulate_exit from tools/walkforward_sim.py (wick-aware first-touch,
+     SL-first, fees, monitor trailing), horizon cap 14 days.
+  5. Features: exclusively core.aim2_features.build_feature_row
+     (shared builder = serving parity).
 
-Conv-Signale werden deterministisch untersampelt (md5-Hash, reproduzierbar),
-weil FIFO/Volume sonst 80% des Datensatzes stellen; der Schwarm-Kontext wird
-IMMER auf dem vollen Event-Strom berechnet (Sampling darf die Welt nicht
-verändern, nur die Trainingsauswahl).
+Conv signals are deterministically undersampled (md5 hash, reproducible),
+because FIFO/Volume would otherwise make up 80% of the dataset; the swarm
+context is ALWAYS computed on the full event stream (sampling must not
+change the world, only the training selection).
 
-Beispiel:
-  python tools/aim2_build_dataset.py                # Vollausbau
-  python tools/aim2_build_dataset.py --limit-symbols 15   # Smoke-Test
+Example:
+  python tools/aim2_build_dataset.py                # full build
+  python tools/aim2_build_dataset.py --limit-symbols 15   # smoke test
 """
 
 from __future__ import annotations
@@ -61,19 +61,19 @@ from core.database import get_db_connection  # noqa: E402
 from core.trade_utils import calculate_smart_targets  # noqa: E402
 from tools.research_dataset_common import candles_window_start  # noqa: E402
 from tools.research_dataset_common import to_utc_naive as _shared_to_utc_naive  # noqa: E402
-from tools.walkforward_sim import simulate_exit  # noqa: E402  (nur Import — Datei gehört dem ABR1-Rework)
+from tools.walkforward_sim import simulate_exit  # noqa: E402  (import only — file belongs to the ABR1 rework)
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
 
 SINCE_DEFAULT = "2026-02-25"
-HORIZON_CANDLES = 14 * 24          # 14 Tage à 1h
-WINDOW_CANDLES = 500               # Smart-Targets-Fenster
+HORIZON_CANDLES = 14 * 24          # 14 days of 1h
+WINDOW_CANDLES = 500               # smart-targets window
 MIN_WINDOW = 60
-MAX_JOIN_STALENESS_H = 3           # Kerzen-Lücke → Event verwerfen
-N_PUBLISHED = 3                    # Bot 15 postet targets[:3]
+MAX_JOIN_STALENESS_H = 3           # candle gap → discard event
+N_PUBLISHED = 3                    # bot 15 posts targets[:3]
 
-# Deterministisches Conv-Sampling in % (md5 über "strategy|id")
+# Deterministic conv sampling in % (md5 over "strategy|id")
 CONV_SAMPLE_PCT = {
     "Fast In And Out": 25,
     "Volume Indicator": 35,
@@ -98,12 +98,12 @@ def set_low_priority() -> None:
 
 
 def to_utc_naive(series: pd.Series) -> pd.Series:
-    """Signal-/Close-Zeiten als naives UTC — EIN Pfad mit den Research-Buildern.
+    """Signal/close times as naive UTC — ONE path with the research builders.
 
-    Der feste Bucharest→UTC-Schritt ist mit dem R3-Flip (T-2026-KYT-9050-005)
-    entfallen: die Writer stempeln UTC. Die Lesart der Historie hängt an
-    core.time.R3_CUTOVER_UTC (docs/UTC_POLICY.md §6); DST-Frühjahrslücke wird
-    dort vorwärts geschoben, die ambige Herbststunde wird NaT."""
+    The fixed Bucharest→UTC step went away with the R3 flip
+    (T-2026-KYT-9050-005): the writers stamp UTC. Reading the history depends on
+    core.time.R3_CUTOVER_UTC (docs/UTC_POLICY.md §6); the DST spring gap is
+    pushed forward there, the ambiguous autumn hour becomes NaT."""
     return _shared_to_utc_naive(series)
 
 
@@ -127,12 +127,12 @@ def keep_sampled(strategy: str, event_id) -> bool:
 # 1) EVENTS
 # ─────────────────────────────────────────────────────────────────────────────
 def load_events(conn, since: str) -> pd.DataFrame:
-    # Meta-Gate-Ausgaben sind kein Basissignal: AIM1 (tot), AIM2 (postet seit
-    # 06.07.) und AIM2-TOPN (T-2026-CU-9050-051) fallen raus, sonst würde ein
-    # AIM2-Retrain die eigenen Gate-Entscheidungen als Trainings-Events labeln
-    # (F6-Selbst-Feedback). Identisch zur Serving-Definition in
-    # 15_ai_master_bot.load_signal_stream — die AIM2_DESIGN.md-§3-Invariante
-    # „identische Definition wie im Trainer" (T-2026-CU-9050-065).
+    # Meta-gate outputs are not a base signal: AIM1 (dead), AIM2 (posting since
+    # 06.07.) and AIM2-TOPN (T-2026-CU-9050-051) are excluded, otherwise an
+    # AIM2 retrain would label its own gate decisions as training events
+    # (F6 self-feedback). Identical to the serving definition in
+    # 15_ai_master_bot.load_signal_stream — the AIM2_DESIGN.md §3 invariant
+    # "identical definition as in the trainer" (T-2026-CU-9050-065).
     ai = df_query(
         conn,
         """
@@ -180,10 +180,10 @@ def load_events(conn, since: str) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2) KONTEXT-STRUKTUREN (Schwarm, Regime, Trailing-WR)
+# 2) CONTEXT STRUCTURES (swarm, regime, trailing WR)
 # ─────────────────────────────────────────────────────────────────────────────
 def build_swarm_index(ev: pd.DataFrame) -> dict:
-    """Voller Event-Strom je Symbol (VOR Sampling) für die Schwarm-Features."""
+    """Full event stream per symbol (BEFORE sampling) for the swarm features."""
     idx = {}
     for sym, g in ev.groupby("symbol", sort=False):
         g = g.sort_values("ts")
@@ -204,7 +204,7 @@ def swarm_stats(index: dict, symbol: str, ts64, direction: str) -> dict:
     if entry is None:
         return out
     ts_arr, is_long, src = entry
-    hi = int(np.searchsorted(ts_arr, ts64, side="left"))  # strikt < ts → Event selbst raus (F6)
+    hi = int(np.searchsorted(ts_arr, ts64, side="left"))  # strictly < ts → excludes the event itself (F6)
     lo5 = int(np.searchsorted(ts_arr, ts64 - np.timedelta64(5, "D"), side="left"))
     if hi <= lo5:
         return out
@@ -231,7 +231,7 @@ def load_regime(conn) -> tuple[np.ndarray, list[dict]]:
         FROM regime_history ORDER BY ts
         """,
     )
-    ts = pd.to_datetime(df["ts"]).values.astype("datetime64[ns]")  # bereits naive UTC (Step 2)
+    ts = pd.to_datetime(df["ts"]).values.astype("datetime64[ns]")  # already naive UTC (Step 2)
     return ts, df.to_dict("records")
 
 
@@ -244,8 +244,8 @@ def regime_at(r_ts: np.ndarray, r_rows: list[dict], ts64) -> tuple[dict | None, 
 
 
 def load_trail_index(conn, since: str) -> dict:
-    """closed_ai_signals dedupliziert → je Modell sortierte (close_time, win)-Arrays.
-    Win-Semantik = TRAIL_WIN_SQL (identisch im Serving)."""
+    """closed_ai_signals deduplicated → per-model sorted (close_time, win) arrays.
+    Win semantics = TRAIL_WIN_SQL (identical in serving)."""
     df = df_query(
         conn,
         f"""
@@ -282,9 +282,9 @@ def trail_wr(index: dict, model: str, ts64) -> tuple[float, int]:
 # 3) LABELING JE SYMBOL
 # ─────────────────────────────────────────────────────────────────────────────
 def load_candles(conn, symbol: str, since: str) -> pd.DataFrame | None:
-    # Über core.candles: GESCHLOSSENE 1h-Kerzen + Indikator-Join (include_forming
-    # =False). process_symbol schneidet per searchsorted-1 auf die letzte
-    # geschlossene Kerze — die forming Tail-Zeile war nie Teil des Vertrags.
+    # Via core.candles: CLOSED 1h candles + indicator join (include_forming
+    # =False). process_symbol trims via searchsorted-1 to the last
+    # closed candle — the forming tail row was never part of the contract.
     try:
         df = read_candles_with_indicators(
             conn,
@@ -321,14 +321,14 @@ def process_symbol(conn, symbol: str, events: pd.DataFrame, swarm_idx, r_ts, r_r
     closes = df["close"].to_numpy(dtype=np.float64)
     ind_arrays = {c: df[c].to_numpy() for c in IND_COLS}
 
-    # Events derselben Stunde+Richtung teilen Geometrie, Replay und Marktzeile
-    # (FIFO-Bursts!) — einmal rechnen, oft verwenden.
+    # Events of the same hour+direction share geometry, replay and market row
+    # (FIFO bursts!) — compute once, use often.
     label_cache: dict[tuple[int, str], tuple | None] = {}
 
     for ev in events.itertuples():
         ts64 = np.datetime64(ev.ts)
         floor64 = np.datetime64(pd.Timestamp(ev.ts).floor("h"))
-        idx = int(np.searchsorted(times, floor64, side="left")) - 1  # letzte GESCHLOSSENE Kerze
+        idx = int(np.searchsorted(times, floor64, side="left")) - 1  # last CLOSED candle
         if idx < MIN_WINDOW:
             stats["no_window"] += 1
             continue
@@ -336,8 +336,8 @@ def process_symbol(conn, symbol: str, events: pd.DataFrame, swarm_idx, r_ts, r_r
             stats["stale_join"] += 1
             continue
 
-        # Konservativ-Modus: Signalstunden-Kerze überspringen — ihr High/Low
-        # enthält bis zu 1h Preisbewegung VOR dem Signal (Label-Lookahead-Probe).
+        # Conservative mode: skip the signal-hour candle — its high/low
+        # contains up to 1h of price movement BEFORE the signal (label lookahead probe).
         start_off = 2 if skip_entry_hour else 1
         cache_key = (idx, ev.direction)
         if cache_key not in label_cache:
@@ -372,7 +372,7 @@ def process_symbol(conn, symbol: str, events: pd.DataFrame, swarm_idx, r_ts, r_r
 
         label = res.get("outcome_tp1")
         if res.get("exit_reason") == "open_at_end":
-            label = None  # Report-13-Regel: offene Trades nicht labeln
+            label = None  # Report-13 rule: do not label open trades
         regime_row, regime_age = regime_at(r_ts, r_rows, ts64)
         swarm = swarm_stats(swarm_idx, symbol, ts64, ev.direction)
 
@@ -417,7 +417,7 @@ def main() -> None:
     ap.add_argument("--out", default=os.path.join(REPLAY_DIR, "aim2_events.jsonl"))
     ap.add_argument("--limit-symbols", type=int, default=0)
     ap.add_argument("--skip-entry-hour", action="store_true",
-                    help="Konservative Labels: Signalstunden-Kerze nicht replayen (Lookahead-Probe)")
+                    help="Conservative labels: do not replay the signal-hour candle (lookahead probe)")
     args = ap.parse_args()
 
     set_low_priority()
@@ -425,18 +425,18 @@ def main() -> None:
     t0 = time.time()
 
     conn = get_db_connection()
-    log("Lade Events…")
+    log("Loading events…")
     ev = load_events(conn, args.since)
     n_ai = int((ev["source_type"] == "ai").sum())
     n_conv = int((ev["source_type"] == "conv").sum())
-    log(f"Events gesamt: {len(ev)} (ai={n_ai}, conv={n_conv}); "
-        f"gesampelt fürs Training: {int(ev['sampled'].sum())}")
+    log(f"Total events: {len(ev)} (ai={n_ai}, conv={n_conv}); "
+        f"sampled for training: {int(ev['sampled'].sum())}")
 
-    swarm_idx = build_swarm_index(ev)          # VOLLER Strom (vor Sampling)
+    swarm_idx = build_swarm_index(ev)          # FULL stream (before sampling)
     r_ts, r_rows = load_regime(conn)
     trail_idx = load_trail_index(conn, args.since)
-    log(f"Kontext bereit: {len(swarm_idx)} Symbole im Schwarm-Index, "
-        f"{len(r_rows)} Regime-Zeilen, {len(trail_idx)} Modelle mit Trailing-WR")
+    log(f"Context ready: {len(swarm_idx)} symbols in swarm index, "
+        f"{len(r_rows)} regime rows, {len(trail_idx)} models with trailing WR")
 
     train_ev = ev[ev["sampled"]]
     symbols = list(train_ev["symbol"].drop_duplicates())
@@ -453,13 +453,13 @@ def main() -> None:
             if i % 25 == 0 or i == len(symbols):
                 closed = stats["written"] - stats["open_end"]
                 wr = stats["wins"] / closed * 100 if closed else 0.0
-                log(f"{i}/{len(symbols)} Symbole | geschrieben {stats['written']} "
-                    f"(WR geschlossen: {wr:.1f}%) | skips: {stats['no_candles']} keine Kerzen, "
-                    f"{stats['stale_join']} stale, {stats['geometry_fail']} Geometrie, "
-                    f"{stats['no_window']} Fenster | {time.time() - t0:.0f}s")
+                log(f"{i}/{len(symbols)} symbols | written {stats['written']} "
+                    f"(WR closed: {wr:.1f}%) | skips: {stats['no_candles']} no candles, "
+                    f"{stats['stale_join']} stale, {stats['geometry_fail']} geometry, "
+                    f"{stats['no_window']} window | {time.time() - t0:.0f}s")
     conn.close()
 
-    log(f"FERTIG -> {args.out}")
+    log(f"DONE -> {args.out}")
     log(json.dumps(stats))
 
 

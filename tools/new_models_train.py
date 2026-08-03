@@ -1,21 +1,21 @@
 """
-tools/new_models_train.py — Training der Research-Modelle PEX1/FMR1/TRM1/FIF1
-(Report 15: S6/S8/S10/S11). Läuft auf dem VPS (Step 2), NACH dem jeweiligen
-Dataset-Builder (tools/<strat>_build_dataset.py).
+tools/new_models_train.py — Training of research models PEX1/FMR1/TRM1/FIF1
+(Report 15: S6/S8/S10/S11). Runs on the VPS (step 2), AFTER the respective
+dataset builder (tools/<strat>_build_dataset.py).
 
-Methodik (Batch-E-Gerüst, identisch tools/aim2_train.py):
-  * chronologischer 70/15/15-Split mit 7-Tage-Purge-Gap (P1.29)
-  * XGBoost (binär; TRM1: multi:softprob mit 3 Klassen), Early Stopping auf Val
-  * Isotonic-Kalibrierung auf Validation (nur Anzeige — Gate läuft roh)
-  * Threshold-Wahl per Replay-Netto-PnL auf Validation; Test bleibt bis zum
-    Abschlussreport unberührt
-  * Artefakt NUR nach staging_models (P1.35). Deploy ins Repo-Root (Dateiname
-    <strat>_model.pkl, den die Bots 30–33 laden) ist eine Operator-Entscheidung.
+Methodology (batch-E framework, identical to tools/aim2_train.py):
+  * chronological 70/15/15 split with 7-day purge gap (P1.29)
+  * XGBoost (binary; TRM1: multi:softprob with 3 classes), early stopping on val
+  * Isotonic calibration on validation (display only — gate runs raw)
+  * Threshold selection per replay net PnL on validation; test untouched until
+    final report
+  * Artefact ONLY to staging_models (P1.35). Deploy to repo root (filename
+    <strat>_model.pkl, which bots 30–33 load) is an operator decision.
 
-Artefakt-Vertrag (core/model_artifacts.load_artifact):
+Artefact contract (core/model_artifacts.load_artifact):
   dict(model, features, optimal_threshold, calibrator_isotonic, meta)
 
-Beispiele:
+Examples:
   python tools/new_models_train.py --strategy pex1
   python tools/new_models_train.py --strategy trm1 --min-val-trades 20
 """
@@ -52,10 +52,10 @@ from core.research_features import (  # noqa: E402
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
 
-# purge_days >= Replay-Horizont des jeweiligen Builders, sonst überlappen die
-# PnL-Fenster der Threshold-Wahl über die Split-Grenze (Review-Fix 2026-07-06):
-# pex1/fmr1/fif1 simulieren 7 Tage, trm1 (BTC-Smart-Targets) 14 Tage, fmr2
-# (Normalisierungs-/Timeout-Exit) höchstens 9 Settlements = 3 Tage.
+# purge_days >= replay horizon of the respective builder, else PnL
+# windows of threshold selection overlap the split boundary (review fix 2026-07-06):
+# pex1/fmr1/fif1 simulate 7 days, trm1 (BTC-smart-targets) 14 days, fmr2
+# (normalisation/timeout exit) at most 9 settlements = 3 days.
 STRATEGIES = {
     "pex1": {"model_id": "PEX1", "features": PEX1_FEATURES, "kind": "binary", "purge_days": 7},
     "fmr1": {"model_id": "FMR1", "features": FMR1_FEATURES, "kind": "binary", "purge_days": 7},
@@ -80,11 +80,11 @@ def load_events(path: str, feature_cols: list[str]) -> tuple[pd.DataFrame, pd.Da
     X = pd.DataFrame(feats)
     missing = [c for c in feature_cols if c not in X.columns]
     if missing:
-        raise SystemExit(f"Events tragen nicht alle Vertrags-Features — fehlend: {missing}")
+        raise SystemExit(f"Events don't carry all contract features — missing: {missing}")
     X = X[feature_cols].astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    # ISO8601 statt Format-Inferenz: die Builder schreiben gemischte Präzision
-    # (FMR1-Settlements sekundengenau ohne .%f, Spike-Events mit Mikrosekunden) —
-    # pandas rät sonst das Format der ersten Zeile und wirft auf der zweiten.
+    # ISO8601 instead of format inference: builders write mixed precision
+    # (FMR1 settlements second-precise without .%f, spike events with microseconds) —
+    # pandas else guesses format from first row and breaks on second.
     meta["ts"] = pd.to_datetime(meta["ts"], format="ISO8601")
     return meta, X
 
@@ -133,19 +133,19 @@ def train_binary(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
     y = meta["label"].astype(int).to_numpy()
     pnl = pd.to_numeric(meta["net_pnl_pct"], errors="coerce").fillna(0.0).to_numpy()
     w = pd.to_numeric(meta["weight"], errors="coerce").fillna(1.0).to_numpy()
-    log(f"Gelabelt: {len(meta)} | WR (gewichtet): {np.average(y, weights=w):.3f} "
-        f"| ø Replay-PnL: {np.average(pnl, weights=w):+.3f}%")
+    log(f"Labelled: {len(meta)} | WR (weighted): {np.average(y, weights=w):.3f} "
+        f"| ø replay-PnL: {np.average(pnl, weights=w):+.3f}%")
 
     tr, va, te, t1, t2 = chrono_split(meta, cfg["purge_days"])
     log(f"Split: train={tr.sum()} | val={va.sum()} | test={te.sum()} "
         f"(t1={t1.date()}, t2={t2.date()}, purge={cfg['purge_days']}d)")
     if min(tr.sum(), va.sum(), te.sum()) < args.min_val_trades:
-        raise SystemExit("Zu wenig Events für einen belastbaren Split — Abbruch.")
+        raise SystemExit("Too few events for a reliable split — abort.")
 
     model = make_model("binary")
     model.fit(X[tr], y[tr], sample_weight=w[tr],
               eval_set=[(X[va], y[va])], sample_weight_eval_set=[w[va]], verbose=False)
-    log(f"Trainiert: best_iteration={model.best_iteration}")
+    log(f"Trained: best_iteration={model.best_iteration}")
 
     raw_va = model.predict_proba(X[va])[:, 1]
     raw_te = model.predict_proba(X[te])[:, 1]
@@ -154,22 +154,22 @@ def train_binary(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
     auc_va = roc_auc_score(y[va], raw_va, sample_weight=w[va])
     auc_te = roc_auc_score(y[te], raw_te, sample_weight=w[te])
     brier_te = brier_score_loss(y[te], iso.predict(raw_te), sample_weight=w[te])
-    log(f"AUC val={auc_va:.4f} | AUC test={auc_te:.4f} | Brier test (kalibriert)={brier_te:.4f}")
+    log(f"AUC val={auc_va:.4f} | AUC test={auc_te:.4f} | Brier test (calibrated)={brier_te:.4f}")
 
-    # Threshold auf ROHEN Val-Probs (die Bots gaten roh — Konvention MIS2/ABR1).
+    # Threshold on RAW val probs (bots gate raw — convention MIS2/ABR1).
     best = pick_threshold(raw_va, pnl[va], w[va], args.min_val_trades)
     if best is None:
-        log("⚠️ Kein Threshold mit genug Val-Trades — Abbruch ohne Artefakt.")
+        log("⚠️ No threshold with enough val trades — abort without artefact.")
         sys.exit(2)
-    log(f"Val-Operating-Point: thr={best['threshold']} | n={best['n']} | "
+    log(f"Val operating point: thr={best['threshold']} | n={best['n']} | "
         f"øPnL={best['avg_pnl']:+.3f}% | ΣPnL={best['total_pnl']:+.1f}%")
 
     sel = raw_te >= best["threshold"]
     base_avg = float(np.average(pnl[te], weights=w[te]))
     gate_avg = float(np.average(pnl[te][sel], weights=w[te][sel])) if sel.sum() else float("nan")
     gate_wr = float(np.average(y[te][sel], weights=w[te][sel])) if sel.sum() else float("nan")
-    log(f"GATE-UPLIFT test: ohne Gate ø {base_avg:+.3f}%/Trade | mit Gate "
-        f"ø {gate_avg:+.3f}%/Trade, WR {gate_wr:.3f}, n={int(sel.sum())}/{int(te.sum())}")
+    log(f"GATE-UPLIFT test: without gate ø {base_avg:+.3f}%/trade | with gate "
+        f"ø {gate_avg:+.3f}%/trade, WR {gate_wr:.3f}, n={int(sel.sum())}/{int(te.sum())}")
 
     return {
         "model": model, "calibrator": iso, "threshold": best["threshold"],
@@ -189,31 +189,31 @@ def train_binary(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
 
 
 def train_trm1(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
-    """TRM1: 3-Klassen-Modell; Gate = max(P(up), P(down)); der Threshold wird
-    über den Replay-PnL des BTC-Trades in der prognostizierten Richtung gewählt."""
-    # Events mit offenem Replay (win_* = None → Mark-to-Market-PnL) fliegen
-    # komplett raus — konsistent mit dem label-Filter der binären Pfade
-    # (Review-Fix 2026-07-06; vorher verrauschten offene Trades die
-    # Threshold-Wahl).
+    """TRM1: 3-class model; gate = max(P(up), P(down)); threshold chosen
+    via replay PnL of BTC trade in predicted direction."""
+    # Events with open replay (win_* = None → mark-to-market PnL) are
+    # completely filtered out — consistent with label filter of binary paths
+    # (review fix 2026-07-06; before, open trades noised the
+    # threshold selection).
     closed = (meta["win_long"].notna() & meta["win_short"].notna()).to_numpy()
     meta, X = meta[closed].reset_index(drop=True), X[closed].reset_index(drop=True)
     y = meta["label_class"].astype(int).to_numpy()
     pnl_long = pd.to_numeric(meta["pnl_long"], errors="coerce").fillna(0.0).to_numpy()
     pnl_short = pd.to_numeric(meta["pnl_short"], errors="coerce").fillna(0.0).to_numpy()
     w = pd.to_numeric(meta["weight"], errors="coerce").fillna(1.0).to_numpy()
-    log(f"Events (Replay geschlossen): {len(meta)} | Klassen: other={int((y == 0).sum())} "
+    log(f"Events (replay closed): {len(meta)} | classes: other={int((y == 0).sum())} "
         f"up={int((y == TRM1_CLASS_UP).sum())} down={int((y == TRM1_CLASS_DOWN).sum())}")
 
     tr, va, te, t1, t2 = chrono_split(meta, cfg["purge_days"])
     log(f"Split: train={tr.sum()} | val={va.sum()} | test={te.sum()} "
         f"(t1={t1.date()}, t2={t2.date()}, purge={cfg['purge_days']}d)")
     if min(tr.sum(), va.sum(), te.sum()) < args.min_val_trades:
-        raise SystemExit("Zu wenig Events für einen belastbaren Split — Abbruch.")
+        raise SystemExit("Too few events for a reliable split — abort.")
 
     model = make_model("multiclass")
     model.fit(X[tr], y[tr], sample_weight=w[tr],
               eval_set=[(X[va], y[va])], sample_weight_eval_set=[w[va]], verbose=False)
-    log(f"Trainiert: best_iteration={model.best_iteration}")
+    log(f"Trained: best_iteration={model.best_iteration}")
 
     def gate_and_pnl(proba: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         p_up, p_down = proba[:, TRM1_CLASS_UP], proba[:, TRM1_CLASS_DOWN]
@@ -227,23 +227,23 @@ def train_trm1(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
     gate_va, pnl_va, win_va = gate_and_pnl(proba_va, va)
     gate_te, pnl_te, win_te = gate_and_pnl(proba_te, te)
 
-    # Kalibrierung: Gate-Prob → P(gewählter Trade gewinnt) — nur Anzeige.
+    # Calibration: gate-prob → P(chosen trade wins) — display only.
     iso = IsotonicRegression(out_of_bounds="clip")
     iso.fit(gate_va, win_va, sample_weight=w[va])
 
     best = pick_threshold(gate_va, pnl_va, w[va], args.min_val_trades)
     if best is None:
-        log("⚠️ Kein Threshold mit genug Val-Trades — Abbruch ohne Artefakt.")
+        log("⚠️ No threshold with enough val trades — abort without artefact.")
         sys.exit(2)
-    log(f"Val-Operating-Point: thr={best['threshold']} | n={best['n']} | "
+    log(f"Val operating point: thr={best['threshold']} | n={best['n']} | "
         f"øPnL={best['avg_pnl']:+.3f}% | ΣPnL={best['total_pnl']:+.1f}%")
 
     sel = gate_te >= best["threshold"]
     base_avg = float(np.average(pnl_te, weights=w[te]))
     gate_avg = float(np.average(pnl_te[sel], weights=w[te][sel])) if sel.sum() else float("nan")
     acc = float(np.average((win_te[sel] == 1), weights=w[te][sel])) if sel.sum() else float("nan")
-    log(f"GATE-UPLIFT test: alle Transitions ø {base_avg:+.3f}% | gated "
-        f"ø {gate_avg:+.3f}%, Trade-WR {acc:.3f}, n={int(sel.sum())}/{int(te.sum())}")
+    log(f"GATE-UPLIFT test: all transitions ø {base_avg:+.3f}% | gated "
+        f"ø {gate_avg:+.3f}%, trade-WR {acc:.3f}, n={int(sel.sum())}/{int(te.sum())}")
 
     return {
         "model": model, "calibrator": iso, "threshold": best["threshold"],
@@ -263,8 +263,8 @@ def train_trm1(cfg: dict, meta: pd.DataFrame, X: pd.DataFrame, args) -> dict:
 
 
 def main() -> None:
-    # cp1252-Konsole: ø/Σ in Ausgaben dürfen den Lauf nicht abbrechen
-    # (gleicher Fix wie tools/retrain_from_replay.py, 13ce748).
+    # cp1252 console: ø/Σ in output must not break the run
+    # (same fix as tools/retrain_from_replay.py, 13ce748).
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -307,8 +307,8 @@ def main() -> None:
     joblib.dump(artifact, out_path)
     with open(out_path.replace(".pkl", "_report.json"), "w", encoding="utf-8") as fh:
         json.dump(artifact["meta"], fh, ensure_ascii=False, indent=2)
-    log(f"Artefakt → {out_path} (NUR staging — Deploy ins Repo-Root als "
-        f"{args.strategy}_model.pkl ist eine Operator-Entscheidung, P1.35)")
+    log(f"Artefact → {out_path} (staging ONLY — deploy to repo root as "
+        f"{args.strategy}_model.pkl is an operator decision, P1.35)")
 
 
 if __name__ == "__main__":

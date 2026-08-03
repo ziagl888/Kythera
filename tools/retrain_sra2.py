@@ -1,30 +1,30 @@
 """
-tools/retrain_sra2.py — SRA2: Retrain des S/R-Meta-Filters (Task #1, 2026-07-06).
+tools/retrain_sra2.py — SRA2: Retraining of the S/R meta-filter (task #1, 2026-07-06).
 
-Basis: legacy_trainers/X9-SR-ANALYZER-Schritt1.py (bewiesener SRA1-Trainer,
-Meta-Labeling über closed_trades3, getrennte LONG/SHORT-Modelle, chronologischer
-Split). Vier Verbesserungen per Operator-Beschluss (docs/MODEL_INTENT.md §5):
+Basis: legacy_trainers/X9-SR-ANALYZER-step1.py (proven SRA1 trainer,
+meta-labeling via closed_trades3, separate LONG/SHORT models, chronological
+split). Four improvements per operator decision (docs/MODEL_INTENT.md §5):
 
-  1. PREIS-ROHSPALTEN RAUS (Skalen-Leakage): die 15 absoluten Preis-Level +
-     atr_14/macd in Preisskala fliegen; erhalten bleiben die skalenfreien
-     Pendants (pct_*, *_atr) plus neue skalenfreie Ersatzspalten
+  1. RAW PRICE COLUMNS OUT (scale leakage): the 15 absolute price levels +
+     atr_14/macd in price scale are removed; retained are the scale-free
+     counterparts (pct_*, *_atr) plus new scale-free replacement columns
      (macd_dif_pct, macd_dea_pct, atr_pct).
-  2. LOOK-AHEAD-FIX (Audit 13-P2b): Indikator-Join nur auf die letzte
-     GESCHLOSSENE 1h-Kerze (open_time <= signal_time - 1h) — der alte Join
-     traf die forming candle (bis +1h Zukunft).
-  3. NaN LIVE-KONSISTENT: kein globales fillna(median) mehr (Train/Live-
-     Lücke) — XGBoost verarbeitet NaN nativ, exakt wie der Bot (P1.20).
-  4. Isotonic-Kalibrierung auf Validation + Threshold via pick_threshold_safe
-     (Ø-PnL/Trade, Mindest-n) statt implizitem 0,65-Hardcode.
+  2. LOOK-AHEAD FIX (audit 13-P2b): indicator join only to the last
+     CLOSED 1h candle (open_time <= signal_time - 1h) — the old join
+     hit the forming candle (up to +1h future).
+  3. NaN LIVE-CONSISTENT: no global fillna(median) anymore (train/live
+     gap) — XGBoost processes NaN natively, exactly like the bot (P1.20).
+  4. Isotonic calibration on validation + threshold via pick_threshold_safe
+     (avg-PnL/trade, min-n) instead of implicit 0.65 hardcode.
 
-Label (Operator bestätigt 2026-07-06 + Code-Beweis 13-updatesupportresistance):
-  status in ('SL1','SL2','SL3','4') = WIN (SL nach TP1/2/3 = Trailing-Gewinn),
-  'SL0' = LOSS. PnL-Approximation für die Threshold-Ökonomie: 25 %-Tranchen je
-  erreichtem Target, Rest zum Trailing-SL-Level (SL1→Entry, SL2→T1, SL3→T2).
+Label (operator confirmed 2026-07-06 + code evidence 13-updatesupportresistance):
+  status in ('SL1','SL2','SL3','4') = WIN (SL after TP1/2/3 = trailing win),
+  'SL0' = LOSS. PnL approximation for threshold economics: 25% tranches per
+  target reached, rest to trailing-SL level (SL1→entry, SL2→T1, SL3→T2).
 
-Artefakte NUR nach staging (P1.35): sra2_model_{LONG,SHORT}.json (natives
-XGBoost-JSON wie der Bot es lädt) + _meta.json (Vertrag: features, threshold,
-model_id='SRA2') + _calib.pkl. Deploy entscheidet Michi.
+Artefacts ONLY to staging (P1.35): sra2_model_{LONG,SHORT}.json (native
+XGBoost JSON as the bot loads it) + _meta.json (contract: features, threshold,
+model_id='SRA2') + _calib.pkl. Deploy is Michi's decision.
 """
 
 from __future__ import annotations
@@ -48,10 +48,10 @@ from core.sra_features import SRA2_FEATURES, build_sra2_features  # noqa: E402
 from core.time import legacy_naive_to_utc  # noqa: E402
 from tools.retrain_from_replay import STAGING_DIR, pick_threshold_safe  # noqa: E402
 
-# Feature-Vertrag + Builder leben in core/sra_features.py — EIN Builder fuer
-# Trainer und Serving (X-R1). 9_ai_sr_bot importiert denselben Modul.
+# Feature contract + builder live in core/sra_features.py — ONE builder for
+# trainer and serving (X-R1). 9_ai_sr_bot imports the same module.
 
-# Roh-Indikatorspalten, die build_sra2_features als Eingabe braucht (SQL-Projektion).
+# Raw indicator columns that build_sra2_features needs as input (SQL projection).
 INDICATOR_COLS = (
     "open_time, close, rsi_9, rsi_14, rsi_24, macd_dif_fast_9_21_9, "
     "macd_dea_fast_9_21_9, tsi_fast_12_7_7, tsi_fast_12_7_7_signal, atr_14, "
@@ -59,15 +59,15 @@ INDICATOR_COLS = (
     "donchian_lower_20, donchian_mid_20, support_price, resistance_price, "
     "ema_9, ema_21, wma_9, wma_21, kama_9, kama_21, trend_direction"
 )
-# Dieselben Spalten als Projektion für read_indicators (open_time zuerst — der
-# Read ordnet danach). Ein Ort für die Wahrheit, geparst aus INDICATOR_COLS.
+# Same columns as projection for read_indicators (open_time first — the read
+# sorts by that). One source of truth, parsed from INDICATOR_COLS.
 INDICATOR_COL_LIST = tuple(c.strip() for c in INDICATOR_COLS.split(","))
 
 
 def approx_pnl_pct(row) -> float:
-    """PnL-Approximation je Status für die Threshold-Ökonomie: 25 %-Tranchen je
-    erreichtem Target, Rest zum Trailing-SL (SL1→Entry, SL2→T1, SL3→T2),
-    SL0 = voller SL, '4' = volle Ladder. Fees 0,10 % RT."""
+    """PnL approximation per status for threshold economics: 25% tranches per
+    target reached, rest to trailing-SL (SL1→entry, SL2→T1, SL3→T2),
+    SL0 = full SL, '4' = full ladder. Fees 0.10% RT."""
     try:
         entry = float(row["entry"])
         if entry <= 0:
@@ -89,7 +89,7 @@ def approx_pnl_pct(row) -> float:
             legs = [leg(tgts[i]) for i in range(n_hit) if tgts[i] is not None]
             trail_exit = entry if n_hit == 1 else tgts[n_hit - 2]
             legs += [leg(trail_exit)] * (4 - n_hit) if trail_exit is not None else []
-        else:  # SL0 / unbekannt = voller Verlust zum SL
+        else:  # SL0 / unknown = full loss to SL
             legs = [leg(sl)] * 4 if sl is not None else [-5.0] * 4
         return float(np.mean(legs)) - 0.10 if legs else 0.0
     except (TypeError, ValueError, KeyError):
@@ -113,10 +113,10 @@ def load_dataset(conn) -> pd.DataFrame:
         coin = tr["coin"]
         if coin not in ind_cache:
             try:
-                # Über core.candles: GESCHLOSSENE 1h-Indikatorzeilen, ASC. Die
-                # Per-Signal-Maske unten (ot <= t_sig-1h) wählt ohnehin nur
-                # geschlossene Kerzen; include_forming=False hält die forming
-                # Zeile schon aus dem Cache (R1).
+                # Via core.candles: CLOSED 1h indicator rows, ascending. The
+                # per-signal mask below (ot <= t_sig-1h) selects only closed
+                # candles anyway; include_forming=False keeps the forming row out
+                # of the cache (R1).
                 ind_cache[coin] = read_indicators(
                     conn, coin, "1h", include_forming=False, columns=INDICATOR_COL_LIST
                 )
@@ -126,14 +126,14 @@ def load_dataset(conn) -> pd.DataFrame:
         dfi = ind_cache[coin]
         if dfi is None or dfi.empty:
             continue
-        # LOOK-AHEAD-FIX (Verbesserung 2): letzte GESCHLOSSENE 1h-Kerze —
-        # open_time + 1h <= Signalzeit. TZ-Vertrag seit dem R3-Flip
-        # (T-2026-KYT-9050-005): die feste Bucharest-Lokalisierung ist raus, die
-        # Lesart der Historie steht zentral in core.time (docs/UTC_POLICY.md §6).
-        # closed_trades3 ist eine reine Legacy-Quelle (letzte Zeile 2026-02-23,
-        # 8.245 Zeilen, read-only vermessen 2026-08-01) — sie liegt komplett vor
-        # dem Flip und gehört damit in den Backfill-Umfang bzw. unter jede
-        # Cutover-Konstante. Kerzen sind UTC.
+        # LOOK-AHEAD FIX (improvement 2): last CLOSED 1h candle —
+        # open_time + 1h <= signal time. TZ contract since the R3 flip
+        # (T-2026-KYT-9050-005): the fixed Bucharest localization is out, history
+        # reading is central in core.time (docs/UTC_POLICY.md §6).
+        # closed_trades3 is a pure legacy source (last row 2026-02-23,
+        # 8,245 rows, read-only measured 2026-08-01) — it lies completely before
+        # the flip and thus belongs in the backfill scope or under each
+        # cutover constant. Candles are UTC.
         t_sig = pd.Timestamp(legacy_naive_to_utc(pd.Timestamp(tr["time"]).to_pydatetime())).tz_localize("UTC")
         ot = pd.to_datetime(dfi["open_time"], utc=True)
         mask = ot <= (t_sig - pd.Timedelta(hours=1))
@@ -153,7 +153,7 @@ def load_dataset(conn) -> pd.DataFrame:
     if not df.empty:
         df["signal_time"] = pd.to_datetime(df["signal_time"], utc=True).dt.tz_localize(None)
         df = df.sort_values("signal_time").reset_index(drop=True)
-        # Zeiten sind ab hier naive UTC — konsistent für Split-Quantile.
+        # Times are naive UTC from here on — consistent for split quantiles.
     return df
 
 
@@ -179,21 +179,21 @@ def main() -> None:
     df = load_dataset(conn)
     conn.close()
     if df.empty or len(df) < 300:
-        raise SystemExit(f"Zu wenig Events ({len(df)}) — Abbruch (Guard wie Schritt1)")
+        raise SystemExit(f"Too few events ({len(df)}) — abort (guard like step1)")
     print(f"Dataset: {len(df)} Events, {df['signal_time'].min()} → {df['signal_time'].max()}")
 
     results: dict = {"strategy": "sra2", "features": SRA2_FEATURES}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
-            print(f"SRA2 {direction}: nur {len(d)} Events — übersprungen")
+            print(f"SRA2 {direction}: only {len(d)} events — skipped")
             continue
         train, val, test = chrono_split_gap(d)
         base = d["outcome"].mean() * 100
-        print(f"SRA2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
-              f"Basisrate WIN {base:.1f}%")
+        print(f"SRA2 {direction}: {len(d)} events | split {len(train)}/{len(val)}/{len(test)} | "
+              f"base rate WIN {base:.1f}%")
 
-        # Hyperparameter wie der bewiesene Schritt1-Trainer
+        # Hyperparameters like the proven step1 trainer
         model = xgb.XGBClassifier(
             objective="binary:logistic", eval_metric="auc", n_estimators=400,
             max_depth=4, learning_rate=0.025, subsample=0.82,
@@ -238,7 +238,7 @@ def main() -> None:
             "val_stats": val_stats, "test_stats": test_stats,
         }
         out = os.path.join(STAGING_DIR, f"sra2_model_{direction}.json")
-        model.save_model(out)  # natives XGBoost-JSON — Format wie der Bot es lädt
+        model.save_model(out)  # native XGBoost JSON — format as bot loads it
         joblib.dump(iso, os.path.join(STAGING_DIR, f"sra2_model_{direction}_calib.pkl"))
         with open(os.path.join(STAGING_DIR, f"sra2_model_{direction}_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2, default=str)

@@ -1,13 +1,13 @@
 # 26_regime_detector.py
 """
-Regime Detector — Phase 1 des Regime-Orchestrators.
+Regime detector — phase 1 of the regime orchestrator.
 
-Läuft alle 5 Minuten und:
-  1. Berechnet Features (BTC + BTCDOM)
-  2. Klassifiziert BTC-Regime + Alt-Context (zwei Achsen)
-  3. Schreibt jeden Check after regime_history
-  4. Debounced beide Achsen unabhängig → regime_current
-  5. Bei bestätigtem Wechsel: Regime-Change-Alert in REGIME_STATUS_CHANNEL_ID
+Runs every 5 minutes and:
+  1. Computes features (BTC + BTCDOM)
+  2. Classifies BTC regime + alt context (two axes)
+  3. Writes every check to regime_history
+  4. Debounces both axes independently → regime_current
+  5. On confirmed change: regime-change alert to REGIME_STATUS_CHANNEL_ID
 
 Watchdog: start_delay=160
 """
@@ -31,8 +31,8 @@ from core.regime_logic import (
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-CHECK_INTERVAL_SECONDS = 300  # alle 5 Minuten
-TREND_RETURN_THRESHOLD_4H_PCT = 1.5  # Referenz für Status-Posts
+CHECK_INTERVAL_SECONDS = 300  # every 5 minutes
+TREND_RETURN_THRESHOLD_4H_PCT = 1.5  # reference for status posts
 VOLA_HIGH_PERCENTILE = 75
 VOLA_LOW_PERCENTILE = 40
 ALT_CONTEXT_THRESHOLD_PCT = 1.5
@@ -327,16 +327,16 @@ def handle_regime_change(
     btc_ret_4h = features.get("btc_return_4h", 0.0)
     btcdom_val = features.get("btcdom_value")
     btcdom_ret = features.get("btcdom_return_24h")
-    # Confidence separat anzeigen statt min(btc, alt) — der alte Code zeigte
-    # 0% wenn eine der beiden Axes unsicher war, was alarmistisch wirkt
-    # obwohl die betroffene Axis durchaus confident sein kann.
+    # Show confidence separately instead of min(btc, alt) — the old code showed
+    # 0% if either axis was uncertain, which looks alarmist even though the
+    # affected axis can be quite confident.
     conf_btc = features.get("confidence_btc", features.get("confidence", 0.0))
     conf_alt = features.get("confidence_alt", 0.0)
 
     btcdom_line = ""
     if btcdom_val is not None:
-        # BTCDOM ist ein Punkt-Index (Base 1000), kein Prozentsatz.
-        # Früher mit '%' suffixiert, das war irreführend.
+        # BTCDOM is a point index (base 1000), not a percentage.
+        # Previously suffixed with '%', which was misleading.
         btcdom_str = f"{btcdom_val:.1f}"
         if btcdom_ret is not None:
             sign = "+" if btcdom_ret >= 0 else ""
@@ -355,11 +355,11 @@ def handle_regime_change(
     try:
         send_telegram(msg, REGIME_STATUS_CHANNEL_ID)
     except Exception as e:
-        logger.error(f"Error sending des Regime-Change-Alerts: {e}")
+        logger.error(f"Error sending regime-change alert: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STÜNDLICHER STATUS-POST
+# HOURLY STATUS POST
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -372,7 +372,7 @@ async def post_hourly_status() -> None:
     try:
         conn = get_db_connection()
 
-        # Aktuelles Regime
+        # Current regime
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT regime, alt_context, since, alt_context_since, confidence FROM regime_current WHERE id = 1"
@@ -397,7 +397,7 @@ async def post_hourly_status() -> None:
             m = int((delta.total_seconds() % 3600) // 60)
             return f"{ts.strftime('%Y-%m-%d %H:%M')} UTC ({h}h {m}min)"
 
-        # Letzte 24h Regime-Verteilung
+        # Last 24h regime distribution
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -411,7 +411,7 @@ async def post_hourly_status() -> None:
         total_checks = sum(r[1] for r in dist_rows) or 1
         dist_lines = "\n".join(f"  {r[0]:<12} {r[1] / total_checks * 100:.0f}%" for r in dist_rows)
 
-        # Aktuelle BTC-Features
+        # Current BTC features
         features = compute_features(conn)
         btc_line = "  no data"
         atr_line = "  no data"
@@ -424,12 +424,12 @@ async def post_hourly_status() -> None:
             )
             atr_line = f"  1h {features['btc_atr_1h_pct']:.2f}% | 4h {features['btc_atr_4h_pct']:.2f}%"
             if features.get("btcdom_value") is not None:
-                # BTCDOM ist Punkt-Index (Base 1000), kein Prozentsatz.
+                # BTCDOM is a point index (base 1000), not a percentage.
                 sign = "+" if (features.get("btcdom_return_24h") or 0) >= 0 else ""
                 ret24h = features.get("btcdom_return_24h", 0.0) or 0.0
                 btcdom_line = f"  {features['btcdom_value']:.1f} | 24h {sign}{ret24h:.2f}%"
 
-        # Offene Orchestrator-Trades
+        # Open orchestrator trades
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT coin, direction, bot_name FROM orchestrator_open_trades "
@@ -442,7 +442,7 @@ async def post_hourly_status() -> None:
         if open_count > 8:
             open_lines += f"\n  ... and {open_count - 8} more"
 
-        # Whitelist-Summary im aktuellen Regime
+        # Whitelist summary in current regime
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -464,10 +464,10 @@ async def post_hourly_status() -> None:
         if not wl_rows:
             wl_lines = "\n  (whitelist not yet computed)"
 
-        # Gate-Qualität: wieviele Forwards der letzten 24h liefen über eine
-        # echte 4D-Zelle, wieviele über default-open bzw. Fallback (B8).
-        # wl_reason-Format: '4D-Grund' | 'no_whitelist_entry' |
-        # '<status>:<fallback_reason>' (Fallback- und Staleness-Pfad).
+        # Gate quality: how many forwards from the last 24h ran through a
+        # real 4D cell, how many through default-open or fallback (B8).
+        # wl_reason format: '4D-reason' | 'no_whitelist_entry' |
+        # '<status>:<fallback_reason>' (fallback and staleness path).
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -519,14 +519,14 @@ async def post_hourly_status() -> None:
         logger.info(f"✅ Hourly status post sent ({cur_regime}/{cur_alt})")
 
     except Exception as e:
-        logger.error(f"Error for Stunden-Status-Post: {e}", exc_info=True)
+        logger.error(f"Error for hourly status post: {e}", exc_info=True)
     finally:
         if conn:
             conn.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HAUPT-LOOP
+# MAIN LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -542,19 +542,19 @@ async def regime_check_loop() -> None:
 
         features = compute_features(conn)
         if features is None:
-            logger.warning("Incomplete data — Regime-Check skipped")
+            logger.warning("Incomplete data — regime check skipped")
             return
 
-        # Regime-State EINMAL je Check lesen: liefert die Hysterese-Referenz
-        # (§22 — bestehender ODER pendender TREND hält bis unter die
-        # Exit-Schwelle) und wird unten an apply_debounce durchgereicht.
+        # Read regime-state ONCE per check: supplies the hysteresis reference
+        # (§22 — existing OR pending TREND persists until below exit threshold)
+        # and is passed down to apply_debounce.
         state_row = read_regime_state(conn)
         prev_regime = hysteresis_prev_regime(state_row)
 
         result = classify_regime(features, features["vola_p75"], features["vola_p40"], prev_regime=prev_regime)
         logger.info(
-            f"Regime-Check: BTC={result['regime']} (conf={result['confidence_btc']:.2f}) "
-            f"Alt={result['alt_context']} (conf={result['confidence_alt']:.2f})"
+            f"Regime check: BTC={result['regime']} (conf={result['confidence_btc']:.2f}) "
+            f"alt={result['alt_context']} (conf={result['confidence_alt']:.2f})"
         )
 
         insert_regime_history(conn, result, features)
@@ -569,10 +569,10 @@ async def regime_check_loop() -> None:
         )
 
         if debounced["btc_regime_changed"] or debounced["alt_context_changed"]:
-            # Confidences aus classify_regime in features mergen damit die
-            # Alert-Message beide Werte getrennt anzeigen kann (vorher zeigte
-            # der Report min(btc, alt) → 0% wenn nur eine Axis unsicher war,
-            # wirkte alarmistisch obwohl die andere Axis valide war).
+            # Merge confidences from classify_regime into features so the alert
+            # message can show both values separately (previously the report
+            # showed min(btc, alt) → 0% if either axis was uncertain, looked
+            # alarmist even though the other axis was valid).
             features_with_conf = dict(features)
             features_with_conf["confidence_btc"] = result["confidence_btc"]
             features_with_conf["confidence_alt"] = result["confidence_alt"]
@@ -588,7 +588,7 @@ async def regime_check_loop() -> None:
             )
 
     except Exception as e:
-        logger.error(f"Regime-Check fehlgeschlagen: {e}", exc_info=True)
+        logger.error(f"Regime check failed: {e}", exc_info=True)
     finally:
         if conn:
             conn.close()
@@ -620,7 +620,7 @@ async def schedule_hourly_status() -> None:
 async def main() -> None:
     logger.info("=== 🌐 REGIME DETECTOR STARTED ===")
 
-    # Schema beim Start sicherstellen
+    # Ensure schema at startup
     conn = None
     try:
         conn = get_db_connection()
@@ -629,7 +629,7 @@ async def main() -> None:
         if conn:
             conn.close()
 
-    # Ersten Check sofort, dann alle 5 Minuten
+    # First check immediately, then every 5 minutes
     await regime_check_loop()
 
     await asyncio.gather(
@@ -642,4 +642,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Regime Detector manuell stopped (Strg+C).")
+        logger.info("Regime detector manually stopped (Ctrl+C).")

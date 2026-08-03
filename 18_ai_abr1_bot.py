@@ -12,11 +12,11 @@ import time
 import joblib
 import numpy as np
 import pandas as pd
-import pandas_ta  # noqa: F401 — registriert den df.ta-Accessor (Regression aus 052ba4c:
+import pandas_ta  # noqa: F401 — registers the df.ta accessor (regression from 052ba4c:
 import requests
 
-# der Ruff-Cleanup entfernte den funktionslokalen Import aus b6735d9 als "unused",
-# wodurch calculate_technical_indicators auf JEDEM Coin mit AttributeError starb)
+# the ruff cleanup removed the function-local import from b6735d9 as "unused",
+# which made calculate_technical_indicators die with AttributeError on EVERY coin)
 import scipy.signal
 import xgboost as xgb
 
@@ -33,60 +33,61 @@ logger = logging.getLogger(__name__)
 
 # 🛠️ CONFIGURATION
 MODEL_ID = 'ABR1'
-TARGET_CHANNEL_ID = _kcfg.CH_ABR1  # Dein ABR1 Channel
+TARGET_CHANNEL_ID = _kcfg.CH_ABR1  # your ABR1 channel
 SG_LONG_MODEL_FILE = 'bt2_model_LONG.json'
 SG_SHORT_MODEL_FILE = 'bt2_model_SHORT.json'
 SG_COINS_FILE = 'coins.json'
 
-# FIX: Die Thresholds LONG=0.60 / SHORT=0.80 sind asymmetrisch und bewusst streng
-# für SHORT gewählt, weil die alten Backtests zeigten dass SHORT-Setups an
-# Break&Retest-Leveln deutlich mehr False-Positives produzieren (insb. in Bull-
-# Markt-Phasen wo der Trend gegen die Retest-Richtung läuft).
-# ACHTUNG: Falls das Ergebnis bei Live-Trading stark von den Backtests abweicht,
-# hier die Werte ggf. anpassen — oder kombiniert mit SUCCESS_CLASS_IDX (s. unten)
-# prüfen, ob die Semantik bei der Modell-Version stimmt.
+# FIX: the thresholds LONG=0.60 / SHORT=0.80 are asymmetric and deliberately
+# strict for SHORT, because the old backtests showed that SHORT setups at
+# break&retest levels produce noticeably more false positives (especially in
+# bull-market phases where the trend runs against the retest direction).
+# CAUTION: if the live-trading result deviates strongly from the backtests,
+# adjust the values here if needed — or, combined with SUCCESS_CLASS_IDX (see
+# below), check whether the semantics match the model version.
 THRESHOLDS = {'LONG': 0.60, 'SHORT': 0.80}
 
-# SUCCESS_CLASS_IDX wählt in predict_proba[0, SUCCESS_CLASS_IDX] die Spalte der
-# "Erfolgs"-Klasse. Das bt2-Modell ist KEIN Binär-Classifier, sondern 3-klassig
-# (multi:softprob). Verifiziert gegen den Trainingscode (BT2-ML-Trainer.py /
-# BT2-ML-Final_Saver.py, 2025-12): der Datagrepper vergibt die String-Labels
-#   continuation_success (price_change > +5%) = Trade geht auf  → WIN
-#   failed_breakout      (price_change < -3%) = Trade scheitert → LOSS
-#   neutral              (dazwischen)                           → seitwärts
-# und der Trainer kodiert sie per sklearn LabelEncoder ALPHABETISCH:
+# SUCCESS_CLASS_IDX selects the "success" class column in
+# predict_proba[0, SUCCESS_CLASS_IDX]. The bt2 model is NOT a binary
+# classifier, but 3-class (multi:softprob). Verified against the training
+# code (BT2-ML-Trainer.py / BT2-ML-Final_Saver.py, 2025-12): the data grepper
+# assigns the string labels
+#   continuation_success (price_change > +5%) = trade works out → WIN
+#   failed_breakout      (price_change < -3%) = trade fails     → LOSS
+#   neutral              (in between)                           → sideways
+# and the trainer encodes them via sklearn LabelEncoder ALPHABETICALLY:
 #   continuation_success = 0, failed_breakout = 1, neutral = 2
-# (success_idx = class_mapping['continuation_success'] = 0, für LONG- UND
-# SHORT-Modell identisch trainiert).
-# → SUCCESS_CLASS_IDX = 0 ist KORREKT. NICHT auf 1 setzen — 1 ist die
-#   LOSS-Klasse (failed_breakout).
+# (success_idx = class_mapping['continuation_success'] = 0, trained
+# identically for the LONG AND SHORT model).
+# → SUCCESS_CLASS_IDX = 0 is CORRECT. Do NOT set it to 1 — 1 is the
+#   LOSS class (failed_breakout).
 SUCCESS_CLASS_IDX = 0
 PIVOT_WINDOW = 10
 RETEST_BACKWARD_LOOKUP_CANDLES = 24
 LEVEL_TOLERANCE_PCT = 0.005
 LIVE_DATA_HISTORY_HOURS = 240
 
-# ── LONG-Funding-Gate (Experiment, Operator-Freigabe 2026-07-06 abends) ──────
-# Report 21 Addendum 2: Die einzige Regel, die den Out-of-Sample-Test überlebt —
-# LONG nur, wenn das Mittel der letzten 3 Funding-Sätze STRIKT über dem
-# Binance-Default (+1,0 bps/8h) liegt: fund_24h > +3 bps → +1,12%/Trade, 74% WR
-# (n=119/Jahr auf 100 Coins; Test-Fenster +0,69%, n=17 — dünn, daher Experiment
-# mit eigenem Tracking-Tag und Review nach 4–6 Wochen). Fail-CLOSED: ohne
-# Funding-Daten bleibt LONG zu.
+# ── LONG funding gate (experiment, operator sign-off 2026-07-06 evening) ────
+# Report 21 Addendum 2: the only rule that survives the out-of-sample test —
+# LONG only if the mean of the last 3 funding rates is STRICTLY above the
+# Binance default (+1.0 bps/8h): fund_24h > +3 bps → +1.12%/trade, 74% WR
+# (n=119/year across 100 coins; test window +0.69%, n=17 — thin, hence
+# experiment with its own tracking tag and review after 4–6 weeks). Fail
+# CLOSED: without funding data, LONG stays shut.
 FUNDING_GATE_LONG_BPS = 3.0
-# SHORT-Spiegelbefund (gleiche Studie, 33,5k SHORT-Events): fund_24h > +1,5 bps
-# ist für SHORTs in Train UND Test konsistent giftig (−1,2%/Trade) — exakt die
-# Zone, in der das LONG-Gate öffnet. Deshalb VETO auf dem Modell-Gate. Anders
-# als das LONG-Gate fail-OPEN: ohne Funding-Daten gilt das validierte
-# Modell-Signal (das Veto ist Sicherheitsnetz, nicht Primär-Gate).
+# SHORT mirror finding (same study, 33.5k SHORT events): fund_24h > +1.5 bps
+# is consistently toxic for SHORTs in train AND test (−1.2%/trade) — exactly
+# the zone where the LONG gate opens. Hence VETO on the model gate. Unlike
+# the LONG gate, this is fail-OPEN: without funding data the validated model
+# signal applies (the veto is a safety net, not the primary gate).
 FUNDING_VETO_SHORT_BPS = 1.5
-FUNDING_GATE_TAG = 'ABR2'  # Generation-2-Tag; direction-Spalte trennt die Seiten
+FUNDING_GATE_TAG = 'ABR2'  # generation-2 tag; the direction column separates the sides
 _funding_cache: dict = {}  # symbol -> (monotonic_ts, mean_bps | None)
 
 
 def get_funding_24h_bps(symbol):
-    """Mittel der letzten 3 abgerechneten Funding-Sätze in bps (30-min-Cache).
-    None bei API-Fehler — der Aufrufer behandelt das als 'Gate zu'."""
+    """Mean of the last 3 settled funding rates in bps (30-min cache).
+    None on API error — the caller treats that as 'gate shut'."""
     now = time.monotonic()
     hit = _funding_cache.get(symbol)
     if hit is not None and now - hit[0] < 1800:
@@ -103,7 +104,7 @@ def get_funding_24h_bps(symbol):
         if rates:
             mean_bps = sum(rates) / len(rates) * 1e4
     except Exception as e:
-        logger.warning(f"⚠️ Funding-Check {symbol} fehlgeschlagen (Gate bleibt zu): {e}")
+        logger.warning(f"⚠️ Funding check {symbol} failed (gate stays shut): {e}")
     _funding_cache[symbol] = (now, mean_bps)
     return mean_bps
 
@@ -129,16 +130,16 @@ FEATURE_COLUMNS = [
     'retest_volume_ratio_avg',
 ]
 
-# Binär-Flags dürfen über ein einzelnes Coin-Fenster legitim konstant sein
-# (z.B. RSI nie unter 30) — der Startup-Selbsttest prüft sie deshalb nicht hart.
+# Binary flags may legitimately be constant over a single coin window
+# (e.g. RSI never below 30) — the startup self-test therefore doesn't hard-check them.
 BINARY_FLAG_FEATURES = {'rsi_below_30', 'rsi_above_70', 'tsi_above_0', 'tsi_below_0'}
 
-# FIX (P0.12): pandas_ta benennt seine Spalten versions-/parameterabhängig
-# (KAMA_9_2_30 statt KAMA_9, TSI_7_12_7 statt TSI_12_7, BBL_20_2.0_2.0 statt
-# BBL_20_2, DCL_20_20 statt DCL_20). Das alte Exakt-Matching fand 11 der 18
-# Feature-Quellspalten nie → NaN → fillna(0) → das Modell lief real nur auf
-# 7 Features (Split-Count-Beweis im Audit). Prefix-Matching wie in
-# 14_ai_atb_bot.py:197-211. 'TSIs_' muss vor 'TSI_' stehen.
+# FIX (P0.12): pandas_ta names its columns version-/parameter-dependently
+# (KAMA_9_2_30 instead of KAMA_9, TSI_7_12_7 instead of TSI_12_7, BBL_20_2.0_2.0
+# instead of BBL_20_2, DCL_20_20 instead of DCL_20). The old exact matching
+# never found 11 of the 18 feature source columns → NaN → fillna(0) → the
+# model actually ran on only 7 features (split-count proof in the audit).
+# Prefix matching as in 14_ai_atb_bot.py:197-211. 'TSIs_' must come before 'TSI_'.
 PTA_PREFIX_TO_CANONICAL = [
     ('EMA_9', 'ema9'),
     ('EMA_21', 'ema21'),
@@ -156,9 +157,9 @@ PTA_PREFIX_TO_CANONICAL = [
 
 
 def resolve_pta_columns(df):
-    """Mappt pandas_ta-Ausgabespalten per Prefix auf die kanonischen Namen.
+    """Maps pandas_ta output columns to the canonical names by prefix.
 
-    Wirft ValueError, wenn eine Quellspalte fehlt — kein stilles fillna(0) mehr.
+    Raises ValueError if a source column is missing — no more silent fillna(0).
     """
     rename_map = {}
     missing = []
@@ -169,21 +170,21 @@ def resolve_pta_columns(df):
         else:
             rename_map[col] = canonical
     if missing:
-        raise ValueError(f"pandas_ta-Spalten nicht gefunden: {missing}")
+        raise ValueError(f"pandas_ta columns not found: {missing}")
     return df.rename(columns=rename_map)
 
 
-# Modelle global — je Richtung ein Vertrag: {model, features, threshold,
-# success_idx, calibrator}. Der Vertrag kommt aus der meta.json des Artefakts
-# (Fix R13-ABR1-5: nichts mehr hardcoden, was das Training festlegt).
+# Models are global — one contract per direction: {model, features, threshold,
+# success_idx, calibrator}. The contract comes from the artifact's meta.json
+# (fix R13-ABR1-5: no more hardcoding what training already determines).
 MODELS = {'LONG': None, 'SHORT': None}
 
 
 def _load_model_contract(direction, model_file):
-    """Lädt Modell + Vertrag. Neue Artefakte (tools/retrain_from_replay.py)
-    bringen eine *_meta.json mit model_type='binary...', features, threshold —
-    success ist dort predict_proba[:, 1]. Ohne meta.json: Legacy-3-Klassen-
-    Modell (multi:softprob, success = Klasse 0, Thresholds aus THRESHOLDS)."""
+    """Loads model + contract. New artifacts (tools/retrain_from_replay.py)
+    bring a *_meta.json with model_type='binary...', features, threshold —
+    success there is predict_proba[:, 1]. Without meta.json: legacy 3-class
+    model (multi:softprob, success = class 0, thresholds from THRESHOLDS)."""
     model = xgb.XGBClassifier()
     model.load_model(model_file)
 
@@ -197,30 +198,30 @@ def _load_model_contract(direction, model_file):
         with open(meta_path, encoding='utf-8') as f:
             meta = json.load(f)
         if not str(meta.get('model_type', '')).startswith('binary'):
-            raise ValueError(f"{meta_path}: unerwarteter model_type {meta.get('model_type')!r}")
+            raise ValueError(f"{meta_path}: unexpected model_type {meta.get('model_type')!r}")
         features = meta.get('features')
         if not features:
-            raise ValueError(f"{meta_path}: Feature-Liste fehlt — Artefakt mit aktuellem Trainer neu erzeugen")
+            raise ValueError(f"{meta_path}: feature list missing — regenerate the artifact with the current trainer")
         contract = {
             'model': model,
             'features': list(features),
             'threshold': float(meta['optimal_threshold']),
             'success_idx': 1,
             'calibrator': calibrator,
-            # Neue Generation postet unter eigenem Tag (Operator-Regel 2026-07-06);
-            # ältere Binär-Metas ohne model_id sind ebenfalls Retrain-Generation 2.
+            # New generation posts under its own tag (operator rule 2026-07-06);
+            # older binary metas without model_id are also retrain generation 2.
             'model_id': meta.get('model_id', 'ABR2'),
         }
         logger.info(
-            f"✅ {direction}: Binär-Modell ({meta_path}), {len(features)} Features, "
-            f"Threshold {contract['threshold']:.2f}, Kalibrator: {'ja' if calibrator else 'nein'}"
+            f"✅ {direction}: binary model ({meta_path}), {len(features)} features, "
+            f"threshold {contract['threshold']:.2f}, calibrator: {'yes' if calibrator else 'no'}"
         )
         return contract
 
     logger.warning(
-        f"⚠️ {direction}: keine {meta_path} gefunden — Legacy-3-Klassen-Vertrag "
-        f"(success_idx={SUCCESS_CLASS_IDX}, Threshold {THRESHOLDS[direction]:.2f}). "
-        f"Das Legacy-Modell ist laut Audit/Retrain (Report 19) als Gate praktisch blind."
+        f"⚠️ {direction}: no {meta_path} found — legacy 3-class contract "
+        f"(success_idx={SUCCESS_CLASS_IDX}, threshold {THRESHOLDS[direction]:.2f}). "
+        f"Per audit/retrain (Report 19), the legacy model is practically blind as a gate."
     )
     return {
         'model': model,
@@ -228,7 +229,7 @@ def _load_model_contract(direction, model_file):
         'threshold': float(THRESHOLDS[direction]),
         'success_idx': SUCCESS_CLASS_IDX,
         'calibrator': calibrator,
-        'model_id': MODEL_ID,  # Legacy-Modell bleibt unter ABR1 messbar
+        'model_id': MODEL_ID,  # legacy model stays measurable under ABR1
     }
 
 
@@ -236,7 +237,7 @@ def load_models_and_coins():
     try:
         MODELS['LONG'] = _load_model_contract('LONG', SG_LONG_MODEL_FILE)
         MODELS['SHORT'] = _load_model_contract('SHORT', SG_SHORT_MODEL_FILE)
-        logger.info("✅ ML Modelle loaded successfully.")
+        logger.info("✅ ML models loaded successfully.")
     except Exception as e:
         logger.critical(f"❌ ERROR: Could not load ML models: {e}")
         exit(1)
@@ -246,14 +247,14 @@ def load_models_and_coins():
             data = json.load(f)
             return data.get('coins', data) if isinstance(data, dict) else data
     except Exception:
-        logger.warning("Konnte coins.json nicht laden, nutze leere Liste.")
+        logger.warning("Could not load coins.json, using empty list.")
         return []
 
 
 def calculate_technical_indicators(df):
-    """Berechnet alle Features für das Modell via pandas_ta"""
+    """Calculates all features for the model via pandas_ta"""
 
-    # Sicherstellen, dass alles numerisch ist
+    # ensure everything is numeric
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
@@ -265,9 +266,9 @@ def calculate_technical_indicators(df):
     df.ta.bbands(length=20, append=True)
     df.ta.donchian(length=20, append=True)
 
-    # FIX (P0.12): Prefix-Matching statt Exakt-Namen + hartes ValueError bei
-    # fehlender Quellspalte (vorher: NaN-Spalte anlegen → fillna(0) → Feature
-    # still konstant 0).
+    # FIX (P0.12): prefix matching instead of exact names + hard ValueError on
+    # a missing source column (previously: create a NaN column → fillna(0) →
+    # feature silently constant 0).
     df = resolve_pta_columns(df)
 
     df['dist_close_ema9_pct'] = ((df['close'] - df['ema9']) / df['ema9'] * 100).fillna(0)
@@ -295,12 +296,12 @@ def calculate_technical_indicators(df):
 
 
 def startup_feature_selfcheck(coins):
-    """FIX (P0.12): Startup-Assertion "kein Feature konstant".
+    """FIX (P0.12): startup assertion "no feature constant".
 
-    Berechnet die Feature-Pipeline auf echten Daten einiger Coins und bricht hart
-    ab, wenn ein kontinuierliches Feature konstant ist oder Spalten fehlen — genau
-    der Fehlermodus, der das Modell monatelang unbemerkt auf 7/18 Features fahren
-    ließ. Binär-Flags werden nur gewarnt (legitim konstant über kurze Fenster).
+    Calculates the feature pipeline on real data for a few coins and hard-aborts
+    if a continuous feature is constant or columns are missing — exactly the
+    failure mode that let the model run unnoticed on 7/18 features for months.
+    Binary flags only trigger a warning (legitimately constant over short windows).
     """
     conn = get_db_connection()
     try:
@@ -316,7 +317,7 @@ def startup_feature_selfcheck(coins):
                     columns=("open_time", "open", "high", "low", "close", "volume"),
                 )
             except Exception as e:
-                logger.warning(f"Selbsttest: {symbol} nicht ladbar ({e}), nächster Coin.")
+                logger.warning(f"Self-test: {symbol} not loadable ({e}), next coin.")
                 continue
             if len(df) < 60:
                 continue
@@ -325,36 +326,32 @@ def startup_feature_selfcheck(coins):
                 break
 
         if not frames:
-            logger.critical("❌ Feature-Selbsttest: keine verwertbaren Daten gefunden — Abbruch.")
+            logger.critical("❌ Feature self-test: no usable data found — aborting.")
             exit(1)
 
         sample = pd.concat(frames, ignore_index=True)
         continuous = [c for c in FEATURE_COLUMNS if c not in BINARY_FLAG_FEATURES]
         constant = [c for c in continuous if sample[c].nunique(dropna=False) <= 1]
         if constant:
-            logger.critical(f"❌ Feature-Selbsttest fehlgeschlagen — konstante Features: {constant}. Abbruch.")
+            logger.critical(f"❌ Feature self-test failed — constant features: {constant}. Aborting.")
             exit(1)
         constant_flags = [c for c in BINARY_FLAG_FEATURES if sample[c].nunique(dropna=False) <= 1]
         if constant_flags:
-            logger.warning(
-                f"Selbsttest: Binär-Flags konstant über die Stichprobe (kann legitim sein): {constant_flags}"
-            )
-        logger.info(
-            f"✅ Feature-Selbsttest bestanden ({len(sample)} Zeilen, {len(frames)} Coins, 18/18 Features variabel)."
-        )
+            logger.warning(f"Self-test: binary flags constant across the sample (can be legitimate): {constant_flags}")
+        logger.info(f"✅ Feature self-test passed ({len(sample)} rows, {len(frames)} coins, 18/18 features variable).")
     finally:
         conn.close()
 
 
 def find_pivot_levels(df):
-    """FIX (R07-ABR1-b, Detektor-Rework 2026-07): nur BESTÄTIGTE Pivots.
+    """FIX (R07-ABR1-b, detector rework 2026-07): only CONFIRMED pivots.
 
-    Das alte 'edge'-Padding + greater_equal erklärte die letzten PIVOT_WINDOW
-    Kerzen zu unbestätigten Pivots, die mit der nächsten Kerze wieder
-    verschwinden konnten (Repainting) — solche Levels kamen im Training
-    (BT2-Datagrepper, ohne Padding) nie vor. Jetzt: ein Pivot braucht
-    PIVOT_WINDOW Kerzen auf BEIDEN Seiten; der Rand wird hart ausgeschlossen
-    (argrelextrema clippt am Rand sonst gegen sich selbst).
+    The old 'edge' padding + greater_equal declared the last PIVOT_WINDOW
+    candles unconfirmed pivots, which could vanish again with the next candle
+    (repainting) — such levels never occurred during training (BT2 data
+    grepper, without padding). Now: a pivot needs PIVOT_WINDOW candles on
+    BOTH sides; the edge is hard-excluded (argrelextrema otherwise clips
+    against itself at the edge).
     """
     if len(df) < PIVOT_WINDOW * 2 + 1:
         return []
@@ -383,11 +380,11 @@ def find_pivot_levels(df):
     return levels
 
 
-# Setup-Geometrie-Features (Detektor-Rework 2026-07): die 18 FEATURE_COLUMNS
-# sind generische Indikator-Abstände der Retest-Kerze — das Break&Retest-Setup
-# selbst (Level-Distanz, Break-Stärke, Alter) war für das Modell unsichtbar.
-# Diese Features werden von find_break_retest_setups() geliefert und gehen in
-# die NEUEN Binär-Modelle ein (Feature-Liste kommt aus deren meta.json).
+# Setup geometry features (detector rework 2026-07): the 18 FEATURE_COLUMNS
+# are generic indicator distances of the retest candle — the break&retest
+# setup itself (level distance, break strength, age) was invisible to the
+# model. These features are supplied by find_break_retest_setups() and feed
+# into the NEW binary models (the feature list comes from their meta.json).
 GEOMETRY_FEATURES = [
     'setup_dist_close_level_pct',
     'setup_break_strength_pct',
@@ -398,30 +395,30 @@ GEOMETRY_FEATURES = [
 
 
 def find_break_retest_setups(df, retest_idx, levels):
-    """Gemeinsame Break&Retest-Erkennung für Bot UND Walk-Forward-Simulator
-    (tools/walkforward_sim.py importiert diese Funktion — eine Quelle, kein Skew).
+    """Shared break&retest detection for the bot AND the walk-forward simulator
+    (tools/walkforward_sim.py imports this function — one source, no skew).
 
-    Prüft, ob die Kerze bei retest_idx der ERSTE Retest eines frischen,
-    gültigen Level-Breaks ist. Behebt drei Fehler der alten Inline-Logik:
+    Checks whether the candle at retest_idx is the FIRST retest of a fresh,
+    valid level break. Fixes three bugs of the old inline logic:
 
-    1. RICHTUNGS-KOPPLUNG: Vorher war der Retest ein reines Touch-Gate
-       (is_retest_long OR is_retest_short), die Richtung kam allein aus dem
-       Break — ein High-Touch von UNTEN an einen aufwärts gebrochenen
-       Widerstand (= gescheiterter Ausbruch, im Training die LOSS-Klasse)
-       wurde als LONG signalisiert. Jetzt: LONG verlangt Low-Touch von oben
-       UND Close über dem Level; SHORT spiegelbildlich (Trainer-Semantik,
-       BT2-Datagrepper Z. 215/272).
-    2. HOLD-CHECK: Alle Closes zwischen Break und Retest müssen auf der
-       Break-Seite des Levels bleiben — ein zwischenzeitlich gescheiterter
-       Ausbruch invalidiert das Setup.
-    3. ERST-TOUCH: Der Trainer labelt nur den ersten Retest nach dem Break;
-       eine frühere Band-Berührung zwischen Break und Retest invalidiert.
+    1. DIRECTION COUPLING: previously the retest was a pure touch gate
+       (is_retest_long OR is_retest_short), the direction came solely from
+       the break — a high touch from BELOW on a resistance that broke
+       upward (= failed breakout, the LOSS class during training) was
+       signalled as LONG. Now: LONG requires a low touch from above AND a
+       close above the level; SHORT mirrors this (trainer semantics,
+       BT2 data grepper lines 215/272).
+    2. HOLD CHECK: all closes between break and retest must stay on the
+       break side of the level — a breakout that failed in the meantime
+       invalidates the setup.
+    3. FIRST TOUCH: the trainer only labels the first retest after the
+       break; an earlier band touch between break and retest invalidates it.
 
-    Zusätzlich Trainer-Semantik für das Level-Alter: der Break muss NACH der
-    vollständigen Pivot-Bestätigung liegen (break_idx > level_index + PIVOT_WINDOW).
+    Additionally, trainer semantics for the level age: the break must occur
+    AFTER the full pivot confirmation (break_idx > level_index + PIVOT_WINDOW).
 
-    Rückgabe: Liste von Setups (max. 1 je Richtung; bei mehreren Kandidaten
-    gewinnt der frischeste Break) inkl. GEOMETRY_FEATURES fürs Modell.
+    Returns: list of setups (max. 1 per direction; if there are multiple
+    candidates, the freshest break wins) including GEOMETRY_FEATURES for the model.
     """
     retest = df.iloc[retest_idx]
     setups = {}
@@ -433,16 +430,16 @@ def find_break_retest_setups(df, retest_idx, levels):
 
         if level['type'] == 'resistance':
             direction = 'LONG'
-            # Retest von OBEN: Low tastet das Band an, Close hält über dem Level.
+            # retest from ABOVE: low touches the band, close holds above the level.
             if not (lower_bound <= retest['low'] <= upper_bound and retest['close'] > lvl_price):
                 continue
         else:
             direction = 'SHORT'
-            # Retest von UNTEN: High tastet das Band an, Close hält unter dem Level.
+            # retest from BELOW: high touches the band, close holds below the level.
             if not (lower_bound <= retest['high'] <= upper_bound and retest['close'] < lvl_price):
                 continue
 
-        # Break-Suche rückwärts; Level muss vor dem Break bestätigt sein.
+        # break search backwards; the level must be confirmed before the break.
         search_end_idx = max(level['index'] + PIVOT_WINDOW, retest_idx - RETEST_BACKWARD_LOOKUP_CANDLES)
         break_idx = None
         for j in range(retest_idx - 1, search_end_idx, -1):
@@ -455,9 +452,9 @@ def find_break_retest_setups(df, retest_idx, levels):
                     break_idx = j
                     break
                 if c_close <= lvl_price:
-                    break  # Close unter dem Level nach dem Break → Ausbruch gescheitert
+                    break  # close below the level after the break → breakout failed
                 if df.iloc[j]['low'] <= upper_bound:
-                    break  # frühere Band-Berührung → Retest wäre nicht der erste
+                    break  # earlier band touch → retest would not be the first
             else:
                 if prev_close > lvl_price > c_close:
                     break_idx = j
@@ -501,12 +498,12 @@ def find_break_retest_setups(df, retest_idx, levels):
 
 
 def send_signal(conn, symbol, direction, prob, close_price, model_tag_override=None, funding_bps=None):
-    # Cooldown: 4h pro Coin/Direction. check_cooldown gibt True zurück wenn aktiv (blockiert).
+    # cooldown: 4h per coin/direction. check_cooldown returns True if active (blocking).
     if check_cooldown(conn, MODEL_ID, symbol, direction, 4):
-        logger.info(f"⏳ Cooldown active für {symbol} ({direction}).")
+        logger.info(f"⏳ Cooldown active for {symbol} ({direction}).")
         return
 
-    # Smart Targets: echte HVN/SR/Fib-basierte Entries, SL, 10 Targets — nicht mehr Dummy-Werte.
+    # smart targets: real HVN/SR/Fib-based entries, SL, 10 targets — no more dummy values.
     trade_setup = calculate_smart_targets(conn, symbol, direction, close_price)
     entry1 = trade_setup['entry1']
     entry2 = trade_setup['entry2']
@@ -515,18 +512,18 @@ def send_signal(conn, symbol, direction, prob, close_price, model_tag_override=N
 
     lev = get_max_leverage(symbol, 20)
 
-    # Versionierungs-Regel (Operator 2026-07-06): überarbeitete Modelle posten
-    # unter neuem Tag (ABR2, ...), damit Alt/Neu in Trackern getrennt messbar
-    # sind. Das Tag kommt aus dem Artefakt-Vertrag; Legacy-Modelle bleiben ABR1.
+    # versioning rule (operator 2026-07-06): revised models post under a new
+    # tag (ABR2, ...) so old/new are separately measurable in trackers. The
+    # tag comes from the artifact contract; legacy models stay ABR1.
     model_tag = MODELS[direction].get('model_id', MODEL_ID) if MODELS.get(direction) else MODEL_ID
     if model_tag_override:
-        model_tag = model_tag_override  # z. B. Funding-Gate-LONG postet als Generation 2
+        model_tag = model_tag_override  # e.g. funding-gate LONG posts as generation 2
 
-    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
-    # Verhaltensänderung. ABR2 ist in beiden Richtungen geparkt → SHADOW (überwachter
-    # Trade statt Cornix); ABR1 (Legacy-Fallback-Tag) bleibt Default LIVE. Rein additiv
-    # am Post-Zweig (Regel 4). ai_signals speichert die volle Target-Liste →
-    # n_show=len(targets); confidence ist wie im Live-Pfad prob.
+    # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate. Default LIVE ⇒ no
+    # behaviour change. ABR2 is parked in both directions → SHADOW (monitored
+    # trade instead of Cornix); ABR1 (legacy fallback tag) stays default LIVE. Purely
+    # additive on the post branch (rule 4). ai_signals stores the full target list →
+    # n_show=len(targets); confidence is prob as in the live path.
     _route = route_legacy_leg(
         conn, model_tag, direction, symbol, prob, entry1, entry2, sl, targets, n_show=len(targets)
     )
@@ -551,18 +548,18 @@ def send_signal(conn, symbol, direction, prob, close_price, model_tag_override=N
 
     emoji = f"🚀 AI {model_tag} LONG SIGNAL" if direction == "LONG" else f"💥 AI {model_tag} SHORT SIGNAL"
 
-    # FIX Doppel-Post (Operator-Meldung 2026-07-06): Die Info-Nachricht darf den
-    # Cornix-Block NICHT nochmal enthalten — Cornix parste beide Nachrichten als
-    # eigenständige Signale (doppelte Position).
-    # Funding-Zeile NUR in der Info-Nachricht (die Cornix-Nachricht bleibt die
-    # einzige parsebare — Doppel-Post-Regel 2026-07-06 unangetastet).
-    funding_line = f"\n<b>→ Funding-Gate: {funding_bps:+.2f} bps/8h (24h-Mittel)</b>" if funding_bps is not None else ""
-    html = f"""<pre><b>{emoji}</b>\n<b>{symbol}</b>\n<b>→ Direction: {direction}</b>\n<b>→ ML Confidence: <b>{prob:.1%}</b></b>{funding_line}\n<b>→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC | Modul: {model_tag}</b>\n<b>→ Source: AI Break & Retest Model</b></pre>"""
+    # FIX double-post (operator report 2026-07-06): the info message must NOT
+    # contain the Cornix block again — Cornix parsed both messages as
+    # standalone signals (duplicate position).
+    # Funding line ONLY in the info message (the Cornix message stays the
+    # only parsable one — double-post rule 2026-07-06 untouched).
+    funding_line = f"\n<b>→ Funding-Gate: {funding_bps:+.2f} bps/8h (24h mean)</b>" if funding_bps is not None else ""
+    html = f"""<pre><b>{emoji}</b>\n<b>{symbol}</b>\n<b>→ Direction: {direction}</b>\n<b>→ ML Confidence: <b>{prob:.1%}</b></b>{funding_line}\n<b>→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC | Module: {model_tag}</b>\n<b>→ Source: AI Break & Retest Model</b></pre>"""
 
     chart_buf = generate_minichart_image(symbol, minutes=240)
 
     with conn.cursor() as cur:
-        # Cornix Channel (Hier nutzt er den speziellen Rubberband Channel!)
+        # Cornix channel (here it uses the special Rubberband channel!)
         cur.execute(
             "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (TARGET_CHANNEL_ID, cornix_msg)
         )
@@ -590,15 +587,16 @@ def send_signal(conn, symbol, direction, prob, close_price, model_tag_override=N
         )
     conn.commit()
     update_cooldown(conn, MODEL_ID, symbol, direction)
-    logger.info(f"✅ {MODEL_ID} Signal für {symbol} in Outbox gelegt!")
+    logger.info(f"✅ {MODEL_ID} signal for {symbol} placed in outbox!")
 
 
 def process_abr_logic(conn, symbol):
     try:
-        # R1: die Erkennung läuft auf den jüngsten GESCHLOSSENEN Kerzen. Für 1h ist
-        # include_forming=False exakt der bisherige `open_time < current_hour_utc`-
-        # Schnitt (1h-open_times haben immer minute=0); limit=LIVE_DATA_HISTORY_HOURS
-        # ersetzt das `.tail()`, der bisherige +5h-Overfetch entfällt.
+        # R1: detection runs on the most recent CLOSED candles. For 1h,
+        # include_forming=False is exactly the previous
+        # `open_time < current_hour_utc` cut (1h open_times always have
+        # minute=0); limit=LIVE_DATA_HISTORY_HOURS replaces the `.tail()`,
+        # the previous +5h overfetch is gone.
         df = read_candles(
             conn,
             symbol,
@@ -617,12 +615,12 @@ def process_abr_logic(conn, symbol):
         if not levels:
             return
 
-        # FIX (R07-ABR1-a, Detektor-Rework 2026-07): NUR die jüngste
-        # geschlossene Kerze ist Retest-Kandidat. Der Bot läuft stündlich —
-        # jede Kerze wird genau einmal geprüft; das alte 3-Kerzen-Fenster
-        # produzierte bis zu 3h stale Entries und Doppel-Bewertungen.
-        # (Die laufende Kerze wurde oben via open_time < current_hour_utc
-        # weggeschnitten — 1h-Kerzen haben immer minute=0.)
+        # FIX (R07-ABR1-a, detector rework 2026-07): ONLY the most recent
+        # closed candle is a retest candidate. The bot runs hourly — each
+        # candle is checked exactly once; the old 3-candle window produced
+        # up to 3h of stale entries and duplicate evaluations.
+        # (The forming candle was cut off above via open_time < current_hour_utc
+        # — 1h candles always have minute=0.)
         retest_idx = len(df_indicators) - 1
         retest_candle = df_indicators.iloc[retest_idx]
 
@@ -630,44 +628,44 @@ def process_abr_logic(conn, symbol):
             direction = setup['direction']
             contract = MODELS[direction]
 
-            # Feature-Vertrag des Artefakts strikt bedienen: Indikator-Features
-            # der Retest-Kerze + Setup-Geometrie. Fehlende Features sind ein
-            # harter Fehler — KEIN stilles fillna(0) über fehlende Spalten
-            # (X-R5-Muster, hat den 11-Features-Bug 3 Stufen lang versteckt).
+            # Strictly serve the artifact's feature contract: indicator
+            # features of the retest candle + setup geometry. Missing
+            # features are a hard error — NO silent fillna(0) over missing
+            # columns (X-R5 pattern, hid the 11-features bug for 3 stages).
             feature_row = {**retest_candle[FEATURE_COLUMNS].to_dict(), **setup['features']}
             missing = [c for c in contract['features'] if c not in feature_row]
             if missing:
-                raise ValueError(f"Feature-Vertrag verletzt — fehlend: {missing}")
+                raise ValueError(f"Feature contract violated — missing: {missing}")
             X_event = pd.DataFrame([{c: feature_row[c] for c in contract['features']}], dtype=float)
 
-            # Defensive Absicherung gegen NaN/Inf in berechneten WERTEN
-            # (z.B. Indikator-Warmup bei frischen Coins): NaN/Inf → 0 (neutral).
+            # defensive safeguard against NaN/Inf in computed VALUES
+            # (e.g. indicator warmup for fresh coins): NaN/Inf → 0 (neutral).
             X_event = X_event.replace([np.inf, -np.inf], np.nan).fillna(0)
 
             prediction_proba = float(contract['model'].predict_proba(X_event)[0, contract['success_idx']])
 
-            # Kalibrierte Confidence nur für die Anzeige — das Gate läuft auf
-            # der Roh-Probability, auf der auch der Threshold gewählt wurde.
+            # calibrated confidence only for display — the gate runs on
+            # the raw probability, which is also what the threshold was chosen on.
             display_proba = prediction_proba
             if contract['calibrator'] is not None:
                 display_proba = float(contract['calibrator'].predict([prediction_proba])[0])
 
             logger.info(
-                f"ABR1 Break&Retest erkannt bei {symbol} | Dir: {direction} | "
+                f"ABR1 break&retest detected for {symbol} | Dir: {direction} | "
                 f"Level: {setup['level_price']:.6f} | Prob: {prediction_proba:.2f} "
                 f"(Gate {contract['threshold']:.2f})"
             )
-            # Gates je Richtung (Stand 2026-07-06 abends):
-            #   SHORT — Binär-Modell-Gate auf Roh-Probability (v2-Vertrag).
-            #   LONG  — Funding-Gate-EXPERIMENT (Report 21 Addendum 2): das
-            #           ML-Gate ist für LONG nachweislich blind, aber
-            #           fund_24h > +3 bps überlebt als einzige Regel den
-            #           Out-of-Sample-Test. Der Legacy-Modell-Vertrag dient nur
-            #           noch der Confidence-Anzeige; fail-closed ohne Funding.
+            # Gates per direction (as of 2026-07-06 evening):
+            #   SHORT — binary model gate on raw probability (v2 contract).
+            #   LONG  — funding-gate EXPERIMENT (Report 21 Addendum 2): the
+            #           ML gate is demonstrably blind for LONG, but
+            #           fund_24h > +3 bps survives as the only rule for the
+            #           out-of-sample test. The legacy model contract now only
+            #           serves the confidence display; fail-closed without funding.
             if direction == 'LONG':
                 fund_bps = get_funding_24h_bps(symbol)
                 if fund_bps is not None and fund_bps > FUNDING_GATE_LONG_BPS:
-                    logger.info(f"🟢 LONG-Funding-Gate offen für {symbol}: {fund_bps:+.2f} bps")
+                    logger.info(f"🟢 LONG funding gate open for {symbol}: {fund_bps:+.2f} bps")
                     send_signal(
                         conn,
                         symbol,
@@ -679,17 +677,17 @@ def process_abr_logic(conn, symbol):
                     )
                 elif fund_bps is not None:
                     logger.info(
-                        f"⛔ LONG-Funding-Gate zu für {symbol}: {fund_bps:+.2f} bps (Limit {FUNDING_GATE_LONG_BPS:+.1f})"
+                        f"⛔ LONG funding gate shut for {symbol}: {fund_bps:+.2f} bps (limit {FUNDING_GATE_LONG_BPS:+.1f})"
                     )
             elif prediction_proba >= contract['threshold']:
-                # SHORT-Funding-Veto (2026-07-06, Report 21 Addendum 2 Spiegel-
-                # test): bei fund_24h > +1,5 bps ist die Zone konsistent
-                # verlustig — Veto trotz Modell-Gate. Fail-open (s. Konstante).
+                # SHORT funding veto (2026-07-06, Report 21 Addendum 2 mirror
+                # test): at fund_24h > +1.5 bps the zone is consistently
+                # unprofitable — veto despite the model gate. Fail-open (see constant).
                 fund_bps = get_funding_24h_bps(symbol)
                 if fund_bps is not None and fund_bps > FUNDING_VETO_SHORT_BPS:
                     logger.info(
-                        f"⛔ SHORT-Funding-Veto für {symbol}: {fund_bps:+.2f} bps "
-                        f"(> {FUNDING_VETO_SHORT_BPS:+.1f}, Modell-Prob {prediction_proba:.2f})"
+                        f"⛔ SHORT funding veto for {symbol}: {fund_bps:+.2f} bps "
+                        f"(> {FUNDING_VETO_SHORT_BPS:+.1f}, model prob {prediction_proba:.2f})"
                     )
                 else:
                     send_signal(conn, symbol, direction, display_proba, retest_candle['close'], funding_bps=fund_bps)
@@ -699,7 +697,7 @@ def process_abr_logic(conn, symbol):
 
 
 def main():
-    logger.info("=== AI BREAK & RETEST BOT (ABR1) GESTARTET ===")
+    logger.info("=== AI BREAK & RETEST BOT (ABR1) STARTED ===")
     coins = load_models_and_coins()
     startup_feature_selfcheck(coins)
 
@@ -726,4 +724,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

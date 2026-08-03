@@ -278,24 +278,24 @@ def fill_channel(stats: dict, glen: int, budget: int, measure: str, fee: float) 
 
 def render_md(meta: dict) -> str:
     L = [
-        f"# Trailing-Bot Slot-Budget — welche Beine in den neuen Channel? ({meta['task']})",
+        f"# Trailing bot slot budget — which legs into the new channel? ({meta['task']})",
         "",
-        f"_generated {meta['generated_at']} · read-only · nur LIVE-Beine · trailing X={int(meta['x'] * 100)} % · "
-        f"tf {meta['tf']} · {meta['lev']:.0f}x · ab {meta['start']} · Gebühr {meta['fee']:.2f} %/Trade_",
+        f"_generated {meta['generated_at']} · read-only · LIVE legs only · trailing X={int(meta['x'] * 100)} % · "
+        f"tf {meta['tf']} · {meta['lev']:.0f}x · since {meta['start']} · fee {meta['fee']:.2f} %/trade_",
         "",
-        f"**Frage:** Cornix deckelt einen Channel bei **{meta['budget']} gleichzeitig offenen Trades**. "
-        "Maßstab ist der **Netto-Ertrag pro belegtem Slot-Tag**, nicht der per-Trade-Sharpe. "
-        "Bewertet pro **(Tag, Richtung)**, weil `shadow_gate` pro Bein schaltet.",
+        f"**Question:** Cornix caps a channel at **{meta['budget']} simultaneously open trades**. "
+        "The yardstick is the **net return per occupied slot-day**, not the per-trade Sharpe. "
+        "Scored per **(tag, direction)**, because `shadow_gate` switches per leg.",
         "",
-        "## Aktivierungsschwelle — der entscheidende Parameter",
+        "## Activation threshold — the decisive parameter",
         "",
-        "Ein skalenfreier Trail (`schließe bei X % Rückgabe vom Peak`) feuert auch auf einem "
-        "0,5-%-Peak und macht die Fleet zum Micro-Scalper. `act` = geforderter Peak (unlev %), "
-        "bevor der Trail scharf wird. `unter Gebühr` = Anteil Trades, deren Trailing-Ertrag die "
-        "0,10-%-Gebühr nicht deckt.",
+        "A scale-free trail (`close on X % give-back from peak`) also fires on a "
+        "0.5 % peak and turns the fleet into a micro-scalper. `act` = required peak (unlev %) "
+        "before the trail arms. `below fee` = share of trades whose trailing return does not "
+        "cover the 0.10 % fee.",
         "",
-        "| act % | Σ netto (alle Live-Beine) | Ø/Trade netto | unter Gebühr | Median Haltedauer h "
-        "(über Beine) | Ø Slots (alle) | netto/Slot | **Füllung 500 netto** | Beine |",
+        "| act % | Σ net (all live legs) | Ø/trade net | below fee | median hold h "
+        "(across legs) | Ø slots (all) | net/slot | **fill 500 net** | legs |",
         "|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
     ]
     for a in meta["activations"]:
@@ -308,58 +308,58 @@ def render_md(meta: dict) -> str:
         )
     L += [
         "",
-        f"_Referenz hold (ohne Trailing), netto: **{meta['hold_total_net']:.0f}** · "
-        f"Ø Slots {meta['hold_occ_mean']:.0f} · Median Haltedauer {meta['hold_median_h']:.1f} h (über Beine)_",
+        f"_Reference hold (without trailing), net: **{meta['hold_total_net']:.0f}** · "
+        f"Ø slots {meta['hold_occ_mean']:.0f} · median hold {meta['hold_median_h']:.1f} h (across legs)_",
         "",
-        f"## Beine bei act = {meta['chosen_act']:.0f} %",
+        f"## Legs at act = {meta['chosen_act']:.0f} %",
         "",
-        "| Bein | n | Ø Slots hold → trail | p95 | Haltedauer h hold → trail | Σ netto hold → trail | **netto/Slot-Tag** | unter Gebühr |",
+        "| Leg | n | Ø slots hold → trail | p95 | hold h hold → trail | Σ net hold → trail | **net/slot-day** | below fee |",
         "|---|--:|--:|--:|--:|--:|--:|--:|",
     ]
     s = meta["legs"]
     for k in sorted(s, key=lambda k: -s[k]["density_trail"]):
         g = s[k]
-        thin = " ⚠dünn" if g["thin"] else ""
+        thin = " ⚠thin" if g["thin"] else ""
         L.append(
             f"| {k}{thin} | {g['n']} | {g['occ_mean_hold']:.0f} → **{g['occ_mean_trail']:.0f}** | "
             f"{g['occ_p95_trail']:.0f} | {g['hold_h_median']:.0f} → {g['trail_h_median']:.1f} | "
             f"{g['value_hold_net']:.0f} → {g['value_trail_net']:.0f} | **{g['density_trail']:.3f}** | "
             f"{g['below_fee_pct']:.0f} % |"
         )
-    L += ["", "## Kanal-Füllung (greedy nach Netto-Dichte; Gleichzeitigkeit exakt gerechnet)", ""]
+    L += ["", "## Channel fill (greedy by net density; concurrency computed exactly)", ""]
     for v in meta["selections"]:
         L += [
-            f"### Budget {v['budget']} nach **{v['measure']}**",
+            f"### Budget {v['budget']} by **{v['measure']}**",
             "",
-            f"- **Aufgenommen ({len(v['accepted'])}):** {', '.join(v['accepted']) or '—'}",
-            f"- Belegung: Ø {v['joint_mean']} · p95 {v['joint_p95']} · max {v['joint_max']}",
-            f"- Σ netto: **{v['value_trail_net']:.0f} %** ({v['n']} Trades)",
-            "- Abgelehnt: " + (", ".join(f"{r['leg']} ({r['would_be']:.0f})" for r in v["rejected"]) or "—"),
+            f"- **Accepted ({len(v['accepted'])}):** {', '.join(v['accepted']) or '—'}",
+            f"- Occupancy: Ø {v['joint_mean']} · p95 {v['joint_p95']} · max {v['joint_max']}",
+            f"- Σ net: **{v['value_trail_net']:.0f} %** ({v['n']} trades)",
+            "- Rejected: " + (", ".join(f"{r['leg']} ({r['would_be']:.0f})" for r in v["rejected"]) or "—"),
             "",
         ]
     L += [
-        "## Ehrliche Grenzen",
+        "## Honest limits",
         "",
-        "- **Registerstand ist zeit-variabel** — der heutige `leg_status` liegt auf der ganzen Historie.",
-        "- **15m-Auflösung.** Der Trail wird auf Kerzen-Extremen ausgewertet, mit strikt vorherigem "
-        "Peak (keine Gleich-Kerzen-Trigger). Ein 5m/10s-Resolver (T-035-Harness) ist die nächste "
-        "Verschärfung; die DCA-treue Bestätigung der Finalisten steht noch aus.",
-        "- **Die Kerzen-Maske schließt an der Exit-Seite nicht bündig ab.** Selektiert wird über "
-        "`open_time`, also reicht die letzte Kerze eines Trades bis zu einem `tf`-Intervall über den "
-        "erfassten Close hinaus; ihr Extrem kann den Trail noch scharfstellen. Der Ausstiegs-ZEITPUNKT "
-        "ist gedeckelt (nie nach dem erfassten Close), der Ausstiegs-WERT nicht. Einseitig — "
-        "Zusatzdaten erzeugen Trigger, sie entfernen keine — und auf ≤1 Kerze pro Trade begrenzt "
-        "(bei den Langhaltern ~1 % der Kerzen). Bündig wäre `open_time + tf <= close_time`; das "
-        "kostet einen Re-Lauf und damit neue Zahlen.",
-        "- **Auch die p95-sichere Auswahl reißt den Deckel in der Spitze:** die gemeinsame Belegung "
-        "erreicht 2001 = 4× die 500. In den obersten ~5 % der Stunden lehnt Cornix also ab, und ohne "
-        "eigene Zulassungskontrolle entscheidet nicht die Auswahl, sondern der Zufall, welche Trades "
-        "das trifft (Bot 40 deckelt deshalb selbst).",
-        "- **Wert = Σ unlevered %-Bewegung minus Gebühr**, Gleichgewichtung, kein Compounding: als "
-        "Dichte-Maß robust, als absolute Rendite nicht wörtlich.",
-        "- **Slippage ist NICHT modelliert.** Bei niedriger Aktivierungsschwelle sind die Exits klein "
-        "und zahlreich — dort frisst Slippage überproportional. Das spricht zusätzlich gegen act=0.",
-        "- Greedy ist nicht beweisbar optimal (Knapsack).",
+        "- **Register state is time-variable** — today's `leg_status` is applied over the whole history.",
+        "- **15m resolution.** The trail is evaluated on candle extremes, with a strictly prior "
+        "peak (no same-candle trigger). A 5m/10s resolver (T-035 harness) is the next "
+        "refinement; DCA-faithful confirmation of the finalists is still outstanding.",
+        "- **The candle mask does not close flush on the exit side.** Selection is via "
+        "`open_time`, so a trade's last candle extends up to one `tf` interval beyond the "
+        "recorded close; its extreme can still arm the trail. The exit TIME "
+        "is capped (never after the recorded close), the exit VALUE is not. One-sided — "
+        "extra data creates triggers, it removes none — and limited to ≤1 candle per trade "
+        "(for the long holders ~1 % of candles). Flush would be `open_time + tf <= close_time`; that "
+        "costs a re-run and thus new numbers.",
+        "- **Even the p95-safe selection blows the cap at the peak:** the joint occupancy "
+        "reaches 2001 = 4× the 500. In the top ~5 % of hours Cornix therefore rejects, and without "
+        "an admission control of its own, it is not the selection but chance that decides which trades "
+        "get hit (bot 40 therefore caps itself).",
+        "- **Value = Σ unlevered % move minus fee**, equal weighting, no compounding: robust as a "
+        "density measure, not literal as an absolute return.",
+        "- **Slippage is NOT modelled.** At a low activation threshold the exits are small "
+        "and numerous — there slippage eats disproportionately. That argues further against act=0.",
+        "- Greedy is not provably optimal (knapsack).",
     ]
     return "\n".join(L) + "\n"
 
@@ -418,7 +418,7 @@ def main() -> None:
         per_fill[a] = fills
         print(
             f"  act={a}: net {sweep[str(a)]['total_net']:.0f}, Ø slots {sweep[str(a)]['occ_mean_all']:.0f}, "
-            f"fill(mean) {fills['mean']['value_trail_net']:.0f} aus {len(fills['mean']['accepted'])} Beinen",
+            f"fill(mean) {fills['mean']['value_trail_net']:.0f} from {len(fills['mean']['accepted'])} legs",
             flush=True,
         )
 

@@ -256,6 +256,46 @@ Verifiziert: `backtest/test_fleet_code_age.py` 10/10 (DB-frei), PowerShell parst
 (`[Parser]::ParseFile`), `-DryRun` end-to-end gelaufen, ruff + format + mypy sauber, Guard 24/24.
 Der Kanarienvogel gegen den Live-Checkout meldet aktuell korrekt **„1 von 41"** — das Dashboard,
 das seit dem Marker-Restart bewusst auf altem Code läuft.
+## [2026-08-03] Python sources translated to English (T-2026-KYT-9050-075)
+
+225 `.py` files, comments, docstrings and string literals German → English. **No behaviour
+change intended, and it is proven rather than asserted.**
+
+**Proof 1 — logic inside each file.** An AST guard parses every file before/after, collapses
+string constants to a placeholder, compares f-string interpolations as a sorted multiset and
+diffs the normalised trees. 224/225 identical. The single exception is documented below.
+
+**Proof 2 — behaviour across files.** The guard checks each file alone and is therefore blind
+to a test asserting on another module's message. Six such couplings surfaced. One of them took
+down pytest collection entirely: `tools/dca_all_bots.py` emits `DCA-HURTS` now, while
+`backtest/test_dca_all_bots.py` — a script that `sys.exit()`s on failure — still checked for
+`DCA-SCHADET`. Collection aborted with `INTERNALERROR`, so 1999 tests silently became 1. Three
+further couplings were already broken *before* this sweep (`test_bot_variant_archive.py`,
+`test_atomic_write_json.py`, `test_retrain_model_id.py` asserted German strings whose producers
+had been English for a while) and are repaired here.
+
+**Proof 3 — completeness.** Progress was first measured by counting umlauts, which misses
+"nur die letzte Zeile". A word-based detector found 57 further German comment/string tokens in
+14 files. Both detectors now run in the verification pass.
+
+Test result against a baseline measured on the pre-sweep commit **in a worktree with the same
+`.env` visibility**: 55 failures before, 54 after, **0 newly caused**, 1 previously-red test now
+green. `ruff check` and `ruff format` match the baseline exactly (the sweep had made 10 files
+fail `format`; fixed).
+
+Deliberately not done: the Jinja templates under `tools/dashboard/templates/` are still German,
+so four dashboard test assertions were kept German to match their producer — translating those
+templates is a separate pass, and those assertions must move with it. `dashboard.py` had its log
+classifier changed from `'kritisch'` to `'critical'`: all eight modules that emitted the German
+word are now English, so the check had become dead code and critical lines would have stopped
+being highlighted. The test name `test_missing_leg_stats_are_not_bewertbar` keeps its German word
+— renaming a test is a code change, not a translation.
+
+Single guard exception: `db_schema_analysis.py:505`, ASCII banner padding `" " * 38` → `* 37`,
+because "ANALYSE" → "ANALYSIS" is one character longer and the box is a fixed 80 columns. Rendered
+widths measured before/after: `[80, 80, 80, 80]` both times. An intermediate agent version had
+`* 36` and produced a misaligned `[80, 79, 80, 80]`.
+
 ## [2026-08-02] English-only policy for the whole repository (T-2026-KYT-9050-075)
 
 `CLAUDE.md` gains hard rule 10: everything written into this repository is English — code,

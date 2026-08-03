@@ -1,45 +1,45 @@
 #!/usr/bin/env python3
-# tools/promotion_guard.py — Challenger-Promotion-Namensguard (T-2026-KYT-9050-057).
+# tools/promotion_guard.py — challenger promotion name guard (T-2026-KYT-9050-057).
 #
-# DAS PROBLEM (Review-Finding aus T-185 / PR #170, seither latent):
-# `core.shadow_gate.shadow_artifact_path` gibt für ein SHADOW-Bein den Staging-
-# Pfad zurück, für ein LIVE-Bein aber den NACKTEN Root-Dateinamen — die Promotion
-# ist damit allein durch den Register-Flip (SHADOW→LIVE) + das Kopieren der Datei
-# in den Repo-Root definiert. `SHADOW_ARTIFACTS` trägt für Challenger-Tags
-# historisch den Dateinamen der Retrain-GENERATION, nicht den des Tags:
+# THE PROBLEM (review finding from T-185 / PR #170, latent ever since):
+# `core.shadow_gate.shadow_artifact_path` returns the staging path for a SHADOW
+# leg, but for a LIVE leg the BARE root filename — the promotion is therefore
+# defined solely by the register flip (SHADOW→LIVE) + copying the file into the
+# repo root. `SHADOW_ARTIFACTS` historically carries, for challenger tags, the
+# filename of the retrain GENERATION, not the tag's own:
 #
-#     "RUB3": {"LONG": "rub2_model_LONG.pkl"}   # ← Tag RUB3, Datei rub2_*
+#     "RUB3": {"LONG": "rub2_model_LONG.pkl"}   # ← tag RUB3, file rub2_*
 #
-# Geht so ein Bein live, liest der Challenger den Root-Slot einer FREMDEN
-# Generation — und, schlimmer, die Promotion legt die Challenger-Datei in genau
-# den Slot, aus dem der Legacy-Bot sein Live-Modell lädt. Bei EPD3-SHORT war das
-# 2026-07-21 real (`epd2_model_SHORT.pkl` = Bot-10-`EPD2_ARTIFACT_PATHS["SHORT"]`):
-# der EPD2-Live-Pfad hätte dasselbe Modell geladen und unter zwei Tags gepostet
-# (Regel-4-Doppel-Trade, echtes Geld). Gefixt wurde das damals VON HAND, indem das
-# Root-Artefakt challenger-distinkt `epd3_model_SHORT.pkl` genannt wurde; bei
-# EPD3-LONG (T-037) dieselbe Handarbeit ein zweites Mal.
+# If such a leg goes live, the challenger reads the root slot of a FOREIGN
+# generation — and, worse, the promotion places the challenger file in exactly
+# the slot the legacy bot loads its live model from. For EPD3-SHORT this was
+# real on 2026-07-21 (`epd2_model_SHORT.pkl` = bot 10's `EPD2_ARTIFACT_PATHS["SHORT"]`):
+# the EPD2 live path would have loaded the same model and posted it under two
+# tags (rule-4 duplicate trade, real money). It was fixed BY HAND at the time by
+# renaming the root artifact challenger-distinctly to `epd3_model_SHORT.pkl`; for
+# EPD3-LONG (T-037) the same manual work a second time.
 #
-# WAS DIESER GUARD TUT: er automatisiert genau diese Handarbeit — er prüft für
-# jedes Bein in `SHADOW_ARTIFACTS`, ob sein Promotions-Ziel (der Root-Dateiname)
-# challenger-distinkt ist, und schlägt sonst den tag-eigenen Namen vor. Ein
-# LIVE-Bein mit fremdem Slot ist ein FAIL (exit 1), ein noch-SHADOW-Bein ein WARN
-# (latenter Promotions-Blocker). Heute: RUB3-LONG ist WARN, kein FAIL — RUB3 ist
-# per T-2026-KYT-9050-037 auf SHADOW geparkt, der Hazard also scharf, aber nicht
-# ausgelöst. Der Flip auf LIVE ohne Rename dreht ihn auf FAIL.
+# WHAT THIS GUARD DOES: it automates exactly that manual work — it checks, for
+# every leg in `SHADOW_ARTIFACTS`, whether its promotion target (the root
+# filename) is challenger-distinct, and otherwise suggests the tag's own name. A
+# LIVE leg with a foreign slot is a FAIL (exit 1), a still-SHADOW leg a WARN
+# (latent promotion blocker). Today: RUB3-LONG is WARN, not FAIL — RUB3 is
+# parked on SHADOW per T-2026-KYT-9050-037, so the hazard is live but not
+# triggered. Flipping to LIVE without a rename turns it into FAIL.
 #
 # Invariants:
-#   * READ-ONLY und rein registry-basiert: kein DB-Zugriff, kein Netzwerk, kein
-#     Dateisystem-Scan, keine Promotion (harte Regeln 1/2). Damit ist das Urteil
-#     unabhängig davon, welche Artefakte auf DIESER Maschine liegen.
-#   * KEINE Verhaltensänderung an `core.shadow_gate` (harte Regel 7: der Gate wird
-#     von Bots UND Trainer/Replay importiert). Der Guard LIEST das Register.
-#   * Die Tag→Root-Dateiname-Brücke der Legacy-/Live-Generationen kommt aus
-#     `tools.bot_variants.index.legacy_artifact_slots()` — eine bereits getestete
-#     Quelle statt eines zweiten kuratierten Dicts.
+#   * READ-ONLY and purely registry-based: no DB access, no network, no
+#     filesystem scan, no promotion (hard rules 1/2). The verdict is therefore
+#     independent of which artifacts sit on THIS machine.
+#   * NO behaviour change to `core.shadow_gate` (hard rule 7: the gate is
+#     imported by bots AND trainer/replay). The guard READS the register.
+#   * The tag→root-filename bridge for the legacy/live generations comes from
+#     `tools.bot_variants.index.legacy_artifact_slots()` — an already-tested
+#     source instead of a second curated dict.
 #
-# Aufruf:
-#   python tools/promotion_guard.py            # Findings + exit 1 bei FAIL
-#   python tools/promotion_guard.py --strict   # WARNs zählen auch als exit 1
+# Invocation:
+#   python tools/promotion_guard.py            # findings + exit 1 on FAIL
+#   python tools/promotion_guard.py --strict   # WARNs also count as exit 1
 
 from __future__ import annotations
 
@@ -59,12 +59,12 @@ FAIL = "FAIL"
 
 
 def _norm(tag: str) -> str:
-    """Tag-Normalisierung wie im Register (Keys sind dort UPPER)."""
+    """Tag normalisation as in the register (keys are UPPER there)."""
     return (tag or "").strip().upper()
 
 
 class Finding(NamedTuple):
-    """Ein Befund je (Tag, Richtung). ``severity`` ist WARN oder FAIL."""
+    """One finding per (tag, direction). ``severity`` is WARN or FAIL."""
 
     tag: str
     direction: str
@@ -77,18 +77,17 @@ class Finding(NamedTuple):
         return (
             f"{self.severity} {self.tag}/{self.direction}: '{self.filename}' — "
             + "; ".join(self.reasons)
-            + f" → challenger-distinkt benennen: '{self.suggestion}'"
+            + f" → rename challenger-distinct: '{self.suggestion}'"
         )
 
 
 def slot_claims() -> dict[str, set[str]]:
-    """Root-Dateiname → Menge der Tags, die diesen Loader-Slot beanspruchen.
+    """Root filename → set of tags claiming this loader slot.
 
-    Vereinigung aus (a) der kuratierten Legacy-/Live-Registry (die Root-Slots, aus
-    denen die Fleet-Bots ihre Modelle laden) und (b) `SHADOW_ARTIFACTS` (die
-    Klasse-(A)/Challenger-Tags). Ein Dateiname mit >1 Tag ist der Kollisions-
-    Hazard: bei der Promotion landet EIN Artefakt in einem Slot, den ZWEI
-    Generationen lesen."""
+    Union of (a) the curated legacy/live registry (the root slots the fleet
+    bots load their models from) and (b) `SHADOW_ARTIFACTS` (the class-(A)/
+    challenger tags). A filename with >1 tag is the collision hazard: on
+    promotion, ONE artifact lands in a slot TWO generations read from."""
     claims: dict[str, set[str]] = {}
     for tag, dirmap in variant_index.legacy_artifact_slots().items():
         for filenames in dirmap.values():
@@ -101,19 +100,19 @@ def slot_claims() -> dict[str, set[str]]:
 
 
 def tag_prefix(tag: str) -> str:
-    """Der Dateinamen-Präfix, den ein tag-eigenes Artefakt tragen muss.
+    """The filename prefix a tag's own artifact must carry.
 
-    Konvention der bereits gefixten Fälle: Tag `EPD3` → `epd3_model_SHORT.pkl`.
-    Bindestriche der Horizont-Tags (`MIS2-8H`) fallen weg, damit der Präfix ein
-    gültiger Dateinamen-Token bleibt."""
+    Convention of the already-fixed cases: tag `EPD3` → `epd3_model_SHORT.pkl`.
+    Hyphens of horizon tags (`MIS2-8H`) are dropped so the prefix stays a
+    valid filename token."""
     return _norm(tag).replace("-", "").lower()
 
 
 def suggested_name(tag: str, filename: str) -> str:
-    """Challenger-distinkter Vorschlag: führenden Generations-Token ersetzen.
+    """Challenger-distinct suggestion: replace the leading generation token.
 
-    'rub2_model_LONG.pkl' + RUB3 → 'rub3_model_LONG.pkl'. Trägt der Name keinen
-    '_'-Token (Legacy-Einzeldateien), wird der Präfix vorangestellt."""
+    'rub2_model_LONG.pkl' + RUB3 → 'rub3_model_LONG.pkl'. If the name carries
+    no '_' token (legacy single files), the prefix is prepended."""
     prefix = tag_prefix(tag)
     head, sep, tail = filename.partition("_")
     if sep and head.lower() != prefix:
@@ -124,17 +123,17 @@ def suggested_name(tag: str, filename: str) -> str:
 
 
 def check_leg(tag: str, direction: str, claims: dict[str, set[str]] | None = None) -> Finding | None:
-    """Prüft EIN (Tag, Richtung)-Bein aus `SHADOW_ARTIFACTS`. None = sauber.
+    """Checks ONE (tag, direction) leg from `SHADOW_ARTIFACTS`. None = clean.
 
-    Zwei unabhängige Belege für "nicht challenger-distinkt":
-      (1) OWNERSHIP — der Dateiname wird von mindestens einem FREMDEN Tag
-          beansprucht (der harte Beleg: da liest wirklich ein anderer Loader).
-      (2) KONVENTION — der Dateiname trägt nicht den tag-eigenen Präfix. Fängt
-          auch den Fall, in dem der fremde Loader (noch) in keiner Registry steht.
+    Two independent pieces of evidence for "not challenger-distinct":
+      (1) OWNERSHIP — the filename is claimed by at least one FOREIGN tag
+          (the hard evidence: some other loader really reads it).
+      (2) CONVENTION — the filename does not carry the tag's own prefix. Also
+          catches the case where the foreign loader is (not yet) in any registry.
 
-    Die Schwere kommt aus dem Lifecycle: ein LIVE-Bein liest den fremden Root-Slot
-    JETZT (FAIL), ein SHADOW/SILENT/RETIRED-Bein erst nach der nächsten Promotion
-    (WARN — latenter Blocker, den der Operator vor dem Flip sehen muss)."""
+    The severity comes from the lifecycle: a LIVE leg reads the foreign root
+    slot NOW (FAIL), a SHADOW/SILENT/RETIRED leg only after the next promotion
+    (WARN — a latent blocker the operator must see before the flip)."""
     filename = shadow_gate.SHADOW_ARTIFACTS.get(_norm(tag), {}).get(_norm(direction))
     if not filename:
         return None
@@ -143,18 +142,18 @@ def check_leg(tag: str, direction: str, claims: dict[str, set[str]] | None = Non
     reasons: list[str] = []
     foreign = sorted(claims.get(filename, set()) - {_norm(tag)})
     if foreign:
-        reasons.append(f"Root-Slot wird auch von {', '.join(foreign)} gelesen")
+        reasons.append(f"root slot is also read by {', '.join(foreign)}")
     if not filename.lower().startswith(tag_prefix(tag) + "_"):
-        reasons.append(f"Dateiname trägt nicht den tag-eigenen Präfix '{tag_prefix(tag)}_'")
+        reasons.append(f"filename does not carry the tag's own prefix '{tag_prefix(tag)}_'")
     if not reasons:
         return None
 
     live = shadow_gate.is_live(tag, direction)
     severity = FAIL if live else WARN
     reasons.append(
-        "Bein ist LIVE ⇒ shadow_artifact_path liefert diesen Root-Namen bereits"
+        "leg is LIVE ⇒ shadow_artifact_path already delivers this root name"
         if live
-        else f"Bein ist {shadow_gate.leg_status(tag, direction)} ⇒ heute latent, blockiert die nächste Promotion"
+        else f"leg is {shadow_gate.leg_status(tag, direction)} ⇒ latent today, blocks the next promotion"
     )
     return Finding(
         tag=_norm(tag),
@@ -167,7 +166,7 @@ def check_leg(tag: str, direction: str, claims: dict[str, set[str]] | None = Non
 
 
 def scan() -> list[Finding]:
-    """Alle Beine aus `SHADOW_ARTIFACTS`, stabil sortiert (FAIL zuerst)."""
+    """All legs from `SHADOW_ARTIFACTS`, stably sorted (FAIL first)."""
     claims = slot_claims()
     findings = [
         f
@@ -180,30 +179,30 @@ def scan() -> list[Finding]:
 
 
 def check_staging_filename(filename: str, claims: dict[str, set[str]] | None = None) -> tuple[str, str]:
-    """Promotions-Vorschau für EINE Staging-Datei (Einstieg für den Verifier).
+    """Promotion preview for ONE staging file (entry point for the verifier).
 
-    Der Verifier sieht nur die Datei, nicht die Absicht — wer `rub2_model_LONG.pkl`
-    promotet, kann die RUB2-Generation ODER den RUB3-Challenger meinen. Deshalb
-    hier bewusst WARN statt FAIL: der Befund nennt die konkurrierenden Tags, das
-    Urteil bleibt beim Operator. Der unzweideutige Fall (Register sagt LIVE) ist
-    `scan()` und dort ein FAIL."""
+    The verifier only sees the file, not the intent — whoever promotes
+    `rub2_model_LONG.pkl` may mean the RUB2 generation OR the RUB3 challenger.
+    Hence deliberately WARN instead of FAIL here: the finding names the
+    competing tags, the verdict stays with the operator. The unambiguous case
+    (register says LIVE) is `scan()` and a FAIL there."""
     claims = slot_claims() if claims is None else claims
     tags = sorted(claims.get(filename, set()))
     if len(tags) < 2:
-        return OK, f"Root-Slot '{filename}' wird nur von {tags[0] if tags else '—'} beansprucht"
+        return OK, f"root slot '{filename}' is only claimed by {tags[0] if tags else '—'}"
     hint = " / ".join(f"{t} → {suggested_name(t, filename)}" for t in tags)
     return WARN, (
-        f"Root-Slot '{filename}' wird von {len(tags)} Tags beansprucht ({', '.join(tags)}) — "
-        f"eine Promotion bedient beide Loader aus EINER Datei (Regel-4-Doppel-Post-Hazard). "
-        f"Challenger challenger-distinkt benennen: {hint}"
+        f"root slot '{filename}' is claimed by {len(tags)} tags ({', '.join(tags)}) — "
+        f"a promotion would serve both loaders from ONE file (rule-4 duplicate-post hazard). "
+        f"Rename the challenger challenger-distinct: {hint}"
     )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Challenger-Promotion-Namensguard: kapert ein Challenger-Artefakt einen fremden Loader-Slot?"
+        description="Challenger promotion name guard: does a challenger artifact hijack a foreign loader slot?"
     )
-    parser.add_argument("--strict", action="store_true", help="WARNs ebenfalls als Fehler werten (exit 1)")
+    parser.add_argument("--strict", action="store_true", help="Also treat WARNs as an error (exit 1)")
     args = parser.parse_args(argv)
 
     reconfigure = getattr(sys.stdout, "reconfigure", None)
@@ -212,18 +211,18 @@ def main(argv: list[str] | None = None) -> int:
 
     findings = scan()
     if not findings:
-        print("PASS promotion-guard: alle Challenger-Artefakte tragen einen challenger-distinkten Root-Namen.")
+        print("PASS promotion-guard: all challenger artifacts carry a challenger-distinct root name.")
         return 0
     for f in findings:
         print(f.as_line())
     fails = [f for f in findings if f.severity == FAIL]
     if fails:
-        print(f"\n{len(fails)} FAIL — ein LIVE-Bein lädt aus einem fremden Root-Slot. Artefakt umbenennen (Regel 4/6).")
+        print(f"\n{len(fails)} FAIL — a LIVE leg loads from a foreign root slot. Rename the artifact (rule 4/6).")
         return 1
     if args.strict:
-        print(f"\n{len(findings)} WARN und --strict — als Fehler gewertet.")
+        print(f"\n{len(findings)} WARN and --strict — treated as an error.")
         return 1
-    print(f"\n{len(findings)} WARN, kein FAIL — latente Promotions-Blocker, heute ohne Live-Effekt.")
+    print(f"\n{len(findings)} WARN, no FAIL — latent promotion blockers, no live effect today.")
     return 0
 
 

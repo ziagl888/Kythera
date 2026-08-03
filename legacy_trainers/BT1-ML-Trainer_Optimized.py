@@ -1,69 +1,69 @@
 import pandas as pd
 import numpy as np
 import joblib
-from sklearn.model_selection import train_test_split, GridSearchCV # NEU: GridSearchCV für Tuning
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, make_scorer # make_scorer für GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV # NEW: GridSearchCV for tuning
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, make_scorer # make_scorer for GridSearchCV
 import xgboost as xgb
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time
 import logging
 
-# Konfiguriere Logging
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ========================= KONFIGURATION =========================
-DATA_FILE = 'ml_training_data.csv' 
-LONG_MODEL_FILE = 'long_trend_prediction_model.joblib' 
+# ========================= CONFIGURATION =========================
+DATA_FILE = 'ml_training_data.csv'
+LONG_MODEL_FILE = 'long_trend_prediction_model.joblib'
 SHORT_MODEL_FILE = 'short_trend_prediction_model.joblib'
 
 # ========================= HYPERPARAMETER TUNING CONFIG =========================
-# Dies ist das Gitter von Hyperparametern, das GridSearchCV durchsuchen wird.
-# ACHTUNG: Ein größerer Suchraum erhöht die Rechenzeit exponentiell!
-# Starte mit kleineren Bereichen/weniger Optionen und erweitere bei Bedarf.
+# This is the grid of hyperparameters that GridSearchCV will search.
+# CAUTION: A larger search space increases compute time exponentially!
+# Start with smaller ranges/fewer options and expand as needed.
 PARAM_GRID = {
-    'n_estimators': [100, 200, 300], # Anzahl der Boosting-Runden (Bäume)
-    'learning_rate': [0.05, 0.1],     # Schrittgröße beim Update der Gewichte
-    'max_depth': [3, 5],              # Maximale Tiefe eines Baumes
-    'subsample': [0.7, 0.9],          # Anteil der Samples pro Baum
-    'colsample_bytree': [0.7, 0.9],   # Anteil der Features pro Baum
-    'gamma': [0, 0.1]                 # Minimaler Verlust-Reduktion für einen Split
+    'n_estimators': [100, 200, 300], # number of boosting rounds (trees)
+    'learning_rate': [0.05, 0.1],     # step size when updating the weights
+    'max_depth': [3, 5],              # maximum depth of a tree
+    'subsample': [0.7, 0.9],          # fraction of samples per tree
+    'colsample_bytree': [0.7, 0.9],   # fraction of features per tree
+    'gamma': [0, 0.1]                 # minimum loss reduction for a split
 }
 
-# Cross-Validation Folds
-CV_FOLDS = 3 # Anzahl der Folds für Cross-Validation (3 oder 5 sind Standard)
+# Cross-validation folds
+CV_FOLDS = 3 # number of folds for cross-validation (3 or 5 is standard)
 
 def train_and_evaluate_model(X, y, model_type="GENERAL"):
-    """Trainiert und evaluiert ein XGBoost-Modell mit Hyperparameter-Tuning."""
-    logger.info(f"\n--- Starte ML Modell Training für {model_type} Signale ---")
+    """Trains and evaluates an XGBoost model with hyperparameter tuning."""
+    logger.info(f"\n--- Starting ML model training for {model_type} signals ---")
 
     if len(X) == 0:
-        logger.warning(f"Keine Daten für {model_type} Modelltraining.")
+        logger.warning(f"No data for {model_type} model training.")
         return None, None, None
 
-    # Daten in Trainings- und Testsets aufteilen
+    # Split data into training and test sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    logger.info(f"Trainingsset Größe für {model_type}: {len(X_train)} | Testset Größe: {len(X_test)}")
-    logger.info(f"Verteilung der Erfolg-Labels im Trainingsset für {model_type}:\n{y_train.value_counts(normalize=True)}")
-    logger.info(f"Verteilung der Erfolg-Labels im Testset für {model_type}:\n{y_test.value_counts(normalize=True)}")
+    logger.info(f"Training set size for {model_type}: {len(X_train)} | Test set size: {len(X_test)}")
+    logger.info(f"Distribution of success labels in the training set for {model_type}:\n{y_train.value_counts(normalize=True)}")
+    logger.info(f"Distribution of success labels in the test set for {model_type}:\n{y_test.value_counts(normalize=True)}")
 
-    # Klassenungleichgewicht ausgleichen
+    # Balance class imbalance
     scale_pos_weight_value = len(y_train[y_train == 0]) / len(y_train[y_train == 1])
-    logger.info(f"Scale_pos_weight für {model_type}: {scale_pos_weight_value:.2f}")
+    logger.info(f"Scale_pos_weight for {model_type}: {scale_pos_weight_value:.2f}")
 
-    # XGBoost Basis-Modell
+    # XGBoost base model
     xgb_model = xgb.XGBClassifier(
         objective='binary:logistic',
         eval_metric='logloss',
         random_state=42,
         scale_pos_weight=scale_pos_weight_value,
-        use_label_encoder=False # Für neuere Versionen nicht mehr nötig, aber schadet nicht.
+        use_label_encoder=False # No longer needed for newer versions, but doesn't hurt.
     )
 
-    # GridSearchCV für Hyperparameter-Tuning
-    # Wir optimieren auf ROC AUC
+    # GridSearchCV for hyperparameter tuning
+    # We optimise on ROC AUC
     scorer = make_scorer(roc_auc_score)
 
     grid_search = GridSearchCV(
@@ -71,78 +71,78 @@ def train_and_evaluate_model(X, y, model_type="GENERAL"):
         param_grid=PARAM_GRID,
         scoring=scorer,
         cv=CV_FOLDS,
-        verbose=1, # Zeigt Fortschritt an
-        n_jobs=1 # Nutzt alle CPU-Kerne
+        verbose=1, # shows progress
+        n_jobs=1 # uses all CPU cores
     )
 
-    logger.info(f"Starte Hyperparameter-Tuning für {model_type} Modell...")
+    logger.info(f"Starting hyperparameter tuning for {model_type} model...")
     start_time_tune = time.time()
     grid_search.fit(X_train, y_train)
     end_time_tune = time.time()
-    logger.info(f"Tuning abgeschlossen in {(end_time_tune - start_time_tune)/60:.1f} Minuten.")
+    logger.info(f"Tuning completed in {(end_time_tune - start_time_tune)/60:.1f} minutes.")
 
     best_model = grid_search.best_estimator_
-    logger.info(f"Beste Hyperparameter für {model_type}: {grid_search.best_params_}")
-    logger.info(f"Bester ROC AUC Score auf Validierung (CV) für {model_type}: {grid_search.best_score_:.4f}")
+    logger.info(f"Best hyperparameters for {model_type}: {grid_search.best_params_}")
+    logger.info(f"Best ROC AUC score on validation (CV) for {model_type}: {grid_search.best_score_:.4f}")
 
-    # Modell evaluieren auf dem Testset
-    logger.info(f"\n--- Modell Evaluation für {model_type} auf dem Testset ---")
+    # Evaluate model on the test set
+    logger.info(f"\n--- Model evaluation for {model_type} on the test set ---")
     y_pred = best_model.predict(X_test)
     y_proba = best_model.predict_proba(X_test)[:, 1]
 
-    logger.info("\nKlassifikationsbericht (Precision, Recall, F1-Score):")
+    logger.info("\nClassification report (precision, recall, F1 score):")
     logger.info(classification_report(y_test, y_pred))
 
     roc_auc = roc_auc_score(y_test, y_proba)
-    logger.info(f"ROC AUC Score (Maß für Trennschärfe des Modells): {roc_auc:.4f}")
-    
-    cm = confusion_matrix(y_test, y_pred)
-    logger.info("\nKonfusionsmatrix:")
-    logger.info(f"\n{cm}")
-    logger.info(f"  True Positives (TP): {cm[1,1]} -> Modell sagt Erfolg voraus, und es war ein Erfolg.")
-    logger.info(f"  False Positives (FP): {cm[0,1]} -> Modell sagt Erfolg voraus, aber es war ein Misserfolg (Fehlalarm).")
-    logger.info(f"  True Negatives (TN): {cm[0,0]} -> Modell sagt Misserfolg voraus, und es war ein Misserfolg.")
-    logger.info(f"  False Negatives (FN): {cm[1,0]} -> Modell sagt Misserfolg voraus, aber es war ein Erfolg (verpasste Chance).")
+    logger.info(f"ROC AUC score (measure of the model's discriminative power): {roc_auc:.4f}")
 
-    # Feature Importance anzeigen
-    logger.info(f"\n--- Feature Importance für {model_type} ---")
+    cm = confusion_matrix(y_test, y_pred)
+    logger.info("\nConfusion matrix:")
+    logger.info(f"\n{cm}")
+    logger.info(f"  True Positives (TP): {cm[1,1]} -> model predicts success, and it was a success.")
+    logger.info(f"  False Positives (FP): {cm[0,1]} -> model predicts success, but it was a failure (false alarm).")
+    logger.info(f"  True Negatives (TN): {cm[0,0]} -> model predicts failure, and it was a failure.")
+    logger.info(f"  False Negatives (FN): {cm[1,0]} -> model predicts failure, but it was a success (missed opportunity).")
+
+    # Show feature importance
+    logger.info(f"\n--- Feature importance for {model_type} ---")
     feature_importances = pd.Series(best_model.feature_importances_, index=X_train.columns)
     top_features = feature_importances.sort_values(ascending=False)
     logger.info(f"\n{top_features}")
 
-    # Plotten der Feature Importance
+    # Plot the feature importance
     plt.figure(figsize=(12, max(7, len(X_train.columns) * 0.4)))
     sns.barplot(x=top_features.values, y=top_features.index, palette='viridis')
     plt.title(f'XGBoost Feature Importance ({model_type})')
-    plt.xlabel('Wichtigkeit')
+    plt.xlabel('Importance')
     plt.ylabel('Features')
     plt.tight_layout()
-    plt.savefig(f'{model_type.lower()}_feature_importance.png') # Speichern des Plots
-    # plt.show() # Optional, nur anzeigen wenn du es visuell sehen willst
+    plt.savefig(f'{model_type.lower()}_feature_importance.png') # save the plot
+    # plt.show() # optional, only show if you want to see it visually
 
     return best_model, grid_search.best_params_, roc_auc
 
 def main():
     start_total_time = time.time()
-    logger.info("--- Starte ML Modell Training mit separaten Modellen und Tuning ---")
+    logger.info("--- Starting ML model training with separate models and tuning ---")
 
-    # 1. Daten laden
+    # 1. Load data
     try:
         df = pd.read_csv(DATA_FILE)
-        logger.info(f"Daten erfolgreich aus {DATA_FILE} geladen. {len(df)} Zeilen gefunden.")
+        logger.info(f"Data successfully loaded from {DATA_FILE}. {len(df)} rows found.")
     except FileNotFoundError:
-        logger.error(f"Fehler: {DATA_FILE} nicht gefunden. Bitte zuerst das Daten-Sammel-Skript ausführen.")
+        logger.error(f"Error: {DATA_FILE} not found. Please run the data collection script first.")
         return
 
-    # 2. Daten vorbereiten (Feature Engineering & Label Definition)
-    # Konvertiere 'event_type' in numerische Werte (für XGBoost)
+    # 2. Prepare data (feature engineering & label definition)
+    # Convert 'event_type' into numeric values (for XGBoost)
     df['event_type_numeric'] = df['event_type'].map({'UP': 1, 'DOWN': 0})
-    
+
     features = [
-        # WICHTIG: 'event_type_numeric' wird HIER noch nicht aus den Features entfernt,
-        # da es für die Aufteilung der Daten notwendig ist und erst später für die
-        # Trainings-Features der Einzelmodelle eliminiert wird.
-        'event_type_numeric',       
+        # IMPORTANT: 'event_type_numeric' is not yet removed from the features HERE,
+        # since it is needed for splitting the data and is only eliminated later
+        # for the training features of the individual models.
+        'event_type_numeric',
         'vol_ratio',                
         'rsi',                      
         'atr_pct',                  
@@ -166,27 +166,27 @@ def main():
     
     # Cleaning
     initial_rows = len(df)
-    # Hier wichtig: Den `event_type` für die Aufteilung VOR der NaN-Bereinigung behalten
-    # Auch 'event_type_numeric' muss hier dabei sein, da es in 'features' ist
-    df_cleaned = df[features + ['label_success', 'event_type']].dropna() 
-    
+    # Important here: keep `event_type` for the split BEFORE the NaN cleanup
+    # 'event_type_numeric' must also be included here, since it is in 'features'
+    df_cleaned = df[features + ['label_success', 'event_type']].dropna()
+
     if len(df_cleaned) < initial_rows:
-        logger.warning(f"Achtung: {initial_rows - len(df_cleaned)} Zeilen mit NaN-Werten entfernt. Verbleibende Samples: {len(df_cleaned)}")
-        
+        logger.warning(f"Note: {initial_rows - len(df_cleaned)} rows with NaN values removed. Remaining samples: {len(df_cleaned)}")
+
     if len(df_cleaned) == 0:
-        logger.error("Keine gültigen Daten nach NaN-Entfernung übrig. Training abgebrochen.")
+        logger.error("No valid data left after NaN removal. Training aborted.")
         return
 
-    logger.info(f"Anzahl verwendeter Features: {len(features)}")
-    logger.info(f"Verwendete Features: {features}")
-    logger.info(f"Anzahl Samples nach Bereinigung: {len(df_cleaned)}")
+    logger.info(f"Number of features used: {len(features)}")
+    logger.info(f"Features used: {features}")
+    logger.info(f"Number of samples after cleaning: {len(df_cleaned)}")
 
-    # 3. Daten aufteilen in Long und Short
+    # 3. Split data into long and short
     df_long = df_cleaned[df_cleaned['event_type'] == 'UP'].copy()
     df_short = df_cleaned[df_cleaned['event_type'] == 'DOWN'].copy()
 
-    # Entferne 'event_type_numeric' aus den Features, die an die einzelnen Modelle gehen
-    # Es ist redundant, da das Modell nun nur noch UP- oder DOWN-Signale sieht.
+    # Remove 'event_type_numeric' from the features passed to the individual models
+    # It is redundant, since the model now only ever sees UP or DOWN signals.
     long_features = [f for f in features if f != 'event_type_numeric']
     short_features = [f for f in features if f != 'event_type_numeric']
 
@@ -195,27 +195,27 @@ def main():
 
     X_short = df_short[short_features]
     y_short = df_short['label_success']
-    
-    # 4. Long Modell trainieren
+
+    # 4. Train the long model
     long_model, long_best_params, long_roc_auc = train_and_evaluate_model(X_long, y_long, "LONG")
     if long_model:
         joblib.dump(long_model, LONG_MODEL_FILE)
-        logger.info(f"Long Modell erfolgreich gespeichert als '{LONG_MODEL_FILE}'")
-        
-    # 5. Short Modell trainieren
+        logger.info(f"Long model successfully saved as '{LONG_MODEL_FILE}'")
+
+    # 5. Train the short model
     short_model, short_best_params, short_roc_auc = train_and_evaluate_model(X_short, y_short, "SHORT")
     if short_model:
         joblib.dump(short_model, SHORT_MODEL_FILE)
-        logger.info(f"Short Modell erfolgreich gespeichert als '{SHORT_MODEL_FILE}'")
-    
+        logger.info(f"Short model successfully saved as '{SHORT_MODEL_FILE}'")
+
     total_duration = (time.time() - start_total_time) / 60
-    logger.info(f"\n--- Gesamtes Training Abgeschlossen in {total_duration:.1f} Minuten ---")
-    
-    logger.info("\n--- Zusammenfassung der Ergebnisse ---")
+    logger.info(f"\n--- Entire training completed in {total_duration:.1f} minutes ---")
+
+    logger.info("\n--- Summary of results ---")
     if long_model:
-        logger.info(f"LONG Modell: Best Params: {long_best_params} | ROC AUC: {long_roc_auc:.4f}")
+        logger.info(f"LONG model: Best Params: {long_best_params} | ROC AUC: {long_roc_auc:.4f}")
     if short_model:
-        logger.info(f"SHORT Modell: Best Params: {short_best_params} | ROC AUC: {short_roc_auc:.4f}")
+        logger.info(f"SHORT model: Best Params: {short_best_params} | ROC AUC: {short_roc_auc:.4f}")
 
 if __name__ == "__main__":
     main()

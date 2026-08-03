@@ -1,48 +1,47 @@
-"""tools/regime_gate_edge_test.py — Regime-Gate-Edge-Test (Phase B, T-2026-KYT-9050-032).
+"""tools/regime_gate_edge_test.py — regime gate edge test (phase B, T-2026-KYT-9050-032).
 
-Frage
------
-Für die Phase-A-Kandidaten: In welchen BTC-Regime-States (RULE-rekonstruiert aus
-`regime_history`, T-029/T-031-Infra) ist ein Bot je Richtung profitabel — und
-würde ein REGIME-GATE (nur in günstigen States handeln) den Gesamt-Edge
-verbessern?
-  * Negativ-Edge-Bots: flippt ein Gate das Ergebnis positiv (Rettung statt
-    Retire)?
-  * Positiv-Edge-Bots: hebt ein Gate den Mean-Edge / senkt es den Drawdown?
+Question
+--------
+For the phase-A candidates: in which BTC regime states (RULE reconstructed from
+`regime_history`, T-029/T-031 infra) is a bot profitable per direction — and
+would a REGIME GATE (trade only in favourable states) improve overall edge?
+  * negative-edge bots: does a gate flip the result positive (rescue instead of
+    retire)?
+  * positive-edge bots: does a gate raise mean edge / lower drawdown?
 
-Methodik (ehrlich, KEIN In-Sample-Selbstbetrug)
------------------------------------------------
-  1. Jeder realisierte Trade wird über sein OPEN-Timestamp AS-OF an das
-     RULE-rekonstruierte BTC-Regime gebunden (kein Look-ahead; `regime_history`
-     ist 5-min, geschlossene Checks). SOFT-Gate (build_soft_timeline hl=192) als
-     zweite Variante — Anschluss an T-031.
-  2. Per (tag, dir) × Regime: n + mean-net-Edge (gestaffelter unlevered Move
-     − Fee, identisch zu Phase A).
-  3. **OOS-Gate-Test (temporaler Split):** günstige Regimes werden auf der
-     ERSTEN Trade-Hälfte bestimmt (mean-net > 0, cell-n ≥ MIN_CELL), das Gate
-     dann auf der ZWEITEN Hälfte angewandt. So misst „gated vs ungated" den Edge
-     out-of-sample — ein In-Sample-Gate (günstige Regimes auf denselben Daten
-     wählen) wäre ein garantierter, wertloser Uplift.
-  4. Verdikt je Leg: RESCUED (ungated<0 → gated OOS >0), IMPROVED (gated > ungated
-     und ungated>0), NO-HELP.
+Methodology (honest, NO in-sample self-deception)
+--------------------------------------------------
+  1. Each realised trade is bound via its OPEN timestamp AS-OF to the
+     RULE-reconstructed BTC regime (no look-ahead; `regime_history`
+     is 5-min, closed checks). SOFT gate (build_soft_timeline hl=192) as
+     second variant — attachment to T-031.
+  2. Per (tag, dir) × regime: n + mean-net edge (levered unlevered move
+     − fee, identical to phase A).
+  3. **OOS gate test (temporal split):** favourable regimes determined on the
+     FIRST trade half (mean-net > 0, cell-n ≥ MIN_CELL), gate then applied
+     to the SECOND half. So "gated vs ungated" measures edge out-of-sample —
+     an in-sample gate (select favourable regimes on same data) would be
+     guaranteed, worthless uplift.
+  4. Verdict per leg: RESCUED (ungated<0 → gated OOS >0), IMPROVED (gated > ungated
+     and ungated>0), NO-HELP.
 
-Join-Grenzen (ehrlich)
-----------------------
-  * Regime = RULE_recon (debounced) aus dem gespeicherten `regime`-Stream; T-031
-    validierte das zu 91.85% gegen das aufgezeichnete `regime_at_open`. Residual
-    = Warm-up + Ingestion-Outage-Desync.
-  * SOFT smoothed NUR die BTC-Achse; alt_context bleibt hier außen vor (die
-    per-Bot-Whitelist ist NICHT historisch rekonstruierbar, T-031 — ein echtes
-    „hätte das Gate geforwarded" ist unmöglich, wir messen den REGIME-EDGE, nicht
-    die Whitelist).
-  * Outcome = realized Trade-`status` (TP1-Touch-Win) → gestaffelter Move, nicht
-    exchange-reconciled; Monitor-Rauschen (P1.2/P2.7) trifft Gated + Ungated
-    gleich → der DIFF ist robuster als das Absolutniveau.
-  * Der OOS-Gate-Uplift ist eine OBERGRENZE der Regime-Achse allein — er sagt
-    NICHT, dass Live-Gating exakt so trifft (Whitelist-Mechanik, Cornix-Routing,
-    Regime-Auto-Close interagieren). Empfehlung, kein Rollout (Michi-Eskalation).
+Join bounds (honest)
+--------------------
+  * regime = RULE_recon (debounced) from stored `regime` stream; T-031
+    validated this to 91.85% against recorded `regime_at_open`. residual
+    = warm-up + ingestion outage desync.
+  * SOFT smoothed ONLY the BTC axis; alt_context stays outside here (per-bot
+    whitelist is NOT historically reconstructible, T-031 — a true
+    "would the gate have forwarded" is impossible, we measure REGIME edge, not
+    whitelist).
+  * outcome = realised trade `status` (TP1-touch-win) → levered move, not
+    exchange-reconciled; monitor noise (P1.2/P2.7) hits gated + ungated
+    equally → the DIFF is more robust than absolute level.
+  * OOS gate uplift is a CEILING of regime axis alone — it does NOT
+    say live gating hits exactly so (whitelist mechanics, Cornix routing,
+    regime auto-close interact). recommendation, no rollout (Michi escalation).
 
-Betrieb: DB strikt read-only, BELOW_NORMAL, CPU-Höflichkeit. Output nach
+operation: DB strictly read-only, BELOW_NORMAL, CPU courtesy. output to
 KYTHERA_REPLAY_DIR (JSON + Markdown).
 """
 
@@ -98,7 +97,7 @@ def _mean(xs: list[float]) -> float | None:
 
 
 def regime_cell_stats(trades: list[dict]) -> dict:
-    """Per-Regime {n, mean_net} über eine Trade-Liste ({regime, net})."""
+    """Per-regime {n, mean_net} over a trade list ({regime, net})."""
     by: dict[str, list[float]] = defaultdict(list)
     for t in trades:
         if t.get("regime"):
@@ -107,17 +106,17 @@ def regime_cell_stats(trades: list[dict]) -> dict:
 
 
 def favorable_regimes(train: list[dict], min_cell: int = MIN_CELL) -> set[str]:
-    """Regimes mit mean-net > 0 und cell-n ≥ min_cell auf dem TRAIN-Split."""
+    """regimes with mean-net > 0 and cell-n ≥ min_cell on the TRAIN split."""
     stats = regime_cell_stats(train)
     return {rg for rg, s in stats.items() if s["n"] >= min_cell and s["mean_net"] > 0}
 
 
 def oos_gate_test(trades: list[dict], min_cell: int = MIN_CELL) -> dict:
-    """Temporaler OOS-Gate-Test. `trades` je {ts, regime, net}, chronologisch
-    sortierbar. Günstige Regimes auf der ersten Hälfte lernen, auf der zweiten
-    anwenden. Gibt ungated/gated Mean + kept-fraction + Delta zurück."""
-    # None-ts sinkt ans Ende (zweiter Key-Wert nur bei vorhandenem ts vergleichen
-    # → kein None<None-TypeError, falls je ein Trade ohne Open-Zeit durchkommt).
+    """temporal OOS gate test. `trades` per {ts, regime, net}, sortable
+    chronologically. learn favourable regimes on first half, apply on second
+    half. returns ungated/gated mean + kept fraction + delta."""
+    # None-ts sinks to end (second key value only compared when ts exists
+    # → no None<None TypeError if a trade without open time comes through).
     ts_sorted = sorted(trades, key=lambda t: (t["ts"] is None, t["ts"] if t["ts"] is not None else 0))
     n = len(ts_sorted)
     if n < 2 * min_cell:
@@ -143,11 +142,11 @@ def oos_gate_test(trades: list[dict], min_cell: int = MIN_CELL) -> dict:
 
 
 def gate_verdict(gate: dict) -> str:
-    """Verdikt aus einem oos_gate_test-Dict.
+    """verdict from an oos_gate_test dict.
 
-    NO-FAV-REGIME (kein Regime ist auf Train profitabel → das Gate blockt ALLE
-    Test-Trades) ist für einen Negativ-Edge-Leg das entscheidende Ergebnis: kein
-    Regime-Subset rettet ihn — Retire steht, Gating hilft nicht."""
+    NO-FAV-REGIME (no regime is profitable on train → gate blocks ALL
+    test trades) is the decisive result for a negative-edge leg: no
+    regime subset saves it — retire stands, gating doesn't help."""
     if gate.get("insufficient"):
         return "INSUFFICIENT"
     u = gate.get("ungated_mean_net")
@@ -372,11 +371,11 @@ def build_report(meta: dict) -> str:
         f"legs with n≥{MIN_LEG_N}: {len(meta['legs'])}_\n"
     )
     ap(
-        f"**Gate-Test:** günstige BTC-Regimes (mean-net>0, cell-n≥{MIN_CELL}) auf der ERSTEN Trade-Hälfte "
-        "gelernt, auf der ZWEITEN angewandt (OUT-OF-SAMPLE). `ungated`/`gated net%` = mean gestaffelter "
-        "unlevered Move − Fee auf dem Test-Split; `Δ`=gated−ungated; `kept`=Anteil des Test-Flows, den das "
-        "Gate durchlässt. RULE-Regime = debounced RULE_recon (T-031, 91.85% fidelity). "
-        "RESCUED = ungated<0→gated>0. **Empfehlung, kein Rollout.**\n"
+        f"**gate test:** favourable BTC regimes (mean-net>0, cell-n≥{MIN_CELL}) learnt on FIRST trade half "
+        "applied on SECOND (out-of-sample). `ungated`/`gated net%` = mean levered "
+        "unlevered move − fee on test split; `Δ`=gated−ungated; `kept`=fraction of test flow that "
+        "gate lets through. RULE regime = debounced RULE_recon (T-031, 91.85% fidelity). "
+        "RESCUED = ungated<0→gated>0. **recommendation, no rollout.**\n"
     )
 
     # ── Executive summary ─────────────────────────────────────────────────
@@ -402,17 +401,17 @@ def build_report(meta: dict) -> str:
     ]
     ap("## Executive Summary\n")
     ap(
-        f"- **RESCUED (Negativ→Positiv durch Gate): {len(rescued)}** "
-        + (", ".join(f"{lg['tag']}/{lg['direction'][:1]}" for lg in rescued) if rescued else "— KEIN Leg")
-        + ". Kein Regime-Gate flippt einen Negativ-Edge-Leg out-of-sample ins Plus."
+        f"- **rescued (negative→positive by gate): {len(rescued)}** "
+        + (", ".join(f"{lg['tag']}/{lg['direction'][:1]}" for lg in rescued) if rescued else "— no leg")
+        + ". no regime gate flips a negative-edge leg out-of-sample into plus."
     )
     ap(
-        f"- **Retire bestätigt (kein günstiges Regime existiert, Gate blockt alles): {len(no_fav)}** — "
+        f"- **retire confirmed (no favourable regime exists, gate blocks all): {len(no_fav)}** — "
         + (", ".join(f"{lg['tag']}/{lg['direction'][:1]}" for lg in no_fav) or "—")
-        + ". Diese bluten in JEDEM Regime → Gating hilft nicht, Retire/Richtungs-Abschaltung steht."
+        + ". these bleed in EVERY regime → gating doesn't help, retire/direction shutdown stands."
     )
     ap(
-        f"- **Negativ-Edge nur verbessert, bleibt aber negativ: {len(still_neg)}** — "
+        f"- **negative edge only improved, stays negative: {len(still_neg)}** — "
         + (
             ", ".join(
                 f"{lg['tag']}/{lg['direction'][:1]} ({lg['rule_gate']['ungated_mean_net']:+.2f}→{lg['rule_gate']['gated_mean_net']:+.2f})"
@@ -420,22 +419,22 @@ def build_report(meta: dict) -> str:
             )
             or "—"
         )
-        + ". Gate mildert, rettet aber nicht."
+        + ". gate softens, doesn't save."
     )
     ap(
-        f"- **Positiv-Edge durch Gate verbessert (OOS): {len(improved_pos)}** — "
+        f"- **positive edge improved by gate (OOS): {len(improved_pos)}** — "
         + (
             ", ".join(f"{lg['tag']}/{lg['direction'][:1]} (Δ{lg['rule_gate']['delta']:+.2f})" for lg in improved_pos)
             or "—"
         )
-        + ". Meist bescheiden (<+0.3%/Trade) und/oder bei niedriger kept-fraction; das existierende "
-        "Whitelist-v2-Vehikel (T-069) ist der Live-Weg, kein neues Gate."
+        + ". mostly modest (<+0.3%/trade) and/or at low kept fraction; existing "
+        "whitelist-v2 vehicle (T-069) is the live path, not a new gate."
     )
     ap(
-        "- **Kernbefund:** Der Edge der Verlust-Legs ist RICHTUNGS-, nicht regime-bedingt "
-        "(Pattern/Sniper/Rubberband-Familien: LONG-Edge, SHORT-Blutung über ALLE Regimes) → der Hebel "
-        "ist die Richtungs-/Retire-Entscheidung, nicht ein BTC-Regime-Gate. Deckt sich mit T-029/T-031 "
-        "(η²≈0, Regime trennt Churn, nicht Richtung).\n"
+        "- **core finding:** edge of loss legs is DIRECTION-, not regime-driven "
+        "(pattern/sniper/rubberband families: LONG edge, SHORT bleeding across ALL regimes) → leverage "
+        "is the direction/retire decision, not a BTC regime gate. aligns with T-029/T-031 "
+        "(η²≈0, regime separates churn, not direction).\n"
     )
 
     # RULE gate — split by rescue candidates (ungated<0) vs improvement (ungated>0)
@@ -493,24 +492,24 @@ def build_report(meta: dict) -> str:
 
 
 _JOIN_LIMITS = [
-    "Regime = RULE_recon (debounced) aus dem gespeicherten regime-Stream; T-031 validierte das zu "
-    "91.85% gegen aufgezeichnetes regime_at_open. Residual = Warm-up + Ingestion-Outage-Desync.",
-    "As-of-Join setzt voraus, dass trade.open_time (AI) / time (classic) und regime_history.ts DIESELBE "
-    "naive Uhr tragen (R3-TZ-Baustelle, P1.8/UTC_POLICY). Ein systematischer Offset (z.B. +3h) würde die "
-    "Regime-Zuordnung zeitlich verschieben; da Gated+Ungated denselben Offset teilen, bleibt der DIFF "
-    "(und damit RESCUED/IMPROVED) robust, nur die absolute Zell-Attribution kann verschmieren.",
-    "Der OOS-Gate-Uplift misst die REGIME-Achse allein — NICHT die Live-Whitelist-Mechanik "
-    "(nicht historisch rekonstruierbar, T-031), Cornix-Routing oder Regime-Auto-Close. Er ist eine "
-    "Obergrenze dessen, was Regime-Konditionierung theoretisch bringt; Live-Gating kann darunter liegen.",
-    "Outcome = realized status (TP1-Touch-Win) → gestaffelter Move, Monitor-Rauschen (P1.2/P2.7) trifft "
-    "gated+ungated gleich → der DIFF ist robuster als das Absolutniveau.",
-    "Günstige Regimes werden datengetrieben gewählt (mean-net>0 auf Train) — bei 5 Regimes ist die "
-    "Multiple-Comparison-Gefahr gering, aber der OOS-Split ist die eigentliche Absicherung; ein "
-    "In-Sample-Gate wäre wertlos.",
-    "TREND_UP/DOWN sind selten (je ~3-4% der Zeit) → in vielen Legs unter MIN_CELL und damit weder als "
-    "günstig noch ungünstig klassifizierbar (Gate lässt sie NICHT durch — konservativ, kept-frac zeigt es).",
-    "alt_context bleibt außen vor (SOFT smoothed nur die BTC-Achse; die per-Bot-Whitelist über "
-    "bot×regime×alt×dir ist der eigentliche Live-Gate, aber nicht rekonstruierbar).",
+    "regime = RULE_recon (debounced) from stored regime stream; T-031 validated this to "
+    "91.85% against recorded regime_at_open. residual = warm-up + ingestion outage desync.",
+    "as-of join assumes trade.open_time (AI) / time (classic) and regime_history.ts carry SAME "
+    "naive clock (R3-TZ issue, P1.8/UTC_POLICY). systematic offset (e.g. +3h) would time-shift "
+    "regime assignment; since gated+ungated share same offset, DIFF "
+    "(and thus RESCUED/IMPROVED) stays robust, only absolute cell attribution can blur.",
+    "OOS gate uplift measures REGIME axis alone — NOT live whitelist mechanics "
+    "(not historically reconstructible, T-031), Cornix routing or regime auto-close. It is an "
+    "upper bound of what regime conditioning theoretically brings; live gating may fall short.",
+    "outcome = realised status (TP1-touch-win) → levered move, monitor noise (P1.2/P2.7) hits "
+    "gated+ungated equally → DIFF is more robust than absolute level.",
+    "favourable regimes chosen data-driven (mean-net>0 on train) — with 5 regimes "
+    "multiple comparison risk is low, but OOS split is the real safeguard; "
+    "in-sample gate would be worthless.",
+    "TREND_UP/DOWN rare (each ~3-4% of time) → in many legs below MIN_CELL and thus neither "
+    "favourable nor unfavourable classifiable (gate does NOT let them through — conservative, kept-frac shows it).",
+    "alt_context stays outside (SOFT smoothed only BTC axis; per-bot whitelist over "
+    "bot×regime×alt×dir is the actual live gate, but not reconstructible).",
 ]
 
 
@@ -535,7 +534,7 @@ def main() -> None:
         try:
             check_cpu_headroom()
         except SystemExit as e:
-            print(f"WARN {e} — Phase B läuft dennoch (read-only, BELOW_NORMAL).", flush=True)
+            print(f"WARN {e} — phase B runs anyway (read-only, BELOW_NORMAL).", flush=True)
 
     set_low_priority()
     soft_headroom()

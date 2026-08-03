@@ -1,21 +1,21 @@
 """
-tools/pex1_build_dataset.py — Trainings-Events + Replay-Labels für PEX1
-"Pump-Exhaustion-Short" (Report 15, S6). Läuft auf dem VPS (Step 2).
+tools/pex1_build_dataset.py — training events + replay labels for PEX1
+"Pump-Exhaustion-Short" (Report 15, S6). Runs on the VPS (Step 2).
 
-Pipeline je Event (pump_dump_events, Gates wie im Live-Bot 30 gespiegelt:
+Pipeline per event (pump_dump_events, gates mirrored from live bot 30:
 volume_ratio >= 5, price_change_60s >= +1.5):
-  1. TZ: spike_time-Offset wird gegen die Wanduhr gemessen (Session-TZ des
-     Detectors unbekannt) → Konvertierung nach UTC.
-  2. Dedup je Symbol: 4h-Mindestabstand (Spiegel des Live-Cooldowns).
-  3. floor-1-Join auf die letzte GESCHLOSSENE 1h-Kerze (kein Lookahead).
-  4. Geometrie: calculate_smart_targets SHORT auf dem Kerzenfenster — exakt
-     das, was Bot 30 beim Posten berechnet.
-  5. Label: simulate_exit (First-Touch, SL-first, Fees), Horizont 7 Tage.
-  6. Features: core.research_features.build_pex1_row (geteilter Builder).
+  1. TZ: spike_time offset is measured against the wall clock (session TZ of
+     the detector unknown) → conversion to UTC.
+  2. Dedup per symbol: 4h minimum spacing (mirror of the live cooldown).
+  3. floor-1 join onto the last CLOSED 1h candle (no lookahead).
+  4. Geometry: calculate_smart_targets SHORT on the candle window — exactly
+     what bot 30 computes when posting.
+  5. Label: simulate_exit (first-touch, SL-first, fees), horizon 7 days.
+  6. Features: core.research_features.build_pex1_row (shared builder).
 
-Beispiel:
-  python tools/pex1_build_dataset.py                 # Vollausbau
-  python tools/pex1_build_dataset.py --limit-symbols 15   # Smoke-Test
+Example:
+  python tools/pex1_build_dataset.py                 # full run
+  python tools/pex1_build_dataset.py --limit-symbols 15   # smoke test
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ import time
 import numpy as np
 import pandas as pd
 
-# REPO_ROOT MUSS vor dem ersten tools-/core-Import auf sys.path liegen —
-# der Insert in research_dataset_common käme sonst nie zur Ausführung
-# (Henne-Ei; Spec-Review-Fix 2026-07-06, Muster tools/aim2_build_dataset.py).
+# REPO_ROOT MUST be on sys.path before the first tools/core import —
+# otherwise the insert in research_dataset_common would never execute
+# (chicken-and-egg; spec review fix 2026-07-06, pattern tools/aim2_build_dataset.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.time import legacy_naive_to_utc  # noqa: E402
@@ -54,8 +54,8 @@ from core.trade_utils import calculate_smart_targets  # noqa: E402
 from tools.walkforward_sim import simulate_exit  # noqa: E402
 
 SINCE_DEFAULT = "2026-02-25"
-HORIZON_CANDLES = 7 * 24      # Exhaustion-These lebt Stunden bis Tage
-DEDUP_HOURS = 4               # Spiegel des Live-Cooldowns (Bot 30)
+HORIZON_CANDLES = 7 * 24      # exhaustion thesis lives hours to days
+DEDUP_HOURS = 4               # mirror of the live cooldown (bot 30)
 N_PUBLISHED = 3
 
 
@@ -65,47 +65,47 @@ def detect_offset_h(conn) -> int:
         return 0
     row_ts = pd.Timestamp(row)
     if row_ts.tzinfo is not None:
-        # timestamptz-Spalte (Ist-Zustand seit Vermessung 2026-07-06): PG liefert
-        # aware UTC — keine Offset-Heuristik nötig, Konvertierung übernimmt
-        # spike_time_to_utc über den tz-aware-Zweig.
+        # timestamptz column (actual state since measurement 2026-07-06): PG returns
+        # aware UTC — no offset heuristic needed, conversion is handled by
+        # spike_time_to_utc via the tz-aware branch.
         return 0
     now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     return int(np.clip(round((row_ts - now).total_seconds() / 3600.0), -12, 12))
 
 
 def spike_time_to_utc(series: pd.Series, offset_h: int) -> pd.Series:
-    """spike_time → naive UTC. Ein konstanter Offset über Monate wäre DST-blind
-    (Review-Fix 2026-07-06: Pre-DST-Events würden 1h verschoben → Kerze VOR dem
-    Event im Label). Offset 2/3h ⇒ Domäne ist die Legacy-Writer-TZ
-    (Europe/Bucharest) → DST-aware konvertieren; 0 ⇒ bereits UTC; alles andere:
-    konstanter Shift mit Warnung (unbekannte Domäne).
+    """spike_time → naive UTC. A constant offset over months would be DST-blind
+    (review fix 2026-07-06: pre-DST events would shift 1h → candle BEFORE the
+    event in the label). Offset 2/3h ⇒ domain is the legacy writer TZ
+    (Europe/Bucharest) → convert DST-aware; 0 ⇒ already UTC; anything else:
+    constant shift with warning (unknown domain).
 
-    Live-Ist (read-only vermessen 2026-08-01, T-2026-KYT-9050-005):
-    ``pump_dump_events.spike_time`` ist ``timestamp WITH time zone`` — der
-    aware-Zweig unten greift, die Offset-Heuristik ist heute schon tot Code für
-    diese Tabelle und misst nach dem R3-Flip ohnehin 0. Der naive Zweig bleibt
-    als Fallback für ältere Dumps; er geht durch dieselbe zentrale Lesart wie
-    alle anderen Legacy-Spalten (core.time, docs/UTC_POLICY.md §6)."""
-    # Awareness am ROHWERT prüfen, nicht an der geparsten Spalte: timestamptz
-    # über eine DST-Grenze (z. B. 2026-03-29 EET→EEST) liefert GEMISCHTE
-    # Offsets (+02/+03). pd.to_datetime ohne utc=True fixiert dann den Offset
-    # der ersten Zeile und koerziert alle abweichenden Zeilen zu NaT — der
-    # EPD2-Lauf 2026-07-07 verlor so ALLE Events nach dem DST-Wechsel.
+    Live actual state (read-only measured 2026-08-01, T-2026-KYT-9050-005):
+    ``pump_dump_events.spike_time`` is ``timestamp WITH time zone`` — the
+    aware branch below applies, the offset heuristic is already dead code for
+    this table today and measures 0 anyway after the R3 flip. The naive branch
+    remains as a fallback for older dumps; it goes through the same central
+    read path as all other legacy columns (core.time, docs/UTC_POLICY.md §6)."""
+    # Check awareness on the RAW value, not the parsed column: timestamptz
+    # across a DST boundary (e.g. 2026-03-29 EET→EEST) returns MIXED
+    # offsets (+02/+03). pd.to_datetime without utc=True then fixes the offset
+    # of the first row and coerces all deviating rows to NaT — the
+    # EPD2 run on 2026-07-07 lost ALL events after the DST change this way.
     sample = next((v for v in series if v is not None and not pd.isna(v)), None)
     if sample is not None and getattr(sample, "tzinfo", None) is not None:
-        # timestamptz: aware → utc=True verkraftet gemischte Offsets → naive UTC.
+        # timestamptz: aware → utc=True handles mixed offsets → naive UTC.
         s = pd.to_datetime(series, errors="coerce", utc=True)
         return s.dt.tz_localize(None)
     s = pd.to_datetime(series, errors="coerce")
     if offset_h == 0:
         return s
     if offset_h in (2, 3):
-        # Domäne HIER gemessen (detect_offset_h), nicht angenommen — daher der
-        # einzige sanktionierte assume_legacy-Aufruf; die DST-Rezeptur selbst
-        # liegt zentral in core.time (eine Stelle, nicht sechs).
+        # Domain MEASURED HERE (detect_offset_h), not assumed — hence the
+        # only sanctioned assume_legacy call; the DST recipe itself
+        # lives centrally in core.time (one place, not six).
         return legacy_naive_to_utc(s, assume_legacy=True)
-    log(f"WARNUNG: spike_time-Offset {offset_h:+d}h passt zu keiner bekannten TZ-Domäne — "
-        f"konstanter Shift (DST-blind).")
+    log(f"WARNING: spike_time offset {offset_h:+d}h does not match any known TZ domain — "
+        f"constant shift (DST-blind).")
     return s - pd.Timedelta(hours=offset_h)
 
 
@@ -119,8 +119,8 @@ def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
           AND spike_time > %s::timestamp
         ORDER BY spike_time ASC
         """,
-        # Grober SQL-Vorfilter mit 1 Tag Marge; exakter Since-Cut nach der
-        # TZ-Konvertierung in pandas.
+        # Coarse SQL pre-filter with 1 day margin; exact since-cut after the
+        # TZ conversion in pandas.
         (PEX1_MIN_VOL_RATIO, PEX1_MIN_PUMP_PCHG_60S, since),
     )
     ev["ts"] = spike_time_to_utc(ev["spike_time"], offset_h)
@@ -128,7 +128,7 @@ def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
     ev = ev[ev["symbol"].str.endswith("USDT")].dropna(subset=["ts"])
     ev = ev[ev["ts"] >= pd.Timestamp(since)]
 
-    # Dedup: je Symbol 4h-Mindestabstand (erster Spike gewinnt — wie der Cooldown live).
+    # Dedup: 4h minimum spacing per symbol (first spike wins — like the live cooldown).
     keep, last_ts = [], {}
     for row in ev.itertuples():
         prev = last_ts.get(row.symbol)
@@ -152,9 +152,9 @@ def main() -> None:
 
     conn = get_db_connection()
     offset_h = detect_offset_h(conn)
-    log(f"spike_time-Offset: {offset_h:+d}h gegen UTC")
+    log(f"spike_time offset: {offset_h:+d}h vs UTC")
     ev = load_events(conn, args.since, offset_h)
-    log(f"Events nach Gates + Dedup: {len(ev)} über {ev['symbol'].nunique()} Symbole")
+    log(f"Events after gates + dedup: {len(ev)} across {ev['symbol'].nunique()} symbols")
 
     symbols = list(ev["symbol"].drop_duplicates())
     if args.limit_symbols:
@@ -182,11 +182,11 @@ def main() -> None:
                 if join_is_stale(times, idx, row.ts):
                     stats["stale_join"] += 1
                     continue
-                # Entry = Spike-Preis-Schätzung, NICHT der Pre-Pump-Close
-                # (Review-Fix HIGH 2026-07-06): Bot 30 steigt live POST-Pump ein
-                # (live_price nach dem Spike). Der Pre-Pump-Close als Entry hätte
-                # pump-korreliert deflationierte Labels erzeugt (der Pump selbst
-                # riss den simulierten SL). Schätzer: letzter Close × (1 + 60s-Move).
+                # Entry = spike price estimate, NOT the pre-pump close
+                # (review fix HIGH 2026-07-06): bot 30 enters live POST-pump
+                # (live_price after the spike). The pre-pump close as entry would have
+                # produced pump-correlated deflated labels (the pump itself
+                # would have torn the simulated SL). Estimator: last close × (1 + 60s move).
                 entry_est = float(closes[idx]) * (1.0 + float(row.price_change_60s) / 100.0)
                 try:
                     win = df.iloc[max(0, idx - WINDOW_CANDLES + 1): idx + 1]
@@ -196,11 +196,11 @@ def main() -> None:
                     targets = [float(t) for t in setup["targets"][:N_PUBLISHED]]
                     if not targets or sl <= 0 or entry1 <= 0:
                         raise ValueError("degenerate geometry")
-                    # Replay ab idx+2: die Event-Kerze (idx+1) enthält den
-                    # Pump-Run-up VOR unserem Entry — wick-aware First-Touch
-                    # würde ihn fälschlich als SL-Riss zählen. Konservativ
-                    # (schnelle TP-Treffer derselben Stunde entfallen ebenfalls);
-                    # aim2-Präzedenz: --skip-entry-hour.
+                    # Replay from idx+2: the event candle (idx+1) contains the
+                    # pump run-up BEFORE our entry — wick-aware first-touch
+                    # would falsely count it as an SL breach. Conservative
+                    # (fast TP hits within the same hour are also dropped);
+                    # aim2 precedent: --skip-entry-hour.
                     end = min(idx + 2 + HORIZON_CANDLES, len(times))
                     res = simulate_exit(
                         times[:end], highs[:end], lows[:end], closes[:end],
@@ -220,7 +220,7 @@ def main() -> None:
 
                 label = res.get("outcome_tp1")
                 if res.get("exit_reason") == "open_at_end":
-                    label = None  # Report-13-Regel: offene Trades nicht labeln
+                    label = None  # Report 13 rule: do not label open trades
                 fh.write(json.dumps({
                     "symbol": sym, "ts": pd.Timestamp(row.ts).isoformat(),
                     "direction": "SHORT", "weight": 1.0,
@@ -236,10 +236,10 @@ def main() -> None:
             if i % 25 == 0 or i == len(symbols):
                 closed = stats["written"] - stats["open_end"]
                 wr = stats["wins"] / closed * 100 if closed else 0.0
-                log(f"{i}/{len(symbols)} Symbole | geschrieben {stats['written']} "
-                    f"(WR geschlossen: {wr:.1f}%) | {time.time() - t0:.0f}s")
+                log(f"{i}/{len(symbols)} symbols | written {stats['written']} "
+                    f"(WR closed: {wr:.1f}%) | {time.time() - t0:.0f}s")
     conn.close()
-    log(f"FERTIG -> {args.out}")
+    log(f"DONE -> {args.out}")
     log(json.dumps(stats))
 
 

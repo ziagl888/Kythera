@@ -1,26 +1,23 @@
 # backtest/test_research_bots_live_price.py
-"""DB-freie Tests für den Entry-Preis-Anker der Research-Bots 30/31/32
-(T-2026-KYT-9050-011, Follow-up aus Block 5 / T-2026-CU-9050-112).
+"""DB-free tests for entry price anchor of research bots 30/31/32
+(T-2026-KYT-9050-011, follow-up from block 5 / T-2026-CU-9050-112).
 
-Seit Block 5 liest ``core.research_features.fetch_context_frame`` mit
-``include_forming=False`` — ``df["close"].iloc[-1]`` ist damit die letzte
-GESCHLOSSENE 1h-Kerze und als Entry-Anker bis zu ~59 min stale. Die drei Bots
-holen den Anker jetzt über ``core.live_price.get_live_price`` (core.candles
-contract 2: Erkennung auf geschlossenen Kerzen, Preis separat).
+Since block 5 ``core.research_features.fetch_context_frame`` reads with
+``include_forming=False`` — ``df["close"].iloc[-1]`` is thus the last CLOSED
+1h candle and as entry anchor up to ~59 min stale. The three bots now fetch
+the anchor via ``core.live_price.get_live_price`` (core.candles contract 2:
+detection on closed candles, price separately).
 
-Gepinnt wird genau das, was am Geld-Pfad hängt:
-  1. Der geposteten Geometrie UND dem Prediction-Log liegt der LIVE-Preis
-     zugrunde, nicht der (bewusst abweichend gesetzte) letzte geschlossene Close
-     des Kontext-Frames.
-  2. Liefert ``get_live_price`` None (Binance-REST tot UND DB-Fallback leer),
-     wird das Signal ÜBERSPRUNGEN — kein Post, kein ``log_prediction`` mit
-     price=None.
-  3. Die Cooldown-Semantik bleibt unverändert: 30/31 spiegeln das unbedingte
-     Trainings-Dedup und setzen den Cooldown auch auf dem None-Pfad; 32 setzt
-     ihn weiterhin nur auf dem Post-Pfad.
-  4. Der Freshness-Guard von Bot 32 (``fetch_context_frame`` → None) hält, obwohl
-     der Frame dort keinen Preis mehr liefert.
-  5. Quell-Pin: kein Bot nimmt den Anker wieder aus dem Kerzen-Frame.
+Pinned is exactly what depends on the money path:
+  1. Posted geometry AND prediction log are based on LIVE price, not the
+     (deliberately set differently) last closed close of the context frame.
+  2. If ``get_live_price`` returns None (Binance REST dead AND DB fallback empty),
+     signal is SKIPPED — no post, no ``log_prediction`` with price=None.
+  3. Cooldown semantics remain unchanged: 30/31 mirror the unconditional training
+     dedup and set cooldown also on None path; 32 still sets it only on post path.
+  4. Freshness guard of bot 32 (``fetch_context_frame`` → None) holds even though
+     the frame no longer provides price there.
+  5. Source pin: no bot takes the anchor again from the candle frame.
 
 Run: pytest backtest/test_research_bots_live_price.py -v
      python backtest/test_research_bots_live_price.py
@@ -40,22 +37,22 @@ import pandas as pd
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-# core.config verlangt Secrets; die Build-Maschine liefert ein leeres .env.
+# core.config requires secrets; build machine provides empty .env.
 os.environ.setdefault("DB_PASSWORD", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
 
 UTC = datetime.timezone.utc
 
-LIVE_PRICE = 123.45  # was get_live_price liefert
-STALE_CLOSE = 999.0  # letzter GESCHLOSSENER 1h-Close im Kontext-Frame
+LIVE_PRICE = 123.45  # what get_live_price returns
+STALE_CLOSE = 999.0  # last CLOSED 1h close in context frame
 
 BOT_FILES = ("30_ai_pex1_bot.py", "31_ai_fmr1_bot.py", "32_ai_trm1_bot.py")
 
 
 def _import_bot(filename: str, module_name: str):
-    """Numerisch benannte Bot-Module sind nicht importierbar — per Pfad laden.
-    Der Modul-Import ist DB-frei: ``load_artifact`` findet kein pkl und liefert
-    den Idle-Contract (Falle 3)."""
+    """Numerically named bot modules are not importable — load by path.
+    The module import is DB-free: ``load_artifact`` finds no pkl and returns
+    the idle contract (pitfall 3)."""
     path = os.path.join(REPO_ROOT, filename)
     spec = importlib.util.spec_from_file_location(module_name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -69,7 +66,7 @@ fmr1 = _import_bot("31_ai_fmr1_bot.py", "fmr1_bot_under_test")
 trm1 = _import_bot("32_ai_trm1_bot.py", "trm1_bot_under_test")
 
 
-# ── DB-freie Fakes ───────────────────────────────────────────────────────────
+# ── DB-free fakes ───────────────────────────────────────────────────────────
 class _Cur:
     def __enter__(self):
         return self
@@ -102,7 +99,7 @@ class _FakeConn:
 
 
 class _Model:
-    """predict_proba wie sklearn/xgboost: 2D-ndarray, eine Zeile."""
+    """predict_proba like sklearn/xgboost: 2D ndarray, one row."""
 
     def __init__(self, proba):
         self._proba = np.asarray([proba], dtype=float)
@@ -128,12 +125,12 @@ def _artifact(tag: str, proba, threshold: float = 0.5) -> dict:
 
 
 def _ctx_frame(n: int = 40):
-    """(df, idx) wie fetch_context_frame — der letzte Close ist bewusst der
-    STALE_CLOSE-Marker: taucht er in der Geometrie auf, kam der Anker aus dem
-    Kerzen-Frame statt aus get_live_price."""
+    """(df, idx) like fetch_context_frame — the last close is deliberately the
+    STALE_CLOSE marker: if it shows up in the geometry, the anchor came from the
+    candle frame instead of from get_live_price."""
     df = pd.DataFrame(
         {
-            # naiv wie fetch_context_frame (tz_localize(None) nach dem Read)
+            # naive like fetch_context_frame (tz_localize(None) after the read)
             "open_time": pd.date_range("2026-08-01", periods=n, freq="h"),
             "close": [STALE_CLOSE] * n,
             "volume": [1000.0] * n,
@@ -151,7 +148,7 @@ class _Rec:
 
 
 def _targets(conn, symbol, direction, live_price, **k):
-    """Echo-Fake von calculate_smart_targets: die Geometrie hängt am Anker."""
+    """Echo mock of calculate_smart_targets: geometry depends on anchor."""
     p = float(live_price)
     return {"entry1": p, "entry2": p, "sl": p * 1.05, "targets": [p * 0.98, p * 0.96]}
 
@@ -182,7 +179,7 @@ def _event(symbol: str = "AAAUSDT") -> dict:
     now = datetime.datetime.now(UTC).replace(tzinfo=None)
     return {
         "symbol": symbol,
-        "spike_time": now - datetime.timedelta(minutes=5),  # frisch (< 30 min)
+        "spike_time": now - datetime.timedelta(minutes=5),  # fresh (< 30 min)
         "volume_ratio": 7.0,
         "price_change_60s": 2.0,
         "buy_pressure": 0.8,
@@ -210,9 +207,9 @@ def test_pex1_entry_anchor_is_the_live_price(monkeypatch):
     rec = _wire_pex1(monkeypatch, LIVE_PRICE)
     pex1.process_event(_FakeConn(), _event(), 0)
 
-    assert len(rec.posts) == 1, "PEX1 postete kein Signal trotz prob > Threshold"
-    assert rec.posts[0]["entry1"] == LIVE_PRICE, "Entry-Anker kommt nicht aus get_live_price"
-    assert rec.posts[0]["entry1"] != STALE_CLOSE, "Entry-Anker ist der geschlossene 1h-Close (stale)"
+    assert len(rec.posts) == 1, "PEX1 posted no signal despite prob > threshold"
+    assert rec.posts[0]["entry1"] == LIVE_PRICE, "Entry anchor does not come from get_live_price"
+    assert rec.posts[0]["entry1"] != STALE_CLOSE, "Entry anchor is the closed 1h close (stale)"
     assert rec.preds == [("PEX1", "AAAUSDT", "SHORT", LIVE_PRICE, True)]
     assert rec.cooldowns == [("PEX1", "AAAUSDT", "SHORT")]
 
@@ -221,10 +218,10 @@ def test_pex1_skips_signal_when_live_price_is_none(monkeypatch):
     rec = _wire_pex1(monkeypatch, None)
     pex1.process_event(_FakeConn(), _event(), 0)
 
-    assert rec.posts == [], "PEX1 postete ohne Live-Preis"
-    assert rec.preds == [], "PEX1 schrieb ein Prediction-Log ohne Entry-Preis"
-    # Der Cooldown spiegelt das unbedingte 4h-Trainings-Dedup — er hängt am
-    # Scoring, nicht am Posting, und bleibt deshalb unverändert.
+    assert rec.posts == [], "PEX1 posted without a live price"
+    assert rec.preds == [], "PEX1 wrote a prediction log without an entry price"
+    # Cooldown mirrors the unconditional 4h training dedup — it depends on
+    # scoring, not posting, and thus remains unchanged.
     assert rec.cooldowns == [("PEX1", "AAAUSDT", "SHORT")]
 
 
@@ -255,11 +252,11 @@ def test_fmr1_entry_anchor_is_the_live_price(monkeypatch):
     rec = _wire_fmr1(monkeypatch, LIVE_PRICE)
     fmr1.process_candidate(_FakeConn(), "BBBUSDT", "SHORT", 0.0012, 0.97)
 
-    assert len(rec.posts) == 1, "FMR1 postete kein Signal trotz prob > Threshold"
-    assert rec.posts[0]["entry1"] == LIVE_PRICE, "Entry-Anker kommt nicht aus get_live_price"
-    assert rec.posts[0]["entry1"] != STALE_CLOSE, "Entry-Anker ist der geschlossene 1h-Close (stale)"
+    assert len(rec.posts) == 1, "FMR1 posted no signal despite prob > threshold"
+    assert rec.posts[0]["entry1"] == LIVE_PRICE, "Entry anchor does not come from get_live_price"
+    assert rec.posts[0]["entry1"] != STALE_CLOSE, "Entry anchor is the closed 1h close (stale)"
     assert rec.preds == [("FMR1", "BBBUSDT", "SHORT", LIVE_PRICE, True)]
-    # Das FMR2-Shadow-Bein hängt am SELBEN Anker.
+    # FMR2 shadow leg depends on the SAME anchor.
     assert rec.shadows == [("BBBUSDT", "SHORT", LIVE_PRICE)]
     assert rec.cooldowns == [("FMR1", "BBBUSDT", "SHORT")]
 
@@ -268,16 +265,16 @@ def test_fmr1_skips_signal_and_shadow_when_live_price_is_none(monkeypatch):
     rec = _wire_fmr1(monkeypatch, None)
     fmr1.process_candidate(_FakeConn(), "BBBUSDT", "SHORT", 0.0012, 0.97)
 
-    assert rec.posts == [], "FMR1 postete ohne Live-Preis"
-    assert rec.preds == [], "FMR1 schrieb ein Prediction-Log ohne Entry-Preis"
-    assert rec.shadows == [], "FMR2-Shadow-Bein lief ohne Entry-Preis"
-    assert rec.cooldowns == [("FMR1", "BBBUSDT", "SHORT")]  # 24h-Dedup-Spiegel unverändert
+    assert rec.posts == [], "FMR1 posted without a live price"
+    assert rec.preds == [], "FMR1 wrote a prediction log without an entry price"
+    assert rec.shadows == [], "FMR2 shadow leg ran without an entry price"
+    assert rec.cooldowns == [("FMR1", "BBBUSDT", "SHORT")]  # 24h dedup mirror unchanged
 
 
 # ── Bot 32 / TRM1 ────────────────────────────────────────────────────────────
 def _wire_trm1(mp, price, ctx=_ctx_frame):
     rec = _Rec()
-    mp.setattr(trm1, "ARTIFACT", _artifact("TRM1", [0.1, 0.8, 0.1]))  # Klasse 1 = TREND_UP → LONG
+    mp.setattr(trm1, "ARTIFACT", _artifact("TRM1", [0.1, 0.8, 0.1]))  # class 1 = TREND_UP → LONG
     mp.setattr(trm1, "LIVE_POSTING", True)
     mp.setattr(trm1, "get_db_connection", lambda *a, **k: _FakeConn())
     mp.setattr(trm1, "fetch_regime_state", lambda conn: ("TRANSITION", 30.0))
@@ -298,10 +295,10 @@ def test_trm1_entry_anchor_is_the_live_price(monkeypatch):
     rec = _wire_trm1(monkeypatch, LIVE_PRICE)
     trm1.run_check()
 
-    assert len(rec.posts) == 1, "TRM1 postete kein Signal trotz prob > Threshold"
+    assert len(rec.posts) == 1, "TRM1 posted no signal despite prob > threshold"
     assert rec.posts[0]["symbol"] == "BTCUSDT" and rec.posts[0]["direction"] == "LONG"
-    assert rec.posts[0]["entry1"] == LIVE_PRICE, "Entry-Anker kommt nicht aus get_live_price"
-    assert rec.posts[0]["entry1"] != STALE_CLOSE, "Entry-Anker ist der geschlossene 1h-Close (stale)"
+    assert rec.posts[0]["entry1"] == LIVE_PRICE, "Entry anchor does not come from get_live_price"
+    assert rec.posts[0]["entry1"] != STALE_CLOSE, "Entry anchor is the closed 1h close (stale)"
     assert rec.preds == [("TRM1", "BTCUSDT", "LONG", LIVE_PRICE, True)]
     assert rec.cooldowns == [("TRM1", "BTCUSDT", "LONG")]
 
@@ -310,37 +307,37 @@ def test_trm1_skips_check_when_live_price_is_none(monkeypatch):
     rec = _wire_trm1(monkeypatch, None)
     trm1.run_check()
 
-    assert rec.posts == [], "TRM1 postete ohne Live-Preis"
-    assert rec.preds == [], "TRM1 schrieb ein Prediction-Log ohne Entry-Preis"
-    # Bot 32 setzt den Cooldown per Design NUR auf dem Post-Pfad — unverändert.
+    assert rec.posts == [], "TRM1 posted without a live price"
+    assert rec.preds == [], "TRM1 wrote a prediction log without an entry price"
+    # Bot 32 sets cooldown by design ONLY on post path — unchanged.
     assert rec.cooldowns == []
 
 
 def test_trm1_keeps_the_context_frame_freshness_guard(monkeypatch):
-    """Der Frame liefert keinen Preis mehr, bleibt aber das Gate 'BTCUSDT-1h-Join
-    vorhanden und nicht staler als CONTEXT_MAX_STALENESS_H'."""
+    """The frame no longer supplies a price, but the gate 'BTCUSDT-1h-join
+    present and not staler than CONTEXT_MAX_STALENESS_H' still holds."""
     rec = _wire_trm1(monkeypatch, LIVE_PRICE, ctx=None)
     trm1.run_check()
 
-    assert rec.posts == [] and rec.preds == [], "Freshness-Guard greift nicht mehr (stale Daten → Signal)"
+    assert rec.posts == [] and rec.preds == [], "Freshness guard no longer applies (stale data → signal)"
 
 
 # ── Quell-Pin ────────────────────────────────────────────────────────────────
 def test_no_research_bot_anchors_on_the_closed_candle_frame():
-    """Regressions-Pin gegen den Rückbau: kein Bot darf den Entry-Anker wieder
-    aus dem (seit Block 5 closed-only) Kontext-Frame nehmen."""
+    """Regression pin against rollback: no bot may take the entry anchor again
+    from the (closed-only since block 5) context frame."""
     for filename in BOT_FILES:
         with open(os.path.join(REPO_ROOT, filename), encoding="utf-8") as fh:
             src = fh.read()
-        assert 'live_price = float(df["close"]' not in src, f"{filename}: Anker wieder aus dem Kerzen-Frame"
-        assert "from core.live_price import get_live_price" in src, f"{filename}: get_live_price nicht importiert"
+        assert 'live_price = float(df["close"]' not in src, f"{filename}: anchor taken again from the candle frame"
+        assert "from core.live_price import get_live_price" in src, f"{filename}: get_live_price not imported"
 
 
 if __name__ == "__main__":
     import traceback
 
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # cp1252-Konsole (Windows)
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # cp1252 console (Windows)
     except Exception:
         pass
     from _pytest.monkeypatch import MonkeyPatch
@@ -361,5 +358,5 @@ if __name__ == "__main__":
             traceback.print_exc()
         finally:
             mp.undo()
-    print(f"\n{len(fns) - failed}/{len(fns)} Tests bestanden")
+    print(f"\n{len(fns) - failed}/{len(fns)} tests passed")
     sys.exit(1 if failed else 0)

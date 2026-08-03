@@ -1,52 +1,52 @@
 """
-tools/scratch_exit_study.py — K15 · SRX Scratch-Reload-Exit-Studie (T-2026-CU-9050-137).
+tools/scratch_exit_study.py — K15 · SRX scratch-reload-exit study (T-2026-CU-9050-137).
 
-Zweck
+Purpose
 -----
-Prüft OFFLINE die Praktiker-These, dass bei Break-&-Retest-Setups (ABR) ein
-"Scratch-Reload"-Exit den fixen SL schlägt: Statt einen vollen 4–12 %-SL-Hit zu
-nehmen, wird die Position sofort gescratcht, wenn eine 4h-Kerze ZURÜCK über das
-gebrochene Level (`level_price`) schließt (LONG: darunter), und beim nächsten
-Cross + Retest desselben Levels neu eröffnet — max. N ∈ {2,4,8} Zyklen, Fenster
-14 Tage je Event. Der Entry ist unser bestehendes ABR-Konzept; NUR die
-Exit-Mechanik ist neu (Spec docs/MODEL_CANDIDATES_SPEC_2026-07.md §K15).
+Checks OFFLINE the practitioner thesis that, for break-&-retest setups (ABR), a
+"scratch-reload" exit beats the fixed SL: instead of taking a full 4–12% SL hit,
+the position is scratched immediately when a 4h candle closes BACK over the
+broken level (`level_price`) (LONG: below it), and reopened on the next
+cross + retest of the same level — max. N ∈ {2,4,8} cycles, window
+14 days per event. The entry is our existing ABR concept; ONLY the
+exit mechanic is new (spec docs/MODEL_CANDIDATES_SPEC_2026-07.md §K15).
 
-Nichts davon geht in einen Bot: der Trade-Monitor kennt weder Scratch-Exits noch
-Re-Entries. Reiner Falsifikations-Replay (Batch-E), read-only.
+None of this goes into a bot: the trade monitor knows neither scratch exits nor
+re-entries. Pure falsification replay (Batch-E), read-only.
 
-Event-Quelle
+Event source
 ------------
-Vorhandener ABR1-Walkforward-Replay
-`_X/staging_models/replay/abr1_replay_365d.jsonl` (288.281 Events, 526 Coins).
-KEIN neuer Detektor, KEIN neuer Walkforward-Lauf. Die Baseline (Variante a) ist
-das bereits simulierte First-Touch-Ergebnis `net_pnl_pct` des Records — es wird
-NICHT neu simuliert (Spec-Vorgabe). Variante (b)/(c) ersetzen nur die
-Verlust-Seite (SL → Scratch-Reload).
+Existing ABR1 walkforward replay
+`_X/staging_models/replay/abr1_replay_365d.jsonl` (288,281 events, 526 coins).
+NO new detector, NO new walkforward run. The baseline (variant a) is
+the already simulated first-touch result `net_pnl_pct` of the record — it is
+NOT re-simulated (spec requirement). Variant (b)/(c) only replace the
+loss side (SL → scratch-reload).
 
-Varianten je Event
+Variants per event
 ------------------
-  (a) Baseline           = Record-`net_pnl_pct` (ungetouched, First-Touch-Ladder).
-  (b) Scratch-Reload      = Scratch bei 4h-Close jenseits `level_price`, Re-Entry
-                            bei Cross+Retest, harter SL TOUCH-basiert als Netz.
-  (c) wie (b), harter SL CLOSE-basiert — eigene Grid-Zelle, getrennt ausgewiesen.
-                            ⚠ Close-basierte Stops unterschätzen bei Hebel das
-                            Liquidationsrisiko (Liquidation ist Touch-basiert;
-                            Cross-Margin mildert, eliminiert es nicht).
-  (aux) TP1-vs-TouchSL    = dieselbe Geometrie wie (b), aber OHNE Scratch/Reentry
-                            (First-Touch TP1 gegen Touch-SL). Nur zur Diagnose:
-                            trennt den Scratch-Effekt vom TP1-statt-Ladder-Effekt,
-                            weil (a) die Original-Ladder ist. Nicht wertend.
+  (a) Baseline            = record `net_pnl_pct` (untouched, first-touch ladder).
+  (b) Scratch-Reload      = scratch at 4h close beyond `level_price`, re-entry
+                            on cross+retest, hard SL TOUCH-based as a net.
+  (c) like (b), hard SL CLOSE-based — its own grid cell, reported separately.
+                            ⚠ Close-based stops underestimate the
+                            liquidation risk under leverage (liquidation is touch-based;
+                            cross-margin mitigates it, does not eliminate it).
+  (aux) TP1-vs-TouchSL    = same geometry as (b), but WITHOUT scratch/reentry
+                            (first-touch TP1 against touch SL). For diagnosis only:
+                            separates the scratch effect from the TP1-instead-of-ladder
+                            effect, because (a) is the original ladder. Not a verdict.
 
-Fees: nicht neu erfunden — `walkforward_sim.FEE_PER_SIDE` (0,05 %/Seite →
-0,10 % Round-Trip), je Leg abgezogen (Regel 10).
+Fees: not reinvented — `walkforward_sim.FEE_PER_SIDE` (0.05%/side →
+0.10% round trip), deducted per leg (rule 10).
 
-Survivorship (Regel 9): die Event-Population ist der ABR1-Walkforward über die
-in `coins.json` gelisteten, HEUTE handelbaren Coins — delistete Paare fehlen, der
-Verlust-Tail ist damit optimistisch. Gilt für ALLE Varianten gleichermaßen, der
-(b)-vs-(a)-Vergleich bleibt intern konsistent.
+Survivorship (rule 9): the event population is the ABR1 walkforward over the
+coins listed in `coins.json` as TRADABLE TODAY — delisted pairs are missing, so the
+loss tail is optimistic. Applies EQUALLY to ALL variants, the
+(b)-vs-(a) comparison stays internally consistent.
 
-Betrieb: BELOW_NORMAL, CPU-Headroom-Check, DB strikt read-only (nur SELECT),
-Batch je Coin (≈526 Coin-Queries statt 288k). Ergebnis nach
+Operation: BELOW_NORMAL, CPU headroom check, DB strictly read-only (SELECT only),
+batched per coin (≈526 coin queries instead of 288k). Result under
 `staging_models/scratch_exit_study.{json,md}`.
 """
 
@@ -75,23 +75,23 @@ from walkforward_sim import (  # noqa: E402
 from core.candles import read_candles  # noqa: E402
 from core.database import db_connection  # noqa: E402
 
-# Der Replay liegt außerhalb des Repos in Documents\_X. Absoluter Pfad, per --replay überschreibbar.
+# The replay lives outside the repo in Documents\_X. Absolute path, overridable via --replay.
 DEFAULT_REPLAY = r"C:\Users\Michael\Documents\_X\staging_models\replay\abr1_replay_365d.jsonl"
 
 OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
-FEE_ROUNDTRIP = 2.0 * FEE_PER_SIDE  # Fraktion, je Leg
+FEE_ROUNDTRIP = 2.0 * FEE_PER_SIDE  # fraction, per leg
 WINDOW_DAYS = 14
 N_CYCLES = (2, 4, 8)
 MAX_CYCLES = max(N_CYCLES)
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Event-Stream (leichtgewichtig — Features werden verworfen, 378 MB nie im RAM)
+# Event stream (lightweight — features are discarded, 378 MB never in RAM)
 # ────────────────────────────────────────────────────────────────────────────
 def stream_events(path: str, sample_stride: int = 1):
-    """Yields (symbol, event_dict) je Zeile. `event` trägt nur die Simulations-
-    Felder — die schweren `features` werden verworfen. sample_stride>1 nimmt jedes
-    n-te Event (dokumentierter Cap, kein Silent-Sampling)."""
+    """Yields (symbol, event_dict) per line. `event` carries only the simulation
+    fields — the heavy `features` are discarded. sample_stride>1 takes every
+    nth event (documented cap, not silent sampling)."""
     kept = 0
     total = 0
     with open(path, encoding="utf-8") as fh:
@@ -106,7 +106,7 @@ def stream_events(path: str, sample_stride: int = 1):
             targets = r.get("targets") or []
             if not targets or r.get("net_pnl_pct") is None:
                 continue
-            st = r["signal_time"]  # "YYYY-MM-DD HH:MM:SS" naive-UTC (Writer = UTC-Instant)
+            st = r["signal_time"]  # "YYYY-MM-DD HH:MM:SS" naive UTC (writer = UTC instant)
             sig = datetime.strptime(st, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
             ev = {
                 "dir_long": r["direction"] == "LONG",
@@ -125,43 +125,43 @@ def stream_events(path: str, sample_stride: int = 1):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Kern-Simulation je Event (EIN Durchlauf je SL-Modus, alle N daraus abgeleitet)
+# Core simulation per event (ONE pass per SL mode, every N derived from it)
 # ────────────────────────────────────────────────────────────────────────────
 def simulate(o, h, low, c, i0, i1, ev, close_sl):
-    """Ein Scratch-Reload-Durchlauf über die 4h-Kerzen [i0, i1) (14d-Fenster),
-    harte Obergrenze MAX_CYCLES Scratches. Liefert die Flat-Netto-Stände nach
-    jedem Scratch plus den Terminal-Zustand — daraus leitet `derive()` jedes
-    N ∈ {2,4,8} ohne erneuten Durchlauf ab.
+    """One scratch-reload pass over the 4h candles [i0, i1) (14d window),
+    hard cap MAX_CYCLES scratches. Returns the flat net levels after
+    each scratch plus the terminal state — `derive()` then derives every
+    N ∈ {2,4,8} from this without another pass.
 
-    Rückgabe: (scratch_nets, terminal_outcome, terminal_net, terminal_scratches)
-      scratch_nets[k] = kumulierter Netto-Ertrag (Fraktion) DIREKT nach dem
-                        (k+1)-ten Scratch (Position flat).
+    Returns: (scratch_nets, terminal_outcome, terminal_net, terminal_scratches)
+      scratch_nets[k] = cumulative net return (fraction) RIGHT AFTER the
+                        (k+1)th scratch (position flat).
     """
     is_long = ev["dir_long"]
     level = ev["level"]
     sl = ev["sl"]
     tp1 = ev["tp1"]
 
-    net = 0.0                    # kumuliert, Fraktion
-    pos_entry = ev["entry"]      # aktueller Einstiegspreis des offenen Legs
+    net = 0.0                    # cumulative, fraction
+    pos_entry = ev["entry"]      # current entry price of the open leg
     in_pos = True
-    crossed = False              # WAIT_RETEST erreicht (Cross zurück gesehen)
+    crossed = False              # WAIT_RETEST reached (cross back seen)
     scratch_nets: list[float] = []
 
     def leg_return(px):
         return (px / pos_entry - 1.0) if is_long else (1.0 - px / pos_entry)
 
     for i in range(i0, i1):
-        oi, hi, li, ci = o[i], h[i], low[i], c[i]  # noqa: F841 (oi ungenutzt, Klarheit)
+        oi, hi, li, ci = o[i], h[i], low[i], c[i]  # noqa: F841 (oi unused, for clarity)
         if in_pos:
-            # Reihenfolge bei Intra-Kerzen-Ambiguität: harter SL zuerst
-            # (pessimistisch, wie walkforward_sim SL-first), dann TP, dann Scratch.
+            # Order on intra-candle ambiguity: hard SL first
+            # (pessimistic, like walkforward_sim SL-first), then TP, then scratch.
             if close_sl:
                 sl_hit = (ci <= sl) if is_long else (ci >= sl)
-                sl_fill = ci  # Close-basiert: Fill am (durchgeschlossenen) Close
+                sl_fill = ci  # close-based: fill at the (breached) close
             else:
                 sl_hit = (li <= sl) if is_long else (hi >= sl)
-                sl_fill = sl  # Touch-basiert: Fill am Stop-Preis
+                sl_fill = sl  # touch-based: fill at the stop price
             tp_hit = (hi >= tp1) if is_long else (li <= tp1)
             scratch = (ci < level) if is_long else (ci > level)
 
@@ -178,35 +178,35 @@ def simulate(o, h, low, c, i0, i1, ev, close_sl):
                     return scratch_nets, "exhausted", net, len(scratch_nets)
                 in_pos = False
                 crossed = False
-            # sonst: Position halten
+            # else: hold the position
         else:
-            # Warte auf Cross zurück über das Level, dann Retest-Halt (Folgekerze
-            # schließt ebenfalls jenseits) → Re-Entry am Retest-Close.
+            # Wait for the cross back over the level, then retest hold (following
+            # candle also closes beyond it) → re-entry at the retest close.
             back = (c[i] >= level) if is_long else (c[i] <= level)
             if not crossed:
                 if back:
                     crossed = True
             else:
                 if back:
-                    pos_entry = c[i]  # Re-Entry am bestätigten Retest-Close
+                    pos_entry = c[i]  # re-entry at the confirmed retest close
                     in_pos = True
                     crossed = False
                 else:
-                    crossed = False  # Retest gescheitert → auf neuen Cross warten
+                    crossed = False  # retest failed → wait for a new cross
 
-    # Fenster-Ende
+    # Window end
     if in_pos:
-        net += leg_return(c[i1 - 1]) - FEE_ROUNDTRIP  # Zwangs-Exit MTM am letzten Close
+        net += leg_return(c[i1 - 1]) - FEE_ROUNDTRIP  # forced exit MTM at the last close
         return scratch_nets, "timeout_open", net, len(scratch_nets)
     return scratch_nets, "timeout_flat", net, len(scratch_nets)
 
 
 def derive(scratch_nets, terminal_outcome, terminal_net, terminal_scr, n_cap):
-    """Ergebnis für Zyklen-Cap n_cap aus dem EINEN Simulationslauf.
+    """Result for cycle cap n_cap from the ONE simulation pass.
 
-    Bei Cap n_cap wird nach dem n_cap-ten Scratch gestoppt (flat, kein Re-Entry),
-    d.h. jede Terminal-Auflösung, die im ungekappten Lauf ERST nach ≥ n_cap
-    Scratches kam, ist für den Cap unerreichbar.
+    At cap n_cap, the run stops after the n_cap-th scratch (flat, no re-entry),
+    i.e. any terminal resolution that in the uncapped run happened ONLY after ≥ n_cap
+    scratches is unreachable for the cap.
     """
     if len(scratch_nets) >= n_cap and terminal_scr >= n_cap:
         return scratch_nets[n_cap - 1], n_cap, "scratch_exhausted"
@@ -214,8 +214,8 @@ def derive(scratch_nets, terminal_outcome, terminal_net, terminal_scr, n_cap):
 
 
 def simulate_geom(o, h, low, c, i0, i1, ev):
-    """Aux: reine First-Touch TP1-vs-Touch-SL-Geometrie (kein Scratch, kein
-    Re-Entry). Isoliert den Scratch-Effekt vom TP1-statt-Ladder-Effekt."""
+    """Aux: pure first-touch TP1-vs-touch-SL geometry (no scratch, no
+    re-entry). Isolates the scratch effect from the TP1-instead-of-ladder effect."""
     is_long = ev["dir_long"]
     entry, sl, tp1 = ev["entry"], ev["sl"], ev["tp1"]
     for i in range(i0, i1):
@@ -236,7 +236,7 @@ def simulate_geom(o, h, low, c, i0, i1, ev):
 # Aggregation
 # ────────────────────────────────────────────────────────────────────────────
 class Accum:
-    """Sammelt (net_pct, is_win) plus optional Zyklen; berechnet Kennzahlen."""
+    """Collects (net_pct, is_win) plus optional cycles; computes metrics."""
 
     def __init__(self):
         self.nets: list[float] = []
@@ -270,25 +270,25 @@ class Accum:
 
 def main():
     ap = argparse.ArgumentParser(description="K15 SRX scratch-reload-exit study (read-only)")
-    ap.add_argument("--replay", default=DEFAULT_REPLAY, help="Pfad zum abr1_replay_*.jsonl")
-    ap.add_argument("--limit-symbols", type=int, default=0, help="Nur die ersten N Coins (Smoke)")
+    ap.add_argument("--replay", default=DEFAULT_REPLAY, help="Path to abr1_replay_*.jsonl")
+    ap.add_argument("--limit-symbols", type=int, default=0, help="Only the first N coins (smoke test)")
     ap.add_argument("--sample-stride", type=int, default=1,
-                    help="Jedes n-te Event (dokumentierter Cap; 1 = voll)")
+                    help="Every nth event (documented cap; 1 = full)")
     ap.add_argument("--out-prefix", default=os.path.join(REPO_ROOT, "staging_models", "scratch_exit_study"))
     ap.add_argument("--skip-cpu-check", action="store_true",
-                    help="Den harten >90%%-CPU-Abbruch überspringen. Legitim NUR weil wir "
-                         "BELOW_NORMAL laufen (yieldet an die Fleet) und der einzige Study-Job "
-                         "sind; der VPS ist dauer-saturiert. Explizit + geloggt statt still.")
+                    help="Skip the hard >90%% CPU abort. Legitimate ONLY because we "
+                         "run at BELOW_NORMAL (yields to the fleet) and are the only study job "
+                         "running; the VPS is permanently saturated. Explicit + logged instead of silent.")
     args = ap.parse_args()
 
     set_low_priority()
     if args.skip_cpu_check:
-        print("CPU-Headroom-Check ÜBERSPRUNGEN (--skip-cpu-check) — Lauf bei BELOW_NORMAL, "
-              "yieldet an die Fleet.")
+        print("CPU headroom check SKIPPED (--skip-cpu-check) — running at BELOW_NORMAL, "
+              "yields to the fleet.")
     else:
         check_cpu_headroom()
 
-    print(f"Lese Events aus {args.replay} (stride={args.sample_stride}) …")
+    print(f"Reading events from {args.replay} (stride={args.sample_stride}) …")
     by_symbol: dict[str, list[dict]] = defaultdict(list)
     stats = {"total": 0, "kept": 0}
     for sym, ev in stream_events(args.replay, args.sample_stride):
@@ -300,15 +300,15 @@ def main():
     if args.limit_symbols:
         symbols = symbols[: args.limit_symbols]
     n_events_used = sum(len(by_symbol[s]) for s in symbols)
-    print(f"  {stats['total']} Zeilen, {stats['kept']} verwendbare Events, "
-          f"{len(by_symbol)} Coins. Genutzt: {n_events_used} Events / {len(symbols)} Coins.")
+    print(f"  {stats['total']} lines, {stats['kept']} usable events, "
+          f"{len(by_symbol)} coins. Used: {n_events_used} events / {len(symbols)} coins.")
 
-    # Akkumulatoren
+    # Accumulators
     acc_base = Accum()
     acc_geom = Accum()
     acc = {("b", n): Accum() for n in N_CYCLES}
     acc.update({("c", n): Accum() for n in N_CYCLES})
-    # Chrono-Split & Monats-Split brauchen (sig, net_a, net_b_perN, net_c_perN)
+    # Chrono split & monthly split need (sig, net_a, net_b_perN, net_c_perN)
     rows: list[tuple] = []  # (sig, base, geom, {(v,n):net})
     outcomes = {("b", n): defaultdict(int) for n in N_CYCLES}
     outcomes.update({("c", n): defaultdict(int) for n in N_CYCLES})
@@ -328,8 +328,8 @@ def main():
             if df is None or df.empty:
                 skipped_no_candles += len(evs)
                 continue
-            # open_time ist TIMESTAMPTZ; die PG-Session liefert es in Ortszeit (+03).
-            # Robust nach UTC-naiv (manche Reads geben object-dtype zurück).
+            # open_time is TIMESTAMPTZ; the PG session delivers it in local time (+03).
+            # Robustly converted to naive UTC (some reads return object dtype).
             ot_ser = pd.to_datetime(df["open_time"], utc=True)
             ot = ot_ser.dt.tz_localize(None).to_numpy(dtype="datetime64[ns]")
             o = df["open"].to_numpy(dtype=float).tolist()
@@ -357,13 +357,13 @@ def main():
                         row_nets[(tag, n)] = net_pct
                 rows.append((ev["sig"], ev["base_net"], row_nets, ev["month"]))
             if si % 50 == 0 or si == len(symbols):
-                print(f"  [{si}/{len(symbols)}] {sym}: kumuliert {len(rows)} Events simuliert")
+                print(f"  [{si}/{len(symbols)}] {sym}: cumulative {len(rows)} events simulated")
 
     if not rows:
-        print("KEINE Events simuliert — Abbruch.")
+        print("NO events simulated — aborting.")
         sys.exit(1)
 
-    # ── Chrono val/test-Split (Median der signal_time) ──
+    # ── Chrono val/test split (median of signal_time) ──
     rows.sort(key=lambda r: r[0])
     mid = len(rows) // 2
     val, test = rows[:mid], rows[mid:]
@@ -382,7 +382,7 @@ def main():
         for n in N_CYCLES:
             split[f"{tag}_N{n}"] = {"val": half_avg(val, (tag, n)), "test": half_avg(test, (tag, n))}
 
-    # ── Verdict: (b) schlägt (a) in Val UND Test? ──
+    # ── Verdict: does (b) beat (a) in val AND test? ──
     base_val, base_test = split["base"]["val"], split["base"]["test"]
     verdict_cells = {}
     any_beat = False
@@ -398,7 +398,7 @@ def main():
         any_beat = any_beat or beats
     verdict = "scratch_beats_baseline" if any_beat else "no_op_thesis_falsified"
 
-    # ── Monats-Split (avg net je Monat: base + b_N4 als Repräsentant) ──
+    # ── Monthly split (avg net per month: base + b_N4 as representative) ──
     months = defaultdict(lambda: {"base": [], "b_N4": [], "c_N4": []})
     for _sig, base, rn, month in rows:
         months[month]["base"].append(base)
@@ -416,7 +416,7 @@ def main():
         }
 
     result = {
-        "study": "K15 · SRX — Scratch-Reload-Exit (ABR1-Events)",
+        "study": "K15 · SRX — Scratch-Reload-Exit (ABR1 events)",
         "task": "T-2026-CU-9050-137",
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "replay_source": args.replay,
@@ -446,19 +446,19 @@ def main():
         "outcomes": {f"{t}_N{n}": dict(outcomes[(t, n)]) for t in ("b", "c") for n in N_CYCLES},
         "month_split": month_split,
         "caveats": {
-            "close_based_sl": "Variante (c) unterschätzt bei Hebel das "
-            "Liquidationsrisiko — Liquidation ist Touch-basiert; Cross-Margin "
-            "mildert, eliminiert das nicht.",
-            "survivorship": "Event-Population = ABR1-Walkforward über heute in "
-            "coins.json handelbare Coins; delistete Paare fehlen → Verlust-Tail "
-            "optimistisch (gilt für alle Varianten gleich, Vergleich intern konsistent).",
-            "baseline_asymmetry": "(a) ist die Original-Ladder (mehrere Targets); "
-            "(b)/(c) verwenden TP1-First-Touch. `aux_geom_tp1_touchsl` isoliert "
-            "den TP1-statt-Ladder-Effekt von der Scratch-Mechanik.",
-            "intra_candle": "Bei TP+SL in derselben 4h-Kerze gewinnt der SL "
-            "(pessimistisch, wie walkforward_sim SL-first).",
-            "offline_only": "Der Trade-Monitor kennt weder Scratch-Exits noch "
-            "Re-Entries — reine Offline-Studie, nichts geht in einen Bot.",
+            "close_based_sl": "Variant (c) underestimates the "
+            "liquidation risk under leverage — liquidation is touch-based; cross-margin "
+            "mitigates it, does not eliminate it.",
+            "survivorship": "Event population = ABR1 walkforward over coins "
+            "tradable today in coins.json; delisted pairs are missing → loss tail "
+            "optimistic (applies equally to all variants, comparison stays internally consistent).",
+            "baseline_asymmetry": "(a) is the original ladder (multiple targets); "
+            "(b)/(c) use TP1 first-touch. `aux_geom_tp1_touchsl` isolates "
+            "the TP1-instead-of-ladder effect from the scratch mechanic.",
+            "intra_candle": "When TP+SL occur in the same 4h candle, the SL wins "
+            "(pessimistic, like walkforward_sim SL-first).",
+            "offline_only": "The trade monitor knows neither scratch exits nor "
+            "re-entries — pure offline study, nothing goes into a bot.",
         },
     }
 
@@ -469,7 +469,7 @@ def main():
         json.dump(result, fh, indent=2, ensure_ascii=False)
     write_md(md_path, result)
     print(f"\nVERDICT: {verdict}")
-    print(f"Geschrieben: {json_path}\n           {md_path}")
+    print(f"Written: {json_path}\n           {md_path}")
 
 
 def write_md(path, r):
@@ -484,43 +484,43 @@ def write_md(path, r):
     lines = []
     lines.append(f"# {r['study']}")
     lines.append("")
-    lines.append(f"**Task:** {r['task']} · **Generiert (UTC):** {r['generated_utc']}")
-    lines.append(f"**Quelle:** `{r['replay_source']}` (read-only)")
+    lines.append(f"**Task:** {r['task']} · **Generated (UTC):** {r['generated_utc']}")
+    lines.append(f"**Source:** `{r['replay_source']}` (read-only)")
     lines.append("")
     s = r["sampling"]
-    lines.append(f"**Events:** {s['events_simulated']} simuliert "
-                 f"(von {s['events_in_file']} im File, {s['events_usable']} verwendbar; "
-                 f"stride={s['stride']}, {s['symbols_used']} Coins; "
-                 f"{s['events_skipped_no_candles']} ohne 4h-Kerzen übersprungen).")
-    lines.append(f"**Fenster:** {r['window_days']} Tage · **Fees:** "
-                 f"{r['fee_roundtrip_pct']} % Round-Trip je Leg (walkforward_sim.FEE_PER_SIDE).")
+    lines.append(f"**Events:** {s['events_simulated']} simulated "
+                 f"(of {s['events_in_file']} in the file, {s['events_usable']} usable; "
+                 f"stride={s['stride']}, {s['symbols_used']} coins; "
+                 f"{s['events_skipped_no_candles']} skipped without 4h candles).")
+    lines.append(f"**Window:** {r['window_days']} days · **Fees:** "
+                 f"{r['fee_roundtrip_pct']} % round trip per leg (walkforward_sim.FEE_PER_SIDE).")
     lines.append("")
     lines.append(f"## VERDICT: `{r['verdict']}`")
     lines.append("")
-    lines.append("Kriterium (Spec §K15 / Regel 8): Variante (b) muss (a) im "
-                 "**Ø-Netto-PnL in BEIDEN Chrono-Hälften (Val UND Test)** schlagen.")
+    lines.append("Criterion (spec §K15 / rule 8): variant (b) must beat (a) in "
+                 "**avg net PnL in BOTH chrono halves (val AND test)**.")
     lines.append("")
-    lines.append("| Zelle | Δ Val (b–a) | Δ Test (b–a) | schlägt in beiden? |")
+    lines.append("| Cell | Δ val (b–a) | Δ test (b–a) | beats in both? |")
     lines.append("|---|---|---|---|")
     for n in r["n_cycles_grid"]:
         c = r["verdict_cells"][f"b_N{n}"]
         lines.append(f"| b · N={n} | {c['val_delta']} | {c['test_delta']} | "
-                     f"{'**JA**' if c['beats_baseline_both_halves'] else 'nein'} |")
+                     f"{'**YES**' if c['beats_baseline_both_halves'] else 'no'} |")
     lines.append("")
-    lines.append("## Kennzahlen je Variante (Netto-PnL in % des Nominals)")
+    lines.append("## Metrics per variant (net PnL in % of notional)")
     lines.append("")
-    lines.append("| Variante | n | WR % | Ø net | Median | p5 | p95 |")
+    lines.append("| Variant | n | WR % | avg net | median | p5 | p95 |")
     lines.append("|---|---|---|---|---|---|---|")
-    lines.append(row("(a) Baseline (Record)", v["a_baseline_recorded"]))
+    lines.append(row("(a) Baseline (record)", v["a_baseline_recorded"]))
     lines.append(row("(aux) TP1-vs-TouchSL", v["aux_geom_tp1_touchsl"]))
     for n in r["n_cycles_grid"]:
         lines.append(row(f"(b) Scratch·TouchSL·N={n}", v[f"b_scratch_touchSL_N{n}"]))
     for n in r["n_cycles_grid"]:
         lines.append(row(f"(c) Scratch·CloseSL·N={n}", v[f"c_scratch_closeSL_N{n}"]))
     lines.append("")
-    lines.append("### Zyklen / Re-Entry (Scratch-Varianten)")
+    lines.append("### Cycles / re-entry (scratch variants)")
     lines.append("")
-    lines.append("| Zelle | Ø Zyklen | max | % mit Re-Entry |")
+    lines.append("| Cell | avg cycles | max | % with re-entry |")
     lines.append("|---|---|---|---|")
     for t in ("b", "c"):
         for n in r["n_cycles_grid"]:
@@ -530,11 +530,11 @@ def write_md(path, r):
                              f"{st.get('max_cycles')} | {st.get('pct_with_reentry')} |")
     lines.append("")
     sp = r["chrono_split"]
-    lines.append("## Chrono-Split (Val = frühere Hälfte, Test = spätere)")
+    lines.append("## Chrono split (val = earlier half, test = later)")
     lines.append("")
-    lines.append(f"Val n={sp['val_n']} (bis {sp['val_cut']}), Test n={sp['test_n']}.")
+    lines.append(f"Val n={sp['val_n']} (up to {sp['val_cut']}), test n={sp['test_n']}.")
     lines.append("")
-    lines.append("| Zelle | Ø net Val | Ø net Test |")
+    lines.append("| Cell | avg net val | avg net test |")
     lines.append("|---|---|---|")
     lines.append(f"| (a) Baseline | {sp['base']['val']} | {sp['base']['test']} |")
     for t in ("b", "c"):
@@ -542,9 +542,9 @@ def write_md(path, r):
             cell = sp[f"{t}_N{n}"]
             lines.append(f"| ({t}) N={n} | {cell['val']} | {cell['test']} |")
     lines.append("")
-    lines.append("## Monats-Split (Ø net, Repräsentant N=4)")
+    lines.append("## Monthly split (avg net, representative N=4)")
     lines.append("")
-    lines.append("| Monat | n | (a) base | (b) N4 | (c) N4 |")
+    lines.append("| Month | n | (a) base | (b) N4 | (c) N4 |")
     lines.append("|---|---|---|---|---|")
     for m, d in r["month_split"].items():
         lines.append(f"| {m} | {d['n']} | {d['base_avg']} | {d['b_N4_avg']} | {d['c_N4_avg']} |")

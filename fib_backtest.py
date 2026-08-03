@@ -1,20 +1,20 @@
 """
-fib_backtest_v3.py — Fibonacci Backtest (korrigierte Logik)
+fib_backtest_v3.py — Fibonacci backtest (corrected logic)
 
-Kernproblem der v2: Zu viele False-Setups durch:
-  - Zu enges SL (nur 0.5% über Swing)
-  - 0.786-Level ist kein valider Entry (zu tief im Retracement)
-  - Jeder 8%-Swing wird als Setup gewertet (zu viele schlechte Setups)
-  - LONG-SL zu nah am Entry gesetzt
+Core problem of v2: too many false setups due to:
+  - too tight SL (only 0.5% above swing)
+  - the 0.786 level is not a valid entry (too deep in the retracement)
+  - every 8% swing is counted as a setup (too many bad setups)
+  - LONG SL set too close to entry
 
 Fixes in v3:
-  - SL = ganzer Swing-Abstand * SL_BUFFER (realistisches SL)
-  - Nur Fib-Levels 0.382, 0.5, 0.618 als Entry (klassische Levels)
-  - Min-Swing auf 15% erhöht (nur signifikante Swings)
-  - Qualitäts-Filter: Swing muss sich von Vorgänger-Swing abheben
-  - Exit: T1 bei 1.0 (Wiederholung des Swings), T2/T3 Extensions
+  - SL = full swing distance * SL_BUFFER (realistic SL)
+  - only fib levels 0.382, 0.5, 0.618 as entry (classic levels)
+  - min swing raised to 15% (only significant swings)
+  - quality filter: swing must stand out from the preceding swing
+  - exit: T1 at 1.0 (repeat of the swing), T2/T3 extensions
 
-Aufruf:
+Invocation:
     py fib_backtest_v3.py
     py fib_backtest_v3.py --direction short
     py fib_backtest_v3.py --min-swing 20
@@ -48,16 +48,16 @@ load_dotenv()
 # a live expectancy.
 
 # ─────────────────────────────────────────────────────────────────────────────
-# KONFIGURATION
+# CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-ENTRY_FIB_LEVELS = [0.382, 0.5, 0.618]  # Nur klassische Entry-Levels
+ENTRY_FIB_LEVELS = [0.382, 0.5, 0.618]  # only classic entry levels
 FIB_TARGETS = [1.0, 1.272, 1.618, 2.0, 2.618]
 
-SWING_LOOKBACK = 5  # Kerzen links+rechts für Swing
-MIN_SWING_PCT = 15.0  # Mindest-Swing 15% (nur signifikante Swings)
-FIB_ENTRY_TOL = 0.02  # ±2% Toleranz (etwas großzügiger)
-MAX_RETRACE_BARS = 15  # Max Kerzen für Retracement-Einstieg
-SL_BUFFER = 0.03  # SL = 3% jenseits des Swing-Extrems
+SWING_LOOKBACK = 5  # candles left+right for a swing
+MIN_SWING_PCT = 15.0  # minimum swing 15% (only significant swings)
+FIB_ENTRY_TOL = 0.02  # ±2% tolerance (somewhat more generous)
+MAX_RETRACE_BARS = 15  # max candles for the retracement entry
+SL_BUFFER = 0.03  # SL = 3% beyond the swing extreme
 BACKTEST_DAYS = 365
 COINS_FILE = "coins.json"
 
@@ -119,19 +119,19 @@ def load_ohlcv(conn, symbol: str, since: datetime) -> pd.DataFrame | None:
 
 
 def fib_levels(high: float, low: float) -> dict[float, float]:
-    """Retracement-Levels von High → Low Richtung."""
+    """Retracement levels in the high → low direction."""
     diff = high - low
     return {lvl: high - diff * lvl for lvl in ENTRY_FIB_LEVELS}
 
 
 def fib_ext_short(high: float, low: float) -> dict[float, float]:
-    """Extension-Targets unterhalb des Lows (SHORT Targets)."""
+    """Extension targets below the low (SHORT targets)."""
     diff = high - low
     return {lvl: low - diff * (lvl - 1.0) for lvl in FIB_TARGETS}
 
 
 def fib_ext_long(low: float, high: float) -> dict[float, float]:
-    """Extension-Targets oberhalb des Highs (LONG Targets)."""
+    """Extension targets above the high (LONG targets)."""
     diff = high - low
     return {lvl: high + diff * (lvl - 1.0) for lvl in FIB_TARGETS}
 
@@ -148,12 +148,12 @@ def nearest_fib(price: float, levels: dict[float, float]) -> tuple[float, float]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SWING-ERKENNUNG
+# SWING DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def find_swings(df: pd.DataFrame) -> tuple[list[int], list[int]]:
-    """Gibt (swing_high_indices, swing_low_indices) zurück."""
+    """Returns (swing_high_indices, swing_low_indices)."""
     h = df["high"].values
     low = df["low"].values
     n = len(h)
@@ -183,7 +183,7 @@ class Trade:
     swing_high: float
     swing_low: float
     entry_fib: float
-    swing_pct: float  # Größe des Swings in %
+    swing_pct: float  # size of the swing in %
     targets: dict[float, float]
     targets_hit: list[float] = field(default_factory=list)
     exit_price: float = 0.0
@@ -214,28 +214,28 @@ class Trade:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SETUP-SUCHE
+# SETUP SEARCH
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def find_setups(df: pd.DataFrame, symbol: str, direction: str | None) -> list[Trade]:
     """
-    Sucht Fib-Setups mit verbesserter Logik:
+    Searches for fib setups with improved logic:
 
     SHORT:
-      1. Swing-High erkannt
-      2. Danach ein tieferes Low (min. MIN_SWING_PCT unter Swing-High)
-      3. Retracement zurück zu 0.382 / 0.5 / 0.618
-      4. Bestätigung: Close der Entry-Kerze UNTER dem Retracement-Level
-         (Kerze schließt bereits wieder runter = Richtungsbestätigung)
-      5. SL = Swing-High + SL_BUFFER%
+      1. swing high detected
+      2. followed by a deeper low (min. MIN_SWING_PCT below the swing high)
+      3. retracement back to 0.382 / 0.5 / 0.618
+      4. confirmation: close of the entry candle UNDER the retracement level
+         (candle already closes back down = direction confirmation)
+      5. SL = swing high + SL_BUFFER%
 
     LONG:
-      1. Swing-Low erkannt
-      2. Danach ein höheres High (min. MIN_SWING_PCT über Swing-Low)
-      3. Retracement zurück zu 0.382 / 0.5 / 0.618
-      4. Bestätigung: Close der Entry-Kerze ÜBER dem Retracement-Level
-      5. SL = Swing-Low - SL_BUFFER%
+      1. swing low detected
+      2. followed by a higher high (min. MIN_SWING_PCT above the swing low)
+      3. retracement back to 0.382 / 0.5 / 0.618
+      4. confirmation: close of the entry candle OVER the retracement level
+      5. SL = swing low - SL_BUFFER%
     """
     trades = []
     closes = df["close"].values
@@ -246,12 +246,12 @@ def find_setups(df: pd.DataFrame, symbol: str, direction: str | None) -> list[Tr
 
     swing_high_idxs, swing_low_idxs = find_swings(df)
 
-    # ── SHORT Setups ──────────────────────────────────────────────────────────
+    # ── SHORT setups ──────────────────────────────────────────────────────────
     if direction != "long":
         for sh_idx in swing_high_idxs:
             sh_price = highs[sh_idx]
 
-            # Suche das Tief nach dem Swing-High (innerhalb MAX_RETRACE_BARS*2)
+            # search for the low after the swing high (within MAX_RETRACE_BARS*2)
             search_end = min(sh_idx + MAX_RETRACE_BARS * 2, n)
             seg_lows = lows[sh_idx + 1 : search_end]
             if len(seg_lows) == 0:
@@ -260,43 +260,43 @@ def find_setups(df: pd.DataFrame, symbol: str, direction: str | None) -> list[Tr
             min_low_idx = sh_idx + 1 + min_offset
             min_low = lows[min_low_idx]
 
-            # Swing groß genug?
+            # swing big enough?
             swing_pct = (sh_price - min_low) / sh_price * 100
             if swing_pct < MIN_SWING_PCT:
                 continue
 
-            # Das Tief sollte idealerweise ein Swing-Low sein
-            # (tolerant: akzeptiere auch wenn es kein perfektes Swing-Low ist)
+            # the low should ideally be a swing low
+            # (tolerant: also accept if it is not a perfect swing low)
 
-            # Fib-Retracement berechnen
+            # compute the fib retracement
             retr = fib_levels(sh_price, min_low)
             ext_tgt = fib_ext_short(sh_price, min_low)
 
-            # Suche Retracement-Entry nach dem Tief
+            # search for the retracement entry after the low
             search_end2 = min(min_low_idx + MAX_RETRACE_BARS, n)
             for j in range(min_low_idx + 1, search_end2):
-                # Nutze Kerzen-High für Retracement-Check (nicht nur Close)
+                # use the candle high for the retracement check (not just close)
                 candle_high = highs[j]
                 candle_close = closes[j]
 
                 hit = nearest_fib(candle_high, retr)
                 if hit is None:
-                    # auch Close prüfen
+                    # also check close
                     hit = nearest_fib(candle_close, retr)
                 if hit is None:
                     continue
 
                 fib_ratio, fib_price = hit
 
-                # RICHTUNGSBESTÄTIGUNG: Close der Entry-Kerze muss UNTER dem
-                # Retracement-Level schließen (bearishe Ablehnung)
+                # DIRECTION CONFIRMATION: close of the entry candle must close
+                # UNDER the retracement level (bearish rejection)
                 if candle_close >= fib_price:
-                    continue  # Kerze schließt noch oben → keine Bestätigung
+                    continue  # candle still closes above → no confirmation
 
                 entry_price = candle_close
                 sl_price = sh_price * (1 + SL_BUFFER)
 
-                # Risk darf nicht mehr als 50% des Swing-Abstands sein
+                # risk must not exceed 50% of the swing distance
                 risk = sl_price - entry_price
                 swing_range = sh_price - min_low
                 if risk > swing_range * 0.5:
@@ -320,9 +320,9 @@ def find_setups(df: pd.DataFrame, symbol: str, direction: str | None) -> list[Tr
                         targets=tgts,
                     )
                 )
-                break  # Ein Entry pro Swing
+                break  # one entry per swing
 
-    # ── LONG Setups ───────────────────────────────────────────────────────────
+    # ── LONG setups ───────────────────────────────────────────────────────────
     if direction != "short":
         for sl_idx in swing_low_idxs:
             sl_price = lows[sl_idx]
@@ -355,7 +355,7 @@ def find_setups(df: pd.DataFrame, symbol: str, direction: str | None) -> list[Tr
 
                 fib_ratio, fib_price = hit
 
-                # RICHTUNGSBESTÄTIGUNG: Close ÜBER dem Fib-Level (bullishe Ablehnung)
+                # DIRECTION CONFIRMATION: close OVER the fib level (bullish rejection)
                 if candle_close <= fib_price:
                     continue
 
@@ -391,15 +391,15 @@ def find_setups(df: pd.DataFrame, symbol: str, direction: str | None) -> list[Tr
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SIMULATION (mit SL-Trailing)
+# SIMULATION (with SL trailing)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def simulate(trade: Trade, df: pd.DataFrame) -> Trade:
     """
-    Simulation mit Trailing-SL:
-      - Nach T1: SL → Break-Even
-      - Nach T2+: SL → vorheriges Target
+    Simulation with trailing SL:
+      - after T1: SL → break-even
+      - after T2+: SL → previous target
     """
     entry_dt = trade.entry_date
     entry_idx = None
@@ -471,14 +471,14 @@ def simulate(trade: Trade, df: pd.DataFrame) -> Trade:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ERGEBNIS
+# RESULTS
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def print_results(trades: list[Trade], direction_filter: str | None) -> None:
     done = [t for t in trades if t.exit_reason != ""]
     if not done:
-        print("\n❌ Keine abgeschlossenen Trades.")
+        print("\n❌ No completed trades.")
         return
 
     n = len(done)
@@ -501,7 +501,7 @@ def print_results(trades: list[Trade], direction_filter: str | None) -> None:
     coin_counts = Counter(t.symbol for t in done)
     entry_dist = Counter(round(t.entry_fib, 3) for t in done)
 
-    # Swing-Größe Analyse
+    # swing size analysis
     swing_buckets = {"15-25%": 0, "25-40%": 0, "40-60%": 0, "60%+": 0}
     for t in done:
         if t.swing_pct < 25:
@@ -513,7 +513,7 @@ def print_results(trades: list[Trade], direction_filter: str | None) -> None:
         else:
             swing_buckets["60%+"] += 1
 
-    # WR nach Swing-Größe
+    # WR by swing size
     swing_wr = {}
     for bucket in swing_buckets:
         bucket_trades = []
@@ -543,16 +543,16 @@ def print_results(trades: list[Trade], direction_filter: str | None) -> None:
 
     W = 64
     print("\n" + "═" * W)
-    print("  FIB BACKTEST v3 ERGEBNISSE")
+    print("  FIB BACKTEST v3 RESULTS")
     print("═" * W)
-    print(f"  Zeitraum:       letzte {BACKTEST_DAYS} Tage (1D-Kerzen)")
-    print(f"  Richtung:       {direction_filter.upper() if direction_filter else 'LONG + SHORT'}")
-    print(f"  Entry-Levels:   {ENTRY_FIB_LEVELS}")
+    print(f"  Period:         last {BACKTEST_DAYS} days (1D candles)")
+    print(f"  Direction:      {direction_filter.upper() if direction_filter else 'LONG + SHORT'}")
+    print(f"  Entry levels:   {ENTRY_FIB_LEVELS}")
     print(
-        f"  Swing min:      {MIN_SWING_PCT}%  |  SL-Buffer: {SL_BUFFER * 100:.0f}%  |  Tol: ±{FIB_ENTRY_TOL * 100:.0f}%"
+        f"  Swing min:      {MIN_SWING_PCT}%  |  SL buffer: {SL_BUFFER * 100:.0f}%  |  Tol: ±{FIB_ENTRY_TOL * 100:.0f}%"
     )
     print()
-    print(f"  Trades gesamt:  {n}")
+    print(f"  Trades total:   {n}")
     if longs and shorts:
         wr_l = sum(1 for t in longs if t.is_win) / len(longs) * 100
         wr_s = sum(1 for t in shorts if t.is_win) / len(shorts) * 100
@@ -563,7 +563,7 @@ def print_results(trades: list[Trade], direction_filter: str | None) -> None:
     print()
     print(f"  {'── PERFORMANCE ':-<{W - 4}}")
     print(f"  Win-Rate:       {wr:.1f}%")
-    print(f"  SL getroffen:   {n_sl} ({n_sl / n * 100:.1f}%)")
+    print(f"  SL hit:         {n_sl} ({n_sl / n * 100:.1f}%)")
     print(f"  Avg PnL:        {avg_r:+.2f}R  /  {avg_p:+.1f}%")
     print(f"  Total PnL:      {tot_r:+.1f}R")
     if wins:
@@ -580,14 +580,14 @@ def print_results(trades: list[Trade], direction_filter: str | None) -> None:
         bar = "█" * (cnt * 25 // max_t)
         print(f"  T{i + 1} ({lbl}):  {cnt:>4} ({cnt / n * 100:4.1f}%)  {bar}")
     print()
-    print(f"  Chance ≥50% Bewegung:  {chance_move(50):.1f}%")
-    print(f"  Chance ≥70% Bewegung:  {chance_move(70):.1f}%")
+    print(f"  Chance of ≥50% move:  {chance_move(50):.1f}%")
+    print(f"  Chance of ≥70% move:  {chance_move(70):.1f}%")
     print()
-    print(f"  {'── SWING-GRÖSSE vs. PERFORMANCE ':-<{W - 4}}")
+    print(f"  {'── SWING SIZE vs. PERFORMANCE ':-<{W - 4}}")
     for bucket, (cnt, wr_b, avg_b) in swing_wr.items():
         print(f"  {bucket:<10} {cnt:>4} Trades  WR {wr_b:>4.1f}%  Avg {avg_b:+.2f}R")
     print()
-    print(f"  {'── ENTRY-FIB-LEVELS ':-<{W - 4}}")
+    print(f"  {'── ENTRY FIB LEVELS ':-<{W - 4}}")
     max_e = max(entry_dist.values()) if entry_dist else 1
     for lvl, cnt in sorted(entry_dist.items()):
         bar = "█" * (cnt * 20 // max_e)
@@ -602,15 +602,15 @@ def print_results(trades: list[Trade], direction_filter: str | None) -> None:
         avg = sum(t.pnl_r for t in wt) / len(wt)
         print(f"  {coin:<16} {cnt:>3} Trades  WR {wrc:>4.1f}%  Avg {avg:+.2f}R")
     print()
-    print(f"  {'── BEWERTUNG ':-<{W - 4}}")
+    print(f"  {'── VERDICT ':-<{W - 4}}")
     if tot_r > 0 and wr >= 45:
-        verdict = "✅ STRATEGIE PROFITABEL"
+        verdict = "✅ STRATEGY PROFITABLE"
     elif tot_r > 0:
-        verdict = "⚠️  LEICHT POSITIV — weiteres Testing empfohlen"
+        verdict = "⚠️  SLIGHTLY POSITIVE — further testing recommended"
     elif wr >= 40 and abs(aw_r) > abs(al_r) * 1.2:
-        verdict = "⚠️  WR niedrig aber gutes R/R — Parameter tunen"
+        verdict = "⚠️  WR low but good R/R — tune parameters"
     else:
-        verdict = "❌ NICHT PROFITABEL in diesem Zeitraum/Parameterset"
+        verdict = "❌ NOT PROFITABLE in this period/parameter set"
     print(f"  {verdict}")
     print("═" * W + "\n")
 
@@ -634,7 +634,7 @@ def main() -> None:
         type=float,
         nargs="+",
         default=ENTRY_FIB_LEVELS,
-        help="Fib Entry-Levels z.B. --entry-levels 0.382 0.5 0.618",
+        help="Fib entry levels e.g. --entry-levels 0.382 0.5 0.618",
     )
     args = parser.parse_args()
 
@@ -650,8 +650,8 @@ def main() -> None:
 
     print("\n🔍 Fib Backtest v3")
     print(f"   Coins:       {len(coins)}")
-    print(f"   Entry-Levels: {ENTRY_FIB_LEVELS}")
-    print(f"   Min-Swing:   {MIN_SWING_PCT}%  |  SL-Buffer: {SL_BUFFER * 100:.0f}%\n")
+    print(f"   Entry levels: {ENTRY_FIB_LEVELS}")
+    print(f"   Min swing:   {MIN_SWING_PCT}%  |  SL buffer: {SL_BUFFER * 100:.0f}%\n")
 
     conn = get_conn()
     all_trades: list[Trade] = []
@@ -659,7 +659,7 @@ def main() -> None:
 
     for i, symbol in enumerate(coins):
         if (i + 1) % 100 == 0:
-            print(f"  [{i + 1}/{len(coins)}] — {n_ok} Coins, {len(all_trades)} Setups...")
+            print(f"  [{i + 1}/{len(coins)}] — {n_ok} coins, {len(all_trades)} setups...")
         df = load_ohlcv(conn, symbol, since)
         if df is None:
             n_miss += 1
@@ -670,7 +670,7 @@ def main() -> None:
             all_trades.append(trade)
 
     conn.close()
-    print(f"\n✅ Fertig: {n_ok} Coins, {n_miss} ohne Daten, {len(all_trades)} Setups")
+    print(f"\n✅ Done: {n_ok} coins, {n_miss} without data, {len(all_trades)} setups")
     print_results(all_trades, args.direction)
 
 

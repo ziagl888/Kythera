@@ -49,8 +49,8 @@ STAGING = ROOT / "staging_models" / "epd3_model_SHORT.pkl"
 PROMOTED = ROOT / "epd3_model_SHORT.pkl"
 
 EXPECTED_TAG = "EPD3"
-# Ein Sentinel statt des echten Fallbacks: bekäme der Contract seinen Tag aus der
-# Call-Site statt aus meta.model_id, stünde genau dieser String im Ergebnis.
+# A sentinel instead of the real fallback: if the contract got its tag from the
+# call site instead of from meta.model_id, exactly this string would show up in the result.
 SENTINEL_TAG = "TAG-FROM-CALLER-NOT-ARTIFACT"
 
 PROBE_ROWS = 64
@@ -61,7 +61,7 @@ CALIB_GRID = np.linspace(0.0, 1.0, 101)
 def _load_module(name: str):
     path = ROOT / "tools" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader, f"{path} nicht ladbar"
+    assert spec and spec.loader, f"{path} not loadable"
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -73,7 +73,7 @@ EPD_FEATURES = list(R.EPD2_FEATURES)
 
 
 def _raw(path: Path) -> dict:
-    assert path.exists(), f"Artefakt fehlt (git-getrackt, sollte im Checkout liegen): {path}"
+    assert path.exists(), f"artifact missing (git-tracked, should be in the checkout): {path}"
     return joblib.load(path)
 
 
@@ -82,34 +82,34 @@ def _scores(art: dict) -> np.ndarray:
     return np.asarray(art["model"].predict_proba(rng.normal(size=(PROBE_ROWS, len(art["features"])))))
 
 
-# ------------------------------------------------------------------ der eigentliche Fix
+# ------------------------------------------------------------------ the actual fix
 def test_staging_artifact_loads_through_the_bot_loader_as_epd3():
     contract = model_artifacts.load_artifact(str(STAGING), EPD_FEATURES, SENTINEL_TAG)
-    assert contract["loaded"], "core.model_artifacts lehnt das Staging-Artefakt ab"
-    assert contract["tag"] == EXPECTED_TAG, f"Tag {contract['tag']!r} statt {EXPECTED_TAG!r}"
+    assert contract["loaded"], "core.model_artifacts rejects the staging artifact"
+    assert contract["tag"] == EXPECTED_TAG, f"tag {contract['tag']!r} instead of {EXPECTED_TAG!r}"
     assert contract["meta"]["model_id"] == EXPECTED_TAG
-    assert contract["calibrator"] is not None, "Kalibrator im Round-Trip verloren gegangen"
+    assert contract["calibrator"] is not None, "calibrator lost in the round trip"
     assert 0.0 < contract["threshold"] < 1.0
 
 
 def test_promoted_root_artifact_is_untouched_by_this_task():
-    # Harte Regel 2: der Root-Promote ist Michis Entscheidung. Dieser Task hat NUR
-    # nach staging_models/ geschrieben — das Root-Artefakt trägt weiterhin den
-    # ererbten Tag. Nach einer späteren Promotion trägt es EPD3; beides ist hier
-    # zulässig, unzulässig wäre ein DRITTER Wert (jemand hat daran gedreht).
+    # Hard rule 2: the root promote is Michi's decision. This task ONLY wrote
+    # to staging_models/ — the root artifact still carries the inherited tag.
+    # After a later promotion it will carry EPD3; both are valid here, invalid
+    # would be a THIRD value (someone touched it).
     assert str(_raw(PROMOTED)["meta"]["model_id"]) in {"EPD2", EXPECTED_TAG}
 
 
-# ------------------------------------------------------------------ nichts sonst geändert
+# ------------------------------------------------------------------ nothing else changed
 def test_redump_changed_only_the_model_id():
     before, after = _raw(PROMOTED), _raw(STAGING)
 
-    assert sorted(before) == sorted(after), "Artefakt-Keys weichen ab"
-    assert list(before["features"]) == list(after["features"]), "Feature-Liste/Reihenfolge weicht ab"
-    assert repr(before["optimal_threshold"]) == repr(after["optimal_threshold"]), "Threshold weicht ab"
+    assert sorted(before) == sorted(after), "artifact keys differ"
+    assert list(before["features"]) == list(after["features"]), "feature list/order differs"
+    assert repr(before["optimal_threshold"]) == repr(after["optimal_threshold"]), "threshold differs"
 
-    # Scores statt Objekt-Identität: das ist die Eigenschaft, die zählt — ein
-    # Re-Dump erhält keine Objekt-Identität, wohl aber jede Vorhersage.
+    # Scores instead of object identity: that is the property that matters — a
+    # re-dump does not preserve object identity, but it does preserve every prediction.
     np.testing.assert_array_equal(_scores(before), _scores(after))
 
     cal_before = before["calibrator_isotonic"].predict(CALIB_GRID)
@@ -122,19 +122,19 @@ def test_redump_changed_only_the_model_id():
     differing = [
         k for k in sorted(set(meta_before) | set(meta_after)) if repr(meta_before.get(k)) != repr(meta_after.get(k))
     ]
-    assert not differing, f"meta ausserhalb model_id verändert: {differing}"
+    assert not differing, f"meta changed outside model_id: {differing}"
 
 
-# ------------------------------------------------------------------ der Verifier-Vertrag
+# ------------------------------------------------------------------ the verifier contract
 def _epd3_spec() -> dict:
-    """Die Verifier-Familie, unter der ein EPD3-Artefakt geprüft gehört.
+    """The verifier family under which an EPD3 artifact belongs to be checked.
 
-    build_registry() globt heute nur `epd2_model_*.pkl` — die EPD3-Challenger-
-    Dateien fallen durch das Raster und werden vom CLI-Lauf still übersprungen.
-    Der Contract, den der Verifier prüft, gilt trotzdem, und dieser Test fährt
-    ihn deshalb direkt. Die Registry-Erweiterung ist Folgearbeit: sie zieht
-    epd3_model_LONG.pkl mit herein, das denselben Tag-Defekt trägt, aber (siehe
-    Modul-Docstring) hier nicht sauber re-dumpbar ist.
+    build_registry() today only globs `epd2_model_*.pkl` — the EPD3 challenger
+    files fall through the net and are silently skipped by the CLI run. The
+    contract that the verifier checks still applies, and this test therefore
+    runs it directly. The registry extension is follow-up work: it pulls in
+    epd3_model_LONG.pkl, which carries the same tag defect but (see the module
+    docstring) cannot be cleanly re-dumped here.
     """
     return {
         "family": "epd3",
@@ -149,9 +149,9 @@ def _epd3_spec() -> dict:
 def test_verifier_contract_checks_pass_on_the_staging_artifact():
     res = V.verify_artifact(str(STAGING), _epd3_spec(), str(STAGING.parent))
     failed = [(name, msg) for name, st, msg in res["checks"] if st == V.FAIL]
-    assert not failed, f"mechanische Contract-Checks FAIL: {failed}"
+    assert not failed, f"mechanical contract checks FAIL: {failed}"
     by_name = {name: st for name, st, _ in res["checks"]}
-    assert by_name["tag"] == V.OK, "HR-6-Tag-Check ist der Grund für diesen Re-Dump"
+    assert by_name["tag"] == V.OK, "the HR-6 tag check is the whole reason for this re-dump"
     assert by_name["loader"] == V.OK
     assert by_name["features"] == V.OK
 
@@ -164,4 +164,4 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print(f"  ok  {name}")
-    print("OK — EPD3-SHORT-Staging-Artefakt trägt model_id=EPD3, sonst unverändert")
+    print("OK — EPD3-SHORT staging artifact carries model_id=EPD3, otherwise unchanged")

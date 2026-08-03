@@ -1,53 +1,53 @@
-# backtest/test_feature_lookahead.py — Look-ahead-Perturbationstest über die
-# geteilten Feature-Builder (core/*_features.py, Trainer == Serving == Replay).
+# backtest/test_feature_lookahead.py — look-ahead perturbation test across the
+# shared feature builders (core/*_features.py, trainer == serving == replay).
 #
-# Macht die harten Regeln 5 (nur geschlossene Kerzen) und 7 (geteilte
-# Feature-Builder) mechanisch prüfbar statt nur per DO-NOT-Kommentar behauptet.
-# Vorbild: HKUDS/Vibe-Trading tests/factors/test_lookahead.py (MIT),
+# Makes hard rules 5 (closed candles only) and 7 (shared feature builders)
+# mechanically checkable instead of merely asserted via a DO-NOT comment.
+# Model: HKUDS/Vibe-Trading tests/factors/test_lookahead.py (MIT),
 # T-2026-CU-9050-027 D1.
 #
-# Mechanik je Builder-Klasse:
-#   * Frame-/as-of-Builder (Funktion SIEHT Zukunftszeilen im Input und muss sie
-#     ignorieren): Baseline berechnen, dann alle Input-Spalten ab der
-#     Perturbations-Zeile mit NaN/1e10 vergiften, neu berechnen — die Werte vor
-#     der Perturbation müssen bit-nah (atol/rtol 1e-9) invariant bleiben.
-#     Ein Future-Leak fällt sofort durch.
-#       - mis.add_advanced_features        (ganzer Frame, Features je Zeile)
-#       - research.candle_context_features (df + idx; alles > idx ist Zukunft)
+# Mechanics per builder class:
+#   * Frame-/as-of builder (function SEES future rows in the input and must
+#     ignore them): compute the baseline, then poison all input columns from
+#     the perturbation row onward with NaN/1e10, recompute — the values before
+#     the perturbation must stay bit-close (atol/rtol 1e-9) invariant.
+#     A future leak fails immediately.
+#       - mis.add_advanced_features        (whole frame, features per row)
+#       - research.candle_context_features (df + idx; everything > idx is future)
 #       - research.build_pex1_row / build_fmr1_row / build_fif1_row
-#       - funding.funding_features_asof    (volle Historie + ts, interner Slice)
-#   * Window-scoped Builder (die Signatur enthält per Kontrakt NUR
-#     Vergangenheit — das Fenster endet am Entscheidungszeitpunkt, der Caller
-#     schneidet): keine Perturbations-Achse vorhanden. Hier wird stattdessen
-#     Determinismus + Input-Nicht-Mutation geprüft; der Leak-Surface liegt im
-#     Caller (Bot-SQL / Dataset-Builder) und wird für fetch_context_frame
-#     unten explizit mitgetestet.
-#       - rub.rub_trend / build_rub_features (Fenster-Arrays)
-#       - research.build_trm1_row            (regime_history-Fenster; zusätzlich:
-#                                             Zeilen älter als das 12er-Fenster
-#                                             dürfen NICHT einfließen)
-#       - research.funding_stats             (Settlement-Liste bis "jetzt")
-#       - aim2.build_feature_row             (row-scoped, kein Zeit-Input;
-#                                             der floor-1-Join ist Caller-Pflicht)
-#       - sra.build_sra2_features            (row-scoped, eine Indikator-Zeile rein;
-#                                             der floor-1-Join ist Caller-Pflicht)
-#   * Bewusst NICHT einzeln getestet (keine Look-ahead-Fläche): pct_distance
-#     (elementweises Mapping ohne Fenster/Shift, transitiv via
-#     add_advanced_features mitgetestet), assert_features_alive (beide Module,
-#     Invarianten-Assertion statt Feature-Berechnung), parity_nonzero_share
-#     (Diagnose auf fertigem Vektor), load_funding (reiner DB-Loader; das
-#     as-of-Gate liegt in funding_features_asof und ist oben abgedeckt).
-#   * walkforward_sim.load_ohlcv / load_joined (R1-Kern, DB-frei via Fake-Reader):
-#     die beiden Loader speisen die Labels JEDES Retrains (P0.10). Sie müssen
-#     core.candles mit include_forming=False aufrufen; die laufende Kerze darf
-#     nicht im Replay-Frame landen. Der Fake-Reader bildet den Cutoff pandas-
-#     seitig nach — die echte SQL braucht libpq zum Rendern (test_candles.py).
-#   * fetch_context_frame (R1-Kern, DB-frei via Stub-Cursor): eine Forming
-#     Candle der aktuellen Stunde in der DB (is_closed ist NICHT durchgesetzt,
-#     OPUS-HANDOFF Falle 1) darf weder die gewählte Feature-Kerze noch deren
-#     Features ändern — der floor-1-Join muss sie ignorieren.
+#       - funding.funding_features_asof    (full history + ts, internal slice)
+#   * Window-scoped builder (the signature contains, by contract, ONLY the
+#     past — the window ends at the decision point, the caller slices):
+#     no perturbation axis present. Instead this checks determinism +
+#     input non-mutation; the leak surface lives in the caller
+#     (bot SQL / dataset builder) and is explicitly covered for
+#     fetch_context_frame below.
+#       - rub.rub_trend / build_rub_features (window arrays)
+#       - research.build_trm1_row            (regime_history window; additionally:
+#                                             rows older than the 12-row window
+#                                             must NOT flow in)
+#       - research.funding_stats             (settlement list up to "now")
+#       - aim2.build_feature_row             (row-scoped, no time input;
+#                                             the floor-1 join is the caller's duty)
+#       - sra.build_sra2_features            (row-scoped, one indicator row in;
+#                                             the floor-1 join is the caller's duty)
+#   * Deliberately NOT tested individually (no look-ahead surface): pct_distance
+#     (element-wise mapping without window/shift, covered transitively via
+#     add_advanced_features), assert_features_alive (both modules,
+#     invariant assertion rather than feature computation), parity_nonzero_share
+#     (diagnostic on the finished vector), load_funding (pure DB loader; the
+#     as-of gate lives in funding_features_asof and is covered above).
+#   * walkforward_sim.load_ohlcv / load_joined (R1 core, DB-free via fake reader):
+#     the two loaders feed the labels of EVERY retrain (P0.10). They must
+#     call core.candles with include_forming=False; the running candle must
+#     not land in the replay frame. The fake reader replicates the cutoff on
+#     the pandas side — the real SQL needs libpq to render (test_candles.py).
+#   * fetch_context_frame (R1 core, DB-free via stub cursor): a forming
+#     candle of the current hour in the DB (is_closed is NOT enforced,
+#     OPUS-HANDOFF trap 1) must change neither the chosen feature candle nor
+#     its features — the floor-1 join must ignore it.
 #
-# Läuft ohne DB:  python backtest/test_feature_lookahead.py
+# Runs without a DB:  python backtest/test_feature_lookahead.py
 
 import datetime as dt
 import os
@@ -68,17 +68,17 @@ from core.mis_features import (  # noqa: E402
     add_advanced_features_multi,
 )
 
-# ── Konstanten ────────────────────────────────────────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────────
 N_ROWS = 300
-PROBE_T = 250  # Zeile, deren Features unter Zukunfts-Vergiftung invariant sein müssen
+PROBE_T = 250  # row whose features must stay invariant under future poisoning
 PERTURB_VALUE = 1e10
-RTOL = ATOL = 1e-9  # jeder echte Leak drückt weit größer durch als 1e-9
+RTOL = ATOL = 1e-9  # any real leak pushes through far larger than 1e-9
 
 
 def poison_future(df: pd.DataFrame, cols: list[str], start: int) -> pd.DataFrame:
-    """Kopie von ``df``, in der ``cols`` ab Zeile ``start`` vergiftet sind —
-    abwechselnd NaN und 1e10 je Spalte, damit beide Repräsentationen eines
-    Leaks (NaN-Propagation und Absurd-Wert-Drift) Abdeckung bekommen."""
+    """Copy of ``df`` in which ``cols`` are poisoned from row ``start`` onward —
+    alternating NaN and 1e10 per column, so both representations of a
+    leak (NaN propagation and absurd-value drift) get coverage."""
     out = df.copy()
     for j, col in enumerate(cols):
         out.iloc[start:, out.columns.get_loc(col)] = np.nan if j % 2 == 0 else PERTURB_VALUE
@@ -86,29 +86,29 @@ def poison_future(df: pd.DataFrame, cols: list[str], start: int) -> pd.DataFrame
 
 
 def assert_rows_invariant(base: pd.DataFrame, poisoned: pd.DataFrame, cols: list[str], upto: int, label: str) -> None:
-    """Alle Zeilen < ``upto`` müssen in ``cols`` bit-nah übereinstimmen."""
+    """All rows < ``upto`` must match bit-close in ``cols``."""
     a = base.loc[: upto - 1, cols].to_numpy(dtype=np.float64)
     b = poisoned.loc[: upto - 1, cols].to_numpy(dtype=np.float64)
     nan_a, nan_b = np.isnan(a), np.isnan(b)
-    assert np.array_equal(nan_a, nan_b), f"{label}: NaN-Muster vor der Perturbation divergiert (Look-ahead-Leak)"
+    assert np.array_equal(nan_a, nan_b), f"{label}: NaN pattern before the perturbation diverges (look-ahead leak)"
     np.testing.assert_allclose(
         a[~nan_a], b[~nan_b], rtol=RTOL, atol=ATOL,
-        err_msg=f"{label}: Feature-Werte vor der Perturbation divergieren (Look-ahead-Leak)",
+        err_msg=f"{label}: feature values before the perturbation diverge (look-ahead leak)",
     )
 
 
 def assert_dicts_equal(base: dict, poisoned: dict, label: str) -> None:
-    assert set(base) == set(poisoned), f"{label}: Feature-Keys divergieren ({set(base) ^ set(poisoned)})"
+    assert set(base) == set(poisoned), f"{label}: feature keys diverge ({set(base) ^ set(poisoned)})"
     for k in base:
         np.testing.assert_allclose(
             float(base[k]), float(poisoned[k]), rtol=RTOL, atol=ATOL,
-            err_msg=f"{label}: Feature '{k}' ändert sich unter Zukunfts-Vergiftung (Look-ahead-Leak)",
+            err_msg=f"{label}: feature '{k}' changes under future poisoning (look-ahead leak)",
         )
 
 
-# ── Synthetische Frames ───────────────────────────────────────────────────────
+# ── Synthetic frames ───────────────────────────────────────────────────────
 def make_mis_df(n=N_ROWS, seed=7) -> pd.DataFrame:
-    """1h-Frame mit allen MIS-Pflichtspalten (wie backtest/test_mis_features.py)."""
+    """1h frame with all MIS-required columns (like backtest/test_mis_features.py)."""
     rng = np.random.default_rng(seed)
     close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
     df = pd.DataFrame({
@@ -131,7 +131,7 @@ CONTEXT_VALUE_COLS = ["close", "volume", "rsi_14", "ema_21", "ema_200", "atr_14"
 
 
 def make_context_df(n=N_ROWS, seed=11) -> pd.DataFrame:
-    """ASC-Frame mit den CONTEXT_SQL_SELECT-Spalten (research_features)."""
+    """ASC frame with the CONTEXT_SQL_SELECT columns (research_features)."""
     rng = np.random.default_rng(seed)
     close = 50 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
     return pd.DataFrame({
@@ -147,7 +147,7 @@ def make_context_df(n=N_ROWS, seed=11) -> pd.DataFrame:
     })
 
 
-# ── MIS: Frame-Builder ────────────────────────────────────────────────────────
+# ── MIS: frame builder ────────────────────────────────────────────────────────
 def test_mis_lookahead():
     df = make_mis_df()
     perturb_from = PROBE_T + 10
@@ -158,19 +158,19 @@ def test_mis_lookahead():
             poison_future(df, REQUIRED_INPUT_COLS, perturb_from), include_legacy=include_legacy
         )
         assert_rows_invariant(base, poisoned, cols, perturb_from, f"MIS(include_legacy={include_legacy})")
-        # Canary (Detektionskraft): IN der vergifteten Region müssen die Features
-        # divergieren — sonst wäre die Perturbation nie beim Builder angekommen
-        # und die Invarianz oben ein Scheinerfolg.
+        # Canary (detection power): WITHIN the poisoned region the features must
+        # diverge — otherwise the perturbation never reached the builder
+        # and the invariance above would be a false pass.
         a = base.loc[perturb_from:, FEATURE_COLS].to_numpy(dtype=np.float64)
         b = poisoned.loc[perturb_from:, FEATURE_COLS].to_numpy(dtype=np.float64)
-        assert not np.allclose(a, b, equal_nan=True), "Perturbation erreicht den Builder nicht — Test ohne Kraft"
-    print(f"OK  MIS add_advanced_features: Zeilen < {perturb_from} invariant unter Zukunfts-Vergiftung (beide Modi)")
+        assert not np.allclose(a, b, equal_nan=True), "perturbation does not reach the builder — test has no power"
+    print(f"OK  MIS add_advanced_features: rows < {perturb_from} invariant under future poisoning (both modes)")
 
 
 def test_mis_multi_lookahead():
-    """add_advanced_features_multi (Trainer-Pfad für Multi-Coin-Frames): dieselbe
-    Invarianz je Symbol — Vergiftung der Zukunft beider Symbole darf die Zeilen
-    davor nicht ändern (die Symbolgrenzen-Parität deckt test_mis_features.py)."""
+    """add_advanced_features_multi (trainer path for multi-coin frames): same
+    invariance per symbol — poisoning the future of both symbols must not
+    change the rows before it (symbol-boundary parity is covered by test_mis_features.py)."""
     perturb_from = PROBE_T + 10
     a = make_mis_df(seed=21).assign(symbol="AAAUSDT")
     b = make_mis_df(seed=22).assign(symbol="BBBUSDT")
@@ -183,22 +183,22 @@ def test_mis_multi_lookahead():
         g_base = base[base["symbol"] == sym].reset_index(drop=True)
         g_pois = poisoned[poisoned["symbol"] == sym].reset_index(drop=True)
         assert_rows_invariant(g_base, g_pois, FEATURE_COLS, perturb_from, f"MIS-multi({sym})")
-        # Canary wie in test_mis_lookahead: die vergiftete Region MUSS divergieren.
+        # Canary as in test_mis_lookahead: the poisoned region MUST diverge.
         a = g_base.loc[perturb_from:, FEATURE_COLS].to_numpy(dtype=np.float64)
         b = g_pois.loc[perturb_from:, FEATURE_COLS].to_numpy(dtype=np.float64)
-        assert not np.allclose(a, b, equal_nan=True), f"Perturbation erreicht den Multi-Builder nicht ({sym})"
-    print(f"OK  MIS add_advanced_features_multi: Zeilen < {perturb_from} je Symbol invariant")
+        assert not np.allclose(a, b, equal_nan=True), f"perturbation does not reach the multi builder ({sym})"
+    print(f"OK  MIS add_advanced_features_multi: rows < {perturb_from} invariant per symbol")
 
 
-# ── Research: df+idx-Builder ──────────────────────────────────────────────────
+# ── Research: df+idx builder ──────────────────────────────────────────────────
 def test_candle_context_lookahead():
     df = make_context_df()
-    # Alles > idx ist Zukunft — Vergiftung direkt ab idx+1 (strengster Schnitt).
+    # Everything > idx is future — poisoning starts right at idx+1 (strictest cut).
     poisoned = poison_future(df, CONTEXT_VALUE_COLS, PROBE_T + 1)
     base = research_features.candle_context_features(df, PROBE_T)
     got = research_features.candle_context_features(poisoned, PROBE_T)
     assert_dicts_equal(base, got, "candle_context_features")
-    print("OK  candle_context_features: idx-Zeile invariant, Zeilen > idx werden nicht gelesen")
+    print("OK  candle_context_features: idx row invariant, rows > idx are not read")
 
 
 def test_event_row_builders_lookahead():
@@ -227,10 +227,10 @@ def test_event_row_builders_lookahead():
         research_features.build_fif1_row("LONG", poisoned, PROBE_T, regime_row, 12.0, 3, 5, ts),
         "build_fif1_row",
     )
-    print("OK  build_pex1_row / build_fmr1_row / build_fif1_row: invariant unter Zukunfts-Vergiftung")
+    print("OK  build_pex1_row / build_fmr1_row / build_fif1_row: invariant under future poisoning")
 
 
-# ── Funding: as-of-Builder ────────────────────────────────────────────────────
+# ── Funding: as-of builder ────────────────────────────────────────────────────
 def make_funding_frame(n=120, seed=5) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     return pd.DataFrame({
@@ -241,9 +241,9 @@ def make_funding_frame(n=120, seed=5) -> pd.DataFrame:
 
 def test_funding_asof_lookahead():
     g = make_funding_frame()
-    ts = g["funding_time"].iloc[80] + pd.Timedelta(hours=3)  # zwischen zwei Settlements
+    ts = g["funding_time"].iloc[80] + pd.Timedelta(hours=3)  # between two settlements
     base = funding_features.funding_features_asof({"XUSDT": g}, "XUSDT", ts)
-    assert base, "Baseline leer — Testaufbau kaputt (Historie zu kurz?)"
+    assert base, "baseline empty — test setup broken (history too short?)"
 
     poisoned = g.copy()
     future = poisoned["funding_time"] >= ts
@@ -251,28 +251,28 @@ def test_funding_asof_lookahead():
     poisoned.loc[future, "funding_rate"] = PERTURB_VALUE
     got = funding_features.funding_features_asof({"XUSDT": poisoned}, "XUSDT", ts)
     assert_dicts_equal(base, got, "funding_features_asof")
-    print("OK  funding_features_asof: Sätze mit funding_time >= ts fließen nicht ein")
+    print("OK  funding_features_asof: records with funding_time >= ts do not flow in")
 
 
 def test_funding_asof_boundary_strict():
-    """Ein Settlement EXAKT zum Ereigniszeitpunkt darf nicht einfließen
-    (Kontrakt: 'STRIKT vor dem Ereigniszeitpunkt', Docstring core/funding_features.py)."""
+    """A settlement EXACTLY at the event time must not flow in
+    (contract: 'STRICTLY before the event time', docstring core/funding_features.py)."""
     g = make_funding_frame()
-    ts = g["funding_time"].iloc[80]  # exakt auf einem Settlement
+    ts = g["funding_time"].iloc[80]  # exactly on a settlement
     base = funding_features.funding_features_asof({"XUSDT": g}, "XUSDT", ts)
 
     poisoned = g.copy()
-    poisoned.loc[poisoned["funding_time"] >= ts, "funding_rate"] = np.nan  # inkl. der Zeile AT ts
+    poisoned.loc[poisoned["funding_time"] >= ts, "funding_rate"] = np.nan  # incl. the row AT ts
     got = funding_features.funding_features_asof({"XUSDT": poisoned}, "XUSDT", ts)
     assert_dicts_equal(base, got, "funding_features_asof(boundary)")
-    print("OK  funding_features_asof: Settlement exakt AT ts bleibt draußen (strikt as-of)")
+    print("OK  funding_features_asof: settlement exactly AT ts stays out (strict as-of)")
 
 
-# ── Window-scoped Builder: Determinismus + Nicht-Mutation ─────────────────────
+# ── Window-scoped builder: determinism + non-mutation ─────────────────────
 def test_rub_window_scoped():
-    """rub_trend/build_rub_features bekommen per Signatur NUR das Lookback-Fenster
-    (endet an der aktuellen Kerze) — es gibt keine Zukunfts-Achse im Input, der
-    Leak-Surface ist der Caller-Slice (Bot 13 / Walkforward-Adapter)."""
+    """rub_trend/build_rub_features receive, by signature, ONLY the lookback window
+    (ends at the current candle) — there is no future axis in the input, the
+    leak surface is the caller slice (bot 13 / walkforward adapter)."""
     rng = np.random.default_rng(9)
     ts_sec = np.arange(0, 95 * 86400, 3600, dtype=np.float64)
     closes = 100 * np.exp(np.cumsum(rng.normal(0, 0.005, len(ts_sec))))
@@ -280,19 +280,19 @@ def test_rub_window_scoped():
 
     a = rub_features.rub_trend(ts_sec, closes, float(closes[-1]))
     b = rub_features.rub_trend(ts_sec, closes, float(closes[-1]))
-    assert a == b, "rub_trend nicht deterministisch"
-    assert np.array_equal(ts_sec, ts_before) and np.array_equal(closes, closes_before), "rub_trend mutiert Input"
+    assert a == b, "rub_trend not deterministic"
+    assert np.array_equal(ts_sec, ts_before) and np.array_equal(closes, closes_before), "rub_trend mutates input"
 
     f1 = rub_features.build_rub_features(a[0], a[1], float(closes[-1]), 28.0, -18.0, -12.0, 0.4, 0.3, 1.2, 95.0)
     f2 = rub_features.build_rub_features(a[0], a[1], float(closes[-1]), 28.0, -18.0, -12.0, 0.4, 0.3, 1.2, 95.0)
     assert f1 == f2 and set(f1) == set(rub_features.RUB_FEATURES)
-    print("OK  rub_trend / build_rub_features: deterministisch, Input unmutiert (window-scoped)")
+    print("OK  rub_trend / build_rub_features: deterministic, input unmutated (window-scoped)")
 
 
 def test_trm1_window_contract():
-    """build_trm1_row: Fenster endet am aktuellen Check (window-scoped, keine
-    Zukunfts-Achse). Zusätzlich: Zeilen ÄLTER als das 12er-Fenster dürfen das
-    Ergebnis nicht beeinflussen (interner [-TRM1_WINDOW_CHECKS:]-Slice)."""
+    """build_trm1_row: window ends at the current check (window-scoped, no
+    future axis). Additionally: rows OLDER than the 12-row window must not
+    influence the result (internal [-TRM1_WINDOW_CHECKS:] slice)."""
     rng = np.random.default_rng(13)
 
     def mk_row(i):
@@ -309,56 +309,56 @@ def test_trm1_window_contract():
 
     rows = [mk_row(i) for i in range(20)]
     base = research_features.build_trm1_row(rows, 42.0)
-    assert base == research_features.build_trm1_row(rows, 42.0), "build_trm1_row nicht deterministisch"
+    assert base == research_features.build_trm1_row(rows, 42.0), "build_trm1_row not deterministic"
 
     older_poisoned = [{**r, "btc_return_4h": PERTURB_VALUE, "regime": "HIGH_VOLA"} for r in rows[:-12]] + rows[-12:]
     got = research_features.build_trm1_row(older_poisoned, 42.0)
     assert_dicts_equal(base, got, "build_trm1_row(older-than-window)")
-    print("OK  build_trm1_row: deterministisch, Zeilen außerhalb des 12er-Fensters fließen nicht ein")
+    print("OK  build_trm1_row: deterministic, rows outside the 12-row window do not flow in")
 
 
 def test_funding_stats_window_contract():
-    """funding_stats: Settlement-Liste endet per Kontrakt am 'jetzt' (window-scoped,
-    Caller schneidet). Intern nutzt sie maximal die letzten FMR1_HISTORY_SETTLEMENTS
-    Sätze — ältere Elemente dürfen das Ergebnis nicht beeinflussen."""
+    """funding_stats: settlement list ends, by contract, at 'now' (window-scoped,
+    caller slices). Internally it uses at most the last FMR1_HISTORY_SETTLEMENTS
+    records — older elements must not influence the result."""
     rng = np.random.default_rng(23)
     rates = list(rng.normal(1e-4, 5e-5, 150))
     base = research_features.funding_stats(rates)
-    assert base == research_features.funding_stats(list(rates)), "funding_stats nicht deterministisch"
+    assert base == research_features.funding_stats(list(rates)), "funding_stats not deterministic"
 
     n_hist = research_features.FMR1_HISTORY_SETTLEMENTS
     older_poisoned = [PERTURB_VALUE] * (len(rates) - n_hist) + rates[-n_hist:]
     got = research_features.funding_stats(older_poisoned)
     assert_dicts_equal(base, got, "funding_stats(older-than-window)")
-    print(f"OK  funding_stats: deterministisch, Sätze außerhalb der letzten {n_hist} fließen nicht ein")
+    print(f"OK  funding_stats: deterministic, records outside the last {n_hist} do not flow in")
 
 
 def test_regime_features_row_scoped():
-    """regime_features ist row-scoped (eine regime_history-Zeile + Alter rein,
-    One-Hot-Dict raus) — keine Zeit-Achse; prüfbar: Determinismus + Nicht-Mutation."""
+    """regime_features is row-scoped (one regime_history row + age in,
+    one-hot dict out) — no time axis; testable: determinism + non-mutation."""
     row = {"regime": "TREND_UP", "confidence": 0.8}
     before = dict(row)
     a = research_features.regime_features(row, 15.0)
     b = research_features.regime_features(row, 15.0)
-    assert a == b and row == before, "regime_features nicht deterministisch oder mutiert Input"
+    assert a == b and row == before, "regime_features not deterministic or mutates input"
     assert a["regime_is_TREND_UP"] == 1.0 and a["regime_conf"] == 0.8
-    print("OK  regime_features: deterministisch, row-scoped, Input unmutiert")
+    print("OK  regime_features: deterministic, row-scoped, input unmutated")
 
 
 def test_rub_event_type_pure():
-    """rub_event_type ist eine pure Skalar-Funktion (Vorfilter) — Determinismus."""
+    """rub_event_type is a pure scalar function (pre-filter) — determinism."""
     args = (-0.10, 25.0, -20.0, 95.0, 96.0, 110.0)
     assert rub_features.rub_event_type(*args) == rub_features.rub_event_type(*args) == "REVERSION_UP"
     assert rub_features.rub_event_type(0.0, 50.0, 0.0, 100.0, 96.0, 110.0) is None
-    print("OK  rub_event_type: pure, deterministisch")
+    print("OK  rub_event_type: pure, deterministic")
 
 
 def test_aim2_row_scoped():
-    """aim2.build_feature_row ist row-scoped: eine Event-Zeile rein, ein
-    Feature-Dict raus — kein Zeit-Series-Input, also keine Perturbations-Achse.
-    Der floor-1-Join (letzte GESCHLOSSENE Kerze) ist per Vertrag Caller-Pflicht
-    (Docstring core/aim2_features.py); hier prüfbar: Determinismus + keine
-    Mutation der Input-Dicts."""
+    """aim2.build_feature_row is row-scoped: one event row in, one
+    feature dict out — no time-series input, hence no perturbation axis.
+    The floor-1 join (last CLOSED candle) is, by contract, the caller's duty
+    (docstring core/aim2_features.py); testable here: determinism + no
+    mutation of the input dicts."""
     market = {c: 101.0 for c in aim2_features.MARKET_PRICE_COLS}
     market.update({c: 0.5 for c in aim2_features.MARKET_ABS_COLS})
     market.update({c: 1.5 for c in aim2_features.ATR_COLS})
@@ -372,18 +372,18 @@ def test_aim2_row_scoped():
 
     a = aim2_features.build_feature_row(market, 100.0, regime, 30.0, swarm, source)
     b = aim2_features.build_feature_row(market, 100.0, regime, 30.0, swarm, source)
-    assert a == b, "build_feature_row nicht deterministisch"
-    assert (market, regime, swarm, source) == inputs_before, "build_feature_row mutiert Input-Dicts"
-    print("OK  aim2.build_feature_row: deterministisch, row-scoped, Inputs unmutiert")
+    assert a == b, "build_feature_row not deterministic"
+    assert (market, regime, swarm, source) == inputs_before, "build_feature_row mutates input dicts"
+    print("OK  aim2.build_feature_row: deterministic, row-scoped, inputs unmutated")
 
 
 def test_sra2_row_scoped():
-    """sra.build_sra2_features ist row-scoped: eine 1h-Indikator-Zeile rein, ein
-    Feature-Dict raus — kein Zeit-Series-Input, also keine Perturbations-Achse.
-    Der floor-1-Join (letzte GESCHLOSSENE Kerze) ist Caller-Pflicht (9_ai_sr_bot /
-    tools/retrain_sra2.py); hier prüfbar: Determinismus, keine Mutation der
-    Input-Zeile und der Key-Vertrag gegen SRA2_FEATURES (die Bot==Trainer-Parität
-    aus T-2026-CU-9050-042 haftet an genau diesem Schlüssel-Set)."""
+    """sra.build_sra2_features is row-scoped: one 1h indicator row in, one
+    feature dict out — no time-series input, hence no perturbation axis.
+    The floor-1 join (last CLOSED candle) is the caller's duty (9_ai_sr_bot /
+    tools/retrain_sra2.py); testable here: determinism, no mutation of the
+    input row, and the key contract against SRA2_FEATURES (the bot==trainer
+    parity from T-2026-CU-9050-042 hinges on exactly this key set)."""
     ind = {
         "close": 101.0, "atr_14": 1.5,
         "rsi_9": 55.0, "rsi_14": 52.0, "rsi_24": 48.0,
@@ -398,35 +398,35 @@ def test_sra2_row_scoped():
 
     a = sra_features.build_sra2_features(ind)
     b = sra_features.build_sra2_features(ind)
-    assert a == b, "build_sra2_features nicht deterministisch"
-    assert ind == ind_before, "build_sra2_features mutiert die Input-Zeile"
+    assert a == b, "build_sra2_features not deterministic"
+    assert ind == ind_before, "build_sra2_features mutates the input row"
     assert set(a) == set(sra_features.SRA2_FEATURES), (
-        f"build_sra2_features bricht den SRA2-Key-Vertrag ({set(a) ^ set(sra_features.SRA2_FEATURES)})"
+        f"build_sra2_features breaks the SRA2 key contract ({set(a) ^ set(sra_features.SRA2_FEATURES)})"
     )
-    print("OK  sra.build_sra2_features: deterministisch, row-scoped, Input unmutiert, Key-Vertrag")
+    print("OK  sra.build_sra2_features: deterministic, row-scoped, input unmutated, key contract")
 
 
-# ── fetch_context_frame: R1 / Forming-Candle via Fake-Reader ─────────────────
-# Nach der Block-5-Umverdrahtung liest fetch_context_frame über core.candles
-# (read_candles_with_indicators, include_forming=False) — die forming Kerze
-# fällt schon im Read raus (DB-Uhr-Cutoff, mechanisch getestet in
-# test_candles.py), nicht mehr erst im floor-1-Join. Der Fake-Reader unten
-# (_fake_reader) bildet den include_forming-Cutoff pandas-seitig nach; er wird
-# via monkeypatch von research_features.read_candles_with_indicators eingehängt,
-# analog zu den walkforward-Loadern. Der Test bleibt damit DB-frei.
+# ── fetch_context_frame: R1 / forming candle via fake reader ─────────────────
+# After the block-5 rewiring, fetch_context_frame reads via core.candles
+# (read_candles_with_indicators, include_forming=False) — the forming candle
+# already drops out at the read (DB-clock cutoff, mechanically tested in
+# test_candles.py), no longer only at the floor-1 join. The fake reader below
+# (_fake_reader) replicates the include_forming cutoff on the pandas side; it
+# is hooked in via monkeypatch of research_features.read_candles_with_indicators,
+# analogous to the walkforward loaders. This keeps the test DB-free.
 _CTX_COLS = ["open_time", "close", "volume", "rsi_14", "ema_21", "ema_200", "atr_14", "boll_upper_20", "boll_lower_20"]
 
 
 def _ctx_frame_asc(n=60, tf="1h", end_offset_h=0, seed=17):
-    """ASC 1h-Frame, now-relativ: n geschlossene Kerzen PLUS die laufende
-    (open_time == period_start) — so wie die per-Coin-Tabelle sie heute wirklich
-    enthält. ``end_offset_h`` schiebt das ganze Fenster um h Stunden in die
-    Vergangenheit (für den Staleness-Fall)."""
+    """ASC 1h frame, now-relative: n closed candles PLUS the running one
+    (open_time == period_start) — the way the per-coin table actually
+    contains them today. ``end_offset_h`` shifts the whole window by h hours
+    into the past (for the staleness case)."""
     from core import candles
 
     forming_open = candles.period_start(tf, dt.datetime.now(dt.timezone.utc)) - dt.timedelta(hours=end_offset_h)
     step = candles.timeframe_delta(tf)
-    times = [forming_open - i * step for i in range(n, -1, -1)]  # ASC, letzte Zeile = forming
+    times = [forming_open - i * step for i in range(n, -1, -1)]  # ASC, last row = forming
     rng = np.random.default_rng(seed)
     close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, len(times))))
     df = pd.DataFrame({
@@ -444,8 +444,8 @@ def _ctx_frame_asc(n=60, tf="1h", end_offset_h=0, seed=17):
 
 
 def _run_fetch_context(frame, as_of):
-    """fetch_context_frame mit eingehängtem Fake-Reader ausführen; gibt
-    (result, calls) zurück."""
+    """Run fetch_context_frame with the fake reader hooked in; returns
+    (result, calls)."""
     calls: list[dict] = []
     original = research_features.read_candles_with_indicators
     try:
@@ -457,76 +457,76 @@ def _run_fetch_context(frame, as_of):
 
 
 def test_fetch_context_frame_ignores_forming_candle():
-    """R1: die forming Kerze der laufenden Stunde darf weder die gewählte
-    Feature-Kerze noch deren Features speisen. Nach Block 5 droppt sie der Read
-    (include_forming=False) — ihr Wert ist irrelevant. Gegenprobe: eine
-    vergiftete forming Zeile ändert das Ergebnis nicht."""
+    """R1: the forming candle of the running hour must feed neither the chosen
+    feature candle nor its features. After block 5, the read drops it
+    (include_forming=False) — its value is irrelevant. Counter-check: a
+    poisoned forming row does not change the result."""
     frame, forming_open = _ctx_frame_asc()
-    as_of = dt.datetime.now(dt.timezone.utc)  # Entscheidung in der laufenden Stunde
+    as_of = dt.datetime.now(dt.timezone.utc)  # decision in the running hour
     poisoned = frame.copy()
-    poisoned.iloc[-1, 1:] = PERTURB_VALUE  # forming Kerze (letzte Zeile) vergiften
+    poisoned.iloc[-1, 1:] = PERTURB_VALUE  # poison the forming candle (last row)
 
     (res_a, calls_a) = _run_fetch_context(frame, as_of)
     (res_b, _) = _run_fetch_context(poisoned, as_of)
-    assert res_a is not None and res_b is not None, "fetch_context_frame lieferte None trotz ausreichender Historie"
+    assert res_a is not None and res_b is not None, "fetch_context_frame returned None despite sufficient history"
     df_a, idx_a = res_a
     df_b, idx_b = res_b
 
-    # Der Read MUSS geschlossen-only angefordert worden sein (mechanische R1-Prüfung).
-    assert calls_a and calls_a[0]["include_forming"] is False, "fetch_context_frame liest die forming Kerze"
-    assert calls_a[0]["tf"] == "1h", f"falscher Timeframe angefordert: {calls_a[0]['tf']}"
+    # The read MUST have been requested closed-only (mechanical R1 check).
+    assert calls_a and calls_a[0]["include_forming"] is False, "fetch_context_frame reads the forming candle"
+    assert calls_a[0]["tf"] == "1h", f"wrong timeframe requested: {calls_a[0]['tf']}"
     assert calls_a[0]["indicator_columns"] == research_features.CONTEXT_IND_COLS, (
-        "Indikator-Spalten weichen von der geteilten Quelle ab (harte Regel 7)"
+        "indicator columns deviate from the shared source (hard rule 7)"
     )
 
     forming_naive = pd.Timestamp(forming_open).tz_convert("UTC").tz_localize(None)
     last_closed = forming_naive - pd.Timedelta(hours=1)
-    for df, idx, label in ((df_a, idx_a, "sauber"), (df_b, idx_b, "vergiftet")):
+    for df, idx, label in ((df_a, idx_a, "clean"), (df_b, idx_b, "poisoned")):
         chosen = df["open_time"].iloc[idx]
-        assert chosen < forming_naive, f"Feature-Kerze ({label}) nicht strikt vor der as_of-Stunde: {chosen}"
-        assert chosen == last_closed, f"floor-1-Join wählt nicht die letzte geschlossene Kerze ({label}): {chosen}"
+        assert chosen < forming_naive, f"feature candle ({label}) not strictly before the as_of hour: {chosen}"
+        assert chosen == last_closed, f"floor-1 join does not select the last closed candle ({label}): {chosen}"
 
     assert_dicts_equal(
         research_features.candle_context_features(df_a, idx_a),
         research_features.candle_context_features(df_b, idx_b),
         "fetch_context_frame(forming candle)",
     )
-    print("OK  fetch_context_frame: forming Kerze der laufenden Stunde ausgeschlossen (include_forming=False)")
+    print("OK  fetch_context_frame: forming candle of the running hour excluded (include_forming=False)")
 
 
 def test_fetch_context_frame_staleness_guard():
-    """Feature-Kerze älter als CONTEXT_MAX_STALENESS_H → None (Training hätte
-    das Event verworfen; Live darf es kein Signal speisen)."""
-    frame, _ = _ctx_frame_asc(end_offset_h=6)  # jüngste geschlossene Kerze ~6h alt
-    as_of = dt.datetime.now(dt.timezone.utc)  # 6h Lücke > 3h
+    """Feature candle older than CONTEXT_MAX_STALENESS_H → None (training would
+    have discarded the event; live must not feed a signal from it)."""
+    frame, _ = _ctx_frame_asc(end_offset_h=6)  # most recent closed candle ~6h old
+    as_of = dt.datetime.now(dt.timezone.utc)  # 6h gap > 3h
     got, _ = _run_fetch_context(frame, as_of)
-    assert got is None, "Staleness-Guard greift nicht (stale Feature-Kerze wurde geliefert)"
-    print("OK  fetch_context_frame: Staleness-Guard (>3h) liefert None")
+    assert got is None, "staleness guard does not trigger (stale feature candle was delivered)"
+    print("OK  fetch_context_frame: staleness guard (>3h) returns None")
 
 
-# ── regime_logic.compute_features: 15m closed-candle Read-Kontrakt (Block 5) ──
-# Der Regime-Detektor speist über classify_regime → apply_debounce das
-# Orchestrator-Gating. Die bei der Entscheidung laufende 15m-Kerze darf die
-# Klassifikation nicht mehr treiben (R1). Mechanisch, DB-frei via Fake-read_candles:
-#   * Live (as_of=None): include_forming=False, KEIN end (DB-Uhr-Cutoff).
-#   * Backfill (as_of=historisch): end=last_closed_open_time('15m', as_of) —
-#     NICHT end=as_of (das ließe die bei as_of forming Kerze drin = Look-ahead).
+# ── regime_logic.compute_features: 15m closed-candle read contract (block 5) ──
+# The regime detector feeds the orchestrator gating via classify_regime →
+# apply_debounce. The 15m candle running at decision time must no longer
+# drive the classification (R1). Mechanical, DB-free via fake read_candles:
+#   * Live (as_of=None): include_forming=False, NO end (DB-clock cutoff).
+#   * Backfill (as_of=historical): end=last_closed_open_time('15m', as_of) —
+#     NOT end=as_of (that would leave the candle forming at as_of in = look-ahead).
 def test_regime_compute_features_read_contract():
     from core import candles, regime_logic
 
     now = dt.datetime.now(dt.timezone.utc)
-    forming_open = candles.period_start("15m", now).replace(tzinfo=None)  # naive, wie die DB
+    forming_open = candles.period_start("15m", now).replace(tzinfo=None)  # naive, like the DB
     step = candles.timeframe_delta("15m")
     calls: list[dict] = []
 
     def fake_read(conn, symbol, tf, **kw):
         calls.append({"symbol": symbol, "tf": tf, **kw})
-        n = 700  # > MIN_DATA_POINTS_15M (480) auch nach 5h-Backfill-Schnitt
-        times = [forming_open - i * step for i in range(n, -1, -1)]  # ASC, letzte Zeile = forming
+        n = 700  # > MIN_DATA_POINTS_15M (480) even after the 5h backfill cut
+        times = [forming_open - i * step for i in range(n, -1, -1)]  # ASC, last row = forming
         df = pd.DataFrame({"open_time": times})
         for c in kw["columns"]:
             if c != "open_time":
-                df[c] = 100.0 + np.arange(len(df)) * 0.01  # leicht variabel für pct_change/ewm
+                df[c] = 100.0 + np.arange(len(df)) * 0.01  # slightly variable for pct_change/ewm
         if not kw.get("include_forming", False):
             df = df[df["open_time"] < forming_open]
         if kw.get("end") is not None:
@@ -538,38 +538,39 @@ def test_regime_compute_features_read_contract():
         original = regime_logic.read_candles
         try:
             regime_logic.read_candles = fake_read
-            feats = regime_logic.compute_features(object(), as_of)  # conn ist 1. Positional
+            feats = regime_logic.compute_features(object(), as_of)  # conn is the 1st positional
         finally:
             regime_logic.read_candles = original
         return feats, [dict(c) for c in calls]
 
     # ── Live ──
     feats_live, calls_live = run(None)
-    assert feats_live is not None, "compute_features(None) lieferte None trotz ausreichender Historie"
+    assert feats_live is not None, "compute_features(None) returned None despite sufficient history"
     for sym in ("BTCUSDT", "BTCDOMUSDT"):
         c = next(x for x in calls_live if x["symbol"] == sym)
-        assert c["tf"] == "15m" and c["include_forming"] is False, f"{sym}: liest die forming 15m-Kerze"
-        assert c["end"] is None, f"{sym}: Live darf keine obere Grenze setzen (DB-Uhr-Cutoff, kein Look-ahead-Fix nötig)"
+        assert c["tf"] == "15m" and c["include_forming"] is False, f"{sym}: reads the forming 15m candle"
+        assert c["end"] is None, f"{sym}: live must not set an upper bound (DB-clock cutoff, no look-ahead fix needed)"
 
     # ── Backfill ──
     as_of = now - dt.timedelta(hours=5)
     feats_bf, calls_bf = run(as_of)
-    assert feats_bf is not None, "compute_features(as_of) lieferte None trotz ausreichender Historie"
+    assert feats_bf is not None, "compute_features(as_of) returned None despite sufficient history"
     expected_end = candles.last_closed_open_time("15m", as_of).replace(tzinfo=None)
     for sym in ("BTCUSDT", "BTCDOMUSDT"):
         c = next(x for x in calls_bf if x["symbol"] == sym)
-        assert c["include_forming"] is False, f"{sym}: Backfill liest die forming Kerze"
+        assert c["include_forming"] is False, f"{sym}: backfill reads the forming candle"
         assert c["end"] == expected_end, (
-            f"{sym}: Backfill-end muss last_closed_open_time sein (nicht as_of): {c['end']} != {expected_end}"
+            f"{sym}: backfill end must be last_closed_open_time (not as_of): {c['end']} != {expected_end}"
         )
-    print("OK  compute_features: 15m closed-only — Live ohne end, Backfill end=last_closed_open_time (kein Look-ahead)")
+    print("OK  compute_features: 15m closed-only — live without end, backfill end=last_closed_open_time (no look-ahead)")
 
 
-# ── walkforward_sim: Loader-Kontrakt (die einzige Label-Quelle des Retrains) ──
+# ── walkforward_sim: loader contract (the only label source of the retrain) ──
 def _import_walkforward_sim():
-    """`tools/walkforward_sim.py` ist DB-frei importierbar, sobald die zwei
-    Pflicht-Secrets aus core.config gesetzt sind — die Verbindung baut erst
-    main() auf. Die Loader lassen sich damit ohne DB gegen ihren Kontrakt testen."""
+    """`tools/walkforward_sim.py` is importable DB-free once the two
+    mandatory secrets from core.config are set — the connection is only
+    built by main(). This lets the loaders be tested against their contract
+    without a DB."""
     os.environ.setdefault("DB_PASSWORD", "test")
     os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
     import tools.walkforward_sim as wfs
@@ -578,8 +579,8 @@ def _import_walkforward_sim():
 
 
 def _closed_plus_forming(tf: str, cols: list[str], n: int = 40) -> pd.DataFrame:
-    """Frame aus n geschlossenen Kerzen PLUS der aktuell laufenden (open_time ==
-    period_start), so wie die per-Coin-Tabelle sie heute wirklich enthält."""
+    """Frame of n closed candles PLUS the currently running one (open_time ==
+    period_start), the way the per-coin table actually contains them today."""
     from core import candles
 
     forming_open = candles.period_start(tf, dt.datetime.now(dt.timezone.utc))
@@ -593,10 +594,10 @@ def _closed_plus_forming(tf: str, cols: list[str], n: int = 40) -> pd.DataFrame:
 
 
 def _fake_reader(frame: pd.DataFrame, calls: list[dict]):
-    """Ersetzt core.candles.read_candles* durch eine pandas-seitige Nachbildung
-    des `include_forming`-Cutoffs (die echte SQL braucht libpq zum Rendern —
-    siehe backtest/test_candles.py). Prüft damit BEIDES: dass der Loader den
-    Kontrakt richtig aufruft und dass die laufende Kerze wirklich rausfällt."""
+    """Replaces core.candles.read_candles* with a pandas-side replica of the
+    `include_forming` cutoff (the real SQL needs libpq to render —
+    see backtest/test_candles.py). This checks BOTH: that the loader calls
+    the contract correctly and that the running candle actually drops out."""
     from core import candles
 
     def _read(conn, symbol, tf, **kw):
@@ -611,9 +612,9 @@ def _fake_reader(frame: pd.DataFrame, calls: list[dict]):
 
 
 def test_walkforward_loaders_drop_the_forming_candle():
-    """`load_ohlcv` / `load_joined` speisen die Labels JEDES Retrains (P0.10).
-    Die laufende Kerze darf dort nie als geschlossen ankommen — sonst trägt
-    jedes daraus trainierte Modell einen Look-ahead."""
+    """`load_ohlcv` / `load_joined` feed the labels of EVERY retrain (P0.10).
+    The running candle must never arrive there as closed — otherwise every
+    model trained from it carries a look-ahead."""
     wfs = _import_walkforward_sim()
     original = wfs.read_candles
     try:
@@ -624,18 +625,18 @@ def test_walkforward_loaders_drop_the_forming_candle():
             wfs.read_candles = _fake_reader(frame, calls)
             got = wfs.load_ohlcv(object(), "TESTUSDT", tf, days=30)
 
-            assert calls and calls[0]["include_forming"] is False, f"load_ohlcv({tf}) liest die forming Kerze"
+            assert calls and calls[0]["include_forming"] is False, f"load_ohlcv({tf}) reads the forming candle"
             assert got is not None and len(got) == len(frame) - 1
             assert (got["open_time"] < forming_open).all(), (
-                f"load_ohlcv({tf}): forming Kerze im Replay-Frame — Look-ahead in der Label-Quelle"
+                f"load_ohlcv({tf}): forming candle in the replay frame — look-ahead in the label source"
             )
     finally:
         wfs.read_candles = original
-    print("OK  load_ohlcv: forming Kerze fällt für 1h/4h/1d raus (include_forming=False)")
+    print("OK  load_ohlcv: forming candle drops out for 1h/4h/1d (include_forming=False)")
 
 
 def test_walkforward_joined_loader_drops_the_forming_candle():
-    """Gleiche Invariante für den Sniper-Join (td/bb-Adapter, 1h + 4h)."""
+    """Same invariant for the sniper join (td/bb adapter, 1h + 4h)."""
     wfs = _import_walkforward_sim()
     original = wfs.read_candles_with_indicators
     try:
@@ -646,32 +647,32 @@ def test_walkforward_joined_loader_drops_the_forming_candle():
             wfs.read_candles_with_indicators = _fake_reader(frame, calls)
             got = wfs.load_joined(object(), "TESTUSDT", tf, days=30)
 
-            assert calls and calls[0]["include_forming"] is False, f"load_joined({tf}) liest die forming Kerze"
+            assert calls and calls[0]["include_forming"] is False, f"load_joined({tf}) reads the forming candle"
             assert calls[0]["indicator_columns"] == wfs.SNIPER_JOIN_INDICATORS
             assert got is not None and len(got) == len(frame) - 1
             assert (got["open_time"] < forming_open).all(), (
-                f"load_joined({tf}): forming Kerze im Replay-Frame — Look-ahead in der Label-Quelle"
+                f"load_joined({tf}): forming candle in the replay frame — look-ahead in the label source"
             )
     finally:
         wfs.read_candles_with_indicators = original
-    print("OK  load_joined: forming Kerze fällt für 1h/4h raus (include_forming=False)")
+    print("OK  load_joined: forming candle drops out for 1h/4h (include_forming=False)")
 
 
-WARMUP_ROWS = 12  # so viele Kopfzeilen haben noch keinen ema_200 (Warmup der DB-Indikatoren)
+WARMUP_ROWS = 12  # this many head rows have no ema_200 yet (warmup of the DB indicators)
 
 
 def test_walkforward_joined_loader_never_backfills_warmup_indicators():
-    """Zweiter Look-ahead derselben Funktion (T-2026-CU-9050-045): `ffill` schließt
-    Innen-Lücken aus der Vergangenheit, ein `bfill` danach würde die Warmup-Kopfzeilen
-    aus der ZUKUNFT füllen. `ema_200` ist am Anfang jeder Coin-Historie NULL, und
-    `run_td_bb` emittiert schon ab `t=149` — der Leak landet also, anders als die
-    forming Kerze, in GELABELTEN Trainingszeilen. Erwartung: Kopfzeilen verworfen,
-    nie mit einem späteren Wert gefüllt."""
+    """Second look-ahead in the same function (T-2026-CU-9050-045): `ffill` closes
+    internal gaps from the past, a `bfill` afterwards would fill the warmup head
+    rows from the FUTURE. `ema_200` is NULL at the start of every coin history, and
+    `run_td_bb` already emits from `t=149` onward — so unlike the forming candle,
+    the leak lands in LABELLED training rows. Expectation: head rows discarded,
+    never filled with a later value."""
     wfs = _import_walkforward_sim()
     original = wfs.read_candles_with_indicators
     try:
         frame = _closed_plus_forming("1h", list(wfs.OHLCV_COLUMNS) + wfs.SNIPER_JOIN_INDICATORS)
-        # ema_200 fehlt im Warmup; die erste echte Zeile trägt einen unverwechselbaren Wert.
+        # ema_200 is missing in the warmup; the first real row carries a distinctive value.
         frame.loc[: WARMUP_ROWS - 1, "ema_200"] = np.nan
         frame.loc[WARMUP_ROWS:, "ema_200"] = 4711.0
         first_real_open = pd.Timestamp(frame["open_time"].iloc[WARMUP_ROWS])
@@ -681,19 +682,19 @@ def test_walkforward_joined_loader_never_backfills_warmup_indicators():
 
         assert got is not None and not got["ema_200"].isna().any()
         assert (got["open_time"] >= first_real_open).all(), (
-            "load_joined: Warmup-Kopfzeile überlebt — ihr ema_200 kann nur aus der Zukunft stammen"
+            "load_joined: warmup head row survives — its ema_200 can only have come from the future"
         )
-        # closed = len(frame)-1 (forming), davon fallen die WARMUP_ROWS Kopfzeilen weg.
+        # closed = len(frame)-1 (forming), of which the WARMUP_ROWS head rows drop out.
         assert len(got) == len(frame) - 1 - WARMUP_ROWS, (
-            f"erwartet {len(frame) - 1 - WARMUP_ROWS} Zeilen, bekommen {len(got)} — bfill füllt noch"
+            f"expected {len(frame) - 1 - WARMUP_ROWS} rows, got {len(got)} — bfill is still filling"
         )
     finally:
         wfs.read_candles_with_indicators = original
-    print(f"OK  load_joined: {WARMUP_ROWS} Warmup-Kopfzeilen verworfen statt aus der Zukunft gefüllt")
+    print(f"OK  load_joined: {WARMUP_ROWS} warmup head rows discarded instead of filled from the future")
 
 
 if __name__ == "__main__":
-    # cp1252-Konsole (Windows): Sonderzeichen nicht crashen lassen
+    # cp1252 console (Windows): don't let special characters crash it
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
@@ -717,4 +718,4 @@ if __name__ == "__main__":
     test_walkforward_loaders_drop_the_forming_candle()
     test_walkforward_joined_loader_drops_the_forming_candle()
     test_walkforward_joined_loader_never_backfills_warmup_indicators()
-    print("\nAlle Look-ahead-Perturbationstests bestanden — kein Future-Leak in den geteilten Feature-Buildern.")
+    print("\nAll look-ahead perturbation tests passed — no future leak in the shared feature builders.")

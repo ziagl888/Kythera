@@ -1,17 +1,17 @@
-# 32_ai_trm1_bot.py — TRM1 "Transition-Resolution-Modell" (Report 15, S10).
+# 32_ai_trm1_bot.py — TRM1 "transition resolution model" (Report 15, S10).
 """
-Läuft NUR im TRANSITION-Regime (44,5% der Zeit — E8) und sagt die
-Auflösungsrichtung voraus (TREND_UP / TREND_DOWN / keine handelbare Auflösung)
-aus den regime_history-Rohfeatures. Prognostiziert das Modell eine Trend-
-Auflösung über der Val-Schwelle, postet der Bot ein BTCUSDT-Signal in diese
-Richtung (BULL→LONG, BEAR→SHORT) — messbar über ai_signals wie jeder andere Bot
-(Operator-Entscheid 2026-07-06).
+Runs ONLY in the TRANSITION regime (44.5% of the time — E8) and predicts the
+resolution direction (TREND_UP / TREND_DOWN / no tradeable resolution)
+from the regime_history raw features. If the model predicts a trend
+resolution above the val threshold, the bot posts a BTCUSDT signal in that
+direction (BULL→LONG, BEAR→SHORT) — measurable via ai_signals like any other bot
+(operator decision 2026-07-06).
 
-Klassen-Vertrag (core/research_features): 0 = OTHER (CHOP/HIGH_VOLA/keine
-Auflösung), 1 = TREND_UP, 2 = TREND_DOWN. Trainer: tools/trm1_build_dataset.py
+Class contract (core/research_features): 0 = OTHER (CHOP/HIGH_VOLA/no
+resolution), 1 = TREND_UP, 2 = TREND_DOWN. Trainer: tools/trm1_build_dataset.py
 + tools/new_models_train.py --strategy trm1.
 
-Läuft alle 5 Minuten (Raster des 26_regime_detector, +4 min versetzt).
+Runs every 5 minutes (grid of 26_regime_detector, offset by +4 min).
 Watchdog: start_delay=207.
 """
 
@@ -49,11 +49,11 @@ logger = logging.getLogger(__name__)
 
 MODEL_ID = "TRM1"
 ARTIFACT_PATH = "trm1_model.pkl"
-TARGET_CHANNEL_ID = _kcfg.CH_TRM1  # per-Bot-Override, Fallback CH_NEW_IDEAS
+TARGET_CHANNEL_ID = _kcfg.CH_TRM1  # per-bot override, fallback CH_NEW_IDEAS
 LIVE_POSTING = os.getenv("NEW_IDEAS_LIVE_POSTING", "1") == "1"
 SHADOW_FLOOR = 0.25
 TRADE_SYMBOL = "BTCUSDT"
-COOLDOWN_HOURS = 12  # höchstens ein Signal je Richtung/Episode-Zeitfenster
+COOLDOWN_HOURS = 12  # at most one signal per direction/episode time window
 ARTIFACT_RETRY_S = 1800
 
 ARTIFACT = load_artifact(ARTIFACT_PATH, TRM1_FEATURES, MODEL_ID)
@@ -68,7 +68,7 @@ def ensure_artifact() -> None:
 
 
 def fetch_regime_state(conn) -> tuple[str, float] | None:
-    """Debounced-Regime + Minuten seit Regime-Beginn aus regime_current."""
+    """Debounced regime + minutes since regime start from regime_current."""
     with conn.cursor() as cur:
         cur.execute("SELECT regime, since FROM regime_current WHERE id = 1")
         row = cur.fetchone()
@@ -83,7 +83,7 @@ def fetch_regime_state(conn) -> tuple[str, float] | None:
 
 
 def fetch_regime_window(conn, limit: int = TRM1_WINDOW_CHECKS) -> list[dict]:
-    """Letzte Checks aus regime_history, chronologisch ASC (ts = naive UTC)."""
+    """Latest checks from regime_history, chronological ASC (ts = naive UTC)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -99,12 +99,12 @@ def fetch_regime_window(conn, limit: int = TRM1_WINDOW_CHECKS) -> list[dict]:
 
 
 def startup_feature_selfcheck() -> bool:
-    """P0.12-Muster: Features über echte regime_history-Fenster rechnen.
+    """P0.12 pattern: run the features over real regime_history windows.
 
-    Rückgabe False bei (noch) zu wenig regime_history — der Aufrufer wartet
-    dann statt zu crashen (frisches Setup füllt sich alle 5 min selbst; ein
-    exit(1) würde einen ~2h-Watchdog-Restart-Loop erzeugen, Review-Fix
-    2026-07-06). Kaputte Features bleiben ein harter Abbruch."""
+    Returns False when there's (still) too little regime_history — the caller
+    then waits instead of crashing (a fresh setup fills itself every 5 min; an
+    exit(1) would create a ~2h watchdog restart loop, review fix
+    2026-07-06). Broken features remain a hard abort."""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
@@ -118,13 +118,13 @@ def startup_feature_selfcheck() -> bool:
             cols = [d[0] for d in cur.description]
             hist = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()][::-1]
         if len(hist) < TRM1_WINDOW_CHECKS + 10:
-            logger.warning("Selbsttest: zu wenig regime_history-Zeilen — läuft 26_regime_detector? Warte.")
+            logger.warning("Self-test: too few regime_history rows — is 26_regime_detector running? Waiting.")
             return False
         rows = []
         for end in range(TRM1_WINDOW_CHECKS, len(hist), 5):
             window = hist[end - TRM1_WINDOW_CHECKS : end]
             rows.append(build_trm1_row(window, minutes_in_transition=float(end)))
-        # Fraktions-/Konfidenz-Features dürfen über ruhige Phasen konstant sein.
+        # Fraction/confidence features are allowed to be constant over calm phases.
         assert_features_alive(
             rows,
             TRM1_FEATURES,
@@ -139,7 +139,7 @@ def startup_feature_selfcheck() -> bool:
             },
             context=" (TRM1-Startup)",
         )
-        logger.info(f"✅ Feature-Selbsttest bestanden ({len(rows)} Fenster).")
+        logger.info(f"✅ Feature self-test passed ({len(rows)} windows).")
         return True
     except ValueError as e:
         logger.critical(f"❌ {e}")
@@ -153,7 +153,7 @@ def run_check() -> None:
     try:
         state = fetch_regime_state(conn)
         if state is None:
-            logger.warning("regime_current leer — läuft 26_regime_detector?")
+            logger.warning("regime_current empty — is 26_regime_detector running?")
             return
         regime, minutes_in = state
         if regime != "TRANSITION":
@@ -165,7 +165,7 @@ def run_check() -> None:
         feature_row = build_trm1_row(window, minutes_in)
         missing = [c for c in ARTIFACT["features"] if c not in feature_row]
         if missing:
-            raise ValueError(f"Feature-Vertrag verletzt — fehlend: {missing}")
+            raise ValueError(f"Feature contract violated — missing: {missing}")
         X = pd.DataFrame([{c: feature_row[c] for c in ARTIFACT["features"]}], dtype=float)
         X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -177,41 +177,41 @@ def run_check() -> None:
             return
         conf = calibrated_confidence(ARTIFACT, prob)
 
-        # Der Kontext-Frame speist seit T-2026-KYT-9050-011 NICHT mehr den
-        # Entry-Preis; er bleibt der Daten-Freshness-Guard, hinter dem TRM1
-        # bisher schwieg: genug 1h-Historie für BTCUSDT UND ein Join, der nicht
-        # staler als CONTEXT_MAX_STALENESS_H ist (Ingestion lebt). TRM1-Features
-        # kommen aus regime_history, nicht aus diesem Frame.
+        # Since T-2026-KYT-9050-011 the context frame no longer feeds the
+        # entry price; it stays the data-freshness guard TRM1 previously
+        # stayed silent behind: enough 1h history for BTCUSDT AND a join that's
+        # no staler than CONTEXT_MAX_STALENESS_H (ingestion is alive). TRM1 features
+        # come from regime_history, not from this frame.
         if fetch_context_frame(conn, TRADE_SYMBOL) is None:
             return
-        # Entry-Anker = LIVE-Preis (core.live_price, core.candles contract 2:
-        # Erkennung auf geschlossenen Kerzen, Preis separat). Der Frame trägt
-        # seit Block 5 (T-2026-CU-9050-112) nur geschlossene Kerzen — sein
-        # letzter Close wäre bis zu ~59 min alt.
+        # Entry anchor = LIVE price (core.live_price, core.candles contract 2:
+        # detection on closed candles, price separate). The frame has carried
+        # only closed candles since block 5 (T-2026-CU-9050-112) — its
+        # last close would be up to ~59 min old.
         live_price = get_live_price(TRADE_SYMBOL, conn)
         if live_price is None:
-            # Ohne Preis-Anker kein Signal und kein Prediction-Log; TRM1 prüft
-            # ohnehin alle 5 min erneut. Kein Cooldown — der wird hier nur auf
-            # dem Post-Pfad gesetzt (unverändert).
-            logger.warning(f"{TRADE_SYMBOL}: kein Live-Preis (Binance + DB-Fallback) — Check übersprungen.")
+            # Without a price anchor, no signal and no prediction log; TRM1 checks
+            # again every 5 min anyway. No cooldown — that's only set here on
+            # the post path (unchanged).
+            logger.warning(f"{TRADE_SYMBOL}: no live price (Binance + DB fallback) — check skipped.")
             return
 
         logger.info(
-            f"TRM1 TRANSITION seit {minutes_in:.0f} min | P(up)={p_up:.3f} "
-            f"P(down)={p_down:.3f} (Gate {ARTIFACT['threshold']:.2f})"
+            f"TRM1 TRANSITION for {minutes_in:.0f} min | P(up)={p_up:.3f} "
+            f"P(down)={p_down:.3f} (gate {ARTIFACT['threshold']:.2f})"
         )
 
         if check_cooldown(conn, MODEL_ID, TRADE_SYMBOL, direction, COOLDOWN_HOURS):
             return
         if has_open_ai_signal(conn, TRADE_SYMBOL, direction, ARTIFACT["tag"]):
             return
-        # Kein Self-Hedge (Review-Fix 2026-07-06): kippt die Prognose im
-        # 5-min-Takt, während der Gegen-Trade noch offen ist, würde TRM1 sonst
-        # gleichzeitige Gegenpositionen auf BTCUSDT posten — dann nur Shadow.
+        # No self-hedge (review fix 2026-07-06): if the forecast flips on the
+        # 5-min cadence while the counter-trade is still open, TRM1 would otherwise
+        # post simultaneous counter-positions on BTCUSDT — then only shadow.
         opposite = "SHORT" if direction == "LONG" else "LONG"
         allow_post = not has_open_ai_signal(conn, TRADE_SYMBOL, opposite, ARTIFACT["tag"])
         if not allow_post and prob >= ARTIFACT["threshold"]:
-            logger.info(f"⛔ Gegenposition ({opposite}) offen — {direction}-Signal nur als Shadow.")
+            logger.info(f"⛔ Counter-position ({opposite}) open — {direction} signal shadow-only.")
 
         if prob >= ARTIFACT["threshold"] and LIVE_POSTING and allow_post:
             setup = calculate_smart_targets(conn, TRADE_SYMBOL, direction, live_price)
@@ -228,19 +228,19 @@ def run_check() -> None:
                 setup["targets"],
                 source_desc="AI Transition Resolution Model",
                 extra_info_lines=[
-                    f"Regime: TRANSITION seit {minutes_in:.0f} min",
-                    f"Auflösung: {'TREND_UP' if direction == 'LONG' else 'TREND_DOWN'}",
+                    f"Regime: TRANSITION for {minutes_in:.0f} min",
+                    f"Resolution: {'TREND_UP' if direction == 'LONG' else 'TREND_DOWN'}",
                 ],
             )
             log_prediction(conn, ARTIFACT["tag"], TRADE_SYMBOL, direction, live_price, conf, posted=True)
-            update_cooldown(conn, MODEL_ID, TRADE_SYMBOL, direction)  # committet atomar
+            update_cooldown(conn, MODEL_ID, TRADE_SYMBOL, direction)  # commits atomically
         else:
             if prob >= ARTIFACT["threshold"] and not LIVE_POSTING:
-                logger.info(f"👻 SHADOW-Post {direction} (p={prob:.2f}) — Live-Posting deaktiviert.")
+                logger.info(f"👻 SHADOW post {direction} (p={prob:.2f}) — live posting disabled.")
             log_prediction(conn, ARTIFACT["tag"], TRADE_SYMBOL, direction, live_price, conf, posted=False)
             conn.commit()
     except Exception as e:
-        logger.error(f"TRM1-Check-Fehler: {e}")
+        logger.error(f"TRM1 check error: {e}")
         try:
             conn.rollback()
         except Exception:
@@ -251,9 +251,9 @@ def run_check() -> None:
 
 def main() -> None:
     global LIVE_POSTING
-    logger.info("=== 🧭 AI TRM1 BOT (Transition-Resolution, S10) GESTARTET ===")
+    logger.info("=== 🧭 AI TRM1 BOT (Transition Resolution, S10) STARTED ===")
     if TARGET_CHANNEL_ID == 0:
-        logger.warning("Weder CH_TRM1 noch CH_NEW_IDEAS gesetzt — erzwinge Shadow-only-Modus.")
+        logger.warning("Neither CH_TRM1 nor CH_NEW_IDEAS set — forcing shadow-only mode.")
         LIVE_POSTING = False
     logger.info(f"Posting: {'LIVE' if LIVE_POSTING else 'SHADOW-ONLY'}")
 
@@ -270,12 +270,12 @@ def main() -> None:
     conn.close()
 
     while not startup_feature_selfcheck():
-        time.sleep(600)  # regime_history füllt sich alle 5 min von selbst
+        time.sleep(600)  # regime_history fills itself every 5 min
 
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
-        # +4 min zum 5-min-Raster des Regime-Detectors — dessen Check ist dann
-        # sicher geschrieben, bevor wir lesen.
+        # +4 min offset from the regime detector's 5-min grid — its check is
+        # then guaranteed to be written before we read.
         if now.minute % 5 == 4:
             ensure_artifact()
             if ARTIFACT["loaded"]:
@@ -289,4 +289,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

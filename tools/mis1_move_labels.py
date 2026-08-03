@@ -1,31 +1,31 @@
 """
-tools/mis1_move_labels.py — Move-Labels für die MIS1-Replay-Samples (Operator-Konzept).
+tools/mis1_move_labels.py — Move labels for the MIS1 replay samples (operator concept).
 
-Zweck
------
-Das Replay-Label (TP1-vor-SL der Smart-Targets-Geometrie) beantwortet "verdient
-der gepostete Trade Geld?". Das ursprüngliche MIS-Konzept fragt aber "kommt ein
-Pump/Dump von ±X% innerhalb T?" — mit horizontabhängigem X:
+Purpose
+-------
+The replay label (TP1-before-SL of the smart-targets geometry) answers "does
+the posted trade earn money?". But the original MIS concept asks "does a
+pump/dump of ±X% happen within T?" — with horizon-dependent X:
 
     8h → ±5%      24h → ±10%      72h → ±15%      168h → ±25%
 
-Dieses Skript berechnet für jeden (symbol, signal_time)-Punkt des vorhandenen
-Replays die maximale Auf-/Abwärtsbewegung je Horizont NACH — nur aus den
-1h-Preisreihen, ohne Feature- oder Geometrie-Neuberechnung. Gespeichert werden
-die KONTINUIERLICHEN Extreme (Close- und Wick-Basis), damit die Label-Schwellen
-im Trainer ohne Neu-Lauf variiert werden können.
+For every (symbol, signal_time) point of the existing replay this script
+computes the maximum up/down move per horizon AFTER — purely from the
+1h price series, without recomputing features or geometry. What is stored
+are the CONTINUOUS extremes (close and wick basis), so the label thresholds
+can be varied in the trainer without a re-run.
 
-Fensterkonvention wie im Replay (walkforward_sim.run_mis1): Entscheidungskerze t
-(signal_time = open_time[t] + 1h), Entry = close[t], Bewegungsfenster =
-Kerzen t+1 .. t+H. `full_Hh=false` heißt: Datenende vor Horizontende — eine
-positive Schwelle kann trotzdem als 1 gewertet werden, eine 0 ist dort aber
-kein verlässliches Label (Trainer verwirft sie).
+Window convention as in the replay (walkforward_sim.run_mis1): decision candle t
+(signal_time = open_time[t] + 1h), entry = close[t], move window =
+candles t+1 .. t+H. `full_Hh=false` means: data end before horizon end — a
+positive threshold can still be scored as 1, but a 0 there is not a reliable
+label (the trainer discards it).
 
-Betriebsregeln (Live-VPS!): BELOW_NORMAL, DB strikt read-only, Output als JSONL
-nach Documents\\_X\\staging_models\\replay\\.
+Operating rules (live VPS!): BELOW_NORMAL, DB strictly read-only, output as JSONL
+to Documents\\_X\\staging_models\\replay\\.
 
-Beispiel
---------
+Example
+-------
   python tools/mis1_move_labels.py --replay ...\\replay\\mis1_replay_400d.jsonl
 """
 
@@ -54,8 +54,8 @@ HORIZONS = (8, 24, 72, 168)
 
 
 def collect_sample_times(replay_path: str) -> dict[str, list[str]]:
-    """Ein Durchlauf über das Replay-JSONL: je Symbol die eindeutigen
-    signal_times (LONG/SHORT teilen sich den Zeitpunkt)."""
+    """One pass over the replay JSONL: per symbol the unique
+    signal_times (LONG/SHORT share the timestamp)."""
     per_symbol: dict[str, set] = {}
     with open(replay_path, encoding="utf-8") as fh:
         for line in fh:
@@ -66,9 +66,9 @@ def collect_sample_times(replay_path: str) -> dict[str, list[str]]:
 
 def load_prices(conn, symbol: str, days: int) -> pd.DataFrame | None:
     try:
-        # Über core.candles: GESCHLOSSENE 1h-Kerzen, ASC. Der Cutoff dort ist
-        # Epoch-Arithmetik auf der DB-Uhr und ersetzt das frühere
-        # date_trunc('hour', NOW()) — TZ-unabhängig statt session-abhängig.
+        # Via core.candles: CLOSED 1h candles, ASC. The cutoff there is
+        # epoch arithmetic on the DB clock and replaces the earlier
+        # date_trunc('hour', NOW()) — TZ-independent instead of session-dependent.
         df = read_candles(
             conn,
             symbol,
@@ -89,10 +89,10 @@ def load_prices(conn, symbol: str, days: int) -> pd.DataFrame | None:
 
 
 def forward_extremes(series: pd.Series, horizon: int, mode: str) -> np.ndarray:
-    """Extremum über die Kerzen t+1 .. t+horizon (Teilfenster am Datenende).
+    """Extremum over candles t+1 .. t+horizon (partial window at data end).
 
-    rolling(h, min_periods=1) bei Index i deckt [i-h+1 .. i]; um h nach vorn
-    geschoben deckt es bei Index t exakt [t+1 .. t+h]."""
+    rolling(h, min_periods=1) at index i covers [i-h+1 .. i]; shifted forward
+    by h it covers exactly [t+1 .. t+h] at index t."""
     roll = series.rolling(horizon, min_periods=1)
     agg = roll.max() if mode == "max" else roll.min()
     return agg.shift(-horizon).values
@@ -110,9 +110,9 @@ def label_symbol(df: pd.DataFrame, sample_times: list[str]) -> list[dict]:
         ext[(h, "up_wick")] = forward_extremes(df["high"], h, "max")
         ext[(h, "dn_wick")] = forward_extremes(df["low"], h, "min")
 
-    # signal_time = open_time + 1h → Index der Entscheidungskerze.
-    # Replay-signal_times sind tz-naiv (UTC-Wandzeit), DB-open_time tz-aware —
-    # beide Seiten auf naive UTC normalisieren, sonst matcht NICHTS.
+    # signal_time = open_time + 1h → index of the decision candle.
+    # Replay signal_times are tz-naive (UTC wall-clock time), DB open_time is tz-aware —
+    # normalise both sides to naive UTC, otherwise NOTHING matches.
     naive_ot = df["open_time"].dt.tz_localize(None)
     idx_by_time = {ts + pd.Timedelta(hours=1): i for i, ts in enumerate(naive_ot)}
 
@@ -122,11 +122,11 @@ def label_symbol(df: pd.DataFrame, sample_times: list[str]) -> list[dict]:
         if t is None or entry[t] <= 0:
             continue
         e = entry[t]
-        rec: dict = {"symbol": None, "signal_time": st}  # symbol setzt der Aufrufer
+        rec: dict = {"symbol": None, "signal_time": st}  # symbol is set by the caller
         for h in HORIZONS:
             up_c, dn_c = ext[(h, "up_close")][t], ext[(h, "dn_close")][t]
             up_w, dn_w = ext[(h, "up_wick")][t], ext[(h, "dn_wick")][t]
-            if np.isnan(up_c):  # keine einzige Kerze nach t
+            if np.isnan(up_c):  # not a single candle after t
                 rec[f"runup_close_pct_{h}h"] = None
                 rec[f"drawdown_close_pct_{h}h"] = None
                 rec[f"runup_wick_pct_{h}h"] = None
@@ -142,12 +142,12 @@ def label_symbol(df: pd.DataFrame, sample_times: list[str]) -> list[dict]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Move-Labels für MIS1-Replay-Samples")
-    ap.add_argument("--replay", required=True, help="mis1_replay_*.jsonl aus walkforward_sim")
+    ap = argparse.ArgumentParser(description="Move labels for MIS1 replay samples")
+    ap.add_argument("--replay", required=True, help="mis1_replay_*.jsonl from walkforward_sim")
     ap.add_argument("--days", type=int, default=410,
-                    help="DB-Ladefenster; muss das Replay-Fenster abdecken")
+                    help="DB load window; must cover the replay window")
     ap.add_argument("--out", default=None,
-                    help="Default: <replay-Verzeichnis>/mis1_move_labels.jsonl")
+                    help="Default: <replay-directory>/mis1_move_labels.jsonl")
     args = ap.parse_args()
 
     try:
@@ -159,10 +159,10 @@ def main() -> None:
 
     out_path = args.out or os.path.join(os.path.dirname(args.replay), "mis1_move_labels.jsonl")
 
-    print("Sammle Sample-Zeitpunkte aus dem Replay ...")
+    print("Collecting sample timestamps from the replay ...")
     per_symbol = collect_sample_times(args.replay)
     n_samples = sum(len(v) for v in per_symbol.values())
-    print(f"{len(per_symbol)} Symbole, {n_samples} eindeutige (symbol, signal_time)-Punkte")
+    print(f"{len(per_symbol)} symbols, {n_samples} unique (symbol, signal_time) points")
 
     conn = get_db_connection()
     t0 = time.time()
@@ -171,24 +171,24 @@ def main() -> None:
         for i, (symbol, times) in enumerate(sorted(per_symbol.items()), 1):
             df = load_prices(conn, symbol, args.days)
             if df is None:
-                print(f"  !! {symbol}: keine Preisdaten — übersprungen")
+                print(f"  !! {symbol}: no price data — skipped")
                 continue
             recs = label_symbol(df, times)
             if not recs and times:
-                print(f"  !! {symbol}: 0/{len(times)} Zeitstempel gematcht (Datenlücke?)")
+                print(f"  !! {symbol}: 0/{len(times)} timestamps matched (data gap?)")
             for rec in recs:
                 rec["symbol"] = symbol
                 fh.write(json.dumps(rec) + "\n")
                 n_written += 1
             fh.flush()
             if i % 50 == 0:
-                print(f"[{i}/{len(per_symbol)}] {symbol}: total {n_written} Labels "
+                print(f"[{i}/{len(per_symbol)}] {symbol}: total {n_written} labels "
                       f"({time.time() - t0:.0f}s)", flush=True)
     conn.close()
 
-    print(f"\nFertig: {n_written}/{n_samples} Labels → {out_path}")
+    print(f"\nDone: {n_written}/{n_samples} labels → {out_path}")
     if n_written < n_samples * 0.5:
-        print(f"FEHLER: nur {n_written}/{n_samples} gelabelt — Ergebnis unbrauchbar")
+        print(f"ERROR: only {n_written}/{n_samples} labelled — result unusable")
         sys.exit(1)
 
 

@@ -1,24 +1,24 @@
 # core/funding_features.py
-"""Geteilter Funding-Feature-Builder — EINE Quelle für Studien, Trainer und Bots.
+"""Shared funding feature builder — ONE source for studies, trainers and bots.
 
-Herkunft: Report 21 Addendum 2 (ABR1-LONG-Studie 2026-07-06). Die dort
-validierten Feature-Definitionen sind hier kanonisch festgehalten, damit
-kommende Retrains (RUB2, EPD2, …) exakt dieselben Größen benutzen wie die
-Studie und der Live-Bot (kein Train/Serve-Skew — gleiche Regel wie
-core/mis_features.py und core/aim2_features.py).
+Origin: Report 21 Addendum 2 (ABR1-LONG study 2026-07-06). The feature
+definitions validated there are held canonical here, so that
+upcoming retrains (RUB2, EPD2, …) use exactly the same quantities as the
+study and the live bot (no train/serve skew — same rule as
+core/mis_features.py and core/aim2_features.py).
 
-Datenquelle offline: Tabelle ``funding_rates`` (voll backfillt via
-``tools/backfill_funding_rates.py``; 8h-Raster). Live holt der Bot dieselben
-Werte per REST (siehe 18_ai_abr1_bot.get_funding_24h_bps).
+Data source offline: table ``funding_rates`` (fully backfilled via
+``tools/backfill_funding_rates.py``; 8h grid). Live, the bot fetches the same
+values via REST (see 18_ai_abr1_bot.get_funding_24h_bps).
 
-Alle Features sind as-of: es gehen nur Funding-Sätze ein, deren funding_time
-STRIKT vor dem Ereigniszeitpunkt liegt — kein Lookahead.
+All features are as-of: only funding rates whose funding_time is
+STRICTLY before the event timestamp are included — no lookahead.
 
-Validierte Schwellen (ABR-Familie, Stand 2026-07-06):
-  * LONG-Gate:   fund_24h > +3,0 bps  (+1,12 %/Trade, 74 % WR)
-  * SHORT-Veto:  fund_24h > +1,5 bps  (−1,21 %/Trade in der Zone)
-Referenz: Binance-Default-Funding = +1,0 bps/8h — dort kleben ~75 % der Werte,
-das Signal steckt STRIKT darüber/darunter.
+Validated thresholds (ABR family, as of 2026-07-06):
+  * LONG gate:   fund_24h > +3.0 bps  (+1.12 %/trade, 74 % WR)
+  * SHORT veto:  fund_24h > +1.5 bps  (−1.21 %/trade in the zone)
+Reference: Binance default funding = +1.0 bps/8h — ~75 % of values cling
+there, the signal sits STRICTLY above/below.
 """
 
 from __future__ import annotations
@@ -29,25 +29,25 @@ import numpy as np
 import pandas as pd
 
 FUNDING_FEATURES = [
-    "fund_last",  # letzter abgerechneter Satz (bps)
-    "fund_24h",  # Mittel letzte 3 Sätze (bps) — Gate-/Veto-Größe
-    "fund_72h",  # Mittel letzte 9 Sätze (bps)
-    "fund_7d_cum",  # Summe letzte 21 Sätze (bps)
-    "fund_pctl_90d",  # Perzentil des letzten Satzes vs. eigene 90d-Historie
+    "fund_last",  # last settled rate (bps)
+    "fund_24h",  # mean of last 3 rates (bps) — gate/veto quantity
+    "fund_72h",  # mean of last 9 rates (bps)
+    "fund_7d_cum",  # sum of last 21 rates (bps)
+    "fund_pctl_90d",  # percentile of the last rate vs. its own 90d history
     "fund_trend",  # fund_24h − fund_72h (bps)
 ]
 
-#: Mindestanzahl historischer Sätze, bevor Features berechnet werden (7 Tage).
+#: Minimum number of historical rates before features are computed (7 days).
 MIN_HISTORY = 21
 
 
 def load_funding(conn, symbols: list[str], since=None) -> dict[str, pd.DataFrame]:
-    """Lädt die Funding-Historie je Symbol aus ``funding_rates`` (aufsteigend).
+    """Loads the funding history per symbol from ``funding_rates`` (ascending).
 
-    since: optionale Untergrenze (tz-aware). Live-Bots begrenzen damit den
-    Load — funding_features_asof nutzt maximal die letzten 270 Sätze (~90d),
-    die volle Historie je Trigger zu ziehen ist verschenkte DB-Arbeit.
-    Trainer/Replays lassen since weg (as-of über den gesamten Zeitraum).
+    since: optional lower bound (tz-aware). Live bots use it to bound the
+    load — funding_features_asof uses at most the last 270 rates (~90d),
+    pulling the full history per trigger would be wasted DB work.
+    Trainers/replays omit since (as-of over the entire time range).
     """
     query = "SELECT symbol, funding_time, funding_rate FROM funding_rates WHERE symbol = ANY(%(syms)s)"
     params: dict = {"syms": list(symbols)}
@@ -61,10 +61,10 @@ def load_funding(conn, symbols: list[str], since=None) -> dict[str, pd.DataFrame
 
 
 def funding_features_asof(by_sym: dict[str, pd.DataFrame], symbol: str, ts_utc) -> dict:
-    """Die 6 FUNDING_FEATURES für ein Ereignis zu Zeitpunkt ``ts_utc`` (tz-aware).
+    """The 6 FUNDING_FEATURES for an event at timestamp ``ts_utc`` (tz-aware).
 
-    Rückgabe {} wenn Symbol fehlt oder Historie < MIN_HISTORY — der Aufrufer
-    entscheidet (Trainer: Zeile verwerfen; Gate: fail-closed/-open je Politik).
+    Returns {} if the symbol is missing or history < MIN_HISTORY — the caller
+    decides (trainer: drop the row; gate: fail-closed/-open per policy).
     """
     g = by_sym.get(symbol)
     if g is None:
@@ -85,77 +85,78 @@ def funding_features_asof(by_sym: dict[str, pd.DataFrame], symbol: str, ts_utc) 
     }
 
 
-# --- Abrechnungs-gebundener Cache für Hochfrequenz-Aufrufer (T-2026-CU-9050-055) ---
+# --- Settlement-bound cache for high-frequency callers (T-2026-CU-9050-055) ---
 #
-# ``funding_features_asof`` hängt vom Zeitstempel AUSSCHLIESSLICH über den
-# searchsorted-Schnitt ab — über die Zahl der Sätze mit funding_time < ts. Solange
-# keine neue Abrechnung dazukommt, ist das Ergebnis konstant: der Schnitt bleibt
-# gleich, und alle Aggregate sind Suffixe (rates[-3:], rates[-270:], …), hängen
-# also nicht an der wandernden ``since``-Untergrenze des Loads.
+# ``funding_features_asof`` depends on the timestamp EXCLUSIVELY via the
+# searchsorted cut — via the number of rates with funding_time < ts. As long as
+# no new settlement is added, the result is constant: the cut stays the
+# same, and all aggregates are suffixes (rates[-3:], rates[-270:], …), so they
+# don't depend on the load's moving ``since`` lower bound.
 #
-# Der Cache-Schlüssel kommt deshalb aus den DATEN, nicht aus der Wanduhr: ein
-# Eintrag gilt bis zu der Abrechnung, die das Ergebnis als Nächstes verändern kann
-# (siehe ``next_feature_change``). Zwei Fehlerklassen, die ein uhr-gebundener Key
-# (z.B. "eine Stunde") hätte, entfallen damit:
+# The cache key therefore comes from the DATA, not the wall clock: an
+# entry is valid up to the settlement that can next change the result
+# (see ``next_feature_change``). Two error classes that a clock-bound key
+# (e.g. "one hour") would have are eliminated by this:
 #
-#   * Abrechnungen, die nicht auf einer vollen Stunde liegen. Nichts erzwingt
-#     das — ``tools/backfill_funding_rates.py`` schreibt ``funding_time`` mit
-#     voller Millisekunden-Auflösung. Ein Satz um 12:30 wäre unter einem
-#     Stunden-Key bis 13:00 unsichtbar geblieben.
-#   * Ingestion-Verzug. Ist die fällige Zeile noch nicht da, ist der Eintrag
-#     bereits abgelaufen: es wird neu geladen, bis sie erscheint — dann schiebt
-#     der frische ``funding_time`` die Grenze weiter. Der Cache korrigiert sich
-#     selbst, statt auf eine Ingestion-SLA zu wetten.
+#   * Settlements that don't land on a full hour. Nothing enforces
+#     that — ``tools/backfill_funding_rates.py`` writes ``funding_time`` at
+#     full millisecond resolution. A rate at 12:30 would have stayed
+#     invisible under an hour key until 13:00.
+#   * Ingestion lag. If the due row isn't there yet, the entry has
+#     already expired: it gets reloaded until it appears — then the fresh
+#     ``funding_time`` pushes the boundary further out. The cache corrects
+#     itself instead of betting on an ingestion SLA.
 #
-# Ein naiver Zeit-TTL leistet beides nicht: er kann eine Abrechnungsgrenze
-# überspannen und dem Modell veraltetes Funding servieren — Bruch der
-# Trainer-Parität (Train == Serve == Replay).
-# as-of nutzt max. die letzten 270 Sätze (rates[-270:] für fund_pctl_90d). Bei
-# 8h-Kadenz sind das exakt 90 Tage — 95d gäben nur 5 Tage Puffer, ein Coin mit
-# >5d kumulierter Funding-Lücke in seinen letzten 270 Sätzen bekäme live weniger
-# als 270 Samples und wiche in fund_pctl_90d minimal vom Trainer ab (der über die
-# volle Historie rechnet). 110d gibt 20 Tage Lücken-Puffer über das 90d-Minimum.
+# A naive time TTL can do neither: it can span a settlement boundary
+# and serve the model stale funding — a break of trainer parity
+# (train == serve == replay).
+# as-of uses at most the last 270 rates (rates[-270:] for fund_pctl_90d). At
+# 8h cadence that's exactly 90 days — 95d would give only 5 days of buffer, a
+# coin with a >5d cumulative funding gap in its last 270 rates would get fewer
+# than 270 samples live and would deviate slightly from the trainer in
+# fund_pctl_90d (which computes over the full history). 110d gives 20 days of
+# gap buffer above the 90d minimum.
 CACHE_SINCE_DAYS = 110
-#: Wie viele der jüngsten Abstände in die Intervall-Schätzung eingehen.
+#: How many of the most recent gaps go into the interval estimate.
 CACHE_INTERVAL_SAMPLES = 8
 
-#: symbol → (gültig_bis = nächste fällige Abrechnung, Features)
+#: symbol → (valid_until = next due settlement, features)
 _CACHE: dict[str, tuple[pd.Timestamp, dict]] = {}
 
 
 def clear_funding_cache() -> None:
-    """Nur für Tests / Prozess-Reset."""
+    """Test-only / process reset."""
     _CACHE.clear()
 
 
 def next_feature_change(g: pd.DataFrame, ts_utc) -> pd.Timestamp | None:
-    """Bis wann das As-of-Ergebnis für ``ts_utc`` unverändert bleibt.
+    """Until when the as-of result for ``ts_utc`` stays unchanged.
 
-    ``funding_features_asof`` schneidet mit ``searchsorted(..., 'left')``: es gehen
-    die Sätze mit ``funding_time < ts`` ein. Das Ergebnis kippt also erst, wenn ts
-    den NÄCHSTEN Satz überschreitet. Der steht entweder schon in den Daten (dann
-    ist er die Grenze — auch wenn er auf keiner vollen Stunde liegt), oder er ist
-    noch nicht abgerechnet: dann wird er aus der Historie geschätzt.
+    ``funding_features_asof`` cuts with ``searchsorted(..., 'left')``: the
+    rates with ``funding_time < ts`` go in. The result only flips once ts
+    crosses the NEXT rate. That rate is either already in the data (then
+    it's the boundary — even if it doesn't land on a full hour), or it's
+    not settled yet: then it's estimated from the history.
 
-    Die Schätzung nimmt bewusst das **Minimum** der jüngsten Abstände, nicht den
-    Median. Die beiden Fehlerrichtungen sind nämlich nicht gleich teuer:
+    The estimate deliberately takes the **minimum** of the most recent gaps, not
+    the median. The two error directions aren't equally costly:
 
-      * Zu KURZ geschätzt → der Eintrag läuft zu früh ab, ein zusätzlicher
-        DB-Roundtrip. Kostet Zeit, nie Korrektheit.
-      * Zu LANG geschätzt → der Cache sitzt über einer echten Abrechnung und
-        liefert einen stale Wert. Genau der Paritäts-Bruch, den dieser Cache
-        verhindern soll.
+      * Estimated too SHORT → the entry expires too early, one extra
+        DB roundtrip. Costs time, never correctness.
+      * Estimated too LONG → the cache sits past a real settlement and
+        serves a stale value. Exactly the parity break this cache is
+        meant to prevent.
 
-    Verkürzt ein Coin seine Kadenz (Binance 8h → 4h/1h) oder verzerrt eine
-    Ingestion-Lücke die jüngsten Abstände, überschätzt ein Median das nächste
-    Intervall um Stunden. Das Minimum kann die BEOBACHTETEN Abstände nicht
-    überschätzen — den allerersten Satz einer plötzlich kürzeren Kadenz kann
-    keine Historien-Schätzung vorhersehen (ein Onset-Overshoot bleibt), aber ab
-    dem zweiten kurzen Satz zieht das Minimum nach, ein Median-Fenster hinge noch
-    stundenlang am alten Wert.
+    If a coin shortens its cadence (Binance 8h → 4h/1h) or an ingestion gap
+    distorts the most recent gaps, a median would overestimate the next
+    interval by hours. The minimum can't overestimate the OBSERVED gaps —
+    no history-based estimate can foresee the very first rate of a suddenly
+    shorter cadence (an onset overshoot remains), but from the second short
+    rate onward the minimum catches up, whereas a median window would still
+    hang on the old value for hours.
 
-    ``None`` bei zu kurzer Historie — ohne zwei Sätze ist kein Intervall bestimmbar,
-    dann wird nicht gecacht.
+    ``None`` for too-short a history — without two rates no interval can be
+    determined, so nothing is cached.
     """
     ft = g["funding_time"]
     if len(ft) < 2:
@@ -170,11 +171,11 @@ def next_feature_change(g: pd.DataFrame, ts_utc) -> pd.Timestamp | None:
 
 
 def funding_features_cached(conn, symbol: str, ts_utc: datetime.datetime, loader=load_funding) -> dict:
-    """Wie ``funding_features_asof``, aber ohne den DB-Roundtrip zu wiederholen,
-    solange keine neue Abrechnung das Ergebnis verändern kann. Die Werte sind
-    identisch zum ungecachten Aufruf (Begründung oben).
+    """Like ``funding_features_asof``, but without repeating the DB roundtrip
+    as long as no new settlement can change the result. The values are
+    identical to the uncached call (rationale above).
 
-    ``loader`` ist injizierbar, damit der Cache DB-frei testbar bleibt.
+    ``loader`` is injectable so the cache stays testable without a DB.
     """
     hit = _CACHE.get(symbol)
     if hit is not None and pd.Timestamp(ts_utc) <= hit[0]:
@@ -185,19 +186,19 @@ def funding_features_cached(conn, symbol: str, ts_utc: datetime.datetime, loader
 
     g = by_sym.get(symbol)
     valid_until = next_feature_change(g, ts_utc) if g is not None else None
-    # Ein LEERES Ergebnis (Historie < MIN_HISTORY) NICHT cachen: der nächste Satz,
-    # der den Coin über die Schwelle hebt, kann früher fallen als das geschätzte
-    # Intervall, und bis dahin würde `{}` ausgeliefert — genau dann, wenn der Coin
-    # handelbar wird. Wie beim Late-Row-Fall: lieber jeden Tick neu laden, bis echte
-    # Features da sind.
+    # Do NOT cache an EMPTY result (history < MIN_HISTORY): the next rate that
+    # lifts the coin over the threshold can land earlier than the estimated
+    # interval, and until then `{}` would be served — exactly when the coin
+    # becomes tradeable. Same as the late-row case: better to reload every tick
+    # until real features are there.
     if feats and valid_until is not None and pd.Timestamp(ts_utc) <= valid_until:
         _CACHE[symbol] = (valid_until, feats)
     else:
-        # Historie zu kurz (kein Intervall bestimmbar) ODER die Abrechnung ist
-        # überfällig, weil die Zeile noch nicht ingested ist. Im zweiten Fall wäre
-        # der Eintrag ohnehin sofort abgelaufen — die Uhr läuft vorwärts, ein
-        # abgelaufener Eintrag wird nie ausgeliefert. Das `pop` ist also Hygiene
-        # (und ein Netz gegen einen NTP-Rückschritt), nicht die tragende Sperre.
-        # Die tragende Sperre ist der `<=`-Vergleich oben.
+        # History too short (no interval determinable) OR the settlement is
+        # overdue because the row hasn't been ingested yet. In the second case
+        # the entry would have expired immediately anyway — the clock runs
+        # forward, an expired entry is never served. The `pop` is thus hygiene
+        # (and a safety net against an NTP rollback), not the load-bearing guard.
+        # The load-bearing guard is the `<=` comparison above.
         _CACHE.pop(symbol, None)
     return feats

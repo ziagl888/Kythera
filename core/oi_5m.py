@@ -1,28 +1,28 @@
-# core/oi_5m.py — 5m-Open-Interest-Persistenz (TimescaleDB-Hypertable `oi_5m`)
+# core/oi_5m.py — 5m open interest persistence (TimescaleDB hypertable `oi_5m`)
 #
-# K9/OIC aus docs/MODEL_CANDIDATES_SPEC_2026-07.md (T-2026-CU-9050-103).
-# Blaupause: core/ticker_10s.py — gleiche Timescale-Konventionen, gleicher
-# Caller-Contract (Fehler stoppen den Collector-Loop nie).
+# K9/OIC from docs/MODEL_CANDIDATES_SPEC_2026-07.md (T-2026-CU-9050-103).
+# Blueprint: core/ticker_10s.py — same Timescale conventions, same
+# caller contract (errors never stop the collector loop).
 #
-# Schreiber: 35_oi_collector.py (EIN batched Insert pro 5m-Sweep über alle
-# Coins — kein Per-Symbol-Insert, P1.40-Lehre zu WAL-Churn) und einmalig
-# tools/oi_backfill.py (30d-Initial-Backfill, mehr hält Binance nicht vor).
-# Leser: künftige OI-Modell-Studien (OI-Preis-Divergenz, OI-Spike-Fade,
-# OI×Funding — eigene Tasks ab ~Okt 2026, ≥60d Historie; Spec K9).
+# Writer: 35_oi_collector.py (ONE batched insert per 5m sweep across all
+# coins — no per-symbol insert, P1.40 lesson about WAL churn) and one-off
+# tools/oi_backfill.py (30d initial backfill, Binance doesn't keep more than that).
+# Reader: future OI model studies (OI-price divergence, OI spike fade,
+# OI×funding — own tasks from ~Oct 2026, ≥60d history; spec K9).
 #
-# TZ-Vertrag: `ts` ist TIMESTAMPTZ und wird UTC-aware geschrieben (Timestamps
-# kommen als Binance-Epoch-ms und laufen durch core.time.from_unix_ts) —
-# gleiche bewusste Abweichung von den naiven Legacy-Spalten wie ticker_10s,
-# damit die DST-Mixed-Offset-Fehlerklasse (Fix f95f092) hier nicht entsteht.
+# TZ contract: `ts` is TIMESTAMPTZ and is written UTC-aware (timestamps
+# arrive as Binance epoch-ms and pass through core.time.from_unix_ts) —
+# the same deliberate deviation from the naive legacy columns as ticker_10s,
+# so the DST mixed-offset error class (fix f95f092) doesn't arise here.
 #
-# Volumen-Budget: ~530 Coins × 288 Punkte/Tag ≈ 153k Rows/Tag (~8 MB/Tag roh).
-# Chunks 1 Tag, Compression nach 3 Tagen (segmentby=symbol), Retention 730
-# Tage — native Timescale-Jobs, 6_housekeeping muss die Tabelle NICHT anfassen.
+# Volume budget: ~530 coins × 288 points/day ≈ 153k rows/day (~8 MB/day raw).
+# Chunks 1 day, compression after 3 days (segmentby=symbol), retention 730
+# days — native Timescale jobs, 6_housekeeping does NOT need to touch the table.
 #
-# Dedup: anders als ticker_10s braucht es keine UNIQUE-Index-Migration — die
-# Tabelle ist neu und der PRIMARY KEY (ts, symbol) aus der Spec erzwingt die
-# Eindeutigkeit von Anfang an. Collector und Backfill schreiben beide mit
-# ON CONFLICT DO NOTHING dagegen (Doppelstart/Backfill-Überlappung = No-op).
+# Dedup: unlike ticker_10s it needs no UNIQUE index migration — the
+# table is new and the PRIMARY KEY (ts, symbol) from the spec enforces
+# uniqueness from the start. Both the collector and backfill write with
+# ON CONFLICT DO NOTHING against it (double start/backfill overlap = no-op).
 
 from __future__ import annotations
 
@@ -42,28 +42,28 @@ RETAIN_FOR = "730 days"
 
 
 def ensure_schema(conn) -> None:
-    """Legt Hypertable + Compression-/Retention-Policy idempotent an.
+    """Creates the hypertable + compression/retention policy idempotently.
 
-    Einmal beim Prozess-Start aufrufen (nicht pro Sweep). Erwartet die
-    timescaledb-Extension in der DB (auf dem Live-VPS installiert, 2.26).
+    Call once at process start (not per sweep). Expects the
+    timescaledb extension in the DB (installed on the live VPS, 2.26).
     """
     try:
         _ensure_schema_inner(conn)
     except Exception:
-        # Halb ausgeführte DDL nie auf der geteilten Connection liegen lassen —
-        # der Caller versucht das Schema beim nächsten Sweep erneut und braucht
-        # dafür eine saubere Transaktion (ticker_10s-Muster).
+        # Never leave half-executed DDL on the shared connection —
+        # the caller retries the schema on the next sweep and needs
+        # a clean transaction for that (ticker_10s pattern).
         try:
             conn.rollback()
         except Exception:
-            logger.exception("Rollback nach fehlgeschlagenem oi_5m-Schema-Setup fehlgeschlagen")
+            logger.exception("Rollback after failed oi_5m schema setup failed")
         raise
 
 
 def _ensure_schema_inner(conn) -> None:
     with conn.cursor() as cur:
-        # DDL exakt nach Spec K9: PRIMARY KEY (ts, symbol) enthält die
-        # Partitionierungs-Spalte, damit akzeptiert create_hypertable ihn.
+        # DDL exactly per spec K9: PRIMARY KEY (ts, symbol) contains the
+        # partitioning column, so create_hypertable accepts it.
         cur.execute(
             f"""CREATE TABLE IF NOT EXISTS {TABLE} (
                     ts            TIMESTAMPTZ      NOT NULL,
@@ -94,18 +94,18 @@ def _ensure_schema_inner(conn) -> None:
         )
     conn.commit()
     logger.info(
-        f"✅ Hypertable {TABLE} bereit (chunk={CHUNK_INTERVAL}, compress>{COMPRESS_AFTER}, retention={RETAIN_FOR})"
+        f"✅ Hypertable {TABLE} ready (chunk={CHUNK_INTERVAL}, compress>{COMPRESS_AFTER}, retention={RETAIN_FOR})"
     )
 
 
 def rows_from_hist_payload(symbol: str, payload: list[dict]) -> list[tuple]:
-    """Baut Insert-Rows aus einer `/futures/data/openInterestHist`-Antwort.
+    """Builds insert rows from a `/futures/data/openInterestHist` response.
 
-    Eine Quelle für BEIDE Writer (Collector-Sweep und Backfill-Paginierung),
-    damit Parsing/TZ-Konversion nicht driften kann. Binance liefert je Punkt
-    ``sumOpenInterest`` (Kontrakte), ``sumOpenInterestValue`` (USDT) und
-    ``timestamp`` (Epoch-ms, UTC). Malformte Einträge werden mit ERROR-Log
-    verworfen — nie mit 0 substituiert (Feature-Contract-Disziplin, P0.12).
+    One source for BOTH writers (collector sweep and backfill pagination),
+    so parsing/TZ conversion cannot drift. Binance delivers per point
+    ``sumOpenInterest`` (contracts), ``sumOpenInterestValue`` (USDT) and
+    ``timestamp`` (epoch-ms, UTC). Malformed entries are dropped with an
+    ERROR log — never substituted with 0 (feature contract discipline, P0.12).
     """
     rows: list[tuple[datetime.datetime, str, float, float]] = []
     for item in payload:
@@ -119,17 +119,17 @@ def rows_from_hist_payload(symbol: str, payload: list[dict]) -> list[tuple]:
                 )
             )
         except (KeyError, TypeError, ValueError) as e:
-            logger.error(f"oi_5m: malformter openInterestHist-Punkt für {symbol} verworfen: {e} — {item!r}")
+            logger.error(f"oi_5m: malformed openInterestHist point for {symbol} dropped: {e} — {item!r}")
     return rows
 
 
 def insert_oi(conn, rows: list[tuple]) -> None:
-    """Batched Insert eines kompletten 5m-Sweeps (oder einer Backfill-Seite).
+    """Batched insert of a complete 5m sweep (or a backfill page).
 
-    ``rows``: Liste von ``(ts_utc_aware, symbol, open_interest, oi_value_usdt)``.
-    Fehler dürfen den Collector-Loop nie stoppen — der Caller fängt Exceptions
-    (ein verlorener Sweep ist ein akzeptierter Datenpunkt-Verlust, ein toter
-    Collector verliert ab da ALLES — dieselbe Asymmetrie wie beim Detector).
+    ``rows``: list of ``(ts_utc_aware, symbol, open_interest, oi_value_usdt)``.
+    Errors must never stop the collector loop — the caller catches exceptions
+    (a lost sweep is an accepted data point loss, a dead collector loses
+    EVERYTHING from that point on — the same asymmetry as with the detector).
     """
     if not rows:
         return
@@ -144,11 +144,11 @@ def insert_oi(conn, rows: list[tuple]) -> None:
             )
         conn.commit()
     except Exception:
-        # Rollback gehört zum Commit-Besitz: ohne ihn bleibt die geteilte
-        # Connection in InFailedSqlTransaction und alle folgenden Sweeps
-        # schlagen fehl — genau das "toter Collector"-Szenario.
+        # Rollback is part of commit ownership: without it the shared
+        # connection stays in InFailedSqlTransaction and all subsequent sweeps
+        # fail — exactly the "dead collector" scenario.
         try:
             conn.rollback()
         except Exception:
-            logger.exception("Rollback nach fehlgeschlagenem oi_5m-Insert fehlgeschlagen")
+            logger.exception("Rollback after failed oi_5m insert failed")
         raise

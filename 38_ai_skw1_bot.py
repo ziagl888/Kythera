@@ -1,33 +1,33 @@
-# 38_ai_skw1_bot.py — SKW1 "Cross-Sectional Skewness L/S" (Studie K7; LIVE seit T-2026-CU-9050-183).
+# 38_ai_skw1_bot.py — SKW1 "cross-sectional skewness L/S" (study K7; live since T-2026-CU-9050-183).
 """
-Wöchentliche Querschnitts-Rotation nach realisierter Return-Schiefe: ranke das
-liquiditätsgefilterte Universum nach `mom_skew_7d` (7d-Skew der 15m-Log-Returns);
-**SHORT das oberste Dezil** (hoch-positive Schiefe = Lotterie-Coins), **LONG das
-unterste Dezil** (negative Schiefe). Studie K7: Dezil-Monotonie ρ=−0,88,
-Netto-Spread ≈ +2,5 %/Woche val+test-stabil.
+Weekly cross-sectional rotation by realised return skewness: rank the
+liquidity-filtered universe by `mom_skew_7d` (7d skew of 15m log returns);
+**SHORT the top decile** (high-positive skew = lottery coins), **LONG the
+bottom decile** (negative skew). Study K7: decile monotonicity ρ=−0.88,
+net spread ≈ +2.5%/week val+test stable.
 
-**BEIDE Beine seit T-2026-CU-9050-183 LIVE (→ CH_ATS).** Die Studie stuft SKW1 als
-VALIDIERTES Feature/Retrain-Input ein, NICHT als schlüsselfertigen Edge (Netto nur
-Fees+Funding modelliert, kein Slippage/Impact/Borrow; das LONG-Low-Skew-Bein ist
-tail-getrieben, WR<0,5 in jedem Dezil). Der Post läuft über
-`signal_post.post_ai_signal_gated` (LIVE → Cornix-Post in CH_ATS; ein Rückzug in
-den Shadow = `("SKW1", dir)` in `_LIFECYCLE` wieder auf SHADOW, Tag `SKW1`).
+**BOTH legs live since T-2026-CU-9050-183 (→ CH_ATS).** The study rates SKW1 as
+VALIDATED feature/retrain input, NOT as turnkey edge (net only models
+fees+funding, no slippage/impact/borrow; the LONG-low-skew leg is
+tail-driven, WR<0.5 in each decile). Posting runs via
+`signal_post.post_ai_signal_gated` (LIVE → Cornix post in CH_ATS; withdrawal to
+shadow = `("SKW1", dir)` in `_LIFECYCLE` back to SHADOW, tag `SKW1`).
 
-Signal-Vertrag == Studie `tools/skewness_study.py` + geteilter Builder
-`core/moment_features.py` (Regel 7): `build_moment_panel`→`moment_features_asof`
-liefert `mom_skew_7d` as-of, geschlossene 15m-Bars, native-NaN. Reimplementiert
-(studien-lokal): Querschnitts-Dezil-Rang, wöchentliches Montag-00:00-UTC-Raster,
-Liquiditäts-Filter (trailing 7d-Dollar-Volumen, unteres Terzil raus),
+Signal contract == study `tools/skewness_study.py` + shared builder
+`core/moment_features.py` (rule 7): `build_moment_panel`→`moment_features_asof`
+yields `mom_skew_7d` as-of, closed 15m bars, native NaN. Reimplemented
+(study-local): cross-sectional decile rank, weekly Monday 00:00 UTC grid,
+liquidity filter (trailing 7d dollar volume, bottom tertile out),
 MIN_COINS_PER_WEEK.
 
-**WICHTIGE Divergenz (dokumentiert):** die Studie misst einen 1-WOCHEN-HALTE-Exit
-(Timeout, kein TP/SL). Der Shadow-Monitor verfolgt aber First-Touch-TP/SL
-(geteilte `hvn_sr_trade_geometry`). Der Shadow-PnL ist damit NICHT die
-Studien-PnL, sondern eine richtungs-getreue First-Touch-Validierung desselben
-Signals — bewusst, da der Monitor keinen Timeout-Exit kennt (Live-Money, kein
-Monitor-Umbau). Market-Fill (entry1==entry2).
+**IMPORTANT divergence (documented):** the study measures a 1-week hold exit
+(timeout, no TP/SL). The shadow monitor tracks first-touch TP/SL instead
+(shared `hvn_sr_trade_geometry`). Shadow PnL is thus NOT study PnL,
+but a direction-faithful first-touch validation of the same signal —
+deliberate, since the monitor knows no timeout exit (live money, no
+monitor rework). Market fill (entry1==entry2).
 
-Läuft wöchentlich (Montag 00:00 UTC, Minute 31). Watchdog: start_delay=255.
+Runs weekly (Monday 00:00 UTC, minute 31). Watchdog: start_delay=255.
 """
 
 import datetime
@@ -52,45 +52,45 @@ MODEL_ID = "SKW1"
 TF = "15m"
 SKEW_FEATURE = "mom_skew_7d"
 N_DECILES = 10
-LIQ_EXCLUDE_TERCILE = 1.0 / 3.0  # unteres Dollar-Vol-Terzil raus (== Studie)
-MIN_COINS_PER_WEEK = 20  # zu dünner Querschnitt → Woche übersprungen
-LIQ_BARS = 7 * 24 * 4  # 7d in 15m-Bars für das trailing Dollar-Volumen
-MIN_15M_ROWS = 7 * 24 * 4 + 8  # volles 7d-Skew-Fenster (672) + Puffer
-COOLDOWN_HOURS = 24 * 6  # eine Woche Sperre (fire-once je Rebalance/Richtung)
-SHADOW_CONF = 0.5  # regelbasiert, kein Modell-Prob
+LIQ_EXCLUDE_TERCILE = 1.0 / 3.0  # bottom dollar-vol tercile out (== study)
+MIN_COINS_PER_WEEK = 20  # cross-section too thin → week skipped
+LIQ_BARS = 7 * 24 * 4  # 7d in 15m bars for the trailing dollar volume
+MIN_15M_ROWS = 7 * 24 * 4 + 8  # full 7d skew window (672) + buffer
+COOLDOWN_HOURS = 24 * 6  # one week lock (fire-once per rebalance/direction)
+SHADOW_CONF = 0.5  # rule-based, no model prob
 SCAN_MINUTE = 31
-MAX_PER_SIDE = 40  # Runaway-Schutz
+MAX_PER_SIDE = 40  # runaway protection
 
 
 def select_deciles(rows: list[tuple[str, float, float]]) -> tuple[list[str], list[str]]:
-    """Pure Querschnitts-Selektion (DB-frei testbar). ``rows`` = (symbol, skew,
-    dollar_vol). Liquiditäts-Filter (unteres Terzil raus) → Dezil-Rang nach Skew.
-    Rückgabe (longs, shorts): LONG = unterstes Skew-Dezil, SHORT = oberstes."""
+    """Pure cross-sectional selection (testable without DB). ``rows`` = (symbol, skew,
+    dollar_vol). Liquidity filter (bottom tercile out) → decile rank by skew.
+    Return (longs, shorts): LONG = lowest skew decile, SHORT = highest."""
     if len(rows) < MIN_COINS_PER_WEEK:
         return [], []
     dvs = np.array([r[2] for r in rows], dtype=float)
-    thr = float(np.nanquantile(dvs, LIQ_EXCLUDE_TERCILE))  # NaN-robust (Review-Fix)
+    thr = float(np.nanquantile(dvs, LIQ_EXCLUDE_TERCILE))  # NaN-robust (review fix)
     liquid = [r for r in rows if r[2] >= thr]
     if len(liquid) < MIN_COINS_PER_WEEK:
         return [], []
-    liquid.sort(key=lambda r: r[1])  # aufsteigend nach Skew
+    liquid.sort(key=lambda r: r[1])  # ascending by skew
     ndec = max(1, round(len(liquid) / N_DECILES))
-    longs = [r[0] for r in liquid[:ndec]]  # niedrigste Skew → LONG
-    shorts = [r[0] for r in liquid[-ndec:]]  # höchste Skew → SHORT
+    longs = [r[0] for r in liquid[:ndec]]  # lowest skew → LONG
+    shorts = [r[0] for r in liquid[-ndec:]]  # highest skew → SHORT
     return longs[:MAX_PER_SIDE], shorts[:MAX_PER_SIDE]
 
 
 def gather(conn, coins: list[str], now: datetime.datetime) -> tuple[list[tuple[str, float, float]], dict[str, float]]:
     """(rows, entries): rows = [(symbol, skew, dollar_vol)], entries = {symbol:
-    entry_price}. Liest je Coin die 15m-Kerzen einmal, baut das Moment-Panel
-    (geteilter Builder) und liest den 7d-Skew as-of ``now``."""
+    entry_price}. Reads the 15m candles once per coin, builds the moment panel
+    (shared builder) and reads the 7d skew as-of ``now``."""
     rows: list[tuple[str, float, float]] = []
     entries: dict[str, float] = {}
     for symbol in coins:
         try:
-            # limit = nur die jüngsten Bars (das 7d-Skew-Fenster + Puffer) — ein
-            # 15m-Voll-Read über die ganze Historie wäre ein wöchentlicher CPU-Spike
-            # ohne Nutzen (min_periods=672 nutzt nur den Rand). Review-Fix.
+            # limit = only the most recent bars (the 7d skew window + buffer) — a
+            # full 15m read over the entire history would be a weekly CPU spike
+            # with no benefit (min_periods=672 only uses the edge). Review fix.
             df = read_candles(
                 conn,
                 symbol,
@@ -109,9 +109,9 @@ def gather(conn, coins: list[str], now: datetime.datetime) -> tuple[list[tuple[s
             vol = df["volume"].to_numpy(dtype=float)
             dollar_vol = float(np.mean((close * vol)[-LIQ_BARS:]))
             entry = float(close[-1])
-            # dollar_vol MUSS endlich sein: ein NaN würde sonst np.nanquantile im
-            # Selector unschädlich machen, aber ein Coin mit NaN-Kerze soll gar nicht
-            # erst in den Querschnitt (Review-Fix, Symmetrie zum skew-None-Guard).
+            # dollar_vol MUST be finite: a NaN would otherwise be rendered harmless
+            # by np.nanquantile in the selector, but a coin with a NaN candle should
+            # not enter the cross-section in the first place (review fix, symmetry with the skew-None guard).
             if entry <= 0 or not np.isfinite(dollar_vol):
                 continue
             rows.append((symbol, float(skew), dollar_vol))
@@ -122,7 +122,7 @@ def gather(conn, coins: list[str], now: datetime.datetime) -> tuple[list[tuple[s
 
 
 def emit(conn, symbol: str, direction: str, entry: float) -> None:
-    """Ein Shadow-Bein (LONG/SHORT) mit geteilter Geometrie. Fail-safe: nie live."""
+    """A shadow leg (LONG/SHORT) with shared geometry. Fail-safe: never live."""
     if not shadow_posting_enabled() or leg_status(MODEL_ID, direction) not in (LIVE, SHADOW):
         return
     if check_cooldown(conn, MODEL_ID, symbol, direction, COOLDOWN_HOURS):
@@ -139,7 +139,7 @@ def emit(conn, symbol: str, direction: str, entry: float) -> None:
         conn,
         MODEL_ID,
         direction,
-        _kcfg.CH_ATS,  # ehem. ATS-Channel (T-2026-CU-9050-183)
+        _kcfg.CH_ATS,  # formerly ATS channel (T-2026-CU-9050-183)
         symbol,
         SHADOW_CONF,
         entry,
@@ -151,11 +151,11 @@ def emit(conn, symbol: str, direction: str, entry: float) -> None:
     )
     if outcome == "live":
         logger.info(
-            f"📈 SKW1 LIVE {direction} {symbol} | Skew-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP) → CH_ATS."
+            f"📈 SKW1 LIVE {direction} {symbol} | Skew decile @ {entry:g} (SL {sl:g}, {len(targets)} TP) → CH_ATS."
         )
     elif outcome == "shadow":
-        logger.info(f"👻 SKW1-Shadow {direction} {symbol} | Skew-Dezil @ {entry:g} (SL {sl:g}, {len(targets)} TP).")
-    update_cooldown(conn, MODEL_ID, symbol, direction)  # committet atomar
+        logger.info(f"👻 SKW1-Shadow {direction} {symbol} | Skew decile @ {entry:g} (SL {sl:g}, {len(targets)} TP).")
+    update_cooldown(conn, MODEL_ID, symbol, direction)  # commits atomically
 
 
 def run_scan() -> None:
@@ -165,7 +165,7 @@ def run_scan() -> None:
     try:
         rows, entries = gather(conn, coins, now)
         longs, shorts = select_deciles(rows)
-        logger.info(f"🔍 SKW1-Rebalance: {len(rows)} bewertbar → {len(longs)} LONG / {len(shorts)} SHORT.")
+        logger.info(f"🔍 SKW1 rebalance: {len(rows)} eligible → {len(longs)} LONG / {len(shorts)} SHORT.")
         for direction, syms in (("LONG", longs), ("SHORT", shorts)):
             for symbol in syms:
                 try:
@@ -174,17 +174,17 @@ def run_scan() -> None:
                     logger.error(f"emit {symbol} {direction}: {e}")
                 finally:
                     try:
-                        conn.rollback()  # P2.32; nach dem Cooldown-Commit ein No-op
+                        conn.rollback()  # P2.32; a no-op after the cooldown commit
                     except Exception:
-                        logger.error("Rollback fehlgeschlagen (tote Connection) — Abbruch.")
+                        logger.error("Rollback failed (dead connection) — aborting.")
                         return
     finally:
         conn.close()
-    logger.info("🏁 SKW1-Rebalance stopped.")
+    logger.info("🏁 SKW1 rebalance stopped.")
 
 
 def main() -> None:
-    logger.info("=== 🎲 AI SKW1 BOT (Cross-Sectional Skewness L/S, K7) GESTARTET — LIVE L/S → CH_ATS ===")
+    logger.info("=== 🎲 AI SKW1 BOT (Cross-Sectional Skewness L/S, K7) STARTED — LIVE L/S → CH_ATS ===")
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -199,7 +199,7 @@ def main() -> None:
 
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
-        if now.weekday() == 0 and now.hour == 0 and now.minute == SCAN_MINUTE:  # Montag 00:31 UTC
+        if now.weekday() == 0 and now.hour == 0 and now.minute == SCAN_MINUTE:  # Monday 00:31 UTC
             run_scan()
             time.sleep(60)
         else:
@@ -210,4 +210,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

@@ -1,8 +1,8 @@
-"""DB-freie Tests für den ATB2-Converging-Channel-Detektor (core/atb2_features).
+"""DB-free tests for the ATB2 converging-channel detector (core/atb2_features).
 
-Baut synthetische, deterministische Kanäle (konvergierend, Volumen-Kontraktion,
-bestätigte Pivots) und prüft Detektion, Feature-Vertrag, No-Repaint-Kontrakt und
-die Startup-Assertion. Kein DB-Zugriff — läuft standalone in CI-freier Umgebung.
+Builds synthetic, deterministic channels (converging, volume contraction,
+confirmed pivots) and checks detection, feature contract, no-repaint contract and
+the startup assertion. No DB access — runs standalone in a CI-free environment.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from core import atb2_features as atb  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
-# Fixture-Generator                                                            #
+# Fixture generator                                                            #
 # --------------------------------------------------------------------------- #
 def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
                             u0: float = 110.0, l0: float = 90.0, conv: float = 0.05,
@@ -27,11 +27,11 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
                             in_vol: float = 4000.0, pre_vol: float = 12000.0,
                             break_vol: float = 8000.0, break_gap: float = 2.0,
                             n_post: int = 0) -> pd.DataFrame:
-    """Erzeugt einen konvergierenden Kanal, der am Ende (geschlossen) ausbricht.
+    """Generates a converging channel that breaks out (closed) at the end.
 
-    Vorlauf = fallende Rampe mit hohem Volumen (für Volumen-Kontraktion & ATR/RSI-
-    Warmlauf); Kanalfenster = Zickzack zwischen konvergierenden Grenzen mit
-    bestätigten Pivots an den Wendepunkten; danach eine Ausbruchskerze.
+    Warmup = falling ramp with high volume (for volume contraction & ATR/RSI
+    warmup); channel window = zigzag between converging bounds with
+    confirmed pivots at the turning points; then a breakout candle.
     """
     def upper(j: float) -> float:
         return u0 - conv * j
@@ -39,7 +39,7 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
     def lower(j: float) -> float:
         return l0 + conv * j
 
-    # Wendepunkte im Kanalfenster: j%period==0 -> Low-Turn, j%period==period/2 -> High-Turn.
+    # Turning points in the channel window: j%period==0 -> low turn, j%period==period/2 -> high turn.
     turns: list[tuple[int, str]] = []
     half = period // 2
     for j in range(0, span + 1):
@@ -54,7 +54,7 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
     opens, highs, lows, closes, vols, times = [], [], [], [], [], []
     t0 = pd.Timestamp("2026-01-01", tz=None)
 
-    # Vorlauf: fallende Rampe 101 -> 97, hohes Volumen.
+    # Warmup: falling ramp 101 -> 97, high volume.
     for k in range(n_pre):
         px = 101.0 - (4.0 * k / max(1, n_pre - 1))
         opens.append(px + 0.1)
@@ -64,7 +64,7 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
         vols.append(pre_vol)
         times.append(t0 + pd.Timedelta(hours=len(times)))
 
-    # Kanalfenster: close = stückweise linear zwischen Wendepunkten.
+    # Channel window: close = piecewise linear between turning points.
     for j in range(0, span):
         # bracketing turns
         prev_t = max([t for t in turns if t[0] <= j], key=lambda x: x[0])
@@ -81,10 +81,10 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
         is_high_turn = (j % period == half)
         is_low_turn = (j % period == 0)
         if is_high_turn:
-            hi = up_v          # exakt auf der Oberkante -> Touch
+            hi = up_v          # exactly on the upper bound -> touch
             lo = close - 0.3
         elif is_low_turn:
-            lo = lo_v          # exakt auf der Unterkante -> Touch
+            lo = lo_v          # exactly on the lower bound -> touch
             hi = close + 0.3
         else:
             hi = min(close + 0.3, up_v - 0.4)
@@ -93,10 +93,10 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
         highs.append(hi)
         lows.append(lo)
         closes.append(close)
-        vols.append(in_vol)   # In-Kanal-Volumen < Vorlauf -> Kontraktion
+        vols.append(in_vol)   # in-channel volume < warmup -> contraction
         times.append(t0 + pd.Timedelta(hours=len(times)))
 
-    # Ausbruchskerze (geschlossen): schließt jenseits der Grenze bei j=span.
+    # Breakout candle (closed): closes beyond the bound at j=span.
     up_end, lo_end = upper(span), lower(span)
     if break_dir == "up":
         oc, cc = up_end - 1.0, up_end + break_gap
@@ -108,11 +108,11 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
     highs.append(hi)
     lows.append(lo)
     closes.append(cc)
-    vols.append(break_vol)       # Volumen-Spike
+    vols.append(break_vol)       # volume spike
     times.append(t0 + pd.Timedelta(hours=len(times)))
 
-    # Fortsetzungskerzen nach dem Ausbruch (damit simulate_exit im Adapter eine
-    # Folgekerze hat und der Break nicht die letzte Zeile ist).
+    # Continuation candles after the breakout (so simulate_exit in the adapter has
+    # a following candle and the break is not the last row).
     for k in range(n_post):
         step = (break_gap + 1.0) if break_dir == "up" else -(break_gap + 1.0)
         px = closes[-1] + step
@@ -124,8 +124,8 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
         times.append(t0 + pd.Timedelta(hours=len(times)))
 
     if add_forming:
-        # Eine noch offene Forming-Candle mit Müll-Werten (der Aufrufer schneidet
-        # sie via df.iloc[:-1] ab, R1) — darf das Ergebnis nicht verändern.
+        # A still-open forming candle with garbage values (the caller cuts
+        # it off via df.iloc[:-1], R1) — must not change the result.
         opens.append(closes[-1])
         highs.append(closes[-1] + 50.0)
         lows.append(closes[-1] - 50.0)
@@ -145,7 +145,7 @@ def make_converging_channel(n_pre: int = 30, span: int = 80, period: int = 20,
 def test_detects_converging_channel_breakout_long():
     df = atb.compute_indicators(make_converging_channel(break_dir="up"))
     setup = atb.find_channel_breakout(df)
-    assert setup is not None, "konvergierender Ausbruch nach oben nicht erkannt"
+    assert setup is not None, "converging breakout upward not detected"
     assert setup["direction"] == "LONG"
     f = setup["features"]
     assert f["break_up"] == 1.0
@@ -159,14 +159,14 @@ def test_detects_converging_channel_breakout_long():
 def test_detects_converging_channel_breakout_short():
     df = atb.compute_indicators(make_converging_channel(break_dir="down"))
     setup = atb.find_channel_breakout(df)
-    assert setup is not None, "konvergierender Ausbruch nach unten nicht erkannt"
+    assert setup is not None, "converging breakout downward not detected"
     assert setup["direction"] == "SHORT"
     assert setup["features"]["break_up"] == 0.0
 
 
 def test_forming_candle_must_be_sliced_by_caller():
-    """No-Repaint: mit abgeschnittener Forming-Candle liefert der Detektor
-    dasselbe Ergebnis wie ohne — die Müllkerze verändert nichts (R1-Kontrakt)."""
+    """No-repaint: with the forming candle cut off, the detector delivers
+    the same result as without — the garbage candle changes nothing (R1 contract)."""
     df_full = atb.compute_indicators(make_converging_channel(break_dir="up", add_forming=True))
     df_closed = df_full.iloc[:-1].reset_index(drop=True)
     setup = atb.find_channel_breakout(df_closed)
@@ -178,13 +178,13 @@ def test_feature_contract_complete_and_finite():
     setup = atb.find_channel_breakout(df)
     assert setup is not None
     f = setup["features"]
-    assert set(f.keys()) == set(atb.ATB2_FEATURES), "Feature-Set weicht vom Vertrag ab"
+    assert set(f.keys()) == set(atb.ATB2_FEATURES), "feature set deviates from the contract"
     for k, v in f.items():
-        assert np.isfinite(v), f"Feature {k} nicht endlich: {v}"
+        assert np.isfinite(v), f"feature {k} not finite: {v}"
 
 
 def test_no_channel_on_pure_trend():
-    """Reiner Aufwärtstrend ohne Konsolidierung -> kein konvergierender Kanal."""
+    """Pure uptrend without consolidation -> no converging channel."""
     n = 160
     px = np.linspace(90.0, 130.0, n)
     df = pd.DataFrame({
@@ -200,9 +200,9 @@ def test_assert_features_alive_raises_on_missing_and_constant():
     df = atb.compute_indicators(make_converging_channel(break_dir="up"))
     setup = atb.find_channel_breakout(df)
     assert setup is not None
-    # Mehrere variierte Kanäle -> kontinuierliche Features variieren garantiert.
-    # n_pre=220 -> Break-Index > 200, damit EMA200 (SMA-seeded) real ist und
-    # dist_ema200 über die Fixtures variiert (sonst konstant-0 -> Assertion).
+    # Multiple varied channels -> continuous features guaranteed to vary.
+    # n_pre=220 -> break index > 200, so EMA200 (SMA-seeded) is real and
+    # dist_ema200 varies across the fixtures (otherwise constant-0 -> assertion).
     rows = []
     for i, kw in enumerate([
         dict(conv=0.05, span=80, in_vol=4000, break_gap=2.0, break_vol=8000, n_pre=220),
@@ -212,16 +212,16 @@ def test_assert_features_alive_raises_on_missing_and_constant():
     ]):
         d = atb.compute_indicators(make_converging_channel(break_dir="up", **kw))
         s = atb.find_channel_breakout(d)
-        assert s is not None, f"Fixture {i} bildete keinen Kanal"
+        assert s is not None, f"fixture {i} formed no channel"
         rows.append(s["features"])
     feat_df = pd.DataFrame(rows)
-    atb.assert_features_alive(feat_df)  # darf nicht werfen
+    atb.assert_features_alive(feat_df)  # must not raise
     row_a = rows[0]
 
     import pytest
     with pytest.raises(ValueError):
         atb.assert_features_alive(feat_df.drop(columns=["rsi"]))
-    const_df = pd.DataFrame([row_a, row_a])  # alles konstant
+    const_df = pd.DataFrame([row_a, row_a])  # everything constant
     with pytest.raises(ValueError):
         atb.assert_features_alive(const_df)
 
@@ -230,18 +230,18 @@ def test_measured_move_targets_geometry():
     df = atb.compute_indicators(make_converging_channel(break_dir="up"))
     setup = atb.find_channel_breakout(df)
     tg = atb.measured_move_targets(setup["channel"], setup["breakout"], setup["entry"])
-    assert tg["targets"] == sorted(tg["targets"]), "LONG-Targets müssen aufsteigen"
-    assert tg["sl"] < setup["entry"], "LONG-SL muss unter dem Entry liegen"
-    assert setup["entry"] * 0.85 <= tg["sl"] <= setup["entry"], "SL-Cap verletzt"
+    assert tg["targets"] == sorted(tg["targets"]), "LONG targets must ascend"
+    assert tg["sl"] < setup["entry"], "LONG SL must be below the entry"
+    assert setup["entry"] * 0.85 <= tg["sl"] <= setup["entry"], "SL cap violated"
 
 
 def test_run_atb2_adapter_emits_record(monkeypatch):
-    """DB-freier End-to-End-Test des Walkforward-Adapters: load_ohlcv und
-    calculate_smart_targets werden gestubbt, simulate_exit läuft echt."""
+    """DB-free end-to-end test of the walkforward adapter: load_ohlcv and
+    calculate_smart_targets are stubbed, simulate_exit runs for real."""
     import tools.walkforward_sim as w
 
-    # n_pre groß genug, dass run_atb2s Paritäts-Historie (MIN_HISTORY_CANDLES)
-    # überschritten ist und der Ausbruch tatsächlich evaluiert wird.
+    # n_pre large enough that run_atb2's parity history (MIN_HISTORY_CANDLES)
+    # is exceeded and the breakout is actually evaluated.
     df = make_converging_channel(break_dir="up", n_pre=1450, n_post=15)
     monkeypatch.setattr(w, "load_ohlcv", lambda conn, sym, tf, days: df.copy())
     monkeypatch.setattr(
@@ -252,19 +252,19 @@ def test_run_atb2_adapter_emits_record(monkeypatch):
         },
     )
     trades = w.run_atb2(conn=None, symbol="TEST_USDT", days=365)
-    assert len(trades) >= 1, "Adapter emittierte keinen Ausbruch"
+    assert len(trades) >= 1, "adapter emitted no breakout"
     tr = trades[0]
     assert tr["strategy"] == "atb2" and tr["direction"] == "LONG"
     assert set(tr["features"].keys()) == set(atb.ATB2_FEATURES)
-    # simulate_exit-Ergebnis ist eingespreizt:
+    # simulate_exit result is interleaved:
     assert "outcome_tp1" in tr and "net_pnl_pct" in tr
-    # §11-Vergleichsfelder:
+    # §11 comparison fields:
     assert "smart_outcome_tp1" in tr and "smart_net_pnl_pct" in tr
 
 
 def test_zero_range_break_candle_no_crash():
-    """Flat-Candle (high==low, illiquide Stunde) als Ausbruchskerze darf keinen
-    0/0-ZeroDivisionError in build_atb2_features werfen."""
+    """Flat candle (high==low, illiquid hour) as the breakout candle must not
+    raise a 0/0 ZeroDivisionError in build_atb2_features."""
     n = 60
     px = np.linspace(100.0, 101.0, n)
     df = pd.DataFrame({
@@ -273,7 +273,7 @@ def test_zero_range_break_candle_no_crash():
         "volume": np.full(n, 1000.0),
     })
     dfi = atb.compute_indicators(df)
-    # letzte Kerze flach und jenseits der Oberkante:
+    # last candle flat and beyond the upper bound:
     dfi.loc[dfi.index[-1], ["open", "high", "low", "close"]] = 105.0
     channel = {
         "up_slope": 0.0, "up_int": 101.0, "lo_slope": 0.0, "lo_int": 99.0,
@@ -284,7 +284,7 @@ def test_zero_range_break_candle_no_crash():
     }
     breakout = atb.detect_breakout(dfi, channel, n - 1)
     assert breakout is not None and breakout["direction"] == "LONG"
-    feats = atb.build_atb2_features(dfi, channel, breakout, n - 1)  # darf nicht werfen
+    feats = atb.build_atb2_features(dfi, channel, breakout, n - 1)  # must not raise
     assert feats["body_commitment"] == 0.0
     assert set(feats.keys()) == set(atb.ATB2_FEATURES)
 

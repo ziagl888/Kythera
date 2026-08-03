@@ -1,8 +1,8 @@
 """
-tools/research_dataset_common.py — geteilte Helfer der Research-Dataset-Builder
-(pex1/fmr1/trm1/fif1_build_dataset.py). Muster und TZ-Konventionen aus
-tools/aim2_build_dataset.py; Labels kommen IMMER aus simulate_exit
-(tools/walkforward_sim.py — wick-aware First-Touch, SL-first, Fees).
+tools/research_dataset_common.py — shared helpers for the research dataset builders
+(pex1/fmr1/trm1/fif1_build_dataset.py). Patterns and TZ conventions from
+tools/aim2_build_dataset.py; labels ALWAYS come from simulate_exit
+(tools/walkforward_sim.py — wick-aware first-touch, SL-first, fees).
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-# cp1252-Konsole: Sonderzeichen in Ausgaben dürfen den Lauf nicht abbrechen
-# (gleicher Fix wie tools/retrain_from_replay.py, 13ce748).
+# cp1252 console: special characters in output must not abort the run
+# (same fix as tools/retrain_from_replay.py, 13ce748).
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -28,23 +28,23 @@ except Exception:
 
 from core.candles import read_candles_with_indicators  # noqa: E402
 
-# CONTEXT_IND_COLS ist die EINE Quelle (core/research_features), aus der auch der
-# Live-Join (fetch_context_frame) seine Indikator-Spalten zieht — so bleiben die
-# Frame-Spalten von Serving und Training/Replay byte-identisch (harte Regel 7).
+# CONTEXT_IND_COLS is the ONE source (core/research_features) from which the
+# live join (fetch_context_frame) also draws its indicator columns — this keeps
+# the frame columns of serving and training/replay byte-identical (hard rule 7).
 from core.research_features import CONTEXT_IND_COLS  # noqa: E402
 from core.time import LEGACY_WRITER_TZ, legacy_naive_to_utc, r3_history_mode  # noqa: E402
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
 REPLAY_DIR = os.getenv("KYTHERA_REPLAY_DIR", os.path.join(STAGING_DIR, "replay"))
 
-# Die TZ, in der die *_trades_master-Writer VOR dem R3-Flip gestempelt haben
-# (T-2026-KYT-9050-005). Kein laufender Writer benutzt sie mehr — sie ist nur
-# noch die Lesart der Historie, und ob die überhaupt gebraucht wird, entscheidet
-# core.time.R3_CUTOVER_UTC. Re-Export unter dem alten Namen für die Builder.
+# The TZ in which the *_trades_master writers stamped BEFORE the R3 flip
+# (T-2026-KYT-9050-005). No running writer uses it anymore — it is now only
+# the reading of the history, and whether it is even needed is decided by
+# core.time.R3_CUTOVER_UTC. Re-exported under the old name for the builders.
 LOCAL_TZ = LEGACY_WRITER_TZ
-MAX_JOIN_STALENESS_H = 3           # Kerzen-Lücke → Event verwerfen
-MIN_WINDOW = 60                    # Mindest-Kerzen vor dem Event
-WINDOW_CANDLES = 500               # Smart-Targets-Fenster
+MAX_JOIN_STALENESS_H = 3           # candle gap → discard event
+MIN_WINDOW = 60                    # minimum candles before the event
+WINDOW_CANDLES = 500               # smart-targets window
 
 
 def log(msg: str) -> None:
@@ -52,7 +52,7 @@ def log(msg: str) -> None:
 
 
 def set_low_priority() -> None:
-    """VPS läuft an der Lastgrenze — Builder laufen mit BELOW_NORMAL."""
+    """VPS runs at the load limit — builders run with BELOW_NORMAL."""
     try:
         import psutil
 
@@ -73,39 +73,39 @@ _R3_MODE_LOGGED = False
 
 
 def to_utc_naive(series: pd.Series) -> pd.Series:
-    """Event-Zeiten einer Legacy-Spalte als naives UTC.
+    """Event times of a legacy column as naive UTC.
 
-    Vor dem R3-Flip (T-2026-KYT-9050-005) rechnete das fest die PG-Lokalzeit
-    heraus. Die Writer stempeln jetzt UTC; eine feste Kompensation wäre eine
-    zweite Verschiebung. Ob und ab wann ALTE Zeilen noch lokalisiert werden
-    müssen, hängt an einer einzigen Konstante (core.time.R3_CUTOVER_UTC,
-    docs/UTC_POLICY.md §6) — deshalb hier keine eigene TZ-Logik mehr.
+    Before the R3 flip (T-2026-KYT-9050-005) this hard-coded the PG local time
+    out. The writers now stamp UTC; a fixed compensation would be a
+    second shift. Whether and from when OLD rows still need to be localised
+    depends on a single constant (core.time.R3_CUTOVER_UTC,
+    docs/UTC_POLICY.md §6) — hence no more dedicated TZ logic here.
 
-    Trainings-relevant: die Lesart wird beim ersten Aufruf geloggt. Ein Trainer,
-    der Historie unter der falschen Lesart liest, baut Train/Serve-Skew (P0.13)
-    — das darf nicht still passieren."""
+    Training-relevant: the reading is logged on the first call. A trainer
+    that reads history under the wrong reading builds a train/serve skew (P0.13)
+    — that must not happen silently."""
     global _R3_MODE_LOGGED
     if not _R3_MODE_LOGGED:
         _R3_MODE_LOGGED = True
-        log(f"R3-Zeitdomäne der Legacy-Spalten: {r3_history_mode()} (docs/UTC_POLICY.md §6)")
+        log(f"R3 time domain of the legacy columns: {r3_history_mode()} (docs/UTC_POLICY.md §6)")
     return legacy_naive_to_utc(series)
 
 
 def candles_window_start(since: str, lookback_days: int):
-    """Untere Fenstergrenze als aware Datetime für core.candles.
+    """Lower window bound as an aware datetime for core.candles.
 
-    Reproduziert das frühere ``%s::timestamptz - INTERVAL 'N days'`` der Builder-
-    SQL: ``since`` wurde DB-seitig in der Session-TZ (PG-Lokal == LOCAL_TZ) als
-    timestamptz interpretiert. Wir lokalisieren identisch und ziehen die Tage ab.
-    Das ist nur eine Warmup-Untergrenze weit vor den Events — DST-Granularität
-    (≤1h) ist immateriell, und die Bucharest-Lesart schneidet nie SPÄTER als die
-    alte SQL, verliert also keine Kerzen.
+    Reproduces the earlier ``%s::timestamptz - INTERVAL 'N days'`` of the builder
+    SQL: ``since`` was interpreted DB-side in the session TZ (PG local == LOCAL_TZ)
+    as a timestamptz. We localise identically and subtract the days.
+    This is only a warmup lower bound well before the events — DST granularity
+    (≤1h) is immaterial, and the Bucharest reading never cuts LATER than the
+    old SQL, so it loses no candles.
 
-    Bewusst NICHT Teil des R3-Flips (T-2026-KYT-9050-005): hier wird kein
-    Spaltenwert in seine Domäne übersetzt, sondern ein Kalenderdatum in eine
-    absichtlich konservative Untergrenze. Bucharest liegt (2–3h) VOR der
-    UTC-Lesart, die Grenze bleibt also unter beiden Regimen gültig — sie fügt
-    höchstens Warmup-Kerzen hinzu, verliert nie welche.
+    Deliberately NOT part of the R3 flip (T-2026-KYT-9050-005): here no
+    column value is translated into its domain, but a calendar date into a
+    deliberately conservative lower bound. Bucharest sits (2–3h) BEFORE the
+    UTC reading, so the boundary stays valid under both regimes — at most it
+    adds warmup candles, it never loses any.
     """
     ts = pd.Timestamp(since)
     if ts.tzinfo is None:
@@ -114,12 +114,12 @@ def candles_window_start(since: str, lookback_days: int):
 
 
 def load_candles_ctx(conn, symbol: str, since: str, lookback_days: int = 30) -> pd.DataFrame | None:
-    """1h-Kerzen + Kontext-Indikatoren (CONTEXT_SQL_SELECT-Join), ASC, naive UTC.
+    """1h candles + context indicators (CONTEXT_SQL_SELECT join), ASC, naive UTC.
 
-    Über core.candles: GESCHLOSSENE Kerzen (include_forming=False). Die Caller
-    schneiden ohnehin per floor_idx auf die letzte geschlossene Kerze vor dem
-    Event — die forming Tail-Zeile hätten sie nie gewählt; der Wechsel ist
-    vertragskompatibel und entfernt einen latenten R1-Repaint (Report §3)."""
+    Via core.candles: CLOSED candles (include_forming=False). The callers
+    already cut via floor_idx to the last closed candle before the
+    event — they would never have picked the forming tail row; the switch is
+    contract-compatible and removes a latent R1 repaint (report §3)."""
     try:
         df = read_candles_with_indicators(
             conn,
@@ -143,8 +143,8 @@ def load_candles_ctx(conn, symbol: str, since: str, lookback_days: int = 30) -> 
 
 
 def floor_idx(times: np.ndarray, ts) -> int:
-    """Index der letzten GESCHLOSSENEN 1h-Kerze vor ``ts`` (floor-1-Join,
-    kein Lookahead). −1 wenn keine Kerze existiert."""
+    """Index of the last CLOSED 1h candle before ``ts`` (floor-1 join,
+    no lookahead). −1 if no candle exists."""
     floor64 = np.datetime64(pd.Timestamp(ts).floor("h"))
     return int(np.searchsorted(times, floor64, side="left")) - 1
 
@@ -155,7 +155,7 @@ def join_is_stale(times: np.ndarray, idx: int, ts) -> bool:
 
 
 def load_regime(conn) -> tuple[np.ndarray, list[dict]]:
-    """regime_history (ts = naive UTC) für regime_at-Lookups."""
+    """regime_history (ts = naive UTC) for regime_at lookups."""
     df = df_query(
         conn,
         "SELECT ts, regime, confidence FROM regime_history ORDER BY ts",

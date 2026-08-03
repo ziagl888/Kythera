@@ -1,37 +1,37 @@
 """
-tools/epd2_build_dataset.py — Trainings-Events + Replay-Labels für den
-EPD2-Retrain (Momentum-MITFAHREN, MODEL_INTENT §7).
+tools/epd2_build_dataset.py — training events + replay labels for the
+EPD2 retrain (Momentum-RIDE-ALONG, MODEL_INTENT §7).
 
-EPD detektiert auf 10s-Ticks — bar-für-bar ist das nicht nachspielbar. Die
-Detektor-Logs SIND aber die Events: ``pump_dump_events`` wird von Bot 10 mit
-exakt den Live-Gates geschrieben. Pipeline (Muster: tools/pex1_build_dataset.py,
-Spiegel der BOT-10-Semantik statt Bot 30):
+EPD detects on 10s ticks — bar-by-bar this is not replayable. The
+detector logs ARE the events though: ``pump_dump_events`` is written by Bot 10 with
+exactly the live gates. Pipeline (pattern: tools/pex1_build_dataset.py,
+mirrors BOT-10 semantics instead of Bot 30):
 
-  1. Events: volume_ratio >= 5 (Alert-Gate des Bots) UND
-     |price_change_60s| >= PUMP_EVENT_MIN_ABS_PCHG_60S — BEIDE Richtungen.
-  2. Richtung = MITFAHREN (Intent §7): Pump (+60s-Move) → LONG, Dump → SHORT.
-  3. TZ-Fix + Dedup 900 s je Symbol (Live-Alert-Throttle von Bot 10).
-  4. Entry = echter Preis zum `spike_time` aus ``ticker_10s`` (T-2026-CU-9050-035).
-     Früher war das der Schätzer ``close×(1+p_chg_60s/100)``. Der ist seit der
-     Normalisierung von ``p_chg_60s`` auf eine Rate pro 60 s FALSCH: die Spalte
-     trägt nicht mehr den realisierten Move, und ohne die Fensterlänge lässt er
-     sich aus dem Event-Log nicht rekonstruieren (harte Regel 7, Trainer ==
-     Serving). ``ticker_10s`` hält den tatsächlich gehandelten Preis in 10s-
-     Auflösung und schlägt jeden Schätzer — gemessen finden 7053 von 7055 Events
-     der letzten drei Tage einen Tick innerhalb von 60 s, über alle 404
-     Event-Symbole.
-  5. Geometrie = BOT-10-Geometrie as-of: get_hvn_and_sr_levels(df=95d-Fenster)
-     + hvn_sr_trade_geometry + ensure_min_tp_distance (NICHT smart_targets —
-     Bot 10 postet HVN/SR-Geometrie).
-  6. Label: simulate_exit ab Event-Kerze+2 (Skip-Entry-Hour, aim2-Präzedenz),
-     Horizont 7 Tage.
-  7. Features: die 10 Live-Features des Bots (sample_fill=1.0 als dokumentierte
-     Steady-State-Näherung — der Wert steht nicht im Event-Log) + die 6
-     Funding-Features (core/funding_features, Operator-Auftrag 2026-07-06).
+  1. Events: volume_ratio >= 5 (bot's alert gate) AND
+     |price_change_60s| >= PUMP_EVENT_MIN_ABS_PCHG_60S — BOTH directions.
+  2. Direction = RIDE-ALONG (Intent §7): pump (+60s move) → LONG, dump → SHORT.
+  3. TZ fix + dedup 900 s per symbol (Bot 10's live alert throttle).
+  4. Entry = actual price at `spike_time` from ``ticker_10s`` (T-2026-CU-9050-035).
+     This used to be the estimator ``close×(1+p_chg_60s/100)``. That has been WRONG
+     since ``p_chg_60s`` was normalised to a rate per 60 s: the column no longer
+     carries the realised move, and without the window length it cannot be
+     reconstructed from the event log (hard rule 7, trainer ==
+     serving). ``ticker_10s`` holds the actually traded price at 10s
+     resolution and beats any estimator — measured, 7053 of 7055 events
+     from the last three days find a tick within 60 s, across all 404
+     event symbols.
+  5. Geometry = BOT-10 geometry as-of: get_hvn_and_sr_levels(df=95d window)
+     + hvn_sr_trade_geometry + ensure_min_tp_distance (NOT smart_targets —
+     Bot 10 posts HVN/SR geometry).
+  6. Label: simulate_exit from event candle+2 (skip-entry-hour, aim2 precedent),
+     7-day horizon.
+  7. Features: the bot's 10 live features (sample_fill=1.0 as a documented
+     steady-state approximation — the value is not in the event log) + the 6
+     funding features (core/funding_features, operator order 2026-07-06).
 
-Beispiel:
-  python tools/epd2_build_dataset.py                    # Vollausbau
-  python tools/epd2_build_dataset.py --limit-symbols 10 # Smoke-Test
+Example:
+  python tools/epd2_build_dataset.py                    # full build
+  python tools/epd2_build_dataset.py --limit-symbols 10 # smoke test
 """
 
 from __future__ import annotations
@@ -66,15 +66,15 @@ from core.funding_features import funding_features_asof, load_funding  # noqa: E
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry  # noqa: E402
 from tools.walkforward_sim import simulate_exit  # noqa: E402
 
-SINCE_DEFAULT = "2026-02-25"      # Beginn belastbarer pump_dump_events-Historie
-ALERT_MIN_VOL_RATIO = 5.0         # Alert-Gate von Bot 10 (Training == Serving)
+SINCE_DEFAULT = "2026-02-25"      # start of reliable pump_dump_events history
+ALERT_MIN_VOL_RATIO = 5.0         # Bot 10's alert gate (training == serving)
 HORIZON_CANDLES = 7 * 24
-DEDUP_SECONDS = 900               # Live-Alert-Throttle je Symbol (Bot 10)
-TICKER_MAX_LAG_SEC = 60           # max. Abstand Event ↔ ticker_10s-Tick für den Entry
+DEDUP_SECONDS = 900               # live alert throttle per symbol (Bot 10)
+TICKER_MAX_LAG_SEC = 60           # max. distance event ↔ ticker_10s tick for the entry
 N_PUBLISHED = 3
-LEVEL_WINDOW_H = 95 * 24          # HVN/SR-Fenster wie get_hvn_and_sr_levels live
+LEVEL_WINDOW_H = 95 * 24          # HVN/SR window matching get_hvn_and_sr_levels live
 
-#: 10-Feature-Vertrag von Bot 10 (features_array-Reihenfolge dort).
+#: 10-feature contract of Bot 10 (features_array order there).
 EPD_FEATURES = [
     "vol_ratio", "p_chg_60s", "buy_pres", "volat", "sample_fill",
     "rsi", "tsi", "macd", "e9_dist", "e21_dist",
@@ -83,7 +83,7 @@ EPD_FEATURES = [
 EPD_SQL_INDICATORS = (
     "i.rsi_14, i.tsi_fast_12_7_7, i.macd_dif_normal_12_26_9, i.ema_9, i.ema_21"
 )
-# Reine Spaltennamen für read_candles_with_indicators (i.-Präfix entfernt).
+# Plain column names for read_candles_with_indicators (i. prefix removed).
 EPD_IND_COLS = [c.strip().split(".")[-1] for c in EPD_SQL_INDICATORS.split(",") if c.strip()]
 
 
@@ -101,15 +101,15 @@ def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
         """,
         (ALERT_MIN_VOL_RATIO, _kcfg.PUMP_EVENT_MIN_ABS_PCHG_60S, since),
     )
-    # ~30 % der Events tragen EXAKTE Event-Zeitpunkt-Indikatoren (ev_*; ältere
-    # Bot-Version schrieb sie mit) — wo vorhanden, schlagen sie den bis zu 1h
-    # stalen 1h-Join-Fallback.
+    # ~30 % of events carry EXACT event-time indicators (ev_*; an older
+    # bot version wrote these along) — where present, they beat the up to 1h
+    # stale 1h join fallback.
     ev["ts"] = spike_time_to_utc(ev["spike_time"], offset_h)
     ev["symbol"] = ev["symbol"].astype(str).str.upper()
     ev = ev[ev["symbol"].str.endswith("USDT")].dropna(subset=["ts"])
     ev = ev[ev["ts"] >= pd.Timestamp(since)]
 
-    # Dedup: 900s-Throttle je Symbol (richtungsübergreifend — wie pd_state live).
+    # Dedup: 900s throttle per symbol (cross-direction — like pd_state live).
     keep, last_ts = [], {}
     for row in ev.itertuples():
         prev = last_ts.get(row.symbol)
@@ -121,7 +121,7 @@ def load_events(conn, since: str, offset_h: int) -> pd.DataFrame:
 
 
 def ticker_history_start(conn) -> pd.Timestamp | None:
-    """Ältester `ticker_10s`-Tick als naive UTC, oder None bei leerer Tabelle."""
+    """Oldest `ticker_10s` tick as naive UTC, or None if the table is empty."""
     row = df_query(conn, "SELECT MIN(ts) AS m FROM ticker_10s")["m"].iloc[0]
     if pd.isna(row):
         return None
@@ -129,11 +129,11 @@ def ticker_history_start(conn) -> pd.Timestamp | None:
 
 
 def load_ticker_prices(conn, symbol: str, since: str) -> tuple[np.ndarray, np.ndarray]:
-    """10s-Ticks eines Symbols als (Zeiten, Preise), chronologisch.
+    """10s ticks of a symbol as (times, prices), chronological.
 
-    `ticker_10s.ts` ist per TZ-Vertrag UTC-aware (core/ticker_10s.py) — anders als
-    die naiven Legacy-Spalten. Hier auf naive UTC gebracht, damit der Vergleich
-    mit `spike_time_to_utc(...)` auf derselben Basis läuft.
+    `ticker_10s.ts` is UTC-aware per TZ contract (core/ticker_10s.py) — unlike
+    the naive legacy columns. Brought to naive UTC here so the comparison
+    with `spike_time_to_utc(...)` runs on the same basis.
     """
     try:
         df = df_query(
@@ -153,13 +153,13 @@ def load_ticker_prices(conn, symbol: str, since: str) -> tuple[np.ndarray, np.nd
 def entry_from_ticker(
     ts_arr: np.ndarray, px_arr: np.ndarray, event_ts: pd.Timestamp, max_lag: int = TICKER_MAX_LAG_SEC
 ) -> float | None:
-    """Tatsächlich gehandelter Preis zum Event-Zeitpunkt, oder None.
+    """Actually traded price at the event time, or None.
 
-    `spike_time` ist die Wanduhr des Detectors NACH dem 60s-Move, der Tick an
-    dieser Stelle ist also bereits der Post-Spike-Preis — genau das, was der alte
-    Schätzer approximieren wollte. Kein Fallback auf den Schätzer: ohne Tick ist
-    der Entry unbekannt, und eine geratene Entry-Geometrie erzeugt ein falsches
-    Label, kein fehlendes.
+    `spike_time` is the detector's wall clock AFTER the 60s move, so the tick at
+    this point is already the post-spike price — exactly what the old
+    estimator was trying to approximate. No fallback to the estimator: without a tick
+    the entry is unknown, and a guessed entry geometry produces a wrong
+    label, not a missing one.
     """
     if ts_arr.size == 0:
         return None
@@ -177,10 +177,10 @@ def entry_from_ticker(
 
 
 def load_candles_epd(conn, symbol: str, since: str) -> pd.DataFrame | None:
-    """1h-Kerzen + EPD-Indikatorspalten, Lookback 100d (95d-Level-Fenster).
+    """1h candles + EPD indicator columns, lookback 100d (95d level window).
 
-    Über core.candles: GESCHLOSSENE Kerzen (include_forming=False); der Caller
-    schneidet per floor_idx ohnehin auf die letzte geschlossene Kerze."""
+    Via core.candles: CLOSED candles (include_forming=False); the caller
+    trims to the last closed candle via floor_idx anyway."""
     try:
         df = read_candles_with_indicators(
             conn,
@@ -220,7 +220,7 @@ def main() -> None:
     ap.add_argument(
         "--allow-pre-ticker",
         action="store_true",
-        help="Events vor dem ersten ticker_10s-Tick zulassen (sie verlieren ihren Entry).",
+        help="Allow events before the first ticker_10s tick (they lose their entry).",
     )
     args = ap.parse_args()
 
@@ -230,27 +230,27 @@ def main() -> None:
 
     conn = get_db_connection()
     offset_h = detect_offset_h(conn)
-    log(f"spike_time-Offset: {offset_h:+d}h gegen UTC")
+    log(f"spike_time offset: {offset_h:+d}h against UTC")
 
-    # Der Entry kommt aus ticker_10s (Schritt 4 im Modul-Docstring). Reicht `since`
-    # vor den ersten Tick, würde jedes Event davor still an `no_ticker` verloren
-    # gehen — das sieht im Log wie ein kleiner Filter aus und ist in Wahrheit ein
-    # halber Datensatz. Lieber laut abbrechen als leise schrumpfen.
+    # The entry comes from ticker_10s (step 4 in the module docstring). If `since`
+    # reaches before the first tick, every event before it would be silently lost
+    # to `no_ticker` — that looks like a small filter in the log but is really a
+    # half-sized dataset. Better to abort loudly than shrink silently.
     tick_start = ticker_history_start(conn)
     if tick_start is None:
-        log("FEHLER: ticker_10s ist leer — ohne Ticks kein Entry. Abbruch.")
+        log("ERROR: ticker_10s is empty — no ticks, no entry. Aborting.")
         sys.exit(2)
     if pd.Timestamp(args.since) < tick_start and not args.allow_pre_ticker:
-        log(f"FEHLER: --since {args.since} liegt vor dem ersten ticker_10s-Tick "
-            f"({tick_start:%Y-%m-%d %H:%M} UTC). Events davor bekommen keinen Entry.")
-        log("       Setze --since auf den Post-Restart-Schnitt (empfohlen), oder "
-            "--allow-pre-ticker, wenn der Verlust bewusst ist.")
+        log(f"ERROR: --since {args.since} is before the first ticker_10s tick "
+            f"({tick_start:%Y-%m-%d %H:%M} UTC). Events before that get no entry.")
+        log("       Set --since to the post-restart cut (recommended), or "
+            "--allow-pre-ticker if the loss is deliberate.")
         sys.exit(2)
 
     ev = load_events(conn, args.since, offset_h)
     n_long = int((ev["price_change_60s"] > 0).sum())
-    log(f"Events nach Gates + Dedup: {len(ev)} ({n_long} Pump/LONG, "
-        f"{len(ev) - n_long} Dump/SHORT) über {ev['symbol'].nunique()} Symbole")
+    log(f"Events after gates + dedup: {len(ev)} ({n_long} pump/LONG, "
+        f"{len(ev) - n_long} dump/SHORT) across {ev['symbol'].nunique()} symbols")
 
     symbols = list(ev["symbol"].drop_duplicates())
     if args.limit_symbols:
@@ -283,10 +283,10 @@ def main() -> None:
                 p_chg = float(row.price_change_60s)
                 direction = "LONG" if p_chg > 0 else "SHORT"
                 is_long = direction == "LONG"
-                # Entry = echter Post-Spike-Preis aus ticker_10s. `p_chg_60s` ist
-                # seit T-035 eine Rate pro 60 s, kein realisierter Move — als
-                # Aufschlag auf `close` wäre er schlicht falsch. Das Vorzeichen
-                # (Richtung) bleibt von der Normalisierung unberührt.
+                # Entry = actual post-spike price from ticker_10s. `p_chg_60s` has
+                # been a rate per 60 s since T-035, not a realised move — as a
+                # markup on `close` it would simply be wrong. The sign
+                # (direction) is unaffected by the normalisation.
                 entry1 = entry_from_ticker(tick_ts, tick_px, row.ts)
                 if entry1 is None:
                     stats["no_ticker"] += 1
@@ -318,8 +318,8 @@ def main() -> None:
                         "p_chg_60s": p_chg,
                         "buy_pres": float(row.buy_pressure),
                         "volat": float(row.volatility),
-                        "sample_fill": 1.0,  # Steady-State-Näherung (nicht im Event-Log)
-                        # Event-Zeitpunkt-Indikatoren (ev_*) bevorzugt, sonst 1h-Join as-of
+                        "sample_fill": 1.0,  # steady-state approximation (not in the event log)
+                        # event-time indicators (ev_*) preferred, else 1h join as-of
                         "rsi": _ev(row.ev_rsi, _val(df, "rsi_14", idx, 50.0)),
                         "tsi": _ev(row.ev_tsi, _val(df, "tsi_fast_12_7_7", idx, 0.0)),
                         "macd": _ev(row.ev_macd, _val(df, "macd_dif_normal_12_26_9", idx, 0.0)),
@@ -333,7 +333,7 @@ def main() -> None:
 
                 label = res.get("outcome_tp1")
                 if res.get("exit_reason") == "open_at_end":
-                    label = None  # Report-13-Regel: offene Trades nicht labeln
+                    label = None  # report-13 rule: don't label open trades
                 fh.write(json.dumps({
                     "symbol": sym, "ts": pd.Timestamp(row.ts).isoformat(),
                     "direction": direction, "weight": 1.0,
@@ -349,10 +349,10 @@ def main() -> None:
             if i % 25 == 0 or i == len(symbols):
                 closed = stats["written"] - stats["open_end"]
                 wr = stats["wins"] / closed * 100 if closed else 0.0
-                log(f"{i}/{len(symbols)} Symbole | geschrieben {stats['written']} "
-                    f"(WR geschlossen: {wr:.1f}%) | {time.time() - t0:.0f}s")
+                log(f"{i}/{len(symbols)} symbols | written {stats['written']} "
+                    f"(WR closed: {wr:.1f}%) | {time.time() - t0:.0f}s")
     conn.close()
-    log(f"FERTIG -> {args.out}")
+    log(f"DONE -> {args.out}")
     log(json.dumps(stats))
 
 

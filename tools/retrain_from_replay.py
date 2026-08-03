@@ -1,26 +1,26 @@
 """
-tools/retrain_from_replay.py — Retraining auf Walk-Forward-Replay-Labels (Batch E3).
+tools/retrain_from_replay.py — Retraining on walk-forward replay labels (Batch E3).
 
-Konsumiert die JSONL-Trades aus tools/walkforward_sim.py (Label = First-Touch-
-Outcome der TATSÄCHLICH geposteten Order-Geometrie — X-R1-Fix) und trainiert
-die Nachfolger-Modelle:
+Consumes JSONL trades from tools/walkforward_sim.py (label = first-touch
+outcome of ACTUALLY posted order geometry — X-R1 fix) and trains the
+successor models:
 
-  td / bb   — binäres XGB wie smc_ml_trainer (20 Features), ein Modell je TF
-  abr1      — binäres XGB je Richtung (18 Features wie 18_ai_abr1_bot)
-  mis1      — 8 binäre XGB ({8,24,72,168}h × {pump,dump}) auf den 63 bereinigten
-              Features aus core.mis_features (Leakage-Fix, Report 13); Label =
-              TP1-vor-SL INNERHALB des Horizonts (horizontgekappter Replay)
+  td / bb   — binary XGB like smc_ml_trainer (20 features), one model per TF
+  abr1      — binary XGB per direction (18 features like 18_ai_abr1_bot)
+  mis1      — 8 binary XGB ({8,24,72,168}h × {pump,dump}) on the 63 cleaned
+              features from core.mis_features (leakage fix, Report 13); label =
+              TP1-before-SL WITHIN the horizon (horizon-capped replay)
 
-Methodik (Report-13-Gerüst):
-  * chronologischer 70/15/15-Split mit Purge-Gap (P1.29)
-  * Threshold auf dem Validation-Slice per realem Replay-PnL (net_pnl_pct
-    aus dem Simulator, nicht 2R-Formel)
-  * Isotonic-Kalibrierung auf Validation (im Artefakt als Zusatz-Key —
-    die Live-Bots lesen weiterhin model/features/threshold)
-  * Kalibrierungs-Report alt vs. neu (Confidence-Buckets vs. Replay-Outcome)
-  * Artefakte NUR nach staging_models (P1.35-Regel), mit meta
+Methodology (Report-13 structure):
+  * chronological 70/15/15 split with purge gap (P1.29)
+  * threshold on validation slice per actual replay PnL (net_pnl_pct
+    from simulator, not 2R formula)
+  * isotonic calibration on validation (in artifact as extra key —
+    live bots still read model/features/threshold)
+  * calibration report old vs. new (confidence buckets vs. replay outcome)
+  * artifacts ONLY to staging_models (P1.35 rule), with meta
 
-Beispiele:
+Examples:
   python tools/retrain_from_replay.py --strategy td --tf 4h
   python tools/retrain_from_replay.py --strategy abr1
 """
@@ -53,15 +53,15 @@ from core.staging_guard import assert_no_foreign_overwrite  # noqa: E402
 from core.atb2_features import ATB2_FEATURES  # noqa: E402
 from core.atb2_features import assert_features_alive as assert_atb2_alive  # noqa: E402
 
-MIS1_HORIZONS = (8, 24, 72, 168)  # muss zu tools/walkforward_sim.MIS1_HORIZONS passen
+MIS1_HORIZONS = (8, 24, 72, 168)  # must match tools/walkforward_sim.MIS1_HORIZONS
 
-# RUB2-Vertrag (MODEL_INTENT §8): die 9 geteilten Bot-Features (core/rub_features,
-# MACD fix auf normal_12_26_9 = Live-Parität, Semantikbruch behoben) + die 6
-# Funding-Features (core/funding_features) aus dem Replay-Adapter.
+# RUB2 contract (MODEL_INTENT §8): the 9 shared bot features (core/rub_features,
+# MACD fixed to normal_12_26_9 = live parity, semantic break fixed) + the 6
+# funding features (core/funding_features) from the replay adapter.
 RUB2_FEATURES = list(RUB_FEATURES) + list(FUNDING_FEATURES)
 
-# EPD2 (MODEL_INTENT §7): die 10 Live-Features von Bot 10 (Schlüsselnamen wie
-# im Builder tools/epd2_build_dataset.py geschrieben) + die 6 Funding-Features.
+# EPD2 (MODEL_INTENT §7): the 10 live features from bot 10 (key names as
+# written in builder tools/epd2_build_dataset.py) + the 6 funding features.
 EPD2_FEATURES = [
     "vol_ratio",
     "p_chg_60s",
@@ -75,14 +75,14 @@ EPD2_FEATURES = [
     "e21_dist",
 ] + list(FUNDING_FEATURES)
 
-# ATS2 (Bot 12 TSI-Sniper): der 29-Feature-Vertrag von core.ats_features (EINE
-# Quelle mit dem Bot + dem walkforward_sim-Adapter). KEINE Funding-Features —
-# Bot 12 liest keine (anders als RUB2/EPD2).
+# ATS2 (Bot 12 TSI Sniper): the 29-feature contract of core.ats_features (ONE
+# source with the bot + the walkforward_sim adapter). NO funding features —
+# bot 12 does not read any (unlike RUB2/EPD2).
 ATS2_FEATURES = list(ATS_FEATURES)
 
-# Operator-Konzept (2026-07-06): Move-Label = "±X% Bewegung INNERHALB des
-# Horizonts" (Close-Basis), Schwelle wächst mit dem Horizont. Quelle:
-# tools/mis1_move_labels.py über den Preisreihen der Replay-Samples.
+# Operator concept (2026-07-06): move label = "±X% movement WITHIN the
+# horizon" (close basis), threshold grows with the horizon. Source:
+# tools/mis1_move_labels.py over the price series of replay samples.
 MOVE_THRESH_PCT = {8: 5.0, 24: 10.0, 72: 15.0, 168: 25.0}
 
 STAGING_DIR = os.getenv("KYTHERA_STAGING_DIR", r"C:\Users\Michael\Documents\_X\staging_models")
@@ -112,8 +112,8 @@ SNIPER_FEATURES = [
     "trend_SIDEWAYS",
 ]
 
-# Feature-Vertrag des ALTEN 3-Klassen-Produktionsmodells (nur noch für den
-# Alt-vs-Neu-Kalibrierungsvergleich — das alte Modell kennt exakt diese 18).
+# Feature contract of the OLD 3-class production model (only for
+# old-vs-new calibration comparison — the old model knows exactly these 18).
 ABR1_FEATURES_LEGACY = [
     "dist_close_ema9_pct",
     "dist_ema9_ema21_pct",
@@ -135,10 +135,10 @@ ABR1_FEATURES_LEGACY = [
     "retest_volume_ratio_avg",
 ]
 
-# Neuer Vertrag: 18 Indikator-Features + Setup-Geometrie aus dem Detektor-
-# Rework (find_break_retest_setups in 18_ai_abr1_bot — der Simulator schreibt
-# sie ins Replay-Feature-Dict). Vorher war das Break&Retest-Setup selbst für
-# das Modell unsichtbar.
+# New contract: 18 indicator features + setup geometry from the detector
+# rework (find_break_retest_setups in 18_ai_abr1_bot — the simulator writes
+# them to the replay feature dict). Previously the break & retest setup itself was
+# invisible to the model.
 ABR1_FEATURES = ABR1_FEATURES_LEGACY + [
     "setup_dist_close_level_pct",
     "setup_break_strength_pct",
@@ -148,30 +148,30 @@ ABR1_FEATURES = ABR1_FEATURES_LEGACY + [
 ]
 
 
-# --- Optionaler additiver Feature-Block-Anschluss (§K7 MOM, T-2026-CU-9050-141) ---
+# --- Optional additive feature block attachment (§K7 MOM, T-2026-CU-9050-141) ---
 #
-# DEFAULT-OFF. Vorbild ist der eingebackene Funding-Block (RUB2_FEATURES =
-# RUB_FEATURES + FUNDING_FEATURES weiter oben): dort werden geteilte Feature-Namen
-# einfach an den Vertrag einer Strategie angehängt. Der Moment-Block macht dasselbe,
-# aber HINTER dem --features-Flag statt fest verdrahtet — nur wenn "moments"
-# übergeben wird, hängt ``with_extra_features`` den core.moment_features-Block an.
+# DEFAULT-OFF. Model is the built-in funding block (RUB2_FEATURES =
+# RUB_FEATURES + FUNDING_FEATURES above): there, shared feature names are
+# simply appended to a strategy's contract. The moment block does the same,
+# but BEHIND the --features flag rather than hard-wired — only when "moments"
+# is passed does ``with_extra_features`` append the core.moment_features block.
 #
-# Strikt additiv: ohne --features moments ist ``extra_features`` leer, und
-# ``with_extra_features(BASE, [])`` liefert eine element-identische Kopie von BASE.
-# Das Retrain-Verhalten (gewählte Spalten, Artefakt, meta) ist dann byte-identisch
-# zu vorher — der Anschluss ist ein reiner No-op, solange das Flag fehlt.
+# Strictly additive: without --features moments, ``extra_features`` is empty, and
+# ``with_extra_features(BASE, [])`` yields an element-identical copy of BASE.
+# The retrain behaviour (selected columns, artifact, meta) is then byte-identical
+# to before — the attachment is a pure no-op as long as the flag is missing.
 #
-# Anhängen der Namen triggert KEIN Retrain und füllt keine Werte: der Replay-Writer
-# (tools/walkforward_sim) muss die Moment-Spalten erst liefern, bevor ein --features
-# moments-Lauf sinnvoll ist. Das Bauen dieses Writers + der Retrain-Lauf selbst sind
-# der Queue vorbehalten (§K7, Ein-Job-Regel) — hier wird NUR der Anschluss gebaut.
+# Appending the names triggers NO retrain and fills no values: the replay writer
+# (tools/walkforward_sim) must deliver the moment columns first before a --features
+# moments run makes sense. Building this writer + the retrain run itself are
+# reserved for the queue (§K7, one-job rule) — here ONLY the attachment is built.
 FEATURE_HOOKS: dict[str, list[str]] = {"moments": list(MOMENT_FEATURES)}
 
 
 def resolve_extra_features(names) -> list[str]:
-    """Löst die --features-Auswahl in die konkreten Zusatz-Feature-Namen auf.
+    """Resolves --features selection to concrete extra feature names.
 
-    ``None``/leer → ``[]`` (Default-OFF-Pfad, kein Verhaltenswechsel)."""
+    ``None``/empty → ``[]`` (default-OFF path, no behaviour change)."""
     extra: list[str] = []
     for n in names or ():
         extra.extend(FEATURE_HOOKS[n])
@@ -179,41 +179,41 @@ def resolve_extra_features(names) -> list[str]:
 
 
 def with_extra_features(base, extra_features) -> list[str]:
-    """``list(base)`` plus optionale Zusatz-Features. Bei leerem ``extra_features``
-    element-identisch zu ``base`` (byte-identisches Retrain-Verhalten)."""
+    """``list(base)`` plus optional extra features. With empty ``extra_features``
+    element-identical to ``base`` (byte-identical retrain behaviour)."""
     return list(base) + list(extra_features)
 
 
 def load_replay(path: str, ts_key: str = "signal_time", label_key: str = "outcome_tp1") -> pd.DataFrame:
-    """JSONL-Event-Loader. ts_key/label_key parametrisieren die Builder-Dialekte
-    (Kerzen-Replays: signal_time/outcome_tp1; EPD2-Detektor-Events: ts/label) —
-    EIN Loader, damit Fixes wie die utc=True-Mixed-Offset-Lehre (f95f092) nicht
-    je Kopie nachgezogen werden müssen."""
+    """JSONL event loader. ts_key/label_key parametrise the builder dialects
+    (candle replays: signal_time/outcome_tp1; EPD2 detector events: ts/label) —
+    ONE loader so that fixes like the utc=True mixed-offset lesson (f95f092) don't
+    have to be chased across copies."""
     rows = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             t = json.loads(line)
             if t.get(label_key) is None:
-                continue  # bei Datenende noch offene Trades: kein Label
+                continue  # at data end still open trades: no label
             feats = t.pop("features", None)
             pnl = t.get("net_pnl_pct")
             if feats is None or pnl is None:
-                # LAUT scheitern statt still mit 0 trainieren (Review PR #10):
-                # null-Features/null-PnL sind Writer-Bugs — als 0.0-Zeilen würden
-                # sie die Validation-Ökonomie verwässern, auf der
-                # pick_threshold_safe den LIVE-Gate-Threshold wählt.
+                # FAIL loudly rather than train silently with 0 (Review PR #10):
+                # null features/null PnL are writer bugs — as 0.0 rows they would
+                # dilute the validation economics on which
+                # pick_threshold_safe selects the LIVE gate threshold.
                 missing = "features" if feats is None else "net_pnl_pct"
                 raise ValueError(
-                    f"Replay-Zeile ohne {missing} in {path} "
-                    f"({t.get('symbol')}, {t.get(ts_key)}) — Replay-Writer prüfen."
+                    f"Replay row without {missing} in {path} "
+                    f"({t.get('symbol')}, {t.get(ts_key)}) — check replay writer."
                 )
             row = dict(feats)
             row.update(
                 {
                     "symbol": t["symbol"],
                     "direction": t["direction"],
-                    # Roh-String lassen — das vektorisierte to_datetime unten parst
-                    # die ganze Spalte einmal (statt pd.Timestamp je Zeile doppelt).
+                    # Keep as raw string — the vectorised to_datetime below parses
+                    # the entire column once (rather than pd.Timestamp per row twice).
                     "signal_time": t[ts_key],
                     "outcome": int(t[label_key]),
                     "net_pnl_pct": float(pnl),
@@ -239,16 +239,16 @@ def chrono_split(df: pd.DataFrame, gap_hours: int):
 
 
 def split_shortfall(df: pd.DataFrame, gap_days: int, min_rows: int = 50, band: float = 0.15) -> dict:
-    """Warum ``chrono_split`` leere Slices liefert — und wieviel Kalender fehlt.
+    """Why ``chrono_split`` yields empty slices — and how much calendar is missing.
 
-    ``chrono_split`` gibt Val und Test je das ``band``-Quantilsband der
-    Signalzeiten; der Purge-Gap schneidet davon vorne ``gap_days`` Tage weg. Ist
-    das Band kürzer als der Gap, sind beide Slices LEER — unabhängig davon, wie
-    viele Zeilen der Datensatz hat. Die Abhilfe ist deshalb nie "mehr Coins",
-    sondern immer "mehr Kalender".
+    ``chrono_split`` returns val and test as each the ``band`` quantile band of
+    signal times; the purge gap cuts ``gap_days`` days from the front. If
+    the band is shorter than the gap, both slices are EMPTY — regardless of how
+    many rows the dataset has. The remedy is therefore never "more coins",
+    but always "more calendar".
 
-    Rechnung (gleichmäßige Dichte ``rows_per_day`` unterstellt — bei stark
-    schwankender Event-Rate ist ``required_span_days`` nur eine Schätzung):
+    Calculation (assuming uniform density ``rows_per_day`` — with strongly
+    varying event rate, ``required_span_days`` is only an estimate):
         (band · span − gap_days) · rows_per_day ≥ min_rows
     """
     span_days = (df["signal_time"].max() - df["signal_time"].min()).total_seconds() / 86400
@@ -283,7 +283,7 @@ def bucket_calibration(probs: np.ndarray, outcomes: np.ndarray, pnl: np.ndarray)
 
 
 def pick_threshold(val_df: pd.DataFrame, probs: np.ndarray) -> tuple[float, dict]:
-    """Threshold per realem Replay-PnL auf Validation (P1.29 + X-R2-Fix)."""
+    """Threshold per actual replay PnL on validation (P1.29 + X-R2 fix)."""
     best_thresh, best_pnl, best = 0.5, -np.inf, {}
     for thresh in np.arange(0.30, 0.85, 0.05):
         m = probs >= thresh
@@ -301,14 +301,14 @@ def pick_threshold(val_df: pd.DataFrame, probs: np.ndarray) -> tuple[float, dict
 
 
 def pick_threshold_safe(val_df: pd.DataFrame, probs: np.ndarray, min_n: int = 200):
-    """Operator-Kriterium (2026-07-06): möglichst wenige, dafür sichere Trades.
+    """Operator criterion (2026-07-06): few but safe trades.
 
-    Statt Summen-PnL (belohnt Volumen → degeneriert in bullischen Val-Slices
-    zum Take-almost-all) wird der Ø-Netto-PnL PRO Trade maximiert. Kandidaten
-    sind Prob-Quantile (funktioniert bei jeder Basisrate), Mindest-Stichprobe
-    min_n auf Validation, bei Gleichstand gewinnt der höhere Threshold.
-    Liefert threshold=None, wenn kein Kandidat min_n erreicht ODER der beste
-    Ø-PnL <= 0 ist — das Modell gilt dann als NICHT deploybar."""
+    Instead of sum PnL (rewards volume → degenerates to take-almost-all in bullish val
+    slices), average net PnL per trade is maximised. Candidates are
+    probability quantiles (work at any base rate), minimum sample size
+    min_n on validation, with ties broken by higher threshold.
+    Returns threshold=None if no candidate reaches min_n OR the best
+    average PnL <= 0 — the model is then considered NOT deployable."""
     quantiles = (0.50, 0.70, 0.80, 0.85, 0.90, 0.925, 0.95, 0.97, 0.98, 0.99)
     cands = sorted({round(float(np.quantile(probs, q)), 4) for q in quantiles})
     curve, best = [], None
@@ -368,11 +368,11 @@ def train_binary(train, val, test, feature_cols, hyper=None, picker=pick_thresho
 
 
 def old_model_calibration(strategy, tf, df, direction=None, horizon=None):
-    """Kalibrierung des PRODUKTIONS-Modells auf denselben Replay-Events."""
+    """Calibration of the PRODUCTION model on the same replay events."""
     try:
         if strategy == "mis1":
-            # Legacy-67-Feature-pkl (inkl. der Unfall-Features — die stehen im
-            # Replay als legacy_features-Spalten bereit, s. core.mis_features).
+            # Legacy 67-feature pickle (incl. the accident features — they stand
+            # in replay as legacy_features columns, see core.mis_features).
             key = f"{horizon}h_{'pump' if direction == 'LONG' else 'dump'}"
             path = os.path.join(LIVE_DIR, f"pump_model_{key}_final.pkl")
             if not os.path.exists(path):
@@ -386,7 +386,7 @@ def old_model_calibration(strategy, tf, df, direction=None, horizon=None):
             model, feats = data["model"], data["features"]
             X = df.reindex(columns=feats, fill_value=0).fillna(0)
             probs = model.predict_proba(X)[:, 1]
-        else:  # abr1: natives 3-Klassen-JSON, success = Klasse 0
+        else:  # abr1: native 3-class JSON, success = class 0
             model = xgb.XGBClassifier()
             model.load_model(os.path.join(LIVE_DIR, f"bt2_model_{direction}.json"))
             X = df.reindex(columns=ABR1_FEATURES_LEGACY, fill_value=0).fillna(0)
@@ -395,16 +395,16 @@ def old_model_calibration(strategy, tf, df, direction=None, horizon=None):
             np.asarray(probs), df["outcome"].values.astype(float), df["net_pnl_pct"].values.astype(float)
         )
     except Exception as e:
-        print(f"  (Alt-Modell-Kalibrierung fehlgeschlagen: {e})")
+        print(f"  (Old model calibration failed: {e})")
         return None, None
 
 
 def save_artifact(path, model, feature_cols, thresh, iso, meta):
     os.makedirs(STAGING_DIR, exist_ok=True)
     if os.path.abspath(os.path.dirname(path)) != os.path.abspath(STAGING_DIR):
-        raise SystemExit(f"Refuse: Artefakt-Ziel liegt nicht in STAGING_DIR: {path}")
-    # td/bb teilen den Dateinamen mit smc_ml_trainer.py — ein Legacy-Lauf hat am
-    # 2026-07-14 vier fertige Replay-Artefakte still überschrieben (T-2026-KYT-9050-006).
+        raise SystemExit(f"Refuse: artifact destination not in STAGING_DIR: {path}")
+    # td/bb share the filename with smc_ml_trainer.py — a legacy run on
+    # 2026-07-14 silently overwrote four ready replay artifacts (T-2026-KYT-9050-006).
     assert_no_foreign_overwrite(path, meta.get("trainer", "tools/retrain_from_replay.py"))
     joblib.dump(
         {
@@ -422,13 +422,13 @@ def save_artifact(path, model, feature_cols, thresh, iso, meta):
 def run_td_bb(strategy: str, tf: str, replay_path: str, extra_features=()) -> dict:
     df = load_replay(replay_path)
     if df.empty or len(df) < 300:
-        raise SystemExit(f"Zu wenig Replay-Trades ({len(df)}) in {replay_path}")
+        raise SystemExit(f"Too few replay trades ({len(df)}) in {replay_path}")
     feats = with_extra_features(SNIPER_FEATURES, extra_features)
     gap_hours = 100 * (1 if tf == "1h" else 4)
     train, val, test = chrono_split(df, gap_hours)
     print(
-        f"{strategy}_{tf}: {len(df)} gelabelte Events | split {len(train)}/{len(val)}/{len(test)} | "
-        f"Basisrate TP1 {df['outcome'].mean() * 100:.1f}%"
+        f"{strategy}_{tf}: {len(df)} labelled events | split {len(train)}/{len(val)}/{len(test)} | "
+        f"base rate TP1 {df['outcome'].mean() * 100:.1f}%"
     )
 
     model, iso, thresh, val_stats, test_stats, calib_new = train_binary(train, val, test, feats)
@@ -438,11 +438,11 @@ def run_td_bb(strategy: str, tf: str, replay_path: str, extra_features=()) -> di
         "trainer": "tools/retrain_from_replay.py",
         "strategy": strategy,
         "tf": tf,
-        # Versionierungs-Regel (Operator 2026-07-06): Retrain-Generation postet
-        # unter neuem Modell-Tag, damit Alt/Neu in den Trackern getrennt sind.
+        # Versioning rule (operator 2026-07-06): retrain generation posts
+        # under new model tag so old/new are separated in trackers.
         "model_id": f"{strategy.upper()}2_{tf.upper()}",
         "label_source": os.path.basename(replay_path),
-        "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
+        "label": "first-touch TP1-before-SL of posted smart-targets geometry, fees incl.",
         "split": "chronological 70/15/15 + purge gap",
         "threshold_selected_on": "validation",
         "xgboost_version": xgb.__version__,
@@ -472,25 +472,25 @@ def run_td_bb(strategy: str, tf: str, replay_path: str, extra_features=()) -> di
 def run_abr1(replay_path: str, extra_features=()) -> dict:
     df = load_replay(replay_path)
     if df.empty or len(df) < 300:
-        raise SystemExit(f"Zu wenig Replay-Trades ({len(df)}) in {replay_path}")
+        raise SystemExit(f"Too few replay trades ({len(df)}) in {replay_path}")
     feats = with_extra_features(ABR1_FEATURES, extra_features)
     results = {}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 200:
-            print(f"ABR1 {direction}: nur {len(d)} Events — übersprungen")
+            print(f"ABR1 {direction}: only {len(d)} events — skipped")
             continue
         train, val, test = chrono_split(d, 100)
         print(
-            f"abr1 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
-            f"Basisrate {d['outcome'].mean() * 100:.1f}%"
+            f"abr1 {direction}: {len(d)} events | split {len(train)}/{len(val)}/{len(test)} | "
+            f"base rate {d['outcome'].mean() * 100:.1f}%"
         )
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(train, val, test, feats)
         _, calib_old = old_model_calibration("abr1", None, test, direction=direction)
 
-        # natives XGB-JSON wie das Produktions-Format + meta-Sidecar.
-        # "features" gehört IN die meta (Artefakt-Governance, Report 13) — der
-        # Bot lädt den Vertrag von dort statt ihn zu hardcoden (R13-ABR1-5).
+        # native XGB JSON like the production format + meta sidecar.
+        # "features" belongs IN the meta (artifact governance, Report 13) — the
+        # bot loads the contract from there rather than hard-coding it (R13-ABR1-5).
         os.makedirs(STAGING_DIR, exist_ok=True)
         out_json = os.path.join(STAGING_DIR, f"bt2_model_{direction}.json")
         model.save_model(out_json)
@@ -498,10 +498,10 @@ def run_abr1(replay_path: str, extra_features=()) -> dict:
             "trainer": "tools/retrain_from_replay.py",
             "strategy": "abr1",
             "direction": direction,
-            "model_id": "ABR2",  # Versionierungs-Regel Operator 2026-07-06
+            "model_id": "ABR2",  # versioning rule operator 2026-07-06
             "label_source": os.path.basename(replay_path),
-            "label": "first-touch TP1-vor-SL der geposteten smart-targets-Geometrie, Fees inkl.",
-            "model_type": "binary (1=TP1-first-touch) — ANDERS als das alte 3-Klassen-Modell!",
+            "label": "first-touch TP1-before-SL of posted smart-targets geometry, fees incl.",
+            "model_type": "binary (1=TP1-first-touch) — DIFFERENT from the old 3-class model!",
             "success_proba": "predict_proba[:, 1]",
             "features": feats,
             "optimal_threshold": thresh,
@@ -515,9 +515,9 @@ def run_abr1(replay_path: str, extra_features=()) -> dict:
         }
         with open(out_json.replace(".json", "_meta.json"), "w", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2)
-        # Isotonic-Kalibrator persistieren (war vorher NUR bei td/bb im pkl —
-        # für abr1 ging er verloren). Der Bot nutzt ihn für die angezeigte
-        # Confidence; das Gate läuft weiter auf der Roh-Probability.
+        # Persist isotonic calibrator (was previously ONLY in pkl for td/bb —
+        # for abr1 it was lost). The bot uses it for displayed
+        # confidence; the gate runs on raw probability.
         joblib.dump(iso, out_json.replace(".json", "_calib.pkl"))
         print(f"  💾 {out_json}")
         results[direction] = {
@@ -534,9 +534,9 @@ def run_abr1(replay_path: str, extra_features=()) -> dict:
 
 
 def load_mis1_replay(path: str) -> pd.DataFrame:
-    """MIS1-JSONL: Features + legacy_features flach, beide Horizont-Labels.
-    Zeilen ohne Label für einen Horizont (Datenende) werden erst je Horizont
-    verworfen — deshalb hier KEIN globaler outcome_tp1-Filter."""
+    """MIS1 JSONL: features + legacy_features flat, both horizon labels.
+    Rows without label for a horizon (data end) are discarded per-horizon first
+    — therefore NO global outcome_tp1 filter here."""
     rows = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -562,8 +562,8 @@ def load_mis1_replay(path: str) -> pd.DataFrame:
 
 
 def load_mis1_move_labels(path: str) -> pd.DataFrame:
-    """JSONL aus tools/mis1_move_labels.py: kontinuierliche Move-Extreme je
-    (symbol, signal_time) — Label-Schwellen werden hier im Trainer angelegt."""
+    """JSONL from tools/mis1_move_labels.py: continuous move extremes per
+    (symbol, signal_time) — label thresholds are set here in the trainer."""
     rows = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -583,9 +583,9 @@ def run_mis1(
 ) -> dict:
     df_all = load_mis1_replay(replay_path)
     if df_all.empty or len(df_all) < 2000:
-        raise SystemExit(f"Zu wenig Replay-Samples ({len(df_all)}) in {replay_path}")
+        raise SystemExit(f"Too few replay samples ({len(df_all)}) in {replay_path}")
     print(
-        f"mis1: {len(df_all)} Samples, {df_all['symbol'].nunique()} Coins, "
+        f"mis1: {len(df_all)} samples, {df_all['symbol'].nunique()} coins, "
         f"{df_all['signal_time'].min()} → {df_all['signal_time'].max()}"
     )
 
@@ -594,10 +594,10 @@ def run_mis1(
         mv = load_mis1_move_labels(move_path)
         df_all = df_all.merge(mv, on=["symbol", "signal_time"], how="left")
         n_matched = df_all[f"full_{MIS1_HORIZONS[0]}h"].notna().sum()
-        print(f"mis1 move-labels: {len(mv)} Punkte geladen, {n_matched}/{len(df_all)} Samples gematcht")
+        print(f"mis1 move-labels: {len(mv)} points loaded, {n_matched}/{len(df_all)} samples matched")
 
-    # P0.12-Assertion auf dem Trainingsmaterial: kein kontinuierliches Feature konstant.
-    assert_features_alive(df_all, context=" (mis1-Retrain)")
+    # P0.12 assertion on training material: no continuous feature is constant.
+    assert_features_alive(df_all, context=" (mis1 retrain)")
 
     feats = with_extra_features(MIS1_FEATURES, extra_features)
     results: dict = {"strategy": "mis1"}
@@ -615,8 +615,8 @@ def run_mis1(
                 ext = pd.to_numeric(sub[col], errors="coerce")
                 hit = (ext >= thr_move) if direction == "LONG" else (ext <= -thr_move)
                 full = sub[f"full_{horizon}h"].fillna(False).astype(bool)
-                # Ein Treffer zählt immer; eine 0 nur bei vollem Horizontfenster
-                # (Datenende vor Horizontende ist kein verlässliches "kein Move").
+                # A hit always counts; a 0 only with full horizon window
+                # (data end before horizon end is not reliable "no move").
                 sub["outcome"] = np.where(hit, 1.0, np.where(full, 0.0, np.nan))
                 sub.loc[ext.isna(), "outcome"] = np.nan
                 d = sub[sub["outcome"].notna()].copy()
@@ -624,20 +624,20 @@ def run_mis1(
             else:
                 d = df_all[(df_all["direction"] == direction) & df_all[f"outcome_{horizon}h"].notna()].copy()
                 d["outcome"] = d[f"outcome_{horizon}h"].astype(int)
-            # Ökonomische Bewertung bleibt in beiden Modi die gepostete
-            # Trade-Geometrie (das verdient/verliert ein Follower real).
+            # Economic valuation stays the same in both modes: the posted
+            # trade geometry (that's what a follower earns/loses in reality).
             d["net_pnl_pct"] = pd.to_numeric(d[f"net_pnl_{horizon}h"], errors="coerce").fillna(0.0)
             d = d.reset_index(drop=True)
             if len(d) < 2000:
-                print(f"mis1 {key}: nur {len(d)} Events — übersprungen")
+                print(f"mis1 {key}: only {len(d)} events — skipped")
                 continue
 
-            # Purge-Gap = Horizont + Stride: kein Label-Fenster aus dem Train-
-            # Slice ragt in Val/Test hinein (Zwillings-Leakage, 13-Addendum-P0).
+            # Purge gap = horizon + stride: no label window from train
+            # slice extends into val/test (twin leakage, 13-addendum-P0).
             train, val, test = chrono_split(d, horizon + stride_hours)
             print(
-                f"mis1 {key}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
-                f"Basisrate TP1@{horizon}h {d['outcome'].mean() * 100:.1f}%"
+                f"mis1 {key}: {len(d)} events | split {len(train)}/{len(val)}/{len(test)} | "
+                f"base rate TP1@{horizon}h {d['outcome'].mean() * 100:.1f}%"
             )
 
             model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
@@ -647,14 +647,14 @@ def run_mis1(
 
             if label_mode == "move":
                 label_txt = (
-                    f"{move_basis.capitalize()}-Move {'+' if direction == 'LONG' else '-'}"
-                    f"{MOVE_THRESH_PCT[horizon]}% INNERHALB {horizon}h "
-                    f"(Operator-Konzept; Quelle tools/mis1_move_labels.py)"
+                    f"{move_basis.capitalize()} move {'+' if direction == 'LONG' else '-'}"
+                    f"{MOVE_THRESH_PCT[horizon]}% WITHIN {horizon}h "
+                    f"(operator concept; source tools/mis1_move_labels.py)"
                 )
             else:
                 label_txt = (
-                    f"first-touch TP1-vor-SL der geposteten smart-targets-Geometrie "
-                    f"INNERHALB {horizon}h, Fees inkl. (Timeout=0)"
+                    f"first-touch TP1-before-SL of posted smart-targets geometry "
+                    f"WITHIN {horizon}h, fees incl. (timeout=0)"
                 )
             if label_mode == "move":
                 prefix = "mis1_move_model" if move_basis == "close" else "mis1_move_wick_model"
@@ -663,15 +663,15 @@ def run_mis1(
             meta = {
                 "trainer": "tools/retrain_from_replay.py",
                 "strategy": "mis1",
-                "model_id": "MIS2",  # Bot hängt den Horizont an: MIS2-8H etc.
+                "model_id": "MIS2",  # bot appends the horizon: MIS2-8H etc.
                 "label_mode": label_mode,
                 "horizon_hours": horizon,
                 "direction": direction,
                 "label_source": os.path.basename(replay_path),
                 "label": label_txt,
-                "features": "core.mis_features.FEATURE_COLS (63, skalenfrei — Leakage-Fix Report 13)",
+                "features": "core.mis_features.FEATURE_COLS (63, scale-free — leakage fix Report 13)",
                 "split": f"chronological 70/15/15 + purge gap {horizon + stride_hours}h",
-                "threshold_selected_on": "validation (Ø-Netto-PnL/Trade, min_n=200 — pick_threshold_safe)",
+                "threshold_selected_on": "validation (avg net PnL/trade, min_n=200 — pick_threshold_safe)",
                 "xgboost_version": xgb.__version__,
                 "n_train": len(train),
                 "n_val": len(val),
@@ -696,16 +696,16 @@ def run_mis1(
 
 
 def run_rub(replay_path: str, extra_features=()) -> dict:
-    """RUB2-Retrain (Task #2): Binärmodell je Richtung auf den Replay-Events des
-    geteilten Vorfilters (core/rub_features), Label = First-Touch der eigenen
-    HVN/S-R-Geometrie inkl. SL-Pfad (behebt das Max-Favorable-Label des alten
-    BT3-Trainers), chronologischer Split (behebt die Episoden-Memorization des
-    Random-Splits), Threshold via pick_threshold_safe."""
+    """RUB2 retrain (task #2): binary model per direction on replay events of the
+    shared pre-filter (core/rub_features), label = first-touch of own
+    HVN/S-R geometry incl. SL path (fixes max-favourable label of old
+    BT3 trainer), chronological split (fixes episode memorization of
+    random split), threshold via pick_threshold_safe."""
     df = load_replay(replay_path)
     if df.empty or len(df) < 600:
-        raise SystemExit(f"Zu wenig Replay-Events ({len(df)}) in {replay_path}")
+        raise SystemExit(f"Too few replay events ({len(df)}) in {replay_path}")
     print(
-        f"rub: {len(df)} Events, {df['symbol'].nunique()} Coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
+        f"rub: {len(df)} events, {df['symbol'].nunique()} coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
     feats = with_extra_features(RUB2_FEATURES, extra_features)
@@ -713,14 +713,14 @@ def run_rub(replay_path: str, extra_features=()) -> dict:
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
-            print(f"rub2 {direction}: nur {len(d)} Events — übersprungen")
+            print(f"rub2 {direction}: only {len(d)} events — skipped")
             continue
-        # Purge-Gap 7 Tage: Reversion-Trades können lange laufen, und die
-        # Extrem-Episoden clustern — großzügig gegen Zwillings-Leakage.
+        # purge gap 7 days: reversion trades can run long, and extreme
+        # episodes cluster — generous against twin leakage.
         train, val, test = chrono_split(d, gap_hours=7 * 24)
         print(
-            f"rub2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
-            f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%"
+            f"rub2 {direction}: {len(d)} events | split {len(train)}/{len(val)}/{len(test)} | "
+            f"base rate TP1 {d['outcome'].mean() * 100:.1f}%"
         )
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
@@ -737,10 +737,10 @@ def run_rub(replay_path: str, extra_features=()) -> dict:
             "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(replay_path),
-            "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-13-Parität), Fees inkl.",
-            "changes_vs_rub1": "MACD auf normal_12_26_9 fixiert (Live-Parität), Label mit "
-            "SL-Pfad statt Max-Favorable-72h, chronologischer Split mit "
-            "7d-Purge statt Random-Split, +6 Funding-Features",
+            "label": "first-touch TP1-before-SL of HVN/S-R geometry (bot-13 parity), fees incl.",
+            "changes_vs_rub1": "MACD fixed to normal_12_26_9 (live parity), label with "
+            "SL path instead of max-favourable-72h, chronological split with "
+            "7d purge instead of random split, +6 funding features",
             "split": "chronological 70/15/15 + 7d purge gap",
             "xgboost_version": xgb.__version__,
             "n_train": len(train),
@@ -765,21 +765,21 @@ def run_rub(replay_path: str, extra_features=()) -> dict:
 
 
 def run_ats(replay_path: str, extra_features=()) -> dict:
-    """ATS2-Retrain (Bot 12 TSI-Sniper, T-2026-CU-9050-121): Binärmodell je
-    Richtung auf den Replay-Events des geteilten TSI-Crossover-Vorfilters
-    (core/ats_features), Label = First-Touch TP1-vor-SL der eigenen HVN/S-R-
-    Geometrie inkl. SL-Pfad + Fees (behebt das Max-Favorable-Proxy-Label des
-    alten X8-TSI-Trainers), chronologischer Split mit Purge-Gap (behebt die
-    Episoden-Memorization des Random-Splits), Threshold via pick_threshold_safe.
+    """ATS2 retrain (bot 12 TSI sniper, T-2026-CU-9050-121): binary model per
+    direction on replay events of the shared TSI crossover pre-filter
+    (core/ats_features), label = first-touch TP1-before-SL of own HVN/S-R
+    geometry incl. SL path + fees (fixes max-favourable-proxy label of old
+    X8 TSI trainer), chronological split with purge gap (fixes episode
+    memorization of random split), threshold via pick_threshold_safe.
 
-    29-Feature-Parität Trainer==Serving: der Bot baut den Feature-Vektor mit
-    derselben core.ats_features.build_ats_features (Parity-Test
+    29-feature parity trainer==serving: the bot builds the feature vector with
+    the same core.ats_features.build_ats_features (parity test
     backtest/test_ats_features)."""
     df = load_replay(replay_path)
     if df.empty or len(df) < 600:
-        raise SystemExit(f"Zu wenig Replay-Events ({len(df)}) in {replay_path}")
+        raise SystemExit(f"Too few replay events ({len(df)}) in {replay_path}")
     print(
-        f"ats: {len(df)} Events, {df['symbol'].nunique()} Coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
+        f"ats: {len(df)} events, {df['symbol'].nunique()} coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
     feats = with_extra_features(ATS2_FEATURES, extra_features)
@@ -787,14 +787,14 @@ def run_ats(replay_path: str, extra_features=()) -> dict:
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
-            print(f"ats2 {direction}: nur {len(d)} Events — übersprungen")
+            print(f"ats2 {direction}: only {len(d)} events — skipped")
             continue
-        # Purge-Gap 7 Tage: TSI-Trades können über mehrere Tage laufen; großzügig
-        # gegen Zwillings-Leakage zwischen Train/Val/Test.
+        # purge gap 7 days: TSI trades can run over several days; generous
+        # against twin leakage between train/val/test.
         train, val, test = chrono_split(d, gap_hours=7 * 24)
         print(
-            f"ats2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
-            f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%"
+            f"ats2 {direction}: {len(d)} events | split {len(train)}/{len(val)}/{len(test)} | "
+            f"base rate TP1 {d['outcome'].mean() * 100:.1f}%"
         )
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
@@ -811,10 +811,10 @@ def run_ats(replay_path: str, extra_features=()) -> dict:
             "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(replay_path),
-            "label": "first-touch TP1-vor-SL der HVN/S-R-Geometrie (Bot-12-Parität), Fees inkl.",
-            "changes_vs_ats1": "DB-basiert über core.candles (R1-clean, kein CSV-Zwischenschritt), "
-            "Label mit SL-Pfad statt Max-Favorable-Move-Proxy, chronologischer Split mit "
-            "7d-Purge statt Random-Split, geteilter Feature-Builder core.ats_features",
+            "label": "first-touch TP1-before-SL of HVN/S-R geometry (bot-12 parity), fees incl.",
+            "changes_vs_ats1": "DB-based over core.candles (R1-clean, no CSV intermediate), "
+            "label with SL path instead of max-favourable-move proxy, chronological split with "
+            "7d purge instead of random split, shared feature builder core.ats_features",
             "split": "chronological 70/15/15 + 7d purge gap",
             "xgboost_version": xgb.__version__,
             "n_train": len(train),
@@ -839,75 +839,75 @@ def run_ats(replay_path: str, extra_features=()) -> dict:
 
 
 def artifact_slot(model_id: str) -> str:
-    """Dateinamen-Präfix, der zu einem Generations-Tag gehört (harte Regel 6).
+    """Filename prefix that belongs to a generation tag (hard rule 6).
 
-    ``EPD4`` → ``epd4``, ``MIS2-8H`` → ``mis28h``. Der Präfix MUSS aus dem Tag
-    kommen: ein Challenger, den man unter dem Dateinamen einer FREMDEN Generation
-    ablegt, kapert bei der Promotion deren Loader-Slot und postet dasselbe Modell
-    unter zwei Tags (der EPD3-SHORT-Fall vom 2026-07-21, T-2026-KYT-9050-057).
-    Identisch zu ``tools.promotion_guard.tag_prefix`` — hier lokal gehalten, damit
-    der Trainer nicht core.shadow_gate + die Variant-Registry importieren muss;
-    die Gleichheit pinnt backtest/test_retrain_model_id.py."""
+    ``EPD4`` → ``epd4``, ``MIS2-8H`` → ``mis28h``. The prefix MUST come from the tag:
+    a challenger placed under the filename of a FOREIGN generation hijacks
+    that loader slot during promotion and posts the same model under two
+    tags (the EPD3-SHORT case from 2026-07-21, T-2026-KYT-9050-057).
+    Identical to ``tools.promotion_guard.tag_prefix`` — kept local here so
+    the trainer doesn't have to import core.shadow_gate + variant registry;
+    equality is pinned by backtest/test_retrain_model_id.py."""
     return model_id.strip().upper().replace("-", "").lower()
 
 
 def run_epd(events_path: str, extra_features=(), model_id: str = "EPD2") -> dict:
-    """EPD2-Retrain (MODEL_INTENT §7): Binärmodell je Richtung auf den
-    Detektor-Events aus tools/epd2_build_dataset.py (nur vol_ratio≥5 wie live,
-    Label = First-Touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie via
-    simulate_exit, 7d-Horizont; offene Trades ungelabelt). Der Builder
-    schreibt ts/label/features statt signal_time/outcome_tp1 → Key-Mapping
-    im geteilten Loader.
+    """EPD2 retrain (MODEL_INTENT §7): binary model per direction on
+    detector events from tools/epd2_build_dataset.py (only vol_ratio≥5 like live,
+    label = first-touch TP1-before-SL of bot-10 HVN/SR geometry via
+    simulate_exit, 7d horizon; open trades unlabelled). The builder
+    writes ts/label/features instead of signal_time/outcome_tp1 → key mapping
+    in the shared loader.
 
-    ``model_id`` ist der Generations-Tag der ERZEUGTEN Artefakte (harte Regel 6).
-    Er setzt ``meta.model_id`` UND den Dateinamen-Präfix gemeinsam — beide
-    auseinanderlaufen zu lassen ist genau der Slot-Kaper-Fehler oben. Default
-    ``EPD2`` hält den bisherigen Lauf byte-identisch; ein Retrain auf einer neuen
-    Feature-Definition läuft unter einem freien Tag (EPD1/2/3 sind vergeben)."""
+    ``model_id`` is the generation tag of the CREATED artifacts (hard rule 6).
+    It sets ``meta.model_id`` AND the filename prefix together — letting them
+    diverge is exactly the slot-hijack error above. Default ``EPD2`` keeps the
+    previous run byte-identical; a retrain on a new feature definition runs
+    under a free tag (EPD1/2/3 are taken)."""
     df = load_replay(events_path, ts_key="ts", label_key="label")
     if df.empty or len(df) < 600:
-        raise SystemExit(f"Zu wenig gelabelte EPD2-Events ({len(df)}) in {events_path}")
+        raise SystemExit(f"Too few labelled EPD2 events ({len(df)}) in {events_path}")
     print(
-        f"epd: {len(df)} Events, {df['symbol'].nunique()} Coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
+        f"epd: {len(df)} events, {df['symbol'].nunique()} coins, {df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
     feats = with_extra_features(EPD2_FEATURES, extra_features)
-    # Register-Keys sind UPPER (core/shadow_gate._norm) — hier normalisieren, damit
-    # ein `--model-id epd4` nicht als kleingeschriebener Tag in die meta wandert
-    # und dort am Lifecycle-Lookup vorbeiläuft.
+    # Register keys are UPPER (core/shadow_gate._norm) — normalise here so
+    # a `--model-id epd4` doesn't end up as a lowercase tag in meta
+    # and miss the lifecycle lookup there.
     model_id = model_id.strip().upper()
     slot = artifact_slot(model_id)
     results: dict = {"strategy": "epd2", "model_id": model_id, "features": feats}
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 300:
-            print(f"epd2 {direction}: nur {len(d)} Events — übersprungen")
+            print(f"epd2 {direction}: only {len(d)} events — skipped")
             continue
-        # Purge-Gap 7 Tage = Label-Horizont des Builders (HORIZON_CANDLES).
+        # purge gap 7 days = label horizon of the builder (HORIZON_CANDLES).
         gap_days = 7
         train, val, test = chrono_split(d, gap_hours=gap_days * 24)
         print(
-            f"epd2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
-            f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%"
+            f"epd2 {direction}: {len(d)} events | split {len(train)}/{len(val)}/{len(test)} | "
+            f"base rate TP1 {d['outcome'].mean() * 100:.1f}%"
         )
         if min(len(train), len(val), len(test)) < 50:
-            # Zeitraum zu kurz für den Purge-Gap (z. B. abgeschnittener Builder-
-            # Lauf): iso.fit/Picker würden auf leeren Slices crashen.
+            # Time period too short for purge gap (e.g. truncated builder
+            # run): iso.fit/picker would crash on empty slices.
             #
-            # Das ist der Regelfall für JEDEN Post-P1.39-Schnitt, solange die
-            # Historie jung ist (T-2026-KYT-9050-004). Die nackte Meldung
-            # "übersprungen" hat dort wie ein Datenfehler ausgesehen, obwohl sie
-            # eine reine Kalender-Aussage ist — deshalb die Rechnung dazu:
-            # Val und Test bekommen je das 15%-Quantilsband, und davon frisst der
-            # Purge-Gap die ersten `gap_days` Tage. Ein Band muss den Gap also
-            # ÜBERSTEIGEN, bevor überhaupt eine Zeile in Val/Test landet.
+            # This is the standard case for EVERY post-P1.39 cut, as long as
+            # the history is young (T-2026-KYT-9050-004). The bare message
+            # "skipped" looked like a data error there, though it's just a
+            # calendar statement — hence the calculation:
+            # val and test each get the 15% quantile band, and the
+            # purge gap eats the first `gap_days` days of it. A band must
+            # EXCEED the gap before any row lands in val/test at all.
             diag = split_shortfall(d, gap_days, min_rows=50)
             print(
-                f"epd2 {direction}: degenerierter Split — übersprungen. "
-                f"Spanne {diag['span_days']:.1f}d, 15%-Band {diag['band_days']:.1f}d < Purge-Gap {gap_days}d "
-                f"(Dichte {diag['rows_per_day']:.0f} Zeilen/Tag) ⇒ Val/Test leer. "
-                f"Für ≥{diag['min_rows']} Zeilen je Slice braucht es ~{diag['required_span_days']:.0f}d Spanne "
-                f"(~{diag['missing_days']:.0f}d mehr Datensammlung)."
+                f"epd2 {direction}: degenerate split — skipped. "
+                f"span {diag['span_days']:.1f}d, 15% band {diag['band_days']:.1f}d < purge gap {gap_days}d "
+                f"(density {diag['rows_per_day']:.0f} rows/day) ⇒ val/test empty. "
+                f"For ≥{diag['min_rows']} rows per slice need ~{diag['required_span_days']:.0f}d span "
+                f"(~{diag['missing_days']:.0f}d more data collection)."
             )
             results[direction] = {"n_events": len(d), "skipped": "degenerate_split", **diag}
             continue
@@ -926,10 +926,10 @@ def run_epd(events_path: str, extra_features=(), model_id: str = "EPD2") -> dict
             "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(events_path),
-            "label": "first-touch TP1-vor-SL der Bot-10-HVN/SR-Geometrie (simulate_exit, 7d), Fees inkl.",
-            "changes_vs_epd1": "nur vol_ratio>=5-Events (Training==Serving statt OOD), Label = "
-            "gepostete Geometrie statt Fix-Bracket, chronologischer Split mit "
-            "7d-Purge statt Random-Split, +6 Funding-Features (Operator 2026-07-06)",
+            "label": "first-touch TP1-before-SL of bot-10 HVN/SR geometry (simulate_exit, 7d), fees incl.",
+            "changes_vs_epd1": "only vol_ratio>=5 events (training==serving instead of OOD), label = "
+            "posted geometry instead of fix bracket, chronological split with "
+            "7d purge instead of random split, +6 funding features (operator 2026-07-06)",
             "split": "chronological 70/15/15 + 7d purge gap",
             "xgboost_version": xgb.__version__,
             "n_train": len(train),
@@ -954,20 +954,20 @@ def run_epd(events_path: str, extra_features=(), model_id: str = "EPD2") -> dict
 
 
 def run_atb(replay_path: str, extra_features=()) -> dict:
-    """ATB2-Retrain (MODEL_INTENT §11, Task-104): Binärmodell je Richtung auf den
-    Converging-Channel-Ausbruchs-Events des geteilten Detektors
-    (core/atb2_features). Label = First-Touch TP1-vor-SL der Measured-Move-
-    Geometrie inkl. SL-Pfad und Fees (behebt das +10%-Touch-OHNE-SL-Label des
-    toten BT1-Trainers, X-R1/X-R5), chronologischer 3-Wege-Split mit Embargo
-    (behebt die Zwillings-Leakage über 72h-überlappende Fenster, X-R3),
-    Threshold via pick_threshold_safe auf Validation (behebt den Test-Set-
-    Threshold, X-R2). Ersetzt ATB1 komplett — der alte Close-Regressions-
-    Detektor ist verworfen."""
+    """ATB2 retrain (MODEL_INTENT §11, task-104): binary model per direction on
+    converging-channel breakout events of the shared detector
+    (core/atb2_features). Label = first-touch TP1-before-SL of measured-move
+    geometry incl. SL path and fees (fixes the +10%-touch-WITHOUT-SL label of
+    dead BT1 trainer, X-R1/X-R5), chronological 3-way split with embargo
+    (fixes twin leakage over 72h-overlapping windows, X-R3),
+    threshold via pick_threshold_safe on validation (fixes test-set
+    threshold, X-R2). Replaces ATB1 completely — the old close-regression
+    detector is discarded."""
     df = load_replay(replay_path)
     if df.empty or len(df) < 400:
-        raise SystemExit(f"Zu wenig ATB2-Replay-Events ({len(df)}) in {replay_path}")
+        raise SystemExit(f"Too few ATB2 replay events ({len(df)}) in {replay_path}")
     print(
-        f"atb2: {len(df)} Events, {df['symbol'].nunique()} Coins, "
+        f"atb2: {len(df)} events, {df['symbol'].nunique()} coins, "
         f"{df['signal_time'].min()} → {df['signal_time'].max()}"
     )
 
@@ -976,16 +976,16 @@ def run_atb(replay_path: str, extra_features=()) -> dict:
     for direction in ("LONG", "SHORT"):
         d = df[df["direction"] == direction].reset_index(drop=True)
         if len(d) < 200:
-            print(f"atb2 {direction}: nur {len(d)} Events — übersprungen")
+            print(f"atb2 {direction}: only {len(d)} events — skipped")
             continue
-        # Silent-Feature-Death-Selbsttest auf dem Trainings-Replay (P0.12-Muster).
-        assert_atb2_alive(d, context=f" ({direction}-Replay)")
-        # Purge-Gap 3 Tage: Measured-Move-Trades können über mehrere Tage laufen;
-        # großzügiger Embargo gegen überlappende Episoden (X-R3-Fix).
+        # silent feature death self-test on training replay (P0.12 pattern).
+        assert_atb2_alive(d, context=f" ({direction} replay)")
+        # purge gap 3 days: measured-move trades can run over several days;
+        # generous embargo against overlapping episodes (X-R3 fix).
         train, val, test = chrono_split(d, gap_hours=3 * 24)
         print(
-            f"atb2 {direction}: {len(d)} Events | split {len(train)}/{len(val)}/{len(test)} | "
-            f"Basisrate TP1 {d['outcome'].mean() * 100:.1f}%"
+            f"atb2 {direction}: {len(d)} events | split {len(train)}/{len(val)}/{len(test)} | "
+            f"base rate TP1 {d['outcome'].mean() * 100:.1f}%"
         )
 
         model, iso, thresh, val_stats, test_stats, calib_new = train_binary(
@@ -1002,13 +1002,13 @@ def run_atb(replay_path: str, extra_features=()) -> dict:
             "features": feats,
             "optimal_threshold": thresh,
             "label_source": os.path.basename(replay_path),
-            "label": "first-touch TP1-vor-SL der Measured-Move-Geometrie "
-            "(⅓/⅔/1× Kanalbreite), Fees inkl.",
-            "changes_vs_atb1": "Converging-Channel-Detektor (bestätigte Pivots, "
-            "geschlossener Ausbruch, §11) statt 90d-Close-Regressionsgerade; Label MIT "
-            "SL-Pfad statt +10%-Touch/72h; chronologischer Split mit 3d-Purge statt "
-            "Random-Split über überlappende Fenster; Threshold auf Validation statt "
-            "Test-Set; 5 WillyAlgoTrader-Setup-Features + Kanalgeometrie als XGB-Features",
+            "label": "first-touch TP1-before-SL of measured-move geometry "
+            "(⅓/⅔/1× channel width), fees incl.",
+            "changes_vs_atb1": "converging-channel detector (confirmed pivots, "
+            "closed breakout, §11) instead of 90d close regression line; label WITH "
+            "SL path instead of +10% touch/72h; chronological split with 3d purge instead of "
+            "random split over overlapping windows; threshold on validation instead of "
+            "test-set; 5 WillyAlgoTrader setup features + channel geometry as XGB features",
             "split": "chronological 70/15/15 + 3d purge gap",
             "threshold_selected_on": "validation",
             "xgboost_version": xgb.__version__,
@@ -1043,7 +1043,7 @@ def top_importance(model, feature_cols, k=8):
 
 
 def main():
-    # cp1252-Konsole: Emojis in Ausgaben dürfen den Lauf nicht abbrechen.
+    # cp1252 console: emojis in output must not abort the run.
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -1056,58 +1056,58 @@ def main():
     ap.add_argument("--replay", default=None)
     ap.add_argument("--days", type=int, default=540)
     ap.add_argument(
-        "--stride", type=int, default=24, help="mis1: Sampling-Stride des Replays (geht in den Purge-Gap ein)"
+        "--stride", type=int, default=24, help="mis1: sampling stride of the replay (enters the purge gap)"
     )
     ap.add_argument(
         "--label-mode",
         default="geometry",
         choices=["geometry", "move"],
-        help="mis1: geometry = TP1-vor-SL der Smart-Targets; "
-        "move = ±X%%-Bewegung innerhalb des Horizonts (Operator-Konzept)",
+        help="mis1: geometry = TP1-before-SL of smart targets; "
+        "move = ±X%% movement within the horizon (operator concept)",
     )
     ap.add_argument(
         "--move-labels",
         default=None,
-        help="mis1 move: JSONL aus tools/mis1_move_labels.py (Default: mis1_move_labels.jsonl neben dem Replay)",
+        help="mis1 move: JSONL from tools/mis1_move_labels.py (default: mis1_move_labels.jsonl next to replay)",
     )
     ap.add_argument(
         "--move-basis",
         default="close",
         choices=["close", "wick"],
-        help="mis1 move: Schlusskurs- oder Docht-Extreme als Label-Basis "
-        "(Operator 2026-07-06: beide Varianten trainieren und vergleichen)",
+        help="mis1 move: close price or wick extremes as label basis "
+        "(operator 2026-07-06: train and compare both variants)",
     )
     ap.add_argument(
         "--features",
         action="append",
         choices=sorted(FEATURE_HOOKS),
         default=None,
-        help="Optionaler additiver Feature-Block (DEFAULT-OFF, §K7 MOM). 'moments' "
-        "hängt core.moment_features.MOMENT_FEATURES an den Feature-Vertrag der "
-        "Strategie an (mehrfach angebbar). OHNE dieses Flag ist das Retrain "
-        "byte-identisch zu vorher (No-op-Anschluss). Anhängen der Namen triggert "
-        "KEIN Retrain — der Replay-Writer muss die Moment-Spalten erst liefern (Queue).",
+        help="optional additive feature block (DEFAULT-OFF, §K7 MOM). 'moments' "
+        "appends core.moment_features.MOMENT_FEATURES to the feature contract of the "
+        "strategy (can be specified multiple times). WITHOUT this flag retrain is "
+        "byte-identical to before (no-op attachment). Appending the names triggers "
+        "NO retrain — the replay writer must deliver the moment columns first (queue).",
     )
     ap.add_argument(
         "--model-id",
         default="EPD2",
-        help="epd: Generations-Tag der erzeugten Artefakte (harte Regel 6). Setzt meta.model_id "
-        "UND den Dateinamen-Präfix (EPD4 -> staging_models/epd4_model_{LONG,SHORT}.pkl, "
-        "retrain_epd4_stats.json). Default EPD2 = unveränderter Lauf. Nur für --strategy epd.",
+        help="epd: generation tag of created artifacts (hard rule 6). Sets meta.model_id "
+        "AND the filename prefix (EPD4 -> staging_models/epd4_model_{LONG,SHORT}.pkl, "
+        "retrain_epd4_stats.json). default EPD2 = unchanged run. only for --strategy epd.",
     )
     args = ap.parse_args()
     extra_features = resolve_extra_features(args.features)
     args.model_id = args.model_id.strip().upper()
     if args.model_id != "EPD2" and args.strategy != "epd":
-        # Lieber abbrechen als das Flag still schlucken: der Aufrufer glaubt sonst,
-        # ein neuer Tag sei gesetzt, und promotet ein Artefakt unter dem alten.
-        raise SystemExit("--model-id ist heute nur für --strategy epd verdrahtet.")
+        # Better to fail than silently swallow the flag: the caller would otherwise
+        # think a new tag is set and promote an artifact under the old one.
+        raise SystemExit("--model-id is today only wired for --strategy epd.")
     if not re.fullmatch(r"[A-Z][A-Z0-9]*(-[A-Z0-9]+)*", args.model_id):
-        raise SystemExit(f"--model-id {args.model_id!r} ist kein gültiger Modell-Tag (z. B. EPD4, MIS2-8H).")
+        raise SystemExit(f"--model-id {args.model_id!r} is not a valid model tag (e.g. EPD4, MIS2-8H).")
 
     if args.replay is None:
         if args.strategy == "epd":
-            # EPD2 nutzt die Detektor-Events des Builders, kein Kerzen-Replay.
+            # EPD2 uses detector events from the builder, not candle replay.
             args.replay = os.path.join(REPLAY_DIR, "epd2_events.jsonl")
         else:
             tag = f"{args.strategy}_{args.tf}" if args.strategy in ("td", "bb") else args.strategy
@@ -1115,11 +1115,11 @@ def main():
             args.replay = os.path.join(REPLAY_DIR, f"{tag}_replay_{days}d.jsonl")
 
     if args.strategy in ("rub", "epd", "atb2", "ats"):
-        # Ein Dispatch statt Zwillings-Ternaries — die nächste Event-Strategie
-        # ergänzt genau einen Eintrag (Runner + Artefakt-Name zusammen).
+        # a dispatch instead of twin ternaries — the next event strategy
+        # adds exactly one entry (runner + artifact name together).
         runner, name = {
             "rub": (run_rub, "rub2"),
-            # Artefakt-Name UND Stats-Name folgen dem Tag (Regel 6, s. artifact_slot).
+            # artifact name AND stats name follow the tag (rule 6, see artifact_slot).
             "epd": (partial(run_epd, model_id=args.model_id), artifact_slot(args.model_id)),
             "atb2": (run_atb, "atb2"),
             "ats": (run_ats, "ats2"),

@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, accuracy_score
 import logging
 
-# Konfiguriere Logging
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -15,24 +15,24 @@ LONG_MODEL_FILE = 'long_trend_prediction_model.joblib'
 SHORT_MODEL_FILE = 'short_trend_prediction_model.joblib'
 
 def optimize_threshold_for_model(model, X_test, y_test, model_name):
-    """Optimiert den Threshold für ein spezifisches Modell."""
-    logger.info(f"\n--- Starte Threshold Optimierung für {model_name} Modell ---")
-    
-    # Wahrscheinlichkeiten vorhersagen
+    """Optimises the threshold for a specific model."""
+    logger.info(f"\n--- Starting threshold optimisation for {model_name} model ---")
+
+    # Predict probabilities
     probs = model.predict_proba(X_test)[:, 1]
 
-    logger.info(f"\n{'Threshold':<10} | {'Precision (Win Rate)':<20} | {'Trades (Anzahl)':<15} | {'Recall':<10}")
+    logger.info(f"\n{'Threshold':<10} | {'Precision (Win Rate)':<20} | {'Trades (Count)':<15} | {'Recall':<10}")
     logger.info("-" * 65)
 
     best_threshold = 0.5
     best_precision = 0.0
 
-    # Wir testen Thresholds von 0.50 bis 0.95
+    # We test thresholds from 0.50 to 0.95
     for thresh in np.arange(0.5, 0.96, 0.05):
-        # Wenn Wahrscheinlichkeit > Threshold, dann Vorhersage = 1, sonst 0
+        # If probability > threshold, then prediction = 1, otherwise 0
         y_pred_custom = (probs >= thresh).astype(int)
-        
-        # Sicherstellen, dass Trades gemacht wurden, um Division durch Null zu vermeiden
+
+        # Make sure trades were made, to avoid division by zero
         num_trades = np.sum(y_pred_custom)
         if num_trades == 0:
             prec = 0.0
@@ -43,31 +43,31 @@ def optimize_threshold_for_model(model, X_test, y_test, model_name):
         
         logger.info(f"{thresh:.2f}       | {prec*100:.2f}%               | {num_trades:<15} | {rec*100:.2f}%")
         
-        # Wir suchen den Punkt, wo wir noch min. 50 Trades im Testset haben, aber max Precision
-        # Kriterium angepasst: mehr als 10 Trades sind auch schon relevant
+        # We look for the point where we still have at least 50 trades in the test set, but max precision
+        # Criterion adjusted: more than 10 trades is already relevant too
         if num_trades > 10 and prec > best_precision:
             best_precision = prec
             best_threshold = thresh
 
     logger.info("-" * 65)
-    logger.info(f"Empfehlung für {model_name}: Setze den Threshold in deinem Live-Bot auf {best_threshold:.2f}")
-    logger.info(f"Damit erwartete Win-Rate für {model_name}: {best_precision*100:.2f}%")
+    logger.info(f"Recommendation for {model_name}: set the threshold in your live bot to {best_threshold:.2f}")
+    logger.info(f"Expected win rate for {model_name}: {best_precision*100:.2f}%")
     return best_threshold, best_precision
 
 def main():
-    logger.info("--- Starte separate Threshold Optimierung für LONG und SHORT Modelle ---")
-    
-    # 1. Daten und Modelle laden
+    logger.info("--- Starting separate threshold optimisation for LONG and SHORT models ---")
+
+    # 1. Load data and models
     try:
         df = pd.read_csv(DATA_FILE)
         long_model = joblib.load(LONG_MODEL_FILE)
         short_model = joblib.load(SHORT_MODEL_FILE)
     except FileNotFoundError:
-        logger.error("Fehler: Daten- oder Modell-Datei nicht gefunden. Bitte zuerst Training ausführen.")
+        logger.error("Error: data or model file not found. Please run training first.")
         return
 
-    # 2. Daten vorbereiten (identisch zum Training)
-    # Entferne 'event_type_numeric' und 'event_type' aus den Features für die Modelle
+    # 2. Prepare data (identical to training)
+    # Remove 'event_type_numeric' and 'event_type' from the features for the models
     features = [
         'vol_ratio', 'rsi', 'atr_pct', 'dist_ema200', 'slope_trend', 'hour_of_day',
         'dist_close_ema9_pct', 'dist_ema9_ema21_pct', 'dist_close_kama9_pct',
@@ -77,10 +77,10 @@ def main():
     ]
     
     # Cleaning
-    # Wir brauchen die event_type Spalte hier noch zur Aufteilung
+    # We still need the event_type column here for the split
     df_cleaned = df[features + ['label_success', 'event_type']].dropna()
-    
-    # 3. Daten aufteilen in Long und Short (Testsets!)
+
+    # 3. Split data into Long and Short (test sets!)
     df_long_test = df_cleaned[df_cleaned['event_type'] == 'UP'].copy()
     df_short_test = df_cleaned[df_cleaned['event_type'] == 'DOWN'].copy()
 
@@ -90,21 +90,21 @@ def main():
     X_short_test_all = df_short_test[features]
     y_short_test_all = df_short_test['label_success']
     
-    # WICHTIG: Erneuter Train-Test-Split, um nur die Testdaten zu bewerten,
-    # die das Modell im Training noch nie gesehen hat.
-    # Wir nutzen hier den gleichen random_state wie im Training.
+    # IMPORTANT: Repeated train-test split, to evaluate only the test data
+    # that the model has never seen during training.
+    # We use the same random_state here as in training.
     _, X_long_test, _, y_long_test = train_test_split(X_long_test_all, y_long_test_all, test_size=0.2, random_state=42, stratify=y_long_test_all)
     _, X_short_test, _, y_short_test = train_test_split(X_short_test_all, y_short_test_all, test_size=0.2, random_state=42, stratify=y_short_test_all)
 
-    # 4. Threshold Optimierung für LONG Modell
+    # 4. Threshold optimisation for LONG model
     long_thresh, long_prec = optimize_threshold_for_model(long_model, X_long_test, y_long_test, "LONG")
-    
-    # 5. Threshold Optimierung für SHORT Modell
+
+    # 5. Threshold optimisation for SHORT model
     short_thresh, short_prec = optimize_threshold_for_model(short_model, X_short_test, y_short_test, "SHORT")
-    
-    logger.info(f"\n--- Endgültige Empfehlungen für den Live-Bot ---")
-    logger.info(f"LONG Trade Trigger Threshold: {long_thresh:.2f} (erwartete Win Rate: {long_prec*100:.2f}%)")
-    logger.info(f"SHORT Trade Trigger Threshold: {short_thresh:.2f} (erwartete Win Rate: {short_prec*100:.2f}%)")
+
+    logger.info(f"\n--- Final recommendations for the live bot ---")
+    logger.info(f"LONG trade trigger threshold: {long_thresh:.2f} (expected win rate: {long_prec*100:.2f}%)")
+    logger.info(f"SHORT trade trigger threshold: {short_thresh:.2f} (expected win rate: {short_prec*100:.2f}%)")
 
 if __name__ == "__main__":
     main()

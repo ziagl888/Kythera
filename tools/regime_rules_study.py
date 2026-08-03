@@ -1,31 +1,31 @@
 # tools/regime_rules_study.py
-"""Detector-Rework-Studie (MODEL_INTENT §22, T-2026-CU-9050-016 Folge):
-Regelvarianten für classify_btc_regime über die volle BTCUSDT_15m-Historie
-nachspielen und zweifach bewerten:
+"""Detector rework study (MODEL_INTENT §22, T-2026-CU-9050-016 follow-up):
+rule variants for classify_btc_regime over full BTCUSDT_15m history,
+replay and evaluate doubly:
 
-  1. STRUKTUR — kommt TREND überhaupt vor, und wie stabil? (Episodenzahl,
-     Mediandauer, Flap-Quote <1h, Zeitanteile je Regime). Step-6-Befund:
-     die Ist-Regel verlangt ATR<P40 UND |ret_4h|>1,5 % — ein 1,5 %-Move
-     hebt ATR aber fast immer über P40 → 7 TREND-Episoden in 5,5 Monaten.
-  2. ÖKONOMIE — trennt der Zustand die Monatsergebnisse der bekannten
-     regimeabhängigen LONG-Setups? Overlay der Replay-Events (RUB LONG,
-     ABR1 LONG) auf den nachgespielten Zustand: Ø-PnL je Regime.
-     (Das ist der Use-Case: Regime-Gate statt Event-Gate, §8.)
+  1. STRUCTURE — does TREND occur at all, and how stable? (episode count,
+     median duration, flap rate <1h, time share per regime). Step-6 finding:
+     the current rule requires ATR<P40 AND |ret_4h|>1.5% — a 1.5% move
+     almost always pushes ATR above P40 too → 7 TREND episodes in 5.5 months.
+  2. ECONOMICS — does state separate monthly results of known regime-dependent
+     LONG setups? Overlay of the replay events (RUB LONG,
+     ABR1 LONG) onto the replayed state: avg PnL per regime.
+     (That is the use case: regime gate instead of event gate, §8.)
 
-Varianten:
-  V0            — Ist-Zustand (core/regime_logic.classify_btc_regime).
-  V1_fix_<X>    — Mid-Band (P40..P75) bekommt eigene Trend-Regel:
-                  |ret_4h| ≥ X  (X aus Grid) → TREND_UP/DOWN, sonst TRANSITION.
-  V2_atr_<K>    — Mid-Band vol-skaliert: |ret_4h| ≥ K × atr_4h_pct.
+Variants:
+  V0            — current state (core/regime_logic.classify_btc_regime).
+  V1_fix_<X>    — mid-band (P40..P75) gets own trend rule:
+                  |ret_4h| ≥ X  (X from grid) → TREND_UP/DOWN, else TRANSITION.
+  V2_atr_<K>    — mid-band vol-scaled: |ret_4h| ≥ K × atr_4h_pct.
 
-Alle Varianten lassen Low-Vola-Regeln (TREND/CHOP) und HIGH_VOLA unverändert —
-der Operator-Auftrag betrifft NUR die TRANSITION-Restklasse.
+All variants leave low-vol rules (TREND/CHOP) and HIGH_VOLA unchanged —
+operator task affects ONLY TRANSITION residue class.
 
-Debounce-Näherung: Zustandswechsel zählt erst nach 2 aufeinanderfolgenden
-15m-Bars (~ live: 2×5-min-Checks). Identisch über alle Varianten → fairer
-Vergleich; Absolutwerte sind Näherung.
+Debounce approximation: state change counts only after 2 consecutive 15m bars
+(~ live: 2×5-min checks). Identical across all variants → fair comparison;
+absolute values are approximation.
 
-Read-only; Ergebnis-JSON nach staging_models.
+Read-only; result JSON to staging_models.
 """
 
 from __future__ import annotations
@@ -57,16 +57,16 @@ from tools.research_dataset_common import (  # noqa: E402
 )
 
 DAYS = 430
-DEBOUNCE_BARS = 2  # ≈ 2 Checks à 5 min live
+DEBOUNCE_BARS = 2  # ≈ 2 checks at 5 min live
 BARS_PER_DAY = 96  # 15m
 FIX_GRID = (1.5, 2.0, 2.5)
 ATR_GRID = (0.75, 1.0, 1.5)
 
 
 def load_btc(conn) -> pd.DataFrame:
-    # Über core.candles: GESCHLOSSENE 15m-Kerzen, ASC. Die Regime-Studie darf
-    # nicht auf der forming 15m-Kerze rechnen (dieselbe R1-Disziplin, die live
-    # core/regime_logic bekommt) — include_forming=False schneidet DB-seitig.
+    # Via core.candles: CLOSED 15m candles, ASC. The regime study must
+    # not compute on the forming 15m candle (the same R1 discipline that live
+    # core/regime_logic gets) — include_forming=False cuts it off on the DB side.
     df = read_candles(
         conn,
         "BTCUSDT",
@@ -75,14 +75,14 @@ def load_btc(conn) -> pd.DataFrame:
         include_forming=False,
         columns=("open_time", "high", "low", "close"),
     )
-    # timestamptz über DST-Grenzen ⇒ gemischte Offsets ⇒ utc=True Pflicht
-    # (gleiche Falle wie spike_time_to_utc, Fix f95f092); Events sind naive UTC.
+    # timestamptz across DST boundaries ⇒ mixed offsets ⇒ utc=True mandatory
+    # (same trap as spike_time_to_utc, fix f95f092); events are naive UTC.
     df["open_time"] = pd.to_datetime(df["open_time"], utc=True).dt.tz_localize(None)
     return df.reset_index(drop=True)
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Vektorisierte Replikation von core/regime_logic.compute_features."""
+    """Vectorised replication of core/regime_logic.compute_features."""
     close, high, low = df["close"].astype(float), df["high"].astype(float), df["low"].astype(float)
     prev_close = close.shift(1)
     tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
@@ -90,10 +90,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(
         {
-            # Zustand auf den BAR-CLOSE stempeln (open_time + 15m): ret_4h/ATR
-            # dieser Zeile sind erst mit dem Close bekannt — mit open_time hätte
-            # der as-of-Merge in economics() bis zu 15 min Lookahead und die
-            # Regime-Ökonomie wäre optimistisch verzerrt (Review PR #9).
+            # Stamp state onto the BAR-CLOSE (open_time + 15m): ret_4h/ATR
+            # of this row are only known once the bar closes — with open_time the
+            # as-of merge in economics() would have up to 15 min of lookahead and
+            # the regime economics would be optimistically biased (review PR #9).
             "ts": df["open_time"] + pd.Timedelta(minutes=15),
             "ret_4h": close.pct_change(16) * 100,
             "atr_4h_pct": atr_4h / close * 100,
@@ -107,7 +107,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def classify(feat: pd.DataFrame, variant: str, param: float | None) -> np.ndarray:
-    """Regelwerk je Bar. Low-Vola- und HIGH_VOLA-Zweige == Ist-Zustand."""
+    """Rule set per bar. Low-vola and HIGH_VOLA branches == current state."""
     ret, atr, p75, p40 = (feat[c].values for c in ("ret_4h", "atr_4h_pct", "p75", "p40"))
     regime = np.full(len(feat), "TRANSITION", dtype=object)
 
@@ -126,12 +126,12 @@ def classify(feat: pd.DataFrame, variant: str, param: float | None) -> np.ndarra
     elif variant == "V2_atr":
         regime[mid & (ret >= param * atr)] = "TREND_UP"
         regime[mid & (ret <= -param * atr)] = "TREND_DOWN"
-    # V0: mid bleibt TRANSITION
+    # V0: mid stays TRANSITION
     return regime
 
 
 def debounce(raw: np.ndarray) -> np.ndarray:
-    """Wechsel erst nach DEBOUNCE_BARS gleichen Raw-Werten wirksam."""
+    """Change only takes effect after DEBOUNCE_BARS identical raw values."""
     eff = np.empty_like(raw)
     cur = raw[0]
     pend, pend_n = None, 0
@@ -149,7 +149,7 @@ def debounce(raw: np.ndarray) -> np.ndarray:
 
 
 def episode_stats(eff: np.ndarray, ts: pd.Series) -> dict:
-    """Zeitanteile, Episodenzahl, Mediandauer (h), Flap-Quote (<1h) je Regime."""
+    """Time shares, episode count, median duration (h), flap rate (<1h) per regime."""
     df = pd.DataFrame({"regime": eff, "ts": ts.values})
     df["ep"] = (df["regime"] != df["regime"].shift(1)).cumsum()
     eps = df.groupby("ep").agg(regime=("regime", "first"), n=("regime", "size"))
@@ -189,7 +189,7 @@ def load_replay_events(path: str, direction: str) -> pd.DataFrame | None:
 
 
 def economics(eff: np.ndarray, ts: pd.Series, events: pd.DataFrame) -> dict:
-    """Ø-PnL der Replay-Events je nachgespieltem Regime-Zustand (as-of merge)."""
+    """Avg PnL of the replay events per replayed regime state (as-of merge)."""
     state = pd.DataFrame({"ts": ts.values, "regime": eff})
     merged = pd.merge_asof(events, state, on="ts", direction="backward")
     g = merged.groupby("regime")["pnl"].agg(["size", "mean", "median"])
@@ -206,19 +206,19 @@ def main() -> None:
         pass
 
     conn = get_db_connection()
-    log("Lade BTCUSDT_15m …")
+    log("Loading BTCUSDT_15m …")
     btc = load_btc(conn)
     conn.close()
-    log(f"{len(btc)} Bars geladen ({btc['open_time'].min()} → {btc['open_time'].max()})")
+    log(f"{len(btc)} bars loaded ({btc['open_time'].min()} → {btc['open_time'].max()})")
 
     feat = build_features(btc)
-    log(f"Features: {len(feat)} Bars nach Warmup")
+    log(f"Features: {len(feat)} bars after warmup")
 
     rub = load_replay_events(os.path.join(REPLAY_DIR, "rub_replay_365d.jsonl"), "LONG")
     abr = load_replay_events(os.path.join(REPLAY_DIR, "detector_fix", "abr1_replay_365d.jsonl"), "LONG")
     log(
-        f"Ökonomie-Overlay: RUB-LONG={0 if rub is None else len(rub)} Events, "
-        f"ABR1-LONG={0 if abr is None else len(abr)} Events"
+        f"Economics overlay: RUB-LONG={0 if rub is None else len(rub)} events, "
+        f"ABR1-LONG={0 if abr is None else len(abr)} events"
     )
 
     variants: list[tuple[str, str, float | None]] = [("V0_ist", "V0", None)]
@@ -244,12 +244,12 @@ def main() -> None:
         )
         if rub is not None and "TREND_UP" in res.get("rub_long_by_regime", {}):
             r = res["rub_long_by_regime"]["TREND_UP"]
-            log(f"   RUB-LONG in TREND_UP: n={r['n']}, Ø {r['avg_pnl']:+.2f}%/Trade")
+            log(f"   RUB-LONG in TREND_UP: n={r['n']}, avg {r['avg_pnl']:+.2f}%/trade")
 
     out = os.path.join(STAGING_DIR, "regime_rules_study.json")
     with open(out, "w", encoding="utf-8") as fh:
         json.dump({"days": DAYS, "debounce_bars": DEBOUNCE_BARS, "results": results}, fh, indent=2)
-    log(f"FERTIG -> {out}")
+    log(f"DONE -> {out}")
 
 
 if __name__ == "__main__":

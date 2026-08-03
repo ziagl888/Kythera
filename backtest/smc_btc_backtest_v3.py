@@ -9,7 +9,7 @@ import numpy as np
 import scipy.signal
 import logging
 
-# --- Eigene DB Connection importieren ---
+# --- Import own DB connection ---
 from core.candles import read_candles
 from core.database import get_db_connection
 
@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 🛠️ BACKTEST KONFIGURATION & GRID PARAMETER
+# 🛠️ BACKTEST CONFIGURATION & GRID PARAMETER
 # ==========================================
 SYMBOL = 'BTCUSDT'
 TIMEFRAME = '1h'
@@ -32,24 +32,24 @@ MAX_PIVOT_AGE = 120
 MAX_FVG_AGE = 48
 EMA_PERIOD = 21
 
-# --- 🎛️ DIE PARAMETER FÜR DEN GRID SEARCH ---
-# Wir nehmen die Gewinner SLs und RRs aus dem ersten Test
+# --- 🎛️ THE PARAMETERS FOR GRID SEARCH ---
+# We take the winning SLs and RRs from the first test
 SL_PCTS = [0.004, 0.005]
 MIN_RR_RATIOS = [1.15, 1.25, 1.5]
 
-# NEU: RSI Schwellenwerte für den Einstieg
-# Long wenn RSI < Limit (Pullback ist abgekühlt), Short wenn RSI > (100 - Limit)
+# NEW: RSI thresholds for entry
+# Long if RSI < limit (pullback has cooled), short if RSI > (100 - limit)
 RSI_LIMITS = [40, 45, 50, 55, 60]
 
 
 # ==========================================
-# 📊 DATA FETCHING (LOKALE DATENBANK)
+# 📊 DATA FETCHING (LOCAL DATABASE)
 # ==========================================
 def fetch_db_data():
-    logger.info(f"Loading historical {TIMEFRAME} Daten for {SYMBOL} from the database...")
+    logger.info(f"Loading historical {TIMEFRAME} data for {SYMBOL} from the database...")
     try:
         conn = get_db_connection()
-        # Über core.candles: GESCHLOSSENE Kerzen, ASC (include_forming=False).
+        # Via core.candles: CLOSED candles, ascending (include_forming=False).
         df = read_candles(
             conn, SYMBOL, TIMEFRAME, include_forming=False, columns=('open_time', 'open', 'high', 'low', 'close')
         )
@@ -59,12 +59,12 @@ def fetch_db_data():
         df.dropna(inplace=True)
         return df.reset_index(drop=True)
     except Exception as e:
-        logger.error(f"Error loading der DB-Daten: {e}")
+        logger.error(f"Error loading DB data: {e}")
         return pd.DataFrame()
 
 
 # ==========================================
-# 📈 RSI BERECHNUNG
+# 📈 RSI CALCULATION
 # ==========================================
 def calculate_rsi(series, period=14):
     delta = series.diff()
@@ -85,11 +85,11 @@ def run_simulation(df, sl_pct, min_rr_ratio, rsi_limit):
     opens = df['open'].values
     closes = df['close'].values
 
-    # EMA & RSI berechnen
+    # Calculate EMA & RSI
     ema_values = df['close'].ewm(span=EMA_PERIOD, adjust=False).mean().values
     rsi_values = calculate_rsi(df['close']).values
 
-    # Pivot Punkte im Voraus berechnen
+    # Pre-calculate pivot points
     peak_idx = scipy.signal.argrelextrema(highs, np.greater, order=5)[0]
     trough_idx = scipy.signal.argrelextrema(lows, np.less, order=5)[0]
     resistances = [(int(idx), float(highs[idx])) for idx in peak_idx]
@@ -110,7 +110,7 @@ def run_simulation(df, sl_pct, min_rr_ratio, rsi_limit):
         curr_price = closes[curr_idx]
 
         # -------------------------------------------------
-        # 1. AKTIVE TRADES PRÜFEN (SL & TP)
+        # 1. CHECK ACTIVE TRADES (SL & TP)
         # -------------------------------------------------
         trades_to_remove = []
         for trade in active_trades:
@@ -161,7 +161,7 @@ def run_simulation(df, sl_pct, min_rr_ratio, rsi_limit):
             active_trades.remove(t)
 
         # -------------------------------------------------
-        # 2. NEUE FVGs ERKENNEN
+        # 2. DETECT NEW FVGs
         # -------------------------------------------------
         c = curr_idx - 1
 
@@ -184,7 +184,7 @@ def run_simulation(df, sl_pct, min_rr_ratio, rsi_limit):
                 active_bear_fvgs.append({'top': lows[c - 2], 'bottom': highs[c], 'created_at': c})
 
         # -------------------------------------------------
-        # 3. FVGs SCHLIESSEN & TRADES AUSLÖSEN
+        # 3. CLOSE FVGs & TRIGGER TRADES
         # -------------------------------------------------
         surviving_bull_fvgs = []
         for fvg in active_bull_fvgs:
@@ -201,7 +201,7 @@ def run_simulation(df, sl_pct, min_rr_ratio, rsi_limit):
                     reward = target - curr_price
 
                     if risk > 0 and (reward / risk) >= min_rr_ratio:
-                        # NEU: Preis > EMA21 UND RSI < Limit (Pullback-Exhaustion)
+                        # NEW: price > EMA21 AND RSI < limit (pullback exhaustion)
                         if curr_price > ema_values[curr_idx] and rsi_values[curr_idx] < rsi_limit:
                             active_trades.append({'direction': 'LONG', 'entry': curr_price, 'sl': sl, 'tp': target})
             else:
@@ -223,7 +223,7 @@ def run_simulation(df, sl_pct, min_rr_ratio, rsi_limit):
                     reward = curr_price - target
 
                     if risk > 0 and (reward / risk) >= min_rr_ratio:
-                        # NEU: Preis < EMA21 UND RSI > (100 - Limit)
+                        # NEW: price < EMA21 AND RSI > (100 - limit)
                         if curr_price < ema_values[curr_idx] and rsi_values[curr_idx] > (100 - rsi_limit):
                             active_trades.append({'direction': 'SHORT', 'entry': curr_price, 'sl': sl, 'tp': target})
             else:
@@ -255,8 +255,8 @@ def main():
     total_runs = len(combinations)
 
     print("=" * 85)
-    print(f"🧠 SMC EMA21 + RSI OPTIMIERUNG | {total_runs} Kombinationen")
-    print(f"Margin: ${TRADE_MARGIN:,.0f} | Historie: {len(df)} 1h-Kerzen")
+    print(f"🧠 SMC EMA21 + RSI OPTIMISATION | {total_runs} combinations")
+    print(f"Margin: ${TRADE_MARGIN:,.0f} | History: {len(df)} 1h candles")
     print("=" * 85)
 
     results = []
@@ -264,20 +264,20 @@ def main():
 
     for idx, (sl, rr, rsi) in enumerate(combinations, 1):
         if idx % 5 == 0 or idx == total_runs:
-            print(f"⏳ Calculating Kombination {idx}/{total_runs}...")
+            print(f"⏳ Calculating combination {idx}/{total_runs}...")
 
         res = run_simulation(df, sl, rr, rsi)
         results.append(res)
 
     end_time = time.time()
 
-    # Sortiere Ergebnisse after höchstem Profit
+    # Sort results by highest profit
     results.sort(key=lambda x: x['pnl'], reverse=True)
 
-    # In Datei schreiben
+    # Write to file
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("=" * 85 + "\n")
-        f.write(f"🧠 SMC EMA21 + RSI ERGEBNISSE | Sortiert after Profit\n")
+        f.write(f"🧠 SMC EMA21 + RSI RESULTS | Sorted by profit\n")
         f.write("=" * 85 + "\n")
         header = f"{'SL %':<8} | {'R:R':<6} | {'RSI':<5} | {'Trades':<6} | {'Win Rate':<9} | {'Max DD':<7} | {'Netto PnL':<12}"
         f.write(header + "\n")
@@ -287,9 +287,9 @@ def main():
             line = f"{r['sl'] * 100:>5.2f}%  | {r['rr']:<6.2f} | <{r['rsi']:<4} | {r['trades']:<6} | {r['win_rate']:>6.2f} % | {r['max_dd']:>5.2f}% | ${r['pnl']:+,.2f}"
             f.write(line + "\n")
 
-    # Top 10 in der Konsole ausgeben
+    # Output top 10 in console
     print("\n" + "=" * 85)
-    print("🏆 DIE TOP 10 EMA+RSI-KOMBINATIONEN FÜR BTCUSDT")
+    print("🏆 TOP 10 EMA+RSI COMBINATIONS FOR BTCUSDT")
     print("=" * 85)
     print(header)
     print("-" * 85)

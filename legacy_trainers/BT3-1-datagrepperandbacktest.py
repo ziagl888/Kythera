@@ -21,12 +21,12 @@ DB_CONFIG = {
 LOOKBACK_DAYS = 365
 TREND_WINDOW_HOURS = 90 * 24
 FUTURE_WINDOW_HOURS = 3 * 24
-TARGET_MOVE_PCT = 0.10        # Ziel: 10% Bounce in Richtung Trend
+TARGET_MOVE_PCT = 0.10        # Target: 10% bounce in the direction of the trend
 COINS_FILE = 'coins.json'
 OUTPUT_FILE = 'reversion_ml_training_data.csv'
 
-# --- STRATEGIE PARAMETER ---
-MIN_TREND_DISTANCE_PCT = 0.08  # Mindestens 8% weg von der Trendlinie
+# --- STRATEGY PARAMETERS ---
+MIN_TREND_DISTANCE_PCT = 0.08  # At least 8% away from the trend line
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 # =========================================================
@@ -49,7 +49,7 @@ def calculate_trend_vectorized(prices, timestamps):
     return m, c
 
 def analyze_coin(engine, symbol):
-    logging.info(f"--> Analysiere {symbol} für Mean Reversion...")
+    logging.info(f"--> Analysing {symbol} for mean reversion...")
     
     total_days_load = LOOKBACK_DAYS + 90 + (200/24) + 5 
     query = text(f"""
@@ -62,7 +62,7 @@ def analyze_coin(engine, symbol):
     try:
         df = pd.read_sql(query, engine)
     except Exception as e:
-        logging.error(f"Fehler beim Laden von {symbol}: {e}")
+        logging.error(f"Error loading {symbol}: {e}")
         return []
 
     if df.empty: return []
@@ -74,7 +74,7 @@ def analyze_coin(engine, symbol):
 
     df['vol_avg_20'] = df['volume'].rolling(window=20).mean()
 
-    # --- INDIKATOREN (genau wie bei dir, plus Donchian Logik) ---
+    # --- INDICATORS (exactly as before, plus Donchian logic) ---
     df['RSI'] = ta.rsi(df['close'], length=14)
     df['EMA_9'] = ta.ema(df['close'], length=9)
     df['EMA_21'] = ta.ema(df['close'], length=21)
@@ -132,21 +132,21 @@ def analyze_coin(engine, symbol):
         curr_close = close_values[i]
         trend_val_curr = slope * current_ts + intercept
         
-        # 1. Distanz zur Trendlinie berechnen
+        # 1. Calculate distance to the trend line
         dist_to_trend_pct = (curr_close - trend_val_curr) / trend_val_curr
         
         row = df.iloc[i]
         event_type = None
         
-        # --- REVERSION UP LOGIK (Preis tief unten, muss rauf) ---
+        # --- REVERSION UP LOGIC (price deep down, must go up) ---
         if dist_to_trend_pct <= -MIN_TREND_DISTANCE_PCT:
-            # RSI im Keller, TSI extrem negativ, Preis kratzt am Donchian Lower
+            # RSI in the basement, TSI extremely negative, price scraping the Donchian lower
             if row['RSI'] < RSI_OVERSOLD and row['TSI_Line'] < -15 and curr_close <= row['DC_Lower'] * 1.01:
                 event_type = "REVERSION_UP"
-                
-        # --- REVERSION DOWN LOGIK (Preis weit oben, muss runter) ---
+
+        # --- REVERSION DOWN LOGIC (price far up, must go down) ---
         elif dist_to_trend_pct >= MIN_TREND_DISTANCE_PCT:
-            # RSI überhitzt, TSI extrem positiv, Preis kratzt am Donchian Upper
+            # RSI overheated, TSI extremely positive, price scraping the Donchian upper
             if row['RSI'] > RSI_OVERBOUGHT and row['TSI_Line'] > 15 and curr_close >= row['DC_Upper'] * 0.99:
                 event_type = "REVERSION_DOWN"
 
@@ -155,7 +155,7 @@ def analyze_coin(engine, symbol):
             future_end = i + 1 + FUTURE_WINDOW_HOURS
             success = 0
             
-            # Zielprüfung (10% Bounce in die Gegenrichtung)
+            # Target check (10% bounce in the opposite direction)
             if event_type == "REVERSION_UP":
                 max_price = np.max(high_values[future_start:future_end])
                 if (max_price - curr_close) / curr_close >= TARGET_MOVE_PCT:
@@ -188,7 +188,7 @@ def main():
     coins = load_coins()
     all_results = []
     
-    logging.info(f"Starte Reversion-Datensammlung für {len(coins)} Coins...")
+    logging.info(f"Starting reversion data collection for {len(coins)} coins...")
     
     for coin in coins:
         res = analyze_coin(engine, coin)
@@ -196,15 +196,15 @@ def main():
         
     df_final = pd.DataFrame(all_results)
     if df_final.empty:
-        logging.warning("Keine Reversion-Events gefunden.")
+        logging.warning("No reversion events found.")
         return
 
     df_final.to_csv(OUTPUT_FILE, index=False)
-    
-    logging.info(f"Fertig! {len(df_final)} Events in {OUTPUT_FILE} gespeichert.")
-    logging.info(f"Erfolgsquote im Datensatz: {df_final['label_success'].mean()*100:.2f}%")
-    
-    # Kurz-Statistik
+
+    logging.info(f"Done! {len(df_final)} events saved to {OUTPUT_FILE}.")
+    logging.info(f"Success rate in the dataset: {df_final['label_success'].mean()*100:.2f}%")
+
+    # Short statistics
     up_events = df_final[df_final['event_type'] == 'REVERSION_UP']
     down_events = df_final[df_final['event_type'] == 'REVERSION_DOWN']
     logging.info(f"Reversion UP (Longs): {len(up_events)} | Win-Rate: {up_events['label_success'].mean()*100:.2f}%")

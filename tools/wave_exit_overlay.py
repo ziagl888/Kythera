@@ -34,14 +34,14 @@ Two ladders, two entry models (operator decision, T-035)
     executes (real money, thirds). This is the headline realised number and the
     substrate the Phase-2 overlay will act on.
 
-Realised PnL always goes through `core.realized_pnl` (shared builder, Regel #7):
+Realised PnL always goes through `core.realized_pnl` (shared builder, rule #7):
 this file only decides (targets_hit, close_price) per leg from the candles.
 
-Betriebsregeln (Live-VPS!): DB strictly read-only, BELOW_NORMAL priority, CPU
+Operating rules (live VPS!): DB strictly read-only, BELOW_NORMAL priority, CPU
 headroom checked, coin-windowed reads. Output ONLY to staging_models/replay/.
 
-Beispiele
----------
+Examples
+--------
   python tools/wave_exit_overlay.py --mode validate --model AIM2 --limit 50
   python tools/wave_exit_overlay.py --mode validate --model AIM2
 """
@@ -90,8 +90,8 @@ FEE_PER_SIDE = 0.0005  # 0.10% round-trip, same as walkforward_sim / the audit
 def tick_utc_offset(conn) -> timezone:
     """The tz-offset ticker_10s.ts is stored in (PG session local, e.g. +03).
 
-    closed_ai_signals.open_time is naive wall-clock in that SAME zone, so we
-    localise the naive signal times with this offset before slicing ticks.
+    closed_ai_signals.open_time is naïve wall-clock in that SAME zone, so we
+    localise the naïve signal times with this offset before slicing ticks.
     """
     with conn.cursor() as cur:
         cur.execute("SELECT ts FROM ticker_10s ORDER BY ts LIMIT 1")
@@ -146,7 +146,7 @@ def load_cornix_geometry(conn, model: str, start: str, end: str, parse_fn) -> di
 
     The bot tag appears in the footer in bot-specific shapes — AIM2 as "(AIM2)",
     EPD3 as "AI module EPD3" — so we scope by the bare tag substring `%model%`,
-    not `%(model)%`. The <pre> HTML twin (which also carries "Modul: EPD3") is
+    not `%(model)%`. The <pre> HTML twin (which also carries "Module: EPD3") is
     excluded, so the surviving match is the plain Cornix leg.
     """
     with conn.cursor() as cur:
@@ -527,7 +527,7 @@ def run_overlays(arts: list[dict]) -> dict:
 def overlay_c(arts: list[dict], y: float, glen: int) -> dict:
     """(c) Portfolio circuit-breaker: flatten ALL open trades on a y% retrace of the
     aggregate open-position wave; new signals after a flatten start a fresh wave
-    ("im Tal wieder Signale nehmen"). Returns realised + MaxDD, direction-split.
+    ("take signals again in the valley"). Returns realised + MaxDD, direction-split.
 
     The flatten decision (which trade at which grid step) is the pure, DB-free
     `core.wave_exit_sim.portfolio_circuit_breaker`; here we only map the flatten
@@ -735,32 +735,32 @@ def render_md(s: dict) -> str:
         "",
         f"_generated {s['generated_at']} · read-only · window {s['window'][0]} → {s['window'][1]}_",
         "",
-        "**Backbone:** vollständige wick-aware **5m**-OHLC-Kerzen (`candles`, 12× feiner als der "
-        "1h-Live-Monitor) für die Touch-Erkennung; **10s**-Ticks (`ticker_10s`) nur als Order-Resolver "
-        "für SL-vs-TP-Reihenfolge innerhalb einer 5m-Kerze. "
-        "**Geometrie:** immutable Cornix-Text (`telegram_outbox`), Original-SL/entry2/TP1-3. "
-        "**Outcome-Ground-Truth:** `closed_ai_signals`.",
+        "**Backbone:** complete wick-aware **5m**-OHLC candles (`candles`, 12× finer than the "
+        "1h live monitor) for touch detection; **10s** ticks (`ticker_10s`) only as order-resolver "
+        "for SL-vs-TP order within a 5m candle. "
+        "**Geometry:** immutable Cornix text (`telegram_outbox`), original SL/entry2/TP1-3. "
+        "**Outcome ground truth:** `closed_ai_signals`.",
         "",
-        "> Warum nicht rein 10s: `ticker_10s` ist ein ~40s-Snapshot mit Lücken (Coverage-Median 0.25) "
-        "und verpasst ~81% der SL-Touch-Events → eine reine Tick-Sim entkommt den Stops und verzerrt "
-        "Realized ~2.7×. Die 5m-Kerze ist gap-frei und wick-aware.",
+        "> Why not pure 10s: `ticker_10s` is a ~40s snapshot with gaps (coverage median 0.25) "
+        "and misses ~81% of SL-touch events → a pure-tick sim escapes the stops and distorts "
+        "realised by ~2.7×. The 5m candle is gap-free and wick-aware.",
         "",
-        f"Closed im Fenster: {s['n_closed_in_window']} · Geometrie gematcht & gescored: **{s['n_scored']}** "
-        f"· ungematcht (Outbox-Retention): {s['n_unmatched_geometry']}.",
-        f"Gescorte-Trades-Span: {s['scored_span'][0]} → {s['scored_span'][1]} "
-        "(Outbox-Retention verzerrt das Set zu **jüngeren** Trades — beim Lesen der Aggregate beachten).",
+        f"Closed in window: {s['n_closed_in_window']} · Geometry matched & scored: **{s['n_scored']}** "
+        f"· unmatched (outbox retention): {s['n_unmatched_geometry']}.",
+        f"Scored trade span: {s['scored_span'][0]} → {s['scored_span'][1]} "
+        "(outbox retention skews the set toward **newer** trades — note when reading aggregates).",
         "",
-        "## Validierung — `monitor`-Config (entry1-only, interne Targets) vs recorded closed_ai_signals",
+        "## Validation — `monitor` config (entry1-only, internal targets) vs recorded closed_ai_signals",
         "",
-        f"- targets_hit **exakt**: {v['targets_hit_exact_pct']}%  ·  **±1**: {v['targets_hit_within1_pct']}%",
-        f"- Win/Loss (TP1-Touch) **Übereinstimmung**: {v['win_agreement_pct']}%",
+        f"- targets_hit **exact**: {v['targets_hit_exact_pct']}%  ·  **±1**: {v['targets_hit_within1_pct']}%",
+        f"- Win/loss (TP1 touch) **agreement**: {v['win_agreement_pct']}%",
         "",
-        "> Restdivergenz kommt aus der feineren Auflösung (5m-Wick + echte Intra-Candle-Ordnung) "
-        "gegenüber dem 1h-Monitor — die Sim ist hier bewusst *treuer* als die recorded-Outcome-Quelle.",
+        "> Residual divergence comes from finer resolution (5m wick + actual intra-candle order) "
+        "versus the 1h monitor — the sim is here deliberately *truer* than the recorded-outcome source.",
         "",
-        "## Realized-Aggregat je Config",
+        "## Realised aggregate per config",
         "",
-        "| config | n | unlev mean% | unlev sum% | net sum% | leveraged sum% (n) | WR(TP1)% | Ø-Dauer med/mean h |",
+        "| config | n | unlev mean% | unlev sum% | net sum% | leveraged sum% (n) | WR(TP1)% | Ø duration med/mean h |",
         "|---|--:|--:|--:|--:|--:|--:|--:|",
     ]
     for name, a in s["configs"].items():
@@ -771,9 +771,9 @@ def render_md(s: dict) -> str:
         )
     lines += [
         "",
-        "**Lesehilfe:** `monitor` = 1:1-Reproduktion des Bot-Monitors (Validierungsanker). "
-        "`cornix3` = was Cornix real handelt (DCA entry1/entry2, 3 publizierte TPs in Dritteln) — "
-        "die Headline-Realized-Zahl und die Basis fürs Phase-2-Overlay.",
+        "**Reading aid:** `monitor` = 1:1 reproduction of the bot monitor (validation anchor). "
+        "`cornix3` = what Cornix trades (DCA entry1/entry2, 3 published TPs in thirds) — "
+        "the headline realised number and the basis for the Phase-2 overlay.",
         "",
     ]
     if s.get("overlay"):
@@ -803,7 +803,7 @@ def render_overlay_md(ov: dict) -> list[str]:
         f = lambda d: f"{d['unlev_sum']}/{d['lev_sum']}" if d and d["lev_sum"] is not None else "—"  # noqa: E731
         return f"| {label} | {f(lo)} | {f(sh)} |"
 
-    # Kernbefund aus den Zahlen ableiten (robust über den Sweep, kein Best-Punkt)
+    # Derive the key finding from the numbers (robust across the sweep, no single best point)
     def _band(sweep: dict, field: str, sub: str = "ALL"):
         vals = [d[sub][field] for d in sweep.values() if d.get(sub) and d[sub].get(field) is not None]
         return (min(vals), max(vals)) if vals else (None, None)
@@ -823,18 +823,18 @@ def render_overlay_md(ov: dict) -> list[str]:
         "",
         "---",
         "",
-        "## Phase 2 — Auto-Close-Overlays (auf `cornix3`, real-money DCA/3-TP)",
+        "## Phase 2 — Auto-Close Overlays (on `cornix3`, real-money DCA/3-TP)",
         "",
-        f"n_arts = {ov['n_arts']} (leveraged, gescort). Metrik = REALIZED (locked-in) — "
-        "unlev Summe% / leveraged Summe%; MaxDD = Peak-to-Trough der aggregierten Open-Positions-Welle "
-        "(leveraged Kontoeinheiten). **Baseline = hold-to-TP/SL.**",
+        f"n_arts = {ov['n_arts']} (leveraged, scored). Metric = REALIZED (locked-in) — "
+        "unlev sum% / leveraged sum%; MaxDD = peak-to-trough of the aggregated open-position wave "
+        "(leveraged account units). **Baseline = hold-to-TP/SL.**",
         "",
-        "### KERNBEFUND",
+        "### KEY FINDING",
         "",
     ]
 
-    # Datengetrieben statt hartkodiert: schlägt IRGENDEINE Overlay-Variante die
-    # Baseline auf leveraged Realized? (Vorzeichen zählt, nicht die AIM2-Story.)
+    # Data-driven instead of hardcoded: does ANY overlay variant beat the
+    # baseline on leveraged realised? (Sign counts, not the AIM2 story.)
     n = ov["n_arts"]
     _lev_his = [v for v in (a_lev[1], c_lev[1]) if v is not None]
     ov_lev_hi = max(_lev_his) if _lev_his else None
@@ -842,55 +842,55 @@ def render_overlay_md(ov: dict) -> list[str]:
     thin = n < 30
     if thin:
         lines.append(
-            f"> ⚠ **THIN (n={n} < 30): unter der Signifikanzschwelle — nur illustrativ, kein Verdikt.** "
-            "Bei so wenigen Legs bestimmt ein einzelnes Fenster das Vorzeichen."
+            f"> ⚠ **THIN (n={n} < 30): below the significance threshold — illustrative only, no verdict.** "
+            "With this few legs, a single window determines the sign."
         )
         lines.append("")
     if beats:
         lines.append(
-            f"- **Leveraged Realized: mindestens eine Overlay-Variante schlägt hold.** Baseline {base_lev}% vs "
+            f"- **Leveraged realized: at least one overlay variant beats hold.** Baseline {base_lev}% vs "
             f"(a) {a_lev[0]}…{a_lev[1]}% / (c) {c_lev[0]}…{c_lev[1]}%. "
             + (
-                "Da die Baseline hier NEGATIV/schwach ist, schlägt jede Früh-Exit-Regel einen ungünstigen Halt — "
-                "das ist ein Fenster-Artefakt, kein bewiesener Timing-Edge (n klein, Baseline-Vorzeichen prüfen)."
+                "Since the baseline is NEGATIVE/weak here, any early-exit rule beats an unfavourable hold — "
+                "that is a window artefact, not a proven timing edge (n small, check the baseline sign)."
                 if (base_lev is not None and base_lev < 0)
-                else "Robustheit über den Sweep + gegen die AIM2/EPD3-Evidenz prüfen, bevor das als Edge gilt."
+                else "Check robustness across the sweep + against the AIM2/EPD3 evidence before calling this an edge."
             )
         )
     else:
         lines.append(
-            f"- **Leveraged Realized: keine Overlay-Variante schlägt hold.** Baseline {base_lev:+g}% vs "
-            f"(a) {a_lev[0]}…{a_lev[1]}% / (c) {c_lev[0]}…{c_lev[1]}% — robust über den GANZEN Sweep schlechter. "
-            "Der leveraged-Summe wird von wenigen Fat-Tail-Wellen-Treffern dominiert (−100%-Clamp-Asymmetrie), "
-            "die jedes Overlay kappt."
+            f"- **Leveraged realized: no overlay variant beats hold.** Baseline {base_lev:+g}% vs "
+            f"(a) {a_lev[0]}…{a_lev[1]}% / (c) {c_lev[0]}…{c_lev[1]}% — robustly worse across the WHOLE sweep. "
+            "The leveraged sum is dominated by a few fat-tail wave hits (−100%-clamp asymmetry), "
+            "which every overlay caps."
         )
     _unlev_his = [v for v in (a_unlev[1], c_unlev[1]) if v is not None]
     ov_unlev_better = base_unlev is not None and _unlev_his and max(_unlev_his) > base_unlev
     lines += [
-        f"- **Unlevered Realized:** Baseline {base_unlev}% vs (a) {a_unlev[0]}…{a_unlev[1]}% / "
-        f"(c) {c_unlev[0]}…{c_unlev[1]}% — Overlays "
-        + ("überwiegend BESSER (schneiden Underwater-Tails)." if ov_unlev_better else "nicht besser."),
-        f"- **Drawdown: (c) ist ein Risk-Tool.** MaxDD-Welle {base_dd} (hold) → {min(c_dd)}…{max(c_dd)} "
-        f"(~{base_dd / max(min(c_dd), 1e-9):.0f}× kleiner).",
-        "- **Fazit:** "
+        f"- **Unlevered realized:** Baseline {base_unlev}% vs (a) {a_unlev[0]}…{a_unlev[1]}% / "
+        f"(c) {c_unlev[0]}…{c_unlev[1]}% — overlays "
+        + ("mostly BETTER (cut underwater tails)." if ov_unlev_better else "not better."),
+        f"- **Drawdown: (c) is a risk tool.** MaxDD wave {base_dd} (hold) → {min(c_dd)}…{max(c_dd)} "
+        f"(~{base_dd / max(min(c_dd), 1e-9):.0f}× smaller).",
+        "- **Conclusion:** "
         + (
-            "Zu dünn für ein Verdikt — siehe THIN-Hinweis oben."
+            "Too thin for a verdict — see the THIN note above."
             if thin
             else (
-                "Overlays schlagen hold NUR weil die Baseline in diesem Fenster schwach war (Artefakt), "
-                "kein robuster Timing-Edge."
+                "Overlays beat hold ONLY because the baseline was weak in this window (artefact), "
+                "not a robust timing edge."
                 if beats
-                else "Wellen-Intuition fängt out-of-sample **kein** leveraged-Edge; (c) konvertiert Upside-Varianz "
-                "in Drawdown-Schutz. **NO-EDGE auf der Headline-Metrik.**"
+                else "Wave intuition catches **no** leveraged edge out-of-sample; (c) converts upside variance "
+                "into drawdown protection. **NO-EDGE on the headline metric.**"
             )
         ),
         "",
-        "> ⚠ **WR(TP1)% ist unter Overlays irreführend** (die Regel schließt auf MTM-Retrace, nicht auf "
-        "TP-Touch → tp1=False obwohl profitabel geschlossen). Realized ist die Metrik, nicht WR. "
-        "Overlay (a) triggert bei ~95% (Peak-Retrace feuert auch auf kleinen Wellen — eine Aktivierungs-"
-        "Schwelle würde nur große Wellen trailen, ist hier aber nicht nötig: das Vorzeichen ist schon klar).",
+        "> ⚠ **WR(TP1)% is misleading under overlays** (the rule closes on MTM retrace, not on "
+        "TP touch → tp1=False even though closed profitably). Realized is the metric, not WR. "
+        "Overlay (a) triggers at ~95% (peak-retrace fires even on small waves — an activation "
+        "threshold would only trail large waves, but is not needed here: the sign is already clear).",
         "",
-        "### Overlay (a) — Per-Trade-Trailing-TP (close bei X% Retrace vom Trade-MTM-Peak)",
+        "### Overlay (a) — Per-Trade Trailing-TP (close at X% retrace from the trade's MTM peak)",
         "",
         "| X% | n | unlev sum% | lev sum% | WR(TP1)% | MaxDD-Welle | getriggert% |",
         "|--:|--:|--:|--:|--:|--:|--:|",
@@ -902,7 +902,7 @@ def render_overlay_md(ov: dict) -> list[str]:
         lines.append(_ov_row(f"{int(x * 100)}", a, str(trig)))
     lines += [
         "",
-        "### Overlay (c) — Portfolio-Circuit-Breaker (close-ALL bei Y% Retrace der Aggregat-Welle)",
+        "### Overlay (c) — Portfolio Circuit-Breaker (close-ALL at Y% retrace of the aggregate wave)",
         "",
         "| Y% | n | unlev sum% | lev sum% | WR(TP1)% | MaxDD-Welle | geflattet |",
         "|--:|--:|--:|--:|--:|--:|--:|",
@@ -913,7 +913,7 @@ def render_overlay_md(ov: dict) -> list[str]:
         lines.append(_ov_row(f"{int(y * 100)}", a, str(a.get("n_flattened", "—"))))
     lines += [
         "",
-        "### Long/Short getrennt (unlev sum% / lev sum%)",
+        "### Long/Short split (unlev sum% / lev sum%)",
         "",
         "| Regel | LONG | SHORT |",
         "|---|--:|--:|",
@@ -926,10 +926,10 @@ def render_overlay_md(ov: dict) -> list[str]:
         lines.append(dir_split_row(f"(c) Y={int(y * 100)}%", ov["overlay_c_portfolio"][str(int(y * 100))]))
     lines += [
         "",
-        "**Ehrliche Grenze:** 7d/674-Legs, jüngeres Fenster (Outbox-Bias). Wellen-Capture ist Markt-Timing; "
-        "getestet wird, ob eine MECHANISCHE Regel die Welle out-of-sample fängt oder nur im Hindsight sichtbar "
-        "ist. Bewertet werden robuste **Bänder + Vorzeichen** über den Sweep, nicht ein Best-Punkt. "
-        "NO-EDGE ist ein valides Ergebnis.",
+        "**Honest limit:** 7d/674 legs, more recent window (outbox bias). Wave capture is market timing; "
+        "what is tested is whether a MECHANICAL rule catches the wave out-of-sample or is only visible in "
+        "hindsight. What is evaluated is robust **bands + sign** across the sweep, not a single best point. "
+        "NO-EDGE is a valid result.",
         "",
     ]
     return lines
@@ -1001,21 +1001,21 @@ def render_entrysl_md(s: dict) -> str:
         return "—" if v is None else v
 
     lines = [
-        f"# entry2-als-SL vs DCA — 3-Arm-Test ({s['model']}) — T-2026-KYT-9050-043",
+        f"# entry2-as-SL vs DCA — 3-arm test ({s['model']}) — T-2026-KYT-9050-043",
         "",
         f"_generated {s['generated_at']} · read-only · window {s['window'][0]} → {s['window'][1]}_",
         "",
-        "**High-Fidelity-Harness (T-035):** 5m-Wick-Kerzen (Touch-Backbone) + 10s-Order-Resolver, "
-        "Geometrie aus immutablem Cornix-Text (`telegram_outbox`, entry1/entry2/orig-SL/TP1-3), "
-        "Realized via `core.realized_pnl`. Verglichen auf dem **entry2-vorhandenen** Trade-Set "
-        "(alle 3 Arme definiert). Metrik risiko-adjustiert (T-041): der leveraged **Sum** ist ein "
-        "Fat-Tail/−100%-Clamp-Artefakt → **Sharpe (per-Trade lev) + kompoundierende MaxDD (fixe 2%)** "
-        "sind das Signal.",
+        "**High-fidelity harness (T-035):** 5m-wick candles (touch backbone) + 10s order-resolver, "
+        "geometry from immutable Cornix text (`telegram_outbox`, entry1/entry2/orig-SL/TP1-3), "
+        "realized via `core.realized_pnl`. Compared on the **entry2-present** trade set "
+        "(all 3 arms defined). Metric risk-adjusted (T-041): the leveraged **sum** is a "
+        "fat-tail/−100%-clamp artefact → **Sharpe (per-trade lev) + compounding MaxDD (fixed 2%)** "
+        "is the signal.",
         "",
-        f"Gescort (entry2-Set): **{e['n_scored']}**"
-        + ("  ⚠ **THIN (<30) — nur illustrativ, kein Verdikt.**" if thin else "")
+        f"Scored (entry2 set): **{e['n_scored']}**"
+        + ("  ⚠ **THIN (<30) — illustrative only, no verdict.**" if thin else "")
         + "\n",
-        "## Die 3 Arme",
+        "## The 3 arms",
         "",
         "| Arm | Setup | n | unlev sum% | unlev mean% | lev sum% | **Sharpe lev** | **MaxDD (2%)** | WR(TP1)% |",
         "|---|---|--:|--:|--:|--:|--:|--:|--:|",
@@ -1038,34 +1038,34 @@ def render_entrysl_md(s: dict) -> str:
         winner = next((arm for arm in ("C", "B", "A") if a.get(arm, {}).get("sharpe_lev") == best), "?")
         verdict = [
             "",
-            "### Befund",
+            "### Finding",
             "",
-            f"- **DCA weglassen ({dca_eff}):** "
-            + ("hilft." if (shB is not None and shA is not None and shB > shA) else "hilft nicht / neutral."),
-            f"- **SL@entry2 statt DCA-Add ({e2_eff}):** "
-            + ("hilft." if (shC is not None and shB is not None and shC > shB) else "hilft nicht / neutral."),
+            f"- **Dropping DCA ({dca_eff}):** "
+            + ("helps." if (shB is not None and shA is not None and shB > shA) else "does not help / neutral."),
+            f"- **SL@entry2 instead of DCA add ({e2_eff}):** "
+            + ("helps." if (shC is not None and shB is not None and shC > shB) else "does not help / neutral."),
             f"- **MaxDD (2%):** A {ddA}% · B {ddB}% · C {ddC}% "
             + (
-                "→ engster Stop (C) drückt den Drawdown." if (ddC is not None and ddA is not None and ddC < ddA) else ""
+                "→ the tighter stop (C) lowers the drawdown." if (ddC is not None and ddA is not None and ddC < ddA) else ""
             ),
-            f"- **Bester Arm (Sharpe): {winner}.** "
+            f"- **Best arm (Sharpe): {winner}.** "
             + (
-                "Michis entry2-als-SL (C) trägt."
+                "Michi's entry2-as-SL (C) holds up."
                 if winner == "C"
-                else "Michis entry2-als-SL (C) schlägt DCA nicht robust — siehe Zahlen."
+                else "Michi's entry2-as-SL (C) does not robustly beat DCA — see the numbers."
             ),
         ]
     elif thin:
         verdict = [
             "",
-            "### Befund",
+            "### Finding",
             "",
-            "> Zu dünn (n<30) — kein belastbares Vorzeichen. Fenster/Bot mit mehr Legs nötig.",
+            "> Too thin (n<30) — no reliable sign. Need a window/bot with more legs.",
         ]
     lines += verdict
 
     # direction split
-    lines += ["", "### Long/Short getrennt (Sharpe lev / MaxDD%)", "", "| Arm | LONG | SHORT |", "|---|--:|--:|"]
+    lines += ["", "### Long/Short split (Sharpe lev / MaxDD%)", "", "| Arm | LONG | SHORT |", "|---|--:|--:|"]
     for arm, _cfg, _desc in ENTRYSL_ARMS:
         lo = e["by_dir"].get("LONG", {}).get(arm, {})
         sh = e["by_dir"].get("SHORT", {}).get(arm, {})
@@ -1076,10 +1076,10 @@ def render_entrysl_md(s: dict) -> str:
 
     lines += [
         "",
-        "**Ehrliche Grenzen:** ~7d/Outbox-Fenster (Geometrie-Retention), entry2-Set (nicht alle Trades "
-        "publizieren entry2). SL@entry2 ist ein **enger** Stop (näher als der Original-SL) → mehr kleine "
-        "Stops, weniger tiefe Verlierer; ob das netto trägt, hängt an entry2-fill→recover vs →SL. "
-        "Compounding sequenziell-nach-close (ignoriert Gleichzeitigkeit). NO-EDGE ist ein valides Ergebnis.",
+        "**Honest limits:** ~7d/outbox window (geometry retention), entry2 set (not all trades "
+        "publish entry2). SL@entry2 is a **tighter** stop (closer than the original SL) → more small "
+        "stops, fewer deep losers; whether that nets out depends on entry2-fill→recover vs →SL. "
+        "Compounding sequential-after-close (ignores simultaneity). NO-EDGE is a valid result.",
         "",
     ]
     return "\n".join(lines)
@@ -1145,12 +1145,12 @@ def render_trailing_md(s: dict) -> str:
         "",
         f"_generated {s['generated_at']} · read-only · window {s['window'][0]} → {s['window'][1]}_",
         "",
-        "**High-Fidelity-Harness (T-035):** per-Trade-Trailing-TP (Overlay a) auf dem **DCA-treuen** "
-        "cornix3-MTM, 5m-Wick + 10s-Resolver. T-035 wertete das nur auf der leveraged **Summe** aus "
-        "(Fat-Tail/−100%-Clamp-Artefakt → schien NO-EDGE). Hier **risiko-adjustiert** (T-041): per-Trade "
-        "leveraged **Sharpe** + kompoundierende **MaxDD (fixe 2%)**, hold vs Trailing-X.",
+        "**High-fidelity harness (T-035):** per-trade trailing-TP (overlay a) on the **DCA-faithful** "
+        "cornix3 MTM, 5m wick + 10s resolver. T-035 evaluated this only on the leveraged **sum** "
+        "(fat-tail/−100%-clamp artefact → looked NO-EDGE). Here **risk-adjusted** (T-041): per-trade "
+        "leveraged **Sharpe** + compounding **MaxDD (fixed 2%)**, hold vs trailing-X.",
         "",
-        f"Gescort (leveraged Arts): **{tr['n_arts']}**\n",
+        f"Scored (leveraged arts): **{tr['n_arts']}**\n",
         "| Variante | n | mean lev% | **Sharpe lev** | **MaxDD (2%)** |",
         "|---|--:|--:|--:|--:|",
         f"| **hold** | {hold['n']} | {hold['mean_lev']} | **{hold['sharpe_lev']}** | **{hold['maxdd_2pct']}%** |",
@@ -1164,28 +1164,28 @@ def render_trailing_md(s: dict) -> str:
     shs = {k: v[k]["sharpe_lev"] for k in v if v[k]["sharpe_lev"] is not None}
     best = max((k for k in shs if k != "hold"), key=lambda k: shs[k], default=None)
     hold_sh = shs.get("hold")
-    lines += ["", "### Befund", ""]
+    lines += ["", "### Finding", ""]
     if best is not None and hold_sh is not None:
         best_sh = shs[best]
         dd_hold, dd_best = hold["maxdd_2pct"], v[best]["maxdd_2pct"]
         beats = best_sh > hold_sh
         lines += [
-            f"- **Bester Trailing-X = {best}%: Sharpe {best_sh:+} vs hold {hold_sh:+}** "
-            + ("→ Trailing hebt den risiko-adjustierten Ertrag." if beats else "→ kein Sharpe-Gewinn."),
-            f"- **MaxDD (2%): hold {dd_hold}% → Trailing {best}% {dd_best}%** "
+            f"- **Best trailing-X = {best}%: Sharpe {best_sh:+} vs hold {hold_sh:+}** "
+            + ("→ trailing raises the risk-adjusted return." if beats else "→ no Sharpe gain."),
+            f"- **MaxDD (2%): hold {dd_hold}% → trailing {best}% {dd_best}%** "
             + (
-                f"(~{dd_hold / max(dd_best, 1e-9):.1f}× kleiner)."
+                f"(~{dd_hold / max(dd_best, 1e-9):.1f}× smaller)."
                 if (dd_best and dd_hold and dd_best < dd_hold)
                 else "."
             ),
-            "- **Fidelity-Vergleich:** T-041 (First-Order 1h) fand dieselbe Richtung (Sharpe rauf, MaxDD runter). "
-            + ("Hier auf 5m+10s+DCA **bestätigt**." if beats else "Hier abgeschwächt/nicht bestätigt — siehe Zahlen."),
+            "- **Fidelity comparison:** T-041 (first-order 1h) found the same direction (Sharpe up, MaxDD down). "
+            + ("Here **confirmed** on 5m+10s+DCA." if beats else "Here weakened/not confirmed — see the numbers."),
         ]
     lines += [
         "",
-        "**Ehrliche Grenzen:** ~Outbox-Fenster (Geometrie-Retention), leveraged Arts, Compounding "
-        "sequenziell-nach-close (ignoriert Gleichzeitigkeit) → MaxDD-Ratio ist das Signal, nicht der absolute "
-        "Multiple. Trailing-Deploy = eigener Operator-Entscheid (Michi).",
+        "**Honest limits:** ~outbox window (geometry retention), leveraged arts, compounding "
+        "sequential-after-close (ignores simultaneity) → the MaxDD ratio is the signal, not the absolute "
+        "multiple. Trailing deploy = separate operator decision (Michi).",
         "",
     ]
     return "\n".join(lines)
@@ -1215,7 +1215,7 @@ def main() -> None:
 
     set_low_priority()
     if args.allow_high_cpu:
-        print("CPU-Headroom-Check übersprungen (--allow-high-cpu; BELOW_NORMAL + read-only).")
+        print("CPU headroom check skipped (--allow-high-cpu; BELOW_NORMAL + read-only).")
     else:
         check_cpu_headroom()
 

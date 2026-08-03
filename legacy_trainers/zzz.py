@@ -1,4 +1,4 @@
-# ZZZ.py – Die wirklich finale Version (Dezember 2025) – 100 % korrekt
+# ZZZ.py – The truly final version (December 2025) – 100% correct
 import asyncio
 import json
 import logging
@@ -45,7 +45,7 @@ import yfinance as yf
 from dateutil.parser import isoparse
 from master_task import check_master_trades
 
-# import gridspec  # wird aus matplotlib importiert
+# import gridspec  # imported from matplotlib
 from matplotlib import gridspec
 
 # from matplotlib.dates import DateFormatter
@@ -70,7 +70,7 @@ from telegram.ext import (
 )
 from xgboost import XGBClassifier
 
-# ========================= KONFIG =========================
+# ========================= CONFIG =========================
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ADMIN_ID = 6976112025
 
@@ -78,7 +78,7 @@ COINS_FILE = Path("coins.json")
 LOG_FILE = Path("command_log.json")
 LOCK_FILE = Path(__file__).with_suffix(".lock")
 
-COINGLASS_API_KEY = os.getenv('COINGLASS_API_KEY', 'CG-6gVq4SWBz1ZNQvEhN9WdWqEk')  # Dein Key
+COINGLASS_API_KEY = os.getenv('COINGLASS_API_KEY', 'CG-6gVq4SWBz1ZNQvEhN9WdWqEk')  # Your key
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_SECRET = os.getenv("BINANCE_API_SECRET", "")
 
@@ -105,20 +105,20 @@ db_pool2 = pool.ThreadedConnectionPool(
 
 
 # ========================= MEAN REVERSION MODELS CHANNELS & MODELS =========================
-RUBBERBAND_CHANNEL_ID = "0"  # Dein neuer Channel
+RUBBERBAND_CHANNEL_ID = "0"  # Your new channel
 
 try:
     REVERSION_MODEL_LONG = joblib.load('long_reversion_model.joblib')
-    print("✅ Long Rubberband Modell erfolgreich geladen!")
+    print("✅ Long Rubberband model loaded successfully!")
 except Exception as e:
-    logger.info(f"❌ FEHLER: Konnte Long Rubberband Modell nicht laden: {e}")
+    logger.info(f"❌ ERROR: Could not load Long Rubberband model: {e}")
     REVERSION_MODEL_LONG = None
 
 try:
     REVERSION_MODEL_SHORT = joblib.load('short_reversion_model.joblib')
-    print("✅ Short Rubberband Modell erfolgreich geladen!")
+    print("✅ Short Rubberband model loaded successfully!")
 except Exception as e:
-    logger.info(f"❌ FEHLER: Konnte Short Rubberband Modell nicht laden: {e}")
+    logger.info(f"❌ ERROR: Could not load Short Rubberband model: {e}")
     REVERSION_MODEL_SHORT = None
 
 REVERSION_THRESH_LONG = 0.75
@@ -126,8 +126,8 @@ REVERSION_THRESH_SHORT = 0.85
 
 # ========================= SMC / ICT GLOBALS =========================
 HISTORICAL_SCANNED = set()
-ALERTED_STRUCT = set()  # Merkt sich bereits gemeldete BOS/CHoCH
-SMC_TREND_STATE = {}  # Speichert den aktuellen Trend (1 = Bullish, -1 = Bearish)
+ALERTED_STRUCT = set()  # Keeps track of already reported BOS/CHoCH
+SMC_TREND_STATE = {}  # Stores the current trend (1 = Bullish, -1 = Bearish)
 
 # ========================= FOREX SMC GLOBALS =========================
 FOREX_PAIRS = ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'USDCHF=X', 'EURJPY=X', 'GBPJPY=X']
@@ -139,29 +139,29 @@ FOREX_TREND_STATE = {}
 
 # ========================= PATTERN DETECTOR GLOBALS =========================
 PATTERN_CHANNEL_ID = 0
-PATTERN_TIMEFRAMES = ['1h']  # Später einfach erweiterbar auf ['1h', '2h', '4h', '1d']
+PATTERN_TIMEFRAMES = ['1h']  # Easily extendable later to ['1h', '2h', '4h', '1d']
 ALERTED_PATTERNS = set()
 ALERTED_RETESTS = set()
-ACTIVE_PATTERNS = {}  # Speichert ausgebrochene Muster für den Retest-Check
+ACTIVE_PATTERNS = {}  # Stores broken-out patterns for the retest check
 
 # ========================= MACRO MODEL =========================
 try:
     MACRO_MODEL = joblib.load('macro_3d_predictor.pkl')
-    print("✅ Macro 3D Predictor Modell erfolgreich geladen!")
+    print("✅ Macro 3D Predictor model loaded successfully!")
 except Exception as e:
-    print(f"❌ FEHLER: Konnte Macro Modell nicht laden: {e}")
+    print(f"❌ ERROR: Could not load Macro model: {e}")
     MACRO_MODEL = None
 
 
 # ========================= 1 MINUTE memory database =========================
-ONE_MINUTE_DATA: dict[str, deque] = {}  # "BTCUSDT" → deque von dicts
+ONE_MINUTE_DATA: dict[str, deque] = {}  # "BTCUSDT" → deque of dicts
 DATA_FILE = Path("1minute.json")
 PUMP_DUMP_FILE = Path("pump_dump_state.json")
 
-# Globaler State für Cooldowns (pro Coin)
+# Global state for cooldowns (per coin)
 PRICE_VOLUME_ALERT_STATE = {}  # symbol → {"last_alert_time": datetime}
 
-# ========================= ROUND LEVEL BREAKER UND ANDERE TASKS =========================
+# ========================= ROUND LEVEL BREAKER AND OTHER TASKS =========================
 TEST_CHANNEL_ID = "0"
 MARKET_CHANNEL_ID = "0"
 AI_CHANNEL_ID = '0'
@@ -177,12 +177,12 @@ ROUND_LEVEL_CONFIG = {
     "XRPUSDT": {"step": 0.1, "decimals": 3},
 }
 
-# Interner Speicher: {symbol: {"last_level": 90000.0, "last_break_time": datetime, "direction": "up"/"down"}}
+# Internal storage: {symbol: {"last_level": 90000.0, "last_break_time": datetime, "direction": "up"/"down"}}
 ROUND_BREAK_STATE = {}
-# Nach ROUND_BREAK_STATE oder ähnlich – z. B. nach ONE_MINUTE_DATA
-PUMP_DUMP_STATE = {}  # symbol → dict mit avg_volume, last_alert_time, etc.
-# Cooldown pro Coin+Level (verhindert Spam bei Seitwärtsbewegungen)
-COOLDOWN_SECONDS = 180  # 3 Minuten
+# After ROUND_BREAK_STATE or similar – e.g. after ONE_MINUTE_DATA
+PUMP_DUMP_STATE = {}  # symbol → dict with avg_volume, last_alert_time, etc.
+# Cooldown per coin+level (prevents spam during sideways movements)
+COOLDOWN_SECONDS = 180  # 3 minutes
 
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 
@@ -213,15 +213,15 @@ PUMP_MODELS = {
 PUMP_MODELS_LOADED = {"model": None, "threshold": 0.5}
 
 
-# Globale Modelle (einmalig laden)
+# Global models (load once)
 MODEL_LONG = joblib.load("trade_success_xgb_LONG_v1.model")
 MODEL_SHORT = joblib.load("trade_success_xgb_SHORT_v1.model")
 
-# Schwellenwerte – kannst du später anpassen / optimieren
+# Thresholds – can be adjusted / optimised later
 CONF_THRESHOLD_LONG = 0.72
 CONF_THRESHOLD_SHORT = 0.78
 
-# Konfiguration
+# Configuration
 TSI_MODEL_LONG_PATH = "model_tsi_long_robust.pkl"
 TSI_MODEL_SHORT_PATH = "model_tsi_short_robust.pkl"
 TSI_THRESH_LONG = 0.80
@@ -260,15 +260,15 @@ TSI_FEATURES = [
 ]
 
 # ========================= ML CONFIG =========================
-# Lade das Modell EINMAL global beim Start des Bots
+# Load the model ONCE globally at bot start
 try:
     ML_MODEL = joblib.load('trend_prediction_model.joblib')
-    print("✅ ML Trendbreaker Modell erfolgreich geladen!")
+    print("✅ ML Trendbreaker model loaded successfully!")
 except Exception as e:
-    print(f"❌ FEHLER: Konnte ML Trendbreaker Modell nicht laden: {e}")
+    print(f"❌ ERROR: Could not load ML Trendbreaker model: {e}")
     ML_MODEL = None
 
-# Dein gewählter Schwellenwert (Sweet Spot)
+# Your chosen threshold (sweet spot)
 ML_THRESHOLD = 0.75
 
 
@@ -277,39 +277,39 @@ SG_SHORT_MODEL_FILE = 'bt2_model_SHORT.json'
 SG_COINS_FILE = 'coins.json'
 SG_LONG_THRESHOLD = 0.6
 SG_SHORT_THRESHOLD = 0.8
-SG_SUCCESS_CLASS_IDX = 0  # Entspricht dem Label von 'continuation_success'
+SG_SUCCESS_CLASS_IDX = 0  # Corresponds to the label of 'continuation_success'
 
-# --- Live-Bot Spezifische Parameter ---
-HOURLY_CHECK_DELAY_MINUTES = 10  # 10 Minuten nach der vollen Stunde
-LIVE_DATA_HISTORY_HOURS = 2400  # Wie viele Stunden Historie für Indikatoren/Pivots geholt werden
-LEVEL_TOLERANCE_PCT = 0.005  # 0.5% Toleranzzone um das Level herum
+# --- Live bot specific parameters ---
+HOURLY_CHECK_DELAY_MINUTES = 10  # 10 minutes after the full hour
+LIVE_DATA_HISTORY_HOURS = 2400  # How many hours of history are fetched for indicators/pivots
+LEVEL_TOLERANCE_PCT = 0.005  # 0.5% tolerance zone around the level
 PIVOT_WINDOW = 10
-RETEST_BACKWARD_LOOKUP_CANDLES = 24  # Wie viele Kerzen vor dem Retest nach einem Break gesucht wird
-MODEL_ID = 'ABR1'  # Fixwert für das Modell-ID in der Datenbank
+RETEST_BACKWARD_LOOKUP_CANDLES = 24  # How many candles before the retest are searched after a break
+MODEL_ID = 'ABR1'  # Fixed value for the model ID in the database
 
-# Später in post_init geladen
-signal_generator_instance = None  # Damit wir Zugriff darauf haben
+# Loaded later in post_init
+signal_generator_instance = None  # So that we have access to it
 
 try:
     LONG_ML_MODEL = joblib.load('long_trend_prediction_model.joblib')
-    print("✅ Long ML Trendbreaker Modell erfolgreich geladen!")
+    print("✅ Long ML Trendbreaker model loaded successfully!")
 except Exception as e:
-    logger.info(f"❌ FEHLER: Konnte Long ML Trendbreaker Modell nicht laden: {e}")
+    logger.info(f"❌ ERROR: Could not load Long ML Trendbreaker model: {e}")
     LONG_ML_MODEL = None
 
 try:
     SHORT_ML_MODEL = joblib.load('short_trend_prediction_model.joblib')
-    print("✅ Short ML Trendbreaker Modell erfolgreich geladen!")
+    print("✅ Short ML Trendbreaker model loaded successfully!")
 except Exception as e:
-    print(f"❌ FEHLER: Konnte Short ML Trendbreaker Modell nicht laden: {e}")
+    print(f"❌ ERROR: Could not load Short ML Trendbreaker model: {e}")
     SHORT_ML_MODEL = None
 
-# Dein gewählter Schwellenwert für LONG und SHORT
-# Anpassung basierend auf der Threshold-Optimierung
+# Your chosen threshold for LONG and SHORT
+# Adjustment based on threshold optimisation
 LONG_ML_THRESHOLD = 0.80
 SHORT_ML_THRESHOLD = 0.75
 
-# ----------------- KONFIGURATION -------------------
+# ----------------- CONFIGURATION -------------------
 SHORT_THRESHOLD = 0.86
 LONG_THRESHOLD = 0.79
 MIN_ML_SCORE_FOR_LOG = 0.25
@@ -323,7 +323,7 @@ logger = logging.getLogger(__name__)
 
 # ========================= LOCK =========================
 if LOCK_FILE.exists():
-    logger.info("Eine Instanz läuft bereits → beende diesen Startversuch.")
+    logger.info("An instance is already running → aborting this start attempt.")
     sys.exit(0)
 LOCK_FILE.touch()
 
@@ -331,20 +331,20 @@ LOCK_FILE.touch()
 # ========================= COINS =========================
 def load_coins() -> set[str]:
     if not COINS_FILE.exists():
-        logger.error("coins.json nicht gefunden!")
+        logger.error("coins.json not found!")
         return set()
     try:
         with open(COINS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-            return set(str(s).upper() for s in data)  # immer uppercase + set
+            return set(str(s).upper() for s in data)  # always uppercase + set
     except Exception as e:
-        logger.error(f"Fehler beim Laden von coins.json: {e}")
+        logger.error(f"Error loading coins.json: {e}")
         return set()
 
 
 coins = load_coins()
 
-# ========================= pumpstats safen =========================
+# ========================= save pumpstats =========================
 _ml_model = None
 _ml_model_time = None
 ML_MODEL_PATH = "pump_dump_model.pkl"
@@ -365,13 +365,13 @@ async def load_pump_dump_state():
                     else datetime(1970, 1, 1, tzinfo=pytz.UTC),
                     "usd_vol_4h": float(data.get("usd_vol_4h", 0)),
                 }
-                # volume_samples als deque wiederherstellen (letzte 360 Werte)
+                # Restore volume_samples as deque (last 360 values)
                 samples = data.get("volume_samples", [])
                 state["volume_samples"] = deque(samples[-360:], maxlen=360)
                 PUMP_DUMP_STATE[symbol] = state
-            logger.info(f"Pump/Dump State geladen für {len(PUMP_DUMP_STATE)} Coins")
+            logger.info(f"Pump/Dump state loaded for {len(PUMP_DUMP_STATE)} coins")
         except Exception as e:
-            logger.error(f"Fehler beim Laden von pump_dump_state.json: {e}")
+            logger.error(f"Error loading pump_dump_state.json: {e}")
             PUMP_DUMP_STATE = {}
     else:
         PUMP_DUMP_STATE = {}
@@ -497,11 +497,11 @@ async def macro_24_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        # # 1. Aktuelle Marktdaten holen (letzte 40 Tage für SMA30)
+        # # 1. Fetch current market data (last 40 days for SMA30)
         # tickers = ['BTC-USD', '^NDX', '^GSPC', 'DX-Y.NYB', 'GC=F', '^TNX', '^VIX']
         # df_list = []
         # for t in tickers:
-        # # yfinance in Thread auslagern, damit Bot nicht blockiert
+        # # Offload yfinance to a thread so the bot doesn't block
         # data = await asyncio.to_thread(yf.download, t, period="40d", interval="1d", progress=False)
         # col_name = t.split('-')[0].replace('^', '').replace('=F', '')
         # if t == 'DX-Y.NYB': col_name = 'DXY'
@@ -513,9 +513,9 @@ async def macro_24_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # close_data.columns = [col_name]
         # df_list.append(close_data)
 
-        # df = pd.concat(df_list, axis=1).ffill() # Forward-Fill für Feiertage/Wochenenden
+        # df = pd.concat(df_list, axis=1).ffill() # Forward-fill for holidays/weekends
 
-        # # 2. Features berechnen
+        # # 2. Compute features
         # features = {}
         # for name in ['BTC', 'NDX', 'GSPC', 'DXY', 'GOLD', 'US10Y', 'VIX']:
         # features[f'{name}_pct_change'] = df[name].pct_change().iloc[-1]
@@ -529,20 +529,20 @@ async def macro_24_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # features['Risk_On_Index'] = features['NDX_pct_change'] - features['DXY_pct_change']
         # features['Fear_Index'] = features['VIX_pct_change'] + features['DXY_pct_change']
 
-        # # DataFrame bauen & Spalten sortieren
+        # # Build DataFrame & sort columns
         # X_live = pd.DataFrame([features])
         # expected_cols = MACRO_MODEL.feature_names_in_
         # X_live = X_live[expected_cols]
 
-        # 1. Aktuelle Marktdaten holen (letzte 40 Tage für SMA30)
+        # 1. Fetch current market data (last 40 days for SMA30)
         tickers = ['BTC-USD', '^NDX', '^GSPC', 'DX-Y.NYB', 'GC=F', '^TNX', '^VIX']
         df_list = []
         for t in tickers:
-            # yfinance in Thread auslagern, damit Bot nicht blockiert
+            # Offload yfinance to a thread so the bot doesn't block
             data = await asyncio.to_thread(yf.download, t, period="40d", interval="1d", progress=False)
             col_name = t.split('-')[0].replace('^', '').replace('=F', '')
 
-            # --- FIX: GSPC zu SP500 mappen ---
+            # --- FIX: map GSPC to SP500 ---
             if t == '^GSPC':
                 col_name = 'SP500'
             if t == 'DX-Y.NYB':
@@ -558,11 +558,11 @@ async def macro_24_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             close_data.columns = [col_name]
             df_list.append(close_data)
 
-        df = pd.concat(df_list, axis=1).ffill()  # Forward-Fill für Feiertage/Wochenenden
+        df = pd.concat(df_list, axis=1).ffill()  # Forward-fill for holidays/weekends
 
-        # 2. Features berechnen
+        # 2. Compute features
         features = {}
-        # --- FIX: Hier auch 'SP500' statt 'GSPC' nutzen ---
+        # --- FIX: use 'SP500' here too instead of 'GSPC' ---
         for name in ['BTC', 'NDX', 'SP500', 'DXY', 'GOLD', 'US10Y', 'VIX']:
             features[f'{name}_pct_change'] = df[name].pct_change().iloc[-1]
 
@@ -575,15 +575,15 @@ async def macro_24_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         features['Risk_On_Index'] = features['NDX_pct_change'] - features['DXY_pct_change']
         features['Fear_Index'] = features['VIX_pct_change'] + features['DXY_pct_change']
 
-        # DataFrame bauen & Spalten sortieren
+        # Build DataFrame & sort columns
         X_live = pd.DataFrame([features])
         expected_cols = MACRO_MODEL.feature_names_in_
         X_live = X_live[expected_cols]
 
-        # 3. Vorhersage
+        # 3. Prediction
         prob_bullish = float(MACRO_MODEL.predict_proba(X_live)[0, 1])
 
-        # 4. Text formatieren (Auf Englisch)
+        # 4. Format text (in English)
         outlook = "BULLISH 🟢" if prob_bullish >= 0.60 else "BEARISH 🔴" if prob_bullish <= 0.40 else "NEUTRAL 🟡"
 
         def fmt_pct(val):
@@ -613,7 +613,7 @@ async def macro_24_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_html(html, disable_web_page_preview=True)
 
     except Exception as e:
-        logger.error(f"!24 Handler Fehler: {e}", exc_info=True)
+        logger.error(f"!24 handler error: {e}", exc_info=True)
         await update.message.reply_text("Error calculating Macro Outlook.")
 
 
@@ -664,7 +664,7 @@ async def top_gainers_losers_handler(update: Update, context: ContextTypes.DEFAU
             price = float(coin["lastPrice"])
             change = float(coin["priceChangePercent"])
 
-            # Intelligente Preisformatierung – linksbündig im Block
+            # Intelligent price formatting – left-aligned within the block
             if price >= 10000:
                 price_str = f"{price:,.2f}"
             elif price >= 100:
@@ -676,7 +676,7 @@ async def top_gainers_losers_handler(update: Update, context: ContextTypes.DEFAU
             else:
                 price_str = f"{price:.10f}".rstrip("0").rstrip(".")
 
-            change_str = f"{change:+.2f}%".rjust(8)  # nur die Prozente rechtsbündig (üblich)
+            change_str = f"{change:+.2f}%".rjust(8)  # only the percentages right-aligned (customary)
             change_color = "#00ff88" if change >= 0 else "#ff4466"
 
             html += f"<b style=\"color:#ffd700;\">{i:2d}</b>  <b>{sym:<14}</b>  <code>${price_str:<14}</code>  <b style=\"color:{change_color};\">{change_str}</b>\n"
@@ -793,8 +793,8 @@ async def get_1h_data_last_90d(symbol: str) -> pd.DataFrame:
 
 def find_pivots(df, distance=8):
     """
-    Findet High- und Low-Pivots mit Mindestabstand.
-    distance=8 → ca. alle 8 Stunden ein Pivot → perfekt für 1h-Chart
+    Finds high and low pivots with a minimum spacing.
+    distance=8 → roughly one pivot every 8 hours → perfect for the 1h chart
     """
     high_peaks, _ = find_peaks(df['HIGH'], distance=distance)
     low_peaks, _ = find_peaks(-df['LOW'], distance=distance)
@@ -803,21 +803,21 @@ def find_pivots(df, distance=8):
 
 def calculate_trendline(df, pivots, is_high=True):
     """
-    Berechnet Trendlinie nur aus echten Pivots (nicht aus allen Daten)
+    Calculates the trendline only from real pivots (not from all data)
     """
     if len(pivots) < 2:
         return None, None
 
-    # X-Werte: Sekunden seit Epoch (korrekt für große Zahlen)
+    # X values: seconds since epoch (correct for large numbers)
     x = df['OPEN_TIME'].iloc[pivots].astype('int64') // 10**9
     x = x.astype(float)
 
-    # Y-Werte: HIGH für Downtrend, LOW für Uptrend
+    # Y values: HIGH for downtrend, LOW for uptrend
     y = df['HIGH'].iloc[pivots] if is_high else df['LOW'].iloc[pivots]
 
     slope, intercept, r_value, _, _ = linregress(x, y)
 
-    # Nur starke Trends (Korrelationskoeffizient > 0.8)
+    # Only strong trends (correlation coefficient > 0.8)
     if abs(r_value) < 0.8:
         return None, None
 
@@ -826,12 +826,12 @@ def calculate_trendline(df, pivots, is_high=True):
 
 def get_trend_values(slope, intercept, open_times):
     """
-    Berechnet die Y-Werte der Trendlinie für alle Zeitpunkte in open_times
+    Calculates the trendline's Y values for all timestamps in open_times
     """
     if slope is None or intercept is None:
         return np.full(len(open_times), np.nan)
 
-    # X-Werte in Sekunden seit Epoch (exakt wie in calculate_trendline!)
+    # X values in seconds since epoch (exactly as in calculate_trendline!)
     x = open_times.astype('int64') // 10**9
     x = x.astype(float)
 
@@ -840,12 +840,12 @@ def get_trend_values(slope, intercept, open_times):
 
 def detect_trend(df):
     """
-    Erkennt den dominanten Trend über 90 Tage anhand von Pivots
+    Detects the dominant trend over 90 days based on pivots
     """
     if len(df) < 50:
         return 'UNDECIDED', None
 
-    high_pivots, low_pivots = find_pivots(df, distance=8)  # ← 8 ist der Goldstandard!
+    high_pivots, low_pivots = find_pivots(df, distance=8)  # ← 8 is the gold standard!
 
     down_slope, down_intercept = calculate_trendline(df, high_pivots, is_high=True)
     up_slope, up_intercept = calculate_trendline(df, low_pivots, is_high=False)
@@ -858,11 +858,11 @@ def detect_trend(df):
     return 'UNDECIDED', None
 
 
-# ========================= FINAL !CHART HANDLER – 100% WIE DEIN ALTER BOT =========================
+# ========================= FINAL !CHART HANDLER – 100% LIKE YOUR OLD BOT =========================
 
 
 async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... dein Anfang unverändert ...
+    # ... your beginning unchanged ...
     if not update.message or not update.message.text:
         return
 
@@ -896,8 +896,8 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # df_ind.drop(columns=['OPEN','HIGH','LOW','CLOSE','VOLUME'], errors='ignore'), on='OPEN_TIME', how='left' )
         # df_plot = df_plot.ffill().bfill()
 
-        # === LIVE PREIS – wie bei dir ===
-        live_price = await get_live_price(valid_symbol)  # deine Funktion!
+        # === LIVE PRICE – as with you ===
+        live_price = await get_live_price(valid_symbol)  # your function!
         live_suffix = ""
         if live_price:
             last_time = df_plot['OPEN_TIME'].iloc[-1]
@@ -919,7 +919,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # df_plot.loc[idx, "LOW"] = min(df_plot.loc[idx, "LOW"], live_price)
                 live_suffix = f" (live {now_time.strftime('%H:%M')})"
 
-        # === DEIN ORIGINALPLOT – 100% IDENTISCH ===
+        # === YOUR ORIGINAL PLOT – 100% IDENTICAL ===
         bg = '#1e1e1e'
         fg = 'white'
         fig = plt.figure(figsize=(22, 15), facecolor=bg)
@@ -928,7 +928,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1 = fig.add_subplot(gs[0])
         ax1.set_facecolor(bg)
 
-        # === NUR JETZT DIE PREIS-LINIEN (nach allen twinx!) ===
+        # === ONLY NOW THE PRICE LINES (after all twinx!) ===
         ax1.plot(df_plot['OPEN_TIME'], df_plot['CLOSE'], color='#00bfff', linewidth=1.5, label='Close')
         if 'EMA_9' in df_plot.columns:
             ax1.plot(df_plot['OPEN_TIME'], df_plot['EMA_9'], color='yellow', linewidth=1.1, label='EMA9')
@@ -946,7 +946,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.grid(True, alpha=0.25, color=fg, linewidth=0.5)
         ax1.tick_params(colors=fg, labelsize=11)
 
-        # Letzter Preis Marker
+        # Last price marker
         ax1.axhline(live_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
         ax1.text(
             0.2,
@@ -960,7 +960,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bbox=dict(facecolor='#1e1e1e', edgecolor='none', pad=5),
         )
 
-        # VOLUME – SCHMAL (0.2) + MIN-HÖHE 5% + FARBIG
+        # VOLUME – NARROW (0.2) + MIN HEIGHT 5% + COLORED
         ax_vol = ax1.twinx()
         vol_max = df_plot['VOLUME'].max()
         vol_min_display = vol_max * 0.25
@@ -996,9 +996,9 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax4.set_ylabel("volume", fontsize=12, color='gray')
         ax4.tick_params(axis='y', labelcolor='gray')
 
-        # NACH DEM PREIS-PLOT (ax1), VOR RSI
-        ax_vol_profile = fig.add_subplot(gs[0, 0], frameon=False)  # Kein Rahmen
-        ax_vol_profile.set_position([0.85, 0.68, 0.12, 0.25])  # Rechts oben, klein
+        # AFTER THE PRICE PLOT (ax1), BEFORE RSI
+        ax_vol_profile = fig.add_subplot(gs[0, 0], frameon=False)  # No frame
+        ax_vol_profile.set_position([0.85, 0.68, 0.12, 0.25])  # Top right, small
 
         # Volume-by-Price
         ax_vbp = fig.add_subplot(gs[0, 1])
@@ -1025,7 +1025,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax_vbp.set_xlabel('Vol', color='white', fontsize=10)
         ax_vbp.tick_params(colors='white')
 
-        # TRENDLINIE AUS 90 TAGEN
+        # TRENDLINE FROM 90 DAYS
         trend_direction, trend_data = detect_trend(df_90d)
         slope, intercept = trend_data if trend_data else (None, None)
         if slope is not None and intercept is not None:
@@ -1075,7 +1075,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax2.legend(facecolor=bg, labelcolor=fg, fontsize=10, loc='upper left')
         ax2.grid(True, alpha=0.15, color=fg)
 
-        # TSI – JETZT WIEDER DA + FEHLERFREI!
+        # TSI – back again + error-free!
         ax3 = fig.add_subplot(gs[2, 0], sharex=ax1)
         ax3.set_facecolor(bg)
         if 'TSI_FAST_12_7_7' in df_plot.columns:
@@ -1093,7 +1093,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax3.set_ylabel('TSI', color=fg, fontsize=12, weight='bold')
         ax3.legend(facecolor=bg, labelcolor=fg, fontsize=10, loc='upper left')
         ax3.grid(True, alpha=0.15, color=fg)
-        # WEISSE LABELS
+        # WHITE LABELS
         for ax in [ax1, ax2, ax3, ax_vol]:
             ax.tick_params(colors=fg, labelsize=10)
             for label in ax.get_xticklabels() + ax.get_yticklabels():
@@ -1105,7 +1105,7 @@ async def chart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_photo(photo=open(tmp_path, 'rb'), caption=f"Chart {valid_symbol} (@{username})")
 
-        os.unlink(tmp_path)  # Datei danach löschen
+        os.unlink(tmp_path)  # Delete file afterwards
         plt.close(fig)
 
     except Exception as e:
@@ -1147,7 +1147,7 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action("upload_photo")
 
     try:
-        # --- DATEN LADEN ---
+        # --- LOAD DATA ---
         df_7d = await get_1h_data_last_7d(valid_symbol)
         df_ind = await get_1h_indicators_last_7d(valid_symbol)
         df_90d = await get_1h_data_last_90d(valid_symbol)
@@ -1157,7 +1157,7 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --- PREPROCESSING ---
-        # Zeitzonen entfernen für sauberen Merge
+        # Remove timezones for a clean merge
         if 'OPEN_TIME' in df_7d.columns:
             df_7d['OPEN_TIME'] = pd.to_datetime(df_7d['OPEN_TIME']).dt.tz_localize(None)
         if not df_ind.empty and 'OPEN_TIME' in df_ind.columns:
@@ -1174,19 +1174,19 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         df_plot = df_plot.ffill().bfill()
 
-        # Floats erzwingen
+        # Force floats
         for c in ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']:
             if c in df_plot.columns:
                 df_plot[c] = pd.to_numeric(df_plot[c], errors='coerce')
 
-        # --- LIVE PREIS UPDATE ---
+        # --- LIVE PRICE UPDATE ---
         live_price = await get_live_price(valid_symbol)
         live_suffix = ""
         if live_price and isinstance(live_price, (int, float)) and live_price > 0:
             last_time = df_plot['OPEN_TIME'].iloc[-1]
             now_time = datetime.now()
 
-            # Simple Logik: Update der letzten Kerze für Live-Ansicht
+            # Simple logic: update the last candle for the live view
             idx = df_plot.index[-1]
             df_plot.loc[idx, "CLOSE"] = float(live_price)
             df_plot.loc[idx, "HIGH"] = max(float(df_plot.loc[idx, "HIGH"]), float(live_price))
@@ -1203,10 +1203,10 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.set_facecolor(bg)
 
         # █████████████████████████████████████████████████████████████████████
-        # CANDLESTICK LOGIK (Ersetzt die Line-Plot Logik)
+        # CANDLESTICK LOGIC (replaces the line-plot logic)
         # █████████████████████████████████████████████████████████████████████
 
-        # X-Achse als Index (0..N) für perfekte Breite
+        # X axis as index (0..N) for perfect width
         x_vals = np.arange(len(df_plot))
 
         o = df_plot['OPEN'].values
@@ -1216,24 +1216,24 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         up = c >= o
         down = ~up
-        col_up = '#44ff44'  # Dein Grün
-        col_down = '#ff4444'  # Dein Rot
+        col_up = '#44ff44'  # Your green
+        col_down = '#ff4444'  # Your red
 
-        # 1. Dochte (High -> Low)
+        # 1. Wicks (High -> Low)
         ax1.vlines(x_vals[up], l[up], h[up], color=col_up, linewidth=1.2, zorder=3)
         ax1.vlines(x_vals[down], l[down], h[down], color=col_down, linewidth=1.2, zorder=3)
 
-        # 2. Körper (Open -> Close) mit Mindesthöhe (Doji-Fix)
+        # 2. Body (Open -> Close) with minimum height (doji fix)
         body_h = np.abs(c - o)
         chart_range = h.max() - l.min()
-        min_h = chart_range * 0.002  # 0.2% Mindesthöhe damit man Dojis sieht
+        min_h = chart_range * 0.002  # 0.2% minimum height so dojis are visible
         body_h = np.maximum(body_h, min_h)
         body_b = np.minimum(o, c)
 
         ax1.bar(x_vals[up], body_h[up], bottom=body_b[up], width=0.6, color=col_up, linewidth=0, zorder=4)
         ax1.bar(x_vals[down], body_h[down], bottom=body_b[down], width=0.6, color=col_down, linewidth=0, zorder=4)
 
-        # --- INDIKATOREN (Angepasst auf x_vals) ---
+        # --- INDICATORS (adapted to x_vals) ---
         if 'EMA_9' in df_plot.columns:
             ax1.plot(x_vals, df_plot['EMA_9'], color='yellow', linewidth=1.1, label='EMA9')
         if 'EMA_21' in df_plot.columns:
@@ -1250,7 +1250,7 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.grid(True, alpha=0.25, color=fg, linewidth=0.5)
         ax1.tick_params(colors=fg, labelsize=11)
 
-        # Letzter Preis Marker
+        # Last price marker
         ax1.axhline(live_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
         ax1.text(
             0.2,
@@ -1264,23 +1264,23 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bbox=dict(facecolor='#1e1e1e', edgecolor='none', pad=5),
         )
 
-        # Y-Limit anpassen
+        # Adjust Y limit
         margin = chart_range * 0.05
         ax1.set_ylim(l.min() - margin, h.max() + margin)
 
-        # --- VOLUME (Unten) ---
+        # --- VOLUME (bottom) ---
         ax_vol = ax1.twinx()
         vol_max = df_plot['VOLUME'].max()
         vol_min_display = vol_max * 0.25
 
-        # Farben passend zu Candles
+        # Colors matching the candles
         vol_colors = np.where(up, col_up, col_down)
 
-        # Wir müssen 'display_volume' berechnen wie in deinem Original
+        # We need to compute 'display_volume' as in your original
         display_volume = df_plot['VOLUME'].copy()
         display_volume[display_volume < vol_min_display] = vol_min_display
 
-        # WICHTIG: x_vals nutzen
+        # IMPORTANT: use x_vals
         ax_vol.bar(
             x_vals,
             display_volume,
@@ -1302,15 +1302,15 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         ax_vol.grid(True, alpha=0.15, color=fg, linewidth=0.4, linestyle='-', axis='y')
 
-        # Volume Overlay (Graue Fläche)
+        # Volume overlay (gray area)
         ax4 = ax1.twinx()
         ax4.fill_between(x_vals, df_plot['VOLUME'], color='gray', alpha=0.4, label='volume')
         ax4.plot(x_vals, df_plot['VOLUME'], color='gray', linewidth=1)
         ax4.set_ylabel("volume", fontsize=12, color='gray')
         ax4.tick_params(axis='y', labelcolor='gray')
-        ax4.set_ylim(0, vol_max * 2.5)  # Sync mit ax_vol
+        ax4.set_ylim(0, vol_max * 2.5)  # Sync with ax_vol
 
-        # --- VOLUME PROFILE (Rechts) ---
+        # --- VOLUME PROFILE (right) ---
         ax_vol_profile = fig.add_subplot(gs[0, 0], frameon=False)
         ax_vol_profile.set_position([0.85, 0.68, 0.12, 0.25])
 
@@ -1319,8 +1319,8 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_bins = np.linspace(l.min(), h.max(), 40)
         vol_by_price = np.zeros(len(price_bins) - 1)
 
-        # Hier nutzen wir searchsorted für Speed, aber dein Loop ist auch ok
-        # Wir nehmen deine Logik:
+        # Here we use searchsorted for speed, but your loop is also fine
+        # We use your logic:
         for _, row in df_7d.iterrows():
             idx = np.searchsorted(price_bins, [row['LOW'], row['HIGH']])
             idx = np.clip(idx, 0, len(vol_by_price) - 1)
@@ -1336,22 +1336,22 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             color='#ff69b4',
             alpha=0.6,
         )
-        ax_vbp.set_ylim(ax1.get_ylim())  # Sync mit Chart
+        ax_vbp.set_ylim(ax1.get_ylim())  # Sync with chart
         ax_vbp.invert_xaxis()
         ax_vbp.set_xlabel('Vol', color='white', fontsize=10)
         ax_vbp.tick_params(colors='white')
 
-        # --- TRENDLINIE & PIVOTS ---
+        # --- TRENDLINE & PIVOTS ---
         trend_direction, trend_data = detect_trend(df_90d)
         slope, intercept = trend_data if trend_data else (None, None)
         if slope is not None and intercept is not None:
-            # Trendlinie berechnen
+            # Compute trendline
             trend_y = get_trend_values(slope, intercept, df_plot['OPEN_TIME'])
-            # Plotten gegen x_vals
+            # Plot against x_vals
             ax1.plot(x_vals, trend_y, color='orange', linewidth=5.0, alpha=0.98, label=f'90d Trend: {trend_direction}')
             ax1.legend(facecolor=bg, labelcolor=fg, fontsize=12, loc='upper left')
 
-            # Pivots (Mapping Zeit -> Index)
+            # Pivots (mapping time -> index)
             high_pivots, low_pivots = find_pivots(df_90d, distance=8)
             last_7d_time = df_plot['OPEN_TIME'].iloc[0]
 
@@ -1359,7 +1359,7 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pivot_times = df_90d['OPEN_TIME'].iloc[pivots]
             pivot_prices = df_90d['HIGH' if trend_direction == 'DOWN' else 'LOW'].iloc[pivots]
 
-            # Map erstellen
+            # Create map
             t_map = {t: i for i, t in enumerate(df_plot['OPEN_TIME'])}
             px, py = [], []
             for t, p in zip(pivot_times, pivot_prices):
@@ -1415,7 +1415,7 @@ async def candles_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.xaxis.set_major_formatter(mticker.FuncFormatter(format_date))
         ax1.xaxis.set_major_locator(mticker.MaxNLocator(nbins=10))
 
-        # Weisse Labels für alle Achsen
+        # White labels for all axes
         for ax in [ax1, ax2, ax3, ax_vol]:
             ax.tick_params(colors=fg, labelsize=10)
             for label in ax.get_xticklabels() + ax.get_yticklabels():
@@ -1473,7 +1473,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"No Chart-Data for {valid_symbol}")
             return
 
-        # PREPROCESSING (identisch)
+        # PREPROCESSING (identical)
         if 'OPEN_TIME' in df_7d.columns:
             df_7d['OPEN_TIME'] = pd.to_datetime(df_7d['OPEN_TIME']).dt.tz_localize(None)
         if not df_ind.empty and 'OPEN_TIME' in df_ind.columns:
@@ -1492,7 +1492,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if c in df_plot.columns:
                 df_plot[c] = pd.to_numeric(df_plot[c], errors='coerce')
 
-        # LIVE PREIS (identisch)
+        # LIVE PRICE (identical)
         live_price = await get_live_price(valid_symbol)
         live_suffix = ""
         if live_price and isinstance(live_price, (int, float)) and live_price > 0:
@@ -1502,7 +1502,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df_plot.loc[idx, "LOW"] = min(float(df_plot.loc[idx, "LOW"]), float(live_price))
             live_suffix = f" (live ${live_price:,.8f})"
 
-        # PLOT SETUP (identisch bis hier)
+        # PLOT SETUP (identical up to here)
         bg = '#1e1e1e'
         fg = 'white'
         fig = plt.figure(figsize=(22, 15), facecolor=bg)
@@ -1520,7 +1520,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         col_up = '#44ff44'
         col_down = '#ff4444'
 
-        # Candles (identisch)
+        # Candles (identical)
         ax1.vlines(x_vals[up], l[up], h[up], color=col_up, linewidth=1.2, zorder=3)
         ax1.vlines(x_vals[down], l[down], h[down], color=col_down, linewidth=1.2, zorder=3)
         body_h = np.abs(c - o)
@@ -1538,7 +1538,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ax1.plot(x_vals, df_plot['BOLL_LOWER_20'], color='#00ffff', linewidth=1.3, label='BB Lower')
             ax1.fill_between(x_vals, df_plot['BOLL_LOWER_20'], df_plot['BOLL_UPPER_20'], color='grey', alpha=0.15)
 
-        # Standard EMAs (wie im candles_handler)
+        # Standard EMAs (as in candles_handler)
         if 'EMA_9' in df_plot.columns:
             ax1.plot(x_vals, df_plot['EMA_9'], color='yellow', linewidth=1.1, label='EMA9')
         if 'EMA_21' in df_plot.columns:
@@ -1557,7 +1557,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.grid(True, alpha=0.25, color=fg, linewidth=0.5)
         ax1.tick_params(colors=fg, labelsize=11)
 
-        # Letzter Preis Marker
+        # Last price marker
         ax1.axhline(live_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
         ax1.text(
             0.2,
@@ -1575,24 +1575,24 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         margin = chart_range * 0.05
         ax1.set_ylim(l.min() - margin, h.max() + margin)
 
-        # Rest identisch: Volume, VBP, Trend, RSI, TSI, Formatierung, Speichern...
-        # (Kopiere hier einfach den gesamten Rest aus deinem candles_handler ab Volume bis Ende)
+        # Rest identical: Volume, VBP, Trend, RSI, TSI, formatting, saving...
+        # (Simply copy the entire rest from your candles_handler from Volume to the end here)
 
-        # ... [Volume, Volume Profile, Trendlinie, RSI, TSI, X-Formatierung, Speichern – alles 1:1 wie in candles_handler] ...
+        # ... [Volume, Volume Profile, trendline, RSI, TSI, X formatting, saving – all 1:1 like in candles_handler] ...
 
-        # --- VOLUME (Unten) ---
+        # --- VOLUME (bottom) ---
         ax_vol = ax1.twinx()
         vol_max = df_plot['VOLUME'].max()
         vol_min_display = vol_max * 0.25
 
-        # Farben passend zu Candles
+        # Colors matching the candles
         vol_colors = np.where(up, col_up, col_down)
 
-        # Wir müssen 'display_volume' berechnen wie in deinem Original
+        # We need to compute 'display_volume' as in your original
         display_volume = df_plot['VOLUME'].copy()
         display_volume[display_volume < vol_min_display] = vol_min_display
 
-        # WICHTIG: x_vals nutzen
+        # IMPORTANT: use x_vals
         ax_vol.bar(
             x_vals,
             display_volume,
@@ -1614,15 +1614,15 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         ax_vol.grid(True, alpha=0.15, color=fg, linewidth=0.4, linestyle='-', axis='y')
 
-        # Volume Overlay (Graue Fläche)
+        # Volume overlay (gray area)
         ax4 = ax1.twinx()
         ax4.fill_between(x_vals, df_plot['VOLUME'], color='gray', alpha=0.4, label='volume')
         ax4.plot(x_vals, df_plot['VOLUME'], color='gray', linewidth=1)
         ax4.set_ylabel("volume", fontsize=12, color='gray')
         ax4.tick_params(axis='y', labelcolor='gray')
-        ax4.set_ylim(0, vol_max * 2.5)  # Sync mit ax_vol
+        ax4.set_ylim(0, vol_max * 2.5)  # Sync with ax_vol
 
-        # --- VOLUME PROFILE (Rechts) ---
+        # --- VOLUME PROFILE (right) ---
         ax_vol_profile = fig.add_subplot(gs[0, 0], frameon=False)
         ax_vol_profile.set_position([0.85, 0.68, 0.12, 0.25])
 
@@ -1631,8 +1631,8 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_bins = np.linspace(l.min(), h.max(), 40)
         vol_by_price = np.zeros(len(price_bins) - 1)
 
-        # Hier nutzen wir searchsorted für Speed, aber dein Loop ist auch ok
-        # Wir nehmen deine Logik:
+        # Here we use searchsorted for speed, but your loop is also fine
+        # We use your logic:
         for _, row in df_7d.iterrows():
             idx = np.searchsorted(price_bins, [row['LOW'], row['HIGH']])
             idx = np.clip(idx, 0, len(vol_by_price) - 1)
@@ -1648,22 +1648,22 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             color='#ff69b4',
             alpha=0.6,
         )
-        ax_vbp.set_ylim(ax1.get_ylim())  # Sync mit Chart
+        ax_vbp.set_ylim(ax1.get_ylim())  # Sync with chart
         ax_vbp.invert_xaxis()
         ax_vbp.set_xlabel('Vol', color='white', fontsize=10)
         ax_vbp.tick_params(colors='white')
 
-        # --- TRENDLINIE & PIVOTS ---
+        # --- TRENDLINE & PIVOTS ---
         trend_direction, trend_data = detect_trend(df_90d)
         slope, intercept = trend_data if trend_data else (None, None)
         if slope is not None and intercept is not None:
-            # Trendlinie berechnen
+            # Compute trendline
             trend_y = get_trend_values(slope, intercept, df_plot['OPEN_TIME'])
-            # Plotten gegen x_vals
+            # Plot against x_vals
             ax1.plot(x_vals, trend_y, color='orange', linewidth=5.0, alpha=0.98, label=f'90d Trend: {trend_direction}')
             ax1.legend(facecolor=bg, labelcolor=fg, fontsize=12, loc='upper left')
 
-            # Pivots (Mapping Zeit -> Index)
+            # Pivots (mapping time -> index)
             high_pivots, low_pivots = find_pivots(df_90d, distance=8)
             last_7d_time = df_plot['OPEN_TIME'].iloc[0]
 
@@ -1671,7 +1671,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pivot_times = df_90d['OPEN_TIME'].iloc[pivots]
             pivot_prices = df_90d['HIGH' if trend_direction == 'DOWN' else 'LOW'].iloc[pivots]
 
-            # Map erstellen
+            # Create map
             t_map = {t: i for i, t in enumerate(df_plot['OPEN_TIME'])}
             px, py = [], []
             for t, p in zip(pivot_times, pivot_prices):
@@ -1727,7 +1727,7 @@ async def bb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.xaxis.set_major_formatter(mticker.FuncFormatter(format_date))
         ax1.xaxis.set_major_locator(mticker.MaxNLocator(nbins=10))
 
-        # Weisse Labels für alle Achsen
+        # White labels for all axes
         for ax in [ax1, ax2, ax3, ax_vol]:
             ax.tick_params(colors=fg, labelsize=10)
             for label in ax.get_xticklabels() + ax.get_yticklabels():
@@ -1787,10 +1787,10 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"No Chart-Data for {valid_symbol}")
             return
 
-        # PREPROCESSING (identisch wie oben)
-        # ... (genau wie in bb_handler) ...
+        # PREPROCESSING (identical to above)
+        # ... (exactly like in bb_handler) ...
 
-        # PREPROCESSING (identisch)
+        # PREPROCESSING (identical)
         if 'OPEN_TIME' in df_7d.columns:
             df_7d['OPEN_TIME'] = pd.to_datetime(df_7d['OPEN_TIME']).dt.tz_localize(None)
         if not df_ind.empty and 'OPEN_TIME' in df_ind.columns:
@@ -1809,7 +1809,7 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if c in df_plot.columns:
                 df_plot[c] = pd.to_numeric(df_plot[c], errors='coerce')
 
-        # LIVE PREIS (identisch)
+        # LIVE PRICE (identical)
         live_price = await get_live_price(valid_symbol)
         live_suffix = ""
         if live_price and isinstance(live_price, (int, float)) and live_price > 0:
@@ -1837,7 +1837,7 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         col_up = '#44ff44'
         col_down = '#ff4444'
 
-        # Candles (identisch)
+        # Candles (identical)
         ax1.vlines(x_vals[up], l[up], h[up], color=col_up, linewidth=1.2, zorder=3)
         ax1.vlines(x_vals[down], l[down], h[down], color=col_down, linewidth=1.2, zorder=3)
         body_h = np.abs(c - o)
@@ -1848,7 +1848,7 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.bar(x_vals[up], body_h[up], bottom=body_b[up], width=0.6, color=col_up, linewidth=0, zorder=4)
         ax1.bar(x_vals[down], body_h[down], bottom=body_b[down], width=0.6, color=col_down, linewidth=0, zorder=4)
 
-        # Candles (identisch wie oben)
+        # Candles (identical to above)
 
         # --- NUR HIER NEU: Donchian Channel 20 ---
         if all(col in df_plot.columns for col in ['DONCHIAN_UPPER_20', 'DONCHIAN_MID_20', 'DONCHIAN_LOWER_20']):
@@ -1859,10 +1859,10 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 x_vals, df_plot['DONCHIAN_LOWER_20'], df_plot['DONCHIAN_UPPER_20'], color='#00ffff', alpha=0.06
             )
 
-        # Standard EMAs (wie immer)
+        # Standard EMAs (as always)
         # ... (wie in candles_handler)
 
-        # Standard EMAs (wie im candles_handler)
+        # Standard EMAs (as in candles_handler)
         if 'EMA_9' in df_plot.columns:
             ax1.plot(x_vals, df_plot['EMA_9'], color='yellow', linewidth=1.1, label='EMA9')
         if 'EMA_21' in df_plot.columns:
@@ -1878,11 +1878,11 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{valid_symbol} Donchian 20{live_suffix} | @{username}", color=fg, fontsize=19, pad=25, weight='bold'
         )
         ax1.legend(facecolor=bg, labelcolor=fg, fontsize=12, loc='upper left')
-        # ... Rest identisch wie in candles_handler ...
+        # ... rest identical to candles_handler ...
         ax1.grid(True, alpha=0.25, color=fg, linewidth=0.5)
         ax1.tick_params(colors=fg, labelsize=11)
 
-        # Letzter Preis Marker
+        # Last price marker
         ax1.axhline(live_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
         ax1.text(
             0.2,
@@ -1900,24 +1900,24 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         margin = chart_range * 0.05
         ax1.set_ylim(l.min() - margin, h.max() + margin)
 
-        # Rest identisch: Volume, VBP, Trend, RSI, TSI, Formatierung, Speichern...
-        # (Kopiere hier einfach den gesamten Rest aus deinem candles_handler ab Volume bis Ende)
+        # Rest identical: Volume, VBP, Trend, RSI, TSI, formatting, saving...
+        # (Simply copy the entire rest from your candles_handler from Volume to the end here)
 
-        # ... [Volume, Volume Profile, Trendlinie, RSI, TSI, X-Formatierung, Speichern – alles 1:1 wie in candles_handler] ...
+        # ... [Volume, Volume Profile, trendline, RSI, TSI, X formatting, saving – all 1:1 like in candles_handler] ...
 
-        # --- VOLUME (Unten) ---
+        # --- VOLUME (bottom) ---
         ax_vol = ax1.twinx()
         vol_max = df_plot['VOLUME'].max()
         vol_min_display = vol_max * 0.25
 
-        # Farben passend zu Candles
+        # Colors matching the candles
         vol_colors = np.where(up, col_up, col_down)
 
-        # Wir müssen 'display_volume' berechnen wie in deinem Original
+        # We need to compute 'display_volume' as in your original
         display_volume = df_plot['VOLUME'].copy()
         display_volume[display_volume < vol_min_display] = vol_min_display
 
-        # WICHTIG: x_vals nutzen
+        # IMPORTANT: use x_vals
         ax_vol.bar(
             x_vals,
             display_volume,
@@ -1939,15 +1939,15 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         ax_vol.grid(True, alpha=0.15, color=fg, linewidth=0.4, linestyle='-', axis='y')
 
-        # Volume Overlay (Graue Fläche)
+        # Volume overlay (gray area)
         ax4 = ax1.twinx()
         ax4.fill_between(x_vals, df_plot['VOLUME'], color='gray', alpha=0.4, label='volume')
         ax4.plot(x_vals, df_plot['VOLUME'], color='gray', linewidth=1)
         ax4.set_ylabel("volume", fontsize=12, color='gray')
         ax4.tick_params(axis='y', labelcolor='gray')
-        ax4.set_ylim(0, vol_max * 2.5)  # Sync mit ax_vol
+        ax4.set_ylim(0, vol_max * 2.5)  # Sync with ax_vol
 
-        # --- VOLUME PROFILE (Rechts) ---
+        # --- VOLUME PROFILE (right) ---
         ax_vol_profile = fig.add_subplot(gs[0, 0], frameon=False)
         ax_vol_profile.set_position([0.85, 0.68, 0.12, 0.25])
 
@@ -1956,8 +1956,8 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_bins = np.linspace(l.min(), h.max(), 40)
         vol_by_price = np.zeros(len(price_bins) - 1)
 
-        # Hier nutzen wir searchsorted für Speed, aber dein Loop ist auch ok
-        # Wir nehmen deine Logik:
+        # Here we use searchsorted for speed, but your loop is also fine
+        # We use your logic:
         for _, row in df_7d.iterrows():
             idx = np.searchsorted(price_bins, [row['LOW'], row['HIGH']])
             idx = np.clip(idx, 0, len(vol_by_price) - 1)
@@ -1973,22 +1973,22 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             color='#ff69b4',
             alpha=0.6,
         )
-        ax_vbp.set_ylim(ax1.get_ylim())  # Sync mit Chart
+        ax_vbp.set_ylim(ax1.get_ylim())  # Sync with chart
         ax_vbp.invert_xaxis()
         ax_vbp.set_xlabel('Vol', color='white', fontsize=10)
         ax_vbp.tick_params(colors='white')
 
-        # --- TRENDLINIE & PIVOTS ---
+        # --- TRENDLINE & PIVOTS ---
         trend_direction, trend_data = detect_trend(df_90d)
         slope, intercept = trend_data if trend_data else (None, None)
         if slope is not None and intercept is not None:
-            # Trendlinie berechnen
+            # Compute trendline
             trend_y = get_trend_values(slope, intercept, df_plot['OPEN_TIME'])
-            # Plotten gegen x_vals
+            # Plot against x_vals
             ax1.plot(x_vals, trend_y, color='orange', linewidth=5.0, alpha=0.98, label=f'90d Trend: {trend_direction}')
             ax1.legend(facecolor=bg, labelcolor=fg, fontsize=12, loc='upper left')
 
-            # Pivots (Mapping Zeit -> Index)
+            # Pivots (mapping time -> index)
             high_pivots, low_pivots = find_pivots(df_90d, distance=8)
             last_7d_time = df_plot['OPEN_TIME'].iloc[0]
 
@@ -1996,7 +1996,7 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pivot_times = df_90d['OPEN_TIME'].iloc[pivots]
             pivot_prices = df_90d['HIGH' if trend_direction == 'DOWN' else 'LOW'].iloc[pivots]
 
-            # Map erstellen
+            # Create map
             t_map = {t: i for i, t in enumerate(df_plot['OPEN_TIME'])}
             px, py = [], []
             for t, p in zip(pivot_times, pivot_prices):
@@ -2052,7 +2052,7 @@ async def don_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.xaxis.set_major_formatter(mticker.FuncFormatter(format_date))
         ax1.xaxis.set_major_locator(mticker.MaxNLocator(nbins=10))
 
-        # Weisse Labels für alle Achsen
+        # White labels for all axes
         for ax in [ax1, ax2, ax3, ax_vol]:
             ax.tick_params(colors=fg, labelsize=10)
             for label in ax.get_xticklabels() + ax.get_yticklabels():
@@ -2115,7 +2115,7 @@ async def get_1h_data_last_300d(symbol: str) -> pd.DataFrame:
         df = pd.DataFrame([dict(row) for row in rows])
         return to_uppercase_df(df)
     except Exception as e:
-        logger.error(f"DB Fehler 300d {symbol}: {e}")
+        logger.error(f"DB error 300d {symbol}: {e}")
         await release_conn(conn)
         return pd.DataFrame()
 
@@ -2223,15 +2223,15 @@ async def send_daily_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     import numpy as np
     from matplotlib.dates import DateFormatter
 
-    # --- 1. 300 Tage 1h-Daten ---
+    # --- 1. 300 days of 1h data ---
     df_1h_300d = await get_1h_data_last_300d(symbol)
     if df_1h_300d.empty:
         await update.message.reply_text(f"no data for {symbol}")
         return
 
-    logging.info(f"{symbol}: {len(df_1h_300d)} 1h-Kerzen (300d) geladen")
+    logging.info(f"{symbol}: {len(df_1h_300d)} 1h candles (300d) loaded")
 
-    # --- 2. Letzte 120 Tage für Chart ---
+    # --- 2. Last 120 days for chart ---
     df_1h_chart = df_1h_300d.tail(min(len(df_1h_300d), 120 * 24)).copy()
     if len(df_1h_chart) < 7 * 24:
         await update.message.reply_text(f"not enough data for {symbol} (min. 7 days)")
@@ -2250,15 +2250,15 @@ async def send_daily_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         .reset_index()
     )
 
-    df_daily['date'] = pd.to_datetime(df_daily['date'])  # sicherstellen
-    df_daily = df_daily.set_index('date')  # ← Das ist der Schlüssel!
-    # df_daily = df_daily.sort_index(ascending=False)            # neueste rechts
+    df_daily['date'] = pd.to_datetime(df_daily['date'])  # ensure
+    df_daily = df_daily.set_index('date')  # ← This is the key!
+    # df_daily = df_daily.sort_index(ascending=False)            # newest on the right
 
     if len(df_daily) < 7:
         await update.message.reply_text(f"Not enough data for {symbol}")
         return
 
-    # --- 3. Indikatoren auf 300d Daten ---
+    # --- 3. Indicators on 300d data ---
     df_1h_300d['date'] = df_1h_300d['OPEN_TIME'].dt.floor('D')
     df_daily_full = (
         df_1h_300d.groupby('date')
@@ -2294,14 +2294,14 @@ async def send_daily_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         df_daily_full['TSI'] = np.nan
         df_daily_full['TSI_SIGNAL'] = np.nan
 
-    # --- 4. Indikatoren zuschneiden ---
+    # --- 4. Trim indicators ---
     df_indicators = df_daily_full.tail(len(df_daily)).copy()
 
     for col in ['RSI_9', 'RSI_14', 'RSI_24', 'TSI', 'TSI_SIGNAL'] + [f'KAMA_{p}' for p in kama_periods]:
         if col in df_indicators.columns:
             df_daily[col] = df_indicators[col].values
 
-    # --- 5. Dein originaler Plot – 100 % erhalten ---
+    # --- 5. Your original plot – 100% preserved ---
     fig = plt.figure(figsize=(24, 16), facecolor='#1e1e1e')
     gs = gridspec.GridSpec(4, 2, width_ratios=[6, 1], height_ratios=[5, 1, 1.2, 0.8], hspace=0.4, wspace=0.05)
 
@@ -2331,7 +2331,7 @@ async def send_daily_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     live_price = await get_live_price(symbol)
     live_suffix = f" LIVE {datetime.now(pytz.UTC).strftime('%H:%M')} - ${live_price:,.8f}"
 
-    # Letzter Preis Marker
+    # Last price marker
     ax1.axhline(live_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
     ax1.text(
         0.05,
@@ -2345,7 +2345,7 @@ async def send_daily_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         bbox=dict(facecolor='#1e1e1e', edgecolor='none', pad=5),
     )
 
-    # KAMA Linien
+    # KAMA lines
     kama_cols = ['KAMA_9', 'KAMA_21', 'KAMA_55', 'KAMA_99']
     colors = ['#ffff00', '#ff8800', '#ff00ff', '#00ffff']
     kama_labels = []
@@ -2435,15 +2435,15 @@ async def send_daily_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     ax_tsi.grid(True, alpha=0.2)
     ax_tsi.tick_params(colors='white')
 
-    # X-Achse Format
-    date_form = DateFormatter("%Y-%m-%d")  # oder "%d.%m" wenn du willst
+    # X-axis format
+    date_form = DateFormatter("%Y-%m-%d")  # or "%d.%m" if you prefer
     for ax in [ax1, ax_rsi, ax_tsi]:
         ax.xaxis.set_major_formatter(date_form)
         ax.tick_params(axis='x', colors='white')
 
     plt.tight_layout()
 
-    # --- Sicheres Speichern & Senden ---
+    # --- Safe saving & sending ---
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
         fig.savefig(tmp.name, format='png', dpi=300, facecolor='#1e1e1e', bbox_inches='tight')
         tmp_path = tmp.name
@@ -2484,16 +2484,16 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action("upload_photo")
 
     try:
-        # --- DATEN LADEN: letzte 360+ Tage 1h ---
+        # --- LOAD DATA: last 360+ days 1h ---
         # df_1h = await get_1h_data_last_360d(valid_symbol)
         # if df_1h.empty:
         # await update.message.reply_text(f"No 1h data available for {valid_symbol}")
         # return
 
-        # # Zeitzone entfernen
+        # # Remove timezone
         # df_1h['OPEN_TIME'] = pd.to_datetime(df_1h['OPEN_TIME']).dt.tz_localize(None)
 
-        # # --- TÄGLICHE KERZEN ERZEUGEN ---
+        # # --- GENERATE DAILY CANDLES ---
         # df_1h['date'] = df_1h['OPEN_TIME'].dt.floor('D')
         # df_daily = df_1h.groupby('date').agg(
         # OPEN=('OPEN', 'first'),
@@ -2510,8 +2510,8 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # df_daily = df_daily.set_index('date')
         # df_plot = df_daily.copy()
 
-        # # --- INDIKATOREN AUF TÄGLICHEN DATEN NEU BERECHNEN ---
-        # df_plot['close'] = df_plot['CLOSE']  # für calculate_* Funktionen
+        # # --- RECOMPUTE INDICATORS ON DAILY DATA ---
+        # df_plot['close'] = df_plot['CLOSE']  # for calculate_* functions
 
         # # RSI
         # df_plot['RSI_9'] = calculate_rsi(df_plot, period=9)
@@ -2531,7 +2531,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # df_plot['KAMA_55'] = calculate_kama(df_plot, period=55)
         # df_plot['KAMA_200'] = calculate_kama(df_plot, period=200)
 
-        # # --- LIVE PREIS UPDATE (auf letzte Tageskerze) ---
+        # # --- LIVE PRICE UPDATE (on the last daily candle) ---
         # live_price = await get_live_price(valid_symbol)
         # live_suffix = ""
         # if live_price and isinstance(live_price, (int, float)) and live_price > 0:
@@ -2541,7 +2541,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # df_plot.loc[idx, "LOW"] = min(df_plot.loc[idx, "LOW"], float(live_price))
         # live_suffix = f" (live ${live_price:,.8f})"
 
-        # --- DATEN LADEN: letzte 360+ Tage 1h (für stabile Berechnung) ---
+        # --- LOAD DATA: last 360+ days 1h (for stable calculation) ---
         df_1h_full = await get_1h_data_last_360d(valid_symbol)
         if df_1h_full.empty:
             await update.message.reply_text(f"No 1h data available for {valid_symbol}")
@@ -2549,7 +2549,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         df_1h_full['OPEN_TIME'] = pd.to_datetime(df_1h_full['OPEN_TIME']).dt.tz_localize(None)
 
-        # --- TÄGLICHE KERZEN ERZEUGEN (aus allen verfügbaren Daten) ---
+        # --- GENERATE DAILY CANDLES (from all available data) ---
         df_1h_full['date'] = df_1h_full['OPEN_TIME'].dt.floor('D')
         df_daily_full = (
             df_1h_full.groupby('date')
@@ -2569,7 +2569,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Not enough daily data for {valid_symbol}")
             return
 
-        # --- INDIKATOREN AUF ALLEN DATEN BERECHNEN (für Stabilität) ---
+        # --- COMPUTE INDICATORS ON ALL DATA (for stability) ---
         df_daily_full['RSI_9'] = calculate_rsi(df_daily_full, period=9)
         df_daily_full['RSI_12'] = calculate_rsi(df_daily_full, period=12)
         df_daily_full['RSI_24'] = calculate_rsi(df_daily_full, period=24)
@@ -2586,14 +2586,14 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         df_daily_full['KAMA_55'] = calculate_kama(df_daily_full, period=55)
         df_daily_full['KAMA_200'] = calculate_kama(df_daily_full, period=200)
 
-        # --- NUR DIE LETZTEN 120 TAGE ZUM PLOTTEN NEHMEN ---
+        # --- ONLY TAKE THE LAST 120 DAYS FOR PLOTTING ---
         df_plot = df_daily_full.tail(120).copy()
 
         if len(df_plot) < 2:
             await update.message.reply_text(f"Not enough data in last 120 days for {valid_symbol}")
             return
 
-        # --- LIVE PREIS UPDATE (auf letzte Tageskerze der 120 Tage) ---
+        # --- LIVE PRICE UPDATE (on the last daily candle of the 120 days) ---
         live_price = await get_live_price(valid_symbol)
         live_suffix = ""
         if live_price and isinstance(live_price, (int, float)) and live_price > 0:
@@ -2603,7 +2603,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df_plot.loc[idx, "LOW"] = min(df_plot.loc[idx, "LOW"], float(live_price))
             live_suffix = f" (live ${live_price:,.8f})"
 
-        # --- PLOT SETUP (identisch zum candles_handler) ---
+        # --- PLOT SETUP (identical to candles_handler) ---
         bg = '#1e1e1e'
         fg = 'white'
         fig = plt.figure(figsize=(22, 15), facecolor=bg)
@@ -2632,15 +2632,15 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.bar(x_vals[up], body_h[up], bottom=body_b[up], width=0.6, color=col_up, linewidth=0, zorder=4)
         ax1.bar(x_vals[down], body_h[down], bottom=body_b[down], width=0.6, color=col_down, linewidth=0, zorder=4)
 
-        # --- INDIKATOREN PLOTTEN ---
-        # EMA 9 & 21 (hell- und dunkelgrün)
+        # --- PLOT INDICATORS ---
+        # EMA 9 & 21 (light and dark green)
         if 'EMA_9' in df_plot.columns and not df_plot['EMA_9'].isna().all():
             ax1.plot(x_vals, df_plot['EMA_9'], color='#00ff88', linewidth=1.3, label='EMA 9')
         if 'EMA_21' in df_plot.columns and not df_plot['EMA_21'].isna().all():
             ax1.plot(x_vals, df_plot['EMA_21'], color='#0088ff', linewidth=1.3, label='EMA 21')
 
-        # KAMA (verschiedene Blautöne)
-        colors_kama = ['#00ffff', '#0099ff', '#3366ff', '#0000ff']  # hell → dunkel
+        # KAMA (various shades of blue)
+        colors_kama = ['#00ffff', '#0099ff', '#3366ff', '#0000ff']  # light → dark
         periods = [9, 21, 55, 200]
         for i, period in enumerate(periods):
             col = f'KAMA_{period}'
@@ -2658,7 +2658,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.grid(True, alpha=0.25, color=fg, linewidth=0.5)
         ax1.tick_params(colors=fg, labelsize=11)
 
-        # Letzter Preis Marker
+        # Last price marker
         ax1.axhline(live_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
         ax1.text(
             0.02,
@@ -2777,7 +2777,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax1.xaxis.set_major_formatter(mticker.FuncFormatter(format_date))
         ax1.xaxis.set_major_locator(mticker.MaxNLocator(nbins=12))
 
-        # Weiße Labels
+        # White labels
         for ax in [ax1, ax2, ax3, ax_vol]:
             ax.tick_params(colors=fg, labelsize=10)
             for label in ax.get_xticklabels() + ax.get_yticklabels():
@@ -2902,16 +2902,16 @@ def find_support_resistance(
     df: pd.DataFrame, lookback_period: int = 2160, volume_multiplier: float = 2.5
 ) -> tuple[list[float], list[float]]:
     """
-    Findet starke Support- und Resistance-Level basierend auf Volumen-Clustern.
+    Finds strong support and resistance levels based on volume clusters.
     """
     if df.empty or len(df) < 10:
-        logger.debug("find_support_resistance: DataFrame leer oder zu klein")
+        logger.debug("find_support_resistance: DataFrame empty or too small")
         return [], []
 
-    df = df.tail(lookback_period).copy()  # Nur letzte X Kerzen
+    df = df.tail(lookback_period).copy()  # Only the last X candles
     vol_median = float(df['VOLUME'].median())
     current_close = float(df['CLOSE'].iloc[-1])
-    min_distance = current_close * 0.015  # 1.5% Mindestabstand
+    min_distance = current_close * 0.015  # 1.5% minimum spacing
 
     supports = []
     resistances = []
@@ -2922,28 +2922,28 @@ def find_support_resistance(
             low = float(row['LOW'])
             high = float(row['HIGH'])
 
-            # Support unter Preis
+            # Support below price
             if low < current_close and all(abs(low - s) > min_distance for s in supports):
                 supports.append(low)
-            # Resistance über Preis
+            # Resistance above price
             if high > current_close and all(abs(high - r) > min_distance for r in resistances):
                 resistances.append(high)
 
-    # Nur die stärksten 5
+    # Only the strongest 5
     supports = sorted(supports, reverse=True)[:5]
     resistances = sorted(resistances)[:5]
 
-    logger.debug(f"Support/Resistance gefunden: S={supports}, R={resistances}")
+    logger.debug(f"Support/Resistance found: S={supports}, R={resistances}")
     return supports, resistances
 
 
 def get_hvn_levels(df: pd.DataFrame, top_n: int = 10, volume_multiplier: float = 1.5) -> list[float]:
     """
-    High Volume Nodes (HVN) – starke Volumen-Cluster im Preis.
-    Fallback auf Support/Resistance, falls keine HVNs gefunden.
+    High Volume Nodes (HVN) – strong volume clusters in price.
+    Falls back to Support/Resistance if no HVNs are found.
     """
     if df.empty or len(df) < 20:
-        logger.debug("get_hvn_levels: DataFrame zu klein")
+        logger.debug("get_hvn_levels: DataFrame too small")
         return []
 
     closes = df['CLOSE'].values.astype(float)
@@ -2952,15 +2952,15 @@ def get_hvn_levels(df: pd.DataFrame, top_n: int = 10, volume_multiplier: float =
 
     price_min, price_max = closes.min(), closes.max()
     if price_max <= price_min:
-        logger.debug("get_hvn_levels: Preisspanne ungültig")
+        logger.debug("get_hvn_levels: price range invalid")
         return []
 
-    # Dynamische Bins – je mehr Daten, desto feiner
+    # Dynamic bins – the more data, the finer
     num_bins = min(150, max(20, len(df) // 2))
     hist, bin_edges = np.histogram(closes, bins=num_bins, range=(price_min, price_max), weights=volumes)
     bin_mids = (bin_edges[:-1] + bin_edges[1:]) / 2.0
 
-    # Nur Bins mit Volumen
+    # Only bins with volume
     valid_vols = hist[hist > 0]
     avg_vol = valid_vols.mean() if len(valid_vols) > 0 else 1.0
     threshold = avg_vol * volume_multiplier
@@ -2968,12 +2968,12 @@ def get_hvn_levels(df: pd.DataFrame, top_n: int = 10, volume_multiplier: float =
     strong_levels = [float(mid) for mid, vol in zip(bin_mids, hist) if vol >= threshold]
 
     if not strong_levels:
-        logger.debug("get_hvn_levels: Keine HVNs – fallback zu S/R")
+        logger.debug("get_hvn_levels: No HVNs – falling back to S/R")
         supports, resistances = find_support_resistance(df, volume_multiplier=volume_multiplier)
         levels = sorted(supports + resistances)
         return levels[:top_n]
 
-    # Sortiere nach Nähe zum aktuellen Preis (besser als Volumen-Sortierung)
+    # Sort by proximity to the current price (better than sorting by volume)
     strong_levels.sort(key=lambda x: (abs(x - current_price), -abs(x - current_price)))
 
     result = []
@@ -2986,7 +2986,7 @@ def get_hvn_levels(df: pd.DataFrame, top_n: int = 10, volume_multiplier: float =
         if len(result) >= top_n:
             break
 
-    logger.debug(f"get_hvn_levels: {len(result)} HVN-Level gefunden: {result}")
+    logger.debug(f"get_hvn_levels: {len(result)} HVN levels found: {result}")
     return sorted(result)
 
 
@@ -2994,14 +2994,14 @@ async def get_short_term_outlook(symbol: str, ind: pd.Series | pd.DataFrame | No
     if ind is None or ind.empty:
         return "No data available for short-term outlook."
 
-    # Sicherstellen, dass wir mit einer Series arbeiten (eine Zeile)
+    # Ensure we are working with a Series (one row)
     if isinstance(ind, pd.DataFrame):
         ind = ind.iloc[0]
 
     reasons = []
     score = 0
 
-    # === Alle Werte sicher als float extrahieren ===
+    # === Safely extract all values as float ===
     rsi_14 = float(ind['RSI_14']) if 'RSI_14' in ind else 50
     ema9 = float(ind['EMA_9']) if 'EMA_9' in ind else 0
     ema21 = float(ind['EMA_21']) if 'EMA_21' in ind else 0
@@ -3063,13 +3063,13 @@ async def get_short_term_outlook(symbol: str, ind: pd.Series | pd.DataFrame | No
         score -= 1
         reasons.append("Trend: DOWN")
 
-    # === ATR Volatilität ===
+    # === ATR volatility ===
     if atr_14 and close_price:
         atr_pct = (atr_14 / close_price) * 100
         vol_text = "VERY HIGH" if atr_pct > 3 else "HIGH" if atr_pct > 2 else "elevated" if atr_pct > 1 else "normal"
         reasons.append(f"ATR volatility: {vol_text} ({atr_pct:.2f}%)")
 
-    # === Ergebnis ===
+    # === Result ===
     outlook = "BULLISH" if score > 0 else "BEARISH" if score < 0 else "NEUTRAL"
     explanation = "; ".join(reasons) if reasons else "insufficient data"
     return f"Short-term {outlook} – {explanation}"
@@ -3087,24 +3087,24 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
         await update.message.reply_text(f"No data available for {symbol}")
         return
 
-    # ... dein kompletter Code ab hier bleibt 1:1 gleich ...
-    # (Live-Preis, Daily/Weekly/Monthly, HVN, OBV, etc.)
+    # ... your complete code from here stays exactly the same ...
+    # (Live price, Daily/Weekly/Monthly, HVN, OBV, etc.)
     df_1h = await get_1h_data_last_7d(symbol)
     supports, resistances = find_support_resistance(df_90d)
     hvns = get_hvn_levels(df_90d, top_n=10, volume_multiplier=1.5)
 
-    # --- NEU: 1h-Daten für 90 Tage (für Daily/Weekly/Monthly) ---
+    # --- NEW: 1h data for 90 days (for Daily/Weekly/Monthly) ---
     df_1h_90d = await get_1h_data_last_90d(symbol)
     if df_1h_90d.empty:
-        await update.message.reply_text(f"Keine 1h-Daten für {symbol}")
+        await update.message.reply_text(f"No 1h data for {symbol}")
         return
 
-    # --- LIVE PREIS ---
+    # --- LIVE PRICE ---
     live_price = await get_live_price(symbol) or latest_30m['CLOSE']
     if live_price is None:
         live_price = latest_30m['CLOSE']  # Fallback
 
-    # --- DATUM & ZEIT ---
+    # --- DATE & TIME ---
     now_utc = datetime.now(pytz.UTC)
     # open_time = latest_30m['OPEN_TIME'].strftime('%Y-%m-%d %H:%M')
     # open_time = pd.to_datetime(latest_30m['OPEN_TIME']).strftime('%Y-%m-%d %H:%M')
@@ -3112,7 +3112,7 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     # open_time = pd.Timestamp(latest_30m['OPEN_TIME']).strftime('%Y-%m-%d %H:%M')
     open_time = latest_30m['OPEN_TIME'].iloc[0].strftime('%Y-%m-%d %H:%M')
 
-    # --- 1. DAILY (heute) ---
+    # --- 1. DAILY (today) ---
     today = now_utc.date()
     df_today = df_1h_90d[df_1h_90d['OPEN_TIME'].dt.date == today]
     daily_high = df_today['HIGH'].max() if not df_today.empty else None
@@ -3120,7 +3120,7 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     daily_high_pct = ((live_price - daily_high) / daily_high * 100) if daily_high else None
     daily_low_pct = ((live_price - daily_low) / daily_low * 100) if daily_low else None
 
-    # --- 2. WEEKLY (aktueller Montag bis heute) ---
+    # --- 2. WEEKLY (current Monday to today) ---
     monday = today - timedelta(days=today.weekday())
     df_week = df_1h_90d[df_1h_90d['OPEN_TIME'].dt.date >= monday]
     weekly_high = df_week['HIGH'].max() if not df_week.empty else None
@@ -3128,7 +3128,7 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     weekly_high_pct = ((live_price - weekly_high) / weekly_high * 100) if weekly_high else None
     weekly_low_pct = ((live_price - weekly_low) / weekly_low * 100) if weekly_low else None
 
-    # --- 3. MONTHLY (1. des Monats bis heute) ---
+    # --- 3. MONTHLY (1st of the month to today) ---
     month_start = today.replace(day=1)
     df_month = df_1h_90d[df_1h_90d['OPEN_TIME'].dt.date >= month_start]
     monthly_high = df_month['HIGH'].max() if not df_month.empty else None
@@ -3142,7 +3142,7 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     obv_7d = await calculate_obv_period(symbol, 7)
     obv_30d = await calculate_obv_period(symbol, 30)
 
-    # --- SICHERE WERTE ---
+    # --- SAFE VALUES ---
     def safe_float(val, default=None):
         try:
             return float(val) if val is not None and not pd.isna(val) else default
@@ -3191,9 +3191,9 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     poc = safe_float(ind.get('POC'))
 
     outlook = await get_short_term_outlook(symbol, ind)
-    # Sicherstellen, dass outlook nie leer ist
+    # Ensure outlook is never empty
 
-    # --- FARB-FUNKTIONEN ---
+    # --- COLOR FUNCTIONS ---
     def color(val, good=None, bad=None, neutral='gray'):
         if val is None:
             return neutral
@@ -3211,7 +3211,7 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     def format_val(val, fmt, na='—'):
         return f"{val:{fmt}}" if val is not None else na
 
-    # --- FORMAT HILFE ---
+    # --- FORMAT HELPERS ---
     def fmt_pct(pct):
         if pct is None:
             return "—"
@@ -3224,14 +3224,14 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
         except:
             return "—"
 
-    # Vor dem HTML – Sicherheit einbauen
+    # Before the HTML – build in safety
     close_open = latest_30m['OPEN'].iloc[0] if not latest_30m.empty and 'OPEN' in latest_30m.columns else close
 
-    # NUR im Outlook-Text die Zeichen escapen – nicht im gesamten HTML!
+    # Only escape characters in the outlook text – not in the entire HTML!
     outlook = outlook.strip() if outlook else "No outlook available"
     outlook_text = outlook.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-    # Dann im HTML nur den Text verwenden – keine Ersetzung im gesamten String!
+    # Then use only the text in the HTML – no replacement in the entire string!
     html = f"""
 <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; font-family: 'Courier New', monospace; font-size:14px; line-height:1.6; border-left: 5px solid #00ffff; white-space: pre-wrap;">
 <b style="color:#00ffff;">Outlook for <a href="https://t.me/{username}" style="color:#00ffff;">@{username}</a></b>
@@ -3245,7 +3245,7 @@ async def send_outlook(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
 </pre>
 """.strip()
 
-    # Am Ende nur noch:
+    # At the end, simply:
     await update.message.reply_html(html)
 
 
@@ -3346,12 +3346,12 @@ async def send_info(update: Update, context: ContextTypes.DEFAULT_TYPE, symbol: 
     obv_7d = await calculate_obv_period(symbol, 7)
     obv_30d = await calculate_obv_period(symbol, 30)
 
-    # NUR im Outlook-Text die Zeichen escapen – nicht im gesamten HTML!
+    # Only escape characters in the outlook text – not in the entire HTML!
     outlook = await get_short_term_outlook(symbol, ind)
     outlook = outlook.strip() if outlook else "No outlook available"
     outlook_text = outlook.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-    # Sicherstellen, dass ind eine Series ist (eine Zeile)
+    # Ensure ind is a Series (one row)
     if isinstance(ind, pd.DataFrame):
         ind = ind.iloc[0]
 
@@ -3438,17 +3438,17 @@ def get_hvn_levelz(
     df: pd.DataFrame,
     top_n: int = 10,
     volume_multiplier: float = 2.5,
-    near_threshold_pct: float = 1.0,  # ±1% vom Preis = "nahe"
+    near_threshold_pct: float = 1.0,  # ±1% from price = "near"
 ) -> dict:
     """
-    Gibt HVN-Level getrennt zurück:
-    - above: HVNs über dem aktuellen Preis
-    - below: HVNs unter dem aktuellen Preis
-    - near: HVNs innerhalb von ±near_threshold_pct
-    - all: alle starken HVNs (sortiert nach Stärke)
+    Returns HVN levels split up:
+    - above: HVNs above the current price
+    - below: HVNs below the current price
+    - near: HVNs within ±near_threshold_pct
+    - all: all strong HVNs (sorted by strength)
     """
     if df.empty or len(df) < 20:
-        logger.debug("get_hvn_levels: DataFrame zu klein")
+        logger.debug("get_hvn_levels: DataFrame too small")
         return {"above": [], "below": [], "near": [], "all": []}
 
     closes = df['CLOSE'].values.astype(float)
@@ -3459,27 +3459,27 @@ def get_hvn_levelz(
     if price_max <= price_min:
         return {"above": [], "below": [], "near": [], "all": []}
 
-    # Dynamische Bins
+    # Dynamic bins
     num_bins = min(200, max(30, len(df) // 2))
     hist, bin_edges = np.histogram(closes, bins=num_bins, range=(price_min, price_max), weights=volumes)
     bin_mids = (bin_edges[:-1] + bin_edges[1:]) / 2.0
 
-    # Durchschnittsvolumen nur von belegten Bins
+    # Average volume only from occupied bins
     valid_vols = hist[hist > 0]
     avg_vol = valid_vols.mean() if len(valid_vols) > 0 else 1.0
     threshold = avg_vol * volume_multiplier
 
-    # Starke Level mit Volumen + Distanz + Nähe-Score
+    # Strong levels with volume + distance + proximity score
     strong_levels = []
     for mid, vol in zip(bin_mids, hist):
         if vol >= threshold:
             distance = abs(mid - current_price)
             near_bonus = 1000 if distance <= current_price * (near_threshold_pct / 100) else 0
-            score = vol + near_bonus - distance * 0.1  # Nähe + Volumen gewichtet
+            score = vol + near_bonus - distance * 0.1  # weighted by proximity + volume
             strong_levels.append({'price': float(mid), 'volume': float(vol), 'distance': distance, 'score': score})
 
     if not strong_levels:
-        # Fallback auf S/R
+        # Fallback to S/R
         supports, resistances = find_support_resistance(df, volume_multiplier=volume_multiplier)
         levels = sorted(supports + resistances, key=lambda x: abs(x - current_price))
         all_levels = [round(x, 8) for x in levels[:top_n]]
@@ -3490,11 +3490,11 @@ def get_hvn_levelz(
             "all": all_levels,
         }
 
-    # Sortiere nach Score (Stärke + Nähe)
+    # Sort by score (strength + proximity)
     strong_levels.sort(key=lambda x: x['score'], reverse=True)
 
-    # Extrahiere Preise
-    prices = [round(l['price'], 8) for l in strong_levels[: top_n * 2]]  # mehr nehmen für Filterung
+    # Extract prices
+    prices = [round(l['price'], 8) for l in strong_levels[: top_n * 2]]  # take more for filtering
 
     above = sorted([p for p in prices if p > current_price])
     below = sorted([p for p in prices if p < current_price], reverse=True)
@@ -3517,7 +3517,7 @@ def get_hvn_levelz(
 
 async def send_targets(update: Update, context: ContextTypes.DEFAULT_TYPE, symbol: str, username: str):
     latest_30m = await get_latest_data(symbol, '30m')
-    df_90d = await get_1h_data_last_90d(symbol)  # 90d für Major Swing!
+    df_90d = await get_1h_data_last_90d(symbol)  # 90d for major swing!
     # df_30d = get_1h_data_last_90d(symbol).tail(30*24)
     if latest_30m is None or df_90d.empty:
         await update.message.reply_text(f"No data for targets of {symbol}")
@@ -3537,15 +3537,15 @@ async def send_targets(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
 
     # --- FIBONACCI ---
     fibonacci_levels = [0.236, 0.382, 0.5, 0.618, 0.786]
-    fibonacci_extensions = [1.0, 1.272, 1.618, 2.0, 2.618]  # 5 Werte!
+    fibonacci_extensions = [1.0, 1.272, 1.618, 2.0, 2.618]  # 5 values!
 
-    # Retracement: High → Low (absteigend)
+    # Retracement: High → Low (descending)
     fib_retracement = [f"{swing_high - diff * level:.8f}" for level in fibonacci_levels]
 
-    # Extension Up: Low + diff * ratio (Ziele über High)
+    # Extension Up: Low + diff * ratio (targets above High)
     fib_extension_up = [f"{swing_low + diff * level:.8f}" for level in fibonacci_extensions]
 
-    # Extension Down: High - diff * (level - 1) (Ziele unter Low)
+    # Extension Down: High - diff * (level - 1) (targets below Low)
     fib_extension_down = [f"{swing_high - diff * (level - 1):.8f}" for level in fibonacci_extensions]
 
     # --- FORMATTER ---
@@ -3588,10 +3588,10 @@ async def send_targets(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
 
 
 # async def get_closings_data():
-# """Holt alle Trades der letzten 7 Tage aus allen 4 Tabellen."""
+# """Fetches all trades from the last 7 days from all 4 tables."""
 # tables = ["closed_trades", "closed_trades2", "closed_trades3", "closed_trades4"]
 
-# # Wir filtern direkt in der SQL-Abfrage auf die letzten 7 Tage
+# # We filter directly in the SQL query on the last 7 days
 # parts = []
 # for t in tables:
 # parts.append(f"SELECT posted, direction, status, '{t}' as source FROM {t} WHERE posted >= NOW() - INTERVAL '7 days'")
@@ -3623,14 +3623,14 @@ async def send_targets(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
 # df['result'] = df.apply(normalize_status, axis=1)
 # return df
 # except Exception as e:
-# logger.error(f"Fehler beim Datenabruf für !closings: {e}")
+# logger.error(f"Error fetching data for !closings: {e}")
 # return None
 # finally:
 # await release_conn(conn)
 
 
 async def get_closings_data():
-    """Holt Daten der letzten 7 Tage und korrigiert den Zeit-Offset."""
+    """Fetches data from the last 7 days and corrects the time offset."""
     tables = ["closed_trades", "closed_trades2", "closed_trades3", "closed_trades4"]
 
     parts = []
@@ -3648,14 +3648,14 @@ async def get_closings_data():
         if df.empty:
             return None
 
-        # 1. In Datetime umwandeln
+        # 1. Convert to datetime
         df['posted'] = pd.to_datetime(df['posted'])
 
-        # 2. Manueller UTC-Fix: Wenn deine DB Lokalzeit (CET) speichert,
-        # ziehen wir 1 Stunde (Winter) oder 2 Stunden (Sommer) ab, um auf UTC zu kommen.
-        # Da wir Februar haben: -1 Stunde.
+        # 2. Manual UTC fix: if your DB stores local time (CET),
+        # we subtract 1 hour (winter) or 2 hours (summer) to arrive at UTC.
+        # Since it's February: -1 hour.
         df['posted'] = df['posted'] - pd.Timedelta(hours=1)
-        # Jetzt als UTC markieren
+        # Now mark as UTC
         df['posted'] = df['posted'].dt.tz_localize('UTC')
 
         def normalize_status(row):
@@ -3678,15 +3678,15 @@ async def get_closings_data():
 
 
 # def create_closings_plot(df):
-# """Erstellt ein stündliches gestapeltes Balkendiagramm mit korrigierten Farben und Zeitachsen."""
-# # Sicherstellen, dass die Zeitstempel als UTC behandelt werden, um Verschiebungen zu vermeiden
+# """Creates an hourly stacked bar chart with corrected colors and time axes."""
+# # Ensure the timestamps are treated as UTC to avoid shifts
 # df['time_bin'] = df['posted'].dt.floor('h')
 
-# # Deine neuen Wunschfarben
+# # Your new desired colors
 # colors = {
-# 'LOSS': '#FF0000',        # Rot
-# 'PARTIAL_WIN': '#0000FF',  # Blau
-# 'FULL_WIN': '#00FF00'      # Starkes Grün
+# 'LOSS': '#FF0000',        # Red
+# 'PARTIAL_WIN': '#0000FF',  # Blue
+# 'FULL_WIN': '#00FF00'      # Strong green
 # }
 # results_order = ['LOSS', 'PARTIAL_WIN', 'FULL_WIN']
 
@@ -3702,13 +3702,13 @@ async def get_closings_data():
 
 # pivot = subset.groupby(['time_bin', 'result']).size().unstack(fill_value=0)
 
-# # Sicherstellen, dass alle Status-Typen als Spalten vorhanden sind
+# # Ensure all status types exist as columns
 # for r in results_order:
 # if r not in pivot.columns: pivot[r] = 0
 
 # pivot = pivot[results_order]
 
-# # Plotten der Balken
+# # Plot the bars
 # pivot.plot(kind='bar', stacked=True, ax=ax, color=[colors[r] for r in results_order], width=0.9)
 
 # ax.set_title(f"Hourly Closing Performance: {direction}", fontsize=16, color='white', fontweight='bold')
@@ -3719,9 +3719,9 @@ async def get_closings_data():
 # ax.set_facecolor('#1e1e1e')
 # ax.tick_params(colors='white', labelsize=10)
 
-# # X-Achsen Beschriftung: Zeitstempel formatieren
+# # X-axis labeling: format timestamps
 # n = len(pivot.index)
-# # Wir zeigen ca. alle 12 Stunden einen Marker, um die Achse nicht zu überladen
+# # We show a marker roughly every 12 hours so the axis doesn't get overloaded
 # step = max(1, n // 14)
 # ax2.set_xticks(range(0, n, step))
 # ax2.set_xticklabels([pivot.index[i].strftime('%d.%m. %H:00') for i in range(0, n, step)], rotation=45, ha='right')
@@ -3736,9 +3736,9 @@ async def get_closings_data():
 
 
 def create_closings_plot(df):
-    """Baut den Chart mit den neuen Farben: Rot, Blau, Stark-Grün."""
-    # Pandas floor funktioniert auf der Spalte, aber wir brauchen
-    # für die Zeitachse saubere Python-Datetimes
+    """Builds the chart with the new colors: red, blue, strong green."""
+    # Pandas floor works on the column, but we need
+    # clean Python datetimes for the time axis
     df['time_bin'] = df['posted'].dt.floor('h')
 
     colors = {'LOSS': '#FF0000', 'PARTIAL_WIN': '#0000FF', 'FULL_WIN': '#00FF00'}
@@ -3747,18 +3747,18 @@ def create_closings_plot(df):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18, 12), sharex=True)
     plt.subplots_adjust(hspace=0.4)
 
-    # --- FIX: Manuelles Flooring für Standard datetime ---
+    # --- FIX: manual flooring for standard datetime ---
     now_utc = datetime.now(pytz.UTC)
     end_time = now_utc.replace(minute=0, second=0, microsecond=0)
     start_time = end_time - timedelta(days=7)
 
-    # Zeitachse für reindex (Pandas)
+    # Time axis for reindex (Pandas)
     all_hours = pd.date_range(start=start_time, end=end_time, freq='h', tz='UTC')
 
     for ax, direction in zip([ax1, ax2], ['LONG', 'SHORT']):
         subset = df[df['direction'] == direction.upper()].copy()
 
-        # Gruppieren und Zeitachse auffüllen
+        # Group and fill in the time axis
         pivot = subset.groupby(['time_bin', 'result']).size().unstack(fill_value=0)
         pivot = pivot.reindex(all_hours, fill_value=0)
 
@@ -3768,7 +3768,7 @@ def create_closings_plot(df):
 
         pivot = pivot[results_order]
 
-        # Plotten (Stacked Bar)
+        # Plot (stacked bar)
         pivot.plot(
             kind='bar', stacked=True, ax=ax, color=[colors[r] for r in results_order], width=1.0, edgecolor='none'
         )
@@ -3779,7 +3779,7 @@ def create_closings_plot(df):
         ax.tick_params(colors='white')
         ax.legend(loc='upper left', facecolor='#1e1e1e', labelcolor='white')
 
-    # X-Achse Beschriftung (Alle 12 Stunden ein Label)
+    # X-axis labeling (one label every 12 hours)
     n = len(pivot.index)
     step = 12
     ax2.set_xticks(range(0, n, step))
@@ -3817,11 +3817,11 @@ async def closings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"Fehler im !closings Handler: {e}")
+        logger.error(f"Error in !closings handler: {e}")
         await update.message.reply_text("Error generating the performance chart.")
 
 
-# Vergiss nicht den Handler zu registrieren:
+# Don't forget to register the handler:
 # application.add_handler(MessageHandler(filters.Regex(r"(?i)^!closings$"), closings_handler))
 
 # ========================================= !TRADING HANDLER  =========================================================================
@@ -3918,11 +3918,11 @@ async def send_trading(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     weekly_h, weekly_l, weekly_h_pct, weekly_l_pct = get_period(df_90d[df_90d['OPEN_TIME'].dt.date >= monday])
     monthly_h, monthly_l, monthly_h_pct, monthly_l_pct = get_period(df_90d[df_90d['OPEN_TIME'].dt.date >= month_start])
 
-    # 30d Durchschnitt (für Vergleich)
+    # 30d average (for comparison)
     # usd_30d, _, _ = await get_volume_data(symbol,30*24)
     # avg_daily_usd = usd_30d / 30 if usd_30d > 0 else 1
 
-    # --- EINMALIG alle Volumen-Daten holen ---
+    # --- Fetch all volume data ONCE ---
     periods = {'1h': 1, '4h': 4, '12h': 12, '24h': 24, '7d': 7 * 24, '30d': 30 * 24}
 
     vol_data = {}
@@ -3935,10 +3935,10 @@ async def send_trading(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
         if name == '30d':
             usd_30d = usd
 
-    # Jetzt korrekt berechnen
+    # Now compute correctly
     avg_daily_usd = usd_30d / 30 if usd_30d > 0 else 1
 
-    # Prozente berechnen
+    # Compute percentages
     for name, data in vol_data.items():
         hours = periods[name]
         expected = avg_daily_usd * (hours / 24)
@@ -3957,7 +3957,7 @@ async def send_trading(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     # Price Changes
     async def get_change(hours):
         start = now - timedelta(hours=hours)
-        conn = await get_conn()  # ← nur einmal holen!
+        conn = await get_conn()  # ← fetch only once!
         try:
             row = await conn.fetchrow(
                 f'SELECT close FROM "{symbol.upper()}_30m" WHERE open_time >= $1 ORDER BY open_time ASC LIMIT 1', start
@@ -3983,7 +3983,7 @@ async def send_trading(update: Update, context: ContextTypes.DEFAULT_TYPE, symbo
     p = lambda x: f"{x:+.2f}%" if x is not None else "—"
     v = lambda x: f"${x / 1e9:.2f}B" if x >= 1e9 else f"${x / 1e6:.2f}M" if x >= 1e6 else f"${x:,.0f}"
 
-    # Finaler, perfekter HTML-Block
+    # Final, perfect HTML block
     html = f"""
 <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; font-family: 'Courier New', monospace; font-size:14px; line-height:1.6; border-left: 5px solid #00ffff;">
 <b style="color:#00ffff;">Trading Performance for <a href="https://t.me/{username}" style="color:#00ffff;">@{username}</a></b>
@@ -4058,7 +4058,7 @@ async def open_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leverage_str = match.group(4).upper().replace("X", "x")
     post_video = bool(match.group(5))
 
-    # Coin validieren
+    # Validate coin
     valid_symbol = await validate_symbol(symbol_raw)
     if not valid_symbol:
         await update.message.reply_text(f"Coin `{symbol_raw}` not found")
@@ -4076,7 +4076,7 @@ async def open_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def find_nearest_level(values, ref_price, direction="below", min_distance_pct=0.5):
     """
-    Findet den nächsten Level mit Mindestabstand in %
+    Finds the nearest level with a minimum spacing in %
     direction: "below", "above", "any"
     """
     if not values:
@@ -4088,7 +4088,7 @@ def find_nearest_level(values, ref_price, direction="below", min_distance_pct=0.
             continue
         dist_pct = abs((v - ref_price) / ref_price * 100)
         if dist_pct < min_distance_pct:
-            continue  # zu nah
+            continue  # too close
         if direction == "below" and v >= ref_price:
             continue
         if direction == "above" and v <= ref_price:
@@ -4098,12 +4098,12 @@ def find_nearest_level(values, ref_price, direction="below", min_distance_pct=0.
     if not candidates:
         return None
 
-    # Sortiere nach Nähe
+    # Sort by proximity
     candidates.sort(key=lambda x: x[1])
     return candidates[0][0] if candidates else None
 
 
-# --- KORREKTE UND FINALE VERSION (kopiere 1:1 ---
+# --- CORRECT AND FINAL VERSION (copy 1:1) ---
 async def send_open_trade(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -4121,26 +4121,26 @@ async def send_open_trade(
         if not 1 <= lev <= 125:
             raise ValueError
     except:
-        await update.message.reply_text("Hebel ungültig (1x–125x)")
+        await update.message.reply_text("Leverage invalid (1x–125x)")
         return
 
-    # Live Preis
+    # Live price
     live_price = await get_live_price(symbol)
     if not live_price:
-        await update.message.reply_text("Kein Live-Preis")
+        await update.message.reply_text("No live price")
         return
 
-    # 90 Tage 1h-Daten laden → für HVN, Fibs, Support/Resistance
+    # Load 90 days of 1h data → for HVN, Fibs, Support/Resistance
     df = await get_1h_data_last_90d(symbol)
     if df.empty or len(df) < 100:
-        await update.message.reply_text("Nicht genug Daten")
+        await update.message.reply_text("Not enough data")
         return
 
-    # Support / Resistance + HVN aus 90 Tagen
+    # Support / Resistance + HVN from 90 days
     supports, resistances = find_support_resistance(df)
-    hvn_all = get_hvn_levelz(df, top_n=500)['all']  # <-- alle starken HVNs
+    hvn_all = get_hvn_levelz(df, top_n=500)['all']  # <-- all strong HVNs
 
-    # Swing für Fibs
+    # Swing for Fibs
     swing_high = df['HIGH'].max()
     swing_low = df['LOW'].min()
     fib_range = swing_high - swing_low
@@ -4151,7 +4151,7 @@ async def send_open_trade(
 
     is_long = direction == "LONG"
 
-    # =============== ENTRY LOGIK ===============
+    # =============== ENTRY LOGIC ===============
     if order_type == "CMP":
         entry1 = live_price
     else:  # LIMIT
@@ -4179,30 +4179,30 @@ async def send_open_trade(
     # sl_pool = [x for x in resistances + hvn_all + fib_ext_up if x > entry2 * 1.01]
     # sl = max(sl_pool) if sl_pool else entry2 * 1.07
 
-    # =============== STOP LOSS – FINAL & PERFEKT ===============
+    # =============== STOP LOSS – FINAL & PERFECT ===============
     if is_long:
-        # LONG: nächster Support/HVN/Fib unter Entry2
+        # LONG: nearest Support/HVN/Fib below Entry2
         sl_candidates = [x for x in supports + hvn_all + fib_retracement if x < entry2 * 0.99]
         sl = min(sl_candidates, key=lambda x: abs(x - entry2)) if sl_candidates else entry2 * 0.93
     else:
-        # SHORT: nächster Widerstand/HVN/FibExt über Entry2
+        # SHORT: nearest resistance/HVN/FibExt above Entry2
         sl_candidates = [x for x in resistances + hvn_all + fib_ext_up if x > entry2 * 1.01]
         sl = min(sl_candidates, key=lambda x: abs(x - entry2)) if sl_candidates else entry2 * 1.07
-        # ← min() = NÄCHSTER, nicht max()!
+        # ← min() = NEAREST, not max()!
 
     # =============== TARGETS ===============
     if is_long:
         target_candidates = [x for x in resistances + hvn_all + fib_ext_up if x > entry1]
-        target_candidates = sorted(target_candidates)  # aufsteigend
+        target_candidates = sorted(target_candidates)  # ascending
     else:
         target_candidates = [x for x in supports + hvn_all + fib_retracement + fib_ext_down if x < entry1 and x > 0]
-        target_candidates = sorted(target_candidates, reverse=True)  # absteigend
+        target_candidates = sorted(target_candidates, reverse=True)  # descending
 
     # Profit %
     def profit(entry, target):
         return (target - entry) / entry * 100 if is_long else (entry - target) / entry * 100
 
-    # Kategorisieren
+    # Categorize
     daily = [(p, profit(entry1, p)) for p in target_candidates if 0 < profit(entry1, p) <= 8]
     mid = [(p, profit(entry1, p)) for p in target_candidates if 8 < profit(entry1, p) <= 25]
     long_t = [(p, profit(entry1, p)) for p in target_candidates if profit(entry1, p) > 25]
@@ -4214,7 +4214,7 @@ async def send_open_trade(
     avg_reward = sum(p[1] for p in daily[:3]) / min(3, len(daily)) if daily else 3
     rrr = avg_reward / avg_risk if avg_risk > 0 else 0.01
 
-    # =============== AUSGABE (neuer Stil) ===============
+    # =============== OUTPUT (new style) ===============
     html = f"""
 <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; font-family: 'Courier New', monospace; font-size:14px; line-height:1.6; border-left: 5px solid #00ffff;">
 <b style="color:#00ffff;">Trade Signal for <a href="https://t.me/{username}">@ {username}</a></b>
@@ -4248,7 +4248,7 @@ async def send_open_trade(
 </pre>
 """
 
-    # Video oder Text
+    # Video or text
     if post_video:
         video = "botlong.mp4" if is_long else "botshort.mp4"
         if Path(video).exists():
@@ -4263,7 +4263,7 @@ async def send_open_trade(
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or update.effective_user.full_name or "Trader"
 
-    # ========================================= !HELP mit Bild =========================================
+    # ========================================= !HELP with image =========================================
     html = f"""
 <pre style="background:#1e1e1e; color:#ffffff; padding:18px; border-radius:14px; font-family: 'Courier New', monospace; font-size:14px; line-height:1.8; border-left: 6px solid #00ffff;">
 <b style="color:#00ffff; font-size:18px;">Bot Commands – requested by <a href="https://t.me/{username}">@{username}</a></b>
@@ -4282,7 +4282,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <b style="color:#ff00ff;">├─ Trade Signals</b>
    <b style="color:lime;">!open [CMP|LIMIT] [LONG|SHORT] [COIN] [LEVERAGE] [-V]</b>
-       → Professional trade signal (optional mit Video)
+       → Professional trade signal (optionally with video)
 
 <b style="color:#ffff00;">├─ Market Overview</b>
    <b style="color:#00ff88;">!sentiment</b>       → Global mood (Fear&Greed, X, Hyperliquid)
@@ -4311,7 +4311,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
    <b style="color:#00ff88;">!latestnews</b>         → Latest crypto news
    <b style="color:#00ff88;">!pumpstats</b>          → Latest pump detections
    <b style="color:#00ff88;">!help</b>               → This beautiful message
-   ← du bist hier
+   ← you are here
    <b style="color:#00ff88;">!version</b>            → Bot changelog
 
 <b style="color:#ff00ff;">└─ Examples</b>
@@ -4324,7 +4324,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 </pre>
 """.strip()
 
-    # KEIN BILD – nur reine Textnachricht → 4096 Zeichen frei!
+    # NO IMAGE – plain text message only → 4096 characters free!
     await update.message.reply_html(html)
 
 
@@ -4334,30 +4334,30 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # """
 # !ai [hours] [coin] [direction] [model]
-# Mögliche Parameter (in beliebiger Reihenfolge):
-# - Zahl → Stunden (z.B. 24)
-# - Coin-Symbol (z.B. BTC, SOL) → wird zu BTCUSDT
-# - long / short → Direction-Filter
-# - EPD1 / MIS1 / ATS1 → Modell-Filter
-# Beispiele:
-# !ai                  → letzte 100 Signale
-# !ai 24               → letzte 24 Stunden
-# !ai BTC              → nur BTCUSDT
-# !ai long             → nur LONG-Signale
-# !ai MIS1             → nur MIS1-Modell
-# !ai long 48 MIS1     → LONG-Signale von MIS1 in letzten 48h
+# Possible parameters (in any order):
+# - Number → hours (e.g. 24)
+# - Coin symbol (e.g. BTC, SOL) → becomes BTCUSDT
+# - long / short → direction filter
+# - EPD1 / MIS1 / ATS1 → model filter
+# Examples:
+# !ai                  → last 100 signals
+# !ai 24               → last 24 hours
+# !ai BTC              → only BTCUSDT
+# !ai long             → only LONG signals
+# !ai MIS1             → only MIS1 model
+# !ai long 48 MIS1     → LONG signals from MIS1 in the last 48h
 # """
 # if not update.message or not update.message.text:
 # return
 
-# raw_args = context.args or []  # ← sicher: falls None → leere Liste
+# raw_args = context.args or []  # ← safe: if None → empty list
 # args = [a.strip().upper() for a in raw_args if a.strip()]
-# logged_args = " ".join(raw_args) if raw_args else ""  # ← Fix 2: vermeidet join(None)
+# logged_args = " ".join(raw_args) if raw_args else ""  # ← Fix 2: avoids join(None)
 # #args = [a.strip().upper() for a in context.args if a.strip()]
 # hours = None
 # coin_filter = None
 # direction_filter = None
-# model_prefix = None  # z.B. "MIS1", "EPD1"
+# model_prefix = None  # e.g. "MIS1", "EPD1"
 
 # valid_models = ["EPD1", "MIS1", "ATS1"]
 
@@ -4420,15 +4420,15 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # if not rows:
 # filter_text = []
-# if hours: filter_text.append(f"letzten {hours}h")
+# if hours: filter_text.append(f"last {hours}h")
 # if coin_filter: filter_text.append(coin_filter.replace("USDT", ""))
 # if direction_filter: filter_text.append(direction_filter)
 # if model_prefix: filter_text.append(model_prefix)
 # filter_desc = " (" + " + ".join(filter_text) + ")" if filter_text else ""
-# await update.message.reply_text(f"Keine AI-Signale gefunden{filter_desc}.")
+# await update.message.reply_text(f"No AI signals found{filter_desc}.")
 # return
 
-# # Titel dynamisch
+# # Dynamic title
 # title_parts = ["AI SIGNALS"]
 # if hours: title_parts.append(f"Last {hours}h")
 # if coin_filter: title_parts.append(coin_filter.replace("USDT", ""))
@@ -4447,12 +4447,12 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ts_utc = row['timestamp'].astimezone(pytz.UTC)
 # ts = ts_utc.strftime("%m-%d %H:%M")
 # sym = row['symbol'].replace("USDT", "")
-# full_model = row['model']  # ← voller Name wie "MSI1-168h_pump"
+# full_model = row['model']  # ← full name like "MSI1-168h_pump"
 # dir = row['direction']
 # conf = row['confidence']
 # price = float(row['price'])
 
-# # Farben
+# # Colors
 # dir_color = "#00ff88" if dir == "LONG" else "#ff6688"
 # conf_color = (
 # "#00ff00" if conf >= 0.7 else
@@ -4461,7 +4461,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # "#ff4444"
 # )
 
-# # Modellname auf 18 Zeichen kürzen, falls zu lang (für schönes Alignment)
+# # Truncate model name to 18 characters if too long (for nice alignment)
 # display_model = full_model if len(full_model) <= 18 else full_model[:15] + "..."
 
 # html_lines.append(
@@ -4474,7 +4474,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # html_lines += [
 # '<b style="color:#00ffff;">─────────────────────────────────────────────────────</b>',
 # f'<b style="color:#00ffff;">Requested by <a href="https://t.me/{username}">@{username}</a> • {datetime.now(pytz.UTC).strftime("%H:%M")} UTC</b>',
-# f'<b style="color:#888888;">Total: {len(rows)} Signale</b>'
+# f'<b style="color:#888888;">Total: {len(rows)} signals</b>'
 # ]
 
 # html = f"""
@@ -4487,14 +4487,14 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # except Exception as e:
 # logger.error(f"!ai error: {e}", exc_info=True)
-# await update.message.reply_text("Fehler beim Laden der AI-Signale.")
+# await update.message.reply_text("Error loading the AI signals.")
 
 
 async def ai_signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # SICHERE ARG-PARSING
+    # SAFE ARG PARSING
     raw_args = context.args or []
     args = [a.strip().upper() for a in raw_args if a.strip()]
     logged_args = " ".join(raw_args) if raw_args else ""
@@ -4523,8 +4523,8 @@ async def ai_signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif arg.endswith("USDT"):
             coin_filter = arg
         else:
-            # Alles andere, was nicht Zahl, LONG/SHORT, Modell ist → als Coin interpretieren
-            # Länge bis 12 (für Namen wie 1000PEPEUSDT)
+            # Anything else that's not a number, LONG/SHORT, or model → interpret as coin
+            # Length up to 12 (for names like 1000PEPEUSDT)
             if len(arg) <= 12:
                 coin_filter = arg if arg.endswith("USDT") else arg + "USDT"
 
@@ -4568,7 +4568,7 @@ async def ai_signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not rows:
             filter_text = []
             if hours:
-                filter_text.append(f"letzten {hours}h")
+                filter_text.append(f"last {hours}h")
             if coin_filter:
                 filter_text.append(coin_filter.replace("USDT", ""))
             if direction_filter:
@@ -4576,10 +4576,10 @@ async def ai_signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if model_prefix:
                 filter_text.append(model_prefix)
             filter_desc = " (" + " + ".join(filter_text) + ")" if filter_text else ""
-            await update.message.reply_text(f"Keine AI-Signale gefunden{filter_desc}.")
+            await update.message.reply_text(f"No AI signals found{filter_desc}.")
             return
 
-        # Titel
+        # Title
         title_parts = ["AI SIGNALS"]
         if hours:
             title_parts.append(f"Last {hours}h")
@@ -4591,7 +4591,7 @@ async def ai_signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             title_parts.append(model_prefix)
         title = " • ".join(title_parts)
 
-        # In Chunks von max. 50 Signalen splitten
+        # Split into chunks of max. 50 signals
         chunk_size = 50
         chunks = [rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)]
 
@@ -4627,19 +4627,19 @@ async def ai_signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     f"<code>${price:,.0f}</code>"
                 )
 
-            if idx == len(chunks) - 1:  # letzte Nachricht
+            if idx == len(chunks) - 1:  # last message
                 html_lines += [
                     '<b style="color:#00ffff;">─────────────────────────────────────────────────────</b>',
                     f'<b style="color:#00ffff;">Requested by <a href="https://t.me/{username}">@{username}</a> • {datetime.now(pytz.UTC).strftime("%H:%M")} UTC</b>',
-                    f'<b style="color:#888888;">Total: {len(rows)} Signale ({len(chunks)} Nachricht{"en" if len(chunks) > 1 else ""})</b>',
+                    f'<b style="color:#888888;">Total: {len(rows)} signals ({len(chunks)} message{"s" if len(chunks) > 1 else ""})</b>',
                 ]
             else:
                 html_lines.append(
-                    f'<b style="color:#888888;">... Fortsetzung in nächster Nachricht ({idx + 1}/{len(chunks)})</b>'
+                    f'<b style="color:#888888;">... continued in next message ({idx + 1}/{len(chunks)})</b>'
                 )
 
-            # CI-Fix (2026-07-06): Backslash im f-String-Ausdruck ist erst ab
-            # Python 3.12 (PEP 701) legal — der Syntax-Check läuft auf 3.11.
+            # CI fix (2026-07-06): a backslash in an f-string expression is only legal
+            # from Python 3.12 (PEP 701) onward — the syntax check runs on 3.11.
             joined_html_lines = "\n".join(html_lines)
             html = f"""
 <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; font-family:'Courier New', monospace; font-size:14px; line-height:1.7; border-left: 6px solid #00ffff;">
@@ -4651,10 +4651,10 @@ async def ai_signals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     except Exception as e:
         logger.error(f"!ai error: {e}", exc_info=True)
-        await update.message.reply_text("Fehler beim Laden der AI-Signale.")
+        await update.message.reply_text("Error loading the AI signals.")
 
 
-# ========================================= !VERSION mit Bild =========================================
+# ========================================= !VERSION with image =========================================
 async def version_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or update.effective_user.full_name or "Trader"
 
@@ -4673,7 +4673,7 @@ async def version_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 </pre>
 """.strip()
 
-    # Bild + Caption senden
+    # Send image + caption
     if Path("bot.jpg").exists():
         with open("bot.jpg", "rb") as photo:
             await update.message.reply_photo(photo=photo, caption=html, parse_mode="HTML")
@@ -4683,7 +4683,7 @@ async def version_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========================================= 1min candle job =========================================
 async def load_1minute_data():
-    """Beim Bot-Start: JSON vom letzten Lauf laden (falls vorhanden)"""
+    """At bot start: load JSON from the last run (if present)"""
     global ONE_MINUTE_DATA
     if DATA_FILE.exists():
         try:
@@ -4691,7 +4691,7 @@ async def load_1minute_data():
                 raw = json.load(f)
             ONE_MINUTE_DATA = {}
             for symbol, entries in raw.items():
-                # Nur letzte 240 Einträge behalten (4h)
+                # Only keep the last 240 entries (4h)
                 dq = deque(maxlen=1440)
                 for entry in entries[-1440:]:
                     dq.append(entry)
@@ -4705,7 +4705,7 @@ async def load_1minute_data():
 
 
 async def save_1minute_data():
-    """Sicheres Speichern aller Daten (z. B. alle 10 Minuten oder beim Shutdown)"""
+    """Safe saving of all data (e.g. every 10 minutes or on shutdown)"""
     try:
         raw = {sym: list(dq) for sym, dq in ONE_MINUTE_DATA.items()}
         with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -4717,15 +4717,15 @@ async def save_1minute_data():
 
 async def one_minute_ticker_job():
     """
-    Läuft exakt alle 10 Sekunden (UTC: :00, :10, :20, :30, :40, :50)
-    Speichert Preis + echtes 10-Sekunden-Volume (Differenz)
+    Runs exactly every 10 seconds (UTC: :00, :10, :20, :30, :40, :50)
+    Stores price + real 10-second volume (difference)
     """
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
         while True:
             try:
                 now = datetime.now(pytz.UTC)
 
-                # Nächsten 10-Sekunden-Schritt berechnen (z. B. 12:34:50 → 12:35:00)
+                # Calculate the next 10-second step (e.g. 12:34:50 → 12:35:00)
                 seconds = now.second
                 next_tick = now.replace(microsecond=0) + timedelta(
                     seconds=(10 - seconds % 10) if seconds % 10 != 0 else 10
@@ -4733,13 +4733,13 @@ async def one_minute_ticker_job():
 
                 sleep_time = (next_tick - datetime.now(pytz.UTC)).total_seconds()
                 if sleep_time <= 0:
-                    sleep_time = 10  # Sicherheit
+                    sleep_time = 10  # Safety
 
                 await asyncio.sleep(sleep_time)
 
-                # --- Exakter Zeitpunkt (immer :00, :10, :20, …) ---
+                # --- Exact timestamp (always :00, :10, :20, …) ---
                 timestamp = datetime.now(pytz.UTC)
-                ts_str = timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")  # z. B. 2025-12-08T12:34:50Z
+                ts_str = timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")  # e.g. 2025-12-08T12:34:50Z
 
                 async with session.get("https://fapi.binance.com/fapi/v1/ticker/24hr") as resp:
                     if resp.status != 200:
@@ -4754,27 +4754,27 @@ async def one_minute_ticker_job():
                         continue
 
                     current_price = float(item["lastPrice"])
-                    current_cum_volume = float(item["volume"])  # kumulatives 24h-Volume
+                    current_cum_volume = float(item["volume"])  # cumulative 24h volume
 
-                    # Vorherigen Eintrag holen für Volume-Differenz
+                    # Get previous entry for the volume difference
                     prev_volume = None
                     if symbol in ONE_MINUTE_DATA and ONE_MINUTE_DATA[symbol]:
                         prev_volume = ONE_MINUTE_DATA[symbol][-1].get("cum_vol")
 
-                    # 10-Sekunden-Volume berechnen
+                    # Compute 10-second volume
                     volume_10s = (current_cum_volume - prev_volume) if prev_volume is not None else 0.0
-                    if volume_10s < 0:  # sehr selten beim 24h-Rollover
+                    if volume_10s < 0:  # very rare during the 24h rollover
                         volume_10s = 0.0
 
                     entry = {
                         "t": ts_str,  # 2025-12-08T12:34:50Z
-                        "p": current_price,  # aktueller Preis
-                        "v10s": round(volume_10s, 8),  # echtes 10-Sekunden-Volume
-                        "cum_vol": current_cum_volume,  # nur intern für nächste Berechnung
+                        "p": current_price,  # current price
+                        "v10s": round(volume_10s, 8),  # real 10-second volume
+                        "cum_vol": current_cum_volume,  # only internal, for the next calculation
                     }
 
                     if symbol not in ONE_MINUTE_DATA:
-                        ONE_MINUTE_DATA[symbol] = deque(maxlen=1440)  # 10s → 4 Stunden = 1440 Punkte
+                        ONE_MINUTE_DATA[symbol] = deque(maxlen=1440)  # 10s → 4 hours = 1440 points
                     ONE_MINUTE_DATA[symbol].append(entry)
                     updated_count += 1
 
@@ -4783,7 +4783,7 @@ async def one_minute_ticker_job():
                     f"sleep {sleep_time:.1f}s → next @ {next_tick.strftime('%H:%M:%S')} UTC"
                 )
 
-                # Optional: alle 10 Minuten auf Festplatte sichern
+                # Optional: save to disk every 10 minutes
                 if timestamp.minute % 10 == 0 and timestamp.second == 0:
                     asyncio.create_task(save_1minute_data())
 
@@ -4801,7 +4801,7 @@ async def volume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # Optional: !volume 5 → nur Spikes ≥5× (statt Standard 3×)
+    # Optional: !volume 5 → only spikes ≥5× (instead of default 3×)
     args = context.args
     min_spike = float(args[0]) if args and args[0].replace('.', '').isdigit() else 3.0
     top_n = 20
@@ -4870,12 +4870,12 @@ async def detect_volume_spikes_async(min_spike: float = 10.0, top_n: int = 50):
     start_4h = now - timedelta(hours=4)
     start_7d = now - timedelta(days=7)
 
-    conn = await get_conn()  # ← RICHTIG!
+    conn = await get_conn()  # ← CORRECT!
     try:
         for symbol in coins:
             tablename = f'"{symbol}_30m"'
             try:
-                # 4h Daten
+                # 4h data
                 rows_4h = await conn.fetch(
                     f"""
                     SELECT volume, close FROM {tablename}
@@ -4894,7 +4894,7 @@ async def detect_volume_spikes_async(min_spike: float = 10.0, top_n: int = 50):
                 if usd_vol_4h < 250_000:
                     continue
 
-                # 7d Durchschnitt
+                # 7d average
                 rows_7d = await conn.fetch(
                     f"""
                     SELECT volume FROM {tablename}
@@ -4923,7 +4923,7 @@ async def detect_volume_spikes_async(min_spike: float = 10.0, top_n: int = 50):
                 logger.debug(f"Volume spike skip {symbol}: {e}")
                 continue
     finally:
-        await release_conn(conn)  # ← IMMER schließen!
+        await release_conn(conn)  # ← ALWAYS close!
 
     spikes.sort(key=lambda x: x['spike_ratio'], reverse=True)
     return spikes[:top_n]
@@ -4931,8 +4931,8 @@ async def detect_volume_spikes_async(min_spike: float = 10.0, top_n: int = 50):
 
 # ============================== !volatile HANDLER ==============================
 async def volatile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... dein Anfang bis try: ...
-    # === HIER FEHLTE DAS! ===
+    # ... your beginning up to try: ...
+    # === THIS WAS MISSING HERE! ===
     args = context.args
     min_range_percent = float(args[0]) if args and args[0].replace('.', '').isdigit() else 10.0
     top_n = 20
@@ -4949,7 +4949,7 @@ async def volatile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         now = datetime.now(pytz.UTC)
         start_4h = now - timedelta(hours=4)
 
-        conn = await get_conn()  # ← RICHTIG!
+        conn = await get_conn()  # ← CORRECT!
         try:
             for symbol in coins:
                 tablename = f'"{symbol}_30m"'
@@ -4988,11 +4988,11 @@ async def volatile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.warning(f"Volatile error {symbol}: {e}")
                     continue
         finally:
-            await release_conn(conn)  # ← IMMER schließen!
+            await release_conn(conn)  # ← ALWAYS close!
 
-        # ... dein kompletter HTML-Output bleibt 100% gleich ...
+        # ... your complete HTML output stays 100% the same ...
 
-        # Sortieren nach Range absteigend
+        # Sort by range descending
         volatile_coins.sort(key=lambda x: x['range'], reverse=True)
         volatile_coins = volatile_coins[:top_n]
 
@@ -5000,7 +5000,7 @@ async def volatile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"No coins with ≥{min_range_percent}% range in last 4h.")
             return
 
-        # === WUNDERSCHÖNES HTML-DESIGN ===
+        # === GORGEOUS HTML DESIGN ===
         border_color = "#ff00ff" if min_range_percent >= 15 else "#00ff88"
         title = f"TOP {len(volatile_coins)} VOLATILE COINS (4h Range ≥{min_range_percent}%)"
 
@@ -5035,11 +5035,11 @@ async def volatile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
-    # 1. Daten holen & Validierung (Standard)
+    # 1. Fetch data & validate (standard)
     if symbol not in ONE_MINUTE_DATA or len(ONE_MINUTE_DATA[symbol]) < 5:
         return None
 
-    # Buffer & Daten laden
+    # Load buffer & data
     buffer_needed = int(minutes * 6 * 1.2)
     full_history = list(ONE_MINUTE_DATA[symbol])
     data = full_history[-buffer_needed:]
@@ -5052,7 +5052,7 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
     df = df.set_index('t').sort_index()
     df = df.dropna(subset=['p', 'v10s'])
 
-    # Zeit-Filter
+    # Time filter
     cutoff_time = df.index[-1] - pd.Timedelta(minutes=minutes)
     df = df[df.index >= cutoff_time]
     if len(df) < 2:
@@ -5061,34 +5061,34 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
     price = df['p'].astype(float)
     volume = df['v10s'].astype(float)
 
-    # Minuten-Berechnung
+    # Minute calculation
     diff_seconds = (df.index[-1] - df.index[0]).total_seconds()
     actual_minutes = int(round(diff_seconds / 60))
     if actual_minutes < 1:
         actual_minutes = 1
 
-    # === SMOOTHING LOGIK (Der Gamechanger) ===
+    # === SMOOTHING LOGIC (the gamechanger) ===
 
-    # 1. Zahlen für X-Achse
+    # 1. Numbers for the X axis
     x_dates = mdates.date2num(df.index)
     y_price = price.values
 
-    # 2. "Weichzeichner" anwenden (Gaussian Filter)
-    # sigma=2 bedeutet: Er glättet über ca. 2-3 Nachbarwerte (20-30 Sekunden).
-    # Je höher Sigma, desto runder (aber ungenauer) wird der Chart.
-    # sigma=2 ist ein guter Kompromiss für 10s Daten.
+    # 2. Apply "blur" (Gaussian filter)
+    # sigma=2 means: it smooths over roughly 2-3 neighboring values (20-30 seconds).
+    # The higher sigma, the rounder (but less accurate) the chart becomes.
+    # sigma=2 is a good compromise for 10s data.
     y_smoothed_gauss = gaussian_filter1d(y_price, sigma=2)
 
-    # 3. Auflösung erhöhen (Spline)
-    # Jetzt ziehen wir die Kurve durch die BEREITS WEICHEN Punkte.
-    # Wir erzeugen 300 Punkte für eine butterweiche Linie.
+    # 3. Increase resolution (spline)
+    # Now we draw the curve through the ALREADY SMOOTHED points.
+    # We generate 300 points for a buttery-smooth line.
     x_smooth = np.linspace(x_dates.min(), x_dates.max(), 300)
 
-    # Wir nutzen hier make_interp_spline (B-Spline), das wirkt organischer als PCHIP
+    # We use make_interp_spline (B-spline) here, which looks more organic than PCHIP
     spline = make_interp_spline(x_dates, y_smoothed_gauss, k=3)
     y_smooth = spline(x_smooth)
 
-    # Rückumwandlung für Plot
+    # Convert back for the plot
     x_smooth_dates = mdates.num2date(x_smooth)
 
     # === PLOT SETUP ===
@@ -5099,7 +5099,7 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
     ax_vol = ax_price.twinx()
     ax_vbp = fig.add_subplot(gs[0, 1])
 
-    # Farbe basierend auf ECHTEN Start/Ende Daten (nicht geglättet)
+    # Color based on REAL start/end data (not smoothed)
     is_up = price.iloc[-1] >= price.iloc[0]
 
     # === VOLUMEN ===
@@ -5109,7 +5109,7 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
 
     vol_colors = ['#00ff88' if i == 0 or price.iloc[i] >= price.iloc[i - 1] else '#ff3040' for i in range(len(price))]
 
-    # Breite für Volumenbalken
+    # Width for volume bars
     if len(df) > 1:
         avg_step = df.index.to_series().diff().median().total_seconds()
         width = (avg_step / 86400) * 0.9
@@ -5127,12 +5127,12 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
         x_smooth_dates, y_smooth, price.min(), color="#00ff88" if is_up else "#ff3040", alpha=0.2, zorder=2
     )
 
-    # Linie (Smooth)
+    # Line (Smooth)
     ax_price.plot(x_smooth_dates, y_smooth, color="#00ffff", linewidth=2.5, zorder=3)
 
-    # === WICHTIG: AKTUELLE PREISANZEIGE ===
-    # Wir zeigen den ECHTEN letzten Preis an, auch wenn die Smooth-Kurve leicht abweicht.
-    # Damit der Nutzer den exakten Wert sieht.
+    # === IMPORTANT: CURRENT PRICE DISPLAY ===
+    # We show the REAL last price, even if the smoothed curve deviates slightly.
+    # So the user sees the exact value.
     last_real_price = price.iloc[-1]
 
     ax_price.axhline(last_real_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
@@ -5149,7 +5149,7 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
         bbox=dict(facecolor='#1e1e1e', edgecolor='none', pad=5),
     )
 
-    # === VOLUME BY PRICE (Rechts) ===
+    # === VOLUME BY PRICE (right) ===
     ax_vbp.set_facecolor("#0d0d0d")
     bins = np.linspace(price.min() * 0.995, price.max() * 1.005, 45)
     hist, _ = np.histogram(price, bins=bins, weights=volume)
@@ -5177,7 +5177,7 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
             linewidth=0.6,
         )
 
-    ax_vbp.set_ylim(ax_price.get_ylim())  # WICHTIG: Sync mit Price-Limits
+    ax_vbp.set_ylim(ax_price.get_ylim())  # IMPORTANT: sync with price limits
     ax_vbp.invert_xaxis()
     ax_vbp.set_xlabel('Vol', color='#ff69b4', fontsize=10)
     ax_vbp.tick_params(colors='#ff69b4', labelsize=8)
@@ -5206,7 +5206,7 @@ async def generate_smooth_minichart_image(symbol: str, minutes: int = 60) -> Byt
     ax_price.xaxis.set_major_locator(locator)
     ax_price.xaxis.set_major_formatter(DateFormatter('%H:%M'))
 
-    # Limits auf die ECHTEN Daten setzen (damit Anfang/Ende stimmen)
+    # Set limits on the REAL data (so start/end are accurate)
     ax_price.set_xlim(df.index[0], df.index[-1])
 
     plt.subplots_adjust(left=0.05, right=0.9, top=0.9, bottom=0.1)
@@ -5226,13 +5226,13 @@ async def smooth_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = text.split()
 
     if len(parts) < 2:
-        await update.message.reply_text("Usage: !smooth <COIN> [minutes]\nBeispiel: !smooth BTC 120")
+        await update.message.reply_text("Usage: !smooth <COIN> [minutes]\nExample: !smooth BTC 120")
         return
 
     symbol_raw = parts[1].upper()
     valid_symbol = await validate_symbol(symbol_raw)
     if not valid_symbol:
-        await update.message.reply_text(f"Coin nicht gefunden: {symbol_raw}")
+        await update.message.reply_text(f"Coin not found: {symbol_raw}")
         return
     symbol = valid_symbol
 
@@ -5264,14 +5264,14 @@ async def smooth_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def generate_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
-    # 1. Daten holen
+    # 1. Fetch data
     if symbol not in ONE_MINUTE_DATA or len(ONE_MINUTE_DATA[symbol]) < 5:
         return None
 
-    # DEBUG: Druckt in deine Konsole, wie viele Daten wirklich da sind
+    # DEBUG: prints to your console how much data is actually available
     total_available = len(ONE_MINUTE_DATA[symbol])
     needed = minutes * 6
-    print(f"DEBUG CHART: Angefordert {minutes}m ({needed} pts), Verfügbar: {total_available} pts")
+    print(f"DEBUG CHART: Requested {minutes}m ({needed} pts), Available: {total_available} pts")
 
     data = list(ONE_MINUTE_DATA[symbol])[-needed:]
 
@@ -5286,7 +5286,7 @@ async def generate_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
     price = df['p'].astype(float)
     volume = df['v10s'].astype(float)
 
-    # Zeitspanne berechnen (für Titel und Breite)
+    # Calculate the time span (for title and width)
     actual_minutes = int((df.index[-1] - df.index[0]).total_seconds() / 60)
 
     # === SETUP ===
@@ -5294,14 +5294,14 @@ async def generate_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
     gs = fig.add_gridspec(1, 2, width_ratios=[4, 1], wspace=0.05)
 
     ax_price = fig.add_subplot(gs[0, 0])
-    ax_vol = ax_price.twinx()  # Volumen liegt über Preis-Achse
+    ax_vol = ax_price.twinx()  # Volume sits above the price axis
     ax_vbp = fig.add_subplot(gs[0, 1])
 
     is_up = price.iloc[-1] >= price.iloc[0]
 
-    # === VOLUMEN (Zuerst konfigurieren, damit es sichtbar ist) ===
-    # Trick: Wir nehmen das 99% Quantil statt Max.
-    # Wenn ein riesiger Spike da ist, wird er abgeschnitten, aber der Rest ist groß sichtbar.
+    # === VOLUME (configure first so it's visible) ===
+    # Trick: we use the 99% quantile instead of max.
+    # If there's a huge spike, it gets clipped, but the rest is clearly visible.
     if len(volume) > 0 and volume.max() > 0:
         vol_max_scale = volume.quantile(0.99)
         if vol_max_scale == 0:
@@ -5309,15 +5309,15 @@ async def generate_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
     else:
         vol_max_scale = 1
 
-    # Farben
+    # Colors
     vol_colors = ['#00ff88' if i == 0 or price.iloc[i] >= price.iloc[i - 1] else '#ff3040' for i in range(len(price))]
 
-    # Breite: Wir machen die Balken künstlich etwas breiter als den Zeitschritt
-    # damit keine Lücken entstehen (sieht "voller" aus)
-    time_diffs = df.index.to_series().diff().dt.total_seconds().median()  # meist 10s
+    # Width: we make the bars artificially a bit wider than the time step
+    # so no gaps appear (looks "fuller")
+    time_diffs = df.index.to_series().diff().dt.total_seconds().median()  # usually 10s
     if pd.isna(time_diffs):
         time_diffs = 10
-    width_days = (time_diffs / 86400) * 0.9  # Umrechnung in Tage für Matplotlib
+    width_days = (time_diffs / 86400) * 0.9  # convert to days for Matplotlib
 
     # Plot
     ax_vol.bar(
@@ -5325,23 +5325,23 @@ async def generate_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
         volume,
         color=vol_colors,
         width=width_days,
-        alpha=0.5,  # Nicht zu transparent machen!
+        alpha=0.5,  # don't make it too transparent!
         align='center',
         zorder=1,
-    )  # Ganz hinten
+    )  # right at the back
 
-    # SKALIERUNG: Das Volumen soll das untere Viertel (25%) einnehmen
-    # Wir setzen das Limit auf 4x den max-Wert.
+    # SCALING: the volume should occupy the bottom quarter (25%)
+    # We set the limit to 4x the max value.
     ax_vol.set_ylim(0, vol_max_scale * 4.0)
-    ax_vol.axis('off')  # Keine Achsenbeschriftung für Volumen links
+    ax_vol.axis('off')  # No axis labeling for volume on the left
 
-    # === PREIS ===
+    # === PRICE ===
     # Area
     ax_price.fill_between(price.index, price, price.min(), color="#00ff88" if is_up else "#ff3040", alpha=0.2, zorder=2)
-    # Linie
+    # Line
     ax_price.plot(price.index, price, color="#00ffff", linewidth=2.5, zorder=3)
 
-    # Letzter Preis Marker
+    # Last price marker
     ax_price.axhline(price.iloc[-1], color="white", linewidth=1, linestyle="--", alpha=0.5)
     # ax_price.text(1.01, price.iloc[-1], f"{price.iloc[-1]:,.4f}",
     # transform=ax_price.get_yaxis_transform(),
@@ -5391,7 +5391,7 @@ async def generate_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
     # === STYLING ===
     coin = symbol.replace("USDT", "")
 
-    # Titel zeigt echte gefundene Zeit an
+    # Title shows the actual time found
     title_time = f"{actual_minutes}min" if actual_minutes > 0 else f"{minutes}min"
 
     ax_price.set_title(
@@ -5407,16 +5407,16 @@ async def generate_minichart_image(symbol: str, minutes: int = 60) -> BytesIO:
     ax_price.set_facecolor("#0d0d0d")
     ax_price.spines[['top', 'right', 'left', 'bottom']].set_visible(False)
 
-    # X-Achse Formatieren
+    # Format X axis
     ax_price.tick_params(axis='x', colors='#888888', labelsize=10)
     ax_price.tick_params(axis='y', colors='#888888', labelsize=10)
 
-    # Locator für Zeitachse
+    # Locator for the time axis
     locator = MinuteLocator(interval=max(1, int(actual_minutes / 6)))
     ax_price.xaxis.set_major_locator(locator)
     ax_price.xaxis.set_major_formatter(DateFormatter('%H:%M'))
 
-    # Limits hart setzen
+    # Hard-set limits
     ax_price.set_xlim(df.index[0], df.index[-1])
 
     plt.subplots_adjust(left=0.05, right=0.9, top=0.9, bottom=0.1)
@@ -5436,13 +5436,13 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = text.split()
 
     if len(parts) < 2:
-        await update.message.reply_text("Usage: !minichart <COIN> [minutes]\nBeispiel: !minichart BTC 120")
+        await update.message.reply_text("Usage: !minichart <COIN> [minutes]\nExample: !minichart BTC 120")
         return
 
     symbol_raw = parts[1].upper()
     valid_symbol = await validate_symbol(symbol_raw)
     if not valid_symbol:
-        await update.message.reply_text(f"Coin nicht gefunden: {symbol_raw}")
+        await update.message.reply_text(f"Coin not found: {symbol_raw}")
         return
     symbol = valid_symbol
 
@@ -5459,7 +5459,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     buf = await generate_minichart_image(symbol, minutes)
     if not buf:
-        await update.message.reply_text(f"Keine 1min-Daten für {symbol} verfügbar")
+        await update.message.reply_text(f"No 1min data for {symbol} available")
         return
 
     caption = (
@@ -5473,7 +5473,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========================= SMC GOLD/SILVER DETECTOR  =========================
 
 # async def create_smc_zones_table():
-# """Tabelle für aktive Fair Value Gaps (FVG) und Orderblocks"""
+# """Table for active Fair Value Gaps (FVG) and orderblocks"""
 # conn = await get_conn()
 # try:
 # await conn.execute("""
@@ -5481,7 +5481,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # id BIGSERIAL PRIMARY KEY,
 # symbol TEXT NOT NULL,
 # timeframe TEXT NOT NULL,
-# zone_type TEXT NOT NULL,      -- 'BISI' (Bullish) oder 'SIBI' (Bearish)
+# zone_type TEXT NOT NULL,      -- 'BISI' (Bullish) or 'SIBI' (Bearish)
 # top_edge NUMERIC NOT NULL,
 # bottom_edge NUMERIC NOT NULL,
 # created_time TIMESTAMPTZ NOT NULL,
@@ -5491,14 +5491,14 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # UNIQUE(symbol, timeframe, created_time, zone_type)
 # )
 # """)
-# logger.info("Tabelle 'active_smc_zones' bereit")
+# logger.info("Table 'active_smc_zones' ready")
 # except Exception as e:
-# logger.error(f"Fehler beim Erstellen von active_smc_zones: {e}")
+# logger.error(f"Error creating active_smc_zones: {e}")
 # finally:
 # await release_conn(conn)
 
 
-# # Die Coins, die exklusiv nach SMC getrackt werden sollen
+# # The coins that should be tracked exclusively via SMC
 # SMC_METALS = ['PAXGUSDT', 'XAGUSDT', 'XAUUSDT']
 # SMC_TIMEFRAMES = {
 # '15m': '15min',
@@ -5512,21 +5512,21 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # async def smc_fvg_detector():
 # """
-# Sucht nach neuen FVGs und Mitigations für Edelmetalle auf Multi-Timeframes.
-# Läuft alle 5 Minuten.
+# Searches for new FVGs and mitigations for precious metals on multiple timeframes.
+# Runs every 5 minutes.
 # """
-# logger.info("SMC / ICT FVG Detector gestartet")
-# await asyncio.sleep(15) # Kurz warten nach Bot-Start
+# logger.info("SMC / ICT FVG Detector started")
+# await asyncio.sleep(15) # Wait briefly after bot start
 
 # while True:
 # try:
 # now = datetime.now(pytz.UTC)
 
 # for symbol in SMC_METALS:
-# # 1. Basis-Daten aus der DB holen (Wir nutzen 15m als Basis für alles unter 1h, und 1h für den Rest)
+# # 1. Fetch base data from the DB (we use 15m as the base for everything below 1h, and 1h for the rest)
 # conn = await get_conn()
 # try:
-# # Hole 1h Daten für die großen Timeframes (letzte 60 Tage)
+# # Fetch 1h data for the larger timeframes (last 60 days)
 # rows_1h = await conn.fetch(f"""
 # SELECT open_time, open, high, low, close
 # FROM "{symbol}_1h"
@@ -5534,7 +5534,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ORDER BY open_time ASC
 # """)
 
-# # Hole 15m Daten für kleine Timeframes (letzte 7 Tage)
+# # Fetch 15m data for the smaller timeframes (last 7 days)
 # rows_15m = []
 # if await table_exists_async(conn, f"{symbol}_15m"):
 # rows_15m = await conn.fetch(f"""
@@ -5550,7 +5550,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # df_15m = pd.DataFrame([dict(r) for r in rows_15m]) if rows_15m else pd.DataFrame()
 
 # for tf_name, tf_rule in SMC_TIMEFRAMES.items():
-# # Passendes Basis-DF auswählen
+# # Select the matching base DF
 # if tf_name in ['15m', '30m'] and not df_15m.empty:
 # base_df = df_15m.copy()
 # elif not df_1h.empty:
@@ -5561,7 +5561,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # base_df['open_time'] = pd.to_datetime(base_df['open_time'], utc=True)
 # base_df.set_index('open_time', inplace=True)
 
-# # Resampling auf den Ziel-Timeframe (z.B. 4h, 1D)
+# # Resampling to the target timeframe (e.g. 4h, 1D)
 # if tf_name not in ['15m', '1h']:
 # df_resampled = base_df.resample(tf_rule).agg({
 # 'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'
@@ -5572,14 +5572,14 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # if len(df_resampled) < 5:
 # continue
 
-# # Aktueller Preis zum Prüfen der Mitigation
+# # Current price to check the mitigation
 # current_price = df_resampled['close'].iloc[-1]
 # current_high = df_resampled['high'].iloc[-1]
 # current_low = df_resampled['low'].iloc[-1]
 
-# # --- PHASE 1: NEUE FVG ERKENNEN ---
-# # Wir prüfen Kerze -3 (C1), Kerze -2 (C2), Kerze -1 (C3)
-# # (Index -1 ist die letzte GESCHLOSSENE oder aktuell offene, wir nehmen die letzten 3 vollendeten)
+# # --- PHASE 1: DETECT NEW FVG ---
+# # We check candle -3 (C1), candle -2 (C2), candle -1 (C3)
+# # (Index -1 is the last CLOSED or currently open one, we take the last 3 completed)
 # c1 = df_resampled.iloc[-4]
 # c2 = df_resampled.iloc[-3]
 # c3 = df_resampled.iloc[-2]
@@ -5604,9 +5604,9 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # fvg_created = True
 
 # if fvg_created:
-# c1_time = df_resampled.index[-4] # Zeitstempel der Entstehung
+# c1_time = df_resampled.index[-4] # Timestamp of creation
 
-# # In DB eintragen (ON CONFLICT DO NOTHING)
+# # Insert into DB (ON CONFLICT DO NOTHING)
 # conn2 = await get_conn()
 # try:
 # res = await conn2.execute("""
@@ -5616,7 +5616,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ON CONFLICT DO NOTHING
 # """, symbol, tf_name, fvg_type, top_edge, bottom_edge, c1_time)
 
-# # Wenn wirklich neu eingefügt, dann posten!
+# # If actually newly inserted, then post!
 # if res.endswith("1"):
 # color = "#00ff88" if "Bullish" in fvg_type else "#ff4466"
 # msg = f"""
@@ -5633,7 +5633,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # finally:
 # await release_conn(conn2)
 
-# # --- PHASE 2: MITIGATION (RETEST) PRÜFEN ---
+# # --- PHASE 2: CHECK MITIGATION (RETEST) ---
 # conn3 = await get_conn()
 # try:
 # active_zones = await conn3.fetch("""
@@ -5650,15 +5650,15 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # mitigated = False
 
-# # Mitigation Bullish (Preis fällt in die Lücke / unter das Top)
+# # Mitigation bullish (price falls into the gap / below the top)
 # if "BISI" in z_type and current_low <= z_top:
 # mitigated = True
-# # Mitigation Bearish (Preis steigt in die Lücke / über den Boden)
+# # Mitigation bearish (price rises into the gap / above the bottom)
 # elif "SIBI" in z_type and current_high >= z_bot:
 # mitigated = True
 
 # if mitigated:
-# # In DB updaten
+# # Update in DB
 # await conn3.execute("UPDATE active_smc_zones SET mitigated = TRUE, mitigated_time = NOW() WHERE id = $1", z_id)
 
 # color = "#00ff88" if "BISI" in z_type else "#ff4466"
@@ -5677,7 +5677,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # finally:
 # await release_conn(conn3)
 
-# await asyncio.sleep(300) # Alle 5 Minuten prüfen
+# await asyncio.sleep(300) # Check every 5 minutes
 
 # except asyncio.CancelledError:
 # raise
@@ -5685,7 +5685,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # logger.error(f"SMC Detector Crash: {e}", exc_info=True)
 # await asyncio.sleep(60)
 
-# # Kleiner Helfer, um zu prüfen ob 15m Tabellen da sind
+# # Small helper to check whether 15m tables exist
 # async def table_exists_async(conn, table_name):
 # try:
 # val = await conn.fetchval("SELECT to_regclass($1)", f'"{table_name}"')
@@ -5694,7 +5694,7 @@ async def minichart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # return False
 
 
-# ========================= SMC / ICT GOLD & SILBER BOT =========================
+# ========================= SMC / ICT GOLD & SILVER BOT =========================
 SMC_METALS = ['PAXGUSDT', 'XAGUSDT', 'XAUUSDT']
 METALS_CHANNEL_ID = "0"
 SMC_TIMEFRAMES = {
@@ -5708,12 +5708,12 @@ SMC_TIMEFRAMES = {
     '1w': '1W',
 }
 
-# Globale Variable, um zu tracken, ob die Historie schon gescannt wurde
+# Global variable to track whether the history has already been scanned
 HISTORICAL_SCANNED = set()
 
 
 async def fetch_and_store_metal_data():
-    """Holt 15m und 1h Kerzen. Smart Fetch: 1000 bei Init, sonst 10."""
+    """Fetches 15m and 1h candles. Smart fetch: 1000 on init, otherwise 10."""
     endpoints = ["15m", "1h"]
     conn = await get_conn()
     try:
@@ -5737,7 +5737,7 @@ async def fetch_and_store_metal_data():
                     params = {'symbol': symbol, 'interval': interval, 'limit': limit}
                     data = []
 
-                    # Versuch 1: Futures, Versuch 2: Spot
+                    # Attempt 1: Futures, attempt 2: Spot
                     async with session.get("https://fapi.binance.com/fapi/v1/klines", params=params) as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -5767,21 +5767,21 @@ async def fetch_and_store_metal_data():
                         tuples,
                     )
     except Exception as e:
-        logger.error(f"Autarker Metals Fetch Error: {e}")
+        logger.error(f"Autonomous metals fetch error: {e}")
     finally:
         await release_conn(conn)
 
 
 async def _run_historical_catchup(df_resampled, symbol, tf_name):
     """
-    Sucht EINMALIG in der gesamten geladenen Historie nach FVGs.
-    Prüft sofort mit Pandas min/max, ob sie in der Zukunft gefüllt wurden.
-    Schreibt nur noch OFFENE lautlos in die Datenbank.
+    Searches ONCE through the entire loaded history for FVGs.
+    Immediately checks with Pandas min/max whether they were filled in the future.
+    Silently writes only OPEN ones to the database.
     """
-    logger.info(f"Führe historischen Catch-Up für {symbol} ({tf_name}) durch...")
+    logger.info(f"Running historical catch-up for {symbol} ({tf_name})...")
     open_zones = []
 
-    # Wir iterieren über die Historie (Stoppen 3 Kerzen vor Schluss)
+    # We iterate through the history (stopping 3 candles before the end)
     for i in range(len(df_resampled) - 3):
         c1 = df_resampled.iloc[i]
         c2 = df_resampled.iloc[i + 1]
@@ -5801,7 +5801,7 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
             bottom_edge = c3['high']
 
         if fvg_type:
-            # Prüfen ob in der Zukunft (ab i+3 bis heute) gefüllt
+            # Check whether it was filled in the future (from i+3 to today)
             future_df = df_resampled.iloc[i + 3 :]
             mitigated = False
 
@@ -5814,7 +5814,7 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
             if not mitigated:
                 open_zones.append((symbol, tf_name, fvg_type, top_edge, bottom_edge, df_resampled.index[i]))
 
-    # In die DB schreiben (ohne Telegram Spam)
+    # Write to the DB (without Telegram spam)
     if open_zones:
         conn = await get_conn()
         try:
@@ -5827,14 +5827,14 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
             """,
                 open_zones,
             )
-            logger.info(f"-> {len(open_zones)} historische, offene FVGs für {symbol} ({tf_name}) importiert.")
+            logger.info(f"-> {len(open_zones)} historical, open FVGs imported for {symbol} ({tf_name}).")
         finally:
             await release_conn(conn)
 
 
 # async def smc_fvg_detector():
-# """Live-Scanner für Edelmetalle (SMC)"""
-# logger.info("SMC / ICT FVG Detector gestartet")
+# """Live scanner for precious metals (SMC)"""
+# logger.info("SMC / ICT FVG Detector started")
 # await asyncio.sleep(5)
 
 # while True:
@@ -5878,13 +5878,13 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
 # if len(df_resampled) < 5:
 # continue
 
-# # --- HISTORICAL CATCH-UP (Einmalig pro Start) ---
+# # --- HISTORICAL CATCH-UP (once per start) ---
 # state_key = f"{symbol}_{tf_name}"
 # if state_key not in HISTORICAL_SCANNED:
 # await _run_historical_catchup(df_resampled, symbol, tf_name)
 # HISTORICAL_SCANNED.add(state_key)
 
-# # --- LIVE PHASE 1: NEUE FVG ERKENNEN (Nur die letzten 3 Kerzen!) ---
+# # --- LIVE PHASE 1: DETECT NEW FVG (only the last 3 candles!) ---
 # current_price = df_resampled['close'].iloc[-1]
 # current_high = df_resampled['high'].iloc[-1]
 # current_low = df_resampled['low'].iloc[-1]
@@ -5914,7 +5914,7 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
 # ON CONFLICT DO NOTHING
 # """, symbol, tf_name, fvg_type, top_edge, bottom_edge, c1_time)
 
-# if res.endswith("1"): # War neu
+# if res.endswith("1"): # Was new
 # color = "#00ff88" if "Bullish" in fvg_type else "#ff4466"
 # msg = f"""
 # <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; border-left:6px solid {color};">
@@ -5930,8 +5930,8 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
 # finally:
 # await release_conn(conn2)
 
-# # --- LIVE PHASE 2: MITIGATION (RETEST) PRÜFEN ---
-# # Prüft die aktuelle Live-Kerze gegen alle Zonen in der Datenbank
+# # --- LIVE PHASE 2: CHECK MITIGATION (RETEST) ---
+# # Checks the current live candle against all zones in the database
 # conn3 = await get_conn()
 # try:
 # active_zones = await conn3.fetch("""
@@ -5974,7 +5974,7 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
 # await asyncio.sleep(300)
 
 # except asyncio.CancelledError:
-# logger.info("SMC FVG Detector wird sauber beendet...")
+# logger.info("SMC FVG Detector shutting down cleanly...")
 # raise
 # except Exception as e:
 # logger.error(f"SMC Detector Crash: {e}", exc_info=True)
@@ -5982,7 +5982,7 @@ async def _run_historical_catchup(df_resampled, symbol, tf_name):
 
 
 async def create_smc_zones_table():
-    """Tabelle für aktive Fair Value Gaps (FVG) und Orderblocks"""
+    """Table for active Fair Value Gaps (FVG) and orderblocks"""
     conn = await get_conn()
     try:
         await conn.execute("""
@@ -6001,24 +6001,24 @@ async def create_smc_zones_table():
             )
         """)
     except Exception as e:
-        logger.error(f"Fehler beim Erstellen von active_smc_zones: {e}")
+        logger.error(f"Error creating active_smc_zones: {e}")
     finally:
         await release_conn(conn)
 
 
 async def smc_fvg_detector():
-    """Live-Scanner für Edelmetalle: FVG, Mitigation, BOS & CHoCH (mit Shutdown-Fix)."""
-    logger.info("SMC / ICT FVG & Structure Detector gestartet")
+    """Live scanner for precious metals: FVG, mitigation, BOS & CHoCH (with shutdown fix)."""
+    logger.info("SMC / ICT FVG & Structure Detector started")
     await asyncio.sleep(5)
 
     try:
         while True:
-            # 1. Frische Marktdaten holen
+            # 1. Fetch fresh market data
             await fetch_and_store_metal_data()
 
             for symbol in SMC_METALS:
                 try:
-                    # CHECKPOINT: Erlaubt asyncio den Task hier sofort abzubrechen
+                    # CHECKPOINT: allows asyncio to cancel the task here immediately
                     await asyncio.sleep(0.01)
 
                     conn = await get_conn()
@@ -6060,7 +6060,7 @@ async def smc_fvg_detector():
                         if len(df_resampled) < 10:
                             continue
 
-                        # --- HISTORICAL CATCH-UP (Einmalig pro Start für FVGs) ---
+                        # --- HISTORICAL CATCH-UP (once per start for FVGs) ---
                         state_key = f"{symbol}_{tf_name}"
                         if state_key not in HISTORICAL_SCANNED:
                             await _run_historical_catchup(df_resampled, symbol, tf_name)
@@ -6069,7 +6069,7 @@ async def smc_fvg_detector():
                         now_str = datetime.now(pytz.UTC).strftime('%H:%M')
 
                         # ==========================================================
-                        # --- PHASE 1: NEUE FVG ERKENNEN (Letzte 3 geschlossene Kerzen)
+                        # --- PHASE 1: DETECT NEW FVG (last 3 closed candles)
                         # ==========================================================
                         c1 = df_resampled.iloc[-4]
                         c2 = df_resampled.iloc[-3]
@@ -6104,7 +6104,7 @@ async def smc_fvg_detector():
                                     c1_time,
                                 )
 
-                                if res.endswith("1"):  # War neu
+                                if res.endswith("1"):  # Was new
                                     try:
                                         chart_buf = await generate_smc_chart(
                                             df_resampled, symbol, tf_name, top_edge, bottom_edge, fvg_type
@@ -6124,14 +6124,14 @@ async def smc_fvg_detector():
                                             chat_id=METALS_CHANNEL_ID, photo=chart_buf, caption=msg, parse_mode="HTML"
                                         )
                                     except Exception as e:
-                                        logger.error(f"Fehler beim FVG Chart Senden: {e}")
+                                        logger.error(f"Error sending FVG chart: {e}")
                             finally:
                                 await release_conn(conn2)
 
                         # ==========================================================
-                        # --- PHASE 2: BOS & CHoCH (MARKTSTRUKTUR) ERKENNEN
+                        # --- PHASE 2: DETECT BOS & CHoCH (MARKET STRUCTURE)
                         # ==========================================================
-                        # Swing Highs/Lows berechnen (Mitte von 5 Kerzen)
+                        # Compute swing highs/lows (middle of 5 candles)
                         df_resampled['Pivot_High'] = (
                             df_resampled['high'] == df_resampled['high'].rolling(window=5, center=True).max()
                         )
@@ -6139,7 +6139,7 @@ async def smc_fvg_detector():
                             df_resampled['low'] == df_resampled['low'].rolling(window=5, center=True).min()
                         )
 
-                        # Letzte 2 wegschneiden (Pivots müssen links und rechts 2 Kerzen haben)
+                        # Trim off the last 2 (pivots need 2 candles on the left and right)
                         confirmed_df = df_resampled.iloc[:-2]
 
                         ph_indices = confirmed_df[confirmed_df['Pivot_High']].index
@@ -6152,7 +6152,7 @@ async def smc_fvg_detector():
                             last_ph_val = confirmed_df.loc[last_ph_idx, 'high']
                             last_pl_val = confirmed_df.loc[last_pl_idx, 'low']
 
-                            # Wir prüfen die letzte komplett geschlossene Kerze (iloc[-2]) gegen die vorletzte (iloc[-3])
+                            # We check the last fully closed candle (iloc[-2]) against the second-to-last (iloc[-3])
                             last_closed = df_resampled['close'].iloc[-2]
                             prev_closed = df_resampled['close'].iloc[-3]
 
@@ -6161,25 +6161,25 @@ async def smc_fvg_detector():
                             struct_price = 0
                             pivot_time = None
 
-                            # Ausbruch nach OBEN (über Swing High)
+                            # Breakout to the UPSIDE (above swing high)
                             if last_closed > last_ph_val and prev_closed <= last_ph_val:
                                 if current_trend == 1 or current_trend == 0:
-                                    struct_type = "BULLISH BOS 🟢"  # Trendfortsetzung
+                                    struct_type = "BULLISH BOS 🟢"  # Trend continuation
                                 else:
-                                    struct_type = "BULLISH CHoCH 🚀"  # Trendwende nach oben
+                                    struct_type = "BULLISH CHoCH 🚀"  # Trend reversal to the upside
 
-                                SMC_TREND_STATE[state_key] = 1  # Neuer Trend ist Bullish
+                                SMC_TREND_STATE[state_key] = 1  # New trend is bullish
                                 struct_price = last_ph_val
                                 pivot_time = last_ph_idx
 
-                            # Ausbruch nach UNTEN (unter Swing Low)
+                            # Breakout to the DOWNSIDE (below swing low)
                             elif last_closed < last_pl_val and prev_closed >= last_pl_val:
                                 if current_trend == -1 or current_trend == 0:
-                                    struct_type = "BEARISH BOS 🔴"  # Trendfortsetzung
+                                    struct_type = "BEARISH BOS 🔴"  # Trend continuation
                                 else:
-                                    struct_type = "BEARISH CHoCH 💥"  # Trendwende nach unten
+                                    struct_type = "BEARISH CHoCH 💥"  # Trend reversal to the downside
 
-                                SMC_TREND_STATE[state_key] = -1  # Neuer Trend ist Bearish
+                                SMC_TREND_STATE[state_key] = -1  # New trend is bearish
                                 struct_price = last_pl_val
                                 pivot_time = last_pl_idx
 
@@ -6189,7 +6189,7 @@ async def smc_fvg_detector():
                                     ALERTED_STRUCT.add(alert_key)
 
                                     try:
-                                        # Chart mit Breakout-Linie generieren (Top=Bottom zeichnet 1 Linie)
+                                        # Generate chart with breakout line (top=bottom draws 1 line)
                                         chart_buf = await generate_smc_chart(
                                             df_resampled, symbol, tf_name, struct_price, struct_price, struct_type
                                         )
@@ -6208,10 +6208,10 @@ async def smc_fvg_detector():
                                             chat_id=METALS_CHANNEL_ID, photo=chart_buf, caption=msg, parse_mode="HTML"
                                         )
                                     except Exception as e:
-                                        logger.error(f"Fehler beim Struktur Chart Senden für {symbol}: {e}")
+                                        logger.error(f"Error sending structure chart for {symbol}: {e}")
 
                         # ==========================================================
-                        # --- PHASE 3: MITIGATION (RETEST) PRÜFEN (Live Kerze)
+                        # --- PHASE 3: CHECK MITIGATION (RETEST) (live candle)
                         # ==========================================================
                         current_price = df_resampled['close'].iloc[-1]
                         current_high = df_resampled['high'].iloc[-1]
@@ -6267,20 +6267,20 @@ async def smc_fvg_detector():
                                             chat_id=METALS_CHANNEL_ID, photo=chart_buf, caption=msg, parse_mode="HTML"
                                         )
                                     except Exception as e:
-                                        logger.error(f"Fehler beim Mitigation Chart Senden: {e}")
+                                        logger.error(f"Error sending mitigation chart: {e}")
                         finally:
                             await release_conn(conn3)
 
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error(f"SMC Fehler bei {symbol}: {e}")
+                    logger.error(f"SMC error for {symbol}: {e}")
 
-            # Wartezeit am Ende der Hauptschleife (5 Min)
+            # Wait time at the end of the main loop (5 min)
             await asyncio.sleep(300)
 
     except asyncio.CancelledError:
-        logger.info("SMC FVG Detector Task wird sauber beendet...")
+        logger.info("SMC FVG Detector task shutting down cleanly...")
         raise
     except Exception as e:
         logger.error(f"SMC Detector Crash: {e}", exc_info=True)
@@ -6288,27 +6288,27 @@ async def smc_fvg_detector():
 
 
 async def generate_smc_chart(df, symbol, timeframe, top_edge, bottom_edge, fvg_type):
-    """Generiert einen Candlestick-Chart und markiert die FVG-Zone oder das Breakout-Level."""
+    """Generates a candlestick chart and marks the FVG zone or the breakout level."""
 
     def create_chart():
-        # Wir nehmen die letzten 60 Kerzen für einen guten Zoom-Faktor
+        # We take the last 60 candles for a good zoom factor
         plot_df = df.tail(60).copy()
 
-        # Binance/Dark-Mode Farben
+        # Binance/dark-mode colors
         mc = mpf.make_marketcolors(up='#00ff88', down='#ff4466', edge='inherit', wick='inherit')
         s = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='nightclouds')
 
-        # Linien einzeichnen (Cyan für gute Sichtbarkeit)
-        # Bei FVG: 2 Linien. Bei BOS/CHoCH (top_edge == bottom_edge): Optisch 1 Linie.
+        # Draw lines (cyan for good visibility)
+        # For FVG: 2 lines. For BOS/CHoCH (top_edge == bottom_edge): visually 1 line.
         hlines = dict(
             hlines=[top_edge, bottom_edge], colors=['#00ffff', '#00ffff'], linestyle='--', linewidths=1.5, alpha=0.7
         )
 
-        # .replace('=X', '') macht Forex-Ticker schöner, stört bei Krypto nicht
+        # .replace('=X', '') makes forex tickers nicer, doesn't hurt for crypto
         clean_symbol = symbol.replace('=X', '')
 
         buf = io.BytesIO()
-        # Chart zeichnen und in den Buffer speichern
+        # Draw the chart and save it to the buffer
         mpf.plot(
             plot_df,
             type='candle',
@@ -6323,56 +6323,56 @@ async def generate_smc_chart(df, symbol, timeframe, top_edge, bottom_edge, fvg_t
         buf.seek(0)
         return buf
 
-    # Auslagerung in einen Thread, damit das Zeichnen (synchron) den Bot (asynchron) nicht blockiert
+    # Offload to a thread so the drawing (synchronous) doesn't block the bot (asynchronous)
     return await asyncio.to_thread(create_chart)
 
 
 # ========================= PATTERN DETECTOR =========================
 
-# Der globale Arbeitsspeicher für unsere Live-Kerzen
+# The global memory store for our live candles
 WS_KLINE_BUFFER = {}
 
 
 async def binance_ws_listener():
-    """Baut eine permanente Verbindung zu Binance auf und fängt Live-Kerzen ab."""
+    """Builds a permanent connection to Binance and captures live candles."""
     url = "wss://fstream.binance.com/stream"
 
-    # Stream-Namen für Binance generieren (Format: btcusdt@kline_5m)
+    # Generate stream names for Binance (format: btcusdt@kline_5m)
     streams = []
     for sym in coins:
         for tf in ['5m', '15m']:
             streams.append(f"{sym.lower()}@kline_{tf}")
 
-    # Binance erlaubt max 200 Streams pro Request. Wir splitten sie in 100er Blöcke.
+    # Binance allows max 200 streams per request. We split them into blocks of 100.
     chunks = [streams[i : i + 100] for i in range(0, len(streams), 100)]
 
     while True:
         try:
             async with websockets.connect(url) as ws:
-                logger.info("🟢 WebSocket zu Binance erfolgreich verbunden!")
+                logger.info("🟢 WebSocket to Binance connected successfully!")
 
-                # Streams abonnieren
+                # Subscribe to streams
                 for i, chunk in enumerate(chunks):
                     sub_msg = {"method": "SUBSCRIBE", "params": chunk, "id": i + 1}
                     await ws.send(json.dumps(sub_msg))
-                    await asyncio.sleep(0.5)  # Kurze Pause zwischen den Requests
+                    await asyncio.sleep(0.5)  # Short pause between requests
 
-                # Endlos-Schleife: Auf eingehende Daten lauschen
+                # Endless loop: listen for incoming data
                 while True:
                     msg = await ws.recv()
                     payload = json.loads(msg)
 
-                    # Wenn es eine gültige Kerzen-Nachricht ist
+                    # If it's a valid candle message
                     if 'data' in payload and 'k' in payload['data']:
                         k = payload['data']['k']
-                        sym = k['s']  # z.B. BTCUSDT
-                        tf = k['i']  # z.B. 5m
+                        sym = k['s']  # e.g. BTCUSDT
+                        tf = k['i']  # e.g. 5m
 
-                        # Timestamp in echtes UTC-Datum umwandeln
+                        # Convert timestamp to real UTC date
                         open_time = datetime.fromtimestamp(k['t'] / 1000, pytz.UTC)
 
-                        # In den Buffer schreiben (überschreibt immer mit dem aktuellsten Tick)
-                        # Wir speichern: (symbol, open_time, open, high, low, close, volume)
+                        # Write to the buffer (always overwrites with the latest tick)
+                        # We store: (symbol, open_time, open, high, low, close, volume)
                         WS_KLINE_BUFFER[(sym, tf)] = (
                             sym,
                             open_time,
@@ -6384,21 +6384,21 @@ async def binance_ws_listener():
                         )
 
         except Exception as e:
-            logger.error(f"🔴 WebSocket getrennt ({e}). Reconnect in 5 Sekunden...")
+            logger.error(f"🔴 WebSocket disconnected ({e}). Reconnecting in 5 seconds...")
             await asyncio.sleep(5)
 
 
 async def db_buffer_flusher():
-    """Schreibt den RAM-Buffer schonend alle 2 Sekunden in die PostgreSQL-Datenbank."""
-    logger.info("💾 DB Buffer Flusher gestartet")
+    """Gently flushes the RAM buffer into the PostgreSQL database every 2 seconds."""
+    logger.info("💾 DB buffer flusher started")
     while True:
         await asyncio.sleep(2)
 
-        # Wenn der Buffer leer ist, nichts tun
+        # If the buffer is empty, do nothing
         if not WS_KLINE_BUFFER:
             continue
 
-        # Buffer kopieren und sofort leeren, damit der WebSocket weiterarbeiten kann
+        # Copy the buffer and clear it immediately so the WebSocket can keep working
         buffer_copy = WS_KLINE_BUFFER.copy()
         WS_KLINE_BUFFER.clear()
 
@@ -6407,7 +6407,7 @@ async def db_buffer_flusher():
             for (sym, tf), data in buffer_copy.items():
                 table_name = f'"{sym}_{tf}"'
 
-                # Wir aktualisieren die laufende Kerze in der DB (Upsert)
+                # We update the running candle in the DB (upsert)
                 await conn.execute(
                     f'''
                     INSERT INTO {table_name} (symbol, open_time, open, high, low, close, volume)
@@ -6419,33 +6419,33 @@ async def db_buffer_flusher():
                     *data,
                 )
         except Exception as e:
-            logger.error(f"Fehler beim DB Flush: {e}")
+            logger.error(f"Error during DB flush: {e}")
         finally:
             await release_conn(conn)
 
 
-# --- DEINE DATAGREPPER LOGIK (Synchron, aber sicher verpackt) ---
+# --- YOUR DATAGREPPER LOGIC (synchronous, but safely wrapped) ---
 def sync_turbo_grepper():
-    """Führt das synchrone Turbo-Update mit 20 Threads aus."""
+    """Runs the synchronous turbo update with 20 threads."""
     import time
     from concurrent.futures import ThreadPoolExecutor
 
     import psycopg2.pool
     import requests
 
-    # --- Konfiguration ---
+    # --- Configuration ---
     DB_NAME = 'cryptodata'
     DB_USER = 'dbfiller'
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
     DB_HOST = 'localhost'
     DB_PORT = 5432
 
-    # Lokale Globals für diesen Run
+    # Local globals for this run
     NUM_WORKERS = 3
     TIMEFRAMES = ['5m', '15m']
     BASE_URL = 'https://fapi.binance.com'
 
-    # Pool lokal in der Funktion initialisieren, um Konflikte zu vermeiden
+    # Initialize the pool locally within the function to avoid conflicts
     local_db_pool = psycopg2.pool.ThreadedConnectionPool(
         minconn=5,
         maxconn=NUM_WORKERS + 5,
@@ -6456,7 +6456,7 @@ def sync_turbo_grepper():
         port=DB_PORT,
     )
 
-    symbols = coins  # Wir nutzen einfach die globale 'coins' Liste aus zzz.py
+    symbols = coins  # We simply use the global 'coins' list from zzz.py
 
     def init_tables():
         conn = local_db_pool.getconn()
@@ -6487,7 +6487,7 @@ def sync_turbo_grepper():
             end_ts = int(now.timestamp() * 1000)
 
             for tf in TIMEFRAMES:
-                # Letzte Zeit holen
+                # Fetch the latest time
                 tablename = f'"{symbol}_{tf}"'
                 latest = None
                 with conn.cursor() as cursor:
@@ -6502,7 +6502,7 @@ def sync_turbo_grepper():
                 if start_ts > end_ts:
                     continue
 
-                # Ohlcv Fetchen (stark verkürzt für Übersicht, nutzt deine Logik)
+                # Fetch OHLCV (heavily shortened for clarity, uses your logic)
                 url = BASE_URL + '/fapi/v1/klines'
                 curr = start_ts
                 all_data = []
@@ -6521,8 +6521,8 @@ def sync_turbo_grepper():
                     # if curr >= end_ts: break
                     # if limit == 1500: time.sleep(0.2)
 
-                    # --- ANTI-BAN FIX: Winzige Pause vor jedem Request ---
-                    # Sorgt dafür, dass die Worker Binance nicht DDOSen
+                    # --- ANTI-BAN FIX: tiny pause before each request ---
+                    # Ensures the workers don't DDoS Binance
                     time.sleep(0.1)
 
                     resp = session.get(
@@ -6531,22 +6531,22 @@ def sync_turbo_grepper():
                         timeout=5,
                     )
 
-                    # 1. Warnung: Rate Limit fast erreicht
+                    # 1. Warning: rate limit almost reached
                     if resp.status_code == 429:
                         retry_after = int(resp.headers.get("Retry-After", 5))
-                        logging.warning(f"⚠️ Binance Limit (429) bei {symbol}. Pausiere Thread für {retry_after}s...")
+                        logging.warning(f"⚠️ Binance limit (429) for {symbol}. Pausing thread for {retry_after}s...")
                         time.sleep(retry_after)
                         continue
 
-                    # 2. Eskalation: IP Ban
+                    # 2. Escalation: IP ban
                     if resp.status_code == 418:
                         logging.error(
-                            f"🚨 BINANCE BAN (418 Teapot) bei {symbol}! Bot ist zu schnell. Stoppe für 5 Minuten..."
+                            f"🚨 BINANCE BAN (418 Teapot) for {symbol}! Bot is too fast. Stopping for 5 minutes..."
                         )
-                        time.sleep(300)  # 5 Minuten Zwangs-Auszeit für diesen Worker
-                        break  # Abbruch für diesen Coin
+                        time.sleep(300)  # 5-minute forced timeout for this worker
+                        break  # Abort for this coin
 
-                    # Andere Fehler
+                    # Other errors
                     if resp.status_code != 200:
                         break
 
@@ -6560,7 +6560,7 @@ def sync_turbo_grepper():
                     if curr >= end_ts:
                         break
 
-                    # Extra Pause bei fetten History-Downloads
+                    # Extra pause for large history downloads
                     if limit == 1500:
                         time.sleep(0.2)
 
@@ -6592,17 +6592,17 @@ def sync_turbo_grepper():
 
     try:
         init_tables()
-        logger.info(f"🚀 Turbo-Update gestartet: {len(symbols)} Coins...")
+        logger.info(f"🚀 Turbo update started: {len(symbols)} coins...")
         with ThreadPoolExecutor(max_workers=NUM_WORKERS) as exe:
             exe.map(process_coin_local, symbols)
     finally:
         local_db_pool.closeall()
-        logger.info("✅ Turbo-Update abgeschlossen.")
+        logger.info("✅ Turbo update complete.")
 
 
 # --- ASYNC WRAPPER ---
 async def update_pattern_data_async():
-    """Führt den synchronen Datagrepper im Hintergrund-Thread aus."""
+    """Runs the synchronous datagrepper in a background thread."""
     await asyncio.to_thread(sync_turbo_grepper)
 
 
@@ -6612,21 +6612,21 @@ async def update_pattern_data_async():
 # import asyncio
 # import pandas as pd
 
-# #alte version für 5min/15min chart
+# #old version for 5min/15min chart
 # async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, start_idx, end_idx):
-# """Generiert einen Chart, der das erkannte Dreieck oder den Channel einzeichnet."""
+# """Generates a chart that draws the detected triangle or the channel."""
 # def create_chart():
-# # Gezoomten Bereich ausschneiden
+# # Cut out the zoomed region
 # start_plot = max(0, start_idx - 20)
 # end_plot = end_idx + 5
 # plot_df = df.iloc[start_plot : end_plot].copy()
 
-# # --- DER FIX FÜR mplfinance ---
-# # mplfinance verlangt zwingend einen DatetimeIndex!
+# # --- THE FIX FOR mplfinance ---
+# # mplfinance requires a DatetimeIndex!
 # plot_df['open_time'] = pd.to_datetime(plot_df['open_time'])
 # plot_df.set_index('open_time', inplace=True)
 
-# # Y-Werte für die Trendlinien berechnen (auf Basis der globalen Integer-Indizes)
+# # Compute the Y values for the trendlines (based on the global integer indices)
 # global_indices = np.arange(start_plot, start_plot + len(plot_df))
 # y_highs = [line_highs['m'] * idx + line_highs['b'] for idx in global_indices]
 # y_lows = [line_lows['m'] * idx + line_lows['b'] for idx in global_indices]
@@ -6634,7 +6634,7 @@ async def update_pattern_data_async():
 # mc = mpf.make_marketcolors(up='#00ff88', down='#ff4466', edge='inherit', wick='inherit')
 # s  = mpf.make_mpf_style(marketcolors=mc, base_mpf_style='nightclouds')
 
-# # Trendlinien hinzufügen
+# # Add trendlines
 # apds = [
 # mpf.make_addplot(y_highs, color='#00ffff', width=1.5, linestyle='-'),
 # mpf.make_addplot(y_lows, color='#ffd700', width=1.5, linestyle='-')
@@ -6661,10 +6661,10 @@ import pandas as pd
 
 
 async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_lows, start_idx, current_idx):
-    """Generiert einen 7-Tage Chart (168 Kerzen) inklusive Volumen-Panel unten."""
+    """Generates a 7-day chart (168 candles) including a volume panel at the bottom."""
 
     def create_chart():
-        # --- 7-TAGE ZOOM (168 Kerzen) ---
+        # --- 7-DAY ZOOM (168 candles) ---
         MAX_CANDLES = 168
         BUFFER_AFTER = 5
 
@@ -6675,12 +6675,12 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
         plot_df['open_time'] = pd.to_datetime(plot_df['open_time'])
         plot_df.set_index('open_time', inplace=True)
 
-        # --- TRENDLINIEN ---
+        # --- TRENDLINES ---
         global_indices = np.arange(start_plot, start_plot + len(plot_df))
         y_highs = [line_highs['m'] * idx + line_highs['b'] for idx in global_indices]
         y_lows = [line_lows['m'] * idx + line_lows['b'] for idx in global_indices]
 
-        # --- HIGHLIGHT-LINIE ---
+        # --- HIGHLIGHT LINE ---
         highlight_date = plot_df.index[current_idx - start_plot]
 
         # Styles (Dark Mode)
@@ -6693,16 +6693,16 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
         ]
 
         buf = io.BytesIO()
-        # Chart zeichnen
+        # Draw the chart
         mpf.plot(
             plot_df,
             type='candle',
             style=s,
-            volume=True,  # <--- HIER IST DAS UPDATE!
+            volume=True,  # <--- HERE IS THE UPDATE!
             addplot=apds,
             vlines=dict(vlines=[highlight_date], linewidths=1.0, colors='white', linestyle='--'),
             title=f"\n{pattern_name}: {symbol.replace('USDT', '')} ({tf}) | Last 7 Days",
-            figsize=(12, 8),  # Etwas höher (8 statt 6), um Platz fürs Volumen zu schaffen
+            figsize=(12, 8),  # A bit taller (8 instead of 6) to make room for volume
             tight_layout=True,
             savefig=buf,
             returnfig=False,
@@ -6713,28 +6713,28 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
     return await asyncio.to_thread(create_chart)
 
 
-# -----ALTE 5 / 15 MIN VERSION -----
+# -----OLD 5 / 15 MIN VERSION -----
 # async def pattern_detector():
-# """Erkennt Dreiecke und Channels auf 5m und 15m und meldet Breakouts."""
-# logger.info("Pattern Detector gestartet")
+# """Detects triangles and channels on 5m and 15m and reports breakouts."""
+# logger.info("Pattern Detector started")
 # await asyncio.sleep(15)
 
 # try:
 # while True:
-# # 1. ZUERST DIE DATEN AKTUALISIEREN (Blockiert den Bot NICHT)
+# # 1. FIRST UPDATE THE DATA (does NOT block the bot)
 # # try:
 # # await update_pattern_data_async()
 # # except asyncio.CancelledError:
 # # raise
 # # except Exception as e:
-# # logger.error(f"Fehler beim Turbo-Data-Update: {e}")
+# # logger.error(f"Error during turbo data update: {e}")
 # # await asyncio.sleep(60)
-# # continue # Wenn Daten-Update fehlschlägt, überspringe diese Runde
+# # continue # If the data update fails, skip this round
 
-# # 2. DANACH ERST DIE ANALYSE STARTEN
+# # 2. ONLY THEN START THE ANALYSIS
 # for symbol in coins:
 # try:
-# await asyncio.sleep(0.01) # Checkpoint für Shutdown
+# await asyncio.sleep(0.01) # Checkpoint for shutdown
 
 # conn = await get_conn()
 # try:
@@ -6742,7 +6742,7 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
 
 # await asyncio.sleep(0.01)
 
-# # Daten laden (die letzten 150 Kerzen reichen für diese Muster locker)
+# # Load data (the last 150 candles are plenty for these patterns)
 # rows = await conn.fetch(f'''
 # SELECT open_time, open, high, low, close
 # FROM "{symbol}_{tf}"
@@ -6752,39 +6752,39 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
 # if len(rows) < 50:
 # continue
 
-# # DataFrame erstellen (und umdrehen, damit alt -> neu)
+# # Build DataFrame (and reverse it, so old -> new)
 # df = pd.DataFrame([dict(r) for r in rows]).iloc[::-1].reset_index(drop=True)
 
-# # 1. Pivots finden (Fenster von 9 Kerzen für markante Punkte)
+# # 1. Find pivots (window of 9 candles for prominent points)
 # df['Pivot_High'] = df['high'] == df['high'].rolling(window=9, center=True).max()
 # df['Pivot_Low'] = df['low'] == df['low'].rolling(window=9, center=True).min()
 
-# # Letzte bestätigte Pivots (ohne die letzten 4 unfertigen Kerzen)
+# # Last confirmed pivots (excluding the last 4 unfinished candles)
 # confirmed_df = df.iloc[:-4]
 # highs = confirmed_df[confirmed_df['Pivot_High']]
 # lows = confirmed_df[confirmed_df['Pivot_Low']]
 
-# # Wir brauchen mindestens 2 markante Hochs und Tiefs
+# # We need at least 2 prominent highs and lows
 # if len(highs) >= 2 and len(lows) >= 2:
-# # Die letzten 2-3 Punkte für die Linie nehmen
+# # Take the last 2-3 points for the line
 # recent_highs = highs.tail(3)
 # recent_lows = lows.tail(3)
 
-# # Lineare Regression, um die Trendlinie zu berechnen (y = m*x + b)
+# # Linear regression to compute the trendline (y = m*x + b)
 # slope_h, intercept_h, _, _, _ = stats.linregress(recent_highs.index, recent_highs['high'])
 # slope_l, intercept_l, _, _, _ = stats.linregress(recent_lows.index, recent_lows['low'])
 
-# # Geometrie / Steigung normalisieren (Prozentuale Veränderung pro Kerze)
+# # Normalize geometry / slope (percentage change per candle)
 # avg_price = df['close'].mean()
 # m_high_pct = (slope_h / avg_price) * 100
 # m_low_pct = (slope_l / avg_price) * 100
 
 # pattern_name = None
 
-# # Schwellenwert für "Flachheit"
+# # Threshold for "flatness"
 # flat_th = 0.02
 
-# # Muster Klassifizierung
+# # Pattern classification
 # if m_high_pct < -flat_th and m_low_pct > flat_th:
 # pattern_name = "Symmetrical Triangle"
 # elif abs(m_high_pct) <= flat_th and m_low_pct > flat_th:
@@ -6796,15 +6796,15 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
 # elif m_high_pct < -flat_th and m_low_pct < -flat_th and abs(m_high_pct - m_low_pct) < 0.05:
 # pattern_name = "Descending Channel"
 
-# # --- NEUER RÖNTGENBLICK FÜR DIE CONSOLE ---
+# # --- NEW X-RAY VIEW FOR THE CONSOLE ---
 
 # if pattern_name:
-# logger.info(f"👀 Muster erkannt: {symbol} ({tf}) -> {pattern_name}. Warte auf Breakout...")
-# # Breakout Check auf der LETZTEN geschlossenen Kerze
-# current_idx = len(df) - 2 # Vorletzte Kerze (ist fertig geschlossen)
+# logger.info(f"👀 Pattern detected: {symbol} ({tf}) -> {pattern_name}. Waiting for breakout...")
+# # Breakout check on the LAST closed candle
+# current_idx = len(df) - 2 # Second-to-last candle (fully closed)
 # current_close = df['close'].iloc[current_idx]
 
-# # Wo liegen die Trendlinien bei dieser Kerze?
+# # Where are the trendlines at this candle?
 # upper_boundary = slope_h * current_idx + intercept_h
 # lower_boundary = slope_l * current_idx + intercept_l
 
@@ -6839,15 +6839,15 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
 # </pre>
 # """.strip()
 
-# # BITTE HIER DEINEN GEWÜNSCHTEN CHANNEL EINTRAGEN
+# # PLEASE ENTER YOUR DESIRED CHANNEL HERE
 # await application.bot.send_photo(
-# chat_id=PATTERN_CHANNEL_ID, # oder ein anderer Channel!
+# chat_id=PATTERN_CHANNEL_ID, # or a different channel!
 # photo=chart_buf,
 # caption=msg,
 # parse_mode="HTML"
 # )
 # except Exception as e:
-# logger.error(f"Fehler beim Pattern Chart für {symbol}: {e}")
+# logger.error(f"Error with pattern chart for {symbol}: {e}")
 
 # finally:
 # await release_conn(conn)
@@ -6855,47 +6855,47 @@ async def generate_pattern_chart(df, symbol, tf, pattern_name, line_highs, line_
 # except asyncio.CancelledError:
 # raise
 # except Exception as e:
-# logger.error(f"Fehler im Pattern Detector bei {symbol}: {e}")
+# logger.error(f"Error in Pattern Detector for {symbol}: {e}")
 
-# # Alle 5 Minuten einmal alle Coins durchscannen reicht für 5m/15m Timeframes
+# # Scanning all coins once every 5 minutes is enough for 5m/15m timeframes
 # await asyncio.sleep(300)
 
 # except asyncio.CancelledError:
-# logger.info("Pattern Detector wird sauber beendet...")
+# logger.info("Pattern Detector shutting down cleanly...")
 # raise
 # except Exception as e:
-# logger.error(f"Pattern Detector Crash: {e}", exc_info=True)
+# logger.error(f"Pattern Detector crash: {e}", exc_info=True)
 # await asyncio.sleep(60)
 
 
 async def pattern_detector():
-    """Erkennt Dreiecke/Channels auf 1h+, meldet Breakouts und prüft auf Retests."""
-    logger.info("Pattern Detector (1h+) gestartet. Wartet auf xx:15 Uhr...")
+    """Detects triangles/channels on 1h+, reports breakouts and checks for retests."""
+    logger.info("Pattern Detector (1h+) started. Waiting for xx:15...")
     await asyncio.sleep(5)
 
     try:
         while True:
             now = datetime.now(pytz.UTC)
 
-            # PÜNKTLICHKEIT: Läuft exakt in der 15. Minute (z.B. 14:15, 15:15)
-            # Da wir die 1h Kerzen checken, die um :00 geschlossen haben,
-            # sind wir um :15 absolut sicher, dass alle DB-Updates durch sind.
+            # PUNCTUALITY: runs exactly at minute 15 (e.g. 14:15, 15:15)
+            # Since we check the 1h candles that closed at :00,
+            # at :15 we're absolutely sure all DB updates have gone through.
             if now.minute != 15:
                 await asyncio.sleep(10)
                 continue
 
-            logger.info(f"Starte Pattern-Scan für {PATTERN_TIMEFRAMES}...")
+            logger.info(f"Starting pattern scan for {PATTERN_TIMEFRAMES}...")
 
             for symbol in coins:
                 try:
-                    await asyncio.sleep(0.01)  # Checkpoint für Shutdown
+                    await asyncio.sleep(0.01)  # Checkpoint for shutdown
 
                     conn = await get_conn()
                     try:
                         for tf in PATTERN_TIMEFRAMES:
                             await asyncio.sleep(0.01)
 
-                            # 150 Kerzen reichen perfekt für 1h+ Muster
+                            # 150 candles are perfectly enough for 1h+ patterns
                             rows = await conn.fetch(f'''
                                 SELECT open_time, open, high, low, close
                                 FROM "{symbol}_{tf}"
@@ -6907,7 +6907,7 @@ async def pattern_detector():
 
                             df = pd.DataFrame([dict(r) for r in rows]).iloc[::-1].reset_index(drop=True)
 
-                            # 1. Pivots finden (Fenster von 9 Kerzen)
+                            # 1. Find pivots (window of 9 candles)
                             df['Pivot_High'] = df['high'] == df['high'].rolling(window=9, center=True).max()
                             df['Pivot_Low'] = df['low'] == df['low'].rolling(window=9, center=True).min()
 
@@ -6949,7 +6949,7 @@ async def pattern_detector():
                                     pattern_name = "Descending Channel"
 
                                 if pattern_name:
-                                    # current_idx ist die KERZE DIE GERADE GESCHLOSSEN WURDE
+                                    # current_idx is the CANDLE THAT JUST CLOSED
                                     current_idx = len(df) - 2
                                     prev_idx = current_idx - 1
 
@@ -6963,7 +6963,7 @@ async def pattern_detector():
                                     up_prev = slope_h * prev_idx + intercept_h
                                     low_prev = slope_l * prev_idx + intercept_l
 
-                                    # Einzigartige ID für dieses Muster (basierend auf dem Zeitpunkt des letzten Hochs)
+                                    # Unique ID for this pattern (based on the timestamp of the last high)
                                     pivot_time_str = df['open_time'].iloc[recent_highs.index[-1]].strftime('%Y%m%d%H%M')
                                     pattern_id = f"{symbol}_{tf}_{pattern_name}_{pivot_time_str}"
 
@@ -6972,7 +6972,7 @@ async def pattern_detector():
                                     start_plot_idx = min(recent_highs.index[0], recent_lows.index[0])
 
                                     # ==========================================
-                                    # FALL 1: NEUER BREAKOUT
+                                    # CASE 1: NEW BREAKOUT
                                     # ==========================================
                                     breakout_dir = None
                                     if c_close > up_curr and p_close <= up_prev:
@@ -6983,7 +6983,7 @@ async def pattern_detector():
                                     if breakout_dir:
                                         if pattern_id not in ALERTED_PATTERNS:
                                             ALERTED_PATTERNS.add(pattern_id)
-                                            # Wir merken uns das Muster für den zukünftigen Retest!
+                                            # We remember the pattern for a future retest!
                                             ACTIVE_PATTERNS[pattern_id] = breakout_dir
 
                                             try:
@@ -7015,10 +7015,10 @@ async def pattern_detector():
                                                     parse_mode="HTML",
                                                 )
                                             except Exception as e:
-                                                logger.error(f"Fehler beim Breakout Chart: {e}")
+                                                logger.error(f"Error with breakout chart: {e}")
 
                                     # ==========================================
-                                    # FALL 2: RETEST EINES BEKANNTEN MUSTERS
+                                    # CASE 2: RETEST OF A KNOWN PATTERN
                                     # ==========================================
                                     elif pattern_id in ACTIVE_PATTERNS:
                                         tracked_dir = ACTIVE_PATTERNS[pattern_id]
@@ -7027,9 +7027,9 @@ async def pattern_detector():
 
                                         retest_alert_key = f"{pattern_id}_retest_{current_idx}"
 
-                                        # Bullish Retest Check
+                                        # Bullish retest check
                                         if "BULLISH" in tracked_dir:
-                                            # Preis muss runterkommen und die Ausbruchslinie berühren/unterschreiten
+                                            # Price must come down and touch/breach the breakout line
                                             if c_low <= up_curr:
                                                 if c_close > up_curr:
                                                     retest_msg = (
@@ -7039,11 +7039,11 @@ async def pattern_detector():
                                                 else:
                                                     retest_msg = "FAILED RETEST 🔴\n(Fakeout! Price closed back inside)"
                                                     retest_color = "#ff4466"
-                                                    del ACTIVE_PATTERNS[pattern_id]  # Löschen, da Muster zerstört
+                                                    del ACTIVE_PATTERNS[pattern_id]  # Delete, since the pattern is destroyed
 
-                                        # Bearish Retest Check
+                                        # Bearish retest check
                                         elif "BEARISH" in tracked_dir:
-                                            # Preis muss hochkommen und die Ausbruchslinie berühren/überschreiten
+                                            # Price must come up and touch/breach the breakout line
                                             if c_high >= low_curr:
                                                 if c_close < low_curr:
                                                     retest_msg = (
@@ -7053,7 +7053,7 @@ async def pattern_detector():
                                                 else:
                                                     retest_msg = "FAILED RETEST 🟢\n(Fakeout! Price closed back inside)"
                                                     retest_color = "#00ff88"
-                                                    del ACTIVE_PATTERNS[pattern_id]  # Löschen, da Muster zerstört
+                                                    del ACTIVE_PATTERNS[pattern_id]  # Delete, since the pattern is destroyed
 
                                         if retest_msg and retest_alert_key not in ALERTED_RETESTS:
                                             ALERTED_RETESTS.add(retest_alert_key)
@@ -7092,14 +7092,14 @@ async def pattern_detector():
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error(f"Fehler im Pattern Detector bei {symbol}: {e}")
+                    logger.error(f"Error in Pattern Detector for {symbol}: {e}")
 
-            # WICHTIG: Nach dem Durchlauf 60 Sekunden schlafen.
-            # So verhindern wir, dass der Bot in der 15. Minute zweimal startet!
+            # IMPORTANT: sleep 60 seconds after the run.
+            # This prevents the bot from starting twice within minute 15!
             await asyncio.sleep(60)
 
     except asyncio.CancelledError:
-        logger.info("Pattern Detector wird sauber beendet...")
+        logger.info("Pattern Detector shutting down cleanly...")
         raise
     except Exception as e:
         logger.error(f"Pattern Detector Crash: {e}", exc_info=True)
@@ -7110,10 +7110,10 @@ async def pattern_detector():
 
 
 async def fetch_and_store_forex_data():
-    """Holt 15m und 1h Forex-Daten über yfinance und speichert sie in der DB."""
+    """Fetches 15m and 1h forex data via yfinance and stores them in the DB."""
     for symbol in FOREX_PAIRS:
         try:
-            # 15m Daten (letzte 5 Tage) und 1h Daten (letzte 20 Tage)
+            # 15m data (last 5 days) and 1h data (last 20 days)
             df_15m = await asyncio.to_thread(yf.download, symbol, period="5d", interval="15m", progress=False)
             df_1h = await asyncio.to_thread(yf.download, symbol, period="20d", interval="1h", progress=False)
 
@@ -7122,23 +7122,23 @@ async def fetch_and_store_forex_data():
 
             for tf, df in [("15m", df_15m), ("1h", df_1h)]:
                 df = df.copy()
-                # yfinance Multi-Index Fix (ab Version 0.2.x)
+                # yfinance multi-index fix (from version 0.2.x onward)
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.droplevel(1)
 
                 df.reset_index(inplace=True)
 
-                # Spalten standardisieren (Datetime heißt bei yfinance oft 'Datetime' oder 'Date')
+                # Standardize columns (in yfinance the datetime column is often called 'Datetime' or 'Date')
                 time_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
                 df.rename(
                     columns={time_col: 'open_time', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close'},
                     inplace=True,
                 )
 
-                # Alles strikt in UTC umwandeln
+                # Convert everything strictly to UTC
                 df['open_time'] = pd.to_datetime(df['open_time'], utc=True)
 
-                # In die Datenbank schreiben
+                # Write to the database
                 conn = await get_conn()
                 try:
                     table_name = f"{symbol}_{tf}"
@@ -7154,7 +7154,7 @@ async def fetch_and_store_forex_data():
 
                     records = df[['open_time', 'open', 'high', 'low', 'close']].to_dict('records')
                     for r in records:
-                        # Float-Werte extrahieren (falls Pandas Series/Numpy Typen zurückbleiben)
+                        # Extract float values (in case Pandas Series/Numpy types remain)
                         await conn.execute(
                             f'''
                             INSERT INTO "{table_name}" (open_time, open, high, low, close)
@@ -7172,25 +7172,25 @@ async def fetch_and_store_forex_data():
                     await release_conn(conn)
 
         except Exception as e:
-            logger.error(f"Fehler beim Forex-Download für {symbol}: {e}")
+            logger.error(f"Error downloading forex data for {symbol}: {e}")
 
-        # Kleiner Checkpoint und Rate-Limit-Schutz für Yahoo Finance
+        # Small checkpoint and rate-limit protection for Yahoo Finance
         await asyncio.sleep(1)
 
 
 async def forex_smc_detector():
-    """Live-Scanner für Forex: FVG, Mitigation, BOS & CHoCH."""
-    logger.info("Forex SMC Detector gestartet")
-    await asyncio.sleep(10)  # Lass den anderen Modulen beim Start kurz Vortritt
+    """Live scanner for forex: FVG, mitigation, BOS & CHoCH."""
+    logger.info("Forex SMC Detector started")
+    await asyncio.sleep(10)  # Let the other modules go first briefly at startup
 
     try:
         while True:
-            # 1. Frische Forex-Marktdaten holen
+            # 1. Fetch fresh forex market data
             await fetch_and_store_forex_data()
 
             for symbol in FOREX_PAIRS:
                 try:
-                    await asyncio.sleep(0.01)  # Checkpoint für Shutdown
+                    await asyncio.sleep(0.01)  # Checkpoint for shutdown
 
                     conn = await get_conn()
                     try:
@@ -7208,6 +7208,7 @@ async def forex_smc_detector():
 
                     for tf_name, tf_rule in SMC_TIMEFRAMES.items():
                         await asyncio.sleep(0.01)  # Checkpoint
+
 
                         if tf_name in ['15m', '30m'] and not df_15m.empty:
                             base_df = df_15m.copy()
@@ -7238,7 +7239,7 @@ async def forex_smc_detector():
 
                         now_str = datetime.now(pytz.UTC).strftime('%H:%M')
 
-                        # --- PHASE 1: FVG ERKENNEN ---
+                        # --- PHASE 1: DETECT FVG ---
                         c1, c2, c3 = df_resampled.iloc[-4], df_resampled.iloc[-3], df_resampled.iloc[-2]
                         fvg_created, fvg_type = False, None
 
@@ -7289,7 +7290,7 @@ async def forex_smc_detector():
                                             chat_id=FOREX_CHANNEL_ID, photo=chart_buf, caption=msg, parse_mode="HTML"
                                         )
                                     except Exception as e:
-                                        logger.error(f"Fehler beim Forex FVG Chart: {e}")
+                                        logger.error(f"Error with forex FVG chart: {e}")
                             finally:
                                 await release_conn(conn2)
 
@@ -7348,7 +7349,7 @@ async def forex_smc_detector():
                                             chat_id=FOREX_CHANNEL_ID, photo=chart_buf, caption=msg, parse_mode="HTML"
                                         )
                                     except Exception as e:
-                                        logger.error(f"Fehler beim Forex BOS Chart: {e}")
+                                        logger.error(f"Error with forex BOS chart: {e}")
 
                         # --- PHASE 3: MITIGATION ---
                         current_price, current_high, current_low = (
@@ -7410,13 +7411,13 @@ async def forex_smc_detector():
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error(f"Forex SMC Fehler bei {symbol}: {e}")
+                    logger.error(f"Forex SMC error for {symbol}: {e}")
 
-            # 5 Minuten Pause
+            # 5-minute pause
             await asyncio.sleep(300)
 
     except asyncio.CancelledError:
-        logger.info("Forex SMC Detector Task wird sauber beendet...")
+        logger.info("Forex SMC Detector task shutting down cleanly...")
         raise
     except Exception as e:
         logger.error(f"Forex SMC Detector Crash: {e}", exc_info=True)
@@ -7441,7 +7442,7 @@ async def create_pump_dump_archive_table():
             )
         """)
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_pump_dump_archive_time ON pump_dump_archive(timestamp)")
-        logger.info("pump_dump_archive Tabelle bereit")
+        logger.info("pump_dump_archive table ready")
     finally:
         await release_conn(conn)
 
@@ -7462,9 +7463,9 @@ async def archive_pump_dump_state_to_db():
                     state["usd_vol_4h"],
                     json.dumps(list(state["volume_samples"])),
                 )
-        logger.info("PUMP_DUMP_STATE in DB archiviert")
+        logger.info("PUMP_DUMP_STATE archived in DB")
     except Exception as e:
-        logger.error(f"Fehler beim Archivieren von PUMP_DUMP_STATE: {e}")
+        logger.error(f"Error archiving PUMP_DUMP_STATE: {e}")
     finally:
         await release_conn(conn)
 
@@ -7474,9 +7475,9 @@ async def cleanup_old_pump_dump_archive(days_to_keep: int = 180):
     try:
         cutoff = datetime.now(pytz.UTC) - timedelta(days=days_to_keep)
         result = await conn.execute("DELETE FROM pump_dump_archive WHERE timestamp < $1", cutoff)
-        logger.info(f"Pump/Dump Archive Cleanup: {result.split()[-1]} Einträge gelöscht")
+        logger.info(f"Pump/Dump archive cleanup: {result.split()[-1]} entries deleted")
     except Exception as e:
-        logger.error(f"Cleanup Fehler: {e}")
+        logger.error(f"Cleanup error: {e}")
     finally:
         await release_conn(conn)
 
@@ -7490,12 +7491,12 @@ async def get_ml_model():
             try:
                 _ml_model = joblib.load(ML_MODEL_PATH)
                 _ml_model_time = now
-                logger.info("ML-Modell für Pump/Dump geladen")
+                logger.info("ML model for Pump/Dump loaded")
             except Exception as e:
-                logger.error(f"Fehler beim Laden des ML-Modells: {e}")
+                logger.error(f"Error loading the ML model: {e}")
                 _ml_model = None
         else:
-            # logger.warning("ML-Modell nicht gefunden – fallback auf rule-based only")
+            # logger.warning("ML model not found – falling back to rule-based only")
             _ml_model = None
             _ml_model_time = now
 
@@ -7503,18 +7504,18 @@ async def get_ml_model():
 
 
 async def ml_pump_dump_trainer():
-    logger.info("ML Pump/Dump Trainer gestartet – tägliches Training")
+    logger.info("ML Pump/Dump Trainer started – daily training")
     # await train_pump_dump_model()
 
     while True:
         try:
             now = datetime.now(pytz.UTC)
-            # Läuft täglich um 04:00 UTC (nach möglichem Cleanup)
+            # Runs daily at 04:00 UTC (after possible cleanup)
             if now.hour == 4 and now.minute < 30:
                 # await train_pump_dump_model()
-                logger.info("ML-Training abgeschlossen – neues Modell gespeichert")
+                logger.info("ML training complete – new model saved")
 
-            await asyncio.sleep(1800)  # Alle 30 Minuten prüfen
+            await asyncio.sleep(1800)  # Check every 30 minutes
 
         except asyncio.CancelledError:
             logger.info("ML Trainer Task cancelled")
@@ -7528,7 +7529,7 @@ async def train_pump_dump_model():
     logger.info("ML Trainer Task started")
     conn = await get_conn()
     try:
-        # Letzte 30 Tage 10s-Daten holen
+        # Fetch the last 30 days of 10s data
         cutoff = datetime.now(pytz.UTC) - timedelta(days=30)
         rows = await conn.fetch(
             """
@@ -7540,17 +7541,17 @@ async def train_pump_dump_model():
             cutoff,
         )
         if len(rows) < 30000:
-            logger.warning("Zu wenig 10s-Daten für ML-Training – mindestens 30k Einträge empfohlen")
+            logger.warning("Too little 10s data for ML training – at least 30k entries recommended")
             return
 
-        # In DataFrame für einfachere Verarbeitung
+        # Into a DataFrame for easier processing
         df = pd.DataFrame(rows, columns=['symbol', 'timestamp', 'price', 'volume_10s'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
 
         features = []
         labels = []
 
-        # Pro Symbol verarbeiten
+        # Process per symbol
         for symbol, group in df.groupby('symbol'):
             group = group.sort_values('timestamp').reset_index(drop=True)
             prices = group['price'].values
@@ -7572,14 +7573,14 @@ async def train_pump_dump_model():
                 elif avg_vol == 0 and len(vol_deque) > 30:
                     avg_vol = sum(vol_deque) / len(vol_deque)
 
-                if avg_vol <= 0 or i < 90 or i + 60 >= len(prices):  # 60 statt 90 → 10 Minuten
+                if avg_vol <= 0 or i < 90 or i + 60 >= len(prices):  # 60 instead of 90 → 10 minutes
                     continue
 
                 volume_ratio = current_vol / avg_vol
                 if volume_ratio < 5.0:
                     continue
 
-                # --- Features berechnen ---
+                # --- Compute features ---
                 start_idx = max(0, i - 6)
                 recent_prices = prices[start_idx : i + 1]
                 price_change_60s = (prices[i] / prices[i - 6] - 1) * 100 if i >= 6 else 0
@@ -7587,7 +7588,7 @@ async def train_pump_dump_model():
                 buy_pressure = up_ticks / max(1, i - start_idx)
                 volatility = np.std(recent_prices) / np.mean(recent_prices) if np.mean(recent_prices) > 0 else 0
 
-                # --- Indikatoren holen ---
+                # --- Fetch indicators ---
                 spike_time = pd.Timestamp(times[i])
                 if pd.isna(spike_time):
                     continue
@@ -7616,23 +7617,23 @@ async def train_pump_dump_model():
                     ema9 = float(ind_row['ema_9']) if ind_row['ema_9'] is not None else float(prices[i])
                     ema21 = float(ind_row['ema_21']) if ind_row['ema_21'] is not None else float(prices[i])
                 except asyncpg.exceptions.UndefinedTableError:
-                    logger.debug(f"Keine Indikator-Tabelle für {symbol} – übersprungen")
+                    logger.debug(f"No indicator table for {symbol} – skipped")
                     continue
                 except Exception as e:
-                    logger.warning(f"Indikator-Fehler {symbol}: {e}")
+                    logger.warning(f"Indicator error {symbol}: {e}")
                     continue
 
                 current_price_float = float(prices[i])
                 ema9_dist = (current_price_float - ema9) / ema9 * 100 if ema9 > 0 else 0.0
                 ema21_dist = (current_price_float - ema21) / ema21 * 100 if ema21 > 0 else 0.0
 
-                # --- Label: Outcome in nächsten 10 Minuten (+60 Ticks) ---
+                # --- Label: outcome in the next 10 minutes (+60 ticks) ---
                 end_idx = i + 60
                 future_change = (prices[end_idx] / prices[i] - 1) * 100 if end_idx < len(prices) else 0
 
-                if future_change >= 3.0:  # leicht entspannt für mehr Pump-Labels
+                if future_change >= 3.0:  # slightly relaxed for more pump labels
                     label = 2
-                elif future_change <= -3.0:  # etwas strenger für Dumps (weniger Noise)
+                elif future_change <= -3.0:  # a bit stricter for dumps (less noise)
                     label = 0
                 else:
                     label = 1
@@ -7654,7 +7655,7 @@ async def train_pump_dump_model():
                 labels.append(label)
 
         if len(features) < 100:
-            logger.warning(f"Nur {len(features)} gelabelte Events – zu wenig für Training")
+            logger.warning(f"Only {len(features)} labeled events – too few for training")
             return
 
         X = np.array(features)
@@ -7662,30 +7663,30 @@ async def train_pump_dump_model():
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-        # === Class Balancing mit sample_weight ===
+        # === Class balancing with sample_weight ===
         from sklearn.utils.class_weight import compute_class_weight
 
-        # Klassen definieren
+        # Define classes
         classes = np.unique(y_train)
 
-        # Balanced Weights berechnen
+        # Compute balanced weights
         class_weights = compute_class_weight('balanced', classes=classes, y=y_train)
         class_weight_dict = dict(zip(classes, class_weights))
 
-        # Fake-Out normal lassen, Pump/Dump nur leicht boosten (max 3x)
+        # Leave fake-out normal, only slightly boost pump/dump (max 3x)
         for label in class_weight_dict:
-            if label == 1:  # Fake-Out
+            if label == 1:  # Fake-out
                 class_weight_dict[label] = 1.0
             else:
                 class_weight_dict[label] = min(class_weight_dict[label], 3.0)
 
-        # Sample Weights erstellen
+        # Create sample weights
         sample_weights = np.array([class_weight_dict[label] for label in y_train])
 
-        # === Modell mit mehr Kapazität ===
+        # === Model with more capacity ===
         model = XGBClassifier(
-            n_estimators=500,  # mehr Trees für besseres Lernen
-            max_depth=6,  # etwas niedriger gegen Overfitting
+            n_estimators=500,  # more trees for better learning
+            max_depth=6,  # a bit lower against overfitting
             learning_rate=0.04,
             subsample=0.85,
             colsample_bytree=0.85,
@@ -7698,7 +7699,7 @@ async def train_pump_dump_model():
         y_pred = model.predict(X_test)
         report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
 
-        logger.info(f"ML-Training abgeschlossen – Events: {len(features)} | Accuracy: {report['accuracy']:.3f}")
+        logger.info(f"ML training complete – events: {len(features)} | Accuracy: {report['accuracy']:.3f}")
         logger.info(
             f"Pump (2) Precision: {report.get('2', {}).get('precision', 0):.3f} | Recall: {report.get('2', {}).get('recall', 0):.3f}"
         )
@@ -7709,7 +7710,7 @@ async def train_pump_dump_model():
             f"Fake-Out (1) Precision: {report.get('1', {}).get('precision', 0):.3f} | Recall: {report.get('1', {}).get('recall', 0):.3f}"
         )
 
-        # Feature Importance
+        # Feature importance
         booster = model.get_booster()
         importance = booster.get_score(importance_type='gain')
         feature_map = {
@@ -7731,16 +7732,16 @@ async def train_pump_dump_model():
         }
 
         sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)
-        logger.info("Feature Importance (Gain):")
+        logger.info("Feature importance (gain):")
         for f_idx, score in sorted_imp:
             feature_name = feature_map.get(f_idx, f_idx)
             logger.info(f"  {feature_name}: {score:.2f}")
 
         joblib.dump(model, "pump_dump_model.pkl")
-        logger.info("Neues ML-Modell gespeichert: pump_dump_model.pkl")
+        logger.info("New ML model saved: pump_dump_model.pkl")
 
     except Exception as e:
-        logger.error(f"ML Training Fehler: {e}", exc_info=True)
+        logger.error(f"ML training error: {e}", exc_info=True)
     finally:
         await release_conn(conn)
 
@@ -7764,32 +7765,32 @@ async def create_pump_dump_events_table():
                 ema21_distance_pct NUMERIC
             )
         """)
-        logger.info("pump_dump_events Tabelle bereit")
+        logger.info("pump_dump_events table ready")
     finally:
         await release_conn(conn)
 
 
 # async def send_cornix_signal(symbol: str, is_pump: bool, modul: str):
 # """
-# Sendet ein Cornix-kompatibles LONG/SHORT-Signal in den Trading-Channel.
-# Nur CMP-Entry, SL und alle verfügbaren Targets (max 20).
+# Sends a Cornix-compatible LONG/SHORT signal to the trading channel.
+# Only CMP entry, SL and all available targets (max 20).
 # """
-# TRADE_CHANNEL_ID = 0  # Dein Cornix-Channel
+# TRADE_CHANNEL_ID = 0  # Your Cornix channel
 # direction = "LONG" if is_pump else "SHORT"
 # leverage = "20x"
 
-# # Live-Preis holen
+# # Fetch live price
 # live_price = await get_live_price(symbol)
 # if not live_price:
-# logger.warning(f"Cornix-Signal für {symbol}: Kein Live-Preis verfügbar")
+# logger.warning(f"Cornix signal for {symbol}: no live price available")
 # return
 
-# # 90 Tage 1h-Daten für Targets/SL
+# # 90 days of 1h data for targets/SL
 # df = await get_1h_data_last_90d(symbol)
 # is_long = is_pump
 # if df.empty or len(df) <= 100:
 # entry1 = live_price
-# logger.warning(f"Cornix-Signal für {symbol}: Nicht genug Daten für Targets")
+# logger.warning(f"Cornix signal for {symbol}: not enough data for targets")
 
 # if is_long:
 # entry2 = entry1 * 0.95
@@ -7807,7 +7808,7 @@ async def create_pump_dump_events_table():
 # supports, resistances = find_support_resistance(df)
 # hvn_all = get_hvn_levelz(df, top_n=500)['all']
 
-# # Swing für Fibs
+# # Swing for Fibs
 # swing_high = df['HIGH'].max()
 # swing_low = df['LOW'].min()
 # fib_range = swing_high - swing_low
@@ -7818,7 +7819,7 @@ async def create_pump_dump_events_table():
 
 # is_long = is_pump
 
-# # CMP Entry (beide Entries = aktueller Preis)
+# # CMP Entry (both entries = current price)
 # entry1 = live_price
 
 # # Stop Loss
@@ -7845,9 +7846,9 @@ async def create_pump_dump_events_table():
 # target_candidates = [x for x in supports + hvn_all + fib_retracement + fib_ext_down if x < (entry1*0.99) and x > 0]
 # target_candidates = sorted(target_candidates, reverse=True)
 
-# targets = target_candidates[:20]  # Max 20 Targets
+# targets = target_candidates[:20]  # Max 20 targets
 
-# # Text-Nachricht bauen – nur gefundene Targets anzeigen
+# # Build the text message – only show targets that were found
 # lines = [
 # f"📈 Signal for {symbol} 📈",
 # f"🚨 Direction: {direction}",
@@ -7871,35 +7872,35 @@ async def create_pump_dump_events_table():
 # chat_id=TRADE_CHANNEL_ID,
 # text=message
 # )
-# logger.info(f"Cornix-Signal gesendet: {symbol} {direction}")
+# logger.info(f"Cornix signal sent: {symbol} {direction}")
 # except Exception as e:
-# logger.error(f"Cornix-Signal Fehler {symbol}: {e}")
+# logger.error(f"Cornix signal error {symbol}: {e}")
 
 
 async def send_cornix_signal(symbol: str, is_pump: bool, modul: str, channel_id=None):
     """
-    Sendet ein Cornix-kompatibles LONG/SHORT-Signal in den angegebenen Channel.
-    Fallback auf alten Cornix-Channel, wenn channel_id=None.
+    Sends a Cornix-compatible LONG/SHORT signal to the specified channel.
+    Falls back to the old Cornix channel when channel_id=None.
     """
-    DEFAULT_TRADE_CHANNEL_ID = 0  # Alter Cornix-Channel
+    DEFAULT_TRADE_CHANNEL_ID = 0  # Old Cornix channel
     target_channel = channel_id if channel_id is not None else DEFAULT_TRADE_CHANNEL_ID
 
     direction = "LONG" if is_pump else "SHORT"
     leverage = "20x-10x"
 
-    # Live-Preis holen
+    # Fetch live price
     live_price = await get_live_price(symbol)
     if not live_price:
-        logger.warning(f"Cornix-Signal für {symbol}: Kein Live-Preis verfügbar")
+        logger.warning(f"Cornix signal for {symbol}: no live price available")
         return
 
-    # 90 Tage 1h-Daten für Targets/SL
+    # 90 days of 1h data for targets/SL
     df = await get_1h_data_last_90d(symbol)
     is_long = is_pump
 
     if df.empty or len(df) <= 100:
         entry1 = live_price
-        logger.warning(f"Cornix-Signal für {symbol}: Nicht genug Daten für Targets")
+        logger.warning(f"Cornix signal for {symbol}: not enough data for targets")
 
         if is_long:
             entry2 = entry1 * 0.95
@@ -7910,7 +7911,7 @@ async def send_cornix_signal(symbol: str, is_pump: bool, modul: str, channel_id=
             target_candidates = [live_price * 0.9875, live_price * 0.975, live_price * 0.9625, live_price * 0.095]
             sl = entry2 * 1.025
     else:
-        # Support / Resistance + HVN + Fibs (dein alter Code bleibt gleich)
+        # Support / Resistance + HVN + Fibs (your old code stays the same)
         supports, resistances = find_support_resistance(df)
         hvn_all = get_hvn_levelz(df, top_n=500)['all']
         swing_high = df['HIGH'].max()
@@ -7962,32 +7963,32 @@ async def send_cornix_signal(symbol: str, is_pump: bool, modul: str, channel_id=
 
     try:
         await application.bot.send_message(chat_id=target_channel, text=message)
-        logger.info(f"Cornix-Signal gesendet: {symbol} {direction} in Channel {target_channel}")
+        logger.info(f"Cornix signal sent: {symbol} {direction} in channel {target_channel}")
     except Exception as e:
-        logger.error(f"Cornix-Signal Fehler {symbol}: {e}")
+        logger.error(f"Cornix signal error {symbol}: {e}")
 
 
 async def early_pump_dump_detector():
-    logger.info("Early Pump/Dump Detector Task gestartet (Hybrid: Volume + Momentum)")
+    logger.info("Early Pump/Dump Detector task started (hybrid: volume + momentum)")
     global PUMP_DUMP_STATE
-    # Nur wirklich informative Events speichern
+    # Only store truly informative events
     min_volume_for_save = 3.8
     min_momentum_for_low_volume = 1.2  # % in 60s
 
     last_save_time = datetime.now(pytz.UTC) - timedelta(minutes=11)
 
-    # logger.info(f"Anzahl coins aus coins.json: {len(coins)}")
+    # logger.info(f"Number of coins from coins.json: {len(coins)}")
     # sample_coins = list(coins)[:5]
-    # logger.info(f"Beispiel coins.json: {sample_coins}")
+    # logger.info(f"Example coins.json: {sample_coins}")
 
-    # logger.info(f"Anzahl Symbole in ONE_MINUTE_DATA: {len(ONE_MINUTE_DATA)}")
+    # logger.info(f"Number of symbols in ONE_MINUTE_DATA: {len(ONE_MINUTE_DATA)}")
     # sample_ticker = list(ONE_MINUTE_DATA.keys())[:5]
-    # logger.info(f"Beispiel ONE_MINUTE_DATA: {sample_ticker}")
+    # logger.info(f"Example ONE_MINUTE_DATA: {sample_ticker}")
 
     # overlap = set(coins) & set(ONE_MINUTE_DATA.keys())
-    # logger.info(f"Overlap (gemeinsame Symbole): {len(overlap)} → {list(overlap)[:10]}")
+    # logger.info(f"Overlap (common symbols): {len(overlap)} → {list(overlap)[:10]}")
 
-    # Initialisiere State für alle Coins
+    # Initialize state for all coins
     for symbol in coins:
         if symbol not in PUMP_DUMP_STATE:
             PUMP_DUMP_STATE[symbol] = {
@@ -8013,10 +8014,10 @@ async def early_pump_dump_detector():
                 current_vol = float(current_entry["v10s"])
                 state = PUMP_DUMP_STATE[symbol]
 
-                # Rolling Average Volume
+                # Rolling average volume
                 state["volume_samples"].append(current_vol)
 
-                # Kaltstart-Schutz
+                # Cold-start protection
                 if len(state["volume_samples"]) < 60:
                     continue
 
@@ -8030,7 +8031,7 @@ async def early_pump_dump_detector():
 
                 volume_ratio = current_vol / state["avg_volume"]
 
-                # Gemeinsame Berechnungen
+                # Shared calculations
                 recent_prices = [float(e["p"]) for e in data[-7:]]
                 price_change_60s = (recent_prices[-1] / recent_prices[-7] - 1) * 100 if len(recent_prices) >= 7 else 0
 
@@ -8048,15 +8049,15 @@ async def early_pump_dump_detector():
                     continue
 
                 if volume_ratio >= min_volume_for_save:
-                    # Hohes Volume → immer speichern (potenzieller Pump ODER Dump)
+                    # High volume → always save (potential pump OR dump)
                     pass
                 elif abs(price_change_60s) >= min_momentum_for_low_volume:
-                    # Starke Bewegung auch bei moderatem Volume → interessant
+                    # Strong movement even with moderate volume → interesting
                     pass
                 else:
-                    continue  # Beides schwach → wahrscheinlich irrelevant
+                    continue  # Both weak → probably irrelevant
 
-                # === Indikatoren holen (einmal für beide Wege) ===
+                # === Fetch indicators (once for both paths) ===
                 rsi = 50.0
                 tsi = 0.0
                 macd = 0.0
@@ -8081,61 +8082,61 @@ async def early_pump_dump_detector():
                         ema9 = float(ind_row['ema_9']) if ind_row['ema_9'] is not None else current_price
                         ema21 = float(ind_row['ema_21']) if ind_row['ema_21'] is not None else current_price
                 except asyncpg.exceptions.UndefinedTableError:
-                    logger.debug(f"Keine Indikator-Tabelle für {symbol}")
+                    logger.debug(f"No indicator table for {symbol}")
                 except Exception as e:
-                    logger.warning(f"Indikator-Fehler {symbol}: {e}")
+                    logger.warning(f"Indicator error {symbol}: {e}")
                 finally:
                     await release_conn(conn)
 
                 ema9_dist = (current_price - ema9) / ema9 * 100 if ema9 > 0 else 0.0
                 ema21_dist = (current_price - ema21) / ema21 * 100 if ema21 > 0 else 0.0
 
-                # === Weg 1: Volume-basiert (wie bisher) ===
+                # === Path 1: volume-based (as before) ===
                 volume_score = 0.0
 
-                # Volume selbst (symmetrisch, aber schwächer)
+                # Volume itself (symmetric, but weaker)
                 if volume_ratio > 1:
-                    volume_score += min(40, (volume_ratio - 1) * 8)  # Pump-Bonus
+                    volume_score += min(40, (volume_ratio - 1) * 8)  # Pump bonus
                 else:
-                    volume_score += max(-30, (volume_ratio - 1) * 30)  # Dump-Malus schwächer
+                    volume_score += max(-30, (volume_ratio - 1) * 30)  # Weaker dump penalty
 
                 # Momentum
                 volume_score += price_change_60s * 10
 
-                # Buy/Sell-Pressure asymmetrisch:
-                if price_change_60s > 0:  # Aufwärtstrend → Buy-Pressure muss hoch sein
+                # Buy/sell pressure, asymmetric:
+                if price_change_60s > 0:  # Uptrend → buy pressure must be high
                     volume_score += (buy_pressure - 0.5) * 60
-                else:  # Abwärtstrend → Sell-Pressure (niedriges buy_pressure) muss stark sein
+                else:  # Downtrend → sell pressure (low buy_pressure) must be strong
                     volume_score += (
                         0.5 - buy_pressure
-                    ) * 50  # Umgedreht: niedriges buy_pressure → positiver Dump-Score
+                    ) * 50  # Inverted: low buy_pressure → positive dump score
 
-                # 5min Change
+                # 5min change
                 if abs(change_5min) < 8:
                     volume_score += 15
                 elif abs(change_5min) > 20:
                     volume_score -= 25
 
-                # === Weg 3: Early-Signal (moderate, aber konsistent – asymmetrisch) ===
+                # === Path 3: early signal (moderate, but consistent – asymmetric) ===
                 early_score = 0.0
 
-                # Basis-Momentum
+                # Base momentum
                 early_score += price_change_60s * 15
 
-                # Buy/Sell-Pressure asymmetrisch
-                if price_change_60s > 0:  # Potenzieller Pump
-                    early_score += (buy_pressure - 0.5) * 70  # Hohes Buy-Pressure → Bonus
-                else:  # Potenzieller Dump
-                    early_score += (0.5 - buy_pressure) * 60  # Niedriges Buy-Pressure (Sell-Pressure) → Bonus für Dump
+                # Buy/sell pressure, asymmetric
+                if price_change_60s > 0:  # Potential pump
+                    early_score += (buy_pressure - 0.5) * 70  # High buy pressure → bonus
+                else:  # Potential dump
+                    early_score += (0.5 - buy_pressure) * 60  # Low buy pressure (sell pressure) → bonus for dump
 
-                # 5min Change (moderate Moves belohnen)
+                # 5min change (reward moderate moves)
                 if 3 < abs(change_5min) < 10:
                     early_score += 30 if change_5min > 0 else -30
                 elif 1 < abs(change_5min) <= 3:
                     early_score += 15 if change_5min > 0 else -15
 
-                # Indikator-Kontext: Unterschiedlich für Pump/Dump
-                if price_change_60s > 0:  # Pump-Richtung
+                # Indicator context: different for pump/dump
+                if price_change_60s > 0:  # Pump direction
                     if (
                         rsi < 65
                         and tsi > -10
@@ -8144,7 +8145,7 @@ async def early_pump_dump_detector():
                         and current_price > ema21 * 0.998
                     ):
                         early_score += 40
-                else:  # Dump-Richtung
+                else:  # Dump direction
                     if (
                         rsi > 35
                         and tsi < 10
@@ -8154,17 +8155,17 @@ async def early_pump_dump_detector():
                     ):
                         early_score -= 40
 
-                # === Weg 2: Momentum + Indikatoren (asymmetrisch für Pump/Dump) ===
+                # === Path 2: momentum + indicators (asymmetric for pump/dump) ===
                 momentum_score = 0.0
 
-                # Momentum und Direction
+                # Momentum and direction
                 momentum_score += price_change_60s * 20
 
-                # Buy/Sell-Pressure (asymmetrisch)
+                # Buy/sell pressure (asymmetric)
                 if price_change_60s > 0:
-                    momentum_score += (buy_pressure - 0.5) * 80  # Starkes Buy-Pressure für Pump
+                    momentum_score += (buy_pressure - 0.5) * 80  # Strong buy pressure for pump
                 else:
-                    momentum_score += (0.5 - buy_pressure) * 70  # Starkes Sell-Pressure für Dump
+                    momentum_score += (0.5 - buy_pressure) * 70  # Strong sell pressure for dump
 
                 if abs(change_5min) > 5:
                     momentum_score += 40
@@ -8178,7 +8179,7 @@ async def early_pump_dump_detector():
                 if abs(change_5min) < -3:
                     momentum_score -= 20
 
-                # Bullischer Kontext → Bonus für Pump
+                # Bullish context → bonus for pump
                 if (
                     change_5min > 0
                     and buy_pressure > 0.6
@@ -8190,7 +8191,7 @@ async def early_pump_dump_detector():
                 ):
                     momentum_score += 40
 
-                # Bearischer Kontext → Bonus für Dump (Sell-Pressure!)
+                # Bearish context → bonus for dump (sell pressure!)
                 if (
                     change_5min < 0
                     and buy_pressure < 0.4
@@ -8202,7 +8203,7 @@ async def early_pump_dump_detector():
                 ):
                     momentum_score -= 40
 
-                # Bullischer Indikator-Kontext → Bonus
+                # Bullish indicator context → bonus
                 if (
                     rsi < 75
                     and tsi > -15
@@ -8211,7 +8212,7 @@ async def early_pump_dump_detector():
                     and current_price > ema21 * 0.997
                 ):
                     momentum_score += 40
-                # Bearish → Malus
+                # Bearish → penalty
                 elif (
                     rsi > 25
                     and tsi < 15
@@ -8221,21 +8222,21 @@ async def early_pump_dump_detector():
                 ):
                     momentum_score -= 40
 
-                # === Trigger: Einer der beiden Wege muss stark sein ===
+                # === Trigger: one of the two paths must be strong ===
                 trigger = False
                 if abs(volume_score) >= 65:
                     trigger = True
-                    # logger.info(f"Volume-Spike erkannt: {symbol} | Score {volume_score:+.0f}")
+                    # logger.info(f"Volume spike detected: {symbol} | Score {volume_score:+.0f}")
                 if abs(momentum_score) >= 100:
                     trigger = True
-                    # logger.info(f"Momentum-Spike erkannt: {symbol} | Momentum-Score {momentum_score:+.0f}")
-                if abs(early_score) >= 60:  # Threshold etwas niedriger als Momentum-Weg
+                    # logger.info(f"Momentum spike detected: {symbol} | Momentum score {momentum_score:+.0f}")
+                if abs(early_score) >= 60:  # Threshold slightly lower than the momentum path
                     trigger = True
-                    # logger.info(f"Early-Signal erkannt: {symbol} | E-Score {early_score:+.0f}")
+                    # logger.info(f"Early signal detected: {symbol} | E-score {early_score:+.0f}")
                 if not trigger:
                     continue
 
-                # Event speichern (für Training – bei jedem Kandidaten)
+                # Save event (for training – for every candidate)
                 conn2 = await get_conn()
                 try:
                     await conn2.execute(
@@ -8258,7 +8259,7 @@ async def early_pump_dump_detector():
                         ema21_dist,
                     )
                 except Exception as e:
-                    logger.error(f"Event-Insert Fehler {symbol}: {e}")
+                    logger.error(f"Event insert error {symbol}: {e}")
                 finally:
                     await release_conn(conn2)
 
@@ -8292,7 +8293,7 @@ async def early_pump_dump_detector():
                 max_prob = max(prob_pump, prob_dump)
                 is_pump = prob_pump >= prob_dump
 
-                if max_prob >= 0.25:  # statt nur >=0.6
+                if max_prob >= 0.25:  # instead of just >=0.6
                     signals_batch.append(
                         {
                             'symbol': symbol,
@@ -8306,17 +8307,17 @@ async def early_pump_dump_detector():
                 if max_prob < 0.6:
                     if max_prob > 0.25:
                         logger.info(
-                            f"ML-Alert schwach: {symbol} | {'PUMP' if is_pump else 'DUMP'} | Confidence {max_prob:.1%} (Pump: {prob_pump:.1%}, Dump: {prob_dump:.1%})"
+                            f"ML alert weak: {symbol} | {'PUMP' if is_pump else 'DUMP'} | Confidence {max_prob:.1%} (Pump: {prob_pump:.1%}, Dump: {prob_dump:.1%})"
                         )
                     # else:
-                    # #logger.info(f"ML-Alert sehr schwach: {symbol} | {'PUMP' if is_pump else 'DUMP'} | Confidence {max_prob:.1%} (Pump: {prob_pump:.1%}, Dump: {prob_dump:.1%})")
-                    # logger.info(f"ML blockiert Alert: {symbol} | V{volume_score:+.0f} | M{momentum_score:+.0f} | E{early_score:+.0f} | Prob {max_prob:.1%}")
+                    # #logger.info(f"ML alert very weak: {symbol} | {'PUMP' if is_pump else 'DUMP'} | Confidence {max_prob:.1%} (Pump: {prob_pump:.1%}, Dump: {prob_dump:.1%})")
+                    # logger.info(f"ML blocking alert: {symbol} | V{volume_score:+.0f} | M{momentum_score:+.0f} | E{early_score:+.0f} | Prob {max_prob:.1%}")
                     continue
 
-                # RICHTIG: ML entscheidet immer die Richtung, wenn Confidence hoch genug
+                # CORRECT: ML always decides the direction when confidence is high enough
                 # is_pump = prob_pump >= prob_dump
 
-                # Optional: Logging für Debugging
+                # Optional: logging for debugging
 
                 logger.info(
                     f"ML-Alert: {symbol} | {'PUMP' if is_pump else 'DUMP'} | Confidence {max_prob:.1%} (Pump: {prob_pump:.1%}, Dump: {prob_dump:.1%})"
@@ -8324,7 +8325,7 @@ async def early_pump_dump_detector():
 
                 await send_cornix_signal(symbol, is_pump, 'EPD1')
 
-                # === Alert posten ===
+                # === Post alert ===
                 border_color = "#00ff00" if is_pump else "#ff0066"
                 emoji = "🚀 EARLY PUMP DETECTION" if is_pump else "💥 EARLY DUMP ALERT"
                 score_color = "#00ff00" if is_pump else "#ff0066"
@@ -8337,7 +8338,7 @@ async def early_pump_dump_detector():
 <b>{'Pump' if is_pump else 'Dump'} Score: <b style="color:{score_color};">V{volume_score:+.0f} | M{momentum_score:+.0f} | E-Score {early_score:+.0f}</b></b>
 <b>→ Price: <code>${current_price:,.8f}</code> <b style="color:{change_color}">({change_5min:+.2f}% in 5min)</b></b>
 <b>→ Volume: <b style="color:#00ff88;">{volume_ratio:.1f}×</b> above average</b>
-<b>→ ML-Confidence: <b style="color:#00ffff;">{max_prob:.1%}</b> / Modul: EPD1 </b>
+<b>→ ML-Confidence: <b style="color:#00ffff;">{max_prob:.1%}</b> / Module: EPD1</b>
 <b>→ Time: {now.strftime('%H:%M')} UTC</b>
 </pre>
                 """.strip()
@@ -8351,19 +8352,19 @@ async def early_pump_dump_detector():
                     else:
                         await application.bot.send_message(chat_id=AI_CHANNEL_ID, text=html, parse_mode="HTML")
                     logger.info(
-                        f"Hybrid Alert gesendet: {symbol} | V{volume_score:+.0f} | M{momentum_score:+.0f} | E{early_score:+.0f} | Prob {max_prob:.1%}"
+                        f"Hybrid alert sent: {symbol} | V{volume_score:+.0f} | M{momentum_score:+.0f} | E{early_score:+.0f} | Prob {max_prob:.1%}"
                     )
                 except Exception as e:
                     logger.error(f"Alert send error {symbol}: {e}")
 
                 state["last_alert_time"] = now
 
-            logger.info(f"Pump/Dump Detector Durchlauf fertig – {processed} Coins geprüft ")
+            logger.info(f"Pump/Dump Detector run complete – {processed} coins checked ")
 
             if signals_batch:
                 asyncio.create_task(log_ai_signals(signals_batch))
 
-            # Speichern alle 10 Minuten
+            # Save every 10 minutes
             now = datetime.now(pytz.UTC)
             if (now - last_save_time).total_seconds() >= 600:
                 try:
@@ -8377,10 +8378,10 @@ async def early_pump_dump_detector():
                         }
                     with open(PUMP_DUMP_FILE, "w", encoding="utf-8") as f:
                         json.dump(save_data, f, indent=2, ensure_ascii=False)
-                    logger.info("Pump/Dump State gespeichert (zyklisch)")
+                    logger.info("Pump/Dump state saved (cyclically)")
                     last_save_time = now
                 except Exception as e:
-                    logger.error(f"Speicher-Fehler: {e}")
+                    logger.error(f"Save error: {e}")
 
         except asyncio.CancelledError:
             logger.info("Detector cancelled")
@@ -8392,20 +8393,20 @@ async def early_pump_dump_detector():
 
 async def rubberband_detector():
     """
-    Läuft jede Stunde um Minute 12 (RUB1 Modul)
-    Sucht nach Gummiband-Überdehnungen.
+    Runs every hour at minute 12 (RUB1 module)
+    Searches for rubber-band overextensions.
     """
-    logger.info("Rubberband Detector (RUB1) gestartet")
+    logger.info("Rubberband Detector (RUB1) started")
 
     while True:
         try:
             now = datetime.now(pytz.UTC)
-            # Wir lassen ihn um 12 Minuten nach der vollen Stunde laufen
+            # We let it run at 12 minutes past the full hour
             if now.minute != 12 or now.second > 30:
                 await asyncio.sleep(20)
                 continue
 
-            logger.info("Starte stündlichen Rubberband (RUB1) Scan...")
+            logger.info("Starting hourly Rubberband (RUB1) scan...")
 
             for symbol in coins:
                 try:
@@ -8494,17 +8495,17 @@ async def rubberband_detector():
                                 source=f"Rubberband Mean Reversion | Distance: {dist_str}",
                             )
                         else:
-                            logger.info(f"RUB1 Trade für {symbol} wg. Cooldown ignoriert.")
+                            logger.info(f"RUB1 trade for {symbol} ignored due to cooldown.")
 
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error(f"Fehler in RUB1 für {symbol}: {e}", exc_info=False)
+                    logger.error(f"Error in RUB1 for {symbol}: {e}", exc_info=False)
 
             await asyncio.sleep(60)
 
         except asyncio.CancelledError:
-            logger.info("Rubberband Detector (RUB1) wird sauber beendet...")
+            logger.info("Rubberband Detector (RUB1) shutting down cleanly...")
             raise
         except Exception as e:
             logger.error(f"RUB1 Detector Crash: {e}", exc_info=True)
@@ -8516,37 +8517,37 @@ async def rubberband_detector():
 
 # async def ml_filtered_tsi_trader():
 # """
-# ML-gefilterter TSI-Crossover Trader
-# - Läuft alle 8 Minuten nach der vollen Stunde
-# - Prüft vorletzte 1h-Kerze auf TSI-Crossover
-# - Nur Trade bei ML-Wahrscheinlichkeit > 70%
-# - Sendet Cornix-Signal + Posting mit Chart
+# ML-filtered TSI crossover trader
+# - Runs every 8 minutes past the full hour
+# - Checks the second-to-last 1h candle for a TSI crossover
+# - Only trades if ML probability > 70%
+# - Sends Cornix signal + posting with chart
 # """
-# logger.info("ML-Filtered TSI Trader Task gestartet")
+# logger.info("ML-Filtered TSI Trader task started")
 
-# # Modell laden
+# # Load model
 # try:
 # model = joblib.load("tsi_profit_predictor_relative.pkl")
-# logger.info("ML-Modell geladen")
+# logger.info("ML model loaded")
 # except Exception as e:
-# logger.error(f"ML-Modell konnte nicht geladen werden: {e}")
+# logger.error(f"ML model could not be loaded: {e}")
 # return
 
 # while True:
 # try:
 # now = datetime.now(pytz.UTC)
-# # Warte bis 8 Minuten nach der vollen Stunde
+# # Wait until 8 minutes past the full hour
 # next_run = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)) + timedelta(minutes=8)
 # sleep_seconds = max(0, (next_run - datetime.now(pytz.UTC)).total_seconds())
-# logger.info(f"Nächster Scan um {next_run} UTC – Schlaf {sleep_seconds:.0f}s")
+# logger.info(f"Next scan at {next_run} UTC – sleeping {sleep_seconds:.0f}s")
 # await asyncio.sleep(sleep_seconds)
 # signals_batch = []
-# logger.info("Stündlicher TSI-Scan mit ML-Filter gestartet")
+# logger.info("Hourly TSI scan with ML filter started")
 
 # for symbol in coins:
 
 # try:
-# # Vorletzte abgeschlossene 1h-Kerze holen
+# # Fetch the second-to-last completed 1h candle
 # conn = await get_conn()
 # rows = await conn.fetch(f"""
 # SELECT i.open_time, p.close, tsi_fast_12_7_7, tsi_fast_12_7_7_signal,
@@ -8563,18 +8564,18 @@ async def rubberband_detector():
 # if len(rows) < 3:
 # continue
 
-# # Reihenfolge: neueste zuerst
-# latest = rows[0]      # aktuelle (offene) Stunde → ignorieren
-# prev = rows[1]        # vorletzte abgeschlossene → mögliches Signal
-# prev_prev = rows[2]   # drittletzte → für Crossover-Vergleich
+# # Order: newest first
+# latest = rows[0]      # current (open) hour → ignore
+# prev = rows[1]        # second-to-last completed → possible signal
+# prev_prev = rows[2]   # third-to-last → for crossover comparison
 
-# # TSI-Werte
+# # TSI values
 # tsi_prev_prev = float(prev_prev["tsi_fast_12_7_7"]) if prev_prev["tsi_fast_12_7_7"] is not None else 0
 # signal_prev_prev = float(prev_prev["tsi_fast_12_7_7_signal"]) if prev_prev["tsi_fast_12_7_7_signal"] is not None else 0
 # tsi_prev = float(prev["tsi_fast_12_7_7"]) if prev["tsi_fast_12_7_7"] is not None else 0
 # signal_prev = float(prev["tsi_fast_12_7_7_signal"]) if prev["tsi_fast_12_7_7_signal"] is not None else 0
 
-# # Crossover in der vorletzten Kerze prüfen
+# # Check the crossover in the second-to-last candle
 # long_cross = (tsi_prev_prev <= signal_prev_prev) and (tsi_prev > signal_prev)
 # short_cross = (tsi_prev_prev >= signal_prev_prev) and (tsi_prev < signal_prev)
 
@@ -8584,7 +8585,7 @@ async def rubberband_detector():
 # direction = "LONG" if long_cross else "SHORT"
 # is_long = long_cross
 
-# # Features aus der vorletzten Kerze berechnen
+# # Compute features from the second-to-last candle
 # close = float(prev["close"])
 # ema200 = float(prev["ema_200"]) if prev["ema_200"] is not None else close
 # ema9 = float(prev["ema_9"]) if prev["ema_9"] is not None else close
@@ -8595,7 +8596,7 @@ async def rubberband_detector():
 # atr = float(prev["atr_14"]) if prev["atr_14"] is not None else 0
 # volume = float(prev["volume"])
 
-# # Volume Ratio (20-Perioden SMA aus 1h Daten) – Tabelle korrigiert!
+# # Volume ratio (20-period SMA from 1h data) – table fixed!
 # conn2 = await get_conn()
 # vol_rows = await conn2.fetch(f"""
 # SELECT volume FROM "{symbol}_1h"
@@ -8606,7 +8607,7 @@ async def rubberband_detector():
 # vol_sma20 = sum(volumes[1:]) / 20 if len(volumes) == 21 else volume
 # volume_ratio = volume / vol_sma20 if vol_sma20 > 0 else 1.0
 
-# # Relative Features
+# # Relative features
 # features = {
 # "rsi_14": float(prev["rsi_14"]) if prev["rsi_14"] is not None else 50,
 # "volume_ratio": volume_ratio,
@@ -8624,7 +8625,7 @@ async def rubberband_detector():
 
 # logger.info(f"{symbol} TSI {direction} Crossover – ML Prob: {prob_profit:.1%}")
 
-# if prob_profit >= 0.25:  # statt nur >=0.60
+# if prob_profit >= 0.25:  # instead of just >=0.60
 # signals_batch.append({
 # 'symbol': symbol,
 # 'price': close,
@@ -8636,11 +8637,11 @@ async def rubberband_detector():
 # if prob_profit < 0.70:
 # continue  # Filter
 
-# # Trade eröffnen
-# logger.info(f"Trade eröffnet: {symbol} {direction} (ML Prob {prob_profit:.1%})")
+# # Open trade
+# logger.info(f"Trade opened: {symbol} {direction} (ML Prob {prob_profit:.1%})")
 # await send_cornix_signal(symbol, is_long, "ATS1")
 
-# # Posting mit Chart
+# # Posting with chart
 # border_color = "#00ff00" if is_long else "#ff0066"
 # emoji = "🚀 TSI-CROSSOVER LONG SIGNAL" if is_long else "💥 TSI-CROSSOVER SHORT SIGNAL"
 # html = f"""
@@ -8651,7 +8652,7 @@ async def rubberband_detector():
 # <b>→ ML Confidence: <b style="color:#00ffff;">{prob_profit:.1%}</b></b>
 # <b>→ RSI: {features['rsi_14']:.1f} | Volume Ratio: {features['volume_ratio']:.1f}x</b>
 # <b>→ Dist to EMA200: {features['close_to_ema200_pct']:+.2f}%</b>
-# <b>→ Time: {now.strftime('%H:%M')} UTC | Modul: ATS1</b>
+# <b>→ Time: {now.strftime('%H:%M')} UTC | Module: ATS1</b>
 # </pre>
 # """.strip()
 
@@ -8671,10 +8672,10 @@ async def rubberband_detector():
 # parse_mode="HTML"
 # )
 # except Exception as e:
-# logger.error(f"Posting-Fehler {symbol}: {e}")
+# logger.error(f"Posting error {symbol}: {e}")
 
 # except Exception as e:
-# logger.error(f"Fehler bei {symbol}: {e}")
+# logger.error(f"Error for {symbol}: {e}")
 
 # if signals_batch:
 # asyncio.create_task(log_ai_signals(signals_batch))
@@ -8689,41 +8690,41 @@ async def rubberband_detector():
 
 async def ml_filtered_tsi_trader():
     """
-    ML-gefilterter TSI-Crossover Trader (Dual Model Robust)
-    - Läuft alle 8 Minuten nach der vollen Stunde
-    - Prüft vorletzte 1h-Kerze auf TSI-Crossover
-    - Berechnet komplexe Features (Volume, VWAP, OBV) live
-    - Nutzt separate Long/Short XGBoost Modelle
+    ML-filtered TSI crossover trader (dual model robust)
+    - Runs every 8 minutes past the full hour
+    - Checks the second-to-last 1h candle for a TSI crossover
+    - Computes complex features (volume, VWAP, OBV) live
+    - Uses separate long/short XGBoost models
     """
-    logger.info("ML-Filtered TSI Trader Task (Dual Robust) gestartet")
+    logger.info("ML-Filtered TSI Trader task (dual robust) started")
 
-    # Modelle laden
+    # Load models
     try:
         model_long = joblib.load(TSI_MODEL_LONG_PATH)
         model_short = joblib.load(TSI_MODEL_SHORT_PATH)
-        logger.info(f"ML-Modelle geladen: {TSI_MODEL_LONG_PATH}, {TSI_MODEL_SHORT_PATH}")
+        logger.info(f"ML models loaded: {TSI_MODEL_LONG_PATH}, {TSI_MODEL_SHORT_PATH}")
     except Exception as e:
-        logger.error(f"ML-Modelle konnten nicht geladen werden: {e}")
+        logger.error(f"ML models could not be loaded: {e}")
         return
 
     while True:
         try:
             now = datetime.now(pytz.UTC)
-            # Warte bis 8 Minuten nach der vollen Stunde
+            # Wait until 8 minutes past the full hour
             next_run = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)) + timedelta(minutes=8)
             sleep_seconds = max(0, (next_run - datetime.now(pytz.UTC)).total_seconds())
-            logger.info(f"Nächster Scan um {next_run.strftime('%H:%M')} UTC – Schlaf {sleep_seconds:.0f}s")
+            logger.info(f"Next scan at {next_run.strftime('%H:%M')} UTC – sleeping {sleep_seconds:.0f}s")
             await asyncio.sleep(sleep_seconds)
 
             signals_batch = []
-            logger.info("Stündlicher TSI-Scan mit Dual-ML-Filter gestartet")
+            logger.info("Hourly TSI scan with dual ML filter started")
 
             for symbol in coins:
                 try:
-                    # Wir brauchen ca. 50 Kerzen Historie für korrekte Indikator-Berechnungen (VWAP, OBV, Rolling)
+                    # We need roughly 50 candles of history for correct indicator calculations (VWAP, OBV, rolling)
                     conn = await get_conn()
-                    # Wir holen Price UND Indicators in einem Join, sortiert nach Zeit absteigend, dann umdrehen
-                    # Hinweis: VWAP und OBV berechnen wir hier in Python neu, um sicherzugehen
+                    # We fetch price AND indicators in one join, sorted by time descending, then reverse
+                    # Note: we recompute VWAP and OBV here in Python to be sure
                     rows = await conn.fetch(f"""
                         SELECT
                             p.open_time, p.high, p.low, p.close, p.volume,
@@ -8744,13 +8745,13 @@ async def ml_filtered_tsi_trader():
                     if len(rows) < 50:
                         continue
 
-                    # In Pandas DataFrame umwandeln und Zeit aufsteigend sortieren
-                    # rows ist eine Liste von Record-Objekten, wir konvertieren sie manuell oder direkt
+                    # Convert to a Pandas DataFrame and sort time ascending
+                    # rows is a list of Record objects, we convert them manually or directly
                     data = [dict(row) for row in rows]
                     df = pd.DataFrame(data)
-                    df = df.iloc[::-1].reset_index(drop=True)  # Umdrehen: Index 0 ist alt, Index -1 ist neu
+                    df = df.iloc[::-1].reset_index(drop=True)  # Reverse: index 0 is old, index -1 is new
 
-                    # Numeric conversion sicherstellen
+                    # Ensure numeric conversion
                     cols = [
                         'high',
                         'low',
@@ -8781,13 +8782,13 @@ async def ml_filtered_tsi_trader():
                     for col in cols:
                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-                    # --- SIGNAL PRÜFUNG (auf vorletzter Kerze: Index -2) ---
-                    # Index -1 ist die aktuelle (offene) Kerze (oder gerade geschlossene, je nach Timing)
-                    # Da der Bot 8 Min NACH der Stunde läuft, ist Index -1 die offene neue Kerze.
-                    # Index -2 ist die abgeschlossene Kerze, die wir handeln wollen.
+                    # --- SIGNAL CHECK (on the second-to-last candle: index -2) ---
+                    # Index -1 is the current (open) candle (or the one that just closed, depending on timing)
+                    # Since the bot runs 8 min AFTER the hour, index -1 is the open new candle.
+                    # Index -2 is the completed candle that we want to trade.
 
-                    current_idx = -2  # Die abgeschlossene Kerze
-                    prev_idx = -3  # Die Kerze davor (für Crossover)
+                    current_idx = -2  # The completed candle
+                    prev_idx = -3  # The candle before it (for the crossover)
 
                     tsi_curr = df.iloc[current_idx]['tsi_fast_12_7_7']
                     sig_curr = df.iloc[current_idx]['tsi_fast_12_7_7_signal']
@@ -8803,7 +8804,7 @@ async def ml_filtered_tsi_trader():
                     direction = "LONG" if long_cross else "SHORT"
 
                     # --- LIVE FEATURE ENGINEERING ---
-                    # 1. OBV & VWAP berechnen
+                    # 1. Compute OBV & VWAP
                     df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
                     df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
                     # VWAP Rolling 20
@@ -8812,16 +8813,16 @@ async def ml_filtered_tsi_trader():
                     ).sum()
                     df['vwap_20'] = df['vwap_20'].fillna(df['close'])
 
-                    # 2. Features für die Signal-Kerze (Index -2) berechnen
+                    # 2. Compute features for the signal candle (index -2)
                     row = df.iloc[current_idx]
-                    row_prev = df.iloc[prev_idx]  # Für Crossover-Features
+                    row_prev = df.iloc[prev_idx]  # For crossover features
 
-                    # Volatilitäts & Volume Helper
+                    # Volatility & volume helper
                     vol_sma20 = df['volume'].rolling(20).mean().iloc[current_idx]
                     if vol_sma20 == 0:
                         vol_sma20 = 1.0  # Zero div fix
 
-                    # Dictionary bauen
+                    # Build dictionary
                     features = {
                         "rsi_14": row['rsi_14'],
                         "rsi_6": row['rsi_6'],
@@ -8850,7 +8851,7 @@ async def ml_filtered_tsi_trader():
                         "slope_norm": (row['trendline_slope'] / row['close']) * 1000 if row['close'] else 0,
                         "dist_supp": (row['close'] - row['support_price']) / row['close'] if row['close'] else 0,
                         "dist_res": (row['resistance_price'] - row['close']) / row['close'] if row['close'] else 0,
-                        # Binary / Crossover Flags (nutzen row_prev)
+                        # Binary / crossover flags (using row_prev)
                         "macd_cross_bearish": int(
                             row_prev['macd_dif_normal_12_26_9'] >= row_prev['macd_dea_normal_12_26_9']
                             and row['macd_dif_normal_12_26_9'] < row['macd_dea_normal_12_26_9']
@@ -8863,7 +8864,7 @@ async def ml_filtered_tsi_trader():
                         ),
                         "bollinger_lower_break": int(row['close'] < row['boll_lower_20']),
                         "close_below_ema50": int(row['close'] < row['ema_50']),
-                        # Advanced Volume Features
+                        # Advanced volume features
                         "obv_ratio": row['obv'] / df['obv'].rolling(20).mean().iloc[current_idx]
                         if df['obv'].rolling(20).mean().iloc[current_idx] != 0
                         else 0,
@@ -8873,9 +8874,9 @@ async def ml_filtered_tsi_trader():
                         "volume_trend_up": int(df['volume'].rolling(5).mean().iloc[current_idx] > vol_sma20),
                     }
 
-                    # Prediction DataFrame erstellen
+                    # Create prediction DataFrame
                     X_live = pd.DataFrame([features])
-                    # Spaltenreihenfolge erzwingen!
+                    # Force column order!
                     X_live = X_live[TSI_FEATURES].fillna(0)
 
                     prob_profit = 0.0
@@ -8892,7 +8893,7 @@ async def ml_filtered_tsi_trader():
                         f"{symbol} TSI {direction} Crossover – ML Prob: {prob_profit:.1%} (Thresh: {threshold:.2f})"
                     )
 
-                    # Logging für Datenbank / Statistik
+                    # Logging for database / statistics
                     if prob_profit >= 0.25:
                         signals_batch.append(
                             {
@@ -8904,11 +8905,11 @@ async def ml_filtered_tsi_trader():
                             }
                         )
 
-                    # Trade Filter
+                    # Trade filter
                     if prob_profit < threshold:
                         continue
 
-                    # --- TRADE AUSFÜHREN ---
+                    # --- EXECUTE TRADE ---
                     logger.info(f"🔥 TRADE EXECUTE: {symbol} {direction} (ML {prob_profit:.1%})")
                     is_long = direction == "LONG"
                     await send_cornix_signal(symbol, is_long, "ATS1")
@@ -8917,8 +8918,8 @@ async def ml_filtered_tsi_trader():
                     border_color = "#00ff00" if is_long else "#ff0066"
                     emoji = "🚀 TSI-SNIPER LONG" if is_long else "💥 TSI-SNIPER SHORT"
 
-                    # Top Feature für Info (z.B. Volume Trend)
-                    vol_trend_str = "JA" if features['volume_trend_up'] else "NEIN"
+                    # Top feature for info (e.g. volume trend)
+                    vol_trend_str = "YES" if features['volume_trend_up'] else "NO"
 
                     html = f"""
 <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; font-family:'Courier New', monospace; font-size:15px; line-height:1.8; border-left:6px solid {border_color};">
@@ -8929,7 +8930,7 @@ async def ml_filtered_tsi_trader():
 <b>→ Price: {row['close']:.4f}</b>
 <b>→ Vol Trend Up: {vol_trend_str} | Spike: {features['volume_spike']}</b>
 <b>→ BB Pos: {features['bb_pos']:.2f} | Dist EMA200: {features['dist_ema200'] * 100:.2f}%</b>
-<b>→ Time: {now.strftime('%H:%M')} UTC | Modul: ATS1</b>
+<b>→ Time: {now.strftime('%H:%M')} UTC | Module: ATS1</b>
 </pre>
                     """.strip()
 
@@ -8942,10 +8943,10 @@ async def ml_filtered_tsi_trader():
                         else:
                             await application.bot.send_message(chat_id=AI_CHANNEL_ID, text=html, parse_mode="HTML")
                     except Exception as e:
-                        logger.error(f"Posting-Fehler {symbol}: {e}")
+                        logger.error(f"Posting error {symbol}: {e}")
 
                 except Exception as e:
-                    logger.error(f"Fehler bei {symbol}: {e}")
+                    logger.error(f"Error for {symbol}: {e}")
 
             if signals_batch:
                 asyncio.create_task(log_ai_signals(signals_batch))
@@ -8971,15 +8972,15 @@ def get_current_round_level(symbol: str, price: float) -> float | None:
 
 
 async def round_level_breaker():
-    logger.info("Round Level Breaker Task gestartet (FIXED)")
+    logger.info("Round Level Breaker task started (FIXED)")
     global ROUND_BREAK_STATE
 
-    # Kurzes Warten beim Start, damit Daten da sind
+    # Brief wait at startup so data is available
     await asyncio.sleep(5)
 
     while True:
         try:
-            await asyncio.sleep(5)  # Häufiger checken (5s)
+            await asyncio.sleep(5)  # Check more frequently (5s)
 
             for symbol, cfg in ROUND_LEVEL_CONFIG.items():
                 if symbol not in ONE_MINUTE_DATA or len(ONE_MINUTE_DATA[symbol]) < 2:
@@ -8989,10 +8990,10 @@ async def round_level_breaker():
                 prev_price = float(data[-2]["p"])
                 current_price = float(data[-1]["p"])
 
-                # Step Size ermitteln
+                # Determine step size
                 step = cfg.get('step_size')
                 if not step:
-                    # Fallback Logik
+                    # Fallback logic
                     if current_price > 10000:
                         step = 1000
                     elif current_price > 1000:
@@ -9005,14 +9006,14 @@ async def round_level_breaker():
                         step = 0.1
 
                 # --- CORE LOGIC ---
-                # Wir prüfen, ob wir in einen neuen "Hunderter/Tausender-Block" gerutscht sind
+                # We check whether we've slipped into a new "hundreds/thousands block"
                 prev_bucket = int(prev_price / step)
                 curr_bucket = int(current_price / step)
 
                 if prev_bucket == curr_bucket:
                     continue
 
-                # Level bestimmen
+                # Determine level
                 if current_price > prev_price:
                     direction = "upwards"
                     crossed_level = curr_bucket * step
@@ -9020,7 +9021,7 @@ async def round_level_breaker():
                     direction = "downwards"
                     crossed_level = prev_bucket * step
 
-                # Validierung: Hat der Preis die Linie wirklich gekreuzt?
+                # Validation: did the price really cross the line?
                 is_valid = False
                 if direction == "upwards" and prev_price < crossed_level <= current_price:
                     is_valid = True
@@ -9034,23 +9035,23 @@ async def round_level_breaker():
                 state = ROUND_BREAK_STATE.get(symbol, {})
                 last_saved_level = state.get(
                     "last_level", 0
-                )  # Umbenannt zu last_saved_level um Verwirrung zu vermeiden
+                )  # Renamed to last_saved_level to avoid confusion
                 last_time = state.get("last_break_time", datetime(1970, 1, 1, tzinfo=pytz.UTC))
 
-                # Cooldown Check
+                # Cooldown check
                 if last_saved_level == crossed_level:
                     if (datetime.now(pytz.UTC) - last_time).total_seconds() < COOLDOWN_SECONDS:
                         continue
 
                 logger.info(f"BREAK: {symbol} crossed {crossed_level} ({direction})")
 
-                # --- SENDEN ---
+                # --- SEND ---
                 chart_buf = await generate_smooth_minichart_image(symbol, minutes=240)
 
                 color = "#00ff00" if direction == "upwards" else "#ff0066"
                 decimals = cfg.get('decimals', 2)
 
-                # HIER WAR DER FEHLER: Wir nutzen jetzt 'crossed_level' statt 'last_level'
+                # THIS IS WHERE THE BUG WAS: we now use 'crossed_level' instead of 'last_level'
                 html = f"""
 <pre style="background:#1e1e1e; color:#ffffff; padding:16px; border-radius:12px; font-family:'Courier New', monospace; font-size:15px; line-height:1.8; border-left:6px solid {color};">
 <b style="color:#00ffff; font-size:18px;">ROUND LEVEL BREAK</b>
@@ -9068,9 +9069,9 @@ async def round_level_breaker():
                     else:
                         await application.bot.send_message(chat_id=MARKET_CHANNEL_ID, text=html, parse_mode="HTML")
                 except Exception as e:
-                    logger.error(f"Fehler beim Senden: {e}")
+                    logger.error(f"Error while sending: {e}")
 
-                # State updaten
+                # Update state
                 ROUND_BREAK_STATE[symbol] = {
                     "last_level": crossed_level,
                     "last_break_time": datetime.now(pytz.UTC),
@@ -9095,7 +9096,7 @@ async def fetch_json(session: aiohttp.ClientSession, url: str, params=None, head
             if resp.status == 200:
                 return await resp.json()
             else:
-                logger.warning(f"HTTP {resp.status} für {url}")
+                logger.warning(f"HTTP {resp.status} for {url}")
                 return None
     except Exception as e:
         logger.error(f"Fetch error {url}: {e}")
@@ -9207,7 +9208,7 @@ async def get_open_interest_async(session):
 
 async def get_x_sentiment_async():
     try:
-        data = get_crypto_data()  # sync fallback ist okay (selten)
+        data = get_crypto_data()  # sync fallback is fine (rare)
         if not data:
             return 0.0
         score = data['btc_change'] / 10 + data['eth_change'] / 15 + data['total_mcap_change'] / 8
@@ -9266,7 +9267,7 @@ async def analyze_sentiment_score(data, fg_value, funding, oi, btc_ls, eth_ls, x
     if oi['btc'] > 55e9:
         score += 1.0
 
-    # Ersetze die Proxy-Logik:
+    # Replace the proxy logic:
     if btc_ls > 2.5:
         score += 1.5
     elif btc_ls > 1.8:
@@ -9298,10 +9299,10 @@ async def analyze_sentiment_score(data, fg_value, funding, oi, btc_ls, eth_ls, x
 
 async def get_long_short_ratios_async(session: aiohttp.ClientSession):
     """
-    Holt echte L/S Ratios von Binance (SIGNED mit Key) oder Fallback-Proxy.
+    Fetches real L/S ratios from Binance (SIGNED with key) or a fallback proxy.
     """
     try:
-        # SIGNED Binance Request (für L/S-Ratio – braucht Key seit 2025)
+        # SIGNED Binance request (for L/S ratio – requires a key since 2025)
         def sign_request(query_string):
             total_params = f"{query_string}&timestamp={int(time.time() * 1000)}"
             signature = hmac.new(
@@ -9328,7 +9329,7 @@ async def get_long_short_ratios_async(session: aiohttp.ClientSession):
             btc_ls = float(btc_data[0]['longShortRatio'])
             eth_ls = float(eth_data[0]['longShortRatio'])
             total_ls = (btc_ls + eth_ls) / 2
-            logger.info(f"Echte L/S Ratios von Binance: BTC={btc_ls:.2f}, ETH={eth_ls:.2f}")
+            logger.info(f"Real L/S ratios from Binance: BTC={btc_ls:.2f}, ETH={eth_ls:.2f}")
             return {
                 'btc': max(0.5, min(btc_ls, 3.0)),
                 'eth': max(0.5, min(eth_ls, 3.0)),
@@ -9336,19 +9337,19 @@ async def get_long_short_ratios_async(session: aiohttp.ClientSession):
             }
 
     except Exception as e:
-        logger.warning(f"Binance SIGNED L/S Fehler: {e}")
+        logger.warning(f"Binance SIGNED L/S error: {e}")
 
-    # Fallback: Robuster Proxy (ohne NameError – nutzt crypto-Daten aus async)
-    logger.warning("Binance L/S fehlgeschlagen – Proxy genutzt")
+    # Fallback: robust proxy (no NameError – uses crypto data from async)
+    logger.warning("Binance L/S failed – using proxy")
     try:
-        # Einfacher Proxy aus 24h Change (wie dein Original, aber ohne sync get_crypto_data)
+        # Simple proxy from 24h change (like your original, but without sync get_crypto_data)
         btc_change = crypto.get('btc_change', 0) if 'crypto' in locals() else 0
         eth_change = crypto.get('eth_change', 0) if 'crypto' in locals() else 0
         btc_ls = 1 + (btc_change / 100) * 2 if btc_change > 0 else 1 - abs(btc_change / 100) * 2
         eth_ls = 1 + (eth_change / 100) * 2 if eth_change > 0 else 1 - abs(eth_change / 100) * 2
         return {'btc': max(0.5, min(btc_ls, 3.0)), 'eth': max(0.5, min(eth_ls, 3.0)), 'total': (btc_ls + eth_ls) / 2}
     except:
-        return {'btc': 1.0, 'eth': 1.0, 'total': 1.0}  # Ultimativer Safe-Fallback
+        return {'btc': 1.0, 'eth': 1.0, 'total': 1.0}  # Ultimate safe fallback
 
 
 async def sentiment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9363,7 +9364,7 @@ async def sentiment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             crypto = await get_crypto_data_async(session)
             if not crypto:
-                await update.message.reply_text("Marktdaten nicht verfügbar.")
+                await update.message.reply_text("Market data not available.")
                 return
 
             fg_value, fg_class = await get_fear_greed_async(session)
@@ -9371,18 +9372,18 @@ async def sentiment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             oi = await get_open_interest_async(session)
             x_sent = await get_x_sentiment_async()
 
-            # ECHTE L/S RATIOS HOLEN
+            # FETCH REAL L/S RATIOS
             ls_ratios = await get_long_short_ratios_async(session)
             btc_ls = ls_ratios.get('btc', 1.0)
             eth_ls = ls_ratios.get('eth', 1.0)
             total_ls = ls_ratios.get('total', 1.0)
 
-            # SENTIMENT BERECHNEN
+            # COMPUTE SENTIMENT
             sentiment = await analyze_sentiment_score(
                 data=crypto, fg_value=fg_value, funding=funding, oi=oi, btc_ls=btc_ls, eth_ls=eth_ls, x_sent=x_sent
             )
 
-            # Farben & Emojis (dein Code bleibt)
+            # Colors & emojis (your code stays)
             if "VERY BULLISH" in sentiment:
                 border_color = "#00ff00"
                 mood_emoji = "BULLISH"
@@ -9399,7 +9400,7 @@ async def sentiment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 border_color = "#ff0066"
                 mood_emoji = "BEARISH"
 
-            # HTML mit L/S-Zeilen (dein Tab-Layout + L/S)
+            # HTML with L/S lines (your tab layout + L/S)
             # html = f"""
             # <pre style="background:#1e1e1e; color:#ffffff; padding:20px; border-radius:16px; font-family:'Courier New', monospace; font-size:15px; line-height:2.1; border-left:10px solid {border_color};">
             # <b style="color:#00ffff; font-size:23px;">CRYPTO MARKET SENTIMENT</b>
@@ -9457,15 +9458,15 @@ async def sentiment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
             logger.error(f"!sentiment error: {e}", exc_info=True)
-            await update.message.reply_text("Sentiment-Daten aktuell nicht verfügbar.")
+            await update.message.reply_text("Sentiment data currently unavailable.")
 
 
 async def market_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. PRÜFUNG: Button oder Text?
+    # 1. CHECK: button or text?
     is_callback = update.callback_query is not None
-    message_target = update.effective_message  # Funktioniert für beides!
+    message_target = update.effective_message  # Works for both!
 
-    # Wenn KEIN Button gedrückt wurde, prüfen wir den Textbefehl
+    # If NO button was pressed, we check the text command
     if not is_callback:
         if not update.message or "!market" not in update.message.text:
             return
@@ -9473,7 +9474,7 @@ async def market_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or update.effective_user.full_name or "unknown"
     log_command("!market", update.effective_user)
 
-    # WICHTIG: message_target nutzen!
+    # IMPORTANT: use message_target!
     await message_target.reply_chat_action(ChatAction.TYPING)
 
     async with aiohttp.ClientSession() as session:
@@ -9497,7 +9498,7 @@ async def market_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data=crypto, fg_value=fg_value, funding=funding, oi=oi, btc_ls=btc_ls, eth_ls=eth_ls, x_sent=x_sent
             )
 
-            # Payload bauen
+            # Build payload
             payload = {
                 "sent": sentiment,
                 "btc": round(crypto['btc_price'], 2),
@@ -9520,7 +9521,7 @@ async def market_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             base_url = "https://ziagl888.github.io/provencryptobotv2/sentiment.html"
             full_url = f"{base_url}#data={b64_data}"
 
-            # Button erstellen
+            # Create button
             # keyboard = [
             # [InlineKeyboardButton(
             # text="🚀 Open Dashboard",
@@ -9529,7 +9530,7 @@ async def market_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ]
             keyboard = [[InlineKeyboardButton(text="Open Market Analysis Dashboard", web_app=WebAppInfo(url=full_url))]]
 
-            # WICHTIG: Hier message_target.reply_text nutzen!
+            # IMPORTANT: use message_target.reply_text here!
             await message_target.reply_text(
                 f"📊 **Crypto Sentiment Analysis**\nStatus: {sentiment}\nPress for Details:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
@@ -9538,11 +9539,11 @@ async def market_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
             logger.error(f"!market error: {e}", exc_info=True)
-            await message_target.reply_text("Sentiment-Daten aktuell nicht verfügbar.")
+            await message_target.reply_text("Sentiment data currently unavailable.")
 
 
 async def market_dashboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Für Text oder Button
+    # For text or button
     is_callback = update.callback_query is not None
     message = update.effective_message or (update.callback_query.message if is_callback else None)
     if not message:
@@ -9554,7 +9555,7 @@ async def market_dashboard_handler(update: Update, context: ContextTypes.DEFAULT
     await message.reply_chat_action(ChatAction.TYPING)
 
     try:
-        # === ALLE DATEN SAMMELN (wie in deinen alten Handlern) ===
+        # === COLLECT ALL DATA (like in your old handlers) ===
         session = aiohttp.ClientSession()
         try:
             crypto = await get_crypto_data_async(session)
@@ -9600,15 +9601,15 @@ async def market_dashboard_handler(update: Update, context: ContextTypes.DEFAULT
                         continue
             finally:
                 await release_conn(conn)
-            volatiles = volatiles[:10] or ["Keine starken Bewegungen"]
+            volatiles = volatiles[:10] or ["No strong movements"]
 
         finally:
             await session.close()
 
-        # === HTML DIREKT IM BOT BAUEN ===
+        # === BUILD HTML DIRECTLY IN THE BOT ===
         html = f"""
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -9630,8 +9631,8 @@ async def market_dashboard_handler(update: Update, context: ContextTypes.DEFAULT
 <div class="card"><h3>Market Mood</h3><center><b style="font-size:28px; color:{'#0f0' if 'BULL' in sentiment else '#f33' if 'BEAR' in sentiment else '#ffaa00'}">{sentiment}</b></center></div>
 
 <div class="grid">
-  <div class="card">BTC Preis<br><b>${crypto['btc_price']:,.0f}</b><br><span class="{'green' if crypto['btc_change'] > 0 else 'red'}">{crypto['btc_change']:+.2f}%</span></div>
-  <div class="card">ETH Preis<br><b>${crypto['eth_price']:,.0f}</b><br><span class="{'green' if crypto['eth_change'] > 0 else 'red'}">{crypto['eth_change']:+.2f}%</span></div>
+  <div class="card">BTC Price<br><b>${crypto['btc_price']:,.0f}</b><br><span class="{'green' if crypto['btc_change'] > 0 else 'red'}">{crypto['btc_change']:+.2f}%</span></div>
+  <div class="card">ETH Price<br><b>${crypto['eth_price']:,.0f}</b><br><span class="{'green' if crypto['eth_change'] > 0 else 'red'}">{crypto['eth_change']:+.2f}%</span></div>
   <div class="card">BTC Dominance<br><b>{crypto['btc_dominance']:.1f}%</b></div>
   <div class="card">Fear & Greed<br><b>{fg_value}</b> → {fg_class}</div>
 </div>
@@ -9648,7 +9649,7 @@ async def market_dashboard_handler(update: Update, context: ContextTypes.DEFAULT
 
 <h3>Volume Spikes (≥3×)</h3>
 <div class="card">
-  {''.join([f'<div class="item">{s["symbol"].replace("USDT", "")} <b class="orange">{s["spike_ratio"]:.1f}×</b></div>' for s in spikes]) or '<div class="item">Keine starken Spikes</div>'}
+  {''.join([f'<div class="item">{s["symbol"].replace("USDT", "")} <b class="orange">{s["spike_ratio"]:.1f}×</b></div>' for s in spikes]) or '<div class="item">No strong spikes</div>'}
 </div>
 
 <h3>Most Volatile (4h)</h3>
@@ -9659,14 +9660,14 @@ async def market_dashboard_handler(update: Update, context: ContextTypes.DEFAULT
 <script>
   const tg = window.Telegram.WebApp;
   tg.ready(); tg.expand();
-  tg.MainButton.text = "Zurück zum Bot"; tg.MainButton.show();
+  tg.MainButton.text = "Back to bot"; tg.MainButton.show();
   tg.MainButton.onClick(() => tg.close());
 </script>
 </body>
 </html>
         """
 
-        # Base64 kodieren & als URL senden
+        # Base64 encode & send as URL
         import base64
 
         b64 = base64.urlsafe_b64encode(html.encode()).decode()
@@ -9674,14 +9675,14 @@ async def market_dashboard_handler(update: Update, context: ContextTypes.DEFAULT
 
         keyboard = [[InlineKeyboardButton("Open Dashboard", web_app=WebAppInfo(url=url))]]
         await message.reply_text(
-            f"**Crypto Market Dashboard**\n\nLive-Daten für @{username}\nKlicke unten:",
+            f"**Crypto Market Dashboard**\n\nLive data for @{username}\nClick below:",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown",
         )
 
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
-        await message.reply_text("Fehler beim Laden des Dashboards.")
+        await message.reply_text("Error loading the dashboard.")
 
 
 # ========================= 10 sec candles to database =========================
@@ -9699,23 +9700,23 @@ async def create_ticker_10s_table():
                 volume_10s NUMERIC NOT NULL,
                 cum_volume NUMERIC NOT NULL DEFAULT 0,
                 inserted_at TIMESTAMPTZ DEFAULT NOW(),
-                PRIMARY KEY (symbol, timestamp)  -- <<< Das hier hinzufügen!
+                PRIMARY KEY (symbol, timestamp)  -- <<< Add this here!
             )
         """)
-        # Index für schnelle Abfragen (optional, da PK schon indexiert ist)
+        # Index for fast queries (optional, since the PK is already indexed)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_ticker_10s_timestamp
             ON ticker_10s(timestamp DESC)
         """)
-        logger.info("ticker_10s Tabelle bereit oder aktualisiert mit PK")
+        logger.info("ticker_10s table ready or updated with PK")
     except Exception as e:
-        logger.error(f"Fehler beim Erstellen der ticker_10s Tabelle: {e}")
+        logger.error(f"Error creating the ticker_10s table: {e}")
     finally:
         await release_conn(conn)
 
 
 async def cleanup_old_10s_data(days_to_keep: int = 180):
-    """Löscht Daten älter als X Tage (Standard: 180 Tage)"""
+    """Deletes data older than X days (default: 180 days)"""
     conn = await get_conn()
     try:
         cutoff = datetime.now(pytz.UTC) - timedelta(days=days_to_keep)
@@ -9727,40 +9728,40 @@ async def cleanup_old_10s_data(days_to_keep: int = 180):
             cutoff,
         )
         deleted = result.split()[-1] if ' ' in result else 0
-        logger.info(f"Cleanup ticker_10s: {deleted} alte Einträge gelöscht (älter als {days_to_keep} Tage)")
+        logger.info(f"Cleanup ticker_10s: {deleted} old entries deleted (older than {days_to_keep} days)")
     except Exception as e:
-        logger.error(f"Fehler beim Cleanup ticker_10s: {e}")
+        logger.error(f"Error during ticker_10s cleanup: {e}")
     finally:
         await release_conn(conn)
 
 
 async def archive_10s_data_to_db():
-    logger.info("10s Data Archiver Task gestartet – speichert alle 10 Minuten in DB")
-    await create_ticker_10s_table()  # Tabelle sicherstellen
+    logger.info("10s Data Archiver task started – saves to DB every 10 minutes")
+    await create_ticker_10s_table()  # Ensure the table exists
 
     while True:
         try:
-            await asyncio.sleep(600)  # 10 Minuten
+            await asyncio.sleep(600)  # 10 minutes
 
             if not ONE_MINUTE_DATA:
-                logger.debug("ONE_MINUTE_DATA leer – nichts zu archivieren")
+                logger.debug("ONE_MINUTE_DATA empty – nothing to archive")
                 continue
 
             total_to_insert = sum(len(entries) for entries in ONE_MINUTE_DATA.values())
-            logger.info(f"Starte Archiv: {len(ONE_MINUTE_DATA)} Symbole, ca. {total_to_insert} Einträge")
+            logger.info(f"Starting archive: {len(ONE_MINUTE_DATA)} symbols, approx. {total_to_insert} entries")
 
             conn = await get_conn()
             insert_count = 0
             error_count = 0
 
             try:
-                # Zuerst ohne Transaktion testen – einzelne Inserts für besseres Debugging
+                # First test without a transaction – individual inserts for easier debugging
                 for symbol, entries in ONE_MINUTE_DATA.items():
                     if not entries:
                         continue
 
-                    recent = list(entries)[-80:]  # letzte ~13 Minuten als Puffer
-                    logger.debug(f"{symbol}: {len(recent)} neue Einträge zum Schreiben")
+                    recent = list(entries)[-80:]  # last ~13 minutes as buffer
+                    logger.debug(f"{symbol}: {len(recent)} new entries to write")
 
                     for entry in recent:
                         try:
@@ -9771,7 +9772,7 @@ async def archive_10s_data_to_db():
                                 ON CONFLICT (symbol, timestamp) DO NOTHING
                             """,
                                 symbol,
-                                isoparse(entry["t"]),  # String im ISO-Format – asyncpg kann das!
+                                isoparse(entry["t"]),  # String in ISO format – asyncpg can handle that!
                                 float(entry["p"]),
                                 float(entry["v10s"]),
                                 float(entry.get("cum_vol", 0)),
@@ -9779,14 +9780,14 @@ async def archive_10s_data_to_db():
                             insert_count += 1
                         except Exception as insert_e:
                             error_count += 1
-                            logger.error(f"Insert-Fehler für {symbol} @ {entry['t']}: {insert_e}", exc_info=True)
+                            logger.error(f"Insert error for {symbol} @ {entry['t']}: {insert_e}", exc_info=True)
 
-                logger.info(f"Archivierung abgeschlossen: {insert_count} erfolgreich eingefügt, {error_count} Fehler")
+                logger.info(f"Archiving complete: {insert_count} successfully inserted, {error_count} errors")
 
             finally:
                 await release_conn(conn)
 
-            # Cleanup etc.
+            # Cleanup, etc.
             now = datetime.now(pytz.UTC)
             if now.hour == 3 and now.minute < 30:
                 await cleanup_old_10s_data(180)
@@ -9805,7 +9806,7 @@ async def archive_10s_data_to_db():
 
 
 async def extreme_move_and_volume_detector():
-    logger.info("Extreme Price Move & Volume Explosion Detector Task gestartet (optimiert gegen Spam)")
+    logger.info("Extreme Price Move & Volume Explosion Detector task started (optimized against spam)")
     global PRICE_VOLUME_ALERT_STATE
 
     for symbol in coins:
@@ -9817,7 +9818,7 @@ async def extreme_move_and_volume_detector():
             await asyncio.sleep(10)
             now = datetime.now(pytz.UTC)
 
-            # Dynamischer Cooldown: 15 Min bei großen Moves, sonst 5 Min
+            # Dynamic cooldown: 15 min for large moves, otherwise 5 min
             for symbol in coins:
                 valid_symbol = symbol
                 if symbol not in ONE_MINUTE_DATA or len(ONE_MINUTE_DATA[symbol]) < 36:
@@ -9826,9 +9827,9 @@ async def extreme_move_and_volume_detector():
                 data = list(ONE_MINUTE_DATA[symbol])
                 state = PRICE_VOLUME_ALERT_STATE[symbol]
 
-                # Basis-Cooldown 5 Min, aber bei starken Moves länger
+                # Base cooldown 5 min, but longer for strong moves
                 base_cooldown = 300
-                extended_cooldown = 900  # 15 Min bei >10% Move
+                extended_cooldown = 900  # 15 min for >10% move
                 time_since_alert = (now - state["last_alert_time"]).total_seconds()
                 if time_since_alert < base_cooldown:
                     continue
@@ -9870,14 +9871,14 @@ async def extreme_move_and_volume_detector():
                         color = "#00ff00" if change_pct > 0 else "#ff0066"
                         alerted = True
 
-                        # Bei großen Moves (>10%) längeren Cooldown
+                        # For large moves (>10%), a longer cooldown
                         if abs(change_pct) >= 10.0:
                             use_extended_cooldown = True
                         break
 
-                # === 2. Volume Explosion (strengere Bedingungen) ===
+                # === 2. Volume explosion (stricter conditions) ===
                 if not alerted:
-                    recent_vols = volumes_10s[-18:]  # letzte 3 Min
+                    recent_vols = volumes_10s[-18:]  # last 3 min
                     recent_prices = prices[-18:]
                     if len(recent_vols) < 12 or len(recent_prices) < 12:
                         continue
@@ -9886,7 +9887,7 @@ async def extreme_move_and_volume_detector():
                     price_start_3min = recent_prices[0]
                     price_change_3min = (current_price / price_start_3min - 1) * 100 if price_start_3min > 0 else 0
 
-                    # Nur bei mindestens ±2% Preisbewegung in 3 Min
+                    # Only with at least ±2% price movement within 3 min
                     if abs(price_change_3min) < 2.0:
                         continue
 
@@ -9900,7 +9901,7 @@ async def extreme_move_and_volume_detector():
                     expected_3min_vol = avg_hour_vol_per_10s * 18
                     volume_factor = recent_total_vol / expected_3min_vol
 
-                    # Strengere Schwelle: 12× statt 8×
+                    # Stricter threshold: 12× instead of 8×
                     if volume_factor >= 12.0:
                         if price_change_3min >= 2.0:
                             pressure = "BUY PRESSURE"
@@ -9916,7 +9917,7 @@ async def extreme_move_and_volume_detector():
                         details = f"{volume_factor:.1f}× in last 3min ({pressure} {price_change_3min:+.2f}%)"
                         alerted = True
 
-                # === Alert senden ===
+                # === Send alert ===
                 if alerted:
                     emoji = "🚀" if "PUMP" in alert_type else "💥" if "DUMP" in alert_type else "📈"
 
@@ -9939,15 +9940,15 @@ async def extreme_move_and_volume_detector():
                             )
                         else:
                             await application.bot.send_message(chat_id=MARKET_CHANNEL_ID, text=html, parse_mode="HTML")
-                        logger.info(f"Extreme Alert gesendet: {symbol} | {alert_type} | {details}")
+                        logger.info(f"Extreme alert sent: {symbol} | {alert_type} | {details}")
                     except Exception as e:
                         logger.error(f"Extreme Alert send error {symbol}: {e}")
 
-                    # Cooldown setzen – länger bei großen Moves
+                    # Set cooldown – longer for large moves
                     cooldown = extended_cooldown if use_extended_cooldown else base_cooldown
                     state["last_alert_time"] = now + timedelta(
                         seconds=(cooldown - base_cooldown)
-                    )  # effektiver Cooldown
+                    )  # effective cooldown
 
         except asyncio.CancelledError:
             logger.info("Extreme Detector Task cancelled")
@@ -9957,16 +9958,16 @@ async def extreme_move_and_volume_detector():
             await asyncio.sleep(10)
 
 
-# ========================= TRENDLINE BREAK / BOUNCE DETECTOR (OPTIMIERT – NUR RELEVANTE EVENTS) =========================
+# ========================= TRENDLINE BREAK / BOUNCE DETECTOR (OPTIMIZED – ONLY RELEVANT EVENTS) =========================
 
 
 def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
     """
-    Berechnet die Features für die letzte Kerze und fragt das passende ML-Modell.
-    df_raw: Der DataFrame mit OHLCV Daten (sollte mind. 200 Kerzen haben)
-    event_type_str: "TRENDLINE BREAK UP" oder "TRENDLINE BREAK DOWN"
-    slope: Die Steigung der Trendlinie zum Zeitpunkt des Events
-    current_close_price: Der Close-Preis der Event-Kerze
+    Computes the features for the last candle and queries the matching ML model.
+    df_raw: the DataFrame with OHLCV data (should have at least 200 candles)
+    event_type_str: "TRENDLINE BREAK UP" or "TRENDLINE BREAK DOWN"
+    slope: the slope of the trendline at the time of the event
+    current_close_price: the close price of the event candle
     """
     model_to_use = None
     if "UP" in event_type_str:
@@ -9976,14 +9977,14 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
         model_to_use = SHORT_ML_MODEL
         current_ml_threshold = SHORT_ML_THRESHOLD
     else:
-        logger.warning(f"Unbekannter event_type_str: {event_type_str}. Rückgabe 0.0.")
-        return 0.0, 0.0  # Rückgabe: Wahrscheinlichkeit, Threshold
+        logger.warning(f"Unknown event_type_str: {event_type_str}. Returning 0.0.")
+        return 0.0, 0.0  # Return: probability, threshold
 
     if model_to_use is None:
         logger.warning(
-            f"ML Modell ({'LONG' if 'UP' in event_type_str else 'SHORT'}) nicht geladen oder fehlerhaft. Rückgabe 0.0."
+            f"ML model ({'LONG' if 'UP' in event_type_str else 'SHORT'}) not loaded or faulty. Returning 0.0."
         )
-        return 0.0, current_ml_threshold  # Rückgabe: Wahrscheinlichkeit, Threshold
+        return 0.0, current_ml_threshold  # Return: probability, threshold
 
     try:
         df = df_raw.copy()
@@ -9991,22 +9992,22 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
 
         if 'open_time' in df.columns:
             df['open_time'] = pd.to_datetime(df['open_time'], utc=True)
-            # df['ts'] wird nicht für die Live-Prediction benötigt, nur im Datensammler
+            # df['ts'] is not needed for the live prediction, only in the data collector
         else:
-            logger.error("Fehler in get_ml_prediction: 'open_time' Spalte nicht gefunden im DataFrame.")
+            logger.error("Error in get_ml_prediction: 'open_time' column not found in the DataFrame.")
             return 0.0, current_ml_threshold
 
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col not in df.columns:
                 logger.error(
-                    f"Fehler in get_ml_prediction: '{col}' Spalte nicht gefunden im DataFrame. Vorhandene Spalten: {df.columns.tolist()}"
+                    f"Error in get_ml_prediction: '{col}' column not found in the DataFrame. Existing columns: {df.columns.tolist()}"
                 )
                 return 0.0, current_ml_threshold
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
         df.dropna(subset=['open', 'high', 'low', 'close', 'volume'], inplace=True)
         if df.empty:
-            logger.warning("DataFrame leer nach NaN-Bereinigung in OHLCV Spalten.")
+            logger.warning("DataFrame empty after NaN cleanup in OHLCV columns.")
             return 0.0, current_ml_threshold
 
         df['vol_avg_20'] = df['volume'].rolling(window=20).mean()
@@ -10040,7 +10041,7 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
             diff_bb = df['BB_Upper'] - df['BB_Lower']
             df['bb_position_relative'] = np.where(diff_bb != 0, (df['close'] - df['BB_Lower']) / diff_bb, 0)
         else:
-            logger.warning("Bollinger Bands Indikatoren konnten nicht vollständig berechnet werden. Rückgabe 0.0.")
+            logger.warning("Bollinger Bands indicators could not be fully computed. Returning 0.0.")
             return 0.0, current_ml_threshold
 
         donchian = ta.donchian(df['high'], df['low'], length=20)
@@ -10056,7 +10057,7 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
             diff_dc = df['DC_Upper'] - df['DC_Lower']
             df['dc_position_relative'] = np.where(diff_dc != 0, (df['close'] - df['DC_Lower']) / diff_dc, 0)
         else:
-            logger.warning("Donchian Channels Indikatoren konnten nicht vollständig berechnet werden. Rückgabe 0.0.")
+            logger.warning("Donchian Channels indicators could not be fully computed. Returning 0.0.")
             return 0.0, current_ml_threshold
 
         df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
@@ -10064,7 +10065,7 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
 
         df.dropna(inplace=True)
         if df.empty:
-            logger.warning("DataFrame ist nach Indikator-Berechnung und NaN-Bereinigung leer. Rückgabe 0.0.")
+            logger.warning("DataFrame is empty after indicator calculation and NaN cleanup. Returning 0.0.")
             return 0.0, current_ml_threshold
 
         row = df.iloc[-1]
@@ -10074,7 +10075,7 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
         slope_pct_per_day = (slope * 86400) / current_close_price if current_close_price else 0
         hour_of_day = pd.to_datetime(row['open_time']).hour
 
-        # Features für die Vorhersage (OHNE event_type_numeric, da durch Modellauswahl impliziert)
+        # Features for the prediction (WITHOUT event_type_numeric, since it's implied by the model selection)
         features_dict = {
             'vol_ratio': [vol_ratio],
             'rsi': [row['rsi']],
@@ -10099,19 +10100,19 @@ def get_ml_prediction(df_raw, event_type_str, slope, current_close_price):
 
         X_live = pd.DataFrame(features_dict)
         if X_live.isnull().values.any():
-            logger.error(f"NaN-Werte in den vorbereiteten Features für die Vorhersage: {X_live.isnull().sum()}")
+            logger.error(f"NaN values in the prepared features for the prediction: {X_live.isnull().sum()}")
             return 0.0, current_ml_threshold
 
         proba = model_to_use.predict_proba(X_live)[0][1]
         return proba, current_ml_threshold
 
     except Exception as e:
-        logger.error(f"ML-Fehler während der Vorhersage: {e}", exc_info=True)
+        logger.error(f"ML error during the prediction: {e}", exc_info=True)
         return 0.0, current_ml_threshold
 
 
 async def trendline_break_bounce_detector():
-    logger.info("Trendline Break/Bounce Detector Task gestartet (optimiert: nur bei Nähe ≤10%)")
+    logger.info("Trendline Break/Bounce Detector task started (optimized: only when proximity ≤10%)")
 
     global TRENDLINE_STATE
     for symbol in coins:
@@ -10125,9 +10126,9 @@ async def trendline_break_bounce_detector():
                 await asyncio.sleep(20)
                 continue
 
-            logger.info(f"Trendline-Check um {now.strftime('%H:%M')} UTC – nur Coins nahe der Trendlinie")
+            logger.info(f"Trendline check at {now.strftime('%H:%M')} UTC – only coins near the trendline")
 
-            conn = await get_conn()  # Verbindung holen
+            conn = await get_conn()  # Get connection
             try:
                 for symbol in coins:
                     valid_symbol = symbol
@@ -10152,21 +10153,21 @@ async def trendline_break_bounce_detector():
 
                     slope, intercept = trend_data
 
-                    # Trendwert für letzte abgeschlossene Kerze
+                    # Trend value for the last completed candle
                     last_time_sec = df_recent['OPEN_TIME'].iloc[-1].timestamp()
                     trend_value_last = slope * last_time_sec + intercept
 
-                    # Relative Distanz in %
+                    # Relative distance in %
                     rel_distance = (last_close - trend_value_last) / trend_value_last if trend_value_last != 0 else 0
 
-                    # Nur fortfahren, wenn Preis innerhalb ±10% der Trendlinie
-                    if abs(rel_distance) > 0.10:  # Korrigierte Grenze (Kommentar sagte 10%)
+                    # Only continue if the price is within ±10% of the trendline
+                    if abs(rel_distance) > 0.10:  # Corrected boundary (comment said 10%)
                         continue
 
-                    tolerance = last_close * 0.008  # ±0.8% für "near"
+                    tolerance = last_close * 0.008  # ±0.8% for "near"
                     distance = last_close - trend_value_last
 
-                    # Current Relation
+                    # Current relation
                     if abs(distance) <= tolerance:
                         current_relation = "near"
                     elif distance > 0:
@@ -10188,7 +10189,7 @@ async def trendline_break_bounce_detector():
                             significant_distance_before = True
                             break
 
-                    # Events erkennen
+                    # Detect events
                     event = None
                     color = "#00ffff"
                     emoji = "📈"
@@ -10221,7 +10222,7 @@ async def trendline_break_bounce_detector():
                             emoji = "⬇️"
 
                     if event:
-                        # === DB-Daten sammeln ===
+                        # === Collect DB data ===
                         rsi_9 = float(df_recent.get('RSI_9', np.nan).iloc[-1]) if 'RSI_9' in df_recent else None
                         rsi_14 = float(df_recent.get('RSI_14', np.nan).iloc[-1]) if 'RSI_14' in df_recent else None
                         rsi_24 = float(df_recent.get('RSI_24', np.nan).iloc[-1]) if 'RSI_24' in df_recent else None
@@ -10269,23 +10270,23 @@ async def trendline_break_bounce_detector():
                                 current_relation,
                                 significant_distance_before,
                             )
-                            logger.debug(f"Trendmeet Rawdata gespeichert: {symbol} | {event}")
+                            logger.debug(f"Trendmeet raw data saved: {symbol} | {event}")
                         except Exception as db_err:
-                            logger.error(f"DB-Insert Fehler für {symbol}: {db_err}")
+                            logger.error(f"DB insert error for {symbol}: {db_err}")
 
-                        # === Chart & Telegram (dein bestehender Code – hier nur Struktur) ===
+                        # === Chart & Telegram (your existing code – structure only here) ===
                         chart_buf = None
 
                         try:
-                            # ... dein kompletter Chart-Code (df_7d, df_ind, preprocessing, live_price, fig, axes, etc.) ...
-                            # Am Ende:
-                            # Daten für !don-Chart vorbereiten
+                            # ... your complete chart code (df_7d, df_ind, preprocessing, live_price, fig, axes, etc.) ...
+                            # At the end:
+                            # Prepare data for the !don chart
                             df_7d = await get_1h_data_last_7d(symbol)
                             df_ind = await get_1h_indicators_last_7d(symbol)
                             if df_7d.empty or df_ind.empty:
                                 raise ValueError("No data")
 
-                            # PREPROCESSING (identisch)
+                            # PREPROCESSING (identical)
                             if 'OPEN_TIME' in df_7d.columns:
                                 df_7d['OPEN_TIME'] = pd.to_datetime(df_7d['OPEN_TIME']).dt.tz_localize(None)
                             if not df_ind.empty and 'OPEN_TIME' in df_ind.columns:
@@ -10304,7 +10305,7 @@ async def trendline_break_bounce_detector():
                                 if c in df_plot.columns:
                                     df_plot[c] = pd.to_numeric(df_plot[c], errors='coerce')
 
-                            # LIVE PREIS (identisch)
+                            # LIVE PRICE (identical)
                             live_price = await get_live_price(valid_symbol)
                             live_suffix = ""
                             if live_price and isinstance(live_price, (int, float)) and live_price > 0:
@@ -10334,7 +10335,7 @@ async def trendline_break_bounce_detector():
                             col_up = '#44ff44'
                             col_down = '#ff4444'
 
-                            # Candles (identisch)
+                            # Candles (identical)
                             ax1.vlines(x_vals[up], l[up], h[up], color=col_up, linewidth=1.2, zorder=3)
                             ax1.vlines(x_vals[down], l[down], h[down], color=col_down, linewidth=1.2, zorder=3)
                             body_h = np.abs(c - o)
@@ -10361,7 +10362,7 @@ async def trendline_break_bounce_detector():
                                 zorder=4,
                             )
 
-                            # Candles (identisch wie oben)
+                            # Candles (identical to above)
 
                             # --- NUR HIER NEU: Donchian Channel 20 ---
                             if all(
@@ -10398,10 +10399,10 @@ async def trendline_break_bounce_detector():
                                     alpha=0.06,
                                 )
 
-                            # Standard EMAs (wie immer)
+                            # Standard EMAs (as always)
                             # ... (wie in candles_handler)
 
-                            # Standard EMAs (wie im candles_handler)
+                            # Standard EMAs (as in candles_handler)
                             if 'EMA_9' in df_plot.columns:
                                 ax1.plot(x_vals, df_plot['EMA_9'], color='yellow', linewidth=1.1, label='EMA9')
                             if 'EMA_21' in df_plot.columns:
@@ -10417,11 +10418,11 @@ async def trendline_break_bounce_detector():
                                 f"{valid_symbol} Donchian 20{live_suffix}", color=fg, fontsize=19, pad=25, weight='bold'
                             )
                             ax1.legend(facecolor=bg, labelcolor=fg, fontsize=12, loc='upper left')
-                            # ... Rest identisch wie in candles_handler ...
+                            # ... rest identical to candles_handler ...
                             ax1.grid(True, alpha=0.25, color=fg, linewidth=0.5)
                             ax1.tick_params(colors=fg, labelsize=11)
 
-                            # Letzter Preis Marker
+                            # Last price marker
                             ax1.axhline(live_price, color="white", linewidth=1, linestyle="--", alpha=0.5)
                             ax1.text(
                                 0.2,
@@ -10439,24 +10440,24 @@ async def trendline_break_bounce_detector():
                             margin = chart_range * 0.05
                             ax1.set_ylim(l.min() - margin, h.max() + margin)
 
-                            # Rest identisch: Volume, VBP, Trend, RSI, TSI, Formatierung, Speichern...
-                            # (Kopiere hier einfach den gesamten Rest aus deinem candles_handler ab Volume bis Ende)
+                            # Rest identical: Volume, VBP, Trend, RSI, TSI, formatting, saving...
+                            # (Simply copy the entire rest from your candles_handler from Volume to the end here)
 
-                            # ... [Volume, Volume Profile, Trendlinie, RSI, TSI, X-Formatierung, Speichern – alles 1:1 wie in candles_handler] ...
+                            # ... [Volume, Volume Profile, trendline, RSI, TSI, X formatting, saving – all 1:1 like in candles_handler] ...
 
-                            # --- VOLUME (Unten) ---
+                            # --- VOLUME (bottom) ---
                             ax_vol = ax1.twinx()
                             vol_max = df_plot['VOLUME'].max()
                             vol_min_display = vol_max * 0.25
 
-                            # Farben passend zu Candles
+                            # Colors matching the candles
                             vol_colors = np.where(up, col_up, col_down)
 
-                            # Wir müssen 'display_volume' berechnen wie in deinem Original
+                            # We need to compute 'display_volume' as in your original
                             display_volume = df_plot['VOLUME'].copy()
                             display_volume[display_volume < vol_min_display] = vol_min_display
 
-                            # WICHTIG: x_vals nutzen
+                            # IMPORTANT: use x_vals
                             ax_vol.bar(
                                 x_vals,
                                 display_volume,
@@ -10484,15 +10485,15 @@ async def trendline_break_bounce_detector():
                             )
                             ax_vol.grid(True, alpha=0.15, color=fg, linewidth=0.4, linestyle='-', axis='y')
 
-                            # Volume Overlay (Graue Fläche)
+                            # Volume overlay (gray area)
                             ax4 = ax1.twinx()
                             ax4.fill_between(x_vals, df_plot['VOLUME'], color='gray', alpha=0.4, label='volume')
                             ax4.plot(x_vals, df_plot['VOLUME'], color='gray', linewidth=1)
                             ax4.set_ylabel("volume", fontsize=12, color='gray')
                             ax4.tick_params(axis='y', labelcolor='gray')
-                            ax4.set_ylim(0, vol_max * 2.5)  # Sync mit ax_vol
+                            ax4.set_ylim(0, vol_max * 2.5)  # Sync with ax_vol
 
-                            # --- VOLUME PROFILE (Rechts) ---
+                            # --- VOLUME PROFILE (right) ---
                             ax_vol_profile = fig.add_subplot(gs[0, 0], frameon=False)
                             ax_vol_profile.set_position([0.85, 0.68, 0.12, 0.25])
 
@@ -10501,8 +10502,8 @@ async def trendline_break_bounce_detector():
                             price_bins = np.linspace(l.min(), h.max(), 40)
                             vol_by_price = np.zeros(len(price_bins) - 1)
 
-                            # Hier nutzen wir searchsorted für Speed, aber dein Loop ist auch ok
-                            # Wir nehmen deine Logik:
+                            # Here we use searchsorted for speed, but your loop is also fine
+                            # We use your logic:
                             for _, row in df_7d.iterrows():
                                 idx = np.searchsorted(price_bins, [row['LOW'], row['HIGH']])
                                 idx = np.clip(idx, 0, len(vol_by_price) - 1)
@@ -10518,18 +10519,18 @@ async def trendline_break_bounce_detector():
                                 color='#ff69b4',
                                 alpha=0.6,
                             )
-                            ax_vbp.set_ylim(ax1.get_ylim())  # Sync mit Chart
+                            ax_vbp.set_ylim(ax1.get_ylim())  # Sync with chart
                             ax_vbp.invert_xaxis()
                             ax_vbp.set_xlabel('Vol', color='white', fontsize=10)
                             ax_vbp.tick_params(colors='white')
 
-                            # --- TRENDLINIE & PIVOTS ---
+                            # --- TRENDLINE & PIVOTS ---
                             trend_direction, trend_data = detect_trend(df_90d)
                             slope, intercept = trend_data if trend_data else (None, None)
                             if slope is not None and intercept is not None:
-                                # Trendlinie berechnen
+                                # Compute trendline
                                 trend_y = get_trend_values(slope, intercept, df_plot['OPEN_TIME'])
-                                # Plotten gegen x_vals
+                                # Plot against x_vals
                                 ax1.plot(
                                     x_vals,
                                     trend_y,
@@ -10540,7 +10541,7 @@ async def trendline_break_bounce_detector():
                                 )
                                 ax1.legend(facecolor=bg, labelcolor=fg, fontsize=12, loc='upper left')
 
-                                # Pivots (Mapping Zeit -> Index)
+                                # Pivots (mapping time -> index)
                                 high_pivots, low_pivots = find_pivots(df_90d, distance=8)
                                 last_7d_time = df_plot['OPEN_TIME'].iloc[0]
 
@@ -10548,7 +10549,7 @@ async def trendline_break_bounce_detector():
                                 pivot_times = df_90d['OPEN_TIME'].iloc[pivots]
                                 pivot_prices = df_90d['HIGH' if trend_direction == 'DOWN' else 'LOW'].iloc[pivots]
 
-                                # Map erstellen
+                                # Create map
                                 t_map = {t: i for i, t in enumerate(df_plot['OPEN_TIME'])}
                                 px, py = [], []
                                 for t, p in zip(pivot_times, pivot_prices):
@@ -10611,7 +10612,7 @@ async def trendline_break_bounce_detector():
                             ax3.legend(facecolor=bg, labelcolor=fg, fontsize=10, loc='upper left')
                             ax3.grid(True, alpha=0.15, color=fg)
 
-                            # --- FORMATIERUNG X-ACHSE (Index -> Datum) ---
+                            # --- X-AXIS FORMATTING (index -> date) ---
                             def format_date(x, pos=None):
                                 idx = int(x + 0.5)
                                 if 0 <= idx < len(df_plot):
@@ -10621,13 +10622,13 @@ async def trendline_break_bounce_detector():
                             ax1.xaxis.set_major_formatter(mticker.FuncFormatter(format_date))
                             ax1.xaxis.set_major_locator(mticker.MaxNLocator(nbins=10))
 
-                            # Weisse Labels für alle Achsen
+                            # White labels for all axes
                             for ax in [ax1, ax2, ax3, ax_vol]:
                                 ax.tick_params(colors=fg, labelsize=10)
                                 for label in ax.get_xticklabels() + ax.get_yticklabels():
                                     label.set_color(fg)
 
-                            # # Am Ende:
+                            # # At the end:
                             # with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                             # fig.savefig(tmp.name, format='png', dpi=300, facecolor='#1e1e1e', bbox_inches='tight', pad_inches=0.4)
                             # tmp_path = tmp.name
@@ -10641,17 +10642,17 @@ async def trendline_break_bounce_detector():
                             plt.close(fig)
                             chart_buf = buf
                         except Exception as e:
-                            logger.error(f"Chart-Fehler für {symbol}: {e}")
+                            logger.error(f"Chart error for {symbol}: {e}")
                             chart_buf = None
 
                         try:
                             # ml_probability = get_ml_prediction(df_90d, event, slope, trend_value_last)
                             ml_probability, current_ml_threshold = get_ml_prediction(df_90d, event, slope, last_close)
                             logger.info(
-                                f"Signal erkannt: {symbol} {event} | ML Score: {ml_probability:.2f} (Threshold: {current_ml_threshold})"
+                                f"Signal detected: {symbol} {event} | ML score: {ml_probability:.2f} (threshold: {current_ml_threshold})"
                             )
 
-                            # Erweiterter Event-String für die Nachricht
+                            # Extended event string for the message
                             event_display = f"{event} (ML: {ml_probability:.0%} ML Score: {ml_probability:.2f} Threshold: {current_ml_threshold:.2f})"
                             if ml_probability >= 0.25:
                                 try:
@@ -10679,21 +10680,21 @@ async def trendline_break_bounce_detector():
                                         direction,
                                         float(ml_probability),
                                         float(last_close),
-                                        event_display,  # Original-Event ohne ML-Prozent
+                                        event_display,  # Original event without the ML percentage
                                         trend_direction,
                                         now,  # datetime.now(pytz.UTC)
                                     )
 
                                     logger.info(
-                                        f"High-Conf ML Trade gespeichert: {symbol} {direction} "
+                                        f"High-conf ML trade saved: {symbol} {direction} "
                                         f"| ML: {ml_probability:.3f} | Price: {last_close:.8f}"
                                     )
 
                                 except Exception as e:
-                                    logger.error(f"Fehler beim Speichern in ML_TREND_TRADES für {symbol}: {e}")
+                                    logger.error(f"Error saving to ML_TREND_TRADES for {symbol}: {e}")
                             event = f"{event} (ML: {ml_probability:.0%})"
                         except Exception as e:
-                            logger.error(f"ML-Fehler für {symbol}: {e}")
+                            logger.error(f"ML error for {symbol}: {e}")
 
                         # HTML + Send
                         html = f"""
@@ -10717,21 +10718,21 @@ async def trendline_break_bounce_detector():
                                 await application.bot.send_message(
                                     chat_id=TRENDBREAKER_CHANNEL_ID, text=html, parse_mode="HTML"
                                 )
-                            logger.info(f"RELEVANTER Trend-Alert: {symbol} | {event} | Dist {rel_distance:+.2%}")
+                            logger.info(f"RELEVANT trend alert: {symbol} | {event} | Dist {rel_distance:+.2%}")
                         except Exception as e:
-                            logger.error(f"Send-Fehler: {e}")
+                            logger.error(f"Send error: {e}")
                             if chart_buf:
                                 chart_buf.close()
 
                         state["last_alert"] = now
 
-                    # State aktualisieren (auch wenn kein Event)
+                    # Update state (even if no event)
                     state["prev_relation"] = current_relation
 
             finally:
                 await release_conn(conn)
 
-            # Nächster Lauf in einer Stunde +5 Min
+            # Next run in one hour +5 min
             next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1) + timedelta(minutes=5)
             sleep_sec = (next_run - datetime.now(pytz.UTC)).total_seconds()
             await asyncio.sleep(max(10, sleep_sec))
@@ -10747,17 +10748,17 @@ async def trendline_break_bounce_detector():
 # id                  SERIAL PRIMARY KEY,
 # detection_time      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 # coin                TEXT NOT NULL,
-# event_type          TEXT NOT NULL,          -- z.B. 'TRENDLINE BREAK UP', 'BOUNCE UP FROM TRENDLINE' ...
-# trend_direction     TEXT,                   -- 'UP', 'DOWN' oder NULL
+# event_type          TEXT NOT NULL,          -- e.g. 'TRENDLINE BREAK UP', 'BOUNCE UP FROM TRENDLINE' ...
+# trend_direction     TEXT,                   -- 'UP', 'DOWN' or NULL
 # close_price         NUMERIC,
 # trend_value         NUMERIC,
-# rel_distance_pct    NUMERIC,                -- relative Distanz in %
+# rel_distance_pct    NUMERIC,                -- relative distance in %
 # abs_distance        NUMERIC,
 # rsi_9               NUMERIC,
 # rsi_14              NUMERIC,
 # rsi_24              NUMERIC,
 # volume_current      NUMERIC,
-# volume_avg_20       NUMERIC,                -- Durchschnitt der letzten 20 Kerzen
+# volume_avg_20       NUMERIC,                -- average of the last 20 candles
 # volume_ratio_pct    NUMERIC,                -- volume_current / volume_avg_20 * 100
 # slope               NUMERIC,
 # intercept           NUMERIC,
@@ -10765,7 +10766,7 @@ async def trendline_break_bounce_detector():
 # prev_relation       TEXT,
 # current_relation    TEXT,
 # significant_dist_before BOOLEAN DEFAULT FALSE,
-# raw_json_data       JSONB,                  -- falls du später mehr speichern willst
+# raw_json_data       JSONB,                  -- in case you want to store more later
 # created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 # );
 
@@ -10777,7 +10778,7 @@ async def trendline_break_bounce_detector():
 
 
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Das Layout der Buttons
+    # The layout of the buttons
     keyboard = [
         [
             InlineKeyboardButton("📊 Merket Sentiment", callback_data="cmd_market"),
@@ -10789,14 +10790,14 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("💰 Portfolio", callback_data="cmd_portfolio"),
-            InlineKeyboardButton("❓ Hilfe", callback_data="cmd_help"),
+            InlineKeyboardButton("❓ Help", callback_data="cmd_help"),
         ],
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Lokale Datei öffnen
-    # 'rb' steht für read binary
+    # Open local file
+    # 'rb' stands for read binary
     with open("bot.jpg", "rb") as f:
         await update.message.reply_photo(
             photo=f, caption="         PROVEN CRYPTO BOT V2 - choose a function:", reply_markup=reply_markup
@@ -10807,36 +10808,36 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()  # Wichtig: Stoppt die Lade-Animation am Button
+    await query.answer()  # Important: stops the loading animation on the button
 
     data = query.data
 
-    # Hier leiten wir die Klicks an deine existierenden Funktionen weiter
+    # Here we route the clicks to your existing functions
     if data == "cmd_market":
-        # Wir rufen deine existierende Funktion auf
+        # We call your existing function
         await market_handler(update, context)
 
     elif data == "market_dashboard":
-        # # Hier müsstest du deine market_handler Funktion aufrufen
-        # # Falls du eine hast: await market_handler(update, context)
+        # # Here you'd need to call your market_handler function
+        # # If you have one: await market_handler(update, context)
         await market_dashboard_handler(update, context)
-        # update.callback_query.message.reply_text("Markt-Funktion wird geladen...")
+        # update.callback_query.message.reply_text("Loading market function...")
 
     # elif data.startswith("chart_"):
-    # # Extrahiere den Coin aus dem Button (z.B. "chart_BTC" -> "BTC")
+    # # Extract the coin from the button (e.g. "chart_BTC" -> "BTC")
     # symbol = data.split("_")[1]
 
-    # # Achtung: Deine Chart-Funktion erwartet wahrscheinlich Text wie "!minichart BTC"
-    # # Da wir hier keinen Text haben, müssen wir die Chart-Funktion evtl. leicht anpassen
-    # # oder direkt die Bild-Generierung aufrufen:
+    # # Note: your chart function probably expects text like "!minichart BTC"
+    # # Since we don't have text here, we may need to slightly adapt the chart function
+    # # or call the image generation directly:
     # await generate_and_send_chart(update, context, symbol)
 
     # elif data == "cmd_help":
-    # await update.callback_query.message.reply_text("Hier ist die Hilfe...")
+    # await update.callback_query.message.reply_text("Here is the help...")
 
 
 # async def load_pump_models():
-# """Lädt alle 3 Modelle + Thresholds einmalig beim Bot-Start"""
+# """Loads all 3 models + thresholds once at bot startup"""
 # global PUMP_MODELS_LOADED
 # for horizon, info in PUMP_MODELS.items():
 # try:
@@ -10844,14 +10845,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # threshold = joblib.load(info["threshold_path"])
 # PUMP_MODELS_LOADED[horizon] = {"model": model, "threshold": threshold}
 # info["loaded"] = True
-# logger.info(f"{horizon}-Pump-Modell geladen (Threshold: {threshold:.3f})")
+# logger.info(f"{horizon}-Pump model loaded (threshold: {threshold:.3f})")
 # except Exception as e:
-# logger.error(f"Fehler beim Laden {horizon}-Modell: {e}")
+# logger.error(f"Error loading {horizon} model: {e}")
 # info["loaded"] = False
 
 
 async def load_pump_models():
-    """Lädt alle drei trainierten Pump-Modelle + Thresholds beim Bot-Start"""
+    """Loads all three trained pump models + thresholds at bot startup"""
     global PUMP_MODELS_LOADED
     PUMP_MODELS_LOADED = {}
 
@@ -10877,28 +10878,28 @@ async def load_pump_models():
         threshold_file = Path(threshold_path)
 
         if not model_file.exists():
-            logger.warning(f"{horizon}-Pump-Modell nicht gefunden: {model_path}")
+            logger.warning(f"{horizon}-Pump model not found: {model_path}")
             PUMP_MODELS_LOADED[horizon] = {"model": None, "threshold": 0.5}
             continue
         if not threshold_file.exists():
-            logger.warning(f"{horizon}-Threshold nicht gefunden: {threshold_path}")
+            logger.warning(f"{horizon}-Threshold not found: {threshold_path}")
             threshold = 0.5  # Fallback
         else:
             try:
                 threshold = joblib.load(threshold_file)
             except Exception as e:
-                logger.error(f"Fehler beim Laden von {threshold_path}: {e}")
+                logger.error(f"Error loading {threshold_path}: {e}")
                 threshold = 0.5
 
         try:
             model = joblib.load(model_file)
             PUMP_MODELS_LOADED[horizon] = {"model": model, "threshold": float(threshold)}
-            logger.info(f"{horizon.upper()}-Pump-Modell geladen (Threshold: {threshold:.3f})")
+            logger.info(f"{horizon.upper()}-Pump model loaded (threshold: {threshold:.3f})")
         except Exception as e:
-            logger.error(f"Fehler beim Laden von {model_path}: {e}")
+            logger.error(f"Error loading {model_path}: {e}")
             PUMP_MODELS_LOADED[horizon] = {"model": None, "threshold": 0.5}
 
-    logger.info("Alle Pump-Modelle geladen oder mit Fallback initialisiert")
+    logger.info("All pump models loaded or initialized with fallback")
 
 
 def pct_distance(price_series: pd.Series, indicator_series: pd.Series) -> pd.Series:
@@ -10908,19 +10909,19 @@ def pct_distance(price_series: pd.Series, indicator_series: pd.Series) -> pd.Ser
 
 
 def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
-    # Sortieren nach open_time (muss vorhanden sein – durch h.open_time garantiert)
+    # Sort by open_time (must be present – guaranteed by h.open_time)
     if 'open_time' in df.columns:
         df = df.sort_values('open_time').reset_index(drop=True)
     else:
         df = df.reset_index(drop=True)
-        logger.warning("open_time fehlt – Sortierung übersprungen")
+        logger.warning("open_time missing – sorting skipped")
 
-    # Volume Features – OHNE groupby (nur 1 Coin)
+    # Volume features – WITHOUT groupby (only 1 coin)
     df['volume_ratio_prev'] = df['volume'] / df['volume'].shift(1)
     df['volume_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
     df['volume_ratio_sma20'] = df['volume'] / df['volume_sma20']
 
-    # Deltas – OHNE groupby
+    # Deltas – WITHOUT groupby
     delta_cols = ['rsi_6', 'rsi_9', 'rsi_12', 'rsi_14', 'rsi_24', 'tsi_fast', 'macd_dif']
     for col in delta_cols:
         if col in df.columns:
@@ -10934,7 +10935,7 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
         df['macd_hist'] = 0.0
         df['macd_hist_delta_1'] = 0.0
 
-    # Binäre Features
+    # Binary features
     if 'close' in df.columns and 'ema_200' in df.columns:
         df['above_ema_200'] = (df['close'] > df['ema_200']).astype(int)
     else:
@@ -10954,7 +10955,7 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df['ema_9_cross_above_21'] = 0
 
-    # ATR-Distanzen
+    # ATR distances
     eps = 1e-8
     if all(c in df.columns for c in ['close', 'atr_14']):
         df['boll_upper_dist_atr'] = (df['close'] - df.get('boll_upper_20', df['close'])) / (df['atr_14'] + eps)
@@ -10965,7 +10966,7 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
         df['boll_lower_dist_atr'] = 0.0
         df['ema_200_dist_atr'] = 0.0
 
-    # Prozentuale Distanzen
+    # Percentage distances
     price = df['close']
     line_cols = [
         c
@@ -10979,14 +10980,14 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 async def hourly_pump_model_checker():
-    """Läuft jede Stunde um :10 – prüft alle Coins gegen die 3 Pump-Modelle"""
-    logger.info("Hourly Pump Dump Model Checker Task gestartet – läuft um :10 jeder Stunde")
-    await load_pump_models()  # Beim Start laden
+    """Runs every hour at :10 – checks all coins against the 3 pump models"""
+    logger.info("Hourly Pump Dump Model Checker task started – runs at :10 every hour")
+    await load_pump_models()  # Load at startup
 
-    # === DEBUG: Modelle anzeigen ===
-    logger.info("=== GELADENE PUMP-MODELLE ===")
+    # === DEBUG: show models ===
+    logger.info("=== LOADED PUMP MODELS ===")
     for horizon, data in PUMP_MODELS_LOADED.items():
-        model_status = "GELADEN" if data.get("model") is not None else "FEHLT"
+        model_status = "LOADED" if data.get("model") is not None else "MISSING"
         threshold = data.get("threshold", "N/A")
         logger.info(f"{horizon.upper()}: {model_status} | Threshold: {threshold:.3f}")
     logger.info("================================")
@@ -10994,9 +10995,9 @@ async def hourly_pump_model_checker():
     # for horizon, data in PUMP_MODELS_LOADED.items():
 
     # if data["model"]:
-    # logger.info(f"{horizon.upper()} Modell erwartet Features: {len(data['model'].feature_names_in_)}")
-    # logger.info(f"Feature-Namen: {data['model'].feature_names_in_}")
-    # === MANUELLER TEST mit BTCUSDT ===
+    # logger.info(f"{horizon.upper()} model expects features: {len(data['model'].feature_names_in_)}")
+    # logger.info(f"Feature names: {data['model'].feature_names_in_}")
+    # === MANUAL TEST with BTCUSDT ===
     # test_symbol = "BTCUSDT"
     # try:
     # conn_test = await get_conn()
@@ -11025,7 +11026,7 @@ async def hourly_pump_model_checker():
     # df_test = pd.DataFrame([dict(row) for row in row_test])
     # df_test = add_advanced_features(df_test)
 
-    # # # Feature-Extraktion (wie im Hauptcode)
+    # # # Feature extraction (like in the main code)
     # # feature_cols = [col for col in df_test.columns if
     # # col.endswith('_dist_pct') or '_delta_1' in col or
     # # col in ['volume_ratio_prev', 'volume_ratio_sma20', 'rsi_6', 'rsi_9', 'rsi_12', 'rsi_14', 'rsi_24', 'tsi_fast',
@@ -11033,48 +11034,48 @@ async def hourly_pump_model_checker():
     # # 'ema_9_cross_above_21', 'boll_upper_dist_atr', 'boll_lower_dist_atr', 'ema_200_dist_atr', 'atr_14']
     # # ]
 
-    # # Nimm ein beliebiges geladenes Modell für die Feature-Namen (alle haben dieselben)
+    # # Take any loaded model for the feature names (all have the same)
     # model_for_features = next((data["model"] for data in PUMP_MODELS_LOADED.values() if data["model"]), None)
     # #if model_for_features is None:
-    # #continue  # Kein Modell geladen
+    # #continue  # No model loaded
 
     # feature_cols = model_for_features.feature_names_in_
 
-    # # Prüfe, ob alle Features vorhanden sind
+    # # Check whether all features are present
     # missing = [col for col in feature_cols if col not in df_test.columns]
     # if missing:
-    # logger.debug(f"BTC: Fehlende Features für Pump-Modelle: {missing}")
+    # logger.debug(f"BTC: missing features for pump models: {missing}")
     # #continue
 
-    # X_current = df_test[feature_cols].values  # exakte Reihenfolge und Anzahl
+    # X_current = df_test[feature_cols].values  # exact order and count
 
     # X_test = df_test[feature_cols].values
 
-    # logger.info("=== MANUELLER TEST BTCUSDT ===")
+    # logger.info("=== MANUAL TEST BTCUSDT ===")
     # for horizon, data in PUMP_MODELS_LOADED.items():
     # if data.get("model"):
     # prob = data["model"].predict_proba(X_test)[0, 1]
-    # above_thr = "JA" if prob >= data["threshold"] else "nein"
+    # above_thr = "YES" if prob >= data["threshold"] else "no"
     # logger.info(f"{horizon.upper()}: Prob {prob:.1%} | Threshold {data['threshold']:.3f} → Signal: {above_thr}")
     # except Exception as e:
-    # logger.error(f"Test-Fehler: {e}")
-    # # === ENDE TEST ===
+    # logger.error(f"Test error: {e}")
+    # # === END TEST ===
 
     coins = load_coins()
     while True:
         try:
             now = datetime.now(pytz.UTC)
-            # Warte bis 10 Minuten nach der vollen Stunde
+            # Wait until 10 minutes past the full hour
             next_run = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)) + timedelta(minutes=10)
             sleep_seconds = (next_run - datetime.now(pytz.UTC)).total_seconds()
             if sleep_seconds > 0:
                 await asyncio.sleep(sleep_seconds)
             signals_batch = []
-            logger.info(f"Hourly Pump Dump - Check um {datetime.now(pytz.UTC).strftime('%H:%M')} UTC gestartet")
+            logger.info(f"Hourly Pump Dump check started at {datetime.now(pytz.UTC).strftime('%H:%M')} UTC")
 
             for symbol in coins:
                 try:
-                    # Daten laden (wie bisher – 100 Zeilen für Historie)
+                    # Load data (as before – 100 rows of history)
                     conn = await get_conn()
                     rows = await conn.fetch(f"""
                         SELECT
@@ -11105,51 +11106,51 @@ async def hourly_pump_model_checker():
                         continue
 
                     df_current = add_advanced_features(df_current)
-                    df_current = df_current.iloc[0:1]  # nur aktuellste Kerze
+                    df_current = df_current.iloc[0:1]  # only the most recent candle
 
-                    # logger.info(" Modell loading now")
-                    # Feature-Liste vom ersten geladenen Modell übernehmen (alle haben dieselben Features)
+                    # logger.info(" Model loading now")
+                    # Take the feature list from the first loaded model (all have the same features)
                     model_sample = next((data["model"] for data in PUMP_MODELS_LOADED.values() if data["model"]), None)
-                    # logger.info(" Modell loading now II")
+                    # logger.info(" Model loading now II")
                     if model_sample is None:
-                        logger.warning("Kein Modell geladen – überspringe Checker")
+                        logger.warning("No model loaded – skipping checker")
                         break
 
                     feature_cols = model_sample.feature_names_in_
 
                     missing = [col for col in feature_cols if col not in df_current.columns]
                     if missing:
-                        logger.debug(f"{symbol}: Fehlende Features – überspringe")
+                        logger.debug(f"{symbol}: missing features – skipping")
                         continue
 
                     X_current = df_current[feature_cols].values
 
-                    # logger.info("checke model jetzt")
-                    # === Alle Modelle (PUMP + DUMP) prüfen ===
-                    candidates = []  # Liste von (prob, horizon, direction)
+                    # logger.info("checking model now")
+                    # === Check all models (PUMP + DUMP) ===
+                    candidates = []  # List of (prob, horizon, direction)
 
                     for horizon, data in PUMP_MODELS_LOADED.items():
                         # if data.get("model") is None:
                         # continue
 
-                        # logger.info("checke model - bin jetzt in der schleife")
+                        # logger.info("checking model - now in the loop")
 
                         model = data["model"]
                         threshold = data["threshold"]
 
-                        # logger.info("model und threshold geladen")
+                        # logger.info("model and threshold loaded")
 
                         try:
-                            prob = model.predict_proba(X_current)[0, 1]  # 1 = positives Event (Pump oder Dump)
+                            prob = model.predict_proba(X_current)[0, 1]  # 1 = positive event (pump or dump)
                             # logger.info(f"{symbol} {horizon.upper()}: {prob:.1%} (Threshold {threshold:.1%})")
                         except Exception as e:
-                            logger.info(f"Prediction-Fehler {symbol} {horizon}: {e}")
+                            logger.info(f"Prediction error {symbol} {horizon}: {e}")
                             continue
 
-                        # Nur wenn Threshold überschritten
+                        # Only if threshold exceeded
                         # if prob >= threshold:
 
-                        if prob >= 0.25:  # statt nur Threshold + 0.1 oder 0.45
+                        if prob >= 0.25:  # instead of just threshold + 0.1 or 0.45
                             entry_price = float(df_current['close'].iloc[0])
                             direction = "LONG" if "pump" in horizon.lower() else "SHORT"
                             modell_key = f"MIS1-{horizon}"
@@ -11173,23 +11174,23 @@ async def hourly_pump_model_checker():
                             direction = "LONG" if "pump" in horizon.lower() else "SHORT"
                             # logger.info(f"{symbol}: no strong Signal found {direction} {prob}")
 
-                    # === Kein Signal? Nächster Coin ===
+                    # === No signal? Next coin ===
                     if not candidates:
-                        # logger.info(f"{symbol}: Kein Signal (höchste Prob: {max((p for p, _, _, _ in candidates or [(0, '', '', 0)]), default=0):.1%})")
+                        # logger.info(f"{symbol}: no signal (highest prob: {max((p for p, _, _, _ in candidates or [(0, '', '', 0)]), default=0):.1%})")
                         continue
 
                     # else:
-                    # #logger.info(f"{symbol}: {len(candidates)} potenzielle Signale gefunden")
+                    # #logger.info(f"{symbol}: {len(candidates)} potential signals found")
 
-                    # === Das stärkste Signal auswählen ===
-                    candidates.sort(reverse=True)  # höchste Prob zuerst
+                    # === Select the strongest signal ===
+                    candidates.sort(reverse=True)  # highest prob first
                     best_prob, best_horizon, best_direction, _ = candidates[0]
 
                     strength = (
                         "STRONG" if best_prob >= data["threshold"] + 0.1 else "MODERATE"
-                    )  # Threshold vom letzten Modell – egal, nur für Text
+                    )  # Threshold from the last model – doesn't matter, only for text
 
-                    # === Cornix-Signal senden ===
+                    # === Send Cornix signal ===
                     is_long = best_direction == "LONG"
                     await send_cornix_signal(symbol, is_long, "MIS1")
 
@@ -11203,7 +11204,7 @@ async def hourly_pump_model_checker():
                         else "💥 DUMP SIGNAL - AI INDICATOR COMBINATOR"
                     )
 
-                    # Nur das stärkste Signal anzeigen + Probability
+                    # Only show the strongest signal + probability
                     signal_text = f"{best_horizon} {'PUMP' if is_long else 'DUMP'} "
 
                     html = f"""
@@ -11226,24 +11227,24 @@ async def hourly_pump_model_checker():
                             chart_buf.close()
                         else:
                             await application.bot.send_message(chat_id=AI_CHANNEL_ID, text=html, parse_mode="HTML")
-                        logger.info(f"Signal gesendet: {symbol} {best_direction} | {signal_text}")
+                        logger.info(f"Signal sent: {symbol} {best_direction} | {signal_text}")
                     except Exception as e:
-                        logger.error(f"Signal-Send-Fehler {symbol}: {e}")
+                        logger.error(f"Signal send error {symbol}: {e}")
                         if chart_buf:
                             chart_buf.close()
 
                 except Exception as e:
-                    logger.error(f"Fehler bei {symbol}: {e}", exc_info=True)
+                    logger.error(f"Error for {symbol}: {e}", exc_info=True)
 
             if signals_batch:
                 asyncio.create_task(log_ai_signals(signals_batch))
         except Exception as e:
-            logger.error(f"Fehler bei {symbol}: {e}", exc_info=True)
+            logger.error(f"Error for {symbol}: {e}", exc_info=True)
 
 
 # ========================= AI Tracker =========================
 async def create_ai_signals_table():
-    """Erstellt die Tabelle für AI-Signale, falls sie noch nicht existiert"""
+    """Creates the table for AI signals if it doesn't already exist"""
     conn = await get_conn()
     try:
         await conn.execute("""
@@ -11252,13 +11253,13 @@ async def create_ai_signals_table():
                 symbol TEXT NOT NULL,
                 timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 price NUMERIC NOT NULL,
-                model TEXT NOT NULL,          -- z.B. 'EPD1', 'MIS1', 'ATS1'
-                direction TEXT NOT NULL,      -- 'LONG' oder 'SHORT'
-                confidence NUMERIC NOT NULL,  -- z.B. 0.73 für 73%
+                model TEXT NOT NULL,          -- e.g. 'EPD1', 'MIS1', 'ATS1'
+                direction TEXT NOT NULL,      -- 'LONG' or 'SHORT'
+                confidence NUMERIC NOT NULL,  -- e.g. 0.73 for 73%
                 inserted_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        # Index für schnelle Abfragen nach Zeit und Modell
+        # Index for fast queries by time and model
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_ai_signals_timestamp
             ON ai_signals(timestamp DESC)
@@ -11267,16 +11268,16 @@ async def create_ai_signals_table():
             CREATE INDEX IF NOT EXISTS idx_ai_signals_model
             ON ai_signals(model, timestamp DESC)
         """)
-        logger.info("Tabelle 'ai_signals' bereit oder erstellt")
+        logger.info("Table 'ai_signals' ready or created")
     except Exception as e:
-        logger.error(f"Fehler beim Erstellen der ai_signals Tabelle: {e}")
+        logger.error(f"Error creating the ai_signals table: {e}")
     finally:
         await release_conn(conn)
 
 
 async def log_ai_signals(signals: list[dict]):
     """
-    Schreibt eine Liste von Signalen in die DB.
+    Writes a list of signals to the DB.
     signals = [{'symbol': 'BTCUSDT', 'price': 65000.0, 'model': 'EPD1', 'direction': 'LONG', 'confidence': 0.73}, ...]
     """
     if not signals:
@@ -11285,7 +11286,7 @@ async def log_ai_signals(signals: list[dict]):
     conn = await get_conn()
     try:
         async with conn.transaction():
-            # WICHTIG: Alle Werte in reine Python-Typen konvertieren
+            # IMPORTANT: convert all values to plain Python types
             prepared_data = []
             for s in signals:
                 prepared_data.append(
@@ -11294,7 +11295,7 @@ async def log_ai_signals(signals: list[dict]):
                         float(s['price']),  # NUMERIC → Python float
                         str(s['model']),  # TEXT
                         str(s['direction']),  # TEXT
-                        float(s['confidence']),  # NUMERIC → explizit float()
+                        float(s['confidence']),  # NUMERIC → explicit float()
                     )
                 )
 
@@ -11307,9 +11308,9 @@ async def log_ai_signals(signals: list[dict]):
                 prepared_data,
             )
 
-        logger.info(f"{len(signals)} AI-Signal(e) erfolgreich in DB geschrieben")
+        logger.info(f"{len(signals)} AI signal(s) successfully written to DB")
     except Exception as e:
-        logger.error(f"Fehler beim Schreiben der AI-Signale: {e}", exc_info=True)
+        logger.error(f"Error writing the AI signals: {e}", exc_info=True)
     finally:
         await release_conn(conn)
 
@@ -11326,17 +11327,17 @@ async def graphai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_coin = match.group(1).upper()
     valid_symbol = await validate_symbol(raw_coin)
     if not valid_symbol:
-        await update.message.reply_text(f"Coin nicht gefunden: {raw_coin}")
+        await update.message.reply_text(f"Coin not found: {raw_coin}")
         return
 
     username = update.effective_user.username or update.effective_user.full_name or "unknown"
 
     await update.message.reply_chat_action(ChatAction.UPLOAD_PHOTO)
 
-    # Daten laden
+    # Load data
     data_pack = await load_graphai_data_binance(valid_symbol)
     if not data_pack or data_pack['df_klines'].empty:
-        await update.message.reply_text("Keine Marktdaten verfügbar.")
+        await update.message.reply_text("No market data available.")
         return
 
     ts_str = datetime.now(pytz.UTC).strftime('%d.%m %H:%M')
@@ -11369,10 +11370,10 @@ async def graphai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for cfg in plots_config:
         try:
-            # Chart generieren
+            # Generate chart
             buf = await asyncio.wait_for(asyncio.to_thread(plot_graphai_flexible, data_pack, cfg), timeout=30.0)
 
-            # WICHTIG: Wenn buf None ist, gab es keine Signale -> Skip
+            # IMPORTANT: if buf is None, there were no signals -> skip
             if buf is None:
                 continue
 
@@ -11383,22 +11384,22 @@ async def graphai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except asyncio.TimeoutError:
             continue
         except Exception as e:
-            logger.error(f"Fehler Chart {cfg.get('title')}: {e}", exc_info=True)
+            logger.error(f"Chart error {cfg.get('title')}: {e}", exc_info=True)
             continue
 
     if charts_sent == 0:
         await update.message.reply_text(
-            "Keine relevanten Signale in den letzten 5 Tagen gefunden (für die gewählten Filter)."
+            "No relevant signals found in the last 5 days (for the selected filters)."
         )
 
 
 async def load_graphai_data_binance(symbol: str):
     """
-    Lädt Klines von Binance und Signale aus der DB.
-    FIX: Initialisiert df_signals immer mit Spalten, um KeyError bei leeren Daten zu verhindern.
+    Loads klines from Binance and signals from the DB.
+    FIX: always initializes df_signals with columns to prevent a KeyError on empty data.
     """
     try:
-        # --- A) Signale aus DB laden ---
+        # --- A) Load signals from DB ---
         conn = await get_conn()
         rows = await conn.fetch(
             """
@@ -11412,7 +11413,7 @@ async def load_graphai_data_binance(symbol: str):
         )
         await release_conn(conn)
 
-        # FIX: Spalten explizit definieren!
+        # FIX: define columns explicitly!
         columns = ['timestamp', 'price_signal', 'direction', 'model', 'confidence']
 
         if rows:
@@ -11428,15 +11429,15 @@ async def load_graphai_data_binance(symbol: str):
                     }
                 )
             df_signals = pd.DataFrame(data_list)
-            # Sicherstellen, dass Timestamp sortiert ist
+            # Ensure the timestamp is sorted
             df_signals = df_signals.sort_values('timestamp')
         else:
-            # Leeres DataFrame mit korrekten Spalten erstellen
+            # Create an empty DataFrame with the correct columns
             df_signals = pd.DataFrame(columns=columns)
 
-        # --- B) Klines von Binance laden ---
+        # --- B) Load klines from Binance ---
         end_time = int(time.time() * 1000)
-        start_time = end_time - (5 * 24 * 60 * 60 * 1000)  # 5 Tage
+        start_time = end_time - (5 * 24 * 60 * 60 * 1000)  # 5 days
 
         url = "https://fapi.binance.com/fapi/v1/klines"
         params = {'symbol': symbol, 'interval': '5m', 'startTime': start_time, 'endTime': end_time, 'limit': 1500}
@@ -11450,7 +11451,7 @@ async def load_graphai_data_binance(symbol: str):
         if not raw_klines:
             return None
 
-        # DataFrame erstellen
+        # Create DataFrame
         df_klines = pd.DataFrame(
             raw_klines,
             columns=[
@@ -11469,7 +11470,7 @@ async def load_graphai_data_binance(symbol: str):
             ],
         )
 
-        # Konvertierung
+        # Conversion
         df_klines['open_time'] = pd.to_datetime(df_klines['open_time'], unit='ms', utc=True)
         df_klines = df_klines.set_index('open_time')
 
@@ -11485,8 +11486,8 @@ async def load_graphai_data_binance(symbol: str):
 
 def plot_graphai_flexible(data_pack: dict, config: dict) -> BytesIO:
     """
-    Generiert Chart mit Volumen.
-    Gibt None zurück, wenn nach Filterung keine Signale übrig sind.
+    Generates a chart with volume.
+    Returns None if no signals remain after filtering.
     """
     symbol = data_pack['symbol']
     df_klines = data_pack['df_klines'].copy()
@@ -11495,23 +11496,23 @@ def plot_graphai_flexible(data_pack: dict, config: dict) -> BytesIO:
     if df_klines.empty:
         return None
 
-    # --- 1. DATEN FILTERN & SKIP CHECK ---
+    # --- 1. FILTER DATA & SKIP CHECK ---
     if df_signals is None or df_signals.empty:
-        return None  # Keine Signale vorhanden -> Kein Chart
+        return None  # No signals present -> no chart
 
     current_signals = df_signals.copy()
 
-    # a) Confidence Filter
+    # a) Confidence filter
     if config.get('min_confidence', 0) > 0:
         current_signals = current_signals[current_signals['confidence'] >= config['min_confidence']]
 
-    # b) Modell Filter
+    # b) Model filter
     if config.get('filter_prefix'):
         current_signals = current_signals[current_signals['model'].str.startswith(config['filter_prefix'])]
     elif config.get('filter_model'):
         current_signals = current_signals[current_signals['model'] == config['filter_model']]
 
-    # SKIP CHECK: Wenn nach Filterung leer -> Abbruch
+    # SKIP CHECK: if empty after filtering -> abort
     if current_signals.empty:
         return None
 
@@ -11530,29 +11531,29 @@ def plot_graphai_flexible(data_pack: dict, config: dict) -> BytesIO:
     )
     mapped_signals = mapped_signals.dropna(subset=['mpl_index'])
 
-    # Sicherheitshalber nochmal checken
+    # Check again just to be safe
     if mapped_signals.empty:
         return None
 
-    # --- 3. PLOT SETUP (MIT VOLUMEN) ---
+    # --- 3. PLOT SETUP (WITH VOLUME) ---
     dark_style = mpf.make_mpf_style(base_mpf_style='nightclouds', gridcolor='#262626')
 
-    # volume=True und panel_ratios
+    # volume=True and panel_ratios
     fig, axlist = mpf.plot(
         df_klines,
         type='candle',
         style=dark_style,
         returnfig=True,
-        figsize=(18, 12),  # Etwas höher für Volumen
+        figsize=(18, 12),  # A bit taller for volume
         warn_too_much_data=2000,
         datetime_format='%d.%m %H:%M',
         xrotation=20,
-        volume=True,  # Volumen aktivieren!
-        panel_ratios=(6, 2),  # Verhältnis Kerzen:Volumen
+        volume=True,  # Enable volume!
+        panel_ratios=(6, 2),  # Ratio candles:volume
     )
-    ax = axlist[0]  # Hauptchart (Kerzen)
-    # axlist[2] wäre Volumenchart (axlist[1] ist oft eine Legende/Axis-Sharing)
-    # mpf kümmert sich um das Volumen, wir müssen nur auf ax[0] zeichnen.
+    ax = axlist[0]  # Main chart (candles)
+    # axlist[2] would be the volume chart (axlist[1] is often a legend/axis-sharing entry)
+    # mpf handles the volume, we only need to draw on ax[0].
 
     # --- 4. HELPER ---
     def calc_sizes_step(confidences):
@@ -11574,8 +11575,8 @@ def plot_graphai_flexible(data_pack: dict, config: dict) -> BytesIO:
             return 'o'
         return 'o'
 
-    # --- 5. SIGNALE ZEICHNEN ---
-    # Modus 1: OVERVIEW
+    # --- 5. DRAW SIGNALS ---
+    # Mode 1: OVERVIEW
     if config['mode'] == 'overview':
         groups = mapped_signals.groupby(['model', 'direction'])
         for (model, direction), group in groups:
@@ -11590,7 +11591,7 @@ def plot_graphai_flexible(data_pack: dict, config: dict) -> BytesIO:
             sizes = calc_sizes_step(group['confidence'].values)
             _scatter_group(ax, group, c_code, sizes, label=f"{model} {direction}")
 
-    # Modus 2: SINGLE MODEL
+    # Mode 2: SINGLE MODEL
     elif config['mode'] == 'single_model':
         color_map = {'LONG': '#00ff00', 'SHORT': '#ff0000'}
         for direction, group in mapped_signals.groupby('direction'):
@@ -11598,7 +11599,7 @@ def plot_graphai_flexible(data_pack: dict, config: dict) -> BytesIO:
             sizes = calc_sizes_step(group['confidence'].values)
             _scatter_group(ax, group, c_code, sizes, label=direction)
 
-    # Modus 3: MSI SPECIAL
+    # Mode 3: MSI SPECIAL
     elif config['mode'] == 'mis_special':
         color_map = {'LONG': '#00ff00', 'SHORT': '#ff0000'}
         groups = mapped_signals.groupby(['model', 'direction'])
@@ -11656,8 +11657,8 @@ def _scatter_group(ax, group, color, sizes, label, marker='o'):
 
 def plot_graphai_candles_v2(data_pack: dict) -> BytesIO:
     """
-    Erstellt den Chart.
-    Korrigierte Version: 'gridcolor' statt 'grid_color'
+    Creates the chart.
+    Corrected version: 'gridcolor' instead of 'grid_color'
     """
     symbol = data_pack['symbol']
     df_klines = data_pack['df_klines']
@@ -11666,17 +11667,17 @@ def plot_graphai_candles_v2(data_pack: dict) -> BytesIO:
     if df_klines.empty:
         return None
 
-    # 1. Vorbereitung für mplfinance Mapping
-    # mplfinance nutzt intern Integer-Indizes (0, 1, 2...) für die X-Achse.
+    # 1. Preparation for mplfinance mapping
+    # mplfinance internally uses integer indices (0, 1, 2...) for the X axis.
     df_klines['mpl_index'] = range(len(df_klines))
 
-    # Reset index, damit 'open_time' eine normale Spalte für merge_asof ist
+    # Reset index so 'open_time' is a normal column for merge_asof
     df_klines_merged = df_klines.reset_index()[['open_time', 'mpl_index', 'close']]
 
     mapped_signals = pd.DataFrame()
 
     if not df_signals.empty:
-        # Signale auf die nächste KLine mappen (Toleranz 15 Min)
+        # Map signals to the nearest kline (tolerance 15 min)
         mapped_signals = pd.merge_asof(
             df_signals,
             df_klines_merged,
@@ -11686,11 +11687,11 @@ def plot_graphai_candles_v2(data_pack: dict) -> BytesIO:
             tolerance=pd.Timedelta('15min'),
         )
 
-        # Signale ohne Match entfernen
+        # Remove signals without a match
         mapped_signals = mapped_signals.dropna(subset=['mpl_index'])
 
-    # 2. Plotting Setup (HIER WAR DER FEHLER)
-    # Korrektur: gridcolor (ohne Unterstrich)
+    # 2. Plotting setup (THIS IS WHERE THE BUG WAS)
+    # Fix: gridcolor (without underscore)
     dark_style = mpf.make_mpf_style(base_mpf_style='nightclouds', gridcolor='#262626')
 
     fig, axlist = mpf.plot(
@@ -11704,11 +11705,11 @@ def plot_graphai_candles_v2(data_pack: dict) -> BytesIO:
         xrotation=20,
         volume=False,
     )
-    ax = axlist[0]  # Haupt-Chart-Achse
+    ax = axlist[0]  # Main chart axis
 
-    # 3. Signale einzeichnen (Gruppenweise!)
+    # 3. Draw signals (group-wise!)
     if not mapped_signals.empty:
-        # Color Mapping
+        # Color mapping
         color_map = {
             'EPD1_LONG': '#00ff00',
             'EPD1_SHORT': '#ff0000',
@@ -11718,24 +11719,24 @@ def plot_graphai_candles_v2(data_pack: dict) -> BytesIO:
             'MIS1_SHORT': '#ff8800',
         }
 
-        # Gruppieren nach Modell und Richtung -> Vektorisierung für Matplotlib
+        # Group by model and direction -> vectorization for Matplotlib
         groups = mapped_signals.groupby(['model', 'direction'])
 
         for (model, direction), group in groups:
             key = f"{model}_{direction}"
             c_code = color_map.get(key, '#cccccc')
 
-            # X-Werte: Der berechnete Integer-Index
+            # X values: the computed integer index
             x_vals = group['mpl_index'].values
 
-            # Y-Werte: Preis leicht offsetten
+            # Y values: offset the price slightly
             y_vals = group['close'].values
             if direction == 'LONG':
-                y_vals = y_vals * 0.997  # Unter der Candle
+                y_vals = y_vals * 0.997  # Below the candle
             else:
-                y_vals = y_vals * 1.003  # Über der Candle
+                y_vals = y_vals * 1.003  # Above the candle
 
-            # Größe basierend auf Confidence
+            # Size based on confidence
             sizes = (group['confidence'] * 300).clip(lower=50, upper=400).values
 
             # PLOT COMMAND
@@ -11751,13 +11752,13 @@ def plot_graphai_candles_v2(data_pack: dict) -> BytesIO:
                 zorder=10,
             )
 
-        # Legende hinzufügen
+        # Add legend
         ax.legend(loc='upper left', facecolor='#0d0d0d', labelcolor='white', fontsize=10, framealpha=0.8)
 
-    # Titel
+    # Title
     ax.set_title(f"{symbol.replace('USDT', '')} (5D 5m) + AI Signals", color='white', fontsize=16, pad=20)
 
-    # Speichern
+    # Save
     buf = BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', facecolor='#0d0d0d', dpi=100)
     buf.seek(0)
@@ -11771,21 +11772,21 @@ def plot_graphai_candles_v2(data_pack: dict) -> BytesIO:
 
 async def graphconv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handler für !graphconv <coin>
-    Zeigt Signale aus der 'conv_signals' Tabelle an.
+    Handler for !graphconv <coin>
+    Shows signals from the 'conv_signals' table.
     """
     if not update.message or not update.message.text:
         return
 
     match = re.match(r"(?i)!graphconv\s+(\w+)", update.message.text.strip())
     if not match:
-        await update.message.reply_text("Usage: !graphconv <coin>\nBeispiel: !graphconv BTC")
+        await update.message.reply_text("Usage: !graphconv <coin>\nExample: !graphconv BTC")
         return
 
     raw_coin = match.group(1).upper()
     valid_symbol = await validate_symbol(raw_coin)
     if not valid_symbol:
-        await update.message.reply_text(f"Coin nicht gefunden: {raw_coin}")
+        await update.message.reply_text(f"Coin not found: {raw_coin}")
         return
 
     username = update.effective_user.username or update.effective_user.full_name or "unknown"
@@ -11793,25 +11794,25 @@ async def graphconv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_chat_action(ChatAction.UPLOAD_PHOTO)
 
-    # 1. Daten laden (Klines + Conv Signals)
+    # 1. Load data (klines + conv signals)
     data_pack = await load_conv_data(valid_symbol)
 
     if not data_pack or data_pack['df_klines'].empty:
-        await update.message.reply_text("Keine Marktdaten verfügbar.")
+        await update.message.reply_text("No market data available.")
         return
 
-    # 2. Chart erstellen
+    # 2. Create chart
     try:
         buf = await asyncio.wait_for(asyncio.to_thread(plot_graphconv_chart, data_pack), timeout=30.0)
     except asyncio.TimeoutError:
-        await update.message.reply_text("Timeout bei der Chart-Erstellung.")
+        await update.message.reply_text("Timeout while creating the chart.")
         return
     except Exception as e:
-        logger.error(f"GraphConv Fehler: {e}", exc_info=True)
-        await update.message.reply_text("Fehler beim Zeichnen des Charts.")
+        logger.error(f"GraphConv error: {e}", exc_info=True)
+        await update.message.reply_text("Error drawing the chart.")
         return
 
-    # 3. Senden
+    # 3. Send
     ts_str = datetime.now(pytz.UTC).strftime('%d.%m %H:%M')
     clean_symbol = valid_symbol.replace('USDT', '')
     caption = f"CONV Signals • {clean_symbol}/USDT • @{username}\n{ts_str} UTC"
@@ -11821,13 +11822,13 @@ async def graphconv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def load_conv_data(symbol: str):
     """
-    Lädt Klines von Binance und Signale aus der 'conv_signals' Tabelle.
+    Loads klines from Binance and signals from the 'conv_signals' table.
     """
     try:
-        # --- A) Conv Signale aus DB laden ---
-        # Annahme: 'coin' in DB ist z.B. 'BTCUSDT' oder 'BTC'.
-        # Wir versuchen beide Varianten oder nutzen 'valid_symbol' direkt.
-        # Da deine DB 'coin' heißt und Werte wie 'NIGHTUSDT' hat, nutzen wir symbol.
+        # --- A) Load conv signals from DB ---
+        # Assumption: 'coin' in the DB is e.g. 'BTCUSDT' or 'BTC'.
+        # We try both variants or use 'valid_symbol' directly.
+        # Since your DB uses 'coin' with values like 'NIGHTUSDT', we use symbol.
 
         conn = await get_conn()
         rows = await conn.fetch(
@@ -11861,9 +11862,9 @@ async def load_conv_data(symbol: str):
         else:
             df_signals = pd.DataFrame(columns=['timestamp', 'source_bot', 'direction', 'entry_price', 'lev'])
 
-        # --- B) Klines von Binance laden (Copy & Paste Logik von vorher) ---
+        # --- B) Load klines from Binance (copy & paste logic from before) ---
         end_time = int(time.time() * 1000)
-        start_time = end_time - (5 * 24 * 60 * 60 * 1000)  # 5 Tage
+        start_time = end_time - (5 * 24 * 60 * 60 * 1000)  # 5 days
 
         url = "https://fapi.binance.com/fapi/v1/klines"
         params = {'symbol': symbol, 'interval': '5m', 'startTime': start_time, 'endTime': end_time, 'limit': 1500}
@@ -11910,7 +11911,7 @@ async def load_conv_data(symbol: str):
 
 def plot_graphconv_chart(data_pack: dict) -> BytesIO:
     """
-    Zeichnet den Chart für conv_signals MIT VOLUMEN.
+    Draws the chart for conv_signals WITH VOLUME.
     """
     symbol = data_pack['symbol']
     df_klines = data_pack['df_klines'].copy()
@@ -11936,18 +11937,18 @@ def plot_graphconv_chart(data_pack: dict) -> BytesIO:
 
     dark_style = mpf.make_mpf_style(base_mpf_style='nightclouds', gridcolor='#262626')
 
-    # Chart erstellen mit Volumen
+    # Create chart with volume
     fig, axlist = mpf.plot(
         df_klines,
         type='candle',
         style=dark_style,
         returnfig=True,
-        figsize=(18, 12),  # Etwas höher
+        figsize=(18, 12),  # A bit taller
         warn_too_much_data=2000,
         datetime_format='%d.%m %H:%M',
         xrotation=20,
-        volume=True,  # Volumen an
-        panel_ratios=(6, 2),  # Ratio anpassen
+        volume=True,  # Volume on
+        panel_ratios=(6, 2),  # Adjust ratio
     )
     ax = axlist[0]
 
@@ -11999,11 +12000,11 @@ def plot_graphconv_chart(data_pack: dict) -> BytesIO:
     return buf
 
 
-# ========================= 30 MIN und 1h Filler  =========================
+# ========================= 30 MIN and 1h filler  =========================
 def run_kline_filler():
     """
-    Dein originales Script – 1:1 übernommen, nur als Funktion
-    Läuft in separatem Thread → blockiert den Bot nicht
+    Your original script – taken over 1:1, just as a function
+    Runs in a separate thread → doesn't block the bot
     """
     import datetime
     import json
@@ -12016,7 +12017,7 @@ def run_kline_filler():
     import requests
     from psycopg2 import extras
 
-    # --- Konfiguration (wie in deinem Script) ---
+    # --- Configuration (like in your script) ---
     DB_NAME = 'cryptodata'
     DB_USER = 'dbfiller'
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
@@ -12048,11 +12049,11 @@ def run_kline_filler():
             with open(filename) as f:
                 return json.load(f)
         except Exception as e:
-            logger.error(f"Fehler beim Laden coins.json: {e}")
+            logger.error(f"Error loading coins.json: {e}")
             return []
 
     def init_tables(symbols):
-        logger.info("Prüfe Tabellenstruktur...")
+        logger.info("Checking table structure...")
         conn = db_pool.getconn()
         try:
             with conn.cursor() as cur:
@@ -12190,17 +12191,17 @@ def run_kline_filler():
                 db_pool.putconn(conn)
             session.close()
 
-    # === Hauptlogik ===
+    # === Main logic ===
     start_t = time.time()
 
     init_db_pool()
     symbols = load_coins()
     if not symbols:
-        logger.warning("Keine Coins geladen – Task beendet")
+        logger.warning("No coins loaded – task ended")
         return
 
     init_tables(symbols)
-    logger.info(f"🚀 Kline-Filler gestartet: {len(symbols)} Coins, {NUM_WORKERS} Threads...")
+    logger.info(f"🚀 Kline filler started: {len(symbols)} coins, {NUM_WORKERS} threads...")
 
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as exe:
         exe.map(process_coin, symbols)
@@ -12209,23 +12210,23 @@ def run_kline_filler():
         db_pool.closeall()
 
     duration = time.time() - start_t
-    logger.info(f"✅ Kline-Filler fertig in {duration:.2f}s ({len(symbols) / duration:.1f} Coins/sek)")
+    logger.info(f"✅ Kline filler done in {duration:.2f}s ({len(symbols) / duration:.1f} coins/sec)")
 
 
 async def kline_filler_wrapper(context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Kline-Filler gestartet")
+    logger.info("Kline filler started")
     await asyncio.to_thread(run_kline_filler)
-    logger.info("Kline-Filler abgeschlossen – starte Indikator-Calculator")
+    logger.info("Kline filler complete – starting indicator calculator")
 
-    # Direkt danach den Indikator-Calculator starten
+    # Start the indicator calculator directly afterward
     await indicator_calculator_wrapper(context)
 
 
 def run_indicator_calculator():
     """
-    Dein originales Indikator-Script – 1:1 übernommen als Funktion
-    Läuft in separatem Thread
-    Berechnet Indikatoren für 30m und 1h
+    Your original indicator script – taken over 1:1 as a function
+    Runs in a separate thread
+    Computes indicators for 30m and 1h
     """
     import datetime
     import json
@@ -12242,7 +12243,7 @@ def run_indicator_calculator():
 
     warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-    # --- Konfiguration (wie in deinem Script) ---
+    # --- Configuration (like in your script) ---
     DB_NAME = 'cryptodata'
     DB_USER = 'dbfiller'
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
@@ -12252,13 +12253,13 @@ def run_indicator_calculator():
     INDICATOR_SUFFIX = '_indicators'
     LOOKBACK_PERIOD = 5000
     NUM_WORKERS = 5
-    TIMEFRAMES = ['30m', '1h']  # <-- Beide Timeframes
+    TIMEFRAMES = ['30m', '1h']  # <-- Both timeframes
 
     db_pool = None
 
     def init_db_pool():
         global db_pool
-        # Pool Größe an Worker anpassen
+        # Adjust pool size to workers
         db_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=5,
             maxconn=NUM_WORKERS + 5,
@@ -12269,14 +12270,14 @@ def run_indicator_calculator():
             port=DB_PORT,
         )
 
-    # --- Deine Hilfsfunktionen (genau wie im Script) ---
+    # --- Your helper functions (exactly like in the script) ---
     # (get_indicator_definitions, create_indicator_table, table_exists, calculate_trendline_and_channel_robust_optimized,
     #  get_hvn_poc_for_dataset, find_support_resistance, calc_fibonacci_levels_dynamic,
     #  calculate_wma, calculate_smma, calculate_rsi, calculate_kama, calculate_indicators_optimized,
     #  write_indicators_to_db_optimized)
 
-    # ... (kopiere alle deine Funktionen hier rein – genau wie im Original) ...
-    # --- Hilfsfunktionen ---
+    # ... (copy all your functions in here – exactly like the original) ...
+    # --- Helper functions ---
 
     def get_timeframe_delta(timeframe):
         if timeframe == '1h':
@@ -12296,7 +12297,7 @@ def run_indicator_calculator():
             with open(filename) as f:
                 return json.load(f)
         except Exception as e:
-            logging.error(f"Fehler beim Laden von coins.json: {e}")
+            logging.error(f"Error loading coins.json: {e}")
             return []
 
     # def table_exists(conn, table_name):
@@ -12305,30 +12306,30 @@ def run_indicator_calculator():
     # cursor.execute("SELECT to_regclass(%s)", (table_name,))
     # return cursor.fetchone()[0] is not None
     # except Exception as e:
-    # logging.error(f"Fehler Table Exists {table_name}: {e}")
+    # logging.error(f"Error Table Exists {table_name}: {e}")
     # return False
 
     def table_exists(conn, table_name):
         """
-        Prüft, ob eine Tabelle existiert.
-        WICHTIG: table_name muss exakt so übergeben werden, wie er in der DB heißt.
-        Wenn die Tabelle "BTCUSDT_1h" heißt (mit Quotes), muss auch der String Quotes enthalten.
+        Checks whether a table exists.
+        IMPORTANT: table_name must be passed exactly as it is named in the DB.
+        If the table is called "BTCUSDT_1h" (with quotes), the string must also contain the quotes.
         """
         try:
             with conn.cursor() as cursor:
-                # Wir nutzen hier %s, psycopg2 escaped das sicher.
-                # to_regclass erwartet den Namen als String.
-                # Wenn table_name = '"BTCUSDT_1h"' ist, funktioniert das perfekt.
+                # We use %s here, psycopg2 escapes it safely.
+                # to_regclass expects the name as a string.
+                # If table_name = '"BTCUSDT_1h"', this works perfectly.
                 cursor.execute("SELECT to_regclass(%s)", (table_name,))
                 result = cursor.fetchone()
                 return result[0] is not None
         except Exception as e:
-            logging.error(f"Fehler Table Exists {table_name}: {e}")
-            conn.rollback()  # Wichtig: Transaktion zurücksetzen bei Fehler
+            logging.error(f"Error Table Exists {table_name}: {e}")
+            conn.rollback()  # Important: reset transaction on error
             return False
 
     def get_indicator_definitions():
-        # Definitionen gekürzt für Übersichtlichkeit - Logik bleibt gleich
+        # Definitions shortened for clarity - logic stays the same
         definitions = {
             "RSI_6": "REAL",
             "RSI_9": "REAL",
@@ -12412,7 +12413,7 @@ def run_indicator_calculator():
             "RESISTANCE_PRICE": "REAL",
         }
 
-        # Dynamische Donchian-Spalten
+        # Dynamic Donchian columns
         for w in [4, 10, 12, 15, 20]:
             definitions[f"DONCHIAN_UPPER_{w}"] = "REAL"
             definitions[f"DONCHIAN_LOWER_{w}"] = "REAL"
@@ -12447,117 +12448,117 @@ def run_indicator_calculator():
             cur.execute(sql)
         conn.commit()
 
-    # --- Optimierte Berechnungen (Vectorized) ---
+    # --- Optimized calculations (vectorized) ---
 
-    # --- Fehlende mathematische Hilfsfunktionen ---
+    # --- Missing math helper functions ---
 
     def calculate_trendline_and_channel_robust_optimized(df):
         """
-        Berechnet lineare Regression und Standardabweichungskanal.
+        Calculates linear regression and a standard deviation channel.
         """
-        # Wir nehmen die letzten N Punkte für den Trend (z.B. 100) oder alle
+        # We take the last N points for the trend (e.g. 100) or all
         lookback = min(len(df), 100)
         subset = df.iloc[-lookback:].copy()
 
         y = subset['close'].values
         x = np.arange(len(y))
 
-        # Lineare Regression
+        # Linear regression
         slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
 
-        # Trendlinie für das GESAMTE Dataset projizieren
-        # Wir müssen den x-Index relativ zum Ende des Subsets setzen
+        # Project the trendline for the ENTIRE dataset
+        # We need to set the x index relative to the end of the subset
         full_x = np.arange(len(df)) - (len(df) - lookback)
         trendline_values = slope * full_x + intercept
 
-        # Standardabweichung für Channel berechnen (basierend auf Abstand zur Linie im Subset)
+        # Compute standard deviation for the channel (based on distance to the line in the subset)
         residuals = y - (slope * x + intercept)
         std_dev = np.std(residuals)
 
-        # Channel Werte für das ganze Set
+        # Channel values for the whole set
         upper_channel = trendline_values + (2 * std_dev)
         lower_channel = trendline_values - (2 * std_dev)
 
-        # Richtung bestimmen
+        # Determine direction
         direction = "SIDEWAYS"
         if slope > 0.0001 * y[0]:
-            direction = "UP"  # Sehr simple Logik, anpassbar
+            direction = "UP"  # Very simple logic, adjustable
         elif slope < -0.0001 * y[0]:
             direction = "DOWN"
 
-        # Da wir Indikatoren für jeden Zeitschritt brauchen, müssen wir Series zurückgeben.
-        # Hier vereinfacht: Wir geben Konstanten oder die berechneten Arrays zurück.
-        # Damit es in calculate_indicators_optimized passt (wo es ins dict update kommt):
+        # Since we need indicators for every time step, we must return Series.
+        # Simplified here: we return constants or the computed arrays.
+        # So it fits into calculate_indicators_optimized (where it goes into the dict update):
 
         return {
-            "TRENDLINE_SLOPE": pd.Series(slope, index=df.index),  # Konstant für das Fenster
+            "TRENDLINE_SLOPE": pd.Series(slope, index=df.index),  # Constant for the window
             "TRENDLINE_INTERCEPT": pd.Series(intercept, index=df.index),
             "TRENDLINE_PRICE": pd.Series(trendline_values, index=df.index),
             "CHANNEL_UPPER_PRICE": pd.Series(upper_channel, index=df.index),
             "CHANNEL_LOWER_PRICE": pd.Series(lower_channel, index=df.index),
             "MID_LINE": pd.Series(trendline_values, index=df.index),  # Alias
             "R_SQUARED": pd.Series(r_value**2, index=df.index),
-            "TREND_DIRECTION": pd.Series(direction, index=df.index),  # Wird als Text gespeichert
+            "TREND_DIRECTION": pd.Series(direction, index=df.index),  # Stored as text
         }
 
     def get_hvn_poc_for_dataset(df, timeframe):
         """
-        Berechnet Point of Control (POC) und High Volume Nodes (HVN) basierend auf Volume Profile.
+        Calculates Point of Control (POC) and High Volume Nodes (HVN) based on the volume profile.
         """
         try:
-            # Einfaches Volume Profile über die geladenen Daten
+            # Simple volume profile over the loaded data
             prices = df['close'].values
             volumes = df['volume'].values if 'volume' in df.columns else np.ones(len(prices))
 
-            # Histogramm erstellen (Preise gewichtet nach Volumen)
-            # Bins: Wurzel aus Anzahl der Datenpunkte ist oft ein guter Richtwert für Bins
+            # Create histogram (prices weighted by volume)
+            # Bins: the square root of the number of data points is often a good rule of thumb for bins
             bins = int(np.sqrt(len(prices)))
             hist, bin_edges = np.histogram(prices, bins=bins, weights=volumes)
 
-            # POC finden (Bin mit höchstem Volumen)
+            # Find POC (bin with the highest volume)
             poc_idx = np.argmax(hist)
             poc_price = (bin_edges[poc_idx] + bin_edges[poc_idx + 1]) / 2
 
-            # HVNs finden (Lokale Maxima im Histogramm)
-            # Wir suchen die Top 3 Peaks neben dem POC
-            peaks, _ = scipy.signal.find_peaks(hist, distance=5)  # distance verhindert benachbarte Bins
+            # Find HVNs (local maxima in the histogram)
+            # We look for the top 3 peaks next to the POC
+            peaks, _ = scipy.signal.find_peaks(hist, distance=5)  # distance prevents adjacent bins
 
-            # Sortiere Peaks nach Größe (Volumen)
+            # Sort peaks by size (volume)
             sorted_peaks = sorted(peaks, key=lambda i: hist[i], reverse=True)
 
             hvn_prices = []
-            for idx in sorted_peaks[:4]:  # Top 4 nehmen
+            for idx in sorted_peaks[:4]:  # Take top 4
                 p = (bin_edges[idx] + bin_edges[idx + 1]) / 2
-                if abs(p - poc_price) > (poc_price * 0.005):  # Nur wenn weit genug vom POC weg
+                if abs(p - poc_price) > (poc_price * 0.005):  # Only if far enough from the POC
                     hvn_prices.append(p)
 
-            # Auffüllen wenn nicht genug gefunden
+            # Fill up if not enough were found
             while len(hvn_prices) < 3:
                 hvn_prices.append(0)
 
             return {"POC": poc_price, "HVN_1": hvn_prices[0], "HVN_2": hvn_prices[1], "HVN_3": hvn_prices[2]}
         except Exception as e:
-            logging.warning(f"Fehler HVN Calculation: {e}")
+            logging.warning(f"HVN calculation error: {e}")
             return {"POC": 0, "HVN_1": 0, "HVN_2": 0, "HVN_3": 0}
 
     def find_support_resistance(df, window=20):
         """
-        Findet lokale Minima und Maxima als Support/Resistance.
+        Finds local minima and maxima as support/resistance.
         """
         try:
-            # Wir nutzen argrelextrema für schnelle Suche
+            # We use argrelextrema for a fast search
             highs = df['high'].values
             lows = df['low'].values
 
-            # Lokale Maxima (Resistance)
+            # Local maxima (resistance)
             max_idx = scipy.signal.argrelextrema(highs, np.greater, order=window)[0]
             resistances = [(highs[i], df.index[i]) for i in max_idx]
 
-            # Lokale Minima (Support)
+            # Local minima (support)
             min_idx = scipy.signal.argrelextrema(lows, np.less, order=window)[0]
             supports = [(lows[i], df.index[i]) for i in min_idx]
 
-            # Sortieren nach Aktualität (neueste zuerst) oder Stärke. Hier: Neueste zuerst.
+            # Sort by recency (newest first) or strength. Here: newest first.
             resistances.sort(key=lambda x: x[1], reverse=True)
             supports.sort(key=lambda x: x[1], reverse=True)
 
@@ -12567,7 +12568,7 @@ def run_indicator_calculator():
 
     def calc_fibonacci_levels_dynamic(df, timeframe='1h'):
         """
-        Berechnet Fib Levels basierend auf High/Low des geladenen Fensters.
+        Calculates Fib levels based on the high/low of the loaded window.
         """
         try:
             max_price = df['high'].max()
@@ -12576,17 +12577,17 @@ def run_indicator_calculator():
 
             fibs = {
                 'support': [],
-                'resistance': [],  # In dieser einfachen Logik symmetrisch
+                'resistance': [],  # Symmetric in this simple logic
                 'extensions': [],
             }
 
-            # Klassische Retracements (Up-Trend Annahme für Berechnung, Levels sind statisch im Fenster)
+            # Classic retracements (uptrend assumption for the calculation, levels are static within the window)
             for level in [0.236, 0.382, 0.5, 0.618, 0.786]:
                 price = max_price - (diff * level)
                 fibs['support'].append({'level': level, 'price': price})
-                fibs['resistance'].append({'level': level, 'price': price})  # Vereinfacht
+                fibs['resistance'].append({'level': level, 'price': price})  # Simplified
 
-            # Extensions (nach oben)
+            # Extensions (upward)
             for ext in [1.272, 1.618, 2.618]:
                 price = max_price + (diff * (ext - 1))
                 fibs['extensions'].append({'level': ext, 'price': price})
@@ -12597,20 +12598,20 @@ def run_indicator_calculator():
 
     def calculate_wma(series, period):
         """
-        Berechnet den Weighted Moving Average (WMA).
-        Nutzt rolling apply mit numpy dot product für Performance.
+        Calculates the Weighted Moving Average (WMA).
+        Uses rolling apply with a numpy dot product for performance.
         """
         weights = np.arange(1, period + 1)
         sum_weights = weights.sum()
 
-        # raw=True ist wichtig für Performance!
+        # raw=True is important for performance!
         return series.rolling(window=period).apply(lambda x: np.dot(x, weights) / sum_weights, raw=True).fillna(0)
 
     def calculate_smma(series, period):
         """
-        Berechnet den Smoothed Moving Average (SMMA).
-        Optimierung: SMMA ist mathematisch identisch mit einem EMA, bei dem alpha = 1/period ist.
-        Das ist 100x schneller als eine Python-Schleife.
+        Calculates the Smoothed Moving Average (SMMA).
+        Optimization: SMMA is mathematically identical to an EMA where alpha = 1/period.
+        That's 100x faster than a Python loop.
         """
         return series.ewm(alpha=1 / period, adjust=False).mean().fillna(0)
 
@@ -12624,12 +12625,12 @@ def run_indicator_calculator():
         return 100.0 - (100.0 / (1.0 + rs)).fillna(0)
 
     def calculate_kama(series, period=10, fast=2, slow=30):
-        # KAMA ist iterativ und schwer zu vektorisieren, hier die numba-optimierte Logik oder klassisch
-        # Klassisch iterativ (langsam, aber korrekt):
+        # KAMA is iterative and hard to vectorize, here the numba-optimized logic or the classic version
+        # Classic iterative (slow, but correct):
         closes = series.values
         kama = np.zeros_like(closes)
         # Init
-        kama[:period] = closes[:period]  # Einfacher Start
+        kama[:period] = closes[:period]  # Simple start
 
         fast_sc = 2 / (fast + 1)
         slow_sc = 2 / (slow + 1)
@@ -12646,16 +12647,16 @@ def run_indicator_calculator():
 
     def calculate_indicators_optimized(df, timeframe):
         """
-        Berechnet ALLE Indikatoren und gibt einen NEUEN DataFrame zurück.
-        Verhindert 'DataFrame is highly fragmented'.
+        Calculates ALL indicators and returns a NEW DataFrame.
+        Prevents 'DataFrame is highly fragmented'.
         """
         df = df.sort_values('open_time')
         close = df['close']
         high = df['high']
         low = df['low']
 
-        # Dictionary zum Sammeln aller neuen Spalten
-        # Das ist der Schlüssel zur Performance! Nicht df['neu'] = ... sondern dict
+        # Dictionary to collect all new columns
+        # This is the key to performance! Not df['new'] = ... but a dict
         results = {}
 
         # 1. RSI
@@ -12670,11 +12671,11 @@ def run_indicator_calculator():
         for p in [7, 10, 20, 25, 50, 99, 100, 200]:
             results[f'MA_{p}'] = close.rolling(window=p).mean().fillna(0)
 
-        # --- NEU HINZUGEFÜGT: WMA ---
+        # --- NEWLY ADDED: WMA ---
         for p in [7, 9, 12, 21, 26, 34, 50, 55, 89, 99, 200]:
             results[f'WMA_{p}'] = calculate_wma(close, period=p)
 
-        # --- NEU HINZUGEFÜGT: SMMA ---
+        # --- NEWLY ADDED: SMMA ---
         for p in [10, 20, 25, 50, 99, 100, 200]:
             results[f'SMMA_{p}'] = calculate_smma(close, period=p)
 
@@ -12709,7 +12710,7 @@ def run_indicator_calculator():
         results['MACD_DIF_NORMAL_12_26_9'], results['MACD_DEA_NORMAL_12_26_9'] = calc_macd(12, 26, 9)
 
         # 8. ATR
-        # TR berechnen
+        # Compute TR
         tr1 = high - low
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
@@ -12732,23 +12733,23 @@ def run_indicator_calculator():
         results['TSI_FAST_12_7_7'] = calc_tsi(12, 7)
         results['TSI_FAST_12_7_7_SIGNAL'] = results['TSI_FAST_12_7_7'].ewm(span=7, adjust=False).mean()
 
-        # Platzhalter für komplexe Berechnungen (Fibonacci, Trend, HVN)
-        # Da diese Funktionen oft zeilenweise oder über das ganze Dataset iterieren,
-        # rufen wir sie hier auf und fügen die Ergebnisse ins Dict ein.
+        # Placeholder for complex calculations (Fibonacci, trend, HVN)
+        # Since these functions often iterate row-wise or over the entire dataset,
+        # we call them here and add the results into the dict.
 
         # Trendlines
         trend_data = calculate_trendline_and_channel_robust_optimized(df)
-        results.update(trend_data)  # Fügt TRENDLINE_PRICE etc. hinzu
+        results.update(trend_data)  # Adds TRENDLINE_PRICE etc.
 
-        # HVN & POC (Konstant für den letzten Zustand, aber wir füllen es auf)
+        # HVN & POC (constant for the latest state, but we fill it in)
         hvn_data = get_hvn_poc_for_dataset(df, timeframe)
         for k, v in hvn_data.items():
-            results[k] = v  # Scalar wird zu Series broadcasted
+            results[k] = v  # Scalar gets broadcast to a Series
 
         # Support / Resistance
         try:
             sup, res = find_support_resistance(df)
-            # Nimm den stärksten (ersten) Wert
+            # Take the strongest (first) value
             s_price = sup[0][0] if sup else 0
             r_price = res[0][0] if res else 0
             results['SUPPORT_PRICE'] = s_price
@@ -12760,7 +12761,7 @@ def run_indicator_calculator():
         # Fibonacci
         fibs = calc_fibonacci_levels_dynamic(df, timeframe=timeframe)
         fibs = calc_fibonacci_levels_dynamic(df, timeframe=timeframe)
-        # Support Fibs
+        # Support fibs
         for lvl in [0.236, 0.382, 0.5, 0.618, 0.786]:
             l_str = str(lvl).replace('.', '_')
             val = next((i['price'] for i in fibs['support'] if i['level'] == lvl), 0)
@@ -12773,11 +12774,11 @@ def run_indicator_calculator():
             val = next((i['price'] for i in fibs['extensions'] if i['level'] == ext), 0)
             results[f"FIB_EXTENSION_{e_str}"] = val
 
-        # === FINALE ZUSAMMENFÜHRUNG ===
-        # Hier erstellen wir EINEN neuen DataFrame. Das verhindert die Fragmentierung.
+        # === FINAL MERGE ===
+        # Here we create ONE new DataFrame. This prevents fragmentation.
         indicators_df = pd.DataFrame(results, index=df.index)
 
-        # Basisdaten hinzufügen
+        # Add base data
         indicators_df['open_time'] = df['open_time']
         indicators_df['close'] = df['close']
         indicators_df['symbol'] = df['symbol'].iloc[0] if not df.empty else ''
@@ -12786,19 +12787,19 @@ def run_indicator_calculator():
 
     def write_indicators_to_db_optimized(conn, df, symbol, timeframe, definitions):
         """
-        Schreibt extrem schnell mit execute_values.
+        Writes extremely fast using execute_values.
         """
         table_name = f'"{symbol}_{timeframe}{INDICATOR_SUFFIX}"'
 
-        # Spalten aus dem DF filtern, die in der DB Definition sind
+        # Filter the columns from the DF that are in the DB definition
         valid_cols = ['symbol', 'open_time', 'close'] + list(definitions.keys())
 
-        # Sicherstellen, dass alle Spalten im DF existieren (mit 0 auffüllen wenn fehlt)
+        # Ensure all columns exist in the DF (fill with 0 if missing)
         for col in valid_cols:
             if col not in df.columns:
                 df[col] = 0
 
-        # DataFrame auf die gültigen Spalten reduzieren und Reihenfolge erzwingen
+        # Reduce the DataFrame to the valid columns and enforce the order
         df_to_write = df[valid_cols].copy()
 
         # Convert to list of tuples
@@ -12806,7 +12807,7 @@ def run_indicator_calculator():
 
         cols_str = ', '.join(valid_cols)
 
-        # UPDATE Clause für Upsert
+        # UPDATE clause for upsert
         update_cols = [c for c in valid_cols if c not in ['symbol', 'open_time']]
         update_sql = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
 
@@ -12841,13 +12842,13 @@ def run_indicator_calculator():
             ind_table = f'"{symbol}_{timeframe}{INDICATOR_SUFFIX}"'
 
             if not table_exists(conn, ohlcv_table):
-                logger.warning(f"Source Table {ohlcv_table} existiert nicht. Überspringe {symbol} {timeframe}.")
+                logger.warning(f"Source table {ohlcv_table} does not exist. Skipping {symbol} {timeframe}.")
                 return
             if not table_exists(conn, ind_table):
-                logger.info(f"Erstelle Tabelle {ind_table}...")
+                logger.info(f"Creating table {ind_table}...")
                 create_indicator_table(conn, symbol, timeframe, definitions)
 
-            # Startpunkt: Letzter berechneter Indikator
+            # Starting point: last computed indicator
             with conn.cursor() as cur:
                 cur.execute(f"SELECT MAX(open_time) FROM {ind_table}")
                 last_ind_time = cur.fetchone()[0]
@@ -12880,14 +12881,14 @@ def run_indicator_calculator():
             df_save = df_ind[df_ind['open_time'] >= save_start_filter]
 
             if not df_save.empty:
-                logger.info(f"Speichere {len(df_save)} Zeilen für {symbol} {timeframe}")
+                logger.info(f"Saving {len(df_save)} rows for {symbol} {timeframe}")
                 write_indicators_to_db_optimized(conn, df_save, symbol, timeframe, definitions)
             else:
-                logger.info(f"{symbol} {timeframe}: Keine neuen Daten")
+                logger.info(f"{symbol} {timeframe}: no new data")
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
-            logger.info(f"ENDE {symbol} {timeframe} nach {duration:.1f}s")
+            logger.info(f"END {symbol} {timeframe} after {duration:.1f}s")
 
         except Exception as e:
             logger.error(f"Error {symbol} {timeframe}: {e}", exc_info=True)
@@ -12895,16 +12896,16 @@ def run_indicator_calculator():
         finally:
             conn.close()
 
-    # === Hauptlogik ===
+    # === Main logic ===
     symbols = load_coins()
     if not symbols:
-        logger.warning("Keine Coins geladen – Indikator-Task beendet")
+        logger.warning("No coins loaded – indicator task ended")
         return
 
-    # Alle Kombinationen (Coin + Timeframe)
+    # All combinations (coin + timeframe)
     tasks = [(s, tf) for s in symbols for tf in TIMEFRAMES]
 
-    logger.info(f"🚀 Indikator-Calculator gestartet: {len(tasks)} Tasks, {NUM_WORKERS} Worker...")
+    logger.info(f"🚀 Indicator calculator started: {len(tasks)} tasks, {NUM_WORKERS} workers...")
 
     # with ProcessPoolExecutor(max_workers=NUM_WORKERS) as exe:
     # exe.map(process_coin, tasks)
@@ -12912,36 +12913,36 @@ def run_indicator_calculator():
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as exe:
         list(exe.map(process_coin, tasks))
 
-    logger.info("✅ Indikator-Calculator fertig")
+    logger.info("✅ Indicator calculator done")
 
 
 async def indicator_calculator_wrapper(context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Indikator-Calculator gestartet")
+    logger.info("Indicator calculator started")
     await asyncio.to_thread(run_indicator_calculator)
-    logger.info("Indikator-Calculator abgeschlossen")
+    logger.info("Indicator calculator complete")
 
 
 # ========================= CONV TRACKER  =========================
 
 
 async def create_conv_signals_table():
-    """Erstellt die zentrale conv_signals Tabelle, falls sie noch nicht existiert"""
+    """Creates the central conv_signals table if it doesn't already exist"""
     conn = await get_conn()
     try:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS conv_signals (
                 id BIGSERIAL PRIMARY KEY,
-                source_bot TEXT NOT NULL,           -- z.B. '5%', 'Fast', 'SR', 'Volume'
-                source_time TIMESTAMPTZ NOT NULL,   -- time aus active_trades
+                source_bot TEXT NOT NULL,           -- e.g. '5%', 'Fast', 'SR', 'Volume'
+                source_time TIMESTAMPTZ NOT NULL,   -- time from active_trades
                 coin TEXT NOT NULL,
                 direction TEXT NOT NULL,            -- LONG/SHORT
                 entry_price NUMERIC,
                 lev TEXT,
                 inserted_at TIMESTAMPTZ DEFAULT NOW(),
-                UNIQUE(source_bot, source_time, coin, direction)  -- verhindert Duplikate
+                UNIQUE(source_bot, source_time, coin, direction)  -- prevents duplicates
             )
         """)
-        # Index für schnelle Abfragen
+        # Index for fast queries
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_conv_signals_coin
             ON conv_signals(coin, source_time DESC)
@@ -12950,15 +12951,15 @@ async def create_conv_signals_table():
             CREATE INDEX IF NOT EXISTS idx_conv_signals_bot
             ON conv_signals(source_bot, source_time DESC)
         """)
-        logger.info("Tabelle 'conv_signals' bereit oder erstellt")
+        logger.info("Table 'conv_signals' ready or created")
     except Exception as e:
-        logger.error(f"Fehler beim Erstellen von conv_signals: {e}")
+        logger.error(f"Error creating conv_signals: {e}")
     finally:
         await release_conn(conn)
 
 
 async def conv_signals_sync_task(context: ContextTypes.DEFAULT_TYPE):
-    logger.info("conv_signals Sync-Task gestartet")
+    logger.info("conv_signals sync task started")
 
     bot_tables = {
         "5% Bot": "active_trades",
@@ -13019,15 +13020,15 @@ async def conv_signals_sync_task(context: ContextTypes.DEFAULT_TYPE):
                         inserted += 1
 
                 total_inserted += inserted
-                logger.info(f"{bot_name}: {len(rows)} Trades geprüft, {inserted} neu eingetragen")
+                logger.info(f"{bot_name}: {len(rows)} trades checked, {inserted} newly inserted")
 
             except Exception as e:
-                logger.error(f"Fehler bei {bot_name} ({table_name}): {e}", exc_info=True)
+                logger.error(f"Error for {bot_name} ({table_name}): {e}", exc_info=True)
 
-        logger.info(f"conv_signals Sync-Task beendet – insgesamt {total_inserted} neue Einträge")
+        logger.info(f"conv_signals sync task finished – {total_inserted} new entries total")
 
     except Exception as e:
-        logger.error(f"Allgemeiner Fehler im conv_signals Sync: {e}", exc_info=True)
+        logger.error(f"General error in conv_signals sync: {e}", exc_info=True)
     finally:
         if conn:
             await release_conn(conn)
@@ -13037,7 +13038,7 @@ async def conv_signals_sync_task(context: ContextTypes.DEFAULT_TYPE):
 
 # CREATE TABLE IF NOT EXISTS ml_weighted_trades3 (
 # id                SERIAL PRIMARY KEY,
-# lfd               INTEGER,              -- aus active_trades3
+# lfd               INTEGER,              -- from active_trades3
 # time              TIMESTAMP,
 # coin              TEXT,
 # direction         TEXT,
@@ -13048,10 +13049,10 @@ async def conv_signals_sync_task(context: ContextTypes.DEFAULT_TYPE):
 # target3           REAL,
 # target4           REAL,
 # sl                REAL,
-# posted            TIMESTAMP,            -- aus active_trades3 (wenn vorhanden)
-# status            TEXT,                 -- aus active_trades3 (falls schon gesetzt)
-# model             TEXT,                 -- fix "ML SR BOT"
-# confidence        REAL,                 -- Wahrscheinlichkeit (0..1)
+# posted            TIMESTAMP,            -- from active_trades3 (if present)
+# status            TEXT,                 -- from active_trades3 (if already set)
+# model             TEXT,                 -- fixed "ML SR BOT"
+# confidence        REAL,                 -- probability (0..1)
 # created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 # );
 
@@ -13060,13 +13061,13 @@ async def conv_signals_sync_task(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================
-# Features erstellen (jetzt async!)
+# Create features (now async!)
 # ============================================
 
 
 def create_feature_row(trade_row):
     """
-    Vollständig synchrone Version – kein await mehr
+    Fully synchronous version – no more await
     """
     indicators = get_indicators_at_time(trade_row['coin'], trade_row['time'])
     if indicators is None:
@@ -13079,7 +13080,7 @@ def create_feature_row(trade_row):
 
     features = {}
 
-    # Direkte Indikatoren (wie im Training)
+    # Direct indicators (as in training)
     base_cols = [
         'rsi_9',
         'rsi_14',
@@ -13111,12 +13112,12 @@ def create_feature_row(trade_row):
         val = row.get(col)
         features[col] = float(val) if pd.notna(val) else np.nan
 
-    # Trend numerisch
+    # Trend numeric
     trend_map = {'UP': 1.0, 'DOWN': -1.0, 'FLAT': 0.0, 'SIDEWAYS': 0.0}
     trend_val = str(row.get('trend_direction', '')).upper()
     features['trend_direction_num'] = trend_map.get(trend_val, 0.0)
 
-    # Relative Distanzen
+    # Relative distances
     def pct(a, b):
         return (a - b) / close * 100 if pd.notna(b) and close > 0 else np.nan
 
@@ -13134,7 +13135,7 @@ def create_feature_row(trade_row):
         }
     )
 
-    # ATR-normalisiert
+    # ATR-normalized
     atr = row.get('atr_14', np.nan)
     if pd.notna(atr) and atr > 0:
         features.update(
@@ -13153,15 +13154,15 @@ def create_feature_row(trade_row):
 
 def get_indicators_at_time(coin: str, timestamp: datetime):
     """
-    Synchron: Holt die neueste Indikator-Row <= timestamp für den Coin
-    Nutzt db_pool2 (psycopg2 ThreadedConnectionPool) – kein await!
+    Synchronous: fetches the latest indicator row <= timestamp for the coin
+    Uses db_pool2 (psycopg2 ThreadedConnectionPool) – no await!
     """
     try:
-        # Coin normalisieren (wie in deiner async-Version)
+        # Normalize coin (like in your async version)
         coin_norm = coin.replace('USDC', 'USDT').replace('/', '')
         table_name = f'"{coin_norm}_1h_indicators"'
 
-        # Timestamp sicherstellen (UTC)
+        # Ensure timestamp (UTC)
         ts = timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
 
         conn = db_pool2.getconn()
@@ -13179,32 +13180,32 @@ def get_indicators_at_time(coin: str, timestamp: datetime):
                 row = cur.fetchone()
 
                 if row is None:
-                    logger.debug(f"Keine Indikatoren für {coin} @ {ts}")
+                    logger.debug(f"No indicators for {coin} @ {ts}")
                     return None
 
-                # Row (Tuple) zu Dict umwandeln
+                # Convert row (tuple) to dict
                 columns = [desc[0] for desc in cur.description]
                 return dict(zip(columns, row))
 
         finally:
-            db_pool2.putconn(conn)  # Wichtig: Connection zurückgeben!
+            db_pool2.putconn(conn)  # Important: return the connection!
 
     except Exception as e:
-        logger.error(f"Indikatoren-Fehler {coin}: {e}")
+        logger.error(f"Indicator error {coin}: {e}")
         return None
 
 
 # ============================================
-# Checker-Funktion (angepasst für async Features)
+# Checker function (adapted for async features)
 # ============================================
 
 
 def _heavy_ml_weighted_checker(context=None):
     """
-    Unzerstörbare Version – psycopg2 mit db_pool2
-    Kein 'unkeyed connection' mehr – garantiert
+    Indestructible version – psycopg2 with db_pool2
+    No more 'unkeyed connection' – guaranteed
     """
-    logger.info("ML Weighted Trades Checker gestartet (synchron mit psycopg2)")
+    logger.info("ML Weighted Trades Checker started (synchronous with psycopg2)")
 
     def safe_float(value):
         if value is None:
@@ -13212,22 +13213,22 @@ def _heavy_ml_weighted_checker(context=None):
         try:
             return float(value)
         except (ValueError, TypeError):
-            logger.warning(f"Ungültiger numerischer Wert: {value} – setze auf None")
+            logger.warning(f"Invalid numeric value: {value} – setting to None")
             return None
 
     if MODEL_LONG is None or MODEL_SHORT is None:
-        logger.error("Modelle nicht geladen – Abbruch")
+        logger.error("Models not loaded – aborting")
         return
 
     conn = None
     try:
         conn = db_pool2.getconn()
-        logger.debug("Connection geholt")
+        logger.debug("Connection obtained")
 
         now_utc = datetime.now(timezone.utc)
-        logger.debug(f"Suche S&R Trades um: {now_utc} (UTC)")
+        logger.debug(f"Searching S&R trades around: {now_utc} (UTC)")
 
-        # Trades abrufen – Cursor explizit schließen
+        # Fetch trades – close cursor explicitly
         cur = conn.cursor()
         cur.execute("""
             SELECT lfd, time, coin, direction, entry, lev,
@@ -13239,11 +13240,11 @@ def _heavy_ml_weighted_checker(context=None):
         rows = cur.fetchall()
         cur.close()
 
-        logger.info(f"Gefundene potenzielle neue Trades: {len(rows)}")
+        logger.info(f"Potential new trades found: {len(rows)}")
 
         if not rows:
-            logger.info("Keine neuen Trades – Ende")
-            # Connection zurückgeben – nur hier, wenn keine Schleife
+            logger.info("No new trades – end")
+            # Return connection – only here, when there's no loop
             db_pool2.putconn(conn)
             return
 
@@ -13271,7 +13272,7 @@ def _heavy_ml_weighted_checker(context=None):
                 if trade.get(field) is not None:
                     trade[field] = safe_float(trade[field])
 
-            # Duplikat-Prüfung – neuer Cursor
+            # Duplicate check – new cursor
             cur = conn.cursor()
             cur.execute(
                 """
@@ -13291,7 +13292,7 @@ def _heavy_ml_weighted_checker(context=None):
                 feat_dict = create_feature_row(trade)
 
                 if feat_dict is None:
-                    logger.warning(f"Keine Features für {trade['coin']} @ {trade['time']}")
+                    logger.warning(f"No features for {trade['coin']} @ {trade['time']}")
                     continue
 
                 X = pd.DataFrame([feat_dict])
@@ -13304,13 +13305,13 @@ def _heavy_ml_weighted_checker(context=None):
                     model = MODEL_SHORT
                     is_pump = False
                 else:
-                    logger.warning(f"Unbekannte Richtung: {direction}")
+                    logger.warning(f"Unknown direction: {direction}")
                     continue
 
                 confidence = model.predict_proba(X)[0, 1]
-                confidence = float(confidence)  # numpy → Python-float
+                confidence = float(confidence)  # numpy → Python float
 
-                logger.info(f"ML Weighted gefunden: {trade['coin']} {direction} | Conf: {confidence:.4f}")
+                logger.info(f"ML Weighted found: {trade['coin']} {direction} | Conf: {confidence:.4f}")
 
                 # Insert
                 cur = conn.cursor()
@@ -13347,9 +13348,9 @@ def _heavy_ml_weighted_checker(context=None):
                 conn.commit()
 
                 inserted += 1
-                logger.info(f"ML Weighted gespeichert: {trade['coin']} {direction} | Conf: {confidence:.4f}")
+                logger.info(f"ML Weighted saved: {trade['coin']} {direction} | Conf: {confidence:.4f}")
 
-                # Signal senden
+                # Send signal
                 if confidence >= 0.75:
                     symbol = trade['coin']
                     diri = trade['direction']
@@ -13368,7 +13369,7 @@ def _heavy_ml_weighted_checker(context=None):
                     # <b style="color:#00ffff; font-size:18px;">{emoji}</b>
                     # <b style="color:#ffd700;">{symbol.replace('USDT','')}/USDT</b>
                     # <b>→ Direction: {diri} </b>
-                    # <b>→ ML-Confidence: <b style="color:#00ffff;">{confidence:.1%}</b> / Modul: SRA1 </b>
+                    # <b>→ ML-Confidence: <b style="color:#00ffff;">{confidence:.1%}</b> / Module: SRA1</b>
                     # <b>→ Time: {now_utc.strftime('%H:%M')} UTC</b>
                     # </pre>
                     # """.strip()
@@ -13376,7 +13377,7 @@ def _heavy_ml_weighted_checker(context=None):
                     # chart_buf = generate_smooth_minichart_image(symbol, minutes=240)
 
                     try:
-                        logger.info(f"SR BOT Alert gesendet: {symbol}")
+                        logger.info(f"SR BOT alert sent: {symbol}")
                     except Exception as e:
                         logger.error(f"Alert send error {symbol}: {e}")
 
@@ -13394,20 +13395,20 @@ def _heavy_ml_weighted_checker(context=None):
                     # text=html,
                     # parse_mode="HTML"
                     # )
-                    # logger.info(f"Channel-Posting gesendet: {coin} {direction} ({module})")
+                    # logger.info(f"Channel posting sent: {coin} {direction} ({module})")
                     # except Exception as e:
-                    # logger.error(f"Posting-Fehler {coin}: {e}")
+                    # logger.error(f"Posting error {coin}: {e}")
 
             except Exception as e:
-                logger.error(f"ML-Fehler für {trade.get('coin', '?')}: {e}", exc_info=True)
+                logger.error(f"ML error for {trade.get('coin', '?')}: {e}", exc_info=True)
                 if conn:
                     conn.rollback()
                 continue
 
-        logger.info(f"Checker beendet – {inserted} neue Einträge")
+        logger.info(f"Checker finished – {inserted} new entries")
 
     except Exception as e:
-        logger.error(f"Checker-Fehler: {e}", exc_info=True)
+        logger.error(f"Checker error: {e}", exc_info=True)
         if conn:
             conn.rollback()
 
@@ -13415,11 +13416,11 @@ def _heavy_ml_weighted_checker(context=None):
         if conn is not None:
             try:
                 db_pool2.putconn(conn)
-                logger.debug("DB-Connection zurück in Pool gegeben")
+                logger.debug("DB connection returned to pool")
             except Exception as put_error:
-                logger.error(f"Pool-Fehler beim Zurückgeben: {put_error}")
-                # Optional: Connection verwerfen, wenn defekt
-                # db_pool2._pool.remove(conn)  # nur wenn du weißt, dass sie defekt ist
+                logger.error(f"Pool error while returning: {put_error}")
+                # Optional: discard the connection if it's broken
+                # db_pool2._pool.remove(conn)  # only if you know it's broken
 
 
 async def ml_weighted_trades_checker(context):
@@ -13428,15 +13429,15 @@ async def ml_weighted_trades_checker(context):
 
 async def master_trades_wrapper(context):
     """
-    Async-Wrapper für check_master_trades – awaitet die echte Funktion
+    Async wrapper for check_master_trades – awaits the actual function
     """
-    logger.info("Master Trades Checker Job triggert – starte async Funktion")
+    logger.info("Master Trades Checker job triggered – starting async function")
 
-    # Hier wird die async-Funktion richtig awaited!
-    await check_master_trades(context.application)  # ← Übergib application als Parameter!
+    # This is where the async function is properly awaited!
+    await check_master_trades(context.application)  # ← Pass application as a parameter!
 
 
-# ========================= Neue ML Trades Task =========================
+# ========================= New ML trades task =========================
 
 # CREATE TABLE IF NOT EXISTS trade_cooldowns (
 # id SERIAL PRIMARY KEY,
@@ -13444,7 +13445,7 @@ async def master_trades_wrapper(context):
 # coin VARCHAR(20) NOT NULL,            -- 'BTCUSDT', 'ETHUSDT' etc.
 # direction VARCHAR(10) NOT NULL,       -- 'LONG', 'SHORT'
 # last_posted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-# cooldown_hours INTEGER DEFAULT 4,     -- 4 Stunden
+# cooldown_hours INTEGER DEFAULT 4,     -- 4 hours
 # UNIQUE (module, coin, direction)
 # );
 
@@ -13453,7 +13454,7 @@ async def master_trades_wrapper(context):
 
 # CREATE TABLE trade_scanner_state (
 # module VARCHAR(10) NOT NULL,
-# signal_type VARCHAR(20) NOT NULL,       -- 'ai_signal' oder 'conv_signal' (für AIM1)
+# signal_type VARCHAR(20) NOT NULL,       -- 'ai_signal' or 'conv_signal' (for AIM1)
 # last_processed_id BIGINT DEFAULT 0,
 # last_scan_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 # PRIMARY KEY (module, signal_type)
@@ -13464,7 +13465,7 @@ COOLDOWN_TABLE = "trade_cooldowns"
 
 
 def is_cooled_down(module: str, coin: str, direction: str) -> bool:
-    """Prüft, ob für dieses Modul/Coin/Direction der Cooldown abgelaufen ist."""
+    """Checks whether the cooldown has expired for this module/coin/direction."""
     conn = db_pool2.getconn()
     try:
         cur = conn.cursor()
@@ -13479,21 +13480,21 @@ def is_cooled_down(module: str, coin: str, direction: str) -> bool:
         cur.close()
 
         if row is None:
-            return True  # Noch nie gepostet → OK
+            return True  # Never posted yet → OK
 
         last_posted = row[0]
         cooldown_end = last_posted + timedelta(hours=COOLDOWN_HOURS)
         return datetime.now(timezone.utc) >= cooldown_end
 
     except Exception as e:
-        logger.error(f"Cooldown-Prüfung Fehler ({module}/{coin}/{direction}): {e}")
-        return True  # Bei Fehler lieber posten als verpassen
+        logger.error(f"Cooldown check error ({module}/{coin}/{direction}): {e}")
+        return True  # On error, better to post than miss it
     finally:
         db_pool2.putconn(conn)
 
 
 def update_cooldown(module: str, coin: str, direction: str):
-    """Speichert oder updated den letzten Post-Zeitpunkt."""
+    """Stores or updates the last post timestamp."""
     conn = db_pool2.getconn()
     try:
         cur = conn.cursor()
@@ -13509,7 +13510,7 @@ def update_cooldown(module: str, coin: str, direction: str):
         conn.commit()
         cur.close()
     except Exception as e:
-        logger.error(f"Cooldown-Update Fehler ({module}/{coin}/{direction}): {e}")
+        logger.error(f"Cooldown update error ({module}/{coin}/{direction}): {e}")
         conn.rollback()
     finally:
         db_pool2.putconn(conn)
@@ -13529,7 +13530,7 @@ def update_cooldown(module: str, coin: str, direction: str):
 # <b style="color:#ffd700;">{coin.replace('USDT','')}/USDT</b>
 # <b>→ Direction: {direction}</b>
 # <b>→ ML Confidence: <b style="color:#00ffff;">{confidence:.1%}</b></b>
-# <b>→ Time: {now_str} UTC | Modul: {module}</b>
+# <b>→ Time: {now_str} UTC | Module: {module}</b>
 # {"<b>→ Source: " + source + "</b>" if source else ""}
 # </pre>
 # """.strip()
@@ -13550,24 +13551,24 @@ def update_cooldown(module: str, coin: str, direction: str):
 # text=html,
 # parse_mode="HTML"
 # )
-# logger.info(f"Channel-Posting gesendet: {coin} {direction} ({module})")
+# logger.info(f"Channel posting sent: {coin} {direction} ({module})")
 # except Exception as e:
-# logger.error(f"Posting-Fehler {coin}: {e}")
+# logger.error(f"Posting error {coin}: {e}")
 
 # update_cooldown(module, coin, direction)
 
 # except Exception as e:
-# logger.error(f"Post-Trade-Fehler {coin} ({module}): {e}")
+# logger.error(f"Post trade error {coin} ({module}): {e}")
 
 # async def post_trade(module: str, coin: str, direction: str, confidence: float, is_long: bool, source: str = ""):
 # try:
-# # 1. Cornix-Signal
-# # Neuer Channel für ABR1, alter für alle anderen
+# # 1. Cornix signal
+# # New channel for ABR1, old one for all others
 # cornix_channel = 0 if module == 'ABR1' else 0
 
-# await send_cornix_signal(coin, is_long, modul=module, channel_id=cornix_channel)  # ← Übergib channel_id
+# await send_cornix_signal(coin, is_long, modul=module, channel_id=cornix_channel)  # ← Pass channel_id
 
-# # 2. Channel-Posting mit Chart (gleicher Channel wie Cornix für ABR1)
+# # 2. Channel posting with chart (same channel as Cornix for ABR1)
 # channel_id = 0 if module == 'ABR1' else AI_CHANNEL_ID
 
 # border_color = "#00ff00" if is_long else "#ff0066"
@@ -13580,7 +13581,7 @@ def update_cooldown(module: str, coin: str, direction: str):
 # <b style="color:#ffd700;">{coin.replace('USDT','')}/USDT</b>
 # <b>→ Direction: {direction}</b>
 # <b>→ ML Confidence: <b style="color:#00ffff;">{confidence:.1%}</b></b>
-# <b>→ Time: {now_str} UTC | Modul: {module}</b>
+# <b>→ Time: {now_str} UTC | Module: {module}</b>
 # {"<b>→ Source: " + source + "</b>" if source else ""}
 # </pre>
 # """.strip()
@@ -13601,30 +13602,30 @@ def update_cooldown(module: str, coin: str, direction: str):
 # text=html,
 # parse_mode="HTML"
 # )
-# logger.info(f"Channel-Posting gesendet: {coin} {direction} ({module}) in Channel {channel_id}")
+# logger.info(f"Channel posting sent: {coin} {direction} ({module}) in channel {channel_id}")
 # except Exception as e:
-# logger.error(f"Posting-Fehler {coin}: {e}")
+# logger.error(f"Posting error {coin}: {e}")
 
 # update_cooldown(module, coin, direction)
 
 # except Exception as e:
-# logger.error(f"Post-Trade-Fehler {coin} ({module}): {e}")
+# logger.error(f"Post trade error {coin} ({module}): {e}")
 
 # async def post_trade(module: str, coin: str, direction: str, confidence: float, is_long: bool, source: str = ""):
 # try:
-# # Channel-Auswahl
+# # Channel selection
 # cornix_channel = 0 if module == 'ABR1' else 0
 # chart_channel = 0 if module == 'ABR1' else AI_CHANNEL_ID
 
-# logger.debug(f"Posting für {module}: Coin={coin}, Direction={direction}, Conf={confidence:.1%}, Channel Cornix={cornix_channel}, Chart={chart_channel}")
+# logger.debug(f"Posting for {module}: Coin={coin}, Direction={direction}, Conf={confidence:.1%}, Channel Cornix={cornix_channel}, Chart={chart_channel}")
 
-# # 1. Cornix-Signal
+# # 1. Cornix signal
 # try:
 # await send_cornix_signal(coin, is_long, modul=module, channel_id=cornix_channel)
 # except Exception as e:
-# logger.error(f"Cornix-Signal Fehler {symbol}: {e}")
+# logger.error(f"Cornix signal error {symbol}: {e}")
 
-# # 2. Channel-Posting mit Chart
+# # 2. Channel posting with chart
 # border_color = "#00ff00" if is_long else "#ff0066"
 # emoji = f"🚀 AI {module} LONG SIGNAL" if is_long else f"💥 AI {module} SHORT SIGNAL"
 
@@ -13635,7 +13636,7 @@ def update_cooldown(module: str, coin: str, direction: str):
 # <b style="color:#ffd700;">{coin.replace('USDT','')}/USDT</b>
 # <b>→ Direction: {direction}</b>
 # <b>→ ML Confidence: <b style="color:#00ffff;">{confidence:.1%}</b></b>
-# <b>→ Time: {now_str} UTC | Modul: {module}</b>
+# <b>→ Time: {now_str} UTC | Module: {module}</b>
 # {"<b>→ Source: " + source + "</b>" if source else ""}
 # </pre>
 # """.strip()
@@ -13656,40 +13657,40 @@ def update_cooldown(module: str, coin: str, direction: str):
 # text=html,
 # parse_mode="HTML"
 # )
-# logger.info(f"Channel-Posting gesendet: {coin} {direction} ({module}) in Channel {chart_channel}")
+# logger.info(f"Channel posting sent: {coin} {direction} ({module}) in channel {chart_channel}")
 # except Exception as e:
-# logger.error(f"Posting-Fehler {coin}: {e}")
+# logger.error(f"Posting error {coin}: {e}")
 
 # update_cooldown(module, coin, direction)
 
 # except Exception as e:
-# logger.error(f"Post-Trade-Fehler {coin} ({module}): {e}", exc_info=True)
+# logger.error(f"Post trade error {coin} ({module}): {e}", exc_info=True)
 
 
 async def post_trade(module: str, coin: str, direction: str, confidence: float, is_long: bool, source: str = ""):
     try:
-        # --- NEU: Dynamische Channel-Auswahl ---
+        # --- NEW: dynamic channel selection ---
         if module == 'ABR1':
             cornix_channel = 0
             chart_channel = 0
         elif module == 'RUB1':
-            cornix_channel = RUBBERBAND_CHANNEL_ID  # Dein Standard Cornix-Channel
-            chart_channel = RUBBERBAND_CHANNEL_ID  # Dein neuer Channel für den Chart
+            cornix_channel = RUBBERBAND_CHANNEL_ID  # Your default Cornix channel
+            chart_channel = RUBBERBAND_CHANNEL_ID  # Your new channel for the chart
         else:
             cornix_channel = 0
             chart_channel = AI_CHANNEL_ID
 
         logger.debug(
-            f"Posting für {module}: Coin={coin}, Direction={direction}, Conf={confidence:.1%}, Channel Cornix={cornix_channel}, Chart={chart_channel}"
+            f"Posting for {module}: Coin={coin}, Direction={direction}, Conf={confidence:.1%}, Channel Cornix={cornix_channel}, Chart={chart_channel}"
         )
 
-        # 1. Cornix-Signal
+        # 1. Cornix signal
         try:
             await send_cornix_signal(coin, is_long, modul=module, channel_id=cornix_channel)
         except Exception as e:
-            logger.error(f"Cornix-Signal Fehler {coin}: {e}")
+            logger.error(f"Cornix signal error {coin}: {e}")
 
-        # 2. Channel-Posting mit Chart
+        # 2. Channel posting with chart
         border_color = "#00ff00" if is_long else "#ff0066"
         emoji = f"🚀 AI {module} LONG SIGNAL" if is_long else f"💥 AI {module} SHORT SIGNAL"
 
@@ -13700,7 +13701,7 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 <b style="color:#ffd700;">{coin.replace('USDT', '')}/USDT</b>
 <b>→ Direction: {direction}</b>
 <b>→ ML Confidence: <b style="color:#00ffff;">{confidence:.1%}</b></b>
-<b>→ Time: {now_str} UTC | Modul: {module}</b>
+<b>→ Time: {now_str} UTC | Module: {module}</b>
 {"<b>→ Source: " + source + "</b>" if source else ""}
 </pre>
         """.strip()
@@ -13714,29 +13715,29 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
                 )
             else:
                 await application.bot.send_message(chat_id=chart_channel, text=html, parse_mode="HTML")
-            logger.info(f"Channel-Posting gesendet: {coin} {direction} ({module}) in Channel {chart_channel}")
+            logger.info(f"Channel posting sent: {coin} {direction} ({module}) in channel {chart_channel}")
         except Exception as e:
-            logger.error(f"Posting-Fehler {coin}: {e}")
+            logger.error(f"Posting error {coin}: {e}")
 
         update_cooldown(module, coin, direction)
 
     except Exception as e:
-        logger.error(f"Post-Trade-Fehler {coin} ({module}): {e}", exc_info=True)
+        logger.error(f"Post trade error {coin} ({module}): {e}", exc_info=True)
 
 
 # async def trade_scanner(context=None):
 # """
-# Asynchrone Trade-Scanner-Funktion – läuft direkt im Haupt-Loop
-# Prüft alle 3 Tabellen, postet neue Trades bei Erfüllung der Bedingungen
-# Alle 60 Sekunden – kein Thread mehr nötig
+# Asynchronous trade scanner function – runs directly in the main loop
+# Checks all 3 tables, posts new trades when conditions are met
+# Every 60 seconds – no thread needed anymore
 # """
-# logger.info("Trade Scanner startet (async im Haupt-Loop)")
+# logger.info("Trade Scanner starting (async in the main loop)")
 
 # conn = None
 # try:
 # conn = await get_conn()
 
-# # Hole die letzten verarbeiteten IDs
+# # Fetch the last processed IDs
 # state_rows = await conn.fetch("""
 # SELECT module, signal_type, last_processed_id FROM trade_scanner_state
 # """)
@@ -13747,15 +13748,15 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 # last_ids[key] = last_id
 
 # modules = [
-# # SRA1: ml_weighted_trades3 – Spalten: id, coin, direction, confidence, entry, lev
+# # SRA1: ml_weighted_trades3 – columns: id, coin, direction, confidence, entry, lev
 # ('SRA1', 'ml_weighted_trades3', lambda conf: conf >= 0.65, 'confidence', 'id', 'coin', 'entry', 'lev', 'none'),
-# # TBA1: ML_TREND_TRADES – Spalten: id, symbol, direction, ml_probability, entry_time
+# # TBA1: ML_TREND_TRADES – columns: id, symbol, direction, ml_probability, entry_time
 # ('TBA1', 'ML_TREND_TRADES', lambda conf, dir: (dir == 'SHORT' and conf >= 0.75) or (dir == 'LONG' and conf >= 0.8), 'ml_probability', 'id', 'symbol', 'entry_time', None, 'none'),
-# # ABR1: ai_br_trades – Spalten: id, model, symbol, direction, confidence, threshold, retest_time, creation_time
-# # Bedingung: confidence >= threshold (pro Trade)
+# # ABR1: ai_br_trades – columns: id, model, symbol, direction, confidence, threshold, retest_time, creation_time
+# # Condition: confidence >= threshold (per trade)
 # #('ABR1', 'ai_br_trades', lambda conf, thresh: conf >= thresh, 'confidence', 'id', 'symbol', None, None, 'none')
 # # ... SRA1, TBA1 ...
-# ('ABR1', 'ai_br_trades', lambda conf, thresh: conf >= thresh, 'confidence', 'id', 'symbol', 'threshold', None, 'none')  # ← threshold hinzugefügt!
+# ('ABR1', 'ai_br_trades', lambda conf, thresh: conf >= thresh, 'confidence', 'id', 'symbol', 'threshold', None, 'none')  # ← threshold added!
 # ]
 
 # for module, table, condition, conf_col, id_col, coin_col, thresh_col,entry_col, lev_col, _ in modules:
@@ -13784,27 +13785,27 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 # conf = r[conf_col]
 # entry = r.get(entry_col)
 # lev = r.get(lev_col)
-# thresh = r[4] if len(r) > 4 else None  # ← thresh abfragen
+# thresh = r[4] if len(r) > 4 else None  # ← query thresh
 
 # new_max_id = max(new_max_id, row_id)
 
 
-# # Innerhalb der for-Schleife für jedes Modul
+# # Inside the for loop for each module
 # if module == 'ABR1':
-# # ABR1: confidence >= threshold (threshold ist pro Trade in der Tabelle)
-# #if conf >= r['threshold']:  # ← r ist die Row als Dict
-# logger.info(f"Im Bereich der ABR1 Schleife für  {coin}")
+# # ABR1: confidence >= threshold (threshold is per trade in the table)
+# #if conf >= r['threshold']:  # ← r is the row as a dict
+# logger.info(f"In the ABR1 loop for {coin}")
 # is_long = direction.upper() == 'LONG'
 # try:
 # if is_cooled_down(module, coin, direction):
-# logger.info(f"Poste Trade {module}: {coin} {direction} (conf {conf:.1%}) – Cooldown frei")
+# logger.info(f"Posting trade {module}: {coin} {direction} (conf {conf:.1%}) – cooldown clear")
 # MAIN_LOOP.create_task(post_trade(module, coin, direction, conf, is_long))
 # else:
-# logger.debug(f"Trade {module}: {coin} {direction} – Cooldown aktiv")
+# logger.debug(f"Trade {module}: {coin} {direction} – cooldown active")
 # except Exception as e:
-# logger.error(f"ABR1-Signal Fehler {symbol}: {e}")
+# logger.error(f"ABR1 signal error {symbol}: {e}")
 # else:
-# # Alte Logik für SRA1/TBA1
+# # Old logic for SRA1/TBA1
 # if condition(conf) if module == 'SRA1' else condition(conf, direction):
 
 # is_long = direction.upper() == 'LONG'
@@ -13817,7 +13818,7 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 # # if is_cooled_down(module, coin, direction):
 # # await post_trade(module, coin, direction, conf, is_long)
 
-# # Update State
+# # Update state
 # if new_max_id > last_id:
 # await conn.execute("""
 # UPDATE trade_scanner_state
@@ -13825,7 +13826,7 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 # WHERE module = $2 AND signal_type = 'none'
 # """, new_max_id, module)
 
-# # AIM1 – Spezialfall: getrennte IDs pro signal_type
+# # AIM1 – special case: separate IDs per signal_type
 # aim_types = ['ai_signal', 'conv_signal']
 # for signal_type in aim_types:
 # last_id = last_ids.get(('AIM1', signal_type), 0)
@@ -13859,7 +13860,7 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 # if is_cooled_down('AIM1', symbol, direction):
 # await post_trade('AIM1', symbol, direction, data['conf'], direction == 'LONG', data['row']['source'])
 
-# # Update State
+# # Update state
 # if new_max_id > last_id:
 # await conn.execute("""
 # UPDATE trade_scanner_state
@@ -13867,10 +13868,10 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 # WHERE module = 'AIM1' AND signal_type = $2
 # """, new_max_id, signal_type)
 
-# await conn.execute("COMMIT")  # Sicherstellen, dass Updates committed werden
+# await conn.execute("COMMIT")  # Ensure updates are committed
 
 # except Exception as e:
-# logger.error(f"Trade-Scanner-Fehler: {e}", exc_info=True)
+# logger.error(f"Trade Scanner error: {e}", exc_info=True)
 # if conn:
 # await conn.execute("ROLLBACK")
 # finally:
@@ -13880,15 +13881,15 @@ async def post_trade(module: str, coin: str, direction: str, confidence: float, 
 
 async def trade_scanner(context=None):
     """
-    Asynchrone Trade-Scanner-Funktion – läuft direkt im Haupt-Loop
-    Prüft alle 3 Tabellen, postet neue Trades bei Erfüllung der Bedingungen
-    Alle 60 Sekunden – kein Thread mehr nötig
+    Asynchronous trade scanner function – runs directly in the main loop
+    Checks all 3 tables, posts new trades when conditions are met
+    Every 60 seconds – no thread needed anymore
     """
-    logger.info("Trade Scanner startet (async im Haupt-Loop)")
+    logger.info("Trade Scanner starting (async in the main loop)")
     conn = None
     try:
         conn = await get_conn()
-        # Hole die letzten verarbeiteten IDs
+        # Fetch the last processed IDs
         state_rows = await conn.fetch("""
             SELECT module, signal_type, last_processed_id FROM trade_scanner_state
         """)
@@ -13898,7 +13899,7 @@ async def trade_scanner(context=None):
             key = (module, signal_type)
             last_ids[key] = last_id
         modules = [
-            # SRA1: ml_weighted_trades3 – Spalten: id, coin, direction, confidence, entry, lev
+            # SRA1: ml_weighted_trades3 – columns: id, coin, direction, confidence, entry, lev
             (
                 'SRA1',
                 'ml_weighted_trades3',
@@ -13910,7 +13911,7 @@ async def trade_scanner(context=None):
                 'lev',
                 'none',
             ),
-            # TBA1: ML_TREND_TRADES – Spalten: id, symbol, direction, ml_probability, entry_time
+            # TBA1: ML_TREND_TRADES – columns: id, symbol, direction, ml_probability, entry_time
             (
                 'TBA1',
                 'ML_TREND_TRADES',
@@ -13922,7 +13923,7 @@ async def trade_scanner(context=None):
                 None,
                 'none',
             ),
-            # ABR1: ai_br_trades – Spalten: id, model, symbol, direction, confidence, threshold, retest_time, creation_time
+            # ABR1: ai_br_trades – columns: id, model, symbol, direction, confidence, threshold, retest_time, creation_time
             (
                 'ABR1',
                 'ai_br_trades',
@@ -13933,7 +13934,7 @@ async def trade_scanner(context=None):
                 'threshold',
                 None,
                 'none',
-            ),  # ← threshold hinzugefügt!
+            ),  # ← threshold added!
         ]
         for module, table, condition, conf_col, id_col, coin_col, entry_col, lev_col, _ in modules:
             last_id = last_ids.get((module, 'none'), 0)
@@ -13959,36 +13960,36 @@ async def trade_scanner(context=None):
                 conf = r[conf_col]
                 entry = r.get(entry_col)
                 lev = r.get(lev_col)
-                thresh = r.get('threshold')  # Optional für ABR1
+                thresh = r.get('threshold')  # Optional for ABR1
                 new_max_id = max(new_max_id, row_id)
 
-                # Bedingung prüfen (optional thresh für ABR1)
+                # Check condition (optional thresh for ABR1)
                 if module == 'ABR1':
                     if thresh is not None and conf >= thresh:
                         is_long = direction.upper() == 'LONG'
-                        logger.info(f"Im Bereich der ABR1 Schleife für {coin}")
+                        logger.info(f"In the ABR1 loop for {coin}")
                         if is_cooled_down(module, coin, direction) and 'USDT_' not in coin:
-                            logger.info(f"Poste Trade {module}: {coin} {direction} (conf {conf:.1%}) – Cooldown frei")
-                            # In der Schleife (z. B. in trade_scanner)
+                            logger.info(f"Posting trade {module}: {coin} {direction} (conf {conf:.1%}) – cooldown clear")
+                            # In the loop (e.g. in trade_scanner)
 
                             # task = loop.create_task(post_trade(module, coin, direction, conf, is_long))
-                            # await task  # ← Warte, bis der Task fertig ist!
+                            # await task  # ← Wait until the task is done!
                             # MAIN_LOOP.create_task(post_trade(module, coin, direction, conf, is_long))
                             await post_trade(module, coin, direction, conf, is_long)
                         else:
-                            logger.debug(f"Trade {module}: {coin} {direction} – Cooldown aktiv")
+                            logger.debug(f"Trade {module}: {coin} {direction} – cooldown active")
                 else:
                     if condition(conf) if module == 'SRA1' else condition(conf, direction):
                         is_long = direction.upper() == 'LONG'
                         if is_cooled_down(module, coin, direction) and 'USDT_' not in coin:
                             # MAIN_LOOP.create_task(post_trade(module, coin, direction, conf, is_long))
-                            # In der Schleife (z. B. in trade_scanner)
+                            # In the loop (e.g. in trade_scanner)
 
                             # task = loop.create_task(post_trade(module, coin, direction, conf, is_long))
-                            # await task  # ← Warte, bis der Task fertig ist!
+                            # await task  # ← Wait until the task is done!
                             await post_trade(module, coin, direction, conf, is_long)
 
-            # Update State
+            # Update state
             if new_max_id > last_id:
                 await conn.execute(
                     """
@@ -13999,7 +14000,7 @@ async def trade_scanner(context=None):
                     new_max_id,
                     module,
                 )
-        # AIM1 – Spezialfall: getrennte IDs pro signal_type
+        # AIM1 – special case: separate IDs per signal_type
         aim_types = ['ai_signal', 'conv_signal']
         for signal_type in aim_types:
             last_id = last_ids.get(('AIM1', signal_type), 0)
@@ -14043,7 +14044,7 @@ async def trade_scanner(context=None):
                     await post_trade(
                         'AIM1', symbol, direction, data['conf'], direction == 'LONG', data['row']['source']
                     )
-            # Update State
+            # Update state
             if new_max_id > last_id:
                 await conn.execute(
                     """
@@ -14054,9 +14055,9 @@ async def trade_scanner(context=None):
                     new_max_id,
                     signal_type,
                 )
-        await conn.execute("COMMIT")  # Sicherstellen, dass Updates committed werden
+        await conn.execute("COMMIT")  # Ensure updates are committed
     except Exception as e:
-        logger.error(f"Trade-Scanner-Fehler: {e}", exc_info=True)
+        logger.error(f"Trade Scanner error: {e}", exc_info=True)
         if conn:
             await conn.execute("ROLLBACK")
     finally:
@@ -14066,7 +14067,7 @@ async def trade_scanner(context=None):
 
 async def trade_scanner_wrapper(context):
     # asyncio.create_task(asyncio.to_thread(trade_scanner, context))
-    logger.info("Trade Scanner Job triggert – starte async Funktion")
+    logger.info("Trade Scanner job triggered – starting async function")
     await trade_scanner(context)  # Await here to execute it!
 
 
@@ -14085,7 +14086,7 @@ def _load_coins(file_path):
         elif isinstance(data, dict) and 'coins' in data:
             return data['coins']
         else:
-            raise ValueError(f"Format der {file_path} nicht erkannt.")
+            raise ValueError(f"Format of {file_path} not recognized.")
 
 
 def _get_ohlcv_data_recent(conn, symbol, hours_history):
@@ -14108,9 +14109,9 @@ def _get_ohlcv_data_recent(conn, symbol, hours_history):
         return df
     except Exception as e:
         if "relation" in str(e) and "does not exist" in str(e):
-            logger.warning(f"  -> Tabelle für {symbol} existiert nicht. Überspringe.")
+            logger.warning(f"  -> Table for {symbol} does not exist. Skipping.")
         else:
-            logger.error(f"Fehler beim Laden von {symbol}: {e}")
+            logger.error(f"Error loading {symbol}: {e}")
         return None
 
 
@@ -14185,9 +14186,9 @@ def _calculate_technical_indicators(df):
     df['volume_avg_30'] = df['volume'].rolling(window=30, min_periods=1).mean()
     df['retest_volume_ratio_avg'] = (df['volume'] / df['volume_avg_30']).fillna(1)
 
-    # --- FIX HIER ---
-    # Das Modell erwartet 'retest_volume', im Live-DataFrame heißt es aber 'volume'.
-    # Wir erstellen einfach einen Alias.
+    # --- FIX HERE ---
+    # The model expects 'retest_volume', but in the live DataFrame it's called 'volume'.
+    # We simply create an alias.
     df['retest_volume'] = df['volume']
     # ----------------
 
@@ -14196,7 +14197,7 @@ def _calculate_technical_indicators(df):
     return df
 
 
-def _find_pivot_levels(df):  # window wird von PIVOT_WINDOW aus global genommen
+def _find_pivot_levels(df):  # window is taken globally from PIVOT_WINDOW
     if len(df) < PIVOT_WINDOW * 2 + 1:
         return []
 
@@ -14253,9 +14254,9 @@ def _create_ai_br_trades_table_blocking(db_config):
             );
         """)
         conn.commit()
-        logger.info("Datenbanktabelle 'ai_br_trades' überprüft/erstellt.")
+        logger.info("Database table 'ai_br_trades' checked/created.")
     except Exception as e:
-        logger.error(f"Fehler beim Erstellen der DB-Tabelle: {e}")
+        logger.error(f"Error creating the DB table: {e}")
     finally:
         if conn:
             conn.close()
@@ -14281,18 +14282,18 @@ def _insert_trade_signal_blocking(db_config, signal_data):
             ),
         )
         conn.commit()
-        logger.info(f"Signal gespeichert: {signal_data}")
+        logger.info(f"Signal saved: {signal_data}")
     except Exception as e:
-        logger.error(f"Fehler beim Speichern des Signals: {e}")
+        logger.error(f"Error saving the signal: {e}")
     finally:
         if conn:
             conn.close()
 
 
-# --- SignalGenerator Klasse (Optimiert für Bot-Integration) ---
+# --- SignalGenerator class (optimized for bot integration) ---
 class SignalGenerator:
     def __init__(self, models, thresholds, success_class_idx, coins, db_config, loop: asyncio.AbstractEventLoop):
-        logger.info("Initialisiere SignalGenerator...")
+        logger.info("Initializing SignalGenerator...")
         self.models = models
         self.thresholds = thresholds
         self.success_class_idx = success_class_idx
@@ -14321,23 +14322,23 @@ class SignalGenerator:
             'retest_volume_ratio_avg',
         ]
 
-        logger.info("SignalGenerator initialisiert.")
+        logger.info("SignalGenerator initialized.")
 
     def _process_coin(self, conn, symbol):
         """
-        Interne Logik für einen einzelnen Coin.
-        Nimmt eine offene DB-Verbindung entgegen (wiederverwendet sie).
+        Internal logic for a single coin.
+        Takes an open DB connection (reuses it).
         logger.info("SignalGenerator running...")
         """
         try:
             df = _get_ohlcv_data_recent(conn, symbol, LIVE_DATA_HISTORY_HOURS)
-            # Prüfen ob Daten da sind
+            # Check whether data is present
             if df is None or df.empty or len(df) < max(PIVOT_WINDOW * 2, 30) + RETEST_BACKWARD_LOOKUP_CANDLES + 2:
                 return
 
             df_with_indicators = _calculate_technical_indicators(df.copy())
 
-            # --- FIX: retest_volume hinzufügen (falls es in _calculate... fehlt) ---
+            # --- FIX: add retest_volume (if missing in _calculate...) ---
             if 'retest_volume' not in df_with_indicators.columns:
                 df_with_indicators['retest_volume'] = df_with_indicators['volume']
             # ---------------------------------------------------------------------
@@ -14346,7 +14347,7 @@ class SignalGenerator:
             if not levels:
                 return
 
-            # Letzte 3 Kerzen auf Retest prüfen
+            # Check the last 3 candles for a retest
             potential_retest_candle_indices = range(
                 len(df_with_indicators) - 1, max(0, len(df_with_indicators) - 1 - 3), -1
             )
@@ -14406,7 +14407,7 @@ class SignalGenerator:
                         X_event = pd.DataFrame([X_event_features], columns=self.feature_columns, dtype=float)
 
                         prediction_proba = current_model.predict_proba(X_event)[0, self.success_class_idx]
-                        logger.info(f"SignalGenerator Break&Retest bei Coin {symbol}")
+                        logger.info(f"SignalGenerator Break&Retest for coin {symbol}")
                         # if prediction_proba >= current_threshold:
                         if prediction_proba >= 0.50:
                             signal_data = {
@@ -14417,49 +14418,49 @@ class SignalGenerator:
                                 'threshold': float(current_threshold),
                                 'retest_time': retest_candle['open_time'],
                             }
-                            # Wir nutzen hier direkt die offene Verbindung
+                            # We use the open connection directly here
                             _insert_trade_signal_blocking(self.db_config, signal_data)
 
         except Exception as e:
-            # Wir loggen den Fehler, aber lassen den Loop weiterlaufen
-            logger.error(f"SignalGenerator Fehler bei Coin {symbol}: {e}")
+            # We log the error but let the loop keep running
+            logger.error(f"SignalGenerator error for coin {symbol}: {e}")
 
     def _run_full_analysis_cycle_blocking(self):
         """
-        Diese Funktion läuft in EINEM separaten Thread.
-        Sie öffnet EINMAL die DB-Verbindung und iteriert dann durch alle Coins.
-        Das spart massiv Ressourcen und verhindert Lag im Bot.
+        This function runs in ONE separate thread.
+        It opens the DB connection ONCE and then iterates through all coins.
+        This saves massive resources and prevents lag in the bot.
         """
         start_time = time.time()
-        logger.info(f"SignalGenerator: Starte Analyse-Zyklus für {len(self.coins)} Coins...")
+        logger.info(f"SignalGenerator: starting analysis cycle for {len(self.coins)} coins...")
 
         conn = None
         try:
             conn = _get_db_connection()
 
             for i, coin in enumerate(self.coins):
-                # Hier rufen wir die Logik für EINEN Coin auf
+                # Here we call the logic for ONE coin
                 self._process_coin(conn, coin)
 
-                # Optional: Kleiner Sleep alle X Coins, um CPU atmen zu lassen
+                # Optional: small sleep every X coins to let the CPU breathe
                 if i % 10 == 0:
                     time.sleep(0.01)
 
         except Exception as e:
-            logger.error(f"Kritischer Fehler im Analyse-Zyklus: {e}", exc_info=True)
+            logger.error(f"Critical error in the analysis cycle: {e}", exc_info=True)
         finally:
             if conn:
                 conn.close()
 
         duration = time.time() - start_time
-        logger.info(f"SignalGenerator: Analyse beendet in {duration:.2f} Sekunden.")
+        logger.info(f"SignalGenerator: analysis finished in {duration:.2f} seconds.")
 
     async def run_hourly_check(self, context):
         """
-        Wird vom JobQueue aufgerufen. Startet den Blocking-Task im Executor.
+        Called by the JobQueue. Starts the blocking task in the executor.
         """
-        # Wir übergeben nun die EINE große Funktion an den Executor,
-        # anstatt 500 kleine Tasks zu spawnen.
+        # We now pass the ONE large function to the executor,
+        # instead of spawning 500 small tasks.
         await self.loop.run_in_executor(None, self._run_full_analysis_cycle_blocking)
 
 
@@ -14504,12 +14505,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Prüfen, ob ein Argument übergeben wurde (z.B. /start menu)
+    # Check whether an argument was passed (e.g. /start menu)
     if context.args and context.args[0] == "menu":
         await menu_handler(update, context)
         return
 
-    # Normaler Start
+    # Normal start
     await update.message.reply_text("PROVEN CRYPTO BOT V2 is running \n/menu → start main menue")
 
 
@@ -14573,7 +14574,7 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========================= LIFECYCLE HANDLERS =========================
 
 # async def post_init(app: Application):
-# """Startet Hintergrund-Tasks NACHDEM der Bot bereit ist"""
+# """Starts background tasks AFTER the bot is ready"""
 # await init_db_pool()
 # await load_1minute_data()
 # await load_pump_dump_state()
@@ -14582,8 +14583,8 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # await create_ai_signals_table()
 # await create_conv_signals_table()
 
-# # Tasks registrieren (in deine globale tasks-Liste)
-# # WICHTIG: Wir nutzen create_task und speichern sie, damit wir sie canceln können
+# # Register tasks (in your global tasks list)
+# # IMPORTANT: we use create_task and store them so we can cancel them
 # await register_task("1minjob", one_minute_ticker_job())
 # await register_task("round_level_breaker", round_level_breaker())
 # await register_task("early_pump_dump_detector", early_pump_dump_detector())
@@ -14602,10 +14603,10 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # async def post_shutdown(app: Application):
-# """Wird beim Beenden (STRG+C) ausgeführt – Tasks aufräumen"""
+# """Runs on shutdown (CTRL+C) – cleans up tasks"""
 # logger.info("Stopping background tasks...")
 
-# # Alle registrierten Tasks canceln
+# # Cancel all registered tasks
 # for name, task in tasks.items():
 # if not task.done():
 # task.cancel()
@@ -14615,7 +14616,7 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # pass
 # logger.info(f"Task '{name}' cancelled.")
 
-# # Daten speichern
+# # Save data
 # await save_1minute_data()
 
 
@@ -14630,36 +14631,36 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # "volume_samples": list(state["volume_samples"])
 # }
 # json.dump(save_data, f, indent=2, ensure_ascii=False)
-# logger.info("Pump/Dump State beim Shutdown gespeichert")
+# logger.info("Pump/Dump state saved on shutdown")
 # except Exception as e:
-# logger.error(f"Shutdown-Save Fehler: {e}")
+# logger.error(f"Shutdown save error: {e}")
 
-# # DB Pool schließen
+# # Close DB pool
 # if db_pool:
 # await db_pool.close()
 # logger.info("Database pool closed.")
 
 
 async def post_init(app: Application):
-    """Startet Hintergrund-Tasks NACHDEM der Bot bereit ist"""
-    logger.info("Starte post_init...")
-    await init_db_pool()  # Dein bestehender DB-Pool
+    """Starts background tasks AFTER the bot is ready"""
+    logger.info("Starting post_init...")
+    await init_db_pool()  # Your existing DB pool
     await load_1minute_data()
     await load_pump_dump_state()
     await create_ticker_10s_table()
     await create_pump_dump_events_table()
-    await create_ai_signals_table()  # Falls dies für andere Signale ist
+    await create_ai_signals_table()  # In case this is for other signals
     await create_conv_signals_table()
     await create_smc_zones_table()
 
-    # NEU: Tabelle für AI Break & Retest Trades erstellen (BLOCKIEREND, aber einmalig)
+    # NEW: create table for AI Break & Retest trades (BLOCKING, but only once)
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _create_ai_br_trades_table_blocking, DB_CONFIG)
 
     # MAIN_LOOP = asyncio.get_event_loop()
 
-    # NEU: ML-Modelle und Coins für SignalGenerator laden
-    logger.info("Lade ML Modelle für den SignalGenerator...")
+    # NEW: load ML models and coins for SignalGenerator
+    logger.info("Loading ML models for the SignalGenerator...")
     # loaded_models = {
     # 'LONG': xgb.XGBClassifier(),
     # 'SHORT': xgb.XGBClassifier()
@@ -14667,15 +14668,15 @@ async def post_init(app: Application):
     # try:
     # loaded_models['LONG'].load_model(SG_LONG_MODEL_FILE)
     # loaded_models['SHORT'].load_model(SG_SHORT_MODEL_FILE)
-    # logger.info("ML Modelle erfolgreich geladen.")
+    # logger.info("ML models loaded successfully.")
     # except Exception as e:
-    # logger.critical(f"FEHLER: Konnte ML Modelle für SignalGenerator nicht laden: {e}. Bot wird beendet.")
-    # sys.exit(1) # Beende den Bot, wenn Modelle nicht geladen werden können
+    # logger.critical(f"ERROR: Could not load ML models for SignalGenerator: {e}. Bot is shutting down.")
+    # sys.exit(1) # Shut down the bot if models cannot be loaded
 
     loaded_coins = _load_coins(SG_COINS_FILE)
-    logger.info(f"{len(loaded_coins)} Coins für SignalGenerator geladen.")
+    logger.info(f"{len(loaded_coins)} coins loaded for the SignalGenerator.")
 
-    # NEU: SignalGenerator Instanz erstellen
+    # NEW: create SignalGenerator instance
     # global signal_generator_instance
     # signal_generator_instance = SignalGenerator(
     # models=loaded_models,
@@ -14683,10 +14684,10 @@ async def post_init(app: Application):
     # success_class_idx=SG_SUCCESS_CLASS_IDX,
     # coins=loaded_coins,
     # db_config=DB_CONFIG,
-    # loop=loop # Übergabe der Event-Loop
+    # loop=loop # Pass the event loop
     # )
 
-    # --- Bestehende Aufgaben registrieren ---
+    # --- Register existing tasks ---
     # await register_task("1minjob", one_minute_ticker_job())
     # await register_task("round_level_breaker", round_level_breaker())
     # await register_task("early_pump_dump_detector", early_pump_dump_detector())
@@ -14700,22 +14701,22 @@ async def post_init(app: Application):
     # await register_task("smc_fvg_detector", smc_fvg_detector())
     # await register_task("forex_smc_detector", forex_smc_detector())
 
-    # # 1. Einmaliger "Catch-Up" (REST API Turbo Grepper)
-    # # Füllt Lücken auf, die entstanden sind, während der Bot offline war.
-    # logger.info("⏳ Starte initialen historischen Daten-Download...")
+    # # 1. One-time "catch-up" (REST API turbo grepper)
+    # # Fills gaps that occurred while the bot was offline.
+    # logger.info("⏳ Starting initial historical data download...")
     # await update_pattern_data_async()
-    # logger.info("✅ Historie vollständig geladen!")
+    # logger.info("✅ History fully loaded!")
 
-    # # 2. Die WebSocket-Verbindung für Live-Daten starten
+    # # 2. Start the WebSocket connection for live data
     # await register_task("binance_ws_listener", binance_ws_listener())
     # #application.create_task(binance_ws_listener())
 
-    # # 3. Den Datenbank-Speicherer starten
+    # # 3. Start the database saver
     # await register_task("db_buffer_flusher", db_buffer_flusher())
     # #application.create_task(db_buffer_flusher())
 
-    # --- KURZE PAUSE ---
-    # Gibt dem WebSocket 3 Sekunden Zeit, den Live-Strom aufzubauen
+    # --- SHORT PAUSE ---
+    # Gives the WebSocket 3 seconds to build up the live stream
     # await asyncio.sleep(3)
 
     # await register_task("pattern_detector", pattern_detector())
@@ -14723,30 +14724,30 @@ async def post_init(app: Application):
     # await register_ml_weighted_checker(app)
     # await register_master_trades_checker(app)
 
-    # NEU: SignalGenerator in die Job Queue registrieren
+    # NEW: register SignalGenerator in the job queue
     # app.job_queue.run_custom(
     # callback=signal_generator_instance.run_hourly_check,
     # job_kwargs={
     # "trigger": CronTrigger(
-    # minute=HOURLY_CHECK_DELAY_MINUTES, # Beispiel: Läuft immer um :10 (z.B. 10:10, 11:10)
-    # hour='*',                          # Jede Stunde
-    # timezone="UTC"                     # Wichtig: UTC für Konsistenz
+    # minute=HOURLY_CHECK_DELAY_MINUTES, # Example: always runs at :10 (e.g. 10:10, 11:10)
+    # hour='*',                          # Every hour
+    # timezone="UTC"                     # Important: UTC for consistency
     # ),
-    # "misfire_grace_time": 600,  # 10 Minuten Toleranz, falls der Job mal hängen bleibt
-    # "coalesce": True,           # Wenn mehrere missed, nur einmal ausführen
-    # "max_instances": 1          # Verhindert Überlappung, falls ein Run länger dauert als das Intervall
+    # "misfire_grace_time": 600,  # 10-minute tolerance in case the job ever hangs
+    # "coalesce": True,           # If several are missed, only run once
+    # "max_instances": 1          # Prevents overlap if a run takes longer than the interval
     # }
     # )
-    # logger.info(f"SignalGenerator für stündlichen Check registriert (um :%s UTC).", HOURLY_CHECK_DELAY_MINUTES)
+    # logger.info(f"SignalGenerator registered for hourly check (at :%s UTC).", HOURLY_CHECK_DELAY_MINUTES)
 
     # logger.info("Bot initialized successfully – Background tasks running")
 
 
 async def post_shutdown(app: Application):
-    """Wird beim Beenden (STRG+C) ausgeführt – Tasks aufräumen"""
+    """Runs on shutdown (CTRL+C) – cleans up tasks"""
     logger.info("Stopping background tasks...")
 
-    # Alle registrierten Tasks canceln
+    # Cancel all registered tasks
     for name, task in tasks.items():
         if not task.done():
             task.cancel()
@@ -14756,7 +14757,7 @@ async def post_shutdown(app: Application):
                 pass
             logger.info(f"Task '{name}' cancelled.")
 
-    # Daten speichern
+    # Save data
     await save_1minute_data()
 
     try:
@@ -14770,11 +14771,11 @@ async def post_shutdown(app: Application):
                     "volume_samples": list(state["volume_samples"]),
                 }
             json.dump(save_data, f, indent=2, ensure_ascii=False)
-        logger.info("Pump/Dump State beim Shutdown gespeichert")
+        logger.info("Pump/Dump state saved on shutdown")
     except Exception as e:
-        logger.error(f"Shutdown-Save Fehler: {e}")
+        logger.error(f"Shutdown save error: {e}")
 
-    # DB Pool schließen
+    # Close DB pool
     if db_pool:
         await db_pool.close()
         logger.info("Database pool closed.")
@@ -14782,14 +14783,14 @@ async def post_shutdown(app: Application):
 
 # ========================= MAIN ENTRY POINT =========================
 # if __name__ == "__main__":
-# # 1. WINDOWS FIX FÜR STRG+C (Muss ganz oben stehen)
+# # 1. WINDOWS FIX FOR CTRL+C (must be at the very top)
 # if sys.platform.startswith("win"):
 # asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-# print("Initialisiere Bot...")
+# print("Initializing bot...")
 
-# # 2. Application bauen
-# # Wir fügen post_shutdown hinzu, damit STRG+C sauber aufräumt
+# # 2. Build application
+# # We add post_shutdown so CTRL+C cleans up properly
 # application = ApplicationBuilder().token(TOKEN)\
 # .post_init(post_init)\
 # .post_shutdown(post_shutdown)\
@@ -14835,28 +14836,28 @@ async def post_shutdown(app: Application):
 # application.add_handler(MessageHandler(filters.Regex(r"(?i)^!graphconv\s+\w+$"), graphconv_handler))
 
 
-# # In deinen add_handler-Block:
+# # In your add_handler block:
 # application.add_handler(MessageHandler(filters.Regex(r"(?i)^!mo$"), market_dashboard_handler))
-# # Optional auch für Button:
+# # Optionally also for button:
 # application.add_handler(CallbackQueryHandler(market_dashboard_handler, pattern="^market_dashboard$"))
 
-# # Alle 5 Minuten (300 Sekunden) den Sync-Task starten
+# # Start the sync task every 5 minutes (300 seconds)
 # application.job_queue.run_repeating(
 # conv_signals_sync_task,
 # interval=300,
-# first=10  # erst nach 10 Sekunden starten
+# first=10  # start only after 10 seconds
 # )
 
 # #application.job_queue.run_repeating(check_master_trades, interval=300, first=20)
 
 # application.job_queue.run_repeating(
-# callback=master_trades_wrapper,  # ← Der neue Wrapper!
+# callback=master_trades_wrapper,  # ← The new wrapper!
 # interval=300,
 # first=20,
 # name="master_trades_checker",
 # job_kwargs={"misfire_grace_time": 3600}
 # )
-# logger.info("Master Trades Checker registriert (non-blocking async)")
+# logger.info("Master Trades Checker registered (non-blocking async)")
 
 
 # application.job_queue.run_repeating(
@@ -14870,20 +14871,20 @@ async def post_shutdown(app: Application):
 
 # application.job_queue.run_repeating(
 # callback=trade_scanner,
-# interval=60,  # Alle 60 Sekunden prüfen
+# interval=60,  # Check every 60 seconds
 # first=10,
 # name="trade_scanner",
 # job_kwargs={"misfire_grace_time": 300}
 # )
-# logger.info("Trade-Scanner Task registriert (alle 60 Sekunden – non-blocking)")
+# logger.info("Trade Scanner task registered (every 60 seconds – non-blocking)")
 
 
 # # application.job_queue.run_custom(
 # # kline_filler_wrapper,
 # # {"trigger": CronTrigger(
-# # minute='0,15,30,45',      # jede Stunde zur Minute 0 und 10
-# # second=1,           # genau zur Sekunde 1
-# # timezone="UTC"      # oder "Europe/Berlin" wenn du lokale Zeit willst
+# # minute='0,15,30,45',      # every hour at minute 0 and 10
+# # second=1,           # exactly at second 1
+# # timezone="UTC"      # or "Europe/Berlin" if you want local time
 # # )}
 # # )
 
@@ -14891,44 +14892,44 @@ async def post_shutdown(app: Application):
 # # kline_filler_wrapper,
 # # job_kwargs={
 # # "trigger": CronTrigger(
-# # minute='*/10',  # alle 15 Minuten (00:01, 15:01, 30:01, 45:01)
+# # minute='*/10',  # every 15 minutes (00:01, 15:01, 30:01, 45:01)
 # # second=1,
 # # timezone="UTC"
 # # ),
-# # "misfire_grace_time": 300,  # 5 Minuten Toleranz – Job wird immer ausgeführt
-# # "coalesce": True,           # Wenn mehrere missed, nur einmal ausführen
-# # "max_instances": 1          # Verhindert Überlappung
+# # "misfire_grace_time": 300,  # 5-minute tolerance – job always runs
+# # "coalesce": True,           # If several are missed, only run once
+# # "max_instances": 1          # Prevents overlap
 # # }
 # # )
 
-# print("Bot läuft! Drücke STRG+C zum Beenden.")
+# print("Bot is running! Press CTRL+C to stop.")
 
-# # 4. Starten
-# # run_polling blockiert das Skript und managed den Loop selbst.
-# # Deswegen brauchen wir kein asyncio.run(main()) mehr.
+# # 4. Start
+# # run_polling blocks the script and manages the loop itself.
+# # That's why we no longer need asyncio.run(main()).
 # try:
 # application.run_polling(drop_pending_updates=True, stop_signals=None)
-# # stop_signals=None ist wichtig unter Windows in manchen Umgebungen!
+# # stop_signals=None is important on Windows in some environments!
 # except Exception as e:
 # print(f"Critical Error: {e}")
 # finally:
 # if LOCK_FILE.exists():
 # LOCK_FILE.unlink()
-# print("Bot wurde beendet.")
+# print("Bot has been stopped.")
 
 
 if __name__ == "__main__":
-    # Dieser Block bleibt wie er ist, wichtig ist, dass asyncio.set_event_loop_policy
-    # und mp.set_start_method / mp.freeze_support frühzeitig aufgerufen werden.
+    # This block stays as it is; what matters is that asyncio.set_event_loop_policy
+    # and mp.set_start_method / mp.freeze_support are called early.
     if sys.platform.startswith("win"):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    print("Initialisiere Bot...")
+    print("Initializing bot...")
 
-    # WICHTIG: set_start_method für joblib/multiprocessing muss HIER sein
-    # um Kompatibilität für alle Subprozesse (falls vorhanden) zu gewährleisten.
-    # Da dein Datagrepper multiprocessing nutzt, ist das hier notwendig.
-    # Und auch für joblib/GridSearchCV, falls du das mal wieder benutzen solltest.
+    # IMPORTANT: set_start_method for joblib/multiprocessing must be HERE
+    # to ensure compatibility for all subprocesses (if any).
+    # Since your datagrepper uses multiprocessing, this is necessary here.
+    # And also for joblib/GridSearchCV, in case you use that again sometime.
     try:
         mp.set_start_method('spawn', force=True)
     except RuntimeError:
@@ -14993,7 +14994,7 @@ if __name__ == "__main__":
     # name="master_trades_checker",
     # job_kwargs={"misfire_grace_time": 3600}
     # )
-    # logger.info("Master Trades Checker registriert (non-blocking async)")
+    # logger.info("Master Trades Checker registered (non-blocking async)")
 
     # application.job_queue.run_repeating(
     # callback=ml_weighted_trades_checker,
@@ -15010,7 +15011,7 @@ if __name__ == "__main__":
     # name="trade_scanner",
     # job_kwargs={"misfire_grace_time": 300}
     # )
-    # logger.info("Trade-Scanner Task registriert (alle 60 Sekunden – non-blocking)")
+    # logger.info("Trade Scanner task registered (every 60 seconds – non-blocking)")
 
     # application.job_queue.run_repeating(
     # callback=trade_scanner_wrapper,
@@ -15019,9 +15020,9 @@ if __name__ == "__main__":
     # name="trade_scanner",
     # job_kwargs={"misfire_grace_time": 300}
     # )
-    # logger.info("Trade Scanner registriert (alle 60 Sekunden – non-blocking)")
+    # logger.info("Trade Scanner registered (every 60 seconds – non-blocking)")
 
-    print("Bot läuft! Drücke STRG+C zum Beenden.")
+    print("Bot is running! Press CTRL+C to stop.")
 
     try:
         application.run_polling(drop_pending_updates=True, stop_signals=None)
@@ -15030,4 +15031,4 @@ if __name__ == "__main__":
     finally:
         if LOCK_FILE.exists():
             LOCK_FILE.unlink()
-        print("Bot wurde beendet.")
+        print("Bot has been stopped.")

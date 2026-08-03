@@ -1,48 +1,48 @@
 """
-tools/walkforward_sim.py — gemeinsamer Walk-Forward-Simulator (Audit P0.10 / P0.11).
+tools/walkforward_sim.py — shared walk-forward simulator (Audit P0.10 / P0.11).
 
-Zweck
------
-Spielt die BOT-EIGENEN Setup-Funktionen bar-für-bar über die historischen
-Kerzen ab und scored die entstehenden Trades mit einem wick-aware
-First-Touch-Forward-Scan (wie der neue Monitor nach dem P2.7-Fix), Fees
-inklusive (P3.6). Die entstehenden Trade-Records sind die LABEL-QUELLE für
-alle Neutrainings — NICHT closed_ai_signals (historisch nur zu 63,4% korrekt
-gescored, Report 17).
+Purpose
+-------
+Replays the BOT-OWN setup functions bar-by-bar over historical candles and
+scores the resulting trades with a wick-aware first-touch forward scan (like
+the new monitor after the P2.7 fix), fees included (P3.6). The resulting trade
+records are the LABEL SOURCE for all retraining — NOT closed_ai_signals
+(historically only 63.4% correctly scored, Report 17).
 
-Kernprinzipien (X-R1-Fix):
-  * Setup-Erkennung importiert die Bot-Module bzw. deren extrahierte
-    Setup-Funktionen — kein Copy-Paste-Skew.
-  * Order-Geometrie = exakt die gepostete Geometrie: CMP-Entry +
-    calculate_smart_targets (df-Fenster-Variante, dieselbe Funktion wie live)
-    bzw. die Bot-eigenen SL/TP-Regeln (UFI1).
-  * Entscheidungen nur auf GESCHLOSSENEN Kerzen bis zum Entscheidungszeitpunkt.
-  * Exits: First-Touch auf den 1h-Kerzen NACH der Entscheidung, wick-aware,
-    SL-first bei Ambiguität (TP und SL in derselben Kerze), Trailing-Semantik
-    wie 8_ai_trade_monitor (ab TP2 rückt der SL auf targets[k-2]).
-  * Fees: 0,05% pro Seite (Taker, konfigurierbar) → 0,10% Round-Trip.
+Core principles (X-R1 fix):
+  * Setup detection imports bot modules or their extracted setup functions —
+    no copy-paste skew.
+  * Order geometry = exactly the posted geometry: CMP entry +
+    calculate_smart_targets (df-window variant, same function as live) or
+    the bot's own SL/TP rules (UFI1).
+  * Decisions only on CLOSED candles until the decision point.
+  * Exits: first-touch on the 1h candles AFTER the decision, wick-aware,
+    SL-first in case of ambiguity (TP and SL in the same candle), trailing
+    semantics like 8_ai_trade_monitor (from TP2 onwards, SL moves to
+    targets[k-2]).
+  * Fees: 0.05% per side (taker, configurable) → 0.10% round-trip.
 
-Strategien
+Strategies
 ----------
-  ufi1   — 29_ufi1_bot.find_ufi1_setup auf Daily-Kerzen (P0.11-Validierung:
-           die "+278R" aus fib_backtest.py müssen fallen)
-  td     — Three-Drive-Erkennung aus 25_smc_ml_sniper.scan_market (1h+4h)
-  bb     — Breaker-Block-Erkennung aus 25_smc_ml_sniper.scan_market (1h+4h)
-  abr1   — Break&Retest-Erkennung aus 18_ai_abr1_bot (1h)
-  mis1   — dichte Stichprobe je geschlossener 1h-Kerze (kein Detektor-Gate),
-           Features aus core.mis_features (geteilter Builder, Leakage-Fix),
-           Labels horizontgekappt 72h/168h — Retrain-Priorität #1 (Report 16)
+  ufi1   — 29_ufi1_bot.find_ufi1_setup on daily candles (P0.11 validation:
+           the "+278R" from fib_backtest.py must be removed)
+  td     — three-drive detection from 25_smc_ml_sniper.scan_market (1h+4h)
+  bb     — breaker-block detection from 25_smc_ml_sniper.scan_market (1h+4h)
+  abr1   — break & retest detection from 18_ai_abr1_bot (1h)
+  mis1   — dense sample per closed 1h candle (no detector gate), features from
+           core.mis_features (shared builder, leakage fix), labels capped
+           72h/168h — retrain priority #1 (Report 16)
 
-Betriebsregeln (Live-VPS!)
---------------------------
-  * Prozess senkt sich selbst auf BELOW_NORMAL.
-  * Vor dem Start wird die System-CPU geprüft (>90% → Abbruch, damit der
-    neue core/health_monitor CPU_SATURATED-Alarm nicht getriggert wird).
-  * DB strikt read-only (nur SELECTs); Ergebnisse gehen als JSONL-Files nach
-    Documents\\_X\\staging_models\\replay\\ (keine neuen Tabellen).
+Operating rules (Live VPS!)
+---------------------------
+  * Process lowers itself to BELOW_NORMAL.
+  * Before start, system CPU is checked (>90% → abort so the new
+    core/health_monitor CPU_SATURATED alarm is not triggered).
+  * DB strictly read-only (SELECT only); results go as JSONL files to
+    Documents\\_X\\staging_models\\replay\\ (no new tables).
 
-Beispiele
----------
+Examples
+--------
   python tools/walkforward_sim.py --strategy ufi1 --days 365
   python tools/walkforward_sim.py --strategy td --tf 1h --days 540
   python tools/walkforward_sim.py --strategy bb --tf 4h --days 540 --limit 50
@@ -103,40 +103,40 @@ from core.trade_utils import (  # noqa: E402
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# KONFIGURATION
+# CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-FEE_PER_SIDE = 0.0005  # Taker 0,05% je Seite → 0,10% Round-Trip (P3.6)
+FEE_PER_SIDE = 0.0005  # Taker 0.05% per side → 0.10% round-trip (P3.6)
 DEFAULT_OUT_DIR = os.getenv(
     "KYTHERA_REPLAY_DIR", r"C:\Users\Michael\Documents\_X\staging_models\replay"
 )
-MAX_CPU_AT_START = 90.0  # health_monitor CPU_SATURATED nicht triggern
+MAX_CPU_AT_START = 90.0  # do not trigger health_monitor CPU_SATURATED
 
-# Wie viele TPs der jeweilige Bot tatsächlich publiziert (Cornix-Message) —
-# bestimmt die Positions-Fraktionierung im Ladder-Exit.
+# How many TPs the respective bot actually publishes (Cornix message) —
+# determines position fractionation in ladder exit.
 PUBLISHED_TARGETS = {"ufi1": 1, "td": 5, "bb": 5, "abr1": 3, "mis1": 5, "rub": 3, "atb2": 3, "ats": 3}
 
-# ATS/TSI (Bot 12): Live liest der Bot die NEUESTEN 500 geschlossenen 1h-Kerzen
-# und normalisiert OBV auf den Fensterstart — der Replay muss dasselbe 500er-
-# Fenster durchreichen. Warmup 100 Tage deckt sowohl das 500-Kerzen-OBV-Fenster
-# (~21 d) als auch den 95d-S/R-Level-Pool ab, damit JEDES Event im angeforderten
-# Zeitraum ein vollständiges Fenster hat (OBV-Baseline-Parität, harte Regel 7).
+# ATS/TSI (Bot 12): live, the bot reads the LATEST 500 closed 1h candles
+# and normalizes OBV to the window start — the replay must pass the same 500-candle
+# window through. Warmup 100 days covers both the 500-candle OBV window
+# (~21 d) and the 95d S/R level pool, so EVERY event in the requested
+# timeframe has a complete window (OBV-baseline parity, hard rule 7).
 ATS_WARMUP_DAYS = 100
 ATS_FEATURE_WINDOW = 500   # Bot 12: read_candles_with_indicators(limit=500)
-ATS_SR_WINDOW_H = 95 * 24  # get_hvn_and_sr_levels nutzt 95 Tage 1h-Kerzen
-ATS_MIN_HISTORY = 50       # Bot-12-Floor: `if len(df) < 50: continue`
+ATS_SR_WINDOW_H = 95 * 24  # get_hvn_and_sr_levels uses 95 days of 1h candles
+ATS_MIN_HISTORY = 50       # Bot-12 floor: `if len(df) < 50: continue`
 
-# ATB2 (§11): Warmup so groß, dass EMA200 vor dem 1. Event konvergiert
-# (MIN_HISTORY_CANDLES=1500 Kerzen ≈ 62,5 Tage → 65d Puffer); Cooldown je
-# Richtung wie die anderen Ausbruch-Bots.
+# ATB2 (§11): warmup large enough so EMA200 converges before 1st event
+# (MIN_HISTORY_CANDLES=1500 candles ≈ 62.5 days → 65d buffer); cooldown per
+# direction like the other breakout bots.
 ATB2_WARMUP_DAYS = 65
 ATB2_COOLDOWN_H = 4
 
 
 def set_low_priority() -> None:
-    """Der VPS läuft an der Lastgrenze — wir laufen mit BELOW_NORMAL.
+    """The VPS runs at the load limit — we run with BELOW_NORMAL.
 
-    psutil ist im Live-venv nicht installiert → ctypes-Fallback direkt auf die
-    WinAPI (BELOW_NORMAL_PRIORITY_CLASS = 0x4000).
+    psutil is not installed in the live venv → ctypes fallback directly to WinAPI
+    (BELOW_NORMAL_PRIORITY_CLASS = 0x4000).
     """
     try:
         import psutil
@@ -150,15 +150,15 @@ def set_low_priority() -> None:
         from ctypes import wintypes
 
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        # Ohne explizite argtypes schlägt SetPriorityClass auf 64-bit still fehl
-        # (HANDLE wird als c_int übergeben) — deshalb hier sauber deklariert.
+        # Without explicit argtypes, SetPriorityClass fails on 64-bit
+        # (HANDLE is passed as c_int) — so declared cleanly here.
         k32.GetCurrentProcess.restype = wintypes.HANDLE
         k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
         k32.SetPriorityClass.restype = wintypes.BOOL
         ok = k32.SetPriorityClass(k32.GetCurrentProcess(), 0x4000)
-        print("Prozess-Priorität: BELOW_NORMAL" if ok else "WARNUNG: SetPriorityClass fehlgeschlagen")
+        print("Process priority: BELOW_NORMAL" if ok else "WARNING: SetPriorityClass failed")
     except Exception:
-        print("WARNUNG: Priorität konnte nicht gesenkt werden")
+        print("WARNING: Priority could not be lowered")
 
 
 def check_cpu_headroom() -> None:
@@ -168,18 +168,18 @@ def check_cpu_headroom() -> None:
         cpu = psutil.cpu_percent(interval=3)
         if cpu > MAX_CPU_AT_START:
             raise SystemExit(
-                f"ABBRUCH: System-CPU bei {cpu:.0f}% (> {MAX_CPU_AT_START:.0f}%) — "
-                f"Fleet nicht zusätzlich belasten (Audit Z0 / CPU_SATURATED)."
+                f"ABORT: System CPU at {cpu:.0f}% (> {MAX_CPU_AT_START:.0f}%) — "
+                f"do not add load to fleet (Audit Z0 / CPU_SATURATED)."
             )
-        print(f"CPU-Check ok: {cpu:.0f}%")
+        print(f"CPU check ok: {cpu:.0f}%")
     except SystemExit:
         raise
     except Exception:
-        print("CPU-Check übersprungen (psutil nicht verfügbar)")
+        print("CPU check skipped (psutil not available)")
 
 
 def import_bot_module(filename: str, module_name: str):
-    """Importiert ein Bot-Modul mit Ziffern-Präfix-Dateinamen (z.B. 29_ufi1_bot.py)."""
+    """Imports a bot module with digit-prefix filename (e.g. 29_ufi1_bot.py)."""
     path = os.path.join(REPO_ROOT, filename)
     spec = importlib.util.spec_from_file_location(module_name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -200,19 +200,20 @@ OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
 
 
 def _window_start(days: int) -> datetime:
-    """Untere Fenstergrenze. Aware UTC über core.time (R3-Policy) — der obere
-    Schnitt an der forming Kerze rechnet DB-seitig in core.candles."""
+    """Lower window boundary. Aware UTC via core.time (R3 policy) — the upper
+    cut at the forming candle is handled DB-side in core.candles."""
     return utc_now() - timedelta(days=int(days))
 
 
 def load_ohlcv(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:
-    """OHLCV window, ASC, GESCHLOSSENE Kerzen (R1-Disziplin).
+    """OHLCV window, ASC, CLOSED candles (R1 discipline).
 
-    Über core.candles statt roher f-String-SQL: der Cutoff dort ist Epoch-
-    Arithmetik auf der DB-Uhr und damit für JEDEN Timeframe richtig. Die
-    Nachbar-Loader schneiden mit `date_trunc('hour', NOW())` — für die 1d- und
-    4h-Reads dieses Simulators wäre das zu grob und ließe die laufende Kerze
-    stehen. Look-ahead hier vergiftet die Labels des gesamten Retrain-Programms.
+    Via core.candles instead of raw f-string SQL: the cutoff there is epoch
+    arithmetic on the DB clock and thus correct for EVERY timeframe. The
+    neighbour loaders cut with `date_trunc('hour', NOW())` — for the 1d and
+    4h reads of this simulator, that would be too coarse and leave the running
+    candle standing. Look-ahead here poisons the labels of the entire retrain
+    program.
     """
     try:
         df = read_candles(
@@ -239,10 +240,10 @@ SNIPER_JOIN_INDICATORS = SNIPER_PRICE_INDICATORS + SNIPER_ABS_INDICATORS + ["atr
 
 
 def load_joined(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:
-    """OHLCV + Indikator-Join, wie ihn 25_smc_ml_sniper live liest — aber nur
-    GESCHLOSSENE Kerzen. Live repaintet Bot 25 auf der forming Kerze (Report
-    CANDLE_CALL_SITES §3); der Replay darf das nicht nachbauen, sonst lernt das
-    Modell auf Kerzen, die es zur Entscheidungszeit nie gesehen hat."""
+    """OHLCV + indicator join, as read live by 25_smc_ml_sniper — but only
+    CLOSED candles. Live, bot 25 repaints on the forming candle (Report
+    CANDLE_CALL_SITES §3); the replay must not replicate this, otherwise the
+    model learns on candles it has never seen at decision time."""
     try:
         df = read_candles_with_indicators(
             conn, symbol, tf,
@@ -260,12 +261,12 @@ def load_joined(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:
     for c in df.columns:
         if c not in ("open_time", "trend_direction"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
-    # ffill schließt Innen-Lücken aus der VERGANGENHEIT. Ein bfill danach (wie in
-    # 25_smc_ml_sniper:220) würde die verbleibenden Kopfzeilen aus der ZUKUNFT
-    # füllen: die Warmup-Spalten (ema_200 braucht 200 Bars) sind am Anfang der
-    # Coin-Historie NULL, und run_td_bb emittiert schon ab t=WINDOW-1=149. Der
-    # Replay verwirft diese Zeilen stattdessen — ein Event ohne echte Indikatoren
-    # ist kein Trainingsdatum (T-2026-CU-9050-045).
+    # ffill closes gaps from the PAST. A bfill afterwards (like in
+    # 25_smc_ml_sniper:220) would fill remaining rows from the FUTURE:
+    # the warmup columns (ema_200 needs 200 bars) are NULL at the start of the
+    # coin history, and run_td_bb already emits from t=WINDOW-1=149. The replay
+    # discards these rows instead — an event without real indicators is not a
+    # training datum (T-2026-CU-9050-045).
     df.ffill(inplace=True)
     df = df.dropna()
     if df.empty:
@@ -274,7 +275,7 @@ def load_joined(conn, symbol: str, tf: str, days: int) -> pd.DataFrame | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EXIT-SIMULATION — wick-aware First-Touch, SL-first, Fees, Monitor-Trailing
+# EXIT SIMULATION — wick-aware first-touch, SL-first, fees, monitor trailing
 # ─────────────────────────────────────────────────────────────────────────────
 def simulate_exit(
     times: np.ndarray,
@@ -289,16 +290,16 @@ def simulate_exit(
     n_published: int,
     fee_per_side: float = FEE_PER_SIDE,
 ) -> dict:
-    """First-Touch-Scan über die Kerzen ab start_idx (alles NACH der Entry-Kerze).
+    """First-touch scan over candles from start_idx (everything AFTER the entry candle).
 
-    Zwei Ergebnisse in einem Pass:
-      * outcome_tp1  — 1 wenn TP1 vor SL berührt wird, 0 wenn SL zuerst,
-                       None wenn bis Datenende keins von beidem (Trade offen).
-                       Bei TP1 UND SL in derselben Kerze: SL zuerst (konservativ).
-      * ladder       — Cornix-Approximation: Position in 1/n gleiche Teile über
-                       die publizierten TPs; Trailing wie 8_ai_trade_monitor
-                       (ab TP2 rückt der SL auf targets[k-2]); Rest schließt am
-                       (ggf. nachgezogenen) SL. Fees je Fill beidseitig.
+    Two results in one pass:
+      * outcome_tp1 — 1 when TP1 is touched before SL, 0 if SL first,
+                      None if neither by end of data (trade open).
+                      If TP1 AND SL in the same candle: SL first (conservative).
+      * ladder — Cornix approximation: position in 1/n equal parts over
+                 the published TPs; trailing like 8_ai_trade_monitor
+                 (from TP2 on, SL moves to targets[k-2]); rest closes at the
+                 (possibly trailing) SL. Fees per fill both ways.
     """
     is_long = direction.upper() == "LONG"
     tps = [float(t) for t in targets[:n_published]] if targets else []
@@ -307,9 +308,9 @@ def simulate_exit(
     frac = 1.0 / len(tps)
 
     cur_sl = float(sl)
-    next_tp = 0  # Index des nächsten offenen TP
+    next_tp = 0  # Index of next open TP
     outcome_tp1 = None
-    realized = 0.0  # Netto-PnL in % des Nominals (Summe über Teil-Fills)
+    realized = 0.0  # Net PnL in % of notional (sum over partial fills)
     exit_reason, exit_time = None, None
 
     def leg_pnl(exit_price: float, fraction: float) -> float:
@@ -323,7 +324,7 @@ def simulate_exit(
         sl_hit = (lo <= cur_sl) if is_long else (hi >= cur_sl)
         tp_hit = (hi >= tps[next_tp]) if is_long else (lo <= tps[next_tp])
 
-        if sl_hit:  # SL-first bei Ambiguität — konservativ (Monitor-Konvention)
+        if sl_hit:  # SL-first in case of ambiguity — conservative (monitor convention)
             if outcome_tp1 is None:
                 outcome_tp1 = 0 if next_tp == 0 else 1
             remaining = 1.0 - next_tp * frac
@@ -347,7 +348,7 @@ def simulate_exit(
         i += 1
 
     if exit_reason is None:
-        # Datenende: Rest mark-to-market am letzten Close (Trade real noch offen)
+        # Data end: rest mark-to-market at last close (trade still really open)
         remaining = 1.0 - next_tp * frac
         if remaining > 0 and n > start_idx:
             realized += leg_pnl(closes[n - 1], remaining)
@@ -366,10 +367,10 @@ def simulate_exit(
 
 
 def first_idx_after(times: np.ndarray, ts) -> int:
-    """Index der ersten Kerze mit open_time > ts (Exits beginnen NACH der Entry-Kerze).
+    """Index of first candle with open_time > ts (exits start AFTER the entry candle).
 
-    `times` ist das naive-UTC datetime64-Array aus `df["open_time"].values`
-    (pandas strippt die TZ bei .values); tz-aware Eingaben werden angeglichen.
+    `times` is the naive-UTC datetime64 array from `df["open_time"].values`
+    (pandas strips TZ at .values); tz-aware inputs are aligned.
     """
     ts = pd.Timestamp(ts)
     if ts.tzinfo is not None:
@@ -378,16 +379,16 @@ def first_idx_after(times: np.ndarray, ts) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ADAPTER 1: UFI1 (P0.11-Validierung)
+# ADAPTER 1: UFI1 (P0.11 validation)
 # ─────────────────────────────────────────────────────────────────────────────
 def run_ufi1(conn, symbol: str, days: int, ufi1_mod) -> list[dict]:
-    """Walk-forward über Daily-Kerzen mit der Bot-eigenen find_ufi1_setup().
+    """Walk-forward over daily candles with the bot's own find_ufi1_setup().
 
-    Entscheidungspunkt: Close jeder Daily-Kerze (der Bot scannt alle 4h mit
-    Live-Preis; die Daily-Granularität ist die konservative Näherung — jedes
-    Setup, das der Bot binnen des Tages genommen hätte, wird spätestens am
-    Tagesschluss genommen). Entry = CMP (letzter Close), SL/TP1 aus dem Setup —
-    exakt die gepostete Geometrie (Single-TP1, kein Trailing-Ladder!).
+    Decision point: close of each daily candle (the bot scans every 4h with
+    live price; daily granularity is the conservative approximation — every
+    setup the bot would have taken during the day is taken by end of day at the
+    latest). Entry = CMP (last close), SL/TP1 from setup — exactly the posted
+    geometry (single-TP1, no trailing ladder!).
     """
     lookback = getattr(ufi1_mod, "DAILY_BARS_LOOKBACK", 120)
     cooldown_h = getattr(ufi1_mod, "COOLDOWN_HOURS", 48)
@@ -403,7 +404,7 @@ def run_ufi1(conn, symbol: str, days: int, ufi1_mod) -> list[dict]:
     h1h, l1h, c1h = df1h["high"].values, df1h["low"].values, df1h["close"].values
 
     df1d_idx = df1d.set_index("open_time")
-    # Naive UTC durchgängig — die 1h-Exit-Serie ist via .values ebenfalls naiv.
+    # Naive UTC throughout — the 1h exit series is also naive via .values.
     df1d_idx.index = df1d_idx.index.tz_localize(None)
     dates = df1d_idx.index
     replay_start = dates.max() - pd.Timedelta(days=days)
@@ -413,13 +414,13 @@ def run_ufi1(conn, symbol: str, days: int, ufi1_mod) -> list[dict]:
     open_until = None
 
     for t in range(len(dates)):
-        ts_close = dates[t] + pd.Timedelta(days=1)  # Kerze t ist ab hier geschlossen
+        ts_close = dates[t] + pd.Timedelta(days=1)  # Candle t is closed from here
         if dates[t] < replay_start:
             continue
         if cooldown_until is not None and ts_close < cooldown_until:
             continue
         if open_until is not None and ts_close < open_until:
-            continue  # Bot-Dedup: aktiver UFI1-Trade auf dem Coin blockiert neue Signale
+            continue  # Bot dedup: active UFI1 trade on the coin blocks new signals
 
         window = df1d_idx.iloc[max(0, t + 1 - lookback): t + 1]
         if len(window) < 15:
@@ -451,10 +452,10 @@ def run_ufi1(conn, symbol: str, days: int, ufi1_mod) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ADAPTER 2/3: TD / BB (25_smc_ml_sniper-Erkennung, 1:1 nachgebaut)
+# ADAPTER 2/3: TD / BB (25_smc_ml_sniper detection, rebuilt 1:1)
 # ─────────────────────────────────────────────────────────────────────────────
 def _sniper_features(df: pd.DataFrame, idx: int, direction: str) -> dict:
-    """== 25_smc_ml_sniper.extract_ml_features (Feature-Kerze idx)."""
+    """== 25_smc_ml_sniper.extract_ml_features (feature candle idx)."""
     close_prev = float(df["close"].iloc[idx])
     feats = {
         "dir_num": 1 if direction == "LONG" else 0,
@@ -473,13 +474,13 @@ def _sniper_features(df: pd.DataFrame, idx: int, direction: str) -> dict:
 
 
 def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
-    """Walk-forward der Sniper-Erkennung: pro geschlossener Kerze ein Scan über
-    das 150-Kerzen-Fenster (wie live `ORDER BY open_time DESC LIMIT 150`).
+    """Walk-forward of the sniper detection: per closed candle, a scan over
+    the 150-candle window (like live `ORDER BY open_time DESC LIMIT 150`).
 
-    Emittiert ALLE Detektor-Events (auch die, die live am ML-Threshold oder am
-    BB_1H-LONG-Parking scheitern würden) — Flag `live_gated` markiert sie. Für
-    das Retraining sind alle Events Trainingsdaten; für Kalibrierungsvergleiche
-    filtert man auf live_gated=False.
+    Emits ALL detector events (even those that would fail live at the ML
+    threshold or at BB_1H-LONG parking) — flag `live_gated` marks them. For
+    retraining, all events are training data; for calibration comparisons,
+    filter on live_gated=False.
     """
     PIVOT_WINDOW = 10
     MAX_TD_SPAN = 50
@@ -490,8 +491,8 @@ def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
     if df is None or len(df) < WINDOW + 10:
         return []
 
-    # 1h-Serie für Smart-Targets-Fenster (live liest calculate_smart_targets
-    # IMMER die 1h-Tabelle) und für die Exit-Simulation.
+    # 1h series for smart targets window (live reads calculate_smart_targets
+    # ALWAYS the 1h table) and for exit simulation.
     df1h = df[["open_time", "open", "high", "low", "close", "volume"]] if tf == "1h" else load_ohlcv(conn, symbol, "1h", days)
     if df1h is None or len(df1h) < 100:
         return []
@@ -554,7 +555,7 @@ def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
             continue
 
         if which == "td":
-            # 1a. Bearish Three-Drive (SHORT)
+            # 1a. Bearish three-drive (SHORT)
             p3 = peak_idx[-1]
             if n_w - p3 <= PIVOT_WINDOW + 2:
                 p1, p2 = peak_idx[-3], peak_idx[-2]
@@ -562,7 +563,7 @@ def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
                     if r_w[p1] > r_w[p2] > r_w[p3]:
                         try_emit("SHORT", lo_b + p3, t, False,
                                  {"p1": int(lo_b + p1), "p2": int(lo_b + p2), "p3": int(lo_b + p3)})
-            # 1b. Bullish Three-Drive (LONG)
+            # 1b. Bullish three-drive (LONG)
             q3 = trough_idx[-1]
             if n_w - q3 <= PIVOT_WINDOW + 2:
                 q1, q2 = trough_idx[-3], trough_idx[-2]
@@ -572,7 +573,7 @@ def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
                                  {"p1": int(lo_b + q1), "p2": int(lo_b + q2), "p3": int(lo_b + q3)})
 
         elif which == "bb":
-            # 2a. Breaker Block LONG (live geparkt für tf=1h → live_gated)
+            # 2a. Breaker block LONG (live parked for tf=1h → live_gated)
             p_res = peak_idx[-2]
             pivot_res = h_w[p_res]
             if pivot_res * 0.995 <= current_price <= pivot_res * 1.005:
@@ -585,7 +586,7 @@ def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
                     if max(h_w[breakout_idx: n_w - 1]) > pivot_res * 1.003:
                         try_emit("LONG", lo_b + n_w - 2, t, tf == "1h",
                                  {"level": float(pivot_res), "breakout_idx": int(lo_b + breakout_idx)})
-            # 2b. Breaker Block SHORT (live auf BEIDEN TFs aktiv — Parking-Lücke!)
+            # 2b. Breaker block SHORT (live active on BOTH TFs — parking gap!)
             p_sup = trough_idx[-2]
             pivot_sup = l_w[p_sup]
             if pivot_sup * 0.995 <= current_price <= pivot_sup * 1.005:
@@ -603,21 +604,21 @@ def run_td_bb(conn, symbol: str, tf: str, days: int, which: str) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ADAPTER 4: ABR1 (18_ai_abr1_bot-Erkennung; Feature-Builder aus dem Bot-Modul)
+# ADAPTER 4: ABR1 (18_ai_abr1_bot detection; feature builder from bot module)
 # ─────────────────────────────────────────────────────────────────────────────
 def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
-    """Walk-forward der ABR1-Erkennung: pro geschlossener 1h-Kerze prüft der
-    Replay genau diese Kerze als Retest-Kandidat (== Bot-Verhalten seit dem
-    Detektor-Rework 2026-07).
+    """Walk-forward of the ABR1 detection: per closed 1h candle, the replay
+    checks exactly this candle as a retest candidate (== bot behavior since the
+    detector rework 2026-07).
 
-    Die Erkennung kommt komplett aus dem Bot-Modul (find_break_retest_setups:
-    Richtungs-Kopplung des Retests, Hold-Check, Erst-Touch, bestätigte Pivots)
-    — eine Quelle, kein Skew. Die Setup-Geometrie-Features des Detektors
-    landen mit im Feature-Dict des Replay-Events.
+    The detection comes entirely from the bot module (find_break_retest_setups:
+    direction coupling of retest, hold check, first-touch, confirmed pivots) —
+    one source, no skew. The detector's setup geometry features end up in the
+    feature dict of the replay event.
 
-    Indikatoren werden EINMAL über die Gesamtserie via Bot-Feature-Builder
-    berechnet (== Trainer-Verhalten; minimale Abweichung zum 240h-Fenster des
-    Bots bei rekursiven Indikatoren, dokumentiert im Report).
+    Indicators are calculated ONCE over the entire series via bot feature builder
+    (== trainer behavior; minimal deviation from the bot's 240h window for
+    recursive indicators, documented in the report).
     """
     HIST = abr1_mod.LIVE_DATA_HISTORY_HOURS  # 240
 
@@ -625,7 +626,7 @@ def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
     if df is None or len(df) < HIST + 10:
         return []
 
-    # Feature-Builder des Bots (mit P0.12-Prefix-Fix) über die Gesamtserie
+    # Bot feature builder (with P0.12 prefix fix) over the entire series
     df_ind = abr1_mod.calculate_technical_indicators(df.copy())
     feature_cols = abr1_mod.FEATURE_COLUMNS
 
@@ -673,22 +674,22 @@ def run_abr1(conn, symbol: str, days: int, abr1_mod) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ADAPTER 5: MIS1 (dichte Stichprobe je geschlossener 1h-Kerze — Retrain-Labels)
+# ADAPTER 5: MIS1 (dense sample per closed 1h candle — retrain labels)
 # ─────────────────────────────────────────────────────────────────────────────
-MIS1_HORIZONS = (8, 24, 72, 168)  # alle Live-Horizonte des Bots; 2026-07-05 um 8/24 erweitert (vorher Report-16-Fokus 72/168)
-MIS1_WARMUP = 30  # volume_sma20 (20) + Deltas; DB-Indikatoren kommen fertig aus dem Join
+MIS1_HORIZONS = (8, 24, 72, 168)  # all bot live horizons; extended 2026-07-05 for 8/24 (previously report-16 focus 72/168)
+MIS1_WARMUP = 30  # volume_sma20 (20) + deltas; DB indicators come ready from join
 
 
 def load_mis1_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
-    """1h-Kerzen + Indikator-Join mit der geteilten Spaltenliste aus
-    core.mis_features. NUR geschlossene Kerzen (R1-Disziplin) — die laufende
-    Stunde fliegt am date_trunc-Filter raus."""
+    """1h candles + indicator join with the shared column list from
+    core.mis_features. ONLY closed candles (R1 discipline) — the running
+    hour is filtered out by date_trunc."""
     # R1: the h⋈i JOIN → read_candles_with_indicators. The candle side keeps full
     # OHLCV (labeling needs high/low); the indicator side is the shared
     # MIS_INDICATOR_COLUMNS. include_forming=False == the old
     # `h.open_time < date_trunc('hour', NOW())` closed filter; MIS_RENAME_MAP
     # reproduces the three tsi/macd aliases so the frame stays byte-equal to
-    # 11_ai_mis (harte Regel 7, Trainer == Serving). The days-window is a soft
+    # 11_ai_mis (hard rule 7, Trainer == Serving). The days-window is a soft
     # lower bound (Python-vs-DB now() skew can't straddle an hourly candle).
     try:
         df = read_candles_with_indicators(
@@ -714,21 +715,21 @@ def load_mis1_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
 
 
 def run_mis1(conn, symbol: str, days: int, stride: int) -> list[dict]:
-    """MIS1 ist NICHT detektor-gated — live scored der Bot jeden Coin jede Stunde.
-    Der Replay sampelt deshalb dicht: jede `stride`-te geschlossene Kerze, mit
-    deterministischem per-Coin-Offset (crc32), damit nicht alle Coins zur selben
-    Marktstunde gesampelt werden (querschnittliche Zwillings-Korrelation).
+    """MIS1 is NOT detector gated — live, the bot scores every coin every hour.
+    The replay therefore samples densely: every `stride`-th closed candle, with
+    deterministic per-coin offset (crc32), so not all coins are sampled at the
+    same market hour (cross-sectional twin correlation).
 
-    Je Sample und Richtung: Geometrie = calculate_smart_targets auf dem
-    1000-Kerzen-Fenster BIS zur Entscheidungskerze (exakt die Live-Funktion),
-    Exits horizontgekappt (8h/24h/72h/168h) in EINEM Lauf — Label = TP1-vor-SL
-    INNERHALB des Horizonts; Timeout mit vollem Datenfenster ist eine 0,
-    Datenende vor Horizontende bleibt None (wird beim Training verworfen).
+    Per sample and direction: geometry = calculate_smart_targets on the
+    1000-candle window UNTIL the decision candle (exactly the live function),
+    exits capped horizontally (8h/24h/72h/168h) in ONE run — label = TP1-before-SL
+    WITHIN the horizon; timeout with full data window is 0, data end before
+    horizon end remains None (discarded during training).
 
-    Bewusste Näherung: Entry = Close der frisch geschlossenen Kerze (der Bot
-    nutzt den Live-Preis ~11 Minuten nach Stundenschluss).
-    Kein Cooldown im Replay — Dedup übernimmt der Stride; die Live-Cooldowns
-    drosseln nur das POSTING, nicht das Scoring."""
+    Intentional approximation: entry = close of freshly closed candle (the bot
+    uses live price ~11 minutes after the hour closes).
+    No cooldown in replay — stride handles dedup; live cooldowns only throttle
+    POSTING, not SCORING."""
     import zlib
 
     df = load_mis1_frame(conn, symbol, days)
@@ -755,12 +756,12 @@ def run_mis1(conn, symbol: str, days: int, stride: int) -> list[dict]:
         features = {k: round(float(feats_df[k].iloc[t]), 6) for k in MIS1_FEATURE_COLS}
         legacy = {k: round(float(feats_df[k].iloc[t]), 6) for k in MIS1_LEGACY_COLS}
 
-        # Level-Pool ist richtungsunabhängig → einmal rechnen, beide Richtungen
-        # (bit-identisch zum Doppel-Call, Paritätstest 2026-07-05).
+        # Level pool is direction independent → calculate once, both directions
+        # (bit-identical to double call, parity test 2026-07-05).
         try:
             pool = compute_smart_target_levels(win1h, current_price)
         except Exception:
-            pool = None  # calculate_smart_targets läuft dann in den Live-Fallback
+            pool = None  # calculate_smart_targets then falls back to live
 
         for direction in ("LONG", "SHORT"):
             setup = calculate_smart_targets(None, symbol, direction, current_price, df=win1h, levels=pool)
@@ -780,14 +781,14 @@ def run_mis1(conn, symbol: str, days: int, stride: int) -> list[dict]:
                 )
                 out = r["outcome_tp1"]
                 if out is None:
-                    # weder TP1 noch SL berührt: mit vollem Horizontfenster eine
-                    # ehrliche 0, bei Datenende vor Horizontende kein Label.
+                    # neither TP1 nor SL touched: with full horizon window an
+                    # honest 0, data end before horizon end has no label.
                     out = 0 if full_window else None
                 rec[f"outcome_{hours}h"] = out
                 rec[f"net_pnl_{hours}h"] = r["net_pnl_pct"]
                 rec[f"exit_reason_{hours}h"] = r["exit_reason"]
                 rec[f"r_multiple_{hours}h"] = r["r_multiple"]
-            # Kompatibilität mit summarize()/load_replay(): Langhorizont als Hauptlabel
+            # Compatibility with summarize()/load_replay(): long horizon as main label
             rec["outcome_tp1"] = rec[f"outcome_{MIS1_HORIZONS[-1]}h"]
             rec["net_pnl_pct"] = rec[f"net_pnl_{MIS1_HORIZONS[-1]}h"]
             rec["r_multiple"] = rec[f"r_multiple_{MIS1_HORIZONS[-1]}h"]
@@ -798,11 +799,11 @@ def run_mis1(conn, symbol: str, days: int, stride: int) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ADAPTER 6: RUB (Rubberband Mean Reversion — Vorfilter-Events nachspielen)
+# ADAPTER 6: RUB (Rubberband mean reversion — replay filter events)
 # ─────────────────────────────────────────────────────────────────────────────
-RUB_REG_WINDOW_H = 95 * 24   # Regressions-/Level-Fenster wie im Bot (95d-Query)
+RUB_REG_WINDOW_H = 95 * 24   # Regression/level window like in bot (95d query)
 RUB_MIN_REG_ROWS = 50        # Bot: len(rows_90d) < 50 → skip
-RUB_COOLDOWN_H = 4           # Live-Cooldown je Coin/Richtung (Bot 13)
+RUB_COOLDOWN_H = 4           # Live cooldown per coin/direction (bot 13)
 
 # The 9 indicator columns bot 13/34 (RUB2/MAX1) read as-of each closed candle —
 # same set as 34_ai_max1_bot's query_ind (Trainer == Serving). Raw DB names, no
@@ -822,8 +823,8 @@ _RUB_INDICATOR_COLUMNS = [
 
 
 def load_rub_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
-    """1h-Kerzen + exakt die Indikatoren, die Bot 13 abfragt (as-of pro Kerze).
-    NUR geschlossene Kerzen (R1-Disziplin)."""
+    """1h candles + exactly the indicators bot 13 queries (as-of per candle).
+    ONLY closed candles (R1 discipline)."""
     # R1: h⋈i JOIN → read_candles_with_indicators (OHLCV candle side for labeling +
     # _RUB_INDICATOR_COLUMNS, raw names, no rename). include_forming=False == the old
     # `h.open_time < date_trunc('hour', NOW())` closed filter; the days+100 window is
@@ -851,7 +852,7 @@ def load_rub_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
 
 
 def _rub_val(arr, i, default):
-    """NaN/Inf → default (Spiegel von get_f im Bot)."""
+    """NaN/Inf → default (mirror of get_f in bot)."""
     v = arr[i]
     try:
         fv = float(v)
@@ -861,17 +862,17 @@ def _rub_val(arr, i, default):
 
 
 def run_rub1(conn, symbol: str, days: int) -> list[dict]:
-    """Walk-forward des RUB-Vorfilters: je geschlossener 1h-Kerze wird die
-    Rubberband-Bedingung geprüft (== stündlicher Live-Scan von Bot 13).
+    """Walk-forward of the RUB filter: for each closed 1h candle, the
+    rubberband condition is checked (== hourly live scan of bot 13).
 
-    EINE Quelle mit dem Bot (core/rub_features: Regression, Vorfilter,
-    9-Feature-Vertrag) + Live-Geometrie as-of (get_hvn_and_sr_levels(df=...) +
-    hvn_sr_trade_geometry + ensure_min_tp_distance). 4h-Cooldown je Richtung
-    wie live. Zusätzlich die 6 Funding-Features (core/funding_features) im
-    Feature-Dict — für den RUB2-Retrain (MODEL_INTENT §8).
+    ONE source with the bot (core/rub_features: regression, filter,
+    9-feature contract) + live geometry as-of (get_hvn_and_sr_levels(df=...) +
+    hvn_sr_trade_geometry + ensure_min_tp_distance). 4h cooldown per direction
+    like live. Additionally, the 6 funding features (core/funding_features) in
+    the feature dict — for the RUB2 retrain (MODEL_INTENT §8).
 
-    Bewusste Näherung: Entry = Close der frisch geschlossenen Kerze (der Bot
-    nutzt den Preis kurz nach Stundenschluss)."""
+    Intentional approximation: entry = close of freshly closed candle (the bot
+    uses price shortly after the hour closes)."""
     df = load_rub_frame(conn, symbol, days)
     if df is None or len(df) < RUB_MIN_REG_ROWS + 2:
         return []
@@ -889,11 +890,11 @@ def run_rub1(conn, symbol: str, days: int) -> list[dict]:
     ts_sec = epoch_seconds(df["open_time"])
     n = len(df)
 
-    # Replay-Fenster: die Warmup-Historie (Regressions-Lookback) liegt VOR dem
-    # angeforderten Zeitraum, Events entstehen nur in den letzten `days` Tagen.
+    # Replay window: the warmup history (regression lookback) lies BEFORE the
+    # requested timeframe, events only occur in the last `days` days.
     start_t = max(RUB_MIN_REG_ROWS, n - days * 24)
 
-    # t1h stammt aus .values → naive UTC-datetime64; Cooldown-Marker ebenfalls naiv.
+    # t1h comes from .values → naive UTC-datetime64; cooldown markers also naive.
     cooldown = {"LONG": pd.Timestamp.min, "SHORT": pd.Timestamp.min}
     trades: list[dict] = []
     for t in range(start_t, n - 1):
@@ -910,8 +911,8 @@ def run_rub1(conn, symbol: str, days: int) -> list[dict]:
         dc_lower = _rub_val(df["donchian_lower_20"].values, t, curr_close)
         dc_upper = _rub_val(df["donchian_upper_20"].values, t, curr_close)
 
-        # Regression erst NACH einem billigen Vor-Vorfilter? Nein — dist_to_trend
-        # steckt in der Bedingung selbst; die Closed-Form-Regression ist billig.
+        # Regression only AFTER a cheap pre-filter? No — dist_to_trend is
+        # in the condition itself; the closed-form regression is cheap.
         dist_pct, slope_day = rub_trend(ts_sec[lo: t + 1], c1h[lo: t + 1], curr_close)
         event_type = rub_event_type(dist_pct, rsi, tsi_line, curr_close, dc_lower, dc_upper)
         if not event_type:
@@ -956,9 +957,9 @@ def run_rub1(conn, symbol: str, days: int) -> list[dict]:
 
 
 def load_ats_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
-    """1h-Kerzen + exakt die Indikatoren, die Bot 12 joint (core.ats_features),
-    NUR geschlossene Kerzen (R1). Numerisch + fillna(0) wie Bot 12 (Zeile 120),
-    damit die abgeleiteten Features bit-gleich sind."""
+    """1h candles + exactly the indicators bot 12 joins (core.ats_features),
+    ONLY closed candles (R1). Numeric + fillna(0) like bot 12 (line 120),
+    so the derived features are bit-identical."""
     try:
         df = read_candles_with_indicators(
             conn,
@@ -982,26 +983,25 @@ def load_ats_frame(conn, symbol: str, days: int) -> pd.DataFrame | None:
 
 
 def run_ats(conn, symbol: str, days: int) -> list[dict]:
-    """Walk-forward des ATS/TSI-Snipers (Bot 12) für den ATS2-Retrain.
+    """Walk-forward of the ATS/TSI sniper (bot 12) for the ATS2 retrain.
 
-    EINE Quelle mit dem Bot: core.ats_features (TSI-Crossover-Vorfilter,
-    29-Feature-Vertrag, OBV/VWAP) + dieselbe HVN/S-R-Geometrie
-    (core.trade_utils.hvn_sr_trade_geometry, byte-identisch zur Bot-Inline-
-    Geometrie). Je geschlossener 1h-Kerze wird auf einen TSI-Signallinien-
-    Crossover geprüft (== stündlicher Live-Scan von Bot 12); Entry = Close der
-    frisch geschlossenen Kerze, Label = First-Touch TP1-vor-SL der geposteten
-    Geometrie (simulate_exit, Fees inkl.).
+    ONE source with the bot: core.ats_features (TSI-crossover filter,
+    29-feature contract, OBV/VWAP) + same HVN/S-R geometry
+    (core.trade_utils.hvn_sr_trade_geometry, byte-identical to bot inline
+    geometry). For each closed 1h candle, we check for a TSI signal line
+    crossover (== hourly live scan of bot 12); entry = close of freshly closed
+    candle, label = first-touch TP1-before-SL of posted geometry
+    (simulate_exit, fees included).
 
-    Kein Cooldown: TSI-Crossovers sind flankengetriggert und alternieren je
-    Richtung — anders als der RUB-Schwellwert-Vorfilter feuern sie nicht mehrfach
-    hintereinander in dieselbe Richtung.
+    No cooldown: TSI-crossovers are edge-triggered and alternate per direction —
+    unlike the RUB-threshold filter, they don't fire multiple times in a row in
+    the same direction.
 
-    OBV-Baseline-Parität (harte Regel 7): der Bot normalisiert OBV auf den Start
-    seines 500-Kerzen-Fensters; der Replay reicht für jedes Event exakt dieses
-    Fenster durch (df.iloc[t+1-500 : t+1]). Der Warmup (ATS_WARMUP_DAYS) sorgt
-    dafür, dass alte Coins ein volles 500er-Fenster haben; junge Coins sind
-    ebenfalls deckungsgleich, weil ihr Fenster wie beim Bot am Coin-Start
-    anliegt."""
+    OBV-baseline parity (hard rule 7): the bot normalizes OBV to the start of
+    its 500-candle window; the replay passes for each event exactly this window
+    (df.iloc[t+1-500 : t+1]). The warmup (ATS_WARMUP_DAYS) ensures that old
+    coins have a full 500-candle window; young coins are also congruent because
+    their window like the bot's starts at the coin start."""
     df = load_ats_frame(conn, symbol, days)
     if df is None or len(df) < ATS_MIN_HISTORY + 2:
         return []
@@ -1012,8 +1012,8 @@ def run_ats(conn, symbol: str, days: int) -> list[dict]:
     tsi_sig = df[TSI_SIGNAL_COL].values
     n = len(df)
 
-    # Events nur im angeforderten Zeitraum; der Warmup davor garantiert je Event
-    # ein volles 500-Kerzen-/95d-Fenster.
+    # Events only in the requested timeframe; the warmup before guarantees each
+    # event a full 500-candle/95d window.
     start_t = max(ATS_MIN_HISTORY, n - days * 24)
     trades: list[dict] = []
     for t in range(start_t, n - 1):
@@ -1053,23 +1053,22 @@ def run_ats(conn, symbol: str, days: int) -> list[dict]:
 
 
 def run_atb2(conn, symbol: str, days: int) -> list[dict]:
-    """Walk-forward des ATB2-Converging-Channel-Detektors (MODEL_INTENT §11).
+    """Walk-forward of the ATB2 converging-channel detector (MODEL_INTENT §11).
 
-    EINE Quelle mit Bot 14: ``core.atb2_features`` (bestätigte Pivots, Kanal-Fit,
-    geschlossener Ausbruch, Feature-Vertrag). Je geschlossener 1h-Kerze wird
-    geprüft, ob ein konvergierender Kanal (Wedge/Triangle/Pennant) ausbricht.
+    ONE source with bot 14: ``core.atb2_features`` (confirmed pivots, channel fit,
+    closed breakout, feature contract). For each closed 1h candle, we check if a
+    converging channel (wedge/triangle/pennant) breaks out.
 
-    Label-Geometrie = Measured-Move (§11: ⅓/⅔/1× Kanalbreite) — die
-    kanal-native Geometrie, die der Bot postet (kein DB-Level-Pool nötig →
-    Train==Serve exakt). Zusätzlich werden die Fleet-Smart-Targets derselben
-    Kerze simuliert und als Vergleich (``smart_*``) ins Record geschrieben —
-    §11 will Measured-Move GEGEN Smart-Targets im Replay bewertet sehen, ohne
-    dafür die Trainings-Label-Quelle zu verwässern.
+    Label geometry = measured move (§11: ⅓/⅔/1× channel width) — the channel-native
+    geometry that the bot posts (no DB level pool needed → Train==Serve exactly).
+    Additionally, the fleet smart targets of the same candle are simulated and
+    written as comparison (``smart_*``) to the record — §11 wants measured-move
+    evaluated AGAINST smart targets in replay, without diluting the training
+    label source.
 
-    4h-Cooldown je Richtung; Entry = Close der frisch geschlossenen
-    Ausbruchskerze."""
+    4h cooldown per direction; entry = close of freshly closed breakout candle."""
     df = load_ohlcv(conn, symbol, "1h", days + ATB2_WARMUP_DAYS)
-    # hist deckt Kanal-Lookback UND EMA200-Konvergenz (Paritäts-Kontrakt) ab.
+    # hist covers channel lookback AND EMA200 convergence (parity contract).
     hist = max(atb.CHANNEL_MAX_SPAN + atb.CONFIRM_BARS + atb.ATR_PERIOD, atb.MIN_HISTORY_CANDLES)
     if df is None or len(df) < hist + 2:
         return []
@@ -1080,7 +1079,7 @@ def run_atb2(conn, symbol: str, days: int) -> list[dict]:
     start_t = max(hist, len(df) - days * 24)
     cooldown = {"LONG": pd.Timestamp.min, "SHORT": pd.Timestamp.min}
     trades: list[dict] = []
-    # -1: simulate_exit braucht mindestens eine Folgekerze nach dem Break.
+    # -1: simulate_exit needs at least one candle after the break.
     for t in range(start_t, len(df) - 1):
         setup = atb.find_channel_breakout(df_ind, t)
         if setup is None:
@@ -1098,7 +1097,7 @@ def run_atb2(conn, symbol: str, days: int) -> list[dict]:
         res = simulate_exit(t1h, H, L, C, t + 1, direction,
                             mm["entry1"], mm["sl"], mm["targets"], PUBLISHED_TARGETS["atb2"])
 
-        # §11-Vergleich: dieselbe Kerze mit den Fleet-Smart-Targets.
+        # §11 comparison: same candle with fleet smart targets.
         win1h = df.iloc[max(0, t + 1 - 1000): t + 1][["open", "high", "low", "close", "volume"]]
         try:
             smart = calculate_smart_targets(None, symbol, direction, entry, df=win1h)
@@ -1146,22 +1145,22 @@ def summarize(trades: list[dict], label: str) -> dict:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Walk-Forward-Simulator (P0.10/P0.11)")
+    ap = argparse.ArgumentParser(description="Walk-forward simulator (P0.10/P0.11)")
     ap.add_argument("--strategy", required=True,
                     choices=["ufi1", "td", "bb", "abr1", "mis1", "rub", "atb2", "ats"])
-    ap.add_argument("--tf", default="1h", choices=["1h", "4h"], help="nur für td/bb")
+    ap.add_argument("--tf", default="1h", choices=["1h", "4h"], help="only for td/bb")
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--stride", type=int, default=24,
-                    help="mis1: jede N-te geschlossene Kerze sampeln (per-Coin-Offset dedupliziert Marktstunden)")
-    ap.add_argument("--coins", default=None, help="Kommagetrennte Liste; Default: coins.json")
-    ap.add_argument("--limit", type=int, default=None, help="nur die ersten N Coins")
+                    help="mis1: sample every N-th closed candle (per-coin offset deduplicates market hours)")
+    ap.add_argument("--coins", default=None, help="comma-separated list; default: coins.json")
+    ap.add_argument("--limit", type=int, default=None, help="only the first N coins")
     ap.add_argument("--out", default=DEFAULT_OUT_DIR)
     ap.add_argument("--resume", action="store_true",
-                    help="an bestehendes JSONL anhängen und bereits enthaltene Coins überspringen")
+                    help="append to existing JSONL and skip already contained coins")
     args = ap.parse_args()
 
-    # cp1252-Konsole: Emojis/Sonderzeichen in Fehlermeldungen dürfen den Lauf
-    # nicht per UnicodeEncodeError abbrechen.
+    # cp1252 console: emojis/special characters in error messages must not break
+    # the run via UnicodeEncodeError.
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -1190,15 +1189,15 @@ def main() -> None:
                 try:
                     tr = json.loads(line)
                 except json.JSONDecodeError:
-                    continue  # abgeschnittene letzte Zeile eines abgebrochenen Laufs
+                    continue  # truncated last line of interrupted run
                 all_trades.append(tr)
                 done_symbols.add(tr["symbol"])
-        # Der zuletzt geschriebene Coin könnte unvollständig sein → neu rechnen.
+        # The last written coin could be incomplete → recalculate.
         if all_trades:
             last_sym = all_trades[-1]["symbol"]
             all_trades = [t for t in all_trades if t["symbol"] != last_sym]
             done_symbols.discard(last_sym)
-        print(f"Resume: {len(done_symbols)} Coins / {len(all_trades)} Trades übernommen")
+        print(f"Resume: {len(done_symbols)} coins / {len(all_trades)} trades taken over")
 
     def fresh_conn():
         c = get_db_connection()
@@ -1211,7 +1210,7 @@ def main() -> None:
     conn = fresh_conn()
     t0 = time.time()
     try:
-        # Auch bei Resume konsolidiert neu schreiben (übernommene Trades zuerst).
+        # Even with resume, consolidate and rewrite (taken trades first).
         with open(out_path, "w", encoding="utf-8") as fh:
             for tr in all_trades:
                 fh.write(json.dumps(tr, default=str) + "\n")
@@ -1237,9 +1236,9 @@ def main() -> None:
                             trades = run_abr1(conn, symbol, args.days, abr1_mod)
                         break
                     except Exception as e:
-                        print(f"  !! {symbol} (Versuch {attempt}): {e}")
-                        # Tote Connection (z.B. DB-Neustart/Idle-Kill nach Stunden)
-                        # nicht den ganzen Lauf reißen lassen — reconnecten.
+                        print(f"  !! {symbol} (attempt {attempt}): {e}")
+                        # Dead connection (e.g. DB restart/idle kill after hours)
+                        # don't let it break the entire run — reconnect.
                         try:
                             conn.rollback()
                         except Exception:
@@ -1249,9 +1248,9 @@ def main() -> None:
                                 pass
                             try:
                                 conn = fresh_conn()
-                                print(f"  ↻ DB-Reconnect vor erneutem Versuch von {symbol}")
+                                print(f"  ↻ DB-reconnect before retry of {symbol}")
                             except Exception as e2:
-                                print(f"  ↻ Reconnect fehlgeschlagen: {e2}")
+                                print(f"  ↻ Reconnect failed: {e2}")
                                 time.sleep(30)
                                 conn = fresh_conn()
                 if trades is None:
@@ -1262,7 +1261,7 @@ def main() -> None:
                 all_trades.extend(trades)
                 if i % 25 == 0 or i == len(coins):
                     el = time.time() - t0
-                    print(f"[{i}/{len(coins)}] {symbol}: total {len(all_trades)} Trades ({el:.0f}s)", flush=True)
+                    print(f"[{i}/{len(coins)}] {symbol}: total {len(all_trades)} trades ({el:.0f}s)", flush=True)
     finally:
         conn.close()
 

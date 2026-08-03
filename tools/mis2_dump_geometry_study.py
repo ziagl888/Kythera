@@ -1,27 +1,27 @@
 """
-tools/mis2_dump_geometry_study.py — Dump-Seite-Überarbeitung, Schritt 1 (Studie).
+tools/mis2_dump_geometry_study.py — dump-side rework, step 1 (study).
 
-Befund (Move-Retrains 2026-07-06): Die MIS2-Dump-Modelle ERKENNEN Dumps gut
-(Move-Trefferquoten 64–73 % bei ~10 % Basisrate), aber die generische
-Short-Smart-Targets-Geometrie verdient daran nichts. Diese Studie beantwortet
-datengetrieben, WORAN das liegt und WELCHE Short-Geometrie stattdessen trägt:
+Finding (move retrains 2026-07-06): the MIS2 dump models DETECT dumps well
+(move hit rates 64–73 % at ~10 % base rate), but the generic
+short smart-targets geometry earns nothing from it. This study answers,
+data-driven, WHY that is and WHICH short geometry carries instead:
 
-  1. Diagnose: Exit-Gründe + PnL des Status quo (Replay-Geometrie) auf den
-     Events, die das jeweilige Dump-Modell selektiert (Operating Point =
-     Top-2%-Quantil der Validation-Probabilities — die Safe-Picker-Thresholds
-     existieren für Dumps bewusst nicht).
-  2. Geometrie-Grid: label-angepasste Brackets auf denselben Events, wick-aware
-     First-Touch auf 1h-Kerzen, SL-first bei Ambiguität, Fees 0,10 % RT,
-     hartes Timeout am Horizontende (Exit zum Close):
-        TP ∈ {X/2, 2X/3, X} der Move-Schwelle X des Horizonts
+  1. Diagnosis: exit reasons + PnL of the status quo (replay geometry) on the
+     events the respective dump model selects (operating point =
+     top-2%-quantile of the validation probabilities — the safe-picker thresholds
+     deliberately do not exist for dumps).
+  2. Geometry grid: label-matched brackets on the same events, wick-aware
+     first-touch on 1h candles, SL-first on ambiguity, fees 0,10 % RT,
+     hard timeout at the horizon end (exit at close):
+        TP ∈ {X/2, 2X/3, X} of the move threshold X of the horizon
         SL ∈ {2, 3, 5, 8} %
-  3. Vergleich je (Horizont × Label-Basis close/wick × Variante):
-     n, WR, Ø-/Median-/Summen-Netto-PnL — gegen den Status quo.
+  3. Comparison per (horizon × label basis close/wick × variant):
+     n, WR, avg/median/sum net PnL — against the status quo.
 
-Kein Deploy, keine Bot-Änderung — reine Studie; Ergebnis-JSON + Konsole.
-Betriebsregeln: BELOW_NORMAL, DB read-only, EIN Job (Sequenz-Regel).
+No deploy, no bot change — pure study; result JSON + console.
+Operating rules: BELOW_NORMAL, DB read-only, ONE job (sequential-jobs rule).
 
-Beispiel:
+Example:
   python tools/mis2_dump_geometry_study.py --replay ...\\mis1_replay_400d.jsonl
 """
 
@@ -53,9 +53,9 @@ from tools.retrain_from_replay import (  # noqa: E402
 )
 from tools.walkforward_sim import set_low_priority  # noqa: E402
 
-FEE_RT_PCT = 0.10  # 0,05 % je Seite
-# V2 (Operator-Feedback 2026-07-06 abends): SL-Raster horizontabhängig — bei
-# −15 %/−25 %-Zielen war 8 % max. unangemessen eng ("mehr Abstand beim SL").
+FEE_RT_PCT = 0.10  # 0,05 % per side
+# V2 (operator feedback 2026-07-06 evening): SL grid horizon-dependent — at
+# −15 %/−25 % targets, 8 % max. was inappropriately tight ("more spacing on the SL").
 SL_GRID_BY_HORIZON = {
     8: (3.0, 5.0, 8.0, 12.0),
     24: (5.0, 8.0, 12.0, 16.0),
@@ -63,10 +63,10 @@ SL_GRID_BY_HORIZON = {
     168: (8.0, 12.0, 16.0, 20.0),
 }
 TP_FRACTIONS = (0.5, 2.0 / 3.0, 1.0)
-# V2: Entry-Varianten — die funktionierenden Shorts der Flotte (EPD1/RUB1/SR)
-# verkaufen an Struktur bzw. in die Gegenbewegung; stumpfer Close-Entry war
-# die Schwäche des V1-Grids. 0.0 = Market am Signal-Close; sonst Limit-Sell
-# X % ÜBER dem Signal-Close (füllt nur, wenn der Bounce kommt).
+# V2: entry variants — the working shorts of the fleet (EPD1/RUB1/SR)
+# sell into structure resp. into the counter-move; blunt close-entry was
+# the weakness of the V1 grid. 0.0 = market at signal close; otherwise limit-sell
+# X % ABOVE the signal close (fills only if the bounce comes).
 ENTRY_BOUNCE_PCT = (0.0, 2.5, 5.0)
 OPERATING_QUANTILE = 0.98  # Top-2 % der Val-Probabilities als Gate
 
@@ -74,14 +74,14 @@ OPERATING_QUANTILE = 0.98  # Top-2 % der Val-Probabilities als Gate
 def simulate_short_bracket(candles: pd.DataFrame, t: int, horizon: int,
                            signal_close: float, tp_pct: float, sl_pct: float,
                            bounce_pct: float = 0.0):
-    """Wick-aware First-Touch für einen SHORT auf Kerzen t+1..t+horizon.
+    """Wick-aware first-touch for a SHORT on candles t+1..t+horizon.
 
-    bounce_pct > 0: Limit-Sell bei signal_close*(1+bounce) — Entry erst, wenn
-    eine Kerze das Level per High erreicht (konservativ: Fill zum Limit).
-    TP liegt IMMER relativ zum Signal-Close (die Move-Prognose zählt ab dem
-    Signalzeitpunkt), SL relativ zum tatsächlichen Entry.
-    SL-first bei Ambiguität. Timeout → Close-Exit. Rückgabe:
-    (outcome, net_pnl_pct) — 1=TP, 0=SL, 2=Timeout, 3=nie gefüllt, None=Datenende."""
+    bounce_pct > 0: limit-sell at signal_close*(1+bounce) — entry only once
+    a candle reaches the level via its high (conservative: fill at the limit).
+    TP is ALWAYS relative to the signal close (the move forecast counts from the
+    signal timestamp), SL relative to the actual entry.
+    SL-first on ambiguity. Timeout → close-exit. Return value:
+    (outcome, net_pnl_pct) — 1=TP, 0=SL, 2=timeout, 3=never filled, None=end of data."""
     n = len(candles)
     end = t + horizon
     highs, lows, closes = candles["high"].values, candles["low"].values, candles["close"].values
@@ -100,12 +100,12 @@ def simulate_short_bracket(candles: pd.DataFrame, t: int, horizon: int,
             return (3, None) if end <= n - 1 else (None, None)
 
     sl_price = entry * (1 + sl_pct / 100.0)
-    # Fill-Kerze selbst: SL-Check ab Fill (konservativ — High könnte nach dem
-    # Fill weiterlaufen), TP-Check erst ab der Folgekerze.
+    # Fill candle itself: SL check from the fill onward (conservative — the high
+    # could keep running after the fill), TP check only from the next candle.
     if entry_i > t and highs[entry_i] >= sl_price:
         return 0, -sl_pct - FEE_RT_PCT
     for i in range(entry_i + 1, min(end, n - 1) + 1):
-        if highs[i] >= sl_price:  # SL-first bei Ambiguität
+        if highs[i] >= sl_price:  # SL-first on ambiguity
             return 0, -sl_pct - FEE_RT_PCT
         if lows[i] <= tp_price:
             return 1, (entry - tp_price) / entry * 100.0 - FEE_RT_PCT
@@ -115,7 +115,7 @@ def simulate_short_bracket(candles: pd.DataFrame, t: int, horizon: int,
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="MIS2-Dump-Geometrie-Studie")
+    ap = argparse.ArgumentParser(description="MIS2 dump geometry study")
     ap.add_argument("--replay", required=True)
     ap.add_argument("--move-labels", default=None)
     ap.add_argument("--days", type=int, default=410)
@@ -129,13 +129,13 @@ def main() -> None:
         pass
     set_low_priority()
 
-    print("Lade Replay (SHORT-Samples) ...")
+    print("Loading replay (SHORT samples) ...")
     df_all = load_mis1_replay(args.replay)
     move_path = args.move_labels or os.path.join(os.path.dirname(args.replay), "mis1_move_labels.jsonl")
     mv = load_mis1_move_labels(move_path)
     df_all = df_all.merge(mv, on=["symbol", "signal_time"], how="left")
     df_all = df_all[df_all["direction"] == "SHORT"].reset_index(drop=True)
-    print(f"{len(df_all)} SHORT-Samples, {df_all['symbol'].nunique()} Coins")
+    print(f"{len(df_all)} SHORT samples, {df_all['symbol'].nunique()} coins")
 
     results: dict = {"operating_quantile": OPERATING_QUANTILE, "fee_rt_pct": FEE_RT_PCT,
                      "models": {}}
@@ -149,7 +149,7 @@ def main() -> None:
             key = f"{horizon}h_dump"
             art_path = os.path.join(STAGING_DIR, f"{prefix}_{key}.pkl")
             if not os.path.exists(art_path):
-                print(f"!! Artefakt fehlt: {art_path} — übersprungen")
+                print(f"!! Artifact missing: {art_path} — skipped")
                 continue
             art = joblib.load(art_path)
             model = art["model"]
@@ -180,7 +180,7 @@ def main() -> None:
                 "status_quo": {}, "exit_reasons": {}, "variants": {},
             }
 
-            # 1) Status quo (Replay-Smart-Targets) auf den selektierten Events
+            # 1) Status quo (replay smart-targets) on the selected events
             sq = sel["net_pnl_pct"].dropna()
             if len(sq):
                 rec["status_quo"] = {
@@ -191,7 +191,7 @@ def main() -> None:
             if er_col in sel.columns:
                 rec["exit_reasons"] = sel[er_col].fillna("none").value_counts().to_dict()
 
-            # 2) Geometrie-Grid auf 1h-Kerzen (V2: SL je Horizont + Entry-Bounces)
+            # 2) Geometry grid on 1h candles (V2: SL per horizon + entry bounces)
             sl_grid = SL_GRID_BY_HORIZON[horizon]
             grids = {(tp_f, sl, b): [] for tp_f in TP_FRACTIONS for sl in sl_grid
                      for b in ENTRY_BOUNCE_PCT}
@@ -241,15 +241,15 @@ def main() -> None:
             results["models"][f"{basis}_{key}"] = rec
             best = max(rec["variants"].items(), key=lambda kv: kv[1]["avg"]) if rec["variants"] else None
             print(f"[{time.time()-t0:.0f}s] {basis}_{key}: gate={gate:.3f}, n_sel={len(sel)}, "
-                  f"Move-WR {rec['move_wr_selected']}% (Basis {rec['move_wr_base']}%), "
-                  f"StatusQuo Ø {rec['status_quo'].get('avg')}% | "
-                  f"beste Variante: {best[0] if best else '—'} "
-                  f"Ø {best[1]['avg'] if best else '—'}%", flush=True)
+                  f"Move WR {rec['move_wr_selected']}% (base {rec['move_wr_base']}%), "
+                  f"StatusQuo avg {rec['status_quo'].get('avg')}% | "
+                  f"best variant: {best[0] if best else '—'} "
+                  f"avg {best[1]['avg'] if best else '—'}%", flush=True)
 
     conn.close()
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(results, fh, indent=2, default=str)
-    print(f"\nFertig → {args.out}")
+    print(f"\nDone → {args.out}")
 
 
 if __name__ == "__main__":

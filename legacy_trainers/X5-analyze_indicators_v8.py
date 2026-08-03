@@ -25,7 +25,7 @@ DB_CONFIG = {
 def load_coins() -> list[str]:
     coins_file = Path("coins.json")
     if not coins_file.exists():
-        logger.error("coins.json nicht gefunden!")
+        logger.error("coins.json not found!")
         return []
     with open(coins_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -54,18 +54,18 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     df['macd_hist'] = df['macd_dif'] - df['macd_dea']
     df['macd_hist_delta_1'] = df.groupby('symbol')['macd_hist'].diff(1)
    
-    # Binäre und Cross Features
+    # Binary and cross features
     df['above_ema_200'] = (df['close'] > df['ema_200']).astype(int)
     df['rsi_14_above_50'] = (df['rsi_14'] > 50).astype(int)
     df['rsi_14_cross_above_30'] = ((df['rsi_14'].shift(1) < 30) & (df['rsi_14'] >= 30)).astype(int)
     df['ema_9_cross_above_21'] = ((df['ema_9'].shift(1) < df['ema_21'].shift(1)) & (df['ema_9'] > df['ema_21'])).astype(int)
    
-    # ATR-normalisierte Abstände
+    # ATR-normalised distances
     df['boll_upper_dist_atr'] = (df['close'] - df['boll_upper_20']) / (df['atr_14'] + 1e-8)
     df['boll_lower_dist_atr'] = (df['close'] - df['boll_lower_20']) / (df['atr_14'] + 1e-8)
     df['ema_200_dist_atr'] = (df['close'] - df['ema_200']) / (df['atr_14'] + 1e-8)
    
-    # Prozentuale Abstände zu allen Linien
+    # Percentage distances to all lines
     price = df['close']
     line_cols = [c for c in df.columns if c.startswith(('ema_', 'wma_', 'kama_', 'boll_', 'donchian_')) and not c.endswith('_dist_pct')]
     for col in line_cols:
@@ -74,7 +74,7 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     return df.fillna(0)
 
 async def train_all_horizons_final():
-    logger.info("Starte finales Training v9 – 8h/72h/168h PUMP + DUMP Modelle (High Precision)")
+    logger.info("Starting final training v9 – 8h/72h/168h PUMP + DUMP models (high precision)")
     coins = load_coins()
     if not coins:
         return
@@ -118,19 +118,19 @@ async def train_all_horizons_final():
                 ])
                 df['symbol'] = symbol
                 all_data.append(df)
-                logger.info(f"{symbol}: {len(df)} Kerzen geladen")
+                logger.info(f"{symbol}: {len(df)} candles loaded")
         except Exception as e:
-            logger.warning(f"Fehler bei {symbol}: {e}")
+            logger.warning(f"Error for {symbol}: {e}")
    
     await conn.close()
    
     if not all_data:
-        logger.error("Keine Daten geladen")
+        logger.error("No data loaded")
         return
-   
+
     df_full = pd.concat(all_data, ignore_index=True)
     df_full = df_full.sort_values(['symbol', 'open_time']).reset_index(drop=True)
-    logger.info(f"Gesamt: {len(df_full)} Kerzen von {len(coins)} Coins")
+    logger.info(f"Total: {len(df_full)} candles from {len(coins)} coins")
    
     df_full = add_advanced_features(df_full)
    
@@ -146,7 +146,7 @@ async def train_all_horizons_final():
             'atr_14'
         ]
     ]
-    logger.info(f"Features für alle Horizonte: {len(feature_cols)}")
+    logger.info(f"Features for all horizons: {len(feature_cols)}")
    
     X_base = df_full[feature_cols]
 
@@ -169,8 +169,8 @@ async def train_all_horizons_final():
     
     
     for name, hours, threshold_pct in horizons:
-        logger.info(f"\n=== Training {name} – High Precision ===")
-       
+        logger.info(f"\n=== Training {name} – high precision ===")
+
         y = []
         valid_indices = []
         for i in range(len(df_full) - hours):
@@ -179,15 +179,15 @@ async def train_all_horizons_final():
             if cp <= 0:
                 continue
             change = (fp - cp) / cp * 100
-            # Label 1 = Treffer (Pump oder Dump je nach Vorzeichen)
-            label = 1 if ((threshold_pct > 0 and change >= threshold_pct) or 
+            # Label 1 = hit (pump or dump depending on sign)
+            label = 1 if ((threshold_pct > 0 and change >= threshold_pct) or
                           (threshold_pct < 0 and change <= threshold_pct)) else 0
             y.append(label)
             valid_indices.append(i)
-       
+
         event_rate = sum(y) / len(y)
         direction = "PUMP" if threshold_pct > 0 else "DUMP"
-        logger.info(f"{direction}-Events ({abs(threshold_pct)}% in {hours}h): {sum(y)} / {len(y)} ({event_rate:.2%})")
+        logger.info(f"{direction} events ({abs(threshold_pct)}% in {hours}h): {sum(y)} / {len(y)} ({event_rate:.2%})")
        
         X = X_base.iloc[valid_indices]
         y = np.array(y)
@@ -254,9 +254,9 @@ async def train_all_horizons_final():
        
         joblib.dump(final_model, f"pump_model_{name}_final.pkl")
         joblib.dump(best_threshold, f"threshold_{name}_final.pkl")
-        logger.info(f"{name} Modell und Threshold gespeichert!")
+        logger.info(f"{name} model and threshold saved!")
 
-    logger.info("Alle 6 Modelle (PUMP + DUMP für 8h/72h/168h) erfolgreich trainiert und gespeichert!")
+    logger.info("All 6 models (PUMP + DUMP for 8h/72h/168h) trained and saved successfully!")
 
 if __name__ == "__main__":
     asyncio.run(train_all_horizons_final())

@@ -13,22 +13,22 @@ logger = logging.getLogger(__name__)
 
 
 def format_price(p) -> str:
-    """P1.4: Preis mit signifikanten Stellen formatieren (statt festem :.6f).
+    """P1.4: format the price with significant digits (instead of fixed :.6f).
 
-    Warum: `:.6f` rundet Sub-0.001-Coins (z.B. 1000SATS, PEPE) auf identische
-    Werte → alle TPs kollabieren auf denselben String → Cornix rejected das Signal.
-    Regel: >=1 → 4 Nachkommastellen; >=0.001 → 6; darunter dynamisch ~6
-    signifikante Stellen (führende Nullen bleiben erhalten, keine
-    wissenschaftliche Notation, damit Cornix den Wert parsen kann).
+    Why: `:.6f` rounds sub-0.001 coins (e.g. 1000SATS, PEPE) to identical
+    values → all TPs collapse to the same string → Cornix rejects the signal.
+    Rule: >=1 → 4 decimal places; >=0.001 → 6; below that dynamically ~6
+    significant digits (leading zeros are preserved, no scientific
+    notation, so Cornix can parse the value).
     """
     try:
         v = float(p)
     except (TypeError, ValueError):
         return str(p)
 
-    # Review-Härtung P1.4: NaN/Inf passieren den float()-Cast, würden aber unten
-    # in math.log10 bzw. im f-Format crashen — defensiv als String zurückgeben
-    # statt den Message-Builder zu killen.
+    # Review hardening P1.4: NaN/Inf pass the float() cast, but would crash
+    # below in math.log10 or in the f-format — return defensively as a string
+    # instead of killing the message builder.
     if not math.isfinite(v):
         return str(p)
 
@@ -40,18 +40,18 @@ def format_price(p) -> str:
     elif a >= 0.001:
         decimals = 6
     else:
-        # ~6 signifikante Stellen: führende Nullen nach dem Komma mitzählen
+        # ~6 significant digits: count leading zeros after the decimal point
         decimals = 5 - math.floor(math.log10(a))
     return f"{v:.{decimals}f}"
 
 
 def ensure_min_tp_distance(targets: list, entry: float, is_long: bool, min_pct: float = 0.05) -> list:
-    """Ensures the LAST target is at least `min_pct` (default 5%) vom
-    Entry entfernt ist. Ist es näher, wird genau EIN zusätzliches Target an
+    """Ensures the LAST target is at least `min_pct` (default 5%) away from
+    entry. If it is closer, exactly ONE additional target is appended at
     the 5% boundary — it is NOT padded to 20 targets.
 
-    Vorher: Alle AI-Bots hatten `while len(targets) < 20: targets.append(last * 1.02)`
-    → TP20 konnte +48% über Entry landen, bei Mean-Reversion-Bots völlig absurd.
+    Before: all AI bots had `while len(targets) < 20: targets.append(last * 1.02)`
+    → TP20 could land +48% above entry, utterly absurd for mean-reversion bots.
     """
     if not targets:
         # No real zones → single 5% target
@@ -76,11 +76,11 @@ def ensure_min_tp_distance(targets: list, entry: float, is_long: bool, min_pct: 
 def get_atr(df, period=14):
     """Calculates the Average True Range (ATR) for dynamic SL/entry distances.
 
-    PERF (MIS1-Retrain 2026-07): numpy statt pd.concat+rolling — der Walk-
-    Forward-Simulator ruft das hunderttausendfach. Semantik unverändert:
-    die alte np.max(DataFrame, axis=1) lief mit skipna → in der ersten Zeile
-    (prev_close=NaN) zählte nur high-low; fmax repliziert genau das. Ergebnis
-    ist NaN, solange weniger als `period` Kerzen vorliegen (wie rolling.mean).
+    PERF (MIS1 retrain 2026-07): numpy instead of pd.concat+rolling — the
+    walk-forward simulator calls this hundreds of thousands of times. Semantics
+    unchanged: the old np.max(DataFrame, axis=1) ran with skipna → in the first
+    row (prev_close=NaN) only high-low counted; fmax replicates exactly that.
+    Result is NaN as long as fewer than `period` candles are available (like rolling.mean).
     """
     h = df['high'].to_numpy(dtype=float)
     l = df['low'].to_numpy(dtype=float)  # noqa: E741
@@ -95,18 +95,18 @@ def get_atr(df, period=14):
 
 
 def cap_leverage_to_sl(desired_lev, entry, sl, safety=0.5):
-    """R4 (Audit): Hebel so cappen, dass die Liquidation nie vor dem SL liegt.
+    """R4 (audit): cap leverage so that liquidation never occurs before the SL.
 
-    Akzeptiert int ODER den "20x"-String aus get_max_leverage() und gibt das
-    Ergebnis im Eingabeformat zurück (String rein → "12x" raus), damit
-    Call-Sites den Wert unverändert in die Cornix-Message formatieren.
-    (Vorher warf int("20x") einen ValueError — auch im except-Handler —
-    und riss die Signal-Pfade von 21/28/29 komplett ab.)
+    Accepts int OR the "20x" string from get_max_leverage() and returns the
+    result in the input format (string in → "12x" out), so call sites
+    format the value unchanged into the Cornix message.
+    (Before: int("20x") raised a ValueError — even in the except handler —
+    and completely broke the signal paths of 21/28/29.)
 
-    Isolierte Liquidation liegt grob bei 1/lev Preisdistanz; mit lev <= safety/sl_dist
-    liegt sie bei mindestens (1/safety)-facher SL-Distanz (safety=0.5 → Faktor 2).
-    Beispiele der Bug-Klasse: 100x mit 1,2%-SL (P0.5) → Cap 41x;
-    20x mit 34%-SL (P0.6) → Cap 1x.
+    Isolated liquidation sits roughly at 1/lev price distance; with lev <= safety/sl_dist
+    it sits at least (1/safety) times the SL distance (safety=0.5 → factor 2).
+    Examples of the bug class: 100x with a 1.2% SL (P0.5) → cap 41x;
+    20x with a 34% SL (P0.6) → cap 1x.
     """
     as_string = isinstance(desired_lev, str)
     try:
@@ -124,13 +124,13 @@ def cap_leverage_to_sl(desired_lev, entry, sl, safety=0.5):
 
 
 def _cut_label_edges(bin_edges) -> np.ndarray:
-    """Bit-identische Reproduktion der pandas-Label-Rundung aus
+    """Bit-identical reproduction of pandas' label rounding from
     pandas.core.reshape.tile._format_labels (precision = _infer_precision(3,…),
-    dann _round_frac je Kante) — vektorisiert, weil der Walk-Forward-Simulator
-    das hunderttausendfach ruft. Formel je Wert x!=0: bei |x|<1 wird auf
-    (precision − floor(log10(|frac|)) − 1) Dezimalen gerundet, sonst auf
-    `precision`; precision ist das kleinste p ∈ [3,20), bei dem alle gerundeten
-    Kanten eindeutig bleiben (Fallback p=3 wie pandas)."""
+    then _round_frac per edge) — vectorised because the walk-forward simulator
+    calls it hundreds of thousands of times. Formula per value x!=0: for |x|<1,
+    round to (precision − floor(log10(|frac|)) − 1) decimals, otherwise to
+    `precision`; precision is the smallest p ∈ [3,20) at which all rounded
+    edges stay unique (fallback p=3, like pandas)."""
     x = np.asarray(bin_edges, dtype=float)
 
     def round_frac_vec(v: np.ndarray, precision: int) -> np.ndarray:
@@ -139,7 +139,7 @@ def _cut_label_edges(bin_edges) -> np.ndarray:
         vm = v[m]
         frac, whole = np.modf(vm)
         digits = np.full(vm.shape, precision, dtype=np.int64)
-        wz = whole == 0  # (frac==0 UND whole==0 hieße v==0 — oben ausgefiltert)
+        wz = whole == 0  # (frac==0 AND whole==0 would mean v==0 — filtered out above)
         digits[wz] = precision - np.floor(np.log10(np.abs(frac[wz]))).astype(np.int64) - 1
         r = np.empty_like(vm)
         for d in np.unique(digits):
@@ -156,14 +156,14 @@ def _cut_label_edges(bin_edges) -> np.ndarray:
 
 
 def compute_smart_target_levels(df, live_price) -> dict:
-    """Richtungsunabhängiger Teil von calculate_smart_targets: ATR + der
-    geclusterte Level-Pool (S/R, Fibs, HVNs, FVGs).
+    """Direction-independent part of calculate_smart_targets: ATR + the
+    clustered level pool (S/R, fibs, HVNs, FVGs).
 
-    Ausgelagert (MIS1-Retrain 2026-07), damit der Walk-Forward-Simulator den
-    Pool je Zeitpunkt EINMAL rechnet und für LONG und SHORT wiederverwendet —
-    live rechnen die Bots ihn wie bisher implizit pro Call. Wirft bei <100
-    Kerzen; das Exception-Handling (Live-Fallback) liegt beim Caller
-    calculate_smart_targets, exakt wie vorher."""
+    Extracted (MIS1 retrain 2026-07) so the walk-forward simulator computes
+    the pool ONCE per point in time and reuses it for LONG and SHORT —
+    live, the bots still compute it implicitly per call as before. Raises for <100
+    candles; exception handling (live fallback) stays with the caller
+    calculate_smart_targets, exactly as before."""
     if len(df) < 100:
         raise ValueError("Insufficient data")
 
@@ -201,21 +201,21 @@ def compute_smart_target_levels(df, live_price) -> dict:
             fibs.append(swing_high - fib_range * (x - 1))
 
     # 🟢 3. HIGH VOLUME NODES & FVGs
-    # PERF (MIS1-Retrain 2026-07): pd.cut(labels=False)+bincount statt
-    # Interval-Labels+groupby — die Label-Formatierung dominierte die
-    # Laufzeit der ganzen Funktion. Die Mids werden aus den GERUNDETEN
-    # Kanten gebildet (exakt die pandas-Label-Rundung via _round_frac/
-    # _infer_precision) — bit-identisch zum alten interval.mid; bei
-    # pandas-Interna-Änderungen fällt es auf die ungerundeten Kanten
-    # zurück (Abweichung ~Anzeige-Präzision, unter dem 0,5%-Cluster-Raster).
+    # PERF (MIS1 retrain 2026-07): pd.cut(labels=False)+bincount instead of
+    # interval labels+groupby — label formatting dominated the runtime of
+    # the whole function. The mids are built from the ROUNDED
+    # edges (exactly pandas' label rounding via _round_frac/
+    # _infer_precision) — bit-identical to the old interval.mid; on
+    # pandas-internals changes it falls back to the unrounded edges
+    # (deviation ~display precision, under the 0.5% cluster grid).
     hvns = []
     try:
         bin_ids, bin_edges = pd.cut(df['close'], bins=60, labels=False, retbins=True)
         edges = _cut_label_edges(bin_edges)
         ids = bin_ids.to_numpy(dtype=np.int64)
         vols = np.bincount(ids, weights=df['volume'].to_numpy(dtype=float), minlength=60)
-        occupied = np.bincount(ids, minlength=60) > 0  # wie groupby(observed=True)
-        # nlargest-Semantik: absteigend nach Volumen, Ties in Bin-Reihenfolge
+        occupied = np.bincount(ids, minlength=60) > 0  # like groupby(observed=True)
+        # nlargest semantics: descending by volume, ties in bin order
         top = sorted(np.flatnonzero(occupied).tolist(), key=lambda b: (-vols[b], b))[:6]
         for b in top:
             hvns.append((edges[b] + edges[b + 1]) / 2.0)
@@ -233,12 +233,12 @@ def compute_smart_target_levels(df, live_price) -> dict:
     # does not exist on the chart as a real level).
     # Additionally: mitigation check — FVGs that have already been traded through
     # are no longer active levels.
-    # PERF (MIS1-Retrain 2026-07): Erkennung + Mitigation vektorisiert.
-    # Der alte O(n²)-Mitigation-Scan (für jede FVG alle Folgekerzen) ist
-    # semantisch exakt "suffix-min(lows) <= gap_bottom" bzw.
-    # "suffix-max(highs) >= gap_top" — hier als accumulate in O(n).
-    # Bull/Bear schließen sich pro Kerze konstruktiv aus (low<=high),
-    # das elif der alten Schleife ist damit abgedeckt.
+    # PERF (MIS1 retrain 2026-07): detection + mitigation vectorised.
+    # The old O(n²) mitigation scan (for every FVG, all following candles) is
+    # semantically exactly "suffix-min(lows) <= gap_bottom" resp.
+    # "suffix-max(highs) >= gap_top" — here as accumulate in O(n).
+    # Bull/bear are constructively mutually exclusive per candle (low<=high),
+    # so the elif of the old loop is covered by this.
     fvgs = []
     opens = df['open'].values
     highs_arr = df['high'].values
@@ -255,8 +255,8 @@ def compute_smart_target_levels(df, live_price) -> dict:
         bull = (highs_arr[idx - 2] < lows_arr[idx]) & mid_bull
         bear = (lows_arr[idx - 2] > highs_arr[idx]) & mid_bear
 
-        # Mitigation ab Kerze i+1; die letzte Kerze (i == n-1) hat keinen
-        # Folgescan → nie mitigiert (wie die alte leere range).
+        # Mitigation from candle i+1 onward; the last candle (i == n-1) has no
+        # follow-up scan → never mitigated (like the old empty range).
         for i in idx[bull]:
             gap_bottom = float(highs_arr[i - 2])
             if i + 1 >= n or suffix_min_low[i + 1] > gap_bottom:
@@ -287,19 +287,19 @@ def compute_smart_target_levels(df, live_price) -> dict:
 
 def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels=None):
     """
-    Kombiniert den riesigen Pool an echten Leveln mit intelligentem Clustering,
+    Combines the huge pool of real levels with intelligent clustering,
     ATR-based minimum distance and hard SAFETY-CAPS against out-of-bounds values.
 
-    `df` (optional): fertiges, chronologisch aufsteigendes 1h-Fenster mit
-    open/high/low/close/volume. Wird es übergeben, findet KEIN DB-Zugriff statt —
-    so spielt der Walk-Forward-Simulator (tools/walkforward_sim.py, P0.10) exakt
-    dieselbe Level-/SL-/Target-Logik auf historischen Fenstern ab wie die
-    Live-Bots (eine Quelle statt Copy-Paste-Skew). Auch der Fehler-Fallback am
-    Ende ist bewusst identisch — der Simulator soll das Live-Verhalten messen.
+    `df` (optional): a ready, chronologically ascending 1h window with
+    open/high/low/close/volume. If passed, NO DB access happens —
+    this lets the walk-forward simulator (tools/walkforward_sim.py, P0.10) replay
+    exactly the same level/SL/target logic on historical windows as the
+    live bots (one source instead of copy-paste skew). The error fallback at
+    the end is deliberately identical too — the simulator is meant to measure live behaviour.
 
-    `levels` (optional): vorberechneter Pool aus compute_smart_target_levels —
-    der Simulator übergibt ihn, um LONG und SHORT desselben Zeitpunkts nicht
-    doppelt zu rechnen. Live-Caller lassen ihn weg (Verhalten unverändert).
+    `levels` (optional): a precomputed pool from compute_smart_target_levels —
+    the simulator passes it in so as not to compute LONG and SHORT of the same
+    point in time twice. Live callers omit it (behaviour unchanged).
     """
     try:
         if levels is None:
@@ -343,16 +343,16 @@ def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels
 
             # Stop Loss (must be below Entry2 but above max_sl_price)
             valid_sl = [x for x in clustered_levels if x <= (entry1 - min_sl_dist) and x < entry2 and x >= max_sl_price]
-            # FIX: Vorher Fallback ohne entry2-Check → bei hohem ATR konnte SL
-            # ÜBER entry2 landen (LONG), was den Trade sofort in SL laufen ließ.
-            # Jetzt: Fallback erzwingt SL < entry2 (mit kleinem Puffer 0.1%).
+            # FIX: previously the fallback had no entry2 check → with a high ATR the SL
+            # could land ABOVE entry2 (LONG), which sent the trade straight into SL.
+            # Now: the fallback forces SL < entry2 (with a small 0.1% buffer).
             if valid_sl:
                 sl = max(valid_sl)
             else:
                 sl = max((entry1 - min_sl_dist), max_sl_price)
-                sl = min(sl, entry2 * 0.999)  # SL muss zwingend unter entry2 liegen
+                sl = min(sl, entry2 * 0.999)  # SL must strictly stay below entry2
 
-            # Targets (Ignoriere absurde Fib-Extensions > 200%)
+            # Targets (ignore absurd fib extensions > 200%)
             raw_targets = [x for x in clustered_levels if x >= (entry1 + min_tp1_dist) and x <= (entry1 * 3.0)]
             raw_targets.sort()
         else:
@@ -361,13 +361,13 @@ def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels
             entry2 = min(valid_e2) if valid_e2 else min((entry1 + min_entry2_dist), max_e2_price)
 
             valid_sl = [x for x in clustered_levels if x >= (entry1 + min_sl_dist) and x > entry2 and x <= max_sl_price]
-            # FIX: Gleicher Fix wie LONG (spiegelverkehrt) — Fallback muss
-            # zwingend SL > entry2 liefern, sonst Trade geht direkt in SL.
+            # FIX: same fix as LONG (mirrored) — the fallback must
+            # strictly deliver SL > entry2, otherwise the trade goes straight into SL.
             if valid_sl:
                 sl = min(valid_sl)
             else:
                 sl = min((entry1 + min_sl_dist), max_sl_price)
-                sl = max(sl, entry2 * 1.001)  # SL muss zwingend über entry2 liegen
+                sl = max(sl, entry2 * 1.001)  # SL must strictly stay above entry2
 
             raw_targets = [x for x in clustered_levels if x <= (entry1 - min_tp1_dist) and x >= (entry1 * 0.1)]
             raw_targets.sort(reverse=True)
@@ -396,7 +396,7 @@ def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels
         }
 
     except Exception as e:
-        logger.error(f"Error for Smart Targets für {symbol}: {e}", exc_info=True)
+        logger.error(f"Error for Smart Targets for {symbol}: {e}", exc_info=True)
         e1 = float(live_price)
         is_long = direction.upper() == "LONG"
         return {
@@ -410,22 +410,22 @@ def calculate_smart_targets(conn, symbol, direction, live_price, df=None, levels
 def get_hvn_and_sr_levels(conn, symbol, live_price, df=None):
     """Fetches historical data and calculates levels for targets/SL.
 
-    FIX (#52): Diese Funktion war 5× identisch kopiert in:
+    FIX (#52): this function was copied identically 5× into:
       - 9_ai_sr_bot.py
       - 10_pump_dump_detector.py
       - 12_ai_ats_bot.py
       - 13_ai_rub_bot.py
       - 14_ai_atb_bot.py
-    Jetzt zentral hier. Kein Kopie mehr pflegen, kein Drift zwischen den Bots.
+    Now centralised here. No more copies to maintain, no drift between the bots.
 
-    `df` (optional): fertiges, chronologisch aufsteigendes 1h-Fenster mit
-    high/low/close (idealerweise ~95 Tage). Wird es übergeben, findet KEIN
-    DB-Zugriff statt — gleiches As-of-Muster wie `calculate_smart_targets`
-    (P0.10): die Walkforward-Adapter (RUB2/EPD2) spielen so exakt dieselbe
-    Level-Logik auf historischen Fenstern ab wie die Live-Bots.
+    `df` (optional): a ready, chronologically ascending 1h window with
+    high/low/close (ideally ~95 days). If passed, NO
+    DB access happens — the same as-of pattern as `calculate_smart_targets`
+    (P0.10): this lets the walk-forward adapters (RUB2/EPD2) replay exactly the
+    same level logic on historical windows as the live bots.
 
-    Nutzt scipy.signal.argrelextrema auf 95 Tagen 1h-Kerzen + Fibonacci-Levels.
-    Returns (supports, resistances): zwei sortierte Listen von Preis-Leveln.
+    Uses scipy.signal.argrelextrema on 95 days of 1h candles + fibonacci levels.
+    Returns (supports, resistances): two sorted lists of price levels.
     """
     if df is None:
         try:
@@ -465,13 +465,13 @@ def get_hvn_and_sr_levels(conn, symbol, live_price, df=None):
 
 
 def hvn_sr_trade_geometry(entry1, is_long, supps, resis):
-    """Entry2/SL/Target-Kandidaten aus HVN/SR-Leveln — die Geometrie, die
-    Bot 10 (EPD) und Bot 13 (RUB) inline identisch berechnen (dortige Kopien
-    bleiben vorerst; diese Funktion ist die referenzierte EINE Quelle für die
-    Walkforward-Adapter, damit Replay-Geometrie == Live-Geometrie).
+    """Entry2/SL/target candidates from HVN/SR levels — the geometry that
+    bot 10 (EPD) and bot 13 (RUB) compute identically inline (their copies
+    remain for now; this function is the referenced ONE source for the
+    walk-forward adapters, so replay geometry == live geometry).
 
-    Returns (entry2, sl, target_candidates) — Targets danach durch
-    ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05) ziehen.
+    Returns (entry2, sl, target_candidates) — targets are then run through
+    ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05).
     """
     entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
     if is_long:

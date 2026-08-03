@@ -1,13 +1,13 @@
 # backtest/test_skw1_bot.py
-"""DB-freie Tests für den SKW1-Shadow-Forwarder (Bot 38, K7, T-2026-CU-9050-149).
+"""DB-free tests for the SKW1 shadow forwarder (bot 38, K7, T-2026-CU-9050-149).
 
-  1. shadow_gate: SKW1 LONG+SHORT sind LIVE (T-2026-CU-9050-183, → CH_ATS),
-     ohne Artefakt (Forwarder-Klasse D).
-  2. bot_catalog: Tag "SKW1" → 38_ai_skw1_bot.py.
-  3. select_deciles: Liquiditäts-Filter (unteres Terzil raus) + Skew-Dezil-Rang
-     (LONG unterstes, SHORT oberstes Dezil), MIN_COINS-Guard.
-  4. emit: emittiert je Bein über post_ai_signal_gated nur wenn LIVE/SHADOW +
-     kein Cooldown/offener Trade + Targets; SILENT → nichts. Live-Post an CH_ATS.
+  1. shadow_gate: SKW1 LONG+SHORT are LIVE (T-2026-CU-9050-183, → CH_ATS),
+     without artifact (forwarder class D).
+  2. bot_catalog: tag "SKW1" → 38_ai_skw1_bot.py.
+  3. select_deciles: liquidity filter (lowest tercile excluded) + skew decile rank
+     (LONG lowest, SHORT highest decile), MIN_COINS guard.
+  4. emit: emits per leg via post_ai_signal_gated only when LIVE/SHADOW +
+     no cooldown/open trade + targets; SILENT → nothing. Live post to CH_ATS.
 
 Run: pytest backtest/test_skw1_bot.py -v
 """
@@ -42,7 +42,7 @@ skw1 = _import_skw1()
 
 # ── 1. shadow_gate ────────────────────────────────────────────────────────────
 def test_skw1_both_legs_live_no_artifact():
-    # T-2026-CU-9050-183: beide Beine live promotet (→ CH_ATS), Forwarder ohne Artefakt.
+    # T-2026-CU-9050-183: both legs promoted live (→ CH_ATS), forwarder without artifact.
     for d in ("LONG", "SHORT"):
         assert sg.leg_status("SKW1", d) == sg.LIVE
         assert not sg.is_shadow("SKW1", d)
@@ -57,15 +57,15 @@ def test_skw1_tag_maps_to_bot38():
 
 # ── 3. select_deciles ─────────────────────────────────────────────────────────
 def test_select_deciles_ranks_and_filters_liquidity():
-    # 25 liquide Coins (dv=100), Skew −12..+12; 5 illiquide (dv=1) mit EXTREM
-    # hoher Skew (+50) — die dürfen trotz Extrem-Skew NICHT geshortet werden.
+    # 25 liquid coins (dv=100), skew −12..+12; 5 illiquid (dv=1) with EXTREMELY
+    # high skew (+50) — they must NOT be shorted despite the extreme skew.
     liquid = [(f"L{i:02d}", float(i - 12), 100.0) for i in range(25)]  # skew -12..12
     illiquid = [(f"I{i:02d}", 50.0, 1.0) for i in range(5)]
     longs, shorts = skw1.select_deciles(liquid + illiquid)
-    # ndec = round(25/10) = 2 → 2 je Seite aus dem LIQUIDEN Set
-    assert longs == ["L00", "L01"]  # niedrigste Skew (−12, −11)
-    assert shorts == ["L23", "L24"]  # höchste LIQUIDE Skew (11, 12), NICHT die I-Coins
-    assert not any(s.startswith("I") for s in longs + shorts)  # illiquide raus
+    # ndec = round(25/10) = 2 → 2 per side from the LIQUID set
+    assert longs == ["L00", "L01"]  # lowest skew (−12, −11)
+    assert shorts == ["L23", "L24"]  # highest LIQUID skew (11, 12), NOT the I coins
+    assert not any(s.startswith("I") for s in longs + shorts)  # illiquid excluded
 
 
 def test_select_deciles_min_coins_guard():
@@ -73,7 +73,7 @@ def test_select_deciles_min_coins_guard():
     assert skw1.select_deciles(rows) == ([], [])
 
 
-# ── 4. emit: Gating + Shadow-Emit ─────────────────────────────────────────────
+# ── 4. emit: gating + shadow emit ─────────────────────────────────────────────
 class _Cur:
     def __enter__(self):
         return self
@@ -123,14 +123,14 @@ def test_emit_short_and_long(monkeypatch):
     short = next(p for p in posts if p[1] == "SHORT")  # (tag, dir, ch, sym, e1, e2, sl)
     long = next(p for p in posts if p[1] == "LONG")
     assert short[0] == "SKW1"
-    assert short[2] == skw1._kcfg.CH_ATS and long[2] == skw1._kcfg.CH_ATS  # ehem. ATS-Channel
-    assert short[6] > short[4]  # SHORT-SL über Entry (sl > e1)
-    assert long[6] < long[4]  # LONG-SL unter Entry
-    assert short[4] == short[5] and long[4] == long[5]  # Market-Fill (e1==e2)
+    assert short[2] == skw1._kcfg.CH_ATS and long[2] == skw1._kcfg.CH_ATS  # former ATS channel
+    assert short[6] > short[4]  # SHORT-SL above entry (sl > e1)
+    assert long[6] < long[4]  # LONG-SL below entry
+    assert short[4] == short[5] and long[4] == long[5]  # market fill (e1==e2)
 
 
 def test_emit_skips_when_silent_or_gated(monkeypatch):
-    posts = _wire(monkeypatch, leg=sg.SILENT)  # SILENT → nichts (LIVE/SHADOW würden emittieren)
+    posts = _wire(monkeypatch, leg=sg.SILENT)  # SILENT → nothing (LIVE/SHADOW would emit)
     skw1.emit(_FakeConn(), "HIUSDT", "SHORT", 100.0)
     posts2 = _wire(monkeypatch, cooldown=True)
     skw1.emit(_FakeConn(), "HIUSDT", "SHORT", 100.0)

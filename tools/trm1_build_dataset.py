@@ -1,24 +1,24 @@
 """
-tools/trm1_build_dataset.py — Trainings-Events + Labels für TRM1
-"Transition-Resolution" (Report 15, S10). Läuft auf dem VPS (Step 2).
+tools/trm1_build_dataset.py — training events + labels for TRM1
+"Transition-Resolution" (Report 15, p.10). Runs on the VPS (Step 2).
 
-Events = TRANSITION-Checks aus regime_history (Roh-Klassifikationen im
-5-min-Raster, ts = naive UTC), gesampelt alle 30 min je Episode (die Checks
-sind hochgradig autokorreliert — dichteres Sampling wäre Pseudo-n).
+Events = TRANSITION checks from regime_history (raw classifications on a
+5-min grid, ts = naive UTC), sampled every 30 min per episode (the checks
+are highly autocorrelated — denser sampling would be pseudo-n).
 
-Label (Klassen-Vertrag core.research_features):
-  1 = TREND_UP, 2 = TREND_DOWN, 0 = OTHER (CHOP/HIGH_VOLA) — die erste
-  Nicht-TRANSITION-Klassifikation nach dem Event, die stabil ist (>= 4 der 5
-  Folge-Checks gleich). Keine Auflösung binnen 24h → Event verworfen.
+Label (class contract core.research_features):
+  1 = TREND_UP, 2 = TREND_DOWN, 0 = OTHER (CHOP/HIGH_VOLA) — the first
+  non-TRANSITION classification after the event that is stable (>= 4 of the
+  5 following checks match). No resolution within 24h → event discarded.
 
-Zusätzlich je Event: simulierter BTC-Trade-PnL BEIDER Richtungen
-(calculate_smart_targets + simulate_exit, Horizont 14 Tage) — der Trainer
-wählt den Threshold über den Replay-PnL der jeweils prognostizierten Richtung.
+Additionally per event: simulated BTC trade PnL for BOTH directions
+(calculate_smart_targets + simulate_exit, 14-day horizon) — the trainer
+picks the threshold via the replay PnL of the respectively predicted direction.
 
-Bekannter, dokumentierter Skew: live gated Bot 32 auf dem DEBOUNCED Regime
-(regime_current), die Events hier sind Roh-Checks.
+Known, documented skew: live Bot 32 is gated on the DEBOUNCED regime
+(regime_current), the events here are raw checks.
 
-Beispiel:
+Example:
   python tools/trm1_build_dataset.py
 """
 
@@ -33,8 +33,8 @@ import time
 import numpy as np
 import pandas as pd
 
-# REPO_ROOT MUSS vor dem ersten tools-/core-Import auf sys.path liegen
-# (Henne-Ei; Spec-Review-Fix 2026-07-06, Muster tools/aim2_build_dataset.py).
+# REPO_ROOT MUST be on sys.path before the first tools/core import
+# (chicken-and-egg; spec review fix 2026-07-06, pattern tools/aim2_build_dataset.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.research_dataset_common import (  # noqa: E402
@@ -60,14 +60,14 @@ from core.research_features import (  # noqa: E402
 from core.trade_utils import calculate_smart_targets  # noqa: E402
 from tools.walkforward_sim import simulate_exit  # noqa: E402
 
-SINCE_DEFAULT = "2026-04-01"     # Regime-Daten laufen erst seit ~April
+SINCE_DEFAULT = "2026-04-01"     # regime data only runs since ~April
 TRADE_SYMBOL = "BTCUSDT"
 HORIZON_CANDLES = 14 * 24
 N_PUBLISHED = 3
-SAMPLE_MINUTES = 30              # ein Event je 30 min Episode
-EPISODE_GAP_MIN = 15             # >15 min Lücke im Raster → neue Episode
+SAMPLE_MINUTES = 30              # one event per 30 min episode
+EPISODE_GAP_MIN = 15             # >15 min gap in the grid → new episode
 RESOLVE_LOOKAHEAD_H = 24
-STABLE_NEED = 4                  # >= 4 der 5 Folge-Checks gleich → stabil
+STABLE_NEED = 4                  # >= 4 of the 5 following checks match → stable
 
 CLASS_MAP = {"TREND_UP": TRM1_CLASS_UP, "TREND_DOWN": TRM1_CLASS_DOWN}
 
@@ -90,8 +90,8 @@ def load_history(conn, since: str) -> list[dict]:
 
 
 def resolve_label(hist: list[dict], i: int) -> tuple[int, float] | None:
-    """Erste stabile Nicht-TRANSITION-Klassifikation nach hist[i].
-    Rückgabe (Klasse, Minuten bis Auflösung) oder None (keine binnen 24h)."""
+    """First stable non-TRANSITION classification after hist[i].
+    Return value (class, minutes to resolution) or None (none within 24h)."""
     t0 = hist[i]["ts"]
     j = i + 1
     while j < len(hist):
@@ -103,7 +103,7 @@ def resolve_label(hist: list[dict], i: int) -> tuple[int, float] | None:
             follow = [hist[k]["regime"] for k in range(j + 1, min(j + 6, len(hist)))]
             if len(follow) >= 5 and sum(1 for r in follow if r == reg) >= STABLE_NEED:
                 return CLASS_MAP.get(reg, TRM1_CLASS_OTHER), dt_min
-            # instabiler Ausreißer — weiter suchen
+            # unstable outlier — keep searching
         j += 1
     return None
 
@@ -120,14 +120,14 @@ def main() -> None:
 
     conn = get_db_connection()
     hist = load_history(conn, args.since)
-    log(f"regime_history-Zeilen: {len(hist)}")
+    log(f"regime_history rows: {len(hist)}")
     if len(hist) < TRM1_WINDOW_CHECKS + 50:
-        raise SystemExit("Zu wenig regime_history — läuft 26_regime_detector?")
+        raise SystemExit("Not enough regime_history — is 26_regime_detector running?")
 
     btc = load_candles_ctx(conn, TRADE_SYMBOL, args.since, lookback_days=40)
     conn.close()
     if btc is None or len(btc) < MIN_WINDOW:
-        raise SystemExit(f"{TRADE_SYMBOL}-Kerzen nicht ladbar.")
+        raise SystemExit(f"{TRADE_SYMBOL} candles not loadable.")
     times = btc["open_time"].values.astype("datetime64[ns]")
     highs = btc["high"].to_numpy(dtype=np.float64)
     lows = btc["low"].to_numpy(dtype=np.float64)
@@ -144,7 +144,7 @@ def main() -> None:
             if row["regime"] != "TRANSITION" or row["ts"] < since_ts:
                 episode_start = None
                 continue
-            # Episoden-Tracking (Lücken im 5-min-Raster beenden die Episode)
+            # episode tracking (gaps in the 5-min grid end the episode)
             if (
                 episode_start is None
                 or (row["ts"] - hist[i - 1]["ts"]).total_seconds() / 60.0 > EPISODE_GAP_MIN
@@ -216,7 +216,7 @@ def main() -> None:
             key = {TRM1_CLASS_UP: "class_up", TRM1_CLASS_DOWN: "class_down"}.get(label_class, "class_other")
             stats[key] += 1
 
-    log(f"FERTIG -> {args.out} ({time.time() - t0:.0f}s)")
+    log(f"DONE -> {args.out} ({time.time() - t0:.0f}s)")
     log(json.dumps(stats))
 
 

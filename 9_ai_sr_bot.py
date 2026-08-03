@@ -15,7 +15,7 @@ from core import shadow_gate
 from core.candles import read_indicators
 from core.charting import generate_minichart_image
 
-# --- CORE IMPORTE ---
+# --- CORE IMPORTS ---
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.model_artifacts import load_artifact_json, maybe_reload
@@ -23,53 +23,53 @@ from core.signal_post import LEG_LIVE, LEG_SHADOW, has_open_ai_signal, post_ai_s
 from core.sra_features import SRA2_FEATURES, build_sra2_features
 from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
 
-# Logging Setup
+# Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_SR_BOT - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- MODELL-ARTEFAKTE (natives XGB-JSON + optionale Meta-/Calib-Sidecars) ---
+# --- MODEL ARTIFACTS (native XGB-JSON + optional metadata/calib sidecars) ---
 #
-# Die Dateinamen sind generationsfreie SLOTS — der Operator kopiert das
-# promotete Artefakt hierher. Die Generation steht ausschliesslich in der
-# Sidecar-Meta (`*_meta.json` → model_id), nie im Dateinamen und nie in einer
-# Quellcode-Konstante (harte Regel 6, T-2026-CU-9050-042). Ein SRA3-Retrain
-# postet damit als SRA3, statt still mit SRA2 in derselben Per-Bot-Statistik zu
-# verschmelzen, auf der das Orchestrator-Gating entscheidet.
+# The filenames are generation-free SLOTS — the operator copies the promoted
+# artifact here. The generation lives exclusively in the sidecar metadata
+# (`*_meta.json` → model_id), never in the filename and never in a source-code
+# constant (hard rule 6, T-2026-CU-9050-042). An SRA3 retrain thus posts as
+# SRA3, instead of silently blending with SRA2 in the same per-bot statistics
+# on which orchestrator gating decides.
 SRA_ARTIFACT_PATHS = {
     'LONG': "trade_success_xgb_LONG_v2.json",
     'SHORT': "trade_success_xgb_SHORT_v2.json",
 }
-# Der Tag, unter dem dieser Bot vor T-2026-CU-9050-042 BEIDE Richtungen postete.
-# Zwei Rollen: default_tag fürs heutige Legacy-Artefakt (keine Meta ⇒ kein
-# model_id) UND transitionaler Dedupe-Key — siehe check_cooldown/Duplikatprüfung.
+# The tag under which this bot previously posted BOTH directions before T-2026-CU-9050-042.
+# Two roles: default_tag for today's legacy artifact (no metadata ⇒ no
+# model_id) AND transitional dedup key — see check_cooldown/deduplication.
 SRA_LEGACY_TAG = 'SRA1'
-# Posting-Schwelle des Legacy-Modells. Ein Artefakt mit Meta bringt seine eigene
-# mit (optimal_threshold aus dem Validation-Slice) und überschreibt sie.
-# 0.65→0.70 (T-2026-CU-9050-171): auf den realisierten SRA1-Trades (n=748,
-# 03–07/2026) ist das Segment 0.65–0.70 netto negativ (Ø −0,10 %); ab 0.70
-# bleiben 62 % der Trades mit MEHR Gesamt-PnL (302 vs. 274) und WR 52→55,5 %.
+# Posting threshold of the legacy model. An artifact with metadata brings its own
+# (optimal_threshold from the validation slice) and overrides it.
+# 0.65→0.70 (T-2026-CU-9050-171): on the realised SRA1 trades (n=748,
+# 03–07/2026) the segment 0.65–0.70 is net negative (Ø −0.10 %); from 0.70
+# 62 % of the trades remain with MORE total PnL (302 vs. 274) and WR 52→55.5 %.
 SRA_LEGACY_THRESHOLD = 0.70
-# Shadow-Log-Untergrenze: alles darüber landet in ml_predictions_master.
+# Shadow log floor: everything above it lands in ml_predictions_master.
 SRA_SHADOW_THRESHOLD = 0.35
 
 MODELS: dict[str, dict] = {}
 
-# SRA2-Shadow (T-2026-CU-9050-125): der SRA2-Retrain war "nicht deploybar", WEIL
-# die Label-Quelle closed_trades3 tot ist — ein reines TRAININGS-Problem. Shadow-
-# Serving umgeht das: es scored den live S/R-Kandidatenstrom durch den geteilten
-# core.sra_features-Builder + das staging-Artefakt und lässt den AI-Monitor die
-# frischen Outcomes (closed_ai_signals) sammeln — genau die Labels, die der tote
-# Tracker nicht mehr liefert. SRA1 bleibt unangetastet live.
+# SRA2 shadow (T-2026-CU-9050-125): the SRA2 retrain was "not deployable" BECAUSE
+# the label source closed_trades3 is dead — a pure TRAINING problem. Shadow
+# serving circumvents this: it scores the live S/R candidate stream via the shared
+# core.sra_features builder + the staging artifact and lets the AI monitor collect
+# fresh outcomes (closed_ai_signals) — exactly the labels the dead tracker no
+# longer provides. SRA1 remains untouched live.
 SHADOW_SRA2: dict[str, object | None] = {"LONG": None, "SHORT": None}
 
 
 def sra_expected_features() -> list[str]:
-    """Die Feature-Namen, die dieser Bot bauen KANN — Legacy-Vektor ∪ SRA2-Vertrag.
+    """The feature names this bot CAN build — legacy vector ∪ SRA2 contract.
 
-    Der harte Feature-Vertrag (P0.12): verlangt ein Artefakt eine Spalte, die
-    hier fehlt, wird es nicht geladen und der Bot idlet — nie fillna(0), denn
-    das Modell hätte diese Spalte im Training nie als 0 gesehen. Die Liste wird
-    aus den Buildern ABGELEITET, nicht danebengeschrieben (zwei Listen driften).
+    The hard feature contract (P0.12): if an artifact requires a column that is
+    missing here, it will not be loaded and the bot idles — never fillna(0),
+    because the model would never have seen this column as 0 in training. The
+    list is DERIVED from the builders, not written separately (two lists drift).
     """
     dummy: dict = dict.fromkeys(SRA_INDICATOR_COLS, 1.0)
     dummy['trend_direction'] = 'UP'
@@ -78,13 +78,13 @@ def sra_expected_features() -> list[str]:
 
 
 def build_serving_row(direction, indicators) -> dict | None:
-    """Der Feature-Frame für ein Artefakt MIT Meta.
+    """The feature frame for an artifact WITH metadata.
 
-    Achtung, geteilte Spaltennamen mit UNTERSCHIEDLICHER Semantik: der alte
-    Bot-Vektor rechnet ``pct_*`` gegen den Close, der SRA2-Builder gegen den
-    Referenzwert (ema9, wma9, …). Der SRA2-Builder gewinnt deshalb bewusst
-    (rechts im Merge) — er definiert die Semantik, auf der das Artefakt
-    trainiert wurde. Der Legacy-Pfad unten fasst diesen Frame nie an.
+    Caution: shared column names with DIFFERENT semantics: the old bot vector
+    computes ``pct_*`` against the close, the SRA2 builder against the reference
+    value (ema9, wma9, …). The SRA2 builder therefore deliberately wins (on the
+    right in the merge) — it defines the semantics on which the artifact was
+    trained. The legacy path below never touches this frame.
     """
     legacy = create_feature_row(direction, indicators)
     if not legacy:
@@ -93,41 +93,42 @@ def build_serving_row(direction, indicators) -> dict | None:
 
 
 def load_models() -> None:
-    """Lädt beide Richtungs-Artefakte. Fehlt eines, idlet NUR diese Richtung
-    (Falle 3: ein Bot ohne Artefakt startet und tut nichts, statt in den
-    Watchdog-Restart-Loop zu laufen — vorher war das ein `exit(1)`)."""
+    """Loads both direction artifacts. If one is missing, only that direction
+    idles (trap 3: a bot without an artifact starts and does nothing instead of
+    falling into the watchdog restart loop — previously this was an `exit(1)`)."""
     expected = sra_expected_features()
     for direction, path in SRA_ARTIFACT_PATHS.items():
         MODELS[direction] = load_artifact_json(path, expected, SRA_LEGACY_TAG, SRA_LEGACY_THRESHOLD)
     if not any(a['loaded'] for a in MODELS.values()):
-        logger.error("❌ Kein SRA-Artefakt ladbar — Bot läuft im Idle-Modus bis zum Deploy.")
+        logger.error("❌ No SRA artifact loadable — bot runs in idle mode until deploy.")
 
-    # SRA2-Shadow-Modelle aus staging_models/ fail-soft nachladen.
+    # SRA2 shadow models from staging_models/ fail-soft reload.
     for direction in ("LONG", "SHORT"):
         SHADOW_SRA2[direction] = shadow_gate.load_shadow_artifact("SRA2", direction)
     if any(SHADOW_SRA2.values()):
         loaded = [d for d, m in SHADOW_SRA2.items() if m is not None]
-        logger.info(f"👻 SRA2 Shadow-Modelle geladen: {', '.join(loaded)}")
+        logger.info(f"👻 SRA2 shadow models loaded: {', '.join(loaded)}")
 
 
 def _emit_max2(conn, coin, prob, entry1, entry2, sl, targets) -> None:
-    """MAX2 (T-2026-KYT-9050-020): der SRA2-LONG-Trade in den Main-Channel.
+    """MAX2 (T-2026-KYT-9050-020): the SRA2 LONG trade into the main channel.
 
-    MAX2 ist KEIN eigenes Modell und kein eigener Prozess — es ist ein Fork der
-    SRA2-LONG-Emission (Aufruf aus _emit_sra2_shadow): feuert SRA2 LONG
-    (prob>=threshold) für einen Coin aus config.MAIN_CHANNEL_COINS, wird DERSELBE
-    Trade (gleiche prob + Entry/SL/Target-Geometrie) zusätzlich unter Tag "MAX2"
-    nach CH_MAIN emittiert. Ersetzt den retireten klassischen "Main Channel"-
-    Detektor (3_detectors.py), der auf genau dieser Coin-Whitelist lief — der
-    einzige Filter ist die Whitelist, exakt wie zuvor (Operator-Entscheid Michi).
+    MAX2 is NOT its own model and not its own process — it is a fork of the
+    SRA2 LONG emission (call from _emit_sra2_shadow): when SRA2 LONG fires
+    (prob>=threshold) for a coin from config.MAIN_CHANNEL_COINS, the SAME
+    trade (same prob + entry/SL/target geometry) is additionally emitted under
+    tag "MAX2" to CH_MAIN. Replaces the retired classic "main channel"
+    detector (3_detectors.py), which ran on exactly this coin whitelist — the
+    only filter is the whitelist, exactly as before (operator decision Michi).
 
-    LONG-only: SRA2 SHORT ist ein toter Shadow-Leg (threshold=None, Labels seit
-    23.02 tot). MAX2 postet default-LIVE (leg_status("MAX2","LONG")=LIVE) — das
-    ist kollisionsfrei mit dem SRA2-Post nach CH_AI_SR, WEIL CH_AI_SR NICHT
-    Cornix-executed ist (informativ/Orchestrator, Operator-bestätigt); sonst wäre
-    es ein Regel-4-Doppel-Trade auf den 37 Coins. Eigener Tag ⇒ eigener Cooldown-/
-    Dedup-Namespace via has_open("MAX2") (Regel 6). Fehler bleiben gekapselt; der
-    bereits committete SRA2-Post ist unberührt (eigene Txn, eigenes Rollback).
+    LONG-only: SRA2 SHORT is a dead shadow leg (threshold=None, labels dead
+    since 23.02). MAX2 posts default-LIVE (leg_status("MAX2","LONG")=LIVE) —
+    this is collision-free with the SRA2 post to CH_AI_SR, BECAUSE CH_AI_SR is
+    NOT Cornix-executed (informational/orchestrator, operator-confirmed);
+    otherwise it would be a rule-4 double trade across 37 coins. Own tag ⇒
+    own cooldown/dedup namespace via has_open("MAX2") (rule 6). Errors remain
+    encapsulated; the already-committed SRA2 post is untouched (own txn, own
+    rollback).
     """
     if not shadow_gate.shadow_posting_enabled() or shadow_gate.leg_status("MAX2", "LONG") not in (
         shadow_gate.LIVE,
@@ -154,7 +155,7 @@ def _emit_max2(conn, coin, prob, entry1, entry2, sl, targets) -> None:
         if outcome is not None:
             conn.commit()
     except Exception as e:
-        logger.warning(f"MAX2 für {coin} LONG fehlgeschlagen: {e}")
+        logger.warning(f"MAX2 for {coin} LONG failed: {e}")
         try:
             conn.rollback()
         except Exception:
@@ -162,17 +163,18 @@ def _emit_max2(conn, coin, prob, entry1, entry2, sl, targets) -> None:
 
 
 def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
-    """SRA2-Emission über das shadow_gate-Routing (T-2026-CU-9050-125/185).
+    """SRA2 emission via the shadow_gate routing (T-2026-CU-9050-125/185).
 
-    Scored denselben S/R-Kandidaten wie der Live-SRA1-Pfad über den geteilten
-    core.sra_features-Builder + das SRA2-Artefakt und emittiert bei prob>=threshold
-    via post_ai_signal_gated: das LIVE-Bein SRA2 LONG (@0.6424, T-185, Artefakt im
-    Repo-Root) emittiert eine Cornix-Format-Message an CH_AI_SR (koexistierend mit
-    SRA1) — Cornix ist auf CH_AI_SR NICHT subscribed (informativ/Orchestrator),
-    weshalb der MAX2-Fork denselben Trade kollisionsfrei nach CH_MAIN spiegeln kann
-    (siehe _emit_max2). Das SHADOW-Bein SRA2 SHORT (threshold=None, staging) bleibt
-    ein überwachter Shadow-Trade (kein Cornix). Geometrie = dieselbe HVN/S-R-Konstruktion wie process_ai_trade (bewusst
-    dupliziert, um den Live-Pfad nicht anzufassen). Fehler bleiben gekapselt.
+    Scores the same S/R candidates as the live SRA1 path via the shared
+    core.sra_features builder + the SRA2 artifact and emits on prob>=threshold
+    via post_ai_signal_gated: the LIVE leg SRA2 LONG (@0.6424, T-185, artifact
+    in repo root) emits a Cornix-format message to CH_AI_SR (coexisting with
+    SRA1) — Cornix is NOT subscribed on CH_AI_SR (informational/orchestrator),
+    which is why the MAX2 fork can collision-free mirror the same trade to
+    CH_MAIN (see _emit_max2). The SHADOW leg SRA2 SHORT (threshold=None,
+    staging) remains a monitored shadow trade (no Cornix). Geometry = the same
+    HVN/S-R construction as process_ai_trade (deliberately duplicated to avoid
+    touching the live path). Errors remain encapsulated.
     """
     if not shadow_gate.shadow_posting_enabled() or shadow_gate.leg_status("SRA2", direction) not in (
         shadow_gate.LIVE,
@@ -193,9 +195,9 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
         thr = shadow_gate.artifact_threshold(art)
         if thr is not None and prob < thr:
             return
-        # Duplikat-Schutz für den LIVE-Leg (SRA2 LONG, T-185): post_ai_signal (live)
-        # macht KEINEN has_open-Check — nur post_shadow_ai_signal tat das intern.
-        # Deshalb hier explizit vor der teuren Geometrie prüfen (analog Bot 10).
+        # Deduplication guard for the LIVE leg (SRA2 LONG, T-185): post_ai_signal (live)
+        # does NO has_open check — only post_shadow_ai_signal did that internally.
+        # So explicitly check here before the expensive geometry (like bot 10).
         if has_open_ai_signal(conn, coin, direction, "SRA2"):
             return
         is_long = direction == "LONG"
@@ -223,7 +225,7 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
             conn,
             "SRA2",
             direction,
-            _kcfg.CH_AI_SR,  # LIVE-Leg SRA2 LONG → SRA-Channel (T-185); SHORT bleibt Shadow
+            _kcfg.CH_AI_SR,  # LIVE leg SRA2 LONG → SRA channel (T-185); SHORT remains shadow
             coin,
             prob,
             entry1,
@@ -235,28 +237,28 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
         )
         if outcome is not None:
             conn.commit()
-        # MAX2 (T-2026-KYT-9050-020): denselben SRA2-LONG-Trade coin-gefiltert in
-        # den Main-Channel forken — ersetzt den retireten klassischen Main-Channel-
-        # Bot, der auf genau MAIN_CHANNEL_COINS lief. Nur LONG (SRA2 SHORT ist tot).
+        # MAX2 (T-2026-KYT-9050-020): fork the same SRA2 LONG trade coin-filtered into
+        # the main channel — replaces the retired classic main-channel bot that ran
+        # on exactly MAIN_CHANNEL_COINS. LONG only (SRA2 SHORT is dead).
         if direction == "LONG" and coin in _kcfg.MAIN_CHANNEL_COINS:
             _emit_max2(conn, coin, prob, entry1, entry2, sl, targets)
     except Exception as e:
-        logger.warning(f"SRA2 Shadow für {coin} {direction} fehlgeschlagen: {e}")
+        logger.warning(f"SRA2 shadow for {coin} {direction} failed: {e}")
         try:
             conn.rollback()
         except Exception:
             pass
 
 
-# FEATURE & INDIKATOR HELFER
+# FEATURE & INDICATOR HELPERS
 
 
 def get_indicators_at_time(conn, coin, timestamp):
-    """Holt die 1h-Indikatoren zur letzten GESCHLOSSENEN Kerze <= timestamp.
+    """Fetches the 1h indicators for the last CLOSED candle <= timestamp.
 
-    R1: include_forming=False — die Features/Erkennung laufen nie auf der forming
-    Kerze. Feuerte ein Trade mitten in der laufenden Stunde, lieferte `<= timestamp`
-    sonst die Partial-Indikatoren dieser Stunde.
+    R1: include_forming=False — features/detection never run on the forming
+    candle. If a trade fired mid-current-hour, `<= timestamp` would otherwise
+    deliver the partial indicators of that hour.
     """
     try:
         df = read_indicators(conn, coin, "1h", limit=1, end=timestamp, include_forming=False)
@@ -264,13 +266,13 @@ def get_indicators_at_time(conn, coin, timestamp):
             return None
         return df.iloc[-1].to_dict()
     except Exception as e:
-        logger.debug(f"Indikatoren-DB-Fehler für {coin}: {e}")
+        logger.debug(f"indicators DB error for {coin}: {e}")
         return None
 
 
-# Roh-Indikatorspalten, die create_feature_row 1:1 übernimmt. Modul-Konstante,
-# damit sra_expected_features() den Feature-Vertrag AUS dem Builder ableiten kann
-# statt ihn danebenzuschreiben (zwei Listen driften auseinander).
+# Raw indicator columns that create_feature_row takes over 1:1. Module constant
+# so that sra_expected_features() can derive the feature contract FROM the builder
+# instead of writing it separately (two lists drift apart).
 SRA_INDICATOR_COLS = [
     'rsi_9',
     'rsi_14',
@@ -300,7 +302,7 @@ SRA_INDICATOR_COLS = [
 
 
 def create_feature_row(direction, indicators):
-    """Erstellt das Feature-Dict für XGBoost basierend auf deiner Modell-Logik."""
+    """Creates the feature dict for XGBoost based on your model logic."""
     close = indicators.get('close', np.nan)
     if pd.isna(close) or close <= 0:
         return None
@@ -333,9 +335,9 @@ def create_feature_row(direction, indicators):
     )
 
     atr = indicators.get('atr_14', np.nan)
-    # FIX P1.20: ATR-Features IMMER emittieren — fehlt ATR, hatte der
-    # Feature-Vektor 35 statt 38 Spalten, predict_proba warf und die ganze
-    # Scan-Iteration brach ab. XGBoost kann mit NaN nativ umgehen.
+    # FIX P1.20: ATR features ALWAYS emit — if ATR is missing, the feature
+    # vector had 35 instead of 38 columns, predict_proba threw and the entire
+    # scan iteration broke. XGBoost can handle NaN natively.
     if pd.notna(atr) and atr > 0:
         features.update(
             {
@@ -353,33 +355,33 @@ def create_feature_row(direction, indicators):
 
 # TARGET CALCULATOR
 
-# POSTING LOGIK
+# POSTING LOGIC
 
 
 def process_ai_trade(conn, symbol, direction, module, live_price, confidence, chart_path=None) -> bool:
     """Calculates trade details, writes to outbox and monitor.
 
-    Returns True wenn der Trade wirklich gepostet wurde, False wenn der
-    interne Cooldown den Post unterdrückt hat (P2.30: der Caller schrieb
-    vorher posted=True in ml_predictions_master, obwohl nie gepostet wurde).
+    Returns True if the trade was actually posted, False if the internal
+    cooldown suppressed the post (P2.30: the caller wrote posted=True in
+    ml_predictions_master before, even though nothing was posted).
     """
-    target_channel = _kcfg.CH_AI_SR  # Dein Ziel-Kanal
+    target_channel = _kcfg.CH_AI_SR  # Your target channel
 
-    # FIX: Vorher eigener Cooldown-Check mit `pd.Timestamp.utcnow().tz_localize(None)`
+    # FIX: Previously own cooldown check with `pd.Timestamp.utcnow().tz_localize(None)`
     # → crashes in newer pandas versions (utcnow is tz-aware there) and mixes
-    # tz-aware/tz-naive Vergleiche. Jetzt: saubere Version aus market_utils.
+    # tz-aware/tz-naive comparisons. Now: clean version from market_utils.
     #
-    # Transitionaler Dedup (T-2026-CU-9050-042): der Cooldown-Key IST der Tag, und
-    # der Tag wechselt beim Retrain-Rollout (SRA1 → SRA2). Eine frische
-    # SRA1-Cooldown-Row würde ein SRA2-Signal auf demselben Coin dann nicht mehr
-    # sperren, und Cornix öffnete eine zweite Live-Position neben der ersten.
-    # Also zusätzlich gegen den Alt-Tag prüfen; solange die Tags gleich sind
-    # (heute, Legacy-Artefakt ohne Meta), fällt der zweite Query weg.
+    # Transitional dedup (T-2026-CU-9050-042): the cooldown key IS the tag, and
+    # the tag changes on retrain rollout (SRA1 → SRA2). A fresh SRA1 cooldown row
+    # would no longer block an SRA2 signal on the same coin, and Cornix would
+    # open a second live position next to the first. So additionally check against
+    # the old tag; as long as the tags are the same (today, legacy artifact
+    # without metadata), the second query is skipped.
     cooldown_tags = [module] if module == SRA_LEGACY_TAG else [module, SRA_LEGACY_TAG]
     if any(check_cooldown(conn, t, symbol, direction, 4) for t in cooldown_tags):
         return False
 
-    # 2. Level & Targets
+    # 2. Levels & targets
     is_long = direction == "LONG"
     entry1 = float(live_price)
     entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
@@ -392,7 +394,7 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
         sl = min([x for x in resis if x > entry2 * 1.01]) if any(x > entry2 * 1.01 for x in resis) else entry2 * 1.025
         t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
-    # FIX: echte Zonen + ggf. 5%-Target wenn letzte Zone zu nah
+    # FIX: real zones + if needed 5% target if last zone is too close
     targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
     # P2.31: publish AND track exactly the same targets. The Cornix block below
     # shows the first n_show TPs; the AI monitor (8_ai_trade_monitor) scores
@@ -400,7 +402,7 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
     # the monitor score phantom TPs the subscriber never saw. Single source for both.
     n_show = 3
     lev = get_max_leverage(symbol, 20)
-    # 3. Cornix & Telegram
+    # 3. Cornix & telegram
     lines = [
         f"📈 Signal for {symbol} 📈",
         f"🚨 Direction: {direction}",
@@ -415,17 +417,18 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
     lines += [f"💸 Stop Loss: $ {sl:.8f}", f"🧠 Trade idea generated by AI module {module} V3"]
     cornix_msg = "\n".join(lines)
 
-    # FIX Doppel-Post (2026-07-06, Flotten-Sweep): Caption ohne eingebetteten
-    # Cornix-Block — Cornix parste sonst beide Nachrichten als Signale.
+    # FIX double post (2026-07-06, fleet sweep): caption without embedded Cornix
+    # block — Cornix would otherwise parse both messages as signals.
     html_caption = f"<b>💥 AI {module} {direction} SIGNAL</b>\n<b>{symbol.replace('USDT', '')}/USDT</b>\n→ Direction: {direction}\n→ ML Confidence: <b>{confidence:.1%}</b>\n→ Time: {datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M')} UTC"
 
-    # T-2026-KYT-9050-033 (Audit T-032): Fleet-Lifecycle-Gate. Default LIVE ⇒ keine
-    # Verhaltensänderung. SRA1 ist in beiden Richtungen geparkt → SHADOW (überwachter
-    # Trade statt Cornix); SRA2 ist der Live-Nachfolger (s. shadow_gate). Rein additiv
-    # (Regel 4). Rückgabe False ⇒ der Caller loggt ml_predictions_master posted=False
-    # (wie bei Cooldown-Suppression). Hinweis: post_shadow_ai_signal loggt zusätzlich
-    # EINE Shadow-Prediction (trade_id=0) — bewusst in Kauf genommen; der monitored
-    # ai_signals-Trade (Audit-Datenquelle) bleibt via has_open singulär.
+    # T-2026-KYT-9050-033 (audit T-032): fleet-lifecycle gate. Default LIVE ⇒ no
+    # behaviour change. SRA1 is parked in both directions → SHADOW (monitored
+    # trade instead of Cornix); SRA2 is the live successor (see shadow_gate).
+    # Purely additive (rule 4). Return False ⇒ the caller logs ml_predictions_master
+    # posted=False (as with cooldown suppression). Note: post_shadow_ai_signal
+    # additionally logs ONE shadow prediction (trade_id=0) — knowingly accepted;
+    # the monitored ai_signals trade (audit data source) remains singular via
+    # has_open.
     _route = route_legacy_leg(conn, module, direction, symbol, confidence, entry1, entry2, sl, targets, n_show=n_show)
     if _route != LEG_LIVE:
         if _route == LEG_SHADOW:
@@ -433,9 +436,9 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
         return False
 
     with conn.cursor() as cur:
-        # Cornix Text
+        # Cornix text
         cur.execute("INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (target_channel, cornix_msg))
-        # Chart Image
+        # Chart image
         if chart_path:
             cur.execute(
                 "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
@@ -460,14 +463,14 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
                 json.dumps(targets[:n_show]),
             ),
         )
-    # FIX (Review Batch 4): Cooldown in DERSELBEN Transaktion wie Outbox +
-    # ai_signals setzen. Vorher lief update_cooldown NACH conn.commit() —
-    # warf der Cooldown-Upsert (z.B. lock_timeout), blieb der Post committed,
-    # aber ohne Cooldown und ohne master-Log → der nächste Scan-Pass hat
-    # denselben Trade erneut gepostet (Doppel-Exposure bei Cornix).
+    # FIX (Review Batch 4): cooldown in THE SAME transaction as outbox +
+    # ai_signals set. Previously update_cooldown ran AFTER conn.commit() —
+    # if the cooldown upsert threw (e.g., lock_timeout), the post remained
+    # committed but without cooldown and without master log → the next scan pass
+    # posted the same trade again (double exposure at Cornix).
     update_cooldown(conn, module, symbol, direction, commit=False)
     conn.commit()
-    logger.info(f"🚀 {module} Trade für {symbol} erfolgreich abgefeuert!")
+    logger.info(f"🚀 {module} trade for {symbol} successfully fired!")
     return True
 
 
@@ -475,12 +478,12 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
 
 
 def main():
-    logger.info("=== 🧠 ML SR BOT AKTIVIERT ===")
+    logger.info("=== 🧠 ML SR BOT ACTIVATED ===")
     load_models()
 
     while True:
-        # Tägliches Reload nimmt einen Artefakt-Deploy ohne Restart auf; ein
-        # fehlgeschlagener Reload verwirft ein geladenes Artefakt nicht.
+        # Daily reload picks up an artifact deploy without a restart; a failed
+        # reload does not discard a loaded artifact.
         expected = sra_expected_features()
         for direction in SRA_ARTIFACT_PATHS:
             MODELS[direction] = maybe_reload(MODELS[direction], expected)
@@ -488,7 +491,7 @@ def main():
         conn = get_db_connection()
         try:
             with conn.cursor() as cur:
-                # 1. Frische S&R Trades aus der Master-Tabelle suchen
+                # 1. Fresh S&R trades from the master table
                 cur.execute("""
                     SELECT id, time, coin, direction, entry
                     FROM active_trades_master
@@ -500,31 +503,31 @@ def main():
                 for trade in fresh_trades:
                     t_id, t_time, coin, direction, entry = trade
 
-                    # FIX P1.20: per-Trade-Isolation. Vorher riss EIN kaputter
-                    # Trade (z.B. predict-Fehler) die ganze Iteration ab und der
-                    # Pass-Rollback verwarf auch die Shadow-Inserts aller schon
-                    # verarbeiteten Trades. Jetzt: commit pro Trade, rollback
-                    # betrifft nur den einen.
+                    # FIX P1.20: per-trade isolation. Previously ONE broken trade
+                    # (e.g., predict error) tore the entire iteration off and the
+                    # pass rollback discarded also the shadow inserts of all already-
+                    # processed trades. Now: commit per trade, rollback only affects
+                    # that one.
                     try:
-                        # SRA2-Shadow (T-2026-CU-9050-125): denselben Kandidaten
-                        # unabhängig vom SRA1-Live-Pfad scoren + überwacht tracken.
+                        # SRA2 shadow (T-2026-CU-9050-125): score the same candidates
+                        # independent of the SRA1 live path + monitored track.
                         _emit_sra2_shadow(conn, coin, direction, t_time, entry)
 
                         artifact = MODELS.get(direction)
                         if not artifact or not artifact['loaded']:
-                            continue  # Idle-Modus dieser Richtung (Falle 3)
-                        # Der Posting-Tag kommt aus der Artefakt-Meta (load_artifact_json
-                        # setzt tag = meta.model_id); ohne Meta bleibt es der benannte
-                        # Legacy-Tag. Er trägt ai_signals.model, ml_predictions_master
-                        # .model_name und den Cooldown-Key — alle drei müssen dieselbe
-                        # Generation nennen, sonst mischt die Per-Bot-Statistik zwei
-                        # Modelle (Regel 6).
+                            continue  # Idle mode for that direction (trap 3)
+                        # The posting tag comes from the artifact metadata (load_artifact_json
+                        # sets tag = meta.model_id); without metadata it remains the named
+                        # legacy tag. It carries ai_signals.model, ml_predictions_master
+                        # .model_name and the cooldown key — all three must name the same
+                        # generation, otherwise the per-bot statistics mix two models
+                        # (rule 6).
                         module_name = artifact['tag']
 
-                        # 2. Duplikatprüfung in Master-Log
-                        #    Transitional: auch gegen den Alt-Tag prüfen. Ohne ihn hielte
-                        #    ein SRA2-Rollout jeden bereits verarbeiteten Trade für neu und
-                        #    postete ihn ein zweites Mal.
+                        # 2. Deduplication check in master log
+                        #    Transitional: also check against the old tag. Without it an
+                        #    SRA2 rollout would hold every already-processed trade as new
+                        #    and would post it a second time.
                         cur.execute(
                             "SELECT 1 FROM ml_predictions_master WHERE trade_id = %s AND model_name IN (%s, %s)",
                             (t_id, module_name, SRA_LEGACY_TAG),
@@ -532,29 +535,28 @@ def main():
                         if cur.fetchone():
                             continue
 
-                        # 3. Aktiver Trade Check (T-2026-CU-9050-055) — prüft, ob für
-                        #    genau dieses Modul/Coin/Richtung bereits ein nicht-
-                        #    geschlossener Trade läuft. Der 4h-Cooldown im Post-Pfad ist
-                        #    eine FREQUENZ-Sperre, kein Positions-Guard: ein SRA-Trade
-                        #    läuft regelmässig länger, und ohne diesen Check öffnete das
-                        #    Folgesignal eine ZWEITE Live-Position neben der ersten
-                        #    (dieselbe Lektion wie RUB, T-2026-CU-9050-043).
-                        #    Muster: 11_ai_mis_bot.py:318. Die Duplikatprüfung darüber
-                        #    schützt nur gegen denselben trade_id, nicht gegen einen
-                        #    NEUEN Setup-Trade auf einem Coin, der schon offen ist.
+                        # 3. Active trade check (T-2026-CU-9050-055) — checks whether for
+                        #    exactly this module/coin/direction an already-running
+                        #    unclosed trade exists. The 4h cooldown in the post path is
+                        #    a FREQUENCY lock, not a position guard: an SRA trade
+                        #    regularly runs longer, and without this check the follow-up
+                        #    signal would open a SECOND live position next to the first
+                        #    (the same lesson as RUB, T-2026-CU-9050-043).
+                        #    Pattern: 11_ai_mis_bot.py:318. The deduplication check above
+                        #    protects only against the same trade_id, not against a NEW
+                        #    setup trade on a coin that is already open.
                         #
-                        #    Der Tag ist zugleich der Dedupe-Key und kippt beim
-                        #    SRA2-Rollout; ohne den Alt-Tag im IN blockte eine offene
-                        #    SRA1-Position das SRA2-Signal nicht mehr. Gleiche Tags
-                        #    (heute) ⇒ No-op.
+                        #    The tag is also the dedup key and flips on SRA2 rollout;
+                        #    without the old tag in the IN an open SRA1 position would
+                        #    no longer block the SRA2 signal. Same tags (today) ⇒ no-op.
                         cur.execute(
                             "SELECT 1 FROM ai_signals WHERE symbol = %s AND direction = %s AND model IN (%s, %s)",
                             (coin, direction, module_name, SRA_LEGACY_TAG),
                         )
                         if cur.fetchone():
-                            continue  # Trade läuft live im AI Monitor
+                            continue  # Trade runs live in AI monitor
 
-                        # 4. Indikatoren & Features
+                        # 4. Indicators & features
                         inds = get_indicators_at_time(conn, coin, t_time)
                         if not inds:
                             continue
@@ -563,14 +565,14 @@ def main():
                         if not features:
                             continue
 
-                        # 5. XGBoost Vorhersage
-                        #    Artefakt MIT Meta: Frame aus dem geteilten SRA2-Builder,
-                        #    ausgerichtet auf den Vertrag — Auswahl UND Reihenfolge. Keine
-                        #    fillna über Spalten: load_artifact_json hat die Namen hart
-                        #    validiert (P0.12); fehlende WERTE bleiben NaN, das kennt das
-                        #    Modell aus dem Training.
-                        #    Artefakt OHNE Meta: der Legacy-Vektor, unverändert — er ist
-                        #    der Vertrag des heute deployten SRA1-Modells.
+                        # 5. XGBoost prediction
+                        #    Artifact WITH metadata: frame from the shared SRA2 builder,
+                        #    aligned to the contract — selection AND order. No fillna
+                        #    across columns: load_artifact_json has hard-validated the
+                        #    names (P0.12); missing VALUES remain NaN, the model knows
+                        #    this from training.
+                        #    Artifact WITHOUT metadata: the legacy vector, unchanged —
+                        #    it is the contract of today's deployed SRA1 model.
                         if artifact['features']:
                             serving = build_serving_row(direction, inds)
                             if not serving:
@@ -580,24 +582,24 @@ def main():
                             X = pd.DataFrame([features])
                         conf = float(artifact['model'].predict_proba(X)[0, 1])
 
-                        # 6. Klassifizierung & Schatten-Log
+                        # 6. Classification & shadow log
                         posted = False
                         if conf >= artifact['threshold']:
-                            # FIX (Review Batch 4): NaN-ATR-Vektoren nicht live posten.
-                            # P1.20 lässt fehlende ATR-Features als NaN durch, damit der
-                            # Scan nicht mehr crasht — aber das Modell hat im Training nie
-                            # NaN in diesen Spalten gesehen, die Confidence darauf ist
-                            # unkalibriert. Solche Rows nur shadow-loggen, kein Cornix-Post.
+                            # FIX (Review Batch 4): do not post NaN-ATR vectors live.
+                            # P1.20 allows missing ATR features to pass as NaN so the
+                            # scan no longer crashes — but the model has never seen NaN
+                            # in these columns in training, the confidence on it is
+                            # uncalibrated. Only shadow-log such rows, no Cornix post.
                             if pd.isna(features.get('support_atr', np.nan)):
-                                logger.info(f"⚠️ {coin} {direction} conf {conf:.1%} — ATR fehlt, nur Shadow-Log.")
+                                logger.info(f"⚠️ {coin} {direction} conf {conf:.1%} — ATR missing, shadow-log only.")
                             else:
-                                logger.info(f"🎯 Treffer! {coin} {direction} hat {conf:.1%} Confidence.")
+                                logger.info(f"🎯 Hit! {coin} {direction} has {conf:.1%} confidence.")
                                 chart_p = generate_minichart_image(coin, minutes=240)
-                                # FIX P2.30: posted aus dem Rückgabewert — False wenn der
-                                # interne 4h-Cooldown den Post unterdrückt hat.
+                                # FIX P2.30: posted from the return value — False if the
+                                # internal 4h cooldown suppressed the post.
                                 posted = process_ai_trade(conn, coin, direction, module_name, entry, conf, chart_p)
 
-                        # Alles >= SRA_SHADOW_THRESHOLD in die Master-History loggen
+                        # Everything >= SRA_SHADOW_THRESHOLD into the master history
                         if conf >= SRA_SHADOW_THRESHOLD:
                             cur.execute(
                                 """
@@ -607,31 +609,31 @@ def main():
                                 (t_id, module_name, t_time, coin, direction, entry, conf, posted),
                             )
                         else:
-                            # Darunter nur als "erledigt" markieren (minimales Log)
+                            # Below that only marked "done" (minimal log)
                             cur.execute(
                                 "INSERT INTO ml_predictions_master (trade_id, model_name, coin, confidence, posted) VALUES (%s, %s, %s, %s, False)",
                                 (t_id, module_name, coin, conf),
                             )
                         conn.commit()
                     except Exception as trade_err:
-                        logger.error(f"SRA1: Fehler bei Trade {t_id} ({coin} {direction}): {trade_err}")
-                        # Rollback guarded — auf einer toten Connection (DB-Restart)
-                        # wirft rollback() selbst und würde sonst bis aus main()
-                        # durchschlagen und den Prozess killen.
+                        logger.error(f"SRA1: error at trade {t_id} ({coin} {direction}): {trade_err}")
+                        # Rollback guarded — on a dead connection (DB restart)
+                        # rollback() itself throws and would otherwise propagate out
+                        # of main() and kill the process.
                         try:
                             conn.rollback()
                         except Exception:
-                            logger.error("SRA1: rollback fehlgeschlagen — Pass-Abbruch, Connection wird erneuert.")
+                            logger.error("SRA1: rollback failed — pass abort, connection is renewed.")
                             break
 
             conn.commit()
         except Exception as e:
-            logger.error(f"Fehler im Loop: {e}")
+            logger.error(f"error in loop: {e}")
             if conn:
                 try:
                     conn.rollback()
                 except Exception:
-                    pass  # tote Connection — close() im finally gibt den Slot frei
+                    pass  # dead connection — close() in finally returns the slot
         finally:
             if conn:
                 conn.close()
@@ -643,4 +645,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot manuell stopped (Strg+C). Shutting down cleanly...")
+        logger.info("Bot manually stopped (Ctrl+C). Shutting down cleanly...")

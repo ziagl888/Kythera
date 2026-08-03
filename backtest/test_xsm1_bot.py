@@ -1,12 +1,12 @@
 # backtest/test_xsm1_bot.py
-"""DB-freie Tests für den XSM1/XSR1-Shadow-Forwarder (Bot 39, K2, T-2026-CU-9050-149).
+"""DB-free tests for the XSM1/XSR1 shadow forwarder (bot 39, K2, T-2026-CU-9050-149).
 
-  1. shadow_gate: XSM1-LONG + XSR1-SHORT sind LIVE (T-2026-CU-9050-183, → CH_ATS),
-     ohne Artefakt.
-  2. bot_catalog: Tags "XSM1"/"XSR1" → 39_ai_xsm1_bot.py.
-  3. select_top_decile: Liquiditäts-Filter + oberstes F-Rendite-Dezil.
-  4. emit: emittiert je (tag,direction) über post_ai_signal_gated nur bei
-     LIVE/SHADOW + kein Cooldown/offener Trade + Targets; SILENT → nichts. → CH_ATS.
+  1. shadow_gate: XSM1-LONG + XSR1-SHORT are LIVE (T-2026-CU-9050-183, → CH_ATS),
+     without artifact.
+  2. bot_catalog: tags "XSM1"/"XSR1" → 39_ai_xsm1_bot.py.
+  3. select_top_decile: liquidity filter + top F-return decile.
+  4. emit: emits per (tag,direction) via post_ai_signal_gated only when
+     LIVE/SHADOW + no cooldown/open trade + targets; SILENT → nothing. → CH_ATS.
 
 Run: pytest backtest/test_xsm1_bot.py -v
 """
@@ -41,12 +41,12 @@ xsm1 = _import_xsm1()
 
 # ── 1. shadow_gate ────────────────────────────────────────────────────────────
 def test_xsm1_xsr1_legs_live_no_artifact():
-    # T-2026-CU-9050-183: die emittierten Beine live promotet (→ CH_ATS), kein Artefakt.
+    # T-2026-CU-9050-183: the emitted legs are promoted live (→ CH_ATS), no artifact.
     assert sg.leg_status("XSM1", "LONG") == sg.LIVE
     assert sg.leg_status("XSR1", "SHORT") == sg.LIVE
     assert sg.shadow_artifact_path("XSM1", "LONG") is None
     assert sg.shadow_artifact_path("XSR1", "SHORT") is None
-    # die jeweils NICHT emittierte Gegenrichtung bleibt Default-LIVE (kein Bot postet sie)
+    # the respective NOT-emitted opposite direction stays default-LIVE (no bot posts it)
     assert sg.leg_status("XSM1", "SHORT") == sg.LIVE
     assert sg.leg_status("XSR1", "LONG") == sg.LIVE
 
@@ -59,14 +59,14 @@ def test_xsm1_xsr1_tags_map_to_bot39():
 
 # ── 3. select_top_decile ──────────────────────────────────────────────────────
 def test_select_top_decile_ranks_and_filters_liquidity():
-    # 30 liquide Coins (dv=100), F-Rendite 0..29 %; 5 illiquide (dv=1) mit EXTREM
-    # hoher Rendite (+99 %) — die dürfen trotzdem NICHT ins Top-Dezil.
+    # 30 liquid coins (dv=100), F-return 0..29 %; 5 illiquid (dv=1) with EXTREMELY
+    # high return (+99 %) — they must still NOT make the top decile.
     liquid = [(f"L{i:02d}", float(i) / 100.0, 100.0) for i in range(30)]
     illiquid = [(f"I{i:02d}", 0.99, 1.0) for i in range(5)]
     top = xsm1.select_top_decile(liquid + illiquid)
-    # ndec = max(1, round(30 * 0.10)) = 3 → die 3 höchsten LIQUIDEN Renditen
+    # ndec = max(1, round(30 * 0.10)) = 3 → the 3 highest LIQUID returns
     assert top == ["L27", "L28", "L29"]
-    assert not any(s.startswith("I") for s in top)  # illiquide raus
+    assert not any(s.startswith("I") for s in top)  # illiquid excluded
 
 
 def test_select_top_decile_min_coins_guard():
@@ -123,16 +123,16 @@ def test_emit_both_hypotheses(monkeypatch):
     assert len(posts) == 2
     xsm = next(p for p in posts if p[0] == "XSM1")  # (tag, dir, ch, sym, e1, e2, sl)
     xsr = next(p for p in posts if p[0] == "XSR1")
-    assert xsm[1] == "LONG" and xsm[6] < xsm[4]  # LONG-SL unter Entry (sl < e1)
-    assert xsr[1] == "SHORT" and xsr[6] > xsr[4]  # SHORT-SL über Entry
-    assert xsm[2] == xsm1._kcfg.CH_ATS and xsr[2] == xsm1._kcfg.CH_ATS  # ehem. ATS-Channel
-    assert xsm[4] == xsm[5] and xsr[4] == xsr[5]  # Market-Fill (e1==e2)
+    assert xsm[1] == "LONG" and xsm[6] < xsm[4]  # LONG-SL below entry (sl < e1)
+    assert xsr[1] == "SHORT" and xsr[6] > xsr[4]  # SHORT-SL above entry
+    assert xsm[2] == xsm1._kcfg.CH_ATS and xsr[2] == xsm1._kcfg.CH_ATS  # former ATS channel
+    assert xsm[4] == xsm[5] and xsr[4] == xsr[5]  # market fill (e1==e2)
 
 
 def test_run_scan_pairs_xsm1_long_xsr1_short():
-    # Seit T-2026-CU-9050-183 sind die Beine default-LIVE — die Richtung wird NUR
-    # noch durch das run_scan-Pairing gesichert (nicht mehr durch die SHADOW-
-    # Registrierung). Diese Invariante pinnen (Review-LOW): keine invertierte Emission.
+    # Since T-2026-CU-9050-183 the legs are default-LIVE — the direction is now ONLY
+    # secured by the run_scan pairing (no longer by the SHADOW registration). Pin
+    # this invariant (review LOW): no inverted emission.
     import inspect
 
     src = inspect.getsource(xsm1.run_scan)
@@ -141,7 +141,7 @@ def test_run_scan_pairs_xsm1_long_xsr1_short():
 
 
 def test_emit_skips_when_silent_or_gated(monkeypatch):
-    posts = _wire(monkeypatch, leg=sg.SILENT)  # SILENT → nichts (LIVE/SHADOW würden emittieren)
+    posts = _wire(monkeypatch, leg=sg.SILENT)  # SILENT → nothing (LIVE/SHADOW would emit)
     xsm1.emit(_FakeConn(), "TOPUSDT", "XSM1", "LONG", 100.0)
     posts2 = _wire(monkeypatch, cooldown=True)
     xsm1.emit(_FakeConn(), "TOPUSDT", "XSM1", "LONG", 100.0)

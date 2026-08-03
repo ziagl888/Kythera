@@ -33,7 +33,7 @@ async def export_signals(pool, coin):
     
     async with pool.acquire() as conn:
         try:
-            # SQL Query OHNE OBV und VWAP, da wir sie im Python berechnen
+            # SQL Query without OBV and VWAP since we calculate them in Python
             rows = await conn.fetch(f"""
                 SELECT 
                     p.open_time, p.high, p.low, p.close, p.volume, -- 0-4
@@ -52,7 +52,7 @@ async def export_signals(pool, coin):
             
             if len(rows) < 150: return
             
-            # Daten als Pandas DataFrame für einfachere Berechnungen
+            # Data as Pandas DataFrame for simpler calculations
             df_coin = pd.DataFrame(rows, columns=[
                 'open_time', 'high', 'low', 'close', 'volume',
                 'rsi_14', 'rsi_6', 'tsi_fast_12_7_7', 'tsi_fast_12_7_7_signal',
@@ -64,37 +64,37 @@ async def export_signals(pool, coin):
                 'trendline_slope', 'support_price', 'resistance_price'
             ])
             
-            # Sicherstellen, dass die Spalten numerisch sind
+            # Ensure that columns are numeric
             df_coin['high'] = pd.to_numeric(df_coin['high'], errors='coerce')
             df_coin['low'] = pd.to_numeric(df_coin['low'], errors='coerce')
             df_coin['close'] = pd.to_numeric(df_coin['close'], errors='coerce')
             df_coin['volume'] = pd.to_numeric(df_coin['volume'], errors='coerce')
 
-            # NaNs in essentiellen Spalten füllen
+            # Fill NaNs in essential columns
             df_coin['close'] = df_coin['close'].fillna(df_coin['close'].median())
             df_coin['volume'] = df_coin['volume'].fillna(0)
             
-            # RSI, TSI für NaN Check
+            # RSI, TSI for NaN check
             tsi_fast = pd.to_numeric(df_coin['tsi_fast_12_7_7'], errors='coerce')
             tsi_fast_signal = pd.to_numeric(df_coin['tsi_fast_12_7_7_signal'], errors='coerce')
             if np.all(np.isnan(tsi_fast)) or np.all(np.isnan(tsi_fast_signal)): return
 
-            # --- Indikatorberechnung (OBV und VWAP) ---
+            # --- Indicator calculation (OBV and VWAP) ---
             # On-Balance Volume (OBV)
             df_coin['obv'] = (np.sign(df_coin['close'].diff()) * df_coin['volume']).fillna(0).cumsum()
 
-            # Volume Weighted Average Price (VWAP) - 20 Perioden
-            # Wir berechnen den Typical Price für den VWAP
+            # Volume Weighted Average Price (VWAP) - 20 periods
+            # We calculate the Typical Price for VWAP
             df_coin['typical_price'] = (df_coin['high'] + df_coin['low'] + df_coin['close']) / 3
             df_coin['vwap_20'] = (df_coin['volume'] * df_coin['typical_price']).rolling(20).sum() / df_coin['volume'].rolling(20).sum()
-            df_coin['vwap_20'] = df_coin['vwap_20'].fillna(df_coin['close']) # Fülle initiales NaN mit Close
+            df_coin['vwap_20'] = df_coin['vwap_20'].fillna(df_coin['close']) # Fill initial NaN with Close
             
-            # Konvertiere zurück zu numpy array für konsistente Verarbeitung
+            # Convert back to numpy array for consistent processing
             data = df_coin.to_numpy(dtype=object)
 
-            # --- Feature Engineering (wie gehabt, aber jetzt mit obv und vwap_20 in 'data') ---
-            # Die Indizes müssen entsprechend den neuen Spalten in df_coin angepasst werden.
-            # Neue Indizes der SQL-Felder (nach dem DataFrame-Umbau)
+            # --- Feature Engineering (as before, but now with obv and vwap_20 in 'data') ---
+            # The indices must be adjusted according to the new columns in df_coin.
+            # New indices of the SQL fields (after the DataFrame rebuild)
             close_idx = df_coin.columns.get_loc('close') # 3
             vol_idx = df_coin.columns.get_loc('volume') # 4
             rsi14_idx = df_coin.columns.get_loc('rsi_14') # 5
@@ -119,11 +119,11 @@ async def export_signals(pool, coin):
             support_idx = df_coin.columns.get_loc('support_price') # 24
             resistance_idx = df_coin.columns.get_loc('resistance_price') # 25
             
-            # Neu berechnete Indikatoren
-            obv_idx = df_coin.columns.get_loc('obv') # 26 (Nach typical_price und vwap_20)
+            # Newly calculated indicators
+            obv_idx = df_coin.columns.get_loc('obv') # 26 (after typical_price and vwap_20)
             vwap_20_idx = df_coin.columns.get_loc('vwap_20') # 27
-            
-            # --- Indikatoren als Pandas Series extrahieren und NaNs füllen ---
+
+            # --- Extract indicators as pandas Series and fill NaNs ---
             close_s = pd.to_numeric(df_coin['close'], errors='coerce').fillna(df_coin['close'].median())
             vol_s = pd.to_numeric(df_coin['volume'], errors='coerce').fillna(0)
             macd_dif_s = pd.to_numeric(df_coin['macd_dif_normal_12_26_9'], errors='coerce').fillna(0)
@@ -150,7 +150,7 @@ async def export_signals(pool, coin):
 
 
             vol_sma20 = vol_s.rolling(20).mean().fillna(0)
-            vol_ratio = vol_s / vol_sma20.replace(0, 1) # Ersetze 0 durch 1, um Division by Zero zu vermeiden
+            vol_ratio = vol_s / vol_sma20.replace(0, 1) # Replace 0 with 1 to avoid division by zero
             
             bb_width = (boll_upper_s - boll_lower_s) / boll_lower_s.replace(0, 1)
             bb_pos = (close_s - boll_lower_s) / (boll_upper_s - boll_lower_s).replace(0, 1)
@@ -173,14 +173,14 @@ async def export_signals(pool, coin):
             dist_supp = (close_s - support_s) / close_s.replace(0, 1)
             dist_res = (resistance_s - close_s) / close_s.replace(0, 1)
 
-            # === BEARISH-SPEZIFISCHE BINARY FEATURES ===
+            # === BEARISH-SPECIFIC BINARY FEATURES ===
             macd_cross_bearish = ( (macd_dif_s.shift(1) >= macd_dea_s.shift(1)) & (macd_dif_s < macd_dea_s) ).astype(int).fillna(0)
             ema9_21_cross_bearish = ( (ema9_s.shift(1) >= ema21_s.shift(1)) & (ema9_s < ema21_s) ).astype(int).fillna(0)
             kama9_21_cross_bearish = ( (kama9_s.shift(1) >= kama21_s.shift(1)) & (kama9_s < kama21_s) ).astype(int).fillna(0)
             bollinger_lower_break = (close_s < boll_lower_s).astype(int).fillna(0)
             close_below_ema50 = (close_s < ema50_s).astype(int).fillna(0)
 
-            # === NEUE VOLUME-SPEZIFISCHE FEATURES ===
+            # === NEW VOLUME-SPECIFIC FEATURES ===
             obv_sma20 = obv_s.rolling(20).mean().fillna(0)
             obv_ratio = obv_s / obv_sma20.replace(0, 1)
             
@@ -191,7 +191,7 @@ async def export_signals(pool, coin):
             volume_trend_up = (vol_s.rolling(5).mean() > vol_s.rolling(20).mean()).astype(int).fillna(0)
 
 
-            # Alle berechneten Features in einen DataFrame packen, um sie leicht an data anzuhängen
+            # Pack all calculated features into a DataFrame to easily append them to data
             calculated_features_df = pd.DataFrame({
                 'vol_ratio': vol_ratio, 'bb_width': bb_width, 'bb_pos': bb_pos,
                 'dist_ema200': dist_ema200, 'dist_ema9_21': dist_ema9_21, 
@@ -205,12 +205,12 @@ async def export_signals(pool, coin):
                 'volume_spike': volume_spike, 'volume_trend_up': volume_trend_up
             })
             
-            # Daten und berechnete Features zusammenführen
+            # Merge data and calculated features
             df_final = pd.concat([df_coin, calculated_features_df], axis=1)
-            data = df_final.to_numpy(dtype=object) # Konvertiere zurück zu numpy
+            data = df_final.to_numpy(dtype=object) # Convert back to numpy
 
-            # Helper zum Extrahieren der Features
-            def get_features(r_df): # Jetzt nimmt es einen DataFrame-Row
+            # Helper for extracting the features
+            def get_features(r_df): # Now it takes a DataFrame row
                 return {
                     "rsi_14": pd.to_numeric(r_df['rsi_14'], errors='coerce'), "rsi_6": pd.to_numeric(r_df['rsi_6'], errors='coerce'),
                     "macd_hist": pd.to_numeric(r_df['macd_dif_normal_12_26_9'], errors='coerce') - pd.to_numeric(r_df['macd_dea_normal_12_26_9'], errors='coerce') if pd.to_numeric(r_df['macd_dif_normal_12_26_9'], errors='coerce') is not None else 0,
@@ -237,8 +237,8 @@ async def export_signals(pool, coin):
                     "volume_trend_up": r_df['volume_trend_up']
                 }
 
-            # Simulation (NUR LONG TRADES)
-            # Iteration jetzt über den DataFrame
+            # Simulation (LONG TRADES ONLY)
+            # Iteration now over the DataFrame
             for i in range(50, len(df_final) - MAX_HOLD_HOURS):
                 row_df = df_final.iloc[i]
                 prev_df = df_final.iloc[i-1]
@@ -288,16 +288,16 @@ async def export_signals(pool, coin):
                         "outcome": outcome,
                         "pnl_pct": result_pnl * 100,
                         "pnl_$": result_pnl * 100 * 20,
-                        **get_features(row_df) # Hier den DataFrame-Row übergeben
+                        **get_features(row_df) # Pass the DataFrame row here
                     })
 
-        except Exception as e: 
-            print(f"Fehler bei Coin {coin}: {e}")
+        except Exception as e:
+            print(f"Error with coin {coin}: {e}")
             pass
 
 async def main():
     pool = await asyncpg.create_pool(**DB_CONFIG)
-    print("Starte LONG-ONLY Export (2.5/1.5) mit erweiterten Features (OBV/VWAP berechnet)...")
+    print("Starting LONG-ONLY export (2.5/1.5) with extended features (OBV/VWAP calculated)...")
     for i, coin in enumerate(coins):
         if i % 50 == 0: print(f"{i} Coins processed...")
         await export_signals(pool, coin)
@@ -306,6 +306,6 @@ async def main():
     if all_signals:
         df = pd.DataFrame(all_signals)
         df.to_csv("tsi_signals_long_only.csv", index=False)
-        print(f"\nFertig! {len(all_signals)} Long-Trades exportiert in 'tsi_signals_long_only.csv'")
+        print(f"\nDone! {len(all_signals)} long trades exported to 'tsi_signals_long_only.csv'")
 
 asyncio.run(main())

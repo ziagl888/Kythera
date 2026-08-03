@@ -18,12 +18,12 @@ Arms (from tools.wave_exit_overlay, the merged T-043 harness):
 Metric = risk-adjusted (T-041): per-trade leveraged Sharpe + fixed-2% compounding
 MaxDD. DCA drag = B_sharpe − A_sharpe (positive → dropping the DCA helps).
 
-Betriebsregeln (Live-VPS!): DB strictly read-only, BELOW_NORMAL priority,
+Operating rules (live VPS!): DB strictly read-only, BELOW_NORMAL priority,
 coin-windowed reads. Output ONLY to staging_models/replay/. Long batch (~2-3 min
 per bot × N bots) — run with the VPS in mind.
 
-Beispiel
---------
+Example
+-------
   python tools/dca_all_bots.py --allow-high-cpu
 """
 
@@ -78,19 +78,19 @@ def render_md(meta: dict) -> str:
     rows = meta["bots"]
     L = []
     ap = L.append
-    ap("# DCA-Effekt fleet-weit — A (DCA) vs B (single-entry1) vs C (SL@entry2) — T-2026-KYT-9050-045\n")
+    ap("# DCA effect fleet-wide — A (DCA) vs B (single-entry1) vs C (SL@entry2) — T-2026-KYT-9050-045\n")
     ap(
-        f"_generated {meta['generated_at']} · read-only · {len(rows)} Bots · je Max-Outbox-Fenster · bis {meta['end']}_\n"
+        f"_generated {meta['generated_at']} · read-only · {len(rows)} bots · per max outbox window · until {meta['end']}_\n"
     )
     ap(
-        "**Warum per-Bot-Fenster:** `closed_ai_signals` hat kein entry2 → seine Realized-Zahlen sind schon "
-        "≈ **Arm B** (single entry1, ohne DCA). Der DCA-Effekt (Arm A) lebt nur im immutablen Cornix-Text "
-        "(`telegram_outbox`), dessen per-Bot-Retention jedes Fenster begrenzt; entry2/SL sind **keine** "
-        "festen %-Abstände → nicht rekonstruierbar. Metrik risiko-adjustiert (T-041): per-Trade leveraged "
-        "**Sharpe** + kompoundierende **MaxDD (2%)**. **DCA-Drag = B−A** (Sharpe; positiv → DCA weglassen hilft).\n"
+        "**Why per-bot windows:** `closed_ai_signals` has no entry2 → its realised numbers are already "
+        "≈ **arm B** (single entry1, no DCA). The DCA effect (arm A) only lives in the immutable Cornix text "
+        "(`telegram_outbox`), whose per-bot retention bounds each window; entry2/SL are **not** "
+        "fixed % offsets → cannot be reconstructed. Metric risk-adjusted (T-041): per-trade leveraged "
+        "**Sharpe** + compounding **MaxDD (2%)**. **DCA drag = B−A** (Sharpe; positive → dropping DCA helps).\n"
     )
     ap(
-        "| Bot | Fenster ab | n | **A Sharpe/MaxDD** | **B Sharpe/MaxDD** | **C Sharpe/MaxDD** | **DCA-Drag (B−A)** | C−B | Verdikt |"
+        "| Bot | Window from | n | **A Sharpe/MaxDD** | **B Sharpe/MaxDD** | **C Sharpe/MaxDD** | **DCA drag (B−A)** | C−B | Verdict |"
     )
     ap("|---|---|--:|--:|--:|--:|--:|--:|---|")
     for r in rows:
@@ -102,7 +102,7 @@ def render_md(meta: dict) -> str:
         verdict = (
             "THIN"
             if thin
-            else ("DCA-SCHADET" if (drag or 0) > 0.02 else ("neutral" if abs(drag or 0) <= 0.02 else "DCA-hilft"))
+            else ("DCA-HURTS" if (drag or 0) > 0.02 else ("neutral" if abs(drag or 0) <= 0.02 else "DCA-HELPS"))
         )
 
         def sd(a: dict):
@@ -128,18 +128,18 @@ def render_md(meta: dict) -> str:
         if _arm(r, "B").get("sharpe_lev") is not None and _arm(r, "C").get("sharpe_lev") is not None
     ]
     c_wins = sum(1 for d in cbs if d > 0.02)
-    ap("\n### Fleet-Verdikt\n")
+    ap("\n### Fleet verdict\n")
     if drags:
         ap(
-            f"- **DCA schadet bei {hurts}/{len(drags)} soliden Bots** (n≥{THIN_N}, DCA-Drag B−A > +0,02). "
-            f"Median-Drag {round(sorted(drags)[len(drags) // 2], 3):+}."
+            f"- **DCA hurts on {hurts}/{len(drags)} solid bots** (n≥{THIN_N}, DCA drag B−A > +0.02). "
+            f"Median drag {round(sorted(drags)[len(drags) // 2], 3):+}."
         )
     if cbs:
-        ap(f"- **entry2-als-SL (C) schlägt B bei {c_wins}/{len(cbs)}** — bot-typ-abhängig (Trend vs Mean-Reversion).")
+        ap(f"- **entry2-as-SL (C) beats B on {c_wins}/{len(cbs)}** — bot-type dependent (trend vs mean-reversion).")
     ap(
-        "\n**Ehrliche Grenzen:** je Bot nur so weit die Outbox-Geometrie reicht (die meisten ~2-3 Wochen; "
-        "ROM1/MIS1-168H ~2,5 Monate). entry2-vorhandenes Set, Compounding sequenziell-nach-close. "
-        "DCA-Weglassen = eigener Deploy-Kandidat (Michi-Entscheid). NO-EDGE/kein-Effekt ist valide.\n"
+        "\n**Honest limits:** per bot only as far as the outbox geometry reaches (most ~2-3 weeks; "
+        "ROM1/MIS1-168H ~2.5 months). entry2-present set, compounding sequential-after-close. "
+        "Dropping DCA = a separate deploy candidate (Michi decision). NO-EDGE/no-effect is valid.\n"
     )
     return "\n".join(L)
 
@@ -165,12 +165,12 @@ def main() -> None:
 
     set_low_priority()
     if args.allow_high_cpu:
-        print("CPU-Headroom-Check übersprungen (--allow-high-cpu; BELOW_NORMAL + read-only).")
+        print("CPU headroom check skipped (--allow-high-cpu; BELOW_NORMAL + read-only).")
     else:
         try:
             check_cpu_headroom()
         except SystemExit as e:
-            print(f"WARN {e} — läuft dennoch (read-only, BELOW_NORMAL).", flush=True)
+            print(f"WARN {e} — running anyway (read-only, BELOW_NORMAL).", flush=True)
 
     conn = get_db_connection()
     try:

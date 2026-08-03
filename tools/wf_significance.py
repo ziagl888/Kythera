@@ -1,54 +1,51 @@
-# tools/wf_significance.py — Signifikanz-Layer über den Walk-Forward-Replay-Output.
+# tools/wf_significance.py — significance layer over walk-forward replay output.
 #
-# Konsumiert das Trade-JSONL von tools/walkforward_sim.py ({tag}_replay_{days}d.jsonl)
-# und beantwortet pro Strategie-Kandidat die Frage, die ein Replay-Summary allein
-# nicht beantwortet: ist der gemessene Edge von Rauschen unterscheidbar?
+# Consumes the trade JSONL from tools/walkforward_sim.py ({tag}_replay_{days}d.jsonl)
+# and answers for each strategy candidate the question that a replay summary alone
+# cannot answer: is the measured edge distinguishable from noise?
 #
-# Drei Statistiken (Vorbild: HKUDS/Vibe-Trading backtest/validation.py:28-145 und
-# src/factors/bench_runner_strict.py:99-195 — Random-Control gegen einen Shuffle
-# DERSELBEN Daten statt Test gegen eine abstrakte Null; MIT, T-2026-CU-9050-027 D3):
+# Three statistics (modelled on: HKUDS/Vibe-Trading backtest/validation.py:28-145 and
+# src/factors/bench_runner_strict.py:99-195 — random control against a shuffle of the
+# SAME data instead of test against an abstract null; MIT, T-2026-CU-9050-027 D3):
 #
-#   1. RANDOM-CONTROL (Sign-Flip-Permutation, der Kern): Unter H0 "die Richtungs-
-#      wahl hat keinen Edge" ist jeder Trade austauschbar mit seinem Gegen-Trade
-#      auf derselben Geometrie. Der Gegen-Trade zahlt dieselben Fees:
-#      flip(net) = -(net + fee_rt) - fee_rt = -net - 2*fee_rt. Die Fee-Summe
-#      ist wegen der Linearität der leg_pnl-Summation exakt der Round-Trip;
-#      die eigentliche Näherung ist die Symmetrieannahme gross' = -gross — ein
-#      real reversierter Trade wäre bei SL-/TP-gekappten Ladder-Profilen
-#      früher gestoppt worden. BIAS-RICHTUNG (Review PR #20): die Kontrolle
-#      ist dadurch bei Trend-Following-artigen R:R-Profilen zu negativ ->
-#      p-Werte eher zu KLEIN, knappe Signifikanz nicht überinterpretieren.
-#      Fairere Kontrolle (simulate_exit-Re-Run mit gespiegelter Richtung) =
-#      eigener Task. n Iterationen zufälliger Flip-Masken liefern die
-#      Null-Verteilung des Mittelwerts -> p-Wert + Delta gegen die Kontrolle.
-#      Das ist bewusst KEIN Test gegen 0: die Kontrolle trägt den Fee-Drag,
-#      den ein richtungsloser Zufalls-Trader real hätte.
-#   2. PERMUTATIONSTEST (Trade-Reihenfolge) für MaxDD: Sharpe ist bei per-Trade-
-#      %-PnL unter Reihenfolge-Permutation INVARIANT (komponierte Equity:
-#      eq_k/eq_{k-1}-1 = pnl_k) — der vt-Permutationstest auf Sharpe wäre hier
-#      degeneriert und wird bewusst NICHT übernommen. Pfadabhängig und ehrlich
-#      testbar ist der Max-Drawdown der Equity-Kurve in Signalzeit-Reihenfolge.
-#      Der DD wird ABSOLUT in %-Punkten unter dem Peak gemessen, nicht auf die
-#      Peak-Höhe normiert — sonst konfundiert die zufällige Peak-Höhe der
-#      fleet-weiten Multi-Coin-Replays den Test (T-2026-CU-9050-053, Details in
-#      max_drawdown_pct). Es ist eine Pfad-Clusterungs-Statistik, kein echter
-#      Portfolio-Drawdown (Overlap bleibt sequenziell verkettet).
-#   3. BOOTSTRAP-CI (Resampling mit Zurücklegen) für per-Trade-Sharpe, avg_r und
-#      Win-Rate. Per-Trade-Sharpe = mean/std der Trade-PnLs, bewusst NICHT
-#      annualisiert (Trades sind nicht zeit-regulär; eine sqrt(252)-Skalierung
-#      würde Präzision vortäuschen).
+#   1. RANDOM-CONTROL (sign-flip permutation, the core): under H0 "the direction
+#      choice has no edge" each trade is exchangeable with its counter-trade on the
+#      same geometry. The counter-trade pays the same fees:
+#      flip(net) = -(net + fee_rt) - fee_rt = -net - 2*fee_rt. The fee sum is exactly
+#      the round-trip due to linearity of leg_pnl summation; the actual approximation is
+#      the symmetry assumption gross' = -gross — a truly reversed trade would have been
+#      stopped earlier with SL-/TP-capped ladder profiles. BIAS DIRECTION (Review PR #20):
+#      the control is thereby too negative for trend-following-like R:R profiles ->
+#      p-values rather too SMALL, marginal significance should not be over-interpreted.
+#      Fairer control (simulate_exit re-run with flipped direction) = separate task. n
+#      iterations of random flip masks yield the null distribution of the mean -> p-value
+#      + delta versus the control. This is deliberately NOT a test against 0: the control
+#      carries the fee drag that a directionless random trader would really have.
+#   2. PERMUTATION TEST (trade order) for MaxDD: Sharpe is invariant under order
+#      permutation for per-trade %-PnL (compounded equity: eq_k/eq_{k-1}-1 = pnl_k) —
+#      the vt permutation test on Sharpe would be degenerate here and is deliberately NOT
+#      adopted. Path-dependent and honestly testable is the max drawdown of the equity
+#      curve in signal chronology. The DD is measured ABSOLUTELY in percentage points
+#      below the peak, not normalised to peak height — otherwise the random peak height
+#      of fleet-wide multi-coin replays confounds the test (T-2026-CU-9050-053, details
+#      in max_drawdown_pct). It is a path-clustering statistic, not true portfolio
+#      drawdown (overlap remains sequentially chained).
+#   3. BOOTSTRAP CI (resampling with replacement) for per-trade Sharpe, avg_r and
+#      win rate. Per-trade Sharpe = mean/std of trade PnLs, deliberately NOT
+#      annualised (trades are not time-regular; a sqrt(252) scaling would feign
+#      precision).
 #
-# Rein additiv: kein Eingriff in walkforward_sim.py. Seed gepinnt (42).
-# Läuft DB-frei auf der Build-Maschine; Input ist ein bestehendes Replay-JSONL.
+# Purely additive: no intervention in walkforward_sim.py. Seed pinned (42).
+# Runs DB-free on the build machine; input is an existing replay JSONL.
 #
 # Usage:
 #   python tools/wf_significance.py <replay.jsonl> [--group-by strategy|strategy+direction]
 #                                   [--n 1000] [--seed 42] [--fee-per-side 0.05]
 #                                   [--min-trades 20] [--out <report.json>]
 #
-# MULTIPLE-TESTING-HINWEIS: dieser Layer testet EINEN Kandidaten. Wer viele
-# Kandidaten screent, braucht zusätzlich FDR/Deflated-Sharpe — bewusst nicht
-# hier (Non-Scope T-2026-CU-9050-027, eigener Task falls gewünscht).
+# MULTIPLE TESTING NOTE: this layer tests ONE candidate. Anyone screening many
+# candidates needs additionally FDR/Deflated-Sharpe — deliberately not here (non-scope
+# T-2026-CU-9050-027, separate task if desired).
 
 from __future__ import annotations
 
@@ -61,36 +58,34 @@ import numpy as np
 
 DEFAULT_N = 1000
 DEFAULT_SEED = 42
-DEFAULT_FEE_PER_SIDE_PCT = 0.05  # Taker je Seite in % (FEE_PER_SIDE walkforward_sim)
+DEFAULT_FEE_PER_SIDE_PCT = 0.05  # Taker per side in % (FEE_PER_SIDE walkforward_sim)
 
 
-# ── Kern-Statistiken ──────────────────────────────────────────────────────────
+# ── Core statistics ───────────────────────────────────────────────────────────
 def max_drawdown_pct(pnls: np.ndarray) -> float:
-    """Max-Drawdown in %-PUNKTEN unter dem laufenden Peak der additiven Equity.
+    """Max drawdown in percentage POINTS below the running peak of cumulative equity.
 
-    ABSOLUT (``equity - peak``), NICHT auf die Peak-Höhe normiert. Die additive
-    Equity (Σ %-PnL) ist reihenfolge-abhängig (das ist der Punkt) und konsistent
-    mit summarize()'s sum_net_pnl_pct.
+    ABSOLUTE (``equity - peak``), NOT normalised to peak height. Cumulative equity
+    (Σ %-PnL) is order-dependent (that is the point) and consistent with summarize()'s
+    sum_net_pnl_pct.
 
-    Warum absolut statt (equity-peak)/peak (T-2026-CU-9050-053): auf den
-    fleet-weiten Multi-Coin-Replays verkettet der Pfad 8–20 gleichzeitige
-    Signale pro Zeitstempel als sequenzielle Einzelwetten, die Equity fällt
-    dadurch tief unter null. Der Quotient hätte am Ende primär die ZUFÄLLIGE
-    Peak-Höhe gemessen (mis1/SHORT + abr1/SHORT Peak bei Trade 0 ≈ 95, rub/LONG
-    bei 2.477) — der Permutationstest war so konfundiert und stellte p_dd_worse
-    verkehrt herum (rub/LONG „gnädig" 1,000 statt „maligne" 0,005). Der absolute
-    DD ist frei von diesem Peak-Artefakt; die +100-Basis kürzt sich in
-    (equity - peak) heraus und entfällt. Nebeneffekt: die alte Division brauchte
-    einen ``np.where(peak > 0, peak, 1.0)``-Guard, der bei Peak ≤ 0 still Einheit
-    UND Skalierung wechselte — dieser Fall existiert hier gar nicht mehr.
+    Why absolute instead of (equity-peak)/peak (T-2026-CU-9050-053): on fleet-wide
+    multi-coin replays the path chains 8–20 simultaneous signals per timestamp as
+    sequential single bets, equity thus falls deep below zero. The quotient would
+    ultimately have measured the RANDOM peak height (mis1/SHORT + abr1/SHORT peak at
+    trade 0 ≈ 95, rub/LONG at 2.477) — the permutation test was thus confounded and
+    stated p_dd_worse backwards (rub/LONG "benignly" 1,000 instead of "malignly" 0,005).
+    The absolute DD is free from this peak artefact; the +100 basis cancels in (equity -
+    peak) and disappears. Side effect: the old division needed an ``np.where(peak > 0,
+    peak, 1.0)`` guard that at peak ≤ 0 still switched unit and scaling — this case
+    no longer exists here.
 
-    GRENZE: gleichzeitige Signale bleiben sequenziell verkettet. Die Zahl ist
-    eine Pfad-Clusterungs-Statistik in %-Punkten, KEIN echter Portfolio-Drawdown
-    (dafür bräuchte es einen overlap-respektierenden Equity-Pfad mit
-    Kapitalallokation — bewusst nicht in diesem additiven Layer). Für den
-    Permutationstest (gleiche Malignität über alle Reihenfolgen?) ist das die
-    ehrliche Größe, weil beobachteter und permutierter Pfad exakt gleich gemessen
-    werden.
+    SCOPE: simultaneous signals remain sequentially chained. The number is a
+    path-clustering statistic in percentage points, NOT true portfolio drawdown (that
+    would need an overlap-respecting equity path with capital allocation — deliberately
+    not in this additive layer). For the permutation test (same malignity across all
+    orders?) this is the honest size, because observed and permuted path are measured
+    exactly the same way.
     """
     equity = np.cumsum(pnls)
     peak = np.maximum.accumulate(equity)
@@ -99,17 +94,17 @@ def max_drawdown_pct(pnls: np.ndarray) -> float:
 
 
 def per_trade_sharpe(pnls: np.ndarray) -> float:
-    """mean/std der Trade-PnLs — NICHT annualisiert (siehe Modul-Docstring)."""
+    """mean/std of trade PnLs — NOT annualised (see module docstring)."""
     std = float(pnls.std())
     return float(pnls.mean() / (std + 1e-12))
 
 
 def sign_flip_control(pnls: np.ndarray, fee_rt_pct: float, n: int, seed: int) -> dict:
-    """Random-Control: zufällige Richtungs-Flips DERSELBEN Trades inkl. Fee-Drag.
+    """Random control: random direction flips of the SAME trades incl. fee drag.
 
-    flip(net) = -net - 2*fee_rt (der Gegen-Trade verliert das Brutto und zahlt
-    trotzdem den Round-Trip). p_value = Anteil der Kontroll-Mittelwerte >= dem
-    beobachteten Mittel (one-sided: "Kandidat besser als richtungsloser Zufall").
+    flip(net) = -net - 2*fee_rt (the counter-trade loses the gross and still pays
+    round-trip). p_value = proportion of control means >= the observed mean (one-sided:
+    "candidate better than directionless chance").
     """
     rng = np.random.default_rng(seed)
     observed = float(pnls.mean())
@@ -123,22 +118,21 @@ def sign_flip_control(pnls: np.ndarray, fee_rt_pct: float, n: int, seed: int) ->
         "observed_mean_pnl_pct": round(observed, 4),
         "control_mean_pnl_pct": round(float(control_means.mean()), 4),
         "random_control_delta_pct": round(observed - float(control_means.mean()), 4),
-        "p_value": round((ge + 1) / (n + 1), 4),  # add-one: nie exakt 0 aus MC
+        "p_value": round((ge + 1) / (n + 1), 4),  # add-one: never exactly 0 from MC
         "n_iterations": n,
     }
 
 
 def order_permutation_test(pnls: np.ndarray, n: int, seed: int) -> dict:
-    """Permutationstest der Trade-Reihenfolge -> p-Wert für den Max-Drawdown.
+    """Permutation test of trade order -> p-value for max drawdown.
 
-    p = Anteil Permutationen mit MaxDD <= observed (beide negativ; "<=" =
-    tiefer/schlechter). KLEINES p => kaum eine zufällige Reihenfolge ist so
-    schlimm wie die beobachtete — die Verluste clustern untypisch MALIGNE in
-    der echten Chronologie (Regime-Abhängigkeit prüfen). p nahe 1 => fast jede
-    Reihenfolge wäre gleich schlimm oder schlimmer — der beobachtete Pfad war
-    untypisch gnädig, das reale DD-Risiko über simulated_max_dd_median_pp
-    budgetieren statt über den beobachteten Wert. (Richtung im Review PR #20
-    korrigiert — vorher stand sie invertiert hier.)
+    p = proportion of permutations with MaxDD <= observed (both negative; "<=" =
+    deeper/worse). SMALL p => hardly any random order is as bad as the observed one —
+    losses cluster atypically MALIGNLY in real chronology (check regime dependence).
+    p near 1 => almost any order would be equally bad or worse — the observed path was
+    atypically benign, budget real DD risk via simulated_max_dd_median_pp rather than
+    the observed value. (Direction corrected in review PR #20 — previously was inverted
+    here.)
     """
     rng = np.random.default_rng(seed)
     observed = max_drawdown_pct(pnls)
@@ -157,7 +151,7 @@ def order_permutation_test(pnls: np.ndarray, n: int, seed: int) -> dict:
 
 def bootstrap_cis(pnls: np.ndarray, r_vals: np.ndarray, wins: np.ndarray,
                   n: int, seed: int, confidence: float = 0.95) -> dict:
-    """Bootstrap-CIs (Resampling mit Zurücklegen) für Sharpe/avg_r/WR."""
+    """Bootstrap CIs (resampling with replacement) for Sharpe/avg_r/WR."""
     rng = np.random.default_rng(seed)
     alpha = (1.0 - confidence) / 2.0
     sharpes = np.empty(n)
@@ -192,7 +186,7 @@ def bootstrap_cis(pnls: np.ndarray, r_vals: np.ndarray, wins: np.ndarray,
     return out
 
 
-# ── Input/Gruppierung ─────────────────────────────────────────────────────────
+# ── Input/Grouping ────────────────────────────────────────────────────────────
 def load_replay_jsonl(path: str) -> list[dict]:
     trades = []
     with open(path, encoding="utf-8") as fh:
@@ -203,7 +197,7 @@ def load_replay_jsonl(path: str) -> list[dict]:
             try:
                 trades.append(json.loads(line))
             except json.JSONDecodeError:
-                continue  # abgebrochene letzte Zeile eines resume-Laufs
+                continue  # aborted last line of a resume run
     return trades
 
 
@@ -220,10 +214,10 @@ def analyze_group(trades: list[dict], n: int, seed: int, fee_rt_pct: float,
               and t.get("net_pnl_pct") is not None]
     result: dict = {"n_signals": len(trades), "n_closed": len(closed)}
     if len(closed) < min_trades:
-        result["skipped"] = f"n_closed < {min_trades} — zu wenig für belastbare Statistik"
+        result["skipped"] = f"n_closed < {min_trades} — too few for reliable statistics"
         return result
 
-    # Pfad-Metriken brauchen die reale Reihenfolge -> nach signal_time sortieren.
+    # Path metrics need real order -> sort by signal_time.
     closed.sort(key=lambda t: str(t.get("signal_time", "")))
     pnls = np.array([float(t["net_pnl_pct"]) for t in closed])
     r_vals = np.array([float(t["r_multiple"]) for t in closed
@@ -231,7 +225,7 @@ def analyze_group(trades: list[dict], n: int, seed: int, fee_rt_pct: float,
     wins = np.array([1.0 if t["outcome_tp1"] == 1 else 0.0 for t in closed])
 
     if float(pnls.std()) == 0.0:
-        result["skipped"] = "PnL-Varianz 0 — Statistik nicht sinnvoll"
+        result["skipped"] = "PnL variance 0 — statistics not meaningful"
         return result
 
     result["random_control"] = sign_flip_control(pnls, fee_rt_pct, n, seed)
@@ -245,20 +239,20 @@ def render_report(results: dict) -> str:
     lines = []
     for key, r in results.items():
         lines.append(f"== {key} ==")
-        lines.append(f"  Signale: {r['n_signals']}  geschlossen: {r['n_closed']}")
+        lines.append(f"  signals: {r['n_signals']}  closed: {r['n_closed']}")
         if "skipped" in r:
             lines.append(f"  SKIP: {r['skipped']}")
             continue
         rc, op, bs = r["random_control"], r["order_permutation"], r["bootstrap"]
         lines.append(
-            f"  Random-Control: mean {rc['observed_mean_pnl_pct']:+.4f}% vs Kontrolle "
-            f"{rc['control_mean_pnl_pct']:+.4f}% (Delta {rc['random_control_delta_pct']:+.4f}%), "
+            f"  Random control: mean {rc['observed_mean_pnl_pct']:+.4f}% vs control "
+            f"{rc['control_mean_pnl_pct']:+.4f}% (delta {rc['random_control_delta_pct']:+.4f}%), "
             f"p={rc['p_value']}"
         )
         lines.append(
-            f"  MaxDD-Pfad (abs, %-Pkt): beobachtet {op['observed_max_dd_pp']:.2f} vs "
-            f"Permutations-Median {op['simulated_max_dd_median_pp']:.2f}, "
-            f"p(schlechter)={op['p_value_dd_worse']}"
+            f"  MaxDD path (abs, %pts): observed {op['observed_max_dd_pp']:.2f} vs "
+            f"permutation median {op['simulated_max_dd_median_pp']:.2f}, "
+            f"p(worse)={op['p_value_dd_worse']}"
         )
         sh = bs["sharpe_per_trade_ci"]
         lines.append(
@@ -277,15 +271,15 @@ def render_report(results: dict) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Signifikanz-Layer über Walk-Forward-Replay-Output (D3)")
-    ap.add_argument("replay_jsonl", help="Pfad zu {tag}_replay_{days}d.jsonl aus walkforward_sim.py")
+    ap = argparse.ArgumentParser(description="Significance layer over walk-forward replay output (D3)")
+    ap.add_argument("replay_jsonl", help="Path to {tag}_replay_{days}d.jsonl from walkforward_sim.py")
     ap.add_argument("--group-by", default="strategy", choices=["strategy", "strategy+direction"])
-    ap.add_argument("--n", type=int, default=DEFAULT_N, help="MC-/Bootstrap-Iterationen")
+    ap.add_argument("--n", type=int, default=DEFAULT_N, help="MC/bootstrap iterations")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--fee-per-side", type=float, default=DEFAULT_FEE_PER_SIDE_PCT,
-                    help="Taker-Fee je Seite in %% (für den Fee-Drag der Random-Control)")
+                    help="Taker fee per side in %% (for fee drag of random control)")
     ap.add_argument("--min-trades", type=int, default=20)
-    ap.add_argument("--out", default=None, help="Report-JSON (Default: <input>_significance.json)")
+    ap.add_argument("--out", default=None, help="Report JSON (default: <input>_significance.json)")
     args = ap.parse_args()
 
     try:
@@ -295,7 +289,7 @@ def main() -> None:
 
     trades = load_replay_jsonl(args.replay_jsonl)
     if not trades:
-        raise SystemExit(f"Keine Trades in {args.replay_jsonl}")
+        raise SystemExit(f"No trades in {args.replay_jsonl}")
 
     groups: dict[str, list[dict]] = {}
     for t in trades:
@@ -313,11 +307,11 @@ def main() -> None:
         "n_iterations": args.n,
         "seed": args.seed,
         "fee_roundtrip_pct": fee_rt,
-        # Einheit explizit im Report: der MaxDD ist absolut in %-Punkten (Suffix
-        # _pp), nicht peak-normiert. Alte Reports tragen _pct und sind NICHT
-        # vergleichbar (T-2026-CU-9050-053).
+        # Unit explicit in report: the MaxDD is absolute in percentage points (suffix
+        # _pp), not peak-normalised. Old reports carry _pct and are NOT comparable
+        # (T-2026-CU-9050-053).
         "max_dd_unit": "percentage_points",
-        "note": "Einzel-Kandidaten-Test; Multi-Kandidaten-Screening braucht zusätzlich FDR (Non-Scope D3).",
+        "note": "Single-candidate test; multi-candidate screening additionally needs FDR (non-scope D3).",
     }
     out_path = args.out or (os.path.splitext(args.replay_jsonl)[0] + "_significance.json")
     with open(out_path, "w", encoding="utf-8") as fh:
