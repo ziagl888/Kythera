@@ -189,16 +189,20 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
     lifted). BOTH legs therefore post Cornix to CH_PUMP_AI and load their artifact
     from the repo ROOT (challenger-distinct epd3_model_{LONG,SHORT}.pkl).
 
-    ⚠ SELECTION CAVEAT (measured in T-085, NOT fixed here): this function scores both
-    directions, takes the STRONGEST by RAW probability and then checks only THAT
-    direction's threshold. The two thresholds differ (LONG 0.76, SHORT 0.6737) and the
-    raw scores of two different models are not comparable, so a valid signal of one leg
-    can be swallowed by a sub-threshold score of the other. Live evidence: after the
-    LONG artifact was promoted on 2026-07-25 09:25 (threshold 0.76 replacing a
-    null-threshold staging dump), LONG emitted ZERO signals for the following nine days
-    because it kept losing the max() to SHORT — whose emissions were then discarded as
-    shadow. Follow-up: filter candidates against their OWN threshold first, then take
-    the strongest.
+    ⚠ SELECTION CAVEAT (structural, NOT fixed here): this function scores both directions,
+    takes the STRONGEST by RAW probability and then checks only THAT direction's threshold.
+    The two thresholds differ (LONG 0.76, SHORT 0.6737) and the raw scores of two different
+    models are not comparable, so a leg above its own cut can be swallowed by a
+    sub-threshold score of the other. HOW OFTEN THAT HAPPENS IS UNMEASURED: the discarded
+    events are not logged anywhere, so there is no telemetry for the drop branch at all.
+    Follow-up T-2026-KYT-9050-086 therefore asks for the counter FIRST, then the fix
+    (filter candidates against their OWN threshold, then take the strongest).
+
+    A retracted claim used to live here (T-2026-KYT-9050-092): that this defect had starved
+    EPD3 LONG to zero emissions for nine days after its 2026-07-25 promotion. It had not —
+    that reading came from ml_predictions_master, which only records SHADOW legs, so LONG
+    going LIVE looked exactly like LONG dying. Both legs post daily. When measuring a live
+    leg's throughput use ai_signals / closed_ai_signals or the bot log, never the shadow table.
 
     ⚠ KILL SWITCH: despite both legs being LIVE, the whole emission still sits behind
     shadow_posting_enabled() — setting KYTHERA_SHADOW_POSTING=0 silences real Cornix

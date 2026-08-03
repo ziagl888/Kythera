@@ -138,7 +138,7 @@ monotonicity that only holds under the stubbed jitter (with real jitter consecut
 overlap and the second CAN be shorter) — reworded. Live smoke through the real call chain: bot
 16 EURUSD=X 1h/4h → 1419/371 rows. `mypy` clean, `ruff` clean, `regression_guard verify` OK.
 **Ops note: the running bot processes keep the old code until the fleet is restarted.**
-## [2026-08-03] EPD3 SHORT go-live @0.6737 — and the discovery that bot 10 had posted nothing live for nine days (T-2026-KYT-9050-085)
+## [2026-08-03] EPD3 SHORT go-live @0.6737 (T-2026-KYT-9050-085) — with a retracted finding, see T-2026-KYT-9050-092
 
 Explicit operator decision: the T-033 park of the EPD3 SHORT leg is lifted, the leg posts
 Cornix to `CH_PUMP_AI` under tag EPD3 at its artifact threshold 0.6737. Two changes —
@@ -150,19 +150,33 @@ which the stale root file still carried as `EPD2` while staging had the correcte
 dump from T-057. A LIVE leg loads from root, so the wrong-tag file could not stay there
 (hard rule 6).
 
-**The measurement that mattered more than the flip.** Verifying the change against the live
-DB surfaced that EPD3 LONG's last emission *ever* was 2026-07-25 09:23:51 — two minutes
-before the timestamp of the `epd3_model_LONG.pkl` promoted by T-037 (09:25). That promotion
-replaced a null-threshold staging dump (which fired on every candidate, hence emitted
-confidences down to 0.265) with a 0.76-threshold root artifact. From 07-26 to 08-03 LONG
-emitted **zero** while SHORT emitted 253–533/day into the shadow. Since EPD3 is bot 10's only
-gated emitter, **the bot posted nothing live at all for nine days and nobody noticed.** Cause:
-`_emit_epd3_shadow` takes `max()` across both directions on *raw* probabilities and then
-checks only the winner's threshold — the two thresholds differ (0.76 vs 0.6737) and raw
-scores of two different models are not comparable, so a valid leg is silently dropped
-whenever the other scores higher while being below its own cut. Documented as a caveat here,
-fixed separately in T-2026-KYT-9050-086 (it changes live posting volume and needs its own
-operator decision).
+**RETRACTED (T-2026-KYT-9050-092, same day).** This entry originally claimed as its headline
+finding that EPD3 LONG's last emission *ever* was 2026-07-25 09:23:51 — two minutes before the
+timestamp of the `epd3_model_LONG.pkl` promoted by T-037 (09:25) — and that bot 10 therefore
+posted nothing live at all for nine days. **That is false.** The measurement was taken from
+`ml_predictions_master`, which is the *shadow* logging path (`core/signal_post.py`:
+`post_shadow_ai_signal` writes it, the live `post_ai_signal` does not). EPD3 LONG went LIVE
+with the T-037 promotion at 09:25 and simply stopped writing to that table two minutes later.
+The two-minute gap that looked like a causal smoking gun is one event — the promotion —
+observed twice: once as the last shadow row, once as the file mtime.
+
+Ground truth from the live tables and the bot log: EPD3 LONG posted every single day.
+`ai_signals` inserts per day — 07-27: 10, 07-28: 60, 07-29: 43, 07-30: 65, 07-31: 33,
+08-01: 35, 08-02: 61, 08-03: 66; the bot log on 08-03 alone shows 52 LONG against 103 SHORT
+`placed in outbox`. No starvation, no silent bot.
+
+What survives is the structural observation, verified by reading the code rather than the
+database: `_emit_epd3_shadow` takes `max()` across both directions on *raw* probabilities and
+then checks only the winner's threshold. The two thresholds differ (0.76 vs 0.6737) and raw
+scores of two different models are not comparable, so a leg above its own cut can be dropped
+when the other scores higher while being below its own. **The effect size of that is
+unmeasured** — the discarded events are not logged anywhere, which is why the follow-up
+T-2026-KYT-9050-086 now asks for the counter *before* the behaviour change.
+
+**Measurement rule that follows from the error:** `ml_predictions_master` only ever sees
+SHADOW legs. A live leg's throughput must be read from `ai_signals` / `closed_ai_signals` or
+from the bot log. Watched through the shadow table, a leg going live is indistinguishable
+from a leg dying.
 
 Risks put to the operator before implementation and reaffirmed: ~360 Cornix signals/day at
 0.6737 plus 422 open shadow SHORTs going live at once, against a Cornix cap of 500 slots per
