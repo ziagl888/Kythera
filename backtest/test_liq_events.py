@@ -246,3 +246,37 @@ def test_flusher_flush_never_raises_and_keeps_buffer(monkeypatch):
     fl.flush()  # must not raise (collector-loop invariant)
     assert fl.rows == [(1,)]  # buffer kept for the next tick
     assert fl.total_inserted == 0
+
+
+# ── Routed WS path + silent-subscription guard (T-2026-KYT-9050-082) ─────────
+
+
+def test_ws_url_is_the_routed_market_path():
+    # Regression pin: the legacy /ws path connects and ACKs subscriptions but
+    # pushes NO market data since the Binance USDT-M migration (2026-04-23) —
+    # the collector ran 5.5h against it without a single frame.
+    collector = _load_collector()
+    assert collector.WS_URL == "wss://fstream.binance.com/market/ws/!forceOrder@arr"
+    assert "/market/ws/" in collector.WS_URL
+
+
+def test_stream_once_reconnects_after_max_silence(monkeypatch):
+    # Eternal recv timeouts are indistinguishable from a dead subscription —
+    # _stream_once must RETURN (forcing a reconnect) once MAX_SILENCE_S passes,
+    # instead of idling forever.
+    collector = _load_collector()
+
+    class FakeWS:
+        def recv(self, timeout=None):
+            raise TimeoutError
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(collector, "connect", lambda *a, **kw: FakeWS())
+    monkeypatch.setattr(collector, "MAX_SILENCE_S", 0.05)
+    fl = collector._Flusher()
+    collector._stream_once(fl)  # must terminate (returns on the silence guard)
