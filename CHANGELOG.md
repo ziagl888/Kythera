@@ -1,3 +1,33 @@
+## [2026-08-04] AIM2-TOPN floor lowered to 0.85 — operator decision, and a correction to yesterday's rate estimate (T-2026-KYT-9050-102)
+
+Closes `AUDIT_TODO#T101-2`. Operator decision (Michi): set `AIM2_TOPN_MIN_PROB=0.85` in the
+live `.env`, so the leg T-2026-KYT-9050-101 found silent for 24 days can actually post.
+
+**Correction to the T-101 entry above.** It said lowering to 0.85 would mean "~4.4 posts/day,
+roughly 30× the intended rate". That was wrong, and the error is worth naming because it
+misrepresented the decision: the `Posts/Day` column of `tools/aim2_topn_calibrate.py` is
+`passed / days` — the number of **eligible candidates**, not posts. The tool states this
+itself ("Set `AIM2_TOPN_N` as backstop independently"). `select_topn` caps selections at
+`n - posts_last_24h`, and with `AIM2_TOPN_N` unset the default `N = 1` applies: **at most one
+post per rolling 24 h**, no matter how many candidates clear the floor.
+
+So at 0.85 the leg posts ~1/day — the lower edge of the 1–3/day design band, not thirty times
+above it. The floor change makes the selection *selective* for the first time: it picks the
+strongest of ~4.4 candidates a day instead of ~0.4.
+
+`DEFAULT_MIN_PROB` in `core/aim2_topn.py` deliberately stays **0.95**: a fresh deployment
+without an operator-set floor should still start maximally selective. The calibrated value
+belongs in the environment, which is exactly where the module docstring always said it should
+come from.
+
+**No fleet restart was performed.** `load_config()` reads the environment at process start, so
+the running bot keeps the 0.95 floor until the next restart. After it, three things confirm
+the change: the startup line must read `effective floor=0.85 (configured 0.85, artifact 0.67,
+bot floor 0.70)`, the throttled starvation WARNING from T-101 must stop appearing, and the
+first `AIM2-TOPN` rows must show up in `ai_signals`/`ml_predictions_master`. If they do not
+appear within ~48 h, then the still-unexplained sub-question from `#T101-2` — six candidates
+cleared 0.95 in July and nothing fired — is the live problem rather than the floor.
+
 ## [2026-08-04] AIM2-TOPN was gated LIVE and silent for 24 days — the floor was never calibrated, and nothing said so (T-2026-KYT-9050-101)
 
 Works off `AUDIT_TODO#T100-2`, opened while verifying T-2026-KYT-9050-100. AIM2-TOPN has
