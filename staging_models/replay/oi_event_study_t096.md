@@ -80,3 +80,51 @@ of them carry an edge?
    own task, Michi-gated.
 3. Fix the collector cadence first (T-097) — a 30-min effective grid would blur
    the 1h-horizon edge the study found.
+
+## Addendum 2026-08-04 — regime conditioning (operator question: "does this only work because we are in a bear market?")
+
+Same data, same frozen event definitions; post-hoc subgroup analysis. Regime =
+BTC and BTCDOM (`BTCDOMUSDT` perp, alt-weakness index) 7d/24h trend from the
+same hourly grid's implied price, as-of the event timestamp. Sides deduped
+separately here (the main run's cooldown is per mechanic across both sides,
+hence slightly different pooled n). All numbers net of 0.10 % RT, per event.
+
+**First: the sample was NOT a bear market.** BTC net +0.2 % over the window,
+weekly returns [−2.5, −7.4, +7.9, +0.7, +0.8, +1.1, −2.7, −0.1]; BTCDOM fell
+−3.3 % (alts slightly outperforming). The edge was not earned on an alt-bleed
+tape.
+
+**DIVERGENCE-SHORT (px≥3 %, oi≤−2 %) by regime:**
+
+| Regime at event | n | net 1h | net 4h | net 24h |
+|---|--:|--:|--:|--:|
+| BTC 7d < −2 % | 254 | +0.15 | **+0.85** (t=2.7) | +1.68 (t=2.2) |
+| BTC 7d −2…+2 % | 215 | +0.70 (t=2.2) | **+1.23** (t=2.4) | +1.00 |
+| BTC 7d > +2 % | 193 | −0.22 | −0.34 | +1.00 (t=0.8) |
+| BTC 24h > +1 % (hot day) | 252 | +0.36 | **+1.02** (t=2.6) | +1.46 |
+| BTCDOM 7d > +1 % | 197 | +0.07 | +0.72 (t=2.1) | +1.50 |
+| BTCDOM 7d < −1 % ("altseason") | 241 | +0.24 | +0.52 | +1.50 |
+| worst 2×2 cell: BTC up × DOM down | 196 | −0.13 | −0.11 | +1.25 |
+
+Readings: (a) **the killer is sustained BTC uptrend, not dominance** — across
+all BTCDOM regimes the edge stays positive, but in BTC-7d-up tape the 1h/4h
+edge disappears; (b) **it disappears rather than inverts** — the worst cells
+sit at ~0, not at losses, and the 24h horizon stays positive everywhere
+(weakly significant); (c) **short-term heat helps, sustained trend hurts**:
+the strongest 4h edge sits on BTC-24h-hot days — mechanically consistent with
+a short-covering rally getting follow-through buying only when the higher-level
+trend is intact.
+
+**DIVERGENCE-LONG (dump ≥3 % on OI ≤ −2 %) by regime — no pocket.** Best cell
++0.56 @4h at WR 51 % (t=1.96, BTC-flat); in BTC-7d-up tape the LONG fade
+*loses* (−0.45 @4h, −1.45 @24h, WR 46 %). The dump-fade is not a bull-market
+hedge: both sides dislike up-tape, only SHORT has a real edge anywhere. LONG
+stays dead.
+
+**Pre-registered hypothesis for the ≥90d re-run (~2026-09-10):** gate
+DIVERGENCE-SHORT on **BTC 7d ≤ +2 %** (as-of, causal). In-sample this keeps
+~71 % of events and essentially all of the PnL. It is registered HERE, before
+the re-run data exists — the re-run evaluates it out-of-sample and must not
+tune it. Caveats: subgroups on 9 weeks of tape; a genuine multi-week bull
+regime is underrepresented (~12 grid-days of BTC-7d-up) — that flank stays
+open until the tape provides it.
