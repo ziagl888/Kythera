@@ -47,6 +47,8 @@ changed, not a defect.
 (thinning disabled, gap measured against the previous candidate, the pool-depth guard removed, a
 call site reverted to the raw slice, the EPD2 legacy path thinned along).
 
+**A second consequence, unbounded:** where the pool has no third separated level, the published ladder gets SHORTER (2 TPs, or 3 with the 5 % backstop as the last rung) instead of merely wider — and Cornix splits the position across whatever it is given, so the size per tranche changes with it. How often that happens cannot be read off the tape either: the pool is not persisted. `ensure_min_tp_distance` is the floor that keeps it from collapsing to a single TP.
+
 **Not measured: the PnL effect.** The candidate pool is not persisted (`ai_signals.targets` holds
 the published slice only, P2.31), so how far TP2/TP3 actually move and what that does to realised
 return needs a replay that recomputes the level pool per signal. The change is structurally
