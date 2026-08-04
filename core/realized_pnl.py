@@ -79,8 +79,16 @@ def _signed_move_pct(sign: float, entry: float, price: float) -> float:
 #
 # So the same trim is right on both eras and the reports need no cutoff date. Do
 # NOT drop the ROM1 entry because "the bot is fixed now" — that would re-inflate
-# every historical row back to a 20-leg position model. AIM2 (15_ai_master_bot:589)
-# still persists its full list and remains the live case for this shim.
+# every historical row back to a 20-leg position model.
+#
+# T-2026-KYT-9050-100 closed the AIM2 side the same way (15_ai_master_bot now
+# persists `targets[:n_show]`), so BOTH entries are now historical-only — and both
+# stay for exactly the same reason: `[:3]` is identity on rows written after the
+# respective deploy and still the posted three on every row before it. This table
+# is therefore no longer a description of live bot behaviour but a permanent
+# decoder for the archive. That is not a reason to prune it: ~2,400 AIM2 and ~8,000
+# ROM1 closed rows still carry the long ladders, and every report that reads them
+# needs this trim to keep the position model at 3 legs.
 PUBLISHED_TARGET_COUNT: dict[str, int] = {
     "ROM1": 3,
     "AIM2": 3,

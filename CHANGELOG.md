@@ -1,3 +1,53 @@
+## [2026-08-04] AIM2 persists what it publishes — the last emitter of the P2.31 class (T-2026-KYT-9050-100)
+
+Follow-up to T-2026-KYT-9050-099 (`AUDIT_TODO#T99-2`). ROM1 was the loud half of the
+persist ≠ publish class; AIM2 (`15_ai_master_bot`) was the quiet one and the last emitter
+still carrying it. Like the four bots the T-2026-CU-9050-083 sweep fixed, it builds its own
+inline Cornix block and its own `ai_signals` insert — and it was simply missed: the block
+posted `targets[:3]`, the insert stored the whole `calculate_smart_targets` list.
+
+Measured on 2,389 closed AIM2 trades since the P2.31 fix: **89.4 %** persisted more than the
+three published targets, **46 %** stored exactly ten, and **6.4 %** of 2,633 trades were
+scored `targets_hit > 3` — credit for take-profits Cornix never received. `n_show = 3` now
+drives both sites.
+
+**This is deliberately NOT the ROM1 recipe.** AIM2's geometry comes from
+`calculate_smart_targets`, which already thins by 1 × ATR: measured median gaps **2.56 %**
+(TP1→TP2) and **2.84 %** (TP2→TP3), and the whole TP1..TP3 ladder spans under 1 % in
+**0.00 %** of signals. The #T98-1 problem does not exist on this leg, and double-thinning is
+exactly what `test_smart_targets_legs_are_untouched` forbids. `n_show` is a local literal
+rather than the shared `N_PUBLISHED_TARGETS` for the same reason — binding AIM2's Cornix
+message to the thinner's target count would let a future thinning change rewrite it silently.
+
+**The risk profile is materially lower than T-099's, and worth stating plainly: the Cornix
+message is byte-identical either way.** Only the persisted list shrinks. Nothing about what
+is traded changes; this moves the book. For new rows monitor 8 then fires ALL TARGETS HIT at
+TP3 (**16.5 %** of trades reach it), confines the SL trail to published rungs, and the
+`targets_hit > 3` class disappears at the source. On today's geometry the recorded exit of
+the cohort stopping exactly at TP3 (n=251) rises **+8.98 % → +11.97 %**, while the cohort
+that ran past TP3 (n=158) falls **+17.38 % → +13.78 %** — phantom upside, since Cornix was
+fully out at TP3. Realised PnL is **unchanged** for both: at k=n=3 the close leg carries
+weight 0 in `weighted_move_pct`.
+
+`core.realized_pnl.PUBLISHED_TARGET_COUNT` keeps both entries, which are now historical-only:
+`[:3]` is identity on rows written from here on and still the posted three on every older row,
+so one lookup stays right on both eras. The table has stopped describing live bot behaviour
+and become a permanent decoder for the archive — that is a reason to document it, not to
+prune it.
+
+Bot 15 joins the `_BOTS` map of `backtest/test_published_targets.py` (the guard that has
+covered bots 9/11/12/13 since 083 and should have covered this one), plus 2 new pins in
+`test_traded_targets.py`; 4 mutations verified red. **Live only after a fleet restart.**
+
+**Found while verifying, not fixed here (`#T100-2`):** `AIM2-TOPN` is gated live in `.env`
+(`AIM2_TOPN_ENABLED=1`, `AIM2_TOPN_LIVE_POSTING=1`, channel set) but has **never** written a
+row to `ai_signals`, `closed_ai_signals` or `ml_predictions_master` — all-time. Even the
+shadow branch would leave prediction rows, so the top-N block never fires. The conservative
+`DEFAULT_MIN_PROB = 0.95` floor does not explain it alone: AIM2 produced 13 calibrated
+predictions ≥ 0.95 in the last 30 days. Its persist == publish property is therefore verified
+structurally (it posts through `post_ai_signal`, which slices at the insert) but not in data —
+there is none. Filed as its own finding.
+
 ## [2026-08-04] ROM1's ladder: the obvious fix would have broken the measurement it was meant to protect (T-2026-KYT-9050-099)
 
 Follow-up to T-2026-KYT-9050-098, which gave the own-geometry legs a 1 % floor between published

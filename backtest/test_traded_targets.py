@@ -74,8 +74,15 @@ def test_shorter_list_than_the_cap_is_returned_whole():
 
 def test_the_carve_out_stays_small():
     """A guard against this quietly growing into a fleet-wide special case:
-    every entry here is a real persist/publish gap verified in the emitter."""
+    every entry here is a real persist/publish gap verified in the emitter.
+
+    After T-099 (ROM1) and T-100 (AIM2) both gaps are closed at the source, so
+    these two entries are historical-only decoders for the archive. A THIRD name
+    appearing here would mean an emitter regressed into persisting more than it
+    publishes — which `backtest/test_published_targets.py` exists to prevent.
+    """
     assert set(PUBLISHED_TARGET_COUNT) == {"ROM1", "AIM2"}
+    assert all(n == 3 for n in PUBLISHED_TARGET_COUNT.values())
 
 
 def test_rom1_stays_correct_after_the_bot_side_fix():
@@ -97,6 +104,24 @@ def test_rom1_stays_correct_after_the_bot_side_fix():
     # The measurement is the same for both, which is the whole point.
     assert weighted_move_pct("LONG", ENTRY, ENTRY, legacy_row, 2, model="ROM1") == weighted_move_pct(
         "LONG", ENTRY, ENTRY, new_row, 2, model="ROM1"
+    )
+
+
+def test_aim2_stays_correct_after_the_bot_side_fix():
+    """T-2026-KYT-9050-100 closed the AIM2 gap the same way T-099 closed ROM1's:
+    15_ai_master_bot now persists `targets[:n_show]`. Both entries are therefore
+    historical-only — and both must stay, for the same reason.
+
+    Measured before the fix: 89.4 % of AIM2 rows persisted more than the 3 published
+    targets, 46 % persisted 10. Pruning the entry would score those rows as a
+    10-leg position model against a stake that really rode on 3.
+    """
+    legacy_row = TARGETS  # persisted the full calculate_smart_targets list
+    new_row = [110.0, 120.0, 130.0]  # persisted == posted
+    assert traded_targets("AIM2", legacy_row) == [110.0, 120.0, 130.0]
+    assert traded_targets("AIM2", new_row) == new_row
+    assert weighted_move_pct("LONG", ENTRY, ENTRY, legacy_row, 2, model="AIM2") == weighted_move_pct(
+        "LONG", ENTRY, ENTRY, new_row, 2, model="AIM2"
     )
 
 
