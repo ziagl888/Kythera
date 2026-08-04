@@ -548,8 +548,16 @@ def hvn_sr_trade_geometry(entry1, is_long, supps, resis):
     remain for now; this function is the referenced ONE source for the
     walk-forward adapters, so replay geometry == live geometry).
 
-    Returns (entry2, sl, target_candidates) — targets are then run through
-    ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05).
+    Returns (entry2, sl, target_candidates) — the candidates are then run through
+    ``thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS)`` and
+    ``ensure_min_tp_distance(..., min_pct=0.05)``, in that order.
+
+    Note what this function does and does NOT guarantee about spacing: the filters
+    above (``> entry1 * 1.01``) put the FIRST candidate at least 1 % from entry, and
+    nothing here separates the candidates from EACH OTHER — they are the raw level
+    list. That gap is why ``thin_targets`` exists (T-2026-KYT-9050-098); a caller
+    that publishes a slice of these candidates without thinning them republishes the
+    clustering.
     """
     entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
     if is_long:
