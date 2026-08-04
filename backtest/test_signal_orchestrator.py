@@ -1378,9 +1378,16 @@ def test_rom1_short_ladder_is_persisted_whole():
     assert _stored_targets(params) == _posted_targets(params) == [101.0, 105.0]
 
 
-def test_rom1_published_count_is_the_shared_constant():
-    """A local literal is how publish/persist/thinning drifted apart before."""
-    assert orch.ROM1_PUBLISHED_TARGETS is N_PUBLISHED_TARGETS
+def test_rom1_published_count_tracks_the_shared_constant():
+    """A local literal is how publish/persist/thinning drifted apart before.
+
+    `is` would be vacuous here — CPython interns small ints, so a re-introduced
+    literal `3` would still pass identity. The binding itself is enforced by the
+    source guard in `test_tp_spacing.py::test_rom1_published_count_is_the_shared
+    _constant`; this one catches the case that guard cannot see at rest: the
+    shared constant moving off 3 while a copy stayed behind.
+    """
+    assert orch.ROM1_PUBLISHED_TARGETS == N_PUBLISHED_TARGETS
 
 
 def test_rom1_geometry_thins_the_tight_ladder():

@@ -608,9 +608,10 @@ def build_rom1_cornix_message(
         f"🏦 CMP Entry: $ {params['entry1']:.8f}",
         f"🏦 Entry 2: $ {params['entry2']:.8f}",
     ]
-    # Cornix only perceives the first 3 TPs (standard) — we also only post 3, and
-    # since T-2026-KYT-9050-099 `insert_rom1_signal` persists exactly this slice
-    # (same helper), so the monitor scores the published ladder and nothing else.
+    # Cornix only perceives the first 3 TPs (standard) — we also only post 3.
+    # Since T-2026-KYT-9050-099 `insert_rom1_signal` persists exactly this slice
+    # through the same helper, the monitor scores the published ladder and
+    # nothing beyond it.
     for i, t in enumerate(rom1_published_targets(params["targets"]), start=1):
         lines.append(f"💰 TP{i}: $ {t:.8f}")
     lines.append(f"💸 Stop Loss: $ {params['sl']:.8f}")
