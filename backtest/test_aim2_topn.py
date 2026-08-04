@@ -210,6 +210,29 @@ def test_startup_log_prints_the_effective_floor_not_the_configured_one():
     assert "_topn_floor = effective_min_prob(_topn.min_prob," in SRC
 
 
+def test_startup_floor_is_computed_after_the_artifact_is_loaded():
+    """ORDER matters, and the shape guards above could not see it.
+
+    T-2026-KYT-9050-103: the startup line read `ARTIFACT["threshold"]` while sitting
+    ABOVE `load_model()`, so it printed the module-level initialisation default
+    (0.80) instead of the real threshold (0.67) — a floor derived from a
+    placeholder, which is the exact failure class T-101 set out to remove. It went
+    green through the whole suite and five mutations, and only showed up in the live
+    startup log after the restart, as `artifact 0.80` next to `threshold 0.67`.
+
+    Today it is invisible because max(0.85, 0.80, 0.70) == max(0.85, 0.67, 0.70).
+    With an artifact threshold above the configured floor it would not be.
+    """
+    load_at = SRC.index("\n    load_model()")
+    floor_at = SRC.index("_topn_floor = effective_min_prob(")
+    assert floor_at > load_at, (
+        "the TOPN startup floor is computed before load_model() — ARTIFACT['threshold'] "
+        "still holds its initialisation default there, so the logged floor is a placeholder"
+    )
+    # The runtime gate is per-cycle and reads the loaded artifact; unaffected either way.
+    assert "topn_min = effective_min_prob(topn_cfg.min_prob," in SRC
+
+
 def test_an_enabled_but_starving_topn_leg_warns():
     """A live leg that can never post must say so — the defect this task exists for.
 
