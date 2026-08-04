@@ -78,6 +78,40 @@ def test_the_carve_out_stays_small():
     assert set(PUBLISHED_TARGET_COUNT) == {"ROM1", "AIM2"}
 
 
+def test_rom1_stays_correct_after_the_bot_side_fix():
+    """T-2026-KYT-9050-099 closed the ROM1 gap at the source (28 now persists the
+    published slice). The ROM1 entry must NOT be dropped for being "fixed":
+
+      * rows written before that deploy still carry the 20-target pool, whose
+        posted ladder is its first three — the trim is still required;
+      * rows written after it carry exactly 3 — the trim is identity.
+
+    So one lookup is right on both eras and no report needs a cutoff date.
+    Dropping the entry would re-inflate every historical row back to a 20-leg
+    position model (the 1.41x understatement, with the sign flipped).
+    """
+    legacy_row = TARGETS  # persisted 20 (here 4), posted the first three
+    new_row = [110.0, 120.0, 130.0]  # persisted == posted
+    assert traded_targets("ROM1", legacy_row) == [110.0, 120.0, 130.0]
+    assert traded_targets("ROM1", new_row) == new_row
+    # The measurement is the same for both, which is the whole point.
+    assert weighted_move_pct("LONG", ENTRY, ENTRY, legacy_row, 2, model="ROM1") == weighted_move_pct(
+        "LONG", ENTRY, ENTRY, new_row, 2, model="ROM1"
+    )
+
+
+def test_a_thin_only_the_message_variant_would_have_been_wrong():
+    """Documents the trap this carve-out sits on: `traded_targets` takes the FIRST
+    three PERSISTED targets. Had ROM1 thinned only what it posts while persisting
+    the raw pool, the posted ladder [101.0, 103.4, 106.5] would have been scored as
+    [101.0, 101.4, 101.8] — wrong prices, silently, on the highest-volume leg.
+    """
+    raw_pool = [101.0, 101.4, 101.8, 103.4, 103.9, 106.5]
+    posted_if_thinned_late = [101.0, 103.4, 106.5]
+    assert traded_targets("ROM1", raw_pool) != posted_if_thinned_late
+    assert traded_targets("ROM1", raw_pool) == [101.0, 101.4, 101.8]
+
+
 # ── the leg count IS the position model ──────────────────────────────────────
 
 

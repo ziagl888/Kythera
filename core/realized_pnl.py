@@ -64,10 +64,23 @@ def _signed_move_pct(sign: float, entry: float, price: float) -> float:
 # `realized_pnl_pct` now optionally take the model and trim themselves. Without
 # `model` they behave byte-equal as before — no caller changes silently.
 #
-# The bots themselves stay untouched (operator decision 2026-08-02: fix measurement
-# only). Trimming the persisted list would change monitor 8's scoring semantics
-# for RUNNING trades — SL trailing and the ALL-TARGETS-close condition would see
-# 3 instead of 20 legs.
+# The bots themselves stayed untouched at the time (operator decision 2026-08-02:
+# fix measurement only), because trimming the persisted list changes monitor 8's
+# scoring semantics for RUNNING trades — SL trailing and the ALL-TARGETS-close
+# condition then see 3 instead of 20 legs.
+#
+# T-2026-KYT-9050-099 closed the ROM1 side at the source: 28_signal_orchestrator
+# now persists exactly the published slice (`rom1_published_targets`). This table
+# stays as it is, and BOTH entries stay correct:
+#
+#   * ROM1 rows written before that deploy still carry the 20-target pool, and
+#     their posted ladder is the first three of it — `targets[:3]`.
+#   * ROM1 rows written after it carry exactly 3, so `targets[:3]` is identity.
+#
+# So the same trim is right on both eras and the reports need no cutoff date. Do
+# NOT drop the ROM1 entry because "the bot is fixed now" — that would re-inflate
+# every historical row back to a 20-leg position model. AIM2 (15_ai_master_bot:589)
+# still persists its full list and remains the live case for this shim.
 PUBLISHED_TARGET_COUNT: dict[str, int] = {
     "ROM1": 3,
     "AIM2": 3,
