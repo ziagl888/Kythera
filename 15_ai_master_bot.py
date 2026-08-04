@@ -743,22 +743,6 @@ def main():
     # R3: which reading interprets the signal stream is logged —
     # a silent wrong assumption about the history would be exactly the P0.13 error mode.
     logger.info(f"    R3 time domain: {r3_history_mode()} (docs/UTC_POLICY.md §6)")
-    _topn = load_topn_config()
-    if _topn.enabled:
-        _topn_mode = "LIVE" if (_topn.live and TOPN_CHANNEL_ID != 0) else "SHADOW-ONLY"
-        # The EFFECTIVE floor, not the configured one (T-2026-KYT-9050-101): the
-        # selection can never sit below the base AIM2 gate, so printing
-        # `_topn.min_prob` advertised a number the bot was not using whenever the
-        # artifact threshold or AIM2_MIN_PROB dominated.
-        _topn_floor = effective_min_prob(_topn.min_prob, ARTIFACT["threshold"], MIN_PROB)
-        logger.info(
-            f"    AIM2-TOPN active — N={_topn.n}, effective floor={_topn_floor:.2f} "
-            f"(configured {_topn.min_prob:.2f}, artifact {ARTIFACT['threshold']:.2f}, "
-            f"bot floor {MIN_PROB:.2f}), posting={_topn_mode}"
-        )
-    else:
-        logger.info("    AIM2-TOPN disabled (AIM2_TOPN_ENABLED≠1) — base AIM2 unchanged.")
-
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -774,6 +758,25 @@ def main():
     conn.close()
 
     load_model()
+
+    # AFTER load_model() on purpose (T-2026-KYT-9050-103): the effective floor is
+    # computed from ARTIFACT["threshold"], which only holds the real value once the
+    # pkl is loaded. Logged from above it read the module-level initialisation
+    # default (0.80) and printed a floor derived from a placeholder — the very
+    # failure class T-2026-KYT-9050-101 set out to remove, just moved instead of
+    # removed. Caught in the live startup log after the 2026-08-04 restart
+    # ("artifact 0.80" next to "threshold 0.67"), not by a test.
+    _topn = load_topn_config()
+    if _topn.enabled:
+        _topn_mode = "LIVE" if (_topn.live and TOPN_CHANNEL_ID != 0) else "SHADOW-ONLY"
+        _topn_floor = effective_min_prob(_topn.min_prob, ARTIFACT["threshold"], MIN_PROB)
+        logger.info(
+            f"    AIM2-TOPN active — N={_topn.n}, effective floor={_topn_floor:.2f} "
+            f"(configured {_topn.min_prob:.2f}, artifact {ARTIFACT['threshold']:.2f}, "
+            f"bot floor {MIN_PROB:.2f}), posting={_topn_mode}"
+        )
+    else:
+        logger.info("    AIM2-TOPN disabled (AIM2_TOPN_ENABLED≠1) — base AIM2 unchanged.")
 
     while True:
         if time.time() - ARTIFACT["loaded_at"] > MODEL_RELOAD_S:
