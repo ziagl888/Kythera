@@ -1,3 +1,68 @@
+## [2026-08-04] ROM1's ladder: the obvious fix would have broken the measurement it was meant to protect (T-2026-KYT-9050-099)
+
+Follow-up to T-2026-KYT-9050-098, which gave the own-geometry legs a 1 % floor between published
+TPs and deliberately left ROM1 (`28_signal_orchestrator`) out. ROM1 was the worst remaining
+offender: measured on **8,144** closed signals since the P2.31 fix, the median gap TP1→TP2 is
+**1.00 %** and TP2→TP3 **0.94 %**, **50.1 %** and **52.0 %** of those gaps sit under 1 %, and in
+**20.7 %** of signals the whole TP1..TP3 ladder spans less than 1 % — three Cornix tranches inside
+one tick.
+
+It was left out because ROM1 is not just a publisher of a slice, it **persists a different one**:
+it writes its own `INSERT INTO ai_signals` (bypassing `core/signal_post`), stores `t_cands[:20]`
+and posts 3. That is the last open persist ≠ publish gap from P2.31 / T-2026-KYT-9050-012, and it
+is what makes the one-line reuse of `thin_targets` actively dangerous:
+`core.realized_pnl.traded_targets` reconstructs the traded ladder as `targets[:3]` — the first
+three **persisted** targets. Thin only what gets posted, and the posted three stop being the first
+three; `traded_targets` then returns the wrong prices, silently, for the fleet's highest-volume
+leg. Exactly the class T-012 exists to fix.
+
+Three options, and what separates them is precisely their effect on monitor 8 for **running**
+trades. **(b)** thinning only the message is the one option that leaves monitor 8 **untouched** —
+the persisted 20 stay, so ALL-TARGETS still needs 20 rungs and the SL trail still steps through
+levels Cornix never received. That reads as the conservative choice and is the opposite: the
+scoring drifts *further* from what is actually traded, and it needs the persisted row to record
+*which* targets were posted — a new column on a live table, operator-gated, with `traded_targets`
+wrong until it ships. **(c)** moving ROM1 onto the shared `core/signal_post` path lands on the
+**same** monitor-8 semantics as (a) (`post_ai_signal` persists `targets[:n_show]`, so ALL-TARGETS
+and the trail sit on the same three rungs), but adds regressions: `post_ai_signal` drops the entry2
+line ROM1 deliberately still publishes (T-042 arm B measured its DCA as neutral), adds a second
+HTML/chart message to the trading channel, and does not set `open_time` explicitly — which would
+re-break the naive-UTC contract the P1.8 follow-up fixed, killing the ±60 s `sync_closed_trades`
+match again.
+
+Implemented **(a)**: thin before persist *and* post. `thin_targets(t_cands[:20], …,
+keep=ROM1_PUBLISHED_TARGETS)` sits inside `compute_rom1_trade_params`, so the replay side
+(`tools/rom1_counterfactual.py`, `tools/whitelist_v2_flip_eval.py`) inherits the geometry instead
+of growing a second thinner. `ROM1_PUBLISHED_TARGETS` is now bound to the shared
+`N_PUBLISHED_TARGETS`, and one `rom1_published_targets()` helper feeds both the Cornix TP loop and
+the `ai_signals` insert — persist == publish is structural, not a coincidence of two call sites.
+
+**What this changes for monitor 8, named up front.** The monitor scores `len(stored)`, so
+ALL TARGETS HIT now fires at TP3 instead of at a rung Cornix never received. Over **9,123** closed
+ROM1 trades since 2026-07-11, **6.4 %** reach TP3 while only **0.4 %** close as ALL TARGETS HIT
+today. For the cohort stopping exactly at TP3 (n=386) the recorded exit rises from **+4.58 %** to
+the TP3 level **+5.40 %**; for the **1.65 %** that ran on past TP3 along the phantom ladder
+(n=151) it falls from **+7.07 %** to **+5.91 %** — upside that was never real, because Cornix was
+fully out at TP3. The realised-PnL number for that whole cohort is **unchanged**: at k=n=3 the
+close leg carries weight 0 in `weighted_move_pct`. SL trailing and `_compute_trailed_sl` — which
+posts a real Cornix `SL` command on a regime change — now index published levels only, and the
+**1.8 %** of trades scored `targets_hit > 3` disappear at the source. **TP1 never moves**
+(`thin_targets` always keeps the first candidate), so the break-even trail keeps its trigger
+price; only TP2/TP3 reach deeper into the pool. Trades closing at TP3 free their
+`orchestrator_open_trades` row earlier, a mild throughput increase against the Cornix slot cap.
+
+`core.realized_pnl.PUBLISHED_TARGET_COUNT` keeps its ROM1 entry **on purpose**: `[:3]` is identity
+on rows written from now on and still the posted three on every historical 20-target row, so one
+lookup stays right on both eras and no report needs a cutoff date. Dropping it as "fixed now"
+would re-inflate the whole history back to a 20-leg position model. AIM2 (`15_ai_master_bot:589`)
+still persists its full list and remains the live case for the shim (`#T99-2`).
+
+10 new DB-free pins across `backtest/test_tp_spacing.py`, `test_signal_orchestrator.py` and
+`test_traded_targets.py` (129 green in those three suites), 5 mutations verified red — including
+the "thin only the message" variant, which is pinned as a counter-example rather than just
+avoided. **Live only after a fleet restart; the geometry change on the money path is the
+operator's call.**
+
 ## [2026-08-04] TP ladders: the 1 % rule existed for the first hop only — the own-geometry legs published three tranches inside one tick (T-2026-KYT-9050-098)
 
 Operator finding (Michi). `hvn_sr_trade_geometry` filters its target candidates against the

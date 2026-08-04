@@ -7,6 +7,7 @@ Run with: pytest backtest/test_signal_orchestrator.py -v
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,6 +35,16 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "unit-test")
 
 from core import config as _kcfg  # noqa: E402 — must follow the env seed above
 
+# The loader stubs `core.trade_utils` wholesale. Two of its members must survive as
+# the REAL thing (T-2026-KYT-9050-099): `thin_targets`, because the ROM1 geometry
+# tests assert on actual prices, and `N_PUBLISHED_TARGETS`, because
+# `ROM1_PUBLISHED_TARGETS` is bound to it at import — as a MagicMock it silently
+# slices to 1 (MagicMock.__index__ == 1) and every ladder assertion below would
+# measure the stub instead of the bot. Both are pure and DB-free.
+# `ensure_min_tp_distance` / `get_hvn_and_sr_levels` stay mocked on purpose — the
+# tests use them as injection points.
+from core.trade_utils import N_PUBLISHED_TARGETS, thin_targets  # noqa: E402
+
 
 def _load_orchestrator():
     spec = importlib.util.spec_from_file_location(
@@ -51,7 +62,10 @@ def _load_orchestrator():
                 REGIME_STATUS_CHANNEL_ID=_kcfg.CH_MARKET_DATA,
             ),
             "core.market_utils": mock.MagicMock(),
-            "core.trade_utils": mock.MagicMock(),
+            "core.trade_utils": mock.MagicMock(
+                N_PUBLISHED_TARGETS=N_PUBLISHED_TARGETS,
+                thin_targets=thin_targets,
+            ),
         },
     ):
         spec.loader.exec_module(mod)
@@ -1310,6 +1324,124 @@ def test_rom1_params_used_not_original_signal():
     import json as _json
 
     assert _json.loads(values[6]) == [105.0, 110.0, 120.0]
+
+
+# ── T-2026-KYT-9050-099: ROM1 persists exactly what it publishes ──────────────
+# ROM1 used to persist `t_cands[:20]` while posting 3 (P2.31 / T-2026-KYT-9050-012:
+# position model off by 1.41x, 1.8 % of trades scored for TPs Cornix never got).
+# The two numbers now come from one helper, so they cannot drift apart again.
+
+
+def _stored_targets(params: dict) -> list[float]:
+    """The target list `insert_rom1_signal` would write to ai_signals."""
+    import json as _json
+
+    conn = mock.MagicMock()
+    cur = mock.MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+    orch.insert_rom1_signal(conn, "BTCUSDT", "LONG", params, commit=False)
+    return _json.loads(cur.execute.call_args[0][1][6])
+
+
+def _posted_targets(params: dict) -> list[float]:
+    """The TP prices a subscriber (and Cornix) actually sees in the message."""
+    msg = orch.build_rom1_cornix_message("BTCUSDT", "LONG", params)
+    return [float(m) for m in re.findall(r"TP\d+:\s*\$\s*([0-9.]+)", msg)]
+
+
+def test_rom1_persists_exactly_the_published_ladder():
+    """The load-bearing invariant: len(ai_signals.targets) == published TP count.
+
+    Monitor 8 scores `range(hit, len(targets))` and closes at `len(targets)`, so a
+    persisted pool deeper than the message makes it score rungs Cornix never had.
+    """
+    params = {
+        "entry1": 100.0,
+        "entry2": 95.0,
+        "sl": 92.0,
+        "targets": [105.0, 110.0, 120.0, 130.0, 140.0],  # deeper than published
+        "leverage": "20x",
+    }
+    stored, posted = _stored_targets(params), _posted_targets(params)
+    assert len(posted) == orch.ROM1_PUBLISHED_TARGETS == 3
+    assert stored == posted == [105.0, 110.0, 120.0], (stored, posted)
+
+
+def test_rom1_short_ladder_is_persisted_whole():
+    """A sparse pool publishes fewer than 3 TPs — persist still follows publish.
+
+    `thin_targets` returns fewer levels when the pool has nothing separated left
+    and `ensure_min_tp_distance` appends its 5 % backstop; over-trimming to a fixed
+    3 here would store a TP that was never posted.
+    """
+    params = {"entry1": 100.0, "entry2": 95.0, "sl": 92.0, "targets": [101.0, 105.0], "leverage": "20x"}
+    assert _stored_targets(params) == _posted_targets(params) == [101.0, 105.0]
+
+
+def test_rom1_published_count_tracks_the_shared_constant():
+    """A local literal is how publish/persist/thinning drifted apart before.
+
+    `is` would be vacuous here — CPython interns small ints, so a re-introduced
+    literal `3` would still pass identity. The binding itself is enforced by the
+    source guard in `test_tp_spacing.py::test_rom1_published_count_is_the_shared
+    _constant`; this one catches the case that guard cannot see at rest: the
+    shared constant moving off 3 while a copy stayed behind.
+    """
+    assert orch.ROM1_PUBLISHED_TARGETS == N_PUBLISHED_TARGETS
+
+
+def test_rom1_geometry_thins_the_tight_ladder():
+    """End-to-end on the measured ROM1 shape: the published ladder reaches into
+    the pool instead of stacking three rungs inside one tick.
+
+    The pool below mirrors the live measurement (median gaps 1.00 % / 0.94 %,
+    whole TP1..TP3 span under 1 % in 20.7 % of signals). Real `thin_targets` and
+    real `ensure_min_tp_distance` — only the level lookup is injected. Note the
+    candidate filter is `x > entry1 * 1.01`, so every level has to clear 101.0 to
+    reach the thinner at all.
+    """
+    from core.trade_utils import ensure_min_tp_distance as _real_ensure
+
+    resis = [101.2, 101.6, 102.0, 103.4, 103.9, 106.5]
+    with (
+        mock.patch.object(orch, "_get_latest_price", return_value=100.0),
+        mock.patch.object(orch, "get_hvn_and_sr_levels", return_value=([92.0], resis)),
+        mock.patch.object(orch, "ensure_min_tp_distance", _real_ensure),
+        mock.patch.object(orch, "get_max_leverage", return_value="20x"),
+    ):
+        params = orch.compute_rom1_trade_params(mock.MagicMock(), "BTCUSDT", "LONG")
+
+    assert params is not None
+    published = orch.rom1_published_targets(params["targets"])
+    # Unthinned this published [101.2, 101.6, 102.0] — the whole ladder inside 0.8 %.
+    assert published == [101.2, 103.4, 106.5], published
+    gaps = [(published[i + 1] - published[i]) / 100.0 * 100.0 for i in range(len(published) - 1)]
+    assert all(g >= 1.0 for g in gaps), gaps
+    # TP1 is never moved by thinning — the break-even trail keeps its trigger.
+    assert published[0] == 101.2
+
+
+def test_rom1_thinning_keeps_traded_targets_correct_for_both_eras():
+    """The trap this task exists for: `core.realized_pnl.traded_targets` rebuilds
+    the traded ladder as `targets[:3]`. Thinning only the MESSAGE would have made
+    the posted three stop being the first three persisted — silently wrong for the
+    fleet's highest-volume leg. Persisting the published slice keeps the shim
+    correct on new rows (identity) and on the historical 20-target rows alike.
+    """
+    from core.realized_pnl import traded_targets
+
+    params = {
+        "entry1": 100.0,
+        "entry2": 95.0,
+        "sl": 92.0,
+        "targets": [101.0, 103.5, 106.5, 110.0, 115.0],
+        "leverage": "20x",
+    }
+    new_row = _stored_targets(params)
+    assert traded_targets("ROM1", new_row) == new_row == _posted_targets(params)
+    # Historical row (persisted 20, posted the first three) is unchanged by this.
+    legacy_row = [101.0, 101.4, 101.8, 102.2, 102.6]
+    assert traded_targets("ROM1", legacy_row) == [101.0, 101.4, 101.8]
 
 
 # ── T-2026-CU-9050-049: differentiated regime auto-close ───────────────────────

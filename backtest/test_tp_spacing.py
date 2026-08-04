@@ -179,6 +179,93 @@ def test_epd2_legacy_path_is_deliberately_not_thinned():
     assert "n_show=len(targets)" in src
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ROM1 / bot 28 (T-2026-KYT-9050-099)
+# ─────────────────────────────────────────────────────────────────────────────
+# ROM1 was deliberately excluded from T-098 because it does not just publish a
+# slice — it PERSISTS a different one. It writes its own INSERT INTO ai_signals
+# (bypassing core/signal_post), stored `t_cands[:20]` and posted 3.
+#
+# That makes the naive fix actively dangerous: `core.realized_pnl.traded_targets`
+# reconstructs the traded ladder as `targets[:3]`, i.e. the FIRST three PERSISTED
+# targets. Thinning only the message would have made the posted three stop being
+# the first three persisted — a silent measurement regression on the fleet's
+# highest-volume leg, and exactly the class T-2026-KYT-9050-012 exists to fix.
+# So the thinning happens BEFORE both, and one helper feeds message and insert.
+#
+# Measured on 8,144 ROM1 signals since the P2.31 fix: median gap TP1→TP2 1.00 %,
+# TP2→TP3 0.94 %, 50.1 % / 52.0 % of those gaps under 1 %, whole TP1..TP3 span
+# under 1 % in 20.7 % of signals.
+
+_ROM1_SRC = "28_signal_orchestrator.py"
+_ROM1_CALL = re.compile(
+    r"ensure_min_tp_distance\(\s*\n\s*thin_targets\(t_cands\[:20\],[^)]*keep=ROM1_PUBLISHED_TARGETS\)"
+)
+
+
+def test_rom1_thins_before_it_publishes():
+    """Fails if bot 28's geometry goes back to the raw `t_cands[:20]` head."""
+    src = _src(_ROM1_SRC)
+    assert _ROM1_CALL.search(src), "28: no thin_targets(...) before ensure_min_tp_distance"
+    assert "ensure_min_tp_distance(t_cands[:20]" not in src, "28: raw candidate slice still published"
+
+
+def test_rom1_published_count_is_the_shared_constant():
+    """`ROM1_PUBLISHED_TARGETS` must BE `N_PUBLISHED_TARGETS`, not a copy of its
+    value: it is simultaneously the thinner's `keep`, the Cornix loop's bound and
+    the persisted length. A literal is how those three drifted apart."""
+    src = _src(_ROM1_SRC)
+    assert re.search(r"ROM1_PUBLISHED_TARGETS\s*=\s*N_PUBLISHED_TARGETS", src), (
+        "28: ROM1_PUBLISHED_TARGETS is no longer bound to the shared constant"
+    )
+    assert re.search(r"ROM1_PUBLISHED_TARGETS\s*=\s*\d", src) is None, "28: hardcoded published count"
+
+
+def test_rom1_persist_and_publish_read_from_one_slice():
+    """The P2.31 invariant for ROM1: len(ai_signals.targets) == published TP count.
+
+    Both sites must go through `rom1_published_targets`. The pre-fix insert bind
+    was a bare `json.dumps(params["targets"])` — that literal is the regression.
+    """
+    src = _src(_ROM1_SRC)
+    assert 'json.dumps(rom1_published_targets(params["targets"]))' in src, (
+        "28: the ai_signals insert no longer stores the published slice"
+    )
+    assert 'enumerate(rom1_published_targets(params["targets"])' in src, (
+        "28: the Cornix TP loop no longer uses the shared slice"
+    )
+    assert 'json.dumps(params["targets"])' not in src, (
+        "28: ai_signals stores the FULL pool again — monitor 8 would score phantom TPs "
+        "and traded_targets() would rebuild the wrong ladder"
+    )
+
+
+def test_rom1_counterfactual_inherits_the_geometry():
+    """Replay parity without a second thinner: the ROM1 scorer must take its
+    geometry from `compute_rom1_trade_params`, not recompute it. A local copy
+    would replay a ladder the fleet no longer posts (the T-098 parity class)."""
+    src = _src(os.path.join("tools", "rom1_counterfactual.py"))
+    assert "orch.compute_rom1_trade_params(" in src, "rom1_counterfactual no longer shares the ROM1 geometry"
+    assert "get_hvn_and_sr_levels(" not in src, "rom1_counterfactual builds its own targets — parity broken"
+
+
+def test_rom1_shaped_ladder_from_the_live_measurement():
+    """The measured ROM1 case: three rungs inside 0.8 % become a spread ladder.
+
+    TP1 stays where it was — `thin_targets` always keeps the first candidate — so
+    the break-even trail (monitor 8: first TP hit ⇒ SL to entry) keeps its trigger
+    price; only TP2/TP3 reach deeper into the pool.
+    """
+    entry = 100.0
+    pool = [101.2, 101.6, 102.0, 103.4, 103.9, 106.5]
+    out = thin_targets(pool, entry, True, keep=N_PUBLISHED_TARGETS)
+    assert out == [101.2, 103.4, 106.5], out
+    assert out[0] == pool[0], "TP1 must not move"
+    # Unthinned the published ladder was pool[:3] — 0.8 % end to end.
+    assert (pool[2] - pool[0]) / entry * 100.0 < 1.0
+    assert (out[-1] - out[0]) / entry * 100.0 > 5.0
+
+
 #: Replay/study tools that reproduce a THINNED live leg's geometry. If the bot thins
 #: and its replay does not, every study of that leg measures a ladder the fleet no
 #: longer posts — the "fixed one side of the contract, forgot the other" class that
