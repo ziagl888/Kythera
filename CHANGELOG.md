@@ -1,3 +1,17 @@
+## [2026-08-04] T-096 addendum: regime conditioning of DIVERGENCE-SHORT — bear-market objection measured, BTC-7d gate pre-registered (T-2026-KYT-9050-096)
+
+Operator question after the study merged: "does this only work because we are in a bear
+market?" Answer, measured on the same frozen events: the sample was not a bear market (BTC
+net +0.2 %, BTCDOM −3.3 %), the edge survives every BTCDOM regime, and the only thing that
+kills the 1h/4h horizon is a sustained BTC-7d uptrend — where it goes to ~0, it does not
+invert (worst 2×2 cell −0.11 @4h; 24h stays positive everywhere). Short-term heat helps
+(strongest 4h edge on BTC-24h-hot days, +1.02, t=2.6). The LONG mirror has no regime pocket
+either — in BTC-up tape it loses outright (−1.45 @24h). Consequence, registered BEFORE the
+out-of-sample data exists: the ≥90d re-run (~2026-09-10) evaluates DIVERGENCE-SHORT with a
+causal **BTC 7d ≤ +2 %** gate (keeps ~71 % of events and essentially all PnL in-sample) and
+must not tune it. Full tables: addendum in `staging_models/replay/oi_event_study_t096.md`.
+Docs-only change, no code touched.
+
 ## [2026-08-04] K9 harvest: OI event study — 2 of 3 mechanics refuted, DIVERGENCE-SHORT is a candidate (T-2026-KYT-9050-096)
 
 The three model ideas seeded with the K9 OI collector (`MODEL_CANDIDATES_SPEC_2026-07.md:416-419`)
