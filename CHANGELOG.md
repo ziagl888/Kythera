@@ -54,6 +54,40 @@ the published slice only, P2.31), so how far TP2/TP3 actually move and what that
 return needs a replay that recomputes the level pool per signal. The change is structurally
 correct and pinned, not empirically validated. It is a live geometry change on the money path and
 takes effect only at the next fleet restart — an operator decision.
+## [2026-08-04] T-096 addendum: regime conditioning of DIVERGENCE-SHORT — bear-market objection measured, BTC-7d gate pre-registered (T-2026-KYT-9050-096)
+
+Operator question after the study merged: "does this only work because we are in a bear
+market?" Answer, measured on the same frozen events: the sample was not a bear market (BTC
+net +0.2 %, BTCDOM −3.3 %), the edge survives every BTCDOM regime, and the only thing that
+kills the 1h/4h horizon is a sustained BTC-7d uptrend — where it goes to ~0, it does not
+invert (worst 2×2 cell −0.11 @4h; 24h stays positive everywhere). Short-term heat helps
+(strongest 4h edge on BTC-24h-hot days, +1.02, t=2.6). The LONG mirror has no regime pocket
+either — in BTC-up tape it loses outright (−1.45 @24h). Consequence, registered BEFORE the
+out-of-sample data exists: the ≥90d re-run (~2026-09-10) evaluates DIVERGENCE-SHORT with a
+causal **BTC 7d ≤ +2 %** gate (keeps ~71 % of events and essentially all PnL in-sample) and
+must not tune it. Full tables: addendum in `staging_models/replay/oi_event_study_t096.md`.
+Docs-only change, no code touched.
+
+## [2026-08-04] K9 harvest: OI event study — 2 of 3 mechanics refuted, DIVERGENCE-SHORT is a candidate (T-2026-KYT-9050-096)
+
+The three model ideas seeded with the K9 OI collector (`MODEL_CANDIDATES_SPEC_2026-07.md:416-419`)
+ran as one read-only event study over the accumulated `oi_5m` history (2026-06-12 → 08-04,
+234-symbol universe ≥ $3M median OI, hourly as-of grid, 24h cooldown, fees 0.10%/RT,
+pre-registered thresholds — `tools/oi_event_study.py`). **SPIKE-FADE is refuted** (net
+−0.46/event @4h, −2.56 @24h — fading fresh OI build-ups wins often and then gets run over in
+the tail; the mean–median gap is tail-driven, so no naive inversion either). **OI×FUNDING
+squeeze is refuted** at the pre-registered thresholds (net −1.44 @4h, t=−2.0; if anything the
+crowded side continues — observation, not a claim). **The survivor is DIVERGENCE-SHORT**: a
+≥2–3% rally whose 4h OI fell ≥2% (short-covering rally, no new money) mean-reverts — at px≥3%
+net **+0.41/event @1h (t=3.2), +0.73 @4h (t=3.2), WR 58–61%, n=580, 8 of 9 weeks positive**,
+monotone across the threshold matrix; the LONG mirror is dead everywhere (matches the
+fleet-wide directional-edge finding). No deployment: the sample is ~7.6 weeks of one regime
+(the spec's own gate was ≥60d) — the frozen script re-runs at ≥90d (~2026-09-10) as an
+out-of-sample confirmation before any bot exists. Side finding with its own task
+(**T-2026-KYT-9050-097**): `35_oi_collector`'s effective cadence degraded from the designed
+5m to 10–30 min since mid-July plus a 45h outage on the 07-12 restart night — the 5m table is
+silently becoming a 15–30m table, which would blur exactly the 1h-horizon edge found here.
+Verdict: `staging_models/replay/oi_event_study_t096.md`. No live code, no DB writes.
 
 ## [2026-08-04] Bot 40: the trail really is a 2 %-scalper — and arming it at TP1 fixes the book but costs a third of the capital efficiency (T-2026-KYT-9050-093)
 
