@@ -1,3 +1,46 @@
+## [2026-08-04] TP ladders: the 1 % rule existed for the first hop only — the own-geometry legs published three tranches inside one tick (T-2026-KYT-9050-098)
+
+Operator finding (Michi). `hvn_sr_trade_geometry` filters its target candidates against the
+**entry** (`x > entry1 * 1.01`) and `ensure_min_tp_distance` only guarantees the **last** target
+is ≥5 % away. Between TP1, TP2 and TP3 there was no rule at all — the published ladder was just
+the head of the raw S/R level list.
+
+Measured on `closed_ai_signals` since the P2.31 fix (2026-07-11), and the split is clean along
+the generator: the legs going through `calculate_smart_targets` (which thins by 1 × ATR) have
+**2–7 %** of neighbouring gaps under 1 % and a ~12 % ladder span; the legs building their own
+geometry have **54 %** (EPD3), **59–60 %** (SRA2/ATS2/TSM1) and **69 %** (MAX1), with a TP1→TP3
+span of only **1.45–2.09 %**. In **23–34 %** of those signals the *entire* ladder spans less than
+1 %, and 16–24 % of trades hit all three at once — three Cornix tranches resolving as a single
+exit. Fleet-wide, 39.5 % of all neighbouring gaps are under 1 %, 12 % under 0.2 %.
+
+New shared helper `core.trade_utils.thin_targets` supplies the missing TP-to-TP floor
+(`MIN_TP_GAP_PCT = 1.0`), applied **before** `ensure_min_tp_distance` so the 5 % backstop still
+fires on the thinned ladder. Two properties carry the change. It measures each gap against the
+last **kept** target, not the previous candidate — a run of near-identical levels passes every
+pairwise check individually and still clusters. And it only thins when the candidate pool is
+**deeper** than what gets published (`len(candidates) <= keep` returns unchanged), which is the
+operator's own condition: a target is only ever skipped when there is a further-out level to take
+its place. That guard is what keeps the `n_show=len(targets)` emitters out — bots 7/18/24/25 and,
+deliberately, bot 10's **EPD2 legacy path**, whose published ladder *is* its pool. Bot 10 now has
+one thinned path (EPD3, 3 of up to 20) and one untouched.
+
+Wired into the ten own-geometry emitters (9, 10-EPD3, 12, 13, 14, 34, 36, 37, 38, 39) through the
+shared `N_PUBLISHED_TARGETS` constant rather than a per-bot literal — a per-site number is exactly
+how the entry-side 1 % ended up applied on one hop and not the other. ROM1 (bot 28) is **out of
+scope**: it persists 20 and publishes 3, and trimming its candidate list would change monitor 8's
+scoring semantics for running trades — the same reason T-2026-KYT-9050-012 corrected only the
+measurement there.
+
+13 DB-free pins in `backtest/test_tp_spacing.py`, five mutations verified to turn them red
+(thinning disabled, gap measured against the previous candidate, the pool-depth guard removed, a
+call site reverted to the raw slice, the EPD2 legacy path thinned along).
+
+**Not measured: the PnL effect.** The candidate pool is not persisted (`ai_signals.targets` holds
+the published slice only, P2.31), so how far TP2/TP3 actually move and what that does to realised
+return needs a replay that recomputes the level pool per signal. The change is structurally
+correct and pinned, not empirically validated. It is a live geometry change on the money path and
+takes effect only at the next fleet restart — an operator decision.
+
 ## [2026-08-04] Bot 40: the trail really is a 2 %-scalper — and arming it at TP1 fixes the book but costs a third of the capital efficiency (T-2026-KYT-9050-093)
 
 Two operator suspicions, measured against the live arm and then against the tape.

@@ -21,7 +21,7 @@ from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.model_artifacts import load_artifact_json, maybe_reload
 from core.signal_post import LEG_LIVE, LEG_SHADOW, has_open_ai_signal, post_ai_signal_gated, route_legacy_leg
 from core.sra_features import SRA2_FEATURES, build_sra2_features
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+from core.trade_utils import N_PUBLISHED_TARGETS, ensure_min_tp_distance, get_hvn_and_sr_levels, thin_targets
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_SR_BOT - %(message)s')
@@ -218,7 +218,12 @@ def _emit_sra2_shadow(conn, coin, direction, t_time, live_price) -> None:
                 else entry2 * 1.025
             )
             t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
-        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        targets = ensure_min_tp_distance(
+            thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+            entry1,
+            is_long,
+            min_pct=0.05,
+        )
         if not targets:
             return
         outcome = post_ai_signal_gated(
@@ -395,7 +400,12 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
         t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
     # FIX: real zones + if needed 5% target if last zone is too close
-    targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+    targets = ensure_min_tp_distance(
+        thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+        entry1,
+        is_long,
+        min_pct=0.05,
+    )
     # P2.31: publish AND track exactly the same targets. The Cornix block below
     # shows the first n_show TPs; the AI monitor (8_ai_trade_monitor) scores
     # whatever is stored in ai_signals.targets. Storing the full 20-zone list made

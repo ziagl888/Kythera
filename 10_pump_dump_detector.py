@@ -30,7 +30,7 @@ from core.signal_post import (
     post_ai_signal_gated,
     route_legacy_leg,
 )
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+from core.trade_utils import N_PUBLISHED_TARGETS, ensure_min_tp_distance, get_hvn_and_sr_levels, thin_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PUMP_DUMP_DETECTOR - %(message)s')
 logger = logging.getLogger(__name__)
@@ -260,7 +260,12 @@ def _emit_epd3_shadow(conn, symbol, base_features, now, current_price):
                 else entry2 * 1.025
             )
             t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
-        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        targets = ensure_min_tp_distance(
+            thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+            entry1,
+            is_long,
+            min_pct=0.05,
+        )
         if not targets:
             return
         outcome = post_ai_signal_gated(
@@ -1338,6 +1343,12 @@ def process_coin_logics(conn, symbol):
             t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
         # FIX: real zones + a 5% target if applicable when the last zone is too close
+        #
+        # DELIBERATELY NOT THINNED (T-2026-KYT-9050-098): this legacy EPD2 leg posts
+        # with n_show=len(targets), so its published ladder IS its candidate pool.
+        # thin_targets would delete targets without replacement — exactly the case the
+        # operator's condition ("only skip when not everything is published") excludes.
+        # The EPD3 path above (:263) is the one that publishes 3 of up to 20 and is thinned.
         targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
 
         # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate for the legacy EPD2

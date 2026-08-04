@@ -31,7 +31,7 @@ from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.signal_post import has_open_ai_signal, post_ai_signal_gated
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+from core.trade_utils import N_PUBLISHED_TARGETS, ensure_min_tp_distance, get_hvn_and_sr_levels, thin_targets
 
 # OHLCV columns for the R1-clean ATB2 read (closed candles).
 _ATB2_OHLCV_COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
@@ -696,7 +696,12 @@ def send_signal(conn, symbol, direction, prob, close_price, event_name, trend_di
         t_cands = sorted([x for x in supps if x > 0 and x < (entry1 * 0.99)], reverse=True)
 
     # FIX: real zones + 5% target if applicable when the last zone is too close
-    targets = ensure_min_tp_distance(t_cands[:20], entry1, direction == "LONG", min_pct=0.05)
+    targets = ensure_min_tp_distance(
+        thin_targets(t_cands[:20], entry1, direction == "LONG", keep=N_PUBLISHED_TARGETS),
+        entry1,
+        direction == "LONG",
+        min_pct=0.05,
+    )
 
     lev = get_max_leverage(symbol, 20)
 

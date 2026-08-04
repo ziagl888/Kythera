@@ -72,7 +72,13 @@ from core.max1_gate import (
 from core.model_artifacts import calibrated_confidence, load_artifact, maybe_reload
 from core.rub_features import RUB_FEATURES, build_rub_features, rub_event_type, rub_trend
 from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
+from core.trade_utils import (
+    N_PUBLISHED_TARGETS,
+    ensure_min_tp_distance,
+    get_hvn_and_sr_levels,
+    hvn_sr_trade_geometry,
+    thin_targets,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_MAX1_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -280,7 +286,12 @@ def post_candidate(conn, cand: Max1Candidate, live: bool) -> None:
     entry1 = cand.close_price
     supps, resis = get_hvn_and_sr_levels(conn, cand.symbol, entry1)
     entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long=False, supps=supps, resis=resis)
-    targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long=False, min_pct=0.05)
+    targets = ensure_min_tp_distance(
+        thin_targets(t_cands[:20], entry1, is_long=False, keep=N_PUBLISHED_TARGETS),
+        entry1,
+        is_long=False,
+        min_pct=0.05,
+    )
     # The persisted confidence is the RAW probability — the domain the gate and the
     # 044 threshold curve live in, and what RUB2 writes for the identical model. The
     # calibrated value is shown in the info message only; persisting it instead would
