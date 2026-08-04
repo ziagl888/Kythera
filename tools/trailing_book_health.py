@@ -42,6 +42,10 @@ a peak established on a STRICTLY earlier candle; index 0 never triggers):
   trail-a2-short-only  SHORT legs trail, LONG legs hold (and the mirror image).
   trail-a2-partial50   at the trail trigger close HALF, the rest rides to the
                        natural close — evaporation insurance instead of exit.
+  trail-tp1 (+f2)      activation is NOT a fixed percentage but the source
+                       signal's OWN first target: the trail arms once the peak
+                       clears TP1. `f2` additionally floors it at 2 % (see
+                       `act_tp1`). Operator question 2026-08-04.
   ptf-y10 / y15        NO per-trade trail; flatten the whole book when its
                        aggregate open mark retraces y from its running peak
                        (`core.wave_exit_sim.portfolio_circuit_breaker`).
@@ -51,6 +55,7 @@ One sim job at a time on this machine (repo rule).
 
 Usage:
     python tools/trailing_book_health.py --start 2026-03-01 --tf 15m
+    python tools/trailing_book_health.py --start 2026-07-01 --tp1-only   # TP1 rules
 """
 
 from __future__ import annotations
@@ -151,6 +156,126 @@ def attach_series(conn, trades: list[dict], tf: str, grid0: np.datetime64, glen:
         if ci % 200 == 0 or ci == len(by_coin):
             print(f"  [{ci}/{len(by_coin)}] {time.time() - t0:.0f}s", flush=True)
     return no_candle
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TP1 GEOMETRY (operator question 2026-08-04: arm the trail at TP1, not at +2 %)
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Largest TP1 distance still treated as a real target. Beyond this the row is a
+#: geometry artefact (a target written in the wrong unit or against a different
+#: entry), and letting it through would silently turn that trade into a `hold`.
+TP1_MAX_PCT = 200.0
+
+
+def attach_tp1(conn, trades: list[dict]) -> tuple[int, int]:
+    """Attach ``tp1_pct`` — the source signal's first target as an unlevered,
+    direction-signed % move from ITS OWN entry. Returns ``(matched, usable)``.
+
+    ``load_trades`` does not read ``targets``, so this is a second pass over the
+    same deduped population, keyed the same way ``load_trades`` dedupes
+    (symbol, tag, direction, open_time).
+
+    Coverage is the load-bearing caveat, not a detail: ``closed_ai_signals.targets``
+    is only populated from ~2026-06 onward (measured 2026-08-04: 0 % Mar–May,
+    2 % Jun, 77 % Jul, 100 % Aug — 19.4 % over the whole March window). A TP1 rule
+    can therefore only be measured causally on the covered window; everything
+    before it would silently fall back to the fixed activation and report a
+    trail-a2 clone under a TP1 label. Hence ``--tp1-only``, which restricts the
+    WHOLE sweep to covered trades so every rule scores the same trades.
+    """
+    from core.bot_naming import pretty_name
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT ON (symbol, model, upper(btrim(direction)), open_time)
+                   symbol, model, upper(btrim(direction)), entry, targets, open_time
+            FROM closed_ai_signals
+            WHERE entry IS NOT NULL AND targets IS NOT NULL
+              AND (status IS NULL OR status NOT ILIKE %s)
+            ORDER BY symbol, model, upper(btrim(direction)), open_time, close_time ASC
+            """,
+            ("%LEGACY%",),
+        )
+        rows = cur.fetchall()
+
+    by_key: dict[tuple, float] = {}
+    for sym, model, d, entry, targets, ot in rows:
+        try:
+            tg = targets if isinstance(targets, list) else json.loads(targets)
+        except (TypeError, ValueError):
+            continue
+        if not tg or entry is None or float(entry) <= 0:
+            continue
+        e, tp1 = float(entry), float(tg[0])
+        pct = (tp1 - e) / e * 100.0 if d == "LONG" else (e - tp1) / e * 100.0
+        by_key.setdefault((str(sym).upper(), pretty_name(str(model)), d, ot), pct)
+
+    matched = usable = 0
+    for t in trades:
+        pct = by_key.get((t["sym"], t["tag"], t["dir"], t["ot"]))
+        t["tp1_pct"] = None
+        if pct is None:
+            continue
+        matched += 1
+        # A non-positive or absurd TP1 is not a target the bot could ever have
+        # armed on — dropped rather than clamped, so it lands in the uncovered
+        # bucket instead of quietly becoming a different rule.
+        if 0.0 < pct < TP1_MAX_PCT:
+            t["tp1_pct"] = pct
+            usable += 1
+    return matched, usable
+
+
+def impute_tp1(trades: list[dict]) -> int:
+    """Fill missing ``tp1_pct`` with the leg's own median TP1 — ROBUSTNESS ONLY.
+
+    An imputed TP1 is a per-leg CONSTANT, so it cannot reproduce the per-trade
+    variation that is the entire point of the rule (a leg whose TP1 sits at 1,7 %
+    on one trade and 9 % on the next arms at two very different peaks). For the
+    fixed-geometry legs (MIS2: TP1 is literally constant) the imputation is exact;
+    for the S/R-derived legs it is a stand-in. Every imputed trade is flagged
+    ``tp1_imputed`` so a run's coverage stays readable in the JSON.
+    """
+    per_leg: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for t in trades:
+        if t.get("tp1_pct") is not None:
+            per_leg[(t["tag"], t["dir"])].append(t["tp1_pct"])
+    med = {k: float(np.median(v)) for k, v in per_leg.items()}
+    n = 0
+    for t in trades:
+        t["tp1_imputed"] = False
+        if t.get("tp1_pct") is not None:
+            continue
+        m = med.get((t["tag"], t["dir"]))
+        if m is None:
+            continue  # leg has no coverage at all — stays on the fallback activation
+        t["tp1_pct"] = m
+        t["tp1_imputed"] = True
+        n += 1
+    return n
+
+
+def act_tp1(t: dict, floor: float | None = None, fallback: float = ACT_LIVE) -> float:
+    """Activation for ONE trade: its own TP1 instead of the fleet-wide constant.
+
+    ``floor`` exists because TP1 is not automatically the higher bar the operator's
+    question assumes: measured over the roster legs, 24 % of trades carry a TP1
+    below 2 %, so a bare TP1 activation arms EARLIER than today on a quarter of the
+    book — which is exactly the micro-scalper the fixed 2 % floor was introduced
+    against (`core.trailing_roster.ACTIVATION_PCT`). ``max(TP1, 2)`` keeps the
+    floor and only ever delays arming.
+
+    ``fallback`` is what an uncovered trade gets. It is the live activation, so an
+    uncovered trade behaves exactly like today's bot — the honest neutral element,
+    but it also means a run over an uncovered period measures trail-a2 wearing a
+    TP1 label. Use ``--tp1-only``.
+    """
+    a = t.get("tp1_pct")
+    if a is None:
+        return fallback
+    return max(a, floor) if floor is not None else a
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -672,6 +797,12 @@ RULE_ORDER = [
     ("trail-a2-short-only", "Trail 2 % only SHORT (LONG holds)"),
     ("trail-a2-long-only", "Trail 2 % only LONG (SHORT holds)"),
     ("trail-a2-partial50", "Trail 2 %, 50 % partial close"),
+    ("trail-tp1", "Trail armed at TP1 (per trade, no floor)"),
+    ("trail-tp1f2", "Trail armed at max(TP1, 2 %)"),
+    ("trail-tp1+ts24", "Trail at TP1 + Time-Stop 24 h"),
+    ("trail-tp1f2+ts24", "Trail at max(TP1, 2 %) + Time-Stop 24 h"),
+    ("trail-tp1+ts24+cap50", "Trail at TP1 + Time-Stop 24 h + Cap ±50"),
+    ("trail-tp1f2+ts24+cap50", "Trail at max(TP1, 2 %) + ts24 + Cap ±50"),
     ("trail-a2-cap50", "Trail 2 % + Exposure-Cap ±50"),
     ("trail-a2-cap100", "Trail 2 % + Exposure-Cap ±100"),
     ("trail-a2+ts24+cap50", "Trail 2 % + Time-Stop 24 h + Cap ±50"),
@@ -708,6 +839,14 @@ def render_md(meta: dict) -> str:
         f"_generated {meta['generated_at']} · read-only · roster legs excluding ROM1 · x={X_FRAC:.0%} · "
         f"tf {meta['tf']} · since {meta['start']} · fee {FEE_RT:.2f} %/trade · {meta['n_trades']} trades_",
         "",
+        f"_TP1 coverage: {meta.get('tp1_usable', 0)} trades with a usable TP1"
+        + (f", {meta['tp1_imputed']} imputed from the leg median" if meta.get("tp1_imputed") else "")
+        + (
+            " · population restricted to covered trades (`--tp1-only`)_"
+            if meta.get("tp1_only")
+            else " · uncovered trades fall back to act=2 %, so the `trail-tp1` rows are a BLEND_"
+        ),
+        "",
         "**Question:** `tools/trailing_slot_budget.py` measured realised sums and slots. A rule that",
         "closes winners and holds losers looks good there and bad in the open book —",
         "Bot 40 proved that live. Here every rule is measured on BOTH sides: realised",
@@ -740,11 +879,30 @@ def render_md(meta: dict) -> str:
 
 
 def main() -> None:
+    # Redirected stdout on this Windows box defaults to cp1252, and every progress
+    # line here carries a "→" or "±". Without this the run dies at the FIRST print
+    # — after the full population load, before a single rule is scored.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--start", default="2026-03-01")
     ap.add_argument("--tf", default="15m")
     ap.add_argument("--lev", type=float, default=20.0)
     ap.add_argument("--out", default=DEFAULT_OUT_DIR)
+    ap.add_argument(
+        "--tp1-only",
+        action="store_true",
+        help="restrict the WHOLE population to trades with a known TP1 — the only "
+        "honest basis for the TP1 rules (targets are only stored from ~2026-06 on)",
+    )
+    ap.add_argument(
+        "--tp1-impute",
+        action="store_true",
+        help="fill a missing TP1 with the leg's median TP1 (robustness run only; a "
+        "per-leg constant cannot reproduce per-trade geometry)",
+    )
+    ap.add_argument("--tag", default="", help="filename suffix, so a second run does not overwrite the first")
     args = ap.parse_args()
 
     from datetime import datetime, timezone
@@ -767,6 +925,31 @@ def main() -> None:
             continue
         trades.append(t)
     print(f"loaded {len(all_trades)} fleet trades → {len(trades)} roster/LIVE (ROM1 excluded: {n_rom1})", flush=True)
+
+    tp1_matched, tp1_usable = attach_tp1(conn, trades)
+    n_imputed = impute_tp1(trades) if args.tp1_impute else 0
+    n_before = len(trades)
+    if args.tp1_only:
+        trades = [t for t in trades if t.get("tp1_pct") is not None]
+    print(
+        f"TP1 geometry: {tp1_matched} matched / {tp1_usable} usable of {n_before} "
+        f"({tp1_usable / n_before * 100:.1f} %)"
+        + (f", {n_imputed} imputed from the leg median" if args.tp1_impute else "")
+        + (f" → population restricted to {len(trades)}" if args.tp1_only else ""),
+        flush=True,
+    )
+    # Counted AFTER imputation, because that is what the rules actually see — the
+    # raw coverage number would overstate the blend on an imputed run.
+    n_fallback = sum(1 for t in trades if t.get("tp1_pct") is None)
+    if n_fallback:
+        # Loud, because the failure is silent otherwise: uncovered trades fall back
+        # to ACT_LIVE, so the TP1 rules converge on trail-a2 the less coverage there is.
+        print(
+            f"  ⚠ {n_fallback} trades without TP1 fall back to act={ACT_LIVE} % — "
+            f"the trail-tp1 rows below are a BLEND to that extent ({n_fallback / len(trades) * 100:.1f} %). "
+            "Use --tp1-only for a clean TP1 population.",
+            flush=True,
+        )
 
     lo = min(_naive(t["ot"]) for t in trades)
     hi = max(_naive(t["ct"]) for t in trades)
@@ -807,6 +990,19 @@ def main() -> None:
     for d, key in [("SHORT", "trail-a2-short-only"), ("LONG", "trail-a2-long-only")]:
         score(key, run_rule(trades, glen, {i: exit_one_sided(t, grid0, ACT_LIVE, d) for i, t in enumerate(trades)}))
     score("trail-a2-partial50", run_partial(trades, glen, grid0, ACT_LIVE))
+    # TP1 activation (operator question 2026-08-04). Same trail, same give-back —
+    # only the arming threshold becomes per-trade instead of fleet-wide.
+    for floor, suffix in [(None, ""), (2.0, "f2")]:
+        tp1_exits = {i: exit_trail(t, grid0, act_tp1(t, floor)) for i, t in enumerate(trades)}
+        tp1_ts_exits = {i: exit_trail_timestop(t, grid0, act_tp1(t, floor), 24.0) for i, t in enumerate(trades)}
+        score(f"trail-tp1{suffix}", run_rule(trades, glen, tp1_exits))
+        score(f"trail-tp1{suffix}+ts24", run_rule(trades, glen, tp1_ts_exits))
+        # The cap layer needs an activation for its own admission bookkeeping only;
+        # the exits are already per-trade, so ACT_LIVE here changes nothing.
+        score(
+            f"trail-tp1{suffix}+ts24+cap50",
+            run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50, exits=tp1_ts_exits),
+        )
     score("trail-a2-cap50", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 50))
     score("trail-a2-cap100", run_exposure_cap(trades, glen, grid0, ACT_LIVE, 100))
     ts24_exits = {i: exit_trail_timestop(t, grid0, ACT_LIVE, 24.0) for i, t in enumerate(trades)}
@@ -875,12 +1071,17 @@ def main() -> None:
         "n_trades": len(trades),
         "n_rom1_excluded": n_rom1,
         "no_candle": no_candle,
+        "tp1_matched": tp1_matched,
+        "tp1_usable": tp1_usable,
+        "tp1_imputed": n_imputed,
+        "tp1_fallback": n_fallback,
+        "tp1_only": args.tp1_only,
         "rules": {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")} for k, v in rules.items()},
         "mover_buckets": buckets,
         "daily_series": series,
     }
     os.makedirs(args.out, exist_ok=True)
-    base = os.path.join(args.out, "trailing_book_health")
+    base = os.path.join(args.out, "trailing_book_health" + (f"_{args.tag}" if args.tag else ""))
     with open(base + ".md", "w", encoding="utf-8") as fh:
         fh.write(render_md({**meta, "rules": rules}))
     with open(base + ".json", "w", encoding="utf-8") as fh:

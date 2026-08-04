@@ -1,3 +1,64 @@
+## [2026-08-04] Bot 40: the trail really is a 2 %-scalper — and arming it at TP1 fixes the book but costs a third of the capital efficiency (T-2026-KYT-9050-093)
+
+Two operator suspicions, measured against the live arm and then against the tape.
+
+**"The trailings close too early" — true as an observation, dead as a lever.** Over the deployed
+regime (mirrors since `TIME_STOP_SINCE`, 851 closed) the trail exits at a median peak of
+**2,30 %**; **84 %** of the 494 `TRAIL` exits never saw a 3 % peak and only 4,5 % saw 5 %. And the
+market kept going: for **94,7 %** of those exits a better mark was reachable within the next 24 h,
+median **+3,48 pp** left on the table (mean +6,72, p90 +18,73). That number is a
+favourable-excursion upper bound, not an achievable alternative — and the simulation shows why
+that distinction matters: **every** later activation earns less. On the July–August window
+(9 149 trades) act=5 makes 5 870 and act=10 makes 4 550 against act=2's 6 539, because the same
+patience that lets winners run also keeps losers on the book (226 → 429 average slots). The
+give-back `x` was refuted the same way in T-052; the activation is now refuted too.
+
+**"Would it work if the trail started at TP1?"** New in `tools/trailing_book_health.py`: a
+per-trade activation (`act_tp1`) taken from the source signal's own first target, plus the
+`ts24`/`cap ±50` combinations, plus `--tp1-only`/`--tp1-impute`. TP1 is not automatically the
+later bar the question assumes — **23,8 %** of roster trades carry a TP1 below 2 % (median
+3,18 %; MIS2 shorts sit at 19–21 %, ATS2/SRA2/MAX1 at 1,7–1,9 %), so both the bare rule and a
+`max(TP1, 2 %)` floor were measured. Under the configuration the bot actually runs the answer is
+clear: **net 5 835 vs. 6 379 (−8,5 %), net per average slot 59 vs. 91 (−35 %), MaxDD 279 vs. 184
+(+52 %)** — bought with the healthiest full-population book of the whole T-052 series
+(**−0,11 %** against −1,26 %, 55 % vs. 69 % underwater, L/S 60/38 instead of 48/22). A second run
+over the full March–August window with independently sourced (imputed) geometry lands on
+**−11 % / −34 % / +48 %** and book −0,98 % vs. −1,65 % — two tapes, two TP1 sources, the same
+answer to within a percentage point. Against the 800-USD envelope, where net-per-slot sets
+position size, that is a pay cut, so the recommendation is **do not flip** — and to revisit it at
+the 2-channel stage, where absolute net becomes the binding metric again and TP1's uncapped
++21 % over act=2 starts to matter. The 2 %-floor variant lands within 0,7 % on every metric.
+
+The underlying gradient is worth recording, because it settles the "too early" question in
+general: over the full window act=5 makes 59 305 and act=10 makes 71 554 against act=2's 46 521 —
+patience **does** buy gross return, at 2–3× the bound capital (530/760 vs. 261 average slots) and
+a falling exchange rate (112/94 vs. 178 net per average slot). TP1 sits on that same gradient at
+126. With one channel and 800 USD, none of it is reachable.
+
+**The blocker that shaped the method.** `closed_ai_signals.targets` is only populated from
+~June 2026 (**0 %** Mar–May, 2 % Jun, 77 % Jul, 100 % Aug — 19,4 % since 2026-03-01), because the
+monitor deletes `targets` on close. A TP1 rule run over T-052's five-month window would have
+fallen back to act = 2 % on four fifths of the population and reported a `trail-a2` clone under a
+TP1 label. The tool no longer allows that silently: the fallback count is printed and stored in
+the JSON, and `--tp1-only` restricts the *whole* sweep to covered trades so every rule scores the
+same trades. The full-period run is available as an explicitly-labelled imputation
+(`--tp1-impute`, per-leg median: 9 270 real, 38 282 imputed, 214 on the act=2 fallback) and is a
+period-robustness check, not a second measurement of the rule.
+
+**Side finding on the second suspicion.** The mirrored SL sits a median **7,03 %** below entry
+(p90 14,87 %, max 53,34 % = −1 067 % of margin at 20×) — inherited S/R geometry from the source
+legs, not a bot defect: `mirrorable_at` keeps the absolute SL on purpose. AIM2 SHORT alone
+carries a third of the arm's SL damage (11 of 42 hits, −100,9 of −304,2 pp) on volume. And the
+T-052 addendum-6 verdict on a −5 % SL cap turns out to be **regime-dependent**: rejected on
+March–July (−33 % net, MaxDD worse), it is nearly free on July–August (net −7 %, **MaxDD −32 %**,
+net-per-slot unchanged) because the sub-−5 % dippers ended at avg −4,76 % instead of −2,74 %.
+Flagged for a re-run with September data, not acted on — the arm is untouched by this task.
+
+Read-only throughout: no live intervention, no change to `40_trailing_close_bot.py`, no gate
+touched. Verdict `staging_models/replay/trailing_tp1_activation_verdict_t093.md`, runs
+`trailing_book_health_tp1_jul.{md,json}` / `_tp1_imputed.{md,json}`, 6 additional DB-free pins
+(32 total in `backtest/test_trailing_book_health.py`).
+
 ## [2026-08-03] SMC-sniper forming-candle guards: blind for three weeks, rewired onto the core.candles contract (T-2026-KYT-9050-083)
 
 Five regression tests that guard hard rule 5 for `25_smc_ml_sniper.py` had been red since

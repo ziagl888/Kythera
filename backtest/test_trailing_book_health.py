@@ -25,11 +25,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from tools.trailing_book_health import (  # noqa: E402
+    ACT_LIVE,
     FEE_RT,
+    act_tp1,
     exit_breakeven,
     exit_trail,
     exit_trail_hardstop,
     exit_trail_timestop,
+    impute_tp1,
     run_direction_gate,
     run_exposure_cap,
     run_feedback_gate,
@@ -344,6 +347,75 @@ def test_no_series_trade_keeps_recorded_outcome_under_every_rule():
     ):
         gi, val = fn()
         assert (gi, val) == (5, -1.5)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TP1 activation (T-2026-KYT-9050-093)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_act_tp1_uses_the_trades_own_target():
+    """The activation becomes per-trade: two trades, two arming thresholds."""
+    near = _trade(0, 10, fav=[1.0], adv=[0.0])
+    far = _trade(0, 10, fav=[1.0], adv=[0.0])
+    near["tp1_pct"], far["tp1_pct"] = 1.7, 9.0
+    assert act_tp1(near) == 1.7
+    assert act_tp1(far) == 9.0
+
+
+def test_act_tp1_floor_only_ever_raises():
+    """`f2` keeps the 2 % micro-scalper floor — 24 % of live TP1s sit below it."""
+    low = _trade(0, 10, fav=[1.0], adv=[0.0])
+    low["tp1_pct"] = 1.2
+    assert act_tp1(low) == 1.2  # bare TP1 would arm EARLIER than the live bot
+    assert act_tp1(low, 2.0) == 2.0
+    high = _trade(0, 10, fav=[1.0], adv=[0.0])
+    high["tp1_pct"] = 6.0
+    assert act_tp1(high, 2.0) == 6.0  # the floor never caps a wide target
+
+
+def test_act_tp1_without_coverage_falls_back_to_the_live_activation():
+    """An uncovered trade must behave exactly like today's bot, not like a hold.
+
+    This is why `--tp1-only` exists: on an uncovered period every TP1 rule silently
+    degenerates into trail-a2, which would read as 'TP1 changes nothing'.
+    """
+    t = _trade(0, 10, fav=[1.0], adv=[0.0])
+    t["tp1_pct"] = None
+    assert act_tp1(t) == ACT_LIVE
+    assert act_tp1(t, 2.0) == ACT_LIVE
+
+
+def test_tp1_activation_delays_the_exit_versus_act2():
+    """A trade whose TP1 sits at 6 % must not be trailed out on a 2,5 % blip."""
+    # Peak 2,5 % in candle 1, gives back to 2,0 % in candle 2, then runs to 8 %.
+    fav = [0.0, 2.5, 2.5, 8.0, 8.0]
+    adv = [0.0, 2.5, 2.0, 2.0, 7.0]
+    t = _trade(0, 10, fav=fav, adv=adv, cm=[0.0, 2.5, 2.0, 8.0, 7.0], real=7.0)
+    t["tp1_pct"] = 6.0
+    gi_a2, val_a2 = exit_trail(t, GRID0, 2.0)
+    gi_tp1, val_tp1 = exit_trail(t, GRID0, act_tp1(t))
+    assert gi_a2 < gi_tp1, (gi_a2, gi_tp1)
+    assert val_tp1 > val_a2, (val_a2, val_tp1)
+    assert np.isclose(val_tp1, 7.2), val_tp1  # peak 8 % × (1 − 0,10)
+
+
+def test_impute_tp1_fills_only_uncovered_trades_of_a_covered_leg():
+    """Imputation is a per-leg constant and must never overwrite a real target."""
+    covered_a = _trade(0, 10, fav=[1.0], adv=[0.0])
+    covered_b = _trade(0, 10, fav=[1.0], adv=[0.0])
+    gap = _trade(0, 10, fav=[1.0], adv=[0.0])
+    orphan = _trade(0, 10, fav=[1.0], adv=[0.0])
+    orphan["tag"] = "OTHER"
+    covered_a["tp1_pct"], covered_b["tp1_pct"] = 3.0, 5.0
+    gap["tp1_pct"] = orphan["tp1_pct"] = None
+    n = impute_tp1([covered_a, covered_b, gap, orphan])
+    assert n == 1
+    assert gap["tp1_pct"] == 4.0 and gap["tp1_imputed"] is True  # median of 3 and 5
+    assert covered_a["tp1_pct"] == 3.0 and covered_a["tp1_imputed"] is False
+    # A leg with no coverage at all keeps its gap rather than borrowing a foreign
+    # leg's geometry — it then rides the documented act=2 fallback.
+    assert orphan["tp1_pct"] is None
 
 
 if __name__ == "__main__":

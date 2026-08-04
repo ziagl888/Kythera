@@ -240,6 +240,55 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   Price difference on the same candle: **+0.02 percentage points/trade**. Real, but not a shifted
   operating point. **Recommendation: keep `act = 2 %`** — and LOWERING `act` would not use the
   free capacity but enlarge it (shorter holding time → less occupancy).
+- [x] **#T93-1 Operator suspicion "the trail closes too early" — CONFIRMED as an observation,
+  REFUTED as a lever (T-2026-KYT-9050-093, 2026-08-04).** Live, over the deployed regime
+  (mirrors from `TIME_STOP_SINCE`, 851 closed): the trail IS a 2%-scalper — median peak at exit
+  **2.30%**, **84%** of the 494 `TRAIL` exits below a 3% peak, only 4.5% above 5%. And the tape
+  kept going: **94.7%** of the exits saw a better mark within 24h, median **+3.48pp** left
+  (mean +6.72, p90 +18.73; 38% left >5pp). **But no later activation converts that into money.**
+  On the July–August window (9 149 trades, all with real TP1 geometry) act=5 earns 5 870 and
+  act=10 4 550 against act=2's 6 539 — the same patience that holds winners also holds losers,
+  and the book grows from 226 to 429 avg slots. The give-back `x` was already refuted the same
+  way (T-052 addendum 2). **The general form, from the full March–August window:** patience does
+  buy gross return (act=5 59 305, act=10 71 554 against act=2's 46 521) — but at 2–3× the bound
+  capital (530/760 vs 261 avg slots) and a falling exchange rate (112/94 vs **178** net per avg
+  slot). With one channel and 800 USD none of it is reachable. Verdict:
+  `staging_models/replay/trailing_tp1_activation_verdict_t093.md`.
+- [x] **#T93-2 TP1 as the activation threshold — MEASURED, NOT RECOMMENDED.** Per-trade
+  activation at the source signal's own TP1 instead of the fleet-wide 2%. Not automatically a
+  later bar: **23.8%** of roster trades carry a TP1 below 2% (median 3.18%, mean 4.47%; MIS2
+  shorts ≈19–21%, ATS2/SRA2/MAX1 ≈1.7–1.9%) — measured live against the mirror entry too
+  (median 2.95% vs 2.92% from the source entry, so the market-entry offset does not distort it).
+  Result under the configuration the bot actually runs (ts24 + cap ±50): **net 5 835 vs 6 379
+  (−8.5%), net per avg slot 59 vs 91 (−35%), MaxDD 279 vs 184 (+52%)** — bought with the
+  healthiest full-population book of the whole series (**−0.11%** vs −1.26%, 55% vs 69%
+  underwater, L/S 60/38 instead of 48/22). **Reproduced on a second window** (March–August,
+  47 766 trades, imputed geometry): −11% / −34% / +48%, book −0.98% vs −1.65% — two tapes, two
+  TP1 sources, same answer to within a percentage point. Against the 800-USD envelope, where
+  net-per-slot decides position size, that is a pay cut. **Do not flip** — and **re-run it at the
+  2-channel stage** (from ~2000 USD, where absolute net becomes binding again: uncapped TP1 makes
+  56 323 against act=2's 46 521, +21%, at a healthier book). The `max(TP1, 2%)` floor variant is
+  within 0.7% on every metric (irrelevant). New: `--tp1-only` / `--tp1-impute` / `act_tp1` in
+  `tools/trailing_book_health.py`, 6 additional DB-free pins.
+- [ ] **#T93-3 `closed_ai_signals.targets` only exists from ~June 2026 — blocks every
+  geometry-dependent replay before July (open, structural).** Coverage measured 2026-08-04:
+  **0%** Mar–May, 2% Jun, 77% Jul, 100% Aug = 19.4% since 2026-03-01. Any rule keyed on TP1/TP-n
+  can only be measured causally on the July+ window; over the T-052 5-month window it would
+  silently degrade into an act=2 clone. The tool now refuses to hide this (fallback count printed
+  + in the JSON, `--tp1-only` restricts the whole sweep). Not fixable retroactively — the
+  monitor deletes `targets` on close (Step 7 finding, `audit_reports/17_monitor_replay_and_gaps.md`).
+- [ ] **#T93-4 The −5% SL cap verdict is regime-dependent — re-run when September data is in
+  (open, Michi-gated).** T-052 addendum 6 rejected the cap on March–July (−33% net on the
+  deployed rule, MaxDD *worse*). Re-measured on July–August it is nearly free: **net 5 925
+  (−7%), MaxDD 126 (−32%), net per avg slot 93 (unchanged), book −0.61%**. Cause is in the
+  recovery statistics — dippers below −5% ended at avg −2.74% on hold over March–July (42.1%
+  better than −5%) but at avg **−4.76%** over July–August (35.0% better). One five-week window
+  against one five-month window: **flag, not a recommendation.** Context for the operator's
+  "the SLs go very deep": the mirrored SL sits a median **7.03%** below entry (p90 14.87%, max
+  53.34% = −1 067% margin at 20×) — inherited S/R geometry from the source legs, not a bot
+  defect (`mirrorable_at` keeps the absolute SL by design). AIM2 SHORT alone carries a third of
+  the arm's SL damage (11 of 42 hits, −100.9 of −304.2pp) through volume, not through unusual
+  geometry.
 - [ ] **#T52-3 Operator decision on bot 40's exit rule (Michi) — UPDATED 2026-07-28.** After
   live confirmation of the desegregation (clean window in ~9h to 95% underwater; bot
   parked on operator order 05:29, unparked 05:43) and run 3 (23 rules, incl. x-sweep,
