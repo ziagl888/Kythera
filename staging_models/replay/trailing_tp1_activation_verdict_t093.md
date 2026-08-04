@@ -207,6 +207,13 @@ act=10 beat act=2 on net; in July–August it loses). So the same sweep was run 
 **A per-leg constant cannot reproduce per-trade geometry**, so this run tests whether the
 *ranking* survives a different tape, not whether the rule works.
 
+Two things this imputation is **not** allowed to be read as. It is **forward-looking**: the leg
+median is taken over the whole population, so a March trade is filled from geometry that only
+existed in July — hindsight in the *parameter*. It is **not** the T-052 addendum-4 defect: the
+activation still uses only entry + target, and the trail still fires against a strictly prior
+peak, so nothing about an individual trade's future enters its own exit decision. That is
+exactly the line between "a robustness check with a known bias" and "a retracted result".
+
 | Rule | n | Σ net | /trade | avg slots | p95 | net/slot-day | equity MaxDD | **net/avg slot** | avg book mark | u.w. |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
 | Hold | 47 766 | 58 072 | 1,216 | 998 | 1 628 | 0,37 | 20 962 | 58 | +2,25 % | 44 % |
@@ -274,6 +281,35 @@ _¹ four days only._
    volume alone. Whether its 209 mirrors/week are worth their SL tail is a leg question
    (T-062-style residual measurement), not an exit-rule question.
 
+## Reproduction
+
+The **simulation** figures (§3, §5) come from committed code and are re-runnable:
+
+```
+python tools/trailing_book_health.py --start 2026-07-01 --tp1-only   --tag tp1_jul
+python tools/trailing_book_health.py --start 2026-03-01 --tp1-impute --tag tp1_imputed
+```
+
+The **live** figures (§1, §2, §4) were ad-hoc read-only queries, not a committed tool — unlike
+the arm's standing live report (`tools/trailing_arm_report.py`, #T54-1), which answers a
+different question (what the arm did) and carries no TP1 or post-exit-excursion view. Recorded
+here so the numbers stay checkable rather than merely asserted. All against
+`trailing_positions`, population `opened_at >= '2026-07-28 14:00+00'` (the `TIME_STOP_SINCE`
+cutoff), `close_reason IS DISTINCT FROM 'PREEXISTING'`:
+
+- **Exit tally** (§1): `GROUP BY close_reason` with `count(*)`, `avg/min/max/sum(close_mark_pct)`.
+- **Trail peak distribution** (§2): same table filtered to `close_reason='TRAIL'`, then
+  `avg/percentile_cont(0.5|0.9) ON peak_pct` plus `count(*) FILTER (WHERE peak_pct < 3|5)`.
+- **Post-exit excursion** (§2): for each `TRAIL` row, 15m wicks from `read_coin_wick(sym,
+  closed_at−1h, closed_at+25h)`; best favourable mark in `(closed_at, closed_at+24h]` measured
+  against the mirror's own `entry`, minus the realised `close_mark_pct`. 493 of 494 rows had
+  candle coverage.
+- **SL geometry** (§4): `(entry−sl)/entry*100` for LONG, `(sl−entry)/entry*100` for SHORT, over
+  all rows with `sl IS NOT NULL`; per-leg table `GROUP BY model, direction HAVING count(*) >= 10`.
+- **Mirror-vs-source TP1** (§3.2): `trailing_positions` joined to `ai_signals` on
+  `src_signal_id` (open mirrors only — `ai_signals` keeps `targets` only while the trade is
+  open), TP1 distance computed against `trailing_positions.entry` and against `ai_signals.entry1`.
+
 ## Honest limitations
 
 - **The primary run is five weeks, one regime** (2026-07-01 → 2026-08-04), because that is where
@@ -290,6 +326,10 @@ _¹ four days only._
   217 of 9 149 trades without candle coverage fall back to their recorded close.
 - The sim has no symbol uniqueness and no slot-cap backlog (AK3/AK4) — it measures the rule, not
   the bot's admission layer.
+- Artefact provenance: `trailing_book_health_tp1_imputed.json` was produced before the review
+  fixes to `tools/trailing_book_health.py` (mutual-exclusion guard, `tp1_fallback` in the meta
+  block, corrected fallback wording). The rule results are unaffected — re-running the committed
+  code with the same flags reproduces every figure and only adds the `tp1_fallback` key.
 - The two cap rows trade slightly different sets (6 250 vs. 6 287 trades — the cap is an
   admission rule, so a different exit rule frees slots at different times). T-052 warns that
   capped rows are not 1:1 comparable on raw net; at a 0,6 % difference in n it is immaterial

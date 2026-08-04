@@ -237,6 +237,16 @@ def impute_tp1(trades: list[dict]) -> int:
     fixed-geometry legs (MIS2: TP1 is literally constant) the imputation is exact;
     for the S/R-derived legs it is a stand-in. Every imputed trade is flagged
     ``tp1_imputed`` so a run's coverage stays readable in the JSON.
+
+    **This is FORWARD-LOOKING and must never be read as a live-achievable result.**
+    The median is taken over the whole loaded population, so a March trade is filled
+    from geometry that only existed in July — the coverage gap runs exactly that way
+    round. It is hindsight in the *parameter*, not in the per-trade tape (the
+    activation still only uses entry + target, and the trail still fires on a
+    strictly prior peak), so it does not repeat the T-052 addendum-4 defect. But
+    it is the reason a run using this is a period-robustness check and not a
+    measurement of the rule — and the reason ``--tp1-only`` refuses to combine
+    with it.
     """
     per_leg: dict[tuple[str, str], list[float]] = defaultdict(list)
     for t in trades:
@@ -925,6 +935,14 @@ def main() -> None:
             continue
         trades.append(t)
     print(f"loaded {len(all_trades)} fleet trades → {len(trades)} roster/LIVE (ROM1 excluded: {n_rom1})", flush=True)
+
+    if args.tp1_only and args.tp1_impute:
+        # The imputation runs BEFORE the filter, so every imputed trade would pass
+        # it — the flag whose entire purpose is "only trades with a real TP1" would
+        # silently admit synthesised geometry, and the JSON would still self-label
+        # `tp1_only: true`. Rejected rather than ordered differently: the two flags
+        # answer different questions and combining them has no honest reading.
+        ap.error("--tp1-only and --tp1-impute are mutually exclusive (imputed trades are not covered trades)")
 
     tp1_matched, tp1_usable = attach_tp1(conn, trades)
     n_imputed = impute_tp1(trades) if args.tp1_impute else 0
