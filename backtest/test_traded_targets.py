@@ -74,8 +74,15 @@ def test_shorter_list_than_the_cap_is_returned_whole():
 
 def test_the_carve_out_stays_small():
     """A guard against this quietly growing into a fleet-wide special case:
-    every entry here is a real persist/publish gap verified in the emitter."""
+    every entry here is a real persist/publish gap verified in the emitter.
+
+    After T-099 (ROM1) and T-100 (AIM2) both gaps are closed at the source, so
+    these two entries are historical-only decoders for the archive. A THIRD name
+    appearing here would mean an emitter regressed into persisting more than it
+    publishes — which `backtest/test_published_targets.py` exists to prevent.
+    """
     assert set(PUBLISHED_TARGET_COUNT) == {"ROM1", "AIM2"}
+    assert all(n == 3 for n in PUBLISHED_TARGET_COUNT.values())
 
 
 def test_rom1_stays_correct_after_the_bot_side_fix():
@@ -116,17 +123,6 @@ def test_aim2_stays_correct_after_the_bot_side_fix():
     assert weighted_move_pct("LONG", ENTRY, ENTRY, legacy_row, 2, model="AIM2") == weighted_move_pct(
         "LONG", ENTRY, ENTRY, new_row, 2, model="AIM2"
     )
-
-
-def test_both_carve_outs_are_now_historical_only():
-    """Documents the state after T-099 + T-100: no live emitter still has the gap.
-
-    The set must stay exactly these two — a NEW name appearing here would mean a
-    third emitter regressed into persisting more than it publishes, which is what
-    `backtest/test_published_targets.py` is supposed to prevent at the source.
-    """
-    assert set(PUBLISHED_TARGET_COUNT) == {"ROM1", "AIM2"}
-    assert all(n == 3 for n in PUBLISHED_TARGET_COUNT.values())
 
 
 def test_a_thin_only_the_message_variant_would_have_been_wrong():
