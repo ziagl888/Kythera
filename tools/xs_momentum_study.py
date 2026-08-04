@@ -97,6 +97,7 @@ from core.trade_utils import (  # noqa: E402
     ensure_min_tp_distance,
     get_hvn_and_sr_levels,
     hvn_sr_trade_geometry,
+    thin_targets,
 )
 from tools.walkforward_sim import (  # noqa: E402
     FEE_PER_SIDE,
@@ -579,7 +580,9 @@ def _geo_net(entry: float, is_long: bool, t1h, h1h, l1h, c1h, start_idx: int) ->
         return None
     supps, resis = get_hvn_and_sr_levels(None, None, entry, df=frame)
     _e2, sl, t_cands = hvn_sr_trade_geometry(entry, is_long, supps, resis)
-    targets = ensure_min_tp_distance(list(t_cands[:20]), entry, is_long, min_pct=0.05)
+    targets = ensure_min_tp_distance(
+        list(thin_targets(t_cands[:20], entry, is_long, keep=N_PUBLISHED)), entry, is_long, min_pct=0.05
+    )
     if not targets:
         return None
     hi = min(len(t1h), start_idx + EXIT_SCAN_CAP_H)

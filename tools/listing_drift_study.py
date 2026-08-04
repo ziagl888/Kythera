@@ -78,6 +78,7 @@ from core.trade_utils import (  # noqa: E402
     ensure_min_tp_distance,
     get_hvn_and_sr_levels,
     hvn_sr_trade_geometry,
+    thin_targets,
 )
 from tools.walkforward_sim import (  # noqa: E402
     FEE_PER_SIDE,
@@ -314,7 +315,12 @@ def fade_events(
             supps, resis = get_hvn_and_sr_levels(None, None, entry_price, df=frame)
             del frame
             _e2, sl, t_cands = hvn_sr_trade_geometry(entry_price, False, supps, resis)
-            targets = ensure_min_tp_distance(list(t_cands[:20]), entry_price, False, min_pct=0.05)
+            targets = ensure_min_tp_distance(
+                list(thin_targets(t_cands[:20], entry_price, False, keep=N_PUBLISHED)),
+                entry_price,
+                False,
+                min_pct=0.05,
+            )
             if not targets:
                 continue
             start = entry_idx + 1

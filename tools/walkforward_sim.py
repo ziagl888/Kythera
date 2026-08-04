@@ -100,6 +100,8 @@ from core.trade_utils import (  # noqa: E402
     ensure_min_tp_distance,
     get_hvn_and_sr_levels,
     hvn_sr_trade_geometry,
+    N_PUBLISHED_TARGETS,
+    thin_targets,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -939,7 +941,12 @@ def run_rub1(conn, symbol: str, days: int) -> list[dict]:
         supps, resis = get_hvn_and_sr_levels(None, symbol, curr_close, df=win95)
         entry1 = curr_close
         entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
-        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        targets = ensure_min_tp_distance(
+            thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+            entry1,
+            is_long,
+            min_pct=0.05,
+        )
         if not targets or sl <= 0:
             continue
 
@@ -1036,7 +1043,12 @@ def run_ats(conn, symbol: str, days: int) -> list[dict]:
         supps, resis = get_hvn_and_sr_levels(None, symbol, curr_close, df=win95)
         entry1 = curr_close
         entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
-        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        targets = ensure_min_tp_distance(
+            thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+            entry1,
+            is_long,
+            min_pct=0.05,
+        )
         if not targets or sl <= 0:
             continue
 

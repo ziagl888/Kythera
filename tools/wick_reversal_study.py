@@ -93,6 +93,7 @@ from core.trade_utils import (  # noqa: E402
     ensure_min_tp_distance,
     get_hvn_and_sr_levels,
     hvn_sr_trade_geometry,
+    thin_targets,
 )
 from tools.walkforward_sim import (  # noqa: E402
     FEE_PER_SIDE,
@@ -259,7 +260,9 @@ def replay_coin(conn, symbol: str) -> list[dict]:
                 supps, resis = get_hvn_and_sr_levels(None, None, entry, df=frame)
                 del frame  # release the as-of window immediately (memory O(cells))
                 _e2, sl, t_cands = hvn_sr_trade_geometry(entry, is_long, supps, resis)
-                targets = ensure_min_tp_distance(list(t_cands[:20]), entry, is_long, min_pct=0.05)
+                targets = ensure_min_tp_distance(
+                    list(thin_targets(t_cands[:20], entry, is_long, keep=N_PUBLISHED)), entry, is_long, min_pct=0.05
+                )
                 if targets:
                     start = i + 1
                     hi = min(n, start + EXIT_SCAN_CAP_BARS)

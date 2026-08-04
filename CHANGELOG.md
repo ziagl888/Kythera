@@ -31,7 +31,19 @@ scope**: it persists 20 and publishes 3, and trimming its candidate list would c
 scoring semantics for running trades — the same reason T-2026-KYT-9050-012 corrected only the
 measurement there.
 
-13 DB-free pins in `backtest/test_tp_spacing.py`, five mutations verified to turn them red
+**The replay side was pulled along in the same change**, because a bot that thins while its
+replay does not is exactly the "fixed one side of the contract, forgot the other" class
+`AUDIT_TODO` names as the repo's dominant root cause — every study of such a leg would then
+measure a ladder the fleet no longer posts. Thinned too:
+`tools/walkforward_sim.py` (`run_rub1` → bot 13, `run_ats` → bot 12, whose docstring claims
+"== hourly live scan of bot 13"), `tools/tsmom_study.py` (TSM1), `tools/xs_momentum_study.py`
+(XSM1), `tools/listing_drift_study.py` (LIS1) and `tools/wick_reversal_study.py` (models the
+deployable geometry). `tools/epd2_build_dataset.py` deliberately stays unthinned — it is built
+for the EPD2 **legacy** leg, the one bot-10 path that publishes its full list. Re-running any of
+those studies now yields different numbers than the published runs; that is the fleet having
+changed, not a defect.
+
+15 DB-free pins in `backtest/test_tp_spacing.py`, five mutations verified to turn them red
 (thinning disabled, gap measured against the previous candidate, the pool-depth guard removed, a
 call site reverted to the raw slice, the EPD2 legacy path thinned along).
 

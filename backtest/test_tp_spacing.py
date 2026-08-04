@@ -179,6 +179,36 @@ def test_epd2_legacy_path_is_deliberately_not_thinned():
     assert "n_show=len(targets)" in src
 
 
+#: Replay/study tools that reproduce a THINNED live leg's geometry. If the bot thins
+#: and its replay does not, every study of that leg measures a ladder the fleet no
+#: longer posts — the "fixed one side of the contract, forgot the other" class that
+#: AUDIT_TODO names as the repo's dominant root cause.
+PARITY_TOOLS = {
+    "tools/walkforward_sim.py": "RUB1 (bot 13, run_rub1) + ATS2 (bot 12, run_ats)",
+    "tools/tsmom_study.py": "TSM1 (bot 37)",
+    "tools/xs_momentum_study.py": "XSM1 (bot 39)",
+    "tools/listing_drift_study.py": "LIS1 (bot 36)",
+    "tools/wick_reversal_study.py": "the deployable geometry it models",
+}
+
+
+def test_replays_of_thinned_legs_thin_too():
+    for name, leg in PARITY_TOOLS.items():
+        src = _src(name)
+        assert "thin_targets(" in src, f"{name} replays {leg} but does not thin"
+        assert "ensure_min_tp_distance(t_cands[:20]" not in src, f"{name}: unthinned call left"
+        assert "ensure_min_tp_distance(list(t_cands[:20])" not in src, f"{name}: unthinned call left"
+
+
+def test_epd2_dataset_builder_stays_unthinned():
+    """It mirrors the EPD2 LEGACY leg — the one bot-10 path that publishes its full
+    list and is therefore deliberately not thinned. Thinning here would desync the
+    dataset from the leg it is built for."""
+    src = _src(os.path.join("tools", "epd2_build_dataset.py"))
+    assert "thin_targets" not in src
+    assert "ensure_min_tp_distance(t_cands[:20]" in src
+
+
 def test_smart_targets_legs_are_untouched():
     """`calculate_smart_targets` already thins by 1 x ATR — it must not be double-thinned."""
     src = _src(os.path.join("core", "trade_utils.py"))
