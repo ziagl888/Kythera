@@ -47,7 +47,7 @@ from core.aim2_features import (
     parity_nonzero_share,
 )
 from core.aim2_topn import MODEL_TAG as TOPN_TAG
-from core.aim2_topn import TopNCandidate, select_topn
+from core.aim2_topn import TopNCandidate, effective_min_prob, select_topn
 from core.aim2_topn import load_config as load_topn_config
 from core.candles import history_start, read_candles_with_indicators, timeframe_delta
 from core.charting import generate_minichart_image
@@ -340,6 +340,41 @@ def load_latest_regime(conn) -> tuple[dict | None, float]:
     return row, age_min
 
 
+#: Wall-clock of the last emitted TOPN starvation warning (throttle state).
+#: The scan runs every ~60 s; an unthrottled line would add ~1,440 entries/day to a
+#: log that is already read with `grep -a`. Hourly keeps "this leg is starving"
+#: visible within one hour of onset without drowning the file.
+_TOPN_STARVE_LOG_INTERVAL_S = 3600.0
+_topn_starve_logged_at = 0.0
+
+
+def _log_topn_starvation(scored: int, floor: float) -> None:
+    """Warn that AIM2-TOPN is enabled but nothing clears its floor.
+
+    T-2026-KYT-9050-101: the leg was gated LIVE from 2026-07-11 and produced zero
+    rows and zero log lines for 24 days, because ``DEFAULT_MIN_PROB = 0.95`` was
+    never calibrated against the artifact in force (measured: p99 of the calibrated
+    probabilities is 0.84, and no threshold yields the 1-3 posts/day the module was
+    specified for). Nothing in the code said so — the only TOPN line was at startup.
+    A silent live leg is indistinguishable from a healthy quiet one, which is what
+    this fixes.
+
+    Deliberately WARNING, not INFO: an enabled leg producing nothing is a defect
+    state, not a status update.
+    """
+    global _topn_starve_logged_at
+    now = time.time()
+    if now - _topn_starve_logged_at < _TOPN_STARVE_LOG_INTERVAL_S:
+        return
+    _topn_starve_logged_at = now
+    logger.warning(
+        f"⚠️ AIM2-TOPN enabled but starving: {scored} candidate(s) scored this cycle, "
+        f"none reached the effective floor {floor:.2f} — no TOPN post is possible at "
+        f"this floor. Recalibrate with tools/aim2_topn_calibrate.py (gate/floor change "
+        f"is an operator decision)."
+    )
+
+
 def count_topn_posts_24h(conn, now_utc_naive) -> int:
     """Rolling 24h counter of AIM2-TOPN rows in ml_predictions_master.
 
@@ -425,7 +460,7 @@ def process_master_trades():
         # candidates of this cycle and select the top-N AFTER the loop
         # under the rolling 24h cap. topn_min: never below the base gate.
         topn_cfg = load_topn_config()
-        topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"], MIN_PROB)
+        topn_min = effective_min_prob(topn_cfg.min_prob, ARTIFACT["threshold"], MIN_PROB)
         topn_pool: list[TopNCandidate] = []
 
         for signal in candidates.itertuples():
@@ -617,6 +652,14 @@ def process_master_trades():
             )
 
         # --- AIM2-TOPN: top-N of the day under a rolling 24h cap ---
+        # Starvation visibility (T-2026-KYT-9050-101): the ONLY TOPN log line used to
+        # be at startup, so an enabled leg that never clears its floor emitted nothing
+        # and said nothing. AIM2-TOPN ran gated LIVE for 24 days with zero rows and
+        # zero log lines before anyone looked. Scored candidates but an empty pool is
+        # the signal that the floor is unreachable — throttled so it stays readable.
+        if topn_cfg.enabled and processed_inserts and not topn_pool:
+            _log_topn_starvation(len(processed_inserts), topn_min)
+
         if topn_cfg.enabled and topn_pool:
             posts_24h = count_topn_posts_24h(conn, now_utc_naive)
             selected = select_topn(topn_pool, topn_cfg.n, topn_min, posts_24h)
@@ -703,7 +746,16 @@ def main():
     _topn = load_topn_config()
     if _topn.enabled:
         _topn_mode = "LIVE" if (_topn.live and TOPN_CHANNEL_ID != 0) else "SHADOW-ONLY"
-        logger.info(f"    AIM2-TOPN active — N={_topn.n}, min_prob={_topn.min_prob:.2f}, posting={_topn_mode}")
+        # The EFFECTIVE floor, not the configured one (T-2026-KYT-9050-101): the
+        # selection can never sit below the base AIM2 gate, so printing
+        # `_topn.min_prob` advertised a number the bot was not using whenever the
+        # artifact threshold or AIM2_MIN_PROB dominated.
+        _topn_floor = effective_min_prob(_topn.min_prob, ARTIFACT["threshold"], MIN_PROB)
+        logger.info(
+            f"    AIM2-TOPN active — N={_topn.n}, effective floor={_topn_floor:.2f} "
+            f"(configured {_topn.min_prob:.2f}, artifact {ARTIFACT['threshold']:.2f}, "
+            f"bot floor {MIN_PROB:.2f}), posting={_topn_mode}"
+        )
     else:
         logger.info("    AIM2-TOPN disabled (AIM2_TOPN_ENABLED≠1) — base AIM2 unchanged.")
 

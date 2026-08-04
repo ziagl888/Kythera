@@ -34,6 +34,7 @@ from core.aim2_topn import (  # noqa: E402
     DEFAULT_N,
     MODEL_TAG,
     TopNCandidate,
+    effective_min_prob,
     load_config,
     select_topn,
 )
@@ -175,7 +176,52 @@ def test_topn_tag_excluded_from_candidate_stream():
 def test_topn_min_never_below_base_gate():
     # Since T-2026-CU-9050-171 the base gate includes the AIM2_MIN_PROB floor,
     # so the TOPN floor must include it too — TOPN never gates looser than base.
-    assert 'topn_min = max(topn_cfg.min_prob, ARTIFACT["threshold"], MIN_PROB)' in SRC
+    #
+    # T-2026-KYT-9050-101 STRENGTHENED this: the guard used to pin the inline
+    # `max(...)` expression, which is exactly what allowed the number to be computed
+    # a SECOND time (the startup log printed the raw configured `min_prob`) and drift
+    # from the gate. Pinning the shared function instead keeps the original invariant
+    # AND forbids the second computation.
+    assert "topn_min = effective_min_prob(topn_cfg.min_prob, ARTIFACT[\"threshold\"], MIN_PROB)" in SRC
+    assert "from core.aim2_topn import TopNCandidate, effective_min_prob, select_topn" in SRC
+    # No hand-rolled floor may come back at either site.
+    assert "max(topn_cfg.min_prob" not in SRC, "the floor is computed inline again — drift risk"
+    assert "max(_topn.min_prob" not in SRC, "startup log computes its own floor again"
+
+
+def test_effective_min_prob_takes_the_highest_input():
+    """The base gate always wins when it is stricter than the TOPN knob."""
+    assert effective_min_prob(0.95, 0.67, 0.70) == 0.95  # the live configuration
+    assert effective_min_prob(0.50, 0.67, 0.70) == 0.70  # bot floor dominates
+    assert effective_min_prob(0.50, 0.88, 0.70) == 0.88  # artifact threshold dominates
+    assert effective_min_prob(0.0, 0.0, 0.0) == 0.0
+
+
+def test_startup_log_prints_the_effective_floor_not_the_configured_one():
+    """The log line has to name the number the bot actually gates on.
+
+    T-2026-KYT-9050-101: AIM2-TOPN ran gated LIVE for 24 days emitting nothing while
+    the startup line advertised `min_prob=0.95` — which happened to equal the
+    effective floor only by coincidence of the current artifact. With a stricter
+    artifact the log would have named a floor the bot was not using, and the leg
+    would have starved against an invisible number.
+    """
+    assert "effective floor={_topn_floor:.2f}" in SRC
+    assert "_topn_floor = effective_min_prob(_topn.min_prob," in SRC
+
+
+def test_an_enabled_but_starving_topn_leg_warns():
+    """A live leg that can never post must say so — the defect this task exists for.
+
+    Before this, the ONLY TOPN log line was at startup, so 24 days of zero posts and
+    zero log output were indistinguishable from a healthy, quiet leg.
+    """
+    assert "def _log_topn_starvation(" in SRC
+    assert "if topn_cfg.enabled and processed_inserts and not topn_pool:" in SRC
+    # WARNING, not INFO: an enabled leg producing nothing is a defect state.
+    assert re.search(r"_log_topn_starvation.*?logger\.warning", SRC, re.S), "starvation must warn"
+    # Throttled — the scan runs every ~60s and the log is read with `grep -a`.
+    assert "_TOPN_STARVE_LOG_INTERVAL_S" in SRC
 
 
 def test_topn_posts_via_single_message_helper():
