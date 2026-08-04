@@ -1,3 +1,35 @@
+## [2026-08-04] The T-101 startup log computed its floor from a placeholder (T-2026-KYT-9050-103)
+
+Found by verifying the fleet restart rather than by a test — which is the point of the entry.
+The live startup log read:
+
+    AIM2-TOPN active — N=1, effective floor=0.85 (configured 0.85, artifact 0.80, bot floor 0.70)
+    AIM2 artifact loaded: 86 features, threshold 0.67 (effective gate 0.70, floor 0.70)
+
+`artifact 0.80` against a real threshold of 0.67. The TOPN startup block reads
+`ARTIFACT["threshold"]` but sat **above** `load_model()`, so it saw the module-level
+initialisation default (`"threshold": 0.80`) rather than the value from the pkl. The number it
+printed was therefore derived from a placeholder — the precise failure class
+T-2026-KYT-9050-101 was written to eliminate, relocated instead of removed.
+
+It is invisible right now only by coincidence: `max(0.85, 0.80, 0.70)` and
+`max(0.85, 0.67, 0.70)` are both 0.85. Let a retrain land a threshold above the configured
+floor and the startup line would advertise 0.85 while the gate used the higher value — and the
+next person diagnosing a starving leg would be reading a number the bot never applied.
+
+**No money path.** `process_master_trades()` recomputes `topn_min` per cycle from the loaded
+artifact; the runtime gate was always correct. This is diagnostics only.
+
+**Why the tests did not catch it, and what changed:** every guard around this line pinned its
+*shape* — that the effective floor is printed, that the shared helper computes it, that no
+hand-rolled `max(...)` returns. None pinned its *ordering* relative to `load_model()`. A green
+21-test suite and five red mutations all passed straight over it. The new guard compares source
+positions: the startup `effective_min_prob` call must appear after the first `load_model()`.
+Verified red against the pre-fix layout.
+
+Takes effect at the next fleet restart. The running fleet keeps printing the placeholder-derived
+line until then, harmlessly while 0.85 dominates.
+
 ## [2026-08-04] AIM2-TOPN floor lowered to 0.85 — operator decision, and a correction to yesterday's rate estimate (T-2026-KYT-9050-102)
 
 Closes `AUDIT_TODO#T101-2`. Operator decision (Michi): set `AIM2_TOPN_MIN_PROB=0.85` in the
