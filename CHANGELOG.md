@@ -1,3 +1,56 @@
+## [2026-08-04] AIM2-TOPN was gated LIVE and silent for 24 days — the floor was never calibrated, and nothing said so (T-2026-KYT-9050-101)
+
+Works off `AUDIT_TODO#T100-2`, opened while verifying T-2026-KYT-9050-100. AIM2-TOPN has
+**zero** rows all-time in `ai_signals`, `closed_ai_signals` and `ml_predictions_master`, and
+**zero** selection log lines across every watchdog log — against 3,050 base AIM2 posts in the
+same period. The gate is genuinely on (`AIM2-TOPN active — N=1, min_prob=0.95, posting=LIVE`
+from 2026-07-11 12:25).
+
+Ruled out in order: the rolling 24h cap (`count_topn_posts_24h` correctly filters on
+`TOPN_TAG`, so `remaining = 1`), the code (unchanged since it landed in one commit, f452dcb
+on 2026-07-10; the live checkout equals `main`), and the control flow (pool init → candidate
+loop → block, no early return in between).
+
+**The cause is that `DEFAULT_MIN_PROB = 0.95` was never calibrated.** The module docstring
+says it should be set from `tools/aim2_topn_calibrate.py`; it never was. That tool, run
+read-only over 29,006 scored candidates of the last 30 days, says: 0.80 → **55.5** posts/day,
+0.85 → **4.37**, 0.88 → **0.43**, 0.95 → **0.43**, 0.99 → 0.23. The distribution falls off a
+**10× cliff between 0.85 and 0.88**, so *no* threshold produces the 1–3 posts/day the module
+was specified for — the tool reports exactly that. And the 0.43/day at the live floor is
+arithmetically just the 13 predictions ≥ 0.95 that exist at all, **all** of them between
+2026-07-08 and 07-13, none in the 22 days since (p99 of the last 30 days: 0.84).
+
+**The second defect is the one worth fixing in code: nothing said so.** The only TOPN log
+line was at startup, so a live leg producing nothing for 24 days was indistinguishable from a
+healthy quiet one. Two changes, both observability, no gate touched:
+
+* `core.aim2_topn.effective_min_prob` — the floor was computed **twice**. The runtime gate
+  took `max(configured, artifact_threshold, AIM2_MIN_PROB)`; the startup log printed the raw
+  configured `min_prob`. They agree today only by coincidence of the current artifact (0.95 >
+  0.67 > 0.70). With a stricter artifact the log would have advertised a floor the bot was not
+  using, and the leg would starve against a number nobody ever sees. One function, both sites.
+* A **throttled WARNING** when the leg is enabled, candidates were scored, and none reached
+  the floor — hourly, because the scan runs every ~60 s and this log is read with `grep -a`.
+  Warning rather than info on purpose: an enabled leg producing nothing is a defect state, not
+  a status update.
+
+The pre-existing source guard pinned the inline `max(...)` expression — which is precisely
+what allowed the second computation to exist and drift. It now pins the shared function and
+additionally forbids a hand-rolled floor at either call site: strictly stronger, not weaker.
+
+4 new pins in `backtest/test_aim2_topn.py`, 5 mutations verified red. One of those mutations
+caught a vacuous guard of my own making: `re.search(r"_log_topn_starvation.*?logger\.warning",
+SRC, re.S)` happily matches an unrelated `logger.warning` later in the module, so downgrading
+the call to `info` survived it. Now scoped to the function body — same class as the
+small-int `is` guard T-099 had to fix.
+
+**Not done, deliberately — all operator decisions (OPUS-HANDOFF §6):** no `.env` change, no
+floor change, no gate flip, no retirement. The choice is between lowering to ~0.85 and
+accepting ~4.4 posts/day (roughly 30× the intended rate), retraining so the upper tail is
+populated again, or retiring the leg (`#T101-2`). One sub-question stays open and needs a
+runtime trace rather than more code reading: in the ~2-day overlap where the gate was on and
+six candidates did clear 0.95, nothing fired and nothing was logged.
+
 ## [2026-08-04] AIM2 persists what it publishes — the last emitter of the P2.31 class (T-2026-KYT-9050-100)
 
 Follow-up to T-2026-KYT-9050-099 (`AUDIT_TODO#T99-2`). ROM1 was the loud half of the

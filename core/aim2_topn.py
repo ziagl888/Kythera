@@ -84,6 +84,23 @@ def load_config() -> TopNConfig:
     )
 
 
+def effective_min_prob(cfg_min_prob: float, artifact_threshold: float, bot_min_prob: float) -> float:
+    """The floor a candidate really has to clear to become a TOPN post.
+
+    ``AIM2_TOPN_MIN_PROB`` is only ONE of three inputs: the selection can never sit
+    below the base AIM2 gate, so the artifact threshold and the ``AIM2_MIN_PROB``
+    floor raise it. Whichever is highest wins.
+
+    This exists as a function because the number was computed twice, independently
+    (T-2026-KYT-9050-101): the runtime gate took ``max(...)`` while the startup log
+    printed the raw configured ``min_prob``. Whenever the artifact threshold or the
+    bot floor dominates, the log therefore advertised a floor the bot was not using —
+    a leg can then starve against a number nobody ever sees. One function, both call
+    sites, no drift.
+    """
+    return max(float(cfg_min_prob), float(artifact_threshold), float(bot_min_prob))
+
+
 @dataclass(frozen=True)
 class TopNCandidate:
     coin: str
