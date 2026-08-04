@@ -27,7 +27,13 @@ from core.charting import generate_minichart_image
 from core.database import get_db_connection
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal_gated
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
+from core.trade_utils import (
+    N_PUBLISHED_TARGETS,
+    ensure_min_tp_distance,
+    get_hvn_and_sr_levels,
+    hvn_sr_trade_geometry,
+    thin_targets,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_ATS_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -133,7 +139,12 @@ def _emit_ats2(conn, symbol, direction, is_long, feature_row, entry1, now):
             return
         supps, resis = get_hvn_and_sr_levels(conn, symbol, entry1)
         entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
-        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        targets = ensure_min_tp_distance(
+            thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+            entry1,
+            is_long,
+            min_pct=0.05,
+        )
         if not targets:
             return
         outcome = post_ai_signal_gated(
@@ -299,7 +310,12 @@ def check_tsi_crossovers():
                 entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
 
                 # FIX: real zones + possibly 5% target if last zone too close
-                targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+                targets = ensure_min_tp_distance(
+                    thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+                    entry1,
+                    is_long,
+                    min_pct=0.05,
+                )
                 # P2.31: publish AND track exactly the same targets. The Cornix block
                 # shows the first n_show TPs; the AI monitor (8_ai_trade_monitor) scores
                 # whatever is stored in ai_signals.targets. Storing the full 20-zone list

@@ -43,7 +43,13 @@ from core.database import get_db_connection
 from core.market_utils import check_cooldown, load_coins, update_cooldown
 from core.shadow_gate import SHADOW, leg_status, shadow_posting_enabled
 from core.signal_post import has_open_ai_signal, post_shadow_ai_signal
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
+from core.trade_utils import (
+    N_PUBLISHED_TARGETS,
+    ensure_min_tp_distance,
+    get_hvn_and_sr_levels,
+    hvn_sr_trade_geometry,
+    thin_targets,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - LIS1_BOT - %(message)s")
 logger = logging.getLogger(__name__)
@@ -157,7 +163,12 @@ def process_coin(conn, symbol: str, onboard_map: dict[str, int], now: datetime.d
     #    shapes only the SL and is discarded for posting.
     supps, resis = get_hvn_and_sr_levels(conn, symbol, entry1)
     _, sl, t_cands = hvn_sr_trade_geometry(entry1, False, supps, resis)
-    targets = ensure_min_tp_distance(t_cands[:20], entry1, False, min_pct=0.05)
+    targets = ensure_min_tp_distance(
+        thin_targets(t_cands[:20], entry1, False, keep=N_PUBLISHED_TARGETS),
+        entry1,
+        False,
+        min_pct=0.05,
+    )
     if not targets:
         return
 

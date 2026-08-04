@@ -21,7 +21,7 @@ from core.funding_features import funding_features_asof, load_funding
 from core.market_utils import check_cooldown, get_max_leverage, update_cooldown
 from core.rub_features import build_rub_features, rub_event_type, rub_trend
 from core.signal_post import LEG_LIVE, LEG_SHADOW, post_shadow_ai_signal, route_legacy_leg
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels
+from core.trade_utils import N_PUBLISHED_TARGETS, ensure_min_tp_distance, get_hvn_and_sr_levels, thin_targets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_RUB_BOT - %(message)s')
 logger = logging.getLogger(__name__)
@@ -138,7 +138,12 @@ def _emit_rub3_shadow(conn, symbol, curr_close, base_features, now):
         supps, resis = get_hvn_and_sr_levels(conn, symbol, curr_close)
         sl = max([x for x in supps if x < entry2 * 0.99]) if any(x < entry2 * 0.99 for x in supps) else entry2 * 0.975
         t_cands = sorted([x for x in resis if x > (entry1 * 1.01)])
-        targets = ensure_min_tp_distance(t_cands[:20], entry1, True, min_pct=0.05)
+        targets = ensure_min_tp_distance(
+            thin_targets(t_cands[:20], entry1, True, keep=N_PUBLISHED_TARGETS),
+            entry1,
+            True,
+            min_pct=0.05,
+        )
         if not targets:
             return
         wrote = post_shadow_ai_signal(conn, "RUB3", symbol, "LONG", prob, entry1, entry2, sl, targets, n_show=3)
@@ -409,7 +414,12 @@ def check_rubberband_conditions():
             # up to +48% above entry, absurd for mean-reversion bots. Now only:
             # take real zones, and if needed add ONE 5% target if the last one
             # is too close to entry.
-            targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+            targets = ensure_min_tp_distance(
+                thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+                entry1,
+                is_long,
+                min_pct=0.05,
+            )
             # P2.31: publish AND track exactly the same targets. The Cornix block
             # shows the first n_show TPs; the AI monitor (8_ai_trade_monitor) scores
             # whatever is stored in ai_signals.targets. Storing the full 20-zone list

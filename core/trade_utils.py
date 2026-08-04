@@ -45,6 +45,84 @@ def format_price(p) -> str:
     return f"{v:.{decimals}f}"
 
 
+#: Minimum gap between two PUBLISHED targets, as a percentage of entry
+#: (T-2026-KYT-9050-098, operator decision Michi 2026-08-04). One source for
+#: every emitter that builds its own geometry — a per-bot literal is how the
+#: entry-side 1 % filter ended up applied on one hop and not the other.
+MIN_TP_GAP_PCT = 1.0
+
+#: How many targets the own-geometry emitters publish (their ``n_show``). Named
+#: here rather than repeated as a literal at each call site: it is the number the
+#: thinning has to reach, and a site that drifts from its own ``n_show`` would
+#: either thin too little (tight ladder survives) or too much (a target vanishes).
+N_PUBLISHED_TARGETS = 3
+
+
+def thin_targets(
+    candidates: list,
+    entry: float,
+    is_long: bool,
+    keep: int,
+    min_gap_pct: float = MIN_TP_GAP_PCT,
+) -> list:
+    """Drop targets that sit closer than ``min_gap_pct`` to the one before them.
+
+    Why this exists
+    ---------------
+    ``hvn_sr_trade_geometry`` filters its candidates against the ENTRY only
+    (``x > entry1 * 1.01``) — the first hop is guaranteed 1 %, every hop after it
+    is whatever the raw S/R level list happens to give. Measured on
+    ``closed_ai_signals`` since the P2.31 fix (2026-08-04): on those legs 54 %
+    (EPD3) to 69 % (MAX1) of neighbouring gaps are under 1 %, and in 23–34 % of
+    signals the WHOLE published TP1..TP3 ladder spans less than 1 % — three
+    Cornix tranches inside one tick of movement, hit together in 16–24 % of
+    trades. ``calculate_smart_targets`` never had this problem because it thins by
+    ``1 x ATR``; this is the same idea as a relative floor for the legs that do
+    not go through it.
+
+    The pool is deeper than the ladder
+    ----------------------------------
+    Those emitters compute up to 20 candidates and publish 3, so skipping a
+    too-close level does not lose a target — it replaces it with the next one
+    that is actually far enough away. That is the whole reason this is safe here
+    and would NOT be safe on the ``n_show=len(targets)`` emitters (7/18/24/25,
+    bot 10's EPD2 legacy path): there the published ladder IS the pool, and
+    thinning would delete targets without replacement.
+
+    ``keep`` is the number the caller will publish. The guard is deliberately
+    ``len(candidates) <= keep`` rather than a flag: a caller that publishes
+    everything it has cannot accidentally opt in.
+
+    Gaps are measured against the PREVIOUS KEPT target, not the previous
+    candidate — otherwise a run of near-identical levels would each be measured
+    against its neighbour, pass individually, and still cluster.
+
+    Returns fewer than ``keep`` entries when the pool genuinely has no further
+    separated levels. That is the honest outcome and it is not padded here:
+    ``ensure_min_tp_distance`` runs afterwards and supplies the 5 % backstop.
+    """
+    if keep <= 0 or len(candidates) <= keep or min_gap_pct <= 0 or entry <= 0:
+        return list(candidates)
+
+    def dist(t: float) -> float:
+        return ((t - entry) / entry * 100.0) if is_long else ((entry - t) / entry * 100.0)
+
+    kept: list = []
+    last_d: float | None = None
+    for t in candidates:
+        d = dist(float(t))
+        if last_d is not None and d - last_d < min_gap_pct:
+            continue
+        kept.append(t)
+        last_d = d
+        if len(kept) >= keep:
+            break
+    # A pool that yields nothing separated at all still has to produce a signal:
+    # falling back to the untouched head is strictly closer to today's behaviour
+    # than returning empty and letting the caller bail out of the trade.
+    return kept if kept else list(candidates[:keep])
+
+
 def ensure_min_tp_distance(targets: list, entry: float, is_long: bool, min_pct: float = 0.05) -> list:
     """Ensures the LAST target is at least `min_pct` (default 5%) away from
     entry. If it is closer, exactly ONE additional target is appended at
@@ -470,8 +548,16 @@ def hvn_sr_trade_geometry(entry1, is_long, supps, resis):
     remain for now; this function is the referenced ONE source for the
     walk-forward adapters, so replay geometry == live geometry).
 
-    Returns (entry2, sl, target_candidates) — targets are then run through
-    ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05).
+    Returns (entry2, sl, target_candidates) — the candidates are then run through
+    ``thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS)`` and
+    ``ensure_min_tp_distance(..., min_pct=0.05)``, in that order.
+
+    Note what this function does and does NOT guarantee about spacing: the filters
+    above (``> entry1 * 1.01``) put the FIRST candidate at least 1 % from entry, and
+    nothing here separates the candidates from EACH OTHER — they are the raw level
+    list. That gap is why ``thin_targets`` exists (T-2026-KYT-9050-098); a caller
+    that publishes a slice of these candidates without thinning them republishes the
+    clustering.
     """
     entry2 = entry1 * 0.95 if is_long else entry1 * 1.05
     if is_long:

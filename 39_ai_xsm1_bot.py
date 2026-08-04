@@ -43,7 +43,13 @@ from core.database import get_db_connection
 from core.market_utils import check_cooldown, load_coins, update_cooldown
 from core.shadow_gate import LIVE, SHADOW, leg_status, shadow_posting_enabled
 from core.signal_post import has_open_ai_signal, post_ai_signal_gated
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry
+from core.trade_utils import (
+    N_PUBLISHED_TARGETS,
+    ensure_min_tp_distance,
+    get_hvn_and_sr_levels,
+    hvn_sr_trade_geometry,
+    thin_targets,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - XSM1_BOT - %(message)s")
 logger = logging.getLogger(__name__)
@@ -123,7 +129,12 @@ def emit(conn, symbol: str, tag: str, direction: str, entry: float) -> None:
     is_long = direction == "LONG"
     supps, resis = get_hvn_and_sr_levels(conn, symbol, entry)
     _, sl, t_cands = hvn_sr_trade_geometry(entry, is_long, supps, resis)
-    targets = ensure_min_tp_distance(t_cands[:20], entry, is_long, min_pct=0.05)
+    targets = ensure_min_tp_distance(
+        thin_targets(t_cands[:20], entry, is_long, keep=N_PUBLISHED_TARGETS),
+        entry,
+        is_long,
+        min_pct=0.05,
+    )
     if not targets:
         return
     outcome = post_ai_signal_gated(

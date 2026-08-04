@@ -50,10 +50,23 @@ def fetch_klines(symbol, interval, limit=300):
         res.raise_for_status()
         data = res.json()
 
-        df = pd.DataFrame(data, columns=[
-            'open_time', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
-        ])
+        df = pd.DataFrame(
+            data,
+            columns=[
+                'open_time',
+                'open',
+                'high',
+                'low',
+                'close',
+                'volume',
+                'close_time',
+                'qav',
+                'num_trades',
+                'taker_base_vol',
+                'taker_quote_vol',
+                'ignore',
+            ],
+        )
         for c in ['open', 'high', 'low', 'close']:
             df[c] = df[c].astype(float)
 
@@ -64,6 +77,7 @@ def fetch_klines(symbol, interval, limit=300):
 
 
 # 🧠 TRADINGVIEW PIVOT POINTS
+
 
 def check_cooldown(strategy_name):
     last_time = COOLDOWNS.get(strategy_name, 0)
@@ -80,13 +94,7 @@ def execute_trade(direction, price, sl, target, strategy, rr):
     trade_id = f"#{TRADE_COUNTER:04d}"
     TRADE_COUNTER += 1
 
-    ACTIVE_TRADES[trade_id] = {
-        'direction': direction,
-        'entry': price,
-        'sl': sl,
-        'tp': target,
-        'strategy': strategy
-    }
+    ACTIVE_TRADES[trade_id] = {'direction': direction, 'entry': price, 'sl': sl, 'tp': target, 'strategy': strategy}
 
     color = "🟢" if direction == "LONG" else "🔴"
     msg = f"""<pre style="background:#1e1e1e; color:#ffffff; padding:10px; border-left:6px solid {'#00ff00' if direction == 'LONG' else '#ff0000'};">
@@ -163,7 +171,8 @@ def monitor_live_trades(live_price):
 # 🎯 PIVOT RETEST STRATEGY (WITH BACKTEST RULES)
 def run_smc_analysis(tf):
     df = fetch_klines(SYMBOL, tf, 300)
-    if df.empty or len(df) < 50: return
+    if df.empty or len(df) < 50:
+        return
 
     # 1. Calculate EMA 21
     df['ema21'] = df['close'].ewm(span=EMA_PERIOD, adjust=False).mean()
@@ -181,8 +190,10 @@ def run_smc_analysis(tf):
 
     def is_touching_pivot_local(price, pivots, max_idx, threshold=0.001):
         for p_idx, p_val in reversed(pivots):
-            if p_idx > max_idx - 5: continue
-            if p_idx < max_idx - MAX_PIVOT_AGE: break
+            if p_idx > max_idx - 5:
+                continue
+            if p_idx < max_idx - MAX_PIVOT_AGE:
+                break
             if abs(price - p_val) / p_val <= threshold:
                 return True
         return False
@@ -198,8 +209,11 @@ def run_smc_analysis(tf):
                     was_closed_before = any(df['low'].iloc[j] <= gap_bottom for j in range(i + 1, curr_idx))
 
                     if not was_closed_before and curr_low <= gap_bottom:
-                        valid_res = [val for p_idx, val in resistances if
-                                     curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val > curr_price]
+                        valid_res = [
+                            val
+                            for p_idx, val in resistances
+                            if curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val > curr_price
+                        ]
 
                         if valid_res:
                             target = min(valid_res)
@@ -224,8 +238,11 @@ def run_smc_analysis(tf):
                     was_closed_before = any(df['high'].iloc[j] >= gap_top for j in range(i + 1, curr_idx))
 
                     if not was_closed_before and curr_high >= gap_top:
-                        valid_sup = [val for p_idx, val in supports if
-                                     curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val < curr_price]
+                        valid_sup = [
+                            val
+                            for p_idx, val in supports
+                            if curr_idx - MAX_PIVOT_AGE <= p_idx <= curr_idx - 5 and val < curr_price
+                        ]
 
                         if valid_sup:
                             target = max(valid_sup)
@@ -244,7 +261,8 @@ def run_smc_analysis(tf):
 def on_message(ws, message):
     try:
         data = json.loads(message)
-        if 'data' not in data: return
+        if 'data' not in data:
+            return
 
         stream_name = data['stream']
         kline = data['data']['k']
@@ -277,7 +295,8 @@ def on_close(ws, close_status_code, close_msg):
 def on_open(ws):
     logger.info("✅ Binance WebSocket connected!")
     send_telegram(
-        "🚀 <b>PIVOT FVG SIMULATOR (SNIPER EDITION) STARTED</b>\nEMA21 | 0.4% SL | R:R 1.25\nPairs: BTCUSDT | TF: 1m, 5m")
+        "🚀 <b>PIVOT FVG SIMULATOR (SNIPER EDITION) STARTED</b>\nEMA21 | 0.4% SL | R:R 1.25\nPairs: BTCUSDT | TF: 1m, 5m"
+    )
 
 
 def start_websocket():
