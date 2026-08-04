@@ -192,6 +192,11 @@ _BOTS = {
     "11_ai_mis_bot.py": 5,
     "12_ai_ats_bot.py": 3,
     "13_ai_rub_bot.py": 3,
+    # T-2026-KYT-9050-100: bot 15 has the same shape as the four above — inline
+    # Cornix block + own ai_signals insert — and was simply missed by the 083
+    # sweep. It persisted the full calculate_smart_targets list while publishing 3
+    # (measured: 89.4 % of rows stored more than 3, 46 % stored 10).
+    "15_ai_master_bot.py": 3,
 }
 
 

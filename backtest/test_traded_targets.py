@@ -100,6 +100,35 @@ def test_rom1_stays_correct_after_the_bot_side_fix():
     )
 
 
+def test_aim2_stays_correct_after_the_bot_side_fix():
+    """T-2026-KYT-9050-100 closed the AIM2 gap the same way T-099 closed ROM1's:
+    15_ai_master_bot now persists `targets[:n_show]`. Both entries are therefore
+    historical-only — and both must stay, for the same reason.
+
+    Measured before the fix: 89.4 % of AIM2 rows persisted more than the 3 published
+    targets, 46 % persisted 10. Pruning the entry would score those rows as a
+    10-leg position model against a stake that really rode on 3.
+    """
+    legacy_row = TARGETS  # persisted the full calculate_smart_targets list
+    new_row = [110.0, 120.0, 130.0]  # persisted == posted
+    assert traded_targets("AIM2", legacy_row) == [110.0, 120.0, 130.0]
+    assert traded_targets("AIM2", new_row) == new_row
+    assert weighted_move_pct("LONG", ENTRY, ENTRY, legacy_row, 2, model="AIM2") == weighted_move_pct(
+        "LONG", ENTRY, ENTRY, new_row, 2, model="AIM2"
+    )
+
+
+def test_both_carve_outs_are_now_historical_only():
+    """Documents the state after T-099 + T-100: no live emitter still has the gap.
+
+    The set must stay exactly these two — a NEW name appearing here would mean a
+    third emitter regressed into persisting more than it publishes, which is what
+    `backtest/test_published_targets.py` is supposed to prevent at the source.
+    """
+    assert set(PUBLISHED_TARGET_COUNT) == {"ROM1", "AIM2"}
+    assert all(n == 3 for n in PUBLISHED_TARGET_COUNT.values())
+
+
 def test_a_thin_only_the_message_variant_would_have_been_wrong():
     """Documents the trap this carve-out sits on: `traded_targets` takes the FIRST
     three PERSISTED targets. Had ROM1 thinned only what it posts while persisting

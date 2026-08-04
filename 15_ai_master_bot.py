@@ -532,6 +532,16 @@ def process_master_trades():
             sl, targets = trade_setup['sl'], trade_setup['targets']
             lev = get_max_leverage(coin, 20)
 
+            # How many TPs Cornix gets — and therefore how many are persisted below
+            # (P2.31, T-2026-KYT-9050-100). ONE local instead of two literal slices:
+            # the count drove the Cornix block while the insert stored the whole
+            # calculate_smart_targets list, which is the persist ≠ publish gap.
+            # Deliberately NOT core.trade_utils.N_PUBLISHED_TARGETS: that constant is
+            # the target the THINNER has to reach for the own-geometry legs, and AIM2
+            # is not thinned (its geometry is already ATR-spaced). Binding to it would
+            # let a future thinning change silently rewrite AIM2's Cornix message.
+            n_show = 3
+
             lines = [
                 f"📈 Signal for {coin} 📈",
                 f"🚨 Direction: {direction}",
@@ -541,7 +551,7 @@ def process_master_trades():
                 # T-2026-KYT-9050-042: entry2 is still computed and stored, but no
                 # longer published — single-entry (arm B). See core/signal_post.py.
             ]
-            for i, t in enumerate(targets[:3], 1):
+            for i, t in enumerate(targets[:n_show], 1):
                 lines.append(f"💰 TP{i}: $ {t:.8f}")
             lines += [f"💸 Stop Loss: $ {sl:.8f}", "🧠 Trade idea verified by Master AI module (AIM2) V1"]
             cornix_msg = "\n".join(lines)
@@ -586,7 +596,15 @@ def process_master_trades():
                         float(entry1),
                         float(entry2),
                         float(sl),
-                        json.dumps(targets),
+                        # P2.31 (T-2026-KYT-9050-100): exactly the published slice.
+                        # Monitor 8 scores `len(stored)` and closes at ALL TARGETS HIT
+                        # when the last one is reached — storing the full list let it
+                        # score rungs Cornix never received. Measured on 2,389 closed
+                        # AIM2 trades since 2026-07-11: 89.4 % persisted MORE than the
+                        # 3 published (46 % stored 10), and 6.4 % of trades were scored
+                        # `targets_hit > 3`. The Cornix message is byte-identical either
+                        # way — this changes the book, not what is traded.
+                        json.dumps(targets[:n_show]),
                     ),
                 )
             shadow_inserts.append((MODEL_NAME, current_time, coin, direction, close_price, prob, True))
