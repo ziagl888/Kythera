@@ -58,6 +58,24 @@ Read-only throughout: no live intervention, no change to `40_trailing_close_bot.
 touched. Verdict `staging_models/replay/trailing_tp1_activation_verdict_t093.md`, runs
 `trailing_book_health_tp1_jul.{md,json}` / `_tp1_imputed.{md,json}`, 6 additional DB-free pins
 (32 total in `backtest/test_trailing_book_health.py`).
+## [2026-08-04] Bot 40 OI/liquidation entry gate: NO EDGE — study + verdict, no live change (T-2026-KYT-9050-094)
+
+Operator question: bot 40's SL hits run 100–200% levered into the red while trail wins bank
+at 20–40% — can open interest or forced liquidations gate the bad entries out? Study over the
+full realized mirror book (1264 posted+filled closes, 2026-07-26 → 08-04, `tools/oi_liq_gate_study.py`):
+**no.** Entry-time OI/implied-price deltas (1h/4h/24h, `oi_5m`) carry zero signal for deep
+losses — AUC 0.455–0.498 pooled and within the worst leg; all 18 gate variants move a −458
+book by noise (−26…+46). The deterministic fallback, an SL-distance admission cap, is actively
+harmful: far stops belong to the trail *winners* (median 8.15% vs 6.18% for SL hits), so every
+cap costs more trail profit than it saves. A liquidation gate is **not concludable yet** —
+`liq_events` (collector 41) only started 2026-08-03; follow-up T-2026-KYT-9050-095 re-runs the
+study with liq features once ≥3 weeks of overlap exist (~08-24), the script's `MIN_LIQ_DAYS`
+guard lifts automatically. Key reframe for the operator: the bleed is the **pre-time-stop
+launch cohort** (−620 over 409 closes, 60 of its 69 SL hits on 07-27 alone, grandfathered by
+explicit decision); the post-cutoff config is **net +161.7 unlevered over 855 closes** with a
+~5% SL rate. The win/loss asymmetry is the designed trail-vs-catastrophic-stop geometry
+(T-052), not a defect. Verdict: `staging_models/replay/oi_liq_gate_verdict_t094.md`. No bot
+code touched, no live intervention.
 
 ## [2026-08-03] SMC-sniper forming-candle guards: blind for three weeks, rewired onto the core.candles contract (T-2026-KYT-9050-083)
 
