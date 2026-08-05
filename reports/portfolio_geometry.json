@@ -1,0 +1,318 @@
+{
+ "task": "T-2026-KYT-9050-105",
+ "geometry_variants": {
+  "t104": {
+   "LONG": [
+    4.0,
+    5.0
+   ],
+   "SHORT": [
+    3.0,
+    2.0
+   ]
+  },
+  "symmetric_wide": {
+   "LONG": [
+    4.0,
+    5.0
+   ],
+   "SHORT": [
+    4.0,
+    5.0
+   ]
+  },
+  "symmetric_tight": {
+   "LONG": [
+    3.0,
+    2.0
+   ],
+   "SHORT": [
+    3.0,
+    2.0
+   ]
+  },
+  "inverted": {
+   "LONG": [
+    3.0,
+    2.0
+   ],
+   "SHORT": [
+    4.0,
+    5.0
+   ]
+  }
+ },
+ "ladder": [
+  0.5,
+  0.5
+ ],
+ "fee_pct": 0.09,
+ "exposure_cap": 50,
+ "train_weeks": 3,
+ "results": {
+  "t104|no_gate|1.6": {
+   "capital": 800.0,
+   "fixed_usd": 1.6,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 1.0,
+   "trades_taken": 8011,
+   "trades_per_day": 151.2,
+   "rejected": {
+    "leg": 33396,
+    "exposure_cap": 11197,
+    "slot_cap": 0,
+    "margin": 3051
+   },
+   "peak_occupancy": 499,
+   "peak_margin_util_pct": 99.8,
+   "binding_constraint": "exposure_cap",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 838.8,
+   "return_pct": 4.85,
+   "max_drawdown_pct": -5.52,
+   "worst_day": [
+    "2026-07-13",
+    -30.32
+   ],
+   "best_day": [
+    "2026-07-30",
+    21.78
+   ],
+   "losing_days": 13,
+   "total_days": 33,
+   "geometry": "t104",
+   "gate": "no_gate"
+  },
+  "t104|no_gate|4.0": {
+   "capital": 800.0,
+   "fixed_usd": 4.0,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 2.5,
+   "trades_taken": 4140,
+   "trades_per_day": 78.1,
+   "rejected": {
+    "leg": 33396,
+    "exposure_cap": 9920,
+    "slot_cap": 0,
+    "margin": 8199
+   },
+   "peak_occupancy": 200,
+   "peak_margin_util_pct": 100.0,
+   "binding_constraint": "exposure_cap",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 898.72,
+   "return_pct": 12.34,
+   "max_drawdown_pct": -6.59,
+   "worst_day": [
+    "2026-07-08",
+    -34.16
+   ],
+   "best_day": [
+    "2026-07-16",
+    30.06
+   ],
+   "losing_days": 10,
+   "total_days": 33,
+   "geometry": "t104",
+   "gate": "no_gate"
+  },
+  "symmetric_wide|no_gate|1.6": {
+   "capital": 800.0,
+   "fixed_usd": 1.6,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 1.0,
+   "trades_taken": 7119,
+   "trades_per_day": 134.3,
+   "rejected": {
+    "leg": 38287,
+    "exposure_cap": 7984,
+    "slot_cap": 0,
+    "margin": 2265
+   },
+   "peak_occupancy": 499,
+   "peak_margin_util_pct": 99.8,
+   "binding_constraint": "exposure_cap",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 821.73,
+   "return_pct": 2.72,
+   "max_drawdown_pct": -4.46,
+   "worst_day": [
+    "2026-07-13",
+    -20.9
+   ],
+   "best_day": [
+    "2026-07-14",
+    14.93
+   ],
+   "losing_days": 14,
+   "total_days": 33,
+   "geometry": "symmetric_wide",
+   "gate": "no_gate"
+  },
+  "symmetric_wide|no_gate|4.0": {
+   "capital": 800.0,
+   "fixed_usd": 4.0,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 2.5,
+   "trades_taken": 3613,
+   "trades_per_day": 68.2,
+   "rejected": {
+    "leg": 38287,
+    "exposure_cap": 7117,
+    "slot_cap": 0,
+    "margin": 6638
+   },
+   "peak_occupancy": 200,
+   "peak_margin_util_pct": 100.0,
+   "binding_constraint": "exposure_cap",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 850.2,
+   "return_pct": 6.28,
+   "max_drawdown_pct": -5.89,
+   "worst_day": [
+    "2026-07-08",
+    -30.36
+   ],
+   "best_day": [
+    "2026-07-14",
+    21.56
+   ],
+   "losing_days": 13,
+   "total_days": 33,
+   "geometry": "symmetric_wide",
+   "gate": "no_gate"
+  },
+  "symmetric_tight|no_gate|1.6": {
+   "capital": 800.0,
+   "fixed_usd": 1.6,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 1.0,
+   "trades_taken": 9352,
+   "trades_per_day": 176.5,
+   "rejected": {
+    "leg": 31695,
+    "exposure_cap": 11283,
+    "slot_cap": 0,
+    "margin": 3325
+   },
+   "peak_occupancy": 499,
+   "peak_margin_util_pct": 99.8,
+   "binding_constraint": "exposure_cap",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 908.32,
+   "return_pct": 13.54,
+   "max_drawdown_pct": -3.11,
+   "worst_day": [
+    "2026-07-24",
+    -11.57
+   ],
+   "best_day": [
+    "2026-07-27",
+    27.55
+   ],
+   "losing_days": 9,
+   "total_days": 33,
+   "geometry": "symmetric_tight",
+   "gate": "no_gate"
+  },
+  "symmetric_tight|no_gate|4.0": {
+   "capital": 800.0,
+   "fixed_usd": 4.0,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 2.5,
+   "trades_taken": 4548,
+   "trades_per_day": 85.8,
+   "rejected": {
+    "leg": 31695,
+    "exposure_cap": 10306,
+    "slot_cap": 0,
+    "margin": 9106
+   },
+   "peak_occupancy": 200,
+   "peak_margin_util_pct": 100.0,
+   "binding_constraint": "exposure_cap",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 989.39,
+   "return_pct": 23.67,
+   "max_drawdown_pct": -2.53,
+   "worst_day": [
+    "2026-07-12",
+    -9.87
+   ],
+   "best_day": [
+    "2026-07-27",
+    35.71
+   ],
+   "losing_days": 10,
+   "total_days": 33,
+   "geometry": "symmetric_tight",
+   "gate": "no_gate"
+  },
+  "inverted|no_gate|1.6": {
+   "capital": 800.0,
+   "fixed_usd": 1.6,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 1.0,
+   "trades_taken": 8381,
+   "trades_per_day": 158.1,
+   "rejected": {
+    "leg": 36586,
+    "exposure_cap": 8709,
+    "slot_cap": 0,
+    "margin": 1979
+   },
+   "peak_occupancy": 499,
+   "peak_margin_util_pct": 99.8,
+   "binding_constraint": "exposure_cap",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 906.0,
+   "return_pct": 13.25,
+   "max_drawdown_pct": -3.81,
+   "worst_day": [
+    "2026-07-24",
+    -16.06
+   ],
+   "best_day": [
+    "2026-07-27",
+    39.77
+   ],
+   "losing_days": 14,
+   "total_days": 33,
+   "geometry": "inverted",
+   "gate": "no_gate"
+  },
+  "inverted|no_gate|4.0": {
+   "capital": 800.0,
+   "fixed_usd": 4.0,
+   "leverage": 5.0,
+   "notional_per_trade_pct": 2.5,
+   "trades_taken": 3979,
+   "trades_per_day": 75.1,
+   "rejected": {
+    "leg": 36586,
+    "exposure_cap": 6668,
+    "slot_cap": 0,
+    "margin": 8422
+   },
+   "peak_occupancy": 200,
+   "peak_margin_util_pct": 100.0,
+   "binding_constraint": "margin",
+   "peak_notional_x_capital": 5.0,
+   "final_balance": 903.13,
+   "return_pct": 12.89,
+   "max_drawdown_pct": -7.19,
+   "worst_day": [
+    "2026-07-21",
+    -32.86
+   ],
+   "best_day": [
+    "2026-07-27",
+    39.58
+   ],
+   "losing_days": 10,
+   "total_days": 33,
+   "geometry": "inverted",
+   "gate": "no_gate"
+  }
+ }
+}

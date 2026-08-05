@@ -75,8 +75,18 @@ from tools.leg_composition_replay import outcome, replay_signal  # noqa: E402
 
 UTC = timezone.utc
 
-# Pre-registered from T-104 — see module docstring. Not search parameters.
-GEOMETRY = {"LONG": (4.0, 5.0), "SHORT": (3.0, 2.0)}
+# Pre-registered geometry variants — compared side by side, never fitted per
+# window. T-104 found the direction verdict flips with geometry (positive legs
+# compose a book 95 % LONG at TP4/SL5 and 76 % SHORT at TP3/SL2); `t104` encodes
+# that asymmetry, and `inverted` is its falsification control. If `inverted`
+# performs as well, the asymmetry was a grid artifact and not a property of the
+# tape — that is the whole reason it is in the sweep.
+GEOMETRY_VARIANTS: dict[str, dict[str, tuple[float, float]]] = {
+    "t104": {"LONG": (4.0, 5.0), "SHORT": (3.0, 2.0)},
+    "symmetric_wide": {"LONG": (4.0, 5.0), "SHORT": (4.0, 5.0)},
+    "symmetric_tight": {"LONG": (3.0, 2.0), "SHORT": (3.0, 2.0)},
+    "inverted": {"LONG": (3.0, 2.0), "SHORT": (4.0, 5.0)},
+}
 LADDER = (0.5, 0.5)  # TP1 / TP2 tranches; TP3 measured as value-destroying
 FEE_PCT = 0.09  # taker round trip on notional
 DEFAULT_LEVERAGE = 20.0
@@ -92,7 +102,7 @@ TRAIN_WEEKS = 3  # trailing window the leg selection is fitted on
 MIN_N_TRAIN = 25  # a leg needs this many trailing trades to be selectable
 
 
-def precompute(z, oi_short_threshold: float | None, oi_feats) -> list[dict]:
+def precompute(z, geometry: dict[str, tuple[float, float]], oi_short_threshold: float | None, oi_feats) -> list[dict]:
     """One record per signal: entry instant, exit instant, realised pp, admission keys.
 
     The ladder is resolved here rather than in the event loop so the simulation
@@ -118,7 +128,7 @@ def precompute(z, oi_short_threshold: float | None, oi_feats) -> list[dict]:
         if hi <= lo:
             continue
         direction = "LONG" if s_long[k] else "SHORT"
-        tp, sl = GEOMETRY[direction]
+        tp, sl = geometry[direction]
         i_tp, i_sl, mark, _, _ = replay_signal(
             c_high[lo:hi], c_low[lo:hi], c_close[lo:hi], float(s_entry[k]), bool(s_long[k])
         )
@@ -289,6 +299,11 @@ def main() -> None:
     ap.add_argument("--capital", type=float, default=800.0)
     ap.add_argument("--sizes", default="1,2,4,8,16", help="fixed USD amounts to sweep")
     ap.add_argument("--leverage", type=float, default=DEFAULT_LEVERAGE)
+    ap.add_argument(
+        "--geometries",
+        default="t104,symmetric_wide,symmetric_tight,inverted",
+        help=f"comma-separated, from {sorted(GEOMETRY_VARIANTS)}; `inverted` is the falsification control",
+    )
     ap.add_argument("--out", default="reports/portfolio_backtest.json")
     args = ap.parse_args()
 
@@ -296,28 +311,39 @@ def main() -> None:
     oi_feats = np.load(args.oi) if args.oi else None
     print(f"Loaded {len(z['s_ts']):,} signals from {args.infile}")
 
+    gates: list[tuple[str, float | None]] = [("no_gate", None)]
+    if oi_feats is not None:
+        gates.append(("oi_gate", args.oi_threshold))
+    geom_names = [g.strip() for g in args.geometries.split(",")]
+
     results = {}
-    for gate_label, threshold in (("no_gate", None), ("oi_gate", args.oi_threshold if oi_feats is not None else None)):
-        if gate_label == "oi_gate" and threshold is None:
-            continue
-        print(f"\n=== variant: {gate_label} ===")
-        recs = precompute(z, threshold, oi_feats)
-        for size in (float(s) for s in args.sizes.split(",")):
-            stats = simulate(recs, args.capital, size, args.leverage)
-            results[f"{gate_label}|{size}"] = stats
+    for geom_name in geom_names:
+        geometry = GEOMETRY_VARIANTS[geom_name]
+        for gate_label, threshold in gates:
             print(
-                f"  {size:>5.0f} USD  trades {stats['trades_taken']:>6} ({stats['trades_per_day']:>5}/d)  "
-                f"peak occ {stats['peak_occupancy']:>4} ({stats['peak_margin_util_pct']:>5}% margin)  "
-                f"return {stats['return_pct']:>+8.2f}%  maxDD {stats['max_drawdown_pct']:>7.2f}%  "
-                f"worst day {stats['worst_day'][1]:>+8.2f}"
+                f"\n=== geometry {geom_name} "
+                f"(L {geometry['LONG'][0]:.0f}/{geometry['LONG'][1]:.0f}, "
+                f"S {geometry['SHORT'][0]:.0f}/{geometry['SHORT'][1]:.0f}) · {gate_label} ==="
             )
+            recs = precompute(z, geometry, threshold, oi_feats)
+            for size in (float(s) for s in args.sizes.split(",")):
+                stats = simulate(recs, args.capital, size, args.leverage)
+                stats["geometry"] = geom_name
+                stats["gate"] = gate_label
+                results[f"{geom_name}|{gate_label}|{size}"] = stats
+                print(
+                    f"  {size:>5.1f} USD  trades {stats['trades_taken']:>6} ({stats['trades_per_day']:>5}/d)  "
+                    f"peak occ {stats['peak_occupancy']:>4} ({stats['peak_margin_util_pct']:>5}% margin)  "
+                    f"return {stats['return_pct']:>+8.2f}%  maxDD {stats['max_drawdown_pct']:>7.2f}%  "
+                    f"worst day {stats['worst_day'][1]:>+8.2f}  bind {stats['binding_constraint']}"
+                )
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(
             {
                 "task": "T-2026-KYT-9050-105",
-                "geometry": GEOMETRY,
+                "geometry_variants": GEOMETRY_VARIANTS,
                 "ladder": LADDER,
                 "fee_pct": FEE_PCT,
                 "exposure_cap": EXPOSURE_CAP,
