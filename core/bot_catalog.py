@@ -39,6 +39,7 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     ("MAX", "34_ai_max1_bot.py"),
     ("MIS", "11_ai_mis_bot.py"),
     ("MSI", "11_ai_mis_bot.py"),  # historical typo family, see core/bot_naming
+    ("ODS", "42_ai_ods1_bot.py"),  # OI-divergence short (T-2026-KYT-9050-106)
     ("PEX", "30_ai_pex1_bot.py"),
     ("QM", "24_quasimodo_bot.py"),
     # ROM1: both close writers persist targets/lev — bot 8 (SL/TP path,
