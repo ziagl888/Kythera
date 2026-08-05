@@ -134,7 +134,27 @@ between 0.5 h and 17.1 h of forward candle data (5m data ends 2026-08-05 16:30Z)
 Dropping them (variant B) does not move the estimate. The optimistic ordering
 (C) makes the case *weaker*, not stronger.
 
-No variant produces a difference distinguishable from zero.
+No variant produces a difference distinguishable from zero — **but that sentence
+was too strong as first written, and the correction matters.** Variants A–C vary
+intra-candle *ordering* and *censoring*. The one conservatism rule they never
+vary is the peak lag (a peak set in candle N cannot trail out until N+1), and
+that rule is worth roughly the whole effect: relaxing it to a candle-close
+retrace test — arguably *closer* to the bot's 10 s live poll, not further from it
+— moves the estimate to **+0.270 (t 1.64)**, and to **+0.315 (t 1.93,
+CI [−0.005, +0.634])** without the carried peak. Found by the independent
+re-derivation during review, not by this study.
+
+So the honest statement is not "null everywhere". It is: **underpowered over
+eight days, direction consistently positive across every variant either side has
+run, never reaching significance, and never flipping sign.** The decision (do not
+remove `SOURCE_CLOSED` on this evidence) is unchanged, because the observational
+`+1.12 pp/trade` claim is still refuted by an order of magnitude. What changes is
+the strength of the negative: this refutes a specific overstated claim, it does
+not establish that the rule is worth keeping on PnL grounds.
+
+A free robustness check the review could run and this study could not: with ~20 h
+more forward candles (3 of the 11 censored rows resolve) the estimate is +0.123
+(t 0.77). Right-censoring is not driving the result.
 
 ## What this does not say
 
@@ -142,13 +162,24 @@ No variant produces a difference distinguishable from zero.
   positive; it is simply too small and too noisy to act on. n=174 over eight days
   is a small sample and a re-run on a longer book could separate it from zero in
   either direction.
-* **The slot argument does not apply at current occupancy.** Holding these
-  positions longer costs 100.5 extra slot-days (0.58/position). At the arm's own
-  realised rate of +0.432 pp/slot-day those slot-days are worth +43 pp, which
-  would make the change net-negative — *but only under a binding cap*. Measured
-  post-cutoff concurrency peaks at **97 of 500 slots**, so the cap is not binding
-  and the freed slots have no alternative use today. The objection becomes live
-  only if the arm approaches its cap.
+* **The slot argument does not apply — and once corrected it points the other
+  way.** Both figures in the first version of this section were wrong; both were
+  found in review and re-derived here.
+  * *Slot cost.* Stated as 100.5 extra slot-days (0.58/position). That charged
+    the full 7-day horizon to the 11 right-censored positions, which only had
+    0.5–17.1 h of forward data. Charging the data that exists gives **28.0
+    slot-days, 0.15/position**. At the arm's realised +0.432 pp/slot-day that is
+    **12.1 pp** foregone against a replayed gain of +24.6 pp — so even under a
+    binding cap the change would be net **positive (+12.5 pp)**, not negative as
+    originally written.
+  * *Occupancy.* Stated as "concurrency peaks at 97 of 500". That counted only
+    mirrors **opened** after the cutoff, which is not slot occupancy. Counting
+    every mirror open during the window: **peak 173 of 500** (288 all-time),
+    mean ≈ 82.
+
+  The conclusion is unchanged — 173/500 is still not binding, so freed slots have
+  no alternative use today — but the argument no longer supports keeping the
+  rule, and it should not be quoted as if it did.
 * **It says nothing about the other rework ideas**, which the handover already
   marked as not evidence-backed.
 

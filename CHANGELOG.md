@@ -32,11 +32,30 @@ The pre-cutoff cohort is excluded on purpose: 143 of its 268 rows carry `sl IS N
 (pre-T-049), so stop exits cannot be modelled there and a replay would let losers run
 unbounded, flattering the hold-longer policy by construction.
 
-**One argument checked and dropped.** Holding longer costs 100.5 extra slot-days, which
-at the arm's realised +0.432 pp/slot-day would make the change net-negative — but only
-under a binding cap. Measured post-cutoff concurrency peaks at **97 of 500 slots**, so
-the cap is not binding and that objection is not live today. It becomes live if the arm
-approaches its cap.
+**One argument checked and dropped — then corrected in review, twice, against itself.**
+The first version of this entry said holding longer costs 100.5 extra slot-days, which at
+the arm's +0.432 pp/slot-day would make the change net-negative under a binding cap, and
+that concurrency "peaks at 97 of 500". Both figures were wrong.
+
+* The 100.5 charged the full 7-day replay horizon to the 11 right-censored positions,
+  which had only 0.5–17.1 h of forward data. Correctly: **28.0 slot-days (0.15/position)
+  = 12.1 pp** against a +24.6 pp replayed gain — so even under a binding cap the change
+  would be net **positive (+12.5 pp)**, the opposite of what was claimed.
+* The 97 counted only mirrors *opened* after the cutoff, which is not occupancy. Every
+  mirror open during the window: **peak 173 of 500** (288 all-time), mean ≈ 82.
+
+The verdict is unchanged (173/500 is still not binding, so freed slots have no
+alternative use), but the slot argument no longer supports keeping the rule and must not
+be quoted as if it did. Both errors sat in the one paragraph this entry singled out for
+its own honesty, which is the reason they are corrected here in full rather than edited
+away.
+
+**The null is underpowered, not absolute.** Variants A–C vary intra-candle ordering and
+censoring; the never-varied peak-lag rule is worth about the whole effect — relaxing it
+gives +0.270 (t 1.64), or +0.315 (t 1.93) without the carried peak. No variant either
+side ran flips the sign. So: eight days, n=174, direction consistently positive, never
+significant. That still refutes the observational +1.12 pp/trade by an order of
+magnitude; it does not establish that `SOURCE_CLOSED` earns its keep.
 
 Separately, `SOURCE_CLOSED` is not primarily a PnL rule: the mirror must not hold a
 position the source no longer holds, or the A/B arm stops measuring the same trades

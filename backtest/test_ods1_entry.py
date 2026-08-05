@@ -18,6 +18,14 @@ import pytest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
+# core.config raises at import when its _required() vars are unset; seed dummies
+# before the loader execs the module (the build machine ships an empty .env stub).
+# Without this the file errors at COLLECTION on any credential-less host — it only
+# looked green here because SRV02 carries the live .env, which is the opposite of
+# the "standalone and DB-free" the task asked for.
+os.environ.setdefault("DB_PASSWORD", "unit-test")
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "unit-test")
+
 
 def _load_bot():
     """Digit-prefixed filename — not importable by name."""
