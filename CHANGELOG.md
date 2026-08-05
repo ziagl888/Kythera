@@ -120,6 +120,49 @@ operator restarts the fleet (hard rule 1). `backtest/test_fleet_definition.py`'s
 `EXPECTED_WATCHDOG_VIEW` golden was left untouched: it has been stale since T-149 and was
 already red before this branch (missing bots 36-41, now 36-42). Refreshing it here would
 be a silent guard reset (hard rule 9).
+## [2026-08-05] Fleet-wide leg composition replay — and what the Cornix backtest actually measured (T-2026-KYT-9050-104)
+
+A Cornix backtest of the AIM and Drawdown channels over 01.-05.08. spanned +109.6 % to -50.3 %
+across four position sizes. The rows reconcile against their stated capital; comparing them to
+each other does not. Cornix sizes off the **available** balance, so mean position size saturates
+(1.07 % at a 5 % setting, 1.24 % at 10 %) while the effective sample collapses from 299 to 131.
+Only the fixed-amount run allocates uniformly. Above ~1 % the percentage setting buys no
+exposure, only concentration.
+
+New: `tools/leg_composition_replay.py` and `tools/oi_gate_eval.py`, both split into a read-only
+DB `export` and a DB-free `replay`/`gate` half, so the expensive part runs off the live VPS
+(which sits at a measured 97 % CPU) and the analysis is reproducible without credentials.
+11 standalone tests in `backtest/test_leg_composition_replay.py` pin the replay conventions —
+first touch wick-aware, entry candle excluded, TP+SL in one candle books as SL, unresolved
+marked to market, and the regime cohorts never pooled.
+
+Findings over 42,277 signals / 3.86M 5m candles (docs/T-2026-KYT-9050-104-leg-composition.md):
+
+* **Direction edge is a property of the exit geometry, not the market.** At TP 4 % / SL 5 % the
+  positive-expectancy legs compose a book 95 % LONG; at TP 3 % / SL 2 % they compose it 76 %
+  SHORT. Same data, same period. Down-moves are faster, so shorts want a tight target and a
+  tight stop while longs want room.
+* **The 2026-07-28 14:00Z regime split is mandatory.** `EXPOSURE_CAP` took the book from 83 % to
+  51 % LONG and -1.342 to +0.191 pp/trade, and removed the tail (worst day -549 pp before,
+  -37.7 pp after). Pooling the cohorts had produced a confident and wrong verdict about
+  MIS1-72H, which post-cutoff runs +0.38 pp over 149 trades.
+* **Short legs are regime-unstable** — the same legs carry 14,806 signals in positive legs over
+  11.-28.07. and 4,220 in negative ones over 28.07.-02.08. Direction balance therefore has to be
+  a channel-level constraint, never an emergent property of an expectancy ranking.
+* **OI as a global ranker carries nothing** (no AUC above 0.56, T-094 replicated), but the bottom
+  quintile of the 4h OI change on the SHORT side is the one result that survives both cohorts:
+  win rate 55.0 % / 51.4 %, +0.739 / +0.552 pp against +0.21..+0.33 and -0.12..+0.04 in the rest.
+  That independently reproduces T-096's DIVERGENCE-SHORT on a different population.
+
+Data quality, measured rather than assumed: `oi_5m` is not a 5-minute table — median cadence was
+5.0 min until 06.07. and 10.0 min from 13.07. onward, so T-2026-KYT-9050-097 now has a date.
+Lookups are as-of with a 45-min staleness cap and 597 signals were voided rather than filled.
+`liq_events` starts 03.08., so no liquidation feature is testable yet (T-095).
+
+No live change: roster, Cornix configuration and fleet are untouched. Sizing and trade count are
+explicitly **not** answered here — per-trade expectancy misses the ladder, fills and fees (the
+book reports +0.69 pp/trade for AIM2 where Cornix implies +0.054) and needs a portfolio
+simulation, walk-forward because the fleet grew 6x over the window.
 
 ## [2026-08-04] The T-101 startup log computed its floor from a placeholder (T-2026-KYT-9050-103)
 

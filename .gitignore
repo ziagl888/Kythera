@@ -261,3 +261,6 @@ max_leverage.json
 
 # Generated analytics export (DuckDB + Parquet) — regenerable, not versioned
 staging_models/analytics/
+
+# Study exports (T-2026-KYT-9050-104): regenerable multi-MB binaries, never in git.
+reports/*.npz
