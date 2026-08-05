@@ -1,3 +1,82 @@
+## [2026-08-05] Bot 40's `SOURCE_CLOSED` exit stays — the replay refutes the case for removing it (T-2026-KYT-9050-106)
+
+Closes `AUDIT_TODO#T106-1`. **No code in bot 40 was changed.** The finding is that a
+change other work was queued behind should not be made.
+
+The observational case looked strong: 433 `SOURCE_CLOSED` positions exiting at −3.69 %
+against `TIME_STOP` at −1.31 %, and removing the rule flipping the arm's book from
+−0.40 to +0.72 pp/trade. It carried its own caveat — the buckets are not randomly
+assigned — and that caveat turned out to be the whole story.
+
+**Two defects.** First, it pools across `TIME_STOP_SINCE` (2026-07-28 14:00Z). Bot 40
+went live 07-26, so the first two days of `SOURCE_CLOSED` come from a window where the
+rival policy *could not fire at all*. Split, the gap is 1.41 pp, not 2.4 pp. This is the
+same cutoff, and the same pooling trap, that the T-104/T-105 handover warns about two
+sections above the item. Second, `SOURCE_CLOSED` fires when the source trade leaves
+`ai_signals` — i.e. because the source hit its stop. Membership is conditioned on the
+outcome, the same defect as bucketing by `closed_ai_signals.status`.
+
+**The load-bearing error:** the cut removes those trades from the book, which assumes
+they never happened. They happened, and they were already 2.75 % underwater when the
+source closed. Removing the exit rule does not remove the loss — it defers it.
+
+**Paired replay** over the 174 post-cutoff rows, each position its own control, 5m
+candles, `core.trailing_state.TrailingState` reused rather than reimplemented so the
+trail semantics cannot drift: **+0.141 pp/trade, SE 0.160, t = 0.88, CI [−0.17, +0.45]**.
+Null. Stable at +0.149 with censored rows dropped and +0.059 under an optimistic
+intra-candle ordering — every modelling choice was set against the hold-longer policy,
+so the null is not a friendly assumption. 36 % of the cohort (63/174) simply walks on to
+the stop it was already sitting on, −7.885 → −8.238.
+
+The pre-cutoff cohort is excluded on purpose: 143 of its 268 rows carry `sl IS NULL`
+(pre-T-049), so stop exits cannot be modelled there and a replay would let losers run
+unbounded, flattering the hold-longer policy by construction.
+
+**One argument checked and dropped.** Holding longer costs 100.5 extra slot-days, which
+at the arm's realised +0.432 pp/slot-day would make the change net-negative — but only
+under a binding cap. Measured post-cutoff concurrency peaks at **97 of 500 slots**, so
+the cap is not binding and that objection is not live today. It becomes live if the arm
+approaches its cap.
+
+Separately, `SOURCE_CLOSED` is not primarily a PnL rule: the mirror must not hold a
+position the source no longer holds, or the A/B arm stops measuring the same trades
+(`40_trailing_close_bot.py:850-854`). With the PnL case null there is nothing on the
+other side of that trade. Does **not** close `#T52-3`.
+
+Verdict: `docs/T-2026-KYT-9050-106-source-closed-replay.md`.
+
+## [2026-08-05] ODS1 registered with the fleet — the bot existed, the fleet did not know (T-2026-KYT-9050-106)
+
+`42_ai_ods1_bot.py` shorts a rally that open interest did not pay for — the only one of
+three OI mechanics that survived the T-096 event study (+0.41/event @1h, t = 3.2, n = 580,
+8 of 9 weeks positive), independently reproduced from the other side by T-104, which put
+the bottom OI quintile of the fleet's existing shorts at +0.739/+0.552 pp against
++0.21..+0.33 in the rest.
+
+The bot, its channel constant and its roster seat landed earlier on this branch. Nothing
+made the fleet aware of it — a file is not a process. Now registered in the three places
+that matter: `core/fleet.py` (the only startup registry, `start_delay=283`, appended last
+because `test_start_delays_are_monotonic` pins list order to ascending delay),
+`core/bot_catalog.py` (tag → script; the catalog guard requires the mapped script to
+exist in `FLEET`, so both edits belong in one commit), and `tools/bot_variants/index.py`
+(ODS1 is rule-based with no model artifact, so without a `_RULE_ONLY_GENERATIONS` entry
+it is undiscoverable and drops silently out of the index).
+
+**Evidence status, stated honestly:** T-096 ran 06-12..08-04 and T-104 06-13..08-05 —
+near-total overlap. The two lines agree across *populations*, not across *time*, so the
+regime coverage T-096's own ≥90 d gate existed to provide is still missing. Going live is
+the operator's deliberate substitute (forward data on a new tape), not a claim the
+evidence is complete. The bracket (TP 1.0/1.5 %, SL 2.0 %) is sized to the measured drift
+rather than inherited from the fleet default, and is the first thing to re-derive once
+ODS1 has live rows of its own; the roster density sits at the bottom (0.010) on purpose,
+because the column is the eviction order and an unmeasured leg yields its seat first.
+
+**Not live yet.** `FLEET` is read at watchdog import, so the entry is inert until the
+operator restarts the fleet (hard rule 1). `backtest/test_fleet_definition.py`'s
+`EXPECTED_WATCHDOG_VIEW` golden was left untouched: it has been stale since T-149 and was
+already red before this branch (missing bots 36-41, now 36-42). Refreshing it here would
+be a silent guard reset (hard rule 9).
+
 ## [2026-08-04] The T-101 startup log computed its floor from a placeholder (T-2026-KYT-9050-103)
 
 Found by verifying the fleet restart rather than by a test — which is the point of the entry.

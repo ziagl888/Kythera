@@ -23,13 +23,18 @@ no PR yet).
 1. **Watchdog registration + `bot_catalog` entry for ODS1.** The file exists; a
    file is not a process. `start_delay=283` is already noted in the module
    docstring. The bot does not run until the fleet restarts — operator action.
-2. **Bot 40 rework.** Only one part is evidence-backed: the `SOURCE_CLOSED` path.
-   433 positions since 11.07., average peak only +1.05 %, average exit **-3.69 %**,
-   total -1568 pp. `TIME_STOP` serves a near-identical population (average peak
-   +0.92 %) and exits at **-1.31 %** — 2.4 pp better. Removing SOURCE_CLOSED flips
-   the arm's book from -0.40 to +0.72 pp/trade. **Caveat that must survive into the
-   PR:** the two buckets are not randomly assigned, so this needs a replay, not
-   just the observational cut.
+2. ~~**Bot 40 rework.**~~ **DONE — REFUTED, do not build it.** The replay this item
+   asked for has run: `docs/T-2026-KYT-9050-106-source-closed-replay.md`,
+   `AUDIT_TODO#T106-1`. The observational case was wrong twice over. It pooled
+   across `TIME_STOP_SINCE` (2026-07-28 14:00Z), where `TIME_STOP` cannot fire at
+   all — the honest gap is 1.41 pp, not 2.4 pp — and the bucket is conditioned on
+   the outcome, because `SOURCE_CLOSED` fires *because* the source hit its stop.
+   Removing the rule does not remove the loss, it defers it: paired replay over the
+   174 post-cutoff rows gives **+0.141 pp/trade, CI [-0.17, +0.45]**, null across
+   every variant, against the +1.12 pp/trade the cut claimed. 36 % of the cohort
+   walks straight on to the stop it was already sitting on. Nothing in bot 40 was
+   changed. The caveat this item carried was the right instinct — it just needed
+   to be acted on rather than passed downstream.
 3. **PR for T-106**, then the CHANGELOG entry.
 4. **Re-derive ODS1's bracket and roster density from its own live rows** once it
    has a book. Both are placeholders and both say so in the code.
