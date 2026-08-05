@@ -308,26 +308,36 @@ def run_cycle(conn) -> None:
         return
     emitted = 0
     suppressed = 0
-    for cand in candidates:
+    for idx, cand in enumerate(candidates):
         if emitted >= MAX_EMITS_PER_CYCLE:
             # Candidates are sorted strictest-first, so what is dropped here is
             # the weakest divergence of the burst, not an arbitrary tail. Logged
             # rather than silent: a cap that truncates without saying so reads as
-            # "the market only offered five" (no silent caps).
-            suppressed = len(candidates) - candidates.index(cand)
+            # "the market only offered five" (no silent caps). The dropped ones
+            # are deferred, not lost — the 4h divergence persists across polls and
+            # they leave no cooldown row, so they re-qualify next cycle.
+            suppressed = len(candidates) - idx
             break
         if has_open_ai_signal(conn, cand["symbol"], "SHORT", MODEL_ID):
             continue
         if on_cooldown(conn, cand["symbol"], now):
             continue
+        # SAVEPOINT per candidate. A bare conn.rollback() here would be
+        # connection-wide and discard every signal already written this cycle —
+        # the opposite of isolating the failure. psycopg2 also leaves the
+        # connection in INERROR after a failed statement, so SOMETHING must undo
+        # it before the next candidate can write; the savepoint undoes exactly
+        # the failed one.
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT ods1_cand")
         try:
             if emit(conn, cand):
                 emitted += 1
+            with conn.cursor() as cur:
+                cur.execute("RELEASE SAVEPOINT ods1_cand")
         except Exception as exc:  # noqa: BLE001 — one bad symbol must not void the batch
-            # Without this the chart fetch inside post_ai_signal (a live HTTP call
-            # per signal) can raise on symbol N and roll back the N-1 signals
-            # already written this cycle.
-            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute("ROLLBACK TO SAVEPOINT ods1_cand")
             logger.error(f"ODS1: emit failed for {cand['symbol']}: {exc}")
     if emitted:
         conn.commit()  # the caller commits (hard rule 8)

@@ -184,15 +184,52 @@ def test_emissions_are_bounded_per_cycle():
     assert ods1.MAX_EMITS_PER_CYCLE <= 25, "a burst must not be able to fill a Cornix channel"
 
 
+class _FakeCursor:
+    """Enough of a cursor to model SAVEPOINT / RELEASE / ROLLBACK TO."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        op = sql.strip().upper()
+        if op.startswith("SAVEPOINT"):
+            self.conn.savepoint = list(self.conn.pending)
+        elif op.startswith("ROLLBACK TO SAVEPOINT"):
+            # exactly what Postgres does: undo back to the mark, keep the rest
+            self.conn.pending = list(self.conn.savepoint)
+        elif op.startswith("RELEASE SAVEPOINT"):
+            self.conn.savepoint = None
+
+
 class _FakeConn:
+    """Models pending-vs-durable so a rollback that eats earlier work is visible.
+
+    The previous version had `rollback()` as a bare `pass`, which made the
+    isolation test structurally unable to observe the property it asserted.
+    """
+
     def __init__(self):
         self.commits = 0
+        self.pending: list[str] = []
+        self.durable: list[str] = []
+        self.savepoint: list[str] | None = None
+
+    def cursor(self):
+        return _FakeCursor(self)
 
     def commit(self):
         self.commits += 1
+        self.durable.extend(self.pending)
+        self.pending = []
 
     def rollback(self):
-        pass
+        self.pending = []
 
 
 def test_run_cycle_stops_at_the_cap_and_keeps_the_strictest(monkeypatch):
@@ -218,13 +255,18 @@ def test_run_cycle_stops_at_the_cap_and_keeps_the_strictest(monkeypatch):
 
 
 def test_one_failing_symbol_does_not_void_the_rest_of_the_batch(monkeypatch):
-    """post_ai_signal does a live chart fetch per signal. Without per-candidate
-    isolation one raising symbol rolls back every signal already written."""
+    """A raise mid-batch must cost exactly that symbol, not the whole cycle.
+
+    The SAVEPOINT is what makes this true. A bare conn.rollback() would be
+    connection-wide and discard S0 as well, while `emitted` still counted it —
+    the log would then claim a signal that never reached the outbox.
+    """
     cands = [{"symbol": f"S{i}USDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0} for i in range(3)]
 
     def flaky(conn, cand):
+        conn.pending.append(cand["symbol"])  # the signal row this emit would write
         if cand["symbol"] == "S1USDT":
-            raise RuntimeError("chart fetch failed")
+            raise RuntimeError("emit failed")
         return True
 
     monkeypatch.setattr(ods1, "load_oi_window", lambda conn, since: {})
@@ -235,7 +277,10 @@ def test_one_failing_symbol_does_not_void_the_rest_of_the_batch(monkeypatch):
 
     conn = _FakeConn()
     ods1.run_cycle(conn)  # must not raise
-    assert conn.commits == 1, "the two good signals must still be committed"
+    assert conn.commits == 1
+    assert conn.durable == ["S0USDT", "S2USDT"], (
+        "the signal written before the failure must survive it, and the failed one must not"
+    )
 
 
 def test_roster_seat_exists_and_does_not_break_the_eviction_order():
