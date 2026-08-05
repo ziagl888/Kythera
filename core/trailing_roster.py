@@ -96,6 +96,23 @@ ROSTER: dict[tuple[str, str], float] = {
     ("MIS1-168h", "LONG"): 0.541,
     ("QM_4H", "LONG"): 0.352,
     ("ATS2", "LONG"): 0.054,
+    # ODS1 OI-divergence short (T-2026-KYT-9050-106, operator decision Michi
+    # 2026-08-05). Seated at the BOTTOM on purpose: every other density above
+    # was MEASURED by the PR #198 slot-budget run, and this column doubles as the
+    # eviction order when the 500-slot cap binds. A leg with no measured density
+    # must be the first to yield a seat, not the last — entering it high would let
+    # an unmeasured leg evict measured ones the moment the channel fills, and
+    # would quietly break the register's provenance (every other value traces to
+    # `fills_by_act["2.0"]["p95"]["accepted"]`).
+    #
+    # The value is a placeholder BELOW the lowest measured leg, not an estimate.
+    # Re-derive it from live rows once ODS1 has its own book, then re-sort.
+    #
+    # Why this leg belongs here at all rather than only in its own channel: T-096
+    # measured the edge as a horizon return (+0.41 % @1h, +0.73 % @4h) with no
+    # stop. A TP/SL bracket cannot express that; `TIME_STOP_H` can, and the
+    # trailing bot is the only place in the fleet that has one.
+    ("ODS1", "SHORT"): 0.010,
 }
 
 #: ROM1 removed from the roster (T-2026-KYT-9050-052, operator decision Michi
