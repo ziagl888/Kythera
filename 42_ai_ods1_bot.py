@@ -70,6 +70,7 @@ import datetime
 import logging
 import os
 import time
+from typing import TypedDict
 
 from core import config as _kcfg
 from core.database import get_db_connection
@@ -98,6 +99,20 @@ SL_PCT = 2.0
 POLL_SECONDS = 300
 STALENESS_CAP_S = 45 * 60
 STARVATION_LOG_EVERY_S = 3600
+
+
+class Candidate(TypedDict):
+    """One qualifying divergence event.
+
+    A TypedDict rather than a bare dict so the ranking key below stays typed:
+    on a plain ``dict`` the values widen to ``object`` and ``oi_chg - px_chg``
+    is not a supported operation.
+    """
+
+    symbol: str
+    price: float
+    px_chg: float
+    oi_chg: float
 
 
 def _as_of(rows: list[tuple[int, float, float]], t: int) -> tuple[float, float] | None:
@@ -155,9 +170,9 @@ def on_cooldown(conn, symbol: str, now: datetime.datetime) -> bool:
         return cur.fetchone() is not None
 
 
-def find_candidates(series: dict[str, list[tuple[int, float, float]]], now_epoch: int) -> list[dict]:
+def find_candidates(series: dict[str, list[tuple[int, float, float]]], now_epoch: int) -> list[Candidate]:
     """Symbols where price rallied while open interest drained."""
-    out = []
+    out: list[Candidate] = []
     for symbol, rows in series.items():
         now = _as_of(rows, now_epoch)
         then = _as_of(rows, now_epoch - LOOKBACK_S)
@@ -194,7 +209,7 @@ def _log_starvation(scanned: int) -> None:
     )
 
 
-def emit(conn, cand: dict) -> None:
+def emit(conn, cand: Candidate) -> None:
     price = cand["price"]
     targets = [price * (1 - p / 100.0) for p in TP_PCTS]
     sl = price * (1 + SL_PCT / 100.0)
