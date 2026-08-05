@@ -1,10 +1,16 @@
 # Bot 40 `SOURCE_CLOSED`: the replay says do not remove it
 
-**Verdict: NO REWORK.** The observational case for deleting the `SOURCE_CLOSED`
-exit does not survive the replay it asked for. The causal effect is
-**+0.14 pp/trade, 95% CI [−0.17, +0.45]** — indistinguishable from zero, and
-stable across every robustness variant. The observational cut put the same
-number at **+1.12 pp/trade**, about 8× larger.
+**Verdict: NO REWORK on this evidence.** The observational case for deleting the
+`SOURCE_CLOSED` exit does not survive the replay it asked for. The causal effect
+is **+0.14 pp/trade, 95% CI [−0.17, +0.45]** — not distinguishable from zero. The
+observational cut put the same number at **+1.12 pp/trade**, about 8× larger.
+
+Read the robustness section before quoting that as a settled negative: the null
+is **underpowered, not absolute**. Across every variant either this study or the
+review ran, the direction is consistently *positive* (+0.06 … +0.32) and never
+reaches significance. This refutes an overstated observational claim; it does not
+establish that `SOURCE_CLOSED` earns its keep on PnL grounds. A re-run on a longer
+book is the right follow-up, not a second observational cut.
 
 Read-only analysis on SRV02. No writes, no artifacts, no fleet action.
 
@@ -177,14 +183,15 @@ more forward candles (3 of the 11 censored rows resolve) the estimate is +0.123
     the filter `close_reason NOT IN (…)` silently dropped every still-open mirror,
     because `NULL NOT IN (…)` is `NULL`, not `true` — 102 rows fell out of both
     halves of the sweep. Counting every mirror open during the window:
-    **peak 190 of 500** (302 all-time, mean ≈ 102); 173 if you count only rows
+    **peak 190–191 of 500** (302 all-time, mean ≈ 102) — 191 counts the cutoff
+    instant itself, 190 the event times inside the window; 173 if you count only rows
     that have since closed.
 
   Both corrections were found by the independent re-derivation in review, not by
   this study — including the arithmetic slip (28.0/174 = 0.16, first written as
   0.15) inside the paragraph whose whole subject is wrong derived numbers.
 
-  The conclusion is unchanged — 173/500 is still not binding, so freed slots have
+  The conclusion is unchanged — 190/500 (38 %) is still not binding, so freed slots have
   no alternative use today — but the argument no longer supports keeping the
   rule, and it should not be quoted as if it did.
 * **It says nothing about the other rework ideas**, which the handover already

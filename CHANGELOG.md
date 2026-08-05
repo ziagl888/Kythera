@@ -51,7 +51,7 @@ A third slip is recorded here for the same reason: "0.15/position" was itself wr
 (28.0/174 = 0.16) — a bad derived number inside the paragraph correcting bad derived
 numbers. Caught by the re-review, not by this study.
 
-The verdict is unchanged (173/500 is still not binding, so freed slots have no
+The verdict is unchanged (190/500 = 38 % is still not binding, so freed slots have no
 alternative use), but the slot argument no longer supports keeping the rule and must not
 be quoted as if it did. Both errors sat in the one paragraph this entry singled out for
 its own honesty, which is the reason they are corrected here in full rather than edited
