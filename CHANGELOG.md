@@ -38,11 +38,18 @@ the arm's +0.432 pp/slot-day would make the change net-negative under a binding 
 that concurrency "peaks at 97 of 500". Both figures were wrong.
 
 * The 100.5 charged the full 7-day replay horizon to the 11 right-censored positions,
-  which had only 0.5–17.1 h of forward data. Correctly: **28.0 slot-days (0.15/position)
+  which had only 0.5–17.1 h of forward data. Correctly: **28.0 slot-days (0.16/position)
   = 12.1 pp** against a +24.6 pp replayed gain — so even under a binding cap the change
   would be net **positive (+12.5 pp)**, the opposite of what was claimed.
-* The 97 counted only mirrors *opened* after the cutoff, which is not occupancy. Every
-  mirror open during the window: **peak 173 of 500** (288 all-time), mean ≈ 82.
+* The 97 was wrong twice: it counted only mirrors *opened* after the cutoff, which is not
+  occupancy, and its filter `close_reason NOT IN (…)` silently dropped all 102 still-open
+  mirrors, because `NULL NOT IN (…)` is `NULL` rather than `true`. Every mirror open
+  during the window: **peak 190 of 500** (302 all-time, mean ≈ 102); 173 counting only
+  rows that have since closed.
+
+A third slip is recorded here for the same reason: "0.15/position" was itself wrong
+(28.0/174 = 0.16) — a bad derived number inside the paragraph correcting bad derived
+numbers. Caught by the re-review, not by this study.
 
 The verdict is unchanged (173/500 is still not binding, so freed slots have no
 alternative use), but the slot argument no longer supports keeping the rule and must not

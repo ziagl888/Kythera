@@ -161,11 +161,13 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   **Two corrections after the core review (2026-08-06), both against this finding's
   own supporting arguments:** (a) the slot cost was 100.5 slot-days only because the
   11 right-censored rows were charged a full 7-day horizon; correctly **28.0
-  slot-days (0.15/position) = 12.1 pp** against a +24.6 pp gain, so under a binding
+  slot-days (0.16/position) = 12.1 pp** against a +24.6 pp gain, so under a binding
   cap the change would be net **positive**, not negative. (b) "concurrency peaks at
-  97/500" counted only mirrors *opened* post-cutoff; the real peak over the window
-  is **173/500** (288 all-time), mean ≈ 82. Still not binding, so the conclusion
-  stands — but the slot argument no longer supports keeping the rule. Also: the
+  97/500" counted only mirrors *opened* post-cutoff **and** silently dropped all 102
+  still-open rows (`NULL NOT IN (…)` is `NULL`, not `true`); the real peak over the
+  window is **190/500** (302 all-time, mean ≈ 102), or 173 counting closed rows only.
+  Still not binding, so the conclusion stands — but the slot argument no longer
+  supports keeping the rule. Also: the
   null is **underpowered, not absolute** — relaxing the never-varied peak-lag rule
   moves the estimate to +0.270 (t 1.64); the sign never flips in any variant either
   side ran. `SOURCE_CLOSED` also carries an A/B-validity

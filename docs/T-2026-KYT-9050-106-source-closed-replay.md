@@ -168,14 +168,21 @@ more forward candles (3 of the 11 censored rows resolve) the estimate is +0.123
   * *Slot cost.* Stated as 100.5 extra slot-days (0.58/position). That charged
     the full 7-day horizon to the 11 right-censored positions, which only had
     0.5–17.1 h of forward data. Charging the data that exists gives **28.0
-    slot-days, 0.15/position**. At the arm's realised +0.432 pp/slot-day that is
+    slot-days, 0.16/position**. At the arm's realised +0.432 pp/slot-day that is
     **12.1 pp** foregone against a replayed gain of +24.6 pp — so even under a
     binding cap the change would be net **positive (+12.5 pp)**, not negative as
     originally written.
-  * *Occupancy.* Stated as "concurrency peaks at 97 of 500". That counted only
-    mirrors **opened** after the cutoff, which is not slot occupancy. Counting
-    every mirror open during the window: **peak 173 of 500** (288 all-time),
-    mean ≈ 82.
+  * *Occupancy.* Stated as "concurrency peaks at 97 of 500". Wrong twice. It
+    counted only mirrors **opened** after the cutoff, which is not occupancy; and
+    the filter `close_reason NOT IN (…)` silently dropped every still-open mirror,
+    because `NULL NOT IN (…)` is `NULL`, not `true` — 102 rows fell out of both
+    halves of the sweep. Counting every mirror open during the window:
+    **peak 190 of 500** (302 all-time, mean ≈ 102); 173 if you count only rows
+    that have since closed.
+
+  Both corrections were found by the independent re-derivation in review, not by
+  this study — including the arithmetic slip (28.0/174 = 0.16, first written as
+  0.15) inside the paragraph whose whole subject is wrong derived numbers.
 
   The conclusion is unchanged — 173/500 is still not binding, so freed slots have
   no alternative use today — but the argument no longer supports keeping the
