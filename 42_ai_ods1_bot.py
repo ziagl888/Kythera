@@ -13,19 +13,38 @@ and it mean-reverts. That is the only one of three OI mechanics that survived
   SPIKE-FADE        — refuted; fading a fresh OI build-up gets run over (-2.56 @24h)
   OI x FUNDING      — refuted at the pre-registered thresholds
 
-Independently reproduced from the other side in T-2026-KYT-9050-104: bucketing
-the fleet's *existing* short signals by the same 4h OI change puts the bottom
-quintile at +0.739 / +0.552 pp against +0.21..+0.33 and -0.12..+0.04 in the rest
-— the only finding in that study that survived both regime cohorts.
+This bot stands on T-096 ALONE
+------------------------------
+An earlier version of this docstring cited T-2026-KYT-9050-104 as an independent
+reproduction from the other side (bucketing the fleet's existing short signals by
+the same 4h OI change: bottom quintile +0.739 / +0.552 pp against +0.21..+0.33
+and -0.12..+0.04 in the rest). **That support is withdrawn on two counts**, both
+measured on 2026-08-06 while reviewing PR #274:
 
-What that replication does NOT buy
-----------------------------------
-T-096 ran 2026-06-12 -> 08-04 and T-104 2026-06-13 -> 08-05: near-total overlap.
-The two lines agree across *populations*, not across *time*, so the regime
-coverage that T-096's own >=90d gate existed to provide is still missing. This
-bot going live is the substitute — forward data on a new tape beats a second
-backtest on the old one — and that is a deliberate operator trade, not a claim
-that the evidence is complete.
+  * Not independent in time. T-104's replay window starts 2026-07-11
+    (`reports/leg_composition_replay.json` -> `export_meta.since`), so T-096's
+    window (06-12 -> 08-04) *contains* it. The handover's "T-104 ran 13.06.-05.08."
+    was wrong. Two studies on the same tape agree across populations, never across
+    time.
+  * Look-ahead in the feature itself. T-104 reads signal instants from
+    `closed_ai_signals.open_time`, a naive column, `AT TIME ZONE 'UTC'`. Measured
+    per model against the 5m candle the entry must fall inside: EPD3 95.0 % vs
+    11.7 %, BR1Hv2 40.7 % vs 10.9 %, MIS1-72H 59.6 % vs 11.5 % all favour
+    Bucharest (+3h); only ROM1 is real naive UTC (86.8 % vs 8.0 %). 84 % of the
+    SHORT population feeding that gate is therefore stamped 3h late, so its
+    "4h OI change before the signal" actually spans [t-1h, t+3h] — it straddles
+    the signal and contains post-signal OI. An OI drop measured partly *after*
+    entry can be positions closing, i.e. consequence rather than cause.
+
+Also corrected: "the only finding in that study that survived both regime
+cohorts" was false. At T-104's own TP3/SL2, 18 legs are sign-stable positive in
+both cohorts (5 under the n>=40 filter its own section 4 applies), including
+EPD3-SHORT on n=6864/2352.
+
+What remains is T-096: one study, one tape, its own >=90d regime gate unmet. The
+bot going live is the deliberate operator substitute for that missing coverage —
+forward data on a new tape — and is now explicitly a one-pillar bet, not a
+replicated one.
 
 The geometry is the weakest part of this file
 ---------------------------------------------
@@ -59,9 +78,12 @@ test environment (operator decision 2026-07-06, OPUS-HANDOFF §5), and
 ``NEW_IDEAS_LIVE_POSTING`` defaults to 1 like the rest of the cohort, so this bot
 is live on deploy by design rather than by omission.
 
-Rule 5 note: this bot reads no candles. Price comes from the same ``oi_5m`` rows as
-the OI itself (implied mark = ``oi_value_usdt / open_interest``), which is what the
-study measured — joining candles would compare two different clocks.
+Rule 5 note: no candles in the DECISION path. Price comes from the same ``oi_5m``
+rows as the OI itself (implied mark = ``oi_value_usdt / open_interest``), which is
+what the study measured — joining candles would compare two different clocks. The
+posting path does read candles: ``post_ai_signal`` renders a 240-minute mini-chart
+per signal. That is display-only and never re-enters the entry rule, but the
+distinction matters, because "reads no candles" flat would be false.
 
 Watchdog: start_delay=283.
 """
@@ -99,6 +121,19 @@ SL_PCT = 2.0
 POLL_SECONDS = 300
 STALENESS_CAP_S = 45 * 60
 STARVATION_LOG_EVERY_S = 3600
+
+# Flood protection. The entry rule describes a MARKET-WIDE event: a BTC-led rally
+# that liquidates shorts satisfies "px >= +3 % and 4h OI <= -2 %" on dozens of
+# correlated alts in the same 5-minute poll. Without a bound one cycle can emit
+# the whole qualifying universe (527 symbols in coins.json) into a Cornix-executed
+# channel — and because ODS1 holds a roster seat, bot 40 mirrors each signal into
+# CH_TRAILING as well, so the burst lands in TWO channels against a per-channel
+# cap of 500. EPD3-SHORT was estimated low once and delivered ~484/day.
+#
+# `find_candidates` already sorts strictest-divergence-first, so truncation keeps
+# the events T-096 measured as the strongest rather than an arbitrary subset.
+# Same shape as `40_trailing_close_bot.TIME_STOP_MAX_PER_CYCLE`.
+MAX_EMITS_PER_CYCLE = int(os.getenv("ODS1_MAX_EMITS_PER_CYCLE", "5"))
 
 
 class Candidate(TypedDict):
@@ -170,14 +205,23 @@ def on_cooldown(conn, symbol: str, now: datetime.datetime) -> bool:
         return cur.fetchone() is not None
 
 
-def find_candidates(series: dict[str, list[tuple[int, float, float]]], now_epoch: int) -> list[Candidate]:
-    """Symbols where price rallied while open interest drained."""
+def find_candidates(series: dict[str, list[tuple[int, float, float]]], now_epoch: int) -> tuple[list[Candidate], int]:
+    """Symbols where price rallied while open interest drained.
+
+    Returns ``(candidates, usable)`` where ``usable`` counts the symbols whose
+    BOTH endpoints survived the staleness cap. The caller needs that number and
+    not ``len(series)``: a symbol with a single 3-hour-old row is present in
+    ``series`` but contributes nothing, so reporting the dict size would claim
+    fresh coverage during exactly the collector outage this bot must announce.
+    """
     out: list[Candidate] = []
+    usable = 0
     for symbol, rows in series.items():
         now = _as_of(rows, now_epoch)
         then = _as_of(rows, now_epoch - LOOKBACK_S)
         if now is None or then is None:
             continue
+        usable += 1
         oi_now, px_now = now
         oi_then, px_then = then
         if oi_then <= 0 or px_then <= 0 or oi_now * px_now < MIN_OI_USDT:
@@ -190,26 +234,41 @@ def find_candidates(series: dict[str, list[tuple[int, float, float]]], now_epoch
     # strictness, so when the channel is busy the most extreme events are the
     # ones worth a slot.
     out.sort(key=lambda c: c["oi_chg"] - c["px_chg"])
-    return out
+    return out, usable
 
 
 _last_starvation_log = 0.0
 
 
-def _log_starvation(scanned: int) -> None:
-    """Say something when nothing qualifies — silence is how AIM2-TOPN hid for 24 days."""
+def _log_starvation(usable: int, loaded: int) -> None:
+    """Say something when nothing qualifies — silence is how AIM2-TOPN hid for 24 days.
+
+    Both numbers matter and they mean different things. ``usable`` is the count
+    that survived the staleness cap on BOTH endpoints; ``loaded`` is how many
+    symbols the window query returned at all. ``usable`` collapsing while
+    ``loaded`` stays high IS the collector-outage signature — reporting only the
+    latter would print reassuring coverage during the failure this log exists to
+    surface.
+    """
     global _last_starvation_log
     if time.time() - _last_starvation_log < STARVATION_LOG_EVERY_S:
         return
     _last_starvation_log = time.time()
     logger.info(
-        f"ODS1: 0 candidates from {scanned} symbols with fresh OI "
+        f"ODS1: 0 candidates — {usable} of {loaded} symbols had two OI points inside the "
+        f"{STALENESS_CAP_S // 60}min staleness cap "
         f"(rule: px >= +{PX_RALLY_PCT}% AND 4h OI <= {OI_DROP_PCT}%). "
-        f"If this persists, check 35_oi_collector — its cadence is a known defect (T-097)."
+        f"If usable stays far below loaded, check 35_oi_collector — its cadence is a known defect (T-097)."
     )
 
 
-def emit(conn, cand: Candidate) -> None:
+def emit(conn, cand: Candidate) -> bool:
+    """Post one divergence short. Returns whether the gate actually emitted.
+
+    The return value is not cosmetic: ``post_ai_signal_gated`` returns falsy for a
+    SILENT/RETIRED leg or a shadow dedup, and counting those as emissions would
+    both overstate the cycle log and commit an empty transaction.
+    """
     price = cand["price"]
     targets = [price * (1 - p / 100.0) for p in TP_PCTS]
     sl = price * (1 + SL_PCT / 100.0)
@@ -236,27 +295,47 @@ def emit(conn, cand: Candidate) -> None:
         logger.info(
             f"✅ ODS1 SHORT {cand['symbol']} @ {price:.8f} (px {cand['px_chg']:+.1f}%, OI {cand['oi_chg']:+.1f}%)"
         )
+    return bool(posted)
 
 
 def run_cycle(conn) -> None:
     now = utc_now()
     now_epoch = int(now.timestamp())
     series = load_oi_window(conn, now_epoch - LOOKBACK_S - STALENESS_CAP_S)
-    candidates = find_candidates(series, now_epoch)
+    candidates, usable = find_candidates(series, now_epoch)
     if not candidates:
-        _log_starvation(len(series))
+        _log_starvation(usable, len(series))
         return
     emitted = 0
+    suppressed = 0
     for cand in candidates:
+        if emitted >= MAX_EMITS_PER_CYCLE:
+            # Candidates are sorted strictest-first, so what is dropped here is
+            # the weakest divergence of the burst, not an arbitrary tail. Logged
+            # rather than silent: a cap that truncates without saying so reads as
+            # "the market only offered five" (no silent caps).
+            suppressed = len(candidates) - candidates.index(cand)
+            break
         if has_open_ai_signal(conn, cand["symbol"], "SHORT", MODEL_ID):
             continue
         if on_cooldown(conn, cand["symbol"], now):
             continue
-        emit(conn, cand)
-        emitted += 1
+        try:
+            if emit(conn, cand):
+                emitted += 1
+        except Exception as exc:  # noqa: BLE001 — one bad symbol must not void the batch
+            # Without this the chart fetch inside post_ai_signal (a live HTTP call
+            # per signal) can raise on symbol N and roll back the N-1 signals
+            # already written this cycle.
+            conn.rollback()
+            logger.error(f"ODS1: emit failed for {cand['symbol']}: {exc}")
     if emitted:
         conn.commit()  # the caller commits (hard rule 8)
-    logger.info(f"ODS1 cycle: {len(candidates)} candidates, {emitted} emitted, {len(series)} symbols with fresh OI")
+    logger.info(
+        f"ODS1 cycle: {len(candidates)} candidates, {emitted} emitted, "
+        f"{suppressed} over the per-cycle cap of {MAX_EMITS_PER_CYCLE}, "
+        f"{usable} of {len(series)} symbols with fresh OI"
+    )
 
 
 def main() -> None:

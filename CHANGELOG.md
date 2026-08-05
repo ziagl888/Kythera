@@ -49,9 +49,7 @@ Verdict: `docs/T-2026-KYT-9050-106-source-closed-replay.md`.
 
 `42_ai_ods1_bot.py` shorts a rally that open interest did not pay for — the only one of
 three OI mechanics that survived the T-096 event study (+0.41/event @1h, t = 3.2, n = 580,
-8 of 9 weeks positive), independently reproduced from the other side by T-104, which put
-the bottom OI quintile of the fleet's existing shorts at +0.739/+0.552 pp against
-+0.21..+0.33 in the rest.
+8 of 9 weeks positive).
 
 The bot, its channel constant and its roster seat landed earlier on this branch. Nothing
 made the fleet aware of it — a file is not a process. Now registered in the three places
@@ -62,11 +60,31 @@ exist in `FLEET`, so both edits belong in one commit), and `tools/bot_variants/i
 (ODS1 is rule-based with no model artifact, so without a `_RULE_ONLY_GENERATIONS` entry
 it is undiscoverable and drops silently out of the index).
 
-**Evidence status, stated honestly:** T-096 ran 06-12..08-04 and T-104 06-13..08-05 —
-near-total overlap. The two lines agree across *populations*, not across *time*, so the
-regime coverage T-096's own ≥90 d gate existed to provide is still missing. Going live is
-the operator's deliberate substitute (forward data on a new tape), not a claim the
-evidence is complete. The bracket (TP 1.0/1.5 %, SL 2.0 %) is sized to the measured drift
+**Evidence status — corrected 2026-08-06, and it got weaker.** This entry originally
+claimed T-104 independently reproduced the mechanism from the other side. That support is
+**withdrawn**, on two counts found while reviewing PR #274:
+
+* *Not independent in time.* T-104's replay starts 2026-07-11 (`export_meta.since` in its
+  own committed report), so T-096's window (06-12..08-04) **contains** it. The handover's
+  "T-104 ran 13.06.–05.08." was simply wrong, and this entry repeated it.
+* *Look-ahead in the feature.* T-104 reads signal instants from
+  `closed_ai_signals.open_time` — a naive column — `AT TIME ZONE 'UTC'`. Measured per
+  model against the 5m candle the entry must fall inside: EPD3 95.0 % vs 11.7 %, MIS1-72H
+  59.6 % vs 11.5 %, BR1Hv2 40.7 % vs 10.9 % all favour Bucharest (+3 h); only ROM1 is real
+  naive UTC (86.8 % vs 8.0 %). So **84 % of the SHORT population feeding that gate is
+  stamped 3 h late**, and its "4 h OI change before the signal" actually spans
+  [t−1 h, t+3 h] — straddling the signal, containing post-signal OI. A drop measured partly
+  after entry can be positions closing: consequence, not cause.
+
+Also corrected: "the only finding in that study that survived both regime cohorts" was
+false — at T-104's own TP3/SL2, 18 legs are sign-stable positive in both cohorts (5 under
+the n≥40 filter its §4 applies), including EPD3-SHORT on n=6864/2352.
+
+ODS1 therefore stands on **T-096 alone**: one study, one tape, its own ≥90 d regime gate
+unmet. Going live is the operator's deliberate substitute (forward data on a new tape),
+now explicitly a one-pillar bet rather than a replicated one. Nothing in the bot's own code
+is affected — it computes its OI lookup as-of against `oi_5m` at the real instant, with a
+staleness cap and no forward fill. The bracket (TP 1.0/1.5 %, SL 2.0 %) is sized to the measured drift
 rather than inherited from the fleet default, and is the first thing to re-derive once
 ODS1 has live rows of its own; the roster density sits at the bottom (0.010) on purpose,
 because the column is the eviction order and an unmeasured leg yields its seat first.
