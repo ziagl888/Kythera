@@ -349,9 +349,10 @@ def test_breakeven_direction_is_not_interchangeable():
 
 
 def test_a_short_breakeven_runner_also_closes_at_entry():
-    """The SHORT branch of `_breakeven_step` was unguarded — swapping the
-    LONG/SHORT comparison left all tests green, on a study whose whole subject is
-    direction asymmetry (`t104` vs `inverted`)."""
+    """SHORT reaches `precompute` at all — the export builder only ever produced
+    LONG before this. The LONG/SHORT swap itself is caught by
+    `test_breakeven_direction_is_not_interchangeable`, not here: this scenario's
+    candles bracket the entry, so both comparisons agree. Kept for the wiring."""
     from tools.portfolio_backtest import precompute
 
     z = _synthetic_export(tp_pct=3.0, hit_index=0, is_long=False)
@@ -377,3 +378,47 @@ def test_breakeven_runner_leaves_at_the_earlier_of_entry_and_the_second_rung():
     high[200] = 104.5  # TP2 only much later
     step = _breakeven_step(high, low, 100.0, True, 0, 200, n)
     assert step == 1, f"must leave at the return to entry (1), not at TP2 (200); got {step}"
+
+
+def test_the_breakeven_correction_is_wired_into_precompute():
+    """Deleting the `_breakeven_step` call from `precompute` left every test green.
+
+    The two precompute-level breakeven tests use a first-candle TP, where
+    `step_exit` is already 0, so their bounds hold with or without the correction —
+    they pin the historical horizon-pinning defect, not the wiring. This one puts
+    TP1 late enough that only the breakeven step can produce the observed exit.
+    """
+    import numpy as np
+
+    from tools.portfolio_backtest import precompute
+
+    # Price stays strictly ABOVE the entry except on candle 12. An earlier version
+    # of this fixture used a band straddling the entry, so `low <= entry` was true
+    # on every candle and the breakeven fired immediately — the same symmetric-data
+    # mistake that hid the LONG/SHORT swap.
+    n, entry = 60, 100.0
+    hi = np.full(n, entry * 1.01)
+    lo = np.full(n, entry * 1.005)
+    hi[10] = entry * 1.03 * 1.001  # TP1 (3 %) on candle 10
+    lo[12] = entry * 0.995  # first return through the entry -> breakeven exit
+    z = {
+        "meta": np.array([json.dumps({"horizon_h": 72, "tf": "5m", "since": "x"})], dtype=object),
+        "symbols": np.array(["XUSDT"], dtype=object),
+        "models": np.array(["M"], dtype=object),
+        "c_sym": np.zeros(n, dtype=np.int32),
+        "c_ts": np.array([T0 + (i + 1) * 300 for i in range(n)], dtype=np.int64),
+        "c_high": hi,
+        "c_low": lo,
+        "c_close": np.full(n, entry),
+        "s_sym": np.array([0], dtype=np.int32),
+        "s_mod": np.array([0], dtype=np.int32),
+        "s_long": np.array([True]),
+        "s_ts": np.array([T0], dtype=np.int64),
+        "s_entry": np.array([entry], dtype=np.float64),
+    }
+    recs = precompute(z, GEOMETRY_VARIANTS["symmetric_tight"], None, None)
+    hold_candles = (recs[0]["exit_ts"] - recs[0]["open_ts"]) // 300
+    assert hold_candles == 13, (
+        f"expected the breakeven exit on candle 12 (13 candles held), got {hold_candles} — "
+        "the correction is not wired into precompute"
+    )

@@ -156,49 +156,34 @@ conclusions invert.** At 800 USD capital, 1.6 USD size, 5x:
 | `t104` (L 4/5, S 3/2) | +4.85 % | **+0.70 %** |
 | `inverted` (falsification control) | +13.25 % | **−3.47 %** |
 
-**What caused the reversal — corrected, because the first version of this entry got it wrong.**
-It said "trades collapse from ~9,000 to ~800 once leg selection may no longer see the future",
-attributing the reversal to the look-ahead fix. A 2×2 ablation run during review shows that is
-false. `symmetric_tight`, same settings:
+**What caused the reversal — corrected twice, because the first two versions of this table were
+both wrong.** The original entry said "trades collapse from ~9,000 to ~800 once leg selection may
+no longer see the future", attributing the reversal to the look-ahead fix. The first correction
+replaced that with a 2×2 whose cells came from an intermediate code state. Re-measured against
+the code actually committed here (`symmetric_tight`, 800 USD / 1.6 USD / 5x):
 
-| | old code | new code |
+| | code before the fixes | code as committed |
 |---|--:|--:|
-| **old export** (55,852 signals, 06-13 → 08-02) | 9,605 / +12.81 % | 9,772 / **+13.49 %** |
-| **new export** (43,330 signals, 07-11 → 08-03) | 776 / −1.21 % | 783 / **−1.19 %** |
+| **old export** (55,852 signals, since 06-13) | 9,352 / **+13.54 %** | 12,206 / **+14.71 %** |
+| **new export** (43,330 signals, since 07-11) | 747 / **−1.16 %** | 801 / **−1.04 %** |
 
-The four code fixes move the headline by **+0.68 pp on the old export and +0.02 pp on the new
-one**. Isolating the look-ahead fix alone on the corrected export leaves `symmetric_tight`
-completely unchanged (783 → 783 trades, identical 30-leg selection) and moves `t104` by 2 %.
+Swapping the export moves the headline **−14.70 pp** (before the fixes) or **−15.75 pp** (after).
+The four code fixes move it **+1.17 pp** on the old export and **+0.12 pp** on the new one.
 
-So: **the reversal is the export, not the code.** The fixes are real and order-preserving; they
-are not what flipped the sign. Writing a fresh mis-attribution into a permanent record, in a PR
-whose entire subject is a mis-attributed finding, is the reason this correction is spelled out
-rather than quietly edited.
+So: **the reversal is the export, not the code** — by two orders of magnitude, and the
+conclusion is unchanged from the first correction even though its numbers were not. The fixes
+are real and order-preserving; they are not what flipped the sign. (+13.54 % is exactly this
+PR's original headline, which is what pins the pre-fix baseline.)
 
-So the previous headline — "tight geometry wins on both sides, which refutes T-104's
-direction asymmetry" — is withdrawn. `t104`'s own asymmetric geometry is the only variant that
-is not negative, and no configuration produces a return worth acting on over this window.
-
-**The falsification control is the lesson.** In the defective run `inverted` performed
-essentially like the best variant (+13.25 against +13.54). A control that cannot separate from
-the thing it is controlling for is telling you the effect is not where you think it is — that
-should have stopped the study before the conclusion was written. Corrected, it separates
-cleanly and is the worst variant.
-
-Three of the four committed reports were stale WIP artifacts, one of them at the tool's default
-`--out` path showing `peak_occupancy: 800` against the 500 cap — the exact defect the PR body
-described as caught. They are removed; `reports/portfolio_geometry.json` is regenerated and is
-now the only committed artifact, covering all four geometries across six sizes.
-
-No OI-gated run is included **on purpose**: the OI short-side filter it would have applied is
-itself a timestamp artifact (see the T-104 entry), so gating on it would launder a refuted
-signal into a new result.
+Writing a fresh mis-attribution into a permanent record, in a PR whose entire subject is a
+mis-attributed finding, is why this is spelled out rather than quietly edited — twice now.
 
 **"Walk-forward" is one refit, and the geometry ranking is withdrawn.** On the corrected export
 `TRAIN_WEEKS = 3` consumes most of the sample: the window runs 2026-07-10 → 08-06, the single
-refit fires at 07-31, and **90.9 % of records (39,380 of 43,319) sit in the un-tradeable
-warm-up** — which is why every cell shows ~42,000 `rejected.leg` against ~800 trades. The
-out-of-sample span is **5.15 days** with 6–7 daily P&L observations. `TRAIN_WEEKS` was sized for
+refit fires at 07-31, and **90.9 % of RECORDS (39,380 of 43,319) sit in the un-tradeable
+warm-up** — 80.3 % of the elapsed TIME, which is what the report's `warmup_share_pct`
+field reports; the two are different denominators and both are worth knowing — which is why every cell shows ~42,000 `rejected.leg` against ~800 trades. The
+out-of-sample span is **5.16 days** with 6–7 daily P&L observations. `TRAIN_WEEKS` was sized for
 the 51-day export; the corrected one is 24 days.
 
 A four-way geometry ordering spanning −3.47 % to +0.70 % over five days has no statistical
@@ -207,7 +192,7 @@ content, so the claim "t104's asymmetric geometry is the only variant that is no
 configuration returns anything worth acting on over this window.** The report now emits
 `n_refits`, `tradeable_days` and `warmup_share_pct` so this cannot be read off silently again,
 and `trades_per_day` is computed over the tradeable span (155.3/d for `symmetric_tight`, not the
-30.1/d the full-window divisor produced — a 5× understatement of the number that has to be read
+30.8/d the full-window divisor produced — a 5× understatement of the number that has to be read
 against the Cornix 500-slot cap).
 
 The tool now also **refuses a defective input**: it runs the same timestamp-domain gate on the

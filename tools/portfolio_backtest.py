@@ -54,7 +54,7 @@ export``. Nothing here touches the live database or the fleet.
 
 Usage
 -----
-    python tools/portfolio_backtest.py --in reports/t105_raw.npz \\
+    python tools/portfolio_backtest.py --in reports/leg_composition_raw.npz \\
         --capital 800 --sizes 1,2,4,8,16 --out reports/portfolio.json
 """
 
@@ -416,7 +416,10 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
             min(days, key=lambda kv: kv[1])[0] if days else None,
             round(min((v for _, v in days), default=0.0), 2),
         ],
-        "best_day": [days and max(days, key=lambda kv: kv[1])[0], round(max((v for _, v in days), default=0.0), 2)],
+        "best_day": [
+            max(days, key=lambda kv: kv[1])[0] if days else None,
+            round(max((v for _, v in days), default=0.0), 2),
+        ],
         "losing_days": sum(1 for _, v in days if v < 0),
         "total_days": len(days),
     }
