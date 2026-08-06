@@ -145,6 +145,35 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   trail rule: **residual −0.72 at t = −4.58**, negative under the second yardstick too.
   The roster slot would be negatively occupied. Verdict:
   `staging_models/replay/short_leg_trail_verdict_t062.md`.
+- [x] **#T106-1 Removing bot 40's `SOURCE_CLOSED` exit — REFUTED by replay
+  (T-2026-KYT-9050-106, 2026-08-05).** The observational case ("−3.69 % vs `TIME_STOP`
+  −1.31 %, removing it flips the arm from −0.40 to +0.72 pp/trade") has two defects.
+  It **pools across `TIME_STOP_SINCE` (2026-07-28 14:00Z)**, where the rival policy
+  could not fire at all — split, the gap is 1.41 pp, not 2.4 pp. And the bucket is
+  **conditioned on the outcome**: `SOURCE_CLOSED` fires because the *source* hit its
+  stop, so removing the rule does not remove the loss, it only defers it. Paired
+  replay over the 174 post-cutoff rows (each position its own control, 5m candles,
+  every assumption set against the hold-longer policy): **+0.141 pp/trade, SE 0.160,
+  t = 0.88, CI [−0.17, +0.45]** — null, and stable across the uncensored (+0.149) and
+  optimistic-ordering (+0.059) variants. 36 % of the cohort simply walks on to the
+  stop it was already sitting on (−7.885 → −8.238). Pre-cutoff cohort deliberately
+  excluded: 143/268 rows carry `sl IS NULL`, so a replay there cannot model stops.
+  **Two corrections after the core review (2026-08-06), both against this finding's
+  own supporting arguments:** (a) the slot cost was 100.5 slot-days only because the
+  11 right-censored rows were charged a full 7-day horizon; correctly **28.0
+  slot-days (0.16/position) = 12.1 pp** against a +24.6 pp gain, so under a binding
+  cap the change would be net **positive**, not negative. (b) "concurrency peaks at
+  97/500" counted only mirrors *opened* post-cutoff **and** silently dropped all 102
+  still-open rows (`NULL NOT IN (…)` is `NULL`, not `true`); the real peak over the
+  window is **190/500** (302 all-time, mean ≈ 102), or 173 counting closed rows only.
+  Still not binding, so the conclusion stands — but the slot argument no longer
+  supports keeping the rule. Also: the
+  null is **underpowered, not absolute** — relaxing the never-varied peak-lag rule
+  moves the estimate to +0.270 (t 1.64); the sign never flips in any variant either
+  side ran. `SOURCE_CLOSED` also carries an A/B-validity
+  purpose the PnL argument never addressed (`40_trailing_close_bot.py:850-854`).
+  Verdict: `docs/T-2026-KYT-9050-106-source-closed-replay.md`. Does **not** close
+  `#T52-3`.
 - [x] **#T62-1 SHORT legs evaluated under the trail rule (2026-08-01).** Both sides
   under the same exit (leg path vs. index path), so the leg's own TP policy
   drops out — the predecessor yardstick (against the full window move) penalised every

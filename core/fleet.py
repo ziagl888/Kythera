@@ -357,4 +357,20 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 279,
         "restart_interval": None,
     },
+    # ── OI divergence short (ODS1, T-2026-KYT-9050-106) ───────────────────────
+    # Shorts a rally that open interest did not pay for — the only one of three
+    # OI mechanics that survived the T-096 event study. Reads oi_5m only, no
+    # candles and no model artifact. Posts to CH_ODS1, which falls back to the
+    # CH_NEW_IDEAS cohort channel, so it is live on deploy by design (operator
+    # decision 2026-08-05, no shadow phase). Last in the list with the highest
+    # delay (monotonicity regression backtest/test_fleet_definition.py). New
+    # entry only supervised after watchdog restart (FLEET read at watchdog
+    # import) ⇒ operator gate.
+    {
+        "name": "AI ODS1 Detector",
+        "script": "42_ai_ods1_bot.py",
+        "group": "ai",
+        "start_delay": 283,
+        "restart_interval": None,
+    },
 ]

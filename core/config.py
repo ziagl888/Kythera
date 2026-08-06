@@ -149,6 +149,11 @@ CH_PEX1 = _ch_override("CH_PEX1", CH_NEW_IDEAS)
 CH_FMR1 = _ch_override("CH_FMR1", CH_NEW_IDEAS)
 CH_TRM1 = _ch_override("CH_TRM1", CH_NEW_IDEAS)
 CH_FIF1 = _ch_override("CH_FIF1", CH_NEW_IDEAS)
+# ODS1 OI-divergence short (T-2026-KYT-9050-106). Cohort channel by default —
+# `CH_NEW_IDEAS` is the test environment (operator decision 2026-07-06), and the
+# cohort's `NEW_IDEAS_LIVE_POSTING` defaults to 1, so this leg is live on deploy
+# by design rather than by omission.
+CH_ODS1 = _ch_override("CH_ODS1", CH_NEW_IDEAS)
 
 # MAX1 high-conviction rubberband short (T-2026-CU-9050-067). Operator decision
 # 2026-07-11: this one posts into the MAIN channel — a deliberate departure from

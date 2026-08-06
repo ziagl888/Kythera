@@ -170,6 +170,7 @@ _PROVENANCE_FAMILY: dict[str, str] = {
     "XSR": "Cross-Sectional-Reversal (bot 39)",
     "UFI": "UFI1 (bot 29)",
     "TRM": "TRM1 (bot 32)",
+    "ODS": "OI-Divergence-Short (bot 42)",
 }
 # Known rule-based live generations WITHOUT a model artifact and without
 # a lifecycle register entry (default LIVE). Without this list, active
@@ -180,6 +181,7 @@ _RULE_ONLY_GENERATIONS: dict[str, list[str]] = {
     "ROM1": ["LONG", "SHORT"],  # regime re-forwarder (bot 28)
     "UFI1": ["LONG", "SHORT"],  # bot 29 (non-standard leverage)
     "TRM1": ["LONG", "SHORT"],  # bot 32
+    "ODS1": ["SHORT"],  # bot 42, OI-divergence short — SHORT-only by construction
 }
 
 _PROVENANCE_TAG: dict[str, str] = {

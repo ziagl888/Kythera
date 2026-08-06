@@ -159,12 +159,26 @@ def _cand(sid, symbol, tag, direction):
 def test_roster_admits_only_selected_legs():
     """AK1. The roster is the PR-#198 selection minus ROM1 — not 'all live bots'.
 
-    31 = the 33 seats of the p95 fill minus ROM1 LONG/SHORT: bot 28 re-forwards
-    trades the original legs already post (double-counting, T-052), and its rows
-    carry the ORIGINAL open_time, so no freshness window can admit it honestly.
-    The exclusion is documented in core.trailing_roster.EXCLUDED_AS_DUPLICATE."""
-    assert len(ROSTER) == 31
+    32 = the 33 seats of the p95 fill minus ROM1 LONG/SHORT (= 31 measured seats),
+    plus ODS1 SHORT. Bot 28 re-forwards trades the original legs already post
+    (double-counting, T-052), and its rows carry the ORIGINAL open_time, so no
+    freshness window can admit it honestly. The exclusion is documented in
+    core.trailing_roster.EXCLUDED_AS_DUPLICATE.
+
+    ODS1 SHORT (T-2026-KYT-9050-106) is the one seat NOT from the p95 fill: it has
+    no measured density and is pinned to the bottom of the eviction order on
+    purpose. That distinction is asserted below rather than folded into the count,
+    so a future unmeasured leg cannot be added silently by bumping a number."""
     from core.trailing_roster import EXCLUDED_AS_DUPLICATE
+
+    assert len(ROSTER) == 32
+    measured = {leg: d for leg, d in ROSTER.items() if leg != ("ODS1", "SHORT")}
+    assert len(measured) == 31
+    # The unmeasured leg must sit strictly below every measured one — the density
+    # column doubles as eviction order when the 500-slot cap binds.
+    assert ROSTER[("ODS1", "SHORT")] < min(measured.values())
+    assert is_rostered("ODS1", "SHORT")
+    assert not is_rostered("ODS1", "LONG")  # SHORT-only by construction
 
     assert set(EXCLUDED_AS_DUPLICATE) == {("ROM1", "LONG"), ("ROM1", "SHORT")}
     assert not is_rostered("ROM1", "LONG") and not is_rostered("ROM1", "SHORT")
