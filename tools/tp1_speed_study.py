@@ -67,6 +67,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tools.leg_composition_replay as lcr  # noqa: E402
+from core.vol_features import VOL_WINDOW_5M, rolling_std_pct  # noqa: E402
 from tools.leg_composition_replay import replay_signal  # noqa: E402
 
 UTC = timezone.utc
@@ -76,30 +77,13 @@ CANDLE_S = 300  # 5m export grid
 STALE_TOLERANCE_S = 900  # a lookback anchor may be at most 15 min older than asked
 FAST_WINDOW_H = 4.0  # primary, pre-registered
 SLOW_WINDOW_H = 12.0  # secondary, robustness
-VOL_WINDOW = 48  # 4h of 5m candles
+VOL_WINDOW = VOL_WINDOW_5M  # 4h of 5m candles
 MIN_MODEL_N = 200  # descriptive per-model table only above this
 TRAIN_SHARE = 0.7
 
-
-def rolling_std(close: np.ndarray, window: int) -> np.ndarray:
-    """Std of 5m pct returns over `window` returns, aligned to the candle index.
-
-    ``out[i]`` uses returns up to and including candle ``i`` — never anything
-    after it. Computed once per series with cumsums, O(n).
-    """
-    n = len(close)
-    out = np.full(n, np.nan)
-    if n < 2:
-        return out
-    r = np.diff(close) / close[:-1] * 100.0
-    c1 = np.concatenate(([0.0], np.cumsum(r)))
-    c2 = np.concatenate(([0.0], np.cumsum(r * r)))
-    # return j covers candles j -> j+1; window of returns ending at return i-1
-    for_i = np.arange(window, len(r) + 1)
-    mean = (c1[for_i] - c1[for_i - window]) / window
-    msq = (c2[for_i] - c2[for_i - window]) / window
-    out[for_i] = np.sqrt(np.maximum(0.0, msq - mean * mean))
-    return out
+# The rolling-std implementation moved to core/vol_features.py (T-112) so the
+# FIF2 bot serves the exact number this study validated — one source, no drift.
+rolling_std = rolling_std_pct
 
 
 def asof_index(ts: np.ndarray, targets: np.ndarray) -> np.ndarray:

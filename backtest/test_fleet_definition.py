@@ -135,6 +135,21 @@ EXPECTED_WATCHDOG_VIEW = [
     # T-2026-CU-9050-103 (K9/OIC): deliberate fleet extension — the anchor grows
     # along with it, the delays/order of the existing entries remain unchanged.
     ("OI Collector", "35_oi_collector.py", 231, None),
+    # Re-pinned under T-2026-KYT-9050-112: the anchor had silently drifted six
+    # bots behind FLEET (36-41 were added without growing it, so this test was
+    # red the whole time and nobody noticed — backtest/ runs in no CI job).
+    # Entries below restate what already ran in production, plus FIF2.
+    ("AI LIS1 Detector", "36_ai_lis1_bot.py", 239, None),
+    ("AI TSM1 Detector", "37_ai_tsm1_bot.py", 247, None),
+    ("AI SKW1 Detector", "38_ai_skw1_bot.py", 255, None),
+    ("AI XSM1 Detector", "39_ai_xsm1_bot.py", 263, None),
+    ("Trailing Close Bot", "40_trailing_close_bot.py", 271, None),
+    ("Liq Collector", "41_liq_collector.py", 279, None),
+    # ODS1 (T-2026-KYT-9050-106, PR #276) landed on main first; FIF2 reserved 291
+    # and left 283 free for exactly that, so monotonicity holds under either
+    # merge order and both entries now sit in it.
+    ("AI ODS1 Detector", "42_ai_ods1_bot.py", 283, None),
+    ("AI FIF2 Mirror", "43_ai_fif2_bot.py", 291, None),
 ]
 
 # Groups rendered by the dashboard CSS (.group-core/.group-ai/.group-strategy/

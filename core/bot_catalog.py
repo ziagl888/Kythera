@@ -33,6 +33,9 @@ _AI_FAMILY_TO_SCRIPT: tuple[tuple[str, str], ...] = (
     ("BB", "25_smc_ml_sniper.py"),
     ("BR", "7_pattern_detector.py"),  # BR15M / BR1Hv2 / BR4H …
     ("EPD", "10_pump_dump_detector.py"),
+    # FIF2 before FIF: longest prefix wins, and the successor bot (43, T-112)
+    # must not resolve onto FIF1's script.
+    ("FIF2", "43_ai_fif2_bot.py"),
     ("FIF", "33_ai_fif1_bot.py"),
     ("FMR", "31_ai_fmr1_bot.py"),
     ("LIS", "36_ai_lis1_bot.py"),  # K5 Post-Listing-Drift-Fade (Shadow-only, T-149)

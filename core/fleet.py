@@ -362,15 +362,30 @@ FLEET: list[dict[str, Any]] = [
     # OI mechanics that survived the T-096 event study. Reads oi_5m only, no
     # candles and no model artifact. Posts to CH_ODS1, which falls back to the
     # CH_NEW_IDEAS cohort channel, so it is live on deploy by design (operator
-    # decision 2026-08-05, no shadow phase). Last in the list with the highest
-    # delay (monotonicity regression backtest/test_fleet_definition.py). New
-    # entry only supervised after watchdog restart (FLEET read at watchdog
-    # import) ⇒ operator gate.
+    # decision 2026-08-05, no shadow phase). New entry only supervised after
+    # watchdog restart (FLEET read at watchdog import) ⇒ operator gate.
     {
         "name": "AI ODS1 Detector",
         "script": "42_ai_ods1_bot.py",
         "group": "ai",
         "start_delay": 283,
+        "restart_interval": None,
+    },
+    # ── FIF2 vol-gated ladder mirror (T-2026-KYT-9050-112) ────────────────────
+    # Mirrors fresh ai_signals arrivals whose symbol clears the rolling q80 of
+    # sym_vol_4h; posts the measured t104 ladder to CH_FIF2 (fallback: the FIF
+    # channel, currently not Cornix-executed — that is the containment).
+    # delay 291 was chosen to leave 283 free for ODS1 (PR #276, then in flight on
+    # a parallel branch) so the monotonicity guard holds regardless of merge
+    # order — ODS1 landed first, and both entries now sit in that order. Last in
+    # the list with the highest delay (monotonicity regression
+    # backtest/test_fleet_definition.py). New entry only supervised after a
+    # watchdog restart ⇒ operator gate.
+    {
+        "name": "AI FIF2 Mirror",
+        "script": "43_ai_fif2_bot.py",
+        "group": "ai",
+        "start_delay": 291,
         "restart_interval": None,
     },
 ]
