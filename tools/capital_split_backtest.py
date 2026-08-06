@@ -204,6 +204,16 @@ def simulate_split(
         # `pnl_pct` arrives as np.float64 from precompute(), so plain arithmetic
         # here yields numpy scalars — cast, or json.dump refuses the artifact.
         "refill_capped_events": int(refill_capped),
+        # Protection metrics for the T-109 sweep. `min_total_equity` is the
+        # floor the whole account actually touched; `reserve_low_water` is how
+        # far the "locked" bucket was drawn down — for a true ratchet
+        # (refill_frac=0) it stays at its starting value by construction, and
+        # any lower reading quantifies exactly how much protection the refill
+        # rule gave away.
+        "min_total_equity": round(float(np.min(total_curve)), 2),
+        "reserve_low_water": round(
+            float(min([total_capital * (1.0 - split_frac)] + [rv for _, _, _, rv in equity])), 2
+        ),
         "final_available": round(float(avail), 2),
         "final_reserve": round(float(reserve), 2),
         "final_total": round(float(final_total), 2),
@@ -225,14 +235,58 @@ def simulate_split(
     }
 
 
+def run_sweep(z, args, skims: list[float], refills: list[float]) -> dict[str, dict]:
+    """The T-2026-KYT-9050-109 grid: every skim x refill pair, per geometry.
+
+    T-108 pinned the two corners — symmetric (a disguised half-size single
+    bucket) and pure ratchet (protection that starves the compounding base).
+    The sweep prices the middle ground. Equity curves are dropped from the
+    cells: 2 geometries x len(skims) x len(refills) runs would otherwise put
+    500 points into every cell of a comparison table.
+    """
+    results: dict[str, dict] = {}
+    for geom_name in (g.strip() for g in args.geometries.split(",")):
+        geometry = GEOMETRY_VARIANTS[geom_name]
+        print(
+            f"\n=== geometry {geom_name} "
+            f"(L {geometry['LONG'][0]:.0f}/{geometry['LONG'][1]:.0f}, "
+            f"S {geometry['SHORT'][0]:.0f}/{geometry['SHORT'][1]:.0f}) ==="
+        )
+        recs = precompute(z, geometry, None, None)
+        ref = simulate_split(
+            recs, args.capital, args.leverage, split_frac=1.0, size_frac=0.005, skim_frac=0.0, refill_frac=0.0
+        )
+        ref.pop("equity_curve", None)
+        results[f"{geom_name}|single_bucket_half_pct"] = ref
+        print(
+            f"  reference single bucket 0.5%:  ret {ref['return_pct']:+6.2f}%  "
+            f"maxDD {ref['max_drawdown_pct']:6.2f}%  min_eq {ref['min_total_equity']:8.2f}"
+        )
+        print(f"  {'skim/refill':>12} " + " ".join(f"{r:>21.2f}" for r in refills))
+        for skim in skims:
+            cells = []
+            for refill in refills:
+                s = simulate_split(recs, args.capital, args.leverage, skim_frac=skim, refill_frac=refill)
+                s.pop("equity_curve", None)
+                results[f"{geom_name}|skim{skim:.2f}|refill{refill:.2f}"] = s
+                cells.append(f"{s['return_pct']:+6.2f}% dd{s['max_drawdown_pct']:6.2f}%")
+            print(f"  {skim:>12.2f} " + " ".join(f"{c:>21}" for c in cells))
+    return results
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Capital-split money-management backtest (T-2026-KYT-9050-108)")
     ap.add_argument("--in", dest="infile", default="reports/leg_composition_raw.npz")
     ap.add_argument("--capital", type=float, default=1000.0)
     ap.add_argument("--leverage", type=float, default=5.0, help="matches the committed T-105 reference runs")
     ap.add_argument("--geometries", default="t104,symmetric_tight")
+    ap.add_argument("--sweep", action="store_true", help="skim x refill grid (T-2026-KYT-9050-109)")
+    ap.add_argument("--skims", default="0.25,0.5,0.75,1.0")
+    ap.add_argument("--refills", default="0,0.25,0.5,0.75,1.0")
     ap.add_argument("--out", default="reports/capital_split_backtest.json")
     args = ap.parse_args()
+    if args.sweep and args.out == "reports/capital_split_backtest.json":
+        args.out = "reports/capital_split_sweep.json"
 
     z = np.load(args.infile, allow_pickle=True)
     src_meta = json.loads(str(z["meta"][0]))
@@ -256,44 +310,49 @@ def main() -> None:
             f"{lcr.DOMAIN_FIT_MIN:.0%}). Re-export before simulating; do not lower the threshold."
         )
 
-    # The variants. `single_bucket_half_pct` is the analytic twin of the split
-    # scheme (0.5 % of total equity, one bucket) — if the equivalence argument
-    # holds on the real tape, those two rows must only diverge through margin
-    # admission. `t105_fixed_5eur` anchors everything to the T-105 baseline.
-    results: dict[str, dict] = {}
-    for geom_name in (g.strip() for g in args.geometries.split(",")):
-        geometry = GEOMETRY_VARIANTS[geom_name]
-        print(
-            f"\n=== geometry {geom_name} "
-            f"(L {geometry['LONG'][0]:.0f}/{geometry['LONG'][1]:.0f}, "
-            f"S {geometry['SHORT'][0]:.0f}/{geometry['SHORT'][1]:.0f}) ==="
+    if args.sweep:
+        results = run_sweep(
+            z, args, [float(s) for s in args.skims.split(",")], [float(r) for r in args.refills.split(",")]
         )
-        recs = precompute(z, geometry, None, None)
-
-        variants: dict[str, dict] = {}
-        variants["t105_fixed_5eur"] = simulate(recs, args.capital, 5.0, args.leverage)
-        variants["split_50_50_dynamic"] = simulate_split(recs, args.capital, args.leverage)
-        variants["split_50_50_fixed5"] = simulate_split(recs, args.capital, args.leverage, fixed_size=5.0)
-        variants["single_bucket_half_pct"] = simulate_split(
-            recs, args.capital, args.leverage, split_frac=1.0, size_frac=0.005, skim_frac=0.0, refill_frac=0.0
-        )
-        variants["split_ratchet_no_refill"] = simulate_split(recs, args.capital, args.leverage, refill_frac=0.0)
-
-        for label, s in variants.items():
-            ret = s.get("return_pct")
-            dd = s.get("max_drawdown_pct")
+    else:
+        # The variants. `single_bucket_half_pct` is the analytic twin of the split
+        # scheme (0.5 % of total equity, one bucket) — if the equivalence argument
+        # holds on the real tape, those two rows must only diverge through margin
+        # admission. `t105_fixed_5eur` anchors everything to the T-105 baseline.
+        results = {}
+        for geom_name in (g.strip() for g in args.geometries.split(",")):
+            geometry = GEOMETRY_VARIANTS[geom_name]
             print(
-                f"  {label:24s} taken={s.get('trades_taken', 0):>5} "
-                f"ret={ret:+7.2f}%  maxDD={dd:7.2f}%  bind={s.get('binding_constraint', '-'):12s} "
-                f"final={s.get('final_total', s.get('final_balance')):>8}"
+                f"\n=== geometry {geom_name} "
+                f"(L {geometry['LONG'][0]:.0f}/{geometry['LONG'][1]:.0f}, "
+                f"S {geometry['SHORT'][0]:.0f}/{geometry['SHORT'][1]:.0f}) ==="
             )
-            results[f"{geom_name}|{label}"] = s
+            recs = precompute(z, geometry, None, None)
+
+            variants: dict[str, dict] = {}
+            variants["t105_fixed_5eur"] = simulate(recs, args.capital, 5.0, args.leverage)
+            variants["split_50_50_dynamic"] = simulate_split(recs, args.capital, args.leverage)
+            variants["split_50_50_fixed5"] = simulate_split(recs, args.capital, args.leverage, fixed_size=5.0)
+            variants["single_bucket_half_pct"] = simulate_split(
+                recs, args.capital, args.leverage, split_frac=1.0, size_frac=0.005, skim_frac=0.0, refill_frac=0.0
+            )
+            variants["split_ratchet_no_refill"] = simulate_split(recs, args.capital, args.leverage, refill_frac=0.0)
+
+            for label, s in variants.items():
+                ret = s.get("return_pct")
+                dd = s.get("max_drawdown_pct")
+                print(
+                    f"  {label:24s} taken={s.get('trades_taken', 0):>5} "
+                    f"ret={ret:+7.2f}%  maxDD={dd:7.2f}%  bind={s.get('binding_constraint', '-'):12s} "
+                    f"final={s.get('final_total', s.get('final_balance')):>8}"
+                )
+                results[f"{geom_name}|{label}"] = s
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(
             {
-                "task": "T-2026-KYT-9050-108",
+                "task": "T-2026-KYT-9050-109" if args.sweep else "T-2026-KYT-9050-108",
                 "input": os.path.basename(args.infile),
                 "input_since": src_meta.get("since"),
                 "input_domain_fit": round(fit["rate"], 4),

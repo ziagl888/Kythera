@@ -1,3 +1,31 @@
+## [2026-08-06] Profit-securing sweep: no skim/refill ratio beats withdrawing profits (T-2026-KYT-9050-109)
+
+Follow-up to T-108, which pinned the two corners of the capital-split scheme (symmetric =
+disguised half-size bucket, pure ratchet = starved compounding base). This sweeps the middle:
+`tools/capital_split_backtest.py --sweep` runs the full skim x refill grid (4x5, dynamic 1 %
+sizing, 50:50 split) on both geometries, with two new protection metrics per cell
+(`min_total_equity`, `reserve_low_water`).
+
+**Result: the transfer knob does not touch anything that matters.**
+
+* On the positive geometry (`t104`) every one of the 20 cells lands between −0.82 % and
+  +0.59 % against the plain half-size bucket's **+1.50 %** — and the grid has no monotone
+  structure in either direction: the cell-to-cell spread is admission-path noise (which
+  trades clear the margin check shifts with the sizing path), not signal.
+* The equity floor does not improve either: reference `min_total_equity` 986.85 vs
+  984.4–986.5 across all cells.
+* Real irreversibility exists only at `refill = 0` (`reserve_low_water` pinned at 500 by
+  construction, final reserve up to 614 on the losing tape) — but that is just "withdrawn
+  profits are safe", available from any single account with a withdrawal rule, and it costs
+  the compounding base (available-bucket maxDD up to −25.5 %).
+* On the negative geometry the split softens total maxDD slightly (−2.6 to −3.0 vs −3.31)
+  purely because dead margin means a smaller book — trading less, not protection.
+
+Verdict: **profit securing via intra-account transfer rules is a dead end on this harness.
+If the operator wants banked profits, the honest mechanism is a plain withdrawal rule
+(sweep profits above the starting capital off the trading account); the trade-off is the
+same one the ratchet column prices.** Same T-105 caveats: one refit, ~5 tradeable days.
+
 ## [2026-08-06] Capital-split money management: the 50:50 reserve is a disguised half-size single bucket (T-2026-KYT-9050-108)
 
 Operator proposal, simulated on the T-105 walk-forward harness before anyone wires it into a
