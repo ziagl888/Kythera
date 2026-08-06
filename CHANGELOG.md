@@ -120,6 +120,87 @@ operator restarts the fleet (hard rule 1). `backtest/test_fleet_definition.py`'s
 `EXPECTED_WATCHDOG_VIEW` golden was left untouched: it has been stale since T-149 and was
 already red before this branch (missing bots 36-41, now 36-42). Refreshing it here would
 be a silent guard reset (hard rule 9).
+## [2026-08-05] Fleet-wide leg composition replay — and what the Cornix backtest actually measured (T-2026-KYT-9050-104)
+
+> **Corrected 2026-08-06 (T-2026-KYT-9050-107) — the headline finding did not survive.**
+> This study read `closed_ai_signals.open_time` as UTC. That column is naive and
+> **mixed-domain**: `28_signal_orchestrator` (ROM1) writes explicit UTC, the other 13 writers
+> leave it to `DEFAULT now()`, which stamped session-local Europe/Bucharest until the R3 pool
+> flip took effect at the staggered fleet restart (measured: Bucharest through 2026-08-02
+> ~17:00, mixed to ~20:00, UTC after). So ~77 % of signals were placed 3 h late (33,177 of 43,152 closed rows).
+>
+> **Consequence: the OI short-side filter is retracted.** Re-run on the corrected export, same
+> geometry and quintiles, `oi_chg_4h | SHORT` bottom quintile goes **+0.739 → +0.324**
+> (pre) and **+0.552 → −0.065** (post), while the *top* quintile becomes the best bucket
+> (+0.340 / +0.230) and the AUCs move from 0.463/0.458 to 0.501/0.518 — a coin flip. The
+> apparent edge was the defect: at 3 h late the "4 h OI change before the signal" actually
+> spans [t−1h, t+3h], straddling the signal and carrying post-signal open interest. An OI drop
+> measured partly *after* entry can simply be the position closing.
+>
+> §4's direction claim survives qualitatively but not in magnitude: at TP3/SL2 the corrected
+> book is **66 % LONG / 34 % SHORT**, not 76 % SHORT. §6 (short legs are regime-unstable) is
+> the section the correction leaves standing — 8 of 9 SHORT legs still flip negative across the
+> cutoff.
+>
+> **This also removes ODS1's second evidence pillar** (bot 42, T-2026-KYT-9050-106), which had
+> already withdrawn its reliance on this result for other reasons. T-096 is unaffected —
+> `tools/oi_event_study.py` builds its events from `oi_5m` and never touches the signal tables.
+>
+> The export now carries a writer-aware conversion and a **hard gate**: it fails when the
+> recorded entry stops falling inside the candle at its claimed instant. That check reads
+> 68.2 % on the corrected export — over the closed rows alone 0.686 against 0.267 for the
+> defective all-UTC read — so the old behaviour could not ship through it. Sections 1, 2, 3, 5 and "Data quality" are marked in the doc as ad-hoc
+> session observations — no committed code or artifact produces them, which the first version
+> did not state. The numbers below in this entry are from the ORIGINAL run and are superseded
+> by the doc.
+
+A Cornix backtest of the AIM and Drawdown channels over 01.-05.08. spanned +109.6 % to -50.3 %
+across four position sizes. The rows reconcile against their stated capital; comparing them to
+each other does not. Cornix sizes off the **available** balance, so mean position size saturates
+(1.07 % at a 5 % setting, 1.24 % at 10 %) while the effective sample collapses from 299 to 131.
+Only the fixed-amount run allocates uniformly. Above ~1 % the percentage setting buys no
+exposure, only concentration. **(Ad-hoc session measurement, not reproducible from the committed
+tools — see the provenance note in the doc.)**
+
+New: `tools/leg_composition_replay.py` and `tools/oi_gate_eval.py`, both split into a read-only
+DB `export` and a DB-free `replay`/`gate` half, so the expensive part runs off the live VPS
+(which sits at a measured 97 % CPU) and the analysis is reproducible without credentials.
+11 standalone tests in `backtest/test_leg_composition_replay.py` pin the replay conventions —
+first touch wick-aware, entry candle excluded, TP+SL in one candle books as SL, unresolved
+marked to market, and the regime cohorts never pooled.
+
+Findings over 42,277 signals / 3.86M 5m candles (docs/T-2026-KYT-9050-104-leg-composition.md):
+
+* **Direction edge is a property of the exit geometry, not the market.** At TP 4 % / SL 5 % the
+  positive-expectancy legs compose a book 95 % LONG; at TP 3 % / SL 2 % they compose it 76 %
+  SHORT. Same data, same period. Down-moves are faster, so shorts want a tight target and a
+  tight stop while longs want room.
+* **The 2026-07-28 14:00Z regime split is mandatory.** `EXPOSURE_CAP` took the book from 83 % to
+  51 % LONG and -1.342 to +0.191 pp/trade, and removed the tail (worst day -549 pp before,
+  -37.7 pp after). Pooling the cohorts had produced a confident and wrong verdict about
+  MIS1-72H, which post-cutoff runs +0.38 pp over 149 trades.
+* **Short legs are regime-unstable** — the same legs carry 14,806 signals in positive legs over
+  11.-28.07. and 4,220 in negative ones over 28.07.-02.08. Direction balance therefore has to be
+  a channel-level constraint, never an emergent property of an expectancy ranking.
+* ~~**OI as a short-side filter.**~~ **RETRACTED 2026-08-06 — struck, not superseded.** This
+  bullet claimed the bottom quintile of the 4h OI change was "the one result that survives both
+  cohorts" (+0.739 / +0.552 pp) and that it "independently reproduces T-096's DIVERGENCE-SHORT".
+  Both the result and the reproduction claim are withdrawn: on the corrected export the bottom
+  quintile reads **+0.324 / −0.065**, the *top* quintile is the better bucket (+0.340 / +0.230),
+  and the twelve AUCs span 0.498–0.535 — so "no AUC above 0.56" is also stale, and the effect is
+  a coin flip. The apparent edge was the timestamp defect described in the notice above.
+  It is struck here rather than left under that notice on purpose: the notice disclaims
+  *numbers*, and what stood here was a *conclusion*.
+
+Data quality, measured rather than assumed: `oi_5m` is not a 5-minute table — median cadence was
+5.0 min until 06.07. and 10.0 min from 13.07. onward, so T-2026-KYT-9050-097 now has a date.
+Lookups are as-of with a 45-min staleness cap and 597 signals were voided rather than filled.
+`liq_events` starts 03.08., so no liquidation feature is testable yet (T-095).
+
+No live change: roster, Cornix configuration and fleet are untouched. Sizing and trade count are
+explicitly **not** answered here — per-trade expectancy misses the ladder, fills and fees (the
+book reports +0.69 pp/trade for AIM2 where Cornix implies +0.054) and needs a portfolio
+simulation, walk-forward because the fleet grew 6x over the window.
 
 ## [2026-08-04] The T-101 startup log computed its floor from a placeholder (T-2026-KYT-9050-103)
 

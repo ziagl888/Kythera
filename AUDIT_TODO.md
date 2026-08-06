@@ -174,6 +174,24 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   purpose the PnL argument never addressed (`40_trailing_close_bot.py:850-854`).
   Verdict: `docs/T-2026-KYT-9050-106-source-closed-replay.md`. Does **not** close
   `#T52-3`.
+- [ ] **#T107-1 `core/time.py` models the wrong kind of split for
+  `closed_ai_signals.open_time` (T-2026-KYT-9050-107, 2026-08-06).** `core/time.py:52-56`
+  ships `R3_CUTOVER_UTC = None` and documents the column as carrying "a single domain
+  (UTC) over its whole history", asserting it is "the ONE place that decides how a
+  reader treats that". Measured against the 5m candle the recorded entry must fall
+  inside, that is wrong: the domain splits by **WRITER**, not only by time.
+  `28_signal_orchestrator.insert_rom1_signal` passes `utc_now_naive()` explicitly
+  (fit 0.929 UTC / 0.084 Bucharest); the other 13 inserters omit the column and take
+  `DEFAULT now()` = session-local Bucharest (EPD3 0.099/0.946, MIS1-72H 0.083/0.409,
+  BR1Hv2 0.102/0.442). On top of that the R3 flip is a WINDOW, not an instant, because
+  bot restarts are staggered. T-104 encoded the correction as a tool-local constant
+  (`R3_FLIP_NAIVE`), which leaves the next reader to consult `core/time.py`, see
+  `None`, and repeat the defect — T-105 reads the same column. **Blast radius checked
+  and currently clean:** `28_signal_orchestrator.py:1405-1410` matches both readings via
+  `LEAST(...)` and `tools/whitelist_v2_realized_eval.py:325` returns both `open_time`
+  and `open_time_legacy`, so no committed reader is silently mis-mapping today. Belongs
+  in `docs/UTC_POLICY.md` §6 as a writer dimension alongside the open history decision.
+  Found by the core review of PR #274, not by the study.
 - [x] **#T62-1 SHORT legs evaluated under the trail rule (2026-08-01).** Both sides
   under the same exit (leg path vs. index path), so the leg's own TP policy
   drops out — the predecessor yardstick (against the full window move) penalised every
