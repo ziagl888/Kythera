@@ -120,6 +120,65 @@ operator restarts the fleet (hard rule 1). `backtest/test_fleet_definition.py`'s
 `EXPECTED_WATCHDOG_VIEW` golden was left untouched: it has been stale since T-149 and was
 already red before this branch (missing bots 36-41, now 36-42). Refreshing it here would
 be a silent guard reset (hard rule 9).
+## [2026-08-06] Walk-forward portfolio simulator — four defects, and every headline reversed (T-2026-KYT-9050-105)
+
+The simulator answers the sizing question T-104 could not: per-trade expectancy cannot see a
+slot cap, so it needs an event-driven run with occupancy, margin and the venue's ceilings.
+It shipped with four defects, all found by the core review, all of which had to be fixed
+before any number here means anything.
+
+* **`exit_ts` falsy-zero.** `_exit_step` legitimately returns index 0 when TP or SL is touched
+  on the first closed candle; `if step_exit` read that as "never exited" and pinned the trade
+  to the full 72 h horizon. A five-minute round trip was booked as 72 h of slot occupancy —
+  and because tighter geometries produce more first-candle touches, the bias fell unevenly
+  across exactly the variants being compared.
+* **Walk-forward look-ahead.** `select_legs` filtered the trailing window on `open_ts` but
+  scored with the fully realised `pnl_pct`, so at each weekly refit the last 72 h was selected
+  on outcomes that had not happened. Membership is now on `exit_ts`.
+* **Max drawdown understated twice.** The curve began after the first close, so initial capital
+  was never a peak (a −50 % single trade reported 0.0); and `sorted(equity)` reordered
+  same-timestamp exits by balance, smoothing intra-instant dips away. Drawdown is the number an
+  operator sizes on, so a floor is the wrong direction, not a conservative one.
+* **A breakeven runner was pinned to the horizon.** When TP1 fires and the second rung does
+  not, PnL credited breakeven while occupancy said "held 72 h" — the two halves of one trade
+  disagreeing, inflating hold time for the modal winner under tight geometry.
+
+Plus: `binding_constraint` reported `exposure_cap` when nothing bound at all, and the equity
+curve — the task's first-named deliverable — was computed and discarded.
+
+**Re-run on the corrected T-104 export (the mixed-domain `open_time` fix, same PR series), the
+conclusions invert.** At 800 USD capital, 1.6 USD size, 5x:
+
+| geometry | before | after |
+|---|--:|--:|
+| `symmetric_tight` (the old winner) | +13.54 % | **−1.19 %** |
+| `symmetric_wide` | +2.72 % | −1.14 % |
+| `t104` (L 4/5, S 3/2) | +4.85 % | **+0.63 %** |
+| `inverted` (falsification control) | +13.25 % | **−3.25 %** |
+
+Trades collapse from ~9,000 to ~800 once leg selection may no longer see the future.
+
+So the previous headline — "tight geometry wins on both sides, which refutes T-104's
+direction asymmetry" — is withdrawn. `t104`'s own asymmetric geometry is the only variant that
+is not negative, and no configuration produces a return worth acting on over this window.
+
+**The falsification control is the lesson.** In the defective run `inverted` performed
+essentially like the best variant (+13.25 against +13.54). A control that cannot separate from
+the thing it is controlling for is telling you the effect is not where you think it is — that
+should have stopped the study before the conclusion was written. Corrected, it separates
+cleanly and is the worst variant.
+
+Three of the four committed reports were stale WIP artifacts, one of them at the tool's default
+`--out` path showing `peak_occupancy: 800` against the 500 cap — the exact defect the PR body
+described as caught. They are removed; `reports/portfolio_geometry.json` is regenerated and is
+now the only committed artifact, covering all four geometries across six sizes.
+
+No OI-gated run is included **on purpose**: the OI short-side filter it would have applied is
+itself a timestamp artifact (see the T-104 entry), so gating on it would launder a refuted
+signal into a new result.
+
+Tests 12 → 19, each defect pinned and mutation-verified.
+
 ## [2026-08-05] Fleet-wide leg composition replay — and what the Cornix backtest actually measured (T-2026-KYT-9050-104)
 
 > **Corrected 2026-08-06 (T-2026-KYT-9050-107) — the headline finding did not survive.**
