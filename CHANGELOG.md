@@ -1,3 +1,32 @@
+## [2026-08-06] Capital-split money management: the 50:50 reserve is a disguised half-size single bucket (T-2026-KYT-9050-108)
+
+Operator proposal, simulated on the T-105 walk-forward harness before anyone wires it into a
+bot: 1000 EUR split 50:50 into an available and a locked reserve bucket, trades at 1 % of the
+available side (5 EUR), 50 % of every win skimmed into the reserve, 50 % of every loss refilled
+back out of it.
+
+**The transfer rules are symmetric, so the scheme is arithmetically a single bucket at half the
+size fraction.** Every closed trade moves `0.5 * pnl` into each bucket; while the reserve is
+solvent both track `500 + 0.5 * cum_pnl` exactly — confirmed to the cent on the real tape
+(`final_available == final_reserve` in every run, zero capped refills). The reserve neither
+ratchets nor protects: it fills and drains at the same rate.
+
+**Where it does differ, it only costs.** The reserve is dead margin — only the available half
+backs open positions, so concurrent occupancy halves (peak 100 vs 204) and margin rejections
+double (777 vs 445). On the only positive geometry (`t104`, L 4/5 S 3/2, 5x, ~5 tradeable
+days) that admission haircut cuts the same-sized single bucket's +1.50 % to **+0.08 %**; under
+negative geometry it "loses less" (−1.04 % vs −1.54 %) only by trading less. A one-way ratchet
+variant (skim without refill) does bank 55 EUR into the reserve but starves the compounding
+base (available maxDD −11.1 % vs −1.5 %) and lands at −0.02 % total.
+
+New: `tools/capital_split_backtest.py` (two-bucket variant of the T-105 event loop, same
+admission rules and export gate), `backtest/test_capital_split_backtest.py` (5 invariants:
+bucket symmetry, single-bucket equivalence, dead-margin divergence, reserve floor, ratchet
+one-sidedness), `reports/capital_split_backtest.json`. Verdict for the proposal as stated:
+**not deployable as a protection mechanism — it is a sizing choice, and the honest way to get
+its risk profile is to trade 0.5 % of one bucket.** Same eight-week caveat as T-105: one refit,
+~5 tradeable days, entry fills optimistic.
+
 ## [2026-08-06] ODS1's TP ladder had a dead second rung — TP2 widened to 2.0 % (T-2026-KYT-9050-113)
 
 Found by the operator within the first hour of ODS1 trading live, which is the shortest path
