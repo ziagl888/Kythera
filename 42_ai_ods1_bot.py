@@ -52,10 +52,17 @@ The study measured **horizon returns on implied prices with no stop** — a mean
 drift of +0.41 % at 1h and +0.73 % at 4h. That is not a 3 % move, so the fleet's
 usual bracket would sit far outside the effect and the edge would leak away long
 before TP1. The bracket below is therefore sized *to the measured effect*, not
-inherited from the fleet default and not tuned: TP1 1.0 %, TP2 1.5 %, SL 2.0 %.
+inherited from the fleet default and not tuned: TP1 1.0 %, TP2 2.0 %, SL 2.0 %.
 Nothing in T-096 validates those three numbers — they are the smallest honest
 translation of a drift into a bracket, and they are the first thing to re-derive
 once this bot has live rows of its own.
+
+Sizing the bracket to the effect is right; it does NOT license ignoring how the
+ladder is executed. TP2 shipped at 1.5 % and was corrected to 2.0 % inside the
+first hour of live trading, because at a 0.5 % gap the second rung never fired
+separately — Cornix splits the size 50/50 and both rungs resolved in the same
+move. The measured effect sets where TP1 goes; the venue sets how far apart the
+rungs have to be to *be* rungs. See `MIN_TP_GAP_PCT`.
 
 The exit that actually matches the measurement is a **time stop**, which Cornix
 cannot express but ``40_trailing_close_bot.py`` can (``TIME_STOP_H``, default
@@ -115,8 +122,27 @@ COOLDOWN_H = 24  # per symbol, first event wins — the study deduped the same w
 MIN_OI_USDT = 3_000_000  # study universe: median OI >= $3M
 
 # ── geometry — see module docstring, the least-supported part of this file ────
-TP_PCTS = (1.0, 1.5)
+#
+# TP2 widened 1.5 -> 2.0 on 2026-08-06 (operator decision Michi), within the first
+# hour of go-live. At 1.0/1.5 the two rungs sat 0.5 % apart, and Cornix splits the
+# position 50/50 across the ladder — so the second rung was not a separate event:
+# whoever reached TP1 took TP2 in the same move. Two of the first four live trades
+# closed "ALL TARGETS HIT" within minutes. The leg was effectively trading a single
+# target at ~1.25 % while the book recorded a full ladder success, which biases the
+# very live evaluation this bot went live to produce.
+#
+# Measured across the fleet on signals since 2026-08-04, ODS1 was the ONLY leg
+# under a 1 % minimum gap (and the smallest TP1 of all):
+#     EPD3 2.63 %/1.82 %  ROM1 3.09 %/2.01 %  ATS2 2.02 %/1.38 %
+#     TSM1 2.00 %/1.24 %  AIM2 7.21 %/3.67 %     (TP1 distance / min gap)
+#
+# TP1 stays on the measured T-096 drift (+0.41 % @1h, +0.73 % @4h) — that number is
+# the reason this bracket is tight at all. TP2 at 2.0 % equals the SL distance, so
+# the second rung is a symmetric 1R. `MIN_TP_GAP_PCT` pins the rule that was
+# missing: the old guards checked the ceiling and the ordering, never the spacing.
+TP_PCTS = (1.0, 2.0)
 SL_PCT = 2.0
+MIN_TP_GAP_PCT = 1.0  # fleet convention; tightest compliant leg is TSM1 at 1.24 %
 
 POLL_SECONDS = 300
 STALENESS_CAP_S = 45 * 60
