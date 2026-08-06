@@ -101,5 +101,7 @@ def test_ratchet_reserve_only_grows():
     evals = [rec(open_h=AFTER_WARMUP + i * 2, hold_h=1, pnl=(3.0 if i % 2 else -3.0)) for i in range(10)]
     out = simulate_split(train(n=30) + evals, 1000.0, leverage=5.0, refill_frac=0.0)
     assert out["final_reserve"] >= 500.0
+    # the T-109 protection metric: a true ratchet never draws the reserve down
+    assert out["reserve_low_water"] >= 500.0
     # every skim that entered the reserve came out of available's compounding base
     assert out["final_available"] <= 500.0 + (out["final_total"] - 1000.0)
