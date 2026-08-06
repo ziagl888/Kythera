@@ -71,6 +71,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import tools.leg_composition_replay as lcr  # noqa: E402
 from tools.leg_composition_replay import outcome, replay_signal  # noqa: E402
 
 UTC = timezone.utc
@@ -228,14 +229,21 @@ def _breakeven_step(
     `_exit_step(i_tp2, None, n)` returned and what made the PnL and the occupancy
     of the same trade disagree.
     """
-    if i_tp2 is not None:
-        return int(i_tp2)
     if i_tp1 is None:
         return n - 1
+    # The breakeven stop is live from the moment TP1 takes the first half, so the
+    # runner leaves at whichever comes FIRST: price back through the entry, or the
+    # second rung. Short-circuiting on `i_tp2` (the previous version) was wrong
+    # whenever the original stop fired between the two rungs — PnL credits
+    # breakeven there, while occupancy claimed the position was held until TP2 was
+    # eventually touched. Measured on the committed export: 1,011 of 43,319
+    # records under symmetric_tight, mean 21.6 h overstated. Same PnL-vs-occupancy
+    # disagreement this function was added to remove, with a smaller lever arm.
     after = slice(int(i_tp1) + 1, n)
     back = (low[after] <= entry) if is_long else (high[after] >= entry)
     hits = np.flatnonzero(back)
-    return int(i_tp1) + 1 + int(hits[0]) if hits.size else n - 1
+    be = int(i_tp1) + 1 + int(hits[0]) if hits.size else n - 1
+    return min(be, int(i_tp2)) if i_tp2 is not None else be
 
 
 def select_legs(recs: list[dict], t0: int, t1: int) -> set[tuple[str, str]]:
@@ -277,6 +285,10 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
     daily: dict[str, float] = defaultdict(float)
     selection: set[tuple[str, str]] = set()
     next_refit = t_start + train_s
+    # First instant at which anything CAN be admitted. Everything before it is
+    # warm-up: `selection` is empty, so every record is booked as rejected.leg.
+    first_tradeable = next_refit
+    n_refits = 0
 
     events = sorted(recs, key=lambda r: r["open_ts"])
     ei = 0
@@ -303,6 +315,7 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
         if r["open_ts"] >= next_refit:
             selection = select_legs(recs, r["open_ts"] - train_s, r["open_ts"])
             next_refit = r["open_ts"] + week
+            n_refits += 1
         if not selection or (r["model"], r["direction"]) not in selection:
             rejected_leg += 1
             continue
@@ -337,6 +350,7 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
     #
     # Drawdown is the number an operator would size on, so a floor is not a
     # conservative approximation here — it is the wrong direction.
+    tradeable_days = max(0.0, (t_end - first_tradeable) / 86400)
     curve = [capital] + [b for _, b in equity]
     peak = np.maximum.accumulate(curve)
     max_dd = float(((np.array(curve) - peak) / peak).min() * 100)
@@ -348,7 +362,17 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
         "leverage": leverage,
         "notional_per_trade_pct": round(fixed_usd * leverage / capital * 100, 2),
         "trades_taken": taken,
-        "trades_per_day": round(taken / n_days, 1),
+        # Over the whole window this divides by a span in which the strategy
+        # structurally cannot trade: nothing is admitted before the first refit,
+        # and with TRAIN_WEEKS=3 on a 24-day export that warm-up is 87 % of the
+        # sample. Reported over the tradeable span, and the raw span kept beside
+        # it so the two cannot be confused. Against the Cornix 500-slot cap the
+        # tradeable rate is the one that matters.
+        "trades_per_day": round(taken / max(1e-9, tradeable_days), 1),
+        "trades_per_day_full_window": round(taken / n_days, 1),
+        "tradeable_days": round(tradeable_days, 2),
+        "n_refits": n_refits,
+        "warmup_share_pct": round(100.0 * (1.0 - tradeable_days / max(1e-9, (t_end - t_start) / 86400)), 1),
         "rejected": {
             "leg": rejected_leg,
             "exposure_cap": rejected_cap,
@@ -386,9 +410,12 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
         # reader needs, and max_drawdown_pct above carries the exact extremum.
         "equity_curve": [
             [int(ts), round(bal, 2)]
-            for ts, bal in ([(t_start, capital)] + equity)[:: max(1, len(equity) // EQUITY_POINTS)]
+            for ts, bal in ([(t_start, capital)] + equity)[:: max(1, -(-len(equity) // EQUITY_POINTS))]
         ],
-        "worst_day": [days and min(days, key=lambda kv: kv[1])[0], round(min((v for _, v in days), default=0.0), 2)],
+        "worst_day": [
+            min(days, key=lambda kv: kv[1])[0] if days else None,
+            round(min((v for _, v in days), default=0.0), 2),
+        ],
         "best_day": [days and max(days, key=lambda kv: kv[1])[0], round(max((v for _, v in days), default=0.0), 2)],
         "losing_days": sum(1 for _, v in days if v < 0),
         "total_days": len(days),
@@ -397,7 +424,7 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Walk-forward portfolio backtest (T-2026-KYT-9050-105)")
-    ap.add_argument("--in", dest="infile", default="reports/t105_raw.npz")
+    ap.add_argument("--in", dest="infile", default="reports/leg_composition_raw.npz")
     ap.add_argument("--oi", default=None, help="optional OI feature npz; enables the short gate")
     ap.add_argument("--oi-threshold", type=float, default=-1.2, help="short gate: keep oi_chg_4h <= this")
     ap.add_argument("--capital", type=float, default=800.0)
@@ -413,7 +440,30 @@ def main() -> None:
 
     z = np.load(args.infile, allow_pickle=True)
     oi_feats = np.load(args.oi) if args.oi else None
-    print(f"Loaded {len(z['s_ts']):,} signals from {args.infile}")
+    src_meta = json.loads(str(z["meta"][0]))
+    print(f"Loaded {len(z['s_ts']):,} signals from {args.infile} (export since {src_meta.get('since')})")
+
+    # Refuse a defective export. This tool's previous conclusions were produced
+    # from an input whose signal timestamps were 3h out (T-2026-KYT-9050-107), and
+    # nothing in the output said which file it came from. The same gate the export
+    # applies is applied here to the input, because a simulator that silently
+    # accepts a bad export re-publishes the defect under a new name.
+    fit = lcr._timestamp_domain_fit(
+        c_sym=z["c_sym"],
+        c_ts=z["c_ts"],
+        c_high=z["c_high"],
+        c_low=z["c_low"],
+        s_sym=z["s_sym"],
+        s_ts=z["s_ts"],
+        s_entry=z["s_entry"],
+    )
+    print(f"Input timestamp-domain fit: {fit['rate']:.1%} ({fit['inside']:,}/{fit['checked']:,})")
+    if fit["rate"] < lcr.DOMAIN_FIT_MIN:
+        raise SystemExit(
+            f"Input export FAILS the timestamp-domain check ({fit['rate']:.1%} < "
+            f"{lcr.DOMAIN_FIT_MIN:.0%}) — it predates the T-104 correction. Re-export "
+            "before simulating; do not lower the threshold."
+        )
 
     gates: list[tuple[str, float | None]] = [("no_gate", None)]
     if oi_feats is not None:
@@ -447,6 +497,13 @@ def main() -> None:
         json.dump(
             {
                 "task": "T-2026-KYT-9050-105",
+                # Provenance. The one field a reader of this PR needs, and the one
+                # the previous artifact lacked: which export produced these numbers.
+                "input": os.path.basename(args.infile),
+                "input_since": src_meta.get("since"),
+                "input_domain_fit": round(fit["rate"], 4),
+                "capital": args.capital,
+                "leverage": args.leverage,
                 "geometry_variants": GEOMETRY_VARIANTS,
                 "ladder": LADDER,
                 "fee_pct": FEE_PCT,

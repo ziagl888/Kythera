@@ -151,12 +151,29 @@ conclusions invert.** At 800 USD capital, 1.6 USD size, 5x:
 
 | geometry | before | after |
 |---|--:|--:|
-| `symmetric_tight` (the old winner) | +13.54 % | **−1.19 %** |
-| `symmetric_wide` | +2.72 % | −1.14 % |
-| `t104` (L 4/5, S 3/2) | +4.85 % | **+0.63 %** |
-| `inverted` (falsification control) | +13.25 % | **−3.25 %** |
+| `symmetric_tight` (the old winner) | +13.54 % | **−1.04 %** |
+| `symmetric_wide` | +2.72 % | −1.11 % |
+| `t104` (L 4/5, S 3/2) | +4.85 % | **+0.70 %** |
+| `inverted` (falsification control) | +13.25 % | **−3.47 %** |
 
-Trades collapse from ~9,000 to ~800 once leg selection may no longer see the future.
+**What caused the reversal — corrected, because the first version of this entry got it wrong.**
+It said "trades collapse from ~9,000 to ~800 once leg selection may no longer see the future",
+attributing the reversal to the look-ahead fix. A 2×2 ablation run during review shows that is
+false. `symmetric_tight`, same settings:
+
+| | old code | new code |
+|---|--:|--:|
+| **old export** (55,852 signals, 06-13 → 08-02) | 9,605 / +12.81 % | 9,772 / **+13.49 %** |
+| **new export** (43,330 signals, 07-11 → 08-03) | 776 / −1.21 % | 783 / **−1.19 %** |
+
+The four code fixes move the headline by **+0.68 pp on the old export and +0.02 pp on the new
+one**. Isolating the look-ahead fix alone on the corrected export leaves `symmetric_tight`
+completely unchanged (783 → 783 trades, identical 30-leg selection) and moves `t104` by 2 %.
+
+So: **the reversal is the export, not the code.** The fixes are real and order-preserving; they
+are not what flipped the sign. Writing a fresh mis-attribution into a permanent record, in a PR
+whose entire subject is a mis-attributed finding, is the reason this correction is spelled out
+rather than quietly edited.
 
 So the previous headline — "tight geometry wins on both sides, which refutes T-104's
 direction asymmetry" — is withdrawn. `t104`'s own asymmetric geometry is the only variant that
@@ -177,7 +194,33 @@ No OI-gated run is included **on purpose**: the OI short-side filter it would ha
 itself a timestamp artifact (see the T-104 entry), so gating on it would launder a refuted
 signal into a new result.
 
-Tests 12 → 19, each defect pinned and mutation-verified.
+**"Walk-forward" is one refit, and the geometry ranking is withdrawn.** On the corrected export
+`TRAIN_WEEKS = 3` consumes most of the sample: the window runs 2026-07-10 → 08-06, the single
+refit fires at 07-31, and **90.9 % of records (39,380 of 43,319) sit in the un-tradeable
+warm-up** — which is why every cell shows ~42,000 `rejected.leg` against ~800 trades. The
+out-of-sample span is **5.15 days** with 6–7 daily P&L observations. `TRAIN_WEEKS` was sized for
+the 51-day export; the corrected one is 24 days.
+
+A four-way geometry ordering spanning −3.47 % to +0.70 % over five days has no statistical
+content, so the claim "t104's asymmetric geometry is the only variant that is not negative" is
+**withdrawn as a ranking**. What the run supports is the weaker and sufficient statement: **no
+configuration returns anything worth acting on over this window.** The report now emits
+`n_refits`, `tradeable_days` and `warmup_share_pct` so this cannot be read off silently again,
+and `trades_per_day` is computed over the tradeable span (155.3/d for `symmetric_tight`, not the
+30.1/d the full-window divisor produced — a 5× understatement of the number that has to be read
+against the Cornix 500-slot cap).
+
+The tool now also **refuses a defective input**: it runs the same timestamp-domain gate on the
+export it is handed and aborts below the threshold. Its `--in` default pointed at the *old*
+`t105_raw.npz` (domain fit 0.236), so running with defaults silently regenerated the withdrawn
++13.49 % with nothing in the output naming the source. The report header now carries `input`,
+`input_since` and `input_domain_fit`.
+
+Tests 12 → 22, each defect pinned and mutation-verified — including three guards that had to be
+rewritten because the first versions were tautological: the `exit_ts` guard (twice), the
+same-timestamp drawdown guard (the loser closed first, so `sorted()` was a no-op and the
+mutation stayed green), and the breakeven guard (candles straddled the entry on both sides, so
+the LONG/SHORT swap was invisible).
 
 ## [2026-08-05] Fleet-wide leg composition replay — and what the Cornix backtest actually measured (T-2026-KYT-9050-104)
 

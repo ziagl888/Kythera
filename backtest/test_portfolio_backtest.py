@@ -183,7 +183,7 @@ def test_fee_is_charged_once_per_round_trip():
 # accounted over.
 
 
-def _synthetic_export(entry=100.0, n_candles=20, sl_pct=None, tp_pct=None, hit_index=0):
+def _synthetic_export(entry=100.0, n_candles=20, sl_pct=None, tp_pct=None, hit_index=0, is_long=True):
     """Minimal in-memory npz stand-in: one LONG signal on one symbol.
 
     Exactly one of `sl_pct` / `tp_pct` is driven through `hit_index`, so a test can
@@ -195,10 +195,16 @@ def _synthetic_export(entry=100.0, n_candles=20, sl_pct=None, tp_pct=None, hit_i
     hi = np.full(n_candles, entry * 1.0005)
     lo = np.full(n_candles, entry * 0.9995)
     cl = np.full(n_candles, entry)
-    if sl_pct is not None:
-        lo[hit_index] = entry * (1 - sl_pct / 100.0) * 0.999
-    if tp_pct is not None:
-        hi[hit_index] = entry * (1 + tp_pct / 100.0) * 1.001
+    if is_long:
+        if sl_pct is not None:
+            lo[hit_index] = entry * (1 - sl_pct / 100.0) * 0.999
+        if tp_pct is not None:
+            hi[hit_index] = entry * (1 + tp_pct / 100.0) * 1.001
+    else:
+        if sl_pct is not None:
+            hi[hit_index] = entry * (1 + sl_pct / 100.0) * 1.001
+        if tp_pct is not None:
+            lo[hit_index] = entry * (1 - tp_pct / 100.0) * 0.999
     return {
         "meta": np.array([json.dumps({"horizon_h": 72, "tf": "5m", "since": "2026-07-11"})], dtype=object),
         "symbols": np.array(["XUSDT"], dtype=object),
@@ -210,7 +216,7 @@ def _synthetic_export(entry=100.0, n_candles=20, sl_pct=None, tp_pct=None, hit_i
         "c_close": cl,
         "s_sym": np.array([0], dtype=np.int32),
         "s_mod": np.array([0], dtype=np.int32),
-        "s_long": np.array([True]),
+        "s_long": np.array([is_long]),
         "s_ts": np.array([T0], dtype=np.int64),
         "s_entry": np.array([entry], dtype=np.float64),
     }
@@ -289,7 +295,11 @@ def test_drawdown_is_not_smoothed_away_by_same_timestamp_exits():
     recs = (
         train(model="A", n=30, pnl=1.0)
         + train(model="B", n=30, pnl=1.0)
-        + [rec(model="A", open_h=h, hold_h=1, pnl=-40.0), rec(model="B", open_h=h, hold_h=1, pnl=+35.0)]
+        # WINNER FIRST. With the loser inserted first, `equity` is already ascending
+        # by balance and `sorted()` is a no-op — the earlier version of this test was
+        # green under the very mutation it names. Winner-first makes the sort
+        # actually reorder, so reinstating it drops max_drawdown -3.86% -> -0.50%.
+        + [rec(model="B", open_h=h, hold_h=1, pnl=+35.0), rec(model="A", open_h=h, hold_h=1, pnl=-40.0)]
     )
     out = simulate(recs, capital=1000.0, fixed_usd=100.0, leverage=1.0)
     assert out["max_drawdown_pct"] < -1.0, (
@@ -311,3 +321,59 @@ def test_equity_curve_is_emitted():
     curve = out["equity_curve"]
     assert curve and curve[0][1] == pytest.approx(1000.0), "curve must start at initial capital"
     assert all(len(p) == 2 for p in curve)
+
+
+def test_breakeven_direction_is_not_interchangeable():
+    """The LONG/SHORT comparison in `_breakeven_step`, pinned so a swap goes red.
+
+    An earlier version of this coverage used candles straddling the entry on BOTH
+    sides, so `low <= entry` and `high >= entry` fired on the same candle and the
+    swap was invisible. Here the price only ever crosses the entry from one side.
+    """
+    import numpy as np
+
+    from tools.portfolio_backtest import _breakeven_step
+
+    n, entry = 20, 100.0
+    # LONG: stays ABOVE entry, dips back to it only on candle 5
+    high = np.full(n, 101.0)
+    low = np.full(n, 100.5)
+    low[5] = 99.5
+    assert _breakeven_step(high, low, entry, True, 0, None, n) == 5
+
+    # SHORT: stays BELOW entry, comes back up to it only on candle 7
+    high_s = np.full(n, 99.5)
+    low_s = np.full(n, 99.0)
+    high_s[7] = 100.5
+    assert _breakeven_step(high_s, low_s, entry, False, 0, None, n) == 7
+
+
+def test_a_short_breakeven_runner_also_closes_at_entry():
+    """The SHORT branch of `_breakeven_step` was unguarded — swapping the
+    LONG/SHORT comparison left all tests green, on a study whose whole subject is
+    direction asymmetry (`t104` vs `inverted`)."""
+    from tools.portfolio_backtest import precompute
+
+    z = _synthetic_export(tp_pct=3.0, hit_index=0, is_long=False)
+    recs = precompute(z, GEOMETRY_VARIANTS["symmetric_tight"], None, None)
+    assert recs and recs[0]["direction"] == "SHORT"
+    hold_s = recs[0]["exit_ts"] - recs[0]["open_ts"]
+    assert hold_s < 72 * 3600, "a SHORT breakeven stop-out is not a 72h hold"
+    assert hold_s <= 3 * 300
+
+
+def test_breakeven_runner_leaves_at_the_earlier_of_entry_and_the_second_rung():
+    """`i_tp2 is not None` used to short-circuit, so when the original stop fired
+    BETWEEN the rungs the PnL said breakeven while occupancy claimed the position
+    ran to TP2. 1,011 of 43,319 records on the committed export, mean 21.6h."""
+    import numpy as np
+
+    from tools.portfolio_backtest import _breakeven_step
+
+    n = 300
+    high = np.full(n, 100.5)
+    low = np.full(n, 99.5)
+    low[1] = 98.0  # back through entry on candle 1
+    high[200] = 104.5  # TP2 only much later
+    step = _breakeven_step(high, low, 100.0, True, 0, 200, n)
+    assert step == 1, f"must leave at the return to entry (1), not at TP2 (200); got {step}"
