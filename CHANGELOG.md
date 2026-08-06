@@ -1,3 +1,35 @@
+## [2026-08-06] FIF2 decision backtest: the vol gate carries, the single-TP exit costs (T-2026-KYT-9050-111)
+
+Operator proposal: replace FIF1 with a bot that mirrors fleet signals passing the T-110
+volatility gate and posts them with a single TP (100 % out at TP1). New
+`tools/fif2_single_tp_backtest.py` runs the go/no-go: {ungated, q80, q90 train-quantile
+vol gate} x {single-TP, T-105 ladder}, t104 geometry primary, chronological 70/30 split,
+fees included; ladder cells reuse `tools.portfolio_backtest.precompute` verbatim. The
+pre-registered bar: gated single-TP must be positive on TEST **and** beat its ladder twin
+per slot-hour.
+
+**Half the bar holds.** On test (t104): gated single-TP is genuinely positive — q80
++0.192 pp/trade (t=2.7, WR 51.3 %), q90 +0.220 (t=2.2), median hold collapses to ~0.7 h
+and average concurrency to ~48 of 500 slots, versus an ungated book that is negative on
+train and marginal on test. The gate also rescues the negative symmetric_tight geometry
+(-0.153 -> +0.197). The T-110 finding survives contact with money.
+
+**But the ladder twin wins every gated cell** — per trade (+0.314 vs +0.192 at q80) and
+per slot-hour (+0.091 vs +0.063; same ordering at q90 and under symmetric_tight). "100 %
+out at TP1" gives away the runner exactly on the high-vol trades the gate selects.
+Portfolio sanity run (t104 single-TP q80, 1000 EUR, 5 EUR, 5x, T-105 admission):
++3.51 %, maxDD -0.88 %, no binding constraint.
+
+**Verdict: do not build the bot as proposed; build it with the ladder exit.** The gate is
+the value; the single-TP exit destroys ~40 % of it. Caveats before any go-live, stated
+loudly: the test split is ~8 days / 2 ISO weeks; entries fill at signal price and a
+vol-gated bot is MORE exposed to fill slippage than the fleet average (bot 40 measured
+18/101 mirrors >1 % away within 15 min); domain fit 68 %. Rework posts under a NEW tag
+(FIF2) per hard rule 6; FIF1 replacement is an operator decision.
+
+Plus `backtest/test_fif2_single_tp.py` (5 tests: TP-first pays tp-fee, tie books the full
+stop, horizon mark exit, hold time = touching candle's close, slot-hour = sum/sum).
+
 ## [2026-08-06] TP1-speed study: the symbol's own volatility decides, BTC context does not (T-2026-KYT-9050-110)
 
 Operator question: can market context at signal time (BTC, BTCDOM, OI, funding, forced liqs)
