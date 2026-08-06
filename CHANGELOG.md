@@ -120,6 +120,93 @@ operator restarts the fleet (hard rule 1). `backtest/test_fleet_definition.py`'s
 `EXPECTED_WATCHDOG_VIEW` golden was left untouched: it has been stale since T-149 and was
 already red before this branch (missing bots 36-41, now 36-42). Refreshing it here would
 be a silent guard reset (hard rule 9).
+## [2026-08-06] Walk-forward portfolio simulator — four defects, and every headline reversed (T-2026-KYT-9050-105)
+
+The simulator answers the sizing question T-104 could not: per-trade expectancy cannot see a
+slot cap, so it needs an event-driven run with occupancy, margin and the venue's ceilings.
+It shipped with four defects, all found by the core review, all of which had to be fixed
+before any number here means anything.
+
+* **`exit_ts` falsy-zero.** `_exit_step` legitimately returns index 0 when TP or SL is touched
+  on the first closed candle; `if step_exit` read that as "never exited" and pinned the trade
+  to the full 72 h horizon. A five-minute round trip was booked as 72 h of slot occupancy —
+  and because tighter geometries produce more first-candle touches, the bias fell unevenly
+  across exactly the variants being compared.
+* **Walk-forward look-ahead.** `select_legs` filtered the trailing window on `open_ts` but
+  scored with the fully realised `pnl_pct`, so at each weekly refit the last 72 h was selected
+  on outcomes that had not happened. Membership is now on `exit_ts`.
+* **Max drawdown understated twice.** The curve began after the first close, so initial capital
+  was never a peak (a −50 % single trade reported 0.0); and `sorted(equity)` reordered
+  same-timestamp exits by balance, smoothing intra-instant dips away. Drawdown is the number an
+  operator sizes on, so a floor is the wrong direction, not a conservative one.
+* **A breakeven runner was pinned to the horizon.** When TP1 fires and the second rung does
+  not, PnL credited breakeven while occupancy said "held 72 h" — the two halves of one trade
+  disagreeing, inflating hold time for the modal winner under tight geometry.
+
+Plus: `binding_constraint` reported `exposure_cap` when nothing bound at all, and the equity
+curve — the task's first-named deliverable — was computed and discarded.
+
+**Re-run on the corrected T-104 export (the mixed-domain `open_time` fix, same PR series), the
+conclusions invert.** At 800 USD capital, 1.6 USD size, 5x:
+
+| geometry | before | after |
+|---|--:|--:|
+| `symmetric_tight` (the old winner) | +13.54 % | **−1.04 %** |
+| `symmetric_wide` | +2.72 % | −1.11 % |
+| `t104` (L 4/5, S 3/2) | +4.85 % | **+0.70 %** |
+| `inverted` (falsification control) | +13.25 % | **−3.47 %** |
+
+**What caused the reversal — corrected twice, because the first two versions of this table were
+both wrong.** The original entry said "trades collapse from ~9,000 to ~800 once leg selection may
+no longer see the future", attributing the reversal to the look-ahead fix. The first correction
+replaced that with a 2×2 whose cells came from an intermediate code state. Re-measured against
+the code actually committed here (`symmetric_tight`, 800 USD / 1.6 USD / 5x):
+
+| | code before the fixes | code as committed |
+|---|--:|--:|
+| **old export** (55,852 signals, since 06-13) | 9,352 / **+13.54 %** | 12,206 / **+14.71 %** |
+| **new export** (43,330 signals, since 07-11) | 747 / **−1.16 %** | 801 / **−1.04 %** |
+
+Swapping the export moves the headline **−14.70 pp** (before the fixes) or **−15.75 pp** (after).
+The four code fixes move it **+1.17 pp** on the old export and **+0.12 pp** on the new one.
+
+So: **the reversal is the export, not the code** — by two orders of magnitude, and the
+conclusion is unchanged from the first correction even though its numbers were not. The fixes
+are real and order-preserving; they are not what flipped the sign. (+13.54 % is exactly this
+PR's original headline, which is what pins the pre-fix baseline.)
+
+Writing a fresh mis-attribution into a permanent record, in a PR whose entire subject is a
+mis-attributed finding, is why this is spelled out rather than quietly edited — twice now.
+
+**"Walk-forward" is one refit, and the geometry ranking is withdrawn.** On the corrected export
+`TRAIN_WEEKS = 3` consumes most of the sample: the window runs 2026-07-10 → 08-06, the single
+refit fires at 07-31, and **90.9 % of RECORDS (39,380 of 43,319) sit in the un-tradeable
+warm-up** — 80.3 % of the elapsed TIME, which is what the report's `warmup_share_pct`
+field reports; the two are different denominators and both are worth knowing — which is why every cell shows ~42,000 `rejected.leg` against ~800 trades. The
+out-of-sample span is **5.16 days** with 6–7 daily P&L observations. `TRAIN_WEEKS` was sized for
+the 51-day export; the corrected one is 24 days.
+
+A four-way geometry ordering spanning −3.47 % to +0.70 % over five days has no statistical
+content, so the claim "t104's asymmetric geometry is the only variant that is not negative" is
+**withdrawn as a ranking**. What the run supports is the weaker and sufficient statement: **no
+configuration returns anything worth acting on over this window.** The report now emits
+`n_refits`, `tradeable_days` and `warmup_share_pct` so this cannot be read off silently again,
+and `trades_per_day` is computed over the tradeable span (155.3/d for `symmetric_tight`, not the
+30.8/d the full-window divisor produced — a 5× understatement of the number that has to be read
+against the Cornix 500-slot cap).
+
+The tool now also **refuses a defective input**: it runs the same timestamp-domain gate on the
+export it is handed and aborts below the threshold. Its `--in` default pointed at the *old*
+`t105_raw.npz` (domain fit 0.236), so running with defaults silently regenerated the withdrawn
++13.49 % with nothing in the output naming the source. The report header now carries `input`,
+`input_since` and `input_domain_fit`.
+
+Tests 12 → 22, each defect pinned and mutation-verified — including three guards that had to be
+rewritten because the first versions were tautological: the `exit_ts` guard (twice), the
+same-timestamp drawdown guard (the loser closed first, so `sorted()` was a no-op and the
+mutation stayed green), and the breakeven guard (candles straddled the entry on both sides, so
+the LONG/SHORT swap was invisible).
+
 ## [2026-08-05] Fleet-wide leg composition replay — and what the Cornix backtest actually measured (T-2026-KYT-9050-104)
 
 > **Corrected 2026-08-06 (T-2026-KYT-9050-107) — the headline finding did not survive.**
