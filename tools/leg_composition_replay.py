@@ -88,6 +88,35 @@ UTC = timezone.utc
 # flag: a pooled run is exactly the failure mode this constant exists to prevent.
 REGIME_CUTOFF_EPOCH = int(datetime(2026, 7, 28, 14, 0, tzinfo=UTC).timestamp())
 
+# Boundary from which the DEFAULT-now writers stamp `closed_ai_signals.open_time`
+# in UTC rather than session-local Bucharest — expressed in the column's OWN naive
+# clock, because that is what the comparison in the export runs against.
+#
+# The R3 pool flip merged 2026-08-01 but only takes effect per process at the fleet
+# restart, and restarts are staggered, so the transition is a window rather than an
+# instant. Measured 2026-08-06 by candle fit per hour: Bucharest through
+# 2026-08-02 ~17:00, mixed 17:00-20:00, clean UTC from 20:00 on. 20:00 is therefore
+# the first hour where UTC is unambiguously right; the ~200 rows inside the mixed
+# band are read as Bucharest, which is the pre-flip default and the conservative
+# choice for a study window that ends 2026-08-02.
+#
+# ROM1 is exempt in the query above — it was always explicit UTC, on both sides.
+#
+# Deliberately NAIVE (hence the noqa): it is compared against `open_time`, which is
+# `timestamp without time zone`. Attaching a tzinfo here would make Postgres compare
+# an aware value against a naive column and silently reintroduce the very
+# domain confusion this constant exists to resolve. DTZ001 is the R3 policy's
+# enforcement rule and it is right in general — this is the documented exception.
+R3_FLIP_NAIVE = datetime(2026, 8, 2, 20, 0)  # noqa: DTZ001
+
+# Minimum share of signals whose recorded entry must fall inside the candle covering
+# their claimed instant. Not 1.0: a limit entry can be posted at a level the market
+# only reaches later, and `entry` is the POSTED level rather than the fill, so a
+# healthy run still misses some. The defective all-UTC read scored 0.326 overall and
+# 0.117 on EPD3; the writer-aware read scores ~0.95 on the DEFAULT-now writers. 0.60
+# sits far above the broken regime and far below the healthy one.
+DOMAIN_FIT_MIN = 0.60
+
 # Grid extended downward on 2026-08-05: at the original floor of 3.0 nearly every
 # SHORT leg optimised on the smallest available SL, i.e. the run was reading its
 # own boundary rather than an optimum. A grid whose best cell sits on the edge
@@ -102,6 +131,49 @@ MIN_N = 40  # below this a model x direction cell is reported but not ranked
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPORT (the only half that touches the DB)
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _timestamp_domain_fit(
+    c_sym: np.ndarray,
+    c_ts: np.ndarray,
+    c_high: np.ndarray,
+    c_low: np.ndarray,
+    s_sym: np.ndarray,
+    s_ts: np.ndarray,
+    s_entry: np.ndarray,
+) -> dict:
+    """Share of signals whose entry falls inside the candle covering their instant.
+
+    This is the empirical test for "is the naive->UTC mapping right", and it is the
+    only check that would have caught the original defect: reading a Bucharest
+    column as UTC moves every signal 3h, which lands the entry outside the candle
+    almost everywhere. Shape-only assertions cannot see it, and neither can a green
+    replay — the numbers stay plausible, they are just about the wrong candles.
+
+    Cheap: one searchsorted over the (symbol, ts) ordered candle arrays.
+    """
+    if len(s_ts) == 0 or len(c_ts) == 0:
+        return {"checked": 0, "inside": 0, "rate": 0.0}
+    # candles are ordered by (symbol, ts); find each symbol's block once
+    starts = np.searchsorted(c_sym, np.arange(c_sym[-1] + 1), side="left")
+    ends = np.searchsorted(c_sym, np.arange(c_sym[-1] + 1), side="right")
+    checked = inside = 0
+    for sym in np.unique(s_sym):
+        if sym >= len(starts):
+            continue
+        a, b = starts[sym], ends[sym]
+        if b <= a:
+            continue
+        sel = s_sym == sym
+        idx = np.searchsorted(c_ts[a:b], s_ts[sel], side="right") - 1
+        ok = idx >= 0
+        if not ok.any():
+            continue
+        j = a + idx[ok]
+        ent = s_entry[sel][ok]
+        checked += int(ok.sum())
+        inside += int(((ent >= c_low[j]) & (ent <= c_high[j])).sum())
+    return {"checked": checked, "inside": inside, "rate": (inside / checked) if checked else 0.0}
 
 
 def cmd_export(args: argparse.Namespace) -> None:
@@ -124,13 +196,40 @@ def cmd_export(args: argparse.Namespace) -> None:
         with conn.cursor() as cur:
             cur.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
 
-            # ai_signals.timestamp is timestamptz; closed_ai_signals.open_time is a
-            # legacy naive column read as UTC (core.time ships R3_CUTOVER_UTC=None,
-            # i.e. a single domain over the whole history).
+            # `ai_signals.timestamp` is timestamptz and needs no correction.
+            # `closed_ai_signals.open_time` is naive and is NOT a single domain —
+            # the earlier version read it all as UTC and was wrong for ~84 % of the
+            # population. Measured 2026-08-06 against the 5m candle the recorded
+            # entry must fall inside (fit at 0h vs -3h):
+            #
+            #   ROM1      86.8 % / 8.0 %   -> already UTC
+            #   EPD3      11.7 % / 95.0 %  -> Bucharest
+            #   MIS1-72H  11.5 % / 59.6 %  -> Bucharest
+            #   BR1Hv2    10.9 % / 40.7 %  -> Bucharest
+            #
+            # Cause: `28_signal_orchestrator.insert_rom1_signal` is the ONLY writer
+            # that sets `open_time` explicitly (`utc_now_naive()`); the other 13 leave
+            # it to `DEFAULT now()`, which stamps the session-local Europe/Bucharest
+            # wall clock. The split is therefore by WRITER, not by time — which is
+            # why `core.time`'s single `R3_CUTOVER_UTC` model does not describe it,
+            # and why a blanket -3h would corrupt ROM1's ~8.5k rows the other way.
+            #
+            # The R3 pool flip adds a second, time-based dimension: once the fleet
+            # restarted, the DEFAULT-now writers stamp UTC too. That flip is a
+            # WINDOW, not an instant, because bot restarts are staggered — measured
+            # Bucharest through 2026-08-02 ~17:00, mixed to ~20:00, clean UTC after.
+            # `R3_FLIP_NAIVE` is that boundary in the column's own clock.
+            #
+            # `AT TIME ZONE 'Europe/Bucharest'` interprets the naive value AS
+            # Bucharest and yields a timestamptz — DST-correct, unlike a fixed -3h.
             cur.execute(
                 """
                 SELECT symbol, model, direction,
-                       extract(epoch FROM (open_time AT TIME ZONE 'UTC'))::bigint, entry::float8
+                       extract(epoch FROM CASE
+                         WHEN model LIKE 'ROM%%' THEN open_time AT TIME ZONE 'UTC'
+                         WHEN open_time >= %(flip)s THEN open_time AT TIME ZONE 'UTC'
+                         ELSE open_time AT TIME ZONE 'Europe/Bucharest'
+                       END)::bigint, entry::float8
                   FROM closed_ai_signals
                  WHERE open_time >= %(s)s AND open_time < %(u)s
                    AND entry > 0 AND direction IN ('LONG','SHORT')
@@ -141,7 +240,13 @@ def cmd_export(args: argparse.Namespace) -> None:
                  WHERE timestamp >= %(stz)s AND timestamp < %(utz)s
                    AND entry1 > 0 AND direction IN ('LONG','SHORT')
                 """,
-                {"s": since.replace(tzinfo=None), "u": until.replace(tzinfo=None), "stz": since, "utz": until},
+                {
+                    "s": since.replace(tzinfo=None),
+                    "u": until.replace(tzinfo=None),
+                    "stz": since,
+                    "utz": until,
+                    "flip": R3_FLIP_NAIVE,
+                },
             )
             sig_rows = cur.fetchall()
             if not sig_rows:
@@ -193,6 +298,23 @@ def cmd_export(args: argparse.Namespace) -> None:
     del chunks
     models = sorted({r[1] for r in sig_rows})
     mod_index = {m: i for i, m in enumerate(models)}
+
+    s_sym_arr = np.fromiter((sym_index[r[0]] for r in sig_rows), dtype=np.int32, count=len(sig_rows))
+    s_ts_arr = np.fromiter((r[3] for r in sig_rows), dtype=np.int64, count=len(sig_rows))
+    s_entry_arr = np.fromiter((r[4] for r in sig_rows), dtype=np.float64, count=len(sig_rows))
+    fit = _timestamp_domain_fit(c_sym, c_ts, c_high, c_low, s_sym_arr, s_ts_arr, s_entry_arr)
+    print(
+        f"Timestamp-domain check: {fit['inside']:,}/{fit['checked']:,} entries fall inside the "
+        f"{CANDLE_TF} candle at their claimed instant ({fit['rate']:.1%})."
+    )
+    if fit["rate"] < DOMAIN_FIT_MIN:
+        raise SystemExit(
+            f"Timestamp-domain check FAILED: {fit['rate']:.1%} < {DOMAIN_FIT_MIN:.0%}.\n"
+            "The recorded entry should sit inside the candle covering the signal instant. A "
+            "collapsed rate means the naive->UTC mapping is wrong again (see R3_FLIP_NAIVE and "
+            "the ROM1 exemption). Do NOT lower this threshold to get a green run — that is the "
+            "defect this gate exists to catch."
+        )
 
     payload = {
         "symbols": np.array(symbols, dtype=object),

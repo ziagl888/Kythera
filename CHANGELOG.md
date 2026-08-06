@@ -122,12 +122,45 @@ already red before this branch (missing bots 36-41, now 36-42). Refreshing it he
 be a silent guard reset (hard rule 9).
 ## [2026-08-05] Fleet-wide leg composition replay — and what the Cornix backtest actually measured (T-2026-KYT-9050-104)
 
+> **Corrected 2026-08-06 (T-2026-KYT-9050-107) — the headline finding did not survive.**
+> This study read `closed_ai_signals.open_time` as UTC. That column is naive and
+> **mixed-domain**: `28_signal_orchestrator` (ROM1) writes explicit UTC, the other 13 writers
+> leave it to `DEFAULT now()`, which stamped session-local Europe/Bucharest until the R3 pool
+> flip took effect at the staggered fleet restart (measured: Bucharest through 2026-08-02
+> ~17:00, mixed to ~20:00, UTC after). So ~84 % of signals were placed 3 h late.
+>
+> **Consequence: the OI short-side filter is retracted.** Re-run on the corrected export, same
+> geometry and quintiles, `oi_chg_4h | SHORT` bottom quintile goes **+0.739 → +0.324**
+> (pre) and **+0.552 → −0.065** (post), while the *top* quintile becomes the best bucket
+> (+0.340 / +0.230) and the AUCs move from 0.463/0.458 to 0.501/0.518 — a coin flip. The
+> apparent edge was the defect: at 3 h late the "4 h OI change before the signal" actually
+> spans [t−1h, t+3h], straddling the signal and carrying post-signal open interest. An OI drop
+> measured partly *after* entry can simply be the position closing.
+>
+> §4's direction claim survives qualitatively but not in magnitude: at TP3/SL2 the corrected
+> book is **66 % LONG / 34 % SHORT**, not 76 % SHORT. §6 (short legs are regime-unstable) is
+> the section the correction leaves standing — 8 of 9 SHORT legs still flip negative across the
+> cutoff.
+>
+> **This also removes ODS1's second evidence pillar** (bot 42, T-2026-KYT-9050-106), which had
+> already withdrawn its reliance on this result for other reasons. T-096 is unaffected —
+> `tools/oi_event_study.py` builds its events from `oi_5m` and never touches the signal tables.
+>
+> The export now carries a writer-aware conversion and a **hard gate**: it fails when the
+> recorded entry stops falling inside the candle at its claimed instant. That check reads
+> 68.2 % on the corrected data and 32.6 % on the defective read, so the old behaviour could not
+> ship through it. Sections 1, 2, 3, 5 and "Data quality" are marked in the doc as ad-hoc
+> session observations — no committed code or artifact produces them, which the first version
+> did not state. The numbers below in this entry are from the ORIGINAL run and are superseded
+> by the doc.
+
 A Cornix backtest of the AIM and Drawdown channels over 01.-05.08. spanned +109.6 % to -50.3 %
 across four position sizes. The rows reconcile against their stated capital; comparing them to
 each other does not. Cornix sizes off the **available** balance, so mean position size saturates
 (1.07 % at a 5 % setting, 1.24 % at 10 %) while the effective sample collapses from 299 to 131.
 Only the fixed-amount run allocates uniformly. Above ~1 % the percentage setting buys no
-exposure, only concentration.
+exposure, only concentration. **(Ad-hoc session measurement, not reproducible from the committed
+tools — see the provenance note in the doc.)**
 
 New: `tools/leg_composition_replay.py` and `tools/oi_gate_eval.py`, both split into a read-only
 DB `export` and a DB-free `replay`/`gate` half, so the expensive part runs off the live VPS

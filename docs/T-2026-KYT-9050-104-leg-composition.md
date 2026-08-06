@@ -1,8 +1,24 @@
 # Leg composition for a Cornix-traded channel — candle replay of the whole fleet
 
-**T-2026-KYT-9050-104** · 2026-08-05 · read-only study, no live change ·
-tools: `tools/leg_composition_replay.py`, `tools/oi_gate_eval.py` ·
-data: 42,277 signals / 3.86M 5m candles, 2026-07-11 → 2026-08-02, 72h horizon
+**T-2026-KYT-9050-104** · 2026-08-05, **corrected 2026-08-06** · read-only study,
+no live change · tools: `tools/leg_composition_replay.py`, `tools/oi_gate_eval.py` ·
+data: 43,330 signals / 3.96M 5m candles, 2026-07-11 → 2026-08-02, 72h horizon
+
+> **Correction notice (T-2026-KYT-9050-107).** The first version of this study read
+> `closed_ai_signals.open_time` as UTC. That column is naive and mixed-domain, so
+> ~84 % of signals were stamped 3 h late. **Section 7's headline finding did not
+> survive the re-run and is retracted there in full.** Sections 4 and 6 were
+> recomputed on the corrected export and their numbers have moved. Sections 1, 2,
+> 3, 5 and "Data quality" were never produced by the committed tools at all — see
+> the provenance note below.
+>
+> **Provenance, which the first version did not state.** Only sections 4, 6 and 7
+> come from `tools/leg_composition_replay.py` + `tools/oi_gate_eval.py` and the
+> committed `reports/*.json`. Sections **1, 2, 3, 5**, "Data quality" and
+> "Retractions" come from an ad-hoc session against the live book on 2026-08-05:
+> no code in this PR computes them and no committed artifact contains them. They
+> are recorded observations, not reproducible results, and must not be quoted as
+> if the reports backed them.
 
 **Origin (Michi, 2026-08-05):** a Cornix backtest of the AIM and Drawdown (Bot 40)
 channels over 01.–05.08. at four position sizes produced results spanning +109.6 %
@@ -12,9 +28,17 @@ composition of a traded channel.
 ## Verdict in one line
 
 The Cornix numbers are internally consistent but not comparable across sizes, the
-window was not representative, and **nothing in leg selection, exit rule or SL
-geometry survived both regime cohorts except one thing: an OI filter on the short
-side.**
+window was not representative, and **after the timestamp correction, nothing in
+leg selection, exit rule or SL geometry survives both regime cohorts.** The OI
+short-side filter that the first version reported as the one survivor was an
+artifact of the defect (§7).
+
+The earlier phrasing — "nothing survived … except one thing" — was also wrong on
+its own terms, independently of the timestamp bug: "survives" was never defined,
+and at the study's own TP3/SL2 geometry **18 legs are sign-stable positive in both
+cohorts** (5 under the n ≥ 40 filter §4 applies), including EPD3-SHORT on
+n = 6,864/2,352. The claim should have been the narrower one it actually
+supported: no *leg-selection rule* generalised across the cohorts.
 
 ---
 
@@ -65,18 +89,30 @@ the split, and `backtest/test_leg_composition_replay.py` pins it.
 
 Same data, same period, two geometries:
 
-| geometry | book of positive-expectancy legs |
-|---|---|
-| TP 4 % / SL 5 % | **95 % LONG** / 5 % SHORT |
-| TP 3 % / SL 2 % | 24 % LONG / **76 % SHORT** |
+| geometry | book of positive-expectancy legs | before correction |
+|---|---|---|
+| TP 4 % / SL 5 % | **95 % LONG** / 5 % SHORT | 95 % / 5 % (unchanged) |
+| TP 3 % / SL 2 % | **66 % LONG** / 34 % SHORT | 24 % / **76 %** |
 
-AIM2-SHORT moves +0.062 → **+0.531**, TD_1H-LONG +1.127 → −0.627. Mechanically
-consistent with down-moves being faster and sharper: shorts need a tight target
-*and* a tight stop, longs need room. Break-even win rate at TP3/SL2 is 40 %.
+The qualitative claim survives — geometry moves the direction balance of the book,
+and it moves it a long way. The **magnitude does not**: at TP3/SL2 the corrected
+run is 66/34 LONG-majority, where the defective one read 76 % SHORT. So "tight
+geometry makes the book short" is retracted; what remains is "tight geometry makes
+the book materially less long" (95 % → 66 %).
 
-The original grid floor of 3.0 was itself a defect — nearly every short leg
-optimised on the smallest available SL, i.e. the run was reading its own boundary.
-The grid now starts at 1.5.
+Break-even win rate at TP3/SL2 is 41.8 % including the 0.09 pp round-trip fee (the
+40 % previously stated is the fee-free figure).
+
+Two caveats on this section, both understated in the first version:
+
+* **Fee asymmetry.** `leg_composition_replay.py` subtracts `FEE_PCT = 0.09` and
+  `oi_gate_eval.py` does not, yet both were reported as "pp" side by side. §4/§6
+  are net, the old §7 was gross.
+* **The grid still reads its own edge.** Raising the floor from 3.0 to 1.5 moved
+  the boundary rather than removing it: **64 of 72** ranked cells (n ≥ 40) still
+  optimise on a grid edge, mostly at the TP ceiling 8.0 or the new SL floor 1.5.
+  Per-leg optimal geometry is therefore *not* identified by this run. Only the
+  fixed-geometry comparison in the table above is supported.
 
 ## 5. SL distance is not a universal lever
 
@@ -92,48 +128,83 @@ trades that ran far enough for the stop to be pulled up behind them.
 
 ## 6. Short legs are regime-unstable
 
-The same legs, two adjacent windows, five-figure samples:
+The same legs, two adjacent windows, five-figure samples. **SHORT legs only, at
+TP4/SL5, with no minimum-n filter** — §4 applies n ≥ 40 and this tally does not,
+which the first version failed to state:
 
 | | signals in positive legs | in negative legs |
 |---|--:|--:|
-| 11.07.–28.07. | **14,806** | 1,438 |
-| 28.07.–02.08. | 309 | **4,220** |
+| 11.07.–28.07. | **14,953** | 1,377 |
+| 28.07.–02.08. | 462 | **4,463** |
 
-AIM2-SHORT +1.222 → +0.062, BR1Hv2-SHORT +0.451 → −1.159, EPD3-SHORT +0.108 →
-−0.374. An expectancy ranking would therefore recommend a different roster every
-few weeks. **Direction balance has to be a channel-level constraint
-(`EXPOSURE_CAP`), never an emergent property of a ranking.**
+Per leg, pre → post at TP4/SL5 (n ≥ 40 in both cohorts):
 
-## 7. The one regime-stable finding: OI as a short-side filter
+| leg | n pre/post | pre | post |
+|---|--:|--:|--:|
+| AIM2 SHORT | 1,289 / 251 | +1.285 | **+0.513** |
+| MAX1 SHORT | 251 / 80 | +0.722 | −0.505 |
+| SRA2 SHORT | 372 / 85 | +0.841 | −0.946 |
+| BR1Hv2 SHORT | 1,079 / 253 | +0.403 | −1.155 |
+| BR2H SHORT | 651 / 101 | +0.310 | −1.200 |
+| ROM1 SHORT | 2,661 / 757 | +0.255 | −0.537 |
+| EPD3 SHORT | 6,916 / 2,499 | +0.052 | −0.430 |
 
-As a global ranker OI carries nothing — **T-094 replicates**, no AUC above 0.56:
+**This is the section the correction left standing.** Eight of nine SHORT legs
+with usable samples flip negative across the cutoff, and only AIM2 stays positive.
+An expectancy ranking would therefore recommend a different roster every few weeks.
+**Direction balance has to be a channel-level constraint (`EXPOSURE_CAP`), never an
+emergent property of a ranking.**
 
-| feature | LONG post/pre | SHORT post/pre |
-|---|--:|--:|
-| `oi_chg_4h` | 0.555 / 0.552 | 0.458 / 0.463 |
-| `oi_chg_24h` | 0.519 / 0.539 | 0.516 / 0.496 |
-| `oi_pct_30d` | 0.510 / 0.539 | 0.518 / 0.504 |
+One caveat the first version did not carry: these `n` are signal counts, not
+independent observations. ROM1 is a re-forwarder, so its ~2.7k rows mirror events
+already counted under the originating leg. Read the sample sizes as volume, not as
+statistical power.
 
-AUC is the wrong statistic here: the effect sits in the tail, not in the ranking.
-Bottom quintile of `oi_chg_4h` (open interest down ≥ ~1.2 % over 4h), TP3/SL2:
+## 7. The OI short-side filter — RETRACTED, it was a timestamp artifact
 
-| cohort | n | win rate | exp pp | other four quintiles |
-|---|--:|--:|--:|---|
-| pre | 3,158 | **55.0 %** | **+0.739** | +0.21 … +0.33 |
-| post | 901 | **51.4 %** | **+0.552** | −0.12 … +0.04 |
+**This section previously reported the study's one regime-stable finding. It does
+not exist.** It was produced by reading `closed_ai_signals.open_time` — a naive,
+mixed-domain column — as UTC, which stamped ~84 % of the population 3 h late. The
+`oi_chg_4h` window then spanned `[t−1h, t+3h]` instead of `[t−4h, t]`: it
+straddled the signal and carried three hours of *post-signal* open interest. An OI
+drop measured partly after entry can simply be the position closing. The apparent
+edge was that look-ahead.
 
-Longs show the mirror (top quintile +0.284 / +0.168 vs bottom −0.324 / −0.507):
-long with rising OI is new money behind the move, short with falling OI is a
-short-covering rally with none.
+Re-run 2026-08-06 on the corrected export (T-2026-KYT-9050-107), same geometry
+(TP3/SL2), same quintile construction, `oi_chg_4h | SHORT`:
 
-This is the only result in the study that survives both cohorts, and it
-independently reproduces **T-096's DIVERGENCE-SHORT** on a different population —
-T-096 generated its own events, this filters the fleet's existing shorts.
+| cohort | quintile | before (3 h late) | after (corrected) |
+|---|---|--:|--:|
+| pre | q1 (most OI drain) | **+0.739** | **+0.324** |
+| pre | q5 (most OI build) | +0.243 | **+0.340** |
+| post | q1 | **+0.552** | **−0.065** |
+| post | q5 | +0.040 | **+0.230** |
+| pre / post | AUC | 0.463 / 0.458 | 0.501 / 0.518 |
 
-Against it: the quintile was chosen after seeing it. What offsets that is the
-two-cohort replication plus agreement with T-096's pre-registered hypothesis — more
-than a post-hoc pick, less than an out-of-sample test. The gate also discards 80 %
-of short volume.
+Read the two right-hand columns as a whole and the finding inverts. Pre-cutoff,
+the bottom quintile no longer beats the top (+0.324 against +0.340). Post-cutoff
+the bottom quintile is **negative** and the best bucket is now the *opposite* end.
+The AUCs move from 0.458/0.463 — below 0.5, i.e. weakly informative in the
+inverted direction — to 0.501/0.518, which is a coin flip.
+
+So there is no bottom-quintile short edge, no mirror in the longs to interpret,
+and **nothing in this study reproduces T-096**. The reproduction claim is
+withdrawn in full: it was never independent in time either (T-096 ran
+2026-06-12 → 08-04 and *contains* this window, 07-11 → 08-02), but that is now
+moot, because after correction there is no result to compare.
+
+What survives from this section is one methodological point, and it is the
+expensive kind: **a study that reads a naive timestamp column must prove which
+domain it is in.** `tools/leg_composition_replay.py` now carries a writer-aware
+conversion (ROM1 explicit-UTC vs the 13 `DEFAULT now()` writers on Bucharest, plus
+the R3 flip window) and a hard gate that fails the export when the recorded entry
+stops falling inside the candle at its claimed instant. That check moved from
+32.6 % to 68.2 % on this data; the defective read would not pass it.
+
+**Consequence for ODS1 (bot 42, T-2026-KYT-9050-106):** its second evidence pillar
+is gone, not merely weakened. ODS1 now rests on T-096 alone — which is unaffected,
+because `tools/oi_event_study.py` generates its events from `oi_5m` directly and
+never touches the signal tables.
 
 ## Data quality (measured, not assumed)
 
