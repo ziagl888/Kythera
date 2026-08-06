@@ -182,10 +182,15 @@ Findings over 42,277 signals / 3.86M 5m candles (docs/T-2026-KYT-9050-104-leg-co
 * **Short legs are regime-unstable** — the same legs carry 14,806 signals in positive legs over
   11.-28.07. and 4,220 in negative ones over 28.07.-02.08. Direction balance therefore has to be
   a channel-level constraint, never an emergent property of an expectancy ranking.
-* **OI as a global ranker carries nothing** (no AUC above 0.56, T-094 replicated), but the bottom
-  quintile of the 4h OI change on the SHORT side is the one result that survives both cohorts:
-  win rate 55.0 % / 51.4 %, +0.739 / +0.552 pp against +0.21..+0.33 and -0.12..+0.04 in the rest.
-  That independently reproduces T-096's DIVERGENCE-SHORT on a different population.
+* ~~**OI as a short-side filter.**~~ **RETRACTED 2026-08-06 — struck, not superseded.** This
+  bullet claimed the bottom quintile of the 4h OI change was "the one result that survives both
+  cohorts" (+0.739 / +0.552 pp) and that it "independently reproduces T-096's DIVERGENCE-SHORT".
+  Both the result and the reproduction claim are withdrawn: on the corrected export the bottom
+  quintile reads **+0.324 / −0.065**, the *top* quintile is the better bucket (+0.340 / +0.230),
+  and the twelve AUCs span 0.498–0.535 — so "no AUC above 0.56" is also stale, and the effect is
+  a coin flip. The apparent edge was the timestamp defect described in the notice above.
+  It is struck here rather than left under that notice on purpose: the notice disclaims
+  *numbers*, and what stood here was a *conclusion*.
 
 Data quality, measured rather than assumed: `oi_5m` is not a 5-minute table — median cadence was
 5.0 min until 06.07. and 10.0 min from 13.07. onward, so T-2026-KYT-9050-097 now has a date.

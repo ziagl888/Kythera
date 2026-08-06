@@ -6,7 +6,7 @@ data: 43,330 signals / 3.96M 5m candles, 2026-07-11 → 2026-08-02, 72h horizon
 
 > **Correction notice (T-2026-KYT-9050-107).** The first version of this study read
 > `closed_ai_signals.open_time` as UTC. That column is naive and mixed-domain, so
-> ~84 % of signals were stamped 3 h late. **Section 7's headline finding did not
+> ~77 % of signals were stamped 3 h late (33,145 of 43,330 exported rows: the non-ROM pre-flip closed half). **Section 7's headline finding did not
 > survive the re-run and is retracted there in full.** Sections 4 and 6 were
 > recomputed on the corrected export and their numbers have moved. Sections 1, 2,
 > 3, 5 and "Data quality" were never produced by the committed tools at all — see
@@ -34,11 +34,21 @@ short-side filter that the first version reported as the one survivor was an
 artifact of the defect (§7).
 
 The earlier phrasing — "nothing survived … except one thing" — was also wrong on
-its own terms, independently of the timestamp bug: "survives" was never defined,
-and at the study's own TP3/SL2 geometry **18 legs are sign-stable positive in both
-cohorts** (5 under the n ≥ 40 filter §4 applies), including EPD3-SHORT on
-n = 6,864/2,352. The claim should have been the narrower one it actually
-supported: no *leg-selection rule* generalised across the cohorts.
+its own terms, independently of the timestamp bug: "survives" was never defined.
+At the study's own TP3/SL2 geometry, computed on the **corrected** report,
+**11 legs are sign-stable positive in both cohorts**, and **2** of them clear the
+n ≥ 40 filter §4 applies: `AIM2|LONG` (n = 907/269, +0.171/+0.171) and
+`AIM2|SHORT` (n = 1,289/251, +0.998/+0.722). The claim should have been the
+narrower one it actually supported: no *leg-selection rule* generalised across the
+cohorts.
+
+> An earlier draft of this very paragraph cited "18 legs, 5 under n ≥ 40,
+> including EPD3-SHORT on n = 6,864/2,352". Those were the **pre-correction**
+> figures, carried over unrecomputed — the same defect this document exists to
+> fix, in the sentence doing the fixing. On the corrected data EPD3-SHORT is
+> **negative in both cohorts** at TP3/SL2 (−0.070 / −0.120 on n = 6,916/2,499), so
+> it was not merely a stale number but an inverted example, about the fleet's
+> largest leg. Caught by the core review, not by this study.
 
 ---
 
@@ -109,7 +119,7 @@ Two caveats on this section, both understated in the first version:
   `oi_gate_eval.py` does not, yet both were reported as "pp" side by side. §4/§6
   are net, the old §7 was gross.
 * **The grid still reads its own edge.** Raising the floor from 3.0 to 1.5 moved
-  the boundary rather than removing it: **64 of 72** ranked cells (n ≥ 40) still
+  the boundary rather than removing it: **64 of 73** ranked cells (n ≥ 40) still
   optimise on a grid edge, mostly at the TP ceiling 8.0 or the new SL floor 1.5.
   Per-leg optimal geometry is therefore *not* identified by this run. Only the
   fixed-geometry comparison in the table above is supported.
@@ -146,11 +156,16 @@ Per leg, pre → post at TP4/SL5 (n ≥ 40 in both cohorts):
 | SRA2 SHORT | 372 / 85 | +0.841 | −0.946 |
 | BR1Hv2 SHORT | 1,079 / 253 | +0.403 | −1.155 |
 | BR2H SHORT | 651 / 101 | +0.310 | −1.200 |
+| FIF1 SHORT | 119 / 51 | +0.292 | −1.029 |
 | ROM1 SHORT | 2,661 / 757 | +0.255 | −0.537 |
 | EPD3 SHORT | 6,916 / 2,499 | +0.052 | −0.430 |
+| TSM1 SHORT | 1,128 / 483 | **−0.130** | −0.513 |
 
-**This is the section the correction left standing.** Eight of nine SHORT legs
-with usable samples flip negative across the cutoff, and only AIM2 stays positive.
+**This is the section the correction left standing.** All nine SHORT legs meeting
+the n ≥ 40 filter are listed (an earlier draft silently dropped FIF1 and TSM1 —
+TSM1 being the one that complicates the story). Precisely: **seven of nine flip
+from positive to negative** across the cutoff, TSM1 was already negative before it,
+and eight of nine end up negative. Only AIM2 stays positive.
 An expectancy ranking would therefore recommend a different roster every few weeks.
 **Direction balance has to be a channel-level constraint (`EXPOSURE_CAP`), never an
 emergent property of a ranking.**
@@ -164,7 +179,7 @@ statistical power.
 
 **This section previously reported the study's one regime-stable finding. It does
 not exist.** It was produced by reading `closed_ai_signals.open_time` — a naive,
-mixed-domain column — as UTC, which stamped ~84 % of the population 3 h late. The
+mixed-domain column — as UTC, which stamped ~77 % of the population 3 h late. The
 `oi_chg_4h` window then spanned `[t−1h, t+3h]` instead of `[t−4h, t]`: it
 straddled the signal and carried three hours of *post-signal* open interest. An OI
 drop measured partly after entry can simply be the position closing. The apparent

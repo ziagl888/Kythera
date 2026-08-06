@@ -17,6 +17,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import datetime  # noqa: E402
+
+import tools.leg_composition_replay as lcr  # noqa: E402
 from tools.leg_composition_replay import (  # noqa: E402
     REGIME_CUTOFF_EPOCH,
     SL_GRID,
@@ -47,7 +50,9 @@ def test_long_tp_first_touch_uses_the_wick():
 
 def test_short_direction_is_mirrored():
     """For a SHORT the favourable excursion is measured off the low."""
-    high, low, close = candles((101.0, 95.0, 96.0),)
+    high, low, close = candles(
+        (101.0, 95.0, 96.0),
+    )
     i_tp, i_sl, mark, mfe, mae = replay_signal(high, low, close, entry=100.0, is_long=False)
     assert i_tp["4.0"] == 0
     assert mfe == pytest.approx(5.0)
@@ -166,3 +171,108 @@ def test_regime_cutoff_is_the_documented_instant():
     from datetime import datetime, timezone
 
     assert REGIME_CUTOFF_EPOCH == int(datetime(2026, 7, 28, 14, 0, tzinfo=timezone.utc).timestamp())
+
+
+# ── the timestamp-domain gate (T-2026-KYT-9050-107) ──────────────────────────
+# This guard exists because the study's headline finding turned out to be a
+# timestamp artifact that no shape assertion and no green replay could see: the
+# numbers stayed plausible, they were simply about the wrong candles. Shipping the
+# guard untested would have repeated the mistake one level up.
+
+
+def _one_symbol(entry=100.0, n=12, step=300, t0=1_752_000_000):
+    """One symbol, flat candles bracketing `entry`, one signal on candle 3."""
+    c_ts = np.array([t0 + i * step for i in range(n)], dtype=np.int64)
+    c_sym = np.zeros(n, dtype=np.int32)
+    c_high = np.full(n, entry * 1.01)
+    c_low = np.full(n, entry * 0.99)
+    return c_sym, c_ts, c_high, c_low
+
+
+def test_domain_fit_is_perfect_when_the_signal_instant_is_right():
+    c_sym, c_ts, c_high, c_low = _one_symbol()
+    s_sym = np.zeros(3, dtype=np.int32)
+    s_ts = c_ts[[3, 5, 7]]
+    s_entry = np.full(3, 100.0)
+    fit = lcr._timestamp_domain_fit(
+        c_sym=c_sym, c_ts=c_ts, c_high=c_high, c_low=c_low, s_sym=s_sym, s_ts=s_ts, s_entry=s_entry
+    )
+    assert fit["checked"] == 3
+    assert fit["rate"] == pytest.approx(1.0)
+
+
+def test_domain_fit_collapses_when_the_signals_are_shifted_by_three_hours():
+    """The defect, reproduced: a Bucharest column read as UTC moves every signal
+    +3h onto candles whose range no longer contains the recorded entry."""
+    c_sym, c_ts, c_high, c_low = _one_symbol()
+    # entries that only match their OWN candle: ramp the band per candle
+    c_high = np.array([100.0 + i for i in range(len(c_ts))]) * 1.001
+    c_low = np.array([100.0 + i for i in range(len(c_ts))]) * 0.999
+    s_sym = np.zeros(3, dtype=np.int32)
+    idx = [3, 5, 7]
+    s_entry = np.array([100.0 + i for i in idx], dtype=np.float64)
+
+    right = lcr._timestamp_domain_fit(
+        c_sym=c_sym, c_ts=c_ts, c_high=c_high, c_low=c_low, s_sym=s_sym, s_ts=c_ts[idx], s_entry=s_entry
+    )
+    assert right["rate"] == pytest.approx(1.0)
+
+    shifted = lcr._timestamp_domain_fit(
+        c_sym=c_sym,
+        c_ts=c_ts,
+        c_high=c_high,
+        c_low=c_low,
+        s_sym=s_sym,
+        s_ts=c_ts[idx] + 3 * 3600,
+        s_entry=s_entry,
+    )
+    assert shifted["rate"] < 0.5, "a 3h shift must be visible to the gate"
+    assert shifted["rate"] < lcr.DOMAIN_FIT_MIN, "and it must trip the export threshold"
+
+
+def test_domain_fit_does_not_credit_a_signal_before_any_candle():
+    """searchsorted returns -1 there; crediting it would inflate the rate."""
+    c_sym, c_ts, c_high, c_low = _one_symbol()
+    s_sym = np.zeros(1, dtype=np.int32)
+    fit = lcr._timestamp_domain_fit(
+        c_sym=c_sym,
+        c_ts=c_ts,
+        c_high=c_high,
+        c_low=c_low,
+        s_sym=s_sym,
+        s_ts=np.array([c_ts[0] - 60], dtype=np.int64),
+        s_entry=np.array([100.0]),
+    )
+    assert fit["checked"] == 0
+    assert fit["rate"] == 0.0
+
+
+def test_swapping_high_and_low_raises_instead_of_blaming_the_timestamp_mapping():
+    """The call-site mutation that a unit test of this function cannot otherwise
+    see: `c_high`/`c_low` are adjacent same-dtype arrays, so swapping them is a
+    one-character copy-paste. Swapped, the rate collapses and the export aborts
+    telling the operator the timestamp mapping is broken when the real fault is an
+    argument order. The signature is keyword-only so the swap cannot be written
+    positionally at all, and the guard catches it if it is written by name."""
+    c_sym, c_ts, c_high, c_low = _one_symbol()
+    s_sym = np.zeros(3, dtype=np.int32)
+    with pytest.raises(ValueError, match="swapped"):
+        lcr._timestamp_domain_fit(
+            c_sym=c_sym,
+            c_ts=c_ts,
+            c_high=c_low,
+            c_low=c_high,
+            s_sym=s_sym,
+            s_ts=c_ts[[3, 5, 7]],
+            s_entry=np.full(3, 100.0),
+        )
+    with pytest.raises(TypeError):
+        lcr._timestamp_domain_fit(c_sym, c_ts, c_high, c_low, s_sym, c_ts[[3]], np.full(1, 100.0))
+
+
+def test_r3_flip_boundary_is_the_measured_instant_and_is_naive():
+    """Pinned like REGIME_CUTOFF_EPOCH: measured per hour on 2026-08-02, not
+    assumed. Naive on purpose — it is compared against a naive column."""
+    assert lcr.R3_FLIP_NAIVE.tzinfo is None
+    assert lcr.R3_FLIP_NAIVE == datetime(2026, 8, 2, 20, 0)
+    assert 0.0 < lcr.DOMAIN_FIT_MIN < 1.0

@@ -95,12 +95,21 @@ REGIME_CUTOFF_EPOCH = int(datetime(2026, 7, 28, 14, 0, tzinfo=UTC).timestamp())
 # The R3 pool flip merged 2026-08-01 but only takes effect per process at the fleet
 # restart, and restarts are staggered, so the transition is a window rather than an
 # instant. Measured 2026-08-06 by candle fit per hour: Bucharest through
-# 2026-08-02 ~17:00, mixed 17:00-20:00, clean UTC from 20:00 on. 20:00 is therefore
-# the first hour where UTC is unambiguously right; the ~200 rows inside the mixed
-# band are read as Bucharest, which is the pre-flip default and the conservative
-# choice for a study window that ends 2026-08-02.
+# 2026-08-02 ~17:00, mixed 17:00-20:00, UTC the better read from 20:00 on. It is
+# NOT fully settled there: 20:00 -> 08-03 04:00 still scores UTC only 0.24-0.52,
+# and it stabilises at 0.52-0.97 from 08-03 04:00. 20:00 is the first hour where
+# UTC is unambiguously better, not the first hour where it is clean. The ~235 rows
+# in the mixed band are read as Bucharest — the pre-flip default, neutral at
+# 17:00/18:00 and clearly right at 19:00 — which is the conservative choice for a
+# study window ending 2026-08-02. About 218 non-ROM rows in the 20:00 -> 08-03
+# 04:00 tail are mapped UTC at no better than Bucharest: 0.5 % of the population,
+# all in the `post` cohort, immaterial to every reported number.
 #
-# ROM1 is exempt in the query above — it was always explicit UTC, on both sides.
+# The query exempts `model LIKE 'ROM%'`, not `= 'ROM1'`, and that is deliberate:
+# ROM1 is the only ROM tag in the history today, but hard rule 6 means a rework
+# posts as ROM2 — still written by `28_signal_orchestrator`, still explicit UTC.
+# The prefix keeps the exemption correct across that rename; an equality check
+# would silently start mis-mapping the new tag.
 #
 # Deliberately NAIVE (hence the noqa): it is compared against `open_time`, which is
 # `timestamp without time zone`. Attaching a tzinfo here would make Postgres compare
@@ -112,9 +121,23 @@ R3_FLIP_NAIVE = datetime(2026, 8, 2, 20, 0)  # noqa: DTZ001
 # Minimum share of signals whose recorded entry must fall inside the candle covering
 # their claimed instant. Not 1.0: a limit entry can be posted at a level the market
 # only reaches later, and `entry` is the POSTED level rather than the fill, so a
-# healthy run still misses some. The defective all-UTC read scored 0.326 overall and
-# 0.117 on EPD3; the writer-aware read scores ~0.95 on the DEFAULT-now writers. 0.60
-# sits far above the broken regime and far below the healthy one.
+# healthy run still misses some.
+#
+# Calibration, measured over 40,329 closed rows (2026-07-11 -> 08-02):
+#   all-UTC (the defect)              0.267
+#   writer-aware (this tool)          0.686
+#   writer-aware minus the ROM branch 0.512
+#
+# CAVEAT, and it is a real weakness of this gate: the rate depends on the LEG MIX,
+# not on the domain mapping alone. Per leg the Bucharest fit spans 0.096 (BR1D) to
+# 0.988 (EPD2) — AIM2 0.207, MAX1 0.201, TSM1 0.242 against EPD3 0.946 on 36 % of
+# the population — because legs that post market-adjacent entries fit far better
+# than legs posting limits away from the market. The non-ROM base rate is 0.623,
+# NOT the ~0.95 an earlier version of this comment claimed (that was EPD3 alone).
+# So if EPD3 were parked or retagged, a CORRECT mapping would fall to ~0.543 and
+# trip this gate. Do not read a red gate as proof of a domain break — read the
+# per-model rates first. Gating per writer-class against its own baseline is the
+# better design and is left as a follow-up.
 DOMAIN_FIT_MIN = 0.60
 
 # Grid extended downward on 2026-08-05: at the original floor of 3.0 nearly every
@@ -134,6 +157,7 @@ MIN_N = 40  # below this a model x direction cell is reported but not ranked
 
 
 def _timestamp_domain_fit(
+    *,
     c_sym: np.ndarray,
     c_ts: np.ndarray,
     c_high: np.ndarray,
@@ -151,9 +175,18 @@ def _timestamp_domain_fit(
     replay — the numbers stay plausible, they are just about the wrong candles.
 
     Cheap: one searchsorted over the (symbol, ts) ordered candle arrays.
+
+    Keyword-only on purpose. `c_high` and `c_low` are adjacent same-dtype arrays,
+    so a positional call makes swapping them a one-character copy-paste that no
+    unit test of this function can see — the mutation would live at the CALL site.
+    Swapped, the inside-test becomes `entry >= high and entry <= low`, the rate
+    collapses to ~0, and the export aborts telling the operator the timestamp
+    mapping is broken when it is not. Keyword-only makes that unrepresentable.
     """
     if len(s_ts) == 0 or len(c_ts) == 0:
         return {"checked": 0, "inside": 0, "rate": 0.0}
+    if np.any(c_high < c_low):
+        raise ValueError("candle high < low — c_high/c_low look swapped at the call site")
     # candles are ordered by (symbol, ts); find each symbol's block once
     starts = np.searchsorted(c_sym, np.arange(c_sym[-1] + 1), side="left")
     ends = np.searchsorted(c_sym, np.arange(c_sym[-1] + 1), side="right")
@@ -302,7 +335,15 @@ def cmd_export(args: argparse.Namespace) -> None:
     s_sym_arr = np.fromiter((sym_index[r[0]] for r in sig_rows), dtype=np.int32, count=len(sig_rows))
     s_ts_arr = np.fromiter((r[3] for r in sig_rows), dtype=np.int64, count=len(sig_rows))
     s_entry_arr = np.fromiter((r[4] for r in sig_rows), dtype=np.float64, count=len(sig_rows))
-    fit = _timestamp_domain_fit(c_sym, c_ts, c_high, c_low, s_sym_arr, s_ts_arr, s_entry_arr)
+    fit = _timestamp_domain_fit(
+        c_sym=c_sym,
+        c_ts=c_ts,
+        c_high=c_high,
+        c_low=c_low,
+        s_sym=s_sym_arr,
+        s_ts=s_ts_arr,
+        s_entry=s_entry_arr,
+    )
     print(
         f"Timestamp-domain check: {fit['inside']:,}/{fit['checked']:,} entries fall inside the "
         f"{CANDLE_TF} candle at their claimed instant ({fit['rate']:.1%})."
