@@ -42,6 +42,7 @@ from core.fleet import FLEET  # noqa: E402
         ("BR1Hv2", "7_pattern_detector.py"),
         ("EPD2", "10_pump_dump_detector.py"),
         ("FIF1", "33_ai_fif1_bot.py"),
+        ("FIF2", "43_ai_fif2_bot.py"),  # successor bot — longest prefix must win over "FIF"
         ("FMR1", "31_ai_fmr1_bot.py"),
         ("MAX1", "34_ai_max1_bot.py"),
         ("MIS1-8h", "11_ai_mis_bot.py"),

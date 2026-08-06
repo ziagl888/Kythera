@@ -1,5 +1,10 @@
 # Research-Bots 30–33 — PEX1 / FMR1 / TRM1 / FIF1
 
+> **FIF1 successor:** `43_ai_fif2_bot.py` (FIF2, T-2026-KYT-9050-112) is the
+> vol-gated ladder mirror built on the T-110/T-111 evidence chain. It shares
+> the FIF channel (`CH_FIF2` → `CH_FIF1` fallback) but is NOT part of this
+> cohort — its design and gates are documented in the bot's module docstring.
+
 **Status:** 2026-07-06 · **Source:** `audit_reports/15_strategy_proposals.md` (S6, S8, S10, S11)
 · **Task:** T-2026-CU-9050-019
 

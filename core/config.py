@@ -154,6 +154,11 @@ CH_FIF1 = _ch_override("CH_FIF1", CH_NEW_IDEAS)
 # cohort's `NEW_IDEAS_LIVE_POSTING` defaults to 1, so this leg is live on deploy
 # by design rather than by omission.
 CH_ODS1 = _ch_override("CH_ODS1", CH_NEW_IDEAS)
+# FIF2 (T-2026-KYT-9050-112) chains onto the FIF channel: the successor bot
+# lands next to the FIF1 stream it replaces (operator decision 2026-08-06 —
+# that channel is currently not Cornix-executed, which is the containment),
+# but can be split onto its own channel via .env without a deploy.
+CH_FIF2 = _ch_override("CH_FIF2", CH_FIF1)
 
 # MAX1 high-conviction rubberband short (T-2026-CU-9050-067). Operator decision
 # 2026-07-11: this one posts into the MAIN channel — a deliberate departure from

@@ -1,3 +1,47 @@
+## [2026-08-06] FIF2 built: bot 43, the vol-gated ladder mirror (T-2026-KYT-9050-112)
+
+Operator go (Michi, 2026-08-06) on the T-111 verdict. New `43_ai_fif2_bot.py` mirrors fresh
+fleet signals from `ai_signals` (bot-40-style ingest: age <= 240 s, self-echo excluded in the
+query, in-memory seen-set, bootstrap cycle posts nothing) and reposts the ones whose symbol
+clears the **rolling q80 of `sym_vol_4h`** — with the **measured t104 ladder** (LONG TP 4/5 %,
+SL 5 %; SHORT TP 3/4 %, SL 2 %), not the operator's original single-TP shape, because T-111
+measured the ladder beating it in every gated cell.
+
+Design points, each pinned by `backtest/test_fif2_bot.py` (11 tests):
+
+* **Shared vol builder.** `core/vol_features.py` now owns `rolling_std_pct` /`vol_now_pct`;
+  `tools/tp1_speed_study.py` imports it (`rolling_std is rolling_std_pct` is asserted) — the
+  bot serves the exact number the studies validated (hard rule 7), reading CLOSED 5m candles
+  only via `read_candles(..., include_forming=False, start=history_start(...))`, stale series
+  voided, never filled.
+* **Rolling threshold, never a constant.** T-111's 0.5712 was a train-window quantile. The bot
+  keeps the trailing 14-day distribution of every evaluated candidate (persisted through
+  restarts via `core.state_utils.atomic_write_json`), gates at its q80, and posts NOTHING
+  below `MIN_REFIT_N=500` samples — warm-up is logged hourly, not silent (the AIM2-TOPN
+  lesson). `confidence` = the vol's trailing percentile; every evaluated candidate leaves an
+  `ml_predictions_master` row (posted or not), so the gate can be recalibrated later without
+  a schema change.
+* **Flood cap.** `FIF2_MAX_EMITS_PER_CYCLE=5`, strongest tape first, suppressed count logged
+  (T-111 measured ~376 gated posts/day; a market-wide vol regime must not dump the whole
+  correlated universe into the channel).
+* **Containment.** Posts to `CH_FIF2` → fallback `CH_FIF1` (the FIF channel, currently NOT
+  Cornix-executed — FIF1 runs negative edge, the operator turned the channel off). Kill
+  switches: `FIF2_LIVE_POSTING=0`, `CH_FIF2=0`, or a `_LIFECYCLE` entry. Tag `FIF2` (hard
+  rule 6). ODS1-style savepoint-per-candidate, one commit per cycle (hard rule 8).
+
+Registration (ODS1 checklist, PR #276 pattern): `core/fleet.py` (delay 291 — 283 stays free
+for ODS1 so monotonicity holds under either merge order), `core/config.py` (`CH_FIF2`),
+`core/bot_catalog.py` (`FIF2` before `FIF`, longest prefix wins), `.env.example`, README bot
+table, `docs/NEW_IDEAS_BOTS.md` pointer. Also re-pinned `EXPECTED_WATCHDOG_VIEW` in
+`backtest/test_fleet_definition.py`, which had silently drifted six bots behind FLEET
+(36–41 never grew the anchor; the test was red the whole time — backtest/ runs in no CI job).
+
+**Not in this PR, operator actions:** watchdog restart to supervise bot 43 (new FLEET entry is
+only picked up on watchdog restart), optional `CH_FIF2` in `.env`, Cornix stays off on the FIF
+channel until the shadow phase measured the fill gap (T-111's named risk: a vol gate selects
+exactly the fast tapes where bot 40 measured 18/101 mirrors >1 % away), and any bot-40 roster
+seat for FIF2 is a separate decision.
+
 ## [2026-08-06] FIF2 decision backtest: the vol gate carries, the single-TP exit costs (T-2026-KYT-9050-111)
 
 Operator proposal: replace FIF1 with a bot that mirrors fleet signals passing the T-110
