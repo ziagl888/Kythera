@@ -1,0 +1,495 @@
+{
+ "task": "T-2026-KYT-9050-110",
+ "input": "leg_composition_raw.npz",
+ "input_since": "2026-07-11",
+ "input_domain_fit": 0.6821,
+ "geometry": {
+  "LONG": [
+   4.0,
+   5.0
+  ],
+  "SHORT": [
+   3.0,
+   2.0
+  ]
+ },
+ "fast_window_h": 4.0,
+ "secondary_window_h": 12.0,
+ "covered": 43319,
+ "tp1_first_rate": 0.4364,
+ "median_hit_h_tp1_first": 7.68,
+ "split_ts": 1785187187,
+ "results": {
+  "fast_4h": {
+   "base_rate": 0.1598,
+   "features": [
+    {
+     "feature": "sym_vol_4h",
+     "auc_train": 0.7945,
+     "auc_test": 0.7746,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "oi_pct_30d",
+     "auc_train": 0.6244,
+     "auc_test": 0.6073,
+     "n_train": 29867,
+     "n_test": 12974,
+     "nan_share": 0.011
+    },
+    {
+     "feature": "sym_ret_24h",
+     "auc_train": 0.5925,
+     "auc_test": 0.5963,
+     "n_train": 29389,
+     "n_test": 12994,
+     "nan_share": 0.0216
+    },
+    {
+     "feature": "oi_chg_24h",
+     "auc_train": 0.5854,
+     "auc_test": 0.5675,
+     "n_train": 26414,
+     "n_test": 12973,
+     "nan_share": 0.0908
+    },
+    {
+     "feature": "oi_chg_4h",
+     "auc_train": 0.5606,
+     "auc_test": 0.538,
+     "n_train": 29105,
+     "n_test": 12965,
+     "nan_share": 0.0288
+    },
+    {
+     "feature": "sym_ret_4h",
+     "auc_train": 0.557,
+     "auc_test": 0.5418,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "sym_ret_1h",
+     "auc_train": 0.5383,
+     "auc_test": 0.5143,
+     "n_train": 30304,
+     "n_test": 12996,
+     "nan_share": 0.0004
+    },
+    {
+     "feature": "btcdom_ret_4h",
+     "auc_train": 0.4731,
+     "auc_test": 0.492,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "btc_vol_4h",
+     "auc_train": 0.48,
+     "auc_test": 0.4834,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "btcdom_ret_24h",
+     "auc_train": 0.4815,
+     "auc_test": 0.4846,
+     "n_train": 29389,
+     "n_test": 12996,
+     "nan_share": 0.0216
+    },
+    {
+     "feature": "btc_ret_1h",
+     "auc_train": 0.4863,
+     "auc_test": 0.4942,
+     "n_train": 30304,
+     "n_test": 12996,
+     "nan_share": 0.0004
+    },
+    {
+     "feature": "btc_ret_24h",
+     "auc_train": 0.508,
+     "auc_test": 0.5177,
+     "n_train": 29389,
+     "n_test": 12996,
+     "nan_share": 0.0216
+    },
+    {
+     "feature": "btc_ret_4h",
+     "auc_train": 0.5046,
+     "auc_test": 0.5095,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    }
+   ]
+  },
+  "fast_12h": {
+   "base_rate": 0.2657,
+   "features": [
+    {
+     "feature": "sym_vol_4h",
+     "auc_train": 0.7008,
+     "auc_test": 0.6868,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "oi_pct_30d",
+     "auc_train": 0.5738,
+     "auc_test": 0.5644,
+     "n_train": 29867,
+     "n_test": 12974,
+     "nan_share": 0.011
+    },
+    {
+     "feature": "sym_ret_24h",
+     "auc_train": 0.5523,
+     "auc_test": 0.5627,
+     "n_train": 29389,
+     "n_test": 12994,
+     "nan_share": 0.0216
+    },
+    {
+     "feature": "oi_chg_24h",
+     "auc_train": 0.5471,
+     "auc_test": 0.5429,
+     "n_train": 26414,
+     "n_test": 12973,
+     "nan_share": 0.0908
+    },
+    {
+     "feature": "oi_chg_4h",
+     "auc_train": 0.5291,
+     "auc_test": 0.5315,
+     "n_train": 29105,
+     "n_test": 12965,
+     "nan_share": 0.0288
+    },
+    {
+     "feature": "sym_ret_4h",
+     "auc_train": 0.5288,
+     "auc_test": 0.5375,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "btcdom_ret_24h",
+     "auc_train": 0.4804,
+     "auc_test": 0.4896,
+     "n_train": 29389,
+     "n_test": 12996,
+     "nan_share": 0.0216
+    },
+    {
+     "feature": "sym_ret_1h",
+     "auc_train": 0.5189,
+     "auc_test": 0.5163,
+     "n_train": 30304,
+     "n_test": 12996,
+     "nan_share": 0.0004
+    },
+    {
+     "feature": "btc_ret_4h",
+     "auc_train": 0.488,
+     "auc_test": 0.5165,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "btc_ret_1h",
+     "auc_train": 0.4881,
+     "auc_test": 0.4977,
+     "n_train": 30304,
+     "n_test": 12996,
+     "nan_share": 0.0004
+    },
+    {
+     "feature": "btc_vol_4h",
+     "auc_train": 0.4922,
+     "auc_test": 0.4937,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "btcdom_ret_4h",
+     "auc_train": 0.497,
+     "auc_test": 0.5026,
+     "n_train": 30295,
+     "n_test": 12996,
+     "nan_share": 0.0006
+    },
+    {
+     "feature": "btc_ret_24h",
+     "auc_train": 0.502,
+     "auc_test": 0.5151,
+     "n_train": 29389,
+     "n_test": 12996,
+     "nan_share": 0.0216
+    }
+   ]
+  }
+ },
+ "top_feature_deciles": {
+  "feature": "sym_vol_4h",
+  "rows": [
+   {
+    "decile": 1,
+    "n": 3931,
+    "fast_4h": 0.0193,
+    "tp1_first": 0.3119,
+    "sl_first": 0.3719
+   },
+   {
+    "decile": 2,
+    "n": 4086,
+    "fast_4h": 0.033,
+    "tp1_first": 0.3713,
+    "sl_first": 0.4134
+   },
+   {
+    "decile": 3,
+    "n": 4310,
+    "fast_4h": 0.0483,
+    "tp1_first": 0.423,
+    "sl_first": 0.4232
+   },
+   {
+    "decile": 4,
+    "n": 4434,
+    "fast_4h": 0.051,
+    "tp1_first": 0.4299,
+    "sl_first": 0.4605
+   },
+   {
+    "decile": 5,
+    "n": 4517,
+    "fast_4h": 0.0804,
+    "tp1_first": 0.4306,
+    "sl_first": 0.4729
+   },
+   {
+    "decile": 6,
+    "n": 4563,
+    "fast_4h": 0.1168,
+    "tp1_first": 0.4611,
+    "sl_first": 0.4756
+   },
+   {
+    "decile": 7,
+    "n": 4541,
+    "fast_4h": 0.1724,
+    "tp1_first": 0.4563,
+    "sl_first": 0.5045
+   },
+   {
+    "decile": 8,
+    "n": 4511,
+    "fast_4h": 0.2337,
+    "tp1_first": 0.4587,
+    "sl_first": 0.5196
+   },
+   {
+    "decile": 9,
+    "n": 4206,
+    "fast_4h": 0.365,
+    "tp1_first": 0.4898,
+    "sl_first": 0.4995
+   },
+   {
+    "decile": 10,
+    "n": 4192,
+    "fast_4h": 0.4773,
+    "tp1_first": 0.5193,
+    "sl_first": 0.4783
+   }
+  ]
+ },
+ "weekly_auc_fast4h": {
+  "sym_vol_4h": [
+   [
+    "2026-W28",
+    0.8275,
+    1885
+   ],
+   [
+    "2026-W29",
+    0.8117,
+    11108
+   ],
+   [
+    "2026-W30",
+    0.7921,
+    14724
+   ],
+   [
+    "2026-W31",
+    0.7635,
+    15396
+   ],
+   [
+    "2026-W32",
+    0.7342,
+    178
+   ]
+  ],
+  "oi_pct_30d": [
+   [
+    "2026-W28",
+    0.671,
+    1882
+   ],
+   [
+    "2026-W29",
+    0.6401,
+    10684
+   ],
+   [
+    "2026-W30",
+    0.6101,
+    14723
+   ],
+   [
+    "2026-W31",
+    0.6077,
+    15394
+   ],
+   [
+    "2026-W32",
+    0.5201,
+    158
+   ]
+  ],
+  "sym_ret_24h": [
+   [
+    "2026-W28",
+    0.5512,
+    979
+   ],
+   [
+    "2026-W29",
+    0.6119,
+    11108
+   ],
+   [
+    "2026-W30",
+    0.5833,
+    14724
+   ],
+   [
+    "2026-W31",
+    0.5994,
+    15394
+   ],
+   [
+    "2026-W32",
+    0.456,
+    178
+   ]
+  ]
+ },
+ "fast4h_by_direction": {
+  "LONG": 0.1373,
+  "SHORT": 0.1831
+ },
+ "fast4h_by_model": {
+  "AIM2": {
+   "n": 2716,
+   "fast_4h": 0.2901
+  },
+  "ATS1": {
+   "n": 230,
+   "fast_4h": 0.113
+  },
+  "ATS2": {
+   "n": 1566,
+   "fast_4h": 0.0607
+  },
+  "BB_4H": {
+   "n": 662,
+   "fast_4h": 0.0816
+  },
+  "BR1Hv2": {
+   "n": 2590,
+   "fast_4h": 0.0799
+  },
+  "BR2H": {
+   "n": 1399,
+   "fast_4h": 0.0843
+  },
+  "BR4H": {
+   "n": 552,
+   "fast_4h": 0.0688
+  },
+  "EPD3": {
+   "n": 15328,
+   "fast_4h": 0.173
+  },
+  "FIF1": {
+   "n": 317,
+   "fast_4h": 0.1073
+  },
+  "MAX1": {
+   "n": 331,
+   "fast_4h": 0.148
+  },
+  "MIS1-168H": {
+   "n": 1070,
+   "fast_4h": 0.0841
+  },
+  "MIS1-72H": {
+   "n": 1664,
+   "fast_4h": 0.0799
+  },
+  "MIS2-72H": {
+   "n": 357,
+   "fast_4h": 0.6106
+  },
+  "MIS2-8H": {
+   "n": 295,
+   "fast_4h": 0.5119
+  },
+  "ROM1": {
+   "n": 8668,
+   "fast_4h": 0.1457
+  },
+  "RUB2": {
+   "n": 321,
+   "fast_4h": 0.162
+  },
+  "RUB3": {
+   "n": 287,
+   "fast_4h": 0.1568
+  },
+  "SKW1": {
+   "n": 209,
+   "fast_4h": 0.1722
+  },
+  "SRA1": {
+   "n": 284,
+   "fast_4h": 0.1056
+  },
+  "SRA2": {
+   "n": 1286,
+   "fast_4h": 0.1672
+  },
+  "TD_1H": {
+   "n": 217,
+   "fast_4h": 0.0783
+  },
+  "TSM1": {
+   "n": 1611,
+   "fast_4h": 0.0981
+  }
+ },
+ "gaps": "funding + forced-liq features need VPS DB / API backfill; liq_events only since 2026-08-03"
+}
