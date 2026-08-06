@@ -214,7 +214,8 @@ domain it is in.** `tools/leg_composition_replay.py` now carries a writer-aware
 conversion (ROM1 explicit-UTC vs the 13 `DEFAULT now()` writers on Bucharest, plus
 the R3 flip window) and a hard gate that fails the export when the recorded entry
 stops falling inside the candle at its claimed instant. That check moved from
-32.6 % to 68.2 % on this data; the defective read would not pass it.
+0.267 to 0.686 over the closed rows (68.2 % over the whole export); the defective read would
+not pass it.
 
 **Consequence for ODS1 (bot 42, T-2026-KYT-9050-106):** its second evidence pillar
 is gone, not merely weakened. ODS1 now rests on T-096 alone — which is unaffected,

@@ -127,7 +127,7 @@ be a silent guard reset (hard rule 9).
 > **mixed-domain**: `28_signal_orchestrator` (ROM1) writes explicit UTC, the other 13 writers
 > leave it to `DEFAULT now()`, which stamped session-local Europe/Bucharest until the R3 pool
 > flip took effect at the staggered fleet restart (measured: Bucharest through 2026-08-02
-> ~17:00, mixed to ~20:00, UTC after). So ~84 % of signals were placed 3 h late.
+> ~17:00, mixed to ~20:00, UTC after). So ~77 % of signals were placed 3 h late (33,177 of 43,152 closed rows).
 >
 > **Consequence: the OI short-side filter is retracted.** Re-run on the corrected export, same
 > geometry and quintiles, `oi_chg_4h | SHORT` bottom quintile goes **+0.739 → +0.324**
@@ -148,8 +148,8 @@ be a silent guard reset (hard rule 9).
 >
 > The export now carries a writer-aware conversion and a **hard gate**: it fails when the
 > recorded entry stops falling inside the candle at its claimed instant. That check reads
-> 68.2 % on the corrected data and 32.6 % on the defective read, so the old behaviour could not
-> ship through it. Sections 1, 2, 3, 5 and "Data quality" are marked in the doc as ad-hoc
+> 68.2 % on the corrected export — over the closed rows alone 0.686 against 0.267 for the
+> defective all-UTC read — so the old behaviour could not ship through it. Sections 1, 2, 3, 5 and "Data quality" are marked in the doc as ad-hoc
 > session observations — no committed code or artifact produces them, which the first version
 > did not state. The numbers below in this entry are from the ORIGINAL run and are superseded
 > by the doc.

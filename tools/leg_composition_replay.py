@@ -231,14 +231,19 @@ def cmd_export(args: argparse.Namespace) -> None:
 
             # `ai_signals.timestamp` is timestamptz and needs no correction.
             # `closed_ai_signals.open_time` is naive and is NOT a single domain —
-            # the earlier version read it all as UTC and was wrong for ~84 % of the
+            # the earlier version read it all as UTC and was wrong for ~77 % of the
             # population. Measured 2026-08-06 against the 5m candle the recorded
             # entry must fall inside (fit at 0h vs -3h):
             #
-            #   ROM1      86.8 % / 8.0 %   -> already UTC
-            #   EPD3      11.7 % / 95.0 %  -> Bucharest
-            #   MIS1-72H  11.5 % / 59.6 %  -> Bucharest
-            #   BR1Hv2    10.9 % / 40.7 %  -> Bucharest
+            #   ROM1      92.9 % /  8.4 %  -> already UTC
+            #   EPD3       9.9 % / 94.6 %  -> Bucharest
+            #   MIS1-72H   8.4 % / 40.8 %  -> Bucharest
+            #   BR1Hv2    10.3 % / 44.2 %  -> Bucharest
+            #
+            # Over BOTH directions, 2026-07-11 -> 08-02. An earlier version of this
+            # block quoted SHORT-only figures (MIS1-72H 59.6 % on n=52) without
+            # saying so, which disagreed with AUDIT_TODO#T107-1's all-direction
+            # numbers for the same measurement.
             #
             # Cause: `28_signal_orchestrator.insert_rom1_signal` is the ONLY writer
             # that sets `open_time` explicitly (`utc_now_naive()`); the other 13 leave

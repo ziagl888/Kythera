@@ -275,4 +275,9 @@ def test_r3_flip_boundary_is_the_measured_instant_and_is_naive():
     assumed. Naive on purpose — it is compared against a naive column."""
     assert lcr.R3_FLIP_NAIVE.tzinfo is None
     assert lcr.R3_FLIP_NAIVE == datetime(2026, 8, 2, 20, 0)
-    assert 0.0 < lcr.DOMAIN_FIT_MIN < 1.0
+    # Pinned to the exact value, like REGIME_CUTOFF_EPOCH and R3_FLIP_NAIVE above.
+    # A range assertion let the threshold be lowered to 0.05 with a green suite —
+    # which is precisely the move the constant's own comment forbids ("Do NOT lower
+    # this threshold to get a green run"). Changing it must be a deliberate act
+    # that shows up as a test edit, with the calibration re-derived.
+    assert lcr.DOMAIN_FIT_MIN == pytest.approx(0.60)
