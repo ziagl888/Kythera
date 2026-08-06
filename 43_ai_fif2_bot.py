@@ -20,9 +20,18 @@ Geometry — from the study, not the fleet default
 The T-104/T-105/T-111 chain priced the ``t104`` bracket on the TP grid, so the
 mirror posts exactly what was measured: LONG TP 4 % / 5 % with SL 5 %, SHORT
 TP 3 % / 4 % with SL 2 %, two rungs, 50/50 tranches with stop-to-breakeven
-after TP1 (the simulator's ladder model — the breakeven move is Cornix channel
-config, noted in the ops section below). The source signal's own bracket is
-deliberately NOT reused: T-111 measured this one.
+after TP1. The source signal's own bracket is deliberately NOT reused: T-111
+measured this one.
+
+**Precondition the bot cannot enforce itself:** the measured ladder edge
+(+0.314 vs +0.192 pp/trade at q80) is priced with the stop moving to breakeven
+once TP1 is taken — ``tools/portfolio_backtest.precompute`` models that via
+``_breakeven_step``, and it decides what the runner half is worth when price
+comes back. This bot only posts the two rungs and the initial SL; the breakeven
+move is **Cornix channel configuration**. Without it the runner carries the full
+SL instead of 0, and the live geometry is not the one that was measured. Check
+the channel's breakeven setting BEFORE any Cornix-on — today the FIF channel is
+not Cornix-executed, so this is a go-live precondition, not a live defect.
 
 The gate threshold is a rolling quantile, never a constant
 ----------------------------------------------------------
@@ -314,13 +323,16 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
     vols = [v for _, v in samples]
     evaluated.sort(key=lambda cv: cv[1], reverse=True)  # strongest tape first
     emitted = suppressed = 0
-    for idx, (cand, vol) in enumerate(evaluated):
+    for cand, vol in evaluated:
         confidence = vol_percentile(vols, vol)
         passed = vol >= threshold
         if passed and emitted >= MAX_EMITS_PER_CYCLE:
             # sorted highest-vol-first: what is dropped is the weakest of the
-            # burst, not an arbitrary subset (no silent caps — counted + logged)
-            suppressed = sum(1 for _, v in evaluated[idx:] if v >= threshold)
+            # burst, not an arbitrary subset (no silent caps — counted + logged).
+            # Count up, never assign: an assignment inside the loop is overwritten
+            # by every later candidate and ends at the remaining tail length (1),
+            # which would under-report a 20-candidate burst as a single drop.
+            suppressed += 1
             passed = False
         did_post = False
         if passed and not has_open_ai_signal(conn, cand["symbol"], cand["direction"], MODEL_ID):

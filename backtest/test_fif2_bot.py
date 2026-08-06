@@ -11,9 +11,9 @@ weakest of a burst — counted, not silent.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import sys
-import unittest.mock as mock
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -33,17 +33,29 @@ CHANNEL = -1002222222222  # test-local, never a real channel id
 
 
 def _load_bot():
-    """Load the numerically named bot module with DB + config stubbed out."""
+    """Load the numerically named bot module with DB + config stubbed out.
+
+    The two stub keys are swapped in and out by hand rather than through
+    ``mock.patch.dict("sys.modules", ...)``: patch.dict restores the WHOLE
+    snapshot it took on entry, which also drops every module imported while the
+    block was open — including the numpy C submodules the bot pulls in on first
+    touch. Re-importing those later raises "cannot load module more than once
+    per process" (Python 3.14), so a suite that happened to run this file first
+    took down the next test that needed numpy. Touch only what we stubbed.
+    """
     spec = importlib.util.spec_from_file_location("fif2_bot", os.path.join(ROOT, "43_ai_fif2_bot.py"))
     mod = importlib.util.module_from_spec(spec)
-    with mock.patch.dict(
-        "sys.modules",
-        {
-            "core.database": MagicMock(),
-            "core.config": MagicMock(CH_FIF2=CHANNEL),
-        },
-    ):
+    stubs = {"core.database": MagicMock(), "core.config": MagicMock(CH_FIF2=CHANNEL)}
+    saved = {k: sys.modules.get(k) for k in stubs}
+    sys.modules.update(stubs)
+    try:
         spec.loader.exec_module(mod)
+    finally:
+        for key, previous in saved.items():
+            if previous is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = previous
     return mod
 
 
@@ -167,3 +179,21 @@ def test_cap_keeps_the_strongest_of_a_burst_and_counts_the_rest(monkeypatch):
     # every evaluated candidate leaves a prediction row, posted or not
     assert len(logged) == n
     conn.commit.assert_called_once()  # the caller commits (hard rule 8)
+
+
+def test_cap_reports_the_full_suppressed_count_not_the_tail(monkeypatch, caplog):
+    """The count in the cycle log must be the whole dropped burst.
+
+    The first version assigned `suppressed` inside the candidate loop, so every
+    later candidate overwrote it and the line ended at the remaining tail — a
+    15-candidate drop reported as 1. That defeats the very "no silent caps" rule
+    the cap was given, and it is invisible to a test that only counts emissions,
+    so the number itself is asserted here.
+    """
+    n = BOT.MAX_EMITS_PER_CYCLE + 15
+    with caplog.at_level(logging.INFO, logger=BOT.logger.name):
+        emitted, _, _ = _cycle_fixture(monkeypatch, n_candidates=n)
+    assert len(emitted) == BOT.MAX_EMITS_PER_CYCLE
+    cycle_lines = [r.message for r in caplog.records if r.message.startswith("FIF2 cycle:")]
+    assert len(cycle_lines) == 1
+    assert f"{n - BOT.MAX_EMITS_PER_CYCLE} over the per-cycle cap" in cycle_lines[0]

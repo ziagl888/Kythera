@@ -42,6 +42,25 @@ channel until the shadow phase measured the fill gap (T-111's named risk: a vol 
 exactly the fast tapes where bot 40 measured 18/101 mirrors >1 % away), and any bot-40 roster
 seat for FIF2 is a separate decision.
 
+**Found in the pre-merge review, fixed in this PR:** the flood cap's suppression counter was
+assigned inside the candidate loop, so each later candidate overwrote it and the cycle line
+reported the remaining tail — a 20-candidate burst with 5 emitted logged "1 over the cap"
+instead of 15. The emission decision was never wrong, only the number that makes the drop
+visible, which is exactly what "no silent caps" is supposed to guarantee; the cap test was
+named "…and counts the rest" but asserted only the emission count, so it could not see it.
+Counted up now, with the log line itself asserted. Second finding, documentation: the measured
+ladder edge is priced with the stop moving to breakeven after TP1 (`_breakeven_step` in the
+simulator) — the bot cannot enforce that, it is **Cornix channel configuration**, and the
+docstring pointed at an "ops section" that did not exist. Without it the runner carries the
+full SL instead of 0, so the live geometry would not be the measured one: named as a go-live
+precondition on the bot itself. Third, the bot's test loader stubbed `sys.modules` through
+`mock.patch.dict`, which restores the whole snapshot on exit and therefore drops every module
+imported inside the block — including numpy's C submodules, whose re-import raises "cannot
+load module more than once per process" on Python 3.14. Any suite run that reached this file
+before another numpy-using test died on collection; the loader now swaps only the two keys it
+stubbed. Since ODS1 (PR #276) merged first, `EXPECTED_WATCHDOG_VIEW` also gained its entry —
+the reserved 283/291 split held, as intended.
+
 ## [2026-08-06] FIF2 decision backtest: the vol gate carries, the single-TP exit costs (T-2026-KYT-9050-111)
 
 Operator proposal: replace FIF1 with a bot that mirrors fleet signals passing the T-110

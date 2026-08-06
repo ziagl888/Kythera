@@ -145,8 +145,10 @@ EXPECTED_WATCHDOG_VIEW = [
     ("AI XSM1 Detector", "39_ai_xsm1_bot.py", 263, None),
     ("Trailing Close Bot", "40_trailing_close_bot.py", 271, None),
     ("Liq Collector", "41_liq_collector.py", 279, None),
-    # T-2026-KYT-9050-112: FIF2 vol-gated ladder mirror; 283 left free for ODS1
-    # (PR #276, parallel branch) so monotonicity holds under either merge order.
+    # ODS1 (T-2026-KYT-9050-106, PR #276) landed on main first; FIF2 reserved 291
+    # and left 283 free for exactly that, so monotonicity holds under either
+    # merge order and both entries now sit in it.
+    ("AI ODS1 Detector", "42_ai_ods1_bot.py", 283, None),
     ("AI FIF2 Mirror", "43_ai_fif2_bot.py", 291, None),
 ]
 
