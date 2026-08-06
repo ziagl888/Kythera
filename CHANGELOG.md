@@ -1,3 +1,47 @@
+## [2026-08-06] ODS1's TP ladder had a dead second rung — TP2 widened to 2.0 % (T-2026-KYT-9050-113)
+
+Found by the operator within the first hour of ODS1 trading live, which is the shortest path
+from "shipped" to "caught" this fleet has had.
+
+ODS1 posted `TP_PCTS = (1.0, 1.5)` — the two rungs **0.5 % apart**. Cornix splits the position
+50/50 across the ladder, so at that spacing the second rung is not a separate event: whoever
+reaches TP1 takes TP2 in the same move. Two of the first four live trades closed "ALL TARGETS
+HIT" within minutes. The leg was effectively trading a single target at ~1.25 % while the book
+recorded a full ladder success — which biases exactly the live evaluation ODS1 went live to
+produce.
+
+Measured across the fleet on signals since 2026-08-04, ODS1 was the **only** leg under a 1 %
+minimum gap, and also carried the smallest TP1 distance of any leg:
+
+| leg | TP1 distance | min gap |
+|---|--:|--:|
+| AIM2 | 7.21 % | 3.67 % |
+| ROM1 | 3.09 % | 2.01 % |
+| EPD3 | 2.63 % | 1.82 % |
+| ATS2 | 2.02 % | 1.38 % |
+| TSM1 | 2.00 % | 1.24 % |
+| **ODS1** | **1.00 %** | **0.50 %** |
+
+**Fix (operator decision, Michi): `TP_PCTS = (1.0, 2.0)`.** TP1 stays on the measured T-096
+drift (+0.41 % @1h, +0.73 % @4h) — that number is why the bracket is tight at all. TP2 now sits
+1.0 % beyond it and equals the SL distance, i.e. a symmetric 1R second rung. The rejected
+alternative was collapsing to a single target: more honest to the measurement (T-096 measured a
+drift, not a ladder) but it discards the staged exit entirely.
+
+**Why the guards did not catch it.** They pinned the ceiling (`max(TP_PCTS) <= 2.0`) and the
+ordering, and never the *spacing*. The bracket was translated faithfully from the study and the
+fleet convention was simply never checked — sizing a bracket to the measured effect is right,
+but it does not license ignoring how the venue executes the ladder. `MIN_TP_GAP_PCT = 1.0` now
+pins the rule, with the fleet table recorded in the test so the convention lives where it is
+enforced, and a companion guard rejects a last rung beyond the stop.
+
+The threshold constant is pinned to its exact value as well: mutation showed the guard could
+otherwise be defanged by lowering `MIN_TP_GAP_PCT` instead of widening the ladder — the same
+hole found in `DOMAIN_FIT_MIN` on PR #274 one commit earlier.
+
+Takes effect at the next fleet restart. Signals already posted under the old ladder keep their
+geometry; Cornix holds them as published.
+
 ## [2026-08-05] Bot 40's `SOURCE_CLOSED` exit stays — the replay refutes the case for removing it (T-2026-KYT-9050-106)
 
 Closes `AUDIT_TODO#T106-1`. **No code in bot 40 was changed.** The finding is that a

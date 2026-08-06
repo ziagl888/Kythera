@@ -133,6 +133,43 @@ def test_bracket_is_sized_to_the_measured_drift_not_the_fleet_default():
     assert ods1.TP_PCTS == tuple(sorted(ods1.TP_PCTS))
 
 
+def test_ladder_rungs_are_far_enough_apart_to_be_rungs():
+    """Cornix splits the position 50/50 across the ladder, so two targets closer
+    than the fleet's 1 % minimum are not a staged exit — whoever reaches TP1 takes
+    TP2 in the same move, and the book records a full ladder success for what was
+    really a single target.
+
+    ODS1 shipped at (1.0, 1.5) — a 0.5 % gap — and two of its first four live
+    trades closed "ALL TARGETS HIT" within minutes. Measured across the fleet on
+    signals since 2026-08-04 (TP1 distance / min gap), ODS1 was the only violator:
+
+        EPD3 2.63 %/1.82 %   ROM1 3.09 %/2.01 %   ATS2 2.02 %/1.38 %
+        TSM1 2.00 %/1.24 %   AIM2 7.21 %/3.67 %   ODS1 1.00 %/0.50 %  <-
+
+    The previous guards pinned the ceiling and the ordering and never the spacing,
+    which is why a faithful translation of the study still produced a dead rung.
+    """
+    # Pin the constant too. Without this, the guard can be defanged by lowering
+    # MIN_TP_GAP_PCT instead of widening the ladder — verified by mutation, and the
+    # identical hole was found in DOMAIN_FIT_MIN on PR #274 one commit earlier.
+    # Changing the fleet minimum must show up as a test edit, with the fleet
+    # re-measured.
+    assert ods1.MIN_TP_GAP_PCT == pytest.approx(1.0)
+
+    gaps = [b - a for a, b in zip(ods1.TP_PCTS, ods1.TP_PCTS[1:], strict=False)]
+    assert gaps, "a single-target ladder has no spacing to check — state that deliberately"
+    assert min(gaps) >= ods1.MIN_TP_GAP_PCT, (
+        f"TP rungs {ods1.TP_PCTS} are {min(gaps):.2f} % apart, below the "
+        f"{ods1.MIN_TP_GAP_PCT} % fleet minimum — the second rung would not fire separately"
+    )
+
+
+def test_the_last_rung_is_not_beyond_the_stop():
+    """A target further from the entry than the stop can only be reached by a move
+    that already had every chance to stop the trade out first."""
+    assert max(ods1.TP_PCTS) <= ods1.SL_PCT
+
+
 def _capture_emit(monkeypatch):
     """Run ods1.emit with the posting gate stubbed; return the captured kwargs."""
     seen: list[dict] = []
