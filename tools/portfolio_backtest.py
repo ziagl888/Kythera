@@ -150,7 +150,25 @@ def precompute(z, geometry: dict[str, tuple[float, float]], oi_short_threshold: 
                 res2 = outcome(i_tp[str(tp2)], i_sl[str(sl)])
                 # stop travels to breakeven once the first rung is taken
                 pnl += LADDER[1] * (tp2 if res2 == "TP" else 0.0)
-                step_exit = max(step_exit, _exit_step(i_tp[str(tp2)], None, hi - lo))
+                # When the runner is credited breakeven (res2 != "TP") the position
+                # closed when price came BACK to entry — not at the horizon. The
+                # previous `_exit_step(i_tp[tp2], None, hi - lo)` returned n-1 in
+                # that case, so the two halves of one trade disagreed: PnL said
+                # "stopped at breakeven", occupancy said "held 72h". That inflated
+                # hold time for the modal winner under tight geometry, i.e. exactly
+                # against the "tight frees slots faster" mechanism being measured.
+                step_exit = max(
+                    step_exit,
+                    _breakeven_step(
+                        c_high[lo:hi],
+                        c_low[lo:hi],
+                        float(s_entry[k]),
+                        bool(s_long[k]),
+                        i_tp[str(tp)],
+                        i_tp[str(tp2)],
+                        hi - lo,
+                    ),
+                )
             else:
                 pnl += LADDER[1] * tp
         elif res1 == "SL":
@@ -191,6 +209,33 @@ def _exit_step(i_tp: int | None, i_sl: int | None, n: int) -> int:
     """Step index at which the position is closed; horizon end when neither fires."""
     cands = [i for i in (i_tp, i_sl) if i is not None]
     return min(cands) if cands else n - 1
+
+
+def _breakeven_step(
+    high: np.ndarray,
+    low: np.ndarray,
+    entry: float,
+    is_long: bool,
+    i_tp1: int | None,
+    i_tp2: int | None,
+    n: int,
+) -> int:
+    """Step at which the runner leaves after TP1 took the first half.
+
+    If the second rung fires, that is the exit. Otherwise the stop sits at
+    breakeven, so the runner leaves the first time price trades back through the
+    entry after TP1 — not at the horizon end, which is what the previous
+    `_exit_step(i_tp2, None, n)` returned and what made the PnL and the occupancy
+    of the same trade disagree.
+    """
+    if i_tp2 is not None:
+        return int(i_tp2)
+    if i_tp1 is None:
+        return n - 1
+    after = slice(int(i_tp1) + 1, n)
+    back = (low[after] <= entry) if is_long else (high[after] >= entry)
+    hits = np.flatnonzero(back)
+    return int(i_tp1) + 1 + int(hits[0]) if hits.size else n - 1
 
 
 def select_legs(recs: list[dict], t0: int, t1: int) -> set[tuple[str, str]]:

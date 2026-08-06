@@ -14,6 +14,7 @@ of 500.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -182,19 +183,74 @@ def test_fee_is_charged_once_per_round_trip():
 # accounted over.
 
 
-def test_exit_ts_is_kept_when_the_position_closes_on_the_first_candle():
-    """`_exit_step` returns 0 for a first-candle touch; `if step_exit` read that
-    valid 0 as "never exited" and pinned the trade to the full 72h horizon —
-    an 864x overstatement of slot occupancy, biased toward tight geometries."""
-    from tools.portfolio_backtest import _exit_step
+def _synthetic_export(entry=100.0, n_candles=20, sl_pct=None, tp_pct=None, hit_index=0):
+    """Minimal in-memory npz stand-in: one LONG signal on one symbol.
 
-    assert _exit_step(0, None, 10) == 0, "a first-candle TP is step 0, not falsy-absent"
-    assert _exit_step(None, 0, 10) == 0
-    assert _exit_step(None, None, 10) == 9, "neither fired -> horizon end"
-    # the guard that matters: 0 must not be treated as absent
-    step = _exit_step(0, None, 10)
-    assert step is not None and step == 0
-    assert bool(step) is False, "precisely why `if step_exit` was wrong"
+    Exactly one of `sl_pct` / `tp_pct` is driven through `hit_index`, so a test can
+    place the exit on a chosen candle — `hit_index=0` is the step-0 case.
+    """
+    import numpy as np
+
+    c_ts = np.array([T0 + (i + 1) * 300 for i in range(n_candles)], dtype=np.int64)
+    hi = np.full(n_candles, entry * 1.0005)
+    lo = np.full(n_candles, entry * 0.9995)
+    cl = np.full(n_candles, entry)
+    if sl_pct is not None:
+        lo[hit_index] = entry * (1 - sl_pct / 100.0) * 0.999
+    if tp_pct is not None:
+        hi[hit_index] = entry * (1 + tp_pct / 100.0) * 1.001
+    return {
+        "meta": np.array([json.dumps({"horizon_h": 72, "tf": "5m", "since": "2026-07-11"})], dtype=object),
+        "symbols": np.array(["XUSDT"], dtype=object),
+        "models": np.array(["M"], dtype=object),
+        "c_sym": np.zeros(n_candles, dtype=np.int32),
+        "c_ts": c_ts,
+        "c_high": hi,
+        "c_low": lo,
+        "c_close": cl,
+        "s_sym": np.array([0], dtype=np.int32),
+        "s_mod": np.array([0], dtype=np.int32),
+        "s_long": np.array([True]),
+        "s_ts": np.array([T0], dtype=np.int64),
+        "s_entry": np.array([entry], dtype=np.float64),
+    }
+
+
+def test_exit_ts_is_not_lost_when_the_stop_is_hit_on_the_first_candle():
+    """The falsy-zero, pinned where it actually lived: the `exit_ts` assignment in
+    `precompute`, not `_exit_step` in isolation.
+
+    An SL on the first closed candle gives `step_exit == 0` with no ladder branch
+    to perturb it — the one scenario that isolates the bug. An earlier version of
+    this guard used a first-candle TP and stayed GREEN under mutation, because the
+    breakeven-runner logic bumped `step_exit` to 1 and the falsy path was never
+    reached. Verified by mutation in both directions.
+    """
+    from tools.portfolio_backtest import precompute
+
+    z = _synthetic_export(sl_pct=2.0, hit_index=0)
+    recs = precompute(z, GEOMETRY_VARIANTS["symmetric_tight"], None, None)
+    assert recs, "the synthetic signal must produce a record"
+    r = recs[0]
+    hold_s = r["exit_ts"] - r["open_ts"]
+    assert hold_s <= 300, (
+        f"a stop hit on the first candle must not be booked as {hold_s / 3600:.1f}h "
+        "of slot occupancy (falsy-zero regression)"
+    )
+
+
+def test_a_breakeven_runner_closes_when_price_returns_to_entry_not_at_the_horizon():
+    """TP1 fires, the second rung never does, so the runner stops at breakeven.
+    Pinning it to the horizon made PnL and occupancy disagree about the same
+    trade, inflating hold time for the modal winner under tight geometry."""
+    from tools.portfolio_backtest import precompute
+
+    z = _synthetic_export(tp_pct=3.0, hit_index=0)  # clears 3.0, never 4.0
+    recs = precompute(z, GEOMETRY_VARIANTS["symmetric_tight"], None, None)
+    r = recs[0]
+    hold_s = r["exit_ts"] - r["open_ts"]
+    assert hold_s < 72 * 3600, "a breakeven stop-out is not a 72h hold"
+    assert hold_s <= 3 * 300, f"price returns to entry on the next candle, got {hold_s}s"
 
 
 def test_leg_selection_excludes_trades_that_had_not_resolved_at_the_refit():
