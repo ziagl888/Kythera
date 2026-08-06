@@ -173,3 +173,85 @@ def test_every_variant_defines_both_directions():
 
 def test_fee_is_charged_once_per_round_trip():
     assert FEE_PCT == pytest.approx(0.09)
+
+
+# ── the three defects the core review found, pinned ───────────────────────────
+# All three shipped green: the suite covered `simulate` against hand-built records
+# whose exit_ts was correct by construction, and never covered `precompute` or
+# `select_legs` at all. So it validated the accounting and never the input it
+# accounted over.
+
+
+def test_exit_ts_is_kept_when_the_position_closes_on_the_first_candle():
+    """`_exit_step` returns 0 for a first-candle touch; `if step_exit` read that
+    valid 0 as "never exited" and pinned the trade to the full 72h horizon —
+    an 864x overstatement of slot occupancy, biased toward tight geometries."""
+    from tools.portfolio_backtest import _exit_step
+
+    assert _exit_step(0, None, 10) == 0, "a first-candle TP is step 0, not falsy-absent"
+    assert _exit_step(None, 0, 10) == 0
+    assert _exit_step(None, None, 10) == 9, "neither fired -> horizon end"
+    # the guard that matters: 0 must not be treated as absent
+    step = _exit_step(0, None, 10)
+    assert step is not None and step == 0
+    assert bool(step) is False, "precisely why `if step_exit` was wrong"
+
+
+def test_leg_selection_excludes_trades_that_had_not_resolved_at_the_refit():
+    """Look-ahead: filtering on open_ts while scoring realised pnl let ~72h of
+    each trailing window be selected on outcomes that had not happened yet."""
+    from tools.portfolio_backtest import MIN_N_TRAIN, select_legs
+
+    t0, t1 = T0, T0 + 100 * HOUR
+    # A leg that is negative on everything RESOLVED inside the window, but is
+    # rescued by trades that open inside it and resolve after it.
+    resolved = [rec(model="L", open_h=1, hold_h=1, pnl=-1.0) for _ in range(MIN_N_TRAIN)]
+    unresolved = [rec(model="L", open_h=99, hold_h=72, pnl=+50.0) for _ in range(MIN_N_TRAIN)]
+    picked = select_legs(resolved + unresolved, t0, t1)
+    assert ("L", "LONG") not in picked, "a leg may only be judged on trades that had resolved by the refit instant"
+    # and the same leg IS admitted once those trades genuinely resolve in-window
+    later = [rec(model="L", open_h=1, hold_h=1, pnl=+2.0) for _ in range(MIN_N_TRAIN)]
+    assert ("L", "LONG") in select_legs(later, t0, t1)
+
+
+def test_drawdown_sees_the_fall_from_initial_capital():
+    """The curve started AFTER the first close, so initial capital was never a
+    peak and the fall from capital to the first trough was invisible. The warm-up
+    block only trains the leg (its own trades are rejected — no prior window), so
+    the first SCORED trade is the first move off the initial capital."""
+    recs = train(n=30, pnl=1.0) + [rec(open_h=24 * 21, hold_h=1, pnl=-50.0)]
+    out = simulate(recs, capital=1000.0, fixed_usd=100.0, leverage=1.0)
+    assert out["trades_taken"] > 0, "warm-up must make the leg selectable"
+    assert out["max_drawdown_pct"] < -1.0, f"a losing trade must show drawdown, got {out['max_drawdown_pct']}"
+
+
+def test_drawdown_is_not_smoothed_away_by_same_timestamp_exits():
+    """`sorted(equity)` reordered same-instant exits ascending by BALANCE, so an
+    intra-instant dip vanished. equity is already chronological; the sort was
+    both unnecessary and harmful."""
+    h = 24 * 21
+    recs = (
+        train(model="A", n=30, pnl=1.0)
+        + train(model="B", n=30, pnl=1.0)
+        + [rec(model="A", open_h=h, hold_h=1, pnl=-40.0), rec(model="B", open_h=h, hold_h=1, pnl=+35.0)]
+    )
+    out = simulate(recs, capital=1000.0, fixed_usd=100.0, leverage=1.0)
+    assert out["max_drawdown_pct"] < -1.0, (
+        f"the dip between two same-instant exits must survive, got {out['max_drawdown_pct']}"
+    )
+
+
+def test_binding_constraint_reports_none_when_nothing_bound():
+    """The field exists so a return cannot be read without its constraint; the
+    old chain fell through to 'exposure_cap' even at zero rejections."""
+    out = simulate(train(n=30, pnl=1.0), capital=100_000.0, fixed_usd=1.0, leverage=1.0)
+    assert out["binding_constraint"] == "none"
+
+
+def test_equity_curve_is_emitted():
+    """The task's first-named deliverable was computed and discarded."""
+    recs = train(n=30, pnl=1.0) + [rec(open_h=24 * 21, hold_h=1, pnl=2.0)]
+    out = simulate(recs, capital=1000.0, fixed_usd=100.0, leverage=1.0)
+    curve = out["equity_curve"]
+    assert curve and curve[0][1] == pytest.approx(1000.0), "curve must start at initial capital"
+    assert all(len(p) == 2 for p in curve)

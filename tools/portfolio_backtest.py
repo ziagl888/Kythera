@@ -90,7 +90,13 @@ GEOMETRY_VARIANTS: dict[str, dict[str, tuple[float, float]]] = {
 LADDER = (0.5, 0.5)  # TP1 / TP2 tranches; TP3 measured as value-destroying
 FEE_PCT = 0.09  # taker round trip on notional
 DEFAULT_LEVERAGE = 20.0
-EXPOSURE_CAP = 50  # direction overhang, mirrors core/trailing_roster
+# Direction overhang. NOT from core/trailing_roster (that module only holds
+# SLOT_CAP) — the live value is `40_trailing_close_bot.EXPOSURE_CAP`, which reads
+# the env override TRAILING_BOT_EXPOSURE_CAP and is therefore operator-settable
+# rather than a fixed constant.
+EXPOSURE_CAP = 50
+# Equity-curve points written per run — see "equity_curve" in the result dict.
+EQUITY_POINTS = 500
 # Cornix caps a channel at 500 simultaneously open trades; core/trailing_roster
 # mirrors it as SLOT_CAP so the bot decides which trades get dropped instead of
 # letting Cornix decide by arrival time. The first version of this simulation
@@ -158,7 +164,16 @@ def precompute(z, geometry: dict[str, tuple[float, float]], oi_short_threshold: 
                 "model": models[s_mod[k]],
                 "direction": direction,
                 "open_ts": int(s_ts[k]),
-                "exit_ts": int(ts[min(len(ts) - 1, (lo - a) + step_exit)]) if step_exit else int(s_ts[k] + horizon_s),
+                # `if step_exit` was a falsy-zero bug: `_exit_step` legitimately
+                # returns 0 when TP or SL is touched on the FIRST closed candle
+                # after the signal, and that 0 was read as "never exited", pinning
+                # the trade to the full horizon. A five-minute round trip was booked
+                # as 72 h of slot occupancy — an 864x overstatement, and worse than
+                # a uniform bias because tighter geometries produce more step-0
+                # touches, so it fell unevenly across the variants being compared.
+                # `_exit_step` never returns None (it falls back to n-1), so the
+                # index is always valid and needs no fallback at all.
+                "exit_ts": int(ts[min(len(ts) - 1, (lo - a) + step_exit)]),
                 "pnl_pct": pnl,
                 "symbol": symbols[s_sym[k]],
                 "oi": float(oi_feats["oi_chg_4h"][k]) if oi_feats is not None else np.nan,
@@ -179,10 +194,22 @@ def _exit_step(i_tp: int | None, i_sl: int | None, n: int) -> int:
 
 
 def select_legs(recs: list[dict], t0: int, t1: int) -> set[tuple[str, str]]:
-    """Legs with positive mean pp on [t0, t1) and enough trades to mean it."""
+    """Legs with positive mean pp, RESOLVED inside [t0, t1), and enough trades.
+
+    Membership is on `exit_ts`, not `open_ts`. Filtering on entry while scoring
+    with the fully realised `pnl_pct` is a look-ahead: at each weekly refit the
+    last `horizon_s` (72 h) of the trailing window had not resolved yet, so ~43 %
+    of each newly added week was selected on outcomes that had not happened. A leg
+    that only turns positive in its final unresolved days was admitted a week
+    early. This is the same defect class that inflated a prior study here 8x by
+    checking arming over a whole lifetime instead of up to the deadline.
+
+    The cost is that the effective training window is shorter than `t1 - t0` by
+    one horizon — which is the real information set, not a loss.
+    """
     agg: dict[tuple[str, str], list[float]] = defaultdict(list)
     for r in recs:
-        if t0 <= r["open_ts"] < t1:
+        if t0 <= r["open_ts"] and r["exit_ts"] < t1:
             agg[(r["model"], r["direction"])].append(r["pnl_pct"])
     return {k for k, v in agg.items() if len(v) >= MIN_N_TRAIN and float(np.mean(v)) > 0.0}
 
@@ -251,9 +278,23 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
         taken += 1
         peak_occ = max(peak_occ, len(open_pos))
 
-    curve = [b for _, b in sorted(equity)]
-    peak = np.maximum.accumulate(curve) if curve else np.array([capital])
-    max_dd = float(((np.array(curve) - peak) / peak).min() * 100) if curve else 0.0
+    # Two defects lived in these three lines and both understated risk.
+    #
+    # (a) The curve started at the balance AFTER the first close, so the initial
+    #     capital was never a peak and the decline from capital to the first trough
+    #     was invisible. A run losing 50 % on its only trade reported max_dd 0.0.
+    # (b) `sorted(equity)` sorts (ts, balance) TUPLES, so exits sharing a timestamp
+    #     — routine on a 5m grid with up to 500 open positions — were reordered
+    #     ascending by balance, smoothing intra-instant dips away. A -40 %/+35 %
+    #     pair closing on the same candle reported zero drawdown. `equity` is
+    #     already appended in chronological processing order, so the sort was both
+    #     unnecessary and harmful.
+    #
+    # Drawdown is the number an operator would size on, so a floor is not a
+    # conservative approximation here — it is the wrong direction.
+    curve = [capital] + [b for _, b in equity]
+    peak = np.maximum.accumulate(curve)
+    max_dd = float(((np.array(curve) - peak) / peak).min() * 100)
     days = sorted(daily.items())
     n_days = max(1, (t_end - t_start) // 86400)
     return {
@@ -273,8 +314,17 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
         "peak_margin_util_pct": round(peak_occ * fixed_usd / capital * 100, 1),
         # which ceiling actually bound — reporting the return without this invites
         # reading a sample-selection artifact as a sizing result
+        # "none" first: with all three counters at zero the chain below reported
+        # "exposure_cap", i.e. it named a ceiling that never fired. This field
+        # exists precisely so a return cannot be read without its binding
+        # constraint — asserting one that did not bind is the misreading it was
+        # built to prevent, and it is what made the "the slot is the scarce
+        # resource" claim look supported when slot_cap rejections were 0 in every
+        # committed run.
         "binding_constraint": (
-            "slot_cap"
+            "none"
+            if max(rejected_slots, rejected_margin, rejected_cap) == 0
+            else "slot_cap"
             if rejected_slots > max(rejected_margin, rejected_cap)
             else "margin"
             if rejected_margin > rejected_cap
@@ -284,6 +334,15 @@ def simulate(recs: list[dict], capital: float, fixed_usd: float, leverage: float
         "final_balance": round(balance, 2),
         "return_pct": round((balance / capital - 1) * 100, 2),
         "max_drawdown_pct": round(max_dd, 2),
+        # The equity curve is the task's first-named deliverable. It was built here
+        # and then discarded, while the module docstring still advertised it.
+        # Down-sampled to at most EQUITY_POINTS points so a 9k-trade run does not
+        # put a 9k-element array into every cell of a sweep — the shape is what a
+        # reader needs, and max_drawdown_pct above carries the exact extremum.
+        "equity_curve": [
+            [int(ts), round(bal, 2)]
+            for ts, bal in ([(t_start, capital)] + equity)[:: max(1, len(equity) // EQUITY_POINTS)]
+        ],
         "worst_day": [days and min(days, key=lambda kv: kv[1])[0], round(min((v for _, v in days), default=0.0), 2)],
         "best_day": [days and max(days, key=lambda kv: kv[1])[0], round(max((v for _, v in days), default=0.0), 2)],
         "losing_days": sum(1 for _, v in days if v < 0),
