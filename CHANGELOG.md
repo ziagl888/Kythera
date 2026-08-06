@@ -1,3 +1,47 @@
+## [2026-08-06] TP1-speed study: the symbol's own volatility decides, BTC context does not (T-2026-KYT-9050-110)
+
+Operator question: can market context at signal time (BTC, BTCDOM, OI, funding, forced liqs)
+predict which trades reach TP1 fast? Economically this is the T-105 slot-turnover question —
+the bot-40 book is margin/slot-bound, so a trade that takes TP1 in an hour returns its margin
+~70x faster than one that limps to the 72 h horizon.
+
+New `tools/tp1_speed_study.py` (DB-free, on the corrected T-104/T-105 exports). Pre-registered:
+label = TP1 strictly before SL (tie -> SL) within 4 h under the t104 geometry (12 h secondary);
+features as-of the last CLOSED candle (hard rule 5), chronological 70/30 split, per-week AUC
+consistency; Bonferroni bar stated up front. 43,319 covered signals, base rate 16.0 %.
+
+**Findings (test-set confirmed, 5/5 weeks consistent):**
+
+* **`sym_vol_4h` — the signal symbol's own 4 h realised vol — AUC 0.79 train / 0.77 test.**
+  Decile spread 1.9 % -> 47.7 % fast-TP1. The tautology check (does vol just speed up
+  everything, SL included?) says no: TP1-first RISES with vol (31 % -> 52 %) and in the top
+  decile TP1-first (51.9 %) overtakes SL-first (47.8 %), while low-vol trades leave ~30 %
+  of positions unresolved at the horizon — 72 h of dead slot.
+* **`oi_pct_30d` AUC 0.62/0.61** — the only OI feature above noise; likely partly vol in
+  disguise, not independently established.
+* **BTC and BTCDOM context: nothing.** All six features AUC 0.48–0.52 — the operator's
+  BTC-conditioning hypothesis is refuted on this window.
+* SHORT hits fast TP1 more than LONG (18.3 % vs 13.7 %) — geometry-mechanical (3 % vs 4 %
+  target), not a finding.
+
+Gaps stated, not buried: funding and forced-liq features need the VPS DB or an API backfill
+(`liq_events` only exists since 2026-08-03); signals cluster in time so the effective N is
+far below 43k. **This is an association verdict, not a deployable gate.** The deployable
+follow-up is explicitly NOT run here: vol-conditioned admission in the T-105 portfolio
+simulator, measuring PnL per slot-hour — flagged as the next task if wanted.
+
+Two further gaps, found in the pre-merge review and named rather than buried: the task brief
+also listed a **time-of-day** feature, which was never built — nothing here says whether the
+signal hour matters. And **no significance test is computed**: the Bonferroni line quoted in
+the pre-registration (p < 0.0019) is never applied, so the verdicts rest on AUC magnitude plus
+per-week sign consistency alone. For `sym_vol_4h` (AUC 0.79 at n ~ 30k) that is academic; for
+the 0.54–0.56 band it is precisely the "signal vs suggestive" line, so that band stays
+suggestive. Neither gap moves the headline — both are follow-up work.
+
+Plus `backtest/test_tp1_speed_study.py` (7 tests: same-candle tie books as SL, forming
+candle never enters features, hit time = touching candle's close, NaN on missing history,
+tie-averaged AUC).
+
 ## [2026-08-06] Profit-securing sweep: no skim/refill ratio beats withdrawing profits (T-2026-KYT-9050-109)
 
 Follow-up to T-108, which pinned the two corners of the capital-split scheme (symmetric =
