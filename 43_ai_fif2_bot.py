@@ -162,6 +162,15 @@ STARVATION_LOG_EVERY_S = 3600
 # the studies scored strongest and drops the marginal tail — logged, not silent.
 MAX_EMITS_PER_CYCLE = int(os.getenv("FIF2_MAX_EMITS_PER_CYCLE", "5"))
 
+# Hard ceiling on per-symbol ticker calls in one cycle — the bound
+# ``core.live_price.posting_anchor`` asks every caller to supply. The batch returns
+# every futures symbol in ONE request (P2.44), so this path only covers a symbol
+# missing from an otherwise valid payload (a delisting), and an empty batch returns
+# before the loop. Bounded anyway: "it is only ever a couple of symbols" is the same
+# shape of argument that let ODS1 ship an unbounded fan-out, and an argument is not
+# checkable. Same constant name and default as ODS1 so the two read alike.
+MAX_PRICE_FALLBACKS_PER_CYCLE = int(os.getenv("FIF2_MAX_PRICE_FALLBACKS", "5"))
+
 
 def ladder(direction: str, entry: float) -> tuple[list[float], float]:
     """The measured t104 bracket as absolute prices. Targets ordered for Cornix
@@ -378,11 +387,20 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
     # feature first, for every new candidate — the distribution feeds the gate
     evaluated: list[tuple[dict, float, float]] = []
     unpriced = 0
+    fallbacks = 0
     for cand in fresh:
         vol = sym_vol_4h(conn, cand["symbol"])
         if vol is None:
             continue  # voided, never filled — and never sampled either
-        market = prices.get(cand["symbol"]) or posting_anchor(cand["symbol"])
+        market = prices.get(cand["symbol"])
+        if not market and fallbacks < MAX_PRICE_FALLBACKS_PER_CYCLE:
+            # Counted before the call, so a request that times out still spends
+            # budget. "Single gaps in a good batch" is an argument about the
+            # expected case; this loop iterates a DB result and runs before the
+            # bootstrap return, so on the first cycle after a restart it walks the
+            # whole open book. The bound is what makes the argument unnecessary.
+            fallbacks += 1
+            market = posting_anchor(cand["symbol"])
         if not market or market <= 0:
             # Same doctrine as a voided vol: a candidate we cannot price is not one
             # we could have traded, so it does not belong in the gate's candidate
@@ -397,7 +415,10 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
     if bootstrap:
         # First cycle after start: the book already existed before this process;
         # posting it would mirror signals of unknowable freshness history.
-        logger.info(f"FIF2: bootstrap cycle — {len(evaluated)} candidates sampled, none posted")
+        logger.info(
+            f"FIF2: bootstrap cycle — {len(evaluated)} candidates sampled, none posted "
+            f"({unpriced} dropped without a live anchor)"
+        )
         return
 
     threshold = gate_threshold([v for _, v in samples])

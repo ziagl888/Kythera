@@ -241,6 +241,20 @@ def test_drift_is_signed_so_a_fallen_price_reads_as_consumed():
     assert ods1.drift_consumed_pct(100.0, 100.0) == pytest.approx(0.0)
 
 
+def test_drift_is_measured_against_the_decision_price_like_fif2():
+    """The BASE, not just the sign.
+
+    Both bots express their bound as a fraction of TP1, so both have to read the
+    drift off the same denominator or the numbers are not comparable — and
+    AUDIT_TODO #T115-1 makes re-deriving them from live rows the next step.
+    An asymmetric value is required here: at 100 -> 90 the decision-price base gives
+    10.00 % and the market base 11.11 %, so a silent revert to the old denominator
+    fails. A symmetric case (or a sign-only assertion) would not catch it.
+    """
+    assert ods1.drift_consumed_pct(100.0, 90.0) == pytest.approx(10.0)
+    assert ods1.drift_consumed_pct(100.0, 110.0) == pytest.approx(-10.0)
+
+
 def test_the_drift_bound_is_tied_to_tp1_not_a_loose_constant():
     """It has to move with the geometry it protects: re-pricing TP1 without
     re-pricing the bound would silently change what fraction of the measured effect
@@ -281,10 +295,11 @@ def test_posting_anchor_voids_rather_than_inventing_a_price(monkeypatch):
     assert live_price.posting_anchor("XUSDT") is None
 
 
-def test_both_bots_use_the_shared_anchor(monkeypatch):
+def test_ods1_uses_the_shared_anchor():
     """The conn-rollback rule has ONE owner. A bot re-implementing the lookup locally
     is where that rule gets dropped, so the identity is pinned rather than the
-    behaviour."""
+    behaviour. (FIF2's half of this lives in backtest/test_fif2_bot.py, where bot 43
+    is already loaded — the earlier name claimed both bots and checked one.)"""
     from core.live_price import posting_anchor
 
     assert ods1.posting_anchor is posting_anchor

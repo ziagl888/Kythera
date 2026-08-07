@@ -32,9 +32,9 @@ touched the posted entry, so the arm traded a selection it had created itself.
 * **Unpriced is voided, never filled.** No live anchor ⇒ no post, and specifically no fallback
   to the stale price this change removed — that would make the defect intermittent instead of
   gone. One `get_live_prices_batch()` per cycle (P2.44); ODS1 resolves the per-symbol HTTP
-  fallback only after the open/cooldown filters so it is bounded by the emit cap, and FIF2
-  skips a whole cycle on an empty batch rather than degrading into one call per coin at a 60 s
-  poll. Neither hands the connection to `get_live_price`: its DB fallback calls
+  both bots return on an empty batch rather than degrading into one call per coin, and single
+  gaps in an otherwise valid payload are capped by `MAX_PRICE_FALLBACKS_PER_CYCLE`. Neither
+  hands the connection to `get_live_price`: its DB fallback calls
   `conn.rollback()`, which is connection-wide and would discard everything the cycle wrote
   before its single commit.
 

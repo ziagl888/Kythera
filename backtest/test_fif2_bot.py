@@ -277,6 +277,37 @@ def test_a_candidate_without_a_live_anchor_leaves_no_sample_and_no_row(monkeypat
     assert len(logged) == 1, "the unpriced candidate must not leave a prediction row"
 
 
+def test_fif2_uses_the_shared_anchor():
+    """Identity, not behaviour: a locally re-implemented lookup is exactly how the
+    "never hand `conn` to get_live_price" rule gets dropped, and monkeypatching the
+    name in the fixtures above would not catch that."""
+    from core.live_price import posting_anchor
+
+    assert BOT.posting_anchor is posting_anchor
+
+
+def test_per_symbol_fallbacks_are_bounded_here_too(monkeypatch):
+    """`posting_anchor`'s docstring asks every caller for an explicit per-cycle
+    bound. This loop iterates a DB result and runs BEFORE the bootstrap return, so
+    the first cycle after a restart walks the whole open book — the empty-batch
+    return does not cover a valid payload that is merely missing symbols."""
+    n = BOT.MAX_PRICE_FALLBACKS_PER_CYCLE + 10
+    calls: list[str] = []
+    conn = MagicMock()
+    cands = [
+        {"id": i, "symbol": f"S{i}USDT", "model": "EPD3", "direction": "LONG", "entry": 100.0, "age_sec": 30.0}
+        for i in range(n)
+    ]
+    monkeypatch.setattr(BOT, "fetch_fresh_signals", lambda _c: cands)
+    monkeypatch.setattr(BOT, "get_live_prices_batch", lambda: {"OTHERUSDT": 1.0})  # valid, but lacks them
+    monkeypatch.setattr(BOT, "posting_anchor", lambda s, *_a, **_k: calls.append(s))
+    monkeypatch.setattr(BOT, "sym_vol_4h", lambda _c, _s: 1.0)
+    monkeypatch.setattr(BOT, "emit", lambda *_a, **_k: pytest.fail("no anchor, no post"))
+
+    BOT.run_cycle(conn, [], seen={}, bootstrap=False)
+    assert len(calls) == BOT.MAX_PRICE_FALLBACKS_PER_CYCLE, len(calls)
+
+
 def test_an_empty_batch_evaluates_nothing_and_marks_nothing_seen(monkeypatch):
     """An empty batch is a transport failure, not a verdict. Marking the burst seen
     would drop it permanently — those candidates are still inside MAX_MIRROR_AGE_S
