@@ -181,6 +181,33 @@ EXPOSURE_CAP = int(os.getenv("TRAILING_BOT_EXPOSURE_CAP", "50"))
 # collisions are frequent, the lock just shifts them.
 SYMBOL_COOLDOWN_SEC = float(os.getenv("TRAILING_BOT_SYMBOL_COOLDOWN_SEC", "60"))
 
+# How long a symbol stays locked after the trailing arm itself exited a position on
+# it (T-2026-KYT-9050-115, operator decision Michi 2026-08-07). 0 = off.
+#
+# Distinct from SYMBOL_COOLDOWN_SEC, which is about Cornix settling a close. This
+# one is about trade IDENTITY. The bot's "a once-trailed trade is done" lock
+# (`read_mirrored_src_ids`, and the rationale on `open_mirrors`) is keyed on
+# ``src_signal_id``, so it only ever recognises the SAME ai_signals row. A
+# re-forwarding leg writes the same underlying trade under a NEW id and walks
+# straight past it:
+#
+#   t        source signal posts, bot mirrors it
+#   t+180s   the trail fires, mirror closes TRAIL — the source trade runs on
+#   t+240s   the 60s cooldown has long expired, the symbol is free
+#   t+250s   a re-forwarded row for that same trade, still inside
+#            MAX_MIRROR_AGE_SEC of its OWN open_time, is admitted
+#            -> re-entry into exactly the position the trail just exited
+#
+# The hole is not new and not specific to one leg: any two rostered legs firing on
+# one symbol inside the window can produce it. FIF2's roster seat turns it from rare
+# into routine, because that bot mirrors the fleet by construction AND its vol gate
+# selects the fast tapes where a trailing exit within minutes actually happens.
+#
+# 1 h covers the whole re-forward window with wide margin — a re-forwarded row can
+# only be admitted within MAX_MIRROR_AGE_SEC of its own open_time — while leaving a
+# genuinely independent later signal on the symbol tradeable.
+REENTRY_LOCK_H = float(os.getenv("TRAILING_BOT_REENTRY_LOCK_H", "1"))
+
 # Exit reasons (land in trailing_positions.close_reason)
 REASON_TRAIL = "TRAIL"
 #: Time-stop: never crossed the activation threshold and older than TIME_STOP_H.
@@ -201,6 +228,17 @@ REASON_NOT_FILLED = "ENTRY_NOT_FILLED"
 #: `Close` would at best be redundant and would claim an exit we did not
 #: trigger (operator note Michi, 2026-07-27).
 REASON_SL_HIT = "SL_HIT"
+
+#: Exits that arm REENTRY_LOCK_H — the ones where the trailing arm CHOSE to leave a
+#: position while the underlying trade was still alive at fleet level. Those are the
+#: exits a re-forwarded row can undo, because the source trade is still open and
+#: still being mirrored onward by other legs.
+#:
+#: The other reasons are deliberately not here. SL_HIT and SOURCE_CLOSED mean the
+#: underlying trade is over, so there is nothing left to re-enter; ENTRY_NOT_FILLED
+#: and SHADOW_CARRYOVER never held a position at all; PREEXISTING is a bookkeeping
+#: marker, not an exit. Locking on those would cost entries without closing a hole.
+REENTRY_LOCKING_REASONS = (REASON_TRAIL, REASON_TIME_STOP)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trailing_positions (
@@ -396,6 +434,33 @@ def read_cooling_symbols(conn) -> set[str]:
         return {r[0] for r in cur.fetchall()}
 
 
+def read_reentry_locked_symbols(conn) -> set[str]:
+    """Symbols the trailing arm exited itself within ``REENTRY_LOCK_H``.
+
+    Unlike ``read_cooling_symbols`` this does NOT filter on ``posted``. That column
+    answers "could a Cornix order collide", which is the cooldown's question. This
+    one asks "did our book already trade and leave this position", and a shadow
+    mirror did exactly that — re-entering it would corrupt the shadow measurement
+    the same way it would corrupt a live book. The window is computed by the DB
+    against its own ``NOW()`` (TZ contract R3), in seconds so a fractional
+    ``REENTRY_LOCK_H`` stays exact — ``make_interval(hours => …)`` takes an int and
+    would silently floor 0.5 h to 0.
+    """
+    if REENTRY_LOCK_H <= 0:
+        return set()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT symbol FROM trailing_positions
+            WHERE closed_at IS NOT NULL
+              AND close_reason = ANY(%s)
+              AND closed_at > NOW() - make_interval(secs => %s)
+            """,
+            (list(REENTRY_LOCKING_REASONS), REENTRY_LOCK_H * 3600.0),
+        )
+        return {r[0] for r in cur.fetchall()}
+
+
 def read_open_mirrors(conn) -> dict[int, dict]:
     """Own open mirror positions, ``src_signal_id`` → row."""
     with conn.cursor() as cur:
@@ -517,12 +582,16 @@ def admit(
     free_slots: int,
     cooling: set[str] | None = None,
     open_by_dir: dict[str, int] | None = None,
+    locked: set[str] | None = None,
 ) -> tuple[list, list]:
     """Who gets into the channel? Returns ``(admitted, rejected_with_reason)``.
 
-    Four reasons, all hard:
+    Five reasons, all hard:
       * ``SYMBOL_HELD`` — a mirror position is already running on this symbol, and
         Cornix' close is symbol-wide.
+      * ``SYMBOL_REENTRY_LOCK`` — the trail exited a position on this symbol within
+        ``REENTRY_LOCK_H``. Checked before the cooldown because a just-trailed symbol
+        trips both and this is the more specific reason of the two.
       * ``SYMBOL_COOLING`` — a `Close` was just posted on this symbol, which
         may still be in progress at Cornix.
       * ``EXPOSURE_CAP`` — the candidate's direction already leads the opposite direction
@@ -541,10 +610,17 @@ def admit(
     admitted, rejected = [], []
     taken = set(held_symbols)
     cooling = cooling or set()
+    locked = locked or set()
     dir_cnt = {"LONG": 0, "SHORT": 0, **(open_by_dir or {})}
     for sid, sig in sorted(candidates, key=lambda c: -c[1]["density"]):
         if sig["symbol"] in taken:
             rejected.append((sid, sig, "SYMBOL_HELD"))
+            continue
+        if sig["symbol"] in locked:
+            # A re-forwarded row carries a new src_signal_id, so the src-keyed
+            # re-entry lock cannot see that this is the trade we just trailed out of.
+            # The symbol is the only identity both rows share.
+            rejected.append((sid, sig, "SYMBOL_REENTRY_LOCK"))
             continue
         if sig["symbol"] in cooling:
             # A close is in progress on this symbol — racing it with an opposite order
@@ -636,7 +712,14 @@ def open_mirrors(
     open_by_dir = {"LONG": 0, "SHORT": 0}
     for m in mirrors.values():
         open_by_dir[m["direction"]] = open_by_dir.get(m["direction"], 0) + 1
-    admitted, rejected = admit(new, held, SLOT_CAP - len(mirrors), read_cooling_symbols(conn), open_by_dir)
+    admitted, rejected = admit(
+        new,
+        held,
+        SLOT_CAP - len(mirrors),
+        read_cooling_symbols(conn),
+        open_by_dir,
+        locked=read_reentry_locked_symbols(conn),
+    )
 
     # Bundled rather than per candidate: the rejections repeat in EVERY
     # 10s cycle as long as the source trade is open. In the first shadow run
@@ -981,7 +1064,8 @@ def main() -> None:
     logger.info(f"=== 🪝 TRAILING CLOSE BOT STARTED ({mode}) ===")
     logger.info(
         f"Roster: {len(ROSTER)} legs from {SOURCE_REPORT} · act={ACTIVATION_PCT}% · x={RETRACE_FRAC:.0%} · "
-        f"cap={SLOT_CAP} (expected avg {EXPECTED_OCC_MEAN:.0f} / p95 {EXPECTED_OCC_P95:.0f})"
+        f"cap={SLOT_CAP} (expected avg {EXPECTED_OCC_MEAN:.0f} / p95 {EXPECTED_OCC_P95:.0f}) · "
+        f"re-entry lock {REENTRY_LOCK_H:.1f}h on {'/'.join(REENTRY_LOCKING_REASONS)}"
     )
     if mode == "SHADOW":
         logger.warning(
@@ -1006,12 +1090,14 @@ def main() -> None:
 
             sources, all_open = read_source_signals(conn)
             mirrors = read_open_mirrors(conn)
-            # Close first, then open — in this order so a symbol freed in the
-            # same cycle can be reused immediately AND
-            # the `Close <SYMBOL>` goes out guaranteed before a new entry on the same
-            # symbol: the outbox is strictly FIFO per channel by id
-            # (4_telegram_bot.py, P0.1(d)/P1.3). Reversed it would close the
-            # freshly opened trade flat again.
+            # Close first, then open — in this order so the `Close <SYMBOL>` goes out
+            # guaranteed before a new entry on the same symbol: the outbox is strictly
+            # FIFO per channel by id (4_telegram_bot.py, P0.1(d)/P1.3). Reversed it
+            # would close the freshly opened trade flat again.
+            # A symbol freed in this cycle can also be reused in it — but since
+            # T-2026-KYT-9050-115 only when the trail did NOT choose the exit itself:
+            # REENTRY_LOCKING_REASONS holds the symbol for REENTRY_LOCK_H, so what is
+            # immediately reusable are the SL/SOURCE_CLOSED/never-filled exits.
             # ONE Binance batch call per cycle, shared by both steps.
             prices = get_live_prices_batch()
             poll_open_mirrors(conn, sources, mirrors, all_open, prices)

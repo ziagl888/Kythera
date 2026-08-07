@@ -37,6 +37,33 @@ def get_live_prices_batch():
         return {}
 
 
+def posting_anchor(symbol):
+    """The live price to anchor a signal's geometry on, or None.
+
+    The sanctioned entry anchor for the POSTING path: a bot that derives its
+    targets and stop as PERCENTAGES has to hang them off the price the position
+    actually opens at, not off the price that triggered its rule
+    (T-2026-KYT-9050-115).
+
+    It exists as its own function to own one safety rule in one place: ``conn`` is
+    deliberately NOT forwarded to ``get_live_price``. That fallback calls
+    ``conn.rollback()`` on a query error, which is connection-wide — and the bots
+    using this (42, 43) write signals and prediction rows across a cycle and commit
+    ONCE at the end, so a rollback from inside a price lookup would discard the
+    whole batch. Losing the DB fallback costs one skipped candidate; taking it
+    could cost every signal in the cycle. HTTP-only is the cheaper failure.
+
+    Callers must treat None as "skip this candidate" (T-011) and must NOT fall back
+    to a stale price of their own — that reintroduces the defect this replaced.
+
+    NOTE for callers: this is one HTTP request per call. Resolve the bulk through
+    ``get_live_prices_batch`` (P2.44) and use this only for the few symbols missing
+    from an otherwise good batch, under an explicit per-cycle bound.
+    """
+    price = get_live_price(symbol)
+    return float(price) if price else None
+
+
 def get_live_price(symbol, conn=None):
     """Fetches the current live price from Binance.
     On failure (rate limit, network error) falls back to the newest close

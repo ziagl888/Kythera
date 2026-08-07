@@ -96,6 +96,30 @@ ROSTER: dict[tuple[str, str], float] = {
     ("MIS1-168h", "LONG"): 0.541,
     ("QM_4H", "LONG"): 0.352,
     ("ATS2", "LONG"): 0.054,
+    # FIF2 vol-gated ladder mirror (T-2026-KYT-9050-115, operator decision Michi
+    # 2026-08-07). Like ODS1 below, an UNMEASURED leg: the PR #198 slot-budget run
+    # predates it, so no `density_trail` exists for it and these two values are
+    # placeholders below every measured leg, not estimates. Above ODS1 because the
+    # operator rates the live book higher; the ordering between two placeholders is
+    # a judgement, and it only decides which of the two unmeasured legs yields a
+    # seat first. Re-derive both from live rows once FIF2 has its own book.
+    #
+    # FIF2 is a RE-FORWARDER, which is what got ROM1 struck from this register
+    # (EXCLUDED_AS_DUPLICATE below), so the seat needs the distinction spelled out.
+    # ROM1 re-posted the SAME trades the original legs already fed into this channel
+    # and double-counted 10 334 % of a 49 204 % headline. FIF2 overlaps only where
+    # the source leg is itself rostered, and there `admit()` resolves it: candidates
+    # are sorted by density and the second one on a symbol is rejected SYMBOL_HELD,
+    # so the measured leg wins and the FIF2 copy is dropped. What the seat actually
+    # buys is the complement — a vol-gated admission path for legs that never earned
+    # a seat (EPD3, TSM1, BB_1H, BR2H, FIF1), which reach the trailing channel only
+    # through this leg.
+    #
+    # The seat is what made `REENTRY_LOCK_H` necessary in 40_trailing_close_bot:
+    # a re-forwarded row carries a NEW ai_signals.id, so the bot's src_signal_id
+    # re-entry lock does not recognise it as the trade it just trailed out of.
+    ("FIF2", "LONG"): 0.012,
+    ("FIF2", "SHORT"): 0.011,
     # ODS1 OI-divergence short (T-2026-KYT-9050-106, operator decision Michi
     # 2026-08-05). Seated at the BOTTOM on purpose: every other density above
     # was MEASURED by the PR #198 slot-budget run, and this column doubles as the

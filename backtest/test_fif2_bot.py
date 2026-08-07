@@ -141,9 +141,13 @@ def test_fetch_excludes_self_and_rows_without_a_usable_entry():
 # ── cycle behaviour ──────────────────────────────────────────────────────────
 
 
-def _cycle_fixture(monkeypatch, n_candidates: int, bootstrap: bool = False):
+def _cycle_fixture(monkeypatch, n_candidates: int, bootstrap: bool = False, prices=None):
     """Run one cycle against stubs: every candidate has vol i+1 (strongest last
-    in arrival order), the trailing distribution is warm, nothing is open."""
+    in arrival order), the trailing distribution is warm, nothing is open.
+
+    ``prices`` defaults to every symbol trading exactly at its source entry, so the
+    drift bound is inert and the cap/gate pins below measure what they name.
+    """
     conn = MagicMock()
     cands = [
         {"id": i, "symbol": f"S{i}USDT", "model": "EPD3", "direction": "LONG", "entry": 100.0, "age_sec": 30.0}
@@ -154,7 +158,13 @@ def _cycle_fixture(monkeypatch, n_candidates: int, bootstrap: bool = False):
     monkeypatch.setattr(BOT, "fetch_fresh_signals", lambda _c: cands)
     monkeypatch.setattr(BOT, "sym_vol_4h", lambda _c, s: float(s[1 : s.index("USDT")]) + 1.0)
     monkeypatch.setattr(BOT, "has_open_ai_signal", lambda *_a: False)
-    monkeypatch.setattr(BOT, "emit", lambda _c, cand, vol, conf: emitted.append((cand["symbol"], vol)) or True)
+    monkeypatch.setattr(
+        BOT,
+        "get_live_prices_batch",
+        lambda: {c["symbol"]: 100.0 for c in cands} if prices is None else dict(prices),
+    )
+    monkeypatch.setattr(BOT, "posting_anchor", lambda *_a, **_k: None)
+    monkeypatch.setattr(BOT, "emit", lambda _c, cand, vol, conf, market: emitted.append((cand["symbol"], vol)) or True)
     monkeypatch.setattr(BOT, "log_prediction", lambda *_a, **kw: logged.append(kw.get("posted", _a[-1])))
     # warm distribution with a threshold every candidate clears (vols >= 1.0)
     now = 1_760_000_000.0
@@ -197,3 +207,128 @@ def test_cap_reports_the_full_suppressed_count_not_the_tail(monkeypatch, caplog)
     cycle_lines = [r.message for r in caplog.records if r.message.startswith("FIF2 cycle:")]
     assert len(cycle_lines) == 1
     assert f"{n - BOT.MAX_EMITS_PER_CYCLE} over the per-cycle cap" in cycle_lines[0]
+
+
+# ── the entry anchor (T-2026-KYT-9050-115) ───────────────────────────────────
+
+
+def test_the_ladder_hangs_off_the_posting_price_not_the_source_entry(monkeypatch):
+    """The defect this replaced: the ladder was built on the SOURCE signal's entry1
+    — the price the originating bot saw when IT fired, up to MAX_MIRROR_AGE_S plus
+    that leg's insert latency earlier. The t104 bracket is a percentage geometry, so
+    anchoring it on a price this mirror is not opened at posts a risk/reward T-111
+    never priced.
+
+    Source entry and market are deliberately different, so an implementation that
+    kept using ``cand["entry"]`` cannot pass.
+    """
+    seen: list[dict] = []
+    monkeypatch.setattr(BOT, "post_ai_signal_gated", lambda conn, **kw: seen.append(kw) or 1)
+    monkeypatch.setattr(BOT, "get_max_leverage", lambda *_a, **_k: 20)
+    cand = {"id": 7, "symbol": "XUSDT", "model": "EPD3", "direction": "LONG", "entry": 100.0, "age_sec": 30.0}
+    assert BOT.emit(MagicMock(), cand, vol=1.2, confidence=0.85, market=110.0) is True
+
+    kw = seen[0]
+    assert kw["entry1"] == pytest.approx(110.0)
+    assert kw["entry2"] == pytest.approx(110.0)
+    assert kw["targets"] == pytest.approx([110.0 * 1.04, 110.0 * 1.05])
+    assert kw["sl"] == pytest.approx(110.0 * 0.95)
+
+
+def test_drift_is_direction_aware():
+    """Chasing means the opposite thing per side: for a LONG the market has run UP
+    since the source signalled, for a SHORT it has run DOWN."""
+    assert BOT.drift_consumed_pct("LONG", 100.0, 101.0) == pytest.approx(1.0)
+    assert BOT.drift_consumed_pct("LONG", 100.0, 99.0) == pytest.approx(-1.0)
+    assert BOT.drift_consumed_pct("SHORT", 100.0, 99.0) == pytest.approx(1.0)
+    assert BOT.drift_consumed_pct("SHORT", 100.0, 101.0) == pytest.approx(-1.0)
+
+
+def test_the_drift_bound_scales_with_each_direction_s_own_tp1():
+    """LONG TP1 is 4 %, SHORT TP1 is 3 % — one shared absolute number would be a
+    different fraction of the geometry on each side."""
+    for direction in ("LONG", "SHORT"):
+        assert BOT.max_drift_pct(direction) == pytest.approx(
+            BOT.DRIFT_CONSUMED_FRAC_OF_TP1 * BOT.TP_PCTS[direction][0]
+        )
+        assert 0.0 < BOT.max_drift_pct(direction) < BOT.TP_PCTS[direction][0]
+    assert BOT.max_drift_pct("LONG") != BOT.max_drift_pct("SHORT")
+
+
+def test_a_mirror_that_would_chase_the_move_is_not_posted(monkeypatch):
+    """Above the bound the mirror is buying the tail of a move the source already
+    signalled — not the trade T-111 filled at signal price."""
+    beyond = 100.0 * (1.0 + 2.0 * BOT.max_drift_pct("LONG") / 100.0)
+    prices = {"S0USDT": beyond, "S1USDT": 100.0}
+    emitted, logged, _ = _cycle_fixture(monkeypatch, n_candidates=2, prices=prices)
+    assert [s for s, _ in emitted] == ["S1USDT"], emitted
+    # The chased candidate still leaves a prediction row — that is the shadow record
+    # the gate gets re-calibrated from.
+    assert len(logged) == 2
+
+
+def test_a_candidate_without_a_live_anchor_leaves_no_sample_and_no_row(monkeypatch):
+    """Same doctrine as a voided vol: a candidate we cannot price is not one we
+    could have traded, so it belongs in neither the gate's candidate population nor
+    the prediction book. Falling back to the source entry would reintroduce exactly
+    the stale anchor this change removed."""
+    emitted, logged, _ = _cycle_fixture(monkeypatch, n_candidates=2, prices={"S1USDT": 100.0})
+    assert [s for s, _ in emitted] == ["S1USDT"], emitted
+    assert len(logged) == 1, "the unpriced candidate must not leave a prediction row"
+
+
+def test_fif2_uses_the_shared_anchor():
+    """Identity, not behaviour: a locally re-implemented lookup is exactly how the
+    "never hand `conn` to get_live_price" rule gets dropped, and monkeypatching the
+    name in the fixtures above would not catch that."""
+    from core.live_price import posting_anchor
+
+    assert BOT.posting_anchor is posting_anchor
+
+
+def test_per_symbol_fallbacks_are_bounded_here_too(monkeypatch):
+    """`posting_anchor`'s docstring asks every caller for an explicit per-cycle
+    bound. This loop iterates a DB result and runs BEFORE the bootstrap return, so
+    the first cycle after a restart walks the whole open book — the empty-batch
+    return does not cover a valid payload that is merely missing symbols."""
+    n = BOT.MAX_PRICE_FALLBACKS_PER_CYCLE + 10
+    calls: list[str] = []
+    conn = MagicMock()
+    cands = [
+        {"id": i, "symbol": f"S{i}USDT", "model": "EPD3", "direction": "LONG", "entry": 100.0, "age_sec": 30.0}
+        for i in range(n)
+    ]
+    monkeypatch.setattr(BOT, "fetch_fresh_signals", lambda _c: cands)
+    monkeypatch.setattr(BOT, "get_live_prices_batch", lambda: {"OTHERUSDT": 1.0})  # valid, but lacks them
+    monkeypatch.setattr(BOT, "posting_anchor", lambda s, *_a, **_k: calls.append(s))
+    monkeypatch.setattr(BOT, "sym_vol_4h", lambda _c, _s: 1.0)
+    monkeypatch.setattr(BOT, "emit", lambda *_a, **_k: pytest.fail("no anchor, no post"))
+
+    BOT.run_cycle(conn, [], seen={}, bootstrap=False)
+    assert len(calls) == BOT.MAX_PRICE_FALLBACKS_PER_CYCLE, len(calls)
+
+
+def test_an_empty_batch_evaluates_nothing_and_marks_nothing_seen(monkeypatch):
+    """An empty batch is a transport failure, not a verdict. Marking the burst seen
+    would drop it permanently — those candidates are still inside MAX_MIRROR_AGE_S
+    next cycle. And the fallback must NOT be per-symbol HTTP for the whole burst:
+    that is the P2.44 regression, one call per coin, at a 60 s poll."""
+    conn = MagicMock()
+    cands = [
+        {"id": i, "symbol": f"S{i}USDT", "model": "EPD3", "direction": "LONG", "entry": 100.0, "age_sec": 30.0}
+        for i in range(3)
+    ]
+    per_symbol_calls: list[str] = []
+    monkeypatch.setattr(BOT, "fetch_fresh_signals", lambda _c: cands)
+    monkeypatch.setattr(BOT, "get_live_prices_batch", lambda: {})
+    monkeypatch.setattr(BOT, "posting_anchor", lambda s, *_a, **_k: per_symbol_calls.append(s))
+    monkeypatch.setattr(BOT, "sym_vol_4h", lambda _c, _s: 1.0)
+    monkeypatch.setattr(BOT, "emit", lambda *_a, **_k: pytest.fail("nothing may post without an anchor"))
+
+    seen: dict[int, float] = {}
+    samples: list[list[float]] = []
+    BOT.run_cycle(conn, samples, seen, bootstrap=False)
+
+    assert seen == {}, "an unevaluated candidate must stay eligible for the next cycle"
+    assert samples == [], "the gate distribution must not absorb candidates that were never priced"
+    assert per_symbol_calls == [], "an empty batch must not degrade into one HTTP call per coin"

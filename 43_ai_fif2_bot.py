@@ -29,9 +29,21 @@ once TP1 is taken — ``tools/portfolio_backtest.precompute`` models that via
 ``_breakeven_step``, and it decides what the runner half is worth when price
 comes back. This bot only posts the two rungs and the initial SL; the breakeven
 move is **Cornix channel configuration**. Without it the runner carries the full
-SL instead of 0, and the live geometry is not the one that was measured. Check
-the channel's breakeven setting BEFORE any Cornix-on — today the FIF channel is
-not Cornix-executed, so this is a go-live precondition, not a live defect.
+SL instead of 0, and the live geometry is not the one that was measured.
+
+Since T-2026-KYT-9050-115 that precondition is LIVE, not deferred. The FIF
+channel itself is still not Cornix-executed, but the roster seat granted in that
+task routes this bot's signals through ``40_trailing_close_bot``, which reposts
+the source's ``sl`` and ``targets`` verbatim via ``build_cornix_block`` into
+``CH_TRAILING`` — and that channel IS Cornix-executed. So these rungs now reach a
+venue that fills them. Two consequences, both for the operator:
+
+* Check ``CH_TRAILING``'s breakeven setting. Without stop-to-breakeven after TP1
+  the runner half is not the half T-111 priced.
+* In that channel the trail, not the ladder, is the primary exit
+  (``ACTIVATION_PCT`` / ``RETRACE_FRAC`` / ``TIME_STOP_H``). The rungs still sit
+  at Cornix as partial take-profits, so the live geometry there is the ladder AND
+  the trail — a combination neither T-111 nor the PR #198 slot-budget run scored.
 
 The gate threshold is a rolling quantile, never a constant
 ----------------------------------------------------------
@@ -51,8 +63,17 @@ turned the channel off in Cornix — so live posts here produce forward
 measurement, not fills (operator decision 2026-08-06). Kill switches, any one
 of which suffices: ``FIF2_LIVE_POSTING=0`` (shadow-only), ``CH_FIF2=0``
 (shadow-only via the ``_ch_override`` contract), or a ``("FIF2", <dir>)``
-``_LIFECYCLE`` entry in ``core/shadow_gate``. If FIF2 shows positive live edge,
-feeding its trades into bot 40 (roster seat) is a separate operator decision.
+``_LIFECYCLE`` entry in ``core/shadow_gate``.
+
+The roster seat this section originally deferred ("if FIF2 shows positive live
+edge, feeding its trades into bot 40 is a separate operator decision") was granted
+on 2026-08-07 (T-2026-KYT-9050-115, operator decision Michi) — **ahead of that
+measurement, not because of it**: FIF2 deployed 2026-08-06 and gates on a
+``MIN_REFIT_N``-sample trailing distribution, so one day of live rows cannot carry
+a live-edge verdict. It is a deliberate operator override of this file's own
+precondition, recorded here rather than left as a contradiction. The seat's
+densities are placeholders below every measured leg for the same reason
+(``core/trailing_roster``), so under a binding slot cap FIF2 yields its seat first.
 
 Known honest risks, carried over from T-111 and re-checked before any Cornix-on:
 the backtest fills at signal price while a vol gate selects exactly the fast
@@ -78,6 +99,7 @@ from core import config as _kcfg
 from core import shadow_gate
 from core.candles import history_start, read_candles
 from core.database import get_db_connection
+from core.live_price import get_live_prices_batch, posting_anchor
 from core.market_utils import get_max_leverage
 from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal_gated
 from core.state_utils import atomic_write_json
@@ -101,6 +123,34 @@ STATE_PATH = os.getenv("FIF2_STATE_PATH", "fif2_gate_state.json")
 TP_PCTS = {"LONG": (4.0, 5.0), "SHORT": (3.0, 4.0)}
 SL_PCT = {"LONG": 5.0, "SHORT": 2.0}
 
+# ── the entry anchor: posting time, not the source bot's detection time ──────
+#
+# Until T-2026-KYT-9050-115 the ladder hung off the SOURCE signal's ``entry1`` —
+# the price the originating bot saw when IT fired, up to MAX_MIRROR_AGE_S old plus
+# that leg's own insert latency (bot 40 measured 30-120 s for tick legs and a hard
+# ~185-195 s wall for candle-cycle legs, which is why its window is 240 s at all).
+# The ladder is a percentage bracket, so anchoring it on a price this mirror will
+# not be filled at posts a risk/reward that is not the one T-111 priced.
+#
+# This is the correction bot 40 already made on 2026-07-27 (operator decision
+# Michi): of 24 mirrors 5 filled, and for 15 of 18 cancellations the market never
+# touched the posted entry — the arm traded a selection it had created itself,
+# favouring trades whose move reverts. Bot 40 re-anchors only the entry and keeps
+# the source's SL/targets absolute because those are S/R levels; the t104 rungs are
+# percentages, so here entry and ladder move together.
+#
+# It does not close the fill gap the module docstring flags — Cornix still places an
+# order and a fast tape can still run away from it — but it removes the part of that
+# gap this bot manufactures itself, and it makes what remains measurable: the posted
+# entry is now a price that existed at post time.
+#
+# How much of the move may already have happened before we mirror. Not measured —
+# T-111 filled at signal price and priced no mirror delay — so it is a bound on how
+# far the mirror may drift from the trade that was studied, as a fraction of TP1 so
+# it scales with each direction's own geometry (LONG 0.5 x 4 % = 2.0 %,
+# SHORT 0.5 x 3 % = 1.5 %). Skips are counted and logged, never silent.
+DRIFT_CONSUMED_FRAC_OF_TP1 = float(os.getenv("FIF2_DRIFT_CONSUMED_FRAC", "0.5"))
+
 # ── mirror mechanics ─────────────────────────────────────────────────────────
 POLL_SECONDS = 60
 MAX_MIRROR_AGE_S = 240  # bot-40 parity: a stale mirror fills a different market
@@ -112,6 +162,15 @@ STARVATION_LOG_EVERY_S = 3600
 # the studies scored strongest and drops the marginal tail — logged, not silent.
 MAX_EMITS_PER_CYCLE = int(os.getenv("FIF2_MAX_EMITS_PER_CYCLE", "5"))
 
+# Hard ceiling on per-symbol ticker calls in one cycle — the bound
+# ``core.live_price.posting_anchor`` asks every caller to supply. The batch returns
+# every futures symbol in ONE request (P2.44), so this path only covers a symbol
+# missing from an otherwise valid payload (a delisting), and an empty batch returns
+# before the loop. Bounded anyway: "it is only ever a couple of symbols" is the same
+# shape of argument that let ODS1 ship an unbounded fan-out, and an argument is not
+# checkable. Same constant name and default as ODS1 so the two read alike.
+MAX_PRICE_FALLBACKS_PER_CYCLE = int(os.getenv("FIF2_MAX_PRICE_FALLBACKS", "5"))
+
 
 def ladder(direction: str, entry: float) -> tuple[list[float], float]:
     """The measured t104 bracket as absolute prices. Targets ordered for Cornix
@@ -120,6 +179,21 @@ def ladder(direction: str, entry: float) -> tuple[list[float], float]:
     targets = [entry * (1 + sign * p / 100.0) for p in TP_PCTS[direction]]
     sl = entry * (1 - sign * SL_PCT[direction] / 100.0)
     return targets, sl
+
+
+def drift_consumed_pct(direction: str, source_entry: float, market: float) -> float:
+    """How far the market has already run the trade's way since the source fired.
+
+    Positive means the mirror would be chasing: for a LONG the market is above the
+    price the source signalled at, for a SHORT it is below.
+    """
+    sign = 1.0 if direction == "LONG" else -1.0
+    return sign * (market / source_entry - 1.0) * 100.0
+
+
+def max_drift_pct(direction: str) -> float:
+    """The consumed-drift bound for this direction (see the constant)."""
+    return DRIFT_CONSUMED_FRAC_OF_TP1 * TP_PCTS[direction][0]
 
 
 def gate_threshold(vols: list[float]) -> float | None:
@@ -235,10 +309,19 @@ def _log_quiet(reason: str) -> None:
     logger.info(f"FIF2: no emissions — {reason}")
 
 
-def emit(conn, cand: dict, vol: float, confidence: float) -> bool:
-    """Post one mirrored signal with the measured ladder. Returns whether the
-    gate actually emitted (falsy for SILENT/RETIRED legs and shadow dedups)."""
-    targets, sl = ladder(cand["direction"], cand["entry"])
+def emit(conn, cand: dict, vol: float, confidence: float, market: float) -> bool:
+    """Post one mirrored signal with the measured ladder, anchored at ``market``.
+
+    ``market`` is the live price at POSTING time, not the source signal's entry —
+    see the anchor rationale above ``DRIFT_CONSUMED_FRAC_OF_TP1``. The ladder is
+    derived from it, so the posted bracket is the t104 geometry measured against
+    the price this mirror actually opens at.
+
+    Returns whether the gate actually emitted (falsy for SILENT/RETIRED legs and
+    shadow dedups).
+    """
+    targets, sl = ladder(cand["direction"], market)
+    drift = drift_consumed_pct(cand["direction"], cand["entry"], market)
     lev = get_max_leverage(cand["symbol"], 20)
     posted = post_ai_signal_gated(
         conn,
@@ -247,8 +330,8 @@ def emit(conn, cand: dict, vol: float, confidence: float) -> bool:
         channel_id=TARGET_CHANNEL_ID if LIVE_POSTING else 0,
         symbol=cand["symbol"],
         confidence=confidence,
-        entry1=cand["entry"],
-        entry2=cand["entry"],
+        entry1=market,
+        entry2=market,
         sl=sl,
         targets=targets,
         source_desc=f"vol-gated mirror of {cand['model']} (sym_vol_4h {vol:.2f}%, p{int(confidence * 100)})",
@@ -256,13 +339,15 @@ def emit(conn, cand: dict, vol: float, confidence: float) -> bool:
         extra_info_lines=[
             f"Source: {cand['model']} #{cand['id']} {cand['direction']}",
             f"4h realized vol {vol:.2f}% — trailing percentile {int(confidence * 100)}",
+            f"Entry anchored at posting time — {drift:+.2f}% since the source signalled",
             f"Leverage: {lev}",
         ],
     )
     if posted:
         logger.info(
-            f"✅ FIF2 {cand['direction']} {cand['symbol']} @ {cand['entry']:.8f} "
-            f"(src {cand['model']} #{cand['id']}, vol {vol:.2f}%, p{int(confidence * 100)}, {posted})"
+            f"✅ FIF2 {cand['direction']} {cand['symbol']} @ {market:.8f} "
+            f"(src {cand['model']} #{cand['id']}, vol {vol:.2f}%, p{int(confidence * 100)}, "
+            f"drift {drift:+.2f}%, {posted})"
         )
     return bool(posted)
 
@@ -280,40 +365,76 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
         del seen[sid]
 
     fresh = [c for c in fetch_fresh_signals(conn) if c["id"] not in seen]
-    for c in fresh:
-        seen[c["id"]] = now_epoch
     if not fresh:
         return
 
+    # One batch ticker call per cycle, never one per candidate (P2.44). The live
+    # anchor is now part of what makes a candidate tradeable, so it is resolved
+    # here alongside the feature rather than at emit time.
+    prices = get_live_prices_batch()
+    if not prices:
+        # Nothing is marked seen: an empty batch is a transport failure, not a
+        # verdict on these candidates, and they are still inside MAX_MIRROR_AGE_S
+        # next cycle. Per-symbol HTTP for the whole burst is deliberately NOT the
+        # fallback — that is the P2.44 regression (one call per coin) and FIF2 polls
+        # every 60 s. The per-symbol path below covers single gaps in a good batch.
+        _log_quiet("batch ticker returned nothing — no live anchors, nothing evaluated this cycle")
+        return
+
+    for c in fresh:
+        seen[c["id"]] = now_epoch
+
     # feature first, for every new candidate — the distribution feeds the gate
-    evaluated: list[tuple[dict, float]] = []
+    evaluated: list[tuple[dict, float, float]] = []
+    unpriced = 0
+    fallbacks = 0
     for cand in fresh:
         vol = sym_vol_4h(conn, cand["symbol"])
         if vol is None:
             continue  # voided, never filled — and never sampled either
+        market = prices.get(cand["symbol"])
+        if not market and fallbacks < MAX_PRICE_FALLBACKS_PER_CYCLE:
+            # Counted before the call, so a request that times out still spends
+            # budget. "Single gaps in a good batch" is an argument about the
+            # expected case; this loop iterates a DB result and runs before the
+            # bootstrap return, so on the first cycle after a restart it walks the
+            # whole open book. The bound is what makes the argument unnecessary.
+            fallbacks += 1
+            market = posting_anchor(cand["symbol"])
+        if not market or market <= 0:
+            # Same doctrine as a voided vol: a candidate we cannot price is not one
+            # we could have traded, so it does not belong in the gate's candidate
+            # population either. Falling back to the source's entry here would
+            # reintroduce exactly the stale anchor this change removed.
+            unpriced += 1
+            continue
         samples.append([now_epoch, vol])
-        evaluated.append((cand, vol))
+        evaluated.append((cand, vol, market))
     samples[:] = trim_samples(samples, now_epoch)
 
     if bootstrap:
         # First cycle after start: the book already existed before this process;
         # posting it would mirror signals of unknowable freshness history.
-        logger.info(f"FIF2: bootstrap cycle — {len(evaluated)} candidates sampled, none posted")
+        logger.info(
+            f"FIF2: bootstrap cycle — {len(evaluated)} candidates sampled, none posted "
+            f"({unpriced} dropped without a live anchor)"
+        )
         return
 
     threshold = gate_threshold([v for _, v in samples])
     if threshold is None:
         _log_quiet(
             f"warm-up: {len(samples)}/{MIN_REFIT_N} vol samples in the trailing "
-            f"{REFIT_WINDOW_S // 86400}d window — no threshold, no posts"
+            f"{REFIT_WINDOW_S // 86400}d window — no threshold, no posts "
+            f"({unpriced} candidate(s) dropped without a live anchor)"
         )
-        for cand, vol in evaluated:
+        for cand, vol, market in evaluated:
             log_prediction(
                 conn,
                 MODEL_ID,
                 cand["symbol"],
                 cand["direction"],
-                cand["entry"],
+                market,
                 vol_percentile([v for _, v in samples], vol),
                 posted=False,
             )
@@ -321,11 +442,16 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
         return
 
     vols = [v for _, v in samples]
-    evaluated.sort(key=lambda cv: cv[1], reverse=True)  # strongest tape first
-    emitted = suppressed = 0
-    for cand, vol in evaluated:
+    evaluated.sort(key=lambda cvm: cvm[1], reverse=True)  # strongest tape first
+    emitted = suppressed = chased = 0
+    for cand, vol, market in evaluated:
         confidence = vol_percentile(vols, vol)
         passed = vol >= threshold
+        if passed and drift_consumed_pct(cand["direction"], cand["entry"], market) >= max_drift_pct(cand["direction"]):
+            # The move the source signalled has already happened. Mirroring now
+            # chases it, and the mirror is no longer the trade T-111 priced.
+            chased += 1
+            passed = False
         if passed and emitted >= MAX_EMITS_PER_CYCLE:
             # sorted highest-vol-first: what is dropped is the weakest of the
             # burst, not an arbitrary subset (no silent caps — counted + logged).
@@ -342,7 +468,7 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
             with conn.cursor() as cur:
                 cur.execute("SAVEPOINT fif2_cand")
             try:
-                did_post = emit(conn, cand, vol, confidence)
+                did_post = emit(conn, cand, vol, confidence, market)
                 with conn.cursor() as cur:
                     cur.execute("RELEASE SAVEPOINT fif2_cand")
             except Exception as exc:  # noqa: BLE001 — isolate the failure to the candidate
@@ -353,13 +479,18 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
         # every evaluated candidate leaves a prediction row — the below-gate
         # ones are the shadow measurement that lets the gate be re-calibrated
         # from ml_predictions_master without a DB migration
-        log_prediction(conn, MODEL_ID, cand["symbol"], cand["direction"], cand["entry"], confidence, posted=did_post)
+        log_prediction(conn, MODEL_ID, cand["symbol"], cand["direction"], market, confidence, posted=did_post)
     conn.commit()  # the caller commits (hard rule 8)
-    if emitted or suppressed:
+    # `unpriced` counts too: a cycle whose ONLY outcome is dropped candidates is
+    # still a cycle that decided something, and routing it to the hourly-rate-limited
+    # `_log_quiet` would make exactly those skips silent — the thing every other
+    # counter here exists to prevent.
+    if emitted or suppressed or chased or unpriced:
         logger.info(
             f"FIF2 cycle: {len(evaluated)} evaluated, {emitted} emitted, {suppressed} over the "
-            f"per-cycle cap of {MAX_EMITS_PER_CYCLE}, threshold {threshold:.4f} (q{int(GATE_QUANTILE * 100)}, "
-            f"n={len(samples)})"
+            f"per-cycle cap of {MAX_EMITS_PER_CYCLE}, {chased} already run past the drift bound, "
+            f"{unpriced} without a live anchor, threshold {threshold:.4f} "
+            f"(q{int(GATE_QUANTILE * 100)}, n={len(samples)})"
         )
     else:
         _log_quiet(f"{len(evaluated)} candidates below the q{int(GATE_QUANTILE * 100)} threshold {threshold:.4f}")
@@ -371,6 +502,8 @@ def main() -> None:
         f"FIF2 start — channel={TARGET_CHANNEL_ID} live={LIVE_POSTING} legs={live_leg} · "
         f"gate q{int(GATE_QUANTILE * 100)} over trailing {REFIT_WINDOW_S // 86400}d (min n={MIN_REFIT_N}) · "
         f"ladder LONG {TP_PCTS['LONG']}/SL {SL_PCT['LONG']}% SHORT {TP_PCTS['SHORT']}/SL {SL_PCT['SHORT']}% · "
+        f"entry anchored at posting time, skip above {max_drift_pct('LONG'):.2f}%/"
+        f"{max_drift_pct('SHORT'):.2f}% consumed drift · "
         f"mirror age <= {MAX_MIRROR_AGE_S}s · cap {MAX_EMITS_PER_CYCLE}/cycle"
     )
     if not LIVE_POSTING:

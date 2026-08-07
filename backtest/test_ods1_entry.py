@@ -193,7 +193,7 @@ def test_short_targets_are_below_entry_and_stop_is_above(monkeypatch):
     """
     seen = _capture_emit(monkeypatch)
     cand = {"symbol": "XUSDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0}
-    assert ods1.emit(object(), cand) is True
+    assert ods1.emit(object(), cand, 100.0) is True
 
     kw = seen[0]
     assert kw["direction"] == "SHORT"
@@ -207,7 +207,102 @@ def test_emit_reports_whether_the_gate_actually_posted(monkeypatch):
     monkeypatch.setattr(ods1, "post_ai_signal_gated", lambda conn, **kw: None)
     monkeypatch.setattr(ods1, "get_max_leverage", lambda *a, **k: 20)
     cand = {"symbol": "XUSDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0}
-    assert ods1.emit(object(), cand) is False
+    assert ods1.emit(object(), cand, 100.0) is False
+
+
+# ── the entry anchor (T-2026-KYT-9050-115) ───────────────────────────────────
+
+
+def test_the_whole_bracket_hangs_off_the_posting_price_not_the_oi_point(monkeypatch):
+    """The defect this replaced: the bracket was derived from the OI-implied price,
+    which `_as_of` accepts up to STALENESS_CAP_S old on a collector running a 10-min
+    median cadence. TP1 is 1.0 %, so a 10-minute-old anchor on this bot's own tape
+    (+3 % over 4 h) could sit half a TP1 away — the posted risk/reward was not the
+    one the geometry priced.
+
+    Asserted against the MARKET price, and with decision != market so an
+    implementation that silently kept using `cand["price"]` cannot pass.
+    """
+    seen = _capture_emit(monkeypatch)
+    cand = {"symbol": "XUSDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0}
+    assert ods1.emit(object(), cand, 110.0) is True
+
+    kw = seen[0]
+    assert kw["entry1"] == pytest.approx(110.0)
+    assert kw["entry2"] == pytest.approx(110.0)
+    assert kw["targets"] == pytest.approx([110.0 * 0.99, 110.0 * 0.98])
+    assert kw["sl"] == pytest.approx(110.0 * 1.02)
+
+
+def test_drift_is_signed_so_a_fallen_price_reads_as_consumed():
+    """SHORT: the market moving DOWN since the OI point is the effect being spent."""
+    assert ods1.drift_consumed_pct(100.0, 99.0) > 0
+    assert ods1.drift_consumed_pct(100.0, 101.0) < 0
+    assert ods1.drift_consumed_pct(100.0, 100.0) == pytest.approx(0.0)
+
+
+def test_drift_is_measured_against_the_decision_price_like_fif2():
+    """The BASE, not just the sign.
+
+    Both bots express their bound as a fraction of TP1, so both have to read the
+    drift off the same denominator or the numbers are not comparable — and
+    AUDIT_TODO #T115-1 makes re-deriving them from live rows the next step.
+    An asymmetric value is required here: at 100 -> 90 the decision-price base gives
+    10.00 % and the market base 11.11 %, so a silent revert to the old denominator
+    fails. A symmetric case (or a sign-only assertion) would not catch it.
+    """
+    assert ods1.drift_consumed_pct(100.0, 90.0) == pytest.approx(10.0)
+    assert ods1.drift_consumed_pct(100.0, 110.0) == pytest.approx(-10.0)
+
+
+def test_the_drift_bound_is_tied_to_tp1_not_a_loose_constant():
+    """It has to move with the geometry it protects: re-pricing TP1 without
+    re-pricing the bound would silently change what fraction of the measured effect
+    may already be gone."""
+    assert ods1.max_drift_pct() == pytest.approx(ods1.DRIFT_CONSUMED_FRAC_OF_TP1 * ods1.TP_PCTS[0])
+    assert 0.0 < ods1.max_drift_pct() < ods1.TP_PCTS[0], "a bound at or above TP1 bounds nothing"
+
+
+def test_posting_anchor_never_hands_a_connection_to_the_price_fallback(monkeypatch):
+    """`get_live_price`'s DB fallback calls conn.rollback() on a query error. That is
+    connection-wide, and both bots commit ONCE at the end of a cycle — so a fallback
+    that took the connection could discard every signal already written. HTTP-only is
+    the cheaper failure.
+
+    Tested on `core.live_price.posting_anchor`, which owns this rule for the whole
+    fleet: the signature takes no connection at all, so the hazard is structurally
+    unreachable rather than merely avoided by convention.
+    """
+    import inspect
+
+    from core import live_price
+
+    assert "conn" not in inspect.signature(live_price.posting_anchor).parameters
+
+    got: list[tuple] = []
+    monkeypatch.setattr(live_price, "get_live_price", lambda *a, **k: got.append((a, k)) or 42.0)
+    assert live_price.posting_anchor("XUSDT") == pytest.approx(42.0)
+    args, kwargs = got[0]
+    assert args == ("XUSDT",) and kwargs == {}, (args, kwargs)
+
+
+def test_posting_anchor_voids_rather_than_inventing_a_price(monkeypatch):
+    from core import live_price
+
+    monkeypatch.setattr(live_price, "get_live_price", lambda *a, **k: None)
+    assert live_price.posting_anchor("XUSDT") is None
+    monkeypatch.setattr(live_price, "get_live_price", lambda *a, **k: 0.0)
+    assert live_price.posting_anchor("XUSDT") is None
+
+
+def test_ods1_uses_the_shared_anchor():
+    """The conn-rollback rule has ONE owner. A bot re-implementing the lookup locally
+    is where that rule gets dropped, so the identity is pinned rather than the
+    behaviour. (FIF2's half of this lives in backtest/test_fif2_bot.py, where bot 43
+    is already loaded — the earlier name claimed both bots and checked one.)"""
+    from core.live_price import posting_anchor
+
+    assert ods1.posting_anchor is posting_anchor
 
 
 def test_emissions_are_bounded_per_cycle():
@@ -281,7 +376,8 @@ def test_run_cycle_stops_at_the_cap_and_keeps_the_strictest(monkeypatch):
     monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (burst, len(burst)))
     monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
     monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
-    monkeypatch.setattr(ods1, "emit", lambda conn, cand: posted.append(cand["symbol"]) or True)
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {c["symbol"]: 100.0 for c in burst})
+    monkeypatch.setattr(ods1, "emit", lambda conn, cand, market: posted.append(cand["symbol"]) or True)
 
     ods1.run_cycle(_FakeConn())
 
@@ -300,7 +396,7 @@ def test_one_failing_symbol_does_not_void_the_rest_of_the_batch(monkeypatch):
     """
     cands = [{"symbol": f"S{i}USDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0} for i in range(3)]
 
-    def flaky(conn, cand):
+    def flaky(conn, cand, market):
         conn.pending.append(cand["symbol"])  # the signal row this emit would write
         if cand["symbol"] == "S1USDT":
             raise RuntimeError("emit failed")
@@ -310,6 +406,7 @@ def test_one_failing_symbol_does_not_void_the_rest_of_the_batch(monkeypatch):
     monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, 3))
     monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
     monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {c["symbol"]: 100.0 for c in cands})
     monkeypatch.setattr(ods1, "emit", flaky)
 
     conn = _FakeConn()
@@ -318,6 +415,95 @@ def test_one_failing_symbol_does_not_void_the_rest_of_the_batch(monkeypatch):
     assert conn.durable == ["S0USDT", "S2USDT"], (
         "the signal written before the failure must survive it, and the failed one must not"
     )
+
+
+def test_a_candidate_whose_drift_already_ran_is_not_posted(monkeypatch):
+    """T-096 measured a horizon return FROM the event instant. If the price has
+    already mean-reverted between the OI point and this poll, the trade being
+    entered is the tail of the effect, not the effect."""
+    cands = [
+        {"symbol": "SPENTUSDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0},
+        {"symbol": "FRESHUSDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0},
+    ]
+    beyond = 100.0 * (1.0 - 2.0 * ods1.max_drift_pct() / 100.0)  # well past the bound
+    posted: list[str] = []
+    monkeypatch.setattr(ods1, "load_oi_window", lambda conn, since: {})
+    monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, 2))
+    monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {"SPENTUSDT": beyond, "FRESHUSDT": 100.0})
+    monkeypatch.setattr(ods1, "emit", lambda conn, cand, market: posted.append(cand["symbol"]) or True)
+
+    ods1.run_cycle(_FakeConn())
+    assert posted == ["FRESHUSDT"], posted
+
+
+def test_a_candidate_without_a_live_anchor_is_voided_not_posted_at_the_stale_price(monkeypatch):
+    """The error path must not fall back to the OI-implied price — that is exactly
+    the stale anchor this change removed, and reintroducing it there would make the
+    defect intermittent instead of gone."""
+    cands = [{"symbol": "XUSDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0}]
+    posted: list[str] = []
+    monkeypatch.setattr(ods1, "load_oi_window", lambda conn, since: {})
+    monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, 1))
+    monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
+    # a GOOD batch that simply lacks this symbol; the per-symbol fallback also fails
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {"OTHERUSDT": 1.0})
+    monkeypatch.setattr(ods1, "posting_anchor", lambda *a, **k: None)
+    monkeypatch.setattr(ods1, "emit", lambda conn, cand, market: posted.append(cand["symbol"]) or True)
+
+    conn = _FakeConn()
+    ods1.run_cycle(conn)
+    assert posted == []
+    assert conn.commits == 0, "nothing was emitted, so nothing should be committed"
+
+
+def test_an_empty_batch_evaluates_nothing_and_never_fans_out_per_symbol(monkeypatch):
+    """The P2.44 regression on the degraded path.
+
+    An empty batch usually means the SAME host is failing, so the per-symbol calls
+    fail too — and a failed lookup takes `unpriced += 1; continue`, which never
+    increments `emitted`. The per-cycle emit cap therefore cannot break that loop:
+    the first version of this code fanned out one 5 s `requests.get` per candidate,
+    up to the 527-symbol universe the module docstring describes, inside a 300 s
+    poll and during precisely the outage or 429 that escalates into an IP ban.
+    Nothing is lost by returning — the 4h divergence persists and a skipped
+    candidate writes no cooldown row, so it re-qualifies next poll.
+    """
+    cands = [{"symbol": f"S{i}USDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0} for i in range(30)]
+    per_symbol_calls: list[str] = []
+    monkeypatch.setattr(ods1, "load_oi_window", lambda conn, since: {})
+    monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, 30))
+    monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {})
+    monkeypatch.setattr(ods1, "posting_anchor", lambda s, *a, **k: per_symbol_calls.append(s))
+    monkeypatch.setattr(ods1, "emit", lambda *a, **k: pytest.fail("nothing may post without an anchor"))
+
+    ods1.run_cycle(_FakeConn())
+    assert per_symbol_calls == [], "an empty batch must not degrade into one HTTP call per coin"
+
+
+def test_per_symbol_fallbacks_are_bounded_by_their_own_counter(monkeypatch):
+    """Even on a good batch the fallback needs an explicit bound: `unpriced` and
+    `chased` both `continue` without incrementing `emitted`, so an argument that the
+    emit cap bounds this loop is simply false. A counter is checkable, a claim is
+    not."""
+    n = ods1.MAX_PRICE_FALLBACKS_PER_CYCLE + 10
+    cands = [{"symbol": f"S{i}USDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0} for i in range(n)]
+    calls: list[str] = []
+    monkeypatch.setattr(ods1, "load_oi_window", lambda conn, since: {})
+    monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, n))
+    monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
+    # non-empty batch, but every candidate is missing from it
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {"OTHERUSDT": 1.0})
+    monkeypatch.setattr(ods1, "posting_anchor", lambda s, *a, **k: calls.append(s))
+    monkeypatch.setattr(ods1, "emit", lambda *a, **k: pytest.fail("no anchor, no post"))
+
+    ods1.run_cycle(_FakeConn())
+    assert len(calls) == ods1.MAX_PRICE_FALLBACKS_PER_CYCLE, len(calls)
 
 
 def test_roster_seat_exists_and_does_not_break_the_eviction_order():
