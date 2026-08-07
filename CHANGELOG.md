@@ -1,3 +1,49 @@
+## [2026-08-07] Realised-PnL report: the open book, marked to market (T-2026-KYT-9050-114)
+
+Every window of the 4h realised report is filtered on **close time**, so a leg whose winners
+are still running shows only its fast SL closes. The report was therefore structurally
+pessimistic for every slow leg — and nearly triggered a park decision on half a book: BR4H
+SHORT read `30d Σ −1995.6 % │ Ø −6.30 % │ n=317` while its **53 open positions marked to
++1907.7 %**, i.e. the whole 30d book was flat, not bleeding. Same shape across the BR family
+(BR1D, BR2H, BR1Hv2) and, inverted, the honest bleeders: SRA1 is negative on closes *and* on
+its open book.
+
+`job_realized_pnl_report` now reads both open tables (`ai_signals` + `active_trades_master`,
+mirroring the two closed sources), marks them with **one** `get_live_prices_batch()` call and
+scores them through the same `realized_pnl_pct` as the closed part. Per bot two new lines,
+per lifecycle block a footer total:
+
+```
+BR4H
+  30d : Σ  -2154.2% │ Ø   -6.75% │ n=319
+  open: Σ  +1872.1% │ Ø  +36.00% │ n=52  ⚠ unrealized
+  Σall: Σ   -282.1% │ Ø   -0.76% │ n=371
+```
+
+* **Both directions of the fix stay visible.** `open` is unrealized and can evaporate (T-041);
+  the line is marked as such and the legend says so. The point is not that the open book is
+  profit — it is that a verdict read off the closed half alone is read off half the book.
+* **`None` ≠ `{}`.** A failed batch ticker drops the open book for that run (pre-114 output,
+  one warning, no per-coin HTTP fallback — that would be ~530 serial requests inside a
+  scheduler job); `{}` means "ticker fine, nothing open" and still renders a `—`. Printing a
+  silent 0 for an unavailable ticker would read as "nothing running", the exact misreading
+  this feature removes. Same reason `_format_block_total` returns `None` without an open book
+  rather than totalling half a book.
+* **No 30d cap on the open book** (operator decision Michi): a position older than the window
+  counts in full — a stale open position is itself a signal (dead slot), and `n` per line
+  keeps it transparent.
+* **Nothing vanishes.** Bots with an open book but no close in the window are unioned into the
+  block (they had no entry in `stats` at all); the block sort moved from 30d to 30d+open, which
+  is identity when the open book is absent. Open rows dropped as unfilled / no price / not
+  scoreable are counted and logged, never silently skipped.
+* Label column widened 3 → 4 so `open`/`Σall` align with `8h`/`30d` in the monospace block.
+
+Verified by a dry run against the live DB with `send_telegram` stubbed: 7 chunks, max 3851
+chars (limit 4096), 3698 of 3729 open positions marked, all three block totals rendered in
+their section's last chunk. 15 new DB-free pins in `backtest/test_market_tracker_realized.py`
+(48/48). Report-only change — no bot, no gate, no lifecycle entry touched. **Live only after a
+fleet restart (operator).**
+
 ## [2026-08-06] FIF2 built: bot 43, the vol-gated ladder mirror (T-2026-KYT-9050-112)
 
 Operator go (Michi, 2026-08-06) on the T-111 verdict. New `43_ai_fif2_bot.py` mirrors fresh
