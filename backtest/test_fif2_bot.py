@@ -163,7 +163,7 @@ def _cycle_fixture(monkeypatch, n_candidates: int, bootstrap: bool = False, pric
         "get_live_prices_batch",
         lambda: {c["symbol"]: 100.0 for c in cands} if prices is None else dict(prices),
     )
-    monkeypatch.setattr(BOT, "get_live_price", lambda *_a, **_k: None)
+    monkeypatch.setattr(BOT, "posting_anchor", lambda *_a, **_k: None)
     monkeypatch.setattr(BOT, "emit", lambda _c, cand, vol, conf, market: emitted.append((cand["symbol"], vol)) or True)
     monkeypatch.setattr(BOT, "log_prediction", lambda *_a, **kw: logged.append(kw.get("posted", _a[-1])))
     # warm distribution with a threshold every candidate clears (vols >= 1.0)
@@ -290,7 +290,7 @@ def test_an_empty_batch_evaluates_nothing_and_marks_nothing_seen(monkeypatch):
     per_symbol_calls: list[str] = []
     monkeypatch.setattr(BOT, "fetch_fresh_signals", lambda _c: cands)
     monkeypatch.setattr(BOT, "get_live_prices_batch", lambda: {})
-    monkeypatch.setattr(BOT, "get_live_price", lambda s, *_a, **_k: per_symbol_calls.append(s))
+    monkeypatch.setattr(BOT, "posting_anchor", lambda s, *_a, **_k: per_symbol_calls.append(s))
     monkeypatch.setattr(BOT, "sym_vol_4h", lambda _c, _s: 1.0)
     monkeypatch.setattr(BOT, "emit", lambda *_a, **_k: pytest.fail("nothing may post without an anchor"))
 

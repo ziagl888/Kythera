@@ -249,24 +249,45 @@ def test_the_drift_bound_is_tied_to_tp1_not_a_loose_constant():
     assert 0.0 < ods1.max_drift_pct() < ods1.TP_PCTS[0], "a bound at or above TP1 bounds nothing"
 
 
-def test_entry_anchor_never_hands_the_connection_to_the_price_fallback(monkeypatch):
+def test_posting_anchor_never_hands_a_connection_to_the_price_fallback(monkeypatch):
     """`get_live_price`'s DB fallback calls conn.rollback() on a query error. That is
-    connection-wide, and ODS1 commits once at the END of the cycle — so a fallback
-    that took the connection could discard every signal already written this cycle.
-    HTTP-only is the cheaper failure."""
+    connection-wide, and both bots commit ONCE at the end of a cycle — so a fallback
+    that took the connection could discard every signal already written. HTTP-only is
+    the cheaper failure.
+
+    Tested on `core.live_price.posting_anchor`, which owns this rule for the whole
+    fleet: the signature takes no connection at all, so the hazard is structurally
+    unreachable rather than merely avoided by convention.
+    """
+    import inspect
+
+    from core import live_price
+
+    assert "conn" not in inspect.signature(live_price.posting_anchor).parameters
+
     got: list[tuple] = []
-    monkeypatch.setattr(ods1, "get_live_price", lambda *a, **k: got.append((a, k)) or 42.0)
-    sentinel = object()
-    assert ods1.entry_anchor(sentinel, "XUSDT") == pytest.approx(42.0)
+    monkeypatch.setattr(live_price, "get_live_price", lambda *a, **k: got.append((a, k)) or 42.0)
+    assert live_price.posting_anchor("XUSDT") == pytest.approx(42.0)
     args, kwargs = got[0]
-    assert sentinel not in args and sentinel not in kwargs.values(), (args, kwargs)
+    assert args == ("XUSDT",) and kwargs == {}, (args, kwargs)
 
 
-def test_entry_anchor_voids_rather_than_inventing_a_price(monkeypatch):
-    monkeypatch.setattr(ods1, "get_live_price", lambda *a, **k: None)
-    assert ods1.entry_anchor(object(), "XUSDT") is None
-    monkeypatch.setattr(ods1, "get_live_price", lambda *a, **k: 0.0)
-    assert ods1.entry_anchor(object(), "XUSDT") is None
+def test_posting_anchor_voids_rather_than_inventing_a_price(monkeypatch):
+    from core import live_price
+
+    monkeypatch.setattr(live_price, "get_live_price", lambda *a, **k: None)
+    assert live_price.posting_anchor("XUSDT") is None
+    monkeypatch.setattr(live_price, "get_live_price", lambda *a, **k: 0.0)
+    assert live_price.posting_anchor("XUSDT") is None
+
+
+def test_both_bots_use_the_shared_anchor(monkeypatch):
+    """The conn-rollback rule has ONE owner. A bot re-implementing the lookup locally
+    is where that rule gets dropped, so the identity is pinned rather than the
+    behaviour."""
+    from core.live_price import posting_anchor
+
+    assert ods1.posting_anchor is posting_anchor
 
 
 def test_emissions_are_bounded_per_cycle():
@@ -412,14 +433,62 @@ def test_a_candidate_without_a_live_anchor_is_voided_not_posted_at_the_stale_pri
     monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, 1))
     monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
     monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
-    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {})
-    monkeypatch.setattr(ods1, "get_live_price", lambda *a, **k: None)  # HTTP fallback also down
+    # a GOOD batch that simply lacks this symbol; the per-symbol fallback also fails
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {"OTHERUSDT": 1.0})
+    monkeypatch.setattr(ods1, "posting_anchor", lambda *a, **k: None)
     monkeypatch.setattr(ods1, "emit", lambda conn, cand, market: posted.append(cand["symbol"]) or True)
 
     conn = _FakeConn()
     ods1.run_cycle(conn)
     assert posted == []
     assert conn.commits == 0, "nothing was emitted, so nothing should be committed"
+
+
+def test_an_empty_batch_evaluates_nothing_and_never_fans_out_per_symbol(monkeypatch):
+    """The P2.44 regression on the degraded path.
+
+    An empty batch usually means the SAME host is failing, so the per-symbol calls
+    fail too — and a failed lookup takes `unpriced += 1; continue`, which never
+    increments `emitted`. The per-cycle emit cap therefore cannot break that loop:
+    the first version of this code fanned out one 5 s `requests.get` per candidate,
+    up to the 527-symbol universe the module docstring describes, inside a 300 s
+    poll and during precisely the outage or 429 that escalates into an IP ban.
+    Nothing is lost by returning — the 4h divergence persists and a skipped
+    candidate writes no cooldown row, so it re-qualifies next poll.
+    """
+    cands = [{"symbol": f"S{i}USDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0} for i in range(30)]
+    per_symbol_calls: list[str] = []
+    monkeypatch.setattr(ods1, "load_oi_window", lambda conn, since: {})
+    monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, 30))
+    monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {})
+    monkeypatch.setattr(ods1, "posting_anchor", lambda s, *a, **k: per_symbol_calls.append(s))
+    monkeypatch.setattr(ods1, "emit", lambda *a, **k: pytest.fail("nothing may post without an anchor"))
+
+    ods1.run_cycle(_FakeConn())
+    assert per_symbol_calls == [], "an empty batch must not degrade into one HTTP call per coin"
+
+
+def test_per_symbol_fallbacks_are_bounded_by_their_own_counter(monkeypatch):
+    """Even on a good batch the fallback needs an explicit bound: `unpriced` and
+    `chased` both `continue` without incrementing `emitted`, so an argument that the
+    emit cap bounds this loop is simply false. A counter is checkable, a claim is
+    not."""
+    n = ods1.MAX_PRICE_FALLBACKS_PER_CYCLE + 10
+    cands = [{"symbol": f"S{i}USDT", "price": 100.0, "px_chg": 4.0, "oi_chg": -5.0} for i in range(n)]
+    calls: list[str] = []
+    monkeypatch.setattr(ods1, "load_oi_window", lambda conn, since: {})
+    monkeypatch.setattr(ods1, "find_candidates", lambda series, now: (cands, n))
+    monkeypatch.setattr(ods1, "has_open_ai_signal", lambda *a, **k: False)
+    monkeypatch.setattr(ods1, "on_cooldown", lambda *a, **k: False)
+    # non-empty batch, but every candidate is missing from it
+    monkeypatch.setattr(ods1, "get_live_prices_batch", lambda: {"OTHERUSDT": 1.0})
+    monkeypatch.setattr(ods1, "posting_anchor", lambda s, *a, **k: calls.append(s))
+    monkeypatch.setattr(ods1, "emit", lambda *a, **k: pytest.fail("no anchor, no post"))
+
+    ods1.run_cycle(_FakeConn())
+    assert len(calls) == ods1.MAX_PRICE_FALLBACKS_PER_CYCLE, len(calls)
 
 
 def test_roster_seat_exists_and_does_not_break_the_eviction_order():

@@ -226,9 +226,13 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   earned one (EPD3, TSM1, BB_1H, BR2H, FIF1); where the source leg IS rostered, `admit`
   resolves the overlap in favour of the measured leg via density sort + `SYMBOL_HELD`, so the
   FIF2 copy is dropped. Whether the performance the seat was granted on comes mostly from the
-  overlapping or the complementary population was not measurable from the build machine (no
-  DB credentials, hard rule 1). Answer it from `ml_predictions_master` / `closed_ai_signals`
-  in a VPS session before FIF2's density is re-derived.
+  overlapping or the complementary population is **not yet measured** — answer it from
+  `ml_predictions_master` / `closed_ai_signals` before FIF2's density is re-derived (`#T115-3`).
+  An earlier revision of this entry claimed it was "not measurable from the build machine (no
+  DB credentials)"; that was wrong and is corrected here — the session that wrote it was
+  running on SRV02, which carries the live `.env`. Read-only analysis against the live DB is
+  the sanctioned path there; hard rule 1 forbids WRITE queries and fleet intervention from a
+  dev session, not reads.
 - [x] **#T62-1 SHORT legs evaluated under the trail rule (2026-08-01).** Both sides
   under the same exit (leg path vs. index path), so the leg's own TP policy
   drops out — the predecessor yardstick (against the full window move) penalised every

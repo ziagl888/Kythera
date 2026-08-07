@@ -58,7 +58,34 @@ underlying is over; ENTRY_NOT_FILLED and SHADOW_CARRYOVER never held a position)
 `SYMBOL_REENTRY_LOCK`, and unlike the cooldown does **not** filter on `posted` — a shadow
 mirror also traded and left that position.
 
-Verification: `backtest/test_ods1_entry.py` (26), `test_fif2_bot.py` (18),
+**Review round (same PR).** Two independent reviews found the same defect in the first cut, and
+it is worth recording because the code asserted the opposite: ODS1's comment and this entry both
+claimed the per-symbol price fallback was "bounded by the emit cap". It was not — `unpriced` and
+`chased` each `continue` **without** incrementing `emitted`, so the cap could never break that
+loop. An empty batch usually means the same host is failing, so the per-symbol calls fail too,
+and the bot would have fired one 5 s request per candidate across the up-to-527-symbol universe,
+inside a 300 s poll, during exactly the outage or 429 that escalates into an IP ban. Fixed by
+adopting FIF2's doctrine (empty batch → log and return; candidates leave no cooldown row and
+re-qualify next poll) **plus** an explicit `MAX_PRICE_FALLBACKS_PER_CYCLE` counter for single
+gaps in an otherwise good batch — a counter is checkable, an argument from another counter was
+not. Also fixed: `SYMBOL_REENTRY_LOCK` was missing from `tools/trailing_intake_audit.ADMIT_GATES`,
+so the one tool that answers "which gate is binding" would have silently dropped the new gate;
+FIF2's `unpriced` count could go unreported on quiet cycles; the two bots' `drift_consumed_pct`
+used different denominators; and `entry_anchor` was deduplicated into
+`core/live_price.posting_anchor`, so the "never hand `conn` to `get_live_price`" rule has one
+owner and a signature that takes no connection at all.
+
+**Two docstring corrections that are not cosmetic.** `43_ai_fif2_bot.py` still stated the roster
+seat as conditional on positive live edge — the seat was granted one day after the bot deployed,
+i.e. deliberately ahead of that measurement, now recorded as an operator override rather than
+left as a contradiction. And its breakeven paragraph still read "the FIF channel is not
+Cornix-executed, so this is a go-live precondition, not a live defect": the roster seat routes
+FIF2's `sl`/`targets` through bot 40 into `CH_TRAILING`, which **is** Cornix-executed, so that
+precondition is now live. In that channel the trail is the primary exit while the rungs sit at
+Cornix as partial take-profits — a combination neither T-111 nor the PR #198 slot-budget run
+scored.
+
+Verification: `backtest/test_ods1_entry.py` (29), `test_fif2_bot.py` (18),
 `test_trailing_close_bot.py` (67) all green per file, plus `guard.py verify|smoke`. Six
 mutations confirm the new pins bite: reverting either anchor, disabling either drift guard,
 defanging `locked` in `admit`, and widening the lock to `SL_HIT` each fail. Note that these

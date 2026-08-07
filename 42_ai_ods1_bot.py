@@ -105,7 +105,7 @@ from typing import TypedDict
 
 from core import config as _kcfg
 from core.database import get_db_connection
-from core.live_price import get_live_price, get_live_prices_batch
+from core.live_price import get_live_prices_batch, posting_anchor
 from core.market_utils import get_max_leverage
 from core.signal_post import has_open_ai_signal, post_ai_signal_gated
 from core.time import utc_now
@@ -198,6 +198,15 @@ STARVATION_LOG_EVERY_S = 3600
 # the events T-096 measured as the strongest rather than an arbitrary subset.
 # Same shape as `40_trailing_close_bot.TIME_STOP_MAX_PER_CYCLE`.
 MAX_EMITS_PER_CYCLE = int(os.getenv("ODS1_MAX_EMITS_PER_CYCLE", "5"))
+
+# Hard ceiling on per-symbol ticker calls in one cycle. `get_live_prices_batch`
+# returns every futures symbol in ONE request (P2.44), so this path only covers a
+# single symbol missing from an otherwise good batch — rare, and a handful of calls.
+# The bound exists because the alternative was an argument rather than a guarantee:
+# `unpriced` and `chased` both `continue` WITHOUT incrementing `emitted`, so the
+# per-cycle emit cap can never break that loop, and an argument that a fan-out "is
+# bounded by the emit cap" was simply false. A counter is checkable; a claim is not.
+MAX_PRICE_FALLBACKS_PER_CYCLE = int(os.getenv("ODS1_MAX_PRICE_FALLBACKS", "5"))
 
 
 class Candidate(TypedDict):
@@ -332,27 +341,19 @@ def drift_consumed_pct(decision_price: float, market: float) -> float:
     Positive means the market has moved the way the trade wants to go — for a
     SHORT, that the price has already fallen since the OI point the rule fired
     on, so part of the +0.41 %/@1h this bot exists to capture is spent.
+
+    Measured as a fraction of the DECISION price, the same base FIF2's
+    ``drift_consumed_pct`` uses (``sign * (market / reference - 1)``, here with the
+    SHORT-only sign folded in). The two bots' bounds are both fractions of TP1, so
+    they have to be read off the same base or whoever re-derives them from live
+    rows (AUDIT_TODO #T115-1) is comparing two different quantities.
     """
-    return (decision_price / market - 1.0) * 100.0
+    return -(market / decision_price - 1.0) * 100.0
 
 
 def max_drift_pct() -> float:
     """The consumed-drift bound as an absolute percentage (see the constant)."""
     return DRIFT_CONSUMED_FRAC_OF_TP1 * TP_PCTS[0]
-
-
-def entry_anchor(conn, symbol: str) -> float | None:
-    """The live price at posting time, or None when it cannot be established.
-
-    ``conn`` is accepted for symmetry with the rest of the cycle but is
-    deliberately NOT handed to ``get_live_price``: its DB fallback calls
-    ``conn.rollback()`` on a query error, which is connection-wide and would
-    discard every signal this cycle already wrote before the single commit at the
-    end. Losing the fallback costs one skipped candidate; taking it could cost the
-    whole batch. HTTP-only is the cheaper failure.
-    """
-    price = get_live_price(symbol)
-    return float(price) if price else None
 
 
 def emit(conn, cand: Candidate, market: float) -> bool:
@@ -412,16 +413,29 @@ def run_cycle(conn) -> None:
     # most cycles qualify nobody — an unconditional ticker call would be pure cost.
     prices = get_live_prices_batch()
     if not prices:
-        # Not fatal: the per-candidate fallback resolves an anchor over HTTP, and the
-        # emit cap bounds that to at most MAX_EMITS_PER_CYCLE calls. Logged anyway —
-        # a persistent batch outage changes the cost profile of every cycle, and a
-        # price path that quietly degrades is how a bot stops posting unnoticed.
-        logger.warning("ODS1: batch ticker returned nothing — falling back to per-symbol price lookups")
+        # An empty batch is a transport failure, not a verdict on these candidates —
+        # and it is exactly when the per-symbol fallback must NOT run. The batch and
+        # the per-symbol call hit the same host, so a batch that returns nothing
+        # usually means the next 527 single calls also fail: each one burns its full
+        # 5 s timeout, none of them increments `emitted`, so the cap below cannot
+        # break the loop. That is a ~527-request serial storm inside a 300 s poll,
+        # fired during precisely the outage or 429 that escalates into an IP ban —
+        # the P2.44 regression restored on the degraded path.
+        #
+        # Returning costs nothing: the 4h divergence persists across polls and a
+        # skipped candidate leaves no cooldown row, so it re-qualifies next cycle.
+        # Same doctrine as FIF2's `run_cycle`.
+        logger.warning(
+            f"ODS1: batch ticker returned nothing — {len(candidates)} candidate(s) left unevaluated "
+            f"this cycle (no per-symbol fan-out); they re-qualify next poll"
+        )
+        return
 
     emitted = 0
     suppressed = 0
     chased = 0
     unpriced = 0
+    fallbacks = 0
     for idx, cand in enumerate(candidates):
         if emitted >= MAX_EMITS_PER_CYCLE:
             # Candidates are sorted strictest-first, so what is dropped here is
@@ -436,9 +450,16 @@ def run_cycle(conn) -> None:
             continue
         if on_cooldown(conn, cand["symbol"], now):
             continue
-        # The anchor is resolved AFTER the open/cooldown filters so the HTTP
-        # fallback is only ever paid for a candidate that would really post.
-        market = prices.get(cand["symbol"]) or entry_anchor(conn, cand["symbol"])
+        # The anchor is resolved after the open/cooldown filters, so a candidate
+        # already excluded costs nothing. It is NOT free for everyone past this
+        # point though: the drift guard below runs after the fetch, so a chased
+        # candidate pays for an anchor it then discards. Hence an explicit bound
+        # rather than an argument from the emit cap — neither `unpriced` nor
+        # `chased` increments `emitted`, so the cap cannot bound this loop.
+        market = prices.get(cand["symbol"])
+        if not market and fallbacks < MAX_PRICE_FALLBACKS_PER_CYCLE:
+            fallbacks += 1
+            market = posting_anchor(cand["symbol"])
         if not market or market <= 0:
             # No anchor, no post. Voiding beats falling back to the OI-implied
             # price: that is precisely the stale number this change removed, and

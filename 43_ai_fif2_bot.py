@@ -29,9 +29,21 @@ once TP1 is taken — ``tools/portfolio_backtest.precompute`` models that via
 ``_breakeven_step``, and it decides what the runner half is worth when price
 comes back. This bot only posts the two rungs and the initial SL; the breakeven
 move is **Cornix channel configuration**. Without it the runner carries the full
-SL instead of 0, and the live geometry is not the one that was measured. Check
-the channel's breakeven setting BEFORE any Cornix-on — today the FIF channel is
-not Cornix-executed, so this is a go-live precondition, not a live defect.
+SL instead of 0, and the live geometry is not the one that was measured.
+
+Since T-2026-KYT-9050-115 that precondition is LIVE, not deferred. The FIF
+channel itself is still not Cornix-executed, but the roster seat granted in that
+task routes this bot's signals through ``40_trailing_close_bot``, which reposts
+the source's ``sl`` and ``targets`` verbatim via ``build_cornix_block`` into
+``CH_TRAILING`` — and that channel IS Cornix-executed. So these rungs now reach a
+venue that fills them. Two consequences, both for the operator:
+
+* Check ``CH_TRAILING``'s breakeven setting. Without stop-to-breakeven after TP1
+  the runner half is not the half T-111 priced.
+* In that channel the trail, not the ladder, is the primary exit
+  (``ACTIVATION_PCT`` / ``RETRACE_FRAC`` / ``TIME_STOP_H``). The rungs still sit
+  at Cornix as partial take-profits, so the live geometry there is the ladder AND
+  the trail — a combination neither T-111 nor the PR #198 slot-budget run scored.
 
 The gate threshold is a rolling quantile, never a constant
 ----------------------------------------------------------
@@ -51,8 +63,17 @@ turned the channel off in Cornix — so live posts here produce forward
 measurement, not fills (operator decision 2026-08-06). Kill switches, any one
 of which suffices: ``FIF2_LIVE_POSTING=0`` (shadow-only), ``CH_FIF2=0``
 (shadow-only via the ``_ch_override`` contract), or a ``("FIF2", <dir>)``
-``_LIFECYCLE`` entry in ``core/shadow_gate``. If FIF2 shows positive live edge,
-feeding its trades into bot 40 (roster seat) is a separate operator decision.
+``_LIFECYCLE`` entry in ``core/shadow_gate``.
+
+The roster seat this section originally deferred ("if FIF2 shows positive live
+edge, feeding its trades into bot 40 is a separate operator decision") was granted
+on 2026-08-07 (T-2026-KYT-9050-115, operator decision Michi) — **ahead of that
+measurement, not because of it**: FIF2 deployed 2026-08-06 and gates on a
+``MIN_REFIT_N``-sample trailing distribution, so one day of live rows cannot carry
+a live-edge verdict. It is a deliberate operator override of this file's own
+precondition, recorded here rather than left as a contradiction. The seat's
+densities are placeholders below every measured leg for the same reason
+(``core/trailing_roster``), so under a binding slot cap FIF2 yields its seat first.
 
 Known honest risks, carried over from T-111 and re-checked before any Cornix-on:
 the backtest fills at signal price while a vol gate selects exactly the fast
@@ -78,7 +99,7 @@ from core import config as _kcfg
 from core import shadow_gate
 from core.candles import history_start, read_candles
 from core.database import get_db_connection
-from core.live_price import get_live_price, get_live_prices_batch
+from core.live_price import get_live_prices_batch, posting_anchor
 from core.market_utils import get_max_leverage
 from core.signal_post import has_open_ai_signal, log_prediction, post_ai_signal_gated
 from core.state_utils import atomic_write_json
@@ -164,19 +185,6 @@ def drift_consumed_pct(direction: str, source_entry: float, market: float) -> fl
 def max_drift_pct(direction: str) -> float:
     """The consumed-drift bound for this direction (see the constant)."""
     return DRIFT_CONSUMED_FRAC_OF_TP1 * TP_PCTS[direction][0]
-
-
-def entry_anchor(conn, symbol: str) -> float | None:
-    """The live price at posting time, or None when it cannot be established.
-
-    ``conn`` is accepted for symmetry with the rest of the cycle but deliberately
-    NOT passed to ``get_live_price``: its DB fallback calls ``conn.rollback()`` on
-    a query error, which is connection-wide and would discard every prediction row
-    and signal this cycle already wrote before the single commit at the end.
-    Losing the fallback costs one skipped candidate; taking it could cost the batch.
-    """
-    price = get_live_price(symbol)
-    return float(price) if price else None
 
 
 def gate_threshold(vols: list[float]) -> float | None:
@@ -374,7 +382,7 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
         vol = sym_vol_4h(conn, cand["symbol"])
         if vol is None:
             continue  # voided, never filled — and never sampled either
-        market = prices.get(cand["symbol"]) or entry_anchor(conn, cand["symbol"])
+        market = prices.get(cand["symbol"]) or posting_anchor(cand["symbol"])
         if not market or market <= 0:
             # Same doctrine as a voided vol: a candidate we cannot price is not one
             # we could have traded, so it does not belong in the gate's candidate
@@ -396,7 +404,8 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
     if threshold is None:
         _log_quiet(
             f"warm-up: {len(samples)}/{MIN_REFIT_N} vol samples in the trailing "
-            f"{REFIT_WINDOW_S // 86400}d window — no threshold, no posts"
+            f"{REFIT_WINDOW_S // 86400}d window — no threshold, no posts "
+            f"({unpriced} candidate(s) dropped without a live anchor)"
         )
         for cand, vol, market in evaluated:
             log_prediction(
@@ -451,7 +460,11 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
         # from ml_predictions_master without a DB migration
         log_prediction(conn, MODEL_ID, cand["symbol"], cand["direction"], market, confidence, posted=did_post)
     conn.commit()  # the caller commits (hard rule 8)
-    if emitted or suppressed or chased:
+    # `unpriced` counts too: a cycle whose ONLY outcome is dropped candidates is
+    # still a cycle that decided something, and routing it to the hourly-rate-limited
+    # `_log_quiet` would make exactly those skips silent — the thing every other
+    # counter here exists to prevent.
+    if emitted or suppressed or chased or unpriced:
         logger.info(
             f"FIF2 cycle: {len(evaluated)} evaluated, {emitted} emitted, {suppressed} over the "
             f"per-cycle cap of {MAX_EMITS_PER_CYCLE}, {chased} already run past the drift bound, "

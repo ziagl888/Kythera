@@ -14,8 +14,9 @@ which is why an audit against the DB alone systematically blames the wrong one:
 
     stage 1  read_source_signals   roster · shadow_gate leg_status · entry · sl/targets
     stage 2  freshness             age > TRAILING_BOT_MAX_AGE_SEC   → PREEXISTING (DB)
-    stage 3  admit()               SYMBOL_HELD · SYMBOL_COOLING ·
-                                   EXPOSURE_CAP · SLOT_CAP          → log tally only
+    stage 3  admit()               SYMBOL_HELD · SYMBOL_REENTRY_LOCK ·
+                                   SYMBOL_COOLING · EXPOSURE_CAP ·
+                                   SLOT_CAP                         → log tally only
     stage 4  mirroring             no market price · mirrorable_at  → log only
     stage 5  fill                  entry never touched              → ENTRY_NOT_FILLED (DB)
 
@@ -67,7 +68,12 @@ TALLY_RE = re.compile(
 )
 
 #: Gates that can appear in that tally, in the order admit() tests them.
-ADMIT_GATES = ("SYMBOL_HELD", "SYMBOL_COOLING", "EXPOSURE_CAP", "SLOT_CAP")
+# In admit()'s own test order, so the report's column order matches the order a
+# candidate is actually judged in. SYMBOL_REENTRY_LOCK joined in
+# T-2026-KYT-9050-115; a gate that `parse_tally` reads but this tuple omits is
+# dropped from the report entirely — silent capping in the one tool that exists to
+# answer "which gate is binding".
+ADMIT_GATES = ("SYMBOL_HELD", "SYMBOL_REENTRY_LOCK", "SYMBOL_COOLING", "EXPOSURE_CAP", "SLOT_CAP")
 
 
 def parse_tally(line: str) -> tuple[str, dict[str, int]] | None:
