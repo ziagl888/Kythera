@@ -19,6 +19,7 @@ from core.candles import read_candles
 
 # --- Own DB connection import ---
 from core.database import get_db_connection
+from core.live_price import get_live_prices_batch
 from core.market_utils import send_telegram
 from core.realized_pnl import realized_pnl_pct
 
@@ -1926,24 +1927,129 @@ def _aggregate_realized_pnl(rows: list[tuple[str, float, float]]) -> dict[str, d
     return stats
 
 
-def _format_realized_pnl_blocks(stats: dict[str, dict[str, dict[str, float]]]) -> list[str]:
-    """One Telegram <pre> block per bot, sorted by 30d sum (descending)."""
+def _aggregate_open_book(rows: list[tuple[str, float]]) -> dict[str, dict[str, float]]:
+    """Fold (bot, mark_to_market_pct) rows into per-bot ``{'sum','n','avg'}``.
+
+    The open counterpart of :func:`_aggregate_realized_pnl` (T-2026-KYT-9050-114).
+    It has NO window dimension on purpose: an open position has no close time,
+    so the only honest statement is "this is what the book is worth right now".
+    Positions older than the 30d window are deliberately included — the open
+    book IS the open book, and a stale position is itself a signal (dead slot,
+    operator decision Michi). ``n`` per line keeps that transparent.
+
+    Pure + module-scope so backtest/test_market_tracker_realized.py can drive
+    it without a DB (same pattern as _aggregate_realized_pnl).
+    """
+    stats: dict[str, dict[str, float]] = {}
+    for bot, pnl in rows:
+        s = stats.setdefault(bot, {'sum': 0.0, 'n': 0.0})
+        s['sum'] += pnl
+        s['n'] += 1
+    for s in stats.values():
+        s['avg'] = s['sum'] / s['n']
+    return stats
+
+
+# Label column width of the per-bot lines. 4 instead of the window-only 3 since
+# T-2026-KYT-9050-114, so "open"/"Σall" align with "8h"/"30d" in the monospace
+# <pre> block.
+_REALIZED_LABEL_W = 4
+
+
+def _realized_line(label: str, sum_pct: float, avg_pct: float, n: float, suffix: str = "") -> str:
+    """One ``label: Σ … │ Ø … │ n=…`` line — shared by windows, open and Σall."""
+    return f"  {label:<{_REALIZED_LABEL_W}}: Σ {sum_pct:>+8.1f}% │ Ø {avg_pct:>+7.2f}% │ n={int(n)}{suffix}"
+
+
+def _format_realized_pnl_blocks(
+    stats: dict[str, dict[str, dict[str, float]]],
+    open_stats: dict[str, dict[str, float]] | None = None,
+) -> list[str]:
+    """One Telegram <pre> block per bot, sorted by the combined sum (descending).
+
+    ``open_stats`` is the mark-to-market open book from :func:`_aggregate_open_book`
+    (T-2026-KYT-9050-114). Passing ``None`` means "no open book this run" — the
+    batch ticker was unavailable — and reproduces the pre-114 output exactly;
+    it must NOT be confused with ``{}`` ("ticker fine, nothing open"), which
+    still renders the open/Σall lines with a — placeholder. Silently printing
+    a 0 for an unavailable ticker would read as "nothing running", the exact
+    misreading this feature exists to remove.
+
+    The sort key is 30d + open instead of 30d alone, because a bot can now
+    appear with an open book but no close in the window (it would otherwise
+    have no sortable key at all). With ``open_stats=None`` the key collapses to
+    the 30d sum, so the pre-114 ordering is unchanged.
+    """
+    opens = open_stats or {}
+
+    def combined(bot: str, per_bot: dict) -> tuple[float, float]:
+        """(sum, n) of 30d closed + open book for one bot."""
+        w30 = per_bot.get("30d")
+        o = opens.get(bot)
+        return (
+            (w30['sum'] if w30 else 0.0) + (o['sum'] if o else 0.0),
+            (w30['n'] if w30 else 0.0) + (o['n'] if o else 0.0),
+        )
+
+    # A bot with an open book but no close in the 30d window has no entry in
+    # `stats` — union both key sets or it would silently vanish from the report.
+    bots: dict[str, dict] = dict(stats)
+    for bot in opens:
+        bots.setdefault(bot, {})
 
     def sort_key(item: tuple[str, dict]) -> tuple[float, str]:
-        w30 = item[1].get("30d")
-        return (-(w30['sum'] if w30 else float('-inf')), item[0].casefold())
+        return (-combined(item[0], item[1])[0], item[0].casefold())
 
     blocks = []
-    for bot, per_bot in sorted(stats.items(), key=sort_key):
+    for bot, per_bot in sorted(bots.items(), key=sort_key):
         lines = [f"<b>{bot}</b>"]
         for win_name, _hours in REALIZED_WINDOWS:
             w = per_bot.get(win_name)
             if w:
-                lines.append(f"  {win_name:<3}: Σ {w['sum']:>+8.1f}% │ Ø {w['avg']:>+7.2f}% │ n={int(w['n'])}")
+                lines.append(_realized_line(win_name, w['sum'], w['avg'], w['n']))
             else:
-                lines.append(f"  {win_name:<3}: —")
+                lines.append(f"  {win_name:<{_REALIZED_LABEL_W}}: —")
+        if open_stats is not None:
+            o = opens.get(bot)
+            if o:
+                lines.append(_realized_line("open", o['sum'], o['avg'], o['n'], suffix="  ⚠ unrealized"))
+            else:
+                lines.append(f"  {'open':<{_REALIZED_LABEL_W}}: —")
+            c_sum, c_n = combined(bot, per_bot)
+            if c_n:
+                lines.append(_realized_line("Σall", c_sum, c_sum / c_n, c_n))
+            else:
+                lines.append(f"  {'Σall':<{_REALIZED_LABEL_W}}: —")
         blocks.append("\n".join(lines))
     return blocks
+
+
+def _format_block_total(
+    label: str,
+    stats: dict[str, dict[str, dict[str, float]]],
+    open_stats: dict[str, dict[str, float]] | None,
+) -> str | None:
+    """Footer block with the lifecycle block's aggregate (T-2026-KYT-9050-114).
+
+    Sums 30d closed and the open book over every bot of ONE block (ACTIVE /
+    SHADOW / RETIRED). Returns None when there is nothing to total, or when
+    the open book is unavailable (``open_stats is None``) — a "total" that
+    silently covers only half the book would be worse than no total.
+    """
+    if open_stats is None or not (stats or open_stats):
+        return None
+    closed_sum = sum(pb["30d"]["sum"] for pb in stats.values() if "30d" in pb)
+    closed_n = sum(pb["30d"]["n"] for pb in stats.values() if "30d" in pb)
+    open_sum = sum(o["sum"] for o in open_stats.values())
+    open_n = sum(o["n"] for o in open_stats.values())
+    return "\n".join(
+        [
+            f"<b>── {label} TOTAL ──</b>",
+            f"  {'30d':<{_REALIZED_LABEL_W}}: Σ {closed_sum:>+9.1f}% │ n={int(closed_n)}",
+            f"  {'open':<{_REALIZED_LABEL_W}}: Σ {open_sum:>+9.1f}% │ n={int(open_n)}",
+            f"  {'Σall':<{_REALIZED_LABEL_W}}: Σ {closed_sum + open_sum:>+9.1f}% │ n={int(closed_n + open_n)}",
+        ]
+    )
 
 
 def realized_lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[str]) -> str:
@@ -2074,9 +2180,48 @@ async def job_realized_pnl_report() -> None:
                 """,
                 conn,
             )
+
+            # ── OPEN book (T-2026-KYT-9050-114) ──────────────────────────
+            # Every window above is filtered on CLOSE time, so a leg whose
+            # winners are still running shows only its fast SL closes and
+            # reads far worse than it is. Measured 2026-08-07: BR4H SHORT
+            # closed −1995.6 % (n=317) but +1907.7 % across its 53 open
+            # positions — a park decision on the closed part alone would have
+            # been made on half the book. Both open tables are read, mirroring
+            # the two closed sources above; ai_signals holds only open trades
+            # (the monitor deletes on close), active_trades_master likewise.
+            df_ai_open = pd.read_sql_query(
+                """
+                SELECT model AS strategy, upper(btrim(direction)) AS direction,
+                       symbol, entry1 AS entry, targets, current_target_hit AS targets_hit,
+                       entry_filled, lev
+                FROM ai_signals
+                """,
+                conn,
+            )
+            df_cls_open = pd.read_sql_query(
+                """
+                SELECT strategy, upper(btrim(direction)) AS direction,
+                       coin AS symbol, entry, lev,
+                       target1, target2, target3, target4, status
+                FROM active_trades_master
+                """,
+                conn,
+            )
     except Exception as e:
         logger.error(f"Error loading realised PnL data: {e}", exc_info=True)
         return
+
+    # Mark-to-market price for the open book: ONE batch call for every futures
+    # symbol (core.live_price is the sanctioned live-price reader outside
+    # monitors 5/8). The per-coin fallback is deliberately NOT used here — it
+    # would fire ~530 serial HTTP requests inside a scheduler job. On failure
+    # the open book is dropped for this run (open_stats stays None) and the
+    # report degrades to its pre-114 shape instead of printing a 0 that would
+    # read as "nothing open".
+    prices = get_live_prices_batch()
+    if not prices:
+        logger.warning("Realised PnL: batch ticker unavailable — open book omitted this run.")
 
     active = active_scripts()
     # T-2026-CU-9050-125: three lifecycle blocks per (tag, direction) instead of flat
@@ -2085,10 +2230,17 @@ async def job_realized_pnl_report() -> None:
     active_rows: list[tuple[str, float, float]] = []
     shadow_rows: list[tuple[str, float, float]] = []
     retired_rows: list[tuple[str, float, float]] = []
+    # Open book per lifecycle block — same bucketing, no window dimension.
+    open_active_rows: list[tuple[str, float]] = []
+    open_shadow_rows: list[tuple[str, float]] = []
+    open_retired_rows: list[tuple[str, float]] = []
     n_neutral = 0
     n_invalid = 0
     n_inactive = 0
     n_future = 0
+    n_open_unfilled = 0
+    n_open_noprice = 0
+    n_open_invalid = 0
     unmapped: set[str] = set()
 
     def add_row(tag: str, direction: str, age_h: float, pnl: float | None) -> None:
@@ -2116,6 +2268,57 @@ async def job_realized_pnl_report() -> None:
             unmapped.add(label)
         else:  # "inactive": LIVE leg but script parked (dropped as before)
             n_inactive += 1
+
+    def add_open_row(tag: str, direction: str, pnl: float | None) -> None:
+        """Open-book twin of add_row — same bucketing, no age dimension."""
+        nonlocal n_open_invalid, n_inactive
+        if pnl is None:
+            n_open_invalid += 1
+            return
+        label = pretty_name(tag)
+        bucket = realized_lifecycle_bucket(tag, direction, active)
+        if bucket == "retired":
+            open_retired_rows.append((label, pnl))
+        elif bucket == "shadow":
+            open_shadow_rows.append((label, pnl))
+        elif bucket == "active":
+            open_active_rows.append((label, pnl))
+        elif bucket == "unmapped":
+            unmapped.add(label)
+        else:
+            n_inactive += 1
+
+    if prices:
+        for r in df_ai_open.itertuples(index=False):
+            # Mirrors the closed-side exclusions: an unfilled entry has no
+            # position (the closed query drops ENTRY_NOT_FILLED), and a NULL
+            # lev is not scoreable (bot 8 stamps it ~10s after the post, and
+            # UFI keeps it NULL by design).
+            if not r.entry_filled:
+                n_open_unfilled += 1
+                continue
+            price = prices.get(r.symbol)
+            if price is None:
+                n_open_noprice += 1
+                continue
+            targets = _parse_targets(r.targets)
+            add_open_row(
+                str(r.strategy),
+                str(r.direction),
+                realized_pnl_pct(r.direction, r.entry, price, targets or [], r.targets_hit, r.lev, r.strategy),
+            )
+
+        for r in df_cls_open.itertuples(index=False):
+            price = prices.get(r.symbol)
+            if price is None:
+                n_open_noprice += 1
+                continue
+            targets = _classic_targets(r.target1, r.target2, r.target3, r.target4)
+            add_open_row(
+                str(r.strategy),
+                str(r.direction),
+                realized_pnl_pct(r.direction, r.entry, price, targets, _parse_hits(r.status), r.lev),
+            )
 
     for r in df_ai.itertuples(index=False):
         if _is_neutral_close(r.close_reason):
@@ -2146,11 +2349,22 @@ async def job_realized_pnl_report() -> None:
     active_stats = _aggregate_realized_pnl(active_rows)
     shadow_stats = _aggregate_realized_pnl(shadow_rows)
     retired_stats = _aggregate_realized_pnl(retired_rows)
-    if not (active_stats or shadow_stats or retired_stats):
-        logger.info("Realised PnL: no computable trades in 30d window — post skipped.")
+    # None (not {}) when the ticker failed — see _format_realized_pnl_blocks.
+    open_active = _aggregate_open_book(open_active_rows) if prices else None
+    open_shadow = _aggregate_open_book(open_shadow_rows) if prices else None
+    open_retired = _aggregate_open_book(open_retired_rows) if prices else None
+    if not (active_stats or shadow_stats or retired_stats or open_active or open_shadow or open_retired):
+        logger.info("Realised PnL: no computable trades in 30d window and no open book — post skipped.")
         return
 
     unmapped_note = f'\n  {len(unmapped)} unmapped tag(s) skipped (see bot log)' if unmapped else ''
+    open_note = (
+        '\n  open = open book marked to the live price, UNREALIZED — it can still evaporate\n'
+        '  open is NOT limited to 30d: a position older than the window counts in full\n'
+        '  Σall = 30d closed + open'
+        if prices
+        else '\n  open book omitted this run (batch ticker unavailable)'
+    )
     legend = (
         '\n\n<b>Legend:</b>\n'
         '  Σ = sum of realized % per window | Ø = avg per trade\n'
@@ -2158,22 +2372,29 @@ async def job_realized_pnl_report() -> None:
         '  stake split equally across targets, rest closes at exit\n'
         '  AI trades: only closes with persisted targets+lev (exact-only)\n'
         '  excluded: unfilled entries, housekeeping closes'
+        f'{open_note}'
         f'{unmapped_note}'
     )
 
     sections = [
-        ("💵 <b>REALIZED PnL — ACTIVE</b> (live posting) 💵", active_stats),
-        ("👻 <b>REALIZED PnL — SHADOW</b> (tracked, not live) 👻", shadow_stats),
-        ("🗄 <b>REALIZED PnL — RETIRED</b> (old model versions) 🗄", retired_stats),
+        ("💵 <b>REALIZED PnL — ACTIVE</b> (live posting) 💵", "ACTIVE", active_stats, open_active),
+        ("👻 <b>REALIZED PnL — SHADOW</b> (tracked, not live) 👻", "SHADOW", shadow_stats, open_shadow),
+        ("🗄 <b>REALIZED PnL — RETIRED</b> (old model versions) 🗄", "RETIRED", retired_stats, open_retired),
     ]
-    sections = [(title, st) for title, st in sections if st]
+    sections = [s for s in sections if s[2] or s[3]]
 
-    for idx, (title, st) in enumerate(sections):
+    for idx, (title, label, st, open_st) in enumerate(sections):
         is_last = idx == len(sections) - 1
         header_first = f'<pre>{title}\n<i>leveraged, target-weighted, windows by CLOSE time</i>\n\n'
         header_continued = f'<pre>{title} (continued)\n\n'
         footer = (legend if is_last else '') + '</pre>'
-        chunks = _build_chunks(_format_realized_pnl_blocks(st), header_first, header_continued, footer)
+        blocks = _format_realized_pnl_blocks(st, open_st)
+        # Appended LAST so _build_chunks — which packs in order — puts the
+        # block total in the final chunk of this section.
+        total = _format_block_total(label, st, open_st)
+        if total:
+            blocks.append(total)
+        chunks = _build_chunks(blocks, header_first, header_continued, footer)
         for chunk in chunks:
             send_telegram(chunk, TELEGRAM_CHANNEL_ID)
             await asyncio.sleep(1)
@@ -2183,10 +2404,12 @@ async def job_realized_pnl_report() -> None:
             f"Realised PnL: {n_future} close(s) with negative age dropped — check writer/query clock (trap 9)."
         )
     n_total = len(active_rows) + len(shadow_rows) + len(retired_rows)
+    n_open = len(open_active_rows) + len(open_shadow_rows) + len(open_retired_rows)
     logger.info(
         f"✅ Realised PnL post sent (active={len(active_stats)}, shadow={len(shadow_stats)}, "
-        f"retired={len(retired_stats)} bots, {n_total} trades in 30d window; "
-        f"skipped: {n_neutral} neutral, {n_invalid} invalid, {n_inactive} inactive, {n_future} future-age)."
+        f"retired={len(retired_stats)} bots, {n_total} trades in 30d window, {n_open} open marked; "
+        f"skipped: {n_neutral} neutral, {n_invalid} invalid, {n_inactive} inactive, {n_future} future-age; "
+        f"open skipped: {n_open_unfilled} unfilled, {n_open_noprice} no price, {n_open_invalid} invalid)."
     )
 
 
