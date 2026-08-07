@@ -306,3 +306,42 @@ def test_block_total_is_omitted_without_open_book():
 
 def test_block_total_is_omitted_when_block_is_empty():
     assert mt._format_block_total("RETIRED", {}, {}) is None
+
+
+# ── open book: why the SQL entry-guard is load-bearing (review PR #283) ─────
+
+
+def test_nan_entry_is_not_caught_by_the_python_guards():
+    """The open-book queries MUST filter `entry > 0` in SQL, like the closed ones.
+
+    A NULL entry arrives from pandas as NaN, and every downstream guard is
+    NaN-permeable: `nan <= 0` is False, `abs(nan) > MAX_ABS_MOVE_PCT` is False,
+    and `max(nan, -100.0)` returns nan. realized_pnl_pct therefore yields nan —
+    NOT None — so add_open_row would accept the row and a single one would
+    poison the bot's open/Σall line and the whole block total. This test pins
+    the behaviour that makes the SQL filter necessary; delete the filter and
+    the report silently prints nan.
+    """
+    from core.realized_pnl import realized_pnl_pct
+
+    out = realized_pnl_pct("LONG", float("nan"), 100.0, [110.0], 0, 20)
+    assert out is not None
+    assert out != out  # nan
+
+
+def test_open_book_queries_filter_non_positive_entries():
+    import re
+
+    src = open(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "23_market_tracker.py"),
+        encoding="utf-8",
+    ).read()
+    assert re.search(r"FROM ai_signals\s*\n\s*WHERE entry1 > 0", src)
+    assert re.search(r"FROM active_trades_master\s*\n\s*WHERE entry > 0", src)
+
+
+def test_nan_poisons_an_aggregate_if_it_ever_gets_through():
+    # Documents the blast radius the SQL guard prevents: sum() has no NaN
+    # tolerance, so one bad row takes the bot line and the block total with it.
+    stats = mt._aggregate_open_book([("BOT", 10.0), ("BOT", float("nan"))])
+    assert stats["BOT"]["sum"] != stats["BOT"]["sum"]  # nan

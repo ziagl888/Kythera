@@ -2190,12 +2190,19 @@ async def job_realized_pnl_report() -> None:
             # been made on half the book. Both open tables are read, mirroring
             # the two closed sources above; ai_signals holds only open trades
             # (the monitor deletes on close), active_trades_master likewise.
+            # `entry > 0` mirrors the closed queries deliberately and is NOT
+            # redundant with the Python guards: a NULL entry arrives as NaN,
+            # and every downstream check is NaN-permeable (`nan <= 0` is False,
+            # `abs(nan) > MAX_ABS_MOVE_PCT` is False, `max(nan, -100.0)` is nan)
+            # — realized_pnl_pct would return nan, not None, and one such row
+            # would poison the bot's open/Σall line AND the block total.
             df_ai_open = pd.read_sql_query(
                 """
                 SELECT model AS strategy, upper(btrim(direction)) AS direction,
                        symbol, entry1 AS entry, targets, current_target_hit AS targets_hit,
                        entry_filled, lev
                 FROM ai_signals
+                WHERE entry1 > 0
                 """,
                 conn,
             )
@@ -2205,6 +2212,7 @@ async def job_realized_pnl_report() -> None:
                        coin AS symbol, entry, lev,
                        target1, target2, target3, target4, status
                 FROM active_trades_master
+                WHERE entry > 0
                 """,
                 conn,
             )
@@ -2241,6 +2249,7 @@ async def job_realized_pnl_report() -> None:
     n_open_unfilled = 0
     n_open_noprice = 0
     n_open_invalid = 0
+    n_open_inactive = 0
     unmapped: set[str] = set()
 
     def add_row(tag: str, direction: str, age_h: float, pnl: float | None) -> None:
@@ -2271,7 +2280,7 @@ async def job_realized_pnl_report() -> None:
 
     def add_open_row(tag: str, direction: str, pnl: float | None) -> None:
         """Open-book twin of add_row — same bucketing, no age dimension."""
-        nonlocal n_open_invalid, n_inactive
+        nonlocal n_open_invalid, n_open_inactive
         if pnl is None:
             n_open_invalid += 1
             return
@@ -2285,8 +2294,9 @@ async def job_realized_pnl_report() -> None:
             open_active_rows.append((label, pnl))
         elif bucket == "unmapped":
             unmapped.add(label)
-        else:
-            n_inactive += 1
+        else:  # "inactive": LIVE leg but script parked — own counter, the
+            # closed-path n_inactive must stay readable as a closed-path number.
+            n_open_inactive += 1
 
     if prices:
         for r in df_ai_open.itertuples(index=False):
@@ -2409,7 +2419,8 @@ async def job_realized_pnl_report() -> None:
         f"✅ Realised PnL post sent (active={len(active_stats)}, shadow={len(shadow_stats)}, "
         f"retired={len(retired_stats)} bots, {n_total} trades in 30d window, {n_open} open marked; "
         f"skipped: {n_neutral} neutral, {n_invalid} invalid, {n_inactive} inactive, {n_future} future-age; "
-        f"open skipped: {n_open_unfilled} unfilled, {n_open_noprice} no price, {n_open_invalid} invalid)."
+        f"open skipped: {n_open_unfilled} unfilled, {n_open_noprice} no price, "
+        f"{n_open_invalid} invalid, {n_open_inactive} inactive)."
     )
 
 
