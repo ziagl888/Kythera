@@ -1,3 +1,70 @@
+## [2026-08-07] Entry anchored at posting time (ODS1/FIF2), FIF2 roster seat, re-entry lock (T-2026-KYT-9050-115)
+
+Operator finding (Michi): bots 42 (ODS1) and 43 (FIF2) built their brackets from a price that
+was true when the rule *fired*, not when the signal was *posted*. Both geometries are pure
+percentage translations of a measured effect, so a bracket hung off a price the position is
+not opened at posts a risk/reward that was never priced. Bot 40 made exactly this correction
+on 2026-07-27 — of 24 mirrors 5 filled, and for 15 of 18 cancellations the market never
+touched the posted entry, so the arm traded a selection it had created itself.
+
+* **ODS1 was the worse case.** Its anchor was the OI-implied mark (`oi_value_usdt /
+  open_interest`) of the newest `oi_5m` row at or before now — accepted up to
+  `STALENESS_CAP_S` (45 min) old, on a collector running a 10-min median / 20-min p90 cadence
+  (T-097). TP1 is **1.0 %**, so a 10-minute-old anchor on this bot's own tape (+3 % over 4 h)
+  could sit half a TP1 away. **FIF2** anchored on the source signal's `entry1`: the price the
+  originating bot saw when *it* fired, up to `MAX_MIRROR_AGE_S` plus that leg's insert latency
+  earlier (30–120 s tick legs, a ~185–195 s wall for candle-cycle legs).
+* **What moves with the anchor differs from bot 40 on purpose.** Bot 40 re-anchors only the
+  entry and keeps the source's SL/targets at their ABSOLUTE prices, because those are S/R
+  levels (`mirrorable_at`). ODS1's rungs and FIF2's t104 ladder are percentages, so entry and
+  bracket are re-anchored together.
+* **Decision paths are untouched.** ODS1 still decides on the `oi_5m` clock and FIF2 still
+  gates on closed 5m candles through `core/vol_features` — only the posting geometry moved.
+  Mixing clocks in the entry *rule* is what both module docstrings rule out, and the ODS1
+  Rule-5 note now names the ticker as the second posting-path price source.
+* **A drift bound, expressed as a fraction of TP1** (`DRIFT_CONSUMED_FRAC_OF_TP1`, 0.5): skip
+  when the market has already run half of TP1 the trade's way since the decision price — ODS1
+  0.50 %, FIF2 2.0 % LONG / 1.5 % SHORT. Re-anchoring means entering later, and past that
+  bound the trade is the tail of the effect rather than the effect. **Not measured** — neither
+  study priced an entry delay — so it is a loose bound, tied to the geometry it protects so
+  re-pricing TP1 cannot silently change it. Bot 40's `mirrorable_at` degenerates to a no-op
+  here, because a percentage ladder moves with its own anchor.
+* **Unpriced is voided, never filled.** No live anchor ⇒ no post, and specifically no fallback
+  to the stale price this change removed — that would make the defect intermittent instead of
+  gone. One `get_live_prices_batch()` per cycle (P2.44); ODS1 resolves the per-symbol HTTP
+  fallback only after the open/cooldown filters so it is bounded by the emit cap, and FIF2
+  skips a whole cycle on an empty batch rather than degrading into one call per coin at a 60 s
+  poll. Neither hands the connection to `get_live_price`: its DB fallback calls
+  `conn.rollback()`, which is connection-wide and would discard everything the cycle wrote
+  before its single commit.
+
+**FIF2 takes a trailing roster seat** (LONG + SHORT, operator decision Michi). Placeholder
+densities below every measured leg and above ODS1; the column doubles as eviction order, so an
+unmeasured leg yields its seat first. FIF2 is a re-forwarder like ROM1 but is not excluded for
+it: where the source leg is itself rostered, `admit` resolves the overlap by density sort +
+`SYMBOL_HELD` and the measured leg wins. What the seat buys is the complement — a vol-gated
+admission path for legs that never earned one (EPD3, TSM1, BB_1H, BR2H, FIF1).
+
+**The seat exposed a latent defect in bot 40, now fixed** (`REENTRY_LOCK_H`, default 1 h). The
+"a once-trailed trade is done" lock is keyed on `src_signal_id`, so it only recognises the SAME
+`ai_signals` row. A re-forwarder writes the same underlying trade under a NEW id and walks past
+it: mirror opens at t, trails out at t+180 s, the 60 s `SYMBOL_COOLDOWN_SEC` expires, and a
+re-forwarded row still inside `MAX_MIRROR_AGE_SEC` is admitted — a re-entry into exactly the
+position the trail just exited. The hole is not new and not FIF2-specific (any two rostered
+legs on one symbol can produce it); FIF2's seat turns it from rare into routine, because its
+vol gate selects the fast tapes where a trailing exit within minutes actually happens. The lock
+is symbol-scoped, arms only on `TRAIL`/`TIME_STOP` (SL_HIT and SOURCE_CLOSED mean the
+underlying is over; ENTRY_NOT_FILLED and SHADOW_CARRYOVER never held a position), rejects as
+`SYMBOL_REENTRY_LOCK`, and unlike the cooldown does **not** filter on `posted` — a shadow
+mirror also traded and left that position.
+
+Verification: `backtest/test_ods1_entry.py` (26), `test_fif2_bot.py` (18),
+`test_trailing_close_bot.py` (67) all green per file, plus `guard.py verify|smoke`. Six
+mutations confirm the new pins bite: reverting either anchor, disabling either drift guard,
+defanging `locked` in `admit`, and widening the lock to `SL_HIT` each fail. Note that these
+suites must be run **per file** — running them together fails 9 tests on unmodified `main` too
+(cross-file `core.config` stub pollution, pre-existing).
+
 ## [2026-08-07] Realised-PnL report: the open book, marked to market (T-2026-KYT-9050-114)
 
 Every window of the 4h realised report is filtered on **close time**, so a leg whose winners

@@ -91,6 +91,11 @@ class FakeCursor:
         self.store["sql"].append((" ".join(sql.split()), params))
         if "FROM ai_signals" in sql:
             self._rows = self.store["ai_signals"]
+        elif "DISTINCT symbol FROM trailing_positions" in sql and "close_reason = ANY" in sql:
+            # Checked BEFORE the cooling branch: both read `DISTINCT symbol FROM
+            # trailing_positions` and would otherwise answer from the same list,
+            # which would make the two locks indistinguishable in every test here.
+            self._rows = [(x,) for x in self.store["locked"]]
         elif "DISTINCT symbol FROM trailing_positions" in sql:
             self._rows = [(x,) for x in self.store["cooling"]]
         elif "FROM trailing_positions" in sql:
@@ -125,6 +130,7 @@ class FakeConn:
             "outbox": [],
             "inserted": [],
             "cooling": [],
+            "locked": [],
             "ai_signals": list(ai_signals),
             "mirrors": list(mirrors),
         }
@@ -156,29 +162,48 @@ def _cand(sid, symbol, tag, direction):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+#: Seats that did NOT come from the PR-#198 p95 fill and therefore carry a
+#: placeholder density instead of a measured one. Listed explicitly so an
+#: unmeasured leg can never be added by bumping a count — every entry here has to
+#: be typed out, and the assertions below hold the whole set below the measured
+#: floor rather than naming one leg.
+UNMEASURED_SEATS = {("ODS1", "SHORT"), ("FIF2", "LONG"), ("FIF2", "SHORT")}
+
+
 def test_roster_admits_only_selected_legs():
     """AK1. The roster is the PR-#198 selection minus ROM1 — not 'all live bots'.
 
-    32 = the 33 seats of the p95 fill minus ROM1 LONG/SHORT (= 31 measured seats),
-    plus ODS1 SHORT. Bot 28 re-forwards trades the original legs already post
-    (double-counting, T-052), and its rows carry the ORIGINAL open_time, so no
-    freshness window can admit it honestly. The exclusion is documented in
+    31 measured seats = the 33 of the p95 fill minus ROM1 LONG/SHORT. Bot 28
+    re-forwards trades the original legs already post (double-counting, T-052), and
+    its rows carry the ORIGINAL open_time, so no freshness window can admit it
+    honestly. The exclusion is documented in
     core.trailing_roster.EXCLUDED_AS_DUPLICATE.
 
-    ODS1 SHORT (T-2026-KYT-9050-106) is the one seat NOT from the p95 fill: it has
-    no measured density and is pinned to the bottom of the eviction order on
-    purpose. That distinction is asserted below rather than folded into the count,
-    so a future unmeasured leg cannot be added silently by bumping a number."""
+    On top sit the seats with no measured density: ODS1 SHORT
+    (T-2026-KYT-9050-106) and FIF2 LONG/SHORT (T-2026-KYT-9050-115). They are
+    pinned below the measured floor on purpose. That distinction is asserted
+    structurally rather than folded into the count, so a future unmeasured leg
+    cannot be added silently by bumping a number.
+
+    FIF2 is a re-forwarder like ROM1 but is NOT excluded for it: ROM1 re-posted the
+    same trades the original legs already fed into this channel, while FIF2's
+    overlap is resolved by `admit` (density sort + SYMBOL_HELD) and its unique
+    contribution is the legs that never earned a seat. What its seat did require is
+    the symbol-scoped re-entry lock — a re-forwarded row carries a new
+    src_signal_id, which the src-keyed lock cannot recognise."""
     from core.trailing_roster import EXCLUDED_AS_DUPLICATE
 
-    assert len(ROSTER) == 32
-    measured = {leg: d for leg, d in ROSTER.items() if leg != ("ODS1", "SHORT")}
+    measured = {leg: d for leg, d in ROSTER.items() if leg not in UNMEASURED_SEATS}
     assert len(measured) == 31
-    # The unmeasured leg must sit strictly below every measured one — the density
-    # column doubles as eviction order when the 500-slot cap binds.
-    assert ROSTER[("ODS1", "SHORT")] < min(measured.values())
+    assert len(ROSTER) == len(measured) + len(UNMEASURED_SEATS)
+    assert UNMEASURED_SEATS <= set(ROSTER), "every declared placeholder seat must actually be seated"
+    # Every unmeasured leg must sit strictly below every measured one — the density
+    # column doubles as eviction order when the 500-slot cap binds, so an unmeasured
+    # leg must be the first to yield a seat, never the last.
+    assert max(ROSTER[leg] for leg in UNMEASURED_SEATS) < min(measured.values())
     assert is_rostered("ODS1", "SHORT")
     assert not is_rostered("ODS1", "LONG")  # SHORT-only by construction
+    assert is_rostered("FIF2", "LONG") and is_rostered("FIF2", "SHORT")  # both legs measured in T-111
 
     assert set(EXCLUDED_AS_DUPLICATE) == {("ROM1", "LONG"), ("ROM1", "SHORT")}
     assert not is_rostered("ROM1", "LONG") and not is_rostered("ROM1", "SHORT")
@@ -910,6 +935,85 @@ def test_symbol_held_still_wins_over_cooling():
     log should see the real cause, not the milder one."""
     admitted, rejected = bot.admit([_cand(1, "BTCUSDT", "MIS1-72h", "LONG")], {"BTCUSDT"}, 500, cooling={"BTCUSDT"})
     assert admitted == [] and rejected[0][2] == "SYMBOL_HELD"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Re-entry lock (T-2026-KYT-9050-115). The src_signal_id lock recognises only the
+# SAME ai_signals row; a re-forwarding leg writes the same underlying trade under a
+# new id and walks past it. The symbol is the only identity both rows share.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_symbol_the_trail_just_exited_is_not_re_entered():
+    cands = [_cand(1, "XTZUSDT", "MIS1-72h", "LONG")]
+    admitted, rejected = bot.admit(cands, held_symbols=set(), free_slots=500, locked={"XTZUSDT"})
+    assert admitted == []
+    assert [(sid, why) for sid, _, why in rejected] == [(1, "SYMBOL_REENTRY_LOCK")]
+
+    admitted, rejected = bot.admit(cands, set(), 500, locked=set())
+    assert [sid for sid, _ in admitted] == [1] and rejected == []
+
+
+def test_re_entry_lock_reports_itself_rather_than_the_milder_cooldown():
+    """A just-trailed symbol trips both windows. The log has to name the one that
+    will still be blocking in an hour, not the one that expires in a minute."""
+    admitted, rejected = bot.admit(
+        [_cand(1, "XTZUSDT", "MIS1-72h", "LONG")], set(), 500, cooling={"XTZUSDT"}, locked={"XTZUSDT"}
+    )
+    assert admitted == [] and rejected[0][2] == "SYMBOL_REENTRY_LOCK"
+
+
+def test_open_mirrors_actually_applies_the_re_entry_lock():
+    """Wiring pin, same shape as the cooldown one: `admit` and
+    `read_reentry_locked_symbols` are each correct alone, and this is the assertion
+    that fails if open_mirrors forgets to pass the locked set through."""
+    conn = FakeConn(ai_signals=[_src_row(1, "XTZUSDT", "MIS1-72h", "LONG")])
+    conn.store["locked"] = ["XTZUSDT"]
+    sources, _ = bot.read_source_signals(conn)
+    assert bot.open_mirrors(conn, sources, {}, set(), prices={"XTZUSDT": 101.0}) == 0
+    assert conn.store["outbox"] == [], conn.store["outbox"]
+
+    conn.store["locked"] = []
+    assert bot.open_mirrors(conn, sources, {}, set(), prices={"XTZUSDT": 101.0}) == 1
+
+
+def test_only_the_trails_own_exits_arm_the_lock():
+    """SL_HIT and SOURCE_CLOSED mean the underlying trade is over — there is
+    nothing left to re-enter, and locking on them would cost entries without
+    closing a hole. ENTRY_NOT_FILLED and SHADOW_CARRYOVER never held a position.
+
+    Pinned as a set rather than by reading the query, so widening it stays a
+    deliberate test edit."""
+    assert set(bot.REENTRY_LOCKING_REASONS) == {bot.REASON_TRAIL, bot.REASON_TIME_STOP}
+    for reason in (bot.REASON_SL_HIT, bot.REASON_SOURCE_CLOSED, bot.REASON_NOT_FILLED, bot.REASON_PREEXISTING):
+        assert reason not in bot.REENTRY_LOCKING_REASONS
+
+
+def test_re_entry_lock_query_is_reason_scoped_and_ignores_posted():
+    """Two properties the SQL must have, and one it must NOT.
+
+    Reason-scoped: an unscoped query would lock every closed symbol for an hour.
+    Shadow rows count: `posted` answers "could a Cornix order collide", which is the
+    COOLDOWN's question. This lock asks whether our book already traded and left the
+    position, and a shadow mirror did exactly that.
+    """
+    conn = FakeConn()
+    bot.read_reentry_locked_symbols(conn)
+    sql = [s for s, _ in conn.store["sql"] if "trailing_positions" in s]
+    assert sql, conn.store["sql"]
+    assert "close_reason = ANY" in sql[0], sql[0]
+    assert "posted" not in sql[0], sql[0]
+    # Window computed by the DB against its own NOW() (TZ contract R3), in seconds
+    # so a fractional REENTRY_LOCK_H survives — make_interval(hours => …) floors.
+    assert "NOW()" in sql[0] and "make_interval(secs =>" in sql[0], sql[0]
+
+
+def test_re_entry_lock_outlives_the_window_a_re_forward_can_arrive_in():
+    """The lock only closes the hole if it is still standing when the re-forwarded
+    row shows up. That row can be admitted up to MAX_MIRROR_AGE_SEC after its own
+    open_time, so anything shorter leaves the gap open."""
+    assert bot.REENTRY_LOCK_H * 3600 > bot.MAX_MIRROR_AGE_SEC, (bot.REENTRY_LOCK_H, bot.MAX_MIRROR_AGE_SEC)
+    assert bot.REENTRY_LOCK_H * 3600 > bot.SYMBOL_COOLDOWN_SEC, "the cooldown alone was the hole"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

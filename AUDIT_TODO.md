@@ -192,6 +192,43 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   and `open_time_legacy`, so no committed reader is silently mis-mapping today. Belongs
   in `docs/UTC_POLICY.md` §6 as a writer dimension alongside the open history decision.
   Found by the core review of PR #274, not by the study.
+- [x] **#T115-1 ODS1/FIF2 posted a bracket built on a detection-time price
+  (T-2026-KYT-9050-115, 2026-08-07).** Operator finding (Michi). ODS1 anchored on the
+  OI-implied mark of the newest `oi_5m` row at or before now — accepted up to 45 min old on
+  a collector at 10-min median cadence (T-097) — against a TP1 of **1.0 %**, so a routine
+  10-minute anchor could sit half a TP1 off. FIF2 anchored on the source signal's `entry1`
+  (up to `MAX_MIRROR_AGE_S` plus that leg's insert latency). Both geometries are percentage
+  translations of a measured effect, so both must hang off the price the position opens at;
+  bot 40 made the same correction on 2026-07-27. Fixed: entry AND bracket re-anchored on the
+  live ticker at posting time, decision paths untouched, unpriced candidates voided rather
+  than filled from the stale price, plus a `DRIFT_CONSUMED_FRAC_OF_TP1` bound (0.5 × TP1) so
+  a re-anchored entry cannot chase an effect that already ran. The bound is **not measured** —
+  neither T-096 nor T-111 priced an entry delay — and is the first thing to re-derive from
+  each bot's own live rows.
+- [x] **#T115-2 Bot 40's re-entry lock could not see a re-forwarded trade
+  (T-2026-KYT-9050-115, 2026-08-07).** `read_mirrored_src_ids` keys "a once-trailed trade is
+  done" on `src_signal_id`, which only ever matches the SAME `ai_signals` row. A re-forwarding
+  leg writes the same underlying trade under a NEW id: mirror opens at t, trails out at
+  t+180 s, the 60 s `SYMBOL_COOLDOWN_SEC` expires, and a re-forwarded row still inside
+  `MAX_MIRROR_AGE_SEC` is admitted — re-entry into exactly the position the trail just left.
+  Latent for any two rostered legs on one symbol; FIF2's new roster seat would have made it
+  routine, because its vol gate selects the tapes where a trailing exit within minutes
+  happens. Fixed by a symbol-scoped `REENTRY_LOCK_H` (default 1 h) arming only on
+  `TRAIL`/`TIME_STOP`, rejecting as `SYMBOL_REENTRY_LOCK`.
+- [ ] **#T115-3 Re-derive the FIF2 and ODS1 roster densities from live rows.** Both sit on
+  placeholder values below every measured leg (FIF2 0.012/0.011, ODS1 0.010) because the
+  PR #198 slot-budget run predates them. The column doubles as eviction order when the
+  500-slot cap binds, so until they are re-measured the two unmeasured legs yield their seats
+  first — deliberate, but it means neither has ever been scored on net-per-occupied-slot-day.
+  Re-run `tools/trailing_slot_budget.py` once each has its own book and re-sort the register.
+- [ ] **#T115-4 The share of FIF2's live edge that rides on already-rostered source legs is
+  unmeasured.** FIF2's unique contribution through the roster seat is the legs that never
+  earned one (EPD3, TSM1, BB_1H, BR2H, FIF1); where the source leg IS rostered, `admit`
+  resolves the overlap in favour of the measured leg via density sort + `SYMBOL_HELD`, so the
+  FIF2 copy is dropped. Whether the performance the seat was granted on comes mostly from the
+  overlapping or the complementary population was not measurable from the build machine (no
+  DB credentials, hard rule 1). Answer it from `ml_predictions_master` / `closed_ai_signals`
+  in a VPS session before FIF2's density is re-derived.
 - [x] **#T62-1 SHORT legs evaluated under the trail rule (2026-08-01).** Both sides
   under the same exit (leg path vs. index path), so the leg's own TP policy
   drops out — the predecessor yardstick (against the full window move) penalised every
