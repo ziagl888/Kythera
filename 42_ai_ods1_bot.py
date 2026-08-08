@@ -54,8 +54,35 @@ usual bracket would sit far outside the effect and the edge would leak away long
 before TP1. The bracket below is therefore sized *to the measured effect*, not
 inherited from the fleet default and not tuned: TP1 1.0 %, TP2 2.0 %, SL 2.0 %.
 Nothing in T-096 validates those three numbers — they are the smallest honest
-translation of a drift into a bracket, and they are the first thing to re-derive
-once this bot has live rows of its own.
+translation of a drift into a bracket.
+
+That re-derivation has since been RUN and returned "no change"
+(T-2026-KYT-9050-116, ``staging_models/replay/ods1_bracket_study_t116.md``). The
+rule was replayed over 1217 events (919 fit / 279 holdout / 19 purged) and all 50
+admissible brackets were scored path-dependently against the same paths. In the fit
+window 43 of the 49 alternatives beat this one — it ranks 44th of 50 — and **none
+of that survived**: fit t of 3.0-3.7 collapse to holdout t of 0.11-0.67, the
+highest holdout t anywhere on the surface is 0.99, and the paired holdout of the
+fit winner (2/4/4) against this bracket is +0.089 pp/trade at t=0.60. 11 of the top
+12 cells sit on the grid's widest stop, so that ranking is largely a statement
+about the grid. Shipping the fit winner would have been an overfit.
+
+Two things the study did establish. The exit mix refutes "this is not a bracket,
+just a hold": in the top-12 cells only 3.2-9.5 % of trades reach the 24 h mark-out
+(this bracket itself: 0.41 %), the rest resolve at a rung or the stop. And every
+cell that OUTRANKS this one is measured more leniently than it — their intra-bar
+ambiguity runs 0.49-2.14 % against this bracket's 2.88 %,
+because a 2 % stop collides with a rung inside the same 5 m bar far more often, and
+every such bar is resolved against the trade. (Across all 50 cells ambiguity spans
+0.49-5.51 %, and three ARE more ambiguous than this one — so "harshest of all"
+would be false; "harsher than everything that beats it" is the true form, and it is
+the one the argument needs.)
+
+So these three numbers stay, on "no evidence to move them", not on "they were
+right". Before the next attempt, note that every live row up to 2026-08-07 was
+posted around an anchor that could be 45 minutes stale against a 1.0 % TP1
+(T-2026-KYT-9050-115) — the geometry cannot be judged from a book carrying that
+confound. Re-run after ~2-3 weeks of post-anchor rows.
 
 Sizing the bracket to the effect is right; it does NOT license ignoring how the
 ladder is executed. TP2 shipped at 1.5 % and was corrected to 2.0 % inside the
@@ -188,11 +215,20 @@ STARVATION_LOG_EVERY_S = 3600
 
 # Flood protection. The entry rule describes a MARKET-WIDE event: a BTC-led rally
 # that liquidates shorts satisfies "px >= +3 % and 4h OI <= -2 %" on dozens of
-# correlated alts in the same 5-minute poll. Without a bound one cycle can emit
-# the whole qualifying universe (527 symbols in coins.json) into a Cornix-executed
-# channel — and because ODS1 holds a roster seat, bot 40 mirrors each signal into
-# CH_TRAILING as well, so the burst lands in TWO channels against a per-channel
-# cap of 500. EPD3-SHORT was estimated low once and delivered ~484/day.
+# correlated alts in the same 5-minute poll. Without a bound one cycle can emit the
+# whole qualifying universe (527 symbols in coins.json) — and because ODS1 holds a
+# roster seat, bot 40 mirrors each signal into CH_TRAILING as well — and THAT is
+# where a per-channel cap of 500 binds, because the cap is a Cornix construct and
+# cannot bind on a channel Cornix does not watch. EPD3-SHORT was estimated low once
+# and delivered ~484/day.
+#
+# Correction (operator, 2026-08-08): this comment used to call THIS bot's own
+# channel Cornix-executed. It is not. `CH_ODS1` is unset and resolves to
+# `CH_NEW_IDEAS` (core/config.py), and that cohort channel is not Cornix-executed —
+# posts here produce forward measurement, not fills. The execution path that does
+# cost money is the OTHER one named above: the roster seat, which routes this bot's
+# `sl`/`targets` through `40_trailing_close_bot` into `CH_TRAILING`. The cap is
+# therefore still needed for exactly one of the two reasons it used to give.
 #
 # `find_candidates` already sorts strictest-divergence-first, so truncation keeps
 # the events T-096 measured as the strongest rather than an arbitrary subset.

@@ -215,6 +215,45 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   routine, because its vol gate selects the tapes where a trailing exit within minutes
   happens. Fixed by a symbol-scoped `REENTRY_LOCK_H` (default 1 h) arming only on
   `TRAIL`/`TIME_STOP`, rejecting as `SYMBOL_REENTRY_LOCK`.
+- [x] **#T116-1 ODS1 bracket re-derived — NO CHANGE (T-2026-KYT-9050-116, 2026-08-08).** 1217
+  replayed events, 919 fit / 279 holdout / 19 purged. The live 1/2/2 ranks 44th of 50 on fit
+  (+0.092 pp/trade) — 43 alternatives beat it — and none survived out of sample: holdout t
+  0.11–0.67, max t_hold across all 50 cells 0.99, paired best-minus-live +0.089 pp/trade at
+  t=0.60. 11 of the top 12 crowd the grid's widest stop. Bracket stays, on "no evidence to move
+  it". Refuted en route: the wide-stop cells are NOT just holding (3–10 % time exits), so this is
+  a bracket question. **Both reviews found the first cut's purge gap purged nothing** (receipt:
+  n_fit + n_hold == n_events) plus three claims wrong against the study's own JSON, all erring
+  toward flattering the verdict — fixed and documented in the artifact's Corrections section
+  rather than silently. Verdict: `staging_models/replay/ods1_bracket_study_t116.md`.
+- [x] **#T118-1 "Cornix-executed" was attributed to the wrong channel (T-2026-KYT-9050-118,
+  2026-08-08).** Operator correction: `CH_NEW_IDEAS` is not Cornix-executed, nor is the FIF
+  channel. `42_ai_ods1_bot.py`'s cap comment and the matching test docstring (both from
+  `#T106`) claimed ODS1's own channel was — it resolves to `CH_NEW_IDEAS` and only posts.
+  Corrected; the cap's other justification (roster seat → `CH_TRAILING`, which IS executed) is
+  the real one and stands. Also retracts the "money-affecting, sign-off required" framing that
+  T-115/T-116 carried into their PR bodies and that both reviews inherited unchecked: the
+  execution path is the roster seat, not the bot's own channel. Doc-only, AST-identical.
+- [ ] **#T118-2 Sweep the surviving "the FIF channel" phrasing.** `core/fleet.py:377`,
+  `.env.example`, `README.md` and `docs/NEW_IDEAS_BOTS.md` still name a distinct FIF channel;
+  all four are TRUE about execution (not Cornix-executed) and only stale in naming, which is why
+  they were left out of `#T118-1`'s declared scope. `core/config.py` was corrected there because
+  the fixed docstrings point readers at it. `docs/NEW_IDEAS_BOTS.md` additionally says "Cornix
+  tracking of the posted signals is the validation" for `CH_NEW_IDEAS` — accurate when written
+  (2026-07-07), contradicted by the operator's 2026-08-08 statement; needs a dated note, not a
+  deletion.
+- [ ] **#T116-2 Re-run the ODS1 bracket study on post-anchor rows (~2026-08-21).** Every live row
+  up to 2026-08-07 was posted around an anchor up to 45 min stale against a 1.0 % TP1
+  (`#T115-1`), so the live book cannot arbitrate the geometry while that confound is in the
+  sample. Re-run `tools/ods1_bracket_study.py` after ~2–3 weeks of post-anchor rows and compare
+  the live cell against its OWN history rather than against a grid — a grid over this many cells
+  finds a winner by noise, which is exactly what happened here.
+- [ ] **#T116-3 The ODS1 trailing-arm vs own-channel gap is unexplained.** +0.303 %/trade
+  unlevered in bot 40 (n=33) against ≈ −0.13 % in its own channel, with 30 of 33 closing as
+  `SOURCE_CLOSED` — so not an exit effect. The entry-anchor explanation could not be verified:
+  `trailing_positions.src_signal_id` does not join to `closed_ai_signals.id` (own sequence; the
+  join produced 255 % "price differences" from id collisions) and a symbol+direction+time join
+  returns n=0, which points at the writer-dependent timezone domain of `#T107-1`. Needs a
+  reliable link between a mirror and its source row before it can be answered at all.
 - [ ] **#T115-3 Re-derive the FIF2 and ODS1 roster densities from live rows.** Both sit on
   placeholder values below every measured leg (FIF2 0.012/0.011, ODS1 0.010) because the
   PR #198 slot-budget run predates them. The column doubles as eviction order when the
