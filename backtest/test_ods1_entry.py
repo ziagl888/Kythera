@@ -309,8 +309,9 @@ def test_emissions_are_bounded_per_cycle():
     """The entry rule is a MARKET-WIDE mechanic: one BTC-led short squeeze puts
     dozens of correlated alts over the threshold in the same poll. Unbounded, a
     single cycle could post the whole qualifying universe — and the roster seat
-    mirrors each one into CH_TRAILING too, so the burst hits two channels against a
-    per-channel cap of 500. EPD3-SHORT was estimated low once and delivered ~484/day.
+    mirrors each one into CH_TRAILING too, which is where a per-channel cap of 500
+    binds: the cap is a Cornix construct and cannot bind on a channel Cornix does
+    not watch. EPD3-SHORT was estimated low once and delivered ~484/day.
 
     This docstring used to call ODS1's OWN channel Cornix-executed. It is not
     (operator, 2026-08-08): `CH_ODS1` resolves to `CH_NEW_IDEAS`, which posts but is

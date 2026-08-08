@@ -156,7 +156,9 @@ CH_FIF1 = _ch_override("CH_FIF1", CH_NEW_IDEAS)
 CH_ODS1 = _ch_override("CH_ODS1", CH_NEW_IDEAS)
 # FIF2 (T-2026-KYT-9050-112) chains onto the FIF channel: the successor bot
 # lands next to the FIF1 stream it replaces (operator decision 2026-08-06 —
-# that channel is currently not Cornix-executed, which is the containment),
+# that channel is currently not Cornix-executed, which is the containment — and
+# with CH_FIF1 unset there is no distinct FIF channel: the chain ends at
+# CH_NEW_IDEAS, which is not executed either, T-2026-KYT-9050-118),
 # but can be split onto its own channel via .env without a deploy.
 CH_FIF2 = _ch_override("CH_FIF2", CH_FIF1)
 

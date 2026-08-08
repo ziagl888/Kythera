@@ -14,8 +14,11 @@ fills.
   sentence is the real execution path and is unchanged: ODS1 holds a roster seat, so bot 40
   mirrors each signal into `CH_TRAILING`, and that channel *is* executed. A burst still lands
   against a per-channel cap of 500 there.
-* **FIF2's containment holds after all.** Its docstring said the FIF channel is not
-  Cornix-executed, and that is true — the imprecision was only that no distinct FIF channel
+* **Retracted (2026-08-07 alarm).** FIF2's containment holds after all. Its docstring said
+  the FIF channel is not
+  Cornix-executed, and that is true — the alarm I raised on 2026-08-07, that this containment
+  was untrue in the live configuration, is withdrawn. The imprecision was only that no distinct
+  FIF channel
   exists: `CH_FIF2` → `CH_FIF1` → `CH_NEW_IDEAS`, so FIF2 shares the cohort channel with ODS1.
   Now stated that way, with the roster seat named as the single path out of the containment.
 * **Retracted.** T-115 and T-116 repeatedly framed ODS1 geometry changes as "money-affecting,

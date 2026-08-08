@@ -31,8 +31,8 @@ comes back. This bot only posts the two rungs and the initial SL; the breakeven
 move is **Cornix channel configuration**. Without it the runner carries the full
 SL instead of 0, and the live geometry is not the one that was measured.
 
-Since T-2026-KYT-9050-115 that precondition is LIVE, not deferred. The FIF
-channel itself is still not Cornix-executed, but the roster seat granted in that
+Since T-2026-KYT-9050-115 that precondition is LIVE, not deferred. The cohort
+channel this bot posts to is still not Cornix-executed, but the roster seat in that
 task routes this bot's signals through ``40_trailing_close_bot``, which reposts
 the source's ``sl`` and ``targets`` verbatim via ``build_cornix_block`` into
 ``CH_TRAILING`` — and that channel IS Cornix-executed. So these rungs now reach a

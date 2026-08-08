@@ -217,9 +217,10 @@ STARVATION_LOG_EVERY_S = 3600
 # that liquidates shorts satisfies "px >= +3 % and 4h OI <= -2 %" on dozens of
 # correlated alts in the same 5-minute poll. Without a bound one cycle can emit the
 # whole qualifying universe (527 symbols in coins.json) — and because ODS1 holds a
-# roster seat, bot 40 mirrors each signal into CH_TRAILING as well, so the burst
-# lands in TWO channels against a per-channel cap of 500. EPD3-SHORT was estimated
-# low once and delivered ~484/day.
+# roster seat, bot 40 mirrors each signal into CH_TRAILING as well — and THAT is
+# where a per-channel cap of 500 binds, because the cap is a Cornix construct and
+# cannot bind on a channel Cornix does not watch. EPD3-SHORT was estimated low once
+# and delivered ~484/day.
 #
 # Correction (operator, 2026-08-08): this comment used to call THIS bot's own
 # channel Cornix-executed. It is not. `CH_ODS1` is unset and resolves to

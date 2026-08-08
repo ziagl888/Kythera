@@ -233,6 +233,14 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   the real one and stands. Also retracts the "money-affecting, sign-off required" framing that
   T-115/T-116 carried into their PR bodies and that both reviews inherited unchecked: the
   execution path is the roster seat, not the bot's own channel. Doc-only, AST-identical.
+- [ ] **#T118-2 Sweep the surviving "the FIF channel" phrasing.** `core/fleet.py:377`,
+  `.env.example`, `README.md` and `docs/NEW_IDEAS_BOTS.md` still name a distinct FIF channel;
+  all four are TRUE about execution (not Cornix-executed) and only stale in naming, which is why
+  they were left out of `#T118-1`'s declared scope. `core/config.py` was corrected there because
+  the fixed docstrings point readers at it. `docs/NEW_IDEAS_BOTS.md` additionally says "Cornix
+  tracking of the posted signals is the validation" for `CH_NEW_IDEAS` — accurate when written
+  (2026-07-07), contradicted by the operator's 2026-08-08 statement; needs a dated note, not a
+  deletion.
 - [ ] **#T116-2 Re-run the ODS1 bracket study on post-anchor rows (~2026-08-21).** Every live row
   up to 2026-08-07 was posted around an anchor up to 45 min stale against a 1.0 % TP1
   (`#T115-1`), so the live book cannot arbitrate the geometry while that confound is in the
