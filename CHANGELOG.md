@@ -1,3 +1,51 @@
+## [2026-08-08] ODS1 bracket re-derived from its own replay — NO CHANGE (T-2026-KYT-9050-116)
+
+ODS1 came out net negative in its first two live days (45 closed, Σ −120 % of stake, Ø −2.67 %,
+WR 64.4 %), and its own docstring named the bracket as "the first thing to re-derive once this
+bot has live rows of its own". Done — and the answer is **do not change TP1 1.0 / TP2 2.0 /
+SL 2.0**, on "no evidence to move them", not on "they were right".
+
+The 45 live rows cannot answer the question: they were produced *under* the current bracket and
+say nothing about what a different one would have done. So `tools/ods1_bracket_study.py` replays
+the entry rule over the OI history — through `find_candidates`/`_as_of` loaded out of
+`42_ai_ods1_bot.py` itself, so the rule under test is the rule that runs — and scores every
+admissible bracket path-dependently on the same 5m paths. 1217 deduped events from 14 113
+simulated polls, 938 fit / 279 holdout, split 2026-07-25 with a 24 h purge gap. Entry is the 5m
+close at the event instant (the posting-time proxy), never the OI-implied mark that
+T-2026-KYT-9050-115 removed.
+
+* **The fit ranking does not carry over.** Nearly every alternative beat the live cell in the fit
+  window (+0.25…+0.32 against +0.093 pp/trade, t 3.0–3.7) and **not one** survived: holdout t
+  falls to 0.11–0.67. The paired holdout of the fit winner (2/4/4) against the live bracket, on
+  the same 279 events, is +0.088 pp/trade at **t = 0.60**. Shipping that winner would have been
+  an overfit, not a fix.
+* **The winner sits on the grid boundary** (SL 4.0 / TP2 4.0), so the ranking is a statement
+  about the grid rather than the strategy. Reported by the tool itself, not left to the reader.
+* **A hypothesis was refuted.** "Wide stop wins" was expected to mean "this is not a bracket, it
+  is just holding for 24 h" — which would have pointed at bot 40's time stop instead. The exit
+  mix says otherwise: only 3–10 % of trades in the wide cells reach the mark-out. It is a bracket
+  question, and the bracket answer is "no evidence".
+* **The live bracket is measured most harshly of all**: intra-bar ambiguity 2.9 % against 0.5–0.9 %
+  elsewhere, because a 2 % stop collides with a rung inside the same 5 m bar far more often — and
+  every such bar is resolved against the trade.
+* **Confound named, not ignored.** Every live row up to 2026-08-07 was posted around an anchor
+  that could be 45 min stale against a 1.0 % TP1. The geometry cannot be judged from a book
+  carrying that. Re-run after ~2–3 weeks of post-anchor rows (`#T116-2`).
+
+Not built on, and recorded so nobody else does: ODS1 shows +0.303 %/trade unlevered in bot 40's
+trailing arm (n=33) against ≈ −0.13 % in its own channel — but 30 of the 33 closed as
+`SOURCE_CLOSED`, so it is not an exit effect, and the entry-anchor explanation could **not** be
+verified. `trailing_positions.src_signal_id` does not join to `closed_ai_signals.id` (own
+sequence — the join yields 255 % "price differences" from id collisions), and a symbol+time join
+returns n=0, pointing at the writer-dependent timezone domain of T-2026-KYT-9050-107. The
+association stands; the mechanism does not.
+
+Verification: `backtest/test_ods1_bracket_study.py` (10) pins the SHORT path arithmetic, the
+look-ahead boundary (the event bar cannot resolve its own trade), pessimistic intra-bar
+resolution, dropped-vs-zero handling for missing paths, and the identity of the bisect windowing
+that makes the replay runnable — the last one is load-bearing for the whole "replay == serving"
+claim. `test_ods1_entry.py` (30) and `guard.py verify` green.
+
 ## [2026-08-07] Entry anchored at posting time (ODS1/FIF2), FIF2 roster seat, re-entry lock (T-2026-KYT-9050-115)
 
 Operator finding (Michi): bots 42 (ODS1) and 43 (FIF2) built their brackets from a price that

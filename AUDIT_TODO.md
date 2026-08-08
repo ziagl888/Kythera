@@ -215,6 +215,26 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   routine, because its vol gate selects the tapes where a trailing exit within minutes
   happens. Fixed by a symbol-scoped `REENTRY_LOCK_H` (default 1 h) arming only on
   `TRAIL`/`TIME_STOP`, rejecting as `SYMBOL_REENTRY_LOCK`.
+- [x] **#T116-1 ODS1 bracket re-derived — NO CHANGE (T-2026-KYT-9050-116, 2026-08-08).** 1217
+  replayed events, 938 fit / 279 holdout with a 24 h purge. Nearly every alternative beat the
+  live 1/2/2 in the fit window (+0.25…+0.32 vs +0.093 pp/trade, t 3.0–3.7) and none survived
+  out of sample (holdout t 0.11–0.67; paired best-minus-live +0.088 pp/trade at t=0.60). The fit
+  winner also sat on the grid boundary. Bracket stays, on "no evidence to move it". Refuted en
+  route: the wide-stop cells are NOT just holding (3–10 % time exits), so this is a bracket
+  question. Verdict: `staging_models/replay/ods1_bracket_study_t116.md`.
+- [ ] **#T116-2 Re-run the ODS1 bracket study on post-anchor rows (~2026-08-21).** Every live row
+  up to 2026-08-07 was posted around an anchor up to 45 min stale against a 1.0 % TP1
+  (`#T115-1`), so the live book cannot arbitrate the geometry while that confound is in the
+  sample. Re-run `tools/ods1_bracket_study.py` after ~2–3 weeks of post-anchor rows and compare
+  the live cell against its OWN history rather than against a grid — a grid over this many cells
+  finds a winner by noise, which is exactly what happened here.
+- [ ] **#T116-3 The ODS1 trailing-arm vs own-channel gap is unexplained.** +0.303 %/trade
+  unlevered in bot 40 (n=33) against ≈ −0.13 % in its own channel, with 30 of 33 closing as
+  `SOURCE_CLOSED` — so not an exit effect. The entry-anchor explanation could not be verified:
+  `trailing_positions.src_signal_id` does not join to `closed_ai_signals.id` (own sequence; the
+  join produced 255 % "price differences" from id collisions) and a symbol+direction+time join
+  returns n=0, which points at the writer-dependent timezone domain of `#T107-1`. Needs a
+  reliable link between a mirror and its source row before it can be answered at all.
 - [ ] **#T115-3 Re-derive the FIF2 and ODS1 roster densities from live rows.** Both sit on
   placeholder values below every measured leg (FIF2 0.012/0.011, ODS1 0.010) because the
   PR #198 slot-budget run predates them. The column doubles as eviction order when the
