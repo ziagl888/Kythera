@@ -216,12 +216,15 @@ and closes them there via trailing (act 2%, x 10%). Open, deliberately operator-
   happens. Fixed by a symbol-scoped `REENTRY_LOCK_H` (default 1 h) arming only on
   `TRAIL`/`TIME_STOP`, rejecting as `SYMBOL_REENTRY_LOCK`.
 - [x] **#T116-1 ODS1 bracket re-derived — NO CHANGE (T-2026-KYT-9050-116, 2026-08-08).** 1217
-  replayed events, 938 fit / 279 holdout with a 24 h purge. Nearly every alternative beat the
-  live 1/2/2 in the fit window (+0.25…+0.32 vs +0.093 pp/trade, t 3.0–3.7) and none survived
-  out of sample (holdout t 0.11–0.67; paired best-minus-live +0.088 pp/trade at t=0.60). The fit
-  winner also sat on the grid boundary. Bracket stays, on "no evidence to move it". Refuted en
-  route: the wide-stop cells are NOT just holding (3–10 % time exits), so this is a bracket
-  question. Verdict: `staging_models/replay/ods1_bracket_study_t116.md`.
+  replayed events, 919 fit / 279 holdout / 19 purged. The live 1/2/2 ranks 44th of 50 on fit
+  (+0.092 pp/trade) — 43 alternatives beat it — and none survived out of sample: holdout t
+  0.11–0.67, max t_hold across all 50 cells 0.99, paired best-minus-live +0.089 pp/trade at
+  t=0.60. 11 of the top 12 crowd the grid's widest stop. Bracket stays, on "no evidence to move
+  it". Refuted en route: the wide-stop cells are NOT just holding (3–10 % time exits), so this is
+  a bracket question. **Both reviews found the first cut's purge gap purged nothing** (receipt:
+  n_fit + n_hold == n_events) plus three claims wrong against the study's own JSON, all erring
+  toward flattering the verdict — fixed and documented in the artifact's Corrections section
+  rather than silently. Verdict: `staging_models/replay/ods1_bracket_study_t116.md`.
 - [ ] **#T116-2 Re-run the ODS1 bracket study on post-anchor rows (~2026-08-21).** Every live row
   up to 2026-08-07 was posted around an anchor up to 45 min stale against a 1.0 % TP1
   (`#T115-1`), so the live book cannot arbitrate the geometry while that confound is in the

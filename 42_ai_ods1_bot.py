@@ -58,19 +58,24 @@ translation of a drift into a bracket.
 
 That re-derivation has since been RUN and returned "no change"
 (T-2026-KYT-9050-116, ``staging_models/replay/ods1_bracket_study_t116.md``). The
-rule was replayed over 1217 events and every admissible bracket scored
-path-dependently against the same paths. In the fit window nearly every
-alternative beat this one (+0.25..+0.32 against +0.093 pp/trade) — and **none of
-it survived**: fit t of 3.0-3.7 collapse to holdout t of 0.11-0.67, and the
-paired holdout of the fit winner (2/4/4) against this bracket is +0.088 pp/trade
-at t=0.60. Every top cell also sat on the grid's widest stop, so the ranking was
-a statement about the grid. Shipping the fit winner would have been an overfit.
+rule was replayed over 1217 events (919 fit / 279 holdout / 19 purged) and all 50
+admissible brackets were scored path-dependently against the same paths. In the fit
+window 43 of the 49 alternatives beat this one — it ranks 44th of 50 — and **none
+of that survived**: fit t of 3.0-3.7 collapse to holdout t of 0.11-0.67, the
+highest holdout t anywhere on the surface is 0.99, and the paired holdout of the
+fit winner (2/4/4) against this bracket is +0.089 pp/trade at t=0.60. 11 of the top
+12 cells sit on the grid's widest stop, so that ranking is largely a statement
+about the grid. Shipping the fit winner would have been an overfit.
 
 Two things the study did establish. The exit mix refutes "this is not a bracket,
 just a hold": only 3-10 % of trades reach the 24 h mark-out, the rest resolve at a
-rung or the stop. And this bracket is the one measured most harshly — its 2 % stop
-collides with a rung inside the same 5 m bar 2.9 % of the time against 0.5-0.9 %
-elsewhere, and every such bar is resolved against the trade.
+rung or the stop. And every cell that OUTRANKS this one is measured more leniently
+than it — their intra-bar ambiguity runs 0.50-2.17 % against this bracket's 2.92 %,
+because a 2 % stop collides with a rung inside the same 5 m bar far more often, and
+every such bar is resolved against the trade. (Across all 50 cells ambiguity spans
+0.50-5.59 %, and three ARE more ambiguous than this one — so "harshest of all"
+would be false; "harsher than everything that beats it" is the true form, and it is
+the one the argument needs.)
 
 So these three numbers stay, on "no evidence to move them", not on "they were
 right". Before the next attempt, note that every live row up to 2026-08-07 was

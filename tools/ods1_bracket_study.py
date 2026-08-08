@@ -25,7 +25,8 @@ this study would measure a rule nobody trades.
 
 What the entry price is
 -----------------------
-The 5m candle CLOSE at the event instant, not the OI-implied mark. Since
+The CLOSE of the 5m bar the event falls in — i.e. a uniform ~5-minute posting delay,
+not an instantaneous fill — and never the OI-implied mark. Since
 T-2026-KYT-9050-115 the bot anchors its geometry on the live ticker at posting
 time; the candle close is the honest replay proxy for that. Using the implied mark
 would re-measure exactly the stale-anchor defect that task removed.
@@ -108,8 +109,10 @@ SL_GRID = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)
 #: so the "no bracket, use the time stop" alternative is scored on equal footing.
 HORIZON_H = 24
 
-#: Purge gap between fit and holdout: a trade opened just before the split can run
-#: for HORIZON_H hours, so without the gap its outcome would leak across the seam.
+#: Purge gap between fit and holdout. Events in [split, split + PURGE_H) are DROPPED
+#: from BOTH windows, never shifted into one: such an event runs for up to HORIZON_H
+#: hours, so its outcome overlaps the first holdout events. `n_purged` per cell is
+#: the receipt — if n_fit + n_hold equals n_events, nothing was purged.
 PURGE_H = HORIZON_H
 
 
@@ -118,7 +121,12 @@ def replay_events(conn, since: str, until: str) -> list[dict]:
 
     Steps the same 5-minute grid the live bot polls on (POLL_SECONDS=300) and
     applies the bot's own cooldown semantics — first event per symbol wins inside
-    COOLDOWN_H, exactly as ``on_cooldown`` enforces live and as T-096 deduped.
+    COOLDOWN_H, as ``on_cooldown`` does live and as T-096 deduped.
+
+    Deliberately NOT modelled: ``MAX_EMITS_PER_CYCLE``, ``has_open_ai_signal`` and
+    the drift guard. So this is every instant the RULE fires, a superset of what the
+    bot posts. Harmless here because every grid cell is scored on the same event set
+    and the verdict rests on a PAIRED comparison — but it is not "what went live".
     """
     lo = dt.datetime.fromisoformat(since).replace(tzinfo=dt.timezone.utc)
     hi = dt.datetime.fromisoformat(until).replace(tzinfo=dt.timezone.utc)
@@ -288,7 +296,7 @@ def score(events, paths, split_ts: int | None):
             for sl in SL_GRID:
                 if tp2 > sl:
                     continue  # a target beyond the stop can only be reached after the stop had its chance
-                fit, hold, amb, reasons = [], [], 0, defaultdict(int)
+                fit, hold, amb, purged, reasons = [], [], 0, 0, defaultdict(int)
                 hold_by_event: dict[tuple[str, int], float] = {}
                 for e in events:
                     p = paths.get((e["symbol"], e["ts"]))
@@ -299,9 +307,24 @@ def score(events, paths, split_ts: int | None):
                         continue
                     amb += a
                     reasons[reason] += 1
-                    if split_ts and e["ts"] >= split_ts + PURGE_H * 3600:
+                    if split_ts is not None and e["ts"] >= split_ts + PURGE_H * 3600:
                         hold.append(move)
                         hold_by_event[(e["symbol"], e["ts"])] = move
+                    elif split_ts is not None and e["ts"] >= split_ts:
+                        # THE PURGE. An event inside the gap runs for up to HORIZON_H
+                        # hours, so its outcome overlaps the first holdout events —
+                        # keeping it in fit is exactly the leak the gap exists to stop.
+                        #
+                        # The first version had no such branch: everything that was not
+                        # holdout fell through to fit, gap cohort included, so PURGE_H
+                        # only shifted the holdout start and purged nothing. The receipt
+                        # that it never fired was arithmetic — n_fit + n_hold equalled
+                        # n_events exactly. `n_purged` below is the standing receipt now,
+                        # and the ASSIGNMENT is pinned by
+                        # test_the_purge_gap_actually_drops_the_gap_cohort (the old test
+                        # asserted only the CONSTANT, which is why this survived review
+                        # into a shipped artifact).
+                        purged += 1
                     else:
                         fit.append(move)
                 if len(fit) < 30:
@@ -313,6 +336,9 @@ def score(events, paths, split_ts: int | None):
                         "tp2": tp2,
                         "sl": sl,
                         "n_fit": len(fit),
+                        # Non-zero is the proof the purge ran: n_fit + n_hold must be
+                        # LESS than n_events. Equality means the gap purged nothing.
+                        "n_purged": purged,
                         "mean_fit": float(np.mean(fit)),
                         "t_fit": _t(fit),
                         "n_hold": len(hold),

@@ -17,7 +17,9 @@ serving", so the optimisation must be an identity, not an approximation.
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
+import math
 import os
 import sys
 
@@ -128,6 +130,98 @@ def test_a_path_without_forward_bars_is_not_scored_as_flat():
 # ── grid admissibility ───────────────────────────────────────────────────────
 
 
+def test_t_statistic_is_the_one_sample_t_the_verdict_rests_on():
+    """`_t` produces the t=0.60 that decides the whole study, and nothing pinned it.
+
+    Hand-computed: mean 2.0, sample sd (ddof=1) 1.0 over n=5 -> t = 2.0/(1/sqrt(5)).
+    A population sd (ddof=0) or a missing sqrt(n) both change the verdict's number
+    while leaving every other test green — both were survived mutations in review.
+    """
+    xs = [1.0, 2.0, 3.0, 1.0, 3.0]  # mean 2.0, ddof=1 sd = 1.0
+    assert S._t(xs) == pytest.approx(2.0 / (1.0 / math.sqrt(5)))
+    assert S._t([1.0, 1.0, 1.0]) == 0.0, "zero spread is not a signal"
+    assert S._t([1.0, 2.0]) == 0.0, "n < 3 is undefined, not significant"
+
+
+def test_the_replay_is_driven_end_to_end_not_re_implemented(monkeypatch):
+    """The windowing identity, asserted against `replay_events` ITSELF.
+
+    The first version re-implemented the bisect inline in the test and compared THAT
+    to the bot — so it proved a property of the test's own code, not of the study's.
+    Review caught it by mutating `span` to drop STALENESS_CAP_S: every test stayed
+    green. This drives the real function over a fake cursor and compares against a
+    naive full-series loop, which is the claim the module actually makes.
+    """
+
+    class _Cur:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params=None):
+            self._out = [] if "SET " in sql else self.rows
+
+        def fetchall(self):
+            return self._out
+
+    class _Conn:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def cursor(self):
+            return _Cur(self.rows)
+
+    # A rally on draining OI, with the two endpoints far enough apart that a window
+    # missing STALENESS_CAP_S would lose the `then` point and fire nothing.
+    t0 = int(dt.datetime(2026, 7, 1, tzinfo=dt.timezone.utc).timestamp())
+    rows = []
+    for off, oi, px in [
+        (0, 1_000_000.0, 100.0),
+        (4 * 3600 + 1500, 1_000_000.0, 100.0),
+        (4 * 3600 + 1800, 940_000.0, 108.0),
+        (5 * 3600, 940_000.0, 108.0),
+    ]:
+        rows.append(("XUSDT", t0 + off, oi, oi * px))
+
+    got = S.replay_events(_Conn(rows), "2026-07-01", "2026-07-01T06:00:00")
+
+    # naive reference: the bot's own rule over the FULL series, same poll grid
+    series = {"XUSDT": [(int(ts), float(oi), float(v) / float(oi)) for _s, ts, oi, v in rows]}
+    want, seen = [], {}
+    t, end = t0, t0 + 6 * 3600
+    while t <= end:
+        for c in ODS1.find_candidates(series, t)[0]:
+            prev = seen.get(c["symbol"])
+            if prev is None or t - prev >= ODS1.COOLDOWN_H * 3600:
+                seen[c["symbol"]] = t
+                want.append((t, c["symbol"]))
+        t += ODS1.POLL_SECONDS
+
+    assert [(e["ts"], e["symbol"]) for e in got] == want
+    assert want, "the fixture must actually fire, or this asserts nothing"
+
+
+def test_entry_is_the_close_of_the_event_bar_not_its_open_or_high():
+    """Pins WHICH price of the event bar is the anchor.
+
+    Discriminating by construction, which the first attempt was not: it used a bar
+    with a high of 120 and a close of 100, but the follow-on lows cleared BOTH
+    rungs under either anchor, so `entry = path[0][1]` produced the same outcome and
+    survived mutation. Here the follow-on low reaches TP1 but not TP2 measured from
+    the close (99 / 98), while from the high (118.8 / 117.6) it clears both — so the
+    two anchors differ in exit reason AND in value.
+    """
+    path = bars((120.0, 80.0, 100.0), (99.5, 98.5, 99.0), (99.2, 98.8, 99.0))
+    move, reason, _ = S.simulate(path, tp1=1.0, tp2=2.0, sl=2.0)
+    assert reason == "TIME", "from the CLOSE only TP1 fills; from the high both rungs would"
+    assert move == pytest.approx(1.0)  # TP1 at +1 %, runner marked out at 99.0 = +1 %
+
+
 def test_the_grid_refuses_rungs_closer_than_the_fleet_minimum():
     """ODS1 already shipped a dead rung once (1.0/1.5): Cornix splits 50/50 and at a
     0.5 % gap whoever reached TP1 took TP2 in the same move. The study must not
@@ -135,6 +229,7 @@ def test_the_grid_refuses_rungs_closer_than_the_fleet_minimum():
     events = [{"ts": 0, "symbol": "X", "px_chg": 4.0, "oi_chg": -5.0}]
     paths = {("X", 0): bars(*[(100.0, 100.0, 100.0)] * 60)}
     cells = S.score(events * 40, {("X", 0): paths[("X", 0)]}, split_ts=None)
+    assert cells, "an empty surface would make every assertion below vacuous"
     for c in cells:
         assert c["tp2"] - c["tp1"] >= ODS1.MIN_TP_GAP_PCT
         assert c["tp2"] <= c["sl"], "a target beyond the stop is unreachable without the stop firing first"
@@ -177,6 +272,40 @@ def test_windowed_replay_matches_the_unwindowed_rule_exactly():
 
     assert full == windowed, (full, windowed)
     assert full, "the fixture must actually fire, or this asserts nothing"
+
+
+def test_the_purge_gap_actually_drops_the_gap_cohort():
+    """The gap must PURGE, not shift.
+
+    The first version asserted only `PURGE_H == HORIZON_H` — the constant — while the
+    assignment sent everything that was not holdout into fit, gap cohort included.
+    The receipt that it never fired was arithmetic: `n_fit + n_hold` equalled
+    `n_events` exactly. So this pins the ASSIGNMENT: an event inside the gap must end
+    up in neither window, and the totals must not add up to the event count.
+    """
+    assert S.PURGE_H == S.HORIZON_H, "a purge shorter than the horizon leaks outcomes across the split"
+
+    split = 1_760_000_000
+    flat = bars(*[(100.0, 100.0, 100.0)] * 40)
+    events, paths = [], {}
+    # 40 before the split, 40 inside the gap, 40 after it
+    for i, ts in enumerate(
+        [split - (i + 1) * 3600 for i in range(40)]
+        + [split + 3600 for _ in range(40)]
+        + [split + S.PURGE_H * 3600 + 3600 for _ in range(40)]
+    ):
+        sym = f"S{i}USDT"
+        events.append({"ts": ts, "symbol": sym, "px_chg": 4.0, "oi_chg": -5.0})
+        paths[(sym, ts)] = flat
+
+    cells = S.score(events, paths, split_ts=split)
+    assert cells, "fixture must produce admissible cells"
+    for c in cells:
+        assert c["n_purged"] == 40, c["n_purged"]
+        assert c["n_fit"] == 40 and c["n_hold"] == 40
+        assert c["n_fit"] + c["n_hold"] < len(events), (
+            "n_fit + n_hold == n_events is the signature of a gap that purges nothing"
+        )
 
 
 def test_the_window_keeps_both_endpoints_the_rule_needs():
