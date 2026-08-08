@@ -24,11 +24,11 @@ T-2026-KYT-9050-115 removed.
   reader.
 * **A hypothesis was refuted.** "Wide stop wins" was expected to mean "this is not a bracket, it
   is just holding for 24 h" — which would have pointed at bot 40's time stop instead. The exit
-  mix says otherwise: only 3–10 % of trades in the wide cells reach the mark-out. It is a bracket
+  mix says otherwise: only 3.2–9.5 % of trades in the top-12 cells reach the mark-out. It is a bracket
   question, and the bracket answer is "no evidence".
 * **The incumbent is measured more harshly than everything that beats it**: among the 43 cells
-  that outrank it on fit, intra-bar ambiguity runs 0.50–2.17 % against its 2.92 %, and every
-  ambiguous bar is resolved against the trade. (Across all 50 cells the range is 0.50–5.59 % and
+  that outrank it on fit, intra-bar ambiguity runs 0.49–2.14 % against its 2.88 %, and every
+  ambiguous bar is resolved against the trade. (Across all 50 cells the range is 0.49–5.51 % and
   three exceed the live cell, so "harshest of all" would be false — the restricted claim is the
   one the argument needs.)
 * **Confound named, not ignored.** Every live row up to 2026-08-07 was posted around an anchor

@@ -329,7 +329,12 @@ def score(events, paths, split_ts: int | None):
                         fit.append(move)
                 if len(fit) < 30:
                     continue
-                total = len(fit) + len(hold)
+                # Same cohort as the numerators: `reasons` and `amb` are counted
+                # BEFORE the assignment branch, so they include the purged events.
+                # Dividing by fit+hold alone inflated every percentage by ~1.6 %
+                # once the purge started dropping rows — before it, the two sets
+                # coincided and the bug could not exist.
+                total = len(fit) + len(hold) + purged
                 cells.append(
                     {
                         "tp1": tp1,

@@ -68,12 +68,13 @@ fit winner (2/4/4) against this bracket is +0.089 pp/trade at t=0.60. 11 of the 
 about the grid. Shipping the fit winner would have been an overfit.
 
 Two things the study did establish. The exit mix refutes "this is not a bracket,
-just a hold": only 3-10 % of trades reach the 24 h mark-out, the rest resolve at a
-rung or the stop. And every cell that OUTRANKS this one is measured more leniently
-than it — their intra-bar ambiguity runs 0.50-2.17 % against this bracket's 2.92 %,
+just a hold": in the top-12 cells only 3.2-9.5 % of trades reach the 24 h mark-out
+(this bracket itself: 0.41 %), the rest resolve at a rung or the stop. And every
+cell that OUTRANKS this one is measured more leniently than it — their intra-bar
+ambiguity runs 0.49-2.14 % against this bracket's 2.88 %,
 because a 2 % stop collides with a rung inside the same 5 m bar far more often, and
 every such bar is resolved against the trade. (Across all 50 cells ambiguity spans
-0.50-5.59 %, and three ARE more ambiguous than this one — so "harshest of all"
+0.49-5.51 %, and three ARE more ambiguous than this one — so "harshest of all"
 would be false; "harsher than everything that beats it" is the true form, and it is
 the one the argument needs.)
 

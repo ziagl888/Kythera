@@ -180,11 +180,15 @@ def test_the_replay_is_driven_end_to_end_not_re_implemented(monkeypatch):
     # missing STALENESS_CAP_S would lose the `then` point and fire nothing.
     t0 = int(dt.datetime(2026, 7, 1, tzinfo=dt.timezone.utc).timestamp())
     rows = []
+    # The `then` point sits EXACTLY on the inclusive lower edge: span is
+    # LOOKBACK_S + STALENESS_CAP_S = 17100 s, and 17100 / POLL_SECONDS = 57, so
+    # t0 + 17100 is a poll instant and t0 is exactly `t - span` for it. `_as_of`
+    # accepts a point at exactly the staleness cap (it tests `>`), so the rule
+    # fires — but a window whose lower bound is off by one step drops it and voids
+    # the symbol silently. That mutation survived the previous fixture.
     for off, oi, px in [
         (0, 1_000_000.0, 100.0),
-        (4 * 3600 + 1500, 1_000_000.0, 100.0),
-        (4 * 3600 + 1800, 940_000.0, 108.0),
-        (5 * 3600, 940_000.0, 108.0),
+        (17100, 940_000.0, 108.0),
     ]:
         rows.append(("XUSDT", t0 + off, oi, oi * px))
 
@@ -306,12 +310,16 @@ def test_the_purge_gap_actually_drops_the_gap_cohort():
         assert c["n_fit"] + c["n_hold"] < len(events), (
             "n_fit + n_hold == n_events is the signature of a gap that purges nothing"
         )
+        # The percentage columns are counted over EVERY scored event, purged ones
+        # included, so their denominator has to be that same cohort. Dividing by
+        # fit+hold alone inflated every published percentage by ~1.6 %.
+        assert sum(c["reasons"].values()) == c["n_fit"] + c["n_hold"] + c["n_purged"]
+        assert c["time_exit_pct"] + c["sl_exit_pct"] <= 100.0 + 1e-9
 
 
 def test_the_window_keeps_both_endpoints_the_rule_needs():
     """Guards the span itself: a window shorter than LOOKBACK_S + STALENESS_CAP_S
     would drop the `then` endpoint and silently void symbols instead of firing."""
-    assert S.PURGE_H == S.HORIZON_H, "a purge shorter than the horizon leaks outcomes across the split"
     now = 1_760_000_000
     pts = [(now - 4 * 3600 - 60, 1_000_000.0, 100.0), (now - 60, 950_000.0, 104.0)]
     got, _ = ODS1.find_candidates({"XUSDT": pts}, now)

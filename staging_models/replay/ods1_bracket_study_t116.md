@@ -41,12 +41,12 @@ path-dependently on the same events.
 
 | rank | TP1 | TP2 | SL | n fit | Ø fit | t | n hold | Ø hold | **t hold** | TIME % | SL % | amb % |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2.00 | 4.00 | 4.00 | 919 | +0.334 | 3.33 | 279 | +0.104 | **0.56** | 9.7 | 42.6 | 0.6 |
-| 2 | 2.00 | 3.00 | 4.00 | 919 | +0.327 | 3.44 | 279 | +0.053 | **0.30** | 5.2 | 37.2 | 0.6 |
-| 3 | 1.50 | 4.00 | 4.00 | 919 | +0.283 | 3.05 | 279 | +0.113 | **0.67** | 9.7 | 42.6 | 0.6 |
-| 4 | 1.00 | 4.00 | 4.00 | 919 | +0.282 | 3.40 | 279 | +0.069 | **0.44** | 9.7 | 42.6 | 0.8 |
-| 5 | 2.00 | 3.00 | 3.00 | 919 | +0.280 | 3.32 | 279 | +0.017 | **0.11** | 3.8 | 44.7 | 0.8 |
-| **44** | **1.00** | **2.00** | **2.00** | 919 | **+0.092** | **1.77** | 279 | **+0.015** | **0.16** | 0.4 | 47.7 | **2.9** |
+| 1 | 2.00 | 4.00 | 4.00 | 919 | +0.334 | 3.33 | 279 | +0.104 | **0.57** | 9.5 | 41.9 | 0.6 |
+| 2 | 2.00 | 3.00 | 4.00 | 919 | +0.327 | 3.44 | 279 | +0.053 | **0.30** | 5.1 | 36.6 | 0.6 |
+| 3 | 1.50 | 4.00 | 4.00 | 919 | +0.283 | 3.05 | 279 | +0.113 | **0.67** | 9.5 | 41.9 | 0.6 |
+| 4 | 1.00 | 4.00 | 4.00 | 919 | +0.282 | 3.40 | 279 | +0.069 | **0.45** | 9.5 | 41.9 | 0.8 |
+| 5 | 2.00 | 3.00 | 3.00 | 919 | +0.280 | 3.32 | 279 | +0.017 | **0.11** | 3.8 | 44.0 | 0.8 |
+| **44** | **1.00** | **2.00** | **2.00** | 919 | **+0.092** | **1.77** | 279 | **+0.015** | **0.16** | 0.4 | 47.0 | **2.9** |
 
 Rank 5 is listed deliberately: it is the one cell in the top 12 that does *not* sit on
 the widest stop, i.e. the counterexample to the boundary argument below. An earlier
@@ -66,13 +66,13 @@ outside it, or there may be none.
 **A hypothesis was refuted, and it changed the conclusion.** "Wide stop wins" was
 expected to mean *"this is not a bracket at all, it is just holding for 24 h"*, which
 would have pointed at bot 40's time stop rather than any bracket. The exit mix says no:
-only 3–10 % of trades in the wide cells reach the mark-out. It is a bracket question,
+only 3.2–9.5 % of trades in the top-12 cells reach the mark-out. It is a bracket question,
 and the bracket answer is "no evidence".
 
 **The live bracket is measured more harshly than every cell that beats it.** Across all
-50 cells intra-bar ambiguity spans 0.50–5.59 % (median 1.25 %), and three cells are
-*more* ambiguous than the live cell's 2.92 % — so it is not the harshest overall. But
-among the **43 cells that outrank it on fit**, ambiguity runs 0.50–2.17 %, i.e. every
+50 cells intra-bar ambiguity spans 0.49–5.51 % (median 1.23 %), and three cells are
+*more* ambiguous than the live cell's 2.88 % — so it is not the harshest overall. But
+among the **43 cells that outrank it on fit**, ambiguity runs 0.49–2.14 %, i.e. every
 single one is treated more leniently, and every ambiguous bar is resolved against the
 trade. The comparison that produces the ranking is therefore biased against the
 incumbent, which makes the absence of a significant alternative more notable, not less.
@@ -117,11 +117,11 @@ association stands; the mechanism does not. Do not cite it as an anchor effect.
 * **Right-censoring is silent.** Events in the final hours of the window get paths
   shorter than the full horizon and are marked out at the last available close,
   indistinguishable from a genuine 24 h mark-out in the `TIME` count. All such events
-  fall in the holdout. Small here (the live cell records 0.4 % TIME exits) and
+  fall in the holdout. Small here (the live cell records 0.41 % TIME exits) and
   undirected, but unmeasured.
 * The grid is bounded at SL 4.0 / TP2 4.0 and the winner crowds that bound.
 
-## Corrections to the first revision of this document
+## Corrections to earlier revisions of this document
 
 Both PR reviews caught the same defects; they are recorded rather than quietly fixed.
 
@@ -135,8 +135,14 @@ Both PR reviews caught the same defects; they are recorded rather than quietly f
 2. **"The worst cell in the fit window"** — false. Rank 44 of 50; six cells are worse.
 3. **"Every top cell sat on the widest stop"** — false. 11 of 12; rank 5 is the exception.
 4. **"Measured most harshly of all, 2.9 % against 0.5–0.9 % elsewhere"** — false as
-   written. True only against the cells that outrank it (0.50–2.17 %); across all 50 the
-   range is 0.50–5.59 % and three cells exceed the live cell.
+   written. True only against the cells that outrank it (0.49–2.14 %); across all 50 the
+   range is 0.49–5.51 % and three cells exceed the live cell.
 5. **The surface table omitted rank 4** of the previous run — which was precisely the
    cell contradicting the boundary argument made further down. Hand-transcription; the
    table is now generated from the JSON.
+6. **The percentage columns were inflated by ~1.6 %** in the previous revision — fixing
+   the purge introduced it. `reasons`/`ambiguous` are counted over every scored event
+   (1217) while the denominator was fit+hold only (1198); before the purge existed the
+   two cohorts coincided and the bug could not occur. Denominator corrected, a test
+   asserts `sum(reasons) == n_fit + n_hold + n_purged`, and every figure above is from
+   the re-run.
