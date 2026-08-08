@@ -1,3 +1,32 @@
+## [2026-08-08] The trailing bot becomes two arms — bot 44 posts everything, twice the seats (T-2026-KYT-9050-117)
+
+Operator decision (Michi): keep bot 40 exactly as it is for its channel, and add an unfiltered
+twin that mirrors ALL roster trades. Bot 44 is bot 40's module re-executed under
+`TRAILING_BOT_PROFILE=free` — a thin wrapper, so every behaviour change keeps being made once,
+in bot 40, and reaches both arms by construction.
+
+* **What the free profile drops:** the ±50 exposure cap (T-052's structural bound, deliberately
+  removed so the arm measures the unfiltered book) and bot 40's single-channel scarcity.
+  Density-ranked slot admission stays active, but its budget is the SUM over TWO channels
+  (`CH_TRAILING_FREE_A/B`, Cornix caps 500 per channel ≈ 1000 seats) — the roster still peaks
+  near ~2000 in the top ~5% of hours, and then the densest legs win here too.
+* **Channel mechanics:** `assign_channels()` places each admitted entry into the channel with
+  the fewest open positions (balanced books), the position row records its `channel_id`, and
+  every close posts into exactly that channel — Cornix' `Close` acts symbol-wide PER channel,
+  anywhere else it would flatten a different trade or none. One position per symbol holds
+  ACROSS both channels (operator decision: no double exposure per coin).
+* **Separate books:** the twin writes `trailing_free_positions` and posts under `-TRAILF`.
+  Sharing bot 40's table was never an option — both arms mirror the same source ids, and the
+  unique indexes would silently eat whichever bot polls second.
+* **Containment until the real channels exist:** `TRAILING_FREE_LIVE_POSTING` defaults 0 AND
+  both channels fall back to `CH_SHADOW_TEST` (not Cornix-executed) — a deploy alone posts
+  nothing that trades. Fleet entry at delay 299; supervised only after a watchdog restart
+  (operator gate).
+* **Pins:** 13 new free-profile tests (caps off ONLY there, symbol-global uniqueness, balancer
+  behaviour, per-channel cap never overfilled, channel-faithful closes, thin-wrapper source
+  pin, unknown-profile crash). Bot 40's 63 existing pins run unchanged — the trail profile is
+  byte-for-byte the old behaviour.
+
 ## [2026-08-07] Entry anchored at posting time (ODS1/FIF2), FIF2 roster seat, re-entry lock (T-2026-KYT-9050-115)
 
 Operator finding (Michi): bots 42 (ODS1) and 43 (FIF2) built their brackets from a price that

@@ -2,12 +2,14 @@
 """
 T-2026-KYT-9050-117. The unfiltered arm of the trailing experiment: identical
 behaviour to ``40_trailing_close_bot.py`` — same roster, same trail rule, same
-time-stop, same fill logic — but WITHOUT the admission restrictions (no
-density-ranked slot scarcity, no ±50 exposure cap; operator decision Michi
-2026-08-08). It posts ALL roster trades, spread evenly over TWO channels
-(``CH_TRAILING_FREE_A/B``), because Cornix caps each channel at 500 open
-trades — two channels ≈ 1000 seats, and occupancy above that is rare
-(``staging_models/replay/trailing_slot_budget_live.md``).
+time-stop, same fill logic — but WITHOUT the ±50 exposure cap (operator
+decision Michi 2026-08-08). Slot admission itself stays density-ranked;
+what changes is its budget: Cornix caps each channel at 500 open trades, so
+TWO channels (``CH_TRAILING_FREE_A/B``) give ~1000 seats instead of bot 40's
+500. That is not unlimited — this roster's occupancy still peaks near ~2000
+in the top ~5% of hours (``staging_models/replay/trailing_slot_budget_live.md``),
+and in those hours the densest legs win the seats here too, just twice as
+many of them.
 
 This file is deliberately a THIN WRAPPER, not a copy: it sets
 ``TRAILING_BOT_PROFILE=free`` and re-executes bot 40's module, so every

@@ -61,13 +61,15 @@ path, two bots):
   * ``free`` — bot 44 (``44_trailing_free_bot.py`` sets the env var and
     re-executes this module): the unfiltered arm. NO exposure cap
     (operator decision Michi 2026-08-08 — T-052's ±50 bound deliberately
-    dropped so the arm measures ALL roster trades), spread evenly over TWO
-    channels (``CH_TRAILING_FREE_A/B``) because Cornix caps each channel at
-    500 — two channels ≈ 1000 seats, and occupancy above that is rare
-    (``trailing_slot_budget_live.md``). Own table ``trailing_free_positions``,
-    own live gate ``TRAILING_FREE_LIVE_POSTING`` (default 0), tag suffix
-    ``-TRAILF``. Until the two real channels exist, both fall back to
-    ``CH_SHADOW_TEST`` (not Cornix-executed — the containment).
+    dropped), spread evenly over TWO channels (``CH_TRAILING_FREE_A/B``)
+    because Cornix caps each channel at 500 — two channels ≈ 1000 seats.
+    Density-ranked slot admission stays active on that summed budget: the
+    roster's occupancy still peaks near ~2000 in the top ~5% of hours
+    (``trailing_slot_budget_live.md``), and then the densest legs win here
+    too, just twice as many. Own table ``trailing_free_positions``, own live
+    gate ``TRAILING_FREE_LIVE_POSTING`` (default 0), tag suffix ``-TRAILF``.
+    Until the two real channels exist, both fall back to ``CH_SHADOW_TEST``
+    (not Cornix-executed — the containment).
 One position per symbol holds ACROSS the profile's channels (operator decision
 2026-08-08): Cornix' close is only per channel, but double exposure on one coin
 is not what the unfiltered arm is meant to measure. A close always posts to the
@@ -90,9 +92,12 @@ So two additional, strictly causal bounds (numbers: verdict
 
 Invariants:
   * NEVER writes to ``ai_signals`` and NEVER closes a foreign trade — its only
-    write rights are ``telegram_outbox`` (own channel) and ``trailing_positions``.
-  * At most one open mirror position per symbol (Cornix-close is symbol-wide).
-  * Open mirror positions ≤ ``SLOT_CAP``; direction overhang ≤ ``EXPOSURE_CAP``.
+    write rights are ``telegram_outbox`` (own channels) and the profile's own
+    table (``trailing_positions`` / ``trailing_free_positions``).
+  * At most one open mirror position per symbol, across ALL of the profile's
+    channels (Cornix-close is symbol-wide per channel).
+  * Open mirror positions ≤ ``SLOT_CAP`` PER CHANNEL; direction overhang
+    ≤ ``EXPOSURE_CAP`` where the profile sets one (``free``: off by default).
   * Exactly ONE Cornix-parseable message per entry (hard rule 4).
   * A leg without LIVE status in ``shadow_gate`` is never mirrored even if it
     is in the roster.
